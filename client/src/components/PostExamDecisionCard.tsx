@@ -32,7 +32,6 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardCheck, Loader2, CircleDollarSign, CalendarClock, XCircle, RotateCcw, UserCog,
-  HandCoins,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,16 +49,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { POST_EXAM_CARD_ANCHOR } from "@/components/device_flow_resume";
-import {
-  ServiceDiscountFields, EMPTY_DISCOUNT, type DiscountDraft,
-} from "@/components/ServiceDiscountFields";
-import {
-  purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
-  purchaseSubmitLabel,
-} from "@/components/purchase_dialog_ui";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
-import { MoneyInput } from "@/components/ui/money-input";
+import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
   followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
@@ -170,10 +162,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const [finalPrice, setFinalPrice] = useState("");
   const [priceReason, setPriceReason] = useState("");
   const [expertId, setExpertId] = useState("");
-  //  ══ «إتمام البيع» / «لم يشترِ» — نُقلا إلى `ExamPathDecisionActions`
-  //  (المرحلة الخامسة) ═══════════════════════════════════════════════════
-  //  الحالةُ والنافذتان ومعاينةُ السعر صارت داخل ذلك المكوّن — يستهلكه هذا
-  //  الملفّ وطابورُ «بانتظار الحسم» الجديد معاً، بلا نسخةٍ ثانية من المنطق.
+  //  ══ «إتمام البيع»/«لم يشترِ» (مسارُ المعاينة) و«اشترى»/«لم يشترِ»
+  //  (المسارُ الموروث) — نُقلا إلى `ExamPathDecisionActions` (المرحلة
+  //  الخامسة) و`LegacyDecisionActions` (تصحيحٌ حيّ) على التوالي ══════════
+  //  الحالةُ والنوافذُ ومعاينةُ السعر صارت داخل هذين المكوّنين — يستهلكهما
+  //  هذا الملفّ وطابورُ «بانتظار الحسم» معاً، بلا نسخةٍ ثانية من المنطق.
 
   const { data: followups, isLoading } = useQuery<Followup[]>({
     queryKey: [`/api/followups/patient/${patientId}`],
@@ -259,14 +252,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
   const [reversalOpen, setReversalOpen] = useState(false);
 
-  const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
-  //  السعرُ الأصلي حين سكتت المعاينة — يكتبه الاستعلامات مرّةً واحدة.
-  const [firstPrice, setFirstPrice] = useState<number>(0);
-
   const reset = () => {
     setDialog(null); setNote(""); setFinalPrice(""); setPriceReason(""); setExpertId("");
     setNextDate(defaultNextDate()); setNoSchedule(false); setReason("needs_time");
-    setDiscount(EMPTY_DISCOUNT); setFirstPrice(0);
   };
 
   const act = useMutation({
@@ -427,15 +415,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   const actions = examPath ? [] : allowedActions(session as any, active.status);
   const pendingRequest = (active.priceRequests ?? []).find((r: any) => r.status === "pending");
   const busy = act.isPending;
-  //  معاينةُ الفرق حيّةً من **الدالّة المشتركة نفسها** التي يحسب بها الخادم —
-  //  فلا تعرض الشاشةُ رقماً يخالف ما سيُحفَظ.
-  //  **ما ينقص يُسأل عنه، والموجودُ لا** — أساسُ النافذة الذكيّة. والقاعدةُ
-  //  في `purchase_dialog_ui` وحدها كي تُختبَر: اثنتا عشرة تركيبةً لا تُقرأ
-  //  بالعين في JSX.
-  const { needsFirstPrice, needsExpert } = purchaseGaps(active);
-  //  **السعرُ المرجعيّ للنافذة**: المحفوظ على الصفّ إن وُجد، وإلّا ما
-  //  يكتبه الموظّف الآن. والخصمُ يُحسب عليه لا على صفرٍ لا معنى له.
-  const originalPrice = purchaseOriginalPrice(active, firstPrice);
+  //  **«اشترى»/«لم يشترِ» على هذا المسار — `LegacyDecisionActions`
+  //  أدناه**: نافذةُ «اشترى» وحسابُ ما ينقص (`purchaseGaps`) والخصمُ
+  //  والحارسُ والجسم كلُّها داخل ذلك المكوّن — لا نسخةٌ ثانية هنا.
   //  **اسمُ الخبير للسجلّ**: الحمولةُ تخزّن الرقم وحده، والشاشةُ تعرف أسماء
   //  خبراء الفرع. ومَن غادر الفرع فلم يعد في القائمة يبقى برقمه — أهونُ من
   //  اسمٍ مخترَع. والمحفوظُ على الصفّ يُقدَّم لأنه أوثق من قائمةٍ حيّة.
@@ -673,31 +655,28 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {/*  ══ **زرٌّ واحد اسمُه «اشترى»** ═════════════════════════════
-              كان زرّان: «اشترى — يرغب بإكمال البيع» و«اشترى — بدء التصنيع».
-              والفرقُ بينهما داخليّ (رايةُ طابور مقابل بيعٍ فعليّ)، فحمّل
-              الموظّفَ تمييزاً لا شأنَ له به — واختار الخطأ نصفَ الوقت.
-
-              فبقي واحد. **ولا يُعطَّل لنقصِ معلومة**: النافذةُ تسأل عمّا
-              ينقص (سعراً أو خبيراً أو كليهما) في مكانها، بدل أن يُطرَد
-              الموظّف إلى شاشةٍ أخرى ثم يُطلَب منه أن يعود. */}
-          {actions.includes("confirm_purchase") && (
-            <Button size="sm" disabled={busy}
-              onClick={() => setDialog("confirm_purchase")}
-              data-testid="button-confirm-purchase">
-              <HandCoins className="h-4 w-4" /> اشترى
-            </Button>
-          )}
+          {/*  ══ «اشترى»/«لم يشترِ» — مكوّنٌ مشترك مع طابور «بانتظار الحسم»
+              (تصحيحٌ حيّ) ═════════════════════════════════════════════════
+              نُقلا إلى `LegacyDecisionActions`: نفسُ نافذة «اشترى» التي
+              تسأل عمّا ينقص (سعراً أو خبيراً أو كليهما) في مكانها، بدل أن
+              يُطرَد الموظّف إلى شاشةٍ أخرى ثم يُطلَب منه أن يعود — ونفسُ
+              نافذة «لم يشترِ» بسببها المنظَّم. **بلا نسخةٍ ثانية من
+              المنطق**: `actions` هي الحارسةُ نفسُها. */}
+          <LegacyDecisionActions
+            followupId={active.id}
+            patientId={patientId}
+            branchId={activeBranchId}
+            actions={actions}
+            followup={{
+              approvedPrice: active.approvedPrice,
+              selectedExpertUserId: active.selectedExpertUserId,
+              selectedExpertName: active.selectedExpertName ?? null,
+            }}
+          />
           {actions.includes("defer") && (
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => setDialog("defer")} data-testid="button-defer">
               <CalendarClock className="h-4 w-4" /> يحتاج متابعة / مؤجَّل
-            </Button>
-          )}
-          {actions.includes("close") && (
-            <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => setDialog("close")} data-testid="button-close-followup">
-              <XCircle className="h-4 w-4" /> لم يشترِ
             </Button>
           )}
           {/*  **قرارُ مديرِ الفرع لا طلبٌ يُرسَل**: يفتح النافذة ويكتب الرقم
@@ -812,14 +791,14 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
       {/*  «إتمام البيع» و«لم يشترِ» ونافذتاهما انتقلتا إلى
           `ExamPathDecisionActions` أعلاه (المرحلة الخامسة). */}
 
-      {/* ── تأجيل ── */}
-      <Dialog open={dialog === "defer" || dialog === "close" || dialog === "reopen"}
+      {/* ── تأجيل / إعادة فتح — «إغلاق بدون شراء» انتقل إلى
+          `LegacyDecisionActions` أعلاه (تصحيحٌ حيّ) ── */}
+      <Dialog open={dialog === "defer" || dialog === "reopen"}
         onOpenChange={(o) => !o && reset()}>
         <DialogContent dir="rtl">
           <DialogHeader>
             <DialogTitle>
-              {dialog === "defer" ? "تأجيل ومتابعة"
-                : dialog === "close" ? "إغلاق بدون شراء" : "إعادة فتح المتابعة"}
+              {dialog === "defer" ? "تأجيل ومتابعة" : "إعادة فتح المتابعة"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
@@ -836,32 +815,30 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 </Select>
               </div>
             )}
-            {dialog !== "close" && (
-              <div className="space-y-2">
-                <Label>
-                  موعد المتابعة القادمة
-                  {dialog === "reopen" && <span className="text-muted-foreground"> (اختياري)</span>}
-                </Label>
-                <Input type="date" value={nextDate} disabled={noSchedule}
-                  onChange={(e) => setNextDate(e.target.value)}
-                  data-testid="input-next-followup" />
-                {/*  في إعادة الفتح: الفراغُ قرارٌ صريح بنفسه، فلا مربّعَ
-                    ثالثاً يقول الشيء نفسه. */}
-                {dialog === "reopen" ? (
-                  <p className="text-xs text-muted-foreground" data-testid="text-reopen-hint">
-                    اتركه فارغاً ليعود الملف <b>بانتظار قرار المريض</b> بلا موعد.
-                    وحدّد تاريخاً فقط إن أردت تأجيله للمتابعة.
-                  </p>
-                ) : (
-                  <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={noSchedule}
-                      onChange={(e) => setNoSchedule(e.target.checked)}
-                      data-testid="checkbox-no-schedule" />
-                    بلا موعد متابعة (قرارٌ صريح)
-                  </label>
-                )}
-              </div>
-            )}
+            <div className="space-y-2">
+              <Label>
+                موعد المتابعة القادمة
+                {dialog === "reopen" && <span className="text-muted-foreground"> (اختياري)</span>}
+              </Label>
+              <Input type="date" value={nextDate} disabled={noSchedule}
+                onChange={(e) => setNextDate(e.target.value)}
+                data-testid="input-next-followup" />
+              {/*  في إعادة الفتح: الفراغُ قرارٌ صريح بنفسه، فلا مربّعَ
+                  ثالثاً يقول الشيء نفسه. */}
+              {dialog === "reopen" ? (
+                <p className="text-xs text-muted-foreground" data-testid="text-reopen-hint">
+                  اتركه فارغاً ليعود الملف <b>بانتظار قرار المريض</b> بلا موعد.
+                  وحدّد تاريخاً فقط إن أردت تأجيله للمتابعة.
+                </p>
+              ) : (
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={noSchedule}
+                    onChange={(e) => setNoSchedule(e.target.checked)}
+                    data-testid="checkbox-no-schedule" />
+                  بلا موعد متابعة (قرارٌ صريح)
+                </label>
+              )}
+            </div>
             <div>
               <Label>ملاحظة (اختياري)</Label>
               <Input value={note} onChange={(e) => setNote(e.target.value)}
@@ -871,9 +848,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <DialogFooter>
             <Button disabled={busy} data-testid="button-confirm-dialog"
               onClick={() => {
-                if (dialog === "close") {
-                  submit(`/api/followups/${active.id}/close`, { reason, note: note || undefined });
-                } else if (dialog === "reopen") {
+                if (dialog === "reopen") {
                   submit(`/api/followups/${active.id}/reopen`,
                     reopenPayload({ nextDate, note }));
                 } else {
@@ -989,92 +964,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── تأكيد الشراء ── */}
-      <Dialog open={dialog === "confirm_purchase"} onOpenChange={(o) => !o && reset()}>
-        <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>اشترى</DialogTitle></DialogHeader>
-          {/*  ══ نافذةٌ واحدة **تسأل عمّا ينقص فقط** ═══════════════════════
-              أربعُ حالات لا أربعُ شاشات: (سعرٌ وخبير) موجودان ⟶ تأكيد ·
-              ناقصُ الخبير ⟶ الخبير وحده · ناقصُ السعر ⟶ السعر وحده ·
-              ناقصُهما ⟶ الاثنان معاً. والموجودُ يُعرَض ولا يُسأل عنه. */}
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {needsFirstPrice || needsExpert
-                ? <>ينقص لإتمام البيع: {[
-                  needsFirstPrice ? "السعر الأصلي" : null,
-                  needsExpert ? "الخبير المسؤول" : null,
-                ].filter(Boolean).join(" و")}.</>
-                : <>السعر المعتمد: <b>{active.approvedPrice.toLocaleString()} د.ع</b>.</>}
-              {" "}يُفتح أمر التصنيع وتُقيَّد الكلفة على حساب المريض في الحال.
-            </p>
-
-            {/*  **السعرُ الأصلي حين سكتت المعاينة** — ليس خصماً ولا يحتاج
-                اعتماداً: الطبيبُ ترك الحقلَ فارغاً، وأولُ رقمٍ يُكتب هو
-                السعرُ الطبيعي نفسه. */}
-            {needsFirstPrice && (
-              <div className="space-y-1" data-testid="first-price-block">
-                <Label className="text-sm font-semibold">
-                  السعر الأصلي <span className="text-destructive">*</span>
-                </Label>
-                <MoneyInput value={firstPrice} onValueChange={setFirstPrice}
-                  placeholder="0" data-testid="input-first-price" />
-                <p className="text-xs text-muted-foreground">
-                  لم يحدّد الطبيب كلفة الجهاز في المعاينة — أدخل السعر الطبيعي.
-                  <b> لا يحتاج اعتماداً</b>؛ الاعتماد للخصم وحده.
-                </p>
-              </div>
-            )}
-
-            {/*  والخبيرُ الناقص يُختار **هنا** لا في شاشةٍ أخرى. والموجودُ
-                يُعرَض للقراءة: تغييرُه فعلٌ مستقلٌّ له زرُّه، ولا يُبدَّل
-                من باب البيع. */}
-            {needsExpert ? (
-              <div className="space-y-1" data-testid="purchase-expert-block">
-                <Label className="text-sm font-semibold">
-                  الخبير المسؤول <span className="text-destructive">*</span>
-                </Label>
-                <Select value={expertId} onValueChange={setExpertId}>
-                  <SelectTrigger data-testid="select-purchase-expert">
-                    <SelectValue placeholder="اختر الخبير" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(experts ?? []).map((e: any) => (
-                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
-                data-testid="text-purchase-expert">
-                <span className="text-muted-foreground">الخبير المسؤول: </span>
-                <b>{active.selectedExpertName ?? `#${active.selectedExpertUserId}`}</b>
-              </div>
-            )}
-
-            {/*  ══ والخصمُ يُطبَّق فوراً كالسعر الكامل تماماً (تصحيحٌ تشغيليّ) ══
-                لا طابورَ اعتمادٍ بعد اليوم: مَن يصل هذه النافذةَ اجتاز
-                `canConfirmPurchase` بالفعل — نفسُ بوّابة تأكيد الشراء
-                كامل السعر — فحفظُه هو التنفيذ. */}
-            {originalPrice > 0 && (
-              <ServiceDiscountFields originalPrice={originalPrice}
-                value={discount} onChange={setDiscount} testIdPrefix="purchase-discount" />
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              disabled={purchaseBlocked({
-                followup: active, firstPrice, expertId, discount, busy,
-              })}
-              data-testid="button-confirm-purchase-submit"
-              onClick={() => submit(`/api/followups/${active.id}/confirm-purchase`,
-                purchaseBody({ followup: active, firstPrice, expertId, discount }))}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" />
-                : purchaseSubmitLabel({ followup: active, firstPrice, discount })}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/*  «اشترى» ونافذتُها انتقلتا إلى `LegacyDecisionActions` أعلاه
+          (تصحيحٌ حيّ) — نفسُ نمط `ExamPathDecisionActions` قبلها. */}
     </Card>
   );
 }

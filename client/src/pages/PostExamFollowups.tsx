@@ -8,15 +8,21 @@
 // الصفُّ إلى «تم الحسم» من تلقاء نفسه: **لا زرَّ «تحديد كمحسوم»** — عضويةُ
 // التبويب مُشتقَّةٌ بالكامل من حالة المتابعة القائمة، لا حالةً تُخترَع هنا.
 //
-// **والحسمُ من نفس مكوّن بطاقة المريض حرفياً** (`ExamPathDecisionActions`)
-// — نفسُ البابين `/complete-sale`/`/not-bought`، نفسُ التحقّق، نفسُ معاينة
-// السعر الحيّة، نفسُ ملاحظة الطبيب. **بلا حقيقةٍ ماليةٍ جديدة هنا.**
+// **والحسمُ من نفس مكوّني بطاقة المريض حرفياً**: `ExamPathDecisionActions`
+// لمسار المعاينة (`/complete-sale`/`/not-bought`)، و`LegacyDecisionActions`
+// للمسار الموروث (`/confirm-purchase`/`/close`، تصحيحٌ حيّ) — نفسُ التحقّق
+// ونفسُ `allowedActions` الحارسة لكلٍّ منهما. **بلا حقيقةٍ ماليةٍ جديدة هنا.**
 //
 // **والنطاقُ يفرضه الخادم**: هذه الشاشة تعرض ما يصلها ضمن فروع الجلسة،
 // ومسؤولٌ متعدّدَ الفروع يستطيع تضييقها بفرعٍ واحد — والشارةُ في الشريط
 // الجانبيّ تبقى **كلَّ الفروع** بصرف النظر عن هذا الفلتر المحليّ.
+//
+// **والترتيبُ في الجانب** (تصحيحٌ حيّ): الصفحةُ تحمّل النتيجةَ الكاملة
+// أصلاً، فتبديلُ «الأقدم/الأحدث أولاً» فوريٌّ بلا نداءٍ ثانٍ. ضابطٌ واحدٌ
+// مرئيّ، **وكلُّ تبويبٍ على افتراضه القديم بحرفه**: «بانتظار الحسم» الأقدمُ
+// أولاً، و«تم الحسم» الأحدثُ حسماً أولاً — راجع `post_exam_followups_presentation.ts`.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,9 +32,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ChevronLeft } from "lucide-react";
+import { Loader2, ChevronLeft, ArrowUpDown } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
 import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
+import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import {
   DECISION_QUEUE_PAGE_TITLE, DECISION_QUEUE_PAGE_SUBTITLE,
   DECISION_QUEUE_TAB_WAITING, DECISION_QUEUE_TAB_RESOLVED,
@@ -37,7 +44,10 @@ import {
   type DecisionQueueState,
 } from "@shared/decision_queue";
 import { PRICE_KIND_LABELS } from "@shared/commercial";
-import { resolvedSaleDiscount } from "./post_exam_followups_presentation";
+import {
+  resolvedSaleDiscount, sortWaitingRows, sortResolvedRows, defaultSortDirectionFor,
+  type SortDirection,
+} from "./post_exam_followups_presentation";
 
 interface Branch { id: number; name: string; }
 
@@ -142,13 +152,8 @@ function WaitingCard({ row }: { row: WaitingRow }) {
             <span className="text-foreground">{row.examDoctorName ?? "—"}</span>
           </div>
         </div>
-        {/*  ══ **صفٌّ يتيم (`examPath === false`) ⟶ لا كتلةَ بيعٍ حديثة**
-            (تصحيحٌ حيّ) ═══════════════════════════════════════════════════
-            معاينةٌ موقّعة بلا حلقةٍ (`device_episode_id IS NULL`) ليست على
-            مسار المعاينة — `/complete-sale`/`/not-bought` تردّانها ٤٠٩
-            دائماً، فعرضُ الكتلة هنا كان يوهم بفعلٍ لا يعمل، ويعرض رسالةَ
-            حجبِ ملكيةٍ لا تخصّها. الصفُّ يبقى ظاهراً بـ«فتح الملف» وحده —
-            **لا مسارَ بيعٍ ثانياً يُخترَع هنا.** */}
+        {/*  ══ مسارُ المعاينة (`examPath=true`) ⟶ «إتمام البيع»/«لم يشترِ»
+            الحديثان — بلا تغيير ═══════════════════════════════════════════ */}
         {row.examPath && (
           <ExamPathDecisionActions
             followupId={row.followupId}
@@ -163,6 +168,29 @@ function WaitingCard({ row }: { row: WaitingRow }) {
               selectedExpertUserId: row.selectedExpertUserId,
             }}
           />
+        )}
+        {/*  ══ صفٌّ يتيم (`examPath=false`) ⟶ «اشترى»/«لم يشترِ» الموروثان
+            (تصحيحٌ حيّ) ═══════════════════════════════════════════════════
+            معاينةٌ موقّعة بلا حلقةٍ (`device_episode_id IS NULL`) ليست على
+            مسار المعاينة — الحسمُ لها كان مقصوراً على «فتح الملف» رغم أن
+            ملفّ المريض يعرض له القرارَ مباشرةً. صار الطابورُ يعرضه هنا
+            أيضاً بنفس الأفعال المصرَّح بها من الخادم (`allowedActions`) —
+            **لا مسارَ بيعٍ ثانياً يُخترَع**، نفسُ البابين القديمين
+            `/confirm-purchase`/`/close`. و«فتح الملف» يبقى متاحاً دائماً. */}
+        {!row.examPath && row.actions.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            <LegacyDecisionActions
+              followupId={row.followupId}
+              patientId={row.patientId}
+              branchId={row.branchId}
+              actions={row.actions}
+              followup={{
+                approvedPrice: row.approvedPrice,
+                selectedExpertUserId: row.selectedExpertUserId,
+                selectedExpertName: row.selectedExpertName,
+              }}
+            />
+          </div>
         )}
       </CardContent>
     </Card>
@@ -254,6 +282,20 @@ export default function PostExamFollowups() {
   const [tab, setTab] = useState<DecisionQueueState>("waiting");
   const [serviceFilter, setServiceFilter] = useState("all");
   const [branchFilter, setBranchFilter] = useState<string>("all");
+  //  ══ افتراضٌ مستقلٌّ لكلّ تبويب — ضابطٌ واحد مرئيّ (تصحيحٌ لاحق) ══════════
+  //  «بانتظار الحسم» يبقى الأقدمَ أولاً كما كان دائماً (`examSignedAt ASC`)،
+  //  و«تم الحسم» يبقى الأحدثَ حسماً أولاً كما كان دائماً (`resolvedAt
+  //  DESC`) — حالتان مستقلّتان بافتراضَيهما الأصليَّين، لا حالةٌ واحدة
+  //  مشتركة كانت تفرض قيمةً ابتدائية واحدة على التبويبين معاً (وتقلب بذلك
+  //  افتراضَ «تم الحسم» بصمت). **والضابطُ المرئيّ يبقى واحداً**: يعرض
+  //  ويُغيِّر اتجاهَ التبويب الحاليّ وحده، وكلا الاتجاهين متاحان في كلا
+  //  التبويبين. راجع `post_exam_followups_presentation.ts`.
+  const [waitingSortDir, setWaitingSortDir] = useState<SortDirection>(
+    () => defaultSortDirectionFor("waiting"));
+  const [resolvedSortDir, setResolvedSortDir] = useState<SortDirection>(
+    () => defaultSortDirectionFor("resolved"));
+  const sortDir = tab === "waiting" ? waitingSortDir : resolvedSortDir;
+  const setSortDir = tab === "waiting" ? setWaitingSortDir : setResolvedSortDir;
 
   //  فلترةُ الفرع تُعرَض فقط لمن يملك أكثر من فرعٍ فعلياً — مسؤولٌ عام أو
   //  مديرُ فرعٍ/موظّفٌ متعدّدُ الفروع. القائمةُ نفسُها المستعملة في شاشة
@@ -297,6 +339,15 @@ export default function PostExamFollowups() {
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
+  //  ══ ترتيبٌ في الجانب — النتيجةُ كاملةٌ أصلاً (تصحيحٌ حيّ) ═════════════
+  //  مفتاحٌ مختلف لكلّ تبويب (`examSignedAt`/`resolvedAt`)، واتجاهٌ مختلفٌ
+  //  مستقلّ لكلّ تبويب أيضاً (`sortDir` أعلاه) — لا نداءَ خادمٍ ثانٍ ولا
+  //  تغييرَ في ترتيب/تصفّح النقطة نفسها.
+  const sortedRows = useMemo(() => (
+    tab === "waiting"
+      ? sortWaitingRows(rows as WaitingRow[], sortDir)
+      : sortResolvedRows(rows as ResolvedRow[], sortDir)
+  ), [rows, tab, sortDir]);
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -320,6 +371,19 @@ export default function PostExamFollowups() {
         </Tabs>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/*  ══ ضابطُ الترتيب — عنصرٌ واحدٌ مضغوط، يعرض اتجاهَ التبويب
+              الحاليّ ويُغيِّره وحده (كلٌّ منهما بافتراضه وحالته
+              المستقلّة) ═══════════════════════════════════════════════ */}
+          <Select value={sortDir} onValueChange={(v) => setSortDir(v as SortDirection)}>
+            <SelectTrigger className="w-[130px] gap-1" data-testid="select-sort-direction">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="asc" data-testid="option-sort-asc">الأقدم أولاً</SelectItem>
+              <SelectItem value="desc" data-testid="option-sort-desc">الأحدث أولاً</SelectItem>
+            </SelectContent>
+          </Select>
           {showBranchFilter && (
             <Select value={branchFilter} onValueChange={setBranchFilter}>
               <SelectTrigger className="w-[140px]" data-testid="select-branch-filter">
@@ -352,15 +416,15 @@ export default function PostExamFollowups() {
         <div className="flex justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
-      ) : rows.length === 0 ? (
+      ) : sortedRows.length === 0 ? (
         <p className="text-center text-sm text-muted-foreground py-12" data-testid="text-followups-empty">
           {tab === "waiting" ? "لا يوجد مَن ينتظر الحسم." : "لا شيء محسوم بعد ضمن هذه الفلترة."}
         </p>
       ) : (
         <div className="space-y-3">
           {tab === "waiting"
-            ? (rows as WaitingRow[]).map((r) => <WaitingCard key={r.followupId} row={r} />)
-            : (rows as ResolvedRow[]).map((r) => <ResolvedCard key={r.followupId} row={r} />)}
+            ? (sortedRows as WaitingRow[]).map((r) => <WaitingCard key={r.followupId} row={r} />)
+            : (sortedRows as ResolvedRow[]).map((r) => <ResolvedCard key={r.followupId} row={r} />)}
         </div>
       )}
     </div>

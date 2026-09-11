@@ -56,6 +56,7 @@ import * as decisionQueue from "./decision_queue_store";
 import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
+  allowedActions,
 } from "@shared/followup";
 import {
   saleState, missingLabel, PURCHASE_DECISION_LABELS, PRICE_KIND_LABELS,
@@ -304,6 +305,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //
   // **والبوّابةُ `canCompleteReceptionSale` نفسُها** — مَن يقدر أن يحسم هو
   // مَن يرى الطابور: لا الطبيب، ولا قائمةَ أدوارٍ جديدة.
+  //
+  // ══ صفٌّ يتيم (`examPath=false`) ⟶ أفعالُ المسار الموروث ذاتُها (تصحيحٌ
+  // حيّ) ══════════════════════════════════════════════════════════════════
+  // متابعةٌ بلا حلقة `service_path='exam'` تُحسَم من ملفّ المريض بـ«اشترى»/
+  // «لم يشترِ» — `/confirm-purchase`/`/close` بحراستهما القائمة
+  // (`canConfirmPurchase`/`canActCommercially`). هذا الطابورُ يُظهر
+  // الأفعالَ نفسَها (`allowedActions`) فيُتمّ الحسمُ منه مباشرةً، بلا بابٍ
+  // ثالث ولا حراسةٍ ثانية — الكتابةُ الفعلية تبقى في نقطتيها القديمتين
+  // بحرفهما.
 
   /**
    * **الطابور** — `state=waiting` (الافتراضي) أو `state=resolved`.
@@ -357,12 +367,16 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  ══ **الحقولُ الثلاثة معاً** (تصحيحٌ لاحق) ═════════════════════════
         //  `complete_sale` يكتب السعرَ والخبيرَ والقرارَ معاً — فيلزم فحصُ
         //  مالكية الثلاثة، لا القرارِ وحده، وإلّا ظهر زرٌّ سيردّه الخادمُ ٤٠٣.
-        //  ══ **صفٌّ يتيمٌ (`examPath === false`) ⟶ بلا أفعالٍ حديثة** (تصحيحٌ
-        //  حيّ) ═══════════════════════════════════════════════════════════
+        //  ══ **صفٌّ يتيمٌ (`examPath === false`) ⟶ أفعالُ المسار الموروث**
+        //  (تصحيحٌ حيّ) ═══════════════════════════════════════════════════
         //  `examPathActions`/`assertExamPathFollowup` تردّان ٤٠٩ لصفٍّ بلا
-        //  حلقة `service_path='exam'` — فحسابُ الأفعال له كان سيعرض زرّاً
-        //  يردّه البابُ الحقيقيّ دائماً. الصفُّ يبقى ظاهراً في الطابور (نفسُ
-        //  «فتح الملف» الموروث في الشاشة)، وأفعالُه فارغةٌ حصراً.
+        //  حلقة `service_path='exam'` — فحسابُ أفعال المسار الحديث له كان
+        //  سيعرض زرّاً يردّه البابُ الحقيقيّ دائماً. لكنّ ملفَّ المريض يعرض
+        //  له «اشترى»/«لم يشترِ» من `allowedActions` **نفسِها** (المسارُ
+        //  الموروث القائم منذ ما قبل هذه المرحلة) — فهذا الطابورُ يستعملها
+        //  حرفياً بدل تفريغ الصفّ من أفعاله. **ولا حراسةَ ثانية تُخترَع**:
+        //  `/confirm-purchase`/`/close` هما مَن يفحصان الصلاحيةَ فعلياً،
+        //  وهذه القائمةُ عرضٌ لا إذن.
         const rows = out.rows.map((r) => ({
           ...r,
           actions: r.examPath
@@ -379,7 +393,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
                 owner: r.expertOwner, ownerUserId: r.expertOwnerUserId, ownerName: r.expertOwnerName,
               },
             })
-            : [],
+            : allowedActions(owner, r.status),
         }));
         res.json({ rows, total: out.total });
       } else {

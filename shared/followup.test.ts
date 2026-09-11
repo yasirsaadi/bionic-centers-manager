@@ -492,7 +492,8 @@ console.log("\n── عقد البطاقة التجاري ──");
 check(cardSrc.includes("button-set-commercial-price")
   && cardSrc.includes("/commercial-price"),
   "ر. **زرُّ تحديد السعر ونقطتُه في البطاقة**");
-// ══ ر٠. **زرُّ الشراء واحد** — والإشارةُ صارت أثراً لا زرّاً ══════════════
+// ══ ر٠. **زرُّ الشراء واحد — في مكوّنٍ مشتركٍ لا داخل البطاقة** (تصحيحٌ حيّ)
+// ════════════════════════════════════════════════════════════════════════
 //  كان في البطاقة زرّان يعنيان الشيء نفسه للموظّف: «اشترى» و«اشترى — يرغب
 //  بإكمال البيع». فالثاني حُذف من الشاشة، **ونقطتُه وتاريخُه باقيان**:
 //  الخادم يسجّل الإشارة نفسها تلقائياً حين يُرفَع طلبُ خصم، والصفوف القديمة
@@ -500,13 +501,49 @@ check(cardSrc.includes("button-set-commercial-price")
 check(!cardSrc.includes("button-signal-purchase-interest"),
   "ر٠. **ولا زرَّ إشارةٍ ثانياً في البطاقة** — زرُّ شراءٍ واحد",
   (cardSrc.match(/.*signal-purchase-interest.*/g) ?? []).join("\n"));
-const buyButtons = (cardSrc.match(/data-testid="button-confirm-purchase"/g) ?? []);
+
+//  **والزرُّ نفسُه انتقل إلى `LegacyDecisionActions.tsx`** — مكوّنٌ مشترك
+//  يستهلكه ملفُّ المريض وطابورُ «بانتظار الحسم» معاً، بنفس نمط
+//  `ExamPathDecisionActions` قبله. فالعقدُ الصحيح ليس «الزرّ داخل البطاقة»
+//  بل «الزرّ في مكانٍ واحدٍ، تستورده البطاقةُ والطابورُ ولا تعيدان كتابته».
+const legacyActionsSrc = readFileSync(join(import.meta.dirname,
+  "../client/src/components/LegacyDecisionActions.tsx"), "utf8");
+const queueSrc = readFileSync(join(import.meta.dirname,
+  "../client/src/pages/PostExamFollowups.tsx"), "utf8");
+
+const buyButtons = (legacyActionsSrc.match(
+  /data-testid="button-legacy-confirm-purchase"/g) ?? []);
 check(buyButtons.length === 1,
-  "   **وزرُّ «اشترى» واحدٌ لا نسختان**", `عددُها: ${buyButtons.length}`);
+  "   **وزرُّ «اشترى» واحدٌ لا نسختان — داخل `LegacyDecisionActions` وحدها**",
+  `عددُها: ${buyButtons.length}`);
+check(!cardSrc.includes("button-confirm-purchase")
+  && !queueSrc.includes("button-confirm-purchase"),
+  "   **ولا يبقى تعريفُ الزرّ القديم في البطاقة أو الطابور** — لا نسخةً"
+    + " موازيةً بجوار الاستيراد");
+check(cardSrc.includes("@/components/LegacyDecisionActions\"")
+  && cardSrc.includes("<LegacyDecisionActions"),
+  "   **وبطاقةُ المريض تستورد المكوّنَ المشترك وترسمه فعلاً** — إعادةُ"
+    + " استخدامٍ لا وصفٌ توثيقيّ فقط");
+check(queueSrc.includes("@/components/LegacyDecisionActions\"")
+  && queueSrc.includes("<LegacyDecisionActions"),
+  "   **وطابورُ «بانتظار الحسم» يستورد المكوّنَ نفسَه ويرسمه فعلاً**"
+    + " — نفسُ إعادة الاستخدام التي تثبتها البطاقةُ أعلاه");
+//  **ولا منطقَ شراءٍ مكرَّراً**: حسابُ الفجوات والحارسُ وجسمُ الطلب
+//  (`purchaseGaps`/`purchaseBlocked`/`purchaseBody`) يُنادَون من داخل
+//  `LegacyDecisionActions` وحدها — لا من البطاقة ولا من الطابور مباشرةً.
+check(legacyActionsSrc.includes("purchaseBlocked(")
+  && legacyActionsSrc.includes("purchaseBody("),
+  "   **والحارسُ وجسمُ الطلب يُنادَيان من المكوّن المشترك فعلاً**");
+check(!cardSrc.includes("purchaseBlocked(") && !cardSrc.includes("purchaseBody(")
+  && !queueSrc.includes("purchaseBlocked(") && !queueSrc.includes("purchaseBody("),
+  "   **ولا نداءَ مباشراً لهما من البطاقة أو الطابور** — لا نسخةَ منطقٍ ثانية");
+
 //  **ولا يُعطَّل لغياب الخبير**: النافذةُ تختاره، فلا يُطرَد الموظّف منها.
-check(!/selectedExpertUserId === null[\s\S]{0,400}button-confirm-purchase"/.test(cardSrc),
+check(!/selectedExpertUserId === null[\s\S]{0,400}button-legacy-confirm-purchase"/
+  .test(legacyActionsSrc),
   "   **ولا يُعطَّل لغياب الخبير** — النافذةُ تختاره");
-check(!cardSrc.includes("اختر الخبير المسؤول أولاً"),
+check(!legacyActionsSrc.includes("اختر الخبير المسؤول أولاً")
+  && !cardSrc.includes("اختر الخبير المسؤول أولاً"),
   "   **ولا نصَّ يطرد الموظّفَ ليختار الخبير في مكانٍ آخر**");
 //  **والنقطةُ باقيةٌ في الخادم** — توافقاً رجعياً وللتسجيل التلقائي.
 const followupRoutesSrc = readFileSync(
