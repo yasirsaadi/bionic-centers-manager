@@ -381,6 +381,20 @@ export interface FinancialPeriodMetrics {
   expenses: number;
   /** الصافي = الإيرادُ الفعليّ (النقد المقبوض) ناقص المصاريف. */
   net: number;
+  /**
+   * ══ تصحيحٌ إنتاجيّ (القسم K من مهمّة التدريب) ══════════════════════════
+   * = salesValue − revenue لهذه **الفترة بعينها** — «قيمةُ مبيعات الفترة
+   * التي لم تتحوّل إلى قبضٍ فعليّ في نفس الفترة». محسوبةٌ هنا في الخادم لا
+   * في النموذج: كان النموذج يطرح salesValue−revenue بنفسه عند سؤاله عن
+   * الفرق، وهذا يخالف «لا تحسب رقماً مالياً بنفسك أبداً» صراحةً.
+   *
+   * **وليست** `outstandingLifetime` (رصيدٌ إجماليّ مستحقّ حتى الآن، مدى
+   * الحياة، لا فترة) — مفهومان مختلفان لا يجوز خلطُهما: مبيعاتٌ لم تُقبَض
+   * *هذه الفترة* تحديداً قد تخصّ ديناً قديماً سُدِّد جزءٌ منه الآن (فيصير
+   * الفرقُ سالباً هنا — مقبوضٌ أكثر ممّا بِيع في الفترة نفسها، وهذا صحيحٌ
+   * ومقصود، لا خطأ حساب) — بينما `outstandingLifetime` لا يتأثّر بأيّ فترة.
+   */
+  uncollectedSalesValue: number;
 }
 
 /**
@@ -412,6 +426,8 @@ export interface FinancialMetricsComparison {
     revenue: MetricComparison;
     expenses: MetricComparison;
     net: MetricComparison;
+    /** غيرُ المُقبَض من مبيعات كلّ فترةٍ على حدة — محسوبةٌ كبقيّة المقاييس. */
+    uncollectedSalesValue: MetricComparison;
   };
 }
 
@@ -423,16 +439,19 @@ export interface FinancialSummaryResult {
 
 async function summaryFor(branchId: number | undefined, start: string, end: string): Promise<FinancialPeriodFigures> {
   const s = await storage.getAccountingSummary(branchId, start, end, { baghdadDays: true });
+  const salesValue = s.totalRevenue;
+  const revenue = s.totalPaid;
   return {
     start, end,
     //  ══ لا تُبدَّل — `totalRevenue` (مبيعات/كلفة) و`totalPaid` (نقدٌ
     //  مقبوض) حقيقتان مختلفتان في `storage.ts` نفسِه (راجع تعليقه هناك:
     //  "totalPaid الوارد = payments … / totalRevenue المبيعات = cost-ledger
     //  entries …"). المحوِّلُ هنا يسمّيهما بصدقٍ للنموذج فقط.
-    salesValue: s.totalRevenue,
-    revenue: s.totalPaid,
+    salesValue, revenue,
     expenses: s.totalExpenses,
     net: s.netProfit,
+    //  ══ محسوبةٌ هنا لا في النموذج (القسم K) — راجع تعليق الحقل في الواجهة. ══
+    uncollectedSalesValue: salesValue - revenue,
     collectionRateLifetime: s.collectionRate, outstandingLifetime: s.totalRemaining,
   };
 }
@@ -465,6 +484,7 @@ export async function getFinancialSummary(params: {
         revenue: computeComparison(current.revenue, prevFull.revenue),
         expenses: computeComparison(current.expenses, prevFull.expenses),
         net: computeComparison(current.net, prevFull.net),
+        uncollectedSalesValue: computeComparison(current.uncollectedSalesValue, prevFull.uncollectedSalesValue),
       },
     };
   }

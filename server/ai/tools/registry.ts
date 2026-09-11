@@ -40,6 +40,9 @@ import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./
 import {
   orderStatusLabel, purposeLabel, serviceTypeLabel, specialtyLabel, stageLabel,
 } from "../semantics";
+import {
+  findNextIncompleteModule, getModuleLesson, listAccessibleTracks, submitTrainingAnswer,
+} from "../../training/store";
 
 /** الخدمتان اللتان يُسنَد لهما خبيرُ تصنيع. العلاج الطبيعي ليس منهما. */
 const DEVICE_SERVICES = ["prosthetic", "medical_support"];
@@ -917,6 +920,48 @@ async function financialSummaryTool(access: AiAccessContext, input: any): Promis
   return { ok: true, data: result as unknown as Record<string, unknown> };
 }
 
+// ══ ٨. training_catalog — كتالوجُ التدريب لهذه الجلسة بعينها ═════════════
+//
+// ══ «الموظّف لا يدرّب المساعد» (القسم أ من مهمّة التدريب) ═══════════════
+// الأدواتُ الثلاث هنا **قراءةٌ** إلا واحدةً ضيّقة (`training_submit_answer`)
+// تكتب تقدّم **صاحب الجلسة نفسه وحده** — لا معرفةً ولا مساراً ولا وحدة.
+// المسؤولُ العام وحده يُنشئ المسارات والوحدات (عبر لوحة التحكّم)، والمحتوى
+// يُبنى فوق المعرفة الموثوقة المعتمَدة لا فوق نصٍّ يخترعه المساعد.
+
+async function trainingCatalog(access: AiAccessContext): Promise<ToolOutcome> {
+  const [tracks, next] = await Promise.all([
+    listAccessibleTracks(access), findNextIncompleteModule(access),
+  ]);
+  return { ok: true, data: { tracks: tracks as unknown as Record<string, unknown>[], next } };
+}
+
+// ══ ٩. training_lesson — درسُ وحدةٍ بعينها، **بلا إجابة الاختبار** ═══════
+
+async function trainingLesson(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  const moduleId = Number(input?.moduleId);
+  if (!Number.isInteger(moduleId) || moduleId <= 0) {
+    return denied("رقم الوحدة (moduleId) مطلوبٌ ويجب أن يكون عدداً صحيحاً موجباً.");
+  }
+  const result = await getModuleLesson({ moduleId, access });
+  if (!result.ok) return denied(result.error);
+  return { ok: true, data: result.lesson as unknown as Record<string, unknown> };
+}
+
+// ══ ١٠. training_submit_answer — **الكتابةُ الوحيدة المسموحة على هذا
+// السجلّ**: تصحيحٌ حتميّ، لا حكمَ نموذج ══════════════════════════════════
+
+async function trainingSubmitAnswer(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  const moduleId = Number(input?.moduleId);
+  if (!Number.isInteger(moduleId) || moduleId <= 0) {
+    return denied("رقم الوحدة (moduleId) مطلوبٌ ويجب أن يكون عدداً صحيحاً موجباً.");
+  }
+  const answerText = strArg(input, "answerText");
+  if (!answerText) return denied("نصُّ الإجابة مطلوب.");
+  const result = await submitTrainingAnswer({ moduleId, answerText, access });
+  if (!result.ok) return denied(result.error);
+  return { ok: true, data: result.outcome as unknown as Record<string, unknown> };
+}
+
 // ══ السجلّ الثابت ════════════════════════════════════════════════════════
 
 const CODE_ARG = {
@@ -1053,14 +1098,18 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     spec: {
       name: "financial_summary",
       description:
-        "ملخّصٌ ماليّ لفترة محدَّدة، بأربعة حقول لا تتبادل: salesValue (قيمةُ المبيعات — قيودُ "
+        "ملخّصٌ ماليّ لفترة محدَّدة، بخمسة حقول لا تتبادل: salesValue (قيمةُ المبيعات — قيودُ "
         + "الكلفة المسجَّلة في الفترة، ولو لم تُقبض بعد)، وrevenue (الإيرادُ الفعليّ — النقدُ "
-        + "المقبوضُ فعلاً في الفترة)، وexpenses (المصاريف)، وnet (الصافي = revenue − expenses). "
-        + "**المبيعات ليست إيراداً حتى تُقبض**: سؤالٌ عن «الإيراد» يُجاب من revenue لا salesValue، "
-        + "وسؤالٌ عن «كم بعنا» أو «قيمة المبيعات» يُجاب من salesValue لا revenue. current وbyBranch "
-        + "يحملان أيضاً outstandingLifetime/collectionRateLifetime — رصيدٌ مستحقّ ونسبةُ تحصيلٍ "
-        + "**إجماليّان حتى الآن**، لا رقمَي الفترة. مع مقارنةٍ اختيارية بالفترة السابقة بنفس الطول "
-        + "(compare): comparison.metrics تحمل salesValue/revenue/expenses/net — كلُّ حقلٍ كائنٌ "
+        + "المقبوضُ فعلاً في الفترة)، وexpenses (المصاريف)، وnet (الصافي = revenue − expenses)، "
+        + "وuncollectedSalesValue (= salesValue − revenue **لهذه الفترة بعينها**، محسوبةٌ جاهزةً — "
+        + "«قيمةُ مبيعات الفترة التي لم تتحوّل إلى قبضٍ فعليّ في نفس الفترة»؛ **ليست** "
+        + "outstandingLifetime، ولا تُحسَب بطرح salesValue−revenue يدوياً مهما بدا الحساب بسيطاً — "
+        + "استعمل الحقل الجاهز دائماً). **المبيعات ليست إيراداً حتى تُقبض**: سؤالٌ عن «الإيراد» "
+        + "يُجاب من revenue لا salesValue، وسؤالٌ عن «كم بعنا» أو «قيمة المبيعات» يُجاب من "
+        + "salesValue لا revenue. current وbyBranch يحملان أيضاً outstandingLifetime/"
+        + "collectionRateLifetime — رصيدٌ مستحقّ ونسبةُ تحصيلٍ **إجماليّان حتى الآن**، لا رقمَي "
+        + "الفترة. مع مقارنةٍ اختيارية بالفترة السابقة بنفس الطول (compare): comparison.metrics "
+        + "تحمل salesValue/revenue/expenses/net/uncollectedSalesValue — كلُّ حقلٍ كائنٌ "
         + "**محسوبٌ بالكامل في الخادم**: currentValue وpreviousValue وdelta (الفرقُ الجاهز) "
         + "وpercentChange (النسبةُ الجاهزة، أو null حين previousValue=0). **انقل هذه الأرقامَ كما "
         + "هي ولا تحسبها بنفسك، ولا تجمع ولا تطرح، ولا تخترع نسبةً حين percentChange تصل null.** "
@@ -1081,6 +1130,62 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     },
     offeredTo: (a) => a.mode === "financial",
     run: financialSummaryTool,
+  },
+  training_catalog: {
+    spec: {
+      name: "training_catalog",
+      description:
+        "مساراتُ التدريب المتاحة لهذه الجلسة بعينها — حسب قدراتها الحقيقية من الصلاحيات، لا كلَّ المسارات "
+        + "الموجودة. كلُّ مسارٍ يحمل وحداته وحالةَ كلٍّ منها (not_started/started/completed/needs_review/"
+        + "practice_only)، وnext يقول أقرب وحدةٍ غيرِ منجَزة عبر كلّ المسارات — استعملها لسؤال «وين وصلت "
+        + "بالتدريب؟» أو «كمّل تدريبي من آخر مكان». استعمل هذه الأداة حين يطلب الموظّف تدريباً أو دليلاً "
+        + "لوظيفته («دربني»، «أنا موظف جديد»، «ما الذي يجب أن أتعلمه؟»)، أو يسأل عن تقدّمه. بلا وسائط، وبلا أي مبلغ.",
+      input_schema: { type: "object", properties: {} } as any,
+    },
+    //  **متاحةٌ للجميع** — نفسُ my_worklist: القائمةُ نفسُها تُشتقّ من قدرات
+    //  الجلسة، فموظّفٌ بلا أي قدرةٍ خاصّة يبقى يرى ما هو «general» فقط.
+    offeredTo: () => true,
+    run: (a) => trainingCatalog(a),
+  },
+  training_lesson: {
+    spec: {
+      name: "training_lesson",
+      description:
+        "درسُ وحدةٍ تدريبية بعينها (moduleId من training_catalog): عنوانُها ومحتواها المبنيّ من المعرفة "
+        + "الموثوقة المعتمَدة **الحالية** (لا نسخةٍ قديمة ولو عُدِّلت المقالة لاحقاً)، وأهدافُ التعلّم إن "
+        + "وُجدت، وسؤالُ الاختبار النصّي فقط **بلا إجابته أو معاييرها** — تلك تبقى في الخادم دوماً. فتحُ "
+        + "الدرس يسجّل بدءَ الوحدة تلقائياً، ولوحدةٍ بلا اختبار (أو تدريبٍ عمليّ بحت) يسجّلها منجَزةً مباشرة "
+        + "بلا حاجة لتصحيح. استعملها بعد أن يختار الموظّف وحدةً من نتيجة training_catalog.",
+      input_schema: {
+        type: "object",
+        properties: { moduleId: { type: "number", description: "رقم الوحدة، من نتيجة training_catalog" } },
+        required: ["moduleId"],
+      } as any,
+    },
+    offeredTo: () => true,
+    run: trainingLesson,
+  },
+  training_submit_answer: {
+    spec: {
+      name: "training_submit_answer",
+      description:
+        "تصحيحُ إجابة الموظّف عن سؤال اختبار وحدةٍ فتحتَها بـtraining_lesson — **تصحيحٌ حتميّ في الخادم من "
+        + "مفاهيمَ مطلوبة مخزَّنة سلفاً؛ أنت لا تقرّر النجاح أو الرسوب أبداً ولا تخترع معياراً بديلاً.** تُعيد "
+        + "result، إمّا completed (نجح) أو needs_review (ينقصه مفهومٌ أو أكثر)، مع missingHints عند "
+        + "needs_review فقط — اشرح للموظّف من هذه التلميحات الحرفية وحدها بأسلوبك، ولا تخترع تلميحاً آخر ولا "
+        + "تُعلن نجاحاً يخالف result. تُرفَض لوحدةٍ بلا اختبار أو موسومةٍ «تدريباً عملياً» — تلك تكتمل بفتح "
+        + "الدرس وحده فلا داعي لهذه الأداة معها. لا تنادِها إلا بعد أن يكتب الموظّف إجابته فعلاً.",
+      input_schema: {
+        type: "object",
+        properties: {
+          moduleId: { type: "number", description: "رقم الوحدة" },
+          answerText: { type: "string", description: "إجابةُ الموظّف كما كتبها بالضبط" },
+        },
+        required: ["moduleId", "answerText"],
+      } as any,
+    },
+    offeredTo: () => true,
+    run: trainingSubmitAnswer,
   },
   } satisfies Record<string, ToolEntry>,
 );

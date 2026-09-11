@@ -726,13 +726,17 @@ async function main() {
 
     // ══ م. أسماء الأدوات مغلقة ═══════════════════════════════════════
     //  ══ (AI Assistant v2) صارت سبعاً — أُضيفت patient_search،
-    //  operational_summary، financial_summary. السجلُّ **لا يزال مغلقاً**
-    //  — القائمة صريحةٌ هنا فقط لتبقى دليلاً حيّاً على كل اسمٍ مسموح، لا
-    //  لأن العدد ثابتٌ للأبد.
+    //  operational_summary، financial_summary. ثمّ صارت عشراً (مدرّبُ
+    //  الموظّفين) — أُضيفت training_catalog، training_lesson،
+    //  training_submit_answer (`server/training/store.ts`، لا كتابةَ فيها
+    //  خارج تقدّم التدريب نفسِه). السجلُّ **لا يزال مغلقاً** — القائمة
+    //  صريحةٌ هنا فقط لتبقى دليلاً حيّاً على كل اسمٍ مسموح، لا لأن العدد
+    //  ثابتٌ للأبد.
     console.log("\n── السجلّ مغلق ──");
-    same("م. سبعُ أدواتٍ لا غير", TOOL_NAMES.sort(), [
+    same("م. عشرُ أدواتٍ لا غير", TOOL_NAMES.sort(), [
       "financial_summary", "my_worklist", "operational_summary", "patient_clinical_summary",
       "patient_finance", "patient_lookup", "patient_search",
+      "training_catalog", "training_lesson", "training_submit_answer",
     ]);
     for (const bogus of ["run_sql", "query", "exec", "patient_update", "delete_patient", "__proto__"]) {
       same(`   «${bogus}» ⟶ يُردّ`,

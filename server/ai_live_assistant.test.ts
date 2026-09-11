@@ -174,20 +174,26 @@ async function main() {
     //  ══ (مراجعةٌ حيّة) operational_summary لم تعد تصل بلا canViewReports ══
     //  لا `S.recv` ولا `S.acc` يحملانها — فتغيّب عن كليهما هنا، وتظهر مع
     //  `S.recvReports` تحديداً (تحتها مباشرةً).
+    //  ══ (مدرّبُ الموظّفين) ثلاثُ أدواتِ تدريبٍ **مُعرَضةٌ للجميع** ══════════
+    //  training_catalog/training_lesson/training_submit_answer مثل my_worklist
+    //  بالحرف — لا يستثنيها أيّ دورٍ أو صلاحية، فتُضاف إلى كلّ قائمةٍ أدناه.
     console.log("\n── ما يُعرَض على النموذج ──");
-    same("ب. الموظّف العادي (بلا canViewReports): أربع أدوات بلا المالية ولا التقارير",
+    same("ب. الموظّف العادي (بلا canViewReports): سبعُ أدواتٍ بلا المالية ولا التقارير",
       seen[0].tools.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search"]);
+      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search",
+        "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.recvReports), ask("مرحباً"));
-    same("   ومعه canViewReports: خمسٌ (يضاف operational_summary)",
+    same("   ومعه canViewReports: ثمانٍ (يضاف operational_summary)",
       seen[0].tools.sort(),
-      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search"]);
+      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search",
+        "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب (بلا canViewReports أيضاً): ستّ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
+    same("   والمحاسب (بلا canViewReports أيضاً): تسعٌ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
       "financial_summary", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
+      "training_catalog", "training_lesson", "training_submit_answer",
     ]);
 
     // ══ ج. الخلط بين التشغيلي والمالي ═══════════════════════════════
@@ -422,10 +428,17 @@ async function main() {
     try {
       //  ══ أوّلاً: سؤالُ مسارِ عملٍ يشارك «ابحث»/«المريض» حرفياً ⟶ تظهر
       //  (البوّابةُ مفتوحة — «كيف» إشارةُ مسارِ عملٍ صريحة) ══════════════
+      //  ══ (مراجعةُ إكمالٍ ٢٠٢٦-٠٩-١١، القسم ٥) — السؤالُ صار يذكر «سجلّ
+      //  المرضى» (عبارةٌ من عنوان `searchArticle` نفسِه) بعد أن زرع القسمُ ٥
+      //  أربعَ مقالاتِ استكشاف أخطاءٍ حقيقية تشارك «مريض/بحث» في نصوصها،
+      //  فصار السؤالُ الأقدم («كيف ابحث عن مريض بالاسم؟») لا يفوز بالضرورة
+      //  في المنافسة على أعلى ثلاث نتائج ضدّ معرفةٍ حقيقيةٍ أكثر — لا خطأ في
+      //  الاسترجاع، بل تزاحمٌ طبيعيّ في مجموعةٍ أكبر. تعزيزُ خصوصية السؤال
+      //  (لا تغييرُ `searchArticle` ولا منطق الاسترجاع) يعيده للصدارة بثقة.
       runScript([{ text: "توضيحُ آلية البحث." }]);
-      const workflowSearch: any = await chat(access(S.recv), ask("كيف ابحث عن مريض بالاسم؟"));
+      const workflowSearch: any = await chat(access(S.recv), ask("كيف ابحث عن مريض في سجلّ المرضى؟"));
       check(seen[0].system.includes(searchArticle.body),
-        "ح.٨.١ (تجهيز) سؤالُ مسارِ عملٍ («كيف ابحث...») ⟶ المقالةُ تصل نصَّ النظام فعلياً — إثباتُ تطابقٍ حقيقي",
+        "ح.٨.١ (تجهيز) سؤالُ مسارِ عملٍ («كيف ابحث... في سجلّ المرضى») ⟶ المقالةُ تصل نصَّ النظام فعلياً — إثباتُ تطابقٍ حقيقي",
         seen[0].system.slice(-400));
       check(workflowSearch.value.knowledge.some((k: any) => k.id === searchArticle.id),
         "ح.٨.٢ وتظهر في knowledge أيضاً");
@@ -451,6 +464,146 @@ async function main() {
     } finally {
       await setArticleActive({ id: searchArticle.id, active: false, actor: { userId: ADMIN, name: "مسؤول" } });
     }
+
+    // ══ ي. القسمُ ٥ (مراجعةُ إكمالٍ ٢٠٢٦-٠٩-١١) — مقالاتُ استكشاف الأخطاء
+    //  الحقيقية المزروعة في ترحيل ٠٧٦ تصل فعلياً لأسئلةٍ واقعية عبر
+    //  الدردشة الحيّة، بلا أيّ تعليمة تحايلٍ، وسؤالٌ مجهولٌ لا يستدرج شيئاً. ══
+    console.log("\n── ي. القسمُ ٥ — مقالاتُ استكشاف الأخطاء الحقيقية ──");
+
+    runScript([{ text: "شرحُ سبب عدم ظهور التقرير." }]);
+    const reportsIssue: any = await chat(access(S.recv), ask("ليش ما أشوف التقرير؟"));
+    check(seen[0].system.includes("canViewReports"),
+      "ي.١ «ليش ما أشوف التقرير؟» يستدرج مقالة troubleshoot_reports_not_visible فعلياً (نصُّها الحقيقيّ وصل)",
+      seen[0].system.slice(-700));
+    check(reportsIssue.value.knowledge.some((k: any) => k.title === "لماذا لا أرى التقارير؟"),
+      "ي.٢ وتظهر في knowledge بعنوانها الحقيقيّ");
+
+    runScript([{ text: "شرحُ سبب عدم ظهور مريض." }]);
+    const patientIssue: any = await chat(access(S.recv), ask("ليش المريض ما يظهر في القوائم ولا في البحث؟"));
+    check(seen[0].system.includes("المحذوفات") && seen[0].system.includes("canViewPatients"),
+      "ي.٣ وسؤالٌ عن عدم ظهور مريضٍ يستدرج troubleshoot_patient_not_visible فعلياً",
+      seen[0].system.slice(-700));
+
+    runScript([{ text: "شرحُ الفرق بين الصلاحيتين." }]);
+    const paymentsIssue: any = await chat(access(S.acc), ask("ليش ما أشوف مدفوعات المريض؟"));
+    check(seen[0].system.includes("canViewPayments") && seen[0].system.includes("canManageAccounting"),
+      "ي.٤ وسؤالٌ عن عدم ظهور مدفوعات يستدرج troubleshoot_payments_not_visible ويفرّق canViewPayments عن canManageAccounting",
+      seen[0].system.slice(-700));
+
+    runScript([{ text: "شرحُ أهليّة عاد للشراء." }]);
+    const returnIssue: any = await chat(access(S.recv), ask("زر عاد للشراء ما عطاني ولا عملية مؤهلة، شنو المشكلة؟"));
+    check(seen[0].system.includes("لم يشترِ") && seen[0].system.includes("لا يُصطنَع مسارٌ بديل"),
+      "ي.٥ وسؤالٌ عن «عاد للشراء» بلا عمليةٍ مؤهَّلة يستدرج troubleshoot_return_to_purchase_ineligible",
+      seen[0].system.slice(-700));
+
+    //  ي.٦ **بلا أيّ تعليمة تحايلٍ أو تجاوز صلاحية** في أيٍّ من النصوص
+    //  المستدرَجة أعلاه (آخرُ نداءٍ فقط هنا يكفي — نفسُ المتون تكرّرت).
+    const noBypassPhrases = ["تجاوز الصلاحية", "تجاهل الصلاحية", "استخدم حساباً آخر", "عدّل القاعدة مباشرة"];
+    check(noBypassPhrases.every((p) => !seen[0].system.includes(p)),
+      "ي.٦ وبلا أيّ عبارة تحايلٍ أو تجاوز صلاحية في نصّ النظام المستدرَج آخر مرّة");
+
+    //  ي.٧ سؤالٌ عشوائيّ لا صلة له بأيّ مشكلةٍ معروفة — لا يستدرج أيّاً من
+    //  مقالات استكشاف الأخطاء الأربع قسراً؛ والنموذجُ (المزيَّف هنا بنصّ
+    //  «معلوماتٌ غير كافية») هو مصدرُ تلك العبارة لا الاسترجاع.
+    runScript([{ text: "لا تتوفر لديّ معلوماتٌ كافية للإجابة عن هذا." }]);
+    const unknownIssue: any = await chat(access(S.recv), ask("ما هو لون السماء في المساء؟"));
+    check(!seen[0].system.includes("canViewReports") && !seen[0].system.includes("canViewPayments")
+      && !seen[0].system.includes("لا يُصطنَع مسارٌ بديل") && !seen[0].system.includes("المحذوفات"),
+      "ي.٧ وسؤالٌ عشوائيّ لا صلة له لا يستدرج أيّاً من مقالات استكشاف الأخطاء الأربع قسراً");
+    same("ي.٧ب وknowledge فارغةٌ صراحةً", unknownIssue.value.knowledge, []);
+    check(unknownIssue.value.reply.includes("معلوماتٌ غير كافية") || unknownIssue.value.reply.includes("لا تتوفر"),
+      "ي.٧ج والردُّ نفسُه (من النموذج، لا من الاسترجاع) يقول عدم كفاية المعلومات كما بُرمِج في هذا الاختبار");
+
+    // ══ ك. القسمُ ٦ (مراجعةُ إكمالٍ) — الإرشادُ الحرُّ «كيف أسوي كذا؟» صار
+    //  واعياً بالقدرة: مقالاتُ ترحيل ٠٧٥ الحقيقية بعد تحديث جمهورها في
+    //  ترحيل ٠٧٦ (القسم ٦) تصل مَن يملك القدرةَ المناسبة وحده عبر الدردشة
+    //  الحرّة — لا مساراتِ التدريب الرسمية فقط (تلك مُختبَرةٌ في
+    //  `server/training.test.ts`، وهذا اختبارٌ للمسار الحرّ المستقلّ عنها). ══
+    console.log("\n── ك. القسمُ ٦ — إرشادٌ حرٌّ واعٍ بالقدرة (معرفةٌ حقيقية مزروعة) ──");
+
+    //  ك.١-٢ الاستقبالُ (بلا medical) لا يصل مقالة معاينة الطبيب — مقيَّدةٌ
+    //  الآن بجمهور medical/manager بعد تحديث ٠٧٦.
+    runScript([{ text: "توضيحٌ عامّ." }]);
+    const recvAskMedical: any = await chat(access(S.recv), ask("كيف توقّع معاينة الطبيب وما الفرق بين التحرير والملحق؟"));
+    check(!seen[0].system.includes("لصاحب المعاينة نفسه أو للمدير المسؤول"),
+      "ك.١ **الاستقبالُ لا يصل مقالة معاينة الطبيب (medical_exam_workflow)** — جمهورُها medical/manager فقط",
+      seen[0].system.slice(-700));
+    check(!recvAskMedical.value.knowledge.some((k: any) => k.title === "معاينة الطبيب وتوقيعها"),
+      "ك.٢ ولا تظهر في knowledge كذلك");
+
+    //  ك.٣-٤ والخبيرُ (expert) يصل مقالة مراحل التصنيع فعلياً — جمهورها
+    //  expert/manager. **إرشادٌ تصنيعيّ حقيقيّ** لا سردٌ عام.
+    runScript([{ text: "توضيحُ مراحل التصنيع." }]);
+    const expertAskMfg: any = await chat(access(S.expert), ask("ما هي مراحل تصنيع الطرف الصناعي من استلام الأمر إلى التسليم؟"));
+    check(seen[0].system.includes("جاهز للتجربة") && seen[0].system.includes("يُسنَد إلى خبير واحد"),
+      "ك.٣ **والخبيرُ يصل مقالة مراحل التصنيع (manufacturing_stages) فعلياً** — جمهورُها يشمل expert",
+      seen[0].system.slice(-700));
+    check(expertAskMfg.value.knowledge.some((k: any) => k.title === "مراحل تصنيع الطرف الصناعي"),
+      "ك.٤ وتظهر في knowledge بعنوانها");
+
+    //  ك.٥-٦ وموظّفُ علاجٍ طبيعيّ (canEnterSessions) يصل مقالة خطة الجلسات
+    //  — جمهورُها physio حصراً. جلسةٌ محلّية لا تحتاج تعديل `S` المشتركة.
+    const physioUser = {
+      userId: 9915, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+      displayName: "physio", permissions: { canEnterSessions: true },
+    };
+    runScript([{ text: "توضيحُ خطة الجلسات." }]);
+    const physioAsk: any = await chat(access(physioUser), ask("كيف تعمل خطة الجلسات وعدّاد الجلسات المشتراة في العلاج الطبيعي؟"));
+    check(seen[0].system.includes("الجلسات المشتراة") && seen[0].system.includes("لا يحرّك أي مبلغ مالي"),
+      "ك.٥ **وموظّفُ العلاج الطبيعي (physio) يصل مقالة خطة الجلسات (physio_session_plan) فعلياً**",
+      seen[0].system.slice(-700));
+    check(physioAsk.value.knowledge.some((k: any) => k.title === "خطة الجلسات وعدّاد العلاج الطبيعي"),
+      "ك.٦ وتظهر في knowledge بعنوانها");
+    //  والاستقبالُ العاديّ (بلا physio) **لا** يصلها بنفس السؤال.
+    runScript([{ text: "توضيحٌ عامّ." }]);
+    await chat(access(S.recv), ask("كيف تعمل خطة الجلسات وعدّاد الجلسات المشتراة في العلاج الطبيعي؟"));
+    check(!seen[0].system.includes("لا يحرّك أي مبلغ مالي"),
+      "ك.٦ب **والاستقبالُ العاديّ (بلا physio) لا يصل نفسَ المقالة** بالسؤال نفسِه");
+
+    //  ك.٧-٨ ومقالةٌ ماليةٌ (finance/reports) لا تصل جلسةً بلا أيٍّ منهما —
+    //  cost_vs_payment جمهورُها ["finance","reports"].
+    runScript([{ text: "توضيحٌ عامّ." }]);
+    await chat(access(S.recv), ask("ما الفرق بين الكلفة والدفعة في دفتر القيود؟"));
+    check(!seen[0].system.includes("لا يُحتسب أي مبلغ") ,
+      "ك.٧ **والاستقبالُ (بلا finance ولا reports) لا يصل مقالة cost_vs_payment**", seen[0].system.slice(-700));
+
+    //  وتصل المحاسب (finance) فعلاً — نفسُ السؤال بالحرف.
+    runScript([{ text: "توضيحُ الفرق." }]);
+    const accAskCost: any = await chat(access(S.acc), ask("ما الفرق بين الكلفة والدفعة في دفتر القيود؟"));
+    check(seen[0].system.includes("لا يُحتسب أي مبلغ") && seen[0].system.includes("تنبيه محاسبي فوري"),
+      "ك.٨ **ويصلها المحاسبُ (finance) فعلاً** — نفسُ السؤال بالحرف", seen[0].system.slice(-700));
+    check(accAskCost.value.knowledge.some((k: any) => k.title === "الفرق بين الكلفة والدفعة"),
+      "ك.٨ب وتظهر في knowledge بعنوانها");
+
+    //  ك.٩-١٠ **موظّفٌ متعدّدُ القدرات (finance+reports معاً)** يصل مقالتين
+    //  ماليّتين محدودتَي الجمهور بلا تعارض — الاتحادُ الإضافيّ يعمل في
+    //  الاسترجاع الحرّ تماماً كما يعمل في `capabilitiesFor` نفسِها.
+    const multiCapUser = {
+      userId: 9916, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+      displayName: "multi", permissions: { canManageAccounting: true, canViewReports: true },
+    };
+    runScript([{ text: "توضيحُ الفرق." }]);
+    const multiAskCost: any = await chat(access(multiCapUser), ask("ما الفرق بين الكلفة والدفعة في دفتر القيود؟"));
+    check(seen[0].system.includes("لا يُحتسب أي مبلغ"),
+      "ك.٩ والموظّفُ متعدّدُ القدرات (finance+reports) يصل مقالة cost_vs_payment (جمهورُها finance **أو** reports)");
+    runScript([{ text: "توضيحُ طلب التصحيح." }]);
+    const multiAskCorrection: any = await chat(access(multiCapUser), ask("ما هي خطوات طلب تصحيح مالي على دفعة؟"));
+    check(seen[0].system.includes("مديرَ الفرع") || seen[0].system.includes("المسؤول العام")
+      || multiAskCorrection.value.knowledge.some((k: any) => k.title === "طلب تصحيح مالي على دفعة"),
+      "ك.١٠ **وتصله أيضاً مقالة طلب التصحيح المالي (financial_correction_request، جمهورُها finance/manager)** — كلا المجالين معاً بلا تعارض",
+      JSON.stringify(multiAskCorrection.value.knowledge));
+
+    //  ك.١١ والمسؤولُ العام يصل الجميع — أربعُ مقالاتٍ بجمهورٍ مختلفٍ كلِّياً
+    //  (medical/expert/physio/finance)، بلا أعلامٍ شخصية (S.admin أعلاه
+    //  permissions فيها canViewPatients/canManageAccounting فقط، لا medical
+    //  ولا expert ولا physio على الإطلاق) — تجانسٌ حيٌّ مع القسم ١.
+    runScript([{ text: "توضيحٌ شامل." }]);
+    const adminAskMedical: any = await chat(access(S.admin), ask("كيف توقّع معاينة الطبيب وما الفرق بين التحرير والملحق؟"));
+    check(seen[0].system.includes("لصاحب المعاينة نفسه أو للمدير المسؤول"),
+      "ك.١١ **والمسؤولُ العام يصل مقالة معاينة الطبيب رغم عدم امتلاكه medical كعلمٍ شخصيّ** — تجانسٌ مع اتحاد القسم ١",
+      seen[0].system.slice(-700));
+    check(adminAskMedical.value.knowledge.some((k: any) => k.title === "معاينة الطبيب وتوقيعها"),
+      "ك.١١ب وتظهر في knowledge بعنوانها");
 
     // ══ ط. الأدواتُ الجديدة تُعرَض بحسب الدور (D1/D2/D3) ═════════════════
     console.log("\n── الأدواتُ الجديدة بحسب الدور ──");

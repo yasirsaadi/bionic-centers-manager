@@ -82,6 +82,7 @@ import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
 import { generateSurveyReply } from "./ai/survey_reply";
 import { registerAiKnowledgeRoutes } from "./ai/knowledge/routes";
+import { registerTrainingRoutes } from "./training/routes";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
@@ -7645,6 +7646,9 @@ export async function registerRoutes(
   //  اقتراحٍ لأيّ موظّف، وإدارةُ المقالات/الاقتراحات للمسؤول العام وحده.
   //  راجع server/ai/knowledge/store.ts.
   registerAiKnowledgeRoutes(app, isAuthenticated);
+  //  تدريبُ الموظّفين (ترحيل ٠٧٦): كتالوجٌ وقدرات، تصحيحُ اختباراتٍ حتميّ،
+  //  وعرضُ إدارة مقيَّد. راجع server/training/store.ts.
+  registerTrainingRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
   registerPatientTrashRoutes(app, isAuthenticated);
 
