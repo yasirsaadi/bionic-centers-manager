@@ -60,8 +60,8 @@ const BASE = `http://127.0.0.1:${PORT}`;
 //  نطاقُ معرّفاتٍ محجوزٌ لهذا الملفّ وحده.
 const B1 = 9750, B2 = 9751;
 const RECV = 9752, DOC = 9753, FIN = 9754, MULTI = 9755, NOCAP = 9756,
-  REPORTS_ONLY = 9757, MGR1 = 9758, MGR2 = 9759, ADMIN1 = 9760;
-const ALL_USERS = [RECV, DOC, FIN, MULTI, NOCAP, REPORTS_ONLY, MGR1, MGR2, ADMIN1];
+  REPORTS_ONLY = 9757, MGR1 = 9758, MGR2 = 9759, ADMIN1 = 9760, THERAPIST = 9761;
+const ALL_USERS = [RECV, DOC, FIN, MULTI, NOCAP, REPORTS_ONLY, MGR1, MGR2, ADMIN1, THERAPIST];
 const MARK = "اختبار-تدريب-الموظفين";
 
 async function q(sql: string, params: any[] = []) {
@@ -80,6 +80,17 @@ async function cleanup(customTrackId?: number | null) {
     await q(`DELETE FROM training_modules WHERE track_id = $1`, [customTrackId]);
     await q(`DELETE FROM training_tracks WHERE id = $1`, [customTrackId]);
   }
+  //  ══ تنظيفٌ ذاتيّ الشفاء — مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ ══════════════════════
+  //  مسارٌ من لوحة الإدارة (القسم «ن») يُنشَأ **بمعرّفٍ حيّ لا يُعرَف سلفاً**
+  //  (خلافاً لـ`customTrackId` أعلاه)؛ فتشغيلةٌ سابقة انقطعت في منتصفها
+  //  (خطأٌ غيرُ متوقَّع بين الإنشاء والتنظيف المضمَّن في نفس القسم) كانت
+  //  تترك صفّاً يتيماً يحمل `created_by`/`approved_by` = أحد مستخدمي هذا
+  //  الملفّ، فيُفشل حذفَ `system_users` أدناه في **كلّ تشغيلةٍ تالية** —
+  //  عطبٌ يتراكم لا يُصلح نفسَه. فيُنظَّف كلُّ مسارٍ عنوانُه يحمل علامةَ
+  //  هذا الملفّ، بصرف النظر عن مصدره، قبل لمس صفوف المستخدمين.
+  await q(`DELETE FROM training_modules WHERE track_id IN
+             (SELECT id FROM training_tracks WHERE title LIKE $1)`, [`${MARK}%`]);
+  await q(`DELETE FROM training_tracks WHERE title LIKE $1`, [`${MARK}%`]);
   await q(`DELETE FROM ai_knowledge_suggestions WHERE submitted_by = ANY($1::int[])`, [ALL_USERS]);
   await q(`DELETE FROM ai_knowledge_articles WHERE title LIKE $1`, [`${MARK}%`]);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [ALL_USERS]);
@@ -105,9 +116,10 @@ async function main() {
       ($6,'tr-reports','x','تقارير فقط','reception',$10,true, false,false,false,false,false,false,true),
       ($7,'tr-mgr1','x','مدير فرع أ','branch_manager',$10,true, false,false,false,false,false,false,false),
       ($8,'tr-mgr2','x','مدير فرع ب','branch_manager',$11,true, false,false,false,false,false,false,false),
-      ($9,'tr-admin','x','مسؤول اختبار','admin',NULL,true, false,false,false,false,false,false,false)
+      ($9,'tr-admin','x','مسؤول اختبار','admin',NULL,true, false,false,false,false,false,false,false),
+      ($12,'tr-therapist','x','معالج اختبار','therapist',$10,true, false,false,false,false,false,false,false)
     ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, is_active = true
-  `, [RECV, DOC, FIN, MULTI, NOCAP, REPORTS_ONLY, MGR1, MGR2, ADMIN1, B1, B2]);
+  `, [RECV, DOC, FIN, MULTI, NOCAP, REPORTS_ONLY, MGR1, MGR2, ADMIN1, B1, B2, THERAPIST]);
 
   //  ══ مقالةُ اختبارٍ مخصَّصة + مسارٌ ووحداتٌ مخصَّصة — لا نُمسّ أيّ صفٍّ
   //  مزروع من ترحيل ٠٧٦ في أيّ اختبارٍ يكتب أو يعطّل ══════════════════════
@@ -196,6 +208,10 @@ async function main() {
       mgr1: { userId: MGR1, displayName: "مدير١", role: "branch_manager", branchId: B1, isAdmin: false, permissions: {} },
       mgr2: { userId: MGR2, displayName: "مدير٢", role: "branch_manager", branchId: B2, isAdmin: false, permissions: {} },
       admin: { userId: ADMIN1, displayName: "مسؤول", role: "admin", branchId: null, isAdmin: true, permissions: {} },
+      //  ══ مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث، القسم ٢) ══ — دورٌ therapist
+      //  حقيقيّ **بلا** canEnterSessions (صفُّه في القاعدة أعلاه يحمله false
+      //  صراحةً) — يجب أن يملك قدرة physio بالدور وحده.
+      therapist: { userId: THERAPIST, displayName: "معالج", role: "therapist", branchId: B1, isAdmin: false, permissions: { canEnterSessions: false } },
     };
     const H = Object.fromEntries(Object.entries(S).map(([k, v]) => [k, sessionHeader(v)])) as Record<keyof typeof S, string>;
 
@@ -682,23 +698,13 @@ async function main() {
       patchedModPosition.knowledgeArticleIds, [adminCrudArticle.id]);
     sameStable("ن.١٩ والاختبارُ ورث كذلك بلا مسّ", patchedModPosition.quiz, validModuleQuiz);
 
-    //  ن.٢٠-٢١ مقالةٌ خاصّةٌ بفرعٍ آخر — **يُسمَح بالإشارة إليها عند الإنشاء**
-    //  (موجودةٌ فعلاً، والتحقّقُ وجوديّ لا نطاقيّ) لكنّها تبقى «غيرَ قابلةٍ
-    //  للاستعمال كمحتوًى عامّ» فعلياً: لا تصل أيّ درسٍ مطلقاً (حارسُ القسم ٧
-    //  نفسُه، ب.١١). تُعاد تفعيلُها مؤقّتاً لعزل السبب (نطاقُ الفرع وحده).
-    await setArticleActive({ id: branchArticle.id, active: true, actor: actorFor(ADMIN1, "م", "admin", null) });
-    const branchRefModuleRes = await POST(`/api/training/admin/tracks/${TRACK_ID}/modules`, "admin", {
-      title: `${MARK} — وحدةٌ تشير لمقالة فرعٍ عبر لوحة الإدارة`, description: "x", position: 8,
-      knowledgeArticleIds: [branchArticle.id],
-    });
-    check(branchRefModuleRes.status === 201,
-      "ن.٢٠ الإنشاءُ ينجح رغم أنّ المقالة خاصّةٌ بفرعٍ آخر — التحقّقُ وجوديّ لا نطاقيّ", `status=${branchRefModuleRes.status}`);
-    const branchRefModule = (await branchRefModuleRes.json()).module;
-    const branchRefLesson = await GET(`/api/training/modules/${branchRefModule.id}/lesson`, "recv");
-    const branchRefLessonBody = (await branchRefLesson.json()).lesson;
-    same("ن.٢١ **لكنّها لا تصل أيّ درسٍ فعلياً** — «قابلةٌ للإشارة، غيرُ قابلةٍ للاستعمال» — تصديقٌ حيّ لبند القسم ٣",
-      branchRefLessonBody.lesson, []);
-    await setArticleActive({ id: branchArticle.id, active: false, actor: actorFor(ADMIN1, "م", "admin", null) });
+    //  ن.٢٠-٢١ (سلوكٌ صُحِّح — مراجعةٌ حيّة ٢٠٢٦-٠٩-١١، تصحيحٌ ثالث، القسم ٣):
+    //  كان الإنشاءُ **يُسمَح** بالإشارة إلى مقالةٍ خاصّةٍ بفرعٍ آخر (تحقّقٌ
+    //  وجوديّ لا نطاقيّ) وتبقى «غيرَ قابلةٍ للاستعمال» فعلياً — «وحدةٌ» تبدو
+    //  صحيحة لمديرٍ يبنيها ثمّ درسٌ فارغ لكلّ موظّف. صار الإنشاءُ **يُرفَض
+    //  صراحةً الآن** (`articleIdsExist` تشترط `branch_id IS NULL`) — الحراسةُ
+    //  عند الكتابة لا القراءة وحدها. التغطيةُ الكاملة (إنشاءٌ وتعديلٌ، وبلا
+    //  كتابة) صارت في القسم «ف» أدناه.
 
     const auditTrackCreate = (await q(
       `SELECT action FROM audit_log WHERE entity_type='training_track' AND entity_id=$1 ORDER BY id`,
@@ -730,6 +736,115 @@ async function main() {
       (adminCatalog.tracks as any[]).length, totalActiveTracks);
     check((adminCatalog.tracks as any[]).some((t) => t.id === TRACK_ID),
       "س.٢ ومن ضمنها المسارُ المخصَّص لهذا الاختبار (جمهورُه reception فقط — ADMIN1 لا يحمل reception كعلمٍ شخصيّ)");
+
+    // ══ ع. مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث، القسم ١) — قدرةُ المال
+    //  الحقيقية لا نطاقُها الحيّ. نقاطُ هذا الملفّ لا تمرّر `scopeBranchId`
+    //  لـ`resolveAiAccess` (`accessFrom` في `routes.ts`)، فـ`access.mode`
+    //  يهبط دوماً إلى `general` لغير المسؤول ولو كان محاسباً فعلياً
+    //  (`financeScopeMissing`) — وكان `resolveActiveArticle` يشترط
+    //  `mode==='financial'` بعينها لمقالةٍ `scope: finance`، فيحجب محاسباً
+    //  حقيقياً عن معرفةٍ تدريبيةٍ يستحقّها. الحارسُ الصحيح الآن
+    //  `access.canUseFinance` — القدرةُ ذاتُها، لا نطاقُها. ══════════════
+    console.log("\n── ع. القسمُ ١ (تصحيحٌ ثالث) — قدرةُ المال الحقيقية لا نطاقُها الحيّ ──");
+
+    const finTracks = await (await GET("/api/training/tracks", "fin")).json();
+    check((finTracks.tracks as any[]).some((t) => t.title === "دليل المحاسبة"),
+      "ع.١ المحاسبُ (canManageAccounting) يرى مسار «دليل المحاسبة» المزروع فعلياً",
+      JSON.stringify((finTracks.tracks as any[]).map((t) => t.title)));
+
+    const [financeModRow] = (await q(
+      `SELECT id FROM training_modules WHERE seed_key = 'mod_finance_cost_vs_payment'`)).rows;
+    check(Boolean(financeModRow), "ع.٢ (تجهيز) الوحدةُ المزروعة «الفرق بين الكلفة والدفعة» موجودةٌ فعلاً في القاعدة");
+    const financeModId = financeModRow.id as number;
+    const financeLessonRes = await GET(`/api/training/modules/${financeModId}/lesson`, "fin");
+    check(financeLessonRes.status === 200, "ع.٣ فتحُ درس الوحدة المالية للمحاسب ينجح (٢٠٠)", `status=${financeLessonRes.status}`);
+    const financeLesson = (await financeLessonRes.json()).lesson;
+    check(Array.isArray(financeLesson.lesson) && financeLesson.lesson.length > 0,
+      "ع.٤ **وليس بدرسٍ فارغ** — يحمل مقالة cost_vs_payment المعتمَدة فعلاً (كان فارغاً بالضبط قبل هذا التصحيح)",
+      JSON.stringify(financeLesson.lesson));
+    check(financeLesson.lesson.some((a: any) => a.articleTitle === "الفرق بين الكلفة والدفعة"),
+      "ع.٥ وعنوانُ المقالة مطابقٌ للمقالة المعتمَدة المزروعة بعينها");
+
+    //  ع.٦-٨ عزلُ الحارس المُصحَّح نفسِه عن حراسة المسار: وحدةٌ ضمن TRACK_ID
+    //  (جمهورُه reception) تشير لمقالةٍ `scope: finance` فقط. **recv تُرفَض**
+    //  (بلا canManageAccounting). **وMULTI تصل** — يملك reception (فيمرّ
+    //  حارسَ التراك نفسَه الذي يمرّ منه recv بالضبط) **و**canManageAccounting
+    //  حقيقية معاً (خلافاً لـFIN الذي لا يملك reception فلا يمرّ حارسَ
+    //  التراك أصلاً هنا) — فالفارقُ الوحيد بين recv وMULTI في هذه الوحدة
+    //  هو `canUseFinance`، وهذا بالضبط ما صُحِّح (كلاهما `mode='general'`
+    //  بالتساوي في نقاط هذا الملفّ).
+    const isolatedFinanceArticle = await createArticle({
+      title: `${MARK} — مقالةٌ بنطاق finance لعزل الحارس`, body: `${MARK} — متنٌ ماليٌّ لعزل حارس canUseFinance`,
+      scope: "finance", branchId: null, actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+    const [modIsolatedFinance] = (await q(
+      `INSERT INTO training_modules (track_id, title, description, position, knowledge_article_ids)
+       VALUES ($1,$2,$3,7,$4::jsonb) RETURNING id`,
+      [TRACK_ID, `${MARK} — وحدةُ عزل حارس المال`, "تشير لمقالةٍ بنطاق finance فقط", JSON.stringify([isolatedFinanceArticle.id])],
+    )).rows;
+    const MOD_ISOLATED_FINANCE = modIsolatedFinance.id as number;
+
+    const recvIsolatedRes = await GET(`/api/training/modules/${MOD_ISOLATED_FINANCE}/lesson`, "recv");
+    check(recvIsolatedRes.status === 200, "ع.٦ recv يفتح الدرسَ (جمهورُ المسار reception يطابقه)", `status=${recvIsolatedRes.status}`);
+    const recvIsolatedLesson = (await recvIsolatedRes.json()).lesson;
+    same("ع.٧ **وبلا القدرة المالية الحقيقية ⟶ لا يصل المقالة** — recv ليس محاسباً، رغم أن mode لديه أيضاً general كـfin بالضبط",
+      recvIsolatedLesson.lesson, []);
+
+    const multiIsolatedRes = await GET(`/api/training/modules/${MOD_ISOLATED_FINANCE}/lesson`, "multi");
+    check(multiIsolatedRes.status === 200, "ع.٨ (تجهيز) MULTI يفتح الدرسَ (يملك reception فيمرّ حارسَ التراك)", `status=${multiIsolatedRes.status}`);
+    const multiIsolatedLesson = (await multiIsolatedRes.json()).lesson;
+    check(multiIsolatedLesson.lesson.some((a: any) => a.articleId === isolatedFinanceArticle.id),
+      "ع.٩ **وMULTI (canManageAccounting حقيقية) يصل المقالة الماليّة فعلاً** — القدرةُ الحقيقية هي الحارسُ الآن لا نطاقُ mode الحيّ");
+
+    await setArticleActive({ id: isolatedFinanceArticle.id, active: false, actor: actorFor(ADMIN1, "م", "admin", null) });
+
+    // ══ غ. مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث، القسم ٢) — دورُ therapist
+    //  وحده يكفي لقدرة physio، ولو كان canEnterSessions=false صراحةً ══════
+    console.log("\n── غ. القسمُ ٢ (تصحيحٌ ثالث) — المعالجُ بلا canEnterSessions يرى مسار العلاج الطبيعي ──");
+
+    const therapistTracks = await (await GET("/api/training/tracks", "therapist")).json();
+    check((therapistTracks.tracks as any[]).some((t) => t.title === "دليل العلاج الطبيعي"),
+      "غ.١ المعالج (role=therapist، canEnterSessions=false صراحةً) يرى «دليل العلاج الطبيعي» المزروع",
+      JSON.stringify((therapistTracks.tracks as any[]).map((t) => t.title)));
+
+    const nocapTracksAgain = await (await GET("/api/training/tracks", "nocap")).json();
+    check(!(nocapTracksAgain.tracks as any[]).some((t) => t.title === "دليل العلاج الطبيعي"),
+      "غ.٢ **وموظّفٌ عاديّ** (لا دور therapist ولا canEnterSessions) **لا يراه**");
+
+    // ══ ف. مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث، القسم ٣) — رفضُ مقالةٍ
+    //  خاصّةٍ بفرعٍ كمرجعٍ لوحدةٍ تدريبية عامّة، عند الإنشاء والتعديل معاً —
+    //  لا قبولٌ صامت ليُكتشَف لاحقاً أن الدرس فارغ ══════════════════════════
+    console.log("\n── ف. القسمُ ٣ (تصحيحٌ ثالث) — رفضُ مقالةٍ خاصّةٍ بفرعٍ كمرجعٍ لوحدةٍ عامّة ──");
+
+    const beforeCreateBranchRefCount = (await q(
+      `SELECT COUNT(*)::int AS n FROM training_modules WHERE track_id=$1`, [TRACK_ID])).rows[0].n;
+    const createBranchRefRes = await POST(`/api/training/admin/tracks/${TRACK_ID}/modules`, "admin", {
+      title: `${MARK} — وحدةٌ يُفترَض أن تُرفَض`, description: "x", knowledgeArticleIds: [branchArticle.id],
+    });
+    check(createBranchRefRes.status === 400,
+      "ف.١ إنشاءُ وحدةٍ تشير لمقالةٍ خاصّةٍ بفرعٍ يُرفَض صراحةً (٤٠٠) — لا يُقبَل بصمتٍ ليُكتشَف لاحقاً أن الدرس فارغ",
+      `status=${createBranchRefRes.status}`);
+    const afterCreateBranchRefCount = (await q(
+      `SELECT COUNT(*)::int AS n FROM training_modules WHERE track_id=$1`, [TRACK_ID])).rows[0].n;
+    same("ف.٢ **وبلا صفٍّ جديد يُكتب**", afterCreateBranchRefCount, beforeCreateBranchRefCount);
+
+    const [beforeUpdateRow] = (await q(
+      `SELECT knowledge_article_ids FROM training_modules WHERE id=$1`, [MOD_SUPERSEDE])).rows;
+    const updateBranchRefRes = await PATCH(`/api/training/admin/modules/${MOD_SUPERSEDE}`, "admin", {
+      knowledgeArticleIds: [branchArticle.id],
+    });
+    check(updateBranchRefRes.status === 400,
+      "ف.٣ وتعديلُ وحدةٍ قائمة لتشير لمقالةٍ خاصّةٍ بفرعٍ يُرفَض صراحةً (٤٠٠) أيضاً", `status=${updateBranchRefRes.status}`);
+    const [afterUpdateRow] = (await q(
+      `SELECT knowledge_article_ids FROM training_modules WHERE id=$1`, [MOD_SUPERSEDE])).rows;
+    same("ف.٤ **والصفُّ القائم بقي بلا مسّ** — لم يُكتب نصفُ تغيير",
+      afterUpdateRow.knowledge_article_ids, beforeUpdateRow.knowledge_article_ids);
+
+    const validUpdateRes = await PATCH(`/api/training/admin/modules/${MOD_SUPERSEDE}`, "admin", {
+      knowledgeArticleIds: [article.id],
+    });
+    check(validUpdateRes.status === 200,
+      "ف.٥ ومرجعٌ عامٌّ صحيح (بلا فرع) يبقى مقبولاً كما كان — الحارسُ الجديد لا يفرط", `status=${validUpdateRes.status}`);
   } finally {
     await cleanup(TRACK_ID);
     httpServer.close();

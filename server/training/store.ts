@@ -17,7 +17,7 @@
 // `server/ai/knowledge/store.ts` — والحارسَ الحقيقيّ (المسؤولُ العام وحده)
 // في طبقة النقاط (`routes.ts`)، لا هنا.
 
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   trainingTracks, trainingModules, employeeTrainingProgress, systemUsers, branches,
@@ -60,11 +60,24 @@ import type { Actor } from "../ai/knowledge/store";
  * كافٍ ما دامت الوحدةُ تشير دائماً إلى مقالةٍ من نفس نطاق مسارها — لكنّه
  * ليس ضماناً بنيوياً. فمسارٌ عامُّ الجمهور يشير خطأً إلى مقالةٍ `scope:
  * finance` أو `audience:["finance"]` كان سيُسرّب محتواها لمن لا يملك
- * القدرة المالية. فيُعاد هنا **نفسُ فحص النطاق** الذي يحرس الاسترجاعَ
- * العاديّ (`server/ai/knowledge/retrieval.ts: retrieveKnowledge`) — لا
- * قاعدةً ثانية: `scope==='finance'` يشترط `mode==='financial'` بعينها،
- * و`scope==='administration'` يشترط `isAdmin || branch_manager` بعينها،
- * ثمّ `audienceMatches` على عمود `audience` نفسِه. **والملغاةُ لا تُعرَض
+ * القدرة المالية. فيُعاد هنا **نفسُ حارس الإدارة** الذي يحرس الاسترجاعَ
+ * العاديّ (`server/ai/knowledge/retrieval.ts: retrieveKnowledge`) —
+ * `scope==='administration'` يشترط `isAdmin || branch_manager` بعينها،
+ * ثمّ `audienceMatches` على عمود `audience` نفسِه.
+ *
+ * **وحارسُ `finance` وحده مختلفٌ عمداً (مراجعةٌ حيّة ٢٠٢٦-٠٩-١١، تصحيحٌ
+ * ثالث)** — `retrieveKnowledge` يشترط `access.mode==='financial'` لأنه
+ * يفتح مساراً قد يُلحِق **لقطةً مالية حيّة حقيقية** (`financial_summary`)،
+ * وتلك تحتاج نطاقَ فرعٍ مصادَقاً (`resolveAiAccess({scopeBranchId})`) لا
+ * القدرةَ وحدها. أمّا هنا فمتنُ **معرفةٍ تدريبية مكتوبة سلفاً** — لا رقمَ
+ * فيها، ولا نطاقَ فرعٍ يُحدَّد وقت القراءة أصلاً (نقاطُ هذا الملفّ لا
+ * تمرّر `scopeBranchId` لـ`resolveAiAccess` كما يوثّق `accessFrom` أعلاه
+ * في `routes.ts`، فـ`mode` هنا يهبط إلى `general` دوماً لغير المسؤول ولو
+ * كان محاسباً فعلياً — `financeScopeMissing` تحديداً لهذا السبب). فاشتراطُ
+ * `mode==='financial'` هنا كان يحجب محاسباً حقيقياً عن مقالةٍ تدريبيةٍ
+ * ماليةٍ يستحقّها بحكم عمله. الحارسُ الصحيحُ **سلطةُ المال ذاتُها**
+ * (`access.canUseFinance` — `isAdmin || canManageAccounting`، مُستقلّةٌ عن
+ * `mode`/`scopeBranchId` تماماً)، لا نطاقُها الحيّ. **والملغاةُ لا تُعرَض
  * ولا تُفسَّر خطأً برمجياً** — تُستبعَد من الدرس بصمتٍ كأنّ السلسلة سُحبت،
  * فلا يُميَّز الموظّفُ بين «حُذفت المقالة» و«ليست لك».
  */
@@ -87,8 +100,8 @@ async function resolveActiveArticle(
   if (!row) return null;
 
   const caps = capabilitiesFor(access);
-  //  ══ نفسُ حارسَي `retrieveKnowledge` بالحرف — لا نسخةٌ ثانية تنحرف ══
-  const allowFinance = access.mode === "financial";
+  //  القدرةُ الماليةُ الحقيقية — لا نطاقٌ حيّ (راجع التعليق أعلاه).
+  const allowFinance = access.canUseFinance;
   const allowAdministration = access.isAdmin || access.role === "branch_manager";
   if (row.scope === "finance" && !allowFinance) return null;
   if (row.scope === "administration" && !allowAdministration) return null;
@@ -554,16 +567,26 @@ export async function getManagementTrainingProgress(
 // تعطيلٌ فقط — لا `DELETE` في أيّ دالّةٍ هنا، ولا نقطةَ REST توفّره.
 
 /**
- * وجودُ كلّ رقم مقالةٍ في `ai_knowledge_articles` — **أيَّ نسخة**، فعّالةً
- * كانت أم لا؛ `resolveActiveArticle` يمشي أماماً من أيّ نقطةٍ في السلسلة
- * فيصل النسخةَ الفعّالة الحالية بصرف النظر عمّا أُدرِج هنا (القسم ٧). مصفوفةٌ
- * فارغة تمرّ دائماً — «بلا مقالاتٍ مرجعية» شكلٌ صحيح لوحدةٍ (نادرٌ، لكنه ليس
- * خطأً بنيوياً).
+ * وجودُ كلّ رقم مقالةٍ في `ai_knowledge_articles` **كمقالةٍ عامّة** —
+ * `branch_id IS NULL` — **أيَّ نسخة**، فعّالةً كانت أم لا؛ `resolveActiveArticle`
+ * يمشي أماماً من أيّ نقطةٍ في السلسلة فيصل النسخةَ الفعّالة الحالية بصرف
+ * النظر عمّا أُدرِج هنا (القسم ٧). مصفوفةٌ فارغة تمرّ دائماً — «بلا مقالاتٍ
+ * مرجعية» شكلٌ صحيح لوحدةٍ (نادرٌ، لكنه ليس خطأً بنيوياً).
+ *
+ * **ومقالةٌ خاصّةٌ بفرعٍ تُرفَض هنا صراحةً منذ مراجعةٍ حيّة ٢٠٢٦-٠٩-١١
+ * (تصحيحٌ ثالث)** — لا تُقبَل بصمتٍ لتُكتشَف لاحقاً أنها لا تصل أيّ درسٍ.
+ * كانت `resolveActiveArticle` وحدَها تحرس هذا (تُسقِط `branch_id IS NOT
+ * NULL` من سلسلة الحلّ، القسم ٧)، فمسارُ إنشاء/تعديل الوحدة كان يقبل
+ * معرّفَ مقالةٍ فرعية بنجاحٍ ظاهريّ — «وحدةٌ» تبدو صحيحة لمديرٍ يبنيها ثمّ
+ * درسٌ فارغ لكلّ موظّف. **والمسارُ التدريبيُّ عامٌّ دائماً** (لا تصميمَ
+ * تدريبٍ محصورٍ بفرعٍ اليوم) فلا استثناء هنا — الحراسةُ الآن عند الكتابة
+ * لا القراءة وحدها، وحارسُ `resolveActiveArticle` **يبقى كما هو** دفاعاً
+ * في العمق لأيّ صفٍّ موروث قد يكون أُدرِج قبل هذا التصحيح.
  */
 async function articleIdsExist(ids: readonly number[]): Promise<boolean> {
   if (ids.length === 0) return true;
   const rows = await db.select({ id: aiKnowledgeArticles.id }).from(aiKnowledgeArticles)
-    .where(inArray(aiKnowledgeArticles.id, ids as number[]));
+    .where(and(inArray(aiKnowledgeArticles.id, ids as number[]), isNull(aiKnowledgeArticles.branchId)));
   const found = new Set(rows.map((r) => r.id));
   return ids.every((id) => found.has(id));
 }
@@ -690,9 +713,10 @@ function toModuleAdminRow(r: typeof trainingModules.$inferSelect): TrainingModul
 
 /**
  * إنشاءُ وحدةٍ جديدة — **تحقّقٌ صارمٌ قبل الكتابة**: المسارُ موجود، وكلُّ
- * رقم مقالةٍ مرجعيّ موجودٌ فعلاً (لا يُفحَص أنه فعّالٌ الآن — `resolveActiveArticle`
- * يحلّ ذلك حيّاً عند كلّ قراءة، فرقمٌ يشير لنسخةٍ سابقة في سلسلةٍ لاحقاً
- * تُعدَّل يبقى صحيحاً؛ رقمٌ لا وجود له مطلقاً وحده يُرفَض).
+ * رقم مقالةٍ مرجعيّ موجودٌ فعلاً **كمقالةٍ عامّة** (لا يُفحَص أنه فعّالٌ
+ * الآن — `resolveActiveArticle` يحلّ ذلك حيّاً عند كلّ قراءة، فرقمٌ يشير
+ * لنسخةٍ سابقة في سلسلةٍ لاحقاً تُعدَّل يبقى صحيحاً؛ رقمٌ لا وجود له
+ * مطلقاً، أو موجودٌ لكنّه خاصٌّ بفرعٍ، يُرفَض — `articleIdsExist` أعلاه).
  */
 export async function createTrainingModule(params: {
   trackId: number; title: string; description: string; position: number;
@@ -703,7 +727,7 @@ export async function createTrainingModule(params: {
     .where(eq(trainingTracks.id, params.trackId));
   if (!track) return { ok: false, error: "المسار غير موجود" };
   if (!(await articleIdsExist(params.knowledgeArticleIds))) {
-    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة" };
+    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة أو خاصّةٌ بفرعٍ — المسارُ التدريبيُّ عامٌّ ولا يقبل إلّا مقالاتٍ عامّة" };
   }
 
   const [row] = await db.insert(trainingModules).values({
@@ -732,7 +756,7 @@ export async function updateTrainingModule(params: {
   practiceOnly?: boolean; actor: Actor;
 }): Promise<{ ok: true; module: TrainingModuleAdminRow } | { ok: false; error: string }> {
   if (params.knowledgeArticleIds !== undefined && !(await articleIdsExist(params.knowledgeArticleIds))) {
-    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة" };
+    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة أو خاصّةٌ بفرعٍ — المسارُ التدريبيُّ عامٌّ ولا يقبل إلّا مقالاتٍ عامّة" };
   }
   return db.transaction(async (tx: any) => {
     await tx.execute(sql`SELECT 1 FROM training_modules WHERE id = ${params.id} FOR UPDATE`);

@@ -44,7 +44,7 @@ export interface CapabilitySource {
  * نصَّ رسالة. مطابقةٌ حرفياً لِما تفحصه بقيّةُ النظام فعلاً عند كلّ نقطة
  * (`canManageAccounting` للمحاسبة، `canViewReports` للتقارير، `canWriteMedicalExam`
  * أو دور `doctor` للطبيب، `canWorkAsExpert` أو دور `prosthetics_expert`
- * للخبير، `canEnterSessions` للعلاج الطبيعي، `canAddPatients` للاستقبال،
+ * للخبير، `canEnterSessions` أو دور `therapist` للعلاج الطبيعي، `canAddPatients` للاستقبال،
  * `canViewPatients` لسجلّ المرضى) — **لا قاعدةَ صلاحيةٍ جديدة تُخترَع هنا**،
  * فقط تجميعٌ لِما هو قائمٌ فعلاً في التطبيق الحيّ.
  *
@@ -72,7 +72,17 @@ export function capabilitiesFor(access: CapabilitySource): Set<Capability> {
   if (p.canViewPatients === true) caps.add("patients");
   if (p.canWriteMedicalExam === true || role === "doctor") caps.add("medical");
   if (p.canWorkAsExpert === true || role === "prosthetics_expert") caps.add("expert");
-  if (p.canEnterSessions === true) caps.add("physio");
+  //  ══ مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث) — دورُ `therapist` وحده يكفي ══
+  //  كانت `physio` تُشترَط بـ`canEnterSessions` فقط — وهو علمٌ يفتح تتبّعَ
+  //  الجلسات اليومية (`server/sessions_module/`)، لا هويّةَ المعالج نفسِها.
+  //  معالجٌ حقيقيّ بدور `therapist` قد لا يملك هذا العلمَ (لم يُضبَط، أو
+  //  فرعٌ لا يستعمل تتبّع الأجهزة) فيفقد معرفةَ العلاج الطبيعي التدريبية
+  //  رغم أنه صاحبُها الحقيقيّ — نفسُ نمط `doctor`/`prosthetics_expert`
+  //  أعلاه بالحرف: **الدورُ وحده كافٍ**، والعلمُ الصريح طريقٌ ثانٍ لا شرطٌ
+  //  وحيد. **وهذا يمنح قدرةَ التدريب/المعرفة فقط** — لا يفتح `canEnterSessions`
+  //  ولا أيّ صلاحيةٍ تطبيقية أخرى؛ تتبّعُ الجلسات يبقى محروساً بعلمه وحده
+  //  في مكانه القائم (`server/sessions_module/routes.ts`) بلا مسّ.
+  if (p.canEnterSessions === true || role === "therapist") caps.add("physio");
   if (p.canManageAccounting === true) caps.add("finance");
   if (p.canViewReports === true) caps.add("reports");
 

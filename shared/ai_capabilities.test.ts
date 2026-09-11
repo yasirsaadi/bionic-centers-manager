@@ -207,5 +207,37 @@ console.log("\n═══ تركيبُ القدرات ═══\n");
     sorted(adminSomeFlagsTrue), sorted(new Set<Capability>(CAPABILITIES)));
 }
 
+// ── ١٠. دورُ therapist وحده يكفي لقدرة physio (مراجعةٌ حيّة ٢٠٢٦-٠٩-١١،
+//  تصحيحٌ ثالث، القسم ٢) — نفسُ نمط doctor/prosthetics_expert بالحرف ══════
+{
+  const therapistNoFlag = capabilitiesFor({
+    isAdmin: false, role: "therapist",
+    permissions: { canEnterSessions: false },
+  });
+  check("١٠.١ معالجٌ حقيقيّ (role=therapist) بـcanEnterSessions=false صراحةً ⟶ يملك physio رغم ذلك",
+    therapistNoFlag.has("physio"));
+  same("١٠.٢ وقدراتُه محصورةٌ بـgeneral+physio فقط — **لا** تُمنَح canEnterSessions أيّ صلاحيةٍ تطبيقية أخرى ضمناً",
+    sorted(therapistNoFlag), ["general", "physio"]);
+
+  const therapistNoPermissionsField = capabilitiesFor({ isAdmin: false, role: "therapist" });
+  check("١٠.٣ وحتى بلا حقل permissions إطلاقاً (undefined) — physio تُمنَح بالدور وحده",
+    therapistNoPermissionsField.has("physio"));
+
+  const ordinaryNoTherapistNoFlag = capabilitiesFor({
+    isAdmin: false, role: "reception",
+    permissions: {},
+  });
+  check("١٠.٤ **وموظّفٌ عاديّ** (لا دورَ therapist ولا canEnterSessions) **لا يملك physio**",
+    !ordinaryNoTherapistNoFlag.has("physio"));
+
+  //  والمسارُ القديم يبقى كما كان بالحرف: العلمُ وحده كافٍ لدورٍ آخر.
+  const flagOnlyDifferentRole = capabilitiesFor({
+    isAdmin: false, role: "reception",
+    permissions: { canEnterSessions: true },
+  });
+  check("١٠.٥ وموظّفٌ بعلم canEnterSessions=true (دورٌ آخر غير therapist) لا يزال يملك physio — لا رجعةَ في السلوك القديم",
+    flagOnlyDifferentRole.has("physio"));
+}
+
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

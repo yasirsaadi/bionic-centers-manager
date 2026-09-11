@@ -1976,10 +1976,16 @@ function TrainingAdminTab() {
   //  مقالاتُ المعرفة الفعّالة وحدها مرجعٌ لاختيار دروس الوحدة — **بلا اقتراحٍ
   //  معلَّق ولا مرفوض يمكن أن يصل هذه القائمة إطلاقاً** (نفسُ استعلام
   //  `AiKnowledgeTab`؛ React Query يدمج النداءين بمفتاحٍ واحد، فلا ازدواج).
+  //  **وبلا مقالةٍ خاصّةٍ بفرعٍ** (مراجعةٌ حيّة ٢٠٢٦-٠٩-١١، تصحيحٌ ثالث) —
+  //  المسارُ التدريبيُّ عامٌّ دائماً، والخادمُ يرفضها الآن صراحةً عند
+  //  الإنشاء/التعديل (`articleIdsExist` في `server/training/store.ts`)؛
+  //  حجبُها هنا من القائمة نفسِها يمنع المسؤولَ من اختيارها أصلاً بدل أن
+  //  يُفاجَأ بردٍّ ٤٠٠ بعد ملء النموذج.
   const { data: articlesForTrainingData } = useQuery<{ rows: AiKnowledgeArticleRow[] }>({
     queryKey: ["/api/ai/knowledge/articles"],
   });
-  const activeArticlesForTraining = (articlesForTrainingData?.rows ?? []).filter((a) => a.isActive);
+  const activeArticlesForTraining = (articlesForTrainingData?.rows ?? [])
+    .filter((a) => a.isActive && a.branchId === null);
 
   const [trackDialogOpen, setTrackDialogOpen] = useState(false);
   const [editingTrack, setEditingTrack] = useState<TrainingTrackRow | null>(null);
