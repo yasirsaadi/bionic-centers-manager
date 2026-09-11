@@ -12,16 +12,25 @@
 // بالفرع والتصنيف، ترقيمٌ، عدٌّ دقيق) — فصله يُبقي كلَّ ملفٍّ على مسؤوليةٍ
 // واحدة، ويمنع تضخّم `store.ts` أكثر.
 //
-// ══ مسارُ المعاينة وحده — INNER JOIN لا LEFT ══════════════════════════════
+// ══ يتيمةٌ (بلا حلقة) أو حلقتُها `service_path='exam'` — LEFT JOIN + شرطُ
+// أهليّةٍ صريح، لا INNER JOIN (تصحيحٌ حيّ — شكلُ الإنتاج للمريض ٢٥٣٤) ══════
 // `isExamPathFollowup` في `store.ts` تنضمّ إلى `patient_device_episodes`
-// بـ`JOIN` داخليّ — فمتابعةٌ بلا حلقةٍ (`device_episode_id IS NULL`، ممكنةٌ
-// فعلاً: `claimAwaitingEpisodeForExam` قد تُرجع `null`) **ليست** على مسار
-// المعاينة بهذا الفحص، رغم أن معاينةً حقيقية وقّعتها. وبما أنّ الأبوابَ
-// القانونية (`/complete-sale`, `/not-bought`) لا تقدر أصلاً على حسم صفٍّ
-// كهذا (`isExamPathFollowup` تردّه `false`)، فهذا الطابورُ **يطابق الحدَّ
-// نفسَه بالضبط**: `JOIN` داخليّ + `service_path = 'exam'` — لا يُعرَض صفٌّ
-// كإجراءٍ ممكن إن كانت نقطتُه القانونية ستردّه أصلاً. صفٌّ كهذا يبقى مرئياً
-// من ملفّ المريض مباشرةً (المسارُ الموروث لم يُمَسّ).
+// بـ`JOIN` داخليّ + `service_path='exam'` — فمتابعةٌ بلا حلقةٍ
+// (`device_episode_id IS NULL`، ممكنةٌ فعلاً: `claimAwaitingEpisodeForExam`
+// قد تُرجع `null` حين لا حلقةَ `awaiting_exam` منتظرة لحظةَ التوقيع) **ليست**
+// على مسار المعاينة بذلك الفحص، رغم أن معاينةً حقيقية وقّعتها ومتابعةً حقيقية
+// فتحها التوقيع — وهي **متابعةٌ حيّة غيرُ طرفيّة** بقيت غائبةً عن هذا الطابور
+// تماماً، فبقيت غيرَ محسومة إلى الأبد ولا أحد يراها إلّا مَن يفتح ملفَّ
+// المريض بنفسه. `isExamPathFollowup` نفسُها **لا تتغيّر** — الأبوابُ
+// القانونية (`/complete-sale`, `/not-bought`) تبقى تردّ صفّاً يتيماً كهذا
+// (409، مسارُه القديم) بحرفها؛ هذا الطابورُ وحده يتّسع ليُظهر الصفَّ **دون
+// أن يعرض له أفعال المسار الحديث** (`examPath` أدناه، والحراسة في
+// `routes.ts`).
+//
+// فالحدُّ صار: **يتيمةٌ (`device_episode_id IS NULL`) أو حلقتُها
+// `service_path = 'exam'`** — حلقةٌ من مسارٍ آخر (`no_exam`) أو حلقةٌ
+// موروثة (`service_path IS NULL`، ما قبل ترحيل ٠٦٥) تبقى مستبعدةً بحرفها،
+// وهذا ما يفرضه شطرُ `de.service_path = 'exam'` وحده حين توجد حلقة.
 //
 // ══ العدُّ حيٌّ لا مشتقّاً من طول قائمة ═════════════════════════════════════
 // كلُّ دالّة عدٍّ هنا `COUNT(*)` من القاعدة. **بلا `LIMIT` افتراضيّ صامت**:
@@ -71,6 +80,11 @@ const NOT_TERMINAL = sql`f.status NOT IN (${sql.join(
   TERMINAL_STATUSES.map((s) => sql`${s}`), sql`, `,
 )})`;
 
+//  «يتيمةٌ أو على مسار المعاينة» — شرطُ الأهليّة المشترك بين الطابورين
+//  (راجع الشرحَ أعلى الملفّ). يُستعمَل في `WHERE` بعد `LEFT JOIN
+//  patient_device_episodes de` — لا يصلح مع `INNER JOIN`.
+const EXAM_PATH_OR_ORPHAN = sql`(f.device_episode_id IS NULL OR de.service_path = 'exam')`;
+
 // ── بانتظار الحسم ─────────────────────────────────────────────────────────
 
 export interface DecisionQueueWaitingRow {
@@ -109,13 +123,22 @@ export interface DecisionQueueWaitingRow {
   purchaseDecisionOwner: FieldOwner | null;
   purchaseDecisionUserId: number | null;
   purchaseDecisionName: string | null;
+  /**
+   * **هل هذه المتابعةُ على مسار المعاينة فعلياً** (حلقتُها
+   * `service_path = 'exam'`)؟ `false` ليتيمةٍ بلا حلقة (`device_episode_id
+   * IS NULL`) — نفسُ معنى `episodeServicePath === "exam"` في
+   * `getFollowupsForPatient`. **والحراسةُ في `routes.ts`**: أفعالُ المسار
+   * الحديث (`complete_sale`/`not_bought`) لا تُحسَب إلّا حين هذا الحقلُ
+   * `true` — صفٌّ يتيم يبقى ظاهراً بلا تلك الأفعال، والحسمُ له من ملفّ
+   * المريض بمساره القديم كما كان.
+   */
+  examPath: boolean;
 }
 
 const WAITING_FROM = sql`
     FROM post_exam_followups f
-    --  ⚠ JOIN داخليّ عمداً — راجع رأسَ الملفّ.
-    JOIN patient_device_episodes de
-      ON de.id = f.device_episode_id AND de.service_path = 'exam'
+    --  ⚠ LEFT JOIN عمداً — راجع تعليقَ EXAM_PATH_OR_ORPHAN أعلى الملفّ.
+    LEFT JOIN patient_device_episodes de ON de.id = f.device_episode_id
     JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
     LEFT JOIN branches b ON b.id = f.branch_id
     LEFT JOIN medical_exams e ON e.id = f.medical_exam_id
@@ -155,6 +178,7 @@ const toWaitingRow = (x: any): DecisionQueueWaitingRow => ({
     || x.purchase_decision_user_id === undefined
     ? null : Number(x.purchase_decision_user_id),
   purchaseDecisionName: x.purchase_decision_name ?? null,
+  examPath: x.episode_service_path === "exam",
 });
 
 /**
@@ -167,7 +191,7 @@ const toWaitingRow = (x: any): DecisionQueueWaitingRow => ({
 export async function listDecisionQueueWaiting(
   f: DecisionQueueScopeFilter,
 ): Promise<{ rows: DecisionQueueWaitingRow[]; total: number }> {
-  const where = sql`${NOT_TERMINAL} AND ${filterClause(f)}`;
+  const where = sql`${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${filterClause(f)}`;
   const countR = await db.execute(sql`SELECT COUNT(*)::int AS n ${WAITING_FROM} WHERE ${where}`);
   const total = Number((countR.rows ?? [])[0]?.n ?? 0);
 
@@ -180,7 +204,8 @@ export async function listDecisionQueueWaiting(
            f.selected_expert_user_id, u.display_name AS expert_name,
            f.price_owner, f.price_owner_user_id, f.price_owner_name,
            f.expert_owner, f.expert_owner_user_id, f.expert_owner_name,
-           f.purchase_decision_owner, f.purchase_decision_user_id, f.purchase_decision_name
+           f.purchase_decision_owner, f.purchase_decision_user_id, f.purchase_decision_name,
+           de.service_path AS episode_service_path
     ${WAITING_FROM}
     WHERE ${where}
     ORDER BY e.signed_at ASC NULLS LAST, f.id ASC
@@ -198,10 +223,9 @@ export async function countDecisionQueueWaiting(scope: number[] | null): Promise
   const r = await db.execute(sql`
     SELECT COUNT(*)::int AS n
       FROM post_exam_followups f
-      JOIN patient_device_episodes de
-        ON de.id = f.device_episode_id AND de.service_path = 'exam'
+      LEFT JOIN patient_device_episodes de ON de.id = f.device_episode_id
       JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
-     WHERE ${NOT_TERMINAL} AND ${scopeClause(scope)}
+     WHERE ${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${scopeClause(scope)}
   `);
   return Number((r.rows ?? [])[0]?.n ?? 0);
 }
@@ -241,9 +265,10 @@ export interface DecisionQueueResolvedRow {
 
 const RESOLVED_FROM = sql`
     FROM post_exam_followups f
-    --  ⚠ JOIN داخليّ عمداً — راجع رأسَ الملفّ.
-    JOIN patient_device_episodes de
-      ON de.id = f.device_episode_id AND de.service_path = 'exam'
+    --  ⚠ LEFT JOIN عمداً — راجع تعليقَ EXAM_PATH_OR_ORPHAN أعلى الملفّ.
+    --  فمتابعةٌ يتيمةٌ حُسمت بمسارها القديم (إغلاقٌ/تأكيدُ شراءٍ من ملفّ
+    --  المريض) لا تختفي من تاريخ هذا الطابور لمجرّد أنها بلا حلقة.
+    LEFT JOIN patient_device_episodes de ON de.id = f.device_episode_id
     JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
     LEFT JOIN branches b ON b.id = f.branch_id
     LEFT JOIN system_users u ON u.id = f.selected_expert_user_id
@@ -299,7 +324,8 @@ export async function listDecisionQueueResolved(
   f: DecisionQueueScopeFilter,
 ): Promise<{ rows: DecisionQueueResolvedRow[]; total: number }> {
   const where = sql`
-    f.status IN ('converted', 'closed_without_purchase') AND ${filterClause(f)}
+    f.status IN ('converted', 'closed_without_purchase')
+    AND ${EXAM_PATH_OR_ORPHAN} AND ${filterClause(f)}
   `;
   const countR = await db.execute(sql`SELECT COUNT(*)::int AS n ${RESOLVED_FROM} WHERE ${where}`);
   const total = Number((countR.rows ?? [])[0]?.n ?? 0);

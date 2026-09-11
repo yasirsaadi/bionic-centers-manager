@@ -153,6 +153,45 @@ async function legacyFollowup(label: string): Promise<{ pid: number; fid: number
   return { pid, fid };
 }
 
+/**
+ * **متابعةٌ يتيمة** — معاينةٌ موقّعة بلا حلقةٍ منتظرة (`device_episode_id
+ * IS NULL`) — شكلُ الإنتاج للمريض ٢٥٣٤ بالضبط (تصحيحٌ حيّ). خلافاً لـ
+ * `readySale` لا تُفتَح حلقةٌ قبل التوقيع، فـ`claimAwaitingEpisodeForExam`
+ * لا تجد شيئاً تحجزه و`ensureFollowupForSignedExam` تُنشئ الصفَّ بـ
+ * `device_episode_id = NULL` — **بابٌ حيٌّ حقيقيّ** (لا لقطةَ قاعدةٍ كـ
+ * `legacyFollowup`/`noExamLinkedFollowup` أدناه).
+ */
+async function orphanFollowup(
+  label: string,
+  opts: { caseType?: "prosthetic" | "medical_support"; branchId?: number } = {},
+): Promise<{ pid: number; fid: number }> {
+  const branchId = opts.branchId ?? 1;
+  const caseType = opts.caseType ?? "prosthetic";
+  const pid = await mkPatient(label, branchId);
+  await mkCase(pid, branchId, caseType);
+  const ex = await signExam(pid, { caseType });
+  if (ex.status >= 300) throw new Error(`signExam failed: ${JSON.stringify(ex.body)}`);
+  return { pid, fid: await followupOf(pid) };
+}
+
+/**
+ * حلقةٌ على مسار «بلا معاينة» (`service_path='no_exam'`) يشير إليها توقيعٌ
+ * لاحق — تُثبت أن الحدَّ الموسَّع (يتيمةٌ **أو** `service_path='exam'`) لا
+ * يسحب معه حلقةً من مسارٍ آخر. **لقطةُ قاعدةٍ ضابطة** (نفسُ نمط
+ * `legacyFollowup` تماماً) — لا محاكاةً لبابٍ حيّ يفتح حلقةً كهذه ثم يوقّع
+ * عليها معاينة.
+ */
+async function noExamLinkedFollowup(label: string): Promise<{ pid: number; fid: number }> {
+  const pid = await mkPatient(label);
+  const cid = await mkCase(pid);
+  await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+             sequence_number, status, agreed_cost, requested_item, service_path, created_by)
+           VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device','no_exam',$3)`, [pid, cid, MANAGER]);
+  await signExam(pid);
+  const fid = await followupOf(pid);
+  return { pid, fid };
+}
+
 async function waiting(session: any, extra = "") {
   return http("GET", `/api/followups/decision-queue?state=waiting${extra}`, session);
 }
@@ -810,6 +849,83 @@ async function main() {
       //  والحجبُ التاريخيُّ (القسم ل) يبقى كما هو بحرفه لهؤلاء الأربعة —
       //  هذا الشرطُ الجديد لا يمسّ منطقَ `examPathActions`/`examPathBlockedMessage`
       //  إطلاقاً، فقط يقرّر **مَن يدخل الكتلةَ من الأصل**.
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log(
+      "\n── س. متابعةٌ يتيمة — معاينةٌ موقّعة بلا حلقة (تصحيحٌ حيّ، شكلُ الإنتاج"
+      + " للمريض ٢٥٣٤) ──",
+    );
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const countBefore = await countOf(S.admin);
+
+      const { fid: orphanFid } = await orphanFollowup("يتيمةٌ-أطراف");
+      const { fid: normalFid } = await readySale("عاديّةٌ-بجوار-اليتيمة");
+      const { fid: noExamFid } = await noExamLinkedFollowup("حلقةٌ-بلا-معاينة-بجوار-اليتيمة");
+
+      const w = await waiting(S.admin);
+      check(idsOf(w.body).includes(orphanFid),
+        "٦٨. **متابعةٌ يتيمة (بلا حلقة) تظهر الآن في «بانتظار الحسم»** — لم"
+          + " تعد مفقودةً كما كانت (المريض ٢٥٣٤)", JSON.stringify(idsOf(w.body)));
+
+      const orphanRow = rowOf(w.body, orphanFid);
+      check(!!orphanRow, "٦٩. والصفُّ اليتيمُ موجودٌ فعلياً في ردّ الخادم");
+      same("٧٠. **و`examPath = false`** — ليست على مسار المعاينة الحديث رغم ظهورها",
+        orphanRow?.examPath, false);
+      same("٧١. **وبلا أفعالٍ حديثة إطلاقاً** (`actions = []`) — لا `complete_sale`"
+        + " كاذبٌ سيردّه الخادم", orphanRow?.actions, []);
+
+      const csOrphan = await http("POST", `/api/followups/${orphanFid}/complete-sale`, S.recv,
+        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+      same("٧٢. **والبابُ الحديث يردّها ٤٠٩ فعلاً — `examPath=false` يطابق"
+        + " الواقعَ لا افتراضاً**", csOrphan.status, 409);
+
+      const countAfter = await countOf(S.admin);
+      same("٧٣. **وشارةُ الشريط الجانبيّ تزداد بالضبط بعدد المؤهَّل**"
+        + " (اليتيمةُ والعاديّةُ فقط — لا الحلقةُ من مسار «بلا معاينة»)",
+        (countAfter.body?.count ?? 0) - (countBefore.body?.count ?? 0), 2);
+
+      const normalRow = rowOf(w.body, normalFid);
+      same("٧٤. **وصفُّ مسار المعاينة العاديّ بجوارها: `examPath = true`**",
+        normalRow?.examPath, true);
+      same("٧٥. **وأفعالُه الفعلان معاً كما كانا قبل هذا التصحيح** — لا انحرافَ"
+        + " رجعيّ على المسار العاديّ",
+        [...(normalRow?.actions ?? [])].sort(), ["complete_sale", "not_bought"].sort());
+
+      check(!idsOf(w.body).includes(noExamFid),
+        "٧٦. **وحلقةٌ `service_path='no_exam'` تبقى مستبعدةً من الطابور بحرفها**"
+          + " — لا تُسحَب مع توسيع الحدّ", JSON.stringify(idsOf(w.body)));
+      const rBeforeClose = await resolved(S.admin);
+      check(!idsOf(rBeforeClose.body).includes(noExamFid),
+        "٧٧. ولا في «تم الحسم» أيضاً — لم تُحسَم أصلاً");
+
+      //  ══ الحسمُ عبر البابِ القديم («فتح الملف» ⟵ إغلاق) — لم يتغيّر ═════
+      const closeOrphan = await http("POST", `/api/followups/${orphanFid}/close`, S.recv,
+        { reason: "other", note: "قرّر عدم الشراء بعد المراجعة" });
+      same("٧٨. **والحسمُ عبر البابِ القديم (المتاح من «فتح الملف» في ملفّ"
+        + " المريض) يعمل لها بلا تغيير**", closeOrphan.status, 200);
+
+      const wAfterClose = await waiting(S.admin);
+      check(!idsOf(wAfterClose.body).includes(orphanFid),
+        "٧٩. **وتختفي من «بانتظار الحسم» فوراً بعد الحسم** — كأيّ صفٍّ آخر");
+
+      const rAfterClose = await resolved(S.admin);
+      const resolvedOrphan = rowOf(rAfterClose.body, orphanFid);
+      check(!!resolvedOrphan,
+        "٨٠. **ولا تختفي من تاريخ «تم الحسم» لكونها يتيمة** — هذا بالضبط ما"
+          + " كان يفقدها قبل هذا التصحيح", JSON.stringify(idsOf(rAfterClose.body)));
+      same("٨١. ونتيجتُها `not_bought` كما يُفترَض من `close`",
+        resolvedOrphan?.result, "not_bought");
+
+      //  ══ مسندٌ طبّي يتيم — الفحصُ ليس خاصّاً بالأطراف ═══════════════════
+      const { fid: supportOrphanFid } = await orphanFollowup(
+        "يتيمةٌ-مسند", { caseType: "medical_support" });
+      const wSupport = await waiting(S.admin);
+      const supportOrphanRow = rowOf(wSupport.body, supportOrphanFid);
+      check(!!supportOrphanRow,
+        "٨٢. **ومسندٌ طبّي يتيمٌ (لا طرفٌ صناعي فقط) يظهر بنفس القاعدة**");
+      same("   وبنفس `examPath = false`", supportOrphanRow?.examPath, false);
     }
 
     console.log(

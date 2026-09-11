@@ -349,28 +349,37 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         const out = await decisionQueue.listDecisionQueueWaiting(filter);
         const owner = ownerSessionOf(req);
         const mayAct = canCompleteReceptionSale(owner);
-        //  ══ **الأفعالُ من الدالّة الحارسة نفسِها** ═══════════════════════
+        //  ══ **الأفعالُ من الدالّة الحارسة نفسِها — ولمسار المعاينة وحده**
+        //  ═══════════════════════════════════════════════════════════════
         //  نفسُ `examPathActions` التي تحرس `/complete-sale`/`/not-bought` —
         //  فلا يظهر زرٌّ سيردّه الخادمُ (مثلاً حقلُ قرارٍ مملوكٌ لغير الفاعل
         //  على صفٍّ موروثٍ نادر). لا حراسةَ ثانية تُخترَع هنا.
         //  ══ **الحقولُ الثلاثة معاً** (تصحيحٌ لاحق) ═════════════════════════
         //  `complete_sale` يكتب السعرَ والخبيرَ والقرارَ معاً — فيلزم فحصُ
         //  مالكية الثلاثة، لا القرارِ وحده، وإلّا ظهر زرٌّ سيردّه الخادمُ ٤٠٣.
+        //  ══ **صفٌّ يتيمٌ (`examPath === false`) ⟶ بلا أفعالٍ حديثة** (تصحيحٌ
+        //  حيّ) ═══════════════════════════════════════════════════════════
+        //  `examPathActions`/`assertExamPathFollowup` تردّان ٤٠٩ لصفٍّ بلا
+        //  حلقة `service_path='exam'` — فحسابُ الأفعال له كان سيعرض زرّاً
+        //  يردّه البابُ الحقيقيّ دائماً. الصفُّ يبقى ظاهراً في الطابور (نفسُ
+        //  «فتح الملف» الموروث في الشاشة)، وأفعالُه فارغةٌ حصراً.
         const rows = out.rows.map((r) => ({
           ...r,
-          actions: examPathActions({
-            session: owner, status: r.status, mayAct,
-            decisionField: {
-              owner: r.purchaseDecisionOwner, ownerUserId: r.purchaseDecisionUserId,
-              ownerName: r.purchaseDecisionName,
-            },
-            priceField: {
-              owner: r.priceOwner, ownerUserId: r.priceOwnerUserId, ownerName: r.priceOwnerName,
-            },
-            expertField: {
-              owner: r.expertOwner, ownerUserId: r.expertOwnerUserId, ownerName: r.expertOwnerName,
-            },
-          }),
+          actions: r.examPath
+            ? examPathActions({
+              session: owner, status: r.status, mayAct,
+              decisionField: {
+                owner: r.purchaseDecisionOwner, ownerUserId: r.purchaseDecisionUserId,
+                ownerName: r.purchaseDecisionName,
+              },
+              priceField: {
+                owner: r.priceOwner, ownerUserId: r.priceOwnerUserId, ownerName: r.priceOwnerName,
+              },
+              expertField: {
+                owner: r.expertOwner, ownerUserId: r.expertOwnerUserId, ownerName: r.expertOwnerName,
+              },
+            })
+            : [],
         }));
         res.json({ rows, total: out.total });
       } else {
