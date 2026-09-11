@@ -873,8 +873,18 @@ async function main() {
       check(!!orphanRow, "٦٩. والصفُّ اليتيمُ موجودٌ فعلياً في ردّ الخادم");
       same("٧٠. **و`examPath = false`** — ليست على مسار المعاينة الحديث رغم ظهورها",
         orphanRow?.examPath, false);
-      same("٧١. **وبلا أفعالٍ حديثة إطلاقاً** (`actions = []`) — لا `complete_sale`"
-        + " كاذبٌ سيردّه الخادم", orphanRow?.actions, []);
+      //  **تصحيحٌ حيّ لهذه المهمّة** — كانت `actions = []` (PR #284)، فلا
+      //  زرَّ حسمٍ يظهر على صفٍّ حقيقيّ بانتظار قرار. الآن تصل الأفعالُ
+      //  الموروثة الحقيقية (`allowedActions`) — نفسُ ما يراه ملفّ المريض
+      //  تماماً — لا `complete_sale`/`not_bought` الحديثتين (القسم ش يفصّل
+      //  مصفوفةَ الصلاحية كاملةً بأربعة فاعلين).
+      {
+        const orphanAllowed = orphanRow?.actions ?? [];
+        check(orphanAllowed.includes("confirm_purchase") && orphanAllowed.includes("close"),
+          "٧١. **وأفعالُ المسار الموروث الحقيقية تصل الآن — «اشترى»/«لم يشترِ»**"
+            + " (`confirm_purchase`+`close`) بدل `actions=[]` القديمة، لا `complete_sale`"
+            + " الحديثة الكاذبة", JSON.stringify(orphanAllowed));
+      }
 
       const csOrphan = await http("POST", `/api/followups/${orphanFid}/complete-sale`, S.recv,
         { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
@@ -926,6 +936,76 @@ async function main() {
       check(!!supportOrphanRow,
         "٨٢. **ومسندٌ طبّي يتيمٌ (لا طرفٌ صناعي فقط) يظهر بنفس القاعدة**");
       same("   وبنفس `examPath = false`", supportOrphanRow?.examPath, false);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log(
+      "\n── ش. صفٌّ يتيمٌ: أفعالُ المسار الموروث ذاتُها — «اشترى»/«لم يشترِ»"
+      + " (تصحيحٌ حيّ) ──",
+    );
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const { fid: orphanFid } = await orphanFollowup("يتيمةٌ-أفعالٌ-موروثة");
+
+      const adminActions = rowOf((await waiting(S.admin)).body, orphanFid)?.actions ?? [];
+      check(adminActions.includes("confirm_purchase") && adminActions.includes("close"),
+        "٨٣. **والمسؤولُ العام يملك «اشترى» و«لم يشترِ» معاً على الصفّ اليتيم**"
+          + " — نفسُ `allowedActions` التي تحرس ملفّ المريض", JSON.stringify(adminActions));
+
+      const recvActions = rowOf((await waiting(S.recv)).body, orphanFid)?.actions ?? [];
+      check(recvActions.includes("confirm_purchase") && recvActions.includes("close"),
+        "٨٤. **والاستقبالُ كذلك**", JSON.stringify(recvActions));
+
+      //  ══ **والمحاسبُ يملك «اشترى» وحدها فقط** — نفسُ فرقه القائم أصلاً في
+      //  `allowedActions` (`canConfirmPurchase` تشمله، `canActCommercially` لا)
+      //  — والمطلوبُ صراحةً أن يُحفَظ هذا الفرقُ بحرفه على المسار الجديد.
+      const acctActions = rowOf((await waiting(S.acct)).body, orphanFid)?.actions ?? [];
+      same("٨٥. **والمحاسبُ يملك «اشترى» وحدها — لا «لم يشترِ» إطلاقاً**"
+        + " — يحفظ الفرقَ القائم في `/confirm-purchase`/`/close` بحرفه",
+        acctActions, ["confirm_purchase"]);
+
+      //  والبابُ الحقيقيّ يعمل فعلياً من هذا الطابور — الأفعالُ المعروضة
+      //  ليست وعداً كاذباً، ولا مسارَ بيعٍ ثانياً اختُرع.
+      const cp = await http("POST", `/api/followups/${orphanFid}/confirm-purchase`, S.recv,
+        { originalPrice: 500_000, expertUserId: EXPERT });
+      same("٨٦. **والبابُ الحقيقيّ `/confirm-purchase` يعمل من هذا الطابور بالفعل**",
+        cp.status, 200);
+      const afterRow = rowOf((await resolved(S.admin)).body, orphanFid);
+      same("   وتنتقل إلى «تم الحسم» بنتيجة bought", afterRow?.result, "bought");
+    }
+    {
+      const { fid: orphanFid2 } = await orphanFollowup("يتيمةٌ-لم-يشترِ-فعلياً");
+      const cl = await http("POST", `/api/followups/${orphanFid2}/close`, S.recv,
+        { reason: "not_convinced" });
+      same("٨٧. **والبابُ الحقيقيّ `/close` يعمل من هذا الطابور بالفعل**", cl.status, 200);
+      const afterRow2 = rowOf((await resolved(S.admin)).body, orphanFid2);
+      same("   وتنتقل إلى «تم الحسم» بنتيجة not_bought", afterRow2?.result, "not_bought");
+
+      //  ومحاولةُ محاسبٍ لـ«لم يشترِ» على يتيمةٍ أخرى تُردّ فعلاً — تطابق
+      //  غيابَ `close` من أفعاله المعروضة تماماً، لا وعداً زائفاً.
+      const { fid: orphanFid3 } = await orphanFollowup("يتيمةٌ-محاسبٌ-مرفوض-فعلياً");
+      const acctClose = await http("POST", `/api/followups/${orphanFid3}/close`, S.acct,
+        { reason: "price" });
+      same("٨٨. **والمحاسبُ يُردّ فعلاً عند محاولة «لم يشترِ»** — يطابق غيابها عن `actions`",
+        acctClose.status, 403);
+    }
+
+    console.log("\n── ص. صفٌّ عاديّ (examPath=true) بجوار توسيع الأفعال — بلا تأثّر ──");
+    {
+      const { fid: normalFid } = await readySale("عاديّةٌ-بجوار-توسيع-الأفعال");
+      const row = rowOf((await waiting(S.admin)).body, normalFid);
+      same("٨٩. **`examPath` يبقى `true`، والأفعالُ `complete_sale`/`not_bought`"
+        + " كما كانت تماماً — لا `allowedActions` على مسار المعاينة**",
+        [row?.examPath, [...(row?.actions ?? [])].sort()],
+        [true, ["complete_sale", "not_bought"].sort()]);
+    }
+
+    console.log("\n── ض. حلقةُ «بلا معاينة» تبقى مستبعدةً من الطابور — توسيعُ الأفعال لا يعني توسيعَ العضويّة ──");
+    {
+      const { fid: noExamFid } = await noExamLinkedFollowup(
+        "حلقةٌ-بلا-معاينة-بعد-توسيع-الأفعال");
+      check(!idsOf((await waiting(S.admin)).body).includes(noExamFid),
+        "٩٠. **وحلقةُ `service_path='no_exam'` تبقى غائبةً عن الطابور بحرفها**");
     }
 
     console.log(
