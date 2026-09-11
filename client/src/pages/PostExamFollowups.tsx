@@ -18,8 +18,9 @@
 // الجانبيّ تبقى **كلَّ الفروع** بصرف النظر عن هذا الفلتر المحليّ.
 //
 // **والترتيبُ في الجانب** (تصحيحٌ حيّ): الصفحةُ تحمّل النتيجةَ الكاملة
-// أصلاً، فتبديلُ «الأقدم/الأحدث أولاً» فوريٌّ بلا نداءٍ ثانٍ — راجع
-// `post_exam_followups_presentation.ts`.
+// أصلاً، فتبديلُ «الأقدم/الأحدث أولاً» فوريٌّ بلا نداءٍ ثانٍ. ضابطٌ واحدٌ
+// مرئيّ، **وكلُّ تبويبٍ على افتراضه القديم بحرفه**: «بانتظار الحسم» الأقدمُ
+// أولاً، و«تم الحسم» الأحدثُ حسماً أولاً — راجع `post_exam_followups_presentation.ts`.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -44,7 +45,7 @@ import {
 } from "@shared/decision_queue";
 import { PRICE_KIND_LABELS } from "@shared/commercial";
 import {
-  resolvedSaleDiscount, sortWaitingRows, sortResolvedRows, DEFAULT_SORT_DIRECTION,
+  resolvedSaleDiscount, sortWaitingRows, sortResolvedRows, defaultSortDirectionFor,
   type SortDirection,
 } from "./post_exam_followups_presentation";
 
@@ -281,11 +282,20 @@ export default function PostExamFollowups() {
   const [tab, setTab] = useState<DecisionQueueState>("waiting");
   const [serviceFilter, setServiceFilter] = useState("all");
   const [branchFilter, setBranchFilter] = useState<string>("all");
-  //  ══ الترتيبُ — تبويبٌ واحد لكلا التبويبين، بمفتاحٍ مختلف لكلٍّ منهما
-  //  (تصحيحٌ حيّ) ═══════════════════════════════════════════════════════
-  //  «الأقدم أولاً» هي القيمةُ الافتراضية — نفسُ الترتيب القديم لـ«بانتظار
-  //  الحسم» بالضبط (`examSignedAt ASC`). راجع `post_exam_followups_presentation.ts`.
-  const [sortDir, setSortDir] = useState<SortDirection>(DEFAULT_SORT_DIRECTION);
+  //  ══ افتراضٌ مستقلٌّ لكلّ تبويب — ضابطٌ واحد مرئيّ (تصحيحٌ لاحق) ══════════
+  //  «بانتظار الحسم» يبقى الأقدمَ أولاً كما كان دائماً (`examSignedAt ASC`)،
+  //  و«تم الحسم» يبقى الأحدثَ حسماً أولاً كما كان دائماً (`resolvedAt
+  //  DESC`) — حالتان مستقلّتان بافتراضَيهما الأصليَّين، لا حالةٌ واحدة
+  //  مشتركة كانت تفرض قيمةً ابتدائية واحدة على التبويبين معاً (وتقلب بذلك
+  //  افتراضَ «تم الحسم» بصمت). **والضابطُ المرئيّ يبقى واحداً**: يعرض
+  //  ويُغيِّر اتجاهَ التبويب الحاليّ وحده، وكلا الاتجاهين متاحان في كلا
+  //  التبويبين. راجع `post_exam_followups_presentation.ts`.
+  const [waitingSortDir, setWaitingSortDir] = useState<SortDirection>(
+    () => defaultSortDirectionFor("waiting"));
+  const [resolvedSortDir, setResolvedSortDir] = useState<SortDirection>(
+    () => defaultSortDirectionFor("resolved"));
+  const sortDir = tab === "waiting" ? waitingSortDir : resolvedSortDir;
+  const setSortDir = tab === "waiting" ? setWaitingSortDir : setResolvedSortDir;
 
   //  فلترةُ الفرع تُعرَض فقط لمن يملك أكثر من فرعٍ فعلياً — مسؤولٌ عام أو
   //  مديرُ فرعٍ/موظّفٌ متعدّدُ الفروع. القائمةُ نفسُها المستعملة في شاشة
@@ -330,8 +340,9 @@ export default function PostExamFollowups() {
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   //  ══ ترتيبٌ في الجانب — النتيجةُ كاملةٌ أصلاً (تصحيحٌ حيّ) ═════════════
-  //  مفتاحٌ مختلف لكلّ تبويب (`examSignedAt`/`resolvedAt`)، ونفسُ الاتجاه
-  //  المختار يُطبَّق على كليهما — لا حالةَ ترتيبٍ مستقلّة لكلّ تبويب.
+  //  مفتاحٌ مختلف لكلّ تبويب (`examSignedAt`/`resolvedAt`)، واتجاهٌ مختلفٌ
+  //  مستقلّ لكلّ تبويب أيضاً (`sortDir` أعلاه) — لا نداءَ خادمٍ ثانٍ ولا
+  //  تغييرَ في ترتيب/تصفّح النقطة نفسها.
   const sortedRows = useMemo(() => (
     tab === "waiting"
       ? sortWaitingRows(rows as WaitingRow[], sortDir)
@@ -360,8 +371,9 @@ export default function PostExamFollowups() {
         </Tabs>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/*  ══ ضابطُ الترتيب — عنصرٌ واحدٌ مضغوط، بلا تكرار المفتاح
-              لكلّ تبويب ═══════════════════════════════════════════════ */}
+          {/*  ══ ضابطُ الترتيب — عنصرٌ واحدٌ مضغوط، يعرض اتجاهَ التبويب
+              الحاليّ ويُغيِّره وحده (كلٌّ منهما بافتراضه وحالته
+              المستقلّة) ═══════════════════════════════════════════════ */}
           <Select value={sortDir} onValueChange={(v) => setSortDir(v as SortDirection)}>
             <SelectTrigger className="w-[130px] gap-1" data-testid="select-sort-direction">
               <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />

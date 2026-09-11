@@ -8,7 +8,7 @@
 // الرأس السابق لهذا التصحيح وينجح بعده** — القسم (ج) تحديداً.
 
 import {
-  resolvedSaleDiscount, sortWaitingRows, sortResolvedRows, DEFAULT_SORT_DIRECTION,
+  resolvedSaleDiscount, sortWaitingRows, sortResolvedRows, defaultSortDirectionFor,
 } from "./post_exam_followups_presentation";
 
 let failures = 0;
@@ -56,8 +56,12 @@ console.log("\n── و. ترتيبُ «بانتظار الحسم» — examSig
     { followupId: 11, examSignedAt: "2026-01-01T10:00:00Z" },
     { followupId: 12, examSignedAt: "2026-01-02T10:00:00Z" },
   ];
-  same("و.١. **الافتراضُ `asc` هو السلوكُ القديم** — الأقدمُ أوّلاً",
-    DEFAULT_SORT_DIRECTION, "asc");
+  same("و.١. **افتراضُ «بانتظار الحسم» يبقى الأقدمَ أوّلاً كما كان دائماً**",
+    defaultSortDirectionFor("waiting"), "asc");
+  same("   **و«تم الحسم» يبقى الأحدثَ حسماً أوّلاً — افتراضٌ مستقلّ لا"
+    + " يفرضه تبويبٌ آخر** (تصحيحٌ لاحق: كانا يشتركان حالةً واحدة فتقلب"
+    + " افتراضُ «تم الحسم» صمتاً بمجرّد إضافة الضابط)",
+    defaultSortDirectionFor("resolved"), "desc");
   same("و.٢. `asc` ⟶ الأقدمُ فالأحدث",
     sortWaitingRows(rows, "asc").map((r) => r.followupId), [11, 12, 10]);
   same("و.٣. `desc` ⟶ عكسُه تماماً — الأحدثُ فالأقدم",
@@ -110,7 +114,8 @@ console.log("\n── ط. ترتيبُ «تم الحسم» — resolvedAt (مف�
   same("ط.١. `asc` ⟶ الأقدمُ حسماً أوّلاً",
     sortResolvedRows(rows, "asc").map((r) => r.followupId), [51, 52, 50]);
   same("ط.٢. `desc` ⟶ الأحدثُ حسماً أوّلاً — **سلوكُ الخادم الافتراضيّ القديم**"
-    + " (`ORDER BY resolved_at DESC`)، متاحٌ الآن باختيارٍ صريح لا افتراضاً",
+    + " (`ORDER BY resolved_at DESC`)، وهو الافتراضُ المعروض فعلاً لهذا"
+    + " التبويب (راجع و.١ أعلاه)، ويبقى متاحاً بالاختيار الصريح كذلك",
     sortResolvedRows(rows, "desc").map((r) => r.followupId), [50, 52, 51]);
 }
 
