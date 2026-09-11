@@ -125,7 +125,9 @@
     "test:ai-capabilities": "tsx shared/ai_capabilities.test.ts",
     "test:ai-training-rules": "tsx shared/ai_training.test.ts",
     "test:training": "tsx server/training.test.ts",
-    "test:training-ui": "tsx client/src/components/training_admin_ui.test.ts"
+    "test:training-ui": "tsx client/src/components/training_admin_ui.test.ts",
+    "test:ai-training-intent": "tsx shared/ai_training_intent.test.ts",
+    "test:ai-training-orchestration": "tsx server/ai_training_orchestration.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
