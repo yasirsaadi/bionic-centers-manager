@@ -48,16 +48,25 @@ export interface CapabilitySource {
  * `canViewPatients` لسجلّ المرضى) — **لا قاعدةَ صلاحيةٍ جديدة تُخترَع هنا**،
  * فقط تجميعٌ لِما هو قائمٌ فعلاً في التطبيق الحيّ.
  *
- * و`manager` = دور `branch_manager` بعينه — **نفسُ** قاعدة `allowAdministration`
- * القائمة في `server/ai/knowledge/retrieval.ts` حرفياً (لا قاعدةٌ ثانية
- * تنحرف عنها)، لا افتراضَ أنّ مديرَ الفرع يملك كلَّ صلاحية.
+ * ══ المسؤولُ العام يملك الاتحادَ الكامل — بسلطته لا بأعلام صفّه (مراجعةٌ
+ * حيّة) ═══════════════════════════════════════════════════════════════════
+ * `isAdmin === true` ⟶ **كلَّ قدرةٍ في `CAPABILITIES`**، فوراً وبلا قراءة
+ * `permissions` إطلاقاً. هذا يطابق التجاوزَ العامّ القائم فعلياً في التطبيق
+ * الحيّ (`enforceBranchAccess`، `allowAdministration`، حجبُ التصنيع/الطبّ/
+ * المحاسبة — المسؤولُ يمضي في كلّها بسلطته لا بعَلَمٍ مخزَّن)؛ ربطُ قدرات
+ * المسؤول بأعلام صلاحيةٍ شخصية على صفّه كان يعني أن مسؤولاً حُذفت من صفّه
+ * `can_manage_accounting` (أو لم تُضبَط قطّ) يفقد قدرة `finance` — تناقضٌ
+ * مباشر مع أنه يرى كلَّ لقطةٍ مالية فعلياً. **ومديرُ الفرع خارج هذا التجاوز
+ * تماماً** — قدرتُه `manager` وحدها من دوره، وبقيّةُ قدراته من أعلامه
+ * الحقيقية فقط كما كانت؛ لا اتحادَ كاملاً إلا لـ`isAdmin` حرفياً.
  */
 export function capabilitiesFor(access: CapabilitySource): Set<Capability> {
+  if (access.isAdmin) return new Set<Capability>(CAPABILITIES);
+
   const caps = new Set<Capability>(["general"]);
   const p = access.permissions ?? {};
   const role = access.role ?? "";
 
-  if (access.isAdmin) caps.add("admin");
   if (role === "branch_manager") caps.add("manager");
   if (p.canAddPatients === true) caps.add("reception");
   if (p.canViewPatients === true) caps.add("patients");

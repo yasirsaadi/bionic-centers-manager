@@ -38,6 +38,21 @@ function same(msg: string, got: unknown, expected: unknown) {
   check(JSON.stringify(got) === JSON.stringify(expected), msg,
     `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
 }
+//  مقارنةٌ لا تتأثّر بترتيب مفاتيح الكائنات — `jsonb` في Postgres لا يحفظ
+//  ترتيبَ الإدخال، فمقارنةُ quiz (كائنٌ متداخل) بـ`JSON.stringify` الخام
+//  كانت تُبلغ فشلاً زائفاً رغم تطابق المحتوى تماماً.
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  if (v && typeof v === "object") {
+    const keys = Object.keys(v as object).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as any)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+function sameStable(msg: string, got: unknown, expected: unknown) {
+  check(stableStringify(got) === stableStringify(expected), msg,
+    `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
+}
 
 const PORT = 6980;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -471,6 +486,250 @@ async function main() {
 
     const toolBadModule = await executeTool(recvAccess, "training_lesson", { moduleId: "abc" as any });
     check(toolBadModule.ok === false, "ك.٧ وسيطُ moduleId غيرُ رقميّ يُرفَض من الأداة أيضاً");
+
+    // ══ ل. القسمُ ٧ (مراجعةُ إكمالٍ ٢٠٢٦-٠٩-١١) — دفاعٌ بالعمق عند حلّ
+    //  المعرفة: جمهورُ المسار ليس كلَّ الحراسة. مسارٌ جمهورُه يطابق الموظّف
+    //  (TRACK_ID جمهورُه reception، وrecv يملكها) قد يشير إلى مقالاتٍ
+    //  **جمهورُها هي** أو **نطاقُها الماليّ/الإداريّ** لا يطابق الموظّف —
+    //  ويجب أن تُستبعَد من الدرس رغم أن المسار والوحدةَ مرئيّان له تماماً. ══
+    console.log("\n── ل. دفاعٌ بالعمق — قيودُ المقالة نفسِها ──");
+
+    const medicalOnlyArticle = await createArticle({
+      title: `${MARK} — مقالةٌ بجمهور medical فقط`, body: `${MARK} — متنٌ يخصّ الأطباء حصراً`,
+      scope: "general", branchId: null, audience: ["medical"],
+      actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+    const financeOnlyArticle = await createArticle({
+      title: `${MARK} — مقالةٌ بجمهور finance فقط`, body: `${MARK} — متنٌ ماليّ محدَّد الجمهور`,
+      scope: "general", branchId: null, audience: ["finance"],
+      actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+    const financeScopeArticle = await createArticle({
+      title: `${MARK} — مقالةٌ بنطاق finance`, body: `${MARK} — تفصيلٌ محاسبيّ حسّاس`,
+      scope: "finance", branchId: null,
+      actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+    const adminScopeArticle = await createArticle({
+      title: `${MARK} — مقالةٌ بنطاق administration`, body: `${MARK} — تفصيلٌ إداريّ حسّاس`,
+      scope: "administration", branchId: null,
+      actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+
+    const [modDefenseRow] = (await q(
+      `INSERT INTO training_modules (track_id, title, description, position, knowledge_article_ids)
+       VALUES ($1,$2,$3,5,$4::jsonb) RETURNING id`,
+      [TRACK_ID, `${MARK} — وحدةُ الدفاع بالعمق`, "تشير لأربع مقالاتٍ مقيَّدة كلٌّ بقيدٍ مختلف",
+        JSON.stringify([medicalOnlyArticle.id, financeOnlyArticle.id, financeScopeArticle.id, adminScopeArticle.id])],
+    )).rows;
+    const MOD_DEFENSE = modDefenseRow.id as number;
+
+    const defenseLessonRecv = await GET(`/api/training/modules/${MOD_DEFENSE}/lesson`, "recv");
+    check(defenseLessonRecv.status === 200,
+      "ل.١ فتحُ الدرس ينجح (recv يملك جمهورَ المسار reception فيمرّ حارسَ التراك)", `status=${defenseLessonRecv.status}`);
+    const defenseLessonRecvBody = (await defenseLessonRecv.json()).lesson;
+    same("ل.٢ **وبلا مقالةٍ واحدة تصل** — الأربعُ مقيَّدةٌ بما لا يملكه recv رغم مطابقة جمهور المسار نفسِه",
+      defenseLessonRecvBody.lesson, []);
+
+    //  والمسؤولُ العام (ADMIN1، بلا أيّ علمِ صلاحيةٍ شخصيّ في صفّه — نفسُ
+    //  فحص القسم ١) يملك الاتحادَ الكامل من `capabilitiesFor` فيرى الأربعَ معاً.
+    const defenseLessonAdmin = await GET(`/api/training/modules/${MOD_DEFENSE}/lesson`, "admin");
+    check(defenseLessonAdmin.status === 200, "ل.٣ والمسؤولُ العام يفتح الدرسَ أيضاً", `status=${defenseLessonAdmin.status}`);
+    const defenseLessonAdminBody = (await defenseLessonAdmin.json()).lesson;
+    const adminArticleIds = (defenseLessonAdminBody.lesson as any[]).map((a) => a.articleId).sort((a, b) => a - b);
+    const expectedFourIds = [medicalOnlyArticle.id, financeOnlyArticle.id, financeScopeArticle.id, adminScopeArticle.id].sort((a, b) => a - b);
+    same("ل.٤ **والمسؤولُ العام يرى المقالاتِ الأربع معاً** — جمهورٌ + نطاقان ماليّ وإداريّ، بلا أعلامٍ شخصية",
+      adminArticleIds, expectedFourIds);
+
+    for (const idToDeactivate of [medicalOnlyArticle.id, financeOnlyArticle.id, financeScopeArticle.id, adminScopeArticle.id]) {
+      await setArticleActive({ id: idToDeactivate, active: false, actor: actorFor(ADMIN1, "م", "admin", null) });
+    }
+
+    // ══ م. القسمُ ٤ (مراجعةُ إكمالٍ) — دلالاتُ التقدّم: completedAt وattemptCount
+    //  needs_review **لا** تحمل completedAt بعد اليوم، وattempt_count يبدأ
+    //  من صفرٍ حقيقيّ (لا من واحدٍ بمجرّد فتح الدرس) ويُعَدّ الإجاباتِ
+    //  المُرسَلة فعلاً لا مرّاتِ فتح الدرس. ═══════════════════════════════
+    console.log("\n── م. دلالاتُ التقدّم — completedAt وattempt_count ──");
+
+    const semanticsQuiz = JSON.stringify({
+      question: `${MARK} — اكتب كلمة «صحيح» في إجابتك`,
+      requiredConcepts: [{ keywords: ["صحيح", "نعم"], hint: "كلمة صحيح أو نعم" }],
+    });
+    const [modSemanticsRow] = (await q(
+      `INSERT INTO training_modules (track_id, title, description, position, knowledge_article_ids, quiz)
+       VALUES ($1,$2,$3,6,'[]'::jsonb,$4::jsonb) RETURNING id`,
+      [TRACK_ID, `${MARK} — وحدةُ دلالات التقدّم`, "لاختبار completedAt وattempt_count تحديداً", semanticsQuiz],
+    )).rows;
+    const MOD_SEMANTICS = modSemanticsRow.id as number;
+
+    //  م.١-٣ فتحُ الدرس فقط — **بلا أيّ إجابة** — status=started، completedAt=null، attempt=٠.
+    await GET(`/api/training/modules/${MOD_SEMANTICS}/lesson`, "recv");
+    const rowAfterOpen = (await q(
+      `SELECT status, completed_at, attempt_count FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+      [RECV, MOD_SEMANTICS])).rows[0];
+    same("م.١ فتحُ درسٍ باختبارٍ بلا إجابة ⟶ status=started", rowAfterOpen?.status, "started");
+    check(rowAfterOpen?.completed_at === null, "م.٢ وcompleted_at لا يزال null");
+    same("م.٣ **وattempt_count = ٠ — لا يبدأ من ١ بمجرّد الفتح** (جوهرُ الإصلاح)", rowAfterOpen?.attempt_count, 0);
+
+    //  م.٤-٧ إجابةٌ خاطئة أولى ⟶ needs_review، **بلا completedAt**، attempt=١.
+    const wrongSemantics1 = await POST(`/api/training/modules/${MOD_SEMANTICS}/answer`, "recv", { answerText: "خطأ تماماً" });
+    same("م.٤ إجابةٌ خاطئة أولى ⟶ needs_review", (await wrongSemantics1.json()).outcome.result, "needs_review");
+    const rowAfterWrong1 = (await q(
+      `SELECT status, completed_at, attempt_count FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+      [RECV, MOD_SEMANTICS])).rows[0];
+    same("م.٥ status=needs_review", rowAfterWrong1?.status, "needs_review");
+    check(rowAfterWrong1?.completed_at === null,
+      "م.٦ **وcompleted_at يبقى null لـneeds_review** — لم يعد يُختَم بخطأ (جوهرُ الإصلاح الثاني)");
+    same("م.٧ وattempt_count = ١ — أوّلُ إجابةٍ مُرسَلة فعلياً لا مرّةَ فتحٍ", rowAfterWrong1?.attempt_count, 1);
+
+    //  م.٨-١٠ إجابةٌ خاطئة ثانية ⟶ لا تزال needs_review، attempt=٢.
+    const wrongSemantics2 = await POST(`/api/training/modules/${MOD_SEMANTICS}/answer`, "recv", { answerText: "لا أعرف الجواب" });
+    same("م.٨ إجابةٌ خاطئة ثانية ⟶ needs_review أيضاً", (await wrongSemantics2.json()).outcome.result, "needs_review");
+    const rowAfterWrong2 = (await q(
+      `SELECT status, completed_at, attempt_count FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+      [RECV, MOD_SEMANTICS])).rows[0];
+    check(rowAfterWrong2?.completed_at === null, "م.٩ وcompleted_at ما زال null بعد محاولتين فاشلتين");
+    same("م.١٠ وattempt_count = ٢ بالضبط", rowAfterWrong2?.attempt_count, 2);
+
+    //  م.١١-١٤ إجابةٌ صحيحةٌ ثالثة ⟶ completed، وcompletedAt يُختَم الآن فقط.
+    const beforeSuccessTime = new Date();
+    const rightSemantics = await POST(`/api/training/modules/${MOD_SEMANTICS}/answer`, "recv", { answerText: "نعم هذا صحيح" });
+    same("م.١١ إجابةٌ صحيحةٌ لاحقة (بعد فشلين) ⟶ completed", (await rightSemantics.json()).outcome.result, "completed");
+    const rowAfterSuccess = (await q(
+      `SELECT status, completed_at, attempt_count FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+      [RECV, MOD_SEMANTICS])).rows[0];
+    same("م.١٢ status=completed", rowAfterSuccess?.status, "completed");
+    check(rowAfterSuccess?.completed_at !== null,
+      "م.١٣ **وcompleted_at يُختَم الآن فقط — لحظةَ النجاح الفعليّ**، لا لحظةَ الفتح ولا أوّلَ محاولةٍ فاشلة");
+    check(new Date(rowAfterSuccess.completed_at).getTime() >= beforeSuccessTime.getTime() - 2000,
+      "م.١٣ب وختمُه زمنٌ قريبٌ من لحظة الإرسال الناجحة فعلاً — لا زمنٌ سابقٌ لحظةَ الفتح");
+    same("م.١٤ وattempt_count = ٣ — ثلاثُ إجاباتٍ مُرسَلة (فشلان ثمّ نجاح)", rowAfterSuccess?.attempt_count, 3);
+
+    //  م.١٥-١٦ practice_only: completedAt يُختَم لحظةَ الفتح/الإقرار — الصفُّ
+    //  من قسم «ز» أعلاه (RECV × MOD_PRACTICE)، لم يُلمَس منذ ذلك الحين.
+    const practiceRow = (await q(
+      `SELECT status, completed_at FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+      [RECV, MOD_PRACTICE])).rows[0];
+    same("م.١٥ status=practice_only", practiceRow?.status, "practice_only");
+    check(practiceRow?.completed_at !== null,
+      "م.١٦ **وcompleted_at مختومٌ لدرسٍ عمليّ بمجرّد فتحه/إقراره** — لا ينتظر تصحيحاً آلياً لن يقع أبداً");
+
+    // ══ ن. القسمُ ٣ (مراجعةُ إكمالٍ) — إدارةُ المسارات والوحدات (CRUD) ═══
+    //  المسؤولُ العام يستطيع إنشاءَ/تعديلَ هيكل التدريب بلا نشر كودٍ جديد.
+    //  لا حذفَ فعليّاً — تفعيلٌ/تعطيلٌ فقط، ومدقَّقٌ الآن بالكامل. ═══════════
+    console.log("\n── ن. إدارةُ المسارات والوحدات (CRUD) ──");
+
+    const mgrCreateTrack = await POST("/api/training/admin/tracks", "mgr1", {
+      title: `${MARK} — محاولةُ مديرِ فرع`, description: "يجب أن تُرفَض",
+    });
+    check(mgrCreateTrack.status === 403, "ن.١ مديرُ الفرع ليس مسؤولاً عامّاً — لا يُنشئ مساراً (٤٠٣)", `status=${mgrCreateTrack.status}`);
+
+    const createTrackRes = await POST("/api/training/admin/tracks", "admin", {
+      title: `${MARK} — مسارٌ من الإدارة`, description: "وصفٌ أوّليّ",
+      audience: ["finance", "reports"], sortOrder: 500,
+    });
+    check(createTrackRes.status === 201, "ن.٢ إنشاءُ مسارٍ جديد من لوحة الإدارة ينجح", `status=${createTrackRes.status}`);
+    const createdTrack = (await createTrackRes.json()).track;
+    same("ن.٣ الجمهورُ محفوظٌ كما أُرسل", [...createdTrack.audience].sort(), ["finance", "reports"]);
+    same("ن.٤ والترتيبُ محفوظٌ كما أُرسل", createdTrack.sortOrder, 500);
+
+    const badAudienceTrack = await POST("/api/training/admin/tracks", "admin", {
+      title: `${MARK} — مسارٌ بجمهورٍ فاسد`, description: "x", audience: ["not_a_capability"],
+    });
+    check(badAudienceTrack.status === 400, "ن.٥ جمهورٌ فاسدٌ عند إنشاء مسارٍ ⟶ ٤٠٠", `status=${badAudienceTrack.status}`);
+
+    const patchSortOnlyRes = await PATCH(`/api/training/admin/tracks/${createdTrack.id}`, "admin", { sortOrder: 501 });
+    check(patchSortOnlyRes.status === 200, "ن.٦ تعديلُ sortOrder وحده ينجح", `status=${patchSortOnlyRes.status}`);
+    const patchedSortOnly = (await patchSortOnlyRes.json()).track;
+    same("ن.٧ العنوانُ لم يتغيّر (لم يُرسَل في هذا التعديل)", patchedSortOnly.title, createdTrack.title);
+    same("ن.٨ **والجمهورُ ورث القيمةَ الحالية بالحرف** — لم يُسقَط إلى عامّ بصمت",
+      [...patchedSortOnly.audience].sort(), ["finance", "reports"]);
+    same("ن.٩ وsortOrder الجديد وصل فعلاً", patchedSortOnly.sortOrder, 501);
+
+    const adminCrudArticle = await createArticle({
+      title: `${MARK} — مقالةٌ لاختبار إدارة التدريب`, body: `${MARK} — متنٌ حقيقيّ`,
+      scope: "general", branchId: null, actor: actorFor(ADMIN1, "مسؤول اختبار", "admin", null),
+    });
+    const validModuleQuiz = { question: `${MARK} — سؤالٌ حقيقيّ`, requiredConcepts: [{ keywords: ["جواب"], hint: "اذكر كلمة جواب" }] };
+    const createModuleRes = await POST(`/api/training/admin/tracks/${createdTrack.id}/modules`, "admin", {
+      title: `${MARK} — وحدةٌ من الإدارة`, description: "وصفٌ", position: 1,
+      knowledgeArticleIds: [adminCrudArticle.id], learningObjectives: ["هدفٌ أوّل", "هدفٌ ثانٍ"],
+      quiz: validModuleQuiz, practiceOnly: false,
+    });
+    check(createModuleRes.status === 201, "ن.١٠ إنشاءُ وحدةٍ بمقالةٍ حقيقية واختبارٍ صالح ينجح", `status=${createModuleRes.status}`);
+    const createdModule = (await createModuleRes.json()).module;
+    same("ن.١١ معرّفُ المقالة المرجعيّة محفوظ", createdModule.knowledgeArticleIds, [adminCrudArticle.id]);
+    same("ن.١٢ وأهدافُ التعلّم محفوظة", createdModule.learningObjectives, ["هدفٌ أوّل", "هدفٌ ثانٍ"]);
+    sameStable("ن.١٣ والاختبارُ محفوظٌ بحذافيره", createdModule.quiz, validModuleQuiz);
+
+    const beforeBadRefCount = (await q(`SELECT COUNT(*)::int AS n FROM training_modules WHERE track_id=$1`, [createdTrack.id])).rows[0].n;
+    const badArticleRefRes = await POST(`/api/training/admin/tracks/${createdTrack.id}/modules`, "admin", {
+      title: `${MARK} — وحدةٌ بمقالةٍ وهمية`, description: "x", knowledgeArticleIds: [999999999],
+    });
+    check(badArticleRefRes.status === 400, "ن.١٤ مقالةٌ مرجعيةٌ غيرُ موجودة ⟶ ٤٠٠", `status=${badArticleRefRes.status}`);
+    const afterBadRefCount = (await q(`SELECT COUNT(*)::int AS n FROM training_modules WHERE track_id=$1`, [createdTrack.id])).rows[0].n;
+    same("ن.١٤ب **وبلا صفٍّ جديد يُكتب** — عددُ الوحدات لم يتغيّر", afterBadRefCount, beforeBadRefCount);
+
+    const badQuizRes = await POST(`/api/training/admin/tracks/${createdTrack.id}/modules`, "admin", {
+      title: `${MARK} — وحدةٌ باختبارٍ مشوَّه`, description: "x", quiz: { question: "بلا مفاهيم" },
+    });
+    check(badQuizRes.status === 400, "ن.١٥ اختبارٌ مشوَّه (بلا requiredConcepts) ⟶ ٤٠٠", `status=${badQuizRes.status}`);
+
+    const patchModPositionRes = await PATCH(`/api/training/admin/modules/${createdModule.id}`, "admin", { position: 7 });
+    check(patchModPositionRes.status === 200, "ن.١٦ تعديلُ position وحده ينجح", `status=${patchModPositionRes.status}`);
+    const patchedModPosition = (await patchModPositionRes.json()).module;
+    same("ن.١٧ position الجديد وصل", patchedModPosition.position, 7);
+    same("ن.١٨ **وknowledgeArticleIds ورثت القيمةَ الحالية** — لم تُصفَّر إلى مصفوفةٍ فارغة",
+      patchedModPosition.knowledgeArticleIds, [adminCrudArticle.id]);
+    sameStable("ن.١٩ والاختبارُ ورث كذلك بلا مسّ", patchedModPosition.quiz, validModuleQuiz);
+
+    //  ن.٢٠-٢١ مقالةٌ خاصّةٌ بفرعٍ آخر — **يُسمَح بالإشارة إليها عند الإنشاء**
+    //  (موجودةٌ فعلاً، والتحقّقُ وجوديّ لا نطاقيّ) لكنّها تبقى «غيرَ قابلةٍ
+    //  للاستعمال كمحتوًى عامّ» فعلياً: لا تصل أيّ درسٍ مطلقاً (حارسُ القسم ٧
+    //  نفسُه، ب.١١). تُعاد تفعيلُها مؤقّتاً لعزل السبب (نطاقُ الفرع وحده).
+    await setArticleActive({ id: branchArticle.id, active: true, actor: actorFor(ADMIN1, "م", "admin", null) });
+    const branchRefModuleRes = await POST(`/api/training/admin/tracks/${TRACK_ID}/modules`, "admin", {
+      title: `${MARK} — وحدةٌ تشير لمقالة فرعٍ عبر لوحة الإدارة`, description: "x", position: 8,
+      knowledgeArticleIds: [branchArticle.id],
+    });
+    check(branchRefModuleRes.status === 201,
+      "ن.٢٠ الإنشاءُ ينجح رغم أنّ المقالة خاصّةٌ بفرعٍ آخر — التحقّقُ وجوديّ لا نطاقيّ", `status=${branchRefModuleRes.status}`);
+    const branchRefModule = (await branchRefModuleRes.json()).module;
+    const branchRefLesson = await GET(`/api/training/modules/${branchRefModule.id}/lesson`, "recv");
+    const branchRefLessonBody = (await branchRefLesson.json()).lesson;
+    same("ن.٢١ **لكنّها لا تصل أيّ درسٍ فعلياً** — «قابلةٌ للإشارة، غيرُ قابلةٍ للاستعمال» — تصديقٌ حيّ لبند القسم ٣",
+      branchRefLessonBody.lesson, []);
+    await setArticleActive({ id: branchArticle.id, active: false, actor: actorFor(ADMIN1, "م", "admin", null) });
+
+    const auditTrackCreate = (await q(
+      `SELECT action FROM audit_log WHERE entity_type='training_track' AND entity_id=$1 ORDER BY id`,
+      [createdTrack.id])).rows.map((r: any) => r.action);
+    same("ن.٢٢ سجلُّ تدقيق المسار: إنشاءٌ ثمّ تعديلٌ بالترتيب", auditTrackCreate, ["create", "edit"]);
+    const auditModuleCreate = (await q(
+      `SELECT action FROM audit_log WHERE entity_type='training_module' AND entity_id=$1 ORDER BY id`,
+      [createdModule.id])).rows.map((r: any) => r.action);
+    same("ن.٢٣ وسجلُّ تدقيق الوحدة: إنشاءٌ ثمّ تعديلٌ أيضاً", auditModuleCreate, ["create", "edit"]);
+
+    await PATCH(`/api/training/admin/tracks/${createdTrack.id}/active`, "admin", { active: false });
+    const auditTrackFull = (await q(
+      `SELECT action FROM audit_log WHERE entity_type='training_track' AND entity_id=$1 ORDER BY id`,
+      [createdTrack.id])).rows.map((r: any) => r.action);
+    same("ن.٢٤ **والتعطيلُ يُضيف سطراً ثالثاً 'deactivate'** — لم يكن يُدقَّق قبل هذه المراجعة",
+      auditTrackFull, ["create", "edit", "deactivate"]);
+
+    await q(`DELETE FROM training_modules WHERE track_id = $1`, [createdTrack.id]);
+    await q(`DELETE FROM training_tracks WHERE id = $1`, [createdTrack.id]);
+    await setArticleActive({ id: adminCrudArticle.id, active: false, actor: actorFor(ADMIN1, "م", "admin", null) });
+
+    // ══ س. القسمُ ١ (تكملةٌ حيّة) — المسؤولُ العام يرى **كلَّ** مسارٍ نشط
+    //  رغم أعلامه الشخصية الفارغة تماماً (ADMIN1 مزروعٌ بهذا الشكل أصلاً في
+    //  رأس هذا الملفّ: can_* كلُّها false). ═══════════════════════════════
+    console.log("\n── س. المسؤولُ العام يرى كلَّ المسارات النشطة ──");
+    const totalActiveTracks = (await q(`SELECT COUNT(*)::int AS n FROM training_tracks WHERE is_active = true`)).rows[0].n;
+    const adminCatalog = await (await GET("/api/training/tracks", "admin")).json();
+    same("س.١ عددُ المسارات في كتالوج المسؤول العام = كلُّ المسارات النشطة في القاعدة، بلا استثناء",
+      (adminCatalog.tracks as any[]).length, totalActiveTracks);
+    check((adminCatalog.tracks as any[]).some((t) => t.id === TRACK_ID),
+      "س.٢ ومن ضمنها المسارُ المخصَّص لهذا الاختبار (جمهورُه reception فقط — ADMIN1 لا يحمل reception كعلمٍ شخصيّ)");
   } finally {
     await cleanup(TRACK_ID);
     httpServer.close();

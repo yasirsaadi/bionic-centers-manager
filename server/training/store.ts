@@ -1,28 +1,36 @@
 // تدريبُ الموظّفين — طبقةُ البيانات. القراءةُ تحلّ المعرفةَ الفعّالة حيّاً؛
-// الكتابةُ الوحيدة تقدّمُ الموظّف نفسه.
+// الكتابةُ للموظّف العاديّ تقدّمَه هو وحده؛ وبناءُ المسارات والوحدات
+// نفسِها للمسؤول العام حصراً (القسم ٣، مراجعةُ إكمال).
 //
-// ══ لا نسخةَ ثانية من المحاسبة — ولا من المعرفة ═══════════════════════════
-// هذا الملفّ **لا يكتب معرفةً ولا يعدّلها أبداً**. المسؤولُ العام وحده
-// يفعل ذلك عبر `server/ai/knowledge/store.ts` القائمة — هذا الملفّ يقرأ
-// نتيجتها فقط (`resolveActiveArticles`) ويكتب تقدّم التدريب حصراً.
+// ══ لا نسخةَ ثانية من المحاسبة — ولا من **معرفة المقالات** ═══════════════
+// هذا الملفّ **لا يكتب مقالةَ معرفةٍ ولا يعدّلها أبداً** — ذاك يبقى حكراً
+// على `server/ai/knowledge/store.ts` القائمة، وهذا الملفّ يقرأ نتيجتها فقط
+// (`resolveActiveArticles`). أمّا **هيكلُ التدريب** (المساراتُ والوحدات
+// التي تُشير إلى تلك المقالات بمعرّفها) فيُكتَب **هنا** بنفس مبدأ «لا نسخةَ
+// ثانية»: لا تُنسَخ متونُ المقالات داخل وحدةٍ أبداً — رقمُ المقالة وحده.
 //
 // ══ الهويّةُ من الجلسة دائماً — لا معرّفَ مستخدمٍ من العميل أبداً ═══════════
-// كلُّ دالّةٍ هنا تأخذ `access: AiAccessContext` (المشتقّة من الجلسة في
-// `server/ai/access.ts`) أو حقولها الدنيا — لا `userId` خامٍ من جسم طلبٍ أو
-// وسائط أداة. فإكمالُ وحدةٍ لصالح موظّفٍ آخر مستحيلٌ بنيوياً لا بفحصٍ لاحق.
+// كلُّ دالّةٍ تخصّ تقدّم موظّفٍ تأخذ `access: AiAccessContext` (المشتقّة من
+// الجلسة في `server/ai/access.ts`) أو حقولها الدنيا — لا `userId` خامٍ من
+// جسم طلبٍ أو وسائط أداة. فإكمالُ وحدةٍ لصالح موظّفٍ آخر مستحيلٌ بنيوياً لا
+// بفحصٍ لاحق. ودوالُّ إدارة التدريب (تحت) تأخذ `Actor` — نفسُ نمط
+// `server/ai/knowledge/store.ts` — والحارسَ الحقيقيّ (المسؤولُ العام وحده)
+// في طبقة النقاط (`routes.ts`)، لا هنا.
 
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   trainingTracks, trainingModules, employeeTrainingProgress, systemUsers, branches,
+  aiKnowledgeArticles,
 } from "@shared/schema";
-import { audienceMatches, capabilitiesFor, type Capability } from "@shared/ai_capabilities";
+import { audienceMatches, capabilitiesFor, isCapability, type Capability } from "@shared/ai_capabilities";
 import {
   gradeAnswer, isQuizSpec, resolveNonQuizResult,
   type ModuleResult, type ProgressStatus, type QuizSpec,
 } from "@shared/ai_training";
 import { logAudit } from "../accounting/ledger";
 import type { AiAccessContext } from "../ai/access";
+import type { Actor } from "../ai/knowledge/store";
 
 // ═══════════════════════════════════════════════════════════════════════
 // ══ ١. حلّ المعرفة — السلسلةُ الفعّالة حيّاً، لا الرقمُ المخزَّن حرفياً ═══
@@ -45,33 +53,57 @@ import type { AiAccessContext } from "../ai/access";
  * `null` (كأنّ السلسلة سُحبت) بدل أن تُسرّب متن فرعٍ لموظّفي كلّ الفروع.
  * والشرطُ داخل الـCTE نفسِه فيقطع السلسلةَ من نقطة الانحراف لا يُصفّي
  * النتيجةَ النهائية فقط — نسخةٌ عامّةٌ لاحقة في نفس السلسلة تبقى تُحَلّ.
+ *
+ * ══ دفاعٌ في العمق — قيودُ المقالة **نفسِها**، لا قيودُ المسار وحدها
+ * (القسم ٧، مراجعةُ الإكمال) ═══════════════════════════════════════════
+ * `getModuleLesson`/`submitTrainingAnswer` يفحصان جمهورَ **المسار**، وهذا
+ * كافٍ ما دامت الوحدةُ تشير دائماً إلى مقالةٍ من نفس نطاق مسارها — لكنّه
+ * ليس ضماناً بنيوياً. فمسارٌ عامُّ الجمهور يشير خطأً إلى مقالةٍ `scope:
+ * finance` أو `audience:["finance"]` كان سيُسرّب محتواها لمن لا يملك
+ * القدرة المالية. فيُعاد هنا **نفسُ فحص النطاق** الذي يحرس الاسترجاعَ
+ * العاديّ (`server/ai/knowledge/retrieval.ts: retrieveKnowledge`) — لا
+ * قاعدةً ثانية: `scope==='finance'` يشترط `mode==='financial'` بعينها،
+ * و`scope==='administration'` يشترط `isAdmin || branch_manager` بعينها،
+ * ثمّ `audienceMatches` على عمود `audience` نفسِه. **والملغاةُ لا تُعرَض
+ * ولا تُفسَّر خطأً برمجياً** — تُستبعَد من الدرس بصمتٍ كأنّ السلسلة سُحبت،
+ * فلا يُميَّز الموظّفُ بين «حُذفت المقالة» و«ليست لك».
  */
 async function resolveActiveArticle(
-  storedId: number,
+  storedId: number, access: AiAccessContext,
 ): Promise<{ id: number; title: string; body: string } | null> {
   const result = await db.execute(sql`
     WITH RECURSIVE chain AS (
-      SELECT id, title, body, is_active, supersedes_id
+      SELECT id, title, body, scope, audience, is_active, supersedes_id
         FROM ai_knowledge_articles WHERE id = ${storedId} AND branch_id IS NULL
       UNION ALL
-      SELECT a.id, a.title, a.body, a.is_active, a.supersedes_id
+      SELECT a.id, a.title, a.body, a.scope, a.audience, a.is_active, a.supersedes_id
         FROM ai_knowledge_articles a
         JOIN chain c ON a.supersedes_id = c.id
        WHERE a.branch_id IS NULL
     )
-    SELECT id, title, body FROM chain WHERE is_active = TRUE LIMIT 1
+    SELECT id, title, body, scope, audience FROM chain WHERE is_active = TRUE LIMIT 1
   `);
   const row = (result.rows ?? [])[0] as any;
   if (!row) return null;
+
+  const caps = capabilitiesFor(access);
+  //  ══ نفسُ حارسَي `retrieveKnowledge` بالحرف — لا نسخةٌ ثانية تنحرف ══
+  const allowFinance = access.mode === "financial";
+  const allowAdministration = access.isAdmin || access.role === "branch_manager";
+  if (row.scope === "finance" && !allowFinance) return null;
+  if (row.scope === "administration" && !allowAdministration) return null;
+  const rowAudience = Array.isArray(row.audience) ? (row.audience as string[]) : null;
+  if (!audienceMatches(rowAudience, caps)) return null;
+
   return { id: Number(row.id), title: String(row.title), body: String(row.body) };
 }
 
 async function resolveActiveArticles(
-  ids: readonly number[],
+  ids: readonly number[], access: AiAccessContext,
 ): Promise<{ id: number; title: string; body: string }[]> {
   const out: { id: number; title: string; body: string }[] = [];
   for (const id of ids) {
-    const resolved = await resolveActiveArticle(id);
+    const resolved = await resolveActiveArticle(id, access);
     if (resolved) out.push(resolved);
   }
   return out;
@@ -207,12 +239,22 @@ async function touchProgress(id: number): Promise<void> {
     .where(eq(employeeTrainingProgress.id, id));
 }
 
+/**
+ * ══ `attemptCount` — يعدّ إجاباتٍ مُرسَلة، لا مرّاتِ فتحٍ (القسم ٤، مراجعةُ
+ * الإكمال) ═════════════════════════════════════════════════════════════
+ * فتحُ درسٍ (هنا) **لا يُعَدّ محاولة** — الموظّفُ لم يُجب عن شيء بعد، سواءٌ
+ * فُتحت وحدةٌ عمليّة/بلا اختبار فاكتملت فوراً، أو وحدةٌ باختبارٍ فبقيت
+ * `started`. فيبدأ العدّادُ `0` دائماً هنا، و`submitTrainingAnswer` وحدها
+ * ترفعه — أوّل إجابةٍ حقيقية تكتبه `1` لا `2` (كانت `insertProgress` تكتب
+ * `1` هنا فتُحتسَب المحاولةُ الأولى الحقيقية `٢`).
+ */
 async function insertProgress(params: {
-  userId: number; trackId: number; moduleId: number; status: ProgressStatus; completedAt: Date | null;
+  userId: number; trackId: number; moduleId: number; status: ProgressStatus;
+  completedAt: Date | null; attemptCount: number;
 }): Promise<void> {
   await db.insert(employeeTrainingProgress).values({
     userId: params.userId, trackId: params.trackId, moduleId: params.moduleId,
-    status: params.status, attemptCount: 1,
+    status: params.status, attemptCount: params.attemptCount,
     ...(params.completedAt ? { completedAt: params.completedAt } : {}),
   });
 }
@@ -243,7 +285,7 @@ export async function getModuleLesson(params: {
   const articleIds = Array.isArray(moduleRow.knowledgeArticleIds)
     ? (moduleRow.knowledgeArticleIds as unknown[]).filter((x): x is number => typeof x === "number")
     : [];
-  const lesson = await resolveActiveArticles(articleIds);
+  const lesson = await resolveActiveArticles(articleIds, params.access);
   const quiz = isQuizSpec(moduleRow.quiz) ? (moduleRow.quiz as QuizSpec) : null;
   const objectives = Array.isArray(moduleRow.learningObjectives)
     ? (moduleRow.learningObjectives as unknown[]).filter((x): x is string => typeof x === "string")
@@ -259,13 +301,13 @@ export async function getModuleLesson(params: {
       const result: ModuleResult = resolveNonQuizResult(moduleRow.practiceOnly);
       await insertProgress({
         userId: params.access.userId, trackId: trackRow.id, moduleId: moduleRow.id,
-        status: result, completedAt: new Date(),
+        status: result, completedAt: new Date(), attemptCount: 0,
       });
       status = result;
     } else {
       await insertProgress({
         userId: params.access.userId, trackId: trackRow.id, moduleId: moduleRow.id,
-        status: "started", completedAt: null,
+        status: "started", completedAt: null, attemptCount: 0,
       });
       status = "started";
     }
@@ -333,6 +375,13 @@ export async function submitTrainingAnswer(params: {
   const result: "completed" | "needs_review" = grade.passed ? "completed" : "needs_review";
   const missingHints = grade.missingIndexes.map((i) => quiz.requiredConcepts[i]?.hint ?? "");
   const now = new Date();
+  //  ══ `completedAt` يُختم عند النجاح وحده (القسم ٤، مراجعةُ الإكمال) ══
+  //  إجابةٌ خاطئة `needs_review` **لا تحمل** ختمَ اكتمال — القيدُ
+  //  `etp_completed_shape_check` (ترحيل ٠٧٦ المصحَّح) يفرض هذا في القاعدة
+  //  نفسها، فلا صفٌّ يحمل حالةً ناقصة وختمَ اكتمالٍ معاً. وإعادةُ محاولةٍ
+  //  بعد نجاحٍ سابق (نادر — لماذا يعيد موظّفٌ اختباراً اجتازه؟) تُصفِّر
+  //  `completedAt` إن رسب هذه المرّة: الحالةُ الحقيقية تسود على تاريخها.
+  const completedAtValue = result === "completed" ? now : null;
 
   //  بياناتُ تقييمٍ مدمَجة للتدقيق — لا نصَّ محادثةٍ كامل، ومقتطَفٌ قصير فقط.
   const answerSummary = {
@@ -343,13 +392,17 @@ export async function submitTrainingAnswer(params: {
   const existing = await currentProgress(params.access.userId, moduleRow.id);
   if (existing) {
     await db.update(employeeTrainingProgress).set({
-      status: result, answerSummary, completedAt: now, lastAttemptedAt: now,
+      status: result, answerSummary, completedAt: completedAtValue, lastAttemptedAt: now,
+      //  ══ محاولةٌ مُرسَلة فعلياً — أوّلُ إرسالٍ حقيقيّ يرفع العدّاد من ٠
+      //  (لا ١، بعد إصلاح `insertProgress`) إلى ١ بالضبط ══
       attemptCount: existing.attemptCount + 1, updatedAt: now,
     }).where(eq(employeeTrainingProgress.id, existing.id));
   } else {
+    //  لا صفَّ سابقٍ (إرسالٌ مباشر بلا فتح درسٍ أوّلاً) — هذا الإرسالُ نفسُه
+    //  هو المحاولةُ الأولى.
     await db.insert(employeeTrainingProgress).values({
       userId: params.access.userId, trackId: trackRow.id, moduleId: moduleRow.id,
-      status: result, answerSummary, attemptCount: 1, completedAt: now,
+      status: result, answerSummary, attemptCount: 1, completedAt: completedAtValue,
     });
   }
 
@@ -484,4 +537,248 @@ export async function getManagementTrainingProgress(
   });
 
   return { ok: true, rows };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ══ ٦. إدارةُ التدريب — إنشاءٌ وتعديلٌ للمسؤول العام وحده (القسم ٣،
+// مراجعةُ إكمال) ══════════════════════════════════════════════════════════
+//
+// ══ لماذا هنا لا في `server/ai/knowledge/store.ts` ═══════════════════════
+// هذه دوالٌّ على `training_tracks`/`training_modules` — جدولا هذا الملفّ،
+// لا `ai_knowledge_articles`. الكتابةُ الوحيدة التي تلمس المعرفةَ نفسَها
+// تبقى حصراً في ملفّ المعرفة كما كانت — هنا نكتب **إشارةً** إليها
+// (`knowledge_article_ids`) لا نصَّها.
+//
+// ══ بلا حذفٍ فعليّ أبداً ═══════════════════════════════════════════════
+// نفسُ مبدأ ٠٦١/٠٦٨/معرفة المساعد: «لا شيء يُمحى، الحالة تتغيّر». تفعيلٌ/
+// تعطيلٌ فقط — لا `DELETE` في أيّ دالّةٍ هنا، ولا نقطةَ REST توفّره.
+
+/**
+ * وجودُ كلّ رقم مقالةٍ في `ai_knowledge_articles` — **أيَّ نسخة**، فعّالةً
+ * كانت أم لا؛ `resolveActiveArticle` يمشي أماماً من أيّ نقطةٍ في السلسلة
+ * فيصل النسخةَ الفعّالة الحالية بصرف النظر عمّا أُدرِج هنا (القسم ٧). مصفوفةٌ
+ * فارغة تمرّ دائماً — «بلا مقالاتٍ مرجعية» شكلٌ صحيح لوحدةٍ (نادرٌ، لكنه ليس
+ * خطأً بنيوياً).
+ */
+async function articleIdsExist(ids: readonly number[]): Promise<boolean> {
+  if (ids.length === 0) return true;
+  const rows = await db.select({ id: aiKnowledgeArticles.id }).from(aiKnowledgeArticles)
+    .where(inArray(aiKnowledgeArticles.id, ids as number[]));
+  const found = new Set(rows.map((r) => r.id));
+  return ids.every((id) => found.has(id));
+}
+
+export interface TrainingTrackAdminRow {
+  id: number; seedKey: string | null; title: string; description: string;
+  audience: Capability[]; isActive: boolean; sortOrder: number;
+  createdByName: string; approvedByName: string; createdAt: string; updatedAt: string;
+}
+
+function toTrackAdminRow(r: typeof trainingTracks.$inferSelect): TrainingTrackAdminRow {
+  const audience = Array.isArray(r.audience)
+    ? (r.audience as unknown[]).filter((x): x is Capability => isCapability(x))
+    : [];
+  return {
+    id: r.id, seedKey: r.seedKey, title: r.title, description: r.description,
+    audience: audience.length ? audience : ["general"],
+    isActive: r.isActive, sortOrder: r.sortOrder,
+    createdByName: r.createdByName, approvedByName: r.approvedByName,
+    createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+/** إنشاءُ مسارٍ جديد — جمهورٌ صريحٌ دائماً (`["general"]` إن تُرك فارغاً، نفسُ افتراض العمود). */
+export async function createTrainingTrack(params: {
+  title: string; description: string; audience: Capability[]; sortOrder: number; actor: Actor;
+}): Promise<TrainingTrackAdminRow> {
+  const audience = params.audience.length ? params.audience : (["general"] as Capability[]);
+  const [row] = await db.insert(trainingTracks).values({
+    title: params.title.trim(), description: params.description.trim(),
+    audience, sortOrder: params.sortOrder, isActive: true,
+    createdBy: params.actor.userId, createdByName: params.actor.name ?? "—",
+    approvedBy: params.actor.userId, approvedByName: params.actor.name ?? "—",
+  }).returning();
+  await logAudit({
+    entityType: "training_track", entityId: row.id, action: "create",
+    userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+    newValues: { title: row.title, audience: row.audience, sortOrder: row.sortOrder },
+    ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null,
+  });
+  return toTrackAdminRow(row);
+}
+
+/**
+ * تعديلُ مسارٍ قائم — **حقولٌ جزئية**: غيابُ حقلٍ من `params` (لا القيمةُ
+ * `undefined` الصريحة، فهذا كائنٌ داخليّ لا جسمَ JSON — طبقةُ النقاط تقرّر
+ * أيَّ مفاتيحَ تُمرِّر) يعني «اتركه كما هو»، لا كتابةٌ فوقه بقيمةٍ فارغة.
+ * تعديلُ سطرٍ لا نسخةٌ جديدة (خلافاً للمعرفة) — المسارُ هيكلٌ تنظيميّ لا
+ * سجلٌّ يُوثَّق تاريخُ نسخه.
+ */
+export async function updateTrainingTrack(params: {
+  id: number; title?: string; description?: string; audience?: Capability[]; sortOrder?: number;
+  actor: Actor;
+}): Promise<{ ok: true; track: TrainingTrackAdminRow } | { ok: false; error: string }> {
+  return db.transaction(async (tx: any) => {
+    await tx.execute(sql`SELECT 1 FROM training_tracks WHERE id = ${params.id} FOR UPDATE`);
+    const [current] = await tx.select().from(trainingTracks).where(eq(trainingTracks.id, params.id));
+    if (!current) return { ok: false, error: "المسار غير موجود" };
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (params.title !== undefined) patch.title = params.title.trim();
+    if (params.description !== undefined) patch.description = params.description.trim();
+    if (params.audience !== undefined) patch.audience = params.audience.length ? params.audience : ["general"];
+    if (params.sortOrder !== undefined) patch.sortOrder = params.sortOrder;
+
+    const [row] = await tx.update(trainingTracks).set(patch).where(eq(trainingTracks.id, params.id)).returning();
+    await logAudit({
+      entityType: "training_track", entityId: row.id, action: "edit",
+      userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+      oldValues: { title: current.title, audience: current.audience, sortOrder: current.sortOrder },
+      newValues: { title: row.title, audience: row.audience, sortOrder: row.sortOrder },
+      ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
+    });
+    return { ok: true, track: toTrackAdminRow(row) };
+  });
+}
+
+/** تفعيلٌ/تعطيلٌ — بلا حذفٍ فعليّ أبداً، ومدقَّقٌ (كانت هاتان النقطتان تكتبان بلا تدقيق قبل هذه المراجعة). */
+export async function setTrainingTrackActive(params: {
+  id: number; active: boolean; actor: Actor;
+}): Promise<{ ok: true; track: TrainingTrackAdminRow } | { ok: false; error: string }> {
+  return db.transaction(async (tx: any) => {
+    await tx.execute(sql`SELECT 1 FROM training_tracks WHERE id = ${params.id} FOR UPDATE`);
+    const [current] = await tx.select().from(trainingTracks).where(eq(trainingTracks.id, params.id));
+    if (!current) return { ok: false, error: "المسار غير موجود" };
+    if (current.isActive === params.active) return { ok: true, track: toTrackAdminRow(current) };
+
+    const [row] = await tx.update(trainingTracks)
+      .set({ isActive: params.active, updatedAt: new Date() })
+      .where(eq(trainingTracks.id, params.id)).returning();
+    await logAudit({
+      entityType: "training_track", entityId: row.id, action: params.active ? "activate" : "deactivate",
+      userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+      newValues: { isActive: row.isActive },
+      ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
+    });
+    return { ok: true, track: toTrackAdminRow(row) };
+  });
+}
+
+export interface TrainingModuleAdminRow {
+  id: number; trackId: number; seedKey: string | null; title: string; description: string;
+  position: number; knowledgeArticleIds: number[]; learningObjectives: string[] | null;
+  quiz: QuizSpec | null; practiceOnly: boolean; isActive: boolean;
+  createdAt: string; updatedAt: string;
+}
+
+function toModuleAdminRow(r: typeof trainingModules.$inferSelect): TrainingModuleAdminRow {
+  const articleIds = Array.isArray(r.knowledgeArticleIds)
+    ? (r.knowledgeArticleIds as unknown[]).filter((x): x is number => typeof x === "number")
+    : [];
+  const objectives = Array.isArray(r.learningObjectives)
+    ? (r.learningObjectives as unknown[]).filter((x): x is string => typeof x === "string")
+    : null;
+  return {
+    id: r.id, trackId: r.trackId, seedKey: r.seedKey, title: r.title, description: r.description,
+    position: r.position, knowledgeArticleIds: articleIds,
+    learningObjectives: objectives && objectives.length ? objectives : null,
+    quiz: isQuizSpec(r.quiz) ? (r.quiz as QuizSpec) : null,
+    practiceOnly: r.practiceOnly, isActive: r.isActive,
+    createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * إنشاءُ وحدةٍ جديدة — **تحقّقٌ صارمٌ قبل الكتابة**: المسارُ موجود، وكلُّ
+ * رقم مقالةٍ مرجعيّ موجودٌ فعلاً (لا يُفحَص أنه فعّالٌ الآن — `resolveActiveArticle`
+ * يحلّ ذلك حيّاً عند كلّ قراءة، فرقمٌ يشير لنسخةٍ سابقة في سلسلةٍ لاحقاً
+ * تُعدَّل يبقى صحيحاً؛ رقمٌ لا وجود له مطلقاً وحده يُرفَض).
+ */
+export async function createTrainingModule(params: {
+  trackId: number; title: string; description: string; position: number;
+  knowledgeArticleIds: number[]; learningObjectives: string[] | null; quiz: QuizSpec | null;
+  practiceOnly: boolean; actor: Actor;
+}): Promise<{ ok: true; module: TrainingModuleAdminRow } | { ok: false; error: string }> {
+  const [track] = await db.select({ id: trainingTracks.id }).from(trainingTracks)
+    .where(eq(trainingTracks.id, params.trackId));
+  if (!track) return { ok: false, error: "المسار غير موجود" };
+  if (!(await articleIdsExist(params.knowledgeArticleIds))) {
+    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة" };
+  }
+
+  const [row] = await db.insert(trainingModules).values({
+    trackId: params.trackId, title: params.title.trim(), description: params.description.trim(),
+    position: params.position, knowledgeArticleIds: params.knowledgeArticleIds,
+    learningObjectives: params.learningObjectives, quiz: params.quiz,
+    practiceOnly: params.practiceOnly, isActive: true,
+  }).returning();
+  await logAudit({
+    entityType: "training_module", entityId: row.id, action: "create",
+    userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+    newValues: {
+      trackId: row.trackId, title: row.title, position: row.position,
+      hasQuiz: Boolean(row.quiz), practiceOnly: row.practiceOnly,
+      articleCount: params.knowledgeArticleIds.length,
+    },
+    ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null,
+  });
+  return { ok: true, module: toModuleAdminRow(row) };
+}
+
+/** تعديلُ وحدةٍ قائمة — حقولٌ جزئية، نفسُ مبدأ `updateTrainingTrack`. */
+export async function updateTrainingModule(params: {
+  id: number; title?: string; description?: string; position?: number;
+  knowledgeArticleIds?: number[]; learningObjectives?: string[] | null; quiz?: QuizSpec | null;
+  practiceOnly?: boolean; actor: Actor;
+}): Promise<{ ok: true; module: TrainingModuleAdminRow } | { ok: false; error: string }> {
+  if (params.knowledgeArticleIds !== undefined && !(await articleIdsExist(params.knowledgeArticleIds))) {
+    return { ok: false, error: "إحدى المقالات المرجعيّة غير موجودة" };
+  }
+  return db.transaction(async (tx: any) => {
+    await tx.execute(sql`SELECT 1 FROM training_modules WHERE id = ${params.id} FOR UPDATE`);
+    const [current] = await tx.select().from(trainingModules).where(eq(trainingModules.id, params.id));
+    if (!current) return { ok: false, error: "الوحدة غير موجودة" };
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (params.title !== undefined) patch.title = params.title.trim();
+    if (params.description !== undefined) patch.description = params.description.trim();
+    if (params.position !== undefined) patch.position = params.position;
+    if (params.knowledgeArticleIds !== undefined) patch.knowledgeArticleIds = params.knowledgeArticleIds;
+    if (params.learningObjectives !== undefined) patch.learningObjectives = params.learningObjectives;
+    if (params.quiz !== undefined) patch.quiz = params.quiz;
+    if (params.practiceOnly !== undefined) patch.practiceOnly = params.practiceOnly;
+
+    const [row] = await tx.update(trainingModules).set(patch).where(eq(trainingModules.id, params.id)).returning();
+    await logAudit({
+      entityType: "training_module", entityId: row.id, action: "edit",
+      userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+      oldValues: { title: current.title, position: current.position, hasQuiz: Boolean(current.quiz) },
+      newValues: { title: row.title, position: row.position, hasQuiz: Boolean(row.quiz) },
+      ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
+    });
+    return { ok: true, module: toModuleAdminRow(row) };
+  });
+}
+
+/** تفعيلٌ/تعطيلٌ لوحدة — بلا حذفٍ فعليّ، ومدقَّق. */
+export async function setTrainingModuleActive(params: {
+  id: number; active: boolean; actor: Actor;
+}): Promise<{ ok: true; module: TrainingModuleAdminRow } | { ok: false; error: string }> {
+  return db.transaction(async (tx: any) => {
+    await tx.execute(sql`SELECT 1 FROM training_modules WHERE id = ${params.id} FOR UPDATE`);
+    const [current] = await tx.select().from(trainingModules).where(eq(trainingModules.id, params.id));
+    if (!current) return { ok: false, error: "الوحدة غير موجودة" };
+    if (current.isActive === params.active) return { ok: true, module: toModuleAdminRow(current) };
+
+    const [row] = await tx.update(trainingModules)
+      .set({ isActive: params.active, updatedAt: new Date() })
+      .where(eq(trainingModules.id, params.id)).returning();
+    await logAudit({
+      entityType: "training_module", entityId: row.id, action: params.active ? "activate" : "deactivate",
+      userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+      newValues: { isActive: row.isActive },
+      ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
+    });
+    return { ok: true, module: toModuleAdminRow(row) };
+  });
 }

@@ -53,13 +53,14 @@ import {
   Layers,
   Sparkles,
   Activity,
-  Plus,
-  Trash2, Bell,
+  Bell,
   GraduationCap,
 } from "lucide-react";
 import type { Branch, BranchSetting, SystemUser } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MEDICAL_SPECIALTIES, SPECIALTY_LABELS } from "@shared/medical";
+import { CAPABILITIES, CAPABILITY_LABELS, type Capability } from "@shared/ai_capabilities";
+import { isQuizSpec } from "@shared/ai_training";
 import {
   Select,
   SelectContent,
@@ -1317,6 +1318,9 @@ interface AiKnowledgeArticleRow {
   isActive: boolean;
   version: number;
   supersedesId: number | null;
+  /** جمهورُ القدرات (ترحيل ٠٧٦) — `null` = بلا قيدٍ إضافيّ فوق النطاق. */
+  audience: string[] | null;
+  contentType: string;
   createdByName: string;
   approvedByName: string;
   approvedAt: string;
@@ -1349,6 +1353,15 @@ const KNOWLEDGE_SCOPE_LABELS: Record<string, string> = {
 };
 const KNOWLEDGE_SCOPES = Object.keys(KNOWLEDGE_SCOPE_LABELS);
 
+/** نوعُ المحتوى (ترحيل ٠٧٦) — نفسُ قيدَي CHECK في القاعدة، لا قيمةٌ ثالثة. */
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  workflow: "مسارُ عمل", troubleshooting: "استكشافُ أخطاء",
+};
+const CONTENT_TYPES = Object.keys(CONTENT_TYPE_LABELS);
+
+/** جمهورٌ قابلٌ للاختيار في لوحة المعرفة — بلا «عامّ»: تركُ الكلّ بلا تأشير هو «عامّ». */
+const SELECTABLE_AUDIENCE_CAPABILITIES = CAPABILITIES.filter((c) => c !== "general");
+
 function AiKnowledgeTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1356,6 +1369,15 @@ function AiKnowledgeTab() {
   const [decision, setDecision] = useState<{ suggestion: AiKnowledgeSuggestionRow; mode: "approve" | "reject" } | null>(null);
   const [approveAsNew, setApproveAsNew] = useState(true);
   const [approveTargetId, setApproveTargetId] = useState<string>("");
+  //  ══ الجمهورُ ونوعُ المحتوى — حالةٌ مضبوطة (Checkbox لا يقرؤها FormData) ══
+  //  تُضبَط عند فتح كلّ نافذة (إنشاء/تعديل مقالة، أو اعتمادُ اقتراحٍ كمقالةٍ
+  //  جديدة) وتُرسَل صراحةً عند الحفظ — للتعديل هذا يعني عملياً «أعِد إرسال
+  //  ما تراه الشاشة»، وهو مطابقٌ لوراثة الخادم حين لا يلمسها المسؤول أصلاً.
+  const [articleAudience, setArticleAudience] = useState<Capability[]>([]);
+  const [articleContentType, setArticleContentType] = useState<string>("workflow");
+  const toggleArticleAudience = (cap: Capability, checked: boolean) => {
+    setArticleAudience((prev) => (checked ? [...prev, cap] : prev.filter((c) => c !== cap)));
+  };
 
   const { data: branches = [] } = useQuery<BranchOption[]>({ queryKey: ["/api/branches"] });
   const { data: articlesData, isLoading: articlesLoading } = useQuery<{ rows: AiKnowledgeArticleRow[] }>({
@@ -1377,12 +1399,18 @@ function AiKnowledgeTab() {
   };
 
   const saveArticle = useMutation({
-    mutationFn: async (data: { id?: number; title: string; body: string; scope: string; branchId: number | null }) => {
+    mutationFn: async (data: {
+      id?: number; title: string; body: string; scope: string; branchId: number | null;
+      audience: Capability[]; contentType: string;
+    }) => {
       const url = data.id ? `/api/ai/knowledge/articles/${data.id}` : "/api/ai/knowledge/articles";
       const method = data.id ? "PATCH" : "POST";
       const res = await fetch(url, {
         method, headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ title: data.title, body: data.body, scope: data.scope, branchId: data.branchId }),
+        body: JSON.stringify({
+          title: data.title, body: data.body, scope: data.scope, branchId: data.branchId,
+          audience: data.audience, contentType: data.contentType,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1419,6 +1447,9 @@ function AiKnowledgeTab() {
       id: number; mode: "approve" | "reject";
       decisionNote?: string; targetArticleId?: number | null;
       title?: string; body?: string; scope?: string; branchId?: number | null;
+      //  ══ فقط لمقالةٍ جديدة — غيابُهما عند تعديل مقالةٍ قائمة يعني
+      //  وراثة الخادم لجمهورها/نوعها الحاليَّين بدل مسحهما صامتاً ══
+      audience?: Capability[]; contentType?: string;
     }) => {
       const url = `/api/ai/knowledge/suggestions/${params.id}/${params.mode === "approve" ? "approve" : "reject"}`;
       const res = await fetch(url, {
@@ -1428,6 +1459,8 @@ function AiKnowledgeTab() {
             ? {
               targetArticleId: params.targetArticleId ?? null,
               title: params.title, body: params.body, scope: params.scope, branchId: params.branchId,
+              ...(params.audience !== undefined ? { audience: params.audience } : {}),
+              ...(params.contentType !== undefined ? { contentType: params.contentType } : {}),
             }
             : { decisionNote: params.decisionNote },
         ),
@@ -1487,7 +1520,10 @@ function AiKnowledgeTab() {
                 <div className="flex gap-2 pt-1">
                   <Button
                     size="sm"
-                    onClick={() => { setDecision({ suggestion: s, mode: "approve" }); setApproveAsNew(true); setApproveTargetId(""); }}
+                    onClick={() => {
+                      setDecision({ suggestion: s, mode: "approve" }); setApproveAsNew(true); setApproveTargetId("");
+                      setArticleAudience([]); setArticleContentType("workflow");
+                    }}
                     data-testid={`button-approve-suggestion-${s.id}`}
                   >
                     اعتماد
@@ -1538,7 +1574,10 @@ function AiKnowledgeTab() {
             </p>
           </div>
           <Button
-            onClick={() => setArticleDialog({ mode: "create", article: null })}
+            onClick={() => {
+              setArticleDialog({ mode: "create", article: null });
+              setArticleAudience([]); setArticleContentType("workflow");
+            }}
             className="gap-2 shrink-0"
             data-testid="button-add-knowledge-article"
           >
@@ -1570,6 +1609,14 @@ function AiKnowledgeTab() {
                         <Badge variant={a.isActive ? "default" : "outline"} className="font-normal">
                           {a.isActive ? "فعّالة" : "غير فعّالة"}
                         </Badge>
+                        {a.contentType === "troubleshooting" && (
+                          <Badge variant="outline" className="font-normal text-amber-700 border-amber-300">استكشافُ أخطاء</Badge>
+                        )}
+                        {(a.audience ?? []).map((cap) => (
+                          <Badge key={cap} variant="outline" className="font-normal text-[10px]">
+                            {CAPABILITY_LABELS[cap as Capability] ?? cap}
+                          </Badge>
+                        ))}
                         <span className="text-xs text-muted-foreground">نسخة {a.version}</span>
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{a.body}</p>
@@ -1579,7 +1626,11 @@ function AiKnowledgeTab() {
                       {a.isActive && (
                         <Button
                           size="sm" variant="outline"
-                          onClick={() => setArticleDialog({ mode: "edit", article: a })}
+                          onClick={() => {
+                            setArticleDialog({ mode: "edit", article: a });
+                            setArticleAudience(((a.audience as Capability[] | null) ?? []));
+                            setArticleContentType(a.contentType || "workflow");
+                          }}
                           data-testid={`button-edit-article-${a.id}`}
                         >
                           <Pencil className="h-3.5 w-3.5" />
@@ -1620,7 +1671,10 @@ function AiKnowledgeTab() {
                 toast({ title: "العنوان والنص مطلوبان", variant: "destructive" });
                 return;
               }
-              saveArticle.mutate({ id: articleDialog?.article?.id, title, body, scope, branchId });
+              saveArticle.mutate({
+                id: articleDialog?.article?.id, title, body, scope, branchId,
+                audience: articleAudience, contentType: articleContentType,
+              });
             }}
             className="space-y-4"
           >
@@ -1650,6 +1704,39 @@ function AiKnowledgeTab() {
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">نوعُ المحتوى</label>
+                <select
+                  value={articleContentType}
+                  onChange={(e) => setArticleContentType(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  data-testid="select-article-content-type"
+                >
+                  {CONTENT_TYPES.map((t) => (
+                    <option key={t} value={t}>{CONTENT_TYPE_LABELS[t]}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2 space-y-2">
+                <label className="text-sm font-medium">
+                  الجمهورُ المسموح <span className="font-normal text-muted-foreground">(اتركه فارغاً ليصل الجميعَ ضمن النطاق أعلاه)</span>
+                </label>
+                <div className="flex flex-wrap gap-3 rounded-md border p-2.5">
+                  {SELECTABLE_AUDIENCE_CAPABILITIES.map((cap) => (
+                    <div key={cap} className="flex items-center gap-1.5">
+                      <Checkbox
+                        id={`article-audience-${cap}`}
+                        checked={articleAudience.includes(cap)}
+                        onCheckedChange={(checked) => toggleArticleAudience(cap, checked === true)}
+                        data-testid={`checkbox-article-audience-${cap}`}
+                      />
+                      <label htmlFor={`article-audience-${cap}`} className="text-xs cursor-pointer">
+                        {CAPABILITY_LABELS[cap]}
+                      </label>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="col-span-2 space-y-2">
                 <label className="text-sm font-medium">العنوان *</label>
@@ -1710,7 +1797,10 @@ function AiKnowledgeTab() {
                   const scope = String(fd.get("scope") || "general");
                   const branchId = fd.get("branchId") ? parseInt(String(fd.get("branchId"))) : null;
                   if (!title) { toast({ title: "عنوان المقالة الجديدة مطلوب", variant: "destructive" }); return; }
-                  decideSuggestion.mutate({ id: decision.suggestion.id, mode: "approve", title, body, scope, branchId });
+                  decideSuggestion.mutate({
+                    id: decision.suggestion.id, mode: "approve", title, body, scope, branchId,
+                    audience: articleAudience, contentType: articleContentType,
+                  });
                 } else {
                   if (!approveTargetId) { toast({ title: "اختر المقالة المستهدَفة", variant: "destructive" }); return; }
                   decideSuggestion.mutate({ id: decision.suggestion.id, mode: "approve", targetArticleId: parseInt(approveTargetId), body });
@@ -1740,6 +1830,35 @@ function AiKnowledgeTab() {
                       <option value="">كل الفروع</option>
                       {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
                     </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">نوعُ المحتوى</label>
+                    <select
+                      value={articleContentType}
+                      onChange={(e) => setArticleContentType(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      {CONTENT_TYPES.map((t) => (<option key={t} value={t}>{CONTENT_TYPE_LABELS[t]}</option>))}
+                    </select>
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    <label className="text-sm font-medium">
+                      الجمهورُ المسموح <span className="font-normal text-muted-foreground">(اتركه فارغاً ليصل الجميعَ ضمن النطاق)</span>
+                    </label>
+                    <div className="flex flex-wrap gap-3 rounded-md border p-2.5">
+                      {SELECTABLE_AUDIENCE_CAPABILITIES.map((cap) => (
+                        <div key={cap} className="flex items-center gap-1.5">
+                          <Checkbox
+                            id={`approve-audience-${cap}`}
+                            checked={articleAudience.includes(cap)}
+                            onCheckedChange={(checked) => toggleArticleAudience(cap, checked === true)}
+                          />
+                          <label htmlFor={`approve-audience-${cap}`} className="text-xs cursor-pointer">
+                            {CAPABILITY_LABELS[cap]}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div className="col-span-2 space-y-2">
                     <label className="text-sm font-medium">العنوان *</label>
@@ -1787,6 +1906,7 @@ function AiKnowledgeTab() {
 interface TrainingModuleRow {
   id: number; trackId: number; seedKey: string | null; title: string; description: string;
   position: number; isActive: boolean; practiceOnly: boolean; quiz: unknown;
+  knowledgeArticleIds: number[]; learningObjectives: string[] | null;
 }
 interface TrainingTrackRow {
   id: number; seedKey: string | null; title: string; description: string;
@@ -1852,17 +1972,140 @@ function TrainingAdminTab() {
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
+  //  ══ إنشاءُ/تعديلُ المسارات والوحدات — المسؤولُ العام وحده (القسم ٣) ═══════
+  //  مقالاتُ المعرفة الفعّالة وحدها مرجعٌ لاختيار دروس الوحدة — **بلا اقتراحٍ
+  //  معلَّق ولا مرفوض يمكن أن يصل هذه القائمة إطلاقاً** (نفسُ استعلام
+  //  `AiKnowledgeTab`؛ React Query يدمج النداءين بمفتاحٍ واحد، فلا ازدواج).
+  const { data: articlesForTrainingData } = useQuery<{ rows: AiKnowledgeArticleRow[] }>({
+    queryKey: ["/api/ai/knowledge/articles"],
+  });
+  const activeArticlesForTraining = (articlesForTrainingData?.rows ?? []).filter((a) => a.isActive);
+
+  const [trackDialogOpen, setTrackDialogOpen] = useState(false);
+  const [editingTrack, setEditingTrack] = useState<TrainingTrackRow | null>(null);
+  const [trackTitle, setTrackTitle] = useState("");
+  const [trackDescription, setTrackDescription] = useState("");
+  const [trackAudience, setTrackAudience] = useState<Capability[]>([]);
+  const [trackSortOrder, setTrackSortOrder] = useState(0);
+
+  const openCreateTrack = () => {
+    setEditingTrack(null);
+    setTrackTitle(""); setTrackDescription(""); setTrackAudience([]); setTrackSortOrder(0);
+    setTrackDialogOpen(true);
+  };
+  const openEditTrack = (t: TrainingTrackRow) => {
+    setEditingTrack(t);
+    setTrackTitle(t.title); setTrackDescription(t.description);
+    setTrackAudience((t.audience as Capability[]) ?? []);
+    setTrackSortOrder(t.sortOrder);
+    setTrackDialogOpen(true);
+  };
+
+  const saveTrack = useMutation({
+    mutationFn: async () => {
+      const url = editingTrack ? `/api/training/admin/tracks/${editingTrack.id}` : "/api/training/admin/tracks";
+      const method = editingTrack ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({
+          title: trackTitle, description: trackDescription, audience: trackAudience, sortOrder: trackSortOrder,
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "تعذّر الحفظ"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateTraining();
+      toast({ title: editingTrack ? "تم تعديل المسار" : "تمّت إضافةُ المسار" });
+      setTrackDialogOpen(false);
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
+  const [moduleDialogOpen, setModuleDialogOpen] = useState(false);
+  const [editingModule, setEditingModule] = useState<TrainingModuleRow | null>(null);
+  const [moduleTrackId, setModuleTrackId] = useState<number | null>(null);
+  const [moduleTitle, setModuleTitle] = useState("");
+  const [moduleDescription, setModuleDescription] = useState("");
+  const [modulePosition, setModulePosition] = useState(0);
+  const [moduleArticleIds, setModuleArticleIds] = useState<number[]>([]);
+  const [moduleObjectivesText, setModuleObjectivesText] = useState("");
+  const [moduleQuizJson, setModuleQuizJson] = useState("");
+  const [modulePracticeOnly, setModulePracticeOnly] = useState(false);
+
+  const openCreateModule = (trackId: number) => {
+    setEditingModule(null); setModuleTrackId(trackId);
+    setModuleTitle(""); setModuleDescription(""); setModulePosition(0);
+    setModuleArticleIds([]); setModuleObjectivesText(""); setModuleQuizJson(""); setModulePracticeOnly(false);
+    setModuleDialogOpen(true);
+  };
+  const openEditModule = (m: TrainingModuleRow) => {
+    setEditingModule(m); setModuleTrackId(m.trackId);
+    setModuleTitle(m.title); setModuleDescription(m.description); setModulePosition(m.position);
+    setModuleArticleIds(m.knowledgeArticleIds ?? []);
+    setModuleObjectivesText((m.learningObjectives ?? []).join("\n"));
+    setModuleQuizJson(m.quiz ? JSON.stringify(m.quiz, null, 2) : "");
+    setModulePracticeOnly(m.practiceOnly);
+    setModuleDialogOpen(true);
+  };
+  const toggleModuleArticle = (id: number, checked: boolean) => {
+    setModuleArticleIds((prev) => (checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)));
+  };
+
+  const saveModule = useMutation({
+    mutationFn: async () => {
+      let quiz: unknown = null;
+      const trimmedQuiz = moduleQuizJson.trim();
+      if (!modulePracticeOnly && trimmedQuiz) {
+        try {
+          quiz = JSON.parse(trimmedQuiz);
+        } catch {
+          throw new Error("نصُّ الاختبار ليس JSON صالحاً");
+        }
+        if (!isQuizSpec(quiz)) throw new Error("شكلُ الاختبار غير صالح — راجع المثال أسفل الحقل");
+      }
+      const objectives = moduleObjectivesText.split("\n").map((s) => s.trim()).filter(Boolean);
+      const body = {
+        title: moduleTitle, description: moduleDescription, position: modulePosition,
+        knowledgeArticleIds: moduleArticleIds,
+        learningObjectives: objectives.length ? objectives : null,
+        quiz, practiceOnly: modulePracticeOnly,
+      };
+      const url = editingModule
+        ? `/api/training/admin/modules/${editingModule.id}`
+        : `/api/training/admin/tracks/${moduleTrackId}/modules`;
+      const method = editingModule ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "تعذّر الحفظ"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateTraining();
+      toast({ title: editingModule ? "تم تعديل الوحدة" : "تمّت إضافةُ الوحدة" });
+      setModuleDialogOpen(false);
+    },
+    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+  });
+
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GraduationCap className="h-5 w-5 text-primary" />
-            مساراتُ التدريب ووحداتُها
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5 text-primary" />
+              مساراتُ التدريب ووحداتُها
+            </CardTitle>
+            <Button type="button" size="sm" variant="outline" onClick={openCreateTrack} data-testid="button-new-track">
+              <Plus className="h-4 w-4 ml-1" /> مسارٌ جديد
+            </Button>
+          </div>
           <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-            مبنيّةٌ فوق معرفة المساعد المعتمَدة — تعديلُ مقالةٍ من تبويب «معرفة المساعد» يصل دروسَها المرتبطة
-            تلقائياً. التفعيل والتعطيل هنا فقط.
+            الدروسُ مبنيّةٌ فوق معرفة المساعد المعتمَدة — تعديلُ مقالةٍ من تبويب «معرفة المساعد» يصل الدروسَ
+            المرتبطة بها تلقائياً. الإنشاءُ والتعديلُ والتفعيلُ/التعطيلُ من هنا؛ لا حذفَ فعليّاً.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1882,6 +2125,13 @@ function TrainingAdminTab() {
                   ))}
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    type="button" size="icon" variant="ghost" className="h-7 w-7"
+                    onClick={() => openEditTrack(t)}
+                    data-testid={`button-edit-track-${t.id}`}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
                   <span className="text-xs text-muted-foreground">{t.isActive ? "فعّال" : "معطَّل"}</span>
                   <Switch
                     checked={t.isActive}
@@ -1900,6 +2150,13 @@ function TrainingAdminTab() {
                       {m.practiceOnly ? <Badge variant="outline" className="text-[10px]">تدريبٌ عمليّ</Badge> : null}
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        type="button" size="icon" variant="ghost" className="h-6 w-6"
+                        onClick={() => openEditModule(m)}
+                        data-testid={`button-edit-module-${m.id}`}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
                       <span className="text-[11px] text-muted-foreground">{m.isActive ? "فعّالة" : "معطَّلة"}</span>
                       <Switch
                         checked={m.isActive}
@@ -1909,6 +2166,14 @@ function TrainingAdminTab() {
                     </div>
                   </div>
                 ))}
+                <Button
+                  type="button" size="sm" variant="ghost"
+                  className="h-7 text-xs w-full justify-start gap-1.5 text-muted-foreground"
+                  onClick={() => openCreateModule(t.id)}
+                  data-testid={`button-new-module-${t.id}`}
+                >
+                  <Plus className="h-3.5 w-3.5" /> وحدةٌ جديدة في هذا المسار
+                </Button>
               </div>
             </div>
           ))}
@@ -1962,6 +2227,172 @@ function TrainingAdminTab() {
           ))}
         </CardContent>
       </Card>
+
+      <Dialog open={trackDialogOpen} onOpenChange={setTrackDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingTrack ? "تعديلُ مسار" : "مسارٌ جديد"}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!trackTitle.trim() || !trackDescription.trim()) {
+                toast({ title: "العنوانُ والوصفُ مطلوبان", variant: "destructive" });
+                return;
+              }
+              saveTrack.mutate();
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium">العنوان *</label>
+              <Input value={trackTitle} onChange={(e) => setTrackTitle(e.target.value)} required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">الوصف *</label>
+              <Textarea value={trackDescription} onChange={(e) => setTrackDescription(e.target.value)} rows={2} required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">ترتيبُ الظهور</label>
+              <Input
+                type="number"
+                value={trackSortOrder}
+                onChange={(e) => setTrackSortOrder(parseInt(e.target.value, 10) || 0)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                الجمهورُ المسموح <span className="font-normal text-muted-foreground">(اتركه فارغاً ليصل الجميع)</span>
+              </label>
+              <div className="flex flex-wrap gap-3 rounded-md border p-2.5">
+                {SELECTABLE_AUDIENCE_CAPABILITIES.map((cap) => (
+                  <div key={cap} className="flex items-center gap-1.5">
+                    <Checkbox
+                      id={`track-audience-${cap}`}
+                      checked={trackAudience.includes(cap)}
+                      onCheckedChange={(checked) =>
+                        setTrackAudience((prev) =>
+                          checked === true ? Array.from(new Set([...prev, cap])) : prev.filter((c) => c !== cap),
+                        )
+                      }
+                    />
+                    <label htmlFor={`track-audience-${cap}`} className="text-xs cursor-pointer">
+                      {CAPABILITY_LABELS[cap]}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setTrackDialogOpen(false)}>إلغاء</Button>
+              <Button type="submit" disabled={saveTrack.isPending}>
+                {saveTrack.isPending ? "جارٍ الحفظ..." : "حفظ"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={moduleDialogOpen} onOpenChange={setModuleDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingModule ? "تعديلُ وحدة" : "وحدةٌ جديدة"}</DialogTitle>
+            <DialogDescription>
+              ضمن مسار: {tracks.find((t) => t.id === moduleTrackId)?.title ?? "—"}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!moduleTitle.trim() || !moduleDescription.trim()) {
+                toast({ title: "العنوانُ والوصفُ مطلوبان", variant: "destructive" });
+                return;
+              }
+              saveModule.mutate();
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium">العنوان *</label>
+              <Input value={moduleTitle} onChange={(e) => setModuleTitle(e.target.value)} required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">الوصف *</label>
+              <Textarea value={moduleDescription} onChange={(e) => setModuleDescription(e.target.value)} rows={2} required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">ترتيبُ الظهور ضمن المسار</label>
+              <Input
+                type="number"
+                value={modulePosition}
+                onChange={(e) => setModulePosition(parseInt(e.target.value, 10) || 0)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">المقالاتُ المرجعية (المعتمَدة فقط)</label>
+              <div className="max-h-40 overflow-y-auto rounded-md border p-2 space-y-1">
+                {activeArticlesForTraining.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">لا مقالاتٍ معتمَدة بعد.</p>
+                ) : (
+                  activeArticlesForTraining.map((a) => (
+                    <div key={a.id} className="flex items-center gap-1.5">
+                      <Checkbox
+                        id={`module-article-${a.id}`}
+                        checked={moduleArticleIds.includes(a.id)}
+                        onCheckedChange={(checked) => toggleModuleArticle(a.id, checked === true)}
+                      />
+                      <label htmlFor={`module-article-${a.id}`} className="text-xs cursor-pointer truncate">
+                        {a.title}
+                      </label>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                أهدافُ التعلّم <span className="font-normal text-muted-foreground">(سطرٌ لكلّ هدف، اختياري)</span>
+              </label>
+              <Textarea
+                value={moduleObjectivesText}
+                onChange={(e) => setModuleObjectivesText(e.target.value)}
+                rows={3}
+                placeholder={"مثال:\nمعرفة مَن يملك canViewPatients\nمعرفة أثر الحذف الناعم على سجلّ المريض"}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="module-practice-only"
+                checked={modulePracticeOnly}
+                onCheckedChange={(v) => setModulePracticeOnly(v === true)}
+              />
+              <label htmlFor="module-practice-only" className="text-xs cursor-pointer">
+                درسٌ عمليّ بلا اختبار (تُسجَّل مكتملةً بمجرّد فتحها)
+              </label>
+            </div>
+            {!modulePracticeOnly && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  الاختبار <span className="font-normal text-muted-foreground">(JSON، اختياري — اتركه فارغاً لدرسٍ بلا اختبار)</span>
+                </label>
+                <Textarea
+                  value={moduleQuizJson}
+                  onChange={(e) => setModuleQuizJson(e.target.value)}
+                  rows={6}
+                  className="font-mono text-xs"
+                  placeholder={'{\n  "question": "متى يُمنح canViewPatients؟",\n  "requiredConcepts": [\n    { "keywords": ["مدير", "فرع"], "hint": "اذكر أن مدير الفرع يملكها" }\n  ]\n}'}
+                />
+              </div>
+            )}
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setModuleDialogOpen(false)}>إلغاء</Button>
+              <Button type="submit" disabled={saveModule.isPending}>
+                {saveModule.isPending ? "جارٍ الحفظ..." : "حفظ"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -14,8 +14,8 @@ import type { Express } from "express";
 import { storage } from "../../storage";
 import {
   approveSuggestion, createArticle, createSuggestion, editArticle,
-  isKnowledgeScope, listArticlesForAdmin, listSuggestions, rejectSuggestion,
-  setArticleActive, type Actor,
+  isKnowledgeContentType, isKnowledgeScope, listArticlesForAdmin, listSuggestions,
+  parseAudience, rejectSuggestion, setArticleActive, type Actor,
 } from "./store";
 
 type Req = any;
@@ -68,6 +68,31 @@ async function resolveBranchIdField(v: unknown): Promise<{ ok: true; value: numb
   const branches = await storage.getBranches();
   if (!branches.some((b) => b.id === parsed)) return { ok: false };
   return { ok: true, value: parsed };
+}
+
+/**
+ * جمهورُ المقالة ونوعُ محتواها من الجسم — **الحضورُ يقرّر لا القيمة**
+ * (القسم ٢، مراجعةُ الإكمال). مفتاحٌ غائبٌ من الجسم لا يدخل الكائن الناتج
+ * أصلاً، فيَرث `editArticleTx`/`approveSuggestion` القيمةَ الحالية بدل أن
+ * يُسقطاها بصمت؛ ومفتاحٌ حاضرٌ (ولو `null` صراحةً لمسح القيد) يُتحقَّق منه
+ * ويُضاف. فشلُ التحقّق فشلٌ مغلَق — لا كتابةَ بقيمةٍ ملفَّقة.
+ */
+function metadataFieldsFrom(body: any):
+  | { ok: true; fields: { audience?: import("@shared/ai_capabilities").Capability[] | null; contentType?: import("./store").KnowledgeContentType } }
+  | { ok: false; error: string } {
+  const fields: { audience?: import("@shared/ai_capabilities").Capability[] | null; contentType?: import("./store").KnowledgeContentType } = {};
+  if (body && Object.prototype.hasOwnProperty.call(body, "audience")) {
+    const parsed = parseAudience(body.audience);
+    if (!parsed.ok) return { ok: false, error: "جمهورٌ غير صالح — كلّ عنصرٍ يجب أن يكون قدرةً معروفة (reception/patients/medical/expert/physio/finance/reports/manager/admin/general)" };
+    fields.audience = parsed.value;
+  }
+  if (body && Object.prototype.hasOwnProperty.call(body, "contentType")) {
+    if (!isKnowledgeContentType(body.contentType)) {
+      return { ok: false, error: "نوعُ المحتوى يجب أن يكون workflow أو troubleshooting" };
+    }
+    fields.contentType = body.contentType;
+  }
+  return { ok: true, fields };
 }
 
 function articleIdList(v: unknown): number[] {
@@ -152,6 +177,11 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
       branchId = resolved.value;
     }
 
+    //  ══ الجمهور ونوعُ المحتوى — غيابهما وراثةٌ من المقالة المستهدَفة (تعديل)
+    //  أو افتراضٌ (مقالةٌ جديدة)، لا مسحاً صامتاً ══
+    const metadata = metadataFieldsFrom(req.body);
+    if (!metadata.ok) return res.status(400).json({ error: metadata.error });
+
     const result = await approveSuggestion({
       id,
       targetArticleId,
@@ -159,6 +189,7 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
       body: str(req.body?.body) ?? undefined,
       scope: isKnowledgeScope(scope) ? scope : undefined,
       branchId,
+      ...metadata.fields,
       actor: actorFrom(req),
     });
     if (!result.ok) return res.status(409).json({ error: result.error });
@@ -199,8 +230,11 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
     if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
 
+    const metadata = metadataFieldsFrom(req.body);
+    if (!metadata.ok) return res.status(400).json({ error: metadata.error });
+
     const article = await createArticle({
-      title, body, scope, branchId: resolvedBranch.value, actor: actorFrom(req),
+      title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req),
     });
     res.status(201).json({ article });
   });
@@ -221,8 +255,13 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
     if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
 
+    //  ══ غيابُ audience/contentType من الجسم ⟶ وراثةٌ من النسخة الحالية —
+    //  لا يفتحهما هذا المسار بصمت (القسم ٢، مراجعةُ الإكمال) ══
+    const metadata = metadataFieldsFrom(req.body);
+    if (!metadata.ok) return res.status(400).json({ error: metadata.error });
+
     const result = await editArticle({
-      id, title, body, scope, branchId: resolvedBranch.value, actor: actorFrom(req),
+      id, title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req),
     });
     if (!result.ok) return res.status(409).json({ error: result.error });
     res.json({ article: result.article });

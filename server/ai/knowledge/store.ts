@@ -19,7 +19,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { aiKnowledgeArticles, aiKnowledgeSuggestions } from "@shared/schema";
 import { logAudit } from "../../accounting/ledger";
-import type { Capability } from "@shared/ai_capabilities";
+import { isCapability, type Capability } from "@shared/ai_capabilities";
 
 export type KnowledgeScope =
   | "general" | "reception" | "medical" | "manufacturing"
@@ -33,6 +33,31 @@ export const KNOWLEDGE_SCOPES: readonly KnowledgeScope[] = [
 
 export function isKnowledgeScope(v: unknown): v is KnowledgeScope {
   return typeof v === "string" && (KNOWLEDGE_SCOPES as readonly string[]).includes(v);
+}
+
+/** نفسُ قيدَي `CHECK` الترحيل ٠٧٦ على `content_type` — مصدرٌ واحد. */
+export const KNOWLEDGE_CONTENT_TYPES = ["workflow", "troubleshooting"] as const;
+export type KnowledgeContentType = (typeof KNOWLEDGE_CONTENT_TYPES)[number];
+export function isKnowledgeContentType(v: unknown): v is KnowledgeContentType {
+  return typeof v === "string" && (KNOWLEDGE_CONTENT_TYPES as readonly string[]).includes(v);
+}
+
+/**
+ * تحقّقٌ صارمٌ من جمهور المقالة (٠٧٦، القسم ٢ من مراجعة الإكمال) — **فشلٌ
+ * مغلَق**: أيّ عنصرٍ ليس قدرةً حقيقية من `shared/ai_capabilities.ts` يردّ
+ * `{ok:false}` بدل تجاهله صامتاً. الغيابُ (`undefined`/`null`) يبقى «بلا
+ * قيد» صحيحاً، ومصفوفةٌ فارغة تُطبَّع إلى `null` — **صورةٌ واحدة مخزَّنة**
+ * لـ«بلا قيد» لا صورتان (`null` و`[]`) قد تنحرفان لاحقاً في شرطٍ يفحص
+ * إحداهما فقط.
+ */
+export function parseAudience(
+  v: unknown,
+): { ok: true; value: Capability[] | null } | { ok: false } {
+  if (v === undefined || v === null) return { ok: true, value: null };
+  if (!Array.isArray(v)) return { ok: false };
+  if (v.length === 0) return { ok: true, value: null };
+  if (!v.every((x) => isCapability(x))) return { ok: false };
+  return { ok: true, value: Array.from(new Set(v as Capability[])) };
 }
 
 /** مَن يكتب — من الجلسة دائماً، لا من جسم الطلب. */
@@ -139,6 +164,9 @@ export interface ArticleAdminRow extends ActiveArticleRow {
   isActive: boolean;
   version: number;
   supersedesId: number | null;
+  /** جمهورُ القدرات (٠٧٦) — `null` = بلا قيدٍ إضافيّ فوق `scope`. */
+  audience: Capability[] | null;
+  contentType: KnowledgeContentType;
   createdByName: string;
   approvedByName: string;
   approvedAt: string;
@@ -147,9 +175,14 @@ export interface ArticleAdminRow extends ActiveArticleRow {
 }
 
 function toAdminRow(r: typeof aiKnowledgeArticles.$inferSelect): ArticleAdminRow {
+  const audience = Array.isArray(r.audience)
+    ? (r.audience as unknown[]).filter((x): x is Capability => isCapability(x))
+    : null;
   return {
     id: r.id, title: r.title, body: r.body, scope: r.scope, branchId: r.branchId,
     seedKey: r.seedKey, isActive: r.isActive, version: r.version, supersedesId: r.supersedesId,
+    audience: audience && audience.length ? audience : null,
+    contentType: isKnowledgeContentType(r.contentType) ? r.contentType : "workflow",
     createdByName: r.createdByName, approvedByName: r.approvedByName,
     approvedAt: r.approvedAt.toISOString(), createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
@@ -168,15 +201,32 @@ interface ArticleWriteParams {
   scope: KnowledgeScope;
   branchId: number | null;
   actor: Actor;
+  /**
+   * ══ إنشاءٌ vs تعديل — معنيان مختلفان لغياب الحقل (القسم ٢، مراجعةُ
+   * الإكمال) ══════════════════════════════════════════════════════════════
+   * **إنشاءٌ** (`createArticleTx`): الغيابُ = الافتراض (`audience: null`،
+   * `contentType: "workflow"`). **تعديلٌ** (`editArticleTx`): الغيابُ =
+   * **وراثةٌ** من المقالة الحالية — تعديلُ صياغةٍ لا يجوز أن يُسقط قيداً
+   * موجوداً بصمت لمجرّد أن المسؤول لم يُعِد إرسال الحقل. فحضورُ الحقل هنا
+   * (ولو بقيمة `null` صريحة لمسح القيد) يعني «غيّره»، وغيابُه (`undefined`)
+   * يعني «اتركه كما هو» — والمنادي (نقاط REST) هو مَن يقرّر أيَّهما بتضمين
+   * المفتاح في هذا الكائن من عدمه، لا بقيمته.
+   */
+  audience?: Capability[] | null;
+  contentType?: KnowledgeContentType;
 }
 
 /** الكاتبُ القانونيّ — إنشاءُ مقالةٍ جديدة من الصفر (نسخةٌ أولى). */
 export async function createArticleTx(tx: any, params: ArticleWriteParams): Promise<ArticleAdminRow> {
+  const audience = params.audience ?? null;
+  const contentType = params.contentType ?? "workflow";
   const [row] = await tx.insert(aiKnowledgeArticles).values({
     title: params.title.trim(),
     body: params.body.trim(),
     scope: params.scope,
     branchId: params.branchId,
+    audience,
+    contentType,
     isActive: true,
     version: 1,
     supersedesId: null,
@@ -188,7 +238,10 @@ export async function createArticleTx(tx: any, params: ArticleWriteParams): Prom
   await logAudit({
     entityType: "ai_knowledge_article", entityId: row.id, action: "create",
     userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
-    newValues: { title: row.title, scope: row.scope, branchId: row.branchId, version: row.version },
+    newValues: {
+      title: row.title, scope: row.scope, branchId: row.branchId, version: row.version,
+      audience: row.audience, contentType: row.contentType,
+    },
     ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
   });
   return toAdminRow(row);
@@ -214,11 +267,25 @@ export async function editArticleTx(
     return { ok: false, error: "لا يمكن تعديل مقالةٍ غير فعّالة — فعّلها أولاً أو أنشئ مقالةً جديدة" };
   }
 
+  //  ══ الوراثةُ — غيابُ الحقل هنا يعني «لا تُغيّره»، لا «امسحه» ══════════
+  //  (القسم ٢، مراجعةُ الإكمال) مقالةٌ موسومةٌ `audience:["finance"]` لا
+  //  يجوز أن تصير بلا قيدٍ لمجرّد أن المسؤول عدّل صياغةً أو اعتمد اقتراحاً
+  //  دون أن يمرّ صراحةً بحقلَي الجمهور/النوع — فتُورَث القيمةُ الحالية.
+  const nextAudienceRaw = params.audience !== undefined ? params.audience : current.audience;
+  const nextAudience = Array.isArray(nextAudienceRaw)
+    ? (nextAudienceRaw as unknown[]).filter((x): x is Capability => isCapability(x))
+    : null;
+  const nextContentType = params.contentType !== undefined
+    ? params.contentType
+    : (isKnowledgeContentType(current.contentType) ? current.contentType : "workflow");
+
   const [next] = await tx.insert(aiKnowledgeArticles).values({
     title: params.title.trim(),
     body: params.body.trim(),
     scope: params.scope,
     branchId: params.branchId,
+    audience: nextAudience && nextAudience.length ? nextAudience : null,
+    contentType: nextContentType,
     isActive: true,
     version: current.version + 1,
     supersedesId: current.id,
@@ -236,8 +303,14 @@ export async function editArticleTx(
   await logAudit({
     entityType: "ai_knowledge_article", entityId: next.id, action: "edit",
     userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
-    oldValues: { id: current.id, title: current.title, version: current.version },
-    newValues: { title: next.title, scope: next.scope, version: next.version, supersedesId: next.supersedesId },
+    oldValues: {
+      id: current.id, title: current.title, version: current.version,
+      audience: current.audience, contentType: current.contentType,
+    },
+    newValues: {
+      title: next.title, scope: next.scope, version: next.version, supersedesId: next.supersedesId,
+      audience: next.audience, contentType: next.contentType,
+    },
     ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
   });
 
@@ -432,6 +505,9 @@ export async function approveSuggestion(params: {
   body?: string;
   scope?: KnowledgeScope;
   branchId?: number | null;
+  /** غيابُهما ⟶ وراثةٌ عند تعديل مقالةٍ قائمة، افتراضٌ عند إنشاء واحدةٍ جديدة. */
+  audience?: Capability[] | null;
+  contentType?: KnowledgeContentType;
   actor: Actor;
 }): Promise<
   | { ok: true; suggestion: SuggestionRow; article: ArticleAdminRow }
@@ -458,6 +534,10 @@ export async function approveSuggestion(params: {
         body: finalBody,
         scope: (params.scope ?? target.scope) as KnowledgeScope,
         branchId: params.branchId !== undefined ? params.branchId : target.branchId,
+        //  ══ وراثةٌ افتراضية — نفسُ `editArticleTx` بالحرف ══
+        //  اعتمادُ اقتراحٍ يعدّل صياغةَ مقالةٍ موسومةٍ بجمهورٍ أو نوعٍ محدَّد
+        //  **لا يُسقطهما** إلّا أن يُمرّرهما المسؤولُ صراحةً في طلب الاعتماد.
+        audience: params.audience, contentType: params.contentType,
         actor: params.actor,
       });
     } else {
@@ -465,7 +545,9 @@ export async function approveSuggestion(params: {
       if (!params.scope) return { ok: false, error: "نطاقُ المقالة إلزاميّ عند إنشاء مقالةٍ جديدة" };
       const article = await createArticleTx(tx, {
         title: params.title.trim(), body: finalBody, scope: params.scope,
-        branchId: params.branchId ?? null, actor: params.actor,
+        branchId: params.branchId ?? null,
+        audience: params.audience, contentType: params.contentType,
+        actor: params.actor,
       });
       articleResult = { ok: true, article };
     }

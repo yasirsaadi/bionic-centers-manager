@@ -155,5 +155,57 @@ console.log("\n═══ تركيبُ القدرات ═══\n");
   check("٨.٩ ويصل مَن يملك finance فعلاً", audienceMatches(["finance"], capsFinance));
 }
 
+// ── ٩. المسؤولُ العام — اتحادُ القدرات الكامل بصرف النظر عن الأعلام المخزَّنة
+//  (مراجعةُ إكمالٍ ٢٠٢٦-٠٩-١١، القسم ١). قبل هذا كان `isAdmin=true` يمنح
+//  general + admin فقط ما لم تكن أعلامُ صفّه الشخصية أيضاً true — يخالف
+//  الانحيازَ الحيّ في بقيّة التطبيق (`enforceBranchAccess`، إلخ) حيث
+//  المسؤولُ العام يتجاوز كلَّ فحصِ علمٍ فرديّ. ═══════════════════════════
+{
+  const adminAllFlagsFalse = capabilitiesFor({
+    isAdmin: true, role: "admin",
+    permissions: {
+      canAddPatients: false, canViewPatients: false, canWriteMedicalExam: false,
+      canWorkAsExpert: false, canEnterSessions: false, canManageAccounting: false,
+      canViewReports: false,
+    },
+  });
+  same("٩.١ isAdmin=true بكلّ الأعلام false ⟶ **مجموعةُ القدرات كاملةً** بلا استثناء",
+    sorted(adminAllFlagsFalse), sorted(new Set<Capability>(CAPABILITIES)));
+
+  const adminNoPermissionsField = capabilitiesFor({ isAdmin: true, role: "admin" });
+  same("٩.٢ وحتى بلا حقل permissions إطلاقاً (undefined) — نفسُ الاتحاد الكامل",
+    sorted(adminNoPermissionsField), sorted(new Set<Capability>(CAPABILITIES)));
+
+  check("٩.٣ manager ضمن الاتحاد أيضاً (لم يعد يُشترَط role='branch_manager')",
+    adminAllFlagsFalse.has("manager"));
+  check("٩.٤ وreception/patients/medical/expert/physio/finance/reports كلّها حاضرة",
+    ["reception", "patients", "medical", "expert", "physio", "finance", "reports"]
+      .every((c) => adminAllFlagsFalse.has(c as Capability)));
+
+  //  **branch_manager لا يُمنَح هذا التجاوز** — نفسُ أعلامٍ فارغة، دورٌ آخر.
+  const managerAllFlagsFalse = capabilitiesFor({
+    isAdmin: false, role: "branch_manager",
+    permissions: {
+      canAddPatients: false, canViewPatients: false, canWriteMedicalExam: false,
+      canWorkAsExpert: false, canEnterSessions: false, canManageAccounting: false,
+      canViewReports: false,
+    },
+  });
+  same("٩.٥ **مديرُ فرعٍ بنفس الأعلام الفارغة ⟶ manager+general فقط** — لا اتحادَ كاملاً له",
+    sorted(managerAllFlagsFalse), ["general", "manager"]);
+  check("٩.٦ وبالتحديد لا admin/finance/medical/expert لمديرِ الفرع هنا",
+    !managerAllFlagsFalse.has("admin") && !managerAllFlagsFalse.has("finance")
+    && !managerAllFlagsFalse.has("medical") && !managerAllFlagsFalse.has("expert"));
+
+  //  isAdmin=true **مع** بعض الأعلام true لا يُنقِص شيئاً ولا يُغيّر النتيجة
+  //  عن الاتحاد الكامل — القيمةُ الوحيدة الحاكمة هي isAdmin نفسُها.
+  const adminSomeFlagsTrue = capabilitiesFor({
+    isAdmin: true, role: "admin",
+    permissions: { canManageAccounting: true, canViewReports: true },
+  });
+  same("٩.٧ isAdmin=true مع بعض الأعلام true ⟶ الاتحادُ الكاملُ نفسُه، لا تغييرَ",
+    sorted(adminSomeFlagsTrue), sorted(new Set<Capability>(CAPABILITIES)));
+}
+
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

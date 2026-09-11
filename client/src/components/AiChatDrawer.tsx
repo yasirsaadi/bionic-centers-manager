@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Sparkles, Send, X, Loader2, Bot, User, MessageSquareWarning,
+  Sparkles, Send, X, Loader2, Bot, User, Users, MessageSquareWarning,
   GraduationCap, ChevronRight, CheckCircle2, AlertCircle, PlayCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -78,6 +78,79 @@ interface TrainingNext {
   trackTitle: string;
   moduleId: number;
   moduleTitle: string;
+}
+
+//  ══ «تقدّمُ فريقي» — مديرُ الفرع وحده (٤.n القسم ٨) ═══════════════════════
+//  نفسُ شكل `GET /api/training/management/progress` بالحرف (يستهلكه أصلاً
+//  `AdminSettings.tsx: ManagementEmployeeRow` للمسؤول العام) — الخادمُ
+//  يفرض النطاقَ بفرع مديرِ الفرع وحده، وهذا مجرّد استهلاكٍ مضغوط للشكل
+//  نفسِه هنا. **بلا إجابات اختبارٍ حرّة ولا بيانات فرعٍ آخر** — الشكلُ لا
+//  يحملهما أصلاً.
+interface ManagementTrackProgressRow {
+  trackId: number;
+  trackTitle: string;
+  completedModules: number;
+  totalModules: number;
+  needsReviewCount: number;
+}
+interface ManagementEmployeeRow {
+  userId: number;
+  displayName: string;
+  branchId: number | null;
+  branchName: string | null;
+  tracks: ManagementTrackProgressRow[];
+  lastActivityAt: string | null;
+}
+
+/** لوحةُ «تقدّمُ فريقي» — قراءةٌ فقط، ضمن فرع مديرِ الفرع (يفرضه الخادم). */
+function TeamProgressPanel(props: { rows: ManagementEmployeeRow[]; isLoading: boolean; onBack: () => void }) {
+  const { rows, isLoading, onBack } = props;
+  return (
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition"
+        data-testid="button-team-progress-back"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+        كلّ المسارات
+      </button>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+          <Loader2 className="h-4 w-4 animate-spin" /> جارٍ تحميل تقدّم الفريق…
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-6" data-testid="text-team-progress-empty">
+          لا موظّفين ضمن فرعك بعد.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((e) => (
+            <div key={e.userId} className="rounded-md border p-2 space-y-1.5" data-testid={`team-progress-${e.userId}`}>
+              <div className="text-xs font-semibold">{e.displayName}</div>
+              {e.tracks.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">لا مساراتٍ متاحة لهذا الموظّف.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {e.tracks.map((t) => (
+                    <span key={t.trackId} className="text-[10px] rounded border px-1.5 py-0.5 flex items-center gap-1">
+                      <span className="truncate max-w-[7rem]">{t.trackTitle}</span>
+                      <Badge variant="secondary" className="text-[9px] px-1">{t.completedModules}/{t.totalModules}</Badge>
+                      {t.needsReviewCount > 0 && (
+                        <Badge variant="destructive" className="text-[9px] px-1">{t.needsReviewCount}↺</Badge>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const TRAINING_STATUS_LABEL: Record<TrainingModuleStatus, string> = {
@@ -332,6 +405,8 @@ export function AiChatDrawer() {
   const [activeModuleId, setActiveModuleId] = useState<number | null>(null);
   const [quizAnswer, setQuizAnswer] = useState("");
   const [quizOutcome, setQuizOutcome] = useState<TrainingAnswerOutcome | null>(null);
+  //  «تقدّمُ فريقي» — مديرُ الفرع وحده، طيٌّ ثالثٌ داخل لوحة التدريب نفسِها.
+  const [teamProgressOpen, setTeamProgressOpen] = useState(false);
 
   // Hide entirely when AI isn't configured — otherwise every authenticated
   // employee gets the assistant. What it can SEE is decided server-side.
@@ -361,6 +436,7 @@ export function AiChatDrawer() {
     setActiveModuleId(null);
     setQuizAnswer("");
     setQuizOutcome(null);
+    setTeamProgressOpen(false);
   };
 
   const askMutation = useMutation({
@@ -437,6 +513,13 @@ export function AiChatDrawer() {
   const lessonQuery = useQuery<{ lesson: TrainingLessonView }>({
     queryKey: [`/api/training/modules/${activeModuleId}/lesson`],
     enabled: open && trainingOpen && activeModuleId != null,
+  });
+  //  «تقدّمُ فريقي» — مديرُ الفرع وحده؛ الخادمُ هو الحارسُ الحقيقيّ (يردّ ٤٠٣
+  //  لغيره)، وهذا الشرطُ هنا عرضٌ لا حراسة — نفسُ مبدأ الملفّ كلّه.
+  const isBranchManager = session?.role === "branch_manager";
+  const teamProgressQuery = useQuery<{ rows: ManagementEmployeeRow[] }>({
+    queryKey: ["/api/training/management/progress"],
+    enabled: open && trainingOpen && teamProgressOpen && isBranchManager,
   });
 
   const openModule = (moduleId: number) => {
@@ -555,13 +638,32 @@ export function AiChatDrawer() {
 
             {trainingOpen ? (
               <div className="flex-1 overflow-y-auto px-4 py-3" data-testid="panel-training">
-                {activeModuleId == null ? (
-                  <TrainingCatalog
-                    tracks={tracksQuery.data?.tracks ?? []}
-                    isLoading={tracksQuery.isLoading}
-                    next={nextQuery.data?.next}
-                    onOpenModule={openModule}
+                {teamProgressOpen ? (
+                  <TeamProgressPanel
+                    rows={teamProgressQuery.data?.rows ?? []}
+                    isLoading={teamProgressQuery.isLoading}
+                    onBack={() => setTeamProgressOpen(false)}
                   />
+                ) : activeModuleId == null ? (
+                  <div className="space-y-3">
+                    {isBranchManager && (
+                      <button
+                        type="button"
+                        onClick={() => setTeamProgressOpen(true)}
+                        className="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-right hover:bg-accent transition"
+                        data-testid="button-open-team-progress"
+                      >
+                        <Users className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-medium">تقدّمُ فريقي</span>
+                      </button>
+                    )}
+                    <TrainingCatalog
+                      tracks={tracksQuery.data?.tracks ?? []}
+                      isLoading={tracksQuery.isLoading}
+                      next={nextQuery.data?.next}
+                      onOpenModule={openModule}
+                    />
+                  </div>
                 ) : (
                   <TrainingLessonPanel
                     lesson={lessonQuery.data?.lesson}

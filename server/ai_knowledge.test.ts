@@ -463,6 +463,136 @@ async function main() {
     });
     check(cleanDeactivate.status === 200,
       "ن.١٠.٩ ومعرّفٌ صحيحٌ يعمل كما كان بعد كلّ الرفض أعلاه", `status=${cleanDeactivate.status}`);
+
+    // ══ س. القسمُ ٢ (مراجعةُ إكمالٍ ٢٠٢٦-٠٩-١١) — audience/contentType
+    //  يعبُران التعديلَ والاعتمادَ صراحةً، ولا يُفقَدان بصمتٍ عند تعديل نصٍّ
+    //  فقط. مقالةٌ مقيَّدةٌ لا تصير عامّةً لمجرّد أن مسؤولاً صحّح صياغتها. ══
+    console.log("\n── س. حفظُ audience/contentType عبر النسخ ──");
+
+    const createFinanceRes = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: `${MARK} — مقالةٌ ماليةٌ مقيَّدة`, body: `${MARK} — متنٌ أصليّ`,
+        scope: "general", branchId: null, audience: ["finance"], contentType: "troubleshooting",
+      }),
+    });
+    check(createFinanceRes.status === 201, "س.١ إنشاءُ مقالةٍ بجمهور finance ونوع troubleshooting ينجح", `status=${createFinanceRes.status}`);
+    const createdFinance = (await createFinanceRes.json()).article;
+    same("س.٢ audience محفوظٌ كما أُرسل", createdFinance.audience, ["finance"]);
+    same("س.٣ contentType محفوظٌ كما أُرسل", createdFinance.contentType, "troubleshooting");
+
+    //  س.٤ تعديلُ الصياغة فقط (بلا إرسال audience أو contentType إطلاقاً) —
+    //  النسخةُ الجديدة **يجب أن ترث** القيمتين من النسخة الحالية.
+    const editWordingRes = await fetch(`${BASE}/api/ai/knowledge/articles/${createdFinance.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: createdFinance.title, body: `${MARK} — متنٌ مُصحَّح لغوياً فقط`,
+        scope: createdFinance.scope, branchId: createdFinance.branchId,
+      }),
+    });
+    check(editWordingRes.status === 200, "س.٤ تعديلُ الصياغة وحدها ينجح", `status=${editWordingRes.status}`);
+    const editedWording = (await editWordingRes.json()).article;
+    same("س.٥ **النسخةُ الجديدة تبقى audience=[\"finance\"]** — لم تصر null ولا عامّة", editedWording.audience, ["finance"]);
+    same("س.٦ **ونوعُ المحتوى troubleshooting باقٍ كما هو** — لم يتحوّل صمتاً إلى workflow", editedWording.contentType, "troubleshooting");
+    check(editedWording.id !== createdFinance.id, "س.٧ والتعديلُ نسخةٌ جديدة فعلاً (معرّفٌ مختلف)");
+
+    const [oldRow] = (await q(`SELECT is_active FROM ai_knowledge_articles WHERE id = $1`, [createdFinance.id])).rows;
+    check(oldRow?.is_active === false, "س.٨ والنسخةُ القديمة أُطفئت تلقائياً بعد النسخة الجديدة");
+
+    //  س.٩ تعديلٌ **صريح** يغيّر الجمهور فقط — يجب أن ينجح ويستبدل القيمة.
+    const editAudienceRes = await fetch(`${BASE}/api/ai/knowledge/articles/${editedWording.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: editedWording.title, body: editedWording.body,
+        scope: editedWording.scope, branchId: editedWording.branchId,
+        audience: ["finance", "reports"],
+      }),
+    });
+    check(editAudienceRes.status === 200, "س.٩ تعديلُ الجمهور صراحةً ينجح", `status=${editAudienceRes.status}`);
+    const editedAudience = (await editAudienceRes.json()).article;
+    same("س.١٠ الجمهورُ الجديد المُرسَل صراحةً يستبدل القديم",
+      [...editedAudience.audience].sort(), ["finance", "reports"]);
+    same("س.١١ وcontentType لا يزال troubleshooting (لم يُرسَل فتوارَث)", editedAudience.contentType, "troubleshooting");
+
+    //  س.١٢ جمهورٌ فاسد (قيمةٌ ليست قدرة) ⟶ ٤٠٠، فشلٌ مغلَق، بلا كتابة.
+    const editBadAudienceRes = await fetch(`${BASE}/api/ai/knowledge/articles/${editedAudience.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: editedAudience.title, body: editedAudience.body,
+        scope: editedAudience.scope, branchId: editedAudience.branchId,
+        audience: ["not_a_real_capability"],
+      }),
+    });
+    check(editBadAudienceRes.status === 400, "س.١٢ جمهورٌ فاسدٌ (ليس قدرةً حقيقية) يُردّ ٤٠٠", `status=${editBadAudienceRes.status}`);
+    const [afterBadAudienceRow] = (await q(`SELECT audience FROM ai_knowledge_articles WHERE id = $1`, [editedAudience.id])).rows;
+    same("س.١٢ب **والصفُّ الحقيقيّ بقي بلا مسّ** — لم يُكتب نصفُ تغيير",
+      [...(afterBadAudienceRow?.audience ?? [])].sort(), ["finance", "reports"]);
+
+    //  س.١٣ نوعُ محتوًى فاسد ⟶ ٤٠٠.
+    const editBadContentTypeRes = await fetch(`${BASE}/api/ai/knowledge/articles/${editedAudience.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: editedAudience.title, body: editedAudience.body,
+        scope: editedAudience.scope, branchId: editedAudience.branchId,
+        contentType: "not_a_real_type",
+      }),
+    });
+    check(editBadContentTypeRes.status === 400, "س.١٣ contentType فاسدٌ يُردّ ٤٠٠", `status=${editBadContentTypeRes.status}`);
+
+    //  س.١٤ اعتمادُ اقتراحٍ **كتعديلٍ لمقالةٍ قائمة** (targetArticleId) بلا
+    //  إرسال audience/contentType — يجب أن يرث من المقالة المستهدَفة.
+    const suggForApprove = await createSuggestion({
+      suggestedText: `${MARK} — نصٌّ مقترَحٌ لمقالةٍ مقيَّدة`, reason: `${MARK} — سبب`,
+      actor: actorFor(STAFF, "موظّف اختبار", "reception", B1),
+    });
+    const approveAsEditRes = await fetch(`${BASE}/api/ai/knowledge/suggestions/${suggForApprove.id}/approve`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({ targetArticleId: editedAudience.id, body: `${MARK} — نصٌّ نهائيّ بعد الاعتماد` }),
+    });
+    check(approveAsEditRes.status === 200, "س.١٤ اعتمادُ الاقتراح كتعديلٍ لمقالةٍ قائمة ينجح", `status=${approveAsEditRes.status}`);
+    const approvedAsEdit = (await approveAsEditRes.json()).article;
+    same("س.١٥ **النسخةُ المعتمَدة ترث audience من المقالة المستهدَفة** — لا null ولا عامّة",
+      [...approvedAsEdit.audience].sort(), ["finance", "reports"]);
+    same("س.١٦ **وترث contentType كذلك (troubleshooting)**", approvedAsEdit.contentType, "troubleshooting");
+
+    //  س.١٧ اعتمادٌ **كمقالةٍ جديدة** (بلا targetArticleId) بجمهورٍ ونوعٍ
+    //  صريحين — لا وراثةَ هنا (لا مقالةَ سابقة أصلاً).
+    const suggForNew = await createSuggestion({
+      suggestedText: `${MARK} — اقتراحٌ لمقالةٍ جديدة كلّياً`, reason: `${MARK} — سبب`,
+      actor: actorFor(STAFF, "موظّف اختبار", "reception", B1),
+    });
+    const approveAsNewRes = await fetch(`${BASE}/api/ai/knowledge/suggestions/${suggForNew.id}/approve`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: `${MARK} — مقالةٌ جديدةٌ من اقتراح`, body: `${MARK} — متنُها`,
+        scope: "general", audience: ["medical"], contentType: "troubleshooting",
+      }),
+    });
+    check(approveAsNewRes.status === 200, "س.١٧ اعتمادُ الاقتراح كمقالةٍ جديدة بجمهورٍ صريح ينجح", `status=${approveAsNewRes.status}`);
+    const approvedAsNew = (await approveAsNewRes.json()).article;
+    same("س.١٨ والمقالةُ الجديدة تحمل الجمهورَ المُرسَل صراحةً", approvedAsNew.audience, ["medical"]);
+    same("س.١٩ ونوعَ المحتوى troubleshooting", approvedAsNew.contentType, "troubleshooting");
+
+    //  س.٢٠ اعتمادٌ كمقالةٍ جديدة **بلا** audience/contentType ⟶ الافتراضاتُ
+    //  الآمنة (عامّ/workflow) — نفسُ سلوك الإنشاء المباشر بلا وراثة.
+    const suggForNewDefault = await createSuggestion({
+      suggestedText: `${MARK} — اقتراحٌ بلا جمهورٍ محدَّد`, reason: `${MARK} — سبب`,
+      actor: actorFor(STAFF, "موظّف اختبار", "reception", B1),
+    });
+    const approveAsNewDefaultRes = await fetch(`${BASE}/api/ai/knowledge/suggestions/${suggForNewDefault.id}/approve`, {
+      method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+      body: JSON.stringify({
+        title: `${MARK} — مقالةٌ جديدةٌ بلا جمهور`, body: `${MARK} — متنُها`, scope: "general",
+      }),
+    });
+    check(approveAsNewDefaultRes.status === 200, "س.٢٠ اعتمادُ اقتراحٍ كمقالةٍ جديدة بلا audience/contentType ينجح", `status=${approveAsNewDefaultRes.status}`);
+    const approvedAsNewDefault = (await approveAsNewDefaultRes.json()).article;
+    same("س.٢١ audience يغيب ⟶ null (بلا قيدٍ إضافيّ) — نفسُ افتراض الإنشاء المباشر", approvedAsNewDefault.audience, null);
+    same("س.٢٢ وcontentType يغيب ⟶ workflow افتراضاً", approvedAsNewDefault.contentType, "workflow");
+
+    for (const idToDeactivate of [approvedAsEdit.id, approvedAsNew.id, approvedAsNewDefault.id]) {
+      await setArticleActive({ id: idToDeactivate, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
+    }
   } finally {
     await cleanup();
     httpServer.close();

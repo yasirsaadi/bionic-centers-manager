@@ -137,7 +137,9 @@ CREATE TABLE IF NOT EXISTS employee_training_progress (
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at TIMESTAMPTZ,
   last_attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  attempt_count INTEGER NOT NULL DEFAULT 1,
+  -- ══ صفرٌ لا واحد (مراجعةُ إكمال) — يعدّ إجاباتٍ مُرسَلة لا مرّاتِ فتحٍ.
+  -- فتحُ درسٍ ليس محاولة؛ دالّةُ تصحيح الإجابة وحدها ترفعه من صفر.
+  attempt_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- صفٌّ واحد لكلّ (موظّف، وحدة) — محاولةٌ ثانية تُحدِّث الصفّ نفسَه، فلا
@@ -156,7 +158,11 @@ BEGIN
   END IF;
 END $$;
 
--- ══ اتساقٌ: مكتمِلةٌ لها ختمُ اكتمال، بادئةٌ بلا ختم ═══════════════════════
+-- ══ اتساقٌ: مكتمِلةٌ (نجاحاً) لها ختمُ اكتمال، وما عداها بلا ختم
+-- (مراجعةُ إكمال — القسم ٤) ══════════════════════════════════════════════
+-- حالةُ needs_review لا تحمل ختمَ اكتمال (completed_at) — الوحدةُ لم تكتمل،
+-- وتبقى «غيرَ منجَزة» في طابور الاستئناف حتى نجاحٍ لاحق. فقط حالةُ completed
+-- (اختبارٌ نُجح) وpractice_only (وحدةٌ عمليّة اكتملت بفتحها) تحملانه.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -165,8 +171,8 @@ BEGIN
     ALTER TABLE employee_training_progress
       ADD CONSTRAINT etp_completed_shape_check
       CHECK (
-        (status = 'started' AND completed_at IS NULL)
-        OR (status IN ('completed', 'needs_review', 'practice_only') AND completed_at IS NOT NULL)
+        (status IN ('started', 'needs_review') AND completed_at IS NULL)
+        OR (status IN ('completed', 'practice_only') AND completed_at IS NOT NULL)
       );
   END IF;
 END $$;
@@ -339,6 +345,77 @@ VALUES
        jsonb_build_object('keywords', jsonb_build_array('المسؤول العام', 'المسؤول'), 'hint', 'المسؤول العام وحده')
      )
    ), FALSE)
+
+ON CONFLICT (seed_key) DO NOTHING;
+
+-- ══ ٨. جمهورٌ لمقالات ٠٧٥ الأشمل تأثيراً — تصحيحُ مراجعة الإكمال (القسم ٦)
+-- ═════════════════════════════════════════════════════════════════════════
+-- معظمُ معرفة ٠٧٥ زُرعت بـaudience=NULL (لم يكن العمودُ موجوداً وقتها)، فسؤالٌ
+-- حرّ («كيف أسوي كذا؟») لم يكن يفرّق الموظّفين بحسب اختصاصهم بعد. تحديثٌ
+-- على seed_key معروفةٍ فقط، **بلا مسّ حرفٍ من أيّ متن** — UPDATE بشرطٍ
+-- idempotent بطبيعته (نتيجةٌ واحدة مهما تكرّر التشغيل). شرطُ AND is_active
+-- = TRUE احتياطٌ: لو عُدِّلت إحداها عبر لوحة الإدارة قبل نشر هذا الترحيل
+-- (نادرٌ إذ ٠٧٦ لم يُدمَج بعد)، فلا يُكتَب على نسخةٍ سابقةٍ مسحوبة أصلاً —
+-- النسخةُ الفعّالة الجديدة تحمل audience الذي اختاره مَن عدّلها حينها.
+--
+-- ══ جمهورٌ يتقاطع مع وحدات التدريب المزروعة أعلاه عمداً ═════════════════
+-- مقالاتُ maintenance_flow وcomponent_sale_flow وmanufacturing_stages يشير
+-- إليها track_expert (قدرة expert) — فجمهورُها **يجب** أن يشمل expert،
+-- وإلّا رفضها الدفاعُ في العمق (دالّةُ حلّ المقالة الفعّالة) عن درس الخبير
+-- نفسِه الذي زرعته هذه المقالةُ بعينها. نفسُ الشرط بين medical_exam_workflow وtrack_medical،
+-- physio_session_plan وtrack_physio، cost_vs_payment/financial_correction_request
+-- وtrack_finance، administrative_reversal وtrack_admin.
+--
+-- ══ الثلاثةُ المتروكة عمداً بلا تحديث (audience تبقى NULL) ══════════════
+-- patient_journey_overview (يقرؤه track_reception وtrack_medical معاً —
+-- عامٌّ فعلاً)، patient_trash_restore وreturn_to_purchase (بلا شيءٍ حسّاس
+-- في متنهما، ويُشير إليهما track_reception كوعيٍ تشغيليّ لا كإجراءٍ يملكه
+-- الاستقبال بالضرورة) — «إبقاءُ العامّ عامّاً» بالحرف.
+UPDATE ai_knowledge_articles SET audience = '["reception","manager"]'::jsonb
+  WHERE seed_key = 'reception_new_patient_registration' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["medical","manager"]'::jsonb
+  WHERE seed_key = 'medical_exam_workflow' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["expert","manager"]'::jsonb
+  WHERE seed_key = 'manufacturing_stages' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["expert","reception","finance","manager"]'::jsonb
+  WHERE seed_key = 'maintenance_flow' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["expert","reception","finance","manager"]'::jsonb
+  WHERE seed_key = 'component_sale_flow' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["physio"]'::jsonb
+  WHERE seed_key = 'physio_session_plan' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["finance","reports"]'::jsonb
+  WHERE seed_key = 'cost_vs_payment' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["finance","manager"]'::jsonb
+  WHERE seed_key = 'financial_correction_request' AND is_active = TRUE;
+UPDATE ai_knowledge_articles SET audience = '["admin","manager"]'::jsonb
+  WHERE seed_key = 'administrative_reversal' AND is_active = TRUE;
+
+-- ══ ٩. أربعُ مقالاتِ استكشاف أخطاء — content_type='troubleshooting' حقيقيّ
+-- لا عموداً بلا مثال (القسم ٥، مراجعةُ الإكمال) ═══════════════════════════
+-- مُشتقّةٌ من الكود الفعليّ وحده (صلاحياتُ canViewPatients/canViewPayments/
+-- canViewReports في server/routes.ts، وأهليّةُ «عاد للشراء» الحتميّة في
+-- server/followup/return_to_purchase_store.ts) — لا تخمين. **بلا أيّ
+-- تعليمة تحايلٍ أو تجاوز صلاحية** (القسم L): كلُّها تحيل إلى طلب الصلاحية
+-- من صاحب السلطة، لا إلى مسارٍ بديل. audience=NULL عمداً — بلا رقمٍ ولا
+-- اسمِ مريضٍ ولا مبلغٍ في أيّ متن، فلا حاجةَ لتضييق جمهورها.
+INSERT INTO ai_knowledge_articles
+  (seed_key, title, body, scope, content_type, created_by_name, approved_by_name)
+VALUES
+  ('troubleshoot_patient_not_visible', 'لماذا لا أرى مريضاً في القوائم أو البحث؟',
+   'عدمُ ظهور مريضٍ متوقَّع سببُه غالباً أحدُ اثنين. الأوّل: حسابك لا يملك صلاحية «عرض سجلّ المرضى» (canViewPatients) أصلاً — الحلُّ الوحيد طلبُها من مدير الفرع أو المسؤول العام إن كانت وظيفتك تستلزمها فعلاً، ولا مسارَ بديلاً لإظهاره بدونها. الثاني: المريضُ مسجَّلٌ في فرعٍ خارج نطاق عملك — كلُّ حسابٍ مقفولٌ على فرعه (أو فروعه المصرَّح بها)، والمسؤولُ العام وحده يرى كلّ الفروع معاً. احتمالٌ ثالث أضيق: المريضُ في «المحذوفات» (حُذف خلال آخر ثلاثين يوماً) فلا يظهر في البحث العاديّ إطلاقاً، ولا يستعيده إلا مَن يملك صلاحية الاستعادة (المسؤول العام، مديرُ الفرع، أو الطبيب).',
+   'general', 'troubleshooting', 'النظام (ترحيل ٠٧٦ — مراجعةُ إكمال)', 'اعتمادٌ ذاتيّ عند الترحيل — يراجعه المسؤول العام عند الحاجة'),
+
+  ('troubleshoot_payments_not_visible', 'لماذا لا أرى مدفوعات مريض؟',
+   'رؤيةُ مدفوعات مريضٍ تحكمها صلاحيةٌ منفصلة بذاتها اسمُها «عرض المدفوعات» (canViewPayments) — وهي **مختلفة** عن صلاحية إدارة المحاسبة (canManageAccounting): موظّفٌ قد يملك إحداهما بلا الأخرى تماماً. مَن يفتقد canViewPayments لا يرى قائمة الدفعات ولا المبلغ المدفوع في ملفّ المريض إطلاقاً، بصرف النظر عن أيّ صلاحيةٍ أخرى يملكها فعلاً. الحلُّ الوحيد طلبُ الصلاحية المناسبة من مدير الفرع أو المسؤول العام إن كانت وظيفتك تستلزمها.',
+   'general', 'troubleshooting', 'النظام (ترحيل ٠٧٦ — مراجعةُ إكمال)', 'اعتمادٌ ذاتيّ عند الترحيل — يراجعه المسؤول العام عند الحاجة'),
+
+  ('troubleshoot_reports_not_visible', 'لماذا لا أرى التقارير؟',
+   'صلاحيةُ التقارير (canViewReports) منفصلةٌ تماماً عن كلّ صلاحيةٍ أخرى — موظّفٌ يملك عرض المرضى أو حتى إدارة المحاسبة قد لا يملكها. بدونها لا يظهر التقرير المطلوب ولا أيُّ تقريرٍ آخر، وتبقى صفحاتُ التقارير التشغيلية والإدارية مغلقة. المسؤولُ العام يملكها دائماً بسلطته، وأيّ موظّفٍ آخر يحتاج مديرَ الفرع أو المسؤول العام لمنحها صراحةً — لا مسارَ آخر لفتحها.',
+   'general', 'troubleshooting', 'النظام (ترحيل ٠٧٦ — مراجعةُ إكمال)', 'اعتمادٌ ذاتيّ عند الترحيل — يراجعه المسؤول العام عند الحاجة'),
+
+  ('troubleshoot_return_to_purchase_ineligible', '«عاد للشراء» لا يعطيني عمليةً مؤهَّلة',
+   'زرّ «عاد للشراء» قد يظهر في ملفّ المريض بينما لا يعرض أيّ عمليةٍ مؤهَّلة عند فتحه — وهذه نتيجةٌ حقيقية ممكنة، لا عطلاً برمجياً. الأهليّةُ شرطٌ دقيق يُفحَص من القاعدة حيّاً في كلّ مرّة: طلبُ جهازٍ على مسار المعاينة تحديداً، بحالة «تمّت معاينته»، وآخِرُ قرارٍ عليه بالضبط «لم يشترِ» بلا طلبِ مراجعةٍ معلَّقٍ على الجهاز نفسِه أصلاً. فمريضٌ اشترى بالفعل، أو لم يُعايَن قطّ، أو كان آخِرُ قراره على ذلك الجهاز غير «لم يشترِ»، لا يملك عمليةً مؤهَّلة، والقائمةُ الفارغة تقول ذلك بصدقٍ لا بعطل. لا يُصطنَع مسارٌ بديل ولا عمليةٌ وهميّة لإجبار الأهليّة — الشاشةُ والخادمُ يتّفقان دائماً على النتيجة نفسِها، فإن بدا اختلافٌ بينهما فحدِّث الصفحة أوّلاً قبل افتراض عطلٍ حقيقيّ.',
+   'general', 'troubleshooting', 'النظام (ترحيل ٠٧٦ — مراجعةُ إكمال)', 'اعتمادٌ ذاتيّ عند الترحيل — يراجعه المسؤول العام عند الحاجة')
 
 ON CONFLICT (seed_key) DO NOTHING;
 `;
