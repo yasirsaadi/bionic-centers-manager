@@ -58,6 +58,13 @@ interface WaitingRow {
   selectedExpertUserId: number | null;
   selectedExpertName: string | null;
   actions: string[];
+  /**
+   * هل هذه المتابعةُ على مسار المعاينة فعلياً (حلقتُها `service_path='exam'`)؟
+   * `false` لصفٍّ يتيم (معاينةٌ موقّعة بلا حلقة) — يبقى ظاهراً هنا بـ«فتح
+   * الملف» وحدها، بلا كتلة «إتمام البيع» الحديثة (تصحيحٌ حيّ — راجع
+   * `decision_queue_store.ts`).
+   */
+  examPath: boolean;
 }
 
 interface ResolvedRow {
@@ -135,19 +142,28 @@ function WaitingCard({ row }: { row: WaitingRow }) {
             <span className="text-foreground">{row.examDoctorName ?? "—"}</span>
           </div>
         </div>
-        <ExamPathDecisionActions
-          followupId={row.followupId}
-          patientId={row.patientId}
-          branchId={row.branchId}
-          actions={row.actions}
-          examNotes={row.examNotes}
-          prefill={{
-            originalPrice: row.originalPrice,
-            approvedPrice: row.approvedPrice,
-            priceKind: row.priceKind,
-            selectedExpertUserId: row.selectedExpertUserId,
-          }}
-        />
+        {/*  ══ **صفٌّ يتيم (`examPath === false`) ⟶ لا كتلةَ بيعٍ حديثة**
+            (تصحيحٌ حيّ) ═══════════════════════════════════════════════════
+            معاينةٌ موقّعة بلا حلقةٍ (`device_episode_id IS NULL`) ليست على
+            مسار المعاينة — `/complete-sale`/`/not-bought` تردّانها ٤٠٩
+            دائماً، فعرضُ الكتلة هنا كان يوهم بفعلٍ لا يعمل، ويعرض رسالةَ
+            حجبِ ملكيةٍ لا تخصّها. الصفُّ يبقى ظاهراً بـ«فتح الملف» وحده —
+            **لا مسارَ بيعٍ ثانياً يُخترَع هنا.** */}
+        {row.examPath && (
+          <ExamPathDecisionActions
+            followupId={row.followupId}
+            patientId={row.patientId}
+            branchId={row.branchId}
+            actions={row.actions}
+            examNotes={row.examNotes}
+            prefill={{
+              originalPrice: row.originalPrice,
+              approvedPrice: row.approvedPrice,
+              priceKind: row.priceKind,
+              selectedExpertUserId: row.selectedExpertUserId,
+            }}
+          />
+        )}
       </CardContent>
     </Card>
   );
