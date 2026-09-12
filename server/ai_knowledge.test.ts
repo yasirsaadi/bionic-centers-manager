@@ -800,7 +800,12 @@ async function main() {
     // الأدلّةُ الإنتاجية الجديدة: `DELETE /api/admin/users/:id` يتعلّق كذلك.
     // هذا القسم يثبت أنّ الوحدة المشتركة تُغطّي هذا الطريقَ الثاني بلا أيّ
     // تعديلٍ في منطق الحذف نفسِه، وأنّ سجلَّه آمنٌ كسجلّ التعديل تماماً.
-    console.log("\n── ص. تشخيصُ حذف مستخدم النظام — نفسُ الوحدة المشتركة، ولا تُغيّر الحذف الناجح ──");
+    console.log("\n── ص. تشخيصُ حذف مستخدم النظام — نفسُ الوحدة المشتركة، ولا تُغيّر التعطيل الناجح ──");
+    //  ⚠ تحديثٌ (٢٠٢٦-٠٩-١٢، تصحيحٌ إنتاجيّ لاحق): هذا المسارُ صار يُعطّل
+    //  الحسابَ (isActive=false) لا يحذف صفّه فعلياً — راجع القسم ٩ في هذا
+    //  الملفّ (`test:admin-user-lifecycle` المستقلّ يحمل التغطيةَ السلوكية
+    //  الكاملة). هذا القسمُ يبقى مقصوراً على غرضه الأصليّ: أن تعليماتِ
+    //  التوقيت لا تُفسد الفعلَ الناجح، أيّاً كان.
     {
       await q(`
         INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, is_active)
@@ -813,17 +818,18 @@ async function main() {
         { method: "DELETE", headers: { "x-test-session": adminHeader } },
       ));
 
-      check(delRes.status === 200, "ص.١ **الحذفُ ينجح كالمعتاد رغم وجود التعليمات المؤقّتة**", `status=${delRes.status}`);
+      check(delRes.status === 200, "ص.١ **الفعلُ ينجح كالمعتاد رغم وجود التعليمات المؤقّتة**", `status=${delRes.status}`);
       const delBody = await delRes.json().catch(() => ({}));
       check(delBody?.success === true, "ص.٢ والاستجابةُ تؤكّد النجاح بشكلها المعتاد نفسِه", JSON.stringify(delBody));
 
-      const [afterRow] = (await q(`SELECT id FROM system_users WHERE id = $1`, [DELETE_VICTIM])).rows;
-      check(!afterRow, "ص.٣ **والصفُّ فعلاً محذوفٌ من القاعدة** — لا نصفَ حذف");
+      const [afterRow] = (await q(`SELECT id, is_active FROM system_users WHERE id = $1`, [DELETE_VICTIM])).rows;
+      check(!!afterRow, "ص.٣ **والصفُّ لا يزال موجوداً** — تعطيلٌ لا حذفٌ فعليّ (تصحيحٌ إنتاجيّ)");
+      same("ص.٣ب وisActive صار false فعلياً", afterRow?.is_active, false);
 
       const diagLines = parsedDiagLines(lines, "admin_user_delete", DELETE_VICTIM);
       const expectedPhases = [
         "raw_request_arrival_before_session", "session_middleware_completed", "route_handler_reached",
-        "before_delete_system_user", "after_delete_system_user", "before_response",
+        "before_deactivate_system_user", "after_deactivate_system_user", "before_response",
         "http_response_finish", "http_response_close",
       ];
       const seenPhases = diagLines.map((l) => l.phase);
@@ -840,6 +846,116 @@ async function main() {
       const leakedUser = lines.filter((l) => l.includes("ak-victim") || l.includes("ضحيّةُ اختبار الحذف"));
       check(leakedUser.length === 0,
         "ص.٦ **ولا اسمَ المستخدم المحذوف ولا اسمَ حسابه في أيّ سطر سجلّ**", JSON.stringify(leakedUser));
+    }
+
+    // ══ ق. قفلٌ على audit_log — يخرج ضمن مهلة القفل، ردٌّ يصل، ولا نسخةَ
+    // جزئيّة (تصحيحٌ إنتاجيّ ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════
+    // كان الالتقاطُ القديم يُغلِّف عبارة `FOR UPDATE` وحدها؛ قفلٌ لاحقٌ على
+    // `audit_log` (المكتوب أثناء نفس المعاملة عبر logAudit) كان يُنهيه
+    // بوستغرس خلال ٥ث بالضبط **لكنّ الخطأ يبقى غيرَ ممسوك**، فيتعلّق الطلبُ
+    // كاملاً إلى الأبد رغم أن قاعدة البيانات ردّت. الالتقاطُ صار يغلِّف
+    // المعاملةَ كلَّها.
+    console.log("\n── ق. قفلُ audit_log — يخرج نظيفاً ضمن مهلة القفل، لا تعليقاً بعد رَدّ بوستغرس (تصحيحٌ إنتاجيّ) ──");
+    {
+      const target = await createArticle({
+        title: `${MARK} — مقالةٌ لاختبار قفل audit_log`, body: `${MARK} — أصل`,
+        scope: "general", branchId: null, actor: actorFor(ADMIN, "مسؤول", "admin", null),
+      });
+
+      const holder = await pool.connect();
+      await holder.query("BEGIN");
+      await holder.query("LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE");
+
+      const t0 = Date.now();
+      const ctrl = new AbortController();
+      const guardTimer = setTimeout(() => ctrl.abort(), 20_000); // حارسٌ سخيّ للاختبار وحده، لا مهلةَ التطبيق
+      let status = -1, aborted = false, body: any = null;
+      try {
+        const res = await fetch(`${BASE}/api/ai/knowledge/articles/${target.id}`, {
+          method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+          signal: ctrl.signal,
+          body: JSON.stringify({ title: target.title, body: `${MARK} — أثناء قفل audit_log`, scope: "general", branchId: null }),
+        });
+        status = res.status;
+        body = await res.json().catch(() => null);
+      } catch { aborted = true; } finally { clearTimeout(guardTimer); }
+      const elapsed = Date.now() - t0;
+
+      await holder.query("ROLLBACK");
+      holder.release();
+
+      check(!aborted, "ق.١ **ردٌّ وصل فعلاً — لا تعليقٌ إلى الأبد رغم أن القفل على جدولٍ آخر لا صفّ المقالة**", `elapsed=${elapsed}ms`);
+      if (!aborted) {
+        check(status === 409, "ق.٢ **٤٠٩ صريح — نفسُ ردّ قفل الصفّ تماماً**", `status=${status}`);
+        check(elapsed < 8000, "ق.٣ **ويعود ضمن ثوانٍ معدودة (< ٨ث)** — بحدود مهلة القفل (٥ث) لا أكثر", `elapsed=${elapsed}ms`);
+        check(typeof body?.error === "string" && body.error.includes("قيد التعديل"),
+          "ق.٤ ورسالةٌ عربيةٌ واضحة مطابقة لرسالة قفل الصفّ", JSON.stringify(body));
+      }
+
+      //  ق.٥ لا نسخةَ جديدة فعّالة كُتبت من المحاولة الفاشلة — الأصلُ وحده باقٍ.
+      const versions = (await q(
+        `SELECT id, is_active FROM ai_knowledge_articles WHERE title LIKE $1 ORDER BY id`,
+        [`${MARK} — مقالةٌ لاختبار قفل audit_log%`],
+      )).rows;
+      same("ق.٥ **نسخةٌ واحدةٌ فقط موجودة، فعّالة كما كانت** — لا نسخةَ ثانية جزئيّة", versions.length, 1);
+      check(versions[0]?.is_active === true, "ق.٦ والنسخةُ الوحيدةُ فعّالةٌ كما كانت قبل المحاولة");
+
+      //  ق.٧ وبعد تحرّر القفل، تعديلٌ عاديّ ينجح فوراً — لا أثر عالقٍ.
+      const afterRes = await fetch(`${BASE}/api/ai/knowledge/articles/${target.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({ title: target.title, body: `${MARK} — بعد تحرّر قفل audit_log`, scope: "general", branchId: null }),
+      });
+      check(afterRes.status === 200, "ق.٧ **وتعديلٌ جديدٌ ينجح فوراً بعد تحرّر القفل**", `status=${afterRes.status}`);
+    }
+
+    // ══ ر. تشبّعُ المِجمَع — الطلبُ يخرج ضمن مهلة الاقتناء، وتحريرُ اتّصالٍ
+    // واحد يُعيد التعديل الطبيعيّ فوراً (تصحيحٌ إنتاجيّ ٢٠٢٦-٠٩-١٢) ═══════
+    console.log("\n── ر. تشبّعُ مِجمَع الاتصالات — لا تعليقَ إلى الأبد، ٥٠٣ لا ٤٠٩ ──");
+    {
+      const target = await createArticle({
+        title: `${MARK} — مقالةٌ لاختبار تشبّع المِجمَع`, body: `${MARK} — أصل`,
+        scope: "general", branchId: null, actor: actorFor(ADMIN, "مسؤول", "admin", null),
+      });
+
+      const poolMax = (pool as any).options?.max ?? 10;
+      const held: any[] = [];
+      for (let i = 0; i < poolMax; i++) held.push(await pool.connect());
+
+      const t0 = Date.now();
+      const ctrl = new AbortController();
+      const guardTimer = setTimeout(() => ctrl.abort(), 15_000); // فوق مهلة الاقتناء (٨ث) بهامشٍ سخيّ
+      let status = -1, aborted = false, body: any = null;
+      try {
+        const res = await fetch(`${BASE}/api/ai/knowledge/articles/${target.id}`, {
+          method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+          signal: ctrl.signal,
+          body: JSON.stringify({ title: target.title, body: `${MARK} — أثناء تشبّع المِجمَع`, scope: "general", branchId: null }),
+        });
+        status = res.status;
+        body = await res.json().catch(() => null);
+      } catch { aborted = true; } finally { clearTimeout(guardTimer); }
+      const elapsed = Date.now() - t0;
+
+      check(!aborted, "ر.١ **ردٌّ وصل فعلاً رغم تشبّع المِجمَع بالكامل** — لا انتظارٌ أبديّ لاقتناء اتّصال", `elapsed=${elapsed}ms`);
+      if (!aborted) {
+        check(status === 503, "ر.٢ **٥٠٣ — خدمةٌ مؤقّتاً غير متاحة، لا ٤٠٩** (ليس تعارضَ تعديلٍ، بل خادمٌ مُثقَل)", `status=${status}`);
+        check(elapsed < 10_000, "ر.٣ **ويعود ضمن ثوانٍ معدودة** — بحدود مهلة الاقتناء (٨ث) لا أكثر", `elapsed=${elapsed}ms`);
+        check(typeof body?.error === "string" && body.error.includes("مشغول"),
+          "ر.٤ ورسالةٌ عربيةٌ واضحة تدلّ على انشغال الخادم لا تعارضَ تعديل", JSON.stringify(body));
+      }
+
+      //  ر.٥ تحريرُ اتّصالٍ واحدٍ فقط يُعيد التعديل الطبيعيّ فوراً.
+      const released = held.pop();
+      released.release();
+      const afterRes = await fetch(`${BASE}/api/ai/knowledge/articles/${target.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({ title: target.title, body: `${MARK} — بعد تحرير اتصال`, scope: "general", branchId: null }),
+      });
+      check(afterRes.status === 200,
+        "ر.٥ **وبعد تحرير اتصالٍ واحد فقط (والمِجمَع لا يزال شبهَ مشبَع) يعمل التعديل فوراً**",
+        `status=${afterRes.status}`);
+
+      for (const c of held) c.release();
     }
   } finally {
     await cleanup();

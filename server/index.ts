@@ -15,8 +15,21 @@ import { startNotificationDispatcher } from "./patient_notifications/dispatcher"
 // In Express, an async handler that rejects (or any stray promise rejection)
 // isn't caught by the express error middleware — and Node exits with status 1
 // on an unhandled rejection by default. That is exactly the
-// "Instance failed: Exited with status 1" crash seen on Render. Log it and
-// keep serving; the affected request still gets its error response.
+// "Instance failed: Exited with status 1" crash seen on Render.
+//
+// ══ تصحيحُ تعليقٍ مضلِّل (تشخيصٌ حيّ، ٢٠٢٦-٠٩-١٢) ═══════════════════════════
+// كان هذا التعليق يدّعي أن «الطلبَ المتأثّر يحصل على ردّ خطئه» — **غير
+// صحيح**: هذا المُعالِج لا يملك `res` أصلاً، فلا يستطيع الردّ على أيّ طلب.
+// ما يفعله فعلياً هو **منع سقوط العملية كلِّها** فقط — يسجّل الخطأ ويُبقي
+// الخادمَ يخدم بقيّة الطلبات. أمّا الطلبُ الذي رفض وعده أصلاً فيبقى **بلا
+// أيّ استجابة إلى الأبد** ما لم يستدعِ معالجُه `next(err)` صراحةً (فيصل
+// الخطأ إلى وسيط الأخطاء أسفل هذا الملفّ ويُرسَل ردٌّ حقيقي) — وهذا بالضبط
+// ما كان يسبّب تعليقاتِ حذف/تعديل المستخدم ومقالة المعرفة إلى الأبد قبل
+// هذا الإصلاح: خطأٌ حقيقيّ يقع (قيدٌ أجنبيّ، مهلةُ قفل) ويُعاد رميه
+// (`throw err`) من داخل معالجٍ غير متزامن بدل `next(err)`، فيسجَّله هذا
+// المعالِج ويُترَك طلبُ العميل معلَّقاً بلا ردّ. **فالإصلاحُ الحقيقيّ في كلّ
+// معالجٍ** (استدعاء `next(err)` بدل `throw`)، **لا هنا** — هذا المعالِج
+// يبقى شبكةَ أمانٍ للعملية نفسها فقط، ولن يصير يوماً شبكةَ أمانٍ لطلبٍ فردي.
 process.on("unhandledRejection", (reason) => {
   console.error("[process] Unhandled promise rejection (service kept alive):", reason);
 });
