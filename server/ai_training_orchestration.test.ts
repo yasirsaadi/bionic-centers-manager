@@ -20,6 +20,15 @@
 //     يطلب وحدةً ثالثة كان يُقبل خطأً قبل هذا التصحيح).
 // (٦) وتخطّي training_catalog قبل ملاحةٍ صريحة (نداءٌ لِـtraining_lesson
 //     مباشرةً) يُرفَض بلا تنفيذ — لا مرجعَ لهويّةٍ صحيحة بعد.
+// (٧) **العطبُ الإنتاجيّ التالي (تصحيحٌ ثانٍ)**: «دربني... من البداية»
+//     نادى training_catalog ثم أنهى النموذجُ الردَّ بنصٍّ عاديّ **بلا نداء
+//     training_lesson إطلاقاً** — لا تمرّداً برقمٍ خاطئ (ذاك القسم ٢)، بل
+//     تجاهلاً تاماً للإلزام. runWithTools كانت تقبل ذلك النصَّ نهائياً.
+//     الآن: الخادمُ يفرض فتحَ الوحدة الأولى **حتمياً بنفسه** حين يحاول
+//     النموذج الإنهاءَ بلا فتح، ويُغذّي نتيجتها الحقيقية إلى جولةٍ تالية
+//     يشرحها فيها النموذج — فلا يُقبل نصُّ الإنهاء الأصليّ نهائياً، ولا
+//     تُفتَح وحدةٌ ثانية.
+// (٨) ونفسُ العطب لـ«كمّل تدريبي» — الخادمُ يفرض فتحَ next تحديداً.
 //
 // ══ ولا مسّ لدلالات الإكمال ولا لجداول التقدّم — الحرّاسُ الجدد على عدد
 // نداءات training_lesson **وهويّتها** لهذه الرسالة وحدها، لا على ما تكتبه
@@ -37,6 +46,7 @@ import type * as provider from "./ai/provider";
 import { aiChat } from "./ai/chat";
 import { safeAiComplete } from "./ai/provider";
 import { resolveAiAccess } from "./ai/access";
+import { findNextIncompleteModule } from "./training/store";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -51,8 +61,11 @@ function same(msg: string, got: unknown, expected: unknown) {
 const MARK = "اختبار-تنسيق-التدريب";
 const B1 = 9781;
 const U_PROGRESS = 9782, U_START = 9783, U_TWOMODULES = 9784, U_CONTINUE = 9785, U_QUIZ = 9786,
-  U_SKIP_CATALOG = 9787;
-const ALL_USERS = [U_PROGRESS, U_START, U_TWOMODULES, U_CONTINUE, U_QUIZ, U_SKIP_CATALOG];
+  U_SKIP_CATALOG = 9787, U_FORCE_START = 9788, U_FORCE_CONTINUE = 9789;
+const ALL_USERS = [
+  U_PROGRESS, U_START, U_TWOMODULES, U_CONTINUE, U_QUIZ, U_SKIP_CATALOG,
+  U_FORCE_START, U_FORCE_CONTINUE,
+];
 
 async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
   const { rows } = await pool.query(text, params);
@@ -110,14 +123,19 @@ async function main() {
     INSERT INTO system_users
       (id, username, password_hash, display_name, role, branch_id, is_active, can_add_patients)
     VALUES
-      ($1,'orch-progress','x','م. تقدّم','reception',$7,true,true),
-      ($2,'orch-start','x','م. بداية','reception',$7,true,true),
-      ($3,'orch-two','x','م. وحدتان','reception',$7,true,true),
-      ($4,'orch-continue','x','م. متابعة','reception',$7,true,true),
-      ($5,'orch-quiz','x','م. اختبار','reception',$7,true,true),
-      ($6,'orch-skip','x','م. تخطّي','reception',$7,true,true)
+      ($1,'orch-progress','x','م. تقدّم','reception',$9,true,true),
+      ($2,'orch-start','x','م. بداية','reception',$9,true,true),
+      ($3,'orch-two','x','م. وحدتان','reception',$9,true,true),
+      ($4,'orch-continue','x','م. متابعة','reception',$9,true,true),
+      ($5,'orch-quiz','x','م. اختبار','reception',$9,true,true),
+      ($6,'orch-skip','x','م. تخطّي','reception',$9,true,true),
+      ($7,'orch-force-start','x','م. فرضُ البداية','reception',$9,true,true),
+      ($8,'orch-force-continue','x','م. فرضُ المتابعة','reception',$9,true,true)
     ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, is_active = true
-  `, [U_PROGRESS, U_START, U_TWOMODULES, U_CONTINUE, U_QUIZ, U_SKIP_CATALOG, B1]);
+  `, [
+    U_PROGRESS, U_START, U_TWOMODULES, U_CONTINUE, U_QUIZ, U_SKIP_CATALOG,
+    U_FORCE_START, U_FORCE_CONTINUE, B1,
+  ]);
 
   const quiz = JSON.stringify({
     question: `${MARK} — اكتب كلمة «تجربة» في إجابتك`,
@@ -267,11 +285,22 @@ async function main() {
 
       //  استطلاعٌ بحتٌ (لا تدريبَ فيه) لمعرفة قيمة next الحقيقية — لبناء
       //  السيناريو العدائيّ التالي، لا جزءاً من الاختبار نفسِه.
-      runScript([{ toolCalls: [{ name: "training_catalog", input: {} }] }]);
-      await chat(accessOf(U_CONTINUE), [{ role: "user", content: "كمّل تدريبي" }]);
-      const peek = seen[1]?.results?.[0];
-      same("٤.١. **training_catalog.next يشير للوحدة الثانية تحديداً — لا الأولى ولا الثالثة**",
-        peek?.next?.moduleId, MOD_B);
+      //
+      //  ══ مباشرةً من المخزن، لا عبر chat() (تصحيحٌ بعد القسم ٧/٨) ═══════
+      //  كان هذا استطلاعاً عبر chat() بسكربتٍ من نداءٍ واحد، معتمداً على أن
+      //  الجولةَ الثانية (حين ينفد السكربت فيُعيد المزيَّفُ نصَّ «انتهيت.»
+      //  الافتراضيّ بلا أدوات) تُقبَل نهائياً بلا أثر. وهذا صحيحٌ قبل هذا
+      //  التصحيح فقط: `forceRequiredLessonOpen` الجديدة **تفرض فتحَ next
+      //  فعلاً** عند أيّ محاولة إنهاءٍ بعد نجاح الكتالوج لرسالة «كمّل» —
+      //  ولو كانت محاولةُ الإنهاء تلك نصَّ المزيَّف الافتراضيّ لا نصّاً
+      //  اختاره سكربتُ الاختبار. فكان الاستطلاعُ نفسُه يفتح الوحدةَ الثانية
+      //  فعلياً قبل أن يبدأ السيناريو العدائيّ، فيتغيّر next الحقيقيّ تحته.
+      //  والقراءةُ المباشرة من `findNextIncompleteModule` بلا حلقة أدواتٍ
+      //  إطلاقاً هي الاستطلاعُ الصادق — بلا أثرٍ جانبيّ ممكن مهما تطوّرت
+      //  runWithTools لاحقاً.
+      const peekNext = await findNextIncompleteModule(accessOf(U_CONTINUE));
+      same("٤.١. **next الحقيقيّ يشير للوحدة الثانية تحديداً — لا الأولى ولا الثالثة**",
+        peekNext?.moduleId, MOD_B);
 
       runScript([
         { toolCalls: [{ name: "training_catalog", input: {} }] },
@@ -279,7 +308,7 @@ async function main() {
         //  تعني next تحديداً (الثانية هنا). يجب أن تُرفَض.
         { toolCalls: [{ name: "training_lesson", input: { moduleId: MOD_C } }] },
         //  ثمّ المحاولةُ الصحيحة — رقمُ next نفسُه.
-        { toolCalls: [{ name: "training_lesson", input: { moduleId: peek.next.moduleId } }] },
+        { toolCalls: [{ name: "training_lesson", input: { moduleId: peekNext!.moduleId } }] },
         { text: "هذه الوحدة الثانية." },
       ]);
       const res = await chat(accessOf(U_CONTINUE), [{ role: "user", content: "كمّل تدريبي" }]);
@@ -382,6 +411,100 @@ async function main() {
         `SELECT 1 FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
         [U_SKIP_CATALOG, MOD_A]);
       check(!row, "٦.٣. **ولا صفَّ تقدّمٍ كُتب** — لا أثر جانبيّ من المحاولة المرفوضة");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ٧. العطبُ الإنتاجيّ — إنهاءٌ بلا فتح: يُفرَض فتحُ الأولى حتماً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  العطبُ بالضبط: نداءُ training_catalog ثم نصٌّ عاديّ **بلا** أيّ نداءٍ
+    //  لِـtraining_lesson — لا تمرّداً برقمٍ خاطئ (ذاك القسم ٢)، بل تجاهلاً
+    //  تاماً للإلزام. والرسالةُ نفسُها المُبلَّغة إنتاجياً حرفياً.
+    {
+      runScript([
+        { toolCalls: [{ name: "training_catalog", input: {} }] },
+        //  محاولةُ إنهاءٍ بلا فتح — هذا النصُّ يجب ألّا يخرج كردٍّ نهائيّ.
+        { text: "حسناً، سأبدأ بتدريبك الآن." },
+        //  الجولةُ التي يراها النموذج **بعد** أن يفرض الخادمُ الفتحَ حتماً
+        //  — فيشرح المحتوى الحقيقيّ الذي وصله فعلاً، لا الذي ادّعاه.
+        { text: "هذه الوحدة الأولى فعلاً — تشرح كذا وكذا." },
+      ]);
+      const res = await chat(accessOf(U_FORCE_START),
+        [{ role: "user", content: "دربني على عملي كموظف استقبال من البداية." }]);
+      check(res.ok === true, "٧.١. المحادثةُ تنجح");
+
+      check(res.ok && res.value.reply !== "حسناً، سأبدأ بتدريبك الآن.",
+        "٧.٢. **نصُّ الإنهاء الذي لم يفتح شيئاً لم يُقبَل نهائياً**",
+        JSON.stringify(res.ok ? res.value.reply : res));
+      same("٧.٣. **وبدلاً منه: شرحُ الوحدة الحقيقية بعد الفتح الحتميّ**",
+        res.ok ? res.value.reply : null, "هذه الوحدة الأولى فعلاً — تشرح كذا وكذا.");
+
+      //  نتيجةُ الفتح المفروض تصل النموذجَ في طلب الجولة التالية — seen[2]
+      //  (seen[0]=الكتالوج، seen[1]=محاولة الإنهاء، seen[2]=بعد الفرض).
+      const forcedLesson = seen[2]?.results?.[0];
+      same("٧.٤. **والفتحُ المفروض حقيقيّ — عنوانُ الوحدة الأولى فعلاً من القاعدة**",
+        forcedLesson?.title, `${MARK} — الوحدة الأولى`);
+
+      const [row] = await q<{ status: string }>(
+        `SELECT status FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+        [U_FORCE_START, MOD_A]);
+      check(!!row, "٧.٥. **وصفُّ تقدّمٍ كُتب فعلاً للوحدة الأولى — الفتحُ ليس مسرحياً**");
+      same("   واكتملت فوراً كما يتوقَّع لوحدةٍ بلا اختبار", row?.status, "completed");
+
+      const [rowB] = await q(
+        `SELECT 1 FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+        [U_FORCE_START, MOD_B]);
+      check(!rowB, "٧.٦. **ولم تُفتَح وحدةٌ ثانية في نفس الرسالة** رغم جولتين إضافيّتين للنموذج");
+
+      check((res.ok ? res.value.tools?.names ?? [] : []).includes("training_lesson"),
+        "٧.٧. **والفتحُ المفروض مسجَّلٌ في تدقيق الأدوات كأنّه نداءٌ حقيقيّ**",
+        JSON.stringify(res.ok ? res.value.tools : res));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ٨. نفسُ العطب لـ«كمّل تدريبي» — يُفرَض فتحُ next حتماً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      //  إعدادٌ: الوحدةُ الأولى مكتملةٌ سلفاً، فـnext تصير الثانية — نفسُ
+      //  الحقيقة المُثبَتة في ٤.١ بالمسار نفسِه (مستخدمٌ جديدٌ منعزل هنا).
+      await q(
+        `INSERT INTO employee_training_progress (user_id, track_id, module_id, status, completed_at)
+         VALUES ($1,$2,$3,'completed',now())`,
+        [U_FORCE_CONTINUE, TRACK_ID, MOD_A]);
+
+      runScript([
+        { toolCalls: [{ name: "training_catalog", input: {} }] },
+        //  إنهاءٌ بلا فتح — العطبُ نفسُه، لا تمرّداً برقمٍ خاطئ.
+        { text: "تمام، خلّينا نكمل." },
+        { text: "هذه الوحدة الثانية فعلاً — تشرح كذا وكذا." },
+      ]);
+      const res = await chat(accessOf(U_FORCE_CONTINUE), [{ role: "user", content: "كمّل تدريبي" }]);
+      check(res.ok === true, "٨.١. المحادثةُ تنجح");
+
+      check(res.ok && res.value.reply !== "تمام، خلّينا نكمل.",
+        "٨.٢. **نصُّ الإنهاء الذي لم يفتح شيئاً لم يُقبَل نهائياً**",
+        JSON.stringify(res.ok ? res.value.reply : res));
+      same("٨.٣. **وبدلاً منه: شرحُ الوحدة الحقيقية بعد الفتح الحتميّ**",
+        res.ok ? res.value.reply : null, "هذه الوحدة الثانية فعلاً — تشرح كذا وكذا.");
+
+      const forcedLesson = seen[2]?.results?.[0];
+      same("٨.٤. **والفتحُ المفروض حقيقيّ — عنوانُ وحدة next تحديداً (الثانية)، لا الأولى ولا الثالثة**",
+        forcedLesson?.title, `${MARK} — الوحدة الثانية`);
+
+      const [rowB] = await q<{ status: string }>(
+        `SELECT status FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+        [U_FORCE_CONTINUE, MOD_B]);
+      check(!!rowB, "٨.٥. وصفُّ تقدّمٍ كُتب فعلاً للوحدة الثانية");
+      same("   واكتملت فوراً كما يتوقَّع", rowB?.status, "completed");
+
+      const [rowC] = await q(
+        `SELECT 1 FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+        [U_FORCE_CONTINUE, MOD_C]);
+      check(!rowC, "٨.٦. **ولم تُفتَح وحدةٌ ثالثة في نفس الرسالة**");
+
+      const [rowA] = await q<{ status: string }>(
+        `SELECT status FROM employee_training_progress WHERE user_id=$1 AND module_id=$2`,
+        [U_FORCE_CONTINUE, MOD_A]);
+      same("٨.٧. **والوحدةُ الأولى لم تُمَسّ** — بقيت مكتملةً من الإعداد", rowA?.status, "completed");
     }
 
     console.log(`\n${failures === 0
