@@ -593,6 +593,108 @@ async function main() {
     for (const idToDeactivate of [approvedAsEdit.id, approvedAsNew.id, approvedAsNewDefault.id]) {
       await setArticleActive({ id: idToDeactivate, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
     }
+
+    // ══ ع. قفلُ الصفّ لا يعلّق الطلب إلى الأبد — تصحيحٌ إنتاجيّ ═══════════
+    // «جارٍ الحفظ...» بلا نهاية: FOR UPDATE بلا مهلةٍ كان يعلّق تعديلَ مقالةٍ
+    // إلى الأبد إن كان صفُّها مقفولاً من معاملةٍ أخرى. هنا: معاملةٌ خارجية
+    // تُمسك القفلَ عمداً، والتعديلُ عبر النقطة الحقيقية يجب أن يفشل ضمن ثوانٍ
+    // معدودة بردٍّ واضح (٤٠٩) لا بانتظارٍ أبديّ ولا بانهيار.
+    console.log("\n── ع. قفلُ الصفّ — ردٌّ واضح ضمن ثوانٍ، لا انتظارٌ أبديّ (تصحيحٌ إنتاجيّ) ──");
+    {
+      const lockTarget = await createArticle({
+        title: `${MARK} — مقالةٌ لاختبار القفل`, body: `${MARK} — متنٌ أصليّ`,
+        scope: "general", branchId: null, actor: actorFor(ADMIN, "مسؤول", "admin", null),
+      });
+
+      //  ع.١ التعديلُ العاديّ ينجح بسرعة أوّلاً — المسارُ السعيد لم يتأثّر
+      //  بإضافة مهلة القفل (لا حجزَ قفلٍ من أحد الآن). هذا يثبت «التعديلُ
+      //  العاديّ ما زال ينجح» صراحةً في سياق هذا التصحيح بعينه.
+      const normalEditRes = await fetch(`${BASE}/api/ai/knowledge/articles/${lockTarget.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({
+          title: lockTarget.title, body: `${MARK} — متنٌ مُعدَّلٌ بلا تعارض`,
+          scope: "general", branchId: null,
+        }),
+      });
+      check(normalEditRes.status === 200,
+        "ع.١ **التعديلُ العاديّ ينجح كالمعتاد** مع وجود مهلة القفل الجديدة", `status=${normalEditRes.status}`);
+      const normalEdited = (await normalEditRes.json()).article;
+      same("ع.٢ نسخةٌ جديدة فعّالة كما كان", normalEdited.version, 2);
+
+      //  ع.٣ معاملةٌ خارجية تُمسك قفلَ الصفّ الفعّال الآن عمداً — بلا COMMIT.
+      const holder = await pool.connect();
+      await holder.query("BEGIN");
+      await holder.query(`SELECT 1 FROM ai_knowledge_articles WHERE id = $1 FOR UPDATE`, [normalEdited.id]);
+
+      try {
+        //  حارسُ الاختبار نفسِه لا يعلَّق أبداً حتى لو ارتدّ هذا التصحيح —
+        //  ٢٠ث سخيّةٌ فوق مهلة الخادم (٥ث)، فشلٌ صريح بدل تعليق حزمة الاختبار.
+        const t0 = Date.now();
+        const guardController = new AbortController();
+        const guardTimer = setTimeout(() => guardController.abort(), 20_000);
+        let lockedEditRes: Response | null = null;
+        let clientTimedOut = false;
+        try {
+          lockedEditRes = await fetch(`${BASE}/api/ai/knowledge/articles/${normalEdited.id}`, {
+            method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+            signal: guardController.signal,
+            body: JSON.stringify({
+              title: normalEdited.title, body: `${MARK} — محاولةٌ أثناء القفل`,
+              scope: "general", branchId: null,
+            }),
+          });
+        } catch {
+          clientTimedOut = true;
+        } finally {
+          clearTimeout(guardTimer);
+        }
+        const elapsed = Date.now() - t0;
+
+        check(!clientTimedOut,
+          "ع.٤ **والخادمُ يردّ فعلاً ولو كان الصفُّ مقفولاً** — لا انتظارٌ أبديّ حتى بمهلة اختبارٍ سخيّة (٢٠ث)",
+          `elapsed=${elapsed}ms`);
+        if (!clientTimedOut && lockedEditRes) {
+          check(lockedEditRes.status === 409,
+            "ع.٥ **والردُّ ٤٠٩ صريح — لا انهيارٌ ولا انتظار**", `status=${lockedEditRes.status}`);
+          check(elapsed < 8000,
+            "ع.٦ **ويعود ضمن ثوانٍ معدودة (< ٨ث)** — بحدود مهلة الخادم (٥ث) لا أكثر", `elapsed=${elapsed}ms`);
+          const lockedBody = await lockedEditRes.json().catch(() => ({}));
+          check(typeof lockedBody.error === "string" && lockedBody.error.includes("قيد التعديل"),
+            "ع.٧ **ورسالةٌ عربيةٌ واضحة تدلّ على السبب** — لا خطأ خادمٍ عارٍ", JSON.stringify(lockedBody));
+        }
+      } finally {
+        await holder.query("ROLLBACK");
+        holder.release();
+      }
+
+      //  ع.٨ ولم يُكتب شيء أثناء المحاولة الفاشلة — لا نسخةَ ثالثة يتيمة.
+      //  العنوانُ لم يتغيّر عبر أيّ تعديلٍ في هذا القسم، فعدّه يحصر السلسلة
+      //  كلَّها: الأصل (لقطةٌ ١) + normalEdited (لقطةٌ ٢) فقط عند هذه النقطة.
+      const [rowCount] = (await q(
+        `SELECT COUNT(*) AS n FROM ai_knowledge_articles WHERE title = $1`,
+        [`${MARK} — مقالةٌ لاختبار القفل`],
+      )).rows;
+      same("ع.٨ **ولا نسخةَ ثالثة كُتبت من المحاولة المرفوضة** — فشلٌ نظيف بلا أثر جزئيّ",
+        Number(rowCount?.n ?? -1), 2);
+
+      //  ع.٩ وبعد تحرّر القفل، تعديلٌ جديدٌ ينجح فوراً — الاتّصالُ والمعاملةُ
+      //  لم يبقيا في حالةٍ معطوبة بسبب فشل القفل السابق (مُثبَتٌ سلوكاً هنا،
+      //  لا افتراضاً من قراءة الكود وحدها).
+      const afterLockEditRes = await fetch(`${BASE}/api/ai/knowledge/articles/${normalEdited.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+        body: JSON.stringify({
+          title: normalEdited.title, body: `${MARK} — بعد تحرّر القفل`,
+          scope: "general", branchId: null,
+        }),
+      });
+      check(afterLockEditRes.status === 200,
+        "ع.٩ **وبعد تحرّر القفل، تعديلٌ جديدٌ ينجح فوراً** — لا أثر عالقٍ من محاولة القفل",
+        `status=${afterLockEditRes.status}`);
+      const afterLockEdited = (await afterLockEditRes.json()).article;
+      same("ع.١٠ نسخةٌ ثالثةٌ صحيحة الآن (بعد الرفض النظيف)", afterLockEdited.version, 3);
+
+      await setArticleActive({ id: afterLockEdited.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
+    }
   } finally {
     await cleanup();
     httpServer.close();

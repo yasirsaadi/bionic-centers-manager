@@ -70,5 +70,41 @@ console.log("\n── الاعتمادُ ذاتُ اعتماد ذاتيّ ──
 check(!/name="approvedByName"|name="decidedByName"/.test(tabBody),
   "ز. لا حقلَ نصٍّ حرٍّ لاسم المعتمِد — الهويّةُ من الجلسة دائماً");
 
+console.log("\n── ح. حفظُ المقالة — مهلةٌ محدودة، لا زرَّ حفظٍ معلَّقاً إلى الأبد (تصحيحٌ إنتاجيّ) ──");
+{
+  //  والوصلُ حقيقيّ لا شكليّ — الاستيرادُ وحده لا يكفي؛ نداءُ fetchWithTimeout
+  //  يجب أن يقع فعلاً داخل مسار حفظ المقالة (tabBody)، لا في تبويبٍ آخر.
+  check(src.includes('import { fetchWithTimeout, SAVE_ARTICLE_TIMEOUT_MS } from "./ai_knowledge_admin_save"'),
+    "ح.١. الاستيرادُ من الوحدة المستقلّة القابلة للاختبار موجودٌ فعلياً");
+  check(tabBody.includes("fetchWithTimeout(") && tabBody.includes("SAVE_ARTICLE_TIMEOUT_MS"),
+    "ح.٢. **ونداؤها يقع فعلاً في مسار حفظ المقالة** — لا استيرادٌ ميت");
+  //  ولا AbortController خامّاً مُعاد كتابته هنا — المنطقُ في مكانٍ واحد
+  //  يُختبَر (ai_knowledge_admin_save.ts)، لا نسخةٌ ثانية تنحرف عنه.
+  check(!tabBody.includes("new AbortController"),
+    "ح.٣. **ولا نسخةَ ثانية من منطق المهلة هنا** — المصدرُ الوحيد الملفُّ المستقلّ");
+}
+
+console.log("\n── ط. النصُّ المُدخَل يبقى عند الخطأ — لا إغلاقَ للنافذة إلّا عند النجاح ──");
+{
+  //  saveArticle.onError يجب ألّا يمسّ articleDialog — فتبقى حقولُ النموذج
+  //  (defaultValue غير متحكَّمة) كما كتبها المسؤول، قابلةً لإعادة المحاولة
+  //  بلا إعادة كتابتها. onSuccess وحدها تُغلق النافذة.
+  const saveArticleIdx = tabBody.indexOf("const saveArticle = useMutation(");
+  const nextMutationIdx = tabBody.indexOf("const toggleActive = useMutation(");
+  check(saveArticleIdx > -1 && nextMutationIdx > saveArticleIdx,
+    "ط.١. حدودُ مُعرِّف saveArticle موجودةٌ فعلياً في المصدر");
+  const saveArticleBlock = tabBody.slice(saveArticleIdx, nextMutationIdx);
+  const onErrorIdx = saveArticleBlock.indexOf("onError:");
+  const onSuccessIdx = saveArticleBlock.indexOf("onSuccess:");
+  check(onErrorIdx > -1 && onSuccessIdx > -1 && onErrorIdx > onSuccessIdx,
+    "ط.٢. onError موجودةٌ وتلي onSuccess في تعريف saveArticle");
+  const onErrorBlock = saveArticleBlock.slice(onErrorIdx);
+  check(!onErrorBlock.includes("setArticleDialog(null)"),
+    "ط.٣. **onError لا تُغلق النافذة أبداً** — النصُّ يبقى لإعادة المحاولة");
+  const onSuccessBlock = saveArticleBlock.slice(onSuccessIdx, onErrorIdx);
+  check(onSuccessBlock.includes("setArticleDialog(null)"),
+    "ط.٤. وonSuccess وحدها من تُغلقها — تمييزٌ حقيقيّ لا افتراض");
+}
+
 console.log(`\n${failures === 0 ? "✅ all ai-knowledge-ui cases pass" : `❌ ${failures} case(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

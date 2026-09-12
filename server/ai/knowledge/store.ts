@@ -255,11 +255,33 @@ export async function createArticle(params: ArticleWriteParams): Promise<Article
  * الكاتبُ القانونيّ — تعديلُ مقالةٍ قائمة: **نسخةٌ جديدة، لا كتابةٌ فوق
  * القديمة**. يُقفَل صفّها أوّلاً (`FOR UPDATE`) فلا تعديلان متزامنان
  * يُنتجان نسختين متفرّعتين من الأصل نفسه.
+ *
+ * ══ حدٌّ زمنيّ لانتظار القفل — لا انتظارَ أبديّ (تصحيحٌ إنتاجيّ) ═══════════
+ * «FOR UPDATE» بلا مهلة كانت تُعلّق الطلبَ إلى الأبد إن كان صفٌّ آخر يحمل
+ * قفلاً عليه (تعديلٌ متزامنٌ آخر لنفس المقالة، أو معاملةٌ عالقة في مكانٍ
+ * آخر) — فيبقى زرّ «حفظ» في الواجهة على «جارٍ الحفظ...» بلا نجاحٍ ولا خطأ
+ * أبداً، لأن الخادم نفسه لم يُجب بعد. `SET LOCAL lock_timeout` يقتصر على
+ * هذه المعاملة وحدها (يُنسى تلقائياً عند COMMIT/ROLLBACK، فلا أثرَ خارج هذا
+ * الاستدعاء ولا حاجةَ لإعادة ضبطه)، والالتقاطُ أدناه يُترجم رمز بوستغرس
+ * `55P03` (`lock_not_available`) إلى ردٍّ عربيّ واضح بدل الانتظار الأبديّ.
+ *
+ * **ومُثبَتٌ حيّاً أن هذا لا يُفسد المعاملة**: PostgreSQL يعامل `COMMIT` على
+ * معاملةٍ أُجهضت بخطأ (كهذا) كأنه `ROLLBACK` صامت — فالعودةُ بـ`{ok:false}`
+ * هنا بدل رمي الخطأ لا تكتب شيئاً جزئياً، والقفل والمعاملة الموصوفان أعلاه
+ * باقيان بحرفهما — لم يتغيّر شكلُ `FOR UPDATE` ولا شرطُه.
  */
 export async function editArticleTx(
   tx: any, params: ArticleWriteParams & { id: number },
 ): Promise<{ ok: true; article: ArticleAdminRow } | { ok: false; error: string }> {
-  await tx.execute(sql`SELECT 1 FROM ai_knowledge_articles WHERE id = ${params.id} FOR UPDATE`);
+  await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
+  try {
+    await tx.execute(sql`SELECT 1 FROM ai_knowledge_articles WHERE id = ${params.id} FOR UPDATE`);
+  } catch (err: any) {
+    if (err?.code === "55P03") {
+      return { ok: false, error: "المقالة قيد التعديل من مكانٍ آخر الآن — أعد المحاولة بعد قليل" };
+    }
+    throw err;
+  }
   const [current] = await tx.select().from(aiKnowledgeArticles)
     .where(eq(aiKnowledgeArticles.id, params.id));
   if (!current) return { ok: false, error: "المقالة غير موجودة" };
