@@ -496,6 +496,12 @@ async function main() {
     //  (`converted_work_order_id` ⟶ الأمر) ولا يُخمّن غيرَها. يعمل مرّةً
     //  عند الإقلاع ثم لا يعود، ولا يمسّ مالاً ولا معاينة.
     "server/migrations/063_sold_device_identity_repair.ts",
+    //  وترحيلُ ٠٧٧ كذلك: تعبئةٌ **حتميّة** واحدة لعمود `awaiting_since`
+    //  الجديد — حلقةٌ منتظرة ولها طلبُ «عاد للشراء» معلَّق تأخذ لحظةَ
+    //  طلبها (`medical_review_requests.created_at`) لا غير. يعمل مرّةً عند
+    //  الإقلاع ثم لا يعود، ولا يمسّ حالةً ولا تسلسلاً ولا سعراً ولا
+    //  `created_at` — لا ثابتاً من ثوابت الحلقة.
+    "server/migrations/077_episode_awaiting_since.ts",
     //  طبقة البيانات المخصّصة — كل كتابةٍ حيّة تمرّ منها.
     "server/device_episodes/store.ts",
     //  كاسكيد دمج الملفّين: ينقل الحلقات بمعرّفاتها ويعيد ترقيم تسلسلها

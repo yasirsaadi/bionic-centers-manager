@@ -31,6 +31,7 @@ import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
+  ExamEpisodeAmbiguousError, ExamEpisodeStaleError, awaitingExamEpisodesForCase,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
@@ -249,6 +250,15 @@ export async function createExam(values: {
   plan: string | null;
   notes: string | null;
   idempotencyKey: string;
+  /**
+   * **الجهازُ الذي تُعاينه هذه المعاينةُ بعينه** (تدقيق ٢٠٢٦-٠٩-١٢، INT-02).
+   *
+   * يصل من صفّ «معايناتي» أو من منتقي النافذة، ويُقفَل ويُتحقَّق منه تحت
+   * المعاملة في `claimAwaitingEpisodeForExam`. وغيابُه (`null`/`undefined`)
+   * مقبولٌ لعميلٍ قديم **فقط حين لا التباس**: صفرٌ أو حلقةٌ منتظرةٌ واحدة؛
+   * وأكثرُ من واحدة ⟵ `ExamEpisodeAmbiguousError` ٤٠٩ بلا كتابة.
+   */
+  deviceEpisodeId?: number | null;
 }): Promise<{ exam: MedicalExam; created: boolean }> {
   const key = values.idempotencyKey;
   if (!key || !key.trim()) {
@@ -267,9 +277,17 @@ export async function createExam(values: {
       let episodeId: number | null = null;
 
       if (isDevice && values.caseId !== null) {
+        //  **بالمعرّف حين يُعطى، وبالوحدانية حين يغيب** — ولا `LIMIT 1`.
+        //  والرميُ هنا يقع **قبل** إدراج المعاينة: الالتباسُ والبياتُ
+        //  يتراجعان بصفر كتابة.
         episodeId = await claimAwaitingEpisodeForExam(tx, {
           patientId: values.patientId, caseId: values.caseId,
+          episodeId: values.deviceEpisodeId ?? null,
         });
+      } else if (values.deviceEpisodeId != null) {
+        //  معرّفُ جهازٍ على معاينةٍ بلا خيط جهاز (علاجٌ طبيعي، أو حالةٌ لم
+        //  تُنشأ بعد): لا حلقةَ يمكن أن تطابقه — شاشةٌ بائتة، لا تخمين.
+        throw new ExamEpisodeStaleError();
       }
 
       const [row] = await tx
@@ -331,6 +349,38 @@ export async function createExam(values: {
     }
     throw err;
   }
+}
+
+export { ExamEpisodeAmbiguousError, ExamEpisodeStaleError };
+
+/**
+ * **الفحصُ المبكّر لهويّة الجهاز — قبل أن يُكتب حرفٌ على ملفّ المريض.**
+ *
+ * نقطةُ التوقيع تكتب الوصفةَ على صفّ المريض (`applyDecision`) **قبل**
+ * `createExam`، فلو اكتُشف الالتباسُ داخل المعاملة وحدها لكان ملفُّ المريض
+ * قد تغيّر بينما الطلبُ يُردّ ٤٠٩ — نصفُ كتابةٍ لطلبٍ مرفوض. هذه قراءةٌ بلا
+ * قفل تُطبِّق القاعدةَ نفسَها (`claimAwaitingEpisodeForExam`) على لقطةٍ
+ * حاضرة: معرّفٌ صريح ⟵ يجب أن يكون ضمن المنتظرين؛ بلا معرّف ⟵ صفرٌ أو
+ * واحدة، وأكثرُ ⟵ التباس. **والحَكَمُ الأخير يبقى القفلَ داخل المعاملة** —
+ * سباقٌ بين الفحصين يُردّ هناك بائتاً.
+ */
+export async function resolveExamEpisode(params: {
+  patientId: number; caseId: number | null; deviceEpisodeId: number | null;
+}): Promise<number | null> {
+  if (params.caseId === null) {
+    if (params.deviceEpisodeId !== null) throw new ExamEpisodeStaleError();
+    return null;
+  }
+  const waiting = await awaitingExamEpisodesForCase({
+    patientId: params.patientId, caseId: params.caseId,
+  });
+  if (params.deviceEpisodeId !== null) {
+    if (!waiting.some((c) => c.id === params.deviceEpisodeId)) throw new ExamEpisodeStaleError();
+    return params.deviceEpisodeId;
+  }
+  if (waiting.length === 0) return null;
+  if (waiting.length > 1) throw new ExamEpisodeAmbiguousError(waiting);
+  return waiting[0].id;
 }
 
 // ── episode-aware readers (PR #217) ─────────────────────────────────────────
@@ -1084,6 +1134,16 @@ export interface WorklistRow {
   branchName: string | null;
   caseType: string;
   waitingSince: string | null;
+  /**
+   * **هويّةُ الجهاز المنتظر** (تدقيق ٢٠٢٦-٠٩-١٢): صفٌّ لكلّ حلقةٍ منتظرة،
+   * يحمل معرّفَها ليصل التوقيعُ إليها بعينها. و`null` لصفٍّ بلا حلقة —
+   * طلبُ مراجعةٍ عارٍ أو خيطٌ موروث بلا جهاز.
+   */
+  episodeId: number | null;
+  /** ما طُلب على تلك الحلقة (`full_device` أو جزء) — للعرض. */
+  requestedItem: string | null;
+  /** ترتيبُ الجهاز في خيطه (#١، #٢…) — للعرض. */
+  sequenceNumber: number | null;
 }
 
 /**
@@ -1127,19 +1187,29 @@ export async function getWorklist(
     branch_name: string | null;
     case_type: string;
     waiting_since: string | null;
+    episode_id: number | null;
+    requested_item: string | null;
+    sequence_number: number | null;
   }>(sql`
     SELECT pc.patient_id, p.name AS patient_name, p.phone, p.patient_code,
            COALESCE(pc.branch_id, p.branch_id) AS branch_id,
            b.name AS branch_name,
            pc.case_type,
-           -- A device request starts waiting when it was OPENED, not when the
-           -- specialty thread was first created years earlier.
-           COALESCE(ep.created_at, pc.created_at) AS waiting_since
+           -- **منذ متى ينتظر الطبيبَ** = آخرُ دخولٍ إلى الطابور (ترحيل ٠٧٧):
+           -- «عاد للشراء» اليوم ينتظر منذ اليوم لا منذ فتح الطلب قبل شهرين.
+           -- والصفُّ السابق للترحيل (awaiting_since NULL) يُقرأ بتاريخ فتح
+           -- الطلب كما كان، والخيطُ بلا حلقة بتاريخ إنشائه.
+           COALESCE(ep.awaiting_since, ep.created_at, pc.created_at) AS waiting_since,
+           ep.id AS episode_id,
+           ep.requested_item,
+           ep.sequence_number
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
     LEFT JOIN branches b ON b.id = COALESCE(pc.branch_id, p.branch_id)
-    -- At most one row can join: uq_pde_case_open permits a single non-terminal
-    -- episode per thread, so a returning patient appears ONCE, never twice.
+    -- ══ صفٌّ لكلّ حلقةٍ منتظرة — **لا صفٌّ لكلّ خيط** ═══════════════════
+    -- بعد ترحيل ٠٧٣ (إسقاطُ uq_pde_case_open) قد ينتظر على الخيط الواحد
+    -- أكثرُ من جهاز، وكلٌّ منها عملٌ مستقلٌّ للطبيب بهويّته (episode_id).
+    -- فالانضمامُ يُكثِّر الصفوفَ عمداً، والمفتاحُ في الشاشة بالحلقة.
     LEFT JOIN patient_device_episodes ep
       ON ep.case_id = pc.id AND ep.status = 'awaiting_exam'
       -- **والمسارُ يحسم لا التصنيف** (ترحيل ٠٦٥): طلبٌ قيل صراحةً إنه بلا
@@ -1163,12 +1233,17 @@ export async function getWorklist(
         -- ولا خيطٌ بلا حلقة، ولا معاينةٌ قديمة.
         -- والشرط أن **لا معاينةَ بعد لحظة الطلب** — فيخرج بتوقيع معاينةٍ
         -- جديدة لا بوجود واحدةٍ من قبل.
+        -- **وبهويّة الجهاز**: الطلبُ المرساةُ إلى حلقةٍ يظهر عبر صفّ حلقته
+        -- أعلاه ما دامت تنتظر؛ فإن لم تعد تنتظر (عُوينت، أُلغيت) فلا يُبقي
+        -- الطلبُ وحده المريضَ في القائمة — صفٌّ شبحٌ لجهازٍ لم يعد قائماً.
+        -- والطلبُ العاري (بلا حلقة) يبقى على قاعدته كما كان.
         OR EXISTS (
           SELECT 1 FROM medical_review_requests r
            WHERE r.patient_id = pc.patient_id
              AND r.service_type = pc.case_type
              AND (r.status = 'escalated'
                   OR (r.status = 'pending' AND r.requested_path = 'full'))
+             AND r.device_episode_id IS NULL
              AND NOT EXISTS (
                SELECT 1 FROM medical_exams me2
                 WHERE me2.patient_id = r.patient_id
@@ -1192,7 +1267,7 @@ export async function getWorklist(
           )
         )
       )
-    ORDER BY waiting_since ASC
+    ORDER BY waiting_since ASC, ep.sequence_number ASC NULLS FIRST
   `);
 
   return (rows.rows ?? []).map((r) => ({
@@ -1204,6 +1279,49 @@ export async function getWorklist(
     branchName: r.branch_name ?? null,
     caseType: String(r.case_type),
     waitingSince: r.waiting_since ? String(r.waiting_since) : null,
+    episodeId: r.episode_id === null || r.episode_id === undefined ? null : Number(r.episode_id),
+    requestedItem: r.requested_item ?? null,
+    sequenceNumber: r.sequence_number === null || r.sequence_number === undefined
+      ? null : Number(r.sequence_number),
+  }));
+}
+
+/**
+ * **الحلقاتُ المنتظرةُ المعاينةَ لمريضٍ واحد — لمنتقي نافذة المعاينة.**
+ *
+ * حين تُفتح النافذةُ من صفحة المريض أو السجلّ (لا من صفّ «معايناتي» الذي
+ * يحمل الحلقةَ بعينها) يجب أن تعرف الشاشةُ أيَّ جهازٍ تُعاين: واحدةٌ
+ * تُنتقى تلقائياً، وأكثرُ من واحدة تُعرَض للاختيار الصريح. نفسُ حدّ قائمة
+ * العمل بالحرف (`awaiting_exam` على مسارٍ ليس «بلا معاينة»)، مع سبب
+ * الزيارة من الطلب المعلَّق المرساة إليها إن وُجد.
+ */
+export async function awaitingEpisodesForPatient(patientId: number): Promise<{
+  id: number; caseType: string; sequenceNumber: number; requestedItem: string;
+  awaitingSince: string | null; reviewKind: string | null;
+}[]> {
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT ep.id, pc.case_type, ep.sequence_number, ep.requested_item,
+           COALESCE(ep.awaiting_since, ep.created_at) AS awaiting_since,
+           (SELECT r.review_kind FROM medical_review_requests r
+             WHERE r.device_episode_id = ep.id
+               AND (r.status = 'escalated'
+                    OR (r.status = 'pending' AND r.requested_path = 'full'))
+             ORDER BY r.created_at DESC LIMIT 1) AS review_kind
+      FROM patient_device_episodes ep
+      JOIN patient_cases pc ON pc.id = ep.case_id
+     WHERE ep.patient_id = ${patientId}
+       AND ep.status = 'awaiting_exam'
+       AND ep.service_path IS DISTINCT FROM 'no_exam'
+       AND pc.status = 'active'
+     ORDER BY pc.case_type ASC, ep.sequence_number ASC
+  `);
+  return (rows.rows ?? []).map((r) => ({
+    id: Number(r.id),
+    caseType: String(r.case_type),
+    sequenceNumber: Number(r.sequence_number),
+    requestedItem: String(r.requested_item ?? "full_device"),
+    awaitingSince: r.awaiting_since ? new Date(r.awaiting_since).toISOString() : null,
+    reviewKind: r.review_kind ? String(r.review_kind) : null,
   }));
 }
 

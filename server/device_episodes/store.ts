@@ -57,6 +57,44 @@ export class DeviceEpisodeError extends Error {
   }
 }
 
+/** مرشَّحٌ واحد في رسالة «حدّد الجهاز» — ما يلزم الشاشةَ لتعرضه، لا أكثر. */
+export interface AwaitingEpisodeCandidate {
+  id: number;
+  sequenceNumber: number;
+  requestedItem: RequestedItem;
+}
+
+/**
+ * **أكثرُ من طلب جهازٍ ينتظر المعاينةَ على هذا الخيط، ولم يُحدَّد أيُّها.**
+ *
+ * لا يُختار الأوّلُ ولا الأحدثُ ولا ما صادفه ترتيبُ الصفوف: هويّةُ الجهاز في
+ * سجلٍّ سريريّ مختوم لا تُخمَّن. ٤٠٩ مع المرشَّحين، فتعرضهم الشاشةُ ويختار
+ * الطبيبُ صراحةً.
+ */
+export class ExamEpisodeAmbiguousError extends DeviceEpisodeError {
+  readonly code = "device_episode_ambiguous";
+  constructor(readonly candidates: AwaitingEpisodeCandidate[]) {
+    super(
+      "يوجد أكثر من طلب جهاز بانتظار المعاينة لهذا المريض في هذا الاختصاص — حدّد الجهاز المقصود قبل التوقيع",
+      409,
+    );
+    this.name = "ExamEpisodeAmbiguousError";
+  }
+}
+
+/**
+ * **الجهازُ المحدَّد لم يعد صالحاً للمعاينة** — لا يخصّ هذا المريضَ أو هذا
+ * الخيط، أو لم يعد `awaiting_exam` (عُوين للتوّ، أو أُلغي، أو بِيع). شاشةٌ
+ * بائتة تُردّ بحرفها لا تُصحَّح بصمتٍ إلى جهازٍ آخر.
+ */
+export class ExamEpisodeStaleError extends DeviceEpisodeError {
+  readonly code = "device_episode_stale";
+  constructor(message = "تغيّرت حالة طلب الجهاز — لم يعد بانتظار المعاينة. حدّث الصفحة") {
+    super(message, 409);
+    this.name = "ExamEpisodeStaleError";
+  }
+}
+
 export interface DeviceEpisodeView {
   id: number;
   caseId: number;
@@ -83,6 +121,11 @@ export interface DeviceEpisodeView {
   servicePath: ServicePath | null;
   branchId: number | null;
   createdAt: string | null;
+  /**
+   * **منذ متى ينتظر المعاينةَ** (ترحيل ٠٧٧) — آخرُ دخولٍ إلى `awaiting_exam`،
+   * و`COALESCE(awaiting_since, created_at)` للصفوف السابقة للترحيل.
+   */
+  awaitingSince: string | null;
   deliveredAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
@@ -108,6 +151,7 @@ function toView(r: Record<string, any>): DeviceEpisodeView {
     servicePath: parseServicePath(r.service_path),
     branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
     createdAt: iso(r.created_at),
+    awaitingSince: iso(r.awaiting_since ?? r.created_at),
     deliveredAt: iso(r.delivered_at),
     cancelledAt: iso(r.cancelled_at),
     cancelReason: r.cancel_reason ?? null,
@@ -398,7 +442,8 @@ export async function getDeviceEpisodesForPatient(
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
            e.agreed_cost, e.requested_item, e.component, e.service_path,
-           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+           e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at,
+           e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
      WHERE e.patient_id = ${patientId}
@@ -648,7 +693,7 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
 // الحلقات كلّها في هذا الملف، ويبقى التزامن بيد المُستدعي.
 
 /**
- * احجز الحلقة المنتظرة لهذا (المريض، الخيط) إن وُجدت.
+ * احجز الحلقةَ المنتظرة لهذا (المريض، الخيط) — **بهويّتها لا بترتيب الصفوف**.
  *
  * المطابقة على **الزوج** لا على أحد طرفيه: `caseId` صحيحٌ وحده لا يثبت أن
  * الخيط يخصّ هذا المريض، والكذبة تكون في الجمع بينهما. و
@@ -656,22 +701,77 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
  * (028) يرفض الـ SET NULL الذي يحتاجه المفتاح — فغياب حارس القاعدة هو
  * بالضبط ما يجعل هذا الفحص غير قابل للتخطّي.
  *
- * والقفل (`FOR UPDATE`) يمنع طبيبين يوقّعان معاً من حجز الحلقة نفسها.
+ * ══ **الهويّةُ بعد ترحيل ٠٧٣** (تدقيق ٢٠٢٦-٠٩-١٢: INT-02/RTP-2/MULTI-1) ══
+ * الفهرسُ `uq_pde_case_open` أُسقط، فصار للخيط الواحد أكثرُ من حلقةٍ
+ * `awaiting_exam` قانونياً. و`LIMIT 1` بلا ترتيبٍ كان يربط المعاينةَ
+ * **بأيّ** حلقةٍ صادفها ترتيبُ الصفوف الفيزيائيّ — فتُختَم معاينةُ جهازٍ
+ * على جهازٍ آخر إلى الأبد. القاعدةُ الآن:
+ * • `episodeId` صريح ⟵ تُقفَل **تلك** الحلقةُ بعينها ويُتحقَّق أنها لهذا
+ *   المريض وهذا الخيط وما زالت `awaiting_exam`؛ وإلّا `ExamEpisodeStaleError`.
+ * • بلا معرّف: صفرٌ ⟵ `null` (معاينةٌ بلا جهاز — المسارُ الموروث)؛ واحدةٌ
+ *   ⟵ هي (توافقٌ رجعيّ لعميلٍ قديم)؛ **أكثرُ من واحدة ⟵
+ *   `ExamEpisodeAmbiguousError`** بالمرشَّحين — لا اختيارَ أوّلٍ ولا أحدث.
+ *
+ * والقفل (`FOR UPDATE`) يمنع طبيبين يوقّعان معاً من حجز الحلقة نفسها؛
+ * ومَن يخسر السباقَ يجد الحلقةَ `examined` عند القراءة فيُردّ بائتاً.
  */
 export async function claimAwaitingEpisodeForExam(
   tx: { execute: (q: any) => Promise<any> },
-  params: { patientId: number; caseId: number },
+  params: { patientId: number; caseId: number; episodeId?: number | null },
 ): Promise<number | null> {
+  const wanted = params.episodeId ?? null;
+  if (wanted !== null) {
+    const exact = await tx.execute(sql`
+      SELECT id FROM patient_device_episodes
+       WHERE id = ${wanted}
+         AND case_id = ${params.caseId}
+         AND patient_id = ${params.patientId}
+         AND status = 'awaiting_exam'
+       FOR UPDATE
+    `);
+    const row = (exact.rows ?? [])[0];
+    if (!row) throw new ExamEpisodeStaleError();
+    return Number(row.id);
+  }
   const found = await tx.execute(sql`
-    SELECT id FROM patient_device_episodes
+    SELECT id, sequence_number, requested_item FROM patient_device_episodes
      WHERE case_id = ${params.caseId}
        AND patient_id = ${params.patientId}
        AND status = 'awaiting_exam'
-     LIMIT 1
+     ORDER BY sequence_number ASC
      FOR UPDATE
   `);
-  const row = (found.rows ?? [])[0];
-  return row ? Number(row.id) : null;
+  const rows: Record<string, any>[] = found.rows ?? [];
+  if (rows.length === 0) return null;
+  if (rows.length > 1) throw new ExamEpisodeAmbiguousError(rows.map(toCandidate));
+  return Number(rows[0].id);
+}
+
+function toCandidate(r: Record<string, any>): AwaitingEpisodeCandidate {
+  return {
+    id: Number(r.id),
+    sequenceNumber: Number(r.sequence_number),
+    requestedItem: isRequestedItem(r.requested_item) ? r.requested_item : FULL_DEVICE,
+  };
+}
+
+/**
+ * **الحلقاتُ المنتظرةُ المعاينةَ على خيطٍ بعينه** — قراءةٌ بلا قفل، للفحص
+ * المبكّر في النقطة (قبل أن تُكتَب الوصفةُ على ملفّ المريض) ولعرض المرشَّحين
+ * في نافذة المعاينة. الحَكَمُ الأخير هو `claimAwaitingEpisodeForExam` تحت
+ * القفل — هذه ترشيحٌ يمنع كتابةً جزئية، لا قرارٌ.
+ */
+export async function awaitingExamEpisodesForCase(
+  params: { patientId: number; caseId: number },
+): Promise<AwaitingEpisodeCandidate[]> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT id, sequence_number, requested_item FROM patient_device_episodes
+     WHERE case_id = ${params.caseId}
+       AND patient_id = ${params.patientId}
+       AND status = 'awaiting_exam'
+     ORDER BY sequence_number ASC
+  `);
+  return (r.rows ?? []).map(toCandidate);
 }
 
 /**
@@ -687,9 +787,12 @@ export async function revertEpisodeToAwaitingExam(
   tx: { execute: (q: any) => Promise<any> },
   episodeId: number,
 ): Promise<void> {
+  //  **و`awaiting_since = NOW()`** (ترحيل ٠٧٧): عودةٌ إلى الطابور دخولٌ
+  //  جديدٌ إليه — «عاد للشراء» اليوم ينتظر منذ اليوم لا منذ فتح الطلب.
+  //  و`created_at` لا يُمَسّ: تاريخُ الطلب الحقيقيّ.
   await tx.execute(sql`
     UPDATE patient_device_episodes
-       SET status = 'awaiting_exam', updated_at = NOW()
+       SET status = 'awaiting_exam', awaiting_since = NOW(), updated_at = NOW()
      WHERE id = ${episodeId} AND status = 'examined'
   `);
 }

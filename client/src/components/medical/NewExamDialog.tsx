@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -72,6 +73,21 @@ const EMPTY_FORM: Record<ExamFieldKey, string> = {
  * الاستعلامات القادمة ستُقيِّد أو تُزيل قدرةَ `asDoctor` من ذلك الباب
  * نفسِه. راجع القسم 4.h في CLAUDE.md.
  */
+/** جهازٌ منتظرٌ المعاينةَ كما تُرجعه `GET /api/medical/patients/:id/exams`. */
+interface AwaitingEpisodeOption {
+  id: number;
+  caseType: string;
+  sequenceNumber: number;
+  requestedItem: string;
+  awaitingSince: string | null;
+  reviewKind: string | null;
+}
+
+export function describeAwaitingEpisode(e: AwaitingEpisodeOption): string {
+  const base = `جهاز #${e.sequenceNumber} · ${requestedItemLabel(e.requestedItem, e.caseType)}`;
+  return e.reviewKind === "return_to_purchase" ? `${base} · عاد للشراء` : base;
+}
+
 export function NewExamDialog({
   patientId,
   patientName,
@@ -80,6 +96,8 @@ export function NewExamDialog({
   preferSpecialty,
   exam,
   onDone,
+  deviceEpisodeId,
+  deviceLabel,
 }: {
   patientId: number;
   patientName?: string | null;
@@ -94,6 +112,17 @@ export function NewExamDialog({
   /** Passed to REVISE an existing exam instead of signing a new one. */
   exam?: ExamToEdit | null;
   onDone?: () => void;
+  /**
+   * **الجهازُ الذي تُعاينه هذه المعاينةُ بعينه** (تدقيق ٢٠٢٦-٠٩-١٢).
+   *
+   * يصل من صفّ «معايناتي» جاهزاً. وحين يغيب (فتحٌ من صفحة المريض أو السجلّ)
+   * تقرأ النافذةُ الأجهزةَ المنتظرة للاختصاص المختار: واحدةٌ تُنتقى
+   * تلقائياً، وأكثرُ تُعرَض للاختيار الصريح — **ولا يُرسَل التوقيعُ بلا
+   * هويّة حين توجد أكثر من واحدة**، فالخادم يردّه ٤٠٩ على أي حال.
+   */
+  deviceEpisodeId?: number | null;
+  /** وصفُ الجهاز المُمرَّر — للعرض فقط. */
+  deviceLabel?: string | null;
 }) {
   const isEdit = !!exam;
   const { toast } = useToast();
@@ -104,6 +133,33 @@ export function NewExamDialog({
   const [form, setForm] = useState<Record<ExamFieldKey, string>>({ ...EMPTY_FORM });
   const [rx, setRx] = useState<PrescriptionValue>({});
   const [prefilled, setPrefilled] = useState(false);
+  //  اختيارُ الطبيب من المنتقي — يُصفَّر مع كلّ فتحٍ وكلّ تبديل اختصاص.
+  const [episodeChoice, setEpisodeChoice] = useState<number | null>(null);
+
+  // ══ الأجهزةُ المنتظرةُ المعاينةَ — حين لا يصل الجهازُ جاهزاً ═════════════
+  //  نفسُ نقطة صفحة المريض ونفسُ مفتاح الذاكرة، فلا تُجلَب مرّتين.
+  const fixedEpisode = deviceEpisodeId ?? null;
+  const { data: examsData } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
+    queryKey: [`/api/medical/patients/${patientId}/exams`],
+    enabled: open && !isEdit && fixedEpisode === null,
+  });
+  const candidates = useMemo(
+    () => (fixedEpisode === null && specialty
+      ? (examsData?.awaitingEpisodes ?? []).filter((e) => e.caseType === specialty)
+      : []),
+    [examsData, specialty, fixedEpisode],
+  );
+  //  واحدةٌ ⟵ هي؛ أكثرُ ⟵ ما اختاره الطبيب؛ صفرٌ ⟵ معاينةٌ بلا جهاز.
+  const resolvedEpisode: number | null = fixedEpisode !== null
+    ? fixedEpisode
+    : candidates.length === 1
+      ? candidates[0].id
+      : candidates.length > 1
+        ? (candidates.some((c) => c.id === episodeChoice) ? episodeChoice : null)
+        : null;
+  const needsEpisodeChoice = fixedEpisode === null && candidates.length > 1 && resolvedEpisode === null;
+
+  useEffect(() => { setEpisodeChoice(null); }, [open, specialty]);
 
   // ══ مفتاحُ تطابقِ الإنشاء (migration 074) ═══════════════════════════════
   //  رمزٌ واحد ثابت لكلّ فتحةِ نموذجٍ جديدة — لا لكلّ ضغطةِ حفظ. `useRef` لا
@@ -260,10 +316,17 @@ export function NewExamDialog({
             prescription: rx,
             // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
+            //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
+            ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
           }),
         },
       );
-      if (!res.ok) throw new Error((await res.json())?.error || "تعذّر حفظ المعاينة");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const err: any = new Error(body?.error || "تعذّر حفظ المعاينة");
+        err.code = body?.code ?? null;
+        throw err;
+      }
       return res.json();
     },
     onSuccess: (saved: any) => {
@@ -296,8 +359,18 @@ export function NewExamDialog({
       });
       onDone?.();
     },
-    onError: (err: any) =>
-      toast({ title: "خطأ", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      //  ══ هويّةُ الجهاز تغيّرت تحت أيدينا ═══════════════════════════════
+      //  التباسٌ (فُتح طلبٌ ثانٍ بعد فتح النافذة) أو بياتٌ (وقّعه زميلٌ، أو
+      //  أُلغي): تُحدَّث قائمةُ الأجهزة والطابورُ فيرى الطبيبُ الحالَ الجديد
+      //  ويختار صراحةً — لا إعادةُ إرسالٍ عمياء.
+      if (err?.code === "device_episode_ambiguous" || err?.code === "device_episode_stale") {
+        setEpisodeChoice(null);
+        queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
+        queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      }
+      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+    },
   });
 
   // A prescription alone is a real clinical decision, so it counts as content
@@ -349,6 +422,41 @@ export function NewExamDialog({
             </Select>
           </div>
 
+          {/* ══ أيُّ جهازٍ تُعاين؟ — بهويّته، لا بالتخمين ═══════════════════ */}
+          {!isEdit && fixedEpisode !== null && deviceLabel && (
+            <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
+              data-testid="note-exam-device-fixed">
+              الجهاز: {deviceLabel}
+            </p>
+          )}
+          {!isEdit && fixedEpisode === null && candidates.length === 1 && (
+            <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
+              data-testid="note-exam-device-single">
+              الجهاز: {describeAwaitingEpisode(candidates[0])}
+            </p>
+          )}
+          {!isEdit && fixedEpisode === null && candidates.length > 1 && (
+            <div className="space-y-2">
+              <Label>الجهاز المقصود <span className="text-red-500">*</span></Label>
+              <Select
+                value={episodeChoice === null ? "" : String(episodeChoice)}
+                onValueChange={(v) => setEpisodeChoice(Number(v))}
+              >
+                <SelectTrigger className="bg-white" data-testid="select-exam-device">
+                  <SelectValue placeholder="لهذا المريض أكثر من طلب جهاز بانتظار المعاينة — اختر الجهاز" />
+                </SelectTrigger>
+                <SelectContent>
+                  {candidates.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>{describeAwaitingEpisode(c)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                لا يُوقَّع بلا تحديد: المعاينةُ تُختَم على جهازٍ بعينه ولا تُنقَل بعدها.
+              </p>
+            </div>
+          )}
+
           {specialty && (
             <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
           )}
@@ -380,7 +488,7 @@ export function NewExamDialog({
           </Button>
           <Button
             onClick={() => save.mutate()}
-            disabled={!specialty || !hasContent || save.isPending}
+            disabled={!specialty || !hasContent || save.isPending || needsEpisodeChoice}
             data-testid="button-save-medical-exam"
           >
             {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}

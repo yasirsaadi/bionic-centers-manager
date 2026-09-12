@@ -117,6 +117,21 @@ function clean(value: unknown): string | null {
  * **لا تحقّقَ من صيغة UUID حرفياً عمداً** — الشرطُ الحقيقيّ تفرّدُه في
  * القاعدة لا شكلُه هنا، فمولّدٌ بديل مستقبلاً لا ينكسر على هذا الفحص.
  */
+/**
+ * ردُّ خطأ هويّة الجهاز — الرمزُ والمرشَّحون للشاشة (تدقيق ٢٠٢٦-٠٩-١٢).
+ *
+ * `device_episode_ambiguous` يحمل المرشَّحين فتعرضهم النافذةُ ويختار الطبيبُ
+ * صراحةً؛ و`device_episode_stale` يعني «حدّث الصفحة». وكلاهما ٤٠٩ لا ٥٠٠
+ * — حالةُ عملٍ لا عطبُ نظام.
+ */
+function replyEpisodeError(res: any, err: DeviceEpisodeError) {
+  return res.status(err.status).json({
+    error: err.message,
+    code: (err as any).code ?? "device_episode_error",
+    candidates: (err as any).candidates ?? undefined,
+  });
+}
+
 function isValidIdempotencyKey(v: unknown): v is string {
   return typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(v);
 }
@@ -270,10 +285,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       }
 
       const session = getSession(req);
-      const [allExams, pending, specialties] = await Promise.all([
+      const [allExams, pending, specialties, awaitingEpisodes] = await Promise.all([
         store.getExamsByPatient(patientId),
         store.getPendingForPatient(patientId),
         store.doctorSpecialties(session.userId),
+        //  **الأجهزةُ المنتظرةُ المعاينةَ بهويّتها** — لمنتقي النافذة حين
+        //  تُفتح من صفحة المريض لا من صفّ «معايناتي».
+        store.awaitingEpisodesForPatient(patientId),
       ]);
       //  **الملغاةُ لا تُعرَض في السجلّ الفعّال** (ترحيل ٠٦١): الشاشةُ
       //  السريرية تقول «ما حالُ هذا المريض»، ومعاينةٌ أُلغيت ليست حالَه.
@@ -329,6 +347,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           reversalFollowupId: followupOfExam[e.id] ?? null,
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
+        //  **الأجهزةُ المنتظرةُ بهويّتها** (تدقيق ٢٠٢٦-٠٩-١٢): تعرضها نافذةُ
+        //  المعاينة منتقياً — واحدةٌ تُنتقى تلقائياً، وأكثرُ تُختار صراحةً.
+        awaitingEpisodes,
         canWriteMedicalExam: specialties.length > 0,
         specialties,
         // Who may press "تعديل" — the author, or the responsible manager. Sent
@@ -368,6 +389,21 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res
           .status(403)
           .json({ error: `لا تملك صلاحية المعاينة في اختصاص ${specialtyLabel(caseType)}` });
+      }
+
+      // ══ **هويّةُ الجهاز الذي تُعاينه هذه المعاينة** (تدقيق ٢٠٢٦-٠٩-١٢) ═══
+      //  يصل من صفّ «معايناتي» أو من منتقي النافذة. اختياريٌّ لتوافق عميلٍ
+      //  قديم، **لكنّ شكلَه إن حضر يُشترَط** — معرّفٌ مشوَّه يُردّ ٤٠٠ لا
+      //  يسقط صامتاً إلى «بلا معرّف» فيصير تخميناً.
+      const rawEpisode = req.body?.deviceEpisodeId;
+      let deviceEpisodeId: number | null = null;
+      if (rawEpisode !== undefined && rawEpisode !== null && rawEpisode !== "") {
+        const n = typeof rawEpisode === "number" || typeof rawEpisode === "string"
+          ? Number(rawEpisode) : NaN;
+        if (!Number.isInteger(n) || n <= 0) {
+          return res.status(400).json({ error: "معرّف الجهاز غير صالح", code: "device_episode_invalid" });
+        }
+        deviceEpisodeId = n;
       }
 
       const patient = await store.getPatientScope(patientId);
@@ -488,6 +524,21 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // doctor decides a specialty the patient had no case for, applying it is
       // what creates that case. Resolving the case before this step returned
       // null, and the exam was saved permanently orphaned from its own case.
+      // ══ هويّةُ الجهاز تُحسم **قبل** أن يُكتب حرفٌ على ملفّ المريض ═══════
+      //  `applyDecision` أدناه يكتب الوصفةَ على صفّ المريض. فالالتباسُ
+      //  (أكثرُ من طلبِ جهازٍ ينتظر ولم يُحدَّد أيُّها) والبياتُ (جهازٌ محدَّد
+      //  لم يعد ينتظر) يُردّان هنا ٤٠٩ **بصفر كتابة** — لا وصفةَ تُطبَّق لطلبٍ
+      //  مرفوض. والحَكَمُ الأخير يبقى القفلَ داخل `createExam`.
+      let resolvedEpisodeId: number | null;
+      try {
+        resolvedEpisodeId = await store.resolveExamEpisode({
+          patientId, caseId: earlyCaseRow?.id ?? null, deviceEpisodeId,
+        });
+      } catch (err) {
+        if (err instanceof DeviceEpisodeError) return replyEpisodeError(res, err);
+        throw err;
+      }
+
       const applied = await applyDecision(patientId, caseType, prescription);
 
       const caseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
@@ -506,12 +557,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           deviceCost: null,
           proposedExpertUserId: null,
           idempotencyKey,
+          //  **المعرّفُ المحسوم أعلاه** — لا «أوّلُ حلقةٍ منتظرة»: القفلُ في
+          //  المخزن يتحقّق منه ثانيةً، وسباقٌ غيّر الحالَ بين الفحصين يُردّ.
+          deviceEpisodeId: resolvedEpisodeId,
           ...body,
         }));
       } catch (err) {
         if (err instanceof store.ExamIdempotencyConflictError) {
           return res.status(409).json({ error: err.message, code: "idempotency_conflict" });
         }
+        if (err instanceof DeviceEpisodeError) return replyEpisodeError(res, err);
         throw err;
       }
 
@@ -540,8 +595,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
         //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
         try {
+          //  **وبهويّة الجهاز**: تُغلَق طلباتُ الحلقة التي عاينتها هذه
+          //  المعاينةُ بعينها والطلباتُ العارية — لا طلبُ جهازٍ آخر على الخيط.
           await closeRequestsAwaitingExam({
             patientId, serviceType: caseType, examId: exam.id,
+            deviceEpisodeId: exam.deviceEpisodeId ?? null,
           });
         } catch (linkErr) {
           console.error("[medical] closing review requests after exam failed:", linkErr);
@@ -980,10 +1038,21 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           patientIds: rows.map((r) => r.patientId), branchIds: branchScope(req),
         })
         : [];
-      const reqByKey = new Map(pend.map((p) => [`${p.patientId}:${p.serviceType}`, p]));
+      //  ══ **المطابقةُ بالحلقة حين يملكها الصفّ** (تدقيق ٢٠٢٦-٠٩-١٢) ═══
+      //  صفٌّ لكلّ حلقةٍ منتظرة الآن، والطلبُ المرساةُ إليها هو طلبُها هي
+      //  — لا أقدمُ طلبٍ على الخيط. والصفُّ بلا حلقة يطابق الطلبَ العاري
+      //  (بلا `device_episode_id`) وحده؛ ولا يُقرَض طلبُ جهازٍ لصفٍّ غيره.
+      const reqByEpisode = new Map(
+        pend.filter((p) => p.deviceEpisodeId !== null).map((p) => [p.deviceEpisodeId as number, p]),
+      );
+      const bareByKey = new Map(
+        pend.filter((p) => p.deviceEpisodeId === null).map((p) => [`${p.patientId}:${p.serviceType}`, p]),
+      );
       res.json({
         rows: rows.map((r) => {
-          const hit = reqByKey.get(`${r.patientId}:${r.caseType}`);
+          const hit = r.episodeId !== null
+            ? reqByEpisode.get(r.episodeId)
+            : bareByKey.get(`${r.patientId}:${r.caseType}`);
           const withAlias = aliasByPatient.has(r.patientId)
             ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : { ...r };
           //  **سببُ الزيارة** — يُعرَض دائماً حين يوجد طلبٌ حاكم، بصرف النظر
