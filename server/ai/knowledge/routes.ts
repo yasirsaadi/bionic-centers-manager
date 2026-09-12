@@ -17,6 +17,9 @@ import {
   isKnowledgeContentType, isKnowledgeScope, listArticlesForAdmin, listSuggestions,
   parseAudience, rejectSuggestion, setArticleActive, type Actor,
 } from "./store";
+//  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts.
+//  يُزال مع الاستدعاءات في نقطة PATCH أدناه بعد تحديد مصدر التعليق.
+import { diagPhase, diagRouteHandlerReached } from "../../diagnostics/request_timing";
 
 type Req = any;
 
@@ -241,6 +244,8 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
 
   // ══ ٧. تعديلُ مقالةٍ قائمة — نسخةٌ جديدة ═══════════════════════════════
   app.patch("/api/ai/knowledge/articles/:id", isAuthenticated, async (req: Req, res) => {
+    //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts
+    diagRouteHandlerReached(req);
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const idParsed = parsePositiveIntId(req.params.id);
     if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
@@ -260,10 +265,17 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const metadata = metadataFieldsFrom(req.body);
     if (!metadata.ok) return res.status(400).json({ error: metadata.error });
 
-    const result = await editArticle({
-      id, title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req),
-    });
-    if (!result.ok) return res.status(409).json({ error: result.error });
+    diagPhase(req, "before_transaction");
+    const result = await editArticle(
+      { id, title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req) },
+      { onPhase: (phase) => diagPhase(req, phase) },
+    );
+    diagPhase(req, "transaction_finished");
+    if (!result.ok) {
+      diagPhase(req, "before_response");
+      return res.status(409).json({ error: result.error });
+    }
+    diagPhase(req, "before_response");
     res.json({ article: result.article });
   });
 

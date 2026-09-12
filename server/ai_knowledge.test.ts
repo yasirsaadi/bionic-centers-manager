@@ -22,6 +22,9 @@ import {
 } from "./ai/knowledge/store";
 import { retrieveKnowledge } from "./ai/knowledge/retrieval";
 import type { AiAccessContext } from "./ai/access";
+//  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts.
+//  يُزال الاستيرادُ وقسما ف/ص أدناه معاً بعد تحديد مصدر التعليق.
+import { DIAG_TAG } from "./diagnostics/request_timing";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -39,10 +42,41 @@ const BASE = `http://127.0.0.1:${PORT}`;
 //  نطاقُ معرّفاتٍ محجوزٌ لهذا الملفّ وحده — لا تعارض مع ملفّاتٍ أخرى.
 const B1 = 9930, B2 = 9931; // فرعان
 const STAFF = 9932, ADMIN = 9933, MANAGER1 = 9934, DOCTOR1 = 9935;
+//  ضحيّةُ اختبار تشخيص حذف المستخدم (قسم ص) — محجوزةٌ في النطاق نفسِه.
+const DELETE_VICTIM = 9936;
 const MARK = "اختبار-معرفة-المساعد";
 
 async function q(sql: string, params: any[] = []) {
   return pool.query(sql, params);
+}
+
+/**
+ * تلتقط سطورَ `console.log`/`console.warn` أثناء تنفيذ `fn` **فقط** —
+ * تُستعمَل هنا للتحقّق من شكل سطور تشخيص التوقيت المؤقّتة بلا تأثيرٍ على
+ * بقيّة الاختبار. مهلةٌ قصيرة بعد حلّ الوعد تلتقط حدث `close` الذي قد يقع
+ * بعد استلام الاستجابة عند العميل بلحظاتٍ قليلة لا معه بالضبط.
+ */
+async function captureLogs<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const origLog = console.log;
+  const origWarn = console.warn;
+  console.log = ((...args: unknown[]) => { lines.push(String(args[0])); }) as typeof console.log;
+  console.warn = ((...args: unknown[]) => { lines.push(String(args[0])); }) as typeof console.warn;
+  try {
+    const result = await fn();
+    await new Promise((r) => setTimeout(r, 150));
+    return { result, lines };
+  } finally {
+    console.log = origLog;
+    console.warn = origWarn;
+  }
+}
+
+function parsedDiagLines(lines: string[], route: string, entityId: number | string): Record<string, any>[] {
+  return lines
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((o): o is Record<string, any> =>
+      !!o && o.tag === DIAG_TAG && o.route === route && String(o.entityId) === String(entityId));
 }
 
 function sessionHeader(s: Record<string, unknown>): string {
@@ -54,7 +88,7 @@ async function cleanup() {
              AND user_id = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1]]);
   await q(`DELETE FROM ai_knowledge_suggestions WHERE submitted_by = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1]]);
   await q(`DELETE FROM ai_knowledge_articles WHERE title LIKE $1`, [`${MARK}%`]);
-  await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1]]);
+  await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1, DELETE_VICTIM]]);
   await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
 }
 
@@ -694,6 +728,118 @@ async function main() {
       same("ع.١٠ نسخةٌ ثالثةٌ صحيحة الآن (بعد الرفض النظيف)", afterLockEdited.version, 3);
 
       await setArticleActive({ id: afterLockEdited.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
+    }
+
+    // ══ ف. تعليماتُ توقيتٍ مؤقّتة على تعديل المقالة — لا تُغيّر النجاح،
+    // وسجلُّها آمن (تشخيصٌ مؤقّت، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════
+    // `server/diagnostics/request_timing.ts` تُضيف سطورَ سجلٍّ حول التعديل
+    // الحقيقيّ. هذا القسم يثبت أنها (١) لا تُفسد المسار السعيد، (٢) تُطلق
+    // كلَّ الأطوار المتوقَّعة بمعرّف ارتباطٍ واحد وزمنٍ متزايد، و(٣) لا
+    // تُسرّب عنوان المقالة ولا متنها ولا بيانات المستخدم في أيّ سطر.
+    console.log("\n── ف. تعليماتُ التوقيت المؤقّتة — لا تُغيّر التعديلَ الناجح، وسجلُّها آمن (تشخيصٌ مؤقّت) ──");
+    {
+      const timingTarget = await createArticle({
+        title: `${MARK} — عنوانٌ حسّاسٌ أصليّ`, body: `${MARK} — سرٌّ حسّاسٌ لا يجوز أن يظهر في سجلّ التشخيص`,
+        scope: "general", branchId: null, actor: actorFor(ADMIN, "مسؤول", "admin", null),
+      });
+      const newTitle = `${MARK} — عنوانٌ حسّاسٌ جديد`;
+      const newBody = `${MARK} — متنٌ حسّاسٌ جديدٌ لا يجوز ظهوره في السجلّ أيضاً`;
+
+      const { result: editRes, lines } = await captureLogs(() => fetch(
+        `${BASE}/api/ai/knowledge/articles/${timingTarget.id}`,
+        {
+          method: "PATCH", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+          body: JSON.stringify({ title: newTitle, body: newBody, scope: "general", branchId: null }),
+        },
+      ));
+
+      check(editRes.status === 200, "ف.١ **التعديلُ ينجح كالمعتاد رغم وجود التعليمات المؤقّتة**", `status=${editRes.status}`);
+      const edited = (await editRes.json()).article;
+      check(typeof edited?.id === "number" && edited.title === newTitle,
+        "ف.٢ والاستجابةُ تحمل المقالةَ المعدَّلة الحقيقية بلا تحوير");
+
+      const diagLines = parsedDiagLines(lines, "knowledge_article_edit", timingTarget.id);
+      const expectedPhases = [
+        "raw_request_arrival_before_session", "session_middleware_completed", "route_handler_reached",
+        "before_transaction", "transaction_acquired", "before_lock", "after_lock",
+        "before_read_current", "after_read_current", "before_insert_new_version", "after_insert_new_version",
+        "before_deactivate_old_version", "after_deactivate_old_version", "before_audit_insert", "after_audit_insert",
+        "transaction_finished", "before_response", "http_response_finish", "http_response_close",
+      ];
+      const seenPhases = diagLines.map((l) => l.phase);
+      const missing = expectedPhases.filter((p) => !seenPhases.includes(p));
+      check(missing.length === 0,
+        "ف.٣ **كلُّ الأطوار المطلوبة ظهرت فعلياً لهذا الطلب بعينه** — لا طورَ ناقصاً بصمت",
+        `missing=${JSON.stringify(missing)} seen=${JSON.stringify(seenPhases)}`);
+
+      const requestIds = new Set(diagLines.map((l) => l.requestId));
+      same("ف.٤ معرّفُ ارتباطٍ واحد مشتركٌ عبر كلّ الأطوار — لا اثنان ولا صفر", requestIds.size, 1);
+
+      const elapsedSeries = diagLines.map((l) => l.elapsedMs);
+      const monotonic = elapsedSeries.every((v, i) => i === 0 || v >= elapsedSeries[i - 1]);
+      check(monotonic && elapsedSeries.every((v) => typeof v === "number" && v >= 0),
+        "ف.٥ الزمنُ المنقضي رقمٌ غيرُ سالبٍ ومتزايدٌ عبر الأطوار بالترتيب", JSON.stringify(elapsedSeries));
+
+      //  ف.٦ لا نصّ العنوان ولا المتن (القديم أو الجديد) في أيّ سطرٍ التُقط.
+      const forbiddenText = [timingTarget.title, timingTarget.body, newTitle, newBody, "سرٌّ حسّاسٌ"];
+      const leakedText = lines.filter((l) => forbiddenText.some((f) => l.includes(f)));
+      check(leakedText.length === 0,
+        "ف.٦ **لا نصّ عنوانٍ ولا متنٍ (قديم أو جديد) يظهر في أيّ سطر سجلٍّ التُقط أثناء الطلب**",
+        JSON.stringify(leakedText));
+
+      //  ف.٧ ولا اسمَ المستخدم ولا اسمَ حسابه — بيانات المستخدم غائبةٌ كذلك.
+      const leakedUser = lines.filter((l) => l.includes("مسؤول اختبار") || l.includes("ak-admin"));
+      check(leakedUser.length === 0, "ف.٧ **ولا بيانات المستخدم (الاسم أو اسم الحساب) في أيّ سطر**",
+        JSON.stringify(leakedUser));
+
+      await setArticleActive({ id: edited.id, active: false, actor: actorFor(ADMIN, "م", "admin", null) });
+    }
+
+    // ══ ص. تعليماتُ توقيتٍ مشتركة على حذف مستخدم النظام — نفسُ الوحدة، ولا
+    // تُغيّر الحذف الناجح (تشخيصٌ مؤقّت، ٢٠٢٦-٠٩-١٢) ═══════════════════════
+    // الأدلّةُ الإنتاجية الجديدة: `DELETE /api/admin/users/:id` يتعلّق كذلك.
+    // هذا القسم يثبت أنّ الوحدة المشتركة تُغطّي هذا الطريقَ الثاني بلا أيّ
+    // تعديلٍ في منطق الحذف نفسِه، وأنّ سجلَّه آمنٌ كسجلّ التعديل تماماً.
+    console.log("\n── ص. تشخيصُ حذف مستخدم النظام — نفسُ الوحدة المشتركة، ولا تُغيّر الحذف الناجح ──");
+    {
+      await q(`
+        INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, is_active)
+        VALUES ($1, 'ak-victim', 'x', 'ضحيّةُ اختبار الحذف', 'reception', $2, true)
+        ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, is_active = true
+      `, [DELETE_VICTIM, B1]);
+
+      const { result: delRes, lines } = await captureLogs(() => fetch(
+        `${BASE}/api/admin/users/${DELETE_VICTIM}`,
+        { method: "DELETE", headers: { "x-test-session": adminHeader } },
+      ));
+
+      check(delRes.status === 200, "ص.١ **الحذفُ ينجح كالمعتاد رغم وجود التعليمات المؤقّتة**", `status=${delRes.status}`);
+      const delBody = await delRes.json().catch(() => ({}));
+      check(delBody?.success === true, "ص.٢ والاستجابةُ تؤكّد النجاح بشكلها المعتاد نفسِه", JSON.stringify(delBody));
+
+      const [afterRow] = (await q(`SELECT id FROM system_users WHERE id = $1`, [DELETE_VICTIM])).rows;
+      check(!afterRow, "ص.٣ **والصفُّ فعلاً محذوفٌ من القاعدة** — لا نصفَ حذف");
+
+      const diagLines = parsedDiagLines(lines, "admin_user_delete", DELETE_VICTIM);
+      const expectedPhases = [
+        "raw_request_arrival_before_session", "session_middleware_completed", "route_handler_reached",
+        "before_delete_system_user", "after_delete_system_user", "before_response",
+        "http_response_finish", "http_response_close",
+      ];
+      const seenPhases = diagLines.map((l) => l.phase);
+      const missing = expectedPhases.filter((p) => !seenPhases.includes(p));
+      check(missing.length === 0,
+        "ص.٤ **كلُّ أطوار الحذف المطلوبة ظهرت** — نفسُ الوحدة المشتركة مع مسار تعديل المقالة",
+        `missing=${JSON.stringify(missing)} seen=${JSON.stringify(seenPhases)}`);
+
+      const requestIds = new Set(diagLines.map((l) => l.requestId));
+      same("ص.٥ معرّفُ ارتباطٍ واحد مشتركٌ عبر كلّ أطوار طلب الحذف هذا", requestIds.size, 1);
+
+      //  ص.٦ ولا اسمَ المستخدم المحذوف ولا اسمَ حسابه في أيّ سطر — رقمُ
+      //  الصفّ (`entityId`) وحده هو ما يمرّ، مطابقةً لمعرّف المقالة في ف.
+      const leakedUser = lines.filter((l) => l.includes("ak-victim") || l.includes("ضحيّةُ اختبار الحذف"));
+      check(leakedUser.length === 0,
+        "ص.٦ **ولا اسمَ المستخدم المحذوف ولا اسمَ حسابه في أيّ سطر سجلّ**", JSON.stringify(leakedUser));
     }
   } finally {
     await cleanup();
