@@ -130,7 +130,7 @@ async function episodeStatus(id: number) {
   return (await q<{ status: string }>(`SELECT status FROM patient_device_episodes WHERE id=$1`, [id]))[0]?.status;
 }
 async function requestRow(id: number) {
-  return (await q(`SELECT id, status, exam_id, device_episode_id, review_kind FROM medical_review_requests WHERE id=$1`, [id]))[0];
+  return (await q(`SELECT id, status, exam_id, device_episode_id, review_kind, created_at FROM medical_review_requests WHERE id=$1`, [id]))[0];
 }
 async function examEpisode(examId: number) {
   return (await q<{ e: number | null }>(`SELECT device_episode_id AS e FROM medical_exams WHERE id=$1`, [examId]))[0]?.e ?? null;
@@ -467,15 +467,22 @@ async function main() {
         const p = await mkPatient(`ط-${svc}`, svc);
         await mkCase(p, svc);
         const A = await openEpisode(p, svc);
+        //  وصفتان مختلفتان عمداً: ملفُّ المريض يجب أن يحمل وصفةَ **الفائز**
+        //  وحده — لا وصفةَ الخاسر الذي رُدّ قبل أن يكتب (ترتيبُ الكتابة:
+        //  الادّعاءُ المقفول قبل `applyDecision`، مراجعة المرحلة الأولى P1-C1).
+        const [specKey, specCol] = svc === "prosthetic" ? ["footType", "foot_type"] : ["supportType", "support_type"];
         const [r1, r2] = await Promise.all([
-          signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId }),
-          signExam(p, S.doc2, svc, { deviceEpisodeId: A.episodeId }),
+          signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: "وصفة-الطبيب-الأول" } }),
+          signExam(p, S.doc2, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: "وصفة-الطبيب-الثاني" } }),
         ]);
         const codes = [r1.status, r2.status].sort();
         same("٥٦. **واحدٌ يمضي والآخر يُردّ ٤٠٩ بائتاً**", [codes[0] < 300, codes[1]], [true, 409]);
         same("٥٧. ومعاينةٌ واحدة على الحلقة",
           Number((await q(`SELECT count(*)::int n FROM medical_exams WHERE device_episode_id=$1`, [A.episodeId]))[0].n), 1);
         same("٥٨. ومتابعةٌ واحدة", (await followupsOfEpisode(A.episodeId)).length, 1);
+        const winner = r1.status < 300 ? "وصفة-الطبيب-الأول" : "وصفة-الطبيب-الثاني";
+        same("٥٨.ب **وملفُّ المريض يحمل وصفةَ الفائز وحده** — الخاسرُ لم يكتب حرفاً",
+          (await q<{ v: string | null }>(`SELECT ${specCol} AS v FROM patients WHERE id=$1`, [p]))[0]?.v, winner);
       }
 
       // ══ ي. توقيعان متزامنان على حلقتين مختلفتين ═════════════════════════
@@ -557,6 +564,61 @@ async function main() {
           [[A.episodeId, svc, 1], [B.episodeId, svc, 2]]);
         void A; void B;
       }
+
+      // ══ ص. طلبٌ على مستوى الاختصاص — مراجعة المرحلة الأولى LEG-01/INV-01 ═══
+      // طلبُ معاينةٍ كاملة مرساتُه جهازٌ حيّ **لا ينتظر** (زيارةُ متابعةٍ على
+      // مسلَّم أُحيلت إلى معاينة كاملة) أو عارٍ من الهويّة: يُدرج المريضَ في
+      // القائمة، ويُغلقه أيُّ توقيعٍ للاختصاص بعده — داخل معاملة التوقيع.
+      console.log("\n── ص. طلبٌ على مستوى الاختصاص ──");
+      {
+        const p = await mkPatient(`ص-${svc}`, svc);
+        await mkCase(p, svc);
+        const A = await openEpisode(p, svc);
+        const ex0 = await signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId });
+        check(ex0.status < 300, "٧٣.أ توقيعُ A ثمّ تسليمُه", JSON.stringify(ex0.body));
+        await q(`UPDATE patient_device_episodes SET status='delivered', delivered_at=NOW() WHERE id=$1`, [A.episodeId]);
+        same("   ولا صفَّ قبل الطلب", (await rowsOf(p)).length, 0);
+        const rq = await http("POST", "/api/medical-review/requests", S.recv, {
+          patientId: p, serviceType: svc, requestedPath: "full", reviewKind: "adjustment",
+          deviceEpisodeId: A.episodeId, receptionNote: "تعديلٌ على الجهاز المسلَّم",
+        });
+        same("٧٣.ب طلبُ معاينةٍ كاملة مرساتُه المسلَّم ⟵ ٢٠١", rq.status, 201);
+        const reqId = Number(rq.body?.id);
+        const rows = await rowsOf(p);
+        same("٧٣.ج **يظهر للطبيب صفّاً بلا حلقة، بهويّة طلبه وسببِه**",
+          [rows.length, rows[0]?.episodeId, rows[0]?.returnableRequestId, rows[0]?.reviewKind],
+          [1, null, reqId, "adjustment"]);
+        const ex = await signExam(p, S.doc, svc);
+        same("٧٣.د وتوقيعٌ بلا معرّف يمضي ولا يُختَم على جهاز (لا حلقةَ تنتظر)",
+          [ex.status < 300, await examEpisode(Number(ex.body?.id))], [true, null]);
+        const rr = await requestRow(reqId);
+        same("٧٣.هـ **والطلبُ أُغلق بها**", [rr.status, Number(rr.exam_id)], ["examined", Number(ex.body?.id)]);
+        same("   والمسلَّمُ كما هو", await episodeStatus(A.episodeId), "delivered");
+        same("   وخرج المريضُ من القائمة", (await rowsOf(p)).length, 0);
+
+        // ص.٢ عارٍ مُحال (escalated) ثمّ جهازٌ يُفتَح: توقيعُ الجهاز يغلق كليهما
+        const p2 = await mkPatient(`ص٢-${svc}`, svc);
+        await mkCase(p2, svc);
+        const quick = await http("POST", "/api/medical-review/requests", S.recv, {
+          patientId: p2, serviceType: svc, requestedPath: "quick", reviewKind: "adjustment",
+        });
+        same("٧٣.و طلبٌ سريع عارٍ", quick.status, 201);
+        const qid = Number(quick.body?.id);
+        const esc = await http("POST", `/api/medical-review/requests/${qid}/decide`, S.doc2, { decision: "require_full_exam" });
+        same("٧٣.ز يحيله الطبيبُ إلى معاينةٍ كاملة", [esc.status, (await requestRow(qid)).status], [200, "escalated"]);
+        const rowsBare = await rowsOf(p2);
+        same("٧٣.ح الصفُّ العاري يحمل الطلبَ المُحال",
+          [rowsBare.length, rowsBare[0]?.episodeId, rowsBare[0]?.returnableRequestId], [1, null, qid]);
+        const B = await openEpisode(p2, svc);
+        const rowsB = await rowsOf(p2);
+        same("٧٣.ط وبفتح جهازٍ يصير صفّاً واحداً بهويّة الحلقة **وطلبِها هي** لا العاري",
+          [rowsB.length, rowsB[0]?.episodeId, rowsB[0]?.returnableRequestId], [1, B.episodeId, B.requestId]);
+        const exB = await signExam(p2, S.doc, svc, { deviceEpisodeId: B.episodeId });
+        check(exB.status < 300, "٧٣.ي توقيعُ B", JSON.stringify(exB.body));
+        same("٧٣.ك **يغلق طلبَ B والعاريَ معاً** — الاختصاصُ عُويِن بعدهما",
+          [(await requestRow(B.requestId)).status, (await requestRow(qid)).status], ["examined", "examined"]);
+        same("   وخرج المريضُ من القائمة", (await rowsOf(p2)).length, 0);
+      }
     }
 
     // ══ س. حلقةٌ على مسار «بلا معاينة» لا تظهر ولا تُخمَّن ═══════════════════
@@ -570,10 +632,19 @@ async function main() {
          VALUES ($1,(SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'),1,2,'awaiting_exam','socket','socket','no_exam') RETURNING id`, [p]);
       const rows = await rowsOf(p);
       same("٧٤. القائمةُ تعرض حلقةَ المعاينة وحدها", [rows.length, rows[0]?.episodeId], [1, A.episodeId]);
-      const amb = await signExam(p, S.doc, "prosthetic");
-      same("٧٥. **وبلا معرّفٍ يُردّ التباسٌ لا تخمين** (حلقتان منتظرتان فعلاً)", [amb.status, amb.body?.code], [409, "device_episode_ambiguous"]);
-      const ex = await signExam(p, S.doc, "prosthetic", { deviceEpisodeId: A.episodeId });
-      same("٧٦. وبالمعرّف يُوقَّع على حلقة المعاينة", [ex.status < 300, await examEpisode(Number(ex.body.id))], [true, A.episodeId]);
+      const g = await http("GET", `/api/medical/patients/${p}/exams`, S.doc);
+      same("٧٤.ب ومنتقي النافذة لا يعرض حلقةَ «بلا معاينة» خياراً",
+        (g.body?.awaitingEpisodes ?? []).map((e: any) => e.id), [A.episodeId]);
+      const snap = await patientSnapshot(p);
+      const onNoExam = await signExam(p, S.doc, "prosthetic", { deviceEpisodeId: ne[0].id });
+      same("٧٥. **وتوقيعٌ صريح على حلقة «بلا معاينة» يُردّ ٤٠٩** — لا تُوقَّع من هنا",
+        [onNoExam.status, onNoExam.body?.code], [409, "device_episode_stale"]);
+      same("   بصفر كتابة", await patientSnapshot(p), snap);
+      //  حلقةُ «بلا معاينة» ليست مرشَّحاً أصلاً (مراجعة المرحلة الأولى REF-2/INV-04):
+      //  فحلقةُ المعاينة الوحيدة تُحسَم بلا التباس ولو غاب المعرّف.
+      const ex = await signExam(p, S.doc, "prosthetic");
+      same("٧٦. وبلا معرّفٍ تُحسَم حلقةُ المعاينة الوحيدة — لا التباسَ مع ما ليس مرشَّحاً",
+        [ex.status < 300, await examEpisode(Number(ex.body?.id))], [true, A.episodeId]);
       same("   وحلقةُ «بلا معاينة» لم تُمَسّ", await episodeStatus(ne[0].id), "awaiting_exam");
     }
 

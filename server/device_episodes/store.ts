@@ -171,7 +171,7 @@ export async function getOpenDeviceEpisode(
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
            e.agreed_cost, e.requested_item, e.component, e.service_path,
-           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+           e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
      WHERE e.patient_id = ${patientId}
@@ -224,7 +224,7 @@ export async function resolveIntendedOpenEpisode(params: {
     const r = await db.execute<Record<string, any>>(sql`
       SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
              e.agreed_cost, e.requested_item, e.component, e.service_path,
-             e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+             e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
         FROM patient_device_episodes e
         JOIN patient_cases pc ON pc.id = e.case_id
        WHERE e.id = ${wantId} AND e.patient_id = ${params.patientId}
@@ -243,7 +243,7 @@ export async function resolveIntendedOpenEpisode(params: {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
            e.agreed_cost, e.requested_item, e.component, e.service_path,
-           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+           e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
      WHERE e.patient_id = ${params.patientId}
@@ -272,7 +272,7 @@ export async function listDeliveredEpisodes(
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
            e.agreed_cost, e.requested_item, e.component, e.service_path,
-           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+           e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
      WHERE e.patient_id = ${patientId}
@@ -297,7 +297,7 @@ export async function listPayableEpisodes(
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
            e.agreed_cost, e.requested_item, e.component, e.service_path,
-           e.branch_id, e.created_at, e.delivered_at, e.cancelled_at, e.cancel_reason
+           e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
      WHERE e.patient_id = ${patientId}
@@ -606,7 +606,7 @@ export async function startDeviceEpisodeTx(
             ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
             ${createdBy}, NOW(), NOW())
     RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
-              created_at, delivered_at, cancelled_at, cancel_reason
+              created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
   `);
   const row = (ins.rows ?? [])[0];
   return toView({ ...row, service_type: serviceType });
@@ -677,7 +677,7 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
              updated_at = NOW()
        WHERE id = ${episodeId}
       RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
-                created_at, delivered_at, cancelled_at, cancel_reason
+                created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
     `);
     const row = (upd.rows ?? [])[0];
     const ct = await tx.execute<{ case_type: string }>(sql`
@@ -721,8 +721,11 @@ export async function claimAwaitingEpisodeForExam(
 ): Promise<number | null> {
   const wanted = params.episodeId ?? null;
   if (wanted !== null) {
+    //  **والأهليّةُ واحدة** مع قائمة العمل والمنتقي: `awaiting_exam` على مسارٍ
+    //  ليس «بلا معاينة». فمعرّفُ حلقةِ «بلا معاينة» لا يُقبَل بصمت (مراجعة
+    //  المرحلة الأولى: REF-2/INV-04) — يُردّ بائتاً برسالته.
     const exact = await tx.execute(sql`
-      SELECT id FROM patient_device_episodes
+      SELECT id, service_path FROM patient_device_episodes
        WHERE id = ${wanted}
          AND case_id = ${params.caseId}
          AND patient_id = ${params.patientId}
@@ -731,20 +734,31 @@ export async function claimAwaitingEpisodeForExam(
     `);
     const row = (exact.rows ?? [])[0];
     if (!row) throw new ExamEpisodeStaleError();
+    if (String(row.service_path ?? "") === "no_exam") {
+      throw new ExamEpisodeStaleError(
+        "هذا الطلب على مسار «بلا معاينة» — لا تُوقَّع عليه معاينةٌ من هنا",
+      );
+    }
     return Number(row.id);
   }
+  //  بلا معرّف: النقطةُ حسمت الهويّةَ قبل النداء (`resolveExamEpisode`) —
+  //  الوحيدةُ تصل هنا **بمعرّفها**، فالوصولُ بلا معرّف يعني أن الفحصَ لم
+  //  يجد منتظِراً. فإن ظهر منتظِرٌ تحت القفل (فُتح طلبٌ بين الفحص والقفل)
+  //  **لا يُربَط بمعاينةٍ لم ترَه** (مراجعة المرحلة الأولى: REF-4/P1-C3) —
+  //  يُردّ بائتاً ليعيد الطبيبُ الفتحَ ويرى الجهاز.
   const found = await tx.execute(sql`
-    SELECT id, sequence_number, requested_item FROM patient_device_episodes
+    SELECT id FROM patient_device_episodes
      WHERE case_id = ${params.caseId}
        AND patient_id = ${params.patientId}
        AND status = 'awaiting_exam'
-     ORDER BY sequence_number ASC
+       AND service_path IS DISTINCT FROM 'no_exam'
      FOR UPDATE
   `);
   const rows: Record<string, any>[] = found.rows ?? [];
   if (rows.length === 0) return null;
-  if (rows.length > 1) throw new ExamEpisodeAmbiguousError(rows.map(toCandidate));
-  return Number(rows[0].id);
+  throw new ExamEpisodeStaleError(
+    "ظهر طلبُ جهازٍ جديد بانتظار المعاينة أثناء التوقيع — حدّث الصفحة وحدّد الجهاز",
+  );
 }
 
 function toCandidate(r: Record<string, any>): AwaitingEpisodeCandidate {
@@ -764,11 +778,13 @@ function toCandidate(r: Record<string, any>): AwaitingEpisodeCandidate {
 export async function awaitingExamEpisodesForCase(
   params: { patientId: number; caseId: number },
 ): Promise<AwaitingEpisodeCandidate[]> {
+  //  نفسُ حدّ قائمة العمل والمنتقي بالحرف: مسارُ «بلا معاينة» ليس مرشَّحاً.
   const r = await db.execute<Record<string, any>>(sql`
     SELECT id, sequence_number, requested_item FROM patient_device_episodes
      WHERE case_id = ${params.caseId}
        AND patient_id = ${params.patientId}
        AND status = 'awaiting_exam'
+       AND service_path IS DISTINCT FROM 'no_exam'
      ORDER BY sequence_number ASC
   `);
   return (r.rows ?? []).map(toCandidate);
@@ -1557,8 +1573,8 @@ export async function getDeviceEpisode(episodeId: number): Promise<
 > {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.patient_id, e.case_id, pc.case_type AS service_type, e.sequence_number,
-           e.status, e.agreed_cost, e.requested_item, e.component, e.service_path, e.branch_id, e.created_at, e.delivered_at,
-           e.cancelled_at, e.cancel_reason
+           e.status, e.agreed_cost, e.requested_item, e.component, e.service_path, e.branch_id, e.created_at,
+           e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
      WHERE e.id = ${episodeId}

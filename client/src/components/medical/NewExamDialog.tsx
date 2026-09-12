@@ -139,7 +139,7 @@ export function NewExamDialog({
   // ══ الأجهزةُ المنتظرةُ المعاينةَ — حين لا يصل الجهازُ جاهزاً ═════════════
   //  نفسُ نقطة صفحة المريض ونفسُ مفتاح الذاكرة، فلا تُجلَب مرّتين.
   const fixedEpisode = deviceEpisodeId ?? null;
-  const { data: examsData } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
+  const { data: examsData, isLoading: examsLoading } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
     enabled: open && !isEdit && fixedEpisode === null,
   });
@@ -158,6 +158,10 @@ export function NewExamDialog({
         ? (candidates.some((c) => c.id === episodeChoice) ? episodeChoice : null)
         : null;
   const needsEpisodeChoice = fixedEpisode === null && candidates.length > 1 && resolvedEpisode === null;
+  //  ولا يُرسَل التوقيعُ قبل أن تُعرَف الأجهزةُ المنتظرة (اختصاصُ جهاز بلا
+  //  جهازٍ مُمرَّر): ضغطةٌ سريعة كانت تُرسَل بلا معرّفٍ قبل وصول القائمة.
+  const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
+  const candidatesLoading = !isEdit && fixedEpisode === null && isDeviceSpecialty && examsLoading;
 
   useEffect(() => { setEpisodeChoice(null); }, [open, specialty]);
 
@@ -370,6 +374,9 @@ export function NewExamDialog({
         queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
       }
       toast({ title: "خطأ", description: err.message, variant: "destructive" });
+      //  جهازٌ مُمرَّرٌ من صفّ القائمة لم يعد ينتظر: النافذةُ لا تملك بديلاً —
+      //  تُغلَق ليعيد الطبيبُ الفتحَ من القائمة المحدَّثة، لا زرُّ حفظٍ يفشل ثانيةً.
+      if (err?.code === "device_episode_stale" && fixedEpisode !== null) onOpenChange(false);
     },
   });
 
@@ -408,7 +415,10 @@ export function NewExamDialog({
 
           <div className="space-y-2">
             <Label>الاختصاص</Label>
-            <Select value={specialty} onValueChange={(v) => setSpecialty(v as MedicalSpecialty)}>
+            {/*  جهازٌ مُمرَّرٌ بعينه = اختصاصُه محسوم؛ تبديلُه كان يرسل حلقةَ
+                اختصاصٍ آخر فيُردّ برسالةٍ مضلِّلة. */}
+            <Select value={specialty} onValueChange={(v) => setSpecialty(v as MedicalSpecialty)}
+              disabled={!isEdit && fixedEpisode !== null}>
               <SelectTrigger className="bg-white" data-testid="select-exam-specialty">
                 <SelectValue placeholder="اختر الاختصاص" />
               </SelectTrigger>
@@ -488,7 +498,7 @@ export function NewExamDialog({
           </Button>
           <Button
             onClick={() => save.mutate()}
-            disabled={!specialty || !hasContent || save.isPending || needsEpisodeChoice}
+            disabled={!specialty || !hasContent || save.isPending || needsEpisodeChoice || candidatesLoading}
             data-testid="button-save-medical-exam"
           >
             {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}

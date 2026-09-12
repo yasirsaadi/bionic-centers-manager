@@ -35,6 +35,7 @@ import {
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
+import { closeRequestsAwaitingExam, specialtyLevelRequestSql } from "../medical_review/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -149,6 +150,8 @@ type ExamIdentity = {
   branchId: number | null;
   caseId: number | null;
   caseType: string;
+  /** الجهازُ الذي طُلب توقيعُه — يُقارَن حين يحضر فقط. */
+  deviceEpisodeId?: number | null;
 };
 
 /**
@@ -163,7 +166,12 @@ function examIdentityMatches(existing: MedicalExam, expected: ExamIdentity): boo
     && existing.doctorId === expected.doctorId
     && existing.branchId === expected.branchId
     && existing.caseId === expected.caseId
-    && existing.caseType === expected.caseType;
+    && existing.caseType === expected.caseType
+    //  **والجهازُ من الهويّة** (مراجعة المرحلة الأولى: INV-02/REF-5): نفسُ
+    //  المفتاح بجهازٍ آخر ليس إعادةَ إرسال — تعارضٌ. وغيابُ المعرّف في الطلب
+    //  (عميلٌ قديم) لا يُقارَن، فيبقى الإعادةُ بلا معرّف كما كانت.
+    && (expected.deviceEpisodeId == null
+      || existing.deviceEpisodeId === expected.deviceEpisodeId);
 }
 
 /**
@@ -297,6 +305,18 @@ export async function createExam(values: {
 
       if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
 
+      // ══ إغلاقُ ما كان ينتظر هذه المعاينة — **في معاملتها** (٠٥٥ + المرحلة
+      //  الأولى) ═══════════════════════════════════════════════════════════
+      //  كان يُنادى بعد الالتزام ويُبتلَع فشلُه، فطلبٌ بقي معلَّقاً على حلقةٍ
+      //  عُوينت كان يختفي من كلّ الشاشات ويحبس «عاد للشراء» بفهرس التفرّد
+      //  (مراجعة المرحلة الأولى: REF-8/CLOSE-1). فصار الإغلاقُ والتوقيعُ حدثاً
+      //  واحداً: معاً أو لا شيء — وإغلاقُ صفٍّ لا يفشل إلّا بعطب قاعدةٍ يُفشل
+      //  التوقيعَ معه على أي حال.
+      await closeRequestsAwaitingExam({
+        patientId: values.patientId, serviceType: values.caseType, examId: row.id,
+        deviceEpisodeId: episodeId, tx,
+      });
+
       // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ═══════════════════════════
       // الطبيب قرّر، والمريض لم يقرّر بعد. فتُفتح متابعةٌ بحالة «بانتظار قرار
       // المريض» **في معاملة التوقيع نفسها**: معاينةٌ موقّعة بلا متابعة تعني
@@ -337,6 +357,16 @@ export async function createExam(values: {
       return { exam: row, created: true };
     });
   } catch (err: any) {
+    // ══ خاسرُ سباقِ المفتاح الواحد يصطدم بالحلقة قبل الفهرس ═══════════════
+    //  محاولتان بنفس المفتاح ونفس الجهاز: الأولى تُقفل الحلقةَ وتلتزم، والثانية
+    //  تجدها `examined` فتُردّ بائتةً **قبل** أن تصل إلى إدراجٍ يصطدم بفهرس
+    //  التفرّد. وهذا إعادةُ إرسالٍ لا خطأ (٠٧٤): يُعاد صفُّ الفائزة بنفس فحص
+    //  الهويّة والمحتوى (مراجعة المرحلة الأولى: P1-C2).
+    if (err instanceof ExamEpisodeStaleError) {
+      const winner = await findReplayableExam(key, values);
+      if (winner) return { exam: winner, created: false };
+      throw err;
+    }
     if (err?.code === "23505" && String(err?.constraint ?? "") === "uq_medical_exams_idempotency_key") {
       // نفسُ فحص الهويّة والمحتوى بالضبط عبر `findReplayableExam` — لا
       // نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الفحص السريع أعلاه.
@@ -1016,6 +1046,9 @@ export async function getPendingExams(
        AND r.service_type = pc.case_type
        AND (r.status = 'escalated'
             OR (r.status = 'pending' AND r.requested_path = 'full'))
+       -- **بهويّة الجهاز** (المرحلة الأولى): المرساةُ المنتظرة تُحتسَب عبر
+       -- حلقتها أعلاه؛ وهنا الطلبُ على مستوى الاختصاص وحده — لا مرساةً ملغاة.
+       AND ${specialtyLevelRequestSql("r")}
        AND NOT EXISTS (
          SELECT 1 FROM medical_exams me2
           WHERE me2.patient_id = r.patient_id
@@ -1233,17 +1266,18 @@ export async function getWorklist(
         -- ولا خيطٌ بلا حلقة، ولا معاينةٌ قديمة.
         -- والشرط أن **لا معاينةَ بعد لحظة الطلب** — فيخرج بتوقيع معاينةٍ
         -- جديدة لا بوجود واحدةٍ من قبل.
-        -- **وبهويّة الجهاز**: الطلبُ المرساةُ إلى حلقةٍ يظهر عبر صفّ حلقته
-        -- أعلاه ما دامت تنتظر؛ فإن لم تعد تنتظر (عُوينت، أُلغيت) فلا يُبقي
-        -- الطلبُ وحده المريضَ في القائمة — صفٌّ شبحٌ لجهازٍ لم يعد قائماً.
-        -- والطلبُ العاري (بلا حلقة) يبقى على قاعدته كما كان.
+        -- **وبهويّة الجهاز**: الطلبُ المرساةُ إلى حلقةٍ منتظرة يظهر عبر صفّ
+        -- حلقته أعلاه. والطلبُ «على مستوى الاختصاص» — عارٍ، أو مرساتُه جهازٌ
+        -- حيّ لم يعد ينتظر (زيارةُ متابعةٍ على مسلَّم أُحيلت إلى معاينة
+        -- كاملة) — يبقى على قاعدته كما كان: يُدرج المريضَ حتى يُوقَّع بعده.
+        -- والمرساةُ الملغاة لا تُبقي وحدها صفّاً شبحاً لجهازٍ لم يعد قائماً.
         OR EXISTS (
           SELECT 1 FROM medical_review_requests r
            WHERE r.patient_id = pc.patient_id
              AND r.service_type = pc.case_type
              AND (r.status = 'escalated'
                   OR (r.status = 'pending' AND r.requested_path = 'full'))
-             AND r.device_episode_id IS NULL
+             AND ${specialtyLevelRequestSql("r")}
              AND NOT EXISTS (
                SELECT 1 FROM medical_exams me2
                 WHERE me2.patient_id = r.patient_id
@@ -1425,6 +1459,8 @@ export async function getPendingForPatient(patientId: number): Promise<string[]>
              AND r.service_type = pc.case_type
              AND (r.status = 'escalated'
                   OR (r.status = 'pending' AND r.requested_path = 'full'))
+             -- نفسُ قاعدة الطابور وقائمة العمل: على مستوى الاختصاص وحده.
+             AND ${specialtyLevelRequestSql("r")}
              AND NOT EXISTS (
                SELECT 1 FROM medical_exams me2
                 WHERE me2.patient_id = r.patient_id

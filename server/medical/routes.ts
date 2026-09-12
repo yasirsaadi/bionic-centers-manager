@@ -44,7 +44,6 @@ import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "../device_episodes/store";
 import type * as FollowupStore from "../followup/store";
-import { closeRequestsAwaitingExam } from "../medical_review/store";
 import * as reviewStore from "../medical_review/store";
 import { canSuperviseReview } from "@shared/medical_review";
 import { cancelledExamIds, isExamCancelled } from "./active_exam";
@@ -485,6 +484,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         branchId: earlyCaseRow?.branchId ?? patient.branchId,
         caseId: earlyCaseRow?.id ?? null,
         caseType,
+        //  والجهازُ من الهويّة حين يحضر: نفسُ المفتاح بجهازٍ آخر تعارضٌ لا إعادة.
+        deviceEpisodeId,
         ...body,
         prescription,
       };
@@ -539,9 +540,21 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         throw err;
       }
 
-      const applied = await applyDecision(patientId, caseType, prescription);
+      // ══ الترتيب — **التوقيعُ تحت القفل قبل كتابة الوصفة على الملفّ** ═════
+      //  (مراجعة المرحلة الأولى: P1-C1/REF-1/INV-03) كان `applyDecision`
+      //  يسبق `createExam`، فطلبٌ يُردّ ٤٠٩ **تحت القفل** (زميلٌ سبق إلى
+      //  الحلقة، أو أُلغيت) كان قد كتب وصفتَه على ملفّ المريض بينما السجلُّ
+      //  الموقَّع لغيره. فحين تكون الحالةُ قائمةً — وهي كذلك لكلّ طلبِ جهاز —
+      //  يُوقَّع أوّلاً ثمّ تُطبَّق الوصفة: رفضٌ تحت القفل = صفرُ كتابة.
+      //  وحين لا حالةَ بعد (اختصاصٌ جديد على المريض) يبقى الترتيبُ القديم:
+      //  الوصفةُ هي ما يُنشئ الحالة، ولا حلقةَ يمكن أن تتنازع عليها.
+      const caseFirst = earlyCaseRow !== null && earlyCaseRow !== undefined;
+      let applied: Awaited<ReturnType<typeof applyDecision>> = {};
+      if (!caseFirst) applied = await applyDecision(patientId, caseType, prescription);
 
-      const caseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
+      const caseRow = caseFirst
+        ? earlyCaseRow
+        : await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
       let created: boolean;
       let exam: Awaited<ReturnType<typeof store.createExam>>["exam"];
@@ -570,6 +583,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         throw err;
       }
 
+      //  الوصفةُ على الملفّ **بعد** توقيعٍ التزم فعلاً — ومرّةً واحدة لكلّ
+      //  محاولةٍ منطقية: إعادةُ إرسالٍ (`created: false`) لا تعيد كتابتها.
+      if (caseFirst && created) applied = await applyDecision(patientId, caseType, prescription);
+
       // ══ ما دون هذا كلُّه **آثارٌ يُنشئها الإنشاءُ الحقيقيّ وحده** ═══════
       //  محاولةٌ خسرت سباقاً حقيقياً على نفس المفتاح تعود هنا بـ
       //  `created: false` — نفسُ صفّ الفائزة، بلا تدقيقٍ ثانٍ ولا إغلاقِ
@@ -589,21 +606,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
         });
 
-        //  إغلاقُ ما كان ينتظر هذه المعاينة (ترحيل ٠٥٥): المُرسَل كاملاً من
-        //  الاستقبال والمُحال من طبيبٍ سواء — كلاهما ينتهي بتوقيعٍ لا بقرار.
-        //  فيصير التسلسل مقروءاً: صنّف الاستقبالُ ⟶ انتظر ⟶ عاين.
-        //  **وفشلُه لا يجوز أن يُسقط توقيعَ سجلٍّ سريري**: المعاينة كُتبت
-        //  وخُتمت قبل هذا السطر، وربطٌ ناقص أهونُ من توقيعٍ ضائع.
-        try {
-          //  **وبهويّة الجهاز**: تُغلَق طلباتُ الحلقة التي عاينتها هذه
-          //  المعاينةُ بعينها والطلباتُ العارية — لا طلبُ جهازٍ آخر على الخيط.
-          await closeRequestsAwaitingExam({
-            patientId, serviceType: caseType, examId: exam.id,
-            deviceEpisodeId: exam.deviceEpisodeId ?? null,
-          });
-        } catch (linkErr) {
-          console.error("[medical] closing review requests after exam failed:", linkErr);
-        }
+        //  إغلاقُ طلبات المراجعة صار **داخل** معاملة التوقيع (`store.createExam`)
+        //  — معاً أو لا شيء؛ لا نداءَ بعد الالتزام يُبتلَع فشلُه.
       }
 
       // ══ **ولا بابَ تجارياً ثانياً يُفتَح هنا** ═══════════════════════════
@@ -1042,17 +1046,29 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  صفٌّ لكلّ حلقةٍ منتظرة الآن، والطلبُ المرساةُ إليها هو طلبُها هي
       //  — لا أقدمُ طلبٍ على الخيط. والصفُّ بلا حلقة يطابق الطلبَ العاري
       //  (بلا `device_episode_id`) وحده؛ ولا يُقرَض طلبُ جهازٍ لصفٍّ غيره.
-      const reqByEpisode = new Map(
-        pend.filter((p) => p.deviceEpisodeId !== null).map((p) => [p.deviceEpisodeId as number, p]),
-      );
-      const bareByKey = new Map(
-        pend.filter((p) => p.deviceEpisodeId === null).map((p) => [`${p.patientId}:${p.serviceType}`, p]),
-      );
+      //  **والأقدمُ أوّلاً** (كما كان `DISTINCT ON`): الصفوفُ تصل مرتّبةً
+      //  تصاعدياً، والأوّلُ لكلّ مفتاحٍ هو الذي يبقى — لا الأحدث.
+      const reqByEpisode = new Map<number, typeof pend[number]>();
+      const specialtyByKey = new Map<string, typeof pend[number]>();
+      for (const p of pend) {
+        const k = `${p.patientId}:${p.serviceType}`;
+        if (p.deviceEpisodeId !== null && !p.specialtyLevel) {
+          //  مرساتُه حلقةٌ منتظرة (أو ملغاة — ولا صفَّ لها فلا تُطابَق أبداً).
+          if (!reqByEpisode.has(p.deviceEpisodeId)) reqByEpisode.set(p.deviceEpisodeId, p);
+        }
+        //  الطلبُ على مستوى الاختصاص (عارٍ، أو مرساتُه جهازٌ حيّ لا ينتظر —
+        //  `specialtyLevel` من `specialtyLevelRequestSql` نفسِها التي تحكم
+        //  القائمةَ والإغلاق، لا قاعدةٌ ثانية) يُرفَق بصفٍّ بلا حلقة، **أو
+        //  بصفّ حلقةٍ لا طلبَ لها هي**: إرسالُ الاستعلامات المصحَّح بعد الإرجاع
+        //  عارٍ (مراجعة المرحلة الأولى: REF-3)، وزيارةُ متابعةٍ على مسلَّم
+        //  أُحيلت إلى معاينةٍ كاملة مرساتُها الجهازُ المسلَّم (LEG-01).
+        //  **والأقدمُ أوّلاً** — الصفوفُ تصل مرتّبةً تصاعدياً.
+        if (p.specialtyLevel && !specialtyByKey.has(k)) specialtyByKey.set(k, p);
+      }
       res.json({
         rows: rows.map((r) => {
-          const hit = r.episodeId !== null
-            ? reqByEpisode.get(r.episodeId)
-            : bareByKey.get(`${r.patientId}:${r.caseType}`);
+          const hit = (r.episodeId !== null ? reqByEpisode.get(r.episodeId) : undefined)
+            ?? specialtyByKey.get(`${r.patientId}:${r.caseType}`);
           const withAlias = aliasByPatient.has(r.patientId)
             ? { ...r, aliasCodes: aliasByPatient.get(r.patientId) } : { ...r };
           //  **سببُ الزيارة** — يُعرَض دائماً حين يوجد طلبٌ حاكم، بصرف النظر

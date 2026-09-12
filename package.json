@@ -106,6 +106,7 @@
     "test:daily-review": "tsx server/daily_review.test.ts",
     "test:return-to-purchase": "tsx server/return_to_purchase.test.ts",
     "test:exam-identity": "tsx server/exam_identity.test.ts",
+    "test:exam-identity-ui": "tsx client/src/components/medical/exam_device_identity_ui.test.ts",
     "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
     "test:trash-badge": "tsx server/patient_trash_badge.test.ts",

@@ -180,15 +180,22 @@ async function orphanFollowup(
  * يسحب معه حلقةً من مسارٍ آخر. **لقطةُ قاعدةٍ ضابطة** (نفسُ نمط
  * `legacyFollowup` تماماً) — لا محاكاةً لبابٍ حيّ يفتح حلقةً كهذه ثم يوقّع
  * عليها معاينة.
+ *
+ * **ولا بابَ حيّاً لها بعد المرحلة الأولى من قطار الإصلاح (ترحيل ٠٧٧)**:
+ * حلقةُ «بلا معاينة» لم تعد مرشَّحاً للتوقيع أصلاً — بلا معرّفٍ لا تُحسَم،
+ * وبمعرّفها الصريح تُردّ ٤٠٩. فالتوقيعُ هنا يولّد متابعةً **يتيمة**، ويُربَط
+ * الصفُّ بالحلقة بلقطةِ SQL صريحة — كما كانت هذه الدالّةُ تعلن عن نفسها.
  */
 async function noExamLinkedFollowup(label: string): Promise<{ pid: number; fid: number }> {
   const pid = await mkPatient(label);
   const cid = await mkCase(pid);
-  await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
+  const ep = await q<{ id: number }>(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id,
              sequence_number, status, agreed_cost, requested_item, service_path, created_by)
-           VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device','no_exam',$3)`, [pid, cid, MANAGER]);
+           VALUES ($1,$2,1,1,'awaiting_exam',0,'full_device','no_exam',$3) RETURNING id`, [pid, cid, MANAGER]);
   await signExam(pid);
   const fid = await followupOf(pid);
+  await q(`UPDATE post_exam_followups SET device_episode_id = $2 WHERE id = $1`, [fid, ep[0].id]);
+  await q(`UPDATE patient_device_episodes SET status = 'examined' WHERE id = $1`, [ep[0].id]);
   return { pid, fid };
 }
 
