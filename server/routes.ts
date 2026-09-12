@@ -13,6 +13,12 @@ import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+//  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — تعليقُ كتابتين إداريَّتين إلى الأبد ══════
+//  يُزال الملفّ والاستيرادُ معاً بعد تحديد مصدر التعليق. راجع
+//  `server/diagnostics/request_timing.ts` لتفصيل ما يُسجَّل وما لا يُسجَّل.
+import {
+  diagPhase, diagRawArrivalMiddleware, diagRouteHandlerReached, diagSessionCompletedMiddleware,
+} from "./diagnostics/request_timing";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -314,7 +320,13 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  //  ══ تشخيصٌ مؤقّت — «وصولُ الطلب الخام» قبل أيّ كود جلسة ═══════════════
+  //  محصورٌ بفحص نمطٍ رخيص على طريقين محدَّدين فقط (راجع الملفّ)؛ كلُّ طلبٍ
+  //  آخر يمرّ بلا أثر. يُزال مع بقيّة الاستدعاءات المذكورة أعلاه.
+  app.use(diagRawArrivalMiddleware);
   await setupAuth(app);
+  //  «انتهاءُ وسيط الجلسة» — بلا لمسٍ لـ`setupAuth` أو إعداد الجلسة نفسِها.
+  app.use(diagSessionCompletedMiddleware);
 
   // ══ تحديثُ الصلاحيات حيّاً — بلا خروجٍ وعودة (إصلاحٌ 2026-09-01، وحُصِّن
   // 2026-09-02 — راجع القسم أدناه) ═══════════════════════════════════════
@@ -1468,14 +1480,19 @@ export async function registerRoutes(
 
   // Delete system user (admin only)
   app.delete("/api/admin/users/:id", isAuthenticated, async (req, res) => {
+    //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts
+    diagRouteHandlerReached(req);
     try {
       const branchSession = (req.session as any).branchSession;
       if (!branchSession?.isAdmin) {
         return res.status(403).json({ message: "غير مصرح" });
       }
-      
+
       const id = Number(req.params.id);
+      diagPhase(req, "before_delete_system_user");
       await storage.deleteSystemUser(id);
+      diagPhase(req, "after_delete_system_user");
+      diagPhase(req, "before_response");
       res.json({ success: true });
     } catch (err) {
       throw err;

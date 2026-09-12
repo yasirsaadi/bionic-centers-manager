@@ -252,6 +252,22 @@ export async function createArticle(params: ArticleWriteParams): Promise<Article
 }
 
 /**
+ * ══ تعليماتُ توقيتٍ مؤقّتة — لتحديد أين يتعلّق تعديل المقالة إنتاجياً
+ * (تشخيصٌ مؤقّت، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════════════════
+ * `onPhase` **اختياريّةٌ بحتة**: غيابُها (كلُّ منادٍ آخر غير نقطة PATCH
+ * المباشرة — أي `approveSuggestion`) يعني صفراً من التغيير، لا حتى استدعاءَ
+ * دالّةٍ فارغة. والاسمُ وحده يُمرَّر — لا وقتَ ولا معرّفَ طلبٍ ولا معرّفَ
+ * مقالة هنا: المناديَ (نقطة PATCH وحدها) يحمل هذه الثلاثة في إغلاقه
+ * الخاصّ، فتبقى طبقةُ المخزن غافلةً عن شكل السجلّ تماماً — مسؤوليةٌ واحدة.
+ *
+ * **ولا قيمةَ حساسة تعبر هذا الخطّ أبداً**: اسمُ الطَورِ نصٌّ ثابتٌ من
+ * القائمة أدناه فقط — لا عنوانَ مقالةٍ ولا نصَّها ولا بيانات مستخدم.
+ */
+export interface EditTimingHooks {
+  onPhase: (phase: string) => void;
+}
+
+/**
  * الكاتبُ القانونيّ — تعديلُ مقالةٍ قائمة: **نسخةٌ جديدة، لا كتابةٌ فوق
  * القديمة**. يُقفَل صفّها أوّلاً (`FOR UPDATE`) فلا تعديلان متزامنان
  * يُنتجان نسختين متفرّعتين من الأصل نفسه.
@@ -272,7 +288,10 @@ export async function createArticle(params: ArticleWriteParams): Promise<Article
  */
 export async function editArticleTx(
   tx: any, params: ArticleWriteParams & { id: number },
+  timing?: EditTimingHooks,
 ): Promise<{ ok: true; article: ArticleAdminRow } | { ok: false; error: string }> {
+  timing?.onPhase("transaction_acquired");
+  timing?.onPhase("before_lock");
   await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
   try {
     await tx.execute(sql`SELECT 1 FROM ai_knowledge_articles WHERE id = ${params.id} FOR UPDATE`);
@@ -282,8 +301,11 @@ export async function editArticleTx(
     }
     throw err;
   }
+  timing?.onPhase("after_lock");
+  timing?.onPhase("before_read_current");
   const [current] = await tx.select().from(aiKnowledgeArticles)
     .where(eq(aiKnowledgeArticles.id, params.id));
+  timing?.onPhase("after_read_current");
   if (!current) return { ok: false, error: "المقالة غير موجودة" };
   if (!current.isActive) {
     return { ok: false, error: "لا يمكن تعديل مقالةٍ غير فعّالة — فعّلها أولاً أو أنشئ مقالةً جديدة" };
@@ -301,6 +323,7 @@ export async function editArticleTx(
     ? params.contentType
     : (isKnowledgeContentType(current.contentType) ? current.contentType : "workflow");
 
+  timing?.onPhase("before_insert_new_version");
   const [next] = await tx.insert(aiKnowledgeArticles).values({
     title: params.title.trim(),
     body: params.body.trim(),
@@ -317,11 +340,15 @@ export async function editArticleTx(
     approvedBy: params.actor.userId,
     approvedByName: params.actor.name ?? "—",
   }).returning();
+  timing?.onPhase("after_insert_new_version");
 
+  timing?.onPhase("before_deactivate_old_version");
   await tx.update(aiKnowledgeArticles)
     .set({ isActive: false, updatedAt: new Date() })
     .where(eq(aiKnowledgeArticles.id, current.id));
+  timing?.onPhase("after_deactivate_old_version");
 
+  timing?.onPhase("before_audit_insert");
   await logAudit({
     entityType: "ai_knowledge_article", entityId: next.id, action: "edit",
     userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
@@ -335,14 +362,16 @@ export async function editArticleTx(
     },
     ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
   });
+  timing?.onPhase("after_audit_insert");
 
   return { ok: true, article: toAdminRow(next) };
 }
 
 export async function editArticle(
   params: ArticleWriteParams & { id: number },
+  timing?: EditTimingHooks,
 ): Promise<{ ok: true; article: ArticleAdminRow } | { ok: false; error: string }> {
-  return db.transaction((tx: any) => editArticleTx(tx, params));
+  return db.transaction((tx: any) => editArticleTx(tx, params, timing));
 }
 
 /**
