@@ -61,6 +61,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { MEDICAL_SPECIALTIES, SPECIALTY_LABELS } from "@shared/medical";
 import { CAPABILITIES, CAPABILITY_LABELS, type Capability } from "@shared/ai_capabilities";
 import { isQuizSpec } from "@shared/ai_training";
+import { fetchWithTimeout, SAVE_ARTICLE_TIMEOUT_MS } from "./ai_knowledge_admin_save";
 import {
   Select,
   SelectContent,
@@ -1405,13 +1406,18 @@ function AiKnowledgeTab() {
     }) => {
       const url = data.id ? `/api/ai/knowledge/articles/${data.id}` : "/api/ai/knowledge/articles";
       const method = data.id ? "PATCH" : "POST";
-      const res = await fetch(url, {
+      //  ══ مهلةٌ محدودة — زرّ «حفظ» لا يبقى معلَّقاً أبداً (تصحيحٌ إنتاجيّ)
+      //  ═══════════════════════════════════════════════════════════════════
+      //  fetch بلا مهلةٍ يبقى بلا ردٍّ إن عُلِّق الخادمُ (قفلُ صفٍّ لم يُحسم
+      //  مثلاً) — فتبقى saveArticle.isPending صحيحةً إلى الأبد. المنطقُ في
+      //  ai_knowledge_admin_save.ts — منطقٌ خالص يُختبَر مباشرةً بلا مكوّن React.
+      const res = await fetchWithTimeout(url, {
         method, headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({
           title: data.title, body: data.body, scope: data.scope, branchId: data.branchId,
           audience: data.audience, contentType: data.contentType,
         }),
-      });
+      }, SAVE_ARTICLE_TIMEOUT_MS);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "تعذّر الحفظ");
@@ -1423,6 +1429,8 @@ function AiKnowledgeTab() {
       toast({ title: articleDialog?.mode === "edit" ? "تم حفظ نسخةٍ جديدة من المقالة" : "تمت إضافة المقالة" });
       setArticleDialog(null);
     },
+    //  ══ النافذةُ لا تُغلَق هنا عمداً — النصُّ المُدخَل يبقى في حقول النموذج
+    //  (defaultValue غير متحكَّمة) فيعيد المسؤولُ المحاولة بلا إعادة كتابته.
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
