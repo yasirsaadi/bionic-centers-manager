@@ -376,6 +376,26 @@ function nextCatalogModuleId(catalog: Record<string, unknown> | null): number | 
 }
 
 /**
+ * الوحدةُ الوحيدة المسموحة/المُلزَمة حين تكون الرسالةُ ملاحةً صريحة — من
+ * نتيجة training_catalog **الحقيقية** لهذه الرسالة، لا افتراضاً. `null`
+ * يعني: لا وحدةَ لفتحها (لا مسارَ أوّل لِـ`start_over`، أو `next` فارغة
+ * لِـ`continue` لأن الموظّف أنهى كلَّ ما هو متاحٌ له) — لا رفضٌ حينئذٍ ولا
+ * إلزامٌ، الإنهاءُ سليم.
+ *
+ * **مصدرُ حقيقةٍ واحد** يستعمله الحارسان معاً: `refuseLessonOpen` (يرفض
+ * رقماً مخالفاً) و`forceRequiredLessonOpen` (يفرض هذا الرقم بعينه حين لا
+ * يطلبه أحد) — فلا يمكن أن يرفض أحدُهما رقماً بينما يفرض الآخر رقماً آخر.
+ */
+function allowedExplicitModuleId(
+  explicitNav: ExplicitTrainingNavigation,
+  catalogResult: Record<string, unknown>,
+): number | null {
+  return explicitNav === "start_over"
+    ? firstCatalogModuleId(catalogResult)
+    : nextCatalogModuleId(catalogResult);
+}
+
+/**
  * فتحُ درسٍ يُردّ **دون تنفيذٍ** حين لا يجوز — رسالةٌ عربية تشرح للنموذج
  * لماذا (وبالرقم الصحيح حين يُعرَف)، فيبلّغ الموظّف بدل أن يظنّ عطلاً.
  * `null` يعني: نفّذ كالمعتاد.
@@ -405,6 +425,18 @@ function nextCatalogModuleId(catalog: Record<string, unknown> | null): number | 
  * **ولا تغييرَ في دلالات الإكمال ولا في جدول التقدّم نفسه** — هذا حارسٌ
  * على *عدد وهويّة* نداءات `training_lesson` هذه الرسالة وحدها، لا على ما
  * تكتبه `getModuleLesson` حين تُنفَّذ فعلاً.
+ *
+ * ══ حارسٌ سلبيّ لا يكفي وحده (تصحيحٌ إنتاجيّ ثانٍ) ═══════════════════════
+ * هذه الدالّة **ترفض المخالف** — نداءً برقمٍ خاطئ، أو نداءً ثانياً، أو
+ * نداءً قبل الكتالوج. لكنها لا تفعل شيئاً إن **لم ينادِ النموذجُ
+ * `training_lesson` إطلاقاً** وحاول إنهاء الردّ بنصٍّ عاديّ بعد نجاح
+ * `training_catalog` — وهذا بالضبط ما وقع إنتاجياً: «دربني... من البداية»
+ * نادى الكتالوج ثم عاد بنصٍّ عاديّ بلا فتح الوحدة الأولى، وقُبل ذلك النصّ
+ * نهائياً. فالحارسُ الإيجابيّ المكمِّل `forceRequiredLessonOpen` (أسفل
+ * `runWithTools`) يُنفَّذ عند كل محاولة إنهاء، ويفرض الفتحَ حتماً حين تكون
+ * الرسالةُ ملاحةً صريحة ولم تُفتَح وحدتُها المُلزَمة بعد — **بنفس الرقم
+ * تماماً** الذي كانت هذه الدالّة سترفض ما سواه (`allowedExplicitModuleId`
+ * مصدرٌ واحد للرقم في الحارسين معاً).
  */
 function refuseLessonOpen(params: {
   callName: string;
@@ -428,9 +460,7 @@ function refuseLessonOpen(params: {
       return "نادِ training_catalog أوّلاً — هذا الطلبُ («من البداية»/«كمّل») يحتاج نتيجتَه"
         + " الحقيقية لتحديد الوحدة الصحيحة قبل فتح أيّ درس.";
     }
-    const allowedModuleId = params.explicitNav === "start_over"
-      ? firstCatalogModuleId(params.catalogResult)
-      : nextCatalogModuleId(params.catalogResult);
+    const allowedModuleId = allowedExplicitModuleId(params.explicitNav, params.catalogResult);
     if (allowedModuleId === null) {
       return params.explicitNav === "start_over"
         ? "لا مسارَ متاحاً لهذا الموظّف — لا وحدةَ أولى لفتحها."
@@ -476,10 +506,65 @@ async function runWithTools(params: {
   //  تقرأ منها هويّةَ الوحدة الصحيحة لِـ«من البداية»/«كمّل»، لا تخميناً.
   let catalogResult: Record<string, unknown> | null = null;
 
+  /**
+   * الحارسُ الإيجابيّ — العطبُ الإنتاجيّ الذي تُغلقه هذه الدالّة بالذات:
+   * «دربني... من البداية» نادى training_catalog ثم عاد النموذجُ بنصٍّ
+   * عاديّ **بلا** نداء training_lesson إطلاقاً، وقُبل ذلك النصُّ نهائياً.
+   * `refuseLessonOpen` لا تحمي من هذا — هي ترفض نداءً وقع، ولم يقع نداءٌ
+   * هنا أصلاً لتُرفَض.
+   *
+   * فحين تكون الرسالةُ ملاحةً صريحة (`explicitNav`) ونجح `training_catalog`
+   * هذه الرسالة، ولم تُفتَح وحدةٌ بعد — تُنفَّذ `training_lesson`
+   * **حتمياً من الخادم نفسه**، بنفس الرقم الذي كانت `refuseLessonOpen`
+   * ستفرضه على أيّ نداءٍ مخالف (`allowedExplicitModuleId` واحدة للحارسين).
+   * والنتيجةُ الحقيقية تُحقَن في المحادثة كأنّ النموذج طلبها هو، فتراها
+   * الجولةُ التالية وتشرحها — لا نصّاً مُخترَعاً ولا افتراضاً.
+   *
+   * `true` ⟹ فُرض فتحٌ (نجح أو فشل تنفيذُه — كلاهما يعني ألّا يُقبل نصُّ
+   * هذه الجولة نهائياً، فثمّة جولةٌ تالية ستشرح النتيجةَ الحقيقية أو الخطأ
+   * الحقيقي). `false` ⟹ لا شيء يلزم فتحه (تقدّمٌ صِرف، لا ملاحةً صريحة،
+   * الكتالوجُ لم ينجح بعد هذه الرسالة، الوحدةُ مفتوحةٌ فعلاً، أو لا وحدةَ/
+   * لا next لتُفتَح) — نصُّ النموذج الحاليّ نهائيٌّ سليم كما هو.
+   *
+   * **ولا تفتح إلا وحدةً واحدة على الأكثر طَوال الرسالة**: الشرطُ الأوّل
+   * `trainingLessonOpened` هو نفسُ حارسِ «وحدةٍ واحدة فقط» أعلاه بعينه، فلا
+   * فتحَ ثانياً هنا حتى لو فشل فتحٌ سابقٌ حقيقيّ فُتح بنجاح.
+   */
+  async function forceRequiredLessonOpen(): Promise<boolean> {
+    if (trainingProgressOnly || trainingLessonOpened || !explicitNav || !catalogResult) {
+      return false;
+    }
+    const moduleId = allowedExplicitModuleId(explicitNav, catalogResult);
+    if (moduleId === null) return false;
+
+    const syntheticId = `forced_training_lesson_${moduleId}`;
+    used.push("training_lesson");
+    const outcome = await executeTool(access, "training_lesson", { moduleId });
+    if (outcome.ok) trainingLessonOpened = true;
+    messages.push({
+      role: "assistant",
+      content: [{ type: "tool_use", id: syntheticId, name: "training_lesson", input: { moduleId } }],
+    });
+    messages.push({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: syntheticId,
+        content: JSON.stringify(outcome.data),
+        ...(outcome.ok ? {} : { is_error: true }),
+      }],
+    });
+    return true;
+  }
+
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const step = await stepFn({ system, messages, tools, model: "haiku", maxTokens: 900 });
       if (step.toolCalls.length === 0) {
+        //  محاولةُ إنهاءٍ — قبل قبولها نهائياً، تحقّق أن الملاحةَ الصريحة (إن
+        //  وُجدت) لم تُترَك بلا فتح. فرضٌ ⟹ أعد الجولة فيرى النموذجُ النتيجة
+        //  الحقيقية ويشرحها، بدل أن يُقبل نصٌّ لم يفتح شيئاً.
+        if (await forceRequiredLessonOpen()) continue;
         return { ok: true, value: { reply: step.text, tools: { names: used, count: used.length } } };
       }
 
@@ -504,6 +589,12 @@ async function runWithTools(params: {
       }
       messages.push({ role: "user", content: results });
     }
+
+    //  استُنفدت الجولات بلا أن يُفتَح شيء (مثلاً: النموذجُ شغل الجولاتِ
+    //  الثلاث بأدواتٍ أخرى ولم يحاول الإنهاء داخل الحلقة إطلاقاً) — نفسُ
+    //  الفرض قبل أن يُصاغ الجوابُ النهائي هنا أيضاً، فلا يُفلت الإلزامُ من
+    //  مجرّد أن الإنهاء وقع بعد الحلقة لا داخلها.
+    await forceRequiredLessonOpen();
 
     //  استُنفدت الجولات: يُطلب جوابٌ نهائي **بلا أدوات**، فيُجاب ممّا جُمع
     //  بدل أن تُقطع المحادثة على المستخدم.
