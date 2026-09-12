@@ -37,10 +37,13 @@ import {
   aiToolStep, classifyAiError, safeAiComplete,
   type AiConversationBlock, type AiResult, type AiToolSpec, type AiTurn,
 } from "./provider";
-import { executeTool, toolsFor } from "./tools/registry";
+import { denied, executeTool, toolsFor } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
 import { isLiveDataOnlyQuestion, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
+import {
+  explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
+} from "@shared/ai_training_intent";
 import { toolProvenanceLabels } from "./semantics";
 
 export interface ChatMessage {
@@ -209,11 +212,13 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
  * لا تفتح باباً محجوباً ولا تمنح صلاحيةً لم تكن موجودة.
  */
 const TRAINING_AND_SUPPORT_RULES = `قواعدُ التدريب والدعم التشغيليّ:
-- إن طلب الموظّف تدريباً («دربني»، «أنا موظّف جديد»، «علّمني كيف...»، «اختبرني»، «ما الذي يجب أن أتعلّمه؟»، «وين وصلت بالتدريب؟»، «كمّل تدريبي») نادِ training_catalog أوّلاً — يُظهر مساراتِه المتاحة فعلاً بصلاحياته الحقيقية وحدها، لا ما تفترضه أنت.
-- افتح وحدةً بـtraining_lesson بعد أن يختارها الموظّف، أو باستعمال next من training_catalog لمتابعة آخر مكانٍ توقّف عنده.
-- اشرح محتوى الدرس بمثالٍ من متنه، ثم إن حمل quizQuestion اسأله إيّاه وانتظر إجابة الموظّف — لا تجب عنه ولا تخترع سؤالاً آخر.
-- بعد أن يجيب، نادِ training_submit_answer **بنصّ إجابته كما كتبه بالضبط** — أنت لا تُقيّم صحّتها بنفسك مطلقاً، والنتيجةُ result من الخادم وحدها. اشرح missingHints عند needs_review بأسلوبك الخاصّ، ولا تُضِف تلميحاً لم يصلك ولا تُعلن نجاحاً يخالف result.
-- وحدةٌ بلا quizQuestion، أو موسومةٌ تدريباً عملياً (practiceOnly)، تكتمل بفتح الدرس وحده — لا تختبرها ولا تخترع تصحيحاً لها.
+- إن طلب الموظّف تدريباً بأيّ صيغة («دربني»، «أنا موظّف جديد»، «علّمني كيف...»، «اختبرني»، «ما الذي يجب أن أتعلّمه؟»، «وين وصلت بالتدريب؟»، «كمّل تدريبي») نادِ training_catalog أوّلاً — يُظهر مساراتِه المتاحة فعلاً بصلاحياته الحقيقية وحدها، لا ما تفترضه أنت.
+- **سؤالُ تقدّمٍ صِرف** («وين وصلت بالتدريب؟»، «شنو وصل تدريبي؟»، «كم درسٍ أكملت؟») يُجاب **من نتيجة training_catalog وحدها**: اذكر بوضوح ما اكتمل، والوحدة الحالية (next إن وُجدت)، وما تبقّى — بلا فتح أيّ درسٍ (لا تنادِ training_lesson) وبلا سؤال اختبار. هذا تقريرٌ لا فعل.
+- **«من البداية» أو «من جديد»** (مثل «دربني من البداية») تعني الوحدةَ **الأولى** حرفياً — أوّل وحدةٍ في أوّل مسارٍ متاحٍ من نتيجة training_catalog (tracks[0].modules[0]) — وافتحها بـtraining_lesson **بصرف النظر عن حالتها** (ولو كانت completed سلفاً): الموظّف طلب مراجعتها من جديد، لا الانتقال لِما بعدها.
+- **«كمّل»/«تابع»/«استمر»** (مثل «كمّل تدريبي») تعني وحدةَ next من training_catalog تحديداً — ولو كانت null فلا وحدة لتفتحها: أخبر الموظّف أنه أنهى كلَّ ما هو متاحٌ له حالياً.
+- **افتح وحدةً واحدةً فقط في هذا الردّ** — أيّاً كانت طريقة الاختيار أعلاه. اشرح محتواها بمثالٍ من متنها، ثم إن حملت quizQuestion اسأله إيّاه وانتظر إجابة الموظّف — لا تجب عنه ولا تخترع سؤالاً آخر. **ولو اكتملت الوحدةُ فوراً بفتحها** (بلا quizQuestion، أو practiceOnly) **فاشرحها كما هي رغم اكتمالها** — لا تسقط الشرح لأن الحالة صارت completed.
+- **ولا تفتح الوحدة التالية تلقائياً في نفس الردّ** ولو اكتملت التي فتحتَها للتوّ بلا اختبار — أخبر الموظّف أنها اكتملت، وأنك جاهزٌ لفتح ما يليها إن طلب المتابعة في رسالةٍ جديدة.
+- بعد أن يجيب على اختبارٍ فتحتَه، نادِ training_submit_answer **بنصّ إجابته كما كتبه بالضبط** — أنت لا تُقيّم صحّتها بنفسك مطلقاً، والنتيجةُ result من الخادم وحدها. اشرح missingHints عند needs_review بأسلوبك الخاصّ، ولا تُضِف تلميحاً لم يصلك ولا تُعلن نجاحاً يخالف result.
 - **والتدريبُ لا يمنح صلاحيةً أبداً.** موظّفٌ يسأل عن الوصول لشيءٍ خارج صلاحيته الحقيقية («شلون أشوف المدفوعات وأنا ما عندي صلاحية؟») اشرح أن الوصول يحتاج الصلاحية المناسبة من مسؤول فرعه — **ولا تعلّمه إطلاقاً**: تغييرَ الرابط يدوياً، أو انتحالَ مستخدمٍ آخر، أو تعديلَ تخزين الجلسة أو المتصفّح، أو نداءَ واجهة برمجةٍ مباشرة، أو الوصولَ للقاعدة، أو أيّ التفافٍ آخر على الصلاحيات.
 - لمشكلةٍ تشغيلية يصفها موظّف («الزرّ ما يفتح»، «المريض ما يطلع إلي»، «ما أقدر أضيف دفعة»، «ليش ما أشوف التقرير؟»)، افحص أوّلاً أدواتك الحيّة الآمنة إن كانت ذاتَ صلة (حالة المريض، بحثٌ عنه، عملُك الحاليّ)، ثمّ استعن بالمعرفة الموثوقة المتعلّقة، وصنّف السببَ المحتمل ضمن ستّ فئاتٍ فقط: (١) نقصُ صلاحية، (٢) نطاقُ فرعٍ خارج ما يملكه، (٣) شرطٌ سابقٌ في مسار العمل لم يتحقّق بعد، (٤) بياناتٌ أو حالةُ سجلٍّ ناقصة، (٥) استعمالٌ خاطئ معروف للواجهة، (٦) غيرُ معروف — يحتاج مسؤول الفرع أو الدعم الفنّي.
 - أعطِ خطواتِ تحقّقٍ قصيرة عملية، لا شرحاً مطوَّلاً. وإن لم تكفِ الحقائقُ المتاحة لتشخيصٍ واثق، قل بوضوح ما لا تعرفه ووجّه الموظّف لمسؤول فرعه أو الدعم الفنّي — **لا تخترع سبباً ولا تدّعي وجود عطلٍ برمجيّ لم تتحقّق منه**.`;
@@ -353,6 +358,95 @@ export interface ToolRunReport {
   count: number;
 }
 
+/** رقمُ أوّل وحدةٍ في أوّل مسارٍ متاح — من نتيجة training_catalog الحقيقية، لا مُخمَّنة. */
+function firstCatalogModuleId(catalog: Record<string, unknown> | null): number | null {
+  const tracks = catalog?.tracks;
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  const modules = (tracks[0] as Record<string, unknown> | undefined)?.modules;
+  if (!Array.isArray(modules) || modules.length === 0) return null;
+  const id = (modules[0] as Record<string, unknown> | undefined)?.id;
+  return typeof id === "number" ? id : null;
+}
+
+/** رقمُ وحدة next — من نتيجة training_catalog نفسِها، أو `null` إن لم تكن هناك واحدة. */
+function nextCatalogModuleId(catalog: Record<string, unknown> | null): number | null {
+  const next = catalog?.next as Record<string, unknown> | null | undefined;
+  const id = next?.moduleId;
+  return typeof id === "number" ? id : null;
+}
+
+/**
+ * فتحُ درسٍ يُردّ **دون تنفيذٍ** حين لا يجوز — رسالةٌ عربية تشرح للنموذج
+ * لماذا (وبالرقم الصحيح حين يُعرَف)، فيبلّغ الموظّف بدل أن يظنّ عطلاً.
+ * `null` يعني: نفّذ كالمعتاد.
+ *
+ * ══ ثلاثُ بوّاباتٍ حتميّة، لا وصفٌ في الـprompt وحده (تصحيحٌ إنتاجيّ) ═════
+ * (١) **سؤالُ تقدّمٍ صِرف** («وين وصلت بالتدريب؟») — `training_lesson`
+ * تُحذَف من الأدوات المعروضة لهذه الرسالة أصلاً (أدناه)، وهذا حارسٌ ثانٍ
+ * دفاعاً في العمق: لو وصل نداءٌ لها رغم ذلك (مزوّدٌ لا يلتزم بقائمة
+ * الأدوات المعروضة)، يُرفَض هنا أيضاً بلا تنفيذ.
+ * (٢) **وحدةٌ واحدة فقط تُفتَح في هذه الرسالة** — سواءٌ طلب النموذج فتح
+ * ثانيةٍ في نفس الجولة أو في جولةٍ لاحقة (حتى ثلاث جولات، `MAX_TOOL_
+ * ROUNDS`)، فلا تُتيح النافذةُ الزمنية الواحدة تجاوزَ وحدةٍ صامتاً. العدّادُ
+ * يرتفع فقط عند **نجاح** فتحٍ فعليّ — محاولةٌ فاشلة (رقمُ وحدةٍ خاطئ) لا
+ * تستهلك الحصّة.
+ * (٣) **وهويّةُ الوحدة نفسُها — لا الفتحُ وحده** (تصحيحٌ لاحق). رسالةٌ
+ * صُنِّفت `explicitTrainingNavigation` («من البداية»/«كمّل») تُلزِم برقمٍ
+ * بعينه: `tracks[0].modules[0].id` لِـ`start_over`، أو `next.moduleId`
+ * لِـ`continue` — كلاهما من نتيجة `training_catalog` **الحقيقية** لهذه
+ * الرسالة، لا افتراضاً. نداءٌ لِـ`training_lesson` **قبل** أن ينجح
+ * `training_catalog` في نفس الرسالة يُرفَض (لا مرجعَ لهويّةٍ صحيحة بعد)،
+ * ونداءٌ برقمٍ مخالفٍ يُرفَض أيضاً — **بلا استهلاك حصّة الوحدة الواحدة**
+ * (الرفضُ هنا يسبق `executeTool` تماماً كبقيّة هذه الدالّة، فلا فرقَ بينه
+ * وبين رفضٍ آخر من حيث عدم لمس `trainingLessonOpened`). ورسالةٌ عامّة أو
+ * اختيارٌ صريح لوحدةٍ باسمها (`explicitNav === null`) لا يمرّان بهذا الشرط
+ * إطلاقاً — سلوكُهما القائم بلا قيدٍ إضافي.
+ *
+ * **ولا تغييرَ في دلالات الإكمال ولا في جدول التقدّم نفسه** — هذا حارسٌ
+ * على *عدد وهويّة* نداءات `training_lesson` هذه الرسالة وحدها، لا على ما
+ * تكتبه `getModuleLesson` حين تُنفَّذ فعلاً.
+ */
+function refuseLessonOpen(params: {
+  callName: string;
+  moduleId: unknown;
+  trainingProgressOnly: boolean;
+  trainingLessonOpened: boolean;
+  explicitNav: ExplicitTrainingNavigation | null;
+  catalogResult: Record<string, unknown> | null;
+}): string | null {
+  if (params.callName !== "training_lesson") return null;
+  if (params.trainingProgressOnly) {
+    return "هذا سؤالُ تقدّمٍ فقط — أجب من نتيجة training_catalog (المُنجَز والحاليّ والتالي)،"
+      + " بلا فتح درسٍ ولا سؤال اختبار.";
+  }
+  if (params.trainingLessonOpened) {
+    return "فُتحت وحدةٌ تدريبية بالفعل في هذه الرسالة. اشرحها أو اسألها اختبارَها إن حمل"
+      + " quizQuestion، ولا تفتح وحدةً أخرى — الموظّفُ يطلب المتابعة في رسالةٍ تالية.";
+  }
+  if (params.explicitNav) {
+    if (!params.catalogResult) {
+      return "نادِ training_catalog أوّلاً — هذا الطلبُ («من البداية»/«كمّل») يحتاج نتيجتَه"
+        + " الحقيقية لتحديد الوحدة الصحيحة قبل فتح أيّ درس.";
+    }
+    const allowedModuleId = params.explicitNav === "start_over"
+      ? firstCatalogModuleId(params.catalogResult)
+      : nextCatalogModuleId(params.catalogResult);
+    if (allowedModuleId === null) {
+      return params.explicitNav === "start_over"
+        ? "لا مسارَ متاحاً لهذا الموظّف — لا وحدةَ أولى لفتحها."
+        : "لا وحدة next متاحة — الموظّفُ أنهى كلَّ ما هو متاحٌ له حالياً، فلا شيء لفتحه.";
+    }
+    if (Number(params.moduleId) !== allowedModuleId) {
+      return params.explicitNav === "start_over"
+        ? `«من البداية» تعني أوّل وحدةٍ في أوّل مسارٍ متاح تحديداً — رقمها ${allowedModuleId}`
+          + " من نتيجة training_catalog، لا الوحدةَ التي طلبتَها. أعد المحاولة برقمها الصحيح."
+        : `«كمّل» تعني وحدةَ next من training_catalog تحديداً — رقمها ${allowedModuleId}،`
+          + " لا الوحدةَ التي طلبتَها. أعد المحاولة برقمها الصحيح.";
+    }
+  }
+  return null;
+}
+
 /**
  * حلقةُ الأدوات — **المزوّد يقترح، والخادم يقرّر**.
  *
@@ -367,9 +461,20 @@ async function runWithTools(params: {
   step: ToolStepper;
 }): Promise<AiResult<{ reply: string; tools: ToolRunReport }>> {
   const { access, system, history, step: stepFn } = params;
-  const tools = toolsFor(access);
+  //  ══ نيّةُ التدريب تُحسَب **مرّةً واحدة** من رسالة المستخدم المُطلِقة لهذه
+  //  الرسالة — لا من كل جولة، فهي تمثّل ما طلبه الموظّف طوال هذا الردّ.
+  const latestQuestion = latestUserQuestion(history);
+  const trainingProgressOnly = isTrainingProgressOnlyQuery(latestQuestion);
+  const explicitNav = explicitTrainingNavigation(latestQuestion);
+  const tools = toolsFor(access)
+    .filter((t) => !(trainingProgressOnly && t.name === "training_lesson"));
   const messages: AiTurn[] = toolTurns(history);
   const used: string[] = [];
+  let trainingLessonOpened = false;
+  //  ══ نتيجةُ training_catalog **الحقيقية** لهذه الرسالة ══════════════════
+  //  تُحدَّث كلّما نجح نداءٌ لها (قد يتكرّر عبر الجولات) — refuseLessonOpen
+  //  تقرأ منها هويّةَ الوحدة الصحيحة لِـ«من البداية»/«كمّل»، لا تخميناً.
+  let catalogResult: Record<string, unknown> | null = null;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -382,7 +487,14 @@ async function runWithTools(params: {
       const results: AiConversationBlock[] = [];
       for (const call of step.toolCalls) {
         used.push(call.name);
-        const outcome = await executeTool(access, call.name, call.input);
+        const refusal = refuseLessonOpen({
+          callName: call.name,
+          moduleId: (call.input as Record<string, unknown> | null | undefined)?.moduleId,
+          trainingProgressOnly, trainingLessonOpened, explicitNav, catalogResult,
+        });
+        const outcome = refusal ? denied(refusal) : await executeTool(access, call.name, call.input);
+        if (call.name === "training_lesson" && outcome.ok) trainingLessonOpened = true;
+        if (call.name === "training_catalog" && outcome.ok) catalogResult = outcome.data;
         results.push({
           type: "tool_result",
           tool_use_id: call.id,

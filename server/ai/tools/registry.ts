@@ -56,7 +56,10 @@ export interface ToolOutcome {
   data: Record<string, unknown>;
 }
 
-const denied = (reason: string): ToolOutcome => ({ ok: false, data: { error: reason } });
+//  مُصدَّرة — يستعملها منسّقُ حلقة الأدوات في `chat.ts` ليردّ بنفس الشكل
+//  حين يرفض نداءً **قبل** أن يصل `executeTool` أصلاً (بوّابتا التدريب:
+//  سؤالُ تقدّمٍ صِرف، أو وحدةٌ ثانية في نفس الرسالة) — لا صيغةَ رفضٍ ثانية.
+export const denied = (reason: string): ToolOutcome => ({ ok: false, data: { error: reason } });
 
 /**
  * «غير موجود» و«خارج نطاقك» جوابٌ **واحد**.
