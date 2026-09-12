@@ -37,7 +37,14 @@ assertDatabaseSafeForEntryPoint({ env: process.env, argv: process.argv });
 //  بهامشٍ واضح، فيصل ردٌّ حقيقيّ («الخادم مشغول») غالباً قبل يأس المتصفّح.
 //  ولا تُغيَّر أسبقيةُ رابط القاعدة ولا حارسُ أمانها — هذا خيارٌ إضافيّ على
 //  الكائن نفسِه فقط.
-export const pool = new Pool({ connectionString, connectionTimeoutMillis: 8_000 });
+//
+//  ══ ثابتٌ واحد لمِجمَعين ═══════════════════════════════════════════════
+//  مخزنُ الجلسات (`server/replit_integrations/auth/replitAuth.ts`) يملك
+//  مِجمَعاً منفصلاً يمرّ به **كلُّ** طلبٍ مصادَق قبل أن يبلغ أيَّ مسار — فلو
+//  بقي بلا مهلة لبقي بابُ التعليق الأبديّ مفتوحاً قبل هذا المِجمَع أصلاً.
+//  القيمةُ مُصدَّرة فيقرؤها الاثنان من مصدرٍ واحد ولا ينحرفان.
+export const DB_CONNECTION_TIMEOUT_MS = 8_000;
+export const pool = new Pool({ connectionString, connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS });
 
 // Idle clients can emit errors when the backend (Neon) drops a connection
 // after a network blip or maintenance. Without a listener pg surfaces this

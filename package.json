@@ -121,6 +121,7 @@
     "test:ai-knowledge-retrieval": "tsx shared/ai_knowledge_retrieval.test.ts",
     "test:ai-knowledge": "tsx server/ai_knowledge.test.ts",
     "test:admin-user-lifecycle": "tsx server/admin_user_lifecycle.test.ts",
+    "test:session-store-pool": "tsx server/session_store_pool.test.ts",
     "test:ai-tools-reports": "tsx server/ai_tools_reports.test.ts",
     "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts",
     "test:ai-knowledge-save": "tsx client/src/pages/ai_knowledge_admin_save.test.ts",
