@@ -41,7 +41,9 @@ import { denied, executeTool, toolsFor } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
 import { isLiveDataOnlyQuestion, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
-import { isTrainingProgressOnlyQuery } from "@shared/ai_training_intent";
+import {
+  explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
+} from "@shared/ai_training_intent";
 import { toolProvenanceLabels } from "./semantics";
 
 export interface ChatMessage {
@@ -356,11 +358,29 @@ export interface ToolRunReport {
   count: number;
 }
 
+/** رقمُ أوّل وحدةٍ في أوّل مسارٍ متاح — من نتيجة training_catalog الحقيقية، لا مُخمَّنة. */
+function firstCatalogModuleId(catalog: Record<string, unknown> | null): number | null {
+  const tracks = catalog?.tracks;
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  const modules = (tracks[0] as Record<string, unknown> | undefined)?.modules;
+  if (!Array.isArray(modules) || modules.length === 0) return null;
+  const id = (modules[0] as Record<string, unknown> | undefined)?.id;
+  return typeof id === "number" ? id : null;
+}
+
+/** رقمُ وحدة next — من نتيجة training_catalog نفسِها، أو `null` إن لم تكن هناك واحدة. */
+function nextCatalogModuleId(catalog: Record<string, unknown> | null): number | null {
+  const next = catalog?.next as Record<string, unknown> | null | undefined;
+  const id = next?.moduleId;
+  return typeof id === "number" ? id : null;
+}
+
 /**
  * فتحُ درسٍ يُردّ **دون تنفيذٍ** حين لا يجوز — رسالةٌ عربية تشرح للنموذج
- * لماذا، فيبلّغ الموظّف بدل أن يظنّ عطلاً. `null` يعني: نفّذ كالمعتاد.
+ * لماذا (وبالرقم الصحيح حين يُعرَف)، فيبلّغ الموظّف بدل أن يظنّ عطلاً.
+ * `null` يعني: نفّذ كالمعتاد.
  *
- * ══ بوّابتان حتميّتان، لا وصفٌ في الـprompt وحده (تصحيحٌ إنتاجيّ) ═══════
+ * ══ ثلاثُ بوّاباتٍ حتميّة، لا وصفٌ في الـprompt وحده (تصحيحٌ إنتاجيّ) ═════
  * (١) **سؤالُ تقدّمٍ صِرف** («وين وصلت بالتدريب؟») — `training_lesson`
  * تُحذَف من الأدوات المعروضة لهذه الرسالة أصلاً (أدناه)، وهذا حارسٌ ثانٍ
  * دفاعاً في العمق: لو وصل نداءٌ لها رغم ذلك (مزوّدٌ لا يلتزم بقائمة
@@ -370,13 +390,29 @@ export interface ToolRunReport {
  * ROUNDS`)، فلا تُتيح النافذةُ الزمنية الواحدة تجاوزَ وحدةٍ صامتاً. العدّادُ
  * يرتفع فقط عند **نجاح** فتحٍ فعليّ — محاولةٌ فاشلة (رقمُ وحدةٍ خاطئ) لا
  * تستهلك الحصّة.
+ * (٣) **وهويّةُ الوحدة نفسُها — لا الفتحُ وحده** (تصحيحٌ لاحق). رسالةٌ
+ * صُنِّفت `explicitTrainingNavigation` («من البداية»/«كمّل») تُلزِم برقمٍ
+ * بعينه: `tracks[0].modules[0].id` لِـ`start_over`، أو `next.moduleId`
+ * لِـ`continue` — كلاهما من نتيجة `training_catalog` **الحقيقية** لهذه
+ * الرسالة، لا افتراضاً. نداءٌ لِـ`training_lesson` **قبل** أن ينجح
+ * `training_catalog` في نفس الرسالة يُرفَض (لا مرجعَ لهويّةٍ صحيحة بعد)،
+ * ونداءٌ برقمٍ مخالفٍ يُرفَض أيضاً — **بلا استهلاك حصّة الوحدة الواحدة**
+ * (الرفضُ هنا يسبق `executeTool` تماماً كبقيّة هذه الدالّة، فلا فرقَ بينه
+ * وبين رفضٍ آخر من حيث عدم لمس `trainingLessonOpened`). ورسالةٌ عامّة أو
+ * اختيارٌ صريح لوحدةٍ باسمها (`explicitNav === null`) لا يمرّان بهذا الشرط
+ * إطلاقاً — سلوكُهما القائم بلا قيدٍ إضافي.
  *
  * **ولا تغييرَ في دلالات الإكمال ولا في جدول التقدّم نفسه** — هذا حارسٌ
- * على *عدد* نداءات `training_lesson` هذه الرسالة وحدها، لا على ما تكتبه
- * `getModuleLesson` حين تُنفَّذ فعلاً.
+ * على *عدد وهويّة* نداءات `training_lesson` هذه الرسالة وحدها، لا على ما
+ * تكتبه `getModuleLesson` حين تُنفَّذ فعلاً.
  */
 function refuseLessonOpen(params: {
-  callName: string; trainingProgressOnly: boolean; trainingLessonOpened: boolean;
+  callName: string;
+  moduleId: unknown;
+  trainingProgressOnly: boolean;
+  trainingLessonOpened: boolean;
+  explicitNav: ExplicitTrainingNavigation | null;
+  catalogResult: Record<string, unknown> | null;
 }): string | null {
   if (params.callName !== "training_lesson") return null;
   if (params.trainingProgressOnly) {
@@ -386,6 +422,27 @@ function refuseLessonOpen(params: {
   if (params.trainingLessonOpened) {
     return "فُتحت وحدةٌ تدريبية بالفعل في هذه الرسالة. اشرحها أو اسألها اختبارَها إن حمل"
       + " quizQuestion، ولا تفتح وحدةً أخرى — الموظّفُ يطلب المتابعة في رسالةٍ تالية.";
+  }
+  if (params.explicitNav) {
+    if (!params.catalogResult) {
+      return "نادِ training_catalog أوّلاً — هذا الطلبُ («من البداية»/«كمّل») يحتاج نتيجتَه"
+        + " الحقيقية لتحديد الوحدة الصحيحة قبل فتح أيّ درس.";
+    }
+    const allowedModuleId = params.explicitNav === "start_over"
+      ? firstCatalogModuleId(params.catalogResult)
+      : nextCatalogModuleId(params.catalogResult);
+    if (allowedModuleId === null) {
+      return params.explicitNav === "start_over"
+        ? "لا مسارَ متاحاً لهذا الموظّف — لا وحدةَ أولى لفتحها."
+        : "لا وحدة next متاحة — الموظّفُ أنهى كلَّ ما هو متاحٌ له حالياً، فلا شيء لفتحه.";
+    }
+    if (Number(params.moduleId) !== allowedModuleId) {
+      return params.explicitNav === "start_over"
+        ? `«من البداية» تعني أوّل وحدةٍ في أوّل مسارٍ متاح تحديداً — رقمها ${allowedModuleId}`
+          + " من نتيجة training_catalog، لا الوحدةَ التي طلبتَها. أعد المحاولة برقمها الصحيح."
+        : `«كمّل» تعني وحدةَ next من training_catalog تحديداً — رقمها ${allowedModuleId}،`
+          + " لا الوحدةَ التي طلبتَها. أعد المحاولة برقمها الصحيح.";
+    }
   }
   return null;
 }
@@ -406,12 +463,18 @@ async function runWithTools(params: {
   const { access, system, history, step: stepFn } = params;
   //  ══ نيّةُ التدريب تُحسَب **مرّةً واحدة** من رسالة المستخدم المُطلِقة لهذه
   //  الرسالة — لا من كل جولة، فهي تمثّل ما طلبه الموظّف طوال هذا الردّ.
-  const trainingProgressOnly = isTrainingProgressOnlyQuery(latestUserQuestion(history));
+  const latestQuestion = latestUserQuestion(history);
+  const trainingProgressOnly = isTrainingProgressOnlyQuery(latestQuestion);
+  const explicitNav = explicitTrainingNavigation(latestQuestion);
   const tools = toolsFor(access)
     .filter((t) => !(trainingProgressOnly && t.name === "training_lesson"));
   const messages: AiTurn[] = toolTurns(history);
   const used: string[] = [];
   let trainingLessonOpened = false;
+  //  ══ نتيجةُ training_catalog **الحقيقية** لهذه الرسالة ══════════════════
+  //  تُحدَّث كلّما نجح نداءٌ لها (قد يتكرّر عبر الجولات) — refuseLessonOpen
+  //  تقرأ منها هويّةَ الوحدة الصحيحة لِـ«من البداية»/«كمّل»، لا تخميناً.
+  let catalogResult: Record<string, unknown> | null = null;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -424,9 +487,14 @@ async function runWithTools(params: {
       const results: AiConversationBlock[] = [];
       for (const call of step.toolCalls) {
         used.push(call.name);
-        const refusal = refuseLessonOpen({ callName: call.name, trainingProgressOnly, trainingLessonOpened });
+        const refusal = refuseLessonOpen({
+          callName: call.name,
+          moduleId: (call.input as Record<string, unknown> | null | undefined)?.moduleId,
+          trainingProgressOnly, trainingLessonOpened, explicitNav, catalogResult,
+        });
         const outcome = refusal ? denied(refusal) : await executeTool(access, call.name, call.input);
         if (call.name === "training_lesson" && outcome.ok) trainingLessonOpened = true;
+        if (call.name === "training_catalog" && outcome.ok) catalogResult = outcome.data;
         results.push({
           type: "tool_result",
           tool_use_id: call.id,

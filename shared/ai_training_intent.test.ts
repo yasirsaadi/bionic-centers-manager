@@ -1,6 +1,6 @@
 // نيّةُ رسالة التدريب — منطقٌ خالص، بلا قاعدة بيانات. `npm run test:ai-training-intent`.
 
-import { isTrainingProgressOnlyQuery } from "./ai_training_intent";
+import { explicitTrainingNavigation, isTrainingProgressOnlyQuery } from "./ai_training_intent";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -49,6 +49,40 @@ check(isTrainingProgressOnlyQuery("   ") === false, "و.٢. بياضٌ فقط");
 check(isTrainingProgressOnlyQuery("تدريب") === false, "و.٣. كلمةٌ واحدة بلا إشارة تقدّم");
 check(isTrainingProgressOnlyQuery("وين وصلت") === false,
   "و.٤. إشارةُ تقدّمٍ بلا ذكر «تدريب» إطلاقاً ⟹ لا تصنيف (الافتراضُ الآمن)");
+
+console.log("\n── ز. الملاحةُ الصريحة — مثالا المهمّة ──");
+check(explicitTrainingNavigation("دربني من البداية") === "start_over",
+  "ز.١. «دربني من البداية» ⟹ start_over");
+check(explicitTrainingNavigation("كمّل تدريبي") === "continue",
+  "ز.٢. «كمّل تدريبي» ⟹ continue");
+
+console.log("\n── ح. متغيّراتُ الملاحة الصريحة ──");
+check(explicitTrainingNavigation("ابدأ تدريبي من الأول") === "start_over",
+  "ح.١. «ابدأ تدريبي من الأول» ⟹ start_over");
+check(explicitTrainingNavigation("درّبني من جديد") === "start_over",
+  "ح.٢. «درّبني من جديد» ⟹ start_over");
+check(explicitTrainingNavigation("كمل تدريبي") === "continue",
+  "ح.٣. «كمل تدريبي» (بلا شدّة) ⟹ continue");
+check(explicitTrainingNavigation("تابع تدريبي") === "continue",
+  "ح.٤. «تابع تدريبي» ⟹ continue");
+check(explicitTrainingNavigation("استمر بالتدريب") === "continue",
+  "ح.٥. «استمر بالتدريب» ⟹ continue");
+
+console.log("\n── ط. لا ملاحةَ صريحة — تبقى على سلوكها القائم ──");
+check(explicitTrainingNavigation("دربني") === null,
+  "ط.١. «دربني» وحدها بلا «من البداية» ⟹ null — طلبٌ عامّ");
+check(explicitTrainingNavigation("افتح لي درس التدريب") === null,
+  "ط.٢. «افتح لي درس التدريب» ⟹ null — لا «من البداية» ولا فعلَ متابعة");
+check(explicitTrainingNavigation("افتح الوحدة الثانية") === null,
+  "ط.٣. اختيارٌ صريح باسم الوحدة ⟹ null — يبقى على سلوكه القائم");
+check(explicitTrainingNavigation("وين وصلت بالتدريب؟") === null,
+  "ط.٤. سؤالُ تقدّمٍ صِرف ⟹ null من هذه الدالّة — يُحجَب بـisTrainingProgressOnlyQuery"
+    + " لا بهذه");
+check(explicitTrainingNavigation("كمّل الطلب") === null,
+  "ط.٥. «كمّل الطلب» ⟹ null — فعلُ متابعةٍ بلا سياق تدريبٍ إطلاقاً");
+check(explicitTrainingNavigation("اعرض التقرير من البداية") === null,
+  "ط.٦. «اعرض التقرير من البداية» ⟹ null — «من البداية» بلا سياق تدريبٍ ولا فعل تدريبيّ");
+check(explicitTrainingNavigation("") === null, "ط.٧. سلسلةٌ فارغة");
 
 console.log(`\n${failures === 0 ? "✅ نيّةُ التدريب مصنَّفةٌ صحيحاً في كل الحالات" : `❌ ${failures} فشل`}`);
 process.exit(failures === 0 ? 0 : 1);

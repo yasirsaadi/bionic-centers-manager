@@ -77,3 +77,49 @@ export function isTrainingProgressOnlyQuery(text: string): boolean {
   if (!PROGRESS_SIGNAL_PATTERN.test(normalized)) return false;
   return !exactTokens(text).some((t) => ACTION_OVERRIDE_TOKENS.has(t));
 }
+
+// ══ أيُّ وحدةٍ يجوز فتحها — لا الفتحُ وحده (تصحيحٌ لاحق) ═══════════════
+// كانت البوّابتان السابقتان (سؤالُ تقدّمٍ صِرف، وحدةٌ واحدة لكلّ رسالة) لا
+// تفرضان شيئاً على **هويّة** الوحدة المطلوبة: نموذجٌ يقول «دربني من
+// البداية» ثمّ يفتح الوحدةَ الثالثة كان يمرّ بلا اعتراض — الحصّةُ واحدة،
+// لكن أيّ واحدة. فهذا القسم يحسم الهويّة أيضاً حين تكون الرسالةُ صريحةً:
+// «من البداية» ⟹ tracks[0].modules[0] وحدها، و«كمّل/تابع/استمر» ⟹
+// next.moduleId وحدها — قرارٌ من نصّ الرسالة، والمطابقةُ الفعلية بمعرّف
+// الوحدة تقع في `server/ai/chat.ts` بعد قراءة نتيجة training_catalog
+// الحقيقية (هذا الملفّ لا يعرف قِيَم القاعدة، هويّةَ النيّة فقط).
+
+/** «من البداية»/«من الأول»/«من جديد» — نيّةُ استئنافٍ من الوحدة الأولى. */
+const START_OVER_PATTERN = /من\s*(البدايه|الاول|جديد)/;
+
+/** أفعالُ المتابعة تحديداً — جزءٌ من ACTION_OVERRIDE_TOKENS، مُعادُ تسميته هنا للوضوح. */
+const CONTINUE_TOKENS = new Set(
+  ["كمل", "تابع", "استمر"].map((w) => normalizeSearchText(w)),
+);
+
+export type ExplicitTrainingNavigation = "start_over" | "continue";
+
+/**
+ * نيّةُ ملاحةٍ صريحة — «من البداية» أو «كمّل/تابع/استمر» تحديداً. `null`
+ * لأيّ رسالةٍ أخرى (طلبٌ عامّ، أو اختيارُ وحدةٍ باسمها/رقمها صراحةً من
+ * الموظّف) — وهذه تبقى على **سلوكها القائم بلا قيدٍ إضافي**، فالقيدُ هنا
+ * لصيغتين محدَّدتين فقط لا لكلّ محادثة تدريب.
+ *
+ * **ومطابقةٌ محافظة عمداً**: تشترط إشارةَ تدريبٍ (`تدريب`) أو فعلَ عملٍ
+ * تدريبيّ معروف (`ACTION_OVERRIDE_TOKENS`) مرافقاً لـ«من البداية»، وإشارةَ
+ * تدريبٍ صريحة مرافقةً لأفعال المتابعة — فـ«كمّل الطلب» أو «اعرض التقرير من
+ * البداية» في سياقٍ غير تدريبيّ لا تُصنَّفان ملاحةً صريحة بالخطأ.
+ */
+export function explicitTrainingNavigation(text: string): ExplicitTrainingNavigation | null {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return null;
+  const tokens = exactTokens(text);
+  const hasTrainingContext = TRAINING_CONTEXT_PATTERN.test(normalized);
+  const hasActionToken = tokens.some((t) => ACTION_OVERRIDE_TOKENS.has(t));
+  if (START_OVER_PATTERN.test(normalized) && (hasTrainingContext || hasActionToken)) {
+    return "start_over";
+  }
+  if (hasTrainingContext && tokens.some((t) => CONTINUE_TOKENS.has(t))) {
+    return "continue";
+  }
+  return null;
+}
