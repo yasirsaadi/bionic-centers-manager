@@ -13,7 +13,7 @@
 import type { Express } from "express";
 import { storage } from "../../storage";
 import {
-  approveSuggestion, createArticle, createSuggestion, editArticle,
+  approveSuggestion, ARTICLE_EDIT_SERVER_BUSY_ERROR, createArticle, createSuggestion, editArticle,
   isKnowledgeContentType, isKnowledgeScope, listArticlesForAdmin, listSuggestions,
   parseAudience, rejectSuggestion, setArticleActive, type Actor,
 } from "./store";
@@ -243,40 +243,53 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   });
 
   // ══ ٧. تعديلُ مقالةٍ قائمة — نسخةٌ جديدة ═══════════════════════════════
-  app.patch("/api/ai/knowledge/articles/:id", isAuthenticated, async (req: Req, res) => {
+  app.patch("/api/ai/knowledge/articles/:id", isAuthenticated, async (req: Req, res, next) => {
     //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts
     diagRouteHandlerReached(req);
-    if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
-    const idParsed = parsePositiveIntId(req.params.id);
-    if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
-    const id = idParsed;
-    const title = str(req.body?.title);
-    const body = str(req.body?.body);
-    const scope = req.body?.scope;
-    if (!title) return res.status(400).json({ error: "العنوان مطلوب" });
-    if (!body) return res.status(400).json({ error: "النصّ مطلوب" });
-    if (!isKnowledgeScope(scope)) return res.status(400).json({ error: "النطاق مطلوب وصحيح" });
+    //  ══ next(err) لا throw — Express 4 لا يلتقط رفضَ الوعود تلقائياً
+    //  (تصحيحٌ إنتاجيّ، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════════
+    //  معالجٌ غير متزامنٍ يرمي بلا `try/catch` هنا كان يترك الطلبَ معلَّقاً
+    //  بلا ردٍّ أبداً عند أيّ خطأٍ غير متوقَّع (غير الحالتين المُتَرجَمتين في
+    //  `editArticle` نفسها) — مطابقةً لعطب حذف المستخدم بالضبط.
+    try {
+      if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
+      const idParsed = parsePositiveIntId(req.params.id);
+      if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
+      const id = idParsed;
+      const title = str(req.body?.title);
+      const body = str(req.body?.body);
+      const scope = req.body?.scope;
+      if (!title) return res.status(400).json({ error: "العنوان مطلوب" });
+      if (!body) return res.status(400).json({ error: "النصّ مطلوب" });
+      if (!isKnowledgeScope(scope)) return res.status(400).json({ error: "النطاق مطلوب وصحيح" });
 
-    const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
-    if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
+      const resolvedBranch = await resolveBranchIdField(req.body?.branchId);
+      if (!resolvedBranch.ok) return res.status(400).json({ error: "رقمُ الفرع غير صالح أو غير موجود" });
 
-    //  ══ غيابُ audience/contentType من الجسم ⟶ وراثةٌ من النسخة الحالية —
-    //  لا يفتحهما هذا المسار بصمت (القسم ٢، مراجعةُ الإكمال) ══
-    const metadata = metadataFieldsFrom(req.body);
-    if (!metadata.ok) return res.status(400).json({ error: metadata.error });
+      //  ══ غيابُ audience/contentType من الجسم ⟶ وراثةٌ من النسخة الحالية —
+      //  لا يفتحهما هذا المسار بصمت (القسم ٢، مراجعةُ الإكمال) ══
+      const metadata = metadataFieldsFrom(req.body);
+      if (!metadata.ok) return res.status(400).json({ error: metadata.error });
 
-    diagPhase(req, "before_transaction");
-    const result = await editArticle(
-      { id, title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req) },
-      { onPhase: (phase) => diagPhase(req, phase) },
-    );
-    diagPhase(req, "transaction_finished");
-    if (!result.ok) {
+      diagPhase(req, "before_transaction");
+      const result = await editArticle(
+        { id, title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req) },
+        { onPhase: (phase) => diagPhase(req, phase) },
+      );
+      diagPhase(req, "transaction_finished");
+      if (!result.ok) {
+        diagPhase(req, "before_response");
+        //  ══ ٥٠٣ لا ٤٠٩ لعطل اقتناء اتّصال — ليس تعارضاً مع تعديلٍ آخر ══
+        //  (تصحيحٌ إنتاجيّ، ٢٠٢٦-٠٩-١٢): خادمٌ مُثقَل رسالتُه مختلفةٌ عن قفل
+        //  صفٍّ يعدّله شخصٌ آخر، فرمزُ حالتها مختلفٌ أيضاً.
+        const status = result.error === ARTICLE_EDIT_SERVER_BUSY_ERROR ? 503 : 409;
+        return res.status(status).json({ error: result.error });
+      }
       diagPhase(req, "before_response");
-      return res.status(409).json({ error: result.error });
+      res.json({ article: result.article });
+    } catch (err) {
+      next(err);
     }
-    diagPhase(req, "before_response");
-    res.json({ article: result.article });
   });
 
   // ══ ٨. تفعيل/تعطيل ═════════════════════════════════════════════════════

@@ -1394,8 +1394,12 @@ export async function registerRoutes(
     }
   });
 
-  // Update system user (admin only)
-  app.patch("/api/admin/users/:id", isAuthenticated, async (req, res) => {
+  // Update system user (admin only) — **also the canonical account-
+  // deactivation path**: sending {isActive:false} here disables the account
+  // without touching its row or any historical FK reference (audit_log,
+  // employee_training_progress, medical_exams.doctor_id, …). No separate
+  // "deactivate" endpoint — this reuses the same permission/update logic.
+  app.patch("/api/admin/users/:id", isAuthenticated, async (req, res, next) => {
     try {
       const branchSession = (req.session as any).branchSession;
       if (!branchSession?.isAdmin) {
@@ -1474,13 +1478,35 @@ export async function registerRoutes(
 
       res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
     } catch (err) {
-      throw err;
+      next(err);
     }
   });
 
-  // Delete system user (admin only)
-  app.delete("/api/admin/users/:id", isAuthenticated, async (req, res) => {
-    //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts
+  // ══ تعطيلٌ لا حذفٌ فعليّ (تصحيحٌ إنتاجيّ ٢٠٢٦-٠٩-١٢) ═══════════════════
+  // كان هذا المسار ينادي `storage.deleteSystemUser` — حذفٌ فعليّ لصفّ
+  // `system_users`. أيّ موظّفٍ حقيقيّ يحمل تاريخاً (سجلّ تدقيق، توقيعَ
+  // معاينة، تقدّمَ تدريب، …) يملك واحداً على الأقلّ من ٣٢ قيداً أجنبياً
+  // `NO ACTION` يشير إلى صفّه، فالحذفُ يُرفَض بخطأ قيدٍ (`23503`) — وهذا
+  // الخطأ كان يُعاد رميه من معالجٍ غير متزامن بدل `next(err)`، فلا يصل وسيطُ
+  // الأخطاء إليه أبداً (Express 4 لا يلتقط رفضَ الوعود تلقائياً)، ويبقى طلبُ
+  // العميل معلَّقاً بلا ردٍّ إلى الأبد — «جاري الحذف» لا ينتهي أبداً. القسمُ
+  // ٤.ز من هذا الملفّ (سلّة المرضى) رسم المبدأ الصحيح لبيانات لها تاريخ:
+  // حالةٌ تتغيّر، لا صفٌّ يُمحى.
+  //
+  // فصار هذا المسار **يُعطّل الحساب** (`is_active = false`) بدل حذفه — نفسُ
+  // الكتابة التي تنادي عليها نقطة PATCH أعلاه بالضبط، فلا منطقَ صلاحيةٍ أو
+  // تحديثٍ ثانٍ يتكرّر هنا. **ولا `db.delete(systemUsers)` بعد اليوم في هذا
+  // المسار العاديّ.** أُبقي على هذا الباب بمساره القديم (`DELETE`) توافقاً
+  // رجعياً مع أيّ عميلٍ بائت لم يحمّل النسخة الجديدة بعد — الواجهةُ الحالية
+  // تنادي PATCH مباشرةً (أعلاه) لا هذا المسار.
+  //
+  // والحسابُ المعطَّل **يبقى مرفوضاً فوراً**: تسجيلُ الدخول يفحص `isActive`
+  // أصلاً (أعلى هذا الملفّ)، وتحديثُ الصلاحيات الحيّ (مطلع `registerRoutes`)
+  // يقطع أيّ جلسةٍ مفتوحة لحسابٍ صار `isActive === false` على أوّل طلبٍ
+  // لاحق — بلا حاجةٍ لأيّ منطقٍ جديد هنا.
+  app.delete("/api/admin/users/:id", isAuthenticated, async (req, res, next) => {
+    //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — راجع server/diagnostics/request_timing.ts.
+    //  باقٍ عمداً بعد هذا الإصلاح للتحقّق الإنتاجيّ أنّ المسار لم يعد يتعلّق.
     diagRouteHandlerReached(req);
     try {
       const branchSession = (req.session as any).branchSession;
@@ -1489,13 +1515,17 @@ export async function registerRoutes(
       }
 
       const id = Number(req.params.id);
-      diagPhase(req, "before_delete_system_user");
-      await storage.deleteSystemUser(id);
-      diagPhase(req, "after_delete_system_user");
+      diagPhase(req, "before_deactivate_system_user");
+      const user = await storage.updateSystemUser(id, { isActive: false });
+      diagPhase(req, "after_deactivate_system_user");
+      if (!user) {
+        diagPhase(req, "before_response");
+        return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
       diagPhase(req, "before_response");
-      res.json({ success: true });
+      res.json({ success: true, deactivated: true });
     } catch (err) {
-      throw err;
+      next(err);
     }
   });
 

@@ -278,13 +278,28 @@ export interface EditTimingHooks {
  * آخر) — فيبقى زرّ «حفظ» في الواجهة على «جارٍ الحفظ...» بلا نجاحٍ ولا خطأ
  * أبداً، لأن الخادم نفسه لم يُجب بعد. `SET LOCAL lock_timeout` يقتصر على
  * هذه المعاملة وحدها (يُنسى تلقائياً عند COMMIT/ROLLBACK، فلا أثرَ خارج هذا
- * الاستدعاء ولا حاجةَ لإعادة ضبطه)، والالتقاطُ أدناه يُترجم رمز بوستغرس
- * `55P03` (`lock_not_available`) إلى ردٍّ عربيّ واضح بدل الانتظار الأبديّ.
+ * الاستدعاء ولا حاجةَ لإعادة ضبطه).
+ *
+ * ══ الالتقاطُ يُغطّي **المعاملةَ كاملةً** لا العبارةَ الأولى وحدها (تصحيحٌ
+ * ثانٍ — تشخيصٌ حيّ ٢٠٢٦-٠٩-١٢) ═════════════════════════════════════════
+ * `lock_timeout` قيمةُ جلسةٍ تسري على **كلّ** عبارةٍ لاحقة في هذه المعاملة
+ * — لا `FOR UPDATE` وحدها. فقفلٌ على `audit_log` (أو أيّ عبارةٍ أخرى هنا)
+ * يُلغى بوستغرس ذاتيّاً ضمن الخمس ثوانٍ نفسِها، لكنّ الالتقاطَ القديم كان
+ * يُغلِّف عبارة القفل الأولى فقط — فخطأُ `55P03` من عبارةٍ لاحقة كان يُرمى
+ * غيرَ ممسوكٍ خارج `editArticleTx`، ولأنّ Express 4 لا يُحوِّل رفضَ الوعود
+ * غير الممسوكة تلقائياً إلى ردٍّ (راجع `server/index.ts`)، كان الطلبُ يبقى
+ * معلَّقاً بلا ردٍّ رغم أن بوستغرس نفسَه ردّ خلال ٥ث بالضبط — **مُثبَتٌ
+ * حيّاً**: تأمينُ `audit_log` بقفلٍ خارجيّ أثناء التعديل كان يُعلِّق الطلبَ
+ * الكاملَ ٢٠ث (مهلة الفحص) رغم فشل عبارة التدقيق داخلياً عند ٥ث بالضبط.
+ *
+ * فصار الالتقاطُ يغلِّف **كلَّ** ما بعد `SET LOCAL` — القفلَ، القراءة،
+ * الإدراج، التعطيل، والتدقيق معاً — بنفس الترجمة العربية الواحدة، فأيُّ
+ * عبارةٍ منها تنتظر قفلاً تتجاوز الخمس ثوانٍ تُرَدّ بردٍّ نظيفٍ لا بتعليق.
  *
  * **ومُثبَتٌ حيّاً أن هذا لا يُفسد المعاملة**: PostgreSQL يعامل `COMMIT` على
  * معاملةٍ أُجهضت بخطأ (كهذا) كأنه `ROLLBACK` صامت — فالعودةُ بـ`{ok:false}`
- * هنا بدل رمي الخطأ لا تكتب شيئاً جزئياً، والقفل والمعاملة الموصوفان أعلاه
- * باقيان بحرفهما — لم يتغيّر شكلُ `FOR UPDATE` ولا شرطُه.
+ * هنا بدل رمي الخطأ لا تكتب شيئاً جزئياً (لا نسخةً جديدة، لا تعطيلَ قديمة،
+ * لا سطرَ تدقيق) — والقفل والمعاملة الموصوفان أعلاه باقيان بحرفهما.
  */
 export async function editArticleTx(
   tx: any, params: ArticleWriteParams & { id: number },
@@ -295,83 +310,115 @@ export async function editArticleTx(
   await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
   try {
     await tx.execute(sql`SELECT 1 FROM ai_knowledge_articles WHERE id = ${params.id} FOR UPDATE`);
+    timing?.onPhase("after_lock");
+    timing?.onPhase("before_read_current");
+    const [current] = await tx.select().from(aiKnowledgeArticles)
+      .where(eq(aiKnowledgeArticles.id, params.id));
+    timing?.onPhase("after_read_current");
+    if (!current) return { ok: false, error: "المقالة غير موجودة" };
+    if (!current.isActive) {
+      return { ok: false, error: "لا يمكن تعديل مقالةٍ غير فعّالة — فعّلها أولاً أو أنشئ مقالةً جديدة" };
+    }
+
+    //  ══ الوراثةُ — غيابُ الحقل هنا يعني «لا تُغيّره»، لا «امسحه» ══════════
+    //  (القسم ٢، مراجعةُ الإكمال) مقالةٌ موسومةٌ `audience:["finance"]` لا
+    //  يجوز أن تصير بلا قيدٍ لمجرّد أن المسؤول عدّل صياغةً أو اعتمد اقتراحاً
+    //  دون أن يمرّ صراحةً بحقلَي الجمهور/النوع — فتُورَث القيمةُ الحالية.
+    const nextAudienceRaw = params.audience !== undefined ? params.audience : current.audience;
+    const nextAudience = Array.isArray(nextAudienceRaw)
+      ? (nextAudienceRaw as unknown[]).filter((x): x is Capability => isCapability(x))
+      : null;
+    const nextContentType = params.contentType !== undefined
+      ? params.contentType
+      : (isKnowledgeContentType(current.contentType) ? current.contentType : "workflow");
+
+    timing?.onPhase("before_insert_new_version");
+    const [next] = await tx.insert(aiKnowledgeArticles).values({
+      title: params.title.trim(),
+      body: params.body.trim(),
+      scope: params.scope,
+      branchId: params.branchId,
+      audience: nextAudience && nextAudience.length ? nextAudience : null,
+      contentType: nextContentType,
+      isActive: true,
+      version: current.version + 1,
+      supersedesId: current.id,
+      //  المؤلّفُ الأصليّ يبقى — التعديل تصحيحٌ إداريّ لا تأليفٌ جديد.
+      createdBy: current.createdBy,
+      createdByName: current.createdByName,
+      approvedBy: params.actor.userId,
+      approvedByName: params.actor.name ?? "—",
+    }).returning();
+    timing?.onPhase("after_insert_new_version");
+
+    timing?.onPhase("before_deactivate_old_version");
+    await tx.update(aiKnowledgeArticles)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(aiKnowledgeArticles.id, current.id));
+    timing?.onPhase("after_deactivate_old_version");
+
+    timing?.onPhase("before_audit_insert");
+    await logAudit({
+      entityType: "ai_knowledge_article", entityId: next.id, action: "edit",
+      userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
+      oldValues: {
+        id: current.id, title: current.title, version: current.version,
+        audience: current.audience, contentType: current.contentType,
+      },
+      newValues: {
+        title: next.title, scope: next.scope, version: next.version, supersedesId: next.supersedesId,
+        audience: next.audience, contentType: next.contentType,
+      },
+      ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
+    });
+    timing?.onPhase("after_audit_insert");
+
+    return { ok: true, article: toAdminRow(next) };
   } catch (err: any) {
     if (err?.code === "55P03") {
       return { ok: false, error: "المقالة قيد التعديل من مكانٍ آخر الآن — أعد المحاولة بعد قليل" };
     }
     throw err;
   }
-  timing?.onPhase("after_lock");
-  timing?.onPhase("before_read_current");
-  const [current] = await tx.select().from(aiKnowledgeArticles)
-    .where(eq(aiKnowledgeArticles.id, params.id));
-  timing?.onPhase("after_read_current");
-  if (!current) return { ok: false, error: "المقالة غير موجودة" };
-  if (!current.isActive) {
-    return { ok: false, error: "لا يمكن تعديل مقالةٍ غير فعّالة — فعّلها أولاً أو أنشئ مقالةً جديدة" };
-  }
-
-  //  ══ الوراثةُ — غيابُ الحقل هنا يعني «لا تُغيّره»، لا «امسحه» ══════════
-  //  (القسم ٢، مراجعةُ الإكمال) مقالةٌ موسومةٌ `audience:["finance"]` لا
-  //  يجوز أن تصير بلا قيدٍ لمجرّد أن المسؤول عدّل صياغةً أو اعتمد اقتراحاً
-  //  دون أن يمرّ صراحةً بحقلَي الجمهور/النوع — فتُورَث القيمةُ الحالية.
-  const nextAudienceRaw = params.audience !== undefined ? params.audience : current.audience;
-  const nextAudience = Array.isArray(nextAudienceRaw)
-    ? (nextAudienceRaw as unknown[]).filter((x): x is Capability => isCapability(x))
-    : null;
-  const nextContentType = params.contentType !== undefined
-    ? params.contentType
-    : (isKnowledgeContentType(current.contentType) ? current.contentType : "workflow");
-
-  timing?.onPhase("before_insert_new_version");
-  const [next] = await tx.insert(aiKnowledgeArticles).values({
-    title: params.title.trim(),
-    body: params.body.trim(),
-    scope: params.scope,
-    branchId: params.branchId,
-    audience: nextAudience && nextAudience.length ? nextAudience : null,
-    contentType: nextContentType,
-    isActive: true,
-    version: current.version + 1,
-    supersedesId: current.id,
-    //  المؤلّفُ الأصليّ يبقى — التعديل تصحيحٌ إداريّ لا تأليفٌ جديد.
-    createdBy: current.createdBy,
-    createdByName: current.createdByName,
-    approvedBy: params.actor.userId,
-    approvedByName: params.actor.name ?? "—",
-  }).returning();
-  timing?.onPhase("after_insert_new_version");
-
-  timing?.onPhase("before_deactivate_old_version");
-  await tx.update(aiKnowledgeArticles)
-    .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(aiKnowledgeArticles.id, current.id));
-  timing?.onPhase("after_deactivate_old_version");
-
-  timing?.onPhase("before_audit_insert");
-  await logAudit({
-    entityType: "ai_knowledge_article", entityId: next.id, action: "edit",
-    userId: params.actor.userId, userName: params.actor.name, branchId: params.actor.branchId ?? null,
-    oldValues: {
-      id: current.id, title: current.title, version: current.version,
-      audience: current.audience, contentType: current.contentType,
-    },
-    newValues: {
-      title: next.title, scope: next.scope, version: next.version, supersedesId: next.supersedesId,
-      audience: next.audience, contentType: next.contentType,
-    },
-    ipAddress: params.actor.ipAddress ?? null, userAgent: params.actor.userAgent ?? null, tx,
-  });
-  timing?.onPhase("after_audit_insert");
-
-  return { ok: true, article: toAdminRow(next) };
 }
+
+/**
+ * رسالتا `pg-pool` الوحيدتان لتعذّر اقتناء اتّصالٍ ضمن `connectionTimeoutMillis`
+ * (`server/db.ts`) — لا `code` من نوع SQLSTATE هنا؛ هذا خطأٌ من طبقة العميل
+ * قبل الوصول إلى بوستغرس أصلاً، فلا يُخلَط بـ`55P03` (قفلٌ داخل معاملةٍ
+ * بدأت فعلاً). النصّان حرفيّان من `node_modules/pg-pool/index.js` — تحقّقٌ
+ * لا تخمين.
+ */
+function isPoolCheckoutTimeoutError(err: any): boolean {
+  const msg = typeof err?.message === "string" ? err.message : "";
+  return msg.includes("timeout exceeded when trying to connect")
+    || msg.includes("Connection terminated due to connection timeout");
+}
+
+/**
+ * رسالةٌ مُصدَّرة لا سلسلةٌ حرفية مكرَّرة — النقطةُ (`routes.ts`) تقارنها
+ * لتختار ٥٠٣ («خدمةٌ مؤقّتاً غير متاحة») بدل ٤٠٩ («تعارضٌ»/قفلُ صفّ):
+ * عطلُ اقتناء اتّصالٍ ليس تعارضاً مع تعديلٍ آخر، بل خادمٌ مُثقَل.
+ */
+export const ARTICLE_EDIT_SERVER_BUSY_ERROR = "الخادم مشغولٌ الآن — أعد المحاولة بعد قليل";
 
 export async function editArticle(
   params: ArticleWriteParams & { id: number },
   timing?: EditTimingHooks,
 ): Promise<{ ok: true; article: ArticleAdminRow } | { ok: false; error: string }> {
-  return db.transaction((tx: any) => editArticleTx(tx, params, timing));
+  try {
+    return await db.transaction((tx: any) => editArticleTx(tx, params, timing));
+  } catch (err: any) {
+    //  ══ لا اتّصالَ مُتاحاً من المِجمَع — عطلُ خدمةٍ مؤقّت لا تعارضَ تعديل
+    //  (تصحيحٌ إنتاجيّ، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════════
+    //  هذا يقع **قبل** `editArticleTx` حتى — لا اتّصال يعني لا معاملةَ بدأت
+    //  أصلاً، فلا شيء يُكتب ولا شيء يُعكَس. رسالةٌ مختلفة عمداً عن قفل
+    //  الصفّ: ليست مقالةً يعدّلها أحدٌ آخر، بل خادمٌ مشغولٌ الآن.
+    if (isPoolCheckoutTimeoutError(err)) {
+      return { ok: false, error: ARTICLE_EDIT_SERVER_BUSY_ERROR };
+    }
+    throw err;
+  }
 }
 
 /**

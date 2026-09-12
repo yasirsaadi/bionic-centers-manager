@@ -26,7 +26,25 @@ if (!connectionString) {
 //  تلك تفحص `DATABASE_URL` وحده بينما المسبحُ قد يستعمل `EXTERNAL_DATABASE_URL`.
 assertDatabaseSafeForEntryPoint({ env: process.env, argv: process.argv });
 
-export const pool = new Pool({ connectionString });
+//  ══ مهلةُ اقتناء اتّصال — لا انتظارَ أبديّ عند تشبّع المِجمَع (تصحيحٌ
+//  إنتاجيّ، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════════════════════
+//  بلا هذا الخيار تنتظر `pool.connect()`/`pool.query()`/`db.transaction()`
+//  اتّصالاً متاحاً **إلى الأبد** إن كانت كلُّ الاتّصالات العشرة (الافتراضيّ)
+//  مشغولةً بطلباتٍ أخرى — مُثبَتٌ حيّاً: تشبّعُ المِجمَع عمداً كان يُعلِّق
+//  تعديلَ مقالة معرفة ١٢ث فأكثر بلا أيّ ردّ، وتحريرُ اتّصالٍ واحد فقط كان
+//  يُنجز الطلبَ المعلَّق فوراً. القيمةُ محافِظةٌ عمداً — أقلّ من مهلة العميل
+//  الحالية لحفظ مقالةٍ (١٥ث، `client/src/pages/ai_knowledge_admin_save.ts`)
+//  بهامشٍ واضح، فيصل ردٌّ حقيقيّ («الخادم مشغول») غالباً قبل يأس المتصفّح.
+//  ولا تُغيَّر أسبقيةُ رابط القاعدة ولا حارسُ أمانها — هذا خيارٌ إضافيّ على
+//  الكائن نفسِه فقط.
+//
+//  ══ ثابتٌ واحد لمِجمَعين ═══════════════════════════════════════════════
+//  مخزنُ الجلسات (`server/replit_integrations/auth/replitAuth.ts`) يملك
+//  مِجمَعاً منفصلاً يمرّ به **كلُّ** طلبٍ مصادَق قبل أن يبلغ أيَّ مسار — فلو
+//  بقي بلا مهلة لبقي بابُ التعليق الأبديّ مفتوحاً قبل هذا المِجمَع أصلاً.
+//  القيمةُ مُصدَّرة فيقرؤها الاثنان من مصدرٍ واحد ولا ينحرفان.
+export const DB_CONNECTION_TIMEOUT_MS = 8_000;
+export const pool = new Pool({ connectionString, connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS });
 
 // Idle clients can emit errors when the backend (Neon) drops a connection
 // after a network blip or maintenance. Without a listener pg surfaces this

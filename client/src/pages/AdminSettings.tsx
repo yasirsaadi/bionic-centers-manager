@@ -46,6 +46,7 @@ import {
   Lock,
   Plus,
   Trash2,
+  UserX,
   MapPin,
   LayoutDashboard,
   AlertTriangle,
@@ -2444,7 +2445,7 @@ export default function AdminSettings() {
   // User management states
   const [showUserDialog, setShowUserDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
-  const [userToDelete, setUserToDelete] = useState<SystemUser | null>(null);
+  const [userToDeactivate, setUserToDeactivate] = useState<SystemUser | null>(null);
   const [showUserPassword, setShowUserPassword] = useState(false);
   const [revealedPwUserId, setRevealedPwUserId] = useState<number | null>(null);
   const [userFormData, setUserFormData] = useState({
@@ -2578,10 +2579,20 @@ export default function AdminSettings() {
     },
   });
 
-  const deleteUserMutation = useMutation({
+  // ══ تعطيلٌ لا حذف — يُعيد استعمال نقطة تحديث المستخدم نفسِها ═══════════
+  // كانت هذه الدالّة تنادي DELETE فتمحو صفّ المستخدم فعلياً — وهو خطرٌ حقيقيّ
+  // على موظّفٍ له تاريخٌ (سجلّ تدقيق، تقدّمُ تدريب، إلخ): الحذفُ الفعليّ كان
+  // يفشل بخطأ قيدٍ أجنبيّ لا يصل المستخدمَ أبداً (طلبٌ يتعلّق إلى الأبد على
+  // Express 4 حين يُرفَض وعدٌ غيرُ مُمسَك). فصارت تنادي PATCH بـ
+  // `{isActive:false}` — نفسُ الباب الذي يفتحه تعديلُ المستخدم العاديّ، فلا
+  // منطقَ صلاحيةٍ أو تحديثٍ ثانٍ يتكرّر هنا. والحسابُ يبقى صفّاً كاملاً قابلاً
+  // للتفعيل مجدداً من نافذة «تعديل المستخدم» (مفتاح isActive فيها بالفعل).
+  const deactivateUserMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`/api/admin/users/${id}`, {
-        method: "DELETE",
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: false }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -2591,9 +2602,9 @@ export default function AdminSettings() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: t.adminSettings.toastUserDeleted });
+      toast({ title: t.adminSettings.toastUserDeactivated });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      setUserToDelete(null);
+      setUserToDeactivate(null);
     },
     onError: (error: Error) => {
       toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
@@ -3161,10 +3172,11 @@ export default function AdminSettings() {
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                onClick={() => setUserToDelete(user)}
-                                data-testid={`button-delete-user-${user.id}`}
+                                onClick={() => setUserToDeactivate(user)}
+                                title={t.adminSettings.deactivateUser}
+                                data-testid={`button-deactivate-user-${user.id}`}
                               >
-                                <Trash2 className="w-4 h-4 text-destructive" />
+                                <UserX className="w-4 h-4 text-destructive" />
                               </Button>
                             </div>
                           </td>
@@ -4340,29 +4352,29 @@ export default function AdminSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Confirmation AlertDialog */}
-      <AlertDialog open={!!userToDelete} onOpenChange={() => setUserToDelete(null)}>
+      {/* Deactivate User Confirmation AlertDialog — يعطّل الحساب، لا يحذفه */}
+      <AlertDialog open={!!userToDeactivate} onOpenChange={() => setUserToDeactivate(null)}>
         <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="w-5 h-5" />
-              {t.adminSettings.confirmDeleteUser}
+              {t.adminSettings.confirmDeactivateUser}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t.adminSettings.confirmDeleteUserDesc} "{userToDelete?.username}"؟ {t.adminSettings.cannotUndoAction}
+              {t.adminSettings.confirmDeactivateUserDesc} "{userToDeactivate?.username}"؟ {t.adminSettings.deactivateUserReversibleNote}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
-            <AlertDialogCancel data-testid="button-cancel-delete-user">
+            <AlertDialogCancel data-testid="button-cancel-deactivate-user">
               {t.adminSettings.no}
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => userToDelete && deleteUserMutation.mutate(userToDelete.id)}
-              disabled={deleteUserMutation.isPending}
+              onClick={() => userToDeactivate && deactivateUserMutation.mutate(userToDeactivate.id)}
+              disabled={deactivateUserMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
-              data-testid="button-confirm-delete-user"
+              data-testid="button-confirm-deactivate-user"
             >
-              {deleteUserMutation.isPending ? t.adminSettings.deleting : t.adminSettings.yes}
+              {deactivateUserMutation.isPending ? t.adminSettings.deactivating : t.adminSettings.yes}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
