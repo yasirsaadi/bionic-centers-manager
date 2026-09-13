@@ -111,6 +111,7 @@
     "test:device-prescription": "tsx server/device_prescription.test.ts",
     "test:case-disposal": "tsx server/case_disposal.test.ts",
     "test:exam-request-cancel": "tsx server/exam_request_cancel.test.ts",
+    "test:exam-cancel-handoff": "tsx server/exam_cancel_handoff.test.ts",
     "test:case-closure": "tsx server/case_closure.test.ts",
     "test:manufacturing-order-ui": "tsx client/src/pages/manufacturing_order_ui.test.ts",
     "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",

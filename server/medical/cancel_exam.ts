@@ -24,14 +24,23 @@ import { logAudit } from "../accounting/ledger";
 import { activeExamSql, isExamCancelled } from "./active_exam";
 import { deviceDiscountRefs } from "@shared/discount";
 import { isTerminal } from "@shared/followup";
+import { EXAM_CANCEL_OPERATION_EXISTS } from "@shared/medical";
 import { revertEpisodeToAwaitingExam } from "../device_episodes/store";
 
 export class ExamCancelError extends Error {
   status: number;
-  constructor(message: string, status = 400) {
+  /**
+   *  رمزٌ آليٌّ اختياريّ يرافق الرسالة العربية — **للمسار لا للعرض**.
+   *  الشاشةُ تعرض `message` كما هو دائماً؛ والرمزُ لمن يحتاج
+   *  أن يفرّق رفضاً له بابٌ آخر عن رفضٍ لا بابَ له — بلا مطابقةٍ
+   *  على نصٍّ عربيٍّ يُعاد صوغُه يوماً فتنكسر الشاشةُ صامتةً.
+   */
+  code: string | null;
+  constructor(message: string, status = 400, code: string | null = null) {
     super(message);
     this.name = "ExamCancelError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -39,6 +48,20 @@ export class ExamCancelError extends Error {
 const SOLD =
   "لا يمكن إلغاء هذه المعاينة بعد تنفيذ الخدمة المرتبطة بها."
   + " يجب إلغاء العملية التجارية/التصنيع من مسارها أولاً.";
+
+/**
+ *  **الرفضُ الواحد لكلّ ما وقع تجارياً — رسالةً ورمزاً معاً.**
+ *
+ *  ثلاثةُ مواضعَ ترميه: حالةُ الحلقة (تصنيعٌ أو تسليم) · أمرُ بناءٍ قائم ·
+ *  متابعةٌ تحوّلت. وبناؤه من مكانٍ واحد يمنع أن يحمل موضعٌ رمزَه
+ *  ويُنساه الثاني — فيصير الرفضُ نفسُه له بابٌ مرّةً ولا بابَ له مرّةً.
+ *
+ *  **ولا شيءَ من منطق الرفض تغيّر**: الحُرّاسُ هم هم، والرمزُ لا يفتح
+ *  شيئاً ولا يغلق شيئاً — يسمّي الرفضَ فحسب.
+ */
+function soldRefusal(): ExamCancelError {
+  return new ExamCancelError(SOLD, 409, EXAM_CANCEL_OPERATION_EXISTS);
+}
 
 export interface CancelOutcome {
   examId: number;
@@ -170,7 +193,7 @@ export async function cancelExam(params: {
       if (ep) {
         const st = String(ep.status);
         if (st === "in_manufacturing" || st === "delivered") {
-          throw new ExamCancelError(SOLD, 409);
+          throw soldRefusal();
         }
         //  **وأمرُ تصنيعٍ قائم يمنع مهما قالت الحالة**: الحالةُ لقطةٌ قد
         //  تتأخّر، والأمرُ واقعةٌ لا تُنكَر.
@@ -179,7 +202,7 @@ export async function cancelExam(params: {
            WHERE device_episode_id = ${episodeId} AND purpose = 'initial_build'
            LIMIT 1
         `);
-        if ((wo.rows ?? []).length > 0) throw new ExamCancelError(SOLD, 409);
+        if ((wo.rows ?? []).length > 0) throw soldRefusal();
 
         // ══ **إلغاءُ القديمة لا يُرجع جهازاً تحكمه معاينةٌ أحدث** ═════════
         //  (المرحلة الثانية من قطار الإصلاح — تدقيق ٢٠٢٦-٠٩-١٢، INT-01.)
@@ -243,7 +266,7 @@ export async function cancelExam(params: {
     if (fu) {
       const fst = String(fu.status);
       if (fst === "converted" || fu.converted_work_order_id !== null) {
-        throw new ExamCancelError(SOLD, 409);
+        throw soldRefusal();
       }
       //  **بمرجع هذا الجهاز بعينه** (٢٣٥/٢٣٦): طلبٌ معلَّقٌ على جهازٍ آخر
       //  للمريض نفسه لا يمنع — ولو مُنع لأصبح ملفُّ المريض يقفل بعضُه بعضاً.
