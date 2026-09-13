@@ -27,7 +27,6 @@ import {
   REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL,
   isRefundAnswer, refundQuestionRequired,
 } from "./administrative_reversal";
-import { execFileSync } from "node:child_process";
 
 // ══ (أ) حالةُ العرض — أربعُ حالاتٍ لا واحدة ═══════════════════════════════
 //  الملغاةُ إدارياً تحمل `converted_work_order_id` تاريخياً، وقراءتُه وحدَه
@@ -301,11 +300,19 @@ assert.ok(executeBody.includes("stateStamp: preview?.stateStamp"), "والختم
 assert.ok(!executeBody.includes("refundAnswer"),
   "**والجوابُ لا يُرسَل بعد** — المرحلةُ تسأل وتُلزِم فقط");
 
-// (هـ.٤) الحارسُ المعماريّ — **لا المالُ ولا تنفيذُ الإلغاء تغيّر بملفٍّ واحد**.
-const touched = execFileSync("git", ["diff", "--name-only", "origin/main", "--",
-  "server/admin_reversal/", "server/storage.ts", "server/accounting/"],
-  { encoding: "utf8" }).trim();
-assert.equal(touched, "",
-  "منطقُ الإلغاء الكامل والمحاسبة بلا مسّ");
+// (هـ.٤) **والسؤالُ واجهةٌ محضة — ولا بابَ ثالثاً يفتحه.**
+//  أوّلُ صياغةٍ أثبتت هذا بـ`git diff origin/main` على مسارات المال —
+//  **وذاك ليس ثابتاً بل واقعةُ مراجعةٍ**: يسقط في أيّ نسخةٍ بلا المرجع
+//  `origin/main` (أرشيفٌ، أو استنساخٌ ضحل) بـ`fatal: bad revision` فيقتل
+//  الملفَّ كلَّه لا تأكيداً واحداً، **ويحمرّ لأيّ فرعٍ لاحقٍ يمسّ تلك
+//  المسارات بحقّ**. (أمسكه مراجعٌ آليّ على #٢٩٩ — وكان الموضعُ الثاني لي.)
+//
+//  والثابتُ الحقيقيُّ الدائم: النافذةُ لا تعرف إلّا بابَيها القائمين،
+//  فسؤالٌ أضيف إليها لا يستطيع أن يحرّك ديناراً بحالٍ — ويُقاس بلا git.
+const dialogCalls = [...dialog.matchAll(/fetch\("([^"]+)"/g)].map((m) => m[1]);
+assert.deepEqual(dialogCalls, [
+  "/api/admin/operation-reversal/preview",
+  "/api/admin/operation-reversal/execute",
+], "بابان لا ثالث — ولا نداءَ مالٍ أضافه السؤال");
 
 console.log("✅ correction UX contracts pass");
