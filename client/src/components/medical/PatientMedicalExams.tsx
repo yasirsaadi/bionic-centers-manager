@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
+  EXAM_CANCEL_OPERATION_EXISTS,
   EXAM_FIELDS,
   SPECIALTY_COLORS,
   isMedicalSpecialty,
@@ -221,7 +222,14 @@ export function PatientMedicalExams({
         credentials: "include",
         body: JSON.stringify({ reason: cancelReason.trim() }),
       });
-      if (!res.ok) throw new Error((await res.json())?.error || "تعذّر إلغاء المعاينة");
+      if (!res.ok) {
+        //  نفسُ إديوم `NewExamDialog`: الجسمُ يُقرأ مرّةً واحدةً ويُحمَل
+        //  رمزُه على الخطأ — فلا تُطابَق رسالةٌ عربيّة ليُعرَف ما جرى.
+        const body = await res.json().catch(() => null);
+        const err: any = new Error(body?.error || "تعذّر إلغاء المعاينة");
+        err.code = body?.code ?? null;
+        throw err;
+      }
       return res.json();
     },
     onSuccess: (out: any) => {
@@ -245,8 +253,37 @@ export function PatientMedicalExams({
           : "بقيت محفوظة في سجل التدقيق.",
       });
     },
-    onError: (e: any) =>
-      toast({ title: "تعذّر الإلغاء", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => {
+      //  ══ **رفضٌ له بابٌ آخر — يُفتَح، لا يُقال ويُترَك** ═══════════
+      //  المعاينةُ بعد البيع أو التصنيع لا تُلغى من هنا — وهذا صحيحٌ ولم
+      //  يتغيّر: إلغاءُ المعاينة لا يتراجع عن مالٍ ولا عن تصنيع. والبابُ
+      //  الصحيح هو «تصحيح / إلغاء العملية»: وضعُ «إلغاء العملية بالكامل»
+      //  يعكس البيعَ أوّلاً **ثمّ يسحب المعاينة بشاهدة ٠٦١ نفسِها**
+      //  (`admin_reversal/store.ts` ⟶ `writeExamCancellation`) — فهو يؤدّي ما أراده
+      //  الضاغطُ وزيادةً، بالترتيب الآمن.
+      //
+      //  وكان الموظّف يقرأ «ألغِ العملية من مسارها أولاً» ولا يُقال له أين
+      //  ذلك المسار — والزرُّ إلى جانبِ زرّه على البطاقة نفسِها.
+      //
+      //  **والصلاحياتُ كما هي حرفاً**: `mayReverse` هي نفسُها التي تحكم
+      //  ظهورَ الزرّ أعلاه. فطبيبٌ عاديّ (صاحبُ المعاينة غيرُ مدير) لا
+      //  يُفتَح له شيءٌ ويبقى يقرأ الرسالةَ كما اليوم. **والحجبُ عرضٌ لا
+      //  إذن**: نقطتا التصحيح تفحصان الدورَ والفرعَ في كلّ نداء كما كانتا.
+      const target = cancelling?.reversalFollowupId ?? null;
+      if (e?.code === EXAM_CANCEL_OPERATION_EXISTS && mayReverse && target !== null) {
+        setCancelling(null);
+        setCancelReason("");
+        setReversalFor(target);
+        toast({
+          title: "لا تُلغى المعاينة بعد تنفيذ العملية",
+          description:
+            "فُتحت نافذة «تصحيح / إلغاء العملية» — منها تُراجع العملية ويُسحب"
+            + " أثرُها قبل سحب المعاينة.",
+        });
+        return;
+      }
+      toast({ title: "تعذّر الإلغاء", description: e?.message, variant: "destructive" });
+    },
   });
 
   const saveAddendum = useMutation({

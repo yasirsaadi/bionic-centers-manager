@@ -954,7 +954,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       res.json({ ok: true, ...out });
     } catch (err: any) {
       if (err instanceof ExamCancelError) {
-        return res.status(err.status).json({ error: err.message });
+        //  **والرمزُ يُمرّر حين يوجد** — الرسالةُ للإنسان والرمزُ
+        //  للمسار. فرفضُ «وقعت العملية فعلاً» له بابٌ آخر تفتحُه الشاشةُ
+        //  لمن يملكه، وبقيّةُ الرفوض تصل بـ`code: null` فتُعرَض كما كانت.
+        //
+        //  **ولا إذنَ في الرمز**: مَن يفتح ذلك الباب تقرّره نقطتا
+        //  `/api/admin/operation-reversal/*` بحارسهما وحده — لم يُمَسّ بحرف.
+        return res.status(err.status).json({
+          error: err.message,
+          ...(err.code ? { code: err.code } : {}),
+        });
       }
       console.error("[medical] cancel exam failed:", err);
       res.status(500).json({ error: "تعذّر إلغاء المعاينة" });
