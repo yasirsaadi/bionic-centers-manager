@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 import {
   STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
   REWORK_TYPE_LABELS, REASON_CODE_LABELS,
@@ -78,7 +80,7 @@ export default function ManufacturingOrder() {
   );
   if (!data) return <div className="p-8 text-center text-muted-foreground text-sm">الأمر غير موجود.</div>;
 
-  const { order, patient, timeline, rework, dateChanges = [] } = data;
+  const { order, patient, deviceSpecs, timeline, rework, dateChanges = [] } = data;
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
   const onHold = isHoldStatus(order.status);
@@ -118,6 +120,40 @@ export default function ManufacturingOrder() {
         </div>
       </div>
 
+      {/* ══ مواصفاتُ هذا الجهاز — من معاينته هو (MULTI-2) ══════════════════
+          أعمدةُ المريض تكتبها آخرُ معاينةٍ لأيّ جهازٍ من أجهزته، فبطاقةُ
+          أمر A كانت تعرض مواصفاتِ B. الخادمُ يرسل `deviceSpecs` من وصفة حلقة
+          الأمر بعينها ويُعلن مصدرَها؛ والأمرُ الموروث بلا هويّة يُقال ذلك
+          عنه صراحةً ويبقى على ملفّ المريض كما كان. */}
+      {deviceSpecs?.source === "exam" ? (
+        <Card className="mb-4 border-primary/30" data-testid="card-device-specs">
+          <CardContent className="p-4 text-sm">
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <span className="font-semibold">مواصفات هذا الجهاز — من معاينته</span>
+              <span className="text-xs text-muted-foreground">
+                {order.sequenceNumber != null && <>جهاز #{order.sequenceNumber} · </>}
+                {requestedItemLabel(order.requestedItem ?? null, order.serviceType)}
+                {deviceSpecs.doctorName && <> · {deviceSpecs.doctorName}</>}
+                {deviceSpecs.signedAt && <> · {fmtD(deviceSpecs.signedAt)}</>}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {order.serviceType === "prosthetic" && (
+                <Info label="موقع البتر" value={deviceSpecs.specs.amputationSite} />
+              )}
+              {(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_SPECS).map((f) => (
+                <Info key={f.key} label={f.label} value={deviceSpecs.specs[f.key]} />
+              ))}
+              <Info label="جهة الإصابة" value={deviceSpecs.specs.injurySide} />
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <p className="text-xs text-muted-foreground mb-2" data-testid="note-device-specs-patient-file">
+          أمرٌ بلا معاينة جهازٍ مرتبطة — المواصفات أدناه من ملف المريض كما كان.
+        </p>
+      )}
+
       {/* Patient (allowed fields only — NO financial data) */}
       <Card className="mb-4">
         <CardContent className="p-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
@@ -126,6 +162,20 @@ export default function ManufacturingOrder() {
           <Info label="الطول" value={patient?.height} />
           <Info label="تاريخ الإصابة" value={patient?.injuryDate} />
           <Info label="سبب الإصابة" value={patient?.injuryCause} />
+          {/* ══ ولا يُخفى عن الخبير ما كان يقرؤه ═════════════════════════════
+              أوّلُ تنفيذٍ كان يُخفي هذه الأربعةَ متى عُرفت معاينةُ الجهاز.
+              لكنّ **موقعَ البتر وجهةَ الإصابة ليسا من مفاتيح الوصفة**، والبانيَ
+              اختياريٌّ في نافذة التوقيع: فطبيبٌ يكتب نوعَ الطرف ولا يلمس
+              البانيَ كان يترك الشاشةَ بلا موقعِ بترٍ إطلاقاً — وهو أحملُ
+              حقيقةٍ في بناء طرف. فتبقى معروضةً دائماً، **ويُقال من أين هي**:
+              المعتمَدُ لهذا الجهاز بطاقتُه أعلاه، وهذه من الملفّ. */}
+          {deviceSpecs?.source === "exam" && (
+            <p className="col-span-2 md:col-span-3 text-xs text-muted-foreground"
+               data-testid="note-patient-file-specs">
+              الحقول السريرية أدناه من ملف المريض — قد تخصّ جهازاً آخر إن كان له
+              أكثر من جهاز. المعتمَد لهذا الجهاز ما في بطاقة معاينته أعلاه.
+            </p>
+          )}
           <Info label="موقع البتر" value={patient?.amputationSite} />
           <Info label="نوع الطرف" value={patient?.prostheticType} />
           <Info label="نوع المسند" value={patient?.supportType} />

@@ -51,6 +51,7 @@ import {
 } from "./patient_notifications/registration";
 import { FIRST_STAGE } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
+import { effectiveExamForEpisode, deviceSpecsFromPrescription, hasAnySpec } from "./medical/episode_prescription";
 import type { DbTransaction as DbTransactionLike } from "./events/store";
 import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
@@ -538,8 +539,60 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   if (serviceType === "prosthetic") patch.isAmputee = true; else patch.isMedicalSupport = true;
   const [patient] = await tx.update(patients).set(patch).where(eq(patients.id, patientId)).returning();
 
+  // ══ **مواصفاتُ الحالة من معاينة هذا الجهاز** (المرحلة الثانية من قطار
+  // الإصلاح — تدقيق ٢٠٢٦-٠٩-١٢، MULTI-2) ═══════════════════════════════════
+  //  أعمدةُ صفّ المريض كتبتها **آخرُ** معاينةٍ وُقّعت — لأيّ جهازٍ من أجهزته.
+  //  فمريضٌ بجهازين (٠٧٣): بيعُ A بعد توقيع معاينة B كان يلتقط مواصفاتِ B
+  //  في تفاصيل الحالة. فحلقةٌ لها معاينةٌ فعّالة تُلتقَط مواصفاتُها من وصفتها
+  //  **هي** (موقعُ البتر بالمركِّب البايتيّ نفسِه)، وما لم تقله الوصفةُ يُكمَل
+  //  ممّا أدخله هذا البيعُ صراحةً (`fields`، للإدارة وحدها) — **لا من عمودٍ
+  //  قد يخصّ جهازاً آخر**. ووقائعُ المريض (سببُ الإصابة وتاريخُها ونوعُها)
+  //  تبقى من صفّه. وبلا حلقةٍ أو بلا معاينةٍ فعّالة — **أو بوصفةٍ لا تقول عن
+  //  الجهاز شيئاً** (`hasAnySpec`) — الأعمدةُ كما كانت دائماً: لقطةٌ فارغة
+  //  ليست حقيقةً عن الجهاز، وإخراجُها كان يمحو ما كان يُقرأ.
+  const episodeExam = episode
+    ? await effectiveExamForEpisode(episode.id, tx, serviceType as "prosthetic" | "medical_support")
+    : null;
+  const examSpecs = episodeExam
+    ? deviceSpecsFromPrescription(serviceType, episodeExam.prescription) : null;
+  const rxSpecs = examSpecs && hasAnySpec(examSpecs) ? examSpecs : null;
+  const explicitSpecs: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields ?? {})) {
+    if (typeof v === "string" && v.trim()) explicitSpecs[k] = v.trim();
+  }
+  // ══ **وما سكتت عنه الوصفةُ يُكمَل من الملفّ — حين لا لبسَ وحده** ══════════
+  //  موقعُ البتر وجهةُ الإصابة **ليسا من مفاتيح الوصفة**، وبانيَ البتر
+  //  اختياريٌّ في نافذة التوقيع: فطبيبٌ يكتب نوعَ الطرف ولا يلمس البانيَ كان
+  //  يُخرج لقطةَ بيعٍ بلا موقعِ بترٍ إطلاقاً — وهو أحملُ حقيقةٍ في بناء طرف.
+  //  فإن كان للخيط **حلقةٌ واحدة** فعمودُ الملفّ لا يمكن أن يصف جهازاً غيرَها
+  //  (كتبه التسجيلُ أو هذه المعاينةُ نفسُها) ⟶ يُكمَل منه. وبأكثرَ من حلقةٍ
+  //  يبقى فارغاً: **الصمتُ أصدقُ من استعارةِ مواصفةِ جهازٍ آخر** — وذاك هو
+  //  العطبُ الذي أُغلق. والوصفةُ تعلو على الاثنين دائماً.
+  let fileFill: Record<string, any> = {};
+  if (rxSpecs && episode) {
+    const ec = await tx.execute(sql`
+      SELECT count(*)::int AS n FROM patient_device_episodes WHERE case_id = ${episode.caseId}
+    `);
+    if (Number((ec.rows ?? [])[0]?.n ?? 0) <= 1) {
+      fileFill = serviceType === "prosthetic" ? {
+        amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
+        siliconType: patient.siliconType, siliconSize: patient.siliconSize,
+        suspensionSystem: patient.suspensionSystem, footType: patient.footType,
+        footSize: patient.footSize, kneeJointType: patient.kneeJointType,
+        injurySide: patient.injurySide,
+      } : { supportType: patient.supportType, injurySide: patient.injurySide };
+    }
+  }
   // Build the case details from the freshly-updated patient fields.
-  const detailsForType: Record<string, any> = serviceType === "prosthetic" ? {
+  const detailsForType: Record<string, any> = rxSpecs
+    ? (serviceType === "prosthetic" ? {
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate, injuryType: patient.injuryType,
+        ...fileFill, ...explicitSpecs, ...rxSpecs,
+      } : {
+        injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
+        ...fileFill, ...explicitSpecs, ...rxSpecs,
+      })
+    : serviceType === "prosthetic" ? {
     amputationSite: patient.amputationSite, prostheticType: patient.prostheticType,
     siliconType: patient.siliconType, siliconSize: patient.siliconSize,
     suspensionSystem: patient.suspensionSystem, footType: patient.footType,
