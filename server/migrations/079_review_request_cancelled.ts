@@ -13,8 +13,11 @@
 // ويُقرأ في التدقيق، ولا يُمحى كأنه لم يكن. وهذا نفسُ مبدأ ٠٦١ (إلغاءُ
 // المعاينة شاهدةٌ لا محو) و٠٦٤ (الإبطالُ الإداريّ يبقي السجلّ).
 //
-// **ولا قرارَ طبيبٍ يُدَّعى**: `decision` يبقى `NULL` — لم يقرّر طبيبٌ شيئاً.
-// و`decided_at`/`decided_by` يحملان **مَن سحب ومتى**، و`doctor_note` السبب.
+// **ولا قرارَ طبيبٍ يُدَّعى ولا يُمحى.** طلبٌ معلَّقٌ يُسحَب: `decision` يبقى
+// `NULL` — لم يقرّر أحدٌ شيئاً — و`decided_at`/`decided_by` يحملان مَن سحب
+// ومتى. وطلبٌ **مُرجَعٌ** يُسحَب: قرارُ الطبيب (`return_to_reception`) وسببُه
+// الإلزاميّ ومَن قرّره **تبقى كما هي بحرفها**، وتُلحَق بالملاحظة سطرُ السحب.
+// فالقيدُ يشترط `decided_at` وحدها: الشهادةُ لا تُهدَم لتناسب قيداً.
 //
 // ══ إضافيّ، idempotent، غيرُ مدمّر ═════════════════════════════════════════
 // توسيعُ قيدَي CHECK إلى **مجموعةٍ أوسع** — فكلُّ صفٍّ قائم يجتازها كما هو.
@@ -59,7 +62,7 @@ BEGIN
         OR (status IN ('approved', 'escalated', 'returned')
             AND decision IS NOT NULL AND decided_at IS NOT NULL)
         OR (status = 'examined' AND exam_id IS NOT NULL)
-        OR (status = 'cancelled' AND decision IS NULL AND decided_at IS NOT NULL));
+        OR (status = 'cancelled' AND decided_at IS NOT NULL));
 END
 $mrr79$;
 

@@ -94,6 +94,23 @@ const PAYMENT_TAG: Record<string, string> = {
  * عليها معاينةٌ ثمّ سقطت (٠٦١)، أو بعد إبطالٍ إداريّ (٠٦٤) — وتلك تاريخٌ
  * كامل لا سقالة.
  */
+/**
+ * **طلبُ مراجعةٍ لا يحكم شيئاً**: معلَّقٌ (لم يصل الطبيبَ بعد)، أو مُرجَعٌ إلى
+ * الاستعلامات (طلبَ الطبيبُ تصحيحاً ولم يقرّر سريرياً)، أو **مسحوبٌ سلفاً**
+ * — و**بلا معاينةٍ أُنجزت عنه** في كلّ الأحوال.
+ *
+ * **و`cancelled` منها بالضرورة**: هذا المسارُ نفسُه يكتبها حين يُلغى طلبُ
+ * الجهاز (`cancelScaffoldRequestsForEpisode`)، فلو عُدّت «تاريخاً» لصار كلُّ
+ * إلغاءِ حلقةٍ يحبس خيطَها إلى الأبد — وهو العطبُ بعينه الذي يغلقه هذا
+ * الملفّ. (أمسكه مراجعٌ مستقلّ قبل الدمج.)
+ *
+ * أمّا `approved`/`escalated`/`examined` فقرارُ إنسانٍ وقع — تاريخٌ يمنع.
+ */
+const SCAFFOLD_REQUEST_STATUS_SQL = sql`
+  r.status IN ('pending', 'returned', 'cancelled') AND r.exam_id IS NULL
+`;
+const SCAFFOLD_REQUEST_SQL = SCAFFOLD_REQUEST_STATUS_SQL;
+
 const SCAFFOLD_EPISODE_SQL = sql`
   pde.status IN ('awaiting_exam', 'cancelled')
   AND NOT EXISTS (SELECT 1 FROM medical_exams me WHERE me.device_episode_id = pde.id)
@@ -107,21 +124,13 @@ const SCAFFOLD_EPISODE_SQL = sql`
   AND NOT EXISTS (SELECT 1 FROM cost_entries ce WHERE ce.device_episode_id = pde.id)
   AND NOT EXISTS (SELECT 1 FROM payments pm WHERE pm.device_episode_id = pde.id)
   AND NOT EXISTS (SELECT 1 FROM visits v WHERE v.device_episode_id = pde.id)
-  --  وطلبُ مراجعةٍ **حسمه إنسان** مرساتُه هذه الحلقة: قرارٌ وقع — تاريخ.
-  --  (والمعلَّقُ سقالةٌ تُسحَب معها، لا حاجزٌ.)
+  --  وطلبُ مراجعةٍ **يحكم الحلقة** مرساتُه هذه الحلقة: قرارٌ وقع — تاريخ.
+  --  (والمعلَّقُ والمُرجَعُ والمسحوبُ سقالةٌ تُسحَب معها، لا حاجزٌ.)
   AND NOT EXISTS (
     SELECT 1 FROM medical_review_requests r
      WHERE r.device_episode_id = pde.id
-       AND NOT (r.status IN ('pending', 'returned') AND r.exam_id IS NULL)
+       AND NOT (${SCAFFOLD_REQUEST_STATUS_SQL})
   )
-`;
-
-/**
- * **طلبُ مراجعةٍ سقاليّ**: معلَّقٌ أو مُرجَع، **وبلا معاينةٍ أُنجزت عنه**.
- * أمّا المحسومُ (`approved`/`escalated`/`examined`) فقرارُ إنسانٍ وقع — تاريخ.
- */
-const SCAFFOLD_REQUEST_SQL = sql`
-  r.status IN ('pending', 'returned') AND r.exam_id IS NULL
 `;
 
 async function rows(tx: Executor, q: any): Promise<Record<string, any>[]> {
@@ -281,24 +290,39 @@ export async function classifyCaseDisposal(
     SELECT pde.id FROM patient_device_episodes pde
      WHERE pde.case_id = ${caseId} AND (${SCAFFOLD_EPISODE_SQL}) ORDER BY pde.id
   `);
+  //  **والمرساتان معاً لا إحداهما.** الحلقةُ تُعَدّ سقالةً بشرطٍ على
+  //  `device_episode_id`، والصفُّ يُحذف بشرطٍ على `case_id` — فمفتاحان
+  //  مختلفان لقرارٍ واحد. وطلبٌ مرساتُه الحلقةُ وحدها (بلا حالةٍ أو بحالةٍ
+  //  أخرى) كان يجتاز شرطَ الحلقة ولا يدخل قائمةَ التحرير، فينفجر حذفُ
+  //  الحلقة بـ٢٣٥٠٣ خامّاً — وهو العطبُ الذي نغلقه. (أمسكه مراجعٌ مستقلّ.)
+  const episodeIds = eps.map((r) => Number(r.id));
   const reqs = await rows(tx, sql`
     SELECT r.id FROM medical_review_requests r
-     WHERE r.case_id = ${caseId} AND (${SCAFFOLD_REQUEST_SQL}) ORDER BY r.id
+     WHERE (${SCAFFOLD_REQUEST_SQL})
+       AND (r.case_id = ${caseId}
+            ${episodeIds.length
+              ? sql`OR r.device_episode_id IN (${sql.join(episodeIds.map((i) => sql`${i}`), sql`, `)})`
+              : sql``})
+     ORDER BY r.id
   `);
   //  زيارةُ «إضافة نوع حالة» علامةٌ يكتبها المسارُ نفسُه لا حضورَ مريض.
   //  تُحذف **ناعماً** لا تُنقَل: نقلُها إلى الخيط الباقي يُبقي علامةً تقول
   //  إن نوعاً أُضيف — وقد سُحب. والحذفُ الناعم يُبقيها في السجلّ الجنائي.
+  //
+  //  **والمطابقةُ على `details` وحده** — وهو ما يكتبه `addPatientCaseType`
+  //  حرفياً. و`notes LIKE '%…%'` كانت تلتقط أيّ ملاحظةٍ بشريّةٍ تصادف أن
+  //  تذكر العبارة، فتحذف زيارةً حقيقية.
   const markers = await rows(tx, sql`
     SELECT id FROM visits
      WHERE case_id = ${caseId} AND deleted_at IS NULL
-       AND (details = 'إضافة نوع حالة' OR notes LIKE '%إضافة نوع حالة%')
+       AND details = 'إضافة نوع حالة'
      ORDER BY id
   `);
 
   return {
     disposable: true,
     scaffolding: {
-      episodeIds: eps.map((r) => Number(r.id)),
+      episodeIds,
       reviewRequestIds: reqs.map((r) => Number(r.id)),
       markerVisitIds: markers.map((r) => Number(r.id)),
     },
@@ -323,25 +347,12 @@ export async function disposeCaseScaffolding(
   const { scaffolding, reason, actor } = params;
 
   if (scaffolding.reviewRequestIds.length) {
-    //  **يُسحَب ولا يُمحى** (ترحيل ٠٧٩): `cancelled` بلا `decision` — لم
-    //  يقرّر طبيبٌ شيئاً — مع مَن سحب ومتى والسبب.
-    //
-    //  **ومرساتاه تُحرَّران، ولا تضيع الحقيقة**: الحالةُ والحلقةُ تُحذفان بعد
-    //  أسطر، ومفتاحاهما `NO ACTION` — فبقاؤهما يعني ٢٣٥٠٣ خامّاً على وجه
-    //  المستخدم (وهو العطبُ الذي نُغلقه). فيُنقَل رقماهما إلى الملاحظة قبل
-    //  التحرير: الصفُّ يبقى يقول عن أيّ حالةٍ وأيّ طلبِ جهازٍ كان.
-    await tx.execute(sql`
-      UPDATE medical_review_requests
-         SET status = 'cancelled', decision = NULL, decided_at = NOW(),
-             decided_by = ${actor.userId}, updated_at = NOW(),
-             doctor_note = ${reason}
-               || ' — (سُحبت الحالة'
-               || COALESCE(' #' || case_id::text, '')
-               || COALESCE(' وطلبُ الجهاز #' || device_episode_id::text, '')
-               || ')',
-             case_id = NULL, device_episode_id = NULL
-       WHERE id IN (${sql.join(scaffolding.reviewRequestIds.map((i) => sql`${i}`), sql`, `)})
-    `);
+    await withdrawRequestsTx(tx, {
+      ids: scaffolding.reviewRequestIds,
+      note: `سُحبت الحالة: ${reason}`,
+      actor,
+      releaseAnchors: true,
+    });
   }
 
   if (scaffolding.markerVisitIds.length) {
@@ -381,14 +392,83 @@ export async function cancelScaffoldRequestsForEpisode(
     actor: { userId: number | null; userName: string | null };
   },
 ): Promise<number[]> {
-  const r = await tx.execute(sql`
-    UPDATE medical_review_requests r
-       SET status = 'cancelled', decision = NULL, decided_at = NOW(),
-           decided_by = ${params.actor.userId}, doctor_note = ${params.reason}, updated_at = NOW()
-     WHERE r.device_episode_id = ${params.episodeId} AND (${SCAFFOLD_REQUEST_SQL})
-    RETURNING r.id
+  //  **والمسحوبُ سلفاً لا يُعاد سحبُه**: شرطُ الحالة يستثني `cancelled`
+  //  فلا تُكتب ملاحظةُ سحبٍ ثانية على صفٍّ سُحب من قبل.
+  const found = await rows(tx, sql`
+    SELECT r.id FROM medical_review_requests r
+     WHERE r.device_episode_id = ${params.episodeId}
+       AND r.status IN ('pending', 'returned') AND r.exam_id IS NULL
+     FOR UPDATE
   `);
-  return ((r.rows ?? []) as Record<string, any>[]).map((x) => Number(x.id));
+  const ids = found.map((x) => Number(x.id));
+  if (!ids.length) return [];
+  await withdrawRequestsTx(tx, {
+    ids,
+    note: `أُلغي طلبُ الجهاز: ${params.reason}`,
+    actor: params.actor,
+    //  **والمرساةُ تبقى هنا**: الحلقةُ باقيةٌ (أُلغيت لا حُذفت)، فربطُ الطلب
+    //  بها ما زال صادقاً ومفيداً للتدقيق. وفهرسُ التفرّد مشروطٌ بـ`pending`
+    //  فتحرَّر بتغيّر الحالة وحدها.
+    releaseAnchors: false,
+  });
+  return ids;
+}
+
+/**
+ * **السحبُ يضيف ولا يمحو** — الكتابةُ الواحدة التي يشاركها البابان.
+ *
+ * ══ ولماذا لا تُكتب `decision = NULL` فوق ما كان ═══════════════════════════
+ * طلبٌ حالتُه `returned` يحمل **قرارَ طبيبٍ حقيقياً**: `decision =
+ * 'return_to_reception'`، ومعه `decided_by` و`doctor_note` بالسبب الإلزاميّ
+ * الذي كتبه («جهة البتر غير صحيحة — عدّلها وأعد إرسال الطلب»). ومحوُ
+ * الثلاثة يهدم شهادةً طبّيةً وقعت — وهو ما يمنعه الثابتُ الأوّل صراحةً.
+ * (أمسكه مراجعٌ مستقلّ قبل الدمج.)
+ *
+ * **فالقرارُ يبقى كما هو**، و`decided_by`/`decided_at` لا يُكتَبان إلّا إن
+ * كانا فارغين (طلبٌ معلَّق لم يقرّر فيه أحدٌ شيئاً)، **والملاحظةُ تُلحَق**
+ * بسطرٍ جديد يقول مَن سحب ولماذا ومتى. فيُقرأ الصفُّ كاملاً: ما قرّره
+ * الطبيبُ يومَها، ثمّ أن الطلبَ سُحب بعده.
+ */
+async function withdrawRequestsTx(
+  tx: Executor,
+  params: {
+    ids: number[];
+    note: string;
+    actor: { userId: number | null; userName: string | null };
+    /** هل تُحرَّر المرساتان؟ — نعم حين تُحذف الحالةُ والحلقةُ بعد أسطر. */
+    releaseAnchors: boolean;
+  },
+): Promise<void> {
+  const { ids, note, actor, releaseAnchors } = params;
+  if (!ids.length) return;
+  const by = actor.userName ? ` بواسطة ${actor.userName}` : "";
+  const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+  //  **والمرساتان تُقالان قبل أن تُحرَّرا.** الحالةُ والحلقةُ تُحذفان بعد
+  //  أسطر ومفتاحاهما `NO ACTION`، فبقاؤهما يعني ٢٣٥٠٣ خامّاً على وجه
+  //  المستخدم. وكلُّ تعابير `SET` في Postgres تقرأ الصفَّ **قبل** التحديث،
+  //  فيُلتقَط رقماهما في الملاحظة وتُفرَّغ الأعمدةُ في الجملة نفسِها.
+  const anchorText = releaseAnchors
+    ? sql` || COALESCE(' (الحالة #' || case_id::text || ')', '')
+           || COALESCE(' (طلب الجهاز #' || device_episode_id::text || ')', '')`
+    : sql``;
+  await tx.execute(sql`
+    UPDATE medical_review_requests
+       SET status = 'cancelled',
+           --  القرارُ السابق يبقى؛ والفارغُ يبقى فارغاً (لا قرارَ يُدَّعى).
+           decided_at = COALESCE(decided_at, NOW()),
+           decided_by = COALESCE(decided_by, ${actor.userId}),
+           updated_at = NOW(),
+           --  **تُلحَق لا تُستبدَل** — وسببُ الطبيب يبقى أوّلَ ما يُقرأ.
+           doctor_note = CASE
+             WHEN COALESCE(btrim(doctor_note), '') = ''
+               THEN ${note + by}${anchorText}
+             ELSE doctor_note || E'\n' || ${note + by}${anchorText}
+           END
+           ${releaseAnchors
+             ? sql`, case_id = NULL, device_episode_id = NULL`
+             : sql``}
+     WHERE id IN (${idList})
+  `);
 }
 
 /**

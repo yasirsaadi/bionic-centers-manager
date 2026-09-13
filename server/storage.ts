@@ -66,6 +66,7 @@ import {
   classifyCaseDisposal, disposeCaseScaffolding,
   CaseDisposalBlockedError, type CaseScaffolding,
 } from "./patient_cases/disposal";
+import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
@@ -2680,12 +2681,12 @@ export class DatabaseStorage implements IStorage {
       const collided = await tx.execute<{ id: number; branch_id: number | null }>(sql`
         SELECT s.id, s.branch_id FROM post_exam_followups s
          WHERE s.patient_id = ${sourceId}
-           AND s.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+           AND s.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
            AND EXISTS (
              SELECT 1 FROM post_exam_followups t
               WHERE t.patient_id = ${targetId}
                 AND t.service_type = s.service_type
-                AND t.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+                AND t.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
            )
       `);
       for (const row of (collided.rows ?? [])) {

@@ -29,6 +29,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import * as episodes from "./device_episodes/store";
+import * as followupStore from "./followup/store";
 import { classifyCaseDisposal, CaseDisposalBlockedError } from "./patient_cases/disposal";
 import { db } from "./db";
 import { TERMINAL_STATUSES, isTerminal } from "@shared/followup";
@@ -424,6 +425,123 @@ async function main() {
           (await q(`SELECT 1 FROM post_exam_followup_events WHERE followup_id=$1`, [fu])).length, 0);
       }
 
+      // ══ ج-٢. **المسارُ الكامل: افتح ⟶ ألغِ ⟶ اسحب** (P1 من المراجعة) ════
+      //  أمسكه مراجعٌ مستقلّ: `cancelScaffoldRequestsForEpisode` تكتب
+      //  `cancelled` **وتُبقي** `device_episode_id`، فلو لم تكن `cancelled`
+      //  في قائمة السقالة لعادت الحلقةُ «تاريخاً» ولحُبس الخيطُ إلى الأبد —
+      //  العطبُ بعينه الذي يغلقه هذا الفرع. والتركيبةُ التي تكسر هي التي لم
+      //  تُكتَب، فهذه هي.
+      console.log(`\n── ج-٢. افتح ثمّ ألغِ ثمّ اسحب (${L}) ──`);
+      {
+        const p = await mkPatient(`ج٤-${svc}`, svc);
+        await mkCase(p, svc);
+        const ep = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
+          { serviceType: svc, servicePath: "exam" });
+        const epId = Number(ep.body?.id);
+        const cancel = await http("POST", `/api/patients/${p}/device-episodes/${epId}/cancel`,
+          S.admin, { reason: "فُتح بالخطأ" });
+        same("ج١٥. الإلغاء ينجح", cancel.status, 200);
+        const mid = await reqRows(p);
+        check(mid.length === 1 && mid[0].status === "cancelled",
+          "ج١٦. والطلبُ صار مسحوباً ومرساتُه الحلقةُ باقية", JSON.stringify(mid));
+        const del = await removeCase(p, svc, S.admin);
+        check(del.status === 200,
+          "ج١٧. **ثمّ السحبُ ينجح** — المسحوبُ سقالةٌ لا تاريخ",
+          `${del.status} ${JSON.stringify(del.body)}`);
+        same("ج١٨. ولا حالةَ باقية", (await caseRows(p)).length, 0);
+        same("ج١٩. ولا حلقةَ باقية", (await epRows(p)).length, 0);
+        same("ج٢٠. والطلبُ باقٍ مسحوباً بمرساتين محرَّرتين",
+          (await q(`SELECT status, case_id, device_episode_id FROM medical_review_requests
+                     WHERE patient_id=$1`, [p]))[0],
+          { status: "cancelled", case_id: null, device_episode_id: null });
+        const [note] = await q(`SELECT doctor_note FROM medical_review_requests WHERE patient_id=$1`, [p]);
+        check(/فُتح بالخطأ/.test(String(note?.doctor_note))
+          && new RegExp(`طلب الجهاز #${epId}`).test(String(note?.doctor_note)),
+          "ج٢١. **والملاحظةُ تُلحِق ولا تمحو** — سببُ الإلغاء ثمّ المرساة",
+          String(note?.doctor_note));
+      }
+      {
+        //  **ومسحوبٌ وحدَه بلا حلقة** لا يُقرأ «حسمه الطبيب» (F2).
+        const p = await mkPatient(`ج٥-${svc}`, svc);
+        const c = await mkCase(p, svc);
+        await q(`INSERT INTO medical_review_requests
+                   (patient_id, service_type, case_id, branch_id, requested_path,
+                    review_kind, created_by, status, decision, decided_at, decided_by)
+                 VALUES ($1,$2,$3,1,'full','new_device',${RECV},'cancelled',NULL,NOW(),${ADMIN})`,
+          [p, svc, c]);
+        const del = await removeCase(p, svc, S.admin);
+        check(del.status === 200,
+          "ج٢٢. **وطلبٌ مسحوبٌ سلفاً لا يُقرأ «حسمه الطبيب»**",
+          `${del.status} ${JSON.stringify(del.body)}`);
+      }
+      {
+        //  **ومرساةُ الحلقة وحدها** (F3): الحلقةُ تُقرَأ سقالةً بشرطٍ على
+        //  `device_episode_id`، والصفُّ كان يُختار بـ`case_id` وحده — فطلبٌ
+        //  بلا حالةٍ كان يُترَك فينفجر حذفُ الحلقة بـ٢٣٥٠٣ خامّاً.
+        const p = await mkPatient(`ج٦-${svc}`, svc);
+        const c = await mkCase(p, svc);
+        const e = await mkEpisode(p, c, 1, "awaiting_exam");
+        await q(`INSERT INTO medical_review_requests
+                   (patient_id, service_type, case_id, branch_id, device_episode_id,
+                    requested_path, review_kind, created_by, status)
+                 VALUES ($1,$2,NULL,1,$3,'full','new_device',${RECV},'pending')`,
+          [p, svc, e]);
+        const del = await removeCase(p, svc, S.admin);
+        check(del.status === 200,
+          "ج٢٣. **وطلبٌ مرساتُه الحلقةُ وحدها يُسحَب معها**",
+          `${del.status} ${JSON.stringify(del.body)}`);
+        check(!/violates|constraint|ERROR:/i.test(JSON.stringify(del.body)),
+          "ج٢٤. ولا نصَّ Postgres خامّاً على مسار النجاح", JSON.stringify(del.body));
+        same("ج٢٥. والحلقةُ أُزيلت", (await epRows(p)).length, 0);
+      }
+      {
+        //  **وقرارُ الطبيب لا يُمحى** (F4): طلبٌ مُرجَعٌ يحمل سببَ الإرجاع
+        //  الإلزاميّ ومَن أرجعه وقرارَه — الثلاثةُ تبقى، والسحبُ يُلحَق.
+        const p = await mkPatient(`ج٧-${svc}`, svc);
+        const c = await mkCase(p, svc);
+        const WHY = "جهة البتر غير صحيحة — عدّلها وأعد إرسال الطلب";
+        await q(`INSERT INTO medical_review_requests
+                   (patient_id, service_type, case_id, branch_id, requested_path,
+                    review_kind, created_by, status, decision, decided_at, decided_by, doctor_note)
+                 VALUES ($1,$2,$3,1,'full','new_device',${RECV},'returned',
+                         'return_to_reception',NOW(),${DOC},$4)`,
+          [p, svc, c, WHY]);
+        same("ج٢٦. سحبُ حالةٍ بطلبٍ مُرجَع ينجح", (await removeCase(p, svc, S.admin)).status, 200);
+        const [r] = await q(`SELECT status, decision, decided_by::int db, doctor_note
+                               FROM medical_review_requests WHERE patient_id=$1`, [p]);
+        same("ج٢٧. **وقرارُ الطبيب باقٍ بحرفه**", r?.decision, "return_to_reception");
+        same("ج٢٨. ومَن قرّره باقٍ — لا يُكتب المسؤولُ فوقه", Number(r?.db), DOC);
+        check(String(r?.doctor_note || "").startsWith(WHY),
+          "ج٢٩. **وسببُه الإلزاميُّ أوّلُ ما يُقرأ**", String(r?.doctor_note));
+        check(/سُحبت الحالة/.test(String(r?.doctor_note || "")),
+          "ج٣٠. وسطرُ السحب مُلحَقٌ بعده", String(r?.doctor_note));
+        same("ج٣١. والحالةُ صارت مسحوبة", r?.status, "cancelled");
+      }
+      {
+        //  **ولا قفلَ سعرٍ بعد سحب الطلب** (F5): `hasActiveFollowup` كانت
+        //  تقرأ ثلاثَ طرفيّاتٍ فقط، فالمتقاعدةُ بالسحب تُحسَب حيّةً ويبقى
+        //  `totalCost` مقفلاً إلى الأبد بلا متابعةٍ ولا سعرٍ معتمَد.
+        const p = await mkPatient(`ج٨-${svc}`, svc);
+        const c = await mkCase(p, svc);
+        const e = await mkEpisode(p, c, 1, "examined");
+        await mkFollowup(p, c, svc, e);
+        await episodes.cancelPreManufacturingDeviceEpisode({
+          patientId: p, episodeId: e, reason: "سُحب الطلب",
+          actor: { userId: ADMIN, userName: "المسؤول" },
+        });
+        const live = await followupStore.hasActiveFollowup({ patientId: p, serviceType: svc });
+        check(live === false,
+          "ج٣٢. **ولا متابعةَ حيّة بعد السحب** — القفلُ يرتفع", String(live));
+        const phone = await phoneOf(p);
+        const upd = await http("PUT", `/api/patients/${p}`, S.admin, {
+          name: `${MARK} ج٨-${svc}`, phone, branchId: 1, totalCost: 750000,
+        });
+        same("ج٣٣. وتعديلُ الكلفة يمضي", upd.status, 200);
+        same("ج٣٤. **بلا ملاحظةِ قفل**", upd.body?.costNote ?? null, null);
+        same("ج٣٥. والرقمُ كُتب فعلاً",
+          Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [p]))[0]?.total_cost), 750000);
+      }
+
       // ══ د. التاريخُ الحقيقيّ يمنع — سبعةُ حواجزَ بأبوابها ═══════════════
       console.log(`\n── د. الحواجز السبعة (${L}) ──`);
       {
@@ -654,10 +772,23 @@ async function main() {
       check(TERMINAL_STATUSES.includes("closed_request_cancelled" as any),
         "ل١. الطرفيّةُ الخامسة في `TERMINAL_STATUSES`");
       //  **ولا قائمةَ ثانيةً مكتوبةً يدوياً في SQL** — نسيانُ طرفيّةٍ في
-      //  موضعٍ يجعل متقاعدةً تُحسَب حيّةً فتُقفل الملفَّ إلى الأبد.
-      for (const rel of ["server/patients/trash_store.ts", "server/followup/store.ts"]) {
-        check(!/'closed_exam_cancelled'\s*,\s*'closed_admin_void'/.test(src(rel)),
+      //  موضعٍ يجعل متقاعدةً تُحسَب حيّةً فتُقفل الملفَّ إلى الأبد. وأمسك
+      //  مراجعٌ مستقلّ أربعةَ مواضعَ بقيت بثلاثِ قيمٍ وحدها (قفلُ السعر،
+      //  المتابعةُ الحيّة، وتصادمُ الدمج) — فالحارسُ يشمل كلَّ قارئٍ حيّ.
+      for (const rel of [
+        "server/patients/trash_store.ts", "server/followup/store.ts",
+        "server/storage.ts",
+      ]) {
+        check(!/status NOT IN \('closed_without_purchase'/.test(src(rel)),
           `ل٢. لا قائمةَ طرفيّاتٍ يدويّة في ${rel} — المصدرُ واحد`);
+      }
+      //  **والمفرداتُ في `shared/schema.ts` تواكب الترحيلات**: بيئةٌ تُبنى
+      //  بـ`db:push` قبل تشغيلها كانت تأخذ قيداً وفهرسين ناقصَين.
+      for (const s of ["closed_exam_cancelled", "closed_admin_void", "closed_request_cancelled"]) {
+        const sch = src("shared/schema.ts");
+        check((sch.match(new RegExp(s, "g")) ?? []).length >= 3,
+          `ل٢-ب. \`${s}\` في القيد والفهرسين معاً`,
+          String((sch.match(new RegExp(s, "g")) ?? []).length));
       }
 
       //  **و`caseHasEpisodes` أُزيلت** — الحارسُ العاريُ الذي سبّب العطب.
@@ -693,6 +824,11 @@ async function main() {
         "ل٩. **والشاشةُ تعرض `remedy`** — لا جملةٌ مسدودة");
       check(/JSON\.stringify\(\{\s*reason:\s*removeReason\s*\}\)/.test(ui),
         "ل١٠. وترسل سببَ السحب");
+      //  **و`caseFlagNote` تُعرَض فعلاً** — كانت تُرسَل ولا يقرؤها أحد،
+      //  فيبقى الإسقاطُ صامتاً وهو ما وُضعت لمنعه (أمسكه مراجعٌ مستقلّ).
+      const edit = src("client/src/pages/EditPatient.tsx");
+      check(/result\?\.caseFlagNote/.test(edit) && /toast\(\{[^}]*caseFlagNote/s.test(edit),
+        "ل١١. **وشاشةُ تعديل المريض تعرض `caseFlagNote`** — لا إسقاطٌ صامت");
     }
 
     // ══ م. العلاجُ الطبيعي معزولٌ ══════════════════════════════════════

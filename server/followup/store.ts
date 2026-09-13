@@ -484,7 +484,7 @@ export async function approvedPriceFor(params: {
     SELECT approved_price, price_source FROM post_exam_followups
      WHERE patient_id = ${params.patientId}
        AND service_type = ${params.serviceType}
-       AND status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+       AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
        AND (${params.deviceEpisodeId}::int IS NULL
             OR device_episode_id = ${params.deviceEpisodeId}::int)
      ORDER BY id DESC LIMIT 1
@@ -503,7 +503,7 @@ export async function hasActiveFollowup(params: {
   const r = await db.execute(sql`
     SELECT 1 FROM post_exam_followups
      WHERE patient_id = ${params.patientId} AND service_type = ${params.serviceType}
-       AND status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+       AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
      LIMIT 1
   `);
   return (r.rows ?? []).length > 0;

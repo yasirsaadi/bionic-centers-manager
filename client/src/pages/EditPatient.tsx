@@ -366,6 +366,13 @@ export default function EditPatient() {
         if (result?.costNote) {
           toast({ title: "ملاحظة حول الكلفة", description: result.costNote });
         }
+        //  ══ **وملاحظةُ التصنيف بالمبدأ نفسِه** (CASEDEL-06) ═══════════════
+        //  إطفاءُ عَلَم جهازٍ للمريض حالةٌ نشطة من نوعه يُسقَط في الخادم كي
+        //  لا يبقى صفُّ حالةٍ شبحاً. وبلا هذا التوست كان يُسقَط **صامتاً**:
+        //  توستُ نجاحٍ عامّ، والمربّعُ يعود مؤشَّراً، ولا يعرف الموظّف لماذا.
+        if (result?.caseFlagNote) {
+          toast({ title: "ملاحظة حول تصنيف الحالة", description: result.caseFlagNote });
+        }
         setLocation(`/patients/${patientId}${branchParam}`);
       },
     });

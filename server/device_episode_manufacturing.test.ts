@@ -556,13 +556,22 @@ async function main() {
     same("   ولا أمر أُنشئ", (await ordersOf(pJ)).length, 0);
     same("   والحلقة كما هي", (await epRow(eJ))?.status, "examined");
 
-    // ══ م. حذف نوع الحالة يُرفض متى ملك الخيط حلقة ══════════════════════
-    const pK = await mkPatient("م. حذف بحلقة منتظرة", 0);
+    // ══ م. حذف نوع الحالة: **السقالةُ تُسحَب والتاريخُ يمنع** ═════════════
+    //  ══ قرارُ منتجٍ تغيّر (المرحلة الثالثة — CASEDEL-01) ══════════════════
+    //  كان هذا القسمُ يثبت أن **أيّ** حلقةٍ تحبس الخيط، وهو ما كان يُخلّد
+    //  خطأَ إدخال: التطبيقُ يفتح الحلقةَ تلقائياً بلا قرارِ إنسان، فضغطةٌ
+    //  خاطئةٌ صارت غيرَ قابلةٍ للتراجع أبداً. والقاعدةُ الآن في
+    //  `patient_cases/disposal.ts`: **الخلودُ يُكتسَب بالتاريخ لا بوجود
+    //  الصفّ**. فالحلقةُ المنتظرةُ الفارغة سقالةٌ تُسحَب، والمسلَّمةُ تاريخٌ
+    //  يمنع — والشقُّ الثاني (ن) لم يتغيّر بحرف.
+    const pK = await mkPatient("م. سحب بحلقة منتظرة فارغة", 0);
     const cK = await mkCase(pK, 0);
-    await mkEpisode(pK, cK, 1, "awaiting_exam", 0);
-    const delK = await refused(() => storage.deleteCaseType(pK, "prosthetic"));
-    check(!!delK && /سجل أجهزة/.test(delK.msg), "م. حذف خيطٍ بحلقة منتظرة مرفوض", delK?.msg);
-    same("   والخيط باقٍ", (await q(`SELECT count(*)::int n FROM patient_cases WHERE id=$1`, [cK]))[0].n, 1);
+    const eK = await mkEpisode(pK, cK, 1, "awaiting_exam", 0);
+    const delK = await storage.deleteCaseType(pK, "prosthetic");
+    same("م. سحبُ خيطٍ بحلقةٍ منتظرةٍ فارغة ينجح", delK.disposed.episodeIds, [eK]);
+    same("   والخيط أُزيل", (await q(`SELECT count(*)::int n FROM patient_cases WHERE id=$1`, [cK]))[0].n, 0);
+    same("   والحلقةُ السقالية معه",
+      (await q(`SELECT count(*)::int n FROM patient_device_episodes WHERE id=$1`, [eK]))[0].n, 0);
 
     const pL = await mkPatient("ن. حذف بحلقة مسلَّمة", 0);
     const cL = await mkCase(pL, 0);
