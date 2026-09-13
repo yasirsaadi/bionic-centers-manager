@@ -138,7 +138,8 @@
     "test:training": "tsx server/training.test.ts",
     "test:training-ui": "tsx client/src/components/training_admin_ui.test.ts",
     "test:ai-training-intent": "tsx shared/ai_training_intent.test.ts",
-    "test:ai-training-orchestration": "tsx server/ai_training_orchestration.test.ts"
+    "test:ai-training-orchestration": "tsx server/ai_training_orchestration.test.ts",
+    "test:cancel-sale-race": "tsx server/exam_cancel_sale_race.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

@@ -52,6 +52,7 @@ import { createJournalForPayment } from "../accounting/auto_journal";
 import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
+import { isLockConflict, LOCK_CONFLICT_MESSAGE, LOCK_CONFLICT_CODE } from "../concurrency";
 import * as decisionQueue from "./decision_queue_store";
 import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
@@ -161,6 +162,18 @@ async function retiredOnExamPath(res: any, followupId: number): Promise<boolean>
 function fail(res: any, err: unknown): boolean {
   if (err instanceof FollowupError) {
     res.status(err.status).json({ error: err.message });
+    return true;
+  }
+  //  **والجمودُ تعارضٌ لا عطب** (INT-05): إلغاءُ معاينةٍ متزامنٌ يقفل
+  //  الحلقةَ ثمّ المتابعة، وإتمامُ البيع يقفل المتابعةَ ثمّ الحلقة — فتُجهض
+  //  Postgres إحداهما. وكان الخاسرُ هنا يفلت من هذه الدالّة فيُعاد رميُه من
+  //  معالجٍ غير متزامن ⟶ رفضٌ غير ملتقَط ⟶ **طلبُ الموظّف معلَّقٌ بلا ردّ
+  //  إلى الأبد** (معالجُ العملية في `index.ts` يُبقي الخدمةَ حيّةً ولا يردّ
+  //  على طلبٍ فرديّ — وهو يقول ذلك بنصّه). فصار يُقال تعارضاً بـ٤٠٩.
+  //  والمعاملةُ تراجعت كاملةً بحكم القاعدة: لا أمرَ تصنيعٍ ولا قيدَ كلفةٍ
+  //  ولا نصفَ بيع.
+  if (isLockConflict(err)) {
+    res.status(409).json({ error: LOCK_CONFLICT_MESSAGE, code: LOCK_CONFLICT_CODE });
     return true;
   }
   return false;

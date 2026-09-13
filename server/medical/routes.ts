@@ -48,6 +48,7 @@ import * as reviewStore from "../medical_review/store";
 import { canSuperviseReview } from "@shared/medical_review";
 import { cancelledExamIds, isExamCancelled } from "./active_exam";
 import { cancelExam, ExamCancelError } from "./cancel_exam";
+import { isLockConflict, LOCK_CONFLICT_MESSAGE, LOCK_CONFLICT_CODE } from "../concurrency";
 import { cancelExamRequest, CancelExamRequestError } from "./cancel_exam_request";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
@@ -955,6 +956,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     } catch (err: any) {
       if (err instanceof ExamCancelError) {
         return res.status(err.status).json({ error: err.message });
+      }
+      //  **والجمودُ تعارضٌ لا عطب** (INT-05): إتمامُ بيعٍ متزامنٌ يقفل
+      //  المتابعةَ ثمّ الحلقة، وهذا يقفل الحلقةَ ثمّ المتابعة — فتُجهض
+      //  Postgres إحداهما. الخاسرُ هنا كان يُقرأ ٥٠٠ «تعذّر إلغاء المعاينة»
+      //  فيظنّ الطبيبُ النظامَ معطوباً؛ وهو تعارضٌ يُعاد بعده، والمعاملةُ
+      //  تراجعت كاملةً بحكم القاعدة فلم يتغيّر حرف.
+      if (isLockConflict(err)) {
+        return res.status(409).json({
+          error: LOCK_CONFLICT_MESSAGE, code: LOCK_CONFLICT_CODE,
+        });
       }
       console.error("[medical] cancel exam failed:", err);
       res.status(500).json({ error: "تعذّر إلغاء المعاينة" });
