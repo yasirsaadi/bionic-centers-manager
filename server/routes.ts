@@ -47,6 +47,9 @@ import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes"
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import { CaseDisposalBlockedError } from "./patient_cases/disposal";
 import {
+  previewCaseRemovalTx, closeCaseWithHistoryTx, closureAuditNote, CaseClosureError,
+} from "./patient_cases/closure";
+import {
   checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
   PatientNameTrashConflictError, PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
@@ -2183,6 +2186,92 @@ export async function registerRoutes(
     //  **شكلُ الحالة كما كان** (توافقاً مع أيّ عميلٍ قائم يقرأ حقولها
     //  مباشرةً) **وإجماليٌّ إضافيّ** — لا كسرَ عقدٍ، وشفافيةٌ زائدة.
     res.json({ ...result.case, totalCost: result.totalCost });
+  });
+
+  // ══ **بابان لا واحد: السقالةُ تُهدَم، والتاريخُ يُغلَق** ═══════════════════
+  //  المعاينةُ تقول أيُّهما — بأرقامِ المال من القاعدة لا من الشاشة. وكلاهما
+  //  للمسؤول العام حصراً كما كان الحذفُ دائماً.
+  const caseRemovalGate = (req: any, res: any): { patientId: number; caseType: any } | null => {
+    const branchSession = (req.session as any).branchSession;
+    if (!branchSession?.isAdmin) {
+      res.status(403).json({ message: "سحب نوع الحالة للمدير العام حصراً" });
+      return null;
+    }
+    const patientId = Number(req.params.id);
+    const caseType = String(req.params.caseType);
+    if (!Number.isInteger(patientId) || patientId <= 0) {
+      res.status(400).json({ message: "معرّف غير صالح" });
+      return null;
+    }
+    if (!["prosthetic", "medical_support", "physiotherapy"].includes(caseType)) {
+      res.status(400).json({ message: "نوع غير صالح" });
+      return null;
+    }
+    return { patientId, caseType };
+  };
+
+  app.get("/api/patients/:id/case-type/:caseType/removal-preview", isAuthenticated, async (req, res) => {
+    const gate = caseRemovalGate(req, res);
+    if (!gate) return;
+    try {
+      const preview = await db.transaction((tx) =>
+        previewCaseRemovalTx(tx as any, { patientId: gate.patientId, caseType: gate.caseType }));
+      res.json(preview);
+    } catch (err: any) {
+      if (err instanceof CaseClosureError) {
+        return res.status(err.status).json({ message: err.message });
+      }
+      res.status(500).json({ message: err?.message || "تعذّر قراءة حالة السحب" });
+    }
+  });
+
+  //  **الإغلاق** — لحالةٍ لها تاريخ. لا يحذف صفّاً واحداً، ويقيّد ما يُسترجَع
+  //  حركةً ماليةً مستقلّة. والتدقيقُ بالمعاملة نفسِها.
+  app.post("/api/patients/:id/case-type/:caseType/close", isAuthenticated, async (req, res) => {
+    const gate = caseRemovalGate(req, res);
+    if (!gate) return;
+    const branchSession = (req.session as any).branchSession;
+    const patient = await storage.getPatient(gate.patientId);
+    if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+    try {
+      const outcome = await db.transaction(async (tx) => {
+        const o = await closeCaseWithHistoryTx(tx as any, {
+          patientId: gate.patientId,
+          caseType: gate.caseType,
+          request: {
+            reason: req.body?.reason,
+            refundAmount: req.body?.refundAmount,
+            refundReason: req.body?.refundReason,
+            retainedReason: req.body?.retainedReason,
+          },
+          actor: {
+            userId: branchSession?.userId ?? null,
+            userName: branchSession?.displayName ?? null,
+          },
+        });
+        await logAudit({
+          entityType: "patient_case", entityId: o.caseId, action: "update",
+          userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+          branchId: patient.branchId, ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+          oldValues: { status: "active" },
+          newValues: {
+            status: "closed", caseType: o.caseType,
+            netPaid: o.money.netPaid, refunded: o.money.refundAmount,
+            retained: o.money.retainedAmount, refundPaymentId: o.refundPaymentId,
+          },
+          notes: closureAuditNote(o),
+          tx,
+        });
+        return o;
+      });
+      res.json({ ok: true, ...outcome });
+    } catch (err: any) {
+      if (err instanceof CaseClosureError) {
+        return res.status(err.status).json({ message: err.message });
+      }
+      res.status(500).json({ message: err?.message || "تعذّر إغلاق الحالة" });
+    }
   });
 
   // Delete a case type from a patient — STRICTLY the general admin (owner's
