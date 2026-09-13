@@ -536,16 +536,31 @@ const examSignedAfterRequestSql = (r: string) => sql`EXISTS (
  * أو يُحال الطلبُ أو يُرجَع.
  *
  * ونفسُ شروط القائمة بالحرف — `specialtyLevelRequestSql` و
- * `examSignedAfterRequestSql` و`scopeClause` — لا نسخةٌ ثانية تنحرف عنها.
+ * `examSignedAfterRequestSql` — لا نسخةٌ ثانية تنحرف عنها.
  * **والمرساةُ إلى حلقةٍ منتظرة ليست منها**: تلك صفٌّ آخر بهويّة جهازه،
  * ويُلغى بإلغاء حلقته هو (تدقيق ٢٠٢٦-٠٩-١٢: MULTI-3).
+ *
+ * ══ **ولا فلترةَ بفرع الطلب هنا — والنطاقُ من صفّ المريض المقفول** ═══════
+ * `getWorklist` تُرشّح الصفَّ بفرع **المريض/الحالة**
+ * (`COALESCE(pc.branch_id, p.branch_id)`) **ولا تفلتر `r.branch_id` إطلاقاً**.
+ * فإضافةُ فلترةٍ بفرع الطلب هنا كانت تفتح بابَ خطأٍ حقيقياً: طلبٌ فُتح في
+ * الفرع ١ ثمّ نُقل المريض إلى الفرع ٢ — و`transferPatientToBranch` تنقل
+ * المريضَ وحالاتِه وزياراتِه ودفعاتِه **وتترك طلبَ المراجعة بفرعه الأصليّ
+ * عمداً** (لا يُعاد كتابةُ تاريخٍ قديم) — فيرى طبيبُ الفرع ٢ الصفَّ ويُردّ
+ * زرُّه `nothing_to_cancel` إلى الأبد: صفٌّ ظاهرٌ لا يُلغى. مُعادٌ إنتاجُه
+ * حيّاً على النقاط الحقيقية (٢٠٢٦-٠٩-١٣).
+ *
+ * **والسلطةُ ليست هنا أصلاً**: `cancelExamRequest` تقفل صفَّ المريض وتعيد
+ * فحصَ نطاق الجلسة **منه** قبل أن تنادي هذه (٤٠٣ وإلّا)، فلا تُقرأ هذه
+ * الطلباتُ لمريضٍ خارج النطاق بحال. فالفرعُ يُفرَض **مرّةً واحدة على المريض**
+ * كما تفرضه القائمةُ نفسُها — لا مرّتين بقاعدتين تنحرف إحداهما عن الأخرى.
  *
  * وتُرجع الحالةَ أيضاً: `escalated` **قرارُ طبيبٍ وقع** — لا يُسحَب من هنا،
  * وبابُه «إرجاع للاستعلامات». والمُنادي يقرّر، وهذه تقرأ وتقفل فقط.
  */
 export async function lockSpecialtyLevelQueueRequestsTx(
   tx: { execute: (q: any) => Promise<any> },
-  params: { patientId: number; serviceType: string; branchIds: number[] | null },
+  params: { patientId: number; serviceType: string },
 ): Promise<{ id: number; status: string }[]> {
   const rows = await tx.execute(sql`
     SELECT r.id, r.status
@@ -555,7 +570,6 @@ export async function lockSpecialtyLevelQueueRequestsTx(
        AND (r.status = 'escalated'
             OR (r.status = 'pending' AND r.requested_path = 'full'))
        AND ${specialtyLevelRequestSql("r")}
-       AND ${scopeClause(params.branchIds, "r.branch_id")}
        AND NOT ${examSignedAfterRequestSql("r")}
      ORDER BY r.id
        FOR UPDATE

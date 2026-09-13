@@ -1138,10 +1138,25 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         branchIds: branchScope(req),
       });
 
+      //  ══ **ونوعُ الكيان يتبع معرّفَه — لا نوعٌ ومعرّفُ غيرِه** ═══════════
+      //  سطرٌ يقول `medical_review_request` ويحمل **رقمَ حلقة** يُنسَب إلى
+      //  طلبِ مراجعةٍ لا علاقةَ له به (قراءةُ `audit_log` ترشّح بالثنائيّة
+      //  نوع/رقم)، ويغيب عن تاريخ الحلقة التي أُلغيت فعلاً.
+      //  فالحلقةُ تُقيَّد `patient_device_episode` بمعرّفها — **نفسُ عقد نقطة
+      //  إلغاء الجهاز بحرفه** (`device_episodes/routes.ts`)، وأرقامُ الطلبات
+      //  المسحوبة تُسمّى في الملاحظة كما تفعل هي. وصفٌّ بلا حلقة يُقيَّد
+      //  بطلبه. والفرعُ الثالث لا يقع: `cancelExamRequest` تردّ
+      //  `nothing_to_cancel` قبل أن تكتب حرفاً — وهو مكتوبٌ ليبقى النوعُ
+      //  متّسقاً مع معرّفه إن تغيّرت تلك الدالّة يوماً.
+      const audited = done.cancelledEpisodeId !== null
+        ? { entityType: "patient_device_episode", entityId: done.cancelledEpisodeId }
+        : done.cancelledRequestIds.length > 0
+          ? { entityType: "medical_review_request", entityId: done.cancelledRequestIds[0] }
+          : { entityType: "patient", entityId: patientId };
+
       await logAudit({
-        entityType: "medical_review_request",
-        //  **هويّةُ الصفّ لا المريض**: الحلقةُ حين توجد، وإلّا أوّلُ طلبٍ سُحب.
-        entityId: done.cancelledEpisodeId ?? done.cancelledRequestIds[0] ?? patientId,
+        entityType: audited.entityType,
+        entityId: audited.entityId,
         action: "update",
         userId: session.userId,
         userName: session.userName ?? null,

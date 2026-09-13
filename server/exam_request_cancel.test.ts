@@ -21,6 +21,8 @@
 //   ك.  السببُ إلزاميّ، والملفُّ في السلّة يُردّ، ومسارُ «بلا معاينة» يُردّ.
 //   ل.  **والشكلُ المشوَّه يُردّ** ولا يسقط صامتاً إلى «بلا جهاز».
 //   م.  **ويُقال ما جرى**: `stillListed` صادقٌ حين يبقى الصفُّ لقاعدةٍ أخرى.
+//   ع.  **والمريضُ المنقول بين فرعين**: الصفُّ الظاهرُ يُلغى — ولا عزلَ يضعف.
+//   ف.  **وسطرُ التدقيق نوعُه يتبع معرّفَه**: الحلقةُ بحلقتها والطلبُ بطلبه.
 //   ن.  عقدُ الشاشة، وحارسٌ معماريّ: لا كتابةَ معاينةٍ في مسار الإلغاء.
 
 import express from "express";
@@ -223,6 +225,12 @@ async function cleanup() {
     `DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`,
     `DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`,
     `DELETE FROM patients WHERE referral_source = '${MARK}'`,
+    //  **وسطورُ تدقيقِ هذه النقطة من مستخدمي هذا الاختبار وحدهم** — وإلّا
+    //  تراكمت عبر التشغيلات فصارت تشير إلى صفوفٍ نظّفها تشغيلٌ سابق، ففشل
+    //  ثابتُ «كلُّ سطرٍ يشير إلى صفٍّ موجود» لسببٍ لا علاقةَ له بالكود.
+    `DELETE FROM audit_log WHERE action = 'update'
+       AND notes LIKE 'إلغاء طلب معاينة%'
+       AND user_id IN (${DOC}, ${DOC2}, ${DOCB2}, ${ADMIN}, ${MGR})`,
   ]) await q(s);
 }
 
@@ -248,6 +256,9 @@ async function main() {
       [id, `erc_u${id}`, role, name, spec, branch, JSON.stringify([branch])]);
   }
   await cleanup();
+  //  **لحظةُ البدء من القاعدة** — يُحصَر بها ثابتُ التدقيق في «ف» على سطور
+  //  هذا التشغيل وحده، فلا يحكم على سطورٍ كتبها تشغيلٌ سابق.
+  const runStart = (await q<{ t: string }>(`SELECT NOW()::timestamp AS t`))[0].t;
 
   const app = express();
   app.use(express.json());
@@ -599,6 +610,118 @@ async function main() {
       same("س٤. وبصفر كتابة", await writable(p), before);
       same("س٥. ولا حلقةَ أجهزةٍ له إطلاقاً", (await epRows(p)).length, 0);
       same("س٦. ولا طلبَ مراجعة", (await reqRows(p)).length, 0);
+    }
+
+    // ══ ع. المريضُ المنقول بين فرعين — الصفُّ الظاهرُ يُلغى ═══════════════
+    console.log(`\n── ع. المريضُ المنقول بين فرعين ──`);
+    for (const svc of ["prosthetic", "medical_support"] as Svc[]) {
+      const L = svc === "prosthetic" ? "أطراف" : "مساند";
+      //  **الواقعة**: طلبٌ يُفتَح في الفرع ١ ثمّ يُنقَل المريضُ إلى الفرع ٢.
+      //  و`transferPatientToBranch` تنقل المريضَ وحالاتِه وزياراتِه ودفعاتِه
+      //  **وتترك طلبَ المراجعة بفرعه الأصليّ عمداً** — فكان طبيبُ الفرع ٢
+      //  يرى الصفَّ (القائمةُ ترشّح بفرع المريض/الحالة، لا بفرع الطلب) ويُردّ
+      //  زرُّه `nothing_to_cancel` إلى الأبد. مُعادٌ إنتاجُه حيّاً ٢٠٢٦-٠٩-١٣.
+      const p = await mkPatient(`ع-منقول-${svc}`, svc);
+      const c = await mkCase(p, svc, 1);
+      const rid = await mkBareRequest(p, c, svc, { branch: 1 });
+
+      const tr = await http("POST", `/api/patients/${p}/transfer`, S.admin, { branchId: 2 });
+      same(`ع١. النقل إلى الفرع ٢ ينجح (${L})`, tr.status, 200);
+      const reqBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM medical_review_requests WHERE id=$1`, [rid]))[0];
+      same("ع٢. وفرعُ الطلب يبقى الأصليَّ كما تفعل دالّةُ النقل عمداً",
+        reqBranch?.branch_id, 1);
+      const moved = (await q<{ p_branch: number; c_branch: number }>(
+        `SELECT p.branch_id AS p_branch, c.branch_id AS c_branch
+           FROM patients p JOIN patient_cases c ON c.id=$2 WHERE p.id=$1`, [p, c]))[0];
+      same("ع٣. والمريضُ وحالتُه في الفرع ٢", [moved?.p_branch, moved?.c_branch], [2, 2]);
+
+      const seen = await myRows(p, S.docB2);
+      check(seen.length === 1, "ع٤. وطبيبُ الفرع ٢ يرى الصفَّ", JSON.stringify(seen));
+      const res = await cancelRequest(p, svc, null, S.docB2);
+      same("ع٥. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
+      same("ع٦. والطلبُ المسحوبُ هو هو", res.body?.cancelledRequestIds, [rid]);
+      same("ع٧. والصفُّ خرج فعلاً", res.body?.stillListed, false);
+      const after = await reqRows(p);
+      check(after.length === 1 && after[0].status === "cancelled",
+        "ع٨. والصفُّ في القاعدة مسحوبٌ لا محذوف", JSON.stringify(after));
+      check((await myRows(p, S.docB2)).length === 0, "ع٩. وخرج من قائمة طبيب الفرع ٢");
+
+      //  **والعزلُ لم يضعف بحرف**: إسقاطُ فلترةِ فرعِ الطلب لم يفتح شيئاً —
+      //  السلطةُ صفُّ المريض المقفول، والاستعلامُ مقصورٌ على مريضٍ بعينه.
+      const home = await mkPatient(`ع-مقيم-${svc}`, svc);
+      const hc = await mkCase(home, svc, 1);
+      await mkBareRequest(home, hc, svc, { branch: 1 });
+      const before = await writable(home);
+      const denied = await cancelRequest(home, svc, null, S.docB2);
+      same("ع١٠. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
+      same("ع١١. برمزه", denied.body?.code, "branch_out_of_scope");
+      same("ع١٢. وبصفر كتابة", await writable(home), before);
+    }
+
+    // ══ ف. سطرُ التدقيق — النوعُ يتبع معرّفَه ═══════════════════════════
+    console.log(`\n── ف. هويّةُ سطرِ التدقيق ──`);
+    {
+      const auditOf = (t: string, id: number) =>
+        q<{ id: number; notes: string }>(
+          `SELECT id, notes FROM audit_log
+            WHERE entity_type=$1 AND entity_id=$2 AND action='update'
+              AND notes LIKE 'إلغاء طلب معاينة%' ORDER BY id DESC`, [t, id]);
+
+      //  ① صفٌّ بحلقة ⟶ `patient_device_episode` بمعرّف الحلقة — **نفسُ عقد
+      //  نقطة إلغاء الجهاز**. وأرقامُ الطلبات المسحوبة في الملاحظة كما تفعل هي.
+      const p1 = await mkPatient("ف-بحلقة", "prosthetic");
+      await mkCase(p1, "prosthetic");
+      same("ف٠. فتحُ طلبِ جهاز", (await openDevice(p1, "prosthetic")).status, 201);
+      const ep = (await epRows(p1))[0] as any;
+      const r1 = await cancelRequest(p1, "prosthetic", ep.id);
+      same("ف١. الإلغاء ينجح", r1.status, 200);
+      same("ف٢. والحلقةُ هي المُلغاة", r1.body?.cancelledEpisodeId, ep.id);
+      const epAudit = await auditOf("patient_device_episode", ep.id);
+      check(epAudit.length === 1,
+        "ف٣. وسطرُ التدقيق `patient_device_episode` بمعرّف الحلقة",
+        JSON.stringify(epAudit));
+      //  **والعطبُ بعينه**: لا سطرَ يقول «طلبُ مراجعة» ويحمل رقمَ حلقة.
+      const mislabeled = await auditOf("medical_review_request", ep.id);
+      same("ف٤. ولا سطرَ ينسب رقمَ الحلقة إلى طلبِ مراجعة", mislabeled.length, 0);
+
+      //  ② صفٌّ بلا حلقة ⟶ `medical_review_request` بمعرّف الطلب المسحوب.
+      const p2 = await mkPatient("ف-بلا-حلقة", "medical_support");
+      const c2 = await mkCase(p2, "medical_support");
+      const rid2 = await mkBareRequest(p2, c2, "medical_support");
+      const r2 = await cancelRequest(p2, "medical_support", null);
+      same("ف٥. الإلغاء ينجح", r2.status, 200);
+      same("ف٦. ولا حلقةَ فيه", r2.body?.cancelledEpisodeId, null);
+      const reqAudit = await auditOf("medical_review_request", rid2);
+      check(reqAudit.length === 1,
+        "ف٧. وسطرُه `medical_review_request` بمعرّف الطلب", JSON.stringify(reqAudit));
+      //  ③ **والثابتُ العامّ**: كلُّ سطرٍ كتبته هذه النقطةُ يشير إلى صفٍّ
+      //  موجودٍ **من نوعه هو**. هذا هو العطبُ بعينه محسوماً حتمياً لا
+      //  بتصادفِ أرقام: رقمُ حلقةٍ تحت نوع «طلب مراجعة» يُنسَب إلى طلبٍ آخر
+      //  إن وُجد بذلك الرقم، ويغيب عن تاريخ الحلقة التي أُلغيت فعلاً.
+      const written = await q<{ entity_type: string; entity_id: number }>(
+        `SELECT entity_type, entity_id FROM audit_log
+          WHERE action='update' AND notes LIKE 'إلغاء طلب معاينة%'
+            AND created_at >= $1
+            AND entity_type IN ('medical_review_request','patient_device_episode')`,
+        [runStart]);
+      check(written.length > 0, "ف٨. النقطةُ كتبت سطورَ تدقيق فعلاً", String(written.length));
+      const dangling: string[] = [];
+      for (const row of written) {
+        const table = row.entity_type === "medical_review_request"
+          ? "medical_review_requests" : "patient_device_episodes";
+        const hit = await q(`SELECT 1 FROM ${table} WHERE id=$1`, [row.entity_id]);
+        if (hit.length === 0) dangling.push(`${row.entity_type}#${row.entity_id}`);
+      }
+      same("ف٩. وكلُّ سطرٍ يشير إلى صفٍّ موجودٍ من نوعه هو", dangling, []);
+      //  والحاسمُ: لا سطرَ من نوع «طلب مراجعة» يحمل رقمَ حلقةٍ أُلغيت.
+      const epIds = (await q<{ id: number }>(
+        `SELECT id FROM patient_device_episodes WHERE status='cancelled'
+           AND patient_id IN (SELECT id FROM patients WHERE referral_source=$1)`, [MARK]))
+        .map((r) => r.id);
+      const crossed = written.filter((w) =>
+        w.entity_type === "medical_review_request" && epIds.includes(w.entity_id));
+      same("ف١٠. ولا سطرَ «طلب مراجعة» يحمل رقمَ حلقةٍ مُلغاة", crossed, []);
     }
 
     // ══ ن. عقدُ الشاشة والحارسُ المعماريّ ══════════════════════════════
