@@ -578,6 +578,124 @@ async function main() {
       same("٦٩. **وطلبٌ واحدٌ بالضبط أخيراً — من المسار الصحيح**", Number(finalCount[0].n), 1);
     }
 
+    // ══ (١٣) قرارٌ سابقٌ **بلا حلقة جهاز** — العطبُ المُبلَّغ من الإنتاج ══
+    //
+    // ── الواقعةُ المُعادُ إنتاجُها ────────────────────────────────────────
+    // الطبيبُ يوقّع معاينةً **قبل أن يفتح الاستقبالُ طلبَ جهاز** — مسارٌ
+    // قائمٌ ومدعوم (٤.p: «صفرٌ = معاينةٌ بلا جهاز (الموروث)») — فتُولَد
+    // المتابعةُ بـ`device_episode_id IS NULL`. ثمّ يسجّل الاستقبالُ «لم
+    // يشترِ» (البابُ المبسَّط يردّه ٤٠٩ لأنه ليس على مسارٍ بحلقة، فيُستعمَل
+    // البابُ الموروث). فيصير على الملفّ **قرارُ رفضٍ حقيقيّ**.
+    //
+    // وكانت الأهليّةُ تبدأ `FROM patient_device_episodes` وحدَها، فلا ترى
+    // هذا القرارَ أبداً: يعود المريضُ فعلاً ويقرأ الموظّفُ «لا توجد عملية
+    // سابقة مؤهلة للعودة للشراء لهذا المريض».
+    console.log("\n── ١٣. قرارٌ سابقٌ بلا حلقة جهاز ──");
+    {
+      const pid = await mkPatient("بلا-حلقة", { isAmputee: true });
+      await mkCase(pid, 1, "prosthetic");
+
+      //  معاينةٌ بلا طلبِ جهازٍ مفتوح — المسارُ الموروث بعينه.
+      const exam = await signExam(pid, S.doc, "prosthetic");
+      same("١٣.١. المعاينةُ تُوقَّع بلا طلبِ جهازٍ مفتوح", exam.status, 200);
+      const fu = (await q<{ id: number; device_episode_id: number | null }>(
+        `SELECT id, device_episode_id FROM post_exam_followups
+          WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid]))[0];
+      check(!!fu && fu.device_episode_id === null,
+        "١٣.٢. **والمتابعةُ تُولَد بلا حلقة** — شكلُ العطب", JSON.stringify(fu));
+      same("١٣.٣. ولا حلقةَ على الملفّ إطلاقاً",
+        Number((await q<{ n: number }>(
+          `SELECT count(*)::int n FROM patient_device_episodes WHERE patient_id=$1`, [pid]))[0].n), 0);
+
+      //  «لم يشترِ» — البابُ المبسَّط لا يقبلها (ليست على مسارٍ بحلقة)،
+      //  فالبابُ الموروث هو ما يستعمله الاستقبالُ فعلاً.
+      const viaNew = await http("POST", `/api/followups/${fu.id}/not-bought`, S.recv,
+        { reason: "السعر غالٍ حالياً" });
+      same("١٣.٤. البابُ المبسَّط يردّها ٤٠٩ (ليست على مسارٍ بحلقة)", viaNew.status, 409);
+      const closed = await http("POST", `/api/followups/${fu.id}/close`, S.recv,
+        { reason: "other", note: "لم يشترِ — السعر غالٍ" });
+      same("١٣.٥. والبابُ الموروث يسجّل القرار", closed.status, 200);
+      same("١٣.٦. فالقرارُ «لم يشترِ» قائمٌ على الملفّ",
+        (await q<{ status: string }>(
+          `SELECT status FROM post_exam_followups WHERE id=$1`, [fu.id]))[0].status,
+        "closed_without_purchase");
+
+      //  ══ **الإصلاح**: القرارُ بلا حلقة يُعرَض مؤهَّلاً ══════════════════
+      const elig = await eligibleRows(pid);
+      same("١٣.٧. **والأهليّةُ تراه الآن** — لا «لا توجد عملية سابقة»",
+        elig.rows.length, 1);
+      same("١٣.٨. بلا حلقةٍ مُخترَعة — الهويّةُ متابعتُه", elig.rows[0]?.episodeId, null);
+      same("١٣.٩. وهويّتُه متابعتُه بعينها", elig.rows[0]?.followupId, fu.id);
+      same("١٣.١٠. وقسمُه صحيح", elig.rows[0]?.serviceType, "prosthetic");
+
+      //  ══ التنفيذ — طلبُ المراجعة وحدَه، ولا شيءَ يُخترَع أو يُمحى ═══════
+      const beforeEpisodes = await q(`SELECT id FROM patient_device_episodes WHERE patient_id=$1`, [pid]);
+      const beforeFollowups = await q(
+        `SELECT id, status, device_episode_id, closed_reason FROM post_exam_followups
+          WHERE patient_id=$1 ORDER BY id`, [pid]);
+      const beforeExams = await q(
+        `SELECT id, signed_at, diagnosis FROM medical_exams WHERE patient_id=$1 ORDER BY id`, [pid]);
+
+      const go = await http("POST", "/api/followups/return-to-purchase", S.recv,
+        { patientId: pid, followupId: fu.id });
+      same("١٣.١١. **«عاد للشراء» ينجح للقرار بلا حلقة**", go.status, 201);
+      same("١٣.١٢. ويُعلن صراحةً أن لا حلقةَ له", go.body?.episodeId, null);
+
+      const mrr = await q<{ status: string; review_kind: string; requested_path: string; device_episode_id: number | null }>(
+        `SELECT status, review_kind, requested_path, device_episode_id
+           FROM medical_review_requests WHERE patient_id=$1`, [pid]);
+      same("١٣.١٣. **والأثرُ الوحيد طلبُ مراجعةٍ كاملة بلا مرساة**",
+        mrr.map((r) => [r.status, r.review_kind, r.requested_path, r.device_episode_id]),
+        [["pending", "return_to_purchase", "full", null]]);
+
+      //  **ولا يُفبرَك تاريخ**: لا حلقةَ تُنشأ، ولا متابعةَ تُعدَّل، ولا
+      //  معاينةَ تُمَسّ — بصمةُ الثلاثة مطابقةٌ قبل وبعد.
+      same("١٣.١٤. **ولا حلقةَ جهازٍ تُخترَع**",
+        await q(`SELECT id FROM patient_device_episodes WHERE patient_id=$1`, [pid]), beforeEpisodes);
+      same("١٣.١٥. **ولا متابعةَ تُعدَّل ولا تُمحى**",
+        await q(`SELECT id, status, device_episode_id, closed_reason FROM post_exam_followups
+                  WHERE patient_id=$1 ORDER BY id`, [pid]), beforeFollowups);
+      same("١٣.١٦. **ولا معاينةَ تُمَسّ**",
+        await q(`SELECT id, signed_at, diagnosis FROM medical_exams WHERE patient_id=$1 ORDER BY id`, [pid]),
+        beforeExams);
+
+      //  والمريضُ صار في طابور الطبيب، فلا يُعرَض عليه الخيارُ ثانيةً.
+      same("١٣.١٧. **ولا يُعرَض الخيارُ ثانيةً** — المريضُ في الطابور",
+        (await eligibleRows(pid)).rows.length, 0);
+      const again = await http("POST", "/api/followups/return-to-purchase", S.recv,
+        { patientId: pid, followupId: fu.id });
+      same("١٣.١٨. والضغطةُ الثانية تُردّ ٤٠٩", again.status, 409);
+      same("١٣.١٩. وطلبٌ واحدٌ بالضبط",
+        Number((await q<{ n: number }>(
+          `SELECT count(*)::int n FROM medical_review_requests WHERE patient_id=$1`, [pid]))[0].n), 1);
+    }
+
+    // ── ١٤. وليست توسعةً عمياء: حلقةٌ حيّةٌ تُسقِط العرضَ بلا مرساة ──────
+    //  وجودُ طلبِ جهازٍ قائمٍ يعني أن المرساةَ هي البابُ الدقيق، فلا يُضاف
+    //  إليه عرضٌ غامضٌ من قرارٍ قديمٍ بلا حلقة.
+    console.log("\n── ١٤. حلقةٌ حيّةٌ تُسقِط العرضَ بلا مرساة ──");
+    {
+      const pid = await mkPatient("بلا-حلقة-ثمّ-طلب", { isAmputee: true });
+      await mkCase(pid, 1, "prosthetic");
+      const exam = await signExam(pid, S.doc, "prosthetic");
+      same("١٤.١. الإعدادُ: معاينةٌ بلا حلقة", exam.status, 200);
+      const fu = (await q<{ id: number }>(
+        `SELECT id FROM post_exam_followups WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid]))[0];
+      await http("POST", `/api/followups/${fu.id}/close`, S.recv,
+        { reason: "other", note: "لم يشترِ" });
+      same("١٤.٢. والقرارُ مؤهَّلٌ وحدَه", (await eligibleRows(pid)).rows.length, 1);
+
+      //  ثمّ يفتح الاستقبالُ طلبَ جهازٍ صريحاً.
+      const ep = await http("POST", `/api/patients/${pid}/device-episodes`, S.recv,
+        { serviceType: "prosthetic", servicePath: "exam" });
+      same("١٤.٣. فتحُ طلبِ جهازٍ ينجح", ep.status, 201);
+      same("١٤.٤. **فيسقط العرضُ بلا مرساة** — لا عرضين متنافسين",
+        (await eligibleRows(pid)).rows.length, 0);
+      const blocked = await http("POST", "/api/followups/return-to-purchase", S.recv,
+        { patientId: pid, followupId: fu.id });
+      same("١٤.٥. والتنفيذُ يُردّ ٤٠٩ تحت القفل أيضاً", blocked.status, 409);
+    }
+
     console.log(
       "\nملاحظة: آليّةُ إتمام البيع نفسِها (المالكية، اشتقاقُ السعر، التزامن…) "
       + "مُختبَرةٌ بتفصيلٍ في server/reception_sale.test.ts؛ توقيعُ المعاينة ومتابعةُ ما بعدها "
