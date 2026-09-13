@@ -224,7 +224,7 @@ export function PatientMedicalExams({
       if (!res.ok) throw new Error((await res.json())?.error || "تعذّر إلغاء المعاينة");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (out: any) => {
       //  الإلغاءُ يحرّك أكثر من شاشة: السجلّ، وطابورَ الانتظار، وقائمةَ عمل
       //  الطبيب، وحلقةَ الجهاز ومتابعتَها — فتُبطَل كلُّها لا واحدة.
       queryClient.invalidateQueries({ queryKey });
@@ -236,7 +236,14 @@ export function PatientMedicalExams({
       queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}`] });
       setCancelling(null);
       setCancelReason("");
-      toast({ title: "أُلغيت المعاينة", description: "بقيت محفوظة في سجل التدقيق." });
+      //  **والرسالةُ تقول ما وقع فعلاً**: إرجاعُ طلب الجهاز أثرٌ يراه الموظّف
+      //  في شاشةٍ أخرى، فيُقال هنا لا يُترك ليُكتشَف.
+      toast({
+        title: "أُلغيت المعاينة",
+        description: out?.episodeReset != null
+          ? "بقيت محفوظة في سجل التدقيق، وعاد طلب الجهاز إلى بانتظار المعاينة."
+          : "بقيت محفوظة في سجل التدقيق.",
+      });
     },
     onError: (e: any) =>
       toast({ title: "تعذّر الإلغاء", description: e?.message, variant: "destructive" }),

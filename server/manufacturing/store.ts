@@ -19,6 +19,10 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { buildPatientSearch, trigramReady } from "../patient_search/sql";
 import { activePatientDrizzle } from "../patients/active_patient";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
+import { activeExamSql } from "../medical/active_exam";
+import {
+  orderDeviceSpecs, deviceSpecsFromPrescription, hasAnySpec, type OrderDeviceSpecs,
+} from "../medical/episode_prescription";
 import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
   isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
@@ -718,6 +722,22 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
       holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
       patientName: patients.name, prostheticType: patients.prostheticType, supportType: patients.supportType,
       branchName: branches.name, expertName: systemUsers.displayName,
+      deviceEpisodeId: WO.deviceEpisodeId,
+      // ══ **ما يُصنَع من معاينة هذا الجهاز هو** (المرحلة الثانية، MULTI-2) ═══
+      //  عمودُ المريض `prosthetic_type`/`support_type` تكتبه آخرُ معاينةٍ
+      //  وُقّعت لأيّ جهاز، فبطاقةُ أمر A كانت تقرأ نوعَ B بعد معاينة B. أمرٌ
+      //  له حلقةٌ بمعاينةٍ فعّالة يقرأ نوعَه من وصفتها هي — ولو تركته فارغاً
+      //  يبقى فارغاً لا مقترَضاً. والأمرُ الموروث (بلا هويّة) على العمود كما كان.
+      //  وتُقرأ الوصفةُ كاملةً لا حقلاً منها: قاعدةُ «أيُّ مفتاحٍ يكفي، وبلا
+      //  مفتاحٍ نعود لملفّ المريض» تعيش في `episode_prescription.ts` وحدها،
+      //  فلا تُكتَب مرّةً ثانيةً بـSQL هنا ثمّ تنحرف عنها.
+      episodePrescription: sql<unknown>`(
+        SELECT me.prescription
+          FROM medical_exams me
+         WHERE me.device_episode_id = ${WO.deviceEpisodeId}
+           AND ${activeExamSql("me")}
+         ORDER BY me.signed_at DESC, me.id DESC
+         LIMIT 1)`,
     })
     .from(WO)
     .innerJoin(patients, eq(patients.id, WO.patientId))
@@ -727,6 +747,24 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
     .orderBy(desc(WO.createdAt));
 
   return enrichOrders(rows);
+}
+
+/** نوعُ ما يُصنَع لبطاقة الأمر — من معاينة الجهاز إن قالته، وإلّا من ملفّ المريض. */
+function itemTypeOf(r: {
+  serviceType: string; prostheticType?: string | null; supportType?: string | null;
+  episodePrescription?: unknown;
+}): string | null {
+  const fromFile = r.serviceType === "medical_support"
+    ? (r.supportType ?? null) : (r.prostheticType ?? null);
+  if (r.serviceType !== "prosthetic" && r.serviceType !== "medical_support") return fromFile;
+  const rx = r.episodePrescription;
+  if (!rx || typeof rx !== "object" || Array.isArray(rx)) return fromFile;
+  const specs = deviceSpecsFromPrescription(r.serviceType, rx as Record<string, unknown>);
+  //  **بلا مفتاحٍ واحد ليست حقيقةً عن الجهاز** ⟶ ملفُّ المريض كما كان. وبمفتاحٍ
+  //  واحدٍ فأكثر يصير الجهازُ هو المصدر: نوعٌ لم تقله وصفتُه يبقى فارغاً **لا
+  //  مستعاراً** من عمودٍ كتبه جهازٌ آخر.
+  if (!hasAnySpec(specs)) return fromFile;
+  return (r.serviceType === "medical_support" ? specs.supportType : specs.prostheticType) ?? null;
 }
 
 async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
@@ -781,7 +819,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
       purpose: r.purpose ?? "initial_build",
-      itemType: r.serviceType === "medical_support" ? (r.supportType ?? null) : (r.prostheticType ?? null),
+      itemType: itemTypeOf(r),
       currentStage: r.currentStage,
       status: r.status,
       expertUserId: r.expertUserId,
@@ -821,12 +859,30 @@ export async function getOrderDetail(id: number) {
       finalNotes: WO.finalNotes, expertUserId: WO.expertUserId, assignedBy: WO.assignedBy,
       createdAt: WO.createdAt,
       branchName: branches.name, expertName: systemUsers.displayName,
+      //  **هويّةُ الجهاز** (المرحلة الثانية، MULTI-2): الأمرُ يعرف حلقتَه، فتُقرأ
+      //  مواصفاتُه من معاينة تلك الحلقة لا من أعمدة المريض المشتركة.
+      deviceEpisodeId: WO.deviceEpisodeId,
+      requestedItem: PDE.requestedItem,
+      sequenceNumber: PDE.sequenceNumber,
     })
     .from(WO)
     .leftJoin(branches, eq(branches.id, WO.branchId))
     .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
+    .leftJoin(PDE, eq(PDE.id, WO.deviceEpisodeId))
     .where(eq(WO.id, id));
   if (!order) return null;
+
+  // ══ **مواصفاتُ هذا الجهاز من معاينته هو** — والمصدرُ مُعلَن ═══════════════
+  //  أعمدةُ المريض (`expertPatientColumns`) كتبتها آخرُ معاينةٍ وُقّعت لأيّ
+  //  جهازٍ من أجهزته: بعد معاينة B كانت صفحةُ أمر A تعرض نوعَ B وجهتَه، وبعد
+  //  معاينة مسندٍ تعرض جهةَ المسند على أمر الطرف. فالمواصفاتُ تُقرأ من وصفة
+  //  حلقة الأمر (أحدثُ معاينةٍ فعّالة عليها — والتحريرُ السريريّ اللاحق لها
+  //  يظهر هنا لأنه يكتب على الصفّ نفسِه)، ويُقال `source: "patient_file"` بصدق
+  //  للأمر الموروث بلا هويّة جهاز أو بلا معاينةٍ فعّالة — لا خلطٌ صامت.
+  const deviceSpecs: OrderDeviceSpecs =
+    order.serviceType === "prosthetic" || order.serviceType === "medical_support"
+      ? await orderDeviceSpecs(order.deviceEpisodeId ?? null, order.serviceType)
+      : { source: "patient_file" };
 
   //  **وأمرُ ملفٍّ محذوفٍ لا يُفتَح** (ترحيل ٠٦٨): بلا مريضٍ يعود `null`
   //  فتُردّ الصفحةُ ٤٠٤ — وهو الصدق، الأمرُ باقٍ لكن ملفَّه خرج من النظام.
@@ -878,6 +934,7 @@ export async function getOrderDetail(id: number) {
       reworkCount,
     },
     patient: patient ? { ...patient, branchName: order.branchName ?? null } : null,
+    deviceSpecs,
     timeline,
     rework,
     dateChanges,
