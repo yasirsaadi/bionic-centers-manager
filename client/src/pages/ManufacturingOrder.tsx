@@ -162,14 +162,24 @@ export default function ManufacturingOrder() {
           <Info label="الطول" value={patient?.height} />
           <Info label="تاريخ الإصابة" value={patient?.injuryDate} />
           <Info label="سبب الإصابة" value={patient?.injuryCause} />
-          {deviceSpecs?.source !== "exam" && (
-            <>
-              <Info label="موقع البتر" value={patient?.amputationSite} />
-              <Info label="نوع الطرف" value={patient?.prostheticType} />
-              <Info label="نوع المسند" value={patient?.supportType} />
-              <Info label="جهة الإصابة" value={patient?.injurySide} />
-            </>
+          {/* ══ ولا يُخفى عن الخبير ما كان يقرؤه ═════════════════════════════
+              أوّلُ تنفيذٍ كان يُخفي هذه الأربعةَ متى عُرفت معاينةُ الجهاز.
+              لكنّ **موقعَ البتر وجهةَ الإصابة ليسا من مفاتيح الوصفة**، والبانيَ
+              اختياريٌّ في نافذة التوقيع: فطبيبٌ يكتب نوعَ الطرف ولا يلمس
+              البانيَ كان يترك الشاشةَ بلا موقعِ بترٍ إطلاقاً — وهو أحملُ
+              حقيقةٍ في بناء طرف. فتبقى معروضةً دائماً، **ويُقال من أين هي**:
+              المعتمَدُ لهذا الجهاز بطاقتُه أعلاه، وهذه من الملفّ. */}
+          {deviceSpecs?.source === "exam" && (
+            <p className="col-span-2 md:col-span-3 text-xs text-muted-foreground"
+               data-testid="note-patient-file-specs">
+              الحقول السريرية أدناه من ملف المريض — قد تخصّ جهازاً آخر إن كان له
+              أكثر من جهاز. المعتمَد لهذا الجهاز ما في بطاقة معاينته أعلاه.
+            </p>
           )}
+          <Info label="موقع البتر" value={patient?.amputationSite} />
+          <Info label="نوع الطرف" value={patient?.prostheticType} />
+          <Info label="نوع المسند" value={patient?.supportType} />
+          <Info label="جهة الإصابة" value={patient?.injurySide} />
           <Info label="تصنيف المريض" value={patient?.patientClassification} />
         </CardContent>
       </Card>

@@ -37,9 +37,18 @@ check("٥. ويسمّي الجهازَ برقمه وما طُلب ومَن عا�
   && page.includes("deviceSpecs.doctorName"));
 check("٦. **والأمرُ الموروث يُقال عنه صراحةً** ويبقى على ملفّ المريض",
   page.includes('data-testid="note-device-specs-patient-file"')
-  && page.includes('{deviceSpecs?.source !== "exam" && ('));
-check("٧. ولا تُعرَض أعمدةُ المريض المشتركة بوصفها مواصفاتِ الجهاز حين تُعرَف معاينتُه",
-  /deviceSpecs\?\.source !== "exam" && \(\s*<>\s*<Info label="موقع البتر" value=\{patient\?\.amputationSite\}/.test(page));
+  && page.includes("أمرٌ بلا معاينة جهازٍ مرتبطة — المواصفات أدناه من ملف المريض كما كان."));
+// ══ ولا يُخفى عن الخبير ما كان يقرؤه ═══════════════════════════════════
+// موقعُ البتر وجهةُ الإصابة ليسا من مفاتيح الوصفة، والبانيَ اختياريٌّ في
+// نافذة التوقيع — فإخفاءُ أعمدة الملفّ متى عُرفت المعاينةُ كان يترك شاشةَ
+// الخبير بلا موقعِ بترٍ إطلاقاً. فتبقى معروضةً دائماً ويُقال من أين هي.
+check("٧. **أعمدةُ المريض السريرية معروضةٌ دائماً** — لا تُخفى بوجود معاينة",
+  page.includes('<Info label="موقع البتر" value={patient?.amputationSite} />')
+  && page.includes('<Info label="جهة الإصابة" value={patient?.injurySide} />')
+  && !/deviceSpecs\?\.source !== "exam" && \(\s*<>\s*<Info label="موقع البتر"/.test(page));
+check("٨. **ويُقال إنها من الملفّ** حين تُعرَف معاينةُ الجهاز — فلا تُقرأ مواصفاتِه",
+  page.includes('data-testid="note-patient-file-specs"')
+  && page.includes('المعتمَد لهذا الجهاز ما في بطاقة معاينته أعلاه.'));
 
 console.log(failures === 0 ? "\n✅ كل الاختبارات نجحت" : `\n❌ ${failures} فشل`);
 process.exit(failures === 0 ? 0 : 1);
