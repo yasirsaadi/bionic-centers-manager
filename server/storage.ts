@@ -57,11 +57,17 @@ import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
 import {
   lockCaseAndReadOpenEpisode, lockCaseAndReadExactEpisode,
-  markEpisodeInManufacturing, caseHasEpisodes,
+  markEpisodeInManufacturing,
   startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
+import {
+  classifyCaseDisposal, disposeCaseScaffolding,
+  CaseDisposalBlockedError, type CaseScaffolding,
+} from "./patient_cases/disposal";
+import { reopenClosedCaseTx } from "./patient_cases/reopen";
+import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
@@ -1427,7 +1433,19 @@ export class DatabaseStorage implements IStorage {
     const markerCostOf = (t: string) => t === "prosthetic" ? prostheticMarkerCost : t === "medical_support" ? supportMarkerCost : 0;
     let movedFromHolder = 0;
     const create = async (t: string) => {
-      if (has(t)) return;
+      if (has(t)) {
+        //  ══ **والمغلقةُ تُفتَح، ولا تُستنسَخ** ═══════════════════════════
+        //  الخدمةُ مطلوبةٌ الآن (`want…` هي ما استدعى هذه الدالّة)، والصفُّ
+        //  موجودٌ لكنه مغلق. فيُفتَح **هو** — لا صفٌّ ثانٍ (الفهرسُ الفريد
+        //  يمنعه، وهو الصواب: كلُّ التاريخ مربوطٌ بهذا المعرّف). ولا تُمَسّ
+        //  كلفتُه ولا تفاصيلُه، فحسابُ `movedFromHolder` أدناه لا يتحرّك:
+        //  الفتحُ ليس إنشاءً ولا يحرّك ديناراً.
+        const existing = preExisting.find((c) => c.caseType === t);
+        if (existing && existing.status === "closed") {
+          await reopenClosedCaseTx(tx, existing.id);
+        }
+        return;
+      }
       let cost = markerCostOf(t);
       if (firstEver && t === primaryType) cost = Math.max(0, (p.totalCost || 0) - otherCosts);
       else if (!firstEver && cost > 0) movedFromHolder += cost; // moving this out of the pre-existing holder
@@ -2452,10 +2470,25 @@ export class DatabaseStorage implements IStorage {
 
   // ADMIN-ONLY case-type deletion («حذف نوع حالة») — also the cleaner for
   // GHOST cases left by the old destructive edit (flag wiped, case row kept).
+  //
+  // ══ **السقالةُ تُسحَب، والتاريخُ يُحمى** (المرحلة الثالثة — تدقيق
+  //    ٢٠٢٦-٠٩-١٢: CASEDEL-01/02/03/05 · INT-06) ═══════════════════════════
+  // كان الحارسُ `caseHasEpisodes` — وجودُ صفٍّ واحد في `patient_device_episodes`
+  // مهما كانت حالتُه. والتطبيقُ **يفتح الحلقةَ تلقائياً** عند «إضافة نوع حالة»
+  // أو «طلب جهاز»، فخطأُ إدخالٍ في ثانية صار غيرَ قابلٍ للتراجع إلى الأبد —
+  // ولا إلغاءُ الحلقة يفكّه (الملغاةُ صفٌّ أيضاً)، ولا التصحيحُ الإداريّ يبلغه
+  // (لا بيعَ ليُعكَس). فصار القرارُ قاعدةً واحدة في `patient_cases/disposal.ts`:
+  // **الخلودُ يُكتسَب بالتاريخ لا بوجود الصفّ.**
+  //
   // Safety model:
-  //   - BLOCKED while manufacturing history (any work order) or payments
-  //     TAGGED for this type exist — real history is never deleted, and those
-  //     are resurrection signals syncPatientCases would rebuild the case from.
+  //   - `classifyCaseDisposal` تُنادى **داخل المعاملة وتحت قفل المريض** —
+  //     حالةُ الشاشة ليست حدَّ أمان: بين العرض والضغطة قد يوقّع طبيبٌ معاينةً
+  //     أو يُفتَح أمرُ تصنيع. وهي تشمل الحارسين القديمين (أوامرُ التصنيع
+  //     والدفعاتُ الموسومة) بنصّهما، وتزيد: المعاينةُ، والمتابعةُ، والمبلغُ
+  //     المعلَّق، وطلبُ الخصم، والحلقةُ ذاتُ التاريخ، وطلبُ المراجعة المحسوم.
+  //   - القابلُ للسحب يُزال هو **وسقالتُه وحدها**: حلقاتٌ لا يشير إليها شيء،
+  //     وطلباتُ مراجعةٍ معلَّقةٌ تُسحَب (لا تُمحى — ترحيل ٠٧٩)، وزيارةُ
+  //     العلامة تُحذف ناعماً.
   //   - The case's visits/payments are re-pointed to the remaining case
   //     (physio first) or detached (case_id NULL) — never deleted.
   //   - Cost: 'manual' (a priced business event) is SUBTRACTED from
@@ -2464,7 +2497,11 @@ export class DatabaseStorage implements IStorage {
   //     stay untouched. No remaining case → subtract.
   //   - The type's flag AND its detail columns are cleared so no signal
   //     resurrects the case on the next sync.
-  async deleteCaseType(patientId: number, caseType: "prosthetic" | "medical_support" | "physiotherapy"): Promise<{ movedRows: number }> {
+  async deleteCaseType(
+    patientId: number,
+    caseType: "prosthetic" | "medical_support" | "physiotherapy",
+    actor?: { userId?: number | null; userName?: string | null; reason?: string | null },
+  ): Promise<{ movedRows: number; disposed: CaseScaffolding }> {
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
@@ -2474,24 +2511,20 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
       if (!row) throw new Error("لا توجد حالة من هذا النوع لهذا المريض");
 
-      // **الحلقة تاريخُ جهازٍ دائم.** خيطٌ يملك حلقةً واحدة لا يُحذف: لا
-      // بانتظار انفجار مفتاحٍ أجنبي، ولا بنقل الحلقات أو حذفها تلقائياً.
-      // يُفحَص **قبل** أي تعديل، فالرفض لا يترك أثراً — وقبل حارس أوامر
-      // التصنيع أيضاً، لأن حلقةً بلا أمر (طلبٌ لم يُخصَّص بعد) لا يمسكها
-      // ذاك الحارس أصلاً.
-      if (await caseHasEpisodes(tx, row.id)) {
-        throw new Error("يوجد سجل أجهزة لهذا النوع — لا يمكن حذفه");
-      }
+      //  **القرارُ يُؤخَذ هنا، تحت القفل، لا قبله.** ويُرفَض قبل أيّ كتابة،
+      //  فالمردودُ لا يترك أثراً — لا نصفَ تنظيف.
+      const verdict = await classifyCaseDisposal(tx, {
+        patientId, caseId: row.id, caseType,
+      });
+      if (!verdict.disposable) throw new CaseDisposalBlockedError(verdict.blocker);
 
-      if (caseType !== "physiotherapy") {
-        const wos = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
-          .where(and(eq(prostheticWorkOrders.patientId, patientId), eq(prostheticWorkOrders.serviceType, caseType))).limit(1);
-        if (wos.length > 0) throw new Error("يوجد سجل تصنيع لهذا النوع — لا يمكن حذفه");
-        const tag = caseType === "prosthetic" ? "أطراف صناعية" : "مساند طبية";
-        const tagged = await tx.select({ id: payments.id }).from(payments)
-          .where(and(eq(payments.patientId, patientId), sql`${payments.paymentTreatmentType} LIKE ${"%" + tag + "%"}`)).limit(1);
-        if (tagged.length > 0) throw new Error("توجد دفعات موسومة لهذا النوع — عدّل تصنيفها أولاً ثم احذف");
-      }
+      const reason = (actor?.reason ?? "").trim()
+        || "سُحب نوع الحالة من ملفّ المريض (خطأُ إدخال)";
+      await disposeCaseScaffolding(tx, {
+        scaffolding: verdict.scaffolding,
+        reason,
+        actor: { userId: actor?.userId ?? null, userName: actor?.userName ?? null },
+      });
 
       const others = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), sql`${patientCases.id} <> ${row.id}`));
@@ -2528,7 +2561,7 @@ export class DatabaseStorage implements IStorage {
           : { isPhysiotherapy: false, diseaseType: null, injuries: null, injuryType: null, injuryArea: null, treatmentType: null };
       await tx.update(patients).set(clear).where(eq(patients.id, patientId));
 
-      return { movedRows: rp.length + rv.length };
+      return { movedRows: rp.length + rv.length, disposed: verdict.scaffolding };
     });
   }
 
@@ -2661,12 +2694,12 @@ export class DatabaseStorage implements IStorage {
       const collided = await tx.execute<{ id: number; branch_id: number | null }>(sql`
         SELECT s.id, s.branch_id FROM post_exam_followups s
          WHERE s.patient_id = ${sourceId}
-           AND s.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+           AND s.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
            AND EXISTS (
              SELECT 1 FROM post_exam_followups t
               WHERE t.patient_id = ${targetId}
                 AND t.service_type = s.service_type
-                AND t.status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+                AND t.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
            )
       `);
       for (const row of (collided.rows ?? [])) {

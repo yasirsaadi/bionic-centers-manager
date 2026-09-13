@@ -109,6 +109,8 @@
     "test:exam-identity-ui": "tsx client/src/components/medical/exam_device_identity_ui.test.ts",
     "test:exam-cancel-safety": "tsx server/exam_cancellation_safety.test.ts",
     "test:device-prescription": "tsx server/device_prescription.test.ts",
+    "test:case-disposal": "tsx server/case_disposal.test.ts",
+    "test:case-closure": "tsx server/case_closure.test.ts",
     "test:manufacturing-order-ui": "tsx client/src/pages/manufacturing_order_ui.test.ts",
     "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",

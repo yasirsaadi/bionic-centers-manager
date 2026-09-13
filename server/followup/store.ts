@@ -21,7 +21,7 @@ import { sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { deviceDiscountRefs } from "@shared/discount";
 import {
-  computeCommercialPrice, isFollowupReason, isTerminal,
+  computeCommercialPrice, isFollowupReason, isTerminal, TERMINAL_STATUS_SQL_LIST,
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 import {
@@ -380,7 +380,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
          ORDER BY id DESC LIMIT 1
       ) cl ON TRUE
      WHERE f.patient_id = ${patientId}
-     ORDER BY (f.status NOT IN ('closed_without_purchase','converted','closed_exam_cancelled','closed_admin_void')) DESC, f.id DESC
+     ORDER BY (f.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})) DESC, f.id DESC
   `);
   return (r.rows ?? []).map((x: any) => ({
     ...toRow(x),
@@ -484,7 +484,7 @@ export async function approvedPriceFor(params: {
     SELECT approved_price, price_source FROM post_exam_followups
      WHERE patient_id = ${params.patientId}
        AND service_type = ${params.serviceType}
-       AND status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+       AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
        AND (${params.deviceEpisodeId}::int IS NULL
             OR device_episode_id = ${params.deviceEpisodeId}::int)
      ORDER BY id DESC LIMIT 1
@@ -503,7 +503,7 @@ export async function hasActiveFollowup(params: {
   const r = await db.execute(sql`
     SELECT 1 FROM post_exam_followups
      WHERE patient_id = ${params.patientId} AND service_type = ${params.serviceType}
-       AND status NOT IN ('closed_without_purchase', 'converted', 'closed_exam_cancelled')
+       AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
      LIMIT 1
   `);
   return (r.rows ?? []).length > 0;

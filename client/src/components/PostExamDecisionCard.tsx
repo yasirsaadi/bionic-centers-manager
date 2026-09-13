@@ -131,6 +131,8 @@ const STATUS_TONE: Record<string, string> = {
   closed_exam_cancelled: "bg-gray-100 text-gray-600",
   //  والملغاةُ إدارياً كذلك: تصحيحٌ وقع لا خطأٌ ينتظر أحداً.
   closed_admin_void: "bg-gray-100 text-gray-600",
+  //  وسحبُ طلبِ الجهاز كذلك (ترحيل ٠٧٩): الطلبُ سُحب ولا شيءَ ينتظر.
+  closed_request_cancelled: "bg-gray-100 text-gray-600",
   converted: "bg-green-100 text-green-800",
 };
 
@@ -181,8 +183,12 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  فرعَها (تصحيحٌ 2026-08-28) ═══════════════════════════════════════════
   //  حسابٌ عاديّ لا خطّاف React، فنقلُه فوق باقي الاستعلامات آمنٌ ولا يخالف
   //  قاعدة الخطّافات. والتكرارُ اللاحق حُذف — هذا هو المصدر الوحيد الآن.
-  const terminal = new Set(["closed_admin_void", "closed_exam_cancelled", "closed_without_purchase"]);
-  const active = (followups ?? []).find((f) => !terminal.has(f.status))
+  //  **والقائمةُ من المصدر القانونيّ** (`TERMINAL_STATUSES`) لا مجموعةٌ
+  //  ثانية تُكتب هنا: نسيانُ طرفيّةٍ جديدة كان يجعل البطاقةَ تعرض متابعةً
+  //  متقاعدةً بوصفها فعّالة. و`converted` كانت ناقصةً من المجموعة القديمة
+  //  عمداً — الشراءُ يُعرَض — وهذا محفوظٌ: الشرطُ يستثنيها صراحةً.
+  const active = (followups ?? []).find(
+    (f) => f.status === "converted" || !isTerminal(f.status))
     ?? (followups ?? [])[0] ?? null;
 
   //  ══ **قائمةُ الخبراء بفرع العملية المُباعة — لا فرع الجلسة** (تصحيحٌ

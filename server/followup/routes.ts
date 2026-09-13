@@ -611,13 +611,23 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       return res.status(403).json({ error: "غير مصرح لك بإرسال طلب مراجعة" });
     }
     const patientId = Number(req.body?.patientId);
-    const deviceEpisodeId = Number(req.body?.deviceEpisodeId);
-    if (!Number.isFinite(patientId) || !Number.isFinite(deviceEpisodeId)) {
+    //  **مرساتان لا واحدة**: جهازٌ بعينه، أو — لقرارٍ سابقٍ بلا حلقة —
+    //  المتابعةُ نفسُها. والغيابُ الصريح وحده يفتح الثانية، فقيمةٌ مشوَّهة
+    //  في `deviceEpisodeId` تُردّ ولا تُقرأ «بلا جهاز» بصمت.
+    const rawEpisode = req.body?.deviceEpisodeId;
+    const hasEpisode = rawEpisode !== undefined && rawEpisode !== null && rawEpisode !== "";
+    const deviceEpisodeId = hasEpisode ? Number(rawEpisode) : null;
+    const rawFollowup = req.body?.followupId;
+    const followupId = rawFollowup === undefined || rawFollowup === null || rawFollowup === ""
+      ? null : Number(rawFollowup);
+    if (!Number.isFinite(patientId)
+      || (hasEpisode && !Number.isFinite(deviceEpisodeId as number))
+      || (!hasEpisode && !Number.isFinite(followupId as number))) {
       return res.status(400).json({ error: "بيانات الطلب غير صالحة" });
     }
     try {
       const out = await returnToPurchase.executeReturnToPurchase({
-        patientId, deviceEpisodeId,
+        patientId, deviceEpisodeId, followupId,
         receptionNote: req.body?.receptionNote,
         createdBy: s.userId, branchIds: branchScope(req),
       });
@@ -627,7 +637,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         newValues: out.reviewRequest as any,
         notes: `عاد للشراء — مريض #${patientId} (${specialtyLabel(out.serviceType)})`
-          + ` — الجهاز #${out.episodeId} أُعيد إلى بانتظار المعاينة`,
+          + (out.episodeId === null
+            ? " — عمليةٌ سابقة بلا حلقة جهاز: طلبُ معاينةٍ كاملة بلا مرساة"
+            : ` — الجهاز #${out.episodeId} أُعيد إلى بانتظار المعاينة`),
       });
       res.status(201).json({
         ok: true, reviewRequestId: out.reviewRequest.id, episodeId: out.episodeId,

@@ -873,4 +873,80 @@ export async function createJournalForPaymentTx(
   });
 }
 
+/**
+ * **قيدُ استردادٍ — مرآةُ قيد الدفعة بالضبط، لا عكسُ قيدٍ بعينه.**
+ *
+ * ══ ولماذا لا `reverseJournalEntryTx` ════════════════════════════════════
+ * تلك تعكس **قيداً واحداً بكامله** وتَسِمه `reversed` — فتصلح لتصحيح دفعةٍ
+ * أُدخلت خطأً، ولا تصلح هنا: المستردُّ قد يكون **جزءاً** من مجموع دفعاتٍ
+ * كثيرة، ووسمُ دفعةٍ صحيحةٍ وقعت فعلاً «معكوسة» يكتب ماضياً لم يقع. فالرد
+ * **حركةٌ ماليةٌ جديدة** لها قيدُها: دائنٌ للصندوق (خرج نقد) ومدينٌ للإيراد
+ * (نقص الإيراد) — بنفس حسابَي الدفعة الأصلية، فيُخصَم من قسمه هو.
+ *
+ * والمبلغُ يصل **موجباً** (مقدارَ الردّ) وإن كان صفُّ الدفعة سالباً.
+ *
+ * ══ وحسابٌ غيرُ مُعَدٍّ لا يحبس مالَ المريض ════════════════════════════════
+ * `createJournalForPayment` — البابُ الذي تدخل منه **كلُّ** دفعةِ مريض —
+ * يتخطّى القيدَ بتحذيرٍ حين لا يكون لفرعٍ صندوقٌ مُعَدّ في دليل الحسابات،
+ * والدفعةُ تُحفَظ. فلو رفض الردُّ لنفس السبب لصار المالُ **يدخل ولا يخرج**
+ * في ذلك الفرع بعينه: ثغرةُ إعدادٍ تحبس مالَ مريض. والأرقامُ التي يراها
+ * المستخدم (الوارد · صافي المقبوض · التحصيل) تُحسب من `payments` لا من
+ * اليومية، فصفُّ الردّ وحدَه يصحّحها كاملةً.
+ *
+ * فالنقصُ المُعرَّف — صندوقٌ أو حسابُ إيرادٍ غيرُ موجود — **يُتخطّى ويُقال**:
+ * تُرجَع `{ posted: false, reason }` فيحملها الردُّ والتدقيقُ ولا تختفي.
+ * **وأيُّ فشلٍ آخر يصعد** فيُسقط المعاملةَ كلَّها — لا `try` حول الكتابة.
+ */
+export type RefundJournalResult =
+  | { posted: true }
+  | { posted: false; reason: "no_cash_account" | "no_revenue_account" };
+
+export async function createJournalForRefundTx(
+  tx: any,
+  refund: { id: number; patientId: number; branchId: number; date: Date | string | null; paymentTreatmentType: string | null; notes: string | null },
+  amount: number,
+  createdBy?: number | null,
+): Promise<RefundJournalResult> {
+  if (amount <= 0) return { posted: true };
+
+  const cashAccountId = await getCashAccountForBranch(refund.branchId);
+  if (!cashAccountId) {
+    console.warn(`[auto-journal-tx] no cash account for branch ${refund.branchId}, refund ${refund.id}`);
+    return { posted: false, reason: "no_cash_account" };
+  }
+  const revenueCode = revenueTypeToAccountCode(refund.paymentTreatmentType ?? null);
+  const revenueAccountId = await getAccountIdByCode(revenueCode);
+  if (!revenueAccountId) {
+    console.warn(`[auto-journal-tx] revenue account ${revenueCode} not found, refund ${refund.id}`);
+    return { posted: false, reason: "no_revenue_account" };
+  }
+
+  await createJournalEntryTx(tx, {
+    entryDate: dateToISO(refund.date),
+    branchId: refund.branchId,
+    description: `استرجاع مبلغ لمريض - ${refund.paymentTreatmentType || "غير محدد"}`,
+    reference: refund.notes || `refund#${refund.id}`,
+    sourceType: "payment",
+    sourceId: refund.id,
+    createdBy: createdBy ?? null,
+    lines: [
+      {
+        accountId: revenueAccountId,
+        debit: amount,
+        description: `نقص إيراد باسترجاع ${refund.paymentTreatmentType || ""}`,
+        branchId: refund.branchId,
+        patientId: refund.patientId,
+      },
+      {
+        accountId: cashAccountId,
+        credit: amount,
+        description: "صرف مبلغ مسترجَع للمريض",
+        branchId: refund.branchId,
+        patientId: refund.patientId,
+      },
+    ],
+  });
+  return { posted: true };
+}
+
 export { logAudit };

@@ -25,6 +25,16 @@ export const FOLLOWUP_STATUSES = [
   //  `closed_exam_cancelled`: لم تسقط معاينةٌ سريرياً — بل بطلت العمليةُ
   //  التجارية كلُّها بقرارٍ إداريّ مدقَّق.
   "closed_admin_void",
+  //  ══ **طرفيّةٌ خامسة** (ترحيل ٠٧٩) — سُحب طلبُ الجهاز قبل التصنيع ══════
+  //  إلغاءُ الحلقة كان يترك المتابعةَ حيّةً إلى الأبد (INT-06 = RTP-5):
+  //  تُعرَض في «بانتظار الحسم» على جهازٍ سُحب، و«لم يشترِ» عليها تكتب
+  //  قراراً لم يتّخذه المريض، و«إتمام البيع» يعلّق على حلقةٍ ملغاة.
+  //
+  //  **ولا واحدةٌ من الأربع تصفها**: المريضُ لم يرفض الشراء
+  //  (`closed_without_purchase`)، ولا سقطت معاينةٌ سريرياً
+  //  (`closed_exam_cancelled`)، ولا بطلت صفقةٌ بقرارٍ إداريّ مدقَّق بعد بيع
+  //  (`closed_admin_void`) — بل سُحب **الطلبُ نفسُه** قبل أن يقع شيء.
+  "closed_request_cancelled",
 ] as const;
 export type FollowupStatus = (typeof FOLLOWUP_STATUSES)[number];
 
@@ -41,6 +51,7 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   closed_without_purchase: "مغلق بدون شراء",
   closed_exam_cancelled: "أُغلقت بسبب إلغاء المعاينة",
   closed_admin_void: "ملغاة إدارياً",
+  closed_request_cancelled: "أُلغي طلبُ الجهاز",
   //  **«تحوّل إلى تصنيع» كانت تصف الآلة لا الواقعة.** والواقعةُ التي تهمّ
   //  الموظّف: المريضُ اشترى، والجهازُ بدأ. والاسمُ المخزَّن `converted` كما
   //  هو — النصُّ المقروء وحده تغيّر.
@@ -80,8 +91,16 @@ export const FOLLOWUP_FILTERS: Array<{ key: string; label: string }> = [
 /** الحالاتُ النهائيّة — لا متابعةَ بعدها إلّا بإعادة فتح. */
 export const TERMINAL_STATUSES: FollowupStatus[] = [
   "closed_without_purchase", "converted", "closed_exam_cancelled",
-  "closed_admin_void",
+  "closed_admin_void", "closed_request_cancelled",
 ];
+
+/**
+ * **الطرفيّاتُ كنصٍّ لـSQL** — مصدرٌ واحد للقوائم المكتوبة يدوياً في
+ * الفهارس الجزئية والاستعلامات. نسيانُ واحدةٍ في موضعٍ يجعل متقاعدةً
+ * تُحسَب حيّةً فتُقفل الفهرسُ الفريدُ الملفَّ إلى الأبد (درسُ ٠٦١ ثمّ ٠٦٤).
+ */
+export const TERMINAL_STATUS_SQL_LIST = TERMINAL_STATUSES
+  .map((s) => `'${s}'`).join(", ");
 export const isTerminal = (s: string): boolean =>
   TERMINAL_STATUSES.includes(s as FollowupStatus);
 

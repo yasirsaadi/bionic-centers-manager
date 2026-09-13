@@ -33,6 +33,7 @@ import {
   requiresGlobalAdmin, globalAdminReasons, parseReason,
   type TrashFinancialSnapshot, type TrashSessionLike,
 } from "@shared/patient_trash";
+import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 
 export class TrashError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -83,8 +84,7 @@ export async function computeSnapshot(
         WHERE f.patient_id = ${patientId} AND r.status = 'pending')::int AS pending_price_requests,
       (SELECT COUNT(*) FROM post_exam_followups
         WHERE patient_id = ${patientId}
-          AND status NOT IN ('closed_without_purchase', 'converted',
-                             'closed_exam_cancelled', 'closed_admin_void'))::int AS open_followups,
+          AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)}))::int AS open_followups,
       (SELECT COUNT(*) FROM administrative_operation_reversals
         WHERE patient_id = ${patientId} AND requires_financial_settlement IS TRUE)::int AS open_settlements
   `);

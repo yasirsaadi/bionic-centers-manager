@@ -14,7 +14,8 @@ import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { formatDateTimeIraq } from "@/lib/utils";
 
 interface EligibleDevice {
-  episodeId: number;
+  /**  `null` = قرارٌ سابقٌ بلا حلقة جهاز — هويّتُه `followupId` وحدَه. */
+  episodeId: number | null;
   serviceType: "prosthetic" | "medical_support";
   requestedItem: string | null;
   followupId: number;
@@ -77,8 +78,10 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
 
   //  حلقةٌ واحدة ⟶ تُختار تلقائياً للعرض (لا اختيار، عرضٌ وحيد). أكثرُ من
   //  واحدة ⟶ `null` حتى يختار الموظّفُ صراحةً — **لا يُفضَّل الأحدثُ صامتاً**.
-  const effectiveSelected = candidates.length === 1 ? candidates[0].episodeId : selected;
-  const chosen = candidates.find((c) => c.episodeId === effectiveSelected) ?? null;
+  //  **والهويّةُ بالمتابعة لا بالحلقة**: صفٌّ بلا حلقة (`episodeId === null`)
+  //  لا يصلح مفتاحاً، و`followupId` موجودٌ دائماً على الطرفين.
+  const effectiveSelected = candidates.length === 1 ? candidates[0].followupId : selected;
+  const chosen = candidates.find((c) => c.followupId === effectiveSelected) ?? null;
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -87,7 +90,14 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ patientId, deviceEpisodeId: chosen.episodeId }),
+        //  **الجهازُ إن وُجد، والمتابعةُ دائماً** — والخادمُ يحسم بأيّهما
+        //  يعمل: مرساةٌ حاضرة ⟶ المسارُ المرساة، غائبةٌ ⟶ طلبُ مراجعةٍ
+        //  بلا مرساة. ولا يُرسَل `deviceEpisodeId: null` فيُقرأ قيمةً.
+        body: JSON.stringify({
+          patientId,
+          ...(chosen.episodeId === null ? {} : { deviceEpisodeId: chosen.episodeId }),
+          followupId: chosen.followupId,
+        }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "تعذّر إرسال المريض لمعاينةٍ جديدة");
@@ -155,13 +165,13 @@ export function ReturnToPurchaseDialog({ patientId, serviceType, open, onOpenCha
             >
               {candidates.map((c) => (
                 <label
-                  key={c.episodeId}
+                  key={c.followupId}
                   className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${
-                    effectiveSelected === c.episodeId ? "border-primary bg-primary/5" : "border-muted"
+                    effectiveSelected === c.followupId ? "border-primary bg-primary/5" : "border-muted"
                   }`}
-                  data-testid={`return-to-purchase-option-${c.episodeId}`}
+                  data-testid={`return-to-purchase-option-${c.episodeId ?? `f${c.followupId}`}`}
                 >
-                  <RadioGroupItem value={String(c.episodeId)} className="mt-1" />
+                  <RadioGroupItem value={String(c.followupId)} className="mt-1" />
                   <DeviceCard device={c} compact />
                 </label>
               ))}

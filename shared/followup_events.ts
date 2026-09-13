@@ -119,6 +119,10 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   //  مسجَّل على الملف» فيظنّ أن أحداً لمس الملفَّ ولا يعرف أن المعاينة
   //  التي وُلد عنها سقطت — وهو الخبرُ الوحيد الذي يحتاجه.
   closed_exam_cancelled: "أُغلقت المتابعة بسبب إلغاء المعاينة",
+  //  ══ سحبُ طلب الجهاز (ترحيل ٠٧٩) ════════════════════════════════════
+  //  **ولا يُترك للعبارة العامّة** كذلك: الموظّفُ يحتاج أن يعرف أن الطلبَ
+  //  نفسَه سُحب — لا أن معاينةً سقطت ولا أن المريض رفض الشراء.
+  closed_request_cancelled: "أُغلقت المتابعة بسبب سحب طلب الجهاز",
   administrative_reversal: "أُلغيت العملية إدارياً",
   reopened: "أُعيد فتح الملف",
   //  ══ مسارٌ قديم — يُقرأ ولا يُنشأ ═══════════════════════════════════
@@ -314,6 +318,13 @@ export function followupEventView(
       if (why) out.facts.push(`سبب الإلغاء: ${why}`);
       break;
     }
+    //  بالمبدأ نفسِه: `e.reason` مفتاحٌ داخليّ (`device_request_cancelled`)
+    //  لا سببُ مريض، والخبرُ هو ما كتبه مَن سحب الطلب.
+    case "closed_request_cancelled": {
+      const why = cancellationReason(e?.note);
+      if (why) out.facts.push(`سبب سحب الطلب: ${why}`);
+      break;
+    }
     //  ══ **حقائقُ التصحيح تُقرأ بلا معجم** ═══════════════════════════════
     //   «طلب الاستبدال الجديد: #88» رقمٌ داخليّ لا يعني شيئاً لموظّفٍ ولا
     //   لمدير. والذي يعنيهما: **ماذا كان وماذا صار**. فالعناوينُ من خريطة
@@ -368,6 +379,7 @@ export function followupEventView(
   //  معنونةً «سبب الإلغاء» — والسطرُ الواحد مرّتين ضجيجٌ كذلك.
   const note = typeof e?.note === "string" ? e.note.trim() : "";
   if (note && type !== "closed_without_purchase" && type !== "closed_exam_cancelled"
+    && type !== "closed_request_cancelled"
     && type !== "administrative_reversal"
     //  ومن تصحيح السعر: خرج أعلاه معنوناً «سبب التصحيح» — ومرّتين ضجيج.
     && type !== "exam_price_corrected") {
@@ -386,7 +398,7 @@ export function followupEventView(
 // والحلُّ **اشتقاقٌ من الحالة الحقيقية** لا نصٌّ محفوظ. والحالةُ هي مصدر
 // الحقيقة: `converted` (أو وجودُ أمر تصنيع) تعني «تمّ» ولا تحتمل غير ذلك.
 
-export type PurchasePresentation = "converted" | "discount_pending" | "awaiting" | "admin_void" | "exam_cancelled" | "closed";
+export type PurchasePresentation = "converted" | "discount_pending" | "awaiting" | "admin_void" | "exam_cancelled" | "request_cancelled" | "closed";
 
 export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   converted: "تم الشراء — بدأ التصنيع",
@@ -398,6 +410,9 @@ export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   awaiting: "المريض وافق على الشراء — بانتظار إتمام إجراءات البيع",
   admin_void: "عملية ملغاة إدارياً",
   exam_cancelled: "المعاينة ملغاة",
+  //  سُحب الطلبُ نفسُه قبل التصنيع (ترحيل ٠٧٩) — لا المعاينةُ سقطت ولا
+  //  المريضُ رفض الشراء.
+  request_cancelled: "أُلغي طلبُ الجهاز",
   closed: "أُغلقت العملية بدون شراء",
 };
 
@@ -415,6 +430,7 @@ export function purchasePresentation(f: {
 } | null | undefined): PurchasePresentation {
   if (f?.status === "closed_admin_void") return "admin_void";
   if (f?.status === "closed_exam_cancelled") return "exam_cancelled";
+  if (f?.status === "closed_request_cancelled") return "request_cancelled";
   if (f?.status === "closed_without_purchase") return "closed";
   if (f?.status === "converted" || pos(f?.convertedWorkOrderId) !== null) return "converted";
   if (f?.hasPendingDiscount === true) return "discount_pending";
