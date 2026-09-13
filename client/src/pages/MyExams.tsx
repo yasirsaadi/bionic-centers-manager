@@ -15,6 +15,7 @@ import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRigh
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { rankWorklist } from "./my_exams_order";
 
 interface WorklistRow {
@@ -41,6 +42,19 @@ interface WorklistRow {
    * يعرف أن المريضَ **يريد المتابعة**، لا أن مالاً قُبض بالفعل.
    */
   reviewKind?: string | null;
+  /**
+   * **هويّةُ الجهاز المنتظر** (تدقيق ٢٠٢٦-٠٩-١٢): صفٌّ لكلّ حلقةٍ منتظرة —
+   * مريضٌ بجهازين منتظرين يظهر مرّتين، كلٌّ بجهازه، وتوقيعُ كلّ صفٍّ يحمل
+   * معرّفَ حلقته إلى الخادم فلا يُخمَّن الجهاز. و`null` لصفٍّ بلا حلقة.
+   */
+  episodeId?: number | null;
+  requestedItem?: string | null;
+  sequenceNumber?: number | null;
+}
+
+/** مفتاحُ الصفّ — بالحلقة حين توجد، فلا يتكرّر مفتاحٌ لمريضٍ بجهازين. */
+function rowKey(r: WorklistRow): string {
+  return `${r.patientId}-${r.caseType}-${r.episodeId ?? "case"}`;
 }
 
 function accent(caseType: string) {
@@ -373,8 +387,9 @@ export default function MyExams() {
                     <div className="space-y-2">
                       {list.map((r) => {
                         const days = daysWaiting(r.waitingSince);
+                        const key = rowKey(r);
                         return (
-                          <Card key={`${r.patientId}-${r.caseType}`} className={`border ${a.ring}`}>
+                          <Card key={key} className={`border ${a.ring}`} data-testid={`worklist-row-${key}`}>
                             <CardContent className="p-3 flex items-center justify-between gap-3 flex-wrap">
                               <div className="min-w-0">
                                 <div className="font-semibold text-sm truncate flex items-center gap-1.5" dir="auto">
@@ -384,13 +399,20 @@ export default function MyExams() {
                                     <span
                                       className="inline-flex items-center gap-1 rounded-full border border-amber-300
                                         bg-amber-50 text-amber-800 text-[10px] font-medium px-2 py-0.5 shrink-0"
-                                      data-testid={`badge-return-to-purchase-${r.patientId}-${r.caseType}`}
+                                      data-testid={`badge-return-to-purchase-${key}`}
                                     >
                                       <RotateCcw className="w-3 h-3" /> عاد للشراء
                                     </span>
                                   )}
                                 </div>
                                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                                  {/*  **أيُّ جهاز** — مريضٌ بجهازين منتظرين يقرأ الطبيبُ أيَّهما
+                                      يوقّع، ويحمل الصفُّ هويّتَه إلى التوقيع. */}
+                                  {r.episodeId != null && (
+                                    <span data-testid={`device-label-${key}`}>
+                                      جهاز #{r.sequenceNumber ?? "?"} · {requestedItemLabel(r.requestedItem, r.caseType)}
+                                    </span>
+                                  )}
                                   {r.phone && <span dir="ltr">{r.phone}</span>}
                                   {r.branchName && <span>{r.branchName}</span>}
                                   {r.waitingSince && (
@@ -412,7 +434,7 @@ export default function MyExams() {
                                   <Button
                                     size="sm" variant="outline" className="h-8 text-xs gap-1"
                                     onClick={() => { setReturning(r); setReturnReason(""); }}
-                                    data-testid={`return-request-${r.patientId}-${r.caseType}`}
+                                    data-testid={`return-request-${key}`}
                                   >
                                     <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
                                   </Button>
@@ -421,7 +443,7 @@ export default function MyExams() {
                                   size="sm"
                                   className="h-8 text-xs gap-1"
                                   onClick={() => setTarget(r)}
-                                  data-testid={`write-exam-${r.patientId}-${r.caseType}`}
+                                  data-testid={`write-exam-${key}`}
                                 >
                                   <Stethoscope className="w-3.5 h-3.5" /> كتابة معاينة
                                 </Button>
@@ -475,9 +497,15 @@ export default function MyExams() {
 
       {target && (
         <NewExamDialog
+          key={rowKey(target)}
           patientId={target.patientId}
           patientName={target.patientName}
           preferSpecialty={target.caseType}
+          //  **الجهازُ بعينه** — من الصفّ إلى التوقيع، لا يُخمَّن في الطريق.
+          deviceEpisodeId={target.episodeId ?? null}
+          deviceLabel={target.episodeId != null
+            ? `جهاز #${target.sequenceNumber ?? "?"} · ${requestedItemLabel(target.requestedItem, target.caseType)}`
+            : null}
           open={!!target}
           onOpenChange={(o) => !o && setTarget(null)}
           onDone={() => setTarget(null)}

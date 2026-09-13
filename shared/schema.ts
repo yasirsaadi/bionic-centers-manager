@@ -341,6 +341,17 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
   servicePath: text("service_path"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * **آخرُ دخولٍ إلى طابور المعاينة** (ترحيل ٠٧٧) — لا لحظةُ فتح الطلب.
+   *
+   * «منذ متى ينتظر الطبيبَ» سؤالٌ عن **الدخول الحاليّ** إلى الطابور: طلبٌ
+   * فُتح قبل شهرين ثمّ «لم يشترِ» ثمّ «عاد للشراء» اليوم ينتظر منذ اليوم.
+   * فيُكتب هنا عند كلّ عودةٍ إلى `awaiting_exam` (`revertEpisodeToAwaitingExam`)
+   * وعند الإنشاء (افتراضُ القاعدة). و`created_at` **لا يُعاد كتابتُه أبداً**
+   * — هو تاريخُ الطلب الحقيقيّ. والقارئُ يستعمل `COALESCE(awaiting_since,
+   * created_at)`: صفٌّ سابقٌ للترحيل (`NULL`) يُقرأ بالقاعدة القديمة.
+   */
+  awaitingSince: timestamp("awaiting_since", { withTimezone: true }),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   cancelReason: text("cancel_reason"),

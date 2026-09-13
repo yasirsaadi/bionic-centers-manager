@@ -180,6 +180,11 @@ async function main() {
       ["awaiting_exam", "awaiting_exam"]);
 
     const key1 = randomKey("regression-concurrent");
+    //  **وهويّةُ الجهاز صريحة** (المرحلة الأولى من قطار الإصلاح، ٢٠٢٦-٠٩-١٢):
+    //  حلقتان منتظرتان وتوقيعٌ بلا معرّفٍ صار التباساً يُردّ ٤٠٩ عمداً لا
+    //  اختياراً لأيّهما. فالمحاولاتُ السبع — وهي محاولةٌ منطقيةٌ واحدة —
+    //  تحمل الجهازَ الأوّل بعينه، وموضوعُ الاختبار (مفتاحُ التطابق تحت
+    //  التزامن) كما هو بحرفه.
     const payload = {
       caseType: "prosthetic",
       diagnosis: "بتر تحت الركبة",
@@ -188,6 +193,7 @@ async function main() {
       notes: null,
       prescription: { prostheticType: "تحت الركبة" },
       idempotencyKey: key1,
+      deviceEpisodeId: epA,
     };
 
     const responses = await Promise.all(Array.from({ length: 7 }, () =>
@@ -206,8 +212,8 @@ async function main() {
 
     const [examRow] = await q<{ id: number; device_episode_id: number | null }>(
       `SELECT id, device_episode_id FROM medical_exams WHERE patient_id=$1`, [p1]);
-    check([epA, epB].includes(examRow.device_episode_id as number),
-      "أ٤. **والمعاينةُ ربطت واحدةً من الحلقتين بعينها**", String(examRow.device_episode_id));
+    check(examRow.device_episode_id === epA,
+      "أ٤. **والمعاينةُ ربطت الحلقةَ المحدَّدة بعينها** — لا الأخرى", String(examRow.device_episode_id));
 
     const [statusA, statusB] = [await episodeStatus(epA), await episodeStatus(epB)];
     const examinedCount = [statusA, statusB].filter((s) => s === "examined").length;

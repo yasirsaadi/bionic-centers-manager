@@ -414,10 +414,10 @@ export async function returnFullRequestToReception(params: {
     const cur = await tx.execute<{
       id: number; branch_id: number | null; status: string; requested_path: string;
       patient_id: number; service_type: string; created_by: number | null;
-      decided_at: string | null; created_at: string;
+      decided_at: string | null; created_at: string; device_episode_id: number | null;
     }>(sql`
       SELECT id, branch_id, status, requested_path, patient_id, service_type,
-             created_by, decided_at, created_at
+             created_by, decided_at, created_at, device_episode_id
         FROM medical_review_requests
        WHERE id = ${params.requestId} FOR UPDATE
     `);
@@ -439,11 +439,27 @@ export async function returnFullRequestToReception(params: {
       );
     }
     //  **ولا إرجاعَ بعد توقيع**: معاينةٌ وُقّعت بعد الطلب تعني أنه أُنجز.
+    //  **وبهويّة الجهاز**: طلبٌ مرساتُه حلقةٌ لا تُنجزه إلّا معاينةُ تلك
+    //  الحلقة — معاينةُ جهازٍ آخر على الخيط نفسه لا تحبس إرجاعَه.
+    //  والطلبُ على مستوى الاختصاص (عارٍ أو مرساتُه جهازٌ حيّ لا ينتظر) يُنجزه
+    //  أيُّ توقيعٍ للاختصاص — نفسُ قاعدة `specialtyLevelRequestSql`.
+    const anchoredEpisode = numOrNull(row.device_episode_id);
+    let sameEpisodeOnly = false;
+    if (anchoredEpisode !== null) {
+      const st = await tx.execute<{ status: string }>(sql`
+        SELECT status FROM patient_device_episodes WHERE id = ${anchoredEpisode}
+      `);
+      const s = String((st.rows ?? [])[0]?.status ?? "");
+      sameEpisodeOnly = !["examined", "in_manufacturing", "delivered"].includes(s);
+    }
     const ex = await tx.execute<{ id: number }>(sql`
       SELECT id FROM medical_exams me
        WHERE me.patient_id = ${row.patient_id}
          AND me.case_type = ${row.service_type}
          AND me.created_at >= COALESCE(${row.decided_at}::timestamptz, ${row.created_at}::timestamptz)
+         AND ${sameEpisodeOnly
+           ? sql`me.device_episode_id = ${anchoredEpisode}`
+           : sql`TRUE`}
          AND ${activeExamSql("me")}
        LIMIT 1
     `);
@@ -467,11 +483,60 @@ export async function returnFullRequestToReception(params: {
 }
 
 /**
+ * **«وُقّعت معاينةٌ بعد هذا الطلب»** — بهويّة الجهاز حين يملكها الطلب.
+ *
+ * طلبٌ مرساتُه حلقةٌ لا يُنجزه إلّا توقيعٌ **على تلك الحلقة بعينها**
+ * (`me.device_episode_id`)؛ فمعاينةُ الجهاز A بعد طلب الجهاز B لا تُخفي
+ * طلبَ B ولا تمنع إرجاعَه. والطلبُ العاري (بلا حلقة) يبقى على قاعدته:
+ * أيُّ معاينةٍ فعّالة للاختصاص بعد لحظته تُنجزه.
+ *
+ * `r` هو الاسمُ المستعار لصفّ الطلب في الاستعلام المُضيف.
+ */
+/**
+ * **طلبٌ على مستوى الاختصاص** — لا يخصّ جهازاً يمكن أن تُطالَب به معاينة.
+ *
+ * وجهان: الطلبُ **العاري** (`device_episode_id IS NULL` — «إضافة نوع حالة»
+ * والمُحال بلا مرساة)، والطلبُ الذي مرساتُه **حلقةٌ حيّة لم تعد تنتظر**
+ * (`examined`/`in_manufacturing`/`delivered` — زيارةُ متابعةٍ على جهازٍ
+ * مسلَّم أحالها الطبيبُ إلى معاينةٍ كاملة). كلاهما لا يمكن أن تُقفَل حلقتُه
+ * بالتوقيع (`claimAwaitingEpisodeForExam` تطالب `awaiting_exam` وحدها)، فلو
+ * اشتُرط تطابقُ الحلقة لبقي معلَّقاً إلى الأبد ولاختفى المريضُ من القائمة
+ * (مراجعةُ المرحلة الأولى، LEG-01/INV-01/P1-B1). فيُنجزه أيُّ توقيعٍ فعّال
+ * للاختصاص بعد لحظته — كما كان قبل هذه المرحلة.
+ *
+ * **والمرساةُ الملغاة ليست من هذين**: طلبٌ على حلقةٍ `cancelled` لا يُغلَق
+ * بمعاينة جهازٍ آخر (كان يُغلَق زوراً)، ولا يُعرَض صفّاً — يُقاعده إلغاءُ
+ * الحلقة نفسُه (المرحلة الثالثة). والمرساةُ المنتظرة تُنجَز بتوقيعها هي.
+ */
+export const specialtyLevelRequestSql = (r: string) => sql`(
+  ${sql.raw(r)}.device_episode_id IS NULL
+  OR EXISTS (
+    SELECT 1 FROM patient_device_episodes e
+     WHERE e.id = ${sql.raw(r)}.device_episode_id
+       AND e.status IN ('examined', 'in_manufacturing', 'delivered')
+  )
+)`;
+
+const examSignedAfterRequestSql = (r: string) => sql`EXISTS (
+  SELECT 1 FROM medical_exams me
+   WHERE me.patient_id = ${sql.raw(r)}.patient_id
+     AND me.case_type = ${sql.raw(r)}.service_type
+     AND me.created_at >= COALESCE(${sql.raw(r)}.decided_at, ${sql.raw(r)}.created_at)
+     AND (${specialtyLevelRequestSql(r)}
+          OR me.device_episode_id = ${sql.raw(r)}.device_episode_id)
+     AND ${activeExamSql("me")}
+)`;
+
+/**
  * طلباتُ المعاينة الكاملة المعلَّقة لمرضى قائمةِ العمل — **هويّةٌ لا أكثر**.
  *
- * قائمةُ «معايناتي» صفٌّ لكلّ (مريض، اختصاص) لا لكلّ طلب، فلا رقمَ طلبٍ
- * فيها يُرجِعه الزرّ. وهذه تُرجع أقدمَ طلبٍ منتظرٍ لكلّ ثنائيّة — وهو
- * الطلبُ الذي وضع المريضَ في القائمة.
+ * ══ صفٌّ لكلّ طلب، لا أقدمُ طلبٍ لكلّ (مريض، اختصاص) ═══════════════════
+ * كانت تُرجع `DISTINCT ON (patient, service)` الأقدمَ — صحيحٌ حين كان
+ * للخيط طلبٌ واحد. وبعد ٠٧٣ قد يحمل الخيطُ طلبين بحلقتين: فكان صفّا
+ * القائمة كلاهما يحملان معرّفَ الأقدم — تختفي شارةُ «عاد للشراء» ويُرجِع
+ * زرُّ الصفّ B طلبَ A (تدقيق ٢٠٢٦-٠٩-١٢، RTP-3/MULTI-3). تُرجع الآن كلَّ
+ * الطلبات مع `deviceEpisodeId`، والمنادي يطابق **بالحلقة** حين يملكها
+ * الصفّ، وبالثنائيّة للطلب العاري وحده.
  */
 export async function pendingFullRequestsFor(params: {
   patientIds: number[];
@@ -480,22 +545,26 @@ export async function pendingFullRequestsFor(params: {
   patientId: number; serviceType: string; requestId: number; createdBy: number | null;
   /** **سببُ الزيارة** — تعرضه «معايناتي» صراحةً حين يكون `return_to_purchase`. */
   reviewKind: ReviewKind;
+  /** الحلقةُ المرساة — `null` للطلب العاري (بلا هويّة جهاز). */
+  deviceEpisodeId: number | null;
+  /**
+   * **طلبٌ على مستوى الاختصاص** (`specialtyLevelRequestSql`): عارٍ، أو
+   * مرساتُه جهازٌ حيّ لم يعد ينتظر (examined/in_manufacturing/delivered).
+   * يُغلقه أيُّ توقيعٍ للاختصاص بعده، فيُرفَق بصفّ القائمة بلا حلقة. أمّا
+   * المرساةُ إلى حلقةٍ منتظرة فتُطابَق بحلقتها وحدها، والملغاةُ لا تُطابَق.
+   */
+  specialtyLevel: boolean;
 }[]> {
   if (params.patientIds.length === 0) return [];
   const rows = await db.execute<Record<string, any>>(sql`
-    SELECT DISTINCT ON (r.patient_id, r.service_type)
-           r.id, r.patient_id, r.service_type, r.created_by, r.review_kind
+    SELECT r.id, r.patient_id, r.service_type, r.created_by, r.review_kind,
+           r.device_episode_id,
+           ${specialtyLevelRequestSql("r")} AS specialty_level
       FROM medical_review_requests r
      WHERE r.patient_id IN (${sql.join(params.patientIds.map((p) => sql`${p}`), sql`, `)})
        AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
        AND ${scopeClause(params.branchIds, "r.branch_id")}
-       AND NOT EXISTS (
-         SELECT 1 FROM medical_exams me
-          WHERE me.patient_id = r.patient_id
-            AND me.case_type = r.service_type
-            AND me.created_at >= COALESCE(r.decided_at, r.created_at)
-            AND ${activeExamSql("me")}
-       )
+       AND NOT ${examSignedAfterRequestSql("r")}
      ORDER BY r.patient_id, r.service_type, r.created_at ASC
   `);
   return (rows.rows ?? []).map((r) => ({
@@ -504,6 +573,8 @@ export async function pendingFullRequestsFor(params: {
     requestId: Number(r.id),
     createdBy: numOrNull(r.created_by),
     reviewKind: String(r.review_kind) as ReviewKind,
+    deviceEpisodeId: numOrNull(r.device_episode_id),
+    specialtyLevel: r.specialty_level === true,
   }));
 }
 
@@ -626,13 +697,7 @@ export async function listPendingFullRequests(params: {
        AND p.deleted_at IS NULL
        AND ${scopeClause(params.branchIds, "r.branch_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
-       AND NOT EXISTS (
-         SELECT 1 FROM medical_exams me
-          WHERE me.patient_id = r.patient_id
-            AND me.case_type = r.service_type
-            AND me.created_at >= COALESCE(r.decided_at, r.created_at)
-            AND ${activeExamSql("me")}
-       )
+       AND NOT ${examSignedAfterRequestSql("r")}
      ORDER BY r.created_at ASC
      LIMIT 200
   `);
@@ -673,14 +738,34 @@ export async function listReviewsForPatient(
  */
 export async function closeRequestsAwaitingExam(params: {
   patientId: number; serviceType: string; examId: number;
+  /**
+   * **الحلقةُ التي عاينتها هذه المعاينةُ بعينها** (تدقيق ٢٠٢٦-٠٩-١٢، INT-02).
+   *
+   * بعد ترحيل ٠٧٣ قد ينتظر على الخيط الواحد أكثرُ من طلبٍ، كلٌّ مرساتُه
+   * حلقتُه. فمعاينةٌ فحصت الجهازَ A **لا تُغلق طلبَ الجهاز B** — كانت
+   * تُغلقه بـ`exam_id` معاينةٍ لم تنظر فيه، فيصير سجلُّ الطلب زوراً لا
+   * يُصحَّح. تُغلَق الآن: الطلباتُ المرساةُ إلى **هذه** الحلقة، والطلباتُ
+   * **العارية** (`device_episode_id IS NULL` — «إضافة نوع حالة» والمُحال
+   * بلا مرساة) التي لا هويّةَ جهازٍ لها فأيُّ معاينةٍ للاختصاص تُنجزها.
+   * ومعاينةٌ بلا حلقة (`null`) تُغلق العاريةَ وحدها.
+   */
+  deviceEpisodeId: number | null;
+  /** معاملةُ التوقيع نفسُها — فالإغلاقُ والتوقيعُ حدثٌ واحد لا حدثان. */
+  tx?: { execute: (q: any) => Promise<any> };
 }): Promise<void> {
   if (!isReviewServiceType(params.serviceType)) return;
-  await db.execute(sql`
-    UPDATE medical_review_requests
+  //  الطلبُ على مستوى الاختصاص (عارٍ أو مرساتُه جهازٌ حيّ لا ينتظر) يُنجزه
+  //  أيُّ توقيع؛ وطلبُ حلقةٍ منتظرة لا يُنجزه إلّا توقيعُها هي.
+  const anchor = params.deviceEpisodeId === null
+    ? specialtyLevelRequestSql("r")
+    : sql`(${specialtyLevelRequestSql("r")} OR r.device_episode_id = ${params.deviceEpisodeId})`;
+  await (params.tx ?? db).execute(sql`
+    UPDATE medical_review_requests r
        SET exam_id = ${params.examId}, status = 'examined', updated_at = NOW()
-     WHERE patient_id = ${params.patientId}
-       AND service_type = ${params.serviceType}
-       AND (status = 'escalated' OR (status = 'pending' AND requested_path = 'full'))
+     WHERE r.patient_id = ${params.patientId}
+       AND r.service_type = ${params.serviceType}
+       AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+       AND ${anchor}
   `);
 }
 

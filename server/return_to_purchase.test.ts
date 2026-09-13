@@ -325,9 +325,9 @@ async function main() {
     console.log("\n── ج. تعدّدُ المؤهَّلين — اختيارٌ دقيق لا تخمين ──");
     // ══════════════════════════════════════════════════════════════════
     {
-      //  قسمان مختلفان لنفس المريض — كلٌّ منهما يؤهَّل باستقلال، وهو الشكلُ
-      //  الوحيد الذي يعيد فيه النظامُ أكثرَ من مؤهَّلٍ لمريضٍ واحد (حلقتان
-      //  في القسم نفسه غيرُ ممكنتين معاً — `uq_pde_case_open`).
+      //  قسمان مختلفان لنفس المريض — كلٌّ منهما يؤهَّل باستقلال. (وحلقتان في
+      //  القسم نفسه ممكنتان أيضاً منذ ترحيل ٠٧٣ — `uq_pde_case_open` أُسقط؛
+      //  ذلك الشكلُ بهويّته الدقيقة يحرسه `test:exam-identity`.)
       const pMulti = await mkPatient("تعدّد-مؤهَّلين", { isAmputee: true, isMedicalSupport: true });
       const pros = await declinedDevice(pMulti, "prosthetic");
       const supp = await declinedDevice(pMulti, "medical_support");
@@ -364,6 +364,14 @@ async function main() {
         (r: any) => Number(r.patientId) === pMain && r.caseType === "prosthetic");
       check(!!row, "٣٠. **المريضُ يظهر في قائمة عمل الطبيب**", JSON.stringify(wl.body?.rows));
       same("٣١. **وسببُ الزيارة `return_to_purchase` صراحةً**", row?.reviewKind, "return_to_purchase");
+      //  ══ هويّةُ الصفّ ولحظةُ انتظاره (تدقيق ٢٠٢٦-٠٩-١٢: RTP-1/RTP-3) ═════
+      //  الصفُّ يحمل الحلقةَ العائدة بعينها وطلبَ عودتها هو، وينتظر منذ
+      //  لحظة العودة — لا منذ فتح الطلب الأصليّ (وإلّا دُفن آخرَ الصفحات).
+      same("   **والصفُّ يحمل الحلقةَ العائدة بعينها**", row?.episodeId, deviceMain.episodeId);
+      same("   **وطلبَ عودتها هو**", row?.returnableRequestId, reviewRequestId);
+      check(typeof row?.waitingSince === "string"
+        && Date.now() - new Date(row.waitingSince).getTime() < 120_000,
+        "   **وينتظر منذ لحظة العودة** — لا منذ فتح الطلب", String(row?.waitingSince));
     }
 
     // ══════════════════════════════════════════════════════════════════
