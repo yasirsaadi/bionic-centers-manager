@@ -45,6 +45,7 @@ import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/acti
 import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
+import { CaseDisposalBlockedError } from "./patient_cases/disposal";
 import {
   checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
   PatientNameTrashConflictError, PatientPhoneTrashConflictError,
@@ -2197,16 +2198,41 @@ export async function registerRoutes(
     }
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
     try {
-      const r = await storage.deleteCaseType(patientId, caseType as any);
+      const r = await storage.deleteCaseType(patientId, caseType as any, {
+        userId: branchSession?.userId ?? null,
+        userName: branchSession?.displayName ?? null,
+        reason,
+      });
+      //  **ويُسمّى ما أُزيل** — سطرُ التدقيق يقول السقالةَ بأرقامها، فيُقرأ
+      //  بعد شهر ما الذي سُحب فعلاً لا «حُذف نوع حالة» عارية.
+      const d = r.disposed;
+      const removed = [
+        d.episodeIds.length ? `طلبات أجهزة غير مستعملة: ${d.episodeIds.map((i) => `#${i}`).join("، ")}` : null,
+        d.reviewRequestIds.length ? `طلبات مراجعة مسحوبة: ${d.reviewRequestIds.map((i) => `#${i}`).join("، ")}` : null,
+        d.markerVisitIds.length ? `زيارات علامة: ${d.markerVisitIds.length}` : null,
+      ].filter(Boolean).join(" — ");
       await logAudit({
         entityType: "patient", entityId: patientId, action: "update",
         userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
         branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `حذف نوع حالة ${caseType} (نُقل ${r.movedRows} صفاً للحالة المتبقية)`,
+        oldValues: { caseType, scaffolding: d },
+        notes: `حذف نوع حالة ${caseType} (نُقل ${r.movedRows} صفاً للحالة المتبقية)`
+          + (removed ? ` — ${removed}` : "")
+          + (reason?.trim() ? ` — السبب: ${reason.trim()}` : ""),
       });
       res.json({ ok: true, ...r });
     } catch (err: any) {
+      //  **والحاجزُ يصل الشاشةَ بابَه**: رمزٌ وسببٌ ومخرج — لا جملةٌ مسدودة،
+      //  ولا نصُّ Postgres خام كما كان يتسرّب من مفتاح `medical_review_requests`.
+      if (err instanceof CaseDisposalBlockedError) {
+        return res.status(409).json({
+          message: err.blocker.reason,
+          code: err.blocker.code,
+          remedy: err.blocker.remedy,
+        });
+      }
       res.status(409).json({ message: err?.message || "تعذّر الحذف" });
     }
   });
@@ -2532,6 +2558,35 @@ export async function registerRoutes(
         }
       }
 
+      // ══ **إطفاءُ العَلَم لا يُيتّم حالةً** (CASEDEL-06 = INT-15) ═════════
+      //  الأعلامُ و`patient_cases` مصدرا حقيقةٍ بلا مزامنة: `syncPatientCases`
+      //  **إنشاءٌ فقط** ولا تحذف. فإطفاءُ «أطراف» أو «مساند» من «تعديل مريض»
+      //  كان يترك صفَّ الحالة `active` شبحاً — يقرؤه الموزّعُ والطوابيرُ
+      //  والمحاسبةُ بينما الملفُّ يقول إن المريض ليس منه.
+      //
+      //  **والبابُ واحد**: سحبُ الحالة من سلّة بطاقتها — بقاعدة السقالة،
+      //  بسببٍ مكتوب، وبسطرِ تدقيقٍ يقول ما أُزيل. فهنا لا يُحذَف شيءٌ ضمناً
+      //  ولا يُطفَأ عَلَمٌ يترك شبحاً: يُسقَط الحقلُ ويُبلَّغ الطريق.
+      //
+      //  والانتقالُ `true ⟶ false` وحده يُمسَك — الرفعُ حرٌّ كما كان،
+      //  و«تعديل مريض» يرسل الكائنَ كاملاً في كلّ حفظ فلا يُقاس الحضور.
+      const orphanedFlags: string[] = [];
+      for (const [field, caseType, label] of [
+        ["isAmputee", "prosthetic", "أطراف صناعية"],
+        ["isMedicalSupport", "medical_support", "مساند طبية"],
+        ["isPhysiotherapy", "physiotherapy", "علاج طبيعي"],
+      ] as const) {
+        if (patch[field] !== false) continue;
+        if ((existingPatient as any)[field] !== true) continue;
+        const live = await db.execute(sql`
+          SELECT 1 FROM patient_cases
+           WHERE patient_id = ${id} AND case_type = ${caseType} LIMIT 1
+        `);
+        if ((live.rows ?? []).length === 0) continue;
+        delete patch[field];
+        orphanedFlags.push(label);
+      }
+
       // ══ الهوية العلنية ثابتة — ورفضٌ صريح ═══════════════════════════
       // نقلُ رمزٍ بين ملفّين يقلب هويّتين معاً: ورقةٌ بيد مريضٍ تدلّ على
       // غيره، ورسالةُ تلغرام تصل غير صاحبها. فالمحاولة تُردّ برسالتها بدل
@@ -2689,14 +2744,19 @@ export async function registerRoutes(
       const caseCostAmbiguousNote = (patient as any)?.caseCostSync === "ambiguous"
         ? "تحديث الإجماليّ لم يغيّر كلفة أيّ حالةٍ بعينها — لهذا المريض أكثر من حالة نشطة. عدّل كلفة الحالة المطلوبة من تبويبها في ملف المريض."
         : null;
+      const caseFlagNote = orphanedFlags.length
+        ? `لم يُطفَأ تصنيف ${orphanedFlags.join(" و")}: للمريض حالةٌ نشطة من هذا النوع.`
+          + ` لسحب النوع كاملاً استعمل زرّ السلّة في بطاقة الحالة — يفحص السجلّ ويقول سبب المنع إن وُجد.`
+        : null;
+      const withNote = caseFlagNote ? { ...patient, caseFlagNote } : patient;
       res.json(costLockedByFollowup
         ? {
-          ...patient,
+          ...withNote,
           costNote: "لم تُعدَّل الكلفة: سعر الجهاز معتمد من الطبيب — التعديل يمرّ بطلب تعديل سعر يعتمده طبيب أو المسؤول العام",
         }
         : caseCostAmbiguousNote
-          ? { ...patient, costNote: caseCostAmbiguousNote }
-          : patient);
+          ? { ...withNote, costNote: caseCostAmbiguousNote }
+          : withNote);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       // ══ رقمٌ مكرَّر على مريضٍ فعّالٍ آخر — لا يُكتب شيء ═════════════════

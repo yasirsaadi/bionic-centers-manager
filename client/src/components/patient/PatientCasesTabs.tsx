@@ -10,6 +10,7 @@ import {
 import { formatDateIraq } from "@/lib/utils";
 import { useBranchSession } from "@/components/BranchGate";
 import { MoneyInput } from "@/components/ui/money-input";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 
@@ -152,20 +153,49 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
   // ADMIN-ONLY «حذف نوع الحالة» — also cleans ghost cases (flag wiped by the
   // old destructive edit while the case row survived showing a stale cost).
   const isAdminOnly = !!session?.isAdmin;
+  //  سببُ السحب — يُكتب مرّةً في النافذة ويُحفَظ في التدقيق وعلى طلبات
+  //  المراجعة المسحوبة. اختياريّ عمداً: الخادم يضع نصّاً افتراضياً صادقاً
+  //  حين يُترَك فارغاً، فلا يوقف حقلٌ إضافيٌّ تصحيحَ خطأ إدخال.
+  const [removeReason, setRemoveReason] = useState("");
   const removeCase = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/patients/${patientId}/case-type/${caseRow.caseType}`, {
         method: "DELETE", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: removeReason }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "تعذّر الحذف"); }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        //  ══ **والحاجزُ يُقرأ بابَه** (CASEDEL-02) ════════════════════════
+        //  كان التوست يعرض `e.message` وحدها — وأحياناً نصَّ Postgres خاماً
+        //  عن مفتاحٍ أجنبي. الخادمُ صار يرسل `remedy` مع السبب، فيُعرَض
+        //  معه: ما يمنع، ثمّ الخطوةُ التي تفكّه.
+        const err: any = new Error(e.message || "تعذّر الحذف");
+        err.remedy = typeof e.remedy === "string" ? e.remedy : null;
+        throw err;
+      }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients/:id", patientId] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
-      toast({ title: "حُذف نوع الحالة", description: "نُقلت زياراته ودفعاته إلى الحالة المتبقية." });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/followups/decision-queue"] });
+      setRemoveReason("");
+      const eps = Array.isArray(r?.disposed?.episodeIds) ? r.disposed.episodeIds.length : 0;
+      const reqs = Array.isArray(r?.disposed?.reviewRequestIds) ? r.disposed.reviewRequestIds.length : 0;
+      toast({
+        title: "سُحب نوع الحالة",
+        description: "نُقلت زياراته ودفعاته إلى الحالة المتبقية."
+          + (eps ? ` وأُزيلت ${eps} من طلبات الأجهزة غير المستعملة.` : "")
+          + (reqs ? ` وسُحبت ${reqs} من طلبات المراجعة المعلَّقة.` : ""),
+      });
     },
-    onError: (err: any) => toast({ title: "تعذّر الحذف", description: err.message, variant: "destructive" }),
+    onError: (err: any) => toast({
+      title: "تعذّر السحب",
+      description: err.remedy ? `${err.message}\n${err.remedy}` : err.message,
+      variant: "destructive",
+    }),
   });
 
   return (
@@ -175,20 +205,38 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
         {isAdminOnly && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <button type="button" className="mr-auto text-red-400 hover:text-red-600" title="حذف نوع الحالة (المدير العام)" data-testid={`delete-case-${caseRow.id}`}>
+              <button type="button" className="mr-auto text-red-400 hover:text-red-600" title="سحب نوع الحالة (المدير العام)" data-testid={`delete-case-${caseRow.id}`}>
                 <Trash2 className="w-4 h-4" />
               </button>
             </AlertDialogTrigger>
             <AlertDialogContent dir="rtl">
               <AlertDialogHeader>
-                <AlertDialogTitle>حذف حالة «{m.label}» من ملف المريض؟</AlertDialogTitle>
+                <AlertDialogTitle>سحب حالة «{m.label}» من ملف المريض؟</AlertDialogTitle>
                 <AlertDialogDescription>
-                  تُنقل زيارات ودفعات هذه الحالة إلى الحالة المتبقية (لا تُحذف)، وتُصفَّر حقول النوع من الملف. يُمنع الحذف إن وُجد سجل تصنيع أو دفعات موسومة لهذا النوع. هذا الإجراء للمدير العام حصراً ويُسجَّل في سجل التدقيق.
+                  تُنقل زيارات ودفعات هذه الحالة إلى الحالة المتبقية (لا تُحذف)، وتُصفَّر حقول النوع من الملف.
+                  وتُزال معها طلباتُ الأجهزة التي فتحها النظام تلقائياً ولم يستعملها أحد.
+                  {" "}
+                  <span className="font-semibold">ويُمنع السحب إن وُجد تاريخٌ حقيقي</span>
+                  {" "}
+                  — معاينةٌ موقّعة، أو أمر تصنيع أو صيانة، أو دفعاتٌ موسومة، أو جهازٌ تجاوز مرحلة الطلب —
+                  وتُقال حينها الخطوةُ التي تفكّ المنع. هذا الإجراء للمدير العام حصراً ويُسجَّل في سجل التدقيق.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              <div className="space-y-1">
+                <label className="text-sm text-slate-600" htmlFor={`remove-case-reason-${caseRow.id}`}>
+                  سبب السحب (اختياري — يُحفظ في سجل التدقيق)
+                </label>
+                <Input
+                  id={`remove-case-reason-${caseRow.id}`}
+                  data-testid={`remove-case-reason-${caseRow.id}`}
+                  value={removeReason}
+                  onChange={(e) => setRemoveReason(e.target.value)}
+                  placeholder="مثال: أُضيف بالخطأ عند التسجيل"
+                />
+              </div>
               <AlertDialogFooter className="gap-2">
-                <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => removeCase.mutate()}>حذف الحالة</AlertDialogAction>
+                <AlertDialogCancel onClick={() => setRemoveReason("")}>إلغاء</AlertDialogCancel>
+                <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => removeCase.mutate()}>سحب الحالة</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

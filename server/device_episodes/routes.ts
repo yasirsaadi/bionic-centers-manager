@@ -304,6 +304,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         const before = await episodes.getDeviceEpisode(episodeId);
         const episode = await episodes.cancelPreManufacturingDeviceEpisode({
           patientId, episodeId, reason,
+          actor: { userId: session.userId, userName: session.userName ?? null },
         });
 
         await logAudit({
@@ -317,7 +318,13 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
           newValues: episode,
           ipAddress: req.ip ?? null,
           userAgent: req.get("user-agent") ?? null,
-          notes: `إلغاء جهاز #${episode.sequenceNumber} قبل التصنيع — ${episode.cancelReason}`,
+          notes: `إلغاء جهاز #${episode.sequenceNumber} قبل التصنيع — ${episode.cancelReason}`
+            + (episode.cancelledReviewRequestIds.length
+              ? ` — وسُحب معه طلبُ المراجعة ${episode.cancelledReviewRequestIds.map((i) => `#${i}`).join("، ")}`
+              : "")
+            + (episode.retiredFollowupId !== null
+              ? ` — وتقاعدت متابعتُه #${episode.retiredFollowupId}`
+              : ""),
         });
 
         res.json(episode);

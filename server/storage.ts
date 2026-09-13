@@ -57,11 +57,15 @@ import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
 import {
   lockCaseAndReadOpenEpisode, lockCaseAndReadExactEpisode,
-  markEpisodeInManufacturing, caseHasEpisodes,
+  markEpisodeInManufacturing,
   startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
   resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
+import {
+  classifyCaseDisposal, disposeCaseScaffolding,
+  CaseDisposalBlockedError, type CaseScaffolding,
+} from "./patient_cases/disposal";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
   computeScore, mergeTargets, PERFORMANCE_TARGETS_KEY,
@@ -2452,10 +2456,25 @@ export class DatabaseStorage implements IStorage {
 
   // ADMIN-ONLY case-type deletion («حذف نوع حالة») — also the cleaner for
   // GHOST cases left by the old destructive edit (flag wiped, case row kept).
+  //
+  // ══ **السقالةُ تُسحَب، والتاريخُ يُحمى** (المرحلة الثالثة — تدقيق
+  //    ٢٠٢٦-٠٩-١٢: CASEDEL-01/02/03/05 · INT-06) ═══════════════════════════
+  // كان الحارسُ `caseHasEpisodes` — وجودُ صفٍّ واحد في `patient_device_episodes`
+  // مهما كانت حالتُه. والتطبيقُ **يفتح الحلقةَ تلقائياً** عند «إضافة نوع حالة»
+  // أو «طلب جهاز»، فخطأُ إدخالٍ في ثانية صار غيرَ قابلٍ للتراجع إلى الأبد —
+  // ولا إلغاءُ الحلقة يفكّه (الملغاةُ صفٌّ أيضاً)، ولا التصحيحُ الإداريّ يبلغه
+  // (لا بيعَ ليُعكَس). فصار القرارُ قاعدةً واحدة في `patient_cases/disposal.ts`:
+  // **الخلودُ يُكتسَب بالتاريخ لا بوجود الصفّ.**
+  //
   // Safety model:
-  //   - BLOCKED while manufacturing history (any work order) or payments
-  //     TAGGED for this type exist — real history is never deleted, and those
-  //     are resurrection signals syncPatientCases would rebuild the case from.
+  //   - `classifyCaseDisposal` تُنادى **داخل المعاملة وتحت قفل المريض** —
+  //     حالةُ الشاشة ليست حدَّ أمان: بين العرض والضغطة قد يوقّع طبيبٌ معاينةً
+  //     أو يُفتَح أمرُ تصنيع. وهي تشمل الحارسين القديمين (أوامرُ التصنيع
+  //     والدفعاتُ الموسومة) بنصّهما، وتزيد: المعاينةُ، والمتابعةُ، والمبلغُ
+  //     المعلَّق، وطلبُ الخصم، والحلقةُ ذاتُ التاريخ، وطلبُ المراجعة المحسوم.
+  //   - القابلُ للسحب يُزال هو **وسقالتُه وحدها**: حلقاتٌ لا يشير إليها شيء،
+  //     وطلباتُ مراجعةٍ معلَّقةٌ تُسحَب (لا تُمحى — ترحيل ٠٧٩)، وزيارةُ
+  //     العلامة تُحذف ناعماً.
   //   - The case's visits/payments are re-pointed to the remaining case
   //     (physio first) or detached (case_id NULL) — never deleted.
   //   - Cost: 'manual' (a priced business event) is SUBTRACTED from
@@ -2464,7 +2483,11 @@ export class DatabaseStorage implements IStorage {
   //     stay untouched. No remaining case → subtract.
   //   - The type's flag AND its detail columns are cleared so no signal
   //     resurrects the case on the next sync.
-  async deleteCaseType(patientId: number, caseType: "prosthetic" | "medical_support" | "physiotherapy"): Promise<{ movedRows: number }> {
+  async deleteCaseType(
+    patientId: number,
+    caseType: "prosthetic" | "medical_support" | "physiotherapy",
+    actor?: { userId?: number | null; userName?: string | null; reason?: string | null },
+  ): Promise<{ movedRows: number; disposed: CaseScaffolding }> {
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
@@ -2474,24 +2497,20 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
       if (!row) throw new Error("لا توجد حالة من هذا النوع لهذا المريض");
 
-      // **الحلقة تاريخُ جهازٍ دائم.** خيطٌ يملك حلقةً واحدة لا يُحذف: لا
-      // بانتظار انفجار مفتاحٍ أجنبي، ولا بنقل الحلقات أو حذفها تلقائياً.
-      // يُفحَص **قبل** أي تعديل، فالرفض لا يترك أثراً — وقبل حارس أوامر
-      // التصنيع أيضاً، لأن حلقةً بلا أمر (طلبٌ لم يُخصَّص بعد) لا يمسكها
-      // ذاك الحارس أصلاً.
-      if (await caseHasEpisodes(tx, row.id)) {
-        throw new Error("يوجد سجل أجهزة لهذا النوع — لا يمكن حذفه");
-      }
+      //  **القرارُ يُؤخَذ هنا، تحت القفل، لا قبله.** ويُرفَض قبل أيّ كتابة،
+      //  فالمردودُ لا يترك أثراً — لا نصفَ تنظيف.
+      const verdict = await classifyCaseDisposal(tx, {
+        patientId, caseId: row.id, caseType,
+      });
+      if (!verdict.disposable) throw new CaseDisposalBlockedError(verdict.blocker);
 
-      if (caseType !== "physiotherapy") {
-        const wos = await tx.select({ id: prostheticWorkOrders.id }).from(prostheticWorkOrders)
-          .where(and(eq(prostheticWorkOrders.patientId, patientId), eq(prostheticWorkOrders.serviceType, caseType))).limit(1);
-        if (wos.length > 0) throw new Error("يوجد سجل تصنيع لهذا النوع — لا يمكن حذفه");
-        const tag = caseType === "prosthetic" ? "أطراف صناعية" : "مساند طبية";
-        const tagged = await tx.select({ id: payments.id }).from(payments)
-          .where(and(eq(payments.patientId, patientId), sql`${payments.paymentTreatmentType} LIKE ${"%" + tag + "%"}`)).limit(1);
-        if (tagged.length > 0) throw new Error("توجد دفعات موسومة لهذا النوع — عدّل تصنيفها أولاً ثم احذف");
-      }
+      const reason = (actor?.reason ?? "").trim()
+        || "سُحب نوع الحالة من ملفّ المريض (خطأُ إدخال)";
+      await disposeCaseScaffolding(tx, {
+        scaffolding: verdict.scaffolding,
+        reason,
+        actor: { userId: actor?.userId ?? null, userName: actor?.userName ?? null },
+      });
 
       const others = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), sql`${patientCases.id} <> ${row.id}`));
@@ -2528,7 +2547,7 @@ export class DatabaseStorage implements IStorage {
           : { isPhysiotherapy: false, diseaseType: null, injuries: null, injuryType: null, injuryArea: null, treatmentType: null };
       await tx.update(patients).set(clear).where(eq(patients.id, patientId));
 
-      return { movedRows: rp.length + rv.length };
+      return { movedRows: rp.length + rv.length, disposed: verdict.scaffolding };
     });
   }
 

@@ -21,7 +21,7 @@ import { sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { deviceDiscountRefs } from "@shared/discount";
 import {
-  computeCommercialPrice, isFollowupReason, isTerminal,
+  computeCommercialPrice, isFollowupReason, isTerminal, TERMINAL_STATUS_SQL_LIST,
   type CommercialPriceChange, type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 import {
@@ -380,7 +380,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
          ORDER BY id DESC LIMIT 1
       ) cl ON TRUE
      WHERE f.patient_id = ${patientId}
-     ORDER BY (f.status NOT IN ('closed_without_purchase','converted','closed_exam_cancelled','closed_admin_void')) DESC, f.id DESC
+     ORDER BY (f.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})) DESC, f.id DESC
   `);
   return (r.rows ?? []).map((x: any) => ({
     ...toRow(x),

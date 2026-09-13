@@ -27,6 +27,9 @@ import {
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
+import {
+  cancelScaffoldRequestsForEpisode, retireFollowupForCancelledEpisode,
+} from "../patient_cases/disposal";
 
 /** الاختصاصان اللذان يُشترى فيهما جهاز. العلاج الطبيعي لا حلقة له. */
 export const DEVICE_SERVICE_TYPES = ["prosthetic", "medical_support"] as const;
@@ -643,7 +646,12 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
   patientId: number;
   episodeId: number;
   reason: string;
-}): Promise<DeviceEpisodeView> {
+  /** مَن سحب — يُكتب على طلبات المراجعة التي تُسحَب معه. */
+  actor?: { userId?: number | null; userName?: string | null };
+}): Promise<DeviceEpisodeView & {
+  cancelledReviewRequestIds: number[];
+  retiredFollowupId: number | null;
+}> {
   const { patientId, episodeId } = params;
   const reason = (params.reason ?? "").trim();
   if (!reason) throw new DeviceEpisodeError("سبب الإلغاء إلزامي", 400);
@@ -680,10 +688,35 @@ export async function cancelPreManufacturingDeviceEpisode(params: {
                 created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
     `);
     const row = (upd.rows ?? [])[0];
+
+    //  ══ **وسحبُ الطلب يسحب طلبَ مراجعته معه** (INT-06 = RTP-5) ══════════
+    //  كان الطلبُ يبقى `pending` إلى الأبد بعد أن سُحب جهازُه: يقرأ الطبيبُ
+    //  في طابوره جهازاً لم يعد مطلوباً، ويبقى شاغلاً مرساةَ التفرّد الجزئية
+    //  (`uq_mrr_pending_*` مشروطةٌ بـ`status = 'pending'`) فيُردّ الطلبُ
+    //  الصحيح التالي ٤٠٩ بلا سبب مفهوم.
+    //  **داخل المعاملة نفسِها** — يقعان معاً أو لا يقع شيء.
+    const actor = {
+      userId: params.actor?.userId ?? null,
+      userName: params.actor?.userName ?? null,
+    };
+    const cancelledReviewRequestIds = await cancelScaffoldRequestsForEpisode(tx, {
+      episodeId, reason: `أُلغي طلبُ الجهاز: ${reason}`, actor,
+    });
+
+    //  **والمتابعةُ الحيّة تتقاعد معه** — بسببها الحقيقيّ، والمنتهيةُ لا
+    //  يُعاد كتابةُ تاريخها.
+    const retiredFollowupId = await retireFollowupForCancelledEpisode(tx, {
+      episodeId, patientId, branchId: row.branch_id ?? null, reason, actor,
+    });
+
     const ct = await tx.execute<{ case_type: string }>(sql`
       SELECT case_type FROM patient_cases WHERE id = ${row.case_id}
     `);
-    return toView({ ...row, service_type: (ct.rows ?? [])[0]?.case_type ?? "" });
+    return {
+      ...toView({ ...row, service_type: (ct.rows ?? [])[0]?.case_type ?? "" }),
+      cancelledReviewRequestIds,
+      retiredFollowupId,
+    };
   });
 }
 
@@ -1551,21 +1584,17 @@ export async function syncEpisodeToOrderTerminalState(
   `);
 }
 
-/**
- * هل يملك هذا الخيط حلقةً واحدة على الأقلّ؟
- *
- * يقرأه حذفُ نوع الحالة: الحلقة **تاريخُ جهازٍ دائم**، ولا يجوز أن يمحوه
- * حذفٌ إداري للخيط — لا بالكاسكيد ولا بإعادة الإسناد.
- */
-export async function caseHasEpisodes(
-  tx: { execute: (q: any) => Promise<any> },
-  caseId: number,
-): Promise<boolean> {
-  const r = await tx.execute(sql`
-    SELECT 1 FROM patient_device_episodes WHERE case_id = ${caseId} LIMIT 1
-  `);
-  return (r.rows ?? []).length > 0;
-}
+//  ══ `caseHasEpisodes` أُزيلت (المرحلة الثالثة — CASEDEL-01) ══════════════
+//  كانت `SELECT 1 … WHERE case_id = ?` بلا شرطِ حالةٍ أو تاريخ، يقرؤها حذفُ
+//  نوع الحالة فيقول «يوجد سجل أجهزة». والتطبيقُ **يفتح الحلقةَ تلقائياً**
+//  عند «إضافة نوع حالة» أو «طلب جهاز» — فصفٌّ لا قرارَ إنسانٍ فيه كان يُخلّد
+//  خطأَ إدخال، وحتى الملغاةُ الفارغة تحبس الخيطَ إلى الأبد.
+//
+//  والحكمُ صار لـ`patient_cases/disposal.ts: classifyCaseDisposal`: حلقةٌ
+//  تجاوزت مرحلةَ الطلب — أو يشير إليها معاينةٌ أو متابعةٌ أو أمرُ عملٍ أو
+//  مبلغٌ معلَّق — تُقرأ تاريخاً وتُحجَب؛ وما عداها سقالةٌ تُسحَب.
+//
+//  **ولا تُعاد**: بابٌ واحد للقرار، وإلّا انحرف حارسان.
 
 /** حلقة بمعرّفها مع نوع خدمتها — للتحقّق والعرض. */
 export async function getDeviceEpisode(episodeId: number): Promise<
