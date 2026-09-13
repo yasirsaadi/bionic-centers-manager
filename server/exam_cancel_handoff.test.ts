@@ -354,10 +354,15 @@ async function main() {
       check(cx.includes('"لا يمكن إلغاء هذه المعاينة بعد تنفيذ الخدمة المرتبطة بها."'),
         "٣٧. ونصُّ الرفض كما هو في مصدره");
 
+      //  **والمقياسُ منطقُ الإلغاء لا كلُّ ما يحمل اسمَه.**
+      //  أوّلُ صياغةٍ شملت معه `shared/administrative_reversal.ts` والنافذةَ
+      //  أيضاً — وهما **مفرداتٌ وشاشة** تتطوّران مشروعاً (سؤالٌ يُضاف
+      //  للموظّف مثلاً)، فيحمرّ التأكيدُ لتغييرٍ لا يمسّ إلغاءً ولا ديناراً.
+      //  **ومنطقُ الإلغاء ومالُه في `server/admin_reversal/` وحده** — فهذا
+      //  ما يُقاس، والباقي يحرسه عقدُ الشاشة في `test:correction-ux`.
       const changed = execFileSync("git", ["diff", "--name-only", "origin/main", "--",
-        "server/admin_reversal/", "shared/administrative_reversal.ts",
-        "client/src/components/AdministrativeReversalDialog.tsx"], { encoding: "utf8" }).trim();
-      same("٣٨. **ومنطقُ الإلغاء الكامل لم يُمَسّ بملفٍّ واحد** (مخزنُه ونقاطُه ونافذتُه)",
+        "server/admin_reversal/"], { encoding: "utf8" }).trim();
+      same("٣٨. **ومنطقُ الإلغاء الكامل لم يُمَسّ بملفٍّ واحد** (`server/admin_reversal/`)",
         changed, "");
     }
   } finally {

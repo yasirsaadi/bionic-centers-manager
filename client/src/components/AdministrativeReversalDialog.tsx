@@ -14,7 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS, CORRECTION_INTENT_MODE,
   replacementSummaryLine,
-  type CorrectionIntent, type ReversalMode, type ReversalPreview,
+  REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL, refundQuestionRequired,
+  type CorrectionIntent, type RefundAnswer, type ReversalMode, type ReversalPreview,
 } from "@shared/administrative_reversal";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
@@ -55,11 +56,15 @@ export function AdministrativeReversalDialog({
   const [intent, setIntent] = useState<CorrectionIntent | "">("");
   const [replacementRequestedItem, setReplacementRequestedItem] = useState("");
   const [reasonNote, setReasonNote] = useState("");
+  //  جوابُ «هل تم إرجاع المبلغ للمريض؟» — يمنع التأكيدَ حتى يُختار، **ولا
+  //  يُرسَل ولا يغيّر ديناراً** (المرحلةُ الأولى، قرارُ المالك).
+  const [refundAnswer, setRefundAnswer] = useState<RefundAnswer | "">("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
     setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
+    setRefundAnswer("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -95,6 +100,9 @@ export function AdministrativeReversalDialog({
     setMode(CORRECTION_INTENT_MODE[intent]);
     //  تبديلُ النيّة يُسقط بديلاً اختير لنيّةٍ أخرى.
     if (intent !== "replace_requested_item") setReplacementRequestedItem("");
+    //  **وجوابُ الإرجاع كذلك**: أُجيب عن «إلغاءٍ كامل» ثمّ بُدِّلت النيّةُ
+    //  ثمّ عاد إليها — فيُسأل من جديد، ولا يُحمَل جوابٌ قديم على قرارٍ جديد.
+    setRefundAnswer("");
   }, [intent]);
 
   const run = useMutation({
@@ -157,8 +165,11 @@ export function AdministrativeReversalDialog({
     ...(replacing ? preview.replacementImpact : []),
     ...(replacing && replacementLabel ? [replacementSummaryLine(replacementLabel)] : []),
   ] : [];
+  //  **السؤالُ يُطرح بالقاعدة المشتركة** — لا بشرطٍ مكتوبٍ هنا ينحرف عنها.
+  const refundRequired = refundQuestionRequired({ mode, paidAmount: preview?.paidAmount });
   const canRun = Boolean(intent) && reasonNote.trim().length > 0
     && (!replacing || Boolean(replacementRequestedItem))
+    && (!refundRequired || Boolean(refundAnswer))
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -295,6 +306,33 @@ export function AdministrativeReversalDialog({
                     ))}
                   </ul>
                 </details>
+              </div>
+            )}
+
+            {/*  ══ **سؤالُ إرجاع المبلغ — إلزاميّ، وبعد الملخّص عمداً** ══════
+                الملخّصُ قال للتوّ إن الدفعةَ تبقى وللمريض رصيد؛ فيُسأل هنا
+                عمّا جرى فعلاً بذلك المبلغ. **ولا يُرسَل بعد ولا يغيّر ديناراً
+                ولا تنفيذَ الإلغاء** — هذه المرحلةُ تسأل وتُلزِم فقط. */}
+            {refundRequired && (
+              <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-3"
+                data-testid="box-refund-question">
+                <Label className="font-semibold text-sky-900">
+                  {REFUND_QUESTION_LABEL} *
+                </Label>
+                <div className="flex gap-2">
+                  {REFUND_ANSWERS.map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => setRefundAnswer(a)}
+                      data-testid={`option-refund-${a}`}
+                      className={`flex-1 rounded-lg border p-2 text-center font-semibold transition ${
+                        refundAnswer === a ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
+                    >
+                      {REFUND_ANSWER_LABELS[a]}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
