@@ -648,6 +648,109 @@ async function main() {
         "م٦. **وسطرُ التدقيق يقول النقص** فلا يُكتشَف بعد أشهر", note);
       same("م٧. والحالةُ مغلقة", await caseStatus(c), "closed");
     }
+
+    // ══ ن. حالةٌ بلا فرع — ولا يُقرأ `NULL` صفراً أبداً ═══════════════════
+    //  `patient_cases.branch_id` عمودٌ يقبل `NULL`، و`Number(null)` تساوي
+    //  **صفراً** لا `NaN`. فكانت دفعةُ الاسترجاع تُكتب على فرعٍ رقمُه صفر:
+    //  لا فرعَ به، فيرتدّ المفتاحُ الأجنبيّ بنصّ Postgres خامٍّ وتسقط
+    //  المعاملةُ كلُّها. والفرعُ الآن يُشتقّ: الحالةُ ثمّ المريض.
+    console.log("\n── ن. حالةٌ بلا فرع ──");
+    {
+      const p = await mkPatient("ن-بلا-فرع", "prosthetic");
+      const c = await mkCase(p, "prosthetic", 500_000);
+      await mkExam(p, c, "prosthetic");
+      await mkPayment(p, c, "prosthetic", 180_000);
+      //  الحالةُ بلا فرع — والمريضُ فرعُه ١ (`patients.branch_id` NOT NULL).
+      await q(`UPDATE patient_cases SET branch_id = NULL WHERE id=$1`, [c]);
+      same("ن١. الإعدادُ: الحالةُ بلا فرع",
+        (await q(`SELECT branch_id FROM patient_cases WHERE id=$1`, [c]))[0].branch_id, null);
+
+      same("ن٢. والمعاينةُ تُقرأ بلا انفجار",
+        (await previewOf(p, "prosthetic")).body?.money?.netPaid, 180_000);
+
+      const r = await closeOf(p, "prosthetic", {
+        reason: "أعاد الجهاز", refundAmount: 180_000, refundReason: "ردٌّ كامل",
+      });
+      same("ن٣. **والإغلاق بردٍّ ينجح** — لا ٥٠٠ ولا نصّ مفتاحٍ أجنبيّ", r.status, 200);
+
+      const neg = (await paymentRows(c)).filter((x: any) => x.amount < 0);
+      same("ن٤. وحركةُ الاسترجاع مكتوبة", neg.length, 1);
+      const branchOf = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM payments WHERE id=$1`, [neg[0].id]))[0].branch_id;
+      check(branchOf !== 0 && branchOf !== null,
+        "ن٥. **ولا صفرَ ولا فراغ** في فرع الحركة", String(branchOf));
+      same("ن٦. بل فرعُ المريض بعينه", branchOf, 1);
+      same("ن٧. والصافي صار صفراً", await netPaidOf(c), 0);
+      same("ن٨. والحالةُ مغلقة", await caseStatus(c), "closed");
+    }
+
+    // ══ س. الحالةُ المغلقة تُفتَح حين تُستأنَف الخدمة — بالصفّ نفسِه ═══════
+    console.log("\n── س. إعادةُ فتح حالةٍ مغلقة ──");
+    {
+      const p = await mkPatient("س-إعادة-فتح", "prosthetic");
+      const c = await mkCase(p, "prosthetic", 700_000);
+      const examId = await mkExam(p, c, "prosthetic");
+      const orderId = await mkOrder(p, "prosthetic");
+      await mkPayment(p, c, "prosthetic", 250_000);
+
+      const closed = await closeOf(p, "prosthetic", {
+        reason: "انتهت الخدمة", refundAmount: 0, retainedReason: "الخدمة نُفِّذت",
+      });
+      same("س١. الإعدادُ: الحالةُ أُغلقت", closed.status, 200);
+      same("س٢. وهي مغلقةٌ فعلاً", await caseStatus(c), "closed");
+      const beforeRow = (await q<any>(
+        `SELECT id, cost, cost_source, details, branch_id, created_at
+           FROM patient_cases WHERE id=$1`, [c]))[0];
+
+      //  ── الخدمةُ تُستأنَف: يُفتَح طلبُ جهازٍ على الخيط نفسِه ───────────
+      const ep = await http("POST", `/api/patients/${p}/device-episodes`, S.admin, {
+        serviceType: "prosthetic", servicePath: "exam",
+      });
+      same("س٣. **فتحُ طلبِ جهازٍ ينجح على حالةٍ مغلقة**", ep.status, 201);
+      same("س٤. **والحالةُ عادت نشطة** — لا حلقةٌ حيّةٌ على حالةٍ مخفيّة",
+        await caseStatus(c), "active");
+
+      //  **بالصفّ نفسِه**: لا معرّفٌ جديد ولا صفٌّ ثانٍ.
+      const after = await q<any>(
+        `SELECT id, cost, cost_source, details, branch_id, created_at
+           FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [p]);
+      same("س٥. **وصفٌّ واحدٌ لا صفّان**", after.length, 1);
+      same("س٦. **وهو الصفُّ نفسُه بمعرّفه**", after[0].id, c);
+      same("س٧. **وكلفتُه وتفاصيلُه وفرعُه وتاريخُه كما هي**",
+        {
+          cost: after[0].cost, cost_source: after[0].cost_source,
+          details: after[0].details, branch_id: after[0].branch_id,
+          created_at: after[0].created_at,
+        },
+        {
+          cost: beforeRow.cost, cost_source: beforeRow.cost_source,
+          details: beforeRow.details, branch_id: beforeRow.branch_id,
+          created_at: beforeRow.created_at,
+        });
+
+      //  **والتاريخُ كلُّه ما زال مربوطاً بها** — لم يُقطَع ولم يُنقَل.
+      same("س٨. والمعاينةُ ما زالت عليها",
+        (await q(`SELECT case_id FROM medical_exams WHERE id=$1`, [examId]))[0].case_id, c);
+      same("س٩. والدفعاتُ كما هي (بما فيها صفرُ استرجاع)",
+        (await paymentRows(c)).map((x: any) => x.amount), [250_000]);
+      same("س١٠. وأمرُ التصنيع باقٍ",
+        Number((await q<{ n: number }>(
+          `SELECT count(*)::int n FROM prosthetic_work_orders WHERE id=$1`, [orderId]))[0].n), 1);
+
+      //  وتعود إلى طوابير العمل كما كانت قبل الإغلاق.
+      const pend = await http("GET", "/api/medical/pending", S.doc);
+      check(JSON.stringify(pend.body ?? {}).includes(`"${p}"`),
+        "س١١. **وعادت إلى خريطة انتظار المعاينة**",
+        JSON.stringify(pend.body).slice(0, 200));
+
+      //  ولا يُلمَس ختمُ حالةٍ نشطةٍ بلا سبب: فتحٌ ثانٍ لا يفعل شيئاً.
+      const stamp = (await q<any>(`SELECT updated_at FROM patient_cases WHERE id=$1`, [c]))[0].updated_at;
+      await http("POST", `/api/patients/${p}/device-episodes`, S.admin, {
+        serviceType: "prosthetic", servicePath: "exam",
+      });
+      same("س١٢. **والنشطةُ لا تُلمَس** — لا ختمَ يتحرّك بلا سبب",
+        (await q<any>(`SELECT updated_at FROM patient_cases WHERE id=$1`, [c]))[0].updated_at, stamp);
+    }
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);

@@ -99,7 +99,35 @@ async function lockCaseTx(tx: Executor, patientId: number, caseType: ClosureServ
      FOR UPDATE
   `);
   if (!c) throw new CaseClosureError("لا توجد حالة من هذا النوع لهذا المريض", 404);
-  return { patient: p, caseRow: c };
+  return { patient: p, caseRow: c, branchId: resolveBranchId(p, c) };
+}
+
+/**
+ * **فرعُ الحركة المالية — ولا صفرَ أبداً.**
+ *
+ * ══ العطب ═════════════════════════════════════════════════════════════════
+ * `patient_cases.branch_id` عمودٌ **يقبل `NULL`** (بلا افتراض، ومفتاحٌ أجنبيّ
+ * إلى `branches`). وكان يُقرأ `Number(caseRow.branch_id)` — و`Number(null)`
+ * تساوي **صفراً** لا `NaN`. فحالةٌ بلا فرع كانت تكتب دفعةَ استرجاعٍ على
+ * `branch_id = 0`: لا فرعَ بهذا الرقم، فيرتدّ المفتاحُ الأجنبيّ بنصّ Postgres
+ * خامٍّ على وجه المستخدم وتسقط المعاملةُ كلُّها؛ ولو وُجد فرعٌ بالرقم يوماً
+ * لكان أسوأ — **مالٌ يُنسَب صامتاً إلى فرعٍ لم يعمل فيه**.
+ *
+ * ══ والحلُّ يُرتِّب المصادر ولا يخترع ═════════════════════════════════════
+ * فرعُ الحالة إن وُجد · وإلّا **فرعُ المريض** (`patients.branch_id` عمودٌ
+ * `NOT NULL`، وهو المصدرُ الذي تستعمله `startDeviceEpisodeTx` احتياطاً
+ * أصلاً — لا قاعدةٌ ثانية تُخترَع هنا) · وإلّا **يُردّ الطلبُ صراحةً**
+ * بلا كتابةِ دينار. ولا صفرٌ ولا تخمين.
+ */
+function resolveBranchId(patientRow: Record<string, any>, caseRow: Record<string, any>): number {
+  for (const raw of [caseRow.branch_id, patientRow.branch_id]) {
+    if (raw === null || raw === undefined || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  throw new CaseClosureError(
+    "لا يمكن تحديد فرع هذه الحالة — راجع بيانات الملف قبل الإغلاق.", 409,
+  );
 }
 
 /**
@@ -172,7 +200,7 @@ export async function closeCaseWithHistoryTx(
   },
 ): Promise<CaseClosureOutcome> {
   const { patientId, caseType, request, actor } = params;
-  const { caseRow } = await lockCaseTx(tx, patientId, caseType);
+  const { caseRow, branchId } = await lockCaseTx(tx, patientId, caseType);
   const caseId = Number(caseRow.id);
 
   if (String(caseRow.status) === "closed") {
@@ -204,7 +232,7 @@ export async function closeCaseWithHistoryTx(
     const [ins] = await rows(tx, sql`
       INSERT INTO payments
         (patient_id, branch_id, amount, notes, payment_treatment_type, case_id, date)
-      VALUES (${patientId}, ${Number(caseRow.branch_id)}, ${-money.refundAmount},
+      VALUES (${patientId}, ${branchId}, ${-money.refundAmount},
               ${note}, ${CLOSURE_PAYMENT_TAG[caseType]}, ${caseId}, NOW())
       RETURNING id, patient_id, branch_id, date, payment_treatment_type, notes
     `);
@@ -214,7 +242,7 @@ export async function closeCaseWithHistoryTx(
     const journal = await createJournalForRefundTx(tx, {
       id: refundPaymentId,
       patientId,
-      branchId: Number(caseRow.branch_id),
+      branchId,
       date: ins.date ?? null,
       paymentTreatmentType: CLOSURE_PAYMENT_TAG[caseType],
       notes: note,

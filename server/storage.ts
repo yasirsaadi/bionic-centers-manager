@@ -66,6 +66,7 @@ import {
   classifyCaseDisposal, disposeCaseScaffolding,
   CaseDisposalBlockedError, type CaseScaffolding,
 } from "./patient_cases/disposal";
+import { reopenClosedCaseTx } from "./patient_cases/reopen";
 import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
@@ -1432,7 +1433,19 @@ export class DatabaseStorage implements IStorage {
     const markerCostOf = (t: string) => t === "prosthetic" ? prostheticMarkerCost : t === "medical_support" ? supportMarkerCost : 0;
     let movedFromHolder = 0;
     const create = async (t: string) => {
-      if (has(t)) return;
+      if (has(t)) {
+        //  ══ **والمغلقةُ تُفتَح، ولا تُستنسَخ** ═══════════════════════════
+        //  الخدمةُ مطلوبةٌ الآن (`want…` هي ما استدعى هذه الدالّة)، والصفُّ
+        //  موجودٌ لكنه مغلق. فيُفتَح **هو** — لا صفٌّ ثانٍ (الفهرسُ الفريد
+        //  يمنعه، وهو الصواب: كلُّ التاريخ مربوطٌ بهذا المعرّف). ولا تُمَسّ
+        //  كلفتُه ولا تفاصيلُه، فحسابُ `movedFromHolder` أدناه لا يتحرّك:
+        //  الفتحُ ليس إنشاءً ولا يحرّك ديناراً.
+        const existing = preExisting.find((c) => c.caseType === t);
+        if (existing && existing.status === "closed") {
+          await reopenClosedCaseTx(tx, existing.id);
+        }
+        return;
+      }
       let cost = markerCostOf(t);
       if (firstEver && t === primaryType) cost = Math.max(0, (p.totalCost || 0) - otherCosts);
       else if (!firstEver && cost > 0) movedFromHolder += cost; // moving this out of the pre-existing holder

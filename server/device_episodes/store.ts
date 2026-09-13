@@ -27,6 +27,7 @@ import {
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
+import { reopenClosedCaseTx } from "../patient_cases/reopen";
 import {
   cancelScaffoldRequestsForEpisode, retireFollowupForCancelledEpisode,
 } from "../patient_cases/disposal";
@@ -573,7 +574,7 @@ export async function startDeviceEpisodeTx(
 
   //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
   const cs = await tx.execute(sql`
-    SELECT id, branch_id FROM patient_cases
+    SELECT id, branch_id, status FROM patient_cases
      WHERE patient_id = ${patientId} AND case_type = ${serviceType}
      FOR UPDATE
   `);
@@ -582,6 +583,14 @@ export async function startDeviceEpisodeTx(
     throw new DeviceEpisodeError(
       "لا توجد حالة من هذا النوع على ملف المريض — أضف نوع الحالة أولاً", 400,
     );
+  }
+  //  ══ **وحالةٌ مغلقةٌ تُفتَح بفتح طلبِ جهازٍ عليها** ═══════════════════════
+  //  فتحُ الطلب **هو** استئنافُ الخدمة. وبلا هذا كانت تُولَد حلقةٌ حيّةٌ على
+  //  حالةٍ مغلقة: عملٌ قائمٌ لا يظهر في طابورِ طبيبٍ ولا عدّادِ فرع، لأن
+  //  سبعةَ قرّاءٍ يشترطون `status = 'active'`. والصفُّ نفسُه يُفتَح — بكلفته
+  //  وتفاصيله وتاريخه كما هي — تحت القفل الذي أُخذ لتوّه.
+  if (String(caseRow.status) === "closed") {
+    await reopenClosedCaseTx(tx, Number(caseRow.id));
   }
 
   //  ══ **لم يعد فتحُ حلقةٍ جديدة يُرفَض لمجرّد وجود حلقةٍ أخرى مفتوحة**
@@ -844,6 +853,30 @@ export async function revertEpisodeToAwaitingExam(
        SET status = 'awaiting_exam', awaiting_since = NOW(), updated_at = NOW()
      WHERE id = ${episodeId} AND status = 'examined'
   `);
+}
+
+/**
+ * **حذفُ حلقاتِ السقالة** — الكتابةُ التي يملكها سحبُ نوع الحالة (٤.r).
+ *
+ * الحذفُ الفيزيائيّ هنا هو الصدق: صفٌّ فتحه التطبيقُ ولم يستعمله أحدٌ ليس
+ * تاريخاً يُحفَظ. **والقرارُ ليس هنا**: `classifyCaseDisposal` هي التي تثبت
+ * أن لا معاينةَ ولا متابعةَ ولا أمرَ ولا مبلغَ يشير إلى هذه الصفوف، وتمرّر
+ * معرّفاتِها وحدَها. فتبقى **كلُّ كتابةٍ حيّةٍ على الحلقات في طبقتها** —
+ * وهو ما يحرسه `test:device-episodes` معمارياً.
+ *
+ * تُنادى داخل معاملة المُستدعي وتحت قفله، وتُرجع عددَ ما حُذف فعلاً.
+ */
+export async function deleteScaffoldingEpisodesTx(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeIds: number[],
+): Promise<number> {
+  if (!episodeIds.length) return 0;
+  const r = await tx.execute(sql`
+    DELETE FROM patient_device_episodes
+     WHERE id IN (${sql.join(episodeIds.map((i) => sql`${i}`), sql`, `)})
+    RETURNING id
+  `);
+  return (r.rows ?? []).length;
 }
 
 /** حرّك الحلقة إلى «مُعايَنة» داخل معاملة المُستدعي. */

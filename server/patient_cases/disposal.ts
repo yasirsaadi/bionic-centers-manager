@@ -26,6 +26,7 @@
 
 import { sql } from "drizzle-orm";
 import { isTerminal } from "@shared/followup";
+import { deleteScaffoldingEpisodesTx } from "../device_episodes/store";
 
 /** الطرفيّةُ الخامسة (ترحيل ٠٧٩) — سُحب طلبُ الجهاز قبل التصنيع. */
 const FOLLOWUP_REQUEST_CANCELLED = "closed_request_cancelled";
@@ -399,15 +400,11 @@ export async function disposeCaseScaffolding(
     `);
   }
 
-  if (scaffolding.episodeIds.length) {
-    //  **الحذفُ الفيزيائيّ هنا هو الصدق**: صفٌّ فتحه التطبيقُ ولم يستعمله
-    //  أحد ليس تاريخاً يُحفَظ — و`classifyCaseDisposal` أثبتت للتوّ أن لا
-    //  معاينةَ ولا متابعةَ ولا أمرَ ولا مبلغَ يشير إليه.
-    await tx.execute(sql`
-      DELETE FROM patient_device_episodes
-       WHERE id IN (${sql.join(scaffolding.episodeIds.map((i) => sql`${i}`), sql`, `)})
-    `);
-  }
+  //  **والحذفُ يقع في طبقة الحلقات لا هنا**: `classifyCaseDisposal` أثبتت
+  //  للتوّ أن لا معاينةَ ولا متابعةَ ولا أمرَ ولا مبلغَ يشير إلى هذه الصفوف،
+  //  فيبقى **القرارُ** هنا و**الكتابةُ** في مالكها — وهو ما يحرسه
+  //  `test:device-episodes` معمارياً («كل كتابةٍ حيّة تمرّ من طبقتها»).
+  await deleteScaffoldingEpisodesTx(tx, scaffolding.episodeIds);
 }
 
 /**
