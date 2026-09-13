@@ -528,6 +528,45 @@ const examSignedAfterRequestSql = (r: string) => sql`EXISTS (
 )`;
 
 /**
+ * **الطلباتُ التي تُبقي (مريض، اختصاص) في الطابور بلا هويّةِ جهاز** — مقفولة.
+ *
+ * صفُّ «معايناتي» بلا حلقة يقف على طلبٍ **على مستوى الاختصاص** (عارٍ، أو
+ * مرساتُه جهازٌ حيٌّ لم يعد ينتظر). وزرُّ «إلغاء المعاينة» يحتاج أرقامَها
+ * **تحت القفل** لا من لقطةِ شاشة: بين العرض والضغطة قد يوقّع طبيبٌ معاينةً
+ * أو يُحال الطلبُ أو يُرجَع.
+ *
+ * ونفسُ شروط القائمة بالحرف — `specialtyLevelRequestSql` و
+ * `examSignedAfterRequestSql` و`scopeClause` — لا نسخةٌ ثانية تنحرف عنها.
+ * **والمرساةُ إلى حلقةٍ منتظرة ليست منها**: تلك صفٌّ آخر بهويّة جهازه،
+ * ويُلغى بإلغاء حلقته هو (تدقيق ٢٠٢٦-٠٩-١٢: MULTI-3).
+ *
+ * وتُرجع الحالةَ أيضاً: `escalated` **قرارُ طبيبٍ وقع** — لا يُسحَب من هنا،
+ * وبابُه «إرجاع للاستعلامات». والمُنادي يقرّر، وهذه تقرأ وتقفل فقط.
+ */
+export async function lockSpecialtyLevelQueueRequestsTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { patientId: number; serviceType: string; branchIds: number[] | null },
+): Promise<{ id: number; status: string }[]> {
+  const rows = await tx.execute(sql`
+    SELECT r.id, r.status
+      FROM medical_review_requests r
+     WHERE r.patient_id = ${params.patientId}
+       AND r.service_type = ${params.serviceType}
+       AND (r.status = 'escalated'
+            OR (r.status = 'pending' AND r.requested_path = 'full'))
+       AND ${specialtyLevelRequestSql("r")}
+       AND ${scopeClause(params.branchIds, "r.branch_id")}
+       AND NOT ${examSignedAfterRequestSql("r")}
+     ORDER BY r.id
+       FOR UPDATE
+  `);
+  return ((rows.rows ?? []) as Record<string, any>[]).map((r) => ({
+    id: Number(r.id),
+    status: String(r.status),
+  }));
+}
+
+/**
  * طلباتُ المعاينة الكاملة المعلَّقة لمرضى قائمةِ العمل — **هويّةٌ لا أكثر**.
  *
  * ══ صفٌّ لكلّ طلب، لا أقدمُ طلبٍ لكلّ (مريض، اختصاص) ═══════════════════

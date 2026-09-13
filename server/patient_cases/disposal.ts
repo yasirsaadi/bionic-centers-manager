@@ -445,6 +445,35 @@ export async function cancelScaffoldRequestsForEpisode(
 }
 
 /**
+ * **وسحبُ طلبٍ بعينه** — للبابِ الذي يعرف أرقامَه سلفاً.
+ *
+ * زرُّ «إلغاء المعاينة» في قائمة عمل الطبيب يحسم أوّلاً **أيَّ** طلباتٍ تُبقي
+ * الصفَّ في الطابور (قاعدةُ `medical_review/store` وحدها تعرفها)، ثمّ ينادي
+ * هذه لتكتب — فتبقى **الكتابةُ واحدة** لكلّ سحبٍ في النظام، ولا تُستنسَخ
+ * صيغةُ «تُلحَق لا تُستبدَل» في موضعٍ ثانٍ ينحرف.
+ *
+ * **والمرساتان تبقيان**: لا صفَّ يُحذف هنا — لا الحالةُ ولا الحلقة — فربطُ
+ * الطلب بهما ما زال صادقاً ومفيداً للتدقيق. وفهرسُ التفرّد مشروطٌ بـ`pending`
+ * فيتحرّر بتغيّر الحالة وحدها.
+ */
+export async function cancelScaffoldRequestsById(
+  tx: Executor,
+  params: {
+    ids: number[];
+    reason: string;
+    actor: { userId: number | null; userName: string | null };
+  },
+): Promise<void> {
+  if (!params.ids.length) return;
+  await withdrawRequestsTx(tx, {
+    ids: params.ids,
+    note: `أُلغي طلبُ المعاينة: ${params.reason}`,
+    actor: params.actor,
+    releaseAnchors: false,
+  });
+}
+
+/**
  * **السحبُ يضيف ولا يمحو** — الكتابةُ الواحدة التي يشاركها البابان.
  *
  * ══ ولماذا لا تُكتب `decision = NULL` فوق ما كان ═══════════════════════════
