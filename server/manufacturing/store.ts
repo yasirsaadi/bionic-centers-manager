@@ -879,10 +879,18 @@ export async function getOrderDetail(id: number) {
   //  حلقة الأمر (أحدثُ معاينةٍ فعّالة عليها — والتحريرُ السريريّ اللاحق لها
   //  يظهر هنا لأنه يكتب على الصفّ نفسِه)، ويُقال `source: "patient_file"` بصدق
   //  للأمر الموروث بلا هويّة جهاز أو بلا معاينةٍ فعّالة — لا خلطٌ صامت.
-  const deviceSpecs: OrderDeviceSpecs =
-    order.serviceType === "prosthetic" || order.serviceType === "medical_support"
-      ? await orderDeviceSpecs(order.deviceEpisodeId ?? null, order.serviceType)
-      : { source: "patient_file" };
+  //  **وفشلُ قراءتها لا يُغلق صفحةَ الأمر**: أعطالُ القراءة تُعطّل عملَ الخبير
+  //  كلَّه بلا داعٍ، والبديلُ الصادقُ حاضر — أعمدةُ الملفّ معروضةٌ دائماً تحتها.
+  //  (النصفُ الماليُّ في `startDeviceSaleOperationallyTx` **لا يُغلَّف عمداً**:
+  //  هناك إسقاطُ البيع هو الفشلُ الصحيح، لا لقطةٌ ناقصة تُكتب صامتة.)
+  let deviceSpecs: OrderDeviceSpecs = { source: "patient_file" };
+  if (order.serviceType === "prosthetic" || order.serviceType === "medical_support") {
+    try {
+      deviceSpecs = await orderDeviceSpecs(order.deviceEpisodeId ?? null, order.serviceType);
+    } catch (err) {
+      console.error("[manufacturing] reading device exam specs failed:", err);
+    }
+  }
 
   //  **وأمرُ ملفٍّ محذوفٍ لا يُفتَح** (ترحيل ٠٦٨): بلا مريضٍ يعود `null`
   //  فتُردّ الصفحةُ ٤٠٤ — وهو الصدق، الأمرُ باقٍ لكن ملفَّه خرج من النظام.

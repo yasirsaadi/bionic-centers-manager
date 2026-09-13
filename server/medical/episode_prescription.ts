@@ -47,11 +47,17 @@ type Executor = { execute: (q: any) => Promise<any> };
 export async function effectiveExamForEpisode(
   episodeId: number,
   executor: Executor = db,
+  caseType?: DeviceServiceType,
 ): Promise<EpisodeExam | null> {
+  //  **واختصاصُ المعاينة يُطابَق حين يُعرَف**: صفٌّ مسندٍ يحمل معرّفَ حلقةِ
+  //  أطراف بياناتٌ فاسدة (لا بابَ حيّاً يُنتجها — `claimAwaitingEpisodeForExam`
+  //  يربط بالخيط)، لكنّه لو وُجد لصار «معاينةَ الحلقة» فتخرج مواصفاتُها خاليةً
+  //  ويسقط الأمرُ إلى ملفّ المريض بينما معاينتُه الصحيحة قائمة. فيُستبعَد.
   const r = await executor.execute(sql`
     SELECT me.id, me.signed_at, me.doctor_name, me.prescription
       FROM medical_exams me
      WHERE me.device_episode_id = ${episodeId}
+       ${caseType ? sql`AND me.case_type = ${caseType}` : sql``}
        AND ${activeExamSql("me")}
      ORDER BY me.signed_at DESC, me.id DESC
      LIMIT 1
@@ -125,7 +131,7 @@ export async function orderDeviceSpecs(
   executor: Executor = db,
 ): Promise<OrderDeviceSpecs> {
   if (deviceEpisodeId === null) return { source: "patient_file" };
-  const exam = await effectiveExamForEpisode(deviceEpisodeId, executor);
+  const exam = await effectiveExamForEpisode(deviceEpisodeId, executor, serviceType);
   if (!exam) return { source: "patient_file" };
   const specs = deviceSpecsFromPrescription(serviceType, exam.prescription);
   if (!hasAnySpec(specs)) return { source: "patient_file" };

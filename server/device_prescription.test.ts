@@ -370,9 +370,11 @@ async function main() {
         ["من الملف", "يسار"]);
     }
 
-    // ══ ط. ومفتاحٌ واحد يكفي ليصير الجهازُ هو المصدر ═══════════════════════
-    //  الحدُّ من الجهة الأخرى: وصفةٌ تقول النوعَ وحده ⟶ الجهازُ هو المصدر،
-    //  وما لم تقله يبقى **فارغاً لا مستعاراً** من عمودٍ كتبه جهازٌ آخر.
+    // ══ ط. مفتاحٌ واحد يكفي، والبطاقةُ تقول وصفتَه وحدها ═══════════════════
+    //  وصفةٌ تقول النوعَ وحده ⟶ الجهازُ هو مصدرُ البطاقة، وما لم تقله وصفتُه
+    //  **لا يُعرَض في بطاقته** — لكنّ **أعمدةَ الملفّ تبقى معروضةً تحتها**
+    //  موسومةً بمصدرها (عقدُ الشاشة في `manufacturing_order_ui.test.ts`)،
+    //  فلا يفقد الخبيرُ موقعَ البتر لأن الطبيبَ لم يلمس البانيَ.
     console.log("\n── ط. مفتاحٌ واحد ──");
     {
       const p = await mkPatient("ط", ["prosthetic"]);
@@ -380,14 +382,43 @@ async function main() {
       const A = await openEpisode(p, "prosthetic");
       await signExam(p, S.doc, "prosthetic", A, { prostheticType: "نوع-A" } as any);
       const woA = await sell(A);
-      const s = specsOf(await detail(woA));
+      const d = await detail(woA);
+      const s = specsOf(d);
       same("٣٦. المصدرُ المعاينة، والنوعُ منها",
         [s.source, s.prostheticType, await listItem(woA)], ["exam", "نوع-A", { itemType: "نوع-A" }]);
-      same("٣٧. **وما لم تقله الوصفةُ فارغٌ لا مستعار**",
+      same("٣٧. **وبطاقةُ الجهاز تقول وصفتَه وحدها** — لا تستعير",
         [s.footType ?? null, s.injurySide ?? null], [null, null]);
-      same("٣٨. ولقطةُ البيع كذلك",
-        [(await caseDetails(p, "prosthetic")).prostheticType, (await caseDetails(p, "prosthetic")).footType ?? null],
-        ["نوع-A", null]);
+      //  والمقصودُ بعينه: **موقعُ البتر وجهةُ الإصابة** — ليسا من مفاتيح
+      //  الوصفة ولم تقلهما هذه المعاينة، فلولا بقاءُ أعمدة الملفّ على الشاشة
+      //  لفقدهما الخبيرُ تماماً. (القدمُ ليست في `expertPatientColumns` أصلاً،
+      //  والنوعُ كتبته الوصفةُ على الملفّ عند التوقيع فلا يُقاس هنا.)
+      same("٣٨. **وأعمدةُ الملفّ ما زالت تصل الشاشة** — لا تُحجَب عن الخبير",
+        [typeof d.body?.patient?.amputationSite === "string" && d.body.patient.amputationSite.length > 0,
+          d.body?.patient?.injurySide], [true, "يسار"]);
+      //  ولقطةُ البيع: الخيطُ بحلقةٍ واحدة، فالعمودُ لا يمكن أن يصف غيرَها ⟶ يُكمِل
+      //  ما سكتت عنه الوصفة. والوصفةُ تعلو عليه حيث نطقت.
+      const det = await caseDetails(p, "prosthetic");
+      same("٣٩. **ولقطةُ البيع تُكمَل من الملفّ حين لا لبس** — والوصفةُ تعلو",
+        [det.prostheticType, det.footType, det.injurySide], ["نوع-A", "قدمُ الملفّ", "يسار"]);
+    }
+
+    // ══ ي. وبأكثرَ من حلقةٍ لا يُستعار شيء — الصمتُ أصدق ═══════════════════
+    //  الحدُّ الحقيقيّ لقاعدة الإكمال: خيطٌ بحلقتين، فعمودُ الملفّ قد يصف
+    //  الجهازَ الآخر. وصفةُ A تقول النوعَ وحده ⟶ ما سكتت عنه **يبقى فارغاً**.
+    console.log("\n── ي. حلقتان: لا إكمال ──");
+    {
+      const p = await mkPatient("ي", ["prosthetic"]);
+      const A = await openEpisode(p, "prosthetic");
+      const B = await openEpisode(p, "prosthetic", "socket");
+      await signExam(p, S.doc2, "prosthetic", B, B_RX);
+      same("٤٠. الإعداد: عمودُ الملفّ يحمل قدمَ B", (await patientCols(p)).foot_type, B_RX.footType);
+      await signExam(p, S.doc, "prosthetic", A, { prostheticType: "نوع-A" } as any);
+      const woA = await sell(A);
+      const det = await caseDetails(p, "prosthetic");
+      same("٤١. **لقطةُ A لا تستعير قدمَ B** — ولا جهتَه",
+        [det.prostheticType, det.footType ?? null, det.injurySide ?? null], ["نوع-A", null, null]);
+      same("٤٢. وبطاقةُ A على وصفتها", specsOf(await detail(woA)).prostheticType, "نوع-A");
+      same("٤٣. وحلقةُ B لم تُمَسّ", (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [B]))[0].status, "examined");
     }
   } finally {
     await cleanup();
