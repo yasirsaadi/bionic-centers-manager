@@ -641,8 +641,21 @@ export async function startDeviceEpisode(params: {
   return await db.transaction((tx) => startDeviceEpisodeTx(tx, params));
 }
 
+export interface CancelEpisodeParams {
+  patientId: number;
+  episodeId: number;
+  reason: string;
+  /** مَن سحب — يُكتب على طلبات المراجعة التي تُسحَب معه. */
+  actor?: { userId?: number | null; userName?: string | null };
+}
+
+export type CancelledEpisodeView = DeviceEpisodeView & {
+  cancelledReviewRequestIds: number[];
+  retiredFollowupId: number | null;
+};
+
 /**
- * إلغاء حلقة **قبل التصنيع**.
+ * إلغاء حلقة **قبل التصنيع** — **النسخةُ القانونية**، تأخذ معاملةَ المُنادي.
  *
  * بدونه تبقى الحلقة المفتوحة حاجزاً دائماً: مريضٌ غيّر رأيه بعد طلب الجهاز
  * يُقفل خيطه للأبد، ولا سبيل لبدء جهازٍ آخر عليه أبداً.
@@ -650,83 +663,96 @@ export async function startDeviceEpisode(params: {
  * والإلغاء بعد بدء التصنيع **ليس هنا**: هناك أمرُ عملٍ حقيقي بمراحله
  * وخبيره، وإلغاؤه قرارُ تصنيعٍ يُتَّخذ من الأمر نفسه ثم يُغلق الحلقة —
  * لا العكس. فهذه النقطة ترفض `in_manufacturing` صراحةً.
+ *
+ * ══ ولماذا انقسمت إلى `Tx` وغلاف ═══════════════════════════════════════
+ * نفسُ نمط `startDeviceEpisodeTx` بحرفه: المنطقُ كلُّه هنا، والغلافُ أدناه
+ * يفتح معاملتَه الخاصّة لكلّ مُستدعٍ قائم — فلا يتغيّر لأيٍّ منهم حرف.
+ * ومَن يحتاج أن يقع الإلغاءُ **مع** كتابةٍ أخرى في حدثٍ واحد — زرُّ «إلغاء
+ * المعاينة» في قائمة عمل الطبيب يسحب الطلبَ ويُلغي حلقتَه معاً — ينادي هذه.
  */
-export async function cancelPreManufacturingDeviceEpisode(params: {
-  patientId: number;
-  episodeId: number;
-  reason: string;
-  /** مَن سحب — يُكتب على طلبات المراجعة التي تُسحَب معه. */
-  actor?: { userId?: number | null; userName?: string | null };
-}): Promise<DeviceEpisodeView & {
-  cancelledReviewRequestIds: number[];
-  retiredFollowupId: number | null;
-}> {
+export async function cancelPreManufacturingDeviceEpisodeTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: CancelEpisodeParams,
+): Promise<CancelledEpisodeView> {
   const { patientId, episodeId } = params;
   const reason = (params.reason ?? "").trim();
   if (!reason) throw new DeviceEpisodeError("سبب الإلغاء إلزامي", 400);
 
-  return await db.transaction(async (tx) => {
-    const cur = await tx.execute<{ id: number; status: string; patient_id: number }>(sql`
-      SELECT id, status, patient_id FROM patient_device_episodes
-       WHERE id = ${episodeId} FOR UPDATE
-    `);
-    const ep = (cur.rows ?? [])[0];
-    if (!ep) throw new DeviceEpisodeError("الحلقة غير موجودة", 404);
-    //  الانتماء يُتحقَّق في الشيفرة لا في المسار وحده: معرّفٌ من ملف مريض
-    //  آخر لا يجوز أن يُلغى لمجرّد أنه ورد في عنوان صحيح.
-    if (Number(ep.patient_id) !== patientId) {
-      throw new DeviceEpisodeError("الحلقة لا تخصّ هذا المريض", 404);
-    }
+  const cur = await tx.execute(sql`
+    SELECT id, status, patient_id FROM patient_device_episodes
+     WHERE id = ${episodeId} FOR UPDATE
+  `);
+  const ep = (cur.rows ?? [])[0];
+  if (!ep) throw new DeviceEpisodeError("الحلقة غير موجودة", 404);
+  //  الانتماء يُتحقَّق في الشيفرة لا في المسار وحده: معرّفٌ من ملف مريض
+  //  آخر لا يجوز أن يُلغى لمجرّد أنه ورد في عنوان صحيح.
+  if (Number(ep.patient_id) !== patientId) {
+    throw new DeviceEpisodeError("الحلقة لا تخصّ هذا المريض", 404);
+  }
 
-    const status = String(ep.status);
-    if (status === "in_manufacturing") {
-      throw new DeviceEpisodeError(
-        "الجهاز دخل التصنيع — يُلغى من أمر التصنيع نفسه لا من هنا", 409,
-      );
-    }
-    if (!CANCELLABLE_STATUSES.includes(status as PatientDeviceEpisodeStatus)) {
-      throw new DeviceEpisodeError("الحلقة في حالة نهائية ولا تُلغى", 409);
-    }
+  const status = String(ep.status);
+  if (status === "in_manufacturing") {
+    throw new DeviceEpisodeError(
+      "الجهاز دخل التصنيع — يُلغى من أمر التصنيع نفسه لا من هنا", 409,
+    );
+  }
+  if (!CANCELLABLE_STATUSES.includes(status as PatientDeviceEpisodeStatus)) {
+    throw new DeviceEpisodeError("الحلقة في حالة نهائية ولا تُلغى", 409);
+  }
 
-    const upd = await tx.execute<Record<string, any>>(sql`
-      UPDATE patient_device_episodes
-         SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = ${reason},
-             updated_at = NOW()
-       WHERE id = ${episodeId}
-      RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
-                created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
-    `);
-    const row = (upd.rows ?? [])[0];
+  const upd = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = ${reason},
+           updated_at = NOW()
+     WHERE id = ${episodeId}
+    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
+              created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
+  `);
+  const row = (upd.rows ?? [])[0];
 
-    //  ══ **وسحبُ الطلب يسحب طلبَ مراجعته معه** (INT-06 = RTP-5) ══════════
-    //  كان الطلبُ يبقى `pending` إلى الأبد بعد أن سُحب جهازُه: يقرأ الطبيبُ
-    //  في طابوره جهازاً لم يعد مطلوباً، ويبقى شاغلاً مرساةَ التفرّد الجزئية
-    //  (`uq_mrr_pending_*` مشروطةٌ بـ`status = 'pending'`) فيُردّ الطلبُ
-    //  الصحيح التالي ٤٠٩ بلا سبب مفهوم.
-    //  **داخل المعاملة نفسِها** — يقعان معاً أو لا يقع شيء.
-    const actor = {
-      userId: params.actor?.userId ?? null,
-      userName: params.actor?.userName ?? null,
-    };
-    const cancelledReviewRequestIds = await cancelScaffoldRequestsForEpisode(tx, {
-      episodeId, reason: `أُلغي طلبُ الجهاز: ${reason}`, actor,
-    });
-
-    //  **والمتابعةُ الحيّة تتقاعد معه** — بسببها الحقيقيّ، والمنتهيةُ لا
-    //  يُعاد كتابةُ تاريخها.
-    const retiredFollowupId = await retireFollowupForCancelledEpisode(tx, {
-      episodeId, patientId, branchId: row.branch_id ?? null, reason, actor,
-    });
-
-    const ct = await tx.execute<{ case_type: string }>(sql`
-      SELECT case_type FROM patient_cases WHERE id = ${row.case_id}
-    `);
-    return {
-      ...toView({ ...row, service_type: (ct.rows ?? [])[0]?.case_type ?? "" }),
-      cancelledReviewRequestIds,
-      retiredFollowupId,
-    };
+  //  ══ **وسحبُ الطلب يسحب طلبَ مراجعته معه** (INT-06 = RTP-5) ══════════
+  //  كان الطلبُ يبقى `pending` إلى الأبد بعد أن سُحب جهازُه: يقرأ الطبيبُ
+  //  في طابوره جهازاً لم يعد مطلوباً، ويبقى شاغلاً مرساةَ التفرّد الجزئية
+  //  (`uq_mrr_pending_*` مشروطةٌ بـ`status = 'pending'`) فيُردّ الطلبُ
+  //  الصحيح التالي ٤٠٩ بلا سبب مفهوم.
+  //  **داخل المعاملة نفسِها** — يقعان معاً أو لا يقع شيء.
+  const actor = {
+    userId: params.actor?.userId ?? null,
+    userName: params.actor?.userName ?? null,
+  };
+  //  **والعبارةُ يملكها الكاتب** — `cancelScaffoldRequestsForEpisode` تصدّر
+  //  ملاحظتَها بـ«أُلغي طلبُ الجهاز:» بنفسها، فتصديرُها هنا ثانيةً كان
+  //  يُنتج «أُلغي طلبُ الجهاز: أُلغي طلبُ الجهاز: …» على وجه الطبيب.
+  const cancelledReviewRequestIds = await cancelScaffoldRequestsForEpisode(tx, {
+    episodeId, reason, actor,
   });
+
+  //  **والمتابعةُ الحيّة تتقاعد معه** — بسببها الحقيقيّ، والمنتهيةُ لا
+  //  يُعاد كتابةُ تاريخها.
+  const retiredFollowupId = await retireFollowupForCancelledEpisode(tx, {
+    episodeId, patientId, branchId: row.branch_id ?? null, reason, actor,
+  });
+
+  const ct = await tx.execute(sql`
+    SELECT case_type FROM patient_cases WHERE id = ${row.case_id}
+  `);
+  return {
+    ...toView({ ...row, service_type: (ct.rows ?? [])[0]?.case_type ?? "" }),
+    cancelledReviewRequestIds,
+    retiredFollowupId,
+  };
+}
+
+/**
+ * **الغلافُ المتوافق**: يفتح معاملته الخاصّة حول `cancelPreManufacturingDeviceEpisodeTx`.
+ *
+ * لكلّ مُستدعٍ لا يحتاج أن يُشارك هذه الكتابةَ معاملةً أكبر — وهو كلُّ
+ * مُستدعٍ قائم قبل زرّ «إلغاء المعاينة». سطرٌ واحد لا أكثر.
+ */
+export async function cancelPreManufacturingDeviceEpisode(
+  params: CancelEpisodeParams,
+): Promise<CancelledEpisodeView> {
+  return await db.transaction((tx) => cancelPreManufacturingDeviceEpisodeTx(tx, params));
 }
 
 // ── الربط بالمعاينة ─────────────────────────────────────────────────────

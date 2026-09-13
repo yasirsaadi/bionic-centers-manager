@@ -48,6 +48,7 @@ import * as reviewStore from "../medical_review/store";
 import { canSuperviseReview } from "@shared/medical_review";
 import { cancelledExamIds, isExamCancelled } from "./active_exam";
 import { cancelExam, ExamCancelError } from "./cancel_exam";
+import { cancelExamRequest, CancelExamRequestError } from "./cancel_exam_request";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
 
 type Req = any;
@@ -1086,6 +1087,101 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     } catch (err: any) {
       console.error("[medical] GET worklist failed:", err);
       res.status(500).json({ error: "تعذّر تحميل قائمة المعاينات" });
+    }
+  });
+
+  // ── إلغاءُ طلبِ معاينةٍ لم تبدأ — زرُّ «إلغاء المعاينة» ────────────────
+  //
+  //  **الصلاحيةُ هي الطابورُ نفسُه.** `doctorSpecialties` تُقرأ من القاعدة في
+  //  كلّ طلب (لا من الجلسة، فسحبُ الاختصاص يسري فوراً — قاعدةُ هذا الملفّ
+  //  كلِّه)، وتشترط حساباً فعّالاً دورُه `doctor` أو يحمل `canWriteMedicalExam`.
+  //  فمَن يستطيع أن **يوقّع** على هذا الصفّ يستطيع أن يقول «لا معاينةَ له» —
+  //  والثاني أقلُّ أثراً من الأوّل: لا سجلَّ سريرياً يُكتب، ولا ديناراً.
+  //  **والاختصاصُ شرطٌ لا زينة**: طبيبُ العلاج الطبيعي لا يُلغي طلبَ أطراف.
+  app.post("/api/medical/worklist/cancel-request", isAuthenticated, async (req: Req, res) => {
+    try {
+      const session = getSession(req);
+      const patientId = Number(req.body?.patientId);
+      if (!Number.isInteger(patientId) || patientId <= 0) {
+        return res.status(400).json({ error: "معرّف المريض غير صالح" });
+      }
+      const caseType = String(req.body?.caseType ?? "");
+      if (!isMedicalSpecialty(caseType)) {
+        return res.status(400).json({ error: "اختصاص غير معروف" });
+      }
+      //  **وشكلُ معرّفِ الجهاز يُشترَط إن حضر** (المرحلة الأولى): مشوَّهٌ يُردّ
+      //  ٤٠٠ ولا يسقط صامتاً إلى «بلا جهاز» فيصير الإلغاءُ تخميناً.
+      const rawEpisode = req.body?.deviceEpisodeId;
+      let deviceEpisodeId: number | null = null;
+      if (rawEpisode !== undefined && rawEpisode !== null && rawEpisode !== "") {
+        const n = typeof rawEpisode === "number" || typeof rawEpisode === "string"
+          ? Number(rawEpisode) : NaN;
+        if (!Number.isInteger(n) || n <= 0) {
+          return res.status(400).json({ error: "معرّف الجهاز غير صالح", code: "device_episode_invalid" });
+        }
+        deviceEpisodeId = n;
+      }
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (!reason) return res.status(400).json({ error: "سبب الإلغاء إلزامي" });
+
+      const specialties = await store.doctorSpecialties(session.userId);
+      if (!specialties.includes(caseType)) {
+        return res.status(403).json({ error: "هذا الاختصاص ليس من اختصاصاتك" });
+      }
+
+      const done = await cancelExamRequest({
+        patientId,
+        caseType,
+        deviceEpisodeId,
+        reason,
+        actor: { userId: session.userId, userName: session.userName ?? null },
+        branchIds: branchScope(req),
+      });
+
+      await logAudit({
+        entityType: "medical_review_request",
+        //  **هويّةُ الصفّ لا المريض**: الحلقةُ حين توجد، وإلّا أوّلُ طلبٍ سُحب.
+        entityId: done.cancelledEpisodeId ?? done.cancelledRequestIds[0] ?? patientId,
+        action: "update",
+        userId: session.userId,
+        userName: session.userName ?? null,
+        branchId: done.branchId,
+        newValues: done,
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
+        notes: `إلغاء طلب معاينة ${specialtyLabel(caseType)} للمريض #${patientId} — ${reason}`
+          + (done.cancelledEpisodeId !== null ? ` — أُلغي طلبُ الجهاز #${done.cancelledEpisodeId}` : "")
+          + (done.cancelledRequestIds.length
+            ? ` — وسُحبت طلباتُ المراجعة ${done.cancelledRequestIds.map((i) => `#${i}`).join("، ")}`
+            : ""),
+      });
+
+      //  ══ **ويُقال للطبيب ما جرى فعلاً، لا ما وُعد به** ═══════════════════
+      //  الصفُّ قد يقف على أكثر من قاعدة: خيطُ خدمةٍ سابقٌ لحقبة المسار يبقى
+      //  «ينتظر معاينة» بحكم القاعدة القديمة ولو سُحب طلبُه كلُّه — وبابُه
+      //  الإدارة لا هذا الزرّ. فبدل أن تَعِد الرسالةُ بخروجٍ لم يقع، تُسأل
+      //  **الدالّةُ الحقيقية نفسُها** (`getWorklist`) — لا نسخةٌ ثانية من
+      //  قاعدة العضوية — ويُقال الجواب كما هو.
+      let stillListed = false;
+      try {
+        const after = await store.getWorklist(specialties, branchScope(req));
+        stillListed = after.some((r) => r.patientId === patientId && r.caseType === caseType);
+      } catch (probeErr) {
+        //  **وفشلُ الاستطلاع ليس فشلَ الإلغاء**: الكتابةُ التزمت سلفاً،
+        //  والقائمةُ تُعاد جلبُها في الواجهة على كل حال.
+        console.error("[medical] worklist re-check after cancel failed:", probeErr);
+      }
+
+      res.json({ ...done, stillListed });
+    } catch (err: any) {
+      if (err instanceof CancelExamRequestError || err instanceof DeviceEpisodeError) {
+        return res.status(err.status).json({
+          error: err.message,
+          code: (err as any).code ?? undefined,
+        });
+      }
+      console.error("[medical] cancel exam request failed:", err);
+      res.status(500).json({ error: "تعذّر إلغاء طلب المعاينة" });
     }
   });
 

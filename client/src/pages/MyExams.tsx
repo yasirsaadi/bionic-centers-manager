@@ -11,11 +11,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag, Undo2, RotateCcw } from "lucide-react";
+import { Stethoscope, Search, Eye, Clock, CheckCircle2, ArrowUpDown, ChevronRight, ChevronLeft, ShoppingBag, Undo2, RotateCcw, XCircle } from "lucide-react";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
-import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { requestedItemLabel, isDeviceServiceKind } from "@shared/prosthetic_parts";
 import { rankWorklist } from "./my_exams_order";
 
 interface WorklistRow {
@@ -146,6 +146,56 @@ export default function MyExams() {
       notify({ title: "خطأ", description: e?.message, variant: "destructive" });
     } finally {
       setReturnBusy(false);
+    }
+  };
+
+  //  ══ **إلغاءُ طلبِ معاينةٍ لم تبدأ** ═══════════════════════════════════
+  //  «إرجاع للاستعلامات» يقول «صحّح البيانات وأعد الإرسال»؛ وهذا يقول «لا
+  //  معاينةَ لها أصلاً». وقبله لم يكن للطبيب إلّا أن **يوقّع معاينةً يعرف
+  //  أنها لا لزوم لها** ليُخرج الصفَّ من قائمته — توقيعٌ يصف ما لم يحدث.
+  //  **ولا يُكتب سجلٌّ سريريّ ولا يُمَسّ مال**: يُسحَب طلبُ المراجعة وتُلغى
+  //  سقالةُ الجهاز غير المستخدَمة، ويبقى الملفُّ في سجلّ المرضى كما هو.
+  const [cancelling, setCancelling] = useState<WorklistRow | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  const submitCancel = async () => {
+    const row = cancelling;
+    const reason = cancelReason.trim();
+    if (!row || !reason) return;
+    setCancelBusy(true);
+    try {
+      const res = await fetch("/api/medical/worklist/cancel-request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          patientId: row.patientId,
+          caseType: row.caseType,
+          //  **هويّةُ الجهاز من الصفّ نفسِه** — لا تُخمَّن في الطريق.
+          deviceEpisodeId: row.episodeId ?? null,
+          reason,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "تعذّر إلغاء طلب المعاينة");
+      qcMy.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
+      qcMy.invalidateQueries({ queryKey: ["/api/medical/pending"] });
+      qcMy.invalidateQueries({ queryKey: ["/api/medical-review/queue"] });
+      setCancelling(null);
+      setCancelReason("");
+      //  **ويُقال ما جرى لا ما وُعد به**: صفٌّ يقف على قاعدةٍ أخرى (خيطُ
+      //  خدمةٍ قديم) يبقى بعد سحب طلبه — والخادمُ وحده يعرف ذلك.
+      notify({
+        title: "أُلغي طلب المعاينة",
+        description: body?.stillListed
+          ? "سُحب الطلب — وما زال المريض في قائمتك لسببٍ آخر (ملفٌّ قديم): بابُه الإدارة."
+          : "خرج من قائمتك — ويبقى في سجل المرضى كما هو، بلا معاينة.",
+      });
+    } catch (e: any) {
+      notify({ title: "خطأ", description: e?.message, variant: "destructive" });
+    } finally {
+      setCancelBusy(false);
     }
   };
 
@@ -439,6 +489,21 @@ export default function MyExams() {
                                     <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
                                   </Button>
                                 )}
+                                {/*  **وللأجهزة وحدها**: العلاجُ الطبيعي لا حلقاتِ أجهزةٍ له
+                                    ولا طلباتِ مراجعة (`reviewServiceOfCaseType` تُرجع
+                                    `null` له)، فصفُّه يقف على القاعدة القديمة وحدها
+                                    ولا شيءَ فيه يُلغى — وزرٌّ يردّه الخادمُ دائماً
+                                    ليس زرّاً. */}
+                                {isDeviceServiceKind(r.caseType) && (
+                                  <Button
+                                    size="sm" variant="outline"
+                                    className="h-8 text-xs gap-1 text-destructive hover:text-destructive"
+                                    onClick={() => { setCancelling(r); setCancelReason(""); }}
+                                    data-testid={`cancel-exam-${key}`}
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" /> إلغاء المعاينة
+                                  </Button>
+                                )}
                                 <Button
                                   size="sm"
                                   className="h-8 text-xs gap-1"
@@ -545,6 +610,51 @@ export default function MyExams() {
             <Button size="sm" disabled={!returnReason.trim() || returnBusy}
               onClick={submitReturn} data-testid="return-confirm">
               <Undo2 className="w-3.5 h-3.5 ml-1" /> إرجاع
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══ إلغاءُ طلبِ معاينةٍ لم تبدأ — بسببٍ إلزاميّ ═══════════════ */}
+      <Dialog open={!!cancelling} onOpenChange={(o) => { if (!o) { setCancelling(null); setCancelReason(""); } }}>
+        <DialogContent dir="rtl" className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="text-base">إلغاء طلب المعاينة</DialogTitle>
+            <DialogDescription className="text-xs">
+              {cancelling?.patientName} — {cancelling ? specialtyLabel(cancelling.caseType) : ""}
+              {cancelling?.episodeId != null
+                && ` · جهاز #${cancelling.sequenceNumber ?? "?"} · ${requestedItemLabel(cancelling.requestedItem, cancelling.caseType)}`}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/40 p-2.5 text-[11px] leading-5 space-y-0.5">
+            <div>يُسحب طلبُ المعاينة{cancelling?.episodeId != null ? " ويُلغى طلبُ الجهاز غير المستعمَل" : ""}، ويخرج من قائمتك.</div>
+            <div><b>ولا تُكتب معاينةٌ ولا تُلغى معاينة</b> — لا سجلَّ سريرياً يُنشأ ولا يُمحى.</div>
+            <div>ويبقى المريضُ في سجل المرضى بملفه كاملاً — <b>ولا يتحرّك دينار</b>.</div>
+            <div>ويستطيع الاستعلامات إرسالَ طلبٍ جديد متى لزم.</div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">
+              سبب الإلغاء <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={cancelReason} onChange={(e) => setCancelReason(e.target.value)}
+              rows={3} className="text-sm"
+              placeholder="مثال: أُضيف النوع بالخطأ — المريض لا يحتاج طرفاً صناعياً"
+              data-testid="cancel-exam-reason"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              يُحفظ في السجلّ مع اسمك ووقته.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm"
+              onClick={() => { setCancelling(null); setCancelReason(""); }}>
+              تراجع
+            </Button>
+            <Button size="sm" variant="destructive"
+              disabled={!cancelReason.trim() || cancelBusy}
+              onClick={submitCancel} data-testid="cancel-exam-confirm">
+              <XCircle className="w-3.5 h-3.5 ml-1" /> إلغاء الطلب
             </Button>
           </DialogFooter>
         </DialogContent>
