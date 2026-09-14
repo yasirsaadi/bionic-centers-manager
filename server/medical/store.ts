@@ -31,7 +31,8 @@ import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
-  ExamEpisodeAmbiguousError, ExamEpisodeStaleError, awaitingExamEpisodesForCase,
+  ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
+  awaitingExamEpisodesForCase, episodeBranchOf,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
@@ -267,6 +268,13 @@ export async function createExam(values: {
    * وأكثرُ من واحدة ⟵ `ExamEpisodeAmbiguousError` ٤٠٩ بلا كتابة.
    */
   deviceEpisodeId?: number | null;
+}, opts?: {
+  /**
+   * نطاقُ الجلسة الحيّ — يُفحَص **على فرع الحلقة تحت القفل**: إتاحةُ الملفّ
+   * (٠٨٠) تفتح القراءةَ والعملَ الجديد ولا تعطي توقيعَ جهازٍ مسؤوليتُه لفرعٍ
+   * آخر. غيابُه/`null` = بلا حراسةٍ هنا (مسؤولٌ عام، أو منادٍ داخليّ).
+   */
+  branchIds?: number[] | null;
 }): Promise<{ exam: MedicalExam; created: boolean }> {
   const key = values.idempotencyKey;
   if (!key || !key.trim()) {
@@ -283,15 +291,24 @@ export async function createExam(values: {
   try {
     return await db.transaction(async (tx) => {
       let episodeId: number | null = null;
+      //  **فرعُ العملية** — فرعُ الحلقة حين توجد، وإلّا فرعُ الحالة/التسجيل
+      //  كما مرّره المنادي. فمعاينةُ جهازٍ نُقلت مسؤوليتُه تُسجَّل بفرع مَن
+      //  يعمل عليه فعلاً، لا بفرع تسجيل المريض.
+      let operationBranchId: number | null = values.branchId ?? null;
 
       if (isDevice && values.caseId !== null) {
         //  **بالمعرّف حين يُعطى، وبالوحدانية حين يغيب** — ولا `LIMIT 1`.
         //  والرميُ هنا يقع **قبل** إدراج المعاينة: الالتباسُ والبياتُ
-        //  يتراجعان بصفر كتابة.
-        episodeId = await claimAwaitingEpisodeForExam(tx, {
+        //  وخروجُ الفرع يتراجعون بصفر كتابة.
+        const claimed = await claimAwaitingEpisodeForExam(tx, {
           patientId: values.patientId, caseId: values.caseId,
           episodeId: values.deviceEpisodeId ?? null,
+          branchIds: opts?.branchIds ?? null,
         });
+        if (claimed) {
+          episodeId = claimed.id;
+          if (claimed.branchId !== null) operationBranchId = claimed.branchId;
+        }
       } else if (values.deviceEpisodeId != null) {
         //  معرّفُ جهازٍ على معاينةٍ بلا خيط جهاز (علاجٌ طبيعي، أو حالةٌ لم
         //  تُنشأ بعد): لا حلقةَ يمكن أن تطابقه — شاشةٌ بائتة، لا تخمين.
@@ -300,7 +317,7 @@ export async function createExam(values: {
 
       const [row] = await tx
         .insert(EX)
-        .values({ ...values, deviceEpisodeId: episodeId })
+        .values({ ...values, branchId: operationBranchId, deviceEpisodeId: episodeId })
         .returning();
 
       if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
@@ -340,7 +357,9 @@ export async function createExam(values: {
               caseId: values.caseId,
               deviceEpisodeId: episodeId,
               medicalExamId: row.id,
-              branchId: values.branchId,
+              //  **فرعُ العملية لا فرعُ التسجيل**: متابعةُ جهازٍ نُقلت
+              //  مسؤوليتُه تُفتَح في فرع مَن يعمل عليه.
+              branchId: operationBranchId,
               serviceType: values.caseType as "prosthetic" | "medical_support",
               deviceCost: values.deviceCost,
               //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
@@ -381,7 +400,19 @@ export async function createExam(values: {
   }
 }
 
-export { ExamEpisodeAmbiguousError, ExamEpisodeStaleError };
+export { ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError };
+
+/**
+ * **فرعُ العملية لتوقيعٍ بعينه** — فرعُ الحلقة حين يُطلَب جهازٌ محدَّد، وإلّا
+ * `null` فيبقى المنادي على فرع الحالة/التسجيل كما كان. تُقرأ في النقطة قبل
+ * فحص التطابق ليتّسق ما يُقارَن مع ما يُخزَّن.
+ */
+export async function examOperationBranch(
+  patientId: number, deviceEpisodeId: number | null,
+): Promise<number | null> {
+  if (deviceEpisodeId === null) return null;
+  return await episodeBranchOf({ patientId, episodeId: deviceEpisodeId });
+}
 
 /**
  * **الفحصُ المبكّر لهويّة الجهاز — قبل أن يُكتب حرفٌ على ملفّ المريض.**
@@ -1237,7 +1268,10 @@ export async function getWorklist(
     sequence_number: number | null;
   }>(sql`
     SELECT pc.patient_id, p.name AS patient_name, p.phone, p.patient_code,
-           COALESCE(pc.branch_id, p.branch_id) AS branch_id,
+           -- **ورقمُ الفرع واسمُه من فرع الحلقة حين توجد** — الصفُّ يقول
+           -- مَن يملك هذا العمل الآن لا أين سُجّل المريضُ يوماً. والصفُّ بلا
+           -- حلقة يبقى على فرع الحالة ثمّ التسجيل كما كان.
+           COALESCE(ep.branch_id, pc.branch_id, p.branch_id) AS branch_id,
            b.name AS branch_name,
            pc.case_type,
            -- **منذ متى ينتظر الطبيبَ** = آخرُ دخولٍ إلى الطابور (ترحيل ٠٧٧):
@@ -1250,7 +1284,6 @@ export async function getWorklist(
            ep.sequence_number
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
-    LEFT JOIN branches b ON b.id = COALESCE(pc.branch_id, p.branch_id)
     -- ══ صفٌّ لكلّ حلقةٍ منتظرة — **لا صفٌّ لكلّ خيط** ═══════════════════
     -- بعد ترحيل ٠٧٣ (إسقاطُ uq_pde_case_open) قد ينتظر على الخيط الواحد
     -- أكثرُ من جهاز، وكلٌّ منها عملٌ مستقلٌّ للطبيب بهويّته (episode_id).
@@ -1261,6 +1294,9 @@ export async function getWorklist(
       -- معاينة لا ينضمّ، فلا يظهر في قائمة عمل الطبيب. و«NULL» (حلقةُ ما
       -- قبل ٠٦٥) تنضمّ كما كانت — الغيابُ ليس إعفاءً.
      AND ep.service_path IS DISTINCT FROM 'no_exam'
+    -- **واسمُ الفرع بعد الحلقة لا قبلها**: الانضمامُ يقرأ عمودَ فرع الحلقة،
+    -- ولا يراه لو سبقه. فرُتِّب بعده ليطابق الاسمُ الرقمَ المعروض.
+    LEFT JOIN branches b ON b.id = COALESCE(ep.branch_id, pc.branch_id, p.branch_id)
     WHERE pc.status = 'active'
       AND p.deleted_at IS NULL
       AND ${scoped}

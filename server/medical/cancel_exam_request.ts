@@ -52,7 +52,11 @@ export interface CancelExamRequestResult {
   cancelledEpisodeId: number | null;
   /** أرقامُ طلبات المراجعة التي سُحبت (المرساة والعارية معاً). */
   cancelledRequestIds: number[];
-  /** فرعُ المريض وقتَ الإلغاء — للتدقيق. */
+  /**
+   * **فرعُ العملية وقتَ الإلغاء** — فرعُ الحلقة حين يكون للصفّ حلقة، وإلّا
+   * فرعُ الحالة ثمّ التسجيل. وهو ما يُقيَّد في `audit_log`: الحدثُ وقع في
+   * الفرع الذي كان يملك العمل، لا في فرع تسجيل المريض.
+   */
   branchId: number | null;
 }
 
@@ -239,7 +243,8 @@ export async function cancelExamRequest(params: {
       cancelledRequestIds: cancelledRequestIds
         .filter((id, i) => cancelledRequestIds.indexOf(id) === i)
         .sort((a, b) => a - b),
-      branchId,
+      //  **فرعُ العملية لا فرعُ التسجيل** — نفسُ الرقم الذي حرس الطلب.
+      branchId: scopeBranch,
     };
   });
 }

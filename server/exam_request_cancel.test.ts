@@ -667,13 +667,50 @@ async function main() {
       const seen = await myRows(p, S.docB2);
       check(seen.length === 1, "ع١٠. وطبيبُ الفرع ٢ يرى الصفَّ **بنقل المسؤولية**",
         JSON.stringify(seen));
+      //  **وهويّةُ فرع العملية على الصفّ نفسِه** — رقماً واسماً.
+      same("ع١١. **وصفُّه يحمل رقمَ فرع الحلقة واسمَه**",
+        [seen[0]?.branchId, seen[0]?.branchName], [2, "فرعٌ آخر"]);
       check((await myRows(p, S.doc)).length === 0,
-        "ع١١. **وخرج من طابور طبيب الفرع ١** — المسؤوليةُ انتقلت لا نُسخت");
+        "ع١٢. **وخرج من طابور طبيب الفرع ١** — المسؤوليةُ انتقلت لا نُسخت");
+
+      // ③ **والتوقيعُ يُسجَّل بفرع الحلقة** — معاينةً ومتابعةً.
+      const pS = await mkPatient(`ع-توقيعٌ-منقول-${svc}`, svc);
+      await mkCase(pS, svc, 1);
+      const epS = Number((await openDevice(pS, svc, S.recv)).body?.episode?.id);
+      await http("POST", `/api/patients/${pS}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: true });
+      const signed = await signExam(pS, svc, epS, S.docB2);
+      same("ع١٣. طبيبُ الفرع ٢ يوقّع معاينةَ الجهاز المنقول", signed.status, 200);
+      const exBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM medical_exams WHERE patient_id=$1`, [pS]))[0];
+      const fuBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM post_exam_followups WHERE patient_id=$1`, [pS]))[0];
+      same("ع١٤. **والمعاينةُ والمتابعةُ تُسجَّلان بفرع الحلقة لا فرع التسجيل**",
+        [Number(exBranch?.branch_id), Number(fuBranch?.branch_id)], [2, 2]);
+
+      // ④ **والإتاحةُ وحدها لا توقّع حلقةَ فرعٍ آخر.**
+      const pB = await mkPatient(`ع-توقيعٌ-محجوب-${svc}`, svc);
+      await mkCase(pB, svc, 1);
+      const epB = Number((await openDevice(pB, svc, S.recv)).body?.episode?.id);
+      await http("POST", `/api/patients/${pB}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: false });
+      const blocked = await signExam(pB, svc, epB, S.docB2);
+      same("ع١٥. **الإتاحةُ وحدها لا تفتح توقيعَ حلقةِ فرعٍ آخر**", blocked.status, 403);
+      same("ع١٦. برمزه", blocked.body?.code, "episode_branch_out_of_scope");
+      same("ع١٧. وبصفر معاينة", (await examRows(pB)).length, 0);
+
       const res = await cancelRequest(p, svc, epId, S.docB2);
-      same("ع١٢. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
-      same("ع١٣. والحلقةُ المُلغاة هي هي", res.body?.cancelledEpisodeId, epId);
-      same("ع١٤. والصفُّ خرج فعلاً", res.body?.stillListed, false);
-      check((await myRows(p, S.docB2)).length === 0, "ع١٥. وخرج من قائمة طبيب الفرع ٢");
+      same("ع١٨. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
+      same("ع١٩. والحلقةُ المُلغاة هي هي", res.body?.cancelledEpisodeId, epId);
+      same("ع٢٠. والصفُّ خرج فعلاً", res.body?.stillListed, false);
+      //  **وتدقيقُ الإلغاء بفرع الحلقة** — الحدثُ وقع حيث كان العمل.
+      const auditBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM audit_log
+          WHERE entity_type='patient_device_episode' AND entity_id=$1
+          ORDER BY id DESC LIMIT 1`, [epId]))[0];
+      same("ع٢١. **وسطرُ تدقيق الإلغاء بفرع الحلقة**",
+        Number(auditBranch?.branch_id), 2);
+      check((await myRows(p, S.docB2)).length === 0, "ع٢٢. وخرج من قائمة طبيب الفرع ٢");
 
       //  **والعزلُ لم يضعف بحرف**: مريضُ الفرع ١ **بلا إتاحةٍ ولا نقل** يبقى
       //  مغلقاً على طبيب الفرع ٢ تماماً كما كان.
@@ -682,9 +719,9 @@ async function main() {
       await mkBareRequest(home, hc, svc, { branch: 1 });
       const before = await writable(home);
       const denied = await cancelRequest(home, svc, null, S.docB2);
-      same("ع١٦. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
-      same("ع١٧. برمزه", denied.body?.code, "branch_out_of_scope");
-      same("ع١٨. وبصفر كتابة", await writable(home), before);
+      same("ع٢٣. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
+      same("ع٢٤. برمزه", denied.body?.code, "branch_out_of_scope");
+      same("ع٢٥. وبصفر كتابة", await writable(home), before);
     }
 
     // ══ ف. سطرُ التدقيق — النوعُ يتبع معرّفَه ═══════════════════════════
