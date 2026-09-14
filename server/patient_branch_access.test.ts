@@ -428,6 +428,92 @@ async function main() {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ط. المتابعةُ الحيّة جزءٌ من العملية — و«بانتظار الحسم» ينتقل ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      //  **المتابعةُ بعد المعاينة قرارٌ تجاريٌّ معلَّق** — جزءٌ من العملية
+      //  المفتوحة. فتُسأل عند الإتاحة، وتنتقل مع المسؤولية، **ويتبعها طابورُ
+      //  «بانتظار الحسم»** الذي يرشّح بـ`post_exam_followups.branch_id`.
+      const waitingIn = async (sess: any, pid: number) =>
+        ((await http("GET", "/api/followups/decision-queue?state=waiting", sess))
+          .body?.rows ?? []).filter((r: any) => Number(r.patientId) === pid);
+
+      const pf = await mkPatient("متابعةٌ-حيّة", KARBALA);
+      const cf = await mkCase(pf, KARBALA);
+      const [epf] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, service_path, created_by)
+         VALUES ($1,$2,$3,1,'examined',0,'full_device','exam',$4) RETURNING id`,
+        [pf, cf, KARBALA, ADMIN]);
+      const [fu] = await q<{ id: number }>(
+        `INSERT INTO post_exam_followups (patient_id, case_id, device_episode_id, branch_id,
+           service_type, status, created_by)
+         VALUES ($1,$2,$3,$4,'prosthetic','awaiting_patient_decision',$5) RETURNING id`,
+        [pf, cf, epf.id, KARBALA, ADMIN]);
+
+      check((await waitingIn(S.admin, pf)).length === 1,
+        "٦٥. الإعدادُ: صفٌّ في «بانتظار الحسم»");
+      //  ① **والمتابعةُ الحيّة تُحسَب عمليةً مفتوحة** — فالصمتُ يُردّ ٤٠٠.
+      const silent = await http("POST", `/api/patients/${pf}/branch-access`, S.admin,
+        { branchId: DHIQAR });
+      same("٦٦. **والمتابعةُ الحيّة تستوجب سؤالَ نقل المسؤولية**", silent.status, 400);
+
+      //  ② **«لا»** ⟶ المتابعةُ وطابورُها كما هما بالضبط.
+      same("٦٧. والإتاحةُ بلا نقلٍ تنجح",
+        (await http("POST", `/api/patients/${pf}/branch-access`, S.admin,
+          { branchId: DHIQAR, moveOpenOperations: false })).status, 201);
+      const [fuNo] = await q(`SELECT branch_id FROM post_exam_followups WHERE id=$1`, [fu.id]);
+      same("٦٨. **وفرعُ المتابعة لم يتغيّر**", Number(fuNo.branch_id), KARBALA);
+      same("٦٩. والصفُّ ما زال في «بانتظار الحسم» لكربلاء",
+        [(await waitingIn(S.karbala, pf)).length, (await waitingIn(S.dhiqar, pf)).length],
+        [1, 0]);
+
+      //  ③ **ثمّ نقلُ المسؤولية** ⟶ المتابعةُ تنتقل، والطابورُ يتبعها.
+      const moveFu = await http("POST", `/api/patients/${pf}/branch-access`, S.admin,
+        { branchId: DHIQAR, moveOpenOperations: true, keepExpert: true });
+      same("٧٠. نقلُ المسؤولية ينجح", moveFu.status, 200);
+      same("٧١. **والمتابعةُ المنقولةُ هي هي**", moveFu.body?.movedFollowupIds, [fu.id]);
+      const [fuYes] = await q(
+        `SELECT branch_id, status FROM post_exam_followups WHERE id=$1`, [fu.id]);
+      same("٧٢. **فرعُ المتابعة صار ذي قار وحالتُها كما هي**",
+        [Number(fuYes.branch_id), fuYes.status], [DHIQAR, "awaiting_patient_decision"]);
+      same("٧٣. **و«بانتظار الحسم» خرج من كربلاء وظهر في ذي قار**",
+        [(await waitingIn(S.karbala, pf)).length, (await waitingIn(S.dhiqar, pf)).length],
+        [0, 1]);
+      const [pRow] = await q(`SELECT branch_id FROM patients WHERE id=$1`, [pf]);
+      same("٧٤. **وفرعُ تسجيل المريض ما زال كربلاء**", Number(pRow.branch_id), KARBALA);
+
+      //  ④ **والمنتهيةُ والتاريخيةُ لا تُمَسّ** — واقعةٌ وقعت في فرعها.
+      const pd = await mkPatient("متابعةٌ-منتهية", KARBALA);
+      const cd = await mkCase(pd, KARBALA);
+      const done = await q<{ id: number }>(
+        `INSERT INTO post_exam_followups (patient_id, case_id, device_episode_id, branch_id,
+           service_type, status, created_by)
+         VALUES ($1,$2,NULL,$3,'prosthetic','converted',$4),
+                ($1,$2,NULL,$3,'medical_support','closed_without_purchase',$4)
+         RETURNING id`, [pd, cd, KARBALA, ADMIN]);
+      //  ومتابعةٌ حيّةٌ **بلا حلقة** معها — تنتقل هي وحدها.
+      const [bare] = await q<{ id: number }>(
+        `INSERT INTO post_exam_followups (patient_id, case_id, device_episode_id, branch_id,
+           service_type, status, created_by)
+         VALUES ($1,$2,NULL,$3,'prosthetic','awaiting_patient_decision',$4) RETURNING id`,
+        [pd, cd, KARBALA, ADMIN]);
+      //  **وهي وحدها تستوجب السؤال** — لا حلقةَ لهذا المريض ولا أمرَ عمل.
+      same("٧٥. **ومتابعةٌ حيّةٌ بلا حلقة وحدها تستوجب السؤال**",
+        (await http("POST", `/api/patients/${pd}/branch-access`, S.admin,
+          { branchId: DHIQAR })).status, 400);
+      const mixed = await http("POST", `/api/patients/${pd}/branch-access`, S.admin,
+        { branchId: DHIQAR, moveOpenOperations: true, keepExpert: true });
+      same("٧٦. **والحيّةُ بلا حلقة تنتقل وحدها**",
+        [mixed.status, mixed.body?.movedFollowupIds], [201, [bare.id]]);
+      const after = await q<{ id: number; branch_id: number }>(
+        `SELECT id, branch_id FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [pd]);
+      same("٧٧. **والمنتهيتان بفرعهما الأصليّ كما هما**",
+        after.filter((r) => done.some((d) => d.id === r.id)).map((r) => Number(r.branch_id)),
+        [KARBALA, KARBALA]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     console.log("\n── و. السحب · والأقسام الثلاثة · وحذفُ المريض الكامل ──");
     // ═══════════════════════════════════════════════════════════════════
     {

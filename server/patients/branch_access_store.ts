@@ -23,6 +23,8 @@ import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
 import { validateExpertForBranchTx } from "../manufacturing/store";
 import { moveLiveEpisodeToBranchTx } from "../device_episodes/store";
+import { moveLiveFollowupsToBranchTx } from "../followup/store";
+import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import {
   BranchAccessError, grantBranchAccessTx, revokeBranchAccessTx,
   listPatientBranchAccess, type BranchAccessRow,
@@ -48,6 +50,12 @@ export interface OpenOperation {
   workOrderBranchId: number | null;
   expertUserId: number | null;
   expertName: string | null;
+  /**
+   * **متابعةُ ما بعد المعاينة الحيّة** — القرارُ التجاريُّ المعلَّق على هذه
+   * العملية. `null` لصفٍّ لا متابعةَ حيّةً وراءه.
+   */
+  followupId: number | null;
+  followupBranchId: number | null;
 }
 
 /**
@@ -80,6 +88,13 @@ export async function listOpenOperations(
        WHERE ep.patient_id = ${patientId}
          AND ep.status NOT IN ('delivered', 'cancelled')
          AND ep.admin_void_reversal_id IS NULL
+    ), live_fu AS (
+      --  **المتابعةُ الحيّة جزءٌ من العملية المفتوحة** — القرارُ التجاريُّ
+      --  المعلَّق. والمنتهيةُ واقعةٌ تاريخية لا تُعَدّ ولا تُنقَل.
+      SELECT f.id, f.branch_id, f.service_type, f.device_episode_id
+        FROM post_exam_followups f
+       WHERE f.patient_id = ${patientId}
+         AND f.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
     )
     --  ① كلُّ أمرٍ حيّ، ومعه حلقتُه إن وُجدت — حيّةً كانت أو مسلَّمة.
     SELECT ep.id AS episode_id, ep.status AS episode_status,
@@ -88,19 +103,36 @@ export async function listOpenOperations(
            COALESCE(ep.status NOT IN ('delivered', 'cancelled')
                     AND ep.admin_void_reversal_id IS NULL, FALSE) AS episode_live,
            w.id AS work_order_id, w.purpose AS wo_purpose, w.status AS wo_status,
-           w.branch_id AS wo_branch_id, w.expert_user_id, u.display_name AS expert_name
+           w.branch_id AS wo_branch_id, w.expert_user_id, u.display_name AS expert_name,
+           fw.id AS followup_id, fw.branch_id AS followup_branch_id
       FROM live_wo w
       LEFT JOIN patient_device_episodes ep ON ep.id = w.device_episode_id
       LEFT JOIN patient_cases c ON c.id = ep.case_id
       LEFT JOIN system_users u ON u.id = w.expert_user_id
+      LEFT JOIN live_fu fw ON fw.device_episode_id = w.device_episode_id
     UNION ALL
     --  ② حلقةٌ حيّةٌ لم يُفتَح لها أمرٌ حيّ بعد — طلبٌ قائمٌ ينتظر.
     SELECT e.id, e.status, e.branch_id, e.requested_item, c2.case_type, TRUE,
-           NULL, NULL, NULL, NULL, NULL, NULL
+           NULL, NULL, NULL, NULL, NULL, NULL,
+           fe.id, fe.branch_id
       FROM live_ep e
       JOIN patient_cases c2 ON c2.id = e.case_id
+      LEFT JOIN live_fu fe ON fe.device_episode_id = e.id
      WHERE NOT EXISTS (SELECT 1 FROM live_wo w2 WHERE w2.device_episode_id = e.id)
-     ORDER BY episode_id NULLS LAST, work_order_id NULLS LAST
+    UNION ALL
+    --  ③ **متابعةٌ حيّةٌ لا يمثّلها صفٌّ أعلاه** — بلا حلقةٍ إطلاقاً (§4.r)،
+    --  أو حلقتُها مسلَّمةٌ/ملغاةٌ ولا أمرَ حيّاً عليها. قرارٌ معلَّقٌ قائم،
+    --  فيُسأل عنه ويُنقَل مع المسؤولية — **ولا يُكرَّر** مع الصفوف أعلاه.
+    SELECT f2.device_episode_id, ep2.status, ep2.branch_id, ep2.requested_item,
+           COALESCE(c3.case_type, f2.service_type), FALSE,
+           NULL, NULL, NULL, NULL, NULL, NULL,
+           f2.id, f2.branch_id
+      FROM live_fu f2
+      LEFT JOIN patient_device_episodes ep2 ON ep2.id = f2.device_episode_id
+      LEFT JOIN patient_cases c3 ON c3.id = ep2.case_id
+     WHERE NOT EXISTS (SELECT 1 FROM live_wo w3 WHERE w3.device_episode_id = f2.device_episode_id)
+       AND NOT EXISTS (SELECT 1 FROM live_ep e3 WHERE e3.id = f2.device_episode_id)
+     ORDER BY episode_id NULLS LAST, work_order_id NULLS LAST, followup_id NULLS LAST
   `);
   return (r.rows ?? []).map((x: any) => ({
     episodeId: x.episode_id === null || x.episode_id === undefined ? null : Number(x.episode_id),
@@ -119,6 +151,10 @@ export async function listOpenOperations(
     expertUserId: x.expert_user_id === null || x.expert_user_id === undefined
       ? null : Number(x.expert_user_id),
     expertName: x.expert_name ?? null,
+    followupId: x.followup_id === null || x.followup_id === undefined
+      ? null : Number(x.followup_id),
+    followupBranchId: x.followup_branch_id === null || x.followup_branch_id === undefined
+      ? null : Number(x.followup_branch_id),
   }));
 }
 
@@ -131,7 +167,11 @@ export function operationsOwnedByBranch(
 ): OpenOperation[] {
   return open.filter((o) =>
     (o.workOrderId !== null && o.workOrderBranchId === branchId)
-    || (o.workOrderId === null && o.episodeLive && o.episodeBranchId === branchId));
+    || (o.workOrderId === null && o.episodeLive && o.episodeBranchId === branchId)
+    //  **والمتابعةُ الحيّة عملٌ أيضاً**: قرارٌ تجاريٌّ معلَّق في هذا الفرع —
+    //  سحبُ الرؤية عنه يترك «بانتظار الحسم» عند مَن لا يرى الملفّ.
+    || (o.workOrderId === null && !o.episodeLive
+      && o.followupId !== null && o.followupBranchId === branchId));
 }
 
 export interface GrantResult {
@@ -139,6 +179,8 @@ export interface GrantResult {
   branchId: number;
   /** العملياتُ التي نُقلت مسؤوليتُها فعلاً — فارغةٌ حين اختار المسؤولُ «لا». */
   movedOperations: { episodeId: number | null; workOrderId: number | null }[];
+  /** المتابعاتُ الحيّةُ التي انتقل فرعُها معها — والمنتهيةُ لا تُمَسّ. */
+  movedFollowupIds: number[];
   expertChanged: boolean;
   access: BranchAccessRow[];
   openOperations: OpenOperation[];
@@ -215,6 +257,7 @@ export async function grantBranchAccess(params: {
     });
 
     const moved: { episodeId: number | null; workOrderId: number | null }[] = [];
+    let movedFollowupIds: number[] = [];
     let expertChanged = false;
 
     if (open.length > 0 && params.moveOpenOperations === true) {
@@ -272,12 +315,21 @@ export async function grantBranchAccess(params: {
         }
         moved.push({ episodeId: op.episodeId, workOrderId: op.workOrderId });
       }
+
+      //  **والمتابعاتُ الحيّةُ تنتقل معها — في المعاملة نفسِها.** الكتابةُ في
+      //  طبقتها (`followup/store.ts`) والقرارُ هنا، كما في الحلقات. وتُنادى
+      //  **مرّةً للمريض** لا لكلّ صفّ: متابعةٌ بلا حلقة لا يمثّلها صفٌّ بعينه،
+      //  والمنتهيةُ محروسةٌ بشرط الحالة في `UPDATE` نفسِه.
+      movedFollowupIds = await moveLiveFollowupsToBranchTx(tx as any, {
+        patientId: params.patientId, branchId: params.branchId,
+      });
     }
 
     const result: GrantResult = {
       created: grant.created,
       branchId: params.branchId,
       movedOperations: moved,
+      movedFollowupIds,
       expertChanged,
       access: await listPatientBranchAccess(params.patientId, tx as any),
       openOperations: await listOpenOperations(params.patientId, tx as any),
@@ -294,7 +346,10 @@ export async function grantBranchAccess(params: {
         + (moved.length > 0
           ? ` — ونُقلت مسؤولية ${moved.length} عملية مفتوحة`
             + (expertChanged ? " مع إسناد خبير الفرع الجديد" : " مع إبقاء الخبير الحالي")
-          : " — والعمليات المفتوحة وخبراؤها كما هم"),
+          : " — والعمليات المفتوحة وخبراؤها كما هم")
+        + (movedFollowupIds.length > 0
+          ? ` — ومعها ${movedFollowupIds.length} متابعة حيّة بانتظار الحسم`
+          : ""),
       tx,
     });
 

@@ -260,6 +260,36 @@ function assertMayOverwrite(
  * ولذلك يُفحص التاريخ كلّه لا الأوامر الفعّالة وحدها: أمرٌ **مكتمل** دليلُ
  * جهازٍ مسلَّم — وهو بالضبط المريض الذي لا يجوز أن تُفتح له متابعةُ بيع.
  */
+/**
+ * **نقلُ المتابعات الحيّة إلى فرعٍ آخر** — داخل معاملة المُستدعي.
+ *
+ * المتابعةُ بعد المعاينة **جزءٌ من العملية المفتوحة**: هي القرارُ التجاريُّ
+ * المعلَّق على الجهاز. فحين تُنقَل مسؤوليةُ العملية (ترحيل ٠٨٠) تنتقل معها،
+ * وإلّا بقي «بانتظار الحسم» في طابور الفرع القديم بينما الجهازُ يُصنَع في
+ * الجديد — صفٌّ ظاهرٌ لمن لا يملكه.
+ *
+ * **والمنتهيةُ لا تُمَسّ أبداً**: `converted` و«لم يشترِ» وأخواتُها وقائعُ
+ * تاريخية وقعت في فرعها — وشرطُ الحالة في `UPDATE` نفسِه، فمتابعةٌ حُسمت
+ * بين القراءة والكتابة لا تُنقَل بأثرٍ رجعيّ.
+ *
+ * **وبحلقةٍ أو بلا حلقة سواء**: متابعةٌ وُلدت عن معاينةٍ بلا طلب جهاز
+ * (`device_episode_id IS NULL`، §4.r) قرارٌ حيٌّ كغيرها.
+ */
+export async function moveLiveFollowupsToBranchTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { patientId: number; branchId: number },
+): Promise<number[]> {
+  const r = await tx.execute(sql`
+    UPDATE post_exam_followups
+       SET branch_id = ${params.branchId}, updated_at = NOW()
+     WHERE patient_id = ${params.patientId}
+       AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
+       AND branch_id IS DISTINCT FROM ${params.branchId}
+    RETURNING id
+  `);
+  return ((r.rows ?? []) as Record<string, any>[]).map((x) => Number(x.id));
+}
+
 export async function ensureFollowupForSignedExam(tx: any, params: {
   patientId: number;
   caseId: number | null;
