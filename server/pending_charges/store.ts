@@ -521,10 +521,31 @@ export async function createComponentSaleOperation(params: {
       if (params.component === null) {
         throw new ChargeError("حدّد الجزء المراد بيعه — اختر من القائمة", 400);
       }
+      //  ══ **وفرعُ الحركة لا يُصدَّق لمجرّد أنه وصل** (ترحيل ٠٨٠) ═════════
+      //  `params.branchId` يقوله المُنادي، ونداءٌ مباشرٌ للمخزن يتجاوز فحصَ
+      //  النقطة تماماً. فيُعاد التحقّق **تحت القفل**: أهو فرعُ تسجيل المريض،
+      //  أم فرعٌ أُتيح له الملفُّ صراحةً؟ وإلّا فلا يُفتَح شيءٌ به —
+      //  فرعٌ لا يصل هذا الملفَّ لا يفتح فيه عمليةً ولا يقيّد مالاً.
+      let openBranchId: number | null = null;
+      if (params.branchId !== null) {
+        const reach = await tx.execute(sql`
+          SELECT 1 FROM patients p
+           WHERE p.id = ${params.patientId}
+             AND (p.branch_id = ${params.branchId}
+                  OR EXISTS (SELECT 1 FROM patient_branch_access a
+                              WHERE a.patient_id = p.id AND a.branch_id = ${params.branchId}))
+        `);
+        if ((reach.rows ?? []).length === 0) {
+          throw new ChargeError(
+            "الفرع المطلوب لا يصل ملفّ هذا المريض — أتِح الملفّ له أولاً", 409);
+        }
+        openBranchId = params.branchId;
+      }
       const episode = await episodes.startDeviceEpisodeTx(tx, {
         patientId: params.patientId, serviceType: "prosthetic",
         createdBy: params.actor.userId,
         requestedItem: params.component, servicePath: "no_exam",
+        actingBranchId: openBranchId,
       });
       episodeId = episode.id;
       component = episode.requestedItem;
@@ -563,6 +584,8 @@ export async function createComponentSaleOperation(params: {
       patientId: params.patientId, serviceType: "prosthetic", fields: {},
       expertUserId: params.expertUserId, assignedBy: params.actor.userId,
       deviceEpisodeId: episodeId, expectServicePath: "no_exam",
+      //  وأمرُ العمل في فرع العملية الفعليّ — المقروءِ تحت القفل.
+      actingBranchId: actualOperationBranchId,
       //  **الواقعةُ الصريحة** — لا يُستدَلّ عليها بغياب صفّ لاحقاً.
       noExamNoCharge: params.priceKind === "free",
     });

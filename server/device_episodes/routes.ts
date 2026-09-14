@@ -40,6 +40,10 @@ function getSession(req: Req) {
 }
 
 /** الفروع التي يصلها المستخدم. `null` = مسؤول، أي كل الفروع. */
+import {
+  scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+} from "../patients/branch_access";
+
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
   if (s.isAdmin) return null;
@@ -204,7 +208,9 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (trashGuard(res, patient)) return;
-      if (!canReachBranch(req, patient.branch_id)) {
+      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+      const patientRef = { id: patientId, branchId: patient.branch_id ?? null };
+      if (!(await scopeReachesPatient(branchScope(req), patientRef))) {
         return res.status(403).json({ error: "لا يمكنك بدء جهاز لمريض فرع آخر" });
       }
 
@@ -227,9 +233,17 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       }
 
       const session = getSession(req);
+      //  **وطلبُ الجهاز يُفتَح في فرع الحركة** (ترحيل ٠٨٠) — لا في فرع
+      //  تسجيل المريض حين يفتحه موظّفُ فرعٍ أُتيح له الملفّ.
+      const actingBranchId = resolveActingBranchId({
+        scope: branchScope(req),
+        sessionBranchId: session.branchId ?? null,
+        homeBranchId: patientRef.branchId,
+        patientBranchIds: await patientBranchIdsOf(patientRef),
+      });
       const episode = await episodes.startDeviceEpisode({
         patientId, serviceType, createdBy: session.userId,
-        requestedItem: parsedItem.value, servicePath,
+        requestedItem: parsedItem.value, servicePath, actingBranchId,
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────

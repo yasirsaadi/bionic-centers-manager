@@ -70,6 +70,10 @@ function getSession(req: Req) {
 }
 
 /** الفروع التي يصلها المستخدم. `null` = مسؤول، أي كلّ الفروع. */
+import {
+  scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+} from "../patients/branch_access";
+
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
   if (s.isAdmin) return null;
@@ -193,9 +197,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       }
       const patient = await patientRow(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branch_id)) {
+      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+      if (!(await scopeReachesPatient(branchScope(req),
+        { id: patientId, branchId: patient.branch_id ?? null }))) {
         return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
       }
+      //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
+      //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+      const opBranchId = resolveActingBranchId({
+        scope: branchScope(req),
+        sessionBranchId: getSession(req).branchId ?? null,
+        homeBranchId: patient.branch_id ?? null,
+        patientBranchIds: await patientBranchIdsOf(
+          { id: patientId, branchId: patient.branch_id ?? null }),
+      });
 
       //  ══ **ثلاثةُ أوضاع — حلقةٌ جديدة، استئنافُ حلقةٍ موروثة، أو إلحاقٌ
       //  صريحٌ بجهازٍ قيد التصنيع** ═══════════════════════════════════════
@@ -250,7 +265,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         if (!Number.isInteger(expertUserId) || expertUserId <= 0) {
           return res.status(400).json({ error: "اختر الخبير المسؤول عن التنفيذ" });
         }
-        const v = await mfg.validateExpertForBranch(expertUserId, patient.branch_id as number);
+        const v = await mfg.validateExpertForBranch(expertUserId, opBranchId as number);
         if (!v.ok) return res.status(400).json({ error: v.reason });
       }
 
@@ -274,7 +289,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       const note = typeof req.body?.note === "string" ? req.body.note.trim() || null : null;
 
       const out = await store.createComponentSaleOperation({
-        patientId, branchId: patient.branch_id ?? null, expertUserId,
+        patientId, branchId: opBranchId, expertUserId,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
         finalPrice: offer.finalPrice!, paidNow: paidNowResult.amount,
         note, actor: actorOf(req), component, existingEpisodeId, attachToDeviceEpisodeId,
@@ -403,9 +418,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       }
       const patient = await patientRow(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branch_id)) {
+      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+      if (!(await scopeReachesPatient(branchScope(req),
+        { id: patientId, branchId: patient.branch_id ?? null }))) {
         return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
       }
+      //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
+      //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+      const opBranchId = resolveActingBranchId({
+        scope: branchScope(req),
+        sessionBranchId: getSession(req).branchId ?? null,
+        homeBranchId: patient.branch_id ?? null,
+        patientBranchIds: await patientBranchIdsOf(
+          { id: patientId, branchId: patient.branch_id ?? null }),
+      });
 
       //  **أيُّ جهازٍ يُصان؟** — قاعدةُ الصيانة القائمة بحرفها: صاحبُ نوعٍ
       //  واحد يبقى تلقائياً، وصاحبُ الاثنين يُصرِّح، والصمتُ يُردّ لا يُخمَّن.
@@ -431,7 +457,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         });
       }
 
-      const v = await mfg.validateExpertForBranch(expertUserId, patient.branch_id as number);
+      const v = await mfg.validateExpertForBranch(expertUserId, opBranchId as number);
       if (!v.ok) return res.status(400).json({ error: v.reason });
 
       //  **والجزءُ من القائمة القائمة وحدها** (ترحيل ٠٦٠) — ولا قائمةَ
@@ -468,7 +494,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
       const out = await store.createMaintenanceOperation({
-        patientId, branchId: patient.branch_id ?? null, serviceType, expertUserId,
+        patientId, branchId: opBranchId, serviceType, expertUserId,
         maintenanceComponent: comp.value,
         deviceEpisodeId: target.deviceEpisodeId,
         legacyUnrecordedDevice: target.legacyUnrecordedDevice,
@@ -709,9 +735,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       if (!Number.isFinite(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
       const patient = await patientRow(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branch_id)) {
+      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+      if (!(await scopeReachesPatient(branchScope(req),
+        { id: patientId, branchId: patient.branch_id ?? null }))) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
+      //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
+      //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+      const opBranchId = resolveActingBranchId({
+        scope: branchScope(req),
+        sessionBranchId: getSession(req).branchId ?? null,
+        homeBranchId: patient.branch_id ?? null,
+        patientBranchIds: await patientBranchIdsOf(
+          { id: patientId, branchId: patient.branch_id ?? null }),
+      });
       res.json({ rows: await store.listForPatient(patientId) });
     } catch (err) {
       fail(res, err, "تعذّر تحميل مبالغ المريض المعلّقة");

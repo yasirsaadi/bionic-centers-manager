@@ -53,6 +53,7 @@ import { storage } from "../storage";
 import * as store from "./store";
 import { FollowupError } from "./store";
 import * as decisionQueue from "./decision_queue_store";
+import { scopeReachesPatient } from "../patients/branch_access";
 import {
   canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
   canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
@@ -227,7 +228,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!Number.isFinite(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    if (!canReachBranch(req, patient.branchId)) {
+    //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+    if (!(await scopeReachesPatient(branchScope(req), patient))) {
       return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
     const rows = await store.getFollowupsForPatient(patientId);

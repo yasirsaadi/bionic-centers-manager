@@ -32,6 +32,9 @@ import {
   episodeDiscountRef, serviceDiscountRef,
 } from "@shared/discount";
 import { discountAuditNote } from "../discounts/routes";
+import {
+  scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+} from "../patients/branch_access";
 
 type Req = any;
 
@@ -83,6 +86,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // Can this manager/admin session act on `branchId`?
   const branchInScope = (s: ReturnType<typeof getSession>, branchId: number) =>
     s.isAdmin || s.accessible.includes(branchId);
+
+  //  **مَن يصل هذا الملفّ** (ترحيل ٠٨٠) — فرعُ التسجيل **أو** فرعٌ أُتيح له.
+  const reachesPatient = async (
+    s: ReturnType<typeof getSession>, patient: { id: number; branchId: number | null },
+  ): Promise<boolean> => {
+    if (s.isAdmin) return true;
+    const scope = s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []);
+    return await scopeReachesPatient(scope, patient as any);
+  };
 
   // ---- experts roster for a branch (for reception's patient form + admin) ----
   app.get("/api/manufacturing/experts", isAuthenticated, async (req: Req, res) => {
@@ -244,7 +256,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     else if (!requestedSt) serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
     if (!serviceType) return res.status(400).json({ error: "هذه الميزة لمرضى الأطراف الصناعية والمساند الطبية فقط" });
     // Branch scope.
-    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+    if (!(await reachesPatient(s, patient))) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     // Expert must be valid for the patient's branch.
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
@@ -370,7 +382,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     else if (requested === "medical_support" && patient.isMedicalSupport) serviceType = "medical_support";
     else if (!requested) serviceType = patient.isAmputee ? "prosthetic" : patient.isMedicalSupport ? "medical_support" : null;
     if (!serviceType) return res.status(400).json({ error: "هذه الميزة لمرضى الأطراف والمساند فقط" });
-    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+    if (!(await reachesPatient(s, patient))) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     const v = await store.validateExpertForBranch(expertUserId, patient.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
@@ -593,9 +605,18 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
 
     try {
+      //  **والعمليةُ تُنسَب لفرع الحركة** (ترحيل ٠٨٠) — لا لفرع تسجيل
+      //  المريض حين يخصّصها موظّفُ فرعٍ أُتيح له الملفّ.
+      const actingBranchId = resolveActingBranchId({
+        scope: s.isAdmin ? null : (s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : [])),
+        sessionBranchId: s.branchId ?? null,
+        homeBranchId: patient.branchId,
+        patientBranchIds: await patientBranchIdsOf(patient as any),
+      });
       const { workOrderId } = await storage.assignManufacturing({
         patientId, serviceType, fields, cost: effectiveCost, expertUserId, assignedBy: s.userId ?? null,
         deviceEpisodeId: liveEpisode?.id ?? null,
+        actingBranchId,
       });
       await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
         `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${effectiveCost}${mayWriteClinical ? "" : " — سعر الطبيب المعتمد"})`);
@@ -1071,7 +1092,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
     // Branch scope for non-admins.
-    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح" });
+    if (!(await reachesPatient(s, patient))) return res.status(403).json({ error: "غير مصرح" });
     const canView = s.isAdmin || isManager(s) || s.permissions?.canViewPatients;
     if (!canView) return res.status(403).json({ error: "غير مصرح" });
     res.json(await store.getActiveOrderSummaryForPatient(patientId));
@@ -1088,7 +1109,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (Number.isNaN(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    if (!s.isAdmin && !branchInScope(s, patient.branchId)) return res.status(403).json({ error: "غير مصرح" });
+    if (!(await reachesPatient(s, patient))) return res.status(403).json({ error: "غير مصرح" });
     const canView = s.isAdmin || isManager(s) || s.permissions?.canViewPatients;
     if (!canView) return res.status(403).json({ error: "غير مصرح" });
     res.json(await store.getAllOrdersForPatient(patientId));

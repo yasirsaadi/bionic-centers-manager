@@ -52,7 +52,11 @@ export interface CancelExamRequestResult {
   cancelledEpisodeId: number | null;
   /** أرقامُ طلبات المراجعة التي سُحبت (المرساة والعارية معاً). */
   cancelledRequestIds: number[];
-  /** فرعُ المريض وقتَ الإلغاء — للتدقيق. */
+  /**
+   * **فرعُ العملية وقتَ الإلغاء** — فرعُ الحلقة حين يكون للصفّ حلقة، وإلّا
+   * فرعُ الحالة ثمّ التسجيل. وهو ما يُقيَّد في `audit_log`: الحدثُ وقع في
+   * الفرع الذي كان يملك العمل، لا في فرع تسجيل المريض.
+   */
   branchId: number | null;
 }
 
@@ -98,22 +102,58 @@ export async function cancelExamRequest(params: {
     if (patient.deleted_at) {
       throw new CancelExamRequestError(PATIENT_IN_TRASH_ERROR, 409, "patient_in_trash");
     }
-    //  **ونطاقُ الفرع يُعاد فحصُه من الصفّ المقفول**: قد يُنقَل المريضُ بين
-    //  المعاينة والتنفيذ، والفحصُ في النقطة ردٌّ مبكّرٌ لا الحارسُ الأخير.
+    //  فرعُ المريض للتدقيق — والنطاقُ يُحسَم بفرع الحلقة أدناه.
     const branchId = patient.branch_id === null ? null : Number(patient.branch_id);
+
+    // ── ② الحالةُ والحلقةُ تُقرآن تحت القفل — **والرمي بعدهما** ───────────
+    //  تُقرآن أوّلاً لأن النطاقَ يُحسَب منهما، **ولا يُرمى شيءٌ قبل ٤٠٣**:
+    //  عزلُ الفرع يسبق كلَّ خطأٍ يكشف هويّة (قاعدةُ ٤.p بحرفها) — فلا يعرف
+    //  طبيبُ فرعٍ آخر من الردّ أللمريض حالةٌ من هذا النوع أم لا.
+    const [caseRow] = await rows(tx, sql`
+      SELECT id, status, branch_id FROM patient_cases
+       WHERE patient_id = ${params.patientId} AND case_type = ${params.caseType}
+       FOR UPDATE
+    `);
+    //  الحلقةُ **بمعرّفها** لا بـ«الحلقة المنتظرة»: للخيط الواحد أكثرُ من
+    //  حلقةٍ منتظرة بعد ترحيل ٠٧٣، وكلٌّ صفٌّ مستقلّ.
+    let episodeRow: Record<string, any> | undefined;
+    if (params.deviceEpisodeId !== null && caseRow) {
+      [episodeRow] = await rows(tx, sql`
+        SELECT id, status, service_path, branch_id FROM patient_device_episodes
+         WHERE id = ${params.deviceEpisodeId}
+           AND patient_id = ${params.patientId}
+           AND case_id = ${caseRow.id}
+         FOR UPDATE
+      `);
+    }
+
+    // ── ③ نطاقُ الفرع — **بفرع الحلقة حين توجد** (٢٠٢٦-٠٩-١٤) ─────────────
+    //  **الحارسُ يطابق القائمة** (`getWorklist`): الجهازُ عملٌ له فرعُه، فنقلُ
+    //  مسؤولية العملية (ترحيل ٠٨٠) ينقل `ep.branch_id` — ومَن صار الصفُّ في
+    //  طابوره هو مَن يُلغيه. وبلا هذا يبقى صفٌّ ظاهرٌ لا يُلغى، وهو العطبُ
+    //  الذي وُضع له هذا القسم أصلاً.
+    //
+    //  **والإتاحةُ وحدها لا تكفي**: صفُّ `patient_branch_access` لا يحرّك
+    //  `ep.branch_id` — **ولا يُقرأ هنا إطلاقاً**، فملفٌّ أُتيح لفرعٍ بلا
+    //  نقلِ مسؤولية يبقى طلبُه على فرعه الأوّل ويُردّ ٤٠٣.
+    //
+    //  **والصفُّ بلا حلقة** (طلبٌ عارٍ، أو معرّفٌ لا يطابق صفّاً) يسقط إلى
+    //  فرع الحالة ثمّ التسجيل — وهو ما تقرؤه القائمةُ له بالضبط.
+    const scopeBranch = episodeRow
+      ? (episodeRow.branch_id === null || episodeRow.branch_id === undefined
+        ? (caseRow?.branch_id === null || caseRow?.branch_id === undefined
+          ? branchId : Number(caseRow.branch_id))
+        : Number(episodeRow.branch_id))
+      : (caseRow?.branch_id === null || caseRow?.branch_id === undefined
+        ? branchId : Number(caseRow.branch_id));
     if (params.branchIds !== null
-      && (branchId === null || !params.branchIds.includes(branchId))) {
+      && (scopeBranch === null || !params.branchIds.includes(scopeBranch))) {
       throw new CancelExamRequestError(
         "لا يمكنك التعديل على مريض فرع آخر", 403, "branch_out_of_scope",
       );
     }
 
-    // ── ② الحالةُ تحت القفل — والنشطةُ وحدها لها طابور ────────────────────
-    const [caseRow] = await rows(tx, sql`
-      SELECT id, status FROM patient_cases
-       WHERE patient_id = ${params.patientId} AND case_type = ${params.caseType}
-       FOR UPDATE
-    `);
+    // ── ④ ثمّ الحالةُ والحلقةُ يُحكَم عليهما — والنشطةُ وحدها لها طابور ────
     if (!caseRow) {
       throw new CancelExamRequestError(
         "لا توجد حالة من هذا النوع لهذا المريض", 404, "case_missing",
@@ -125,35 +165,26 @@ export async function cancelExamRequest(params: {
       );
     }
 
-    // ── ③ القراراتُ كلُّها قبل أيّ كتابة — ولا نصفَ إلغاء ──────────────────
-    //  الحلقةُ **بمعرّفها** لا بـ«الحلقة المنتظرة»: للخيط الواحد أكثرُ من
-    //  حلقةٍ منتظرة بعد ترحيل ٠٧٣، وكلٌّ صفٌّ مستقلّ.
+    // ── ⑤ القراراتُ كلُّها قبل أيّ كتابة — ولا نصفَ إلغاء ──────────────────
     let episodeToCancel: number | null = null;
     if (params.deviceEpisodeId !== null) {
-      const [ep] = await rows(tx, sql`
-        SELECT id, status, service_path FROM patient_device_episodes
-         WHERE id = ${params.deviceEpisodeId}
-           AND patient_id = ${params.patientId}
-           AND case_id = ${caseRow.id}
-         FOR UPDATE
-      `);
       //  **والبياتُ يُقال بياتاً**: حلقةٌ وُقّعت عليها معاينةٌ للتوّ صارت
       //  `examined` — والصفُّ الذي ضغطه الطبيبُ لم يعد قائماً. ولا يُلغى
       //  ما بدأت معاينتُه.
-      if (!ep || String(ep.status) !== "awaiting_exam") {
+      if (!episodeRow || String(episodeRow.status) !== "awaiting_exam") {
         throw new CancelExamRequestError(
           "تغيّر هذا الطلب — حدّث الصفحة", 409, "device_episode_stale",
         );
       }
       //  ومسارُ «بلا معاينة» ليس من هذا الطابور أصلاً (ترحيل ٠٦٥): لا يُعرَض
       //  فيه ولا يُلغى منه — وبابُه التصحيحُ الإداريّ.
-      if (String(ep.service_path ?? "") === "no_exam") {
+      if (String(episodeRow.service_path ?? "") === "no_exam") {
         throw new CancelExamRequestError(
           "هذا الطلب على مسار «بلا معاينة» — لا يُلغى من قائمة المعاينات",
           409, "no_exam_path",
         );
       }
-      episodeToCancel = Number(ep.id);
+      episodeToCancel = Number(episodeRow.id);
     }
 
     //  الطلباتُ على مستوى الاختصاص — هي ما يُبقي **الصفَّ بلا حلقة** قائماً.
@@ -212,7 +243,8 @@ export async function cancelExamRequest(params: {
       cancelledRequestIds: cancelledRequestIds
         .filter((id, i) => cancelledRequestIds.indexOf(id) === i)
         .sort((a, b) => a - b),
-      branchId,
+      //  **فرعُ العملية لا فرعُ التسجيل** — نفسُ الرقم الذي حرس الطلب.
+      branchId: scopeBranch,
     };
   });
 }

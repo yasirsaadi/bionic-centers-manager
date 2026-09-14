@@ -21,7 +21,8 @@
 //   ك.  السببُ إلزاميّ، والملفُّ في السلّة يُردّ، ومسارُ «بلا معاينة» يُردّ.
 //   ل.  **والشكلُ المشوَّه يُردّ** ولا يسقط صامتاً إلى «بلا جهاز».
 //   م.  **ويُقال ما جرى**: `stillListed` صادقٌ حين يبقى الصفُّ لقاعدةٍ أخرى.
-//   ع.  **والمريضُ المنقول بين فرعين**: الصفُّ الظاهرُ يُلغى — ولا عزلَ يضعف.
+//   ع.  **إتاحةٌ بلا نقل ثمّ نقلُ مسؤولية**: الإتاحةُ وحدها لا تنقل طابوراً،
+//       ونقلُ المسؤولية ينقل فرعَ الحلقة فيتبعه الطابورُ والإلغاءُ معاً.
 //   ف.  **وسطرُ التدقيق نوعُه يتبع معرّفَه**: الحلقةُ بحلقتها والطلبُ بطلبه.
 //   ن.  عقدُ الشاشة، وحارسٌ معماريّ: لا كتابةَ معاينةٍ في مسار الإلغاء.
 
@@ -201,6 +202,7 @@ async function writable(p: number) {
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   for (const s of [
+    `DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`,
     `DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`,
     `DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`,
     `DELETE FROM price_change_requests WHERE followup_id IN
@@ -612,51 +614,114 @@ async function main() {
       same("س٦. ولا طلبَ مراجعة", (await reqRows(p)).length, 0);
     }
 
-    // ══ ع. المريضُ المنقول بين فرعين — الصفُّ الظاهرُ يُلغى ═══════════════
-    console.log(`\n── ع. المريضُ المنقول بين فرعين ──`);
+    // ══ ع. إتاحةٌ بلا نقل · ثمّ نقلُ المسؤولية فعلاً ═══════════════════
+    console.log(`\n── ع. إتاحةٌ بلا نقل · ثمّ نقلُ المسؤولية ──`);
     for (const svc of ["prosthetic", "medical_support"] as Svc[]) {
       const L = svc === "prosthetic" ? "أطراف" : "مساند";
-      //  **الواقعة**: طلبٌ يُفتَح في الفرع ١ ثمّ يُنقَل المريضُ إلى الفرع ٢.
-      //  و`transferPatientToBranch` تنقل المريضَ وحالاتِه وزياراتِه ودفعاتِه
-      //  **وتترك طلبَ المراجعة بفرعه الأصليّ عمداً** — فكان طبيبُ الفرع ٢
-      //  يرى الصفَّ (القائمةُ ترشّح بفرع المريض/الحالة، لا بفرع الطلب) ويُردّ
-      //  زرُّه `nothing_to_cancel` إلى الأبد. مُعادٌ إنتاجُه حيّاً ٢٠٢٦-٠٩-١٣.
-      const p = await mkPatient(`ع-منقول-${svc}`, svc);
+      //  **الفرقُ بين إتاحةِ ملفٍّ ونقلِ مسؤوليةِ عملية** (ترحيل ٠٨٠):
+      //  الإتاحةُ رؤيةٌ وحدها — لا تحرّك فرعَ حلقةٍ ولا تنقل طابوراً.
+      //  ونقلُ المسؤولية ينقل `ep.branch_id`، **فيصير الجهازُ عملَ الفرع
+      //  الجديد**: يظهر في طابور طبيبه ويخرج من طابور الأوّل.
+      //
+      //  وطابورُ الطبيب وحارسُ هذا الإلغاء **يقرآن فرعَ الحلقة نفسَه**، فلا
+      //  يبقى صفٌّ ظاهرٌ لا يُلغى — وهو العطبُ الذي وُضع له هذا القسم.
+      const p = await mkPatient(`ع-مُتاح-${svc}`, svc);
       const c = await mkCase(p, svc, 1);
-      const rid = await mkBareRequest(p, c, svc, { branch: 1 });
+      const ep = await openDevice(p, svc, S.recv);
+      same(`ع١. طلبُ جهازٍ في الفرع ١ (${L})`, ep.status, 201);
+      const epId = Number(ep.body?.episode?.id ?? ep.body?.id);
 
-      const tr = await http("POST", `/api/patients/${p}/transfer`, S.admin, { branchId: 2 });
-      same(`ع١. النقل إلى الفرع ٢ ينجح (${L})`, tr.status, 200);
-      const reqBranch = (await q<{ branch_id: number }>(
-        `SELECT branch_id FROM medical_review_requests WHERE id=$1`, [rid]))[0];
-      same("ع٢. وفرعُ الطلب يبقى الأصليَّ كما تفعل دالّةُ النقل عمداً",
-        reqBranch?.branch_id, 1);
-      const moved = (await q<{ p_branch: number; c_branch: number }>(
-        `SELECT p.branch_id AS p_branch, c.branch_id AS c_branch
-           FROM patients p JOIN patient_cases c ON c.id=$2 WHERE p.id=$1`, [p, c]))[0];
-      same("ع٣. والمريضُ وحالتُه في الفرع ٢", [moved?.p_branch, moved?.c_branch], [2, 2]);
+      // ① **إتاحةٌ بلا نقلِ مسؤولية** — رؤيةٌ فقط.
+      const grant = await http("POST", `/api/patients/${p}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: false });
+      same("ع٢. إتاحةُ الملفّ للفرع ٢ بلا نقلِ مسؤولية تنجح", grant.status, 201);
+      //  **ولا صفَّ يُعاد كتابةُ فرعه** — لا المريضُ ولا الحالةُ ولا الحلقة.
+      const stayed = (await q<{ p_branch: number; c_branch: number; e_branch: number }>(
+        `SELECT p.branch_id AS p_branch, c.branch_id AS c_branch, e.branch_id AS e_branch
+           FROM patients p
+           JOIN patient_cases c ON c.id = $2
+           JOIN patient_device_episodes e ON e.id = $3
+          WHERE p.id = $1`, [p, c, epId]))[0];
+      same("ع٣. وفرعُ المريض والحالةِ والحلقةِ يبقى ١ كما هو",
+        [stayed?.p_branch, stayed?.c_branch, stayed?.e_branch], [1, 1, 1]);
+      //  **والإتاحةُ وحدها لا تنقل الطابور** — هذا قرارٌ صريح لا أثرٌ جانبيّ.
+      check((await myRows(p, S.docB2)).length === 0,
+        "ع٤. **والإتاحةُ وحدها لا تُدخل الصفَّ طابورَ طبيب الفرع ٢**");
+      const early = await cancelRequest(p, svc, epId, S.docB2);
+      same("ع٥. ولا تفتح له الإلغاء", early.status, 403);
+      same("ع٦. برمزه", early.body?.code, "branch_out_of_scope");
+      check((await myRows(p, S.doc)).length === 1,
+        "ع٧. والصفُّ ما زال في طابور طبيب الفرع ١");
+
+      // ② **ثمّ نقلُ المسؤولية فعلاً** — الحلقةُ تنتقل، ومعها الطابور.
+      const moveOp = await http("POST", `/api/patients/${p}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: true });
+      same("ع٨. نقلُ مسؤولية العملية إلى الفرع ٢ ينجح", moveOp.status, 200);
+      const movedRow = (await q<{ p_branch: number; e_branch: number }>(
+        `SELECT p.branch_id AS p_branch, e.branch_id AS e_branch
+           FROM patients p JOIN patient_device_episodes e ON e.id = $2
+          WHERE p.id = $1`, [p, epId]))[0];
+      same("ع٩. **فرعُ الحلقة صار ٢ وفرعُ تسجيل المريض ما زال ١**",
+        [movedRow?.p_branch, movedRow?.e_branch], [1, 2]);
 
       const seen = await myRows(p, S.docB2);
-      check(seen.length === 1, "ع٤. وطبيبُ الفرع ٢ يرى الصفَّ", JSON.stringify(seen));
-      const res = await cancelRequest(p, svc, null, S.docB2);
-      same("ع٥. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
-      same("ع٦. والطلبُ المسحوبُ هو هو", res.body?.cancelledRequestIds, [rid]);
-      same("ع٧. والصفُّ خرج فعلاً", res.body?.stillListed, false);
-      const after = await reqRows(p);
-      check(after.length === 1 && after[0].status === "cancelled",
-        "ع٨. والصفُّ في القاعدة مسحوبٌ لا محذوف", JSON.stringify(after));
-      check((await myRows(p, S.docB2)).length === 0, "ع٩. وخرج من قائمة طبيب الفرع ٢");
+      check(seen.length === 1, "ع١٠. وطبيبُ الفرع ٢ يرى الصفَّ **بنقل المسؤولية**",
+        JSON.stringify(seen));
+      //  **وهويّةُ فرع العملية على الصفّ نفسِه** — رقماً واسماً.
+      same("ع١١. **وصفُّه يحمل رقمَ فرع الحلقة واسمَه**",
+        [seen[0]?.branchId, seen[0]?.branchName], [2, "فرعٌ آخر"]);
+      check((await myRows(p, S.doc)).length === 0,
+        "ع١٢. **وخرج من طابور طبيب الفرع ١** — المسؤوليةُ انتقلت لا نُسخت");
 
-      //  **والعزلُ لم يضعف بحرف**: إسقاطُ فلترةِ فرعِ الطلب لم يفتح شيئاً —
-      //  السلطةُ صفُّ المريض المقفول، والاستعلامُ مقصورٌ على مريضٍ بعينه.
+      // ③ **والتوقيعُ يُسجَّل بفرع الحلقة** — معاينةً ومتابعةً.
+      const pS = await mkPatient(`ع-توقيعٌ-منقول-${svc}`, svc);
+      await mkCase(pS, svc, 1);
+      const epS = Number((await openDevice(pS, svc, S.recv)).body?.episode?.id);
+      await http("POST", `/api/patients/${pS}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: true });
+      const signed = await signExam(pS, svc, epS, S.docB2);
+      same("ع١٣. طبيبُ الفرع ٢ يوقّع معاينةَ الجهاز المنقول", signed.status, 200);
+      const exBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM medical_exams WHERE patient_id=$1`, [pS]))[0];
+      const fuBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM post_exam_followups WHERE patient_id=$1`, [pS]))[0];
+      same("ع١٤. **والمعاينةُ والمتابعةُ تُسجَّلان بفرع الحلقة لا فرع التسجيل**",
+        [Number(exBranch?.branch_id), Number(fuBranch?.branch_id)], [2, 2]);
+
+      // ④ **والإتاحةُ وحدها لا توقّع حلقةَ فرعٍ آخر.**
+      const pB = await mkPatient(`ع-توقيعٌ-محجوب-${svc}`, svc);
+      await mkCase(pB, svc, 1);
+      const epB = Number((await openDevice(pB, svc, S.recv)).body?.episode?.id);
+      await http("POST", `/api/patients/${pB}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: false });
+      const blocked = await signExam(pB, svc, epB, S.docB2);
+      same("ع١٥. **الإتاحةُ وحدها لا تفتح توقيعَ حلقةِ فرعٍ آخر**", blocked.status, 403);
+      same("ع١٦. برمزه", blocked.body?.code, "episode_branch_out_of_scope");
+      same("ع١٧. وبصفر معاينة", (await examRows(pB)).length, 0);
+
+      const res = await cancelRequest(p, svc, epId, S.docB2);
+      same("ع١٨. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
+      same("ع١٩. والحلقةُ المُلغاة هي هي", res.body?.cancelledEpisodeId, epId);
+      same("ع٢٠. والصفُّ خرج فعلاً", res.body?.stillListed, false);
+      //  **وتدقيقُ الإلغاء بفرع الحلقة** — الحدثُ وقع حيث كان العمل.
+      const auditBranch = (await q<{ branch_id: number }>(
+        `SELECT branch_id FROM audit_log
+          WHERE entity_type='patient_device_episode' AND entity_id=$1
+          ORDER BY id DESC LIMIT 1`, [epId]))[0];
+      same("ع٢١. **وسطرُ تدقيق الإلغاء بفرع الحلقة**",
+        Number(auditBranch?.branch_id), 2);
+      check((await myRows(p, S.docB2)).length === 0, "ع٢٢. وخرج من قائمة طبيب الفرع ٢");
+
+      //  **والعزلُ لم يضعف بحرف**: مريضُ الفرع ١ **بلا إتاحةٍ ولا نقل** يبقى
+      //  مغلقاً على طبيب الفرع ٢ تماماً كما كان.
       const home = await mkPatient(`ع-مقيم-${svc}`, svc);
       const hc = await mkCase(home, svc, 1);
       await mkBareRequest(home, hc, svc, { branch: 1 });
       const before = await writable(home);
       const denied = await cancelRequest(home, svc, null, S.docB2);
-      same("ع١٠. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
-      same("ع١١. برمزه", denied.body?.code, "branch_out_of_scope");
-      same("ع١٢. وبصفر كتابة", await writable(home), before);
+      same("ع٢٣. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
+      same("ع٢٤. برمزه", denied.body?.code, "branch_out_of_scope");
+      same("ع٢٥. وبصفر كتابة", await writable(home), before);
     }
 
     // ══ ف. سطرُ التدقيق — النوعُ يتبع معرّفَه ═══════════════════════════

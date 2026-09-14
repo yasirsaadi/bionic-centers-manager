@@ -93,6 +93,8 @@ function getSession(req: Req) {
 }
 
 /** Branch IDs the caller may read. `null` = admin, i.e. every branch. */
+import { scopeReachesPatient } from "../patients/branch_access";
+
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
   if (s.isAdmin) return null;
@@ -283,7 +285,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branchId)) {
+      if (!(await scopeReachesPatient(branchScope(req), patient))) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
 
@@ -411,7 +413,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branchId)) {
+      if (!(await scopeReachesPatient(branchScope(req), patient))) {
         // Name both sides: a bare "another branch" left the doctor guessing
         // why a save he had every right to make was refused.
         const names = await store.branchNames();
@@ -482,10 +484,18 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  قد أنشأ الحالةَ للتوّ (لم تكن موجودة قبله)، هذه القراءةُ **تجدها**:
       //  الحالةُ صفٌّ قائمٌ الآن في القاعدة، لا لقطةٌ محلّية بائتة.
       const earlyCaseRow = await store.findCaseFor(patientId, caseType as MedicalSpecialty);
+      //  ══ **فرعُ العملية — فرعُ الحلقة حين يُطلَب جهازٌ بعينه** ═══════════
+      //  الجهازُ عملٌ له فرعُه، ونقلُ مسؤوليته (٠٨٠) ينقله. فيُقرأ هنا **قبل**
+      //  فحص التطابق ليتّسق ما يُقارَن مع ما سيُخزَّن — وإلّا قرأت إعادةُ
+      //  إرسالٍ مشروعة «تعارضاً» لأن الصفَّ المحفوظ يحمل فرعَ الحلقة والطلبُ
+      //  يتوقّع فرعَ التسجيل. والصفُّ بلا حلقة يبقى على فرع الحالة/التسجيل.
+      const operationBranchId =
+        (await store.examOperationBranch(patientId, deviceEpisodeId))
+        ?? earlyCaseRow?.branchId ?? patient.branchId;
       const replayContent = {
         patientId,
         doctorId: session.userId,
-        branchId: earlyCaseRow?.branchId ?? patient.branchId,
+        branchId: operationBranchId,
         caseId: earlyCaseRow?.id ?? null,
         caseType,
         //  والجهازُ من الهويّة حين يحضر: نفسُ المفتاح بجهازٍ آخر تعارضٌ لا إعادة.
@@ -567,7 +577,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           patientId,
           caseId: caseRow?.id ?? null,
           caseType: caseType as MedicalSpecialty,
-          branchId: caseRow?.branchId ?? patient.branchId,
+          branchId: operationBranchId,
           doctorId: session.userId,
           doctorName,
           prescription,
@@ -578,6 +588,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  المخزن يتحقّق منه ثانيةً، وسباقٌ غيّر الحالَ بين الفحصين يُردّ.
           deviceEpisodeId: resolvedEpisodeId,
           ...body,
+        }, {
+          //  **ونطاقُ الجلسة يُفحَص على فرع الحلقة تحت القفل**: إتاحةُ الملفّ
+          //  (٠٨٠) تفتح القراءةَ والعملَ الجديد — لا توقيعَ جهازٍ مسؤوليتُه
+          //  لفرعٍ آخر. وفحصُ النقطة أعلاه على المريض يبقى ردّاً مبكّراً.
+          branchIds: branchScope(req),
         }));
       } catch (err) {
         if (err instanceof store.ExamIdempotencyConflictError) {

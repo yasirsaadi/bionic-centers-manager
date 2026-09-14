@@ -44,6 +44,11 @@ import { patientActiveOnDate } from "./patient_activity";
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
+import { registerPatientBranchAccessRoutes } from "./patients/branch_access_routes";
+import {
+  scopeReachesPatient, patientBranchIdsOf, scopeReachesPatientBranches,
+  resolveActingBranchId, patientVisibleToScopeSql,
+} from "./patients/branch_access";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import { CaseDisposalBlockedError } from "./patient_cases/disposal";
 import {
@@ -461,6 +466,32 @@ export async function registerRoutes(
     const list = Array.isArray(branchSession?.accessibleBranches) ? branchSession.accessibleBranches : [];
     if (list.length > 0) return list;
     return branchSession?.branchId ? [branchSession.branchId] : [];
+  };
+
+  // ══ **مَن يصل هذا الملفّ، وإلى أيّ فرعٍ تُنسَب حركتُه** (ترحيل ٠٨٠) ═══
+  //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ. ولا يُكتب
+  //  `allowed.includes(patient.branchId)` في أيّ حارسٍ بعد اليوم: تلك تقرأ
+  //  فرعَ التسجيل وحده فتحجب فرعاً مُنح رؤيةَ الملفّ صراحةً.
+  const reachesPatient = async (
+    req: any, patient: { id: number; branchId: number | null } | null | undefined,
+  ): Promise<boolean> => {
+    if (!patient) return false;
+    return await scopeReachesPatient(accessibleBranchesFor(req), patient as any);
+  };
+
+  //  **الفرعُ الذي تُنسَب إليه حركةٌ جديدة** — «الفرع الذي حدثت فيه».
+  //  موظّفُ ذي قار يقبض على ملفٍّ مسجَّلٍ في كربلاء ⟶ الدفعةُ في ذي قار،
+  //  وحسابُ كربلاء لا يتغيّر بحرف.
+  const actingBranchFor = async (
+    req: any, patient: { id: number; branchId: number | null },
+  ): Promise<number | null> => {
+    const bs = (req.session as any).branchSession;
+    return resolveActingBranchId({
+      scope: accessibleBranchesFor(req),
+      sessionBranchId: bs?.branchId ?? null,
+      homeBranchId: patient.branchId,
+      patientBranchIds: await patientBranchIdsOf(patient as any),
+    });
   };
 
   // Who may collect cash against an invoice — the ONE predicate for both
@@ -1730,8 +1761,11 @@ export async function registerRoutes(
     //  العدّاد ولا في نتيجة بحثٍ باسمٍ أو رمز. وبابُه «المحذوفات» وحدها.
     const conditions: any[] = [activePatientDrizzle()];
     if (!isAdmin) {
-      // Non-admins are always pinned to their own branch.
-      conditions.push(eq(patients.branchId, branchSession?.branchId ?? -1));
+      //  Non-admins are pinned to their own branch — **وإلى كلّ ملفٍّ أُتيح
+      //  لفرعهم صراحةً** (ترحيل ٠٨٠). فمريضُ كربلاء المُتاحُ لذي قار يظهر
+      //  في سجلّ ذي قار كاملاً — في الأطراف والمساند والعلاج الطبيعي سواء،
+      //  بلا تفرقةٍ بين الأقسام. **وفرعُ تسجيله لا يتغيّر بذلك بحرف.**
+      conditions.push(patientVisibleToScopeSql([branchSession?.branchId ?? -1]));
     } else if (!search && req.query.branchId && req.query.branchId !== "all") {
       const b = parseInt(String(req.query.branchId));
       if (Number.isFinite(b)) conditions.push(eq(patients.branchId, b));
@@ -2083,7 +2117,7 @@ export async function registerRoutes(
     const canView = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPatients);
     if (!canView) return res.status(403).json({ message: "غير مصرح" });
     const allowedCases = accessibleBranchesFor(req);
-    const canAccess = patient && (allowedCases === null || allowedCases.includes(patient.branchId));
+    const canAccess = await reachesPatient(req, patient);
     if (!patient || !canAccess) return res.status(404).json({ message: "Patient not found or unauthorized" });
 
     const [cases, payments, visits] = await Promise.all([
@@ -2149,7 +2183,7 @@ export async function registerRoutes(
 
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
-    if (!isAdmin && branchSession?.branchId !== patient.branchId) return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+    if (!(await reachesPatient(req, patient))) return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
 
     const cost = Number(req.body?.cost);
     if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ message: "قيمة غير صالحة" });
@@ -2545,34 +2579,26 @@ export async function registerRoutes(
     }
   });
 
+  // ══ **«نقل المريض» تقاعد — البديلُ إتاحةُ الملفّ لفرعٍ إضافيّ** (ترحيل ٠٨٠)
+  //
+  //  كان هذا البابُ يعيد كتابة `patients.branch_id` و`visits.branch_id`
+  //  و`payments.branch_id` و`patient_cases.branch_id` **كلَّها** إلى الفرع
+  //  الجديد. فمريضٌ دفع في كربلاء ثمّ جاء ذي قار كان مالُه يُنزَع من حسابات
+  //  كربلاء **بأثرٍ رجعيّ** ويُنسَب إلى فرعٍ لم يقبضه: تقريرُ كربلاء عن أمسٍ
+  //  مضى يتغيّر اليوم، والفرقُ لا يفسّره أحد.
+  //
+  //  **والبابُ يتقاعد ولا يُحذف كاتبُه** (نفسُ مبدأ ٤.i/٤.j): يبقى بفحص
+  //  صلاحيته الأصليّ حرفياً ثمّ يردّ ٤٠٩ ويدلّ على البابِ الصحيح — فعميلٌ
+  //  قديمٌ مفتوحٌ منذ ما قبل النشر يقرأ سبباً لا صمتاً.
   app.post(api.patients.transfer.path, isAuthenticated, async (req, res) => {
     if (!isAdminOrManager(req)) {
       return res.status(403).json({ message: "فقط المدير يمكنه نقل المرضى" });
     }
-
-    const id = Number(req.params.id);
-    const { branchId } = api.patients.transfer.input.parse(req.body);
-
-    // Branch isolation: branch_manager can transfer ONLY between
-    // branches they manage. Admin has no constraint.
-    const allowed = accessibleBranchesFor(req);
-    if (allowed !== null) {
-      const patient = await storage.getPatient(id);
-      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
-      if (!allowed.includes(patient.branchId)) {
-        return res.status(403).json({ message: "لا يمكنك نقل مريض من فرع لا تديره" });
-      }
-      if (!allowed.includes(branchId)) {
-        return res.status(403).json({ message: "لا يمكنك النقل إلى فرع لا تديره" });
-      }
-    }
-    
-    // Transfer patient with all related records (visits, payments)
-    const patient = await storage.transferPatientToBranch(id, branchId);
-    if (!patient) {
-      return res.status(404).json({ message: "المريض غير موجود" });
-    }
-    res.json(patient);
+    return res.status(409).json({
+      message: "«نقل المريض» تقاعد — فرعُ التسجيل وحساباتُه لا تتغيّر."
+        + " أتِح الملفَّ للفرع الإضافي بدلاً من ذلك"
+        + " (POST /api/patients/:id/branch-access)",
+    });
   });
 
   app.put("/api/patients/:id/created-at", isAuthenticated, async (req, res) => {
@@ -2585,7 +2611,7 @@ export async function registerRoutes(
     if (allowed !== null) {
       const patient = await storage.getPatient(id);
       if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
-      if (!allowed.includes(patient.branchId)) {
+      if (!(await reachesPatient(req, patient))) {
         return res.status(403).json({ message: "لا يمكنك تعديل مريض من فرع آخر" });
       }
     }
@@ -3082,7 +3108,7 @@ export async function registerRoutes(
         // Branch isolation — and every row this writes is pinned to the
         // patient's own branch, never a branch id from the request body.
         const allowedNs = accessibleBranchesFor(req);
-        if (allowedNs !== null && !allowedNs.includes(patient.branchId)) {
+        if (!(await reachesPatient(req, patient))) {
           throw new NewServiceError("غير مصرح لك بهذا الفرع", 403);
         }
 
@@ -3219,6 +3245,9 @@ export async function registerRoutes(
         const done = await executeNewService({
           patientId,
           serviceType,
+          //  **فرعُ الحركة** (ترحيل ٠٨٠): خدمةٌ جديدة تُسجَّل في فرع الموظّف
+          //  الذي قدّمها، لا في فرع تسجيل المريض.
+          actingBranchId: await actingBranchFor(req, patient),
           //  **القياسيُّ للجلسات، والمُدخَلُ لما عداها**: الاستشارةُ و«خدمة
           //  أخرى» بلا جدولِ أسعارٍ يحكمها، فيبقى مبلغُها قرارَ الموظّف كما كان.
           serviceCost: isPhysioService ? stdPrice : serviceCost,
@@ -3303,7 +3332,7 @@ export async function registerRoutes(
       if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
       if (!patient.isPhysiotherapy) return res.status(400).json({ message: "هذه الميزة لمرضى العلاج الطبيعي" });
       const allowedPp = accessibleBranchesFor(req);
-      if (allowedPp !== null && !allowedPp.includes(patient.branchId)) {
+      if (!(await reachesPatient(req, patient))) {
         return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
       }
 
@@ -3402,7 +3431,7 @@ export async function registerRoutes(
       if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
       if (!patient.isPhysiotherapy) return res.status(400).json({ message: "هذه الميزة لمرضى العلاج الطبيعي" });
       const allowedPp = accessibleBranchesFor(req);
-      if (allowedPp !== null && !allowedPp.includes(patient.branchId)) {
+      if (!(await reachesPatient(req, patient))) {
         return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
       }
 
@@ -3452,7 +3481,7 @@ export async function registerRoutes(
         const accessible: number[] = Array.isArray(branchSession?.accessibleBranches) && branchSession.accessibleBranches.length > 0
           ? branchSession.accessibleBranches
           : (branchSession?.branchId ? [branchSession.branchId] : []);
-        if (!accessible.includes(patient.branchId)) {
+        if (!(await reachesPatient(req, patient))) {
           return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
         }
       }
@@ -3654,6 +3683,10 @@ export async function registerRoutes(
           message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
         });
       }
+      //  ══ **والزيارةُ تُنسَب لفرع الحركة** (ترحيل ٠٨٠) ═══════════════════
+      //  زيارةُ ذي قار على ملفٍّ مسجَّلٍ في كربلاء تُسجَّل في ذي قار — ولا
+      //  زيارةٌ قديمة تتغيّر بحرف.
+      (input as any).branchId = (await actingBranchFor(req, live)) ?? live.branchId;
     }
 
     // Track which system user created this visit (if logged in via system user)
@@ -3962,11 +3995,13 @@ export async function registerRoutes(
     // الفرعُ الحقيقيّ هو فرعُ المريض نفسه — نفسُ نمط `/new-service`
     // (`accessibleBranchesFor`)، فلا تُخترَع سياسةُ فروعٍ ثانية.
     const allowedBranchesForPayment = accessibleBranchesFor(req);
-    if (allowedBranchesForPayment !== null && !allowedBranchesForPayment.includes(livePatient.branchId)) {
+    if (!(await reachesPatient(req, livePatient))) {
       return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
     }
-    // والصفُّ يُكتب بفرع المريض الحقيقيّ دائماً — لا بما أرسله العميل.
-    input.branchId = livePatient.branchId;
+    //  والصفُّ يُكتب **بفرع الحركة** — لا بما أرسله العميل، ولا بفرع
+    //  التسجيل حين يكون الموظّفُ في فرعٍ آخر أُتيح له الملفّ (ترحيل ٠٨٠).
+    //  فدفعةُ ذي قار تُقيَّد في ذي قار، وحسابُ كربلاء لا يتغيّر بحرف.
+    input.branchId = (await actingBranchFor(req, livePatient)) ?? livePatient.branchId;
 
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
     if (!isFreeSessions) {
@@ -4336,7 +4371,7 @@ export async function registerRoutes(
       const [doc] = await db.select().from(documents).where(eq(documents.id, id));
       if (!doc) return res.status(404).json({ message: "المستند غير موجود" });
       const patient = await storage.getPatient(doc.patientId);
-      if (!patient || !allowed.includes(patient.branchId)) {
+      if (!patient || !(await reachesPatient(req, patient))) {
         return res.status(403).json({ message: "لا يمكنك حذف مستند خارج نطاقك" });
       }
     }
@@ -7864,6 +7899,7 @@ export async function registerRoutes(
   registerTrainingRoutes(app, isAuthenticated);
   registerDiscountRoutes(app, isAuthenticated);
   registerPatientTrashRoutes(app, isAuthenticated);
+  registerPatientBranchAccessRoutes(app, isAuthenticated);
 
   // ══ تواصلُ المريض — **صادرٌ فقط، بلا نقطةٍ عامّة واحدة** ═══════════════
   //  لا webhook، ولا تذاكرَ ربط، ولا استهلاك، ولا أوامرَ واردة. الرقمُ

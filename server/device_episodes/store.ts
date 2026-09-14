@@ -99,6 +99,24 @@ export class ExamEpisodeStaleError extends DeviceEpisodeError {
   }
 }
 
+/**
+ * **الجهازُ عملُ فرعٍ آخر** — ٤٠٣ لا ٤٠٩: الطلبُ قائمٌ وسليم، لكنّ مسؤوليتَه
+ * ليست لهذا الفرع. ورؤيةُ الملفّ (إتاحةُ ٠٨٠) **ليست إذناً بتوقيعه**:
+ * الإتاحةُ تفتح الملفَّ للقراءة والعمل الجديد، ونقلُ المسؤولية وحده ينقل
+ * الجهازَ — فلا يوقّع طبيبُ فرعٍ على جهازٍ يصنعه فرعٌ آخر لمجرّد أنه يرى ملفّه.
+ */
+export class ExamEpisodeBranchError extends DeviceEpisodeError {
+  readonly code = "episode_branch_out_of_scope";
+  constructor() {
+    super(
+      "طلبُ الجهاز هذا مسؤوليةُ فرعٍ آخر — إتاحةُ الملفّ لا تكفي لتوقيع معاينته."
+      + " انقل مسؤولية العملية إلى فرعك أوّلاً",
+      403,
+    );
+    this.name = "ExamEpisodeBranchError";
+  }
+}
+
 export interface DeviceEpisodeView {
   id: number;
   caseId: number;
@@ -553,6 +571,12 @@ export async function startDeviceEpisodeTx(
      * المرحلة. أمّا كتابةُ `'exam'` افتراضاً فادّعاءُ جوابٍ لم يُعطَ.
      */
     servicePath?: ServicePath | null;
+    /**
+     * **الفرعُ الذي يُفتَح فيه هذا الطلب** (ترحيل ٠٨٠) — يحسمه المُستدعي
+     * بـ`resolveActingBranchId` بعد التحقّق أنه يصل الملفّ. وغيابُه يُبقي
+     * السلوكَ القائم: فرعُ الخيط ثمّ فرعُ تسجيل المريض.
+     */
+    actingBranchId?: number | null;
   },
 ): Promise<DeviceEpisodeView> {
   const { patientId, serviceType, createdBy } = params;
@@ -614,7 +638,8 @@ export async function startDeviceEpisodeTx(
     INSERT INTO patient_device_episodes
       (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
        requested_item, component, service_path, created_by, created_at, updated_at)
-    VALUES (${patientId}, ${caseRow.id}, ${caseRow.branch_id ?? patient.branch_id ?? null},
+    VALUES (${patientId}, ${caseRow.id},
+            ${params.actingBranchId ?? caseRow.branch_id ?? patient.branch_id ?? null},
             ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
             ${createdBy}, NOW(), NOW())
     RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
@@ -637,6 +662,8 @@ export async function startDeviceEpisode(params: {
   createdBy: number | null;
   requestedItem?: RequestedItem | null;
   servicePath?: ServicePath | null;
+  /** فرعُ الحركة (ترحيل ٠٨٠) — غيابُه = فرعُ الخيط ثمّ فرعُ التسجيل. */
+  actingBranchId?: number | null;
 }): Promise<DeviceEpisodeView> {
   return await db.transaction((tx) => startDeviceEpisodeTx(tx, params));
 }
@@ -785,15 +812,24 @@ export async function cancelPreManufacturingDeviceEpisode(
  */
 export async function claimAwaitingEpisodeForExam(
   tx: { execute: (q: any) => Promise<any> },
-  params: { patientId: number; caseId: number; episodeId?: number | null },
-): Promise<number | null> {
+  params: {
+    patientId: number; caseId: number; episodeId?: number | null;
+    /**
+     * نطاقُ الجلسة الحيّ — `null`/الغياب للمسؤول العام أو لمنادٍ لا يحرس.
+     * **يُفحَص على فرع الحلقة نفسِها** لا على فرع المريض: الجهازُ عملٌ له
+     * فرعُه، والإتاحةُ وحدها لا تجعله عملَ فرعٍ آخر.
+     */
+    branchIds?: number[] | null;
+  },
+): Promise<{ id: number; branchId: number | null } | null> {
+  const scope = params.branchIds ?? null;
   const wanted = params.episodeId ?? null;
   if (wanted !== null) {
     //  **والأهليّةُ واحدة** مع قائمة العمل والمنتقي: `awaiting_exam` على مسارٍ
     //  ليس «بلا معاينة». فمعرّفُ حلقةِ «بلا معاينة» لا يُقبَل بصمت (مراجعة
     //  المرحلة الأولى: REF-2/INV-04) — يُردّ بائتاً برسالته.
     const exact = await tx.execute(sql`
-      SELECT id, service_path FROM patient_device_episodes
+      SELECT id, service_path, branch_id FROM patient_device_episodes
        WHERE id = ${wanted}
          AND case_id = ${params.caseId}
          AND patient_id = ${params.patientId}
@@ -807,7 +843,14 @@ export async function claimAwaitingEpisodeForExam(
         "هذا الطلب على مسار «بلا معاينة» — لا تُوقَّع عليه معاينةٌ من هنا",
       );
     }
-    return Number(row.id);
+    const branchId = row.branch_id === null || row.branch_id === undefined
+      ? null : Number(row.branch_id);
+    //  **وفرعُ الحلقة هو الحَكَم** — تحت القفل، لا لقطةَ النقطة. وحلقةٌ بلا
+    //  فرع (موروثة) تبقى على حكم المريض الذي فحصته النقطةُ سلفاً.
+    if (scope !== null && branchId !== null && !scope.includes(branchId)) {
+      throw new ExamEpisodeBranchError();
+    }
+    return { id: Number(row.id), branchId };
   }
   //  بلا معرّف: النقطةُ حسمت الهويّةَ قبل النداء (`resolveExamEpisode`) —
   //  الوحيدةُ تصل هنا **بمعرّفها**، فالوصولُ بلا معرّف يعني أن الفحصَ لم
@@ -827,6 +870,27 @@ export async function claimAwaitingEpisodeForExam(
   throw new ExamEpisodeStaleError(
     "ظهر طلبُ جهازٍ جديد بانتظار المعاينة أثناء التوقيع — حدّث الصفحة وحدّد الجهاز",
   );
+}
+
+/**
+ * **فرعُ حلقةٍ بعينها — بلا شرطِ حالة** (٢٠٢٦-٠٩-١٤).
+ *
+ * تُقرأ في النقطة لتُحسَب بها هويّةُ التوقيع (فرعُ العملية) **قبل** فحص
+ * التطابق، فيتّسق ما يُقارَن مع ما يُخزَّن. **وبلا شرطِ حالة عمداً**: إعادةُ
+ * إرسالٍ بعد نجاح المحاولة الأولى تجد الحلقةَ `examined` لا `awaiting_exam`،
+ * ولو اشترطنا الحالةَ لعادت الهويّةُ مختلفةً فيُقرأ إرسالٌ مُعادٌ تعارضاً.
+ * والحَكَمُ الأخير يبقى `claimAwaitingEpisodeForExam` تحت القفل.
+ */
+export async function episodeBranchOf(
+  params: { patientId: number; episodeId: number },
+): Promise<number | null> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT branch_id FROM patient_device_episodes
+     WHERE id = ${params.episodeId} AND patient_id = ${params.patientId}
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row || row.branch_id === null || row.branch_id === undefined) return null;
+  return Number(row.branch_id);
 }
 
 function toCandidate(r: Record<string, any>): AwaitingEpisodeCandidate {
@@ -892,6 +956,33 @@ export async function revertEpisodeToAwaitingExam(
  *
  * تُنادى داخل معاملة المُستدعي وتحت قفله، وتُرجع عددَ ما حُذف فعلاً.
  */
+/**
+ * **نقلُ مسؤولية حلقةٍ حيّةٍ إلى فرعٍ آخر** — الكتابةُ التي تملكها إتاحةُ
+ * الملفّ لفرعٍ إضافيّ (ترحيل ٠٨٠).
+ *
+ * **والقرارُ ليس هنا**: المسؤولُ العام هو مَن يقرّر نقلَ المسؤولية،
+ * و`branch_access_store.ts` يتحقّق من الفرع ومن حالة العملية ويقفل الملفَّ.
+ * وهذه تكتب **الحلقةَ الحيّةَ وحدها** — الشرطُ في `UPDATE` نفسِه، فحلقةٌ
+ * سُلّمت أو أُلغيت بين القراءة والكتابة لا تُمَسّ بأثرٍ رجعيّ.
+ *
+ * فتبقى **كلُّ كتابةٍ حيّةٍ على الحلقات في طبقتها** — وهو ما يحرسه
+ * `test:device-episodes` معمارياً.
+ */
+export async function moveLiveEpisodeToBranchTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; branchId: number },
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET branch_id = ${params.branchId}, updated_at = NOW()
+     WHERE id = ${params.episodeId}
+       AND status NOT IN ('delivered', 'cancelled')
+       AND admin_void_reversal_id IS NULL
+    RETURNING id
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
 export async function deleteScaffoldingEpisodesTx(
   tx: { execute: (q: any) => Promise<any> },
   episodeIds: number[],
