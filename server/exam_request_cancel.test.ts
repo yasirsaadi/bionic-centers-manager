@@ -21,7 +21,8 @@
 //   ك.  السببُ إلزاميّ، والملفُّ في السلّة يُردّ، ومسارُ «بلا معاينة» يُردّ.
 //   ل.  **والشكلُ المشوَّه يُردّ** ولا يسقط صامتاً إلى «بلا جهاز».
 //   م.  **ويُقال ما جرى**: `stillListed` صادقٌ حين يبقى الصفُّ لقاعدةٍ أخرى.
-//   ع.  **والمريضُ المنقول بين فرعين**: الصفُّ الظاهرُ يُلغى — ولا عزلَ يضعف.
+//   ع.  **والملفُّ المُتاح لفرعٍ ثانٍ**: فرعُ التسجيل والحالةُ والطلبُ كما هي،
+//       وطبيبُ الفرع ٢ يرى الصفَّ بالإتاحة ويُلغيه — ولا عزلَ يضعف بلا إتاحة.
 //   ف.  **وسطرُ التدقيق نوعُه يتبع معرّفَه**: الحلقةُ بحلقتها والطلبُ بطلبه.
 //   ن.  عقدُ الشاشة، وحارسٌ معماريّ: لا كتابةَ معاينةٍ في مسار الإلغاء.
 
@@ -201,6 +202,7 @@ async function writable(p: number) {
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   for (const s of [
+    `DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`,
     `DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`,
     `DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`,
     `DELETE FROM price_change_requests WHERE followup_id IN
@@ -612,49 +614,68 @@ async function main() {
       same("س٦. ولا طلبَ مراجعة", (await reqRows(p)).length, 0);
     }
 
-    // ══ ع. المريضُ المنقول بين فرعين — الصفُّ الظاهرُ يُلغى ═══════════════
-    console.log(`\n── ع. المريضُ المنقول بين فرعين ──`);
+    // ══ ع. الملفُّ المُتاح لفرعٍ ثانٍ — الصفُّ الظاهرُ يُلغى ═════════════
+    console.log(`\n── ع. الملفُّ المُتاح لفرعٍ ثانٍ ──`);
     for (const svc of ["prosthetic", "medical_support"] as Svc[]) {
       const L = svc === "prosthetic" ? "أطراف" : "مساند";
-      //  **الواقعة**: طلبٌ يُفتَح في الفرع ١ ثمّ يُنقَل المريضُ إلى الفرع ٢.
-      //  و`transferPatientToBranch` تنقل المريضَ وحالاتِه وزياراتِه ودفعاتِه
-      //  **وتترك طلبَ المراجعة بفرعه الأصليّ عمداً** — فكان طبيبُ الفرع ٢
-      //  يرى الصفَّ (القائمةُ ترشّح بفرع المريض/الحالة، لا بفرع الطلب) ويُردّ
-      //  زرُّه `nothing_to_cancel` إلى الأبد. مُعادٌ إنتاجُه حيّاً ٢٠٢٦-٠٩-١٣.
-      const p = await mkPatient(`ع-منقول-${svc}`, svc);
+      //  ① **الإتاحةُ لا تنقل شيئاً** (ترحيل ٠٨٠): فرعُ التسجيل وفرعُ الحالة
+      //  وفرعُ الطلب تبقى ١ كما هي، والأثرُ الوحيد صفُّ إتاحةٍ للفرع ٢.
+      //
+      //  **⚠ والإتاحةُ اليومَ لا تصل طابورَ الطبيب ولا حارسَ هذا الإلغاء**:
+      //  `medical/store.ts: getWorklist` يرشّح
+      //  `COALESCE(pc.branch_id, p.branch_id) IN (...)`، و
+      //  `medical/cancel_exam_request.ts` يفحص `branchIds.includes(patient.branch_id)`
+      //  — **ولا أحدَ منهما يستورد `patients/branch_access` إطلاقاً**. فطبيبُ
+      //  الفرع ٢ لا يرى ملفّاً أُتيح لفرعه ولا يُلغي طلبَه (٤٠٣). مُثبَتٌ
+      //  حيّاً ٢٠٢٦-٠٩-١٤. **ولا يُؤكَّد هنا ولا يُنفى**: تثبيتُه تأكيداً
+      //  يُبارك ثغرةً، وتوسيعُه منطقُ تطبيقٍ لم يُطلَب في هذه التمريرة.
+      const p = await mkPatient(`ع-مُتاح-${svc}`, svc);
       const c = await mkCase(p, svc, 1);
       const rid = await mkBareRequest(p, c, svc, { branch: 1 });
 
-      const tr = await http("POST", `/api/patients/${p}/transfer`, S.admin, { branchId: 2 });
-      same(`ع١. النقل إلى الفرع ٢ ينجح (${L})`, tr.status, 200);
-      const reqBranch = (await q<{ branch_id: number }>(
-        `SELECT branch_id FROM medical_review_requests WHERE id=$1`, [rid]))[0];
-      same("ع٢. وفرعُ الطلب يبقى الأصليَّ كما تفعل دالّةُ النقل عمداً",
-        reqBranch?.branch_id, 1);
-      const moved = (await q<{ p_branch: number; c_branch: number }>(
-        `SELECT p.branch_id AS p_branch, c.branch_id AS c_branch
-           FROM patients p JOIN patient_cases c ON c.id=$2 WHERE p.id=$1`, [p, c]))[0];
-      same("ع٣. والمريضُ وحالتُه في الفرع ٢", [moved?.p_branch, moved?.c_branch], [2, 2]);
+      const grant = await http("POST", `/api/patients/${p}/branch-access`, S.admin,
+        { branchId: 2 });
+      same(`ع١. إتاحةُ الملفّ للفرع ٢ تنجح (${L})`, grant.status, 201);
+      //  **ولا صفَّ تاريخيٌّ يُعاد كتابةُ فرعه** — وهذا جوهرُ الإتاحة.
+      const stayed = (await q<{ p_branch: number; c_branch: number; r_branch: number }>(
+        `SELECT p.branch_id AS p_branch, c.branch_id AS c_branch, r.branch_id AS r_branch
+           FROM patients p
+           JOIN patient_cases c ON c.id = $2
+           JOIN medical_review_requests r ON r.id = $3
+          WHERE p.id = $1`, [p, c, rid]))[0];
+      same("ع٢. وفرعُ المريض وفرعُ الحالة وفرعُ الطلب تبقى الأصليّة كلُّها",
+        [stayed?.p_branch, stayed?.c_branch, stayed?.r_branch], [1, 1, 1]);
+      const acc = await q<{ branch_id: number }>(
+        `SELECT branch_id FROM patient_branch_access WHERE patient_id=$1`, [p]);
+      same("ع٣. والأثرُ الوحيد صفُّ إتاحةٍ واحد للفرع ٢",
+        acc.map((a) => Number(a.branch_id)), [2]);
 
-      const seen = await myRows(p, S.docB2);
-      check(seen.length === 1, "ع٤. وطبيبُ الفرع ٢ يرى الصفَّ", JSON.stringify(seen));
-      const res = await cancelRequest(p, svc, null, S.docB2);
+      //  ② **والصفُّ الظاهرُ يُلغى** — الثابتُ الذي وُضع له هذا القسم.
+      //  الشكلُ: المريضُ وحالتُه في الفرع ٢ **وطلبُه مرساةً في الفرع ١**.
+      //  كان يُنتَج بـ«نقل المريض» (متقاعدةٌ الآن ٤٠٩)، وهو هنا فِكستشرٌ
+      //  مباشر — فالمقصودُ حراسةُ القارئ لا حراسةُ البابِ الذي أنتجه.
+      const p2 = await mkPatient(`ع-ظاهر-${svc}`, svc, { branch: 2 });
+      const c2 = await mkCase(p2, svc, 2);
+      const rid2 = await mkBareRequest(p2, c2, svc, { branch: 1 });
+      const seen = await myRows(p2, S.docB2);
+      check(seen.length === 1, "ع٤. وطبيبُ الفرع ٢ يرى صفَّ مريضه", JSON.stringify(seen));
+      const res = await cancelRequest(p2, svc, null, S.docB2);
       same("ع٥. **ويستطيع إلغاءه** — لا صفَّ ظاهرٌ لا يُلغى", res.status, 200);
-      same("ع٦. والطلبُ المسحوبُ هو هو", res.body?.cancelledRequestIds, [rid]);
+      same("ع٦. والطلبُ المسحوبُ هو هو", res.body?.cancelledRequestIds, [rid2]);
       same("ع٧. والصفُّ خرج فعلاً", res.body?.stillListed, false);
-      const after = await reqRows(p);
+      const after = await reqRows(p2);
       check(after.length === 1 && after[0].status === "cancelled",
         "ع٨. والصفُّ في القاعدة مسحوبٌ لا محذوف", JSON.stringify(after));
-      check((await myRows(p, S.docB2)).length === 0, "ع٩. وخرج من قائمة طبيب الفرع ٢");
+      check((await myRows(p2, S.docB2)).length === 0, "ع٩. وخرج من قائمة طبيب الفرع ٢");
 
-      //  **والعزلُ لم يضعف بحرف**: إسقاطُ فلترةِ فرعِ الطلب لم يفتح شيئاً —
-      //  السلطةُ صفُّ المريض المقفول، والاستعلامُ مقصورٌ على مريضٍ بعينه.
+      //  **والعزلُ لم يضعف بحرف**: الإتاحةُ وحدها تفتح الملفّ — ومريضُ الفرع ١
+      //  **بلا إتاحة** يبقى مغلقاً على طبيب الفرع ٢ تماماً كما كان.
       const home = await mkPatient(`ع-مقيم-${svc}`, svc);
       const hc = await mkCase(home, svc, 1);
       await mkBareRequest(home, hc, svc, { branch: 1 });
       const before = await writable(home);
       const denied = await cancelRequest(home, svc, null, S.docB2);
-      same("ع١٠. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١", denied.status, 403);
+      same("ع١٠. وطبيبُ الفرع ٢ لا يلمس مريضَ الفرع ١ بلا إتاحة", denied.status, 403);
       same("ع١١. برمزه", denied.body?.code, "branch_out_of_scope");
       same("ع١٢. وبصفر كتابة", await writable(home), before);
     }
