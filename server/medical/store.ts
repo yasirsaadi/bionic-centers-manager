@@ -1194,12 +1194,24 @@ export async function getWorklist(
 ): Promise<WorklistRow[]> {
   if (specialties.length === 0) return [];
 
+  //  ══ **ونطاقُ الفرع بفرع الحلقة حين توجد** (٢٠٢٦-٠٩-١٤) ═══════════════
+  //  الجهازُ عملٌ له فرعُه: نقلُ مسؤولية العملية إلى فرعٍ آخر (ترحيل ٠٨٠)
+  //  ينقل `ep.branch_id`، فيصير الجهازُ في طابور طبيب ذلك الفرع ويخرج من
+  //  طابور الأوّل — وهو معنى «نقل المسؤولية» حرفياً.
+  //
+  //  **والإتاحةُ وحدها لا تنقل طابوراً**: صفُّ `patient_branch_access` لا
+  //  يحرّك `ep.branch_id`، فملفٌّ أُتيح لفرعٍ بلا نقلِ مسؤولية يبقى عملُه
+  //  حيث هو — **ولا يُقرأ `patient_branch_access` هنا إطلاقاً**.
+  //
+  //  **والصفُّ بلا حلقة كما كان بحرفه**: `ep.branch_id` تصل `NULL` من
+  //  الانضمام الخارجيّ، فيسقط `COALESCE` إلى فرع الحالة ثمّ التسجيل.
+  //  (وخريطتا الانتظار على قاعدتهما — هذا طابورُ العمل وحده.)
   const scoped =
     branchIds === null
       ? sql`TRUE`
       : branchIds.length === 0
         ? sql`FALSE`
-        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(
+        : sql`COALESCE(ep.branch_id, pc.branch_id, p.branch_id) IN (${sql.join(
             branchIds.map((id) => sql`${id}`),
             sql`, `,
           )})`;
