@@ -50,6 +50,9 @@ import { cancelledExamIds, isExamCancelled } from "./active_exam";
 import { cancelExam, ExamCancelError } from "./cancel_exam";
 import { cancelExamRequest, CancelExamRequestError } from "./cancel_exam_request";
 import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shared/medical";
+import {
+  LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
+} from "@shared/lock_conflict";
 
 type Req = any;
 
@@ -963,6 +966,19 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(err.status).json({
           error: err.message,
           ...(err.code ? { code: err.code } : {}),
+        });
+      }
+      //  ══ **تعارضُ الأقفال يُقال تعارضاً** ══════════════════════════
+      //   بيعٌ يجري على الملفّ نفسِه في اللحظة نفسِها يُنتج جموداً حقيقياً،
+      //   وتُسقط القاعدةُ هذه المعاملةَ **كاملةً** — فلا شاهدةَ إلغاءٍ ولا
+      //   نصفَ كتابة. وكان الردُّ ٥٠٠ «تعذّر إلغاء المعاينة»، فيقرؤها
+      //   الطبيبُ عطباً في النظام بدل «أعد المحاولة».
+      //
+      //   **ولا إعادةَ تلقائية هنا**: القرارُ للطبيب، والرسالةُ تقول له إن
+      //   شيئاً لم يقع.
+      if (isLockConflictError(err)) {
+        return res.status(409).json({
+          error: LOCK_CONFLICT_ERROR, code: LOCK_CONFLICT_CODE,
         });
       }
       console.error("[medical] cancel exam failed:", err);
