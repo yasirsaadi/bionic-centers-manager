@@ -103,6 +103,7 @@
     "test:component-sale": "tsx server/component_sale.test.ts",
     "test:parallel-device-operations": "tsx server/parallel_device_operations.test.ts",
     "test:decision-queue": "tsx server/decision_queue.test.ts",
+    "test:decision-queue-sold": "tsx server/decision_queue_sold.test.ts",
     "test:decision-queue-rules": "tsx shared/decision_queue.test.ts",
     "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts",
     "test:daily-review": "tsx server/daily_review.test.ts",

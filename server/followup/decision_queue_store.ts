@@ -85,6 +85,59 @@ const NOT_TERMINAL = sql`f.status NOT IN (${sql.join(
 //  patient_device_episodes de` — لا يصلح مع `INNER JOIN`.
 const EXAM_PATH_OR_ORPHAN = sql`(f.device_episode_id IS NULL OR de.service_path = 'exam')`;
 
+//  ══ **«بانتظار الحسم» لمن لم يُبَع جهازُه فعلاً — لا لمن بِيع** ═══════════
+//  الشرطُ كان الحالةَ وحدها (`NOT_TERMINAL`). و«حُسم» يكتبه `confirmPurchase`
+//  ذرّياً مع البيع، فالقاعدتان تتطابقان **ما دام كلُّ بيعٍ يمرّ به**. ولا
+//  يمرّ به دائماً: الشكلُ المُعادُ إنتاجُه حيّاً على النقاط الحقيقية —
+//  معاينةٌ تُوقَّع **قبل** أن يفتح الاستقبالُ طلبَ جهاز (متابعةٌ يتيمة،
+//  `device_episode_id IS NULL` — شكلُ الإنتاج الموصوف أعلى هذا الملفّ)،
+//  ثمّ يبيع الاستقبالُ جزءاً حقيقياً من بابِ «بلا معاينة»
+//  (`POST /api/no-exam/device-sale`): أمرُ بناءٍ مفتوح، وحلقةٌ في التصنيع،
+//  ومالٌ مقيَّد — **والمتابعةُ اليتيمةُ باقيةٌ في الطابور ومحسوبةٌ في الشارة**،
+//  تعرض «اشترى» على مريضٍ اشترى بالفعل.
+//
+//  ولهذا الشكلِ بعينه قاعدةٌ مكتوبةٌ في المستودع أصلاً:
+//  `ensureFollowupForSignedExam` **ترفض إنشاءَ** متابعةٍ يتيمة حين يوجد
+//  «أيُّ أمرِ بناءٍ في التاريخ» لهذا (المريض، الخدمة). لكنّ البيعَ هنا وقع
+//  **بعد** الإنشاء، فلم يرَه حارسُ الإنشاء قطّ — فتُطبَّق القاعدةُ نفسُها
+//  عند القراءة.
+//
+//  ══ ما هو «البيعُ الفعليّ القائم» — مفرداتُ المستودع لا تعريفٌ جديد ══════
+//  نفسُ زوج `server/medical/cancel_exam.ts` بحرفه (حارسُ «بِيع فلا تُلغى
+//  المعاينة»): **حالةُ الحلقة** `in_manufacturing`/`delivered`، **أو** أمرُ
+//  بناءٍ قائم — «الحالةُ لقطةٌ قد تتأخّر، والأمرُ واقعةٌ لا تُنكَر».
+//
+//  ══ والمُبطَلُ إدارياً ليس بيعاً قائماً ═════════════════════════════════
+//  «تراجعٌ عن الشراء فقط» (٤.n) يعكس الكلفة ويُبطل الأمر
+//  (`admin_void_reversal_id`) ويعيد الحلقةَ `examined` والمتابعةَ
+//  `awaiting_patient_decision` — **عمداً ليُعاد حسمُها**. فاستثناؤه شرطُ
+//  صحّةٍ لا تساهل: بدونه يختفي صفٌّ أُعيد للطابور بقرارٍ صريح.
+//  والحدُّ هو **هل عاد المال**: الإبطالُ الإداريّ يعكس القيد، و`cancelOrder`
+//  العاديّ لا يعكسه صراحةً («ولا عكسٌ مالي هنا») — فذاك بيعٌ وقع ويبقى.
+const NO_STANDING_SALE = sql`(
+  CASE WHEN f.device_episode_id IS NULL THEN
+    --  يتيمةٌ بلا هويّة جهاز: قاعدةُ ensureFollowupForSignedExam نفسُها.
+    NOT EXISTS (
+      SELECT 1 FROM prosthetic_work_orders wo
+       WHERE wo.patient_id = f.patient_id
+         AND wo.service_type = f.service_type
+         AND COALESCE(wo.purpose, 'initial_build') = 'initial_build'
+         AND wo.admin_void_reversal_id IS NULL
+    )
+  ELSE
+    --  ولها حلقةٌ ⟶ **حلقتُها هي وحدها**، لا (مريض + قسم): العائدُ يملك
+    --  أكثر من جهاز، ونسبةُ بيعِ أحدِهما إلى طلبِ الآخر هي بعينها ما يمنعه
+    --  قطارُ الإصلاح (٤.p/٤.q).
+    de.status NOT IN ('in_manufacturing', 'delivered')
+    AND NOT EXISTS (
+      SELECT 1 FROM prosthetic_work_orders wo
+       WHERE wo.device_episode_id = f.device_episode_id
+         AND COALESCE(wo.purpose, 'initial_build') = 'initial_build'
+         AND wo.admin_void_reversal_id IS NULL
+    )
+  END
+)`;
+
 // ── بانتظار الحسم ─────────────────────────────────────────────────────────
 
 export interface DecisionQueueWaitingRow {
@@ -184,14 +237,20 @@ const toWaitingRow = (x: any): DecisionQueueWaitingRow => ({
 /**
  * **طابورُ «بانتظار الحسم»** — الأقدمُ توقيعاً أوّلاً (`f.id` كاسرَ تعادل).
  *
- * والفرزُ من **الحالة الحالية وحدها** (`NOT_TERMINAL`) لا من `purchase_decision`
+ * والفرزُ من **الحالة الحيّة** (`NOT_TERMINAL`) لا من `purchase_decision`
  * المخزَّنة: صفٌّ أُعيد فتحه بعد «لم يشترِ» يعود بانتظاراً حقيقياً هنا، لا
  * لقطةَ قرارٍ قديمة.
+ *
+ * **ومعها `NO_STANDING_SALE`**: مَن بِيع جهازُه فعلاً لا ينتظر حسماً — راجع
+ * شرحَها أعلاه. والصفُّ المحجوب لا يُنقَل إلى «تم الحسم» (شرطُه
+ * `converted`/`closed_without_purchase` بحرفه ولم يُمَسّ) — يبقى مقروءاً
+ * وقابلاً للحسم من **ملفّ المريض** بمساره كما كان دائماً.
  */
 export async function listDecisionQueueWaiting(
   f: DecisionQueueScopeFilter,
 ): Promise<{ rows: DecisionQueueWaitingRow[]; total: number }> {
-  const where = sql`${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${filterClause(f)}`;
+  const where = sql`${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${NO_STANDING_SALE}
+    AND ${filterClause(f)}`;
   const countR = await db.execute(sql`SELECT COUNT(*)::int AS n ${WAITING_FROM} WHERE ${where}`);
   const total = Number((countR.rows ?? [])[0]?.n ?? 0);
 
@@ -225,7 +284,8 @@ export async function countDecisionQueueWaiting(scope: number[] | null): Promise
       FROM post_exam_followups f
       LEFT JOIN patient_device_episodes de ON de.id = f.device_episode_id
       JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
-     WHERE ${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${scopeClause(scope)}
+     WHERE ${NOT_TERMINAL} AND ${EXAM_PATH_OR_ORPHAN} AND ${NO_STANDING_SALE}
+       AND ${scopeClause(scope)}
   `);
   return Number((r.rows ?? [])[0]?.n ?? 0);
 }
