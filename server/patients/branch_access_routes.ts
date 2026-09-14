@@ -12,7 +12,6 @@ import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { logAudit } from "../accounting/ledger";
 import { scopeReachesPatient, sharedBranchIdsOf } from "./branch_access";
 import {
   grantBranchAccess, revokeBranchAccess, listOpenOperations,
@@ -106,6 +105,8 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
     }
 
     try {
+      //  **والتدقيقُ داخل معاملة المخزن** — لا سطرَ يبقى بعد تراجعها،
+      //  ولا نجاحٌ يمضي بلا سطر.
       const out = await grantBranchAccess({
         patientId, branchId,
         actorUserId: s.userId ?? null, actorName: s.userName,
@@ -113,17 +114,7 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
         moveOpenOperations: moveRaw as boolean | undefined,
         keepExpert: keepRaw as boolean | undefined,
         newExpertUserId,
-      });
-      await logAudit({
-        entityType: "patient_branch_access", entityId: patientId, action: "create",
-        userId: s.userId ?? null, userName: s.userName, branchId,
-        newValues: out,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `إتاحة ملف المريض #${patientId} للفرع #${branchId}`
-          + (out.movedOperations.length > 0
-            ? ` — ونُقلت مسؤولية ${out.movedOperations.length} عملية مفتوحة`
-              + (out.expertChanged ? " مع إسناد خبير الفرع الجديد" : " مع إبقاء الخبير الحالي")
-            : " — والعمليات المفتوحة وخبراؤها كما هم"),
       });
       res.status(out.created ? 201 : 200).json(out);
     } catch (e: any) {
@@ -149,15 +140,12 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
       return res.status(400).json({ message: "معرّف غير صالح" });
     }
     try {
-      const out = await revokeBranchAccess({ patientId, branchId });
-      if (!out.removed) return res.status(404).json({ message: "لا توجد إتاحة لهذا الفرع" });
-      await logAudit({
-        entityType: "patient_branch_access", entityId: patientId, action: "delete",
-        userId: s.userId ?? null, userName: s.userName, branchId,
+      const out = await revokeBranchAccess({
+        patientId, branchId,
+        actorUserId: s.userId ?? null, actorName: s.userName,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `سحب إتاحة ملف المريض #${patientId} عن الفرع #${branchId}`
-          + " — ولم يتغيّر أي صف تاريخي",
       });
+      if (!out.removed) return res.status(404).json({ message: "لا توجد إتاحة لهذا الفرع" });
       res.json(out);
     } catch (e: any) {
       if (e instanceof BranchAccessError || e?.name === "BranchAccessError") {

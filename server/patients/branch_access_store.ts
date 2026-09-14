@@ -20,6 +20,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "../db";
+import { logAudit } from "../accounting/ledger";
 import { validateExpertForBranchTx } from "../manufacturing/store";
 import { moveLiveEpisodeToBranchTx } from "../device_episodes/store";
 import {
@@ -29,10 +30,15 @@ import {
 
 export { BranchAccessError };
 
-/** عمليةٌ مفتوحة — الحلقةُ الحيّة وأمرُ عملها الحيّ إن وُجد. */
+/** عمليةٌ مفتوحة — أمرُ عملٍ حيّ، أو حلقةٌ حيّةٌ لم يُفتَح أمرُها بعد. */
 export interface OpenOperation {
   episodeId: number | null;
   episodeStatus: string | null;
+  /**
+   * أحيّةٌ الحلقةُ نفسُها؟ المسلَّمةُ والملغاةُ **تاريخٌ لا يُنقَل** — وأمرُها
+   * الحيُّ وحده هو ما ينتقل حين تُنقَل المسؤولية.
+   */
+  episodeLive: boolean;
   serviceType: string | null;
   requestedItem: string | null;
   episodeBranchId: number | null;
@@ -47,33 +53,59 @@ export interface OpenOperation {
 /**
  * **العملياتُ المفتوحة** — ما يستحقّ سؤالَ «أتُنقَل مسؤوليتُها؟».
  *
- * «مفتوحة» = حلقةٌ لم تُسلَّم ولم تُلغَ ولم تُبطَل إدارياً، **أو** أمرُ عملٍ
- * ليس `completed` ولا `cancelled`. والمنتهي لا يُسأل عنه ولا يُمَسّ.
+ * «مفتوحة» = **أمرُ عملٍ حيّ** (ليس `completed` ولا `cancelled` ولا مُبطَلاً
+ * إدارياً)، **أو** حلقةٌ حيّة لم يُفتَح لها أمرٌ بعد. والمنتهي لا يُسأل عنه
+ * ولا يُمَسّ.
+ *
+ * **والأمرُ الحيُّ عملٌ جارٍ مهما كانت حلقتُه** — والبدءُ من الحلقة وحدها كان
+ * يُعمي عن شكلين حقيقيَّين: صيانةُ جهازٍ **مسلَّم** (حلقتُها `delivered`)،
+ * وأمرٌ **بلا حلقةٍ إطلاقاً** (`device_episode_id IS NULL` — الموروثُ من قبل
+ * حقبة الحلقات). كلاهما خبيرٌ يعمل اليوم، وكلاهما كان يمضي بلا سؤال.
  */
 export async function listOpenOperations(
   patientId: number, tx?: { execute: (q: any) => Promise<any> },
 ): Promise<OpenOperation[]> {
   const ex = tx ?? (db as any);
   const r = await ex.execute(sql`
-    SELECT ep.id AS episode_id, ep.status AS episode_status, ep.branch_id AS episode_branch_id,
-           ep.requested_item, c.case_type AS service_type,
-           wo.id AS work_order_id, wo.purpose AS wo_purpose, wo.status AS wo_status,
-           wo.branch_id AS wo_branch_id, wo.expert_user_id, u.display_name AS expert_name
-      FROM patient_device_episodes ep
-      JOIN patient_cases c ON c.id = ep.case_id
-      LEFT JOIN prosthetic_work_orders wo
-             ON wo.device_episode_id = ep.id
-            AND wo.status NOT IN ('completed', 'cancelled')
-            AND wo.admin_void_reversal_id IS NULL
-      LEFT JOIN system_users u ON u.id = wo.expert_user_id
-     WHERE ep.patient_id = ${patientId}
-       AND ep.status NOT IN ('delivered', 'cancelled')
-       AND ep.admin_void_reversal_id IS NULL
-     ORDER BY ep.id ASC
+    WITH live_wo AS (
+      SELECT wo.id, wo.purpose, wo.status, wo.branch_id, wo.expert_user_id,
+             wo.device_episode_id, wo.service_type
+        FROM prosthetic_work_orders wo
+       WHERE wo.patient_id = ${patientId}
+         AND wo.status NOT IN ('completed', 'cancelled')
+         AND wo.admin_void_reversal_id IS NULL
+    ), live_ep AS (
+      SELECT ep.id, ep.status, ep.branch_id, ep.requested_item, ep.case_id
+        FROM patient_device_episodes ep
+       WHERE ep.patient_id = ${patientId}
+         AND ep.status NOT IN ('delivered', 'cancelled')
+         AND ep.admin_void_reversal_id IS NULL
+    )
+    --  ① كلُّ أمرٍ حيّ، ومعه حلقتُه إن وُجدت — حيّةً كانت أو مسلَّمة.
+    SELECT ep.id AS episode_id, ep.status AS episode_status,
+           ep.branch_id AS episode_branch_id, ep.requested_item,
+           COALESCE(c.case_type, w.service_type) AS service_type,
+           COALESCE(ep.status NOT IN ('delivered', 'cancelled')
+                    AND ep.admin_void_reversal_id IS NULL, FALSE) AS episode_live,
+           w.id AS work_order_id, w.purpose AS wo_purpose, w.status AS wo_status,
+           w.branch_id AS wo_branch_id, w.expert_user_id, u.display_name AS expert_name
+      FROM live_wo w
+      LEFT JOIN patient_device_episodes ep ON ep.id = w.device_episode_id
+      LEFT JOIN patient_cases c ON c.id = ep.case_id
+      LEFT JOIN system_users u ON u.id = w.expert_user_id
+    UNION ALL
+    --  ② حلقةٌ حيّةٌ لم يُفتَح لها أمرٌ حيّ بعد — طلبٌ قائمٌ ينتظر.
+    SELECT e.id, e.status, e.branch_id, e.requested_item, c2.case_type, TRUE,
+           NULL, NULL, NULL, NULL, NULL, NULL
+      FROM live_ep e
+      JOIN patient_cases c2 ON c2.id = e.case_id
+     WHERE NOT EXISTS (SELECT 1 FROM live_wo w2 WHERE w2.device_episode_id = e.id)
+     ORDER BY episode_id NULLS LAST, work_order_id NULLS LAST
   `);
   return (r.rows ?? []).map((x: any) => ({
     episodeId: x.episode_id === null || x.episode_id === undefined ? null : Number(x.episode_id),
     episodeStatus: x.episode_status ?? null,
+    episodeLive: x.episode_live === true || x.episode_live === "t",
     serviceType: x.service_type ?? null,
     requestedItem: x.requested_item ?? null,
     episodeBranchId: x.episode_branch_id === null || x.episode_branch_id === undefined
@@ -88,6 +120,18 @@ export async function listOpenOperations(
       ? null : Number(x.expert_user_id),
     expertName: x.expert_name ?? null,
   }));
+}
+
+/**
+ * **أتملك هذا الفرعُ عملاً حيّاً على هذا الملفّ؟** — الفرعُ يملك أمرَ عملٍ حيّ،
+ * أو حلقةً حيّةً لم يُفتَح أمرُها بعد.
+ */
+export function operationsOwnedByBranch(
+  open: OpenOperation[], branchId: number,
+): OpenOperation[] {
+  return open.filter((o) =>
+    (o.workOrderId !== null && o.workOrderBranchId === branchId)
+    || (o.workOrderId === null && o.episodeLive && o.episodeBranchId === branchId));
 }
 
 export interface GrantResult {
@@ -105,6 +149,10 @@ export const OPERATION_ANSWER_REQUIRED =
 
 export const EXPERT_CHOICE_REQUIRED =
   "اختر: إبقاء الخبير الحالي أو خبيراً من خبراء الفرع الجديد";
+
+export const REVOKE_BLOCKED_BY_OPERATION =
+  "لا يمكن سحب الإتاحة: لهذا الفرع عملية حيّة على هذا الملف — "
+  + "أكملها أو انقل مسؤوليتها إلى فرع آخر أولاً";
 
 /**
  * **إتاحةُ الملفّ لفرعٍ إضافيّ.**
@@ -127,6 +175,8 @@ export async function grantBranchAccess(params: {
   moveOpenOperations?: boolean;
   keepExpert?: boolean;
   newExpertUserId?: number | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }): Promise<GrantResult> {
   return await db.transaction(async (tx) => {
     //  قفلُ المريض — نفسُ قفل المسارات الأخرى على هذا الملفّ (٩١٩).
@@ -185,10 +235,12 @@ export async function grantBranchAccess(params: {
       }
 
       for (const op of open) {
-        if (op.episodeId !== null) {
+        if (op.episodeId !== null && op.episodeLive) {
           //  **الكتابةُ في طبقتها** — `moveLiveEpisodeToBranchTx` بحُرّاسها
           //  (الحيّةُ وحدها)، والقرارُ هنا. حارسٌ معماريّ يمنع SQL الحلقات
           //  خارج `device_episodes/store.ts`.
+          //  **والمسلَّمةُ لا تُنقَل**: جهازٌ سُلِّم واقعةٌ وقعت في فرعها،
+          //  وصيانتُه اليوم عملٌ جارٍ ينتقل وحده.
           await moveLiveEpisodeToBranchTx(tx as any, {
             episodeId: op.episodeId, branchId: params.branchId,
           });
@@ -222,7 +274,7 @@ export async function grantBranchAccess(params: {
       }
     }
 
-    return {
+    const result: GrantResult = {
       created: grant.created,
       branchId: params.branchId,
       movedOperations: moved,
@@ -230,6 +282,23 @@ export async function grantBranchAccess(params: {
       access: await listPatientBranchAccess(params.patientId, tx as any),
       openOperations: await listOpenOperations(params.patientId, tx as any),
     };
+
+    //  **والتدقيقُ في المعاملة نفسِها** — لا بعدها: سطرٌ يُكتب خارجها يبقى
+    //  شاهداً على إتاحةٍ تراجعت، وغيابُه بعد نجاحها يمحو مَن قرّر.
+    await logAudit({
+      entityType: "patient_branch_access", entityId: params.patientId, action: "create",
+      userId: params.actorUserId, userName: params.actorName, branchId: params.branchId,
+      newValues: result,
+      ipAddress: params.ipAddress ?? null, userAgent: params.userAgent ?? null,
+      notes: `إتاحة ملف المريض #${params.patientId} للفرع #${params.branchId}`
+        + (moved.length > 0
+          ? ` — ونُقلت مسؤولية ${moved.length} عملية مفتوحة`
+            + (expertChanged ? " مع إسناد خبير الفرع الجديد" : " مع إبقاء الخبير الحالي")
+          : " — والعمليات المفتوحة وخبراؤها كما هم"),
+      tx,
+    });
+
+    return result;
   });
 }
 
@@ -239,13 +308,42 @@ export async function grantBranchAccess(params: {
  * ولا يُعاد شيءٌ إلى فرع التسجيل: أمرُ عملٍ نُقلت مسؤوليتُه يبقى حيث انتقل
  * (العملُ جارٍ هناك فعلاً)، وكلُّ صفٍّ تاريخيّ حيث وقع. سحبُ الرؤية ليس
  * تراجعاً عن عمل.
+ *
+ * **ولا يُسحَب عن فرعٍ يملك عملاً حيّاً** (٤٠٩ وصفرُ كتابة): الخبيرُ يعمل
+ * على الجهاز اليوم، وسحبُ الرؤية يُعميه عن ملفّ مَن يصنع له — عملٌ قائمٌ
+ * بلا ملفّ. والمخرجُ إكمالُ العملية أو نقلُ مسؤوليتها إلى فرعٍ آخر.
+ * **وعمليةٌ في فرعٍ ثالث لا تمنع**: الشرطُ ملكيّةُ **هذا** الفرع بعينه.
  */
 export async function revokeBranchAccess(params: {
-  patientId: number; branchId: number;
+  patientId: number;
+  branchId: number;
+  actorUserId?: number | null;
+  actorName?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }): Promise<{ removed: boolean; access: BranchAccessRow[] }> {
   return await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${params.patientId})`);
+
+    //  **تُقرأ تحت القفل** كما في المنح — لا لقطةَ شاشة.
+    const owned = operationsOwnedByBranch(
+      await listOpenOperations(params.patientId, tx as any), params.branchId,
+    );
+    if (owned.length > 0) throw new BranchAccessError(REVOKE_BLOCKED_BY_OPERATION, 409);
+
     const removed = await revokeBranchAccessTx(tx as any, params);
+    if (removed) {
+      //  **والتدقيقُ في المعاملة نفسِها** — وسطرٌ لا يُكتب لسحبٍ لم يقع.
+      await logAudit({
+        entityType: "patient_branch_access", entityId: params.patientId, action: "delete",
+        userId: params.actorUserId ?? null, userName: params.actorName ?? null,
+        branchId: params.branchId,
+        ipAddress: params.ipAddress ?? null, userAgent: params.userAgent ?? null,
+        notes: `سحب إتاحة ملف المريض #${params.patientId} عن الفرع #${params.branchId}`
+          + " — ولم يتغيّر أي صف تاريخي",
+        tx,
+      });
+    }
     return { removed, access: await listPatientBranchAccess(params.patientId, tx as any) };
   });
 }

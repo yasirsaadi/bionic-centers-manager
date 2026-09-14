@@ -124,6 +124,7 @@ async function branchBooks(branchId: number) {
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   for (const t of [
+    `DELETE FROM audit_log WHERE entity_type = 'patient_branch_access' AND entity_id IN (${ids})`,
     `DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`,
     `DELETE FROM medical_review_requests WHERE patient_id IN (${ids})`,
     `DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`,
@@ -485,6 +486,230 @@ async function main() {
       check(!/transferPatientToBranch\s*\(/.test(
         readFileSync(join(process.cwd(), "server/routes.ts"), "utf8")),
         "٤٤-ب. ولا نداءَ له في أيّ نقطة");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ح-١. التدقيقُ داخل المعاملة نفسِها ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const store = await import("./patients/branch_access_store");
+      const auditRows = (pid2: number, action: string) => q(
+        `SELECT branch_id, user_id, notes FROM audit_log
+          WHERE entity_type='patient_branch_access' AND entity_id=$1 AND action=$2`,
+        [pid2, action]);
+
+      //  ① منحٌ ناجح ⟶ سطرٌ واحد بفرعه وفاعله.
+      const pA = await mkPatient("تدقيقٌ-في-المعاملة", KARBALA);
+      await mkCase(pA, KARBALA);
+      same("٤٥. الإعدادُ: منحٌ ناجح",
+        (await http("POST", `/api/patients/${pA}/branch-access`, S.admin,
+          { branchId: DHIQAR })).status, 201);
+      const aC = await auditRows(pA, "create");
+      same("٤٦. **وسطرُ تدقيقٍ واحدٌ بفرعه وفاعله**",
+        [aC.length, Number(aC[0]?.branch_id), Number(aC[0]?.user_id)],
+        [1, DHIQAR, ADMIN]);
+
+      //  ② **الاختبارُ الفاصل**: سطرُ التدقيق نفسُه يفشل (فاعلٌ لا وجود له —
+      //  `audit_log.user_id` مفتاحٌ أجنبيّ) ⟹ **يجب أن تسقط المعاملةُ كلُّها**.
+      //  خارجَ المعاملة كان `logAudit` يبتلع خطأه وتبقى الإتاحةُ بلا شاهد.
+      const pB = await mkPatient("تدقيقٌ-فاشلٌ-يُسقط-المنح", KARBALA);
+      await mkCase(pB, KARBALA);
+      let grantThrew = false;
+      try {
+        await store.grantBranchAccess({
+          patientId: pB, branchId: DHIQAR,
+          actorUserId: 9999999, actorName: "فاعلٌ لا وجود له",
+        });
+      } catch { grantThrew = true; }
+      const [leftB] = await q(
+        `SELECT COUNT(*)::int c FROM patient_branch_access WHERE patient_id=$1`, [pB]);
+      same("٤٧. **فشلُ سطر التدقيق يُسقط المنحَ كلَّه** — ولا صفَّ إتاحةٍ يبقى",
+        [grantThrew, leftB.c], [true, 0]);
+
+      //  ③ سحبٌ ناجح ⟶ سطرٌ واحد.
+      same("٤٨. الإعدادُ: سحبٌ ناجح",
+        (await http("DELETE", `/api/patients/${pA}/branch-access/${DHIQAR}`, S.admin)).status, 200);
+      same("٤٩. **وسطرُ تدقيقِ سحبٍ واحد**", (await auditRows(pA, "delete")).length, 1);
+
+      //  ④ وفشلُ سطر تدقيق السحب يُسقط السحبَ — **الإتاحةُ تبقى**.
+      const pC = await mkPatient("تدقيقٌ-فاشلٌ-يُسقط-السحب", KARBALA);
+      await mkCase(pC, KARBALA);
+      await http("POST", `/api/patients/${pC}/branch-access`, S.admin, { branchId: DHIQAR });
+      let revokeThrew = false;
+      try {
+        await store.revokeBranchAccess({
+          patientId: pC, branchId: DHIQAR,
+          actorUserId: 9999999, actorName: "فاعلٌ لا وجود له",
+        });
+      } catch { revokeThrew = true; }
+      const [leftC] = await q(
+        `SELECT COUNT(*)::int c FROM patient_branch_access WHERE patient_id=$1`, [pC]);
+      same("٥٠. **وفشلُ سطر التدقيق يُسقط السحبَ** — والإتاحةُ باقية",
+        [revokeThrew, leftC.c], [true, 1]);
+
+      //  ⑤ حارسٌ معماريّ: لا تدقيقَ بعد المعاملة في ملفّ النقاط.
+      const routesSrc = readFileSync(
+        join(process.cwd(), "server/patients/branch_access_routes.ts"), "utf8");
+      check(!/logAudit\s*\(/.test(routesSrc),
+        "٥١. **ولا `logAudit` خارج المعاملة في ملفّ النقاط**");
+      const storeSrc = readFileSync(
+        join(process.cwd(), "server/patients/branch_access_store.ts"), "utf8");
+      check((storeSrc.match(/logAudit\(\{/g) ?? []).length === 2
+        && (storeSrc.match(/^\s*tx,$/gm) ?? []).length >= 2,
+        "٥٢. والمخزنُ يكتب سطرَي المنح والسحب بـ`tx`");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ح-٢. أمرُ العملِ الحيُّ عمليةٌ مفتوحة مهما كانت حلقتُه ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const mkEpisode = async (patientId: number, caseId: number, status: string) => {
+        const [r] = await q<{ id: number }>(
+          `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+             status, agreed_cost, requested_item, service_path, created_by)
+           VALUES ($1,$2,$3,1,$4,0,'full_device','exam',$5) RETURNING id`,
+          [patientId, caseId, KARBALA, status, ADMIN]);
+        return r.id;
+      };
+      const mkOrder = async (
+        patientId: number, episodeId: number | null, status: string, purpose = "initial_build",
+      ) => {
+        const [r] = await q<{ id: number }>(
+          `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+             purpose, status, current_stage, device_episode_id)
+           VALUES ($1,$2,$3,'prosthetic',$4,$5,'order_received',$6) RETURNING id`,
+          [patientId, KARBALA, EXPERT_K, purpose, status, episodeId]);
+        return r.id;
+      };
+
+      //  ① **أمرٌ حيٌّ وحلقتُه مسلَّمة** — صيانةُ جهازٍ سُلِّم: خبيرٌ يعمل اليوم.
+      const pD = await mkPatient("أمرٌ-حيٌّ-وحلقةٌ-مسلَّمة", KARBALA);
+      const cD = await mkCase(pD, KARBALA);
+      const epD = await mkEpisode(pD, cD, "delivered");
+      const woD = await mkOrder(pD, epD, "active", "maintenance");
+      const noAnsD = await http("POST", `/api/patients/${pD}/branch-access`, S.admin,
+        { branchId: DHIQAR });
+      same("٥٣. **أمرٌ حيٌّ على حلقةٍ مسلَّمة ⟶ السؤالُ إلزاميّ (٤٠٠)**",
+        noAnsD.status, 400);
+
+      const viewD = await http("GET", `/api/patients/${pD}/branch-access`, S.admin);
+      const rowD = (viewD.body?.openOperations ?? [])
+        .find((o: any) => Number(o.workOrderId) === woD);
+      same("٥٤. **ويظهر في `openOperations` بحلقتِه غير الحيّة**",
+        [viewD.body?.openOperations?.length, rowD?.episodeLive, rowD?.episodeStatus,
+          Number(rowD?.episodeId), rowD?.serviceType],
+        [1, false, "delivered", epD, "prosthetic"]);
+
+      const yesD = await http("POST", `/api/patients/${pD}/branch-access`, S.admin,
+        { branchId: DHIQAR, moveOpenOperations: true, keepExpert: true });
+      const [epDA] = await q(
+        `SELECT branch_id, status FROM patient_device_episodes WHERE id=$1`, [epD]);
+      const [woDA] = await q(`SELECT branch_id FROM prosthetic_work_orders WHERE id=$1`, [woD]);
+      same("٥٥. **«نعم» تنقل الأمرَ ولا تمسّ الحلقةَ المسلَّمة**",
+        [yesD.status, Number(woDA.branch_id), Number(epDA.branch_id), epDA.status],
+        [201, DHIQAR, KARBALA, "delivered"]);
+
+      //  ② **أمرٌ حيٌّ بلا حلقةٍ إطلاقاً** — الموروثُ من قبل حقبة الحلقات.
+      const pE = await mkPatient("أمرٌ-حيٌّ-بلا-حلقة", KARBALA);
+      await mkCase(pE, KARBALA);
+      const woE = await mkOrder(pE, null, "active");
+      const noAnsE = await http("POST", `/api/patients/${pE}/branch-access`, S.admin,
+        { branchId: DHIQAR });
+      const viewE = await http("GET", `/api/patients/${pE}/branch-access`, S.admin);
+      const rowE = (viewE.body?.openOperations ?? [])[0];
+      same("٥٦. **أمرٌ حيٌّ بلا حلقة ⟶ ٤٠٠، ويُقرأ بخدمته من الأمر نفسِه**",
+        [noAnsE.status, viewE.body?.openOperations?.length, rowE?.episodeId,
+          rowE?.episodeLive, Number(rowE?.workOrderId), rowE?.serviceType],
+        [400, 1, null, false, woE, "prosthetic"]);
+      const yesE = await http("POST", `/api/patients/${pE}/branch-access`, S.admin,
+        { branchId: DHIQAR, moveOpenOperations: true, keepExpert: true });
+      const [woEA] = await q(`SELECT branch_id FROM prosthetic_work_orders WHERE id=$1`, [woE]);
+      same("٥٧. **و«نعم» تنقله وحدَه**",
+        [yesE.status, Number(woEA.branch_id)], [201, DHIQAR]);
+
+      //  ③ **ولا ازدواج**: حلقةٌ حيّةٌ وأمرُها الحيّ ⟶ صفٌّ واحد لا اثنان.
+      const pF = await mkPatient("حلقةٌ-حيّةٌ-بأمرٍ-حيّ", KARBALA);
+      const cF = await mkCase(pF, KARBALA);
+      const epF = await mkEpisode(pF, cF, "in_manufacturing");
+      const woF = await mkOrder(pF, epF, "active");
+      const viewF = await http("GET", `/api/patients/${pF}/branch-access`, S.admin);
+      same("٥٨. **ولا ازدواج** — صفٌّ واحد يحمل الحلقةَ وأمرَها",
+        [viewF.body?.openOperations?.length,
+          Number(viewF.body?.openOperations?.[0]?.episodeId),
+          Number(viewF.body?.openOperations?.[0]?.workOrderId),
+          viewF.body?.openOperations?.[0]?.episodeLive],
+        [1, epF, woF, true]);
+
+      //  ④ **والمنتهي لا يُسأل عنه** — وإلّا صار كلُّ ملفٍّ «عمليةً مفتوحة».
+      const pG = await mkPatient("منتهٍ-لا-يُسأل-عنه", KARBALA);
+      const cG = await mkCase(pG, KARBALA);
+      const epG = await mkEpisode(pG, cG, "delivered");
+      await mkOrder(pG, epG, "completed");
+      const viewG = await http("GET", `/api/patients/${pG}/branch-access`, S.admin);
+      const grantG = await http("POST", `/api/patients/${pG}/branch-access`, S.admin,
+        { branchId: DHIQAR });
+      same("٥٩. **وأمرٌ منتهٍ وحلقةٌ مسلَّمة ⟶ لا سؤالَ ولا عملية**",
+        [viewG.body?.openOperations?.length, grantG.status], [0, 201]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ح-٣. لا سحبَ عن فرعٍ يملك عملاً حيّاً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pH = await mkPatient("سحبٌ-وعملٌ-حيٌّ-في-الفرع", KARBALA);
+      const cH = await mkCase(pH, KARBALA);
+      const [epH] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, service_path, created_by)
+         VALUES ($1,$2,$3,1,'in_manufacturing',0,'full_device','exam',$4) RETURNING id`,
+        [pH, cH, KARBALA, ADMIN]);
+      const [woH] = await q<{ id: number }>(
+        `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+           purpose, status, current_stage, device_episode_id)
+         VALUES ($1,$2,$3,'prosthetic','initial_build','active','order_received',$4) RETURNING id`,
+        [pH, KARBALA, EXPERT_K, epH.id]);
+      same("٦٠. الإعدادُ: الإتاحةُ ونقلُ المسؤولية إلى ذي قار",
+        (await http("POST", `/api/patients/${pH}/branch-access`, S.admin,
+          { branchId: DHIQAR, moveOpenOperations: true, keepExpert: true })).status, 201);
+
+      const blocked = await http("DELETE", `/api/patients/${pH}/branch-access/${DHIQAR}`, S.admin);
+      same("٦١. **سحبُ الإتاحة عن فرعٍ يملك عملاً حيّاً ⟶ ٤٠٩**", blocked.status, 409);
+      check(String(blocked.body?.message ?? "").includes("عملية حيّة"),
+        "    والرسالةُ تقول السبب", String(blocked.body?.message));
+      const [stillH] = await q(
+        `SELECT COUNT(*)::int c FROM patient_branch_access WHERE patient_id=$1 AND branch_id=$2`,
+        [pH, DHIQAR]);
+      const [woHA] = await q(
+        `SELECT branch_id, status FROM prosthetic_work_orders WHERE id=$1`, [woH.id]);
+      const [epHA] = await q(
+        `SELECT branch_id, status FROM patient_device_episodes WHERE id=$1`, [epH.id]);
+      same("٦٢. **وصفرُ كتابة** — الإتاحةُ والأمرُ والحلقةُ كما هي",
+        [stillH.c, Number(woHA.branch_id), woHA.status, Number(epHA.branch_id), epHA.status],
+        [1, DHIQAR, "active", DHIQAR, "in_manufacturing"]);
+
+      //  **وعمليةٌ في فرعٍ آخر لا تمنع** — الشرطُ ملكيّةُ هذا الفرع بعينه.
+      const pI = await mkPatient("عملٌ-حيٌّ-في-فرعٍ-آخر", KARBALA);
+      const cI = await mkCase(pI, KARBALA);
+      const [epI] = await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+           status, agreed_cost, requested_item, service_path, created_by)
+         VALUES ($1,$2,$3,1,'in_manufacturing',0,'full_device','exam',$4) RETURNING id`,
+        [pI, cI, KARBALA, ADMIN]);
+      await q(
+        `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+           purpose, status, current_stage, device_episode_id)
+         VALUES ($1,$2,$3,'prosthetic','initial_build','active','order_received',$4)`,
+        [pI, KARBALA, EXPERT_K, epI.id]);
+      await http("POST", `/api/patients/${pI}/branch-access`, S.admin,
+        { branchId: DHIQAR, moveOpenOperations: false });
+      same("٦٣. **وعملٌ حيٌّ في كربلاء لا يمنع سحبَ ذي قار**",
+        (await http("DELETE", `/api/patients/${pI}/branch-access/${DHIQAR}`, S.admin)).status, 200);
+
+      //  **واكتمالُ العمل يفكّ المنع** — الحاجزُ عن العملِ الجاري لا عن الفرع.
+      await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE id=$1`, [woH.id]);
+      await q(`UPDATE patient_device_episodes SET status='delivered' WHERE id=$1`, [epH.id]);
+      same("٦٤. **واكتمالُ العملية يفكّ المنع**",
+        (await http("DELETE", `/api/patients/${pH}/branch-access/${DHIQAR}`, S.admin)).status, 200);
     }
   } finally {
     await cleanup();
