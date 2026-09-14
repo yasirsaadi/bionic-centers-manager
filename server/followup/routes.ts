@@ -64,6 +64,9 @@ import {
   examPathActions, examPathStatusLine, canCompleteReceptionSale,
   type CommercialField,
 } from "@shared/commercial";
+import {
+  LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
+} from "@shared/lock_conflict";
 import * as discountStore from "../discounts/store";
 import { followupDiscountRef } from "@shared/discount";
 import { discountAuditNote } from "../discounts/routes";
@@ -161,6 +164,17 @@ async function retiredOnExamPath(res: any, followupId: number): Promise<boolean>
 function fail(res: any, err: unknown): boolean {
   if (err instanceof FollowupError) {
     res.status(err.status).json({ error: err.message });
+    return true;
+  }
+  //  ══ **وتعارضُ الأقفال خطأُ عملٍ أيضاً** ═════════════════════════════
+  //   إلغاءُ معاينةٍ يجري على الملفّ نفسِه في اللحظة نفسِها يُنتج جموداً
+  //   حقيقياً، فتُسقط القاعدةُ إحدى المعاملتين **كاملةً**. وبلا هذه
+  //   الترجمة كان المنادي يرمي من معالجٍ غيرِ متزامن، فلا يصل الطلبَ ردٌّ
+  //   إطلاقاً — يبقى الموظّفُ أمام دوّارةٍ لا يعرف أوقع البيعُ أم لا.
+  //
+  //   **ولا إعادةَ تلقائية**: القرارُ له، والرسالةُ تقول إن شيئاً لم يقع.
+  if (isLockConflictError(err)) {
+    res.status(409).json({ error: LOCK_CONFLICT_ERROR, code: LOCK_CONFLICT_CODE });
     return true;
   }
   return false;
