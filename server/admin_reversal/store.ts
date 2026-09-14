@@ -224,6 +224,54 @@ function saleAmountOf(op: ResolvedOperation): number {
 }
 
 /**
+ * **ما بقي من كلفة هذه العملية على الدفاتر فعلاً** — لا سعرُ بيعها.
+ *
+ * ══ لماذا ليس `saleAmountOf` وحدها ═════════════════════════════════════
+ * سعرُ البيع واقعةٌ تاريخية لا تتغيّر، لكنّ **ما بقي منه قائماً قد نقص**:
+ * المسؤولُ يخفّض `patients.total_cost` من «تعديل مريض» (المسارُ الموثَّق في
+ * §4.h) فيتحرّك المجموعُ وكلفةُ الحالة **ولا يتحرّك `agreed_cost`**. فجهازٌ
+ * بِيع بمليون قد لا يكون على الدفاتر منه إلّا ٣٠٠ ألفاً.
+ *
+ * وعكسُ المليون حينئذٍ يُنتج كذبتين معاً: `GREATEST(0, …)` تُنقص ٣٠٠ ألفاً
+ * فقط (كلَّ ما كان هناك)، بينما `cost_entries` يكتب **−١,٠٠٠,٠٠٠** كاملة.
+ * فينكسر ثابتُ الدفتر (§٤: «مجموع قيود المريض = `total_cost`») بفارقٍ دائم،
+ * ويصرخ إنذارُ `cost_ledger_mismatch`، ويقرأ المريضُ رصيداً لم يقع.
+ *
+ * **فالقاعدة: لا يُعكَس أكثرُ ممّا يُنقَص فعلاً — أبداً.** والحدُّ من الاثنين
+ * معاً: مجموعُ المريض **وكلفةُ خيطه**؛ فالخيطُ حدٌّ حقيقيّ أيضاً — تجاوزُه
+ * يسحب مالاً يخصّ خيطاً آخر للمريض نفسِه.
+ *
+ * **وفي البيانات السليمة لا يفعل شيئاً**: البيعُ أضاف `sale` إلى الاثنين،
+ * فكلاهما ≥ `sale` ولا يبيت الحدُّ إلّا حيث وقع تخفيضٌ فعلاً.
+ */
+async function standingCostOf(
+  h: { execute: (q: any) => Promise<any> },
+  op: ResolvedOperation,
+  sale: number,
+  lock = false,
+): Promise<number> {
+  if (sale <= 0) return 0;
+  const p = await h.execute(lock
+    ? sql`SELECT total_cost FROM patients WHERE id = ${op.patientId} FOR UPDATE`
+    : sql`SELECT total_cost FROM patients WHERE id = ${op.patientId}`);
+  const total = Number((p.rows ?? [])[0]?.total_cost ?? 0);
+  let bound = Number.isFinite(total) ? total : 0;
+  if (op.caseId !== null) {
+    //  **وترتيبُ القفل كترتيب الكتابة القائم**: صفُّ المريض أوّلاً ثمّ صفُّ
+    //  الخيط — وهو بعينه ترتيبُ `UPDATE`ين في ⑤. فلا قفلَ جديدٌ يعكس ترتيباً.
+    const c = await h.execute(lock
+      ? sql`SELECT cost FROM patient_cases WHERE id = ${op.caseId} FOR UPDATE`
+      : sql`SELECT cost FROM patient_cases WHERE id = ${op.caseId}`);
+    const caseRow = (c.rows ?? [])[0];
+    if (caseRow) {
+      const caseCost = Number(caseRow.cost ?? 0);
+      bound = Math.min(bound, Number.isFinite(caseCost) ? caseCost : 0);
+    }
+  }
+  return Math.max(0, Math.min(sale, bound));
+}
+
+/**
  * **هل يمكن إرجاعُ هذه الصفقة إلى ما قبل الشراء حقاً؟**
  *
  * ══ ولماذا ليس كلُّ مباعٍ قابلاً للتراجع ═══════════════════════════════
@@ -312,6 +360,10 @@ export async function previewReversal(target: {
   if (!op) return null;
 
   const sale = saleAmountOf(op);
+  //  **والمعروضُ هو ما سيقع**: المقدارُ القائم لا سعرُ البيع — وإلّا وعدت
+  //  الشاشةُ بعكس مليونٍ ثمّ عكس التنفيذُ ٣٠٠ ألفاً. **وهي استشاريةٌ بلا
+  //  قفل**: التنفيذُ يعيد الحساب تحت القفل ولا يبني على هذا الرقم.
+  const reversible = await standingCostOf(db, op, sale);
   const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
   const delivered = op.episodeStatus === "delivered" || op.orderStatus === "completed";
   const started = op.orderStartedAt !== null
@@ -333,8 +385,8 @@ export async function previewReversal(target: {
   //  الفكرةُ أُلغيت: إمّا يُردّ المالُ فتمضي العملية، وإمّا لا تمضي.
   const financeLines = (mode: ReversalMode): ReversalImpactLine[] => {
     const out: ReversalImpactLine[] = [];
-    if (sale > 0) {
-      out.push({ kind: "check", text: `عكس كلفة ${money(sale)} د.ع بقيد معاكس` });
+    if (reversible > 0) {
+      out.push({ kind: "check", text: `عكس كلفة ${money(reversible)} د.ع بقيد معاكس` });
       out.push({ kind: "check", text: "تُخصم من إجمالي حساب المريض وكلفة القسم" });
     }
     if (op.paidAmount > 0) {
@@ -401,7 +453,8 @@ export async function previewReversal(target: {
   const summary: Record<ReversalMode, ReversalImpactLine[]> = {
     purchase_only: [
       { kind: "check", text: "إلغاء الشراء وأمر التصنيع الخاطئ" },
-      ...(sale > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(sale)} د.ع` }] : []),
+      ...(reversible > 0
+        ? [{ kind: "check" as const, text: `عكس كلفة ${money(reversible)} د.ع` }] : []),
       { kind: "check", text: "إعادة الطلب والمعاينة إلى ما قبل الشراء" },
       { kind: "check", text: "الاحتفاظ بكامل السجل السابق" },
       ...(op.paidAmount > 0
@@ -410,7 +463,8 @@ export async function previewReversal(target: {
     ],
     full_operation: [
       { kind: "check", text: "إلغاء العملية الخاطئة بالكامل" },
-      ...(sale > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(sale)} د.ع` }] : []),
+      ...(reversible > 0
+        ? [{ kind: "check" as const, text: `عكس كلفة ${money(reversible)} د.ع` }] : []),
       { kind: "check", text: "الاحتفاظ بكامل السجل السابق" },
       ...(op.paidAmount > 0
         ? [{ kind: "check" as const, text: `رد ${money(op.paidAmount)} د.ع للمريض` }]
@@ -427,9 +481,12 @@ export async function previewReversal(target: {
     workOrderId: op.workOrderId,
     serviceType: op.serviceType,
     requestedItemLabel: itemLabel,
+    //  **`saleAmount` يبقى واقعةَ البيع** — بكم بِيع الجهاز فعلاً؛
+    //  و`financialDelta` هو **الأثر**: ما سيُنقَص فعلاً. وهما رقمان
+    //  مختلفان متى وقع تخفيضٌ سابق، ودمجُهما يكذب على أحد الطرفين.
     saleAmount: sale,
     paidAmount: op.paidAmount,
-    financialDelta: -sale,
+    financialDelta: -reversible,
     availableModes,
     //  **الخادمُ يقرّر ما يُعرَض** — بالدالّة نفسِها التي تحرس التنفيذ.
     availableIntents: availableIntentsOf(op),
@@ -447,7 +504,7 @@ export async function previewReversal(target: {
     manufacturingStarted: started,
     delivered,
     alreadyReversed,
-    stateStamp: stampOf(op),
+    stateStamp: stampOf(op, reversible),
   };
 }
 
@@ -456,13 +513,20 @@ export async function previewReversal(target: {
  *
  * ولا يشمل أختاماً زمنية تتحرّك بلا معنى (`updated_at`): ختمٌ يتغيّر بلا
  * سببٍ يُنتج ٤٠٩ لا يفهمها أحد، فيتعلّم الموظّفُ تجاهلَ الرسالة.
+ *
+ * **ومقدارُ العكس منه** (`reversibleCost`): صار جزءاً من الأثر المعروض، فهو
+ * جزءٌ من الختم بالضرورة. وأعمدتُه مصادرُ حقيقةٍ مستقلّة — `patients.
+ * total_cost` و`patient_cases.cost` يتحرّكان من «تعديل مريض» ومن كلّ بابٍ
+ * ماليٍّ آخر بلا أن يمسّ أيٌّ منها حقلاً من الحقول أعلاه. فتخفيضٌ يقع بين
+ * المعاينة والتنفيذ كان يمرّ بختمٍ سليم ويُنفَّذ بأثرٍ **غيرِ الذي قُرئ**.
+ * والعقدُ المؤسّسيّ: يُعرَض الأثر ⟶ يُقرأ ⟶ يُنفَّذ **ذلك الأثرُ بعينه**.
  */
-function stampOf(op: ResolvedOperation): string {
+function stampOf(op: ResolvedOperation, reversibleCost: number): string {
   return [
     op.followupId, op.followupStatus, op.approvedPrice,
     op.deviceEpisodeId ?? "-", op.episodeStatus ?? "-", op.episodeAgreedCost,
     op.workOrderId ?? "-", op.orderStatus ?? "-",
-    op.paidAmount, op.existingReversalId ?? "-",
+    op.paidAmount, op.existingReversalId ?? "-", reversibleCost,
   ].join("|");
 }
 
@@ -576,7 +640,19 @@ export async function executeReversal(params: {
     if (op.existingReversalId !== null) {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);
     }
-    if (params.expectedStamp !== stampOf(op)) throw new ReversalError(DRIFT, 409);
+    //  ══ **المقدارُ الذي يُعكَس — القائمُ فعلاً، تحت القفل** ═══════════════
+    //  ويُحسَب **قبل مقارنة الختم** لأنه جزءٌ منه: تخفيضٌ وقع بين المعاينة
+    //  والتنفيذ يبدّل الأثرَ المعروض، فيُردّ الطلبُ ٤٠٩ **بلا كتابةِ حرف**
+    //  ويُعاد فتحُ النافذة لمراجعة الأثر الجديد.
+    //
+    //  **و`sold` تبقى على `sale`** — واقعةُ البيع لا أثرُه: عمليةٌ خُفّضت
+    //  كلفتُها إلى الصفر **بِيعت فعلاً**، فلو قِيس البيعُ بالقائم لصارت
+    //  «بلا شراء» ورُدَّ عنها «التراجع عن الشراء» بلا وجه.
+    const sale = saleAmountOf(op);
+    const reversedCost = await standingCostOf(tx, op, sale, true);
+    if (params.expectedStamp !== stampOf(op, reversedCost)) {
+      throw new ReversalError(DRIFT, 409);
+    }
 
     // ══ **الاستبدالُ يُفحَص قبل أن تُكتب كلمة** ══════════════════════════
     //  والشرطُ هو `replacementPossible` نفسُه الذي قرّر ما تعرضه الشاشة —
@@ -653,7 +729,6 @@ export async function executeReversal(params: {
         + " راجع الإدارة قبل الإلغاء.", 409);
     }
 
-    const sale = saleAmountOf(op);
     const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
     if (params.mode === "purchase_only") {
       if (!sold) {
@@ -692,7 +767,7 @@ export async function executeReversal(params: {
            created_by, created_by_name)
         VALUES (${op.patientId}, ${op.branchId}, ${op.medicalExamId}, ${op.followupId},
                 ${op.deviceEpisodeId}, ${op.workOrderId}, ${params.mode},
-                ${params.reasonCode}, ${reasonNote}, ${-sale},
+                ${params.reasonCode}, ${reasonNote}, ${-reversedCost},
                 ${false}, ${op.paidAmount - refundAmount},
                 ${params.actor.userId}, ${params.actor.userName})
         RETURNING id
@@ -722,23 +797,26 @@ export async function executeReversal(params: {
     }
 
     // ── ⑤ عكسُ الكلفة — قيدٌ معاكسٌ يُضاف، والأصلُ لا يُمَسّ ────────────
-    if (sale > 0) {
+    //  **ومقدارٌ واحد في المواضع الثلاثة** — مجموعُ المريض وكلفةُ الخيط
+    //  وقيدُ الدفتر. و`GREATEST` تبقى حزامَ أمانٍ لا حاسماً: الحدُّ حُسب
+    //  تحت القفل فلا تبيت، ولو باتت يوماً لبقي الصفُّ غيرَ سالبٍ.
+    if (reversedCost > 0) {
       if (op.caseId !== null) {
         await tx.execute(sql`
           UPDATE patient_cases
-             SET cost = GREATEST(0, COALESCE(cost, 0) - ${sale}), updated_at = NOW()
+             SET cost = GREATEST(0, COALESCE(cost, 0) - ${reversedCost}), updated_at = NOW()
            WHERE id = ${op.caseId}
         `);
       }
       await tx.execute(sql`
         UPDATE patients
-           SET total_cost = GREATEST(0, COALESCE(total_cost, 0) - ${sale})
+           SET total_cost = GREATEST(0, COALESCE(total_cost, 0) - ${reversedCost})
          WHERE id = ${op.patientId}
       `);
       await tx.execute(sql`
         INSERT INTO cost_entries
           (patient_id, branch_id, amount, source, case_id, device_episode_id, notes)
-        VALUES (${op.patientId}, ${op.branchId}, ${-sale}, 'administrative_reversal',
+        VALUES (${op.patientId}, ${op.branchId}, ${-reversedCost}, 'administrative_reversal',
                 ${op.caseId}, ${op.deviceEpisodeId},
                 ${reversalCostNote(reversalId, params.mode)})
       `);
@@ -855,7 +933,8 @@ export async function executeReversal(params: {
               ${params.reasonCode}, ${reasonNote},
               ${JSON.stringify({
                 reversalId, mode: params.mode,
-                reversedAmount: sale, workOrderId: op.workOrderId,
+                reversedAmount: reversedCost, saleAmount: sale,
+                workOrderId: op.workOrderId,
                 deviceEpisodeId: op.deviceEpisodeId,
                 preservedPaidAmount: op.paidAmount - refundAmount,
                 refundedAmount: refundAmount, refundPaymentId,
@@ -893,7 +972,7 @@ export async function executeReversal(params: {
       },
       newValues: {
         mode: params.mode, reasonCode: params.reasonCode, reasonNote,
-        financialDelta: -sale, workOrderVoided,
+        financialDelta: -reversedCost, workOrderVoided,
         deviceEpisodeId: op.deviceEpisodeId, examCancelled,
         preservedPaidAmount: op.paidAmount - refundAmount,
         refundedAmount: refundAmount, refundPaymentId, refundJournalPosted,
@@ -903,7 +982,7 @@ export async function executeReversal(params: {
       userAgent: params.audit?.userAgent ?? null,
       notes: `${REVERSAL_EVENT_TITLES[params.mode]} #${reversalId}`
         + ` لمريض #${op.patientId} — ${reversalReasonLabel(params.reasonCode)}: ${reasonNote}`
-        + (sale > 0 ? ` · عُكست كلفة ${money(sale)} د.ع` : "")
+        + (reversedCost > 0 ? ` · عُكست كلفة ${money(reversedCost)} د.ع` : "")
         + (refundAmount > 0
           ? ` · رُدّ للمريض ${money(refundAmount)} د.ع (دفعة #${refundPaymentId})`
             + (refundJournalPosted ? "" : " — تعذّر قيدُ اليومية: راجع دليل حسابات الفرع")
@@ -919,7 +998,7 @@ export async function executeReversal(params: {
 
     return {
       reversalId, mode: params.mode, patientId: op.patientId,
-      financialDelta: -sale,
+      financialDelta: -reversedCost,
       refundedAmount: refundAmount, refundPaymentId, refundJournalPosted,
       workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled, replacementEpisodeId,
     };
