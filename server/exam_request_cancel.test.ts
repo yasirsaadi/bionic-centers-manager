@@ -682,8 +682,20 @@ async function main() {
         "ف٣. وسطرُ التدقيق `patient_device_episode` بمعرّف الحلقة",
         JSON.stringify(epAudit));
       //  **والعطبُ بعينه**: لا سطرَ يقول «طلبُ مراجعة» ويحمل رقمَ حلقة.
-      const mislabeled = await auditOf("medical_review_request", ep.id);
-      same("ف٤. ولا سطرَ ينسب رقمَ الحلقة إلى طلبِ مراجعة", mislabeled.length, 0);
+      //
+      //  **ويُقاس بسطور هذه العملية نفسِها لا بمطابقةِ رقمٍ عبر جدولين**:
+      //  أوّلُ صياغةٍ سألت «أثمّة سطرٌ من نوع طلبِ مراجعة يحمل الرقم
+      //  `ep.id`؟» — وذاك سؤالٌ عن **تصادفِ أرقام**: تسلسلا الجدولين
+      //  مستقلّان، فرقمُ حلقةٍ قد يساوي رقمَ طلبٍ حقيقيٍّ آخر، فيُدان سطرٌ
+      //  صحيحٌ تماماً. والسؤالُ الصحيح: **ماذا كتبت هذه العمليةُ بالضبط؟**
+      //  ورقمُ المريض في الملاحظة يحسمها بلا أيّ مقارنةٍ بين الجدولين.
+      const writtenFor = (pid: number) =>
+        q<{ entity_type: string; entity_id: number }>(
+          `SELECT entity_type, entity_id FROM audit_log
+            WHERE action='update' AND notes LIKE $1 ORDER BY id`,
+          [`إلغاء طلب معاينة%للمريض #${pid} —%`]);
+      same("ف٤. وسطرٌ واحدٌ لهذه العملية، بنوع الحلقة ومعرّفها — ولا سطرَ طلبِ مراجعة",
+        await writtenFor(p1), [{ entity_type: "patient_device_episode", entity_id: ep.id }]);
 
       //  ② صفٌّ بلا حلقة ⟶ `medical_review_request` بمعرّف الطلب المسحوب.
       const p2 = await mkPatient("ف-بلا-حلقة", "medical_support");
@@ -699,8 +711,8 @@ async function main() {
       //  موجودٍ **من نوعه هو**. هذا هو العطبُ بعينه محسوماً حتمياً لا
       //  بتصادفِ أرقام: رقمُ حلقةٍ تحت نوع «طلب مراجعة» يُنسَب إلى طلبٍ آخر
       //  إن وُجد بذلك الرقم، ويغيب عن تاريخ الحلقة التي أُلغيت فعلاً.
-      const written = await q<{ entity_type: string; entity_id: number }>(
-        `SELECT entity_type, entity_id FROM audit_log
+      const written = await q<{ entity_type: string; entity_id: number; notes: string }>(
+        `SELECT entity_type, entity_id, notes FROM audit_log
           WHERE action='update' AND notes LIKE 'إلغاء طلب معاينة%'
             AND created_at >= $1
             AND entity_type IN ('medical_review_request','patient_device_episode')`,
@@ -714,14 +726,28 @@ async function main() {
         if (hit.length === 0) dangling.push(`${row.entity_type}#${row.entity_id}`);
       }
       same("ف٩. وكلُّ سطرٍ يشير إلى صفٍّ موجودٍ من نوعه هو", dangling, []);
-      //  والحاسمُ: لا سطرَ من نوع «طلب مراجعة» يحمل رقمَ حلقةٍ أُلغيت.
-      const epIds = (await q<{ id: number }>(
-        `SELECT id FROM patient_device_episodes WHERE status='cancelled'
-           AND patient_id IN (SELECT id FROM patients WHERE referral_source=$1)`, [MARK]))
-        .map((r) => r.id);
-      const crossed = written.filter((w) =>
-        w.entity_type === "medical_review_request" && epIds.includes(w.entity_id));
-      same("ف١٠. ولا سطرَ «طلب مراجعة» يحمل رقمَ حلقةٍ مُلغاة", crossed, []);
+      //  والحاسمُ: **الصفُّ المُشار إليه هو الصفُّ الذي عملت عليه النقطة**
+      //  — يُقاس **داخل جدول نوعه وحده**: لمريض الملاحظة نفسِه، وحالتُه
+      //  `cancelled` أي أثرُ هذه النقطة بعينه.
+      //
+      //  **ولا تُقارَن أرقامُ جدولين**: أوّلُ صياغةٍ جمعت أرقامَ الحلقات
+      //  الملغاة ثمّ سألت أيقع رقمُ سطرِ «طلب مراجعة» بينها — فحمرّت على
+      //  **تصادفِ رقم** (طلبٌ رقمُه ٢ وحلقةٌ رقمُها ٢)، وهما صفّان صحيحان
+      //  لا علاقةَ لأحدهما بالآخر. والسطرُ المغلوطُ حقاً يسقط هنا أيضاً:
+      //  إمّا لا صفَّ بذلك الرقم في جدوله (ف٩)، أو صفٌّ لمريضٍ آخر.
+      const crossed: string[] = [];
+      for (const row of written) {
+        const pid = Number(/للمريض #(\d+)/.exec(row.notes ?? "")?.[1] ?? NaN);
+        const table = row.entity_type === "medical_review_request"
+          ? "medical_review_requests" : "patient_device_episodes";
+        const [hit] = await q<{ patient_id: number; status: string }>(
+          `SELECT patient_id, status FROM ${table} WHERE id=$1`, [row.entity_id]);
+        if (!hit || hit.patient_id !== pid || hit.status !== "cancelled") {
+          crossed.push(`${row.entity_type}#${row.entity_id}`
+            + ` (مريضُ السطر ${pid} · الصفّ ${hit ? `${hit.patient_id}/${hit.status}` : "غائب"})`);
+        }
+      }
+      same("ف١٠. وكلُّ سطرٍ يشير إلى صفِّ مريضِه المُلغى في جدول نوعه", crossed, []);
     }
 
     // ══ ن. عقدُ الشاشة والحارسُ المعماريّ ══════════════════════════════
