@@ -77,6 +77,8 @@ export function normalizeEntries(raw: unknown): NewServiceEntry[] | null {
  * العدّاد.
  */
 export async function executeNewService(params: {
+  /** فرعُ الحركة (ترحيل ٠٨٠) — غيابُه = فرعُ تسجيل المريض. */
+  actingBranchId?: number | null;
   patientId: number;
   serviceType: string;
   serviceCost: number;
@@ -99,6 +101,9 @@ export async function executeNewService(params: {
   audit?: { ipAddress?: string | null; userAgent?: string | null };
   tx?: any;
 }): Promise<NewServiceResult> {
+  //  **فرعُ الحركة** (ترحيل ٠٨٠) — يمرّره المُستدعي بعد التحقّق أنه يصل
+  //  هذا الملفّ؛ وغيابُه يُبقي السلوكَ القائم: فرعُ تسجيل المريض.
+  const opBranchId = params.actingBranchId ?? null;
   const serviceLabel = NEW_SERVICE_LABELS[params.serviceType];
   if (!serviceLabel) throw new NewServiceError("نوع الخدمة غير صالح", 400);
   const serviceCost = Math.max(0, Math.round(Number(params.serviceCost) || 0));
@@ -175,7 +180,8 @@ export async function executeNewService(params: {
     }
     await storage.updatePatient(
       params.patientId, { totalCost: newTotalCost, ...planPatch } as any,
-      "new_service", nsCaseId, tx,
+      //  **وقيدُ الكلفة في فرع الحركة** (ترحيل ٠٨٠) — لا في فرع التسجيل.
+      "new_service", nsCaseId, tx, false, opBranchId,
     );
 
     // Keep the per-case split in step: the same amount the aggregate just
@@ -228,7 +234,7 @@ export async function executeNewService(params: {
         //  الحلَّ من وسمه فينتهيان إلى حالتين مختلفتين لخدمةٍ واحدة.
         await storage.createVisit({
           patientId: params.patientId,
-          branchId: patient.branchId,
+          branchId: opBranchId ?? patient.branchId,
           caseId: nsCaseId!,
           treatmentType: entry.treatmentType,
           details: "خدمة جديدة",
@@ -249,7 +255,7 @@ export async function executeNewService(params: {
         if (entry.cost > 0 || isFree || entry.sessionCount > 0) {
           await storage.createPayment({
             patientId: params.patientId,
-            branchId: patient.branchId,
+            branchId: opBranchId ?? patient.branchId,
             caseId: nsCaseId!,
             amount: isFree ? 0 : (paymentShares[i] ?? 0),
             isFreeSessions: isFree,
@@ -263,7 +269,7 @@ export async function executeNewService(params: {
       const sc = params.sessionCount ?? null;
       await storage.createVisit({
         patientId: params.patientId,
-        branchId: patient.branchId,
+        branchId: opBranchId ?? patient.branchId,
         caseId: nsCaseId!,
         treatmentType: params.paymentTreatmentType || null,
         details: "خدمة جديدة",
@@ -278,7 +284,7 @@ export async function executeNewService(params: {
       if (paidNow > 0 || isFree) {
         await storage.createPayment({
           patientId: params.patientId,
-          branchId: patient.branchId,
+          branchId: opBranchId ?? patient.branchId,
           caseId: nsCaseId!,
           amount: isFree ? 0 : paidNow,
           isFreeSessions: isFree,
@@ -292,7 +298,7 @@ export async function executeNewService(params: {
     await logAudit({
       entityType: "patient", entityId: params.patientId, action: "update",
       userId: params.actor.userId, userName: params.actor.userName,
-      branchId: patient.branchId,
+      branchId: opBranchId ?? patient.branchId,
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
       notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`

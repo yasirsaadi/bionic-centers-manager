@@ -93,6 +93,8 @@ function getSession(req: Req) {
 }
 
 /** Branch IDs the caller may read. `null` = admin, i.e. every branch. */
+import { scopeReachesPatient } from "../patients/branch_access";
+
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
   if (s.isAdmin) return null;
@@ -283,7 +285,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branchId)) {
+      if (!(await scopeReachesPatient(branchScope(req), patient))) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
 
@@ -411,7 +413,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      if (!canReachBranch(req, patient.branchId)) {
+      if (!(await scopeReachesPatient(branchScope(req), patient))) {
         // Name both sides: a bare "another branch" left the doctor guessing
         // why a save he had every right to make was refused.
         const names = await store.branchNames();

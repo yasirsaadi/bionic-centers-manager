@@ -478,6 +478,26 @@ export const patientCodeAliases = pgTable("patient_code_aliases", {
   reason: text("reason").notNull().default("merge"),
 });
 
+// ══ **إتاحةُ ملفّ المريض لفروعٍ إضافية** (ترحيل ٠٨٠) — بديلُ «نقل المريض»
+//
+// فرعُ التسجيل (`patients.branch_id`) يبقى كما هو إلى الأبد، وكلُّ صفٍّ
+// تاريخيّ يبقى بفرعه الذي وقع فيه. وهذا الجدولُ يقول **مَن يرى الملفَّ
+// أيضاً** — ومَن يراه يعمل عليه، وتُنسَب حركتُه الجديدة **لفرعه هو**.
+//
+// صفٌّ لكلّ (مريض، فرعٍ إضافيّ). ولا يُمنَح فرعُ التسجيل نفسُه (يفرضه
+// الخادم: لا يُقرأ عمودُ جدولٍ آخر في `CHECK`).
+export const patientBranchAccess = pgTable("patient_branch_access", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  grantedByUserId: integer("granted_by_user_id"),
+  //  لقطةُ اسمٍ لا join — يبقى مقروءاً بعد تغيير اسم الحساب أو حذفه،
+  //  نفسُ مبدأ `medical_exams.doctor_name`.
+  grantedByName: text("granted_by_name"),
+  note: text("note"),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const patientEvents = pgTable("patient_events", {
   // BIGSERIAL: ينمو مع كل زيارة ودفعة ومرحلة تصنيع، فحدّ الـ32-بت قريب
   // على مدى سنوات. `mode: "number"` آمن حتى 2^53، وهو أبعد من أي أفق.

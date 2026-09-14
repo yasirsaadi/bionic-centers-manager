@@ -3,6 +3,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DeletePatientDialog } from "@/components/DeletePatientDialog";
+import { PatientBranchAccessDialog } from "@/components/PatientBranchAccessDialog";
 import { canTrashPatients } from "@shared/patient_trash";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
@@ -227,8 +228,6 @@ export default function PatientDetails() {
     },
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
-  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
-  const [selectedTransferBranch, setSelectedTransferBranch] = useState<string>("");
   const [editCreatedAtOpen, setEditCreatedAtOpen] = useState(false);
   const [newCreatedAtDate, setNewCreatedAtDate] = useState<string>("");
   const [newCreatedAtTime, setNewCreatedAtTime] = useState<string>("");
@@ -261,39 +260,6 @@ export default function PatientDetails() {
       const res = await fetch("/api/branches", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch branches");
       return res.json();
-    },
-  });
-  
-  const transferMutation = useMutation({
-    mutationFn: async ({ patientId, branchId }: { patientId: number; branchId: number }) => {
-      const res = await fetch(`/api/patients/${patientId}/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branchId }),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || t.patientDetails.failedToTransfer);
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
-      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
-      setTransferDialogOpen(false);
-      setSelectedTransferBranch("");
-      toast({
-        title: t.patientDetails.transferSuccess,
-        description: t.patientDetails.transferSuccessDesc,
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: t.patientDetails.error,
-        description: error.message,
-        variant: "destructive",
-      });
     },
   });
   
@@ -731,59 +697,13 @@ export default function PatientDetails() {
           />
         )}
         
-        {/* Transfer Patient Button — admin or branch manager */}
-        {isAdminOrManager && (
-          <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="gap-2" data-testid="button-transfer-patient">
-                <ArrowLeftRight className="w-4 h-4" />
-                {t.patientDetails.transferToBranch}
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>{t.patientDetails.transferTitle}</DialogTitle>
-                <DialogDescription>
-                  {t.patientDetails.transferDesc}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="py-4">
-                <label className="text-sm font-medium mb-2 block">{t.patientDetails.selectNewBranch}</label>
-                <Select value={selectedTransferBranch} onValueChange={setSelectedTransferBranch}>
-                  <SelectTrigger data-testid="select-transfer-branch">
-                    <SelectValue placeholder={t.patientDetails.selectBranch} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {branches?.filter(b => b.id !== patient?.branchId).map((branch) => (
-                      <SelectItem key={branch.id} value={String(branch.id)}>
-                        {branch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
-                  {t.common.cancel}
-                </Button>
-                <Button 
-                  onClick={() => {
-                    if (patient && selectedTransferBranch) {
-                      transferMutation.mutate({ 
-                        patientId: patient.id, 
-                        branchId: parseInt(selectedTransferBranch) 
-                      });
-                    }
-                  }}
-                  disabled={!selectedTransferBranch || transferMutation.isPending}
-                  data-testid="button-confirm-transfer"
-                >
-                  {transferMutation.isPending ? t.patientDetails.transferring : t.patientDetails.transferPatient}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
+        {/* ══ **إتاحةُ الملفّ لفرعٍ إضافيّ — بديلُ «نقل المريض»** (ترحيل ٠٨٠)
+            كان الزرُّ القديم ينقل الملفَّ فيعيد كتابة فرع كلّ دفعةٍ وزيارةٍ
+            وحالة. والبديلُ **يتيح** ولا ينقل: فرعُ التسجيل وحساباتُه كما
+            هي، والفرعُ المضاف يرى الملفَّ كاملاً.
+            **والصلاحيةُ للمسؤول العام وحده** — والخادمُ هو الحارس؛ ومَن لا
+            يملكها يقرأ الحالةَ ولا يرى زرَّ الحفظ. */}
+        <PatientBranchAccessDialog patientId={patient.id} />
 
         {isAdminOrManager && (
           <Dialog open={editCreatedAtOpen} onOpenChange={setEditCreatedAtOpen}>

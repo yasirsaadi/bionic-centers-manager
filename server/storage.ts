@@ -33,6 +33,7 @@ import {
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
+  patientBranchAccess,
   financialCorrectionRequests,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } from "drizzle-orm";
@@ -172,7 +173,6 @@ export interface IStorage {
   getPaymentsByBranchSince(branchId: number, cutoff: Date | null): Promise<Payment[]>;
   getVisitsByBranchSince(branchId: number, cutoff: Date | null): Promise<Visit[]>;
   getBranchFinanceTotals(branchId: number): Promise<{ totalCost: number; totalPatients: number; totalPaid: number; totalPayments: number }>;
-  transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined>;
 
   // Visits
   getVisitsByPatientId(patientId: number): Promise<Visit[]>;
@@ -411,6 +411,12 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
    * **ويُقال ذلك برسالته الصحيحة** لا برسالةِ «لم يفحصها طبيب».
    */
   expectServicePath?: "exam" | "no_exam";
+  /**
+   * **الفرعُ الذي تقع فيه هذه العملية** (ترحيل ٠٨٠) — يحسمه المُستدعي
+   * بـ`resolveActingBranchId` بعد أن يتحقّق أنه يصل هذا الملفَّ. غيابُه
+   * يُبقي السلوكَ القائم: فرعُ تسجيل المريض.
+   */
+  actingBranchId?: number | null;
 }): Promise<DeviceSaleOperation> {
   const { patientId, serviceType, fields, expertUserId, assignedBy } = params;
   const wantEpisode = params.deviceEpisodeId ?? null;
@@ -511,17 +517,31 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     )).limit(1);
   if (openWo.length > 0) throw new ActiveAssignmentError();
 
+  //  ══ **الفرعُ الذي تقع فيه هذه العملية** (ترحيل ٠٨٠) ═══════════════════
+  //  كان دائماً فرعَ تسجيل المريض. ومذ صار الملفُّ يُتاح لفروعٍ إضافية،
+  //  صارت العمليةُ تُنسَب **للفرع الذي حدثت فيه** — يمرّره المُستدعي بعد أن
+  //  يتحقّق أنه يصل هذا الملفَّ فعلاً (`resolveActingBranchId`). وغيابُه
+  //  يُبقي السلوكَ القائم بحرفه: فرعُ التسجيل.
+  //
+  //  **ولا يُعاد كتابةُ صفٍّ قائم**: خيطُ حالةٍ موجودٌ يبقى بفرعه، وإنما
+  //  الجديدُ وحده (الحالةُ إن لم تكن، وأمرُ العمل) يأخذ فرعَ العملية.
+  const opBranchId = params.actingBranchId ?? existing.branchId;
+
   // ══ **ولا أمرَ في فرعٍ مرتبطٍ بحلقةٍ من فرعٍ آخر** ═════════════════════
-  //  مريضٌ نُقل بعد أن فُتح طلبُه: الأمرُ يُنشأ بفرعه **الحاليّ** بينما
-  //  الحلقةُ من فرعه القديم — فيصير للعملية فرعان، ويُنسب مالُها بعد شهرٍ
+  //  الأمرُ والحلقةُ عمليةٌ واحدة: افتراقُ فرعيهما يجعل مالَها يُنسَب بعد شهرٍ
   //  إلى فرعٍ لم يعمل فيها. والتصحيحُ بابُه نقلُ العملية إدارياً لا الصمت.
+  //
+  //  **والمقارنةُ بفرع العملية لا بفرع تسجيل المريض** (ترحيل ٠٨٠): مذ صار
+  //  الملفُّ يُتاح لفروعٍ إضافية، صار الفرعُ الصحيحُ لهذه العملية هو الفرعُ
+  //  الذي تقع فيه — وقد يكون غيرَ فرع التسجيل بحقٍّ تامّ. والثابتُ المحفوظ
+  //  هو **اتّحادُ فرعِ الأمر وفرعِ حلقته**، وهو ما يُقاس هنا.
   if (episode) {
     const eb = await tx.execute(sql`
       SELECT branch_id FROM patient_device_episodes WHERE id = ${episode.id}
     `);
     const epBranch = (eb.rows ?? [])[0]?.branch_id ?? null;
-    if (epBranch !== null && existing.branchId !== null
-      && Number(epBranch) !== Number(existing.branchId)) {
+    if (epBranch !== null && opBranchId !== null
+      && Number(epBranch) !== Number(opBranchId)) {
       throw new DeviceEpisodeError(
         "طلب الجهاز مفتوحٌ على فرعٍ آخر غير فرع المريض الحالي —"
         + " صحّح العملية إدارياً قبل بدئها، فلا يُفتَح أمرٌ في فرعٍ وحلقتُه في آخر.",
@@ -610,6 +630,8 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   };
   const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
+
+
   let caseId: number;
   if (existingCase) {
     caseId = existingCase.id;
@@ -619,7 +641,7 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     //  حالةٌ جديدة تُفتَح **بكلفةٍ صفر**: الكلفةُ يكتبها النصفُ الماليّ
     //  وحده، فما لم يُعتمَد مبلغُه لا يظهر رقمٌ في أيّ تقرير.
     const [nc] = await tx.insert(patientCases).values({
-      patientId, branchId: existing.branchId, caseType: serviceType, cost: 0,
+      patientId, branchId: opBranchId, caseType: serviceType, cost: 0,
       details: cleanDetails, costSource: "manual",
     }).onConflictDoNothing().returning();
     if (nc) {
@@ -641,7 +663,7 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   }
 
   const [wo] = await tx.insert(prostheticWorkOrders).values({
-    patientId, branchId: existing.branchId, expertUserId, serviceType,
+    patientId, branchId: opBranchId, expertUserId, serviceType,
     status: "active", currentStage: FIRST_STAGE, expectedDeliveryDate: null, assignedBy,
     // بناءٌ أولي صراحةً لا اعتماداً على قيمة العمود الافتراضية، والرابط
     // معه: أمرُ جهازٍ حيّ بلا هويّته يتيمٌ لا يُنهي حلقته أبداً.
@@ -664,7 +686,7 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   });
 
   return {
-    patientId, serviceType, branchId: existing.branchId,
+    patientId, serviceType, branchId: opBranchId,
     workOrderId: wo.id, expertUserId, episodeId: episode?.id ?? null,
     requestedItem: episode?.requestedItem ?? null, caseId,
     priorCaseCost, priorCaseSource, priorTotalCost, priorEpisodeAgreedCost,
@@ -1846,6 +1868,9 @@ export class DatabaseStorage implements IStorage {
   async updatePatient(
     id: number, updates: Partial<InsertPatient>, costSource: string = "manual_edit",
     costCaseId: number | null = null, tx?: any, syncSoleCaseCost: boolean = false,
+    //  **فرعُ قيد الكلفة** (ترحيل ٠٨٠) — «الفرعُ الذي حدثت فيه الحركة».
+    //  غيابُه يُبقي السلوكَ القائم بحرفه: فرعُ تسجيل المريض.
+    costBranchId: number | null = null,
   ): Promise<(Patient & { caseCostSync?: "synced" | "ambiguous" | null }) | undefined> {
     // ══ تعديلٌ يمسّ وجهةَ واتساب ⟶ **وحدةٌ دائمة واحدة** ═══════════════
     //
@@ -1954,7 +1979,7 @@ export class DatabaseStorage implements IStorage {
       const delta = (updated.totalCost || 0) - (before.totalCost || 0);
       if (delta !== 0) {
         await h.insert(costEntries).values({
-          patientId: id, branchId: updated.branchId, amount: delta, source: costSource,
+          patientId: id, branchId: costBranchId ?? updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
         });
 
@@ -2159,6 +2184,11 @@ export class DatabaseStorage implements IStorage {
       // follow-up calls, treatment plans, and survey responses (+answers) go
       // with the patient; journal lines are ACCOUNTING history and must
       // survive — detach them from the patient instead of deleting.
+      //  ══ **إتاحةُ الفروع الإضافية** (ترحيل ٠٨٠) — **صراحةً لا اتّكالاً
+      //  على `ON DELETE CASCADE`**: الكاسكيدُ في القاعدة حزامُ أمان، والقاعدةُ
+      //  الملزمة (CLAUDE.md §٨، بعد حادثة ٢٠٢٦-٠٧-٢٦) توجب أن يمرّ كلُّ جدولٍ
+      //  يحمل مفتاحاً إلى `patients` بهذا المسار المُختبَر بنفسه.
+      await tx.delete(patientBranchAccess).where(eq(patientBranchAccess.patientId, id));
       await tx.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
       await tx.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
       const respRows = await tx.select({ id: surveyResponses.id })
@@ -2450,6 +2480,8 @@ export class DatabaseStorage implements IStorage {
      * مَن لا يمرّر شيئاً يفتح معاملته كما كان دائماً.
      */
     tx?: DbTransactionLike;
+    /** الفرعُ الذي تقع فيه العملية (ترحيل ٠٨٠) — غيابُه = فرعُ التسجيل. */
+    actingBranchId?: number | null;
   }): Promise<{ patient: Patient; workOrderId: number; deviceEpisodeId: number | null }> {
     const body = async (tx: any) => {
       const op = await startDeviceSaleOperationallyTx(tx, {
@@ -2459,6 +2491,7 @@ export class DatabaseStorage implements IStorage {
         expertUserId: params.expertUserId,
         assignedBy: params.assignedBy,
         deviceEpisodeId: params.deviceEpisodeId ?? null,
+        actingBranchId: params.actingBranchId ?? null,
       });
       const { patient } = await applyDeviceSaleFinancialsTx(tx, {
         operation: op, cost: params.cost,
@@ -2727,6 +2760,30 @@ export class DatabaseStorage implements IStorage {
       `);
       await tx.execute(sql`
         UPDATE price_change_requests SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
+      `);
+
+      // ── إتاحةُ الفروع الإضافية (ترحيل ٠٨٠) ───────────────────────────────
+      //  **اتّحادٌ لا استبدال**: مَن كان يرى أحدَ الملفّين يرى الباقي — فلا
+      //  يفقد فرعٌ ملفّاً مُنح رؤيتَه صراحةً لمجرّد أنّ الإدارة دمجت ملفّين.
+      //
+      //  وتصادمان مشروعان يُسقطان الدمجَ لو نُقلت الصفوفُ كما هي:
+      //   ① `uq_pba_patient_branch` — الفرعُ نفسُه مُتاحٌ للملفّين معاً.
+      //   ② **فرعُ تسجيل الهدف** — إتاحتُه له لا معنى لها، والخادمُ يرفضها
+      //      أصلاً عند المنح، فلا تُخلَق من بابٍ خلفيّ هنا.
+      //  فيُحذف المكرَّرُ والزائدُ من صفوف المصدر **قبل** النقل، ويبقى الباقي.
+      await tx.execute(sql`
+        DELETE FROM patient_branch_access s
+         WHERE s.patient_id = ${sourceId}
+           AND (
+             s.branch_id = (SELECT branch_id FROM patients WHERE id = ${targetId})
+             OR EXISTS (
+               SELECT 1 FROM patient_branch_access t
+                WHERE t.patient_id = ${targetId} AND t.branch_id = s.branch_id
+             )
+           )
+      `);
+      await tx.execute(sql`
+        UPDATE patient_branch_access SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
       `);
       // ── سجلُّ التصحيح الإداريّ (ترحيل ٠٦٤) ───────────────────────────────
       //  **repoint بلا تصادمٍ ممكن**: فهرسُ التفرّد عليه على `followup_id`
@@ -3046,40 +3103,16 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async transferPatientToBranch(patientId: number, newBranchId: number): Promise<Patient | undefined> {
-    // Update patient's branch
-    const [updatedPatient] = await db.update(patients)
-      .set({ branchId: newBranchId })
-      .where(eq(patients.id, patientId))
-      .returning();
-    
-    if (!updatedPatient) return undefined;
-
-    // Update all visits for this patient to the new branch
-    await db.update(visits)
-      .set({ branchId: newBranchId })
-      .where(eq(visits.patientId, patientId));
-
-    // Update all payments for this patient to the new branch
-    await db.update(payments)
-      .set({ branchId: newBranchId })
-      .where(eq(payments.patientId, patientId));
-
-    // ══ وحالاتُ المريض تنتقل معه (ترحيل ٠٧٣) ═══════════════════════════
-    // `patient_cases.branch_id` كان يبقى على الفرع القديم بعد النقل، فكلّ
-    // حلقةِ جهازٍ أو أمرِ عملٍ **جديد** يُفتَح بعد النقل يشتقّ فرعَه من صفّ
-    // الحالة (`startDeviceEpisodeTx`) — فيُنسَب لفرعٍ لم يعد المريضُ فيه.
-    // **ولا يُعاد كتابةُ تاريخٍ قديم**: أوامرُ التصنيع وحلقاتُ الأجهزة وقيودُ
-    // الكلف والدفعاتُ السابقة تبقى بفروعها كما وقعت — هذا تصحيحٌ للفرع الذي
-    // تبدأ منه العملياتُ **الجديدة** فقط.
-    await db.update(patientCases)
-      .set({ branchId: newBranchId })
-      .where(eq(patientCases.patientId, patientId));
-
-    // Documents don't have branchId, they're linked to patient only
-
-    return updatedPatient;
-  }
+  // ══ **`transferPatientToBranch` أُزيل** (ترحيل ٠٨٠) ════════════════════
+  //  كان يعيد كتابة `patients.branch_id` و`visits.branch_id` و
+  //  `payments.branch_id` و`patient_cases.branch_id` **كلَّها**. فمريضٌ دفع
+  //  في كربلاء ثمّ جاء ذي قار كان مالُه يُنزَع من حسابات كربلاء بأثرٍ رجعيّ
+  //  ويُنسَب إلى فرعٍ لم يقبضه.
+  //
+  //  **وأُزيل ولم يتقاعد**: البابُ الذي يناديه تقاعد ٤٠٩ (فيقرأ عميلٌ قديم
+  //  سبباً)، أمّا الكاتبُ نفسُه فلا مُستدعيَ مشروعاً له — وإبقاءُ كاتبٍ يعيد
+  //  كتابة التاريخ الماليّ في المستودع يعني أنه سيُنادى يوماً بالسهو.
+  //  والبديلُ `server/patients/branch_access*.ts`: إتاحةٌ لا نقل.
 
   // Visits
   //

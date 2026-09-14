@@ -57,7 +57,8 @@ const PORT = 6862;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-عمليات-متوازية";
 const ADMIN = 9991, RECV = 9992, EXPERT = 9993, EXPERT2 = 9994, EXPERT_B2 = 9995;
-const USERS = [ADMIN, RECV, EXPERT, EXPERT2, EXPERT_B2];
+const RECV2 = 9996;
+const USERS = [ADMIN, RECV, EXPERT, EXPERT2, EXPERT_B2, RECV2];
 
 const S = {
   admin: {
@@ -67,6 +68,13 @@ const S = {
   recv: {
     userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "ريام", permissions: { canAddPatients: true },
+  },
+  //  **جلسةُ الفرع الثاني** — بها يُقاس «فرعُ الحركة» (ترحيل ٠٨٠): مَن يبيع
+  //  من الفرع ٢ تُنسَب عمليتُه للفرع ٢، ولو كان الملفُّ مسجَّلاً في الفرع ١.
+  branch2: {
+    userId: RECV2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
+    displayName: "استقبال الفرع الثاني",
+    permissions: { canAddPatients: true, canViewPatients: true },
   },
 };
 
@@ -180,6 +188,7 @@ async function main() {
     [EXPERT, "prosthetics_expert", "الخبير", 1, [1]],
     [EXPERT2, "prosthetics_expert", "الخبير الثاني", 1, [1]],
     [EXPERT_B2, "prosthetics_expert", "خبير الفرع الآخر", 2, [2]],
+    [RECV2, "reception", "استقبال الفرع الثاني", 2, [2]],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
              VALUES ($1,$2,'x',$4,$3,$5,$6::jsonb,true)
@@ -222,12 +231,18 @@ async function main() {
       // «طرفٌ كاملٌ قيد التصنيع بالفعل من الفرع القديم».
       const original = await mkExistingFullDevice(pid, caseId, 1, 1, EXPERT);
 
-      // «تُنقَل المريضةُ/المريض إلى فرعٍ آخر».
-      const transferred = await storage.transferPatientToBranch(pid, 2);
-      check(!!transferred && transferred.branchId === 2, "أ١. النقلُ ينجح ويحدّث فرع المريض", String(transferred?.branchId));
+      //  ══ «يصير المريضُ يُخدَم من فرعٍ آخر» — **إتاحةً لا نقلاً** (ترحيل ٠٨٠)
+      //  `transferPatientToBranch` أُزيل: كان يعيد كتابة فرع كلّ دفعةٍ وزيارةٍ
+      //  وحالة، فمالُ الفرع الأول يُنزَع منه بأثرٍ رجعيّ. والبديلُ يُتيح الملفَّ
+      //  للفرع الثاني، **وفرعُ التسجيل وخيطُ الحالات يبقيان كما هما** — وهذا
+      //  ما يُقاس أدناه صراحةً.
+      const granted = await http("POST", `/api/patients/${pid}/branch-access`, S.admin,
+        { branchId: 2, moveOpenOperations: false });
+      check(granted.status === 201, "أ١. الإتاحةُ لفرعٍ ثانٍ تنجح", JSON.stringify(granted.body));
+      const [patAfter] = await q(`SELECT branch_id FROM patients WHERE id=$1`, [pid]);
       const caseAfter = (await db.select().from(patientCases).where(eq(patientCases.id, caseId)))[0];
-      same("أ٢. **وخيطُ الحالات ينتقل معه** — إصلاحٌ مطلوب لهذه الحادثة بعينها",
-        caseAfter.branchId, 2);
+      same("أ٢. **وفرعُ التسجيل وخيطُ الحالات كما هما** — لا يُعاد كتابةُ تاريخ",
+        [Number(patAfter.branch_id), caseAfter.branchId], [1, 1]);
       const origEpBefore = await episodeOf(original.episodeId);
       const origWoBefore = await orderOf(original.workOrderId);
       same("أ٣. **والعمليةُ القديمة تبقى بفرعها التاريخيّ** — لا يُعاد كتابة تاريخٍ",
@@ -237,7 +252,7 @@ async function main() {
       const r = await sale({
         patientId: pid, component: "socket", expertUserId: EXPERT_B2,
         originalPrice: 40_000, discountAmount: 0, paidNow: 0,
-      }, S.admin);
+      }, S.branch2);
       check(r.status === 201, "أ٤. **البيعُ الجديد ينجح** — لا يُرفَض لوجود عمليةٍ أخرى مفتوحة",
         JSON.stringify(r.body));
       check(r.body.deviceEpisodeId !== original.episodeId && r.body.workOrderId !== original.workOrderId,
