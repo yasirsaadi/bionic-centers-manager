@@ -136,9 +136,9 @@ export function AdministrativeReversalDialog({
         title: intent === "replace_requested_item"
           ? `تم تصحيح العملية وفتح طلب جديد: ${replacementLabel || "الطلب الصحيح"}`
           : mode === "purchase_only" ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
-        //  **ويُقال ما وقع للمال بالضبط** — ثلاثُ حالاتٍ لا حالتان: رُدّ ·
-        //  حالتان لا ثالثة: رُدَّ المالُ · أو لم يكن هناك مالٌ يُردّ. **ولا
-        //  «تسويةٌ معلَّقة»** — لم يعد للنظام بابٌ يُخلّفها.
+        //  **ويُقال ما وقع للمال بالضبط** — حالتان لا ثالثة: رُدَّ المالُ ·
+        //  أو لم يكن هناك مالٌ يُردّ. **ولا «تسويةٌ معلَّقة»** — لم يعد
+        //  للنظام بابٌ يُخلّفها.
         description: Number(out?.refundedAmount ?? 0) > 0
           ? `تم رد ${Number(out.refundedAmount).toLocaleString("en-US")} د.ع للمريض`
             + (out?.refundJournalPosted === false
