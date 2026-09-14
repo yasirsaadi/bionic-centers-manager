@@ -50,7 +50,7 @@ import { assertNameAvailableForRegistration, assertPhoneAvailable } from "./pati
 import {
   registerWhatsappWelcome, ensureWhatsappContact, revokeWhatsappContacts,
 } from "./patient_notifications/registration";
-import { FIRST_STAGE } from "@shared/manufacturing";
+import { FIRST_STAGE, SERVICE_TYPE_LABELS } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import { effectiveExamForEpisode, deviceSpecsFromPrescription, hasAnySpec } from "./medical/episode_prescription";
 import type { DbTransaction as DbTransactionLike } from "./events/store";
@@ -2627,6 +2627,53 @@ export class DatabaseStorage implements IStorage {
         throw new Error("أحد الملفين في المحذوفات — استعده أولاً ثم أعد الدمج");
       }
 
+      // ══ **متابعتان حيّتان بلا حلقة لنفس الخدمة — يُرفض الدمج كلُّه** ═════
+      //  الفهرسُ `uq_pef_active_legacy` فريدٌ على (مريض، خدمة) **للصفوف بلا
+      //  حلقة وحدها**. فالتصادمُ الحقيقيُّ الوحيد أن يحمل الملفّان معاً
+      //  متابعةً حيّةً **بلا حلقة** لنفس الخدمة — وحينها لا يُعرَف أيُّ
+      //  القرارين هو قرارُ المريض، ولا مرساةَ جهازٍ تفرّق بينهما.
+      //
+      //  **والرفضُ قبل أوّل كتابة** — لا نصفُ دمج: المعاملةُ لم تلمس صفّاً
+      //  بعد، فالردُّ يترك الملفّين كما وجدهما بالضبط.
+      //
+      //  ══ ولماذا لا يُغلق شيءٌ بدلاً من ذلك ══════════════════════════════
+      //  كان الدمجُ يُغلق متابعةَ المصدر `closed_without_purchase` ويُلحق
+      //  حدثاً بها — **وهذا اختلاقُ قرارٍ لم يقع**: «لم يشترِ» واقعةٌ قالها
+      //  المريض، وتظهر في «تم الحسم» (§4.l) قرارَ شراءٍ حقيقياً يقرؤه
+      //  الموظّفُ والتقارير. ودمجُ ملفّين إجراءٌ إداريّ لا يقول عن رغبة
+      //  المريض شيئاً. **فلا تُغلَق متابعةٌ بسبب الدمج بعد اليوم إطلاقاً.**
+      //
+      //  **والحلقاتُ المختلفة تتعايش**: `uq_pef_active_episode` فريدٌ على
+      //  `device_episode_id` وحده لا على المريض، فمتابعتان لحلقتين مختلفتين
+      //  تبقيان حيّتين معاً بعد الدمج — تماماً كما صارت الحلقتان المفتوحتان
+      //  واقعةً سليمة بعد رفع `uq_pde_case_open` (ترحيل ٠٧٣). وكذلك متابعةٌ
+      //  بلا حلقة مع أخرى لها حلقة: الفهرسُ لا يرى الثانية أصلاً.
+      const legacyClash = await tx.execute<{ service_type: string }>(sql`
+        SELECT DISTINCT s.service_type FROM post_exam_followups s
+         WHERE s.patient_id = ${sourceId}
+           AND s.device_episode_id IS NULL
+           AND s.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
+           AND EXISTS (
+             SELECT 1 FROM post_exam_followups t
+              WHERE t.patient_id = ${targetId}
+                AND t.service_type = s.service_type
+                AND t.device_episode_id IS NULL
+                AND t.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
+           )
+      `);
+      const clashed = (legacyClash.rows ?? []).map((r) => String(r.service_type));
+      if (clashed.length > 0) {
+        const names = clashed
+          .map((t) => SERVICE_TYPE_LABELS[t as keyof typeof SERVICE_TYPE_LABELS] ?? t)
+          .join(" و");
+        throw new Error(
+          `لا يمكن الدمج: الملفّان يحملان معاً قراراً معلّقاً بعد المعاينة`
+          + ` لنفس الخدمة (${names}) بلا ارتباطٍ بجهازٍ بعينه.`
+          + ` احسم أحد القرارين من بطاقة المريض — «إتمام البيع» أو «لم يشترِ» —`
+          + ` ثم أعد الدمج. ولم يتغيّر شيء في الملفّين.`,
+        );
+      }
+
       // ══ حلقتان مفتوحتان من النوع نفسه — لم تعد مانعةً للدمج (ترحيل ٠٧٣)
       // ═══════════════════════════════════════════════════════════════════
       // كانت هذه النقطة تردّ الدمج لمجرّد أن كلا الملفّين يحمل حلقةً مفتوحة
@@ -2707,11 +2754,9 @@ export class DatabaseStorage implements IStorage {
       // ── متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ──────────────────────────────
       // تشير إلى الحالة، فتُرمَّم مثل الزيارات والدفعات قبل حذف حالة المصدر.
       //
-      // **والتصادم مشروع**: كلا الملفّين قد يحمل متابعةً حيّةً للخدمة نفسها،
-      // وإعادةُ التوجيه وحدها كانت ستنتهك `uq_pef_active_legacy` وتُسقط
-      // الدمج — نفس علّة `patient_contacts` حرفياً. فمتابعةُ المصدر تُغلق
-      // **قبل** نقلها: تُنقل محفوظةً كتاريخ كامل، والحيّة تبقى واحدة.
-      // والإغلاق يُلحق حدثه كي لا يظهر السطر مغلقاً بلا سبب.
+      // **والتصادمُ الحقيقيُّ رُدّ قبل أوّل كتابة** (الحارسُ أعلاه): متابعتان
+      // حيّتان **بلا حلقة** لنفس الخدمة تُسقطان الدمجَ كلَّه برسالةٍ صريحة.
+      // وما عداهما يتعايش، فلا يُغلَق صفٌّ واحد بسبب الدمج.
       for (const { from, to } of caseRemap) {
         await tx.execute(sql`
           UPDATE post_exam_followups SET case_id = ${to} WHERE case_id = ${from}
@@ -2724,34 +2769,8 @@ export class DatabaseStorage implements IStorage {
            WHERE case_id = ${from} AND patient_id = ${sourceId}
         `);
       }
-      const collided = await tx.execute<{ id: number; branch_id: number | null }>(sql`
-        SELECT s.id, s.branch_id FROM post_exam_followups s
-         WHERE s.patient_id = ${sourceId}
-           AND s.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
-           AND EXISTS (
-             SELECT 1 FROM post_exam_followups t
-              WHERE t.patient_id = ${targetId}
-                AND t.service_type = s.service_type
-                AND t.status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
-           )
-      `);
-      for (const row of (collided.rows ?? [])) {
-        await tx.execute(sql`
-          UPDATE post_exam_followups
-             SET status = 'closed_without_purchase', closed_reason = 'other',
-                 closed_at = NOW(), last_note = 'أُغلقت تلقائياً عند دمج الملفّين',
-                 updated_at = NOW()
-           WHERE id = ${row.id}
-        `);
-        await tx.execute(sql`
-          INSERT INTO post_exam_followup_events
-            (followup_id, patient_id, branch_id, event_type, to_status, reason, note, payload)
-          VALUES (${row.id}, ${sourceId}, ${row.branch_id}, 'closed_without_purchase',
-                  'closed_without_purchase', 'other',
-                  'أُغلقت تلقائياً عند دمج الملفّين — متابعة الملفّ الباقي هي الحيّة',
-                  ${JSON.stringify({ mergedInto: targetId })}::jsonb)
-        `);
-      }
+      //  **ولا إغلاقَ هنا**: التصادمُ الحقيقيُّ الوحيد رُدّ قبل أوّل كتابة
+      //  أعلاه، وما بقي يتعايش. فالمتابعاتُ تُنقَل بحالتها كما هي.
       await tx.execute(sql`
         UPDATE post_exam_followups SET patient_id = ${targetId} WHERE patient_id = ${sourceId}
       `);
