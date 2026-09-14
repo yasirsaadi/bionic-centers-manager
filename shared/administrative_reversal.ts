@@ -275,3 +275,48 @@ export function refundQuestionRequired(params: {
   const paid = typeof params.paidAmount === "number" ? params.paidAmount : Number.NaN;
   return Number.isFinite(paid) && paid > 0;
 }
+
+// ══ وإن لم يُرجَع المبلغ — سؤالٌ ثانٍ، خياران ═══════════════════════════
+//
+//  «لا» ليست جواباً ينتهي عنده الأمر: المبلغُ ما زال عند المركز، والمسؤولُ
+//  أمام قرارٍ حقيقيّ — **أيمضي في الإلغاء ويُسوّي المبلغَ لاحقاً، أم يتراجع
+//  عن الإلغاء أصلاً؟** وبلا هذا السؤال كان «لا» تمرّ صامتةً ويُلغى، فيبقى
+//  الرصيدُ بلا قرارٍ سجّله أحد.
+//
+//  **وهذه المرحلةُ تسأل وتُلزِم فقط كسابقتها**: الجوابُ لا يُرسَل إلى الخادم،
+//  ولا يغيّر ديناراً، ولا يغيّر تنفيذَ الإلغاء بحرف. الذي يفعله في الشاشة:
+//  **«أمضِ» يفتح التأكيد · و«تراجع» يُغلق النافذة** — وذاك ليس تغييراً في
+//  التنفيذ بل امتناعٌ عنه، وهو معنى الخيار نفسِه.
+
+/** ما يُقرأ فوق الخيارين — وصفُ حالٍ لا سياسةٌ تُخترَع. */
+export const UNREFUNDED_CHOICE_LABEL = "المبلغ لم يُرجَع بعد — ماذا تريد؟";
+
+export const UNREFUNDED_CHOICES = ["proceed", "abort"] as const;
+export type UnrefundedChoice = (typeof UNREFUNDED_CHOICES)[number];
+
+export const UNREFUNDED_CHOICE_LABELS: Record<UnrefundedChoice, string> = {
+  proceed: "إلغاء العملية الآن وتصفي المبلغ لاحقاً",
+  abort: "التراجع عن الإلغاء",
+};
+
+export function isUnrefundedChoice(v: unknown): v is UnrefundedChoice {
+  return typeof v === "string" && (UNREFUNDED_CHOICES as readonly string[]).includes(v);
+}
+
+/**
+ *  **متى يُطرَح الثاني** — فرعٌ من الأوّل لا سؤالٌ مستقلّ.
+ *
+ *  شرطُه أن يكون الأوّلُ مطروحاً أصلاً (`refundQuestionRequired`) **وأن يكون
+ *  الجوابُ «لا» حرفاً**. فـ«نعم» تُنهي الأمر — لا رصيدَ معلَّقاً يُقرَّر فيه؛
+ *  و`""` تعني أنه لم يُجب بعد، **فلا يُقفَز إلى الفرع قبل أصله**.
+ *
+ *  **ولا يُقاس بـ`!== "yes"`**: الفراغُ ليس «لا»، وقياسُه عليه كان يُظهر
+ *  السؤالَ الثاني قبل أن يُجاب الأوّل.
+ */
+export function unrefundedChoiceRequired(params: {
+  mode: ReversalMode | "" | null | undefined;
+  paidAmount: unknown;
+  refundAnswer: RefundAnswer | "" | null | undefined;
+}): boolean {
+  return refundQuestionRequired(params) && params.refundAnswer === "no";
+}

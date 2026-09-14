@@ -15,7 +15,10 @@ import {
   CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS, CORRECTION_INTENT_MODE,
   replacementSummaryLine,
   REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL, refundQuestionRequired,
+  UNREFUNDED_CHOICES, UNREFUNDED_CHOICE_LABELS, UNREFUNDED_CHOICE_LABEL,
+  unrefundedChoiceRequired,
   type CorrectionIntent, type RefundAnswer, type ReversalMode, type ReversalPreview,
+  type UnrefundedChoice,
 } from "@shared/administrative_reversal";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
@@ -59,12 +62,14 @@ export function AdministrativeReversalDialog({
   //  جوابُ «هل تم إرجاع المبلغ للمريض؟» — يمنع التأكيدَ حتى يُختار، **ولا
   //  يُرسَل ولا يغيّر ديناراً** (المرحلةُ الأولى، قرارُ المالك).
   const [refundAnswer, setRefundAnswer] = useState<RefundAnswer | "">("");
+  //  وفرعُ «لا»: أيمضي ويُسوّي لاحقاً، أم يتراجع؟ **لا يُرسَل هو الآخر.**
+  const [unrefundedChoice, setUnrefundedChoice] = useState<UnrefundedChoice | "">("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
     setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
-    setRefundAnswer("");
+    setRefundAnswer(""); setUnrefundedChoice("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -102,7 +107,7 @@ export function AdministrativeReversalDialog({
     if (intent !== "replace_requested_item") setReplacementRequestedItem("");
     //  **وجوابُ الإرجاع كذلك**: أُجيب عن «إلغاءٍ كامل» ثمّ بُدِّلت النيّةُ
     //  ثمّ عاد إليها — فيُسأل من جديد، ولا يُحمَل جوابٌ قديم على قرارٍ جديد.
-    setRefundAnswer("");
+    setRefundAnswer(""); setUnrefundedChoice("");
   }, [intent]);
 
   const run = useMutation({
@@ -167,9 +172,15 @@ export function AdministrativeReversalDialog({
   ] : [];
   //  **السؤالُ يُطرح بالقاعدة المشتركة** — لا بشرطٍ مكتوبٍ هنا ينحرف عنها.
   const refundRequired = refundQuestionRequired({ mode, paidAmount: preview?.paidAmount });
+  const unrefundedRequired = unrefundedChoiceRequired({
+    mode, paidAmount: preview?.paidAmount, refundAnswer,
+  });
   const canRun = Boolean(intent) && reasonNote.trim().length > 0
     && (!replacing || Boolean(replacementRequestedItem))
     && (!refundRequired || Boolean(refundAnswer))
+    //  **وفرعُ «لا» لا يُتجاوَز بالسكوت**: «تراجع» يُغلق النافذة، فلا يبقى
+    //  ما يفتح التأكيدَ إلّا «أمضِ وسوِّ لاحقاً» صراحةً.
+    && (!unrefundedRequired || unrefundedChoice === "proceed")
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -324,7 +335,9 @@ export function AdministrativeReversalDialog({
                     <button
                       key={a}
                       type="button"
-                      onClick={() => setRefundAnswer(a)}
+                      //  **وتبديلُ الجواب يُسقط فرعَه**: قرارٌ اتُّخذ عن
+                      //  «لا» لا يُحمَل على «لا» ثانيةٍ بعد مرورٍ بـ«نعم».
+                      onClick={() => { setRefundAnswer(a); setUnrefundedChoice(""); }}
                       data-testid={`option-refund-${a}`}
                       className={`flex-1 rounded-lg border p-2 text-center font-semibold transition ${
                         refundAnswer === a ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
@@ -333,6 +346,37 @@ export function AdministrativeReversalDialog({
                     </button>
                   ))}
                 </div>
+
+                {/*  ══ **فرعُ «لا» — خياران، والثاني امتناعٌ لا تنفيذ** ═════
+                    «أمضِ وسوِّ لاحقاً» يفتح التأكيدَ ولا يفعل شيئاً بنفسه؛
+                    و«التراجع عن الإلغاء» **يُغلق النافذة** — وهو معنى الخيار
+                    حرفياً: لا يُنفَّذ شيء. **ولا نداءَ ولا دينارَ في أيٍّ
+                    منهما**، ولا يُرسَل الجوابُ إلى الخادم. */}
+                {unrefundedRequired && (
+                  <div className="space-y-2 border-t border-sky-200 pt-2"
+                    data-testid="box-unrefunded-choice">
+                    <Label className="font-semibold text-sky-900">
+                      {UNREFUNDED_CHOICE_LABEL} *
+                    </Label>
+                    <div className="space-y-2">
+                      {UNREFUNDED_CHOICES.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => {
+                            setUnrefundedChoice(c);
+                            if (c === "abort") onOpenChange(false);
+                          }}
+                          data-testid={`option-unrefunded-${c}`}
+                          className={`w-full rounded-lg border p-2 text-right font-semibold transition ${
+                            unrefundedChoice === c ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
+                        >
+                          {UNREFUNDED_CHOICE_LABELS[c]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
