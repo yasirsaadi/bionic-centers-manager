@@ -38,6 +38,7 @@ import {
 import {
   FOLLOWUP_ADMIN_VOID_STATUS, REVERSAL_EVENT_TITLES, reversalCostNote,
   reversalReasonLabel, replacementSummaryLine,
+  REFUND_ANSWER_REQUIRED_ERROR, isRefundAnswer, refundQuestionRequired,
   type CorrectionIntent, type ReversalMode, type ReversalPreview,
   type ReversalImpactLine,
 } from "@shared/administrative_reversal";
@@ -501,6 +502,12 @@ export async function executeReversal(params: {
   actor: { userId: number | null; userName: string | null };
   audit?: { ipAddress?: string | null; userAgent?: string | null };
   replacementRequestedItem?: string | null;
+  /**
+   *  جوابُ «هل تم إرجاع المبلغ للمريض؟» كما وصل من الشاشة — **خامٌّ عمداً**:
+   *  يُتحقَّق منه هنا تحت القفل بالمبلغ المقروء من القاعدة، لا في النقطة
+   *  بلقطةٍ قد تكون بائتة. ولا يُخزَّن ولا يحرّك ديناراً في هذه المرحلة.
+   */
+  refundAnswer?: unknown;
 }): Promise<ReversalOutcome> {
   const reasonNote = String(params.reasonNote ?? "").trim();
   if (!reasonNote) throw new ReversalError("اكتب سبب التصحيح", 400);
@@ -574,6 +581,23 @@ export async function executeReversal(params: {
           "الطلب الصحيح غير صالح لهذه الخدمة أو مطابقٌ للطلب الحالي", 400,
         );
       }
+    }
+
+    // ══ **جوابُ إرجاع المبلغ — عقدٌ يسبق أوّلَ كتابة** ══════════════════
+    //  والشرطُ هو `refundQuestionRequired` **نفسُه** الذي قرّر أن تعرض
+    //  الشاشةُ السؤال — فلا تُسأل هناك ويُقبَل الصمتُ هنا، ولا يُطلَب هنا
+    //  جوابٌ لم يُسأل هناك.
+    //
+    //  **والمبلغُ `op.paidAmount` مقروءٌ تحت القفل** (②) لا من جسم الطلب:
+    //  دفعةٌ قُبضت بعد المعاينة تجعل السؤالَ واجباً ولو لم تعرضه الشاشةُ
+    //  قطّ — فيُردّ الطلبُ بدل أن يمضي إلغاءٌ لم يُقرَّر فيه مصيرُ المال.
+    //
+    //  **و«لا» جوابٌ صحيح يمضي**: الخادمُ يحرس **وجودَ قرارٍ** لا مضمونَه؛
+    //  المضيُّ مع رصيدٍ لم يُردّ قرارٌ قائمٌ ومشروع (يبقى موسوماً
+    //  `requires_financial_settlement` كما كان). والمرفوضُ هو الصمت.
+    if (refundQuestionRequired({ mode: params.mode, paidAmount: op.paidAmount })
+        && !isRefundAnswer(params.refundAnswer)) {
+      throw new ReversalError(REFUND_ANSWER_REQUIRED_ERROR, 400);
     }
 
     const sale = saleAmountOf(op);

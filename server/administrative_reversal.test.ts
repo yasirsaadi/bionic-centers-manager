@@ -448,6 +448,10 @@ async function main() {
         followupId: f.id, intent: "replace_requested_item",
         replacementRequestedItem: "socket",
         reasonNote: "المريض يريد قالباً لا طرفاً كاملاً",
+        //  **عقدٌ قائم**: إلغاءٌ كاملٌ على عمليةٍ لها مبلغٌ مقبوض لا يمضي
+        //  بلا جوابٍ عن «هل تم إرجاع المبلغ للمريض؟» — والجوابُ هنا لا
+        //  يغيّر شيئاً ممّا يلي: لا ردَّ مال، ولا دفعةَ تُمَسّ (٤٥/٤٨).
+        refundAnswer: "yes",
         stateStamp: pv.body?.stateStamp,
       });
       same("٢٠. **الإلغاءُ الكامل ينفَّذ**", r.status, 200);
@@ -680,7 +684,7 @@ async function main() {
         (await execute({
           followupId: d.followupId, mode: "full_operation",
           reasonCode: "wrong_service_or_device", reasonNote: "خدمةٌ خاطئة",
-          stateStamp: pv.body?.stateStamp,
+          stateStamp: pv.body?.stateStamp, refundAnswer: "yes",
         })).status, 200);
       const s = await shape(d.patientId);
       same("٤٥. **الدفعةُ باقيةٌ بحرفها** — ولا ردَّ اختُرع",
@@ -805,7 +809,7 @@ async function main() {
         (await execute({
           followupId: d.followupId, mode: "full_operation",
           reasonCode: "other", reasonNote: "بعد التحديث",
-          stateStamp: pv2.body?.stateStamp,
+          stateStamp: pv2.body?.stateStamp, refundAnswer: "yes",
         })).status, 200);
     }
 

@@ -119,6 +119,17 @@ export function AdministrativeReversalDialog({
         body: JSON.stringify({
           ...target, intent, replacementRequestedItem, reasonNote: reasonNote.trim(),
           stateStamp: preview?.stateStamp,
+          //  **جوابُ الإرجاع يُرسَل حين يلزم وحدَه** — أي مع «إلغاء العملية
+          //  بالكامل» على عمليةٍ لها مبلغٌ مقبوض. و«التراجعُ عن الشراء» لا
+          //  سؤالَ فيه أصلاً، فحملُ جوابٍ إليه يُوهم قارئَ الطلب أن قراراً
+          //  مالياً اتُّخذ هناك.
+          //
+          //  **وبالقاعدة المشتركة نفسِها التي قرّرت أن يُعرَض السؤال** — لا
+          //  بشرطٍ ثانٍ يُكتب هنا وينحرف عنها يوماً. والخادمُ هو الحاكمُ على
+          //  كلّ حال: يقرأ المبلغَ تحت القفل ويردّ التنفيذَ إن لزم الجوابُ
+          //  ولم يصل — فلقطةٌ بائتة هنا تُردّ هناك، لا تمضي صامتة.
+          ...(refundQuestionRequired({ mode, paidAmount: preview?.paidAmount }) && refundAnswer
+            ? { refundAnswer } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json())?.error || "تعذّر تنفيذ التصحيح");
