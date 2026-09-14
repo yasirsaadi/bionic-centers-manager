@@ -158,6 +158,17 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         //  **والبديلُ لا يُقبل إلّا مع نيّة الاستبدال**: قيمةٌ عالقةٌ في جسم
         //  الطلب لا تفتح طلباً لم يطلبه أحد.
         replacementRequestedItem: intent === "replace_requested_item" ? rawReplacement : null,
+        //  ══ **جوابُ إرجاع المبلغ يُمرَّر خامّاً ولا يُفحَص هنا** ═══════════
+        //   لأن الحكمَ يحتاج **المبلغَ المقبوض**، وهو لا يُعرَف إلّا بقراءةِ
+        //   العملية تحت القفل. ففحصُه هنا بلقطةٍ قبل المعاملة نافذةٌ مفتوحة:
+        //   دفعةٌ تُقبَض بينهما فيمضي إلغاءٌ بلا جواب. والمنسّقُ يردّ ٤٠٠
+        //   قبل أن يكتب حرفاً — للصمت `REFUND_ANSWER_REQUIRED_ERROR`،
+        //   ولـ«لا» `REFUND_NOT_DONE_ERROR`: قرارٌ بعدم الردّ يُلغي المحاولة.
+        //
+        //   **ولا يُصفَّر لغير الإلغاء الكامل**: `refundQuestionRequired`
+        //   هناك تُسقطه بنفسها لـ«التراجع عن الشراء»، فتصفيرُه هنا نسخةٌ
+        //   ثانية من الشرط تنحرف يوماً.
+        refundAnswer: req.body?.refundAnswer,
       });
       res.json(outcome);
     } catch (err: any) {

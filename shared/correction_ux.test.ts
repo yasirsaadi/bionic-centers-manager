@@ -24,6 +24,9 @@ import {
   CORRECTION_INTENTS, CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS,
   CORRECTION_INTENT_MODE, CORRECTION_INTENT_REASON, isCorrectionIntent,
   replacementSummaryLine, REVERSAL_REASON_CODES,
+  REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL,
+  isRefundAnswer, refundQuestionRequired,
+  REFUND_NOT_DONE_ERROR,
 } from "./administrative_reversal";
 
 // ══ (أ) حالةُ العرض — أربعُ حالاتٍ لا واحدة ═══════════════════════════════
@@ -231,5 +234,147 @@ assert.ok(!voidBranch.includes("AdministrativeReversalDialog"),
   "التصحيحُ تمّ — ولا يُفتَح عليه بابُ تنفيذٍ ثانٍ");
 assert.ok(!voidBranch.includes("setReversalOpen"),
   "ولا زرَّ يفتحه");
+
+// ══ (هـ) **سؤالُ إرجاع المبلغ** — يُطرَح ويُلزِم، ولا يفعل شيئاً بعد ═══════
+//  المرحلةُ الأولى بقرار المالك: السؤالُ يظهر ويمنع التأكيد، **ولا مالَ
+//  يتحرّك ولا تنفيذَ الإلغاء يتغيّر**. فما يُختبَر هنا **ظهورُه وإلزامُه**.
+
+// (هـ.١) القاعدةُ الخالصة — شرطان معاً لا أحدُهما.
+assert.equal(refundQuestionRequired({ mode: "full_operation", paidAmount: 250_000 }), true,
+  "إلغاءٌ كامل ومبلغٌ مقبوض ⟶ يُسأل");
+assert.equal(refundQuestionRequired({ mode: "full_operation", paidAmount: 1 }), true,
+  "ودينارٌ واحد مبلغٌ أيضاً");
+
+//  **«تراجعٌ عن الشراء فقط» لا يُسأل**: الطلبُ يبقى حيّاً ليُشترى صحيحاً،
+//  والمالُ يُستعمل فيه — فلا رصيدَ معلَّقٌ يُسأل عن ردّه.
+assert.equal(refundQuestionRequired({ mode: "purchase_only", paidAmount: 250_000 }), false,
+  "تراجعٌ عن الشراء ⟶ لا يُسأل ولو كان هناك مبلغ");
+
+//  **وبلا مبلغٍ لا سؤال** — وسؤالٌ بلا موضوعٍ يعلّم الضغطَ بلا قراءة.
+assert.equal(refundQuestionRequired({ mode: "full_operation", paidAmount: 0 }), false);
+//  والسالبُ مجموعُ دفعاتٍ ردَّ المركزُ أكثرَ ممّا قبض (§٤.r) — لا شيءَ عنده يُردّ.
+assert.equal(refundQuestionRequired({ mode: "full_operation", paidAmount: -50_000 }), false,
+  "مجموعٌ سالبٌ ليس مبلغاً عند المركز");
+
+//  ولا وضعَ بعد ⟶ لا سؤال: الموظّفُ لم يختر النيّةَ أصلاً.
+assert.equal(refundQuestionRequired({ mode: "", paidAmount: 250_000 }), false);
+assert.equal(refundQuestionRequired({ mode: null, paidAmount: 250_000 }), false);
+assert.equal(refundQuestionRequired({ mode: undefined, paidAmount: 250_000 }), false);
+
+//  **ومبلغٌ غير رقميّ لا يُخمَّن**: معاينةٌ لم تصل بعد، أو عميلٌ بائت.
+for (const bad of [undefined, null, "250000", Number.NaN, Infinity, -Infinity, {}, []]) {
+  assert.equal(refundQuestionRequired({ mode: "full_operation", paidAmount: bad }), false,
+    `مبلغٌ غيرُ رقميّ لا يطرح السؤال: ${JSON.stringify(bad) ?? String(bad)}`);
+}
+
+// (هـ.٢) النصوصُ — واحدةٌ يقرؤها الطرفان.
+assert.equal(REFUND_QUESTION_LABEL, "هل تم إرجاع المبلغ للمريض؟");
+assert.deepEqual([...REFUND_ANSWERS], ["yes", "no"], "خياران لا ثالث");
+assert.equal(REFUND_ANSWER_LABELS.yes, "نعم");
+assert.equal(REFUND_ANSWER_LABELS.no, "لا");
+assert.ok(REFUND_ANSWERS.every((a) => REFUND_ANSWER_LABELS[a]), "ولا خيارَ بلا نصّ");
+assert.ok(isRefundAnswer("yes") && isRefundAnswer("no"));
+assert.ok(!isRefundAnswer("maybe") && !isRefundAnswer("") && !isRefundAnswer(null));
+
+// (هـ.٣) عقدُ الشاشة — يظهر، ويُلزِم، **ويُرسَل حين يلزم**.
+assert.ok(dialog.includes("refundQuestionRequired({ mode, paidAmount: preview?.paidAmount })"),
+  "الشاشةُ تسأل بالقاعدة المشتركة لا بشرطٍ ثانٍ ينحرف");
+assert.ok(!/mode === "full_operation"/.test(dialog),
+  "ولا تُعيد كتابةَ الشرط يدوياً — لا للعرض ولا للإرسال");
+assert.ok(dialog.includes("{REFUND_QUESTION_LABEL}"), "والنصُّ من المفردات المشتركة");
+assert.ok(dialog.includes('data-testid="box-refund-question"'));
+assert.ok(dialog.includes('data-testid={`option-refund-${a}`}'), "وخياراه موسومان");
+assert.ok(dialog.includes("REFUND_ANSWERS.map"), "وُيبنيان من القائمة القانونية");
+//  **وإلزاميّ بأضيقَ من «أيُّ جواب»**: «نعم» وحدها تفتح التأكيد — يُفصَّل
+//  في القسم «و» أدناه مع حذف السؤال الثاني.
+assert.ok(dialog.includes('(!refundRequired || refundAnswer === "yes")'),
+  "**وإلزاميّ**: لا تأكيدَ قبل «نعم»");
+//  ولا يبقى جوابٌ من عمليةٍ سابقة ولا من نيّةٍ سابقة.
+assert.ok(/setMode\(""\); setIntent\(""\);[\s\S]{0,120}setRefundAnswer\(""\)/.test(dialog),
+  "يُمسَح عند فتح عمليةٍ أخرى");
+assert.ok(/if \(intent !== "replace_requested_item"\)[\s\S]{0,400}setRefundAnswer\(""\)/.test(dialog),
+  "وعند تبديل النيّة");
+
+//  **ويُرسَل مع التنفيذ — بالشرط المشترك نفسِه لا بنسخةٍ ثانية منه.**
+//   وذاك ما يجعل «يُرسَل حين يلزم» ثابتاً لا مصادفة: القاعدةُ التي تقرّر
+//   أن يُعرَض السؤالُ هي بعينها التي تقرّر أن يُرسَل جوابُه — فلا حالةَ
+//   يُسأل فيها ولا يُرسَل، ولا حالةَ يُرسَل فيها جوابٌ لم يُسأل عنه.
+//   **و«التراجعُ عن الشراء» يسقط منها تلقائياً** (`refundQuestionRequired`
+//   تردّه `false`)، فلا يحمل طلبُه جواباً يُوهم بقرارٍ ماليٍّ هناك.
+const executeBody = dialog.split('"/api/admin/operation-reversal/execute"')[1]
+  ?.split("onSuccess")[0] ?? "";
+assert.ok(executeBody.length > 100, "جسمُ التنفيذ مقروء");
+assert.ok(executeBody.includes("stateStamp: preview?.stateStamp"), "والختمُ ما زال فيه");
+assert.ok(executeBody.includes("refundAnswer"),
+  "**والجوابُ يُرسَل مع التنفيذ**");
+assert.ok(
+  executeBody.includes(
+    "...(refundQuestionRequired({ mode, paidAmount: preview?.paidAmount }) && refundAnswer"),
+  "**وبالشرط المشترك نفسِه** — فلا يُرسَل إلّا مع الإلغاء الكامل ذي المبلغ");
+//  **ولا يُرسَل فارغاً**: `&& refundAnswer` تُسقط `""`، فلا يصل الخادمَ مفتاحٌ
+//  بقيمةٍ فارغة يُقرأ «أُجيب» وهو لم يُجَب.
+assert.ok(executeBody.includes("&& refundAnswer"),
+  "ولا يُرسَل جوابٌ فارغ");
+
+// (هـ.٤) **والسؤالُ واجهةٌ محضة — ولا بابَ ثالثاً يفتحه.**
+//  أوّلُ صياغةٍ أثبتت هذا بـ`git diff origin/main` على مسارات المال —
+//  **وذاك ليس ثابتاً بل واقعةُ مراجعةٍ**: يسقط في أيّ نسخةٍ بلا المرجع
+//  `origin/main` (أرشيفٌ، أو استنساخٌ ضحل) بـ`fatal: bad revision` فيقتل
+//  الملفَّ كلَّه لا تأكيداً واحداً، **ويحمرّ لأيّ فرعٍ لاحقٍ يمسّ تلك
+//  المسارات بحقّ**. (أمسكه مراجعٌ آليّ على #٢٩٩ — وكان الموضعُ الثاني لي.)
+//
+//  والثابتُ الحقيقيُّ الدائم: النافذةُ لا تعرف إلّا بابَيها القائمين،
+//  فسؤالٌ أضيف إليها لا يستطيع أن يحرّك ديناراً بحالٍ — ويُقاس بلا git.
+const dialogCalls = [...dialog.matchAll(/fetch\("([^"]+)"/g)].map((m) => m[1]);
+assert.deepEqual(dialogCalls, [
+  "/api/admin/operation-reversal/preview",
+  "/api/admin/operation-reversal/execute",
+], "بابان لا ثالث — ولا نداءَ مالٍ أضافه السؤال");
+
+// ══ (و) **فرعُ «لا» — امتناعٌ لا تنفيذ، بلا سؤالٍ ثانٍ** ════════════════════
+//  السؤالُ الثاني («أمضِ وسوِّ لاحقاً» / «تراجع») **حُذف كاملاً**: خيارُ
+//  «سوِّ لاحقاً» هو بعينه ما كان يُخلّف رصيداً لا يتذكّره أحد. فصار الجوابُ
+//  ثنائياً بلا فرع: **«نعم» تفتح التأكيد · و«لا» تُغلق النافذة**.
+
+// (و.١) **لا أثرَ لفكرة السؤال الثاني في المفردات المشتركة.**
+const sharedSrc = fs.readFileSync("shared/administrative_reversal.ts", "utf8");
+for (const gone of [
+  "UNREFUNDED_CHOICE", "UNREFUNDED_CHOICES", "unrefundedChoiceRequired",
+  "UnrefundedChoice", "isUnrefundedChoice",
+]) {
+  assert.ok(!sharedSrc.includes(gone), `حُذف من المفردات المشتركة: ${gone}`);
+  assert.ok(!dialog.includes(gone), `وحُذف من الشاشة: ${gone}`);
+}
+
+// (و.٢) **«لا» تُغلق النافذة** — امتناعٌ صريح، لا حالةٌ تُترَك.
+assert.ok(/if \(a === "no"\) \{[\s\S]{0,80}onOpenChange\(false\);/.test(dialog),
+  "**اختيارُ «لا» يُغلق النافذة فوراً**");
+assert.ok(dialog.includes("REFUND_NOT_DONE_ERROR"),
+  "ويقول للموظّف لماذا — بالنصّ المشترك نفسِه الذي يردّ به الخادم");
+
+// (و.٣) **و«نعم» وحدها تفتح التأكيد.**
+assert.ok(dialog.includes('(!refundRequired || refundAnswer === "yes")'),
+  "**لا تأكيدَ إلّا بـ«نعم» صراحةً** — و«لا» لا تفتحه ولو بقيت في الحالة");
+//  ولا ينادي التنفيذ بحال — `run.mutate` لزرّ التأكيد وحده.
+assert.equal((dialog.match(/run\.mutate\(\)/g) ?? []).length, 1,
+  "ولا بابَ تنفيذٍ ثانٍ أضافه السؤال");
+//  ولا يُحمَل جوابٌ على حالةٍ تغيّرت: موضعان يمسحانه (فتحُ عمليةٍ أخرى،
+//  وتبديلُ النيّة) — ولا ثالثَ بعد حذف الفرع.
+assert.equal((dialog.match(/setRefundAnswer\(""\)/g) ?? []).length, 2,
+  "يُمسَح عند فتح عمليةٍ أخرى وعند تبديل النيّة");
+
+// ══ (ز) **ولا «تسويةٌ معلَّقة» في أيّ سطحٍ يقرؤه إنسان** ═══════════════════
+//  الفكرةُ أُلغيت: إمّا يُردّ المالُ فتمضي العملية، وإمّا لا تمضي. فلا يبقى
+//  في المفردات المشتركة ولا في الشاشة وعدٌ بتسويةٍ لاحقة.
+assert.ok(!sharedSrc.includes("requiresFinancialSettlement:"),
+  "**لا حقلَ `requiresFinancialSettlement` في عقد المعاينة**");
+assert.ok(!dialog.includes("requiresFinancialSettlement"),
+  "ولا تقرؤه الشاشةُ من ناتج التنفيذ");
+assert.ok(!dialog.includes("يحتاج تسوية"),
+  "**ولا عبارةَ «يحتاج تسوية» تصل الموظّف**");
+//  **والنصُّ الجديد يقول القاعدةَ كاملة** — لا نصفَها.
+assert.ok(REFUND_NOT_DONE_ERROR.includes("لم تُلغَ العملية")
+  && REFUND_NOT_DONE_ERROR.includes("أعد المحاولة"),
+  "ورسالةُ «لا» تقول إن شيئاً لم يقع، وتدلّ على الطريق");
 
 console.log("✅ correction UX contracts pass");

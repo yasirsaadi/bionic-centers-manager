@@ -448,6 +448,11 @@ async function main() {
         followupId: f.id, intent: "replace_requested_item",
         replacementRequestedItem: "socket",
         reasonNote: "المريض يريد قالباً لا طرفاً كاملاً",
+        //  **عقدٌ قائم**: إلغاءٌ كاملٌ على عمليةٍ لها مبلغٌ مقبوض لا يمضي
+        //  إلّا بـ«نعم» — ومعها يُسجَّل ردُّ المال. و«لا» تُلغي المحاولةَ
+        //  كلَّها. تفصيلُ الردّ في `test:reversal-refund-contract`؛ وما يلي
+        //  يقيس الاستبدالَ نفسَه.
+        refundAnswer: "yes",
         stateStamp: pv.body?.stateStamp,
       });
       same("٢٠. **الإلغاءُ الكامل ينفَّذ**", r.status, 200);
@@ -475,10 +480,13 @@ async function main() {
         [s.total, s.eps.find((e: any) => Number(e.id) === oldEpId)?.status,
           s.eps.find((e: any) => Number(e.id) === oldEpId)?.cost],
         [before.total - 1_500_000, "delivered", 2_000_000]);
-      same("٢٨. **ولا دفعةَ حُذفت ولا عُكست** — نقدٌ قُبض يبقى",
-        s.pays.map((p: any) => p.amount), [400_000]);
-      same("٢٨-ب. **ويُقال رصيداً يحتاج تسوية**",
-        [r.body?.requiresFinancialSettlement, r.body?.preservedPaidAmount], [true, 400_000]);
+      //  **والأصلُ لا يُمَسّ، ويُضاف ردُّه**: نقدٌ قُبض واقعةٌ لا تُعاد
+      //  كتابتُها — فلا تُحذَف الدفعةُ ولا تُعدَّل، بل يُكتب صفٌّ سالبٌ
+      //  بجوارها. (تفصيلُ الردّ في `test:reversal-refund-contract`.)
+      same("٢٨. **الدفعةُ الأصلية كما هي، ومعها ردُّها**",
+        s.pays.map((p: any) => p.amount), [400_000, -400_000]);
+      same("٢٨-ب. **ويُقال الردُّ في الاستجابة — ولا تسويةَ معلَّقة**",
+        [r.body?.refundedAmount, typeof r.body?.refundPaymentId], [400_000, "number"]);
       same("٢٩. **وهويّةٌ واحدة تجمع التصحيح**",
         [s.revs.length, s.revs[0].mode], [1, "full_operation"]);
 
@@ -661,9 +669,9 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  هـ) **دفعةٌ قائمة** — تبقى، ويصير للمريض رصيدٌ يحتاج تسوية.
+    //  هـ) **دفعةٌ قائمة** — تُردّ كاملةً، ولا تُخلَّف تسويةٌ معلَّقة.
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── هـ) دفعةٌ محفوظة ورصيدٌ للمريض ──");
+    console.log("\n── هـ) دفعةٌ قائمة تُردّ بالكامل ──");
     {
       const d = await soldOperation("دفعةٌ محفوظة", 750_000);
       await q(`INSERT INTO payments (patient_id, branch_id, amount,
@@ -672,24 +680,28 @@ async function main() {
         [d.patientId, d.episodeId, d.caseId]);
       const pv = await preview({ followupId: d.followupId });
       same("٤٢. **المعاينةُ المسبقة تقول الدفعةَ بالدينار**",
-        [pv.body?.paidAmount, pv.body?.requiresFinancialSettlement], [300_000, true]);
-      check(JSON.stringify(pv.body?.impact?.full_operation).includes("لم تُحذف"),
-        "٤٣. **وتقول صراحةً إنها لن تُحذف**",
+        pv.body?.paidAmount, 300_000);
+      //  **وتقول ما سيقع بها**: تُردّ — لا «تبقى ويحتاج الأمرُ تسويةً لاحقة».
+      //  والفكرةُ الثانية أُلغيت: يُردّ المالُ فتمضي العملية، أو لا تمضي.
+      check(JSON.stringify(pv.body?.impact?.full_operation).includes("رد المبلغ المقبوض"),
+        "٤٣. **وتقول صراحةً إن المبلغ سيُردّ**",
         JSON.stringify(pv.body?.impact?.full_operation));
+      check(!JSON.stringify(pv.body ?? {}).includes("يحتاج تسوية"),
+        "٤٣-ب. **ولا وعدَ بتسويةٍ معلَّقة في أيّ سطرٍ منها**");
       same("٤٤. (التصحيحُ ينفَّذ)",
         (await execute({
           followupId: d.followupId, mode: "full_operation",
           reasonCode: "wrong_service_or_device", reasonNote: "خدمةٌ خاطئة",
-          stateStamp: pv.body?.stateStamp,
+          stateStamp: pv.body?.stateStamp, refundAnswer: "yes",
         })).status, 200);
       const s = await shape(d.patientId);
-      same("٤٥. **الدفعةُ باقيةٌ بحرفها** — ولا ردَّ اختُرع",
-        [s.pays.length, s.pays[0].amount], [1, 300_000]);
-      same("٤٦. **والكلفةُ عُكست فصار للمريض رصيد**",
-        [s.total, s.pays[0].amount - s.total], [0, 300_000]);
-      same("٤٧. **والتصحيحُ موسومٌ بأنه يحتاج تسوية مالية**",
-        [s.revs[0].settle, s.revs[0].paid], [true, 300_000]);
-      same("٤٨. **ولا قيدَ ردٍّ ولا دفعةَ سالبة**",
+      same("٤٥. **الأصلُ باقٍ بحرفه، ومعه ردُّه** — لا تُحذَف دفعةٌ ولا تُعدَّل",
+        s.pays.map((p: any) => p.amount), [300_000, -300_000]);
+      same("٤٦. **والكلفةُ عُكست، ولا رصيدَ للمريض بعد الردّ**",
+        [s.total, s.pays.reduce((t: number, p: any) => t + Number(p.amount), 0)], [0, 0]);
+      same("٤٧. **ولا وسمَ تسويةٍ على صفّ التصحيح، ولا شيءَ محفوظ**",
+        [s.revs[0].settle, s.revs[0].paid], [false, 0]);
+      same("٤٨. **وقيدُ كلفةٍ واحدٌ للتصحيح** — والردُّ حركةٌ مستقلّة لا قيدُ كلفة",
         s.entries.filter((e: any) => e.source === "administrative_reversal").length, 1);
     }
 
@@ -805,7 +817,7 @@ async function main() {
         (await execute({
           followupId: d.followupId, mode: "full_operation",
           reasonCode: "other", reasonNote: "بعد التحديث",
-          stateStamp: pv2.body?.stateStamp,
+          stateStamp: pv2.body?.stateStamp, refundAnswer: "yes",
         })).status, 200);
     }
 

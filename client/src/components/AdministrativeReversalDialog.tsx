@@ -14,7 +14,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS, CORRECTION_INTENT_MODE,
   replacementSummaryLine,
-  type CorrectionIntent, type ReversalMode, type ReversalPreview,
+  REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL, REFUND_NOT_DONE_ERROR,
+  refundQuestionRequired,
+  type CorrectionIntent, type RefundAnswer, type ReversalMode, type ReversalPreview,
 } from "@shared/administrative_reversal";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
@@ -55,11 +57,15 @@ export function AdministrativeReversalDialog({
   const [intent, setIntent] = useState<CorrectionIntent | "">("");
   const [replacementRequestedItem, setReplacementRequestedItem] = useState("");
   const [reasonNote, setReasonNote] = useState("");
+  //  جوابُ «هل تم إرجاع المبلغ للمريض؟» — **«نعم» وحدها تفتح التأكيد**،
+  //  و«لا» تُلغي المحاولةَ وتُغلق النافذة. ولا خيارَ ثالث.
+  const [refundAnswer, setRefundAnswer] = useState<RefundAnswer | "">("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
     setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
+    setRefundAnswer("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -95,6 +101,9 @@ export function AdministrativeReversalDialog({
     setMode(CORRECTION_INTENT_MODE[intent]);
     //  تبديلُ النيّة يُسقط بديلاً اختير لنيّةٍ أخرى.
     if (intent !== "replace_requested_item") setReplacementRequestedItem("");
+    //  **وجوابُ الإرجاع كذلك**: أُجيب عن «إلغاءٍ كامل» ثمّ بُدِّلت النيّةُ
+    //  ثمّ عاد إليها — فيُسأل من جديد، ولا يُحمَل جوابٌ قديم على قرارٍ جديد.
+    setRefundAnswer("");
   }, [intent]);
 
   const run = useMutation({
@@ -106,6 +115,17 @@ export function AdministrativeReversalDialog({
         body: JSON.stringify({
           ...target, intent, replacementRequestedItem, reasonNote: reasonNote.trim(),
           stateStamp: preview?.stateStamp,
+          //  **جوابُ الإرجاع يُرسَل حين يلزم وحدَه** — أي مع «إلغاء العملية
+          //  بالكامل» على عمليةٍ لها مبلغٌ مقبوض. و«التراجعُ عن الشراء» لا
+          //  سؤالَ فيه أصلاً، فحملُ جوابٍ إليه يُوهم قارئَ الطلب أن قراراً
+          //  مالياً اتُّخذ هناك.
+          //
+          //  **وبالقاعدة المشتركة نفسِها التي قرّرت أن يُعرَض السؤال** — لا
+          //  بشرطٍ ثانٍ يُكتب هنا وينحرف عنها يوماً. والخادمُ هو الحاكمُ على
+          //  كلّ حال: يقرأ المبلغَ تحت القفل ويردّ التنفيذَ إن لزم الجوابُ
+          //  ولم يصل — فلقطةٌ بائتة هنا تُردّ هناك، لا تمضي صامتة.
+          ...(refundQuestionRequired({ mode, paidAmount: preview?.paidAmount }) && refundAnswer
+            ? { refundAnswer } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json())?.error || "تعذّر تنفيذ التصحيح");
@@ -116,8 +136,13 @@ export function AdministrativeReversalDialog({
         title: intent === "replace_requested_item"
           ? `تم تصحيح العملية وفتح طلب جديد: ${replacementLabel || "الطلب الصحيح"}`
           : mode === "purchase_only" ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
-        description: out?.requiresFinancialSettlement
-          ? "الدفعة المسجلة لم تُحذف — للمريض رصيد يحتاج تسوية مالية."
+        //  **ويُقال ما وقع للمال بالضبط** — حالتان لا ثالثة: رُدَّ المالُ ·
+        //  أو لم يكن هناك مالٌ يُردّ. **ولا «تسويةٌ معلَّقة»** — لم يعد
+        //  للنظام بابٌ يُخلّفها.
+        description: Number(out?.refundedAmount ?? 0) > 0
+          ? `تم رد ${Number(out.refundedAmount).toLocaleString("en-US")} د.ع للمريض`
+            + (out?.refundJournalPosted === false
+              ? " (تعذّر قيد اليومية — راجع دليل حسابات الفرع.)" : "")
           : "عادت الحالة الصحيحة، وبقيت جميع السجلات في التاريخ.",
       });
       //  كلُّ قارئٍ يجب أن يتّفق فوراً: الملفُّ والحلقاتُ والمتابعةُ
@@ -157,8 +182,13 @@ export function AdministrativeReversalDialog({
     ...(replacing ? preview.replacementImpact : []),
     ...(replacing && replacementLabel ? [replacementSummaryLine(replacementLabel)] : []),
   ] : [];
+  //  **السؤالُ يُطرح بالقاعدة المشتركة** — لا بشرطٍ مكتوبٍ هنا ينحرف عنها.
+  const refundRequired = refundQuestionRequired({ mode, paidAmount: preview?.paidAmount });
   const canRun = Boolean(intent) && reasonNote.trim().length > 0
     && (!replacing || Boolean(replacementRequestedItem))
+    //  **و«نعم» وحدها تفتح التأكيد**: «لا» تُغلق النافذةَ لحظةَ اختيارها،
+    //  فلا تبقى في الحالة أصلاً — والشرطُ هنا حزامُ أمانٍ لا أكثر.
+    && (!refundRequired || refundAnswer === "yes")
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -295,6 +325,50 @@ export function AdministrativeReversalDialog({
                     ))}
                   </ul>
                 </details>
+              </div>
+            )}
+
+            {/*  ══ **سؤالُ إرجاع المبلغ — بابٌ واحد، وبعد الملخّص عمداً** ═══
+                الملخّصُ قال للتوّ إن المبلغَ سيُردّ؛ فيُسأل هنا هل رُدّ فعلاً.
+                **«نعم» تفتح التأكيد** (والخادمُ يسجّل الردَّ ثمّ يُلغي)،
+                و**«لا» تُلغي المحاولة وتُغلق النافذة** — ولا يتغيّر شيء.
+                **ولا خيارَ ثالث ولا «سوِّ لاحقاً»**: تلك هي بعينها الفكرةُ
+                التي كانت تُخلّف رصيداً لا يتذكّره أحد. */}
+            {refundRequired && (
+              <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-3"
+                data-testid="box-refund-question">
+                <Label className="font-semibold text-sky-900">
+                  {REFUND_QUESTION_LABEL} *
+                </Label>
+                <div className="flex gap-2">
+                  {REFUND_ANSWERS.map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      //  **و«لا» امتناعٌ لا تنفيذ**: تُغلق النافذةَ فوراً،
+                      //  ولا تترك حالةً تُفتَح بها شاشةُ تأكيد.
+                      onClick={() => {
+                        setRefundAnswer(a);
+                        if (a === "no") {
+                          onOpenChange(false);
+                          toast({
+                            title: "لم يُنفَّذ الإلغاء",
+                            description: REFUND_NOT_DONE_ERROR,
+                          });
+                        }
+                      }}
+                      data-testid={`option-refund-${a}`}
+                      className={`flex-1 rounded-lg border p-2 text-center font-semibold transition ${
+                        refundAnswer === a ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
+                    >
+                      {REFUND_ANSWER_LABELS[a]}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-sky-800">
+                  «نعم» تسجّل رد المبلغ ثم تلغي العملية · و«لا» تلغي المحاولة
+                  ولا تغيّر شيئاً.
+                </p>
               </div>
             )}
 

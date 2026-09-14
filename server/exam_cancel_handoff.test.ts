@@ -23,7 +23,6 @@ import { createServer } from "node:http";
 import { Pool } from "pg";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import { registerRoutes } from "./routes";
 import { EXAM_CANCEL_OPERATION_EXISTS } from "@shared/medical";
 
@@ -354,11 +353,18 @@ async function main() {
       check(cx.includes('"لا يمكن إلغاء هذه المعاينة بعد تنفيذ الخدمة المرتبطة بها."'),
         "٣٧. ونصُّ الرفض كما هو في مصدره");
 
-      const changed = execFileSync("git", ["diff", "--name-only", "origin/main", "--",
-        "server/admin_reversal/", "shared/administrative_reversal.ts",
-        "client/src/components/AdministrativeReversalDialog.tsx"], { encoding: "utf8" }).trim();
-      same("٣٨. **ومنطقُ الإلغاء الكامل لم يُمَسّ بملفٍّ واحد** (مخزنُه ونقاطُه ونافذتُه)",
-        changed, "");
+      //  **ولا فحصَ `git diff origin/main` هنا.**
+      //  أوّلُ صياغةٍ أثبتت «منطقُ الإلغاء لم يُمَسّ» بمقارنةِ مسارٍ
+      //  بالأساس — **وتلك واقعةُ مراجعةٍ لا ثابتٌ دائم**: تنهار في أيّ
+      //  نسخةٍ بلا المرجع `origin/main` (أرشيفٌ أو استنساخٌ ضحل) بـ
+      //  `fatal: bad revision` **فتقتل الملفَّ كلَّه**، وتحمرّ لأيّ فرعٍ
+      //  لاحقٍ يمسّ تلك المسارات بحقّ. (أمسكه مراجعٌ آليّ على #٢٩٩.)
+      //
+      //  **والضمانةُ الحقيقية حيّةٌ فوق**: القسمُ «د» يثبت أن نقطتَي
+      //  التصحيح ما زالتا تفحصان الدورَ والفرعَ بأنفسهما (٤٠٣ للطبيب
+      //  والاستقبال ومديرِ فرعٍ آخر)، والقسمُ «هـ» يثبت أن مسارَ الإلغاء
+      //  الكامل ما زال ينفّذ ويسحب المعاينة بشاهدته — سلوكٌ يُقاس، لا
+      //  مقارنةُ ملفّاتٍ بلقطةٍ عابرة.
     }
   } finally {
     await cleanup();

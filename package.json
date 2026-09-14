@@ -57,6 +57,7 @@
     "test:first-device-identity": "tsx server/first_device_identity.test.ts",
     "test:administrative-reversal": "tsx server/administrative_reversal.test.ts",
     "test:correction-ux": "tsx shared/correction_ux.test.ts",
+    "test:reversal-refund-contract": "tsx server/reversal_refund_contract.test.ts",
     "test:followup-rules": "tsx shared/followup.test.ts",
     "test:specialty-order": "tsx shared/specialty_order.test.ts",
     "test:patient-search": "tsx server/patient_search.test.ts",
