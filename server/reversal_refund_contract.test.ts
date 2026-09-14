@@ -1,18 +1,22 @@
-// **عقدُ جواب «هل تم إرجاع المبلغ للمريض؟»** — يُرسَل مع الإلغاء الكامل،
-// ويردّ الخادمُ التنفيذَ إن لزم ولم يصل. `npm run test:reversal-refund-contract`.
+// **عقدُ جواب «هل تم إرجاع المبلغ للمريض؟»** — يُرسَل، ويحرسه الخادم،
+// و«نعم» تَرُدّ المال. `npm run test:reversal-refund-contract`.
 //
-// ══ ما يُختبَر هنا — **العقدُ وحدَه** ═══════════════════════════════════════
+// ══ ما يُختبَر هنا ═══════════════════════════════════════════════════════
 // «إلغاء العملية بالكامل» يعكس البيعَ **ولا يمسّ الدفعات** (قرارٌ قائم منذ
 // ٠٦٤: نقدٌ قُبض واقعةٌ لا تُعاد كتابتُها)، فيبقى للمريض رصيدٌ موسومٌ
 // `requires_financial_settlement`. والسؤالُ يُطرح على مَن يعرف الجواب لحظتَها.
 //
-// **وهذه المرحلةُ تسأل وتُرسِل وتحرس — ولا تسجّل ولا تحرّك ديناراً**:
 //   ① الشاشةُ ترسل الجوابَ مع **الإلغاء الكامل وحدَه** (عقدُ الشاشة في
 //      `npm run test:correction-ux` — لا يُكرَّر هنا).
 //   ② **والخادمُ يردّ ٤٠٠** إن كان على العملية مبلغٌ مقبوضٌ ولم يصل جوابٌ
 //      صحيح — **قبل أن يكتب حرفاً**.
-//   ③ **ولا أثرَ ماليّاً للجواب نفسِه**: «نعم» و«لا» تُنتجان النتيجةَ نفسَها
-//      بالضبط — لا ردَّ مال، ولا دفعةَ تُمَسّ، ولا يُخزَّن الجوابُ في صفّ.
+//   ③ **و«نعم» تُنفَّذ**: يُردّ **الصافي المقبوض** كاملاً — صفُّ دفعةٍ سالبٌ
+//      بنفس الحالة والحلقة والفرع، ومعه قيدُ اليومية المرآة، **في معاملة
+//      الإلغاء نفسِها** وبالكاتب القانونيّ الواحد. **ولا تسويةَ معلَّقة بعده.**
+//   ④ **و«لا» كما كانت بحرفها**: تمضي بلا ردٍّ وبلا دينار، والرصيدُ يبقى
+//      موسوماً — والقسمُ «ج» يحرس ذلك من الانحراف.
+//
+// **والأصلُ لا يُمَسّ في الفرعين**: لا دفعةٌ تُعدَّل ولا تُحذف ولا قيدٌ يُعكَس.
 //
 // **ولا حارسَ قائمٌ ضعُف**: الصلاحيةُ (٤٠٣) والختمُ البائت (٤٠٩) يبقيان
 // أسبقَ منه — فلا يتحوّل رفضٌ معروفٌ إلى ٤٠٠ جديدة.
@@ -24,7 +28,9 @@ import { createServer } from "node:http";
 import { Pool } from "pg";
 import crypto from "node:crypto";
 import { registerRoutes } from "./routes";
-import { REFUND_ANSWER_REQUIRED_ERROR } from "@shared/administrative_reversal";
+import {
+  REFUND_ANSWER_REQUIRED_ERROR, reversalRefundPaymentNote,
+} from "@shared/administrative_reversal";
 
 const PORT = 6971;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -120,6 +126,30 @@ async function executeFull(followupId: number, extra: any = {}, session: any = S
   }, session);
 }
 
+/** صافي المقبوض على حلقةٍ بعينها — نفسُ ما يقرؤه الخادمُ تحت القفل. */
+async function netPaid(episodeId: number) {
+  const [r] = await q<{ net: string }>(
+    `SELECT COALESCE(SUM(amount),0)::int AS net FROM payments WHERE device_episode_id=$1`,
+    [episodeId]);
+  return Number(r.net);
+}
+/** صفوفُ الدفعات بترتيبها — الأصلُ أوّلاً ثمّ الردُّ إن وقع. */
+async function paymentsOf(patientId: number) {
+  return await q(`SELECT id, amount, notes, case_id, device_episode_id, branch_id,
+                         payment_treatment_type
+                    FROM payments WHERE patient_id=$1 ORDER BY id`, [patientId]);
+}
+/** قيدُ اليومية المربوطُ بصفّ دفعةٍ بعينه — بسطرَيه. */
+async function journalOf(paymentId: number) {
+  const [e] = await q(`SELECT id, source_type, source_id, total_amount, status
+                         FROM journal_entries
+                        WHERE source_type='payment' AND source_id=$1`, [paymentId]);
+  if (!e) return null;
+  const lines = await q(`SELECT debit, credit FROM journal_lines
+                          WHERE entry_id=$1 ORDER BY id`, [e.id]);
+  return { entry: e, lines };
+}
+
 /** بصمةُ كلّ ما قد يلمسه تصحيحٌ أو مال — «صفرُ كتابة» يُقاس لا يُدّعى. */
 async function snapshot(patientId: number) {
   const ep = await q(`SELECT id,status,agreed_cost FROM patient_device_episodes WHERE patient_id=$1 ORDER BY id`, [patientId]);
@@ -173,6 +203,8 @@ async function cleanup() {
     `DELETE FROM medical_exam_addenda WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`,
     `DELETE FROM medical_exam_revisions WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`,
     `DELETE FROM medical_exams WHERE patient_id IN (${ids})`,
+    `DELETE FROM journal_entries WHERE id IN
+       (SELECT entry_id FROM journal_lines WHERE patient_id IN (${ids}))`,
     `DELETE FROM journal_lines WHERE patient_id IN (${ids})`,
     `DELETE FROM payments WHERE patient_id IN (${ids})`,
     `DELETE FROM cost_entries WHERE patient_id IN (${ids})`,
@@ -186,6 +218,19 @@ async function cleanup() {
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'ذي قار') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع النقديّ** — يزرعه `seed_chart_of_accounts` للفروع
+  //  الموجودة **لحظةَ الترحيل**، والفروعُ هنا تُنشأ بعده. وبلا صندوقٍ يتخطّى
+  //  قيدُ الردّ بـ`journalPosted:false` (سلوكٌ مقصود: نقصُ إعدادٍ لا يحبس
+  //  مالَ مريض — يُثبته `test:case-closure`)، فيُزرَع هنا **ليُختبَر القيدُ
+  //  نفسُه** لا مخرجُ الطوارئ. ونسخةُ الرموز من الزارع حرفاً.
+  const [par] = await q<{ id: number }>(
+    `SELECT id FROM chart_of_accounts WHERE account_code='1110'`);
+  await q(`INSERT INTO chart_of_accounts
+             (account_code, account_name_ar, account_type, account_subtype,
+              parent_id, branch_id, normal_balance, is_system)
+           VALUES ('111101','الصندوق النقدي - بغداد','asset','current_asset',
+                   $1, 1, 'debit', true)
+           ON CONFLICT (account_code) DO NOTHING`, [par?.id ?? null]);
   for (const [id, role, name, spec, br] of [
     [ADMIN, "admin", "المسؤول", "[]", 1],
     [RECV, "reception", "استعلامات", "[]", 1],
@@ -256,35 +301,32 @@ async function main() {
         await snapshot(d.patientId), before);
     }
 
-    // ══ ج) **«نعم» و«لا» كلاهما جوابٌ صحيح يمضي** ══════════════════════════
+    // ══ ج) **«لا» — القرارُ يمضي، ولا دينارَ يتحرّك** ══════════════════════
     //  الخادمُ يحرس **وجودَ قرارٍ** لا مضمونَه: المضيُّ مع رصيدٍ لم يُردّ
-    //  قرارٌ مشروع (يبقى موسوماً `requires_financial_settlement`).
-    console.log("\n── ج) «نعم» و«لا» — القرارُ يمضي، والأثرُ واحد ──");
+    //  قرارٌ مشروع، ويبقى موسوماً `requires_financial_settlement`.
+    //  **وهذا الفرعُ لم يُمَسّ** حين نُفِّذ فرعُ «نعم» — والقسمُ يحرسه.
+    console.log("\n── ج) فرعُ «لا» — يمضي بلا ردّ ──");
     {
-      const yes = await soldOperation("ج-نعم", 1_000_000);
-      await pay(yes, 300_000);
-      const rYes = await executeFull(yes.followupId, { refundAnswer: "yes" });
-      same("٧. **«نعم» ⟶ ينفَّذ**", rYes.status, 200);
-
       const no = await soldOperation("ج-لا", 1_000_000);
       await pay(no, 300_000);
       const rNo = await executeFull(no.followupId, { refundAnswer: "no" });
-      same("٨. **و«لا» ⟶ ينفَّذ أيضاً** — الحارسُ على الصمت لا على المضمون",
-        rNo.status, 200);
-
-      //  **والأثرُ واحدٌ حرفياً** — وهذا هو إثباتُ «لا يُسجَّل ردُّ مال بعد».
-      same("٩. **والأثرُ المالي والتشغيليّ واحدٌ بالضبط في الحالتين**"
-        + " — فالجوابُ لا يحرّك ديناراً ولا يُخزَّن في صفّ",
-        await outcomeShape(yes.patientId), await outcomeShape(no.patientId));
+      same("٧. **«لا» ⟶ ينفَّذ** — الحارسُ على الصمت لا على المضمون", rNo.status, 200);
+      same("٨. **ولا ردَّ في الاستجابة**",
+        [rNo.body?.refundedAmount, rNo.body?.refundPaymentId], [0, null]);
 
       const s = await outcomeShape(no.patientId);
-      same("١٠. **والدفعةُ باقيةٌ بحرفها** — لا ردَّ اختُرع ولا دفعةَ سالبة",
+      same("٩. **والدفعةُ باقيةٌ بحرفها** — لا ردَّ اختُرع ولا دفعةَ سالبة",
         s.pay, [{ amount: 300_000, notes: "دفعة تجريبية" }]);
-      same("١١. **والرصيدُ موسومٌ «يحتاج تسوية»** كما كان قبل هذه المرحلة",
+      same("١٠. **والرصيدُ موسومٌ «يحتاج تسوية»** كما كان قبل هذه المرحلة",
         [s.rev?.requires_financial_settlement, s.rev?.preserved_paid_amount],
         [true, 300_000]);
-      same("١٢. **ولا قيدَ ردٍّ** — قيدُ التصحيح وحدَه",
+      same("١١. **ولا قيدَ كلفةٍ ثانٍ** — قيدُ التصحيح وحدَه",
         (s.ce as any[]).filter((e) => e.source === "administrative_reversal").length, 1);
+      same("١٢. **ولا قيدَ يوميةِ ردٍّ أصلاً**",
+        (await q(`SELECT count(*)::int n FROM journal_entries je
+                   JOIN journal_lines jl ON jl.entry_id = je.id
+                  WHERE jl.patient_id=$1 AND je.source_type='payment'`,
+          [no.patientId]))[0].n, 0);
     }
 
     // ══ د) **بلا مبلغٍ لا سؤال** — العقدُ لا يعترض طريقاً نظيفاً ═══════════
@@ -295,6 +337,16 @@ async function main() {
       same("١٣. (الإعدادُ: لا مبلغَ مقبوض)", pv.body?.paidAmount, 0);
       const r = await executeFull(d.followupId);
       same("١٤. **ينفَّذ بلا حقلِ جوابٍ أصلاً** — لا سؤالَ بلا موضوع", r.status, 200);
+
+      //  **ولا يُخترَع ردٌّ لجوابٍ لم يُسأل**: «نعم» ملفَّقةٌ على عمليةٍ بلا
+      //  مبلغ لا تُنتج صفّاً سالباً — الشرطُ هو `refundQuestionRequired`
+      //  نفسُه، لا وجودُ الحقل في الطلب.
+      const d2 = await soldOperation("د-٢", 700_000);
+      const r2 = await executeFull(d2.followupId, { refundAnswer: "yes" });
+      same("١٤-ب. **و«نعم» ملفَّقةٌ بلا مبلغ ⟶ لا ردَّ ولا صفَّ سالب**",
+        [r2.status, r2.body?.refundedAmount, r2.body?.refundPaymentId,
+          (await paymentsOf(d2.patientId)).length],
+        [200, 0, null, 0]);
     }
 
     // ══ هـ) **«التراجعُ عن الشراء» لا يُسأل ولو كان هناك مبلغ** ════════════
@@ -311,6 +363,21 @@ async function main() {
         reasonNote: "ضغطةٌ خاطئة", stateStamp: pv.body?.stateStamp,
       });
       same("١٦. **ينفَّذ بلا جواب** — الحقلُ للإلغاء الكامل وحدَه", r.status, 200);
+
+      //  **ولا يُردّ مالٌ في وضعٍ لا سؤالَ فيه**: الطلبُ باقٍ ليُشترى صحيحاً
+      //  والمالُ يُستعمل فيه — فـ«نعم» ملفَّقةٌ هنا لا تُخرج ديناراً.
+      const d2 = await soldOperation("هـ-٢", 1_200_000);
+      await pay(d2, 400_000);
+      const pv2 = await preview(d2.followupId);
+      const r2 = await executeRaw({
+        followupId: d2.followupId, intent: "purchase_mistake",
+        reasonNote: "ضغطةٌ خاطئة", stateStamp: pv2.body?.stateStamp, refundAnswer: "yes",
+      });
+      same("١٦-ب. **و«نعم» ملفَّقةٌ على «تراجعِ الشراء» ⟶ لا ردَّ ولا صفَّ سالب**",
+        [r2.status, r2.body?.refundedAmount,
+          (await paymentsOf(d2.patientId)).filter((x: any) => Number(x.amount) < 0).length,
+          await netPaid(d2.episodeId)],
+        [200, 0, 0, 400_000]);
     }
 
     // ══ و) **المبلغُ يُقرأ من القاعدة تحت القفل لا من جسم الطلب** ══════════
@@ -367,6 +434,115 @@ async function main() {
           followupId: d.followupId, intent: "cancel_operation",
           reasonNote: "  ", stateStamp: pv.body?.stateStamp, refundAnswer: "yes",
         })).status, 400);
+    }
+    // ══ ح) **فرعُ «نعم» — يُردّ الصافي المقبوض كاملاً** ═════════════════════
+    console.log("\n── ح) فرعُ «نعم» — الردُّ الكامل ──");
+    {
+      const d = await soldOperation("ح", 1_000_000);
+      await pay(d, 300_000);
+      const [orig] = await paymentsOf(d.patientId);
+
+      const r = await executeFull(d.followupId, { refundAnswer: "yes" });
+      same("٢٥. **«نعم» ⟶ ينفَّذ**", r.status, 200);
+      same("٢٦. **والاستجابة تقول الردَّ بمقداره ورقم صفّه**",
+        [r.body?.refundedAmount, typeof r.body?.refundPaymentId,
+          r.body?.refundJournalPosted],
+        [300_000, "number", true]);
+
+      // ── الصفُّ المالي السالب، بهويّته كاملة ──
+      const pays = await paymentsOf(d.patientId);
+      same("٢٧. **صفّان: الأصلُ كما هو، وردٌّ سالبٌ واحد**", pays.length, 2);
+      same("٢٨. **والأصلُ لم يُمَسّ بحرف** — لا يُعدَّل ولا يُحذف",
+        pays[0], orig);
+      const refund = pays[1] as any;
+      same("٢٩. **والردُّ بمقدار الصافي المقبوض سالباً**",
+        Number(refund.amount), -300_000);
+      same("٣٠. **ومربوطٌ بنفس الحالة ونفس حلقة الجهاز ونفس الفرع**",
+        [Number(refund.case_id), Number(refund.device_episode_id),
+          Number(refund.branch_id)],
+        [d.caseId, d.episodeId, 1]);
+      same("٣١. **وموسومٌ بقسمه** — فيُخصَم من إيراد قسمه لا من «غير مبوّب»",
+        refund.payment_treatment_type, "أطراف صناعية");
+      same("٣٢. **وملاحظتُه من المصدر المشترك** تربطه بتصحيحه",
+        refund.notes, reversalRefundPaymentNote(Number(r.body.reversalId), "سببٌ تجريبيّ"));
+      same("٣٣. **والصافي المقبوض صار صفراً**", await netPaid(d.episodeId), 0);
+      same("٣٤. **ورقمُ الصفّ في الاستجابة هو هذا الصفُّ بعينه**",
+        Number(r.body.refundPaymentId), Number(refund.id));
+
+      // ── قيدُ اليومية المرآة، في المعاملة نفسِها ──
+      const j = await journalOf(Number(refund.id));
+      check(j !== null, "٣٥. **وقيدُ اليومية كُتب ومربوطٌ بصفّ الردّ**");
+      same("٣٦. **بسطرَيه: مدينٌ للإيراد ودائنٌ للصندوق بالمقدار نفسِه**",
+        j?.lines.map((l: any) => [Number(l.debit), Number(l.credit)]),
+        [[300_000, 0], [0, 300_000]]);
+      same("٣٧. **ومجموعُه وحالتُه**",
+        [Number(j?.entry.total_amount), j?.entry.status], [300_000, "posted"]);
+
+      // ── ولا تسويةَ معلَّقة بعده ──
+      const sh = await outcomeShape(d.patientId);
+      same("٣٨. **ولا تسويةَ ماليةٌ معلَّقة بعد الردّ** — في الاستجابة وفي الصفّ",
+        [r.body?.requiresFinancialSettlement, r.body?.preservedPaidAmount,
+          sh.rev?.requires_financial_settlement, sh.rev?.preserved_paid_amount],
+        [false, 0, false, 0]);
+
+      // ── والحدثُ والتدقيقُ يقولان ما وقع ──
+      const [ev] = await q(`SELECT payload FROM post_exam_followup_events
+                             WHERE followup_id=$1 AND event_type='administrative_reversal'`,
+        [d.followupId]);
+      same("٣٩. **وحدثُ المتابعة يحمل الردَّ ولا يَعِد بتسوية**",
+        [ev?.payload?.refundedAmount, ev?.payload?.preservedPaidAmount,
+          ev?.payload?.requiresFinancialSettlement],
+        [300_000, 0, false]);
+      const [aud] = await q(`SELECT notes, new_values FROM audit_log
+                              WHERE entity_type='administrative_operation_reversal'
+                                AND entity_id=$1`, [Number(r.body.reversalId)]);
+      check(String(aud?.notes ?? "").includes("رُدّ للمريض"),
+        "٤٠. **وسطرُ التدقيق يقول الردَّ بالدينار**", String(aud?.notes));
+      check(!String(aud?.notes ?? "").includes("تحتاج تسوية"),
+        "٤١. **ولا يَعِد بتسويةٍ لا موضوعَ لها**", String(aud?.notes));
+
+      // ── وما لا يتغيّر: المعاينةُ سُحبت والحلقةُ أُبطلت كما في أيّ إلغاءٍ كامل ──
+      same("٤٢. **وبقيّةُ الإلغاء الكامل كما هي** — المتابعةُ والحلقةُ والأمر",
+        [sh.fu, (sh.ep as any)?.status, sh.wo],
+        ["closed_admin_void", "cancelled", "cancelled"]);
+    }
+
+    // ══ ط) **الردُّ صافٍ لا إجمالي** — استردادٌ سابقٌ لا يُدفَع مرّتين ═══════
+    console.log("\n── ط) صافي المقبوض بعد استردادٍ سابق ──");
+    {
+      const d = await soldOperation("ط", 1_000_000);
+      await pay(d, 300_000);
+      await pay(d, -100_000);          // استردادٌ جزئيٌّ سابق (§٤.r)
+      same("٤٣. (الإعدادُ: الصافي ٢٠٠,٠٠٠ لا ٣٠٠,٠٠٠)",
+        await netPaid(d.episodeId), 200_000);
+      const pv = await preview(d.followupId);
+      same("٤٤. **والمعاينةُ المسبقة تقرأ الصافي**", pv.body?.paidAmount, 200_000);
+
+      const r = await executeFull(d.followupId, { refundAnswer: "yes" });
+      same("٤٥. **ويُردّ الصافي بالضبط** — لا الإجماليُّ ولا المقبوضُ مرّتين",
+        [r.status, r.body?.refundedAmount], [200, 200_000]);
+      same("٤٦. **والصافي بعده صفر**", await netPaid(d.episodeId), 0);
+      same("٤٧. **وثلاثةُ صفوفٍ لا أكثر**",
+        (await paymentsOf(d.patientId)).map((x: any) => Number(x.amount)),
+        [300_000, -100_000, -200_000]);
+    }
+
+    // ══ ي) **الضغطةُ المزدوجة ⟶ ردٌّ واحد بالضبط** ═════════════════════════
+    console.log("\n── ي) التزامن ──");
+    {
+      const d = await soldOperation("ي", 1_000_000);
+      await pay(d, 500_000);
+      const pv = await preview(d.followupId);
+      const body = {
+        followupId: d.followupId, intent: "cancel_operation",
+        reasonNote: "ضغطتان", stateStamp: pv.body?.stateStamp, refundAnswer: "yes",
+      };
+      const [a, b] = await Promise.all([executeRaw(body), executeRaw(body)]);
+      const codes = [a.status, b.status].sort();
+      same("٤٨. **واحدةٌ تنفَّذ والأخرى تُردّ**", codes, [200, 409]);
+      same("٤٩. **وصفُّ ردٍّ واحدٌ بالضبط — لا يُردّ المالُ مرّتين**",
+        (await paymentsOf(d.patientId)).filter((x: any) => Number(x.amount) < 0).length, 1);
+      same("٥٠. **والصافي صفرٌ لا سالب**", await netPaid(d.episodeId), 0);
     }
   } finally {
     await cleanup();

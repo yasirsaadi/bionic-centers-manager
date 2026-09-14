@@ -26,7 +26,7 @@ import {
   type ClosureServiceType, type ClosureMoney, type ClosureRequest,
 } from "@shared/case_closure";
 import { classifyCaseDisposal, type CaseDisposal } from "./disposal";
-import { createJournalForRefundTx } from "../accounting/auto_journal";
+import { recordRefundPaymentTx } from "../accounting/refund_payment";
 
 type Executor = { execute: (q: any) => Promise<any> };
 
@@ -225,29 +225,22 @@ export async function closeCaseWithHistoryTx(
   const { reason, money, refundReason, retainedReason } = parsed.value;
 
   // ── ① الاستردادُ حركةٌ ماليةٌ مستقلّة — والأصلُ لا يُمَسّ ────────────────
+  //  **والكتابةُ بالكاتب الواحد** (`recordRefundPaymentTx`): رُفعت من هنا كما
+  //  هي حرفاً حين احتاجها بابٌ ثانٍ (فرعُ «نعم» في التصحيح الإداريّ) — نفسُ
+  //  الأعمدة ونفسُ القيد ونفسُ التسامح مع نقص الإعداد. **والوسمُ والملاحظةُ
+  //  يبقيان هنا**: لغةُ الإغلاق لا لغةُ كلّ ردّ.
   let refundPaymentId: number | null = null;
   let journalPosted = true;
   if (money.refundAmount > 0) {
-    const note = refundPaymentNote(caseType, refundReason ?? reason);
-    const [ins] = await rows(tx, sql`
-      INSERT INTO payments
-        (patient_id, branch_id, amount, notes, payment_treatment_type, case_id, date)
-      VALUES (${patientId}, ${branchId}, ${-money.refundAmount},
-              ${note}, ${CLOSURE_PAYMENT_TAG[caseType]}, ${caseId}, NOW())
-      RETURNING id, patient_id, branch_id, date, payment_treatment_type, notes
-    `);
-    refundPaymentId = Number(ins.id);
-    //  قيدُ اليومية المرآة: مدينٌ للإيراد، دائنٌ للصندوق — **بالمعاملة نفسِها**،
-    //  فلا نقدٌ يخرج في جدولٍ ويبقى الدفترُ لا يعرفه.
-    const journal = await createJournalForRefundTx(tx, {
-      id: refundPaymentId,
-      patientId,
-      branchId,
-      date: ins.date ?? null,
+    const written = await recordRefundPaymentTx(tx, {
+      patientId, branchId, caseId,
+      amount: money.refundAmount,
       paymentTreatmentType: CLOSURE_PAYMENT_TAG[caseType],
-      notes: note,
-    }, money.refundAmount, actor.userId);
-    journalPosted = journal.posted;
+      notes: refundPaymentNote(caseType, refundReason ?? reason),
+      actorUserId: actor.userId,
+    });
+    refundPaymentId = written.paymentId;
+    journalPosted = written.journalPosted;
   }
 
   // ── ② الإغلاق — الحالةُ وحدها، بشرطِ حالةٍ يمنع الإغلاقَ مرّتين ─────────

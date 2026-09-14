@@ -32,6 +32,8 @@ import {
   type DeviceServiceType,
 } from "../device_episodes/store";
 import { voidOrderAdministratively } from "../manufacturing/store";
+import { recordRefundPaymentTx } from "../accounting/refund_payment";
+import { CLOSURE_PAYMENT_TAG } from "@shared/case_closure";
 import {
   FULL_DEVICE, requestedItemLabel, requestedItemOptions,
 } from "@shared/prosthetic_parts";
@@ -39,6 +41,7 @@ import {
   FOLLOWUP_ADMIN_VOID_STATUS, REVERSAL_EVENT_TITLES, reversalCostNote,
   reversalReasonLabel, replacementSummaryLine,
   REFUND_ANSWER_REQUIRED_ERROR, isRefundAnswer, refundQuestionRequired,
+  reversalRefundPaymentNote,
   type CorrectionIntent, type ReversalMode, type ReversalPreview,
   type ReversalImpactLine,
 } from "@shared/administrative_reversal";
@@ -462,7 +465,13 @@ export interface ReversalOutcome {
   patientId: number;
   financialDelta: number;
   requiresFinancialSettlement: boolean;
+  /** ما بقي عند المركز من المقبوض بعد هذا التصحيح — صفرٌ إن رُدّ. */
   preservedPaidAmount: number;
+  /** ما رُدّ فعلاً في هذه المعاملة — صفرٌ في كلّ فرعٍ غيرِ «نعم». */
+  refundedAmount: number;
+  refundPaymentId: number | null;
+  /** `false` حين تخطّى القيدُ لنقص إعدادٍ مُعرَّف — يُقال ولا يُبتلَع. */
+  refundJournalPosted: boolean;
   workOrderVoided: number | null;
   episodeId: number | null;
   examCancelled: number | null;
@@ -595,9 +604,38 @@ export async function executeReversal(params: {
     //  **و«لا» جوابٌ صحيح يمضي**: الخادمُ يحرس **وجودَ قرارٍ** لا مضمونَه؛
     //  المضيُّ مع رصيدٍ لم يُردّ قرارٌ قائمٌ ومشروع (يبقى موسوماً
     //  `requires_financial_settlement` كما كان). والمرفوضُ هو الصمت.
-    if (refundQuestionRequired({ mode: params.mode, paidAmount: op.paidAmount })
-        && !isRefundAnswer(params.refundAnswer)) {
+    const refundQuestionAsked = refundQuestionRequired({
+      mode: params.mode, paidAmount: op.paidAmount,
+    });
+    if (refundQuestionAsked && !isRefundAnswer(params.refundAnswer)) {
       throw new ReversalError(REFUND_ANSWER_REQUIRED_ERROR, 400);
+    }
+
+    // ══ **فرعُ «نعم»: يُردّ الصافي المقبوض كاملاً** ═══════════════════════
+    //  **والقرارُ هنا قبل أوّل كتابة**، لأن صفَّ التصحيح (③) يحمل وسمَ
+    //  «يحتاج تسوية» وما بقي محفوظاً — فلو أُخذ القرارُ بعده لكُتب الوسمُ
+    //  كاذباً ثمّ صُحّح بتحديثٍ ثانٍ يقرأ بينهما مَن يقرأ.
+    //
+    //  **والمبلغُ هو `op.paidAmount`** — مجموعُ صفوف الدفعات على **هذه
+    //  الحلقة بعينها** مقروءاً تحت القفل (②)، وهو **صافٍ بطبيعته**: يشمل أيَّ
+    //  استردادٍ سابق (صفوفٌ سالبة)، فلا يُردّ المبلغُ مرّتين ولا يُردّ أكثرُ
+    //  ممّا عند المركز.
+    //
+    //  **و«لا» ليست فرعاً هنا**: تمضي كما كانت بحرفها — بلا ردٍّ وبلا دينار،
+    //  والرصيدُ يبقى موسوماً `requires_financial_settlement`.
+    const refundAmount = refundQuestionAsked && params.refundAnswer === "yes"
+      ? op.paidAmount : 0;
+
+    //  **وفرعُ المال يُحسم قبل أن يُكتب دينار** — ولا يُقرأ `NULL` صفراً
+    //  (درسُ §٤.r: `Number(null) === 0`، ففرعٌ لا وجودَ له يبتلع مالاً أو
+    //  يُسقط المعاملةَ بنصّ مفتاحٍ أجنبيّ خامّ على وجه المستخدم).
+    const liveBranchId = Number.isFinite(Number(liveBranch)) && Number(liveBranch) > 0
+      ? Number(liveBranch) : null;
+    const refundBranchId = op.branchId ?? liveBranchId;
+    if (refundAmount > 0 && refundBranchId === null) {
+      throw new ReversalError(
+        "لا يمكن رد المبلغ: لا فرعَ مسجَّلٌ لهذه العملية ولا لملفّ المريض."
+        + " راجع الإدارة قبل الإلغاء.", 409);
     }
 
     const sale = saleAmountOf(op);
@@ -632,7 +670,8 @@ export async function executeReversal(params: {
         VALUES (${op.patientId}, ${op.branchId}, ${op.medicalExamId}, ${op.followupId},
                 ${op.deviceEpisodeId}, ${op.workOrderId}, ${params.mode},
                 ${params.reasonCode}, ${reasonNote}, ${-sale},
-                ${op.paidAmount > 0 && sale > 0}, ${op.paidAmount},
+                ${op.paidAmount > 0 && sale > 0 && refundAmount === 0},
+                ${op.paidAmount - refundAmount},
                 ${params.actor.userId}, ${params.actor.userName})
         RETURNING id
       `);
@@ -681,6 +720,40 @@ export async function executeReversal(params: {
                 ${op.caseId}, ${op.deviceEpisodeId},
                 ${reversalCostNote(reversalId, params.mode)})
       `);
+    }
+
+    // ── ⑤-ب **ردُّ المال** — عاقبةٌ تجاريةٌ أخرى، قبل سحب السلطة السريرية ──
+    //  موضعُه مقصود: **العواقبُ التجارية أوّلاً ثمّ السلطةُ السريرية** (⑧).
+    //  فلا تبقى لحظةٌ تكون فيها المعاينةُ ملغاةً والمالُ عند المركز.
+    //
+    //  **وبالكاتب القانونيّ الواحد** الذي تستعمله إعادةُ المال عند إغلاق
+    //  الحالة (§٤.r) — لا نسخةَ ثانية من محاسبة الردّ: صفٌّ سالبٌ مربوطٌ
+    //  **بنفس المريض والحالة والحلقة والفرع**، وقيدُ اليومية المرآة معه
+    //  **في هذه المعاملة نفسِها**.
+    //
+    //  **والأصلُ لا يُمَسّ**: لا دفعةٌ تُعدَّل ولا تُحذف ولا قيدٌ يُعكَس —
+    //  فالتاريخُ يبقى يقول إن مالاً قُبض ثمّ رُدّ.
+    //
+    //  **ومرّةً واحدة بالضبط**: صفُّ التصحيح (③) فريدٌ على `followup_id`،
+    //  فالضغطةُ الثانية تصطدم به وتُردّ ٤٠٩ قبل أن تبلغ هذا السطر.
+    let refundPaymentId: number | null = null;
+    let refundJournalPosted = true;
+    if (refundAmount > 0) {
+      const written = await recordRefundPaymentTx(tx, {
+        patientId: op.patientId,
+        branchId: refundBranchId as number,
+        caseId: op.caseId,
+        deviceEpisodeId: op.deviceEpisodeId,
+        amount: refundAmount,
+        //  **الوسمُ من مفردات الأقسام القائمة** — به يجد القيدُ حسابَ
+        //  إيراده ويُخصَم الردُّ من قسمه هو، لا من «غير مبوّب».
+        paymentTreatmentType:
+          CLOSURE_PAYMENT_TAG[op.serviceType as keyof typeof CLOSURE_PAYMENT_TAG] ?? null,
+        notes: reversalRefundPaymentNote(reversalId, reasonNote),
+        actorUserId: params.actor.userId,
+      });
+      refundPaymentId = written.paymentId;
+      refundJournalPosted = written.journalPosted;
     }
 
     // ── ⑥ الحلقةُ والمتابعة — بحسب الوضع ───────────────────────────────
@@ -762,8 +835,10 @@ export async function executeReversal(params: {
                 reversalId, mode: params.mode,
                 reversedAmount: sale, workOrderId: op.workOrderId,
                 deviceEpisodeId: op.deviceEpisodeId,
-                preservedPaidAmount: op.paidAmount,
-                requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
+                preservedPaidAmount: op.paidAmount - refundAmount,
+                requiresFinancialSettlement:
+                  op.paidAmount > 0 && sale > 0 && refundAmount === 0,
+                refundedAmount: refundAmount, refundPaymentId,
                 replacementEpisodeId, replacementRequestedItem: replacementItem,
                 //  **ما يقرؤه الموظّف يُشتقّ من هذين لا من رقمٍ داخليّ**:
                 //  «رقم الحلقة ٨٨» لا يعني شيئاً لأحد، و«الطلب الجديد: قالب»
@@ -800,7 +875,8 @@ export async function executeReversal(params: {
         mode: params.mode, reasonCode: params.reasonCode, reasonNote,
         financialDelta: -sale, workOrderVoided,
         deviceEpisodeId: op.deviceEpisodeId, examCancelled,
-        preservedPaidAmount: op.paidAmount,
+        preservedPaidAmount: op.paidAmount - refundAmount,
+        refundedAmount: refundAmount, refundPaymentId, refundJournalPosted,
         replacementEpisodeId, replacementRequestedItem: replacementItem,
       },
       ipAddress: params.audit?.ipAddress ?? null,
@@ -808,7 +884,11 @@ export async function executeReversal(params: {
       notes: `${REVERSAL_EVENT_TITLES[params.mode]} #${reversalId}`
         + ` لمريض #${op.patientId} — ${reversalReasonLabel(params.reasonCode)}: ${reasonNote}`
         + (sale > 0 ? ` · عُكست كلفة ${money(sale)} د.ع` : "")
-        + (op.paidAmount > 0 ? ` · دفعة ${money(op.paidAmount)} د.ع محفوظة وتحتاج تسوية` : "")
+        + (refundAmount > 0
+          ? ` · رُدّ للمريض ${money(refundAmount)} د.ع (دفعة #${refundPaymentId})`
+            + (refundJournalPosted ? "" : " — تعذّر قيدُ اليومية: راجع دليل حسابات الفرع")
+          : op.paidAmount > 0
+            ? ` · دفعة ${money(op.paidAmount)} د.ع محفوظة وتحتاج تسوية` : "")
         //  **والسطرُ يقول ماذا فُتح، لا رقمَ حلقةٍ داخليّاً وحده.**
         + (replacementItem !== null
           ? ` · ${replacementSummaryLine(
@@ -820,8 +900,11 @@ export async function executeReversal(params: {
     return {
       reversalId, mode: params.mode, patientId: op.patientId,
       financialDelta: -sale,
-      requiresFinancialSettlement: op.paidAmount > 0 && sale > 0,
-      preservedPaidAmount: op.paidAmount,
+      //  **ولا تسويةَ معلَّقةٌ بعد ردٍّ وقع**: وسمُ «يحتاج تسوية» فوق مالٍ
+      //  رُدَّ فعلاً يرسل الموظّفَ يبحث عن عملٍ لا وجودَ له.
+      requiresFinancialSettlement: op.paidAmount > 0 && sale > 0 && refundAmount === 0,
+      preservedPaidAmount: op.paidAmount - refundAmount,
+      refundedAmount: refundAmount, refundPaymentId, refundJournalPosted,
       workOrderVoided, episodeId: op.deviceEpisodeId, examCancelled, replacementEpisodeId,
     };
   });
