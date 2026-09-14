@@ -1,10 +1,11 @@
-// **عقدُ جواب «هل تم إرجاع المبلغ للمريض؟»** — يُرسَل، ويحرسه الخادم،
-// و«نعم» تَرُدّ المال. `npm run test:reversal-refund-contract`.
+// **عقدُ جواب «هل تم إرجاع المبلغ للمريض؟»** — بابٌ واحد: «نعم» تَرُدّ المالَ
+// ثمّ تُلغي، و«لا» تُلغي المحاولة. `npm run test:reversal-refund-contract`.
 //
 // ══ ما يُختبَر هنا ═══════════════════════════════════════════════════════
-// «إلغاء العملية بالكامل» يعكس البيعَ **ولا يمسّ الدفعات** (قرارٌ قائم منذ
-// ٠٦٤: نقدٌ قُبض واقعةٌ لا تُعاد كتابتُها)، فيبقى للمريض رصيدٌ موسومٌ
-// `requires_financial_settlement`. والسؤالُ يُطرح على مَن يعرف الجواب لحظتَها.
+// «إلغاء العملية بالكامل» يعكس البيعَ، فيصير ما قُبض على هذه العملية مالاً
+// بلا ما يقابله. وتركُه «رصيداً يحتاج تسويةً لاحقة» كان يعني أن أحداً يجب
+// أن يتذكّره — **ولا أحدَ يتذكّر**. فصارت القاعدةُ ثنائيةً لا ثالثَ لها،
+// ويُسأل عنها مَن يعرف الجواب في اللحظة التي يعرفه فيها.
 //
 //   ① الشاشةُ ترسل الجوابَ مع **الإلغاء الكامل وحدَه** (عقدُ الشاشة في
 //      `npm run test:correction-ux` — لا يُكرَّر هنا).
@@ -12,9 +13,10 @@
 //      صحيح — **قبل أن يكتب حرفاً**.
 //   ③ **و«نعم» تُنفَّذ**: يُردّ **الصافي المقبوض** كاملاً — صفُّ دفعةٍ سالبٌ
 //      بنفس الحالة والحلقة والفرع، ومعه قيدُ اليومية المرآة، **في معاملة
-//      الإلغاء نفسِها** وبالكاتب القانونيّ الواحد. **ولا تسويةَ معلَّقة بعده.**
-//   ④ **و«لا» كما كانت بحرفها**: تمضي بلا ردٍّ وبلا دينار، والرصيدُ يبقى
-//      موسوماً — والقسمُ «ج» يحرس ذلك من الانحراف.
+//      الإلغاء نفسِها** وبالكاتب القانونيّ الواحد.
+//   ④ **و«لا» تُلغي محاولةَ الإلغاء**: ٤٠٠ برسالتها، **وصفرُ كتابة** — لا
+//      ردَّ ولا إلغاءَ ولا دينار. **ولا «تسويةٌ معلَّقة» في أيّ فرع**: إمّا
+//      يُردّ المالُ فتمضي العملية، وإمّا لا تمضي أصلاً.
 //
 // **والأصلُ لا يُمَسّ في الفرعين**: لا دفعةٌ تُعدَّل ولا تُحذف ولا قيدٌ يُعكَس.
 //
@@ -29,7 +31,7 @@ import { Pool } from "pg";
 import crypto from "node:crypto";
 import { registerRoutes } from "./routes";
 import {
-  REFUND_ANSWER_REQUIRED_ERROR, reversalRefundPaymentNote,
+  REFUND_ANSWER_REQUIRED_ERROR, REFUND_NOT_DONE_ERROR, reversalRefundPaymentNote,
 } from "@shared/administrative_reversal";
 
 const PORT = 6971;
@@ -301,32 +303,31 @@ async function main() {
         await snapshot(d.patientId), before);
     }
 
-    // ══ ج) **«لا» — القرارُ يمضي، ولا دينارَ يتحرّك** ══════════════════════
-    //  الخادمُ يحرس **وجودَ قرارٍ** لا مضمونَه: المضيُّ مع رصيدٍ لم يُردّ
-    //  قرارٌ مشروع، ويبقى موسوماً `requires_financial_settlement`.
-    //  **وهذا الفرعُ لم يُمَسّ** حين نُفِّذ فرعُ «نعم» — والقسمُ يحرسه.
-    console.log("\n── ج) فرعُ «لا» — يمضي بلا ردّ ──");
+    // ══ ج) **«لا» — تُلغي محاولةَ الإلغاء، ولا يتغيّر شيء** ═══════════════
+    //  القاعدةُ ثنائيةٌ لا ثالثَ لها: يُردّ المالُ فتمضي العملية، أو لا تمضي.
+    //  **ولا «سوِّ لاحقاً»** — ذاك هو بعينه ما كان يُخلّف رصيداً لا يتذكّره
+    //  أحد. فـ«لا» قرارٌ مكتمل: ٤٠٠ برسالتها هي، **وصفرُ كتابة**.
+    console.log("\n── ج) فرعُ «لا» — تُلغي المحاولة ──");
     {
-      const no = await soldOperation("ج-لا", 1_000_000);
-      await pay(no, 300_000);
-      const rNo = await executeFull(no.followupId, { refundAnswer: "no" });
-      same("٧. **«لا» ⟶ ينفَّذ** — الحارسُ على الصمت لا على المضمون", rNo.status, 200);
-      same("٨. **ولا ردَّ في الاستجابة**",
-        [rNo.body?.refundedAmount, rNo.body?.refundPaymentId], [0, null]);
+      const d = await soldOperation("ج-لا", 1_000_000);
+      await pay(d, 300_000);
+      const before = await snapshot(d.patientId);
 
-      const s = await outcomeShape(no.patientId);
-      same("٩. **والدفعةُ باقيةٌ بحرفها** — لا ردَّ اختُرع ولا دفعةَ سالبة",
-        s.pay, [{ amount: 300_000, notes: "دفعة تجريبية" }]);
-      same("١٠. **والرصيدُ موسومٌ «يحتاج تسوية»** كما كان قبل هذه المرحلة",
-        [s.rev?.requires_financial_settlement, s.rev?.preserved_paid_amount],
-        [true, 300_000]);
-      same("١١. **ولا قيدَ كلفةٍ ثانٍ** — قيدُ التصحيح وحدَه",
-        (s.ce as any[]).filter((e) => e.source === "administrative_reversal").length, 1);
-      same("١٢. **ولا قيدَ يوميةِ ردٍّ أصلاً**",
-        (await q(`SELECT count(*)::int n FROM journal_entries je
-                   JOIN journal_lines jl ON jl.entry_id = je.id
-                  WHERE jl.patient_id=$1 AND je.source_type='payment'`,
-          [no.patientId]))[0].n, 0);
+      const r = await executeFull(d.followupId, { refundAnswer: "no" });
+      same("٧. **«لا» ⟶ ٤٠٠** — لا تُلغى العملية قبل ردّ المال", r.status, 400);
+      same("٨. **برسالتها هي** — لا رسالةِ الصمت: قرارٌ مكتملٌ لا نقصُ بيانات",
+        r.body?.error, REFUND_NOT_DONE_ERROR);
+      same("٩. **وصفرُ كتابة** — البصمةُ مطابقةٌ بايتاً: لا ردَّ ولا إلغاءَ"
+        + " ولا قيدَ ولا شاهدةَ ولا سطرَ تدقيق",
+        await snapshot(d.patientId), before);
+
+      //  **ولا يُسمَّم الملفُّ برفضٍ**: العمليةُ ما زالت قابلةً للإلغاء بـ«نعم».
+      const after = await executeFull(d.followupId, { refundAnswer: "yes" });
+      same("١٠. **ثمّ تمضي بـ«نعم» بعدها** — الرفضُ امتناعٌ لا عطب",
+        [after.status, after.body?.refundedAmount], [200, 300_000]);
+      same("١١. **وردٌّ واحدٌ بالضبط** — لا أثرَ للمحاولة المرفوضة",
+        (await paymentsOf(d.patientId)).filter((x: any) => Number(x.amount) < 0).length, 1);
+      same("١٢. **والصافي صفر**", await netPaid(d.episodeId), 0);
     }
 
     // ══ د) **بلا مبلغٍ لا سؤال** — العقدُ لا يعترض طريقاً نظيفاً ═══════════
@@ -407,8 +408,11 @@ async function main() {
       const fresh = await executeFull(d2.followupId);
       same("٢٠. **وبأثرٍ محدَّثٍ يُطلَب الجوابُ الذي لم تسأله الشاشةُ قطّ** ⟶ ٤٠٠",
         [fresh.status, fresh.body?.error], [400, REFUND_ANSWER_REQUIRED_ERROR]);
-      same("٢١. **ثمّ يمضي بالجواب**",
-        (await executeFull(d2.followupId, { refundAnswer: "no" })).status, 200);
+      same("٢١. **ثمّ يمضي بـ«نعم» ويُردّ المبلغُ الذي لم تعرفه الشاشة**",
+        await (async () => {
+          const done = await executeFull(d2.followupId, { refundAnswer: "yes" });
+          return [done.status, done.body?.refundedAmount, await netPaid(d2.episodeId)];
+        })(), [200, 150_000, 0]);
     }
 
     // ══ ز) **الصلاحيةُ تسبق سؤالَ المال** — ولا تُسرَّب حالةُ مالٍ لمن لا يملك ══
@@ -478,12 +482,15 @@ async function main() {
       same("٣٧. **ومجموعُه وحالتُه**",
         [Number(j?.entry.total_amount), j?.entry.status], [300_000, "posted"]);
 
-      // ── ولا تسويةَ معلَّقة بعده ──
+      // ── ولا فكرةَ «تسوية معلَّقة» أصلاً ──
       const sh = await outcomeShape(d.patientId);
-      same("٣٨. **ولا تسويةَ ماليةٌ معلَّقة بعد الردّ** — في الاستجابة وفي الصفّ",
-        [r.body?.requiresFinancialSettlement, r.body?.preservedPaidAmount,
-          sh.rev?.requires_financial_settlement, sh.rev?.preserved_paid_amount],
-        [false, 0, false, 0]);
+      same("٣٨. **ولا وسمَ تسويةٍ على الصفّ، ولا شيءَ محفوظ** — رُدَّ المال",
+        [sh.rev?.requires_financial_settlement, sh.rev?.preserved_paid_amount],
+        [false, 0]);
+      same("٣٨-ب. **والفكرةُ خرجت من الاستجابة كلّها** — لا حقلَ يَعِد بتسوية",
+        [Object.prototype.hasOwnProperty.call(r.body ?? {}, "requiresFinancialSettlement"),
+          Object.prototype.hasOwnProperty.call(r.body ?? {}, "preservedPaidAmount")],
+        [false, false]);
 
       // ── والحدثُ والتدقيقُ يقولان ما وقع ──
       const [ev] = await q(`SELECT payload FROM post_exam_followup_events
@@ -491,7 +498,8 @@ async function main() {
         [d.followupId]);
       same("٣٩. **وحدثُ المتابعة يحمل الردَّ ولا يَعِد بتسوية**",
         [ev?.payload?.refundedAmount, ev?.payload?.preservedPaidAmount,
-          ev?.payload?.requiresFinancialSettlement],
+          Object.prototype.hasOwnProperty.call(ev?.payload ?? {},
+            "requiresFinancialSettlement")],
         [300_000, 0, false]);
       const [aud] = await q(`SELECT notes, new_values FROM audit_log
                               WHERE entity_type='administrative_operation_reversal'

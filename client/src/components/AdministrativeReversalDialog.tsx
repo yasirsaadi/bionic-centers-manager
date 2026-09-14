@@ -14,11 +14,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CORRECTION_INTENT_LABELS, CORRECTION_INTENT_EFFECTS, CORRECTION_INTENT_MODE,
   replacementSummaryLine,
-  REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL, refundQuestionRequired,
-  UNREFUNDED_CHOICES, UNREFUNDED_CHOICE_LABELS, UNREFUNDED_CHOICE_LABEL,
-  unrefundedChoiceRequired,
+  REFUND_ANSWERS, REFUND_ANSWER_LABELS, REFUND_QUESTION_LABEL, REFUND_NOT_DONE_ERROR,
+  refundQuestionRequired,
   type CorrectionIntent, type RefundAnswer, type ReversalMode, type ReversalPreview,
-  type UnrefundedChoice,
 } from "@shared/administrative_reversal";
 
 // **تصحيح / إلغاء العملية** — نافذةٌ واحدة تفتحها الشاشاتُ الثلاث.
@@ -59,17 +57,15 @@ export function AdministrativeReversalDialog({
   const [intent, setIntent] = useState<CorrectionIntent | "">("");
   const [replacementRequestedItem, setReplacementRequestedItem] = useState("");
   const [reasonNote, setReasonNote] = useState("");
-  //  جوابُ «هل تم إرجاع المبلغ للمريض؟» — يمنع التأكيدَ حتى يُختار، **ولا
-  //  يُرسَل ولا يغيّر ديناراً** (المرحلةُ الأولى، قرارُ المالك).
+  //  جوابُ «هل تم إرجاع المبلغ للمريض؟» — **«نعم» وحدها تفتح التأكيد**،
+  //  و«لا» تُلغي المحاولةَ وتُغلق النافذة. ولا خيارَ ثالث.
   const [refundAnswer, setRefundAnswer] = useState<RefundAnswer | "">("");
-  //  وفرعُ «لا»: أيمضي ويُسوّي لاحقاً، أم يتراجع؟ **لا يُرسَل هو الآخر.**
-  const [unrefundedChoice, setUnrefundedChoice] = useState<UnrefundedChoice | "">("");
 
   //  ولا مسوّدةٌ تتسرّب إلى عمليةٍ أخرى: سببُ أمسٍ ليس سببَ اليوم.
   useEffect(() => {
     if (!open) return;
     setMode(""); setIntent(""); setReplacementRequestedItem(""); setReasonNote("");
-    setRefundAnswer(""); setUnrefundedChoice("");
+    setRefundAnswer("");
   }, [open, target.followupId, target.workOrderId, target.episodeId]);
 
   const key = JSON.stringify(target);
@@ -107,7 +103,7 @@ export function AdministrativeReversalDialog({
     if (intent !== "replace_requested_item") setReplacementRequestedItem("");
     //  **وجوابُ الإرجاع كذلك**: أُجيب عن «إلغاءٍ كامل» ثمّ بُدِّلت النيّةُ
     //  ثمّ عاد إليها — فيُسأل من جديد، ولا يُحمَل جوابٌ قديم على قرارٍ جديد.
-    setRefundAnswer(""); setUnrefundedChoice("");
+    setRefundAnswer("");
   }, [intent]);
 
   const run = useMutation({
@@ -141,16 +137,13 @@ export function AdministrativeReversalDialog({
           ? `تم تصحيح العملية وفتح طلب جديد: ${replacementLabel || "الطلب الصحيح"}`
           : mode === "purchase_only" ? "تم التراجع عن الشراء" : "تم إلغاء العملية إدارياً",
         //  **ويُقال ما وقع للمال بالضبط** — ثلاثُ حالاتٍ لا حالتان: رُدّ ·
-        //  بقي ويحتاج تسوية · لا مالَ أصلاً. وسطرٌ واحدٌ لحالتين يُخفي ردّاً
-        //  وقع فعلاً، أو يَعِد بتسويةٍ لا موضوعَ لها.
+        //  حالتان لا ثالثة: رُدَّ المالُ · أو لم يكن هناك مالٌ يُردّ. **ولا
+        //  «تسويةٌ معلَّقة»** — لم يعد للنظام بابٌ يُخلّفها.
         description: Number(out?.refundedAmount ?? 0) > 0
           ? `تم رد ${Number(out.refundedAmount).toLocaleString("en-US")} د.ع للمريض`
-            + " — ولا تسوية مالية معلقة."
             + (out?.refundJournalPosted === false
               ? " (تعذّر قيد اليومية — راجع دليل حسابات الفرع.)" : "")
-          : out?.requiresFinancialSettlement
-            ? "الدفعة المسجلة لم تُحذف — للمريض رصيد يحتاج تسوية مالية."
-            : "عادت الحالة الصحيحة، وبقيت جميع السجلات في التاريخ.",
+          : "عادت الحالة الصحيحة، وبقيت جميع السجلات في التاريخ.",
       });
       //  كلُّ قارئٍ يجب أن يتّفق فوراً: الملفُّ والحلقاتُ والمتابعةُ
       //  والتصنيعُ وطوابيرُ الطبيب والمال.
@@ -191,15 +184,11 @@ export function AdministrativeReversalDialog({
   ] : [];
   //  **السؤالُ يُطرح بالقاعدة المشتركة** — لا بشرطٍ مكتوبٍ هنا ينحرف عنها.
   const refundRequired = refundQuestionRequired({ mode, paidAmount: preview?.paidAmount });
-  const unrefundedRequired = unrefundedChoiceRequired({
-    mode, paidAmount: preview?.paidAmount, refundAnswer,
-  });
   const canRun = Boolean(intent) && reasonNote.trim().length > 0
     && (!replacing || Boolean(replacementRequestedItem))
-    && (!refundRequired || Boolean(refundAnswer))
-    //  **وفرعُ «لا» لا يُتجاوَز بالسكوت**: «تراجع» يُغلق النافذة، فلا يبقى
-    //  ما يفتح التأكيدَ إلّا «أمضِ وسوِّ لاحقاً» صراحةً.
-    && (!unrefundedRequired || unrefundedChoice === "proceed")
+    //  **و«نعم» وحدها تفتح التأكيد**: «لا» تُغلق النافذةَ لحظةَ اختيارها،
+    //  فلا تبقى في الحالة أصلاً — والشرطُ هنا حزامُ أمانٍ لا أكثر.
+    && (!refundRequired || refundAnswer === "yes")
     && !run.isPending && !preview?.alreadyReversed;
 
   return (
@@ -339,10 +328,12 @@ export function AdministrativeReversalDialog({
               </div>
             )}
 
-            {/*  ══ **سؤالُ إرجاع المبلغ — إلزاميّ، وبعد الملخّص عمداً** ══════
-                الملخّصُ قال للتوّ إن الدفعةَ تبقى وللمريض رصيد؛ فيُسأل هنا
-                عمّا جرى فعلاً بذلك المبلغ. **ولا يُرسَل بعد ولا يغيّر ديناراً
-                ولا تنفيذَ الإلغاء** — هذه المرحلةُ تسأل وتُلزِم فقط. */}
+            {/*  ══ **سؤالُ إرجاع المبلغ — بابٌ واحد، وبعد الملخّص عمداً** ═══
+                الملخّصُ قال للتوّ إن المبلغَ سيُردّ؛ فيُسأل هنا هل رُدّ فعلاً.
+                **«نعم» تفتح التأكيد** (والخادمُ يسجّل الردَّ ثمّ يُلغي)،
+                و**«لا» تُلغي المحاولة وتُغلق النافذة** — ولا يتغيّر شيء.
+                **ولا خيارَ ثالث ولا «سوِّ لاحقاً»**: تلك هي بعينها الفكرةُ
+                التي كانت تُخلّف رصيداً لا يتذكّره أحد. */}
             {refundRequired && (
               <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-3"
                 data-testid="box-refund-question">
@@ -354,9 +345,18 @@ export function AdministrativeReversalDialog({
                     <button
                       key={a}
                       type="button"
-                      //  **وتبديلُ الجواب يُسقط فرعَه**: قرارٌ اتُّخذ عن
-                      //  «لا» لا يُحمَل على «لا» ثانيةٍ بعد مرورٍ بـ«نعم».
-                      onClick={() => { setRefundAnswer(a); setUnrefundedChoice(""); }}
+                      //  **و«لا» امتناعٌ لا تنفيذ**: تُغلق النافذةَ فوراً،
+                      //  ولا تترك حالةً تُفتَح بها شاشةُ تأكيد.
+                      onClick={() => {
+                        setRefundAnswer(a);
+                        if (a === "no") {
+                          onOpenChange(false);
+                          toast({
+                            title: "لم يُنفَّذ الإلغاء",
+                            description: REFUND_NOT_DONE_ERROR,
+                          });
+                        }
+                      }}
                       data-testid={`option-refund-${a}`}
                       className={`flex-1 rounded-lg border p-2 text-center font-semibold transition ${
                         refundAnswer === a ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
@@ -365,37 +365,10 @@ export function AdministrativeReversalDialog({
                     </button>
                   ))}
                 </div>
-
-                {/*  ══ **فرعُ «لا» — خياران، والثاني امتناعٌ لا تنفيذ** ═════
-                    «أمضِ وسوِّ لاحقاً» يفتح التأكيدَ ولا يفعل شيئاً بنفسه؛
-                    و«التراجع عن الإلغاء» **يُغلق النافذة** — وهو معنى الخيار
-                    حرفياً: لا يُنفَّذ شيء. **ولا نداءَ ولا دينارَ في أيٍّ
-                    منهما**، ولا يُرسَل الجوابُ إلى الخادم. */}
-                {unrefundedRequired && (
-                  <div className="space-y-2 border-t border-sky-200 pt-2"
-                    data-testid="box-unrefunded-choice">
-                    <Label className="font-semibold text-sky-900">
-                      {UNREFUNDED_CHOICE_LABEL} *
-                    </Label>
-                    <div className="space-y-2">
-                      {UNREFUNDED_CHOICES.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          onClick={() => {
-                            setUnrefundedChoice(c);
-                            if (c === "abort") onOpenChange(false);
-                          }}
-                          data-testid={`option-unrefunded-${c}`}
-                          className={`w-full rounded-lg border p-2 text-right font-semibold transition ${
-                            unrefundedChoice === c ? "border-primary bg-primary/10" : "hover:bg-muted/50"}`}
-                        >
-                          {UNREFUNDED_CHOICE_LABELS[c]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <p className="text-xs text-sky-800">
+                  «نعم» تسجّل رد المبلغ ثم تلغي العملية · و«لا» تلغي المحاولة
+                  ولا تغيّر شيئاً.
+                </p>
               </div>
             )}
 
