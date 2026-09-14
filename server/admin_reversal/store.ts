@@ -504,7 +504,7 @@ export async function previewReversal(target: {
     manufacturingStarted: started,
     delivered,
     alreadyReversed,
-    stateStamp: stampOf(op),
+    stateStamp: stampOf(op, reversible),
   };
 }
 
@@ -513,13 +513,20 @@ export async function previewReversal(target: {
  *
  * ولا يشمل أختاماً زمنية تتحرّك بلا معنى (`updated_at`): ختمٌ يتغيّر بلا
  * سببٍ يُنتج ٤٠٩ لا يفهمها أحد، فيتعلّم الموظّفُ تجاهلَ الرسالة.
+ *
+ * **ومقدارُ العكس منه** (`reversibleCost`): صار جزءاً من الأثر المعروض، فهو
+ * جزءٌ من الختم بالضرورة. وأعمدتُه مصادرُ حقيقةٍ مستقلّة — `patients.
+ * total_cost` و`patient_cases.cost` يتحرّكان من «تعديل مريض» ومن كلّ بابٍ
+ * ماليٍّ آخر بلا أن يمسّ أيٌّ منها حقلاً من الحقول أعلاه. فتخفيضٌ يقع بين
+ * المعاينة والتنفيذ كان يمرّ بختمٍ سليم ويُنفَّذ بأثرٍ **غيرِ الذي قُرئ**.
+ * والعقدُ المؤسّسيّ: يُعرَض الأثر ⟶ يُقرأ ⟶ يُنفَّذ **ذلك الأثرُ بعينه**.
  */
-function stampOf(op: ResolvedOperation): string {
+function stampOf(op: ResolvedOperation, reversibleCost: number): string {
   return [
     op.followupId, op.followupStatus, op.approvedPrice,
     op.deviceEpisodeId ?? "-", op.episodeStatus ?? "-", op.episodeAgreedCost,
     op.workOrderId ?? "-", op.orderStatus ?? "-",
-    op.paidAmount, op.existingReversalId ?? "-",
+    op.paidAmount, op.existingReversalId ?? "-", reversibleCost,
   ].join("|");
 }
 
@@ -633,7 +640,19 @@ export async function executeReversal(params: {
     if (op.existingReversalId !== null) {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);
     }
-    if (params.expectedStamp !== stampOf(op)) throw new ReversalError(DRIFT, 409);
+    //  ══ **المقدارُ الذي يُعكَس — القائمُ فعلاً، تحت القفل** ═══════════════
+    //  ويُحسَب **قبل مقارنة الختم** لأنه جزءٌ منه: تخفيضٌ وقع بين المعاينة
+    //  والتنفيذ يبدّل الأثرَ المعروض، فيُردّ الطلبُ ٤٠٩ **بلا كتابةِ حرف**
+    //  ويُعاد فتحُ النافذة لمراجعة الأثر الجديد.
+    //
+    //  **و`sold` تبقى على `sale`** — واقعةُ البيع لا أثرُه: عمليةٌ خُفّضت
+    //  كلفتُها إلى الصفر **بِيعت فعلاً**، فلو قِيس البيعُ بالقائم لصارت
+    //  «بلا شراء» ورُدَّ عنها «التراجع عن الشراء» بلا وجه.
+    const sale = saleAmountOf(op);
+    const reversedCost = await standingCostOf(tx, op, sale, true);
+    if (params.expectedStamp !== stampOf(op, reversedCost)) {
+      throw new ReversalError(DRIFT, 409);
+    }
 
     // ══ **الاستبدالُ يُفحَص قبل أن تُكتب كلمة** ══════════════════════════
     //  والشرطُ هو `replacementPossible` نفسُه الذي قرّر ما تعرضه الشاشة —
@@ -710,15 +729,6 @@ export async function executeReversal(params: {
         + " راجع الإدارة قبل الإلغاء.", 409);
     }
 
-    const sale = saleAmountOf(op);
-    //  ══ **المقدارُ الذي يُعكَس — القائمُ فعلاً، تحت القفل** ═══════════════
-    //  ويُحسَب **قبل صفّ التصحيح (③)** لأنه يحمل `financial_delta`: رقمٌ
-    //  يُكتب ثمّ يُصحَّح بتحديثٍ ثانٍ يقرأ بينهما مَن يقرأ.
-    //
-    //  **و`sold` تبقى على `sale`** — واقعةُ البيع لا أثرُه: عمليةٌ خُفّضت
-    //  كلفتُها إلى الصفر **بِيعت فعلاً**، فلو قِيس البيعُ بالقائم لصارت
-    //  «بلا شراء» ورُدَّ عنها «التراجع عن الشراء» بلا وجه.
-    const reversedCost = await standingCostOf(tx, op, sale, true);
     const sold = sale > 0 || op.followupStatus === "converted" || op.workOrderId !== null;
     if (params.mode === "purchase_only") {
       if (!sold) {

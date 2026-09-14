@@ -169,6 +169,34 @@ async function money(patientId: number) {
   };
 }
 
+/** لقطةٌ كاملة — كلُّ ما يجب ألّا يتحرّك حين يُردّ التنفيذ. */
+async function snapshot(patientId: number) {
+  const [p] = await q(`SELECT total_cost::int AS total FROM patients WHERE id=$1`, [patientId]);
+  const cases = await q(
+    `SELECT id, cost::int AS cost FROM patient_cases WHERE patient_id=$1 ORDER BY id`, [patientId]);
+  const entries = await q(
+    `SELECT id, amount::int AS amount, source FROM cost_entries WHERE patient_id=$1 ORDER BY id`,
+    [patientId]);
+  const eps = await q(
+    `SELECT id, status, agreed_cost::int AS cost, admin_void_reversal_id
+       FROM patient_device_episodes WHERE patient_id=$1 ORDER BY id`, [patientId]);
+  const fus = await q(
+    `SELECT id, status, converted_work_order_id, closed_reason
+       FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [patientId]);
+  const wos = await q(
+    `SELECT id, status, admin_void_reversal_id FROM prosthetic_work_orders
+      WHERE patient_id=$1 ORDER BY id`, [patientId]);
+  const revs = await q(
+    `SELECT id FROM administrative_operation_reversals WHERE patient_id=$1 ORDER BY id`,
+    [patientId]);
+  const evs = await q(
+    `SELECT id, event_type FROM post_exam_followup_events WHERE patient_id=$1 ORDER BY id`,
+    [patientId]);
+  const cancels = await q(
+    `SELECT exam_id FROM medical_exam_cancellations WHERE patient_id=$1 ORDER BY id`, [patientId]);
+  return { total: p?.total ?? 0, cases, entries, eps, fus, wos, revs, evs, cancels };
+}
+
 const preview = (target: any) =>
   http("POST", "/api/admin/operation-reversal/preview", S.admin, target);
 async function execute(body: any) {
@@ -177,8 +205,8 @@ async function execute(body: any) {
     { ...body, stateStamp: pv.body?.stateStamp });
 }
 
-/** يخفض مجموعَ المريض من «تعديل مريض» — نفسُ بابِ الواقعة الموثَّقة. */
-async function lowerTotalCost(patientId: number, to: number) {
+/** يضبط مجموعَ المريض من «تعديل مريض» — نفسُ بابِ الواقعة الموثَّقة. */
+async function setTotalCost(patientId: number, to: number) {
   const [p] = await q(`SELECT * FROM patients WHERE id=$1`, [patientId]);
   return await http("PUT", `/api/patients/${patientId}`, S.admin, {
     name: p.name, phone: p.phone, branchId: p.branch_id, totalCost: to,
@@ -262,7 +290,7 @@ async function main() {
         [1_000_000, 1_000_000, 1_000_000]);
       same("   والدفترُ متّسقٌ قبل التخفيض", sold.ledger, sold.total);
 
-      const cut = await lowerTotalCost(op.patientId, 300_000);
+      const cut = await setTotalCost(op.patientId, 300_000);
       check(cut.status < 300, "٢. التخفيضُ الإداريّ نجح", JSON.stringify(cut.body));
       const after = await money(op.patientId);
       same("   ومجموعُ المريض صار ٣٠٠ ألفاً", after.total, 300_000);
@@ -330,7 +358,7 @@ async function main() {
     console.log("\n── ج. لا شيءَ قائمٌ ⟶ لا قيدَ يُكتب ──");
     {
       const op = await soldOperation("الصفر", 500_000);
-      const cut0 = await lowerTotalCost(op.patientId, 0);
+      const cut0 = await setTotalCost(op.patientId, 0);
       check(cut0.status < 300, "١٤-ب. التخفيضُ إلى الصفر نجح", JSON.stringify(cut0.body));
       const before = await money(op.patientId);
       same("١٥. المجموعُ صفرٌ قبل الإلغاء", [before.total, before.caseCost], [0, 0]);
@@ -353,7 +381,7 @@ async function main() {
     console.log("\n── د. تراجعٌ عن الشراء بعد تخفيضٍ سابق ──");
     {
       const op = await soldOperation("التراجع", 900_000);
-      const cutD = await lowerTotalCost(op.patientId, 250_000);
+      const cutD = await setTotalCost(op.patientId, 250_000);
       check(cutD.status < 300, "١٧-ب. التخفيضُ نجح", JSON.stringify(cutD.body));
       const before = await money(op.patientId);
       same("١٨. القائمُ ٢٥٠ ألفاً وسعرُ الحلقة ٩٠٠", [before.total, before.agreed],
@@ -372,6 +400,63 @@ async function main() {
         fin.reversalEntries.map((e) => e.amount), [-250_000]);
       same("٢٢. **وثابتُ الدفتر محفوظ**", fin.ledger, fin.total);
       same("   و`financial_delta`", res.body?.financialDelta, -250_000);
+    }
+
+    // ══ و. الختمُ يحمل مقدارَ العكس — فتغيُّرُه بين المعاينة والتنفيذ يُردّ ══
+    console.log("\n── و. تغيَّر المقدارُ بين المعاينة والتنفيذ ──");
+    {
+      const op = await soldOperation("الختم", 1_000_000);
+      await setTotalCost(op.patientId, 300_000);
+
+      const pv1 = await preview({ followupId: op.followupId });
+      check(pv1.status < 300, "٢٥. المعاينةُ الأولى نجحت", JSON.stringify(pv1.body));
+      same("٢٦. **وتقول إن الأثر ٣٠٠ ألفاً**", pv1.body?.financialDelta, -300_000);
+      //  **وسعرُ البيع يبقى واقعتَه** — الرقمان مختلفان عمداً.
+      same("   وسعرُ البيع مليونٌ كما هو", pv1.body?.saleAmount, 1_000_000);
+      const staleStamp = String(pv1.body?.stateStamp ?? "");
+      check(staleStamp.length > 0, "   والختمُ محفوظ", staleStamp);
+
+      //  ── يتغيّر القائمُ بين القراءة والتنفيذ ──
+      const raise = await setTotalCost(op.patientId, 500_000);
+      check(raise.status < 300, "٢٧. ثمّ صار القائمُ ٥٠٠ ألفاً", JSON.stringify(raise.body));
+
+      const before = await snapshot(op.patientId);
+      same("   والمجموعُ فعلاً ٥٠٠ ألفاً", before.total, 500_000);
+
+      const bad = await http("POST", "/api/admin/operation-reversal/execute", S.admin, {
+        followupId: op.followupId, mode: "full_operation",
+        reasonCode: "purchase_recorded_by_mistake", reasonNote: "تنفيذٌ بختمٍ بائت",
+        stateStamp: staleStamp,
+      });
+      same("٢٨. **والتنفيذُ بالختم البائت يُردّ ٤٠٩**", bad.status, 409);
+      check(String(bad.body?.error ?? bad.body?.message ?? "").includes("تغيّرت العملية"),
+        "   برسالةٍ تطلب إعادةَ فتح النافذة ومراجعةَ الأثر",
+        JSON.stringify(bad.body));
+
+      const after = await snapshot(op.patientId);
+      same("٢٩. **وصفرُ كتابة** — لا شيءَ تحرّك بايتاً", after, before);
+      same("   ولا صفَّ تصحيحٍ وُلد", after.revs, []);
+      same("   ولا قيدَ عكسٍ كُتب",
+        after.entries.filter((e: any) => e.source === "administrative_reversal"), []);
+
+      //  ── والمعاينةُ الجديدة تقول الحقيقةَ الجديدة، وتنفيذُها يمضي ──
+      const pv2 = await preview({ followupId: op.followupId });
+      same("٣٠. **والمعاينةُ الجديدة تقول ٥٠٠ ألفاً**", pv2.body?.financialDelta, -500_000);
+      check(String(pv2.body?.stateStamp ?? "") !== staleStamp,
+        "   وختمُها مختلفٌ عن البائت", "");
+
+      const ok = await http("POST", "/api/admin/operation-reversal/execute", S.admin, {
+        followupId: op.followupId, mode: "full_operation",
+        reasonCode: "purchase_recorded_by_mistake", reasonNote: "تنفيذٌ بعد إعادة المراجعة",
+        stateStamp: String(pv2.body?.stateStamp ?? ""),
+      });
+      check(ok.status < 300, "٣١. **والتنفيذُ بالختم الحيّ ينجح**", JSON.stringify(ok.body));
+      same("   ويعكس ٥٠٠ ألفاً بالضبط", ok.body?.financialDelta, -500_000);
+
+      const fin = await money(op.patientId);
+      same("   والقيدُ السالبُ بالمقدار نفسِه",
+        fin.reversalEntries.map((e) => e.amount), [-500_000]);
+      same("   وثابتُ الدفتر محفوظ", fin.ledger, fin.total);
     }
 
     // ══ هـ. الثابتُ العامّ على كلّ ما كُتب في هذه الجلسة ══════════════════
