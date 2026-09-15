@@ -24,7 +24,10 @@ WITH waiting AS (
     JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
    WHERE f.status NOT IN ('closed_without_purchase','converted',
                           'closed_exam_cancelled','closed_admin_void',
-                          'closed_request_cancelled')
+                          'closed_request_cancelled',
+                          --  الطرفيّةُ السادسة (ترحيل ٠٨١) — وبلا هذا السطر
+                          --  يُرجع الملفُّ صفوفاً أُلغي حسمُها ولم تعد في الطابور.
+                          'closed_decision_cancelled')
      AND (f.device_episode_id IS NULL OR de.service_path = 'exam')
      AND (
        CASE WHEN f.device_episode_id IS NULL THEN
@@ -131,8 +134,14 @@ SELECT patient_code, patient_name, branch_id, service_type, status AS followup_s
            THEN 'OK2 ✓ متابعةٌ سابقة محسومةٌ بالشراء — وهذه طلبٌ لاحقٌ حيّ'
          WHEN maint_orders > 0
            THEN 'OK3 ✓ صيانةٌ فقط — ليست بيعَ جهاز، فالانتظارُ صحيح'
+         --  ══ **المالُ وحدَه ليس دليلَ خطأ** (قرارُ المالك ٢٠٢٦-٠٩-١٥) ══
+         --  مريضٌ له دفعاتٌ قديمة ثمّ جاء بمعاينةٍ جديدة صحيحة **يجب** أن
+         --  يظهر في الطابور. فالعشرُ التي حُسمت خطأً حُسمت **بأعيانها بعد
+         --  رؤيتها**، لا باستنتاجٍ من وجود مال — وهويّاتُها مثبَّتةٌ صراحةً
+         --  في `cancel_decision_ten.sql` ولا تُشتقّ من هنا أبداً.
+         --  فهذه فئةُ **مراجعة** لا فئةُ خطأ، وهي خارج مجموع «ظاهرون بالخطأ».
          WHEN paid_for_service > 0
-           THEN 'X3 ✘ قُبض مالٌ للقسم بلا أيّ أمرِ بناء — يستحقّ نظرة'
+           THEN 'R1 ⟲ يحتاج مراجعة — مالٌ مقبوضٌ للقسم بلا أمرِ بناء (قد يكون مالاً قديماً وطلباً جديداً صحيحاً)'
          ELSE 'OK4 ✓ لا بيعَ ولا أمرَ ولا مال — ظهورٌ صحيح'
        END AS reason
   FROM facts)
@@ -157,7 +166,10 @@ WITH waiting AS (
     JOIN patients p ON p.id = f.patient_id AND p.deleted_at IS NULL
    WHERE f.status NOT IN ('closed_without_purchase','converted',
                           'closed_exam_cancelled','closed_admin_void',
-                          'closed_request_cancelled')
+                          'closed_request_cancelled',
+                          --  الطرفيّةُ السادسة (ترحيل ٠٨١) — وبلا هذا السطر
+                          --  يُرجع الملفُّ صفوفاً أُلغي حسمُها ولم تعد في الطابور.
+                          'closed_decision_cancelled')
      AND (f.device_episode_id IS NULL OR de.service_path = 'exam')
      AND (
        CASE WHEN f.device_episode_id IS NULL THEN
@@ -264,13 +276,20 @@ SELECT patient_code, patient_name, branch_id, service_type, status AS followup_s
            THEN 'OK2 ✓ متابعةٌ سابقة محسومةٌ بالشراء — وهذه طلبٌ لاحقٌ حيّ'
          WHEN maint_orders > 0
            THEN 'OK3 ✓ صيانةٌ فقط — ليست بيعَ جهاز، فالانتظارُ صحيح'
+         --  ══ **المالُ وحدَه ليس دليلَ خطأ** (قرارُ المالك ٢٠٢٦-٠٩-١٥) ══
+         --  مريضٌ له دفعاتٌ قديمة ثمّ جاء بمعاينةٍ جديدة صحيحة **يجب** أن
+         --  يظهر في الطابور. فالعشرُ التي حُسمت خطأً حُسمت **بأعيانها بعد
+         --  رؤيتها**، لا باستنتاجٍ من وجود مال — وهويّاتُها مثبَّتةٌ صراحةً
+         --  في `cancel_decision_ten.sql` ولا تُشتقّ من هنا أبداً.
+         --  فهذه فئةُ **مراجعة** لا فئةُ خطأ، وهي خارج مجموع «ظاهرون بالخطأ».
          WHEN paid_for_service > 0
-           THEN 'X3 ✘ قُبض مالٌ للقسم بلا أيّ أمرِ بناء — يستحقّ نظرة'
+           THEN 'R1 ⟲ يحتاج مراجعة — مالٌ مقبوضٌ للقسم بلا أمرِ بناء (قد يكون مالاً قديماً وطلباً جديداً صحيحاً)'
          ELSE 'OK4 ✓ لا بيعَ ولا أمرَ ولا مال — ظهورٌ صحيح'
        END AS reason
   FROM facts)
 
-SELECT CASE WHEN reason LIKE 'X%' THEN '✘ ظاهرون بالخطأ — بيعٌ قائم أو مالٌ بلا تفسير'
+SELECT CASE WHEN reason LIKE 'X%' THEN '✘ ظاهرون بالخطأ — بيعٌ قائمٌ لا يراه الحارس'
+            WHEN reason LIKE 'R%' THEN '⟲ يحتاج مراجعةً بشرية — لا يُحسَب خطأً ولا صحيحاً'
             ELSE '✓ ظاهرون بشكل صحيح' END AS "الفئة",
        count(*) AS "العدد"
   FROM classified GROUP BY 1

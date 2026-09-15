@@ -13,10 +13,15 @@
 --   وتسقط المعاملةُ كلُّها — رفضٌ نظيف، لا نصفَ كتابة. وفي الخطوة ٠ فحصٌ
 --   صريحٌ يقول أَطُبِّق أم لا.
 --
--- ══ ما يفعله ═══════════════════════════════════════════════════════════════
+-- ══ ما يفعله — **ثلاثةُ أعمدةٍ لا أكثر** ═══════════════════════════════════
 --   حالةُ الصفّ ⟶ `closed_decision_cancelled` (طرفيّة) · `closed_at` ·
---   `last_note` = السبب · `last_contact_at` · `updated_at`
+--   `updated_at`
 --   + صفٌّ في `post_exam_followup_events` + صفٌّ في `audit_log`.
+--
+--   **ولا `last_note` ولا `last_contact_at`**: السببُ يعيش في الحدث وفي
+--   التدقيق، ولا يُكتب فوق آخر ملاحظةٍ قالها زميلٌ عن المريض؛ وإلغاءُ الحسم
+--   ليس اتصالاً بالمريض فلا يحرّك ختمَ آخرِ تواصل. **وهذا مطابقٌ حرفياً
+--   للكاتب القانونيّ** `server/followup/store.ts: cancelDecision`.
 --
 -- ══ ما لا يفعله — **وهذا مُثبَتٌ داخل المعاملة نفسِها لا موعود** ═══════════
 --   لا يحذف صفَّ متابعةٍ ولا مريضاً ولا معاينة · ولا يكتب قرارَ شراءٍ ولا
@@ -83,7 +88,10 @@ CREATE TEMP TABLE _f_before ON COMMIT DROP AS
          service_type, status, approved_price, original_price, price_kind,
          price_source, selected_expert_user_id, purchase_decision,
          purchase_decision_at, purchase_decision_owner, not_bought_reason_text,
-         closed_reason, converted_at, converted_work_order_id
+         closed_reason, converted_at, converted_work_order_id,
+         --  **العمودان اللذان لا يُمَسّان** — في اللقطة كي يُثبت الحارسُ (أ)
+         --  بقاءهما، لا كي يُسمَح بتغيّرهما.
+         last_note, last_contact_at
     FROM post_exam_followups;
 
 CREATE TEMP TABLE _money_before ON COMMIT DROP AS
@@ -129,8 +137,6 @@ upd AS (
   UPDATE post_exam_followups f
      SET status          = 'closed_decision_cancelled',
          closed_at       = NOW(),
-         last_note       = (SELECT reason FROM actor),
-         last_contact_at = NOW(),
          updated_at      = NOW()
     FROM locked l
    WHERE f.id = l.id AND f.status = l.status
@@ -173,7 +179,8 @@ SELECT
 
 -- ══ الحُرّاس — يقارنون اللقطةَ الحقيقية. أيُّ واحدٍ يُسقط المعاملةَ كلَّها ══
 
--- (أ) لا صفَّ متابعةٍ تغيّر إلّا حالةُ العشر، ولا عمودَ تجاريّاً واحداً تحرّك.
+-- (أ) لا صفَّ متابعةٍ تغيّر إلّا حالةُ العشر — ولا عمودَ تجاريّاً واحداً تحرّك،
+--     **ولا `last_note` ولا `last_contact_at` على أيّ صفّ** بما فيها العشر.
 --     ويشمل هذا المتابعةَ ٧٠ تلقائياً: أيُّ فرقٍ عليها يُلتقَط هنا.
 DO $$
 DECLARE n int; bad text;
@@ -187,14 +194,14 @@ BEGIN
             b.price_kind, b.price_source, b.selected_expert_user_id,
             b.purchase_decision, b.purchase_decision_at, b.purchase_decision_owner,
             b.not_bought_reason_text, b.closed_reason, b.converted_at,
-            b.converted_work_order_id)
+            b.converted_work_order_id, b.last_note, b.last_contact_at)
         IS DISTINCT FROM
            (f.patient_id, f.case_id, f.device_episode_id, f.medical_exam_id,
             f.branch_id, f.service_type, f.approved_price, f.original_price,
             f.price_kind, f.price_source, f.selected_expert_user_id,
             f.purchase_decision, f.purchase_decision_at, f.purchase_decision_owner,
             f.not_bought_reason_text, f.closed_reason, f.converted_at,
-            f.converted_work_order_id)
+            f.converted_work_order_id, f.last_note, f.last_contact_at)
     UNION ALL
     -- حالةٌ تغيّرت على صفٍّ خارج العشر، أو إلى قيمةٍ غير المتوقَّعة
     SELECT b.id FROM _f_before b JOIN post_exam_followups f ON f.id = b.id
@@ -240,8 +247,15 @@ COMMIT;
 -- الخطوة ٢ — تحقّقٌ بعد الإتمام. قراءةٌ فقط. (٧٠ معروضةٌ عمداً للمقارنة.)
 -- ───────────────────────────────────────────────────────────────────────────
 SELECT f.id AS "المتابعة", p.patient_code AS "رمز المريض",
-       f.status AS "الحالة", f.closed_at AS "وقت الإلغاء", f.last_note AS "السبب",
-       f.purchase_decision AS "قرارُ الشراء (يبقى فارغاً)",
+       f.status AS "الحالة", f.closed_at AS "وقت الإلغاء",
+       --  السببُ يُقرأ من **الحدث** لا من `last_note` — هناك يعيش.
+       (SELECT ev.note FROM post_exam_followup_events ev
+         WHERE ev.followup_id = f.id
+           AND ev.event_type = 'closed_decision_cancelled'
+         ORDER BY ev.id DESC LIMIT 1)            AS "سببُ الإلغاء (من الحدث)",
+       f.last_note         AS "آخرُ ملاحظة (يجب أن تبقى كما كانت)",
+       f.last_contact_at   AS "آخرُ تواصل (يجب أن يبقى كما كان)",
+       f.purchase_decision AS "قرارُ الشراء (كما كان — لا يُمحى)",
        f.closed_reason     AS "سببُ الإغلاق (يبقى فارغاً)"
   FROM post_exam_followups f JOIN patients p ON p.id = f.patient_id
  WHERE f.id IN (60, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71)

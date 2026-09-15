@@ -1351,10 +1351,17 @@ export async function closeWithoutPurchase(params: {
  * **والصفُّ لا يُحذَف**: نهايةٌ محايدةٌ مسمّاة `closed_decision_cancelled`
  * («أُلغي الحسم») وحدثٌ يقول مَن ولماذا ومتى — لا محوَ ولا كتابةَ فوق.
  *
- * ══ والسببُ إلزاميّ ═════════════════════════════════════════════════════
+ * ══ والسببُ إلزاميّ — ويعيش في الحدث والتدقيق لا فوق ملاحظةِ غيره ══════
  * نصٌّ حرّ (لا رمزٌ من `FOLLOWUP_REASONS`: تلك أسبابُ **المريض** لعدم
- * الشراء، وهذا ليس ذاك). ويُكتب في `last_note` وفي الحدث — **و`closed_reason`
- * يبقى `NULL`**: عمودٌ معناه «لماذا لم يشترِ»، وملؤه هنا يدّعي سبباً لم يُقَل.
+ * الشراء، وهذا ليس ذاك). ويُكتب في `post_exam_followup_events` وفي
+ * `audit_log` — **ولا يُكتب في `last_note`**: ذاك آخرُ ما قيل عن المريض،
+ * وسحبُ مهمّةٍ من طابورٍ لا يمحو ما قاله زميلٌ قبل أسبوع.
+ *
+ * **و`last_contact_at` لا يتحرّك**: إلغاءُ الحسم **ليس اتصالاً بالمريض** —
+ * تحريكُه يجعل ملفّاً لم يُكلَّم صاحبُه منذ شهر يُقرأ «تُوبع اليوم».
+ *
+ * **و`closed_reason` يبقى `NULL`**: عمودٌ معناه «لماذا لم يشترِ»، وملؤه
+ * هنا يدّعي سبباً لم يُقَل.
  *
  * ══ والمنتهيةُ لا تُلمَس ════════════════════════════════════════════════
  * `lockFollowup` بالحالات الحيّة وحدها ⟶ ٤٠٩ لكلّ طرفيّة. فضغطتان
@@ -1375,12 +1382,16 @@ export async function cancelDecision(params: {
       "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
       "price_approval_pending", "purchase_approval_pending",
     ]);
-    //  **الحالةُ وحدها** — ولا عمودَ تجاريّ ولا قرارَ مريضٍ يُكتب أو يُمحى.
+    //  ══ **ثلاثةُ أعمدةٍ لا أكثر** — وهي كلُّ ما تستلزمه إنهاءُ المهمّة ══
+    //  الحالةُ الطرفيّة · ختمُ الإغلاق · ختمُ التحديث. ولا عمودَ تجاريّ ولا
+    //  قرارَ مريضٍ يُكتب أو يُمحى، **ولا `last_note`** (آخرُ ما قيل عن
+    //  المريض — لا يُكتب فوقه سببُ سحبِ مهمّة)، **ولا `last_contact_at`**
+    //  (إلغاءُ الحسم ليس اتصالاً).
     //  وشرطُ الحالة في `UPDATE` نفسِه هو حارسُ السباق الثاني بعد القفل.
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET status = 'closed_decision_cancelled', closed_at = NOW(),
-             last_note = ${reason}, last_contact_at = NOW(), updated_at = NOW()
+             updated_at = NOW()
        WHERE id = ${params.followupId} AND status = ${cur.status}
       RETURNING ${SELECT_COLS}
     `);

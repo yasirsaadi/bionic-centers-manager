@@ -27,7 +27,9 @@ import { canCancelDecision, TERMINAL_STATUSES, FOLLOWUP_STATUS_LABELS } from "@s
 // المخزنَ أصلاً، فحارسُ المخزن نفسُه لا يُختبَر من فوقها أبداً. وحارسٌ
 // لا يُختبَر حارسٌ يسقط يوماً بلا أن يفشل شيء.
 import * as followupStore from "./followup/store";
-import { followupEventView } from "@shared/followup_events";
+import {
+  followupEventView, purchasePresentation, PURCHASE_STATE_TEXT,
+} from "@shared/followup_events";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -353,7 +355,8 @@ async function main() {
   }
   async function fRow(fid: number) {
     const [r] = await q(`SELECT status, closed_at IS NOT NULL closed, closed_reason,
-                                last_note, purchase_decision, purchase_decision_owner,
+                                last_note, last_contact_at,
+                                purchase_decision, purchase_decision_owner,
                                 not_bought_reason_text, approved_price, original_price,
                                 price_kind, price_owner, selected_expert_user_id,
                                 expert_owner, converted_work_order_id, device_episode_id
@@ -476,7 +479,8 @@ async function main() {
         [0, null, null]);
       same("٢٨. **ولا خبيرَ أُسنِد**", row?.selected_expert_user_id, null);
       check(Boolean(row?.closed), "٢٩. وختمُ الإغلاق مكتوب");
-      same("٣٠. **والسببُ محفوظٌ على الصفّ**", row?.last_note, REASON);
+      //  **والسببُ لا يُكتب على الصفّ** — يعيش في الحدث وفي التدقيق وحدهما.
+      same("٣٠. **ولا يُكتب السببُ في `last_note`**", row?.last_note, null);
 
       //  ── الحدثُ والتدقيق ──
       const ev = await q(`SELECT event_type, from_status, to_status, note, payload,
@@ -578,7 +582,13 @@ async function main() {
       const again = await cancel(fid, S.admin, "سببٌ ثانٍ");
       same("٥٨. **والثانيةُ تُردّ ٤٠٩** — المنتهيةُ لا تُلغى مرّتين", again.status, 409);
       const row = await fRow(fid);
-      same("٥٩. **والسببُ الأوّل هو الباقي** — لا كتابةَ فوق", row?.last_note, "سببٌ أوّل");
+      {
+        const [e1] = await q(`SELECT note FROM post_exam_followup_events
+                               WHERE followup_id=$1 AND event_type='closed_decision_cancelled'
+                               ORDER BY id`, [fid]);
+        same("٥٩. **والسببُ الأوّل هو الباقي في الحدث** — لا كتابةَ فوق",
+          e1?.note, "سببٌ أوّل");
+      }
       const ev = await q(`SELECT COUNT(*)::int n FROM post_exam_followup_events
                            WHERE followup_id=$1 AND event_type='closed_decision_cancelled'`, [fid]);
       same("٦٠. **وحدثٌ واحدٌ بالضبط**", Number(ev[0]?.n), 1);
@@ -746,6 +756,91 @@ async function main() {
                           WHERE entity_type='post_exam_followup' AND entity_id=$1`,
           [fid]))[0].n),
       ], [1, 1]);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n══ ن. الحيادُ الكامل — آخرُ ملاحظةٍ وآخرُ تواصلٍ لا يُمَسّان ══\n");
+    // ════════════════════════════════════════════════════════════════════
+    //  **إلغاءُ الحسم سحبُ مهمّةٍ لا حدثٌ على المريض**: فلا يُكتب سببُه فوق
+    //  آخر ملاحظةٍ قالها زميلٌ عنه، ولا يحرّك ختمَ آخرِ تواصلٍ فيجعل ملفّاً
+    //  لم يُكلَّم صاحبُه منذ شهر يُقرأ «تُوبع اليوم».
+    {
+      const { pid, fid } = await readySale("الحياد الكامل");
+      const NOTE = "اتصلنا به الأحد — قال يراجع أهله ويردّ";
+      await q(`UPDATE post_exam_followups
+                  SET last_note = $1, last_contact_at = TIMESTAMPTZ '2026-08-01 09:30:00+03'
+                WHERE id = $2`, [NOTE, fid]);
+      const pre = await fRow(fid);
+      const before = await fingerprint(pid);
+      same("٩٤. الإعدادُ: ملاحظةٌ ووقتُ تواصلٍ سابقان", [pre?.last_note, Boolean(pre?.last_contact_at)],
+        [NOTE, true]);
+
+      const r = await cancel(fid, S.admin, "دخل الطابور بالخطأ — سببُ الإلغاء لا يُكتب فوق ملاحظته");
+      same("٩٥. الإلغاءُ ينجح", r.status, 200);
+      const post = await fRow(fid);
+      same("٩٦. **والحالةُ طرفيّة**", post?.status, "closed_decision_cancelled");
+
+      same("٩٧. **آخرُ ملاحظةٍ باقيةٌ حرفاً بحرف** — لا سببُ الإلغاء كتبها",
+        post?.last_note, NOTE);
+      same("٩٨. **وآخرُ تواصلٍ لم يتحرّك بجزءٍ من ثانية**",
+        String(post?.last_contact_at ?? ""), String(pre?.last_contact_at ?? ""));
+      same("٩٩. **وصفرُ كتابةٍ على الملفّ**", await fingerprint(pid), before);
+
+      //  والسببُ موجودٌ فعلاً — في الحدث، حيث يعيش.
+      const [ev] = await q(`SELECT note FROM post_exam_followup_events
+                             WHERE followup_id=$1 AND event_type='closed_decision_cancelled'`, [fid]);
+      check(String(ev?.note ?? "").includes("دخل الطابور بالخطأ"),
+        "١٠٠. **والسببُ محفوظٌ في الحدث** — لم يضِع، بل لم يُكتب فوق غيره");
+      const [au] = await q(`SELECT notes FROM audit_log
+                             WHERE entity_type='post_exam_followup' AND entity_id=$1
+                               AND notes LIKE 'إلغاء الحسم%'`, [fid]);
+      check(String(au?.notes ?? "").includes("دخل الطابور بالخطأ"),
+        "١٠١. **وفي سطر التدقيق كذلك**");
+
+      //  والحارسُ المعماريّ: العمودان غائبان عن جسم الدالّة أصلاً.
+      {
+        const src = readFileSync(join(import.meta.dirname, "followup", "store.ts"), "utf8");
+        const i = src.indexOf("export async function cancelDecision(");
+        const j = src.indexOf("\n/**", i);
+        const fn = src.slice(i, j > i ? j : undefined);
+        const upd = fn.slice(fn.indexOf("UPDATE post_exam_followups"), fn.indexOf("RETURNING"));
+        check(!/last_note/.test(upd), "١٠٢. **ولا `last_note` في جملة الكتابة**", upd);
+        check(!/last_contact_at/.test(upd), "١٠٣. **ولا `last_contact_at`**", upd);
+        check(/SET status =[\s\S]*closed_at =[\s\S]*updated_at =/.test(upd),
+          "١٠٤. **والمكتوبُ ثلاثةُ أعمدةٍ لا أكثر**", upd);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n══ س. قرارُ شراءٍ محفوظ — لا يُمحى ولا يُناقَض نصّاً ══\n");
+    // ════════════════════════════════════════════════════════════════════
+    //  النظامُ يقبل `purchase_decision = 'bought'` محفوظاً بينما البيعُ ينتظر
+    //  استكمالَ بياناته (٠٦٦). و«إلغاء الحسم» **لا يمحوه** — وهذا صوابُه.
+    //  فالنصُّ المعروض بعده يجب ألّا ينفيه.
+    {
+      const { pid, fid } = await readySale("قرارٌ محفوظ");
+      await ownDecisionBought(fid, DOC, "سعد");
+      const pre = await fRow(fid);
+      same("١٠٥. الإعدادُ: قرارُ «اشترى» محفوظٌ على الصفّ",
+        [pre?.purchase_decision, pre?.purchase_decision_owner], ["bought", "doctor"]);
+      const before = await fingerprint(pid);
+
+      const r = await cancel(fid, S.admin, "المهمّةُ دخلت الطابورَ بالخطأ");
+      same("١٠٦. الإلغاءُ ينجح", r.status, 200);
+      const post = await fRow(fid);
+      same("١٠٧. **والقرارُ المحفوظ باقٍ كما هو — لا يُمحى**",
+        [post?.purchase_decision, post?.purchase_decision_owner], ["bought", "doctor"]);
+      same("١٠٨. **وصفرُ كتابةٍ على الملفّ**", await fingerprint(pid), before);
+
+      //  ── والعرضُ لا يناقض الصفَّ الذي يقرؤه الموظّفُ نفسُه ──
+      const view = purchasePresentation({ status: post?.status } as any);
+      same("١٠٩. **والعرضُ `decision_cancelled`**", view, "decision_cancelled");
+      const text = PURCHASE_STATE_TEXT[view];
+      check(text.includes("أُلغي الحسم"), "١١٠. **ونصُّه يقول إن الحسمَ أُلغي**", text);
+      check(!/لا\s+قرار/.test(text),
+        "١١١. **ولا ينفي قراراً قائماً في الصفّ نفسِه** — لا «لا قرارَ شراءٍ مسجَّل»", text);
+      check(!/لم\s+يشترِ|رفض|تم الشراء/.test(text),
+        "١١٢. **ولا يثبت شراءً ولا رفضاً** — محايدٌ في الاتجاهين", text);
     }
 
     console.log(
