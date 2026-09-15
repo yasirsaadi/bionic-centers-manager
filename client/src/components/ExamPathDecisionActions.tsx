@@ -25,6 +25,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
@@ -69,6 +70,11 @@ export function ExamPathDecisionActions({
   const [dialog, setDialog] = useState<"complete_sale" | "not_bought" | null>(null);
   const [cOriginal, setCOriginal] = useState("");
   const [cDiscount, setCDiscount] = useState("");
+  //  ══ **«مجاني» مربّعٌ صريح — لا رقمٌ يُحسَب في الرأس** ═════════════════
+  //  المجّانيّةُ في هذا النظام **خصمٌ يساوي السعر الأصليّ** (دلالةُ ٠٦٦:
+  //  `original_price > 0` و`approved_price = 0`)، وكان على الموظّف أن
+  //  يعرف ذلك ويكتب الرقمَ مرّتين ليبلغه. فصار مربّعاً يقولها.
+  const [cFree, setCFree] = useState(false);
   const [cExpert, setCExpert] = useState("");
   //  ══ **المبلغُ المدفوعُ الآن — اختياريٌّ محضٌ** (قرار المالك) ═══════════
   //  البيعُ/الكلفةُ ≠ القبض. فارغٌ **دائماً** افتراضاً، ولا شيء يملؤه غير
@@ -80,8 +86,8 @@ export function ExamPathDecisionActions({
   const [note, setNote] = useState("");
 
   const reset = () => {
-    setDialog(null); setCOriginal(""); setCDiscount(""); setCExpert("");
-    setCPaidNow(""); setCReason(""); setNote("");
+    setDialog(null); setCOriginal(""); setCDiscount(""); setCFree(false);
+    setCExpert(""); setCPaidNow(""); setCReason(""); setNote("");
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -158,9 +164,19 @@ export function ExamPathDecisionActions({
   const submit = (path: string, body: any, kind: "complete_sale" | "not_bought") =>
     act.mutate({ path, body, kind });
 
+  //  ══ **الخصمُ الفعليّ — مُشتقٌّ لا مخزَّنٌ مرّتين** ═══════════════════
+  //  «مجاني» مؤشَّرٌ ⟶ الخصمُ **هو** السعرُ الأصليّ، فيخرج النهائيُّ صفراً
+  //  من `deriveOfferFromDiscount` نفسِها بلا قاعدةٍ ثانية هنا. ولأنه مُشتقّ
+  //  لا منسوخ، تغييرُ السعر الأصليّ وهو مؤشَّرٌ **يتبعه الخصمُ فوراً** —
+  //  فلا يبقى رقمٌ بائتٌ يجعل «المجّانيّ» بسعرٍ موجب.
+  //
+  //  **والمُرسَلُ هو هذا بعينه** لا حالةُ المربّع: العميلُ لا يرسل نوعَ سعرٍ
+  //  ولا سعراً نهائياً أبداً (القسم 4.i) — الخادمُ يشتقّهما من
+  //  `originalPrice`/`discountAmount` وحدهما ويعتمدهما وحده.
+  const csEffectiveDiscount = cFree ? cOriginal : cDiscount;
   const csOffer = deriveOfferFromDiscount({
     originalPrice: cOriginal === "" ? null : Number(cOriginal),
-    discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+    discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
   });
   //  **قراءةٌ فقط من حقل القبض نفسِه** — ليست جزءاً من اشتقاق العرض
   //  التجاريّ، فالحارسُ الحقيقيّ في الخادم لا هنا (راجع `parsePaidNow`).
@@ -225,6 +241,8 @@ export function ExamPathDecisionActions({
                       ? String(prefill.approvedPrice) : ""));
                   setCDiscount(prefill?.priceKind && prefill?.originalPrice
                     ? String(Math.max(0, prefill.originalPrice - (prefill.approvedPrice ?? 0))) : "");
+                  //  مجّانيّةٌ محفوظةٌ سابقاً تُقرأ من نوعها لا من رقمها.
+                  setCFree(prefill?.priceKind === "free");
                   setCExpert(prefill?.selectedExpertUserId ? String(prefill.selectedExpertUserId) : "");
                   setDialog("complete_sale");
                 }}
@@ -285,9 +303,24 @@ export function ExamPathDecisionActions({
             </div>
             <div className="space-y-1">
               <Label htmlFor="cs-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
-              <MoneyInput id="cs-discount" allowEmpty value={cDiscount}
+              {/*  مؤشَّرٌ «مجاني» ⟶ الحقلُ **معطَّلٌ ويعرض السعر الأصليّ**:
+                  لا يُترَك مفتوحاً برقمٍ يناقض المربّع، ولا يُخفى فيختفي
+                  معه سببُ كون النهائيّ صفراً. */}
+              <MoneyInput id="cs-discount" allowEmpty value={csEffectiveDiscount}
+                disabled={cFree}
                 onValueChange={(v) => setCDiscount(v === null ? "" : String(v))}
                 className="bg-white" data-testid="input-complete-sale-discount" />
+            </div>
+            {/*  ══ **«مجاني» — قرارٌ يُؤشَّر لا رقمٌ يُحسَب** ═══════════════
+                والسعرُ الأصليُّ يبقى مطلوباً وهو مؤشَّر: التبرّعُ يُقاس
+                بقيمته (دلالةُ ٠٦٦)، فمجّانيٌّ بلا أصلٍ موجب يردّه الخادم. */}
+            <div className="flex items-center gap-3 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/50 p-2.5">
+              <Checkbox id="cs-free" checked={cFree}
+                onCheckedChange={(v) => setCFree(!!v)}
+                data-testid="checkbox-complete-sale-free" />
+              <Label htmlFor="cs-free" className="cursor-pointer text-sm font-medium">
+                مجاني — السعر النهائي صفر
+              </Label>
             </div>
             {/*  السعرُ النهائيّ — للقراءة فقط، معاينةٌ حيّة لا حقلٌ يُكتب فيه. */}
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
@@ -352,7 +385,7 @@ export function ExamPathDecisionActions({
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
                 originalPrice: Number(cOriginal),
-                discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+                discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
                 expertUserId: Number(cExpert),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
