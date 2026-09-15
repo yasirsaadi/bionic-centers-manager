@@ -75,6 +75,15 @@ interface WaitingRow {
    * `decision_queue_store.ts`).
    */
   examPath: boolean;
+  /**
+   * **«إلغاء الحسم» — سلطةٌ إدارية يقولها الخادم** (ترحيل ٠٨١).
+   *
+   * `canCancelDecision && !isTerminal` مقروءةً من الجلسة ونطاقِ الفرع في
+   * `server/followup/routes.ts` — **لكلّ صفٍّ حيّ بصرف النظر عن `examPath`**.
+   * كانت تُقرأ هنا بـ`(row as any)` وتمرَّر لمسار المعاينة وحده؛ فصارت
+   * حقلاً مطبوعاً يمرّ إلى المكوّنين معاً.
+   */
+  mayCancelDecision: boolean;
 }
 
 interface ResolvedRow {
@@ -160,7 +169,7 @@ function WaitingCard({ row }: { row: WaitingRow }) {
             patientId={row.patientId}
             branchId={row.branchId}
             actions={row.actions}
-            mayCancelDecision={Boolean((row as any).mayCancelDecision)}
+            mayCancelDecision={Boolean(row.mayCancelDecision)}
             examNotes={row.examNotes}
             prefill={{
               originalPrice: row.originalPrice,
@@ -178,13 +187,19 @@ function WaitingCard({ row }: { row: WaitingRow }) {
             أيضاً بنفس الأفعال المصرَّح بها من الخادم (`allowedActions`) —
             **لا مسارَ بيعٍ ثانياً يُخترَع**، نفسُ البابين القديمين
             `/confirm-purchase`/`/close`. و«فتح الملف» يبقى متاحاً دائماً. */}
-        {!row.examPath && row.actions.length > 0 && (
+        {/*  ══ **والشرطُ «أفعالٌ عادية أو صلاحيةُ إلغاء»** (ترحيل ٠٨١) ═════
+            `row.actions.length > 0` وحدها كانت تحجب الصفَّ كلَّه حين تفرغ
+            القائمة — ومديرُ فرعٍ أمام صفٍّ موروثٍ في `price_approval_pending`
+            يقع في ذلك بالضبط: `allowedActions` تُرجع له `[]`، فلا يجد زرّاً
+            ولا حتى «إلغاء الحسم» الذي يملكه فعلاً. */}
+        {!row.examPath && (row.actions.length > 0 || row.mayCancelDecision) && (
           <div className="flex flex-wrap gap-2">
             <LegacyDecisionActions
               followupId={row.followupId}
               patientId={row.patientId}
               branchId={row.branchId}
               actions={row.actions}
+              mayCancelDecision={Boolean(row.mayCancelDecision)}
               followup={{
                 approvedPrice: row.approvedPrice,
                 selectedExpertUserId: row.selectedExpertUserId,
