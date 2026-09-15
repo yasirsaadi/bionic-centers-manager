@@ -63,6 +63,7 @@ import {
   ATTACH_TO_IN_MANUFACTURING_QUESTION,
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
+import { resolveResumeTarget } from "./patient_service_launcher_logic";
 import {
   devicePhaseOf, maintenanceDeviceBlocksSave, resolveMaintenanceDeviceTarget,
   UNREGISTERED_DEVICE,
@@ -78,10 +79,21 @@ interface Props {
   patientId: number;
   branchId: number;
   serviceType: Service;
-  /** حلقةٌ قائمة على مسار «بلا معاينة» — فتُسجَّل عليها هي ولا تُفتَح ثانية. */
-  existingEpisodeId?: number | null;
-  /** الطلبُ المسجَّل على تلك الحلقة — يُعرَض ولا يُسأل عنه ثانيةً. */
-  existingRequestedItem?: string | null;
+  /**
+   * **عملياتُ بيعٍ بلا معاينة فُتحت ولم تكتمل** على خيط هذا المريض — كلُّها،
+   * لا واحدةٌ منتقاة سلفاً.
+   *
+   * وجودُ **أيّ** منها يعني أن هذه العمليةَ استئنافٌ لا بيعٌ جديد: تُسجَّل
+   * على الحلقة القائمة ولا تُفتَح ثانيةٌ فوقها. والعددُ هو ما يحسم الشاشة:
+   *
+   * · **صفر** ⟶ بيعٌ جديد كما كان تماماً — يُختار الجزءُ من القائمة.
+   * · **واحدة** ⟶ تُستأنَف ضمناً كما كانت تماماً — يُعرَض ما طُلب فيها.
+   * · **أكثر** ⟶ **اختيارٌ صريح إلزاميّ** (ترحيل ٠٧٣ رفع `uq_pde_case_open`
+   *   فصارت العملياتُ المتوازية المستقلّة ممكنة). واستئنافُ الأولى صامتاً
+   *   كان يفتح النموذجَ على عمليةٍ لم يقصدها أحد — بل على ترتيب وصول
+   *   الصفوف من الخادم. فيُعرَض **الجزءُ ورقمُ العملية** ويُختار.
+   */
+  resumeCandidates?: { episodeId: number; requestedItem: string; sequenceNumber: number | null }[];
   /**
    * **مُرشَّحون لسؤال الإلحاق** — كلُّ طرفٍ كاملٍ قيد التصنيع بالفعل على خيط
    * المريض (قد يزيد عن واحد، ترحيل ٠٧٣: عملياتٌ متوازية مستقلّة). وجودُهم
@@ -102,11 +114,26 @@ interface Props {
 
 export function NoExamOperationDialog({
   open, onOpenChange, patientId, branchId, serviceType,
-  existingEpisodeId = null, existingRequestedItem = null,
-  attachCandidates = [], initialKind,
+  resumeCandidates = [], attachCandidates = [], initialKind,
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  //  ══ **العمليةُ المستأنَفة — واحدةٌ تُحسَم، وأكثرُ تُختار** (ترحيل ٠٧٣) ══
+  //  `resuming` تقول «على الملفّ عمليةٌ معلَّقة»، و`existingEpisodeId` تقول
+  //  «وهذه هي بعينها». والاثنتان لا تتطابقان حين يتعدّد المُرشَّحون ولم
+  //  يُختَر بعد — وتلك بالضبط الحالةُ التي تمنع الحفظ (`resumeUnpicked`)
+  //  بدل أن يُنتقى الأوّلُ صامتاً.
+  //  والقرارُ نفسُه في `resolveResumeTarget` — دالّةٌ خالصة تُختبَر دخلاً
+  //  وخرجاً، لا نصّاً يُقرأ. فانتقاءٌ صامتٌ يعود يوماً بصياغةٍ أخرى يسقط
+  //  في الاختبار لا يمرّ.
+  const [resumeTargetId, setResumeTargetId] = useState<string>("");
+  const resume = resolveResumeTarget({
+    candidates: resumeCandidates, pickedId: resumeTargetId,
+  });
+  const resuming = resume.resuming;
+  const existingEpisodeId = resume.episodeId;
+  const existingRequestedItem = resume.requestedItem;
 
   //  ══ **نوعُ العملية محسومٌ متى كان معلوماً** ═══════════════════════════
   //  ثلاثةُ أسبابٍ تحسمه، وكلُّها تسبق فتحَ النافذة:
@@ -117,13 +144,13 @@ export function NoExamOperationDialog({
   //    · **اختيارُ المُوجِّه** — أجاب الموظّفُ بضغطته.
   const fixedKind: Kind | null = serviceType === "medical_support"
     ? "maintenance"
-    : (initialKind ?? (existingEpisodeId ? "device_sale" : null));
+    : (initialKind ?? (resuming ? "device_sale" : null));
 
   const [kind, setKind] = useState<Kind>(fixedKind ?? "maintenance");
   //  البيعُ للأطراف وحدها الآن، فلا قيمةَ ابتدائية «كاملة» تُحشى للمساند.
   //  **والاسمُ محليٌّ يخصّ الجزءَ المراد بيعه** — لا يصطدم بحالة الصيانة
   //  `component` أدناه (حقلٌ مختلفٌ تماماً: الجزء المراد صيانته).
-  const [requestedItem, setRequestedItem] = useState<string>(existingRequestedItem ?? "");
+  const [requestedItem, setRequestedItem] = useState<string>("");
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
   const [note, setNote] = useState("");
@@ -138,7 +165,10 @@ export function NoExamOperationDialog({
   const [attachTargetId, setAttachTargetId] = useState<string>("");
   //  يُعرَض فقط عند بيع جزءٍ جديد (لا استئنافَ حلقةٍ موروثة — لتلك مسارُها
   //  الخاصّ ولا معنى لسؤال الإلحاق عليها) وحين يوجد مُرشَّحٌ واحدٌ فأكثر.
-  const showAttachPrompt = kind === "device_sale" && !existingEpisodeId
+  //  **`!resuming` لا `!existingEpisodeId`**: مع عملياتٍ معلَّقة لم يُختَر
+  //  منها بعدُ واحدة، كان الشرطُ الثاني يصير صادقاً فيظهر سؤالُ الإلحاق على
+  //  استئنافٍ لا معنى له فيه — سؤالُ الإلحاق لبيعٍ **جديد** وحده.
+  const showAttachPrompt = kind === "device_sale" && !resuming
     && attachCandidates.length > 0;
   const attaching = showAttachPrompt && attachChoice === "yes";
   const attachUnanswered = showAttachPrompt && attachChoice === null;
@@ -303,7 +333,10 @@ export function NoExamOperationDialog({
     }),
   });
 
-  const missingItem = kind === "device_sale" && !existingEpisodeId && !requestedItem;
+  const missingItem = kind === "device_sale" && !resuming && !requestedItem;
+  //  **ولا حفظَ على عمليةٍ لم تُختَر** حين تتعدّد المعلَّقات — لا يُنتقى
+  //  الأوّلُ صامتاً، ولا يُفتَح بيعٌ جديد فوق عمليةٍ قائمة.
+  const resumeUnpicked = kind === "device_sale" && resume.unpicked;
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
   const maintenanceDeviceUnready = kind === "maintenance"
     && maintenanceDeviceBlocksSave({ phase: devicePhase, selection: deviceSelection });
@@ -315,7 +348,7 @@ export function NoExamOperationDialog({
   //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
   //  كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !attachUnanswered && !attachUnpicked
+    && !maintenanceDeviceUnready && !attachUnanswered && !attachUnpicked && !resumeUnpicked
     && Boolean(offer.ok) && paidNowCheck.ok;
 
   return (
@@ -366,7 +399,7 @@ export function NoExamOperationDialog({
                   {" — "}
                   {serviceType === "medical_support"
                     ? "المساند الطبية لا تُباع بلا معاينة، فالصيانة وحدها من هنا"
-                    : existingEpisodeId
+                    : resuming
                       ? "استكمالٌ لطلبٍ مفتوح على هذا المريض"
                       : "محسومٌ من سبب الحضور الذي اخترته"}
                 </span>
@@ -390,13 +423,42 @@ export function NoExamOperationDialog({
 
           {/* ── البيع: ما الجزء المراد بيعه؟ ── */}
           {kind === "device_sale" && (
-            existingEpisodeId ? (
-              <p className="text-sm text-muted-foreground" data-testid="no-exam-op-existing">
-                الطلب القائم: <b>{existingRequestedItem
-                  ? (COMPONENT_LABELS[existingRequestedItem as keyof typeof COMPONENT_LABELS]
-                    ?? existingRequestedItem)
-                  : "—"}</b>
-              </p>
+            resuming ? (
+              resumeCandidates.length === 1 ? (
+                <p className="text-sm text-muted-foreground" data-testid="no-exam-op-existing">
+                  الطلب القائم: <b>{existingRequestedItem
+                    ? (COMPONENT_LABELS[existingRequestedItem as keyof typeof COMPONENT_LABELS]
+                      ?? existingRequestedItem)
+                    : "—"}</b>
+                </p>
+              ) : (
+                //  ── أكثرُ من عمليةٍ معلَّقة على القسم نفسِه — اختيارٌ صريح ──
+                //  ولا يُستأنَف الأوّلُ عنه (ترحيل ٠٧٣: عملياتٌ متوازية).
+                //  ويُعرَض **الجزءُ ورقمُ العملية** معاً: جزءان مختلفان قد
+                //  يتشابهان بالاسم، ورقمان مختلفان يفرّقان بينهما قطعاً.
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">أيّ عملية تُكمِل؟</Label>
+                  <p className="text-xs text-muted-foreground"
+                    data-testid="no-exam-op-resume-hint">
+                    على هذا الملفّ <b>أكثرُ من عمليةٍ معلَّقة</b> لم تكتمل. اختر
+                    {" "}المقصودة — <b>ولا تُفتَح عمليةٌ جديدة</b> ما دامت واحدةٌ منها
+                    {" "}قائمة.
+                  </p>
+                  <Select value={resumeTargetId} onValueChange={setResumeTargetId}>
+                    <SelectTrigger data-testid="no-exam-op-resume-target">
+                      <SelectValue placeholder="اختر العملية…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {resumeCandidates.map((c) => (
+                        <SelectItem key={c.episodeId} value={String(c.episodeId)}>
+                          {`${COMPONENT_LABELS[c.requestedItem as keyof typeof COMPONENT_LABELS]
+                            ?? c.requestedItem} · طلب #${c.sequenceNumber ?? "؟"}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )
             ) : (
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">الجزء المراد بيعه</Label>
