@@ -468,12 +468,16 @@ export function NewExamDialog({
               الجهاز: {deviceLabel}
             </p>
           )}
-          {/*  بُدّل الاختصاصُ فسقط الجهازُ المُمرَّر — يُقال صراحةً لا يختفي صامتاً. */}
+          {/*  بُدّل الاختصاصُ فسقط الجهازُ المُمرَّر — يُقال صراحةً لا يختفي صامتاً.
+               **وتقتصر العبارةُ على الربط**: مصيرُ الطلب القديم ليس واحداً —
+               خيطٌ وحيدٌ يُسحَب بمنطق التبديل القائم (§4.b) فيُلغى طلبُه
+               وتُحذَف حلقتُه السقالية، ومريضٌ يحمل الخيطين يبقى طلبُه معلَّقاً.
+               فوعدٌ بأحد المصيرين يكذب في نصف الحالات. */}
           {fixedEpisodeDropped && (
             <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-dropped">
               غيّرتَ الاختصاص، فلن تُربَط هذه المعاينة بطلب الجهاز الذي أرسله الاستعلامات
-              {deviceLabel ? ` (${deviceLabel})` : ""} — يبقى ذلك الطلب كما هو بانتظار معاينته.
+              {deviceLabel ? ` (${deviceLabel})` : ""}.
             </p>
           )}
           {!isEdit && activeFixedEpisode === null && candidates.length === 1 && (

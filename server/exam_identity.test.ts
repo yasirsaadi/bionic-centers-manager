@@ -663,8 +663,10 @@ async function main() {
       const p = await mkPatient("غ-switch", "medical_support");
       await mkCase(p, "medical_support");
       const support = await openEpisode(p, "medical_support");
-      same("٧٩. (الإعدادُ: طلبُ مسندٍ مفتوحٌ بانتظار المعاينة)",
-        await episodeStatus(support.episodeId), "awaiting_exam");
+      same("٧٩. (الإعدادُ: طلبُ مسندٍ مفتوحٌ بانتظار المعاينة، وطلبُ مراجعته معلَّق)",
+        [await episodeStatus(support.episodeId),
+         (await requestRow(support.requestId!) as any)?.status],
+        ["awaiting_exam", "pending"]);
 
       //  الطبيبُ يبدّل إلى «طرف صناعي» — فالنافذةُ لا ترسل معرّفَ المسند.
       const ex = await signExam(p, S.doc, "prosthetic");
@@ -689,6 +691,25 @@ async function main() {
         `SELECT device_episode_id e FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [p]);
       check(fu.every((f) => f.e !== support.episodeId),
         "٨٣. **ولا متابعةَ تشير إلى جهاز المسند**", JSON.stringify(fu));
+
+      //  ══ **ومصيرُ الطلب القديم يُقال صريحاً، لا يُترَك مفترَضاً** ═══════
+      //  النافذةُ كانت تَعِد الطبيبَ بأن «الطلبَ يبقى كما هو بانتظار
+      //  معاينته» — **وهذا ليس ما يفعله الخادم** في هذا الشكل: خيطُ المسند
+      //  كان وحيداً، فمنطقُ التبديل القائم (`retireSupersededCase` ⟶
+      //  `storage.deleteCaseType`، §4.b) سحبه عبر مسار السحب في §4.r —
+      //  فحلقتُه السقالية **تُحذَف فيزيائياً** وطلبُ مراجعتها **يُلغى**
+      //  ومرساتاه تُحرَّران. فالبنودُ التالية تثبت السلوكَ الفعليَّ كما هو،
+      //  ولا تدّعي بقاءً لم يقع.
+      same("٨٣.أ **وحلقةُ المسند السقالية حُذفت** — لا تبقى منتظرةً",
+        await q<{ n: number }>(
+          `SELECT count(*)::int n FROM patient_device_episodes WHERE id=$1`, [support.episodeId]),
+        [{ n: 0 }]);
+      const supReq: any = await requestRow(support.requestId!);
+      same("٨٣.ب **وطلبُ مراجعتها أُلغي ومرساتاه حُرِّرتا** — لا `pending` شبحاً",
+        [supReq?.status, supReq?.device_episode_id, supReq?.exam_id],
+        ["cancelled", null, null]);
+      same("٨٣.ج **فلا يبقى للمريض صفٌّ مسندٍ في قائمة عمل الطبيب**",
+        (await rowsOf(p)).filter((r) => r.caseType === "medical_support").length, 0);
 
       //  ولو أصرّ عميلٌ بائتٌ وأرسل المعرّفَ الخاطئ صراحةً ⟶ الخادمُ يردّه.
       const p2 = await mkPatient("غ-explicit", "medical_support");
