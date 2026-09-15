@@ -37,17 +37,31 @@ check("٢. ولا يُرسَل في التحرير (النسخةُ الثاني�
 console.log("\n── الحسم ──");
 check("٣. النافذةُ تقرأ الأجهزةَ المنتظرة من نقطة المعاينات (`awaitingEpisodes`)",
   dlg.includes("awaitingEpisodes") && dlg.includes("/api/medical/patients/${patientId}/exams"));
-check("٤. **ولا تجلبها حين يصلها المعرّفُ ثابتاً** من صفّ القائمة",
-  dlg.includes("enabled: open && !isEdit && fixedEpisode === null"));
+check("٤. **ولا تجلبها حين يصلها المعرّفُ ثابتاً** من صفّ القائمة — بالهويّة الفعّالة",
+  dlg.includes("enabled: open && !isEdit && activeFixedEpisode === null"));
 check("٥. المرشَّحون بالاختصاص المختار وحده",
   dlg.includes("filter((e) => e.caseType === specialty)"));
 check("٦. **أكثرُ من مرشَّح بلا اختيار ⟵ لا حفظ** — لا تخمينَ في الشاشة كما لا تخمينَ في الخادم",
-  dlg.includes("const needsEpisodeChoice = fixedEpisode === null && candidates.length > 1 && resolvedEpisode === null")
+  dlg.includes("const needsEpisodeChoice = activeFixedEpisode === null && candidates.length > 1 && resolvedEpisode === null")
   && /disabled=\{[^}]*needsEpisodeChoice[^}]*\}/.test(dlg));
 check("٧. وأثناءَ تحميل المرشَّحين لا حفظ (وإلّا وُقّع بلا هويّة على خيطٍ فيه جهازان)",
   /disabled=\{[^}]*candidatesLoading[^}]*\}/.test(dlg));
-check("٨. والاختصاصُ مقفولٌ حين يكون الجهازُ ثابتاً — المعرّفُ يقول اختصاصَه",
-  dlg.includes("disabled={!isEdit && fixedEpisode !== null}"));
+// ── ٨. **الاختصاصُ مفتوحٌ دائماً، والجهازُ يسقط بتبديله** ────────────────
+//  ⚠ **انعكسَ عقدُ البند ٨ بقرارِ المالك (٢٠٢٦-٠٩-١٥)**: كان يثبت أن المنتقيَ
+//  **مقفول** متى وصل جهازٌ ثابت. ومَن يفحص المريضَ هو مَن يحدّد اختصاصَه،
+//  وتصحيحُه قرارٌ سريريّ (§4.b) لا يجوز أن يُقفَل بحجّة هويّة جهاز.
+check("٨. **المنتقي مفتوحٌ دائماً** — لا `disabled` عليه إطلاقاً",
+  !/<Select value=\{specialty\}[\s\S]{0,200}?disabled=/.test(dlg));
+check("٨أ. واختصاصُ الجهاز المُمرَّر يُقرأ من `preferSpecialty` — الصفُّ نفسُه يمرّرهما",
+  dlg.includes("const fixedEpisodeSpecialty = fixedEpisode === null ? null : (preferSpecialty ?? null)"));
+check("٨ب. **والجهازُ لا يُعتمَد إلّا ما بقي اختصاصُه** — تبديلُه يُسقطه",
+  dlg.includes("const fixedEpisodeApplies = fixedEpisode !== null && specialty === fixedEpisodeSpecialty")
+  && dlg.includes("const activeFixedEpisode = fixedEpisodeApplies ? fixedEpisode : null"));
+check("٨ج. **والحمولةُ تُبنى من الهويّة الفعّالة** — فلا يُرسَل معرّفُ جهازِ اختصاصٍ آخر",
+  dlg.includes("const resolvedEpisode: number | null = activeFixedEpisode !== null")
+  && dlg.includes("? activeFixedEpisode"));
+check("٨د. ويُقال للطبيب أن الجهازَ سقط — لا يختفي صامتاً",
+  dlg.includes("fixedEpisodeDropped") && dlg.includes('data-testid="note-exam-device-dropped"'));
 
 // ── ٣. ثلاثُ حالاتِ عرض ───────────────────────────────────────────────────
 console.log("\n── العرض ──");
@@ -60,7 +74,11 @@ console.log("\n── الأخطاء ──");
 check("١٢. **الرمزان يُلتقَطان** ويُعاد تحميلُ المرشَّحين",
   dlg.includes('err?.code === "device_episode_ambiguous" || err?.code === "device_episode_stale"'));
 check("١٣. وشاشةٌ بائتة على جهازٍ ثابت تُغلَق — الصفُّ لم يعد قائماً",
-  dlg.includes('err?.code === "device_episode_stale" && fixedEpisode !== null) onOpenChange(false)'));
+  dlg.includes('err?.code === "device_episode_stale" && activeFixedEpisode !== null) onOpenChange(false)'));
+//  **وبالهويّة الفعّالة**: مَن بدّل الاختصاصَ له بديلٌ من القائمة، وإغلاقُ
+//  النافذة عليه يرمي معاينةً كتبها للتوّ.
+check("١٣ب. **ولا تُغلَق على مَن بدّل الاختصاص** — له بديلٌ يُحَلّ من القائمة",
+  !dlg.includes('err?.code === "device_episode_stale" && fixedEpisode !== null) onOpenChange(false)'));
 
 // ── ٥. «معايناتي» — صفٌّ لكلّ جهاز ────────────────────────────────────────
 console.log("\n── معايناتي ──");
