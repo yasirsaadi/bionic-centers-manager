@@ -527,6 +527,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             patientId={patientId}
             branchId={activeBranchId}
             actions={examActions}
+            mayCancelDecision={Boolean((active as any).mayCancelDecision)}
             examNotes={active.examNotes}
             statusLine={active.statusLine}
             prefill={{

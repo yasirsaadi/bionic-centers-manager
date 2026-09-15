@@ -2269,7 +2269,8 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     'awaiting_patient_decision', 'follow_up', 'price_approval_pending',
     'price_approved_waiting_patient', 'purchase_approval_pending',
     'closed_without_purchase', 'converted', 'closed_exam_cancelled',
-    'closed_admin_void', 'closed_request_cancelled')`),
+    'closed_admin_void', 'closed_request_cancelled',
+    'closed_decision_cancelled')`),
   check("post_exam_followups_service_check",
     sql`${t.serviceType} IN ('prosthetic', 'medical_support')`),
   //  `reception_set` (ترحيل ٠٥٩): أولُ سعرٍ حين سكتت المعاينة — يُدخله
@@ -2323,12 +2324,12 @@ export const postExamFollowups = pgTable("post_exam_followups", {
     device_episode_id IS NOT NULL
     AND status NOT IN ('closed_without_purchase', 'converted',
                        'closed_exam_cancelled', 'closed_admin_void',
-                       'closed_request_cancelled')`),
+                       'closed_request_cancelled', 'closed_decision_cancelled')`),
   uniqueIndex("uq_pef_active_legacy").on(t.patientId, t.serviceType).where(sql`
     device_episode_id IS NULL
     AND status NOT IN ('closed_without_purchase', 'converted',
                        'closed_exam_cancelled', 'closed_admin_void',
-                       'closed_request_cancelled')`),
+                       'closed_request_cancelled', 'closed_decision_cancelled')`),
   index("ix_pef_patient").on(t.patientId),
   //  طابورُ الاستعلامات يُرتَّب بالرايات أوّلاً — جزئيٌّ على المرفوعة وحدها.
   index("ix_pef_purchase_interest").on(t.purchaseInterestAt)
@@ -2454,7 +2455,7 @@ export const POST_EXAM_FOLLOWUP_STATUSES = [
   "awaiting_patient_decision", "follow_up", "price_approval_pending",
   "price_approved_waiting_patient", "purchase_approval_pending",
   "closed_without_purchase", "converted", "closed_exam_cancelled",
-  "closed_admin_void", "closed_request_cancelled",
+  "closed_admin_void", "closed_request_cancelled", "closed_decision_cancelled",
 ] as const;
 export type PostExamFollowupStatus = (typeof POST_EXAM_FOLLOWUP_STATUSES)[number];
 

@@ -14,7 +14,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { XCircle, Loader2, HandCoins } from "lucide-react";
+import { XCircle, Loader2, HandCoins, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
@@ -50,6 +51,14 @@ export interface ExamPathDecisionActionsProps {
   statusLine?: string | null;
   /** تعبئةٌ مسبقة نادرة من قيمٍ سابقة على الصفّ — لا تُطمَس. */
   prefill?: ExamPathDecisionActionsPrefill;
+  /**
+   * **«إلغاء الحسم» — سلطةٌ إدارية يقولها الخادم** (ترحيل ٠٨١).
+   *
+   * مسؤولٌ عامّ أو مديرُ فرع، وللصفّ الحيّ وحده. **لا تُشتقّ في الشاشة**:
+   * الخادمُ يفحص `canCancelDecision` ونطاقَ الفرع والحالةَ معاً ويرسل
+   * الجواب — فلا يظهر زرٌّ سيردّه ٤٠٣ أو ٤٠٩. غيابُها يُقرأ «لا».
+   */
+  mayCancelDecision?: boolean;
   /** يُنادى بعد نجاح أيّ فعل — إضافةً على إبطال المفاتيح المشتركة أدناه. */
   onResolved?: () => void;
 }
@@ -62,13 +71,23 @@ export interface ExamPathDecisionActionsProps {
  * جملةَ حجب، أو أكثر من واحدةٍ معاً.
  */
 export function ExamPathDecisionActions({
-  followupId, patientId, branchId, actions, examNotes, statusLine, prefill, onResolved,
+  followupId, patientId, branchId, actions, examNotes, statusLine, prefill, mayCancelDecision = false, onResolved,
 }: ExamPathDecisionActionsProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [dialog, setDialog] = useState<"complete_sale" | "not_bought" | null>(null);
+  const [dialog, setDialog] =
+    useState<"complete_sale" | "not_bought" | "cancel_decision" | null>(null);
+  //  سببُ إلغاء الحسم — **نصٌّ حرٌّ إلزاميّ**، منفصلٌ عن سبب «لم يشترِ»:
+  //  ذاك يقوله المريضُ وهذا يقوله المدير، وخلطُهما في حقلٍ واحد يخلط
+  //  واقعتين في السجلّ.
+  const [cCancelReason, setCCancelReason] = useState("");
   const [cOriginal, setCOriginal] = useState("");
   const [cDiscount, setCDiscount] = useState("");
+  //  ══ **«مجاني» مربّعٌ صريح — لا رقمٌ يُحسَب في الرأس** ═════════════════
+  //  المجّانيّةُ في هذا النظام **خصمٌ يساوي السعر الأصليّ** (دلالةُ ٠٦٦:
+  //  `original_price > 0` و`approved_price = 0`)، وكان على الموظّف أن
+  //  يعرف ذلك ويكتب الرقمَ مرّتين ليبلغه. فصار مربّعاً يقولها.
+  const [cFree, setCFree] = useState(false);
   const [cExpert, setCExpert] = useState("");
   //  ══ **المبلغُ المدفوعُ الآن — اختياريٌّ محضٌ** (قرار المالك) ═══════════
   //  البيعُ/الكلفةُ ≠ القبض. فارغٌ **دائماً** افتراضاً، ولا شيء يملؤه غير
@@ -80,8 +99,9 @@ export function ExamPathDecisionActions({
   const [note, setNote] = useState("");
 
   const reset = () => {
-    setDialog(null); setCOriginal(""); setCDiscount(""); setCExpert("");
-    setCPaidNow(""); setCReason(""); setNote("");
+    setDialog(null); setCOriginal(""); setCDiscount(""); setCFree(false);
+    setCExpert(""); setCPaidNow(""); setCReason(""); setCCancelReason("");
+    setNote("");
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -117,7 +137,7 @@ export function ExamPathDecisionActions({
 
   const act = useMutation({
     mutationFn: async (
-      { path, body }: { path: string; body: any; kind: "complete_sale" | "not_bought" },
+      { path, body }: { path: string; body: any; kind: "complete_sale" | "not_bought" | "cancel_decision" },
     ) => {
       const res = await apiRequest("POST", path, body);
       return res.json();
@@ -155,12 +175,22 @@ export function ExamPathDecisionActions({
     },
   });
   const busy = act.isPending;
-  const submit = (path: string, body: any, kind: "complete_sale" | "not_bought") =>
+  const submit = (path: string, body: any, kind: "complete_sale" | "not_bought" | "cancel_decision") =>
     act.mutate({ path, body, kind });
 
+  //  ══ **الخصمُ الفعليّ — مُشتقٌّ لا مخزَّنٌ مرّتين** ═══════════════════
+  //  «مجاني» مؤشَّرٌ ⟶ الخصمُ **هو** السعرُ الأصليّ، فيخرج النهائيُّ صفراً
+  //  من `deriveOfferFromDiscount` نفسِها بلا قاعدةٍ ثانية هنا. ولأنه مُشتقّ
+  //  لا منسوخ، تغييرُ السعر الأصليّ وهو مؤشَّرٌ **يتبعه الخصمُ فوراً** —
+  //  فلا يبقى رقمٌ بائتٌ يجعل «المجّانيّ» بسعرٍ موجب.
+  //
+  //  **والمُرسَلُ هو هذا بعينه** لا حالةُ المربّع: العميلُ لا يرسل نوعَ سعرٍ
+  //  ولا سعراً نهائياً أبداً (القسم 4.i) — الخادمُ يشتقّهما من
+  //  `originalPrice`/`discountAmount` وحدهما ويعتمدهما وحده.
+  const csEffectiveDiscount = cFree ? cOriginal : cDiscount;
   const csOffer = deriveOfferFromDiscount({
     originalPrice: cOriginal === "" ? null : Number(cOriginal),
-    discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+    discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
   });
   //  **قراءةٌ فقط من حقل القبض نفسِه** — ليست جزءاً من اشتقاق العرض
   //  التجاريّ، فالحارسُ الحقيقيّ في الخادم لا هنا (راجع `parsePaidNow`).
@@ -225,6 +255,8 @@ export function ExamPathDecisionActions({
                       ? String(prefill.approvedPrice) : ""));
                   setCDiscount(prefill?.priceKind && prefill?.originalPrice
                     ? String(Math.max(0, prefill.originalPrice - (prefill.approvedPrice ?? 0))) : "");
+                  //  مجّانيّةٌ محفوظةٌ سابقاً تُقرأ من نوعها لا من رقمها.
+                  setCFree(prefill?.priceKind === "free");
                   setCExpert(prefill?.selectedExpertUserId ? String(prefill.selectedExpertUserId) : "");
                   setDialog("complete_sale");
                 }}
@@ -239,6 +271,21 @@ export function ExamPathDecisionActions({
                 <XCircle className="h-4 w-4" /> لم يشترِ
               </Button>
             )}
+          </div>
+        )}
+        {/*  ══ **«إلغاء الحسم» — خارجَ `actions` عمداً** (ترحيل ٠٨١) ═══════
+            سلطتُه أضيقُ (مسؤولٌ أو مديرُ فرع) ولا تحرسها مالكيةُ حقلٍ
+            تجاريّ — فلا يُطوى في مصفوفة أفعال البيع. ويظهر **ولو حُجبت
+            أفعالُ البيع كلُّها**: صفٌّ موروثٌ محجوبٌ عن الحسم هو بعينه ما
+            قد يحتاج الخروجَ من الطابور. */}
+        {mayCancelDecision && (
+          <div className="flex flex-wrap gap-2 border-t border-emerald-200 pt-2">
+            <Button size="sm" variant="ghost" disabled={busy}
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => { setCCancelReason(""); setDialog("cancel_decision"); }}
+              data-testid="button-cancel-decision">
+              <Ban className="h-4 w-4" /> إلغاء الحسم
+            </Button>
           </div>
         )}
         {/*  ══ **حاجزُ ملكيةٍ موروثة — جملةٌ إنسانية بلا كودٍ داخليّ**
@@ -285,9 +332,24 @@ export function ExamPathDecisionActions({
             </div>
             <div className="space-y-1">
               <Label htmlFor="cs-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
-              <MoneyInput id="cs-discount" allowEmpty value={cDiscount}
+              {/*  مؤشَّرٌ «مجاني» ⟶ الحقلُ **معطَّلٌ ويعرض السعر الأصليّ**:
+                  لا يُترَك مفتوحاً برقمٍ يناقض المربّع، ولا يُخفى فيختفي
+                  معه سببُ كون النهائيّ صفراً. */}
+              <MoneyInput id="cs-discount" allowEmpty value={csEffectiveDiscount}
+                disabled={cFree}
                 onValueChange={(v) => setCDiscount(v === null ? "" : String(v))}
                 className="bg-white" data-testid="input-complete-sale-discount" />
+            </div>
+            {/*  ══ **«مجاني» — قرارٌ يُؤشَّر لا رقمٌ يُحسَب** ═══════════════
+                والسعرُ الأصليُّ يبقى مطلوباً وهو مؤشَّر: التبرّعُ يُقاس
+                بقيمته (دلالةُ ٠٦٦)، فمجّانيٌّ بلا أصلٍ موجب يردّه الخادم. */}
+            <div className="flex items-center gap-3 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/50 p-2.5">
+              <Checkbox id="cs-free" checked={cFree}
+                onCheckedChange={(v) => setCFree(!!v)}
+                data-testid="checkbox-complete-sale-free" />
+              <Label htmlFor="cs-free" className="cursor-pointer text-sm font-medium">
+                مجاني — السعر النهائي صفر
+              </Label>
             </div>
             {/*  السعرُ النهائيّ — للقراءة فقط، معاينةٌ حيّة لا حقلٌ يُكتب فيه. */}
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
@@ -352,7 +414,7 @@ export function ExamPathDecisionActions({
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
                 originalPrice: Number(cOriginal),
-                discountAmount: cDiscount === "" ? 0 : Number(cDiscount),
+                discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
                 expertUserId: Number(cExpert),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
@@ -386,6 +448,41 @@ export function ExamPathDecisionActions({
               onClick={() => submit(`/api/followups/${followupId}/not-bought`,
                 { reason: cReason.trim(), note: note || undefined }, "not_bought")}>
               تسجيل
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/*  ══ **نافذةُ إلغاء الحسم — تأكيدٌ وسببٌ إلزاميّ** ═══════════════
+          والنصُّ يقول ما **لا** يحدث بقدر ما يقول ما يحدث: الموظّفُ يحتاج
+          أن يطمئنّ أن الملفَّ والمالَ والجهازَ والمعاينةَ لا تُمَسّ. */}
+      <Dialog open={dialog === "cancel_decision"} onOpenChange={(o) => !o && reset()}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader><DialogTitle>إلغاء الحسم</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+              data-testid="text-cancel-decision-scope">
+              تخرج هذه المتابعة من «بانتظار الحسم» نهائياً. <b>ولا يُسجَّل شراءٌ
+              ولا «لم يشترِ»</b>، ولا تتغيّر الدفعاتُ ولا الكلفةُ ولا الجهازُ ولا
+              أمرُ التصنيع ولا المعاينة — بياناتُ المريض كلُّها تبقى كما هي.
+            </p>
+            <Label htmlFor="c-cancel-reason" className="text-xs">
+              سبب الإلغاء <span className="text-destructive">*</span>
+            </Label>
+            <Textarea id="c-cancel-reason" value={cCancelReason}
+              onChange={(e: any) => setCCancelReason(e.target.value)}
+              placeholder="لماذا لا ينبغي أن تكون هذه المتابعة في الطابور؟"
+              className="bg-white min-h-[70px]" data-testid="input-cancel-decision-reason" />
+            <p className="text-xs text-muted-foreground">
+              يُسجَّل السببُ ومَن نفّذ ووقتُ التنفيذ في سجلّ التدقيق.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="destructive" disabled={busy || !cCancelReason.trim()}
+              data-testid="button-save-cancel-decision"
+              onClick={() => submit(`/api/followups/${followupId}/cancel-decision`,
+                { reason: cCancelReason.trim() }, "cancel_decision")}>
+              تأكيد إلغاء الحسم
             </Button>
           </DialogFooter>
         </DialogContent>

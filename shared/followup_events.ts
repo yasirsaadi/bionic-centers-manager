@@ -123,6 +123,11 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   //  **ولا يُترك للعبارة العامّة** كذلك: الموظّفُ يحتاج أن يعرف أن الطلبَ
   //  نفسَه سُحب — لا أن معاينةً سقطت ولا أن المريض رفض الشراء.
   closed_request_cancelled: "أُغلقت المتابعة بسبب سحب طلب الجهاز",
+  //  ══ إلغاءُ الحسم (ترحيل ٠٨١) ═══════════════════════════════════════
+  //  **ولا يُترك للعبارة العامّة** كذلك: الخبرُ أن الصفَّ ما كان ينبغي أن
+  //  يدخل الطابورَ أصلاً — لا أن المريض رفض، ولا أن معاينةً سقطت، ولا أن
+  //  طلباً سُحب. ولا شيءَ تغيّر في الملفّ سوى خروجِه من مهمّةِ حسمٍ خاطئة.
+  closed_decision_cancelled: "أُلغي الحسم — خرجت المتابعة من «بانتظار الحسم»",
   administrative_reversal: "أُلغيت العملية إدارياً",
   reopened: "أُعيد فتح الملف",
   //  ══ مسارٌ قديم — يُقرأ ولا يُنشأ ═══════════════════════════════════
@@ -325,6 +330,12 @@ export function followupEventView(
       if (why) out.facts.push(`سبب سحب الطلب: ${why}`);
       break;
     }
+    //  وكذلك إلغاءُ الحسم: السببُ نصٌّ حرٌّ إلزاميّ كتبه مَن ألغى.
+    case "closed_decision_cancelled": {
+      const why = cancellationReason(e?.note);
+      if (why) out.facts.push(`سبب إلغاء الحسم: ${why}`);
+      break;
+    }
     //  ══ **حقائقُ التصحيح تُقرأ بلا معجم** ═══════════════════════════════
     //   «طلب الاستبدال الجديد: #88» رقمٌ داخليّ لا يعني شيئاً لموظّفٍ ولا
     //   لمدير. والذي يعنيهما: **ماذا كان وماذا صار**. فالعناوينُ من خريطة
@@ -380,6 +391,7 @@ export function followupEventView(
   const note = typeof e?.note === "string" ? e.note.trim() : "";
   if (note && type !== "closed_without_purchase" && type !== "closed_exam_cancelled"
     && type !== "closed_request_cancelled"
+    && type !== "closed_decision_cancelled"
     && type !== "administrative_reversal"
     //  ومن تصحيح السعر: خرج أعلاه معنوناً «سبب التصحيح» — ومرّتين ضجيج.
     && type !== "exam_price_corrected") {
@@ -398,7 +410,7 @@ export function followupEventView(
 // والحلُّ **اشتقاقٌ من الحالة الحقيقية** لا نصٌّ محفوظ. والحالةُ هي مصدر
 // الحقيقة: `converted` (أو وجودُ أمر تصنيع) تعني «تمّ» ولا تحتمل غير ذلك.
 
-export type PurchasePresentation = "converted" | "discount_pending" | "awaiting" | "admin_void" | "exam_cancelled" | "request_cancelled" | "closed";
+export type PurchasePresentation = "converted" | "discount_pending" | "awaiting" | "admin_void" | "exam_cancelled" | "request_cancelled" | "decision_cancelled" | "closed";
 
 export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   converted: "تم الشراء — بدأ التصنيع",
@@ -410,6 +422,15 @@ export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
   awaiting: "المريض وافق على الشراء — بانتظار إتمام إجراءات البيع",
   admin_void: "عملية ملغاة إدارياً",
   exam_cancelled: "المعاينة ملغاة",
+  //  ══ أُلغي الحسمُ نفسُه (ترحيل ٠٨١) — **والنصُّ محايدٌ عمداً** ══════════
+  //  الصياغةُ الأولى كانت «لا قرارَ شراءٍ مسجَّل»، **وهي قد تكذب**: النظامُ
+  //  يقبل `purchase_decision = 'bought'` محفوظاً بينما البيعُ ينتظر استكمالَ
+  //  بياناته (٠٦٦ — «اشترى تُحفَظ ولو نقص السعرُ أو الخبير»)، و«إلغاء
+  //  الحسم» **لا يمحو ذلك القرار** — وهذا صوابُه. فلو أُلغي الحسمُ على صفٍّ
+  //  كهذا لقرأ الموظّفُ نفياً لقرارٍ قائمٍ في الصفّ نفسِه.
+  //  فالنصُّ يقول **ما وقع** (أُغلقت المهمّة إدارياً) ولا ينفي ولا يثبت
+  //  قراراً سابقاً — ومَن أراد القرارَ يقرؤه من حقله.
+  decision_cancelled: "أُلغي الحسم — أُغلقت مهمة الحسم إدارياً",
   //  سُحب الطلبُ نفسُه قبل التصنيع (ترحيل ٠٧٩) — لا المعاينةُ سقطت ولا
   //  المريضُ رفض الشراء.
   request_cancelled: "أُلغي طلبُ الجهاز",
@@ -431,6 +452,7 @@ export function purchasePresentation(f: {
   if (f?.status === "closed_admin_void") return "admin_void";
   if (f?.status === "closed_exam_cancelled") return "exam_cancelled";
   if (f?.status === "closed_request_cancelled") return "request_cancelled";
+  if (f?.status === "closed_decision_cancelled") return "decision_cancelled";
   if (f?.status === "closed_without_purchase") return "closed";
   if (f?.status === "converted" || pos(f?.convertedWorkOrderId) !== null) return "converted";
   if (f?.hasPendingDiscount === true) return "discount_pending";
