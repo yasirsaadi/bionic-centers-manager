@@ -257,11 +257,23 @@ export function LegacyDecisionActions({
             )}
 
             {/*  والخصمُ يُطبَّق فوراً كالسعر الكامل تماماً — مَن يصل هذه
-                النافذةَ اجتاز `canConfirmPurchase` بالفعل. */}
-            {originalPrice > 0 && (
-              <ServiceDiscountFields originalPrice={originalPrice}
-                value={discount} onChange={setDiscount} testIdPrefix="legacy-purchase-discount" />
-            )}
+                النافذةَ اجتاز `canConfirmPurchase` بالفعل.
+
+                ══ **وحقولُ البيع كلُّها حاضرةٌ من فتحِ النافذة** (٢٠٢٦-٠٩-١٥)
+                كان الشرطُ `originalPrice > 0` يُخفي هذه الكتلةَ حتى يكتب
+                الموظّفُ السعرَ، فيرى نافذةً ناقصةً ولا يعرف أن فيها خصماً
+                ومجّانيّةً أصلاً — **ونافذةُ المسار الحديث ترسم حقولَها
+                كلَّها دفعةً واحدة** ولا تُخفي شيئاً خلف إدخالٍ سابق.
+                فصارت تُرسَم دائماً، **والسعرُ المرجعيُّ يتبع ما يُكتب
+                أعلاه حيّاً** (`purchaseOriginalPrice` تُحسَب في كلّ رسم).
+
+                **ولا حرفَ تغيّر في المال**: `hasDiscount(EMPTY_DISCOUNT, 0)`
+                تساوي `false` فالكتلةُ خاملةٌ تماماً قبل السعر — لا ملخّصَ
+                ولا سببَ ولا حمولة؛ و`purchaseBlocked` تعطّل الإرسالَ عند
+                `!(original > 0)` **كما كانت بحرفها**، فلا زرٌّ يُفتَح قبل
+                أوانه ولا حمولةٌ تتغيّر. */}
+            <ServiceDiscountFields originalPrice={originalPrice}
+              value={discount} onChange={setDiscount} testIdPrefix="legacy-purchase-discount" />
           </div>
           <DialogFooter>
             <Button
