@@ -337,13 +337,18 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  ب٢) **حلقةٌ مفتوحةٌ غيرُ مرتبطة ⟶ ٤٠٩، ولا تُختطَف.**
+    //  ب٢) **حلقةٌ مفتوحةٌ غيرُ مرتبطة ⟶ جهازٌ جديدٌ مستقلّ، لا ٤٠٩ ولا اختطاف.**
     //
-    //  متابعةٌ بلا هويّة + حلقةٌ مفتوحةٌ على الخيط = **التباس**. لا دليلَ
-    //  يربطهما: قد تكون طلبَ جهازٍ آخر أحدثَ، أو تكراراً تشغيلياً. والتقاطُها
-    //  كان سيثبّت سعرَ هذه المتابعة على جهازٍ لم يُقصَد.
+    //  ⚠ **انعكسَ عقدُ هذا القسم بقرارِ المالك (٢٠٢٦-٠٩-١٥)** — وكان يثبت
+    //  ردَّ ٤٠٩. والسببُ أن ترحيلَ ٠٧٣ جعل تعدّدَ الحلقات المفتوحة **حالاً
+    //  مشروعاً لا شذوذاً**، فصار الردُّ يحبس بيعاً صحيحاً لمجرّد أن للمريض
+    //  جهازاً آخر يُصنَع، بلا بابٍ يفكّه.
+    //
+    //  **والمنعُ الأصليُّ محفوظٌ بحرفه**: الحلقةُ الغريبة **لا تُختطَف** —
+    //  ولا تُقرأ ولا تُعدَّل ولا تُغلَق (البندُ ٥٨ هو نفسُه قبل وبعد). الذي
+    //  تغيّر أن الالتباسَ يُحَلّ بفتحِ حلقةٍ خاصّةٍ بهذه المتابعة بدل أن يُردّ.
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ب٢) حلقةٌ مفتوحةٌ غيرُ مرتبطة ──");
+    console.log("\n── ب٢) حلقةٌ مفتوحةٌ غيرُ مرتبطة ⟶ جهازٌ مستقلّ ──");
     {
       const p = await mkPatient("حلقةٌ غيرُ مرتبطة");
       await mkCase(p);
@@ -357,26 +362,103 @@ async function main() {
       });
       const strayId = Number((stray as any).id ?? stray);
       const strayBefore = (await q(
-        `SELECT status, agreed_cost::int AS cost, sequence_number
+        `SELECT status, agreed_cost::int AS cost, sequence_number, requested_item,
+                service_path, branch_id, case_id, created_at, updated_at
            FROM patient_device_episodes WHERE id=$1`, [strayId]))[0];
 
       await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
       const buy = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
-      same("٥٤. **البيعُ يُردّ ٤٠٩** — ولا تُختطَف حلقةٌ لم يُقل إنها له",
-        buy.status, 409);
-      check(String(buy.body?.error ?? "").includes("غير مرتبط بهذه المتابعة"),
-        "٥٥. **والرسالةُ تدلّ على المراجعة**", String(buy.body?.error));
+      same("٥٤. **البيعُ يمضي** — والجهازُ الآخر لا يمنعه", buy.status, 200);
 
       const s = await shape(p);
-      same("٥٦. **ولا رابطَ كُتب على المتابعة**", s.f?.device_episode_id, null);
-      same("٥٧. **ولا أمرَ تصنيعٍ ولا قيدَ كلفة**",
-        [s.wos.length, s.entries.length], [0, 0]);
-      same("٥٨. **والحلقةُ الغريبة كما هي** — لا حالةً ولا سعراً ولا تسلسلاً",
-        (await q(`SELECT status, agreed_cost::int AS cost, sequence_number
+      const fresh = s.eps.find((e: any) => Number(e.id) !== strayId);
+      check(!!fresh, "٥٥. **وحلقةٌ جديدةٌ مستقلّةٌ أُنشئت لهذه المتابعة**",
+        JSON.stringify(s.eps));
+      same("٥٦. **والمتابعةُ مربوطةٌ بها هي** — لا بالغريبة",
+        Number(s.f?.device_episode_id), Number(fresh?.id));
+      same("٥٧. **وأمرُ التصنيع وقيدُ الكلفة عليها وحدها**",
+        [Number(s.wos[0]?.device_episode_id),
+          Number(s.entries.find((e: any) => e.source === "assign_manufacturing")?.device_episode_id)],
+        [Number(fresh?.id), Number(fresh?.id)]);
+      same("٥٨. **والحلقةُ الغريبة كما هي بايتاً** — لا حالةً ولا سعراً ولا تسلسلاً"
+        + " (المنعُ الأصليُّ محفوظ)",
+        (await q(`SELECT status, agreed_cost::int AS cost, sequence_number, requested_item,
+                         service_path, branch_id, case_id, created_at, updated_at
                     FROM patient_device_episodes WHERE id=$1`, [strayId]))[0],
         strayBefore);
-      same("٥٩. **ولا حلقةَ ثانيةً أُنشئت**", s.eps.length, 1);
-      same("٦٠. **ولا مالَ تحرّك**", [s.total, s.caseCost], [0, 0]);
+      same("٥٩. **وحلقتان لا أكثر** — الغريبةُ والجديدة، بتسلسلين متمايزين",
+        [s.eps.length, Number(strayBefore.sequence_number), Number(fresh?.sequence_number)],
+        [2, 1, 2]);
+      same("٦٠. **والمالُ على هذه المتابعة وحدها**",
+        [s.total, s.caseCost], [1_400_000, 1_400_000]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ب٣) **عدّةُ أجهزةٍ مفتوحةٍ لا تمنع بيعَ متابعةٍ أخرى بلا هويّة**
+    //      (قرارُ المالك ٢٠٢٦-٠٩-١٥).
+    //
+    //  هذا هو الشكلُ الذي وُضع له التعديل: المريضُ يملك ثلاثةَ أجهزةٍ مفتوحةً
+    //  معاً (ترحيلُ ٠٧٣ أباح ذلك)، وله متابعةٌ رابعةٌ بلا هويّةِ جهاز. فالبيعُ
+    //  لا يُردّ، ولا يُربَط بأيٍّ من الثلاثة، بل **يُفتَح له جهازٌ رابعٌ مستقلّ**.
+    //
+    //  **والثلاثةُ لا تُمَسّ بحرف** — تُبصَم كلُّها قبل البيع وبعده وتُقارَن.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ب٣) ثلاثةُ أجهزةٍ مفتوحة + متابعةٌ بلا هويّة ──");
+    {
+      const p = await mkPatient("ثلاثةُ أجهزةٍ مفتوحة");
+      await mkCase(p);
+      //  ① المعاينةُ أوّلاً وبلا حلقاتٍ بعد — فتفتح متابعةً **بلا هويّة**.
+      await signExam(p, S.doc, 2_000_000);
+      const f = await followupOf(p);
+      same("٦١. (متابعةٌ بلا هويّة جهاز)", f?.deviceEpisodeId, null);
+
+      //  ② ثمّ يفتح الاستعلاماتُ **ثلاثةَ** طلباتٍ مستقلّة لا علاقةَ لها بها.
+      const others: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        const ep = await episodes.startDeviceEpisode({
+          patientId: p, serviceType: "prosthetic", createdBy: MGR,
+        });
+        others.push(Number((ep as any).id ?? ep));
+      }
+      //  وحالاتٌ متنوّعة كما في الواقع: واحدٌ فُحص، واثنان ينتظران.
+      await q(`UPDATE patient_device_episodes SET status='examined' WHERE id=$1`, [others[1]]);
+
+      const FINGERPRINT = `SELECT id, status, agreed_cost::int AS cost, sequence_number,
+                                  requested_item, component, service_path, branch_id,
+                                  case_id, created_at, updated_at, delivered_at, cancelled_at
+                             FROM patient_device_episodes
+                            WHERE id = ANY($1::int[]) ORDER BY id`;
+      const before = await q(FINGERPRINT, [others]);
+      same("٦٢. (ثلاثُ حلقاتٍ مفتوحةٍ معاً قبل البيع)",
+        [before.length, before.filter((e: any) => e.status === "awaiting_exam").length,
+          before.filter((e: any) => e.status === "examined").length],
+        [3, 2, 1]);
+
+      //  ③ البيع.
+      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
+      const buy = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recv, {});
+      same("٦٣. **البيعُ يمضي** — ثلاثةُ أجهزةٍ مفتوحةٍ لا تمنعه", buy.status, 200);
+
+      const s = await shape(p);
+      const fresh = s.eps.find((e: any) => !others.includes(Number(e.id)));
+      check(!!fresh, "٦٤. **وجهازٌ رابعٌ جديدٌ أُنشئ لهذه المتابعة**", JSON.stringify(s.eps));
+      same("٦٥. **مستقلٌّ تماماً** — تسلسلٌ رابعٌ خاصٌّ به، وقد مضى إلى التصنيع بالبيع",
+        [Number(fresh?.sequence_number), String(fresh?.status)], [4, "in_manufacturing"]);
+      same("٦٦. **والمتابعةُ مربوطةٌ به هو** — لا بأيٍّ من الثلاثة",
+        [Number(s.f?.device_episode_id), others.includes(Number(s.f?.device_episode_id))],
+        [Number(fresh?.id), false]);
+      same("٦٧. **وأمرُ التصنيع الوحيد عليه، وقيدُ الكلفة كذلك**",
+        [s.wos.length, Number(s.wos[0]?.device_episode_id),
+          Number(s.entries.find((e: any) => e.source === "assign_manufacturing")?.device_episode_id)],
+        [1, Number(fresh?.id), Number(fresh?.id)]);
+      same("٦٨. **ولا أمرَ تصنيعٍ على أيٍّ من الثلاثة**",
+        s.wos.filter((w: any) => others.includes(Number(w.device_episode_id))).length, 0);
+
+      //  ④ والثلاثةُ كما كانت **بايتاً بايت** — لا حالةً ولا سعراً ولا ختماً.
+      same("٦٩. **والثلاثةُ لم تُمَسّ بحرف** — لا تُعدَّل ولا تُغلَق",
+        await q(FINGERPRINT, [others]), before);
+      same("٧٠. **والمالُ على الجديد وحده**",
+        [s.total, s.caseCost, s.eps.length], [2_000_000, 2_000_000, 4]);
     }
 
     // ══════════════════════════════════════════════════════════════════
