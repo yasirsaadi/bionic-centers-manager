@@ -648,6 +648,90 @@ async function main() {
       same("   وحلقةُ «بلا معاينة» لم تُمَسّ", await episodeStatus(ne[0].id), "awaiting_exam");
     }
 
+    // ══ غ. **الطبيبُ يبدّل الاختصاصَ على طلبِ جهازٍ مُرسَل** ═══════════════
+    //  سيناريو المالك بالحرف: الاستعلاماتُ ترسل «مسند طبي»، والطبيبُ يراه
+    //  فيقرّر أنه **طرفٌ صناعي**. فتُحفَظ المعاينةُ أطرافاً، **ولا تبقى
+    //  مربوطةً بجهاز المسند الخاطئ**.
+    //
+    //  والشاشةُ هي التي تُسقط المعرّفَ عند التبديل (عقدُها في
+    //  `test:exam-identity-ui`)، فالمُحاكاةُ هنا **توقيعٌ بلا معرّف** — وهو
+    //  بالضبط ما ترسله النافذةُ بعد التبديل.
+    // ══════════════════════════════════════════════════════════════════════
+    console.log("\n── غ. تبديلُ الاختصاص على طلبٍ مُرسَل ──");
+    {
+      //  مريضٌ سجّله الاستعلاماتُ **مسنداً**، وفتح له طلبَ مسندٍ صريحاً.
+      const p = await mkPatient("غ-switch", "medical_support");
+      await mkCase(p, "medical_support");
+      const support = await openEpisode(p, "medical_support");
+      same("٧٩. (الإعدادُ: طلبُ مسندٍ مفتوحٌ بانتظار المعاينة، وطلبُ مراجعته معلَّق)",
+        [await episodeStatus(support.episodeId),
+         (await requestRow(support.requestId!) as any)?.status],
+        ["awaiting_exam", "pending"]);
+
+      //  الطبيبُ يبدّل إلى «طرف صناعي» — فالنافذةُ لا ترسل معرّفَ المسند.
+      const ex = await signExam(p, S.doc, "prosthetic");
+      check(ex.status < 300, "٨٠. **المعاينةُ تُحفَظ أطرافاً** رغم أن الطلبَ كان مسنداً",
+        JSON.stringify(ex.body));
+      const examId = Number(ex.body?.id);
+      same("٨١. **ولا تُربَط بجهاز المسند الخاطئ**", await examEpisode(examId), null);
+      same("   واختصاصُها المحفوظ هو ما وقّعه الطبيب",
+        (await q<{ c: string }>(`SELECT case_type c FROM medical_exams WHERE id=$1`, [examId]))[0]?.c,
+        "prosthetic");
+
+      //  **ومنطقُ تصحيح الاختصاص القائم هو الذي عمل** (§4.b «تبديل النوع لا
+      //  إضافته»): خيطُ المسند كان وحيداً فسُحب، وخيطُ الأطراف قائم — ولا
+      //  مسارَ ثانٍ اخترعناه هنا.
+      const cases = await q<{ t: string; st: string }>(
+        `SELECT case_type t, status st FROM patient_cases WHERE patient_id=$1 ORDER BY case_type`, [p]);
+      same("٨٢. **والخيطُ صار أطرافاً بمنطق التبديل القائم** — لا خيطان",
+        cases.map((c) => c.t), ["prosthetic"]);
+
+      //  والمتابعةُ المولودةُ عن التوقيع لا تحمل هويّةَ جهاز المسند.
+      const fu = await q<{ e: number | null }>(
+        `SELECT device_episode_id e FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [p]);
+      check(fu.every((f) => f.e !== support.episodeId),
+        "٨٣. **ولا متابعةَ تشير إلى جهاز المسند**", JSON.stringify(fu));
+
+      //  ══ **ومصيرُ الطلب القديم يُقال صريحاً، لا يُترَك مفترَضاً** ═══════
+      //  النافذةُ كانت تَعِد الطبيبَ بأن «الطلبَ يبقى كما هو بانتظار
+      //  معاينته» — **وهذا ليس ما يفعله الخادم** في هذا الشكل: خيطُ المسند
+      //  كان وحيداً، فمنطقُ التبديل القائم (`retireSupersededCase` ⟶
+      //  `storage.deleteCaseType`، §4.b) سحبه عبر مسار السحب في §4.r —
+      //  فحلقتُه السقالية **تُحذَف فيزيائياً** وطلبُ مراجعتها **يُلغى**
+      //  ومرساتاه تُحرَّران. فالبنودُ التالية تثبت السلوكَ الفعليَّ كما هو،
+      //  ولا تدّعي بقاءً لم يقع.
+      same("٨٣.أ **وحلقةُ المسند السقالية حُذفت** — لا تبقى منتظرةً",
+        await q<{ n: number }>(
+          `SELECT count(*)::int n FROM patient_device_episodes WHERE id=$1`, [support.episodeId]),
+        [{ n: 0 }]);
+      const supReq: any = await requestRow(support.requestId!);
+      same("٨٣.ب **وطلبُ مراجعتها أُلغي ومرساتاه حُرِّرتا** — لا `pending` شبحاً",
+        [supReq?.status, supReq?.device_episode_id, supReq?.exam_id],
+        ["cancelled", null, null]);
+      same("٨٣.ج **فلا يبقى للمريض صفٌّ مسندٍ في قائمة عمل الطبيب**",
+        (await rowsOf(p)).filter((r) => r.caseType === "medical_support").length, 0);
+
+      //  ولو أصرّ عميلٌ بائتٌ وأرسل المعرّفَ الخاطئ صراحةً ⟶ الخادمُ يردّه.
+      const p2 = await mkPatient("غ-explicit", "medical_support");
+      await mkCase(p2, "medical_support");
+      const sup2 = await openEpisode(p2, "medical_support");
+      const snap2 = await patientSnapshot(p2);
+      const wrong = await signExam(p2, S.doc, "prosthetic", { deviceEpisodeId: sup2.episodeId });
+      same("٨٤. **ومعرّفُ جهازِ اختصاصٍ آخر يُردّ ٤٠٩** — ولهذا لا ترسله الشاشة",
+        [wrong.status, wrong.body?.code], [409, "device_episode_stale"]);
+      same("   بصفر كتابة", await patientSnapshot(p2), snap2);
+
+      //  **وبقاءُ الاختصاص كما أرسله الاستعلامات لا يغيّر شيئاً** — المسارُ
+      //  القائم بحرفه: المعرّفُ يُرسَل، والمعاينةُ تُختَم على جهازها.
+      const p3 = await mkPatient("غ-unchanged", "medical_support");
+      await mkCase(p3, "medical_support");
+      const sup3 = await openEpisode(p3, "medical_support");
+      const same3 = await signExam(p3, S.doc, "medical_support", { deviceEpisodeId: sup3.episodeId });
+      same("٨٥. **وبلا تبديلٍ: المسارُ كما كان** — تُختَم على جهازها هو",
+        [same3.status < 300, await examEpisode(Number(same3.body?.id))], [true, sup3.episodeId]);
+      same("   والحلقةُ صارت مُعايَنة", await episodeStatus(sup3.episodeId), "examined");
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {

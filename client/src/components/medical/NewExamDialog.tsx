@@ -139,29 +139,54 @@ export function NewExamDialog({
   // ══ الأجهزةُ المنتظرةُ المعاينةَ — حين لا يصل الجهازُ جاهزاً ═════════════
   //  نفسُ نقطة صفحة المريض ونفسُ مفتاح الذاكرة، فلا تُجلَب مرّتين.
   const fixedEpisode = deviceEpisodeId ?? null;
+
+  // ══ **والجهازُ المُمرَّر يخصّ اختصاصَه هو — فإن بدّله الطبيبُ سقط** ══════
+  //  كان منتقي الاختصاص **معطَّلاً** متى وصل جهازٌ بعينه: الطبيبُ يفتح صفَّ
+  //  «معايناتي» فيجد حكمَ الاستعلامات مقفلاً عليه. ومَن يفحص المريضَ هو مَن
+  //  يعرف أطرفاً يحتاج أم مسنداً — وتصحيحُ هذا **قرارٌ سريريّ** (§4.b:
+  //  «تبديل النوع لا إضافته»)، فلا يجوز أن يُقفَل بحجّة هويّة جهاز.
+  //
+  //  **واختصاصُ الجهاز يُقرأ من `preferSpecialty` بدقّةٍ لا بتخمين**: صفُّ
+  //  «معايناتي» يمرّر الاثنين من **الصفّ نفسِه** (صفٌّ واحد = حلقةٌ منتظرةٌ
+  //  واحدة باختصاصها، §4.p)، والنافذةُ تُعاد تركيبُها لكلّ صفّ.
+  //
+  //  فمتى بقي الاختصاصُ كما أرسله الاستعلامات ⟶ **المسارُ كما كان بحرفه**.
+  //  ومتى بُدّل ⟶ الجهازُ القديم **لا يُرسَل ولا تُربَط به المعاينة**: حلقةُ
+  //  مسندٍ على معاينة أطراف تُردّ ٤٠٩ `device_episode_stale` من الخادم أصلاً
+  //  (§4.p)، وإرسالُها كان يعني رسالةً مضلِّلة بدل تصحيحٍ سليم.
+  //
+  //  **ولا مسارَ موازٍ**: السقوطُ يعيد النافذةَ إلى منطقها القائم نفسِه —
+  //  أجهزةُ الاختصاص الجديد المنتظرة تُقرأ وتُحسَم كما لو فُتحت من صفحة
+  //  المريض (واحدةٌ تلقائياً · أكثرُ بمنتقٍ إلزاميّ · صفرٌ بلا جهاز).
+  const fixedEpisodeSpecialty = fixedEpisode === null ? null : (preferSpecialty ?? null);
+  const fixedEpisodeApplies = fixedEpisode !== null && specialty === fixedEpisodeSpecialty;
+  const activeFixedEpisode = fixedEpisodeApplies ? fixedEpisode : null;
+  //  وبُدّل الاختصاصُ بعد أن وصل جهازٌ — يُقال للطبيب لماذا اختفى.
+  const fixedEpisodeDropped = fixedEpisode !== null && !fixedEpisodeApplies && !isEdit && !!specialty;
+
   const { data: examsData, isLoading: examsLoading } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
-    enabled: open && !isEdit && fixedEpisode === null,
+    enabled: open && !isEdit && activeFixedEpisode === null,
   });
   const candidates = useMemo(
-    () => (fixedEpisode === null && specialty
+    () => (activeFixedEpisode === null && specialty
       ? (examsData?.awaitingEpisodes ?? []).filter((e) => e.caseType === specialty)
       : []),
-    [examsData, specialty, fixedEpisode],
+    [examsData, specialty, activeFixedEpisode],
   );
   //  واحدةٌ ⟵ هي؛ أكثرُ ⟵ ما اختاره الطبيب؛ صفرٌ ⟵ معاينةٌ بلا جهاز.
-  const resolvedEpisode: number | null = fixedEpisode !== null
-    ? fixedEpisode
+  const resolvedEpisode: number | null = activeFixedEpisode !== null
+    ? activeFixedEpisode
     : candidates.length === 1
       ? candidates[0].id
       : candidates.length > 1
         ? (candidates.some((c) => c.id === episodeChoice) ? episodeChoice : null)
         : null;
-  const needsEpisodeChoice = fixedEpisode === null && candidates.length > 1 && resolvedEpisode === null;
+  const needsEpisodeChoice = activeFixedEpisode === null && candidates.length > 1 && resolvedEpisode === null;
   //  ولا يُرسَل التوقيعُ قبل أن تُعرَف الأجهزةُ المنتظرة (اختصاصُ جهاز بلا
   //  جهازٍ مُمرَّر): ضغطةٌ سريعة كانت تُرسَل بلا معرّفٍ قبل وصول القائمة.
   const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
-  const candidatesLoading = !isEdit && fixedEpisode === null && isDeviceSpecialty && examsLoading;
+  const candidatesLoading = !isEdit && activeFixedEpisode === null && isDeviceSpecialty && examsLoading;
 
   useEffect(() => { setEpisodeChoice(null); }, [open, specialty]);
 
@@ -376,7 +401,11 @@ export function NewExamDialog({
       toast({ title: "خطأ", description: err.message, variant: "destructive" });
       //  جهازٌ مُمرَّرٌ من صفّ القائمة لم يعد ينتظر: النافذةُ لا تملك بديلاً —
       //  تُغلَق ليعيد الطبيبُ الفتحَ من القائمة المحدَّثة، لا زرُّ حفظٍ يفشل ثانيةً.
-      if (err?.code === "device_episode_stale" && fixedEpisode !== null) onOpenChange(false);
+      //
+      //  **وبالهويّة الفعّالة لا المُمرَّرة**: مَن بدّل الاختصاصَ يحلّ جهازَه
+      //  من القائمة كأيّ فتحةٍ من صفحة المريض — فله بديلٌ فعلاً، وإغلاقُ
+      //  النافذة عليه يرمي معاينةً كتبها للتوّ.
+      if (err?.code === "device_episode_stale" && activeFixedEpisode !== null) onOpenChange(false);
     },
   });
 
@@ -415,10 +444,10 @@ export function NewExamDialog({
 
           <div className="space-y-2">
             <Label>الاختصاص</Label>
-            {/*  جهازٌ مُمرَّرٌ بعينه = اختصاصُه محسوم؛ تبديلُه كان يرسل حلقةَ
-                اختصاصٍ آخر فيُردّ برسالةٍ مضلِّلة. */}
-            <Select value={specialty} onValueChange={(v) => setSpecialty(v as MedicalSpecialty)}
-              disabled={!isEdit && fixedEpisode !== null}>
+            {/*  **مفتوحٌ دائماً** — ولو وصل جهازٌ بعينه: مَن يفحص المريض هو مَن
+                يحدّد اختصاصَه، وتبديلُه يُسقط هويّةَ الجهاز القديم بدل أن
+                يُرسلها فتُردّ ٤٠٩. */}
+            <Select value={specialty} onValueChange={(v) => setSpecialty(v as MedicalSpecialty)}>
               <SelectTrigger className="bg-white" data-testid="select-exam-specialty">
                 <SelectValue placeholder="اختر الاختصاص" />
               </SelectTrigger>
@@ -433,19 +462,31 @@ export function NewExamDialog({
           </div>
 
           {/* ══ أيُّ جهازٍ تُعاين؟ — بهويّته، لا بالتخمين ═══════════════════ */}
-          {!isEdit && fixedEpisode !== null && deviceLabel && (
+          {!isEdit && activeFixedEpisode !== null && deviceLabel && (
             <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-fixed">
               الجهاز: {deviceLabel}
             </p>
           )}
-          {!isEdit && fixedEpisode === null && candidates.length === 1 && (
+          {/*  بُدّل الاختصاصُ فسقط الجهازُ المُمرَّر — يُقال صراحةً لا يختفي صامتاً.
+               **وتقتصر العبارةُ على الربط**: مصيرُ الطلب القديم ليس واحداً —
+               خيطٌ وحيدٌ يُسحَب بمنطق التبديل القائم (§4.b) فيُلغى طلبُه
+               وتُحذَف حلقتُه السقالية، ومريضٌ يحمل الخيطين يبقى طلبُه معلَّقاً.
+               فوعدٌ بأحد المصيرين يكذب في نصف الحالات. */}
+          {fixedEpisodeDropped && (
+            <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
+              data-testid="note-exam-device-dropped">
+              غيّرتَ الاختصاص، فلن تُربَط هذه المعاينة بطلب الجهاز الذي أرسله الاستعلامات
+              {deviceLabel ? ` (${deviceLabel})` : ""}.
+            </p>
+          )}
+          {!isEdit && activeFixedEpisode === null && candidates.length === 1 && (
             <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-single">
               الجهاز: {describeAwaitingEpisode(candidates[0])}
             </p>
           )}
-          {!isEdit && fixedEpisode === null && candidates.length > 1 && (
+          {!isEdit && activeFixedEpisode === null && candidates.length > 1 && (
             <div className="space-y-2">
               <Label>الجهاز المقصود <span className="text-red-500">*</span></Label>
               <Select
