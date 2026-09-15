@@ -35,6 +35,18 @@ export const FOLLOWUP_STATUSES = [
   //  (`closed_exam_cancelled`)، ولا بطلت صفقةٌ بقرارٍ إداريّ مدقَّق بعد بيع
   //  (`closed_admin_void`) — بل سُحب **الطلبُ نفسُه** قبل أن يقع شيء.
   "closed_request_cancelled",
+  //  ══ **طرفيّةٌ سادسة** (ترحيل ٠٨١) — أُلغي الحسمُ نفسُه ═══════════════
+  //  صفٌّ دخل «بانتظار الحسم» **بالخطأ**: لا بيعَ ينتظره ولا قرارَ مريضٍ
+  //  يُنتظَر، بل وجودُه في الطابور هو العطب. فيُخرَج منه بقرارٍ إداريٍّ
+  //  مدقَّق — **بلا أن يُقال عن المريض شيءٌ لم يقله**.
+  //
+  //  **ولا واحدةٌ من الخمس تصفها**: `closed_without_purchase` تدّعي رفضاً
+  //  لم يقع · `converted` تدّعي بيعاً لم يقع · `closed_exam_cancelled`
+  //  تدّعي سقوطَ معاينةٍ سريرياً · `closed_admin_void` تدّعي إبطالَ صفقةٍ
+  //  بعد بيع · `closed_request_cancelled` تدّعي سحبَ طلبِ الجهاز.
+  //  وهنا **لم يتغيّر شيءٌ في العالَم** — لا مال ولا جهاز ولا معاينة ولا
+  //  تصنيع — تغيّر أن مهمّةَ الحسم لم تكن مستحقّةً أصلاً.
+  "closed_decision_cancelled",
 ] as const;
 export type FollowupStatus = (typeof FOLLOWUP_STATUSES)[number];
 
@@ -52,6 +64,7 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
   closed_exam_cancelled: "أُغلقت بسبب إلغاء المعاينة",
   closed_admin_void: "ملغاة إدارياً",
   closed_request_cancelled: "أُلغي طلبُ الجهاز",
+  closed_decision_cancelled: "أُلغي الحسم",
   //  **«تحوّل إلى تصنيع» كانت تصف الآلة لا الواقعة.** والواقعةُ التي تهمّ
   //  الموظّف: المريضُ اشترى، والجهازُ بدأ. والاسمُ المخزَّن `converted` كما
   //  هو — النصُّ المقروء وحده تغيّر.
@@ -91,7 +104,7 @@ export const FOLLOWUP_FILTERS: Array<{ key: string; label: string }> = [
 /** الحالاتُ النهائيّة — لا متابعةَ بعدها إلّا بإعادة فتح. */
 export const TERMINAL_STATUSES: FollowupStatus[] = [
   "closed_without_purchase", "converted", "closed_exam_cancelled",
-  "closed_admin_void", "closed_request_cancelled",
+  "closed_admin_void", "closed_request_cancelled", "closed_decision_cancelled",
 ];
 
 /**
@@ -340,6 +353,29 @@ export const canRecordFollowup = canActCommercially;
  * **والنطاقُ الجغرافي ليس هنا**: يفرضه `canReachBranch` في النقطة من صفّ
  * المتابعة نفسه لا من الطلب، فمديرُ فرعٍ آخر يُردّ ولو كان مديراً.
  */
+/**
+ * **مَن يُلغي الحسم** — سلطةٌ إدارية: المسؤولُ العام ومديرُ الفرع وحدهما.
+ *
+ * ══ لماذا ليست لكلّ مَن يبيع ═══════════════════════════════════════════
+ * «إلغاء الحسم» يقول **«هذا الصفُّ ما كان ينبغي أن يكون هنا»** — حكمٌ على
+ * صحّة الطابور نفسِه لا على واقعةٍ شهدها الموظّف. ومَن يبيع يومياً
+ * (استقبالٌ ومحاسب) يقرّر ما رآه: اشترى أو لم يشترِ. أمّا إخراجُ صفٍّ من
+ * الطابور بلا قرارِ مريضٍ إطلاقاً فقرارٌ إداريٌّ يُسأل عنه صاحبُه.
+ *
+ * **ودالّةٌ مستقلّة عمداً** لا `canSetCommercialPrice` رغم تطابق المنطق
+ * اليوم — نفسُ مبدأ ٤.j/٤.k: كلُّ بابٍ يتطوّر بلا أن يخشى تعديلُه كسرَ
+ * الآخر. **وسلطةُ المسؤول تُفحَص أوّلاً** فتمرّ بذاتها لا بدور صاحبها.
+ *
+ * **والطبيبُ ليس منهم** ولو كان مخوَّلاً بالمعاينة: هذا قرارٌ عن طابورٍ
+ * تجاريّ لا عن سجلٍّ سريريّ.
+ */
+export function canCancelDecision(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return s?.role === "branch_manager";
+}
+
 export function canSetCommercialPrice(
   s: FollowupSessionLike | null | undefined,
 ): boolean {

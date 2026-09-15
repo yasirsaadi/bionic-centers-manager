@@ -48,6 +48,7 @@
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { db } from "../db";
 import { createJournalForPayment } from "../accounting/auto_journal";
 import { storage } from "../storage";
 import * as store from "./store";
@@ -55,9 +56,9 @@ import { FollowupError } from "./store";
 import * as decisionQueue from "./decision_queue_store";
 import { scopeReachesPatient } from "../patients/branch_access";
 import {
-  canActCommercially, canConfirmPurchase, canDecideLegacyPriceRequest,
-  canSetCommercialPrice, canSignalPurchaseInterest, canViewFollowup,
-  allowedActions,
+  canActCommercially, canCancelDecision, canConfirmPurchase,
+  canDecideLegacyPriceRequest, canSetCommercialPrice, canSignalPurchaseInterest,
+  canViewFollowup, allowedActions, isTerminal,
 } from "@shared/followup";
 import {
   saleState, missingLabel, PURCHASE_DECISION_LABELS, PRICE_KIND_LABELS,
@@ -283,6 +284,17 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
             decisionField, priceField, expertField, mayAct,
           })
           : null,
+        //  ══ **«إلغاء الحسم» سلطةٌ إدارية مستقلّة** (ترحيل ٠٨١) ══════════
+        //  **لا تُطوى في `actions`**: تلك أفعالُ البيع، بوّابتُها
+        //  `canCompleteReceptionSale` وحُرّاسُ المالكية التجارية. وهذه
+        //  بوّابتُها أضيقُ (مسؤولٌ أو مديرُ فرع) ولا تحرسها مالكيةُ حقلٍ
+        //  إطلاقاً — فلا تكتب حقلاً تجارياً أصلاً. وخلطُهما كان يجعل
+        //  الطبيبَ يراها (لو وُسِّعت) أو يحجبها عن مديرِ فرعٍ لصفٍّ موروثٍ
+        //  سعرُه مملوكٌ للطبيب — والحالتان خطأ.
+        //
+        //  **والمنتهيةُ لا تُلغى**: الشاشةُ تعرف من الحالة، والخادمُ يردّ
+        //  ٤٠٩ على أيّ حال.
+        mayCancelDecision: canCancelDecision(s) && !isTerminal(f.status),
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
           price: !canOverwriteCommercialField({ field: priceField, session: owner }),
@@ -410,6 +422,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
               },
             })
             : allowedActions(owner, r.status),
+          //  **«إلغاء الحسم» — نفسُ حساب بطاقة المريض بحرفه** (ترحيل ٠٨١).
+          //  والطابورُ لا يعرض إلّا الحيّ، فالشرطُ الثاني تحصيلُ حاصلٍ هنا
+          //  ويُكتب مع ذلك: مصدرُ الحقيقة واحدٌ لا فرضٌ على القارئ.
+          mayCancelDecision: canCancelDecision(s) && !isTerminal(r.status),
         }));
         res.json({ rows, total: out.total });
       } else {
@@ -946,6 +962,61 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       });
       res.json({ ...updated, decisionLabel: PURCHASE_DECISION_LABELS.not_bought });
     } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
+  // ── إلغاءُ الحسم — **الصفُّ يخرج من الطابور ولا يُقال عن المريض شيء** ──
+  //  (ترحيل ٠٨١) صفٌّ دخل «بانتظار الحسم» بالخطأ: لا بيعَ ينتظره ولا قرارَ
+  //  مريضٍ يُنتظَر. فيُخرَج بقرارٍ إداريٍّ مدقَّق — **بلا بيعٍ يُنشأ، وبلا
+  //  «لم يشترِ» تُسجَّل، وبلا دينارٍ أو جهازٍ أو معاينةٍ تُمَسّ**.
+  app.post("/api/followups/:id/cancel-decision", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    //  **سلطةٌ إدارية** — لا لكلّ موظّف: الاستقبالُ والمحاسبُ يقرّران ما
+    //  شهداه (اشترى / لم يشترِ)، وإخراجُ صفٍّ من الطابور بلا قرارِ مريضٍ
+    //  إطلاقاً حكمٌ على صحّة الطابور نفسِه.
+    if (!canCancelDecision(s)) {
+      return res.status(403).json({
+        error: "«إلغاء الحسم» للمسؤول العام ومدير الفرع — لا الاستقبال ولا المحاسب ولا الطبيب",
+      });
+    }
+    //  ونطاقُ الفرع يُقرأ من صفّ المتابعة لا من الطلب: مديرُ فرعٍ آخر يُردّ.
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    const reason = str(req.body?.reason);
+    if (!reason) return res.status(400).json({ error: "سبب إلغاء الحسم مطلوب" });
+    try {
+      //  ══ **والتدقيقُ في المعاملة نفسِها** (درسُ ٤.t) ══════════════════
+      //  `logAudit` بلا `tx` يبتلع خطأه — فيخرج الصفُّ من الطابور بلا
+      //  شاهدٍ يقول مَن أخرجه ولماذا، وهو أوّلُ ما يُسأل عنه بعد شهر.
+      //  و«يُسجَّل التدقيقُ والسبب» ضمانةٌ لا نيّة: إمّا الاثنان معاً وإمّا
+      //  يبقى الصفُّ في الطابور كما كان. (وسطرُ `post_exam_followup_events`
+      //  مكتوبٌ في المعاملة نفسِها أصلاً من `appendEvent`.)
+      const updated = await db.transaction(async (tx) => {
+        const row = await store.cancelDecision({
+          followupId: f.id, reason, actor: actorOf(req), tx,
+        });
+        await logAudit({
+          entityType: "post_exam_followup", entityId: f.id, action: "update",
+          userId: s.userId, userName: s.userName, branchId: f.branchId,
+          oldValues: { status: f.status },
+          newValues: { status: "closed_decision_cancelled", cancelReason: reason },
+          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          notes: `إلغاء الحسم — متابعة #${f.id}: ${reason}`,
+          tx,
+        });
+        return row;
+      });
+      res.json(updated);
+    } catch (e) {
+      if (fail(res, e)) return;
+      //  **والفشلُ يُقال لا يُترك معلَّقاً** (درسُ ٤.c بالحرف): `throw` من
+      //  معالجٍ غيرِ متزامن لا يصل الطلبَ ردٌّ إطلاقاً — يبقى الموظّفُ أمام
+      //  دوّارةٍ لا يعرف أخرج الصفُّ من الطابور أم لا. والمعاملةُ تراجعت
+      //  كاملةً أصلاً، فالرسالةُ تقول الحقيقةَ: لم يقع شيء.
+      console.error("[cancel-decision] failed:", e);
+      res.status(500).json({
+        error: "تعذّر إلغاء الحسم — لم يتغيّر شيء. أعد المحاولة أو راجع المسؤول.",
+      });
+    }
   });
 
   // ── تحديدُ السعر التجاري — **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ──────

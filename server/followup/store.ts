@@ -1332,6 +1332,73 @@ export async function closeWithoutPurchase(params: {
 }
 
 /**
+ * **إلغاءُ الحسم** — الصفُّ يخرج من الطابور، ولا يُقال عن المريض شيء.
+ *
+ * ══ الواقعة (قرارُ المالك ٢٠٢٦-٠٩-١٥) ═══════════════════════════════════
+ * صفٌّ دخل «بانتظار الحسم» **بالخطأ**: لا بيعَ ينتظره ولا قرارَ مريضٍ
+ * يُنتظَر — وجودُه هناك هو العطب. ولم يكن للموظّف مخرجٌ إلّا أن يكذب:
+ * «لم يشترِ» تكتب رفضاً لم يقع، و«إتمام البيع» تكتب بيعاً لم يقع.
+ *
+ * ══ وما لا تفعله هذه الدالّة — وهو جوهرُها ══════════════════════════════
+ * **لا تلمس شيئاً غير حالة الصفّ**: لا سعرَ ولا خصمَ ولا نوعَ سعرٍ ولا
+ * خبيرَ ولا `purchase_decision` ولا مالكيةَ حقلٍ ولا `not_bought_reason_text`
+ * · **ولا دفعةً ولا كلفةً ولا قيدَ دفتر** · **ولا حلقةَ جهازٍ ولا أمرَ
+ * تصنيعٍ ولا مرحلة** · **ولا معاينةً ولا نسخةً ولا ملحقاً ولا شاهدةَ إلغاء**
+ * · ولا طلبَ خصمٍ أو سعرٍ معلَّقاً (**عمداً**: `closeWithoutPurchase` تُلغيها
+ * لأن الملفَّ حُسم بلا شراء فصار طلبُ سعره بلا موضوع؛ وهنا **لم يُحسَم شيء**
+ * — الصفُّ خرج من طابورٍ لم يكن له، وطلبُه القائم يبقى لصاحبه).
+ *
+ * **والصفُّ لا يُحذَف**: نهايةٌ محايدةٌ مسمّاة `closed_decision_cancelled`
+ * («أُلغي الحسم») وحدثٌ يقول مَن ولماذا ومتى — لا محوَ ولا كتابةَ فوق.
+ *
+ * ══ والسببُ إلزاميّ ═════════════════════════════════════════════════════
+ * نصٌّ حرّ (لا رمزٌ من `FOLLOWUP_REASONS`: تلك أسبابُ **المريض** لعدم
+ * الشراء، وهذا ليس ذاك). ويُكتب في `last_note` وفي الحدث — **و`closed_reason`
+ * يبقى `NULL`**: عمودٌ معناه «لماذا لم يشترِ»، وملؤه هنا يدّعي سبباً لم يُقَل.
+ *
+ * ══ والمنتهيةُ لا تُلمَس ════════════════════════════════════════════════
+ * `lockFollowup` بالحالات الحيّة وحدها ⟶ ٤٠٩ لكلّ طرفيّة. فضغطتان
+ * متزامنتان: الثانيةُ تنتظر القفل ثمّ تقرأ حالةً صارت طرفيّةً فتُردّ —
+ * **نتيجةٌ واحدة وحدثٌ واحد**، ولا حسمَ يُقلَب بعد وقوعه.
+ */
+export async function cancelDecision(params: {
+  followupId: number;
+  /** **نصٌّ حرٌّ إلزاميّ** — يُفرَض هنا لا في الشاشة وحدها. */
+  reason: string;
+  actor: Actor;
+  tx?: any;
+}): Promise<FollowupRow> {
+  const reason = String(params.reason ?? "").trim();
+  if (!reason) throw new FollowupError("سبب إلغاء الحسم مطلوب", 400);
+  const body = async (tx: any) => {
+    const cur = await lockFollowup(tx, params.followupId, [
+      "awaiting_patient_decision", "follow_up", "price_approved_waiting_patient",
+      "price_approval_pending", "purchase_approval_pending",
+    ]);
+    //  **الحالةُ وحدها** — ولا عمودَ تجاريّ ولا قرارَ مريضٍ يُكتب أو يُمحى.
+    //  وشرطُ الحالة في `UPDATE` نفسِه هو حارسُ السباق الثاني بعد القفل.
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET status = 'closed_decision_cancelled', closed_at = NOW(),
+             last_note = ${reason}, last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ${params.followupId} AND status = ${cur.status}
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(CONFLICT, 409);
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "closed_decision_cancelled", fromStatus: cur.status,
+      toStatus: "closed_decision_cancelled", note: reason,
+      payload: { cancelReason: reason, actorRole: params.actor.role ?? null },
+      actor: params.actor,
+    });
+    return toRow(row);
+  };
+  return params.tx ? await body(params.tx) : await db.transaction(body);
+}
+
+/**
  * إعادةُ الفتح — **حدثٌ جديد لا تصحيحُ قديم**.
  *
  * الصفّ نفسه يعود حيّاً وتبقى أحداثه كلّها، ويُلحق به `reopened`.

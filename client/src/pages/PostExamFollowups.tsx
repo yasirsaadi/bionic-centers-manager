@@ -160,6 +160,7 @@ function WaitingCard({ row }: { row: WaitingRow }) {
             patientId={row.patientId}
             branchId={row.branchId}
             actions={row.actions}
+            mayCancelDecision={Boolean((row as any).mayCancelDecision)}
             examNotes={row.examNotes}
             prefill={{
               originalPrice: row.originalPrice,
