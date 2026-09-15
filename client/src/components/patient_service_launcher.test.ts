@@ -19,7 +19,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  launcherOptions, resumableNoExamSale, inManufacturingFullDeviceEpisodes,
+  launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes,
   FLOW_ENDPOINTS, GROUP_LABELS, nextSubmissionToken, mintSubmissionToken,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
@@ -320,56 +320,61 @@ function main() {
   // ══ ٨-٩. استئنافُ بيعٍ بلا معاينة بقي ناقصاً ══════════════════════════
   //  حلقةٌ `awaiting_exam` بمسار `no_exam` = عمليةٌ فُتحت ولم تُكمَل: بلا
   //  سعرٍ ولا خبيرٍ ولا أمر تصنيع. تُستأنَف **هي بعينها**.
+  //
+  //  **وقد تزيد عن واحدة** (ترحيل ٠٧٣) — والتفصيلُ كلُّه في حزمةٍ مستقلّة:
+  //  `npm run test:no-exam-sale-resume` (التصفيةُ صفّاً صفّاً، والترتيبُ،
+  //  والاختيارُ الإلزاميّ حين تتعدّد، وعقدُ النافذة).
   console.log("\n── استئنافُ البيع الناقص ──");
   const HALF = [{
     id: 77, serviceType: "prosthetic", status: "awaiting_exam",
-    servicePath: "no_exam", requestedItem: "socket",
+    servicePath: "no_exam", requestedItem: "socket", sequenceNumber: 1,
   }];
   same("٩. **الحلقةُ الناقصة تُستأنَف بمعرّفها وبما طُلب فيها حرفاً**",
-    resumableNoExamSale(HALF, "prosthetic"), { episodeId: 77, requestedItem: "socket" });
-  same("ولا تُستأنَف لقسمٍ آخر", resumableNoExamSale(HALF, "medical_support"), null);
+    resumableNoExamSales(HALF, "prosthetic"),
+    [{ episodeId: 77, requestedItem: "socket", sequenceNumber: 1 }]);
+  same("ولا تُستأنَف لقسمٍ آخر", resumableNoExamSales(HALF, "medical_support"), []);
 
   //  **ولا يُخمَّن المطلوب أبداً**: صفٌّ بلا `requestedItem` لا يُستأنَف —
   //  فتحُ نافذةٍ على مجهولٍ كان سيسجّل بيعَ قطعةٍ لم يطلبها أحد.
   same("١٠.أ وصفٌّ بلا مطلوبٍ لا يُستأنَف — ولا يُخمَّن له شيء",
-    resumableNoExamSale([{ ...HALF[0], requestedItem: null }], "prosthetic"), null);
+    resumableNoExamSales([{ ...HALF[0], requestedItem: null }], "prosthetic"), []);
   same("ولا صفٌّ بلا معرّفٍ رقميّ",
-    resumableNoExamSale([{ ...HALF[0], id: undefined }] as any, "prosthetic"), null);
+    resumableNoExamSales([{ ...HALF[0], id: undefined }] as any, "prosthetic"), []);
 
   //  **ومسارُ المعاينة ليس ناقصاً** — طلبٌ ينتظر الطبيب يمضي بمساره.
   same("١٠.ب وحلقةُ مسار المعاينة لا تُستأنَف بيعاً",
-    resumableNoExamSale([{ ...HALF[0], servicePath: "exam" }], "prosthetic"), null);
+    resumableNoExamSales([{ ...HALF[0], servicePath: "exam" }], "prosthetic"), []);
   //  وحلقةُ ما قبل ٠٦٥ (`null`) ليست بيعاً بلا معاينة — لم تُسأل أصلاً.
   same("ولا حلقةُ ما قبل ٠٦٥ (بلا مسار)",
-    resumableNoExamSale([{ ...HALF[0], servicePath: null }], "prosthetic"), null);
+    resumableNoExamSales([{ ...HALF[0], servicePath: null }], "prosthetic"), []);
   for (const status of ["in_manufacturing", "delivered", "cancelled", "examined"]) {
     same(`وحلقةٌ «${status}» ليست عمليةً ناقصة`,
-      resumableNoExamSale([{ ...HALF[0], status }], "prosthetic"), null);
+      resumableNoExamSales([{ ...HALF[0], status }], "prosthetic"), []);
   }
   same("وبلا حلقاتٍ إطلاقاً ⟶ لا استئناف",
-    [resumableNoExamSale([], "prosthetic"), resumableNoExamSale(null, "prosthetic"),
-      resumableNoExamSale(undefined, "prosthetic")], [null, null, null]);
+    [resumableNoExamSales([], "prosthetic"), resumableNoExamSales(null, "prosthetic"),
+      resumableNoExamSales(undefined, "prosthetic")], [[], [], []]);
   //  ══ **ولا يُستأنَف ما لا يُباع** (قرارُ المالك بعد ٢٤٩) ═════════════════
   //  حلقةٌ موروثة بمسار `no_exam` وطلبِ «جهازٍ كامل» يردّها الخادمُ عند
   //  البيع. فاستئنافُها كان يعبّئ نموذجاً مآلُه ٤٠٩ محتوم — وبابُها
   //  المعاينةُ أو التصحيحُ الإداريّ كما تقول رسالةُ الردّ.
   same("١٠.ج **وطلبُ «طرفٍ كامل» لا يُستأنَف بيعاً** — يردّه الخادمُ حتماً",
-    resumableNoExamSale([{ ...HALF[0], requestedItem: "full_device" }], "prosthetic"), null);
+    resumableNoExamSales([{ ...HALF[0], requestedItem: "full_device" }], "prosthetic"), []);
   same("١٠.د **ولا طلبُ «مسندٍ كامل»** — ولا بيعَ للمساند بلا معاينة أصلاً",
-    resumableNoExamSale(
+    resumableNoExamSales(
       [{ ...HALF[0], serviceType: "medical_support", requestedItem: "full_device" }],
-      "medical_support"), null);
+      "medical_support"), []);
   //  **والأجزاءُ تبقى تُستأنَف** — الضيقُ على ما يجب وحده، بلا كنسِ ما حوله.
   same("١٠.هـ وكلُّ جزءِ طرفٍ يبقى قابلاً للاستئناف",
-    PROSTHETIC_COMPONENTS.filter((c) => resumableNoExamSale(
-      [{ ...HALF[0], requestedItem: c }], "prosthetic")?.requestedItem !== c), []);
+    PROSTHETIC_COMPONENTS.filter((c) => resumableNoExamSales(
+      [{ ...HALF[0], requestedItem: c }], "prosthetic")[0]?.requestedItem !== c), []);
 
-  //  **والموزِّعُ يمرّرها إلى النافذة القائمة** — ولا يُنشئ حلقةً ثانية.
-  check(/resumableNoExamSale\(episodeData\?\.episodes, flow\.serviceType\)/.test(launcherCode),
+  //  **والموزِّعُ يمرّرها إلى النافذة القائمة** — ولا يُنشئ حلقةً ثانية،
+  //  **ولا يختار عنها واحدةً** حين تتعدّد (ترحيل ٠٧٣).
+  check(/resumableNoExamSales\(episodeData\?\.episodes, flow\.serviceType\)/.test(launcherCode),
     "١٠.ج **والموزِّعُ يقرأ الاستئنافَ من حلقات المريض نفسِها**");
-  check(/existingEpisodeId=\{saleResume\?\.episodeId \?\? null\}/.test(launcherCode)
-    && /existingRequestedItem=\{saleResume\?\.requestedItem \?\? null\}/.test(launcherCode),
-    "ويمرّرهما إلى نافذة «بلا معاينة» القائمة");
+  check(/resumeCandidates=\{[A-Za-z]+\}/.test(launcherCode),
+    "ويمرّر المُرشَّحين كاملين إلى نافذة «بلا معاينة» القائمة");
   //  ولا يُستأنَف على مسار الصيانة — تلك لا تفتح حلقةً أصلاً.
   check(/flow\.initialKind === "device_sale"/.test(launcherCode),
     "١٠.د **والاستئنافُ لمسار البيع وحده** — الصيانةُ لا حلقةَ لها");

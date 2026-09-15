@@ -183,48 +183,128 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   return all.filter((o): o is LauncherOption => o !== null);
 }
 
-// ══ استئنافُ بيعٍ بلا معاينة بقي ناقصاً ══════════════════════════════════
+// ══ استئنافُ بيعٍ بلا معاينة بقي ناقصاً — مُرشَّحون يُعرَضون، لا واحدٌ يُنتقى ══
 
 /**
- * **الحلقةُ التي فُتحت ولم تكتمل — تُستأنَف هي، ولا تُفتَح ثانية.**
+ * **كلُّ عمليةِ بيعٍ بلا معاينة فُتحت ولم تكتمل على هذا الخيط.**
  *
- * ── العطبُ الذي تغلقه ──────────────────────────────────────────────────
+ * ── العطبُ الأصليّ الذي تغلقه ────────────────────────────────────────────
  * المسارُ القديم كان يفتح حلقةَ `no_exam` أوّلاً ثمّ يسجّل مبلغَها. فإن
  * انقطع بينهما — إغلاقُ نافذة، خطأُ شبكة، موظّفٌ تركها — بقي على الملفّ
  * صفٌّ حيّ: جزءٌ مطلوبٌ بمسار «بلا معاينة»، **بلا سعرٍ ولا خبيرٍ ولا أمر
  * تصنيع**. وهذا وقع في الإنتاج فعلاً.
  *
- * ولا يجوز حذفُه (عمليةٌ حقيقية وُثّقت) ولا فتحُ ثانٍ فوقه (فهرسُ
- * `uq_pde_case_open` يمنع، والمعنى يمنع قبله). فيُستأنَف **هو بعينه**:
- * تُفتَح نافذةُ «بلا معاينة» على معرّفه، فتُكمِل خبيرَه ومبلغَه وأمرَه.
+ * ولا يجوز حذفُه (عمليةٌ حقيقية وُثّقت) ولا فتحُ ثانٍ فوقه بلا قصد. فيُستأنَف
+ * **هو بعينه**: تُفتَح نافذةُ «بلا معاينة» على معرّفه، فتُكمِل خبيرَه
+ * ومبلغَه وأمرَه.
+ *
+ * ── ولا اختيارَ ضمنيّاً بعد اليوم (ترحيل ٠٧٣) ═══════════════════════════
+ * كانت هذه الدالّةُ تُرجع **مُرشَّحاً واحداً** (`.find()`، أوّلَ مطابقة)
+ * لأن `uq_pde_case_open` كان يضمن ألّا توجد أكثرُ من حلقةٍ مفتوحة على
+ * الخيط أصلاً. وذلك الفهرسُ **رُفع**: مريضٌ قد يحمل اليوم **أكثر من**
+ * عمليةِ بيعٍ معلَّقة معاً على القسم نفسِه — قالبٌ وركبةٌ مثلاً، عمليتان
+ * مستقلّتان عمداً.
+ *
+ * فاستئنافُ الأولى صامتاً كان يفتح النموذجَ على **عمليةٍ لم يقصدها أحد**:
+ * الموظّفُ جاء يُكمِل الركبة فيُسجَّل سعرُها وخبيرُها على القالب. وأسوأُ
+ * من ذلك أن «الأولى» لم تكن قراراً أصلاً — بل ترتيبَ وصول الصفوف من
+ * الخادم، فيختلف المستأنَفُ بين فتحةٍ وأخرى بلا سببٍ يراه أحد.
+ *
+ * فصارت تُرجع **كلَّ** المُرشَّحين، والمستدعي (الشاشة) هو مَن يعرض القائمةَ
+ * ويُلزم اختياراً صريحاً حين تزيد عن واحد — نفسُ قاعدة
+ * `inManufacturingFullDeviceEpisodes` أدناه حرفاً بحرف.
  *
  * ── ولا يُخمَّن المطلوب أبداً ────────────────────────────────────────────
  * ما طُلب مكتوبٌ على الصفّ، فيُقرأ منه حرفاً. وحلقةٌ وصلت بلا `requestedItem`
  * أو بلا معرّفٍ رقميّ **لا تُستأنَف**: فتحُ نافذةٍ على مجهولٍ كان سيسجّل
  * بيعَ قطعةٍ لم يطلبها أحد. والخادمُ يردّ الطلبَ الثاني ٤٠٩ برسالته، وهو
- * أصدقُ من تخمينٍ يمرّ.
+ * أصدقُ من تخمينٍ يمرّ. **والمرفوضُ يسقط وحده** ولا يُخفي صالحاً بجواره.
  */
-export function resumableNoExamSale(
+export function resumableNoExamSales(
   episodes: PatientEpisodeSummary[] | null | undefined,
   serviceType: "prosthetic" | "medical_support",
-): { episodeId: number; requestedItem: string } | null {
+): { episodeId: number; requestedItem: string; sequenceNumber: number | null }[] {
   const list = Array.isArray(episodes) ? episodes : [];
-  const found = list.find((e) =>
-    e.serviceType === serviceType
-    && e.status === "awaiting_exam"
-    && e.servicePath === "no_exam");
-  if (!found) return null;
-  const id = Number(found.id);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  const item = typeof found.requestedItem === "string" && found.requestedItem.trim()
-    ? found.requestedItem : null;
-  if (!item) return null;
-  //  **ولا يُستأنَف ما لا يُباع.** حلقةٌ موروثة بمسار `no_exam` وطلبٍ «جهازٍ
-  //  كامل» يردّها الخادمُ عند البيع (قرارُ المالك بعد ٢٤٩). فاستئنافُها هنا
-  //  كان يُعبّئ نموذجاً مآلُه ٤٠٩ محتوم — وبابُها المعاينةُ أو التصحيحُ
-  //  الإداريّ كما تقول رسالةُ الردّ. والقاعدةُ من `shared` لا نسخةٌ منها.
-  if (!noExamSaleAllowed(serviceType, item)) return null;
-  return { episodeId: id, requestedItem: item };
+  return list
+    .filter((e) =>
+      e.serviceType === serviceType
+      && e.status === "awaiting_exam"
+      && e.servicePath === "no_exam")
+    .map((e) => {
+      const id = Number(e.id);
+      if (!Number.isFinite(id) || id <= 0) return null;
+      const item = typeof e.requestedItem === "string" && e.requestedItem.trim()
+        ? e.requestedItem : null;
+      if (!item) return null;
+      //  **ولا يُستأنَف ما لا يُباع.** حلقةٌ موروثة بمسار `no_exam` وطلبٍ
+      //  «جهازٍ كامل» يردّها الخادمُ عند البيع (قرارُ المالك بعد ٢٤٩).
+      //  فاستئنافُها هنا كان يُعبّئ نموذجاً مآلُه ٤٠٩ محتوم — وبابُها
+      //  المعاينةُ أو التصحيحُ الإداريّ كما تقول رسالةُ الردّ. والقاعدةُ من
+      //  `shared` لا نسخةٌ منها.
+      if (!noExamSaleAllowed(serviceType, item)) return null;
+      //  **`typeof` لا `Number()`**: `Number(null)` تساوي **صفراً** لا `NaN`،
+      //  فحلقةٌ وصلت بلا تسلسلٍ كانت تُقرأ «#٠» فتتصدّر القائمةَ بدل أن
+      //  تُذيَّل — رقمٌ مخترَع يسبق الأرقامَ الحقيقية.
+      const raw = e.sequenceNumber;
+      return {
+        episodeId: id, requestedItem: item,
+        sequenceNumber: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
+      };
+    })
+    .filter((c): c is { episodeId: number; requestedItem: string; sequenceNumber: number | null } =>
+      c !== null)
+    // ترتيبٌ ثابتٌ يُقرَأ — الأقدم رقماً أوّلاً، بصرف النظر عن ترتيب وصول
+    // الخادم. المجهولُ الرقم (نادرٌ، بيانات تاريخية) يُذيَّل لا يُخمَّن.
+    .sort((a, b) => (a.sequenceNumber ?? Infinity) - (b.sequenceNumber ?? Infinity));
+}
+
+/** العمليةُ التي سيُسجَّل عليها البيع — أو لا شيء، وسببُه. */
+export interface ResumeTarget {
+  /** على الملفّ عمليةٌ معلَّقة — فهذه استئنافٌ لا بيعٌ جديد. */
+  resuming: boolean;
+  /** العمليةُ بعينها — `null` ما دامت لم تُحسَم. */
+  episodeId: number | null;
+  /** ما طُلب فيها — يُعرَض ولا يُسأل عنه ثانيةً. */
+  requestedItem: string | null;
+  /** عملياتٌ معلَّقة بلا اختيارٍ بعد — **يمنع الحفظ**، ولا يُنتقى الأوّل. */
+  unpicked: boolean;
+}
+
+/**
+ * **أيّ عمليةٍ معلَّقة يُسجَّل عليها البيع؟** — قرارُ النافذة خالصاً.
+ *
+ * أُخرِج من `NoExamOperationDialog` إلى هنا لأن المشروع بلا مشغّل DOM،
+ * فقرارٌ يعيش داخل مكوّن React لا يُختبَر إلّا بقراءة نصِّه — وقراءةُ النصّ
+ * لا تُمسك انتقاءً صامتاً يعود يوماً بصياغةٍ أخرى. وهنا يُختبَر دخلاً وخرجاً.
+ *
+ * ثلاثُ حالاتٍ لا رابع:
+ * · **صفر** ⟶ `resuming: false` — بيعٌ جديد، يُختار الجزءُ من القائمة.
+ * · **واحدة** ⟶ تُحسَم ضمناً بلا سؤال (نفسُ الشاشة القديمة تماماً).
+ * · **أكثر** ⟶ `unpicked` حتى يختار الموظّفُ واحدةً بعينها، **ولا يُنتقى
+ *   الأوّلُ صامتاً** (ترحيل ٠٧٣ رفع `uq_pde_case_open`، فصارت العملياتُ
+ *   المتوازية المستقلّة ممكنة على الخيط الواحد).
+ *
+ * **والمُختارُ يُطابَق بالمعرّف** من القائمة نفسِها — فقيمةٌ بائتة (حُسمت
+ * عمليةٌ في تبويبٍ آخر فاختفت من القائمة) تُقرأ «لم يُختَر» فتمنع الحفظ،
+ * لا «اختير شيءٌ ما» فتُسجَّل على عمليةٍ لم تعد قائمة.
+ */
+export function resolveResumeTarget(params: {
+  candidates: { episodeId: number; requestedItem: string; sequenceNumber: number | null }[];
+  pickedId: string;
+}): ResumeTarget {
+  const list = Array.isArray(params.candidates) ? params.candidates : [];
+  if (list.length === 0) {
+    return { resuming: false, episodeId: null, requestedItem: null, unpicked: false };
+  }
+  const pick = list.length === 1
+    ? list[0]
+    : list.find((c) => String(c.episodeId) === params.pickedId) ?? null;
+  return {
+    resuming: true,
+    episodeId: pick?.episodeId ?? null,
+    requestedItem: pick?.requestedItem ?? null,
+    unpicked: pick === null,
+  };
 }
 
 // ══ إلحاقُ جزءٍ بجهازٍ كاملٍ قيد التصنيع — مُرشَّحون يُعرَضون، لا قرارٌ يُتَّخذ هنا ══

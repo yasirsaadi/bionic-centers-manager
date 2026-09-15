@@ -13,7 +13,7 @@ import { NoExamOperationDialog } from "./NoExamOperationDialog";
 import { ReturnToPurchaseDialog } from "./ReturnToPurchaseDialog";
 import { ReturnToPurchaseRoutingChoice } from "./ReturnToPurchaseRoutingChoice";
 import {
-  launcherOptions, resumableNoExamSale, inManufacturingFullDeviceEpisodes, GROUP_LABELS,
+  launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type PatientEpisodeSummary,
   type ServiceFlow,
 } from "./patient_service_launcher_logic";
@@ -197,9 +197,15 @@ export function PatientServiceLauncher({
   //  حلقةٌ `awaiting_exam` بمسار `no_exam` تعني عمليةً فُتحت ولم تُكمَل:
   //  بلا سعرٍ ولا خبيرٍ ولا أمر تصنيع. فتُفتَح النافذةُ **عليها** فتُكمِلها،
   //  ولا تُنشأ ثانيةٌ فوقها. والمطلوبُ يُقرأ من صفّها لا يُخمَّن.
-  const saleResume = flow?.kind === "no_exam_operation" && flow.initialKind === "device_sale"
-    ? resumableNoExamSale(episodeData?.episodes, flow.serviceType)
-    : null;
+  //
+  //  **وقد تزيد عن واحدة** (ترحيل ٠٧٣: عملياتٌ متوازية مستقلّة صارت ممكنة
+  //  على الخيط الواحد) — فتُمرَّر القائمةُ كاملةً ولا يُختار منها هنا واحدٌ
+  //  عن الموظّف. `NoExamOperationDialog` تحسم الواحدةَ ضمناً وتُلزم اختياراً
+  //  صريحاً حين تتعدّد.
+  const saleResumeCandidates = flow?.kind === "no_exam_operation"
+    && flow.initialKind === "device_sale"
+    ? resumableNoExamSales(episodeData?.episodes, flow.serviceType)
+    : [];
 
   //  ══ **أطرافٌ كاملة قيد التصنيع — مُرشَّحون لسؤال الإلحاق الصريح** ═══════
   //  تُحسَب لكلّ مسار «بلا معاينة» للأطراف (لا للمساند — لا أجزاءَ لها)،
@@ -377,8 +383,7 @@ export function PatientServiceLauncher({
           branchId={patient.branchId}
           serviceType={flow.serviceType}
           initialKind={flow.initialKind}
-          existingEpisodeId={saleResume?.episodeId ?? null}
-          existingRequestedItem={saleResume?.requestedItem ?? null}
+          resumeCandidates={saleResumeCandidates}
           attachCandidates={attachCandidates}
           open
           onOpenChange={closeFlow}
