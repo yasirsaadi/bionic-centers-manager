@@ -16,7 +16,7 @@ import {
   purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
   purchaseSubmitLabel,
 } from "./purchase_dialog_ui";
-import { EMPTY_DISCOUNT, type DiscountDraft } from "./service_discount_ui";
+import { EMPTY_DISCOUNT, hasDiscount, type DiscountDraft } from "./service_discount_ui";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -252,6 +252,91 @@ check("     **وعرضُ نتيجة الحسم يمرّ بدالّة السعر 
 const followupsBare = (followupsSrc.match(/\{[^{}\n]*[Pp]rice[^{}\n]*\}\s*(⟶|→|←|-->)/g) ?? []);
 check("     ولا سهمَ عارياً بين رقمين فيها",
   followupsBare.length === 0, followupsBare.join("\n"));
+
+// ── ٩. **حقولُ البيع تظهر من فتحِ النافذة — لا تنتظر إدخالَ السعر** ──────
+//  ══ العطبُ الذي يغلقه ══════════════════════════════════════════════════
+//  كتلةُ «خصم أو خدمة مجّانية» في نافذة «اشترى» الموروثة كانت خلف شرطٍ
+//  `originalPrice > 0`، فتُفتَح النافذةُ على صفٍّ بلا سعرٍ محفوظ ولا يرى
+//  الموظّفُ إلّا حقلَ السعر والخبير — **ولا يعرف أن في النافذة خصماً
+//  ومجّانيّةً أصلاً** حتى يكتب رقماً. ونافذةُ المسار الحديث
+//  (`ExamPathDecisionActions`) ترسم حقولَها كلَّها دفعةً واحدة.
+//
+//  **والحمايةُ شقّان**: الشاشةُ ترسم الكتلةَ دائماً (عقدُ المصدر أدناه)،
+//  **والمالُ لا يتحرّك بذلك** (القاعدةُ الخالصة أوّلاً) — فظهورٌ مبكّر
+//  لا يفتح زرّاً ولا يضيف حقلاً إلى الحمولة.
+console.log("\n── حقول البيع تظهر فوراً ──");
+
+//  ① الكتلةُ **خاملةٌ تماماً** قبل السعر: لا خصمَ تدّعيه، فلا ملخّصَ ولا
+//     سببَ ولا حمولة. وهذا ما يجعل عرضَها آمناً لا مجرّد «مقبول».
+same("٤٥. **بلا سعرٍ بعد ⟵ لا خصمَ تدّعيه الكتلة**",
+  hasDiscount(EMPTY_DISCOUNT, purchaseOriginalPrice(CASE_D, 0)), false);
+same("     وكذلك على صفٍّ خبيرُه محفوظٌ وسعرُه لا",
+  hasDiscount(EMPTY_DISCOUNT, purchaseOriginalPrice(CASE_C, 0)), false);
+
+//  ② **والزرُّ يبقى مغلقاً كما كان بحرفه** — `purchaseBlocked` تعطّله عند
+//     `!(original > 0)`، وظهورُ الكتلة لا يمسّ ذلك.
+same("٤٦. **والإرسالُ معطَّلٌ بلا سعرٍ كما كان** — العرضُ ليس إذناً",
+  [purchaseBlocked({ followup: CASE_C, firstPrice: 0, expertId: "", discount: draft() }),
+    purchaseBlocked({ followup: CASE_D, firstPrice: 0, expertId: "9", discount: draft() })],
+  [true, true]);
+
+//  ③ **والحمولةُ لا تكتسب حقلَ خصمٍ** لمجرّد أن الكتلةَ صارت مرئية.
+same("٤٧. **ولا حقلَ خصمٍ في الحمولة** — الكتلةُ معروضةٌ لم تُلمَس",
+  purchaseBody({ followup: CASE_D, firstPrice: 0, expertId: "9", discount: draft() }),
+  { originalPrice: 0, expertUserId: 9 });
+
+//  ④ **وما إن يُكتب السعرُ يتبعه المرجعُ حيّاً** فتعمل الكتلةُ كما كانت
+//     دائماً — لا سلوكَ جديد بعد الإدخال، فقط حضورٌ قبله.
+same("٤٨. **والسعرُ المرجعيُّ يتبع ما يُكتب أعلاه حيّاً**",
+  purchaseOriginalPrice(CASE_D, 500_000), 500_000);
+same("٤٩. فيُفتَح الزرُّ بعد السعر والخبير كما كان",
+  purchaseBlocked({ followup: CASE_D, firstPrice: 500_000, expertId: "9", discount: draft() }),
+  false);
+same("٥٠. ويعمل الخصمُ عليه كما كان",
+  purchaseBody({
+    followup: CASE_D, firstPrice: 500_000, expertId: "9",
+    discount: draft({ finalPrice: 400_000, reason: "manager_discretion" }),
+  }),
+  {
+    originalPrice: 500_000, expertUserId: 9,
+    discount: { finalPrice: 400_000, isFree: false, reason: "manager_discretion", note: undefined },
+  });
+
+//  ── عقدُ الشاشة: الكتلةُ تُرسَم بلا شرطٍ على السعر ──────────────────────
+//  **والتعليقاتُ تُزال قبل الفحص**: الشرطُ المحذوف مذكورٌ نصّاً في تعليق
+//  الملفّ (يشرح ما كان)، فلولا إزالتُها لَمرّ الفحصُ على ذكرٍ لا على كود.
+const stripJsxComments = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+const legacySrc = stripJsxComments(readFileSync(
+  join(import.meta.dirname, "./LegacyDecisionActions.tsx"), "utf8"));
+
+check("٥١. **الكتلةُ موجودةٌ في النافذة الموروثة**",
+  legacySrc.includes("<ServiceDiscountFields"));
+check("٥٢. **ولا شرطَ `originalPrice > 0` يحجبها**",
+  !/originalPrice\s*>\s*0\s*&&/.test(legacySrc),
+  (legacySrc.match(/.*originalPrice\s*>\s*0.*/g) ?? []).join("\n"));
+//  **ولا أيُّ شرطٍ آخر يسبقها** — الفحصُ على ما يسبق الوسمَ مباشرةً، فلا
+//  يُستبدَل الشرطُ المحذوف بآخر يفعل الشيءَ نفسَه بصياغةٍ أخرى.
+const beforeTag = legacySrc.slice(0, legacySrc.indexOf("<ServiceDiscountFields")).trimEnd();
+check("٥٣. **ولا شرطَ آخر مكانَه** — لا `&& (` قبل الوسم مباشرةً",
+  !/&&\s*\(\s*$/.test(beforeTag), beforeTag.slice(-120));
+
+//  ── والمرجعُ هو المسارُ الحديث نفسُه، لا وصفٌ مكتوبٌ هنا ────────────────
+//  فلو عاد يوماً إلى إخفاءِ حقولٍ خلف إدخالٍ سابق، سقط هذا البند معه.
+const examPathSrc = stripJsxComments(readFileSync(
+  join(import.meta.dirname, "./ExamPathDecisionActions.tsx"), "utf8"));
+const csDialog = examPathSrc.slice(
+  examPathSrc.indexOf('dialog === "complete_sale"'),
+  examPathSrc.indexOf('dialog === "not_bought"'));
+for (const [what, id] of [
+  ["الخبير", "select-complete-sale-expert"],
+  ["السعر الأصلي", "input-complete-sale-original"],
+  ["مقدار الخصم", "input-complete-sale-discount"],
+] as [string, string][]) {
+  const at = csDialog.indexOf(`data-testid="${id}"`);
+  const head = csDialog.slice(0, at).trimEnd();
+  check(`٥٤. **والمسارُ الحديث يرسم «${what}» بلا شرطٍ سابق**`,
+    at > 0 && !/&&\s*\(\s*$/.test(head), head.slice(-120));
+}
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);
