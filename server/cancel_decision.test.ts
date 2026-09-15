@@ -843,6 +843,160 @@ async function main() {
         "١١٢. **ولا يثبت شراءً ولا رفضاً** — محايدٌ في الاتجاهين", text);
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n══ ع. المسارُ الموروث — الصلاحيةُ تصل الشاشةَ ويوجد زرٌّ يستعملها ══\n");
+    // ════════════════════════════════════════════════════════════════════
+    //  ══ الفجوةُ التي يغلقها هذا القسم ═══════════════════════════════════
+    //  الخادمُ يرسل `mayCancelDecision` لكلّ صفٍّ حيّ من نقطتَي البطاقة
+    //  والطابور معاً — **بصرف النظر عن `examPath`**. لكنّ الشاشتين كانتا
+    //  ترسمان الزرَّ في `ExamPathDecisionActions` وحدها، وتلك لا تُركَّب إلّا
+    //  حين `examPath === true`. فصفٌّ موروثٌ (يتيمٌ أو حلقةٌ من ما قبل ٠٦٥)
+    //  كان يحمل الصلاحيةَ **ولا يجد زرّاً** — وهو بعينه شكلُ الصفوف التي
+    //  وُضع البابُ لأجلها. والخادمُ لم يُمَسّ هنا بحرف: الفجوةُ واجهيّةٌ
+    //  محضة، والاختبارُ يثبت الطرفين — الحقيقةَ الحيّة وعقدَ الوصل.
+    {
+      //  ── ١) الصلاحيةُ الحيّة على صفٍّ موروث: مَن يراها ومَن لا ──────────
+      const { pid, fid } = await orphanFollowup("موروثٌ للإلغاء");
+      const cardRow = async (s: any) => {
+        const r = await http("GET", `/api/followups/patient/${pid}`, s);
+        return (r.body?.rows ?? r.body ?? []).find?.((x: any) => Number(x.id) === fid)
+          ?? (r.body?.followups ?? []).find?.((x: any) => Number(x.id) === fid);
+      };
+      same("١١٣. الإعدادُ: صفٌّ موروثٌ حيٌّ في الطابور",
+        [await inQueue(S.recv, fid), (await fRow(fid))?.device_episode_id], [true, null]);
+      same("١١٤. **وليس على مسار المعاينة** — فيُرسَم بالمكوّن الموروث",
+        rowOf((await waiting(S.admin)).body, fid)?.examPath, false);
+
+      same("١١٥. **المسؤولُ العامّ يراها على الصفّ الموروث**",
+        (await cardRow(S.admin))?.mayCancelDecision, true);
+      same("١١٦. **ومديرُ الفرع ضمن فرعه**",
+        (await cardRow(S.manager))?.mayCancelDecision, true);
+      for (const [who, sess] of [["الاستقبال", S.recv], ["المحاسب", S.acct], ["الطبيب", S.doc]] as any[]) {
+        same(`١١٧. **ولا ${who}** — فلا يُرسَم زرٌّ يردّه الخادمُ ٤٠٣`,
+          (await cardRow(sess))?.mayCancelDecision, false);
+      }
+      //  والطابورُ يقولها بنفس الحساب — الشاشتان تقرآن الحقيقةَ نفسَها.
+      same("١١٨. **والطابورُ يقولها بنفس الحساب**", [
+        rowOf((await waiting(S.admin)).body, fid)?.mayCancelDecision,
+        rowOf((await waiting(S.manager)).body, fid)?.mayCancelDecision,
+        rowOf((await waiting(S.recv)).body, fid)?.mayCancelDecision,
+        rowOf((await waiting(S.acct)).body, fid)?.mayCancelDecision,
+      ], [true, true, false, false]);
+    }
+
+    {
+      //  ── ٢) مديرُ الفرع **ضمن فرعه وحده** — لا يمتدّ إلى فرعٍ آخر ───────
+      const b2 = await orphanFollowup("موروثٌ في فرعٍ آخر", { branchId: 2 });
+      same("١١٩. **والصفُّ في الفرع ٢ لا يبلغ مديرَ الفرع ١ أصلاً**",
+        rowOf((await waiting(S.manager)).body, b2.fid) ?? null, null);
+      same("١٢٠. **والمسؤولُ يراه في كلّ الفروع**",
+        rowOf((await waiting(S.admin)).body, b2.fid)?.mayCancelDecision, true);
+    }
+
+    {
+      //  ── ٣) **الأفعالُ العاديةُ فارغة والصلاحيةُ قائمة** ────────────────
+      //  مديرُ فرعٍ أمام صفٍّ موروثٍ في `price_approval_pending`: اعتمادُ
+      //  السعر القديم ليس له (`canDecideLegacyPriceRequest`) فتُرجع
+      //  `allowedActions` **`[]`** — وهو مع ذلك يملك إخراجَ الصفّ. والشرطُ
+      //  القديم `actions.length > 0` كان يحجب الصفَّ كلَّه فلا يجد زرّاً.
+      const { fid } = await orphanFollowup("موروثٌ بأفعالٍ فارغة");
+      await q(`UPDATE post_exam_followups SET status='price_approval_pending' WHERE id=$1`, [fid]);
+      const row = rowOf((await waiting(S.manager)).body, fid);
+      same("١٢١. **الأفعالُ العاديةُ فارغةٌ تماماً لمديرِ الفرع**", row?.actions, []);
+      same("١٢٢. **والصلاحيةُ قائمةٌ مع ذلك** — فلا بدّ من زرٍّ",
+        row?.mayCancelDecision, true);
+      //  والفعلُ نفسُه يمضي فعلاً بهذا الشكل — لا صلاحيةٌ معلَّقةٌ بلا باب.
+      same("١٢٣. **والإلغاءُ ينجح بيد مديرِ الفرع**",
+        (await cancel(fid, S.manager, "دخل الطابورَ بالخطأ — أفعالُه فارغة")).status, 200);
+      same("١٢٤. فيخرج من الطابور", await inQueue(S.manager, fid), false);
+    }
+
+    {
+      //  ── ٤) **السببُ إلزاميّ على الصفّ الموروث أيضاً** ──────────────────
+      const { pid, fid } = await orphanFollowup("موروثٌ بلا سبب");
+      const before = await fingerprint(pid);
+      for (const [what, reason] of [
+        ["الغائب", undefined], ["الفارغ", ""], ["البياض", "   "],
+      ] as any[]) {
+        const r = await cancel(fid, S.admin, reason);
+        same(`١٢٥. **السببُ ${what} يُردّ ٤٠٠**`, r.status, 400);
+      }
+      same("١٢٦. **والصفُّ باقٍ حيّاً**", (await fRow(fid))?.status, "awaiting_patient_decision");
+      same("١٢٧. **وصفرُ كتابةٍ على الملفّ**", await fingerprint(pid), before);
+      same("١٢٨. **وبسببٍ حقيقيّ يمضي — نفسُ النقطة**",
+        (await cancel(fid, S.admin, "سببٌ مكتوب")).status, 200);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n══ ف. عقدُ الشاشة — المكوّنُ الموروث وصِلتاه ══\n");
+    // ════════════════════════════════════════════════════════════════════
+    //  **لا مشغّلَ DOM في المستودع**، فعقدُ الوصل يُقرأ من المصدر — والأصلُ
+    //  المقابَلُ به هو `ExamPathDecisionActions.tsx` نفسُه لا نصٌّ مكتوبٌ
+    //  هنا: فلو تغيّر السلوكُ هناك يوماً ولم يلحقه الموروثُ، سقط القسم.
+    {
+      const cdir = join(import.meta.dirname, "..", "client", "src");
+      const src = (...parts: string[]) => readFileSync(join(cdir, ...parts), "utf8");
+      const legacy = src("components", "LegacyDecisionActions.tsx");
+      const examPath = src("components", "ExamPathDecisionActions.tsx");
+      const queue = src("pages", "PostExamFollowups.tsx");
+      const card = src("components", "PostExamDecisionCard.tsx");
+
+      //  ── الخاصّيةُ والزرُّ والنافذة ──────────────────────────────────────
+      check(/mayCancelDecision\?: boolean;/.test(legacy),
+        "١٢٩. **الخاصّيةُ `mayCancelDecision` في عقد المكوّن الموروث**");
+      check(/\{mayCancelDecision && \(/.test(legacy),
+        "١٣٠. **والزرُّ مشروطٌ بها وحدها** — لا بـ`actions`");
+      check(/data-testid="button-cancel-decision"/.test(legacy),
+        "١٣١. وبنفس معرّف الزرّ");
+      check(/data-testid="button-save-cancel-decision"/.test(legacy)
+        && /data-testid="input-cancel-decision-reason"/.test(legacy)
+        && /data-testid="text-cancel-decision-scope"/.test(legacy),
+        "١٣٢. **ونفسُ نافذة التأكيد بحقلها وتحذيرها**");
+
+      //  ── **نفسُ النقطة القائمة** — لا مسارَ ثانٍ يُخترَع ────────────────
+      const EP = "`/api/followups/${followupId}/cancel-decision`";
+      check(legacy.includes(EP), "١٣٣. **ونفسُ نقطة الإلغاء القائمة**", EP);
+      check(examPath.includes(EP) && legacy.includes(EP),
+        "١٣٤. **والمكوّنان ينادِيان النقطةَ نفسَها حرفاً بحرف**");
+      check(/\{ reason: cancelReason\.trim\(\) \}/.test(legacy),
+        "١٣٥. **ونفسُ جسم الطلب** — `{ reason }` مقلَّماً");
+      check(/disabled=\{busy \|\| !cancelReason\.trim\(\)\}/.test(legacy),
+        "١٣٦. **والسببُ إلزاميٌّ في الشاشة كذلك** — زرُّ الحفظ معطَّلٌ بلا نصّ");
+      //  ونفسُ معالجة النجاح/الخطأ/الإبطال: الفعلُ يمرّ بـ`submit` نفسِها
+      //  التي تمرّ بها «اشترى»/«لم يشترِ» — لا `useMutation` ثانية.
+      same("١٣٧. **ولا طفرةً ثانية للإلغاء** — نفسُ `act`/`submit`/`invalidateAll`",
+        (legacy.match(/useMutation\(/g) ?? []).length, 1);
+      check(/setCancelReason\(""\); setDialog\("cancel_decision"\)/.test(legacy),
+        "١٣٨. **والنافذةُ تُفتَح بحقلٍ فارغ** — لا سببٌ بائتٌ من فتحةٍ سابقة");
+
+      //  ── الصِّلةُ الأولى: الطابور ────────────────────────────────────────
+      check(/mayCancelDecision: boolean;/.test(queue),
+        "١٣٩. **والحقلُ مطبوعٌ في نوع صفّ الطابور**");
+      const legacyBlock = queue.slice(queue.indexOf("<LegacyDecisionActions"),
+        queue.indexOf("/>", queue.indexOf("<LegacyDecisionActions")));
+      check(/mayCancelDecision=\{Boolean\(row\.mayCancelDecision\)\}/.test(legacyBlock),
+        "١٤٠. **والطابورُ يمرّرها إلى المكوّن الموروث**", legacyBlock);
+      check(queue.includes("row.actions.length > 0 || row.mayCancelDecision"),
+        "١٤١. **وشرطُ العرض صار «أفعالٌ أو صلاحية»** — لا يحجبه فراغُ الأفعال");
+      check(!/\(row as any\)\.mayCancelDecision/.test(queue),
+        "١٤٢. ولا قراءةَ `any` بقيت له");
+
+      //  ── الصِّلةُ الثانية: بطاقةُ المريض — نفسُ التمرير ─────────────────
+      const cardBlock = card.slice(card.indexOf("<LegacyDecisionActions"),
+        card.indexOf("/>", card.indexOf("<LegacyDecisionActions")));
+      check(/mayCancelDecision=\{!examPath && Boolean\(\(active as any\)\.mayCancelDecision\)\}/
+        .test(cardBlock),
+        "١٤٣. **وبطاقةُ المريض تمرّرها كذلك** — فالشاشتان متطابقتان", cardBlock);
+      //  **و`!examPath` شرطُ صحّةٍ لا زينة**: البطاقةُ تُركّب المكوّنَ
+      //  الموروثَ بلا شرط، فبدونه يظهر الزرُّ مرّتين على صفّ مسار المعاينة.
+      check(cardBlock.includes("!examPath"),
+        "١٤٤. **ومقصورةً على الموروث** — فلا زرّان على صفّ مسار المعاينة");
+      const examBlock = card.slice(card.indexOf("<ExamPathDecisionActions"),
+        card.indexOf("/>", card.indexOf("<ExamPathDecisionActions")));
+      check(/mayCancelDecision=/.test(examBlock),
+        "١٤٥. **ومسارُ المعاينة كما كان بحرفه**");
+    }
+
     console.log(
       "\nملاحظة: «إلغاء الحسم» لا يُنشئ بيعاً ولا يسجّل «لم يشترِ» ولا يعكس بيعاً"
       + " سابقاً — المنتهيةُ تُردّ ٤٠٩، والحيّةُ تخرج من الطابور وحدها.");

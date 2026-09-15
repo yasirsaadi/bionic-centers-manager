@@ -13,6 +13,11 @@
 // (`purchaseGaps`)، نفسُ حارس الإرسال (`purchaseBlocked`)، نفسُ جسم الطلب
 // (`purchaseBody`) — بلا نسختين تنحرفان يوماً.
 //
+// ══ ومعهما «إلغاء الحسم» — وحدَه من خارج `actions` ══════════════════════
+// نفسُ الزرّ ونفسُ النافذة ونفسُ النقطة `/api/followups/:id/cancel-decision`
+// التي في `ExamPathDecisionActions` بحرفها. سلطتُه أضيقُ (مسؤولٌ أو مديرُ
+// فرع) والخادمُ يقولها في `mayCancelDecision` — فليست فعلاً في `actions`.
+//
 // ══ عمداً بلا الأفعال الأخرى ═══════════════════════════════════════════
 // تأجيل · تحديد السعر النهائي · اختيار الخبير المستقلّ · إعادة الفتح ·
 // اعتمادُ/رفضُ طلب سعرٍ قديم — هذه تبقى حصراً في `PostExamDecisionCard.tsx`.
@@ -28,7 +33,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { XCircle, Loader2, HandCoins } from "lucide-react";
+import { XCircle, Loader2, HandCoins, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +43,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -65,25 +71,48 @@ export interface LegacyDecisionActionsProps {
   /** الأفعالُ المتاحة من الخادم (`allowedActions`) — يُقرَأ منها `confirm_purchase`/`close` فقط؛ أيُّ فعلٍ آخر فيها يُتجاهَل عمداً. */
   actions: string[];
   followup: LegacyDecisionActionsFollowup;
+  /**
+   * **«إلغاء الحسم» — سلطةٌ إدارية يقولها الخادم** (ترحيل ٠٨١).
+   *
+   * نفسُ الخاصّية ونفسُ دلالتها في `ExamPathDecisionActions` بحرفها: مسؤولٌ
+   * عامّ أو مديرُ فرع، وللصفّ الحيّ وحده. **لا تُشتقّ في الشاشة** — الخادمُ
+   * يفحص `canCancelDecision` ونطاقَ الفرع والحالةَ معاً ويرسل الجواب،
+   * فلا يظهر زرٌّ سيردّه ٤٠٣ أو ٤٠٩. غيابُها يُقرأ «لا».
+   *
+   * ══ ولماذا هنا أيضاً — الفجوةُ التي أُغلقت ═══════════════════════════
+   * الخادمُ يرسلها **لكلّ صفٍّ حيّ** من نقطتَي البطاقة والطابور معاً
+   * (`server/followup/routes.ts`) بصرف النظر عن المسار، لكنّ الشاشتين
+   * كانتا ترسمانها في `ExamPathDecisionActions` وحدها — وتلك لا تُركَّب
+   * إلّا حين `examPath === true`. فصفٌّ موروثٌ (يتيمٌ أو حلقةٌ من ما قبل
+   * ٠٦٥) كان يحمل الصلاحيةَ ولا يجد زرّاً — **وهو بعينه شكلُ الصفوف التي
+   * وُضع البابُ لأجلها**. فصار للمكوّن الموروث الزرُّ نفسُه بالسلوك نفسِه.
+   */
+  mayCancelDecision?: boolean;
   /** يُنادى بعد نجاح أيّ فعل — إضافةً على إبطال المفاتيح المشتركة أدناه. */
   onResolved?: () => void;
 }
 
 export function LegacyDecisionActions({
-  followupId, patientId, branchId, actions, followup, onResolved,
+  followupId, patientId, branchId, actions, followup,
+  mayCancelDecision = false, onResolved,
 }: LegacyDecisionActionsProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [dialog, setDialog] = useState<"confirm_purchase" | "close" | null>(null);
+  const [dialog, setDialog] =
+    useState<"confirm_purchase" | "close" | "cancel_decision" | null>(null);
   const [firstPrice, setFirstPrice] = useState(0);
   const [expertId, setExpertId] = useState("");
   const [discount, setDiscount] = useState<DiscountDraft>(EMPTY_DISCOUNT);
   const [reason, setReason] = useState<FollowupReason>("needs_time");
   const [note, setNote] = useState("");
+  //  سببُ إلغاء الحسم — **نصٌّ حرٌّ إلزاميّ**، منفصلٌ عن سبب «لم يشترِ»:
+  //  ذاك يقوله المريضُ وهذا يقوله المدير، وخلطُهما في حقلٍ واحد يخلط
+  //  واقعتين في السجلّ. (نفسُ تعليل `ExamPathDecisionActions` حرفياً.)
+  const [cancelReason, setCancelReason] = useState("");
 
   const reset = () => {
     setDialog(null); setFirstPrice(0); setExpertId(""); setDiscount(EMPTY_DISCOUNT);
-    setReason("needs_time"); setNote("");
+    setReason("needs_time"); setNote(""); setCancelReason("");
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقةُ المريض —
@@ -154,6 +183,23 @@ export function LegacyDecisionActions({
           onClick={() => { setReason("needs_time"); setNote(""); setDialog("close"); }}
           data-testid="button-legacy-close-followup">
           <XCircle className="h-4 w-4" /> لم يشترِ
+        </Button>
+      )}
+      {/*  ══ **«إلغاء الحسم» — خارجَ `actions` عمداً** (ترحيل ٠٨١) ═══════════
+          نفسُ قاعدة `ExamPathDecisionActions` بحرفها: سلطتُه أضيقُ (مسؤولٌ
+          أو مديرُ فرع) ولا تحرسها مالكيةُ حقلٍ تجاريّ، فلا يُطوى في مصفوفة
+          أفعال البيع. ويظهر **ولو كانت `actions` فارغةً تماماً** — ومديرُ
+          فرعٍ أمام صفٍّ موروثٍ في `price_approval_pending` هو بالضبط هذه
+          الحالة: `allowedActions` تُرجع له `[]` (اعتمادُ السعر القديم ليس
+          له)، وهو مع ذلك يملك إخراجَ الصفّ من الطابور.
+          **ولا وعاءَ تخطيطٍ هنا** — عنصرٌ مستقلّ كبقيّة أزرار هذا المكوّن
+          (رأسُ الملفّ)، فيضعه المُستدعي في صفّ أزراره كما يضع أخويه. */}
+      {mayCancelDecision && (
+        <Button size="sm" variant="ghost" disabled={busy}
+          className="text-muted-foreground hover:text-destructive"
+          onClick={() => { setCancelReason(""); setDialog("cancel_decision"); }}
+          data-testid="button-cancel-decision">
+          <Ban className="h-4 w-4" /> إلغاء الحسم
         </Button>
       )}
 
@@ -257,6 +303,45 @@ export function LegacyDecisionActions({
               onClick={() => submit(`/api/followups/${followupId}/close`,
                 { reason, note: note || undefined })}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/*  ══ **نافذةُ إلغاء الحسم — تأكيدٌ وسببٌ إلزاميّ** ═══════════════
+          مطابقةٌ حرفياً لنافذة `ExamPathDecisionActions`: **نفسُ النقطة
+          القائمة** `/api/followups/:id/cancel-decision`، ونفسُ جسم الطلب
+          (`{ reason }` مقلَّمٌ)، ونفسُ حارس الإرسال (`!cancelReason.trim()`)،
+          ونفسُ معالجة النجاح والخطأ والإبطال (`act` أعلاه بحرفها).
+          والنصُّ يقول ما **لا** يحدث بقدر ما يقول ما يحدث: الموظّفُ يحتاج
+          أن يطمئنّ أن الملفَّ والمالَ والجهازَ والمعاينةَ لا تُمَسّ. */}
+      <Dialog open={dialog === "cancel_decision"} onOpenChange={(o) => !o && reset()}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader><DialogTitle>إلغاء الحسم</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+              data-testid="text-cancel-decision-scope">
+              تخرج هذه المتابعة من «بانتظار الحسم» نهائياً. <b>ولا يُسجَّل شراءٌ
+              ولا «لم يشترِ»</b>، ولا تتغيّر الدفعاتُ ولا الكلفةُ ولا الجهازُ ولا
+              أمرُ التصنيع ولا المعاينة — بياناتُ المريض كلُّها تبقى كما هي.
+            </p>
+            <Label htmlFor="l-cancel-reason" className="text-xs">
+              سبب الإلغاء <span className="text-destructive">*</span>
+            </Label>
+            <Textarea id="l-cancel-reason" value={cancelReason}
+              onChange={(e: any) => setCancelReason(e.target.value)}
+              placeholder="لماذا لا ينبغي أن تكون هذه المتابعة في الطابور؟"
+              className="bg-white min-h-[70px]" data-testid="input-cancel-decision-reason" />
+            <p className="text-xs text-muted-foreground">
+              يُسجَّل السببُ ومَن نفّذ ووقتُ التنفيذ في سجلّ التدقيق.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="destructive" disabled={busy || !cancelReason.trim()}
+              data-testid="button-save-cancel-decision"
+              onClick={() => submit(`/api/followups/${followupId}/cancel-decision`,
+                { reason: cancelReason.trim() })}>
+              تأكيد إلغاء الحسم
             </Button>
           </DialogFooter>
         </DialogContent>

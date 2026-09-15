@@ -668,12 +668,21 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               تسأل عمّا ينقص (سعراً أو خبيراً أو كليهما) في مكانها، بدل أن
               يُطرَد الموظّف إلى شاشةٍ أخرى ثم يُطلَب منه أن يعود — ونفسُ
               نافذة «لم يشترِ» بسببها المنظَّم. **بلا نسخةٍ ثانية من
-              المنطق**: `actions` هي الحارسةُ نفسُها. */}
+              المنطق**: `actions` هي الحارسةُ نفسُها.
+
+              ══ **و«إلغاء الحسم» معهما** (ترحيل ٠٨١) ═══════════════════════
+              الخادمُ يرسل `mayCancelDecision` لكلّ صفٍّ حيّ، وكانت البطاقةُ
+              تمرّرها لـ`ExamPathDecisionActions` وحدها — فصفٌّ موروثٌ يحمل
+              الصلاحيةَ ولا يجد زرّاً. **و`!examPath` شرطٌ لا زينة**: هذا
+              المكوّنُ يُركَّب هنا بلا شرطٍ (أفعالُه تفرغ على مسار المعاينة
+              فلا يرسم شيئاً)، فبدونه كان الزرُّ يظهر **مرّتين** على صفّ مسار
+              المعاينة — مرّةً من كلّ مكوّن. */}
           <LegacyDecisionActions
             followupId={active.id}
             patientId={patientId}
             branchId={activeBranchId}
             actions={actions}
+            mayCancelDecision={!examPath && Boolean((active as any).mayCancelDecision)}
             followup={{
               approvedPrice: active.approvedPrice,
               selectedExpertUserId: active.selectedExpertUserId,
