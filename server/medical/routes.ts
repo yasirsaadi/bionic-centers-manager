@@ -194,6 +194,12 @@ async function applyDecision(
   patientId: number,
   caseType: MedicalSpecialty,
   prescription: Record<string, any>,
+  /**
+   * **الخيطُ الذي غادره الطلبُ حين صُحِّح نوعُه** (٤.y) — يأتي من
+   * `createExam` بعد التزامها. غيابُه يعني «لا تصحيحَ وقع»، فلا تُنادى
+   * دالّةُ التنظيف إطلاقاً ويبقى المسارُ القديم بحرفه.
+   */
+  retypedFromCaseType?: string | null,
 ): Promise<{ switchNote?: string }> {
   let switchNote: string | undefined;
 
@@ -220,6 +226,27 @@ async function applyDecision(
     }
   } catch (err) {
     console.error("[medical] retiring superseded case failed:", err);
+  }
+
+  // ══ **وأثرُ الخطأ التشغيليّ يُرفَع مع الطلب الذي صُحِّح** (٤.y) ═════════
+  //  تصحيحُ النوع ينقل الطلبَ بهويّته إلى الخيط الصحيح، فيبقى الخيطُ القديم
+  //  على الملفّ فارغاً — تصنيفاً وحالةً وشارةَ انتظار — أثراً لخطأِ إدخالٍ
+  //  لا لخدمةٍ يحتاجها المريض. وحُرّاسُ الدالّة (طلبٌ باقٍ · كلفة · الثمانيةُ
+  //  القائمة) هي ما يمنع أن يمسّ هذا عمليةً مستقلّةً حقيقية.
+  //
+  //  **وفشلُه لا يُسقط توقيعاً ثبت**: المعاينةُ التزمت قبل هذا السطر.
+  const retypedFrom = retypedFromCaseType ?? null;
+  if (retypedFrom && retypedFrom !== caseType) {
+    try {
+      const cleaned = await store.retireRetypedSourceCase(
+        patientId, retypedFrom as MedicalSpecialty,
+      );
+      if (cleaned.reason) {
+        switchNote = `بقيت الحالة السابقة مفتوحة: ${cleaned.reason}`;
+      }
+    } catch (err) {
+      console.error("[medical] retiring retyped source case failed:", err);
+    }
   }
 
   return { switchNote };
@@ -599,9 +626,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         : await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
       let created: boolean;
+      let retypedFrom: string | null = null;
       let exam: Awaited<ReturnType<typeof store.createExam>>["exam"];
       try {
-        ({ exam, created } = await store.createExam({
+        ({ exam, created, retypedFrom } = await store.createExam({
           patientId,
           caseId: caseRow?.id ?? null,
           caseType: caseType as MedicalSpecialty,
@@ -634,7 +662,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       //  الوصفةُ على الملفّ **بعد** توقيعٍ التزم فعلاً — ومرّةً واحدة لكلّ
       //  محاولةٍ منطقية: إعادةُ إرسالٍ (`created: false`) لا تعيد كتابتها.
-      if (caseFirst && created) applied = await applyDecision(patientId, caseType, prescription);
+      if (caseFirst && created) {
+        applied = await applyDecision(patientId, caseType, prescription, retypedFrom);
+      }
 
       // ══ ما دون هذا كلُّه **آثارٌ يُنشئها الإنشاءُ الحقيقيّ وحده** ═══════
       //  محاولةٌ خسرت سباقاً حقيقياً على نفس المفتاح تعود هنا بـ

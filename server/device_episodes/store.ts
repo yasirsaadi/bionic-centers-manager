@@ -932,6 +932,21 @@ export async function awaitingExamEpisodesForCase(
   return (r.rows ?? []).map(toCandidate);
 }
 
+/**
+ * **أعلى الخيطِ طلبُ جهازٍ باقٍ؟** — قراءةٌ خالصة بلا حالةٍ ولا استثناء.
+ *
+ * يستعملها تنظيفُ الخيط المصدر بعد تصحيح النوع (٤.y): **أيُّ صفٍّ باقٍ —
+ * منتظراً كان أو مُعايَناً أو ملغىً — يعني أن على الخيط عمليةً أخرى**،
+ * فيُترَك كما هو. والقرارُ هنا **لا** يفرّق بين سقالةٍ وتاريخ عمداً: الفرقُ
+ * من شأن `classifyCaseDisposal`، وهذا سؤالٌ أضيق — «أبقي شيء؟».
+ */
+export async function caseHasAnyEpisode(caseId: number): Promise<boolean> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT 1 FROM patient_device_episodes WHERE case_id = ${caseId} LIMIT 1
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
 // ══ **تصحيحُ نوع العملية — الطلبُ نفسُه يُصحَّح، ولا يُختطف طلبٌ آخر** ══════
 //  الاستعلاماتُ تفتح الطلبَ بنوعٍ تخمّنه، والطبيبُ هو مَن يعرف. فحين يبدّل
 //  النوعَ على صفٍّ بعينه، المقصودُ **ذلك الطلبُ هو**: يُنقَل إلى خيط
