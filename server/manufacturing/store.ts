@@ -1446,6 +1446,58 @@ export async function voidOrderAdministratively(
   return { wasTerminal, status: live.status, currentStage: live.currentStage };
 }
 
+/**
+ * **إعادةُ إسناد الخبير — الكاتبُ القانونيّ، داخل معاملة المُستدعي.**
+ *
+ * انقسمت عن `reassignExpert` بنفس نمط `startDeviceEpisodeTx` بحرفه (٤.ك):
+ * الغلافُ يفتح معاملتَه، وهذه تنضمّ إلى معاملةٍ قائمة. فإتاحةُ الملفّ لفرعٍ
+ * إضافيّ تُغيّر خبيرَ عمليةٍ **بالكاتب عينه** — لا `UPDATE` ثانٍ بملاحظةٍ
+ * منزلية الصنع، فسطرُ `reassigned` وتسميةُ الخبيرين تبقى واحدة أينما وقع
+ * التحويل.
+ *
+ * **والهويّةُ المتوقَّعة تُقارَن بالصفّ المقفول**: `expectedExpertUserId` هو ما
+ * قرأه المُستدعي، فلو حوّله غيرُنا بين القراءة والقفل رُدّ التعارضُ ولم
+ * يُسمَّ في السطر خبيرٌ لم يكن مسنَداً.
+ */
+export async function reassignExpertTx(
+  tx: any,
+  params: {
+    orderId: number;
+    expectedExpertUserId: number;
+    serviceType: string;
+    purpose?: string | null;
+    newExpertUserId: number;
+    reason: string;
+    performedBy: number | null;
+    /**
+     * قاعدة الاستقبال: لا تحويل بعد بدء العمل. يفحصها المسار قبل القفل،
+     * فتُعاد هنا على الصفّ المقفول — وإلا مرّ تحويلٌ بعد تقدّمٍ متزامن.
+     */
+    requireNotStarted?: boolean;
+  },
+): Promise<ProstheticWorkOrder> {
+  const live = await lockOrder(tx, params.orderId);
+  assertNotTerminal(live);
+  // الخبير السابق يُقرأ من الصفّ المقفول: لو حوّله غيرُنا بيننا وبين
+  // قراءتنا لَسمّى سطرُنا خبيراً لم يكن مسنَداً حين حوّلنا.
+  if (live.expertUserId !== params.expectedExpertUserId) throw new WorkOrderConflictError(live);
+  if (params.requireNotStarted
+      && (live.currentStage !== firstStageFor(params.serviceType, params.purpose) || !!live.startedAt)) {
+    throw new WorkOrderConflictError(live);
+  }
+  const [updated] = await tx.update(WO)
+    .set({ expertUserId: params.newExpertUserId, updatedAt: new Date() })
+    .where(eq(WO.id, params.orderId)).returning();
+  await tx.insert(WH).values({
+    workOrderId: params.orderId,
+    actionType: "reassigned",
+    fromStage: live.currentStage, toStage: live.currentStage,
+    notes: `تحويل من الخبير ${await expertNameOf(tx, live.expertUserId)} إلى ${await expertNameOf(tx, params.newExpertUserId)} — السبب: ${params.reason}`,
+    performedBy: params.performedBy,
+  });
+  return updated;
+}
+
 export async function reassignExpert(params: {
   order: ProstheticWorkOrder;
   newExpertUserId: number;
@@ -1457,29 +1509,17 @@ export async function reassignExpert(params: {
    */
   requireNotStarted?: boolean;
 }): Promise<ProstheticWorkOrder> {
-  const { order, newExpertUserId } = params;
-  return await db.transaction(async (tx) => {
-    const live = await lockOrder(tx, order.id);
-    assertNotTerminal(live);
-    // الخبير السابق يُقرأ من الصفّ المقفول: لو حوّله غيرُنا بيننا وبين
-    // قراءتنا لَسمّى سطرُنا خبيراً لم يكن مسنَداً حين حوّلنا.
-    if (live.expertUserId !== order.expertUserId) throw new WorkOrderConflictError(live);
-    if (params.requireNotStarted
-        && (live.currentStage !== firstStageFor(order.serviceType, order.purpose) || !!live.startedAt)) {
-      throw new WorkOrderConflictError(live);
-    }
-    const [updated] = await tx.update(WO)
-      .set({ expertUserId: newExpertUserId, updatedAt: new Date() })
-      .where(eq(WO.id, order.id)).returning();
-    await tx.insert(WH).values({
-      workOrderId: order.id,
-      actionType: "reassigned",
-      fromStage: live.currentStage, toStage: live.currentStage,
-      notes: `تحويل من الخبير ${await expertNameOf(tx, live.expertUserId)} إلى ${await expertNameOf(tx, newExpertUserId)} — السبب: ${params.reason}`,
-      performedBy: params.performedBy,
-    });
-    return updated;
-  });
+  const { order } = params;
+  return await db.transaction(async (tx) => reassignExpertTx(tx, {
+    orderId: order.id,
+    expectedExpertUserId: order.expertUserId,
+    serviceType: order.serviceType,
+    purpose: order.purpose,
+    newExpertUserId: params.newExpertUserId,
+    reason: params.reason,
+    performedBy: params.performedBy,
+    requireNotStarted: params.requireNotStarted,
+  }));
 }
 
 // ---- patient-page summary card (authorized non-expert users) -----------------

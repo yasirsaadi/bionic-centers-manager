@@ -21,10 +21,14 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
-import { validateExpertForBranchTx } from "../manufacturing/store";
+import { validateExpertForBranchTx, reassignExpertTx } from "../manufacturing/store";
 import { moveLiveEpisodeToBranchTx } from "../device_episodes/store";
 import { moveLiveFollowupsToBranchTx } from "../followup/store";
 import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
+import {
+  openOperationKey, resolveOperationDecisions, legacyDecisionsFor,
+  type OperationDecisionInput,
+} from "@shared/branch_access_operations";
 import {
   BranchAccessError, grantBranchAccessTx, revokeBranchAccessTx,
   listPatientBranchAccess, type BranchAccessRow,
@@ -187,7 +191,11 @@ export interface GrantResult {
 }
 
 export const OPERATION_ANSWER_REQUIRED =
-  "لهذا المريض عملية مفتوحة — أجب: هل تُنقل مسؤوليتها إلى الفرع الجديد؟";
+  "لهذا المريض عملية مفتوحة — أجب عن كل عملية: تبقى في فرعها أم تنتقل،"
+  + " ويبقى خبيرها أم يتغيّر؟";
+
+export const MIXED_DECISION_FORMS =
+  "وصل قرارٌ لكل عملية وقرارٌ عامّ معاً — أرسل أحدهما";
 
 export const EXPERT_CHOICE_REQUIRED =
   "اختر: إبقاء الخبير الحالي أو خبيراً من خبراء الفرع الجديد";
@@ -197,16 +205,26 @@ export const REVOKE_BLOCKED_BY_OPERATION =
   + "أكملها أو انقل مسؤوليتها إلى فرع آخر أولاً";
 
 /**
- * **إتاحةُ الملفّ لفرعٍ إضافيّ.**
+ * **إتاحةُ الملفّ لفرعٍ إضافيّ — وقرارُ كلّ عمليةٍ مفتوحة على حدة.**
  *
- * `moveOpenOperations`:
- *   • `false` ⟶ الإتاحةُ وحدها. العمليةُ وخبيرُها **كما هما بالضبط**.
- *   • `true`  ⟶ تنتقل الحلقةُ الحيّةُ وأمرُ العمل الحيّ إلى الفرع الجديد،
- *     ومعهما قرارُ الخبير: `keepExpert` يُبقيه، أو `newExpertUserId` يُسنِد
- *     خبيراً من الفرع الجديد بعد التحقّق منه **تحت القفل**.
+ * `operationDecisions` — صفٌّ لكلّ عمليةٍ مفتوحة بمفتاحها
+ * (`openOperationKey`)، ولكلٍّ قراران **متعامدان**:
+ *   • `move` — تبقى في فرعها أم تنتقل إلى الفرع المضاف.
+ *   • `expert` — `"keep"` أو رقمُ خبيرٍ جديد، **ولو بقيت العملية**.
  *
- * والسؤالُ إلزاميٌّ حين توجد عمليةٌ مفتوحة — `undefined` تُردّ ٤٠٠ ولا
- * تُقرأ «لا» بصمت: إسقاطُ مسؤوليةٍ بالسكوت ليس قراراً.
+ * فمريضٌ له طرفٌ ومسندٌ يُقرَّر لكلٍّ ما يخصّه: ينتقل أحدُهما ويبقى الآخر،
+ * ويتغيّر خبيرُ الباقي وحده إن لزم.
+ *
+ * **والخبيرُ يُتحقَّق تجاه فرع العملية بعد القرار** لا تجاه المنح دائماً:
+ * المنتقلةُ تأخذ خبيراً من الفرع المضاف، والباقيةُ من **فرعها هي** — وإلّا
+ * أُسنِد جهازُ كربلاء الباقي فيها إلى خبيرٍ لا يعمل فيها.
+ *
+ * `moveOpenOperations`/`keepExpert`/`newExpertUserId` — **الصيغةُ المختصرة
+ * القديمة** بحرفها: قرارٌ واحد لكلّ العمليات. تُترجَم إلى قراراتٍ لكلّ عملية
+ * (`legacyDecisionsFor`) فتمرّ بالمسار الواحد نفسِه — لا فرعَ تنفيذٍ ثانٍ.
+ *
+ * والسؤالُ إلزاميٌّ حين توجد عمليةٌ مفتوحة — الغيابُ يُردّ ٤٠٠ ولا يُقرأ
+ * «لا» بصمت: إسقاطُ مسؤوليةٍ بالسكوت ليس قراراً.
  */
 export async function grantBranchAccess(params: {
   patientId: number;
@@ -214,6 +232,7 @@ export async function grantBranchAccess(params: {
   actorUserId: number | null;
   actorName: string | null;
   note?: string | null;
+  operationDecisions?: OperationDecisionInput[];
   moveOpenOperations?: boolean;
   keepExpert?: boolean;
   newExpertUserId?: number | null;
@@ -242,9 +261,27 @@ export async function grantBranchAccess(params: {
     //  بين عرض النافذة والضغطة.
     const open = await listOpenOperations(params.patientId, tx as any);
 
-    if (open.length > 0 && params.moveOpenOperations === undefined) {
-      throw new BranchAccessError(OPERATION_ANSWER_REQUIRED, 400);
+    //  **القراراتُ تُحسَم قبل أيّ كتابة** — صيغةٌ صريحةٌ لكلّ عملية، أو
+    //  المختصرةُ القديمة تُترجَم إليها. والجمعُ بينهما التباسٌ يُردّ ولا
+    //  يُرجَّح أحدُهما بصمت.
+    let decisions: OperationDecisionInput[] = [];
+    if (open.length > 0) {
+      const explicit = Array.isArray(params.operationDecisions);
+      const legacy = params.moveOpenOperations !== undefined;
+      if (explicit && legacy) throw new BranchAccessError(MIXED_DECISION_FORMS, 400);
+      if (explicit) decisions = params.operationDecisions!;
+      else if (legacy) {
+        decisions = legacyDecisionsFor(open, {
+          move: params.moveOpenOperations === true,
+          keepExpert: params.keepExpert,
+          newExpertUserId: params.newExpertUserId,
+        });
+      } else throw new BranchAccessError(OPERATION_ANSWER_REQUIRED, 400);
     }
+    const resolved = resolveOperationDecisions({
+      open, decisions, grantedBranchId: params.branchId,
+    });
+    if (!resolved.ok) throw new BranchAccessError(resolved.error, 400);
 
     const grant = await grantBranchAccessTx(tx as any, {
       patientId: params.patientId,
@@ -259,25 +296,28 @@ export async function grantBranchAccess(params: {
     const moved: { episodeId: number | null; workOrderId: number | null }[] = [];
     let movedFollowupIds: number[] = [];
     let expertChanged = false;
+    const movingFollowupIds: number[] = [];
 
-    if (open.length > 0 && params.moveOpenOperations === true) {
-      //  قرارُ الخبير إلزاميٌّ متى وُجد أمرُ عملٍ حيٌّ له خبير.
-      const withOrder = open.filter((o) => o.workOrderId !== null);
-      if (withOrder.length > 0
-          && params.keepExpert !== true
-          && (params.newExpertUserId === null || params.newExpertUserId === undefined)) {
-        throw new BranchAccessError(EXPERT_CHOICE_REQUIRED, 400);
-      }
+    for (const plan of resolved.plans) {
+      const op = plan.op;
 
-      let expertId: number | null = null;
-      if (withOrder.length > 0 && params.keepExpert !== true) {
-        expertId = Number(params.newExpertUserId);
-        //  **خبيرُ الفرع الجديد يُتحقَّق منه تحت القفل** — لا قائمةٌ بائتة.
-        const v = await validateExpertForBranchTx(tx, expertId, params.branchId);
+      //  ① **الخبيرُ يُتحقَّق تجاه فرع العملية بعد القرار** — تحت القفل، قبل
+      //  أيّ كتابةٍ لهذه العملية. فلا يُنقَل شيءٌ ثمّ يُردّ خبيرُه.
+      if (plan.validateExpertUserId !== null) {
+        if (op.expertUserId === null) {
+          throw new BranchAccessError("هذه العملية بلا خبير مسنَد — لا تحويل", 409);
+        }
+        if (plan.targetBranchId === null) {
+          throw new BranchAccessError("تعذّر تحديد فرع هذه العملية — حدّث الصفحة", 409);
+        }
+        //  **المُسمَّى يُتحقَّق منه ولو كان الحاليَّ نفسَه** — و«إبقاء» وحدها
+        //  تتخطّى التحقّق (العقدُ القائم: خبيرٌ بدأ جهازاً يواصله).
+        const v = await validateExpertForBranchTx(tx, plan.validateExpertUserId, plan.targetBranchId);
         if (!v.ok) throw new BranchAccessError(v.reason, 400);
       }
 
-      for (const op of open) {
+      //  ② **النقل** — الحلقةُ الحيّةُ وأمرُ العمل الحيّ وحدهما.
+      if (plan.move) {
         if (op.episodeId !== null && op.episodeLive) {
           //  **الكتابةُ في طبقتها** — `moveLiveEpisodeToBranchTx` بحُرّاسها
           //  (الحيّةُ وحدها)، والقرارُ هنا. حارسٌ معماريّ يمنع SQL الحلقات
@@ -291,9 +331,7 @@ export async function grantBranchAccess(params: {
         if (op.workOrderId !== null) {
           const upd = await tx.execute(sql`
             UPDATE prosthetic_work_orders
-               SET branch_id = ${params.branchId},
-                   expert_user_id = ${expertId ?? op.expertUserId},
-                   updated_at = NOW()
+               SET branch_id = ${params.branchId}, updated_at = NOW()
              WHERE id = ${op.workOrderId}
                AND status NOT IN ('completed', 'cancelled')
                AND admin_void_reversal_id IS NULL
@@ -301,27 +339,60 @@ export async function grantBranchAccess(params: {
           `);
           if ((upd.rows ?? []).length > 0) {
             //  **سجلُّ الأمر يقول ما جرى** — الجدولُ مُلحَقٌ لا يُعاد كتابتُه.
+            //  والنقلُ سطرُه، وتغييرُ الخبير سطرُ `reassigned` الخاصُّ به من
+            //  الكاتب القانونيّ — واقعتان تُقرآن على حدة لا سطرٌ يخلطهما.
             await tx.execute(sql`
               INSERT INTO prosthetic_work_history
                 (work_order_id, action_type, notes, performed_by)
               VALUES (${op.workOrderId}, 'status_change',
-                      ${`نقل مسؤولية العملية إلى الفرع #${params.branchId}`
-                        + (expertId !== null && expertId !== op.expertUserId
-                          ? ` — وإسناد الخبير #${expertId}` : " — مع إبقاء الخبير الحالي")},
+                      ${`نقل مسؤولية العملية إلى الفرع #${params.branchId}`},
                       ${params.actorUserId})
             `);
-            if (expertId !== null && expertId !== op.expertUserId) expertChanged = true;
           }
         }
         moved.push({ episodeId: op.episodeId, workOrderId: op.workOrderId });
+        if (op.followupId !== null) movingFollowupIds.push(op.followupId);
       }
 
-      //  **والمتابعاتُ الحيّةُ تنتقل معها — في المعاملة نفسِها.** الكتابةُ في
-      //  طبقتها (`followup/store.ts`) والقرارُ هنا، كما في الحلقات. وتُنادى
-      //  **مرّةً للمريض** لا لكلّ صفّ: متابعةٌ بلا حلقة لا يمثّلها صفٌّ بعينه،
-      //  والمنتهيةُ محروسةٌ بشرط الحالة في `UPDATE` نفسِه.
+      //  ③ **تغييرُ الخبير — بالكاتب القانونيّ نفسِه** (`reassignExpertTx`):
+      //  سطرُ `reassigned` وتسميةُ الخبيرين ومقارنةُ الصفّ المقفول كما في
+      //  «تحويل الخبير» من صفحة التصنيع بالضبط — لا نسخةَ ثانية.
+      //  **ويقع ولو بقيت العملية في فرعها**: خبيرٌ يُجاز فيُسلَّم جهازُه
+      //  لزميلٍ في الفرع نفسِه، والمسؤوليةُ لم تتحرّك.
+      if (plan.newExpertUserId !== null && op.workOrderId !== null) {
+        try {
+          await reassignExpertTx(tx, {
+            orderId: op.workOrderId,
+            expectedExpertUserId: op.expertUserId as number,
+            serviceType: op.serviceType ?? "prosthetic",
+            purpose: op.workOrderPurpose,
+            newExpertUserId: plan.newExpertUserId,
+            reason: plan.move
+              ? `إتاحة الملف للفرع #${params.branchId} — ونقل مسؤولية العملية معه`
+              : `إتاحة الملف للفرع #${params.branchId} — والعملية باقية في فرعها`,
+            performedBy: params.actorUserId,
+          });
+        } catch (e: any) {
+          //  تعارضُ أمرِ عمل (انتهى أو حُوِّل خبيرُه بيننا وبين القفل) يُقال
+          //  ٤٠٩ صريحةً — لا ٥٠٠ عمياء. والمعاملةُ تتراجع كاملةً.
+          if (e?.name === "WorkOrderConflictError") {
+            throw new BranchAccessError(
+              "تغيّرت حالة أمر العمل أو خبيره — حدّث الصفحة وأعد القرار", 409);
+          }
+          throw e;
+        }
+        expertChanged = true;
+      }
+    }
+
+    //  **والمتابعاتُ الحيّةُ تنتقل مع عملياتها هي — في المعاملة نفسِها.**
+    //  الكتابةُ في طبقتها (`followup/store.ts`) والقرارُ هنا، كما في الحلقات.
+    //  **وبمعرّفاتها لا بالمريض كلِّه**: متابعةُ عمليةٍ بقيت في فرعها تبقى
+    //  معها، فلا يُسحَب قرارٌ تجاريٌّ إلى فرعٍ لا يملك عمليتَه.
+    if (movingFollowupIds.length > 0) {
       movedFollowupIds = await moveLiveFollowupsToBranchTx(tx as any, {
         patientId: params.patientId, branchId: params.branchId,
+        followupIds: Array.from(new Set(movingFollowupIds)),
       });
     }
 
@@ -343,10 +414,12 @@ export async function grantBranchAccess(params: {
       newValues: result,
       ipAddress: params.ipAddress ?? null, userAgent: params.userAgent ?? null,
       notes: `إتاحة ملف المريض #${params.patientId} للفرع #${params.branchId}`
-        + (moved.length > 0
-          ? ` — ونُقلت مسؤولية ${moved.length} عملية مفتوحة`
-            + (expertChanged ? " مع إسناد خبير الفرع الجديد" : " مع إبقاء الخبير الحالي")
-          : " — والعمليات المفتوحة وخبراؤها كما هم")
+        //  **يقول ما جرى لكلّ عملية** — لا جملةً واحدة تصف الجميع، فقرارُ
+        //  كلّ عمليةٍ صار مستقلّاً وسطرُ التدقيق يتبعه.
+        + (open.length === 0 ? " — ولا عملية مفتوحة"
+          : ` — ${moved.length} من ${open.length} عملية نُقلت مسؤوليتها`
+            + `، و${open.length - moved.length} بقيت في فرعها`
+            + (expertChanged ? "، ومعها تغييرُ خبير" : "، وبلا تغيير خبير"))
         + (movedFollowupIds.length > 0
           ? ` — ومعها ${movedFollowupIds.length} متابعة حيّة بانتظار الحسم`
           : ""),

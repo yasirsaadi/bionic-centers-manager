@@ -9,7 +9,7 @@
 // بلا جواب.
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
@@ -20,6 +20,10 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Share2, Trash2, Building2 } from "lucide-react";
+import {
+  openOperationKey, resolveOperationDecisions, expertTargetBranchId,
+  operationHasExpertChoice, type OperationDecisionInput,
+} from "@shared/branch_access_operations";
 
 export interface AccessRow {
   id: number; branchId: number; branchName: string | null;
@@ -29,6 +33,9 @@ interface OpenOperation {
   episodeId: number | null; serviceType: string | null;
   requestedItem: string | null; workOrderId: number | null;
   expertUserId: number | null; expertName: string | null;
+  //  ما يلزم لقرار كلّ عملية — والشكلُ نفسُه الذي يقرؤه الخادم.
+  episodeLive: boolean; episodeBranchId: number | null;
+  workOrderBranchId: number | null; followupId: number | null;
 }
 export interface AccessState {
   homeBranchId: number | null; homeBranchName: string | null;
@@ -71,28 +78,65 @@ const SERVICE_LABEL: Record<string, string> = {
 export function PatientBranchAccessDialog({ patientId }: { patientId: number }) {
   const [open, setOpen] = useState(false);
   const [branchId, setBranchId] = useState("");
-  const [moveOps, setMoveOps] = useState<"yes" | "no" | "">("");
-  const [expertChoice, setExpertChoice] = useState("");   // "keep" | "<id>"
+  //  **قرارٌ لكلّ عملية** بمفتاحها — لا قرارٌ واحد يُطبَّق على الجميع.
+  //  `move` و`expert` مستقلّان: تبقى العمليةُ ويتغيّر خبيرُها، أو العكس.
+  const [ops, setOps] = useState<Record<string, { move?: boolean; expert?: string }>>({});
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = usePatientBranchAccess(patientId, open);
 
-  //  خبراءُ الفرع المضاف — لا يُطلبون قبل اختيار الفرع.
-  const { data: experts } = useQuery<{ id: number; displayName: string }[]>({
-    queryKey: ["/api/patients", patientId, "branch-access", branchId, "experts"],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/patients/${patientId}/branch-access/${branchId}/experts`, { credentials: "include" });
-      if (!res.ok) throw new Error("تعذّر قراءة خبراء الفرع");
-      return res.json();
-    },
-    enabled: open && branchId !== "" && moveOps === "yes",
+  const openOps: OpenOperation[] = data?.openOperations ?? [];
+  const grantedBranch = branchId === "" ? 0 : Number(branchId);
+
+  /** فرعُ العملية **بعد** قرارها — وإليه تُطلب قائمةُ خبرائها. */
+  const targetBranchOf = (op: OpenOperation): number | null => {
+    const d = ops[openOperationKey(op)];
+    if (d?.move === undefined) return null;
+    return expertTargetBranchId(op, d.move, grantedBranch);
+  };
+
+  //  **خبراءُ كلّ فرعٍ يلزم فعلاً** — لا الفرعُ المضاف وحده: عمليةٌ تبقى في
+  //  كربلاء تُغيَّر إلى خبيرِ **كربلاء**، وطلبُ خبراء الفرع المضاف لها كان
+  //  سيعرض مَن لا يعمل فيها ثمّ يردّه الخادم.
+  const expertBranches = Array.from(new Set(
+    openOps.filter(operationHasExpertChoice)
+      .map(targetBranchOf)
+      .filter((b): b is number => typeof b === "number" && b > 0),
+  ));
+  const expertQueries = useQueries({
+    queries: expertBranches.map((b) => ({
+      queryKey: ["/api/patients", patientId, "branch-access", b, "experts"],
+      queryFn: async () => {
+        const res = await fetch(
+          `/api/patients/${patientId}/branch-access/${b}/experts`, { credentials: "include" });
+        if (!res.ok) throw new Error("تعذّر قراءة خبراء الفرع");
+        return res.json() as Promise<{ id: number; displayName: string }[]>;
+      },
+      enabled: open,
+    })),
+  });
+  const expertsOf = (b: number | null): { id: number; displayName: string }[] => {
+    if (b === null) return [];
+    const i = expertBranches.indexOf(b);
+    return i < 0 ? [] : (expertQueries[i]?.data ?? []);
+  };
+
+  /** قرارُ الشاشة بشكله القانونيّ — يبنيه الطرفان من الدالّة نفسِها. */
+  const buildDecisions = (): OperationDecisionInput[] => openOps.map((op) => {
+    const key = openOperationKey(op);
+    const d = ops[key] ?? {};
+    const out: OperationDecisionInput = { key, move: d.move as boolean };
+    if (operationHasExpertChoice(op)) {
+      out.expert = d.expert === "keep" ? "keep"
+        : d.expert ? Number(d.expert) : undefined;
+    }
+    return out;
   });
 
   //  إغلاقُ النافذة يمسح الحالة — فلا يبقى نصفُ قرارٍ معلّقاً بعد إعادة فتح.
   useEffect(() => {
-    if (!open) { setBranchId(""); setMoveOps(""); setExpertChoice(""); }
+    if (!open) { setBranchId(""); setOps({}); }
   }, [open]);
 
   const invalidate = () => {
@@ -104,13 +148,9 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
   const grant = useMutation({
     mutationFn: async () => {
       const body: Record<string, unknown> = { branchId: Number(branchId) };
-      if (hasOpenOps) {
-        body.moveOpenOperations = moveOps === "yes";
-        if (moveOps === "yes") {
-          if (expertChoice === "keep") body.keepExpert = true;
-          else body.newExpertUserId = Number(expertChoice);
-        }
-      }
+      //  **قرارٌ لكلّ عملية** — ولا يُرسَل معه القرارُ العامّ القديم أبداً،
+      //  فالخادمُ يردّ الجمعَ بينهما التباساً.
+      if (openOps.length > 0) body.operationDecisions = buildDecisions();
       const res = await fetch(`/api/patients/${patientId}/branch-access`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body), credentials: "include",
@@ -154,13 +194,11 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
       toast({ title: "تعذّر السحب", description: e.message, variant: "destructive" }),
   });
 
-  const hasOpenOps = (data?.openOperations?.length ?? 0) > 0;
-  const opsWithOrder = (data?.openOperations ?? []).filter((o) => o.workOrderId !== null);
-  const needsExpert = hasOpenOps && moveOps === "yes" && opsWithOrder.length > 0;
-  const canSubmit = branchId !== ""
-    && (!hasOpenOps || moveOps !== "")
-    && (!needsExpert || expertChoice !== "")
-    && !grant.isPending;
+  //  **بوّابةُ الحفظ هي حاكمُ الخادم نفسُه** — لا شرطٌ ثانٍ ينحرف عنه.
+  const decisionsOk = openOps.length === 0 || resolveOperationDecisions({
+    open: openOps, decisions: buildDecisions(), grantedBranchId: grantedBranch,
+  }).ok;
+  const canSubmit = branchId !== "" && decisionsOk && !grant.isPending;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -219,7 +257,19 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
               <>
                 <div>
                   <label className="text-sm font-medium mb-2 block">الفرع المضاف</label>
-                  <Select value={branchId} onValueChange={(v) => { setBranchId(v); setExpertChoice(""); }}>
+                  {/*  تبديلُ الفرع المضاف يُسقط خبيرَ العمليات **المنتقلة** وحدها:
+                      اختيارُها كان من خبراء الفرع القديم. والباقيةُ في فرعها
+                      خبيرُها لا علاقةَ له بهذا التبديل فيبقى كما اختير. */}
+                  <Select value={branchId} onValueChange={(v) => {
+                    setBranchId(v);
+                    setOps((prev) => {
+                      const next: typeof prev = {};
+                      for (const [k, d] of Object.entries(prev)) {
+                        next[k] = d.move ? { ...d, expert: undefined } : d;
+                      }
+                      return next;
+                    });
+                  }}>
                     <SelectTrigger data-testid="select-access-branch">
                       <SelectValue placeholder="اختر الفرع" />
                     </SelectTrigger>
@@ -231,56 +281,79 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
                   </Select>
                 </div>
 
-                {hasOpenOps && (
+                {openOps.length > 0 && (
                   <div className="rounded-md border p-3 space-y-3" data-testid="open-operation-question">
                     <div className="text-sm">
-                      <b>لهذا المريض عملية مفتوحة:</b>
-                      <ul className="mt-1 list-disc pr-5 text-muted-foreground">
-                        {data!.openOperations.map((o, i) => (
-                          <li key={i}>
-                            {SERVICE_LABEL[o.serviceType ?? ""] ?? o.serviceType}
-                            {o.requestedItem ? ` — ${o.requestedItem}` : ""}
-                            {o.expertName ? ` — الخبير: ${o.expertName}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        هل تُنقل مسؤوليتها إلى الفرع الجديد؟
-                      </label>
-                      <Select value={moveOps} onValueChange={(v) => {
-                        setMoveOps(v as "yes" | "no"); setExpertChoice("");
-                      }}>
-                        <SelectTrigger data-testid="select-move-operations">
-                          <SelectValue placeholder="اختر" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">نعم — تنتقل المسؤولية للفرع الجديد</SelectItem>
-                          <SelectItem value="no">لا — تبقى العملية وخبيرها كما هما</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <b>لهذا المريض {openOps.length > 1 ? `${openOps.length} عمليات مفتوحة` : "عملية مفتوحة"}:</b>
+                      <span className="block text-muted-foreground mt-0.5">
+                        قرّر لكل عملية على حدة — تبقى أم تنتقل، ويبقى خبيرها أم يتغيّر.
+                      </span>
                     </div>
 
-                    {needsExpert && (
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">الخبير</label>
-                        <Select value={expertChoice} onValueChange={setExpertChoice}>
-                          <SelectTrigger data-testid="select-expert-choice">
-                            <SelectValue placeholder="اختر" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="keep">
-                              إبقاء الخبير الحالي
-                              {opsWithOrder[0]?.expertName ? ` (${opsWithOrder[0].expertName})` : ""}
-                            </SelectItem>
-                            {(experts ?? []).map((e) => (
-                              <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                    {openOps.map((o) => {
+                      const key = openOperationKey(o);
+                      const d = ops[key] ?? {};
+                      const target = targetBranchOf(o);
+                      const hasExpert = operationHasExpertChoice(o);
+                      const set = (patch: { move?: boolean; expert?: string }) =>
+                        setOps((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+                      return (
+                        <div key={key} className="rounded-md border p-2.5 space-y-2"
+                          data-testid={`operation-decision-${key}`}>
+                          <div className="text-sm font-medium">
+                            {SERVICE_LABEL[o.serviceType ?? ""] ?? o.serviceType}
+                            {o.requestedItem ? ` — ${o.requestedItem}` : ""}
+                            {o.expertName && (
+                              <span className="font-normal text-muted-foreground">
+                                {" "}— الخبير الحالي: {o.expertName}
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="text-xs text-muted-foreground mb-1 block">المسؤولية</label>
+                            <Select
+                              value={d.move === undefined ? "" : d.move ? "yes" : "no"}
+                              onValueChange={(v) => set({ move: v === "yes", expert: undefined })}>
+                              <SelectTrigger data-testid={`select-move-${key}`}>
+                                <SelectValue placeholder="اختر" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="yes">تنتقل إلى الفرع الجديد</SelectItem>
+                                <SelectItem value="no">تبقى في فرعها</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {/*  **والخبيرُ قرارٌ مستقلّ** — يُعرَض متى تقرّر مصيرُ
+                              العملية، منتقلةً كانت أم باقية. */}
+                          {hasExpert && d.move !== undefined && (
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">الخبير</label>
+                              <Select value={d.expert ?? ""} onValueChange={(v) => set({ expert: v })}>
+                                <SelectTrigger data-testid={`select-expert-${key}`}>
+                                  <SelectValue placeholder="اختر" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="keep">
+                                    إبقاء الخبير الحالي
+                                    {o.expertName ? ` (${o.expertName})` : ""}
+                                  </SelectItem>
+                                  {expertsOf(target).map((e) => (
+                                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <span className="block text-xs text-muted-foreground mt-1">
+                                {d.move
+                                  ? "خبراء الفرع الجديد — لأن مسؤولية العملية تنتقل إليه."
+                                  : "خبراء فرع العملية نفسه — لأنها تبقى فيه."}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </>

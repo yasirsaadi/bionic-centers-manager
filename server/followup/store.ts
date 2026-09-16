@@ -277,14 +277,29 @@ function assertMayOverwrite(
  */
 export async function moveLiveFollowupsToBranchTx(
   tx: { execute: (q: any) => Promise<any> },
-  params: { patientId: number; branchId: number },
+  params: {
+    patientId: number;
+    branchId: number;
+    /**
+     * **متابعاتٌ بعينها** — حين ينتقل بعضُ عمليات المريض دون بعض، تنتقل
+     * متابعةُ كلِّ عمليةٍ مع عمليتها هي. وغيابُه يُبقي السلوكَ القديم
+     * بحرفه: كلُّ متابعةٍ حيّةٍ للمريض.
+     */
+    followupIds?: number[];
+  },
 ): Promise<number[]> {
+  const only = params.followupIds;
+  //  مصفوفةٌ فارغةٌ صريحة = «لا شيء ينتقل» — لا تُقرأ «الكلّ» بصمت.
+  if (only !== undefined && only.length === 0) return [];
+  const scope = only === undefined
+    ? sql``
+    : sql` AND id IN (${sql.join(only.map((i) => sql`${i}`), sql`, `)})`;
   const r = await tx.execute(sql`
     UPDATE post_exam_followups
        SET branch_id = ${params.branchId}, updated_at = NOW()
      WHERE patient_id = ${params.patientId}
        AND status NOT IN (${sql.raw(TERMINAL_STATUS_SQL_LIST)})
-       AND branch_id IS DISTINCT FROM ${params.branchId}
+       AND branch_id IS DISTINCT FROM ${params.branchId}${scope}
     RETURNING id
   `);
   return ((r.rows ?? []) as Record<string, any>[]).map((x) => Number(x.id));

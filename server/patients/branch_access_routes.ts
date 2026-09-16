@@ -18,6 +18,7 @@ import {
   BranchAccessError,
 } from "./branch_access_store";
 import { listPatientBranchAccess } from "./branch_access";
+import type { OperationDecisionInput } from "@shared/branch_access_operations";
 
 type Req = any;
 
@@ -104,6 +105,37 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
       if (newExpertUserId === null) return res.status(400).json({ message: "خبير غير صالح" });
     }
 
+    //  **قرارُ كلّ عمليةٍ على حدة** — شكلُه يُفحَص هنا، ومعناه يُحسَم في
+    //  المخزن تحت القفل بالعملياتِ المقروءةِ لحظتَها (`resolveOperationDecisions`).
+    //  فلا شاشةٌ تقرّر أيُّ عمليةٍ موجودة، ولا قيمةٌ مشوَّهة تُقرأ «تبقى» بصمت.
+    const rawDecisions = req.body?.operationDecisions;
+    let operationDecisions: OperationDecisionInput[] | undefined;
+    if (rawDecisions !== undefined) {
+      if (!Array.isArray(rawDecisions)) {
+        return res.status(400).json({ message: "قرارات العمليات غير صالحة" });
+      }
+      const parsed: OperationDecisionInput[] = [];
+      for (const d of rawDecisions) {
+        const key = typeof d?.key === "string" ? d.key.trim() : "";
+        if (!key) return res.status(400).json({ message: "قرار بلا معرّف عملية" });
+        if (typeof d?.move !== "boolean") {
+          return res.status(400).json({ message: "أجب لكل عملية: تبقى في فرعها أم تنتقل" });
+        }
+        //  `undefined` تعني «لم يُرسَل»، والمخزنُ يردّها حين تلزم — ولا
+        //  تُقلَب هنا إلى «إبقاء» فيمرّ قرارٌ لم يتّخذه أحد.
+        const e = d?.expert;
+        let expert: "keep" | number | undefined;
+        if (e === "keep") expert = "keep";
+        else if (e !== undefined && e !== null && e !== "") {
+          const id = parseId(e);
+          if (id === null) return res.status(400).json({ message: "خبير غير صالح" });
+          expert = id;
+        }
+        parsed.push({ key, move: d.move, expert });
+      }
+      operationDecisions = parsed;
+    }
+
     try {
       //  **والتدقيقُ داخل معاملة المخزن** — لا سطرَ يبقى بعد تراجعها،
       //  ولا نجاحٌ يمضي بلا سطر.
@@ -111,6 +143,7 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
         patientId, branchId,
         actorUserId: s.userId ?? null, actorName: s.userName,
         note: typeof req.body?.note === "string" ? req.body.note.trim() || null : null,
+        operationDecisions,
         moveOpenOperations: moveRaw as boolean | undefined,
         keepExpert: keepRaw as boolean | undefined,
         newExpertUserId,

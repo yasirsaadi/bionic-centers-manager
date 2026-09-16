@@ -48,6 +48,8 @@ const MARK = "اختبار-إتاحة-الفروع";
 const KARBALA = 3, DHIQAR = 4;
 const ADMIN = 9961, RECV_K = 9962, RECV_D = 9963, DOC = 9964;
 const EXPERT_K = 9965, EXPERT_D = 9966;
+//  خبيرٌ ثانٍ في كربلاء — لإثبات تغييرِ خبيرِ عمليةٍ **باقيةٍ في فرعها**.
+const EXPERT_K2 = 9967;
 
 const S: Record<string, any> = {
   admin: {
@@ -169,6 +171,7 @@ async function main() {
     [DOC, "doctor", KARBALA, `[${KARBALA},${DHIQAR}]`, "الطبيب"],
     [EXPERT_K, "prosthetics_expert", KARBALA, `[${KARBALA}]`, "خبير كربلاء"],
     [EXPERT_D, "prosthetics_expert", DHIQAR, `[${DHIQAR}]`, "خبير ذي قار"],
+    [EXPERT_K2, "prosthetics_expert", KARBALA, `[${KARBALA}]`, "خبير كربلاء الثاني"],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,
                branch_ids,is_active,medical_specialties)
@@ -560,9 +563,15 @@ async function main() {
       const dlg = readFileSync(
         join(process.cwd(), "client/src/components/PatientBranchAccessDialog.tsx"), "utf8");
       check(dlg.includes("/branch-access"), "٣٩. النافذةُ تنادي النقطةَ الحقيقية");
-      check(dlg.includes("moveOpenOperations") && dlg.includes("keepExpert")
-        && dlg.includes("newExpertUserId"),
-        "٤٠. وترسل قرارَ العملية المفتوحة وقرارَ الخبير");
+      //  **صارت ترسل قراراً لكلّ عملية** لا قراراً عامّاً للمريض كلِّه —
+      //  وتبني القرارَ والبوّابةَ من الحاكم القانونيّ نفسِه الذي يحرس الخادم.
+      check(dlg.includes("operationDecisions") && dlg.includes("openOperationKey")
+        && dlg.includes("resolveOperationDecisions"),
+        "٤٠. **وترسل قراراً لكلّ عملية على حدة** — بالحاكم القانونيّ نفسِه");
+      check(!dlg.includes("moveOpenOperations") && !dlg.includes("keepExpert"),
+        "٤٠.أ. **ولا تُرسل القرارَ العامَّ القديم معه** — فالجمعُ بينهما يُردّ");
+      check(dlg.includes("expertTargetBranchId"),
+        "٤٠.ب. **وتطلب خبراءَ فرعِ العملية بعد قرارها** — لا الفرعَ المضاف دائماً");
       check(dlg.includes("لا يتغيّر فرع التسجيل"),
         "٤١. وتقول صراحةً إن فرعَ التسجيل وتاريخَه لا يتغيّران");
       const page = readFileSync(join(process.cwd(), "client/src/pages/PatientDetails.tsx"), "utf8");
@@ -936,12 +945,154 @@ async function main() {
       const [rowK2] = await q<{ b: number }>(`SELECT branch_id b FROM patients WHERE id=$1`, [pK]);
       same("   وصفُّه في القاعدة كما هو", Number(rowK2.b), DHIQAR);
     }
+
+    // ══ ل. **قرارُ كلّ عمليةٍ على حدة** ══════════════════════════════════
+    //  كان القرارُ واحداً للمريض كلِّه: «أتُنقَل العملياتُ؟» وخبيرٌ واحد
+    //  يُطبَّق على الجميع — ولم يكن سبيلٌ إلى **تغيير خبير عمليةٍ تبقى في
+    //  فرعها**. فصار لكلّ عمليةٍ قرارُها، والقراران متعامدان.
+    // ═════════════════════════════════════════════════════════════════════
+    console.log("\n── ل. قرارُ كلّ عملية على حدة ──");
+    {
+      const mkOp = async (
+        patientId: number, caseId: number, expert: number, item: string,
+      ) => {
+        const [ep] = await q<{ id: number }>(
+          //  القيدُ يشترط `component = requested_item` لغير الجهاز الكامل.
+          `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+             status, agreed_cost, requested_item, service_path, created_by, component)
+           VALUES ($1,$2,$3,(SELECT COALESCE(MAX(sequence_number),0)+1
+                             FROM patient_device_episodes WHERE case_id=$2),
+                   'in_manufacturing',0,$4,'exam',$5,$6) RETURNING id`,
+          [patientId, caseId, KARBALA, item, ADMIN,
+           item === "full_device" ? null : item]);
+        const [wo] = await q<{ id: number }>(
+          `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+             purpose, status, current_stage, device_episode_id)
+           VALUES ($1,$2,$3,'prosthetic','initial_build','active','order_received',$4) RETURNING id`,
+          [patientId, KARBALA, expert, ep.id]);
+        return { episodeId: ep.id, workOrderId: wo.id, key: `wo:${wo.id}` };
+      };
+      const woRow = async (id: number) => (await q<{ b: number; e: number; st: string }>(
+        `SELECT branch_id b, expert_user_id e, status st FROM prosthetic_work_orders WHERE id=$1`,
+        [id]))[0];
+      const epBranch = async (id: number) => Number((await q<{ b: number }>(
+        `SELECT branch_id b FROM patient_device_episodes WHERE id=$1`, [id]))[0].b);
+      const historyKinds = async (id: number) => (await q<{ a: string }>(
+        `SELECT action_type a FROM prosthetic_work_history WHERE work_order_id=$1 ORDER BY id`,
+        [id])).map((r) => r.a);
+
+      //  ① **الطلبُ الأصليّ: تبقى العمليةُ في فرعها ويتغيّر خبيرُها وحده.**
+      {
+        const pL = await mkPatient("ل-تبقى-ويتغيّر-خبيرُها", KARBALA);
+        const cL = await mkCase(pL, KARBALA);
+        const op = await mkOp(pL, cL, EXPERT_K, "full_device");
+
+        //  خبيرٌ ثانٍ **في كربلاء نفسِها** — فالعمليةُ باقيةٌ فيها.
+        const KARB2 = EXPERT_K2;
+
+        const r = await http("POST", `/api/patients/${pL}/branch-access`, S.admin, {
+          branchId: DHIQAR,
+          operationDecisions: [{ key: op.key, move: false, expert: KARB2 }],
+        });
+        same("٨٣. **تبقى العملية ويتغيّر خبيرها — يُقبَل**", r.status, 201);
+
+        const after = await woRow(op.workOrderId);
+        same("٨٤. **العمليةُ لم تتحرّك من فرعها، والخبيرُ تغيّر**",
+          [Number(after.b), Number(after.e), await epBranch(op.episodeId)],
+          [KARBALA, KARB2, KARBALA]);
+
+        //  **وبالكاتب القانونيّ**: سطرُ `reassigned` — لا `status_change`
+        //  منزليّ الصنع، ولا سطرَ نقلٍ لعمليةٍ لم تنتقل.
+        same("٨٥. **وسطرُ السجلّ `reassigned` وحده** — بالكاتب القانونيّ، بلا سطر نقل",
+          await historyKinds(op.workOrderId), ["reassigned"]);
+
+        //  **وخبيرُ فرعٍ آخر يُردّ**: العمليةُ في كربلاء، فلا يُسنَد إليها
+        //  خبيرُ ذي قار ولو كان الفرعُ المضاف ذي قار.
+        const op2 = await mkOp(pL, cL, EXPERT_K, "socket");
+        const bad = await http("POST", `/api/patients/${pL}/branch-access`, S.admin, {
+          branchId: DHIQAR,
+          operationDecisions: [
+            { key: op.key, move: false, expert: "keep" },
+            { key: op2.key, move: false, expert: EXPERT_D },
+          ],
+        });
+        same("٨٦. **وخبيرُ فرعٍ آخر لعمليةٍ باقية يُردّ** — لا يُسنَد جهازُ كربلاء لخبير ذي قار",
+          bad.status, 400);
+        const stillK = await woRow(op2.workOrderId);
+        same("    وصفرُ كتابة", [Number(stillK.b), Number(stillK.e)], [KARBALA, EXPERT_K]);
+      }
+
+      //  ② **عمليتان، قراران مختلفان** — ولا يُطبَّق قرارُ إحداهما على أختها.
+      {
+        const pM = await mkPatient("ل-عمليتان-قراران", KARBALA);
+        const cM = await mkCase(pM, KARBALA);
+        const a = await mkOp(pM, cM, EXPERT_K, "full_device");
+        const b = await mkOp(pM, cM, EXPERT_K, "socket");
+
+        const r = await http("POST", `/api/patients/${pM}/branch-access`, S.admin, {
+          branchId: DHIQAR,
+          operationDecisions: [
+            { key: a.key, move: true, expert: EXPERT_D },   // تنتقل ويتغيّر خبيرُها
+            { key: b.key, move: false, expert: "keep" },    // تبقى بخبيرها
+          ],
+        });
+        same("٨٧. **قراران مختلفان لعمليتين — يُقبلان**", r.status, 201);
+
+        const A = await woRow(a.workOrderId), B = await woRow(b.workOrderId);
+        same("٨٨. **الأولى انتقلت بخبير الفرع الجديد**",
+          [Number(A.b), Number(A.e), await epBranch(a.episodeId)],
+          [DHIQAR, EXPERT_D, DHIQAR]);
+        same("٨٩. **والثانية لم تُمَسّ بقرار أختها** — فرعُها وخبيرُها وحلقتُها",
+          [Number(B.b), Number(B.e), await epBranch(b.episodeId)],
+          [KARBALA, EXPERT_K, KARBALA]);
+        same("٩٠. وسجلُّ الأولى: نقلٌ وتحويلُ خبير · والثانيةُ بلا سطر",
+          [await historyKinds(a.workOrderId), await historyKinds(b.workOrderId)],
+          [["status_change", "reassigned"], []]);
+
+        //  **وعمليةٌ بلا قرارٍ تُردّ** — لا تُقرأ «تبقى» بصمت.
+        const pN = await mkPatient("ل-قرارٌ-ناقص", KARBALA);
+        const cN = await mkCase(pN, KARBALA);
+        const n1 = await mkOp(pN, cN, EXPERT_K, "full_device");
+        await mkOp(pN, cN, EXPERT_K, "socket");
+        const partial = await http("POST", `/api/patients/${pN}/branch-access`, S.admin, {
+          branchId: DHIQAR,
+          operationDecisions: [{ key: n1.key, move: true, expert: "keep" }],
+        });
+        same("٩١. **عمليةٌ بلا قرار ⟶ ٤٠٠**", partial.status, 400);
+        const [nn] = await q<{ c: number }>(
+          `SELECT COUNT(*)::int c FROM patient_branch_access WHERE patient_id=$1`, [pN]);
+        same("    وصفرُ كتابة — ولا إتاحةَ وقعت", nn.c, 0);
+
+        //  **والجمعُ بين الصيغتين التباسٌ يُردّ.**
+        const mixed = await http("POST", `/api/patients/${pN}/branch-access`, S.admin, {
+          branchId: DHIQAR, moveOpenOperations: false,
+          operationDecisions: [{ key: n1.key, move: true, expert: "keep" }],
+        });
+        same("٩٢. **والجمعُ بين القرار العامّ وقرارات العمليات ⟶ ٤٠٠**", mixed.status, 400);
+      }
+
+      //  ③ **والصيغةُ المختصرة القديمة كما كانت بحرفها.**
+      {
+        const pO = await mkPatient("ل-المختصرةُ-القديمة", KARBALA);
+        const cO = await mkCase(pO, KARBALA);
+        const a = await mkOp(pO, cO, EXPERT_K, "full_device");
+        const b = await mkOp(pO, cO, EXPERT_K, "socket");
+        const r = await http("POST", `/api/patients/${pO}/branch-access`, S.admin, {
+          branchId: DHIQAR, moveOpenOperations: true, newExpertUserId: EXPERT_D,
+        });
+        same("٩٣. **«نعم» + خبيرٌ جديد تنقل الجميع كما كانت**", r.status, 201);
+        const A = await woRow(a.workOrderId), B = await woRow(b.workOrderId);
+        same("    والعمليتان معاً في الفرع الجديد بخبيره",
+          [Number(A.b), Number(A.e), Number(B.b), Number(B.e)],
+          [DHIQAR, EXPERT_D, DHIQAR, EXPERT_D]);
+      }
+    }
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`,
-      [[ADMIN, RECV_K, RECV_D, DOC, EXPERT_K, EXPERT_D]]);
+      [[ADMIN, RECV_K, RECV_D, DOC, EXPERT_K, EXPERT_D, EXPERT_K2]]);
     await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`,
-      [[ADMIN, RECV_K, RECV_D, DOC, EXPERT_K, EXPERT_D]]);
+      [[ADMIN, RECV_K, RECV_D, DOC, EXPERT_K, EXPERT_D, EXPERT_K2]]);
     httpServer.close();
   }
 
