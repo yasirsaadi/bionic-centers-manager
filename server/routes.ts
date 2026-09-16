@@ -2027,8 +2027,22 @@ export async function registerRoutes(
     const patient = await storage.getPatient(id);
     const ctx = getUserContext(req);
 
-    // Allow access if: admin, user has no branch assigned yet, or user's branch matches patient's branch
-    const canAccess = ctx.role === 'admin' || !ctx.branchId || patient?.branchId === ctx.branchId;
+    //  ══ **الإتاحةُ لفروعٍ إضافية تُقرأ هنا أيضاً** (ترحيل ٠٨٠ — إصلاحٌ
+    //  2026-09-16) ═══════════════════════════════════════════════════════
+    //  كان الشرطُ `patient?.branchId === ctx.branchId` — **فرعُ التسجيل
+    //  وحده**، وهو بعينه النمطُ الذي يمنعه `patients/branch_access.ts`
+    //  صراحةً. فسجلُّ المرضى (`/api/patients/registry`) يُظهر للفرع المُتاح
+    //  له الصفَّ بـ`patientVisibleToScopeSql`، ثمّ تُردّ هذه النقطةُ ٤٠٤ على
+    //  الضغطة: يرى الموظّفُ المريضَ ولا يفتح ملفَّه.
+    //
+    //  والنطاقُ يُبنى بالشكل نفسِه الذي كان يفتح البابَ قبل اليوم، فلا
+    //  صلاحيةَ تتّسع ولا تضيق: **مسؤولٌ عامّ** أو **موظّفٌ بلا فرعٍ بعد**
+    //  ⟶ `null` (تُرجع `scopeReachesPatient` له `true` كما كان)، وإلّا
+    //  فرعُ جلسته وحده — و`scopeReachesPatient` تقيس بفرع التسجيل **أو**
+    //  إتاحةٍ صريحة، وهي القاعدةُ التي يستعملها السجلّ حرفاً بحرف.
+    const viewScope: number[] | null =
+      ctx.role === 'admin' || !ctx.branchId ? null : [Number(ctx.branchId)];
+    const canAccess = patient ? await scopeReachesPatient(viewScope, patient) : false;
 
     if (!patient || !canAccess) {
       return res.status(404).json({ message: "Patient not found or unauthorized" });
