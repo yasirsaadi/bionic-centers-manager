@@ -822,6 +822,36 @@ export async function closeRequestsAwaitingExam(params: {
   `);
 }
 
+/**
+ * **طلبُ المراجعة يتبع طلبَ الجهاز حين يُصحَّح نوعه.**
+ *
+ * الاستعلاماتُ فتحت الطلبَ بنوعٍ خاطئ، والطبيبُ صحّحه فانتقلت الحلقةُ إلى
+ * خيط الاختصاص الصحيح (`retypeAwaitingEpisodeForExamTx`). وصفُّ المراجعة
+ * يحمل `service_type` و`case_id` **لقطتين** من لحظة الفتح، و
+ * `closeRequestsAwaitingExam` تطابق `service_type` — فلو بقيتا على القديم
+ * لبقي الطلبُ `pending` إلى الأبد في طابور الاختصاص الذي غادره، **ولحجز
+ * مرساتَه** (`uq_mrr_pending_episode`) عن أيّ طلبٍ لاحقٍ لنفس الحلقة.
+ *
+ * **والمعلَّقُ وحده يُعدَّل**: صفٌّ حسمه إنسانٌ (`examined`/`returned`/
+ * `cancelled`) أو أُحيل (`escalated`) شهادةٌ على ما جرى — لا يُعاد كتابتُها
+ * لتناسب تصحيحاً لاحقاً (درسُ ٤.r: «قرارُ الطبيب لا يُمحى»).
+ */
+export async function retagPendingRequestsForRetypedEpisode(params: {
+  patientId: number; episodeId: number;
+  caseId: number | null; serviceType: string;
+  /** معاملةُ التوقيع نفسُها — التصحيحُ والتوقيعُ حدثٌ واحد. */
+  tx: { execute: (q: any) => Promise<any> };
+}): Promise<void> {
+  if (!isReviewServiceType(params.serviceType)) return;
+  await params.tx.execute(sql`
+    UPDATE medical_review_requests
+       SET service_type = ${params.serviceType}, case_id = ${params.caseId}, updated_at = NOW()
+     WHERE device_episode_id = ${params.episodeId}
+       AND patient_id = ${params.patientId}
+       AND status = 'pending'
+  `);
+}
+
 // ── التحويل ──────────────────────────────────────────────────────────────
 
 function numOrNull(v: unknown): number | null {

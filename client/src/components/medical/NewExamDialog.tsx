@@ -151,18 +151,32 @@ export function NewExamDialog({
   //  واحدة باختصاصها، §4.p)، والنافذةُ تُعاد تركيبُها لكلّ صفّ.
   //
   //  فمتى بقي الاختصاصُ كما أرسله الاستعلامات ⟶ **المسارُ كما كان بحرفه**.
-  //  ومتى بُدّل ⟶ الجهازُ القديم **لا يُرسَل ولا تُربَط به المعاينة**: حلقةُ
-  //  مسندٍ على معاينة أطراف تُردّ ٤٠٩ `device_episode_stale` من الخادم أصلاً
-  //  (§4.p)، وإرسالُها كان يعني رسالةً مضلِّلة بدل تصحيحٍ سليم.
   //
-  //  **ولا مسارَ موازٍ**: السقوطُ يعيد النافذةَ إلى منطقها القائم نفسِه —
-  //  أجهزةُ الاختصاص الجديد المنتظرة تُقرأ وتُحسَم كما لو فُتحت من صفحة
-  //  المريض (واحدةٌ تلقائياً · أكثرُ بمنتقٍ إلزاميّ · صفرٌ بلا جهاز).
+  //  ══ **ومتى بُدّل ⟶ يُصحَّح الطلبُ نفسُه، ولا تُسقَط هويّتُه** (٤.y) ══════
+  //  كان التبديلُ يُسقط المعرّف، فيقع التوقيعُ «بلا معرّف» — وقاعدةُ التوافق
+  //  «واحدةٌ منتظرة ⟵ هي» تلتقط عندئذٍ **طلباً مستقلّاً آخر** من النوع
+  //  الجديد إن وُجد، فتُختَم معاينةٌ على جهازٍ لم ينظر فيه الطبيب ويُغلق
+  //  طلبُه وتُولَد له متابعةُ شراء — بختمٍ (ترِكر ٠٢٨) لا يُصحَّح بعدها.
+  //
+  //  فيُرسَل **معرّفُ الطلب نفسِه** ومعه رايةُ التصحيح، والخادمُ ينقله إلى
+  //  خيط الاختصاص الصحيح بمعرّفه ومطلوبه وفرعه وتاريخ انتظاره كما هي. وإن
+  //  لم يعد صالحاً لحظةَ الحفظ ⟶ ٤٠٩ بصفر كتابة، **لا اختيارَ بديلٍ عنه**.
+  //
+  //  **والتصحيحُ بين اختصاصَي الأجهزة وحدهما**: العلاجُ الطبيعي بلا حلقات،
+  //  فالتبديلُ إليه يُسقط الجهازَ حقّاً — وذاك ما تقوله العبارةُ الكهرمانية.
   const fixedEpisodeSpecialty = fixedEpisode === null ? null : (preferSpecialty ?? null);
   const fixedEpisodeApplies = fixedEpisode !== null && specialty === fixedEpisodeSpecialty;
-  const activeFixedEpisode = fixedEpisodeApplies ? fixedEpisode : null;
-  //  وبُدّل الاختصاصُ بعد أن وصل جهازٌ — يُقال للطبيب لماذا اختفى.
-  const fixedEpisodeDropped = fixedEpisode !== null && !fixedEpisodeApplies && !isEdit && !!specialty;
+  const isDeviceKind = (s: string | null | undefined) =>
+    s === "prosthetic" || s === "medical_support";
+  //  تصحيحُ نوعٍ حقيقيّ: جهازٌ وصل باختصاصه، وبُدّل إلى اختصاص أجهزةٍ آخر.
+  const fixedEpisodeRetype = fixedEpisode !== null && !isEdit && !!specialty
+    && !fixedEpisodeApplies
+    && isDeviceKind(fixedEpisodeSpecialty) && isDeviceKind(specialty);
+  const activeFixedEpisode = (fixedEpisodeApplies || fixedEpisodeRetype) ? fixedEpisode : null;
+  //  وسقوطٌ حقيقيّ (تبديلٌ إلى العلاج الطبيعي، أو جهازٌ بلا اختصاصٍ معروف)
+  //  — يُقال للطبيب لماذا اختفى، ولا يختفي صامتاً.
+  const fixedEpisodeDropped = fixedEpisode !== null && !fixedEpisodeApplies
+    && !fixedEpisodeRetype && !isEdit && !!specialty;
 
   const { data: examsData, isLoading: examsLoading } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
@@ -347,6 +361,10 @@ export function NewExamDialog({
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
             //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
             ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
+            //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
+            //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
+            ...(!isEdit && fixedEpisodeRetype && resolvedEpisode !== null
+              ? { retypeDeviceEpisode: true } : {}),
           }),
         },
       );
@@ -473,6 +491,15 @@ export function NewExamDialog({
                خيطٌ وحيدٌ يُسحَب بمنطق التبديل القائم (§4.b) فيُلغى طلبُه
                وتُحذَف حلقتُه السقالية، ومريضٌ يحمل الخيطين يبقى طلبُه معلَّقاً.
                فوعدٌ بأحد المصيرين يكذب في نصف الحالات. */}
+          {/*  بُدّل الاختصاصُ على طلبٍ بعينه — **يُصحَّح هو** ولا يُختار غيرُه.
+               ويُقال صراحةً كي لا يظنّ الطبيبُ أنه فتح طلباً ثانياً. */}
+          {fixedEpisodeRetype && (
+            <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
+              data-testid="note-exam-device-retyped">
+              غيّرتَ الاختصاص — المقصود طلب الجهاز نفسه
+              {deviceLabel ? ` (${deviceLabel})` : ""}، ولن تُربَط هذه المعاينة بأي طلب جهاز آخر.
+            </p>
+          )}
           {fixedEpisodeDropped && (
             <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-dropped">

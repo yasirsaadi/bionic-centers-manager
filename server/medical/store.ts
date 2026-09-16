@@ -33,10 +33,14 @@ import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
   ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
   awaitingExamEpisodesForCase, episodeBranchOf,
+  retypableEpisodeForExam, retypeAwaitingEpisodeForExamTx,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
-import { closeRequestsAwaitingExam, specialtyLevelRequestSql } from "../medical_review/store";
+import {
+  closeRequestsAwaitingExam, specialtyLevelRequestSql,
+  retagPendingRequestsForRetypedEpisode,
+} from "../medical_review/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -268,6 +272,15 @@ export async function createExam(values: {
    * وأكثرُ من واحدة ⟵ `ExamEpisodeAmbiguousError` ٤٠٩ بلا كتابة.
    */
   deviceEpisodeId?: number | null;
+  /**
+   * **تصحيحُ نوع هذا الطلب بعينه** (٤.y) — الطبيبُ بدّل الاختصاص على صفٍّ
+   * وصله بهويّته. فـ`deviceEpisodeId` أعلاه يشير إلى طلبٍ **على خيطٍ آخر**،
+   * ويُنقَل إلى خيط `caseType` **بمعرّفه** قبل أن يُحجَز للمعاينة.
+   *
+   * **ولا يُقرأ بلا معرّف**: راية تصحيحٍ بلا هويّةِ الطلب المقصود تفتح
+   * البابَ الذي جاءت لتغلقه — اختيارَ طلبٍ آخر نيابةً عن الطبيب.
+   */
+  retypeEpisode?: boolean;
 }, opts?: {
   /**
    * نطاقُ الجلسة الحيّ — يُفحَص **على فرع الحلقة تحت القفل**: إتاحةُ الملفّ
@@ -291,12 +304,28 @@ export async function createExam(values: {
   try {
     return await db.transaction(async (tx) => {
       let episodeId: number | null = null;
+      let retypedEpisode = false;
       //  **فرعُ العملية** — فرعُ الحلقة حين توجد، وإلّا فرعُ الحالة/التسجيل
       //  كما مرّره المنادي. فمعاينةُ جهازٍ نُقلت مسؤوليتُه تُسجَّل بفرع مَن
       //  يعمل عليه فعلاً، لا بفرع تسجيل المريض.
       let operationBranchId: number | null = values.branchId ?? null;
 
       if (isDevice && values.caseId !== null) {
+        //  ══ **تصحيحُ نوع الطلب يسبق حجزَه** (٤.y) ═══════════════════════
+        //  الطلبُ يُنقَل إلى خيط الاختصاص الذي وقّعه الطبيب **بمعرّفه**،
+        //  ثمّ يُحجَز بالمسار القائم نفسِه — فحُرّاسُ الحجز (الحالة، المسار،
+        //  الفرع) تبقى الكلمةَ الأخيرة، ولا بابَ ثانياً يلتفّ عليها.
+        //  وكلُّ ذلك في معاملة التوقيع: رفضٌ في أيّ خطوة = صفرُ كتابة.
+        if (values.retypeEpisode === true && values.deviceEpisodeId != null) {
+          await retypeAwaitingEpisodeForExamTx(tx, {
+            patientId: values.patientId,
+            episodeId: values.deviceEpisodeId,
+            targetCaseId: values.caseId,
+            targetServiceType: values.caseType,
+            branchIds: opts?.branchIds ?? null,
+          });
+          retypedEpisode = true;
+        }
         //  **بالمعرّف حين يُعطى، وبالوحدانية حين يغيب** — ولا `LIMIT 1`.
         //  والرميُ هنا يقع **قبل** إدراج المعاينة: الالتباسُ والبياتُ
         //  وخروجُ الفرع يتراجعون بصفر كتابة.
@@ -329,6 +358,16 @@ export async function createExam(values: {
       //  (مراجعة المرحلة الأولى: REF-8/CLOSE-1). فصار الإغلاقُ والتوقيعُ حدثاً
       //  واحداً: معاً أو لا شيء — وإغلاقُ صفٍّ لا يفشل إلّا بعطب قاعدةٍ يُفشل
       //  التوقيعَ معه على أي حال.
+      //  **وطلبُ المراجعة يتبع طلبَ الجهاز حين يُصحَّح نوعه** (٤.y) —
+      //  **قبل** الإغلاق أدناه، لأنه يطابق بـ`service_type`: صفٌّ بقي على
+      //  النوع القديم لا يُغلَق فيبقى معلَّقاً في طابورٍ غادره طلبُه.
+      if (retypedEpisode && episodeId !== null) {
+        await retagPendingRequestsForRetypedEpisode({
+          patientId: values.patientId, episodeId,
+          caseId: values.caseId, serviceType: values.caseType, tx,
+        });
+      }
+
       await closeRequestsAwaitingExam({
         patientId: values.patientId, serviceType: values.caseType, examId: row.id,
         deviceEpisodeId: episodeId, tx,
@@ -427,21 +466,56 @@ export async function examOperationBranch(
  */
 export async function resolveExamEpisode(params: {
   patientId: number; caseId: number | null; deviceEpisodeId: number | null;
-}): Promise<number | null> {
+  /** اختصاصُ المعاينة — يلزم لتصحيح نوع الطلب (٤.y). */
+  caseType: string;
+  /**
+   * **الطبيبُ بدّل الاختصاصَ على هذا الطلب بعينه** (٤.y) — فالمعرّفُ يشير
+   * إلى طلبٍ على خيطٍ آخر، والمقصودُ تصحيحُه هو لا اختيارُ بديلٍ عنه.
+   * وبلا هذه الراية يبقى معرّفُ خيطٍ آخر بائتاً كما كان (٤٠٩).
+   */
+  retype?: boolean;
+}): Promise<{ episodeId: number | null; retype: boolean }> {
+  const retypeAsked = params.retype === true && params.deviceEpisodeId !== null;
   if (params.caseId === null) {
+    //  ══ **لا خيطَ للاختصاص الجديد بعد ⟶ لا شيءَ يُختطف** ═════════════════
+    //  الطلبُ المستقلّ «ب» لا يوجد إلّا على خيطٍ قائم، فحيث لا خيطَ لا خطر.
+    //  ويتولّاه **مسارُ §4.b القائم بحرفه** (تبديلُ النوع لا إضافته): الوصفةُ
+    //  تُنشئ الخيطَ الجديد، ويُسحَب الخيطُ الوحيد السابق بحُرّاسه.
+    //
+    //  ولا يُصحَّح الطلبُ هنا: الخيطُ الهدف يُنشئه `applyDecision` **قبل**
+    //  التوقيع في هذا المسار وحده، ويسحب معه الخيطَ القديم بما فيه هذا
+    //  الطلبُ نفسُه — فنقلٌ بعده ينقل صفّاً لم يعد موجوداً. وتقديمُ التوقيع
+    //  على الوصفة هنا يعيد ترتيباً قائماً لسببٍ موثَّق، وذاك خارج هذه
+    //  المهمّة. **والرايةُ تُقرأ ولا تُنفَّذ**، ولا تُردّ ٤٠٩ في وجه توقيعٍ
+    //  كان يمضي قبل اليوم.
+    if (retypeAsked) return { episodeId: null, retype: false };
     if (params.deviceEpisodeId !== null) throw new ExamEpisodeStaleError();
-    return null;
+    return { episodeId: null, retype: false };
   }
   const waiting = await awaitingExamEpisodesForCase({
     patientId: params.patientId, caseId: params.caseId,
   });
   if (params.deviceEpisodeId !== null) {
-    if (!waiting.some((c) => c.id === params.deviceEpisodeId)) throw new ExamEpisodeStaleError();
-    return params.deviceEpisodeId;
+    //  الطلبُ على الخيط الصحيح أصلاً — المسارُ القائم بحرفه، ولا تصحيحَ يقع
+    //  ولو وصلت الراية (الطبيبُ بدّل ثمّ عاد إلى النوع نفسِه).
+    if (waiting.some((c) => c.id === params.deviceEpisodeId)) {
+      return { episodeId: params.deviceEpisodeId, retype: false };
+    }
+    //  **وإن لم يكن عليه: يُصحَّح هو، ولا يُختار غيرُه أبداً** — فلو لم يعد
+    //  صالحاً يُردّ ٤٠٩ بصفر كتابة، ولا سقوطَ إلى «الوحيدة المنتظرة» التي
+    //  قد تكون طلباً مستقلّاً آخر لم ينظر فيه الطبيب.
+    if (retypeAsked) {
+      const ok = await retypableEpisodeForExam({
+        patientId: params.patientId, episodeId: params.deviceEpisodeId,
+        targetServiceType: params.caseType,
+      });
+      if (ok) return { episodeId: params.deviceEpisodeId, retype: true };
+    }
+    throw new ExamEpisodeStaleError();
   }
-  if (waiting.length === 0) return null;
+  if (waiting.length === 0) return { episodeId: null, retype: false };
   if (waiting.length > 1) throw new ExamEpisodeAmbiguousError(waiting);
-  return waiting[0].id;
+  return { episodeId: waiting[0].id, retype: false };
 }
 
 // ── episode-aware readers (PR #217) ─────────────────────────────────────────

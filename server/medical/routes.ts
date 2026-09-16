@@ -411,6 +411,30 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         deviceEpisodeId = n;
       }
 
+      // ══ **تصحيحُ نوع الطلب — نيّةٌ صريحة لا استنتاج** (٤.y) ══════════════
+      //  الاستعلاماتُ تفتح الطلبَ بنوعٍ تخمّنه، والطبيبُ يصحّحه على الصفّ
+      //  الذي وصله. فحين يبدّل الاختصاص، تُرسل الشاشةُ **معرّفَ الطلب نفسِه**
+      //  ومعه هذه الراية — فيُصحَّح هو ولا يُختطف طلبٌ مستقلٌّ آخر من النوع
+      //  الجديد. **وإسقاطُ المعرّف ليس حلّاً**: التوقيعُ بلا هويّة يلتقط
+      //  «الوحيدةَ المنتظرة» وقد تكون جهازاً لم ينظر فيه الطبيب.
+      //
+      //  **وشكلُها يُشترَط**: قيمةٌ ليست بوليانياً تُردّ ٤٠٠ ولا تُقرأ صدقاً
+      //  ولا كذباً. **ولا تُقرأ بلا معرّف**: رايةُ تصحيحٍ بلا هويّة الطلب
+      //  المقصود تفتح البابَ الذي جاءت لتغلقه.
+      const rawRetype = req.body?.retypeDeviceEpisode;
+      if (rawRetype !== undefined && rawRetype !== null && typeof rawRetype !== "boolean") {
+        return res.status(400).json({
+          error: "قيمة تصحيح نوع الطلب غير صالحة", code: "retype_flag_invalid",
+        });
+      }
+      const retypeDeviceEpisode = rawRetype === true;
+      if (retypeDeviceEpisode && deviceEpisodeId === null) {
+        return res.status(400).json({
+          error: "تصحيح نوع الطلب يحتاج معرّف الطلب المقصود — أعد فتح النافذة",
+          code: "retype_without_episode",
+        });
+      }
+
       const patient = await store.getPatientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (!(await scopeReachesPatient(branchScope(req), patient))) {
@@ -545,10 +569,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  لم يعد ينتظر) يُردّان هنا ٤٠٩ **بصفر كتابة** — لا وصفةَ تُطبَّق لطلبٍ
       //  مرفوض. والحَكَمُ الأخير يبقى القفلَ داخل `createExam`.
       let resolvedEpisodeId: number | null;
+      let retypeEpisode = false;
       try {
-        resolvedEpisodeId = await store.resolveExamEpisode({
+        const resolved = await store.resolveExamEpisode({
           patientId, caseId: earlyCaseRow?.id ?? null, deviceEpisodeId,
+          caseType, retype: retypeDeviceEpisode,
         });
+        resolvedEpisodeId = resolved.episodeId;
+        retypeEpisode = resolved.retype;
       } catch (err) {
         if (err instanceof DeviceEpisodeError) return replyEpisodeError(res, err);
         throw err;
@@ -587,6 +615,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  **المعرّفُ المحسوم أعلاه** — لا «أوّلُ حلقةٍ منتظرة»: القفلُ في
           //  المخزن يتحقّق منه ثانيةً، وسباقٌ غيّر الحالَ بين الفحصين يُردّ.
           deviceEpisodeId: resolvedEpisodeId,
+          //  **وتصحيحُ النوع يقع تحت القفل نفسِه** — لا نداءَ ثانٍ خارجه.
+          retypeEpisode,
           ...body,
         }, {
           //  **ونطاقُ الجلسة يُفحَص على فرع الحلقة تحت القفل**: إتاحةُ الملفّ

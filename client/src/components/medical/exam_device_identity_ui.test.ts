@@ -54,9 +54,23 @@ check("٨. **المنتقي مفتوحٌ دائماً** — لا `disabled` عل
   !/<Select value=\{specialty\}[\s\S]{0,200}?disabled=/.test(dlg));
 check("٨أ. واختصاصُ الجهاز المُمرَّر يُقرأ من `preferSpecialty` — الصفُّ نفسُه يمرّرهما",
   dlg.includes("const fixedEpisodeSpecialty = fixedEpisode === null ? null : (preferSpecialty ?? null)"));
-check("٨ب. **والجهازُ لا يُعتمَد إلّا ما بقي اختصاصُه** — تبديلُه يُسقطه",
+//  ⚠ **وانعكسَ عقدُ ٨ب بقرارِ المالك (٢٠٢٦-٠٩-١٦)**: كان يثبت أن تبديلَ
+//  الاختصاص **يُسقط** الجهازَ المُمرَّر. وإسقاطُ هويّته ليس حلّاً — التوقيعُ
+//  بلا معرّف يلتقط «الوحيدةَ المنتظرة»، وقد تكون طلباً مستقلّاً آخر لم ينظر
+//  فيه الطبيب (مُثبَتٌ حيّاً في `test:exam-identity` قسما ف وق). فالمعرّفُ
+//  يبقى، ومعه رايةُ تصحيحٍ صريحة، والخادمُ يصحّح **ذلك الطلبَ بعينه**.
+check("٨ب. **وتبديلُ الاختصاص يصحّح الطلبَ نفسَه ولا يُسقط هويّته**",
   dlg.includes("const fixedEpisodeApplies = fixedEpisode !== null && specialty === fixedEpisodeSpecialty")
-  && dlg.includes("const activeFixedEpisode = fixedEpisodeApplies ? fixedEpisode : null"));
+  && dlg.includes("const activeFixedEpisode = (fixedEpisodeApplies || fixedEpisodeRetype) ? fixedEpisode : null"));
+check("٨ب.١ **والتصحيحُ بين اختصاصَي الأجهزة وحدهما** — العلاجُ الطبيعي بلا حلقات",
+  dlg.includes("const fixedEpisodeRetype = fixedEpisode !== null && !isEdit && !!specialty")
+  && dlg.includes("&& isDeviceKind(fixedEpisodeSpecialty) && isDeviceKind(specialty)"));
+check("٨ب.٢ **والنيّةُ صريحةٌ في الحمولة** — بلا الراية يبقى معرّفُ خيطٍ آخر بائتاً",
+  dlg.includes("{ retypeDeviceEpisode: true }")
+  && /!isEdit && fixedEpisodeRetype && resolvedEpisode !== null/.test(dlg));
+check("٨ب.٣ **والسقوطُ يبقى للتبديل الذي لا تصحيحَ فيه** — لا يشمل تصحيحَ النوع",
+  dlg.includes("const fixedEpisodeDropped = fixedEpisode !== null && !fixedEpisodeApplies")
+  && dlg.includes("&& !fixedEpisodeRetype && !isEdit && !!specialty"));
 check("٨ج. **والحمولةُ تُبنى من الهويّة الفعّالة** — فلا يُرسَل معرّفُ جهازِ اختصاصٍ آخر",
   dlg.includes("const resolvedEpisode: number | null = activeFixedEpisode !== null")
   && dlg.includes("? activeFixedEpisode"));
@@ -74,6 +88,16 @@ const droppedNote = (() => {
 check("٨هـ. **ولا تَعِد بمصير الطلب القديم** — الربطُ وحده هو ما تقوله",
   droppedNote.includes("فلن تُربَط هذه المعاينة بطلب الجهاز")
   && !/يبقى|بانتظار معاينته|كما هو|سيُلغى|سيُحذف/.test(droppedNote), droppedNote);
+//  وسطرُ التصحيح كذلك: يقول إن المقصودَ الطلبُ نفسُه وإنه لن يُربَط بغيره —
+//  **ولا يَعِد بنقلٍ** قد لا يقع (خيطٌ هدفٌ غيرُ موجود ⟵ مسارُ §4.b القائم).
+const retypedNote = (() => {
+  const at = dlg.indexOf('data-testid="note-exam-device-retyped"');
+  return at < 0 ? "" : dlg.slice(at, dlg.indexOf("</p>", at));
+})();
+check("٨و. **وسطرُ التصحيح يقول المقصودَ ونفيَ الربط بغيره، ولا يَعِد بنقل**",
+  retypedNote.includes("المقصود طلب الجهاز نفسه")
+  && retypedNote.includes("ولن تُربَط هذه المعاينة بأي طلب جهاز آخر")
+  && !/سيُنقَل|سيُحذف|سيُلغى|يبقى/.test(retypedNote), retypedNote);
 
 // ── ٣. ثلاثُ حالاتِ عرض ───────────────────────────────────────────────────
 console.log("\n── العرض ──");
@@ -87,9 +111,11 @@ check("١٢. **الرمزان يُلتقَطان** ويُعاد تحميلُ ا�
   dlg.includes('err?.code === "device_episode_ambiguous" || err?.code === "device_episode_stale"'));
 check("١٣. وشاشةٌ بائتة على جهازٍ ثابت تُغلَق — الصفُّ لم يعد قائماً",
   dlg.includes('err?.code === "device_episode_stale" && activeFixedEpisode !== null) onOpenChange(false)'));
-//  **وبالهويّة الفعّالة**: مَن بدّل الاختصاصَ له بديلٌ من القائمة، وإغلاقُ
-//  النافذة عليه يرمي معاينةً كتبها للتوّ.
-check("١٣ب. **ولا تُغلَق على مَن بدّل الاختصاص** — له بديلٌ يُحَلّ من القائمة",
+//  **وبالهويّة الفعّالة لا الممرَّرة**: تبديلٌ إلى العلاج الطبيعي يُسقط
+//  الجهازَ حقّاً، فللطبيب بديلٌ يُحَلّ من القائمة ولا تُغلَق نافذتُه. أمّا
+//  تصحيحُ النوع فهويّتُه فعّالة — و٤٠٩ عليها يعني أن الطلبَ نفسَه لم يعد
+//  قائماً، فالإغلاقُ صحيح.
+check("١٣ب. **ولا تُغلَق على مَن سقط جهازُه** — الفحصُ بالفعّالة لا بالممرَّرة",
   !dlg.includes('err?.code === "device_episode_stale" && fixedEpisode !== null) onOpenChange(false)'));
 
 // ── ٥. «معايناتي» — صفٌّ لكلّ جهاز ────────────────────────────────────────
