@@ -148,7 +148,8 @@
     "test:ai-training-orchestration": "tsx server/ai_training_orchestration.test.ts",
     "test:reversal-standing-cost": "tsx server/reversal_standing_cost.test.ts",
     "test:merge-followup-collision": "tsx server/merge_followup_collision.test.ts",
-    "test:replacement-parallel-episode": "tsx server/replacement_parallel_episode.test.ts"
+    "test:replacement-parallel-episode": "tsx server/replacement_parallel_episode.test.ts",
+    "test:patient-header-branches": "tsx client/src/pages/patient_header_branches.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

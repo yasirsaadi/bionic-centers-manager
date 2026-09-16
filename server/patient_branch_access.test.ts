@@ -19,6 +19,11 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+//  الدالّةُ التي تبني رأسَ الملفّ في الشاشة — تُستدعى هنا بحمولةٍ **حيّة**
+//  من النقطة نفسِها، فيُقفَل العقدُ بين شكل الخادم ونصّ الرأس بدل وصفِه.
+import {
+  patientHeaderBranches, formatSharedBranches,
+} from "../client/src/pages/patient_header_branches";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -853,6 +858,83 @@ async function main() {
       //  **وصاحبُ الملفّ لم يُمَسّ**: ذي قار يفتحه قبل الإتاحة وبعدها وبعد السحب.
       same("٧٤. **وفرعُ التسجيل يفتحه في كلّ الأحوال**",
         (await http("GET", `/api/patients/${pJ}`, S.dhiqar)).status, 200);
+    }
+
+    // ══ ك. **رأسُ الملفّ يقول الفروع** ═══════════════════════════════════
+    //  الرأسُ كان يعرض فرعَ التسجيل وحده، فملفٌّ أُتيح لفرعٍ آخر لا يقول
+    //  ذلك في أيّ مكانٍ يُقرأ بالمرور. والمصدرُ **النقطةُ القائمة** —
+    //  لا مسارَ خادمٍ جديد — فيُثبَت هنا أن حمولتَها الحيّة تُنتج السطرين
+    //  فعلاً حين تمرّ بالدالّة التي تستعملها الشاشة (`patientHeaderBranches`).
+    //  فلو أُعيدت تسميةُ `access` أو `branchId` يوماً سقط هذا البند — والعقدُ
+    //  بين الخادم والرأس مقفولٌ لا موصوف.
+    // ═════════════════════════════════════════════════════════════════════
+    console.log("\n── ك. رأسُ الملفّ: فرع التسجيل · متاح أيضاً ──");
+    {
+      const pK = await mkPatient("ك-رأس-الفروع", DHIQAR);
+      await mkCase(pK, DHIQAR);
+
+      const branchRows = await q<{ id: number; name: string }>(
+        `SELECT id, name FROM branches WHERE id = ANY($1::int[])`, [[KARBALA, DHIQAR]]);
+      const nameOf = (id: number) => branchRows.find((b) => Number(b.id) === id)?.name ?? "";
+
+      /** الرأسُ كما تبنيه الشاشةُ من حمولةٍ حيّة. */
+      const headerOf = async (sess: any) => {
+        const r = await http("GET", `/api/patients/${pK}/branch-access`, sess);
+        const patientRow = await http("GET", `/api/patients/${pK}`, sess);
+        return {
+          status: r.status,
+          head: patientHeaderBranches({
+            //  فرعُ التسجيل من صفّ المريض — تماماً كما تفعل الصفحة.
+            homeBranchId: patientRow.body?.branchId ?? null,
+            access: r.body?.access ?? [],
+            branches: branchRows.map((b) => ({ id: Number(b.id), name: b.name })),
+          }),
+        };
+      };
+
+      //  ① قبل الإتاحة — فرعُ التسجيل وحده، ولا سطرَ «متاح أيضاً».
+      const before = await headerOf(S.dhiqar);
+      same("٧٥. (قبل الإتاحة) الرأسُ يقول فرعَ التسجيل وحده",
+        [before.head.home?.id, before.head.home?.label, before.head.shared.length],
+        [DHIQAR, nameOf(DHIQAR), 0]);
+
+      //  ② الإتاحةُ بالمسار القانونيّ.
+      const g = await http("POST", `/api/patients/${pK}/branch-access`, S.admin,
+        { branchId: KARBALA, note: "مراجعة في كربلاء" });
+      check(g.status < 300, "٧٦. الإتاحةُ لكربلاء تنجح", JSON.stringify(g.body));
+
+      //  ③ **الفرعُ المضاف يظهر في الرأس** — وفرعُ التسجيل كما هو.
+      const after = await headerOf(S.dhiqar);
+      same("٧٧. **وفرعُ التسجيل يبقى كما هو** — لم تبدّله الإتاحة",
+        [after.head.home?.id, after.head.home?.label], [DHIQAR, nameOf(DHIQAR)]);
+      same("٧٨. **والفرعُ المضاف يظهر في «متاح أيضاً»**",
+        after.head.shared, [{ id: KARBALA, label: nameOf(KARBALA) }]);
+      same("   ونصُّ السطرين كما يقرؤهما الموظّف",
+        [`فرع التسجيل: ${after.head.home?.label}`,
+         `متاح أيضاً: ${formatSharedBranches(after.head.shared)}`],
+        [`فرع التسجيل: ${nameOf(DHIQAR)}`, `متاح أيضاً: ${nameOf(KARBALA)}`]);
+
+      //  ④ **وصفُّ المريض لم يتغيّر بحرف** — الرأسُ يعرض ولا ينقل.
+      const [rowK] = await q<{ b: number }>(`SELECT branch_id b FROM patients WHERE id=$1`, [pK]);
+      same("٧٩. وفرعُ تسجيله في القاعدة ما زال ذي قار", Number(rowK.b), DHIQAR);
+
+      //  ⑤ **والفرعُ المضاف يقرأ الرأسَ نفسَه** — حارسُ النقطة هو حارسُ
+      //  فتحِ الملفّ، فلا يرى رأساً أفقرَ من رأس صاحب الملفّ.
+      const karbalaView = await headerOf(S.karbala);
+      same("٨٠. **وموظّفُ كربلاء يقرأ الرأسَ نفسَه**",
+        [karbalaView.status, karbalaView.head.home?.id,
+         formatSharedBranches(karbalaView.head.shared)],
+        [200, DHIQAR, nameOf(KARBALA)]);
+
+      //  ⑥ **وعند سحب الإتاحة يختفي من «متاح أيضاً»** — وفرعُ التسجيل باقٍ.
+      same("٨١. السحبُ ينجح",
+        (await http("DELETE", `/api/patients/${pK}/branch-access/${KARBALA}`, S.admin)).status, 200);
+      const revoked = await headerOf(S.dhiqar);
+      same("٨٢. **وبعد السحب يختفي من «متاح أيضاً»**", revoked.head.shared, []);
+      same("   **وفرعُ التسجيل لم يتغيّر بالسحب**",
+        [revoked.head.home?.id, revoked.head.home?.label], [DHIQAR, nameOf(DHIQAR)]);
+      const [rowK2] = await q<{ b: number }>(`SELECT branch_id b FROM patients WHERE id=$1`, [pK]);
+      same("   وصفُّه في القاعدة كما هو", Number(rowK2.b), DHIQAR);
     }
   } finally {
     await cleanup();

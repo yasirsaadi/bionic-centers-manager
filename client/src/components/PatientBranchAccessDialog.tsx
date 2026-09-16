@@ -21,7 +21,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Share2, Trash2, Building2 } from "lucide-react";
 
-interface AccessRow {
+export interface AccessRow {
   id: number; branchId: number; branchName: string | null;
   grantedByName: string | null; note: string | null; grantedAt: string | null;
 }
@@ -30,11 +30,38 @@ interface OpenOperation {
   requestedItem: string | null; workOrderId: number | null;
   expertUserId: number | null; expertName: string | null;
 }
-interface AccessState {
+export interface AccessState {
   homeBranchId: number | null; homeBranchName: string | null;
   access: AccessRow[]; openOperations: OpenOperation[];
   eligibleBranches: { id: number; name: string }[];
   canManage: boolean;
+}
+
+//  ══ **مفتاحٌ واحد ودالّةُ جلبٍ واحدة** ═══════════════════════════════════
+//  رأسُ ملفّ المريض يعرض «متاح أيضاً» من هذه البيانات نفسِها، فلو نسخ
+//  المفتاحَ لنفسه لبقي الرأسُ قديماً بعد منحٍ أو سحبٍ من هذه النافذة —
+//  `invalidate()` أدناه تُبطل **هذا المفتاح بعينه**. فيُصدَّر ليستورده
+//  الطرفان، ولا مسارَ خادمٍ جديد: النقطةُ القائمة تكفي، وحارسُها
+//  (`scopeReachesPatient`) هو حارسُ فتحِ الملفّ نفسُه.
+export const branchAccessQueryKey = (patientId: number) =>
+  ["/api/patients", patientId, "branch-access"] as const;
+
+export async function fetchPatientBranchAccess(patientId: number): Promise<AccessState> {
+  const res = await fetch(`/api/patients/${patientId}/branch-access`, { credentials: "include" });
+  if (!res.ok) throw new Error("تعذّر قراءة حالة الإتاحة");
+  return res.json();
+}
+
+/**
+ * حالةُ إتاحة الفروع لهذا الملفّ. `enabled` تُترَك فتُجلَب دائماً (الرأس)،
+ * وتُمرَّر `open` في النافذة فلا تُجلَب قبل فتحها.
+ */
+export function usePatientBranchAccess(patientId: number, enabled = true) {
+  return useQuery<AccessState>({
+    queryKey: branchAccessQueryKey(patientId),
+    queryFn: () => fetchPatientBranchAccess(patientId),
+    enabled,
+  });
 }
 
 const SERVICE_LABEL: Record<string, string> = {
@@ -49,15 +76,7 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<AccessState>({
-    queryKey: ["/api/patients", patientId, "branch-access"],
-    queryFn: async () => {
-      const res = await fetch(`/api/patients/${patientId}/branch-access`, { credentials: "include" });
-      if (!res.ok) throw new Error("تعذّر قراءة حالة الإتاحة");
-      return res.json();
-    },
-    enabled: open,
-  });
+  const { data, isLoading } = usePatientBranchAccess(patientId, open);
 
   //  خبراءُ الفرع المضاف — لا يُطلبون قبل اختيار الفرع.
   const { data: experts } = useQuery<{ id: number; displayName: string }[]>({
@@ -77,7 +96,7 @@ export function PatientBranchAccessDialog({ patientId }: { patientId: number }) 
   }, [open]);
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/patients", patientId, "branch-access"] });
+    queryClient.invalidateQueries({ queryKey: branchAccessQueryKey(patientId) });
     queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
     queryClient.invalidateQueries({ queryKey: ["/api/patients/registry"] });
   };

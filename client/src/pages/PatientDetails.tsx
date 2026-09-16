@@ -3,7 +3,9 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DeletePatientDialog } from "@/components/DeletePatientDialog";
-import { PatientBranchAccessDialog } from "@/components/PatientBranchAccessDialog";
+import { PatientBranchAccessDialog, usePatientBranchAccess }
+  from "@/components/PatientBranchAccessDialog";
+import { patientHeaderBranches, formatSharedBranches } from "./patient_header_branches";
 import { canTrashPatients } from "@shared/patient_trash";
 import { PatientWorkOrderCard } from "@/components/manufacturing/PatientWorkOrderCard";
 import { CaseDetailSections } from "@/components/patient/CaseDetailSections";
@@ -66,6 +68,7 @@ import {
   Pencil,
   Trash2,
   Building2,
+  Share2,
   Phone,
   MapPin,
   AlertCircle,
@@ -593,6 +596,27 @@ export default function PatientDetails() {
     return (t.branches as Record<string, string>)[name] || name;
   };
 
+  //  ══ **فروعُ الرأس** (ترحيل ٠٨٠) ════════════════════════════════════════
+  //  الرأسُ كان يعرض فرعَ التسجيل وحده، فملفٌّ أُتيح لفرعٍ آخر لا يقول ذلك
+  //  في أيّ مكانٍ يُقرأ بالمرور — ولا يعرفه إلّا مَن فتح نافذة الإتاحة.
+  //
+  //  **والمصدرُ النقطةُ القائمة بمفتاحها القائم** — لا مسارَ خادمٍ جديد،
+  //  ولا حقلَ يُضاف إلى ملفّ المريض. وبالمفتاح نفسِه تُبطله نافذةُ الإتاحة
+  //  عند المنح والسحب، **فيتحدّث الرأسُ معها بلا وصلٍ ثانٍ**. وحارسُ
+  //  النقطة (`scopeReachesPatient`) هو حارسُ فتحِ هذه الصفحة نفسُه، فلا
+  //  صلاحيةَ تتّسع: مَن يقرأ الملفَّ يقرأ فروعَه.
+  //  ولا تُطلَب قبل أن يُعرَف أن الملفَّ موجودٌ ومقروء — فصفحةُ ٤٠٤ لا
+  //  تُتبِع نفسَها بطلبٍ ثانٍ يفشل.
+  const { data: branchAccess } = usePatientBranchAccess(Number(id), Boolean(id && patient));
+  const headerBranches = patientHeaderBranches({
+    //  فرعُ التسجيل من **صفّ المريض** لا من حمولة الإتاحة — هو مصدرُه، وهذه
+    //  الصفحةُ تملكه أصلاً. فلو تأخّرت الإتاحةُ أو فشلت بقي السطرُ صحيحاً.
+    homeBranchId: patient?.branchId ?? null,
+    access: branchAccess?.access ?? [],
+    branches: branches ?? [],
+    translate: (name) => (t.branches as Record<string, string>)[name] || name,
+  });
+
   const translateInjuryType = (type: string): string => {
     return (t.injuryTypes as Record<string, string>)[type] || type;
   };
@@ -843,10 +867,25 @@ export default function PatientDetails() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 md:gap-3 items-center">
-          <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1">
-            <Building2 className="w-3 h-3" />
-            {getBranchName(patient.branchId)}
-          </Badge>
+          {/*  فرعُ التسجيل **مسمّىً صراحةً** — لا شارةَ فرعٍ عارية تُقرأ
+              «الفرع» فيظنّها الموظّفُ فرعَ الزيارة الحالية. */}
+          {headerBranches.home && (
+            <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1"
+              data-testid="badge-home-branch">
+              <Building2 className="w-3 h-3" />
+              فرع التسجيل: {headerBranches.home.label}
+            </Badge>
+          )}
+          {/*  **وكلُّ فرعٍ أُتيح له** — لا الأوّلُ وحده. ولا تظهر الشارةُ
+              أصلاً حين لا إتاحة، فلا يُقرأ فراغٌ حالةً. */}
+          {headerBranches.shared.length > 0 && (
+            <Badge variant="outline"
+              className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1 bg-sky-50 text-sky-700 border-sky-200"
+              data-testid="badge-shared-branches">
+              <Share2 className="w-3 h-3" />
+              متاح أيضاً: {formatSharedBranches(headerBranches.shared)}
+            </Badge>
+          )}
           {/* Case chips: one per specialty. Click → that case's page below.
               Falls back to the legacy single badge until cases are loaded. */}
           {patientCasesList.length > 0 ? (
