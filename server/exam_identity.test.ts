@@ -1000,6 +1000,135 @@ async function main() {
       same("٩٨.أ بصفر كتابة", await patientSnapshot(p3), snap3);
     }
 
+    // ══ ت. تصحيحُ النوع **بلا خيطٍ هدفٍ قائم** — الطلبُ يُصحَّح ولا يُهدَم ══
+    //  شكلُ المالك الأشيع: الاستعلاماتُ سجّلت «مساند» بالخطأ وليس للمريض خيطُ
+    //  أطرافٍ أصلاً. كان التصحيحُ يُسقَط فيتولّاه مسارُ §4.b: يُنشئ الخيطَ
+    //  الجديد **ويهدم** القديمَ بما فيه الطلبُ نفسُه — فيخرج المريضُ بلا طلبِ
+    //  جهازٍ إطلاقاً، ومعاينتُه ومتابعتُه بلا هويّة.
+    console.log("\n── ت. تصحيحُ النوع بلا خيطٍ هدفٍ قائم ──");
+    {
+      //  ت.١ — سيناريو المالك بالحرف: مساندٌ وحده ⟶ أطراف.
+      const p = await mkPatient("ت-simple", "medical_support");
+      await mkCase(p, "medical_support");
+      const A = await openEpisode(p, "medical_support");
+      const beforeA = await episodeRow(A.episodeId);
+
+      same("١٠١. (الإعدادُ: خيطُ مساندٍ وحده — ولا خيطَ أطرافٍ على الملفّ)",
+        [await caseTypesOf(p), await episodeStatus(A.episodeId)],
+        [["medical_support"], "awaiting_exam"]);
+
+      const ex = await signExam(p, S.doc, "prosthetic",
+        { deviceEpisodeId: A.episodeId, retypeDeviceEpisode: true });
+      const examId = ex.status < 300 ? Number(ex.body?.id) : null;
+      check(ex.status < 300, "١٠٢. المعاينةُ تُحفَظ أطرافاً",
+        `الحالة: ${ex.status} · ${JSON.stringify(ex.body)}`);
+
+      //  **الطلبُ باقٍ بمعرّفه** — لا مهدوماً ولا مُستبدَلاً بآخر.
+      const afterA = await episodeRow(A.episodeId);
+      same("١٠٣. **والطلبُ نفسُه باقٍ وصار أطرافاً مُعايَناً** — لا يُهدَم",
+        [afterA === null ? "محذوف" : afterA.id, await episodeCaseType(A.episodeId),
+         await episodeStatus(A.episodeId)],
+        [A.episodeId, "prosthetic", "examined"]);
+      same("١٠٣.أ **وهويّتُه كما هي بايتاً** — المطلوبُ والفرعُ والمسارُ والتواريخُ والكلفة",
+        [afterA?.requested_item, afterA?.component, afterA?.branch_id, afterA?.service_path,
+         afterA?.created_at, afterA?.awaiting_since, afterA?.agreed_cost, afterA?.sequence_number],
+        [beforeA?.requested_item, beforeA?.component, beforeA?.branch_id, beforeA?.service_path,
+         beforeA?.created_at, beforeA?.awaiting_since, beforeA?.agreed_cost, beforeA?.sequence_number]);
+      same("١٠٣.ب **والمعاينةُ مختومةٌ عليه** — لا معاينةً بلا هويّة",
+        examId === null ? null : await examEpisode(examId), A.episodeId);
+      same("١٠٣.ج **ومتابعةُ قرار الشراء مربوطةٌ به** — فبابُها المبسَّط يفتح عليها",
+        (await followupsOfEpisode(A.episodeId)).length, 1);
+      const aReq: any = await requestRow(A.requestId!);
+      same("١٠٣.د وطلبُ مراجعته تبعه وأُغلق بمعاينته",
+        [aReq?.status, aReq?.exam_id, aReq?.device_episode_id], ["examined", examId, A.episodeId]);
+      const reqTyped = (await q<{ s: string; c: number | null }>(
+        `SELECT service_type s, case_id c FROM medical_review_requests WHERE id=$1`, [A.requestId]))[0];
+      same("   ونوعُه وخيطُه صارا أطرافاً — لا `case_id` فارغاً",
+        [reqTyped?.s, reqTyped?.c],
+        ["prosthetic", (await q<{ id: number }>(
+          `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [p]))[0]?.id]);
+
+      //  **ولا أثرَ تشغيليٍّ للمساند** — وهو المطلوبُ الثاني بعينه.
+      same("١٠٤. **وخيطُ المساند رُفع** — لا يبقى إلّا الأطراف",
+        await caseTypesOf(p), ["prosthetic"]);
+      const flags = await deviceFlagsOf(p);
+      same("١٠٤.أ **ولا تصنيفَ مساندٍ ولا عمودَ تفاصيله على الملفّ**",
+        [flags?.a, flags?.s, flags?.sup], [true, false, null]);
+      same("١٠٤.ب **ولا شارةَ «بانتظار معاينة مساند»**", await pendingSpecialtiesOf(p), []);
+      same("١٠٤.ج **ولا صفَّ مساندٍ في قائمة عمل الطبيب**",
+        (await rowsOf(p)).map((r: any) => r.caseType), []);
+
+      //  ت.٢ — الاتجاهُ العكسيّ بالبساطة نفسِها.
+      const p2 = await mkPatient("ت-simple-rev", "prosthetic");
+      await mkCase(p2, "prosthetic");
+      const A2 = await openEpisode(p2, "prosthetic");   //  جهازٌ كامل — يصلح للنوعين
+      const ex2 = await signExam(p2, S.doc, "medical_support",
+        { deviceEpisodeId: A2.episodeId, retypeDeviceEpisode: true });
+      check(ex2.status < 300, "١٠٥. والاتجاهُ العكسيّ كذلك: المعاينةُ تُحفَظ مسنداً",
+        `${ex2.status} ${JSON.stringify(ex2.body)}`);
+      same("١٠٥.أ والطلبُ نفسُه باقٍ وصار مسنداً مُعايَناً",
+        [await episodeCaseType(A2.episodeId), await episodeStatus(A2.episodeId),
+         ex2.status < 300 ? await examEpisode(Number(ex2.body?.id)) : null],
+        ["medical_support", "examined", A2.episodeId]);
+      same("١٠٥.ب وخيطُ الأطراف رُفع ولا تصنيفَ له", await caseTypesOf(p2), ["medical_support"]);
+      same("١٠٥.ج ولا شارةَ «بانتظار معاينة أطراف»", await pendingSpecialtiesOf(p2), []);
+
+      //  **وما لا يصحّ للنوع الجديد لا يُصحَّح** — جزءٌ للأطراف لا يصير مسنداً
+      //  (§4.e: المساندُ بلا أجزاء)، ولا خيطَ مساندٍ يُفتَح له.
+      const p2b = await mkPatient("ت-part-rev", "prosthetic");
+      await mkCase(p2b, "prosthetic");
+      const part = await openEpisode(p2b, "prosthetic", "socket");
+      const snapPart = await patientSnapshot(p2b);
+      const casesPart = await caseTypesOf(p2b);
+      const badPart = await signExam(p2b, S.doc, "medical_support",
+        { deviceEpisodeId: part.episodeId, retypeDeviceEpisode: true });
+      same("١٠٥.د **وطلبُ «قالب» لا يصير مسنداً** — ٤٠٩ بصفر كتابة",
+        [badPart.status, badPart.body?.code], [409, "device_episode_stale"]);
+      same("١٠٥.هـ ولا خيطَ مساندٍ يُفتَح له",
+        [await patientSnapshot(p2b), await caseTypesOf(p2b)], [snapPart, casesPart]);
+
+      //  ت.٣ — **والعمليةُ المستقلّةُ الحقيقية لا تُمَسّ** ولو لم يوجد خيطٌ هدف.
+      const p3 = await mkPatient("ت-other-real", "medical_support");
+      await mkCase(p3, "medical_support");
+      const A3 = await openEpisode(p3, "medical_support");
+      const C3 = await openEpisode(p3, "medical_support");   //  طلبُ مساندٍ ثانٍ حقيقيّ
+      const beforeC = await episodeRow(C3.episodeId);
+      const ex3 = await signExam(p3, S.doc, "prosthetic",
+        { deviceEpisodeId: A3.episodeId, retypeDeviceEpisode: true });
+      check(ex3.status < 300, "١٠٦. تصحيحُ «أ» يمضي ومعه طلبُ مساندٍ ثانٍ حقيقيّ",
+        `${ex3.status} ${JSON.stringify(ex3.body)}`);
+      same("١٠٦.أ و«أ» وحدَه صار أطرافاً", await episodeCaseType(A3.episodeId), "prosthetic");
+      same("١٠٧. **وخيطُ المساند باقٍ بطلبه الثاني** — لا يُرفَع",
+        await caseTypesOf(p3), ["medical_support", "prosthetic"]);
+      same("١٠٧.أ **وصفُّ «ج» مطابقٌ بايتاً**", await episodeRow(C3.episodeId), beforeC);
+      const cReq = (await q<{ s: string; st: string }>(
+        `SELECT service_type s, status st FROM medical_review_requests WHERE id=$1`, [C3.requestId]))[0];
+      same("١٠٧.ب وطلبُ مراجعته ما زال معلَّقاً مسنداً", [cReq?.s, cReq?.st],
+        ["medical_support", "pending"]);
+      same("١٠٧.ج وتبقى شارةُ «بانتظار معاينة مساند» وحدها",
+        await pendingSpecialtiesOf(p3), ["medical_support"]);
+
+      //  ت.٤ — **والرفضُ بصفر كتابة: لا خيطَ هدفٍ يُفتَح لطلبٍ بائت.**
+      const p4 = await mkPatient("ت-stale", "medical_support");
+      await mkCase(p4, "medical_support");
+      const A4 = await openEpisode(p4, "medical_support");
+      const pulled = await http("POST", "/api/medical/worklist/cancel-request", S.doc, {
+        patientId: p4, caseType: "medical_support", deviceEpisodeId: A4.episodeId,
+        reason: "أُلغي الطلب قبل الحفظ",
+      });
+      check(pulled.status < 300, "١٠٨. (الإعدادُ: سُحب الطلبُ قبل الحفظ)",
+        `${pulled.status} ${JSON.stringify(pulled.body)}`);
+      const snap4 = await patientSnapshot(p4);
+      const cases4 = await caseTypesOf(p4);
+      const stale4 = await signExam(p4, S.doc, "prosthetic",
+        { deviceEpisodeId: A4.episodeId, retypeDeviceEpisode: true });
+      same("١٠٩. **يُردّ ٤٠٩ بائتاً**", [stale4.status, stale4.body?.code],
+        [409, "device_episode_stale"]);
+      same("١٠٩.أ بصفر كتابة", await patientSnapshot(p4), snap4);
+      same("١٠٩.ب **ولا خيطَ أطرافٍ يُفتَح** — الصفُّ داخل المعاملة يتراجع معها",
+        await caseTypesOf(p4), cases4);
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {

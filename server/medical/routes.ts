@@ -617,7 +617,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  يُوقَّع أوّلاً ثمّ تُطبَّق الوصفة: رفضٌ تحت القفل = صفرُ كتابة.
       //  وحين لا حالةَ بعد (اختصاصٌ جديد على المريض) يبقى الترتيبُ القديم:
       //  الوصفةُ هي ما يُنشئ الحالة، ولا حلقةَ يمكن أن تتنازع عليها.
-      const caseFirst = earlyCaseRow !== null && earlyCaseRow !== undefined;
+      //  **وتصحيحُ النوع يوجب الترتيبَ الآمن دائماً** (٤.y، تكملة): الطلبُ
+      //  المقصودُ حلقةٌ حيّةٌ يمكن أن يتنازع عليها زميلٌ، والخيطُ الهدف —
+      //  حين لا يوجد — يُفتَح داخل معاملة التوقيع نفسِها لا قبلها. ولو سبقت
+      //  `applyDecision` هنا لسحبت الخيطَ القديم بما فيه الطلبُ نفسُه، فينقل
+      //  التصحيحُ صفّاً لم يعد موجوداً.
+      const caseFirst =
+        (earlyCaseRow !== null && earlyCaseRow !== undefined) || retypeEpisode;
       let applied: Awaited<ReturnType<typeof applyDecision>> = {};
       if (!caseFirst) applied = await applyDecision(patientId, caseType, prescription);
 

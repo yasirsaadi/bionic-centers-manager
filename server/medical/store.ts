@@ -29,6 +29,7 @@ import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { ensureActiveCaseTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
   ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
@@ -319,7 +320,23 @@ export async function createExam(values: {
       //  يعمل عليه فعلاً، لا بفرع تسجيل المريض.
       let operationBranchId: number | null = values.branchId ?? null;
 
-      if (isDevice && values.caseId !== null) {
+      //  ══ **والخيطُ الهدفُ يُفتَح هنا حين لا يوجد** (٤.y، تكملة) ═════════
+      //  تصحيحُ النوع إلى اختصاصٍ لا خيطَ له بعد كان يُسقَط، فيهدم مسارُ
+      //  §4.b الطلبَ نفسَه بدل أن ينقله. فيُفتَح الخيطُ **داخل هذه المعاملة**
+      //  قبل النقل — ورفضٌ في أيّ خطوةٍ بعده يتراجع عنه معها.
+      let targetCaseId = values.caseId;
+      if (
+        isDevice && targetCaseId === null &&
+        values.retypeEpisode === true && values.deviceEpisodeId != null
+      ) {
+        targetCaseId = await ensureActiveCaseTx(tx, {
+          patientId: values.patientId,
+          caseType: values.caseType,
+          branchId: values.branchId ?? null,
+        });
+      }
+
+      if (isDevice && targetCaseId !== null) {
         //  ══ **تصحيحُ نوع الطلب يسبق حجزَه** (٤.y) ═══════════════════════
         //  الطلبُ يُنقَل إلى خيط الاختصاص الذي وقّعه الطبيب **بمعرّفه**،
         //  ثمّ يُحجَز بالمسار القائم نفسِه — فحُرّاسُ الحجز (الحالة، المسار،
@@ -329,7 +346,7 @@ export async function createExam(values: {
           const moved = await retypeAwaitingEpisodeForExamTx(tx, {
             patientId: values.patientId,
             episodeId: values.deviceEpisodeId,
-            targetCaseId: values.caseId,
+            targetCaseId,
             targetServiceType: values.caseType,
             branchIds: opts?.branchIds ?? null,
           });
@@ -340,7 +357,7 @@ export async function createExam(values: {
         //  والرميُ هنا يقع **قبل** إدراج المعاينة: الالتباسُ والبياتُ
         //  وخروجُ الفرع يتراجعون بصفر كتابة.
         const claimed = await claimAwaitingEpisodeForExam(tx, {
-          patientId: values.patientId, caseId: values.caseId,
+          patientId: values.patientId, caseId: targetCaseId,
           episodeId: values.deviceEpisodeId ?? null,
           branchIds: opts?.branchIds ?? null,
         });
@@ -356,7 +373,9 @@ export async function createExam(values: {
 
       const [row] = await tx
         .insert(EX)
-        .values({ ...values, branchId: operationBranchId, deviceEpisodeId: episodeId })
+        //  `caseId` من الخيط المحسوم أعلاه — لا من الطلب: الخيطُ قد يكون
+        //  فُتح في هذه المعاملة لتصحيحٍ لم يجد خيطاً هدفاً.
+        .values({ ...values, caseId: targetCaseId, branchId: operationBranchId, deviceEpisodeId: episodeId })
         .returning();
 
       if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
@@ -374,7 +393,9 @@ export async function createExam(values: {
       if (retypedEpisode && episodeId !== null) {
         await retagPendingRequestsForRetypedEpisode({
           patientId: values.patientId, episodeId,
-          caseId: values.caseId, serviceType: values.caseType, tx,
+          //  الخيطُ المحسوم — لا `values.caseId`: تصحيحٌ لم يجد خيطاً هدفاً
+          //  يفتحه في هذه المعاملة، فكان الطلبُ يُعاد وسمُه بـ`case_id = NULL`.
+          caseId: targetCaseId, serviceType: values.caseType, tx,
         });
       }
 
@@ -487,18 +508,28 @@ export async function resolveExamEpisode(params: {
 }): Promise<{ episodeId: number | null; retype: boolean }> {
   const retypeAsked = params.retype === true && params.deviceEpisodeId !== null;
   if (params.caseId === null) {
-    //  ══ **لا خيطَ للاختصاص الجديد بعد ⟶ لا شيءَ يُختطف** ═════════════════
-    //  الطلبُ المستقلّ «ب» لا يوجد إلّا على خيطٍ قائم، فحيث لا خيطَ لا خطر.
-    //  ويتولّاه **مسارُ §4.b القائم بحرفه** (تبديلُ النوع لا إضافته): الوصفةُ
-    //  تُنشئ الخيطَ الجديد، ويُسحَب الخيطُ الوحيد السابق بحُرّاسه.
+    //  ══ **ولا خيطَ للاختصاص الجديد بعد — والطلبُ يُصحَّح مع ذلك** (٤.y،
+    //  تكملة) ══════════════════════════════════════════════════════════════
+    //  كان التصحيحُ يُسقَط هنا فيتولّاه مسارُ §4.b: يُنشئ الخيطَ الجديد
+    //  **ويهدم** الخيطَ الوحيد السابق بما فيه هذا الطلبُ نفسُه (حلقةٌ
+    //  `awaiting_exam` = سقالةٌ بحكم §4.r). فيخرج المريضُ **بلا طلبِ جهازٍ
+    //  إطلاقاً**، ومعاينتُه ومتابعتُه بلا هويّة — لا «كأنّه سُجّل أطرافاً
+    //  من البداية».
     //
-    //  ولا يُصحَّح الطلبُ هنا: الخيطُ الهدف يُنشئه `applyDecision` **قبل**
-    //  التوقيع في هذا المسار وحده، ويسحب معه الخيطَ القديم بما فيه هذا
-    //  الطلبُ نفسُه — فنقلٌ بعده ينقل صفّاً لم يعد موجوداً. وتقديمُ التوقيع
-    //  على الوصفة هنا يعيد ترتيباً قائماً لسببٍ موثَّق، وذاك خارج هذه
-    //  المهمّة. **والرايةُ تُقرأ ولا تُنفَّذ**، ولا تُردّ ٤٠٩ في وجه توقيعٍ
-    //  كان يمضي قبل اليوم.
-    if (retypeAsked) return { episodeId: null, retype: false };
+    //  فصار الطلبُ يُنقَل بهويّته إلى خيطٍ **يُفتَح داخل معاملة التوقيع**
+    //  (`ensureActiveCaseTx`)، وتتولّى `retireRetypedSourceCase` رفعَ الخيط
+    //  المصدر بعد أن يفرغ. **والصلاحيةُ هي هي**: `retypableEpisodeForExam`
+    //  تُعيد التحقّق من كلّ شرط (المريض · الحالة · المسار · صلاحيةُ المطلوب
+    //  للنوع الجديد)، والقفلُ في `retypeAwaitingEpisodeForExamTx` هو الحَكَم
+    //  الأخير — ورفضٌ هناك يتراجع عن الخيط المفتوح معه.
+    if (retypeAsked) {
+      const ok = await retypableEpisodeForExam({
+        patientId: params.patientId, episodeId: params.deviceEpisodeId!,
+        targetServiceType: params.caseType,
+      });
+      if (ok) return { episodeId: params.deviceEpisodeId, retype: true };
+      throw new ExamEpisodeStaleError();
+    }
     if (params.deviceEpisodeId !== null) throw new ExamEpisodeStaleError();
     return { episodeId: null, retype: false };
   }
