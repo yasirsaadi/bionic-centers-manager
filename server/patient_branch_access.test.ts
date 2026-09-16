@@ -797,6 +797,63 @@ async function main() {
       same("٦٤. **واكتمالُ العملية يفكّ المنع**",
         (await http("DELETE", `/api/patients/${pH}/branch-access/${DHIQAR}`, S.admin)).status, 200);
     }
+
+    // ══ ي. **فتحُ الملفّ الكامل — لا السجلُّ وحده** ═══════════════════════
+    //  العطبُ المُبلَّغ: الفرعُ المضاف يرى المريضَ في السجلّ (`/api/patients/
+    //  registry` يستعمل `patientVisibleToScopeSql`) ثمّ يضغط الصفَّ فيُردّ
+    //  **٤٠٤** — لأن `GET /api/patients/:id` كانت تقيس بفرع التسجيل وحده
+    //  (`patient?.branchId === ctx.branchId`)، وهو بعينه النمطُ الذي يمنعه
+    //  `branch_access.ts` صراحةً. فصارت تقيس بالقاعدة نفسِها.
+    // ═════════════════════════════════════════════════════════════════════
+    console.log("\n── ي. الفرعُ المضاف يفتح الملفّ الكامل ──");
+    {
+      const pJ = await mkPatient("ي-فتح-الملفّ", DHIQAR);
+      await mkCase(pJ, DHIQAR);
+
+      //  قبل الإتاحة: لا في السجلّ ولا في الملفّ — والعزلُ هو الأصل.
+      const regBefore = await http("GET", "/api/patients/registry?pageSize=200", S.karbala);
+      const seenBefore = (regBefore.body?.rows ?? regBefore.body?.patients ?? [])
+        .some((r: any) => Number(r.id) === pJ);
+      same("٦٥. (قبل الإتاحة) لا يظهر في سجلّ كربلاء", seenBefore, false);
+      same("٦٦. (قبل الإتاحة) ولا يُفتَح ملفُّه — ٤٠٤",
+        (await http("GET", `/api/patients/${pJ}`, S.karbala)).status, 404);
+
+      //  الإتاحةُ لكربلاء بالمسار القانونيّ — لا `INSERT` مباشر.
+      const grant = await http("POST", `/api/patients/${pJ}/branch-access`, S.admin,
+        { branchId: KARBALA, note: "مراجعة في كربلاء" });
+      check(grant.status < 300, "٦٧. الإتاحةُ لكربلاء تنجح", JSON.stringify(grant.body));
+
+      //  **السجلُّ يراه** — وهذا كان يعمل أصلاً.
+      const regAfter = await http("GET", "/api/patients/registry?pageSize=200", S.karbala);
+      const seenAfter = (regAfter.body?.rows ?? regAfter.body?.patients ?? [])
+        .some((r: any) => Number(r.id) === pJ);
+      same("٦٨. **وموظّفُ كربلاء يراه في السجلّ**", seenAfter, true);
+
+      //  **وهذا هو العطبُ بعينه**: الصفُّ ظاهرٌ والملفُّ يُردّ ٤٠٤.
+      const full = await http("GET", `/api/patients/${pJ}`, S.karbala);
+      same("٦٩. **ويفتح ملفَّه الكامل** — لا ٤٠٤", full.status, 200);
+      same("   والملفُّ هو ملفُّه هو", Number(full.body?.id), pJ);
+      check(Array.isArray(full.body?.payments) && Array.isArray(full.body?.visits)
+            && Array.isArray(full.body?.documents),
+        "٧٠. **وبمحتواه الكامل** — دفعاتٌ وزياراتٌ ومستندات",
+        JSON.stringify(Object.keys(full.body ?? {})));
+
+      //  **وفرعُ التسجيل لم يتغيّر بحرف** — الإتاحةُ رؤيةٌ لا نقل.
+      const [row] = await q<{ b: number }>(`SELECT branch_id b FROM patients WHERE id=$1`, [pJ]);
+      same("٧١. وفرعُ تسجيله ما زال ذي قار", Number(row.b), DHIQAR);
+
+      //  **والعزلُ لم يضعف — والسحبُ يُغلق البابَ ثانيةً**: الرؤيةُ تتبع
+      //  الإتاحةَ لا العكس. وبند ٦٦ أعلاه هو الوجهُ الآخر: **الفرعُ نفسُه**
+      //  قبل أن يُتاح له يُردّ ٤٠٤ — فالمنعُ أصلٌ والإتاحةُ استثناءٌ صريح.
+      same("٧٢. السحبُ ينجح",
+        (await http("DELETE", `/api/patients/${pJ}/branch-access/${KARBALA}`, S.admin)).status, 200);
+      same("٧٣. **وبعد السحب يعود ٤٠٤**",
+        (await http("GET", `/api/patients/${pJ}`, S.karbala)).status, 404);
+
+      //  **وصاحبُ الملفّ لم يُمَسّ**: ذي قار يفتحه قبل الإتاحة وبعدها وبعد السحب.
+      same("٧٤. **وفرعُ التسجيل يفتحه في كلّ الأحوال**",
+        (await http("GET", `/api/patients/${pJ}`, S.dhiqar)).status, 200);
+    }
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`,
