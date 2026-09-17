@@ -114,8 +114,23 @@ console.log("\n── التصحيحُ من صفحة المريض والسجلّ
 check("٨ز. البابان الآخران لا يمرّران معرّفاً — ولذلك تلزم القائمة",
   !/deviceEpisodeId=/.test(filePage) && !/deviceEpisodeId=/.test(registry)
   && /deviceEpisodeId=\{target\.episodeId/.test(page));
-check("٨ز.١ **فحين لا جهازَ للاختصاص المختار تُقرأ أجهزةُ الاختصاص الآخر**",
-  mod.includes("awaiting.filter((e) => isDeviceSpecialty(e.caseType) && e.caseType !== specialty)"));
+//  ══ ⚠ انقلب عقدُ هذا البند (قرارُ المالك ٢٠٢٦-٠٩-١٧) ═══════════════════
+//  كان يثبت أن **فتحاً عامّاً** — بلا اختصاصٍ أصليٍّ معلوم — يقرأ أجهزةَ
+//  الاختصاص الآخر ليصحّح نوعَها. **وذاك تخمينُ نيّةٍ**: لم يبدّل الطبيبُ
+//  شيئاً، فيُصحَّح نوعُ طلبٍ مستقلٍّ ويُختَم عليه بترِكر ٠٢٨ فلا يُصحَّح.
+//  فصار مصدرُ مرشَّحي التصحيح **التبديلَ المرسى وحده، والباقي مصفوفةٌ فارغة**.
+const otherSpecialtyExpr = (() => {
+  const at = mod.indexOf("const otherSpecialty =");
+  if (at < 0) return "";
+  return mod.slice(at, mod.indexOf(";", at) + 1)
+    .replace(/^\s*\/\/.*$/gm, "").replace(/\s+/g, " ").trim();
+})();
+check("٨ز.١ **ولا مرشَّحَ تصحيحٍ إلّا من تبديلٍ مرسى** — بلا مخرجٍ للفتح العامّ",
+  otherSpecialtyExpr === "const otherSpecialty = switchedFromOpened "
+    + "? awaiting.filter((e) => e.caseType === openedSpecialty) : [];",
+  otherSpecialtyExpr);
+check("٨ز.١أ **والمخرجُ القديم مُزالٌ نصّاً** — لا يعود بصياغةٍ أخرى",
+  !mod.includes("e.caseType !== specialty"));
 check("٨ز.٢ **ولا تصحيحَ حين للاختصاص المختار طلبُه هو** — الآخرُ عمليةٌ مستقلّة",
   mod.includes("const fromList = sameSpecialty.length === 0 && otherSpecialty.length > 0"));
 //  **والمرساةُ هي الاختصاصُ الذي فُتحت به النافذة، لا الجديد**: فُتحت على طلب

@@ -1221,6 +1221,72 @@ async function main() {
         [await caseTypesOf(p), flags.s, flags.sup], [["prosthetic"], false, null]);
     }
 
+    // ══ خ. **الفتحُ العامّ لا يختطف طلبَ الاختصاص الآخر** (قرارُ المالك ٢٠٢٦-٠٩-١٧) ══
+    //  زرُّ «معاينة جديدة» في صفحة المريض يمرّر `preferSpecialty` من اختصاصٍ
+    //  **منتظرٍ يملكه الطبيبُ نفسُه**، وإلّا `null`. فطبيبُ أطرافٍ أمام مريضٍ
+    //  طلبُه المنتظر مساندٌ ⟶ فتحٌ عامّ، ثمّ يستقرّ الاختصاصُ على «أطراف».
+    //  وكانت الشاشةُ عندئذٍ ترسل معرّفَ طلب المساند ومعه رايةَ التصحيح —
+    //  فيُنقَل طلبٌ مستقلٌّ لم يبدّله أحد، وتُختَم عليه معاينةٌ (ترِكر ٠٢٨)
+    //  لا تُصحَّح بعدها. **فصارت لا ترسل شيئاً**، وهذا ما يثبته هذا القسم:
+    //  الحمولةُ بلا `deviceEpisodeId` وبلا راية — عقدُ الشاشة بعد الإصلاح.
+    console.log("\n── خ. الفتحُ العامّ: توقيعٌ بلا جهاز، وطلبُ الآخر لا يُمَسّ ──");
+    {
+      const p = await mkPatient("خ-general", "medical_support");
+      await mkCase(p, "medical_support");
+      await mkCase(p, "prosthetic");
+      await q(`UPDATE patients SET is_amputee=true WHERE id=$1`, [p]);
+      //  طلبُ مساندٍ **مستقلٌّ منتظر** — ولا طلبَ أطرافٍ إطلاقاً.
+      const A = await openEpisode(p, "medical_support");
+      const beforeA = await episodeRow(A.episodeId);
+      const reqA = await requestRow(A.requestId!);
+      const beforeRows = (await rowsOf(p)).map((r) => r.episodeId);
+
+      //  **الحمولةُ التي ترسلها الشاشةُ في الفتح العامّ**: بلا معرّف وبلا راية.
+      const ex = await signExam(p, S.doc, "prosthetic");
+      check(ex.status < 300, "١١٦. المعاينةُ تُحفَظ أطرافاً", JSON.stringify(ex.body));
+      same("١١٦.أ **ومختومةٌ بلا جهاز** — لا تُنسَب لطلبٍ لم ينظر فيه",
+        await examEpisode(Number(ex.body.id)), null);
+
+      // ══ **وطلبُ المساند مطابقٌ بايتاً بايت** — نوعاً وحالةً وطلبَ مراجعة ══
+      same("١١٧. **صفُّ طلب المساند مطابقٌ بايتاً بعد التوقيع**",
+        await episodeRow(A.episodeId), beforeA);
+      same("١١٧.أ ونوعُه لم يتغيّر — ما زال على خيط المساند",
+        await episodeCaseType(A.episodeId), "medical_support");
+      same("١١٧.ب وحالتُه كما هي — ينتظر معاينتَه",
+        await episodeStatus(A.episodeId), "awaiting_exam");
+      same("١١٨. **وطلبُ مراجعته مطابقٌ بايتاً** — معلَّقٌ بلا معاينة",
+        await requestRow(A.requestId!), reqA);
+      same("١١٨.أ ولا معاينةَ مختومةٌ عليه إطلاقاً",
+        await examEpisodeOf(A.episodeId), 0);
+      same("١١٨.ب ولا متابعةَ وُلدت له",
+        await followupsOfEpisode(A.episodeId), []);
+
+      // ══ والخيطان قائمان — لا رفعَ ولا إطفاءَ عَلَم ═══════════════════════
+      const flags = await deviceFlagsOf(p);
+      same("١١٩. الخيطان قائمان والعَلَمان مرفوعان",
+        [await caseTypesOf(p), flags.a, flags.s], [["medical_support", "prosthetic"], true, true]);
+      same("١٢٠. **وشارةُ انتظار المساند باقية** — الطلبُ ما زال ينتظر",
+        (await pendingSpecialtiesOf(p)).includes("medical_support"), true);
+      same("١٢١. وقائمةُ الطبيب تُظهر صفَّ المساند كما كان",
+        (await rowsOf(p)).map((r) => r.episodeId), beforeRows);
+
+      // ══ **والمتابعةُ المولودةُ بلا جهاز** — الشكلُ الموروث، لا اختطاف ════
+      const fu = await q<{ e: number | null }>(
+        `SELECT device_episode_id e FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [p]);
+      same("١٢٢. ومتابعةُ المعاينة بلا هويّة جهاز — لا تشير إلى طلب المساند",
+        fu.map((f) => f.e), fu.map(() => null));
+
+      // ══ **ولو أرسل عميلٌ الرايةَ صراحةً لمضى التصحيح** — الفرقُ في الشاشة
+      //  لا في الخادم: القرارُ «أهي نيّةُ تبديل؟» قرارُ الشاشة، والخادمُ ينفّذ
+      //  نيّةً صريحة. فهذا يثبت أن الإصلاحَ **هو الحمولةُ** لا حارسٌ جديد.
+      const withIntent = await signExam(p, S.doc, "prosthetic",
+        { deviceEpisodeId: A.episodeId, retypeDeviceEpisode: true });
+      check(withIntent.status < 300, "١٢٣. والنيّةُ الصريحة تُصحِّح كما كانت (٤.y بحرفه)",
+        JSON.stringify(withIntent.body));
+      same("١٢٣.أ — عندئذٍ وحدَها ينتقل الطلبُ إلى خيط الأطراف",
+        await episodeCaseType(A.episodeId), "prosthetic");
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {

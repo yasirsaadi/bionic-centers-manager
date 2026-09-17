@@ -9,6 +9,12 @@
 // بالنوع الصحيح من البداية يملك طلبَ جهازٍ حيّاً. مُعادٌ إنتاجُه حيّاً قبل
 // الإصلاح: `الحلقات: []` و`exam.device_episode_id = null`.
 //
+// ══ والعطبُ الثاني (٢٠٢٦-٠٩-١٧، قرارُ المالك) ════════════════════════════
+// ثمّ اتّسع العلاجُ أكثرَ ممّا يلزم: **فتحٌ عامّ** — نافذةٌ بلا اختصاصٍ أصليٍّ
+// معلوم — كان يُقرَأ تبديلاً فيُصحَّح نوعُ طلبٍ مستقلٍّ من الاختصاص الآخر لم
+// يبدّله أحد. فصار التصحيحُ التلقائيُّ **مشروطاً بتبديلٍ صريح عن مرساةٍ
+// معلومة** وحده، والفتحُ العامّ يوقّع على طلب اختصاصه هو أو **بلا جهاز**.
+//
 // ══ ولماذا دالّةٌ خالصة لا قراءةُ مصدر ═════════════════════════════════════
 // درسُ §4.u: قرارٌ داخل React لا يُختبَر إلّا بقراءة نصِّه، وقراءةُ النصّ لا
 // تُمسك انقلاباً في المعنى يعود بصياغةٍ أخرى.
@@ -41,22 +47,32 @@ const shape = (x: ReturnType<typeof r>) =>
   ({ id: x.episodeId, retype: x.retype, n: x.options.length, fromList: x.fromList,
      needsChoice: x.needsChoice, dropped: x.dropped, fixedActive: x.fixedActive });
 
-console.log("\n── أ. شكلُ المالك: «مساند» بالخطأ ⟵ الطبيبُ يختار «أطراف» ──");
+console.log("\n── أ. **الفتحُ العامّ لا يختطف طلبَ الاختصاص الآخر** ──");
 {
-  //  صفحةُ المريض والسجلّ لا يمرّران معرّفاً — هذا هو المدخلُ بعينه.
+  // ══ ⚠ انقلب عقدُ هذا القسم (قرارُ المالك ٢٠٢٦-٠٩-١٧) ════════════════════
+  //  كان يثبت أن فتحاً عامّاً — بلا `openedSpecialty` — **يصحّح** نوعَ طلبِ
+  //  الاختصاص الآخر. **وذاك تخمينُ نيّةٍ لا قراءتُها**: لم يبدّل الطبيبُ
+  //  شيئاً. والتصحيحُ المرسى يبقى مُثبَتاً كاملاً في القسم ج، فلا تنقص تغطية.
+  //
+  //  **شكلُ المالك**: للمريض خيطُ أطرافٍ وخيطُ مساند، وطلبُ مساندٍ مستقلٌّ
+  //  منتظر. يضغط الطبيبُ «معاينة جديدة» في صفحة المريض ولا اختصاصَ منتظرٌ
+  //  يملكه هو ⟶ `preferSpecialty = null` (فتحٌ عامّ)، ثمّ يستقرّ الاختصاصُ
+  //  على «أطراف» — اختصاصِه الوحيد.
   const out = r({ specialty: "prosthetic", awaiting: [ep(1, "medical_support")] });
-  same("١. الطلبُ نفسُه يُرسَل بمعرّفه — لا يُسقَط", out.episodeId, 1);
-  check(out.retype, "٢. **ومعه نيّةُ التصحيح صريحة**");
-  check(out.fromList, "٣. ومصدرُه قائمةُ المريض لا صفُّ «معايناتي»");
-  check(!out.needsChoice, "٤. وطلبٌ واحد ⟵ بلا سؤال");
+  same("١. **لا يُلتقَط طلبُ المساند ولا يُرسَل معرّفُه**", out.episodeId, null);
+  check(!out.retype, "٢. **ولا نيّةَ تصحيحٍ** — لم يبدّل الطبيبُ شيئاً");
+  same("٣. **ولا يُعرَض خياراً أصلاً**", out.options.map((o) => o.id), []);
+  check(!out.needsChoice, "٤. ولا يُحبَس الحفظُ بسؤال — المعاينةُ تُحفَظ بلا جهاز");
   same("٥. والشكلُ كاملاً", shape(out),
-    { id: 1, retype: true, n: 1, fromList: true, needsChoice: false, dropped: false, fixedActive: false });
+    { id: null, retype: false, n: 0, fromList: false, needsChoice: false, dropped: false, fixedActive: false });
 }
 
 console.log("\n── ب. الاتجاهُ العكسيّ وعدمُ التبديل ──");
 {
+  //  ⚠ انقلب كذلك (القرارُ نفسُه): الاتجاهُ العكسيّ في **فتحٍ عامّ**.
   const rev = r({ specialty: "medical_support", awaiting: [ep(5, "prosthetic")] });
-  same("٦. أطرافٌ بالخطأ ⟵ مساند: الطلبُ نفسُه", [rev.episodeId, rev.retype], [5, true]);
+  same("٦. **والعكسُ كذلك في الفتح العامّ** — لا التقاطَ ولا راية",
+    [rev.episodeId, rev.retype], [null, false]);
   const plain = r({ specialty: "medical_support", awaiting: [ep(5, "medical_support")] });
   same("٧. **وبلا تبديلٍ المسارُ كما كان بحرفه** — بلا راية", [plain.episodeId, plain.retype, plain.fromList],
     [5, false, false]);
@@ -129,18 +145,25 @@ console.log("\n── ج.٥ فتحٌ عامّ (بلا مرساة): طلبُ ال
   same("٢٤. ولا يظهر الآخرُ في الخيارات إطلاقاً", out.options.map((o) => o.id), [4]);
 }
 
-console.log("\n── د. أكثرُ من طلبٍ للاختصاص الآخر ⟵ لا تخمين ──");
+console.log("\n── د. **والفتحُ العامّ لا يسأل أصلاً عن طلبات الاختصاص الآخر** ──");
 {
+  // ══ ⚠ انقلب عقدُ هذا القسم (قرارُ المالك ٢٠٢٦-٠٩-١٧) ════════════════════
+  //  كان يثبت منتقياً إلزامياً بين طلبَي الاختصاص الآخر في الفتح العامّ.
+  //  **ولا مرشَّحَ الآن أصلاً**، فلا سؤالَ ولا تخمين. والمنتقي المرسى يبقى
+  //  مُثبَتاً كاملاً في ج.٢ بالاختيار والبائت معاً.
   const two = [ep(1, "medical_support"), ep(2, "medical_support", 2)];
   const out = r({ specialty: "prosthetic", awaiting: two });
-  same("٢٥. **لا يُخمَّن أيُّهما** — لا معرّف", out.episodeId, null);
-  check(out.needsChoice, "٢٦. ومنتقٍ إلزاميّ (لا حفظ قبله)");
-  same("٢٧. والخياران معروضان", out.options.map((o) => o.id), [1, 2]);
+  same("٢٥. **لا مرشَّح إطلاقاً** — لا معرّف ولا خيارات",
+    [out.episodeId, out.options.length], [null, 0]);
+  check(!out.needsChoice, "٢٦. **ولا منتقيَ يحبس الحفظ** — لا شيءَ يُختار منه");
+  check(!out.retype, "٢٧. ولا نيّةَ تصحيح");
+  //  **واختيارٌ صريحٌ من عميلٍ بائت لا يفتح البابَ**: لا يُقرأ اختياراً ولو
+  //  طابق معرّفاً حقيقياً في القائمة — المرشَّحون صفرٌ فلا شيءَ يُطابَق.
   const picked = r({ specialty: "prosthetic", awaiting: two, choice: 2 });
-  same("٢٨. واختيارُ الطبيب يُحسَم بنيّة التصحيح", [picked.episodeId, picked.retype, picked.needsChoice],
-    [2, true, false]);
+  same("٢٨. **واختيارٌ صريحٌ من عميلٍ بائت لا يُصحِّح شيئاً**",
+    [picked.episodeId, picked.retype, picked.needsChoice], [null, false, false]);
   const stale = r({ specialty: "prosthetic", awaiting: two, choice: 77 });
-  same("٢٩. **واختيارٌ بائتٌ لا يُقرأ اختياراً**", [stale.episodeId, stale.needsChoice], [null, true]);
+  same("٢٩. وكذلك اختيارٌ لا وجودَ له", [stale.episodeId, stale.needsChoice], [null, false]);
 }
 
 console.log("\n── هـ. ما لا يُصحَّح ──");
