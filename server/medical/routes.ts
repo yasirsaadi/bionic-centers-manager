@@ -137,6 +137,43 @@ function replyEpisodeError(res: any, err: DeviceEpisodeError) {
   });
 }
 
+/**
+ * **خاسرُ السباق عند فحص حالة الجهاز — إعادةُ إرسالٍ لا رفض** (٢٠٢٦-٠٩-١٧).
+ *
+ * ══ العلّة ════════════════════════════════════════════════════════════
+ * طلبان متطابقان بنفس مفتاح التطابق. الأوّلُ يلتزم **بين** فحصِ التطابق
+ * السريع في النقطة و`resolveExamEpisode` بعده مباشرةً. فيقرأ الثاني
+ * `medical_exams` ولا يجد صفّاً (الفائزةُ لم تلتزم بعد)، ثمّ يقرأ الجهازَ
+ * فيجده `examined` — فيُردّ **٤٠٩ `device_episode_stale`** («تغيّرت حالة
+ * طلب الجهاز») **قبل أن يبلغ `createExam` أصلاً**، فلا يمرّ بحزامِ إعادة
+ * الإرسال الذي هناك. وهو بعينه ما كان يُفشل البندين أ١/أ٢ في
+ * `server/medical_exam_idempotency.test.ts` بمعدّل ٦ من ١٤ تشغيلة.
+ *
+ * ══ والعلاجُ إعادةُ تحقّقٍ بالقاعدة الصارمة القائمة، لا تخفيفُها ═══════
+ * `findReplayableExam` **لم يتغيّر فيها حرف**: نفسُ المفتاح، ونفسُ مطابقة
+ * الهويّة والمحتوى معاً. فإن وُجدت المعاينةُ المطابقة تُعاد كما هي **بصفر
+ * كتابة** — لا تدقيقَ ثانٍ ولا متابعةَ ثانية ولا لمسَ جهازٍ آخر. وإلّا
+ * **يبقى الرفضُ الأصليُّ كما هو**: لا صفَّ بهذا المفتاح (`null`)، أو صفٌّ
+ * بهويّةٍ أو محتوًى مختلف (تعارض) — كلاهما ⟶ يُردّ البياتُ بحرفه.
+ *
+ * وهذا المسارُ لا يُنادى إلّا على `ExamEpisodeStaleError` وحدها: الالتباسُ
+ * (`device_episode_ambiguous`) وفرعُ الجهاز (`device_episode_branch`)
+ * يُردّان كما كانا — ليسا شكلَ سباقٍ على مفتاحٍ واحد.
+ */
+async function replayAfterStaleEpisode(
+  idempotencyKey: string,
+  expected: Parameters<typeof store.findReplayableExam>[1],
+) {
+  try {
+    return await store.findReplayableExam(idempotencyKey, expected);
+  } catch (err) {
+    //  تعارضٌ حقيقيّ (مفتاحٌ لطلبٍ آخر) ⟶ يبقى الرفضُ الأصليّ. وأيُّ خطأٍ
+    //  غيرِ متوقَّع يصعد كما هو — لا يُبتلَع في رفضٍ يخفيه.
+    if (err instanceof store.ExamIdempotencyConflictError) return null;
+    throw err;
+  }
+}
+
 function isValidIdempotencyKey(v: unknown): v is string {
   return typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(v);
 }
@@ -605,6 +642,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         resolvedEpisodeId = resolved.episodeId;
         retypeEpisode = resolved.retype;
       } catch (err) {
+        //  **البياتُ هنا قد يكون خسارةَ سباقٍ لا شاشةً بائتة** — الفائزةُ
+        //  التزمت بين فحص التطابق أعلاه وهذا الفحص. فيُعاد التحقّق بالمفتاح
+        //  نفسِه وبالقاعدة الصارمة نفسِها (`replayAfterStaleEpisode`): تُعاد
+        //  المعاينةُ المطابقة بصفر كتابة، وإلّا يبقى الرفضُ كما هو.
+        if (err instanceof store.ExamEpisodeStaleError) {
+          const winner = await replayAfterStaleEpisode(idempotencyKey, replayContent);
+          if (winner) return res.json({ ...winner, switchNote: null, created: false });
+        }
         if (err instanceof DeviceEpisodeError) return replyEpisodeError(res, err);
         throw err;
       }

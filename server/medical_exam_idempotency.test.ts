@@ -122,6 +122,46 @@ function randomKey(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 }
 
+// ══ بوّابةٌ اختباريةٌ حتميّة على قراءة «الأجهزة المنتظرة» ═══════════════════
+//  تحجز **أوّل** استعلامٍ يقرأ الأجهزةَ المنتظرة لخيطٍ بعد التسليح — وهو
+//  `awaitingExamEpisodesForCase` الذي يناديه `resolveExamEpisode` في النقطة.
+//  ويميّزه `ORDER BY sequence_number` عن قراءة فرع الجهاز (`episodeBranchOf`)
+//  التي **تسبق** الفحصَ السريع، فيقف الطلبُ **بين** الفحصين بالضبط — وذاك
+//  موضعُ العطب حرفياً. فيصير توقيتُ السباق **حتمياً لا احتمالاً**.
+//
+//  **ولا تُمَسّ شيفرةُ الخادم**: الاعتراضُ على عميل القاعدة في هذا الملفّ
+//  وحده، ويُستعاد الأصلُ في `finally` مهما وقع.
+const AWAITING_EPISODES_READ =
+  /patient_device_episodes[\s\S]*awaiting_exam[\s\S]*order\s+by\s+sequence_number/i;
+
+const rawPoolQuery = (pool as any).query;
+const passThroughQuery = rawPoolQuery.bind(pool);
+let gateArmed = false;
+let gateOpen: Promise<void> | null = null;
+let announceHit: (() => void) | null = null;
+
+(pool as any).query = function (...args: any[]) {
+  const first = args[0];
+  const text = typeof first === "string"
+    ? first
+    : (first && typeof first.text === "string" ? first.text : "");
+  if (gateArmed && AWAITING_EPISODES_READ.test(text)) {
+    gateArmed = false;
+    announceHit?.();
+    return gateOpen!.then(() => passThroughQuery(...args));
+  }
+  return passThroughQuery(...args);
+};
+
+/** يُسلِّح البوّابة لطلبٍ واحد: `reached` تُحَلّ حين يقف، و`release` تُطلقه. */
+function armAwaitingReadGate() {
+  let release!: () => void;
+  gateOpen = new Promise<void>((r) => { release = r; });
+  const reached = new Promise<void>((r) => { announceHit = r; });
+  gateArmed = true;
+  return { reached, release };
+}
+
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM post_exam_followup_events WHERE patient_id IN (${ids})`);
@@ -543,7 +583,158 @@ async function main() {
     same("   والطلبُ الثاني ما زال منتظِراً لم يُمَسّ",
       (await q<{ status: string }>(`SELECT status FROM patient_device_episodes WHERE id=$1`, [epT2]))[0].status,
       "awaiting_exam");
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ك. **البياتُ في النقطة** — خاسرُ سباقٍ يُردّ قبل أن يبلغ `createExam`
+    // ══════════════════════════════════════════════════════════════════
+    //  ══ العلّة ══════════════════════════════════════════════════════════
+    //  طلبان **متطابقان** بنفس المفتاح. الأوّلُ يلتزم **بين** فحصِ التطابق
+    //  السريع في النقطة و`resolveExamEpisode` بعده. فيقرأ الثاني
+    //  `medical_exams` ولا يجد صفّاً (الفائزةُ لم تلتزم بعد)، ثمّ يقرأ
+    //  الجهازَ فيجده `examined` ⟶ **٤٠٩ `device_episode_stale`** قبل أن
+    //  يبلغ `createExam` أصلاً، فلا يمرّ بحزامِ إعادة الإرسال الذي هناك.
+    //  وهو بعينه ما كان يُفشل أ١/أ٢ أعلاه بمعدّل ٦ من ١٤ تشغيلة.
+    //
+    //  ══ والتوقيتُ هنا **حتميٌّ لا احتمال** ══════════════════════════════
+    //  بوّابةٌ اختباريةٌ على `pool.query` تحجز **أوّل** قراءةٍ لحالة الأجهزة
+    //  المنتظرة بعد التسليح (استعلامُ `awaitingExamEpisodesForCase` وحده —
+    //  يميّزه `ORDER BY sequence_number` فلا يلتقط قراءةَ فرع الجهاز التي
+    //  تسبق الفحصَ السريع). فتتوقّف الخاسرةُ **في النقطة بالضبط** التي
+    //  يصفها العطب، وتُطلَق الفائزةُ حتى تلتزم، ثمّ تُحرَّر. **ولا تُمَسّ
+    //  شيفرةُ الخادم**: اعتراضٌ على عميل القاعدة في الاختبار وحده،
+    //  يُستعاد الأصلُ بعده مهما وقع.
+    console.log("\n── ك. بياتُ الجهاز في النقطة — طلبان متطابقان ──");
+
+    const pK = await mkPatient("سباقُ البيات في النقطة");
+    const cK = await mkCase(pK);
+    const epK1 = await mkAwaitingEpisode(pK, cK, 1);
+    const epK2 = await mkAwaitingEpisode(pK, cK, 2); // **الجهازُ المستقلّ — لا يُمَسّ**
+
+    const keyK = randomKey("route-stale-replay");
+    const payloadK = {
+      caseType: "prosthetic",
+      diagnosis: "بتر تحت الركبة",
+      chiefComplaint: "ألمٌ في موضع البتر",
+      plan: "طرفٌ صناعيّ",
+      notes: null,
+      prescription: { prostheticType: "تحت الركبة" },
+      idempotencyKey: keyK,
+      deviceEpisodeId: epK1,
+    };
+
+    const gateK = armAwaitingReadGate();
+    //  الخاسرةُ تنطلق ولا تُنتظَر — تتوقّف عند فحص حالة الجهاز.
+    const loserK = http("POST", `/api/medical/patients/${pK}/exams`, S.doctor, payloadK);
+    await gateK.reached;
+
+    //  والفائزةُ تمضي كاملةً وتلتزم بينما الخاسرةُ محجوزة.
+    const winnerK = await http("POST", `/api/medical/patients/${pK}/exams`, S.doctor, payloadK);
+    check(winnerK.status === 200 || winnerK.status === 201,
+      "ك١. الفائزةُ تلتزم أوّلاً", JSON.stringify(winnerK.body));
+    same("   والجهازُ المقصود صار `examined`", await episodeStatus(epK1), "examined");
+
+    //  **لقطةٌ قبل تحرير الخاسرة** — فيُقاس أثرُها وحدها بعد أن تعود.
+    const snapK = async () => ({
+      exams: (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pK]))[0].n,
+      followups: (await q<{ n: number }>(`SELECT count(*)::int n FROM post_exam_followups WHERE patient_id=$1`, [pK]))[0].n,
+      audits: (await q<{ n: number }>(`SELECT count(*)::int n FROM audit_log
+        WHERE entity_type='medical_exam' AND action='create' AND entity_id=$1`, [winnerK.body?.id]))[0].n,
+      episodes: await q<{ id: number; status: string; case_id: number; sequence_number: number }>(
+        `SELECT id, status, case_id, sequence_number FROM patient_device_episodes
+          WHERE patient_id=$1 ORDER BY id`, [pK]),
+      orders: (await q<{ n: number }>(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`, [pK]))[0].n,
+      costs: (await q<{ n: number }>(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [pK]))[0].n,
+      totalCost: (await q<{ total_cost: number }>(`SELECT total_cost FROM patients WHERE id=$1`, [pK]))[0].total_cost,
+    });
+    const beforeK = await snapK();
+
+    gateK.release();
+    const loserRes = await loserK;
+
+    check(loserRes.status === 200 || loserRes.status === 201,
+      "ك٢. **والخاسرةُ تنجح كذلك** — لا تُردّ `device_episode_stale` وهي إعادةُ إرسالٍ مطابقة",
+      JSON.stringify([loserRes.status, loserRes.body?.code, loserRes.body?.error]));
+    same("ك٣. **وتُعيد معرّفَ المعاينة نفسَه**", loserRes.body?.id, winnerK.body?.id);
+    same("   و`created: false` صراحةً", loserRes.body?.created, false);
+
+    const afterK = await snapK();
+    same("ك٤. **وصفرُ كتابةٍ في مسار الاسترداد** — بصمةُ الملفّ قبل الخاسرة وبعدها سواء",
+      afterK, beforeK);
+
+    same("ك٥. **معاينةٌ واحدةٌ بالضبط**", afterK.exams, 1);
+    same("ك٦. **ومتابعةٌ واحدة**", afterK.followups, 1);
+    same("ك٧. **وسطرُ تدقيقِ إنشاءٍ واحد**", afterK.audits, 1);
+
+    const epK2Row = afterK.episodes.find((e) => e.id === epK2);
+    same("ك٨. **والجهازُ المستقلّ لم يُمَسّ** — ما زال منتظِراً بخيطه وتسلسله",
+      [epK2Row?.status, epK2Row?.case_id, epK2Row?.sequence_number],
+      ["awaiting_exam", cK, 2]);
+    same("   والمعاينةُ مختومةٌ على الجهاز المقصود وحده",
+      (await q<{ device_episode_id: number | null }>(
+        `SELECT device_episode_id FROM medical_exams WHERE patient_id=$1`, [pK]))[0].device_episode_id,
+      epK1);
+
+    same("ك٩. **ولا أثرَ ماليٍّ ولا تصنيعيّ**",
+      [afterK.orders, afterK.costs, afterK.totalCost], [0, 0, 0]);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ل. **وإلّا يبقى الرفض** — نفسُ المخرج، بطلبٍ ليس إعادةَ إرسال
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ل. البياتُ يبقى رفضاً لمن ليس إعادةَ إرسال ──");
+
+    //  (١) **مفتاحٌ جديد على جهازٍ استُهلك** — يمرّ بالمخرج نفسِه، ولا صفَّ
+    //  بهذا المفتاح إطلاقاً ⟶ الرفضُ كما كان بحرفه.
+    const staleFresh = await http("POST", `/api/medical/patients/${pK}/exams`, S.doctor, {
+      ...payloadK, idempotencyKey: randomKey("route-stale-fresh"),
+    });
+    same("ل١. **مفتاحٌ جديد على جهازٍ لم يعد منتظِراً ⟶ ٤٠٩**", staleFresh.status, 409);
+    same("   برمز البيات نفسِه", staleFresh.body?.code, "device_episode_stale");
+    same("   ولا صفَّ معاينةٍ ثانٍ",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pK]))[0].n, 1);
+
+    //  (٢) **وسباقٌ بمحتوًى مختلف** — الخاسرةُ تبلغ المخرجَ نفسَه، وصفُّ
+    //  المفتاح موجودٌ لكنّه **ليس طلبَها**: المطابقةُ الصارمة ترفضه ⟶ يبقى
+    //  الرفض. فلا يصير المخرجُ الجديد باباً يُعيد معاينةَ غيرِ صاحبها.
+    const pL = await mkPatient("سباقٌ بمحتوًى مختلف");
+    const cL = await mkCase(pL);
+    const epL = await mkAwaitingEpisode(pL, cL, 1);
+    const keyL = randomKey("route-stale-mismatch");
+    const baseL = {
+      caseType: "prosthetic", chiefComplaint: null, plan: null, notes: null,
+      prescription: {}, idempotencyKey: keyL, deviceEpisodeId: epL,
+    };
+
+    const gateL = armAwaitingReadGate();
+    const loserL = http("POST", `/api/medical/patients/${pL}/exams`, S.doctor,
+      { ...baseL, diagnosis: "تشخيصُ الخاسرة — مختلفٌ تماماً" });
+    await gateL.reached;
+    const winnerL = await http("POST", `/api/medical/patients/${pL}/exams`, S.doctor,
+      { ...baseL, diagnosis: "تشخيصُ الفائزة" });
+    check(winnerL.status === 200 || winnerL.status === 201,
+      "ل٢. الفائزةُ تلتزم", JSON.stringify(winnerL.body));
+    gateL.release();
+    const loserLRes = await loserL;
+
+    same("ل٣. **والخاسرةُ بمحتوًى مختلف تُردّ** — لا تُعاد لها معاينةُ غيرها",
+      loserLRes.status, 409);
+    check(loserLRes.body?.id === undefined || loserLRes.body?.id === null,
+      "   ولا يُسرَّب معرّفُ معاينة الفائزة في الردّ", JSON.stringify(loserLRes.body));
+    same("ل٤. **ومعاينةٌ واحدةٌ فقط للمريض** — تشخيصُ الفائزة وحده",
+      (await q<{ n: number; diagnosis: string }>(
+        `SELECT count(*)::int n, min(diagnosis) diagnosis FROM medical_exams WHERE patient_id=$1`, [pL]))[0],
+      { n: 1, diagnosis: "تشخيصُ الفائزة" });
+
+    //  (٣) **ونفسُ المفتاح بمحتوًى مختلف بعد استقرار السباق** — الفحصُ
+    //  السريع يردّه تعارضاً كما كان، بلا تغيير.
+    same("ل٥. **ونفسُ المفتاح بمحتوًى مختلف ⟶ تعارضٌ كما كان**",
+      (await http("POST", `/api/medical/patients/${pK}/exams`, S.doctor,
+        { ...payloadK, diagnosis: "شيءٌ آخر تماماً" })).status, 409);
+    same("   ومريضٌ مختلفٌ بنفس المفتاح ⟶ تعارضٌ كذلك",
+      (await http("POST", `/api/medical/patients/${p2}/exams`, S.doctor, payloadK)).status, 409);
   } finally {
+    //  يُستعاد عميلُ القاعدة الأصليّ أوّلاً — فلا تنظيفٌ يمرّ ببوّابةٍ مسلَّحة.
+    gateArmed = false;
+    (pool as any).query = rawPoolQuery;
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR, DOCTOR2]]);
     await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[MANAGER, DOCTOR, DOCTOR2]]);
