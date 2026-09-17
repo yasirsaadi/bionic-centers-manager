@@ -424,7 +424,19 @@ export async function createExam(values: {
           await tx.transaction(async (inner: any) => {
             await ensureFollowupForSignedExam(inner, {
               patientId: values.patientId,
-              caseId: values.caseId,
+              //  ══ **الخيطُ المحسوم — لا `values.caseId`** ══════════════════
+              //  هو بعينه ما كُتب على صفّ المعاينة أعلاه. وتصحيحُ نوع الطلب
+              //  إلى اختصاصٍ **لم يكن له خيطٌ قائم** (٤.y، تكملةٌ ثانية) يفتح
+              //  الخيطَ الهدفَ **داخل هذه المعاملة**، بينما `values.caseId`
+              //  لقطةٌ قُرئت قبلها فتصل `null`.
+              //
+              //  فكانت المتابعةُ تُولَد بـ`case_id = NULL` على أشيع شكلٍ من
+              //  أشكال التصحيح، و`completeReceptionSale` تردّ **٤٠٩ «هوية
+              //  الجهاز غير مكتملة»** على كلّ بيعٍ بدفعةٍ فورية
+              //  (`server/followup/store.ts`: `sold.caseId === null`) —
+              //  فالملفُّ يُعايَن ولا يُباع. وتصحيحُ السعر بعد البيع كان
+              //  يتخطّى كلفةَ الحالة للسبب نفسِه.
+              caseId: targetCaseId,
               deviceEpisodeId: episodeId,
               medicalExamId: row.id,
               //  **فرعُ العملية لا فرعُ التسجيل**: متابعةُ جهازٍ نُقلت

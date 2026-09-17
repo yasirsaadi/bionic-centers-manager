@@ -1058,6 +1058,44 @@ async function main() {
       same("١٠٤.ج **ولا صفَّ مساندٍ في قائمة عمل الطبيب**",
         (await rowsOf(p)).map((r: any) => r.caseType), []);
 
+      //  ══ **والمتابعةُ تحمل الخيطَ الهدفَ نفسَه الذي تحمله المعاينة** ═════
+      //  كانت تُنشأ بـ`values.caseId` — لقطةٌ قُرئت **قبل** أن يُفتَح خيطُ
+      //  الأطراف داخل معاملة التوقيع، فتصل `null`. فيخرج المريضُ بمعاينةٍ
+      //  على خيطٍ صحيح ومتابعةٍ بلا خيطٍ إطلاقاً، و`completeReceptionSale`
+      //  تردّ **٤٠٩ «هوية الجهاز غير مكتملة»** على كلّ بيعٍ بدفعةٍ فورية
+      //  (`sold.caseId === null`) — فالملفُّ يُعايَن ولا يُباع.
+      const prostheticCaseId = (await q<{ id: number }>(
+        `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [p]))[0]?.id ?? null;
+      const fRow = (await q<{ id: number; c: number | null; e: number | null; st: string }>(
+        `SELECT id, case_id c, device_episode_id e, status st
+           FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [p]))[0];
+      check(prostheticCaseId !== null, "١٠٤.د (الإعدادُ: خيطُ الأطراف مفتوحٌ فعلاً)");
+      same("١٠٤.هـ **ومتابعتُها تحمل خيطَ الأطراف نفسَه** — لا `case_id` فارغاً",
+        [fRow?.c, fRow?.e], [prostheticCaseId, A.episodeId]);
+      same("   وهو بعينه خيطُ المعاينة — لا خيطان",
+        examId === null ? null : (await q<{ c: number | null }>(
+          `SELECT case_id c FROM medical_exams WHERE id=$1`, [examId]))[0]?.c,
+        prostheticCaseId);
+
+      //  **والبرهانُ الحيّ**: البيعُ بدفعةٍ فورية يمضي — وهو ما كان يُردّ ٤٠٩.
+      const saleT = await http("POST", `/api/followups/${fRow?.id}/complete-sale`, S.recv, {
+        originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 200_000,
+      });
+      check(saleT.status < 300, "١٠٤.و **وإتمامُ البيع مع دفعةٍ فورية ينجح**",
+        `الحالة: ${saleT.status} · ${JSON.stringify(saleT.body)}`);
+      const payT = (await q<{ c: number | null; e: number | null; a: number }>(
+        `SELECT case_id c, device_episode_id e, amount::int a FROM payments WHERE patient_id=$1 ORDER BY id`,
+        [p]));
+      same("١٠٤.ز ودفعةٌ واحدة على الخيط الهدف وعلى عملية الجهاز نفسِها",
+        payT.map((r) => [r.c, r.e, r.a]), [[prostheticCaseId, A.episodeId, 200_000]]);
+      same("   والمتابعةُ تحوّلت بأمرِ تصنيعٍ على الحلقة نفسِها",
+        [(await q<{ st: string }>(`SELECT status st FROM post_exam_followups WHERE id=$1`,
+          [fRow?.id]))[0]?.st,
+         (await q<{ n: number }>(
+           `SELECT count(*)::int n FROM prosthetic_work_orders
+             WHERE patient_id=$1 AND device_episode_id=$2`, [p, A.episodeId]))[0]?.n],
+        ["converted", 1]);
+
       //  ت.٢ — الاتجاهُ العكسيّ بالبساطة نفسِها.
       const p2 = await mkPatient("ت-simple-rev", "prosthetic");
       await mkCase(p2, "prosthetic");
