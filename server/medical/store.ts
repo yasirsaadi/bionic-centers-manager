@@ -29,14 +29,19 @@ import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { ensureActiveCaseTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
   ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
   awaitingExamEpisodesForCase, episodeBranchOf,
+  retypableEpisodeForExam, retypeAwaitingEpisodeForExamTx, caseHasAnyEpisode,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
-import { closeRequestsAwaitingExam, specialtyLevelRequestSql } from "../medical_review/store";
+import {
+  closeRequestsAwaitingExam, specialtyLevelRequestSql,
+  retagPendingRequestsForRetypedEpisode,
+} from "../medical_review/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -268,6 +273,15 @@ export async function createExam(values: {
    * وأكثرُ من واحدة ⟵ `ExamEpisodeAmbiguousError` ٤٠٩ بلا كتابة.
    */
   deviceEpisodeId?: number | null;
+  /**
+   * **تصحيحُ نوع هذا الطلب بعينه** (٤.y) — الطبيبُ بدّل الاختصاص على صفٍّ
+   * وصله بهويّته. فـ`deviceEpisodeId` أعلاه يشير إلى طلبٍ **على خيطٍ آخر**،
+   * ويُنقَل إلى خيط `caseType` **بمعرّفه** قبل أن يُحجَز للمعاينة.
+   *
+   * **ولا يُقرأ بلا معرّف**: راية تصحيحٍ بلا هويّةِ الطلب المقصود تفتح
+   * البابَ الذي جاءت لتغلقه — اختيارَ طلبٍ آخر نيابةً عن الطبيب.
+   */
+  retypeEpisode?: boolean;
 }, opts?: {
   /**
    * نطاقُ الجلسة الحيّ — يُفحَص **على فرع الحلقة تحت القفل**: إتاحةُ الملفّ
@@ -275,7 +289,15 @@ export async function createExam(values: {
    * آخر. غيابُه/`null` = بلا حراسةٍ هنا (مسؤولٌ عام، أو منادٍ داخليّ).
    */
   branchIds?: number[] | null;
-}): Promise<{ exam: MedicalExam; created: boolean }> {
+}): Promise<{
+  exam: MedicalExam;
+  created: boolean;
+  /**
+   * **الخيطُ الذي غادره الطلبُ** حين صُحِّح نوعُه (٤.y) — يقرؤه المنادي
+   * ليُنظّف أثرَ الخطأ التشغيليّ بعد الالتزام. و`null` حين لا تصحيحَ وقع.
+   */
+  retypedFrom: string | null;
+}> {
   const key = values.idempotencyKey;
   if (!key || !key.trim()) {
     throw new Error("createExam: idempotencyKey is required");
@@ -286,22 +308,56 @@ export async function createExam(values: {
   // (قبل `applyDecision`) لا يمنع سباقاً وصل إلى هنا أصلاً بعد أن فات ذلك
   // الفحص. حزامٌ ثانٍ رخيص، لا تكراراً للمعنى.
   const already = await findReplayableExam(key, values);
-  if (already) return { exam: already, created: false };
+  if (already) return { exam: already, created: false, retypedFrom: null };
 
   try {
     return await db.transaction(async (tx) => {
       let episodeId: number | null = null;
+      let retypedEpisode = false;
+      let retypedFrom: string | null = null;
       //  **فرعُ العملية** — فرعُ الحلقة حين توجد، وإلّا فرعُ الحالة/التسجيل
       //  كما مرّره المنادي. فمعاينةُ جهازٍ نُقلت مسؤوليتُه تُسجَّل بفرع مَن
       //  يعمل عليه فعلاً، لا بفرع تسجيل المريض.
       let operationBranchId: number | null = values.branchId ?? null;
 
-      if (isDevice && values.caseId !== null) {
+      //  ══ **والخيطُ الهدفُ يُفتَح هنا حين لا يوجد** (٤.y، تكملة) ═════════
+      //  تصحيحُ النوع إلى اختصاصٍ لا خيطَ له بعد كان يُسقَط، فيهدم مسارُ
+      //  §4.b الطلبَ نفسَه بدل أن ينقله. فيُفتَح الخيطُ **داخل هذه المعاملة**
+      //  قبل النقل — ورفضٌ في أيّ خطوةٍ بعده يتراجع عنه معها.
+      let targetCaseId = values.caseId;
+      if (
+        isDevice && targetCaseId === null &&
+        values.retypeEpisode === true && values.deviceEpisodeId != null
+      ) {
+        targetCaseId = await ensureActiveCaseTx(tx, {
+          patientId: values.patientId,
+          caseType: values.caseType,
+          branchId: values.branchId ?? null,
+        });
+      }
+
+      if (isDevice && targetCaseId !== null) {
+        //  ══ **تصحيحُ نوع الطلب يسبق حجزَه** (٤.y) ═══════════════════════
+        //  الطلبُ يُنقَل إلى خيط الاختصاص الذي وقّعه الطبيب **بمعرّفه**،
+        //  ثمّ يُحجَز بالمسار القائم نفسِه — فحُرّاسُ الحجز (الحالة، المسار،
+        //  الفرع) تبقى الكلمةَ الأخيرة، ولا بابَ ثانياً يلتفّ عليها.
+        //  وكلُّ ذلك في معاملة التوقيع: رفضٌ في أيّ خطوة = صفرُ كتابة.
+        if (values.retypeEpisode === true && values.deviceEpisodeId != null) {
+          const moved = await retypeAwaitingEpisodeForExamTx(tx, {
+            patientId: values.patientId,
+            episodeId: values.deviceEpisodeId,
+            targetCaseId,
+            targetServiceType: values.caseType,
+            branchIds: opts?.branchIds ?? null,
+          });
+          retypedEpisode = true;
+          retypedFrom = moved.fromServiceType;
+        }
         //  **بالمعرّف حين يُعطى، وبالوحدانية حين يغيب** — ولا `LIMIT 1`.
         //  والرميُ هنا يقع **قبل** إدراج المعاينة: الالتباسُ والبياتُ
         //  وخروجُ الفرع يتراجعون بصفر كتابة.
         const claimed = await claimAwaitingEpisodeForExam(tx, {
-          patientId: values.patientId, caseId: values.caseId,
+          patientId: values.patientId, caseId: targetCaseId,
           episodeId: values.deviceEpisodeId ?? null,
           branchIds: opts?.branchIds ?? null,
         });
@@ -317,7 +373,9 @@ export async function createExam(values: {
 
       const [row] = await tx
         .insert(EX)
-        .values({ ...values, branchId: operationBranchId, deviceEpisodeId: episodeId })
+        //  `caseId` من الخيط المحسوم أعلاه — لا من الطلب: الخيطُ قد يكون
+        //  فُتح في هذه المعاملة لتصحيحٍ لم يجد خيطاً هدفاً.
+        .values({ ...values, caseId: targetCaseId, branchId: operationBranchId, deviceEpisodeId: episodeId })
         .returning();
 
       if (episodeId !== null) await markEpisodeExamined(tx, episodeId);
@@ -329,6 +387,18 @@ export async function createExam(values: {
       //  (مراجعة المرحلة الأولى: REF-8/CLOSE-1). فصار الإغلاقُ والتوقيعُ حدثاً
       //  واحداً: معاً أو لا شيء — وإغلاقُ صفٍّ لا يفشل إلّا بعطب قاعدةٍ يُفشل
       //  التوقيعَ معه على أي حال.
+      //  **وطلبُ المراجعة يتبع طلبَ الجهاز حين يُصحَّح نوعه** (٤.y) —
+      //  **قبل** الإغلاق أدناه، لأنه يطابق بـ`service_type`: صفٌّ بقي على
+      //  النوع القديم لا يُغلَق فيبقى معلَّقاً في طابورٍ غادره طلبُه.
+      if (retypedEpisode && episodeId !== null) {
+        await retagPendingRequestsForRetypedEpisode({
+          patientId: values.patientId, episodeId,
+          //  الخيطُ المحسوم — لا `values.caseId`: تصحيحٌ لم يجد خيطاً هدفاً
+          //  يفتحه في هذه المعاملة، فكان الطلبُ يُعاد وسمُه بـ`case_id = NULL`.
+          caseId: targetCaseId, serviceType: values.caseType, tx,
+        });
+      }
+
       await closeRequestsAwaitingExam({
         patientId: values.patientId, serviceType: values.caseType, examId: row.id,
         deviceEpisodeId: episodeId, tx,
@@ -373,7 +443,7 @@ export async function createExam(values: {
         }
       }
 
-      return { exam: row, created: true };
+      return { exam: row, created: true, retypedFrom };
     });
   } catch (err: any) {
     // ══ خاسرُ سباقِ المفتاح الواحد يصطدم بالحلقة قبل الفهرس ═══════════════
@@ -383,14 +453,14 @@ export async function createExam(values: {
     //  الهويّة والمحتوى (مراجعة المرحلة الأولى: P1-C2).
     if (err instanceof ExamEpisodeStaleError) {
       const winner = await findReplayableExam(key, values);
-      if (winner) return { exam: winner, created: false };
+      if (winner) return { exam: winner, created: false, retypedFrom: null };
       throw err;
     }
     if (err?.code === "23505" && String(err?.constraint ?? "") === "uq_medical_exams_idempotency_key") {
       // نفسُ فحص الهويّة والمحتوى بالضبط عبر `findReplayableExam` — لا
       // نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الفحص السريع أعلاه.
       const winner = await findReplayableExam(key, values);
-      if (winner) return { exam: winner, created: false };
+      if (winner) return { exam: winner, created: false, retypedFrom: null };
       // القاعدةُ ضمنت وجودَ صفٍّ بهذا المفتاح — هذا هو معنى ٢٣٥٠٥ هنا — و
       // `findReplayableExam` كانت لتُرجعه أو تَرمي تعارضاً. هذا السطر شبكةُ
       // أمانٍ لحالةٍ لا يُفترَض بلوغها، لا مسارٌ متوقَّع.
@@ -427,21 +497,66 @@ export async function examOperationBranch(
  */
 export async function resolveExamEpisode(params: {
   patientId: number; caseId: number | null; deviceEpisodeId: number | null;
-}): Promise<number | null> {
+  /** اختصاصُ المعاينة — يلزم لتصحيح نوع الطلب (٤.y). */
+  caseType: string;
+  /**
+   * **الطبيبُ بدّل الاختصاصَ على هذا الطلب بعينه** (٤.y) — فالمعرّفُ يشير
+   * إلى طلبٍ على خيطٍ آخر، والمقصودُ تصحيحُه هو لا اختيارُ بديلٍ عنه.
+   * وبلا هذه الراية يبقى معرّفُ خيطٍ آخر بائتاً كما كان (٤٠٩).
+   */
+  retype?: boolean;
+}): Promise<{ episodeId: number | null; retype: boolean }> {
+  const retypeAsked = params.retype === true && params.deviceEpisodeId !== null;
   if (params.caseId === null) {
+    //  ══ **ولا خيطَ للاختصاص الجديد بعد — والطلبُ يُصحَّح مع ذلك** (٤.y،
+    //  تكملة) ══════════════════════════════════════════════════════════════
+    //  كان التصحيحُ يُسقَط هنا فيتولّاه مسارُ §4.b: يُنشئ الخيطَ الجديد
+    //  **ويهدم** الخيطَ الوحيد السابق بما فيه هذا الطلبُ نفسُه (حلقةٌ
+    //  `awaiting_exam` = سقالةٌ بحكم §4.r). فيخرج المريضُ **بلا طلبِ جهازٍ
+    //  إطلاقاً**، ومعاينتُه ومتابعتُه بلا هويّة — لا «كأنّه سُجّل أطرافاً
+    //  من البداية».
+    //
+    //  فصار الطلبُ يُنقَل بهويّته إلى خيطٍ **يُفتَح داخل معاملة التوقيع**
+    //  (`ensureActiveCaseTx`)، وتتولّى `retireRetypedSourceCase` رفعَ الخيط
+    //  المصدر بعد أن يفرغ. **والصلاحيةُ هي هي**: `retypableEpisodeForExam`
+    //  تُعيد التحقّق من كلّ شرط (المريض · الحالة · المسار · صلاحيةُ المطلوب
+    //  للنوع الجديد)، والقفلُ في `retypeAwaitingEpisodeForExamTx` هو الحَكَم
+    //  الأخير — ورفضٌ هناك يتراجع عن الخيط المفتوح معه.
+    if (retypeAsked) {
+      const ok = await retypableEpisodeForExam({
+        patientId: params.patientId, episodeId: params.deviceEpisodeId!,
+        targetServiceType: params.caseType,
+      });
+      if (ok) return { episodeId: params.deviceEpisodeId, retype: true };
+      throw new ExamEpisodeStaleError();
+    }
     if (params.deviceEpisodeId !== null) throw new ExamEpisodeStaleError();
-    return null;
+    return { episodeId: null, retype: false };
   }
   const waiting = await awaitingExamEpisodesForCase({
     patientId: params.patientId, caseId: params.caseId,
   });
   if (params.deviceEpisodeId !== null) {
-    if (!waiting.some((c) => c.id === params.deviceEpisodeId)) throw new ExamEpisodeStaleError();
-    return params.deviceEpisodeId;
+    //  الطلبُ على الخيط الصحيح أصلاً — المسارُ القائم بحرفه، ولا تصحيحَ يقع
+    //  ولو وصلت الراية (الطبيبُ بدّل ثمّ عاد إلى النوع نفسِه).
+    if (waiting.some((c) => c.id === params.deviceEpisodeId)) {
+      return { episodeId: params.deviceEpisodeId, retype: false };
+    }
+    //  **وإن لم يكن عليه: يُصحَّح هو، ولا يُختار غيرُه أبداً** — فلو لم يعد
+    //  صالحاً يُردّ ٤٠٩ بصفر كتابة، ولا سقوطَ إلى «الوحيدة المنتظرة» التي
+    //  قد تكون طلباً مستقلّاً آخر لم ينظر فيه الطبيب.
+    if (retypeAsked) {
+      const ok = await retypableEpisodeForExam({
+        patientId: params.patientId, episodeId: params.deviceEpisodeId,
+        targetServiceType: params.caseType,
+      });
+      if (ok) return { episodeId: params.deviceEpisodeId, retype: true };
+    }
+    throw new ExamEpisodeStaleError();
   }
-  if (waiting.length === 0) return null;
+  if (waiting.length === 0) return { episodeId: null, retype: false };
   if (waiting.length > 1) throw new ExamEpisodeAmbiguousError(waiting);
-  return waiting[0].id;
+  return { episodeId: waiting[0].id, retype: false };
 }
 
 // ── episode-aware readers (PR #217) ─────────────────────────────────────────
@@ -680,6 +795,61 @@ export async function retireSupersededCase(
     // Guard tripped — the old case has real history (a work order, or tagged
     // payments). Keep both and let the caller say so.
     return { switched: false, reason: err?.message || "تعذّر استبدال الحالة السابقة" };
+  }
+}
+
+/**
+ * **أثرُ الخطأ التشغيليّ يُرفَع مع الطلب الذي صُحِّح** (٤.y).
+ *
+ * الاستعلاماتُ سجّلت العمليةَ مسنداً بالخطأ، والطبيبُ صحّحها إلى أطراف
+ * فانتقل الطلبُ بهويّته إلى خيط الأطراف. فإن لم يبقَ على خيط المساند **شيء**،
+ * فوجودُه على الملفّ أثرٌ لخطأِ إدخالٍ لا خدمةٌ يحتاجها المريض: يبقى مصنَّفاً
+ * «مساند»، وتبقى الحالةُ في لوحته، وتظهر شارةُ «بانتظار معاينة مساند». فيُسحَب
+ * الخيطُ فتصير العمليةُ أطرافاً **كما لو سُجّلت أطرافاً من أوّلها**.
+ *
+ * ══ **وثلاثةُ حُرّاسٍ تمنع أن يمسّ هذا عمليةً حقيقية** ═══════════════════
+ * ① **أيُّ طلبِ جهازٍ باقٍ على الخيط ⟶ لا يُمَسّ إطلاقاً.** وهذا الحارسُ
+ *   **ليس** غنيّاً عن الذي تحته: `classifyCaseDisposal` تعدّ الحلقةَ
+ *   `awaiting_exam` **سقالةً** (وهو صوابُها في بابها — سحبُ نوع الحالة)، فلو
+ *   نُودِيت وحدَها لهدمت **طلبَ مساندٍ ثانياً مشروعاً** ما زال ينتظر طبيبه.
+ * ② **وكلفةٌ غيرُ صفرية ⟶ لا يُمَسّ**، فيبقى هذا التنظيفُ **محايداً مالياً
+ *   بالبناء**: لا `total_cost` يتحرّك ولا قيدَ `case_retired` يُكتب ولا دينار.
+ * ③ **ثمّ الحُرّاسُ الثمانية القائمة** (٤.r) عبر `storage.deleteCaseType`
+ *   **نفسِها بلا حرفٍ يتغيّر** — معاينةٌ موقّعة ولو مُلغاة · متابعة · أمرُ
+ *   عمل · دفعةٌ موسومة · مبلغٌ معلَّق · طلبُ خصم · حلقةٌ حيّة · طلبُ مراجعةٍ
+ *   حسمه إنسان. فما له تاريخٌ حقيقيّ **يبقى**، ويُقال للطبيب لماذا.
+ *
+ * **ويُنادى بعد التزام معاملة التوقيع** لا داخلها: `deleteCaseType` تفتح
+ * معاملتَها وتأخذ قفلَ المريض (٩١٩) بنفسها، ونداؤها من داخل معاملةٍ أخرى
+ * يعشّش المعاملات. والتوقيعُ ثبت سلفاً، وفشلُ التنظيف لا يُسقطه.
+ */
+export async function retireRetypedSourceCase(
+  patientId: number,
+  sourceType: MedicalSpecialty,
+): Promise<{ retired: boolean; reason?: string }> {
+  if (sourceType !== "prosthetic" && sourceType !== "medical_support") {
+    return { retired: false };
+  }
+  const [row] = await db
+    .select({ id: patientCases.id, cost: patientCases.cost })
+    .from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, sourceType)));
+  //  سُحب سلفاً بمنطقٍ آخر (تبديلُ §4.b مثلاً) — لا شيءَ يُفعَل ولا شيءَ يُقال.
+  if (!row) return { retired: true };
+  //  ① طلبٌ آخر قائم على الخيط = عمليةٌ مستقلّةٌ حقيقية.
+  if (await caseHasAnyEpisode(row.id)) return { retired: false };
+  //  ② وكلفةٌ مسجَّلة = مالٌ تحرّك يوماً — بابُه الإدارة لا تنظيفُ خطأ إدخال.
+  if ((row.cost || 0) !== 0) {
+    return {
+      retired: false,
+      reason: "على الخيط السابق كلفةٌ مسجَّلة — يُراجَع إدارياً",
+    };
+  }
+  try {
+    await storage.deleteCaseType(patientId, sourceType);
+    return { retired: true };
+  } catch (err: any) {
+    return { retired: false, reason: err?.message || "تعذّر رفع الخيط السابق" };
   }
 }
 

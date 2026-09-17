@@ -933,6 +933,149 @@ export async function awaitingExamEpisodesForCase(
 }
 
 /**
+ * **أعلى الخيطِ طلبُ جهازٍ باقٍ؟** — قراءةٌ خالصة بلا حالةٍ ولا استثناء.
+ *
+ * يستعملها تنظيفُ الخيط المصدر بعد تصحيح النوع (٤.y): **أيُّ صفٍّ باقٍ —
+ * منتظراً كان أو مُعايَناً أو ملغىً — يعني أن على الخيط عمليةً أخرى**،
+ * فيُترَك كما هو. والقرارُ هنا **لا** يفرّق بين سقالةٍ وتاريخ عمداً: الفرقُ
+ * من شأن `classifyCaseDisposal`، وهذا سؤالٌ أضيق — «أبقي شيء؟».
+ */
+export async function caseHasAnyEpisode(caseId: number): Promise<boolean> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT 1 FROM patient_device_episodes WHERE case_id = ${caseId} LIMIT 1
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
+// ══ **تصحيحُ نوع العملية — الطلبُ نفسُه يُصحَّح، ولا يُختطف طلبٌ آخر** ══════
+//  الاستعلاماتُ تفتح الطلبَ بنوعٍ تخمّنه، والطبيبُ هو مَن يعرف. فحين يبدّل
+//  النوعَ على صفٍّ بعينه، المقصودُ **ذلك الطلبُ هو**: يُنقَل إلى خيط
+//  الاختصاص الصحيح **بمعرّفه ومطلوبه وفرعه وتاريخ انتظاره كما هي**.
+//
+//  **وإسقاطُ هويّته ليس حلّاً**: كان التبديلُ يُسقط معرّفَ الطلب، فيقع
+//  التوقيعُ «بلا معرّف» — وقاعدةُ التوافق «واحدةٌ منتظرة ⟵ هي» تلتقط عندئذٍ
+//  **طلباً مستقلّاً آخر** من النوع الجديد إن وُجد: تُختَم معاينةٌ على جهازٍ
+//  لم ينظر فيه الطبيب، ويُغلق طلبُه، وتُولَد له متابعةُ شراء — والختمُ
+//  (ترِكر ٠٢٨) لا يُصحَّح بعدها.
+
+/**
+ * **أصالحٌ هذا الطلبُ لتصحيح نوعه؟** — قراءةٌ بلا قفل للفحص المبكّر في
+ * النقطة، قبل أن تُكتب الوصفةُ على ملفّ المريض. الحَكَمُ الأخير
+ * `retypeAwaitingEpisodeForExamTx` تحت القفل.
+ */
+export async function retypableEpisodeForExam(params: {
+  patientId: number; episodeId: number; targetServiceType: string;
+}): Promise<{ id: number; fromCaseId: number; fromServiceType: DeviceServiceType } | null> {
+  if (!isDeviceServiceType(params.targetServiceType)) return null;
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT e.id, e.case_id, e.requested_item, c.case_type
+      FROM patient_device_episodes e
+      JOIN patient_cases c ON c.id = e.case_id
+     WHERE e.id = ${params.episodeId}
+       AND e.patient_id = ${params.patientId}
+       AND e.status = 'awaiting_exam'
+       AND e.service_path IS DISTINCT FROM 'no_exam'
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return null;
+  const from = String(row.case_type ?? "");
+  //  نوعٌ غيرُ جهازيّ، أو النوعُ نفسُه — ليس تصحيحَ نوع.
+  if (!isDeviceServiceType(from) || from === params.targetServiceType) return null;
+  //  **والمطلوبُ يجب أن يصحّ للنوع الجديد**: «ركبة» لا تصير مسنداً طبياً
+  //  (المساندُ تُطلَب كاملةً، ٤.e) — يُردّ ولا يُصحَّح بصمت.
+  const parsed = parseRequestedItem(row.requested_item, params.targetServiceType);
+  if (!parsed.ok) throw new ExamEpisodeStaleError(parsed.error!);
+  return { id: Number(row.id), fromCaseId: Number(row.case_id), fromServiceType: from };
+}
+
+/**
+ * **انقل الطلبَ إلى خيط الاختصاص الصحيح** — تحت القفل، في معاملة التوقيع.
+ *
+ * **والهويّةُ تبقى هي**: `id` نفسُه، و`requested_item`/`component` كما هما،
+ * و`branch_id` و`created_at` و`awaiting_since` بلا مساس. المتغيّرُ
+ * `case_id` وحده — ومعه `sequence_number` لأنه رقمٌ **داخل الخيط**
+ * (`uq_pde_case_seq`)، فيُحسَب تحت قفل الخيط الهدف كما يحسبه
+ * `startDeviceEpisodeTx` بالضبط.
+ *
+ * **وترتيبُ القفل واحدٌ لا اثنان**: الخيطُ أوّلاً ثمّ الحلقة — نفسُ ترتيب
+ * `startDeviceEpisodeTx` و`lockCaseAndReadOpenEpisode`.
+ */
+export async function retypeAwaitingEpisodeForExamTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: {
+    patientId: number; episodeId: number;
+    targetCaseId: number; targetServiceType: string;
+    /** نطاقُ الجلسة الحيّ — يُفحَص على فرع الحلقة نفسِها، كما في الحجز. */
+    branchIds?: number[] | null;
+  },
+): Promise<{ id: number; branchId: number | null; fromCaseId: number; fromServiceType: string }> {
+  if (!isDeviceServiceType(params.targetServiceType)) {
+    throw new ExamEpisodeStaleError("لا تُنقَل طلباتُ الأجهزة إلى اختصاصٍ بلا أجهزة");
+  }
+  //  ① الخيطُ الهدف — مقفولاً، فيتسلسل تخصيصُ الأرقام عليه.
+  const tc = await tx.execute(sql`
+    SELECT id, case_type FROM patient_cases
+     WHERE id = ${params.targetCaseId} AND patient_id = ${params.patientId}
+     FOR UPDATE
+  `);
+  const target = (tc.rows ?? [])[0];
+  if (!target || String(target.case_type) !== params.targetServiceType) {
+    throw new ExamEpisodeStaleError();
+  }
+
+  //  ② الطلبُ نفسُه — مقفولاً، ويُعاد التحقّق من كلّ شرطٍ فحصته النقطة.
+  const er = await tx.execute(sql`
+    SELECT e.id, e.case_id, e.status, e.service_path, e.branch_id, e.requested_item,
+           c.case_type
+      FROM patient_device_episodes e
+      JOIN patient_cases c ON c.id = e.case_id
+     WHERE e.id = ${params.episodeId} AND e.patient_id = ${params.patientId}
+     FOR UPDATE OF e
+  `);
+  const ep = (er.rows ?? [])[0];
+  if (!ep) throw new ExamEpisodeStaleError();
+  if (String(ep.status) !== "awaiting_exam") throw new ExamEpisodeStaleError();
+  if (String(ep.service_path ?? "") === "no_exam") {
+    throw new ExamEpisodeStaleError(
+      "هذا الطلب على مسار «بلا معاينة» — لا تُوقَّع عليه معاينةٌ من هنا",
+    );
+  }
+  const fromServiceType = String(ep.case_type ?? "");
+  if (!isDeviceServiceType(fromServiceType) || fromServiceType === params.targetServiceType) {
+    throw new ExamEpisodeStaleError();
+  }
+  const parsed = parseRequestedItem(ep.requested_item, params.targetServiceType);
+  if (!parsed.ok) throw new ExamEpisodeStaleError(parsed.error!);
+  const branchId = ep.branch_id === null || ep.branch_id === undefined
+    ? null : Number(ep.branch_id);
+  if ((params.branchIds ?? null) !== null && branchId !== null
+      && !(params.branchIds as number[]).includes(branchId)) {
+    throw new ExamEpisodeBranchError();
+  }
+
+  //  ③ الرقمُ التالي في الخيط الهدف — تحت قفله، كما في فتح طلبٍ جديد.
+  const mx = await tx.execute(sql`
+    SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next
+      FROM patient_device_episodes WHERE case_id = ${params.targetCaseId}
+  `);
+  const nextSeq = Number((mx.rows ?? [])[0]?.next ?? 1);
+
+  //  ④ النقل — **وشرطُ الحال في `UPDATE` نفسِه** حزاماً أخيراً: صفٌّ تغيّر
+  //  بين القراءة والكتابة لا يُنقَل، ويُردّ بائتاً بصفر كتابة.
+  const up = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET case_id = ${params.targetCaseId}, sequence_number = ${nextSeq}, updated_at = NOW()
+     WHERE id = ${params.episodeId}
+       AND patient_id = ${params.patientId}
+       AND case_id = ${Number(ep.case_id)}
+       AND status = 'awaiting_exam'
+     RETURNING id
+  `);
+  if ((up.rows ?? []).length !== 1) throw new ExamEpisodeStaleError();
+  return { id: Number(ep.id), branchId, fromCaseId: Number(ep.case_id), fromServiceType };
+}
+
+/**
  * **أعِد الحلقة إلى «بانتظار المعاينة»** — عند إلغاء المعاينة التي عاينتها
  * (ترحيل ٠٦١).
  *
