@@ -475,11 +475,18 @@ async function main() {
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
         originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة متزامنة", deviceEpisodeId: d1,
       })));
-    same("أربع محاولات على الجهاز نفسه ⟶ نجاح واحد", races.filter((r) => r.status === 201).length, 1);
+    //  ⚠ **انقلب عقدُ هذا البند بترحيل ٠٨٢** (قرارُ المالك ٢٠٢٦-٠٩-١٧): كانت
+    //  أربعُ محاولاتٍ على الجهاز نفسِه تُنتج أمراً واحداً لأن
+    //  `uq_pwo_one_open_maint_per_episode` كان يمنع الثاني. وقد رُفع القيدُ
+    //  صراحةً — **أيُّ عددٍ من أوامر الصيانة المتزامنة مشروع**. والباقي هنا
+    //  أن **لا خطأَ قاعدةٍ خامٍّ يتسرّب** وأن الحسابَ يطابق ما وقع بالضبط.
+    same("أربع محاولات على الجهاز نفسه ⟶ **أربعةُ أوامر مستقلّة** (ترحيل ٠٨٢)",
+      races.filter((r) => r.status === 201).length, 4,
+      JSON.stringify(races.map((r) => [r.status, r.body?.error])));
     check(!races.some((r) => JSON.stringify(r.body ?? "").includes("duplicate key")),
       "   بلا تسريب خطأ قاعدة بيانات", JSON.stringify(races.map((r) => r.body?.error)));
-    same("   وأمرُ صيانةٍ واحد",
-      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 1);
+    same("   وأربعةُ أوامر صيانة — لكلّ عمليةٍ أمرُها",
+      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 4);
 
     const second = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
@@ -487,8 +494,8 @@ async function main() {
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
     });
     same("وجهازٌ مسلَّمٌ آخر ⟶ صيانته الخاصّة تُفتح معه", second.status, 201);
-    same("   فصار أمرا صيانة متوازيان",
-      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 2);
+    same("   فصارت خمسةُ أوامر صيانة متوازية — على جهازين",
+      (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 5);
 
     const noChoice = await http("POST", `/api/no-exam/maintenance`, S.reception, {
       maintenanceComponent: "knee",
