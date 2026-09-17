@@ -1714,7 +1714,19 @@ export class DatabaseStorage implements IStorage {
     return patient;
   }
 
-  async createPatient(insertPatient: InsertPatient): Promise<Patient> {
+  /**
+   * `opts.onPhase` — **تشخيصٌ مؤقّت وحده** (٢٠٢٦-٠٩-١٧، راجع
+   * `server/diagnostics/request_timing.ts`).
+   *
+   * اختياريٌّ تماماً: كلُّ مُستدعٍ آخر ينادي الدالّةَ بمعامِلٍ واحد كما كان
+   * **فلا يُسجَّل حرف**. ولا يغيّر شيئاً حين يحضر أيضاً — نداءٌ متزامنٌ
+   * إنليّ بين سطرين، **بلا منطقٍ تجاريّ يتبدّل، ولا مهلةٍ تُعدَّل، ولا
+   * خطوةٍ تُنقَل إلى الخلفية، ولا ترتيبٍ يتغيّر**.
+   */
+  async createPatient(
+    insertPatient: InsertPatient,
+    opts?: { onPhase?: (phase: string) => void },
+  ): Promise<Patient> {
     const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
 
     const valuesToInsert: any = { ...patientData };
@@ -1815,7 +1827,13 @@ export class DatabaseStorage implements IStorage {
     // there. And no registration cost_entries writer here anymore: pricing a
     // freshly-registered patient is not a thing this function does — it
     // happens later through the dedicated service path.
+    //  ══ تشخيصٌ مؤقّت — الطوران حول `syncPatientCases` وحدها ════════════
+    //  السطرُ الوحيد الذي يُشتبَه بتعليقه داخل هذه الدالّة بعد `COMMIT`.
+    //  الطوران يحيطان به **ولا يلمسانه**: لا `try` جديد يبتلع خطأً، ولا
+    //  مهلةَ تُضاف، ولا نداءَ يُنقَل خارج التسلسل.
+    opts?.onPhase?.("before_sync_patient_cases");
     await this.syncPatientCases(patient.id);
+    opts?.onPhase?.("after_sync_patient_cases");
     return patient;
   }
 

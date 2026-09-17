@@ -111,6 +111,7 @@
     "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts",
     "test:daily-review": "tsx server/daily_review.test.ts",
     "test:return-to-purchase": "tsx server/return_to_purchase.test.ts",
+    "test:diagnose-create-patient": "tsx server/diagnose_create_patient.test.ts",
     "test:exam-identity": "tsx server/exam_identity.test.ts",
     "test:exam-identity-ui": "tsx client/src/components/medical/exam_device_identity_ui.test.ts",
     "test:exam-episode-choice": "tsx client/src/components/medical/exam_episode_choice.test.ts",
