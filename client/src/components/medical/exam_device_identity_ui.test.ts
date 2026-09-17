@@ -118,6 +118,16 @@ check("٨ز.١ **فحين لا جهازَ للاختصاص المختار تُق
   mod.includes("awaiting.filter((e) => isDeviceSpecialty(e.caseType) && e.caseType !== specialty)"));
 check("٨ز.٢ **ولا تصحيحَ حين للاختصاص المختار طلبُه هو** — الآخرُ عمليةٌ مستقلّة",
   mod.includes("const fromList = sameSpecialty.length === 0 && otherSpecialty.length > 0"));
+//  **والمرساةُ هي الاختصاصُ الذي فُتحت به النافذة، لا الجديد**: فُتحت على طلب
+//  مساندٍ «أ» وللمريض طلبُ أطرافٍ مستقلٌّ «ب»، فبُدّل إلى أطراف — فالقراءةُ
+//  بالاختصاص الجديد كانت توقّع على «ب» وتترك «أ» على خطئها.
+check("٨ز.٢أ **والمرساةُ الاختصاصُ الأصليُّ الذي فُتحت به النافذة**",
+  mod.includes("&& specialty !== openedSpecialty")
+  && mod.includes("? awaiting.filter((e) => e.caseType === openedSpecialty)"));
+check("٨ز.٢ب **وتمرّره النافذةُ من `preferSpecialty`** — الأبوابُ الثلاثة تمرّره",
+  dlg.includes("openedSpecialty: preferSpecialty ?? null")
+  && /preferSpecialty=\{/.test(filePage) && /preferSpecialty=\{/.test(registry)
+  && /preferSpecialty=\{/.test(page));
 check("٨ز.٣ **والنيّةُ صريحةٌ من البابين معاً** — لا دلالةَ تتغيّر ضمناً",
   mod.includes("(fixedRetype || (activeFixed === null && fromList))"));
 //  **والقرارُ خالصٌ خارجَ المكوّن**: قرارٌ داخل React لا يُختبَر إلّا بقراءة

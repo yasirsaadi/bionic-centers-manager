@@ -51,10 +51,17 @@ export function resolveExamEpisodeChoice(params: {
   /** من صفّ «معايناتي» وحده — البابان الآخران لا يمرّرانه. */
   fixedEpisodeId: number | null;
   fixedEpisodeSpecialty: string | null;
+  /**
+   * **الاختصاصُ الذي فُتحت به النافذة** (`preferSpecialty`) — يمرّره الأبوابُ
+   * الثلاثة. وهو **مرساةُ التصحيح**: متى بدّله الطبيبُ صار طلبُ التصحيح
+   * يُطلَب من أجهزة هذا الاختصاص هو، لا من أجهزة الاختصاص الجديد.
+   */
+  openedSpecialty: string | null;
   awaiting: AwaitingEpisodeOption[];
   choice: number | null;
 }): ExamEpisodeChoice {
-  const { isEdit, specialty, fixedEpisodeId, fixedEpisodeSpecialty, awaiting, choice } = params;
+  const { isEdit, specialty, fixedEpisodeId, fixedEpisodeSpecialty, openedSpecialty,
+    awaiting, choice } = params;
 
   //  ══ ① الجهازُ المُمرَّر — حين يصل الصفُّ بهويّته ═══════════════════════
   const fixedApplies = fixedEpisodeId !== null && !!specialty && specialty === fixedEpisodeSpecialty;
@@ -67,10 +74,23 @@ export function resolveExamEpisodeChoice(params: {
   const dropped = fixedEpisodeId !== null && !fixedApplies && !fixedRetype && !isEdit && !!specialty;
 
   //  ══ ② وإلّا فمن قائمة أجهزة المريض المنتظرة ════════════════════════════
+  // ══ **والمرساةُ هي الاختصاصُ الذي فُتحت به النافذة، لا الجديد** ═════════
+  //  فُتحت على طلب مساندٍ «أ»، وللمريض طلبُ أطرافٍ مستقلٌّ «ب»، فبدّل الطبيبُ
+  //  إلى أطراف. والقراءةُ بالاختصاص **الجديد** تجد «ب» فتوقّع عليها — وهي
+  //  عمليةٌ مستقلّةٌ لم ينظر فيها، **وتبقى «أ» على خطئها**. والمقصودُ يقيناً
+  //  هو الطلبُ الذي فُتحت عليه النافذة.
+  //
+  //  **فالمرشَّحون من أجهزة الاختصاص الأصليّ وحدها**، وأجهزةُ الاختصاص الجديد
+  //  لا تُقرأ ولا تُعرَض ولا تُمَسّ. وصفرٌ منها ⟶ **لا يُلتقَط بديلٌ**:
+  //  السكوتُ أصدقُ من توقيعٍ على طلبِ غيرها.
+  const switchedFromOpened = !isEdit && activeFixed === null
+    && isDeviceSpecialty(openedSpecialty) && isDeviceSpecialty(specialty)
+    && specialty !== openedSpecialty;
+
   //  **والتحريرُ خارجَ هذا كلِّه**: النسخةُ الثانية لا تعيد ختمَ الجهاز.
   //  ويُقال صراحةً هنا لا يُترَك لكون الاستعلام معطَّلاً في الشاشة —
   //  الاستثناءُ يُطلَب باسمه ولا يُنال بالسهو.
-  const sameSpecialty = !isEdit && activeFixed === null && specialty
+  const sameSpecialty = !isEdit && activeFixed === null && specialty && !switchedFromOpened
     ? awaiting.filter((e) => e.caseType === specialty)
     : [];
 
@@ -82,10 +102,15 @@ export function resolveExamEpisodeChoice(params: {
   //
   //  فحين لا جهازَ للاختصاص المختار، تكون أجهزةُ الاختصاص الآخر المنتظرةُ
   //  هي الطلباتِ التي يصحّح الطبيبُ نوعَها.
-  const otherSpecialty = !isEdit && activeFixed === null && isDeviceSpecialty(specialty)
-    && sameSpecialty.length === 0
-    ? awaiting.filter((e) => isDeviceSpecialty(e.caseType) && e.caseType !== specialty)
-    : [];
+  const otherSpecialty = switchedFromOpened
+    //  بُدّل عن اختصاصٍ معلوم ⟶ **أجهزتُه هو، لا غيرُها**.
+    ? awaiting.filter((e) => e.caseType === openedSpecialty)
+    //  وفُتحت بلا اختصاصٍ معلوم (فتحٌ عامّ) ⟶ لا إشارةَ تبديلٍ يقيناً، فيبقى
+    //  المخرجُ الضيّق: لا جهازَ للاختصاص المختار وللآخر أجهزتُه ⟶ هي المقصودة.
+    : (!isEdit && activeFixed === null && isDeviceSpecialty(specialty)
+        && !isDeviceSpecialty(openedSpecialty) && sameSpecialty.length === 0
+      ? awaiting.filter((e) => isDeviceSpecialty(e.caseType) && e.caseType !== specialty)
+      : []);
 
   //  **ولا تصحيحَ حين للاختصاص المختار طلبُه هو**: ذاك طلبٌ مستقلٌّ حقيقيّ
   //  يُوقَّع عليه، والآخرُ لا يُمَسّ (§4.y).

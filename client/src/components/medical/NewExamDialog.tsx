@@ -173,6 +173,9 @@ export function NewExamDialog({
     specialty: specialty || null,
     fixedEpisodeId: fixedEpisode,
     fixedEpisodeSpecialty,
+    //  **مرساةُ التصحيح**: الاختصاصُ الذي فُتحت به النافذة — تمرّره الأبوابُ
+    //  الثلاثة. ومتى بدّله الطبيبُ صار طلبُ التصحيح يُطلَب من أجهزته هو.
+    openedSpecialty: preferSpecialty ?? null,
     choice: episodeChoice,
   };
   const fixedActive = resolveExamEpisodeChoice({ ...choiceInput, awaiting: [] }).fixedActive;
@@ -186,7 +189,7 @@ export function NewExamDialog({
   const awaiting = examsData?.awaitingEpisodes ?? [];
   const choice = useMemo(
     () => resolveExamEpisodeChoice({ ...choiceInput, awaiting }),
-    [isEdit, specialty, fixedEpisode, fixedEpisodeSpecialty, examsData, episodeChoice],
+    [isEdit, specialty, fixedEpisode, fixedEpisodeSpecialty, preferSpecialty, examsData, episodeChoice],
   );
 
   const resolvedEpisode = choice.episodeId;

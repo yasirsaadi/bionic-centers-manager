@@ -33,6 +33,7 @@ const ep = (id: number, caseType: string, seq = id): AwaitingEpisodeOption => ({
 const base = {
   isEdit: false, specialty: null as string | null,
   fixedEpisodeId: null as number | null, fixedEpisodeSpecialty: null as string | null,
+  openedSpecialty: null as string | null,
   awaiting: [] as AwaitingEpisodeOption[], choice: null as number | null,
 };
 const r = (o: Partial<typeof base>) => resolveExamEpisodeChoice({ ...base, ...o });
@@ -61,60 +62,117 @@ console.log("\n── ب. الاتجاهُ العكسيّ وعدمُ التبد�
     [5, false, false]);
 }
 
-console.log("\n── ج. العمليةُ المستقلّةُ الحقيقية لا تُمَسّ (§4.y) ──");
+console.log("\n── ج. **المرساةُ هي الاختصاصُ الذي فُتحت به النافذة** ──");
+{
+  //  فُتحت على طلب مساندٍ «أ» (#١)، وللمريض طلبُ أطرافٍ مستقلٌّ «ب» (#٢).
+  //  فبدّل الطبيبُ إلى أطراف. والقراءةُ بالاختصاص **الجديد** كانت تجد «ب»
+  //  فتوقّع عليها — عمليةٌ مستقلّةٌ لم ينظر فيها — **وتبقى «أ» على خطئها**.
+  const A = ep(1, "medical_support"), B = ep(2, "prosthetic", 2);
+  const out = r({ openedSpecialty: "medical_support", specialty: "prosthetic", awaiting: [A, B] });
+  same("٨. **يُصحَّح «أ» نفسُها** — الطلبُ الذي فُتحت عليه النافذة", out.episodeId, 1);
+  check(out.retype, "٩. بنيّةِ تصحيحٍ صريحة");
+  same("١٠. **و«ب» لا تُمَسّ ولا تُعرَض إطلاقاً**", out.options.map((o) => o.id), [1]);
+  check(!out.needsChoice, "١١. وطلبٌ أصليٌّ واحد ⟵ بلا سؤال");
+
+  //  والاتجاهُ العكسيّ بالمرآة.
+  const rev = r({ openedSpecialty: "prosthetic", specialty: "medical_support", awaiting: [A, B] });
+  same("١٢. والعكسُ كذلك: فُتحت على أطراف ⟵ يُصحَّح «ب» و«أ» لا تُمَسّ",
+    [rev.episodeId, rev.retype, rev.options.map((o) => o.id)], [2, true, [2]]);
+}
+
+console.log("\n── ج.٢ أكثرُ من طلبٍ للاختصاص الأصليّ ⟵ اختيارٌ لا تخمين ──");
+{
+  const A1 = ep(1, "medical_support"), A2 = ep(3, "medical_support", 2), B = ep(2, "prosthetic");
+  const out = r({ openedSpecialty: "medical_support", specialty: "prosthetic", awaiting: [A1, A2, B] });
+  same("١٣. **لا يُخمَّن أيُّ الطلبين** — لا معرّف", out.episodeId, null);
+  check(out.needsChoice, "١٤. ومنتقٍ إلزاميّ (لا حفظ قبله)");
+  same("١٥. **والخياران من الاختصاص الأصليّ وحده — بلا «ب»**",
+    out.options.map((o) => o.id), [1, 3]);
+  const picked = r({ openedSpecialty: "medical_support", specialty: "prosthetic",
+    awaiting: [A1, A2, B], choice: 3 });
+  same("١٦. واختيارُ الطبيب يُحسَم بنيّة التصحيح", [picked.episodeId, picked.retype], [3, true]);
+  const stale = r({ openedSpecialty: "medical_support", specialty: "prosthetic",
+    awaiting: [A1, A2, B], choice: 2 });
+  same("١٧. **واختيارُ «ب» لا يُقبَل** — ليست من مرشَّحي التصحيح",
+    [stale.episodeId, stale.needsChoice], [null, true]);
+}
+
+console.log("\n── ج.٣ ولا طلبَ للاختصاص الأصليّ ⟵ لا يُلتقَط بديل ──");
+{
+  const out = r({ openedSpecialty: "medical_support", specialty: "prosthetic",
+    awaiting: [ep(2, "prosthetic")] });
+  same("١٨. **السكوتُ أصدقُ من توقيعٍ على طلبِ غيرها**",
+    [out.episodeId, out.retype, out.options.length], [null, false, 0]);
+}
+
+console.log("\n── ج.٤ وبلا تبديلٍ المرساةُ لا تغيّر شيئاً ──");
+{
+  const A = ep(1, "medical_support"), B = ep(2, "prosthetic");
+  const same1 = r({ openedSpecialty: "medical_support", specialty: "medical_support", awaiting: [A, B] });
+  same("١٩. فُتحت على مساندٍ وبقي ⟵ «أ» بلا راية",
+    [same1.episodeId, same1.retype], [1, false]);
+  const same2 = r({ openedSpecialty: "prosthetic", specialty: "prosthetic", awaiting: [A, B] });
+  same("٢٠. وفُتحت على أطرافٍ وبقي ⟵ «ب» بلا راية",
+    [same2.episodeId, same2.retype], [2, false]);
+  const physio = r({ openedSpecialty: "medical_support", specialty: "physiotherapy", awaiting: [A, B] });
+  same("٢١. وبُدّل إلى العلاج الطبيعي ⟵ لا جهازَ ولا تصحيح",
+    [physio.episodeId, physio.retype], [null, false]);
+}
+
+console.log("\n── ج.٥ فتحٌ عامّ (بلا مرساة): طلبُ الاختصاص المختار يُوقَّع عليه ──");
 {
   //  للمريض طلبُ أطرافٍ مستقلّ **وطلبُ مساندٍ مستقلّ**. اختارَ الطبيبُ أطرافاً
   //  ⟶ يُوقَّع على طلب الأطراف، **ولا يُصحَّح نوعُ المساند ولا يُمَسّ**.
   const out = r({ specialty: "prosthetic", awaiting: [ep(9, "medical_support"), ep(4, "prosthetic")] });
-  same("٨. يُوقَّع على طلب اختصاصه هو", out.episodeId, 4);
-  check(!out.retype, "٩. **ولا تصحيحَ** — الآخرُ طلبٌ مستقلٌّ حقيقيّ");
-  same("١٠. ولا يظهر الآخرُ في الخيارات إطلاقاً", out.options.map((o) => o.id), [4]);
+  same("٢٢. يُوقَّع على طلب اختصاصه هو", out.episodeId, 4);
+  check(!out.retype, "٢٣. **ولا تصحيحَ** — الآخرُ طلبٌ مستقلٌّ حقيقيّ");
+  same("٢٤. ولا يظهر الآخرُ في الخيارات إطلاقاً", out.options.map((o) => o.id), [4]);
 }
 
 console.log("\n── د. أكثرُ من طلبٍ للاختصاص الآخر ⟵ لا تخمين ──");
 {
   const two = [ep(1, "medical_support"), ep(2, "medical_support", 2)];
   const out = r({ specialty: "prosthetic", awaiting: two });
-  same("١١. **لا يُخمَّن أيُّهما** — لا معرّف", out.episodeId, null);
-  check(out.needsChoice, "١٢. ومنتقٍ إلزاميّ (لا حفظ قبله)");
-  same("١٣. والخياران معروضان", out.options.map((o) => o.id), [1, 2]);
+  same("٢٥. **لا يُخمَّن أيُّهما** — لا معرّف", out.episodeId, null);
+  check(out.needsChoice, "٢٦. ومنتقٍ إلزاميّ (لا حفظ قبله)");
+  same("٢٧. والخياران معروضان", out.options.map((o) => o.id), [1, 2]);
   const picked = r({ specialty: "prosthetic", awaiting: two, choice: 2 });
-  same("١٤. واختيارُ الطبيب يُحسَم بنيّة التصحيح", [picked.episodeId, picked.retype, picked.needsChoice],
+  same("٢٨. واختيارُ الطبيب يُحسَم بنيّة التصحيح", [picked.episodeId, picked.retype, picked.needsChoice],
     [2, true, false]);
   const stale = r({ specialty: "prosthetic", awaiting: two, choice: 77 });
-  same("١٥. **واختيارٌ بائتٌ لا يُقرأ اختياراً**", [stale.episodeId, stale.needsChoice], [null, true]);
+  same("٢٩. **واختيارٌ بائتٌ لا يُقرأ اختياراً**", [stale.episodeId, stale.needsChoice], [null, true]);
 }
 
 console.log("\n── هـ. ما لا يُصحَّح ──");
 {
-  same("١٦. بلا طلباتٍ إطلاقاً ⟵ معاينةٌ بلا جهاز، بلا راية",
+  same("٣٠. بلا طلباتٍ إطلاقاً ⟵ معاينةٌ بلا جهاز، بلا راية",
     shape(r({ specialty: "prosthetic" })),
     { id: null, retype: false, n: 0, fromList: false, needsChoice: false, dropped: false, fixedActive: false });
   const physio = r({ specialty: "physiotherapy", awaiting: [ep(1, "medical_support")] });
-  same("١٧. **ولا تصحيحَ إلى العلاج الطبيعي** — بلا حلقاتٍ أصلاً",
+  same("٣١. **ولا تصحيحَ إلى العلاج الطبيعي** — بلا حلقاتٍ أصلاً",
     [physio.episodeId, physio.retype, physio.options.length], [null, false, 0]);
   const edit = r({ isEdit: true, specialty: "prosthetic", awaiting: [ep(1, "medical_support")] });
-  same("١٨. والتحريرُ (نسخةٌ ثانية) لا يعيد ختمَ الجهاز ولا يصحّح نوعاً",
+  same("٣٢. والتحريرُ (نسخةٌ ثانية) لا يعيد ختمَ الجهاز ولا يصحّح نوعاً",
     [edit.episodeId, edit.retype], [null, false]);
   const noSpec = r({ specialty: null, awaiting: [ep(1, "medical_support")] });
-  same("١٩. وبلا اختصاصٍ مختار ⟵ لا شيء", [noSpec.episodeId, noSpec.retype], [null, false]);
+  same("٣٣. وبلا اختصاصٍ مختار ⟵ لا شيء", [noSpec.episodeId, noSpec.retype], [null, false]);
 }
 
 console.log("\n── و. مسارُ «معايناتي» لم يتغيّر بحرف (٤.y) ──");
 {
   const applies = r({ specialty: "medical_support", fixedEpisodeId: 7, fixedEpisodeSpecialty: "medical_support" });
-  same("٢٠. جهازٌ مُمرَّرٌ يخصّ اختصاصَه ⟵ هو، بلا راية",
+  same("٣٤. جهازٌ مُمرَّرٌ يخصّ اختصاصَه ⟵ هو، بلا راية",
     [applies.episodeId, applies.retype, applies.fixedActive], [7, false, true]);
   const retyped = r({ specialty: "prosthetic", fixedEpisodeId: 7, fixedEpisodeSpecialty: "medical_support" });
-  same("٢١. وبُدّل اختصاصُه ⟵ **هو نفسُه** مع الراية",
+  same("٣٥. وبُدّل اختصاصُه ⟵ **هو نفسُه** مع الراية",
     [retyped.episodeId, retyped.retype, retyped.fixedActive], [7, true, true]);
   const dropped = r({ specialty: "physiotherapy", fixedEpisodeId: 7, fixedEpisodeSpecialty: "medical_support" });
-  same("٢٢. وبُدّل إلى العلاج الطبيعي ⟵ يسقط حقّاً ويُقال",
+  same("٣٦. وبُدّل إلى العلاج الطبيعي ⟵ يسقط حقّاً ويُقال",
     [dropped.episodeId, dropped.dropped, dropped.fixedActive], [null, true, false]);
   //  **والجهازُ المُمرَّر يعلو على القائمة** — لا يُلتقَط غيرُه أبداً.
   const withList = r({ specialty: "prosthetic", fixedEpisodeId: 7, fixedEpisodeSpecialty: "medical_support",
     awaiting: [ep(3, "prosthetic")] });
-  same("٢٣. **ولا يُختار طلبٌ آخر مكانه** ولو كان للاختصاص الجديد طلبُه",
+  same("٣٧. **ولا يُختار طلبٌ آخر مكانه** ولو كان للاختصاص الجديد طلبُه",
     [withList.episodeId, withList.retype], [7, true]);
 }
 
@@ -127,13 +185,13 @@ console.log("\n── ز. `fixedActive` لا تعتمد على القائمة �
     const a = r({ specialty: spec, fixedEpisodeId: 7, fixedEpisodeSpecialty: fspec, awaiting: [] });
     const b = r({ specialty: spec, fixedEpisodeId: 7, fixedEpisodeSpecialty: fspec,
       awaiting: [ep(3, "prosthetic"), ep(4, "medical_support")] });
-    same(`٢٤. ${spec}: بالقائمة وبدونها سواء`, a.fixedActive, b.fixedActive);
+    same(`٣٨. ${spec}: بالقائمة وبدونها سواء`, a.fixedActive, b.fixedActive);
   }
 }
 
 console.log("\n── ح. `isDeviceSpecialty` ──");
 {
-  same("٢٥. الأجهزةُ للأطراف والمساند وحدهما",
+  same("٣٩. الأجهزةُ للأطراف والمساند وحدهما",
     ["prosthetic", "medical_support", "physiotherapy", null, undefined, ""].map(isDeviceSpecialty),
     [true, true, false, false, false, false]);
 }

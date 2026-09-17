@@ -1129,6 +1129,60 @@ async function main() {
         await caseTypesOf(p4), cases4);
     }
 
+    // ══ ث. التصحيحُ إلى خيطٍ يحمل طلباً مستقلّاً — «ب» لا تُمَسّ ═══════════
+    //  شكلُ المالك (٢٠٢٦-٠٩-١٧): فُتحت النافذةُ على طلب مساندٍ «أ»، وللمريض
+    //  طلبُ أطرافٍ مستقلٌّ «ب»، فبدّل الطبيبُ إلى أطراف. فتُصحَّح «أ» **وتُنقَل
+    //  إلى خيطٍ غيرِ فارغ** — وهذا أوّلُ تصحيحٍ هدفُه خيطٌ يحمل حلقةً أصلاً.
+    console.log("\n── ث. التصحيحُ إلى خيطٍ يحمل طلباً مستقلّاً ──");
+    {
+      const p = await mkPatient("ث-both", "medical_support");
+      await mkCase(p, "medical_support");
+      await mkCase(p, "prosthetic");
+      await q(`UPDATE patients SET is_amputee=true WHERE id=$1`, [p]);
+      const A = await openEpisode(p, "medical_support");           // «أ» الخاطئة
+      const B = await openEpisode(p, "prosthetic", "socket");      // «ب» المستقلّة
+      const beforeB = await episodeRow(B.episodeId);
+      const reqB = await requestRow(B.requestId!);
+
+      const ex = await signExam(p, S.doc, "prosthetic",
+        { deviceEpisodeId: A.episodeId, retypeDeviceEpisode: true });
+      check(ex.status < 300, "١١٠. المعاينةُ تُحفَظ أطرافاً", JSON.stringify(ex.body));
+
+      const afterA = await episodeRow(A.episodeId);
+      same("١١١. **«أ» نفسُها صارت أطرافاً مُعايَنةً** — بمعرّفها",
+        [afterA?.id, await episodeCaseType(A.episodeId), afterA?.status],
+        [A.episodeId, "prosthetic", "examined"]);
+      same("١١١.أ وهويّتُها كما هي بايتاً",
+        [afterA?.requested_item, afterA?.branch_id, afterA?.service_path, afterA?.agreed_cost],
+        [beforeB && "full_device", 1, "exam", 0]);
+      same("١١١.ب والمعاينةُ مختومةٌ عليها", await examEpisode(Number(ex.body.id)), A.episodeId);
+
+      // ══ **و«ب» لم تُمَسّ بحرف** — بصمةٌ كاملةٌ قبل وبعد ═══════════════
+      same("١١٢. **«ب» مطابقةٌ بايتاً بعد التصحيح**",
+        await episodeRow(B.episodeId), beforeB);
+      same("١١٢.أ وطلبُ مراجعتها ما زال معلَّقاً بلا معاينة",
+        await requestRow(B.requestId!), reqB);
+      same("١١٢.ب ولا معاينةَ عليها إطلاقاً", await examEpisodeOf(B.episodeId), 0);
+
+      // ══ والخيطُ يحمل الاثنتين بتسلسلين مختلفين — لا تصادم ═════════════
+      const seqs = await q<{ id: number; n: number }>(
+        `SELECT e.id, e.sequence_number n FROM patient_device_episodes e
+           JOIN patient_cases c ON c.id=e.case_id
+          WHERE e.patient_id=$1 AND c.case_type='prosthetic' ORDER BY e.id`, [p]);
+      same("١١٣. الخيطُ يحمل الطلبين بتسلسلين متمايزين",
+        [seqs.length, new Set(seqs.map((r) => Number(r.n))).size], [2, 2]);
+
+      //  والمريضُ يبقى في الطابور بطلب «ب» وحدها — «أ» خرجت بمعاينتها.
+      const rows = await rowsOf(p);
+      same("١١٤. وقائمةُ الطبيب تُظهر «ب» وحدها",
+        rows.map((r) => r.episodeId), [B.episodeId]);
+      same("١١٤.أ وشارةُ الانتظار للأطراف وحدها (المساندُ رُفع)",
+        await pendingSpecialtiesOf(p), ["prosthetic"]);
+      const flags = await deviceFlagsOf(p);
+      same("١١٥. **ولا أثرَ تشغيليٌّ للمساند** — الخيطُ والعَلَمُ والعمود",
+        [await caseTypesOf(p), flags.s, flags.sup], [["prosthetic"], false, null]);
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {
