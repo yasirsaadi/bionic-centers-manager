@@ -25,6 +25,11 @@ import { EXAM_FIELDS, SPECIALTY_LABELS, type ExamFieldKey, type MedicalSpecialty
 import { useDoctorGrant } from "./useDoctorGrant";
 import { api } from "@shared/routes";
 import { PrescriptionFields, type PrescriptionValue } from "./PrescriptionFields";
+import {
+  resolveExamEpisodeChoice,
+  isDeviceSpecialty,
+  type AwaitingEpisodeOption,
+} from "./exam_episode_choice";
 
 export interface ExamToEdit {
   id: number;
@@ -74,14 +79,6 @@ const EMPTY_FORM: Record<ExamFieldKey, string> = {
  * نفسِه. راجع القسم 4.h في CLAUDE.md.
  */
 /** جهازٌ منتظرٌ المعاينةَ كما تُرجعه `GET /api/medical/patients/:id/exams`. */
-interface AwaitingEpisodeOption {
-  id: number;
-  caseType: string;
-  sequenceNumber: number;
-  requestedItem: string;
-  awaitingSince: string | null;
-  reviewKind: string | null;
-}
 
 export function describeAwaitingEpisode(e: AwaitingEpisodeOption): string {
   const base = `جهاز #${e.sequenceNumber} · ${requestedItemLabel(e.requestedItem, e.caseType)}`;
@@ -165,42 +162,46 @@ export function NewExamDialog({
   //  **والتصحيحُ بين اختصاصَي الأجهزة وحدهما**: العلاجُ الطبيعي بلا حلقات،
   //  فالتبديلُ إليه يُسقط الجهازَ حقّاً — وذاك ما تقوله العبارةُ الكهرمانية.
   const fixedEpisodeSpecialty = fixedEpisode === null ? null : (preferSpecialty ?? null);
-  const fixedEpisodeApplies = fixedEpisode !== null && specialty === fixedEpisodeSpecialty;
-  const isDeviceKind = (s: string | null | undefined) =>
-    s === "prosthetic" || s === "medical_support";
-  //  تصحيحُ نوعٍ حقيقيّ: جهازٌ وصل باختصاصه، وبُدّل إلى اختصاص أجهزةٍ آخر.
-  const fixedEpisodeRetype = fixedEpisode !== null && !isEdit && !!specialty
-    && !fixedEpisodeApplies
-    && isDeviceKind(fixedEpisodeSpecialty) && isDeviceKind(specialty);
-  const activeFixedEpisode = (fixedEpisodeApplies || fixedEpisodeRetype) ? fixedEpisode : null;
-  //  وسقوطٌ حقيقيّ (تبديلٌ إلى العلاج الطبيعي، أو جهازٌ بلا اختصاصٍ معروف)
-  //  — يُقال للطبيب لماذا اختفى، ولا يختفي صامتاً.
-  const fixedEpisodeDropped = fixedEpisode !== null && !fixedEpisodeApplies
-    && !fixedEpisodeRetype && !isEdit && !!specialty;
+
+  // ══ **القرارُ خالصٌ خارجَ المكوّن** (`exam_episode_choice.ts`) ═══════════
+  //  أيُّ طلبٍ تُختَم عليه المعاينة، وأهو تصحيحُ نوعٍ أم توقيعٌ عاديّ — خطؤه
+  //  يُختَم بترِكر ٠٢٨ فلا يُصحَّح، وقرارٌ داخل React لا يُختبَر إلّا بقراءة
+  //  نصِّه (درسُ §4.u). فيُحسَم في دالّةٍ تُختبَر دخلاً وخرجاً.
+  //  و`fixedActive` لا تعتمد على القائمة، فتُقرأ قبل جلبها لتقرّر أتُجلَب.
+  const choiceInput = {
+    isEdit,
+    specialty: specialty || null,
+    fixedEpisodeId: fixedEpisode,
+    fixedEpisodeSpecialty,
+    choice: episodeChoice,
+  };
+  const fixedActive = resolveExamEpisodeChoice({ ...choiceInput, awaiting: [] }).fixedActive;
 
   const { data: examsData, isLoading: examsLoading } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
-    enabled: open && !isEdit && activeFixedEpisode === null,
+    //  لا تُجلَب حين يصل الجهازُ جاهزاً ويكون هو المقصود.
+    enabled: open && !isEdit && !fixedActive,
   });
-  const candidates = useMemo(
-    () => (activeFixedEpisode === null && specialty
-      ? (examsData?.awaitingEpisodes ?? []).filter((e) => e.caseType === specialty)
-      : []),
-    [examsData, specialty, activeFixedEpisode],
+
+  const awaiting = examsData?.awaitingEpisodes ?? [];
+  const choice = useMemo(
+    () => resolveExamEpisodeChoice({ ...choiceInput, awaiting }),
+    [isEdit, specialty, fixedEpisode, fixedEpisodeSpecialty, examsData, episodeChoice],
   );
-  //  واحدةٌ ⟵ هي؛ أكثرُ ⟵ ما اختاره الطبيب؛ صفرٌ ⟵ معاينةٌ بلا جهاز.
-  const resolvedEpisode: number | null = activeFixedEpisode !== null
-    ? activeFixedEpisode
-    : candidates.length === 1
-      ? candidates[0].id
-      : candidates.length > 1
-        ? (candidates.some((c) => c.id === episodeChoice) ? episodeChoice : null)
-        : null;
-  const needsEpisodeChoice = activeFixedEpisode === null && candidates.length > 1 && resolvedEpisode === null;
+
+  const resolvedEpisode = choice.episodeId;
+  const retypeRequested = choice.retype;
+  const episodeOptions = choice.options;
+  const needsEpisodeChoice = choice.needsChoice;
+  const fixedEpisodeDropped = choice.dropped;
+  const activeFixedEpisode = choice.fixedActive ? fixedEpisode : null;
+  //  سطرُ التصحيح — من البابين: صفٌّ مُمرَّرٌ بُدّل اختصاصُه، أو طلبٌ من القائمة.
+  const fixedEpisodeRetype = retypeRequested && choice.fixedActive;
+  const listRetype = retypeRequested && choice.fromList;
   //  ولا يُرسَل التوقيعُ قبل أن تُعرَف الأجهزةُ المنتظرة (اختصاصُ جهاز بلا
   //  جهازٍ مُمرَّر): ضغطةٌ سريعة كانت تُرسَل بلا معرّفٍ قبل وصول القائمة.
-  const isDeviceSpecialty = specialty === "prosthetic" || specialty === "medical_support";
-  const candidatesLoading = !isEdit && activeFixedEpisode === null && isDeviceSpecialty && examsLoading;
+  const candidatesLoading = !isEdit && !choice.fixedActive
+    && isDeviceSpecialty(specialty) && examsLoading;
 
   useEffect(() => { setEpisodeChoice(null); }, [open, specialty]);
 
@@ -363,8 +364,7 @@ export function NewExamDialog({
             ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
             //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
             //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
-            ...(!isEdit && fixedEpisodeRetype && resolvedEpisode !== null
-              ? { retypeDeviceEpisode: true } : {}),
+            ...(retypeRequested ? { retypeDeviceEpisode: true } : {}),
           }),
         },
       );
@@ -493,11 +493,15 @@ export function NewExamDialog({
                فوعدٌ بأحد المصيرين يكذب في نصف الحالات. */}
           {/*  بُدّل الاختصاصُ على طلبٍ بعينه — **يُصحَّح هو** ولا يُختار غيرُه.
                ويُقال صراحةً كي لا يظنّ الطبيبُ أنه فتح طلباً ثانياً. */}
-          {fixedEpisodeRetype && (
+          {(fixedEpisodeRetype || (listRetype && resolvedEpisode !== null)) && (
             <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-retyped">
               غيّرتَ الاختصاص — المقصود طلب الجهاز نفسه
-              {deviceLabel ? ` (${deviceLabel})` : ""}، ولن تُربَط هذه المعاينة بأي طلب جهاز آخر.
+              {fixedEpisodeRetype
+                ? (deviceLabel ? ` (${deviceLabel})` : "")
+                : ` (${describeAwaitingEpisode(
+                  episodeOptions.find((c) => c.id === resolvedEpisode) ?? episodeOptions[0])})`}
+              ، ولن تُربَط هذه المعاينة بأي طلب جهاز آخر.
             </p>
           )}
           {fixedEpisodeDropped && (
@@ -507,13 +511,13 @@ export function NewExamDialog({
               {deviceLabel ? ` (${deviceLabel})` : ""}.
             </p>
           )}
-          {!isEdit && activeFixedEpisode === null && candidates.length === 1 && (
+          {!isEdit && activeFixedEpisode === null && !listRetype && episodeOptions.length === 1 && (
             <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2"
               data-testid="note-exam-device-single">
-              الجهاز: {describeAwaitingEpisode(candidates[0])}
+              الجهاز: {describeAwaitingEpisode(episodeOptions[0])}
             </p>
           )}
-          {!isEdit && activeFixedEpisode === null && candidates.length > 1 && (
+          {!isEdit && activeFixedEpisode === null && episodeOptions.length > 1 && (
             <div className="space-y-2">
               <Label>الجهاز المقصود <span className="text-red-500">*</span></Label>
               <Select
@@ -524,7 +528,7 @@ export function NewExamDialog({
                   <SelectValue placeholder="لهذا المريض أكثر من طلب جهاز بانتظار المعاينة — اختر الجهاز" />
                 </SelectTrigger>
                 <SelectContent>
-                  {candidates.map((c) => (
+                  {episodeOptions.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>{describeAwaitingEpisode(c)}</SelectItem>
                   ))}
                 </SelectContent>
