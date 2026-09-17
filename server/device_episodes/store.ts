@@ -903,6 +903,40 @@ export async function episodeBranchOf(
   return Number(row.branch_id);
 }
 
+/**
+ * **خيطُ الاختصاص الذي ترتبط به حلقةٌ بعينها الآن — وبشرطِ نوعِه** (٢٠٢٦-٠٩-١٧).
+ *
+ * تُقرأ في مسارٍ واحدٍ لا غير: **خاسرُ سباقِ مفتاح التطابق** حين يكون تصحيحُ
+ * نوعِ طلبٍ قد فتح خيطَ الاختصاص الهدف **داخل معاملة الفائزة** (٤.y، تكملةٌ
+ * ثانية)، فالمحاولتان بدأتا كلتاهما و`caseId = null` لأن الخيطَ لم يكن
+ * موجوداً حين قرأتاه. فتُقرأ الهويّةُ القانونية الحالية **لهذه العملية
+ * بعينها** بعد أن التزمت الفائزة.
+ *
+ * **وبشرطِ `case_type` عمداً** — لا «أيُّ خيطٍ صارت إليه»: القيمةُ تُستعمل
+ * لإعادة تطبيق قاعدةِ إعادة الإرسال الصارمة، فلا يجوز أن تُرجع خيطاً من
+ * اختصاصٍ آخر فتُقرأ معاينةُ اختصاصٍ إعادةً لمعاينة اختصاصٍ غيره. واختلافُ
+ * النوع ⟶ `null` ⟶ الهويّةُ تبقى كما هي ⟶ تعارضٌ صريح، وهو الصواب.
+ *
+ * **وبلا شرطِ حالةٍ على الحلقة** — للسبب نفسِه الذي في `episodeBranchOf`:
+ * الفائزةُ تركتها `examined` لا `awaiting_exam`.
+ */
+export async function episodeCaseOf(
+  params: { patientId: number; episodeId: number; caseType: string },
+): Promise<number | null> {
+  const r = await db.execute<Record<string, any>>(sql`
+    SELECT c.id
+      FROM patient_device_episodes e
+      JOIN patient_cases c ON c.id = e.case_id
+     WHERE e.id = ${params.episodeId}
+       AND e.patient_id = ${params.patientId}
+       AND c.patient_id = ${params.patientId}
+       AND c.case_type = ${params.caseType}
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row || row.id === null || row.id === undefined) return null;
+  return Number(row.id);
+}
+
 function toCandidate(r: Record<string, any>): AwaitingEpisodeCandidate {
   return {
     id: Number(r.id),

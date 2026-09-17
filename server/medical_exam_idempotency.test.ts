@@ -398,6 +398,151 @@ async function main() {
     same("ح٣. **و`created:false` صراحةً**", normalRetryZ.body?.created, false);
     same("ح٤. **وما زال صفّاً واحداً في القاعدة**",
       (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pZ]))[0].n, 1);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ط. سباقٌ حقيقيّ على تصحيح نوعٍ **بلا خيطٍ للاختصاص الهدف قبله**
+    // ══════════════════════════════════════════════════════════════════
+    //  ══ الواقعة ════════════════════════════════════════════════════════
+    //  الاستعلاماتُ فتحت طلبَ **مساند**، والطبيبُ يصحّحه إلى **أطراف** —
+    //  ولا خيطَ أطرافٍ على الملفّ بعد. فتُفتَحُ الحالةُ الهدف **داخل معاملة
+    //  التوقيع** (٤.y، تكملةٌ ثانية)، ومعرّفُها لا يُعرَف قبل بدء المعاملة:
+    //  الطلبان المتزامنان يبدآن كلاهما بـ`caseId = null` لأن الخيطَ لم يكن
+    //  موجوداً حين قرأه كلٌّ منهما.
+    //
+    //  فالفائزةُ تفتح الخيطَ وتنقل الطلبَ وتكتب المعاينةَ بـ`case_id`
+    //  الجديد. والخاسرةُ تصطدم بالحلقة `examined` تحت القفل، فتعود إلى
+    //  قاعدة إعادة الإرسال بهويّةٍ **بائتة**: `caseId` عندها ما زال `null`
+    //  بينما الصفُّ المحفوظ يحمل الخيطَ الذي وُلد بعدها — فتُقرأ «هويّةٌ
+    //  مختلفة» ويُردّ **٤٠٩ تعارضاً** على إعادةِ إرسالٍ مشروعةٍ تماماً.
+    //
+    //  ══ والعلاجُ **بعد خسارة السباق وحدها** ════════════════════════════
+    //  لا يُجعَل الخيطُ الفارغ تطابقاً مفتوحاً، ولا تضعف مقارنةُ الهويّة،
+    //  ولا يتغيّر المسارُ السريع قبل السباق. بل يُعاد — في مسار الخسارة
+    //  وحده — قراءةُ الهويّة القانونية الحالية **لنفس عملية الجهاز بعينها**
+    //  من القاعدة، فيُعرَف الخيطُ الذي صارت إليه، ثمّ تُطبَّق **قاعدةُ
+    //  إعادة الإرسال الصارمة نفسُها** على تلك الهويّة المحدَّثة.
+    console.log("\n── ط. طلبان متزامنان على تصحيح نوعٍ بلا خيطٍ هدف ──");
+    const pT = await mkPatient("سباقُ تصحيح النوع بلا خيطٍ هدف");
+    const cT = await mkCase(pT, "medical_support");
+    const epT = await mkAwaitingEpisode(pT, cT, 1);
+
+    same("ط١. **قبل الطلب: لا خيطَ أطرافٍ على الملفّ إطلاقاً**",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM patient_cases
+        WHERE patient_id=$1 AND case_type='prosthetic'`, [pT]))[0].n, 0);
+    same("   والطلبُ منتظِرٌ على خيط المساند",
+      (await q<{ case_id: number; status: string }>(
+        `SELECT case_id, status FROM patient_device_episodes WHERE id=$1`, [epT]))[0],
+      { case_id: cT, status: "awaiting_exam" });
+
+    const keyT = randomKey("retype-race-no-target-case");
+    const payloadT = {
+      caseType: "prosthetic",
+      diagnosis: "بتر تحت الركبة",
+      chiefComplaint: "تصحيحُ نوع الطلب",
+      plan: "طرفٌ صناعيّ",
+      notes: null,
+      prescription: { prostheticType: "تحت الركبة" },
+      idempotencyKey: keyT,
+      deviceEpisodeId: epT,
+      retypeDeviceEpisode: true,
+    };
+
+    //  **طلبان في اللحظة نفسِها** — نفسُ العملية، نفسُ المفتاح، نفسُ المحتوى.
+    const raceT = await Promise.all([
+      http("POST", `/api/medical/patients/${pT}/exams`, S.doctor, payloadT),
+      http("POST", `/api/medical/patients/${pT}/exams`, S.doctor, payloadT),
+    ]);
+
+    check(raceT.every((r) => r.status === 200 || r.status === 201),
+      "ط٢. **الطلبان كلاهما ينجحان** — ولا يُردّ الخاسرُ تعارضاً لمجرّد أن خيطَه كان فارغاً عند بدايته",
+      JSON.stringify(raceT.map((r) => [r.status, r.body?.code, r.body?.error])));
+
+    const raceIds = new Set(raceT.map((r) => r.body?.id));
+    same("ط٣. **وكلاهما يُعيد معرّفَ المعاينة نفسَه**", raceIds.size, 1);
+
+    same("ط٤. **ومعاينةٌ واحدةٌ بالضبط في القاعدة** — لا اثنتان",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pT]))[0].n, 1);
+
+    const [examT] = await q<{ id: number; case_id: number | null; case_type: string; device_episode_id: number | null }>(
+      `SELECT id, case_id, case_type, device_episode_id FROM medical_exams WHERE patient_id=$1`, [pT]);
+    same("   والمعرّفُ المُعاد هو صفُّ القاعدة بعينه", [...raceIds][0], examT.id);
+    same("   والمعاينةُ مختومةٌ على نفس عملية الجهاز", examT.device_episode_id, epT);
+    same("   واختصاصُها هو المصحَّح إليه", examT.case_type, "prosthetic");
+
+    const prosCases = await q<{ id: number }>(
+      `SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pT]);
+    same("ط٥. **وخيطُ أطرافٍ واحدٌ بالضبط وُلد** — لا اثنان من سباقِ الفتح", prosCases.length, 1);
+    same("   والمعاينةُ مربوطةٌ به لا بـ`null`", examT.case_id, prosCases[0]?.id);
+
+    const episodesT = await q<{ id: number; case_id: number; status: string; sequence_number: number }>(
+      `SELECT id, case_id, status, sequence_number FROM patient_device_episodes WHERE patient_id=$1`, [pT]);
+    same("ط٦. **وعمليةُ الجهاز ما زالت صفّاً واحداً بمعرّفه** — لا صفَّ ثانٍ استُنسخ",
+      episodesT.map((e) => e.id), [epT]);
+    same("   **وانتقلت مرّةً واحدة إلى الخيط الصحيح**",
+      [episodesT[0]?.case_id, episodesT[0]?.status, episodesT[0]?.sequence_number],
+      [prosCases[0]?.id, "examined", 1]);
+
+    same("ط٧. **ومتابعةٌ واحدةٌ بالضبط** — لا أثرَ تجاريٌّ مكرَّر",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM post_exam_followups
+        WHERE medical_exam_id=$1`, [examT.id]))[0].n, 1);
+    same("   ومتابعةٌ واحدة لهذا المريض كلِّه",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM post_exam_followups WHERE patient_id=$1`, [pT]))[0].n, 1);
+    same("   وهي على الخيط والعملية الصحيحين",
+      (await q<{ case_id: number | null; device_episode_id: number | null; service_type: string }>(
+        `SELECT case_id, device_episode_id, service_type FROM post_exam_followups
+          WHERE medical_exam_id=$1`, [examT.id]))[0],
+      { case_id: prosCases[0]?.id, device_episode_id: epT, service_type: "prosthetic" });
+
+    same("ط٨. **وسطرُ تدقيقِ إنشاءٍ واحدٌ بالضبط**",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM audit_log
+        WHERE entity_type='medical_exam' AND action='create' AND entity_id=$1`, [examT.id]))[0].n, 1);
+
+    same("ط٩. **ولا أثرَ ماليّ ولا تصنيعيّ مكرَّر — ولا أصليّ أصلاً**",
+      [
+        (await q<{ n: number }>(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`, [pT]))[0].n,
+        (await q<{ n: number }>(`SELECT count(*)::int n FROM cost_entries WHERE patient_id=$1`, [pT]))[0].n,
+        (await q<{ total_cost: number }>(`SELECT total_cost FROM patients WHERE id=$1`, [pT]))[0].total_cost,
+      ], [0, 0, 0]);
+
+    //  وإعادةُ إرسالٍ عاديّة **بعد** انتهاء السباق تبقى تعمل كما كانت.
+    const replayT = await http("POST", `/api/medical/patients/${pT}/exams`, S.doctor, payloadT);
+    check(replayT.status === 200 || replayT.status === 201,
+      "ط١٠. **وإعادةُ الإرسال بعد استقرار السباق تنجح كذلك**", JSON.stringify(replayT.body));
+    same("   بنفس المعرّف و`created:false`", [replayT.body?.id, replayT.body?.created], [examT.id, false]);
+    same("   وما زالت معاينةً واحدة",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pT]))[0].n, 1);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ي. **والصرامةُ لم تُمَسّ** — نفسُ المفتاح بهويّةٍ مختلفة يبقى تعارضاً
+    // ══════════════════════════════════════════════════════════════════
+    //  إعادةُ القراءة أعلاه تقع **بعد خسارة السباق وحدها** وتقرأ هويّةَ
+    //  **تلك العملية بعينها** — فلا تفتح باباً لأيّ اختلافٍ آخر.
+    console.log("\n── ي. المفتاحُ نفسُه بهويّةٍ مختلفة يبقى تعارضاً ──");
+
+    same("ي١. **مريضٌ مختلفٌ بنفس المفتاح ⟶ ٤٠٩**",
+      (await http("POST", `/api/medical/patients/${p2}/exams`, S.doctor, payloadT)).status, 409);
+    same("ي٢. **وطبيبٌ مختلفٌ بنفس المفتاح ⟶ ٤٠٩**",
+      (await http("POST", `/api/medical/patients/${pT}/exams`, S.doctor2, payloadT)).status, 409);
+    same("ي٣. **ومحتوًى مختلفٌ بنفس المفتاح ⟶ ٤٠٩**",
+      (await http("POST", `/api/medical/patients/${pT}/exams`, S.doctor,
+        { ...payloadT, diagnosis: "تشخيصٌ مختلفٌ تماماً" })).status, 409);
+
+    //  **واختصاصٌ مختلفٌ بنفس المفتاح** — الطلبُ صار على خيط الأطراف، فمعاينةُ
+    //  مساندٍ بنفس المفتاح هويّةٌ أخرى لا إعادةَ إرسال.
+    same("ي٤. **واختصاصٌ مختلفٌ بنفس المفتاح ⟶ ٤٠٩**",
+      (await http("POST", `/api/medical/patients/${pT}/exams`, S.doctor,
+        { ...payloadT, caseType: "medical_support" })).status, 409);
+
+    //  **وعمليةُ جهازٍ مختلفة بنفس المفتاح** — طلبٌ ثانٍ مستقلٌّ على الملفّ نفسِه.
+    const epT2 = await mkAwaitingEpisode(pT, prosCases[0].id, 2);
+    same("ي٥. **وعمليةُ جهازٍ مختلفةٌ بنفس المفتاح ⟶ ٤٠٩**",
+      (await http("POST", `/api/medical/patients/${pT}/exams`, S.doctor,
+        { ...payloadT, deviceEpisodeId: epT2, retypeDeviceEpisode: false })).status, 409);
+    same("ي٦. **ولا صفَّ معاينةٍ ثانٍ وُلد من أيٍّ من الخمسة**",
+      (await q<{ n: number }>(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [pT]))[0].n, 1);
+    same("   والطلبُ الثاني ما زال منتظِراً لم يُمَسّ",
+      (await q<{ status: string }>(`SELECT status FROM patient_device_episodes WHERE id=$1`, [epT2]))[0].status,
+      "awaiting_exam");
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR, DOCTOR2]]);

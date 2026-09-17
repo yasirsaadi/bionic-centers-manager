@@ -33,7 +33,7 @@ import { ensureActiveCaseTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
   ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
-  awaitingExamEpisodesForCase, episodeBranchOf,
+  awaitingExamEpisodesForCase, episodeBranchOf, episodeCaseOf,
   retypableEpisodeForExam, retypeAwaitingEpisodeForExamTx, caseHasAnyEpisode,
 } from "../device_episodes/store";
 import { ensureFollowupForSignedExam } from "../followup/store";
@@ -211,6 +211,79 @@ export async function findReplayableExam(
 }
 
 /**
+ * **الهويّةُ الحالية لنفس عملية الجهاز — بعد خسارة سباق التفرّد وحدها.**
+ *
+ * ══ العلّة ════════════════════════════════════════════════════════════
+ * تصحيحُ نوع طلبٍ إلى اختصاصٍ **لا خيطَ له على الملفّ بعد** يفتح الخيطَ
+ * الهدفَ **داخل معاملة التوقيع** (٤.y، تكملةٌ ثانية). فمحاولتان متزامنتان
+ * بنفس المفتاح تبدآن كلتاهما و`caseId = null` — لا لأن الطلبَ بلا خيط، بل
+ * لأن خيطَه **لم يكن قد وُلد بعد** حين قرأتاه. فالفائزةُ تفتحه وتكتب
+ * المعاينةَ عليه، والخاسرةُ تعود إلى قاعدة إعادة الإرسال بهويّةٍ **بائتة**
+ * فتُقرأ «هويّةٌ مختلفة» ويُردّ تعارضاً على إعادةِ إرسالٍ مشروعةٍ تماماً.
+ *
+ * ══ والعلاجُ إعادةُ قراءةٍ ضيّقة، لا تخفيفُ قاعدة ═══════════════════════
+ * **لا يُجعَل الخيطُ الفارغ تطابقاً مفتوحاً**، ولا تُمَسّ `examIdentityMatches`
+ * بحرف، ولا يتغيّر المسارُ السريع قبل السباق. هذه الدالّةُ تُنادى **في
+ * مسارَي الخسارة وحدهما**، وتُطبَّق على الشكل الموصوف بالضبط لا غيره:
+ *   · `caseId === null` — الهويّةُ التي قد تكون بائتةً بهذا المعنى وحدها؛
+ *   · `retypeEpisode === true` — نيّةُ تصحيحٍ صريحة، لا استنتاج؛
+ *   · و`deviceEpisodeId` حاضرٌ — **عمليةٌ بعينها بالمعرّف**، لا ترشيح.
+ * وأيُّ شكلٍ آخر يمضي بهويّته كما هي حرفاً بحرف.
+ *
+ * ثمّ تُقرأ الهويّةُ من **صفّ العملية نفسِه** (`episodeCaseOf`، بشرطِ نوعِ
+ * الخيط) لا من صفّ المعاينة الفائزة — فلا تدور المقارنةُ على نفسها:
+ * المصدرُ مستقلٌّ عن الشيء الذي يُقارَن به. و`null` (لم تنتقل، أو انتقلت
+ * إلى اختصاصٍ آخر) ⟶ تبقى الهويّةُ كما هي ⟶ تعارضٌ صريح، وهو الصواب.
+ *
+ * وبعدها تُطبَّق **قاعدةُ إعادة الإرسال الصارمة نفسُها** بلا استثناء:
+ * مريضٌ آخر · طبيبٌ آخر · فرعٌ آخر · اختصاصٌ آخر · عمليةُ جهازٍ أخرى ·
+ * محتوًى مختلف — كلُّها تبقى تعارضاً كما هي اليوم.
+ */
+async function identityAfterLostRace<T extends ExamIdentity>(
+  values: T & { retypeEpisode?: boolean },
+): Promise<T | null> {
+  if (values.caseId !== null) return null;
+  if (values.retypeEpisode !== true) return null;
+  if (values.deviceEpisodeId === null || values.deviceEpisodeId === undefined) return null;
+  const current = await episodeCaseOf({
+    patientId: values.patientId,
+    episodeId: values.deviceEpisodeId,
+    caseType: values.caseType,
+  });
+  if (current === null) return null;
+  return { ...values, caseId: current };
+}
+
+/**
+ * **إعادةُ الإرسال بعد خسارة سباق التفرّد** — غلافٌ رقيق فوق
+ * `findReplayableExam`، **وتلك لم يتغيّر فيها حرف**.
+ *
+ * لا يفعل شيئاً إطلاقاً إلّا حين تَرمي القاعدةُ الصارمة تعارضاً — وذاك
+ * **هو** إشارةُ الخسارة: صفٌّ بهذا المفتاح موجودٌ ولم تكتبه هذه المحاولة.
+ * فعندها وحدها تُقرأ الهويّةُ الحالية لنفس عملية الجهاز بعينها، **ثمّ
+ * تُعاد القاعدةُ الصارمةُ نفسُها عليها** — لا مقارنةٌ ثانيةٌ أليَن، ولا
+ * استثناء. وإن تعارضت ثانيةً صعد التعارضُ الأصليُّ كما هو.
+ *
+ * فالطلبُ العاديّ — إعادةُ إرسالٍ مطابقة، أو مفتاحٌ جديد، أو تعارضٌ حقيقيّ
+ * من أيّ شكلٍ آخر — لا يمرّ من هذا المسار بحرف: لا استعلامَ إضافيّ، ولا
+ * سلوكَ يتغيّر.
+ */
+async function replayAfterLostRace(
+  key: string,
+  values: ExamIdentity & ExamContent & { retypeEpisode?: boolean },
+): Promise<MedicalExam | null> {
+  try {
+    return await findReplayableExam(key, values);
+  } catch (err) {
+    if (!(err instanceof ExamIdempotencyConflictError)) throw err;
+    const refreshed = await identityAfterLostRace(values);
+    if (refreshed === null) throw err;
+    //  **القاعدةُ الصارمة نفسُها بالهويّة المحدَّثة** — لا نسخةَ ثانية منها.
+    return await findReplayableExam(key, refreshed);
+  }
+}
+
+/**
  * Sign a new exam. The only write path that exists for this table.
  *
  * ══ Binding the exam to the device it is about ═════════════════════════
@@ -307,7 +380,7 @@ export async function createExam(values: {
   // نفسُ فحص `findReplayableExam` بالضبط — يُعاد هنا لأن الناديَ من النقطة
   // (قبل `applyDecision`) لا يمنع سباقاً وصل إلى هنا أصلاً بعد أن فات ذلك
   // الفحص. حزامٌ ثانٍ رخيص، لا تكراراً للمعنى.
-  const already = await findReplayableExam(key, values);
+  const already = await replayAfterLostRace(key, values);
   if (already) return { exam: already, created: false, retypedFrom: null };
 
   try {
@@ -467,14 +540,16 @@ export async function createExam(values: {
     //  التفرّد. وهذا إعادةُ إرسالٍ لا خطأ (٠٧٤): يُعاد صفُّ الفائزة بنفس فحص
     //  الهويّة والمحتوى (مراجعة المرحلة الأولى: P1-C2).
     if (err instanceof ExamEpisodeStaleError) {
-      const winner = await findReplayableExam(key, values);
+      //  والهويّةُ المقارَنة هي الحاليةُ لهذه العملية بعينها — لا لقطةُ ما
+      //  قبل السباق حين لم يكن خيطُ الاختصاص الهدف قد وُلد بعد.
+      const winner = await replayAfterLostRace(key, values);
       if (winner) return { exam: winner, created: false, retypedFrom: null };
       throw err;
     }
     if (err?.code === "23505" && String(err?.constraint ?? "") === "uq_medical_exams_idempotency_key") {
       // نفسُ فحص الهويّة والمحتوى بالضبط عبر `findReplayableExam` — لا
       // نسخةَ ثانية من قاعدة المطابقة يمكن أن تنحرف عن الفحص السريع أعلاه.
-      const winner = await findReplayableExam(key, values);
+      const winner = await replayAfterLostRace(key, values);
       if (winner) return { exam: winner, created: false, retypedFrom: null };
       // القاعدةُ ضمنت وجودَ صفٍّ بهذا المفتاح — هذا هو معنى ٢٣٥٠٥ هنا — و
       // `findReplayableExam` كانت لتُرجعه أو تَرمي تعارضاً. هذا السطر شبكةُ
