@@ -829,14 +829,34 @@ export async function closeRequestsAwaitingExam(params: {
  * خيط الاختصاص الصحيح (`retypeAwaitingEpisodeForExamTx`). وصفُّ المراجعة
  * يحمل `service_type` و`case_id` **لقطتين** من لحظة الفتح، و
  * `closeRequestsAwaitingExam` تطابق `service_type` — فلو بقيتا على القديم
- * لبقي الطلبُ `pending` إلى الأبد في طابور الاختصاص الذي غادره، **ولحجز
+ * لبقي الطلبُ حيّاً إلى الأبد في طابور الاختصاص الذي غادره، **ولحجز
  * مرساتَه** (`uq_mrr_pending_episode`) عن أيّ طلبٍ لاحقٍ لنفس الحلقة.
  *
- * **والمعلَّقُ وحده يُعدَّل**: صفٌّ حسمه إنسانٌ (`examined`/`returned`/
- * `cancelled`) أو أُحيل (`escalated`) شهادةٌ على ما جرى — لا يُعاد كتابتُها
- * لتناسب تصحيحاً لاحقاً (درسُ ٤.r: «قرارُ الطبيب لا يُمحى»).
+ * ══ **والحيُّ هو مَن يتبع — بتعريف مسار الإغلاق نفسِه** ═══════════════════
+ * `pending` **و**`escalated`: هما بعينهما الحالتان اللتان يقرؤهما
+ * `closeRequestsAwaitingExam` و`pendingFullRequestsFor` و
+ * `lockSpecialtyLevelQueueRequestsTx` — طلبٌ ما زال ينتظر معاينتَه الكاملة.
+ * فمجموعةُ «يتبع» ومجموعةُ «يُغلَق» **مجموعةٌ واحدة لا اثنتان تنحرف
+ * إحداهما عن الأخرى**.
+ *
+ * والمُحالُ (`escalated`) كان مستثنىً، فكان يبقى بعد التصحيح على اختصاصه
+ * القديم: لا يُغلقه توقيعُ المعاينة (يطابق `service_type`)، ويبقى صفّاً
+ * شبحاً في طابور الاختصاص الذي غادرته عمليتُه — **مُعادٌ إنتاجُه حيّاً على
+ * النقاط الحقيقية (٢٠٢٦-٠٩-١٧)**.
+ *
+ * ══ **ولا يُعاد كتابةُ قرارِ إنسان** (درسُ ٤.r بحرفه) ════════════════════
+ * ثلاثةُ أعمدةٍ لا غير: `service_type` · `case_id` · `updated_at`.
+ * **و`status` لا يُمَسّ** — المُحالُ يبقى مُحالاً حتى يُغلقه توقيعُ المعاينة
+ * بالمسار القائم نفسِه. **ولا `decision` ولا `decided_by` ولا `decided_at`
+ * ولا `doctor_note` ولا `requested_path` ولا `review_kind`**: قرارُ الطبيب
+ * وسببُه وصاحبُه ووقتُه شهادةٌ على ما جرى، والذي يتحرّك هو **مكانُ الطلب**
+ * لا محتواه. (ولذلك يبقى `medical_review_requests_decided_shape_check`
+ * صادقاً كما هو: شرطُه على `status` وقرينَيه، وهذه لا تلمس أيّاً منها.)
+ *
+ * **والمحسومُ نهائياً لا يتبع**: `examined` · `approved` · `returned` ·
+ * `cancelled` — تلك طلباتٌ انتهت، ونقلُها إلى اختصاصٍ آخر يزوّر تاريخاً.
  */
-export async function retagPendingRequestsForRetypedEpisode(params: {
+export async function retagReviewRequestsForRetypedEpisode(params: {
   patientId: number; episodeId: number;
   caseId: number | null; serviceType: string;
   /** معاملةُ التوقيع نفسُها — التصحيحُ والتوقيعُ حدثٌ واحد. */
@@ -848,7 +868,7 @@ export async function retagPendingRequestsForRetypedEpisode(params: {
        SET service_type = ${params.serviceType}, case_id = ${params.caseId}, updated_at = NOW()
      WHERE device_episode_id = ${params.episodeId}
        AND patient_id = ${params.patientId}
-       AND status = 'pending'
+       AND status IN ('pending', 'escalated')
   `);
 }
 

@@ -40,7 +40,7 @@ import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
 import {
   closeRequestsAwaitingExam, specialtyLevelRequestSql,
-  retagPendingRequestsForRetypedEpisode,
+  retagReviewRequestsForRetypedEpisode,
 } from "../medical_review/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
@@ -389,9 +389,12 @@ export async function createExam(values: {
       //  التوقيعَ معه على أي حال.
       //  **وطلبُ المراجعة يتبع طلبَ الجهاز حين يُصحَّح نوعه** (٤.y) —
       //  **قبل** الإغلاق أدناه، لأنه يطابق بـ`service_type`: صفٌّ بقي على
-      //  النوع القديم لا يُغلَق فيبقى معلَّقاً في طابورٍ غادره طلبُه.
+      //  النوع القديم لا يُغلَق فيبقى حيّاً في طابورٍ غادره طلبُه.
+      //  **والحيُّ هو المعلَّق والمُحال معاً** (٢٠٢٦-٠٩-١٧): كلاهما ينتظر
+      //  معاينتَه الكاملة، وكلاهما يقرؤه الإغلاقُ أدناه — فيتبعان معاً.
+      //  ولا يُمَسّ منهما `status` ولا قرارُ الطبيب ولا سببُه.
       if (retypedEpisode && episodeId !== null) {
-        await retagPendingRequestsForRetypedEpisode({
+        await retagReviewRequestsForRetypedEpisode({
           patientId: values.patientId, episodeId,
           //  الخيطُ المحسوم — لا `values.caseId`: تصحيحٌ لم يجد خيطاً هدفاً
           //  يفتحه في هذه المعاملة، فكان الطلبُ يُعاد وسمُه بـ`case_id = NULL`.

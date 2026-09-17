@@ -132,6 +132,44 @@ async function episodeStatus(id: number) {
 async function requestRow(id: number) {
   return (await q(`SELECT id, status, exam_id, device_episode_id, review_kind, created_at FROM medical_review_requests WHERE id=$1`, [id]))[0];
 }
+/** صفُّ طلبِ المراجعة بأعمدته التي تهمّ التصحيح — **وما يجب ألّا يتحرّك منها**. */
+async function reviewRow(id: number) {
+  return (await q(`SELECT id, status, service_type, case_id, exam_id, decision, decided_by,
+                          decided_at, doctor_note, requested_path, review_kind
+                     FROM medical_review_requests WHERE id=$1`, [id]))[0];
+}
+/** الطلباتُ **الحيّة** (معلَّقة أو مُحالة) لمريضٍ في اختصاصٍ بعينه. */
+async function liveRequestsIn(patientId: number, svc: string) {
+  return await q(`SELECT id, status FROM medical_review_requests
+                   WHERE patient_id=$1 AND service_type=$2
+                     AND status IN ('pending','escalated') ORDER BY id`, [patientId, svc]);
+}
+/**
+ * **طلبُ مراجعةٍ `escalated` مرساةً إلى حلقةٍ منتظرة — عبر النقاط الحقيقية.**
+ *
+ * ولا صفَّ يُلفَّق بـSQL: يُرجَع الطلبُ الكاملُ الذي فتحته الحلقة (فتتحرّر
+ * مرساةُ `uq_mrr_pending_episode`)، ثمّ يُرسل الاستعلاماتُ طلباً **سريعاً**
+ * على الحلقة نفسِها، ثمّ يقرّر الطبيبُ «يتطلّب معاينة كاملة» ⟶ `escalated`.
+ * (والمسارُ الكاملُ لا يُحال بقرارٍ سريع — `decideReviewRequest` تردّه ٤٠٠،
+ * فهذا هو الشكلُ الحقيقيُّ الوحيد لمُحالٍ مرسىً إلى حلقةٍ تنتظر معاينتها.)
+ */
+async function escalatedRequestOn(
+  patientId: number, episodeId: number, fullRequestId: number, svc: Svc,
+) {
+  const ret = await http("POST", `/api/medical-review/requests/${fullRequestId}/return`, S.doc,
+    { reason: "بيانات ناقصة — أعد الإرسال" });
+  if (ret.status >= 300) throw new Error(`فشل الإرجاع: ${ret.status} ${JSON.stringify(ret.body)}`);
+  const mk = await http("POST", "/api/medical-review/requests", S.recv, {
+    patientId, serviceType: svc, requestedPath: "quick", reviewKind: "adjustment",
+    receptionNote: "تعديل على الجهاز", deviceEpisodeId: episodeId,
+  });
+  if (mk.status >= 300) throw new Error(`فشل الطلب السريع: ${mk.status} ${JSON.stringify(mk.body)}`);
+  const id = Number(mk.body.id);
+  const dec = await http("POST", `/api/medical-review/requests/${id}/decide`, S.doc,
+    { decision: "require_full_exam", doctorNote: "يحتاج معاينة كاملة" });
+  if (dec.status >= 300) throw new Error(`فشلت الإحالة: ${dec.status} ${JSON.stringify(dec.body)}`);
+  return id;
+}
 async function examEpisodeOf(episodeId: number) {
   const r = await q<{ n: number }>(
     `SELECT count(*)::int n FROM medical_exams WHERE device_episode_id=$1`, [episodeId]);
@@ -1285,6 +1323,91 @@ async function main() {
         JSON.stringify(withIntent.body));
       same("١٢٣.أ — عندئذٍ وحدَها ينتقل الطلبُ إلى خيط الأطراف",
         await episodeCaseType(A.episodeId), "prosthetic");
+    }
+
+    // ══ ذ. **الطلبُ المُحال يتبع عمليتَه حين يُصحَّح نوعُها** (٢٠٢٦-٠٩-١٧) ═══
+    //  طلبُ مراجعةٍ `escalated` مرساةً إلى حلقةٍ يبدّل الطبيبُ اختصاصَها.
+    //  كان الاتّباعُ مقصوراً على `pending` وحدها، فيبقى المُحالُ على اختصاصه
+    //  القديم: لا يُغلقه توقيعُ المعاينة (`closeRequestsAwaitingExam` تطابق
+    //  `service_type`)، فيبقى **صفّاً شبحاً حيّاً في طابور الاختصاص الذي
+    //  غادرته عمليتُه**. مُعادٌ إنتاجُه حيّاً على النقاط الحقيقية قبل الإصلاح.
+    //
+    //  **والمتحرّكُ مكانُ الطلب لا محتواه**: `service_type` و`case_id` وحدهما
+    //  (ومعهما `updated_at`). و`status` يبقى كما هو في إعادة الوسم — ثمّ
+    //  **يُغلقه مسارُ الإغلاق القائم نفسُه** بالمعاينة الصحيحة.
+    console.log("\n── ذ. الطلبُ المُحال يتبع عمليتَه ──");
+    for (const [from, to] of [
+      ["medical_support", "prosthetic"],
+      ["prosthetic", "medical_support"],
+    ] as [Svc, Svc][]) {
+      const p = await mkPatient(`ذ-${from}⟶${to}`, from);
+      //  الخيطان قائمان معاً — فلا تبديلَ نوعٍ (٤.b) ولا سحبَ خيطٍ مصدر
+      //  (٤.y): يبقى الموضوعُ **اتّباعَ الطلب** وحده.
+      const fromCase = await mkCase(p, from);
+      const toCase = await mkCase(p, to);
+      await q(`UPDATE patients SET is_amputee=true, is_medical_support=true WHERE id=$1`, [p]);
+
+      //  **جهازٌ كامل في الاتجاهين** — الجزءُ (socket ونحوه) للأطراف وحدها،
+      //  فطلبُ جزءٍ لا يصحّ أن يصير مسنداً ويردّه الخادمُ (٤.y: «ما لا يصحّ
+      //  لا يُصحَّح»). والموضوعُ هنا اتّباعُ الطلب لا حارسُ المطلوب.
+      const { episodeId, requestId } = await openEpisode(p, from);
+      const escId = await escalatedRequestOn(p, episodeId, requestId!, from);
+
+      const before = await reviewRow(escId);
+      const returnedBefore = await reviewRow(requestId!);
+      same(`١٢٤. [${from}⟶${to}] الفِكستشر: مُحالٌ مرسىً إلى الحلقة في اختصاصها القديم`,
+        [before.status, before.service_type, Number(before.case_id), before.exam_id],
+        ["escalated", from, fromCase, null]);
+      same("١٢٥. ويظهر صفّاً حيّاً في طابور الاختصاص القديم",
+        (await liveRequestsIn(p, from)).map((r: any) => r.id), [escId]);
+
+      // ══ الطبيبُ يصحّح نوعَ العملية ويوقّع معاينةَ الاختصاص الصحيح ═══════
+      const ex = await signExam(p, S.doc, to, {
+        deviceEpisodeId: episodeId, retypeDeviceEpisode: true,
+      });
+      check(ex.status < 300, `١٢٦. [${from}⟶${to}] التوقيعُ المصحِّح يمضي`,
+        JSON.stringify(ex.body));
+      const examId = Number(ex.body?.id);
+
+      same("١٢٧. **والعمليةُ انتقلت** إلى خيط الاختصاص الجديد",
+        await episodeCaseType(episodeId), to);
+
+      const after = await reviewRow(escId);
+      same("١٢٨. **والطلبُ المُحال تبعها — إلى الاختصاص والخيط الجديدين**",
+        [after.service_type, Number(after.case_id)], [to, toCase]);
+      same("١٢٩. **ثمّ أُغلق بالمعاينة الصحيحة** — بمسار الإغلاق القائم نفسِه",
+        [after.status, Number(after.exam_id)], ["examined", examId]);
+
+      // ══ **ولا يُعاد كتابةُ قرارِ إنسان** — ستّةُ أعمدةٍ لا تتحرّك ═════════
+      same("١٣٠. وقرارُ الطبيب وسببُه وصاحبُه ووقتُه ومسارُه ونوعُه كما هي بايتاً",
+        [after.decision, after.decided_by, after.decided_at, after.doctor_note,
+          after.requested_path, after.review_kind],
+        [before.decision, before.decided_by, before.decided_at, before.doctor_note,
+          before.requested_path, before.review_kind]);
+
+      // ══ **ولا طلبَ قديمٌ يبقى في الاختصاص السابق** ═══════════════════════
+      same("١٣١. **لا طلبَ حيّاً في الاختصاص السابق**",
+        await liveRequestsIn(p, from), []);
+      same("١٣٢. ولا صفَّ له في قائمة عمل الطبيب لذلك الاختصاص",
+        (await rowsOf(p)).filter((r: any) => r.caseType === from).length, 0);
+      same("١٣٣. ولا شارةَ انتظارٍ عليه",
+        (await pendingSpecialtiesOf(p)).includes(from), false);
+
+      // ══ **والمحسومُ نهائياً لا يتبع** — الإصلاحُ لم يتّسع إليه ══════════
+      //  والطلبُ الكاملُ المُرجَع (`returned`) خارج مجموعة «يتبع»: يبقى على
+      //  اختصاصه ولا تُختَم عليه هذه المعاينة. **ولا يُقارَن بايتاً** لأن
+      //  سحبَ الخيط المصدر بعد انتقال حلقته (٤.y ⟶ ٤.r) قد يُقاعده لاحقاً
+      //  بمسارٍ آخر — وذاك آليّةٌ مستقلّة، والمقصودُ هنا أن **إعادةَ الوسم**
+      //  لم تمسّه.
+      const returnedAfter = await reviewRow(requestId!);
+      same("١٣٤. والطلبُ المُرجَع لم يتبع — اختصاصُه كما كان ولا معاينةَ عليه",
+        [returnedAfter.service_type, returnedAfter.exam_id],
+        [returnedBefore.service_type, null]);
+      same("١٣٥. وقرارُ إرجاعه وصاحبُه ووقتُه ومسارُه ونوعُه كما هي",
+        [returnedAfter.decision, returnedAfter.decided_by, returnedAfter.decided_at,
+          returnedAfter.requested_path, returnedAfter.review_kind],
+        [returnedBefore.decision, returnedBefore.decided_by, returnedBefore.decided_at,
+          returnedBefore.requested_path, returnedBefore.review_kind]);
     }
 
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
