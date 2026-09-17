@@ -5,6 +5,13 @@
 // عندها فعلياً: تحميلُ الجلسة، اقتناءُ اتّصالٍ من مِجمَع قاعدة البيانات،
 // أم إغلاقُ الاستجابة نفسِه.
 //
+// ══ وامتدّ لمسارٍ ثالث (٢٠٢٦-٠٩-١٧) — تسجيلُ مريضٍ جديد ═════════════════
+// `POST /api/patients`. **تشخيصٌ فقط، بلا إصلاح**: لا منطقَ تجاريٌّ يتغيّر،
+// ولا مهلةَ تُعدَّل، ولا خطوةٌ تُنقَل إلى الخلفية، ولا مسارٌ آخر يُمَسّ.
+// والوسمُ `DIAG_TAG` يبقى بقيمته الأصلية — هو **علامةُ الأداة** التي
+// يلتقطها كلُّ اختبارٍ تشخيصيّ، لا وصفٌ لطريقٍ بعينه؛ وتغييرُه كان يكسر
+// اختبارين قائمين بلا مقابل.
+//
 // ══ تجريدٌ عابرٌ لا سطحُ عملٍ دائم ═══════════════════════════════════════
 // يُزال بالكامل بعد تحديد مصدر التعليق — **لا يغيّر سلوك أيّ طريق ولا
 // إعداد مِجمَعٍ ولا جلسة**، مجرّد سطورِ سجلٍّ منسدلة على طريقين محدَّدين
@@ -41,14 +48,31 @@ interface DiagRouteMatcher {
   method: string;
   pattern: RegExp;
   route: string;
+  /**
+   * هل يحمل آخرُ مقطعٍ في المسار **معرّفَ صفٍّ رقمياً**؟
+   *
+   * صحيحةٌ للطريقين الأوّلين (`…/articles/:id`، `…/users/:id`) — وهو
+   * سلوكُهما الأصليّ بحرفه. و**كاذبةٌ لطريق الإنشاء**: `POST /api/patients`
+   * آخرُ مقاطعه اسمُ المجموعة `"patients"` لا معرّفَ صفّ، ولا صفَّ أصلاً
+   * لحظةَ الوصول. فيُترَك `entityId` فارغاً بصدق بدل أن يُقرأ سطرُ السجلّ
+   * `entityId: "patients"` فيُظنّ معرّفاً.
+   */
+  entityIdFromPath: boolean;
 }
 
-// ══ الطريقان المشخَّصان حصراً ═══════════════════════════════════════════
-// إضافةُ طريقٍ ثالث لاحقاً تعني سطراً واحداً هنا فقط — لا تعديلَ في أيّ
-// وسيطٍ أو معالج.
+// ══ الطرقُ المشخَّصة حصراً ══════════════════════════════════════════════
+// إضافةُ طريقٍ لاحقاً تعني سطراً واحداً هنا فقط — لا تعديلَ في أيّ وسيطٍ
+// أو معالج.
 const DIAG_ROUTES: DiagRouteMatcher[] = [
-  { method: "PATCH", pattern: /^\/api\/ai\/knowledge\/articles\/[^/]+$/, route: "knowledge_article_edit" },
-  { method: "DELETE", pattern: /^\/api\/admin\/users\/[^/]+$/, route: "admin_user_delete" },
+  { method: "PATCH", pattern: /^\/api\/ai\/knowledge\/articles\/[^/]+$/, route: "knowledge_article_edit", entityIdFromPath: true },
+  { method: "DELETE", pattern: /^\/api\/admin\/users\/[^/]+$/, route: "admin_user_delete", entityIdFromPath: true },
+  //  ══ تسجيلُ مريضٍ جديد (٢٠٢٦-٠٩-١٧) — تشخيصٌ مؤقّتٌ ثالث ════════════════
+  //  **المسارُ مُرسّىً تماماً** (`$` بعد `patients` مباشرةً): لا يطابق
+  //  `POST /api/patients/:id/new-service` ولا `…/add-case-type` ولا
+  //  `…/price-physio` ولا `…/treatment-plans` ولا `…/case-type/…/close` ولا
+  //  `…/transfer` ولا `POST /api/admin/patients/merge` — مجموعةُ الإنشاء
+  //  وحدها. ولا طريقَ آخر يتغيّر سلوكُه بحرف.
+  { method: "POST", pattern: /^\/api\/patients$/, route: "patient_create", entityIdFromPath: false },
 ];
 
 interface DiagState {
@@ -92,7 +116,8 @@ export function diagRawArrivalMiddleware(req: Request, res: Response, next: Next
   const match = matchDiagRoute(req);
   if (!match) return next();
 
-  const entityId = req.path.split("/").filter(Boolean).pop() ?? "";
+  //  طريقُ الإنشاء بلا معرّفِ صفّ — يبقى فارغاً ولا يُقرأ اسمُ المجموعة معرّفاً.
+  const entityId = match.entityIdFromPath ? (req.path.split("/").filter(Boolean).pop() ?? "") : "";
   const state: DiagState = {
     requestId: randomUUID(),
     startedAt: Date.now(),

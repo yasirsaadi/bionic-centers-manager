@@ -2387,6 +2387,10 @@ export async function registerRoutes(
   });
 
   app.post(api.patients.create.path, isAuthenticated, async (req, res) => {
+    //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٧) — راجع server/diagnostics/request_timing.ts.
+    //  **تشخيصٌ فقط**: أسطرُ سجلٍّ منسدلة، بلا منطقٍ تجاريّ يتغيّر ولا مهلةٍ
+    //  ولا خطوةٍ تُنقَل إلى الخلفية.
+    diagRouteHandlerReached(req);
     try {
       // ══ صدقُ التسجيل (تصحيحٌ معماريّ) ═══════════════════════════════════
       // تسجيلُ مريضٍ جديد **لا يعني كلفةً أبداً** — `CreatePatient.tsx`
@@ -2521,7 +2525,15 @@ export async function registerRoutes(
       (input as any).whatsappConsentAt = waEnabled ? new Date() : null;
       (input as any).whatsappConsentByUserId = waEnabled ? (branchSession?.userId ?? null) : null;
 
-      const patient = await storage.createPatient(input);
+      diagPhase(req, "before_create_patient");
+      const patient = await storage.createPatient(
+        input,
+        //  الطوران الداخليّان (`before/after_sync_patient_cases`) يصلان من
+        //  داخل المخزن بنفس معرّف الارتباط — نفسُ نمط `onPhase` القائم في
+        //  `server/ai/knowledge/routes.ts`.
+        { onPhase: (phase) => diagPhase(req, phase) },
+      );
+      diagPhase(req, "after_create_patient");
 
       // كبسةٌ كي يصل الترحيبُ في ثوانٍ لا في دقيقة. **«أطلق وانسَ» وبعد
       // الحفظ** — فشلُها لا يعني شيئاً، والدورةُ الدورية تلتقط ما بقي،
@@ -2545,6 +2557,7 @@ export async function registerRoutes(
         });
       })().catch((err) => console.error("[telegram] new-patient notify failed:", err));
 
+      diagPhase(req, "before_audit");
       await logAudit({
         entityType: "patient",
         entityId: patient.id,
@@ -2555,7 +2568,9 @@ export async function registerRoutes(
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
       });
+      diagPhase(req, "after_audit");
 
+      diagPhase(req, "before_response");
       res.status(201).json(patient);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -2589,6 +2604,7 @@ export async function registerRoutes(
       //
       //  والمعاملةُ تراجعت كاملةً (صفُّ المريض وجهتُه وترحيبُه معاً)، فلا
       //  حالةَ نصفَ مكتوبة تُخفيها هذه الرسالة — وإعادةُ المحاولة نظيفة.
+      diagPhase(req, "before_response");
       return res.status(500).json({ message: "تعذّر تسجيل المريض — لم يُحفظ شيء، أعد المحاولة" });
     }
   });
