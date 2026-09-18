@@ -27,7 +27,7 @@ import {
   RESTORE_WINDOW_DAYS, TRASH_TITLE, DELETE_REASON_LABEL, RESTORE_LABEL,
   PURGE_LABEL, RESTORE_EXPIRED_MESSAGE, GLOBAL_ADMIN_REQUIRED_MESSAGE,
   PURGE_BEFORE_EXPIRY_MESSAGE,
-  PATIENT_IN_TRASH_ERROR, IN_TRASH_HINT, IN_TRASH_ESCALATION,
+  PATIENT_IN_TRASH_ERROR,
   canTrashPatients, canRestorePatients, canPurgePatients,
   requiresGlobalAdmin, globalAdminReasons, daysLeft, isRestorable, parseReason,
   EMPTY_SNAPSHOT,
@@ -561,21 +561,28 @@ async function main() {
       (await http("POST", `/api/medical/patients/${rich.id}/exams`, S.doc,
         { caseType: "prosthetic", diagnosis: "x", plan: "y", idempotencyKey: crypto.randomUUID() })).status >= 400, true);
 
-    // ══ ح. كشفُ التكرار — تنبيهٌ بلا كشف ══════════════════════════════════
+    // ══ ح. `lookup-by-name` — المحذوفُ لا يُقرأ ولا يُنبَّه عليه ═══════════
+    //  **انقلبَ عقدُ هذا القسم بقرارِ مالكٍ صريح (٢٠٢٦-٠٩-١٨)، لا لتخضير
+    //  اختبار.** كان يثبت أن المسارَ يُنبِّه على مطابقٍ في السلّة قبل
+    //  التسجيل (`inTrash`/`inTrashCount`/`trashNotice`). وقد خرج المحذوفُ من
+    //  **كلّ** أغراض تسجيل مريضٍ جديد: لا يظهر، ولا يُعَدّ، ولا يولّد
+    //  تنبيهاً — والحقولُ الثلاثة غابت من الردّ أصلاً.
+    //
+    //  **والسلّةُ نفسُها لم تُمَسّ**: صفحتُها والاستعادةُ والحذفُ النهائيّ
+    //  كما هي (الأقسامُ ط وما بعدها أدناه بلا تغيير).
     console.log("\n── ح. تكرارُ التسجيل ──");
     const lkMgr = await http("GET",
       `/api/patients/lookup-by-name?name=${encodeURIComponent(MARK)}`, S.mgr);
-    check(lkMgr.body?.inTrashCount > 0, "ح١. المخوَّلُ يُنبَّه أن في السلّة مطابقاً");
-    same("ح٢. **وبرسالتها الصريحة**", lkMgr.body?.trashNotice, IN_TRASH_HINT);
-    check(lkMgr.body?.inTrash?.some?.((x: any) => x.id === rich.id) === true,
-      "ح٣. ويرى الصفَّ ليقرّر: استعادةً أو ملفّاً جديداً");
+    same("ح١. **الردُّ مفتاحٌ واحدٌ لا أكثر — لا حقلَ سلّةٍ إطلاقاً**",
+      Object.keys(lkMgr.body ?? {}).sort(), ["matches"]);
+    check(lkMgr.body?.matches?.every?.((x: any) => x.id !== rich.id) === true,
+      "ح٢. **والمحذوفُ ليس في «المطابقات»** — لمَن يملك السلّةَ أيضاً");
     const lkRecv = await http("GET",
       `/api/patients/lookup-by-name?name=${encodeURIComponent(MARK)}`, S.recv);
-    check(lkRecv.body?.inTrashCount > 0, "ح٤. والاستقبالُ يعرف أن هناك ما يوقفه");
-    same("ح٥. **ولا يُكشَف له بيان**", lkRecv.body?.inTrash, []);
-    same("ح٦. ويُقال له ما يكفي ليسأل", lkRecv.body?.trashNotice, IN_TRASH_ESCALATION);
+    same("ح٣. **وكذلك للاستقبال — لا تنبيهَ ولا عدّاد**",
+      Object.keys(lkRecv.body ?? {}).sort(), ["matches"]);
     check(lkRecv.body?.matches?.every?.((x: any) => x.id !== rich.id) === true,
-      "ح٧. والمحذوفُ ليس في «المطابقات» العادية");
+      "ح٤. والمحذوفُ ليس في «المطابقات» العادية");
 
     // ══ ط. الاستعادة — الصفوفُ نفسُها تعود ════════════════════════════════
     console.log("\n── ط. الاستعادة ──");
