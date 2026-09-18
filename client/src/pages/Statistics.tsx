@@ -1461,7 +1461,9 @@ export default function Statistics() {
                       data={stats.conditionDistribution}
                       cx="50%"
                       cy="50%"
-                      outerRadius="78%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -1493,7 +1495,9 @@ export default function Statistics() {
                       data={stats.classificationDistribution}
                       cx="50%"
                       cy="50%"
-                      outerRadius="78%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -1649,18 +1653,22 @@ export default function Statistics() {
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="space-y-3 flex flex-col justify-center">
-                  {stats.revenueByTreatmentData.map((item: any) => (
-                    <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-revenue-${item.name}`}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                        <span className="text-sm font-medium">{item.name}</span>
+                  {stats.revenueByTreatmentData.map((item: any) => {
+                    const total = stats.revenueByTreatmentData.reduce((sum: number, d: any) => sum + d.value, 0);
+                    return (
+                      <div key={item.name} className="flex items-center justify-between" data-testid={`text-treatment-revenue-${item.name}`}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-sm font-medium">{item.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
+                          <span className="text-xs text-muted-foreground">({item.count} {t.statistics.payment})</span>
+                          <span className="text-xs text-muted-foreground">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
-                        <span className="text-xs text-muted-foreground">({item.count} {t.statistics.payment})</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </CardContent>
