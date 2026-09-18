@@ -6,6 +6,7 @@ import { clearBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
+import { isSidebarItemVisible } from "./sidebar_section_visibility";
 import { canTrashPatients, TRASH_TITLE, trashBadgeSeenKey } from "@shared/patient_trash";
 import { LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
@@ -72,10 +73,27 @@ export function Sidebar() {
     }
   }, []);
 
-  // Fetch branch settings
+  //  ══ إعداداتُ إظهار الأقسام — تصل بلا خروجٍ وعودة (٢٠٢٦-٠٩-١٩) ════════
+  //  كانت لقطةً تُجلَب مرّةً ثمّ تبقى (`staleTime` العامّ ٦٠ ثانية،
+  //  و`refetchInterval`/`refetchOnWindowFocus` **مُطفَآن عامّاً** في
+  //  `queryClient.ts`) — فتبديلُ المسؤولِ لخيارٍ لا يبلغ موظّفَ الفرع حتى
+  //  يخرج ويعود.
+  //
+  //  فتحديثان لا أكثر، **لهذا الاستعلام وحده**:
+  //    · `refetchInterval: 30_000` — دورةٌ كلَّ نصف دقيقة. وهي **تتوقّف
+  //      تلقائياً حين تختفي النافذة** (`refetchIntervalInBackground` مُطفَأةٌ
+  //      افتراضاً)، فلا تُستنزَف شبكةُ تبويبٍ منسيّ.
+  //    · `refetchOnWindowFocus: "always"` — لا `true` المجرّدة: تلك تُقاس
+  //      بالبيات، و`staleTime` العامّ ٦٠ ثانية كان سيبتلع أغلبَ العودات.
+  //      و«always» تجلب عند كلّ عودةٍ فعلاً — وهي لحظةُ الرجوع التي تُكمل
+  //      ما تتركه الدورةُ المتوقّفة في الخلفية.
+  //
+  //  **ولا WebSocket ولا مقبسٌ ولا بثّ** — والحمولةُ خمسةُ أعلامٍ لا غير.
   const { data: branchSettings } = useQuery<BranchSettings>({
     queryKey: ["/api/branch-settings"],
     enabled: !!branchSession,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: "always",
   });
 
   // Delivery-alert count for the التنبيهات badge. Light polling keeps the
@@ -364,21 +382,20 @@ export function Sidebar() {
       return false;
     }
 
-    // Check branch settings for non-admin users
-    if (!branchSession?.isAdmin && item.settingKey && branchSettings) {
-      const settingValue = branchSettings[item.settingKey];
-      if (settingValue === false) {
-        return false;
-      }
-    }
-    
-    // Check permissions
-    if (item.permission && !permissions[item.permission]) {
-      // The accounting section is also reachable with the narrow
-      // "add expenses" grant (expenses tab only) — not just full management.
-      if (!(item.href === "/accounting" && permissions.canAddExpenses)) {
-        return false;
-      }
+    //  ══ بوّابتا العرض والصلاحية — في دالّةٍ خالصةٍ واحدة ════════════════
+    //  استُخرجتا من هنا كما هما حرفاً بحرف (`sidebar_section_visibility.ts`)
+    //  ليُثبَت بالاختبار أن **إعداداتِ الفرع تُخفي ولا تمنح** — قرارٌ داخل
+    //  `.filter()` لا يُختبَر إلّا بقراءة نصِّه، وقراءةُ النصّ لا تُمسك
+    //  انقلاباً في المعنى.
+    if (!isSidebarItemVisible({
+      isAdmin: !!branchSession?.isAdmin,
+      settingKey: item.settingKey,
+      branchSettings,
+      permission: item.permission,
+      permissions: permissions as unknown as Record<string, boolean | undefined>,
+      href: item.href,
+    })) {
+      return false;
     }
 
     //  ══ **صفٌّ يختفي عند الصفر** (المرحلة الخامسة) ══════════════════════
