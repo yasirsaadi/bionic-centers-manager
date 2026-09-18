@@ -127,8 +127,10 @@ type PermissionSet = {
   canViewReports: boolean;
   canManageAccounting: boolean;
   canAddExpenses: boolean;
-  canManageSettings: boolean;
-  canManageUsers: boolean;
+  //  `canManageSettings`/`canManageUsers` أُزيلا من هذا النموذج
+  //  (٢٠٢٦-٠٩-١٨): **لا نقطةَ في الخادم تقرؤهما للتفويض** — نقاطُ
+  //  الإعدادات والمستخدمين تفحص `isAdmin` مباشرةً، فمفتاحُهما كان يُطفَأ
+  //  ويُشعَل بلا أيّ أثر. والعمودان باقيان في القاعدة بلا مسّ.
   canManageTreatmentPlans: boolean;
   canManageSurveys: boolean;
   // Per-user visit permissions. Toggle on for any employee the
@@ -155,8 +157,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: true,
     canManageAccounting: true,
     canAddExpenses: false,
-    canManageSettings: true,
-    canManageUsers: true,
     canManageTreatmentPlans: true,
     canManageSurveys: true,
     canEditVisits: true,
@@ -182,8 +182,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: true,
     canManageAccounting: true,
     canAddExpenses: false,
-    canManageSettings: true,
-    canManageUsers: true,
     canManageTreatmentPlans: true,
     canManageSurveys: true,
     canEditVisits: true,
@@ -207,8 +205,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: true,
     canManageAccounting: true,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: false,
     canEditVisits: false,
@@ -229,8 +225,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: false,
     // الاستقبال هم من يجرون الاستبيان مع المريض بعد انتهاء جلسته،
     // فيلزمهم وصول كامل لتعبئة الاستبيانات وقراءة النتائج.
@@ -256,8 +250,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: true,
     canManageSurveys: false,
     // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
@@ -280,8 +272,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: true,
     canEditVisits: false,
@@ -305,8 +295,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: false,
     canManageSurveys: false,
     canEditVisits: false,
@@ -331,8 +319,6 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: true,
     canManageSurveys: false,
     canEditVisits: true,
@@ -2470,9 +2456,8 @@ export default function AdminSettings() {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
-    canManageSettings: false,
-    canManageUsers: false,
     canManageTreatmentPlans: false,
+    canManageSurveys: false,
     canEditVisits: false,
     canDeleteVisits: false,
     canEnterSessions: false,
@@ -2631,9 +2616,8 @@ export default function AdminSettings() {
       canViewReports: false,
       canManageAccounting: false,
       canAddExpenses: false,
-      canManageSettings: false,
-      canManageUsers: false,
       canManageTreatmentPlans: false,
+      canManageSurveys: false,
       canEditVisits: false,
       canDeleteVisits: false,
       canEnterSessions: false,
@@ -2677,9 +2661,8 @@ export default function AdminSettings() {
       canViewReports: user.canViewReports ?? false,
       canManageAccounting: user.canManageAccounting ?? false,
       canAddExpenses: (user as any).canAddExpenses ?? false,
-      canManageSettings: user.canManageSettings ?? false,
-      canManageUsers: user.canManageUsers ?? false,
       canManageTreatmentPlans: (user as any).canManageTreatmentPlans ?? false,
+      canManageSurveys: (user as any).canManageSurveys ?? false,
       canEditVisits: (user as any).canEditVisits ?? false,
       canDeleteVisits: (user as any).canDeleteVisits ?? false,
       canEnterSessions: (user as any).canEnterSessions ?? false,
@@ -4122,22 +4105,13 @@ export default function AdminSettings() {
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-muted-foreground">{t.adminSettings.permCatSystem}</h4>
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="canManageSettings"
-                        checked={userFormData.canManageSettings}
-                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageSettings: checked }))}
-                      />
-                      <Label htmlFor="canManageSettings" className="text-sm">{t.adminSettings.canManageSettings}</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="canManageUsers"
-                        checked={userFormData.canManageUsers}
-                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageUsers: checked }))}
-                      />
-                      <Label htmlFor="canManageUsers" className="text-sm">{t.adminSettings.canManageUsers}</Label>
-                    </div>
+                    {/*  ══ «إدارة الإعدادات» و«إدارة المستخدمين» أُزيلا
+                        (٢٠٢٦-٠٩-١٨) ══════════════════════════════════════
+                        مفتاحان مضلِّلان: لا نقطةَ واحدة في الخادم تقرؤهما
+                        للتفويض — نقاطُ `/api/admin/settings` و
+                        `/api/admin/users` تفحص `isAdmin` مباشرةً. فكان
+                        المسؤولُ يُشعلهما ويُطفئهما بلا أثرٍ إطلاقاً.
+                        والعمودان باقيان في القاعدة بلا مسّ.  */}
                     <div className="flex items-center gap-2">
                       <Switch
                         id="canManageTreatmentPlans"
@@ -4146,6 +4120,21 @@ export default function AdminSettings() {
                         data-testid="switch-canManageTreatmentPlans"
                       />
                       <Label htmlFor="canManageTreatmentPlans" className="text-sm">{t.adminSettings.canManageTreatmentPlans}</Label>
+                    </div>
+                    {/*  ══ «إدارة الاستبيانات» — مفتاحٌ كان ناقصاً
+                        (٢٠٢٦-٠٩-١٨) ══════════════════════════════════════
+                        العَلَمُ يحرس نقطتين فعليتين في الخادم، وكان قالبُ
+                        الدور وحده يكتبه بلا مفتاحٍ يراه المسؤول — فلا سبيل
+                        لإطفائه. وبعد أن صار الخادمُ يقرأ المخزَّن وحدَه،
+                        يلزم مفتاحٌ يُطفئه فعلاً.  */}
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canManageSurveys"
+                        checked={userFormData.canManageSurveys}
+                        onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canManageSurveys: checked }))}
+                        data-testid="switch-canManageSurveys"
+                      />
+                      <Label htmlFor="canManageSurveys" className="text-sm">إدارة الاستبيانات</Label>
                     </div>
                     {/* Per-user visit permissions. Off by default;
                         admin flips them on for trusted staff who

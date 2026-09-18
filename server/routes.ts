@@ -238,24 +238,34 @@ async function patientOwnsCase(
  * تقرأ `branchSession.permissions` بعدها، حاضرةً أو مقبلة، فلا تنحرف
  * نسختان يوماً.
  *
+ * ══ إكمالٌ ٢٠٢٦-٠٩-١٨ — البابان الحقيقيّان لحقا بالمجموعة ══════════════
+ * `canManageTreatmentPlans` و`canManageSurveys` كانا خارج تصحيح ٢٠٢٦-٠٩-٠١
+ * (لم يكونا في القائمة التي سمّاها المالكُ يومَها)، **وهما عَلَمان يحرسان
+ * نقاطاً فعلية**: الخططُ العلاجية في ثلاث نقاط، والاستبياناتُ في نقطتين.
+ * فكان الدورُ يعيد منحَهما — «مدير الفرع» لكليهما و«الاستقبال» للثاني —
+ * بعد أن يطفئهما المسؤولُ من شاشة المستخدمين، فيبدو المفتاحُ كأنّه لا
+ * يعمل. صارا الآن **الحقيقةَ المخزَّنة وحدَها** كبقيّة المجموعة.
+ *
  * ══ ما بقي خارج هذا التصحيح عمداً ══════════════════════════════════════
- * `canManageSettings` · `canManageUsers` · `canManageTreatmentPlans` ·
- * `canManageSurveys` — ليست ضمن «تعديل/حذف المرضى، الدفعات، الزيارات،
- * التقارير، المحاسبة، المصروفات، إجراءات الجلسات» التي طلب المالك محاذاتها
- * صراحةً؛ وأولاها («الإعدادات») تبقى محميّةً بـ`isAdmin` في كل نقطةٍ
- * تُستهلَك فيها فعلياً (لا نقطةَ تقرأ هذا العَلَم للتفويض إطلاقاً — تحقّقتُ
- * منها)، فلا أثرَ أمنيّاً لإبقائها كما هي. وقدراتُ الطبيب/الخبير/اعتماد
- * الخصم (`canWriteMedicalExam`/`canWorkAsExpert`/`canApproveDiscount`)
- * منطقُها القائم منذ ترحيلاتٍ سابقة (٠٢٨ وما بعدها) — قدرةٌ مهنية يحملها
- * صاحبُ الدور ضمناً كما يحمل المسؤولُ سلطته، لا منحاً إدارياً عاماً؛ لم
- * يُطلَب تغييرُها وتغييرُها هنا مخاطرةٌ لا داعي لها.
+ * `canManageSettings` · `canManageUsers` — **لا نقطةَ واحدة في الخادم
+ * تقرؤهما للتفويض**: نقاطُ `/api/admin/settings` و`/api/admin/users` (و
+ * بقيّةُ عائلتهما) تفحص `branchSession.isAdmin` مباشرةً، فمفتاحُهما لا
+ * يفتح شيئاً لغير المسؤول العام أصلاً. فلا تُوسَّع صلاحيةُ الخادم هنا ولا
+ * تُمَسّ تلك المسارات؛ **والمفتاحان المضلِّلان أُزيلا من نموذج صلاحيات
+ * الموظّف** في `AdminSettings.tsx` وحده (٢٠٢٦-٠٩-١٨) — فلا يُطفئ المسؤولُ
+ * مفتاحاً يظنّه سلطةً وهو لا يعني شيئاً.
+ *
+ * وقدراتُ الطبيب/الخبير/اعتماد الخصم
+ * (`canWriteMedicalExam`/`canWorkAsExpert`/`canApproveDiscount`) منطقُها
+ * القائم منذ ترحيلاتٍ سابقة (٠٢٨ وما بعدها) — قدرةٌ مهنية يحملها صاحبُ
+ * الدور ضمناً كما يحمل المسؤولُ سلطته، لا منحاً إدارياً عاماً؛ لم يُطلَب
+ * تغييرُها وتغييرُها هنا مخاطرةٌ لا داعي لها.
  *
  * الدورُ ما زال يقرّر **الافتراضات عند إنشاء المستخدم فقط** (قالب
  * `AdminSettings.tsx`) — لا عند كل قراءةٍ لاحقة، تماماً كما طلب المالك.
  */
 function buildStoredPermissions(systemUser: SystemUser) {
   const grantAll = systemUser.role === "branch_manager";
-  const isReception = systemUser.role === "reception";
   const isAdminRow = systemUser.role === "admin";
   return {
     // ══ محاذاةٌ بالمخزَّن وحده — لا منحَ من الدور بعد اليوم ══════════════
@@ -277,11 +287,22 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canEnterSessions: isAdminRow || Boolean(systemUser.canEnterSessions),
     canManageSessionTargets: isAdminRow || Boolean(systemUser.canManageSessionTargets),
     canViewSessionsReport: isAdminRow || Boolean(systemUser.canViewSessionsReport),
+    // ══ محاذاةٌ بالمخزَّن — إكمالُ الإصلاح على البابين الحقيقيَّين
+    // (٢٠٢٦-٠٩-١٨) ═══════════════════════════════════════════════════════
+    //  هذان العَلَمان **يحرسان نقاطاً فعلية** في الخادم (الخططُ العلاجية
+    //  ثلاثُ نقاط، والاستبياناتُ نقطتان)، وكان الدورُ يعيد منحَهما بعد أن
+    //  يطفئهما المسؤولُ من الشاشة — فيبدو المفتاحُ كأنّه لا يعمل. فصارا
+    //  **الحقيقةَ المخزَّنة وحدَها**، كبقيّة المجموعة أعلاه.
+    canManageTreatmentPlans: Boolean(systemUser.canManageTreatmentPlans),
+    canManageSurveys: Boolean(systemUser.canManageSurveys),
     // ══ خارجَ هذا التصحيح — بمنطقها القائم بحرفه ══════════════════════════
+    //  `canManageSettings`/`canManageUsers`: **لا نقطةَ واحدة في الخادم
+    //  تقرؤهما للتفويض** — نقاطُ الإعدادات والمستخدمين كلُّها تفحص
+    //  `branchSession.isAdmin` مباشرةً. فلا تُوسَّع هنا ولا تُمَسّ تلك
+    //  المسارات؛ والمفتاحان المضلِّلان أُزيلا من نموذج صلاحيات الموظّف في
+    //  `AdminSettings.tsx` وحده (٢٠٢٦-٠٩-١٨).
     canManageSettings: grantAll || Boolean(systemUser.canManageSettings),
     canManageUsers: grantAll || Boolean(systemUser.canManageUsers),
-    canManageTreatmentPlans: grantAll || Boolean(systemUser.canManageTreatmentPlans),
-    canManageSurveys: grantAll || isReception || Boolean(systemUser.canManageSurveys),
     canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
     canWriteMedicalExam: systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
     canApproveDiscount: Boolean(systemUser.canApproveDiscount),
