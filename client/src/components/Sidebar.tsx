@@ -73,9 +73,17 @@ export function Sidebar() {
   }, []);
 
   // Fetch branch settings
+  //  ══ تصل بلا خروجٍ وعودة (٢٠٢٦-٠٩-١٩) ═══════════════════════════════
+  //  الافتراضاتُ العامّة في `queryClient.ts` تُطفئ الاثنين
+  //  (`refetchInterval: false` · `refetchOnWindowFocus: false`) وتضع
+  //  `staleTime: 60_000` — فتبديلُ المسؤولِ لخيارِ إظهارٍ كان لا يبلغ موظّفَ
+  //  الفرع حتى يخرج ويعود. و`"always"` لا `true`: الثانيةُ تُقاس بالبيات،
+  //  فالستّون ثانية كانت ستبتلع أغلبَ العودات.
   const { data: branchSettings } = useQuery<BranchSettings>({
     queryKey: ["/api/branch-settings"],
     enabled: !!branchSession,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: "always",
   });
 
   // Delivery-alert count for the التنبيهات badge. Light polling keeps the

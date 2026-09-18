@@ -3562,7 +3562,16 @@ export default function AdminSettings() {
 
                   {selectedBranchForSettings === branch.id && (
                     <div className="border-t pt-4 mt-4">
-                      <h4 className="text-sm font-semibold text-slate-700 mb-3">{t.adminSettings.sectionSettings}</h4>
+                      {/*  ══ عنوانٌ يقول ما تفعله هذه الخيارات (٢٠٢٦-٠٩-١٩) ══
+                          «إعدادات إظهار الأقسام» كانت تُقرأ صلاحياتٍ —
+                          فالسطرُ تحتها ينفي ذلك صراحةً قبل أن يُطفئ المسؤولُ
+                          خياراً ظنّاً أنه يمنع موظّفاً من الوصول. */}
+                      <h4 className="text-sm font-semibold text-slate-700">
+                        إظهار الأقسام في قائمة الفرع
+                      </h4>
+                      <p className="text-xs text-muted-foreground mb-3 mt-1">
+                        هذه الخيارات تنظّم ما يظهر في القائمة، ولا تمنح صلاحيات للموظف.
+                      </p>
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {sectionLabels.map(({ key, label, icon: Icon }) => (
                           <div 
