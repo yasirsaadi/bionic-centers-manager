@@ -549,6 +549,98 @@ async function main() {
     check(legacyVisible.body?.paymentSessionsSummary === undefined,
       "م١٠. **وبلا ملخّصٍ إضافيّ له — السلوكُ الكامل بلا تغيير**",
       JSON.stringify(legacyVisible.body?.paymentSessionsSummary));
+
+    // ══ ن. `canManageTreatmentPlans` و`canManageSurveys` — إكمالُ المحاذاة
+    //      (٢٠٢٦-٠٩-١٨) ═══════════════════════════════════════════════════
+    //  عَلَمان كانا خارج تصحيح ٢٠٢٦-٠٩-٠١، ويحرسان نقاطاً فعلية في الخادم.
+    //  وكان الدورُ يعيد منحَهما بعد أن يطفئهما المسؤول: «مدير الفرع»
+    //  (`grantAll`) لكليهما، و«الاستقبال» (`isReception`) للاستبيانات —
+    //  فيبدو المفتاحُ في الشاشة كأنّه لا يعمل.
+    //
+    //  والمستخدمان هنا هما نفساهما من الأقسام السابقة بلا صفٍّ جديد:
+    //  `MGR_NO` مديرُ فرع، و`RECEPTION_YES` استقبالٌ يحمل كلَّ الأعلام
+    //  الأخرى **مُشعَلة** — فلا يمكن أن يُنسَب الرفضُ إلى نقصٍ آخر. والعَلَمُ
+    //  وحدَه يتبدّل بين الطلبين، فيُثبَت أنه هو الحَكَم لا الدور.
+    console.log("\n── ن. canManageTreatmentPlans و canManageSurveys — المخزَّن لا الدور ──");
+
+    const PLANS_DENIED = "غير مصرح لك بإدارة الخطط العلاجية";
+    const SURVEYS_DENIED = "غير مصرح لك بإدارة الاستبيانات";
+    //  معرّفٌ لا مريضَ له — فالمرورُ من البوّابة ينتهي ٤٠٤ بلا كتابةِ صفّ.
+    const NO_SUCH_PATIENT = 999999999;
+
+    //  `can_manage_accounting = false` صراحةً: هي المفتاحُ الآخرُ الوحيد
+    //  الذي يفتح `/api/ai/survey-reply` أدناه — فبتثبيتها مُطفَأة يصير
+    //  `can_manage_surveys` هو الحَكَمَ الوحيد هناك أيضاً.
+    await q(`UPDATE system_users SET can_manage_treatment_plans = false,
+               can_manage_surveys = false, can_manage_accounting = false
+             WHERE id = ANY($1::int[])`,
+      [[MGR_NO, RECEPTION_YES]]);
+
+    // ── ن-١. مُطفَأٌ ⟶ يُرفَض، رغم الدور ──────────────────────────────────
+    const plansMgrOff = await http("POST", `/api/patients/${NO_SUCH_PATIENT}/treatment-plans`,
+      S.mgrNo, { planName: "محاولةُ مديرٍ بلا صلاحية" });
+    same("ن١. **مديرُ فرعٍ بـ can_manage_treatment_plans=false ⟶ ٤٠٣** رغم دوره",
+      plansMgrOff.status, 403);
+    same("ن٢. **وبرسالةِ المنع نفسِها — لا رفضٌ لسببٍ آخر**",
+      plansMgrOff.body?.message, PLANS_DENIED);
+
+    const surveysMgrOff = await http("POST", "/api/survey-responses", S.mgrNo, {});
+    same("ن٣. **ومديرُ فرعٍ بـ can_manage_surveys=false ⟶ ٤٠٣** رغم دوره",
+      surveysMgrOff.status, 403);
+    same("ن٤. **وبرسالةِ المنع نفسِها**", surveysMgrOff.body?.message, SURVEYS_DENIED);
+
+    const surveysRecOff = await http("POST", "/api/survey-responses", S.receptionYes, {});
+    same("ن٥. **واستقبالٌ بـ can_manage_surveys=false ⟶ ٤٠٣** — `isReception` لم يعد يمنحها",
+      surveysRecOff.status, 403);
+    same("ن٦. **وبرسالةِ المنع نفسِها**", surveysRecOff.body?.message, SURVEYS_DENIED);
+
+    const plansRecOff = await http("POST", `/api/patients/${NO_SUCH_PATIENT}/treatment-plans`,
+      S.receptionYes, { planName: "محاولةُ استقبالٍ بلا صلاحية" });
+    same("ن٧. **واستقبالٌ بـ can_manage_treatment_plans=false ⟶ ٤٠٣**",
+      plansRecOff.status, 403);
+
+    //  البابُ الثاني للاستبيانات — `canManageAccounting` مُطفَأةٌ صراحةً
+    //  أعلاه، فالعَلَمُ وحدَه يقرّر هنا كذلك.
+    const replyRecOff = await http("POST", "/api/ai/survey-reply", S.receptionYes, {});
+    same("ن٨. **والبابُ الثاني للاستبيانات كذلك ⟶ ٤٠٣**", replyRecOff.status, 403);
+
+    // ── ن-٢. مُشعَلٌ ⟶ يمرّ — فالرفضُ أعلاه كان للعَلَم لا لشيءٍ آخر ─────
+    //  **والقاعدةُ وحدها تتبدّل بين الطلبين** — نفسُ الجلسة بلا أيّ تعديل،
+    //  فيُثبَت معه سريانُ التغيير فوراً بلا خروجٍ وعودة.
+    await q(`UPDATE system_users SET can_manage_treatment_plans = true,
+               can_manage_surveys = true WHERE id = ANY($1::int[])`,
+      [[MGR_NO, RECEPTION_YES]]);
+
+    const plansMgrOn = await http("POST", `/api/patients/${NO_SUCH_PATIENT}/treatment-plans`,
+      S.mgrNo, { planName: "بعد إشعال العَلَم" });
+    check(plansMgrOn.status !== 403 && plansMgrOn.body?.message !== PLANS_DENIED,
+      "ن٩. **وبإشعال العَلَم المخزَّن ⟶ البوّابةُ تُفتَح فوراً (ليست ٤٠٣)**",
+      `status=${plansMgrOn.status} message=${plansMgrOn.body?.message}`);
+    same("ن١٠. **ووصل إلى ما بعدها فعلاً — ٤٠٤ لمريضٍ لا وجودَ له**",
+      plansMgrOn.status, 404);
+
+    //  `/api/ai/survey-reply` بجسمٍ فارغ: يُردّ ٤٠٠ **بعد** البوّابة مباشرةً
+    //  (`responseId` غيرُ صالح) — فيُثبَت المرورُ بلا محاولةِ كتابةِ صفٍّ
+    //  واحد، ولا نداءَ لمزوّد الذكاء.
+    const replyRecOn = await http("POST", "/api/ai/survey-reply", S.receptionYes, {});
+    check(replyRecOn.status !== 403,
+      "ن١١. **وكذلك الاستبيانات — العَلَمُ المخزَّن هو الحَكَم في الاتجاهين**",
+      `status=${replyRecOn.status} body=${JSON.stringify(replyRecOn.body)}`);
+    same("ن١٢. **ووصلت إلى ما بعد البوّابة فعلاً — ٤٠٠ لمعرّفٍ غيرِ صالح**",
+      replyRecOn.status, 400);
+
+    // ── ن-٣. ولا صفَّ خطةٍ كُتب في أيّ اتجاه ───────────────────────────
+    const strayPlans = await q<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM treatment_plans WHERE patient_id = $1`,
+      [NO_SUCH_PATIENT]);
+    same("ن١٣. **وصفرُ كتابةٍ في الحالتين — لا خطّةَ لمريضٍ لا وجودَ له**",
+      strayPlans[0]?.n, "0");
+    const straySurveys = await q<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM survey_responses WHERE surveyor_id = ANY($1::int[])`,
+      [[MGR_NO, RECEPTION_YES]]);
+    same("ن١٤. **ولا صفَّ استبيانٍ كُتب من هذا القسم إطلاقاً**",
+      straySurveys[0]?.n, "0");
+
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
