@@ -56,7 +56,7 @@ import {
 } from "./patient_cases/closure";
 import {
   checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
-  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
+  PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import {
   executeNewService, normalizeEntries, NewServiceError,
@@ -2005,12 +2005,12 @@ export async function registerRoutes(
   //  تحتاجه الواجهة (بخلاف `lookup-by-name` فوقها، المتروكة بحرفها لغرضها
   //  الخاصّ).
   //
-  //  **والسببُ يشمل السلّة أيضاً** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨): مطابقةٌ فعّالة
-  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ مطابقةٌ في
-  //  السلّة ⟵ `trash_conflict` **برسالة السلّة الآمنة القائمة نفسِها**
-  //  (`IN_TRASH_ESCALATION`) — لا تفصيلَ إضافياً، ولا فرقَ في المعاملة
-  //  البصرية (حدٌّ أحمر ومنعُ حفظٍ في الحالتين). الحسمُ في `checkNameAvailability`
-  //  القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
+  //  **والفعّالون وحدهم** (قرارُ مالكٍ صريح، ٢٠٢٦-٠٩-١٨): مطابقةٌ فعّالة
+  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ **ومريضٌ
+  //  محذوفٌ لا يُقرأ أصلاً** فلا يصير حدّاً أحمرَ في الشاشة — كان يُردّ
+  //  `trash_conflict` فيمنع الحفظ، وقد خرج المحذوفُ من منعِ التكرار
+  //  كلّياً (`patients/duplicate_guard.ts`، القسم ٣). والحسمُ في
+  //  `checkNameAvailability` القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
   app.get("/api/patients/name-availability", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     const canAsk = branchSession?.isAdmin
@@ -2585,16 +2585,13 @@ export async function registerRoutes(
       if (err instanceof PatientPhoneConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
       }
-      // ══ والسلّةُ تحجز الهويّةَ أيضاً — نفسُ العدم-كتابةً بالضبط ══════════
-      //  هويّةٌ محذوفة (اسمٌ أو هاتف) تُرفَض ٤٠٩ برسالة السلّة الآمنة —
-      //  فلا يُفتَح ملفٌّ بديلٌ يصطدم بالأصل حين يُستعاد. الشرحُ في
-      //  `patients/duplicate_guard.ts`.
-      if (err instanceof PatientNameTrashConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_name_trash_conflict" });
-      }
-      if (err instanceof PatientPhoneTrashConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
-      }
+      // ══ **والمحذوفُ لا يمنع تسجيلاً إطلاقاً** (قرارُ مالكٍ صريح،
+      //  ٢٠٢٦-٠٩-١٨) ══════════════════════════════════════════════════════
+      //  كانت السلّةُ تحجز الهويّةَ هنا أيضاً فيُردّ ٤٠٩ برسالتها الآمنة.
+      //  وقد خرج المحذوفُ من منعِ التكرار كلّياً: لا فحصَ سلّةٍ في
+      //  `createPatient` ولا تعارضَ يُرمى منها، فلا صنفَ خطأٍ يُلتقَط هنا.
+      //  (الهاتفُ على **التعديل** وحده ما زال يحجز — معالجُه في `PUT`
+      //  أدناه بحرفه.) الشرحُ في `patients/duplicate_guard.ts`، القسم ٣.
       console.error("Error creating patient:", err);
       // ══ **فشلُ الكتابة يُقال، لا يُترك معلَّقاً** ═══════════════════════
       //  كان `throw err` داخل معالجٍ غير متزامن يصير رفضاً غير ملتقَط:

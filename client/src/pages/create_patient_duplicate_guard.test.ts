@@ -33,7 +33,7 @@ check("٣. **والبطاقةُ الكهرمانيةُ (amber) غابت من ن�
 console.log("── حالةُ التحقّق ──");
 const nameCheckState = /const \[nameCheck, setNameCheck\] = useState<\{([\s\S]*?)\}>\(\{ status: "empty" \}\);/
   .exec(src);
-check("٤. **`nameCheck` بحالاتها الخمس بالضبط، ورسالةٌ اختيارية من الخادم (تصحيحٌ لاحق: السلّة)**",
+check("٤. **`nameCheck` بحالاتها الخمس بالضبط، ورسالةٌ اختيارية يعرضها الخادم**",
   !!nameCheckState
     && /status: "empty" \| "checking" \| "available" \| "conflict" \| "error";/.test(nameCheckState[1])
     && /message\?: string;/.test(nameCheckState[1]),
@@ -84,6 +84,16 @@ console.log("── تعطيلُ الزرّ ──");
 check("١٥. **الزرّ معطَّلٌ أيضاً أثناء `checking`/`conflict`/`error`**",
   /disabled=\{isPending \|\| nameCheck\.status === "checking" \|\| nameCheck\.status === "conflict" \|\| nameCheck\.status === "error"\}/
     .test(src));
+
+// ── ٩. والمحذوفُ ليس تعارضاً — لا منطقَ سلّةٍ في الشاشة إطلاقاً ───────────
+//  (قرارُ مالكٍ صريح، ٢٠٢٦-٠٩-١٨) الحجبُ سببُه واحد: مطابقةُ بادئةٍ لاسمِ
+//  مريضٍ **فعّال**. والخادمُ لم يعد يرسل `trash_conflict` أصلاً، فوجودُ أيّ
+//  فرعٍ للسلّة هنا يعني نسخةً ثانية من قاعدةٍ أُلغيت. **والإثباتُ الحيُّ
+//  للقاعدة نفسِها في `test:patient-duplicate-guard` (البند ٢٦) على النقطة
+//  التي تناديها هذه الشاشةُ بعينها.**
+console.log("── السلّةُ خارج الشاشة ──");
+check("١٦. **لا ذكرَ لـ`trash_conflict` ولا لأيّ منطقِ سلّةٍ في ملفّ التسجيل**",
+  !src.includes("trash_conflict") && !src.includes("inTrash") && !src.includes("IN_TRASH"));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}`);
 process.exit(failures === 0 ? 0 : 1);
