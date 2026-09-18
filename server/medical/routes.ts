@@ -156,16 +156,33 @@ function replyEpisodeError(res: any, err: DeviceEpisodeError) {
  * **يبقى الرفضُ الأصليُّ كما هو**: لا صفَّ بهذا المفتاح (`null`)، أو صفٌّ
  * بهويّةٍ أو محتوًى مختلف (تعارض) — كلاهما ⟶ يُردّ البياتُ بحرفه.
  *
+ * ══ **وهويّةُ الخيط قد تكون بائتةً هنا أيضاً** (٢٠٢٦-٠٩-١٨) ════════════
+ * تصحيحُ نوع طلبٍ إلى اختصاصٍ **لا خيطَ له على الملفّ بعد** يفتح الخيطَ
+ * الهدفَ **داخل معاملة التوقيع** (٤.y، تكملةٌ ثانية). فمحاولتان بنفس
+ * المفتاح تبدآن كلتاهما و`caseId = null` — لا لأن الطلبَ بلا خيط، بل لأن
+ * خيطَه لم يكن قد وُلد بعد حين قرأتاه. فالفائزةُ تفتحه وتكتب المعاينةَ
+ * عليه، والخاسرةُ تبلغ هذا المخرجَ بهويّةٍ بائتة فتُقرأ «هويّةٌ مختلفة»
+ * ويُردّ ٤٠٩ على إعادةِ إرسالٍ مشروعةٍ تماماً.
+ *
+ * **وهو الشكلُ الذي يعالجه `store.replayAfterLostRace` أصلاً** في مسار
+ * الخسارة الآخر (داخل `createExam`)، فيُنادى هنا **هو بعينه** — لا نسخةٌ
+ * ثانية من قاعدة تحديث الهويّة في النقطة. وشروطُه هي هي، بلا تخفيف:
+ * `caseId === null` · **نيّةُ تصحيحٍ صريحة** (`retypeEpisode === true`،
+ * تُمرَّر من راية الطلب لا تُستنتَج) · **وعمليةُ جهازٍ بعينها بالمعرّف**.
+ * ثمّ يُعاد **`findReplayableExam` الصارمةُ نفسُها** على الهويّة المقروءة
+ * من صفّ تلك العملية — فمريضٌ آخر أو طبيبٌ آخر أو فرعٌ آخر أو اختصاصٌ آخر
+ * أو عمليةٌ أخرى أو محتوًى مختلف **يبقى تعارضاً كما هو اليوم**.
+ *
  * وهذا المسارُ لا يُنادى إلّا على `ExamEpisodeStaleError` وحدها: الالتباسُ
  * (`device_episode_ambiguous`) وفرعُ الجهاز (`device_episode_branch`)
  * يُردّان كما كانا — ليسا شكلَ سباقٍ على مفتاحٍ واحد.
  */
 async function replayAfterStaleEpisode(
   idempotencyKey: string,
-  expected: Parameters<typeof store.findReplayableExam>[1],
+  expected: Parameters<typeof store.replayAfterLostRace>[1],
 ) {
   try {
-    return await store.findReplayableExam(idempotencyKey, expected);
+    return await store.replayAfterLostRace(idempotencyKey, expected);
   } catch (err) {
     //  تعارضٌ حقيقيّ (مفتاحٌ لطلبٍ آخر) ⟶ يبقى الرفضُ الأصليّ. وأيُّ خطأٍ
     //  غيرِ متوقَّع يصعد كما هو — لا يُبتلَع في رفضٍ يخفيه.
@@ -647,7 +664,12 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         //  نفسِه وبالقاعدة الصارمة نفسِها (`replayAfterStaleEpisode`): تُعاد
         //  المعاينةُ المطابقة بصفر كتابة، وإلّا يبقى الرفضُ كما هو.
         if (err instanceof store.ExamEpisodeStaleError) {
-          const winner = await replayAfterStaleEpisode(idempotencyKey, replayContent);
+          //  **ونيّةُ التصحيح تُمرَّر صراحةً** — من راية الطلب نفسِها، لا
+          //  من `retypeEpisode` المحلّية (لم تُسنَد: المحاولةُ رمت). وهي
+          //  أحدُ شروط إعادة قراءة الهويّة الثلاثة، فبلا تمريرها يبقى
+          //  المسارُ على الهويّة البائتة كما كان.
+          const winner = await replayAfterStaleEpisode(idempotencyKey,
+            { ...replayContent, retypeEpisode: retypeDeviceEpisode });
           if (winner) return res.json({ ...winner, switchNote: null, created: false });
         }
         if (err instanceof DeviceEpisodeError) return replyEpisodeError(res, err);

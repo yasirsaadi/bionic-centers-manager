@@ -267,8 +267,18 @@ async function identityAfterLostRace<T extends ExamIdentity>(
  * فالطلبُ العاديّ — إعادةُ إرسالٍ مطابقة، أو مفتاحٌ جديد، أو تعارضٌ حقيقيّ
  * من أيّ شكلٍ آخر — لا يمرّ من هذا المسار بحرف: لا استعلامَ إضافيّ، ولا
  * سلوكَ يتغيّر.
+ *
+ * ══ **ومسارا الخسارة اثنان، وهذه هي قاعدتُهما الواحدة** (٢٠٢٦-٠٩-١٨) ══
+ * الخسارةُ تقع في موضعين لا واحد: **داخل `createExam`** (الفائزةُ التزمت
+ * بينما هذه المحاولةُ تحت القفل) — وهو ما بُنيت له أصلاً؛ **وفي النقطة**
+ * قبل أن تبلغ `createExam` أصلاً، حين يردّ `resolveExamEpisode` بياتاً
+ * (`ExamEpisodeStaleError`) لأن الفائزةَ استهلكت الطلبَ للتوّ.
+ *
+ * **والشكلُ واحدٌ في الاثنين**: هويّةٌ قُرئت قبل أن يُولَد خيطُها. فتُصدَّر
+ * هذه الدالّةُ ليناديها المساران معاً — **قاعدةُ تحديثِ هويّةٍ واحدة لا
+ * ثانيةَ موازيةً لها**، ولا `identityAfterLostRace` تُستنسَخ في النقطة.
  */
-async function replayAfterLostRace(
+export async function replayAfterLostRace(
   key: string,
   values: ExamIdentity & ExamContent & { retypeEpisode?: boolean },
 ): Promise<MedicalExam | null> {
