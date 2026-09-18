@@ -3080,10 +3080,24 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-4 md:grid-cols-9 w-full max-w-5xl mb-6">
+        {/*  ══ شريطُ تبويباتٍ يلتفّ (٢٠٢٦-٠٩-١٩) — شكلٌ لا وظيفة ══════════
+            كان `grid-cols-9` على الشاشة المتوسّطة: تسعةُ أعمدةٍ ضيّقة تُقصّ
+            عناوينَها، و`grid-cols-4` تحتها. فصار `flex-wrap` بارتفاعٍ حرّ
+            (`h-auto` — الأصلُ `h-10` ثابت، وكان سيقصّ السطرَ الثاني)، وكلُّ
+            زرٍّ بعرضٍ أدنى ٩rem ينمو ليملأ سطرَه. فيلتفّ إلى سطرين على
+            الكمبيوتر وإلى أكثر على الموبايل، والأزرارُ واضحةٌ يسهل ضغطُها.
+
+            **والترتيبُ وحده تغيّر — لا محتوى ولا زرّ ولا استعلام**، وأسطرُ
+            التبويبات التسعة كما هي حرفاً بحرف. و«الفروع» (كلماتُ سرّ الفروع)
+            وُضعت بجوار «كلمات المرور» — كلاهما شاشةُ كلماتِ سرّ.  */}
+        <TabsList className="flex flex-wrap h-auto w-full max-w-5xl mb-6 gap-1 [&>button]:grow [&>button]:basis-[9rem] [&>button]:py-2">
           <TabsTrigger value="users" className="gap-2">
             <Users className="w-4 h-4" />
             {t.adminSettings.tabUsers}
+          </TabsTrigger>
+          <TabsTrigger value="management" className="gap-2">
+            <Layers className="w-4 h-4" />
+            {t.adminSettings.tabManagement}
           </TabsTrigger>
           <TabsTrigger value="passwords" className="gap-2">
             <Key className="w-4 h-4" />
@@ -3092,10 +3106,6 @@ export default function AdminSettings() {
           <TabsTrigger value="branches" className="gap-2">
             <Building2 className="w-4 h-4" />
             {t.adminSettings.tabBranches}
-          </TabsTrigger>
-          <TabsTrigger value="management" className="gap-2">
-            <Layers className="w-4 h-4" />
-            {t.adminSettings.tabManagement}
           </TabsTrigger>
           <TabsTrigger value="backup" className="gap-2">
             <Mail className="w-4 h-4" />
