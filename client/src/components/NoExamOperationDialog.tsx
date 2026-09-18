@@ -47,17 +47,24 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
-import { Loader2, Wallet } from "lucide-react";
+import { Loader2, Wallet, AlertTriangle } from "lucide-react";
 import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_parts";
 import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
 import { deriveOfferFromDiscount, parsePaidNowAmount } from "@shared/commercial";
-import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
+import {
+  MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_WARRANTY_LABEL,
+  MAINTENANCE_SIMILAR_TITLE, MAINTENANCE_SIMILAR_HINT,
+  MAINTENANCE_SIMILAR_BACK, MAINTENANCE_SIMILAR_CONTINUE,
+  deriveMaintenanceTerms, describeSimilarMaintenance,
+  shouldPromptSimilarMaintenance, type SimilarMaintenanceOrder,
+} from "@shared/maintenance";
 import {
   COMPONENT_SALE_SUCCESS_MESSAGE, COMPONENT_ATTACH_SUCCESS_MESSAGE,
   ATTACH_TO_IN_MANUFACTURING_QUESTION,
@@ -198,6 +205,36 @@ export function NoExamOperationDialog({
   //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
   const [deviceSelection, setDeviceSelection] = useState<string>("");
 
+  //  ══ **ضمن الضمان** (ترحيل ٠٨٣) — حالةٌ مستقلّة لا «مجّانيّ» بثوبٍ آخر ══
+  //  الأجرُ صفرٌ بقرار التزامٍ سابق. **ولا شرطَ أهليّةٍ محسوب**: لا مدّةَ
+  //  ولا تاريخَ شراءٍ ولا عدَّ مرّات — الموظّفُ هو مَن يقرّر.
+  const [underWarranty, setUnderWarranty] = useState(false);
+  const warrantyOn = kind === "maintenance" && underWarranty;
+
+  //  ══ **تنبيهُ الصيانة المشابهة — معلوماتيٌّ لا يمنع** ═══════════════════
+  //  `rows === null` لم يُسأل بعد (أو رجع الموظّفُ فأُغلق)؛ ومصفوفةٌ غيرُ
+  //  فارغة تفتح النافذة. **ولا تُكتَب كلمةٌ قبل أن يقرّر**.
+  const [similarRows, setSimilarRows] = useState<SimilarMaintenanceOrder[] | null>(null);
+  const [similarAck, setSimilarAck] = useState(false);
+  const [similarChecking, setSimilarChecking] = useState(false);
+  const similarPromptOpen = kind === "maintenance"
+    && shouldPromptSimilarMaintenance({ rows: similarRows, acknowledged: similarAck });
+
+  //  **وفتحُ النافذة يبدأ صفحةً بيضاء**: ضمانٌ مطفأ وتنبيهٌ لم يُسأل بعد —
+  //  فلا يُورَّث قرارُ عمليةٍ سابقة إلى عمليةٍ جديدة.
+  useEffect(() => {
+    setUnderWarranty(false);
+    setSimilarRows(null);
+    setSimilarAck(false);
+  }, [open]);
+
+  //  **وتغيُّرُ الهدف يُبطل الموافقةَ السابقة**: التشابهُ عن **هذا** الجهاز
+  //  وهذا الجزء بعينهما، فموافقةٌ على غيرهما ليست موافقةً عليهما.
+  useEffect(() => {
+    setSimilarRows(null);
+    setSimilarAck(false);
+  }, [deviceSelection, component, serviceType]);
+
   //  ══ **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة** ═════════════
   //  (المرحلةُ الأولى من تبسيط الصيانة، ٢٠٢٦-٠٩-١٨)
   //
@@ -277,7 +314,12 @@ export function NoExamOperationDialog({
   //  **السعرُ يُشتقّ حيّاً هنا للمعاينة فقط** — نفسُ الاشتقاق الذي يعيده
   //  الخادمُ ويعتمده وحده؛ لا يُرسَل في الطلب. **مشتركٌ بين البابين** منذ
   //  المرحلة الرابعة — الحسابُ والحدودُ الآمنة واحدةٌ بحرفها.
-  const offer = deriveOfferFromDiscount({ originalPrice, discountAmount });
+  //  **وبالضمان يشتقّ المسارُ الصيانيُّ نفسُه** الذي يعتمده الخادم — أصليٌّ
+  //  محفوظ، ونهائيٌّ صفر، وبلا خصم. وبلا ضمانٍ يبقى الاشتقاقُ المشترك كما
+  //  كان بحرفه (بيعُ الجزء لا يعرف الضمانَ أصلاً).
+  const offer = warrantyOn
+    ? deriveMaintenanceTerms({ originalPrice, discountAmount: 0, underWarranty: true })
+    : deriveOfferFromDiscount({ originalPrice, discountAmount });
 
   //  ══ **جهوزيّةُ «المبلغ المدفوع الآن»** — نفسُ الحدّ الذي سيُطبَّق خادميّاً
   //  حرفاً بحرف؛ لا يُحسَب هنا بمعزلٍ عنه. `!offer.ok` تعني «لا سعرَ بعد»
@@ -298,7 +340,10 @@ export function NoExamOperationDialog({
           maintenanceComponent: serviceType === "prosthetic" ? component : null,
           deviceEpisodeId: target.deviceEpisodeId,
           legacyUnrecordedDevice: target.legacyUnrecordedDevice,
-          originalPrice, discountAmount,
+          originalPrice,
+          //  **ولا خصمَ يُرسَل مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق
+          //  لا بخصمٍ يُمنَح، والخادمُ يردّ الاثنين معاً.
+          ...(warrantyOn ? { underWarranty: true } : { discountAmount }),
           //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
           paidNow: paidNowCheck.amount,
           note: note.trim() || null,
@@ -356,6 +401,49 @@ export function NoExamOperationDialog({
       variant: "destructive",
     }),
   });
+
+  /**
+   * **الفحصُ المعلوماتيُّ قبل الحفظ** — قراءةٌ فقط: لا تذكرةَ تُحجَز ولا صفَّ
+   * يُكتب. صيانةٌ مشابهةٌ مفتوحة ⟶ تُعرَض النافذةُ **ولا يُكتب شيء** حتى
+   * يقرّر الموظّف. ولا مشابهَ ⟶ الحفظُ يمضي مباشرةً كما كان بحرفه.
+   *
+   * **وفشلُ الفحص لا يمنع عملاً مشروعاً**: تنبيهٌ تعذّر ليس سبباً لتعطيل
+   * صيانةٍ يريدها الموظّف — فيُتخطّى بصمت ويمضي الحفظ.
+   */
+  const runSubmit = async () => {
+    if (kind === "maintenance" && !similarAck) {
+      const target = resolveMaintenanceDeviceTarget({
+        phase: devicePhase, selection: deviceSelection,
+      });
+      setSimilarChecking(true);
+      try {
+        const res = await apiRequest("POST", "/api/no-exam/maintenance/similar", {
+          patientId, serviceType,
+          maintenanceComponent: serviceType === "prosthetic" ? component : null,
+          deviceEpisodeId: target?.deviceEpisodeId ?? null,
+          legacyUnrecordedDevice: target?.legacyUnrecordedDevice ?? false,
+        });
+        const body = await res.json();
+        const rows: SimilarMaintenanceOrder[] = Array.isArray(body?.similar) ? body.similar : [];
+        if (rows.length > 0) { setSimilarRows(rows); return; }
+      } catch {
+        //  معلوماتيٌّ فحسب — لا يحجب الحفظ.
+      } finally {
+        setSimilarChecking(false);
+      }
+    }
+    save.mutate();
+  };
+
+  /**
+   * **متابعة** — أمرُ صيانةٍ جديدٌ مستقلٌّ كامل، **وبالتذكرة الحالية نفسِها**:
+   * ضغطةٌ واحدة تبقى عمليةً واحدة، والتنبيهُ لم يغيّر من ذلك حرفاً.
+   */
+  const continueDespiteSimilar = () => {
+    setSimilarAck(true);
+    setSimilarRows(null);
+    save.mutate();
+  };
 
   const missingItem = kind === "device_sale" && !resuming && !requestedItem;
   //  **ولا حفظَ على عمليةٍ لم تُختَر** حين تتعدّد المعلَّقات — لا يُنتقى
@@ -623,6 +711,27 @@ export function NoExamOperationDialog({
                   </Select>
                 </div>
               )}
+
+              {/*  ── ضمن الضمان — قرارُ الموظّف، بلا أهليّةٍ محسوبة ──
+                  **والسعرُ الأصليُّ يبقى مطلوباً**: القيمةُ الاسمية للصيانة
+                  تُحفَظ ولو لم يُدفَع منها دينار — وإلّا لم يُعرَف يوماً كم
+                  كلّف الالتزامُ المركزَ. */}
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                <Checkbox id="no-exam-op-warranty-box" checked={underWarranty}
+                  onCheckedChange={(v) => {
+                    const on = !!v;
+                    setUnderWarranty(on);
+                    //  **ولا بقايا من قرارٍ سابق**: خصمٌ أو مبلغٌ مدفوعٌ
+                    //  كُتبا قبل التأشير لا معنى لهما بعده.
+                    if (on) { setDiscountAmount(0); setPaidNow(null); }
+                  }}
+                  data-testid="no-exam-op-warranty" />
+                <Label htmlFor="no-exam-op-warranty-box"
+                  className="cursor-pointer text-sm font-normal leading-5">
+                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — بلا أجور: لا مبلغ يُقيَّد ولا
+                  دَين ولا دفعة. والسعرُ الأصليُّ يبقى مطلوباً ومحفوظاً كقيمةٍ اسمية.
+                </Label>
+              </div>
             </>
           )}
 
@@ -668,18 +777,29 @@ export function NoExamOperationDialog({
             <MoneyInput value={originalPrice} onValueChange={setOriginalPrice}
               data-testid="no-exam-op-original-price" />
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
-            <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
-              data-testid="no-exam-op-discount-amount" />
-            <p className="text-xs text-muted-foreground">
-              صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
-            </p>
-          </div>
+          {/*  **ولا حقلَ خصمٍ مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق لا
+              بخصمٍ يُمنَح، فلا يُسأل الموظّفُ سؤالاً لا معنى له. */}
+          {!warrantyOn && (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
+              <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
+                data-testid="no-exam-op-discount-amount" />
+              <p className="text-xs text-muted-foreground">
+                صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
+              </p>
+            </div>
+          )}
           <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
             data-testid="no-exam-op-final-price">
             {offer.ok ? (
-              offer.kind === "free" ? (
+              warrantyOn ? (
+                <span data-testid="no-exam-op-final-warranty">
+                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — السعر النهائي: 0 د.ع
+                  <span className="text-muted-foreground">
+                    {" "}(القيمة الاسمية {offer.originalPrice!.toLocaleString("en-US")} د.ع)
+                  </span>
+                </span>
+              ) : offer.kind === "free" ? (
                 <span><b>مجاني</b> — السعر النهائي: 0 د.ع</span>
               ) : (
                 <span>
@@ -703,7 +823,12 @@ export function NoExamOperationDialog({
               المجّانيّ. مشتركٌ بين البابين كنظيره السعر أعلاه. ── */}
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">المبلغ المدفوع الآن (د.ع)</Label>
-            {offer.ok && offer.kind === "free" ? (
+            {warrantyOn ? (
+              <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground"
+                data-testid="no-exam-op-paid-now-warranty">
+                {MAINTENANCE_WARRANTY_LABEL} — لا مبلغ يُدفَع ولا دَين يُسجَّل.
+              </p>
+            ) : offer.ok && offer.kind === "free" ? (
               <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground"
                 data-testid="no-exam-op-paid-now-free">
                 مجاني بالكامل — قيمة المجاني: {offer.originalPrice!.toLocaleString("en-US")} د.ع
@@ -736,15 +861,54 @@ export function NoExamOperationDialog({
           </div>
         </div>
 
+        {/*  ── تنبيهُ الصيانة المشابهة — معلوماتيٌّ لا يمنع ──
+            يظهر **قبل أيّ كتابة**، ويُغلَق بأحد قرارين لا ثالثَ لهما. */}
+        {similarPromptOpen && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 space-y-2"
+            data-testid="no-exam-op-similar">
+            <p className="text-sm font-medium flex items-center gap-2 text-amber-900">
+              <AlertTriangle className="h-4 w-4" /> {MAINTENANCE_SIMILAR_TITLE}
+            </p>
+            <ul className="space-y-1">
+              {(similarRows ?? []).map((row) => (
+                <li key={row.workOrderId} className="text-sm text-amber-900"
+                  data-testid={`no-exam-op-similar-row-${row.workOrderId}`}>
+                  {describeSimilarMaintenance(row)}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-800">{MAINTENANCE_SIMILAR_HINT}</p>
+          </div>
+        )}
+
         <DialogFooter>
-          <Button disabled={!ready || save.isPending} data-testid="no-exam-op-submit"
-            onClick={() => save.mutate()}>
-            {save.isPending
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : attaching
-                ? "حفظ البيع وإضافته للطرف الجاري تصنيعه"
-                : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
-          </Button>
+          {similarPromptOpen ? (
+            <div className="flex gap-2">
+              {/*  **رجوع — صفرُ كتابة**: لم يُرسَل شيءٌ أصلاً، والفحصُ قراءةٌ فقط. */}
+              <Button variant="outline" disabled={save.isPending}
+                data-testid="no-exam-op-similar-back"
+                onClick={() => setSimilarRows(null)}>
+                {MAINTENANCE_SIMILAR_BACK}
+              </Button>
+              <Button disabled={!ready || save.isPending}
+                data-testid="no-exam-op-similar-continue"
+                onClick={continueDespiteSimilar}>
+                {save.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : MAINTENANCE_SIMILAR_CONTINUE}
+              </Button>
+            </div>
+          ) : (
+            <Button disabled={!ready || save.isPending || similarChecking}
+              data-testid="no-exam-op-submit"
+              onClick={() => { void runSubmit(); }}>
+              {save.isPending || similarChecking
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : attaching
+                  ? "حفظ البيع وإضافته للطرف الجاري تصنيعه"
+                  : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

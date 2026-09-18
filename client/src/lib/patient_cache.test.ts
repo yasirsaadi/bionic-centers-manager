@@ -265,7 +265,11 @@ console.log("── NoExamOperationDialog.tsx ──");
   check("٢٠. **يستورد `invalidatePatientData` من `@/lib/queryClient`**",
     /invalidatePatientData/.test(src) && /from ["']@\/lib\/queryClient["']/.test(src));
   const start = src.indexOf("const invalidate = () => {");
-  const end = src.indexOf("const offer = deriveOfferFromDiscount", start);
+  //  **مرساةُ النهاية = أوّلُ سطرٍ بعد الدالّة** — وهو `const offer = …`.
+  //  كانت `"const offer = deriveOfferFromDiscount"` حرفياً، فلمّا صار
+  //  الاشتقاقُ يتفرّع على «ضمن الضمان» (ترحيل ٠٨٣) لم تعد تُطابق. والمرساةُ
+  //  أداةُ تحديدِ حدودٍ لا موضوعَ اختبار، فبقي الموضوعُ (٢٢ و٢٣) كما هو.
+  const end = src.indexOf("const offer = ", start);
   check("٢١. تمهيد: عثرنا على حدود دالّة `invalidate`", start > 0 && end > start,
     JSON.stringify({ start, end }));
   const body = src.slice(start, end > 0 ? end : undefined);

@@ -461,6 +461,19 @@ export async function createMaintenanceOrderWithVisit(params: {
    */
   commercialTerms?: { originalPrice: number; kind: "normal" | "discount" | "free" } | null;
   /**
+   * **صيانةٌ ضمن الضمان** (ترحيل ٠٨٣) — علمٌ صريحٌ يُحفَظ على الأمر نفسِه،
+   * **لا يُستنتَج من `kind === "free"`**: المجّانيُّ العاديُّ تبرّعٌ يُقرَّر
+   * اليوم، والضمانُ التزامٌ سبق أن قُطع — وهما صفٌّ واحد بلا هذا العمود.
+   *
+   * `undefined` = **لم يُسأل** فيبقى `NULL` صادقاً (اعتمادُ الخصم الموروث
+   * عبر `server/discounts/store.ts`، وكلُّ نداءٍ لا يعرف هذا السؤال). ولا
+   * قيمةَ افتراضية تكتب معنىً على أمرٍ لم يُسأل عنه أحد.
+   *
+   * **والأجرُ صفرٌ حتماً حين يكون `true`** — يفرضه `maintenance_warranty_
+   * shape_check` في القاعدة، ويشتقّه `deriveMaintenanceTerms` قبل الوصول.
+   */
+  underWarranty?: boolean | null;
+  /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
    * كانت الصيانة تُفتَح بلا أن يُقال أيُّ جزءٍ يُصان، فيصل الخبيرَ أمرٌ عليه
@@ -546,6 +559,8 @@ export async function createMaintenanceOrderWithVisit(params: {
       maintenanceOriginalPrice: params.commercialTerms?.originalPrice ?? null,
       maintenanceFinalPrice: params.commercialTerms ? params.cost : null,
       maintenancePriceKind: params.commercialTerms?.kind ?? null,
+      //  **وعلمُ الضمان** (ترحيل ٠٨٣) — `undefined` تبقى `NULL`: لم يُسأل.
+      maintenanceUnderWarranty: params.underWarranty ?? null,
     }).returning();
     await tx.insert(WH).values({
       workOrderId: workOrder.id,

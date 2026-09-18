@@ -17,9 +17,10 @@
  */
 
 import {
-  deriveOfferFromDiscount, type DiscountOffer,
+  computeCommercialOffer, deriveOfferFromDiscount, type DiscountOffer,
   parsePaidNowAmount, type PaidNowResult,
 } from "./commercial";
+import { componentLabel } from "./prosthetic_parts";
 
 export const MAINTENANCE_SUCCESS_MESSAGE = "تم تسجيل الصيانة وفتح أمر العمل";
 
@@ -140,3 +141,163 @@ export type MaintenanceOffer = DiscountOffer;
  */
 export const parseMaintenancePaidNow = parsePaidNowAmount;
 export type MaintenancePaidNowResult = PaidNowResult;
+
+// ══ الضمانُ — حالةٌ مهيكلةٌ مستقلّة (ترحيل ٠٨٣) ════════════════════════════
+//
+// **«ضمن الضمان» ليست «مجّانيّة» بثوبٍ آخر.** كلتاهما تنتهي إلى أجرٍ صفر،
+// لكنّ الأولى التزامٌ سبق أن قطعه المركز والثانية قرارُ منحٍ جديد. فلو
+// دُلَّ عليهما بـ`priceKind = 'free'` وحدَه لصارتا صفّاً واحداً لا يُفرَّق
+// بينه بعد اليوم — ولا تقريرَ ضمانٍ يُبنى ولا تكلفةَ التزامٍ تُعرَف.
+//
+// **ولا شرطَ أهليّةٍ محسوب**: لا مدّةَ ولا تاريخَ شراءٍ ولا عدَّ مرّاتٍ ولا
+// نوعَ جهاز. **الموظّفُ هو مَن يقرّر**، وصيانةُ ضمانٍ سابقة لا تمنع لاحقة.
+
+export const MAINTENANCE_WARRANTY_LABEL = "ضمن الضمان";
+
+/** علمٌ يصل بغير بوليان = عميلٌ ملفَّق أو بائت — يُردّ ولا يُصحَّح بصمت. */
+export const MAINTENANCE_WARRANTY_FLAG_ERROR =
+  "قيمة «ضمن الضمان» يجب أن تكون نعم أو لا";
+
+/**
+ * **ولا خصمَ مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق، لا بخصمٍ يُمنَح.
+ * وقبولُ الاثنين معاً يُنتج صفّاً يقول شيئين متناقضين عن السبب نفسِه.
+ */
+export const MAINTENANCE_WARRANTY_NO_DISCOUNT_ERROR =
+  "صيانةُ الضمان بلا خصم — احذف مقدار الخصم، أو ألغِ «ضمن الضمان»";
+
+export interface MaintenanceTerms extends MaintenanceOffer {
+  /** **صريحٌ دائماً** — لا يُستنتَج من `kind === "free"` أبداً. */
+  underWarranty: boolean;
+}
+
+const nilTerms: MaintenanceTerms = {
+  ok: false, kind: null, originalPrice: null, finalPrice: null,
+  discountAmount: null, underWarranty: false,
+};
+
+/** الغيابُ = «لا» (العلمُ اختياريٌّ في العقد)؛ وأيُّ شكلٍ آخر يُردّ. */
+export function parseMaintenanceUnderWarranty(raw: unknown):
+  { ok: true; value: boolean } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: false };
+  if (typeof raw !== "boolean") return { ok: false, error: MAINTENANCE_WARRANTY_FLAG_ERROR };
+  return { ok: true, value: raw };
+}
+
+/**
+ * **الشروطُ الكاملة لصيانةٍ واحدة** — سعرٌ ونوعٌ وعلمُ ضمان، من مُدخَلاتٍ
+ * ثلاثة لا أكثر.
+ *
+ * **بلا ضمان** ⟶ `deriveMaintenanceOffer` بحرفها: عاديّ/بخصم/مجّانيّ كما
+ * كانت تماماً — **لا حرفَ يتغيّر في دلالة أيٍّ منها**.
+ *
+ * **وبالضمان** ⟶ الأصليُّ يُتحقَّق منه بنفس الدالّة (فالرسائلُ واحدةٌ لا
+ * تتفرّع)، ثمّ `computeCommercialOffer` نفسُها تبني العرضَ النهائيّ — فلا
+ * ثوابتَ آمنةٌ ثانية ولا حسابٌ منزليُّ الصنع. والنتيجةُ: **الأصليُّ محفوظٌ
+ * كما أدخله الموظّف، والنهائيُّ صفر، والخصمُ صفرٌ صراحةً** (لم يُمنَح خصمٌ
+ * قطّ — والفارقُ يفسّره علمُ الضمان لا خصمٌ ملفَّق).
+ */
+export function deriveMaintenanceTerms(params: {
+  originalPrice: unknown; discountAmount: unknown; underWarranty?: unknown;
+}): MaintenanceTerms {
+  const flag = parseMaintenanceUnderWarranty(params.underWarranty);
+  if (!flag.ok) return { ...nilTerms, error: flag.error };
+
+  if (!flag.value) {
+    return {
+      ...deriveMaintenanceOffer({
+        originalPrice: params.originalPrice, discountAmount: params.discountAmount,
+      }),
+      underWarranty: false,
+    };
+  }
+
+  const d = params.discountAmount;
+  const discountSent = d !== undefined && d !== null && d !== "" && Number(d) !== 0;
+  if (discountSent) {
+    return { ...nilTerms, underWarranty: true, error: MAINTENANCE_WARRANTY_NO_DISCOUNT_ERROR };
+  }
+  //  تحقّقُ الأصليّ برسائله المعتادة — «السعر الأصلي يجب أن يكون…».
+  const base = deriveMaintenanceOffer({
+    originalPrice: params.originalPrice, discountAmount: 0,
+  });
+  if (!base.ok) return { ...base, underWarranty: true };
+  const offer = computeCommercialOffer({ kind: "free", originalPrice: base.originalPrice });
+  if (!offer.ok) return { ...nilTerms, underWarranty: true, error: offer.error };
+  return { ...offer, discountAmount: 0, underWarranty: true };
+}
+
+// ══ تنبيهُ الصيانة المشابهة — معلوماتيٌّ لا يمنع ══════════════════════════
+//
+// **يُسأل قبل الحفظ، ويُجاب بقراءةٍ فقط.** لا تذكرةَ إرسالٍ تُحجَز ولا
+// تتغيّر، ولا صفَّ يُكتب — والمتابعةُ تمضي **بالتذكرة الحالية نفسِها**.
+//
+// ══ ولا قيدَ يعود ═══════════════════════════════════════════════════════
+// ترحيلُ ٠٨٢ رفع «صيانةٌ مفتوحةٌ واحدة لكلّ جهاز» عن قصد: مريضٌ يكسر قالبَه
+// مرّتين في أسبوع عملان حقيقيّان. **فهذا تنبيهٌ لا حارس** — يقول للموظّف ما
+// قد لا يعرفه (زميلٌ في شفتٍ آخر فتح أمراً لنفس الجزء)، ثمّ يمضي إن أراد.
+//
+// ══ وما يُعَدّ «مشابهاً» — أربعةٌ لا أكثر ════════════════════════════════
+//   المريضُ نفسُه · نوعُ الخدمة نفسُه · الجهازُ نفسُه بهويّته (أو **جهازٌ
+//   قديمٌ غير مسجَّل** حين يكون الاختيارُ كذلك، فيُقابَل بما لا هويّةَ له
+//   — **ولا تُخترَع هويّة**) · والجزءُ نفسُه في الأطراف.
+//
+// **ولا الخبيرُ ولا السعرُ ولا الخصمُ ولا المبلغُ المدفوعُ ولا الفرع**: هذه
+// كلُّها تفاصيلُ العملية لا هويّةُ العمل. أمرُ صيانةِ الركبة نفسِها مفتوحٌ
+// في فرعٍ آخر بخبيرٍ آخر وبسعرٍ آخر **هو بالضبط** ما يستحقّ التنبيه.
+
+export interface SimilarMaintenanceOrder {
+  workOrderId: number;
+  /** ISO — قد يغيب في صفٍّ قديم، فلا يُخمَّن تاريخ. */
+  createdAt: string | null;
+  branchId: number | null;
+  branchName: string | null;
+  expertUserId: number | null;
+  expertName: string | null;
+  maintenanceComponent: string | null;
+  deviceEpisodeId: number | null;
+  status: string | null;
+}
+
+export const MAINTENANCE_SIMILAR_TITLE = "توجد صيانة مفتوحة مشابهة";
+export const MAINTENANCE_SIMILAR_HINT =
+  "هذا تنبيهٌ فقط ولا يمنع العملية — راجعه ثمّ قرّر.";
+export const MAINTENANCE_SIMILAR_BACK = "رجوع";
+export const MAINTENANCE_SIMILAR_CONTINUE = "متابعة وفتح أمر صيانة جديد";
+
+/** اليومُ بالتقويم الميلادي كما يقرؤه الموظّف — بلا ساعةٍ ولا منطقةٍ زمنية. */
+function shortDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+    + `-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * **سطرٌ واحد يُقرأ بالمرور**: رقمُ أمر العمل والتاريخُ والخبيرُ والفرع —
+ * **وما غاب منها يُحذَف ولا يُقال «—»**، فسطرُ تنبيهٍ نصفُه شرطاتٌ لا يُقرأ.
+ */
+export function describeSimilarMaintenance(row: SimilarMaintenanceOrder): string {
+  const part = componentLabel(row.maintenanceComponent);
+  return [
+    `أمر العمل #${row.workOrderId}`,
+    part ? `الجزء: ${part}` : null,
+    shortDate(row.createdAt),
+    row.expertName ? `الخبير: ${row.expertName}` : null,
+    row.branchName ? `الفرع: ${row.branchName}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * **متى تُعرَض النافذة** — صفوفٌ مشابهة **ولم يقرّر الموظّفُ بعد**.
+ *
+ * والقرارُ خالصٌ خارج المكوّن عمداً: المشروعُ بلا مشغّل DOM، فقرارٌ يعيش في
+ * `useState` لا يُختبَر إلّا بقراءة نصِّه — وقراءةُ النصّ لا تُمسك انقلاباً
+ * في المعنى يعود بصياغةٍ أخرى (درسُ ٤.u بحرفه).
+ */
+export function shouldPromptSimilarMaintenance(p: {
+  rows: SimilarMaintenanceOrder[] | null | undefined;
+  acknowledged: boolean;
+}): boolean {
+  return !p.acknowledged && Array.isArray(p.rows) && p.rows.length > 0;
+}

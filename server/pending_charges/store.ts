@@ -58,6 +58,7 @@ import {
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
 import { formatDevicePaymentNote } from "@shared/payment_description";
 import type { Payment } from "@shared/schema";
+import type { SimilarMaintenanceOrder } from "@shared/maintenance";
 
 export class ChargeError extends Error {
   status: number;
@@ -820,6 +821,13 @@ export async function createMaintenanceOperation(p: {
    */
   paidNow: number;
   /**
+   * **صيانةٌ ضمن الضمان** (ترحيل ٠٨٣) — يصل مُشتقّاً ومُتحقَّقاً سلفاً
+   * بـ`deriveMaintenanceTerms` (لا قرارَ هنا). والمسارُ المبسّط يسأل عنه
+   * فعلاً، فيُكتب **بولياناً صريحاً دائماً** — لا `NULL` «لم يُسأل» على صفٍّ
+   * سُئل، تماماً كنمط `noExamNoCharge` بحرفه.
+   */
+  underWarranty?: boolean;
+  /**
    * **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة.**
    *
    * اختياريةٌ عمداً بنفس عقد `new_service` بحرفه: عميلٌ لا يرسلها يبقى يعمل
@@ -919,6 +927,9 @@ export async function createMaintenanceOperation(p: {
       //  جديد يعرف قيمتَه دائماً، فلا `NULL` «لم يُسأل» على صفٍّ سُئل فعلاً.
       noExamNoCharge: p.priceKind === "free",
       commercialTerms: { originalPrice: p.originalPrice, kind: p.priceKind },
+      //  **وعلمُ الضمان صريحٌ دائماً من هذا المسار** — `false` تعني «سُئل
+      //  الموظّفُ وأجاب: ليست ضماناً»، وهي حقيقةٌ عن الصفّ لا فراغٌ فيه.
+      underWarranty: p.underWarranty === true,
       tx,
     });
 
@@ -951,6 +962,89 @@ export async function createMaintenanceOperation(p: {
       paidNow: p.paidNow, paymentId: payment?.id ?? null, payment,
     };
   });
+}
+
+/**
+ * **صيانةٌ مفتوحةٌ مشابهة — قراءةٌ فقط، تنبيهٌ لا حارس** (المرحلةُ الثانية من
+ * تبسيط الصيانة، ٢٠٢٦-٠٩-١٨).
+ *
+ * ══ ولا قيدَ يعود ═══════════════════════════════════════════════════════
+ * ترحيلُ ٠٨٢ رفع «صيانةٌ مفتوحةٌ واحدة لكلّ جهاز» **عن قصد**، وهذه الدالّةُ
+ * **لا تُعيده بحرف**: لا تمنع شيئاً، ولا تُنادى من داخل معاملة الكتابة، ولا
+ * يقرأ نتيجتَها حارس. تقول ما هو قائمٌ فحسب، والقرارُ للموظّف.
+ *
+ * **ولا تلمس تذكرةَ الإرسال**: لا تحجزها ولا تقرؤها ولا تغيّرها — فالمتابعةُ
+ * بعدها تمضي **بالتذكرة الحالية نفسِها**، وضغطةٌ واحدة تبقى عمليةً واحدة.
+ *
+ * ══ والتشابهُ أربعةٌ لا أكثر ═════════════════════════════════════════════
+ * المريضُ · نوعُ الخدمة · الجهازُ بهويّته (أو **غيابُها** حين يكون الاختيارُ
+ * «جهاز قديم غير مسجَّل» — فيُقابَل بما لا هويّةَ له، **ولا تُخترَع هويّة**)
+ * · والجزءُ. **ولا الخبيرُ ولا السعرُ ولا الخصمُ ولا المبلغُ ولا الفرع** —
+ * أمرُ صيانةِ الركبة نفسِها مفتوحٌ في فرعٍ آخر بخبيرٍ آخر وبسعرٍ آخر **هو
+ * بالضبط** ما يستحقّ التنبيه.
+ *
+ * ══ و«مفتوحة» = ما لم ينتهِ ولم يُبطَل ═══════════════════════════════════
+ * `status NOT IN ('completed','cancelled')` — نفسُ تعريف `hasOpenOrder`
+ * بحرفه — ومعه استبعادُ المُبطَل إدارياً (٠٦٤): عمليةٌ سُحبت سلطتُها ليست
+ * عملاً قائماً يُنبَّه عليه.
+ */
+export async function listSimilarOpenMaintenance(p: {
+  patientId: number;
+  serviceType: "prosthetic" | "medical_support";
+  deviceEpisodeId: number | null;
+  legacyUnrecordedDevice: boolean;
+  maintenanceComponent: string | null;
+}): Promise<SimilarMaintenanceOrder[]> {
+  //  هويّةُ الجهاز: معرّفٌ بعينه، أو **غيابُ الهويّة** للجهاز غير المسجَّل.
+  //  وما ليس أحدَهما لا يُطابَق بشيء — فلا تنبيهَ على شكلٍ لا يُفهَم.
+  if (p.deviceEpisodeId === null && !p.legacyUnrecordedDevice) return [];
+  const deviceClause = p.legacyUnrecordedDevice
+    ? sql`w.device_episode_id IS NULL`
+    : sql`w.device_episode_id = ${p.deviceEpisodeId}`;
+  //  المساندُ بلا أجزاء، فيُقابَل فراغُها بفراغٍ مثله — والأطرافُ بجزئها.
+  const component = p.serviceType === "prosthetic" ? p.maintenanceComponent : null;
+  const componentClause = component === null
+    ? sql`w.maintenance_component IS NULL`
+    : sql`w.maintenance_component = ${component}`;
+
+  const rows = await db.execute<any>(sql`
+    SELECT w.id::int                AS work_order_id,
+           w.created_at             AS created_at,
+           w.branch_id::int         AS branch_id,
+           b.name                   AS branch_name,
+           w.expert_user_id::int    AS expert_user_id,
+           u.display_name           AS expert_name,
+           w.maintenance_component  AS maintenance_component,
+           w.device_episode_id::int AS device_episode_id,
+           w.status                 AS status
+      FROM prosthetic_work_orders w
+      LEFT JOIN branches     b ON b.id = w.branch_id
+      LEFT JOIN system_users u ON u.id = w.expert_user_id
+     WHERE w.purpose = 'maintenance'
+       AND w.status NOT IN ('completed', 'cancelled')
+       AND w.admin_void_reversal_id IS NULL
+       AND w.patient_id = ${p.patientId}
+       AND w.service_type = ${p.serviceType}
+       AND ${deviceClause}
+       AND ${componentClause}
+     ORDER BY w.id DESC
+     LIMIT 5
+  `);
+  return (rows.rows ?? []).map((r: any) => ({
+    workOrderId: Number(r.work_order_id),
+    createdAt: r.created_at instanceof Date
+      ? r.created_at.toISOString()
+      : (r.created_at ? String(r.created_at) : null),
+    branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
+    branchName: r.branch_name ?? null,
+    expertUserId: r.expert_user_id === null || r.expert_user_id === undefined
+      ? null : Number(r.expert_user_id),
+    expertName: r.expert_name ?? null,
+    maintenanceComponent: r.maintenance_component ?? null,
+    deviceEpisodeId: r.device_episode_id === null || r.device_episode_id === undefined
+      ? null : Number(r.device_episode_id),
+    status: r.status ?? null,
+  }));
 }
 
 /**
