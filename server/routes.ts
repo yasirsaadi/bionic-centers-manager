@@ -1450,6 +1450,18 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * **حسابُ المسؤول العام لا يُعطَّل ولا يُحذَف** (٢٠٢٦-٠٩-١٨) — رسالةٌ
+   * واحدة يتقاسمها البابان الثلاثة (PATCH · DELETE · DELETE /permanent)،
+   * فلا تنحرف صياغةٌ عن أخرى ولا يُنسى بابٌ منها.
+   *
+   * ولماذا أصلاً: تعطيلُ آخرِ حسابِ مسؤولٍ يقفل بابَ الإدارة على النظام —
+   * لا مَن يُعيد تفعيله، ولا مَن يدير المستخدمين بعده. والحارسُ يُقاس على
+   * **الصفّ المخزَّن** لا على الدور القادم في الطلب.
+   */
+  const ADMIN_ACCOUNT_PROTECTED_MESSAGE =
+    "لا يمكن تعطيل حساب المسؤول العام أو حذفه نهائياً";
+
   // Update system user (admin only) — **also the canonical account-
   // deactivation path**: sending {isActive:false} here disables the account
   // without touching its row or any historical FK reference (audit_log,
@@ -1464,6 +1476,18 @@ export async function registerRoutes(
       
       const id = Number(req.params.id);
       const { password, ...userData } = req.body;
+
+      //  ══ **ولا يُعطَّل حسابُ المسؤول العام من هنا** ═══════════════════════
+      //  الشرطُ على الصفّ المخزَّن لا على الدور القادم في الطلب: طلبٌ يُنزل
+      //  الدورَ ويُطفئ الحسابَ في حفظةٍ واحدة كان سيمرّ لو قِيس بالقادم وحده.
+      //  **ولا يُقرأ الصفُّ إلّا حين يطلب الطلبُ تعطيلاً صريحاً** — فالتعديلُ
+      //  العاديّ (اسمٌ، كلمةُ مرور، فرع) يبقى بلا استعلامٍ إضافيّ كما كان.
+      if (userData.isActive === false) {
+        const target = await storage.getSystemUser(id);
+        if (target?.role === "admin") {
+          return res.status(403).json({ message: ADMIN_ACCOUNT_PROTECTED_MESSAGE });
+        }
+      }
 
       // Expert capability flag: normalise to a real boolean when present.
       if (userData.canWorkAsExpert !== undefined) {
@@ -1571,6 +1595,12 @@ export async function registerRoutes(
       }
 
       const id = Number(req.params.id);
+      //  نفسُ حارس المسؤول العام في مسار PATCH — هذا البابُ يفعل الشيءَ نفسَه
+      //  (تعطيلاً) فيلزمه الحارسُ نفسُه، وإلّا صار منفذاً حوله.
+      const target = await storage.getSystemUser(id);
+      if (target?.role === "admin") {
+        return res.status(403).json({ message: ADMIN_ACCOUNT_PROTECTED_MESSAGE });
+      }
       diagPhase(req, "before_deactivate_system_user");
       const user = await storage.updateSystemUser(id, { isActive: false });
       diagPhase(req, "after_deactivate_system_user");
@@ -1580,6 +1610,93 @@ export async function registerRoutes(
       }
       diagPhase(req, "before_response");
       res.json({ success: true, deactivated: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * حذفٌ نهائيٌّ لحساب موظّف — **بابٌ منفصلٌ صريح** (٢٠٢٦-٠٩-١٨).
+   *
+   * ══ لماذا بابٌ ثانٍ لا تعديلٌ للأوّل ═════════════════════════════════════
+   * مسارُ `DELETE /api/admin/users/:id` أعلاه **يُعطّل ولا يحذف** — وذاك
+   * تصحيحٌ إنتاجيٌّ مقصود (٢٠٢٦-٠٩-١٢) يحرسه `test:admin-user-lifecycle`.
+   * فالحذفُ النهائيُّ يحتاج نيّةً صريحة لا يمكن أن تقع بالسهو، ومسارٌ باسمه
+   * (`/permanent`) هو تلك النيّة. **ولا حرفَ يتغيّر في مسار التعطيل.**
+   *
+   * ══ ولا كاسكيد ولا تنظيفَ سجلّاتٍ مرتبطة ════════════════════════════════
+   * ينادي دالّةَ الحذف القائمة في المستودع (سطرُ `DELETE` واحدٌ على
+   * `system_users` وحدَه، بلا لمسِ جدولٍ آخر). فإن كان للموظّف تاريخٌ —
+   * سطرُ تدقيق، تقدّمُ تدريب، معاينةٌ وقّعها، مقالةُ معرفةٍ أنشأها، أيٌّ من
+   * القيود الأجنبية `NO ACTION` المشيرة إلى صفّه — **ترفض القاعدةُ الحذفَ
+   * بـ`23503`، فيُترجَم إلى ٤٠٩ بالعربية ولا يُحذَف شيء ولا يُنظَّف شيء.**
+   * والتاريخُ أثمنُ من صفّ الحساب: بابُ الخروج يبقى «معطَّل».
+   *
+   * ══ وثلاثةُ حُرّاسٍ قبل أيّ كتابة ════════════════════════════════════════
+   * (١) **المسؤولُ العام وحده** يفتح الباب — كبقيّة عائلة `/api/admin/*`.
+   * (٢) **ولا يُحذَف حسابٌ دورُه `admin` إطلاقاً** — لا تعطيلاً ولا حذفاً
+   *     (نفسُ الحارس في مسار التعديل)، فلا يُقفَل النظامُ على نفسه.
+   * (٣) **ولا يُحذَف حسابٌ فعّال**: التعطيلُ أوّلاً قرارٌ منفصل يسبق الهدم،
+   *     فلا تمحو ضغطةٌ واحدة حساباً يعمل. (والشاشةُ تُظهر الزرَّ للمعطَّل
+   *     وحده — وهذا الحارسُ يجعلها حقيقةً في الخادم لا عرضاً فقط.)
+   */
+  app.delete("/api/admin/users/:id/permanent", isAuthenticated, async (req, res, next) => {
+    try {
+      const branchSession = (req.session as any).branchSession;
+      if (!branchSession?.isAdmin) {
+        return res.status(403).json({ message: "غير مصرح" });
+      }
+
+      //  معرّفٌ مشوَّه يُردّ صراحةً ولا يُقرأ رقماً بالسهو (`parseInt("7x")`
+      //  تُرجع ٧ صامتةً — درسُ نقاط المعرفة، ٤.n).
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "معرّف المستخدم غير صالح" });
+      }
+
+      const user = await storage.getSystemUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
+      if (user.role === "admin") {
+        return res.status(403).json({ message: ADMIN_ACCOUNT_PROTECTED_MESSAGE });
+      }
+      if (user.isActive !== false) {
+        return res.status(409).json({
+          message: "عطّل الحساب أولاً ثم احذفه نهائياً.",
+        });
+      }
+
+      try {
+        await storage.deleteSystemUser(id);
+      } catch (err: any) {
+        //  ══ **قيدٌ أجنبيّ ⟶ لا شيءَ يُحذَف ولا شيءَ يُنظَّف** ═══════════
+        //  `DELETE` واحدةٌ على صفٍّ واحد: رفضُها يعني صفرَ كتابة بحكم
+        //  الذرّية، فلا نصفَ حذف. والرسالةُ تقول البديلَ لا نصَّ Postgres.
+        if (String(err?.code) === "23503") {
+          return res.status(409).json({
+            message: "لا يمكن حذف هذا الموظف نهائياً لوجود سجل مرتبط به. يمكنك إبقاء الحساب معطلاً.",
+          });
+        }
+        throw err;
+      }
+
+      //  الفعلُ الوحيدُ الذي لا رجعةَ فيه في إدارة المستخدمين — فلا يقع بلا
+      //  شاهد. و`entity_id` رقمٌ مجرَّد لا مفتاحٌ أجنبيّ، فالسطرُ يبقى مقروءاً
+      //  بعد زوال الصفّ. و`logAudit` بلا معاملةٍ تبتلع خطأها وتسجّله، فلا
+      //  تقلب حذفاً وقع إلى خطأٍ للمستخدم.
+      await logAudit({
+        entityType: "system_user",
+        entityId: id,
+        action: "delete",
+        userId: branchSession?.userId ?? null,
+        userName: branchSession?.displayName ?? null,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        notes: `حذفٌ نهائيّ لحساب الموظّف «${user.username}» (${user.displayName || "بلا اسمٍ معروض"})`,
+      });
+
+      res.json({ success: true, deleted: true });
     } catch (err) {
       next(err);
     }

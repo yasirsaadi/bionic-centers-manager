@@ -47,6 +47,7 @@ import {
   Plus,
   Trash2,
   UserX,
+  UserCheck,
   MapPin,
   LayoutDashboard,
   AlertTriangle,
@@ -2432,6 +2433,12 @@ export default function AdminSettings() {
   const [showUserDialog, setShowUserDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
   const [userToDeactivate, setUserToDeactivate] = useState<SystemUser | null>(null);
+  //  ══ تبسيطُ إدارة الموظّفين (٢٠٢٦-٠٩-١٨) ═══════════════════════════════
+  //  فلترةُ عرضٍ محضة — لا تمسّ ما يُجلَب من الخادم ولا ما يُكتب فيه.
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  //  الحذفُ النهائيّ لا رجعةَ فيه، فله هدفُه المستقلّ ونافذتُه المستقلّة —
+  //  لا يتقاسم حالةَ التعطيل كي لا تفتح ضغطةٌ نافذةَ الفعل الآخر.
+  const [userToDeletePermanently, setUserToDeletePermanently] = useState<SystemUser | null>(null);
   const [showUserPassword, setShowUserPassword] = useState(false);
   const [revealedPwUserId, setRevealedPwUserId] = useState<number | null>(null);
   const [userFormData, setUserFormData] = useState({
@@ -2511,6 +2518,18 @@ export default function AdminSettings() {
       return res.json();
     },
     enabled: isAdmin,
+  });
+
+  //  ══ القائمةُ المعروضة = المجلوبة مُصفّاةً بالحالة وحدها ════════════════
+  //  `isActive` قد تصل `null` لصفٍّ قديم، و«فعّال» في كلّ قارئٍ آخر في
+  //  النظام تعني **ليست `false`** (الخادمُ يقفل الجلسة عند `=== false`
+  //  حصراً) — فتُقاس هنا بالمقياس نفسِه، لا بـ`Boolean(isActive)` التي
+  //  كانت ستُخفي صفّاً قديماً في تبويب «الفعالون» وهو يعمل فعلاً.
+  const isUserActive = (u: SystemUser) => u.isActive !== false;
+  const visibleSystemUsers = (systemUsers ?? []).filter((u) => {
+    if (userStatusFilter === "active") return isUserActive(u);
+    if (userStatusFilter === "inactive") return !isUserActive(u);
+    return true;
   });
 
   const createUserMutation = useMutation({
@@ -2593,6 +2612,61 @@ export default function AdminSettings() {
     },
     onError: (error: Error) => {
       toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
+    },
+  });
+
+  //  ══ تفعيلٌ — نفسُ باب التعطيل بالضبط، بقيمةٍ معاكسة ═══════════════════
+  //  لا نقطةَ جديدة في الخادم لهذا: `PATCH {isActive:true}` هو ما تفعله
+  //  نافذةُ «تعديل المستخدم» أصلاً، فصار له زرٌّ مباشر في الصفّ لا أكثر.
+  const activateUserMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم تفعيل الحساب" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
+    },
+  });
+
+  //  ══ حذفٌ نهائيّ — البابُ المنفصل `/permanent` وحده ════════════════════
+  //  ولا يُنادى `DELETE /api/admin/users/:id` القديم: ذاك يُعطّل ولا يحذف
+  //  (تصحيحٌ إنتاجيّ ٢٠٢٦-٠٩-١٢)، والخلطُ بينهما يجعل ضغطةً تفعل غيرَ ما
+  //  تقول. ورسالةُ الخادم تصل المستخدمَ كما هي — ومنها رسالةُ «سجلٌّ مرتبط»
+  //  التي تدلّ على البديل (إبقاءُ الحساب معطَّلاً) بدل نصّ قاعدة بيانات خام.
+  const deleteUserPermanentlyMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/admin/users/${id}/permanent`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.message || "تعذّر حذف الحساب");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم حذف الحساب نهائياً" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setUserToDeletePermanently(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
+      //  النافذةُ تبقى مفتوحة عمداً: الرسالةُ تُقرأ ثمّ يُغلقها المستخدمُ
+      //  بنفسه — فلا تختفي قبل أن يعرف لماذا لم يُحذف الحساب.
     },
   });
 
@@ -3065,9 +3139,30 @@ export default function AdminSettings() {
               </Button>
             </div>
 
+            {/*  ══ فلترةُ حالةٍ بسيطة (٢٠٢٦-٠٩-١٨) ═══════════════════════════
+                عرضٌ محضٌ فوق القائمة المجلوبة نفسِها — لا استعلامَ ثانياً
+                للخادم ولا محمولَ فلترةٍ في الطلب. */}
+            <div className="flex items-center gap-2 mb-4" data-testid="user-status-filter">
+              {([
+                ["all", "الكل"],
+                ["active", "الفعالون"],
+                ["inactive", "المعطلون"],
+              ] as const).map(([value, label]) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={userStatusFilter === value ? "default" : "outline"}
+                  onClick={() => setUserStatusFilter(value)}
+                  data-testid={`button-user-filter-${value}`}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+
             {isLoadingUsers ? (
               <div className="text-center py-8 text-muted-foreground">{t.adminSettings.loading}</div>
-            ) : systemUsers && systemUsers.length > 0 ? (
+            ) : visibleSystemUsers.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -3082,7 +3177,7 @@ export default function AdminSettings() {
                     </tr>
                   </thead>
                   <tbody>
-                    {systemUsers.map((user) => {
+                    {visibleSystemUsers.map((user) => {
                       // Multi-branch users have branchIds populated; single-
                       // branch users fall back to the legacy branchId field.
                       const userBranchIds: number[] = Array.isArray((user as any).branchIds) && (user as any).branchIds.length > 0
@@ -3138,8 +3233,8 @@ export default function AdminSettings() {
                             )}
                           </td>
                           <td className="py-3 px-4">
-                            <Badge variant={user.isActive ? "default" : "outline"}>
-                              {user.isActive ? t.adminSettings.active : t.adminSettings.inactive}
+                            <Badge variant={isUserActive(user) ? "default" : "outline"}>
+                              {isUserActive(user) ? t.adminSettings.active : t.adminSettings.inactive}
                             </Badge>
                           </td>
                           <td className="py-3 px-4">
@@ -3152,15 +3247,47 @@ export default function AdminSettings() {
                               >
                                 <Pencil className="w-4 h-4" />
                               </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => setUserToDeactivate(user)}
-                                title={t.adminSettings.deactivateUser}
-                                data-testid={`button-deactivate-user-${user.id}`}
-                              >
-                                <UserX className="w-4 h-4 text-destructive" />
-                              </Button>
+                              {/*  ══ فعلٌ واحدٌ لكلّ حالة — لا الاثنان معاً ══
+                                  المعطَّلُ لا يُعطَّل مرّةً ثانية، والفعّالُ لا
+                                  يُحذَف قبل تعطيله (والخادمُ يفرض الاثنين، فلا
+                                  يُعرَض زرٌّ سيردّه). وحسابُ المسؤول العام بلا
+                                  زرٍّ من هذين إطلاقاً — يُردّ ٤٠٣ لو نودي. */}
+                              {user.role === "admin" ? null : isUserActive(user) ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1"
+                                  onClick={() => setUserToDeactivate(user)}
+                                  data-testid={`button-deactivate-user-${user.id}`}
+                                >
+                                  <UserX className="w-4 h-4 text-destructive" />
+                                  تعطيل
+                                </Button>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1"
+                                    onClick={() => activateUserMutation.mutate(user.id)}
+                                    disabled={activateUserMutation.isPending}
+                                    data-testid={`button-activate-user-${user.id}`}
+                                  >
+                                    <UserCheck className="w-4 h-4 text-primary" />
+                                    تفعيل
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1"
+                                    onClick={() => setUserToDeletePermanently(user)}
+                                    data-testid={`button-delete-user-permanently-${user.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4 text-destructive" />
+                                    حذف نهائي
+                                  </Button>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -3171,7 +3298,9 @@ export default function AdminSettings() {
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
-                {t.adminSettings.noUsers}
+                {(systemUsers?.length ?? 0) > 0
+                  ? "لا موظفين بهذه الحالة."
+                  : t.adminSettings.noUsers}
               </div>
             )}
           </Card>
@@ -4341,16 +4470,18 @@ export default function AdminSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* Deactivate User Confirmation AlertDialog — يعطّل الحساب، لا يحذفه */}
+      {/*  ══ تأكيدُ التعطيل — قصيرٌ وصريح (٢٠٢٦-٠٩-١٨) ═══════════════════
+          يعطّل الحساب ولا يحذفه: سطرٌ واحد يقول ما يقع وأنه يُرَدّ،
+          والحسابُ يبقى بصفّه وتاريخِه كاملَين. */}
       <AlertDialog open={!!userToDeactivate} onOpenChange={() => setUserToDeactivate(null)}>
         <AlertDialogContent dir={dir}>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-red-600">
               <AlertTriangle className="w-5 h-5" />
-              {t.adminSettings.confirmDeactivateUser}
+              تعطيل الحساب
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t.adminSettings.confirmDeactivateUserDesc} "{userToDeactivate?.username}"؟ {t.adminSettings.deactivateUserReversibleNote}
+              تعطيل حساب «{userToDeactivate?.username}»؟ لن يستطيع الدخول، ويمكن تفعيله مجدداً في أي وقت.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-0">
@@ -4364,6 +4495,43 @@ export default function AdminSettings() {
               data-testid="button-confirm-deactivate-user"
             >
               {deactivateUserMutation.isPending ? t.adminSettings.deactivating : t.adminSettings.yes}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/*  ══ تأكيدُ الحذف النهائيّ — الفعلُ الوحيد الذي لا يُرَدّ ══════════
+          فيقول ذلك صراحةً، ويقول البديلَ في السطر نفسِه. وإن كان للموظّف
+          سجلٌّ مرتبط ردَّ الخادمُ ولم يُحذَف شيء، ورسالتُه تظهر في تنبيه. */}
+      <AlertDialog
+        open={!!userToDeletePermanently}
+        onOpenChange={() => setUserToDeletePermanently(null)}
+      >
+        <AlertDialogContent dir={dir}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              حذف نهائي
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              حذف حساب «{userToDeletePermanently?.username}» نهائياً؟ لا يمكن التراجع.
+              وإن كان له سجل مرتبط فلن يُحذف، ويبقى معطلاً.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel data-testid="button-cancel-delete-user-permanently">
+              {t.adminSettings.no}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                userToDeletePermanently &&
+                deleteUserPermanentlyMutation.mutate(userToDeletePermanently.id)
+              }
+              disabled={deleteUserPermanentlyMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2"
+              data-testid="button-confirm-delete-user-permanently"
+            >
+              {deleteUserPermanentlyMutation.isPending ? "جارٍ الحذف..." : "حذف نهائي"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
