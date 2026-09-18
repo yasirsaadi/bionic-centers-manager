@@ -1800,13 +1800,16 @@ export class DatabaseStorage implements IStorage {
       //  **داخل هذه المعاملة قبل أيّ `INSERT`**: القفلُ الاستشاريّ يُقفَل
       //  ثمّ الفحصُ يقع، فمحاولتان متزامنتان لنفس الاسم أو الهاتف تتسلسلان
       //  ولا تنجحان معاً. رفضٌ هنا = صفرُ كتابة (لا صفَّ مريض ولا جهةَ
-      //  اتصال ولا ترحيب). **وكلاهما يفحص السلّةَ أيضاً** (`checkTrash: true`
-      //  للهاتف؛ الاسمُ يفحصها دائماً) — هويّةٌ محذوفة تبقى محجوزةً حتى
-      //  تُستعاد أو يُبَتّ فيها إدارياً، فلا يُفتَح لها ملفٌّ بديلٌ بحسن نيّة
-      //  يصطدم بالأصل عند استعادته. الشرحُ الكامل في `patients/duplicate_guard.ts`.
+      //  اتصال ولا ترحيب).
+      //
+      //  **والفحصُ على الفعّالين وحدهم** (قرارُ مالكٍ صريح، ٢٠٢٦-٠٩-١٨):
+      //  المريضُ المحذوف خارجَ منعِ التكرار تماماً — اسمُه لا يمنع، ورقمُه
+      //  لا يمنع، وملفٌّ جديدٌ مطابقٌ له في كلّ بياناته يُسجَّل بصورةٍ
+      //  طبيعية. فلا `checkTrash` هنا إطلاقاً (وهو باقٍ على بابِ التعديل
+      //  وحده). الشرحُ الكامل في `patients/duplicate_guard.ts`، القسم ٣.
       await assertNameAvailableForRegistration(tx, valuesToInsert.name);
       if (valuesToInsert.phoneE164) {
-        await assertPhoneAvailable(tx, valuesToInsert.phoneE164, null, { checkTrash: true });
+        await assertPhoneAvailable(tx, valuesToInsert.phoneE164, null);
       }
 
       const [row] = await tx.insert(patients).values(valuesToInsert).returning();

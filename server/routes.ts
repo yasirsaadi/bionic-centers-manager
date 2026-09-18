@@ -42,7 +42,7 @@ import {
 import { patientActiveOnDate } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
-import { canTrashPatients, IN_TRASH_HINT, IN_TRASH_ESCALATION, PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { registerPatientTrashRoutes, trashActor } from "./patients/trash_routes";
 import { registerPatientBranchAccessRoutes } from "./patients/branch_access_routes";
 import {
@@ -56,7 +56,7 @@ import {
 } from "./patient_cases/closure";
 import {
   checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
-  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
+  PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import {
   executeNewService, normalizeEntries, NewServiceError,
@@ -1947,6 +1947,18 @@ export async function registerRoutes(
     // Two characters find everybody; a real name is the point of the check.
     if (name.length < 3) return res.json({ matches: [] });
 
+    // ══ **والمحذوفُ لا يُقرأ هنا إطلاقاً** (قرارُ مالكٍ صريح، ٢٠٢٦-٠٩-١٨)
+    //  ═══════════════════════════════════════════════════════════════════
+    //  كان هذا المسارُ يقرأ صفوفَ السلّة ويُخرجها في `inTrash`/`inTrashCount`/
+    //  `trashNotice` — تنبيهاً على «ملفٍّ مطابقٍ محذوف» قبل التسجيل. وقد
+    //  خرج المحذوفُ من **كلّ** أغراض تسجيل مريضٍ جديد (القسم ٤.ب‌ب في
+    //  `CLAUDE.md`)، فلم يعد يُعامَل موجوداً هنا: لا يظهر، ولا يُعَدّ، ولا
+    //  يولّد تنبيهاً.
+    //
+    //  **والتصفيةُ في SQL قبل `LIMIT` لا بعده**: الحدُّ عشرون صفّاً، فصفوفُ
+    //  السلّة كانت تزاحم المطابقاتِ الفعّالة عليه ثمّ تُسقَط بعد القراءة —
+    //  فقد يُحجَب نظيرٌ **فعّالٌ** في فرعٍ آخر لأن محذوفاً سبقه (نفسُ درسِ
+    //  التصفية قبل الحجز في ٤.ج).
     const mine = accessibleBranchesFor(req); // null ⇒ admin sees everything
     const rows = await db
       .select({
@@ -1957,40 +1969,23 @@ export async function registerRoutes(
         branchId: patients.branchId,
         branchName: branches.name,
         createdAt: patients.createdAt,
-        deletedAt: patients.deletedAt,
-        restoreUntil: patients.restoreUntil,
       })
       .from(patients)
       .leftJoin(branches, eq(branches.id, patients.branchId))
-      .where(sql`${patients.name} ILIKE ${"%" + name + "%"}`)
+      .where(and(
+        sql`${patients.name} ILIKE ${"%" + name + "%"}`,
+        activePatientDrizzle(),
+      ))
       .limit(20);
 
     // Only the ones the asker CANNOT already see: a namesake inside their own
     // branch is their own list's business, not a cross-branch warning.
+    //  **وهذا الحدُّ لم يتغيّر بحرف** — كشفُ المريض الفعّال عبر الفروع كما كان.
     const matches = mine === null
       ? []
-      : rows.filter((r) => !r.deletedAt && !mine.includes(r.branchId));
+      : rows.filter((r) => !mine.includes(r.branchId));
 
-    // ══ **والمحذوفُ يُنبَّه عليه ولا يُكشف** (ترحيل ٠٦٨) ═══════════════
-    //  الملفُّ في السلّة لا يظهر في السجلّ ولا في البحث، فموظّفُ الاستقبال
-    //  لا يراه ويفتح **ملفّاً ثانياً لنفس الشخص** بحسن نيّة — ثم يُستعاد
-    //  الأوّل بعد أسبوع فيصير للمريض ملفّان ومالُه في اثنين.
-    //
-    //  والتنبيهُ هنا **لا يمرّ بنفس منطق «عبر الفروع»**: المحذوفُ غائبٌ عن
-    //  السجلّ حتى داخل فرع السائل، فناظرُه في فرعه يستحقّ التنبيه أيضاً.
-    const trashHits = rows.filter((r) =>
-      r.deletedAt && (mine === null || mine.includes(r.branchId)));
-    //  ومَن يملك السلّة يرى الصفَّ ليقرّر: استعادةً أو ملفّاً جديداً.
-    //  ومَن لا يملكها يُقال له ما يكفي ليتوقّف — **بلا اسمٍ ولا رقمٍ ولا
-    //  فرعٍ ولا ذكرِ سلّةٍ أصلاً**.
-    const maySeeTrash = canTrashPatients((req.session as any).branchSession);
-    res.json({
-      matches,
-      inTrash: maySeeTrash ? trashHits : [],
-      inTrashCount: trashHits.length,
-      trashNotice: trashHits.length === 0 ? null
-        : maySeeTrash ? IN_TRASH_HINT : IN_TRASH_ESCALATION,
-    });
+    res.json({ matches });
   });
 
   // ══ توفّرُ الاسم عند التسجيل — بادئةٌ لا تشابهٌ ولا مطابقةٌ جزئية ═══════
@@ -2002,15 +1997,15 @@ export async function registerRoutes(
   //  تخضرّ الحدودُ لحظةً ثم يردّ الحفظُ ٤٠٩ إن سبقه تسجيلٌ آخر بجزءِ ثانية.
   //  **ولا يكشف شيئاً عن المطابقات**: لا اسمَ، لا فرعَ، لا رقمَ، لا عدداً —
   //  `available` (وسببٌ محكوم `reason`/`message` عند الحجب فقط) وهذا كلُّ ما
-  //  تحتاجه الواجهة (بخلاف `lookup-by-name` فوقها، المتروكة بحرفها لغرضها
-  //  الخاصّ).
+  //  تحتاجه الواجهة (بخلاف `lookup-by-name` فوقها، التي تُرجع المطابقاتِ
+  //  **الفعّالة** عبر الفروع لغرضها الخاصّ).
   //
-  //  **والسببُ يشمل السلّة أيضاً** (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨): مطابقةٌ فعّالة
-  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ مطابقةٌ في
-  //  السلّة ⟵ `trash_conflict` **برسالة السلّة الآمنة القائمة نفسِها**
-  //  (`IN_TRASH_ESCALATION`) — لا تفصيلَ إضافياً، ولا فرقَ في المعاملة
-  //  البصرية (حدٌّ أحمر ومنعُ حفظٍ في الحالتين). الحسمُ في `checkNameAvailability`
-  //  القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
+  //  **والفعّالون وحدهم** (قرارُ مالكٍ صريح، ٢٠٢٦-٠٩-١٨): مطابقةٌ فعّالة
+  //  ⟵ `active_conflict` بالرسالة المعتمَدة القديمة بلا تغيير؛ **ومريضٌ
+  //  محذوفٌ لا يُقرأ أصلاً** فلا يصير حدّاً أحمرَ في الشاشة — كان يُردّ
+  //  `trash_conflict` فيمنع الحفظ، وقد خرج المحذوفُ من منعِ التكرار
+  //  كلّياً (`patients/duplicate_guard.ts`، القسم ٣). والحسمُ في
+  //  `checkNameAvailability` القانونية، لا نسخةٌ ثانية من منطق البادئة هنا.
   app.get("/api/patients/name-availability", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     const canAsk = branchSession?.isAdmin
@@ -2585,16 +2580,13 @@ export async function registerRoutes(
       if (err instanceof PatientPhoneConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
       }
-      // ══ والسلّةُ تحجز الهويّةَ أيضاً — نفسُ العدم-كتابةً بالضبط ══════════
-      //  هويّةٌ محذوفة (اسمٌ أو هاتف) تُرفَض ٤٠٩ برسالة السلّة الآمنة —
-      //  فلا يُفتَح ملفٌّ بديلٌ يصطدم بالأصل حين يُستعاد. الشرحُ في
-      //  `patients/duplicate_guard.ts`.
-      if (err instanceof PatientNameTrashConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_name_trash_conflict" });
-      }
-      if (err instanceof PatientPhoneTrashConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
-      }
+      // ══ **والمحذوفُ لا يمنع تسجيلاً إطلاقاً** (قرارُ مالكٍ صريح،
+      //  ٢٠٢٦-٠٩-١٨) ══════════════════════════════════════════════════════
+      //  كانت السلّةُ تحجز الهويّةَ هنا أيضاً فيُردّ ٤٠٩ برسالتها الآمنة.
+      //  وقد خرج المحذوفُ من منعِ التكرار كلّياً: لا فحصَ سلّةٍ في
+      //  `createPatient` ولا تعارضَ يُرمى منها، فلا صنفَ خطأٍ يُلتقَط هنا.
+      //  (الهاتفُ على **التعديل** وحده ما زال يحجز — معالجُه في `PUT`
+      //  أدناه بحرفه.) الشرحُ في `patients/duplicate_guard.ts`، القسم ٣.
       console.error("Error creating patient:", err);
       // ══ **فشلُ الكتابة يُقال، لا يُترك معلَّقاً** ═══════════════════════
       //  كان `throw err` داخل معالجٍ غير متزامن يصير رفضاً غير ملتقَط:

@@ -15,20 +15,23 @@
 //    محاولتين متزامنتين بنفس الاسم أو نفس الهاتف معاً — **وقفلُ الاسم عامٌّ
 //    ثابت** (تصحيحٌ لاحق) فيحمي قاعدةَ **البادئة** نفسَها بين اسمين مختلفين
 //    متزامنين لا التطابقَ التامّ فقط. **وهو قفلُ هويّةٍ مشترك** (تصحيحٌ
-//    لاحقٌ ثالث) تشارك فيه **الاستعادةُ** أيضاً الآن — فلا تلتزم بين فحص
-//    الفعّال وفحص المحذوف في التسجيل أو التعديل مهما تقاربا زمنياً.
-// ٤) **والسلّةُ تحجز الهويّةَ** (تصحيحٌ لاحق) — مريضٌ محذوفٌ (سلّةٌ) لا
-//    يُحتسَب **نشطاً** (فلا يظهر في القوائم ولا يُحسَب في المجاميع كما
-//    كان)، **لكنّ اسمَه ورقمَه يبقيان محجوزَين عند التسجيل تحديداً**: لا
-//    يُفتَح لهما ملفٌّ بديل حتى يُستعاد الأصلُ أو يُبَتّ فيه إدارياً — وإلّا
-//    أمكن فتحُ مريضٍ ثانٍ بنفس الهويّة ثمّ استعادةُ الأصل فيصير **فعّالان
-//    بهويّةٍ واحدة**، ما يخرق قاعدةَ الهاتف (فعّالٌ واحد لكلّ رقم) ويُبطل
-//    الحمايةَ الأصلية للسلّة (مراجعةُ الإدارة قبل فتح ملفٍّ ثانٍ). والحذفُ
-//    والاستعادةُ أنفسُهما يبقيان ناعمَين كما كانا بالحرف — لا تغييرَ فيهما.
-//    **والهاتفُ عند التعديل أيضاً** (تصحيحٌ لاحقٌ ثانٍ) — نفسُ الحجز يمنع
-//    مريضاً فعّالاً قائماً من الانتقال إلى رقم مريضٍ محذوف، لا فتحَ ملفٍّ
-//    جديدٍ فقط؛ والاسمُ عند التعديل يبقى خارج القاعدة تماماً كما كان.
-// ٥) **`lookup-by-name` بحرفها** — لم تُمَسّ، ولا تزال تعمل لغرضها الخاصّ.
+//    لاحقٌ ثالث) تشارك فيه **الاستعادةُ** أيضاً — وهي تُصيّر الهويّةَ
+//    **فعّالة**، فتسجيلٌ بلا تسلسلٍ معها كان يُدرِج على قراءةٍ سبقت التزامَها
+//    فينكسر شرطُ الفعّالين نفسُه؛ وفحصُ الهاتف عند التعديل ما زال فحصَين
+//    اثنين فلا تلتزم الاستعادةُ بينهما.
+// ٤) **والمحذوفُ خارجَ منعِ التكرار تماماً** (قرارُ مالكٍ صريح،
+//    ٢٠٢٦-٠٩-١٨ — **يُلغي ويستبدل «السلّةُ تحجز الهويّة عند التسجيل»**):
+//    مريضٌ محذوفٌ لا يُقرأ في فحص التسجيل إطلاقاً — اسمُه لا يمنع، ورقمُه
+//    لا يمنع، **وملفٌّ جديدٌ مطابقٌ له في كلّ بياناته يُسجَّل بصورةٍ
+//    طبيعية**. ولا تأكيدَ إداريّ ولا تجاوزَ ولا نافذةَ ثانية. وفحصُ توفّر
+//    الاسم في الشاشة يتبع القاعدةَ نفسَها فلا يصير المحذوفُ حدّاً أحمر.
+//    والحذفُ والاستعادةُ أنفسُهما لم يُمَسّا بحرف.
+//    **والهاتفُ عند التعديل وحده يبقى يحجز** (تصحيحُ ٢٠٢٦-٠٩-٠٨، لم
+//    يُمَسّ): مريضٌ فعّالٌ قائم لا ينتقل إلى رقم مريضٍ محذوف — منعُ
+//    *انتقالٍ* لا منعُ *تسجيل*؛ والاسمُ عند التعديل خارج القاعدة كما كان.
+// ٥) **`lookup-by-name` — المطابقاتُ الفعّالة وحدها** (قرارُ ٢٠٢٦-٠٩-١٨):
+//    كشفُ النظير عبر الفروع كما كان بحرفه، **والمحذوفُ لا يُقرأ فيها
+//    ولا يولّد تنبيهاً** — فلا `inTrash` ولا عدّادَ ولا رسالة.
 
 import { pool, db } from "./db";
 import { sql } from "drizzle-orm";
@@ -39,7 +42,7 @@ import { normalizePhone } from "@shared/phone";
 import {
   assertNameAvailableForRegistration, PatientNameConflictError, NAME_PREFIX_CONFLICT_MESSAGE,
   acquirePatientIdentityLock, assertPhoneAvailable,
-  PatientNameTrashConflictError, PatientPhoneTrashConflictError,
+  PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import { IN_TRASH_ESCALATION } from "@shared/patient_trash";
 
@@ -169,6 +172,23 @@ async function countByExactName(name: string): Promise<number> {
 async function countByPhoneE164(e164: string | null): Promise<number> {
   const [r] = await q<{ n: number }>(
     `SELECT COUNT(*)::int n FROM patients WHERE referral_source=$1 AND phone_e164=$2`, [MARK, e164]);
+  return r.n;
+}
+
+//  ونظيراهما **للفعّالين وحدهم** — الأصلان أعلاه يعدّان الصفوفَ كلَّها
+//  (محذوفةً وفعّالة)، وهو ما يلزم لإثبات «المحذوفُ باقٍ ولم يُستعَد ضمناً».
+//  وهذان يلزمان لإثبات «وفعّالٌ واحدٌ فقط» بعده — والفرقُ بينهما هو بالضبط
+//  ما يفرّق «سُجّل ملفٌّ ثانٍ» عن «استُعيد الأوّل».
+async function countActiveByExactName(name: string): Promise<number> {
+  const [r] = await q<{ n: number }>(
+    `SELECT COUNT(*)::int n FROM patients
+      WHERE referral_source=$1 AND name=$2 AND deleted_at IS NULL`, [MARK, name]);
+  return r.n;
+}
+async function countActiveByPhoneE164(e164: string | null): Promise<number> {
+  const [r] = await q<{ n: number }>(
+    `SELECT COUNT(*)::int n FROM patients
+      WHERE referral_source=$1 AND phone_e164=$2 AND deleted_at IS NULL`, [MARK, e164]);
   return r.n;
 }
 
@@ -442,20 +462,25 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  ك. السلّةُ — محذوفٌ لا يُحتسَب نشطاً، لكنّ هويّتَه محجوزةٌ حتى تُستعاد
+    //  ك. السلّةُ خارج منعِ التكرار تماماً — لا اسماً ولا هاتفاً
     // ══════════════════════════════════════════════════════════════════
-    //  الثغرةُ التي يحرسها هذا القسم (تصحيحٌ لاحق): مريضٌ يُحذَف ⟵ مريضٌ
-    //  **آخر** يُسجَّل بنفس اسمه أو رقمه بلا عائق (الحارسُ الفعّالُ لا يرى
-    //  المحذوف) ⟵ الأصليُّ يُستعاد ⟵ **فعّالان بهويّةٍ واحدة**. فصار
-    //  التسجيلُ يفحص السلّةَ أيضاً — لا الحذفَ ولا الاستعادةَ نفسَيهما، وهما
-    //  يبقيان ناعمَين تماماً كما كانا (٢٤-٢٥ أدناه بلا تغيير).
-    console.log("\n── ك. السلّة ──");
-    {
-      const x = await mkActivePatient("زياد كامل مطشر", "07755000001");
+    //  **انقلبَ عقدُ هذا القسم بقرارِ مالكٍ صريح (٢٠٢٦-٠٩-١٨)، لا لتخضير
+    //  اختبار.** كان يثبت أنّ السلّة **تحجز** الهويّةَ عند التسجيل: اسمٌ أو
+    //  هاتفٌ يطابق محذوفاً يُردّ ٤٠٩ برسالتها الآمنة. والقاعدةُ الآن عكسُه
+    //  بالحرف: **المريضُ المحذوف لا يدخل منعَ التكرار إطلاقاً** — اسمُه لا
+    //  يمنع، ورقمُه لا يمنع، وملفٌّ جديدٌ مطابقٌ له في **كلّ** بياناته
+    //  يُسجَّل بصورةٍ طبيعية. بلا تأكيدٍ إداريّ ولا تجاوزٍ ولا نافذةٍ ثانية.
+    //
+    //  **وقاعدةُ الفعّالين لم تتغيّر بحرف** — تُثبَت هنا نفسُها في ك-٤.
+    console.log("\n── ك. السلّةُ خارج منعِ التكرار ──");
 
-      const whileActive = await registerPatient(S.recv,
-        { name: "زياد كامل مطشر", phone: "07755000001" });
-      same("٢٣. **قبل الحذف: نفسُ الاسم ونفسُ الرقم محجوبان معاً (تعارضٌ فعّال)**",
+    // ── ك-١. اسمٌ مطابقٌ لمحذوف وحده ⟶ يُسجَّل ─────────────────────────────
+    {
+      const NM = "زياد كامل مطشر";
+      const x = await mkActivePatient(NM, "07755000001");
+
+      const whileActive = await registerPatient(S.recv, { name: NM, phone: "07755000009" });
+      same("٢٣. **تمهيدٌ: قبل الحذف الاسمُ الفعّالُ يمنع (القاعدةُ القديمة على الفعّالين)**",
         [whileActive.status, whileActive.body?.code], [409, "patient_name_conflict"]);
 
       const del = await http("DELETE", `/api/patients/${x.id}`, S.admin, { reason: "اختبار" });
@@ -465,54 +490,155 @@ async function main() {
         "٢٥. **والصفُّ باقٍ في القاعدة بختمِ حذفٍ — لم يُهدَم**",
         JSON.stringify(xAfterDelete));
 
-      // ══ بعد الحذف: الهويّةُ تبقى محجوزةً — لا نشاطَ ولا إتاحة ══════════
-      const availAfterDelete = await nameAvailability(S.recv, "زياد كامل مطشر");
-      same("٢٦. **وبعد الحذف: الاسمُ لا يزال محجوباً — بسبب السلّة لا النشاط**",
-        availAfterDelete.body,
-        { available: false, reason: "trash_conflict", message: IN_TRASH_ESCALATION });
-      same("٢٦.١ **وجسمُ الردّ لا يكشف شيئاً حتى في حالة السلّة — لا اسمَ ولا رقمَ ولا فرعَ**",
-        Object.keys(availAfterDelete.body ?? {}).sort(), ["available", "message", "reason"]);
+      const availAfterDelete = await nameAvailability(S.recv, NM);
+      same("٢٦. **وفحصُ توفّر الاسم في شاشة التسجيل: المحذوفُ ليس تعارضاً — `{available:true}` عارية**",
+        availAfterDelete.body, { available: true });
 
-      const sameAfterDelete = await registerPatient(S.recv,
-        { name: "زياد كامل مطشر", phone: "07755000001" });
-      same("٢٦.٢ **ومحاولةُ تسجيلٍ فعليةٍ بنفس الاسم والرقم ⟶ ٤٠٩ أيضاً — لا فتحَ ملفٍّ ثانٍ بحسن نيّة**",
-        [sameAfterDelete.status, sameAfterDelete.body?.code, sameAfterDelete.body?.message],
-        [409, "patient_name_trash_conflict", IN_TRASH_ESCALATION]);
-      same("      **ولم يُفتَح ملفٌّ ثانٍ** — العدّادُ ما زال ١ (صفُّ x الأصليّ المحذوفُ وحده، بلا صفٍّ جديد)",
-        await countByExactName("زياد كامل مطشر"), 1);
+      const sameNameOnly = await registerPatient(S.recv, { name: NM, phone: "07755000002" });
+      same("٢٦.١ **واسمٌ مطابقٌ لمحذوف ⟶ يُسجَّل ٢٠١ بصورةٍ طبيعية**",
+        [sameNameOnly.status, sameNameOnly.body?.code ?? null], [201, null]);
+      same("      وصفّان بهذا الاسم الآن: المحذوفُ الأصليّ + الجديدُ الفعّال",
+        await countByExactName(NM), 2);
+      same("      **وواحدٌ فعّالٌ فقط** — المحذوفُ لم يُستعَد ضمناً",
+        await countActiveByExactName(NM), 1);
+      const xStillDeleted = await patientRow(x.id);
+      check(xStillDeleted !== null && xStillDeleted.da !== null,
+        "٢٦.٢ **وصفُّ المحذوف لم يُمَسّ — ما زال محذوفاً بختمه**",
+        JSON.stringify(xStillDeleted));
+    }
 
-      // ══ والهاتفُ يحجز حتى بلا تطابق اسمٍ إطلاقاً ═══════════════════════
-      const differentNameSamePhone = await registerPatient(S.recv,
-        { name: "شخصٌ آخر تماماً لا صلة له بهذا الاختبار", phone: "07755000001" });
-      same("٢٦.٣ **واسمٌ مختلفٌ تماماً برقم المحذوف نفسِه ⟶ ٤٠٩ أيضاً — الهاتفُ وحده يكفي**",
-        [differentNameSamePhone.status, differentNameSamePhone.body?.code],
-        [409, "patient_phone_trash_conflict"]);
+    // ── ك-٢. هاتفٌ مطابقٌ لمحذوف وحده ⟶ يُسجَّل ────────────────────────────
+    {
+      const NM = "وسام طالب عبد الحسن";
+      const PH = "07755000101";
+      const y = await mkActivePatient(NM, PH);
+      const del = await http("DELETE", `/api/patients/${y.id}`, S.admin, { reason: "اختبار" });
+      same("٢٦.٣ **تمهيدٌ: مريضٌ آخر يُحذَف برقمه**", del.status, 200);
+
+      const samePhoneOnly = await registerPatient(S.recv,
+        { name: "اسمٌ مختلفٌ تماماً لا صلة له بوسام", phone: PH });
+      same("٢٦.٤ **وهاتفٌ مطابقٌ لمحذوف باسمٍ مختلفٍ تماماً ⟶ يُسجَّل ٢٠١**",
+        [samePhoneOnly.status, samePhoneOnly.body?.code ?? null], [201, null]);
+      same("      وصفّان بهذا الرقم: المحذوفُ + الجديد",
+        await countByPhoneE164(y.phoneE164), 2);
+      same("      **وواحدٌ فعّالٌ فقط بالرقم**", await countActiveByPhoneE164(y.phoneE164), 1);
+      const yStillDeleted = await patientRow(y.id);
+      check(yStillDeleted !== null && yStillDeleted.da !== null,
+        "      وصفُّ المحذوف لم يُمَسّ", JSON.stringify(yStillDeleted));
+    }
+
+    // ── ك-٣. الاسمُ والهاتفُ معاً — تطابقٌ تامٌّ لمحذوف ⟶ يُسجَّل ──────────
+    {
+      const NM = "حيدر عباس فرحان";
+      const PH = "07755000201";
+      const z = await mkActivePatient(NM, PH);
+      const del = await http("DELETE", `/api/patients/${z.id}`, S.admin, { reason: "اختبار" });
+      same("٢٦.٥ **تمهيدٌ: مريضٌ ثالث يُحذَف باسمه ورقمه معاً**", del.status, 200);
+
+      const before = await patientRow(z.id);
+
+      const bothSame = await registerPatient(S.recv, { name: NM, phone: PH });
+      same("٢٦.٦ **ونفسُ الاسم ونفسُ الهاتف معاً لمحذوف ⟶ يُسجَّل ٢٠١ — لا حجزَ ولا مراجعةَ إدارة**",
+        [bothSame.status, bothSame.body?.code ?? null], [201, null]);
+      same("      وصفّان بالاسم", await countByExactName(NM), 2);
+      same("      وصفّان بالرقم", await countByPhoneE164(z.phoneE164), 2);
+      same("      **وفعّالٌ واحدٌ بكلٍّ منهما**",
+        [await countActiveByExactName(NM), await countActiveByPhoneE164(z.phoneE164)], [1, 1]);
+
+      const after = await patientRow(z.id);
+      same("٢٦.٧ **وصفُّ المحذوف مطابقٌ بايتاً قبل التسجيل وبعده — لا كتابةَ عليه ولا استعادةَ ضمنية**",
+        after, before);
+    }
+
+    // ── ك-٤. والفعّالُ يبقى مانعاً — اسماً وهاتفاً (لم يتغيّر بحرف) ────────
+    {
+      const NM = "سجاد نعيم حسون";
+      const PH = "07755000301";
+      await mkActivePatient(NM, PH);
+
+      const dupName = await registerPatient(S.recv, { name: NM, phone: "07755000302" });
+      same("٢٦.٨ **مريضٌ نشطٌ بنفس الاسم يبقى مانعاً ⟶ ٤٠٩**",
+        [dupName.status, dupName.body?.code, dupName.body?.message],
+        [409, "patient_name_conflict", NAME_PREFIX_CONFLICT_MESSAGE]);
+      same("      ولم يُفتَح له صفٌّ — صفٌّ واحدٌ بالاسم",
+        await countByExactName(NM), 1);
+
+      const dupPhone = await registerPatient(S.recv,
+        { name: "اسمٌ مختلفٌ تماماً لا صلة له بسجاد", phone: PH });
+      same("٢٦.٩ **ومريضٌ نشطٌ بنفس الهاتف يبقى مانعاً ⟶ ٤٠٩**",
+        [dupPhone.status, dupPhone.body?.code], [409, "patient_phone_conflict"]);
       same("      ولم يُنشأ له صفٌّ",
-        await countByExactName("شخصٌ آخر تماماً لا صلة له بهذا الاختبار"), 0);
+        await countByExactName("اسمٌ مختلفٌ تماماً لا صلة له بسجاد"), 0);
 
-      // ══ والاستعادةُ تبقى تعمل بلا عائق — هذا الحارسُ يحميها لا يمنعها ════
-      const restore = await http("POST", `/api/patient-trash/${x.id}/restore`, S.admin);
-      same("٢٦.٤ **والاستعادةُ تنجح بلا عائق — لم تُمَسّ**", restore.status, 200);
-      const xAfterRestore = await patientRow(x.id);
-      check(Boolean(xAfterRestore) && xAfterRestore!.da === null,
-        "      والصفُّ عاد نشطاً", JSON.stringify(xAfterRestore));
+      const availActive = await nameAvailability(S.recv, NM);
+      same("٢٦.١٠ **وفحصُ توفّر الاسم يبقى يحجب الفعّالَ برسالته المعتمَدة**",
+        availActive.body,
+        { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+      same("      **وجسمُ الردّ لا يكشف شيئاً** — لا اسمَ ولا رقمَ ولا فرع",
+        Object.keys(availActive.body ?? {}).sort(), ["available", "message", "reason"]);
+    }
 
-      same("٢٦.٥ **وبعد الاستعادة: صفٌّ نشطٌ واحدٌ بالضبط بهذا الرقم — لم يتكرّر أبداً**",
-        await countByPhoneE164(x.phoneE164), 1);
-      same("      وصفٌّ نشطٌ واحدٌ بالضبط بهذا الاسم أيضاً",
-        await countByExactName("زياد كامل مطشر"), 1);
+    // ── ك-٥. والاستعادةُ نفسُها لم تُمَسّ ─────────────────────────────────
+    //  **والعاقبةُ المقبولةُ صراحةً بقرار المالك**: ملفٌّ جديد فُتح بهويّة
+    //  محذوفٍ ثمّ استُعيد الأصلُ ⟶ ملفّان فعّالان بالهويّة نفسِها. هذا ما
+    //  طُلب حرفياً («حتى إذا كانت جميع بيانات المريض الجديد مطابقة تماماً
+    //  لمريض محذوف، يجب أن يقبل النظام التسجيل بصورة طبيعية») — ومعالجتُه
+    //  قرارٌ إداريّ (دمجٌ أو حذف) لا حارسٌ في النظام. يُثبَت هنا صراحةً كي
+    //  يُقرأ الأثرُ كما هو لا كما يُظَنّ.
+    {
+      const NM = "مرتضى صباح لفتة";
+      const PH = "07755000401";
+      const w = await mkActivePatient(NM, PH);
+      await http("DELETE", `/api/patients/${w.id}`, S.admin, { reason: "اختبار" });
+      const created = await registerPatient(S.recv, { name: NM, phone: PH });
+      same("٢٦.١١ **تمهيدٌ: ملفٌّ جديدٌ بهويّة المحذوف يُسجَّل**", created.status, 201);
+
+      const restore = await http("POST", `/api/patient-trash/${w.id}/restore`, S.admin);
+      same("٢٦.١٢ **والاستعادةُ تنجح بلا عائق — لم تُمَسّ بحرف**", restore.status, 200);
+      const wAfter = await patientRow(w.id);
+      check(Boolean(wAfter) && wAfter!.da === null, "      والصفُّ عاد نشطاً",
+        JSON.stringify(wAfter));
+
+      same("٢٦.١٣ **وعندئذٍ ملفّان فعّالان بالهويّة نفسِها — العاقبةُ المقبولةُ صراحةً**",
+        [await countActiveByExactName(NM), await countActiveByPhoneE164(w.phoneE164)], [2, 2]);
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  ل. `lookup-by-name` — بحرفها، لم تُمَسّ
     // ══════════════════════════════════════════════════════════════════
+    //  ل. `lookup-by-name` — المطابقاتُ الفعّالة وحدها
+    // ══════════════════════════════════════════════════════════════════
+    //  **انقلبَ عقدُ هذا القسم بقرارِ مالكٍ صريح (٢٠٢٦-٠٩-١٨)**: كان يثبت
+    //  أربعةَ مفاتيح — ثلاثةٌ منها عن السلّة. وقد خرج المحذوفُ من هذا
+    //  المسار كلّياً، فلم يبقَ إلّا `matches`.
     console.log("\n── ل. سلامةُ lookup-by-name ──");
     {
       const r = await http("GET",
         `/api/patients/lookup-by-name?name=${encodeURIComponent("أحمد حسين فايق")}`, S.recv);
-      same("٢٧. **نفسُ شكل الردّ القديم — لم تُمَسّ**",
-        Object.keys(r.body ?? {}).sort(),
-        ["inTrash", "inTrashCount", "matches", "trashNotice"]);
+      same("٢٧. **مفتاحٌ واحدٌ لا أكثر — لا حقلَ سلّةٍ في الردّ**",
+        Object.keys(r.body ?? {}).sort(), ["matches"]);
+
+      //  ══ والإثباتُ الحقيقيّ: نظيرٌ **فعّالٌ** في فرعٍ آخر يظهر، ومحذوفٌ
+      //  مثلُه لا يظهر ═══════════════════════════════════════════════════
+      //  الاثنان في الفرع ٢ والسائلُ من الفرع ١ — فالتصفيةُ بفرع السائل
+      //  نفسِها لا تُخفي أيّاً منهما، والفارقُ الوحيد بينهما حالةُ الحذف.
+      //  فلو عاد المحذوفُ يُقرأ يوماً لظهر هنا بعينه.
+      const BASE = "هيثم رعد لؤي";
+      const liveOther = await mkActivePatient(`${BASE} حاضر`, "07799000001", 2);
+      const goneOther = await mkActivePatient(`${BASE} غائب`, "07799000002", 2);
+      same("٢٧.١ **تمهيدٌ: الثاني يُحذَف حذفاً ناعماً**",
+        (await http("DELETE", `/api/patients/${goneOther.id}`, S.admin,
+          { reason: "اختبار" })).status, 200);
+
+      const look = await http("GET",
+        `/api/patients/lookup-by-name?name=${encodeURIComponent(BASE)}`, S.recv);
+      const ids = (look.body?.matches ?? []).map((x: any) => x.id);
+      check(ids.includes(liveOther.id),
+        "٢٧.٢ **والنظيرُ الفعّالُ في الفرع الآخر يظهر — الكشفُ عبر الفروع لم يتغيّر**",
+        JSON.stringify(look.body));
+      check(!ids.includes(goneOther.id),
+        "٢٧.٣ **والمحذوفُ لا يظهر إطلاقاً**", JSON.stringify(look.body));
+      same("٢٧.٤ **ولا تنبيهَ ولا عدّاد — الردُّ `matches` وحده**",
+        Object.keys(look.body ?? {}).sort(), ["matches"]);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -708,26 +834,38 @@ async function main() {
     }
 
     {
-      // ن-٢. تسجيلٌ باسمٍ محميّ (اسمُ مريضٍ محذوف) يتسابق مع استعادة صاحبه.
-      // الشكلُ نفسُه بالضبط، لكن على قفل الاسم — `assertNameAvailableForRegistration`
-      // تفحص الفعّالَ والمحذوفَ معاً تحت قفل الهويّة المشترك نفسِه.
+      // ن-٢. تسجيلٌ يتسابق مع استعادة صاحب الاسم.
+      //  **انقلبَ عقدُ هذا الجزء بقرار ٢٠٢٦-٠٩-١٨** (كما القسم ك): لم يعد
+      //  للتسجيل إلّا فحصٌ واحد — الفعّالون — فلا «فحصان» تتسلّل بينهما
+      //  الاستعادة. **لكنّ القفلَ المشترك ما زال يعمل ويجب أن يبقى**:
+      //  الاستعادةُ تُصيّر الهويّةَ **فعّالة**، فتسجيلٌ بلا تسلسلٍ معها كان
+      //  يقرأ «لا تعارضَ فعّالاً» ثمّ يُدرِج بعد التزامها — فينكسر شرطُ
+      //  الفعّالين نفسُه (القسمان ١ و٢). فيُثبَت هنا ثلاثةٌ معاً: التسجيلُ
+      //  يقبض القفلَ · والاستعادةُ تنتظره فعلياً · **وفحصُ الاسم يمضي على
+      //  اسمٍ محذوف** (القاعدةُ الجديدة، عبر الدالّة القانونية نفسِها) ·
+      //  ثمّ الفعّالُ يمنع بعد الاستعادة.
       const NM_A = "سرمد فالح شنون ن٢";
       const nmA = await mkActivePatient(NM_A, "07788000003");
       const delNmA = await http("DELETE", `/api/patients/${nmA.id}`, S.admin, { reason: "اختبار" });
-      same("٣٩. **تمهيدٌ: سرمد يُحذَف حذفاً ناعماً باسمه المحميّ**", delNmA.status, 200);
+      same("٣٩. **تمهيدٌ: سرمد يُحذَف حذفاً ناعماً باسمه**", delNmA.status, 200);
 
       let releaseCreateGate: () => void = () => {};
       const createGate = new Promise<void>((resolve) => { releaseCreateGate = resolve; });
       let createAcquiredIdentityLock = false;
-      let createRejectedAsTrashConflict = false;
+      let createNameCheckPassed = false;
+      let createRejectedUnexpectedly: string | null = null;
       const createDone = db.transaction(async (tx: any) => {
         await acquirePatientIdentityLock(tx);
         createAcquiredIdentityLock = true;
         await createGate;
+        // الدالّةُ القانونية نفسُها — لا نسخةٌ يدوية من منطقها.
         await assertNameAvailableForRegistration(tx, NM_A);
+        createNameCheckPassed = true;
       }).catch((e: any) => {
-        if (e instanceof PatientNameTrashConflictError) createRejectedAsTrashConflict = true;
-        else throw e;
+        //  انحدارٌ حقيقيّ لو عاد حجزُ السلّة يوماً: يُلتقَط ويُقرأ في ٤٢
+        //  بوصفه فشلاً صريحاً، بدل رفضٍ غير ملتقَط يُسقط التشغيلَ كلَّه قبل
+        //  أن يُطبَع سببُه.
+        createRejectedUnexpectedly = e?.name ?? String(e);
       });
 
       await sleep(80);
@@ -741,18 +879,23 @@ async function main() {
 
       await sleep(250);
       check(restoreDone2 === false,
-        "٤١. **وبينما التسجيلُ يحمل قفل الهويّة: الاستعادةُ المتزامنة تبقى محجوبةً أيضاً**",
+        "٤١. **وبينما التسجيلُ يحمل قفل الهويّة: الاستعادةُ المتزامنة تبقى محجوبةً فعلياً — القفلُ المشترك باقٍ ويعمل**",
         `restoreDone2=${restoreDone2}`);
 
       releaseCreateGate();
       await Promise.all([createDone, restorePromise2]);
 
-      check(createRejectedAsTrashConflict,
-        "٤٢. **وبعد تحرّر القفل: التسجيلُ يُرفَض بتعارض السلّة — الاسمُ المحميّ لم يُتجاوَز بحسن نيّة**");
+      check(createNameCheckPassed,
+        "٤٢. **وبعد تحرّر القفل: فحصُ الاسم يمضي — الاسمُ المحذوف ليس تعارضاً (القاعدةُ الجديدة)**",
+        `createRejectedUnexpectedly=${createRejectedUnexpectedly}`);
       same("٤٣. **والاستعادةُ تعبر بعده وتنجح بلا عائق**", restoreHttpResult2?.status, 200);
 
-      same("٤٤. **وصفٌّ واحدٌ بالضبط بهذا الاسم — لا تكرارَ ولا فتحَ ملفٍّ ثانٍ**",
-        await countByExactName(NM_A), 1);
+      // وبعد أن صار الاسمُ **فعّالاً** بالاستعادة: تسجيلٌ حقيقيٌّ به يُردّ —
+      // وهذا بالضبط ما يحرسه تسلسلُ القفل أعلاه.
+      const afterRestore = await registerPatient(S.recv, { name: NM_A, phone: "07788000004" });
+      same("٤٤. **وتسجيلٌ حقيقيٌّ بالاسم بعد استعادته ⟶ ٤٠٩ — قاعدةُ الفعّالين تسري عليه فوراً**",
+        [afterRestore.status, afterRestore.body?.code], [409, "patient_name_conflict"]);
+      same("      وصفٌّ واحدٌ بالضبط بهذا الاسم", await countByExactName(NM_A), 1);
     }
 
   } finally {
