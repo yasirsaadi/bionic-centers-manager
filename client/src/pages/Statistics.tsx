@@ -1461,9 +1461,7 @@ export default function Statistics() {
                       data={stats.conditionDistribution}
                       cx="50%"
                       cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                      outerRadius={100}
+                      outerRadius="78%"
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -1495,9 +1493,7 @@ export default function Statistics() {
                       data={stats.classificationDistribution}
                       cx="50%"
                       cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                      outerRadius={100}
+                      outerRadius="78%"
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -1587,12 +1583,11 @@ export default function Statistics() {
                       data={stats.visitsByTreatmentData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
+                      innerRadius="48%"
+                      outerRadius="78%"
                       fill="#8884d8"
                       paddingAngle={5}
                       dataKey="value"
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                     >
                       {stats.visitsByTreatmentData.map((entry: any, index: number) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
@@ -1611,9 +1606,9 @@ export default function Statistics() {
                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
                           <span className="text-sm font-medium">{item.name}</span>
                         </div>
-                        <div className="text-left">
+                        <div className="flex items-center gap-2">
                           <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.visits}</span>
-                          <span className="text-xs text-muted-foreground mr-2">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
+                          <span className="text-xs text-muted-foreground">({total > 0 ? ((item.value / total) * 100).toFixed(1) : 0}%)</span>
                         </div>
                       </div>
                     );
@@ -1639,12 +1634,11 @@ export default function Statistics() {
                       data={stats.revenueByTreatmentData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
+                      innerRadius="48%"
+                      outerRadius="78%"
                       fill="#8884d8"
                       paddingAngle={5}
                       dataKey="value"
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                     >
                       {stats.revenueByTreatmentData.map((entry: any, index: number) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
@@ -1661,9 +1655,9 @@ export default function Statistics() {
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
                         <span className="text-sm font-medium">{item.name}</span>
                       </div>
-                      <div className="text-left">
+                      <div className="flex items-center gap-2">
                         <span className="text-sm font-bold">{item.value.toLocaleString()} {t.statistics.currency}</span>
-                        <span className="text-xs text-muted-foreground mr-2">({item.count} {t.statistics.payment})</span>
+                        <span className="text-xs text-muted-foreground">({item.count} {t.statistics.payment})</span>
                       </div>
                     </div>
                   ))}
@@ -1683,10 +1677,10 @@ export default function Statistics() {
             <CardContent>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={stats.referralSourceData} layout="vertical">
+                  <BarChart data={stats.referralSourceData} layout="vertical" margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis type="number" />
-                    <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 12 }} />
+                    <YAxis dataKey="name" type="category" width={200} tick={{ fontSize: 12 }} />
                     <Tooltip />
                     <Bar dataKey="value" name={t.statistics.patientCount} fill="#8884d8" radius={[0, 4, 4, 0]}>
                       {stats.referralSourceData.map((_: any, index: number) => (
@@ -1731,12 +1725,11 @@ export default function Statistics() {
                       data={stats.shiftData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
+                      innerRadius="48%"
+                      outerRadius="78%"
                       fill="#8884d8"
                       paddingAngle={5}
                       dataKey="value"
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                     >
                       {stats.shiftData.map((entry, index) => (
                         <Cell key={`shift-cell-${index}`} fill={entry.color} />
