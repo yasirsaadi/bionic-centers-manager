@@ -1305,6 +1305,22 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   maintenanceFinalPrice: integer("maintenance_final_price"),
   maintenancePriceKind: text("maintenance_price_kind"),
   /**
+   * **صيانةٌ ضمن الضمان** (ترحيل ٠٨٣) — حالةٌ مهيكلةٌ مستقلّة، **لا
+   * `maintenance_price_kind = 'free'` وحدَه**.
+   *
+   * النوعُ أعلاه يصف العلاقةَ بين الأصليّ والنهائيّ («كم يُدفَع؟»)، وهذا
+   * يقول **لماذا** لا يُدفَع: التزامٌ سبق أن قطعه المركز، لا تبرّعٌ جديد.
+   * فصيانةٌ مجّانيةٌ عادية تحمل `FALSE` وصيانةُ ضمانٍ تحمل `TRUE`، ويبقى
+   * النوعُ `free` في الحالتين — فالتفريقُ في القاعدة لا في تخمين قارئ.
+   *
+   * `NULL` **غيابُ سؤالٍ لا نفي**: أوامرُ ما قبل الترحيل، واعتمادُ الخصم
+   * الموروث. **ولا قيمةَ افتراضية** تكتب معنىً على أمرٍ لم يُسأل.
+   *
+   * ولا شرطَ أهليّةٍ محسوب: لا مدّةَ ولا تاريخَ شراءٍ ولا عدَّ مرّات —
+   * **الموظّفُ هو مَن يقرّر**، وصيانةُ ضمانٍ سابقة لا تمنع لاحقة.
+   */
+  maintenanceUnderWarranty: boolean("maintenance_under_warranty"),
+  /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
    * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
@@ -1348,6 +1364,17 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
     OR (${t.maintenancePriceKind} = 'discount' AND ${t.maintenanceFinalPrice} > 0
         AND ${t.maintenanceFinalPrice} < ${t.maintenanceOriginalPrice})
     OR (${t.maintenancePriceKind} = 'free' AND ${t.maintenanceFinalPrice} = 0)`),
+  //  ══ الضمانُ (ترحيل ٠٨٣) — قيدان يمنعان الحالةَ المستحيلة ═══════════════
+  //  **الضمانُ على أمرِ صيانةٍ وحدَه**: البناءُ الأوّليُّ هو الجهازُ الذي
+  //  يُصنَع، لا إصلاحُ جهازٍ سابقٍ في ضمانه.
+  check("maintenance_warranty_purpose_check",
+    sql`${t.maintenanceUnderWarranty} IS NULL OR ${t.purpose} = 'maintenance'`),
+  //  **وضمانٌ بأجرٍ تناقضٌ**: النهائيُّ صفرٌ حتماً، والأصليُّ يبقى محفوظاً
+  //  موجباً — القيمةُ الاسمية للصيانة كما أدخلها الموظّف.
+  check("maintenance_warranty_shape_check", sql`
+    ${t.maintenanceUnderWarranty} IS NOT TRUE
+    OR (${t.maintenanceOriginalPrice} IS NOT NULL AND ${t.maintenanceOriginalPrice} > 0
+        AND ${t.maintenanceFinalPrice} = 0)`),
   //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة
   //  وحدها، فأوامرُ الصيانة القديمة بلا جزءٍ لا تثقله (ترحيل ٠٦٠).
   index("ix_wo_maint_component").on(t.maintenanceComponent)

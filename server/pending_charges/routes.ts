@@ -46,9 +46,9 @@ import {
   parseComponent, componentLabel,
 } from "@shared/prosthetic_parts";
 import {
-  canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
+  canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceTerms,
   parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
-  MAINTENANCE_TOKEN_REQUIRED_MESSAGE,
+  MAINTENANCE_TOKEN_REQUIRED_MESSAGE, MAINTENANCE_WARRANTY_LABEL,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
@@ -130,6 +130,107 @@ async function patientRow(patientId: number) {
       FROM patients WHERE id = ${patientId} AND deleted_at IS NULL
   `);
   return (r.rows ?? [])[0] ?? null;
+}
+
+/**
+ * **هويّةُ عمليةِ الصيانة — مصدرٌ واحد لبابَيها.**
+ *
+ * نقطةُ التسجيل ونقطةُ **تنبيه التشابه** تسألان السؤالَ نفسَه: أيُّ مريض، في
+ * أيّ فرعٍ تقع الحركة، وأيُّ نوعِ خدمة. فلو كُتب الجوابُ مرّتين لانحرف
+ * أحدُهما يوماً — فيُنبَّه على تشابهٍ في خيطٍ غيرِ الذي سيُكتب فيه فعلاً.
+ *
+ * **والرسائلُ والرموزُ هي هي بحرفها** (٤٠٠ «بيانات ناقصة» · ٤٠٤ · ٤٠٣ ·
+ * رسائلُ النوع)، فلا يتغيّر ما يقرؤه الموظّفُ على المسار القائم.
+ *
+ * **ولا يُفحَص الخبيرُ هنا**: التنبيهُ لا يحتاجه أصلاً (التشابهُ لا يشمله)،
+ * وفحصُه يبقى في نقطة التسجيل **في موضعه القائم بالضبط** — فلا يتبدّل أيُّ
+ * خطأٍ يُردّ به طلبٌ ناقصٌ من وجهين.
+ */
+async function maintenanceContext(req: Req): Promise<
+  | { ok: false; status: number; error: string }
+  | {
+    ok: true;
+    patientId: number;
+    patient: NonNullable<Awaited<ReturnType<typeof patientRow>>>;
+    opBranchId: number | null;
+    serviceType: "prosthetic" | "medical_support";
+  }
+> {
+  const patientId = Number(req.body?.patientId);
+  if (!Number.isFinite(patientId)) {
+    return { ok: false, status: 400, error: "بيانات ناقصة" };
+  }
+  const patient = await patientRow(patientId);
+  if (!patient) return { ok: false, status: 404, error: "المريض غير موجود" };
+  //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
+  if (!(await scopeReachesPatient(branchScope(req),
+    { id: patientId, branchId: patient.branch_id ?? null }))) {
+    return { ok: false, status: 403, error: "غير مصرح لك بهذا الفرع" };
+  }
+  //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
+  //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+  const opBranchId = resolveActingBranchId({
+    scope: branchScope(req),
+    sessionBranchId: getSession(req).branchId ?? null,
+    homeBranchId: patient.branch_id ?? null,
+    patientBranchIds: await patientBranchIdsOf(
+      { id: patientId, branchId: patient.branch_id ?? null }),
+  });
+
+  //  **أيُّ جهازٍ يُصان؟** — قاعدةُ الصيانة القائمة بحرفها: صاحبُ نوعٍ
+  //  واحد يبقى تلقائياً، وصاحبُ الاثنين يُصرِّح، والصمتُ يُردّ لا يُخمَّن.
+  const owned = [
+    patient.is_amputee ? "prosthetic" : null,
+    patient.is_medical_support ? "medical_support" : null,
+  ].filter(Boolean) as ("prosthetic" | "medical_support")[];
+  if (owned.length === 0) {
+    return { ok: false, status: 400, error: "الصيانة لمرضى الأطراف والمساند فقط" };
+  }
+  const requested = req.body?.serviceType;
+  let serviceType: "prosthetic" | "medical_support";
+  if (typeof requested === "string" && requested) {
+    if (!owned.includes(requested as any)) {
+      return { ok: false, status: 400, error: "هذا النوع غير مفعّل على ملف المريض" };
+    }
+    serviceType = requested as "prosthetic" | "medical_support";
+  } else if (owned.length === 1) {
+    serviceType = owned[0];
+  } else {
+    return {
+      ok: false, status: 400,
+      error: "المريض يحمل طرفاً ومسنداً — حدّد نوع الجهاز المراد صيانته",
+    };
+  }
+  return { ok: true, patientId, patient, opBranchId, serviceType };
+}
+
+/**
+ * **الجهازُ والجزءُ — فحصُ شكلٍ مشتركٌ بين البابين** بالدالّتين القائمتين
+ * نفسيهما (`parseComponent` · `parseMaintenanceDeviceTarget`)؛ والحسمُ
+ * الدقيق يبقى تحت القفل في `resolveDeviceTargetTx` كما كان.
+ */
+function maintenanceItem(req: Req, serviceType: "prosthetic" | "medical_support"):
+  | { ok: false; error: string }
+  | { ok: true; component: string | null; deviceEpisodeId: number | null;
+    legacyUnrecordedDevice: boolean } {
+  //  **والجزءُ من القائمة القائمة وحدها** (ترحيل ٠٦٠) — ولا قائمةَ
+  //  ثانية تُخترَع ولا حقلٌ حرٌّ يُفرغها من معناها.
+  const comp = parseComponent(req.body?.maintenanceComponent);
+  if (!comp.ok) return { ok: false, error: comp.error! };
+  if (serviceType === "prosthetic" && !comp.value) {
+    return { ok: false, error: "حدّد الجزء المراد صيانته" };
+  }
+  //  ══ **الجهازُ — نيّةٌ صريحة، لا افتراض** ══════════════════════════
+  const target = parseMaintenanceDeviceTarget({
+    deviceEpisodeId: req.body?.deviceEpisodeId,
+    legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice,
+  });
+  if (!target.ok) return { ok: false, error: target.error! };
+  return {
+    ok: true, component: comp.value,
+    deviceEpisodeId: target.deviceEpisodeId,
+    legacyUnrecordedDevice: target.legacyUnrecordedDevice,
+  };
 }
 
 /**
@@ -381,6 +482,50 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
   });
 
   /**
+   * **تنبيهُ الصيانة المشابهة — قراءةٌ فقط، ولا تمنع شيئاً** (المرحلةُ
+   * الثانية من تبسيط الصيانة، ٢٠٢٦-٠٩-١٨).
+   *
+   * تُسأل **قبل الحفظ** فتقول: أثمّة أمرُ صيانةٍ مفتوحٌ مشابه؟ ثمّ يقرّر
+   * الموظّف: رجوعٌ (صفرُ كتابة) أو متابعةٌ تفتح أمراً مستقلّاً كاملاً.
+   *
+   * ══ **وليست حارساً** ═══════════════════════════════════════════════════
+   * ترحيلُ ٠٨٢ رفع «صيانةٌ مفتوحةٌ واحدة لكلّ جهاز» عن قصد، **ولا شيءَ هنا
+   * يعيده**: لا تُنادى من نقطة التسجيل، ولا يقرأ نتيجتَها حارس، ولا تردّ
+   * طلباً. مَن تخطّاها — عميلٌ قديم أو نداءٌ مباشر — يُسجَّل كما كان تماماً.
+   *
+   * ══ **ولا تلمس تذكرةَ الإرسال** ════════════════════════════════════════
+   * لا تحجزها ولا تقرؤها ولا تطلبها أصلاً؛ فالمتابعةُ تمضي **بالتذكرة
+   * الحالية نفسِها** — ضغطةٌ واحدة تبقى عمليةً واحدة.
+   *
+   * **والصلاحيةُ والنطاقُ كما في التسجيل بالضبط**: مَن لا يسجّل صيانةً لا
+   * يقرأ صيانةَ مريضٍ ليس في نطاقه.
+   */
+  app.post("/api/no-exam/maintenance/similar", isAuthenticated, async (req: Req, res) => {
+    try {
+      if (!canCompleteMaintenance(chargeSession(req))) {
+        return res.status(403).json({
+          error: "إتمام الصيانة للاستقبال والمحاسب ومدير الفرع والمسؤول",
+        });
+      }
+      const ctx = await maintenanceContext(req);
+      if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error });
+      const item = maintenanceItem(req, ctx.serviceType);
+      if (!item.ok) return res.status(400).json({ error: item.error });
+
+      const similar = await store.listSimilarOpenMaintenance({
+        patientId: ctx.patientId,
+        serviceType: ctx.serviceType,
+        deviceEpisodeId: item.deviceEpisodeId,
+        legacyUnrecordedDevice: item.legacyUnrecordedDevice,
+        maintenanceComponent: item.component,
+      });
+      return res.json({ ok: true, similar });
+    } catch (err) {
+      fail(res, err, "تعذّر التحقّق من الصيانات المفتوحة");
+    }
+  });
+
+  /**
    * **الصيانةُ المبسّطة — بابٌ واحد، حفظةٌ واحدة، بلا مراجعة لاحقة.**
    * (المرحلة الثالثة، ٢٠٢٦-٠٨-٢٨ — تُلغي «الأجرُ ينتظر الطبيب».)
    *
@@ -435,76 +580,30 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: MAINTENANCE_TOKEN_REQUIRED_MESSAGE });
       }
 
-      const patientId = Number(req.body?.patientId);
       const expertUserId = Number(req.body?.expertUserId);
-      if (!Number.isFinite(patientId) || !Number.isInteger(expertUserId) || expertUserId <= 0) {
+      if (!Number.isInteger(expertUserId) || expertUserId <= 0) {
         return res.status(400).json({ error: "بيانات ناقصة" });
       }
-      const patient = await patientRow(patientId);
-      if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠).
-      if (!(await scopeReachesPatient(branchScope(req),
-        { id: patientId, branchId: patient.branch_id ?? null }))) {
-        return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
-      }
-      //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
-      //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
-      const opBranchId = resolveActingBranchId({
-        scope: branchScope(req),
-        sessionBranchId: getSession(req).branchId ?? null,
-        homeBranchId: patient.branch_id ?? null,
-        patientBranchIds: await patientBranchIdsOf(
-          { id: patientId, branchId: patient.branch_id ?? null }),
-      });
-
-      //  **أيُّ جهازٍ يُصان؟** — قاعدةُ الصيانة القائمة بحرفها: صاحبُ نوعٍ
-      //  واحد يبقى تلقائياً، وصاحبُ الاثنين يُصرِّح، والصمتُ يُردّ لا يُخمَّن.
-      const owned = [
-        patient.is_amputee ? "prosthetic" : null,
-        patient.is_medical_support ? "medical_support" : null,
-      ].filter(Boolean) as ("prosthetic" | "medical_support")[];
-      if (owned.length === 0) {
-        return res.status(400).json({ error: "الصيانة لمرضى الأطراف والمساند فقط" });
-      }
-      const requested = req.body?.serviceType;
-      let serviceType: "prosthetic" | "medical_support";
-      if (typeof requested === "string" && requested) {
-        if (!owned.includes(requested as any)) {
-          return res.status(400).json({ error: "هذا النوع غير مفعّل على ملف المريض" });
-        }
-        serviceType = requested as "prosthetic" | "medical_support";
-      } else if (owned.length === 1) {
-        serviceType = owned[0];
-      } else {
-        return res.status(400).json({
-          error: "المريض يحمل طرفاً ومسنداً — حدّد نوع الجهاز المراد صيانته",
-        });
-      }
+      //  **هويّةُ العملية — بالمصدر المشترك** مع نقطة تنبيه التشابه، فلا
+      //  يُنبَّه على خيطٍ غيرِ الذي سيُكتب فيه فعلاً. والرسائلُ والرموزُ
+      //  والترتيبُ كما كانت بحرفها.
+      const ctx = await maintenanceContext(req);
+      if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error });
+      const { patientId, opBranchId, serviceType } = ctx;
 
       const v = await mfg.validateExpertForBranch(expertUserId, opBranchId as number);
       if (!v.ok) return res.status(400).json({ error: v.reason });
 
-      //  **والجزءُ من القائمة القائمة وحدها** (ترحيل ٠٦٠) — ولا قائمةَ
-      //  ثانية تُخترَع ولا حقلٌ حرٌّ يُفرغها من معناها.
-      const comp = parseComponent(req.body?.maintenanceComponent);
-      if (!comp.ok) return res.status(400).json({ error: comp.error });
-      if (serviceType === "prosthetic" && !comp.value) {
-        return res.status(400).json({ error: "حدّد الجزء المراد صيانته" });
-      }
+      const item = maintenanceItem(req, serviceType);
+      if (!item.ok) return res.status(400).json({ error: item.error });
 
-      //  ══ **الجهازُ — نيّةٌ صريحة، لا افتراض** ══════════════════════════
-      //  فحصُ شكلٍ مبكّر فقط: الحسمُ الدقيق (الانتماء والحالة `delivered`)
-      //  يقع تحت القفل داخل `resolveDeviceTargetTx`.
-      const target = parseMaintenanceDeviceTarget({
-        deviceEpisodeId: req.body?.deviceEpisodeId,
-        legacyUnrecordedDevice: req.body?.legacyUnrecordedDevice,
-      });
-      if (!target.ok) return res.status(400).json({ error: target.error });
-
-      //  ══ **السعرُ — يُشتقّ في الخادم من مُدخَلين فقط** (المرحلة الثانية) ══
-      //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً.
-      const offer = deriveMaintenanceOffer({
+      //  ══ **السعرُ وعلمُ الضمان — يُشتقّان في الخادم** (٠٦٩ + ٠٨٣) ═══════
+      //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً. و«ضمن الضمان»
+      //  **حالةٌ مستقلّة**: الأصليُّ يبقى محفوظاً، والنهائيُّ صفر، ولا خصمَ
+      //  معها — ولا تُقرأ من `kind === "free"` بعد اليوم.
+      const offer = deriveMaintenanceTerms({
         originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
+        underWarranty: req.body?.underWarranty,
       });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
 
@@ -519,10 +618,12 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
 
       const out = await store.createMaintenanceOperation({
         patientId, branchId: opBranchId, serviceType, expertUserId,
-        maintenanceComponent: comp.value,
-        deviceEpisodeId: target.deviceEpisodeId,
-        legacyUnrecordedDevice: target.legacyUnrecordedDevice,
+        maintenanceComponent: item.component,
+        deviceEpisodeId: item.deviceEpisodeId,
+        legacyUnrecordedDevice: item.legacyUnrecordedDevice,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
+        //  **وعلمُ الضمان** (ترحيل ٠٨٣) — مُشتقٌّ سلفاً، يُحفَظ على الأمر.
+        underWarranty: offer.underWarranty,
         paidNow: paidNowResult.amount,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
@@ -548,19 +649,25 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType,
           operationKind: "maintenance",
-          maintenanceComponent: comp.value,
+          maintenanceComponent: item.component,
           deviceEpisodeId: out.deviceEpisodeId,
-          legacyUnrecordedDevice: target.legacyUnrecordedDevice,
+          legacyUnrecordedDevice: item.legacyUnrecordedDevice,
           expertUserId,
           originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
           finalPrice: offer.finalPrice, priceKind: offer.kind,
+          //  **وسببُ صفرِ الأجر يُقال صريحاً** — التزامُ ضمانٍ سابق أم
+          //  تبرّعٌ جديد. ولا يُقرأ أحدُهما من الآخر.
+          underWarranty: offer.underWarranty,
           //  **حقيقةُ القبض — لا تُستنتَج من السعر**: كم دُفع الآن، وكم
           //  تبقّى ديناً على هذه العمليةِ بعينها (لا على المريض كلِّه).
           paidNow: out.paidNow, paymentId: out.paymentId,
           remainingUnpaid: offer.finalPrice! - out.paidNow,
           note: note || null,
         },
-        notes: (offer.kind === "free"
+        notes: (offer.underWarranty
+          ? `صيانة — ${MAINTENANCE_WARRANTY_LABEL}، بلا أجور`
+            + ` (القيمة الاسمية ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
+          : offer.kind === "free"
           ? `صيانة — مجّاني (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
           : `صيانة — ${offer.finalPrice!.toLocaleString("en-US")} د.ع`
             + (offer.kind === "discount"
@@ -598,6 +705,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         ok: true, workOrderId: out.workOrderId, deviceEpisodeId: out.deviceEpisodeId,
         originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
         finalPrice: offer.finalPrice, priceKind: offer.kind,
+        underWarranty: offer.underWarranty,
         paidNow: out.paidNow, paymentId: out.paymentId,
         remainingUnpaid: offer.finalPrice! - out.paidNow,
         message: MAINTENANCE_SUCCESS_MESSAGE,
