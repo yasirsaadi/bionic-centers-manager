@@ -19,6 +19,17 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -787,6 +798,7 @@ async function main() {
       prosthetic: true, classification: "past", createdDaysAgo: 800,
     });
     const mvRes = await http("POST", "/api/no-exam/maintenance", S.recv1, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: autoMaint, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صرير في المفصل",

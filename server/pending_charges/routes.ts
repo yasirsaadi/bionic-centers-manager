@@ -48,6 +48,7 @@ import {
 import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
   parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
+  MAINTENANCE_TOKEN_REQUIRED_MESSAGE,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
@@ -411,6 +412,29 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
             + " charged/amount/deviceOrigin",
         });
       }
+      //  ══ **تذكرةُ الإرسال — إلزاميةٌ على هذه النقطة** ═══════════════════
+      //  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. نافذةُ الصيانة تسكّ التذكرةَ عند
+      //  كلّ فتح ولا تُفعِّل زرَّ الحفظ قبلها، **فطلبٌ يصل بلا رمزٍ عميلٌ
+      //  بائتٌ** لا موظّفٌ أخطأ — ويُردّ بمخرجه لا بلومه.
+      //
+      //  **وهنا — قبل كلّ شيء** (بعد الصلاحية والعقد المتقاعد وحدهما): لا
+      //  قفلَ يُؤخَذ، ولا أمرَ عملٍ، ولا زيارةَ، ولا قيدَ كلفةٍ، ولا دفعةَ،
+      //  ولا سطرَ تدقيق. **صفرُ كتابةٍ تشغيليةٍ أو مالية.**
+      //
+      //  **والحجزُ نفسُه يبقى حيث هو** — **داخل معاملة**
+      //  `createMaintenanceOperation` قبل أيّ كتابة: فشلٌ في أيّ خطوةٍ بعده
+      //  يُرجع الرمزَ معه، فتُعاد المحاولةُ بالرمز عينه وتنجح. وهذا حارسُ
+      //  **عقدٍ** يسبقه، لا بديلٌ عنه.
+      //
+      //  **والحقلُ يبقى اختيارياً في المخزن** — لمُنادٍ داخليّ يتجاوز هذه
+      //  النقطة؛ والإلزامُ عقدُ البابِ العامّ وحده.
+      const submissionToken = typeof req.body?.submissionToken === "string"
+        ? req.body.submissionToken.trim().slice(0, 100)
+        : "";
+      if (!submissionToken) {
+        return res.status(400).json({ error: MAINTENANCE_TOKEN_REQUIRED_MESSAGE });
+      }
+
       const patientId = Number(req.body?.patientId);
       const expertUserId = Number(req.body?.expertUserId);
       if (!Number.isFinite(patientId) || !Number.isInteger(expertUserId) || expertUserId <= 0) {
@@ -493,15 +517,6 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
 
       const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
-      //  ══ **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة** ══════════
-      //  نفسُ شكل `new_service` بحرفه (نصٌّ مقلَّم بحدٍّ أعلى). والحجزُ نفسُه
-      //  يقع **داخل معاملة** `createMaintenanceOperation` قبل أيّ كتابة، لا
-      //  هنا: فشلٌ في أيّ خطوةٍ بعده يُرجع الرمزَ معه، فتُعاد المحاولةُ به.
-      //  **واختياريةٌ عمداً**: عميلٌ لا يرسلها يبقى يعمل كما كان بالضبط.
-      const submissionToken = typeof req.body?.submissionToken === "string"
-        ? req.body.submissionToken.trim().slice(0, 100)
-        : "";
-
       const out = await store.createMaintenanceOperation({
         patientId, branchId: opBranchId, serviceType, expertUserId,
         maintenanceComponent: comp.value,
@@ -511,7 +526,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         paidNow: paidNowResult.amount,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
-        submissionToken: submissionToken || null,
+        submissionToken,
       });
 
       //  ══ **الرمزُ نفسُه وصل مرّتين ⟶ نجاحٌ آمن، وصفرُ كتابة** ═════════════

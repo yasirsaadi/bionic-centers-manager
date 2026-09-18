@@ -37,6 +37,17 @@ import { storage } from "../storage";
 import { prostheticWorkOrders as WO, patientCases, costEntries, payments } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -88,7 +99,7 @@ async function maint(body: {
   const { cost, ...rest } = body;
   //  **`paidNow: 0` افتراضٌ آمن** — المرحلة الخامسة صيّرته إلزامياً على سعرٍ
   //  موجب؛ صفرٌ صريحٌ = «دَينٌ كامل»، وهذا الملفّ لا يختبر دفعاتٍ إطلاقاً.
-  return req("POST", "/api/no-exam/maintenance", session, {
+  return req("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(),
     ...rest, legacyUnrecordedDevice: true, originalPrice: cost, discountAmount: 0, paidNow: 0,
   });
 }

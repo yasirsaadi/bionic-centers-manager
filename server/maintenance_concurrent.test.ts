@@ -37,6 +37,10 @@
 //     يكسره منعُ التكرار.
 //   • **ي**: **وفشلُ المعاملة يُرجع حجزَ الرمز معها** — فتُعاد المحاولةُ
 //     بالرمز عينه وتنجح، ولا يُقرأ «مسجَّلة سابقاً» كذباً على عمليةٍ لم تقع.
+//   • **ك**: **والتذكرةُ إلزاميةٌ على النقطة العامّة** (٢٠٢٦-٠٩-١٨) — طلبٌ
+//     بلا رمزٍ (بأشكال غيابه الخمسة) يُردّ ٤٠٠ **بصفر كتابةٍ تشغيلية أو
+//     مالية**: لا أمرَ ولا زيارةَ ولا قيدَ كلفةٍ ولا دفعةَ ولا تدقيق. ومعه
+//     عقدُ الشاشة: زرُّ الحفظ لا يجهز قبل أن تُسكّ التذكرة.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -46,9 +50,14 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import * as mfg from "./manufacturing/store";
 import { sql as MIG082, name as NAME082 } from "./migrations/082_concurrent_maintenance_orders";
+import { MAINTENANCE_TOKEN_REQUIRED_MESSAGE } from "@shared/maintenance";
 
 const MFG_STORE_SRC = readFileSync(
   join(process.cwd(), "server/manufacturing/store.ts"), "utf8");
+/** مصدرُ نافذة العملية — بلا تعليقات، فلا يمرّ فحصُ العقد على ذكرٍ بدل كود. */
+const DIALOG_SRC = readFileSync(
+  join(process.cwd(), "client/src/components/NoExamOperationDialog.tsx"), "utf8")
+  .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const RUNNER_SRC = readFileSync(
   join(process.cwd(), "server/migrations/runner.ts"), "utf8");
 
@@ -107,8 +116,29 @@ async function http(method: string, path: string, session: any, body?: any) {
   try { json = await res.json(); } catch { /* empty */ }
   return { status: res.status, body: json };
 }
-const maint = (body: any, session: any = S.recv) =>
+/**
+ * **الطلبُ كما يُكتب حرفياً** — بلا تذكرةٍ تُحقَن. يستعمله القسمُ الذي غيابُ
+ * الرمز فيه **هو** موضوعُ الاختبار (ك).
+ */
+const maintRaw = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
+
+/**
+ * **والطلبُ المعتاد — بتذكرةٍ فريدةٍ لكلّ نداء** ما لم يحملها الجسمُ صراحةً.
+ *
+ * التذكرةُ صارت **إلزاميةً** على هذه النقطة (٢٠٢٦-٠٩-١٨)، وأقسامُ ترحيل ٠٨٢
+ * (أ–ز) موضوعُها الفهارسُ لا التذكرة: عملياتُ صيانةٍ **حقيقيةٌ مستقلّة**،
+ * لكلٍّ ضغطتُها الخاصّة. **ورمزٌ فريدٌ لكلّ نداء هو بالضبط ما ترسله ضغطتان
+ * مستقلّتان** من نافذتين — فحقنُه هنا يحاكي الواقعَ ولا يخفّف حارساً.
+ * وأقسامُ التذكرة (ح · ط · ي · ك) تمرّر رمزَها صراحةً فلا يُحقَن لها شيء.
+ */
+let autoTok = 0;
+const maint = (body: any, session: any = S.recv) =>
+  maintRaw(
+    body && Object.prototype.hasOwnProperty.call(body, "submissionToken")
+      ? body
+      : { ...body, submissionToken: `${TOK}auto-${++autoTok}` },
+    session);
 
 //  ترحيلُ ٠٨٢ يُطبَّق هنا بنفسه (`DROP INDEX IF EXISTS`) — فالاختبارُ يعمل
 //  على قاعدةٍ بُنيت من قالبٍ سابقٍ له كما على قاعدةٍ سرى عليها المُشغِّل.
@@ -199,6 +229,12 @@ async function auditOf(patientId: number) {
 async function tokenRows(token: string) {
   return await q<{ token: string; scope: string }>(
     `SELECT token, scope FROM submission_tokens WHERE token = $1`, [token]);
+}
+
+/** كم تذكرةً في الجدول كلِّه — للإثبات أن طلباً مردوداً لم يحجز شيئاً. */
+async function tokenCount() {
+  const [r] = await q(`SELECT count(*)::int n FROM submission_tokens`);
+  return Number(r?.n ?? 0);
 }
 
 async function cleanup() {
@@ -574,6 +610,68 @@ async function main() {
     same("ي٥. وعمليةٌ واحدة كاملة",
       [mY1.orders, mY1.visits, mY1.ledger_rows], [1, 1, 1]);
     same("ي٦. وصارت التذكرةُ محجوزةً الآن", (await tokenRows(tokY)).length, 1);
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ك. **وطلبٌ بلا تذكرةٍ يُردّ ٤٠٠ بصفر كتابة** ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  التذكرةُ **إلزاميةٌ على النقطة العامّة**: نافذةُ الصيانة تسكّها عند
+    //  كلّ فتحٍ ولا تُفعِّل زرَّ الحفظ قبلها، **فطلبٌ يصل بلا رمزٍ عميلٌ
+    //  بائتٌ** في متصفّح الموظّف. ولو قُرئ «بلا تذكرة» بصمتٍ لبقي بابُ
+    //  التكرار مفتوحاً على مصراعيه لكلّ صفحةٍ سابقةٍ لهذه المرحلة — وهو
+    //  بعينه ما رفعُ حدِّ ٠٨٢ جعله ممكناً.
+    const pK = await mkPatient("ك. بلا تذكرة");
+    const cK = await mkCase(pK);
+    const eK = await mkEpisode(pK, cK, 1);
+    const baseK = {
+      patientId: pK, serviceType: "prosthetic", deviceEpisodeId: eK,
+      maintenanceComponent: "socket", expertUserId: EXPERT,
+      originalPrice: 50_000, discountAmount: 0, paidNow: 50_000,
+    };
+    const tokensBeforeK = await tokenCount();
+    //  **خمسةُ أشكالٍ للغياب لا واحد** — والمشوَّهُ يُردّ ولا يُصحَّح بصمت.
+    const shapesK: [string, any][] = [
+      ["المفتاحُ غائبٌ تماماً", baseK],
+      ["نصٌّ فارغ", { ...baseK, submissionToken: "" }],
+      ["بياضٌ وحده", { ...baseK, submissionToken: "   " }],
+      ["رقمٌ لا نصّ", { ...baseK, submissionToken: 12345 }],
+      ["`null` صريحة", { ...baseK, submissionToken: null }],
+    ];
+    for (let i = 0; i < shapesK.length; i++) {
+      const [label, body] = shapesK[i];
+      const r = await maintRaw(body);
+      same(`ك١.${i + 1} ${label} ⟶ ٤٠٠`, r.status, 400, JSON.stringify(r.body));
+      same(`ك٢.${i + 1} ${label} — وبرسالةٍ تطلب تحديثَ الصفحة وإعادة المحاولة`,
+        r.body?.error, MAINTENANCE_TOKEN_REQUIRED_MESSAGE);
+    }
+
+    const mK = await moneyOf(pK);
+    same("ك٣. **صفرُ كتابةٍ تشغيلية أو مالية** — لا أمرَ ولا زيارةَ ولا قيدَ كلفةٍ ولا دفعة",
+      [mK.orders, mK.visits, mK.ledger_rows, mK.payments, mK.total, mK.paid],
+      [0, 0, 0, 0, 0, 0]);
+    same("ك٤. **ولا سطرَ تدقيقٍ واحد**", await auditOf(pK), { ops: 0, pays: 0 });
+    same("ك٥. ولا تذكرةَ حُجزت", await tokenCount(), tokensBeforeK);
+    same("ك٦. وصفرٌ في الطوابير القديمة ومراجعة الطبيب",
+      [mK.pending, mK.reviews], [0, 0]);
+
+    //  **والجسمُ عينه بتذكرةٍ صالحة ينجح** — فالردُّ كان للتذكرة وحدها، لا
+    //  لعيبٍ آخر في الطلب. (بلا هذا البند يمرّ القسمُ على طلبٍ باطلٍ أصلاً.)
+    const tokK = `${TOK}required-1`;
+    const okK = await maintRaw({ ...baseK, submissionToken: tokK });
+    same("ك٧. **والجسمُ عينه بتذكرةٍ صالحة ينجح (٢٠١)**", okK.status, 201,
+      JSON.stringify(okK.body));
+    const mK2 = await moneyOf(pK);
+    same("ك٨. وعمليةٌ واحدة كاملة",
+      [mK2.orders, mK2.visits, mK2.ledger_rows, mK2.payments], [1, 1, 1, 1]);
+    same("ك٩. وتذكرةٌ واحدة حُجزت الآن", (await tokenRows(tokK)).length, 1);
+
+    //  ── عقدُ الشاشة: زرُّ الحفظ لا يجهز قبل أن تُسكّ التذكرة ──
+    check(/const\s+maintenanceTokenUnready\s*=\s*kind === "maintenance"\s*&&\s*!submissionToken;/
+      .test(DIALOG_SRC),
+      "ك١٠. **والشاشةُ تعدّ الصيانةَ غيرَ جاهزةٍ بلا تذكرة** — وللصيانة وحدها");
+    check(/const ready = [^;]*!maintenanceTokenUnready/.test(DIALOG_SRC),
+      "ك١١. **والشرطُ موصولٌ فعلاً بـ`ready`** الذي يعطّل زرَّ الحفظ");
+    check(/disabled=\{!ready \|\| save\.isPending\}/.test(DIALOG_SRC),
+      "ك١٢. وزرُّ الحفظ معطَّلٌ بـ`ready` كما كان");
 
     // ══════════════════════════════════════════════════════════════════
   } finally {

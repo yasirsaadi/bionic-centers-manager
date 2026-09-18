@@ -44,6 +44,16 @@ import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 //  ليثبت أن الحارسَ المعامَليّ نفسَه هو السلطة، لا الفحصُ المبكّر وحده.
 import * as pendingChargeStore from "./pending_charges/store";
 
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DIALOG_SRC = readFileSync(
   join(process.cwd(), "client/src/components/NoExamOperationDialog.tsx"), "utf8");
 const ROUTES_SRC = readFileSync(
@@ -156,7 +166,7 @@ async function mkEpisode(patientId: number, caseId: number, seq: number, status:
 //  الآن») صيّرته إلزامياً على سعرٍ موجب؛ صفرٌ صريحٌ = «دَينٌ كامل» وهذا ما
 //  تفترضه هذه الاختباراتُ ضمناً أصلاً (بلا دفعاتٍ إطلاقاً)، فلا يغيّر شيئاً.
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 const oldMaintDoor = (body: any, session: any = S.recv) =>
   http("POST", "/api/manufacturing/maintenance-visit", session, body);
 
@@ -1066,6 +1076,7 @@ async function main() {
       //  **بلا `paidNow` إطلاقاً** — نداءٌ مباشرٌ (لا عبر `maint()` التي
       //  تفرض الافتراضَ الآمن للاختبارات القديمة وحدها).
       const r = await http("POST", "/api/no-exam/maintenance", S.recv, {
+        submissionToken: maintTok(),
         patientId: pid, expertUserId: EXPERT, maintenanceComponent: "tube",
         legacyUnrecordedDevice: true, originalPrice: 45_000, discountAmount: 0,
       });

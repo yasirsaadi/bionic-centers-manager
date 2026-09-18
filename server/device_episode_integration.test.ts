@@ -25,6 +25,17 @@ import * as episodes from "./device_episodes/store";
 import * as mfg from "./manufacturing/store";
 import { resolveDeviceTargetTx } from "./device_episodes/store";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -307,6 +318,7 @@ async function main() {
     // ٦. **وبينما الجديد يُصنَّع**: صيانةٌ على القديم المسلَّم.
     console.log("\n── التعايش: صيانة القديم أثناء تصنيع الجديد ──");
     const maint = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: P, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 75_000, discountAmount: 0, paidNow: 0, note: "صيانة الطرف القديم", deviceEpisodeId: dev1,
@@ -470,7 +482,7 @@ async function main() {
     const d1 = await mkEpisode(pm, cm, 1, "delivered", 0);
     const d2 = await mkEpisode(pm, cm, 2, "delivered", 0);
     const races = await Promise.all(Array.from({ length: 4 }, () =>
-      http("POST", `/api/no-exam/maintenance`, S.reception, {
+      http("POST", `/api/no-exam/maintenance`, S.reception, { submissionToken: maintTok(),
       maintenanceComponent: "knee",
         patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
         originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة متزامنة", deviceEpisodeId: d1,
@@ -489,6 +501,7 @@ async function main() {
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 4);
 
     const second = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة الجهاز الثاني", deviceEpisodeId: d2,
@@ -498,12 +511,14 @@ async function main() {
       (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pm]))[0].n, 5);
 
     const noChoice = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pm, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "بلا اختيار",
     });
     same("وصيانةٌ بلا اختيارٍ ومعه أجهزة مسجَّلة ⟶ مرفوضة", noChoice.status, 400);
     same("وجهازٌ غير مسلَّم لا يُصان",
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
         patientId: P, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0,
         note: "صيانة ملغى", deviceEpisodeId: cancelledEp,
@@ -536,6 +551,7 @@ async function main() {
         (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ce,
         (SELECT COALESCE(total_cost,0) FROM patients WHERE id=$1) AS total`, [pOnlyMfg]);
     const explicitMfg = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 50_000, discountAmount: 0, paidNow: 0, note: "صيانة جهاز غير مسلَّم", deviceEpisodeId: epOM,
@@ -550,6 +566,7 @@ async function main() {
 
     same("٣. وطلبٌ يجمع جهازاً محدَّداً و«قديم» معاً ⟶ متناقض يُردّ",
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
         patientId: pOnlyMfg, expertUserId: EXPERT, serviceType: "prosthetic", originalPrice: 25_000, discountAmount: 0, paidNow: 0,
         note: "متناقض", deviceEpisodeId: epOM, legacyUnrecordedDevice: true,
@@ -603,11 +620,13 @@ async function main() {
     const cRaceM = await mkCase(pRaceM, 0);
     same("٦. قبل التسليم: بلا نيّةٍ صريحة ⟶ ٤٠٠ دائماً (لا استدلال بعد اليوم)",
       (await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
         patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
         originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث",
       })).status, 400);
     const legacyExplicit = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث",
@@ -617,6 +636,7 @@ async function main() {
     await q(`UPDATE prosthetic_work_orders SET status='completed' WHERE patient_id=$1`, [pRaceM]);
     await mkEpisode(pRaceM, cRaceM, 1, "delivered", 0);
     const maintAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة بعد التسليم",
@@ -624,6 +644,7 @@ async function main() {
     same("   وبعده: بلا نيّةٍ صريحة ⟶ ٤٠٠ كذلك — السببُ نفسُه لا اختلاف أهليةٍ",
       maintAfterDeliver.status, 400);
     const legacyAfterDeliver = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pRaceM, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "صيانة إرث ثانية",
@@ -691,6 +712,7 @@ async function main() {
 
     //  والاتجاه المعاكس: بعد أن استقرّ التسليم، صيانةٌ بلا هدف تُردّ.
     const afterTrue = await http("POST", `/api/no-exam/maintenance`, S.reception, {
+      submissionToken: maintTok(),
       maintenanceComponent: "knee",
       patientId: pTrue, expertUserId: EXPERT, serviceType: "prosthetic",
       originalPrice: 25_000, discountAmount: 0, paidNow: 0, note: "بعد التسليم",

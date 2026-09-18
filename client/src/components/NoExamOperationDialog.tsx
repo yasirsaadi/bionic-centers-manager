@@ -364,6 +364,11 @@ export function NoExamOperationDialog({
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
   const maintenanceDeviceUnready = kind === "maintenance"
     && maintenanceDeviceBlocksSave({ phase: devicePhase, selection: deviceSelection });
+  //  **ولا حفظَ قبل أن تُسكَّ تذكرةُ الإرسال** (الصيانةُ وحدها — بيعُ الجزء
+  //  لا يرسلها أصلاً). `useEffect` يسكّها **بعد** أوّل رسم، فثمّة لحظةٌ
+  //  يكون فيها الزرُّ ظاهراً والتذكرةُ فارغة؛ وإرسالٌ فيها يُردّ ٤٠٠ من
+  //  الخادم. فيُمنَع الزرُّ حتى توجد — والخادمُ يبقى الحارسَ الحقيقيّ.
+  const maintenanceTokenUnready = kind === "maintenance" && !submissionToken;
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
   //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
@@ -372,7 +377,8 @@ export function NoExamOperationDialog({
   //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
   //  كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !attachUnanswered && !attachUnpicked && !resumeUnpicked
+    && !maintenanceDeviceUnready && !maintenanceTokenUnready
+    && !attachUnanswered && !attachUnpicked && !resumeUnpicked
     && Boolean(offer.ok) && paidNowCheck.ok;
 
   return (
