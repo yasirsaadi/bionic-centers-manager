@@ -17,9 +17,11 @@
 // كانت نقطة الصيانة تحسم نوع الجهاز بسطر واحد:
 //   `patient.isAmputee ? "prosthetic" : "medical_support"`
 // فمريضٌ يحمل **الاثنين** تُقيَّد صيانة مسنده على خيط الأطراف دائماً —
-// أجورها تُنسَب لحالة الأطراف، وحارسُ «أمرٌ نشط واحد لكل خدمة» يمنع صيانة
-// المسند لأن للأطراف أمراً مفتوحاً. والأولوية لم تكن قراراً بل أوّلَ شرطٍ
-// في تعبيرٍ ثلاثي.
+// أجورها تُنسَب لحالة الأطراف — والأولوية لم تكن قراراً بل أوّلَ شرطٍ في
+// تعبيرٍ ثلاثي. (ويومَ كُتب هذا الملفّ كان حارسُ «أمرٌ نشط واحد لكل خدمة»
+// يمنع عندئذٍ صيانةَ المسند أيضاً لأن للأطراف أمراً مفتوحاً. **وذاك الحارسُ
+// رُفع للصيانة في ترحيل ٠٨٢** — فلم يعد جزءاً من العطب، والخطأُ في حسم
+// النوع يبقى خطأً بذاته: أجورٌ تُقيَّد على الخيط الخطأ.)
 //
 // ══ وما لم يتغيّر ═══════════════════════════════════════════════════════
 // صاحبُ نوعٍ واحد لا يُسأل ولا يتغيّر عنده شيء، ومراحل الصيانة ومحاسبتها
@@ -34,6 +36,17 @@ import { registerPendingChargeRoutes } from "../pending_charges/routes";
 import { storage } from "../storage";
 import { prostheticWorkOrders as WO, patientCases, costEntries, payments } from "@shared/schema";
 import { eq } from "drizzle-orm";
+
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -86,7 +99,7 @@ async function maint(body: {
   const { cost, ...rest } = body;
   //  **`paidNow: 0` افتراضٌ آمن** — المرحلة الخامسة صيّرته إلزامياً على سعرٍ
   //  موجب؛ صفرٌ صريحٌ = «دَينٌ كامل»، وهذا الملفّ لا يختبر دفعاتٍ إطلاقاً.
-  return req("POST", "/api/no-exam/maintenance", session, {
+  return req("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(),
     ...rest, legacyUnrecordedDevice: true, originalPrice: cost, discountAmount: 0, paidNow: 0,
   });
 }
@@ -212,18 +225,25 @@ async function main() {
     same("وأمرٌ واحد نوعه prosthetic", (await ordersOf(pDual)).map((o) => o.serviceType), ["prosthetic"]);
 
     // ١٧. اختيار المسند ⇒ medical_support — **وهذا ما كان مستحيلاً قبلاً**:
-    // الحارس يمنع أمراً ثانياً لنفس الخدمة، وبالتعبير القديم كانت صيانة
-    // المسند تُبنى على `prosthetic` فتصطدم بأمر الأطراف المفتوح.
+    // بالتعبير القديم كانت صيانةُ المسند تُبنى على `prosthetic`، فتُقيَّد
+    // أجورُها على خيط الأطراف (ويومَها كان الحارسُ يردّها أيضاً).
     r = await maint({ patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "medical_support" });
     same("١٧. اختيار المسند ⇒ 201 مع وجود أمر أطراف مفتوح", r.status, 201);
     same("وأمران بخدمتين مستقلّتين",
       (await ordersOf(pDual)).map((o) => o.serviceType).sort(), ["medical_support", "prosthetic"]);
     check(String(r.json?.error ?? "") === "", "ولا رسالة تعارض", JSON.stringify(r.json));
 
-    // والحارس نفسه لم يضعف: أمرٌ ثانٍ لنفس الخدمة ما زال مرفوضاً.
+    // ⚠ **انقلب عقدُ هذا البند بترحيل ٠٨٢** (قرارُ المالك ٢٠٢٦-٠٩-١٧): أمرُ
+    // صيانةٍ ثانٍ لنفس الخدمة كان يُردّ ٤٠٩، وصار يمضي — أيُّ عددٍ من أوامر
+    // الصيانة المتزامنة مشروع. **وموضوعُ هذا الملفّ لم يتغيّر**: الذي يُفحَص
+    // هنا أن النوعَ يُحسَم بما طُلب صراحةً لا بتخمين، وهو ما يُثبته الصفّان
+    // أدناه — أمرٌ ثالث نوعُه `prosthetic` لأنه طُلب كذلك، لا لأن المريض مبتور.
     r = await maint({ patientId: pDual, expertUserId: EXPERT, cost: 25_000, serviceType: "prosthetic",
       maintenanceComponent: "socket" });
-    same("وحارس «أمرٌ نشط واحد لكل خدمة» كما هو ⇒ 409", r.status, 409);
+    same("**وصيانةٌ ثانية للخدمة نفسِها تمضي الآن ⇒ 201** (ترحيل ٠٨٢)", r.status, 201);
+    same("وثلاثةُ أوامر: طرفان ومسند — كلٌّ بنوعه المطلوب لا بالتخمين",
+      (await ordersOf(pDual)).map((o) => o.serviceType).sort(),
+      ["medical_support", "prosthetic", "prosthetic"]);
 
     // ══ ١٨. نوعٌ لا يملكه المريض يُرفَض ═════════════════════════════════
     console.log("\n── التحقّق من الملكية ──");

@@ -13,6 +13,17 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { expertLabelFor, isPerformedByRedundant } from "@shared/daily_review";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -445,6 +456,7 @@ async function main() {
       const cid = await mkCase(pid, 1, "prosthetic");
       void cid;
       const m = await http("POST", "/api/no-exam/maintenance", S.recv, {
+        submissionToken: maintTok(),
         patientId: pid, serviceType: "prosthetic", legacyUnrecordedDevice: true,
         expertUserId: EXPERT, maintenanceComponent: "socket",
         originalPrice: 150_000, discountAmount: 50_000, paidNow: 0,

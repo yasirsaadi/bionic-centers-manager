@@ -36,28 +36,31 @@ export class ActiveOrderError extends Error {
 }
 
 /**
- * هل يوجد أمرٌ مفتوح **يزاحم** هذا الأمر؟
+ * هل يوجد أمرُ **بناءٍ أوليّ** مفتوح يزاحم هذا الأمر؟
  *
- * ══ لماذا صار السؤال بحسب الغرض والجهاز ═══════════════════════════════
- * كان الحارس يسأل: «هل للمريض أمرٌ مفتوح من هذه الخدمة؟» — وكان صحيحاً
- * يوم كان له جهازٌ واحد من كل نوع. أمّا اليوم فطرفٌ مسلَّم يحتاج صيانة
- * وطرفٌ جديد قيد التصنيع عملان مستقلّان على جهازين مختلفين، ولا معنى
- * لأن يمنع أحدهما الآخر.
+ * ══ والصيانةُ خرجت من هذا السؤال كلّياً (ترحيل ٠٨٢) ══════════════════════
+ * كان الحارسُ يسأل عن الغرضين معاً: بناءٌ أوليٌّ يزاحم مثيلَه، **وصيانةٌ
+ * تزاحم صيانةً أخرى لنفس الجهاز**. وقرارُ المالك رفع الثاني بالكامل: أيُّ
+ * عددٍ من أوامر الصيانة المتزامنة — **حتى لنفس الجهاز ونفس القطعة ونفس
+ * الخبير**. فلم يبقَ للصيانة فرعٌ هنا، **ولا نوعٌ يقبلها التوقيع**: فرعٌ
+ * ميّتٌ يبقى مكتوباً تعود به القاعدةُ يوماً بنداءٍ واحدٍ بالسهو.
  *
- * فالمزاحمة الحقيقية ثلاث لا أكثر:
- *   - بناءٌ أوليٌّ يزاحم بناءً أولياً آخر لنفس (المريض، النوع).
- *   - وصيانةُ جهازٍ مسجَّل تزاحم صيانةً أخرى **لذلك الجهاز بعينه**.
- *   - وصيانةُ جهازٍ غير مسجَّل تزاحم مثيلتها لنفس (المريض، النوع)،
- *     إذ لا هوية تفرّق بين جهازين لا حلقة لهما.
+ * فالمزاحمةُ الباقية اثنتان لا أكثر، وكلتاهما بناءٌ أوليّ:
+ *   - بناءٌ أوليٌّ **بحلقةٍ محدَّدة الهوية** يزاحم مثيلَه لتلك الحلقة بعينها.
+ *   - وبناءٌ أوليٌّ **بلا حلقة** يزاحم مثيلَه لنفس (المريض، الخدمة)، إذ لا
+ *     هويّةَ تفرّق بين بناءين لا حلقةَ لهما.
  *
- * والفهارس الثلاثة في ترحيل ٠٥١ تحرس الشروط نفسها في القاعدة، فهذا
- * الفحص يعطي الرسالة والقاعدة تعطي الضمان.
+ * والفهرسان `uq_pwo_one_open_build_per_episode` و`uq_pwo_one_open_legacy_build`
+ * (ترحيل ٠٧٣) يحرسان الشرطين نفسيهما في القاعدة — فهذا الفحصُ يعطي الرسالةَ
+ * والقاعدةُ تعطي الضمان. وفهرسا الصيانة رُفعا في ٠٨٢، فلا ضمانَ في القاعدة
+ * يناقض هذا الانفتاح ولا حارسَ هنا يناقض تلك الفهارس.
  */
 export async function hasOpenOrder(params: {
   patientId: number;
   serviceType: string;
-  purpose: "initial_build" | "maintenance";
-  /** للصيانة فقط: الجهاز المقصود. `null` = جهازٌ غير مسجَّل. */
+  /** **البناءُ الأوليُّ وحده** — الصيانةُ بلا حدٍّ منذ ترحيل ٠٨٢. */
+  purpose: "initial_build";
+  /** الحلقةُ المقصودة. `null`/غياب = بناءٌ بلا هويّة (صفٌّ تاريخيّ أو مسارٌ قديم). */
   deviceEpisodeId?: number | null;
 }): Promise<boolean> {
   const rows = await db.execute<{ id: number }>(sql`
@@ -80,28 +83,23 @@ export async function hasOpenOrder(params: {
  * **وغيابُ الهويّة يبقى على القاعدة القديمة بحرفها**: صفوفٌ تاريخية أو
  * مسارٌ لا يحمل حلقة (`createWorkOrderForExisting` حين لا حلقةَ حيّة) —
  * لا هويّةَ جهازٍ تُميّز بينها، فتبقى المزاحمةُ بـ(مريض، خدمة) فقط.
+ *
+ * ══ **ولا فرعَ للصيانة هنا** (ترحيل ٠٨٢) ═════════════════════════════════
+ * الصيانةُ لا تُزاحم صيانةً أبداً بعد اليوم، فلا شرطَ يُبنى لها هنا ولا
+ * نوعٌ يقبلها توقيعُ الدالّة — والشرطان أدناه بناءٌ أوليٌّ بحرفهما كما كانا.
  */
 function buildCompetitionFilter(params: {
   patientId: number;
   serviceType: string;
-  purpose: "initial_build" | "maintenance";
+  purpose: "initial_build";
   deviceEpisodeId?: number | null;
 }) {
-  if (params.purpose === "initial_build") {
-    if (params.deviceEpisodeId != null) {
-      return sql`purpose = 'initial_build' AND device_episode_id = ${params.deviceEpisodeId}`;
-    }
-    return sql`patient_id = ${params.patientId}
-      AND service_type = ${params.serviceType}
-      AND COALESCE(purpose, 'initial_build') = 'initial_build'
-      AND device_episode_id IS NULL`;
-  }
   if (params.deviceEpisodeId != null) {
-    return sql`purpose = 'maintenance' AND device_episode_id = ${params.deviceEpisodeId}`;
+    return sql`purpose = 'initial_build' AND device_episode_id = ${params.deviceEpisodeId}`;
   }
   return sql`patient_id = ${params.patientId}
     AND service_type = ${params.serviceType}
-    AND purpose = 'maintenance'
+    AND COALESCE(purpose, 'initial_build') = 'initial_build'
     AND device_episode_id IS NULL`;
 }
 
@@ -148,7 +146,7 @@ export async function hasOpenOrderTx(
   tx: { execute: (q: any) => Promise<any> },
   params: {
     patientId: number; serviceType: string;
-    purpose: "initial_build" | "maintenance"; deviceEpisodeId?: number | null;
+    purpose: "initial_build"; deviceEpisodeId?: number | null;
   },
 ): Promise<boolean> {
   const rows = await tx.execute(sql`
@@ -351,11 +349,13 @@ export async function createWorkOrderForExisting(params: {
   return await db.transaction(async (tx) => {
     // In-tx per-service guard (backed by the partial unique index) — the
     // route's pre-check alone was a check-then-act race.
-    // المزاحمة بحسب الغرض — لا بحسب الخدمة وحدها. (هذه النقطة تنشئ صيانةً
-    // غير مسندة لجهازٍ بعينه، فتُقاس على مثيلتها غير المسندة.)
-    if (await hasOpenOrderTx(tx, {
+    // **والبناءُ الأوليُّ وحده يُحرَس** (ترحيل ٠٨٢): الصيانةُ لا تُزاحم صيانةً
+    // أخرى بعد اليوم، فأيُّ عددٍ منها مفتوحٌ معاً مشروع — حتى لنفس الجهاز
+    // ونفس القطعة ونفس الخبير. (وهذه النقطة تنشئ أمراً بلا هويّةِ حلقة،
+    // فيُقاس بناؤها على مثيله غير المُسنَد كما كان بحرفه.)
+    if (purpose === "initial_build" && await hasOpenOrderTx(tx, {
       patientId: params.patientId, serviceType: params.serviceType,
-      purpose, deviceEpisodeId: null,
+      purpose: "initial_build", deviceEpisodeId: null,
     })) throw new ActiveOrderError();
 
     // **ولا بناءٌ أوليّ يتيم.** فحص النقطة وحده check-then-act: بينه وبين
@@ -511,12 +511,20 @@ export async function createMaintenanceOrderWithVisit(params: {
         })
       : null;
 
-    // صيانةُ جهازٍ مسجَّل تُقاس على **ذلك الجهاز**، وغير المسجَّلة على
-    // (المريض، الخدمة). وبناءُ جهازٍ جديد لا يمنع صيانة القديم إطلاقاً.
-    if (await hasOpenOrderTx(tx, {
-      patientId: params.patientId, serviceType: params.serviceType,
-      purpose: "maintenance", deviceEpisodeId: targetEpisodeId,
-    })) throw new ActiveOrderError();
+    //  ══ **ولا حدَّ على عدد أوامر الصيانة المتزامنة** (ترحيل ٠٨٢) ══════════
+    //  قرارُ المالك: أيُّ عددٍ من أوامر الصيانة مفتوحةٌ معاً — **حتى لنفس
+    //  الجهاز ونفس القطعة ونفس الخبير**. مريضٌ يكسر قالبَه مرّتين في أسبوع،
+    //  أو يُصلَح جزءان من طرفه بأمرين منفصلين، عملان حقيقيّان لكلٍّ منهما
+    //  أمرُه وزيارتُه وأجرُه — ومنعُ الثاني كان يجبر الاستقبال على تأجيل
+    //  عملٍ وقع فعلاً أو حشرِه في أمرٍ لا يخصّه.
+    //
+    //  فحُذف الحارسُ من هنا، ورُفع فهرساه من القاعدة معه
+    //  (`uq_pwo_one_open_maint_per_episode` / `uq_pwo_one_open_legacy_maint`)
+    //  — فلا حارسٌ بلا ضمان، ولا ضمانٌ بلا حارس.
+    //
+    //  **وبناءُ الجهاز الأوّليّ لم يُمَسّ بحرف**:
+    //  `uq_pwo_one_open_build_per_episode` و`uq_pwo_one_open_legacy_build`
+    //  قائمان كما هما، وحارسُهما في `createWorkOrderForExisting` كما كان.
 
     const [workOrder] = await tx.insert(WO).values({
       patientId: params.patientId,

@@ -56,6 +56,17 @@ import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
 import { canCompleteComponentSale, COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 /** مصادرُ الحقيقة التي يقرؤها الحارسُ المعماريّ — مرّةً واحدة. */
 const PENDING_MODULE = readFileSync(
   join(process.cwd(), "shared/pending_charge.ts"), "utf8");
@@ -205,7 +216,7 @@ const startNoExam = (patientId: number, serviceType = "prosthetic", item = "sock
 const sale = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 
 /**
  * **زرعٌ مباشر بالـSQL لعمليةٍ «تشغيليةٍ فقط»** — حلقةٌ في التصنيع وأمرُ
@@ -620,9 +631,13 @@ async function main() {
     same("هـ٤. **وقيدُ كلفةٍ واحد وأمرٌ واحد**",
       [mE.total, mE.ledger_rows, mE.orders], [120_000, 1, 1]);
 
-    //  (هـ٥) **وضغطتان على الصيانة** — فهرسُ ٠٥١ يمنع أمراً مفتوحاً ثانياً.
-    //  بالعقد الحاليّ (المرحلة الثالثة) — التغطيةُ الكاملة للتزامن في
-    //  `server/simplified_maintenance.test.ts` (القسم ل).
+    //  (هـ٥) **وضغطتان على الصيانة**.
+    //  ⚠ **انقلب عقدُ هذين البندين بترحيل ٠٨٢** (قرارُ المالك ٢٠٢٦-٠٩-١٧):
+    //  فهرسا ٠٥١ اللذان كانا يمنعان أمرَ صيانةٍ مفتوحاً ثانياً رُفعا —
+    //  فالصيانةُ لا تُزاحم صيانةً أبداً. **والبيعُ أعلاه (هـ٣/هـ٤) لم يُمَسّ**
+    //  ويبقى «نجاحٌ واحد» كما كان. والباقي هنا أن **لكلّ عمليةٍ أثرَها كاملاً
+    //  ولا يُقيَّد أجرٌ مرّتين على واحدة**. (التغطيةُ الكاملة في
+    //  `server/maintenance_concurrent.test.ts`.)
     const pF = await mkPatient("تزامن الصيانة");
     await mkCase(pF);
     const bodyF = {
@@ -631,11 +646,12 @@ async function main() {
       originalPrice: 30_000, discountAmount: 0,
     };
     const raceF = await Promise.all([maint(bodyF), maint(bodyF)]);
-    same("هـ٥. **وصيانتان متزامنتان ⟶ واحدةٌ تمرّ**",
-      raceF.filter((r) => r.status === 201).length, 1);
+    same("هـ٥. **وصيانتان متزامنتان ⟶ كلتاهما تمرّ** (ترحيل ٠٨٢)",
+      raceF.filter((r) => r.status === 201).length, 2,
+      JSON.stringify(raceF.map((r) => [r.status, r.body?.error])));
     const mF = await moneyOf(pF);
-    same("هـ٦. **وأجرٌ واحد وأمرٌ واحد**",
-      [mF.total, mF.ledger_rows, mF.orders], [30_000, 1, 1]);
+    same("هـ٦. **وأجرٌ لكلٍّ وأمرٌ لكلٍّ — لا قيدَ مزدوجٌ على عمليةٍ واحدة**",
+      [mF.total, mF.ledger_rows, mF.orders], [60_000, 2, 2]);
 
     // ══════════════════════════════════════════════════════════════════
     //  (و) «تمت المراجعة» اعترافٌ لا إذن — خاصّيةُ نقطة المراجعة نفسِها

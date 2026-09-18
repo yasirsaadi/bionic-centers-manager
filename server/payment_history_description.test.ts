@@ -49,6 +49,17 @@ import {
 } from "@shared/payment_description";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const PAYMENT_DESC_SRC = readFileSync(
   join(process.cwd(), "shared/payment_description.ts"), "utf8");
 
@@ -121,7 +132,7 @@ async function mkCase(patientId: number, caseType = "prosthetic") {
 const sale = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 
 async function paymentsOf(patientId: number) {
   return await q<{

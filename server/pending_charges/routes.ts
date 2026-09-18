@@ -47,7 +47,8 @@ import {
 } from "@shared/prosthetic_parts";
 import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
-  parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE,
+  parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
+  MAINTENANCE_TOKEN_REQUIRED_MESSAGE,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
@@ -411,6 +412,29 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
             + " charged/amount/deviceOrigin",
         });
       }
+      //  ══ **تذكرةُ الإرسال — إلزاميةٌ على هذه النقطة** ═══════════════════
+      //  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. نافذةُ الصيانة تسكّ التذكرةَ عند
+      //  كلّ فتح ولا تُفعِّل زرَّ الحفظ قبلها، **فطلبٌ يصل بلا رمزٍ عميلٌ
+      //  بائتٌ** لا موظّفٌ أخطأ — ويُردّ بمخرجه لا بلومه.
+      //
+      //  **وهنا — قبل كلّ شيء** (بعد الصلاحية والعقد المتقاعد وحدهما): لا
+      //  قفلَ يُؤخَذ، ولا أمرَ عملٍ، ولا زيارةَ، ولا قيدَ كلفةٍ، ولا دفعةَ،
+      //  ولا سطرَ تدقيق. **صفرُ كتابةٍ تشغيليةٍ أو مالية.**
+      //
+      //  **والحجزُ نفسُه يبقى حيث هو** — **داخل معاملة**
+      //  `createMaintenanceOperation` قبل أيّ كتابة: فشلٌ في أيّ خطوةٍ بعده
+      //  يُرجع الرمزَ معه، فتُعاد المحاولةُ بالرمز عينه وتنجح. وهذا حارسُ
+      //  **عقدٍ** يسبقه، لا بديلٌ عنه.
+      //
+      //  **والحقلُ يبقى اختيارياً في المخزن** — لمُنادٍ داخليّ يتجاوز هذه
+      //  النقطة؛ والإلزامُ عقدُ البابِ العامّ وحده.
+      const submissionToken = typeof req.body?.submissionToken === "string"
+        ? req.body.submissionToken.trim().slice(0, 100)
+        : "";
+      if (!submissionToken) {
+        return res.status(400).json({ error: MAINTENANCE_TOKEN_REQUIRED_MESSAGE });
+      }
+
       const patientId = Number(req.body?.patientId);
       const expertUserId = Number(req.body?.expertUserId);
       if (!Number.isFinite(patientId) || !Number.isInteger(expertUserId) || expertUserId <= 0) {
@@ -502,7 +526,16 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         paidNow: paidNowResult.amount,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
+        submissionToken,
       });
+
+      //  ══ **الرمزُ نفسُه وصل مرّتين ⟶ نجاحٌ آمن، وصفرُ كتابة** ═════════════
+      //  **قبل كلّ ما يلي**: لا سطرَ تدقيقٍ ثانٍ، ولا قيدَ يوميةٍ ثانٍ، ولا
+      //  تدقيقَ دفعةٍ ثانٍ — والمعاملةُ نفسُها لم تكتب أمراً ولا زيارةً ولا
+      //  قيدَ كلفةٍ ولا دفعة. و٢٠٠ لا ٢٠١: لم يُنشَأ شيءٌ في هذه المرّة.
+      if (out.duplicate) {
+        return res.json({ ok: true, duplicate: true, message: MAINTENANCE_DUPLICATE_MESSAGE });
+      }
 
       await logAudit({
         entityType: "no_exam_operation",

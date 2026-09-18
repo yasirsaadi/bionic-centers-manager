@@ -44,6 +44,16 @@ import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 //  ليثبت أن الحارسَ المعامَليّ نفسَه هو السلطة، لا الفحصُ المبكّر وحده.
 import * as pendingChargeStore from "./pending_charges/store";
 
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DIALOG_SRC = readFileSync(
   join(process.cwd(), "client/src/components/NoExamOperationDialog.tsx"), "utf8");
 const ROUTES_SRC = readFileSync(
@@ -156,7 +166,7 @@ async function mkEpisode(patientId: number, caseId: number, seq: number, status:
 //  الآن») صيّرته إلزامياً على سعرٍ موجب؛ صفرٌ صريحٌ = «دَينٌ كامل» وهذا ما
 //  تفترضه هذه الاختباراتُ ضمناً أصلاً (بلا دفعاتٍ إطلاقاً)، فلا يغيّر شيئاً.
 const maint = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/maintenance", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 const oldMaintDoor = (body: any, session: any = S.recv) =>
   http("POST", "/api/manufacturing/maintenance-visit", session, body);
 
@@ -693,7 +703,13 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ل. التزامن — ضغطتان متزامنتان ⟶ أمرٌ واحد بالضبط ──");
+    //  ⚠ **انقلب عقدُ هذا القسم بترحيل ٠٨٢** (قرارُ المالك ٢٠٢٦-٠٩-١٧):
+    //  كان يثبت «أمرٌ واحد بالضبط» لأن `uq_pwo_one_open_maint_per_episode`
+    //  كان يمنع صيانةً ثانية على الجهاز نفسِه. وقد رُفع ذلك القيدُ صراحةً —
+    //  **أيُّ عددٍ من أوامر الصيانة المتزامنة مشروع** — فصار يثبت أن
+    //  الضغطتين تُنتجان **عمليتين مستقلّتين كاملتين** لا نصفَ كتابةٍ ولا
+    //  ازدواجَ قيدٍ على عمليةٍ واحدة. (التفصيلُ في `test:maintenance-concurrent`.)
+    console.log("\n── ل. التزامن — ضغطتان متزامنتان ⟶ عمليتان مستقلّتان كاملتان ──");
     // ══════════════════════════════════════════════════════════════════
     {
       const pid = await mkPatient("تزامن-صيانة");
@@ -710,10 +726,13 @@ async function main() {
         }),
       ]);
       const statuses = [r1.status, r2.status].sort();
-      same("ل١. واحدةٌ تنجح (٢٠١) والأخرى ترتدّ (٤٠٩)", statuses, [201, 409]);
+      same("ل١. **كلتاهما تنجح (٢٠١)** — نفسُ الجهاز والقطعة، وخبيران",
+        statuses, [201, 201], JSON.stringify([r1.body, r2.body]));
       const m = await moneyOf(pid);
-      check(m.orders === 1 && m.ledger_rows === 1,
-        "ل٢. أمرٌ واحد وقيدٌ واحد بالضبط — لا نصفَ كتابة", JSON.stringify(m));
+      same("ل٢. أمران · زيارتان · قيدا كلفة — لكلّ عمليةٍ أثرُها كاملاً",
+        [m.orders, m.visits, m.ledger_rows], [2, 2, 2]);
+      same("ل٣. والمجموعُ ضِعفُ الأجر بالضبط — لا قيدَ مزدوجٌ على عمليةٍ واحدة",
+        [m.total, m.ledger], [40_000, 40_000]);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1057,6 +1076,7 @@ async function main() {
       //  **بلا `paidNow` إطلاقاً** — نداءٌ مباشرٌ (لا عبر `maint()` التي
       //  تفرض الافتراضَ الآمن للاختبارات القديمة وحدها).
       const r = await http("POST", "/api/no-exam/maintenance", S.recv, {
+        submissionToken: maintTok(),
         patientId: pid, expertUserId: EXPERT, maintenanceComponent: "tube",
         legacyUnrecordedDevice: true, originalPrice: 45_000, discountAmount: 0,
       });
@@ -1067,8 +1087,10 @@ async function main() {
       same("    وصفرُ كتابةٍ تماماً", await moneyOf(pid), ZERO);
     }
     {
-      //  ══ ق٧. التزامن — طلبا صيانةٍ متزامنان على الجهاز نفسِه (المسلَّم) ⟶
-      //  واحدٌ ينجح بدفعةٍ واحدة، والآخر يرتدّ بصفر كتابة ═════════════════
+      //  ══ ق٧. التزامن — طلبا صيانةٍ متزامنان على الجهاز نفسِه (المسلَّم).
+      //  ⚠ **انقلب عقدُه بترحيل ٠٨٢**: كان «واحدٌ ينجح والآخر يرتدّ»؛ وصار
+      //  **كلاهما ينجح** — عمليتان مستقلّتان، لكلٍّ أمرُها وزيارتُها ودفعتُها
+      //  وقيدُها. والثابتُ الباقي أن **لا دفعةَ تُقيَّد مرّتين لعمليةٍ واحدة**.
       const pid = await mkPatient("ق-تزامنٌ-بلا-ازدواج");
       const c = await mkCase(pid, "prosthetic");
       const ep = await mkEpisode(pid, c, 1, "delivered");
@@ -1079,12 +1101,15 @@ async function main() {
           deviceEpisodeId: ep, originalPrice: 70_000, discountAmount: 0, paidNow: 70_000 }),
       ]);
       const statuses = [r1.status, r2.status].sort();
-      same("ق٧. واحدٌ ينجح (٢٠١) بالضبط والآخر يرتدّ (٤٠٩)", statuses, [201, 409]);
+      same("ق٧. **كلاهما ينجح (٢٠١)** — قطعتان مختلفتان على الجهاز المسلَّم نفسِه",
+        statuses, [201, 201], JSON.stringify([r1.body, r2.body]));
       const pays = await paymentsOf(pid);
-      same("    ودفعةٌ واحدةٌ بالضبط — لا نصفَ كتابة ولا ازدواج", pays.length, 1);
+      same("    ودفعتان — واحدةٌ لكلّ عملية، لا نصفَ كتابةٍ ولا ازدواجٌ على واحدة",
+        pays.length, 2);
       const m = await moneyOf(pid);
-      same("    وأمرٌ واحدٌ وزيارةٌ واحدةٌ وقيدٌ واحد بالضبط",
-        [m.orders, m.visits, m.ledger_rows], [1, 1, 1]);
+      same("    وأمران وزيارتان وقيدا كلفة",
+        [m.orders, m.visits, m.ledger_rows], [2, 2, 2]);
+      same("    والمجموعُ ضِعفُ الأجر بالضبط", [m.total, m.ledger], [140_000, 140_000]);
     }
   } finally {
     await cleanup();

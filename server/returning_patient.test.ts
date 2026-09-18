@@ -22,6 +22,17 @@ import * as mfg from "./manufacturing/store";
 import { COMPONENT_LABELS } from "@shared/prosthetic_parts";
 import { maintenanceDiscountRef } from "@shared/discount";
 
+
+//  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
+//  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
+//  ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة. وكلُّ نداءٍ في هذا الملفّ عمليةٌ مستقلّة
+//  بضغطتها الخاصّة، **فرمزٌ فريدٌ لكلّ نداء هو بالضبط ما يرسله الواقع**.
+//  والطابعُ الزمنيُّ في البادئة يجعل إعادةَ تشغيل الملفّ على القاعدة نفسِها
+//  تنجح — رمزٌ ثابتٌ كان سيُقرأ «مسجَّلاً سابقاً» في التشغيلة الثانية.
+const MAINT_TOK = `mtok-${Date.now().toString(36)}`;
+let maintTokN = 0;
+const maintTok = () => `${MAINT_TOK}-${++maintTokN}`;
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -343,7 +354,7 @@ async function main() {
       const c = await mkCase(p);
       await mkDeliveredEpisode(p, c);
       const r = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
           note: "صيانة" });
       same("١٨. **صيانةُ طرفٍ بلا جزءٍ تُردّ ٤٠٠**", r.status, 400);
       same("   (برسالةٍ تسمّي المطلوب)", r.body?.error, "حدّد الجزء المراد صيانته");
@@ -353,7 +364,7 @@ async function main() {
       //  **وحتى الجهازُ القديم غير المسجَّل يُسأل عن جزئه**: الجهازُ مجهولٌ
       //  والجزءُ ليس كذلك.
       const legacy = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
           legacyUnrecordedDevice: true });
       same("٢٠. **والقديمُ غير المسجَّل يُسأل أيضاً**", legacy.status, 400);
     }
@@ -366,7 +377,7 @@ async function main() {
       const c = await mkCase(p);
       const ep = await mkDeliveredEpisode(p, c);
       const r = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 50000, discountAmount: 0,
           paidNow: 0,
           note: "صيانة الطرف القديم", maintenanceComponent: "knee", deviceEpisodeId: ep });
       same("٢١. **الصيانةُ بلا خصمٍ تُنفَّذ فوراً**", r.status, 201);
@@ -394,7 +405,7 @@ async function main() {
       const c = await mkCase(p);
       const ep = await mkDeliveredEpisode(p, c);
       const zero = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 0, discountAmount: 0,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 0, discountAmount: 0,
           maintenanceComponent: "knee", deviceEpisodeId: ep, note: "صيانة" });
       same("٢٦. **صيانةٌ بأصلٍ صفرٍ بلا تبرّعٍ صريح تُردّ ٤٠٠**", zero.status, 400);
       check(String(zero.body?.error ?? "").includes("صفر"),
@@ -409,7 +420,7 @@ async function main() {
       //  خصمٍ يساوي الأصلَ بالضبط. (التغطيةُ الشاملة في
       //  `server/simplified_maintenance.test.ts`.)
       const free = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 80000, discountAmount: 80000,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 80000, discountAmount: 80000,
           maintenanceComponent: "knee", deviceEpisodeId: ep });
       same("٢٨. **والتبرّعُ الصريح من سعرٍ موجب يُنفَّذ فوراً بلا طابور**",
         [free.status, free.body?.priceKind, free.body?.finalPrice], [201, "free", 0]);
@@ -898,7 +909,7 @@ async function main() {
       await http("POST", `/api/patients/${p}/device-episodes`, S.reception,
         { servicePath: "exam", serviceType: "prosthetic", requestedItem: "knee" });
       const mv = await http("POST", "/api/no-exam/maintenance", S.reception,
-        { patientId: p, expertUserId: EXPERT, originalPrice: 30000, discountAmount: 0,
+        { submissionToken: maintTok(), patientId: p, expertUserId: EXPERT, originalPrice: 30000, discountAmount: 0,
           paidNow: 0, maintenanceComponent: "adapter", deviceEpisodeId: ep });
       check(mv.status === 201, "(الصيانةُ فُتحت قبل اختبار الحذف)", JSON.stringify(mv.body));
       const before = await moneyOf(p);
