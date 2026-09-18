@@ -47,7 +47,7 @@ import {
 } from "@shared/prosthetic_parts";
 import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceOffer,
-  parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE,
+  parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
@@ -493,6 +493,15 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
 
       const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
+      //  ══ **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة** ══════════
+      //  نفسُ شكل `new_service` بحرفه (نصٌّ مقلَّم بحدٍّ أعلى). والحجزُ نفسُه
+      //  يقع **داخل معاملة** `createMaintenanceOperation` قبل أيّ كتابة، لا
+      //  هنا: فشلٌ في أيّ خطوةٍ بعده يُرجع الرمزَ معه، فتُعاد المحاولةُ به.
+      //  **واختياريةٌ عمداً**: عميلٌ لا يرسلها يبقى يعمل كما كان بالضبط.
+      const submissionToken = typeof req.body?.submissionToken === "string"
+        ? req.body.submissionToken.trim().slice(0, 100)
+        : "";
+
       const out = await store.createMaintenanceOperation({
         patientId, branchId: opBranchId, serviceType, expertUserId,
         maintenanceComponent: comp.value,
@@ -502,7 +511,16 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         paidNow: paidNowResult.amount,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
+        submissionToken: submissionToken || null,
       });
+
+      //  ══ **الرمزُ نفسُه وصل مرّتين ⟶ نجاحٌ آمن، وصفرُ كتابة** ═════════════
+      //  **قبل كلّ ما يلي**: لا سطرَ تدقيقٍ ثانٍ، ولا قيدَ يوميةٍ ثانٍ، ولا
+      //  تدقيقَ دفعةٍ ثانٍ — والمعاملةُ نفسُها لم تكتب أمراً ولا زيارةً ولا
+      //  قيدَ كلفةٍ ولا دفعة. و٢٠٠ لا ٢٠١: لم يُنشَأ شيءٌ في هذه المرّة.
+      if (out.duplicate) {
+        return res.json({ ok: true, duplicate: true, message: MAINTENANCE_DUPLICATE_MESSAGE });
+      }
 
       await logAudit({
         entityType: "no_exam_operation",

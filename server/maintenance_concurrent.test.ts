@@ -23,6 +23,20 @@
 //   • **هـ**: **وبناءان ما زالا مرفوضين** — في القاعدة وفي منطق التطبيق.
 //   • **و**: كلُّ أمرٍ بمبلغه — لا قيدَ مزدوجٌ ولا قيدٌ ضائع.
 //   • **ز**: حارسٌ معماريّ — لا فرعَ صيانةٍ عاد إلى شرط المزاحمة.
+//
+// ══ **وتذكرةُ الإرسال — المنعُ التقنيُّ للتكرار** (٢٠٢٦-٠٩-١٨) ═════════════
+// رفعُ الحدّ أعلاه أزال ما كان يمسك التكرارَ **صدفةً**، فصار لا بدّ من منعٍ
+// **يفرّق بدقّة** بين ضغطتين لعمليةٍ واحدة وعمليتين حقيقيتين متطابقتين.
+// و`submission_tokens` (ترحيل ٠٤٠) هو ذاك التفريق — بلا ترحيلٍ جديد، وبلا
+// أيّ قيدٍ تجاريّ يعود:
+//   • **ح**: **نفسُ الرمز** + نفسُ الطلب + إرسالان متزامنان ⟶ **عمليةٌ واحدة
+//     بكلّ آثارها**: أمرٌ · زيارةٌ · قيدُ كلفةٍ · دفعةٌ · سطرا تدقيقٍ — واحدٌ
+//     من كلٍّ بالضبط، والثانيةُ تُردّ نجاحاً آمناً بصفر كتابة.
+//   • **ط**: **رمزان مختلفان** + نفسُ البيانات + إرسالان متزامنان ⟶
+//     **عمليتان مستقلّتان بكلّ آثارهما**. وهذا هو الثابتُ الذي لا يجوز أن
+//     يكسره منعُ التكرار.
+//   • **ي**: **وفشلُ المعاملة يُرجع حجزَ الرمز معها** — فتُعاد المحاولةُ
+//     بالرمز عينه وتنجح، ولا يُقرأ «مسجَّلة سابقاً» كذباً على عمليةٍ لم تقع.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -60,6 +74,8 @@ async function refused(fn: () => Promise<unknown>): Promise<string | null> {
 const PORT = 6871;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-الصيانة-المتزامنة";
+/** بادئةُ تذاكر هذا الاختبار — تُنظَّف وحدها، ولا تُلمَس تذكرةُ غيره. */
+const TOK = "mc-tok-";
 const ADMIN = 9871, RECV = 9872, EXPERT = 9873;
 const USERS = [ADMIN, RECV, EXPERT];
 
@@ -154,10 +170,35 @@ async function moneyOf(patientId: number) {
       (SELECT count(*)::int FROM cost_entries WHERE patient_id=$1) AS ledger_rows,
       (SELECT count(*)::int FROM prosthetic_work_orders WHERE patient_id=$1) AS orders,
       (SELECT count(*)::int FROM visits WHERE patient_id=$1) AS visits,
+      (SELECT count(*)::int FROM payments WHERE patient_id=$1) AS payments,
+      (SELECT COALESCE(SUM(amount),0)::int FROM payments WHERE patient_id=$1) AS paid,
       (SELECT count(*)::int FROM pending_service_charges WHERE patient_id=$1) AS pending,
       (SELECT count(*)::int FROM medical_review_requests WHERE patient_id=$1) AS reviews`,
     [patientId]);
   return { total: Number(p?.t ?? 0), ...n };
+}
+
+/**
+ * **سطورُ التدقيق لهذا المريض بعينه** — تُحسَب بالمعرّف لا بحقلٍ داخل
+ * `new_values`: الصفُّ يشير إلى أمرِ عملٍ أو دفعةٍ حقيقية، فإن وقع تكرارٌ
+ * ظهر صفٌّ ثانٍ حتماً.
+ */
+async function auditOf(patientId: number) {
+  const [r] = await q(`SELECT
+      (SELECT count(*)::int FROM audit_log
+        WHERE entity_type='no_exam_operation'
+          AND entity_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id=$1)) AS ops,
+      (SELECT count(*)::int FROM audit_log
+        WHERE entity_type='payment'
+          AND entity_id IN (SELECT id FROM payments WHERE patient_id=$1)) AS pays`,
+    [patientId]);
+  return { ops: Number(r?.ops ?? 0), pays: Number(r?.pays ?? 0) };
+}
+
+/** كم صفّاً لهذا الرمز بعينه، وبأيّ نطاق. */
+async function tokenRows(token: string) {
+  return await q<{ token: string; scope: string }>(
+    `SELECT token, scope FROM submission_tokens WHERE token = $1`, [token]);
 }
 
 async function cleanup() {
@@ -187,6 +228,7 @@ async function cleanup() {
   await q(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
+  await q(`DELETE FROM submission_tokens WHERE token LIKE '${TOK}%'`);
   await q(`DELETE FROM patient_code_aliases a
             WHERE NOT EXISTS (SELECT 1 FROM patients p WHERE p.id = a.patient_id)`);
 }
@@ -405,6 +447,133 @@ async function main() {
     check(maintBody.length > 100, "ز٢. قُرئ جسمُ `createMaintenanceOrderWithVisit`");
     check(!/hasOpenOrderTx|ActiveOrderError/.test(maintBody),
       "ز٣. **ولا حارسَ أمرٍ مفتوحٍ فيه بعد اليوم**");
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ح. **نفسُ الرمز + إرسالان متزامنان ⟶ عمليةٌ واحدة بكلّ آثارها** ──");
+    // ══════════════════════════════════════════════════════════════════
+    const pH = await mkPatient("ح. تذكرةٌ واحدة");
+    const cH = await mkCase(pH);
+    const eH = await mkEpisode(pH, cH, 1);
+    const tokH = `${TOK}same-1`;
+    //  **بقبضٍ فعليّ** — فالدفعةُ واقعةٌ تُعَدّ: تكرارٌ يقيّد مالاً مرّتين لا
+    //  يُصحَّح بعد وقوعه، وهو أخطرُ ما يحرسه هذا القسم.
+    const bodyH = {
+      patientId: pH, serviceType: "prosthetic", deviceEpisodeId: eH,
+      maintenanceComponent: "socket", expertUserId: EXPERT,
+      originalPrice: 80_000, discountAmount: 0, paidNow: 80_000,
+      submissionToken: tokH,
+    };
+    const racedH = await Promise.all([maint(bodyH), maint(bodyH)]);
+    same("ح١. **واحدةٌ تُنشئ (٢٠١) والأخرى تُردّ نجاحاً آمناً (٢٠٠)**",
+      racedH.map((r) => r.status).sort(), [200, 201],
+      JSON.stringify(racedH.map((r) => r.body)));
+    const dupH = racedH.find((r) => r.status === 200);
+    const madeH = racedH.find((r) => r.status === 201);
+    check(dupH?.body?.ok === true && dupH?.body?.duplicate === true,
+      "ح٢. والمردودةُ تقول صراحةً إنها مكرَّرة — **نجاحٌ لا فشل**",
+      JSON.stringify(dupH?.body));
+    check(typeof dupH?.body?.message === "string" && dupH!.body.message.includes("سابقاً"),
+      "ح٣. وبرسالةٍ تدلّ أن العملية مسجَّلةٌ سلفاً", JSON.stringify(dupH?.body?.message));
+    check(typeof madeH?.body?.workOrderId === "number" && !madeH?.body?.duplicate,
+      "ح٤. والمنشِئةُ وحدها تحمل رقمَ أمر العمل", JSON.stringify(madeH?.body));
+
+    const mH = await moneyOf(pH);
+    same("ح٥. **أمرٌ واحد · زيارةٌ واحدة · قيدُ كلفةٍ واحد · دفعةٌ واحدة**",
+      [mH.orders, mH.visits, mH.ledger_rows, mH.payments], [1, 1, 1, 1]);
+    same("ح٦. والمجموعُ أجرٌ واحد لا اثنان",
+      [mH.total, mH.case_cost, mH.ledger], [80_000, 80_000, 80_000]);
+    same("ح٧. والمقبوضُ مرّةً واحدة", mH.paid, 80_000);
+    same("ح٨. **وسطرُ تدقيقٍ واحدٌ للعملية وواحدٌ للدفعة**",
+      await auditOf(pH), { ops: 1, pays: 1 });
+    same("ح٩. وصفُّ تذكرةٍ واحدٌ بنطاق `maintenance`",
+      await tokenRows(tokH), [{ token: tokH, scope: "maintenance" }]);
+    same("ح١٠. وصفرٌ في الطوابير القديمة ومراجعة الطبيب",
+      [mH.pending, mH.reviews], [0, 0]);
+
+    //  وإرسالٌ ثالثٌ **متتالٍ** — بعد أن التزمت الأولى يقيناً، لا سباقاً.
+    const thirdH = await maint(bodyH);
+    same("ح١١. وإرسالٌ ثالثٌ بالرمز عينه ⟶ نجاحٌ آمنٌ أيضاً", thirdH.status, 200,
+      JSON.stringify(thirdH.body));
+    const mH2 = await moneyOf(pH);
+    same("ح١٢. **ولا شيءَ تحرّك** — الأرقامُ كما هي",
+      [mH2.orders, mH2.visits, mH2.ledger_rows, mH2.payments, mH2.total, mH2.paid],
+      [1, 1, 1, 1, 80_000, 80_000]);
+    same("ح١٣. ولا سطرَ تدقيقٍ ثالث", await auditOf(pH), { ops: 1, pays: 1 });
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ط. **رمزان مختلفان + نفسُ البيانات ⟶ عمليتان مستقلّتان** ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  **الثابتُ الذي لا يجوز أن يكسره منعُ التكرار**: عملان حقيقيان
+    //  متطابقان تماماً — نفسُ الجهاز والقطعة والخبير والسعر — يمضيان كلاهما.
+    const pT = await mkPatient("ط. رمزان مختلفان");
+    const cT = await mkCase(pT);
+    const eT = await mkEpisode(pT, cT, 1);
+    const baseT = {
+      patientId: pT, serviceType: "prosthetic", deviceEpisodeId: eT,
+      maintenanceComponent: "socket", expertUserId: EXPERT,
+      originalPrice: 60_000, discountAmount: 0, paidNow: 60_000,
+    };
+    const tokT1 = `${TOK}diff-1`, tokT2 = `${TOK}diff-2`;
+    const racedT = await Promise.all([
+      maint({ ...baseT, submissionToken: tokT1 }),
+      maint({ ...baseT, submissionToken: tokT2 }),
+    ]);
+    same("ط١. **كلتاهما تُنشئ فعلاً (٢٠١ و٢٠١)**",
+      racedT.map((r) => r.status).sort(), [201, 201],
+      JSON.stringify(racedT.map((r) => r.body)));
+    same("ط٢. ولا واحدةَ قُرئت «مكرَّرة»",
+      racedT.map((r) => r.body?.duplicate ?? null), [null, null]);
+    const otT = await ordersOf(pT);
+    same("ط٣. وأمران مستقلّان بمعرّفين مختلفين",
+      [otT.length, new Set(otT.map((o: any) => o.id)).size], [2, 2]);
+    same("ط٤. وكلاهما مفتوحٌ على الجهاز نفسِه بالقطعة نفسِها",
+      otT.map((o: any) => [o.purpose, o.de, o.mc]),
+      [["maintenance", eT, "socket"], ["maintenance", eT, "socket"]]);
+    const mT = await moneyOf(pT);
+    same("ط٥. **أمران · زيارتان · قيدا كلفة · دفعتان**",
+      [mT.orders, mT.visits, mT.ledger_rows, mT.payments], [2, 2, 2, 2]);
+    same("ط٦. والمجموعُ ضِعفُ الأجر",
+      [mT.total, mT.case_cost, mT.ledger], [120_000, 120_000, 120_000]);
+    same("ط٧. والمقبوضُ مرّتين", mT.paid, 120_000);
+    same("ط٨. **وسطرا تدقيقٍ للعمليتين وسطرا دفعة**",
+      await auditOf(pT), { ops: 2, pays: 2 });
+    same("ط٩. وصفّا تذكرةٍ لا صفّ",
+      [(await tokenRows(tokT1)).length, (await tokenRows(tokT2)).length], [1, 1]);
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ي. **وفشلُ المعاملة يُرجع حجزَ الرمز معها** ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  مريضٌ يحمل عَلَمَ الأطراف **بلا حالةٍ نشطة**: يمرّ فحوصَ النقطة كلَّها
+    //  ثمّ يُردّ من **داخل** المعاملة (الحارسُ الأوّل) — أي بعد أن يكون
+    //  الرمزُ قد حُجز فيها. فإن لم يرتدّ الحجزُ معها، حُبس الرمزُ إلى الأبد
+    //  وقُرئت إعادةُ المحاولة «مسجَّلة سابقاً» **كذباً** على عمليةٍ لم تقع.
+    const pY = await mkPatient("ي. ارتدادُ التذكرة");
+    const tokY = `${TOK}rollback-1`;
+    const bodyY = {
+      patientId: pY, serviceType: "prosthetic", legacyUnrecordedDevice: true,
+      maintenanceComponent: "foot", expertUserId: EXPERT,
+      originalPrice: 40_000, discountAmount: 0, paidNow: 0,
+      submissionToken: tokY,
+    };
+    const failY = await maint(bodyY);
+    same("ي١. الطلبُ يُردّ لأن لا حالةَ نشطة على الملفّ", failY.status, 400,
+      JSON.stringify(failY.body));
+    same("ي٢. **ولا صفَّ تذكرةٍ بقي** — الحجزُ ارتدّ مع المعاملة",
+      (await tokenRows(tokY)).length, 0);
+    const mY0 = await moneyOf(pY);
+    same("ي٣. وصفرُ كتابةٍ تشغيلية أو مالية",
+      [mY0.orders, mY0.visits, mY0.ledger_rows, mY0.payments, mY0.total],
+      [0, 0, 0, 0, 0]);
+
+    //  ثمّ يُصحَّح الملفُّ وتُعاد المحاولةُ **بالرمز عينه** — وهذا هو المقصود.
+    await mkCase(pY);
+    const retryY = await maint(bodyY);
+    same("ي٤. **وإعادةُ المحاولة بالرمز نفسِه تنجح**", retryY.status, 201,
+      JSON.stringify(retryY.body));
+    const mY1 = await moneyOf(pY);
+    same("ي٥. وعمليةٌ واحدة كاملة",
+      [mY1.orders, mY1.visits, mY1.ledger_rows], [1, 1, 1]);
+    same("ي٦. وصارت التذكرةُ محجوزةً الآن", (await tokenRows(tokY)).length, 1);
 
     // ══════════════════════════════════════════════════════════════════
   } finally {

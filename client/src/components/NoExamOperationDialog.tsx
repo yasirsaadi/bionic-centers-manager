@@ -39,7 +39,7 @@
 // فتبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب. فصار استعمالُها للمساند
 // **الصيانةَ وحدها**: جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -63,7 +63,9 @@ import {
   ATTACH_TO_IN_MANUFACTURING_QUESTION,
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
-import { resolveResumeTarget } from "./patient_service_launcher_logic";
+import {
+  resolveResumeTarget, nextSubmissionToken, mintSubmissionToken,
+} from "./patient_service_launcher_logic";
 import {
   devicePhaseOf, maintenanceDeviceBlocksSave, resolveMaintenanceDeviceTarget,
   UNREGISTERED_DEVICE,
@@ -196,6 +198,24 @@ export function NoExamOperationDialog({
   //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
   const [deviceSelection, setDeviceSelection] = useState<string>("");
 
+  //  ══ **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة** ═════════════
+  //  (المرحلةُ الأولى من تبسيط الصيانة، ٢٠٢٦-٠٩-١٨)
+  //
+  //  **نافذةٌ مفتوحة ⟶ رمزٌ واحدٌ يثبت**: فإعادةُ الإرسال بعد فشلٍ شبكيّ —
+  //  أو ضغطةٌ ثانية على «حفظ» — تحمل الرمزَ عينه، فيقرؤها الخادمُ عمليةً
+  //  واحدة. **وإغلاقُ النافذة يصفّره**: عمليةُ صيانةٍ جديدة تعني فتحاً
+  //  جديداً، فتُسكّ تذكرةٌ جديدة — **ولا يُمنَع عملٌ حقيقيّ متكرّر** (مريضٌ
+  //  يكسر قالبَه مرّتين في أسبوع)، وهو بعينه ما رفعه ترحيلُ ٠٨٢.
+  //
+  //  **والدالّتان هما القائمتان المُختبَرتان** (`patient_service_launcher_logic`)
+  //  اللتان تستعملهما «خدمة جديدة» — لا نسخةَ ثانية تنحرف. والأثرُ يتبع
+  //  **حالةَ** `open` لا حدثَ فتحها: هذه النافذةُ قد تُركَّب مفتوحةً أصلاً،
+  //  فلا `onOpenChange` يقع وكانت التذكرةُ ستبقى فارغة.
+  const [submissionToken, setSubmissionToken] = useState<string>("");
+  useEffect(() => {
+    setSubmissionToken((prev) => nextSubmissionToken(prev, open, mintSubmissionToken));
+  }, [open]);
+
   //  ══ **حالاتُ الخبير أربعٌ تُقال، لا واحدةٌ تُخفي ثلاثاً** ══════════════
   //  كانت `data: experts = []` تسوّي بين «يُحمَّل الآن» و«فشل الطلب» و«لا
   //  خبيرَ في هذا الفرع»: قائمةٌ فارغة في الحالات الثلاث. فيقف الموظّفُ أمام
@@ -282,6 +302,10 @@ export function NoExamOperationDialog({
           //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
           paidNow: paidNowCheck.amount,
           note: note.trim() || null,
+          //  **وتذكرةُ الإرسال** — الخادمُ يحجزها داخل معاملة العملية قبل أيّ
+          //  كتابة، فإعادةُ الإرسال بالرمز عينه تُقرأ «مسجَّلة سابقاً» ولا
+          //  تُنتج أمراً ولا زيارةً ولا قيدَ كلفةٍ ولا دفعةً ثانية.
+          submissionToken,
         });
         return res.json();
       }

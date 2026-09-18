@@ -23,6 +23,15 @@ import {
 
 export const MAINTENANCE_SUCCESS_MESSAGE = "تم تسجيل الصيانة وفتح أمر العمل";
 
+/**
+ * **نجاحٌ آمنٌ لإعادة الإرسال** — الرمزُ نفسُه وصل مرّتين، فالعمليةُ مسجَّلةٌ
+ * سلفاً ولم يُكتب شيءٌ في هذه المرّة: لا أمرَ ولا زيارةَ ولا قيدَ كلفةٍ ولا
+ * دفعةَ ولا تدقيق. **ولا يُقال «فشل»** — العمليةُ التي طلبها الموظّفُ وقعت
+ * فعلاً؛ الذي لم يقع تكرارُها.
+ */
+export const MAINTENANCE_DUPLICATE_MESSAGE =
+  "هذه الصيانة مسجَّلة سابقاً — لم تُسجَّل مرّتين";
+
 export interface MaintenanceSessionLike {
   role?: string | null;
   isAdmin?: boolean | null;

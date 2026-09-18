@@ -790,6 +790,13 @@ async function attachComponentToDeviceInManufacturing(
  *
  * وكلاهما **قبل** أيّ نداءٍ لـ`createMaintenanceOrderWithVisit`: رفضٌ هنا
  * يعني صفرَ كتابة — لا أمرَ ولا زيارةَ ولا قيدَ ولا لمسَ كلفة.
+ *
+ * ══ **وتذكرةُ الإرسال تسبقهما معاً** (المرحلةُ الأولى من تبسيط الصيانة) ═══
+ * `submissionToken` يُحجَز في `submission_tokens` (ترحيل ٠٤٠) بنطاق
+ * `maintenance` **أوّلَ شيءٍ في المعاملة** — قبل هذين الحارسين أنفسِهما. فلا
+ * أمرَ ولا زيارةَ ولا قيدَ ولا دفعةَ ولا تدقيقَ يقع مرّتين من ضغطةٍ واحدة.
+ * **ولا قيدَ تجاريّ يُعاد**: صيانتان متطابقتان برمزين مختلفين تنجحان
+ * كلتاهما — الشرحُ الكامل عند الحجز نفسِه أدناه.
  */
 export async function createMaintenanceOperation(p: {
   patientId: number;
@@ -812,14 +819,59 @@ export async function createMaintenanceOperation(p: {
    * بحرفها: صفرٌ = دَينٌ صريح، والمجّانيّ يصل صفراً دائماً.
    */
   paidNow: number;
-}): Promise<{
-  workOrderId: number; deviceEpisodeId: number | null; finalPrice: number;
-  paidNow: number; paymentId: number | null;
-  /** الصفُّ كاملاً — نفسُ سبب `createComponentSaleOperation` بحرفه. */
-  payment: Payment | null;
-}> {
+  /**
+   * **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة.**
+   *
+   * اختياريةٌ عمداً بنفس عقد `new_service` بحرفه: عميلٌ لا يرسلها يبقى يعمل
+   * كما كان بالضبط (بلا حجزٍ وبلا منع)، فلا نقطةٌ قائمة تنكسر.
+   */
+  submissionToken?: string | null;
+}): Promise<
+  | {
+    /** **الرمزُ نفسُه وصل مرّتين** — العمليةُ مسجَّلةٌ سلفاً، ولم يُكتب شيء. */
+    duplicate: true;
+  }
+  | {
+    duplicate: false;
+    workOrderId: number; deviceEpisodeId: number | null; finalPrice: number;
+    paidNow: number; paymentId: number | null;
+    /** الصفُّ كاملاً — نفسُ سبب `createComponentSaleOperation` بحرفه. */
+    payment: Payment | null;
+  }
+> {
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
+    //  ══ **حجزُ التذكرة أوّلاً — قبل أيّ كتابةٍ تشغيلية أو مالية** ═════════
+    //  ضغطتان على زرّ الحفظ، أو إعادةُ إرسالٍ بعد انقطاع شبكة، كانتا تُنتجان
+    //  **عمليتَي صيانةٍ حقيقيتين**: أمران وزيارتان وقيدا كلفةٍ ودفعتان —
+    //  ومالٌ قُيِّد مرّتين لا يُصحَّح بعد وقوعه.
+    //
+    //  **والعلاجُ تذكرةٌ لا قيدٌ تجاريّ**: قيدُ «صيانةٌ متشابهة تُمنَع» كان
+    //  سيمنع عملاً حقيقياً — مريضٌ يكسر قالبَه مرّتين في أسبوع (وهو بعينه ما
+    //  رفعه ترحيلُ ٠٨٢). والتذكرةُ تفرّق بدقّة: **نفسُ الضغطة** تحمل الرمزَ
+    //  نفسَه دائماً، و**عمليةٌ جديدة** تفتح النافذةَ فتسكّ رمزاً جديداً.
+    //  فعمليتان متطابقتان تماماً برمزين مختلفين تنجحان كلتاهما، ولو تزامنتا.
+    //
+    //  **وأوّلُ شيءٍ في المعاملة**: قبل قفل الحالة والخبير وأمر العمل
+    //  والزيارة والقيد والدفعة — فالتكرارُ لا يبلغ المالَ أصلاً.
+    //  **ويرتدّ معها**: فشلٌ في أيّ خطوةٍ بعده يُرجع صفَّ التذكرة نفسَه، فتُعاد
+    //  المحاولةُ بالرمز عينه ولا يُقرأ «مسجَّلة سابقاً» كذباً على عمليةٍ لم
+    //  تقع قطّ (درسُ `new_service` بحرفه).
+    //
+    //  **والتزامنُ من القاعدة لا من الشيفرة**: `token` مفتاحٌ أساسيّ، فالثانيةُ
+    //  تنتظر الأولى على قفل الفهرس ثمّ تقرأ نتيجتَها — التزمت ⟶ صفرُ صفوف ⟶
+    //  تكرار، وارتدّت ⟶ تُدرِج هي وتمضي. ولا قفلَ آخر بيدها حينئذٍ، فلا جمود.
+    const token = typeof p.submissionToken === "string" ? p.submissionToken.trim() : "";
+    if (token) {
+      const claimed = await tx.execute(sql`
+        INSERT INTO submission_tokens (token, scope)
+        VALUES (${token}, ${"maintenance"})
+        ON CONFLICT (token) DO NOTHING
+        RETURNING token
+      `);
+      if ((claimed.rowCount ?? 0) === 0) return { duplicate: true as const };
+    }
+
     //  ══ **الحارسُ الأوّل — حالةٌ حقيقية بعينها، لا فرعٌ مخمَّن** ══════════
     //  القفلُ (`FOR UPDATE`) يمنع أيضاً أن يسحب `deleteCaseType` هذه
     //  الحالةَ من تحت هذه المعاملة بين هذا الفحص وكتابة `postMaintenanceFee`
@@ -892,6 +944,7 @@ export async function createMaintenanceOperation(p: {
     });
 
     return {
+      duplicate: false as const,
       workOrderId: order.id,
       deviceEpisodeId: order.deviceEpisodeId ?? null,
       finalPrice: p.finalPrice,
