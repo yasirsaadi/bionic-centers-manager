@@ -184,9 +184,13 @@ async function main() {
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.recvReports), ask("مرحباً"));
-    same("   ومعه canViewReports: ثمانٍ (يضاف operational_summary)",
+    //  ══ تسعٌ الآن — `device_sales_summary` تتبع `canViewReports` نفسَها ══
+    //  (والمحاسبُ أدناه بلا هذا العَلَم فلا تصله — دليلٌ حيٌّ أنها ليست
+    //  صلاحيةً مالية.)
+    same("   ومعه canViewReports: تسعٌ (يضاف operational_summary وdevice_sales_summary)",
       seen[0].tools.sort(),
-      ["my_worklist", "operational_summary", "patient_clinical_summary", "patient_lookup", "patient_search",
+      ["device_sales_summary", "my_worklist", "operational_summary", "patient_clinical_summary",
+        "patient_lookup", "patient_search",
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
