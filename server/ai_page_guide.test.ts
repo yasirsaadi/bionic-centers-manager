@@ -4,10 +4,12 @@
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
 // (١) الدليلُ يصل النموذج على `/post-exam-followups` **وفي الوضعين معاً**.
 // (٢) **ولا يصل صفحةً أخرى** ولا بلا سياقِ صفحة.
-// (٣) الصلاحيةُ من `canCompleteReceptionSale` القانونية — **لا قائمةَ أدوارٍ
-//     ثانية في ملفّ الدليل** (فحصٌ على المصدر).
+// (٣) الصلاحيةُ من `canCompleteReceptionSale` القانونية وتسمياتُ أفعال مسار
+//     المعاينة من `EXAM_PATH_ACTION_LABELS` — **لا قائمةَ أدوارٍ ولا تسمياتٍ
+//     منسوخةً في ملفّ الدليل** (فحصٌ على المصدر).
 // (٤) الأدوارُ الأربعة تُقرأ عبرها، **والطبيبُ بلا مسؤوليةٍ لا يُعَدّ بائعاً**.
-// (٥) **ولا يُستنتَج وجودُ زرٍّ لصفٍّ بعينه** — الدليلُ يقولها صراحةً.
+// (٥) **ولا يُستنتَج وجودُ فعلٍ لصفٍّ بعينه** — أفعالُ مسار المعاينة مُحتمَلةٌ
+//     يضعها الخادمُ في `actions` لكلّ صفّ، **ولا تلازمَ بينها**.
 // (٦) والأدواتُ والصلاحياتُ لا تتغيّر.
 
 import { readFileSync } from "fs";
@@ -19,7 +21,10 @@ import { resolveAiAccess } from "./ai/access";
 import { toolsFor } from "./ai/tools/registry";
 import { resolvePageContext } from "./ai/page_context";
 import { pageGuideFor, DECISION_QUEUE_PAGE_PATH } from "./ai/page_guides";
-import { canCompleteReceptionSale } from "@shared/commercial";
+import {
+  canCompleteReceptionSale,
+  EXAM_PATH_ACTIONS, EXAM_PATH_ACTION_LABELS,
+} from "@shared/commercial";
 import {
   DECISION_QUEUE_TAB_WAITING, DECISION_QUEUE_TAB_RESOLVED,
   DECISION_QUEUE_PAGE_SUBTITLE,
@@ -107,7 +112,19 @@ async function main() {
   check(/طرف صناعي/.test(repSys) && /مسند طبي/.test(repSys), "أ.٤ ومرشِّحُ التصنيف");
   check(/ضابطُ ترتيب/.test(repSys), "أ.٥ وضابطُ الترتيب");
   check(/فتح الملف/.test(repSys), "أ.٦ و«فتح الملف»");
-  check(/إتمام البيع/.test(repSys) && /لم يشترِ/.test(repSys), "أ.٧ وأزرارُ مسار المعاينة");
+  //  **التسمياتُ تُقارَن بالخريطة القانونية نفسِها** لا بنصٍّ مكتوبٍ هنا:
+  //  فتغييرُ تسميةٍ في `shared/commercial.ts` يتبعه الاختبارُ والدليلُ معاً.
+  for (const a of EXAM_PATH_ACTIONS) {
+    check(repSys.includes(EXAM_PATH_ACTION_LABELS[a]),
+      `أ.٧ وفعلُ مسار المعاينة «${EXAM_PATH_ACTION_LABELS[a]}»`);
+  }
+  //  **ولا تُوصَف ثابتةً ولا متلازمة**: يضعها الخادمُ في `actions` لكلّ صفّ.
+  check(/أفعالٌ \*\*مُحتمَلة لا ثابتة\*\*/.test(repSys),
+    "أ.٧ب **ويقول إنها مُحتمَلةٌ لا ثابتة**", repSys.slice(-1200));
+  check(/لا يظهر منها إلّا ما يضعه الخادمُ/.test(repSys) && /actions/.test(repSys),
+    "أ.٧ج ومشروطةٌ بما يضعه الخادمُ في `actions`");
+  check(/ولا تلازمَ بينها/.test(repSys) && /فلا\s+تفترض أنها تظهر معاً/.test(repSys),
+    "أ.٧د **ولا يُفهَم منها أنها تظهر معاً**");
   check(/اشترى/.test(repSys), "أ.٨ وزرُّ الصفّ الموروث");
   check(/إلغاء الحسم/.test(repSys), "أ.٩ و«إلغاء الحسم»");
 
@@ -139,6 +156,17 @@ async function main() {
   check(!/"reception"|'reception'|"accountant"|'accountant'|"branch_manager"|'branch_manager'/.test(src),
     "ج.٢ **ولا قائمةَ أدوارٍ منسوخةً فيه إطلاقاً**",
     (src.match(/["'](reception|accountant|branch_manager)["']/g) ?? []).join(","));
+  //  **ولا تسمياتِ أفعالٍ منسوخة**: تُبنى من `EXAM_PATH_ACTION_LABELS`.
+  check(/EXAM_PATH_ACTION_LABELS/.test(src) && /EXAM_PATH_ACTIONS/.test(src),
+    "ج.٢ب **والدليلُ يستورد خريطةَ التسميات القانونية**");
+  //  «إتمام البيع» تسميةُ مسار معاينةٍ حصراً (لا وجودَ لها في الموروث)،
+  //  فغيابُها من المصدر يُثبت أنها ليست مكتوبةً بيدٍ هنا.
+  //  الفحصُ على **الشيفرة** لا التعليقات: التعليقُ يضرب مثلاً بسؤال الموظّف،
+  //  والممنوعُ أن تُكتب التسميةُ في النصّ المُرسَل للنموذج.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+  check(!code.includes(EXAM_PATH_ACTION_LABELS.complete_sale),
+    "ج.٢ج **ولا تسميةَ مسارِ معاينةٍ مكتوبةً حرفياً في شيفرة الدليل**",
+    code.split("\n").filter((l) => l.includes(EXAM_PATH_ACTION_LABELS.complete_sale)).join(" | "));
 
   for (const [name, a] of [["استقبال", rep], ["محاسب", acc], ["مدير فرع", mgr], ["مسؤول", adm]] as const) {
     const g = pageGuideFor(PAGE, a);

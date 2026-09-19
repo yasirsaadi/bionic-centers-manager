@@ -1,19 +1,22 @@
 /**
  * دليلُ الشاشة — **صفحةٌ واحدة في هذه المرحلة** (٤أ): «بانتظار الحسم».
  *
- * يقول للنموذج ما على الشاشة فعلاً: تبويباها، ومرشِّحاتُها، وأزرارُ صفوفها
+ * يقول للنموذج ما على الشاشة فعلاً: تبويباها، ومرشِّحاتُها، وأفعالُ صفوفها
  * بأسمائها كما يقرؤها الموظّف. فيفهم «ليش ما أشوف زرّ إتمام البيع؟» بدل
  * أن يخمّن.
  *
  * ══ ثلاثةُ ثوابتَ في بنائه ═════════════════════════════════════════════
- * ① **لا مصدرَ حقيقةٍ ثانٍ**: التسمياتُ من `shared/decision_queue.ts`
- *    والصلاحيةُ من `canCompleteReceptionSale` في `shared/commercial.ts` —
- *    **تُستدعى لا تُنسَخ قائمةُ أدوارها**. فتغييرُ أيٍّ منهما يتبعه الدليل.
+ * ① **لا مصدرَ حقيقةٍ ثانٍ**: تسمياتُ الشاشة من `shared/decision_queue.ts`،
+ *    وتسمياتُ أفعال مسار المعاينة من `EXAM_PATH_ACTION_LABELS`، والصلاحيةُ
+ *    من `canCompleteReceptionSale` — **كلُّها تُستدعى لا تُنسَخ**. فتغييرُ
+ *    أيٍّ منها يتبعه الدليل.
  * ② **لا بياناتِ صفٍّ حيّة**: هذه المرحلةُ لا تقرأ صفّاً ولا تنادي أداةً
  *    ولا تلمس قاعدة. فالدليلُ يصف **القواعد**، ولا يدّعي حالةَ صفٍّ بعينه.
- * ③ **ووجودُ الزرّ لصفٍّ بعينه لا يُستنتَج من الدور**: يقرّره الخادمُ لكلّ
+ * ③ **ووجودُ الفعل لصفٍّ بعينه لا يُستنتَج من الدور**: يقرّره الخادمُ لكلّ
  *    صفٍّ عبر `examPath` و`actions` و`mayCancelDecision` وحالةِ الصفّ —
  *    وهي **ليست في هذه المرحلة**. فالنموذجُ مُلزَمٌ أن يقول ذلك صراحةً.
+ *    ولذلك أفعالُ مسار المعاينة تُوصَف **مُحتمَلةً لا ثابتة**، ولا تلازمَ
+ *    بينها: قد يضع الخادمُ واحداً منها في `actions` أو لا يضع شيئاً.
  */
 
 import {
@@ -21,7 +24,10 @@ import {
   DECISION_QUEUE_TAB_WAITING, DECISION_QUEUE_TAB_RESOLVED,
   DECISION_QUEUE_SERVICE_FILTERS,
 } from "@shared/decision_queue";
-import { canCompleteReceptionSale } from "@shared/commercial";
+import {
+  canCompleteReceptionSale,
+  EXAM_PATH_ACTIONS, EXAM_PATH_ACTION_LABELS,
+} from "@shared/commercial";
 import type { AiAccessContext } from "./access";
 import type { PageContext } from "./page_context";
 
@@ -41,6 +47,11 @@ function showsBranchFilter(access: AiAccessContext): boolean {
 
 function decisionQueueGuide(access: AiAccessContext): string {
   const filters = DECISION_QUEUE_SERVICE_FILTERS.map((f) => f.label).join(" · ");
+  //  **التسمياتُ من الخريطة القانونية** (`EXAM_PATH_ACTION_LABELS`) بترتيب
+  //  `EXAM_PATH_ACTIONS` — لا نصَّ مكتوباً هنا ينحرف عنها يوماً.
+  const examPathActions = EXAM_PATH_ACTIONS
+    .map((a) => `«${EXAM_PATH_ACTION_LABELS[a]}» (\`${a}\`)`)
+    .join(" · ");
   //  **الدالّةُ القانونية نفسُها** التي تحرس `/complete-sale` و`/not-bought`
   //  في الخادم — لا قائمةَ أدوارٍ ثانية هنا.
   const maySell = canCompleteReceptionSale({
@@ -61,10 +72,14 @@ function decisionQueueGuide(access: AiAccessContext): string {
     ? "**يظهر له** — لأنّ نطاقه أكثرُ من فرع."
     : "**لا يظهر له** — لأنّ نطاقه فرعٌ واحد؛ وهذا ليس نقصَ صلاحية."}
 
-**أزرارُ صفّ «${DECISION_QUEUE_TAB_WAITING}»**:
+**أفعالُ صفّ «${DECISION_QUEUE_TAB_WAITING}»**:
 - «فتح الملف» — متاحٌ من البطاقة دائماً.
-- صفُّ **مسار المعاينة**: «إتمام البيع» و«لم يشترِ».
-- صفٌّ **موروث** (بلا مسار معاينة): «اشترى» و«لم يشترِ».
+- صفُّ **مسار المعاينة** — أفعالٌ **مُحتمَلة لا ثابتة**: ${examPathActions}.
+  **ولا يظهر منها إلّا ما يضعه الخادمُ في \`actions\` لذلك الصفّ بعينه**:
+  قد يضع واحداً منها وحدَه، وقد لا يضع شيئاً — **ولا تلازمَ بينها**، فلا
+  تفترض أنها تظهر معاً.
+- صفٌّ **موروث** (بلا مسار معاينة): أفعالُه «اشترى» و«لم يشترِ»، وهي كذلك
+  مُحتمَلةٌ يقرّرها الخادمُ لكلّ صفٍّ على حدة.
 - «إلغاء الحسم» — سلطةٌ إدارية، يقولها الخادمُ لكلّ صفٍّ على حدة.
 
 **وصلاحيةُ هذا المستخدم للبيع على هذه الشاشة**: ${maySell
