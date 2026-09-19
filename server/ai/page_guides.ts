@@ -47,8 +47,8 @@ import {
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import { specialtyLabel } from "@shared/medical";
 import {
-  REVIEW_SERVICE_TYPES, REVIEW_KIND_LABELS,
-  REVIEW_DECISIONS, REVIEW_DECISION_LABELS,
+  REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
+  REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath,
 } from "@shared/medical_review";
 import type { AiAccessContext } from "./access";
 import type { PageContext } from "./page_context";
@@ -246,21 +246,36 @@ function medicalReviewGuide(label: string): string {
   //  **التسمياتُ من مصادرها القانونية** — لا نصَّ مكتوباً هنا ينحرف عنها.
   const [approve, requireFull, returnToReception] =
     REVIEW_DECISIONS.map((d) => `«${REVIEW_DECISION_LABELS[d]}»`);
-  const kinds = Object.values(REVIEW_KIND_LABELS).map((k) => `«${k}»`).join(" · ");
+  //  **أسبابُ البطاقة من القاعدة القانونية لا من سردٍ كامل**: ما يستوجب
+  //  المسارَ الكامل (`requiresFullPath`) لا يدخل صفوفَ المراجعة السريعة
+  //  أصلاً — فسردُ `REVIEW_KIND_LABELS` كلِّها يَعِد ببطاقاتٍ لا تقع.
+  const quickKinds = REVIEW_KINDS
+    .filter((k) => !requiresFullPath(k))
+    .map((k) => `«${REVIEW_KIND_LABELS[k]}»`).join(" · ");
   const services = REVIEW_SERVICE_TYPES.map((s) => `«${specialtyLabel(s)}»`).join(" و");
 
   return `
 
 دليلُ هذه الشاشة — «${label}»:
 
-**الغرض**: **مراجعةٌ إشرافيةٌ بأثرٍ رجعيّ** لحركة ${services}: مَن جاء، وماذا
-جرى، ومتى، ومَن تولّاه. **⚠ والخدمةُ وقعت فعلاً قبل أن يصل الطلبُ هنا** —
-فهذه **ليست موافقةً سابقةً لتنفيذها**، ولا تحجب عملاً ولا ديناراً ولا أمرَ
-تصنيع. ولذلك يقرأ الإنسانُ ${approve} لا «موافقة».
-وأسبابُ الزيارة المعروضة على البطاقات: ${kinds}.
+**الغرض**: شاشةُ إشرافٍ على حركة ${services}: مَن جاء، وماذا جرى، ومتى، ومَن
+تولّاه. **وهي قسمان لكلٍّ طبيعتُه** — فلا يُوصَف أحدُهما بالآخر:
 
-**والجهازُ الجديد ليس من هذا الباب**: يستوجب **معاينةً موقّعة** تُكتب في
-«معايناتي» — والشرطُ لم يضعف بحرف.
+**① صفوفُ المراجعة الرئيسية — طابورُ المراجعة السريعة وحدَه.**
+تُرجع النقطةُ فيها **الطلباتِ المعلَّقة على المسار السريع فقط**
+(\`status = 'pending'\` **و** \`requested_path = 'quick'\`). **⚠ وهذه وحدَها
+بأثرٍ رجعيّ**: الخدمةُ وقعت فعلاً قبل أن يصل الطلب، فليست موافقةً سابقةً
+لتنفيذها، ولا تحجب عملاً ولا ديناراً ولا أمرَ تصنيع. ولذلك يقرأ الإنسانُ
+${approve} لا «موافقة».
+وأسبابُ الزيارة التي تصلح لهذه البطاقات: ${quickKinds}.
+
+**② وقسمُ «طلبات معاينة كاملة بانتظار الطبيب» ليس كذلك**: طلباتٌ **ما زالت
+تنتظر معاينةً طبيةً كاملة** لم تقع بعد — **فلا تصفه بأنه بأثرٍ رجعيّ**.
+
+**وما يستوجب المسارَ الكامل** (ومنه «${REVIEW_KIND_LABELS.new_device}»
+و«${REVIEW_KIND_LABELS.return_to_purchase}») **لا يدخل صفوفَ المراجعة
+السريعة إطلاقاً** — وقد يظهر في القسم الإشرافيّ ②. **أمّا المعاينةُ نفسُها
+وتوقيعُها فتبقى في «معايناتي»** لا هنا.
 
 **ما على الشاشة**:
 - **نافذتان زمنيّتان**: «اليوم» (**الافتراض**) و«غير مراجعة سابقة» للمتروك
@@ -288,9 +303,13 @@ function medicalReviewGuide(label: string): string {
 — **قرارٌ سريريٌّ لا إشرافيّ**، يقول إن هذه الحالة تحتاج فحصَ طبيب. فمشرفٌ
 إداريٌّ يملك ${approve} **ولا يملك هذا**.
 
-**⚠ و\`canSupervise\` و\`canDecide\` قدرتان مستقلّتان** يرسلهما الخادمُ
-لكلّ طلب — **ولا تُشتقّان من دور المستخدم ولا من جلسته**، ولا تلازمَ
-بينهما.
+**⚠ والعلاقةُ بينهما اتّجاهٌ واحد لا استقلال**:
+**\`canDecide === true\` تستلزم \`canSupervise === true\` دائماً** — فمَن
+يملك القرارَ السريريَّ يملك الإشرافَ معه. **والعكسُ لا يلزم**:
+\`canSupervise === true\` **لا** تعني \`canDecide === true\`.
+**واقرأ القيمتين كما أرسلهما الخادمُ لا غير** — ولا تُشتقّا من دور المستخدم
+ولا من جلسته، **ولا تفترض عن مشرفٍ بعينه أنه يملك أو لا يملك القرارَ
+السريريّ**.
 
 **قسمُ «طلبات معاينة كاملة بانتظار الطبيب»**: يظهر **فقط حين يجتمع الشرطان**
 — \`canSupervise === true\` **و** \`awaitingFull\` غيرُ فارغة. وهو **قراءةٌ
