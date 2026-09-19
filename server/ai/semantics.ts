@@ -56,6 +56,7 @@ const TOOL_PROVENANCE_LABELS: Record<string, string> = {
   operational_summary: "الملخص التشغيلي",
   patient_finance: "بيانات المريض المالية",
   financial_summary: "الملخص المالي",
+  device_sales_summary: "عدد الأطراف المباعة",
   training_catalog: "كتالوج التدريب",
   training_lesson: "درس تدريبي",
   training_submit_answer: "تصحيح اختبار تدريبي",

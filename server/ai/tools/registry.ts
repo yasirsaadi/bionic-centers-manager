@@ -38,6 +38,9 @@ import { activePatientDrizzle } from "../../patients/active_patient";
 import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
 import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
 import {
+  getDeviceSalesSummary, MAX_SALES_DAYS, rangeForDays, resolveBranchByName, resolveDays,
+} from "./device_sales";
+import {
   orderStatusLabel, purposeLabel, serviceTypeLabel, specialtyLabel, stageLabel,
 } from "../semantics";
 import {
@@ -923,6 +926,53 @@ async function financialSummaryTool(access: AiAccessContext, input: any): Promis
   return { ok: true, data: result as unknown as Record<string, unknown> };
 }
 
+// ══ ٨. device_sales_summary — عددُ الأطراف المباعة، لا قيمتُها ══════════
+//
+// **عددٌ فقط.** لا مبلغَ ولا اسمَ مريضٍ ولا ملاحظة — الأداةُ تُجيب «كم»،
+// لا «بكم» ولا «لمن». وتعريفُ «بِيع» وبرهانُه في `./device_sales.ts`.
+
+async function deviceSalesSummaryTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  //  **الحارس أوّلاً وقبل أي قراءة** — نفسُ حارس `operational_summary`
+  //  بالحرف: صلاحيةُ التقارير الحقيقية، لا صلاحيةٌ مالية ولا افتراضُ دور.
+  //  والأداةُ لا تُعرَض أصلاً لغير المخوَّل (`offeredTo` أدناه)، لكنّ
+  //  النموذج قد يخترع اسمها فيُردّ هنا قبل أن تُلمس القاعدة.
+  if (!(access.isAdmin || access.permissions?.canViewReports === true)) {
+    return denied("عدد المبيعات متاح لمن يملك صلاحية عرض التقارير فقط.");
+  }
+
+  //  **الخادمُ يحسب التقويم** — «آخر ١٠ أيام» تصل رقماً لا تاريخين.
+  const daysResolved = resolveDays(input?.days);
+  if (!daysResolved.ok) return denied(daysResolved.error);
+  const { start, end } = rangeForDays(daysResolved.days);
+
+  //  ══ اسمُ الفرع — حضورٌ مشوَّهٌ يُرفَض ولا يُقرأ غياباً ══
+  let branchId: number | null = null;
+  let branchName: string | null = null;
+  const rawName = input?.branchName;
+  if (rawName !== undefined && rawName !== null) {
+    if (typeof rawName !== "string" || rawName.trim() === "") {
+      return denied("اسم الفرع (branchName) يجب أن يكون نصّاً غير فارغ.");
+    }
+    const resolved = await resolveBranchByName({
+      name: rawName.trim(),
+      isAdmin: access.isAdmin,
+      operationalBranches: scopedBranchIds(access),
+    });
+    //  صفرُ مطابقاتٍ أو أكثرُ من واحدة ⟶ يُقال صراحةً ولا يُخمَّن فرع.
+    if (!resolved.ok) return denied(resolved.error);
+    branchId = resolved.branchId;
+    branchName = resolved.branchName;
+  }
+
+  const result = await getDeviceSalesSummary({
+    operationalBranches: scopedBranchIds(access),
+    isAdmin: access.isAdmin,
+    branchId, branchName,
+    start, end, days: daysResolved.days,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
 // ══ ٨. training_catalog — كتالوجُ التدريب لهذه الجلسة بعينها ═════════════
 //
 // ══ «الموظّف لا يدرّب المساعد» (القسم أ من مهمّة التدريب) ═══════════════
@@ -1133,6 +1183,40 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     },
     offeredTo: (a) => a.mode === "financial",
     run: financialSummaryTool,
+  },
+  device_sales_summary: {
+    spec: {
+      name: "device_sales_summary",
+      description:
+        "**عددُ** الأطراف الصناعية الكاملة المباعة خلال آخر `days` يوماً (بتقويم بغداد، "
+        + "ينتهي اليوم) — للأسئلة مثل «كم طرف تم بيعه في مركز بغداد خلال آخر عشرة أيام؟». "
+        + "**لا تحسب التواريخ بنفسك**: أرسل عدد الأيام فقط، والخادمُ يحسب المدى ويُعيده في "
+        + "startDate/endDate. **عددٌ فقط بلا أيّ مبلغ** — لا أسعارَ ولا أسماءَ مرضى. "
+        + "و«بِيع» هنا = أمرُ تصنيعٍ لطرفٍ صناعيّ بغرض بناءٍ أوّليّ، مرتبطٌ بحلقة جهازٍ "
+        + "طلبُها جهازٌ كامل، وغيرُ مُبطَلٍ إدارياً — **فالصيانةُ لا تُعَدّ، وبيعُ جزءٍ "
+        + "(قالب/ركبة/قدم/سيليكون) لا يُعَدّ، والعمليةُ المُصحَّحة إدارياً لا تُعَدّ**. "
+        + "وbranchName اختياريّ بالاسم البشريّ («بغداد») ويُحَلّ ضمن نطاقك وحده: اسمٌ لا "
+        + "يطابق فرعاً واحداً بالضبط يُردّ بخطأ صريح — **لا تخمّن فرعاً ولا رقماً حينئذٍ**. "
+        + "وبتركه: المسؤولُ العام يحصل على كلّ الفروع مع byBranch، وغيرُه على نطاقه وحده. "
+        + "وunclassifiedLegacyOrders أوامرُ قديمة بلا هويّة جهاز لا يمكن إثباتُ نوعها — "
+        + "**غيرُ مُضافةٍ إلى العدّ**، فاذكرها للقارئ حين تكون أكبر من صفر.",
+      input_schema: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: `عدد الأيام حتى اليوم (مثال: 10 لِـ«آخر عشرة أيام»). افتراضاً 30، وبحدٍّ أقصى ${MAX_SALES_DAYS}.`,
+          },
+          branchName: {
+            type: "string",
+            description: "اسمُ الفرع كما ينطقه المستخدم، مثل «بغداد» — اختياريّ.",
+          },
+        },
+      } as any,
+    },
+    //  ══ **صلاحيةُ تقاريرَ لا صلاحيةٌ مالية** — عددٌ تشغيليّ لا مبلغ.
+    offeredTo: (a) => a.isAdmin || a.permissions?.canViewReports === true,
+    run: deviceSalesSummaryTool,
   },
   training_catalog: {
     spec: {
