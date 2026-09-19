@@ -186,7 +186,7 @@ async function main() {
   //  كان الدليلُ يقرؤهما سواءً فيشرح الإخفاءَ بسببٍ كاذب.
   console.log("\n── د: مرشِّحُ الفرع ──");
   const ONE_BRANCH_NOTE = "**لا يظهر له** — لأنّ نطاقه فرعٌ واحد؛ وهذا ليس نقصَ صلاحية.";
-  const NO_BRANCH_NOTE = "**لا يظهر له** — لا يوجد فرع في نطاق عمله؛ راجع الإدارة.";
+  const NO_BRANCH_NOTE = "**لا يظهر له** — لا يوجد فرع في نطاق العمل المسند إليه.";
   const VISIBLE_NOTE = "**يظهر له** — لأنّ نطاقه أكثرُ من فرع.";
 
   const repGuide = pageGuideFor(PAGE, rep);
