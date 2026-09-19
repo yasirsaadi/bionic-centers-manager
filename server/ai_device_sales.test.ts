@@ -19,6 +19,10 @@
 // (ط) **ولا مبلغَ في المخرَج إطلاقاً** — عددٌ فقط.
 // (ي) وحلُّ الاسم: تطابقٌ تامّ يسبق الاحتواء، والالتباسُ يُقال ولا يُخمَّن.
 // (ك) والتنسيق: نتيجةُ الأداة الحقيقية تصل الجولةَ النهائية.
+// (م) والاسمُ القصير الفريد («بغداد») يُحَلّ داخل نطاقٍ من فرعٍ واحد —
+//     **بالحلّال القائم بلا تعديل**، والمسؤولُ يراه ملتبساً فيُردّ.
+// (ن) وعقدُ الإرشاد: قاعدةُ التوجيه في TOOL_TRUST_RULES (تصل الوضعين)،
+//     وإرشادُ استخراج اسم الفرع في وصف الأداة.
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -32,6 +36,7 @@ import { aiChat } from "./ai/chat";
 import { safeAiComplete } from "./ai/provider";
 import { executeTool, toolsFor } from "./ai/tools/registry";
 import type { AiAccessContext } from "./ai/access";
+import { readFileSync } from "fs";
 import { toolProvenanceLabels } from "./ai/semantics";
 
 let failures = 0;
@@ -306,6 +311,54 @@ async function main() {
   const usedNames = ((out as any).value?.toolsUsed ?? []) as string[];
   check(usedNames.includes("عدد الأطراف المباعة"),
     "ك.٨ والتزويدُ يقول للمستخدم مصدرَه بالعربية", JSON.stringify(usedNames));
+
+  console.log("\n── م: الاسمُ القصير الفريد داخل نطاقٍ من فرعٍ واحد ──");
+  //  سؤالُ المالك يقول «مركز بغداد»، والنموذجُ يمرّر «بغداد» وحدها (إرشادُ
+  //  وصف الأداة). فالمطلوبُ إثباتُ أن **الحلّالَ القائم يكفي**: موظّفٌ غيرُ
+  //  مسؤولٍ نطاقُه فرعُ بغداد وحده يمرّر الاسمَ القصير فيُحَلّ ويُعطي عدَّ
+  //  فرعه — بلا مِحلِّلٍ جديد ولا تعديلٍ في الحلّال.
+  const shortName = await call(repA, { days: 10, branchName: "بغداد" });
+  check(shortName.ok === true, "م.١ **الاسمُ القصير «بغداد» يُحَلّ لغير المسؤول داخل نطاقه**",
+    JSON.stringify(shortName.data));
+  same("م.٢ ويُعطي عدَّ فرعه هو", (shortName.data as any).totalSold, 1);
+  same("م.٣ والتسميةُ تُظهر الاسمَ المخزَّن كاملاً", (shortName.data as any).scopeLabel, `فرع ${BAGHDAD_NAME}`);
+  same("م.٤ ولا تفصيلَ فروعٍ لغير المسؤول", (shortName.data as any).byBranch, null);
+  //  **والنجاحُ سببُه ضيقُ النطاق لا تساهلُ الحلّال**: نفسُ الاسم القصير،
+  //  ونفسُ الحلّال، لموظّفٍ نطاقُه يحوي فرعَي بغداد معاً ⟵ **ملتبسٌ فيُردّ**.
+  //  والمقارنةُ داخل صفوف هذه الحزمة وحدها — لا تعتمد على فرعٍ خلّفته حزمةٌ
+  //  مجاورة (وهو ما كان يجعل مقارنةَ المسؤول تُحَلّ بتطابقٍ تامّ لا التباس).
+  const wideA = access({
+    userId: U_REPORTS,
+    permissions: { canViewReports: true },
+    operationalBranches: [B_BAGHDAD, B_THIRD],
+  });
+  const shortWide = await call(wideA, { days: 10, branchName: "بغداد" });
+  check(shortWide.ok === false,
+    "م.٥ **والنجاحُ سببُه النطاق لا التساهل** — نفسُ الاسم بنطاقٍ أوسعَ ملتبسٌ فيُردّ",
+    JSON.stringify(shortWide.data));
+  check(/أكثر من فرع/.test(String((shortWide.data as any)?.error ?? "")),
+    "م.٦ والرسالةُ تقول إنه التباسٌ لا غياب",
+    JSON.stringify(shortWide.data));
+
+  console.log("\n── ن: عقدُ الإرشاد (توجيهُ النموذج) ──");
+  const chatSrc = readFileSync(new URL("./ai/chat.ts", import.meta.url), "utf8");
+  const trustBlock = chatSrc.slice(
+    chatSrc.indexOf("const TOOL_TRUST_RULES"),
+    chatSrc.indexOf("const SYSTEM_PROMPT"));
+  check(/device_sales_summary/.test(trustBlock),
+    "ن.١ **قاعدةُ التوجيه داخل TOOL_TRUST_RULES** — فتصل الوضعين معاً");
+  check((chatSrc.match(/\$\{TOOL_TRUST_RULES\}/g) ?? []).length === 2,
+    "ن.٢ وهذا البلوكُ مُلحَقٌ بنصَّي النظام كليهما");
+  check(/لا financial_summary|ولا تستعمل financial_summary/.test(trustBlock),
+    "ن.٣ وتنهى صراحةً عن financial_summary لعددِ أجهزة");
+  check(/days=10/.test(trustBlock) && /branchName="بغداد"/.test(trustBlock),
+    "ن.٤ ومعها المثالُ الملموس بـdays=10 وbranchName=«بغداد»");
+  const regSrc = readFileSync(new URL("./ai/tools/registry.ts", import.meta.url), "utf8");
+  const specBlock = regSrc.slice(
+    regSrc.indexOf('name: "device_sales_summary"'),
+    regSrc.indexOf("run: deviceSalesSummaryTool"));
+  check(/مركز بغداد/.test(specBlock) && /فرع بغداد/.test(specBlock),
+    "ن.٥ **ووصفُ الأداة يقول: مرّر «بغداد» لا العبارةَ كاملة**");
 
   await cleanup();
   console.log(`\n${failures === 0 ? "✅ كل الفحوص نجحت" : `❌ ${failures} حالة فاشلة`}`);
