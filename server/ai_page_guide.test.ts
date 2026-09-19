@@ -1,5 +1,5 @@
-// أدلّةُ الشاشات: «بانتظار الحسم» (٤أ) و«معايناتي» (٤ب) — دليلان قائمان
-// بذاتهما لا إطارٌ عامّ.
+// أدلّةُ الشاشات: «بانتظار الحسم» (٤أ) · «معايناتي» (٤ب) · «مراجعة حركة
+// مرضى الأطراف والمساند» (٤ج) — أدلّةٌ قائمةٌ بذاتها لا إطارٌ عامّ.
 // قاعدة محلّية: `npm run test:ai-page-guide`.
 //
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
@@ -19,6 +19,10 @@
 // (٨) **ولا يدّعي ما لا يعرفه**: لا شمولَ («كلُّ حالةٍ نشطةٍ بلا معاينة» —
 //     و`getWorklist()` أضيقُ من ذلك)، ولا هويّةً (الدليلُ يُحقَن لأدوارٍ
 //     أخرى، فلا يقول عن قارئه إنه «هذا الطبيب»).
+// (٩) **و«مراجعة الحركة» مراجعةٌ بأثرٍ رجعيّ لا موافقةٌ سابقة**،
+//     و`canSupervise`/`canDecide` **حالتان حيّتان يرسلهما الخادمُ مع
+//     الطابور** — لا تُشتقّان من الجلسة، ودالّتُه لا تأخذ `AiAccessContext`.
+//     والتسمياتُ من `REVIEW_DECISION_LABELS`/`REVIEW_KIND_LABELS` القانونية.
 
 import { readFileSync } from "fs";
 import { pool } from "./db";
@@ -28,9 +32,16 @@ import { safeAiComplete } from "./ai/provider";
 import { resolveAiAccess } from "./ai/access";
 import { toolsFor } from "./ai/tools/registry";
 import { resolvePageContext } from "./ai/page_context";
-import { pageGuideFor, DECISION_QUEUE_PAGE_PATH, MY_EXAMS_PAGE_PATH } from "./ai/page_guides";
+import {
+  pageGuideFor,
+  DECISION_QUEUE_PAGE_PATH, MY_EXAMS_PAGE_PATH, MEDICAL_REVIEW_PAGE_PATH,
+} from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import { specialtyLabel } from "@shared/medical";
+import {
+  REVIEW_SERVICE_TYPES, REVIEW_KIND_LABELS,
+  REVIEW_DECISIONS, REVIEW_DECISION_LABELS,
+} from "@shared/medical_review";
 import {
   canCompleteReceptionSale,
   EXAM_PATH_ACTIONS, EXAM_PATH_ACTION_LABELS,
@@ -394,6 +405,127 @@ async function main() {
   check(!pageGuideFor(PAGE, rep).includes("معايناتي"),
     "ز.١٨ **ودليلُ «بانتظار الحسم» لا يتلوّث بالآخر**");
   check(repGuide === pageGuideFor(PAGE, rep), "ز.١٨أ وهو هو كما قُرئ أوّلاً");
+
+  // ═══ ح: دليلُ «مراجعة الحركة» (٤ج) — بأثرٍ رجعيّ، وقدرتان حيّتان ═══════
+  console.log("\n── ح: دليلُ «مراجعة حركة مرضى الأطراف والمساند» ──");
+  const MR = resolvePageContext(MEDICAL_REVIEW_PAGE_PATH);
+  same("ح.٠ المسارُ القانونيُّ للصفحة", MR?.path, MEDICAL_REVIEW_PAGE_PATH);
+  same("ح.٠أ وتسميتُه العربية", MR?.label, "مراجعة حركة مرضى الأطراف والمساند");
+
+  seen.length = 0;
+  await chat(doc, ask("شنو أسوي هنا؟"), MR);
+  const mrSys = seen[0].system;
+  check(mrSys.includes(GUIDE_MARK), "ح.١ **الدليلُ يصل النموذجَ على هذه الصفحة**", mrSys.slice(-900));
+  check(mrSys.includes("«مراجعة حركة مرضى الأطراف والمساند»"), "ح.١أ وباسم الشاشة");
+  seen.length = 0;
+  await chat(adm, ask("شنو أسوي هنا؟"), MR);
+  check(seen[0].system.includes(GUIDE_MARK), "ح.١ب ويصل الوضعَ الماليَّ أيضاً");
+
+  const mr = pageGuideFor(MR, doc);
+
+  //  ① **بأثرٍ رجعيّ لا موافقةٌ سابقة** — أهمُّ ما في هذه الشاشة.
+  check(/\*\*مراجعةٌ إشرافيةٌ بأثرٍ رجعيّ\*\*/.test(mr),
+    "ح.٢ **الغرض: مراجعةٌ بأثرٍ رجعيّ**", mr.slice(0, 800));
+  check(/الخدمةُ وقعت فعلاً قبل أن يصل الطلبُ هنا/.test(mr)
+    && /\*\*ليست موافقةً سابقةً لتنفيذها\*\*/.test(mr),
+    "ح.٢أ **ويقول صراحةً إنها ليست إذناً سابقاً**");
+  check(/لا تحجب عملاً ولا ديناراً ولا أمرَ\s+تصنيع/.test(mr),
+    "ح.٢ب **ولا تحجب عملاً ولا مالاً**");
+  check(/يستوجب \*\*معاينةً موقّعة\*\*/.test(mr) && /«معايناتي»/.test(mr),
+    "ح.٢ج **والجهازُ الجديد يبقى على بوّابة المعاينة**");
+  //  **والاختصاصان من `REVIEW_SERVICE_TYPES`** لا من نصٍّ منسوخ.
+  for (const sv of REVIEW_SERVICE_TYPES) {
+    check(mr.includes(specialtyLabel(sv)), `ح.٢د ومقصورةٌ على «${specialtyLabel(sv)}»`);
+  }
+  //  **وأسبابُ الزيارة من `REVIEW_KIND_LABELS`** كاملةً.
+  for (const k of Object.values(REVIEW_KIND_LABELS)) {
+    check(mr.includes(`«${k}»`), `ح.٢هـ وسببُ الزيارة «${k}» مذكور`);
+  }
+
+  //  ② النافذتان — ولا ذكرَ للثالثة الخادمية.
+  check(/«اليوم» \(\*\*الافتراض\*\*\)/.test(mr), "ح.٣ **«اليوم» هي الافتراض**");
+  check(/«غير مراجعة سابقة»/.test(mr), "ح.٣أ و«غير مراجعة سابقة» للمتروك");
+  //  ⚠ `window=all` تقبلها النقطةُ ولا تعرضها الشاشةُ زرّاً — فذكرُها يَعِد
+  //  الموظّفَ بنافذةٍ لا يجدها.
+  check(!/`all`/.test(mr) && !/نافذةٌ ثالثة/.test(mr),
+    "ح.٣ب **ولا يذكر النافذةَ الخادمية `all`**");
+
+  //  ③ مرشِّحُ الاختصاص — بما ترجعه النقطةُ لا بالجلسة.
+  check(/مرشِّحُ الاختصاص/.test(mr) && /أكثرَ من اختصاصٍ واحد/.test(mr),
+    "ح.٤ **مرشِّحُ الاختصاص: أكثرُ من واحدٍ فقط**");
+  check(/\*\*ولا تُشتقّ اختصاصاتُه من الجلسة\*\*/.test(mr),
+    "ح.٤أ **ولا تُشتقّ اختصاصاتُه من الجلسة**");
+  check(/يُصفِّر مرشِّحَ الاختصاص/.test(mr), "ح.٤ب وتبديلُ النافذة يُصفِّره");
+
+  //  ④ الصفوفُ من الطابور وحدَه — ولا ادّعاءَ شمول.
+  check(/هي ما ترجعه `GET \/api\/medical-review\/queue` وحدَه/.test(mr),
+    "ح.٥ **الصفوفُ من الطابور وحدَه**");
+  check(/\*\*فلا تقل إن كلَّ طلبِ\s+مراجعةٍ لا بدّ أن يظهر هنا\*\*/.test(mr),
+    "ح.٥أ **ولا يدّعي أن كلَّ طلبٍ يظهر**");
+
+  //  ⑤ **`canSupervise` حالةٌ حيّة** — والأفعالُ الأربعة بتسمياتها القانونية.
+  const [APPROVE, REQ_FULL, RETURN_RCP] =
+    REVIEW_DECISIONS.map((d) => REVIEW_DECISION_LABELS[d]);
+  check(/\*\*وأفعالُ الصفّ تتبع `canSupervise` — وهي حالةٌ حيّةٌ يرسلها الخادمُ/.test(mr),
+    "ح.٦ **الأفعالُ تتبع `canSupervise` الحيّة**");
+  for (const lbl of [APPROVE, "إضافة ملاحظة", RETURN_RCP, "فتح ملف المريض"]) {
+    check(mr.includes(`«${lbl}»`), `ح.٦أ وفعلُ «${lbl}» مذكور`);
+  }
+  check(/\*\*`canSupervise === false`\*\* ⟵ \*\*لا أفعال\*\*/.test(mr),
+    "ح.٦ب **و`false` تعني لا أفعال**");
+  //  **ورسالةُ القراءة فقط بنصّ الشاشة حرفاً**.
+  //  **نصُّ الشاشة حرفاً** — ملفوفٌ بسطرين في القالب، فيُقرأ بعد طيّ الفراغ.
+  same("ح.٦ج **ورسالةُ القراءة فقط كما تقولها الشاشة**",
+    /«(المراجعة الإشرافية[^»]+)»/.exec(mr.replace(/\s+/g, " "))?.[1],
+    "المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص — يمكنك القراءة فقط.");
+
+  //  ⑥ السببُ للإرجاع وحده.
+  //  **ومربوطٌ بالفعل بعينه** لا بجملةٍ عائمة — الإرجاعُ هو الذي يطلب السبب.
+  const flatMr = mr.replace(/\s+/g, " ");
+  check(flatMr.includes(`«${RETURN_RCP}» **لا يمضي بلا سببٍ مكتوب**`),
+    "ح.٧ **والإرجاعُ وحدَه لا يمضي بلا سبب**", flatMr.slice(0, 40));
+  check(flatMr.includes(`أمّا الملاحظةُ مع «${APPROVE}» فاختيارية`),
+    "ح.٧أ **والملاحظةُ مع «تمت المراجعة» اختيارية**");
+
+  //  ⑦ **«يتطلّب معاينة كاملة» بـ`canDecide` وحدها** — قرارٌ سريريّ.
+  check(mr.includes(`«${REQ_FULL}»`), "ح.٨ **و«يتطلّب معاينة كاملة» مذكور**");
+  check(/فعلٌ مختلف\*\*: يظهر \*\*فقط حين تكون `canDecide === true`\*\*/.test(mr),
+    "ح.٨أ **ومشروطٌ بـ`canDecide` وحدها**");
+  check(/\*\*قرارٌ سريريٌّ لا إشرافيّ\*\*/.test(mr), "ح.٨ب **وهو سريريٌّ لا إشرافيّ**");
+  check(/\*\*ولا تُشتقّان من دور المستخدم ولا من جلسته\*\*/.test(mr)
+    && /ولا تلازمَ\s+بينهما/.test(mr),
+    "ح.٨ج **والقدرتان مستقلّتان ولا تُشتقّان من الجلسة**");
+
+  //  ⑧ قسمُ «بانتظار الطبيب» — شرطان، وقراءةٌ وإرجاعٌ فقط.
+  check(/«طلبات معاينة كاملة بانتظار الطبيب»/.test(mr), "ح.٩ **والقسمُ مذكورٌ باسمه**");
+  check(/\*\*فقط حين يجتمع الشرطان\*\*/.test(mr)
+    && /`canSupervise === true` \*\*و\*\* `awaitingFull` غيرُ فارغة/.test(mr),
+    "ح.٩أ **وبشرطين معاً**");
+  check(/\*\*قراءةٌ\s+وإرجاعٌ فقط\*\*/.test(mr), "ح.٩ب **وقراءةٌ وإرجاعٌ فقط**");
+  check(/\*\*ولا «كتابة معاينة» فيه ولا توقيعَ إطلاقاً\*\*/.test(mr),
+    "ح.٩ج **ولا توقيعَ فيه إطلاقاً**");
+  check(/\*\*و`awaitingFull` تستثني ما أنشأه المستخدمُ نفسُه\*\*/.test(mr),
+    "ح.٩د **ويستثني ما أنشأه المستخدمُ نفسُه**");
+
+  //  ⑨ **ولا جزمَ بحالةٍ حيّة** — نفسُ ثابت ٤أ و٤ب.
+  check(/\*\*ولا تعرف\*\* قيمةَ `canSupervise` ولا `canDecide`/.test(mr),
+    "ح.١٠ **ولا يعرف القدرتين لهذا المستخدم**");
+  check(/ولا تجزم بوجود زرٍّ ولا قسمٍ ولا بغيابه/.test(mr),
+    "ح.١٠أ **وينهى عن الجزم في الاتجاهين**");
+
+  //  ⑩ **والدليلُ لا يتغيّر بتغيّر الجلسة** — لأنه لا يقرؤها أصلاً.
+  same("ح.١١ **نصُّه هو هو للمسؤول العامّ**", pageGuideFor(MR, adm), mr);
+  same("ح.١١أ وللاستقبال كذلك", pageGuideFor(MR, rep), mr);
+  same("ح.١١ب ولطبيبٍ بفرعين كذلك", pageGuideFor(MR, multiMy), mr);
+  check(/function medicalReviewGuide\(label: string\): string/.test(src),
+    "ح.١١ج **و`medicalReviewGuide` لا تأخذ `access` أصلاً**");
+  check(!/operationalBranches/.test(mr), "ح.١١د **ولا يذكر `operationalBranches`**");
+
+  //  ⑪ **والصفحتان السابقتان لم تتلوّثا** — ولا هذه بهما.
+  check(!mr.includes("معايناتي») ") && !/بانتظار الحسم/.test(mr),
+    "ح.١٢ **ولا يخلط شاشةً بأخرى**");
+  check(repGuide === pageGuideFor(PAGE, rep), "ح.١٢أ **و٤أ هو هو كما قُرئ أوّلاً**");
+  same("ح.١٢ب **و٤ب هو هو كذلك**", pageGuideFor(MY, doc), my);
 
   // ═══ و: لا سلطةَ ولا أدواتٍ تتغيّر ═════════════════════════════════════
   console.log("\n── و: صفرُ أثرٍ على الأدوات والصلاحيات ──");
