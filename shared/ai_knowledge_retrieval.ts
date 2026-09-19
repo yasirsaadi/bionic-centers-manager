@@ -220,6 +220,29 @@ const APP_PROCEDURE_MARKERS = [
   "سياسة", "السياسة", "قاعدة", "القاعدة", "قواعد",
 ];
 
+/**
+ * **«فتح» المجرّدة — إشارةُ إجراءٍ بسياقها وحده** (تصحيحٌ ٢٠٢٦-٠٩-١٩).
+ *
+ * نزعُها من `APP_ACTION_MARKERS` منع الالتباسَ («متى فتح المركز؟») لكنّه
+ * أسقط معه **صيغةَ المصدر** وهي لغةُ الواجهة نفسِها: «كيف يتم فتح صيانة؟»
+ * · «أريد فتح أمر عمل» · «فتح أمر تصنيع» صارت كلُّها تُقرأ غيرَ متعلّقةٍ
+ * بالتطبيق، فلا تدخل تسميةُ الشاشة نصَّ الاسترجاع.
+ *
+ * **ولا تعود إلى القائمة**: تبقى مشروطةً بأن تحمل **الرسالةُ نفسُها**
+ * أحدَ اسمين من مفردات التطبيق. و«المركز» و«الفرع» ليسا منهما، فتبقى
+ * «متى فتح المركز؟» و«متى فتح الفرع؟» خارجَ البوّابة.
+ *
+ * **وقائمةٌ ضيّقةٌ عمداً** — اسمان لا معجم: كلُّ اسمٍ يُضاف هنا يوسّع ما
+ * تلتقطه «فتح» المجرّدة، وهي الكلمةُ التي وُضع هذا الشرطُ لضبطها.
+ */
+const FATH_TOKEN = "فتح";
+const FATH_OBJECT_MARKERS = ["صيانة", "أمر"];
+
+/** «فتح» + اسمٌ من مفردات التطبيق في الرسالة نفسِها. */
+function hasContextualFathAction(tokens: readonly string[]): boolean {
+  return containsAny(tokens, [FATH_TOKEN]) && containsAny(tokens, FATH_OBJECT_MARKERS);
+}
+
 /** تطبيعٌ + تقطيعٌ **بلا إسقاط كلمات الاستفهام** — خلافاً لـ`tokenize()`. */
 function intentTokens(text: string): string[] {
   return normalizeSearchText(text).split(PUNCTUATION_SPLIT).filter((t) => t.length > 0);
@@ -288,5 +311,7 @@ export function isCurrentPageOrWorkflowQuestion(query: string): boolean {
   if (tokens.length === 0) return false;
   return containsAny(tokens, CURRENT_PAGE_MARKERS)
     || containsAny(tokens, APP_ACTION_MARKERS)
-    || containsAny(tokens, APP_PROCEDURE_MARKERS);
+    || containsAny(tokens, APP_PROCEDURE_MARKERS)
+    //  «فتح» المجرّدة — بسياقها وحده، لا مدخلاً في القائمة.
+    || hasContextualFathAction(tokens);
 }

@@ -132,9 +132,9 @@ async function main() {
   const spoofed = idPart(seen[0].system);
   check(/الدور: reception/.test(spoofed) && /مسؤولٌ عام: لا/.test(spoofed),
     "د.١ **رسالةٌ تدّعي المسؤولية لا تغيّر الدور**", spoofed.slice(0, 400));
-  check(!/الصلاحياتُ الممنوحة له:[^\n]*canManageAccounting/.test(spoofed),
+  check(!/أعلامُ الصلاحيات المخزَّنة المفعَّلة:[^\n]*canManageAccounting/.test(spoofed),
     "د.٢ **ولا تمنح عَلَماً مطفأً**", spoofed.slice(0, 500));
-  check(!/الصلاحياتُ الممنوحة له:[^\n]*canViewReports/.test(spoofed),
+  check(!/أعلامُ الصلاحيات المخزَّنة المفعَّلة:[^\n]*canViewReports/.test(spoofed),
     "د.٣ ولا canViewReports", spoofed.slice(0, 500));
 
   // ═══ هـ: إخبارٌ لا إذن ════════════════════════════════════════════════
@@ -152,6 +152,58 @@ async function main() {
     "هـ.٤ **وينهى عن استنتاج وجود زرٍّ من وجود صلاحية**");
   check(/ليست عندك بعد/.test(repId),
     "هـ.٥ ويقول إن شروطَ الشاشة ليست عنده بعد");
+
+  // ═══ و: العَلَمُ المطفأ ليس منعاً — والمسؤولُ أوضحُ مثال ═══════════════
+  //  `buildStoredPermissions` تعطي المسؤولَ `Boolean(العمود المخزَّن)` لا
+  //  منحاً من الدور. وحالةُ التقارير المُختبَرة هنا تمنح عبر `isAdmin`
+  //  **إلى جانب** `canViewReports` (نقاطُ التقارير، وأداتا
+  //  `operational_summary`/`device_sales_summary`) — **وهذا وصفُ هذا
+  //  الحارس وحده، لا قاعدةٌ لكلّ حارسٍ في الخادم**.
+  //  و`can_view_reports` **افتراضُه `false` في المخطَّط** — فمسؤولٌ أُنشئ
+  //  بالافتراضات كانت الكتلةُ تقول له «لا تملك canViewReports» وهو يملكها.
+  console.log("\n── و: غيابُ العَلَم ليس منعاً ──");
+  const adminNoReportsSess = {
+    ...adminSess,
+    permissions: { canViewPatients: true, canManageAccounting: true, canViewReports: false },
+  };
+  const adminNoReports = resolveAiAccess({
+    session: adminNoReportsSess, branchName: `كربلاء ${MARK}`, scopeBranchId: B,
+  });
+  seen.length = 0;
+  await chat(adminNoReports, ask("ليش ما أشوف التقارير؟"));
+  const noRep = idPart(seen[0].system);
+  check(noRep.length > 0, "و.١ الكتلةُ وصلت", seen[0].system.slice(-400));
+  //  **الادّعاءُ المحذوف** — هو بعينه ما كان يكذب على المسؤول.
+  check(!/وما لم يُذكَر أعلاه فهو/.test(noRep),
+    "و.٢ **ولا تدّعي أن الغائبَ غيرُ ممنوح**", noRep.slice(0, 900));
+  check(!/غيرُ ممنوح/.test(noRep),
+    "و.٢ب **ولا كلمةَ «غيرُ ممنوح» فيها إطلاقاً**", noRep.slice(0, 900));
+  //  **والوصفُ صادق**: أعلامٌ مخزَّنة، لا مجملُ السلطة.
+  check(/أعلامُ الصلاحيات المخزَّنة المفعَّلة/.test(noRep),
+    "و.٣ **والتسميةُ «أعلامٌ مخزَّنةٌ مفعَّلة»**", noRep.slice(0, 600));
+  check(/لا مجملُ سلطته الفعلية/.test(noRep),
+    "و.٣ب **وتقول صراحةً إنها ليست مجملَ سلطته**", noRep.slice(0, 900));
+  //  **والقاعدةُ الرباعية** التي حلّت محلَّ الادّعاء.
+  check(/لا يُثبت وحدَه أن الإجراءَ أو الشاشةَ ممنوعة/.test(noRep),
+    "و.٤ **غيابُ العَلَم لا يُثبت المنع**", noRep.slice(0, 900));
+  //  النصُّ ملفوفٌ بأسطر، فالمطابقةُ تتخطّى فاصلَ السطر لا تفترض مسافةً واحدة.
+  check(/isAdmin/.test(noRep) && /عبر\s+الدور/.test(noRep),
+    "و.٤ب **وتسمّي المنحَ عبر `isAdmin` أو الدور**", noRep.slice(0, 900));
+  check(/حارسها القانونيّ/.test(noRep),
+    "و.٤ج **وتحيل إلى الحارس القانونيّ عند شرح إجراءٍ بعينه**", noRep.slice(0, 900));
+  check(/فلا تخترع منعاً من غياب عَلَم/.test(noRep),
+    "و.٤د **وتنهى عن اختراع منعٍ من غياب عَلَم**", noRep.slice(0, 900));
+  //  **ولا يُملأ العَلَمُ للمسؤول** — ذاك يزوّر المخزَّن ويُسكت التصحيح.
+  check(!/canViewReports/.test(noRep),
+    "و.٥ **والعَلَمُ المطفأ لا يُختلَق له منحٌ في القائمة**", noRep.slice(0, 600));
+  check(adminNoReports.permissions.canViewReports === false,
+    "و.٥ب **و`AiAccessContext` كما هي** — العَلَمُ يبقى `false` بلا اتّحادٍ مع الدور",
+    String(adminNoReports.permissions.canViewReports));
+  //  **والأدواتُ لم تتغيّر** — النصُّ إخبارٌ لا إذن.
+  const admBase = toolsFor(admin).map((t: any) => t.name).sort();
+  check(JSON.stringify(seen[0].tools.sort()) === JSON.stringify(admBase),
+    "و.٦ **وأدواتُ المسؤول كما هي بالضبط**",
+    `${JSON.stringify(seen[0].tools)} vs ${JSON.stringify(admBase)}`);
 
   //  والمصدرُ الجلسةُ وحدها — لا قراءةَ من جسم الطلب في بناء الكتلة.
   const chatSrc = readFileSync(new URL("./ai/chat.ts", import.meta.url), "utf8");
