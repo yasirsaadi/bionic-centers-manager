@@ -38,11 +38,37 @@ export const DECISION_QUEUE_PAGE_PATH = "/post-exam-followups";
  * **مرشِّحُ الفرع يظهر فقط لمن يملك أكثرَ من فرعٍ فعلاً** — نفسُ شرط
  * `PostExamFollowups.tsx` (`isAdmin || accessible.length > 1`) مقروءاً من
  * نطاق الجلسة الخادميّ. و`operationalBranches === null` تعني «كلّ الفروع».
+ *
+ * **ولم تتغيّر بحرف** — قرارُ الظهور هو هو؛ والذي تغيّر **سببُ** الإخفاء
+ * في `branchFilterNote` أدناه.
  */
 function showsBranchFilter(access: AiAccessContext): boolean {
   if (access.isAdmin) return true;
   const branches = access.operationalBranches;
   return branches === null || branches.length > 1;
+}
+
+/**
+ * **سببُ ظهور المرشِّح أو غيابه — وصفرُ فروعٍ ليس فرعاً واحداً.**
+ *
+ * كان السببُ بوليانياً، فالمخفيُّ كلُّه يُقرأ «نطاقه فرعٌ واحد». وحسابٌ
+ * غيرُ مسؤولٍ بلا `branch_ids` ولا `branch_id` (والعمودان `nullable` في
+ * `system_users`) يُنتج `operationalBranches: []` — فتُخفي الشاشةُ
+ * المرشِّحَ لسببٍ صحيح، ويشرحه المساعدُ **بسببٍ كاذب**. وهذا بعينه سؤالُ
+ * الدعم الذي وُضع هذا الدليلُ لأجله.
+ *
+ * فصارت الحالاتُ الثلاثُ غيرِ الإدارية متمايزة، **وحالةُ المسؤول
+ * و`null` كما كانت بحرفها**.
+ */
+function branchFilterNote(access: AiAccessContext): string {
+  if (showsBranchFilter(access)) {
+    return "**يظهر له** — لأنّ نطاقه أكثرُ من فرع.";
+  }
+  //  هنا: غيرُ مسؤول، والنطاقُ مصفوفةٌ طولُها ٠ أو ١ (فما فوقُ ظاهرٌ أعلاه).
+  if ((access.operationalBranches?.length ?? 0) === 0) {
+    return "**لا يظهر له** — لا يوجد فرع في نطاق عمله؛ راجع الإدارة.";
+  }
+  return "**لا يظهر له** — لأنّ نطاقه فرعٌ واحد؛ وهذا ليس نقصَ صلاحية.";
 }
 
 function decisionQueueGuide(access: AiAccessContext): string {
@@ -68,9 +94,7 @@ function decisionQueueGuide(access: AiAccessContext): string {
 - تبويبان: «${DECISION_QUEUE_TAB_WAITING}» و«${DECISION_QUEUE_TAB_RESOLVED}».
 - مرشِّحُ التصنيف: ${filters}.
 - ضابطُ ترتيب (الأقدم/الأحدث).
-- مرشِّحُ الفرع: ${showsBranchFilter(access)
-    ? "**يظهر له** — لأنّ نطاقه أكثرُ من فرع."
-    : "**لا يظهر له** — لأنّ نطاقه فرعٌ واحد؛ وهذا ليس نقصَ صلاحية."}
+- مرشِّحُ الفرع: ${branchFilterNote(access)}
 
 **أفعالُ صفّ «${DECISION_QUEUE_TAB_WAITING}»**:
 - «فتح الملف» — متاحٌ من البطاقة دائماً.
