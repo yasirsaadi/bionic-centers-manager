@@ -91,6 +91,7 @@ import { suggestExpenseCategory } from "./ai/categorize";
 import { explainAnomaly } from "./ai/explain_anomaly";
 import { aiChat, type ChatMessage } from "./ai/chat";
 import { resolveAiAccess } from "./ai/access";
+import { resolvePageContext } from "./ai/page_context";
 import { normalizePatientCode } from "@shared/patient_code";
 import { getRuleBasedHints, getAiHints } from "./ai/expense_hints";
 import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
@@ -7131,7 +7132,7 @@ export async function registerRoutes(
   app.post("/api/ai/chat", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
 
-    const { messages } = req.body ?? {};
+    const { messages, pagePath } = req.body ?? {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages مطلوبة" });
     }
@@ -7155,7 +7156,12 @@ export async function registerRoutes(
 
     const access = resolveAiAccess({ session: branchSession, branchName, scopeBranchId });
 
-    const result = await aiChat(access, history);
+    //  سياقُ الصفحة **بعد** بناء الإذن وبلا أثرٍ فيه: `resolveAiAccess` لا
+    //  تراه أصلاً، فمسارٌ ملفَّق لا يوسّع نطاقاً ولا يفتح أداةً ولا يغيّر
+    //  وضعاً. والتنظيفُ في الخادم لا في العميل (المرحلة ٢).
+    const page = resolvePageContext(pagePath);
+
+    const result = await aiChat(access, history, undefined, undefined, page);
 
     // أثرٌ صغير لكلّ طلب: مَن سأل، من أي فرع، بأي وضع، وهل مُنح المال،
     // وأسماءُ الأدوات التي نُفِّذت وعددُها. **ولا وسائطَ ولا نتائج ولا رمزَ

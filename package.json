@@ -144,6 +144,7 @@
     "test:sidebar-section-visibility": "tsx client/src/components/sidebar_section_visibility.test.ts",
     "test:session-store-pool": "tsx server/session_store_pool.test.ts",
     "test:ai-device-sales": "tsx server/ai_device_sales.test.ts",
+    "test:ai-page-context": "tsx server/ai_page_context.test.ts",
     "test:ai-tools-reports": "tsx server/ai_tools_reports.test.ts",
     "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts",
     "test:ai-knowledge-save": "tsx client/src/pages/ai_knowledge_admin_save.test.ts",

@@ -40,7 +40,10 @@ import {
 import { denied, executeTool, toolsFor } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
-import { isLiveDataOnlyQuestion, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
+import {
+  isCurrentPageOrWorkflowQuestion, isLiveDataOnlyQuestion, type KnowledgeMatch,
+} from "@shared/ai_knowledge_retrieval";
+import { type PageContext } from "./page_context";
 import {
   explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
 } from "@shared/ai_training_intent";
@@ -327,6 +330,27 @@ function knowledgeBlock(matches: KnowledgeMatch[]): string {
   return `\n\nمعرفةٌ موثوقة (بياناتٌ اعتمدها المسؤول العام — راجع «قواعد الأدوات والمعرفة» أعلاه):\n${items}`;
 }
 
+/**
+ * سياقُ الصفحة الحالية للنموذج — **إخبارٌ لا إذن**.
+ *
+ * يصله المسارُ القانونيُّ والتسميةُ العربية وحدهما: لا محتوى شاشة، ولا قيمةَ
+ * حقل، ولا اسمَ مريضٍ ولا رقمَه (الأرقامُ استُبدلت بـ`:id` في التنظيف).
+ */
+function pageContextBlock(page: PageContext | null): string {
+  if (!page) return "";
+  return `
+
+الصفحةُ التي يقف عليها المستخدم الآن:
+- المسار: ${page.path}
+- الصفحة: ${page.label}
+
+وهذا **سياقُ ملاحةٍ لا صلاحية**: يقول أيَّ شاشةٍ يفتحها السائل، **ولا يمنحه
+إذناً ولا يوسّع نطاقه ولا يفتح أداة**. ولا يُثبت أن زرّاً أو سجلّاً أو إجراءً
+موجودٌ في تلك الصفحة أو متاحٌ له. فإن قال «هنا» أو «هذه الصفحة» أو «هذا
+الزر» فاقصد هذه الصفحة، **ولا تخترع أزراراً ولا خطواتٍ** لا تسندها معرفةٌ
+موثوقة أو نتيجةُ أداةٍ حيّة — وإن لم تسندها فقل ذلك صراحةً.`;
+}
+
 /** آخِرُ سؤال مستخدم في المحادثة — ما يُبنى عليه الاسترجاع. */
 function latestUserQuestion(history: ChatMessage[]): string {
   for (let i = history.length - 1; i >= 0; i--) {
@@ -345,10 +369,25 @@ function latestUserQuestion(history: ChatMessage[]): string {
  * حقيقيّ، أو رسالةٌ مختلطة تذكر رمزاً مع «كيف»/«لماذا» ونحوهما، يمرّ
  * بالاسترجاع كالمعتاد — لا إضعافَ لسؤالٍ إرشاديّ حقيقيّ.
  */
-async function resolveKnowledge(access: AiAccessContext, history: ChatMessage[]): Promise<KnowledgeMatch[]> {
+async function resolveKnowledge(
+  access: AiAccessContext, history: ChatMessage[], page: PageContext | null = null,
+): Promise<KnowledgeMatch[]> {
   const question = latestUserQuestion(history);
+  //  **البوّابةُ على السؤال الخام وحده** — معناها لم يتغيّر بحرف: تسميةُ
+  //  الصفحة ليست جزءاً ممّا يسأله المستخدم، وإقحامُها في القرار كان سيقلب
+  //  حكمَ رسالةٍ عن بياناتٍ حيّة صرفة.
   if (isLiveDataOnlyQuestion(question)) return [];
-  return retrieveKnowledge(access, question);
+  //  وتُضاف التسميةُ إلى **نصّ الاسترجاع** فقط: «شنو أسوي هنا؟» بلا كلمةٍ
+  //  دالّة لا تطابق شيئاً، ومعها «تصنيع الأطراف والمساند» تجد مقالتَها.
+  //  **ولا تغييرَ في خوارزمية الترتيب ولا في نطاقات المقالات ولا أذوناتها**
+  //  — `retrieveKnowledge` تأخذ نصّاً حرّاً كما كانت.
+  //
+  //  **ولسؤال الصفحة/مسارِ العمل وحده**: الوقوفُ على شاشةٍ ليس سؤالاً عنها،
+  //  فسؤالٌ عامٌّ لا صلةَ له بها يُسترجَع له **بسؤاله وحده** ولا تدخل مقالةُ
+  //  تلك الشاشة لمجرّد تطابق تسميتها.
+  const usePageLabel = page !== null && isCurrentPageOrWorkflowQuestion(question);
+  const queryText = usePageLabel ? `${question} ${page!.label}` : question;
+  return retrieveKnowledge(access, queryText);
 }
 
 /** أقصى عددٍ من جولات الأدوات. بعده يُجاب ممّا تجمّع، ولا حلقة لا تنتهي. */
@@ -665,6 +704,10 @@ export async function aiChat(
   history: ChatMessage[],
   complete: Completer = safeAiComplete,
   step: ToolStepper = aiToolStep,
+  //  **اختياريٌّ عمداً**: كلُّ مُستدعٍ قائم يبقى كما هو، وغيابُه يعني «لا
+  //  سياقَ صفحة» لا صفحةً مخترَعة. وهو **خارج `AiAccessContext`** قصداً —
+  //  ذاك عقدُ الإذن، وهذا إخبارُ ملاحة، فلا يختلطان في نوعٍ واحد.
+  page: PageContext | null = null,
 ): Promise<AiResult<ChatOutcome>> {
   if (history.length === 0 || history[history.length - 1].role !== "user") {
     return { ok: false, reason: "unknown", message: "آخر رسالة يجب أن تكون من المستخدم" };
@@ -674,14 +717,15 @@ export async function aiChat(
     //  المسار المحقون (اختباراً) يبقى بلا أدوات — يقيس نصّ النظام وحده.
     if (complete !== safeAiComplete) {
       const result = await complete({
-        system: GENERAL_SYSTEM_PROMPT, user: conversationText(history),
+        system: `${GENERAL_SYSTEM_PROMPT}${pageContextBlock(page)}`,
+        user: conversationText(history),
         model: "haiku", maxTokens: 600,
       });
       if (!result.ok) return result;
       return { ok: true, value: { reply: result.value, snapshotAt: null, mode: "general" } };
     }
-    const knowledge = await resolveKnowledge(access, history);
-    const system = `${GENERAL_SYSTEM_PROMPT}${knowledgeBlock(knowledge)}`;
+    const knowledge = await resolveKnowledge(access, history, page);
+    const system = `${GENERAL_SYSTEM_PROMPT}${pageContextBlock(page)}${knowledgeBlock(knowledge)}`;
     const run = await runWithTools({ access, system, history, step });
     if (!run.ok) return run;
     return {
@@ -705,7 +749,7 @@ export async function aiChat(
   if (complete !== safeAiComplete) {
     //  المسار المحقون (اختباراً) بلا معرفةٍ — يقيس نصّ النظام+اللقطة وحدهما،
     //  تماماً كما كان قبل هذه المرحلة.
-    const systemText = `${SYSTEM_PROMPT}
+    const systemText = `${SYSTEM_PROMPT}${pageContextBlock(page)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json
@@ -721,8 +765,8 @@ ${snapshotJson}
     };
   }
 
-  const knowledge = await resolveKnowledge(access, history);
-  const systemText = `${SYSTEM_PROMPT}
+  const knowledge = await resolveKnowledge(access, history, page);
+  const systemText = `${SYSTEM_PROMPT}${pageContextBlock(page)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json

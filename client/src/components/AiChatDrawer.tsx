@@ -443,6 +443,11 @@ export function AiChatDrawer() {
     mutationFn: async (history: ChatMessage[]) => {
       const res = await apiRequest("POST", "/api/ai/chat", {
         messages: history.map(({ role, content }) => ({ role, content })),
+        //  سياقُ الصفحة الحالية — **المسارُ وحده**، بلا استعلامٍ ولا مرساةٍ
+        //  ولا نصِّ شاشةٍ ولا قيمةِ حقل. ويُقرأ **لحظةَ الطلب** لا عند فتح
+        //  الدرج، فمَن تنقّل والدرجُ مفتوح يسأل عن صفحته الحالية.
+        //  والخادمُ ينظّفه ويستبدل الأرقام بـ`:id` — وهو سياقٌ لا صلاحية.
+        pagePath: window.location.pathname,
       });
       return res.json() as Promise<{
         reply: string;
