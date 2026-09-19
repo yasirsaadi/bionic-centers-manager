@@ -40,7 +40,9 @@ import {
 import { denied, executeTool, toolsFor } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
-import { isLiveDataOnlyQuestion, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
+import {
+  isCurrentPageOrWorkflowQuestion, isLiveDataOnlyQuestion, type KnowledgeMatch,
+} from "@shared/ai_knowledge_retrieval";
 import { type PageContext } from "./page_context";
 import {
   explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
@@ -379,7 +381,12 @@ async function resolveKnowledge(
   //  دالّة لا تطابق شيئاً، ومعها «تصنيع الأطراف والمساند» تجد مقالتَها.
   //  **ولا تغييرَ في خوارزمية الترتيب ولا في نطاقات المقالات ولا أذوناتها**
   //  — `retrieveKnowledge` تأخذ نصّاً حرّاً كما كانت.
-  const queryText = page ? `${question} ${page.label}` : question;
+  //
+  //  **ولسؤال الصفحة/مسارِ العمل وحده**: الوقوفُ على شاشةٍ ليس سؤالاً عنها،
+  //  فسؤالٌ عامٌّ لا صلةَ له بها يُسترجَع له **بسؤاله وحده** ولا تدخل مقالةُ
+  //  تلك الشاشة لمجرّد تطابق تسميتها.
+  const usePageLabel = page !== null && isCurrentPageOrWorkflowQuestion(question);
+  const queryText = usePageLabel ? `${question} ${page!.label}` : question;
   return retrieveKnowledge(access, queryText);
 }
 

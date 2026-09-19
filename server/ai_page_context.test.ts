@@ -22,6 +22,9 @@ import {
   canonicalizePagePath, resolvePageContext, KNOWN_PAGE_PATHS,
   UNKNOWN_PAGE_LABEL, MAX_PAGE_PATH_LENGTH,
 } from "./ai/page_context";
+import {
+  isCurrentPageOrWorkflowQuestion, isLiveDataOnlyQuestion,
+} from "@shared/ai_knowledge_retrieval";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -242,6 +245,49 @@ async function main() {
   await chat(general, ask("ما حالة WB-02119؟"), resolvePageContext("/manufacturing"));
   check(!seen[0].system.includes("تتبّع مراحل أمر العمل"),
     "ز.٤ **وبوّابةُ «بياناتٌ حيّة» كما كانت** — لا معرفةَ لسؤال سجلٍّ بعينه",
+    seen[0].system.slice(-700));
+
+  // ═══ ط: تسميةُ الصفحة لسؤال الصفحة وحده — لا لكلّ سؤال ════════════════
+  console.log("\n── ط: التسميةُ لا تدخل استرجاعَ سؤالٍ لا صلةَ له بالشاشة ──");
+
+  //  البوّابةُ الخالصة: الأمثلةُ الثلاثة من الطلب، ومعها إحالةٌ بلا فعل.
+  check(isCurrentPageOrWorkflowQuestion("شنو أسوي هنا؟"),
+    "ط.١ «شنو أسوي هنا؟» سؤالُ صفحة (بالإحالة وحدها — بلا كلمةِ مسارِ عمل)");
+  check(isCurrentPageOrWorkflowQuestion("اشرح لي هذه الصفحة"), "ط.٢ «اشرح لي هذه الصفحة» كذلك");
+  check(isCurrentPageOrWorkflowQuestion("ليش هذا الزر ما يظهر عندي؟"),
+    "ط.٣ «ليش هذا الزر ما يظهر عندي؟» كذلك");
+  check(isCurrentPageOrWorkflowQuestion("ما هذه الشاشة؟"), "ط.٤ وإحالةٌ بلا فعلٍ كذلك");
+  check(isCurrentPageOrWorkflowQuestion("كيف أفتح صيانة؟"),
+    "ط.٥ وسؤالُ مسارِ عملٍ صريح كذلك (WORKFLOW_MARKERS القائمة)");
+
+  const UNRELATED = "هل الدوام غدا رسمي؟";
+  check(!isCurrentPageOrWorkflowQuestion(UNRELATED),
+    "ط.٦ **وسؤالٌ عامٌّ لا صلةَ له بالشاشة ليس منها**", UNRELATED);
+  check(!isCurrentPageOrWorkflowQuestion("هاي الفاتورة شنو؟"),
+    "ط.٧ وسؤالٌ عن سجلٍّ بإشارةٍ عامّة ليس سؤالَ صفحة");
+
+  //  **ضابطٌ لازم**: لولاه لمرّ اختبارُ الارتداد أدناه **للسبب الخطأ** —
+  //  أي لأن بوّابةَ «بياناتٌ حيّة» أعادت [] أصلاً لا لأن الإصلاح يعمل.
+  check(!isLiveDataOnlyQuestion(UNRELATED),
+    "ط.٨ **والسؤالُ العامُّ يمرّ ببوّابة «بياناتٌ حيّة»** — فالاسترجاعُ يجري فعلاً", UNRELATED);
+
+  //  ── الارتدادُ نفسُه: نفسُ الصفحة، نفسُ المقالة، سؤالان مختلفان ──────────
+  seen.length = 0;
+  await chat(general, ask(UNRELATED), resolvePageContext("/manufacturing"));
+  check(!seen[0].system.includes("تتبّع مراحل أمر العمل"),
+    "ط.٩ **سؤالٌ عامٌّ من صفحة التصنيع ⟶ مقالةُ التصنيع لا تُسترجَع**",
+    seen[0].system.slice(-700));
+  //  وسياقُ الصفحة **يصل النموذج كما هو** — المحجوبُ هو الاسترجاعُ وحده.
+  check(seen[0].system.includes("/manufacturing")
+    && seen[0].system.includes("تصنيع الأطراف والمساند"),
+    "ط.١٠ **والسياقُ يصل النموذج كما هو** — المحجوبُ نصُّ الاسترجاع وحده",
+    seen[0].system.slice(-700));
+
+  //  ونفسُ الصفحة بسؤال صفحةٍ ⟶ تُسترجَع. فالفارقُ **نوعُ السؤال** لا الصفحة.
+  seen.length = 0;
+  await chat(general, ask("شنو أسوي هنا؟"), resolvePageContext("/manufacturing"));
+  check(seen[0].system.includes("تتبّع مراحل أمر العمل"),
+    "ط.١١ **ونفسُ الصفحة بسؤال صفحةٍ تُسترجَع** — فالفارقُ نوعُ السؤال",
     seen[0].system.slice(-700));
 
   // ═══ ح: صفرُ سلطة ═════════════════════════════════════════════════════

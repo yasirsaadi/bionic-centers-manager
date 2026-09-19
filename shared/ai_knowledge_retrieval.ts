@@ -174,6 +174,21 @@ const WORKFLOW_MARKERS = [
   "قاعدة", "القاعدة", "قواعد", "لماذا", "ليش", "متي", "اشرح", "شرح",
 ];
 
+/**
+ * إشاراتُ إحالةٍ إلى **الشاشة الحالية** — «هنا»، «هذه الصفحة»، «هذا الزر».
+ *
+ * منفصلةٌ عن `WORKFLOW_MARKERS` لأنها ليست سؤالَ مسارِ عملٍ بذاتها: «شنو
+ * أسوي هنا؟» لا تحمل «كيف» ولا «خطوات» ولا «اشرح» — تحمل **إحالةً** إلى
+ * الشاشة وحدها. ومن غيرها تسقط أشيعُ صيغةٍ يسأل بها الموظّف عن صفحته.
+ *
+ * **وضيّقةٌ عمداً**: اسمُ شاشةٍ أو زرٍّ صريح، لا كلُّ اسم إشارة. «هاي
+ * الفاتورة شنو؟» سؤالٌ عن سجلٍّ لا عن صفحة، فلا يجرّ تسميةَ الشاشة.
+ */
+const CURRENT_PAGE_MARKERS = [
+  "هنا", "صفحة", "الصفحة", "شاشة", "الشاشة",
+  "زر", "الزر", "زرار", "الزرار",
+];
+
 /** تطبيعٌ + تقطيعٌ **بلا إسقاط كلمات الاستفهام** — خلافاً لـ`tokenize()`. */
 function intentTokens(text: string): string[] {
   return normalizeSearchText(text).split(PUNCTUATION_SPLIT).filter((t) => t.length > 0);
@@ -214,4 +229,23 @@ export function isLiveDataOnlyQuestion(query: string): boolean {
   const hasSearchIntent = hasSearchVerb(tokens) || PHONE_LIKE_PATTERN.test(normalized);
   if (!hasPatientCode && !hasReportOrWorklistSignal && !hasSearchIntent) return false;
   return !containsAny(tokens, WORKFLOW_MARKERS);
+}
+
+/**
+ * أسؤالُ **صفحةٍ حالية أو مسارِ عمل**؟ — بوّابةُ إدخال تسمية الصفحة في نصّ
+ * استرجاع المعرفة (المرحلة ٢).
+ *
+ * **ولا علاقةَ لها بـ`isLiveDataOnlyQuestion`**: تلك تقرّر **أيُسترجَع
+ * شيءٌ أصلاً**، وهذه تقرّر **أتُضاف تسميةُ الشاشة إلى نصّ البحث**. الأولى
+ * لم يتغيّر معناها بحرف، والثانية أضيق منها: سؤالٌ عامٌّ لا صلةَ له بالشاشة
+ * يبقى يُسترجَع له كالمعتاد — **بسؤاله وحده**، فلا تدخل مقالةُ الصفحة
+ * لمجرّد أن المستخدم واقفٌ عليها.
+ *
+ * `true` حين تحمل الرسالةُ إشارةَ مسارِ عملٍ صريحة (`WORKFLOW_MARKERS`) أو
+ * إحالةً إلى الشاشة الحالية (`CURRENT_PAGE_MARKERS`).
+ */
+export function isCurrentPageOrWorkflowQuestion(query: string): boolean {
+  const tokens = intentTokens(query);
+  if (tokens.length === 0) return false;
+  return containsAny(tokens, WORKFLOW_MARKERS) || containsAny(tokens, CURRENT_PAGE_MARKERS);
 }
