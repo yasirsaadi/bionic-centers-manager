@@ -356,7 +356,7 @@ function knowledgeBlock(matches: KnowledgeMatch[]): string {
  * `buildStoredPermissions` تعطيه `Boolean(العمود المخزَّن)` لا منحاً من
  * الدور، بينما **بعضُ** حُرّاس التطبيق — ومنها حارسُ التقارير الذي وُلد عنه
  * هذا الارتداد (`isAdmin || permissions.canViewReports` في نقاط التقارير
- * وفي أداتَي `operational_summary`/`financial_summary`) — تمنح الوصولَ عبر
+ * وفي أداتَي `operational_summary`/`device_sales_summary`) — تمنح الوصولَ عبر
  * `isAdmin` **إلى جانب** العَلَم المخزَّن. **ولا يُقال إن كلَّ حارسٍ كذلك**:
  * منها ما يقرأ العَلَمَ وحدَه (`canManageTreatmentPlans` مثلاً)، ومنها ما
  * يفحص `isAdmin` مباشرةً بلا عَلَمٍ أصلاً (نقاطُ الإعدادات والمستخدمين).
