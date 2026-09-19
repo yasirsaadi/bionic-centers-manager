@@ -258,7 +258,19 @@ async function main() {
     "ط.٣ «ليش هذا الزر ما يظهر عندي؟» كذلك");
   check(isCurrentPageOrWorkflowQuestion("ما هذه الشاشة؟"), "ط.٤ وإحالةٌ بلا فعلٍ كذلك");
   check(isCurrentPageOrWorkflowQuestion("كيف أفتح صيانة؟"),
-    "ط.٥ وسؤالُ مسارِ عملٍ صريح كذلك (WORKFLOW_MARKERS القائمة)");
+    "ط.٥ وسؤالُ إجراءٍ في التطبيق كذلك — **بفعله «أفتح» لا بـ«كيف»**");
+
+  //  ══ وكلمةُ الاستفهام وحدها لا تكفي ═══════════════════════════════════
+  //  `WORKFLOW_MARKERS` تحوي «كيف/لماذا/ليش/متى/اشرح» — صحيحةٌ لغرضها
+  //  (بوّابةُ البيانات الحيّة) لكنّها **لا تُثبت** أن السؤال عن الشاشة أو
+  //  عن مسارٍ في النظام. فهاتان تحملانها ولا صلةَ لهما به.
+  check(!isCurrentPageOrWorkflowQuestion("متى تأسس المركز؟"),
+    "ط.٥أ **«متى تأسس المركز؟» ليست سؤالَ صفحة** — «متى» استفهامٌ عامّ");
+  check(!isCurrentPageOrWorkflowQuestion("كيف حالك؟"),
+    "ط.٥ب **و«كيف حالك؟» كذلك** — «كيف» استفهامٌ عامّ");
+  //  والقائمةُ القديمة **لم تُمَسّ**: ما زالت تحمل الكلمتين لبوّابتها هي.
+  check(isLiveDataOnlyQuestion("ما تقرير اليوم؟") && !isLiveDataOnlyQuestion("كيف أقرأ تقرير اليوم؟"),
+    "ط.٥ج **وبوّابةُ «بياناتٌ حيّة» ما زالت تقرأ «كيف» كما كانت** — لم تُمَسّ");
 
   const UNRELATED = "هل الدوام غدا رسمي؟";
   check(!isCurrentPageOrWorkflowQuestion(UNRELATED),
@@ -283,11 +295,32 @@ async function main() {
     "ط.١٠ **والسياقُ يصل النموذج كما هو** — المحجوبُ نصُّ الاسترجاع وحده",
     seen[0].system.slice(-700));
 
+  //  ── والاستفهامُ العامُّ لا يجرّ المقالةَ ولو طابقت تسميةُ الصفحة ───────
+  const GENERIC = "متى تأسس المركز؟";
+  check(!isLiveDataOnlyQuestion(GENERIC),
+    "ط.٩أ **ضابطٌ**: «متى تأسس المركز؟» يمرّ ببوّابة «بياناتٌ حيّة» فالاسترجاعُ يجري", GENERIC);
+  seen.length = 0;
+  await chat(general, ask(GENERIC), resolvePageContext("/manufacturing"));
+  check(!seen[0].system.includes("تتبّع مراحل أمر العمل"),
+    "ط.٩ب **«متى تأسس المركز؟» من صفحة التصنيع ⟶ مقالةُ التصنيع لا تُسترجَع**",
+    seen[0].system.slice(-700));
+  seen.length = 0;
+  await chat(general, ask("كيف حالك؟"), resolvePageContext("/manufacturing"));
+  check(!seen[0].system.includes("تتبّع مراحل أمر العمل"),
+    "ط.٩ج **و«كيف حالك؟» كذلك**", seen[0].system.slice(-700));
+
   //  ونفسُ الصفحة بسؤال صفحةٍ ⟶ تُسترجَع. فالفارقُ **نوعُ السؤال** لا الصفحة.
   seen.length = 0;
   await chat(general, ask("شنو أسوي هنا؟"), resolvePageContext("/manufacturing"));
   check(seen[0].system.includes("تتبّع مراحل أمر العمل"),
     "ط.١١ **ونفسُ الصفحة بسؤال صفحةٍ تُسترجَع** — فالفارقُ نوعُ السؤال",
+    seen[0].system.slice(-700));
+
+  //  وسؤالُ إجراءٍ في التطبيق (بفعله لا باستفهامه) يُثري كذلك.
+  seen.length = 0;
+  await chat(general, ask("كيف أفتح أمر عمل؟"), resolvePageContext("/manufacturing"));
+  check(seen[0].system.includes("تتبّع مراحل أمر العمل"),
+    "ط.١٢ **وسؤالُ إجراءٍ بفعلٍ صريح («أفتح») يُثري أيضاً**",
     seen[0].system.slice(-700));
 
   // ═══ ح: صفرُ سلطة ═════════════════════════════════════════════════════
