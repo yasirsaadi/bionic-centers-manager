@@ -257,34 +257,54 @@ const FATH_PAST_INTERROGATIVES = ["متى", "من"];
  *
  * **و«تم فتح» ماضٍ بالأصل**، مهما سبقه: «هل تم فتح أمر العمل؟» و«اليوم تم
  * فتح أمر العمل؟» و«من تم فتح…» كلُّها أسئلةُ واقعةٍ ماضية. والاستثناءُ
- * **صيغةٌ واحدة مؤكَّدة** في `FATH_SUBORDINATE_OPENER` أدناه.
+ * **شرطان مجتمعان** أدناه: افتتاحُ الجملة التابعة **وصيغةُ متابعةٍ
+ * مؤكَّدة**.
  */
 const FATH_PAST_AUXILIARY = "تم";
 
 /**
- * **الصيغةُ التابعةُ الوحيدة** — «**بعد ما** تم فتح أمر العمل شنو التالي؟».
- *
- * الماضي فيها **خلفيّةٌ** لسؤالٍ يليها لا السؤالَ نفسَه، فإسقاطُ «فتح»
- * يمحو الإشارةَ الوحيدة ويحرم سؤالَ متابعةٍ حقيقياً من سياق صفحته.
- *
- * **ولا يُعمَّم من الصيغة إلى قاعدة**: ما لا يُثبِته شاهدٌ يبقى ماضياً.
- * قاعدةٌ أوسع («ما يسبق `تم` ليس أداةَ سؤال») كانت تقرأ «هل» و«اليوم»
- * تبعيّةً وهما ليستا كذلك — فضاقت إلى هاتين الكلمتين بترتيبهما.
+ * **افتتاحُ الجملة التابعة** — «**بعد ما** تم فتح…». شرطٌ أوّلُ لا يكفي
+ * وحدَه: «بعد ما تم فتح أمر العمل **متى تم إغلاقه؟**» تابعةُ الافتتاح
+ * وسؤالُها مع ذلك عن واقعةٍ ماضيةٍ أخرى.
  */
 const FATH_SUBORDINATE_OPENER = ["بعد", "ما"];
 
 /**
- * **هل يسبق `تم` افتتاحُ الجملة التابعة بعينه؟** — «بعد ما» مُلاصِقتين
- * وبترتيبهما، لا حضورَهما في الرسالة.
+ * **صيغتا المتابعة المؤكَّدتان** — شرطٌ ثانٍ، ومعهما وحدَهما تُقرأ الجملةُ
+ * الماضيةُ خلفيّةً لسؤالٍ يليها.
+ *
+ * **ولا يُعمَّم من صيغةٍ إلى معجم**: هاتان ما أثبته شاهد، وما عداهما يبقى
+ * ماضياً. وهما **محلّيّتان هنا** — لا تدخلان `APP_PROCEDURE_MARKERS` ولا
+ * أيَّ قائمةِ إشاراتٍ عامّة، فلا تُرجِّح «التالي» مقالةً في سؤالٍ آخر.
  */
-function opensSubordinateClause(
+const FATH_FOLLOWUP_FORMS: readonly (readonly string[])[] = [
+  ["شنو", "التالي"],
+  ["ما", "الخطوة", "التالية"],
+];
+
+/** تتابعٌ حرفيٌّ من التوكِنات في الرسالة — لا حضورُ كلماتِه متفرّقةً. */
+function containsPhrase(tokens: readonly string[], phrase: readonly string[]): boolean {
+  if (phrase.length === 0 || phrase.length > tokens.length) return false;
+  for (let i = 0; i + phrase.length <= tokens.length; i++) {
+    if (phrase.every((w, k) => tokens[i + k] === w)) return true;
+  }
+  return false;
+}
+
+/**
+ * **هل الجملةُ الماضيةُ خلفيّةٌ لسؤال متابعةٍ مؤكَّد؟** — الشرطان مجتمعان:
+ * «بعد ما» تُلاصِق `تم` وبترتيبها، **وإحدى صيغتَي المتابعة** في الرسالة.
+ */
+function isConfirmedFollowupClause(
   tokens: readonly string[],
   auxIndex: number,
   opener: readonly string[],
+  forms: readonly (readonly string[])[],
 ): boolean {
   const start = auxIndex - opener.length;
   if (start < 0) return false;
-  return opener.every((w, k) => tokens[start + k] === w);
+  if (!opener.every((w, k) => tokens[start + k] === w)) return false;
+  return forms.some((f) => containsPhrase(tokens, f));
 }
 
 /**
@@ -301,13 +321,15 @@ function hasContextualFathAction(tokens: readonly string[]): boolean {
   const interrogatives = new Set(FATH_PAST_INTERROGATIVES.map((m) => normalizeSearchText(m)));
   const aux = normalizeSearchText(FATH_PAST_AUXILIARY);
   const opener = FATH_SUBORDINATE_OPENER.map((w) => normalizeSearchText(w));
+  const forms = FATH_FOLLOWUP_FORMS.map((f) => f.map((w) => normalizeSearchText(w)));
   const readsAsPast = (i: number): boolean => {
     if (i === 0) return false;                       // «فتح» تفتح الرسالة ⟶ طلبُ إجراء
     const prev = tokens[i - 1];
     if (interrogatives.has(prev)) return true;       // متى/من ⟶ دائماً
     if (prev !== aux) return false;
-    //  «تم فتح» ماضٍ بالأصل — إلّا حين يفتتحها «بعد ما».
-    return !opensSubordinateClause(tokens, i - 1, opener);
+    //  «تم فتح» ماضٍ بالأصل — إلّا حين يفتتحها «بعد ما» **ومعها** صيغةُ
+    //  متابعةٍ مؤكَّدة. والافتتاحُ وحدَه لا يكفي.
+    return !isConfirmedFollowupClause(tokens, i - 1, opener, forms);
   };
   return tokens.some((t, i) => t === fath && !readsAsPast(i));
 }
