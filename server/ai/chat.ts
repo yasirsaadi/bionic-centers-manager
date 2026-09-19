@@ -44,6 +44,7 @@ import {
   isCurrentPageOrWorkflowQuestion, isLiveDataOnlyQuestion, type KnowledgeMatch,
 } from "@shared/ai_knowledge_retrieval";
 import { type PageContext } from "./page_context";
+import { pageGuideFor } from "./page_guides";
 import {
   explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
 } from "@shared/ai_training_intent";
@@ -776,7 +777,7 @@ export async function aiChat(
     //  المسار المحقون (اختباراً) يبقى بلا أدوات — يقيس نصّ النظام وحده.
     if (complete !== safeAiComplete) {
       const result = await complete({
-        system: `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}`,
+        system: `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${pageGuideFor(page, access)}`,
         user: conversationText(history),
         model: "haiku", maxTokens: 600,
       });
@@ -784,7 +785,7 @@ export async function aiChat(
       return { ok: true, value: { reply: result.value, snapshotAt: null, mode: "general" } };
     }
     const knowledge = await resolveKnowledge(access, history, page);
-    const system = `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${knowledgeBlock(knowledge)}`;
+    const system = `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${pageGuideFor(page, access)}${knowledgeBlock(knowledge)}`;
     const run = await runWithTools({ access, system, history, step });
     if (!run.ok) return run;
     return {
@@ -808,7 +809,7 @@ export async function aiChat(
   if (complete !== safeAiComplete) {
     //  المسار المحقون (اختباراً) بلا معرفةٍ — يقيس نصّ النظام+اللقطة وحدهما،
     //  تماماً كما كان قبل هذه المرحلة.
-    const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}
+    const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${pageGuideFor(page, access)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json
@@ -825,7 +826,7 @@ ${snapshotJson}
   }
 
   const knowledge = await resolveKnowledge(access, history, page);
-  const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}
+  const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${pageGuideFor(page, access)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json
