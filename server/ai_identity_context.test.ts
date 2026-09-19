@@ -132,9 +132,9 @@ async function main() {
   const spoofed = idPart(seen[0].system);
   check(/الدور: reception/.test(spoofed) && /مسؤولٌ عام: لا/.test(spoofed),
     "د.١ **رسالةٌ تدّعي المسؤولية لا تغيّر الدور**", spoofed.slice(0, 400));
-  check(!/أعلامُ الصلاحيات المخزَّنة المفعَّلة:[^\n]*canManageAccounting/.test(spoofed),
+  check(!/أعلامُ الصلاحيات المفعَّلة في الجلسة:[^\n]*canManageAccounting/.test(spoofed),
     "د.٢ **ولا تمنح عَلَماً مطفأً**", spoofed.slice(0, 500));
-  check(!/أعلامُ الصلاحيات المخزَّنة المفعَّلة:[^\n]*canViewReports/.test(spoofed),
+  check(!/أعلامُ الصلاحيات المفعَّلة في الجلسة:[^\n]*canViewReports/.test(spoofed),
     "د.٣ ولا canViewReports", spoofed.slice(0, 500));
 
   // ═══ هـ: إخبارٌ لا إذن ════════════════════════════════════════════════
@@ -178,11 +178,17 @@ async function main() {
     "و.٢ **ولا تدّعي أن الغائبَ غيرُ ممنوح**", noRep.slice(0, 900));
   check(!/غيرُ ممنوح/.test(noRep),
     "و.٢ب **ولا كلمةَ «غيرُ ممنوح» فيها إطلاقاً**", noRep.slice(0, 900));
-  //  **والوصفُ صادق**: أعلامٌ مخزَّنة، لا مجملُ السلطة.
-  check(/أعلامُ الصلاحيات المخزَّنة المفعَّلة/.test(noRep),
-    "و.٣ **والتسميةُ «أعلامٌ مخزَّنةٌ مفعَّلة»**", noRep.slice(0, 600));
-  check(/لا مجملُ سلطته الفعلية/.test(noRep),
-    "و.٣ب **وتقول صراحةً إنها ليست مجملَ سلطته**", noRep.slice(0, 900));
+  //  **والوصفُ صادق**: أعلامُ جلسة — بعضُها مشتقٌّ لا مقروءٌ من عمود —
+  //  **وليست مجملَ السلطة**. والصيغةُ القديمة «مخزَّنة» كانت خطأً في
+  //  الاتجاه المقابل، فلا يجوز أن تعود.
+  check(/أعلامُ الصلاحيات المفعَّلة في الجلسة/.test(noRep),
+    "و.٣ **والتسميةُ «أعلامُ الصلاحيات المفعَّلة في الجلسة»**", noRep.slice(0, 600));
+  check(!/مخزَّنة المفعَّلة/.test(noRep) && !/أعلامُ صلاحياتٍ مخزَّنةٌ على حسابه/.test(noRep),
+    "و.٣ب **ولا أثرَ للصيغة القديمة «مخزَّنة»**", noRep.slice(0, 900));
+  check(/لا بالضرورة أعمدةٌ مخزَّنةٌ/.test(noRep) && /يُشتقّ من الدور/.test(noRep),
+    "و.٣ج **وتقول إن بعضَها مشتقٌّ لا مقروءٌ من عمود**", noRep.slice(0, 900));
+  check(/ليست مجملَ سلطته الفعلية/.test(noRep),
+    "و.٣د **والقاعدةُ الحرجة باقية** — ليست مجملَ سلطته", noRep.slice(0, 900));
   //  **والقاعدةُ الرباعية** التي حلّت محلَّ الادّعاء.
   check(/لا يُثبت وحدَه أن الإجراءَ أو الشاشةَ ممنوعة/.test(noRep),
     "و.٤ **غيابُ العَلَم لا يُثبت المنع**", noRep.slice(0, 900));
@@ -204,6 +210,29 @@ async function main() {
   check(JSON.stringify(seen[0].tools.sort()) === JSON.stringify(admBase),
     "و.٦ **وأدواتُ المسؤول كما هي بالضبط**",
     `${JSON.stringify(seen[0].tools)} vs ${JSON.stringify(admBase)}`);
+
+  // ═══ ز: عَلَمٌ **مشتقٌّ من الدور** يُسرَد حين يكون `true` ═══════════════
+  //  `buildStoredPermissions` تمنح الطبيبَ `canWriteMedicalExam` **من دوره**
+  //  لا من عموده. فالقائمةُ تسرده — وهذا صحيح، لأنها أعلامُ **الجلسة** —
+  //  والتسميةُ وحدها هي التي كانت تكذب حين قالت «مخزَّنة».
+  console.log("\n── ز: العَلَمُ المشتقُّ من الدور ──");
+  const docSess = {
+    userId: U_REP, role: "doctor", isAdmin: false, branchId: B, accessibleBranches: [B],
+    displayName: "طبيب",
+    //  كما تبنيها `buildStoredPermissions` لطبيبٍ عمودُه المخزَّن `false`:
+    //  `canWriteMedicalExam: systemUser.role === "doctor" || Boolean(...)`.
+    permissions: { canViewPatients: true, canWriteMedicalExam: true },
+  };
+  const docAccess = resolveAiAccess({
+    session: docSess, branchName: `كربلاء ${MARK}`, scopeBranchId: B,
+  });
+  seen.length = 0;
+  await chat(docAccess, ask("ليش ما أكدر أكتب معاينة؟"));
+  const docId = idPart(seen[0].system);
+  check(/أعلامُ الصلاحيات المفعَّلة في الجلسة:[^\n]*canWriteMedicalExam/.test(docId),
+    "ز.١ **والمشتقُّ من الدور يُسرَد تحت التسمية الجديدة**", docId.slice(0, 600));
+  check(!/مخزَّنة المفعَّلة/.test(docId),
+    "ز.٢ **ولا يُقال عنه «مخزَّن»**", docId.slice(0, 600));
 
   //  والمصدرُ الجلسةُ وحدها — لا قراءةَ من جسم الطلب في بناء الكتلة.
   const chatSrc = readFileSync(new URL("./ai/chat.ts", import.meta.url), "utf8");
