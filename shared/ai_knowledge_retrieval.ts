@@ -255,35 +255,42 @@ const FATH_PAST_INTERROGATIVES = ["متى", "من"];
  * **المساعدُ الماضي** — يلاصق «فتح» حيث لا تلاصقها الأداة: «متى **تم** فتح
  * أمر العمل؟» كانت تمرّ لأن سابقَ «فتح» فيها `تم` لا `متى`.
  *
- * **لكنّه لا يُسقطها دائماً**، خلافاً للأداتين: «**بعد ما** تم فتح أمر
- * العمل شنو التالي؟» جملتُها الماضيةُ **خلفيّةٌ** لسؤالٍ يليها، لا السؤالَ
- * نفسَه — فإسقاطُها يمحو الإشارةَ الوحيدة ويحرم سؤالَ متابعةٍ حقيقياً من
- * سياق صفحته. والشرطُ في `pastClauseIsTheQuestion` أدناه.
+ * **و«تم فتح» ماضٍ بالأصل**، مهما سبقه: «هل تم فتح أمر العمل؟» و«اليوم تم
+ * فتح أمر العمل؟» و«من تم فتح…» كلُّها أسئلةُ واقعةٍ ماضية. والاستثناءُ
+ * **صيغةٌ واحدة مؤكَّدة** في `FATH_SUBORDINATE_OPENER` أدناه.
  */
 const FATH_PAST_AUXILIARY = "تم";
 
 /**
- * **هل الجملةُ الماضيةُ هي السؤالُ نفسُه، أم خلفيّةٌ لسؤالٍ بعدها؟**
+ * **الصيغةُ التابعةُ الوحيدة** — «**بعد ما** تم فتح أمر العمل شنو التالي؟».
  *
- * `تم` تُسقط «فتح» **فقط** حين تفتح الرسالةَ («تم فتح أمر العمل؟») أو تتلو
- * أداةَ سؤالٍ عن الماضي («متى تم فتح…») — فالماضي حينئذٍ هو المسؤولُ عنه.
- * وإلّا فهي داخل جملةٍ تابعة، والسؤالُ يأتي بعدها.
+ * الماضي فيها **خلفيّةٌ** لسؤالٍ يليها لا السؤالَ نفسَه، فإسقاطُ «فتح»
+ * يمحو الإشارةَ الوحيدة ويحرم سؤالَ متابعةٍ حقيقياً من سياق صفحته.
  *
- * **وبلا مفردةٍ واحدة جديدة**: الشرطُ موضعُ `تم` نفسِها وما يسبقها من
- * الأداتين القائمتين — لا معجمَ متابعةٍ يُضاف ولا قائمةَ إشاراتٍ تُوسَّع.
+ * **ولا يُعمَّم من الصيغة إلى قاعدة**: ما لا يُثبِته شاهدٌ يبقى ماضياً.
+ * قاعدةٌ أوسع («ما يسبق `تم` ليس أداةَ سؤال») كانت تقرأ «هل» و«اليوم»
+ * تبعيّةً وهما ليستا كذلك — فضاقت إلى هاتين الكلمتين بترتيبهما.
  */
-function pastClauseIsTheQuestion(
+const FATH_SUBORDINATE_OPENER = ["بعد", "ما"];
+
+/**
+ * **هل يسبق `تم` افتتاحُ الجملة التابعة بعينه؟** — «بعد ما» مُلاصِقتين
+ * وبترتيبهما، لا حضورَهما في الرسالة.
+ */
+function opensSubordinateClause(
   tokens: readonly string[],
   auxIndex: number,
-  interrogatives: ReadonlySet<string>,
+  opener: readonly string[],
 ): boolean {
-  return auxIndex === 0 || interrogatives.has(tokens[auxIndex - 1]);
+  const start = auxIndex - opener.length;
+  if (start < 0) return false;
+  return opener.every((w, k) => tokens[start + k] === w);
 }
 
 /**
  * «فتح» + اسمٌ من مفردات التطبيق في الرسالة نفسِها — **وليست مسبوقةً
- * مباشرةً بما يجعلها واقعةً ماضية** (أداةٌ من الأداتين، أو `تم` في الموضع
- * الذي تكون فيه الجملةُ الماضيةُ هي السؤال).
+ * مباشرةً بما يجعلها واقعةً ماضية** (أداةٌ من الأداتين، أو `تم` خارجَ
+ * الصيغة التابعة الوحيدة).
  *
  * ويكفي **موضعٌ واحد** صالح: رسالةٌ تحمل «فتح» مرّتين، إحداهما ماضيةٌ
  * والأخرى طلبُ إجراء، تبقى سؤالَ إجراء.
@@ -293,12 +300,14 @@ function hasContextualFathAction(tokens: readonly string[]): boolean {
   const fath = normalizeSearchText(FATH_TOKEN);
   const interrogatives = new Set(FATH_PAST_INTERROGATIVES.map((m) => normalizeSearchText(m)));
   const aux = normalizeSearchText(FATH_PAST_AUXILIARY);
+  const opener = FATH_SUBORDINATE_OPENER.map((w) => normalizeSearchText(w));
   const readsAsPast = (i: number): boolean => {
     if (i === 0) return false;                       // «فتح» تفتح الرسالة ⟶ طلبُ إجراء
     const prev = tokens[i - 1];
     if (interrogatives.has(prev)) return true;       // متى/من ⟶ دائماً
     if (prev !== aux) return false;
-    return pastClauseIsTheQuestion(tokens, i - 1, interrogatives);
+    //  «تم فتح» ماضٍ بالأصل — إلّا حين يفتتحها «بعد ما».
+    return !opensSubordinateClause(tokens, i - 1, opener);
   };
   return tokens.some((t, i) => t === fath && !readsAsPast(i));
 }
