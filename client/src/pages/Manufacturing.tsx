@@ -3,6 +3,8 @@ import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useBranchSession } from "@/components/BranchGate";
+import { usePermissions } from "@/hooks/usePermissions";
+import { resolveManufacturingView } from "./manufacturing_view_mode";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -78,9 +80,16 @@ function OrderRow({ o }: { o: OrderCard }) {
 
 export default function Manufacturing() {
   const session = useBranchSession();
-  const isAdmin = !!session?.isAdmin;
-  const isManager = session?.role === "branch_manager";
-  const isExpert = session?.role === "prosthetics_expert";
+  const permissions = usePermissions();
+  //  **الدورُ وحدَه لا يكفي**: الشريطُ الجانبيُّ و`my-orders` يقبلان
+  //  `canWorkAsExpert` كذلك، فكانت الصفحةُ وحدها تقرأ الدورَ فتُرسل
+  //  صاحبَ القدرة إلى `/orders` فيرى لوحةً فارغة. والقرارُ صار في
+  //  `manufacturing_view_mode` ليُختبَر دخلاً وخرجاً.
+  const { isAdmin, isManager, expertOnly, endpoint } = resolveManufacturingView({
+    isAdmin: session?.isAdmin,
+    role: session?.role,
+    canWorkAsExpert: permissions.canWorkAsExpert,
+  });
   const accessible = session?.accessibleBranches ?? [];
 
   const [search, setSearch] = useState("");
@@ -106,11 +115,10 @@ export default function Manufacturing() {
     if (stageFilter !== "all") p.set("stage", stageFilter);
     if (statusFilter !== "all") p.set("status", statusFilter);
     if (branchFilter !== "all") p.set("branchId", branchFilter);
-    if (!isExpert && expertFilter !== "all") p.set("expertUserId", expertFilter);
+    if (!expertOnly && expertFilter !== "all") p.set("expertUserId", expertFilter);
     return p.toString();
-  }, [debouncedSearch, serviceFilter, stageFilter, statusFilter, branchFilter, expertFilter, isExpert]);
+  }, [debouncedSearch, serviceFilter, stageFilter, statusFilter, branchFilter, expertFilter, expertOnly]);
 
-  const endpoint = isExpert ? "/api/manufacturing/my-orders" : "/api/manufacturing/orders";
   const { data: orders = [], isLoading } = useQuery<OrderCard[]>({
     queryKey: [endpoint, qs],
     queryFn: async () => {
@@ -156,7 +164,7 @@ export default function Manufacturing() {
             تصنيع الأطراف والمساند
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {isExpert ? "الحالات المسندة إليك — تابع مراحل التصنيع وسجّل إعادة العمل والنتائج."
+            {expertOnly ? "الحالات المسندة إليك — تابع مراحل التصنيع وسجّل إعادة العمل والنتائج."
               : "متابعة أوامر التصنيع، مراحلها، وإعادة القالب والسوكت."}
           </p>
         </div>
@@ -193,7 +201,7 @@ export default function Manufacturing() {
             </SelectContent>
           </Select>
         )}
-        {isExpert && accessible.length > 1 && (
+        {expertOnly && accessible.length > 1 && (
           <Select value={branchFilter} onValueChange={setBranchFilter}>
             <SelectTrigger className="w-[140px]"><SelectValue placeholder="الفرع" /></SelectTrigger>
             <SelectContent>
