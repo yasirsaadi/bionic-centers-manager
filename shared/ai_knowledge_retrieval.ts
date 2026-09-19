@@ -238,9 +238,31 @@ const APP_PROCEDURE_MARKERS = [
 const FATH_TOKEN = "فتح";
 const FATH_OBJECT_MARKERS = ["صيانة", "أمر"];
 
-/** «فتح» + اسمٌ من مفردات التطبيق في الرسالة نفسِها. */
+/**
+ * **أدواتُ السؤال عن واقعةٍ ماضية** — «**متى** فتح أمر العمل؟» و«**من** فتح
+ * صيانة المريض؟».
+ *
+ * الزوجُ «فتح + صيانة/أمر» كان يمرّ **مهما كانت الصيغة**، فسؤالُ تاريخِ
+ * سجلٍّ يُقرأ سؤالَ إجراء — وهو بعينه الالتباسُ الذي وُضع الشرطُ لإغلاقه.
+ *
+ * **والفحصُ على الكلمة التي تسبق «فتح» مباشرةً** لا على حضورها في الرسالة:
+ * «**متى** يتم فتح صيانة؟» سؤالُ إجراءٍ حقيقيّ — أداةُ السؤال فيه لا تلاصق
+ * «فتح»، فلا تُسقطه. وكلمتان لا معجم.
+ */
+const FATH_PAST_PRECEDERS = ["متى", "من"];
+
+/**
+ * «فتح» + اسمٌ من مفردات التطبيق في الرسالة نفسِها — **وليست مسبوقةً
+ * مباشرةً بأداةِ سؤالٍ عن واقعةٍ ماضية**.
+ *
+ * ويكفي **موضعٌ واحد** صالح: رسالةٌ تحمل «فتح» مرّتين، إحداهما ماضيةٌ
+ * والأخرى طلبُ إجراء، تبقى سؤالَ إجراء.
+ */
 function hasContextualFathAction(tokens: readonly string[]): boolean {
-  return containsAny(tokens, [FATH_TOKEN]) && containsAny(tokens, FATH_OBJECT_MARKERS);
+  if (!containsAny(tokens, FATH_OBJECT_MARKERS)) return false;
+  const fath = normalizeSearchText(FATH_TOKEN);
+  const past = new Set(FATH_PAST_PRECEDERS.map((m) => normalizeSearchText(m)));
+  return tokens.some((t, i) => t === fath && !(i > 0 && past.has(tokens[i - 1])));
 }
 
 /** تطبيعٌ + تقطيعٌ **بلا إسقاط كلمات الاستفهام** — خلافاً لـ`tokenize()`. */

@@ -303,6 +303,24 @@ async function main() {
     "ط.٧ج٤ **و«فتح» وحدها لا تكفي**");
   check(!isCurrentPageOrWorkflowQuestion("كم صيانة عندنا اليوم؟"),
     "ط.٧ج٥ **والاسمُ وحده لا يجرّها** — «صيانة» بلا «فتح» تبقى كما كانت");
+  //  ── صيغةُ الماضي: سؤالُ تاريخِ سجلٍّ لا إجراء (ارتدادُ #340) ───────────
+  //  الزوجُ «فتح + صيانة/أمر» كان يمرّ مهما كانت الصيغة، فـ«متى فتح أمر
+  //  العمل؟» تُقرأ سؤالَ إجراء — وهو الالتباسُ الذي وُضع الشرطُ لإغلاقه.
+  check(!isCurrentPageOrWorkflowQuestion("متى فتح أمر العمل؟"),
+    "ط.٧د١ **«متى فتح أمر العمل؟» سؤالُ واقعةٍ ماضية لا إجراء**");
+  check(!isCurrentPageOrWorkflowQuestion("من فتح صيانة المريض؟"),
+    "ط.٧د٢ **و«من فتح صيانة المريض؟» كذلك**");
+  //  **والفحصُ على المُلاصِق لا على حضور الأداة**: «متى **يتم** فتح صيانة؟»
+  //  سؤالُ إجراءٍ حقيقيّ — أداةُ السؤال فيه لا تسبق «فتح» مباشرةً.
+  check(isCurrentPageOrWorkflowQuestion("متى يتم فتح صيانة؟"),
+    "ط.٧د٣ **و«متى يتم فتح صيانة؟» تبقى سؤالَ إجراء**");
+  //  والخمسةُ المقصودة لم تنحرف بهذا الحارس.
+  check(isCurrentPageOrWorkflowQuestion("كيف يتم فتح صيانة؟")
+    && isCurrentPageOrWorkflowQuestion("أريد فتح أمر عمل")
+    && isCurrentPageOrWorkflowQuestion("فتح أمر تصنيع")
+    && isCurrentPageOrWorkflowQuestion("كيف أفتح صيانة؟")
+    && isCurrentPageOrWorkflowQuestion("كيف أفتح أمر عمل؟"),
+    "ط.٧د٤ **والخمسةُ المقصودة كما هي**");
   //  وبقيّةُ المداخل لم تُمَسّ — عيّنةٌ من كلّ قائمة.
   check(isCurrentPageOrWorkflowQuestion("كيف أسجل مريضاً؟")
     && isCurrentPageOrWorkflowQuestion("ما خطوات الاعتماد؟")
