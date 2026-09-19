@@ -219,18 +219,15 @@ async function main() {
     "د.٤ب **ولا يُقال له «نطاقه فرعٌ واحد»** — وهو العطبُ بعينه");
   check(!zeroGuide.includes(VISIBLE_NOTE), "د.٤ج ولا يُقال إن المرشِّح يظهر له");
 
-  //  و`null` لغير المسؤول (كلّ الفروع) **كما كانت بحرفها**.
-  const nullScope = resolveAiAccess({
-    session: {
-      userId: U.rep, role: "reception", isAdmin: false, branchId: B,
-      accessibleBranches: null, displayName: "كل الفروع",
-      permissions: { canViewPatients: true },
-    },
-    branchName: `كربلاء ${MARK}`, scopeBranchId: B,
-  });
-  check(pageGuideFor(PAGE, nullScope).includes(VISIBLE_NOTE)
-    || nullScope.operationalBranches !== null,
-    "د.٥ و`null`/كلّ الفروع كما كانت");
+  //  ── `null` = كلّ الفروع — **والمسؤولُ هو مَن يُنتجها فعلاً** ──────────
+  //  `operationalBranchesOf` تُرجع `null` للمسؤول وحده؛ وغيرُ المسؤول
+  //  بـ`accessibleBranches: null` يسقط إلى احتياط `branchId` فيصير `[B]`.
+  //  فكانت حالةُ `null` تُبنى بجلسةٍ لا تُنتجها، ويمرّ التأكيدُ على `||`
+  //  يصدُق كلّما **لم** تكن `null` — فلا يفحص شيئاً. فصار المرجعُ `adm`.
+  same("د.٥أ **ونطاقُ المسؤول `null` فعلاً** — كلّ الفروع",
+    adm.operationalBranches, null);
+  check(pageGuideFor(PAGE, adm).includes(VISIBLE_NOTE),
+    "د.٥ و`null`/كلّ الفروع ⟶ المرشِّحُ يظهر", pageGuideFor(PAGE, adm).slice(0, 600));
 
   // ═══ هـ: لا يُستنتَج وجودُ زرٍّ لصفٍّ بعينه ═════════════════════════════
   console.log("\n── هـ: حالةُ الصفّ ليست عنده ──");
