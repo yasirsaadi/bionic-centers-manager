@@ -369,12 +369,14 @@ function knowledgeBlock(matches: KnowledgeMatch[]): string {
  *
  * ══ ⚠ تصحيحٌ ثانٍ — و«مخزَّنة» كانت غيرَ دقيقة أيضاً (٢٠٢٦-٠٩-١٩) ════════
  * التصحيحُ الأوّل سمّاها «أعلاماً **مخزَّنة**» — وذاك خطأٌ في الاتجاه
- * المقابل: `buildStoredPermissions` **تشتقّ** ثمانيةً منها ولا تقرؤها من
- * عمود — `canAddExpenses` (من `canManageAccounting`) · `canEnterSessions`
- * و`canManageSessionTargets` و`canViewSessionsReport` (من دور المسؤول) ·
- * `canManageSettings` و`canManageUsers` (من دور مدير الفرع) ·
- * `canWorkAsExpert` و`canWriteMedicalExam` (من الدور). فطبيبٌ عمودُه
- * `can_write_medical_exam = false` يُسرَد تحت لافتةٍ تقول «مخزَّنة».
+ * المقابل: ثمانيةٌ منها في `buildStoredPermissions` **مركَّبة** — تُقرأ من
+ * عمودها **وتُرفَع أيضاً** من الدور أو من `isAdmin` أو من عَلَمٍ آخر
+ * (`OR`، لا استبدال): `canAddExpenses` (عمودُه **أو** `canManageAccounting`) ·
+ * `canEnterSessions` و`canManageSessionTargets` و`canViewSessionsReport`
+ * (عمودُها **أو** دورُ المسؤول) · `canManageSettings` و`canManageUsers`
+ * (عمودُها **أو** دورُ مدير الفرع) · `canWorkAsExpert` و`canWriteMedicalExam`
+ * (عمودُها **أو** الدور). فطبيبٌ عمودُه `can_write_medical_exam = false`
+ * يحملها من دوره، ويُسرَد تحت لافتةٍ تقول «مخزَّنة».
  *
  * فصارت **«أعلامُ الصلاحيات المفعَّلة في الجلسة»** — وهو ما هي فعلاً: ما
  * تحمله الجلسة، بعضُه من عمود الحساب وبعضُه مشتقٌّ من الدور أو من عَلَمٍ
