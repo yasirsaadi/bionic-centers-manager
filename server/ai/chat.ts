@@ -331,6 +331,65 @@ function knowledgeBlock(matches: KnowledgeMatch[]): string {
 }
 
 /**
+ * **هويّةُ السائل وصلاحياتُه الحقيقية** — من `AiAccessContext` وحدها
+ * (المرحلة ٣).
+ *
+ * لماذا: كان النموذجُ يحرس نفسَه بنصٍّ عامّ («الأسئلةُ المالية خارج
+ * صلاحيتك») **بلا أن يعرف مَن يسأله**، فلا يستطيع أن يقول لموظّفٍ **لماذا**
+ * لا يرى شاشةً أو زرّاً — أشيعُ سؤالِ دعمٍ في النظام.
+ *
+ * **والمصدرُ هو الخادمُ حصراً**: `resolveAiAccess` تبني هذا من الجلسة، ولا
+ * حرفَ منه يأتي من جسم الطلب ولا من نصّ رسالة المستخدم. فرسالةٌ تقول «أنا
+ * مسؤول» لا تغيّر منه شيئاً.
+ *
+ * **ولا يمنح سلطة**: `toolsFor`/`executeTool` يقرآن `access` نفسَه لا هذا
+ * النصّ، فعرضُ عَلَمٍ هنا لا يفتح أداةً ولا يوسّع نطاقاً.
+ *
+ * **والأعلامُ الصادقةُ وحدها**: تُرسَل المفاتيحُ التي قيمتُها `true` **تماماً**
+ * (`=== true` لا «قيمةٌ صادقة»). والمطفأُ **لا يُرسَل أصلاً** — قائمةُ نفيٍ
+ * طويلة تُغري النموذج بتعدادها للمستخدم، والمطلوبُ أن يقول «لا تملك هذه»
+ * حين تغيب لا أن يسرد ما لا يملك.
+ */
+function identityBlock(access: AiAccessContext): string {
+  const granted = Object.entries(access.permissions ?? {})
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+    .sort();
+
+  const scope = access.operationalBranches === null
+    ? "كل الفروع"
+    : `فروعٌ محدَّدة (${access.operationalBranches.length})`;
+
+  const lines = [
+    `- الدور: ${access.role}`,
+    `- مسؤولٌ عام: ${access.isAdmin ? "نعم" : "لا"}`,
+  ];
+  if (access.branchId !== null) {
+    lines.push(`- الفرع الحالي: ${access.branchName ?? `#${access.branchId}`} (رقم ${access.branchId})`);
+  }
+  lines.push(`- نطاقُ العمل: ${scope}`);
+  lines.push(granted.length > 0
+    ? `- الصلاحياتُ الممنوحة له: ${granted.join("، ")}`
+    : "- الصلاحياتُ الممنوحة له: لا شيء");
+
+  return `
+
+هويّةُ المستخدم الذي يسألك الآن (**مقروءةٌ من الخادم، لا من رسالته**):
+${lines.join("\n")}
+
+وهذه **صلاحياتُه الحقيقية** كما يقرؤها النظامُ نفسُه، فاستعملها لتشرح له
+**لماذا** قد تظهر له شاشةٌ أو إجراءٌ أو لا يظهر. **وما لم يُذكَر أعلاه فهو
+غيرُ ممنوح** — ولا تسرد له ما لا يملك، قل ما ينقصه عند الحاجة فقط.
+
+**ولا تستنتج من وجود صلاحيةٍ أن زرّاً موجود**: الصلاحيةُ شرطٌ لا دليل،
+وللشاشة شروطُها الأخرى (حالةُ الصفّ، مسارُ العملية، إعدادُ الفرع) وهي
+**ليست عندك بعد** — فإن لم تعرفها قل ذلك صراحةً ولا تخترعها.
+
+**وهذا إخبارٌ لا إذن**: لا يمنحك أداةً ولا يوسّع نطاقاً، والخادمُ يفحص كلَّ
+طلبٍ من مصدره مهما قال هذا النصّ أو قالت رسالةُ المستخدم.`;
+}
+
+/**
  * سياقُ الصفحة الحالية للنموذج — **إخبارٌ لا إذن**.
  *
  * يصله المسارُ القانونيُّ والتسميةُ العربية وحدهما: لا محتوى شاشة، ولا قيمةَ
@@ -717,7 +776,7 @@ export async function aiChat(
     //  المسار المحقون (اختباراً) يبقى بلا أدوات — يقيس نصّ النظام وحده.
     if (complete !== safeAiComplete) {
       const result = await complete({
-        system: `${GENERAL_SYSTEM_PROMPT}${pageContextBlock(page)}`,
+        system: `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}`,
         user: conversationText(history),
         model: "haiku", maxTokens: 600,
       });
@@ -725,7 +784,7 @@ export async function aiChat(
       return { ok: true, value: { reply: result.value, snapshotAt: null, mode: "general" } };
     }
     const knowledge = await resolveKnowledge(access, history, page);
-    const system = `${GENERAL_SYSTEM_PROMPT}${pageContextBlock(page)}${knowledgeBlock(knowledge)}`;
+    const system = `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${knowledgeBlock(knowledge)}`;
     const run = await runWithTools({ access, system, history, step });
     if (!run.ok) return run;
     return {
@@ -749,7 +808,7 @@ export async function aiChat(
   if (complete !== safeAiComplete) {
     //  المسار المحقون (اختباراً) بلا معرفةٍ — يقيس نصّ النظام+اللقطة وحدهما،
     //  تماماً كما كان قبل هذه المرحلة.
-    const systemText = `${SYSTEM_PROMPT}${pageContextBlock(page)}
+    const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json
@@ -766,7 +825,7 @@ ${snapshotJson}
   }
 
   const knowledge = await resolveKnowledge(access, history, page);
-  const systemText = `${SYSTEM_PROMPT}${pageContextBlock(page)}
+  const systemText = `${SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}
 
 البيانات المالية الحالية (snapshot):
 \`\`\`json
