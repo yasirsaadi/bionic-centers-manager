@@ -239,26 +239,78 @@ const FATH_TOKEN = "فتح";
 const FATH_OBJECT_MARKERS = ["صيانة", "أمر"];
 
 /**
- * **سابقاتٌ تدلّ على قراءة «فتح» واقعةً ماضية** — «**متى** فتح أمر العمل؟»
- * و«**من** فتح صيانة المريض؟» و«**تم** فتح أمر العمل؟».
+ * **أداتا سؤالٍ عن واقعةٍ ماضية** — «**متى** فتح أمر العمل؟» و«**من** فتح
+ * صيانة المريض؟». تُسقطان «فتح» متى لاصقَتاها، بلا شرطٍ آخر.
  *
  * الزوجُ «فتح + صيانة/أمر» كان يمرّ **مهما كانت الصيغة**، فسؤالُ تاريخِ
  * سجلٍّ يُقرأ سؤالَ إجراء — وهو بعينه الالتباسُ الذي وُضع الشرطُ لإغلاقه.
  *
  * **والفحصُ على الكلمة التي تسبق «فتح» مباشرةً** لا على حضورها في الرسالة:
  * «**متى** يتم فتح صيانة؟» سؤالُ إجراءٍ حقيقيّ — أداةُ السؤال فيه لا تلاصق
- * «فتح»، فلا تُسقطه.
- *
- * **و«تم» منها لأنها تلاصق «فتح» حيث لا تلاصقها الأداة**: «متى **تم** فتح
- * أمر العمل؟» كانت تمرّ لأن سابقَ «فتح» فيها `تم` لا `متى`. **و«يتم» ليست
- * منها** — وهي الفارقُ كلُّه: «متى **يتم** فتح صيانة؟» سؤالُ إجراءٍ يبقى
- * مفتوحاً. وثلاثُ كلماتٍ لا معجم.
+ * «فتح»، فلا تُسقطه. **و«يتم» ليست من هؤلاء** — وهي الفارقُ كلُّه.
  */
-const FATH_PAST_PRECEDERS = ["متى", "من", "تم"];
+const FATH_PAST_INTERROGATIVES = ["متى", "من"];
+
+/**
+ * **المساعدُ الماضي** — يلاصق «فتح» حيث لا تلاصقها الأداة: «متى **تم** فتح
+ * أمر العمل؟» كانت تمرّ لأن سابقَ «فتح» فيها `تم` لا `متى`.
+ *
+ * **و«تم فتح» ماضٍ بالأصل**، مهما سبقه: «هل تم فتح أمر العمل؟» و«اليوم تم
+ * فتح أمر العمل؟» و«من تم فتح…» كلُّها أسئلةُ واقعةٍ ماضية. والاستثناءُ
+ * **شرطان مجتمعان** أدناه: افتتاحُ الجملة التابعة **وصيغةُ متابعةٍ
+ * مؤكَّدة**.
+ */
+const FATH_PAST_AUXILIARY = "تم";
+
+/**
+ * **افتتاحُ الجملة التابعة** — «**بعد ما** تم فتح…». شرطٌ أوّلُ لا يكفي
+ * وحدَه: «بعد ما تم فتح أمر العمل **متى تم إغلاقه؟**» تابعةُ الافتتاح
+ * وسؤالُها مع ذلك عن واقعةٍ ماضيةٍ أخرى.
+ */
+const FATH_SUBORDINATE_OPENER = ["بعد", "ما"];
+
+/**
+ * **صيغتا المتابعة المؤكَّدتان** — شرطٌ ثانٍ، ومعهما وحدَهما تُقرأ الجملةُ
+ * الماضيةُ خلفيّةً لسؤالٍ يليها.
+ *
+ * **ولا يُعمَّم من صيغةٍ إلى معجم**: هاتان ما أثبته شاهد، وما عداهما يبقى
+ * ماضياً. وهما **محلّيّتان هنا** — لا تدخلان `APP_PROCEDURE_MARKERS` ولا
+ * أيَّ قائمةِ إشاراتٍ عامّة، فلا تُرجِّح «التالي» مقالةً في سؤالٍ آخر.
+ */
+const FATH_FOLLOWUP_FORMS: readonly (readonly string[])[] = [
+  ["شنو", "التالي"],
+  ["ما", "الخطوة", "التالية"],
+];
+
+/** تتابعٌ حرفيٌّ من التوكِنات في الرسالة — لا حضورُ كلماتِه متفرّقةً. */
+function containsPhrase(tokens: readonly string[], phrase: readonly string[]): boolean {
+  if (phrase.length === 0 || phrase.length > tokens.length) return false;
+  for (let i = 0; i + phrase.length <= tokens.length; i++) {
+    if (phrase.every((w, k) => tokens[i + k] === w)) return true;
+  }
+  return false;
+}
+
+/**
+ * **هل الجملةُ الماضيةُ خلفيّةٌ لسؤال متابعةٍ مؤكَّد؟** — الشرطان مجتمعان:
+ * «بعد ما» تُلاصِق `تم` وبترتيبها، **وإحدى صيغتَي المتابعة** في الرسالة.
+ */
+function isConfirmedFollowupClause(
+  tokens: readonly string[],
+  auxIndex: number,
+  opener: readonly string[],
+  forms: readonly (readonly string[])[],
+): boolean {
+  const start = auxIndex - opener.length;
+  if (start < 0) return false;
+  if (!opener.every((w, k) => tokens[start + k] === w)) return false;
+  return forms.some((f) => containsPhrase(tokens, f));
+}
 
 /**
  * «فتح» + اسمٌ من مفردات التطبيق في الرسالة نفسِها — **وليست مسبوقةً
- * مباشرةً بإحدى سابقات الماضي أعلاه**.
+ * مباشرةً بما يجعلها واقعةً ماضية** (أداةٌ من الأداتين، أو `تم` خارجَ
+ * الصيغة التابعة الوحيدة).
  *
  * ويكفي **موضعٌ واحد** صالح: رسالةٌ تحمل «فتح» مرّتين، إحداهما ماضيةٌ
  * والأخرى طلبُ إجراء، تبقى سؤالَ إجراء.
@@ -266,8 +318,20 @@ const FATH_PAST_PRECEDERS = ["متى", "من", "تم"];
 function hasContextualFathAction(tokens: readonly string[]): boolean {
   if (!containsAny(tokens, FATH_OBJECT_MARKERS)) return false;
   const fath = normalizeSearchText(FATH_TOKEN);
-  const past = new Set(FATH_PAST_PRECEDERS.map((m) => normalizeSearchText(m)));
-  return tokens.some((t, i) => t === fath && !(i > 0 && past.has(tokens[i - 1])));
+  const interrogatives = new Set(FATH_PAST_INTERROGATIVES.map((m) => normalizeSearchText(m)));
+  const aux = normalizeSearchText(FATH_PAST_AUXILIARY);
+  const opener = FATH_SUBORDINATE_OPENER.map((w) => normalizeSearchText(w));
+  const forms = FATH_FOLLOWUP_FORMS.map((f) => f.map((w) => normalizeSearchText(w)));
+  const readsAsPast = (i: number): boolean => {
+    if (i === 0) return false;                       // «فتح» تفتح الرسالة ⟶ طلبُ إجراء
+    const prev = tokens[i - 1];
+    if (interrogatives.has(prev)) return true;       // متى/من ⟶ دائماً
+    if (prev !== aux) return false;
+    //  «تم فتح» ماضٍ بالأصل — إلّا حين يفتتحها «بعد ما» **ومعها** صيغةُ
+    //  متابعةٍ مؤكَّدة. والافتتاحُ وحدَه لا يكفي.
+    return !isConfirmedFollowupClause(tokens, i - 1, opener, forms);
+  };
+  return tokens.some((t, i) => t === fath && !readsAsPast(i));
 }
 
 /** تطبيعٌ + تقطيعٌ **بلا إسقاط كلمات الاستفهام** — خلافاً لـ`tokenize()`. */
