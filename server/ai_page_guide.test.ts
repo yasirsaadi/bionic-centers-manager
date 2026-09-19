@@ -180,13 +180,54 @@ async function main() {
   check(/\*\*لا يملكها\*\*/.test(docGuide), "ج.٥ **والدليلُ يقول ذلك له**", docGuide.slice(-500));
   check(/الطبيبُ بلا صفةِ مسؤولٍ عامّ ليس منهم/.test(docGuide), "ج.٦ ويسمّي الحالةَ صراحةً");
 
-  // ═══ د: مرشِّحُ الفرع يتبع النطاق الفعليّ ══════════════════════════════
+  // ═══ د: مرشِّحُ الفرع يتبع النطاق الفعليّ — **والحالاتُ الأربع متمايزة** ══
+  //  `operationalBranches`: `null` = كلّ الفروع · `[]` = **لا فرعَ إطلاقاً** ·
+  //  `[x]` = فرعٌ واحد · `[x,y]` = أكثر. وصفرُ فروعٍ **ليس** فرعاً واحداً:
+  //  كان الدليلُ يقرؤهما سواءً فيشرح الإخفاءَ بسببٍ كاذب.
   console.log("\n── د: مرشِّحُ الفرع ──");
-  check(/\*\*لا يظهر له\*\*/.test(pageGuideFor(PAGE, rep)),
-    "د.١ فرعٌ واحد ⟶ لا يظهر، **وليس نقصَ صلاحية**");
-  check(/\*\*يظهر له\*\*/.test(pageGuideFor(PAGE, adm)), "د.٢ والمسؤولُ يظهر له");
+  const ONE_BRANCH_NOTE = "**لا يظهر له** — لأنّ نطاقه فرعٌ واحد؛ وهذا ليس نقصَ صلاحية.";
+  const NO_BRANCH_NOTE = "**لا يظهر له** — لا يوجد فرع في نطاق عمله؛ راجع الإدارة.";
+  const VISIBLE_NOTE = "**يظهر له** — لأنّ نطاقه أكثرُ من فرع.";
+
+  const repGuide = pageGuideFor(PAGE, rep);
+  same("د.١أ **ونطاقُ الموظّف فرعٌ واحد فعلاً**", rep.operationalBranches, [B]);
+  check(repGuide.includes(ONE_BRANCH_NOTE),
+    "د.١ فرعٌ واحد ⟶ لا يظهر، **وليس نقصَ صلاحية**", repGuide.slice(0, 600));
+  check(!repGuide.includes(NO_BRANCH_NOTE),
+    "د.١ب **ولا يُقال له إنه بلا فرع**");
+
+  check(pageGuideFor(PAGE, adm).includes(VISIBLE_NOTE), "د.٢ والمسؤولُ يظهر له");
   const multi = mk("reception", false, U.rep, {}, [B, B2]);
-  check(/\*\*يظهر له\*\*/.test(pageGuideFor(PAGE, multi)), "د.٣ ومتعدّدُ الفروع كذلك");
+  same("د.٣أ **ونطاقُه فرعان فعلاً**", multi.operationalBranches, [B, B2]);
+  check(pageGuideFor(PAGE, multi).includes(VISIBLE_NOTE), "د.٣ ومتعدّدُ الفروع كذلك");
+
+  //  ── صفرُ فروع: حسابٌ بلا `branch_ids` ولا `branch_id` (العمودان nullable) ──
+  //  **و`mk` لا تصلح هنا**: تمرّر `branchId: B` فيلتقطه احتياطُ
+  //  `operationalBranchesOf` ويصير النطاقُ `[B]` — فيمرّ الاختبارُ للسبب الخطأ.
+  const zero = resolveAiAccess({
+    session: {
+      userId: U.rep, role: "reception", isAdmin: false, branchId: null,
+      accessibleBranches: [], displayName: "بلا فرع", permissions: { canViewPatients: true },
+    },
+    branchName: null, scopeBranchId: null,
+  });
+  same("د.٤أ **والنطاقُ مصفوفةٌ فارغة فعلاً**", zero.operationalBranches, []);
+  const zeroGuide = pageGuideFor(PAGE, zero);
+  check(zeroGuide.includes(NO_BRANCH_NOTE),
+    "د.٤ **صفرُ فروعٍ ⟶ سببُه هو، لا «فرعٌ واحد»**", zeroGuide.slice(0, 600));
+  check(!zeroGuide.includes(ONE_BRANCH_NOTE),
+    "د.٤ب **ولا يُقال له «نطاقه فرعٌ واحد»** — وهو العطبُ بعينه");
+  check(!zeroGuide.includes(VISIBLE_NOTE), "د.٤ج ولا يُقال إن المرشِّح يظهر له");
+
+  //  ── `null` = كلّ الفروع — **والمسؤولُ هو مَن يُنتجها فعلاً** ──────────
+  //  `operationalBranchesOf` تُرجع `null` للمسؤول وحده؛ وغيرُ المسؤول
+  //  بـ`accessibleBranches: null` يسقط إلى احتياط `branchId` فيصير `[B]`.
+  //  فكانت حالةُ `null` تُبنى بجلسةٍ لا تُنتجها، ويمرّ التأكيدُ على `||`
+  //  يصدُق كلّما **لم** تكن `null` — فلا يفحص شيئاً. فصار المرجعُ `adm`.
+  same("د.٥أ **ونطاقُ المسؤول `null` فعلاً** — كلّ الفروع",
+    adm.operationalBranches, null);
+  check(pageGuideFor(PAGE, adm).includes(VISIBLE_NOTE),
+    "د.٥ و`null`/كلّ الفروع ⟶ المرشِّحُ يظهر", pageGuideFor(PAGE, adm).slice(0, 600));
 
   // ═══ هـ: لا يُستنتَج وجودُ زرٍّ لصفٍّ بعينه ═════════════════════════════
   console.log("\n── هـ: حالةُ الصفّ ليست عنده ──");
