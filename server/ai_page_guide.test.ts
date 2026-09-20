@@ -51,6 +51,7 @@ import {
   MANUFACTURING_PAGE_PATH, MANUFACTURING_ORDER_PAGE_PATH,
   NO_EXAM_REVIEW_PAGE_PATH, RETURNED_CHARGES_PAGE_PATH,
   DISCOUNT_APPROVALS_PAGE_PATH, PAYMENT_CORRECTIONS_PAGE_PATH, DAILY_REVIEW_PAGE_PATH,
+  REPORTS_PAGE_PATH, DAILY_PATIENT_REPORT_PAGE_PATH, REVENUES_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -945,6 +946,51 @@ async function main() {
   same("ل.٢٢ دليل الخصومات ساكن", pageGuideFor(DISC, rep), pageGuideFor(DISC, adm));
   same("ل.٢٣ دليل التصحيح ساكن", pageGuideFor(PCOR, rep), pageGuideFor(PCOR, adm));
   same("ل.٢٤ دليل المراجعة ساكن", pageGuideFor(DREV, rep), pageGuideFor(DREV, adm));
+  // ═══ م: شاشات التقارير والإيرادات ═══════════════════════════════════════
+  console.log("\n── م: التقارير والتقرير اليومي وإيرادات الفروع ──");
+  const REP = resolvePageContext(REPORTS_PAGE_PATH);
+  const DPR = resolvePageContext(DAILY_PATIENT_REPORT_PAGE_PATH);
+  const REV = resolvePageContext(REVENUES_PAGE_PATH);
+  same("م.١ مسار التقارير قانوني", REP?.path, REPORTS_PAGE_PATH);
+  same("م.٢ مسار التقرير اليومي قانوني", DPR?.path, DAILY_PATIENT_REPORT_PAGE_PATH);
+  same("م.٣ مسار الإيرادات قانوني", REV?.path, REVENUES_PAGE_PATH);
+
+  const rpg = pageGuideFor(REP, rep);
+  check(/لفرع واحد في كل مرة/.test(rpg) && /لا يوجد خيار «كل الفروع»/.test(rpg),
+    "م.٤ التقرير التفصيلي فرع واحد");
+  check(/canViewReports/.test(rpg) && /تطابق الفرع/.test(rpg), "م.٥ حارس التقرير لغير المسؤول");
+  check(/كل تاريخ الفرع/.test(rpg) && /45 يوماً افتراضياً/.test(rpg)
+    && /اختيار نافذة أصغر لا يصغّر أرقام الرأس/.test(rpg),
+    "م.٦ الرأس كامل التاريخ والسجل نافذة مستقلة");
+  check(/دفعات ديون قديمة/.test(rpg) && /cost_entries/.test(rpg) && /المقبوض ناقص المصاريف/.test(rpg),
+    "م.٧ مكونات اليوم ومعنى الصافي");
+  check(/المتبقي الحالي من كلفة عمر الملف/.test(rpg), "م.٨ المتبقي في دفعة الدين عمر الملف");
+
+  const dpg = pageGuideFor(DPR, rep);
+  check(/يوم بغداد المختار/.test(dpg) && /من الأقدم إلى الأحدث/.test(dpg), "م.٩ ترتيب تقرير الزيارات");
+  check(/canViewReports/.test(dpg) && /«كل الفروع»/.test(dpg) && /عمود الفرع يظهر فقط/.test(dpg),
+    "م.١٠ نطاق التقرير اليومي");
+  check(/canManageAccounting/.test(dpg) && /financial = null/.test(dpg),
+    "م.١١ المال في التقرير اليومي مشروط بالمحاسبة");
+  check(/المقبوض.*منفصل عن.*الكلفة المسجلة/.test(dpg), "م.١٢ لا يخلط المقبوض بالمبيعات");
+  check(/Excel.*ورقة ثانية/.test(dpg) && /حفظها PDF/.test(dpg), "م.١٣ التصدير يطابق الشاشة");
+  check(/لا ترسل\s+مرشح موظف من واجهتها/.test(dpg), "م.١٤ لا يخترع فلتر موظف ظاهر");
+
+  const rvg = pageGuideFor(REV, rep);
+  check(/AdminGate/.test(rvg) && /\/api\/verify-admin/.test(rvg) && /admin_verified/.test(rvg),
+    "م.١٥ بوابة الإيرادات كود واجهة");
+  check(/معرفة كود AdminGate\s+لا توسّع نطاق بيانات/.test(rvg), "م.١٦ الكود لا يوسّع النطاق الخادمي");
+  check(/sold = مجموع total_cost/.test(rvg) && /paid = مجموع الدفعات الفعلية/.test(rvg),
+    "م.١٧ معنى أرقام الإجمالي");
+  check(/cost_entries المنشأة في يوم الخادم/.test(rvg) && /كل الدفعات المحصلة في ذلك اليوم/.test(rvg),
+    "م.١٨ معنى أرقام اليوم");
+  check(/revenue يساوي paid/.test(rvg), "م.١٩ حقل revenue لا يعني رقماً رابعاً");
+  check(/daily=true/.test(rvg) && /يحذف query string/.test(rvg) && /لا تجزم/.test(rvg),
+    "م.٢٠ وضع الإيرادات لا يُستنتج من pagePath");
+
+  same("م.٢١ دليل التقارير ساكن", pageGuideFor(REP, rep), pageGuideFor(REP, adm));
+  same("م.٢٢ دليل التقرير اليومي ساكن", pageGuideFor(DPR, rep), pageGuideFor(DPR, adm));
+  same("م.٢٣ دليل الإيرادات ساكن", pageGuideFor(REV, rep), pageGuideFor(REV, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
