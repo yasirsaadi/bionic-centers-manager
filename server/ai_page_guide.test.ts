@@ -51,6 +51,10 @@ import {
   MANUFACTURING_PAGE_PATH, MANUFACTURING_ORDER_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
+import {
+  BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
+  STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES,
+} from "@shared/manufacturing";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
