@@ -188,7 +188,7 @@ async function main() {
     "أ.١١ **والدليلُ يصل الوضعَ الماليَّ أيضاً**", seen[0].system.slice(-900));
 
   // ═══ ب: ولا يصل صفحةً غير مخصّصة ══════════════════════════════════════
-  console.log("\\n── ب: صفحةٌ غير مخصّصة لا تأخذه ──");
+  console.log("\n── ب: صفحةٌ غير مخصّصة لا تأخذه ──");
   const UNGUIDED = { path: "/__unguided__", label: "صفحة بلا دليل" } as any;
   seen.length = 0;
   await chat(rep, ask("شنو أسوي هنا؟"), UNGUIDED);
@@ -1133,7 +1133,7 @@ async function main() {
   same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
   same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
   // ═══ ض: النظام المحاسبي وحدود الصلاحية والحقيقة المالية ═════════════
-  console.log("\\n── ض: النظام المحاسبي ──");
+  console.log("\n── ض: النظام المحاسبي ──");
   const ACC = resolvePageContext(ACCOUNTING_PAGE_PATH);
   same("ض.١ مسار المحاسبة قانوني", ACC?.path, ACCOUNTING_PAGE_PATH);
   const acg = pageGuideFor(ACC, rep);
