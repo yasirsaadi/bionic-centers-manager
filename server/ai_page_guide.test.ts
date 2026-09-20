@@ -702,7 +702,11 @@ async function main() {
   check(/رمز المريض الحالي/.test(pg) && /الرمز القديم\s+بعد دمج الملفات/.test(pg), "ط.٧ السجل يشرح البحث بالرمزين");
   check(/الحالة المرضية/.test(pg) && /لا يوجد بحثٌ مكتوب/.test(pg) && /لا يُرسل\s+مرشّح التاريخ/.test(pg),
     "ط.٨ السجل يشرح الحالة وأولوية البحث على التاريخ");
-  check(/Excel/.test(pg) && /PDF/.test(pg) && /canViewPayments/.test(pg), "ط.٩ السجل يشرح التصدير وحجب المال");
+  check(/Excel/.test(pg) && /PDF/.test(pg)
+    && /10000/.test(pg) && /10,000 صف كحد أقصى/.test(pg)
+    && /التصدير ليس كاملاً/.test(pg)
+    && /canViewPayments/.test(pg),
+    "ط.٩ السجل يشرح سقف التصدير وحجب المال");
   check(/لا تستنتج من هذا الدليل أن زرّاً بعينه ظاهر الآن/.test(pg), "ط.١٠ السجل لا يخترع حالة صف");
 
   const ng = pageGuideFor(NEWP, rep);
@@ -732,7 +736,12 @@ async function main() {
   const eg = pageGuideFor(EDT, rep);
   check(/المسؤول العام أو مدير الفرع فقط/.test(eg) && /checkRequiredPatientData/.test(eg),
     "ط.١٧ التعديل يشرح الكلفة وفحص الاكتمال المشروط");
-  check(/تعديل إداري فقط/.test(eg), "ط.١٨ الملف القديم لا يُرفض عند تعديل إداري فقط");
+  for (const field of ["age", "height", "weight", "isAmputee", "amputationSite"]) {
+    check(eg.includes(`\`${field}\``), `ط.١٨ الحقل المحروس ${field} مذكور`);
+  }
+  check(/إذا لم تتغيّر هذه القيم/.test(eg)
+    && /التشخيص أو الإصابة أو المسند أو حقول سريرية أخرى/.test(eg),
+    "ط.١٨أ غير الخمسة لا يفعّل فحص الاكتمال");
 
   const fg = pageGuideFor(FUP, rep);
   check(/العلاج الطبيعي/.test(fg) && /٧ أيام أو أكثر/.test(fg), "ط.١٩ غرض المتابعات مضبوط");
