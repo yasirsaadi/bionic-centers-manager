@@ -903,6 +903,9 @@ async function main() {
   const dc = pageGuideFor(DISC, rep);
   check(dc.includes(`«${DISCOUNT_HISTORY_TITLE}»`) && /لا يُنشئ\s+طلباً معلّقاً جديداً/.test(dc),
     "ل.٤ الخصومات الجديدة فورية والصفحة تاريخية");
+  check(/«بانتظار الإكمال»/.test(dc) && /«مكتمل»/.test(dc)
+    && /«مرفوض»/.test(dc) && /«ملغى»/.test(dc),
+    "ل.٤أ دليل الخصومات يستخدم تسميات فلاتر الشاشة الحالية");
   check(/canApproveDiscount/.test(dc) && /مقيداً بفروعه/.test(dc), "ل.٥ صلاحية الخصم ونطاق الفرع");
   check(/حتى 300 طلب فقط/.test(dc) && /بالأقدم طلباً أولاً/.test(dc) && /COUNT كامل/.test(dc),
     "ل.٦ حد قائمة الخصومات وترتيبها مقابل العداد");
@@ -926,6 +929,8 @@ async function main() {
   const drg = pageGuideFor(DREV, rep);
   check(/للقراءة فقط/.test(drg) && /للمسؤول العام فقط/.test(drg) && /العلاج الطبيعي خارج/.test(drg),
     "ل.١٦ حدود المراجعة اليومية");
+  check(/حقل التاريخ يضع max=اليوم/.test(drg) && /زر اليوم التالي يتوقف عند اليوم/.test(drg),
+    "ل.١٦أ قيد التاريخ موصوف كواجهة لا كحارس خادمي");
   for (const label of Object.values(DAILY_REVIEW_FAMILY_LABELS))
     check(drg.includes(`«${label}»`), `ل.١٧ أسرة ${label} مذكورة`);
   check(/created عمداً/.test(drg) && /فلا يُعرض الحدث نفسه مرتين/.test(drg),
