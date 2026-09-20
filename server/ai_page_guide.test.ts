@@ -56,7 +56,7 @@ import {
   DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
   SESSION_ENTRY_PAGE_PATH, SESSION_TARGETS_PAGE_PATH,
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
-  SURVEYS_PAGE_PATH,
+  STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -189,7 +189,7 @@ async function main() {
 
   // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
   console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/statistics", "/accounting", "/"]) {
+  for (const other of ["/accounting"]) {
     seen.length = 0;
     await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
     check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
@@ -197,8 +197,8 @@ async function main() {
   seen.length = 0;
   await chat(rep, ask("شنو أسوي هنا؟"), null);
   check(!seen[0].system.includes(GUIDE_MARK), "ب.٢ ولا بلا سياقِ صفحة");
-  same("ب.٣ والدالّةُ نفسُها تُرجع فارغاً لغيرها",
-    pageGuideFor(resolvePageContext("/statistics"), rep), "");
+  same("ب.٣ والدالّةُ نفسها تُرجع فارغاً لصفحةٍ بلا دليل",
+    pageGuideFor(resolvePageContext("/accounting"), rep), "");
 
   // ═══ ج: الصلاحيةُ من الدالّة القانونية وحدها ══════════════════════════
   console.log("\n── ج: canCompleteReceptionSale هي المرجع ──");
@@ -1133,6 +1133,41 @@ async function main() {
   same("ع.٢٤ دليل الأهداف ساكن", pageGuideFor(STGT, rep), pageGuideFor(STGT, adm));
   same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
   same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
+  // ═══ ص: الإحصاءات وحدود مصادرها ═══════════════════════════════════════
+  console.log("\n── ص: الإحصاءات ──");
+  const STAT = resolvePageContext(STATISTICS_PAGE_PATH);
+  same("ص.١ مسار الإحصاءات قانوني", STAT?.path, STATISTICS_PAGE_PATH);
+  const stg = pageGuideFor(STAT, rep);
+  check(/showStatistics/.test(stg) && /canViewReports/.test(stg) && /canViewPatients/.test(stg),
+    "ص.٢ يفرق ظهور الصفحة عن مصدر المرضى");
+  check(/يحذف مصفوفة payments كلياً/.test(stg) && /canViewPayments/.test(stg)
+    && /صفراً أو ناقصين/.test(stg), "ص.٣ لا يفسر غياب الدفعات كصفر حقيقي");
+  check(/المسؤول العام وحده يرى مرشح الفرع/.test(stg) && /branchId الأساسي/.test(stg)
+    && /لا تستخدم accessibleBranches/.test(stg), "ص.٤ نطاق الفرع الفعلي");
+  check(/بلا branchId أساسي/.test(stg) && /undefined إلى getPatients/.test(stg)
+    && /كل المرضى/.test(stg), "ص.٤ب يوثق اتساع نطاق الحساب بلا فرع");
+  check(/تاريخ إنشاء الملف أو زيارة\s+أو دفعة/.test(stg)
+    && /المرضى الجدد.*تاريخ\s+إنشاء الملف/s.test(stg), "ص.٥ يشرح اختلاف دلالة مرشح الفترة");
+  check(/newPaidPatients لا يبحث عن دفعة/.test(stg) && /totalCost أكبر من صفر/.test(stg)
+    && /وجود كلفة مسجلة، لا أن نقداً قُبض/.test(stg), "ص.٦ تسمية الدافع لا تعني قبضاً");
+  check(/المرضى الجدد الشهري مستقل عن مرشح الفترة/.test(stg)
+    && /تغيير اليوم أو الأسبوع أو النطاق لا يقص/.test(stg), "ص.٧ التقرير الشهري لا يتبع مرشح الفترة");
+  check(/الإيرادات\/الكلفة.*totalCost/s.test(stg) && /المحصل.*تاريخها داخل\s+الفترة/s.test(stg)
+    && /ليست\s+دفتر قيود/.test(stg), "ص.٨ دلالة المال في الفترة");
+  check(/أعلام المريض أو أنواع حالاته الفعلية/.test(stg) && /أكثر من قسم/.test(stg)
+    && /بيانات تحتاج استكمالاً/.test(stg), "ص.٩ الانتماء للقسم وجودة البيانات");
+  check(/مرشح الفترة في شاشة الإحصاءات لا\s+يؤثر فيها/.test(stg)
+    && /الشهر التقويمي الحالي/.test(stg), "ص.١٠ رضا المرضى مستقل زمنياً");
+  check(/لا تستدعي نقطة\s+calculate/.test(stg) && /count عدداً للمرضى دائماً/.test(stg)
+    && /فئة visits لا يحول count إلى عدد زيارات/.test(stg), "ص.١١ حقيقة الحقول المخصصة");
+  check(/GET \/api\/custom-stats يمرر undefined/.test(stg) && /كل الحقول المخصصة/.test(stg)
+    && /branchId فارغ بتعديل/.test(stg), "ص.١٢ يوثق استثناء الحساب بلا فرع");
+  check(/GET لعنصر مفرد والحساب الخادمي الحالي تتطلبان تسجيل الدخول/.test(stg)
+    && /ملاحظات تدقيق نهائي/.test(stg), "ص.١٢ب يوثق ضعف حراس الحقول المخصصة");
+  check(/PDF.*الملخص وتوزيع الأعمار/s.test(stg) && /Excel.*مواقع البتر/s.test(stg)
+    && /لا يضم أي منهما قسم رضا المرضى/.test(stg), "ص.١٣ حدود التصدير");
+  same("ص.١٤ دليل الإحصاءات ساكن", pageGuideFor(STAT, rep), pageGuideFor(STAT, adm));
+
   // ═══ ف: الاستبيانات ونتائج رضا المرضى ═════════════════════════════════
   console.log("\n── ف: الاستبيانات ──");
   const SURV = resolvePageContext(SURVEYS_PAGE_PATH);
