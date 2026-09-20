@@ -1142,8 +1142,10 @@ async function main() {
     "ص.٢ يفرق ظهور الصفحة عن مصدر المرضى");
   check(/يحذف مصفوفة payments كلياً/.test(stg) && /canViewPayments/.test(stg)
     && /صفراً أو ناقصين/.test(stg), "ص.٣ لا يفسر غياب الدفعات كصفر حقيقي");
-  check(/المسؤول العام وحده يرى مرشح الفرع/.test(stg) && /branchId في جلسته/.test(stg)
-    && /لا تستخدم\s+accessibleBranches/.test(stg), "ص.٤ نطاق الفرع الفعلي");
+  check(/المسؤول العام وحده يرى مرشح الفرع/.test(stg) && /branchId الأساسي/.test(stg)
+    && /لا تستخدم accessibleBranches/.test(stg), "ص.٤ نطاق الفرع الفعلي");
+  check(/بلا branchId أساسي/.test(stg) && /undefined إلى getPatients/.test(stg)
+    && /كل المرضى/.test(stg), "ص.٤ب يوثق اتساع نطاق الحساب بلا فرع");
   check(/تاريخ إنشاء الملف أو زيارة\s+أو دفعة/.test(stg)
     && /المرضى الجدد.*تاريخ\s+إنشاء الملف/s.test(stg), "ص.٥ يشرح اختلاف دلالة مرشح الفترة");
   check(/newPaidPatients لا يبحث عن دفعة/.test(stg) && /totalCost أكبر من صفر/.test(stg)
@@ -1158,8 +1160,10 @@ async function main() {
     && /الشهر التقويمي الحالي/.test(stg), "ص.١٠ رضا المرضى مستقل زمنياً");
   check(/لا تستدعي نقطة\s+calculate/.test(stg) && /count عدداً للمرضى دائماً/.test(stg)
     && /فئة visits لا يحول count إلى عدد زيارات/.test(stg), "ص.١١ حقيقة الحقول المخصصة");
-  check(/GET لعنصر مفرد\s+والحساب الخادمي الحالي تتطلبان تسجيل الدخول فقط/.test(stg)
-    && /ملاحظة تدقيق نهائي/.test(stg), "ص.١٢ يوثق ضعف حارس الحقول المخصصة");
+  check(/GET \/api\/custom-stats يمرر undefined/.test(stg) && /كل الحقول المخصصة/.test(stg)
+    && /branchId فارغ بتعديل/.test(stg), "ص.١٢ يوثق استثناء الحساب بلا فرع");
+  check(/GET لعنصر مفرد والحساب الخادمي الحالي تتطلبان تسجيل الدخول/.test(stg)
+    && /ملاحظات تدقيق نهائي/.test(stg), "ص.١٢ب يوثق ضعف حراس الحقول المخصصة");
   check(/PDF.*الملخص وتوزيع الأعمار/s.test(stg) && /Excel.*مواقع البتر/s.test(stg)
     && /لا يضم أي منهما قسم رضا المرضى/.test(stg), "ص.١٣ حدود التصدير");
   same("ص.١٤ دليل الإحصاءات ساكن", pageGuideFor(STAT, rep), pageGuideFor(STAT, adm));
