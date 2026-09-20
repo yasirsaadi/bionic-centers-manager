@@ -50,11 +50,14 @@ import {
   EDIT_PATIENT_PAGE_PATH, FOLLOW_UPS_PAGE_PATH,
   MANUFACTURING_PAGE_PATH, MANUFACTURING_ORDER_PAGE_PATH,
   NO_EXAM_REVIEW_PAGE_PATH, RETURNED_CHARGES_PAGE_PATH,
+  DISCOUNT_APPROVALS_PAGE_PATH, PAYMENT_CORRECTIONS_PAGE_PATH, DAILY_REVIEW_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
   LEGACY_QUEUE_TITLE, RETURNED_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS,
 } from "@shared/pending_charge";
+import { DISCOUNT_HISTORY_TITLE } from "@shared/discount";
+import { DAILY_REVIEW_FAMILY_LABELS } from "@shared/daily_review";
 import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES,
@@ -888,6 +891,60 @@ async function main() {
     "ك.١٣ يمنع تعليم المسار الطبي القديم");
   same("ك.١٤ دليل الطابور ساكن", pageGuideFor(LEG, rep), pageGuideFor(LEG, adm));
   same("ك.١٥ دليل المُعادات ساكن", pageGuideFor(RET, rep), pageGuideFor(RET, adm));
+  // ═══ ل: الرقابة المالية والمراجعة اليومية ═══════════════════════════════
+  console.log("\n── ل: الخصومات وتصحيح الدفعات والمراجعة اليومية ──");
+  const DISC = resolvePageContext(DISCOUNT_APPROVALS_PAGE_PATH);
+  const PCOR = resolvePageContext(PAYMENT_CORRECTIONS_PAGE_PATH);
+  const DREV = resolvePageContext(DAILY_REVIEW_PAGE_PATH);
+  same("ل.١ مسار الخصومات قانوني", DISC?.path, DISCOUNT_APPROVALS_PAGE_PATH);
+  same("ل.٢ مسار تصحيح الدفعات قانوني", PCOR?.path, PAYMENT_CORRECTIONS_PAGE_PATH);
+  same("ل.٣ مسار المراجعة اليومية قانوني", DREV?.path, DAILY_REVIEW_PAGE_PATH);
+
+  const dc = pageGuideFor(DISC, rep);
+  check(dc.includes(`«${DISCOUNT_HISTORY_TITLE}»`) && /لا يُنشئ\s+طلباً معلّقاً جديداً/.test(dc),
+    "ل.٤ الخصومات الجديدة فورية والصفحة تاريخية");
+  check(/«بانتظار الإكمال»/.test(dc) && /«مكتمل»/.test(dc)
+    && /«مرفوض»/.test(dc) && /«ملغى»/.test(dc),
+    "ل.٤أ دليل الخصومات يستخدم تسميات فلاتر الشاشة الحالية");
+  check(/canApproveDiscount/.test(dc) && /مقيداً بفروعه/.test(dc), "ل.٥ صلاحية الخصم ونطاق الفرع");
+  check(/حتى 300 طلب فقط/.test(dc) && /بالأقدم طلباً أولاً/.test(dc) && /COUNT كامل/.test(dc),
+    "ل.٦ حد قائمة الخصومات وترتيبها مقابل العداد");
+  check(/إكمال وتطبيق السعر/.test(dc) && /إلغاء الطلب/.test(dc) && /تعديل وإكمال/.test(dc),
+    "ل.٧ أفعال الطلب المعلق الثلاثة");
+  check(/الصفر\s+وحده لا يعني تبرعاً/.test(dc), "ل.٨ المجاني صريح لا صفر ضمني");
+  check(/initialPayment/.test(dc) && /مبلغ القبض وليس السعر\s+النهائي/.test(dc),
+    "ل.٩ طلبات الخدمة الجديدة القديمة لا تخترع القبض");
+
+  const pcg = pageGuideFor(PCOR, rep);
+  check(/للمسؤول العام فقط/.test(pcg) && /لا مدير فرع ولا\s+صلاحية can\*/.test(pcg),
+    "ل.١٠ قرار تصحيح الدفعة Admin حصراً");
+  for (const word of ["المبلغ", "التاريخ المالي", "نوع العلاج", "الجلسات المجانية"])
+    check(pcg.includes(word), `ل.١١ الحقل المحمي ${word} مذكور`);
+  check(/الملاحظات\s+وعدد الجلسات وحدهما مباشران/.test(pcg), "ل.١٢ الحقول المباشرة لا تفتح طلباً");
+  check(/هو pending فقط/.test(pcg) && /بأحدث طلب أولاً/.test(pcg), "ل.١٣ الصفحة تعرض المعلق فقط");
+  check(/الرفض يغلق الطلب فقط ولا يغيّر الدفعة/.test(pcg), "ل.١٤ الرفض بلا أثر مالي");
+  check(/تغيّرت أي\s+قيمة من لقطة الدفعة/.test(pcg) && /يرفض الخادم الاعتماد بتعارض/.test(pcg),
+    "ل.١٥ يمنع اعتماد طلب متقادم");
+
+  const drg = pageGuideFor(DREV, rep);
+  check(/للقراءة فقط/.test(drg) && /للمسؤول العام فقط/.test(drg) && /العلاج الطبيعي خارج/.test(drg),
+    "ل.١٦ حدود المراجعة اليومية");
+  check(/حقل التاريخ يضع max=اليوم/.test(drg) && /زر اليوم التالي يتوقف عند اليوم/.test(drg),
+    "ل.١٦أ قيد التاريخ موصوف كواجهة لا كحارس خادمي");
+  for (const label of Object.values(DAILY_REVIEW_FAMILY_LABELS))
+    check(drg.includes(`«${label}»`), `ل.١٧ أسرة ${label} مذكورة`);
+  check(/created عمداً/.test(drg) && /فلا يُعرض الحدث نفسه مرتين/.test(drg),
+    "ل.١٨ فتح الأمر لا يكرر كحركة تصنيع");
+  check(/السعر النهائي المتفق عليه ليس هو المبلغ المدفوع فعلاً/.test(drg),
+    "ل.١٩ يفرق السعر النهائي عن المقبوض");
+  check(/لا يُنسب لشخص إلا إذا\s+وجد سطر تدقيق مباشر/.test(drg),
+    "ل.٢٠ لا يخترع من قبض الدفعة");
+  check(/الخبير الحالي المسند/.test(drg) && /المحفوظ لحظة الحسم/.test(drg),
+    "ل.٢١ يفرق الخبير الحالي عن لقطة الحسم");
+
+  same("ل.٢٢ دليل الخصومات ساكن", pageGuideFor(DISC, rep), pageGuideFor(DISC, adm));
+  same("ل.٢٣ دليل التصحيح ساكن", pageGuideFor(PCOR, rep), pageGuideFor(PCOR, adm));
+  same("ل.٢٤ دليل المراجعة ساكن", pageGuideFor(DREV, rep), pageGuideFor(DREV, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
