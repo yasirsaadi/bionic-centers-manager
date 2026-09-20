@@ -708,11 +708,23 @@ async function main() {
   const ng = pageGuideFor(NEWP, rep);
   check(/موظف الاستقبال لا يملك إدخال تاريخ قديم/.test(ng), "ط.١١ التسجيل يشرح التاريخ");
   check(/name-availability/.test(ng) && /POST \/api\/patients/.test(ng), "ط.١٢ التسجيل يفرّق الإرشاد عن الحارس النهائي");
-  check(/باني موضع البتر/.test(ng) && /كلفة أكبر من صفر/.test(ng), "ط.١٣ التسجيل يشرح استثناء البتر ومسار الالتزام");
+  check(/إصابات وتشخيص\s+العلاج الطبيعي/.test(ng)
+    && /نوع المسند\/جهة الإصابة/.test(ng)
+    && /موضع البتر/.test(ng),
+    "ط.١٣ التسجيل يشرح ما يستطيع الاستقبال إدخاله فعلاً");
+  check(/التسجيل بلا كلفة دائماً/.test(ng)
+    && /totalCost: 0/.test(ng)
+    && /يرفض أي كلفة غير صفرية/.test(ng)
+    && /تخصيص\/إسناد خبير/.test(ng)
+    && /الكلفة والجلسات/.test(ng),
+    "ط.١٣أ التسجيل لا يعلّم مسار الكلفة القديم");
 
   const dg = pageGuideFor(DET, rep);
-  for (const mark of ["الزيارات", "المدفوعات", "المستندات", "خطط العلاج"])
+  for (const mark of ["الزيارات", "المدفوعات", "المستندات"])
     check(dg.includes(`«${mark}»`), `ط.١٤ تبويب ${mark} مذكور`);
+  check(/«خطط العلاج» يظهر \*\*فقط إذا كان المريض علاجاً طبيعياً\*\*/.test(dg)
+    && /patient\.isPhysiotherapy === true/.test(dg),
+    "ط.١٤أ خطط العلاج مشروطة بالعلاج الطبيعي");
   check(/canViewPayments/.test(dg) && /canManageTreatmentPlans/.test(dg) && /canEditPatients/.test(dg) && /canAddPatients/.test(dg),
     "ط.١٥ ملف المريض يربط الأفعال ببواباتها");
   check(/لا تخترع حالةً للمريض ولا قيمةً مالية ولا زرّاً حالياً/.test(dg), "ط.١٦ ملف المريض لا يخترع الحي");
