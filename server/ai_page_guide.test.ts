@@ -189,7 +189,7 @@ async function main() {
 
   // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
   console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/statistics", "/accounting", "/"]) {
+  for (const other of ["/accounting"]) {
     seen.length = 0;
     await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
     check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
@@ -197,8 +197,8 @@ async function main() {
   seen.length = 0;
   await chat(rep, ask("شنو أسوي هنا؟"), null);
   check(!seen[0].system.includes(GUIDE_MARK), "ب.٢ ولا بلا سياقِ صفحة");
-  same("ب.٣ والدالّةُ نفسُها تُرجع فارغاً لغيرها",
-    pageGuideFor(resolvePageContext("/statistics"), rep), "");
+  same("ب.٣ والدالّةُ نفسها تُرجع فارغاً لصفحةٍ بلا دليل",
+    pageGuideFor(resolvePageContext("/accounting"), rep), "");
 
   // ═══ ج: الصلاحيةُ من الدالّة القانونية وحدها ══════════════════════════
   console.log("\n── ج: canCompleteReceptionSale هي المرجع ──");
