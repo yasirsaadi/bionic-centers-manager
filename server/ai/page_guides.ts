@@ -563,8 +563,9 @@ function manufacturingGuide(label: string): string {
 /** صفحة أمر التصنيع — مسار العمل القانوني وأفعال الصفحة. */
 function manufacturingOrderGuide(label: string): string {
   const buildStages = BUILD_STAGES.map((s) => `«${STAGE_LABELS[s]}»`).join(" ← ");
-  const prostheticMaintenance = PROSTHETIC_MAINTENANCE_STAGES.map((s) => `«${STAGE_LABELS[s]}»`).join(" ← ");
-  const supportMaintenance = SUPPORT_MAINTENANCE_STAGES.map((s) => `«${STAGE_LABELS[s]}»`).join(" ← ");
+  const maintenanceStart = STAGE_LABELS[PROSTHETIC_MAINTENANCE_STAGES[0]];
+  const prostheticMaintenanceChoices = PROSTHETIC_MAINTENANCE_STAGES.slice(1).map((s) => `«${STAGE_LABELS[s]}»`).join(" أو ");
+  const supportMaintenanceChoice = STAGE_LABELS[SUPPORT_MAINTENANCE_STAGES[1]];
   const holdKinds = HOLD_STATUSES.map((s) => `«${STATUS_LABELS[s]}»`).join(" · ");
   const finalResults = FINAL_RESULTS.map((r) => `«${FINAL_RESULT_LABELS[r]}»`).join(" · ");
   return `
@@ -590,9 +591,10 @@ function manufacturingOrderGuide(label: string): string {
 إلزامياً إن لم يكن محدداً. وعند التسليم تصبح «نتيجة التصنيع والملاءمة»
 إلزامية، ومن نتائجها القانونية: ${finalResults}.
 
-**الصيانة ليست خط البناء الكامل**. صيانة الطرف: ${prostheticMaintenance}.
-وصيانة المسند: ${supportMaintenance}. من «أمر جديد بانتظار بدء العمل» يختار
-الخبير ما أُنجز فعلاً؛ إتمام خطوة الصيانة ينهي أمر الصيانة.
+**الصيانة ليست خط البناء الكامل ولا سلسلةً من خطوتين**. تبدأ في
+«${maintenanceStart}». في صيانة الطرف يختار الخبير **أحد** الإنجازين:
+${prostheticMaintenanceChoices}. وفي صيانة المسند يكون الإنجاز
+«${supportMaintenanceChoice}». اختيار إنجاز الصيانة ينهي أمر الصيانة.
 
 **التوقف / المشكلة** له الأنواع: ${holdKinds}. السبب يجب أن يكون من أسباب
 النوع المختار. التوقفات العادية لا تغير المرحلة. «إعادة عمل فني» وحدها ترجع
