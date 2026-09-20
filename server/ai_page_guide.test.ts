@@ -56,6 +56,7 @@ import {
   DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
   SESSION_ENTRY_PAGE_PATH, SESSION_TARGETS_PAGE_PATH,
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
+  SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -1132,6 +1133,43 @@ async function main() {
   same("ع.٢٤ دليل الأهداف ساكن", pageGuideFor(STGT, rep), pageGuideFor(STGT, adm));
   same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
   same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
+  // ═══ ف: الاستبيانات ونتائج رضا المرضى ═════════════════════════════════
+  console.log("\n── ف: الاستبيانات ──");
+  const SURV = resolvePageContext(SURVEYS_PAGE_PATH);
+  same("ف.١ مسار الاستبيانات قانوني", SURV?.path, SURVEYS_PAGE_PATH);
+  const svg = pageGuideFor(SURV, rep);
+  check(/إضافة استبيان/.test(svg) && /النتائج/.test(svg), "ف.٢ التبويبان موضحان");
+  check(/الشريط الجانبي.*canManageSurveys/s.test(svg) && /الصفحة نفسها لا تضع حارس/.test(svg),
+    "ف.٣ يفرق إخفاء الملاحة عن سلطة القراءة");
+  check(/الإنشاء نفسه محمي خادمياً بـ canManageSurveys أو المسؤول العام/.test(svg),
+    "ف.٤ حارس إنشاء الاستبيان");
+  check(/page 1/.test(svg) && /بحجم 50/.test(svg) && /بحث خادمي/.test(svg),
+    "ف.٥ منتقي المرضى يستخدم registry محدوداً");
+  check(/isAmputee/.test(svg) && /isPhysiotherapy/.test(svg) && /القالب العام دائماً/.test(svg),
+    "ف.٦ اختيار القالب حسب نوع المريض");
+  check(/medical support/.test(svg) && /لا تضيف قالباً متخصصاً مستقلاً/.test(svg),
+    "ف.٧ المساند لا تملك قالباً متخصصاً حالياً");
+  check(/من 1 إلى 10/.test(svg) && /maxScore = 10/.test(svg) && /percentage/.test(svg),
+    "ف.٨ سلم التقييم وحساب النسبة");
+  check(/لا تعيد التحقق خادمياً من أن branchId/.test(svg) && /قيمة rating بين 1\s+و10/.test(svg),
+    "ف.٩ لا يخترع تحققاً خادمياً غير موجود");
+  check(/بالأحدث أولاً/.test(svg) && /branchId الأساسي/.test(svg) && /لا يستخدم accessibleBranches/.test(svg),
+    "ف.١٠ نطاق نتائج غير المسؤول الحالي");
+  check(/10 افتراضياً/.test(svg) && /50 أو 100/.test(svg) && /pagination محلياً/.test(svg),
+    "ف.١١ تقطيع النتائج محلي");
+  check(/نفس مجموعة responses المحملة/.test(svg) && /فلتر الفرع\s+للمسؤول يغير هذه المجموعة/.test(svg),
+    "ف.١٢ البطاقات والرسوم تتبع مجموعة النتائج نفسها");
+  check(/PDF.*كامل مجموعة responses الحالية/s.test(svg) && /80%/.test(svg) && /60–79%/.test(svg),
+    "ف.١٣ التصدير الكامل وتصنيف الواجهة");
+  check(/تتطلب تسجيل دخول فقط/.test(svg) && /نقطة تدقيق أمني/.test(svg),
+    "ف.١٤ يوثق ضعف حراس قراءة التفاصيل");
+  check(/لا تُرسل للمريض أبداً/.test(svg) && /تعديل النص ونسخه فقط/.test(svg),
+    "ف.١٥ الرد الذكي مسودة لا إرسال");
+  check(/canManageAccounting/.test(svg) && /branchId الأساسي فقط/.test(svg),
+    "ف.١٦ سلطة ونطاق مسودة الرد");
+  check(/من دون اسم المريض/.test(svg) && /مزود الذكاء معطلاً أو محدوداً/.test(svg),
+    "ف.١٧ payload الرد وحد فشل المزود");
+  same("ف.١٨ دليل الاستبيانات ساكن", pageGuideFor(SURV, rep), pageGuideFor(SURV, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
