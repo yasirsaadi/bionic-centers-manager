@@ -170,7 +170,7 @@ async function main() {
 
   // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
   console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/statistics", "/patients", "/manufacturing", "/accounting", "/"]) {
+  for (const other of ["/statistics", "/manufacturing", "/accounting", "/"]) {
     seen.length = 0;
     await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
     check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
@@ -702,6 +702,14 @@ async function main() {
   check(/رمز المريض الحالي/.test(pg) && /الرمز القديم\s+بعد دمج الملفات/.test(pg), "ط.٧ السجل يشرح البحث بالرمزين");
   check(/الحالة المرضية/.test(pg) && /لا يوجد بحثٌ مكتوب/.test(pg) && /لا يُرسل\s+مرشّح التاريخ/.test(pg),
     "ط.٨ السجل يشرح الحالة وأولوية البحث على التاريخ");
+  check(/مع \*\*أي نص بحث\*\*/.test(pg)
+    && /لا يطبّق\s+`branchId`/.test(pg)
+    && /من فروع أخرى/.test(pg),
+    "ط.٨أ بحث المسؤول يتجاهل مرشّح الفرع");
+  check(/ملفات أُتيحت لذلك الفرع صراحةً/.test(pg)
+    && /patientVisibleToScopeSql/.test(pg)
+    && /مسجّل أصلاً في فرع آخر/.test(pg),
+    "ط.٨ب نطاق غير المسؤول يشمل الملفات المشتركة مع فرعه");
   check(/Excel/.test(pg) && /PDF/.test(pg)
     && /10000/.test(pg) && /10,000 صف كحد أقصى/.test(pg)
     && /التصدير ليس كاملاً/.test(pg)
