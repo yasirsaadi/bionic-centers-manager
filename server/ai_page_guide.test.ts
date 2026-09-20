@@ -53,6 +53,7 @@ import {
   DISCOUNT_APPROVALS_PAGE_PATH, PAYMENT_CORRECTIONS_PAGE_PATH, DAILY_REVIEW_PAGE_PATH,
   REPORTS_PAGE_PATH, DAILY_PATIENT_REPORT_PAGE_PATH, REVENUES_PAGE_PATH,
   BRANCHES_PAGE_PATH, BRANCH_DETAILS_PAGE_PATH,
+  DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -60,6 +61,7 @@ import {
 } from "@shared/pending_charge";
 import { DISCOUNT_HISTORY_TITLE } from "@shared/discount";
 import { DAILY_REVIEW_FAMILY_LABELS } from "@shared/daily_review";
+import { TRASH_TITLE, RESTORE_WINDOW_DAYS } from "@shared/patient_trash";
 import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES,
@@ -1032,6 +1034,53 @@ async function main() {
 
   same("ن.١٧ دليل الفروع ساكن", pageGuideFor(BRS, rep), pageGuideFor(BRS, adm));
   same("ن.١٨ دليل تفاصيل الفرع ساكن", pageGuideFor(BRD, rep), pageGuideFor(BRD, adm));
+  // ═══ س: الشاشات التشغيلية الصغيرة — اللوحة والمحذوفات والتنبيهات ══════
+  console.log("\n── س: اللوحة والمحذوفات والتنبيهات ──");
+  const DASH = resolvePageContext(DASHBOARD_PAGE_PATH);
+  const PTR = resolvePageContext(PATIENT_TRASH_PAGE_PATH);
+  const NOTI = resolvePageContext(NOTIFICATIONS_PAGE_PATH);
+  same("س.١ مسار اللوحة قانوني", DASH?.path, DASHBOARD_PAGE_PATH);
+  same("س.٢ مسار المحذوفات قانوني", PTR?.path, PATIENT_TRASH_PAGE_PATH);
+  same("س.٣ مسار التنبيهات قانوني", NOTI?.path, NOTIFICATIONS_PAGE_PATH);
+
+  const dg = pageGuideFor(DASH, rep);
+  check(/الاستقبال يُحوَّل إلى سجل المرضى/.test(dg) && /خبير الأطراف الصرف إلى التصنيع/.test(dg)
+    && /الطبيب\s+إلى «معايناتي»/.test(dg), "س.٤ تحويل أدوار الصفحة الرئيسية");
+  check(/overall/.test(dg) && /daily/.test(dg) && /غير المسؤول يُثبَّت خادمياً على فرع جلسته/.test(dg),
+    "س.٥ نطاق ملخصات اللوحة");
+  check(/canViewPayments/.test(dg) && /لا تفسّر اختفاءها على أنه صفر مالي/.test(dg),
+    "س.٦ المال في واجهة اللوحة محجوب بصلاحية");
+  check(/قبل 06:00/.test(dg) && /اليوم التشغيلي السابق/.test(dg), "س.٧ قاعدة التاريخ المبكر موضحة");
+  check(/أحدث المرضى/.test(dg) && /من دون\s+branchId/.test(dg) && /عابراً للفروع/.test(dg),
+    "س.٨ اختيار فرع المسؤول لا يفلتر صندوق أحدث المرضى");
+  check(/الوارد المباشر اليوم/.test(dg) && /payments/.test(dg) && /لا تساوِها بالمبيعات/.test(dg),
+    "س.٩ الوارد الحي قبض لا مبيعات");
+
+  const tg = pageGuideFor(PTR, rep);
+  check(tg.includes(`«${TRASH_TITLE}»`) && /مدير الفرع، والطبيب فقط/.test(tg), "س.١٠ من يرى السلّة");
+  check(/بالاسم أو رمز المريض أو الهاتف/.test(tg) && /الأحدث حذفاً أولاً/.test(tg)
+    && /حتى 200 صف/.test(tg) && /أكثر من 500/.test(tg), "س.١١ بحث وحدود السلّة");
+  check(/حذف ناعم/.test(tg) && /لا يعيد بناء شيء/.test(tg), "س.١٢ الاستعادة تعيد الصفوف نفسها");
+  check(tg.includes(`${RESTORE_WINDOW_DAYS} يوماً`) && /لا يُحذف تلقائياً/.test(tg)
+    && /المسؤول العام وحده/.test(tg) && /قبل انتهاء المهلة/.test(tg), "س.١٣ مهلة الاستعادة والحذف النهائي");
+  check(/لقطة يوم الحذف/.test(tg) && /لا يعني أن الاستعادة الآن محصورة به/.test(tg),
+    "س.١٤ snapshot وneededGlobalAdmin لا يغيران الاستعادة");
+  check(/لا يوجد زر «فتح الملف»/.test(tg), "س.١٥ لا يخترع فتح ملف محذوف");
+
+  const ng = pageGuideFor(NOTI, rep);
+  check(/محسوبة لحظياً من أوامر التصنيع/.test(ng) && /لا توجد\s+صفوف إشعار مخزنة ولا cron/.test(ng),
+    "س.١٦ التنبيهات مشتقة لا مخزنة");
+  check(/متأخر بعد الموعد/.test(ng) && /بعد\s+يومين/.test(ng) && /alertCount لا يحسب/.test(ng),
+    "س.١٧ نوافذ التنبيه والعدّاد");
+  check(/خبير الأطراف الصرف يرى أوامره/.test(ng) && /مدير الفرع يرى accessibleBranches/.test(ng)
+    && /canViewPatients/.test(ng) && /canManageAccounting/.test(ng), "س.١٨ نطاق التنبيهات الخادمي");
+  check(/لا يوسّع النطاق/.test(ng) && /مشتقة من\s+items/.test(ng), "س.١٩ فلاتر الشاشة تضييق فقط");
+  check(/holdReasonLabel/.test(ng) && /لا يُخترع عذر/.test(ng), "س.٢٠ سبب التأخير لا يُستنتج");
+  check(/الاستقبال أو المحاسب/.test(ng) && /لا تصبح رابطاً/.test(ng), "س.٢١ رؤية التنبيه لا تعني فتح أمر التصنيع");
+
+  same("س.٢٢ دليل اللوحة ساكن", pageGuideFor(DASH, rep), pageGuideFor(DASH, adm));
+  same("س.٢٣ دليل المحذوفات ساكن", pageGuideFor(PTR, rep), pageGuideFor(PTR, adm));
+  same("س.٢٤ دليل التنبيهات ساكن", pageGuideFor(NOTI, rep), pageGuideFor(NOTI, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
