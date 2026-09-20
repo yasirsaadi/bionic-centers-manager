@@ -731,11 +731,19 @@ async function main() {
     "ط.١٤أ خطط العلاج مشروطة بالعلاج الطبيعي");
   check(/canViewPayments/.test(dg) && /canManageTreatmentPlans/.test(dg) && /canEditPatients/.test(dg) && /canAddPatients/.test(dg),
     "ط.١٥ ملف المريض يربط الأفعال ببواباتها");
+  check(/caseId == null/.test(dg)
+    && /صفوف قديمة\/غير منسوبة لحالة/.test(dg)
+    && /قد تبقى بعض السجلات ظاهرة في أكثر من حالة/.test(dg),
+    "ط.١٥أ الحالة المختارة تبقي الصفوف غير المنسوبة");
   check(/لا تخترع حالةً للمريض ولا قيمةً مالية ولا زرّاً حالياً/.test(dg), "ط.١٦ ملف المريض لا يخترع الحي");
 
   const eg = pageGuideFor(EDT, rep);
   check(/المسؤول العام أو مدير الفرع فقط/.test(eg) && /checkRequiredPatientData/.test(eg),
     "ط.١٧ التعديل يشرح الكلفة وفحص الاكتمال المشروط");
+  check(/\?adding=1/.test(eg)
+    && /canEditCost && !addingMode/.test(eg)
+    && /سياق صفحة المساعد يحذف query string/.test(eg),
+    "ط.١٧أ التعديل يشرح استثناء وضع إضافة الحالة للكلفة");
   for (const field of ["age", "height", "weight", "isAmputee", "amputationSite"]) {
     check(eg.includes(`\`${field}\``), `ط.١٨ الحقل المحروس ${field} مذكور`);
   }
