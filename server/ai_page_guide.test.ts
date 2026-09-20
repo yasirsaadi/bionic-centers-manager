@@ -54,6 +54,8 @@ import {
   REPORTS_PAGE_PATH, DAILY_PATIENT_REPORT_PAGE_PATH, REVENUES_PAGE_PATH,
   BRANCHES_PAGE_PATH, BRANCH_DETAILS_PAGE_PATH,
   DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
+  SESSION_ENTRY_PAGE_PATH, SESSION_TARGETS_PAGE_PATH,
+  SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -1081,6 +1083,55 @@ async function main() {
   same("س.٢٢ دليل اللوحة ساكن", pageGuideFor(DASH, rep), pageGuideFor(DASH, adm));
   same("س.٢٣ دليل المحذوفات ساكن", pageGuideFor(PTR, rep), pageGuideFor(PTR, adm));
   same("س.٢٤ دليل التنبيهات ساكن", pageGuideFor(NOTI, rep), pageGuideFor(NOTI, adm));
+  // ═══ ع: تتبع جلسات الأجهزة — الإدخال والأهداف والتقرير والتحليلات ═════
+  console.log("\n── ع: تتبع جلسات الأجهزة ──");
+  const SENT = resolvePageContext(SESSION_ENTRY_PAGE_PATH);
+  const STGT = resolvePageContext(SESSION_TARGETS_PAGE_PATH);
+  const SLST = resolvePageContext(SESSIONS_LIST_PAGE_PATH);
+  const SANA = resolvePageContext(SESSION_ANALYTICS_PAGE_PATH);
+  same("ع.١ مسار إدخال الجلسات قانوني", SENT?.path, SESSION_ENTRY_PAGE_PATH);
+  same("ع.٢ مسار الأهداف قانوني", STGT?.path, SESSION_TARGETS_PAGE_PATH);
+  same("ع.٣ مسار التقرير قانوني", SLST?.path, SESSIONS_LIST_PAGE_PATH);
+  same("ع.٤ مسار التحليلات قانوني", SANA?.path, SESSION_ANALYTICS_PAGE_PATH);
+
+  const eg = pageGuideFor(SENT, rep);
+  check(/canEnterSessions/.test(eg) && /accessibleBranches/.test(eg), "ع.٥ إذن الإدخال ونطاق الفرع");
+  check(/الاستقبال حالة خاصة/.test(eg) && /غير اليوم/.test(eg) && /24 ساعة/.test(eg),
+    "ع.٦ استقبال اليوم ونافذة التعديل");
+  check(/غير الاستقبال لا تضع الواجهة له\s+min\/max/.test(eg), "ع.٧ لا يخترع منع تاريخ لغير الاستقبال");
+  check(/فرع\/تاريخ\/وردية صف واحد/.test(eg) && /upsert ذري/.test(eg), "ع.٨ هوية جلسة الإدخال والذرية");
+  check(/الأجهزة النشطة/.test(eg) && /قد يتجاوز 100%/.test(eg), "ع.٩ أجهزة الإدخال ونسبة الهدف");
+
+  const tg2 = pageGuideFor(STGT, rep);
+  check(/canManageSessionTargets/.test(tg2) && /الحفظ والنسخ يحتاجان/.test(tg2), "ع.١٠ إذن إدارة الأهداف");
+  check(/السنة الحالية\s+والسابقة واللاحقة/.test(tg2) && /2020–2100/.test(tg2), "ع.١١ نطاق سنوات UI مقابل الخادم");
+  check(/نسخ من الشهر السابق/.test(tg2) && /upsert/.test(tg2) && /copied = 0/.test(tg2),
+    "ع.١٢ نسخ الأهداف واستبدالها");
+
+  const lg2 = pageGuideFor(SLST, rep);
+  check(/canViewSessionsReport/.test(lg2) && /أول يوم في شهر العراق الحالي/.test(lg2), "ع.١٣ التقرير وصيغته الافتراضية");
+  check(/واجهةً.*branchId الأساسي/s.test(lg2) && /قائمة الفرع معطلة/.test(lg2), "ع.١٤ تقرير غير المسؤول مثبت واجهة");
+  check(/حتى 1000 صف/.test(lg2) && /الأحدث\s+إلى الأقدم/.test(lg2), "ع.١٥ حد وترتيب قائمة الجلسات");
+  check(/من دون شرط isActive/.test(lg2) && /بخلاف شاشة الإدخال/.test(lg2), "ع.١٦ التقرير قد يعرض أجهزة غير نشطة");
+  check(/CSV وExcel/.test(lg2) && /لا توجد صفحة ثانية أو pagination/.test(lg2), "ع.١٧ التصدير وحد 1000");
+
+  const ag2 = pageGuideFor(SANA, rep);
+  check(/canViewSessionsReport/.test(ag2) && /قائمة الفرع \*\*غير معطلة هنا\*\*/.test(ag2),
+    "ع.١٨ فرع التحليلات لغير المسؤول متعدد الفروع");
+  check(/byDay وbyShift\s+تطبقان الفترة والفرع/.test(ag2), "ع.١٩ اليوم والوردية يحترمان المرشح");
+  check(/byBranch.*كل الفروع/s.test(ag2) && /حتى لو اختار المسؤول فرعاً واحداً/.test(ag2),
+    "ع.٢٠ مقارنة الفروع مستقلة عن فرع المرشح");
+  check(/تباين حالي في الكود/.test(ag2) && /byDevice/.test(ag2)
+    && /لا يتقيد فعلياً بالفترة ولا بالفرع المختار/.test(ag2),
+    "ع.٢١ يوثق خلل تجميع byDevice الحالي بدقة");
+  check(/إجمالي الجلسات/.test(ag2) && /أكثر جهاز استخداماً/.test(ag2)
+    && /المتوسط اليومي/.test(ag2) && /قد تختلف/.test(ag2),
+    "ع.٢٢ أثر byDevice على بطاقات التحليلات");
+
+  same("ع.٢٣ دليل الإدخال ساكن", pageGuideFor(SENT, rep), pageGuideFor(SENT, adm));
+  same("ع.٢٤ دليل الأهداف ساكن", pageGuideFor(STGT, rep), pageGuideFor(STGT, adm));
+  same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
+  same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
