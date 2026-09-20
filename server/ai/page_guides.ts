@@ -50,7 +50,7 @@ import {
   LEGACY_QUEUE_TITLE, LEGACY_QUEUE_HINT, RETURNED_QUEUE_TITLE,
   PENDING_CHARGE_ACTION_LABELS, RETURN_REASON_LABEL,
 } from "@shared/pending_charge";
-import { DISCOUNT_HISTORY_TITLE, DISCOUNT_STATUS_LABELS } from "@shared/discount";
+import { DISCOUNT_HISTORY_TITLE } from "@shared/discount";
 import { DAILY_REVIEW_FAMILY_LABELS, DAILY_REVIEW_SERVICE_LABELS } from "@shared/daily_review";
 import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
@@ -699,7 +699,6 @@ branch لكل ما ينتظر في فروع المستخدم، وmine لما أ�
 }
 /** خصومات سابقة — طابور تاريخي فقط؛ الخصومات الجديدة تُطبَّق فوراً. */
 function discountApprovalsGuide(label: string): string {
-  const statuses = Object.values(DISCOUNT_STATUS_LABELS).map((s) => `«${s}»`).join(" · ");
   return `
 
 دليلُ هذه الشاشة — «${label}»:
@@ -707,7 +706,8 @@ function discountApprovalsGuide(label: string): string {
 **الحقيقة الحالية**: عنوانها «${DISCOUNT_HISTORY_TITLE}». الخصم أو المجاني
 الجديد الذي يدخله موظف مخوّل يُطبَّق فوراً في معاملة الخدمة نفسها؛ لا يُنشئ
 طلباً معلّقاً جديداً. هذه الصفحة لإكمال الطلبات التاريخية التي بقيت من النظام
-السابق فقط، ثم لقراءة تاريخ حالاتها: ${statuses}.
+السابق فقط، ثم لقراءة تاريخ حالاتها كما تسميها الشاشة: «بانتظار الإكمال» ·
+«مكتمل» · «مرفوض» · «ملغى».
 
 **من يفتح ويحسم**: المسؤول العام، مدير الفرع، أو من مُنح صراحةً صلاحية
 canApproveDiscount. غير المسؤول يبقى مقيداً بفروعه، والفرع الحاكم يُقرأ من
@@ -777,8 +777,9 @@ function dailyReviewGuide(label: string): string {
 للمسؤول العام فقط، ومخزنها لا يكتب INSERT أو UPDATE أو DELETE على جداول
 الأعمال. العلاج الطبيعي خارج هذه الصفحة كلياً.
 
-**الفلاتر**: يوم بغداد التقويمي (اليوم افتراضياً ولا تسمح الواجهة بالمستقبل)،
-كل الفروع أو فرع واحد، ونوع الخدمة: الكل أو ${services}. النتيجة النهائية
+**الفلاتر**: يوم بغداد التقويمي (اليوم افتراضياً؛ حقل التاريخ يضع max=اليوم
+وزر اليوم التالي يتوقف عند اليوم)، كل الفروع أو فرع واحد، ونوع الخدمة: الكل
+أو ${services}. النتيجة النهائية
 مرتبة بالأحدث حدثاً أولاً.
 
 **الأسر السبع فقط**: ${families}. «حركة تصنيع» تستبعد حدث created عمداً لأن
