@@ -47,6 +47,10 @@ import {
 } from "@shared/commercial";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
+  LEGACY_QUEUE_TITLE, LEGACY_QUEUE_HINT, RETURNED_QUEUE_TITLE,
+  PENDING_CHARGE_ACTION_LABELS, RETURN_REASON_LABEL,
+} from "@shared/pending_charge";
+import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES, FINAL_RESULTS, FINAL_RESULT_LABELS,
   SERVICE_TYPE_LABELS,
@@ -70,6 +74,8 @@ export const EDIT_PATIENT_PAGE_PATH = "/patients/:id/edit";
 export const FOLLOW_UPS_PAGE_PATH = "/follow-ups";
 export const MANUFACTURING_PAGE_PATH = "/manufacturing";
 export const MANUFACTURING_ORDER_PAGE_PATH = "/manufacturing/orders/:id";
+export const NO_EXAM_REVIEW_PAGE_PATH = "/no-exam-review";
+export const RETURNED_CHARGES_PAGE_PATH = "/returned-charges";
 
 /**
  * **مرشِّحُ الفرع يظهر فقط لمن يملك أكثرَ من فرعٍ فعلاً** — نفسُ شرط
@@ -620,6 +626,72 @@ ${prostheticMaintenanceChoices}. وفي صيانة المسند يكون الإ�
 **⚠ لا تجزم بالمرحلة أو الحالة أو الأزرار الحالية لأمر بعينه من هذا الدليل**؛
 هذه قيم حيّة تأتي من الأمر نفسه. اشرح القاعدة، ولا تخترع حالة الصف.`;
 }
+/** الطابور الموروث للمبالغ غير المكتملة — لا مراجعة طبية جديدة. */
+function noExamReviewGuide(label: string): string {
+  const approve = PENDING_CHARGE_ACTION_LABELS.approve;
+  const sendBack = PENDING_CHARGE_ACTION_LABELS.return;
+  return `
+
+دليلُ هذه الشاشة — «${label}»:
+
+**الحقيقة الحالية**: هذه «${LEGACY_QUEUE_TITLE}» وليست مراجعةً طبية. هي صفوف
+موروثة فقط من عمليات وقعت قبل تحديث المسار وبقي مبلغها خارج المحاسبة. ${LEGACY_QUEUE_HINT}
+لا صف جديد يدخل هذا الطابور الآن.
+
+**من ينهيها خادمياً**: المسؤول العام، مدير الفرع، أو مستخدم مُنح صراحةً قدرة
+إضافة المرضى؛ والطابور محصور بفروعه. لا يحتاج اختصاصاً طبياً، والطبيب أو خبير
+الأطراف لا يكتسب هذه السلطة من مهنته وحدها.
+
+**الفعلان فقط**:
+- «${approve}»: يقيّد مبلغ العملية الموروثة مرة واحدة باستخدام الكاتب المالي
+  القانوني للعملية القائمة؛ لا يفتح أمر تصنيع ثانياً ولا يكرر البيع.
+- «${sendBack}»: يحتاج «${RETURN_REASON_LABEL}» مكتوباً، ويعيد الصف نفسه
+  للتصحيح من دون تحريك دينار ومن دون هدم العملية. لا يوجد فعل «رفض» ثالث.
+
+**القائمة نفسها** تعرض حتى 200 صف من الأحدث إلى الأقدم داخل النطاق. أمّا
+عداد الطابور الخادمي فهو COUNT كامل وغير مقيد بهذا الحد؛ لذلك قد يكون عدد
+الشارة أكبر من عدد الصفوف المعروضة. المرضى الموجودون في المحذوفات لا يظهرون.
+
+**⚠ تعارض واجهة/خادم حالي يجب أن تعرفه**: الخادم يعيد من
+GET /api/no-exam/review حقلاً اسمه rows فقط، بينما الواجهة الحالية ما زالت
+تنتظر أيضاً specialties، وإذا كانت فارغة تعرض رسالة قديمة تقول إن الشاشة
+لطبيب اختصاص. هذه الرسالة القديمة ليست قاعدة الصلاحية الحالية. إذا سأل
+المستخدم لماذا يرى رسالة المنع رغم أنه مخوّل، اشرح هذا التعارض ولا تخترع
+نقص صلاحية أو اختصاص.
+
+**⚠ لا تجزم بوجود مبلغ موروث بعينه الآن**؛ وجود الصفوف وحالتها بيانات حيّة.`;
+}
+
+/** المبالغ المعادة للتصحيح — طابور فرع، لا ملكية شخصية ولا اعتماد طبي جديد. */
+function returnedChargesGuide(label: string): string {
+  return `
+
+دليلُ هذه الشاشة — «${label}»:
+
+**الغرض**: «${RETURNED_QUEUE_TITLE}» — صفوف موروثة أُعيد مبلغها للتصحيح مع
+سبب مكتوب. العملية الأصلية تبقى قائمة، ولا يُنشأ بيع جديد ولا صف ثانٍ.
+
+**مَن يصحح**: المسؤول العام، مدير الفرع، أو مستخدم مُنح صراحةً قدرة إضافة
+المرضى، ضمن نطاق الفروع. الطابور للفرع لا لموظف بعينه؛ شارة «أنشأتها أنت»
+للتنبيه فقط ولا تمنع زميلاً مخولاً في الفرع من التصحيح.
+
+**التصحيح** يغيّر مبلغ الصف نفسه فقط إلى مبلغ موجب صحيح بالدينار، والملاحظة
+اختيارية. عند الإرسال يعود الصف نفسه إلى حالة الانتظار الموروثة، ويبقى سبب
+الإعادة السابق محفوظاً في سجل الأحداث مع تاريخ التصحيح. المبلغ القديم لا
+يُقيّد، ولا يُحسب البيع مرتين.
+
+**القائمة** تعرض حتى 200 صف مرتبة بأحدث إعادة أولاً. عداد الخادم يرجع رقمين:
+branch لكل ما ينتظر في فروع المستخدم، وmine لما أنشأه المستخدم نفسه؛ الأول
+هو عدد مهمة الفرع، والثاني تنبيه شخصي فقط.
+
+**⚠ نصوص قديمة في الواجهة ما زالت تقول «أعادها الطبيب» و«تعود إلى الطبيب»**،
+لكن الخادم الحالي لا يربط هذا المسار بطبيب أو اختصاص. إعادة الإرسال تعيد
+الصف إلى طابور الإكمال الموروث نفسه الذي ينهيه الاستقبال/مدير الفرع/المسؤول.
+لا تعلّم الموظف أن عليه انتظار طبيب بناءً على هذه الصياغة القديمة.
+
+**⚠ لا تستنتج من الدليل أن صفاً بعينه مُعاد الآن أو أن مستخدماً بعينه يملك
+تصحيحه**؛ هذه حالة حيّة ويحسمها الخادم.`;
+}
 /**
  * دليلُ الصفحة الحالية إن كان لها دليل — وإلّا نصٌّ فارغ.
  *
@@ -638,5 +710,7 @@ export function pageGuideFor(page: PageContext | null, access: AiAccessContext):
   if (page?.path === FOLLOW_UPS_PAGE_PATH) return followUpsGuide(page.label);
   if (page?.path === MANUFACTURING_PAGE_PATH) return manufacturingGuide(page.label);
   if (page?.path === MANUFACTURING_ORDER_PAGE_PATH) return manufacturingOrderGuide(page.label);
+  if (page?.path === NO_EXAM_REVIEW_PAGE_PATH) return noExamReviewGuide(page.label);
+  if (page?.path === RETURNED_CHARGES_PAGE_PATH) return returnedChargesGuide(page.label);
   return "";
 }

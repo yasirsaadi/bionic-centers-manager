@@ -49,8 +49,12 @@ import {
   PATIENTS_PAGE_PATH, CREATE_PATIENT_PAGE_PATH, PATIENT_DETAILS_PAGE_PATH,
   EDIT_PATIENT_PAGE_PATH, FOLLOW_UPS_PAGE_PATH,
   MANUFACTURING_PAGE_PATH, MANUFACTURING_ORDER_PAGE_PATH,
+  NO_EXAM_REVIEW_PAGE_PATH, RETURNED_CHARGES_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
+import {
+  LEGACY_QUEUE_TITLE, RETURNED_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS,
+} from "@shared/pending_charge";
 import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES,
@@ -847,6 +851,43 @@ async function main() {
   // الدليلان ساكنان ولا يغيران الأدوات أو الصلاحيات.
   same("ي.٢٤ دليل اللوحة ساكن", pageGuideFor(MFG, rep), pageGuideFor(MFG, adm));
   same("ي.٢٥ دليل الأمر ساكن", pageGuideFor(MORD, rep), pageGuideFor(MORD, adm));
+  // ═══ ك: المبالغ الموروثة — الإكمال والإعادة للتصحيح ═══════════════════
+  console.log("\n── ك: المبالغ السابقة والمُعادة للتصحيح ──");
+  const LEG = resolvePageContext(NO_EXAM_REVIEW_PAGE_PATH);
+  const RET = resolvePageContext(RETURNED_CHARGES_PAGE_PATH);
+  same("ك.١ مسار الطابور الموروث قانوني", LEG?.path, NO_EXAM_REVIEW_PAGE_PATH);
+  same("ك.٢ مسار المُعادات قانوني", RET?.path, RETURNED_CHARGES_PAGE_PATH);
+
+  const lg = pageGuideFor(LEG, rep);
+  check(lg.includes(`«${LEGACY_QUEUE_TITLE}»`) && /ليست مراجعةً طبية/.test(lg),
+    "ك.٣ الطابور الموروث ليس مراجعة طبية");
+  check(/لا صف جديد يدخل هذا الطابور الآن/.test(lg), "ك.٤ الطابور لا يمتلئ من العمليات الجديدة");
+  check(/المسؤول العام، مدير الفرع، أو مستخدم مُنح صراحةً قدرة\s+إضافة المرضى/.test(lg),
+    "ك.٥ حارس الإكمال التشغيلي موضح");
+  check(lg.includes(`«${PENDING_CHARGE_ACTION_LABELS.approve}»`)
+    && lg.includes(`«${PENDING_CHARGE_ACTION_LABELS.return}»`)
+    && /لا يوجد فعل «رفض» ثالث/.test(lg), "ك.٦ الفعلان القانونيان فقط");
+  check(/حتى 200 صف/.test(lg) && /عداد الطابور الخادمي هو COUNT كامل/.test(lg),
+    "ك.٧ فرق حد القائمة عن العداد الكامل");
+  check(/الخادم يعيد من\s+GET \/api\/no-exam\/review حقلاً اسمه rows فقط/.test(lg)
+    && /الواجهة الحالية ما زالت\s+تنتظر أيضاً specialties/.test(lg)
+    && /ليست قاعدة الصلاحية الحالية/.test(lg),
+    "ك.٨ تعارض specialties الحالي موضح بلا اختراع صلاحية");
+
+  const rg = pageGuideFor(RET, rep);
+  check(rg.includes(`«${RETURNED_QUEUE_TITLE}»`) && /الطابور للفرع لا لموظف بعينه/.test(rg),
+    "ك.٩ المُعادات مهمة فرع لا ملكية شخصية");
+  check(/مبلغ موجب صحيح بالدينار/.test(rg) && /الملاحظة\s+اختيارية/.test(rg),
+    "ك.١٠ عقد التصحيح مضبوط");
+  check(/الصف نفسه/.test(rg) && /المبلغ القديم لا\s+يُقيّد/.test(rg) && /لا يُحسب البيع مرتين/.test(rg),
+    "ك.١١ التصحيح لا ينسخ الصف ولا يقيد القديم");
+  check(/حتى 200 صف/.test(rg) && /branch لكل ما ينتظر/.test(rg) && /mine لما أنشأه/.test(rg),
+    "ك.١٢ القائمة والعدادان موضحان");
+  check(/نصوص قديمة في الواجهة/.test(rg) && /الخادم الحالي لا يربط هذا المسار بطبيب أو اختصاص/.test(rg)
+    && /لا تعلّم الموظف أن عليه انتظار طبيب/.test(rg),
+    "ك.١٣ يمنع تعليم المسار الطبي القديم");
+  same("ك.١٤ دليل الطابور ساكن", pageGuideFor(LEG, rep), pageGuideFor(LEG, adm));
+  same("ك.١٥ دليل المُعادات ساكن", pageGuideFor(RET, rep), pageGuideFor(RET, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
