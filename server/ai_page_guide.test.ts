@@ -1138,8 +1138,10 @@ async function main() {
   const STAT = resolvePageContext(STATISTICS_PAGE_PATH);
   same("ص.١ مسار الإحصاءات قانوني", STAT?.path, STATISTICS_PAGE_PATH);
   const stg = pageGuideFor(STAT, rep);
-  check(/showStatistics/.test(stg) && /canViewReports/.test(stg) && /canViewPatients/.test(stg),
-    "ص.٢ يفرق ظهور الصفحة عن مصدر المرضى");
+  check(/لغير المسؤول/.test(stg) && /showStatistics/.test(stg)
+    && /المسؤول العام.*لا\s+يُطبَّق عليه showStatistics/s.test(stg)
+    && /canViewReports/.test(stg) && /canViewPatients/.test(stg),
+    "ص.٢ يفرق ظهور الصفحة للمسؤول عن غيره ومصدر المرضى");
   check(/يحذف مصفوفة payments كلياً/.test(stg) && /canViewPayments/.test(stg)
     && /صفراً أو ناقصين/.test(stg), "ص.٣ لا يفسر غياب الدفعات كصفر حقيقي");
   check(/المسؤول العام وحده يرى مرشح الفرع/.test(stg) && /branchId الأساسي/.test(stg)
@@ -1152,6 +1154,10 @@ async function main() {
     && /وجود كلفة مسجلة، لا أن نقداً قُبض/.test(stg), "ص.٦ تسمية الدافع لا تعني قبضاً");
   check(/المرضى الجدد الشهري مستقل عن مرشح الفترة/.test(stg)
     && /تغيير اليوم أو الأسبوع أو النطاق لا يقص/.test(stg), "ص.٧ التقرير الشهري لا يتبع مرشح الفترة");
+  check(/monthly-new-patients تتطلب canViewReports/.test(stg)
+    && /canViewPatients ولا يملك\s+canViewReports/.test(stg)
+    && /403/.test(stg) && /تختفي قطعة التقرير الشهري/.test(stg),
+    "ص.٧ب يشرح حارس التقرير الشهري وحالة الصفحة الجزئية");
   check(/الإيرادات\/الكلفة.*totalCost/s.test(stg) && /المحصل.*تاريخها داخل\s+الفترة/s.test(stg)
     && /ليست\s+دفتر قيود/.test(stg), "ص.٨ دلالة المال في الفترة");
   check(/أعلام المريض أو أنواع حالاته الفعلية/.test(stg) && /أكثر من قسم/.test(stg)
