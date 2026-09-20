@@ -84,6 +84,8 @@ export const DAILY_REVIEW_PAGE_PATH = "/daily-review";
 export const REPORTS_PAGE_PATH = "/reports";
 export const DAILY_PATIENT_REPORT_PAGE_PATH = "/reports/daily-patients";
 export const REVENUES_PAGE_PATH = "/revenues";
+export const BRANCHES_PAGE_PATH = "/branches";
+export const BRANCH_DETAILS_PAGE_PATH = "/branches/:id";
 
 /**
  * **مرشِّحُ الفرع يظهر فقط لمن يملك أكثرَ من فرعٍ فعلاً** — نفسُ شرط
@@ -893,6 +895,74 @@ function revenuesGuide(label: string): string {
 **⚠ لا تستنتج أن كل الفروع ظاهرة فعلاً ولا تذكر أرقاماً حية**؛ النطاق
 والقيم يأتيان من الجلسة والخادم.`;
 }
+/** دليل شاشة الفروع — بوابة كود في الواجهة، والبيانات تبقى محكومة بالخادم. */
+function branchesGuide(label: string): string {
+  return `
+
+دليلُ هذه الشاشة — «${label}»:
+
+**بوابة الشاشة**: الصفحة مغلّفة بـ AdminGate. الواجهة تطلب كود المسؤول من
+/api/verify-admin، وبعد نجاحه تحفظ admin_verified في localStorage. هذا يفتح
+المكوّن في المتصفح فقط؛ **لا يحوّل الجلسة إلى مسؤول ولا يغير role أو
+permissions أو branchId**.
+
+**مصدر الفروع** هو /api/branches، وهذه النقطة تعيد قائمة الفروع لكل مستخدم
+مصادق عليه. أمّا **بيانات المرضى في البحث** فتأتي من /api/patients: تحتاج
+المسؤول العام أو canViewPatients، ولغير المسؤول تُقفل على فرع الجلسة.
+لذلك معرفة كود AdminGate لا تجعل غير المسؤول يبحث مرضى الفروع الأخرى.
+
+**البحث أعلى الصفحة** لا يبحث الفروع نفسها؛ يبحث المرضى المحمّلين فقط،
+بالاسم أو الهاتف، ويعرض أول 10 نتائج كحد أقصى. لا تعلّم المستخدم أن هذا
+البحث يدعم رمز المريض أو الحالة المرضية في هذه الشاشة، لأن الكود الحالي لا
+يفعل ذلك.
+
+بطاقات الفروع تعرض الاسم والموقع ومعرّف الفرع وتفتح /branches/:id. ظهور
+بطاقة فرع لا يعني أن بيانات مرضاه أصبحت ضمن نطاق المستخدم؛ نطاق المرضى
+يحسمه /api/patients كما سبق.
+
+**⚠ لا تعتبر اجتياز AdminGate إثباتاً أن المستخدم مسؤول عام**، ولا تستنتج
+من الدليل أي مرضى أو أعداد حية.`;
+}
+
+/** تفاصيل فرع واحد — الإحصاءات من كامل مرضى الفرع، والقائمة لها وضع تاريخ/كل. */
+function branchDetailsGuide(label: string): string {
+  return `
+
+دليلُ هذه الشاشة — «${label}»:
+
+هذه الصفحة أيضاً خلف AdminGate نفسه؛ اجتياز الكود لا يرفع صلاحيات الجلسة.
+الفرع المعروض يُؤخذ من رقم المسار، لكن سياق صفحة المساعد يقنّن الرقم إلى
+/branches/:id، لذلك لا تعرف رقم الفرع الفعلي من pagePath وحده.
+
+**مصدر المرضى** هو /api/patients ثم ترشح الواجهة الصفوف التي patient.branchId
+يساوي رقم الفرع في المسار. ولغير المسؤول، /api/patients نفسه مقفول خادمياً
+على فرع جلسته ويحتاج canViewPatients؛ تغيير رقم URL لا يوسع نطاق المرضى.
+
+**بطاقات الملخص أعلى الصفحة ليست متأثرة بالتاريخ أو البحث**: عدد المرضى،
+عدد حالات الأطراف، عدد العلاج الطبيعي، و«الكلفة» كلها محسوبة من كامل
+branchPatients. والكلفة هنا هي مجموع patient.totalCost؛ ليست المقبوض الفعلي
+ولا صافي الإيراد.
+
+**القائمة تبدأ بوضع التاريخ على يوم العراق الحالي**. في وضع التاريخ يدخل
+المريض إذا كان مسجلاً في اليوم المختار **أو** لديه زيارة في ذلك اليوم.
+التبويب الآخر يعرض كل مرضى الفرع.
+
+**مهم: عندما يُكتب بحث، البحث يتجاوز مرشح التاريخ** ويبحث كامل branchPatients
+لهذا الفرع، حتى لو بقي تبويب التاريخ مختاراً. البحث يدعم الاسم والهاتف ورمز
+المريض الحالي والرموز القديمة/البديلة، ويضيف مطابقة الحالة المرضية. ثم يزيل
+التكرار.
+
+التقطيع هنا في الواجهة فقط، ويبدأ 10 صفوف مع خيارات 10 و50 و100.
+زر «إضافة مريض» يفتح /patients/new?branch=<id>. المستخدم المسؤول يمكن أن
+يبدأ التسجيل على هذا الفرع؛ غير المسؤول يعيد CreatePatient فرض branchId
+من جلسة فرعه، فلا تجعل query string وسيلة لتجاوز الفرع.
+
+فتح ملف المريض يضيف ?branch=<id> للملاحة/العودة، لكن query string لا يدخل
+في pagePath المرسَل للمساعد.
+
+**⚠ لا تخترع اسم الفرع أو رقمه أو عدد مرضاه أو كلفته الحالية**؛ هذه قيم
+حية لا يحملها دليل الصفحة.`;
+}
 /**
  * دليلُ الصفحة الحالية إن كان لها دليل — وإلّا نصٌّ فارغ.
  *
@@ -919,5 +989,7 @@ export function pageGuideFor(page: PageContext | null, access: AiAccessContext):
   if (page?.path === REPORTS_PAGE_PATH) return reportsGuide(page.label);
   if (page?.path === DAILY_PATIENT_REPORT_PAGE_PATH) return dailyPatientReportGuide(page.label);
   if (page?.path === REVENUES_PAGE_PATH) return revenuesGuide(page.label);
+  if (page?.path === BRANCHES_PAGE_PATH) return branchesGuide(page.label);
+  if (page?.path === BRANCH_DETAILS_PAGE_PATH) return branchDetailsGuide(page.label);
   return "";
 }
