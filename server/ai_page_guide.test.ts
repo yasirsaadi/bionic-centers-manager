@@ -814,6 +814,9 @@ async function main() {
   for (const st of SUPPORT_MAINTENANCE_STAGES) {
     check(og.includes(`«${STAGE_LABELS[st]}»`), `ي.١٧ صيانة المسند ${st} مذكورة`);
   }
+  check(/الصيانة ليست خط البناء الكامل ولا سلسلةً من خطوتين/.test(og)
+    && /يختار الخبير \*\*أحد\*\* الإنجازين/.test(og),
+    "ي.١٧أ صيانة الطرف اختيار إنجاز واحد لا تسلسل");
   for (const s of HOLD_STATUSES) {
     check(og.includes(`«${STATUS_LABELS[s]}»`), `ي.١٨ حالة التوقف ${s} مذكورة`);
   }
