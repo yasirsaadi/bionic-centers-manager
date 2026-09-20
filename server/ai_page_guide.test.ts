@@ -52,6 +52,7 @@ import {
   NO_EXAM_REVIEW_PAGE_PATH, RETURNED_CHARGES_PAGE_PATH,
   DISCOUNT_APPROVALS_PAGE_PATH, PAYMENT_CORRECTIONS_PAGE_PATH, DAILY_REVIEW_PAGE_PATH,
   REPORTS_PAGE_PATH, DAILY_PATIENT_REPORT_PAGE_PATH, REVENUES_PAGE_PATH,
+  BRANCHES_PAGE_PATH, BRANCH_DETAILS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -991,6 +992,46 @@ async function main() {
   same("م.٢١ دليل التقارير ساكن", pageGuideFor(REP, rep), pageGuideFor(REP, adm));
   same("م.٢٢ دليل التقرير اليومي ساكن", pageGuideFor(DPR, rep), pageGuideFor(DPR, adm));
   same("م.٢٣ دليل الإيرادات ساكن", pageGuideFor(REV, rep), pageGuideFor(REV, adm));
+  // ═══ ن: الفروع وتفاصيل الفرع ═══════════════════════════════════════════
+  console.log("\n── ن: الفروع وتفاصيل الفرع ──");
+  const BRS = resolvePageContext(BRANCHES_PAGE_PATH);
+  const BRD = resolvePageContext("/branches/17");
+  same("ن.١ مسار الفروع قانوني", BRS?.path, BRANCHES_PAGE_PATH);
+  same("ن.٢ مسار تفاصيل الفرع يُقنّن الرقم", BRD?.path, BRANCH_DETAILS_PAGE_PATH);
+
+  const bg = pageGuideFor(BRS, rep);
+  check(/AdminGate/.test(bg) && /\/api\/verify-admin/.test(bg) && /admin_verified/.test(bg),
+    "ن.٣ بوابة الفروع كود واجهة");
+  check(/لا يحوّل الجلسة إلى مسؤول/.test(bg) && /لا يغير role أو\s+permissions أو branchId/.test(bg),
+    "ن.٤ اجتياز الكود لا يرفع سلطة الجلسة");
+  check(/\/api\/branches/.test(bg) && /لكل مستخدم\s+مصادق عليه/.test(bg),
+    "ن.٥ قائمة الفروع ليست حارس مرضى");
+  check(/\/api\/patients/.test(bg) && /canViewPatients/.test(bg) && /فرع الجلسة/.test(bg),
+    "ن.٦ بحث المرضى يبقى خادمياً ضمن النطاق");
+  check(/بالاسم أو الهاتف/.test(bg) && /أول 10 نتائج/.test(bg)
+    && /لا تعلّم المستخدم.*رمز المريض أو الحالة المرضية/s.test(bg),
+    "ن.٧ عقد بحث شاشة الفروع دقيق");
+
+  const bdg = pageGuideFor(BRD, rep);
+  check(/يقنّن الرقم إلى\s+\/branches\/:id/.test(bdg) && /لا تعرف رقم الفرع الفعلي/.test(bdg),
+    "ن.٨ المساعد لا يخترع رقم الفرع من السياق");
+  check(/patient\.branchId/.test(bdg) && /تغيير رقم URL لا يوسع نطاق المرضى/.test(bdg),
+    "ن.٩ تفاصيل الفرع لا تتجاوز نطاق الخادم");
+  check(/ليست متأثرة بالتاريخ أو البحث/.test(bdg) && /مجموع patient\.totalCost/.test(bdg)
+    && /ليست المقبوض الفعلي/.test(bdg), "ن.١٠ بطاقات الملخص لكل الفرع والكلفة ليست قبضاً");
+  check(/مسجلاً في اليوم المختار/.test(bdg) && /زيارة في ذلك اليوم/.test(bdg),
+    "ن.١١ وضع التاريخ تسجيل أو زيارة");
+  check(/البحث يتجاوز مرشح التاريخ/.test(bdg) && /كامل branchPatients/.test(bdg),
+    "ن.١٢ البحث يتجاوز التاريخ داخل الفرع");
+  check(/رمز\s+المريض الحالي/.test(bdg) && /الرموز القديمة\/البديلة/.test(bdg)
+    && /الحالة المرضية/.test(bdg), "ن.١٣ بحث التفاصيل يدعم الرمز والحالة");
+  check(/خيارات 10 و50 و100/.test(bdg), "ن.١٤ تقطيع تفاصيل الفرع عميلّي");
+  check(/\/patients\/new\?branch=<id>/.test(bdg) && /غير المسؤول.*فرض branchId/s.test(bdg),
+    "ن.١٥ query الفرع لا يتجاوز جلسة غير المسؤول");
+  check(/query string لا يدخل\s+في pagePath/.test(bdg), "ن.١٦ query العودة ليس سياق سلطة");
+
+  same("ن.١٧ دليل الفروع ساكن", pageGuideFor(BRS, rep), pageGuideFor(BRS, adm));
+  same("ن.١٨ دليل تفاصيل الفرع ساكن", pageGuideFor(BRD, rep), pageGuideFor(BRD, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
