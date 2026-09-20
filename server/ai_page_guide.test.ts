@@ -46,6 +46,8 @@ import { resolvePageContext } from "./ai/page_context";
 import {
   pageGuideFor,
   DECISION_QUEUE_PAGE_PATH, MY_EXAMS_PAGE_PATH, MEDICAL_REVIEW_PAGE_PATH,
+  PATIENTS_PAGE_PATH, CREATE_PATIENT_PAGE_PATH, PATIENT_DETAILS_PAGE_PATH,
+  EDIT_PATIENT_PAGE_PATH, FOLLOW_UPS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import { specialtyLabel } from "@shared/medical";
@@ -168,7 +170,7 @@ async function main() {
 
   // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
   console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/statistics", "/patients", "/manufacturing", "/accounting", "/"]) {
+  for (const other of ["/statistics", "/manufacturing", "/accounting", "/"]) {
     seen.length = 0;
     await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
     check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
@@ -185,9 +187,10 @@ async function main() {
   check(/canCompleteReceptionSale/.test(src) && /from "@shared\/commercial"/.test(src),
     "ج.١ **الدليلُ يستورد الدالّة القانونية**");
   //  **ولا قائمةَ أدوارٍ ثانية**: لا أسماءَ أدوارٍ مكتوبةً في الملفّ.
-  check(!/"reception"|'reception'|"accountant"|'accountant'|"branch_manager"|'branch_manager'/.test(src),
-    "ج.٢ **ولا قائمةَ أدوارٍ منسوخةً فيه إطلاقاً**",
-    (src.match(/["'](reception|accountant|branch_manager)["']/g) ?? []).join(","));
+  const decisionGuideSrc = src.slice(src.indexOf("function decisionQueueGuide"), src.indexOf("function myExamsGuide"));
+  check(!/"reception"|'reception'|"accountant"|'accountant'|"branch_manager"|'branch_manager'/.test(decisionGuideSrc),
+    "ج.٢ **ولا قائمةَ أدوارٍ منسوخةً في دليل بانتظار الحسم**",
+    (decisionGuideSrc.match(/["'](reception|accountant|branch_manager)["']/g) ?? []).join(","));
   //  **ولا تسمياتِ أفعالٍ منسوخة**: تُبنى من `EXAM_PATH_ACTION_LABELS`.
   check(/EXAM_PATH_ACTION_LABELS/.test(src) && /EXAM_PATH_ACTIONS/.test(src),
     "ج.٢ب **والدليلُ يستورد خريطةَ التسميات القانونية**");
@@ -681,6 +684,92 @@ async function main() {
   check(!/document|window|innerText|querySelector/.test(src),
     "و.٥ **ولا قراءةَ DOM**");
 
+  // ═══ ط: عائلة المريض الأساسية — أدلة ساكنة للتدريب بلا بيانات حيّة ═══
+  console.log("\n── ط: سجل المريض والتسجيل والملف والتعديل والمتابعات ──");
+  const PATS = resolvePageContext(PATIENTS_PAGE_PATH);
+  const NEWP = resolvePageContext(CREATE_PATIENT_PAGE_PATH);
+  const DET = resolvePageContext("/patients/123");
+  const EDT = resolvePageContext("/patients/123/edit");
+  const FUP = resolvePageContext(FOLLOW_UPS_PAGE_PATH);
+  same("ط.١ سجل المرضى قانوني", PATS?.path, PATIENTS_PAGE_PATH);
+  same("ط.٢ التسجيل قانوني", NEWP?.path, CREATE_PATIENT_PAGE_PATH);
+  same("ط.٣ التفاصيل تُقنَّن إلى :id", DET?.path, PATIENT_DETAILS_PAGE_PATH);
+  same("ط.٤ التعديل تُقنَّن إلى :id/edit", EDT?.path, EDIT_PATIENT_PAGE_PATH);
+  same("ط.٥ المتابعات قانونية", FUP?.path, FOLLOW_UPS_PAGE_PATH);
+
+  const pg = pageGuideFor(PATS, rep);
+  check(/جميع المرضى/.test(pg) && /الصفحة\s+الأولى/.test(pg), "ط.٦ السجل يشرح الافتراض");
+  check(/رمز المريض الحالي/.test(pg) && /الرمز القديم\s+بعد دمج الملفات/.test(pg), "ط.٧ السجل يشرح البحث بالرمزين");
+  check(/الحالة المرضية/.test(pg) && /لا يوجد بحثٌ مكتوب/.test(pg) && /لا يُرسل\s+مرشّح التاريخ/.test(pg),
+    "ط.٨ السجل يشرح الحالة وأولوية البحث على التاريخ");
+  check(/مع \*\*أي نص بحث\*\*/.test(pg)
+    && /لا يطبّق\s+`branchId`/.test(pg)
+    && /من فروع أخرى/.test(pg),
+    "ط.٨أ بحث المسؤول يتجاهل مرشّح الفرع");
+  check(/ملفات أُتيحت لذلك الفرع صراحةً/.test(pg)
+    && /patientVisibleToScopeSql/.test(pg)
+    && /مسجّل أصلاً في فرع آخر/.test(pg),
+    "ط.٨ب نطاق غير المسؤول يشمل الملفات المشتركة مع فرعه");
+  check(/Excel/.test(pg) && /PDF/.test(pg)
+    && /10000/.test(pg) && /10,000 صف كحد أقصى/.test(pg)
+    && /التصدير ليس كاملاً/.test(pg)
+    && /canViewPayments/.test(pg),
+    "ط.٩ السجل يشرح سقف التصدير وحجب المال");
+  check(/لا تستنتج من هذا الدليل أن زرّاً بعينه ظاهر الآن/.test(pg), "ط.١٠ السجل لا يخترع حالة صف");
+
+  const ng = pageGuideFor(NEWP, rep);
+  check(/موظف الاستقبال لا يملك إدخال تاريخ قديم/.test(ng), "ط.١١ التسجيل يشرح التاريخ");
+  check(/name-availability/.test(ng) && /POST \/api\/patients/.test(ng), "ط.١٢ التسجيل يفرّق الإرشاد عن الحارس النهائي");
+  check(/إصابات وتشخيص\s+العلاج الطبيعي/.test(ng)
+    && /نوع المسند\/جهة الإصابة/.test(ng)
+    && /موضع البتر/.test(ng),
+    "ط.١٣ التسجيل يشرح ما يستطيع الاستقبال إدخاله فعلاً");
+  check(/التسجيل بلا كلفة دائماً/.test(ng)
+    && /totalCost: 0/.test(ng)
+    && /يرفض أي كلفة غير صفرية/.test(ng)
+    && /تخصيص\/إسناد خبير/.test(ng)
+    && /الكلفة والجلسات/.test(ng),
+    "ط.١٣أ التسجيل لا يعلّم مسار الكلفة القديم");
+
+  const dg = pageGuideFor(DET, rep);
+  for (const mark of ["الزيارات", "المدفوعات", "المستندات"])
+    check(dg.includes(`«${mark}»`), `ط.١٤ تبويب ${mark} مذكور`);
+  check(/«خطط العلاج» يظهر \*\*فقط إذا كان المريض علاجاً طبيعياً\*\*/.test(dg)
+    && /patient\.isPhysiotherapy === true/.test(dg),
+    "ط.١٤أ خطط العلاج مشروطة بالعلاج الطبيعي");
+  check(/canViewPayments/.test(dg) && /canManageTreatmentPlans/.test(dg) && /canEditPatients/.test(dg) && /canAddPatients/.test(dg),
+    "ط.١٥ ملف المريض يربط الأفعال ببواباتها");
+  check(/caseId == null/.test(dg)
+    && /صفوف قديمة\/غير منسوبة لحالة/.test(dg)
+    && /قد تبقى بعض السجلات ظاهرة في أكثر من حالة/.test(dg),
+    "ط.١٥أ الحالة المختارة تبقي الصفوف غير المنسوبة");
+  check(/لا تخترع حالةً للمريض ولا قيمةً مالية ولا زرّاً حالياً/.test(dg), "ط.١٦ ملف المريض لا يخترع الحي");
+
+  const eg = pageGuideFor(EDT, rep);
+  check(/المسؤول العام أو مدير الفرع فقط/.test(eg) && /checkRequiredPatientData/.test(eg),
+    "ط.١٧ التعديل يشرح الكلفة وفحص الاكتمال المشروط");
+  check(/\?adding=1/.test(eg)
+    && /canEditCost && !addingMode/.test(eg)
+    && /سياق صفحة المساعد يحذف query string/.test(eg),
+    "ط.١٧أ التعديل يشرح استثناء وضع إضافة الحالة للكلفة");
+  for (const field of ["age", "height", "weight", "isAmputee", "amputationSite"]) {
+    check(eg.includes(`\`${field}\``), `ط.١٨ الحقل المحروس ${field} مذكور`);
+  }
+  check(/إذا لم تتغيّر هذه القيم/.test(eg)
+    && /التشخيص أو الإصابة أو المسند أو حقول سريرية أخرى/.test(eg),
+    "ط.١٨أ غير الخمسة لا يفعّل فحص الاكتمال");
+
+  const fg = pageGuideFor(FUP, rep);
+  check(/العلاج الطبيعي/.test(fg) && /٧ أيام أو أكثر/.test(fg), "ط.١٩ غرض المتابعات مضبوط");
+  check(/التذكيرات النشطة/.test(fg) && /السجل/.test(fg), "ط.٢٠ التبويبان");
+  check(/الهاتف غير مُمرَّر\s+إلى بحث السجل/.test(fg), "ط.٢١ يشرح فرق بحث الهاتف بين النشط والسجل");
+  check(/حذف سجل متابعة قد يعيد المريض إلى\s+التذكيرات النشطة/.test(fg), "ط.٢٢ يشرح أثر الحذف");
+  check(/canViewPatients/.test(fg) && /عزل الفرع/.test(fg), "ط.٢٣ يشرح الحارس الخادمي");
+
+  // الأدلة الخمسة ساكنة: لا تتغير بتغيير AiAccessContext.
+  for (const p of [PATS, NEWP, DET, EDT, FUP]) {
+    same(`ط.٢٤ الدليل الساكن ${p?.path}`, pageGuideFor(p, rep), pageGuideFor(p, adm));
+  }
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
