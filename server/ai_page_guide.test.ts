@@ -48,6 +48,7 @@ import {
   DECISION_QUEUE_PAGE_PATH, MY_EXAMS_PAGE_PATH, MEDICAL_REVIEW_PAGE_PATH,
   PATIENTS_PAGE_PATH, CREATE_PATIENT_PAGE_PATH, PATIENT_DETAILS_PAGE_PATH,
   EDIT_PATIENT_PAGE_PATH, FOLLOW_UPS_PAGE_PATH,
+  MANUFACTURING_PAGE_PATH, MANUFACTURING_ORDER_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import { specialtyLabel } from "@shared/medical";
@@ -170,7 +171,7 @@ async function main() {
 
   // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
   console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/statistics", "/manufacturing", "/accounting", "/"]) {
+  for (const other of ["/statistics", "/accounting", "/"]) {
     seen.length = 0;
     await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
     check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
@@ -770,6 +771,66 @@ async function main() {
   for (const p of [PATS, NEWP, DET, EDT, FUP]) {
     same(`ط.٢٤ الدليل الساكن ${p?.path}`, pageGuideFor(p, rep), pageGuideFor(p, adm));
   }
+  // ═══ ي: التصنيع — اللوحة وأمر التصنيع ══════════════════════════════════
+  console.log("\n── ي: تصنيع الأطراف والمساند وأمر التصنيع ──");
+  const MFG = resolvePageContext(MANUFACTURING_PAGE_PATH);
+  const MORD = resolvePageContext("/manufacturing/orders/123");
+  same("ي.١ مسار التصنيع قانوني", MFG?.path, MANUFACTURING_PAGE_PATH);
+  same("ي.٢ مسار أمر التصنيع يُقنَّن", MORD?.path, MANUFACTURING_ORDER_PAGE_PATH);
+
+  const mg = pageGuideFor(MFG, rep);
+  check(/نظرتان مختلفتان/.test(mg) && /الحالات المسندة إليك/.test(mg),
+    "ي.٣ اللوحة تفرق بين النظر الإداري وأوامر الخبير");
+  check(/يحمل قدرة العمل كخبير/.test(mg) && /يبقى على النظر الإداري/.test(mg),
+    "ي.٤ مدير-خبير يبقى مديراً");
+  check(/رقم المستخدم نفسه/.test(mg) && /لا يقبل\s+رقم خبير يرسله العميل/.test(mg),
+    "ي.٥ أوامر الخبير معزولة خادمياً");
+  check(/مرشح فرع/.test(mg) && /مرشح خبير/.test(mg) && /نوع الخدمة/.test(mg)
+    && /المرحلة/.test(mg) && /الحالة/.test(mg), "ي.٦ مرشحات اللوحة مذكورة");
+  check(/عدادات الشرائح الصغيرة/.test(mg) && /القائمة التي رجعت فعلاً بعد المرشحات الحالية/.test(mg),
+    "ي.٧ الشرائح ليست إجماليات مستقلة");
+  check(/أمر تصنيع لمريض موجود/.test(mg) && /زر إداري فقط/.test(mg)
+    && /ليس\s+باب الصيانة/.test(mg) && /إضافة خدمة جديدة/.test(mg),
+    "ي.٨ اختصار إنشاء الأمر مضبوط بحدوده");
+  for (const st of BUILD_STAGES) {
+    check(mg.includes(`«${STAGE_LABELS[st]}»`), `ي.٩ مرحلة البناء ${st} مذكورة من المصدر القانوني`);
+  }
+  check(/لا ترسل حقولاً مالية/.test(mg), "ي.١٠ التصنيع لا يعلّم مالاً غير موجود");
+
+  const og = pageGuideFor(MORD, rep);
+  check(/خبير آخر في الفرع نفسه لا يفتح أمر زميله/.test(og), "ي.١١ عزل صفحة الأمر");
+  check(/مواصفات هذا الجهاز — من معاينته/.test(og) && /لا تخلط المصدرين/.test(og),
+    "ي.١٢ مصدر مواصفات الجهاز موضح");
+  for (const st of BUILD_STAGES) {
+    check(og.includes(`«${STAGE_LABELS[st]}»`), `ي.١٣ مرحلة الأمر ${st} مذكورة`);
+  }
+  check(/المسند الذي لا يحتاج قالباً/.test(og) && /من القياسات إلى التصنيع/.test(og),
+    "ي.١٤ استثناء تخطي قالب المسند");
+  check(/تاريخ التسليم المتوقع\s+إلزامياً/.test(og) && /نتيجة التصنيع والملاءمة/.test(og),
+    "ي.١٥ التزام الموعد والنتيجة عند نقاطهما");
+  for (const st of PROSTHETIC_MAINTENANCE_STAGES) {
+    check(og.includes(`«${STAGE_LABELS[st]}»`), `ي.١٦ صيانة الطرف ${st} مذكورة`);
+  }
+  for (const st of SUPPORT_MAINTENANCE_STAGES) {
+    check(og.includes(`«${STAGE_LABELS[st]}»`), `ي.١٧ صيانة المسند ${st} مذكورة`);
+  }
+  for (const s of HOLD_STATUSES) {
+    check(og.includes(`«${STATUS_LABELS[s]}»`), `ي.١٨ حالة التوقف ${s} مذكورة`);
+  }
+  check(/إعادة عمل فني» وحدها ترجع/.test(og) && /إلغاء التوقف\s+ومتابعة العمل/.test(og),
+    "ي.١٩ إعادة العمل والاستئناف موضحان");
+  check(/أول تحديد لا يحتاج سبباً/.test(og) && /تغيير موعد قائم يحتاج سبباً مكتوباً/.test(og)
+    && /اختيار التاريخ نفسه مرفوض/.test(og), "ي.٢٠ قواعد الموعد دقيقة");
+  check(/الإدارة ومدير الفرع فقط/.test(og) && /تحويل لخبير/.test(og)
+    && /تعديل إداري\s+للمرحلة/.test(og), "ي.٢١ أفعال الإدارة في صفحة الأمر");
+  check(/صفحة\s+الأمر نفسها لا تعرض زر «إلغاء أمر التصنيع»/.test(og),
+    "ي.٢٢ لا يخترع زر إلغاء في صفحة الأمر");
+  check(/لا تجزم بالمرحلة أو الحالة أو الأزرار الحالية/.test(og),
+    "ي.٢٣ لا يخترع حالة أمر حي");
+
+  // الدليلان ساكنان ولا يغيران الأدوات أو الصلاحيات.
+  same("ي.٢٤ دليل اللوحة ساكن", pageGuideFor(MFG, rep), pageGuideFor(MFG, adm));
+  same("ي.٢٥ دليل الأمر ساكن", pageGuideFor(MORD, rep), pageGuideFor(MORD, adm));
   await cleanup();
   console.log(failures === 0 ? "\n✅ كل الفحوص نجحت" : `\n❌ ${failures} حالة فاشلة`);
   await pool.end();
