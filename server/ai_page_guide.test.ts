@@ -1158,8 +1158,9 @@ async function main() {
   check(/totalPaid.*payments المؤرخة داخل الفترة/s.test(acg)
     && /totalRevenue.*cost_entries المنشأة داخل الفترة/s.test(acg)
     && /netProfit = الوارد المقبوض ناقص المصروفات/.test(acg), "ض.١٠ معنى تدفقات المال");
-  check(/totalRemaining.*العمر كله/s.test(acg) && /collectionRate.*العمر كله/s.test(acg)
-    && /لا يحول\s+الدين ونسبة التحصيل إلى «دين تلك الفترة»/.test(acg), "ض.١١ المخزون المالي لا يتقيد بالفترة");
+  check(/totalRemaining.*العمر كله.*حد أدنى صفر/s.test(acg)
+    && /لا يُعرض دين سالب/.test(acg) && /collectionRate.*العمر كله/s.test(acg)
+    && /لا يحول\s+الدين ونسبة التحصيل إلى «دين تلك الفترة»/.test(acg), "ض.١١ المخزون المالي وحد الدين الأدنى");
   check(/يوم بغداد \(\+03:00\)/.test(acg) && /todayRevenue فيه هو النقد المقبوض/.test(acg)
     && /قد تختلف لقطة يوم واحد عن الملخص اليومي/.test(acg), "ض.١٢ فرق الملخص اليومي عن نطاق الصفحة");
   check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
@@ -1175,7 +1176,9 @@ async function main() {
     && /حفظ الشراء أو دفعة المورد.*بأفضل\s+جهد/s.test(acg)
     && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات وحدود القيود");
   check(/المديونيات والاتجاهات والربحية والمقارنة والتنبيهات/.test(acg)
-    && /canManageAccounting أو المسؤول/.test(acg), "ض.١٧ تقارير المحاسبة الكاملة");
+    && /استثناء صريح/.test(acg) && /AccountingRevenueByTreatment/.test(acg)
+    && /revenue-by-treatment.*canViewReports/s.test(acg)
+    && /canViewReports فقط.*يفتح \/accounting/s.test(acg), "ض.١٧ استثناء تقرير الإيراد حسب العلاج");
   same("ض.١٨ دليل المحاسبة ساكن", pageGuideFor(ACC, rep), pageGuideFor(ACC, adm));
 
   // ═══ ص: الإحصاءات وحدود مصادرها ═══════════════════════════════════════
