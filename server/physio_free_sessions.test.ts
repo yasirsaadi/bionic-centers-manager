@@ -1931,6 +1931,86 @@ async function state(pid: number) {
         "مم٧. والصفُّ كما هو — صفرٌ ومجّانيٌّ وملاحظتُه الجديدة", JSON.stringify(row2));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── نن. ودمجُ ملفَّين: وسمُ الخطة يتبع خطتَه أو يُرفَع ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `plan_credited = true` معناه «جلساتُ هذا الصفّ في الخطة **الآن**».
+    //  والدمجُ ينقل صفوفَ الدفعات إلى الهدف **ويُسقط خطةَ المصدر مع صفّه**
+    //  — فيصير الوسمُ يشير إلى خطةٍ لم تعد موجودة، ويُقاس على خطةِ الهدف
+    //  التي لم تُبنَ منه قطّ. فحذفُ ذلك الصفّ لاحقاً يطرح من رقمٍ لا يخصّه.
+    {
+      const tgt = await mk("دمج-هدف-بخطة", true);          // روبوت ١٠
+      const src = await mk("دمج-مصدر-بخطة", true);          // روبوت ١٠
+      const gift = await http("POST", "/api/payments", S, {
+        patientId: src, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      check(gift.status === 201, "نن١. هديّةُ ستٍّ على المصدر", String(gift.status));
+      const gid = (await q(
+        `SELECT id, plan_credited c FROM payments WHERE patient_id=$1 AND is_free_sessions=true`, [src])).rows[0];
+      const sBefore = await state(src);
+      check(gid?.c === true && sBefore.sessions === 16,
+        "نن٢. فخطةُ المصدر ١٦ والصفُّ موسومٌ مقيَّداً", `${sBefore.sessions} ${JSON.stringify(gid)}`);
+      const tBefore = await state(tgt);
+      check(tBefore.sessions === 10, "نن٣. وخطةُ الهدف ١٠", String(tBefore.sessions));
+
+      const m = await http("POST", "/api/admin/patients/merge", S, { sourceId: src, targetId: tgt });
+      check(m.status < 300, "نن٤. والدمجُ مضى", `${m.status} ${JSON.stringify(m.body).slice(0, 140)}`);
+
+      const moved = (await q(
+        `SELECT patient_id p, plan_credited c FROM payments WHERE id=$1`, [gid?.id])).rows[0];
+      check(Number(moved?.p) === tgt, "نن٥. والصفُّ انتقل إلى الهدف", JSON.stringify(moved));
+
+      const tAfter = await state(tgt);
+      check(tAfter.sessions === 26,
+        "نن٦. **وخطةُ الهدف صارت ٢٦** — خطّتان مؤلَّفتان تُجمعان كما تُجمع كلفتاهما",
+        `${tBefore.sessions} ⟶ ${tAfter.sessions} ${JSON.stringify(tAfter.plan)}`);
+      check(moved?.c === true,
+        "نن٧. فالوسمُ صادقٌ: جلساتُ الصفّ في خطة الهدف فعلاً", JSON.stringify(moved));
+
+      //  **والحسمُ: حذفُ الهديّة المنقولة يطرح ستّاً لا أكثر.**
+      const del = await http("DELETE", `/api/payments/${gid?.id}`, S, { reason: "إلغاء التبرع" });
+      check(del.status < 300, "نن٨. وحذفُ الهديّة المنقولة مضى", String(del.status));
+      const tDel = await state(tgt);
+      check(tDel.sessions === 20,
+        "نن٩. **والخطةُ ٢٦ ⟶ ٢٠** — لا ١٠ ⟶ ٤ كما كان",
+        `${tAfter.sessions} ⟶ ${tDel.sessions} ${JSON.stringify(tDel.plan)}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── سس. وهدفٌ بلا خطة: لا تُخترَع له واحدة (ذي قار) ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const tgt = await mk("دمج-هدف-بلا-خطة", false);
+      const src = await mk("دمج-مصدر-بخطة٢", true);         // روبوت ١٠
+      const gift = await http("POST", "/api/payments", S, {
+        patientId: src, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      const gid = (await q(
+        `SELECT id, plan_credited c FROM payments WHERE patient_id=$1 AND is_free_sessions=true`, [src])).rows[0];
+      check(gift.status === 201 && gid?.c === true,
+        "سس١. هديّةٌ مقيَّدة على مصدرٍ ذي خطة", JSON.stringify(gid));
+
+      const m = await http("POST", "/api/admin/patients/merge", S, { sourceId: src, targetId: tgt });
+      check(m.status < 300, "سس٢. والدمجُ مضى", String(m.status));
+
+      const t = (await q(`SELECT physio_plan p FROM patients WHERE id=$1`, [tgt])).rows[0];
+      check(t?.p === null || (Array.isArray(t?.p) && t.p.length === 0),
+        "سس٣. **ولا خطةَ تُخترَع لمن لا خطةَ له** — درسُ ذي قار", JSON.stringify(t?.p));
+      const moved = (await q(`SELECT plan_credited c FROM payments WHERE id=$1`, [gid?.id])).rows[0];
+      check(moved?.c === false,
+        "سس٤. **والوسمُ رُفع**: لا خطةَ تحمل جلساتِه، فلا يُطرَح منها لاحقاً",
+        JSON.stringify(moved));
+
+      const del = await http("DELETE", `/api/payments/${gid?.id}`, S, { reason: "إلغاء التبرع" });
+      const t2 = (await q(`SELECT physio_plan p FROM patients WHERE id=$1`, [tgt])).rows[0];
+      check(del.status < 300 && (t2?.p === null || (Array.isArray(t2?.p) && t2.p.length === 0)),
+        "سس٥. وحذفُها بعده لا يُنشئ خطةً ولا يطرح من شيء", `${del.status} ${JSON.stringify(t2?.p)}`);
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

@@ -1833,6 +1833,62 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * **ودمجُ ملفَّين: خطّتان مؤلَّفتان تُجمعان، وإلّا رُفع الوسم** (مراجعةُ
+   * Codex الثانية عشرة).
+   *
+   * `plan_credited = true` معناه «جلساتُ هذا الصفّ في الخطة **الآن**».
+   * والدمجُ ينقل صفوفَ الدفعات إلى الهدف **ويُسقط خطةَ المصدر مع صفّه** —
+   * فكان الوسمُ يبقى يشير إلى خطةٍ لم تعد موجودة، ويُقاس على خطةِ الهدف
+   * التي لم تُبنَ منه قطّ: خطةُ هدفٍ ١٠ + مصدرٌ فيه هديّةُ ستٍّ مقيَّدة ⟶
+   * حذفُ الهديّة بعد الدمج يُنزلها إلى **٤**. مُعادٌ إنتاجُه حيّاً.
+   *
+   * ══ **والخطّتان تُجمعان حين يملك الطرفان واحدة** ═══════════════════════
+   * كلتاهما **رقمٌ مؤلَّف** كتبه موظّف، والمريضُ واحدٌ اشترى في الملفّين
+   * معاً — تماماً كما يجمع الدمجُ `total_cost` والدفعاتِ والزياراتِ وقيودَ
+   * الكلف. وحينها يبقى وسمُ الصفّ المنقول **صادقاً**: جلساتُه انتقلت مع
+   * خطتها إلى خطة الهدف.
+   *
+   * ══ **ولا تُخترَع خطةٌ لمن لا خطةَ له** (حادثةُ ذي قار) ═════════════════
+   * هدفٌ بلا خطة عدّادُه يقرأ دفعاتِه، وإنشاءُ خطةٍ له من خطة المصدر يقلبه
+   * إلى القراءة من الخطة وحدها **فتختفي جلساتُ دفعاته هو**. والحارسُ قائمٌ
+   * في `adjustPhysioPlanForGift` نفسِها (تنصرف حين لا خطةَ للهدف)، فنُنادي
+   * الكاتبَ القانونيَّ ولا نكتب فرعاً ثانياً — **وعندئذٍ يُرفَع الوسمُ عن
+   * الصفوف المنقولة** لأن لا خطةَ تحمل جلساتِها، فلا يُطرَح منها لاحقاً.
+   *
+   * **و`NULL` تبقى `NULL`** (صفٌّ سابقٌ للترحيل، لا نَدَّعي أننا سألناه)،
+   * **و`false` تبقى `false`**، **وصفوفُ الهدف نفسِه لا تُمَسّ** — الشرطُ
+   * على المعرّفات المنقولة بأعيانها.
+   *
+   * **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر ولا دفعة.
+   */
+  async carryPhysioPlanOnMergeTx(
+    tx: any, sourceId: number, targetId: number, movedPaymentIds: number[],
+  ): Promise<void> {
+    //  القراءةُ تحت القفل: الهدفُ أوّلاً ثمّ المصدر — **نفسُ ترتيب الكتابة
+    //  في `mergePatients`** (تحديثُ الهدف ثمّ حذفُ المصدر)، فلا ترتيبَ ثانٍ.
+    const [tgt] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, targetId)).for("update");
+    const [src] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, sourceId)).for("update");
+    const targetPlan = Array.isArray(tgt?.plan) ? (tgt!.plan as PhysioPlanEntry[]) : [];
+    const sourcePlan = Array.isArray(src?.plan) ? (src!.plan as PhysioPlanEntry[]) : [];
+
+    if (targetPlan.length > 0 && sourcePlan.length > 0) {
+      await this.adjustPhysioPlanForGift(targetId, sourcePlan.map((e) => ({
+        treatmentType: String(e?.treatmentType ?? ""),
+        delta: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+      })), tx);
+      return;
+    }
+
+    if (movedPaymentIds.length === 0) return;
+    await tx.update(payments).set({ planCredited: false }).where(and(
+      inArray(payments.id, movedPaymentIds),
+      eq(payments.planCredited, true),
+    ));
+  }
+
+  /**
    * **أيدخل هذا البندُ خطةَ الجلسات؟** — البوّابةُ الواحدة التي يقرؤها
    * القفلُ والقيدُ معاً، فلا يقفل أحدُهما ما لا يقيّده الآخر ولا العكس.
    *
@@ -3272,9 +3328,16 @@ export class DatabaseStorage implements IStorage {
           .where(eq(column, sourceId))
           .returning();
         moved[label] = rows.length;
+        return rows as any[];
       };
       await repoint("visits", visits, visits.patientId);
-      await repoint("payments", payments, payments.patientId);
+      //  **ومعرّفاتُ الدفعات المنقولة تُحفَظ**: وسمُ `plan_credited` عليها
+      //  يصف خطةَ المصدر، وتلك تُسقَط مع صفّه — فيُحسَم مصيرُه بعد تحديث
+      //  الهدف أدناه (`carryPhysioPlanOnMergeTx`). وصفوفُ الهدف نفسِه لا
+      //  تُمَسّ، فالشرطُ على هذه المعرّفات بأعيانها.
+      const movedPaymentIds = (await repoint("payments", payments, payments.patientId))
+        .map((r: any) => Number(r?.id))
+        .filter((n: number) => Number.isInteger(n) && n > 0);
       await repoint("documents", documents, documents.patientId);
       await repoint("invoices", invoices, invoices.patientId);
       await repoint("installmentPlans", installmentPlans, installmentPlans.patientId);
@@ -3448,6 +3511,11 @@ export class DatabaseStorage implements IStorage {
         .set(patch)
         .where(eq(patients.id, targetId))
         .returning();
+
+      //  **وخطةُ الجلسات بعد الرقعة لا قبلها**: `adjustPhysioPlanForGift`
+      //  تكتب `treatment_type` من نصّ الخطة، والرقعةُ أعلاه قد تكتبه من
+      //  المصدر — فالترتيبُ يجعل نصَّ الخطة المجموعة هو الأخير.
+      await this.carryPhysioPlanOnMergeTx(tx, sourceId, targetId, movedPaymentIds);
 
       await tx.delete(patients).where(eq(patients.id, sourceId));
       return { patient, moved };
