@@ -58,6 +58,67 @@ import {
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
   ADMIN_PAGE_PATH, ACCOUNTING_PAGE_PATH, STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
+
+/**
+ * **الشيفرةُ التنفيذية وحدها** من مصدرِ ملفّ الأدلّة.
+ *
+ * يُسقط **نصَّ القوالب الحرفيَّ** والتعليقات، **ويُبقي ما داخل `${...}`**
+ * لأنه كودٌ يُنفَّذ. وكان النزعُ بتعبيرٍ نمطيٍّ واحد يمحو القالبَ كلَّه بما
+ * فيه استدعاءاتُه، فكان نداءٌ داخل `${...}` يفلت من و.٤ (أمسكته مراجعةُ
+ * Codex على #365، ومُثبَتٌ في و.٤ب أدناه).
+ *
+ * **والسلاسلُ العادية تبقى كما هي** — نصُّ SQL خامٌّ فيها علامةٌ حمراء
+ * يجب أن تُمسَك، لا نثرٌ يُسقَط.
+ */
+function executableCode(src: string): string {
+  let out = "";
+  //  مكدّسُ الأطر: `tmpl` نصُّ قالبٍ يُسقَط، وإلّا شيفرةٌ تُبقى
+  //  و`depth` عمقُ الأقواس داخل `${...}` لمعرفة أين ينتهي.
+  const stack: Array<{ tmpl: boolean; depth: number }> = [{ tmpl: false, depth: 0 }];
+  let i = 0;
+  while (i < src.length) {
+    const top = stack[stack.length - 1];
+    const c = src[i];
+    const n = src[i + 1];
+    if (top.tmpl) {
+      if (c === "\\") { i += 2; continue; }                 // هروبٌ في النصّ
+      if (c === "`") { stack.pop(); out += " "; i += 1; continue; }
+      if (c === "$" && n === "{") {
+        stack.push({ tmpl: false, depth: 0 }); out += " "; i += 2; continue;
+      }
+      i += 1; continue;                                     // نصُّ القالب يُسقَط
+    }
+    if (c === "`") { stack.push({ tmpl: true, depth: 0 }); out += " "; i += 1; continue; }
+    if (c === '"' || c === "'") {                           // سلسلةٌ عادية تبقى
+      out += c; i += 1;
+      while (i < src.length) {
+        if (src[i] === "\\") { out += src.slice(i, i + 2); i += 2; continue; }
+        out += src[i]; i += 1;
+        if (src[i - 1] === c) break;
+      }
+      continue;
+    }
+    if (c === "/" && n === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
+      i += 2; out += " "; continue;
+    }
+    if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+      continue;
+    }
+    if (stack.length > 1) {
+      if (c === "{") top.depth += 1;
+      else if (c === "}") {
+        if (top.depth === 0) { stack.pop(); out += " "; i += 1; continue; }
+        top.depth -= 1;
+      }
+    }
+    out += c; i += 1;
+  }
+  return out;
+}
+
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
   LEGACY_QUEUE_TITLE, RETURNED_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS,
@@ -697,8 +758,34 @@ async function main() {
   await chat(doc, ask("شنو أسوي هنا؟"), PAGE);
   same("و.٣ وكذلك للطبيب", seen[0].tools.sort(), docBase);
   //  ولا قاعدةَ بياناتٍ تُقرأ في بناء الدليل.
-  check(!/db\.|storage\.|pool\.|SELECT/i.test(src),
-    "و.٤ **ولا استعلامَ قاعدةٍ في ملفّ الدليل إطلاقاً**");
+  //  **والفحصُ على الشيفرة التنفيذية وحدها**: نصُّ الأدلّة يصف سلوكَ الخادم
+  //  بالعربية فيسمّي `storage.deleteBranch` وأخواتها — وذاك وصفٌ لا نداء.
+  //  فيُنزَع نصُّ القوالب والتعليقاتُ، **ويبقى ما داخل `${...}`**.
+  const guideCode = executableCode(src);
+  check(!/db\.|storage\.|pool\.|\bSELECT\b/i.test(guideCode),
+    "و.٤ **ولا استعلامَ قاعدةٍ في شيفرة ملفّ الدليل إطلاقاً**");
+  //  **وحارسٌ بنيويٌّ فوقه**: الملفُّ لا يستورد قاعدةً ولا مخزناً أصلاً.
+  check(!/^\s*import[\s\S]*?from\s+"(?:[^"]*\/)?(?:db|storage|pool)"/m.test(src)
+    && !/from\s+"pg"/.test(src) && !/from\s+"drizzle/.test(src),
+    "و.٤أ **ولا استيرادَ قاعدةٍ أو مخزنٍ في ملفّ الدليل**");
+  //  **والماسحُ نفسُه يُقاس دخلاً وخرجاً** — لا يُصدَّق ضمناً: نثرُ الدليل
+  //  يُسقَط، **والنداءُ داخل `${...}` يبقى** (هذا بعينه ما أفلت قبل الإصلاح)،
+  //  والسلسلةُ العادية تبقى، والتعليقُ يُسقَط.
+  const scanned = (code: string) => executableCode(code);
+  check(!/storage\./.test(scanned("const g = `الخادمُ ينادي storage.deleteBranch وصفاً`;")),
+    "و.٤ب نصُّ القالب العربيُّ يُسقَط");
+  check(/db\.query/.test(scanned('const g = `قبل ${db.query("x")} بعد`;')),
+    "و.٤ب.١ **والنداءُ داخل ${...} يبقى** — وهو ما كان يفلت");
+  check(/\bSELECT\b/i.test(scanned('const g = `${run("SELECT 1")}`;')),
+    "و.٤ب.٢ وسلسلةُ SQL داخل الاستدعاء تبقى");
+  check(/db\.query/.test(scanned('const r = db.query("SELECT 1");')),
+    "و.٤ب.٣ والشيفرةُ خارج القوالب تبقى");
+  check(!/storage\./.test(scanned("// storage.foo\nconst a = 1;")),
+    "و.٤ب.٤ والتعليقُ يُسقَط");
+  check(/"storage\.foo"/.test(scanned('const a = "storage.foo";')),
+    "و.٤ب.٥ **والسلسلةُ العادية تبقى** — نصُّ SQL خامٌّ فيها علامةٌ حمراء");
+  check(/deep/.test(scanned("const g = `a ${ { k: `b ${deep()} c` } } d`;")),
+    "و.٤ب.٦ والتداخلُ يُفَكّ صحيحاً");
   check(!/document|window|innerText|querySelector/.test(src),
     "و.٥ **ولا قراءةَ DOM**");
 
@@ -764,7 +851,7 @@ async function main() {
   check(/لا تخترع حالةً للمريض ولا قيمةً مالية ولا زرّاً حالياً/.test(dg), "ط.١٦ ملف المريض لا يخترع الحي");
 
   const eg = pageGuideFor(EDT, rep);
-  check(/المسؤول العام أو مدير الفرع فقط/.test(eg) && /checkRequiredPatientData/.test(eg),
+  check(/للمسؤول العام أو مدير الفرع فقط/.test(eg) && /checkRequiredPatientData/.test(eg),
     "ط.١٧ التعديل يشرح الكلفة وفحص الاكتمال المشروط");
   check(/\?adding=1/.test(eg)
     && /canEditCost && !addingMode/.test(eg)
@@ -876,7 +963,7 @@ async function main() {
   check(lg.includes(`«${PENDING_CHARGE_ACTION_LABELS.approve}»`)
     && lg.includes(`«${PENDING_CHARGE_ACTION_LABELS.return}»`)
     && /لا يوجد فعل «رفض» ثالث/.test(lg), "ك.٦ الفعلان القانونيان فقط");
-  check(/حتى 200 صف/.test(lg) && /عداد الطابور الخادمي هو COUNT كامل/.test(lg),
+  check(/حتى 200 صف/.test(lg) && /عداد الطابور الخادمي فهو COUNT كامل/.test(lg),
     "ك.٧ فرق حد القائمة عن العداد الكامل");
   check(/الخادم يعيد من\s+GET \/api\/no-exam\/review حقلاً اسمه rows فقط/.test(lg)
     && /الواجهة الحالية ما زالت\s+تنتظر أيضاً specialties/.test(lg)
@@ -1045,17 +1132,17 @@ async function main() {
   same("س.٢ مسار المحذوفات قانوني", PTR?.path, PATIENT_TRASH_PAGE_PATH);
   same("س.٣ مسار التنبيهات قانوني", NOTI?.path, NOTIFICATIONS_PAGE_PATH);
 
-  const dg = pageGuideFor(DASH, rep);
-  check(/الاستقبال يُحوَّل إلى سجل المرضى/.test(dg) && /خبير الأطراف الصرف إلى التصنيع/.test(dg)
-    && /الطبيب\s+إلى «معايناتي»/.test(dg), "س.٤ تحويل أدوار الصفحة الرئيسية");
-  check(/overall/.test(dg) && /daily/.test(dg) && /غير المسؤول يُثبَّت خادمياً على فرع جلسته/.test(dg),
+  const dashG = pageGuideFor(DASH, rep);
+  check(/الاستقبال يُحوَّل إلى سجل المرضى/.test(dashG) && /خبير الأطراف الصرف إلى التصنيع/.test(dashG)
+    && /الطبيب\s+إلى «معايناتي»/.test(dashG), "س.٤ تحويل أدوار الصفحة الرئيسية");
+  check(/overall/.test(dashG) && /daily/.test(dashG) && /غير المسؤول يُثبَّت خادمياً على فرع جلسته/.test(dashG),
     "س.٥ نطاق ملخصات اللوحة");
-  check(/canViewPayments/.test(dg) && /لا تفسّر اختفاءها على أنه صفر مالي/.test(dg),
+  check(/canViewPayments/.test(dashG) && /لا تفسّر اختفاءها على أنه صفر مالي/.test(dashG),
     "س.٦ المال في واجهة اللوحة محجوب بصلاحية");
-  check(/قبل 06:00/.test(dg) && /اليوم التشغيلي السابق/.test(dg), "س.٧ قاعدة التاريخ المبكر موضحة");
-  check(/أحدث المرضى/.test(dg) && /من دون\s+branchId/.test(dg) && /عابراً للفروع/.test(dg),
+  check(/قبل 06:00/.test(dashG) && /اليوم التشغيلي السابق/.test(dashG), "س.٧ قاعدة التاريخ المبكر موضحة");
+  check(/أحدث المرضى/.test(dashG) && /من دون\s+branchId/.test(dashG) && /عابراً للفروع/.test(dashG),
     "س.٨ اختيار فرع المسؤول لا يفلتر صندوق أحدث المرضى");
-  check(/الوارد المباشر اليوم/.test(dg) && /payments/.test(dg) && /لا تساوِها بالمبيعات/.test(dg),
+  check(/الوارد المباشر اليوم/.test(dashG) && /payments/.test(dashG) && /لا تساوِها بالمبيعات/.test(dashG),
     "س.٩ الوارد الحي قبض لا مبيعات");
 
   const tg = pageGuideFor(PTR, rep);
@@ -1064,21 +1151,21 @@ async function main() {
     && /حتى 200 صف/.test(tg) && /أكثر من 500/.test(tg), "س.١١ بحث وحدود السلّة");
   check(/حذف ناعم/.test(tg) && /لا يعيد بناء شيء/.test(tg), "س.١٢ الاستعادة تعيد الصفوف نفسها");
   check(tg.includes(`${RESTORE_WINDOW_DAYS} يوماً`) && /لا يُحذف تلقائياً/.test(tg)
-    && /المسؤول العام وحده/.test(tg) && /قبل انتهاء المهلة/.test(tg), "س.١٣ مهلة الاستعادة والحذف النهائي");
+    && /للمسؤول العام وحده/.test(tg) && /قبل انتهاء المهلة/.test(tg), "س.١٣ مهلة الاستعادة والحذف النهائي");
   check(/لقطة يوم الحذف/.test(tg) && /لا يعني أن الاستعادة الآن محصورة به/.test(tg),
     "س.١٤ snapshot وneededGlobalAdmin لا يغيران الاستعادة");
   check(/لا يوجد زر «فتح الملف»/.test(tg), "س.١٥ لا يخترع فتح ملف محذوف");
 
-  const ng = pageGuideFor(NOTI, rep);
-  check(/محسوبة لحظياً من أوامر التصنيع/.test(ng) && /لا توجد\s+صفوف إشعار مخزنة ولا cron/.test(ng),
+  const notiG = pageGuideFor(NOTI, rep);
+  check(/محسوبة لحظياً من أوامر التصنيع/.test(notiG) && /لا توجد\s+صفوف إشعار مخزنة ولا cron/.test(notiG),
     "س.١٦ التنبيهات مشتقة لا مخزنة");
-  check(/متأخر بعد الموعد/.test(ng) && /بعد\s+يومين/.test(ng) && /alertCount لا يحسب/.test(ng),
+  check(/متأخر بعد الموعد/.test(notiG) && /بعد\s+يومين/.test(notiG) && /alertCount لا يحسب/.test(notiG),
     "س.١٧ نوافذ التنبيه والعدّاد");
-  check(/خبير الأطراف الصرف يرى أوامره/.test(ng) && /مدير الفرع يرى accessibleBranches/.test(ng)
-    && /canViewPatients/.test(ng) && /canManageAccounting/.test(ng), "س.١٨ نطاق التنبيهات الخادمي");
-  check(/لا يوسّع النطاق/.test(ng) && /مشتقة من\s+items/.test(ng), "س.١٩ فلاتر الشاشة تضييق فقط");
-  check(/holdReasonLabel/.test(ng) && /لا يُخترع عذر/.test(ng), "س.٢٠ سبب التأخير لا يُستنتج");
-  check(/الاستقبال أو المحاسب/.test(ng) && /لا تصبح رابطاً/.test(ng), "س.٢١ رؤية التنبيه لا تعني فتح أمر التصنيع");
+  check(/خبير الأطراف الصرف يرى أوامره/.test(notiG) && /مدير الفرع يرى accessibleBranches/.test(notiG)
+    && /canViewPatients/.test(notiG) && /canManageAccounting/.test(notiG), "س.١٨ نطاق التنبيهات الخادمي");
+  check(/لا يوسّع النطاق/.test(notiG) && /مشتقة من\s+items/.test(notiG), "س.١٩ فلاتر الشاشة تضييق فقط");
+  check(/holdReasonLabel/.test(notiG) && /لا يُخترع عذر/.test(notiG), "س.٢٠ سبب التأخير لا يُستنتج");
+  check(/الاستقبال أو المحاسب/.test(notiG) && /لا تصبح رابطاً/.test(notiG), "س.٢١ رؤية التنبيه لا تعني فتح أمر التصنيع");
 
   same("س.٢٢ دليل اللوحة ساكن", pageGuideFor(DASH, rep), pageGuideFor(DASH, adm));
   same("س.٢٣ دليل المحذوفات ساكن", pageGuideFor(PTR, rep), pageGuideFor(PTR, adm));
@@ -1094,13 +1181,13 @@ async function main() {
   same("ع.٣ مسار التقرير قانوني", SLST?.path, SESSIONS_LIST_PAGE_PATH);
   same("ع.٤ مسار التحليلات قانوني", SANA?.path, SESSION_ANALYTICS_PAGE_PATH);
 
-  const eg = pageGuideFor(SENT, rep);
-  check(/canEnterSessions/.test(eg) && /accessibleBranches/.test(eg), "ع.٥ إذن الإدخال ونطاق الفرع");
-  check(/الاستقبال حالة خاصة/.test(eg) && /غير اليوم/.test(eg) && /24 ساعة/.test(eg),
+  const sentG = pageGuideFor(SENT, rep);
+  check(/canEnterSessions/.test(sentG) && /accessibleBranches/.test(sentG), "ع.٥ إذن الإدخال ونطاق الفرع");
+  check(/الاستقبال حالة خاصة/.test(sentG) && /غير اليوم/.test(sentG) && /24 ساعة/.test(sentG),
     "ع.٦ استقبال اليوم ونافذة التعديل");
-  check(/غير الاستقبال لا تضع الواجهة له\s+min\/max/.test(eg), "ع.٧ لا يخترع منع تاريخ لغير الاستقبال");
-  check(/فرع\/تاريخ\/وردية صف واحد/.test(eg) && /upsert ذري/.test(eg), "ع.٨ هوية جلسة الإدخال والذرية");
-  check(/الأجهزة النشطة/.test(eg) && /قد يتجاوز 100%/.test(eg), "ع.٩ أجهزة الإدخال ونسبة الهدف");
+  check(/غير الاستقبال لا تضع الواجهة له\s+min\/max/.test(sentG), "ع.٧ لا يخترع منع تاريخ لغير الاستقبال");
+  check(/فرع\/تاريخ\/وردية صف واحد/.test(sentG) && /upsert ذري/.test(sentG), "ع.٨ هوية جلسة الإدخال والذرية");
+  check(/الأجهزة النشطة/.test(sentG) && /قد يتجاوز 100%/.test(sentG), "ع.٩ أجهزة الإدخال ونسبة الهدف");
 
   const tg2 = pageGuideFor(STGT, rep);
   check(/canManageSessionTargets/.test(tg2) && /الحفظ والنسخ يحتاجان/.test(tg2), "ع.١٠ إذن إدارة الأهداف");
@@ -1247,12 +1334,13 @@ async function main() {
   const acg = pageGuideFor(ACC, rep);
   check(/showAccounting/.test(acg) && /canManageAccounting/.test(acg)
     && /canAddExpenses يفتح العنصر/.test(acg), "ض.٢ يشرح باب الشريط ودرجة المصروفات");
-  check(/الصفحة نفسها لا تضع حارس/.test(acg) && /الدخول المباشر بلا الصلاحيتين/.test(acg)
+  check(/الصفحة نفسها فلا تضع حارس/.test(acg) && /الدخول المباشر بلا الصلاحيتين/.test(acg)
     && /تعرض الواجهة التبويبات الكاملة/.test(acg), "ض.٣ يفرق إخفاء الملاحة عن حراسة الصفحة");
   check(/ثمانية تبويبات/.test(acg) && /لوحة التحكم/.test(acg) && /الموردون/.test(acg)
     && /التنبيهات/.test(acg), "ض.٤ التبويبات الكاملة موثقة");
   check(/branch_manager كامل المحاسبة/.test(acg) && /قد يرى مدير الفرع.*403/s.test(acg)
-    && /المورد.*المشتريات.*المسؤول العام فقط/s.test(acg), "ض.٥ يوثق اختلاف المدير بين الواجهة والخادم");
+    && /تعديل\/حذف\s+المورد\s+وتعديل\/حذف\s+المشتريات\s+محجوزة\s+للمسؤول\s+العام\s+فقط\s+في\s+الخادم/
+      .test(acg), "ض.٥ يوثق اختلاف المدير بين الواجهة والخادم");
   check(/GET وPOST \/api\/expenses لا يستخدمان تعريف\s+fullAccounting/.test(acg)
     && /مسؤول عام.*canManageAccounting.*canAddExpenses/s.test(acg)
     && /branch_manager بلا أي\s+من هاتين الصلاحيتين.*403/s.test(acg)
@@ -1313,7 +1401,7 @@ async function main() {
   check(/expensesOnly.*قائمة الفواتير/s.test(acg)
     && /branchId طبيعي.*تقيدها القائمة بذلك الفرع/s.test(acg)
     && /بلا branchId.*undefined.*كل الفروع/s.test(acg)
-    && /إخفاء التبويب لا يعني أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ قائمة الفواتير الخلفية ونطاقها");
+    && /إخفاء التبويب لا يعني\s+أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ قائمة الفواتير الخلفية ونطاقها");
   check(/GET \/api\/patients.*canViewPatients/s.test(acg)
     && /مستخدم محاسبة بلا canViewPatients/.test(acg)
     && /قائمة اختيار المريض.*403/s.test(acg)
@@ -1403,7 +1491,7 @@ async function main() {
     "ف.٣ يفرق إخفاء الملاحة عن سلطة القراءة");
   check(/الإنشاء نفسه محمي خادمياً بـ canManageSurveys أو المسؤول العام/.test(svg),
     "ف.٤ حارس إنشاء الاستبيان");
-  check(/page 1/.test(svg) && /بحجم 50/.test(svg) && /بحث خادمي/.test(svg),
+  check(/صفحة 1/.test(svg) && /بحجم 50/.test(svg) && /بحث خادمي/.test(svg),
     "ف.٥ منتقي المرضى يستخدم registry محدوداً");
   check(/isAmputee/.test(svg) && /isPhysiotherapy/.test(svg) && /القالب العام دائماً/.test(svg),
     "ف.٦ اختيار القالب حسب نوع المريض");

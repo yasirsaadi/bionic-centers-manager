@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "check:tests": "tsx script/check_tests.ts",
     "db:push": "drizzle-kit push",
     "test:db-safety": "tsx server/db_safety.test.ts",
     "test:invoice-cash": "tsx server/invoice_cash.test.ts",

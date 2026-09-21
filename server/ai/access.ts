@@ -19,6 +19,8 @@
 export interface BranchSessionLike {
   userId?: number | null;
   role?: string | null;
+  /** اسمُ العرض كما يخزّنه الدخول — لا يقرؤه هذا الملفّ، ويبقى جزءاً من الشكل. */
+  displayName?: string | null;
   isAdmin?: boolean | null;
   branchId?: number | null;
   accessibleBranches?: number[] | null;
