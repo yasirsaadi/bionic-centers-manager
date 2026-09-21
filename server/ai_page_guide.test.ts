@@ -1181,7 +1181,9 @@ async function main() {
   check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
     && /invoices\/:id/.test(acg) && /invoice-items\/bulk/.test(acg)
     && /invoices\/next-number/.test(acg)
-    && /إخفاء تبويب الفواتير ليس حارس بيانات/.test(acg), "ض.١٣ حراس قراءة الفواتير موثقة");
+    && /محجوب حالياً بترتيب\s+المسارات/.test(acg)
+    && /invoices\/:id مسجّل قبله/.test(acg)
+    && /لا تعتمد عليه/.test(acg), "ض.١٣ حراس الفواتير ومسار الرقم التالي المحجوب");
   check(/expensesOnly.*قائمة الفواتير/s.test(acg)
     && /branchId طبيعي.*تقيدها القائمة بذلك الفرع/s.test(acg)
     && /بلا branchId.*undefined.*كل الفروع/s.test(acg)
@@ -1197,10 +1199,15 @@ async function main() {
     "ض.١٤ج فجوة الملخص المالي للمريض");
   check(/الوضع specific/.test(acg) && /الوضع full/.test(acg)
     && /paidNow.*عملية خادمية واحدة/s.test(acg)
+    && /الإنشاء.*يثبت branchId خادمياً.*فرع الجلسة/s.test(acg)
+    && /الحذف.*يفحص أن الفاتورة من فرع الجلسة/s.test(acg)
+    && /التعديل PATCH.*يفحص فقط أن الفاتورة قبل التعديل/s.test(acg)
+    && /storage\.updateInvoice/.test(acg)
+    && /نقلها إلى\s+branchId آخر صالح/.test(acg)
     && /بلا branchId.*POST يحتفظ بفرع الجسم/s.test(acg)
     && /PATCH يتخطى مقارنة الفرع/.test(acg)
     && /القبض مختلف/.test(acg) && /canAddPayments/.test(acg)
-    && /لا يستطيع القبض على فاتورة/.test(acg), "ض.١٥ الفاتورة والقبض ونطاق الحساب بلا فرع");
+    && /لا يستطيع القبض على فاتورة/.test(acg), "ض.١٥ الفاتورة وتغيير الفرع والقبض");
   check(/GET \/api\/vendors.*GET \/api\/vendors\/:id.*POST \/api\/vendors/s.test(acg)
     && /المسؤول\s+العام أو canManageAccounting/.test(acg)
     && /branch_manager وحده لا يمنحها/.test(acg)
