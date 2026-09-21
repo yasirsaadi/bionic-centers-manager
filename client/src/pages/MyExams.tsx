@@ -440,10 +440,25 @@ export default function MyExams() {
                         const key = rowKey(r);
                         return (
                           <Card key={key} className={`border ${a.ring}`} data-testid={`worklist-row-${key}`}>
-                            <CardContent className="p-3 flex items-center justify-between gap-3 flex-wrap">
-                              <div className="min-w-0">
-                                <div className="font-semibold text-sm truncate flex items-center gap-1.5" dir="auto">
-                                  {r.patientName}
+                            <CardContent
+                              //  ══ **الهاتفُ يتكوّم، والحاسوبُ كما كان بالحرف** ══
+                              //  كان الصفُّ `flex items-center` بكتلةِ أزرارٍ `shrink-0`
+                              //  لا تلتفّ: أربعةُ أزرارٍ ≈ ٤٢٠ بكسل على شاشةِ ٣٦٠ —
+                              //  **فيفيض الصفُّ أفقياً** ويُقطَع آخرُه عن النظر.
+                              //  فصار عموداً تحت `sm`، وصفّاً من `sm` فصاعداً بنفس
+                              //  محاذاته وتباعده السابقَين.
+                              className="p-3 flex flex-col gap-2
+                                sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3"
+                            >
+                              {/*  و**`flex-1` لا `min-w-0` وحدها**: بلا أساسِ نموٍّ تنكمش
+                                   كتلةُ البيانات إلى عرض محتواها الأدنى فيُسحَق الاسم. */}
+                              <div className="min-w-0 flex-1">
+                                <div className="font-semibold text-sm flex items-center gap-1.5 min-w-0" dir="auto">
+                                  {/*  **و`truncate` على حاوية `flex` لا تقصّ شيئاً**:
+                                       `text-overflow` لا يسري على عناصر flex، فكان
+                                       الاسمُ الطويل يُقصّ بلا «…» وتُبتَر معه الشارة.
+                                       فالقصُّ على النصّ نفسِه. */}
+                                  <span className="truncate">{r.patientName}</span>
                                   {/*  **عاد للشراء** — يريد المتابعة، لا أن مالاً قُبض. */}
                                   {r.reviewKind === "return_to_purchase" && (
                                     <span
@@ -474,7 +489,9 @@ export default function MyExams() {
                                   )}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1 shrink-0">
+                              {/*  **وتلتفّ الأزرارُ على الهاتف** إلى سطرين بدل أن
+                                   تفيض، وتبقى صفّاً واحداً غيرَ منكمشٍ من `sm`. */}
+                              <div className="flex items-center gap-1 flex-wrap sm:flex-nowrap sm:shrink-0">
                                 <Link href={`/patients/${r.patientId}`}>
                                   <Button size="sm" variant="ghost" className="h-8 text-xs gap-1">
                                     <Eye className="w-3.5 h-3.5" /> الملف
