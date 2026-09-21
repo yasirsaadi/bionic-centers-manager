@@ -1134,6 +1134,46 @@ export const aiKnowledgeSuggestions = pgTable("ai_knowledge_suggestions", {
 
 export type AiKnowledgeSuggestion = typeof aiKnowledgeSuggestions.$inferSelect;
 
+// ══ سجلُّ محادثات المساعد (migration 084) ════════════════════════════════
+// **⚠ يعكس قاعدةً موثَّقة بقرار المالك (٢٠٢٦-٠٩-٢١)**: القسمُ ٤.n يقول «ولا
+// محادثةٌ عادية تُحفَظ أبداً». سأل المالكُ لماذا لا تُحفَظ، ثمّ قرّر حفظها
+// ليقرأ ما يكتبه الموظّفون. فالعكسُ معلَنٌ لا سهو.
+//
+// **صفٌّ لكلّ تبادلٍ واحد** (سؤالٌ وجوابُه)، لا لكلّ محادثة: النقطةُ تستقبل
+// التاريخَ كاملاً في كلّ طلب، فحفظُه كلِّه يكرّر الرسائلَ القديمة صفّاً بعد
+// صفّ. و`conversationId` يجمع صفوفَ الجلسة الواحدة في خيط.
+//
+// **والأسماءُ والأدوارُ لقطاتٌ لا `join`** — درسُ `medical_exams.doctor_name`
+// بحرفه: يبقى السجلُّ مقروءاً بعد تغيير اسم الحساب أو حذفه.
+export const aiChatConversations = pgTable("ai_chat_conversations", {
+  id: serial("id").primaryKey(),
+  //  **معرّفُ تجميعٍ لا هويّة** — تسكّه الشاشة، والإذنُ يُقرأ من `userId`
+  //  وحده. معرّفٌ ملفَّق يخلط خيوطَ صاحبه ولا يبلغ صفَّ أحدٍ غيره.
+  conversationId: text("conversation_id"),
+  userId: integer("user_id").references(() => systemUsers.id).notNull(),
+  userName: text("user_name").notNull(),
+  userRole: text("user_role"),
+  //  **`SET NULL` لا `NO ACTION`**: `storage.deleteBranch` يحذف تابعيه ثمّ
+  //  الفرعَ ولا يعرف هذا الجدول — فمفتاحٌ صارم كان يُفشل حذفَ فرعٍ تحادث
+  //  فيه أحد. و`branchName` لقطةُ نصٍّ أصلاً، فالصفُّ يبقى مقروءاً كما كُتب.
+  branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  branchName: text("branch_name"),
+  //  'general' | 'financial' — وضعُ المساعد الذي جرى فيه التبادل.
+  mode: text("mode").notNull(),
+  //  مسارُ الصفحة كما نظّفه الخادم (`resolvePageContext`) — بلا استعلامٍ
+  //  ولا مرساة، والأرقامُ مستبدَلةٌ بـ`:id` أصلاً قبل أن تصل هنا.
+  pagePath: text("page_path"),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  //  **أسماءُ الأدوات والمعرفةِ لقطاتٌ مرجعية بلا مفتاحٍ أجنبيّ** — نفسُ درس
+  //  ٠٣٥/٠٣٨: مقالةٌ تُستبدَل بنسخةٍ لاحقة، فالرقمُ شاهدٌ لا رابط.
+  toolNames: jsonb("tool_names"),
+  knowledgeIds: jsonb("knowledge_ids"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiChatConversation = typeof aiChatConversations.$inferSelect;
+
 // ══ تدريبُ الموظّفين — فوق المعرفة الموثوقة أعلاه، لا بديلاً عنها (migration
 // 076) ═══════════════════════════════════════════════════════════════════
 // «الموظّف لا يدرّب المساعد»: المسؤولُ العام يزرع المسارات والوحدات

@@ -98,6 +98,9 @@ import { getOrGenerateMonthlyReport } from "./ai/monthly_report";
 import { getOrGenerateSmartAudit } from "./ai/smart_audit";
 import { generateSurveyReply } from "./ai/survey_reply";
 import { registerAiKnowledgeRoutes } from "./ai/knowledge/routes";
+import { registerAiConversationRoutes } from "./ai/conversations/routes";
+import { recordExchange } from "./ai/conversations/store";
+import { lastUserQuestion } from "@shared/ai_conversations";
 import { registerTrainingRoutes } from "./training/routes";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
@@ -7132,7 +7135,7 @@ export async function registerRoutes(
   app.post("/api/ai/chat", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
 
-    const { messages, pagePath } = req.body ?? {};
+    const { messages, pagePath, conversationId } = req.body ?? {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages مطلوبة" });
     }
@@ -7190,6 +7193,35 @@ export async function registerRoutes(
       ipAddress: req.ip ?? null,
       userAgent: req.get?.("user-agent") ?? null,
     });
+
+    //  ══ سجلُّ المحادثة — **قرارُ المالك ٢٠٢٦-٠٩-٢١، يعكس قاعدةً موثَّقة** ══
+    //  القسمُ ٤.n يقول «**ولا محادثةٌ عادية تُحفَظ أبداً**»؛ سأل المالكُ لماذا
+    //  ثمّ قرّر الحفظ ليقرأ ما يكتبه الموظّفون. فصار التبادلُ يُحفَظ في
+    //  `ai_chat_conversations` (٠٨٤) تسعين يوماً — **ولا حرفَ يتغيّر في سطر
+    //  التدقيق أعلاه**: ذاك يبقى للمساءلة بلا نصّ، وهذا هو السجلُّ المقروء.
+    //
+    //  **و«أطلق وانسَ» كما هو `logAudit`**: بلا `await`، وبمصيدةٍ صريحة —
+    //  فشلُ كتابةٍ في السجلّ لا يجوز أن يُضيّع على الموظّف جواباً بين يديه.
+    //  ويُكتب **بعد** فحص `result.ok`: لا يُحفَظ صفٌّ لجوابٍ لم يقع أصلاً.
+    if (result.ok && access.userId) {
+      recordExchange({
+        conversationId,
+        userId: access.userId,
+        userName: branchSession?.displayName ?? null,
+        userRole: typeof branchSession?.role === "string" ? branchSession.role : null,
+        branchId: access.branchId,
+        branchName,
+        mode: access.mode,
+        //  المسارُ **بعد تنظيف الخادم** لا كما وصل من العميل.
+        pagePath: page?.path ?? null,
+        //  آخرُ سؤالِ مستخدمٍ في التاريخ المُرسَل — لا التاريخُ كلُّه، وإلّا
+        //  تكرّرت الرسائلُ القديمة صفّاً بعد صفّ مع كلّ طلب.
+        question: lastUserQuestion(history),
+        answer: result.value.reply,
+        toolNames: toolNames.filter((n, i) => toolNames.indexOf(n) === i),
+        knowledgeIds,
+      }).catch((e) => console.error("[AiChatLog] record failed:", e?.message ?? e));
+    }
 
     if (!result.ok) {
       const status = result.reason === "disabled" ? 503 : result.reason === "rate_limit" ? 429 : 502;
@@ -8060,6 +8092,10 @@ export async function registerRoutes(
   //  اقتراحٍ لأيّ موظّف، وإدارةُ المقالات/الاقتراحات للمسؤول العام وحده.
   //  راجع server/ai/knowledge/store.ts.
   registerAiKnowledgeRoutes(app, isAuthenticated);
+  //  سجلُّ محادثات المساعد (٠٨٤) — **قراءةٌ محضة**: «محادثاتي» لكلّ
+  //  موظّف، و«كلُّ المحادثات» للمسؤول العام وحده. الكتابةُ الوحيدة تقع
+  //  في `/api/ai/chat` أعلاه، لا في هذه النقاط.
+  registerAiConversationRoutes(app, isAuthenticated);
   //  تدريبُ الموظّفين (ترحيل ٠٧٦): كتالوجٌ وقدرات، تصحيحُ اختباراتٍ حتميّ،
   //  وعرضُ إدارة مقيَّد. راجع server/training/store.ts.
   registerTrainingRoutes(app, isAuthenticated);
