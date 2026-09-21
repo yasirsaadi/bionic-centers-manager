@@ -538,7 +538,8 @@ async function main() {
         `ج.١٦ financial_summary: startDate=${JSON.stringify(v)} (${label}) ⟶ خطأٌ صريح`, JSON.stringify(r));
     }
     const finOneValidDate = await executeTool(financeAccess, "financial_summary", { startDate: TODAY });
-    same("ج.١٦ب وتاريخٌ صحيحٌ واحد يبقى يومَه نفسَه", finOneValidDate.data.current.start, TODAY);
+    same("ج.١٦ب وتاريخٌ صحيحٌ واحد يبقى يومَه نفسَه",
+      (finOneValidDate.data as any).current.start, TODAY);
 
     //  ══ ج.١٧ — شكلُ `comparison`: مقاييسُ الفترة فقط، بلا أرقام «الآن» ════
     //  `getAccountingSummary` يعرّف `totalRemaining`/`collectionRate` صراحةً
