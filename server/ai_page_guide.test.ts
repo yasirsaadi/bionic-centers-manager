@@ -1147,7 +1147,7 @@ async function main() {
     && /المورد.*المشتريات.*المسؤول العام فقط/s.test(acg), "ض.٥ يوثق اختلاف المدير بين الواجهة والخادم");
   check(/GET وPOST \/api\/expenses يسمحان بـ canAddExpenses/.test(acg)
     && /PUT وDELETE يحتاجان canManageAccounting/.test(acg)
-    && /section واحداً من\s+devices أو physio أو shared/.test(acg), "ض.٦ صلاحيات وقواعد المصروف");
+    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ صلاحيات وقواعد المصروف");
   check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
     && /قيداً محاسبياً تلقائياً/.test(acg), "ض.٧ إكمال المصروف والقيد التلقائي");
   check(/اقتراح بالذكاء.*expensesOnly/s.test(acg)
