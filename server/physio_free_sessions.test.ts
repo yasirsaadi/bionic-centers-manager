@@ -1144,6 +1144,285 @@ async function state(pid: number) {
         JSON.stringify(seeing.body?.physioSessionsResolved));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── أأ. والبذرةُ تَسِم كلَّ ما استوردته — ومنه ما لا نوعَ له ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  بذرةُ التسعير تضع دفعةً **بلا نوعٍ مسجَّل** في دلو «غير محدد» وتُدخلها
+    //  الخطةَ فعلاً. وكان الوسمُ يقيس بقائمة الأنواع المعروفة، فيبقى صفُّها
+    //  `NULL` — «لم يُسأل» — فحذفُه لاحقاً لا يطرح منه شيئاً وجلساتُه تبقى
+    //  في العدّاد إلى الأبد.
+    {
+      const pid = await mk("بذرةٌ-بلا-نوع", false);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,0,NULL,5,true),($1,$2,100000,'روبوت',2,false)`, [pid, BR]);
+      const untagged = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND payment_treatment_type IS NULL`, [pid])).rows[0].id;
+
+      const price = await http("POST", `/api/patients/${pid}/price-physio`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      const f = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [untagged])).rows[0].plan_credited;
+      const m = await state(pid);
+      check(price.status < 300, "أأ١. التسعيرُ نجح", String(price.status));
+      check(Array.isArray(m.plan) && m.plan.some((e: any) => e.treatmentType === "غير محدد"
+        && e.sessionCount === 5),
+        "أأ٢. والبذرةُ وضعت الصفَّ بلا نوعٍ في دلو «غير محدد»", JSON.stringify(m.plan));
+      check(m.sessions === 17 && m.src === "plan", "أأ٣. والعدّادُ ٥ + ٢ + ١٠ = ١٧", `${m.sessions}/${m.src}`);
+      check(f === true, "أأ٤. **وصفُّه موسومٌ مقيَّداً** — لا `NULL` تمنع الطرحَ لاحقاً", String(f));
+
+      const del = await http("DELETE", `/api/payments/${untagged}`, S, { reason: "إلغاء" });
+      const a = await state(pid);
+      check(del.status < 300, "أأ٥. حذفُه نجح", String(del.status));
+      check(a.sessions === 12, "أأ٦. **١٧ ⟶ ١٢** — طُرحت الخمسُ من دلوها فعلاً",
+        `${m.sessions} ⟶ ${a.sessions} | ${JSON.stringify(a.plan)}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── بب. وخطةٌ كتبها الموظّفُ بيده لا تهدمها تصحيحاتُ الدفعات ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  «تعديل خطة الجلسات» **يستبدل** الخطةَ بما يكتبه الموظّف. وكان وسمُ
+    //  `plan_credited` يبقى على صفوفه، فحذفُ هديّةٍ بعده يطرح من رقمٍ لم
+    //  يُبنَ منه: ١٦ تُستبدَل بعشر، ثمّ تُحذف هديّةُ ستٍّ ⟶ **أربع**.
+    {
+      const pid = await mk("خطةٌ-مؤلَّفة", true);
+      const g = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0].id;
+      const b = await state(pid);
+      const f0 = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [gid])).rows[0].plan_credited;
+      check(g.status === 201 && b.sessions === 16 && f0 === true,
+        "بب١. الأساس: ١٠ + ٦ = ١٦ والهديّةُ موسومةٌ مقيَّدة", `${b.sessions} | ${f0}`);
+
+      const put = await http("PUT", `/api/patients/${pid}/physio-plan`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      const f1 = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [gid])).rows[0].plan_credited;
+      const m = await state(pid);
+      check(put.status < 300 && m.sessions === 10,
+        "بب٢. الموظّفُ استبدلها بعشر", `${put.status} | ${m.sessions}`);
+      check(f1 === false, "بب٣. **والوسمُ رُفع** — الرقمُ مؤلَّفٌ لا مُشتقٌّ من دفعة", String(f1));
+
+      const del = await http("DELETE", `/api/payments/${gid}`, S, { reason: "إلغاء التبرع" });
+      const a = await state(pid);
+      check(del.status < 300, "بب٤. حذفُ الهديّة نجح", String(del.status));
+      check(a.sessions === 10, "بب٥. **والخطةُ ما زالت ١٠ لا أربعاً** — تصحيحُ الموظّف لم يُهدَم",
+        `${m.sessions} ⟶ ${a.sessions}`);
+      check(a.paid === 0, "بب٦. ولا دينارَ تحرّك", String(a.paid));
+
+      //  وهديّةٌ **جديدة** بعد التأليف تُقيَّد وتُوسَم كالمعتاد.
+      const g2 = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 3,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 3, cost: 0, isFree: true }],
+      });
+      const a2 = await state(pid);
+      check(g2.status === 201 && a2.sessions === 13,
+        "بب٧. **وهديّةٌ جديدة بعده تُقيَّد: ١٠ ⟶ ١٣**", `${g2.status} | ${a2.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── جج. وتسعيرٌ يزامن تصحيحَ دفعةٍ: ترتيبُ قفلٍ واحد ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  بذرةُ التسعير تقفل صفَّ المريض ثمّ تكتب على صفوف دفعاته (الوسم)،
+    //  ومسارُ التصحيح كان يقفل **صفَّ الدفعة أوّلاً** ثمّ يطلب صفَّ المريض
+    //  من `adjustPhysioPlanForGift` ⟶ ترتيبان متعاكسان ⟶ **جمودٌ حقيقيّ**.
+    //
+    //  والبوّابةُ تُمسك تسعيراً **قبل** كتابة الوسم مباشرةً، فيبدأ التصحيحُ
+    //  وقد صار صفُّ المريض مقفولاً سلفاً.
+    //
+    //  **وأثرُ الترتيب المعكوس في هذا التشابك تصحيحٌ ضائع لا جمود**: الصفُّ
+    //  لم يُوسَم بعد حين يقرؤه التصحيح، فتنصرف `reconcileGiftPlanTx` بلا
+    //  طرح، ثمّ تبذر البذرةُ من العدد **القديم** — فيمضي الطلبان بنجاحٍ
+    //  ظاهر و**تضيع الأربعُ ⟶ اثنتان** بلا أن يعلم أحد. والجمودُ نفسُه في
+    //  القسم التالي. وبالإصلاح ينتظر التصحيحُ صفَّ المريض نظيفاً، فيقرأ
+    //  الوسمَ بعد الالتزام ويطرح بحقّ.
+    {
+      const pid = await mk("جمودُ التسعير", false);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,0,'روبوت',4,true)`, [pid, BR]);
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0].id;
+
+      const origConnect = (pool as any).connect.bind(pool);
+      let armed = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((res) => { release = res; });
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        let done = false;
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          //  وسمُ البذرة بعينه — بعد قفل صفّ المريض وقبل لمس صفوف الدفعات.
+          if (!done && armed < 1
+              && /update\s+"?payments"?\s+set/i.test(text) && /plan_credited/i.test(text)) {
+            done = true; armed++; await gate; return cq(...args);
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let pr: any, cr: any;
+      try {
+        const pricing = http("POST", `/api/patients/${pid}/price-physio`, S,
+          { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+        const t0 = Date.now();
+        while (armed < 1 && Date.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 20));
+        const correcting = http("PATCH", `/api/payments/${gid}`, S,
+          { sessionCount: 2, reason: "تصحيحُ العدد" });
+        await new Promise((r) => setTimeout(r, 700));
+        release();
+        [pr, cr] = await Promise.all([pricing, correcting]);
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const a = await state(pid);
+      check(armed === 1, "جج١. البوّابةُ حجزت التسعيرَ عند وسمه — السباقُ وقع فعلاً", String(armed));
+      check(pr.status < 300 && cr.status < 300, "جج٢. الطلبان نجحا",
+        `${pr.status}/${cr.status} | ${String(pr.body?.message ?? "")}${String(cr.body?.message ?? "")}`);
+      check(a.sessions === 12, "جج٣. **ولا تصحيحٌ يضيع: ٤ + ١٠ = ١٤ ثمّ ٤ ⟶ ٢ ⟶ ١٢**",
+        `${a.sessions} | ${JSON.stringify(a.plan)}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── دد. والترتيبُ المعكوس جمودٌ حقيقيّ — لا تباطؤ ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  الشكلُ الذي وصفته المراجعة: التصحيحُ يمسك صفَّ الدفعة **ويطلب صفَّ
+    //  المريض** (لأن الصفَّ موسومٌ مقيَّداً فتعمل `adjustPhysioPlanForGift`)،
+    //  بينما البذرةُ تمسك صفَّ المريض وتطلب صفوفَ الدفعات ⟶ `deadlock
+    //  detected` تقتل فيه Postgres إحداهما.
+    //
+    //  **والفِكستشرُ يبني الشرطَ صراحةً**: صفٌّ موسومٌ `true` على ملفٍّ خطتُه
+    //  فارغة — حالةٌ يبلغها سجلٌّ موروث أو خطةٌ أُفرغت، والمقصودُ هنا
+    //  **ترتيبُ القفل** لا تواترُ الحالة.
+    {
+      const pid = await mk("جمودٌ-صريح", false);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,
+                                     is_free_sessions,plan_credited)
+               VALUES ($1,$2,0,'روبوت',4,true,true)`, [pid, BR]);
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0].id;
+
+      const origConnect = (pool as any).connect.bind(pool);
+      let armed = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((res) => { release = res; });
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        let done = false;
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (!done && armed < 1
+              && /update\s+"?payments"?\s+set/i.test(text) && /plan_credited/i.test(text)) {
+            done = true; armed++; await gate; return cq(...args);
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let pr: any, cr: any;
+      try {
+        const pricing = http("POST", `/api/patients/${pid}/price-physio`, S,
+          { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+        const t0 = Date.now();
+        while (armed < 1 && Date.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 20));
+        const correcting = http("PATCH", `/api/payments/${gid}`, S,
+          { sessionCount: 1, reason: "تصحيحٌ متزامن" });
+        await new Promise((r) => setTimeout(r, 700));
+        release();
+        [pr, cr] = await Promise.all([pricing, correcting]);
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const row = (await q(`SELECT session_count n, plan_credited f FROM payments WHERE id=$1`, [gid])).rows[0];
+      check(armed === 1, "دد١. البوّابةُ حجزت البذرةَ عند وسمها", String(armed));
+      check(pr.status < 300 && cr.status < 300,
+        "دد٢. **الطلبان نجحا — ولا `deadlock detected`**",
+        `${pr.status}/${cr.status} | ${String(pr.body?.message ?? "")}${String(cr.body?.message ?? "")}`);
+      check(Number(row.n) === 1 && row.f === true,
+        "دد٣. والصفُّ صار جلسةً واحدة وما زال موسوماً", JSON.stringify(row));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── هه. وعطلٌ في تعديل الدفعة يُقال ولا يُسقط الخادم ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  كانت مصيدةُ `PATCH /api/payments/:id` تُعيد رميَ كلّ ما ليس
+    //  `CorrectionError` — **فلا يصل الطلبَ ردٌّ إطلاقاً** وتخرج العملية.
+    //  أمسكه شكلُ الجمود أعلاه حيّاً قبل إصلاح ترتيب القفل.
+    const injectOnce = async (match: RegExp, run: () => Promise<any>) => {
+      const origConnect = (pool as any).connect.bind(pool);
+      let fired = false;
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        //  **ويُحترَم شكلُ النداء**: `pg-pool` ينادي `client.query(text, vals, cb)`
+        //  بدالّة ردّ، فرميٌ مباشر يُنتج وعداً مرفوضاً لا يلتقطه أحد —
+        //  فيسقط المُشغِّل نفسُه بدل أن يصل العطلُ من حقنّاه.
+        client.query = (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (!fired && match.test(text)) {
+            fired = true;
+            const e = new Error("عطلٌ محقون");
+            const cb = args.length > 0 && typeof args[args.length - 1] === "function"
+              ? args[args.length - 1] : null;
+            if (cb) { cb(e); return undefined as any; }
+            return Promise.reject(e);
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      try { return { res: await run(), fired }; } finally { (pool as any).connect = origConnect; }
+    };
+    {
+      const pid = await mk("عطلُ التعديل", false);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,0,'روبوت',4,true)`, [pid, BR]);
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0].id;
+
+      //  ① عطلٌ **قبل** الالتزام ⟶ صفرُ كتابة، ورسالةٌ تقول ذلك.
+      const a = await injectOnce(
+        /update\s+"?payments"?\s+set/i,
+        () => http("PATCH", `/api/payments/${gid}`, S, { sessionCount: 3 }));
+      const n1 = (await q(`SELECT session_count n FROM payments WHERE id=$1`, [gid])).rows[0].n;
+      check(a.fired && a.res.status === 500,
+        "هه١. **عطلٌ قبل الالتزام ⟶ ردٌّ ٥٠٠ حقيقيّ لا تعليق**",
+        `${a.fired} | ${a.res.status}`);
+      check(String(a.res.body?.message ?? "").includes("لم يُحفَظ شيء"),
+        "هه٢. ورسالتُه تقول إن شيئاً لم يُحفَظ", String(a.res.body?.message));
+      check(Number(n1) === 4, "هه٣. والصفُّ كما كان — صفرُ كتابة", String(n1));
+
+      //  ② ولماذا «لم يُحفَظ شيء» صادقةٌ بلا شرط: لا خطوةَ **بعد** الالتزام
+      //     تصل تلك المصيدة. `logAudit` تبتلع خطأها بحكم تصميمها، فعطلُ
+      //     التدقيق لا يُفشل الطلبَ ولا يُنتج رسالةً تكذب على الموظّف.
+      const b = await injectOnce(
+        /insert\s+into\s+"?audit_log"?/i,
+        () => http("PATCH", `/api/payments/${gid}`, S, { sessionCount: 3 }));
+      const n2 = (await q(`SELECT session_count n FROM payments WHERE id=$1`, [gid])).rows[0].n;
+      check(b.fired && b.res.status < 300,
+        "هه٤. **وعطلُ التدقيق لا يُفشل الطلب** — `logAudit` تبتلعه بحكم تصميمها",
+        `${b.fired} | ${b.res.status}`);
+      check(Number(n2) === 3,
+        "هه٥. والتعديلُ وقع فعلاً — فلا خطوةَ بعد الالتزام تصل المصيدة", String(n2));
+
+      //  ③ والقاعدةُ تعمل بعدها — لا اتّصالٌ مسموم بقي.
+      const ok = await http("PATCH", `/api/payments/${gid}`, S, { sessionCount: 5 });
+      const n3 = (await q(`SELECT session_count n FROM payments WHERE id=$1`, [gid])).rows[0].n;
+      check(ok.status < 300 && Number(n3) === 5, "هه٦. والتعديلُ التالي يمضي نظيفاً",
+        `${ok.status} | ${n3}`);
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

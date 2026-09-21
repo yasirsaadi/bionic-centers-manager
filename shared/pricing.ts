@@ -59,16 +59,27 @@ export function physioSessionsEnterPlan(treatmentType: string, sessionCount: num
   return PHYSIO_TREATMENT_TYPES.includes(type) && entersPhysioPlan(type, sessionCount);
 }
 
-/**
- * الشقُّ **النوعيُّ** وحده — لمن يعدّل الخطةَ بالدلتا، فالطرحُ سالبٌ ولا
- * يُقاس بـ`n > 0`. مُعرَّفٌ بالدالّة أعلاه نفسِها فلا قاعدةَ ثالثة.
- */
-export function physioPlanEligibleType(treatmentType: string): boolean {
-  return physioSessionsEnterPlan(treatmentType, 1);
-}
+/** الدلوُ الذي تضع فيه بذرةُ التسعير دفعةً بلا نوعٍ مسجَّل. */
+export const PHYSIO_UNSPECIFIED_PLAN_KEY = "غير محدد";
 
-/** الأنواعُ التي تصلح سطراً في الخطة — لمن يحتاج القائمةَ نفسَها (شرطُ SQL). */
-export const PHYSIO_PLAN_TYPES = PHYSIO_TREATMENT_TYPES.filter((t) => physioPlanEligibleType(t));
+/**
+ * **على أيّ سطرٍ من الخطة تعيش جلساتُ هذه الدفعة؟** — أو `null` إن لم تدخلها.
+ *
+ * وهذه قاعدةُ **بذرة التسعير** بحرفها (`pricePhysiotherapy`): النوعُ كما
+ * كُتب، وإن كان فارغاً فدلوُ «غير محدد»، ثمّ `entersPhysioPlan` تحسم.
+ * فالبذرةُ تستورد صفّاً بلا نوعٍ مسجَّل وتضعه في ذلك الدلو — **وقارئٌ
+ * يقيس بقائمة الأنواع المعروفة وحدها لا يجد له مفتاحاً**، فلا يُوسَم صفُّه
+ * ولا يُطرَح منه شيء، وتبقى جلساتُه في العدّاد إلى الأبد.
+ *
+ * ولذلك يقرؤها الطرفان معاً: مَن يَسِم ما استورده، ومَن يطرح منه لاحقاً.
+ */
+export function physioPlanKeyForPayment(
+  treatmentType: string | null | undefined,
+  sessionCount: number,
+): string | null {
+  const key = String(treatmentType ?? "").trim() || PHYSIO_UNSPECIFIED_PLAN_KEY;
+  return entersPhysioPlan(key, sessionCount) ? key : null;
+}
 
 export function mergePhysioPlan(
   existing: PhysioPlanEntry[] | null | undefined,

@@ -3647,10 +3647,19 @@ export async function registerRoutes(
       // the user sees, so merging would silently double what they just edited.
       const plan = mergePhysioPlan(null, cleaned);
 
-      const updated = await storage.updatePatient(patientId, {
-        physioPlan: plan,
-        treatmentType: describePhysioPlan(plan) || patient.treatmentType,
-      } as any);
+      //  ══ **والخطةُ المؤلَّفة ترفع أوسمةَ الاشتقاق معها** ═══════════════
+      //  هذه الشاشةُ **تستبدل** الخطةَ بما كتبه الموظّف، فلا يبقى سطرٌ فيها
+      //  مُشتقّاً من دفعةٍ بعينها. وإبقاءُ `plan_credited` كان يجعل تصحيحاً
+      //  لاحقاً يطرح من رقمٍ لم يُبنَ منه فيهدم تصحيحَ الموظّف — راجع
+      //  `storage.clearPhysioPlanProvenanceTx`. **والاثنان في معاملةٍ
+      //  واحدة**: رفعُ وسمٍ عن خطةٍ لم تُستبدَل عيبٌ بالقدر نفسِه.
+      const updated = await db.transaction(async (tx) => {
+        await storage.clearPhysioPlanProvenanceTx(tx, patientId);
+        return await storage.updatePatient(patientId, {
+          physioPlan: plan,
+          treatmentType: describePhysioPlan(plan) || patient.treatmentType,
+        } as any, "manual_edit", null, tx);
+      });
 
       await logAudit({
         entityType: "patient", entityId: patientId, action: "update",
@@ -4602,7 +4611,22 @@ export async function registerRoutes(
       return res.status(202).json({ status: "pending", request: result.request });
     } catch (err: any) {
       if (err instanceof CorrectionError) return res.status(err.status).json({ message: err.message });
-      throw err;
+      //  ══ **ولا رفضٌ عارٍ يخرج من معالجٍ غيرِ متزامن** ═══════════════════
+      //  `throw err` هنا كان يصير رفضاً غيرَ ملتقَط في Express 4: **فلا يصل
+      //  الطلبَ ردٌّ إطلاقاً**، وتخرج العمليةُ نفسُها حيث لا معالجَ لـ
+      //  `unhandledRejection`. أمسكه شكلُ الجمود أعلاه حيّاً — خطأُ قاعدةٍ
+      //  عابر (`deadlock detected`) يُسقط الخادم بدل أن يُردّ ٥٠٠.
+      //
+      //  **و«لم يُحفَظ شيء» صادقةٌ هنا بلا شرط**: كلُّ كاتبٍ في هذا المسار
+      //  معاملةٌ واحدة ترتدّ بكاملها (`storage.updatePayment` ·
+      //  `applyPaymentCorrectionDirect` · `requestPaymentCorrection`)، ولا
+      //  خطوةَ بعد الالتزام تصل هذه المصيدة — `logAudit` تبتلع خطأها بحكم
+      //  تصميمها فلا تُفشل الطلبَ أصلاً (مُثبَتٌ حيّاً). فلو أُضيفت يوماً
+      //  خطوةٌ بعد الالتزام وجب أن تُفرَّق الرسالةُ كما في `POST /api/payments`.
+      console.error("Error updating payment:", err);
+      return res.status(500).json({
+        message: "تعذّر تعديل الدفعة — لم يُحفَظ شيء. أعد المحاولة.",
+      });
     }
   });
 

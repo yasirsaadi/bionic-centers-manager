@@ -308,6 +308,9 @@ export async function requestPaymentCorrection(params: {
   if (!reason) throw new CorrectionError("سبب التصحيح مطلوب", 400);
 
   const body = async (tx: any) => {
+    //  صفُّ المريض أوّلاً ثمّ صفُّ الدفعة — ترتيبٌ واحد مع بذرة التسعير،
+    //  وإلّا وقع جمودٌ حقيقيّ (راجع `storage.lockPatientForPaymentWriteTx`).
+    await storage.lockPatientForPaymentWriteTx(tx, params.paymentId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
@@ -367,6 +370,9 @@ export async function applyPaymentCorrectionDirect(params: {
   if (!reason) throw new CorrectionError("سبب التصحيح مطلوب", 400);
 
   const body = async (tx: any) => {
+    //  صفُّ المريض أوّلاً ثمّ صفُّ الدفعة — ترتيبٌ واحد مع بذرة التسعير،
+    //  وإلّا وقع جمودٌ حقيقيّ (راجع `storage.lockPatientForPaymentWriteTx`).
+    await storage.lockPatientForPaymentWriteTx(tx, params.paymentId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
@@ -417,6 +423,8 @@ export async function approveCorrection(params: {
     if (reqRow.status !== "pending") throw new CorrectionError("طلبُ التصحيح لم يعد معلَّقاً", 409);
     if (reqRow.targetType !== "payment") throw new CorrectionError("نوعُ الهدف غير مدعوم", 400);
 
+    //  وكذلك هنا — راجع `storage.lockPatientForPaymentWriteTx`.
+    await storage.lockPatientForPaymentWriteTx(tx, reqRow.targetId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${reqRow.targetId} FOR UPDATE`);
     const [current] = await tx.select().from(payments).where(eq(payments.id, reqRow.targetId));
     if (!current) throw new CorrectionError("الدفعة الهدف لم تعد موجودة", 409);

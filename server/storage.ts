@@ -41,7 +41,7 @@ import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } fro
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
-import { mergePhysioPlan, describePhysioPlan, PHYSIO_PLAN_TYPES, physioSessionsEnterPlan, physioPlanEligibleType, type PhysioPlanEntry } from "@shared/pricing";
+import { mergePhysioPlan, describePhysioPlan, physioSessionsEnterPlan, physioPlanKeyForPayment, type PhysioPlanEntry } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
@@ -1616,12 +1616,16 @@ export class DatabaseStorage implements IStorage {
       let base = existing.physioPlan;
       if (!Array.isArray(base) || base.length === 0) {
         const priorPayments = await tx
-          .select({ type: payments.paymentTreatmentType, n: payments.sessionCount })
+          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount })
           .from(payments)
           .where(eq(payments.patientId, patientId));
-        const legacy = (priorPayments as { type: string | null; n: number | null }[])
-          .filter((r) => (r.n ?? 0) > 0)
-          .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
+        //  **الصفوفُ المستورَدة تُحسَب مرّةً واحدة ثمّ تُوسَم بأعيانها** —
+        //  `physioPlanKeyForPayment` هي قاعدةُ هذه البذرة نفسُها، فما دخل
+        //  الخطةَ هو بالضبط ما يُوسَم، ولا شرطَ SQL ثانٍ ينحرف عنها.
+        const seeded = (priorPayments as { id: number; type: string | null; n: number | null }[])
+          .map((r) => ({ id: r.id, key: physioPlanKeyForPayment(r.type, r.n ?? 0), sessionCount: r.n ?? 0 }))
+          .filter((r): r is { id: number; key: string; sessionCount: number } => r.key !== null);
+        const legacy = seeded.map((r) => ({ treatmentType: r.key, sessionCount: r.sessionCount }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
         //  ══ **وما استوردَته الخطةُ صار فيها فعلاً — فيُوسَم** ════════════
         //  البذرةُ أعلاه تسحب **كلَّ** دفعةٍ حاملةٍ لجلسات، ومنها الهدايا.
@@ -1632,16 +1636,14 @@ export class DatabaseStorage implements IStorage {
         //  صار في الخطة حقّاً. ووسمُ المُهدى وحده كان يترك صفّاً مدفوعاً
         //  مستورَداً يُقرأ «ليس في الخطة» — فتصحيحُه إلى «مجاني» لاحقاً
         //  **يُضيف جلساته مرّةً ثانية** وهي فيها أصلاً.
-        //  **والوسمُ على أنواع الخطة وحدها** (`PHYSIO_PLAN_TYPES`): نوعٌ
-        //  آخر تضعه البذرةُ في دلو «غير محدد»، و«استشارة طبية» تُسقطها
-        //  `mergePhysioPlan` أصلاً — فلا يُطابقهما الطرحُ لاحقاً، والصمتُ
-        //  أصدقُ من وسمٍ لا يُوصِل إلى مفتاحٍ في الخطة.
-        if (legacy.length > 0) {
-          await tx.update(payments).set({ planCredited: true }).where(and(
-            eq(payments.patientId, patientId),
-            gte(payments.sessionCount, 1),
-            inArray(payments.paymentTreatmentType, [...PHYSIO_PLAN_TYPES]),
-          ));
+        //  **والوسمُ بالمعرّفات لا بشرطِ نوع**: شرطٌ يقيس بقائمة الأنواع
+        //  المعروفة كان يترك صفّاً **بلا نوعٍ مسجَّل** مستورَداً في دلو «غير
+        //  محدد» بـ`plan_credited = NULL` — فحذفُه لاحقاً لا يطرح منه شيئاً
+        //  وجلساتُه تبقى في العدّاد إلى الأبد. و«استشارة طبية» تسقط من
+        //  `seeded` أصلاً فلا تُوسَم.
+        if (seeded.length > 0) {
+          await tx.update(payments).set({ planCredited: true })
+            .where(inArray(payments.id, seeded.map((r) => r.id)));
         }
       }
       const plan = mergePhysioPlan(base, params.entries);
@@ -1705,11 +1707,12 @@ export class DatabaseStorage implements IStorage {
     deltas: { treatmentType: string; delta: number }[],
     tx?: DbTransactionLike,
   ): Promise<void> {
+    //  **والمفتاحُ يُحَلّ بقاعدة البذرة نفسِها**: صفٌّ بلا نوعٍ مسجَّل يعيش
+    //  في دلو «غير محدد»، فطرحٌ يقيس بالنوع الخام لا يجده. و«استشارة طبية»
+    //  لا مفتاحَ لها أصلاً، فلا تُزاد ولا تُنقَص.
     const wanted = (deltas ?? [])
-      .map((d) => ({ treatmentType: String(d?.treatmentType ?? "").trim(), delta: Math.trunc(Number(d?.delta) || 0) }))
-      //  **والنوعُ يُقاس بقاعدة الخطة لا بالعضوية وحدها**: «استشارة طبية»
-      //  نوعٌ معروف ولا يدخل الخطةَ أبداً، فلا يُزاد ولا يُنقَص فيها.
-      .filter((d) => d.delta !== 0 && physioPlanEligibleType(d.treatmentType));
+      .map((d) => ({ key: physioPlanKeyForPayment(d?.treatmentType, 1), delta: Math.trunc(Number(d?.delta) || 0) }))
+      .filter((d): d is { key: string; delta: number } => d.key !== null && d.delta !== 0);
     if (wanted.length === 0) return;
 
     const body = async (t: any) => {
@@ -1727,7 +1730,7 @@ export class DatabaseStorage implements IStorage {
         const type = String(e?.treatmentType ?? "").trim();
         if (type) byType[type] = (byType[type] ?? 0) + Math.max(0, Math.floor(Number(e?.sessionCount) || 0));
       }
-      for (const d of wanted) byType[d.treatmentType] = Math.max(0, (byType[d.treatmentType] ?? 0) + d.delta);
+      for (const d of wanted) byType[d.key] = Math.max(0, (byType[d.key] ?? 0) + d.delta);
       const next: PhysioPlanEntry[] = Object.keys(byType)
         .filter((t2) => byType[t2] > 0)
         .map((t2) => ({ treatmentType: t2, sessionCount: byType[t2] }));
@@ -1766,6 +1769,52 @@ export class DatabaseStorage implements IStorage {
    * **ولا يُقفَل إلّا ما سيُقيَّد**: الشرطُ هو شرطُ `creditGiftToPlanTx`
    * بحرفه — فدفعةٌ عادية لا تُسلسَل بلا سبب، وطرفٌ أو مسندٌ لا يُعَدّ جلسة.
    */
+  /**
+   * **ترتيبُ قفلٍ واحد لا اثنان: صفُّ المريض ثمّ صفُّ الدفعة** (تصحيحُ
+   * مراجعةٍ لاحقة).
+   *
+   * بذرةُ `pricePhysiotherapy` تقفل صفَّ المريض ثمّ تكتب على صفوف دفعاته
+   * (وسمُ ما استوردته)، بينما مسارا التعديل والحذف كانا يقفلان **صفَّ
+   * الدفعة أوّلاً** ثمّ يطلبان صفَّ المريض من `adjustPhysioPlanForGift` —
+   * فتسعيرٌ يزامن تصحيحاً ⟶ **جمودٌ حقيقيّ** تقتل فيه Postgres إحداهما،
+   * فيُردّ تسعيرٌ أو تصحيحٌ مشروع.
+   *
+   * فصار صفُّ المريض هو الخارجيَّ في المسارين معاً — وهو الترتيبُ نفسُه
+   * الذي أرساه `lockPatientForGiftTx` على مسار الإدراج.
+   *
+   * ولا يُقفَل شيءٌ لدفعةٍ لا وجودَ لها: الاستعلامُ الفرعيُّ يعيد `NULL`
+   * فلا صفَّ يُطابق، ويتولّى قفلُ الدفعة بعده أن يقول إنها غير موجودة.
+   */
+  async lockPatientForPaymentWriteTx(tx: any, paymentId: number): Promise<void> {
+    await tx.execute(sql`
+      SELECT p.id FROM patients p
+       WHERE p.id = (SELECT pay.patient_id FROM payments pay WHERE pay.id = ${paymentId})
+       FOR UPDATE`);
+  }
+
+  /**
+   * **وخطةٌ كتبها الموظّفُ بيده ليست مُشتقّةً من دفعةٍ بعد اليوم** (تصحيحُ
+   * مراجعةٍ لاحقة).
+   *
+   * `PUT /api/patients/:id/physio-plan` **يستبدل** الخطةَ بما يكتبه الموظّف
+   * — وهي عندئذٍ رقمٌ مؤلَّف لا حاصلُ جمع دفعات. وإبقاءُ وسم `plan_credited`
+   * على صفوفه كان يجعل تصحيحاً لاحقاً يطرح من رقمٍ لم يُبنَ منه: خطةُ ستَّ
+   * عشرةَ تُستبدَل بعشر، ثمّ تُحذف هديّةُ ستٍّ ⟶ **أربع**، فيُهدَم تصحيحُ
+   * الموظّف بلا أن يعلم.
+   *
+   * فتُرفَع الأوسمةُ القائمة: الرقمُ المؤلَّف هو الحقيقة، ولا تحرّكه
+   * تصحيحاتُ الدفعات بعده. **و`NULL` تبقى `NULL`** (صفٌّ سابقٌ للترحيل، لا
+   * نَدَّعي أننا سألناه)، **وهديّةٌ جديدة تُقيَّد وتُوسَم كالمعتاد** — هي
+   * دخلت الخطةَ القائمة فعلاً.
+   */
+  async clearPhysioPlanProvenanceTx(tx: any, patientId: number): Promise<void> {
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+    await tx.update(payments).set({ planCredited: false }).where(and(
+      eq(payments.patientId, patientId),
+      eq(payments.planCredited, true),
+    ));
+  }
+
   async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
     if (!values?.isFreeSessions) return;
     //  **الشرطُ هو شرطُ `creditGiftToPlanTx` بحرفه** — دالّةٌ واحدة يقرؤها
@@ -3517,6 +3566,8 @@ export class DatabaseStorage implements IStorage {
     //  العددَ القديم نفسَه فتُطرَح دلتاهما من الخطة مرّتين (٦⟶٣ و٦⟶٤ يطرحان
     //  ٥ بينما الصفُّ يقول ٤). والقراءةُ والكتابةُ والمصالحةُ في معاملةٍ واحدة.
     return await db.transaction(async (tx) => {
+      //  صفُّ المريض أوّلاً — راجع `lockPatientForPaymentWriteTx`.
+      await this.lockPatientForPaymentWriteTx(tx, id);
       await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
       const [before] = await tx.select().from(payments).where(eq(payments.id, id));
       const [updated] = await tx.update(payments)
@@ -3532,6 +3583,8 @@ export class DatabaseStorage implements IStorage {
     //  **القراءةُ والكتابةُ ومصالحةُ الخطة في معاملةٍ واحدة بقفل صفّ الدفعة**
     //  — تعديلان متزامنان كانا يقرآن `before` نفسَه فتُطرَح دلتاهما مرّتين.
     return await db.transaction(async (tx) => {
+    //  صفُّ المريض أوّلاً — راجع `lockPatientForPaymentWriteTx`.
+    await this.lockPatientForPaymentWriteTx(tx, id);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, id));
     const [updated] = await tx.update(payments)
