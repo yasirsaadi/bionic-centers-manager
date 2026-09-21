@@ -63,6 +63,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { MEDICAL_SPECIALTIES, SPECIALTY_LABELS } from "@shared/medical";
 import { CAPABILITIES, CAPABILITY_LABELS, type Capability } from "@shared/ai_capabilities";
 import { isQuizSpec } from "@shared/ai_training";
+//  **بوّابةُ سجلّ المحادثات من مصدرها الواحد** — لا شرطَ أدوارٍ يُعاد
+//  كتابتُه هنا فينحرف عن الخادم صامتاً (درسُ ٤.l).
+import { AI_CHAT_RETENTION_DAYS, canReadAllConversations } from "@shared/ai_conversations";
 import { fetchWithTimeout, SAVE_ARTICLE_TIMEOUT_MS } from "./ai_knowledge_admin_save";
 import {
   Select,
@@ -680,6 +683,130 @@ function DimensionBar({ label, dim, detail }: { label: string; dim: DimensionSco
       </div>
       <div className="text-[10px] text-muted-foreground mt-0.5">{detail}</div>
     </div>
+  );
+}
+
+interface ConversationLogRow {
+  id: number;
+  conversationId: string | null;
+  userId: number;
+  userName: string;
+  userRole: string | null;
+  branchId: number | null;
+  branchName: string | null;
+  mode: string;
+  pagePath: string | null;
+  question: string;
+  answer: string;
+  createdAt: string;
+}
+interface ConversationUser { userId: number; userName: string; count: number; }
+/**
+ *  ══ سجلُّ محادثات المساعد — **للمسؤول العام وحده** (٠٨٤) ══════════════════
+ *
+ *  **⚠ قرارُ المالك ٢٠٢٦-٠٩-٢١ يعكس قاعدةً موثَّقة**: القسمُ ٤.n يقول «ولا
+ *  محادثةٌ عادية تُحفَظ أبداً». سأل المالكُ لماذا، ثمّ قرّر الحفظ ليقرأ ما
+ *  يكتبه الموظّفون. فهذه هي الشاشة.
+ *
+ *  **وقراءةٌ محضة**: لا تحرير ولا حذف — سجلٌّ يُقرأ ولا يُنقَّح، وإلّا صار
+ *  مَن يُقرأ عليه قادراً على تنقيحه. والصفوفُ تختفي بانقضاء تسعين يوماً
+ *  وحدها (يفرضها الخادمُ عند القراءة، لا الشاشة).
+ *
+ *  **والبوّابةُ من `shared/ai_conversations.ts`** لا شرطاً مكتوباً هنا —
+ *  مصدرُ حقيقةٍ واحد يقرؤه الخادمُ والشاشةُ معاً (درسُ ٤.l: شريطٌ جانبيّ
+ *  كان يعيد كتابة القاعدة يدوياً فينحرف صامتاً).
+ */
+function AiConversationsTab() {
+  const branchSession = useBranchSession();
+  const allowed = canReadAllConversations(branchSession as any);
+  const [userId, setUserId] = useState<string>("");
+
+  const { data: usersData } = useQuery<{ users: ConversationUser[] }>({
+    queryKey: ["/api/ai/conversations/users"],
+    enabled: allowed,
+  });
+  const { data, isLoading } = useQuery<{ rows: ConversationLogRow[] }>({
+    queryKey: ["/api/ai/conversations", userId],
+    enabled: allowed,
+    queryFn: async () => {
+      const qs = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+      const res = await fetch(`/api/ai/conversations${qs}`, { credentials: "include" });
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+  });
+
+  if (!allowed) {
+    return (
+      <Card className="p-6">
+        <p className="text-sm text-muted-foreground">سجلّ محادثات الموظّفين للمسؤول العام وحده.</p>
+      </Card>
+    );
+  }
+
+  const rows = data?.rows ?? [];
+  const users = usersData?.users ?? [];
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-primary" />
+            سجلّ محادثات المساعد
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            ما سأله الموظّفون المساعدَ وما أجابهم به. يُحفظ {AI_CHAT_RETENTION_DAYS} يوماً ثمّ يُمحى تلقائياً.
+            قراءةٌ فقط — لا تعديل ولا حذف.
+          </p>
+        </div>
+        <div className="flex flex-col items-start gap-1">
+          <label className="text-xs text-muted-foreground">الموظّف</label>
+          <select
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            className="p-2 border rounded-md text-sm bg-background min-w-[12rem]"
+            data-testid="select-conversation-user"
+          >
+            <option value="">كل الموظفين</option>
+            {users.map((u) => (
+              <option key={u.userId} value={String(u.userId)}>
+                {u.userName} ({u.count})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {isLoading && <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>}
+      {!isLoading && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="text-no-conversations">
+          لا توجد محادثات مسجّلة بعد.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {rows.map((r) => (
+          <div key={r.id} className="rounded-lg border p-4 bg-white" data-testid={`conversation-row-${r.id}`}>
+            <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground mb-2">
+              <span className="font-semibold text-slate-700">{r.userName}</span>
+              {r.userRole && <span>· {r.userRole}</span>}
+              {r.branchName && <span>· {r.branchName}</span>}
+              <span>· {new Date(r.createdAt).toLocaleString("ar-IQ")}</span>
+              {r.mode === "financial" && (
+                <span className="rounded bg-amber-100 text-amber-800 px-1.5 py-0.5">مالي</span>
+              )}
+            </div>
+            <div className="text-sm text-slate-800 whitespace-pre-wrap mb-2">
+              <span className="font-semibold">السؤال: </span>{r.question}
+            </div>
+            <div className="text-sm text-slate-600 whitespace-pre-wrap">
+              <span className="font-semibold">الجواب: </span>{r.answer}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -3123,6 +3250,10 @@ export default function AdminSettings() {
             <GraduationCap className="w-4 h-4" />
             تدريب الموظفين
           </TabsTrigger>
+          <TabsTrigger value="ai-conversations" className="gap-2" data-testid="tab-ai-conversations">
+            <Sparkles className="w-4 h-4" />
+            سجلّ المحادثات
+          </TabsTrigger>
           <TabsTrigger value="accuracy" className="gap-2">
             <Activity className="w-4 h-4" />
             دقّة الموظفين
@@ -3765,6 +3896,10 @@ export default function AdminSettings() {
 
         <TabsContent value="training" className="space-y-6">
           <TrainingAdminTab />
+        </TabsContent>
+
+        <TabsContent value="ai-conversations" className="space-y-6">
+          <AiConversationsTab />
         </TabsContent>
 
         <TabsContent value="accuracy" className="space-y-6">

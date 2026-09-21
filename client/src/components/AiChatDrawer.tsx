@@ -10,7 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, Send, X, Loader2, Bot, User, Users, MessageSquareWarning,
-  GraduationCap, ChevronRight, CheckCircle2, AlertCircle, PlayCircle,
+  GraduationCap, ChevronRight, CheckCircle2, AlertCircle, PlayCircle, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +21,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+//  مُولِّدُ المعرّفات القائم — لا ثانيَ له في المستودع (راجع `conversationId`).
+import { mintSubmissionToken, nextSubmissionToken } from "@/components/patient_service_launcher_logic";
+import { AI_CHAT_RETENTION_DAYS } from "@shared/ai_conversations";
 import { useBranchSession } from "@/components/BranchGate";
 import {
   canOpenAssistant, introTextFor, scopeLabelFor, suggestionsFor,
@@ -369,6 +372,18 @@ function TrainingLessonPanel(props: {
   );
 }
 
+/**
+ *  صفُّ «محادثاتي» كما يُرجعه `/api/ai/conversations/mine` — **صفوفُ صاحب
+ *  الجلسة وحدها**، مرشَّحةً في الخادم بالمستخدم وبنافذة التسعين يوماً.
+ */
+interface OwnConversationRow {
+  id: number;
+  question: string;
+  answer: string;
+  pagePath: string | null;
+  createdAt: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -405,6 +420,18 @@ export function AiChatDrawer() {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  //  ══ معرّفُ المحادثة — **تجميعٌ لا هويّة ولا إذن** (٠٨٤) ══════════════
+  //  يُسكّ عند فتح الدرج ويُصفَّر عند إغلاقه، فتنتمي رسائلُ الجلسة الواحدة
+  //  إلى خيطٍ واحد في سجلّ المسؤول بدل أن تتناثر. **والخادمُ لا يبني عليه
+  //  إذناً أبداً**: القراءةُ تُرشَّح بـ`userId` من الجلسة، فمعرّفٌ ملفَّق
+  //  يخلط خيوطَ صاحبه ولا يبلغ صفَّ غيره.
+  //
+  //  **ونفسُ دالّتَي تذكرة الإرسال القائمتين** (`patient_service_launcher_logic`)
+  //  — لا مُولِّدَ معرّفاتٍ ثانٍ في المستودع.
+  const [conversationId, setConversationId] = useState("");
+  useEffect(() => {
+    setConversationId((prev) => nextSubmissionToken(prev, open, mintSubmissionToken));
+  }, [open]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   //  **ويُقاس المربّعُ لحظةَ تركيبه، لا عند تغيّر المسوّدة وحده.**
   //
@@ -442,6 +469,12 @@ export function AiChatDrawer() {
   //  «تقدّمُ فريقي» — مديرُ الفرع وحده، طيٌّ ثالثٌ داخل لوحة التدريب نفسِها.
   const [teamProgressOpen, setTeamProgressOpen] = useState(false);
 
+  //  ══ «محادثاتي» — لوحةٌ ثالثة للجسم، قراءةٌ محضة (٠٨٤) ════════════════
+  //  الموظّفُ يقرأ **محادثاتِه هو** — الترشيحُ بـ`userId` من الجلسة في
+  //  الخادم، فلا معرّفٌ في الطلب يفتح صفوفَ زميل. وتُصفَّر عند الإغلاق
+  //  كبقيّة حالة الدرج.
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   // Hide entirely when AI isn't configured — otherwise every authenticated
   // employee gets the assistant. What it can SEE is decided server-side.
   const { data: aiStatus } = useQuery<{ enabled: boolean }>({
@@ -458,7 +491,13 @@ export function AiChatDrawer() {
   // كلاماً عن مريضٍ آخر — والمساعد صار يقرأ ملفّات حيّة، فبقاءُ سياقٍ قديم
   // يجعله يجيب عن غير مَن أمامه. والتنظيف **عند الإغلاق** لا عند الفتح، كي
   // لا يبقى محتوى مريضٍ في الذاكرة بعد أن أغلق الموظّف النافذة.
-  // (بلا تخزينٍ في المتصفّح ولا في القاعدة — لا شيء يُحفظ أصلاً.)
+  //
+  // **⚠ (٢٠٢٦-٠٩-٢١) — كان هنا «لا شيء يُحفظ أصلاً»، ولم يعد صحيحاً.**
+  // بقرارِ المالك صار التبادلُ يُحفَظ في `ai_chat_conversations` (٠٨٤)
+  // تسعين يوماً: الموظّفُ يقرأ محادثاتِه، والمسؤولُ العام يقرأ الجميع.
+  // **وهذا التنظيفُ يبقى كما هو بحرفه** — شأنُه ذاكرةُ المتصفّح: لا سياقَ
+  // قديم يُرسَل إلى النموذج في فتحةٍ جديدة، ولا نصَّ مريضٍ يبقى في الصفحة.
+  // (وبلا تخزينٍ في المتصفّح إطلاقاً — السجلُّ في القاعدة وحدها.)
   const closeDrawer = () => {
     setOpen(false);
     setMessages([]);
@@ -471,6 +510,7 @@ export function AiChatDrawer() {
     setQuizAnswer("");
     setQuizOutcome(null);
     setTeamProgressOpen(false);
+    setHistoryOpen(false);
   };
 
   const askMutation = useMutation({
@@ -482,6 +522,8 @@ export function AiChatDrawer() {
         //  الدرج، فمَن تنقّل والدرجُ مفتوح يسأل عن صفحته الحالية.
         //  والخادمُ ينظّفه ويستبدل الأرقام بـ`:id` — وهو سياقٌ لا صلاحية.
         pagePath: window.location.pathname,
+        //  خيطُ هذه الجلسة — يجمع صفوفَها في سجلّ المسؤول. تجميعٌ لا إذن.
+        conversationId,
       });
       return res.json() as Promise<{
         reply: string;
@@ -495,6 +537,11 @@ export function AiChatDrawer() {
         ...prev,
         { role: "assistant", content: data.reply, knowledge: data.knowledge, toolsUsed: data.toolsUsed },
       ]);
+      //  **و«محادثاتي» تُبطَل بعد كلّ تبادل** — `staleTime` ستّون ثانية،
+      //  فبلا هذا يفتح الموظّفُ اللوحةَ بعد سؤالٍ مباشرةً فلا يجد سؤالَه.
+      //  (الكتابةُ في الخادم «أطلق وانسَ»، فالإبطالُ يضمن جلباً طازجاً لا
+      //  أكثر — ولا يُعتمَد عليه لإثبات أن الصفَّ كُتب.)
+      queryClient.invalidateQueries({ queryKey: ["/api/ai/conversations/mine"] });
     },
     onError: (err: any) => {
       toast({
@@ -537,6 +584,14 @@ export function AiChatDrawer() {
         variant: "destructive",
       });
     },
+  });
+
+  //  ══ «محادثاتي» — قراءةٌ واحدة خلف `enabled: historyOpen` ══════════════
+  //  لا نداءَ شبكةٍ لموظّفٍ لم يفتح اللوحة. والصفوفُ من الخادم مرشَّحةٌ
+  //  بصاحبها وبنافذة التسعين يوماً — لا ترشيحَ في الشاشة يُعتمَد عليه.
+  const historyQuery = useQuery<{ rows: OwnConversationRow[] }>({
+    queryKey: ["/api/ai/conversations/mine"],
+    enabled: open && historyOpen,
   });
 
   //  ══ التدريب — قراءتان وكتابةٌ واحدة، كلُّها خلف `enabled: trainingOpen` ══
@@ -663,12 +718,32 @@ export function AiChatDrawer() {
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                {/*  «محادثاتي» — لوحةٌ ثالثة، **قراءةٌ محضة**. وفتحُها يُغلق
+                     لوحةَ التدريب: جسمُ الدرج واحدٌ، ولوحتان مفتوحتان معاً
+                     حالةٌ لا تُعرَض.  */}
+                <Button
+                  type="button"
+                  variant={historyOpen ? "secondary" : "ghost"}
+                  size="sm"
+                  className="gap-1.5 text-xs h-8"
+                  onClick={() => {
+                    setHistoryOpen((v) => !v);
+                    setTrainingOpen(false);
+                  }}
+                  data-testid="button-toggle-history"
+                >
+                  <History className="h-4 w-4" />
+                  {historyOpen ? "المحادثة" : "محادثاتي"}
+                </Button>
                 <Button
                   type="button"
                   variant={trainingOpen ? "secondary" : "ghost"}
                   size="sm"
                   className="gap-1.5 text-xs h-8"
-                  onClick={() => setTrainingOpen((v) => !v)}
+                  onClick={() => {
+                    setTrainingOpen((v) => !v);
+                    setHistoryOpen(false);
+                  }}
                   data-testid="button-toggle-training"
                 >
                   <GraduationCap className="h-4 w-4" />
@@ -687,7 +762,30 @@ export function AiChatDrawer() {
               </div>
             </div>
 
-            {trainingOpen ? (
+            {historyOpen ? (
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" data-testid="panel-history">
+                <p className="text-xs text-muted-foreground">
+                  أسئلتك السابقة وأجوبتها — محفوظةٌ {AI_CHAT_RETENTION_DAYS} يوماً ثمّ تُمحى تلقائياً.
+                </p>
+                {historyQuery.isLoading && (
+                  <p className="text-xs text-muted-foreground">جارٍ التحميل…</p>
+                )}
+                {!historyQuery.isLoading && (historyQuery.data?.rows ?? []).length === 0 && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-no-history">
+                    لا توجد محادثات سابقة.
+                  </p>
+                )}
+                {(historyQuery.data?.rows ?? []).map((r) => (
+                  <div key={r.id} className="rounded-lg border p-3 space-y-1" data-testid={`history-row-${r.id}`}>
+                    <div className="text-[11px] text-muted-foreground">
+                      {new Date(r.createdAt).toLocaleString("ar-IQ")}
+                    </div>
+                    <div className="text-xs font-medium whitespace-pre-wrap">{r.question}</div>
+                    <div className="text-xs text-muted-foreground whitespace-pre-wrap">{r.answer}</div>
+                  </div>
+                ))}
+              </div>
+            ) : trainingOpen ? (
               <div className="flex-1 overflow-y-auto px-4 py-3" data-testid="panel-training">
                 {teamProgressOpen ? (
                   <TeamProgressPanel
