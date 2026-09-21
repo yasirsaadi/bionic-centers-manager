@@ -1141,6 +1141,9 @@ async function main() {
   check(/adminOnly/.test(adg) && /branchSession\.isAdmin/.test(adg)
     && /غير مصرح/.test(adg) && /canManageSettings/.test(adg)
     && /canManageUsers/.test(adg), "ظ.٢ الإدارة للمسؤول العام لا لمفاتيح قديمة");
+  check(/return يأتي بعد بعض hooks/.test(adg)
+    && /admin\/branches\/full/.test(adg) && /admin\/users/.test(adg)
+    && /يرفضها الخادم 403/.test(adg), "ظ.٢ب حارس العرض لا يمنع الطلبات العلوية");
 
   check(/تسعة تبويبات/.test(adg) && /المستخدمون/.test(adg)
     && /إدارة الفروع/.test(adg) && /معرفة المساعد/.test(adg)
@@ -1173,9 +1176,12 @@ async function main() {
   check(/branch-password/.test(adg) && /BRANCH_PASSWORD_<id>/.test(adg)
     && /hashed/.test(adg) && /لا يمكن\s+استخراج نصها/.test(adg), "ظ.١٠ كلمات مرور الفروع");
 
-  check(/خمسة\s+مفاتيح/.test(adg) && /showDashboard/.test(adg)
+  check(/سبعة مفاتيح/.test(adg) && /showVisits/.test(adg)
+    && /showExpenses/.test(adg) && /showDashboard.*افتراضيته true/s.test(adg),
+    "ظ.١١ إنشاء الفرع ومصدر showDashboard");
+  check(/خمسة مفاتيح فعلية للتبديل/.test(adg) && /showDashboard/.test(adg)
     && /showStatistics/.test(adg) && /ظهور\/ملاحة/.test(adg)
-    && /ليست\s+بديلاً عن حراس الصلاحيات/.test(adg), "ظ.١١ إعدادات الفرع ليست تفويضاً");
+    && /ليست\s+بديلاً عن حراس الصلاحيات/.test(adg), "ظ.١١ب إعدادات الفرع ليست تفويضاً");
 
   check(/عدد المرضى الفعالين.*أكبر من\s+صفر/s.test(adg)
     && /storage\.deleteBranch/.test(adg) && /حذف فعلي/.test(adg),
@@ -1184,12 +1190,15 @@ async function main() {
   check(/all وtoday وbranch وbranch_today/.test(adg)
     && /CSV.*للمرضى الفعالين/s.test(adg)
     && /تاريخ\s+إنشاء المريض.*يوم بغداد/s.test(adg)
-    && /لا زيارة أو دفعة اليوم/.test(adg), "ظ.١٣ حقيقة النسخة الاحتياطية");
+    && /لا زيارة أو دفعة اليوم/.test(adg)
+    && /export\/patients.*storage\.getPatients\(\).*يستبعد المرضى المحذوفين/s.test(adg),
+    "ظ.١٣ حقيقة النسخة والتصدير");
 
   check(/last_daily_backup_date/.test(adg) && /sendManualBackup لا يكتب هذا المؤشر/.test(adg),
     "ظ.١٤ حالة النسخة اليومية لا تتحدث بالإرسال اليدوي");
 
-  check(/backup_email/.test(adg) && /BACKUP_EMAIL = "yasir\.s81@gmail\.com"/.test(adg)
+  check(/backup_email/.test(adg) && /ثابت BACKUP_EMAIL/.test(adg)
+    && /لا يقرأ backup_email عند\s+الإرسال/.test(adg)
     && /لا يغير وجهة/.test(adg), "ظ.١٥ فجوة بريد النسخة الاحتياطية");
 
   check(/آخر 6 أحرف/.test(adg) && /توكن جديد يمسح\s+chatId القديم/.test(adg)
@@ -1214,8 +1223,9 @@ async function main() {
   check(/ترسل month فقط ولا ترسل\s+branchId/.test(adg)
     && /كل الفروع/.test(adg), "ظ.٢١ تبويب الدقة الحالي لا يفلتر فرعاً");
 
-  check(/noTarget/.test(adg) && /quality وحده.*100/s.test(adg)
-    && /لا تقارن\s+score بين أدوار/.test(adg), "ظ.٢٢ حدود مقارنة تقييم الموظفين");
+  check(/noTarget/.test(adg) && /entries أو deleteCount/.test(adg)
+    && /quality وحده.*100/s.test(adg) && /didWork/.test(adg)
+    && /لا تقارن score بين أدوار/.test(adg), "ظ.٢٢ حدود مقارنة تقييم الموظفين");
 
   same("ظ.٢٣ دليل الإدارة ساكن", pageGuideFor(ADMIN, rep), pageGuideFor(ADMIN, adm));
 
