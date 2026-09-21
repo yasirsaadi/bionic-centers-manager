@@ -1,4 +1,5 @@
 import { useToast } from "@/hooks/use-toast"
+import { toastDuration } from "@/components/ui/toast_timing"
 import {
   Toast,
   ToastClose,
@@ -15,7 +16,11 @@ export function Toaster() {
     <ToastProvider>
       {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
-          <Toast key={id} {...props}>
+          //  **والمهلةُ صريحةٌ من الثابت القانونيّ** لا من افتراض Radix
+          //  الصامت (٥٠٠٠ms): الخطأُ يُمهَل أطولَ لأنه يُقرأ ويُتصرَّف به.
+          //  وتُكتب **بعد** النشر فلا يطمسها `duration` قديمٌ في الحمولة —
+          //  والدالّةُ نفسُها تُعيد الصريحَ متى وصل صالحاً.
+          <Toast key={id} {...props} duration={toastDuration(props.variant, props.duration)}>
             <div className="grid gap-1">
               {title && <ToastTitle>{title}</ToastTitle>}
               {description && (

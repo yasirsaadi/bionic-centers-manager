@@ -4,9 +4,15 @@ import type {
   ToastActionElement,
   ToastProps,
 } from "@/components/ui/toast"
+import { TOAST_REMOVE_DELAY_MS } from "@/components/ui/toast_timing"
 
+//  إشعارٌ واحد في كلّ لحظة — قاعدةُ Material نفسُها: الجديدُ يحلّ محلّ
+//  القديم ولا يتراكم شريطان فوق بعضهما على شاشة هاتف.
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+
+//  **كان `1000000` هنا حرفياً** — ستَّ عشرةَ دقيقة، افتراضُ `shadcn/ui`
+//  المنقول كما هو. القيمةُ وشرحُها في `toast_timing.ts`.
+const TOAST_REMOVE_DELAY = TOAST_REMOVE_DELAY_MS
 
 type ToasterToast = ToastProps & {
   id: string
