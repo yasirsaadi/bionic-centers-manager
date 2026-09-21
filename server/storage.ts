@@ -41,7 +41,7 @@ import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } fro
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
-import { mergePhysioPlan, describePhysioPlan, PHYSIO_TREATMENT_TYPES, type PhysioPlanEntry } from "@shared/pricing";
+import { mergePhysioPlan, describePhysioPlan, PHYSIO_PLAN_TYPES, physioSessionsEnterPlan, physioPlanEligibleType, type PhysioPlanEntry } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
@@ -1632,14 +1632,15 @@ export class DatabaseStorage implements IStorage {
         //  صار في الخطة حقّاً. ووسمُ المُهدى وحده كان يترك صفّاً مدفوعاً
         //  مستورَداً يُقرأ «ليس في الخطة» — فتصحيحُه إلى «مجاني» لاحقاً
         //  **يُضيف جلساته مرّةً ثانية** وهي فيها أصلاً.
-        //  **والوسمُ على أنواع العلاج الطبيعي وحدها**: نوعٌ آخر تضعه
-        //  البذرةُ في دلو «غير محدد» فلا يُطابقه الطرحُ لاحقاً — والصمتُ
+        //  **والوسمُ على أنواع الخطة وحدها** (`PHYSIO_PLAN_TYPES`): نوعٌ
+        //  آخر تضعه البذرةُ في دلو «غير محدد»، و«استشارة طبية» تُسقطها
+        //  `mergePhysioPlan` أصلاً — فلا يُطابقهما الطرحُ لاحقاً، والصمتُ
         //  أصدقُ من وسمٍ لا يُوصِل إلى مفتاحٍ في الخطة.
         if (legacy.length > 0) {
           await tx.update(payments).set({ planCredited: true }).where(and(
             eq(payments.patientId, patientId),
             gte(payments.sessionCount, 1),
-            inArray(payments.paymentTreatmentType, [...PHYSIO_TREATMENT_TYPES]),
+            inArray(payments.paymentTreatmentType, [...PHYSIO_PLAN_TYPES]),
           ));
         }
       }
@@ -1706,7 +1707,9 @@ export class DatabaseStorage implements IStorage {
   ): Promise<void> {
     const wanted = (deltas ?? [])
       .map((d) => ({ treatmentType: String(d?.treatmentType ?? "").trim(), delta: Math.trunc(Number(d?.delta) || 0) }))
-      .filter((d) => d.treatmentType && d.delta !== 0 && PHYSIO_TREATMENT_TYPES.includes(d.treatmentType));
+      //  **والنوعُ يُقاس بقاعدة الخطة لا بالعضوية وحدها**: «استشارة طبية»
+      //  نوعٌ معروف ولا يدخل الخطةَ أبداً، فلا يُزاد ولا يُنقَص فيها.
+      .filter((d) => d.delta !== 0 && physioPlanEligibleType(d.treatmentType));
     if (wanted.length === 0) return;
 
     const body = async (t: any) => {
@@ -1765,9 +1768,9 @@ export class DatabaseStorage implements IStorage {
    */
   async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
     if (!values?.isFreeSessions) return;
-    const n = Math.max(0, Math.floor(Number(values.sessionCount) || 0));
-    const type = String(values.paymentTreatmentType ?? "").trim();
-    if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
+    //  **الشرطُ هو شرطُ `creditGiftToPlanTx` بحرفه** — دالّةٌ واحدة يقرؤها
+    //  الاثنان، فلا يقفل أحدُهما ما لا يقيّده الآخر ولا العكس.
+    if (!physioSessionsEnterPlan(values.paymentTreatmentType, values.sessionCount)) return;
     const patientId = Number(values.patientId);
     if (!Number.isInteger(patientId) || patientId <= 0) return;
     await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
@@ -1777,7 +1780,12 @@ export class DatabaseStorage implements IStorage {
     if (!payment?.isFreeSessions) return;
     const n = Math.max(0, Math.floor(Number(payment.sessionCount) || 0));
     const type = String(payment.paymentTreatmentType ?? "").trim();
-    if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
+    //  ══ **وقاعدةُ الخطة هي الحارس، لا العضويةُ في قائمة الأنواع** ═══════
+    //  `PHYSIO_TREATMENT_TYPES` تضمّ «استشارة طبية»، فحارسٌ بها كان يقبل
+    //  هديّةَ استشارةٍ بجلسات **ويُوسِم صفَّها «قُيِّد»** بينما
+    //  `mergePhysioPlan` لا تُدخلها الخطةَ أبداً — وسمٌ يكذب، وطرحٌ لاحق
+    //  يُنقص من نوعٍ لا وجود له فيها.
+    if (!physioSessionsEnterPlan(type, n)) return;
     //  ══ **والقراءةُ تحت قفل صفّ المريض** ═══════════════════════════════
     //  السؤالُ «أله خطة؟» قرارٌ، وقراءتُه على حالةٍ بائتة تَسِم الصفَّ
     //  `planCredited = false` بينما تسعيرٌ يُنشئ الخطةَ في اللحظة عينها —

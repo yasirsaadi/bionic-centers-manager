@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
@@ -335,26 +335,28 @@ function buildStoredPermissions(systemUser: SystemUser) {
  * طريقة استهلاكها؛ المصدرُ وحده يتبدّل من الصفوف الخام إلى هذه اللقطة.
  */
 function summarizePaymentSessions(
-  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount" | "isFreeSessions">[],
-): { treatmentType: string | null; sessionCount: number; isFree: boolean }[] {
-  //  ══ **والمجّانيُّ لا يُدمَج مع المدفوع** (إصلاحُ ٢٠٢٦-٠٩-٢١) ══════════
-  //  كان التجميعُ بالنوع وحده فتضيع رايةُ `is_free_sessions` في الطريق،
-  //  و`resolvePurchasedSessions` تحتاجها لتضيف الهديّةَ فوق الاشتقاق من
-  //  الكلفة. فالمفتاحُ صار (النوع، أمجّانيّةٌ هي) — **ولا مبلغَ ولا تاريخَ
-  //  ولا معرّفَ دفعةٍ يُضاف**، فالحدُّ الماليُّ الذي وُضع له هذا الملخّص
-  //  (إصلاحُ ٢٠٢٦-٠٩-٠٢) باقٍ بحرفه.
-  const byKey = new Map<string, { treatmentType: string | null; sessionCount: number; isFree: boolean }>();
+  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
+): { treatmentType: string | null; sessionCount: number }[] {
+  //  ══ **ولا رايةَ مجّانيّةٍ تخرج من هنا** (تصحيحُ ٢٠٢٦-٠٩-٢١) ═══════════
+  //  حاولت تمريرةٌ سابقة أن تفصل المُهدى عن المدفوع في هذا الملخّص كي تصل
+  //  الرايةُ إلى `resolvePurchasedSessions` في العميل — **وذاك تسريب**:
+  //  «كم جلسةً أُهديت مقابل كم دُفعت» قرارٌ ماليّ (تبرّعٌ أو خصم)، وهذا
+  //  المسارُ بعينه يحجب المالَ عمّن لا يملك `canViewPayments`. والعدّادُ
+  //  الصحيح يُحسَب الآن **في الخادم** ويصل مجموعاً بلا تصنيف
+  //  (`physioSessionsResolved` أدناه).
+  //
+  //  فالشكلُ عاد كما كان: حقلان لا غير، مُجمَّعان بنوع العلاج — **لا مبلغَ
+  //  ولا تاريخَ ولا معرّفَ دفعةٍ ولا رايةَ مجّانيّة**.
+  const byType = new Map<string, { treatmentType: string | null; sessionCount: number }>();
   for (const p of payments) {
     const n = Number(p.sessionCount) || 0;
     if (n <= 0) continue;
     const type = p.paymentTreatmentType ?? "";
-    const isFree = Boolean(p.isFreeSessions);
-    const key = `${isFree ? "F" : "P"}|${type}`;
-    const row = byKey.get(key);
+    const row = byType.get(type);
     if (row) row.sessionCount += n;
-    else byKey.set(key, { treatmentType: type || null, sessionCount: n, isFree });
+    else byType.set(type, { treatmentType: type || null, sessionCount: n });
   }
-  return Array.from(byKey.values());
+  return Array.from(byType.values());
 }
 
 export async function registerRoutes(
@@ -2246,6 +2248,33 @@ export async function registerRoutes(
     const canViewPaymentsForThisPatient =
       ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPayments);
 
+    //  ══ **وعدّادُ الجلسات يُحسَب في الخادم لمن حُجب عنه المال** ═══════════
+    //  (تصحيحُ ٢٠٢٦-٠٩-٢١). الجلسةُ المُهداة تزيد الرصيدَ ولا تزيد المال،
+    //  فلا يراها اشتقاقٌ من الكلفة ما لم تُميَّز — **وتمييزُها في الردّ
+    //  تسريب**: «كم أُهديت مقابل كم دُفعت» قرارٌ ماليّ على مسارٍ يحجب المال.
+    //
+    //  فالحسابُ يقع هنا بالدالّة المُختبَرة نفسِها (`resolvePurchasedSessions`
+    //  — `test:physio-sessions`)، ويصل العميلَ **مجموعاً بلا تصنيف**: كم
+    //  جلسةً لكلّ نوع، وهي حقيقةٌ سريريّةٌ يعرضها بادجُ الرأس وبطاقةُ «ملخّص
+    //  الجلسات». والمدخلاتُ نفسُها التي كان العميلُ يمرّرها: الخطةُ المخزَّنة
+    //  ونصُّها وكلفةُ حالة العلاج الطبيعي (وإلّا مجموعُ المريض، كما تفعل
+    //  الشاشةُ حين لا تكون الحالاتُ قد وصلت بعد).
+    let physioSessionsResolved: ReturnType<typeof resolvePurchasedSessions> | undefined;
+    if (!canViewPaymentsForThisPatient && patient.isPhysiotherapy) {
+      const cases = await storage.getCasesByPatientId(id);
+      const physioCase = cases.find((c) => c.caseType === "physiotherapy");
+      physioSessionsResolved = resolvePurchasedSessions({
+        plan: (patient as any).physioPlan,
+        treatmentTypeText: patient.treatmentType,
+        caseCost: physioCase?.cost ?? patient.totalCost ?? 0,
+        paymentSessions: payments.map((p) => ({
+          treatmentType: p.paymentTreatmentType ?? null,
+          sessionCount: p.sessionCount ?? null,
+          isFree: Boolean(p.isFreeSessions),
+        })),
+      });
+    }
+
     res.json({
       ...patient,
       ...(canViewPaymentsForThisPatient
@@ -2253,6 +2282,7 @@ export async function registerRoutes(
         //  ══ ملخّصُ جلساتٍ غيرُ ماليّ — راجع تعليق `summarizePaymentSessions`
         //  أعلاه ═════════════════════════════════════════════════════════
         : { paymentSessionsSummary: summarizePaymentSessions(payments) }),
+      ...(physioSessionsResolved ? { physioSessionsResolved } : {}),
       documents,
       visits,
     });

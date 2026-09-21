@@ -21,7 +21,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
-import { mergePhysioPlan, allocateApprovedCost, entersPhysioPlan, PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
+import { mergePhysioPlan, allocateApprovedCost, physioSessionsEnterPlan } from "@shared/pricing";
 import { NEW_SERVICE_DEPARTMENT, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 
 export { NEW_SERVICE_LABELS };
@@ -178,16 +178,15 @@ export async function executeNewService(params: {
     //  يبقى `plan_credited = NULL`، ومعناه «لم يُقيَّد». فحذفُ تلك الهديّة
     //  أو تصحيحُها لاحقاً لا يُنقص الخطةَ، **فتبقى جلساتُها فيها إلى الأبد**.
     //
-    //  والشرطُ شرطان معاً، ولا ثالثَ يُخمَّن: أن تكون الجلساتُ **دخلت**
-    //  الخطةَ فعلاً (`entersPhysioPlan` — قاعدةُ `mergePhysioPlan` نفسُها
-    //  مُصدَّرةً، لا نسخةٌ منها)، وأن يكون النوعُ ممّا **يقدر**
-    //  `adjustPhysioPlanForGift` أن يُنقصه (`PHYSIO_TREATMENT_TYPES`) —
-    //  فوسمٌ لا يستطيع الطرحُ الوفاءَ به وسمٌ كاذب.
+    //  والشرطُ `physioSessionsEnterPlan` — **الدالّةُ الواحدة** التي تجمع
+    //  ركنَي الأمر: أن تدخل الجلساتُ الخطةَ فعلاً (قاعدةُ `mergePhysioPlan`
+    //  نفسُها)، وأن يكون النوعُ ممّا **يقدر** `adjustPhysioPlanForGift` أن
+    //  يُنقصه. فوسمٌ لا يستطيع الطرحُ الوفاءَ به وسمٌ كاذب. (كان التركيبُ
+    //  مكتوباً هنا بشقَّيه، فانحرف عنه حارسُ `creditGiftToPlanTx` فقبل
+    //  الاستشارةَ — فصار في موضعٍ واحد.)
     const planMerged = hasPlan && Boolean(entries && entries.length > 0);
     const giftCreditedToPlan = (treatmentType: unknown, sessionCount: unknown) =>
-      planMerged
-      && entersPhysioPlan(String(treatmentType ?? ""), Number(sessionCount) || 0)
-      && PHYSIO_TREATMENT_TYPES.includes(String(treatmentType ?? "").trim());
+      planMerged && physioSessionsEnterPlan(String(treatmentType ?? ""), Number(sessionCount) || 0);
 
     // ══ قسمُ «خدمة جديدة» — علاجٌ طبيعي بحكم التصنيف ═══════════════════
     //  الأنواعُ الثلاثة — جلساتٌ إضافية · استشارة · خدمة أخرى — **كلُّها

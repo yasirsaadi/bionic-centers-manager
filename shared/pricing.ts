@@ -43,6 +43,33 @@ export function entersPhysioPlan(treatmentType: string, sessionCount: number): b
   return Boolean(type) && n > 0 && type !== "استشارة طبية";
 }
 
+/**
+ * **أتدخل جلساتُ صفّ دفعةٍ الخطةَ المحفوظة؟** — الشرطُ كاملاً في موضعٍ واحد.
+ *
+ * ثلاثةُ أركان: النوعُ من **أنواع العلاج الطبيعي المعروفة** (فدفعةُ طرفٍ أو
+ * مسندٍ ليست جلسةً بحال) · **ويصلح سطراً في الخطة** (`entersPhysioPlan` —
+ * و«استشارة طبية» زيارةٌ واحدة لا دورةُ علاج) · **والعددُ موجب**.
+ *
+ * وكان التركيبُ مكتوباً في أكثر من موضع فانحرف أحدُها: حارسٌ يقيس العضويةَ
+ * في `PHYSIO_TREATMENT_TYPES` وحدها **يقبل الاستشارة** فيُوسِم صفَّها
+ * «قُيِّد في الخطة» — وهي لا تدخلها أبداً. فلا نسخةَ ثانية بعد اليوم.
+ */
+export function physioSessionsEnterPlan(treatmentType: string, sessionCount: number): boolean {
+  const type = String(treatmentType ?? "").trim();
+  return PHYSIO_TREATMENT_TYPES.includes(type) && entersPhysioPlan(type, sessionCount);
+}
+
+/**
+ * الشقُّ **النوعيُّ** وحده — لمن يعدّل الخطةَ بالدلتا، فالطرحُ سالبٌ ولا
+ * يُقاس بـ`n > 0`. مُعرَّفٌ بالدالّة أعلاه نفسِها فلا قاعدةَ ثالثة.
+ */
+export function physioPlanEligibleType(treatmentType: string): boolean {
+  return physioSessionsEnterPlan(treatmentType, 1);
+}
+
+/** الأنواعُ التي تصلح سطراً في الخطة — لمن يحتاج القائمةَ نفسَها (شرطُ SQL). */
+export const PHYSIO_PLAN_TYPES = PHYSIO_TREATMENT_TYPES.filter((t) => physioPlanEligibleType(t));
+
 export function mergePhysioPlan(
   existing: PhysioPlanEntry[] | null | undefined,
   additions: { treatmentType: string; sessionCount: number }[],

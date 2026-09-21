@@ -661,9 +661,12 @@ export default function PatientDetails() {
   //  أدناه فقط؛ الجدولُ الزمنيُّ التفصيليّ (تبويب الزيارات) يبقى يعتمد
   //  `casePayments` كما كان — فارغاً لمن لا يملك الصلاحية، بلا رقمٍ مزيَّفٍ
   //  هناك أيضاً، إذ يحتاج تواريخَ حقيقية لا تصل هذا المستخدم أصلاً.
-  //  `isFree` تمرّ مع كلّ صفّ — الجلسةُ المُهداة تزيد الرصيدَ ولا تزيد
-  //  المال، فلا يراها حسابٌ مبنيٌّ على الكلفة ما لم تُميَّز (إصلاحُ
-  //  ٢٠٢٦-٠٩-٢١؛ ومَن لا يرسلها يُقرأ «مدفوعة» فيبقى السلوكُ كما كان).
+  //  **ولا رايةَ مجّانيّةٍ في الملخّص** (تصحيحُ ٢٠٢٦-٠٩-٢١): تمييزُ المُهدى
+  //  عن المدفوع قرارٌ ماليّ، ومسارُ المحجوب عنه المالُ لا يحمله. فالعدّادُ
+  //  الصحيح — الذي يرى الهديّةَ فوق الاشتقاق من الكلفة — يصل **محسوباً من
+  //  الخادم** في `physioSessionsResolved` أدناه؛ وهذا الملخّصُ يبقى
+  //  لمجموع بادج الرأس كما كان دائماً. ومَن يرى الدفعاتِ الخام يمرّر
+  //  `isFree` منها كما هي.
   const legacyPaymentSessions: {
     treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
   }[] =
@@ -1041,12 +1044,21 @@ export default function PatientDetails() {
             const physioCaseCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
             //  `legacyPaymentSessions` — الدفعاتُ الخام حين تصل، وإلّا
             //  ملخّصُ الجلسات غيرُ الماليّ من الخادم (إصلاحٌ 2026-09-03).
-            const purchased = resolvePurchasedSessions({
-              plan: (patient as any).physioPlan,
-              treatmentTypeText: patient.treatmentType,
-              caseCost: physioCaseCost,
-              paymentSessions: legacyPaymentSessions,
-            });
+            //
+            //  **ومَن حُجب عنه المالُ يأخذ النتيجةَ محسوبةً من الخادم**
+            //  (تصحيحُ ٢٠٢٦-٠٩-٢١): الهديّةُ لا تُميَّز في الردّ — تمييزُها
+            //  تسريبٌ ماليّ — فلا سبيلَ لحسابها هنا. والخادمُ يحسبها
+            //  بالدالّة نفسِها وبالمدخلات نفسِها.
+            const serverResolved = (patient as any).physioSessionsResolved as
+              ReturnType<typeof resolvePurchasedSessions> | undefined;
+            const purchased = (!patient.payments && serverResolved)
+              ? serverResolved
+              : resolvePurchasedSessions({
+                  plan: (patient as any).physioPlan,
+                  treatmentTypeText: patient.treatmentType,
+                  caseCost: physioCaseCost,
+                  paymentSessions: legacyPaymentSessions,
+                });
             const sessionsByType = purchased.byType;
             const totalSessions = purchased.total;
             // The card now shows even at zero: a physiotherapy patient with no

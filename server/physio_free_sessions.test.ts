@@ -1001,6 +1001,149 @@ async function state(pid: number) {
       check(a.paid === 0, "ذ٦. والمقبوضُ صفر — المالُ وحده تحرّك", String(a.paid));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ض. و«استشارة طبية» لا تدخل الخطة ولو أُهديت بجلسات ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `PHYSIO_TREATMENT_TYPES` تضمّ «استشارة طبية» (بسعر صفر)، بينما
+    //  `mergePhysioPlan` تُسقطها دائماً — زيارةٌ واحدة لا دورةُ علاج. فحارسٌ
+    //  يقيس العضويةَ في القائمة وحدها كان يقبل هديّةَ استشارةٍ بجلسات:
+    //  `adjustPhysioPlanForGift` لا تُدخلها الخطةَ، **والصفُّ يُوسَم
+    //  «قُيِّد»** — وسمٌ يكذب، وطرحٌ لاحقٌ يُنقص من نوعٍ لا وجود له فيها.
+    {
+      const pid = await mk("استشارةٌ-مُهداة", true);
+      const b = await state(pid);
+      const planBefore = JSON.stringify(b.plan);
+      check(b.sessions === 10 && b.src === "plan", "ض١. الأساس: ١٠ جلسات من الخطة", JSON.stringify(b));
+
+      const consult = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "استشارة طبية", sessionCount: 3,
+        treatmentEntries: [{ treatmentType: "استشارة طبية", sessionCount: 3, cost: 0, isFree: true }],
+      });
+      const cRow = (await q(
+        `SELECT id, plan_credited FROM payments
+          WHERE patient_id=$1 AND payment_treatment_type='استشارة طبية' ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0];
+      const a = await state(pid);
+      check(consult.status === 201, "ض٢. الهديّةُ سُجّلت (٢٠١) — الصفُّ واقعةٌ محفوظة", String(consult.status));
+      check(JSON.stringify(a.plan) === planBefore,
+        "ض٣. **والخطةُ مطابقةٌ بايتاً — لا سطرَ استشارةٍ فيها**", `${planBefore} ⟶ ${JSON.stringify(a.plan)}`);
+      check(a.sessions === 10, "ض٤. والعدّادُ ما زال ١٠", String(a.sessions));
+      check(cRow?.plan_credited !== true,
+        "ض٥. **ولا يُوسَم صفُّها «قُيِّد في الخطة»** — وسمٌ لا يستطيع الطرحُ الوفاءَ به وسمٌ كاذب",
+        String(cRow?.plan_credited));
+      check(a.paid === 0, "ض٦. ولا دينارَ تحرّك", String(a.paid));
+
+      //  والحارسُ ضيّقٌ لا شامل: هديّةُ نوعٍ يدخل الخطةَ تمضي كما كانت.
+      const robot = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 2,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 0, isFree: true }],
+      });
+      const a2 = await state(pid);
+      check(robot.status === 201 && a2.sessions === 12,
+        "ض٧. **وهديّةُ «روبوت» تمضي: ١٠ ⟶ ١٢** — الحارسُ على الاستشارة وحدها",
+        `${robot.status} | ${a.sessions} ⟶ ${a2.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ظ. ولا بذرةَ تسعيرٍ تَسِم استشارةً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  بذرةُ `pricePhysiotherapy` تسحب كلَّ دفعةٍ حاملةٍ لجلسات وتمرّرها
+    //  `mergePhysioPlan` — وهي تُسقط الاستشارة. فوسمُها «قُيِّد» بالقائمة
+    //  العريضة كان يكذب بالقدر نفسِه.
+    {
+      const pid = await mk("بذرةٌ-واستشارة", false);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,0,'استشارة طبية',3,false),($1,$2,100000,'روبوت',2,false)`, [pid, BR]);
+      const price = await http("POST", `/api/patients/${pid}/price-physio`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      const rows = (await q(
+        `SELECT payment_treatment_type t, plan_credited f FROM payments
+          WHERE patient_id=$1 AND session_count>0 ORDER BY id`, [pid])).rows;
+      const a = await state(pid);
+      const consultRow = rows.find((r: any) => r.t === "استشارة طبية");
+      const robotRow = rows.find((r: any) => r.t === "روبوت");
+      check(price.status < 300, "ظ١. التسعيرُ نجح", String(price.status));
+      check(Array.isArray(a.plan) && !a.plan.some((e: any) => e.treatmentType === "استشارة طبية"),
+        "ظ٢. **ولا سطرَ استشارةٍ في الخطة المبذورة**", JSON.stringify(a.plan));
+      check(consultRow?.f !== true, "ظ٣. **وصفُّها لم يُوسَم «قُيِّد»**", String(consultRow?.f));
+      check(robotRow?.f === true, "ظ٤. وصفُّ «روبوت» وُسم كما يجب — الحارسُ ضيّقٌ لا شامل",
+        String(robotRow?.f));
+      check(a.sessions === 12, "ظ٥. والعدّادُ ٢ + ١٠ = ١٢", `${a.sessions}/${a.src}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── غ. ومَن حُجب عنه المالُ لا يقرأ «كم أُهدي مقابل كم دُفع» ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  حاولت تمريرةٌ سابقة أن تفصل المُهدى عن المدفوع في
+    //  `paymentSessionsSummary` كي تصل رايةُ `is_free_sessions` إلى
+    //  `resolvePurchasedSessions` في العميل. **وذاك تسريب**: «كم جلسةً
+    //  أُهديت مقابل كم دُفعت» قرارٌ ماليّ (تبرّعٌ أو خصم)، وهذا المسارُ
+    //  بعينه يحجب المالَ عمّن لا يملك `canViewPayments`.
+    //
+    //  فالعدّادُ صار يُحسَب **في الخادم** ويصل مجموعاً بلا تصنيف.
+    {
+      const BLIND = 9939;
+      await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,is_active,
+                                         can_view_patients,can_view_payments)
+               VALUES ($1,'physblind','x','استقبالٌ بلا مال','reception',$2,true,true,false)
+               ON CONFLICT (id) DO UPDATE SET is_active=true, can_view_patients=true, can_view_payments=false,
+                 branch_id=EXCLUDED.branch_id`, [BLIND, BR]);
+      const SB = { userId: BLIND, branchId: BR, accessibleBranches: [BR], displayName: "بلا مال",
+        isAdmin: false, role: "reception" };
+
+      //  شكلٌ يفرّق الحسابين فعلاً: الاشتقاقُ من الكلفة ١٠، والمدفوعُ ٢،
+      //  والمُهدى ٦. فالصوابُ ١٦؛ ومجموعُ الملخّص المدموج (٨) كان يُنتج ١٠.
+      const pid = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
+                               is_physiotherapy,treatment_type,total_cost)
+         VALUES ($1,'محجوبٌ-عنه-المال',$2,'مراجعة',44,'ألم',true,'روبوت',500000) RETURNING id`,
+        [`WB-${++code}`, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
+               VALUES ($1,$2,'physiotherapy',500000,'manual','active')`, [pid, BR]);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions,notes)
+               VALUES ($1,$2,50000,'روبوت',1,false,'ملاحظةٌ لا يجوز أن تصل'),
+                      ($1,$2,50000,'روبوت',1,false,'ثانية'),
+                      ($1,$2,0,'روبوت',6,true,'تبرّع')`, [pid, BR]);
+
+      const blind = await http("GET", `/api/patients/${pid}`, SB);
+      const raw = JSON.stringify(blind.body ?? {});
+      const summary = blind.body?.paymentSessionsSummary;
+      const resolved = blind.body?.physioSessionsResolved;
+      check(blind.status === 200, "غ١. الملفُّ يُقرأ (٢٠٠)", String(blind.status));
+      check(blind.body?.payments === undefined, "غ٢. وبلا صفوفِ دفعاتٍ خام",
+        JSON.stringify(blind.body?.payments));
+      check(Array.isArray(summary) && summary.length === 1
+        && JSON.stringify(Object.keys(summary[0]).sort()) === JSON.stringify(["sessionCount", "treatmentType"]),
+        "غ٣. **وملخّصُ الجلسات حقلان لا غير — ولا رايةَ مجّانيّة**", JSON.stringify(summary));
+      check(raw.indexOf("isFree") === -1,
+        "غ٤. **ولا كلمةَ `isFree` واحدة في نصّ الردّ كلِّه**",
+        raw.slice(Math.max(0, raw.indexOf("isFree") - 60), raw.indexOf("isFree") + 60));
+      check(raw.indexOf("ملاحظةٌ لا يجوز") === -1, "غ٥. ولا نصَّ ملاحظةٍ", "تسرّبت");
+      check(resolved?.total === 16,
+        "غ٦. **والعدّادُ ١٦ محسوباً في الخادم** (١٠ من الكلفة + ٦ مُهداة)", JSON.stringify(resolved));
+      check(resolved?.source === "cost", "غ٧. ومصدرُه الاشتقاقُ من الكلفة", JSON.stringify(resolved?.source));
+
+      //  **والفرقُ حقيقيٌّ لا صوريّ**: الملخّصُ المدموج وحده يُنتج ١٠.
+      const fromSummaryOnly = resolvePurchasedSessions({
+        plan: null, treatmentTypeText: "روبوت", caseCost: 500000,
+        paymentSessions: (summary ?? []) as any,
+      });
+      check(fromSummaryOnly.total === 10,
+        "غ٨. **ولولا حسابُ الخادم لقرأ العميلُ ١٠** — فالحسابُ لازمٌ لا زينة",
+        JSON.stringify(fromSummaryOnly));
+
+      //  ومَن يرى الدفعاتِ يأخذها خاماً كما كان، بلا حقلٍ إضافيّ.
+      const seeing = await http("GET", `/api/patients/${pid}`, S);
+      check(seeing.body?.payments?.length === 3, "غ٩. ومَن يملك `canViewPayments` يأخذ الصفوفَ الثلاثة",
+        String(seeing.body?.payments?.length));
+      check(seeing.body?.physioSessionsResolved === undefined
+        && seeing.body?.paymentSessionsSummary === undefined,
+        "غ١٠. **وبلا حقلٍ محسوبٍ له** — يحسبه من دفعاته كما كان دوماً",
+        JSON.stringify(seeing.body?.physioSessionsResolved));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();
