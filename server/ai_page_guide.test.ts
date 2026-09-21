@@ -56,7 +56,7 @@ import {
   DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
   SESSION_ENTRY_PAGE_PATH, SESSION_TARGETS_PAGE_PATH,
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
-  ACCOUNTING_PAGE_PATH, STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
+  ADMIN_PAGE_PATH, ACCOUNTING_PAGE_PATH, STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -1132,6 +1132,114 @@ async function main() {
   same("ع.٢٤ دليل الأهداف ساكن", pageGuideFor(STGT, rep), pageGuideFor(STGT, adm));
   same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
   same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
+  // ═══ ظ: لوحة المسؤول وإدارة النظام والذكاء ═══════════════════════════
+  console.log("\n── ظ: لوحة المسؤول ──");
+  const ADMIN = resolvePageContext(ADMIN_PAGE_PATH);
+  same("ظ.١ مسار الإدارة قانوني", ADMIN?.path, ADMIN_PAGE_PATH);
+  const adg = pageGuideFor(ADMIN, rep);
+
+  check(/adminOnly/.test(adg) && /branchSession\.isAdmin/.test(adg)
+    && /غير مصرح/.test(adg) && /canManageSettings/.test(adg)
+    && /canManageUsers/.test(adg), "ظ.٢ الإدارة للمسؤول العام لا لمفاتيح قديمة");
+  check(/return يأتي بعد بعض hooks/.test(adg)
+    && /admin\/branches\/full/.test(adg) && /admin\/users/.test(adg)
+    && /يرفضها الخادم 403/.test(adg), "ظ.٢ب حارس العرض لا يمنع الطلبات العلوية");
+
+  check(/تسعة تبويبات/.test(adg) && /المستخدمون/.test(adg)
+    && /إدارة الفروع/.test(adg) && /معرفة المساعد/.test(adg)
+    && /تدريب\s+الموظفين/.test(adg) && /دقّة الموظفين/.test(adg),
+    "ظ.٣ تبويبات الإدارة التسعة");
+
+  check(/passwordHash/.test(adg) && /passwordPlain/.test(adg)
+    && /زر «إظهار»/.test(adg), "ظ.٤ كشف كلمة المستخدم للمسؤول موثق");
+
+  check(/كل\s+مستخدم غير admin يحتاج فرعاً/.test(adg)
+    && /branch_manager وprosthetics_expert/.test(adg)
+    && /لا يرفض مصفوفة متعددة لدور آخر/.test(adg),
+    "ظ.٥ الفروع المتعددة والفرق بين الواجهة والخادم");
+
+  check(/تعطيل.*PATCH \/api\/admin\/users\/:id/s.test(adg)
+    && /DELETE \/api\/admin\/users\/:id القديم أيضاً \*\*يعطّل\*\*/.test(adg)
+    && /الحذف الحقيقي.*\/permanent/s.test(adg), "ظ.٦ التعطيل ليس حذفاً");
+
+  check(/غير admin ومعطلاً أولاً/.test(adg) && /409/.test(adg)
+    && /لا يحدث cascade/.test(adg), "ظ.٧ شروط الحذف النهائي وحفظ التاريخ");
+
+  check(/حماية «آخر مسؤول»/.test(adg)
+    && /تغيير role من admin إلى\s+دور آخر/.test(adg)
+    && /لا تفترض وجود حارس.*مسؤول واحد/s.test(adg), "ظ.٨ فجوة خفض دور المسؤول");
+
+  check(/admin-password/.test(adg) && /مفتاح admin القديم/.test(adg)
+    && /لا يغيّر passwordHash/.test(adg)
+    && /\/api\/auth\/change-password/.test(adg), "ظ.٩ كلمة admin القديمة ليست كلمة حساب المستخدم");
+
+  check(/branch-password/.test(adg) && /BRANCH_PASSWORD_<id>/.test(adg)
+    && /hashed/.test(adg) && /لا يمكن\s+استخراج نصها/.test(adg), "ظ.١٠ كلمات مرور الفروع");
+
+  check(/سبعة مفاتيح/.test(adg) && /showVisits/.test(adg)
+    && /showExpenses/.test(adg) && /showDashboard.*افتراضيته true/s.test(adg),
+    "ظ.١١ إنشاء الفرع ومصدر showDashboard");
+  check(/خمسة مفاتيح فعلية للتبديل/.test(adg) && /showDashboard/.test(adg)
+    && /showStatistics/.test(adg) && /ظهور\/ملاحة/.test(adg)
+    && /ليست\s+بديلاً عن حراس الصلاحيات/.test(adg), "ظ.١١ب إعدادات الفرع ليست تفويضاً");
+  check(/showDashboard معروض لكن تحديثه مكسور/.test(adg)
+    && /updateBranchSettingsSchema لا يحتوي\s+showDashboard/.test(adg)
+    && /show_dashboard/.test(adg) && /Zod يجرّد المفتاح الزائد/.test(adg)
+    && /قد ينجح الطلب.*من دون أن يتغير showDashboard/s.test(adg),
+    "ظ.١١ج فجوة حفظ showDashboard موثقة");
+
+  check(/عدد المرضى الفعالين.*أكبر من\s+صفر/s.test(adg)
+    && /storage\.deleteBranch/.test(adg) && /حذف فعلي/.test(adg),
+    "ظ.١٢ حذف الفرع وشروطه");
+
+  check(/all وtoday وbranch وbranch_today/.test(adg)
+    && /CSV.*للمرضى الفعالين/s.test(adg)
+    && /تاريخ\s+إنشاء المريض.*يوم بغداد/s.test(adg)
+    && /لا زيارة أو دفعة اليوم/.test(adg)
+    && /export\/patients.*storage\.getPatients\(\).*يستبعد المرضى المحذوفين/s.test(adg),
+    "ظ.١٣ حقيقة النسخة والتصدير");
+
+  check(/last_daily_backup_date/.test(adg) && /sendManualBackup لا يكتب هذا المؤشر/.test(adg),
+    "ظ.١٤ حالة النسخة اليومية لا تتحدث بالإرسال اليدوي");
+
+  check(/backup_email/.test(adg) && /ثابت BACKUP_EMAIL/.test(adg)
+    && /لا يقرأ backup_email عند\s+الإرسال/.test(adg)
+    && /لا يغير وجهة/.test(adg), "ظ.١٥ فجوة بريد النسخة الاحتياطية");
+
+  check(/آخر 6 أحرف/.test(adg) && /توكن جديد يمسح\s+chatId القديم/.test(adg)
+    && /testAndLink/.test(adg), "ظ.١٦ إعداد تلغرام");
+
+  check(/ذاكرة الذكاء/.test(adg) && /Soft Delete/.test(adg)
+    && /canManageAccounting/.test(adg) && /الكتابة\/التعديل\/الحذف.*مسؤول عام فقط/s.test(adg),
+    "ظ.١٧ ذاكرة الذكاء وامتداد القراءة");
+
+  check(/أي موظف مصادَق.*correction suggestion/s.test(adg)
+    && /pending/.test(adg) && /للمسؤول\s+العام فقط/.test(adg)
+    && /نسخة جديدة/.test(adg), "ظ.١٨ اقتراح المعرفة مقابل اعتماد المسؤول");
+
+  check(/الموظف \*\*لا يدرب الذكاء\*\*/.test(adg)
+    && /المسؤول\/الفريق المركزي/.test(adg)
+    && /المقالات \*\*الفعالة\s+العامة\*\*/.test(adg)
+    && /الخادم عند الحفظ.*لا يشترط أن تلك النسخة نفسها فعالة/s.test(adg)
+    && /resolveActiveArticle/.test(adg), "ظ.١٩ التدريب من الإدارة ومعنى مقالاته");
+  check(/management\/progress.*مدير الفرع.*operationalBranches/s.test(adg)
+    && /branchId الأساسي فقط/.test(adg)
+    && /لا\s+branchIds المتعددة/.test(adg)
+    && /قد لا يظهر.*branchIds فقط/s.test(adg), "ظ.١٩ب نطاق مدير الفرع في تقدم التدريب");
+
+  check(/ليست «نسبة أخطاء صحيحة\/خاطئة»/.test(adg)
+    && /إنتاجية 40/.test(adg) && /استمرارية 20/.test(adg)
+    && /متابعات 15/.test(adg) && /جودة 25/.test(adg), "ظ.٢٠ معنى score الموظف");
+
+  check(/ترسل month فقط ولا ترسل\s+branchId/.test(adg)
+    && /كل الفروع/.test(adg), "ظ.٢١ تبويب الدقة الحالي لا يفلتر فرعاً");
+
+  check(/noTarget/.test(adg) && /entries أو deleteCount/.test(adg)
+    && /quality وحده.*100/s.test(adg) && /didWork/.test(adg)
+    && /لا\s+تقارن score بين أدوار/.test(adg), "ظ.٢٢ حدود مقارنة تقييم الموظفين");
+
+  same("ظ.٢٣ دليل الإدارة ساكن", pageGuideFor(ADMIN, rep), pageGuideFor(ADMIN, adm));
+
   // ═══ ض: النظام المحاسبي وحدود الصلاحية والحقيقة المالية ═════════════
   console.log("\n── ض: النظام المحاسبي ──");
   const ACC = resolvePageContext(ACCOUNTING_PAGE_PATH);
