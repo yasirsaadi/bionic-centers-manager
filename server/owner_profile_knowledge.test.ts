@@ -322,6 +322,103 @@ async function retrieve(q: string) {
   check(src86.includes("supersedes_id = v1.id") && src86.includes("RETURN"),
     "ح٥. **ومشروطٌ**: لا يعمل إن كان الأصلُ منسوخاً سلفاً أو مُطفأً");
 
+  //  ══════════════════════════════════════════════════════════════════════
+  //  ي. السباقُ الحقيقيّ — الترحيلُ مع تحريرِ المسؤول
+  //  ══════════════════════════════════════════════════════════════════════
+  //  سباقُ الترحيل مع نفسِه مستحيل (`seed_key` فريد ⟶ 23505). والسباقُ
+  //  الذي يقع فعلاً هو مع **مسار التحرير**: نسخته بـ`seed_key = NULL`
+  //  و`supersedes_id` بلا قيدِ تفرّد، فلا شيءَ في القاعدة يمنع خَلَفَين
+  //  فعّالَين. فيُحاكى هنا بمعاملةٍ تفعل ما يفعله `editArticleTx` بالضبط:
+  //  تقفل الأصلَ، تُدرج خَلَفاً فعّالاً، تُطفئ الأصل — ثمّ يُشغَّل ٠٨٦
+  //  **بينما هي معلَّقة**.
+  console.log("\n═══ ي. القراءةُ تحت القفل — الترحيلُ مقابل تحريرِ المسؤول ═══");
+
+  const activeHeirs = async (v1Id: number) => (await pool.query(
+    `SELECT id, seed_key, is_active FROM ai_knowledge_articles
+      WHERE supersedes_id = $1 AND is_active = true ORDER BY id`, [v1Id])).rows;
+
+  //  ① إعادةٌ إلى حال ما قبل ٠٨٦: لا خَلَفَ، والأصلُ فعّال.
+  const [{ id: v1Id }] = (await row()) as Array<{ id: number }>;
+  await pool.query(`DELETE FROM ai_knowledge_articles WHERE supersedes_id = $1`, [v1Id]);
+  await pool.query(`UPDATE ai_knowledge_articles SET is_active = true WHERE id = $1`, [v1Id]);
+  check((await activeHeirs(v1Id)).length === 0, "ي١. الإعدادُ: لا خَلَفَ والأصلُ فعّال");
+
+  //  ② معاملةُ «المسؤول» تقفل ولا تلتزم بعد.
+  const admin = await pool.connect();
+  let blockedWhileHeld = false;
+  let migrationDone = false;
+  try {
+    await admin.query("BEGIN");
+    await admin.query(`SELECT 1 FROM ai_knowledge_articles WHERE id = $1 FOR UPDATE`, [v1Id]);
+
+    //  ③ الترحيلُ يبدأ والقفلُ محمول — بنفس ترتيب `editArticleTx`:
+    //     يقفل أوّلاً ثمّ يكتب.
+    const migration = (async () => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        await c.query(scopeSql);
+        await c.query("COMMIT");
+      } catch (e) { await c.query("ROLLBACK"); throw e; }
+      finally { c.release(); migrationDone = true; }
+    })();
+
+    await new Promise((r) => setTimeout(r, 900));
+    blockedWhileHeld = !migrationDone;
+    //  **وي٢ شرطُ صحّةٍ للسيناريو لا دليلٌ على الإصلاح** — ويُقال ذلك
+    //  صراحةً كي لا يُقرأ حارساً وهو ليس به: الترحيلُ يُحجَز في
+    //  الحالتين. بالقفل يُحجَز **قبل أن يقرّر**؛ وبلا قفلٍ تمضي قراءتُه
+    //  (فالقارئُ في MVCC لا يحجزه شيء) ويُدرج، ثمّ يُحجَز عند `UPDATE`
+    //  الأخير — **بعد فوات الأوان**. فلا يفرّق بينهما إلّا الأثرُ:
+    //  ي٣–ي٥ وحدها هي التي تسقط حين يُرفَع القفل.
+    //
+    //  وقيمتُه أنه يمنع سيناريو فارغاً: لو انتهى الترحيلُ قبل أن يفعل
+    //  «المسؤول» شيئاً لَما كان ثمّة سباقٌ أصلاً، ولمرّت ي٣–ي٥ بلا معنى.
+    check(blockedWhileHeld,
+      "ي٢. السيناريو متزامنٌ فعلاً — الترحيلُ في الطريق والقفلُ محمول "
+      + "(شرطُ صحّةٍ لا دليلُ إصلاح: يمرّ في الحالتين)");
+
+    //  ④ الآن يفعل «المسؤول» ما يفعله `editArticleTx`: خَلَفٌ فعّال ثمّ
+    //     إطفاءُ الأصل — والترحيلُ ما زال محجوزاً فلا يرى شيئاً منه بعد.
+    await admin.query(
+      `INSERT INTO ai_knowledge_articles
+         (seed_key, title, body, scope, content_type, version, supersedes_id,
+          created_by_name, approved_by_name, is_active)
+       VALUES (NULL, 'نسخةُ المسؤول', 'متنٌ حرّره المسؤول', 'general', 'workflow',
+               2, $1, 'المسؤول', 'المسؤول', true)`, [v1Id]);
+    await admin.query(
+      `UPDATE ai_knowledge_articles SET is_active = false WHERE id = $1`, [v1Id]);
+
+    await admin.query("COMMIT");
+    await migration;
+  } finally {
+    admin.release();
+  }
+
+  //  ⑤ بعد الالتزام: ٠٨٦ يقرأ الأصلَ **مُطفأً** فينصرف.
+  const heirs = await activeHeirs(v1Id);
+  check(heirs.length === 1,
+    "ي٣. **خَلَفٌ فعّالٌ واحدٌ بالضبط** — لا نسختان من سلسلةٍ واحدة",
+    `got ${heirs.length}: ${JSON.stringify(heirs)}`);
+  check(heirs.length === 1 && heirs[0].seed_key === null,
+    "ي٤. وهو نسخةُ المسؤول — الترحيلُ لم يكتب فوق قرارٍ بشريّ",
+    JSON.stringify(heirs));
+  check((await pool.query(
+    `SELECT 1 FROM ai_knowledge_articles WHERE seed_key = 'center_owner_profile_v2'`
+  )).rowCount === 0, "ي٥. ولا صفَّ ٠٨٦ إطلاقاً — انصرف بلا كتابة");
+
+  //  ⑥ تنظيفٌ يُعيد الحالةَ القانونية، فالحزمةُ تُعاد على القاعدة نفسِها.
+  await pool.query(`DELETE FROM ai_knowledge_articles WHERE supersedes_id = $1`, [v1Id]);
+  await pool.query(`UPDATE ai_knowledge_articles SET is_active = true WHERE id = $1`, [v1Id]);
+  await pool.query(scopeSql);
+  //  (`activeRow()` لا تنتقي `seed_key` — فيُسأل عنه صراحةً هنا.)
+  const restored = (await pool.query(
+    `SELECT seed_key FROM ai_knowledge_articles
+      WHERE supersedes_id = $1 AND is_active = true`, [v1Id])).rows;
+  check(restored.length === 1 && restored[0].seed_key === "center_owner_profile_v2",
+    "ي٦. والحالةُ القانونية عادت — الحزمةُ تُعاد بلا فشل",
+    JSON.stringify(restored.map((r: any) => r.seed_key)));
+
   console.log(`\n${failures === 0 ? "✅ كلُّ البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);
