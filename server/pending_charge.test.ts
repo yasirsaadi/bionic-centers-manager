@@ -86,9 +86,14 @@ function check(cond: boolean, msg: string, detail = "") {
   if (!cond) failures++;
   console.log(`${cond ? "✅" : "❌ FAIL"}  ${msg}${cond ? "" : `\n      ${detail}`}`);
 }
-function same(msg: string, got: unknown, expected: unknown) {
+//  **والتفصيلُ الاختياريّ يظهر فعلاً عند الفشل.** كان التوقيعُ ثلاثةَ
+//  معامِلات، و١٨ موضعَ نداءٍ في المستودع تمرّر رابعاً يشرح الفشل — فيُسقَط
+//  صامتاً، ويقرأ المُشغِّلُ «توقّعتُ كذا ووجدتُ كذا» بلا السببِ الذي كتبه
+//  صاحبُ الاختبار ليُقرأ في تلك اللحظة بالذات.
+function same(msg: string, got: unknown, expected: unknown, detail = "") {
   check(JSON.stringify(got) === JSON.stringify(expected), msg,
-    `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
+    `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`
+    + (detail ? `\n      ${detail}` : ""));
 }
 
 const PORT = 6853;
