@@ -239,6 +239,31 @@ function isStale(current: Payment, snapshot: Record<string, unknown>): boolean {
  * الجديد إن كان المبلغُ موجباً والدفعةُ ليست جلسةً مجانية. فشلٌ حقيقيّ في
  * أيّ خطوةٍ يُسقط المعاملةَ كاملةً — لا نصفَ كتابة.
  */
+/**
+ * **تصحيحُ الهديّة يُصحِّح الخطةَ معها** (٢٠٢٦-٠٩-٢١).
+ *
+ * منحُ الجلسات المجّانية يرفع `physio_plan` لصاحب الخطة (عدّادُه يقرؤها
+ * وحدها ولا يجمعها مع الدفعات). فتصحيحُ هديّةٍ من ستٍّ إلى ثلاث — أو حذفُها
+ * — كان يُبقي الستَّ محسوبةً في العدّاد **إلى الأبد**.
+ *
+ * فالدلتا تُحسب من الصفّ قبل وبعد، وتشمل الأشكال الثلاثة: تغيُّرَ العدد،
+ * وقلبَ علم المجّانيّة في الاتجاهين، وإعادةَ وسمِ النوع (فتُنقَص من القديم
+ * وتُضاف للجديد). **وداخل المعاملة نفسِها** فلا يقع نصفُ تصحيح.
+ */
+function giftPlanDeltas(before: Payment, after: Payment | null): { treatmentType: string; delta: number }[] {
+  const giftOf = (p: Payment | null) =>
+    p && p.isFreeSessions && Number(p.sessionCount) > 0
+      ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+      : null;
+  const b = giftOf(before), a = giftOf(after);
+  if (!b && !a) return [];
+  if (b && a && b.type === a.type) return [{ treatmentType: b.type, delta: a.n - b.n }];
+  const out: { treatmentType: string; delta: number }[] = [];
+  if (b) out.push({ treatmentType: b.type, delta: -b.n });
+  if (a) out.push({ treatmentType: a.type, delta: a.n });
+  return out;
+}
+
 async function applyCorrectionWriteTx(tx: any, params: {
   before: Payment;
   action: "update" | "delete";
@@ -254,6 +279,7 @@ async function applyCorrectionWriteTx(tx: any, params: {
       await reverseJournalForPaymentTx(tx, before.id, params.reversedBy, "حذفٌ مصحَّح");
     }
     await tx.delete(payments).where(eq(payments.id, before.id));
+    await storage.adjustPhysioPlanForGift(before.patientId, giftPlanDeltas(before, null), tx);
     return { payment: null, journalRebuilt: touchesJournal };
   }
 
@@ -285,6 +311,8 @@ async function applyCorrectionWriteTx(tx: any, params: {
   if (touchesJournal && updated.amount > 0 && !updated.isFreeSessions) {
     await createJournalForPaymentTx(tx, updated, params.reversedBy);
   }
+
+  await storage.adjustPhysioPlanForGift(before.patientId, giftPlanDeltas(before, updated), tx);
 
   return { payment: updated, journalRebuilt: touchesJournal };
 }

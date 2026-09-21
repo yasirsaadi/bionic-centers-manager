@@ -4131,7 +4131,18 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const isBranchManager = branchSession?.role === "branch_manager";
-    const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
+    const mayGrantFree = isAdmin || isBranchManager;
+    const isFreeSessions = mayGrantFree ? (req.body.isFreeSessions || false) : false;
+    //  ══ **والنافذةُ تؤشّر «مجاني» لكلّ بند، لا علماً علوياً** ════════════
+    //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) `PaymentModal` يبني البندَ المُهدى بـ`isFree`
+    //  عليه هو ويرسل `treatmentEntries` بلا `isFreeSessions` علويّ — فالبندُ
+    //  كان يصل بكلفةِ صفرٍ وعلمٍ علويٍّ مُطفأ، **فتتخطّاه حلقةُ الإدراج
+    //  ولا يُسجَّل شيءٌ إطلاقاً** والردُّ ٢٠١. مُثبَتٌ حيّاً قبل الإصلاح.
+    //
+    //  والعلمُ العلويُّ يبقى مقبولاً (مُنادٍ آخر أو عميلٌ سابق) فيُعمَّم على
+    //  البنود كلِّها. **ونفسُ بوّابة الصلاحية للاثنين**: مَن لا يملك المنحَ
+    //  المجّانيّ لا يصنعه من بابٍ خلفيّ، ويبقى بندُه بكلفته كما وصل.
+    const entryIsFree = (e: any) => mayGrantFree && (e?.isFree === true || isFreeSessions);
 
     // ══ **مَن يملك كتابة دفعة أصلاً؟** ═══════════════════════════════════
     // `isAuthenticated` وحدها تتحقّق من وجود جلسة، لا من الصلاحية — أيّ
@@ -4175,7 +4186,13 @@ export async function registerRoutes(
     input.branchId = (await actingBranchFor(req, livePatient)) ?? livePatient.branchId;
 
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
-    if (!isFreeSessions) {
+    //  **والمجّانيُّ بالبنود يتخطّاه أيضاً**: حمولةٌ كلُّ بنودها مُهداة لا
+    //  تقبض ديناراً، فحارسُ «لا متبقّي» لا موضوعَ له فيها — وكان يردّها ٤٠٠
+    //  لصاحب ملفٍّ سُدِّد بالكامل، فيتعذّر منحُه هديّةً أصلاً.
+    const payableTotal = Array.isArray(treatmentEntries) && treatmentEntries.length > 0
+      ? treatmentEntries.reduce((sum: number, e: any) => sum + (entryIsFree(e) ? 0 : Math.max(0, Number(e?.cost) || 0)), 0)
+      : Math.max(0, Number((req.body as any)?.amount) || 0);
+    if (!isFreeSessions && payableTotal > 0) {
       const patient = await storage.getPatient(input.patientId);
       if (patient) {
         const payments = await storage.getPaymentsByPatientId(input.patientId);
@@ -4246,18 +4263,19 @@ export async function registerRoutes(
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
       const results = [];
       for (const entry of treatmentEntries) {
-        if (entry.cost > 0 || isFreeSessions) {
+        const freeEntry = entryIsFree(entry);
+        if (entry.cost > 0 || freeEntry) {
           const payment = await writePayment({
             ...input,
-            amount: isFreeSessions ? 0 : entry.cost,
+            amount: freeEntry ? 0 : entry.cost,
             notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
             paymentTreatmentType: entry.treatmentType,
             sessionCount: entry.sessionCount,
-            isFreeSessions: isFreeSessions,
+            isFreeSessions: freeEntry,
           });
           results.push(payment);
           // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
-          if (!isFreeSessions && payment.amount > 0) {
+          if (!freeEntry && payment.amount > 0) {
             await createJournalForPayment(payment, userId);
           }
           await logAudit({
@@ -4285,38 +4303,22 @@ export async function registerRoutes(
           ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         });
       }
-      //  ══ **والجلسةُ المُهداة ترفع خطّةَ صاحب الخطة** ══════════════════
+      //  ══ **والهديّةُ المُسجَّلة ترفع خطّةَ صاحب الخطة** ══════════════
       //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) عدّادُ الجلسات يقرأ الخطةَ المحفوظة **وحدها**
       //  متى وُجدت — لا يجمعها مع الدفعات أبداً (وإلّا عُدّت هديّةُ «خدمة
-      //  جديدة» مرّتين: هي تكتب في الاثنين معاً). فهذا البابُ كان يكتب صفَّ
-      //  الدفعة وحدَه، **فتختفي الهديّةُ عن صاحب الخطة تماماً** — مُثبَتٌ
-      //  حيّاً قبل الإصلاح: العدّادُ ١٠ ⟶ ١٠ بعد منح خمس جلسات.
+      //  جديدة» مرّتين: هي تكتب في الاثنين معاً). فصفُّ الدفعة وحدَه كان
+      //  يُخفي الهديّةَ عن صاحب الخطة تماماً.
       //
-      //  فصار يرفعها **كما ترفعها «خدمة جديدة» بالضبط**، بالدالّة القانونية
-      //  نفسِها (`mergePhysioPlan`)، **ولا يُنشئ خطةً لمن لا خطةَ له**:
-      //  مريضُ المفرد تاريخُه كلُّه على دفعاته، وخطةٌ من جلسةٍ واحدة تطمسه
-      //  وتقلب عدّادَه سالباً (حادثةُ ذي قار ٢٠٢٦-٠٧-٢٩). وعدّادُ ذاك يقرأ
-      //  الدفعاتِ أصلاً فيرى الهديّةَ بلا خطة.
-      //
-      //  **وأنواعُ العلاج الطبيعي وحدها** تدخل الخطة — دفعةُ طرفٍ أو مسندٍ
-      //  ليست جلسة. **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر.
-      if (isFreeSessions) {
-        const freshPlan = (await storage.getPatient(input.patientId))?.physioPlan;
-        const hasPlan = Array.isArray(freshPlan) && freshPlan.length > 0;
-        const planAdditions = (entriesArray as any[])
-          .map((e) => ({
-            treatmentType: String(e?.treatmentType ?? "").trim(),
-            sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
-          }))
-          .filter((e) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
-        if (hasPlan && planAdditions.length > 0) {
-          const nextPlan = mergePhysioPlan(freshPlan, planAdditions);
-          await storage.updatePatient(input.patientId, {
-            physioPlan: nextPlan,
-            treatmentType: describePhysioPlan(nextPlan) || livePatient.treatmentType,
-          } as any);
-        }
-      }
+      //  **والمصدرُ هو ما كُتب فعلاً** (`results`) لا ما وصل في الطلب: بندٌ
+      //  أُسقط علمُه لانعدام الصلاحية لا يرفع خطةً بهديّةٍ لم تُمنَح.
+      //  والكتابةُ في `storage.adjustPhysioPlanForGift` — بقفلِ صفّ المريض،
+      //  وبدلتا يشاركها التعديلُ والحذف، ولا تُنشئ خطةً لمن لا خطةَ له.
+      await storage.adjustPhysioPlanForGift(
+        input.patientId,
+        results
+          .filter((p: any) => p?.isFreeSessions && Number(p?.sessionCount) > 0)
+          .map((p: any) => ({ treatmentType: String(p.paymentTreatmentType ?? ""), delta: Number(p.sessionCount) })),
+      );
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
       const payment = await writePayment({ ...input });
@@ -4333,6 +4335,14 @@ export async function registerRoutes(
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
       });
+      //  والدفعةُ المفردة المُهداة ترفع الخطةَ كما ترفعها البنود — نفسُ
+      //  الدالّة بقفلها ودلتاها، فلا يفترق البابان.
+      await storage.adjustPhysioPlanForGift(
+        input.patientId,
+        payment?.isFreeSessions && Number(payment?.sessionCount) > 0
+          ? [{ treatmentType: String(payment.paymentTreatmentType ?? ""), delta: Number(payment.sessionCount) }]
+          : [],
+      );
       res.status(201).json(payment);
     }
     } catch (err: any) {

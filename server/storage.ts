@@ -41,7 +41,7 @@ import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } fro
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
-import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { mergePhysioPlan, describePhysioPlan, PHYSIO_TREATMENT_TYPES, type PhysioPlanEntry } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
@@ -1650,6 +1650,65 @@ export class DatabaseStorage implements IStorage {
       return updated;
     };
     return params.tx ? await body(params.tx) : await db.transaction(body);
+  }
+
+  /**
+   * **الجلسةُ المُهداة ترفع خطّةَ صاحب الخطة — بقفلٍ وبدلتا** (٢٠٢٦-٠٩-٢١).
+   *
+   * عدّادُ الجلسات يقرأ `physio_plan` **وحدها** متى وُجدت ولا يجمعها مع
+   * الدفعات أبداً. فهديّةٌ تُكتب في صفّ دفعةٍ فقط تختفي عن صاحب الخطة —
+   * وهذه الدالّةُ هي **البابُ الوحيد** الذي يُبقي الاثنين متّسقين، يناديه
+   * إنشاءُ الدفعة وتعديلُها وحذفُها بالدلتا نفسِها.
+   *
+   * ══ ولماذا دلتا لا كتابةٌ كاملة ═══════════════════════════════════════
+   * تصحيحُ هديّةٍ من ستٍّ إلى ثلاث، أو حذفُها، يجب أن يُنقص الخطةَ بالمقدار
+   * عينه — وإلّا بقيت الستُّ محسوبةً في العدّاد إلى الأبد.
+   *
+   * ══ والقفلُ شرطُ صحّةٍ لا تحسين ═══════════════════════════════════════
+   * قراءةُ الخطة وتعديلُها وكتابتُها ثلاثُ خطوات على عمود jsonb واحد. فمنحان
+   * متزامنان لنفس المريض كانا يقرآن الخطةَ عينها ويكتب الأخيرُ فوق الأوّل،
+   * **فتضيع هديّةٌ صحيحة**. والقفلُ على صفّ المريض يُسلسلهما.
+   *
+   * **ولا تُنشئ خطةً لمن لا خطةَ له** (حادثةُ ذي قار ٢٠٢٦-٠٧-٢٩): مريضُ
+   * المفرد تاريخُه كلُّه على دفعاته، وعدّادُه يقرؤها فيرى الهديّةَ بلا خطة.
+   * **وأنواعُ العلاج الطبيعي وحدها** — دفعةُ طرفٍ أو مسندٍ ليست جلسة.
+   * **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر ولا دفعة.
+   */
+  async adjustPhysioPlanForGift(
+    patientId: number,
+    deltas: { treatmentType: string; delta: number }[],
+    tx?: DbTransactionLike,
+  ): Promise<void> {
+    const wanted = (deltas ?? [])
+      .map((d) => ({ treatmentType: String(d?.treatmentType ?? "").trim(), delta: Math.trunc(Number(d?.delta) || 0) }))
+      .filter((d) => d.treatmentType && d.delta !== 0 && PHYSIO_TREATMENT_TYPES.includes(d.treatmentType));
+    if (wanted.length === 0) return;
+
+    const body = async (t: any) => {
+      //  القفلُ أوّلاً، ثمّ القراءة — فالخطةُ التي نعدّلها هي التي نكتب فوقها.
+      const [row] = await t
+        .select({ plan: patients.physioPlan, text: patients.treatmentType })
+        .from(patients).where(eq(patients.id, patientId)).for("update");
+      if (!row) return;
+      const current = Array.isArray(row.plan) ? (row.plan as PhysioPlanEntry[]) : null;
+      //  بلا خطةٍ قائمة ⟶ لا شيء. عدّادُه يقرأ الدفعات، والهديّةُ فيها.
+      if (!current || current.length === 0) return;
+
+      const byType: Record<string, number> = {};
+      for (const e of current) {
+        const type = String(e?.treatmentType ?? "").trim();
+        if (type) byType[type] = (byType[type] ?? 0) + Math.max(0, Math.floor(Number(e?.sessionCount) || 0));
+      }
+      for (const d of wanted) byType[d.treatmentType] = Math.max(0, (byType[d.treatmentType] ?? 0) + d.delta);
+      const next: PhysioPlanEntry[] = Object.keys(byType)
+        .filter((t2) => byType[t2] > 0)
+        .map((t2) => ({ treatmentType: t2, sessionCount: byType[t2] }));
+
+      await t.update(patients)
+        .set({ physioPlan: next as any, treatmentType: describePhysioPlan(next) || row.text })
+        .where(eq(patients.id, patientId));
+    };
+    return tx ? await body(tx) : await db.transaction(body);
   }
 
   // Add a service's price onto the case it belongs to (resolved from its
@@ -3305,11 +3364,40 @@ export class DatabaseStorage implements IStorage {
   // العمودُ خارج توقيع هذه الدالّة كلّياً: لا معاملَ يُغري باستدعاءٍ
   // خاطئ، ولا كاتبَ إعادةِ وسمٍ ثانياً غير `updatePayment`/تصحيح الدفعات.
   async updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any> {
+    const [before] = await db.select().from(payments).where(eq(payments.id, id));
     const [updated] = await db.update(payments)
       .set({ sessionCount })
       .where(eq(payments.id, id))
       .returning();
+    //  وتصحيحُ عدد جلسات هديّةٍ يُصحِّح خطةَ صاحب الخطة معها — وإلّا بقي
+    //  العددُ القديم محسوباً في العدّاد إلى الأبد (انظر `giftPlanDelta`).
+    await this.reconcileGiftPlanFromPayment(before ?? null, updated ?? null);
     return updated;
+  }
+
+  /**
+   * **الهديّةُ في الخطة تتبع صفَّها** — تُنادى من كلّ كاتبٍ يمسّ دفعةً
+   * قائمة خارج مسار التصحيح المحميّ (الذي له نداؤه داخل معاملته).
+   *
+   * تشمل الأشكال الثلاثة: تغيُّرَ العدد، وقلبَ علم المجّانيّة في الاتجاهين،
+   * وإعادةَ وسم النوع (نقصٌ من القديم وزيادةٌ للجديد). **ولا دينارَ يتحرّك.**
+   */
+  private async reconcileGiftPlanFromPayment(before: any, after: any): Promise<void> {
+    const giftOf = (p: any) =>
+      p && p.isFreeSessions && Number(p.sessionCount) > 0
+        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+        : null;
+    const b = giftOf(before), a = giftOf(after);
+    if (!b && !a) return;
+    const patientId = Number(after?.patientId ?? before?.patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    const deltas = b && a && b.type === a.type
+      ? [{ treatmentType: b.type, delta: a.n - b.n }]
+      : [
+        ...(b ? [{ treatmentType: b.type, delta: -b.n }] : []),
+        ...(a ? [{ treatmentType: a.type, delta: a.n }] : []),
+      ];
+    await this.adjustPhysioPlanForGift(patientId, deltas);
   }
 
   async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null, isFreeSessions?: boolean }): Promise<any> {
@@ -3327,6 +3415,7 @@ export class DatabaseStorage implements IStorage {
     if (updated && data.paymentTreatmentType !== undefined && tagChanged(before?.paymentTreatmentType, data.paymentTreatmentType)) {
       await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null);
     }
+    await this.reconcileGiftPlanFromPayment(before ?? null, updated ?? null);
     return updated;
   }
 
