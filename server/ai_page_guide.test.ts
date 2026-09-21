@@ -1154,12 +1154,25 @@ async function main() {
     && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
     && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
   check(/اقتراح بالذكاء.*expensesOnly/s.test(acg)
-    && /categorize-expense يشترط\s+canManageAccounting/.test(acg), "ض.٨ زر تصنيف الذكاء لا يعني صلاحية");
-  check(/لا تستخدم accessibleBranches/.test(acg) && /بلا branchId يعيد undefined/.test(acg)
-    && /كل الفروع/.test(acg), "ض.٩ نطاق الفرع واستثناء الحساب بلا فرع");
+    && /categorize-expense يشترط.*canManageAccounting/s.test(acg)
+    && /ExpenseHintsPanel/.test(acg) && /guidance\/expense/.test(acg)
+    && /لا تقبل canAddExpenses/.test(acg) && /403/.test(acg),
+    "ض.٨ مساعدات نموذج المصروف لا ترث canAddExpenses");
+  check(/بلا branchId أساسي/.test(acg)
+    && /enforceBranchAccess يعيد undefined/.test(acg)
+    && /POST \/api\/expenses.*POST \/api\/invoices.*POST \/api\/purchases/s.test(acg)
+    && /PUT\/DELETE \/api\/expenses\/:id.*PATCH \/api\/invoices\/:id/s.test(acg)
+    && /sessionBranchId=null/.test(acg)
+    && /accessibleBranchesFor يعيد \[\]/.test(acg)
+    && /لا يستطيع القبض/.test(acg), "ض.٩ مصفوفة نطاق الحساب بلا فرع");
+  check(/التقرير الشهري الذكي والتدقيق الذكي/.test(acg)
+    && /branchId=null/.test(acg) && /مفتاح all/.test(acg),
+    "ض.٩ب الذكاء المحاسبي يتسع بلا فرع");
   check(/totalPaid.*payments المؤرخة داخل الفترة/s.test(acg)
     && /totalRevenue.*cost_entries المنشأة داخل الفترة/s.test(acg)
     && /netProfit = الوارد المقبوض ناقص المصروفات/.test(acg), "ض.١٠ معنى تدفقات المال");
+  check(/المصروفات فتبقى موزعة إلى prosthetic وphysio وshared/.test(acg)
+    && !/المصروفات فتبقى موزعة إلى devices/.test(acg), "ض.١٠ب قيمة قسم المصروف القانونية");
   check(/totalRemaining.*العمر كله.*حد أدنى صفر/s.test(acg)
     && /لا يُعرض دين سالب/.test(acg) && /collectionRate.*العمر كله/s.test(acg)
     && /لا يحول\s+الدين ونسبة التحصيل إلى «دين تلك الفترة»/.test(acg), "ض.١١ المخزون المالي وحد الدين الأدنى");
@@ -1168,19 +1181,28 @@ async function main() {
   check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
     && /invoices\/:id/.test(acg) && /invoice-items\/bulk/.test(acg)
     && /إخفاء تبويب الفواتير ليس حارس بيانات/.test(acg), "ض.١٣ حراس قراءة الفواتير موثقة");
-  check(/expensesOnly.*قائمة فواتير فرعه/s.test(acg)
-    && /إخفاء التبويب لا يعني أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ الطلبات الخلفية للتبويبات المخفية");
+  check(/expensesOnly.*قائمة الفواتير/s.test(acg)
+    && /branchId طبيعي.*تقيدها القائمة بذلك الفرع/s.test(acg)
+    && /بلا branchId.*undefined.*كل الفروع/s.test(acg)
+    && /إخفاء التبويب لا يعني أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ قائمة الفواتير الخلفية ونطاقها");
   check(/الوضع specific/.test(acg) && /الوضع full/.test(acg)
     && /paidNow.*عملية خادمية واحدة/s.test(acg)
-    && /canAddPayments/.test(acg), "ض.١٥ إنشاء الفاتورة والقبض");
-  check(/تعديل المورد وإلغاء تفعيله\s+للمسؤول العام فقط/.test(acg)
+    && /بلا branchId.*POST يحتفظ بفرع الجسم/s.test(acg)
+    && /PATCH يتخطى مقارنة الفرع/.test(acg)
+    && /القبض مختلف/.test(acg) && /canAddPayments/.test(acg)
+    && /لا يستطيع القبض على فاتورة/.test(acg), "ض.١٥ الفاتورة والقبض ونطاق الحساب بلا فرع");
+  check(/GET \/api\/vendors.*GET \/api\/vendors\/:id.*POST \/api\/vendors/s.test(acg)
+    && /المسؤول\s+العام أو canManageAccounting/.test(acg)
+    && /branch_manager وحده لا يمنحها/.test(acg)
+    && /قائمة الموردين كيان عام/.test(acg)
+    && /تعديل المورد وإلغاء تفعيله للمسؤول العام فقط/.test(acg)
     && /تعديل\/حذف الشراء للمسؤول العام فقط/.test(acg)
     && /GET \/api\/purchases\/:id/.test(acg)
     && /POST \/api\/purchases\/:id\/payment/.test(acg)
     && /لا يطبقان enforceBranchAccess/.test(acg)
     && /شراءً من فرع آخر.*يسجل عليه دفعة/s.test(acg)
     && /حفظ الشراء أو دفعة المورد.*بأفضل\s+جهد/s.test(acg)
-    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات واستثناء نطاق الفرع");
+    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات وحراسها الفعلية");
   check(/المديونيات والاتجاهات والربحية والمقارنة والتنبيهات/.test(acg)
     && /استثناء صريح/.test(acg) && /AccountingRevenueByTreatment/.test(acg)
     && /revenue-by-treatment.*canViewReports/s.test(acg)
