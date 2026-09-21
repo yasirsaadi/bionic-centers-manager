@@ -32,6 +32,8 @@
 //   • **س**: **وعطلُ القاعدة يُردّ عليه ولا يُعلَّق** — `next(err)` يوصله إلى
 //     وسيط الأخطاء بدل رفضٍ عارٍ يترك الطلبَ بلا استجابة أبداً.
 //   • **ع**: **ولا اسمَ أداةٍ خامّاً يصل العميل** — والعمودُ يبقى في القاعدة.
+//   • **ف**: **ومرشِّحُ المسؤول يسمّي الموظّفَ بأحدثِ لقطة** لا بالأكبر أبجدياً.
+//   • **ص**: **ولا مربّعَ سؤالٍ فوق لوحةٍ لا تعرض الجواب** (عقدُ الشاشة).
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -874,6 +876,84 @@ async function main() {
           "ع٧. **والبناءُ صريحٌ لا نسخٌ بـ`...r`** — وإلّا عاد الحقلُ بلا أن ينتبه أحد");
       }
       await cleanup();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ف. ومرشِّحُ المسؤول يسمّي الموظّفَ بأحدثِ لقطة ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  `MAX(user_name)` تختار الأكبرَ **أبجدياً** لا الأحدثَ زمناً. فموظّفٌ
+    //  تغيّر اسمُه خلال النافذة كان المرشِّحُ يسمّيه بالقديم بينما تسمّيه
+    //  صفوفُه الأحدثُ بالجديد — مرشِّحٌ وقائمةٌ عن شخصين. **والفِكستشرُ
+    //  يختار اسمين يسبق فيهما الجديدُ القديمَ أبجدياً**، فلو عادت `MAX`
+    //  لأعطت القديمَ وسقط البند؛ ولو كان العكسُ لمرّ الخطأُ صدفةً.
+    {
+      await cleanup();
+      const OLD_NAME = "ريام ب";   //  الأكبرُ أبجدياً
+      const NEW_NAME = "ريام أ";   //  والأحدثُ زمناً
+      check(OLD_NAME > NEW_NAME,
+        "ف١. الفِكستشرُ يفرّق بين «الأحدثِ» و«الأكبرِ أبجدياً» فعلاً",
+        `${OLD_NAME} vs ${NEW_NAME}`);
+
+      await recordExchange({
+        conversationId: null, userId: RECV, userName: OLD_NAME, userRole: "reception",
+        branchId: 1, branchName: "بغداد", mode: "general", pagePath: null,
+        question: "سؤالٌ قديم", answer: "جوابٌ قديم", toolNames: [], knowledgeIds: [],
+      });
+      const [oldRow] = await q<{ id: number }>(
+        `SELECT id FROM ai_chat_conversations WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, [RECV]);
+      //  ختمان صريحان — فلا يعتمد الفحصُ على دقّة `NOW()` على آلةٍ سريعة.
+      await q(`UPDATE ai_chat_conversations SET created_at = $2 WHERE id = $1`,
+        [oldRow.id, "2026-09-01 10:00:00+00"]);
+
+      await recordExchange({
+        conversationId: null, userId: RECV, userName: NEW_NAME, userRole: "reception",
+        branchId: 1, branchName: "بغداد", mode: "general", pagePath: null,
+        question: "سؤالٌ جديد", answer: "جوابٌ جديد", toolNames: [], knowledgeIds: [],
+      });
+      const [newRow] = await q<{ id: number }>(
+        `SELECT id FROM ai_chat_conversations WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, [RECV]);
+      await q(`UPDATE ai_chat_conversations SET created_at = $2 WHERE id = $1`,
+        [newRow.id, "2026-09-10 10:00:00+00"]);
+
+      const list = (await http("GET", "/api/ai/conversations/users", S.admin)).body?.users ?? [];
+      const mine = list.find((u: any) => u.userId === RECV);
+      check(mine?.userName === NEW_NAME,
+        "ف٢. **والمرشِّحُ يسمّيه بأحدثِ لقطة** لا بالأكبر أبجدياً", String(mine?.userName));
+      check(mine?.count === 2, "ف٣. والعددُ صحيحٌ كما كان", String(mine?.count));
+
+      //  **ولا يخالف المرشِّحُ ما تقوله الصفوفُ نفسُها** — وهذا هو العطبُ
+      //  المقروء: اسمٌ في القائمة واسمٌ آخر في صفوفها.
+      const rows = (await http("GET", "/api/ai/conversations?userId=" + RECV, S.admin))
+        .body?.rows ?? [];
+      check(rows[0]?.userName === mine?.userName,
+        "ف٤. **ولا يخالف المرشِّحُ أحدثَ صفوفه**", `${rows[0]?.userName} ≠ ${mine?.userName}`);
+
+      //  **واللقطةُ لقطة** — لا `join` إلى `system_users` (فالاسمُ يبقى بعد
+      //  حذف الحساب). وحسابُ الاختبار اسمُه «ريام»، ولا صفَّ يحمله.
+      check(mine?.userName !== "ريام",
+        "ف٥. **ولا يُقرأ الاسمُ من الحساب الحيّ** — اللقطةُ هي المصدر");
+      await cleanup();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ص. ولا مربّعَ سؤالٍ فوق لوحةٍ لا تعرض الجواب ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  جسمُ الدرج واحد: ففتحُ «محادثاتي» يُخفي لوحةَ المحادثة. وكان مربّعُ
+    //  السؤال محروساً بـ`!trainingOpen` وحده فيبقى ظاهراً فوقها — والإرسالُ
+    //  منه يُلحق السؤالَ والجوابَ ومؤشّرَ الانتظار باللوحة **المخفيّة**، فلا
+    //  يرى الموظّفُ شيئاً يحدث فيظنّ الإرسالَ فاشلاً ويعيده.
+    {
+      const drawer = code(DRAWER_SRC);
+      check(/\{!trainingOpen\s*&&\s*!historyOpen\s*&&\s*\(\s*<form/.test(drawer),
+        "ص١. **ومربّعُ السؤال محجوبٌ عن اللوحتين معاً**",
+        "الشرطُ ما زال يحرس لوحةَ التدريب وحدها");
+      //  ولوحتان مفتوحتان معاً حالةٌ لا تُعرَض — فكلُّ زرٍّ يُغلق الأخرى.
+      check(/setHistoryOpen\(\(v\) => !v\);\s*setTrainingOpen\(false\);/.test(drawer)
+        && /setTrainingOpen\(\(v\) => !v\);\s*setHistoryOpen\(false\);/.test(drawer),
+        "ص٢. **ولوحتان مفتوحتان معاً حالةٌ لا تقع** — كلُّ زرٍّ يُغلق الأخرى");
+      //  والعودةُ ضغطةٌ واحدة معنونةٌ بذلك، فلا يُحبَس الموظّفُ في القراءة.
+      check(/historyOpen \? "المحادثة" : "محادثاتي"/.test(drawer),
+        "ص٣. **والعودةُ ضغطةٌ واحدة معنونةٌ «المحادثة»**");
     }
 
     await cleanup();

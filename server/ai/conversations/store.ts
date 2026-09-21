@@ -240,13 +240,26 @@ export async function getConversationThread(
   return rows.map(toRow);
 }
 
-/** أسماءُ مَن لهم محادثاتٌ داخل النافذة — لمرشِّح شاشة المسؤول وحدها. */
+/**
+ *  أسماءُ مَن لهم محادثاتٌ داخل النافذة — لمرشِّح شاشة المسؤول وحدها.
+ *
+ *  ══ والاسمُ **أحدثُ لقطة** لا الأكبرَ أبجدياً ═══════════════════════════
+ *  (مراجعةٌ آلية على #٣٧٢، ٢٠٢٦-٠٩-٢١.) كانت `MAX(user_name)` تختار الأكبرَ
+ *  **أبجدياً** بين لقطات النافذة — لا علاقةَ له بالزمن. فموظّفٌ تغيّر اسمُه
+ *  خلال التسعين يوماً كان المرشِّحُ يسمّيه باسمه **القديم** بينما تسمّيه
+ *  صفوفُه الأحدثُ بالجديد، فيبدو المرشِّحُ وقائمةُ الصفوف عن شخصين.
+ *
+ *  **ولا `join` إلى `system_users`**: مبدأُ هذا الجدول أنّ الأسماء لقطاتٌ
+ *  تبقى مقروءةً بعد تغيير الحساب أو حذفه — فالصوابُ **أحدثُ لقطة** لا حسابٌ
+ *  حيٌّ قد لا يوجد. والترتيبُ هو ترتيبُ القراءة نفسُه `(created_at, id)`.
+ */
 export async function listConversationUsers(
   now?: Date,
 ): Promise<{ userId: number; userName: string; count: number }[]> {
   const rows = await db.select({
     userId: aiChatConversations.userId,
-    userName: sql<string>`MAX(${aiChatConversations.userName})`,
+    userName: sql<string>`(ARRAY_AGG(${aiChatConversations.userName}
+      ORDER BY ${aiChatConversations.createdAt} DESC, ${aiChatConversations.id} DESC))[1]`,
     count: sql<number>`COUNT(*)::int`,
   }).from(aiChatConversations)
     .where(gte(aiChatConversations.createdAt, retentionCutoff(nowOr(now))))
