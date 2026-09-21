@@ -4254,9 +4254,27 @@ export async function registerRoutes(
           explicitLegacy: unallocatedDeviceBalance === true,
         }
       : null;
-    const writePayment = (values: any) => attribution
-      ? storage.createPaymentAttributed(values, attribution)
-      : storage.createPayment(values);
+    //  ══ **ولا علمَ مجّانيّةٍ من العميل يُخزَّن** (إصلاحُ ٢٠٢٦-٠٩-٢١) ═══
+    //  `input` مبنيٌّ من جسم الطلب، فيحمل `isFreeSessions` كما أرسله العميل.
+    //  والمسارُ المفرد كان يكتب `{ ...input }` كما هو — فموظّفُ استقبالٍ
+    //  يملك `canAddPayments` يرسل `isFreeSessions: true` بعددِ جلسات،
+    //  **فتُخزَّن الهديّةُ وترتفع خطتُه** رغم أنه لا يملك المنحَ المجّانيّ.
+    //  مُثبَتٌ حيّاً قبل الإصلاح: الخطةُ ١٠ ⟶ ١٥ من حساب استقبال.
+    //  فالقيمةُ المُصرَّح بها تُكتب فوقها **قبل أيّ إدراج**، فلا يبقى للعميل
+    //  أثرٌ في العمود — والبنودُ لها `entryIsFree` بالبوّابة نفسِها.
+    (input as any).isFreeSessions = isFreeSessions;
+    //  ══ **والصفُّ ورصيدُه في الخطة يقعان معاً أو لا يقع شيء** ═══════════
+    //  كان الإدراجُ يُلتزَم ثمّ تُفتَح معاملةٌ ثانية للخطة — ففشلٌ بينهما
+    //  يترك هديّةً مخزَّنةً وعدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
+    //  تُنتج هديّةً ثانية. فصارا في معاملةٍ واحدة، والوسمُ `plan_credited`
+    //  يُكتب فيها فلا يُقيَّد الصفُّ مرّتين.
+    const writePayment = async (values: any) => await db.transaction(async (tx) => {
+      const payment = attribution
+        ? await storage.createPaymentAttributed(values, attribution, tx)
+        : await storage.createPayment(values, tx);
+      await storage.creditGiftToPlanTx(tx, payment);
+      return payment;
+    });
 
     try {
 
@@ -4303,22 +4321,6 @@ export async function registerRoutes(
           ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         });
       }
-      //  ══ **والهديّةُ المُسجَّلة ترفع خطّةَ صاحب الخطة** ══════════════
-      //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) عدّادُ الجلسات يقرأ الخطةَ المحفوظة **وحدها**
-      //  متى وُجدت — لا يجمعها مع الدفعات أبداً (وإلّا عُدّت هديّةُ «خدمة
-      //  جديدة» مرّتين: هي تكتب في الاثنين معاً). فصفُّ الدفعة وحدَه كان
-      //  يُخفي الهديّةَ عن صاحب الخطة تماماً.
-      //
-      //  **والمصدرُ هو ما كُتب فعلاً** (`results`) لا ما وصل في الطلب: بندٌ
-      //  أُسقط علمُه لانعدام الصلاحية لا يرفع خطةً بهديّةٍ لم تُمنَح.
-      //  والكتابةُ في `storage.adjustPhysioPlanForGift` — بقفلِ صفّ المريض،
-      //  وبدلتا يشاركها التعديلُ والحذف، ولا تُنشئ خطةً لمن لا خطةَ له.
-      await storage.adjustPhysioPlanForGift(
-        input.patientId,
-        results
-          .filter((p: any) => p?.isFreeSessions && Number(p?.sessionCount) > 0)
-          .map((p: any) => ({ treatmentType: String(p.paymentTreatmentType ?? ""), delta: Number(p.sessionCount) })),
-      );
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
       const payment = await writePayment({ ...input });
@@ -4335,14 +4337,6 @@ export async function registerRoutes(
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
       });
-      //  والدفعةُ المفردة المُهداة ترفع الخطةَ كما ترفعها البنود — نفسُ
-      //  الدالّة بقفلها ودلتاها، فلا يفترق البابان.
-      await storage.adjustPhysioPlanForGift(
-        input.patientId,
-        payment?.isFreeSessions && Number(payment?.sessionCount) > 0
-          ? [{ treatmentType: String(payment.paymentTreatmentType ?? ""), delta: Number(payment.sessionCount) }]
-          : [],
-      );
       res.status(201).json(payment);
     }
     } catch (err: any) {
@@ -4350,7 +4344,16 @@ export async function registerRoutes(
       if (err instanceof DeviceEpisodeError) {
         return res.status(err.status).json({ message: err.message });
       }
-      throw err;
+      //  ══ **والفشلُ يُقال، ولا يبقى الطلبُ معلَّقاً** ══════════════════════
+      //  المعالِجُ غيرُ متزامن، وExpress 4 لا يلتقط رفضَ الوعود — فخطأٌ غيرُ
+      //  متوقَّع (عطلُ قاعدةٍ عابر، مهلةُ قفل) كان يخرج رفضاً غيرَ ملتقَط:
+      //  **لا يصل الطلبَ ردٌّ إطلاقاً** وتدور شاشةُ الموظّف بلا نهاية.
+      //  والمعاملةُ تكون قد تراجعت كاملةً، فلا صفَّ ولا نصفَ كتابة — والذي
+      //  ينقص هو أن يُقال ذلك. (نفسُ درس نقاط المحادثات، القسم ٤.ag.)
+      console.error("[payments] فشلٌ غيرُ متوقَّع في تسجيل الدفعة:", err);
+      return res.status(500).json({
+        message: "تعذّر تسجيل الدفعة — لم يُحفَظ شيء. أعد المحاولة، وإن تكرّر فأبلغ المسؤول.",
+      });
     }
   });
 

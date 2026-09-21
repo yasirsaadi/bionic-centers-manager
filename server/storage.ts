@@ -1711,6 +1711,61 @@ export class DatabaseStorage implements IStorage {
     return tx ? await body(tx) : await db.transaction(body);
   }
 
+  /**
+   * **قيدُ الهديّة في الخطة — ويُوسَم الصفُّ بأنه قُيِّد** (ترحيل ٠٨٧).
+   *
+   * يُنادى **داخل معاملة إدراج الدفعة** فيقعان معاً أو لا يقع شيء: صفٌّ
+   * مُهدىً بلا قيدٍ في الخطة يترك عدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
+   * تُنتج هديّةً ثانية.
+   *
+   * **والوسمُ هو ما يسمح بالطرح لاحقاً**: `true` قُيِّد · `false` مُنح ولم
+   * يُقيَّد (مريضُ المفرد بلا خطة — وعدّادُه يقرأ الدفعات فيرى الهديّة) ·
+   * و`null` صفٌّ سابقٌ للترحيل لا يُطرَح منه شيء أبداً.
+   */
+  async creditGiftToPlanTx(tx: any, payment: any): Promise<void> {
+    if (!payment?.isFreeSessions) return;
+    const n = Math.max(0, Math.floor(Number(payment.sessionCount) || 0));
+    const type = String(payment.paymentTreatmentType ?? "").trim();
+    if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
+    const [row] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, payment.patientId));
+    const hasPlan = Array.isArray(row?.plan) && (row!.plan as any[]).length > 0;
+    if (hasPlan) await this.adjustPhysioPlanForGift(payment.patientId, [{ treatmentType: type, delta: n }], tx);
+    await tx.update(payments).set({ planCredited: hasPlan }).where(eq(payments.id, payment.id));
+  }
+
+  /**
+   * **والطرحُ لا يقع إلّا على ما قُيِّد فعلاً** — وهذا ما يمنع إفسادَ خطةٍ
+   * مشروعة: هديّةٌ سابقةٌ للترحيل لم تدخل الخطةَ قطّ، فحذفُها الآن بطرحٍ
+   * أعمى كان يُنزل خطةَ عشرِ جلساتٍ إلى أربع.
+   *
+   * `before` يجب أن يكون مقروءاً **تحت قفل صفّ الدفعة** في المعاملة نفسِها.
+   */
+  async reconcileGiftPlanTx(tx: any, before: any, after: any): Promise<void> {
+    const credited = before?.planCredited === true;
+    const giftOf = (p: any) =>
+      p && p.isFreeSessions && Number(p.sessionCount) > 0
+        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+        : null;
+    const b = credited ? giftOf(before) : null;
+    const a = credited ? giftOf(after) : null;
+    if (!b && !a) {
+      //  صفٌّ غيرُ مقيَّد: لا يُطرَح منه ولا يُضاف إليه — يبقى كما هو.
+      return;
+    }
+    const patientId = Number(after?.patientId ?? before?.patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    const deltas = b && a && b.type === a.type
+      ? [{ treatmentType: b.type, delta: a.n - b.n }]
+      : [
+        ...(b ? [{ treatmentType: b.type, delta: -b.n }] : []),
+        ...(a ? [{ treatmentType: a.type, delta: a.n }] : []),
+      ];
+    await this.adjustPhysioPlanForGift(patientId, deltas, tx);
+    //  صارت الهديّةُ صفراً أو غيرَ مجّانية ⟹ لم يعد لها رصيدٌ في الخطة.
+    if (after && !a) await tx.update(payments).set({ planCredited: false }).where(eq(payments.id, after.id));
+  }
+
   // Add a service's price onto the case it belongs to (resolved from its
   // treatment tag), keeping sum(case costs) in step with the total_cost bump
   // the caller makes. Device cases become 'manual' (an explicitly priced
@@ -3308,8 +3363,11 @@ export class DatabaseStorage implements IStorage {
       requestedEpisodeId: unknown;
       explicitLegacy: boolean;
     },
+    //  معاملةُ المُستدعي، إن كان الإدراجُ جزءاً من عمليةٍ أكبر — فتُدرَج
+    //  الدفعةُ ويُقيَّد رصيدُها في خطة الجلسات **معاً أو لا يقع شيء**.
+    outerTx?: any,
   ): Promise<Payment> {
-    return await db.transaction(async (tx) => {
+    const run = async (tx: any) => {
       const episodeId = await resolveDeviceTargetTx(tx, {
         patientId: insertPayment.patientId as number,
         serviceType: attribution.serviceType,
@@ -3320,7 +3378,8 @@ export class DatabaseStorage implements IStorage {
         chooseMessage: "حدّد الجهاز الذي تخصّه الدفعة — أو اختر «رصيد جهاز قديم/غير مخصَّص»",
       });
       return await this.insertPaymentRow({ ...insertPayment, deviceEpisodeId: episodeId } as any, tx);
-    });
+    };
+    return outerTx ? await run(outerTx) : await db.transaction(run);
   }
 
   async createPayment(insertPayment: InsertPayment, tx?: any): Promise<Payment> {
@@ -3364,45 +3423,28 @@ export class DatabaseStorage implements IStorage {
   // العمودُ خارج توقيع هذه الدالّة كلّياً: لا معاملَ يُغري باستدعاءٍ
   // خاطئ، ولا كاتبَ إعادةِ وسمٍ ثانياً غير `updatePayment`/تصحيح الدفعات.
   async updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any> {
-    const [before] = await db.select().from(payments).where(eq(payments.id, id));
-    const [updated] = await db.update(payments)
-      .set({ sessionCount })
-      .where(eq(payments.id, id))
-      .returning();
-    //  وتصحيحُ عدد جلسات هديّةٍ يُصحِّح خطةَ صاحب الخطة معها — وإلّا بقي
-    //  العددُ القديم محسوباً في العدّاد إلى الأبد (انظر `giftPlanDelta`).
-    await this.reconcileGiftPlanFromPayment(before ?? null, updated ?? null);
-    return updated;
-  }
-
-  /**
-   * **الهديّةُ في الخطة تتبع صفَّها** — تُنادى من كلّ كاتبٍ يمسّ دفعةً
-   * قائمة خارج مسار التصحيح المحميّ (الذي له نداؤه داخل معاملته).
-   *
-   * تشمل الأشكال الثلاثة: تغيُّرَ العدد، وقلبَ علم المجّانيّة في الاتجاهين،
-   * وإعادةَ وسم النوع (نقصٌ من القديم وزيادةٌ للجديد). **ولا دينارَ يتحرّك.**
-   */
-  private async reconcileGiftPlanFromPayment(before: any, after: any): Promise<void> {
-    const giftOf = (p: any) =>
-      p && p.isFreeSessions && Number(p.sessionCount) > 0
-        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
-        : null;
-    const b = giftOf(before), a = giftOf(after);
-    if (!b && !a) return;
-    const patientId = Number(after?.patientId ?? before?.patientId);
-    if (!Number.isInteger(patientId) || patientId <= 0) return;
-    const deltas = b && a && b.type === a.type
-      ? [{ treatmentType: b.type, delta: a.n - b.n }]
-      : [
-        ...(b ? [{ treatmentType: b.type, delta: -b.n }] : []),
-        ...(a ? [{ treatmentType: a.type, delta: a.n }] : []),
-      ];
-    await this.adjustPhysioPlanForGift(patientId, deltas);
+    //  **قفلُ صفّ الدفعة قبل قراءة `before`**: تعديلان متزامنان كانا يقرآن
+    //  العددَ القديم نفسَه فتُطرَح دلتاهما من الخطة مرّتين (٦⟶٣ و٦⟶٤ يطرحان
+    //  ٥ بينما الصفُّ يقول ٤). والقراءةُ والكتابةُ والمصالحةُ في معاملةٍ واحدة.
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
+      const [before] = await tx.select().from(payments).where(eq(payments.id, id));
+      const [updated] = await tx.update(payments)
+        .set({ sessionCount })
+        .where(eq(payments.id, id))
+        .returning();
+      await this.reconcileGiftPlanTx(tx, before ?? null, updated ?? null);
+      return updated;
+    });
   }
 
   async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null, isFreeSessions?: boolean }): Promise<any> {
-    const [before] = await db.select().from(payments).where(eq(payments.id, id));
-    const [updated] = await db.update(payments)
+    //  **القراءةُ والكتابةُ ومصالحةُ الخطة في معاملةٍ واحدة بقفل صفّ الدفعة**
+    //  — تعديلان متزامنان كانا يقرآن `before` نفسَه فتُطرَح دلتاهما مرّتين.
+    return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
+    const [before] = await tx.select().from(payments).where(eq(payments.id, id));
+    const [updated] = await tx.update(payments)
       .set(data)
       .where(eq(payments.id, id))
       .returning();
@@ -3413,10 +3455,13 @@ export class DatabaseStorage implements IStorage {
     // re-run the cost floor over admin-set numbers. total_cost/flags are never
     // touched, so reports are unaffected.
     if (updated && data.paymentTreatmentType !== undefined && tagChanged(before?.paymentTreatmentType, data.paymentTreatmentType)) {
-      await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null);
+      await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null, tx);
     }
-    await this.reconcileGiftPlanFromPayment(before ?? null, updated ?? null);
+    //  وتصحيحُ هديّةٍ **مقيَّدة** يُصحِّح الخطةَ معها — والقديمةُ غيرُ
+    //  المقيَّدة لا يُطرَح منها شيء (ترحيل ٠٨٧).
+    await this.reconcileGiftPlanTx(tx, before ?? null, updated ?? null);
     return updated;
+    });
   }
 
   // Re-resolve (and if needed create) the case a payment belongs to after its

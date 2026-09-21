@@ -389,6 +389,146 @@ async function state(pid: number) {
       check(a.sessions === before.sessions, "ي٢. ولا الخطةُ ترتفع", `${before.sessions} ⟶ ${a.sessions}`);
     }
 
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ك. ولا علمَ مجّانيّةٍ من العميل على المسار المفرد ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  حمولةٌ **بلا `treatmentEntries` إطلاقاً** — المسارُ المفرد. كان
+    //  `{ ...input }` يخزّن علمَ العميل كما وصل، فيلتفّ الاستقبالُ على
+    //  البوّابة ويرفع الخطة. مُثبَتٌ حيّاً قبل الإصلاح: ١٠ ⟶ ١٥.
+    {
+      await q(`INSERT INTO system_users (id,username,password_hash,role,display_name,branch_id,is_active)
+               VALUES (9933,'physfree_r2','x','reception','استقبال٢',$1,true)
+               ON CONFLICT (id) DO UPDATE SET is_active=true`, [BR]);
+      const R = { userId: 9933, branchId: BR, displayName: "استقبال٢", isAdmin: false, role: "reception",
+        permissions: { canViewPatients: true, canAddPayments: true } };
+      const pid = await mk("مفرد-التفاف", true);
+      const before = await state(pid);
+      const r = await http("POST", "/api/payments", R, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        isFreeSessions: true, paymentTreatmentType: "روبوت", sessionCount: 5,
+      });
+      const a = await state(pid);
+      const gifts = (await q(`SELECT 1 FROM payments WHERE patient_id=$1 AND is_free_sessions`, [pid])).rows;
+      check(gifts.length === 0, "ك١. **لا صفَّ مجّانيّ يُخزَّن** من حساب الاستقبال", `${gifts.length} | HTTP ${r.status}`);
+      check(a.sessions === before.sessions, "ك٢. ولا الخطةُ ترتفع", `${before.sessions} ⟶ ${a.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ل. والهديّةُ القديمة لا يُطرَح منها شيء ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  صفٌّ سابقٌ لترحيل ٠٨٧ (`plan_credited IS NULL`) لم يدخل الخطةَ قطّ.
+    //  فطرحٌ أعمى عند حذفه كان يُنزل خطةَ عشرٍ إلى أربع.
+    {
+      const pid = await mk("هديّةٌ-قديمة", true);
+      const payId = (await q(
+        `INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions,plan_credited)
+         VALUES ($1,$2,0,'روبوت',6,true,NULL) RETURNING id`, [pid, BR])).rows[0].id;
+      const before = await state(pid);
+      check(before.sessions === 10, "ل١. الخطةُ عشرٌ والهديّةُ القديمة خارجها", String(before.sessions));
+
+      const c = await http("PATCH", `/api/payments/${payId}`, S, { sessionCount: 3 });
+      check((await state(pid)).sessions === 10, "ل٢. تصحيحُها لا يمسّ الخطة", `HTTP ${c.status}`);
+
+      const d = await http("DELETE", `/api/payments/${payId}`, S, { reason: "قديمة" });
+      const after = await state(pid);
+      check(d.status === 200, "ل٣. الحذف نجح", String(d.status));
+      check(after.sessions === 10, "ل٤. **والخطةُ عشرٌ كما كانت** — لا ٤", String(after.sessions));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── م. وإثباتُ المنشأ يُكتب على الصفّ ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const withPlan = await mk("منشأ-بخطة", true);
+      await http("POST", "/api/payments", S, {
+        patientId: withPlan, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 2,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 0, isFree: true }],
+      });
+      const a1 = (await q(`SELECT plan_credited c FROM payments WHERE patient_id=$1`, [withPlan])).rows;
+      check(a1.length === 1 && a1[0].c === true, "م١. صاحبُ الخطة: الصفُّ موسومٌ **مقيَّداً**", JSON.stringify(a1));
+
+      const noPlan = await mk("منشأ-بلا-خطة", false);
+      await http("POST", "/api/payments", S, {
+        patientId: noPlan, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 2,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 0, isFree: true }],
+      });
+      const a2 = (await q(`SELECT plan_credited c FROM payments WHERE patient_id=$1`, [noPlan])).rows;
+      check(a2.length === 1 && a2[0].c === false, "م٢. ومريضُ المفرد: موسومٌ **غيرَ مقيَّد** (لا خطةَ له)", JSON.stringify(a2));
+      check((await state(noPlan)).sessions === 2, "م٣. وعدّادُه يقرأ الهديّةَ من دفعاته", String((await state(noPlan)).sessions));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ن. وتعديلان متزامنان لهديّةٍ واحدة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("تزامنُ-التعديل", true);
+      await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      const payId = (await q(`SELECT id FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0].id;
+      check((await state(pid)).sessions === 16, "ن١. الأساس: ١٠ + ٦ = ١٦", String((await state(pid)).sessions));
+
+      await Promise.all([
+        http("PATCH", `/api/payments/${payId}`, S, { sessionCount: 3 }),
+        http("PATCH", `/api/payments/${payId}`, S, { sessionCount: 4 }),
+      ]);
+      const row = (await q(`SELECT session_count n FROM payments WHERE id=$1`, [payId])).rows[0];
+      const a = await state(pid);
+      //  **الثابتُ**: الخطةُ = ١٠ + ما يقوله الصفُّ الآن — أيّاً كان الفائز.
+      check(a.sessions === 10 + Number(row.n),
+        "ن٢. **الخطةُ تطابق الصفَّ بالضبط** — لا طرحَ مرّتين", `صفّ=${row.n} خطة=${a.sessions}`);
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── س. والصفُّ ورصيدُه في الخطة: معاً أو لا شيء ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  كان الإدراجُ يُلتزَم ثمّ تُفتَح معاملةٌ ثانية للخطة — ففشلٌ بينهما
+    //  يترك هديّةً مخزَّنةً وعدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
+    //  تُنتج هديّةً ثانية. فيُحقَن فشلٌ حقيقيٌّ في كتابة الخطة ويُقاس الأثر.
+    {
+      const pid = await mk("ذرّية", true);
+      const before = await state(pid);
+      const origConnect = (pool as any).connect.bind(pool);
+      let fired = false;
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (!fired && /update\s+"?patients"?\s+set/i.test(text) && /physio_plan/i.test(text)) {
+            fired = true;
+            throw new Error("عطلٌ محقونٌ في كتابة الخطة");
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let r: any;
+      try {
+        r = await http("POST", "/api/payments", S, {
+          patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+          paymentTreatmentType: "روبوت", sessionCount: 4,
+          treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true }],
+        });
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const rows = (await q(`SELECT id FROM payments WHERE patient_id=$1`, [pid])).rows;
+      const a = await state(pid);
+      check(fired, "س١. العطلُ حُقن في كتابة الخطة فعلاً", String(fired));
+      check(r.status >= 400, "س٢. والطلبُ يُردّ بخطأ — لا نجاحٌ كاذب", String(r.status));
+      check(rows.length === 0, "س٣. **ولا صفَّ دفعةٍ بقي** — تراجعت المعاملةُ كاملةً", JSON.stringify(rows));
+      check(a.sessions === before.sessions, "س٤. والخطةُ كما كانت", `${before.sessions} ⟶ ${a.sessions}`);
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();
