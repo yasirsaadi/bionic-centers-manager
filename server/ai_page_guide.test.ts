@@ -56,7 +56,7 @@ import {
   DASHBOARD_PAGE_PATH, PATIENT_TRASH_PAGE_PATH, NOTIFICATIONS_PAGE_PATH,
   SESSION_ENTRY_PAGE_PATH, SESSION_TARGETS_PAGE_PATH,
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
-  STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
+  ACCOUNTING_PAGE_PATH, STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
@@ -187,18 +187,17 @@ async function main() {
   check(seen[0].system.includes(GUIDE_MARK),
     "أ.١١ **والدليلُ يصل الوضعَ الماليَّ أيضاً**", seen[0].system.slice(-900));
 
-  // ═══ ب: ولا يصل صفحةً أخرى ════════════════════════════════════════════
-  console.log("\n── ب: صفحةٌ أخرى لا تأخذه ──");
-  for (const other of ["/accounting"]) {
-    seen.length = 0;
-    await chat(rep, ask("شنو أسوي هنا؟"), resolvePageContext(other));
-    check(!seen[0].system.includes(GUIDE_MARK), `ب.١ لا دليلَ على ${other}`, seen[0].system.slice(-400));
-  }
+  // ═══ ب: ولا يصل صفحةً غير مخصّصة ══════════════════════════════════════
+  console.log("\n── ب: صفحةٌ غير مخصّصة لا تأخذه ──");
+  const UNGUIDED = { path: "/__unguided__", label: "صفحة بلا دليل" } as any;
+  seen.length = 0;
+  await chat(rep, ask("شنو أسوي هنا؟"), UNGUIDED);
+  check(!seen[0].system.includes(GUIDE_MARK), "ب.١ لا دليلَ لمسارٍ غير مخصّص", seen[0].system.slice(-400));
   seen.length = 0;
   await chat(rep, ask("شنو أسوي هنا؟"), null);
   check(!seen[0].system.includes(GUIDE_MARK), "ب.٢ ولا بلا سياقِ صفحة");
-  same("ب.٣ والدالّةُ نفسها تُرجع فارغاً لصفحةٍ بلا دليل",
-    pageGuideFor(resolvePageContext("/accounting"), rep), "");
+  same("ب.٣ والدالّةُ نفسها تُرجع فارغاً لمسارٍ غير مخصّص",
+    pageGuideFor(UNGUIDED, rep), "");
 
   // ═══ ج: الصلاحيةُ من الدالّة القانونية وحدها ══════════════════════════
   console.log("\n── ج: canCompleteReceptionSale هي المرجع ──");
@@ -1133,6 +1132,118 @@ async function main() {
   same("ع.٢٤ دليل الأهداف ساكن", pageGuideFor(STGT, rep), pageGuideFor(STGT, adm));
   same("ع.٢٥ دليل التقرير ساكن", pageGuideFor(SLST, rep), pageGuideFor(SLST, adm));
   same("ع.٢٦ دليل التحليلات ساكن", pageGuideFor(SANA, rep), pageGuideFor(SANA, adm));
+  // ═══ ض: النظام المحاسبي وحدود الصلاحية والحقيقة المالية ═════════════
+  console.log("\n── ض: النظام المحاسبي ──");
+  const ACC = resolvePageContext(ACCOUNTING_PAGE_PATH);
+  same("ض.١ مسار المحاسبة قانوني", ACC?.path, ACCOUNTING_PAGE_PATH);
+  const acg = pageGuideFor(ACC, rep);
+  check(/showAccounting/.test(acg) && /canManageAccounting/.test(acg)
+    && /canAddExpenses يفتح العنصر/.test(acg), "ض.٢ يشرح باب الشريط ودرجة المصروفات");
+  check(/الصفحة نفسها لا تضع حارس/.test(acg) && /الدخول المباشر بلا الصلاحيتين/.test(acg)
+    && /تعرض الواجهة التبويبات الكاملة/.test(acg), "ض.٣ يفرق إخفاء الملاحة عن حراسة الصفحة");
+  check(/ثمانية تبويبات/.test(acg) && /لوحة التحكم/.test(acg) && /الموردون/.test(acg)
+    && /التنبيهات/.test(acg), "ض.٤ التبويبات الكاملة موثقة");
+  check(/branch_manager كامل المحاسبة/.test(acg) && /قد يرى مدير الفرع.*403/s.test(acg)
+    && /المورد.*المشتريات.*المسؤول العام فقط/s.test(acg), "ض.٥ يوثق اختلاف المدير بين الواجهة والخادم");
+  check(/GET وPOST \/api\/expenses لا يستخدمان تعريف\s+fullAccounting/.test(acg)
+    && /مسؤول عام.*canManageAccounting.*canAddExpenses/s.test(acg)
+    && /branch_manager بلا أي\s+من هاتين الصلاحيتين.*403/s.test(acg)
+    && /PUT وDELETE\s+يحتاجان المسؤول أو canManageAccounting/.test(acg)
+    && /PUT \/api\/expenses\/:id.*المصروف\s+الحالي.*فرع الجلسة/s.test(acg)
+    && /storage\.updateExpense/.test(acg)
+    && /نقل مصروف من فرعه إلى branchId آخر صالح/.test(acg)
+    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف وفجوة نقل الفرع");
+  check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
+    && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
+    && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
+  check(/اقتراح بالذكاء.*expensesOnly/s.test(acg)
+    && /categorize-expense يشترط.*canManageAccounting/s.test(acg)
+    && /ExpenseHintsPanel/.test(acg) && /guidance\/expense/.test(acg)
+    && /لا تقبل canAddExpenses/.test(acg) && /403/.test(acg),
+    "ض.٨ مساعدات نموذج المصروف لا ترث canAddExpenses");
+  check(/بلا branchId أساسي/.test(acg)
+    && /enforceBranchAccess يعيد undefined/.test(acg)
+    && /POST \/api\/expenses.*POST \/api\/invoices.*POST \/api\/purchases/s.test(acg)
+    && /PUT\/DELETE \/api\/expenses\/:id.*PATCH \/api\/invoices\/:id/s.test(acg)
+    && /sessionBranchId=null/.test(acg)
+    && /accessibleBranchesFor يعيد \[\]/.test(acg)
+    && /لا يستطيع القبض/.test(acg), "ض.٩ مصفوفة نطاق الحساب بلا فرع");
+  check(/التقرير الشهري الذكي والتدقيق الذكي/.test(acg)
+    && /branchId=null/.test(acg) && /مفتاح all/.test(acg),
+    "ض.٩ب الذكاء المحاسبي يتسع بلا فرع");
+  check(/totalPaid.*payments المؤرخة داخل الفترة/s.test(acg)
+    && /totalRevenue.*cost_entries المنشأة داخل الفترة/s.test(acg)
+    && /netProfit = الوارد المقبوض ناقص المصروفات/.test(acg), "ض.١٠ معنى تدفقات المال");
+  check(/legacyDevicesUnsplit/.test(acg)
+    && /assign_manufacturing أو maintenance/.test(acg)
+    && /أجهزة قديمة — غير مقسَّمة/.test(acg)
+    && /devicesCombined.*prosthetic \+ medical_support \+\s+legacyDevicesUnsplit/s.test(acg)
+    && /classifiedTotal.*لا يضم القديم غير المقسم/s.test(acg),
+    "ض.١٠ب صف الأجهزة القديمة وتجميع الأجهزة");
+  check(/المصروفات فتبقى موزعة إلى prosthetic وphysio وshared/.test(acg)
+    && !/المصروفات فتبقى موزعة إلى devices/.test(acg), "ض.١٠ج قيمة قسم المصروف القانونية");
+  check(/totalRemaining.*العمر كله.*حد أدنى صفر/s.test(acg)
+    && /لا يُعرض دين سالب/.test(acg) && /collectionRate.*العمر كله/s.test(acg)
+    && /لا يحول\s+الدين ونسبة التحصيل إلى «دين تلك الفترة»/.test(acg), "ض.١١ المخزون المالي وحد الدين الأدنى");
+  check(/حدود يوم\s+بغداد \(\+03:00\)/.test(acg)
+    && /todayRevenue هو النقد المقبوض/.test(acg)
+    && /todayISO/.test(acg)
+    && /toISOString\(\)\.split\("T"\)\[0\]/.test(acg)
+    && /00:00 و02:59 بتوقيت بغداد/.test(acg)
+    && /اليوم السابق/.test(acg)
+    && /زر مرشح الفترة «اليوم».*getTodayIraq/s.test(acg),
+    "ض.١٢ تاريخ UTC الافتراضي مقابل يوم بغداد");
+  check(/تاريخ مصروف جديد.*تاريخ فاتورة\s+جديدة.*تاريخ شراء جديد/s.test(acg)
+    && /قد يُملأ تاريخ اليوم السابق/.test(acg),
+    "ض.١٢ب تواريخ الإدخال الافتراضية تستخدم UTC");
+  check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
+    && /invoices\/:id/.test(acg) && /invoice-items\/bulk/.test(acg)
+    && /invoices\/next-number/.test(acg)
+    && /محجوب حالياً بترتيب\s+المسارات/.test(acg)
+    && /invoices\/:id مسجّل قبله/.test(acg)
+    && /لا تعتمد عليه/.test(acg), "ض.١٣ حراس الفواتير ومسار الرقم التالي المحجوب");
+  check(/expensesOnly.*قائمة الفواتير/s.test(acg)
+    && /branchId طبيعي.*تقيدها القائمة بذلك الفرع/s.test(acg)
+    && /بلا branchId.*undefined.*كل الفروع/s.test(acg)
+    && /إخفاء التبويب لا يعني أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ قائمة الفواتير الخلفية ونطاقها");
+  check(/GET \/api\/patients.*canViewPatients/s.test(acg)
+    && /مستخدم محاسبة بلا canViewPatients/.test(acg)
+    && /قائمة اختيار المريض.*403/s.test(acg)
+    && /GET \/api\/patients\/:id.*canViewPatients/s.test(acg),
+    "ض.١٤ب المحاسبة لا تمنح صلاحية المرضى");
+  check(/patients\/:id\/financial-summary/.test(acg)
+    && /لا يفحص\s+canViewPatients ولا canManageAccounting/.test(acg)
+    && /بلا branchId.*أي فرع/s.test(acg),
+    "ض.١٤ج فجوة الملخص المالي للمريض");
+  check(/الوضع specific/.test(acg) && /الوضع full/.test(acg)
+    && /paidNow.*عملية خادمية واحدة/s.test(acg)
+    && /الإنشاء.*يثبت branchId خادمياً.*فرع الجلسة/s.test(acg)
+    && /الحذف.*يفحص أن الفاتورة من فرع الجلسة/s.test(acg)
+    && /التعديل PATCH.*يفحص فقط أن الفاتورة قبل التعديل/s.test(acg)
+    && /storage\.updateInvoice/.test(acg)
+    && /نقلها إلى\s+branchId آخر صالح/.test(acg)
+    && /بلا branchId.*POST يحتفظ بفرع الجسم/s.test(acg)
+    && /PATCH يتخطى مقارنة الفرع/.test(acg)
+    && /القبض مختلف/.test(acg) && /canAddPayments/.test(acg)
+    && /لا يستطيع القبض على فاتورة/.test(acg), "ض.١٥ الفاتورة وتغيير الفرع والقبض");
+  check(/GET \/api\/vendors.*GET \/api\/vendors\/:id.*POST \/api\/vendors/s.test(acg)
+    && /المسؤول\s+العام أو canManageAccounting/.test(acg)
+    && /branch_manager وحده لا يمنحها/.test(acg)
+    && /قائمة الموردين كيان عام/.test(acg)
+    && /تعديل المورد وإلغاء تفعيله للمسؤول العام فقط/.test(acg)
+    && /تعديل\/حذف الشراء للمسؤول العام فقط/.test(acg)
+    && /GET \/api\/purchases\/:id/.test(acg)
+    && /POST \/api\/purchases\/:id\/payment/.test(acg)
+    && /لا يطبقان enforceBranchAccess/.test(acg)
+    && /شراءً من فرع آخر.*يسجل عليه دفعة/s.test(acg)
+    && /حفظ الشراء أو دفعة المورد.*بأفضل\s+جهد/s.test(acg)
+    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات وحراسها الفعلية");
+  check(/المديونيات والاتجاهات والربحية والمقارنة والتنبيهات/.test(acg)
+    && /استثناء صريح/.test(acg) && /AccountingRevenueByTreatment/.test(acg)
+    && /revenue-by-treatment.*canViewReports/s.test(acg)
+    && /canViewReports فقط.*يفتح \/accounting/s.test(acg), "ض.١٧ استثناء تقرير الإيراد حسب العلاج");
+  same("ض.١٨ دليل المحاسبة ساكن", pageGuideFor(ACC, rep), pageGuideFor(ACC, adm));
+
   // ═══ ص: الإحصاءات وحدود مصادرها ═══════════════════════════════════════
   console.log("\n── ص: الإحصاءات ──");
   const STAT = resolvePageContext(STATISTICS_PAGE_PATH);
