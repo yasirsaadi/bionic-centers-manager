@@ -6,7 +6,7 @@
 // ومالي للمصرَّح لهم — صار نافعاً لكلّ موظّف. والحجب هنا **عرضٌ لا حراسة**:
 // الخادم يقرّر وحده مَن تُبنى له لقطةٌ مالية، ولا يقرأ من العميل شيئاً.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, Send, X, Loader2, Bot, User, Users, MessageSquareWarning,
@@ -383,6 +383,21 @@ interface ChatMessage {
   toolsUsed?: string[];
 }
 
+/**
+ * قياسُ ارتفاع مربّع السؤال ليتبع سطورَه — **الموضعُ الوحيد لهذه القاعدة**.
+ *
+ * ويُصفَّر الارتفاعُ أوّلاً وإلّا لم ينكمش المربّعُ بعد حذف نصٍّ أو بعد تفريغه
+ * عند الإرسال: `scrollHeight` لا ينقص تحت ارتفاعٍ مفروضٍ سلفاً.
+ *
+ * **ويُنادى من بابين لا من واحد**: الأثرُ التخطيطيّ عند تغيّر المسوّدة أو فتح
+ * النافذة، **وربطُ العنصر نفسِه لحظةَ تركيبه** — انظر `attachInput`.
+ */
+function measureAiChatInput(el: HTMLTextAreaElement) {
+  el.style.height = "auto";
+  const h = grownInputHeight(el.scrollHeight);
+  if (h > 0) el.style.height = `${h}px`;
+}
+
 export function AiChatDrawer() {
   const session = useBranchSession();
   const { toast } = useToast();
@@ -390,7 +405,23 @@ export function AiChatDrawer() {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  //  **ويُقاس المربّعُ لحظةَ تركيبه، لا عند تغيّر المسوّدة وحده.**
+  //
+  //  جسمُ الدرج يتبدّل بين المحادثة ولوحة التدريب، فالمربّعُ **يُفكَّك ويُعاد
+  //  تركيبُه** — و`draft`/`open` لا يتغيّران عبر ذلك التبديل، فلا يُعاد تشغيلُ
+  //  الأثر للعنصر الجديد: تبقى مسوّدةُ سطرين في مربّعٍ ارتفاعُه سطرٌ واحد
+  //  (`rows={1}`) حتى يكتب الموظّفُ حرفاً آخر.
+  //
+  //  والعلاجُ عند **الربط** لا في قائمة الاعتماديات: أيُّ إعادة تركيبٍ تُقاس،
+  //  مهما كان الشرطُ الذي فكّكه — فلا يعود العطبُ بشرطٍ ثانٍ يُضاف يوماً.
+  //
+  //  **و`useCallback([])` شرطُ صحّةٍ لا تحسين**: ربطٌ غيرُ ثابت يُفكّ ويُعاد
+  //  في كلّ رسم، فيُعاد القياسُ بلا داعٍ في كلّ حرف.
+  const attachInput = useCallback((el: HTMLTextAreaElement | null) => {
+    inputRef.current = el;
+    if (el) measureAiChatInput(el);
+  }, []);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   //  ══ «اقترح تصحيحاً» — فهرسُ رسالة المساعد المفتوحة نموذجُها الآن ══════
@@ -571,14 +602,12 @@ export function AiChatDrawer() {
     }
   }, [open, messages, askMutation.isPending]);
 
-  //  ارتفاعُ المربّع يتبع سطورَه — يُصفَّر أوّلاً وإلّا لم ينكمش بعد الحذف
-  //  أو بعد تفريغه عند الإرسال.
+  //  ارتفاعُ المربّع يتبع سطورَه — **هذا البابُ لتغيّر المحتوى**: كلُّ حرفٍ
+  //  يُكتب أو يُحذَف، وفتحُ النافذة. أمّا إعادةُ التركيب فبابُها `attachInput`.
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    const h = grownInputHeight(el.scrollHeight);
-    if (h > 0) el.style.height = `${h}px`;
+    measureAiChatInput(el);
   }, [draft, open]);
 
   const send = (text: string) => {
@@ -848,7 +877,7 @@ export function AiChatDrawer() {
               className="border-t px-3 py-2 flex items-end gap-2 shrink-0"
             >
               <Textarea
-                ref={inputRef}
+                ref={attachInput}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
