@@ -1214,7 +1214,7 @@ async function main() {
     "ظ.١٧ ذاكرة الذكاء وامتداد القراءة");
 
   check(/أي موظف مصادَق.*correction suggestion/s.test(adg)
-    && /pending/.test(adg) && /المسؤول العام فقط/.test(adg)
+    && /pending/.test(adg) && /للمسؤول\s+العام فقط/.test(adg)
     && /نسخة جديدة/.test(adg), "ظ.١٨ اقتراح المعرفة مقابل اعتماد المسؤول");
 
   check(/الموظف \*\*لا يدرب الذكاء\*\*/.test(adg)
