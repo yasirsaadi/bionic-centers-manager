@@ -43,6 +43,10 @@ import { db } from "../../db";
 import { storage } from "../../storage";
 import { normalizeSearchText } from "@shared/patient_search";
 import { FULL_DEVICE } from "@shared/prosthetic_parts";
+import {
+  tallyDeviceSales, type DeviceSaleCategoryCount,
+} from "@shared/device_sale_category";
+import { activeExamSql } from "../../medical/active_exam";
 
 /** الحدُّ الأقصى للمدى — نفسُ حدّ `operational_summary` (٩٢ يوماً). */
 export const MAX_SALES_DAYS = 92;
@@ -70,6 +74,21 @@ export interface DeviceSalesSummaryResult {
    * سجلٌّ قديمٌ سابقٌ لحقبة هويّة الجهاز — يُقال ولا يُضاف إلى العدّ.
    */
   unclassifiedLegacyOrders: number;
+  /**
+   * **تفصيلُ ما بِيع فعلاً** — صفٌّ لكلّ صنف، بالأكثر مبيعاً أوّلاً:
+   * الأطرافُ الكاملة مفصَّلةً بنوع البتر (والسليكونيُّ بجزئه: «اصبع» …)،
+   * وكلُّ جزءٍ من الثمانية باسمه، والمساندُ الطبية الكاملة.
+   *
+   * **ومجموعُ `scope: "full"` من الأطراف = `totalSold` بالضبط** — رقمان
+   * من استعلامين يجب أن يتصالحا، ويحرسه اختبارٌ حيّ.
+   */
+  byCategory: DeviceSaleCategoryCount[];
+  /** مجاميعُ سريعة فوق `byCategory` — كي لا يجمعها النموذج بنفسه. */
+  totals: {
+    prostheticFullDevices: number;
+    prostheticComponents: number;
+    medicalSupportDevices: number;
+  };
 }
 
 // ══ حدَّا مدىً بتقويم بغداد ═══════════════════════════════════════════════
@@ -217,7 +236,7 @@ export async function getDeviceSalesSummary(params: {
   const scope = params.branchId != null ? [params.branchId] : params.operationalBranches;
   const { startTs, endExclusiveTs } = baghdadBounds(params.start, params.end);
 
-  const [totalR, unclassifiedR] = await Promise.all([
+  const [totalR, unclassifiedR, categoryR] = await Promise.all([
     db.execute(sql`
       SELECT COUNT(*)::int AS n
         FROM prosthetic_work_orders wo
@@ -237,7 +256,46 @@ export async function getDeviceSalesSummary(params: {
          AND ${branchScopeSql("wo.branch_id", scope)}
          AND wo.created_at >= ${startTs} AND wo.created_at < ${endExclusiveTs}
     `),
+    //  ══ **تفصيلُ الأصناف** — كلُّ بيعة جهاز في المدى، بلا شرط
+    //  `full_device` وبلا شرط `prosthetic`: الجزءُ بيعةٌ كالطرف الكامل،
+    //  والمسندُ الطبيُّ صنفٌ قائم. وحُرّاسُ «بِيع» الباقية كما هي بالحرف:
+    //  بناءٌ أوّليّ (فالصيانةُ خارجة) · وغيرُ مُبطَلٍ إدارياً في الطرفين.
+    //
+    //  والوصفةُ تُجلَب **خامّاً** لتُصنَّف في `classifyDeviceSale` الخالصة —
+    //  فقاعدةُ «مواصفاتُ الجهاز من معاينته هو» (٤.q) لا تُكتَب بـSQL ثانية.
+    //  و`activeExamSql` هي عينُها التي يستعملها `effectiveExamForEpisode`،
+    //  فالمعاينةُ الملغاة (٠٦١) لا تصنّف شيئاً. وترتيبُ الصفّ الفرعيّ هو
+    //  ترتيبُ فهرس ٠٧٨ بالضبط (`device_episode_id, signed_at DESC, id DESC`).
+    db.execute(sql`
+      SELECT wo.service_type AS service_type,
+             ep.requested_item AS requested_item,
+             (SELECT me.prescription
+                FROM medical_exams me
+               WHERE me.device_episode_id = ep.id
+                 AND me.case_type = wo.service_type
+                 AND ${activeExamSql("me")}
+               ORDER BY me.signed_at DESC, me.id DESC
+               LIMIT 1) AS prescription
+        FROM prosthetic_work_orders wo
+        JOIN patient_device_episodes ep ON ep.id = wo.device_episode_id
+       WHERE wo.service_type IN ('prosthetic', 'medical_support')
+         AND COALESCE(wo.purpose, 'initial_build') = 'initial_build'
+         AND wo.admin_void_reversal_id IS NULL
+         AND ep.admin_void_reversal_id IS NULL
+         AND ${branchScopeSql("wo.branch_id", scope)}
+         AND wo.created_at >= ${startTs} AND wo.created_at < ${endExclusiveTs}
+    `),
   ]);
+
+  //  **التصنيفُ في الدالّة الخالصة** — والصفُّ بلا معاينةٍ فعّالة يصل
+  //  `prescription = null` فيُصنَّف «نوعٌ غير مسجَّل» صراحةً، لا يُسقَط.
+  const byCategory = tallyDeviceSales(((categoryR.rows ?? []) as any[]).map((r) => ({
+    serviceType: r.service_type,
+    requestedItem: r.requested_item,
+    prescription: r.prescription ?? null,
+  })));
+  const sumWhere = (f: (c: DeviceSaleCategoryCount) => boolean) =>
+    byCategory.filter(f).reduce((n, c) => n + c.sold, 0);
 
   //  ══ تفصيلُ الفروع — للمسؤول العام حين لا يحدّد فرعاً، لا لغيره ══
   //  (نفسُ شرط `operational_summary` بالحرف.)
@@ -273,5 +331,11 @@ export async function getDeviceSalesSummary(params: {
     scopeLabel,
     byBranch,
     unclassifiedLegacyOrders: Number((unclassifiedR.rows ?? [])[0]?.n ?? 0),
+    byCategory,
+    totals: {
+      prostheticFullDevices: sumWhere((c) => c.serviceType === "prosthetic" && c.scope === "full"),
+      prostheticComponents: sumWhere((c) => c.serviceType === "prosthetic" && c.scope === "part"),
+      medicalSupportDevices: sumWhere((c) => c.serviceType === "medical_support"),
+    },
   };
 }

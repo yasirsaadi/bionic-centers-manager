@@ -49,21 +49,31 @@ function same(msg: string, got: unknown, expected: unknown) {
     `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
 }
 
-const B_BAGHDAD = 9960, B_OTHER = 9961, B_THIRD = 9962;
+const B_BAGHDAD = 9960, B_OTHER = 9961, B_THIRD = 9962, B_CAT = 9968;
 const U_ADMIN = 9963, U_REPORTS = 9964, U_NO_REPORTS = 9965, U_EXPERT = 9966;
 const P1 = 89601, P2 = 89602, P3 = 89603, P4 = 89604, P5 = 89605, P6 = 89606, P7 = 89607;
-const ALL_P = [P1, P2, P3, P4, P5, P6, P7];
-const ALL_U = [U_ADMIN, U_REPORTS, U_NO_REPORTS, U_EXPERT];
-const ALL_B = [B_BAGHDAD, B_OTHER, B_THIRD];
+//  ══ تفصيلُ الأصناف (القسم ص) — إصبعان سليكونيّان وكفٌّ وثنائيٌّ ومسند ══
+const P8 = 89608, P9 = 89609, P10 = 89610, P11 = 89611, P12 = 89612, P13 = 89613;
+//  ثلاثةٌ يجب أن **تُستبعَد** من التفصيل كما تُستبعَد من العدّ — فالقسمُ ص٤
+//  يُثبت أن التفصيلَ لم يُرخِ حارساً من حرّاس «بِيع».
+const P14 = 89614, P15 = 89615, P16 = 89616;
+const DOCTOR = 9967;
+const ALL_P = [P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13, P14, P15, P16];
+const ALL_U = [U_ADMIN, U_REPORTS, U_NO_REPORTS, U_EXPERT, DOCTOR];
+const ALL_B = [B_BAGHDAD, B_OTHER, B_THIRD, B_CAT];
 //  أسماءٌ مميَّزةٌ لهذه الحزمة: `branches.name` فريدٌ في القاعدة، وحزمٌ
 //  مجاورة تُنشئ فرعاً اسمُه «بغداد». والعلاقةُ المُختبَرة (تطابقٌ تامّ
 //  يسبق احتواءً، والتباسٌ حين يطابق الجزءُ اثنين) محفوظةٌ بحرفها.
 const BAGHDAD_NAME = "بغداد فرع الاختبار";
 const OTHER_NAME = "كربلاء فرع الاختبار";
+//  **فرعُ القسم «ص» وحده** — فِكستشراتُ التفصيل لا تُزيح رقماً في
+//  الأقسام القائمة، وتلك تبقى بحرفها: «بيعةٌ واحدة وكلُّ ما عداها مُستبعَد».
+const CAT_NAME = "النجف فرع الاختبار";
 
 async function q(sql: string, params: any[] = []) { return pool.query(sql, params); }
 
 async function cleanup() {
+  await q(`DELETE FROM medical_exams WHERE patient_id = ANY($1::int[])`, [ALL_P]);
   await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN
              (SELECT id FROM prosthetic_work_orders WHERE patient_id = ANY($1::int[]))`, [ALL_P]);
   await q(`DELETE FROM prosthetic_work_orders WHERE patient_id = ANY($1::int[])`, [ALL_P]);
@@ -96,6 +106,13 @@ async function makeOrder(o: {
   patientId: number; branchId: number; serviceType?: string; purpose?: string;
   requestedItem?: string | null; createdAt: string;
   voidOrder?: boolean; voidEpisode?: boolean;
+  /**
+   * وصفةُ معاينةٍ **موقَّعةٍ على هذه الحلقة بعينها** — مصدرُ نوع البتر في
+   * التفصيل (القسم ٤.q). وغيابُها يعني حلقةً بلا معاينةٍ فعّالة.
+   */
+  prescription?: Record<string, unknown>;
+  /** معاينةٌ **ملغاة** (٠٦١) — لا تصنّف شيئاً. */
+  cancelExam?: boolean;
 }): Promise<{ orderId: number; episodeId: number | null }> {
   const caseType = (o.serviceType ?? "prosthetic") === "prosthetic" ? "prosthetic" : "medical_support";
   const cs = await q(
@@ -114,6 +131,24 @@ async function makeOrder(o: {
       [o.patientId, caseId, o.branchId, item, item === "full_device" ? null : item,
        o.voidEpisode ? 777001 : null]);
     episodeId = ep.rows[0].id;
+  }
+
+  if (o.prescription && episodeId !== null) {
+    const ex = await q(
+      `INSERT INTO medical_exams
+         (patient_id, case_id, branch_id, case_type, doctor_id, doctor_name,
+          chief_complaint, clinical_findings, diagnosis, plan, notes,
+          prescription, device_episode_id, signed_at)
+       VALUES ($1,$2,$3,$4,$5,'د. المعاين','شكوى','فحص','تشخيص','خطة','ملاحظة',
+               $6::jsonb,$7,NOW()) RETURNING id`,
+      [o.patientId, caseId, o.branchId, caseType, DOCTOR,
+       JSON.stringify(o.prescription), episodeId]);
+    if (o.cancelExam) {
+      await q(`INSERT INTO medical_exam_cancellations
+                 (exam_id, patient_id, branch_id, cancelled_by, cancelled_by_name, reason)
+               VALUES ($1,$2,$3,$4,'د. المعاين','خطأ إدخال')`,
+        [ex.rows[0].id, o.patientId, o.branchId, DOCTOR]);
+    }
   }
 
   const wo = await q(
@@ -151,8 +186,9 @@ async function main() {
   await cleanup();
 
   await q(`INSERT INTO branches (id, name)
-           VALUES ($1,'بغداد فرع الاختبار'),($2,'كربلاء فرع الاختبار'),($3,'بغداد فرع الاختبار الثاني')
-           ON CONFLICT (id) DO NOTHING`, [B_BAGHDAD, B_OTHER, B_THIRD]);
+           VALUES ($1,'بغداد فرع الاختبار'),($2,'كربلاء فرع الاختبار'),
+                  ($3,'بغداد فرع الاختبار الثاني'),($4,'النجف فرع الاختبار')
+           ON CONFLICT (id) DO NOTHING`, [B_BAGHDAD, B_OTHER, B_THIRD, B_CAT]);
   await q(`
     INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, is_active,
                               can_view_reports, can_work_as_expert)
@@ -160,12 +196,16 @@ async function main() {
       ($1,'ds_admin','x','مسؤول المبيعات','admin',NULL,TRUE,TRUE,FALSE),
       ($2,'ds_rep','x','استقبال بتقارير','reception',$5,TRUE,TRUE,FALSE),
       ($3,'ds_norep','x','استقبال بلا تقارير','reception',$5,TRUE,FALSE,FALSE),
-      ($4,'ds_expert','x','خبير','prosthetics_expert',$5,TRUE,FALSE,TRUE)
+      ($4,'ds_expert','x','خبير','prosthetics_expert',$5,TRUE,FALSE,TRUE),
+      ($6,'ds_doc','x','د. المعاين','doctor',$5,TRUE,FALSE,FALSE)
     ON CONFLICT (id) DO NOTHING`,
-    [U_ADMIN, U_REPORTS, U_NO_REPORTS, U_EXPERT, B_BAGHDAD]);
+    [U_ADMIN, U_REPORTS, U_NO_REPORTS, U_EXPERT, B_BAGHDAD, DOCTOR]);
 
   for (const [pid, br] of [[P1, B_BAGHDAD], [P2, B_OTHER], [P3, B_BAGHDAD], [P4, B_BAGHDAD],
-                           [P5, B_BAGHDAD], [P6, B_BAGHDAD], [P7, B_BAGHDAD]] as [number, number][]) {
+                           [P5, B_BAGHDAD], [P6, B_BAGHDAD], [P7, B_BAGHDAD],
+                           [P8, B_CAT], [P9, B_CAT], [P10, B_CAT],
+                           [P11, B_CAT], [P12, B_CAT], [P13, B_CAT],
+                           [P14, B_CAT], [P15, B_CAT], [P16, B_CAT]] as [number, number][]) {
     await q(`INSERT INTO patients
                (id, name, phone, branch_id, is_amputee, referral_source, age, medical_condition)
              VALUES ($1,$2,'07700000000',$3,TRUE,'اختبار',30,'بتر') ON CONFLICT (id) DO NOTHING`,
@@ -186,6 +226,35 @@ async function main() {
   await makeOrder({ patientId: P6, branchId: B_BAGHDAD, createdAt: daysAgoBaghdadNoon(1), voidEpisode: true });
   //  ⑦ بغداد — طرفٌ كاملٌ **خارج** المدى (لا يُعَدّ في آخر ١٠ أيام)
   await makeOrder({ patientId: P7, branchId: B_BAGHDAD, createdAt: daysAgoBaghdadNoon(40) });
+  //  ══ ⑧–⑫ تفصيلُ الأصناف (القسم ص) — كلُّها بغداد وداخل المدى ══
+  //  ⑧+⑨ **إصبعان سليكونيّان** — سؤالُ المالك بعينه.
+  await makeOrder({ patientId: P8, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(4),
+    prescription: { amputationType: "silicone", siliconePart: "اصبع" } });
+  await makeOrder({ patientId: P9, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(4),
+    prescription: { amputationType: "silicone", siliconePart: "اصبع" } });
+  //  ⑩ كفٌّ سليكونيّ — جزءٌ سليكونيٌّ آخر، فلا يُخلَط بالإصبع.
+  await makeOrder({ patientId: P10, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(4),
+    prescription: { amputationType: "silicone", siliconePart: "كف" } });
+  //  ⑩أ قالبٌ في فرع القسم — فيُقرأ جزءاً مبيعاً في تفصيله هو.
+  await makeOrder({ patientId: P13, branchId: B_CAT, requestedItem: "socket",
+    createdAt: daysAgoBaghdadNoon(6) });
+  //  ⑪ **مسندٌ طبيٌّ كامل** — كان يُستبعَد كلّياً بشرط `service_type`.
+  await makeOrder({ patientId: P11, branchId: B_CAT, serviceType: "medical_support",
+    createdAt: daysAgoBaghdadNoon(5) });
+  //  ⑫ **إصبعٌ سليكونيٌّ بمعاينةٍ ملغاة** (٠٦١) — الوصفةُ لا تحكم، فيُصنَّف
+  //  «نوعٌ غير مسجَّل» ولا يُضاف إلى عدّ الأصابع.
+  await makeOrder({ patientId: P12, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(5),
+    prescription: { amputationType: "silicone", siliconePart: "اصبع" }, cancelExam: true });
+  //  ══ ⑬–⑮ ثلاثةٌ في الفرع نفسِه **يجب أن تُستبعَد** (القسم ص٤) ══
+  //  ⑬ إصبعٌ سليكونيٌّ **مُبطَلٌ إدارياً** (٠٦٤) — وصفتُه سليمة، ومع ذلك لا يُعَدّ.
+  await makeOrder({ patientId: P14, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(5),
+    prescription: { amputationType: "silicone", siliconePart: "اصبع" }, voidOrder: true });
+  //  ⑭ إصبعٌ سليكونيٌّ **خارج المدى** — داخل الفرع لكن قبل أربعين يوماً.
+  await makeOrder({ patientId: P15, branchId: B_CAT, createdAt: daysAgoBaghdadNoon(40),
+    prescription: { amputationType: "silicone", siliconePart: "اصبع" } });
+  //  ⑮ **صيانةُ** طرفٍ داخل المدى — خدمةٌ لا بيع.
+  await makeOrder({ patientId: P16, branchId: B_CAT, purpose: "maintenance",
+    createdAt: daysAgoBaghdadNoon(5) });
 
   const adminA = access({ isAdmin: true, role: "admin", userId: U_ADMIN, operationalBranches: null });
   const repA = access({ userId: U_REPORTS, permissions: { canViewReports: true }, operationalBranches: [B_BAGHDAD] });
@@ -206,7 +275,8 @@ async function main() {
 
   //  والبرهانُ أن الاستبعادات ليست صدفةً: الصفوفُ السبعة كلُّها موجودة.
   const raw = await q(
-    `SELECT COUNT(*)::int AS n FROM prosthetic_work_orders WHERE patient_id = ANY($1::int[])`, [ALL_P]);
+    `SELECT COUNT(*)::int AS n FROM prosthetic_work_orders WHERE patient_id = ANY($1::int[])`,
+    [[P1, P2, P3, P4, P5, P6, P7]]);
   same("ب.١ **الصفوفُ السبعةُ كلُّها مُدرَجةٌ فعلاً** — فالعدُّ ١ استبعادٌ لا فراغ",
     raw.rows[0].n, 7);
 
@@ -249,7 +319,8 @@ async function main() {
   const blob = JSON.stringify(bag.data);
   const keys = Object.keys(bag.data as any).sort();
   same("ط.١ الحقولُ المُعادة محدّدةٌ بالضبط", keys,
-    ["byBranch", "days", "endDate", "scopeLabel", "startDate", "totalSold", "unclassifiedLegacyOrders"]);
+    ["byBranch", "byCategory", "days", "endDate", "scopeLabel", "startDate",
+     "totalSold", "totals", "unclassifiedLegacyOrders"]);
   check(!/cost|price|amount|agreed|paid|سعر|مبلغ|كلفة|دينار/i.test(blob),
     "ط.٢ **ولا أثرَ لأيّ حقلٍ ماليّ**", blob);
   check(!/name|phone|patient|مريض|هاتف/i.test(blob.replace(/branchName|scopeLabel/g, "")),
@@ -286,6 +357,94 @@ async function main() {
   same("ك.٠أ وبغدادُ فيه بواحد", bb.find((x) => x.branchId === B_BAGHDAD)?.sold, 1);
   same("ك.٠ب وكربلاءُ بواحد", bb.find((x) => x.branchId === B_OTHER)?.sold, 1);
   same("ك.٠ج و«بغداد الجديدة» بصفر", bb.find((x) => x.branchId === B_THIRD)?.sold, 0);
+
+  console.log("\n── ص: **تفصيلُ الأصناف** — العطبُ الذي وُلد لأجله هذا القسم ──");
+  //  الواقعة: سأل المالكُ «كم إصبعاً سليكونياً بِيع؟» فاعتذر المساعدُ عن
+  //  رقمٍ موجودٍ في القاعدة، لأن الأداةَ كانت تُرجع عدداً إجمالياً واحداً
+  //  للأطراف الكاملة وحدها.
+  const cat = await call(adminA, { days: 10, branchName: CAT_NAME });
+  const rows = ((cat.data as any).byCategory ?? []) as any[];
+  const sold = (k: string) => rows.find((r) => r.key === k)?.sold ?? 0;
+  const labelOf = (k: string) => rows.find((r) => r.key === k)?.label ?? null;
+
+  same("ص.١ **الإصبعُ السليكونيُّ اثنان — والسؤالُ صار له جواب**",
+    sold("prosthetic_full:silicone:اصبع"), 2);
+  same("ص.٢ وعنوانُه عربيٌّ جاهزٌ للقراءة",
+    labelOf("prosthetic_full:silicone:اصبع"), "اطراف سليكونية تعويضية — اصبع");
+  same("ص.٣ **والكفُّ صنفٌ آخر لا يُخلَط به**", sold("prosthetic_full:silicone:كف"), 1);
+  same("ص.٤ **والمسندُ الطبيُّ الكامل يظهر** — كان مُستبعَداً كلّياً", sold("support_full"), 1);
+  same("ص.٥ وعنوانُه", labelOf("support_full"), "مسند طبي كامل");
+  same("ص.٦ **والقالبُ يظهر باسمه** — كان مُستبعَداً بشرط full_device",
+    sold("prosthetic_part:socket"), 1);
+  same("ص.٧ وعنوانُه من المعجم القانونيّ", labelOf("prosthetic_part:socket"), "القالب");
+
+  console.log("\n── ص٢: **ولا يُخمَّن تصنيفٌ ولا يُسقَط صفّ** ──");
+  //  P1 طرفٌ كاملٌ بلا معاينة، وP12 طرفٌ كاملٌ بمعاينةٍ **ملغاة** — اثنان.
+  same("ص٢.١ **معاينةٌ ملغاة لا تحكم** — فالإصبعُ الملغى لا يُضاف إلى الأصابع",
+    sold("prosthetic_full:silicone:اصبع"), 2);
+  same("ص٢.٢ ويُقال «نوعٌ غير مسجَّل» صراحةً لا يُسقَط",
+    sold("prosthetic_full:unrecorded"), 1);
+  same("ص٢.٣ وعنوانُه يقول ذلك للقارئ",
+    labelOf("prosthetic_full:unrecorded"), "طرف صناعي كامل — نوعٌ غير مسجَّل");
+  check(!rows.some((r) => r.key === "unclassified"),
+    "ص٢.٤ ولا صفَّ «غير مصنّف» في شجرةٍ سليمة", JSON.stringify(rows));
+
+  console.log("\n── ص٣: **والمجاميعُ تتصالح — رقمان من استعلامين** ──");
+  const totals = (cat.data as any).totals;
+  same("ص٣.١ **مجموعُ الأطراف الكاملة = totalSold بالضبط**",
+    [totals.prostheticFullDevices, (cat.data as any).totalSold], [4, 4]);
+  same("ص٣.٢ والأجزاءُ واحد", totals.prostheticComponents, 1);
+  same("ص٣.٣ والمساندُ واحد", totals.medicalSupportDevices, 1);
+  same("ص٣.٤ **ومجموعُ كلّ الصفوف = مجموعُ الثلاثة** — لا صنفَ خارج الحساب",
+    rows.reduce((n, r) => n + r.sold, 0),
+    totals.prostheticFullDevices + totals.prostheticComponents + totals.medicalSupportDevices);
+  const fullFromRows = rows.filter((r) => r.serviceType === "prosthetic" && r.scope === "full")
+    .reduce((n, r) => n + r.sold, 0);
+  same("ص٣.٥ **وتفصيلُ نوع البتر يجمع إلى الأطراف الكاملة نفسِها**",
+    fullFromRows, (cat.data as any).totalSold);
+
+  console.log("\n── ص٤: **وما يُستبعَد يبقى مُستبعَداً بحرفه** ──");
+  //  الصيانةُ والمُبطَلُ إدارياً وما خرج عن المدى: التفصيلُ لا يُرخي حارساً.
+  //  في هذا الفرع **تسعةُ أوامر**: ستّةٌ تُفصَّل، وثلاثةٌ تُستبعَد بحُرّاسها —
+  //  مُبطَلٌ إدارياً · خارجُ المدى · صيانة. ووصفةُ الثلاثةِ الأولى سليمةٌ تقول
+  //  «إصبع سليكوني»، فلو أرخى التفصيلُ حارساً لقفز عدُّ الأصابع من ٢ إلى ٤.
+  const allInBranch = await q(
+    `SELECT COUNT(*)::int AS n FROM prosthetic_work_orders WHERE branch_id = $1`, [B_CAT]);
+  const detailed = rows.reduce((n, r) => n + r.sold, 0);
+  same("ص٤.١ **والتفصيلُ لم يُرخِ حارساً** — تسعةُ أوامرَ، ستّةٌ تُفصَّل وثلاثةٌ تُستبعَد",
+    [allInBranch.rows[0].n, detailed], [9, 6]);
+  same("ص٤.٢ **والأصابعُ اثنان لا أربعة** — فالمُبطَلُ وخارجُ المدى لم يُعَدّا رغم وصفتهما السليمة",
+    sold("prosthetic_full:silicone:اصبع"), 2);
+  //  وفرعٌ آخر لا يلوّث تفصيلَ هذا الفرع: بغدادُ فيها طرفٌ كاملٌ واحد وقالبٌ
+  //  واحد — صفّان لا أكثر، وبلا إصبعٍ سليكونيٍّ ولا مسند.
+  const bagCat = ((await call(adminA, { days: 10, branchName: BAGHDAD_NAME })).data as any).byCategory as any[];
+  same("ص٤.٣ **وفرعٌ آخر لا يلوّث تفصيلَ هذا الفرع**",
+    bagCat.map((r) => [r.key, r.sold]).sort(),
+    [["prosthetic_full:unrecorded", 1], ["prosthetic_part:socket", 1]].sort());
+
+  console.log("\n── ص٥: **ولا مبلغَ تسرّب مع التفصيل** ──");
+  const catBlob = JSON.stringify(cat.data);
+  check(!/cost|price|amount|agreed|paid|سعر|مبلغ|كلفة|دينار/i.test(catBlob),
+    "ص٥.١ لا حقلَ ماليّ", catBlob);
+  check(!/مريض|هاتف|WB-/.test(catBlob), "ص٥.٢ ولا اسمَ مريضٍ ولا رمزَه", catBlob);
+  const repCat = await call(repA, { days: 10 });
+  same("ص٥.٣ **وغيرُ المسؤول يحصل على تفصيلِ نطاقه لا أكثر** — بغدادُ وحدها",
+    ((repCat.data as any).byCategory as any[]).map((r) => [r.key, r.sold]).sort(),
+    [["prosthetic_full:unrecorded", 1], ["prosthetic_part:socket", 1]].sort());
+
+  console.log("\n── ص٦: عقدُ الإرشاد للتفصيل ──");
+  const regSrcCat = readFileSync("server/ai/tools/registry.ts", "utf8");
+  const descAt = regSrcCat.indexOf('name: "device_sales_summary"');
+  const desc = regSrcCat.slice(descAt, descAt + 4000);
+  check(/byCategory/.test(desc), "ص٦.١ الوصفُ يذكر byCategory");
+  check(/اصبع/.test(desc), "ص٦.٢ **ويضرب مثلَ الإصبع السليكونيّ بعينه**");
+  check(/totals/.test(desc) && /لا تجمع بنفسك/.test(desc),
+    "ص٦.٣ ويأمر بنقل المجاميع الجاهزة لا جمعها");
+  check(/غير مسجَّل/.test(desc) && /توزّعها على الأنواع/.test(desc),
+    "ص٦.٤ **وينهى عن توزيع «غير مسجَّل» على الأنواع**");
+  const chatSrcCat = readFileSync("server/ai/chat.ts", "utf8");
+  check(/لا تعتذر عن رقمٍ تحمله الأداة/.test(chatSrcCat),
+    "ص٦.٥ **وقاعدةُ التوجيه تنهى عن الاعتذار عن رقمٍ موجود** — وهو ما وقع فعلاً");
 
   console.log("\n── التزويد ──");
   same("ل.١ للأداة تسميةٌ عربية في آليّة التزويد القائمة",

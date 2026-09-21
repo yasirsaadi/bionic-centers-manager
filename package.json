@@ -146,6 +146,7 @@
     "test:admin-user-permanent-delete": "tsx server/admin_user_permanent_delete.test.ts",
     "test:sidebar-section-visibility": "tsx client/src/components/sidebar_section_visibility.test.ts",
     "test:session-store-pool": "tsx server/session_store_pool.test.ts",
+    "test:device-sale-category": "tsx shared/device_sale_category.test.ts",
     "test:ai-device-sales": "tsx server/ai_device_sales.test.ts",
     "test:ai-page-context": "tsx server/ai_page_context.test.ts",
     "test:ai-identity": "tsx server/ai_identity_context.test.ts",
