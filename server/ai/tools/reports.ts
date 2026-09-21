@@ -15,6 +15,7 @@ import { db } from "../../db";
 import { storage } from "../../storage";
 import { patients, visits, branches } from "@shared/schema";
 import { activePatientDrizzle } from "../../patients/active_patient";
+import { REPORT_ROW_LABELS } from "@shared/service_taxonomy";
 import * as medical from "../../medical/store";
 
 // ══ نطاقُ التاريخ — حدٌّ أقصى، لا افتراضَ صامت لمدىً غير مطلوب ═══════════
@@ -398,6 +399,48 @@ export interface FinancialPeriodMetrics {
 }
 
 /**
+ * قسمٌ واحد من التفصيل الماليّ.
+ *
+ * **والتسميةُ تتبع المحوِّل لا `storage.ts`** (راجع التعليق أعلى هذا القسم):
+ * `salesValue` = ما بِيع (قيدُ كلفة) · `revenue` = ما قُبض نقداً. وفي
+ * `shared/service_taxonomy.ts` يُسمّى الأوّلُ `revenue` والثاني `paid` —
+ * فالمطابقةُ تقع في مكانٍ واحد (`departmentMoney` أدناه) ولا تتكرّر، وإلّا
+ * قرأ النموذجُ «إيراد العلاج الطبيعي» فحصل على قيمة مبيعاته.
+ */
+export interface FinancialDepartmentMoney {
+  /** الاسمُ العربيّ من `REPORT_ROW_LABELS` القانونية — لا معجمَ ثانٍ. */
+  label: string;
+  /** قيمةُ المبيعات — قيودُ الكلفة المؤرَّخة في الفترة. **ليست نقداً.** */
+  salesValue: number;
+  /**
+   * النقدُ المقبوضُ فعلاً في الفترة.
+   *
+   * **و`null` غيابُ قياسٍ لا صفر**: «أجهزة قديمة — غير مقسَّمة» مبيعاتٌ
+   * فقط بحكم مصدرها (`payments.case_id` مملوءةٌ منذ الطور الثالث فلا نظيرَ
+   * لها في المقبوض)، وكتابةُ صفرٍ كانت ستدّعي قياساً لم يقع.
+   */
+  revenue: number | null;
+}
+
+/**
+ * التفصيلُ بالأقسام — **خمسةُ دلاءٍ تُجمع فتساوي الإجماليّ إلى الدينار**:
+ * `prosthetic + medical_support + physiotherapy + legacyDevicesUnsplit +
+ * unclassified = salesValue` (وكذلك المقبوضُ للأربعة التي تقيسه).
+ *
+ * و**`devicesCombined` خارجَه عمداً** — تجميعٌ مشتقّ لا دلوٌ سادس، ولو
+ * وُضع بينها لجمعها النموذجُ ستّاً فحسب مالَ الأجهزة مرّتين.
+ */
+export interface FinancialByDepartment {
+  prosthetic: FinancialDepartmentMoney;
+  medical_support: FinancialDepartmentMoney;
+  physiotherapy: FinancialDepartmentMoney;
+  /** مالُ أجهزةٍ مؤكَّد لم يُثبَت نوعُه — قديمٌ حصراً، ومبيعاتٌ فقط. */
+  legacyDevicesUnsplit: FinancialDepartmentMoney;
+  /** ما لم تحسمه علاقةٌ ولا مصدرٌ قاطع — يُعرَض ولا يُوزَّع ولا يُخمَّن. */
+  unclassified: FinancialDepartmentMoney;
+}
+
+/**
  * ══ لماذا حالةٌ حاضرة لا تدخل مقارنةً تاريخية (تصحيحٌ — مراجعةٌ حيّة) ══
  * `getAccountingSummary` يعرّف `totalRemaining`/`collectionRate` صراحةً
  * أرقاماً **مدى الحياة حتى الآن** (كلفةٌ إجمالية ناقص مدفوعٍ إجماليّ، ونسبةُ
@@ -410,6 +453,21 @@ export interface FinancialPeriodMetrics {
 export interface FinancialPeriodFigures extends FinancialPeriodMetrics {
   collectionRateLifetime: number; // **ليست فترةً** — نسبةٌ إجمالية حتى الآن (توثيقٌ صريح للحقل)
   outstandingLifetime: number; // **ليست فترةً** — رصيدٌ إجماليّ مستحقّ حتى الآن
+  /**
+   * التفصيلُ بالأقسام **لهذه الفترة بعينها** — مقياسُ فترةٍ كبقيّة
+   * `FinancialPeriodMetrics`، لا حالةً حاضرة.
+   *
+   * كان `storage.getAccountingSummary` يحسبه ويرميه المحوِّلُ، فسؤالٌ مشروع
+   * («كم إيراد العلاج الطبيعي في كربلاء في آب؟») لا جواب له إلّا أن يخترعه
+   * النموذج أو يعتذر عن رقمٍ موجودٍ في القاعدة.
+   */
+  byDepartment: FinancialByDepartment;
+  /**
+   * **تجميعٌ مشتقّ لا قسم**: الأطرافُ + المساندُ + القديمُ غيرُ المقسَّم.
+   * يُعطى جاهزاً كي لا يجمع النموذجُ ثلاثةَ أرقامٍ بنفسه — ولا يُجمع مع
+   * دلاء `byDepartment` أبداً (يحسب مالَ الأجهزة مرّتين).
+   */
+  devicesCombined: FinancialDepartmentMoney;
 }
 
 /**
@@ -437,8 +495,27 @@ export interface FinancialSummaryResult {
   byBranch: (FinancialPeriodFigures & { branchId: number; branchName: string })[] | null;
 }
 
+/**
+ * **نقطةُ المطابقة الوحيدة** بين تسمية `shared/service_taxonomy.ts`
+ * (`revenue` = مبيعات · `paid` = نقد) وتسمية هذا المحوِّل (`salesValue` =
+ * مبيعات · `revenue` = نقد). قَلبُها هنا يقلب كلَّ قسمٍ معاً فيُمسَك في
+ * الاختبار، وتكرارُها كان سيقلب واحداً بالسهو فيمرّ.
+ */
+function departmentMoney(
+  key: keyof FinancialByDepartment | "devicesCombined",
+  d: { revenue: number; paid?: number },
+  cashMeasured: boolean,
+): FinancialDepartmentMoney {
+  return {
+    label: REPORT_ROW_LABELS[key] ?? key,
+    salesValue: d.revenue,
+    revenue: cashMeasured ? (d.paid ?? 0) : null,
+  };
+}
+
 async function summaryFor(branchId: number | undefined, start: string, end: string): Promise<FinancialPeriodFigures> {
   const s = await storage.getAccountingSummary(branchId, start, end, { baghdadDays: true });
+  const dep = s.byDepartment;
   const salesValue = s.totalRevenue;
   const revenue = s.totalPaid;
   return {
@@ -453,6 +530,17 @@ async function summaryFor(branchId: number | undefined, start: string, end: stri
     //  ══ محسوبةٌ هنا لا في النموذج (القسم K) — راجع تعليق الحقل في الواجهة. ══
     uncollectedSalesValue: salesValue - revenue,
     collectionRateLifetime: s.collectionRate, outstandingLifetime: s.totalRemaining,
+    byDepartment: {
+      prosthetic: departmentMoney("prosthetic", dep.prosthetic, true),
+      medical_support: departmentMoney("medical_support", dep.medical_support, true),
+      physiotherapy: departmentMoney("physiotherapy", dep.physiotherapy, true),
+      //  **مبيعاتٌ فقط** — لا نظيرَ مقبوضاً يُقاس، فـ`revenue` تصل `null`.
+      legacyDevicesUnsplit: departmentMoney("legacyDevicesUnsplit", dep.legacyDevicesUnsplit, false),
+      unclassified: departmentMoney("unclassified", dep.unclassified, true),
+    },
+    //  **من `s.rollups` لا بجمعٍ هنا** — التجميعُ معرَّفٌ مرّةً في
+    //  `shared/service_taxonomy.ts: rollups`، ونسخةٌ ثانية تنحرف عنه يوماً.
+    devicesCombined: departmentMoney("devicesCombined", s.rollups.devicesCombined, true),
   };
 }
 
