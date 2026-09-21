@@ -7,8 +7,9 @@
  * في النطاق نفسِه) عاش من PR #358 إلى #364: الملفُّ لا يُترجَم فالحزمةُ
  * **لا تعمل أصلاً**، و`npm run check` أخضر لأنه لا يراه.
  *
- * ورفعُ الاستثناء دفعةً واحدة يُظهر ٣٣ خطأً قديماً في ١٣ ملفّاً من دفعاتٍ
- * سابقة — ديونٌ حقيقية لكنها ليست هذا الكسر. فالمُشغِّل يفصل:
+ * ورفعُ الاستثناء دفعةً واحدة أظهر ٣٣ خطأً قديماً في ١٣ ملفّاً من دفعاتٍ
+ * سابقة — ديونٌ حقيقية لكنها ليست هذا الكسر. (صارت ١٥ في ٧ بعد أن أُصلح
+ * المعامِلُ الرابع المُسقَط في `same`.) فالمُشغِّل يفصل:
  *
  *  ① **أيُّ خطأٍ في ملفٍّ ليس على قائمة الديون ⟶ فشل.** فالنظيفُ يبقى نظيفاً،
  *    ولا يعود ملفٌّ إلى الظلام بالسهو.
@@ -39,16 +40,10 @@ import { spawnSync } from "child_process";
 const PENDING_DEBT = new Map<string, number>([
   ["client/src/components/purchase_dialog_ui.test.ts", 1],
   ["server/component_sale.test.ts", 6],
-  ["server/cost_ledger_parity.test.ts", 1],
-  ["server/device_episode_integration.test.ts", 1],
-  ["server/maintenance_concurrent.test.ts", 10],
   ["server/manufacturing/stages.test.ts", 1],
-  ["server/patient_branch_access.test.ts", 2],
   ["server/patient_duplicate_guard.test.ts", 3],
   ["server/patient_search.test.ts", 1],
-  ["server/patient_trash_badge.test.ts", 1],
-  ["server/pending_charge.test.ts", 1],
-  ["server/simplified_maintenance.test.ts", 3],
+  ["server/simplified_maintenance.test.ts", 1],
   ["shared/ai_capabilities.test.ts", 2],
 ]);
 

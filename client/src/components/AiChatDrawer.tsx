@@ -6,15 +6,17 @@
 // ومالي للمصرَّح لهم — صار نافعاً لكلّ موظّف. والحجب هنا **عرضٌ لا حراسة**:
 // الخادم يقرّر وحده مَن تُبنى له لقطةٌ مالية، ولا يقرأ من العميل شيئاً.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, Send, X, Loader2, Bot, User, Users, MessageSquareWarning,
   GraduationCap, ChevronRight, CheckCircle2, AlertCircle, PlayCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AI_CHAT_INPUT_MAX_HEIGHT_PX, grownInputHeight, shouldSendOnKey,
+} from "./ai_chat_input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -388,6 +390,7 @@ export function AiChatDrawer() {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   //  ══ «اقترح تصحيحاً» — فهرسُ رسالة المساعد المفتوحة نموذجُها الآن ══════
@@ -568,6 +571,16 @@ export function AiChatDrawer() {
     }
   }, [open, messages, askMutation.isPending]);
 
+  //  ارتفاعُ المربّع يتبع سطورَه — يُصفَّر أوّلاً وإلّا لم ينكمش بعد الحذف
+  //  أو بعد تفريغه عند الإرسال.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const h = grownInputHeight(el.scrollHeight);
+    if (h > 0) el.style.height = `${h}px`;
+  }, [draft, open]);
+
   const send = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || askMutation.isPending) return;
@@ -575,6 +588,10 @@ export function AiChatDrawer() {
     setMessages(next);
     setDraft("");
     askMutation.mutate(next);
+    //  **والمؤشّرُ يبقى في المربّع**: النافذةُ ما زالت مفتوحة، فالسؤالُ التالي
+    //  يُكتب بلا نقرةٍ ثانية. وضغطُ زرّ الإرسال ينقل التركيزَ إلى الزرّ
+    //  (ثمّ يُعطَّل الزرُّ لفراغ المسوّدة) فيُعاد التركيزُ صراحةً.
+    inputRef.current?.focus();
   };
 
   if (!canUse) return null;
@@ -828,15 +845,29 @@ export function AiChatDrawer() {
                 e.preventDefault();
                 send(draft);
               }}
-              className="border-t px-3 py-2 flex items-center gap-2 shrink-0"
+              className="border-t px-3 py-2 flex items-end gap-2 shrink-0"
             >
-              <Input
+              <Textarea
+                ref={inputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (!shouldSendOnKey({
+                    key: e.key,
+                    shiftKey: e.shiftKey,
+                    isComposing: e.nativeEvent.isComposing,
+                  })) return;
+                  e.preventDefault();
+                  send(draft);
+                }}
                 placeholder="اكتب سؤالك…"
-                disabled={askMutation.isPending}
+                rows={1}
                 data-testid="input-ai-chat"
-                className="flex-1"
+                //  **ولا `disabled` أثناء الانتظار**: العنصرُ المعطَّل يفقد
+                //  التركيزَ ولا يستعيده، وهو سببُ خروج المؤشّر من المربّع.
+                //  ومنعُ الإرسال المزدوج في `send` نفسِها وفي الزرّ.
+                style={{ maxHeight: `${AI_CHAT_INPUT_MAX_HEIGHT_PX}px` }}
+                className="flex-1 min-h-0 resize-none overflow-y-auto py-2 leading-6"
               />
               <Button
                 type="submit"
