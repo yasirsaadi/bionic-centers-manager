@@ -100,22 +100,48 @@ export function resolvePurchasedSessions(input: {
   plan?: PhysioPlanEntry[] | null;
   treatmentTypeText?: string | null;
   caseCost?: number | null;
-  paymentSessions?: { treatmentType: string | null; sessionCount: number | null }[];
+  paymentSessions?: {
+    treatmentType: string | null;
+    sessionCount: number | null;
+    /**
+     * جلسةٌ **مُهداة** (`payments.is_free_sessions`) — بلا دينارٍ واحد.
+     *
+     * وغيابُه يعني «مدفوعة»، فكلُّ مُنادٍ قديمٍ لا يمرّره يبقى على سلوكه
+     * السابق **حرفاً بحرف**.
+     */
+    isFree?: boolean | null;
+  }[];
 }): { byType: Record<string, number>; total: number; source: "plan" | "cost" | "payments" | "none" } {
   const sum = (byType: Record<string, number>) =>
     Object.keys(byType).reduce((s, k) => s + byType[k], 0);
 
   // Payments are computed up front: they are both the legacy fallback AND the
   // sanity floor for the cost derivation below.
-  const paymentsByType: Record<string, number> = {};
+  //  **والمدفوعُ يُفصَل عن المُهدى** — وهذا هو مفتاحُ الإصلاح كلِّه:
+  //  الجلسةُ المجانية تزيد الرصيدَ ولا تزيد المال، فلا يمكن لأيّ حسابٍ
+  //  مبنيٍّ على المال أن يراها. فتُحسَب على حدة وتُضاف فوق أيّ مصدر.
+  const paidByType: Record<string, number> = {};
+  const freeByType: Record<string, number> = {};
   for (const p of input.paymentSessions ?? []) {
     const n = Number(p?.sessionCount) || 0;
     if (n <= 0) continue;
     const type = (p.treatmentType || "").trim() || "غير محدد";
-    paymentsByType[type] = (paymentsByType[type] ?? 0) + n;
+    const bucket = p?.isFree ? freeByType : paidByType;
+    bucket[type] = (bucket[type] ?? 0) + n;
   }
-  const paymentsTotal = sum(paymentsByType);
+  const paidTotal = sum(paidByType);
+  const freeTotal = sum(freeByType);
+  const paymentsByType: Record<string, number> = { ...paidByType };
+  for (const t of Object.keys(freeByType)) paymentsByType[t] = (paymentsByType[t] ?? 0) + freeByType[t];
+  const paymentsTotal = paidTotal + freeTotal;
 
+  //  ══ **ولا يُضاف المُهدى فوق الخطة** — وهذا مقصودٌ لا سهو ═══════════
+  //  البابان اللذان يكتبان الخطةَ يضعان الجلسةَ المجانية **داخلها**:
+  //  «الكلفة والجلسات» (بلا صفّ دفعةٍ إطلاقاً) و«خدمة جديدة» (**وتكتب صفَّ
+  //  دفعةٍ مجانيةٍ أيضاً**). فجمعُ الخطةِ مع الدفعات المجانية كان سيَعُدّ
+  //  هديّةَ «خدمة جديدة» **مرّتين**. فصاحبُ الخطة تُصلَح حالتُه عند الكتابة
+  //  لا عند القراءة: نافذةُ الدفعات صارت ترفع خطّتَه كما ترفعها «خدمة
+  //  جديدة» بالضبط (`server/routes.ts`).
   const fromPlan = (input.plan ?? []).filter((e) => e?.treatmentType && Number(e.sessionCount) > 0);
   if (fromPlan.length > 0) {
     const byType: Record<string, number> = {};
@@ -139,13 +165,26 @@ export function resolvePurchasedSessions(input: {
   // (The priced-course patient is the opposite — cost 275,000 = 11 sessions
   // while his installments carry only 4 — and for him the derivation still
   // fires because 11 > 4.)
+  //
+  //  ══ **والمُهدى يُضاف فوق المُشتقّ، لا يُبتلَع فيه** ═══════════════════
+  //  (إصلاحُ «انتصار حبيب محمد»، ٢٠٢٦-٠٩-٢١ — مُعادُ إنتاجُه حيّاً.) كلفتُها
+  //  ١,٣٠٠,٠٠٠ و«روبوت» بـ٥٠,٠٠٠ ⟶ الاشتقاقُ ٢٦، ودفعاتُها ٢ مدفوعة و**٦
+  //  مجانية مسجَّلةٌ بحقّها في القاعدة**. وكان الاشتقاقُ يفوز ويُهمل الدفعاتِ
+  //  كلَّها، فتقرأ ٢٦ بدل ٣٢ — **والستُّ لا تظهر أبداً مهما أُعيد إدخالُها**.
+  //
+  //  والمقارنةُ صارت بـ**المدفوع** لا بالمجموع: المُشتقُّ يمثّل جلساتٍ دفع
+  //  المريضُ ثمنَها، فمقابلتُه بمجموعٍ يحوي هديّةً مقابلةُ شيئين مختلفين.
+  //  **ومتى خلا الملفُّ من جلسةٍ مجانية فالسلوكُ مطابقٌ لما كان بايتاً**
+  //  (`freeTotal = 0` ⟶ `paidTotal === paymentsTotal` والإضافةُ صفر).
   const label = String(input.treatmentTypeText ?? "").trim();
   const cost = Math.max(0, Math.floor(Number(input.caseCost) || 0));
   const price = PHYSIO_TREATMENT_PRICES[label];
   if (label && !label.includes("،") && price && price > 0 && cost > 0 && cost % price === 0) {
     const derived = cost / price;
-    if (derived > paymentsTotal) {
-      return { byType: { [label]: derived }, total: derived, source: "cost" };
+    if (derived > paidTotal) {
+      const byType: Record<string, number> = { [label]: derived };
+      for (const t of Object.keys(freeByType)) byType[t] = (byType[t] ?? 0) + freeByType[t];
+      return { byType, total: derived + freeTotal, source: "cost" };
     }
   }
 

@@ -661,10 +661,16 @@ export default function PatientDetails() {
   //  أدناه فقط؛ الجدولُ الزمنيُّ التفصيليّ (تبويب الزيارات) يبقى يعتمد
   //  `casePayments` كما كان — فارغاً لمن لا يملك الصلاحية، بلا رقمٍ مزيَّفٍ
   //  هناك أيضاً، إذ يحتاج تواريخَ حقيقية لا تصل هذا المستخدم أصلاً.
-  const legacyPaymentSessions: { treatmentType: string | null; sessionCount: number | null }[] =
+  //  `isFree` تمرّ مع كلّ صفّ — الجلسةُ المُهداة تزيد الرصيدَ ولا تزيد
+  //  المال، فلا يراها حسابٌ مبنيٌّ على الكلفة ما لم تُميَّز (إصلاحُ
+  //  ٢٠٢٦-٠٩-٢١؛ ومَن لا يرسلها يُقرأ «مدفوعة» فيبقى السلوكُ كما كان).
+  const legacyPaymentSessions: {
+    treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
+  }[] =
     patient.payments
       ? patient.payments.map((p) => ({
           treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+          isFree: Boolean((p as any).isFreeSessions),
         }))
       : ((patient as any).paymentSessionsSummary ?? []);
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
@@ -1211,6 +1217,7 @@ export default function PatientDetails() {
                   caseCost: physioCost,
                   paymentSessions: (casePayments ?? []).map((p) => ({
                     treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+                    isFree: Boolean((p as any).isFreeSessions),
                   })),
                 }).byType;
                 const visitsByType: Record<string, number> = {};
@@ -1286,6 +1293,7 @@ export default function PatientDetails() {
                           caseCost: physioCostRows,
                           paymentSessions: (casePayments ?? []).map((p) => ({
                             treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+                            isFree: Boolean((p as any).isFreeSessions),
                           })),
                         });
                         // Anything but the old payment-by-payment flow means the

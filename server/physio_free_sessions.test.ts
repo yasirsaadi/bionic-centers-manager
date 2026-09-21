@@ -1,0 +1,252 @@
+// **الجلسةُ المُهداة تُحتسب، والمالُ لا يتحرّك** — حيّاً على Postgres وعلى
+// النقاط الحقيقية. قاعدة محلّية: `npm run test:physio-free`.
+//
+// ══ قاعدةُ المالك (٢٠٢٦-٠٩-٢١) ═══════════════════════════════════════════
+//   مَن يُدخل الجلسات — استقبالٌ أو مديرٌ أو مديرُ فرع:
+//     • **بلا تأشير «مجاني»** ⟶ يُحتسب المال **وتُسجَّل الجلسات**.
+//     • **بتأشير «مجاني»**   ⟶ تُسجَّل الجلسات **ولا يُحتسب المال**.
+//
+// ══ العطبُ الذي يغلقه ════════════════════════════════════════════════════
+//   عدّادُ الجلسات يقرأ الخطةَ المحفوظة **وحدها** متى وُجدت — لا يجمعها مع
+//   الدفعات أبداً (وإلّا عُدّت هديّةُ «خدمة جديدة» مرّتين: هي تكتب في
+//   الاثنين معاً). و«نافذة الدفعات» كانت تكتب صفَّ الدفعة وحدَه، **فتختفي
+//   الهديّةُ عن صاحب الخطة تماماً**: العدّادُ ١٠ ⟶ ١٠ بعد منح ستّ جلسات.
+//
+//   ومريضُ المفرد (بلا خطة) لم يكن يتأثّر — عدّادُه يقرأ الدفعات أصلاً.
+//   فالإصلاحُ يرفع الخطةَ **إن وُجدت** ولا يُنشئ واحدةً أبداً (ذي قار).
+
+import express from "express";
+import { createServer } from "http";
+import { pool } from "./db";
+import { registerRoutes } from "./routes";
+import { resolvePurchasedSessions } from "../shared/pricing";
+
+const DBURL = process.env.DATABASE_URL || "";
+if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
+  console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
+  process.exit(1);
+}
+
+let failures = 0;
+function check(cond: boolean, msg: string, detail = "") {
+  if (!cond) failures++;
+  console.log(`${cond ? "✅" : "❌ FAIL"}  ${msg}${cond ? "" : `\n      ${detail}`}`);
+}
+
+const PORT = 5623, BASE = `http://127.0.0.1:${PORT}`;
+const q = (t: string, p: any[] = []) => pool.query(t, p);
+const http = async (m: string, path: string, sess: any, body?: any) => {
+  const res = await fetch(BASE + path, {
+    method: m,
+    headers: {
+      "content-type": "application/json",
+      "x-test-session": Buffer.from(JSON.stringify(sess), "utf8").toString("base64"),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json: any = null;
+  try { json = await res.json(); } catch { /* empty */ }
+  return { status: res.status, body: json };
+};
+
+let code = 70000;
+
+/** الحالةُ كما يقرؤها الملفُّ: الكلفة، والمقبوض، والعدّاد بمصدره. */
+async function state(pid: number) {
+  const p = (await q(`SELECT total_cost, treatment_type, physio_plan FROM patients WHERE id=$1`, [pid])).rows[0];
+  const c = (await q(`SELECT cost FROM patient_cases WHERE patient_id=$1 AND case_type='physiotherapy'`, [pid])).rows[0];
+  const pays = (await q(
+    `SELECT payment_treatment_type t, session_count n, is_free_sessions f
+       FROM payments WHERE patient_id=$1 AND session_count>0 ORDER BY id`, [pid])).rows;
+  const paid = (await q(`SELECT COALESCE(SUM(amount),0)::int s FROM payments WHERE patient_id=$1`, [pid])).rows[0].s;
+  const r = resolvePurchasedSessions({
+    plan: p.physio_plan,
+    treatmentTypeText: p.treatment_type,
+    caseCost: c?.cost ?? p.total_cost,
+    paymentSessions: pays.map((x: any) => ({ treatmentType: x.t, sessionCount: x.n, isFree: x.f })),
+  });
+  return { cost: Number(p.total_cost), paid: Number(paid), sessions: r.total, src: r.source, plan: p.physio_plan };
+}
+
+(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use((r: any, _res, next) => {
+    const h = r.headers["x-test-session"];
+    r.session = h ? { branchSession: JSON.parse(Buffer.from(String(h), "base64").toString("utf8")) } : {};
+    next();
+  });
+  const realUse = app.use.bind(app);
+  let skipped = 0;
+  (app as any).use = (...args: any[]) => {
+    if (args.length === 1 && typeof args[0] === "function" && args[0].name === "session") { skipped++; return app; }
+    return realUse(...(args as [any]));
+  };
+  const httpServer = createServer(app);
+  await registerRoutes(httpServer, app);
+  httpServer.listen(PORT);
+  await new Promise((r) => httpServer.once("listening", r));
+
+  try {
+    check(skipped === 1, "جدول النقاط الحقيقي مُركَّب", String(skipped));
+
+    const BR = (await q(`SELECT id FROM branches ORDER BY id LIMIT 1`)).rows[0].id;
+    await q(`INSERT INTO system_users (id,username,password_hash,role,display_name,branch_id,is_active)
+             VALUES (9931,'physfree','x','admin','مالك',$1,true)
+             ON CONFLICT (id) DO UPDATE SET is_active=true`, [BR]);
+    const S = { userId: 9931, branchId: BR, displayName: "مالك", isAdmin: true, role: "admin", permissions: {} };
+
+    const mk = async (name: string, withPlan: boolean) => {
+      const id = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,is_physiotherapy)
+         VALUES ($1,$2,$3,'مراجعة',40,'ألم',true) RETURNING id`, [`WB-${++code}`, name, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,status)
+               VALUES ($1,$2,'physiotherapy',0,'active')`, [id, BR]);
+      if (withPlan) {
+        await http("POST", `/api/patients/${id}/price-physio`, S,
+          { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      }
+      return id;
+    };
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── أ. صاحبُ الخطة: المجّانيُّ من نافذة الدفعات (العطب) ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("خطة-مجاني-دفعات", true);
+      const b = await state(pid);
+      check(b.sessions === 10 && b.src === "plan", "أ١. الأساس: ١٠ جلسات من الخطة", JSON.stringify(b));
+
+      const r = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash", isFreeSessions: true,
+        treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }],
+      });
+      const a = await state(pid);
+      check(r.status === 201, "أ٢. المنح نجح", String(r.status));
+      check(a.sessions === 16, "أ٣. **الجلسات تُحتسب**: ١٠ ⟶ ١٦", `${b.sessions} ⟶ ${a.sessions}`);
+      check(a.cost === b.cost, "أ٤. **والمالُ لا يتحرّك**: الكلفة كما هي", `${b.cost} ⟶ ${a.cost}`);
+      check(a.paid === b.paid, "أ٥. ولا المقبوض", `${b.paid} ⟶ ${a.paid}`);
+      check(Array.isArray(a.plan) && a.plan.length === 2, "أ٦. الخطةُ ارتفعت بالنوع الجديد", JSON.stringify(a.plan));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ب. صاحبُ الخطة: المجّانيُّ من «خدمة جديدة» (كان يعمل) ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("خطة-مجاني-خدمة", true);
+      const b = await state(pid);
+      const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", discount: { isFree: true, reason: "تبرع" },
+        treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }],
+      });
+      const a = await state(pid);
+      check(r.status === 201, "ب١. المنح نجح", String(r.status));
+      check(a.sessions === 16, "ب٢. الجلسات تُحتسب: ١٠ ⟶ ١٦", `${b.sessions} ⟶ ${a.sessions}`);
+      check(a.cost === b.cost, "ب٣. والمالُ لا يتحرّك", `${b.cost} ⟶ ${a.cost}`);
+      check(a.paid === b.paid, "ب٤. ولا المقبوض", `${b.paid} ⟶ ${a.paid}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ج. صاحبُ الخطة: المدفوعُ من «خدمة جديدة» ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("خطة-مدفوع-خدمة", true);
+      const b = await state(pid);
+      const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", serviceCost: 150000, initialPayment: 150000,
+        treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }],
+      });
+      const a = await state(pid);
+      check(r.status < 300, "ج١. البيع نجح", String(r.status));
+      check(a.sessions === 16, "ج٢. الجلسات تُحتسب: ١٠ ⟶ ١٦", `${b.sessions} ⟶ ${a.sessions}`);
+      check(a.cost === b.cost + 150000, "ج٣. **والمالُ يُحتسب**: الكلفة +١٥٠,٠٠٠", `${b.cost} ⟶ ${a.cost}`);
+      check(a.paid === b.paid + 150000, "ج٤. والمقبوض +١٥٠,٠٠٠", `${b.paid} ⟶ ${a.paid}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── د. مريضُ المفرد (بلا خطة) — ولا خطةَ تُخترَع له ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("مفرد-ذي-قار", false);
+      await q(`UPDATE patients SET total_cost=750000, treatment_type='روبوت' WHERE id=$1`, [pid]);
+      await q(`UPDATE patient_cases SET cost=750000 WHERE patient_id=$1 AND case_type='physiotherapy'`, [pid]);
+      for (let k = 0; k < 15; k++) {
+        await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+                 VALUES ($1,$2,50000,'روبوت',1,false)`, [pid, BR]);
+      }
+      const b = await state(pid);
+      check(b.sessions === 15 && b.src === "payments", "د١. الأساس: ١٥ جلسة من الدفعات", JSON.stringify(b));
+
+      const r = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash", isFreeSessions: true,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 3 }],
+      });
+      const a = await state(pid);
+      check(r.status === 201, "د٢. المنح نجح", String(r.status));
+      check(a.sessions === 18, "د٣. الجلسات تُحتسب: ١٥ ⟶ ١٨", `${b.sessions} ⟶ ${a.sessions}`);
+      check(a.plan === null, "د٤. **ولا خطةَ تُنشأ** — حمايةُ ذي قار سليمة", JSON.stringify(a.plan));
+      check(a.cost === b.cost && a.paid === b.paid, "د٥. والمالُ لا يتحرّك", `${b.cost}/${b.paid} ⟶ ${a.cost}/${a.paid}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── هـ. شكلُ «انتصار»: الهديّةُ فوق الاشتقاق من الكلفة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  ملفٌّ سابقٌ لترحيل ٠٣٦: بلا خطة، ونصُّه «روبوت» عارياً، وكلفتُه
+    //  قابلةٌ للقسمة على سعر الجلسة — فالعدّادُ يعيد بناء العدد بالقسمة.
+    //  والهديّةُ كانت تسقط لأن الاشتقاقَ يَغلب سجلَّ الدفعات كلَّه.
+    {
+      const pid = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
+                               is_physiotherapy,treatment_type,total_cost)
+         VALUES ($1,'شكل-انتصار',$2,'مراجعة',45,'ألم',true,'روبوت',1300000) RETURNING id`,
+        [`WB-${++code}`, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
+               VALUES ($1,$2,'physiotherapy',1300000,'auto','active')`, [pid, BR]);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,50000,'روبوت',1,false),($1,$2,50000,'روبوت',1,false),
+                      ($1,$2,0,'أجهزة علاج طبيعي',6,true)`, [pid, BR]);
+      const s = await state(pid);
+      check(s.src === "cost", "هـ١. المصدرُ اشتقاقٌ من الكلفة (١,٣٠٠,٠٠٠ ÷ ٥٠,٠٠٠)", s.src);
+      check(s.sessions === 32, "هـ٢. **٢٦ مشتراة + ٦ مهداة = ٣٢** — الهديّةُ لم تعد تسقط", String(s.sessions));
+
+      //  وبعد أن تُصحَّح الكلفةُ إلى المدفوع فعلاً، يسقط الاشتقاق ويعود
+      //  العدّادُ إلى سجلّ الدفعات — جلستان مدفوعتان + ستٌّ مهداة.
+      await q(`UPDATE patients SET total_cost=100000 WHERE id=$1`, [pid]);
+      await q(`UPDATE patient_cases SET cost=100000, cost_source='manual' WHERE patient_id=$1 AND case_type='physiotherapy'`, [pid]);
+      const s2 = await state(pid);
+      check(s2.src === "payments" && s2.sessions === 8,
+        "هـ٣. وبعد تصحيح الكلفة: ٨ من الدفعات (٢ مدفوعة + ٦ مهداة)", `${s2.sessions} (${s2.src})`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── و. ولا يُحتسب المهدى مرّتين، ولا دفعةُ جهازٍ تدخل الخطة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const pid = await mk("خطة-لا-تكرار", true);
+      await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash", isFreeSessions: true,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 4 }],
+      });
+      const a = await state(pid);
+      check(a.sessions === 14, "و١. ١٠ + ٤ = ١٤ (بلا ازدواج بين الخطة والدفعة)", String(a.sessions));
+      check(Array.isArray(a.plan) && a.plan.length === 1
+        && (a.plan as any[])[0].sessionCount === 14,
+        "و٢. الخطةُ دُمجت في سطرٍ واحد للنوع نفسِه", JSON.stringify(a.plan));
+
+      //  نوعٌ ليس من العلاج الطبيعي لا يدخل الخطة إطلاقاً.
+      const planBefore = JSON.stringify(a.plan);
+      await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash", isFreeSessions: true,
+        treatmentEntries: [{ treatmentType: "أطراف صناعية", sessionCount: 3 }],
+      });
+      const c = await state(pid);
+      check(JSON.stringify(c.plan) === planBefore, "و٣. **ودفعةُ جهازٍ لا تدخل الخطة**", JSON.stringify(c.plan));
+    }
+
+    console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
+  } finally {
+    httpServer.close();
+    await pool.end();
+  }
+  process.exit(failures === 0 ? 0 : 1);
+})();

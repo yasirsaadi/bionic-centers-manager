@@ -335,19 +335,26 @@ function buildStoredPermissions(systemUser: SystemUser) {
  * طريقة استهلاكها؛ المصدرُ وحده يتبدّل من الصفوف الخام إلى هذه اللقطة.
  */
 function summarizePaymentSessions(
-  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
-): { treatmentType: string | null; sessionCount: number }[] {
-  const byType = new Map<string, number>();
+  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount" | "isFreeSessions">[],
+): { treatmentType: string | null; sessionCount: number; isFree: boolean }[] {
+  //  ══ **والمجّانيُّ لا يُدمَج مع المدفوع** (إصلاحُ ٢٠٢٦-٠٩-٢١) ══════════
+  //  كان التجميعُ بالنوع وحده فتضيع رايةُ `is_free_sessions` في الطريق،
+  //  و`resolvePurchasedSessions` تحتاجها لتضيف الهديّةَ فوق الاشتقاق من
+  //  الكلفة. فالمفتاحُ صار (النوع، أمجّانيّةٌ هي) — **ولا مبلغَ ولا تاريخَ
+  //  ولا معرّفَ دفعةٍ يُضاف**، فالحدُّ الماليُّ الذي وُضع له هذا الملخّص
+  //  (إصلاحُ ٢٠٢٦-٠٩-٠٢) باقٍ بحرفه.
+  const byKey = new Map<string, { treatmentType: string | null; sessionCount: number; isFree: boolean }>();
   for (const p of payments) {
     const n = Number(p.sessionCount) || 0;
     if (n <= 0) continue;
-    const key = p.paymentTreatmentType ?? "";
-    byType.set(key, (byType.get(key) ?? 0) + n);
+    const type = p.paymentTreatmentType ?? "";
+    const isFree = Boolean(p.isFreeSessions);
+    const key = `${isFree ? "F" : "P"}|${type}`;
+    const row = byKey.get(key);
+    if (row) row.sessionCount += n;
+    else byKey.set(key, { treatmentType: type || null, sessionCount: n, isFree });
   }
-  return Array.from(byType, ([key, sessionCount]) => ({
-    treatmentType: key || null,
-    sessionCount,
-  }));
+  return Array.from(byKey.values());
 }
 
 export async function registerRoutes(
@@ -4277,6 +4284,38 @@ export async function registerRoutes(
           userId, userName, branchId: payment.branchId, newValues: payment,
           ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         });
+      }
+      //  ══ **والجلسةُ المُهداة ترفع خطّةَ صاحب الخطة** ══════════════════
+      //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) عدّادُ الجلسات يقرأ الخطةَ المحفوظة **وحدها**
+      //  متى وُجدت — لا يجمعها مع الدفعات أبداً (وإلّا عُدّت هديّةُ «خدمة
+      //  جديدة» مرّتين: هي تكتب في الاثنين معاً). فهذا البابُ كان يكتب صفَّ
+      //  الدفعة وحدَه، **فتختفي الهديّةُ عن صاحب الخطة تماماً** — مُثبَتٌ
+      //  حيّاً قبل الإصلاح: العدّادُ ١٠ ⟶ ١٠ بعد منح خمس جلسات.
+      //
+      //  فصار يرفعها **كما ترفعها «خدمة جديدة» بالضبط**، بالدالّة القانونية
+      //  نفسِها (`mergePhysioPlan`)، **ولا يُنشئ خطةً لمن لا خطةَ له**:
+      //  مريضُ المفرد تاريخُه كلُّه على دفعاته، وخطةٌ من جلسةٍ واحدة تطمسه
+      //  وتقلب عدّادَه سالباً (حادثةُ ذي قار ٢٠٢٦-٠٧-٢٩). وعدّادُ ذاك يقرأ
+      //  الدفعاتِ أصلاً فيرى الهديّةَ بلا خطة.
+      //
+      //  **وأنواعُ العلاج الطبيعي وحدها** تدخل الخطة — دفعةُ طرفٍ أو مسندٍ
+      //  ليست جلسة. **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر.
+      if (isFreeSessions) {
+        const freshPlan = (await storage.getPatient(input.patientId))?.physioPlan;
+        const hasPlan = Array.isArray(freshPlan) && freshPlan.length > 0;
+        const planAdditions = (entriesArray as any[])
+          .map((e) => ({
+            treatmentType: String(e?.treatmentType ?? "").trim(),
+            sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+          }))
+          .filter((e) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+        if (hasPlan && planAdditions.length > 0) {
+          const nextPlan = mergePhysioPlan(freshPlan, planAdditions);
+          await storage.updatePatient(input.patientId, {
+            physioPlan: nextPlan,
+            treatmentType: describePhysioPlan(nextPlan) || livePatient.treatmentType,
+          } as any);
+        }
       }
       res.status(201).json(results[0] || { message: "No payments created" });
     } else {
