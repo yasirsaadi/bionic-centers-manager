@@ -4189,9 +4189,20 @@ export async function registerRoutes(
     //  **والمجّانيُّ بالبنود يتخطّاه أيضاً**: حمولةٌ كلُّ بنودها مُهداة لا
     //  تقبض ديناراً، فحارسُ «لا متبقّي» لا موضوعَ له فيها — وكان يردّها ٤٠٠
     //  لصاحب ملفٍّ سُدِّد بالكامل، فيتعذّر منحُه هديّةً أصلاً.
-    const payableTotal = Array.isArray(treatmentEntries) && treatmentEntries.length > 0
-      ? treatmentEntries.reduce((sum: number, e: any) => sum + (entryIsFree(e) ? 0 : Math.max(0, Number(e?.cost) || 0)), 0)
-      : Math.max(0, Number((req.body as any)?.amount) || 0);
+    //  **والمبلغُ العلويُّ يبقى محسوباً** (تصحيحُ مراجعةٍ لاحقة): أنواعُ
+    //  الطرف/المسند تصل ببنودٍ كلفتُها صفرٌ ومبلغٍ يدويٍّ في الأعلى — وهي
+    //  الحالةُ التي تخدمها «شبكةُ الأمان» أدناه بإنشاء دفعةٍ واحدة به. فجمعُ
+    //  كلف البنود وحدَه كان يُخرج صفراً فيتخطّى الحارس، ثمّ تُدرَج الدفعةُ
+    //  الموجبة على ملفٍّ سُدِّد بالكامل. فالقاعدةُ: **يُتخطّى الحارسُ حين
+    //  لا يُقبَض دينارٌ أصلاً — أي حين تكون البنودُ كلُّها مُهداة.**
+    const entriesArr = Array.isArray(treatmentEntries) ? treatmentEntries : [];
+    const allEntriesFree = entriesArr.length > 0 && entriesArr.every((e: any) => entryIsFree(e));
+    const payableTotal = allEntriesFree
+      ? 0
+      : Math.max(
+        entriesArr.reduce((sum: number, e: any) => sum + (entryIsFree(e) ? 0 : Math.max(0, Number(e?.cost) || 0)), 0),
+        Math.max(0, Number((req.body as any)?.amount) || 0),
+      );
     if (!isFreeSessions && payableTotal > 0) {
       const patient = await storage.getPatient(input.patientId);
       if (patient) {

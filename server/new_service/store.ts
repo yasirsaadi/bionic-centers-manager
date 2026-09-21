@@ -17,6 +17,7 @@
 // صفٍّ يفسّرها ثقبٌ في التدقيق. فمَن ينادي من داخل معاملةٍ يمرّرها، ومَن
 // ينادي من نقطته يفتح معاملته هنا كما كانت النقطةُ تفعل.
 
+import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
@@ -133,6 +134,21 @@ export async function executeNewService(params: {
   }
 
   const body = async (tx: any): Promise<NewServiceResult> => {
+    //  ══ **وكلُّ كاتبٍ للخطة يقفل صفَّ المريض أوّلاً** ═════════════════════
+    //  هذه الدالّةُ قراءةٌ‑تعديلٌ‑كتابةٌ على `physio_plan` أيضاً (سطرُ
+    //  `mergePhysioPlan` أدناه): تقرأ الخطةَ هنا وتكتبها بعد عشرات الأسطر.
+    //  فهديّةٌ تُقيَّد في تلك الفجوة تضيع — تُكتب الخطةُ القديمةُ + الجديدُ
+    //  فوقها وصفُّ الهديّة باقٍ يقول إنها قُيِّدت. فالقفلُ هو قفلُ
+    //  `adjustPhysioPlanForGift` و`pricePhysiotherapy` نفسُه، فيتسلسل
+    //  الثلاثةُ على صفٍّ واحد.
+    //
+    //  **وترتيبُ القفل ترتيبُ البيت**: القفلُ الإرشاديُّ (٩١٩) ثمّ صفُّ
+    //  المريض ثمّ صفُّ الحالة — كما في `ensurePhysiotherapyCase` و
+    //  `syncPatientCases` بحرفهما. وهذه الدالّةُ تنادي الأولى بعد أسطر،
+    //  فلو أُخذ صفُّ المريض قبل الإرشاديّ لانقلب الترتيبُ عليهما وصار
+    //  الجمودُ ممكناً.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${params.patientId})`);
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${params.patientId} FOR UPDATE`);
     const patient = await storage.getPatient(params.patientId, tx);
     if (!patient) throw new NewServiceError("المريض غير موجود", 404);
 

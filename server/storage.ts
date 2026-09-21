@@ -1593,7 +1593,13 @@ export class DatabaseStorage implements IStorage {
     tx?: DbTransactionLike;
   }): Promise<Patient> {
     const body = async (tx: any) => {
-      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      //  ══ **وكلُّ كاتبٍ للخطة يقفل صفَّ المريض أوّلاً** (تصحيحُ مراجعةٍ
+      //  لاحقة) ═════════════════════════════════════════════════════════
+      //  هذه الدالّةُ قراءةٌ‑تعديلٌ‑كتابةٌ على `physio_plan` أيضاً. فتسعيرٌ
+      //  يقرأ خطةَ عشرٍ بينما معاملةُ هديّةٍ تكتب ثلاثَ عشرة، ثمّ ينتظرها
+      //  ويكتب «العشرَ القديمة + الجديد» — **فتضيع الهديّةُ وصفُّها باقٍ**.
+      //  فالقفلُ هو قفلُ `adjustPhysioPlanForGift` نفسُه، فيتسلسلان.
+      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId)).for("update");
       if (!existing) throw new Error("المريض غير موجود");
       if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
       // Remember HOW MANY sessions were sold, not just their price (036). The
@@ -1727,6 +1733,18 @@ export class DatabaseStorage implements IStorage {
     const n = Math.max(0, Math.floor(Number(payment.sessionCount) || 0));
     const type = String(payment.paymentTreatmentType ?? "").trim();
     if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
+    //  ══ **ولا قفلَ هنا — الصفُّ مقفولٌ قبلنا بمفتاحه الأجنبيّ** ══════════
+    //  السؤالُ «أله خطة؟» قرارٌ، وقراءتُه على حالةٍ بائتة كانت ستَسِم الصفَّ
+    //  `planCredited = false` بينما تسعيرٌ يُنشئ الخطةَ في اللحظة عينها —
+    //  فتختفي الهديّةُ عن عدّادٍ صار يقرأ الخطةَ وحدها.
+    //
+    //  لكنّ هذه الدالّةَ تُنادى **دائماً بعد إدراج صفّ الدفعة في المعاملة
+    //  نفسِها** (ناديها واحد)، والإدراجُ يأخذ `FOR KEY SHARE` على صفّ
+    //  المريض بحكم مفتاحه الأجنبيّ — وهو يتعارض مع `FOR UPDATE` الذي
+    //  يأخذه كاتبا الخطة (`pricePhysiotherapy` و«خدمة جديدة»). فالتسلسلُ
+    //  واقعٌ قبل أن نصل: مَن سبق التزم أوّلاً، وهذه تقرأ بعده.
+    //  **ولا يُضاف قفلٌ لا يُثبته اختبار** — أُضيف ثمّ أُزيل حين أثبتت
+    //  المراجعةُ العكسية أنّ إزالتَه لا تُسقط تأكيداً واحداً.
     const [row] = await tx.select({ plan: patients.physioPlan })
       .from(patients).where(eq(patients.id, payment.patientId));
     const hasPlan = Array.isArray(row?.plan) && (row!.plan as any[]).length > 0;

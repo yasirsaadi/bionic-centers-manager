@@ -529,6 +529,184 @@ async function state(pid: number) {
       check(a.sessions === before.sessions, "س٤. والخطةُ كما كانت", `${before.sessions} ⟶ ${a.sessions}`);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ع. وحارسُ «لا متبقّي» لا يسقط ببنودٍ صفرية ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  ثغرةٌ أدخلتُها أنا في إصلاح «المجّانيُّ بالبنود يتخطّى الحارس»: كان
+    //  `payableTotal` يُحسَب من **كلف البنود وحدها**. وحمولةُ الطرف/المسند
+    //  تصل ببنودٍ كلفتُها صفرٌ ومبلغٍ يدويٍّ في الأعلى — فيخرج المجموعُ
+    //  صفراً، **ويُتخطّى الحارس**، ثمّ تُدرج «شبكةُ الأمان» أدناه دفعةً
+    //  موجبة على ملفٍّ سُدِّد بالكامل. والقاعدةُ الآن: يُتخطّى الحارسُ حين
+    //  تكون البنودُ **كلُّها مُهداةً** لا حين يكون مجموعُها صفراً.
+    {
+      const pid = await mk("حارس-المتبقّي", true);
+      //  يُسدَّد الملفُّ بالكامل، فلا متبقّي عليه إطلاقاً.
+      const st0 = await state(pid);
+      if (st0.cost - st0.paid > 0) {
+        await http("POST", "/api/payments", S, {
+          patientId: pid, branchId: BR, amount: st0.cost - st0.paid, paymentMethod: "cash",
+          paymentTreatmentType: "روبوت", sessionCount: 0,
+        });
+      }
+      const b = await state(pid);
+      check(b.cost - b.paid === 0, "ع١. الأساس: الملفُّ مُسدَّدٌ بالكامل", `${b.cost} − ${b.paid}`);
+
+      const rowsBefore = (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pid])).rows[0].n;
+      const r = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 50000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 0,
+        //  **بنودٌ صفريةٌ غيرُ مُهداة** + مبلغٌ موجبٌ في الأعلى — شكلُ الثغرة.
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 0, cost: 0 }],
+      });
+      const rowsAfter = (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pid])).rows[0].n;
+      const a = await state(pid);
+      check(r.status === 400, "ع٢. **تُردّ ٤٠٠** — لا دفعةَ على ملفٍّ بلا متبقّي", String(r.status));
+      check(String(r.body?.message ?? "").includes("متبقي"),
+        "ع٣. والرسالةُ رسالةُ الحارس نفسُها", String(r.body?.message));
+      check(rowsAfter === rowsBefore, "ع٤. **وصفرُ صفوفٍ أُدرجت**", `${rowsBefore} ⟶ ${rowsAfter}`);
+      check(a.paid === b.paid, "ع٥. والمقبوضُ كما كان", `${b.paid} ⟶ ${a.paid}`);
+
+      //  **والهديّةُ لا تُردّ**: حمولةٌ كلُّ بنودها مُهداة تمضي على الملفّ
+      //  المُسدَّد نفسِه — وهو ما جاء تخطّي الحارس لأجله، ولم يُكسَر.
+      const g = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 4,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true }],
+      });
+      const g2 = await state(pid);
+      check(g.status === 201, "ع٦. والمجّانيُّ الصريحُ يمضي على الملفّ نفسِه", String(g.status));
+      check(g2.sessions === b.sessions + 4, "ع٧. والجلساتُ تُحتسب", `${b.sessions} ⟶ ${g2.sessions}`);
+      check(g2.paid === b.paid, "ع٨. ولا دينارَ تحرّك", `${b.paid} ⟶ ${g2.paid}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ف. وكلُّ كاتبٍ للخطة يتسلسل مع الهديّة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `adjustPhysioPlanForGift` تقفل صفَّ المريض، لكنّ كاتبَي الخطة
+    //  الآخرَين — «الكلفة والجلسات» و«خدمة جديدة» — كانا يقرآن الخطةَ بلا
+    //  قفلٍ ثمّ يكتبان فوقها بعد أسطر. فهديّةٌ تُقيَّد في تلك الفجوة تضيع:
+    //  يُكتب «القديمُ + الجديد» وصفُّ الهديّة باقٍ يقول إنها قُيِّدت.
+    //
+    //  والسباقُ حتميٌّ بالبوّابة نفسِها من القسم ح: تُحجَز كتابةُ الهديّة
+    //  **وهي ممسكةٌ بقفل الصفّ**، ويُطلَق الكاتبُ الآخر فيبلغ قراءتَه:
+    //    • بلا قفل ⟹ يقرأ ١٠ ويكتب ١٠+٥ = ١٥ — **الهديّةُ ضاعت**.
+    //    • بالقفل ⟹ ينتظر التزامَ الهديّة، فيقرأ ١٦ ويكتب ٢١.
+    const planWriterRace = async (
+      label: string, tag: string, fire: (pid: number) => Promise<any>,
+    ) => {
+      const pid = await mk(label, true);
+      const origConnect = (pool as any).connect.bind(pool);
+      let held = false;
+      let release!: () => void;
+      const gate = new Promise<void>((res) => { release = res; });
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (!held && /update\s+"?patients"?\s+set/i.test(text) && /physio_plan/i.test(text)) {
+            held = true;
+            await gate;
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let gift: any, other: any;
+      try {
+        const g = http("POST", "/api/payments", S, {
+          patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+          paymentTreatmentType: "روبوت", sessionCount: 6,
+          treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+        });
+        await new Promise((r) => setTimeout(r, 400));
+        const o = fire(pid);
+        await new Promise((r) => setTimeout(r, 600));
+        release();
+        [gift, other] = await Promise.all([g, o]);
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const a = await state(pid);
+      check(held, `${tag}١. البوّابةُ أمسكت كتابةَ الهديّة — السباقُ وقع`, String(held));
+      check(gift.status === 201 && other.status < 300,
+        `${tag}٢. الطلبان نجحا`, `${gift.status}/${other.status}`);
+      check(a.sessions === 21, `${tag}٣. **١٠ + ٦ + ٥ = ٢١** — لا هديّةَ تضيع`, String(a.sessions));
+    };
+
+    await planWriterRace("سباق-تسعير", "ف", (pid) =>
+      http("POST", `/api/patients/${pid}/price-physio`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 5 }] }));
+
+    console.log("\n── ص. و«خدمة جديدة» كذلك ──");
+    await planWriterRace("سباق-خدمة", "ص", (pid) =>
+      http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", serviceCost: 250000, initialPayment: 250000,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 5 }],
+      }));
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ق. والسؤالُ «أله خطة؟» تحت القفل لا قبله ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  الساقُ الثالثة: `creditGiftToPlanTx` تقرأ «أللمريض خطة؟» فتقرّر —
+    //  تُقيِّد الهديّةَ في الخطة أم تَسِم الصفَّ `planCredited = false`
+    //  وتمضي. وكانت تقرأ **بلا قفل**، فتسعيرٌ يُنشئ الخطةَ في اللحظة عينها
+    //  يجعلها تقرأ «بلا خطة» فتمضي، ثمّ تُكتب الخطةُ من التسعير وحده —
+    //  **فتختفي الهديّةُ عن عدّادٍ صار يقرأ الخطةَ وحدها**.
+    //
+    //  هنا تُحجَز كتابةُ **التسعير** (فمريضٌ بلا خطةٍ لا يكتب مسارُ الهديّة
+    //  شيئاً)، وتُطلَق الهديّةُ فتبلغ سؤالَها:
+    //    • بلا قفل ⟹ تقرأ «بلا خطة» وتمضي ⟹ الخطةُ ٥ والهديّةُ ضاعت.
+    //    • بالقفل ⟹ تنتظر التزامَ التسعير، فتقرأ الخطةَ وتُقيِّد ⟹ ٩.
+    {
+      const pid = await mk("سباق-بلا-خطة", false);
+      const origConnect = (pool as any).connect.bind(pool);
+      let held = false;
+      let release!: () => void;
+      const gate = new Promise<void>((res) => { release = res; });
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (!held && /update\s+"?patients"?\s+set/i.test(text) && /physio_plan/i.test(text)) {
+            held = true;
+            await gate;
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let price: any, gift: any;
+      try {
+        const pr = http("POST", `/api/patients/${pid}/price-physio`, S,
+          { entries: [{ treatmentType: "روبوت", sessionCount: 5 }] });
+        await new Promise((r) => setTimeout(r, 400));
+        const g = http("POST", "/api/payments", S, {
+          patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+          paymentTreatmentType: "روبوت", sessionCount: 4,
+          treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true }],
+        });
+        await new Promise((r) => setTimeout(r, 600));
+        release();
+        [price, gift] = await Promise.all([pr, g]);
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const a = await state(pid);
+      const credited = (await q(
+        `SELECT plan_credited FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0]?.plan_credited;
+      check(held, "ق١. البوّابةُ أمسكت كتابةَ التسعير — السباقُ وقع", String(held));
+      check(price.status < 300 && gift.status === 201, "ق٢. الطلبان نجحا", `${price.status}/${gift.status}`);
+      check(a.sessions === 9, "ق٣. **٥ + ٤ = ٩** — الهديّةُ دخلت الخطةَ التي وُلدت للتوّ", String(a.sessions));
+      check(credited === true, "ق٤. والصفُّ موسومٌ **مقيَّداً** — لا وسمٌ كاذب", String(credited));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();
