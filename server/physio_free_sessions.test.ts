@@ -21,7 +21,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { resolvePurchasedSessions } from "../shared/pricing";
 import { readFileSync } from "fs";
-import { pickPhysioSessions, seedPurchasedUpFront } from "../client/src/pages/physio_sessions_source";
+import { pickPhysioSessions, perVisitSessionMode } from "../client/src/pages/physio_sessions_source";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -1486,14 +1486,19 @@ async function state(pid: number) {
       check(pickPhysioSessions(undefined, true, () => ({ total: 10 } as any)).total === 10,
         "زز٣. وبلا رقمٍ من الخادم يبقى الحسابُ المحلّيّ — لا فراغ", "");
 
-      check(seedPurchasedUpFront("cost", 16, false) === true,
+      check(perVisitSessionMode("cost", 16, false) === "seed",
         "زز٤. ومصدرٌ غيرُ الدفعات ⟶ يُزرَع المجموع كما كان", "");
-      check(seedPurchasedUpFront("payments", 8, false) === false,
+      check(perVisitSessionMode("payments", 8, false) === "walk",
         "زز٥. والمشيُ الزمنيُّ لمن يملك الصفوف — كما كان بحرفه", "");
-      check(seedPurchasedUpFront("payments", 8, true) === true,
-        "زز٦. **ومَن حُجبت عنه الصفوفُ يُزرَع له المجموع** — لا دفعةَ يمشي عليها", "");
-      check(seedPurchasedUpFront("cost", 0, true) === false,
+      //  ⚠ **انقلب عقدُ زز٦ في مراجعة Codex العاشرة** — بقرارِ التصحيح لا
+      //  لتخضير اختبار: الزرعُ لمن حُجبت عنه الصفوفُ كان يُقدِّم شراءً
+      //  لاحقاً على زياراتٍ سبقته. والقسمُ «كك» يُثبت الفرقَ حيّاً.
+      check(perVisitSessionMode("payments", 8, true) === "hidden",
+        "زز٦. **ومَن حُجبت عنه الصفوفُ لا يُعرَض له رقمٌ لكلّ زيارة**", "");
+      check(perVisitSessionMode("cost", 0, true) === "walk",
         "زز٧. وصفرٌ لا يُزرَع", "");
+      check(perVisitSessionMode("cost", 16, true) === "seed",
+        "زز٧أ. **وخطةٌ مشتراةٌ سلفاً تُزرَع ولو حُجبت الصفوف** — لم تُمَسّ", "");
 
       //  ② والشاشةُ لا تحمل حساباً ثانياً يلتفّ على القرار.
       const src = readFileSync("client/src/pages/PatientDetails.tsx", "utf8");
@@ -1504,8 +1509,10 @@ async function state(pid: number) {
         src.indexOf("const casePaymentSessions"));
       check(resolver.includes("pickPhysioSessions(") && resolver.includes("resolvePurchasedSessions("),
         "زز٩. والنداءُ داخل المُحلّل الواحد الذي يقرّر المصدر", resolver.slice(0, 200));
-      check(src.includes("seedPurchasedUpFront(") && !/source !== "payments"/.test(src),
+      check(src.includes("perVisitSessionMode(") && !/source !== "payments"/.test(src),
         "زز١٠. وقرارُ الزرع من الدالّة الخالصة لا من شرطٍ في الشاشة", "");
+      check(/visitMode === "hidden" \|\| isConsultation/.test(src),
+        "زز١٠أ. **و«لا يُعرَض» تُرسَم بالعلامة القائمة نفسِها** (`-999` ⟶ «-»)", "");
 
       //  ③ **والفرقُ حقيقيٌّ لا صوريّ**: شكلُ غ نفسُه — الاشتقاقُ ١٠ والمُهدى
       //     ٦ — يقرؤه تبويبُ الزيارات ١٠ لو حسب من صفوفٍ لا يملكها.
@@ -1556,8 +1563,9 @@ async function state(pid: number) {
       const sm = bm.body?.physioSessionsResolved;
       check(sm?.total === 3 && sm?.source === "payments",
         "زز١٤. مفردٌ محجوب: ٣ جلسات بمصدر «الدفعات»", JSON.stringify(sm));
-      check(seedPurchasedUpFront(sm?.source, sm?.total, !bm.body?.payments) === true,
-        "زز١٥. **ويُزرَع له المجموعُ رغم ذلك** — لا صفَّ يمشي عليه", "");
+      //  ⚠ **وانقلب عقدُ زز١٥ معه** — للسبب نفسِه.
+      check(perVisitSessionMode(sm?.source, sm?.total, !bm.body?.payments) === "hidden",
+        "زز١٥. **ولا رقمَ لكلّ زيارة** — لا صفَّ يمشي عليه ولا مجموعَ اشتُري سلفاً", "");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1675,6 +1683,153 @@ async function state(pid: number) {
         "طط٤. **والتعديلُ نجح** — لا ٥٠٠", `${patchRes?.status} ${JSON.stringify(patchRes?.body).slice(0, 120)}`);
       const t = (await q(`SELECT payment_treatment_type t FROM payments WHERE id=$1`, [payId])).rows[0].t;
       check(t === "أبر صينية", "طط٥. والوسمُ الجديدُ محفوظ", String(t));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── يي. دفعتان مختلطتان (مدفوعٌ ثمّ هديّة) لا تتجمّدان ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  إدراجُ البند المدفوع يأخذ `FOR KEY SHARE` على صفّ المريض (متوافقٌ مع
+    //  نفسِه)، ثمّ يطلب قفلُ بند الهديّة ترقيتَه إلى `FOR UPDATE` — فطلبان
+    //  متزامنان بالشكل نفسِه يتجمّدان. فالقفلُ يُؤخَذ **قبل أوّل إدراج** متى
+    //  حملت الدفعةُ هديّةً تدخل الخطة.
+    {
+      const pid = await mk("جمودُ-الدفعة-المختلطة", true);
+      const b = await state(pid);
+
+      const origConnect = (pool as any).connect.bind(pool);
+      let arrivals = 0;
+      let releaseFirst: (() => void) | null = null;
+      (pool as any).connect = async function (...ca: any[]) {
+        if (ca.some((x) => typeof x === "function")) return origConnect(...ca);
+        const client: any = await origConnect(...ca);
+        const origQuery = client.query.bind(client);
+        client.query = function (...qa: any[]) {
+          const text = String(typeof qa[0] === "string" ? qa[0] : (qa[0]?.text ?? ""));
+          if (!/pg_advisory_xact_lock\(\s*919/.test(text)) return origQuery(...qa);
+          const n = ++arrivals;
+          const gate = n === 1
+            ? new Promise<void>((res) => { releaseFirst = res; })
+            : Promise.resolve();
+          const cb = typeof qa[qa.length - 1] === "function" ? qa[qa.length - 1] : null;
+          if (cb) { gate.then(() => origQuery(...qa)); return undefined as any; }
+          return gate.then(() => origQuery(...qa));
+        };
+        return client;
+      };
+
+      const mixed = () => http("POST", `/api/payments`, S, {
+        patientId: pid, branchId: BR, amount: 50000, paymentMethod: "cash",
+        treatmentEntries: [
+          { treatmentType: "روبوت", sessionCount: 1, cost: 50000 },
+          { treatmentType: "روبوت", sessionCount: 1, cost: 0, isFree: true },
+        ],
+      });
+      let settled = 0;
+      let r1: any = null, r2: any = null;
+      //  **والجمودُ يُقاس من سجلّ الخادم لا من نصّ الردّ**: المعالِجُ يُخفي
+      //  `40P01` خلف رسالةٍ عربية عامّة، فاختبارٌ يقرأ الجسمَ وحده يمرّ
+      //  لسببٍ خاطئ.
+      const origErr = console.error.bind(console);
+      let serverLog = "";
+      console.error = (...a: any[]) => { serverLog += a.map(String).join(" ") + "\n"; origErr(...a); };
+      try {
+        const p1 = mixed().then((r) => { settled++; r1 = r; return r; });
+        const p2 = mixed().then((r) => { settled++; r2 = r; return r; });
+        //  ننتظر إمّا معامَلةً واقفةً على قفل (شكلُ ما قبل الإصلاح) وإمّا
+        //  طلباً اكتمل (شكلُ الإصلاح) — لا مهلةً عمياء.
+        let waiting = false;
+        for (let i = 0; i < 60 && !waiting && settled === 0; i++) {
+          const r = await q(
+            `SELECT count(*)::int n FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock' AND state = 'active'`);
+          waiting = Number(r.rows[0].n) > 0;
+          if (!waiting) await new Promise((rs) => setTimeout(rs, 50));
+        }
+        check(arrivals >= 2, "يي١. الطلبان بلغا قفلَ الخطة — السيناريو ليس فارغاً", String(arrivals));
+        if (releaseFirst) (releaseFirst as () => void)();
+        await Promise.all([p1, p2]);
+      } finally {
+        (pool as any).connect = origConnect;
+        console.error = origErr;
+      }
+
+      const bodies = `${JSON.stringify(r1?.body).slice(0, 140)} | ${JSON.stringify(r2?.body).slice(0, 140)}`;
+      check(r1?.status === 201 && r2?.status === 201,
+        "يي٢. **الطلبان نجحا معاً** — لا جمود", `${r1?.status}/${r2?.status} ${bodies}`);
+      check(!/deadlock detected|40P01/i.test(serverLog),
+        "يي٣. **ولا `deadlock detected` في سجلّ الخادم**", serverLog.slice(0, 300));
+
+      const rows = (await q(
+        `SELECT amount, is_free_sessions f, plan_credited c FROM payments
+          WHERE patient_id=$1 ORDER BY id`, [pid])).rows;
+      check(rows.length === 4, "يي٤. أربعةُ صفوف: مدفوعان وهديّتان", JSON.stringify(rows));
+      check(rows.filter((x: any) => x.f === true).length === 2,
+        "يي٥. الهديّتان محفوظتان", JSON.stringify(rows));
+      check(rows.filter((x: any) => x.f === true).every((x: any) => x.c === true),
+        "يي٦. وكلتاهما موسومةٌ مقيَّدة", JSON.stringify(rows));
+      const a = await state(pid);
+      check(a.sessions === b.sessions + 2,
+        `يي٧. **والعدّادُ ${b.sessions} ⟶ ${b.sessions + 2}**`, `${a.sessions} ${JSON.stringify(a.plan)}`);
+      check(a.paid === b.paid + 100000, "يي٨. والمقبوضُ ارتفع بالمدفوعَين", String(a.paid));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── كك. والزرعُ كان يُقدِّم شراءً لاحقاً على زياراتٍ سبقته ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  مريضُ مفردٍ (مصدرُه الدفعات): يشتري عشراً ويحضر، ثمّ يشتري عشراً
+    //  أخرى. فالمخوَّلُ يمشي زمنياً فيقرأ على الزيارة الأولى ١٠−١ = ٩،
+    //  والمحجوبُ عنه — بالزرع — كان يقرأ ٢٠−١ = ١٩ على **الزيارة نفسِها**.
+    {
+      const BLIND3 = 9941;
+      await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,is_active,
+                                         can_view_patients,can_view_payments)
+               VALUES ($1,'physblind3','x','استقبالٌ بلا مال','reception',$2,true,true,false)
+               ON CONFLICT (id) DO UPDATE SET is_active=true, can_view_patients=true, can_view_payments=false,
+                 branch_id=EXCLUDED.branch_id`, [BLIND3, BR]);
+      const SB = { userId: BLIND3, branchId: BR, accessibleBranches: [BR], displayName: "بلا مال",
+        isAdmin: false, role: "reception" };
+      const pid = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
+                               is_physiotherapy,treatment_type,total_cost)
+         VALUES ($1,'مفردٌ-بشراءين',$2,'مراجعة',45,'ألم',true,'روبوت',0) RETURNING id`,
+        [`WB-${++code}`, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
+               VALUES ($1,$2,'physiotherapy',0,'manual','active')`, [pid, BR]);
+      //  شراءٌ أوّل (١٠) ثمّ زيارةٌ ثمّ شراءٌ ثانٍ (١٠) ثمّ زيارة — بتواريخ صريحة.
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,date)
+               VALUES ($1,$2,500000,'روبوت',10,'2026-03-01T09:00:00'),
+                      ($1,$2,500000,'روبوت',10,'2026-03-20T09:00:00')`, [pid, BR]);
+      await q(`INSERT INTO visits (patient_id,branch_id,visit_date,treatment_type,details)
+               VALUES ($1,$2,'2026-03-05T09:00:00','روبوت','جلسة'),
+                      ($1,$2,'2026-03-25T09:00:00','روبوت','جلسة')`, [pid, BR]);
+
+      const asAdmin = await http("GET", `/api/patients/${pid}`, S);
+      const asBlind = await http("GET", `/api/patients/${pid}`, SB);
+      const srv = asBlind.body?.physioSessionsResolved;
+      check(srv?.total === 20 && srv?.source === "payments",
+        "كك١. الخادمُ يرسل ٢٠ بمصدر «الدفعات»", JSON.stringify(srv));
+      check(Array.isArray(asAdmin.body?.payments) && asAdmin.body.payments.length === 2,
+        "كك٢. والمخوَّلُ يرى صفَّي الدفع بتاريخيهما", String(asAdmin.body?.payments?.length));
+      check(!asBlind.body?.payments,
+        "كك٣. والمحجوبُ عنه لا يصله صفٌّ واحد", String(!!asBlind.body?.payments));
+
+      //  **والفرقُ حقيقيٌّ لا صوريّ**: ما اشتُري حتى الزيارة الأولى ≠ المجموع.
+      const firstVisit = new Date("2026-03-05T09:00:00").getTime();
+      const boughtByThen = (asAdmin.body.payments as any[])
+        .filter((p) => new Date(p.date).getTime() <= firstVisit)
+        .reduce((n, p) => n + (p.sessionCount || 0), 0);
+      check(boughtByThen === 10 && srv.total === 20,
+        "كك٤. **حتى الزيارة الأولى اشتُري ١٠ فقط والمجموعُ ٢٠**", `${boughtByThen}/${srv?.total}`);
+      check(boughtByThen - 1 === 9 && srv.total - 1 === 19,
+        "كك٥. **فالمخوَّلُ يقرأ ٩ والزرعُ كان يقرأ ١٩ على الزيارة عينها**", "");
+
+      check(perVisitSessionMode(srv.source, srv.total, !asBlind.body?.payments) === "hidden",
+        "كك٦. **فلا رقمَ يُعرَض للمحجوب عنه**", "");
+      check(perVisitSessionMode(srv.source, srv.total, !asAdmin.body?.payments) === "walk",
+        "كك٧. والمخوَّلُ يمشي زمنياً كما كان بحرفه", "");
+      //  والمجموعُ الصحيحُ يبقى في بطاقة «ملخّص الجلسات» فوقه — لا يضيع.
+      check(pickPhysioSessions(srv, !asBlind.body?.payments, () => ({ total: 0 } as any)).total === 20,
+        "كك٨. **وبطاقةُ الملخّص تبقى تعرض ٢٠** — الرقمُ لم يضع", "");
     }
 
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);

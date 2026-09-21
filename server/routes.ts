@@ -4345,6 +4345,23 @@ export async function registerRoutes(
       //  خارجها كما كانا** — لا تتغيّر معامَليّتُهما في هذه التمريرة.
       const created: { payment: any; freeEntry: boolean }[] = await db.transaction(async (tx) => {
         const rows: { payment: any; freeEntry: boolean }[] = [];
+        //  ══ **والقفلُ مرّةً واحدة قبل أوّل إدراج** (مراجعةُ Codex العاشرة) ══
+        //  إدراجُ صفّ دفعةٍ يأخذ `FOR KEY SHARE` على صفّ المريض بمفتاحه
+        //  الأجنبيّ — **وهي متوافقةٌ مع نفسِها**. فدفعةٌ مختلطة (بندٌ مدفوعٌ
+        //  ثمّ هديّة) كانت تُدرج المدفوعَ أوّلاً ثمّ يطلب `lockPatientForGiftTx`
+        //  ترقيتَه إلى `FOR UPDATE` عند بند الهديّة: طلبان متزامنان بالشكل
+        //  نفسِه يمسكان `KEY SHARE` معاً ثمّ ينتظر كلٌّ ترقيةَ الآخر ⟶
+        //  **`deadlock detected`** يُردّ به طلبٌ مشروع بـ٥٠٠.
+        //
+        //  فيُسأل `giftEntersPlan` عن **البنود كلِّها** ويُقفَل قبل أيّ إدراج.
+        //  **والبوّابةُ هي بوّابةُ القيد بحرفها** — لا شرطَ ثالث — فلا يُقفَل
+        //  ما لا يُقيَّد (دفعةٌ كلُّها مدفوعة لا تُسلسَل بلا سبب).
+        const batchLocksPlan = treatmentEntries.some((e: any) => storage.giftEntersPlan({
+          isFreeSessions: entryIsFree(e),
+          paymentTreatmentType: e?.treatmentType,
+          sessionCount: e?.sessionCount,
+        }));
+        if (batchLocksPlan) await storage.lockPatientPlanRowTx(tx, Number((input as any).patientId));
         for (const entry of treatmentEntries) {
           const freeEntry = entryIsFree(entry);
           if (entry.cost > 0 || freeEntry) {

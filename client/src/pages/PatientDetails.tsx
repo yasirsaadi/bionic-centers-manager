@@ -20,7 +20,7 @@ import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolvePurchasedSessions } from "@shared/pricing";
-import { pickPhysioSessions, seedPurchasedUpFront } from "./physio_sessions_source";
+import { pickPhysioSessions, perVisitSessionMode } from "./physio_sessions_source";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1316,13 +1316,17 @@ export default function PatientDetails() {
                         // Anything but the old payment-by-payment flow means the
                         // whole course was bought up front: seed the credit and
                         // skip the chronological payment walk below.
-                        //  **ومَن حُجبت عنه الصفوفُ الخام يُزرَع له المجموع** —
-                        //  المشيُ الزمنيُّ يحتاج دفعاتٍ بتواريخها ولا دفعةَ
-                        //  واحدة تصله، فبدونه يقرأ كلُّ صفٍّ «المتبقي = −عدد
-                        //  الزيارات». والمزروعُ رقمُ الخادم نفسُه الذي تعرضه
-                        //  البطاقةُ فوقه.
-                        const usePlan = seedPurchasedUpFront(
+                        //  ══ **ومَن حُجبت عنه الصفوفُ لا يُزرَع له مجموع** ══
+                        //  (مراجعةُ Codex العاشرة) الزرعُ صادقٌ حين تكون
+                        //  الدورةُ مشتراةً سلفاً فعلاً (خطةٌ أو نصٌّ أو
+                        //  اشتقاقٌ من الكلفة). أمّا مريضُ المفرد — مصدرُه
+                        //  الدفعاتُ — فزرعُ مجموعه **يُقدِّم شراءً لاحقاً على
+                        //  زياراتٍ سبقته**، فيقرأ المحجوبُ عنه رقماً يخالف ما
+                        //  يقرؤه المخوَّل. **فلا رقمَ يُعرَض له هنا**،
+                        //  والمجموعُ الصحيح في بطاقة «ملخّص الجلسات» فوقه.
+                        const visitMode = perVisitSessionMode(
                           purchasedRows.source, purchasedRows.total, rawPaymentsRedacted);
+                        const usePlan = visitMode === "seed";
                         if (usePlan) Object.assign(paidByType, purchasedRows.byType);
                         const visitsOldestFirst = [...(caseVisits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         const paymentsSorted = usePlan ? [] : [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
@@ -1345,7 +1349,7 @@ export default function PatientDetails() {
                           if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          if (isConsultation || isServiceVisit || !v.treatmentType) {
+                          if (visitMode === "hidden" || isConsultation || isServiceVisit || !v.treatmentType) {
                             remainingMap[v.id] = -999;
                           } else {
                             remainingMap[v.id] = (paidByType[type] || sessionsByType[type] || 0) - (visitCountByType[type] || 0);

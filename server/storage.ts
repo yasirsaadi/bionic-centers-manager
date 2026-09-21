@@ -1832,16 +1832,44 @@ export class DatabaseStorage implements IStorage {
     ));
   }
 
-  async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
-    if (!values?.isFreeSessions) return;
-    //  **الشرطُ هو شرطُ `creditGiftToPlanTx` بحرفه** — دالّةٌ واحدة يقرؤها
-    //  الاثنان، فلا يقفل أحدُهما ما لا يقيّده الآخر ولا العكس.
-    if (!physioSessionsEnterPlan(values.paymentTreatmentType, values.sessionCount)) return;
-    const patientId = Number(values.patientId);
+  /**
+   * **أيدخل هذا البندُ خطةَ الجلسات؟** — البوّابةُ الواحدة التي يقرؤها
+   * القفلُ والقيدُ معاً، فلا يقفل أحدُهما ما لا يقيّده الآخر ولا العكس.
+   *
+   * ويقرؤها **مَن يقرّر القفلَ للدفعة كلِّها قبل أوّل إدراج** أيضاً
+   * (`POST /api/payments`) — فلا شرطَ ثالثٌ ينحرف عن الاثنين.
+   */
+  giftEntersPlan(values: any): boolean {
+    if (!values?.isFreeSessions) return false;
+    return physioSessionsEnterPlan(values.paymentTreatmentType, values.sessionCount);
+  }
+
+  /**
+   * قفلُ المريض **بالترتيب الواحد**: إرشاديّ ⟶ صفُّ المريض — راجع
+   * `lockPatientForPaymentWriteTx`.
+   *
+   * ══ **ويُؤخَذ قبل أوّل إدراجٍ في المعاملة، لا عند أوّل هديّة** ══════════
+   * (مراجعةُ Codex العاشرة) إدراجُ صفّ دفعةٍ يأخذ `FOR KEY SHARE` على صفّ
+   * المريض بحكم مفتاحه الأجنبيّ — **وهي متوافقةٌ مع نفسِها**. فدفعةٌ
+   * مختلطة (بندٌ مدفوعٌ ثمّ هديّة) تُدرج المدفوعَ أوّلاً ثمّ تطلب هنا
+   * ترقيةَ القفل إلى `FOR UPDATE`: طلبان متزامنان بالشكل نفسِه يمسكان
+   * `KEY SHARE` معاً ثمّ ينتظر كلٌّ ترقيةَ الآخر ⟶ **`deadlock detected`
+   * حقيقيّ** (`40P01`) يُردّ به طلبٌ مشروع.
+   *
+   * فالمُنادي يسأل `giftEntersPlan` عن **بنود الدفعة كلِّها** ويقفل مرّةً
+   * واحدة قبل أن يُدرج شيئاً. وإعادةُ أخذ القفلين في المعاملة نفسِها بعد
+   * ذلك لا تفعل شيئاً — الإرشاديُّ معدودٌ و`FOR UPDATE` على صفٍّ مقفولٍ
+   * منها لا ينتظر — فيبقى الحارسُ لكلّ بندٍ حزاماً ثانياً بلا كلفة.
+   */
+  async lockPatientPlanRowTx(tx: any, patientId: number): Promise<void> {
     if (!Number.isInteger(patientId) || patientId <= 0) return;
-    //  **وبالترتيب الواحد نفسِه** — راجع `lockPatientForPaymentWriteTx`.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
     await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  }
+
+  async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
+    if (!this.giftEntersPlan(values)) return;
+    await this.lockPatientPlanRowTx(tx, Number(values.patientId));
   }
 
   async creditGiftToPlanTx(tx: any, payment: any): Promise<void> {
