@@ -15,30 +15,41 @@
  *  ② **وأيُّ خطأٍ من صنفٍ قاتل — في أيّ ملفّ ولو كان مَديناً ⟶ فشل.** القاتلُ
  *    ما يمنع الملفَّ من العمل أصلاً (نحوٌ فاسد، تعريفٌ مكرَّر) — وهو صنفُ
  *    الكسر الذي وقع. فلا ملفَّ اختبارٍ واحد يبقى بلا حارسٍ ضدّه.
+ *  ③ **وديونُ الملفّ المَدين مربوطةٌ بعددها لا باسمه ⟶ زيادةٌ فشل.** إعفاءُ
+ *    الملفّ كلِّه كان يجعل خطأً جديداً فيه يمرّ صامتاً، فتنمو الديونُ بلا
+ *    أن يعلم أحد. والنقصانُ فشلٌ أيضاً — لكنّه فشلٌ يطلب تحديثَ الرقم.
  *
  * وأخطاءُ شيفرة التطبيق (غير `*.test.ts`) ليست من شأن هذا الفحص — لها
  * `npm run check` بخطّ أساسه المعروف.
  *
  * **والقائمةُ تَنقص ولا تزيد**: كلّما نُظّف ملفّ، يُحذَف من هنا فيصير محروساً
- * بالكامل. وإضافةُ ملفٍّ إليها قرارٌ صريح، لا شيءٌ يقع بالسهو.
+ * بالكامل. وإضافةُ ملفٍّ إليها — أو رفعُ رقمٍ فيها — قرارٌ صريح، لا شيءٌ يقع
+ * بالسهو.
  */
 import { spawnSync } from "child_process";
 
-/** ديونٌ قديمة سابقة لهذا الفحص — تُحصى وتُعرَض ولا تُفشِل. */
-const PENDING_DEBT = new Set([
-  "client/src/components/purchase_dialog_ui.test.ts",
-  "server/component_sale.test.ts",
-  "server/cost_ledger_parity.test.ts",
-  "server/device_episode_integration.test.ts",
-  "server/maintenance_concurrent.test.ts",
-  "server/manufacturing/stages.test.ts",
-  "server/patient_branch_access.test.ts",
-  "server/patient_duplicate_guard.test.ts",
-  "server/patient_search.test.ts",
-  "server/patient_trash_badge.test.ts",
-  "server/pending_charge.test.ts",
-  "server/simplified_maintenance.test.ts",
-  "shared/ai_capabilities.test.ts",
+/**
+ * ديونٌ قديمة سابقة لهذا الفحص — **بعددها لكلّ ملفّ لا بإعفاء الملفّ**.
+ *
+ * وقائمةُ أسماءٍ مجرّدة كانت تُعفي الملفَّ من **كلّ** خطأٍ غيرِ قاتل، فخطأُ
+ * نوعٍ جديد في ملفٍّ مَدين يرفع المجموعَ ٣٣ ⟶ ٣٤ **والفحصُ أخضر** — فتنمو
+ * الديونُ صامتةً (أمسكته مراجعةُ Codex على #365). فالرقمُ هو العقد:
+ * أكثرُ منه ⟶ فشل، وأقلُّ منه ⟶ فشلٌ يطلب تحديثَه.
+ */
+const PENDING_DEBT = new Map<string, number>([
+  ["client/src/components/purchase_dialog_ui.test.ts", 1],
+  ["server/component_sale.test.ts", 6],
+  ["server/cost_ledger_parity.test.ts", 1],
+  ["server/device_episode_integration.test.ts", 1],
+  ["server/maintenance_concurrent.test.ts", 10],
+  ["server/manufacturing/stages.test.ts", 1],
+  ["server/patient_branch_access.test.ts", 2],
+  ["server/patient_duplicate_guard.test.ts", 3],
+  ["server/patient_search.test.ts", 1],
+  ["server/patient_trash_badge.test.ts", 1],
+  ["server/pending_charge.test.ts", 1],
+  ["server/simplified_maintenance.test.ts", 3],
+  ["shared/ai_capabilities.test.ts", 2],
 ]);
 
 /** أصنافٌ تمنع الملفَّ من العمل أصلاً — لا تُغتفَر في أيّ ملفّ. */
@@ -68,6 +79,17 @@ const blocking = errs.filter((e) => !PENDING_DEBT.has(e.file));
 const fatal = errs.filter((e) => FATAL.has(e.code));
 const debt = errs.filter((e) => PENDING_DEBT.has(e.file) && !FATAL.has(e.code));
 
+//  خطُّ الأساس لكلّ ملفّ: أكثرُ ⟶ انحدارٌ جديد · أقلُّ ⟶ نُظّف فحدِّث الرقم.
+const debtByFile = new Map<string, number>();
+for (const e of debt) debtByFile.set(e.file, (debtByFile.get(e.file) ?? 0) + 1);
+const grown: string[] = [];
+const shrunk: string[] = [];
+for (const [file, expected] of [...PENDING_DEBT].sort()) {
+  const actual = debtByFile.get(file) ?? 0;
+  if (actual > expected) grown.push(`${file}: ${expected} ⟶ ${actual}`);
+  else if (actual < expected) shrunk.push(`${file}: ${expected} ⟶ ${actual}`);
+}
+
 const shown = new Set<string>();
 const print = (title: string, list: Err[]) => {
   if (!list.length) return;
@@ -81,19 +103,23 @@ const print = (title: string, list: Err[]) => {
 print("❌ أخطاءٌ في ملفّاتٍ يجب أن تكون نظيفة:", blocking);
 print("❌ أخطاءٌ من صنفٍ قاتل (تمنع الملفَّ من العمل):", fatal);
 
+if (grown.length) {
+  console.log("\n❌ ديونٌ **نمت** في ملفّاتٍ مَدينة — أخطاءٌ جديدة لا تُغتفَر:");
+  for (const line of grown) console.log(`   ${line}`);
+  print("   وهذه أخطاءُ تلك الملفّات:",
+    debt.filter((e) => (debtByFile.get(e.file) ?? 0) > (PENDING_DEBT.get(e.file) ?? 0)));
+}
+if (shrunk.length) {
+  console.log("\n❌ ملفّاتٌ نُظّفت جزئياً أو كلّياً — حدِّث رقمَها في PENDING_DEBT:");
+  for (const line of shrunk) console.log(`   ${line}`);
+}
+
 if (debt.length) {
-  const byFile = new Map<string, number>();
-  for (const e of debt) byFile.set(e.file, (byFile.get(e.file) ?? 0) + 1);
-  console.log(`\nℹ️  ديونٌ قديمة معروفة (${debt.length} خطأ في ${byFile.size} ملفّ):`);
-  for (const [f, n] of [...byFile].sort()) console.log(`   ${n.toString().padStart(3)}  ${f}`);
+  console.log(`\nℹ️  ديونٌ قديمة معروفة (${debt.length} خطأ في ${debtByFile.size} ملفّ):`);
+  for (const [f, n] of [...debtByFile].sort()) console.log(`   ${n.toString().padStart(3)}  ${f}`);
 }
 
-const stale = [...PENDING_DEBT].filter((f) => !errs.some((e) => e.file === f)).sort();
-if (stale.length) {
-  console.log("\n❌ ملفّاتٌ على قائمة الديون ولم تعد تحمل أخطاء — احذفها من القائمة:");
-  for (const f of stale) console.log(`   ${f}`);
-}
-
-const failed = blocking.length > 0 || fatal.length > 0 || stale.length > 0;
+const failed = blocking.length > 0 || fatal.length > 0
+  || grown.length > 0 || shrunk.length > 0;
 console.log(failed ? "\n❌ فحصُ أنواع الاختبارات فشل" : "\n✅ فحصُ أنواع الاختبارات نجح");
 process.exit(failed ? 1 : 0);

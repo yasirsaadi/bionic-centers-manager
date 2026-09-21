@@ -58,6 +58,67 @@ import {
   SESSIONS_LIST_PAGE_PATH, SESSION_ANALYTICS_PAGE_PATH,
   ADMIN_PAGE_PATH, ACCOUNTING_PAGE_PATH, STATISTICS_PAGE_PATH, SURVEYS_PAGE_PATH,
 } from "./ai/page_guides";
+
+/**
+ * **الشيفرةُ التنفيذية وحدها** من مصدرِ ملفّ الأدلّة.
+ *
+ * يُسقط **نصَّ القوالب الحرفيَّ** والتعليقات، **ويُبقي ما داخل `${...}`**
+ * لأنه كودٌ يُنفَّذ. وكان النزعُ بتعبيرٍ نمطيٍّ واحد يمحو القالبَ كلَّه بما
+ * فيه استدعاءاتُه، فكان نداءٌ داخل `${...}` يفلت من و.٤ (أمسكته مراجعةُ
+ * Codex على #365، ومُثبَتٌ في و.٤ب أدناه).
+ *
+ * **والسلاسلُ العادية تبقى كما هي** — نصُّ SQL خامٌّ فيها علامةٌ حمراء
+ * يجب أن تُمسَك، لا نثرٌ يُسقَط.
+ */
+function executableCode(src: string): string {
+  let out = "";
+  //  مكدّسُ الأطر: `tmpl` نصُّ قالبٍ يُسقَط، وإلّا شيفرةٌ تُبقى
+  //  و`depth` عمقُ الأقواس داخل `${...}` لمعرفة أين ينتهي.
+  const stack: Array<{ tmpl: boolean; depth: number }> = [{ tmpl: false, depth: 0 }];
+  let i = 0;
+  while (i < src.length) {
+    const top = stack[stack.length - 1];
+    const c = src[i];
+    const n = src[i + 1];
+    if (top.tmpl) {
+      if (c === "\\") { i += 2; continue; }                 // هروبٌ في النصّ
+      if (c === "`") { stack.pop(); out += " "; i += 1; continue; }
+      if (c === "$" && n === "{") {
+        stack.push({ tmpl: false, depth: 0 }); out += " "; i += 2; continue;
+      }
+      i += 1; continue;                                     // نصُّ القالب يُسقَط
+    }
+    if (c === "`") { stack.push({ tmpl: true, depth: 0 }); out += " "; i += 1; continue; }
+    if (c === '"' || c === "'") {                           // سلسلةٌ عادية تبقى
+      out += c; i += 1;
+      while (i < src.length) {
+        if (src[i] === "\\") { out += src.slice(i, i + 2); i += 2; continue; }
+        out += src[i]; i += 1;
+        if (src[i - 1] === c) break;
+      }
+      continue;
+    }
+    if (c === "/" && n === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
+      i += 2; out += " "; continue;
+    }
+    if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+      continue;
+    }
+    if (stack.length > 1) {
+      if (c === "{") top.depth += 1;
+      else if (c === "}") {
+        if (top.depth === 0) { stack.pop(); out += " "; i += 1; continue; }
+        top.depth -= 1;
+      }
+    }
+    out += c; i += 1;
+  }
+  return out;
+}
+
 import { DEVICE_SERVICE_TYPES } from "@shared/prosthetic_parts";
 import {
   LEGACY_QUEUE_TITLE, RETURNED_QUEUE_TITLE, PENDING_CHARGE_ACTION_LABELS,
@@ -699,17 +760,32 @@ async function main() {
   //  ولا قاعدةَ بياناتٍ تُقرأ في بناء الدليل.
   //  **والفحصُ على الشيفرة التنفيذية وحدها**: نصُّ الأدلّة يصف سلوكَ الخادم
   //  بالعربية فيسمّي `storage.deleteBranch` وأخواتها — وذاك وصفٌ لا نداء.
-  //  فتُنزَع القوالبُ النصّية والتعليقات أوّلاً، ثمّ يُفحَص ما تبقّى.
-  const guideCode = src
-    .replace(/`(?:\\[\s\S]|[^\\`])*`/g, "``")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^[ \t]*\/\/.*$/gm, "");
-  check(!/db\.|storage\.|pool\.|SELECT/i.test(guideCode),
+  //  فيُنزَع نصُّ القوالب والتعليقاتُ، **ويبقى ما داخل `${...}`**.
+  const guideCode = executableCode(src);
+  check(!/db\.|storage\.|pool\.|\bSELECT\b/i.test(guideCode),
     "و.٤ **ولا استعلامَ قاعدةٍ في شيفرة ملفّ الدليل إطلاقاً**");
   //  **وحارسٌ بنيويٌّ فوقه**: الملفُّ لا يستورد قاعدةً ولا مخزناً أصلاً.
   check(!/^\s*import[\s\S]*?from\s+"(?:[^"]*\/)?(?:db|storage|pool)"/m.test(src)
     && !/from\s+"pg"/.test(src) && !/from\s+"drizzle/.test(src),
     "و.٤أ **ولا استيرادَ قاعدةٍ أو مخزنٍ في ملفّ الدليل**");
+  //  **والماسحُ نفسُه يُقاس دخلاً وخرجاً** — لا يُصدَّق ضمناً: نثرُ الدليل
+  //  يُسقَط، **والنداءُ داخل `${...}` يبقى** (هذا بعينه ما أفلت قبل الإصلاح)،
+  //  والسلسلةُ العادية تبقى، والتعليقُ يُسقَط.
+  const scanned = (code: string) => executableCode(code);
+  check(!/storage\./.test(scanned("const g = `الخادمُ ينادي storage.deleteBranch وصفاً`;")),
+    "و.٤ب نصُّ القالب العربيُّ يُسقَط");
+  check(/db\.query/.test(scanned('const g = `قبل ${db.query("x")} بعد`;')),
+    "و.٤ب.١ **والنداءُ داخل ${...} يبقى** — وهو ما كان يفلت");
+  check(/\bSELECT\b/i.test(scanned('const g = `${run("SELECT 1")}`;')),
+    "و.٤ب.٢ وسلسلةُ SQL داخل الاستدعاء تبقى");
+  check(/db\.query/.test(scanned('const r = db.query("SELECT 1");')),
+    "و.٤ب.٣ والشيفرةُ خارج القوالب تبقى");
+  check(!/storage\./.test(scanned("// storage.foo\nconst a = 1;")),
+    "و.٤ب.٤ والتعليقُ يُسقَط");
+  check(/"storage\.foo"/.test(scanned('const a = "storage.foo";')),
+    "و.٤ب.٥ **والسلسلةُ العادية تبقى** — نصُّ SQL خامٌّ فيها علامةٌ حمراء");
+  check(/deep/.test(scanned("const g = `a ${ { k: `b ${deep()} c` } } d`;")),
+    "و.٤ب.٦ والتداخلُ يُفَكّ صحيحاً");
   check(!/document|window|innerText|querySelector/.test(src),
     "و.٥ **ولا قراءةَ DOM**");
 
