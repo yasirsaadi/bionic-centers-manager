@@ -20,6 +20,8 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { resolvePurchasedSessions } from "../shared/pricing";
+import { readFileSync } from "fs";
+import { pickPhysioSessions, seedPurchasedUpFront } from "../client/src/pages/physio_sessions_source";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -1421,6 +1423,141 @@ async function state(pid: number) {
       const n3 = (await q(`SELECT session_count n FROM payments WHERE id=$1`, [gid])).rows[0].n;
       check(ok.status < 300 && Number(n3) === 5, "هه٦. والتعديلُ التالي يمضي نظيفاً",
         `${ok.status} | ${n3}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── وو. وبندٌ مدفوعٌ رفعته «خدمة جديدة» يُوسَم مقيَّداً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `planPatch` في منسّق «خدمة جديدة» **لا يسأل عن المجّانيّة إطلاقاً**:
+    //  كلُّ بندٍ يدخل `mergePhysioPlan`. فوسمُ الهديّة وحدها كان يُبقي صفَّ
+    //  البند المدفوع `NULL` («لم يُقيَّد») وجلساتُه في الخطة فعلاً — فتصحيحُه
+    //  لاحقاً من «مدفوع» إلى «مجاني» يقرؤه `reconcileGiftPlanTx` صفّاً جديداً
+    //  فيضيف جلساتِه **ثانيةً**: ١٠ + ٥ = ١٥، ثمّ ٢٠ بعد التصحيح.
+    {
+      const pid = await mk("وسم-خدمةٍ-مدفوعة", true);
+      const b = await state(pid);
+      const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", serviceCost: 250000, initialPayment: 250000,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 5 }],
+      });
+      const row = (await q(
+        `SELECT id, plan_credited, is_free_sessions f, session_count n
+           FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0];
+      const mid = await state(pid);
+      check(r.status < 300, "وو١. الخدمةُ المدفوعة سُجّلت", `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
+      check(row?.f === false && Number(row?.n) === 5, "وو٢. وصفُّها مدفوعٌ بخمس جلسات", JSON.stringify(row));
+      check(mid.sessions === b.sessions + 5, "وو٣. والخطةُ ارتفعت ١٠ ⟶ ١٥ — `planPatch` رفعتها",
+        `${b.sessions} ⟶ ${mid.sessions}`);
+      check(row?.plan_credited === true,
+        "وو٤. **والصفُّ المدفوع موسومٌ مقيَّداً** — لا `NULL`", String(row?.plan_credited));
+
+      //  ثمّ يصحّحه المديرُ إلى «مجاني»: وصفُ المال يتغيّر، **وعددُ الجلسات
+      //  لا يتغيّر** — فلا تُضاف إلى الخطة مرّةً ثانية.
+      const fix = await http("PATCH", `/api/payments/${row.id}`, S, {
+        amount: 0, isFreeSessions: true, reason: "تبرّعٌ قرّره المدير بعد القبض",
+      });
+      const a = await state(pid);
+      check(fix.status < 300, "وو٥. التصحيحُ إلى «مجاني» نجح",
+        `${fix.status} ${JSON.stringify(fix.body).slice(0, 140)}`);
+      check(a.sessions === mid.sessions,
+        "وو٦. **والخطةُ ما زالت ١٥ — لا ٢٠**: لا تُعَدّ جلساتُ الصفّ مرّتين",
+        `${mid.sessions} ⟶ ${a.sessions}`);
+      check(a.paid === b.paid, "وو٧. والمقبوضُ عاد كما كان", `${b.paid} ⟶ ${a.paid}`);
+
+      //  والوسمُ ليس زينةً: الحذفُ يُنقص بالمقدار عينه فتعود الخطةُ ١٠.
+      const del = await http("DELETE", `/api/payments/${row.id}`, S, { reason: "إلغاء" });
+      const c = await state(pid);
+      check(del.status < 300, "وو٨. الحذفُ نجح", String(del.status));
+      check(c.sessions === b.sessions, "وو٩. **١٥ ⟶ ١٠** — لا جلساتٌ خالدة", `${a.sessions} ⟶ ${c.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── زز. وعدّادُ الجلسات مصدرٌ واحد في الشاشة كلِّها ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `patient.payments` تغيب عمّن لا يملك `canViewPayments`، فكلُّ حسابٍ
+    //  محلّيٍّ من صفوفها يقرأ صفراً له. فكانت بطاقةُ الملخّص تعرض رقمَ
+    //  الخادم (١٦) بينما يعرض تبويبُ الزيارات — في الشاشة نفسِها — ١٠.
+    {
+      //  ① القراران **خالصان** (درسُ ٤.u): لا يُختبَران بقراءة نصٍّ.
+      check(pickPhysioSessions({ total: 16 } as any, true, () => ({ total: 10 } as any)).total === 16,
+        "زز١. **الصفوفُ محجوبة ⟶ رقمُ الخادم**", "");
+      check(pickPhysioSessions({ total: 16 } as any, false, () => ({ total: 10 } as any)).total === 10,
+        "زز٢. ومَن يملك الصفوفَ يحسب محلّياً كما كان — بمدخلاته هو", "");
+      check(pickPhysioSessions(undefined, true, () => ({ total: 10 } as any)).total === 10,
+        "زز٣. وبلا رقمٍ من الخادم يبقى الحسابُ المحلّيّ — لا فراغ", "");
+
+      check(seedPurchasedUpFront("cost", 16, false) === true,
+        "زز٤. ومصدرٌ غيرُ الدفعات ⟶ يُزرَع المجموع كما كان", "");
+      check(seedPurchasedUpFront("payments", 8, false) === false,
+        "زز٥. والمشيُ الزمنيُّ لمن يملك الصفوف — كما كان بحرفه", "");
+      check(seedPurchasedUpFront("payments", 8, true) === true,
+        "زز٦. **ومَن حُجبت عنه الصفوفُ يُزرَع له المجموع** — لا دفعةَ يمشي عليها", "");
+      check(seedPurchasedUpFront("cost", 0, true) === false,
+        "زز٧. وصفرٌ لا يُزرَع", "");
+
+      //  ② والشاشةُ لا تحمل حساباً ثانياً يلتفّ على القرار.
+      const src = readFileSync("client/src/pages/PatientDetails.tsx", "utf8");
+      const calls = (src.match(/resolvePurchasedSessions\(/g) ?? []).length;
+      check(calls === 1,
+        "زز٨. **`resolvePurchasedSessions` تُنادى مرّةً واحدة في الصفحة كلِّها**", String(calls));
+      const resolver = src.slice(src.indexOf("const resolveSessionsFor"),
+        src.indexOf("const casePaymentSessions"));
+      check(resolver.includes("pickPhysioSessions(") && resolver.includes("resolvePurchasedSessions("),
+        "زز٩. والنداءُ داخل المُحلّل الواحد الذي يقرّر المصدر", resolver.slice(0, 200));
+      check(src.includes("seedPurchasedUpFront(") && !/source !== "payments"/.test(src),
+        "زز١٠. وقرارُ الزرع من الدالّة الخالصة لا من شرطٍ في الشاشة", "");
+
+      //  ③ **والفرقُ حقيقيٌّ لا صوريّ**: شكلُ غ نفسُه — الاشتقاقُ ١٠ والمُهدى
+      //     ٦ — يقرؤه تبويبُ الزيارات ١٠ لو حسب من صفوفٍ لا يملكها.
+      const BLIND2 = 9939;
+      const SB = { userId: BLIND2, branchId: BR, accessibleBranches: [BR], displayName: "بلا مال",
+        isAdmin: false, role: "reception" };
+      const pid = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
+                               is_physiotherapy,treatment_type,total_cost)
+         VALUES ($1,'تبويبُ-الزيارات',$2,'مراجعة',44,'ألم',true,'روبوت',500000) RETURNING id`,
+        [`WB-${++code}`, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
+               VALUES ($1,$2,'physiotherapy',500000,'manual','active')`, [pid, BR]);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,50000,'روبوت',1,false),($1,$2,50000,'روبوت',1,false),($1,$2,0,'روبوت',6,true)`,
+        [pid, BR]);
+
+      const blind = await http("GET", `/api/patients/${pid}`, SB);
+      const server = blind.body?.physioSessionsResolved;
+      const casePayments: any[] = blind.body?.payments ?? [];
+      const localOnly = resolvePurchasedSessions({
+        plan: null, treatmentTypeText: "روبوت", caseCost: 500000,
+        paymentSessions: casePayments.map((p: any) => ({
+          treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+          isFree: Boolean(p.isFreeSessions),
+        })),
+      });
+      check(server?.total === 16, "زز١١. الخادمُ يرسل ١٦", JSON.stringify(server));
+      check(localOnly.total === 10,
+        "زز١٢. **ولولا القرار لقرأ تبويبُ الزيارات ١٠** — من صفوفٍ لا يملكها",
+        JSON.stringify(localOnly));
+      const shown = pickPhysioSessions(server, !blind.body?.payments, () => localOnly);
+      check(shown.total === 16,
+        "زز١٣. **والقرارُ يُعطي ١٦ للموضعين معاً** — رقمٌ واحد في الشاشة", JSON.stringify(shown));
+
+      //  ④ ومريضُ المفرد المحجوبُ عنه المال: مصدرُه «الدفعات»، فبلا الزرع
+      //     يقرأ كلُّ صفٍّ «المتبقي = −عدد الزيارات».
+      const mono = (await q(
+        `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
+                               is_physiotherapy,treatment_type,total_cost)
+         VALUES ($1,'مفردٌ-محجوب',$2,'مراجعة',44,'ألم',true,'روبوت',0) RETURNING id`,
+        [`WB-${++code}`, BR])).rows[0].id;
+      await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
+               VALUES ($1,$2,'physiotherapy',0,'manual','active')`, [mono, BR]);
+      await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
+               VALUES ($1,$2,50000,'روبوت',1,false),($1,$2,0,'روبوت',2,true)`, [mono, BR]);
+      const bm = await http("GET", `/api/patients/${mono}`, SB);
+      const sm = bm.body?.physioSessionsResolved;
+      check(sm?.total === 3 && sm?.source === "payments",
+        "زز١٤. مفردٌ محجوب: ٣ جلسات بمصدر «الدفعات»", JSON.stringify(sm));
+      check(seedPurchasedUpFront(sm?.source, sm?.total, !bm.body?.payments) === true,
+        "زز١٥. **ويُزرَع له المجموعُ رغم ذلك** — لا صفَّ يمشي عليه", "");
     }
 
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);

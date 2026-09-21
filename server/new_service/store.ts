@@ -185,7 +185,7 @@ export async function executeNewService(params: {
     //  مكتوباً هنا بشقَّيه، فانحرف عنه حارسُ `creditGiftToPlanTx` فقبل
     //  الاستشارةَ — فصار في موضعٍ واحد.)
     const planMerged = hasPlan && Boolean(entries && entries.length > 0);
-    const giftCreditedToPlan = (treatmentType: unknown, sessionCount: unknown) =>
+    const creditedToPlan = (treatmentType: unknown, sessionCount: unknown) =>
       planMerged && physioSessionsEnterPlan(String(treatmentType ?? ""), Number(sessionCount) || 0);
 
     // ══ قسمُ «خدمة جديدة» — علاجٌ طبيعي بحكم التصنيف ═══════════════════
@@ -290,10 +290,18 @@ export async function executeNewService(params: {
             caseId: nsCaseId!,
             amount: isFree ? 0 : (paymentShares[i] ?? 0),
             isFreeSessions: isFree,
-            //  المدفوعةُ تبقى `NULL` («لم يُسأل») كما في `creditGiftToPlanTx`.
-            planCredited: isFree
-              ? giftCreditedToPlan(entry.treatmentType, entry.sessionCount)
-              : undefined,
+            //  ══ **والمدفوعةُ تُوسَم كالمُهداة — `planPatch` رفعتهما معاً** ══
+            //  الدمجُ أعلاه لا يسأل عن المجّانيّة إطلاقاً: كلُّ بندٍ يدخل
+            //  `mergePhysioPlan`. فوسمُ الهديّة وحدها كان يُبقي صفَّ البند
+            //  المدفوع `NULL` («لم يُقيَّد») وجلساتُه في الخطة فعلاً —
+            //  فتصحيحُه لاحقاً من «مدفوع» إلى «مجاني» يقرؤه
+            //  `reconcileGiftPlanTx` صفّاً جديداً فيضيف جلساتِه **ثانيةً**
+            //  (خطةُ عشرٍ + خدمةُ خمسٍ = ١٥، ثمّ ٢٠ بعد التصحيح).
+            //
+            //  **ومعنى الوسم واحد**: «جلساتُ هذا الصفّ في الخطة الآن» —
+            //  مُهدىً كان أم مدفوعاً (مراجعةُ Codex الخامسة). فالوسمُ يتبع
+            //  ما فعله `planPatch` لا وصفَ المال.
+            planCredited: creditedToPlan(entry.treatmentType, entry.sessionCount),
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: entry.treatmentType,
             sessionCount: entry.sessionCount,
