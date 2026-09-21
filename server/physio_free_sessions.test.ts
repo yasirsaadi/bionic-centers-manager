@@ -821,6 +821,186 @@ async function state(pid: number) {
       check(g.sessions === before.sessions + 6, "ش٨. والخطةُ ١٠ + ٤ + ٢ = ١٦", String(g.sessions));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ت. وصفٌّ مدفوعٌ يُصحَّح إلى «مجاني» يدخل الخطة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  وسمُ الصفّ المدفوع `null` («لم يُسأل») — وهو يصف ماضيه لا حاضره.
+    //  فكان `reconcileGiftPlanTx` يقرؤه «غيرَ مقيَّد» فينصرف: الصفُّ يصير
+    //  هديّةً بجلسات **والعدّادُ لا يتحرّك**. والمدفوعُ لا تاريخَ له في
+    //  الخطة بحكم التعريف، فيُعامَل معاملةَ الهديّة الجديدة.
+    {
+      const pid = await mk("مدفوعٌ-صار-هديّة", true);
+      const b = await state(pid);
+      const pay = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 100000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 2,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      });
+      const row0 = (await q(
+        `SELECT id, plan_credited FROM payments WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pid])).rows[0];
+      const mid = await state(pid);
+      check(pay.status === 201, "ت١. الدفعةُ المدفوعة سُجّلت", String(pay.status));
+      check(row0?.plan_credited === null, "ت٢. ووسمُها `null` — المدفوعُ لا يُقيَّد في الخطة",
+        String(row0?.plan_credited));
+      check(mid.sessions === b.sessions, "ت٣. والعدّادُ ما زال ١٠ — الخطةُ تَغلب", `${b.sessions} ⟶ ${mid.sessions}`);
+
+      const fix = await http("PATCH", `/api/payments/${row0.id}`, S, {
+        amount: 0, isFreeSessions: true, reason: "تبرّعٌ قرّره المدير بعد القبض",
+      });
+      const row1 = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [row0.id])).rows[0];
+      const a = await state(pid);
+      check(fix.status < 300, "ت٤. التصحيحُ إلى «مجاني» نجح", `${fix.status} ${JSON.stringify(fix.body).slice(0, 140)}`);
+      check(a.sessions === b.sessions + 2, "ت٥. **والخطةُ ارتفعت ١٠ ⟶ ١٢** — الجلستان دخلتا",
+        `${b.sessions} ⟶ ${a.sessions}`);
+      check(row1?.plan_credited === true, "ت٦. والصفُّ موسومٌ مقيَّداً", String(row1?.plan_credited));
+      check(a.paid === b.paid, "ت٧. والمقبوضُ عاد كما كان — لا دينارَ بقي", `${b.paid} ⟶ ${a.paid}`);
+
+      //  والوسمُ ليس زينةً: الحذفُ يُنقص بالمقدار عينه.
+      const del = await http("DELETE", `/api/payments/${row0.id}`, S, { reason: "إلغاء التبرع" });
+      const c = await state(pid);
+      check(del.status < 300, "ت٨. الحذفُ نجح", String(del.status));
+      check(c.sessions === b.sessions, "ت٩. **١٢ ⟶ ١٠** — لا جلساتٌ خالدة", `${a.sessions} ⟶ ${c.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ث. وهديّتان متزامنتان لا تتجمّدان ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  إدراجُ صفّ الدفعة يأخذ `FOR KEY SHARE` على صفّ المريض بمفتاحه
+    //  الأجنبيّ — **وهو متوافقٌ مع نفسِه**. فهديّتان تُدرِجان معاً ثمّ تطلب
+    //  كلٌّ ترقيةَ قفلِها إلى `FOR UPDATE` فتنتظر الأخرى ⟶ **جمودٌ حقيقيّ**
+    //  تقتل فيه Postgres إحداهما. والقسمُ «ح» لا يمسكه: بوّابتُه تُمهل
+    //  الأوّلَ حتى يملك `FOR UPDATE` قبل أن يبدأ الثاني أصلاً.
+    //
+    //  ══ والبوّابةُ هنا **ذاتُ وجهين** فتكون حتميّةً في الحالتين ══════════
+    //    • تُمسك **بعد** `insert into payments` (شكلُ ما قبل الإصلاح:
+    //      الإدراجُ أوّلاً) — فيُدرِج الاثنان ثمّ يتصاعدان ⟶ جمود.
+    //    • وتُمسك **قبل** `... patients ... for update` (شكلُ الإصلاح:
+    //      التصعيدُ أوّلاً) — فيُطلَقان معاً ويتسلسلان نظيفاً.
+    //  ولولا الوجهان لَمرّ الفحصُ في أحد الشكلين لسببٍ خاطئ.
+    {
+      const pid = await mk("جمودُ الهديّتين", true);
+      const before = await state(pid);
+      const gift = (n: number, t: string) => ({
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: t, sessionCount: n,
+        treatmentEntries: [{ treatmentType: t, sessionCount: n, cost: 0, isFree: true }],
+      });
+      const origConnect = (pool as any).connect.bind(pool);
+      let armed = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((res) => { release = res; });
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        let done = false;
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          const isInsert = /insert\s+into\s+"?payments"?/i.test(text);
+          const isLock = /"?patients"?/i.test(text) && /for\s+update/i.test(text);
+          if (!done && armed < 2 && isLock) { done = true; armed++; await gate; return cq(...args); }
+          if (!done && armed < 2 && isInsert) { done = true; armed++; const out = await cq(...args); await gate; return out; }
+          return cq(...args);
+        };
+        return client;
+      };
+      let r1: any, r2: any;
+      try {
+        const p1 = http("POST", "/api/payments", S, gift(3, "روبوت"));
+        const p2 = http("POST", "/api/payments", S, gift(2, "أبر صينية"));
+        const t0 = Date.now();
+        while (armed < 2 && Date.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 20));
+        release();
+        [r1, r2] = await Promise.all([p1, p2]);
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const a = await state(pid);
+      const flags = (await q(
+        `SELECT plan_credited FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id`, [pid])).rows;
+      check(armed === 2, "ث١. البوّابةُ حجزت المعاملتين — السباقُ وقع فعلاً", String(armed));
+      check(r1.status === 201 && r2.status === 201, "ث٢. **الطلبان نجحا — ولا جمود**",
+        `${r1.status}/${r2.status} | ${String(r1.body?.message ?? "")}${String(r2.body?.message ?? "")}`);
+      check(a.sessions === before.sessions + 5, "ث٣. **١٠ + ٣ + ٢ = ١٥**", `${before.sessions} ⟶ ${a.sessions}`);
+      check(flags.length === 2 && flags.every((f: any) => f.plan_credited === true),
+        "ث٤. والصفّان موسومان مقيَّدَين", JSON.stringify(flags));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── خ. والتسعيرُ يَسِم ما استورده من هدايا ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  مريضُ المفرد تُوسَم هديّتُه `false` («مُنحت ولم تُقيَّد») — وهو صدقٌ
+    //  ما دام بلا خطة. ثمّ يُسعَّر، فتبذر الخطةُ من **كلّ** دفعةٍ حاملةٍ
+    //  لجلسات ومنها هذه الهديّة — فتصير في الخطة والوسمُ ما زال `false`.
+    //  فحذفُها لا يطرح شيئاً **وجلساتُها تبقى في العدّاد إلى الأبد**.
+    {
+      const pid = await mk("تسعيرٌ-يستورد-هديّة", false);
+      const g = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 4,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true }],
+      });
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0].id;
+      const f0 = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [gid])).rows[0].plan_credited;
+      const b = await state(pid);
+      check(g.status === 201 && f0 === false, "خ١. هديّةُ مريضِ المفرد موسومةٌ `false` بصدق", String(f0));
+      check(b.sessions === 4 && b.src === "payments", "خ٢. وعدّادُه يقرؤها من دفعاته", `${b.sessions}/${b.src}`);
+
+      const price = await http("POST", `/api/patients/${pid}/price-physio`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      const f1 = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [gid])).rows[0].plan_credited;
+      const m = await state(pid);
+      check(price.status < 300, "خ٣. التسعيرُ نجح", String(price.status));
+      check(m.sessions === 14 && m.src === "plan", "خ٤. والخطةُ بذرت من دفعاته: ٤ + ١٠ = ١٤",
+        `${m.sessions}/${m.src}`);
+      check(f1 === true, "خ٥. **والهديّةُ المستورَدة صارت موسومةً مقيَّدة**", String(f1));
+
+      const del = await http("DELETE", `/api/payments/${gid}`, S, { reason: "إلغاء التبرع" });
+      const a = await state(pid);
+      check(del.status < 300, "خ٦. حذفُ الهديّة نجح", String(del.status));
+      check(a.sessions === 10, "خ٧. **١٤ ⟶ ١٠** — طُرحت الأربعُ فعلاً", `${m.sessions} ⟶ ${a.sessions}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ذ. ولا تُعَدّ جلساتُ صفٍّ استوردته البذرةُ مرّتين ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  الوجهُ المقابل للقسم «ت»: صفٌّ **مدفوع** استوردته بذرةُ التسعير من
+    //  سجلّ الدفعات جلساتُه في الخطة **بالفعل**. فتصحيحُه إلى «مجاني»
+    //  تغيُّرٌ في وصف المال لا في عدد الجلسات — وتقييدُه «هديّةً جديدة»
+    //  كان سيعدّها مرّتين. فالوسمُ `true` هو الحارس.
+    {
+      const pid = await mk("مستورَدٌ-ثمّ-هديّة", false);
+      const ns = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", serviceCost: 100000, initialPayment: 100000,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2 }],
+      });
+      const payId = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND session_count>0 ORDER BY id DESC LIMIT 1`, [pid])).rows[0].id;
+      const b = await state(pid);
+      check(ns.status < 300 && b.sessions === 2 && b.src === "payments",
+        "ذ١. مريضُ المفرد: جلستان مدفوعتان من دفعاته", `${ns.status} | ${b.sessions}/${b.src}`);
+
+      const price = await http("POST", `/api/patients/${pid}/price-physio`, S,
+        { entries: [{ treatmentType: "روبوت", sessionCount: 10 }] });
+      const f = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [payId])).rows[0].plan_credited;
+      const m = await state(pid);
+      check(price.status < 300 && m.sessions === 12 && m.src === "plan",
+        "ذ٢. والتسعيرُ بذر منها: ٢ + ١٠ = ١٢", `${price.status} | ${m.sessions}/${m.src}`);
+      check(f === true, "ذ٣. **والمدفوعُ المستورَد موسومٌ مقيَّداً** — لا المُهدى وحده", String(f));
+
+      const fix = await http("PATCH", `/api/payments/${payId}`, S, {
+        amount: 0, isFreeSessions: true, reason: "تبرّعٌ بأثرٍ رجعيّ",
+      });
+      const a = await state(pid);
+      check(fix.status < 300, "ذ٤. تصحيحُه إلى «مجاني» نجح", String(fix.status));
+      check(a.sessions === 12, "ذ٥. **والخطةُ ما زالت ١٢** — لا جلستان تُعدّان مرّتين",
+        `${m.sessions} ⟶ ${a.sessions}`);
+      check(a.paid === 0, "ذ٦. والمقبوضُ صفر — المالُ وحده تحرّك", String(a.paid));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

@@ -4280,6 +4280,10 @@ export async function registerRoutes(
     //  تُنتج هديّةً ثانية. فصارا في معاملةٍ واحدة، والوسمُ `plan_credited`
     //  يُكتب فيها فلا يُقيَّد الصفُّ مرّتين.
     const writePaymentTx = async (tx: any, values: any) => {
+      //  **والقفلُ قبل الإدراج لا بعده**: الإدراجُ يأخذ `FOR KEY SHARE`
+      //  (متوافقٌ مع نفسِه)، ثمّ يطلب `creditGiftToPlanTx` ترقيتَه إلى
+      //  `FOR UPDATE` — فهديّتان متزامنتان تتجمّدان بدل أن تتسلسلا.
+      await storage.lockPatientForGiftTx(tx, values);
       const payment = attribution
         ? await storage.createPaymentAttributed(values, attribution, tx)
         : await storage.createPayment(values, tx);

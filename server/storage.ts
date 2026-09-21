@@ -1623,6 +1623,25 @@ export class DatabaseStorage implements IStorage {
           .filter((r) => (r.n ?? 0) > 0)
           .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
+        //  ══ **وما استوردَته الخطةُ صار فيها فعلاً — فيُوسَم** ════════════
+        //  البذرةُ أعلاه تسحب **كلَّ** دفعةٍ حاملةٍ لجلسات، ومنها الهدايا.
+        //  فهديّةُ مريضِ المفرد كانت موسومةً `false` («مُنحت ولم تُقيَّد»)،
+        //  وتبقى كذلك بعد أن صارت في الخطة — فحذفُها لاحقاً لا يطرح منها
+        //  شيئاً وجلساتُها تبقى في العدّاد إلى الأبد.
+        //  **والمدفوعُ يُوسَم كالمُهدى**: البذرةُ لا تفرّق بينهما، فكلاهما
+        //  صار في الخطة حقّاً. ووسمُ المُهدى وحده كان يترك صفّاً مدفوعاً
+        //  مستورَداً يُقرأ «ليس في الخطة» — فتصحيحُه إلى «مجاني» لاحقاً
+        //  **يُضيف جلساته مرّةً ثانية** وهي فيها أصلاً.
+        //  **والوسمُ على أنواع العلاج الطبيعي وحدها**: نوعٌ آخر تضعه
+        //  البذرةُ في دلو «غير محدد» فلا يُطابقه الطرحُ لاحقاً — والصمتُ
+        //  أصدقُ من وسمٍ لا يُوصِل إلى مفتاحٍ في الخطة.
+        if (legacy.length > 0) {
+          await tx.update(payments).set({ planCredited: true }).where(and(
+            eq(payments.patientId, patientId),
+            gte(payments.sessionCount, 1),
+            inArray(payments.paymentTreatmentType, [...PHYSIO_TREATMENT_TYPES]),
+          ));
+        }
       }
       const plan = mergePhysioPlan(base, params.entries);
       const [updated] = await tx.update(patients).set({
@@ -1728,25 +1747,45 @@ export class DatabaseStorage implements IStorage {
    * يُقيَّد (مريضُ المفرد بلا خطة — وعدّادُه يقرأ الدفعات فيرى الهديّة) ·
    * و`null` صفٌّ سابقٌ للترحيل لا يُطرَح منه شيء أبداً.
    */
+  /**
+   * **قفلُ صفّ المريض قبل إدراج هديّةٍ بجلسات** (تصحيحُ مراجعةٍ لاحقة).
+   *
+   * إدراجُ صفّ الدفعة يأخذ `FOR KEY SHARE` على صفّ المريض بحكم مفتاحه
+   * الأجنبيّ — **وهو متوافقٌ مع نفسِه**. فهديّتان متزامنتان تُدرِجان معاً،
+   * ثمّ تطلب كلٌّ منهما ترقيةَ قفلِها إلى `FOR UPDATE` في
+   * `creditGiftToPlanTx` فتنتظر الأخرى ⟶ **جمودٌ حقيقيّ** (`deadlock
+   * detected`) تقتل فيه Postgres إحداهما، لا تسلسلٌ نظيف.
+   *
+   * فالتصعيدُ يقع **قبل** الإدراج: الأولى تمسك `FOR UPDATE` فتنتظرها
+   * الثانية قبل أن تُدرج شيئاً، ثمّ تمضي. **وترتيبُ القفل واحد** في
+   * المسارين، ولا حلقةَ انتظارٍ ممكنة.
+   *
+   * **ولا يُقفَل إلّا ما سيُقيَّد**: الشرطُ هو شرطُ `creditGiftToPlanTx`
+   * بحرفه — فدفعةٌ عادية لا تُسلسَل بلا سبب، وطرفٌ أو مسندٌ لا يُعَدّ جلسة.
+   */
+  async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
+    if (!values?.isFreeSessions) return;
+    const n = Math.max(0, Math.floor(Number(values.sessionCount) || 0));
+    const type = String(values.paymentTreatmentType ?? "").trim();
+    if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
+    const patientId = Number(values.patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  }
+
   async creditGiftToPlanTx(tx: any, payment: any): Promise<void> {
     if (!payment?.isFreeSessions) return;
     const n = Math.max(0, Math.floor(Number(payment.sessionCount) || 0));
     const type = String(payment.paymentTreatmentType ?? "").trim();
     if (n <= 0 || !PHYSIO_TREATMENT_TYPES.includes(type)) return;
-    //  ══ **ولا قفلَ هنا — الصفُّ مقفولٌ قبلنا بمفتاحه الأجنبيّ** ══════════
-    //  السؤالُ «أله خطة؟» قرارٌ، وقراءتُه على حالةٍ بائتة كانت ستَسِم الصفَّ
+    //  ══ **والقراءةُ تحت قفل صفّ المريض** ═══════════════════════════════
+    //  السؤالُ «أله خطة؟» قرارٌ، وقراءتُه على حالةٍ بائتة تَسِم الصفَّ
     //  `planCredited = false` بينما تسعيرٌ يُنشئ الخطةَ في اللحظة عينها —
-    //  فتختفي الهديّةُ عن عدّادٍ صار يقرأ الخطةَ وحدها.
-    //
-    //  لكنّ هذه الدالّةَ تُنادى **دائماً بعد إدراج صفّ الدفعة في المعاملة
-    //  نفسِها** (ناديها واحد)، والإدراجُ يأخذ `FOR KEY SHARE` على صفّ
-    //  المريض بحكم مفتاحه الأجنبيّ — وهو يتعارض مع `FOR UPDATE` الذي
-    //  يأخذه كاتبا الخطة (`pricePhysiotherapy` و«خدمة جديدة»). فالتسلسلُ
-    //  واقعٌ قبل أن نصل: مَن سبق التزم أوّلاً، وهذه تقرأ بعده.
-    //  **ولا يُضاف قفلٌ لا يُثبته اختبار** — أُضيف ثمّ أُزيل حين أثبتت
-    //  المراجعةُ العكسية أنّ إزالتَه لا تُسقط تأكيداً واحداً.
+    //  فتختفي الهديّةُ عن عدّادٍ صار يقرأ الخطةَ وحدها. وهو **القفلُ نفسُه**
+    //  الذي يأخذه `lockPatientForGiftTx` قبل الإدراج، فإعادةُ أخذه داخل
+    //  المعاملة عينها لا تفعل شيئاً — والترتيبُ يبقى واحداً في المسارين.
     const [row] = await tx.select({ plan: patients.physioPlan })
-      .from(patients).where(eq(patients.id, payment.patientId));
+      .from(patients).where(eq(patients.id, payment.patientId)).for("update");
     const hasPlan = Array.isArray(row?.plan) && (row!.plan as any[]).length > 0;
     if (hasPlan) await this.adjustPhysioPlanForGift(payment.patientId, [{ treatmentType: type, delta: n }], tx);
     await tx.update(payments).set({ planCredited: hasPlan }).where(eq(payments.id, payment.id));
@@ -1760,13 +1799,38 @@ export class DatabaseStorage implements IStorage {
    * `before` يجب أن يكون مقروءاً **تحت قفل صفّ الدفعة** في المعاملة نفسِها.
    */
   async reconcileGiftPlanTx(tx: any, before: any, after: any): Promise<void> {
-    const credited = before?.planCredited === true;
     const giftOf = (p: any) =>
       p && p.isFreeSessions && Number(p.sessionCount) > 0
         ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
         : null;
-    const b = credited ? giftOf(before) : null;
-    const a = credited ? giftOf(after) : null;
+    //  ══ **وصفٌّ صار هديّةً بعد أن لم يكن هديّةٌ جديدة** ═══════════════════
+    //  صفٌّ مدفوع يُصحَّح إلى «مجاني» لا تاريخَ له في الخطة **بحكم التعريف**
+    //  (المدفوعُ لا يُقيَّد فيها أبداً)، ووسمُه `null` أو `false` يصف ماضيه
+    //  لا حاضره. فكان الشرطُ القديم يقرؤه «غيرَ مقيَّد» فينصرف: الصفُّ يصير
+    //  هديّةً والعدّادُ لا يتحرّك.
+    //  **فيُعامَل معاملةَ الهديّة الجديدة بالكاتب القانونيّ نفسِه** — يقرأ
+    //  الخطةَ تحت القفل، ويقيّد إن وُجدت، ويَسِم الصفَّ بالحقيقة.
+    //
+    //  **إلّا ما كان في الخطة سلفاً** (`planCredited === true`): صفٌّ مدفوع
+    //  استوردته بذرةُ التسعير من سجلّ الدفعات جلساتُه **فيها بالفعل**،
+    //  فتقييدُه ثانيةً لأنه صار مجّانياً يعدّها مرّتين. والتغيُّرُ هنا
+    //  وصفُ المال لا عددُ الجلسات.
+    if (before?.planCredited !== true && !giftOf(before) && giftOf(after)) {
+      await this.creditGiftToPlanTx(tx, after);
+      return;
+    }
+    //  ══ **وما هو في الخطة يُقاس بالوسم لا بالمجّانيّة** ════════════════
+    //  `planCredited === true` معناه **«جلساتُ هذا الصفّ في الخطة الآن»** —
+    //  مُهدىً كان أم مدفوعاً استوردته بذرةُ التسعير. فقياسُ مساهمته
+    //  بـ`giftOf` كان يقرأ المدفوعَ المستورَد «صفراً» ويقرأ حالتَه بعد
+    //  التصحيح جلستين ⟹ **فيضيفهما وهما فيها أصلاً**.
+    const inPlanOf = (p: any) =>
+      p && Number(p.sessionCount) > 0
+        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+        : null;
+    const credited = before?.planCredited === true;
+    const b = credited ? inPlanOf(before) : null;
+    const a = credited ? inPlanOf(after) : null;
     if (!b && !a) {
       //  صفٌّ غيرُ مقيَّد: لا يُطرَح منه ولا يُضاف إليه — يبقى كما هو.
       return;
