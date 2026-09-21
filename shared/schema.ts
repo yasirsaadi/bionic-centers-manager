@@ -1153,7 +1153,10 @@ export const aiChatConversations = pgTable("ai_chat_conversations", {
   userId: integer("user_id").references(() => systemUsers.id).notNull(),
   userName: text("user_name").notNull(),
   userRole: text("user_role"),
-  branchId: integer("branch_id").references(() => branches.id),
+  //  **`SET NULL` لا `NO ACTION`**: `storage.deleteBranch` يحذف تابعيه ثمّ
+  //  الفرعَ ولا يعرف هذا الجدول — فمفتاحٌ صارم كان يُفشل حذفَ فرعٍ تحادث
+  //  فيه أحد. و`branchName` لقطةُ نصٍّ أصلاً، فالصفُّ يبقى مقروءاً كما كُتب.
+  branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
   branchName: text("branch_name"),
   //  'general' | 'financial' — وضعُ المساعد الذي جرى فيه التبادل.
   mode: text("mode").notNull(),

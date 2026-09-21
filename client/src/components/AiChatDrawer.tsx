@@ -7,7 +7,7 @@
 // الخادم يقرّر وحده مَن تُبنى له لقطةٌ مالية، ولا يقرأ من العميل شيئاً.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, Send, X, Loader2, Bot, User, Users, MessageSquareWarning,
   GraduationCap, ChevronRight, CheckCircle2, AlertCircle, PlayCircle, History,
@@ -23,7 +23,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 //  مُولِّدُ المعرّفات القائم — لا ثانيَ له في المستودع (راجع `conversationId`).
 import { mintSubmissionToken, nextSubmissionToken } from "@/components/patient_service_launcher_logic";
-import { AI_CHAT_RETENTION_DAYS } from "@shared/ai_conversations";
+import {
+  AI_CHAT_RETENTION_DAYS, conversationRowsOf, conversationsPageUrl,
+  nextConversationPageParam, type ConversationPageResponse,
+} from "@shared/ai_conversations";
 import { useBranchSession } from "@/components/BranchGate";
 import {
   canOpenAssistant, introTextFor, scopeLabelFor, suggestionsFor,
@@ -586,13 +589,38 @@ export function AiChatDrawer() {
     },
   });
 
-  //  ══ «محادثاتي» — قراءةٌ واحدة خلف `enabled: historyOpen` ══════════════
+  //  ══ «محادثاتي» — صفحاتٌ خلف `enabled: historyOpen` ════════════════════
   //  لا نداءَ شبكةٍ لموظّفٍ لم يفتح اللوحة. والصفوفُ من الخادم مرشَّحةٌ
   //  بصاحبها وبنافذة التسعين يوماً — لا ترشيحَ في الشاشة يُعتمَد عليه.
-  const historyQuery = useQuery<{ rows: OwnConversationRow[] }>({
+  //
+  //  **و`useInfiniteQuery` لا تراكمٌ يدويّ في `useState`**: مفتاحُ الاستعلام
+  //  هو نفسُه الذي يُبطِله `askMutation.onSuccess` بحرفه، فيُعاد جلبُ الصفحات
+  //  المحمَّلة كلِّها ويُشتقّ مؤشّرُ كلٍّ من سابقتها — فيظهر السؤالُ الجديد
+  //  في الرأس بلا أن تُصفَّر الصفحاتُ التي فتحها الموظّف. وتراكمٌ في حالةٍ
+  //  محليّة كان سيبقى بائتاً بعد ذلك الإبطال بلا أن ينتبه أحد.
+  //
+  //  **والرابطُ من الدالّة المشتركة** (`conversationsPageUrl`): الافتراضيُّ
+  //  في `queryClient.ts` يبني الرابطَ من `queryKey.join("/")` فلا موضعَ فيه
+  //  لسلسلة استعلام — ولا يبلغ المؤشّرُ الخادمَ معه أصلاً.
+  const historyQuery = useInfiniteQuery<ConversationPageResponse<OwnConversationRow>>({
     queryKey: ["/api/ai/conversations/mine"],
     enabled: open && historyOpen,
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
+      const res = await fetch(
+        conversationsPageUrl("/api/ai/conversations/mine", {
+          cursor: typeof pageParam === "string" ? pageParam : null,
+        }),
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error("failed");
+      return res.json();
+    },
+    //  **`hasNextPage` من قول الخادم لا من عدّ الصفوف**: صفحةٌ امتلأت
+    //  بالمصادفة ليست دليلاً على وجود تالٍ، ولا العكس.
+    getNextPageParam: nextConversationPageParam,
   });
+  const historyRows = conversationRowsOf(historyQuery.data?.pages);
 
   //  ══ التدريب — قراءتان وكتابةٌ واحدة، كلُّها خلف `enabled: trainingOpen` ══
   //  لا نداءَ شبكةٍ إضافيّاً لموظّفٍ لم يفتح لوحة التدريب أصلاً.
@@ -770,12 +798,12 @@ export function AiChatDrawer() {
                 {historyQuery.isLoading && (
                   <p className="text-xs text-muted-foreground">جارٍ التحميل…</p>
                 )}
-                {!historyQuery.isLoading && (historyQuery.data?.rows ?? []).length === 0 && (
+                {!historyQuery.isLoading && historyRows.length === 0 && (
                   <p className="text-xs text-muted-foreground" data-testid="text-no-history">
                     لا توجد محادثات سابقة.
                   </p>
                 )}
-                {(historyQuery.data?.rows ?? []).map((r) => (
+                {historyRows.map((r) => (
                   <div key={r.id} className="rounded-lg border p-3 space-y-1" data-testid={`history-row-${r.id}`}>
                     <div className="text-[11px] text-muted-foreground">
                       {new Date(r.createdAt).toLocaleString("ar-IQ")}
@@ -784,6 +812,22 @@ export function AiChatDrawer() {
                     <div className="text-xs text-muted-foreground whitespace-pre-wrap">{r.answer}</div>
                   </div>
                 ))}
+                {/*  **«عرض المزيد» يظهر لأنّ الخادمَ قال إنّ ثمّة أقدم** —
+                    وبدونه كان ما يتجاوز الخمسين محفوظاً تسعين يوماً ولا
+                    سبيلَ إلى قراءته من هذه اللوحة بعينها.  */}
+                {historyQuery.hasNextPage && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={historyQuery.isFetchingNextPage}
+                    onClick={() => historyQuery.fetchNextPage()}
+                    data-testid="button-history-more"
+                  >
+                    {historyQuery.isFetchingNextPage ? "جارٍ التحميل…" : "عرض المزيد"}
+                  </Button>
+                )}
               </div>
             ) : trainingOpen ? (
               <div className="flex-1 overflow-y-auto px-4 py-3" data-testid="panel-training">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,7 +65,11 @@ import { CAPABILITIES, CAPABILITY_LABELS, type Capability } from "@shared/ai_cap
 import { isQuizSpec } from "@shared/ai_training";
 //  **بوّابةُ سجلّ المحادثات من مصدرها الواحد** — لا شرطَ أدوارٍ يُعاد
 //  كتابتُه هنا فينحرف عن الخادم صامتاً (درسُ ٤.l).
-import { AI_CHAT_RETENTION_DAYS, canReadAllConversations } from "@shared/ai_conversations";
+import {
+  AI_CHAT_RETENTION_DAYS, canReadAllConversations, conversationRowsOf,
+  conversationsPageUrl, nextConversationPageParam,
+  type ConversationPageResponse,
+} from "@shared/ai_conversations";
 import { fetchWithTimeout, SAVE_ARTICLE_TIMEOUT_MS } from "./ai_knowledge_admin_save";
 import {
   Select,
@@ -725,16 +729,28 @@ function AiConversationsTab() {
     queryKey: ["/api/ai/conversations/users"],
     enabled: allowed,
   });
-  const { data, isLoading } = useQuery<{ rows: ConversationLogRow[] }>({
+  //  **صفحاتٌ لا صفحةٌ واحدة**: السقفُ خمسون صفّاً في الخادم، وعيادةٌ
+  //  كاملةٌ تتجاوزها في أيام — فبلا مؤشّرٍ يبقى أقدمُها محفوظاً تسعين يوماً
+  //  ولا سبيلَ إلى قراءته من هذه الشاشة بعينها. و`userId` في مفتاح
+  //  الاستعلام، فتبديلُ المرشِّح يبدأ من الصفحة الأولى كما يجب.
+  const query = useInfiniteQuery<ConversationPageResponse<ConversationLogRow>>({
     queryKey: ["/api/ai/conversations", userId],
     enabled: allowed,
-    queryFn: async () => {
-      const qs = userId ? `?userId=${encodeURIComponent(userId)}` : "";
-      const res = await fetch(`/api/ai/conversations${qs}`, { credentials: "include" });
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
+      const res = await fetch(
+        conversationsPageUrl("/api/ai/conversations", {
+          userId,
+          cursor: typeof pageParam === "string" ? pageParam : null,
+        }),
+        { credentials: "include" },
+      );
       if (!res.ok) throw new Error("failed");
       return res.json();
     },
+    getNextPageParam: nextConversationPageParam,
   });
+  const isLoading = query.isLoading;
 
   if (!allowed) {
     return (
@@ -744,7 +760,7 @@ function AiConversationsTab() {
     );
   }
 
-  const rows = data?.rows ?? [];
+  const rows = conversationRowsOf(query.data?.pages);
   const users = usersData?.users ?? [];
 
   return (
@@ -805,6 +821,19 @@ function AiConversationsTab() {
             </div>
           </div>
         ))}
+        {/*  يظهر لأنّ الخادمَ قال إنّ ثمّة أقدم — لا لأنّ الصفحة امتلأت.  */}
+        {query.hasNextPage && (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={query.isFetchingNextPage}
+            onClick={() => query.fetchNextPage()}
+            data-testid="button-conversations-more"
+          >
+            {query.isFetchingNextPage ? "جارٍ التحميل…" : "عرض المزيد"}
+          </Button>
+        )}
       </div>
     </Card>
   );

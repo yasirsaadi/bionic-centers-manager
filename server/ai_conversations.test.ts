@@ -21,6 +21,12 @@
 //     الحقيقية `/api/ai/chat` بلا مفتاحِ مزوّد (٥٠٣ وصفرُ صفوف).
 //   • **ي**: حارسٌ معماريّ — لا كتابةَ في ملفّ نقاط القراءة، والوصلُ في
 //     `/api/ai/chat` قائمٌ بشروطه.
+//   • **ك**: **«عرض المزيد» يبلغ أقدمَ صفٍّ داخل النافذة** — بلا تكرارٍ ولا
+//     قفز، وثابتٌ تحت إضافةِ صفٍّ بين الصفحتين (مراجعةٌ آلية على #٣٧٢).
+//   • **ل**: **وحذفُ فرعٍ لا يُحبَس بهذا السجلّ** — `SET NULL` يُسقط الرقمَ
+//     ويُبقي لقطةَ الاسم، والصفُّ يبقى مقروءاً (المراجعةُ نفسُها).
+//   • **م**: **وعقدُ الشاشتين** — المؤشّرُ يبلغ الخادمَ فعلاً من الدرج ومن
+//     لوحة المسؤول، وزرُّ «عرض المزيد» مشروطٌ بقول الخادم.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -33,13 +39,20 @@ import {
   getConversationThread, listAllConversations, listMyConversations,
   purgeExpiredConversations, recordExchange,
 } from "./ai/conversations/store";
-import { AI_CHAT_RETENTION_DAYS } from "@shared/ai_conversations";
+import { storage } from "./storage";
+import {
+  AI_CHAT_RETENTION_DAYS, decodeConversationCursor,
+} from "@shared/ai_conversations";
 
 const ROUTES_SRC = readFileSync(join(process.cwd(), "server/routes.ts"), "utf8");
 const CONV_ROUTES_SRC = readFileSync(
   join(process.cwd(), "server/ai/conversations/routes.ts"), "utf8");
 const RUNNER_SRC = readFileSync(join(process.cwd(), "server/migrations/runner.ts"), "utf8");
 const BACKUP_SRC = readFileSync(join(process.cwd(), "server/backup.ts"), "utf8");
+const DRAWER_SRC = readFileSync(
+  join(process.cwd(), "client/src/components/AiChatDrawer.tsx"), "utf8");
+const ADMIN_SRC = readFileSync(
+  join(process.cwd(), "client/src/pages/AdminSettings.tsx"), "utf8");
 /** بلا تعليقات — فلا يمرّ فحصُ العقد على شرحٍ بدل كود. */
 const code = (t: string) => t.replace(/\/\/[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 
@@ -404,6 +417,255 @@ async function main() {
       "ي٦. **و«أطلق وانسَ» بمصيدة** — فشلُ سجلٍّ لا يُضيّع جواباً بين يدي الموظّف");
     check(/pagePath:\s*page\?\.path/.test(near),
       "ي٧. والمسارُ بعد تنظيف الخادم لا كما وصل من العميل");
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ك. «عرض المزيد» يبلغ أقدمَ صفٍّ داخل النافذة ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  **الواقعة** (مراجعةٌ آلية على #٣٧٢): السقفُ خمسون صفّاً بلا مؤشّر،
+    //  فما تجاوزها يبقى محفوظاً تسعين يوماً **ولا سبيلَ إلى قراءته** من
+    //  الشاشة التي وُعد بها. وهذا القسمُ يثبت أنّ المؤشّرَ يبلغه فعلاً.
+    await cleanup();
+    {
+      //  اثنا عشرَ صفّاً بأختامٍ متمايزة — ثلاثُ صفحاتٍ بحجم خمسة.
+      for (let i = 1; i <= 12; i++) await say(RECV, S.recv, `س${i}`, `ج${i}`);
+      const all = await q<{ id: number }>(
+        `SELECT id FROM ai_chat_conversations WHERE user_id = $1 ORDER BY created_at DESC, id DESC`,
+        [RECV]);
+      same("ك١. اثنا عشرَ صفّاً مكتوبة", all.length, 12);
+
+      //  ── والصفحاتُ تُقرأ بالمؤشّر حتى تنفد ──
+      const seen: number[] = [];
+      let cursor: any = null;
+      let pages = 0;
+      for (;;) {
+        const page = await listMyConversations(RECV, 5, undefined, cursor);
+        pages++;
+        seen.push(...page.rows.map((r) => r.id));
+        if (!page.nextCursor) break;
+        cursor = decodeConversationCursor(page.nextCursor);
+        check(cursor !== null, "ك٢. والمؤشّرُ المُعاد يُفكّ دائماً", String(page.nextCursor));
+        if (pages > 10) break;   // حزامُ أمانٍ للاختبار نفسِه
+      }
+      same("ك٣. ثلاثُ صفحاتٍ بحجم خمسة", pages, 3);
+      same("ك٤. **وكلُّ الصفوف بلغتها القراءة** — لا صفَّ يبقى غيرَ قابلٍ للوصول",
+        seen.length, 12);
+      same("ك٥. **بلا تكرارٍ ولا قفز** — الصفوفُ بأعيانها وبترتيبها",
+        seen, all.map((r) => r.id));
+
+      //  ── والصفحةُ الأولى هي هي بلا مؤشّر ──
+      const first = await listMyConversations(RECV, 5, undefined, null);
+      same("ك٦. والصفحةُ الأولى بلا مؤشّرٍ كما كانت بحرفها",
+        first.rows.map((r) => r.id), all.slice(0, 5).map((r) => r.id));
+      check(first.nextCursor !== null, "ك٧. ومعها مؤشّرُ تالٍ لأنّ ثمّة أقدم");
+
+      //  ── **والمشوَّهُ غيابٌ لا خطأ**: أوّلُ صفحةٍ لا شاشةٌ فارغة ──
+      const bad = await listMyConversations(RECV, 5, undefined,
+        decodeConversationCursor("مؤشّرٌ بائت"));
+      same("ك٨. **ومؤشّرٌ مشوَّه ⟶ الصفحةُ الأولى** لا خطأ",
+        bad.rows.map((r) => r.id), first.rows.map((r) => r.id));
+
+      //  ── ولا مؤشّرَ حين تنتهي الصفوف بالضبط ──
+      const exact = await listMyConversations(RECV, 12, undefined, null);
+      same("ك٩. **واثنا عشرَ بسقف اثني عشر ⟶ لا مزيد**", exact.nextCursor, null);
+      same("ك٩ب. ومعها الصفوفُ كلُّها", exact.rows.length, 12);
+
+      //  ── **وثابتٌ تحت إضافةِ صفٍّ بين الصفحتين** ──
+      //  هذا بعينه ما يكسره `OFFSET`: صفٌّ جديد في الرأس يُزيح النافذة
+      //  فيُعاد صفٌّ قُرئ ويُقفَز عن غيره. والمؤشّرُ بالمفتاح مناعةٌ بالبناء.
+      const p1 = await listMyConversations(RECV, 5, undefined, null);
+      await say(RECV, S.recv, "سؤالٌ جديد أثناء التصفّح", "جوابُه");
+      const p2 = await listMyConversations(RECV, 5, undefined,
+        decodeConversationCursor(p1.nextCursor!));
+      const overlap = p2.rows.map((r) => r.id).filter((id) => p1.rows.some((r) => r.id === id));
+      same("ك١٠. **ولا صفَّ يتكرّر بين الصفحتين رغم إدراجٍ بينهما**", overlap, []);
+      const afterAll = await q<{ id: number }>(
+        `SELECT id FROM ai_chat_conversations WHERE user_id = $1 ORDER BY created_at DESC, id DESC`,
+        [RECV]);
+      //  الصفُّ الجديد في الرأس، فالصفحةُ الثانية بمؤشّرِ ما قبله تبقى
+      //  أقدمَ منه حتماً — ولا تقفز عن صفٍّ كان بينهما.
+      same("ك١١. **والصفحةُ الثانية هي التالية بالضبط في الترتيب الحيّ**",
+        p2.rows.map((r) => r.id), afterAll.slice(6, 11).map((r) => r.id));
+
+      //  ── والنقطةُ الحقيقية ترفع المؤشّرَ وتقبله ──
+      const r1 = await http("GET", "/api/ai/conversations/mine?limit=5", S.recv);
+      same("ك١٢. النقطةُ تُرجع ٢٠٠", r1.status, 200);
+      check(typeof r1.body?.nextCursor === "string" && r1.body.nextCursor.length > 0,
+        "ك١٣. **وترفع `nextCursor` في الردّ**", JSON.stringify(r1.body?.nextCursor));
+      const r2 = await http("GET",
+        `/api/ai/conversations/mine?limit=5&cursor=${encodeURIComponent(r1.body.nextCursor)}`,
+        S.recv);
+      same("ك١٤. والصفحةُ التالية عبر النقطة ٢٠٠", r2.status, 200);
+      const ids1 = (r1.body.rows ?? []).map((r: any) => r.id);
+      const ids2 = (r2.body.rows ?? []).map((r: any) => r.id);
+      same("ك١٥. **وصفوفُها أقدمُ ولا تتقاطع مع الأولى**",
+        ids2.filter((id: number) => ids1.includes(id)), []);
+      check(ids2.length > 0 && Math.max(...ids2) < Math.min(...ids1),
+        "ك١٦. **وكلُّها أقدمُ من كلّ الأولى** — الترتيبُ محفوظ",
+        `${JSON.stringify(ids1)} / ${JSON.stringify(ids2)}`);
+
+      //  ── **والعزلُ لم يضعف بالمؤشّر**: مؤشّرُ موظّفٍ في يد زميلٍ لا يفتح
+      //  صفّاً له — الترشيحُ بـ`user_id` من الجلسة يسبق المؤشّرَ دائماً.
+      const other = await http("GET",
+        `/api/ai/conversations/mine?cursor=${encodeURIComponent(r1.body.nextCursor)}`, S.doc);
+      same("ك١٧. **ومؤشّرُ زميلٍ لا يُسرّب صفّاً** — صفوفُ الطبيب وحدها",
+        (other.body?.rows ?? []).filter((r: any) => r.userId !== DOC).length, 0);
+
+      //  ── وشاشةُ المسؤول كذلك، ومعها مرشِّحُ الموظّف ──
+      const a1 = await http("GET", "/api/ai/conversations?limit=5", S.admin);
+      same("ك١٨. شاشةُ المسؤول ٢٠٠", a1.status, 200);
+      check(typeof a1.body?.nextCursor === "string", "ك١٩. **وترفع مؤشّراً أيضاً**",
+        JSON.stringify(a1.body?.nextCursor));
+      const a2 = await http("GET",
+        `/api/ai/conversations?limit=5&userId=${RECV}&cursor=${encodeURIComponent(a1.body.nextCursor)}`,
+        S.admin);
+      same("ك٢٠. **والمرشِّحُ يبقى مطبَّقاً مع المؤشّر معاً**",
+        (a2.body?.rows ?? []).filter((r: any) => r.userId !== RECV).length, 0);
+    }
+    await cleanup();
+
+    //  ── ك٢١+. **دقّةُ الميكروثانية — حتميّةً لا بمصادفة التوقيت** ──
+    //  البنودُ أعلاه كتبت صفوفَها بـ`NOW()`، فوقوعُها في الملّي ثانية نفسِها
+    //  مصادفةٌ تتبع سرعةَ الآلة. وهنا تُثبَّت الأختامُ صراحةً: ثلاثةُ صفوفٍ
+    //  في **ملّي ثانيةٍ واحدة** بميكروثانياتٍ متمايزة.
+    //
+    //  ومؤشّرٌ مقصوصٌ عند الملّي ثانية كان يجعل الحدَّ `...123000`، فيسقط
+    //  الصفُّ `...123456` من **الصفحتين معاً**: لا الأولى تعرضه (هو بعدها)،
+    //  ولا الثانية (ليس أقدمَ من الحدّ المقصوص). والميكروثانيةُ تُصلحه.
+    {
+      const ids: number[] = [];
+      for (let i = 1; i <= 3; i++) {
+        await say(RECV, S.recv, `دقّة${i}`, `جواب${i}`);
+        const r = await q<{ id: number }>(
+          `SELECT id FROM ai_chat_conversations WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, [RECV]);
+        ids.push(r[0].id);
+      }
+      //  الأحدثُ أوّلاً: ids[2] ⟶ .123789 · ids[1] ⟶ .123456 · ids[0] ⟶ .123001
+      const us = ["123001", "123456", "123789"];
+      for (let i = 0; i < 3; i++) {
+        await q(`UPDATE ai_chat_conversations
+                    SET created_at = TIMESTAMPTZ '2026-09-20 10:00:00.${us[i]}+00'
+                  WHERE id = $1`, [ids[i]]);
+      }
+      const order = await q<{ id: number }>(
+        `SELECT id FROM ai_chat_conversations WHERE user_id=$1
+          ORDER BY created_at DESC, id DESC`, [RECV]);
+      same("ك٢١. ثلاثةُ صفوفٍ في ملّي ثانيةٍ واحدة، بترتيبِ الميكروثانية",
+        order.map((r) => r.id), [ids[2], ids[1], ids[0]]);
+
+      const pa = await listMyConversations(RECV, 1, undefined, null);
+      same("ك٢٢. الصفحةُ الأولى صفٌّ واحد", pa.rows.map((r) => r.id), [ids[2]]);
+      check(pa.nextCursor !== null, "ك٢٣. ومعها مؤشّر");
+      const cur = decodeConversationCursor(pa.nextCursor!);
+      check(cur !== null && cur.createdAtUs % 1000 !== 0,
+        "ك٢٤. **والمؤشّرُ يحمل كسرَ الميكروثانية** لا ملّي ثانيةٍ مقصوصة",
+        JSON.stringify(cur));
+
+      const pb = await listMyConversations(RECV, 1, undefined, cur);
+      same("ك٢٥. **والصفحةُ الثانية هي الجارُ في الملّي ثانية نفسِها** — لا تقفز عنه",
+        pb.rows.map((r) => r.id), [ids[1]]);
+      const pc = await listMyConversations(RECV, 1, undefined,
+        decodeConversationCursor(pb.nextCursor!));
+      same("ك٢٦. والثالثةُ كذلك", pc.rows.map((r) => r.id), [ids[0]]);
+      same("ك٢٧. ثمّ تنتهي", pc.nextCursor, null);
+
+      //  والقراءةُ المتتابعة تبلغ الثلاثةَ كلَّها بلا فقدٍ ولا تكرار
+      const walked: number[] = [];
+      let c2: any = null;
+      for (let i = 0; i < 5; i++) {
+        const pg = await listMyConversations(RECV, 1, undefined, c2);
+        walked.push(...pg.rows.map((r) => r.id));
+        if (!pg.nextCursor) break;
+        c2 = decodeConversationCursor(pg.nextCursor);
+      }
+      same("ك٢٨. **والثلاثةُ كلُّها بلغتها القراءة بأعيانها**",
+        walked, [ids[2], ids[1], ids[0]]);
+    }
+    await cleanup();
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ل. حذفُ فرعٍ لا يُحبَس بهذا السجلّ ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  **الواقعة** (المراجعةُ نفسُها): `storage.deleteBranch` يحذف تابعيه
+    //  الستّة ثمّ الفرعَ، **ولا يعرف هذا الجدول** ولا يلتقط ٢٣٥٠٣. فمفتاحٌ
+    //  بـNO ACTION كان يجعل حذفَ فرعٍ تحادث فيه أحدٌ يوماً يفشل بنصّ
+    //  Postgres خامّ. و`SET NULL` يُسقط الرقمَ **ويُبقي لقطةَ الاسم**.
+    {
+      const BR = 9889;
+      await q(`INSERT INTO branches (id,name) VALUES ($1,'فرعُ الاختبار')
+               ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`, [BR]);
+      await recordExchange({
+        conversationId: null, userId: RECV, userName: "ريام", userRole: "reception",
+        branchId: BR, branchName: "فرعُ الاختبار", mode: "general", pagePath: "/patients",
+        question: "سؤالٌ في فرعٍ سيُحذَف", answer: "جوابُه", toolNames: [], knowledgeIds: [],
+      });
+      const before = await q<{ id: number; branch_id: number | null; branch_name: string }>(
+        `SELECT id, branch_id, branch_name FROM ai_chat_conversations WHERE branch_id = $1`, [BR]);
+      same("ل١. صفٌّ على الفرع قبل الحذف", before.length, 1);
+
+      //  **ولا مصيدةَ هنا**: الفشلُ كان سيرمي، والاختبارُ يسقط صراحةً.
+      const res = await storage.deleteBranch(BR);
+      same("ل٢. **وحذفُ الفرع ينجح** — لا ٢٣٥٠٣ خامّ على وجه المستخدم", res.success, true);
+      same("ل٣. والفرعُ ذهب",
+        (await q(`SELECT 1 FROM branches WHERE id = $1`, [BR])).length, 0);
+
+      const after = await q<{ branch_id: number | null; branch_name: string }>(
+        `SELECT branch_id, branch_name FROM ai_chat_conversations WHERE id = $1`, [before[0].id]);
+      same("ل٤. **والصفُّ باقٍ** — سجلٌّ وُضع ليُقرأ لا يُمحى بحذف فرع", after.length, 1);
+      same("ل٥. **والرقمُ وحده سقط**", after[0].branch_id, null);
+      same("ل٦. **ولقطةُ الاسم باقيةٌ كما كُتبت** — الصفُّ ما زال مقروءاً",
+        after[0].branch_name, "فرعُ الاختبار");
+
+      //  وتُقرأ من النقطة الحقيقية بلا انكسار
+      const r = await http("GET", "/api/ai/conversations", S.admin);
+      same("ل٧. وتُقرأ من شاشة المسؤول ٢٠٠", r.status, 200);
+      check((r.body?.rows ?? []).some((x: any) => x.id === before[0].id),
+        "ل٨. والصفُّ ضمنها");
+
+      //  ── وشكلُ المفتاح في القاعدة نفسِها ──
+      const fk = await q<{ confdeltype: string }>(
+        `SELECT confdeltype FROM pg_constraint
+          WHERE conrelid = 'ai_chat_conversations'::regclass AND contype = 'f'
+            AND confrelid = 'branches'::regclass`);
+      same("ل٩. **والمفتاحُ `SET NULL` في القاعدة** لا NO ACTION",
+        fk.map((f) => f.confdeltype), ["n"]);
+    }
+    await cleanup();
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── م. عقدُ الشاشتين — المؤشّرُ يبلغ الخادمَ فعلاً ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  **ولماذا قراءةُ مصدرٍ هنا**: لا مشغّلَ DOM في المستودع، والعطبُ
+    //  المُبلَّغ كان **نصفُه في الشاشة**: نقطةٌ تقبل مؤشّراً وشاشةٌ لا
+    //  ترسله = الصفوفُ الأقدم تبقى غيرَ قابلةٍ للوصول كما كانت بالضبط.
+    //  فالعقدُ يُقفَل على الوصل لا على وجود دالّةٍ معزولة.
+    {
+      const drawer = code(DRAWER_SRC);
+      const admin = code(ADMIN_SRC);
+      for (const [name, src] of [["درج المساعد", drawer], ["لوحة المسؤول", admin]] as const) {
+        check(/conversationsPageUrl\s*\(/.test(src),
+          `م١. ${name}: **يبني الرابطَ بالدالّة المشتركة** — وبلا ذلك لا يبلغ المؤشّرُ الخادمَ`);
+        check(/getNextPageParam:\s*nextConversationPageParam/.test(src),
+          `م٢. ${name}: **و«هل من مزيد؟» من قول الخادم** لا من عدّ الصفوف`);
+        check(/useInfiniteQuery</.test(src),
+          `م٣. ${name}: وصفحاتٌ لا صفحةٌ واحدة`);
+        check(/conversationRowsOf\s*\(/.test(src),
+          `م٤. ${name}: والصفوفُ من تسطيحِ الصفحات كلِّها`);
+        check(/hasNextPage\s*&&/.test(src) && /fetchNextPage\(\)/.test(src),
+          `م٥. ${name}: **وزرٌّ مشروطٌ بـhasNextPage يجلب التالية**`);
+        check(/عرض المزيد/.test(src),
+          `م٦. ${name}: وعبارتُه بالعربية`);
+      }
+      //  **ومفتاحُ الإبطال لم يتغيّر بحرف**: `askMutation.onSuccess` يُبطِله
+      //  بعد كلّ تبادل، فلو تغيّر المفتاحُ لبقيت اللوحةُ بائتةً بعد سؤالٍ
+      //  جديد — وهو ما كانت البطاقةُ تعالجه قبل هذه التمريرة.
+      check(/invalidateQueries\(\{\s*queryKey:\s*\["\/api\/ai\/conversations\/mine"\]\s*\}\)/
+        .test(drawer), "م٧. **ومفتاحُ الإبطال بعد كلّ تبادل كما كان بحرفه**");
+      check(/queryKey:\s*\["\/api\/ai\/conversations",\s*userId\]/.test(admin),
+        "م٨. **ومرشِّحُ الموظّف في مفتاح الاستعلام** — فتبديلُه يبدأ من الصفحة الأولى");
+      //  ولا تراكمَ يدويٌّ في حالةٍ محليّة يبقى بائتاً بعد الإبطال
+      check(!/setHistoryRows|setConversationRows/.test(drawer + admin),
+        "م٩. **ولا تراكمَ يدويٌّ في `useState`** — لا حالةٌ محليّة تنجو من الإبطال");
+    }
 
     await cleanup();
   } finally {

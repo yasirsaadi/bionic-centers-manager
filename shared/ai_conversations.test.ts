@@ -10,7 +10,9 @@ import {
   AI_CHAT_CONVERSATION_ID_MAX, AI_CHAT_PAGE_SIZE, AI_CHAT_RETENTION_DAYS,
   AI_CHAT_SAVED_ANSWER_MAX, AI_CHAT_SAVED_QUESTION_MAX,
   boundedPageSize, canReadAllConversations, canReadOwnConversations, cappedText,
-  lastUserQuestion, retentionCutoff, sanitizeConversationId,
+  conversationRowsOf, conversationsPageUrl, decodeConversationCursor,
+  encodeConversationCursor, lastUserQuestion, nextConversationPageParam,
+  pageFromRows, retentionCutoff, sanitizeConversationId,
 } from "./ai_conversations";
 
 let failures = 0;
@@ -124,6 +126,112 @@ same("ز٣. والصفرُ والسالب ⟶ الافتراضيّ",
 same("ز٤. **والأكبرُ من السقف يُقصَر عليه** — لا يُسلَّم الجدولُ كلُّه بطلب",
   boundedPageSize(100000), AI_CHAT_PAGE_SIZE);
 same("ز٥. والأصغرُ يُحترَم", boundedPageSize(5), 5);
+
+console.log("\n── ح. المؤشّر — ترميزٌ وفكّ، والمشوَّهُ غيابٌ لا خطأ ──");
+same("ح١. الترميزُ صيغةٌ واحدة",
+  encodeConversationCursor({ createdAtUs: 1758456000123456, id: 42 }), "1758456000123456.42");
+same("ح٢. **ورحلةُ ذهابٍ وإياب لا تفقد كسرَ الميكروثانية**",
+  decodeConversationCursor(encodeConversationCursor({ createdAtUs: 1758456000123456, id: 42 })),
+  { createdAtUs: 1758456000123456, id: 42 });
+//  **وهذا بعينه ما كان ينكسر**: مؤشّرٌ بالملّي ثانية يجعل الحدَّ أقدمَ من
+//  الصفّ الذي جاء منه، فيسقط جارُه في الملّي ثانية نفسِها من الصفحتين معاً.
+check(1758456000123456 % 1000 !== 0,
+  "ح٢ب. **والقيمةُ تحمل كسراً دون الملّي ثانية** — فالاختبارُ يقيس الدقّة فعلاً");
+check(Number.isSafeInteger(4102444800000000),
+  "ح٢ج. وميكروثانياتُ سنة ٢١٠٠ ما زالت عدداً آمناً في جافاسكربت");
+for (const [label, bad] of [
+  ["الغياب", undefined], ["العدم", null], ["الفراغ", ""], ["البياض", "   "],
+  ["رقمٌ لا نصّ", 123], ["بلا نقطة", "1758456000042"], ["بجزءٍ ثالث", "1.2.3"],
+  ["نصٌّ غريب", "abc.def"], ["سالب", "-5.3"], ["كسريّ", "1.5.2"],
+  ["صفرُ معرّف", "1758456000123456.0"], ["صفرُ ختم", "0.42"],
+  ["كائن", { createdAtUs: 1, id: 2 } as any],
+  ["أكبرُ من العدد الآمن", "99999999999999999.42"],
+] as [string, unknown][]) {
+  check(decodeConversationCursor(bad) === null,
+    `ح٣. والمشوَّهُ ⟶ null (${label}) — **الصفحةُ الأولى لا خطأ**`,
+    JSON.stringify(decodeConversationCursor(bad)));
+}
+
+console.log("\n── ط. صفحةٌ من صفوفٍ جُلبت بـlimit+1 ──");
+{
+  //  **و`cursorUs` يصل نصّاً من `node-postgres`** (نوعُ `bigint`) — فالصورةُ
+  //  هنا نصّيّةٌ عمداً كما تصل فعلاً، لا رقماً مريحاً في الاختبار وحده.
+  const row = (id: number, us: string) => ({ id, cursorUs: us });
+  const five = [row(50, "1758456000005000"), row(49, "1758456000004000"),
+    row(48, "1758456000003000"), row(47, "1758456000002456"), row(46, "1758456000001000")];
+  same("ط١. **أقلُّ من السقف ⟶ لا مؤشّر** — «لا مزيد» صراحةً",
+    pageFromRows(five.slice(0, 3), 5), { rows: five.slice(0, 3), nextCursor: null });
+  same("ط٢. ومساوٍ للسقف بالضبط ⟶ لا مؤشّر أيضاً",
+    pageFromRows(five, 5).nextCursor, null);
+  const p = pageFromRows(five, 4);
+  same("ط٣. **والزائدُ يُسقَط ولا يُعرَض** — أربعةٌ لا خمسة", p.rows.map((r) => r.id), [50, 49, 48, 47]);
+  same("ط٤. **والمؤشّرُ من آخرِ صفٍّ مُعاد لا من المحذوف**",
+    p.nextCursor, "1758456000002456.47");
+  //  وهذا هو الثابتُ الذي يمنع التكرارَ والقفز: الصفحةُ التالية شرطُها
+  //  «أقدمُ من آخرِ ما رأيتَه»، لا «تجاوزْ خمسين صفّاً».
+  same("ط٥. **والفكُّ يعيد آخرَ صفٍّ بكسرِ ميكروثانيته**",
+    decodeConversationCursor(p.nextCursor), { createdAtUs: 1758456000002456, id: 47 });
+  same("ط٦. والفارغُ ⟶ صفوفٌ فارغة بلا مؤشّر",
+    pageFromRows([], 5), { rows: [], nextCursor: null });
+  //  **وقيمةٌ لا تصلح مؤشّراً ⟶ «لا مزيد»** لا مؤشّرٌ كاذب يقفز عن صفوف.
+  same("ط٧. وقيمةٌ فاسدة ⟶ لا مؤشّر",
+    pageFromRows([row(3, "x"), row(2, "y"), row(1, "z")], 2).nextCursor, null);
+}
+
+console.log("\n── ي. رابطُ الصفحة — مكانٌ واحد يبنيه ──");
+same("ي١. بلا شيء ⟶ الأساسُ عارياً",
+  conversationsPageUrl("/api/ai/conversations/mine"), "/api/ai/conversations/mine");
+same("ي٢. **والمرشِّحُ الفارغ لا يُرسَل مُعامِلاً فارغاً**",
+  conversationsPageUrl("/api/ai/conversations", { userId: "", cursor: null }),
+  "/api/ai/conversations");
+same("ي٣. والبياضُ كذلك",
+  conversationsPageUrl("/api/ai/conversations", { userId: "  ", cursor: "   " }),
+  "/api/ai/conversations");
+same("ي٤. والمؤشّرُ وحده",
+  conversationsPageUrl("/api/ai/conversations/mine", { cursor: "1758456000000.42" }),
+  "/api/ai/conversations/mine?cursor=1758456000000.42");
+same("ي٥. والموظّفُ وحده",
+  conversationsPageUrl("/api/ai/conversations", { userId: 7 }),
+  "/api/ai/conversations?userId=7");
+same("ي٦. **والاثنان بترتيبٍ ثابت** — رابطُ نفسِ الطلب واحدٌ دائماً",
+  conversationsPageUrl("/api/ai/conversations", { userId: "7", cursor: "1758456000000.42" }),
+  "/api/ai/conversations?userId=7&cursor=1758456000000.42");
+same("ي٧. والقيمُ تُرمَّز",
+  conversationsPageUrl("/api/ai/conversations", { userId: "a b&c=1" }),
+  "/api/ai/conversations?userId=a%20b%26c%3D1");
+
+console.log("\n── ك. «هل من مزيد؟» — من قول الخادم لا من عدّ الصفوف ──");
+same("ك١. مؤشّرٌ حاضر ⟶ يُعاد كما هو",
+  nextConversationPageParam({ rows: [], nextCursor: "1.2" }), "1.2");
+for (const [label, page] of [
+  ["null صريحة", { rows: [], nextCursor: null }],
+  ["غائب", { rows: [] }],
+  ["فراغ", { rows: [], nextCursor: "" }],
+  ["بياض", { rows: [], nextCursor: "   " }],
+  ["الصفحةُ نفسُها null", null],
+  ["غائبةٌ تماماً", undefined],
+] as [string, any][]) {
+  check(nextConversationPageParam(page) === undefined,
+    `ك٢. ولا مزيد ⟶ undefined (${label}) — **وهو ما يُطفئ hasNextPage**`,
+    JSON.stringify(nextConversationPageParam(page)));
+}
+//  **صفحةٌ امتلأت ليست دليلاً على وجود تالٍ**: الخمسون صفّاً بلا مؤشّرٍ
+//  تعني «انتهى»، وزرُّ «عرض المزيد» يختفي — وهذا بعينه ما كان مفقوداً.
+check(nextConversationPageParam({
+  rows: Array.from({ length: 50 }, (_, i) => ({ id: i })), nextCursor: null,
+}) === undefined, "ك٣. **وخمسون صفّاً بلا مؤشّر ⟶ لا مزيد** — لا تخمينَ من الامتلاء");
+
+console.log("\n── ل. تسطيحُ الصفحات — بلا إزالةِ تكرار، فالفصلُ بالبناء ──");
+same("ل١. صفحتان ⟶ صفوفُهما بترتيبهما",
+  conversationRowsOf([{ rows: [{ id: 3 }, { id: 2 }] }, { rows: [{ id: 1 }] }]),
+  [{ id: 3 }, { id: 2 }, { id: 1 }]);
+same("ل٢. والصفحةُ الفارغة لا تكسر شيئاً",
+  conversationRowsOf([{ rows: [] }, { rows: [{ id: 1 }] }]), [{ id: 1 }]);
+same("ل٣. وصفحةٌ بلا حقلِ صفوف تُتخطّى",
+  conversationRowsOf([{ nextCursor: "1.2" } as any, { rows: [{ id: 1 }] }]), [{ id: 1 }]);
+same("ل٤. وغيرُ المصفوفة ⟶ فارغ",
+  [conversationRowsOf(undefined), conversationRowsOf(null), conversationRowsOf("x" as any)],
+  [[], [], []]);
 
 console.log(failures ? `\n❌ ${failures} حالة فاشلة` : "\n✅ كل الفحوص نجحت");
 process.exit(failures ? 1 : 0);

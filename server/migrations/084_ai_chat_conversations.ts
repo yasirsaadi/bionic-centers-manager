@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_conversations (
   user_id          INTEGER NOT NULL REFERENCES system_users(id),
   user_name        TEXT NOT NULL,
   user_role        TEXT,
-  branch_id        INTEGER REFERENCES branches(id),
+  branch_id        INTEGER REFERENCES branches(id) ON DELETE SET NULL,
   branch_name      TEXT,
   mode             TEXT NOT NULL,
   page_path        TEXT,
@@ -55,6 +55,39 @@ CREATE TABLE IF NOT EXISTS ai_chat_conversations (
   knowledge_ids    JSONB,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+--  == وحذفُ فرعٍ لا يُحبَس بهذا السجلّ (مراجعةٌ آلية على #٣٧٢) ===========
+--  storage.deleteBranch يحذف تابعيه الستّة ثمّ الفرعَ نفسَه، **ولا يعرف
+--  هذا الجدول** ولا يلتقط ٢٣٥٠٣. فمفتاحٌ بـNO ACTION كان يجعل حذفَ فرعٍ
+--  تحادث فيه أحدٌ يوماً **يفشل بنصّ Postgres خامّ على وجه المستخدم**.
+--
+--  وSET NULL هو الصوابُ هنا بعينه لا مجرّد مخرَج: branch_name **لقطةُ
+--  نصٍّ** أصلاً بحكم تصميم هذا الجدول (٤.ag) — فالصفُّ يبقى مقروءاً كما
+--  كُتب، ويسقط الرقمُ وحده. **والحذفُ (CASCADE) كان سيمحو سجلّاً وُضع
+--  ليُقرأ، وإضافتُه إلى قائمة deleteBranch كذلك.**
+--
+--  والكتلةُ أدناه لصفٍّ قائم: قاعدةٌ طُبّق عليها الترحيلُ قبل هذا التصحيح
+--  تحمل المفتاحَ القديم، وCREATE TABLE IF NOT EXISTS لا تصلحه. تُقرأ
+--  confdeltype فإن لم تكن n (أي SET NULL) يُعاد بناءُ المفتاح وحده —
+--  **ولا صفَّ يُمَسّ ولا عمودَ ولا جدول**.
+DO $$
+DECLARE
+  cname TEXT;
+BEGIN
+  SELECT conname INTO cname
+    FROM pg_constraint
+   WHERE conrelid = 'ai_chat_conversations'::regclass
+     AND contype = 'f'
+     AND confrelid = 'branches'::regclass
+     AND confdeltype <> 'n'
+   LIMIT 1;
+  IF cname IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE ai_chat_conversations DROP CONSTRAINT %I', cname);
+    ALTER TABLE ai_chat_conversations
+      ADD CONSTRAINT ai_chat_conversations_branch_id_fkey
+      FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 COMMENT ON TABLE ai_chat_conversations IS
   'سجل محادثات المساعد — صف لكل تبادل (سؤال وجوابه). قرار المالك 2026-09-21 يعكس قاعدة «لا محادثة تحفظ» في القسم 4.n. الاحتفاظ 90 يوما. خارج النسخة الاحتياطية البريدية.';

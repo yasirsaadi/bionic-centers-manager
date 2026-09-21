@@ -16,7 +16,8 @@
 import type { Express } from "express";
 import {
   AI_CHAT_CONVERSATION_ID_MAX, boundedPageSize,
-  canReadAllConversations, canReadOwnConversations, sanitizeConversationId,
+  canReadAllConversations, canReadOwnConversations,
+  decodeConversationCursor, sanitizeConversationId,
 } from "@shared/ai_conversations";
 import {
   getConversationThread, listAllConversations, listConversationUsers,
@@ -47,8 +48,13 @@ export function registerAiConversationRoutes(app: Express, isAuthenticated: any)
     if (!canReadOwnConversations(s)) {
       return res.status(403).json({ error: "لا تملك صلاحية قراءة سجلّ المحادثات" });
     }
-    const rows = await listMyConversations(s.userId, boundedPageSize(req.query?.limit));
-    res.json({ rows });
+    //  **والمؤشّرُ المشوَّه يُقرأ غياباً لا خطأً** — رابطٌ بائتٌ من تبويبٍ
+    //  قديم يُعيد الصفحةَ الأولى، وذاك أهونُ من شاشةٍ فارغة بخطأ.
+    const page = await listMyConversations(
+      s.userId, boundedPageSize(req.query?.limit), undefined,
+      decodeConversationCursor(req.query?.cursor),
+    );
+    res.json({ rows: page.rows, nextCursor: page.nextCursor });
   });
 
   //  ══ «كلُّ المحادثات» — المسؤولُ العام وحده ════════════════════════════
@@ -60,11 +66,12 @@ export function registerAiConversationRoutes(app: Express, isAuthenticated: any)
     if (userId === INVALID) {
       return res.status(400).json({ error: "رقم المستخدم غير صحيح" });
     }
-    const rows = await listAllConversations({
+    const page = await listAllConversations({
       limit: boundedPageSize(req.query?.limit),
       userId,
+      cursor: decodeConversationCursor(req.query?.cursor),
     });
-    res.json({ rows });
+    res.json({ rows: page.rows, nextCursor: page.nextCursor });
   });
 
   //  ══ مَن له محادثات — لمرشِّح شاشة المسؤول وحدها ═══════════════════════

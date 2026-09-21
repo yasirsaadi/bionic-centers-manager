@@ -133,3 +133,166 @@ export function boundedPageSize(v: unknown): number {
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return AI_CHAT_PAGE_SIZE;
   return Math.min(n, AI_CHAT_PAGE_SIZE);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ══ مؤشّرُ الصفحة — «عرض المزيد» يبلغ أقدمَ صفٍّ داخل النافذة ═══════════
+// ═══════════════════════════════════════════════════════════════════════
+//
+//  **الواقعة** (مراجعةٌ آلية على #٣٧٢): السقفُ ٥٠ صفّاً وحده بلا مؤشّر،
+//  فموظّفٌ تجاوز الخمسين — أو عيادةٌ كاملةٌ في شاشة المسؤول — يبقى أقدمُه
+//  محفوظاً تسعين يوماً **ولا سبيلَ إلى قراءته** من الشاشة التي وُعد بها.
+//
+//  ══ ولماذا مؤشّرُ مفتاحٍ لا `OFFSET` ═══════════════════════════════════
+//  الترتيبُ `created_at DESC, id DESC`، والصفوفُ تُضاف **في الرأس** كلّما
+//  تحادث أحد. فـ`OFFSET 50` بعد إضافةِ صفَّين يعيد صفَّين سبق أن قُرئا
+//  ويقفز عن غيرهما. والمؤشّرُ بالمفتاح مناعةٌ من ذلك بالبناء، **وهو
+//  ترتيبُ الفهرسين القائمين حرفاً بحرف** (`idx_ai_chat_conv_user` و
+//  `idx_ai_chat_conv_created`) فيُخدَم بلا فرز.
+//
+//  **وصيغتُه مبهمةٌ للعميل**: نصٌّ واحد لا رقمان، فلا تُبنى عليه شاشةٌ
+//  تفترض شكلَه ثمّ ينكسر حين يتغيّر. والمشوَّهُ يُقرأ **غياباً** (أوّلُ
+//  صفحة) لا خطأً — مؤشّرٌ بائتٌ من تبويبٍ قديم يُعيد الصفحةَ الأولى، وهو
+//  أهونُ من شاشةٍ فارغة بخطأ.
+
+/**
+ *  حدُّ صفّ: ختمُه الزمنيّ ومعرّفُه — الترتيبُ نفسُه الذي يقرأ به الفهرس.
+ *
+ *  **وبالميكروثانية لا بالملّي ثانية — وهذا شرطُ صحّةٍ لا دقّةٍ زائدة.**
+ *  `created_at` عمودُ `TIMESTAMPTZ` دقّتُه ميكروثانية، و`Date` في جافاسكربت
+ *  تقف عند الملّي ثانية. فمؤشّرٌ مأخوذٌ من `Date.getTime()` **يقصّ الكسر
+ *  صامتاً**، فيصير الحدُّ أقدمَ من الصفّ الذي جاء منه: صفٌّ في الملّي ثانية
+ *  نفسِها لكن بميكروثانيةٍ أكبر يسقط من **كلتا** الصفحتين — لا الأولى تعرضه
+ *  (هو بعدها في الترتيب) ولا الثانية (ليس «أقدمَ» من الحدّ المقصوص).
+ *
+ *  أمسكه الاختبارُ الحيُّ فعلاً: اثنا عشرَ صفّاً كُتبت في المصفوفة نفسِها،
+ *  فبلغت القراءةُ أحدَ عشر — وصفٌّ واحدٌ اختفى بلا أن يقول أحدٌ شيئاً.
+ *
+ *  **ولذلك تُقرأ القيمةُ من SQL لا من `Date`**: العددُ ميكروثانيةً منذ
+ *  المبدأ، حسابُه في الخادم بحسابٍ صحيحٍ دقيق (`numeric` ثمّ `bigint`).
+ *  و٩٫٠٠٧×١٠¹⁵ ميكروثانية تبلغ سنة ٢٢٥٥ تقريباً — فالعددُ يبقى آمناً في
+ *  جافاسكربت (`Number.isSafeInteger`) طوال عمر هذا النظام.
+ */
+export interface ConversationCursor {
+  createdAtUs: number;
+  id: number;
+}
+
+/** صفٌّ ⟶ مؤشّرٌ مبهم. `"<us>.<id>"` — تفصيلٌ داخليّ لا يعتمد عليه عميل. */
+export function encodeConversationCursor(c: ConversationCursor): string {
+  return `${c.createdAtUs}.${c.id}`;
+}
+
+/**
+ *  مؤشّرٌ مبهم ⟶ حدُّ صفّ، **والمشوَّهُ `null` (أوّلُ صفحة) لا خطأ**.
+ *
+ *  ويُشترَط الشكلُ كاملاً: رقمان صحيحان موجبان مفصولان بنقطةٍ واحدة. فنصٌّ
+ *  غريبٌ أو سالبٌ أو كسريّ أو بجزءٍ ثالث لا يُقرأ نصفَ مؤشّر.
+ */
+export function decodeConversationCursor(v: unknown): ConversationCursor | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  if (!t) return null;
+  const m = /^(\d+)\.(\d+)$/.exec(t);
+  if (!m) return null;
+  const createdAtUs = Number(m[1]);
+  const id = Number(m[2]);
+  if (!Number.isSafeInteger(createdAtUs) || createdAtUs <= 0) return null;
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  return { createdAtUs, id };
+}
+
+/**
+ *  **صفحةٌ من صفوفٍ جُلبت بـ`limit + 1`** — الزائدُ هو الدليلُ على وجود
+ *  تالٍ، فلا يحتاج الأمرُ `COUNT(*)` ثانياً على كلّ نداء.
+ *
+ *  فإن جاء `limit + 1` صفّاً: يُعاد `limit` منها ومعها مؤشّرُ آخرِ صفٍّ
+ *  **مُعاد** (لا المحذوف)، وإلّا `nextCursor = null` صراحةً — «لا مزيد».
+ */
+export function pageFromRows<T extends { id: number; cursorUs: string | number }>(
+  rows: readonly T[], limit: number,
+): { rows: T[]; nextCursor: string | null } {
+  if (rows.length <= limit) return { rows: [...rows], nextCursor: null };
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  //  `bigint` يصل من `node-postgres` نصّاً — فيُحوَّل صراحةً، ولا يُفترَض
+  //  رقماً. والقيمةُ التي لا تصلح مؤشّراً تُقرأ «لا مزيد» بدل أن تُنتج
+  //  مؤشّراً كاذباً يقفز عن صفوف.
+  const us = Number(last.cursorUs);
+  if (!Number.isSafeInteger(us) || us <= 0) return { rows: page, nextCursor: null };
+  return { rows: page, nextCursor: encodeConversationCursor({ createdAtUs: us, id: last.id }) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ══ ووصلُ المؤشّر بالشاشة — رابطُ صفحةٍ يُبنى في مكانٍ واحد ═════════════
+// ═══════════════════════════════════════════════════════════════════════
+//
+//  `client/src/lib/queryClient.ts` يبني الرابطَ الافتراضيّ من
+//  `queryKey.join("/")` — فلا موضعَ فيه لسلسلة استعلام. ولولا ذلك ما
+//  احتاجت الشاشتان `queryFn` صريحة أصلاً؛ **وهو بعينه سببُ أن المؤشّر لم
+//  يكن ليصل الخادمَ لو تُرك للافتراضيّ**.
+//
+//  فالرابطُ يُبنى هنا: دالّةٌ خالصة تُختبَر دخلاً وخرجاً، تستوردها الشاشتان
+//  معاً (درج المساعد ولوحة المسؤول) — **ولا نسخةَ ثانية** تنحرف فتُسقط
+//  المؤشّرَ من إحداهما صامتاً.
+
+export interface ConversationPageQuery {
+  /** موظّفٌ بعينه في شاشة المسؤول. الفراغُ = كلُّ الموظّفين (لا مُعامِل). */
+  userId?: string | number | null;
+  /** مؤشّرُ «ما بعد هذا». الغيابُ = الصفحةُ الأولى. */
+  cursor?: string | null;
+}
+
+/**
+ *  رابطُ صفحةٍ من السجلّ — **بترتيبِ مُعامِلاتٍ ثابت** (`userId` ثمّ
+ *  `cursor`)، فرابطُ نفسِ الطلب واحدٌ دائماً ولا يتشظّى في ذاكرة المتصفّح.
+ *
+ *  والقيمةُ الفارغة **لا تُرسَل مُعامِلاً فارغاً**: `?userId=` كان الخادمُ
+ *  ليقرأه «كلُّ الموظّفين» على كلّ حال، لكنّ رابطاً يحمل فراغاً يوحي بمرشِّحٍ
+ *  لم يُختَر. والقيمُ تُرمَّز دائماً (`encodeURIComponent`).
+ */
+export function conversationsPageUrl(base: string, q?: ConversationPageQuery): string {
+  const parts: string[] = [];
+  const uid = q?.userId;
+  if (uid !== undefined && uid !== null && String(uid).trim() !== "") {
+    parts.push(`userId=${encodeURIComponent(String(uid).trim())}`);
+  }
+  const cur = typeof q?.cursor === "string" ? q.cursor.trim() : "";
+  if (cur) parts.push(`cursor=${encodeURIComponent(cur)}`);
+  return parts.length ? `${base}?${parts.join("&")}` : base;
+}
+
+/** شكلُ ردّ صفحةٍ كما ترسله النقطتان. */
+export interface ConversationPageResponse<T> {
+  rows?: T[] | null;
+  nextCursor?: string | null;
+}
+
+/**
+ *  مُعامِلُ الصفحة التالية — **`undefined` حين لا مزيد**، وهو المُصطلَح الذي
+ *  يقرؤه `useInfiniteQuery` فيُطفئ `hasNextPage`. فزرُّ «عرض المزيد» يختفي
+ *  لأنّ الخادمَ قال إنّ لا تالِيَ، لا لأنّ الشاشةَ خمّنت من عدد الصفوف
+ *  (صفحةٌ امتلأت بالمصادفة ليست دليلاً على وجود تالٍ، ولا العكس).
+ */
+export function nextConversationPageParam(
+  page: ConversationPageResponse<unknown> | null | undefined,
+): string | undefined {
+  const c = typeof page?.nextCursor === "string" ? page.nextCursor.trim() : "";
+  return c ? c : undefined;
+}
+
+/**
+ *  صفوفُ كلّ الصفحات المحمَّلة بترتيبها — **بلا إزالةِ تكرار**: المؤشّرُ
+ *  بالمفتاح يجعل الصفحاتِ منفصلةً بالبناء (`(created_at, id) <` حدٌّ صارم)،
+ *  وإعادةُ الجلب تعيد اشتقاقَ مؤشّر كلّ صفحةٍ من سابقتها فتبقى منفصلة.
+ *  فإزالةُ تكرارٍ هنا كانت ستُخفي انكسارَ ذلك الثابت بدل أن تكشفه.
+ */
+export function conversationRowsOf<T>(
+  pages: readonly (ConversationPageResponse<T> | null | undefined)[] | null | undefined,
+): T[] {
+  if (!Array.isArray(pages)) return [];
+  const out: T[] = [];
+  for (const p of pages) {
+    if (Array.isArray(p?.rows)) out.push(...(p!.rows as T[]));
+  }
+  return out;
+}

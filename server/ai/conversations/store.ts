@@ -15,12 +15,13 @@
 //  وعدُ «تسعين يوماً» لا يُبنى على نجاح كرونٍ ليليّ: كلُّ قراءةٍ هنا تُرشَّح
 //  بـ`retentionCutoff`، فصفٌّ تجاوز النافذة **لا يُعرَض ولو بقي في الجدول**.
 
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, lt, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { aiChatConversations } from "@shared/schema";
 import {
   AI_CHAT_SAVED_ANSWER_MAX, AI_CHAT_SAVED_QUESTION_MAX,
-  cappedText, retentionCutoff, sanitizeConversationId,
+  cappedText, pageFromRows, retentionCutoff, sanitizeConversationId,
+  type ConversationCursor,
 } from "@shared/ai_conversations";
 
 export interface ExchangeInput {
@@ -101,6 +102,49 @@ export async function recordExchange(input: ExchangeInput): Promise<boolean> {
   }
 }
 
+/** صفحةٌ مقروءة: صفوفُها ومؤشّرُ ما بعدها (`null` = لا مزيد). */
+export interface ConversationPage {
+  rows: ConversationRow[];
+  nextCursor: string | null;
+}
+
+/**
+ *  **شرطُ «أقدمُ من هذا الحدّ»** — مقارنةُ صفٍّ مركَّبة `(created_at, id)`،
+ *  وهي بعينها مفاتيحُ الفهرسين القائمين وترتيبُهما، فتُخدَم بلا فرز.
+ *
+ *  و`id` في الحدّ الثاني ضروريّ لا زينة: ختمان متساويان (دفعةٌ كُتبت في
+ *  الملّي ثانية نفسِها) كانا سيُعيدان الصفَّ نفسَه إلى الأبد بمقارنةٍ على
+ *  الختم وحده — أو يقفزان عنه. **وبلا مؤشّرٍ لا شرطَ إطلاقاً** فتبقى
+ *  الصفحةُ الأولى كما كانت بحرفها.
+ */
+function olderThan(cursor: ConversationCursor | null | undefined) {
+  if (!cursor) return [];
+  //  **والحدُّ يُبنى بحسابٍ صحيحٍ دقيق لا بـ`Date`**: `'epoch'` مضافاً إليه
+  //  عددُ ميكروثانياتٍ صحيح يُنتج الختمَ بعينه بلا كسرٍ ضائع — فالصفُّ الذي
+  //  جاء منه المؤشّرُ يُستبعَد بالضبط، ولا يُستبعَد معه جارُه في الملّي
+  //  ثانية نفسِها. (ولو مرّ عبر `Date` لقُصّ الكسرُ فاختفى ذلك الجار.)
+  const bound = sql`TIMESTAMPTZ 'epoch' + ${cursor.createdAtUs}::bigint * INTERVAL '1 microsecond'`;
+  return [sql`(${aiChatConversations.createdAt}, ${aiChatConversations.id})
+    < (${bound}, ${cursor.id}::int)`];
+}
+
+/**
+ *  ميكروثانياتُ الصفّ منذ المبدأ — **تُحسَب في القاعدة لا في جافاسكربت**،
+ *  لأنّ `Date` تقف عند الملّي ثانية فتقصّ الكسرَ صامتاً (راجع شرحَ
+ *  `ConversationCursor`). و`numeric` قبل `bigint` تجعل الحسابَ دقيقاً بلا
+ *  عائمٍ مهما كانت نسخةُ Postgres.
+ */
+const CURSOR_US =
+  sql<string>`(EXTRACT(EPOCH FROM ${aiChatConversations.createdAt})::numeric * 1000000)::bigint`;
+
+/** أعمدةُ الجدول كلُّها ومعها قيمةُ المؤشّر — **والأخيرةُ لا تُسلَّم لعميل**. */
+const ROW_SELECT = { ...getTableColumns(aiChatConversations), cursorUs: CURSOR_US };
+
+/**
+ *  **ويُبنى الصفُّ بحقولٍ صريحة** — فقيمةُ المؤشّر الداخلية (`cursorUs`)
+ *  لا تتسرّب إلى العميل مع الصفوف: المؤشّرُ يُسلَّم مرّةً واحدة في
+ *  `nextCursor` مبهماً، ولا يُبنى عليه شكلُ شاشة.
+ */
 function toRow(r: any): ConversationRow {
   return {
     id: r.id,
@@ -127,16 +171,20 @@ function toRow(r: any): ConversationRow {
  *  استعلامٍ يفتح صفوفَ غيره.
  */
 export async function listMyConversations(
-  userId: number, limit: number, now?: Date,
-): Promise<ConversationRow[]> {
-  const rows = await db.select().from(aiChatConversations)
+  userId: number, limit: number, now?: Date, cursor?: ConversationCursor | null,
+): Promise<ConversationPage> {
+  const rows = await db.select(ROW_SELECT).from(aiChatConversations)
     .where(and(
       eq(aiChatConversations.userId, userId),
       gte(aiChatConversations.createdAt, retentionCutoff(nowOr(now))),
+      ...olderThan(cursor),
     ))
     .orderBy(desc(aiChatConversations.createdAt), desc(aiChatConversations.id))
-    .limit(limit);
-  return rows.map(toRow);
+    //  **صفٌّ زائدٌ واحد هو الدليلُ على وجود تالٍ** — فلا `COUNT(*)` ثانٍ
+    //  على كلّ نداء، ولا ادّعاءَ «لا مزيد» لصفحةٍ امتلأت بالمصادفة.
+    .limit(limit + 1);
+  const page = pageFromRows(rows, limit);
+  return { rows: page.rows.map(toRow), nextCursor: page.nextCursor };
 }
 
 /**
@@ -144,15 +192,17 @@ export async function listMyConversations(
  *  الدالّةُ لا تُنادى من مسارٍ آخر). ترشيحٌ اختياريّ بمستخدمٍ بعينه.
  */
 export async function listAllConversations(
-  opts: { limit: number; userId?: number | null; now?: Date },
-): Promise<ConversationRow[]> {
+  opts: { limit: number; userId?: number | null; now?: Date; cursor?: ConversationCursor | null },
+): Promise<ConversationPage> {
   const conds = [gte(aiChatConversations.createdAt, retentionCutoff(nowOr(opts.now)))];
   if (typeof opts.userId === "number") conds.push(eq(aiChatConversations.userId, opts.userId));
-  const rows = await db.select().from(aiChatConversations)
+  conds.push(...olderThan(opts.cursor));
+  const rows = await db.select(ROW_SELECT).from(aiChatConversations)
     .where(and(...conds))
     .orderBy(desc(aiChatConversations.createdAt), desc(aiChatConversations.id))
-    .limit(opts.limit);
-  return rows.map(toRow);
+    .limit(opts.limit + 1);
+  const page = pageFromRows(rows, opts.limit);
+  return { rows: page.rows.map(toRow), nextCursor: page.nextCursor };
 }
 
 /**
