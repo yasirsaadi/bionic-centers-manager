@@ -1175,8 +1175,12 @@ async function main() {
     && /canAddPayments/.test(acg), "ض.١٥ إنشاء الفاتورة والقبض");
   check(/تعديل المورد وإلغاء تفعيله\s+للمسؤول العام فقط/.test(acg)
     && /تعديل\/حذف الشراء للمسؤول العام فقط/.test(acg)
+    && /GET \/api\/purchases\/:id/.test(acg)
+    && /POST \/api\/purchases\/:id\/payment/.test(acg)
+    && /لا يطبقان enforceBranchAccess/.test(acg)
+    && /شراءً من فرع آخر.*يسجل عليه دفعة/s.test(acg)
     && /حفظ الشراء أو دفعة المورد.*بأفضل\s+جهد/s.test(acg)
-    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات وحدود القيود");
+    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات واستثناء نطاق الفرع");
   check(/المديونيات والاتجاهات والربحية والمقارنة والتنبيهات/.test(acg)
     && /استثناء صريح/.test(acg) && /AccountingRevenueByTreatment/.test(acg)
     && /revenue-by-treatment.*canViewReports/s.test(acg)
