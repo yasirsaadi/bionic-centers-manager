@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
+import { initAiConversationCleanup } from "./ai/conversations/cleanup";
 import { runMigrations } from "./migrations/runner";
 import { warmTrigramCache } from "./patient_search/sql";
 import { db } from "./db";
@@ -144,6 +145,10 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       initBackupScheduler();
+      //  محوُ سجلّ محادثات المساعد بعد تسعين يوماً (٠٨٤) — **بجوار النسخة
+      //  الليلية لا داخلها**: `server/backup.ts` بلا حرفٍ يتغيّر، والجدولُ
+      //  الجديد خارج النسخة البريدية أصلاً (قائمةُ أعمدةٍ مكتوبةٌ يدوياً).
+      initAiConversationCleanup();
       // عامل صادر إشعارات المريض. يبدأ بعد الترحيلات والمسارات، ويصمت
       // معلَناً إن لم يكن بوت المريض مُعدّاً.
       startNotificationDispatcher();

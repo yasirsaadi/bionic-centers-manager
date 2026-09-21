@@ -143,6 +143,8 @@
     "test:create-patient-duplicate-guard": "tsx client/src/pages/create_patient_duplicate_guard.test.ts",
     "test:ai-knowledge-retrieval": "tsx shared/ai_knowledge_retrieval.test.ts",
     "test:ai-knowledge": "tsx server/ai_knowledge.test.ts",
+    "test:ai-conversations": "tsx server/ai_conversations.test.ts",
+    "test:ai-conversations-pure": "tsx shared/ai_conversations.test.ts",
     "test:owner-profile": "tsx server/owner_profile_knowledge.test.ts",
     "test:admin-user-lifecycle": "tsx server/admin_user_lifecycle.test.ts",
     "test:admin-user-permanent-delete": "tsx server/admin_user_permanent_delete.test.ts",
