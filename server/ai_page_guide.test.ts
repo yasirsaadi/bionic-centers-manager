@@ -1230,7 +1230,7 @@ async function main() {
 
   check(/noTarget/.test(adg) && /entries أو deleteCount/.test(adg)
     && /quality وحده.*100/s.test(adg) && /didWork/.test(adg)
-    && /لا تقارن score بين أدوار/.test(adg), "ظ.٢٢ حدود مقارنة تقييم الموظفين");
+    && /لا\s+تقارن score بين أدوار/.test(adg), "ظ.٢٢ حدود مقارنة تقييم الموظفين");
 
   same("ظ.٢٣ دليل الإدارة ساكن", pageGuideFor(ADMIN, rep), pageGuideFor(ADMIN, adm));
 
