@@ -1182,6 +1182,11 @@ async function main() {
   check(/خمسة مفاتيح فعلية للتبديل/.test(adg) && /showDashboard/.test(adg)
     && /showStatistics/.test(adg) && /ظهور\/ملاحة/.test(adg)
     && /ليست\s+بديلاً عن حراس الصلاحيات/.test(adg), "ظ.١١ب إعدادات الفرع ليست تفويضاً");
+  check(/showDashboard معروض لكن تحديثه مكسور/.test(adg)
+    && /updateBranchSettingsSchema لا يحتوي\s+showDashboard/.test(adg)
+    && /show_dashboard/.test(adg) && /Zod يجرّد المفتاح الزائد/.test(adg)
+    && /قد ينجح الطلب.*من دون أن يتغير showDashboard/s.test(adg),
+    "ظ.١١ج فجوة حفظ showDashboard موثقة");
 
   check(/عدد المرضى الفعالين.*أكبر من\s+صفر/s.test(adg)
     && /storage\.deleteBranch/.test(adg) && /حذف فعلي/.test(adg),

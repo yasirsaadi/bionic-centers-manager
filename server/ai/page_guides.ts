@@ -1282,6 +1282,13 @@ fallback true عند غيابه.
 showPatients وshowPayments وshowAccounting وshowStatistics. هذه مفاتيح
 **ظهور/ملاحة** لغير المسؤول وليست بديلاً عن حراس الصلاحيات في نقاط الخادم.
 
+**⚠ وshowDashboard معروض لكن تحديثه مكسور حالياً**: الواجهة ترسله إلى
+POST /api/admin/branches/settings، لكن updateBranchSettingsSchema لا يحتوي
+showDashboard رغم وجود عمود show_dashboard في branch_settings. وبما أن مخطط
+Zod يجرّد المفتاح الزائد، قد ينجح الطلب من دون أن يتغير showDashboard فعلياً.
+لا تقل إن مفتاح لوحة التحكم حُفظ لمجرد أن الشاشة لم تعرض خطأ. أما المفاتيح
+الأربعة الأخرى المعروضة فهي موجودة في مخطط التحديث.
+
 حذف الفرع يُمنع في الواجهة والخادم إذا كان عدد المرضى الفعالين فيه أكبر من
 صفر. وعند السماح، storage.deleteBranch يحذف أولاً branchPasswords و
 branchSettings وexpenses وinvoices وinstallmentPlans وcustomStats ثم صف الفرع.
