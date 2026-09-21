@@ -12,6 +12,17 @@
 //  الكتابةُ الوحيدة `recordExchange`، وتقع داخل `/api/ai/chat` وحدها. وهذا
 //  الملفُّ **قراءةٌ محضة** — لا `POST` ولا `PATCH` ولا `DELETE`: سجلٌّ يُقرأ
 //  ولا يُحرَّر، وإلّا صار مَن يُقرأ عليه قادراً على تنقيحه.
+//
+//  ══ و`next(err)` لا رفضٌ عارٍ — الطلبُ يُردّ عليه دائماً ═════════════════
+//  (مراجعةٌ آلية على #٣٧٢، ٢٠٢٦-٠٩-٢١.) Express 4 لا يلتقط رفضَ الوعود من
+//  معالجٍ غير متزامن، ومعالِجُ `unhandledRejection` في `index.ts` **لا يملك
+//  `res` أصلاً** فلا يستطيع الردّ — يُبقي العمليةَ حيّةً ويترك ذلك الطلبَ
+//  **بلا أيّ استجابة إلى الأبد**. فعطلُ قاعدةٍ عابر (مهلةُ قفل، انقطاعُ
+//  اتّصال) كان يجعل شاشةَ السجلّ تدور بلا نهاية بدل أن تقول «تعذّر».
+//  والمخرجُ نفسُه المستعمَل في `server/ai/knowledge/routes.ts` بحرفه:
+//  `try/catch` حول كلّ معالجٍ يلمس القاعدة، و`next(err)` يوصله إلى وسيط
+//  الأخطاء العامّ فيُرسَل ردٌّ حقيقيّ. **والحُرّاسُ قبله كما هي**: ٤٠٣
+//  و٤٠٠ تبقى ردوداً مبكّرة لا استثناءات.
 
 import type { Express } from "express";
 import {
@@ -43,63 +54,79 @@ export function registerAiConversationRoutes(app: Express, isAuthenticated: any)
   //  ══ «محادثاتي» — كلُّ موظّفٍ مصادَق، صفوفُه هو وحدها ═══════════════════
   //  الترشيحُ بـ`userId` **من الجلسة** لا من الطلب: لا معرّفَ في استعلامٍ
   //  ولا جسمٍ يفتح صفوفَ زميل.
-  app.get("/api/ai/conversations/mine", isAuthenticated, async (req: Req, res) => {
-    const s = sessionOf(req);
-    if (!canReadOwnConversations(s)) {
-      return res.status(403).json({ error: "لا تملك صلاحية قراءة سجلّ المحادثات" });
+  app.get("/api/ai/conversations/mine", isAuthenticated, async (req: Req, res, next) => {
+    try {
+      const s = sessionOf(req);
+      if (!canReadOwnConversations(s)) {
+        return res.status(403).json({ error: "لا تملك صلاحية قراءة سجلّ المحادثات" });
+      }
+      //  **والمؤشّرُ المشوَّه يُقرأ غياباً لا خطأً** — رابطٌ بائتٌ من تبويبٍ
+      //  قديم يُعيد الصفحةَ الأولى، وذاك أهونُ من شاشةٍ فارغة بخطأ.
+      const page = await listMyConversations(
+        s.userId, boundedPageSize(req.query?.limit), undefined,
+        decodeConversationCursor(req.query?.cursor),
+      );
+      res.json({ rows: page.rows, nextCursor: page.nextCursor });
+    } catch (err) {
+      next(err);
     }
-    //  **والمؤشّرُ المشوَّه يُقرأ غياباً لا خطأً** — رابطٌ بائتٌ من تبويبٍ
-    //  قديم يُعيد الصفحةَ الأولى، وذاك أهونُ من شاشةٍ فارغة بخطأ.
-    const page = await listMyConversations(
-      s.userId, boundedPageSize(req.query?.limit), undefined,
-      decodeConversationCursor(req.query?.cursor),
-    );
-    res.json({ rows: page.rows, nextCursor: page.nextCursor });
   });
 
   //  ══ «كلُّ المحادثات» — المسؤولُ العام وحده ════════════════════════════
-  app.get("/api/ai/conversations", isAuthenticated, async (req: Req, res) => {
-    if (!canReadAllConversations(sessionOf(req))) {
-      return res.status(403).json({ error: "سجلّ محادثات الموظّفين للمسؤول العام وحده" });
+  app.get("/api/ai/conversations", isAuthenticated, async (req: Req, res, next) => {
+    try {
+      if (!canReadAllConversations(sessionOf(req))) {
+        return res.status(403).json({ error: "سجلّ محادثات الموظّفين للمسؤول العام وحده" });
+      }
+      const userId = parseUserId(req.query?.userId);
+      if (userId === INVALID) {
+        return res.status(400).json({ error: "رقم المستخدم غير صحيح" });
+      }
+      const page = await listAllConversations({
+        limit: boundedPageSize(req.query?.limit),
+        userId,
+        cursor: decodeConversationCursor(req.query?.cursor),
+      });
+      res.json({ rows: page.rows, nextCursor: page.nextCursor });
+    } catch (err) {
+      next(err);
     }
-    const userId = parseUserId(req.query?.userId);
-    if (userId === INVALID) {
-      return res.status(400).json({ error: "رقم المستخدم غير صحيح" });
-    }
-    const page = await listAllConversations({
-      limit: boundedPageSize(req.query?.limit),
-      userId,
-      cursor: decodeConversationCursor(req.query?.cursor),
-    });
-    res.json({ rows: page.rows, nextCursor: page.nextCursor });
   });
 
   //  ══ مَن له محادثات — لمرشِّح شاشة المسؤول وحدها ═══════════════════════
-  app.get("/api/ai/conversations/users", isAuthenticated, async (req: Req, res) => {
-    if (!canReadAllConversations(sessionOf(req))) {
-      return res.status(403).json({ error: "سجلّ محادثات الموظّفين للمسؤول العام وحده" });
+  app.get("/api/ai/conversations/users", isAuthenticated, async (req: Req, res, next) => {
+    try {
+      if (!canReadAllConversations(sessionOf(req))) {
+        return res.status(403).json({ error: "سجلّ محادثات الموظّفين للمسؤول العام وحده" });
+      }
+      res.json({ users: await listConversationUsers() });
+    } catch (err) {
+      next(err);
     }
-    res.json({ users: await listConversationUsers() });
   });
 
   //  ══ خيطُ محادثةٍ واحدة ════════════════════════════════════════════════
   //  **ومعرّفُ التجميع ليس إذناً**: غيرُ المسؤول يُرشَّح برقم نفسِه دائماً،
   //  فمعرّفُ محادثةِ زميلٍ يُرجع مصفوفةً فارغة لا صفوفَه.
-  app.get("/api/ai/conversations/thread/:conversationId", isAuthenticated, async (req: Req, res) => {
-    const s = sessionOf(req);
-    const isAdmin = canReadAllConversations(s);
-    if (!isAdmin && !canReadOwnConversations(s)) {
-      return res.status(403).json({ error: "لا تملك صلاحية قراءة سجلّ المحادثات" });
+  app.get("/api/ai/conversations/thread/:conversationId", isAuthenticated, async (req: Req, res, next) => {
+    try {
+      const s = sessionOf(req);
+      const isAdmin = canReadAllConversations(s);
+      if (!isAdmin && !canReadOwnConversations(s)) {
+        return res.status(403).json({ error: "لا تملك صلاحية قراءة سجلّ المحادثات" });
+      }
+      const raw = String(req.params?.conversationId ?? "");
+      if (raw.length > AI_CHAT_CONVERSATION_ID_MAX) {
+        return res.status(400).json({ error: "معرّف المحادثة غير صحيح" });
+      }
+      const conversationId = sanitizeConversationId(raw);
+      if (!conversationId) {
+        return res.status(400).json({ error: "معرّف المحادثة غير صحيح" });
+      }
+      const rows = await getConversationThread(conversationId, isAdmin ? null : s.userId);
+      res.json({ rows });
+    } catch (err) {
+      next(err);
     }
-    const raw = String(req.params?.conversationId ?? "");
-    if (raw.length > AI_CHAT_CONVERSATION_ID_MAX) {
-      return res.status(400).json({ error: "معرّف المحادثة غير صحيح" });
-    }
-    const conversationId = sanitizeConversationId(raw);
-    if (!conversationId) {
-      return res.status(400).json({ error: "معرّف المحادثة غير صحيح" });
-    }
-    const rows = await getConversationThread(conversationId, isAdmin ? null : s.userId);
-    res.json({ rows });
   });
 }

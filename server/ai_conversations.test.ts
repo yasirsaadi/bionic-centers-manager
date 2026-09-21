@@ -27,6 +27,11 @@
 //     ويُبقي لقطةَ الاسم، والصفُّ يبقى مقروءاً (المراجعةُ نفسُها).
 //   • **م**: **وعقدُ الشاشتين** — المؤشّرُ يبلغ الخادمَ فعلاً من الدرج ومن
 //     لوحة المسؤول، وزرُّ «عرض المزيد» مشروطٌ بقول الخادم.
+//   • **ن**: **ومحتوى المحادثة لا يبلغ سجلَّ الطلبات** — الجسمُ الحقيقيُّ من
+//     النقطة الحقيقية يمرّ بتعبير `index.ts` بعينه (مراجعةٌ آلية على #٣٧٢).
+//   • **س**: **وعطلُ القاعدة يُردّ عليه ولا يُعلَّق** — `next(err)` يوصله إلى
+//     وسيط الأخطاء بدل رفضٍ عارٍ يترك الطلبَ بلا استجابة أبداً.
+//   • **ع**: **ولا اسمَ أداةٍ خامّاً يصل العميل** — والعمودُ يبقى في القاعدة.
 
 import express from "express";
 import { readFileSync } from "fs";
@@ -43,12 +48,17 @@ import { storage } from "./storage";
 import {
   AI_CHAT_RETENTION_DAYS, decodeConversationCursor,
 } from "@shared/ai_conversations";
+//  الحاجبُ **نفسُه** الذي يناديه سجلُّ الطلبات — لا نسخةٌ في الاختبار.
+import { redactForLog } from "./log_redaction";
 
 const ROUTES_SRC = readFileSync(join(process.cwd(), "server/routes.ts"), "utf8");
 const CONV_ROUTES_SRC = readFileSync(
   join(process.cwd(), "server/ai/conversations/routes.ts"), "utf8");
 const RUNNER_SRC = readFileSync(join(process.cwd(), "server/migrations/runner.ts"), "utf8");
 const BACKUP_SRC = readFileSync(join(process.cwd(), "server/backup.ts"), "utf8");
+const INDEX_SRC = readFileSync(join(process.cwd(), "server/index.ts"), "utf8");
+const STORE_SRC = readFileSync(
+  join(process.cwd(), "server/ai/conversations/store.ts"), "utf8");
 const DRAWER_SRC = readFileSync(
   join(process.cwd(), "client/src/components/AiChatDrawer.tsx"), "utf8");
 const ADMIN_SRC = readFileSync(
@@ -168,6 +178,23 @@ async function main() {
   };
   const httpServer = createServer(app);
   await registerRoutes(httpServer, app);
+
+  //  ══ وسيطُ الأخطاء — **نسخةُ `server/index.ts` بحرفها** ═════════════════
+  //  بلا هذا الوسيط لا معنى لاختبار `next(err)`: الطلبُ سيُعلَّق سواءٌ رمى
+  //  المعالجُ أم مرّر. وهو هنا كي يُثبَت أنّ الخطأ **يصل** فعلاً ويُردّ به.
+  let errorsSeen = 0;
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    errorsSeen++;
+    const status = err?.status || err?.statusCode || 500;
+    if (!res.headersSent) res.status(status).json({ message: err?.message || "Internal Server Error" });
+  });
+
+  //  ومعالجُ الرفض العاري — **مطابقٌ لما في `index.ts`**: يُبقي العمليةَ
+  //  حيّةً ولا يملك `res` فلا يردّ. فبلا الإصلاح يبقى الطلبُ معلَّقاً
+  //  فتفشل المهلةُ أدناه بوضوح، بدل أن تسقط العمليةُ كلُّها.
+  let unhandled = 0;
+  process.on("unhandledRejection", () => { unhandled++; });
+
   httpServer.listen(PORT);
   await new Promise((r) => httpServer.once("listening", r));
 
@@ -665,6 +692,188 @@ async function main() {
       //  ولا تراكمَ يدويٌّ في حالةٍ محليّة يبقى بائتاً بعد الإبطال
       check(!/setHistoryRows|setConversationRows/.test(drawer + admin),
         "م٩. **ولا تراكمَ يدويٌّ في `useState`** — لا حالةٌ محليّة تنجو من الإبطال");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ن. ومحتوى المحادثة لا يبلغ سجلَّ الطلبات ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  سجلُّ الطلبات في `index.ts` يلتقط **جسمَ كلّ استجابة** `/api` ويكتبه
+    //  نصّاً. فصفحةٌ من «كلّ المحادثات» كانت تسكب خمسين تبادلاً لموظّفين
+    //  كثيرين في سجلّ العملية: نسخةٌ خارج نافذة التسعين يوماً وخارج حارسِ
+    //  «المسؤولُ العام وحده». **والفحصُ هنا على الجسم الحقيقيّ من النقطة
+    //  الحقيقية، بتعبير `index.ts` بعينه** — لا على نصٍّ مكتوبٍ في الاختبار.
+    {
+      await cleanup();
+      const QMARK = "سؤالٌ سرّيٌّ لا يجوز أن يبلغ السجلّ ZQ7X";
+      const AMARK = "جوابٌ سرّيٌّ لا يجوز أن يبلغ السجلّ ZA9K";
+      await say(RECV, S.recv, QMARK, AMARK, "logconv");
+
+      /** **التعبيرُ الذي يكتبه `index.ts` حرفاً بحرف** على جسمٍ حقيقيّ. */
+      const logLineOf = (body: unknown) => JSON.stringify(redactForLog(body));
+
+      const mine = await http("GET", "/api/ai/conversations/mine", S.recv);
+      check(mine.status === 200 && (mine.body?.rows ?? []).length === 1,
+        "ن١. الجسمُ الحقيقيُّ من «محادثاتي» جاهزٌ للفحص",
+        JSON.stringify(mine.body).slice(0, 200));
+
+      //  **أوّلاً: العميلُ ما زال يتلقّى النصَّ كاملاً** — الحجبُ للسجلّ
+      //  وحده، ولو مسّ الاستجابةَ لكسر الشاشتين معاً.
+      check(mine.body?.rows?.[0]?.question === QMARK
+        && mine.body?.rows?.[0]?.answer === AMARK,
+        "ن٢. **والاستجابةُ إلى العميل كما هي** — النصُّ كاملٌ فيها، فالحجبُ للسجلّ وحده");
+
+      for (const [name, body] of [
+        ["محادثاتي", mine.body],
+        ["كلُّ المحادثات", (await http("GET", "/api/ai/conversations", S.admin)).body],
+        ["خيطُ المحادثة", (await http("GET", "/api/ai/conversations/thread/logconv", S.recv)).body],
+      ] as const) {
+        const line = logLineOf(body);
+        check(!line.includes(QMARK), `ن٣. ${name}: **ولا نصُّ السؤال في سطر السجلّ**`,
+          line.slice(0, 300));
+        check(!line.includes(AMARK), `ن٤. ${name}: **ولا نصُّ الجواب**`, line.slice(0, 300));
+        check(line.includes("[محجوب]"), `ن٥. ${name}: والحجبُ وقع فعلاً لا أنّ الجسمَ فارغ`,
+          line.slice(0, 300));
+        //  وما يبقى هو ما يبقى في `audit_log` عمداً — يكفي للتشخيص.
+        check(line.includes("ريام") && line.includes("general"),
+          `ن٦. ${name}: **ويبقى ما يُشخَّص به**: مَن سأل وبأيّ وضع`, line.slice(0, 300));
+      }
+
+      //  و`reply` هو النصُّ نفسُه من `POST /api/ai/chat` — فحجبُ أحدِهما دون
+      //  الآخر يترك المحتوى عينَه يتسرّب من النقطة التي تُنشئ الصفوف.
+      check(!logLineOf({ reply: AMARK, knowledge: [] }).includes(AMARK),
+        "ن٧. **و`reply` من `/api/ai/chat` محجوبٌ كذلك** — وهو النصُّ عينُه");
+
+      //  والحارسُ المعماريّ: سطرُ السجلّ ما زال يمرّ بالحاجب فعلاً.
+      check(/JSON\.stringify\(redactForLog\(capturedJsonResponse\)\)/.test(code(INDEX_SRC)),
+        "ن٨. **وسجلُّ الطلبات ما زال يمرّ بالحاجب** — ولو كُتب الجسمُ خامّاً سقط كلُّ ما سبق");
+      await cleanup();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── س. وعطلُ القاعدة يُردّ عليه ولا يُعلَّق ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  Express 4 لا يلتقط رفضَ الوعود من معالجٍ غير متزامن، ومعالِجُ
+    //  `unhandledRejection` **لا يملك `res`** فلا يردّ — يُبقي العمليةَ حيّةً
+    //  ويترك ذلك الطلبَ **بلا أيّ استجابة إلى الأبد**. فالفحصُ هنا بمهلةٍ
+    //  صريحة: ردٌّ حقيقيٌّ ⟶ نجاح، وصمتٌ حتى المهلة ⟶ العطبُ بعينه.
+    {
+      const BOOM = "DB_BOOM_FOR_TEST";
+      const origQuery = pool.query.bind(pool);
+      /** يُفشل استعلاماتِ هذا الجدول وحدها — ولا يمسّ جلسةً ولا مساراً آخر. */
+      const breakDb = () => {
+        (pool as any).query = (...a: any[]) => {
+          const text = typeof a[0] === "string" ? a[0] : (a[0]?.text ?? "");
+          if (String(text).includes("ai_chat_conversations")) {
+            return Promise.reject(new Error(BOOM));
+          }
+          return (origQuery as any)(...a);
+        };
+      };
+      const restoreDb = () => { (pool as any).query = origQuery; };
+
+      async function httpBounded(path: string, session: any, ms = 4000) {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), ms);
+        try {
+          const res = await fetch(BASE + path, {
+            signal: ac.signal,
+            headers: {
+              "content-type": "application/json",
+              "x-test-session": Buffer.from(JSON.stringify(session), "utf8").toString("base64"),
+            },
+          });
+          let json: any = null;
+          try { json = await res.json(); } catch { /* empty */ }
+          return { timedOut: false, status: res.status, body: json };
+        } catch {
+          return { timedOut: true, status: 0, body: null };
+        } finally { clearTimeout(t); }
+      }
+
+      const before = errorsSeen;
+      const unhandledBefore = unhandled;
+      try {
+        breakDb();
+        for (const [name, path, sess] of [
+          ["محادثاتي", "/api/ai/conversations/mine", S.recv],
+          ["كلُّ المحادثات", "/api/ai/conversations", S.admin],
+          ["مَن لهم محادثات", "/api/ai/conversations/users", S.admin],
+          ["خيطُ المحادثة", "/api/ai/conversations/thread/anythread", S.recv],
+        ] as const) {
+          const r = await httpBounded(path, sess);
+          check(!r.timedOut, `س١. ${name}: **الطلبُ يُردّ عليه ولا يُعلَّق**`,
+            "انتهت المهلةُ بلا استجابة — وهذا هو العطب بعينه");
+          check(r.status === 500, `س٢. ${name}: وبرمزٍ حقيقيّ من وسيط الأخطاء`, String(r.status));
+        }
+      } finally { restoreDb(); }
+
+      check(errorsSeen - before === 4,
+        "س٣. **والأخطاءُ الأربعة بلغت وسيطَ الأخطاء فعلاً**", String(errorsSeen - before));
+      check(unhandled === unhandledBefore,
+        "س٤. **ولا رفضٌ عارٍ واحد** — لا شيءَ تسرّب إلى `unhandledRejection`",
+        String(unhandled - unhandledBefore));
+
+      //  والقاعدةُ سليمةٌ بعد ذلك — لم يُكسَر شيءٌ حقيقيّ.
+      const after = await http("GET", "/api/ai/conversations/mine", S.recv);
+      check(after.status === 200, "س٥. والقاعدةُ تعمل بعدها كما كانت", String(after.status));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    console.log("\n── ع. ولا اسمَ أداةٍ خامّاً يصل العميل ──");
+    // ════════════════════════════════════════════════════════════════════
+    //  `patient_lookup` و`financial_summary` أسماءُ أدواتٍ داخلية، و
+    //  `POST /api/ai/chat` يُسقطها عمداً من ردّه — «والاسمُ الخامّ لا يصل
+    //  العميل إطلاقاً بعد اليوم» (القسم ٤.n). فسجلُّ المحادثات لا يجوز أن
+    //  يصير البابَ الخلفيّ لما أُغلق هناك. **والعمودُ يبقى في القاعدة.**
+    {
+      await cleanup();
+      const TOOLS = ["patient_lookup", "financial_summary"];
+      await recordExchange({
+        conversationId: "toolconv", userId: RECV, userName: S.recv.displayName,
+        userRole: S.recv.role, branchId: 1, branchName: "بغداد", mode: "general",
+        pagePath: "/patients", question: "سؤالٌ بأدوات", answer: "جوابٌ بأدوات",
+        toolNames: TOOLS, knowledgeIds: [7],
+      });
+
+      //  **الكتابةُ لم تُمَسّ**: العمودُ محفوظٌ للتدقيق كما كان.
+      const [dbRow] = await q<{ tool_names: any; knowledge_ids: any }>(
+        `SELECT tool_names, knowledge_ids FROM ai_chat_conversations
+          WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, [RECV]);
+      same("ع١. **والعمودُ في القاعدة كما كان** — الكتابةُ لم تُمَسّ",
+        dbRow?.tool_names, TOOLS);
+
+      const surfaces: [string, any[]][] = [
+        ["محادثاتي (نقطة)", (await http("GET", "/api/ai/conversations/mine", S.recv)).body?.rows ?? []],
+        ["كلُّ المحادثات (نقطة)", (await http("GET", "/api/ai/conversations", S.admin)).body?.rows ?? []],
+        ["خيطُ المحادثة (نقطة)", (await http("GET", "/api/ai/conversations/thread/toolconv", S.recv)).body?.rows ?? []],
+        ["محادثاتي (مخزن)", (await listMyConversations(RECV, 20)).rows],
+        ["كلُّ المحادثات (مخزن)", (await listAllConversations({ limit: 20 })).rows],
+        ["خيطُ المحادثة (مخزن)", await getConversationThread("toolconv", RECV)],
+      ];
+      for (const [name, rows] of surfaces) {
+        check(rows.length === 1, `ع٢. ${name}: صفٌّ واحدٌ للفحص`, String(rows.length));
+        check(rows.length > 0 && !("toolNames" in (rows[0] as any)),
+          `ع٣. ${name}: **ولا مفتاحَ `+"`toolNames`"+` في الصفّ**`,
+          JSON.stringify(rows[0] ?? null).slice(0, 200));
+        //  **ولا يتسرّب الاسمُ بأيّ شكلٍ آخر** — لا في حقلٍ ثانٍ ولا في نصّ.
+        check(!JSON.stringify(rows[0] ?? null).includes("patient_lookup"),
+          `ع٤. ${name}: **ولا اسمُ أداةٍ في أيّ موضعٍ من الصفّ**`,
+          JSON.stringify(rows[0] ?? null).slice(0, 200));
+        //  وما يُعرَض فعلاً باقٍ: نصُّ التبادل ومعرّفاتُ المعرفة.
+        same(`ع٥. ${name}: **وما تقرؤه الشاشةُ باقٍ** — معرّفاتُ المعرفة`,
+          (rows[0] as any)?.knowledgeIds, [7]);
+      }
+
+      //  حارسٌ معماريّ: البناءُ صريحٌ لا `...r` — فالإسقاطُ حقيقةٌ لا نيّة.
+      {
+        const body = code(STORE_SRC);
+        const fn = body.slice(body.indexOf("function toRow"),
+          body.indexOf("function toRow") + 800);
+        check(!/toolNames/.test(fn), "ع٦. **ولا `toolNames` في بناء الصفّ**");
+        check(!/\.\.\.r\b/.test(fn),
+          "ع٧. **والبناءُ صريحٌ لا نسخٌ بـ`...r`** — وإلّا عاد الحقلُ بلا أن ينتبه أحد");
+      }
+      await cleanup();
     }
 
     await cleanup();

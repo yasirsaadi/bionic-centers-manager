@@ -39,6 +39,18 @@ export interface ExchangeInput {
   knowledgeIds: number[];
 }
 
+/**
+ *  الصفُّ **كما يصل العميل**.
+ *
+ *  ══ ولا `toolNames` فيه — أسماءٌ تقنيةٌ داخلية ═══════════════════════════
+ *  (مراجعةٌ آلية على #٣٧٢، ٢٠٢٦-٠٩-٢١.) العمودُ يبقى في القاعدة ويكتبه
+ *  `recordExchange` كما هو للتدقيق، **لكنّه لا يُسلَّم لمتصفّح**: `patient_lookup`
+ *  و`financial_summary` وأخواتُها أسماءُ أدواتٍ داخلية، و`POST /api/ai/chat`
+ *  يُسقطها عمداً من ردّه (`const { tools: _rawTools, ...clientSafe }`) فلا
+ *  يصل العميلَ إلّا `toolsUsed` المُترجَمة عربياً — «والاسمُ الخامّ لا يصل
+ *  العميل إطلاقاً بعد اليوم» (القسم ٤.n). فسجلُّ المحادثات لا يجوز أن يصير
+ *  البابَ الخلفيّ لما أُغلق هناك، **ولا شاشةَ من الاثنتين تقرؤه أصلاً**.
+ */
 export interface ConversationRow {
   id: number;
   conversationId: string | null;
@@ -51,7 +63,6 @@ export interface ConversationRow {
   pagePath: string | null;
   question: string;
   answer: string;
-  toolNames: string[];
   knowledgeIds: number[];
   createdAt: Date;
 }
@@ -143,7 +154,10 @@ const ROW_SELECT = { ...getTableColumns(aiChatConversations), cursorUs: CURSOR_U
 /**
  *  **ويُبنى الصفُّ بحقولٍ صريحة** — فقيمةُ المؤشّر الداخلية (`cursorUs`)
  *  لا تتسرّب إلى العميل مع الصفوف: المؤشّرُ يُسلَّم مرّةً واحدة في
- *  `nextCursor` مبهماً، ولا يُبنى عليه شكلُ شاشة.
+ *  `nextCursor` مبهماً، ولا يُبنى عليه شكلُ شاشة. **و`toolNames` تُترَك هنا
+ *  عمداً** — العمودُ محفوظٌ في القاعدة ولا يُسلَّم لعميل (راجع
+ *  `ConversationRow`). والبناءُ الصريح هو ما يجعل الإسقاطَ حقيقةً لا نيّة:
+ *  نسخٌ بـ`...r` كان سيُعيدهما الاثنين بلا أن ينتبه أحد.
  */
 function toRow(r: any): ConversationRow {
   return {
@@ -158,7 +172,6 @@ function toRow(r: any): ConversationRow {
     pagePath: r.pagePath ?? null,
     question: r.question,
     answer: r.answer,
-    toolNames: Array.isArray(r.toolNames) ? r.toolNames : [],
     knowledgeIds: Array.isArray(r.knowledgeIds) ? r.knowledgeIds : [],
     createdAt: r.createdAt,
   };
