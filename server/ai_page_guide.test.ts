@@ -1145,9 +1145,11 @@ async function main() {
     && /التنبيهات/.test(acg), "ض.٤ التبويبات الكاملة موثقة");
   check(/branch_manager كامل المحاسبة/.test(acg) && /قد يرى مدير الفرع.*403/s.test(acg)
     && /المورد.*المشتريات.*المسؤول العام فقط/s.test(acg), "ض.٥ يوثق اختلاف المدير بين الواجهة والخادم");
-  check(/GET وPOST \/api\/expenses يسمحان بـ canAddExpenses/.test(acg)
-    && /PUT وDELETE يحتاجان canManageAccounting/.test(acg)
-    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ صلاحيات وقواعد المصروف");
+  check(/GET وPOST \/api\/expenses لا يستخدمان تعريف\s+fullAccounting/.test(acg)
+    && /مسؤول عام.*canManageAccounting.*canAddExpenses/s.test(acg)
+    && /branch_manager بلا أي\s+من هاتين الصلاحيتين.*403/s.test(acg)
+    && /PUT وDELETE\s+يحتاجان المسؤول أو canManageAccounting/.test(acg)
+    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف الفعلية");
   check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
     && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
     && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
