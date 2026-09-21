@@ -1180,11 +1180,21 @@ async function main() {
     && /قد تختلف لقطة يوم واحد عن الملخص اليومي/.test(acg), "ض.١٢ فرق الملخص اليومي عن نطاق الصفحة");
   check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
     && /invoices\/:id/.test(acg) && /invoice-items\/bulk/.test(acg)
+    && /invoices\/next-number/.test(acg)
     && /إخفاء تبويب الفواتير ليس حارس بيانات/.test(acg), "ض.١٣ حراس قراءة الفواتير موثقة");
   check(/expensesOnly.*قائمة الفواتير/s.test(acg)
     && /branchId طبيعي.*تقيدها القائمة بذلك الفرع/s.test(acg)
     && /بلا branchId.*undefined.*كل الفروع/s.test(acg)
     && /إخفاء التبويب لا يعني أن كل hook توقف عن الطلب/.test(acg), "ض.١٤ قائمة الفواتير الخلفية ونطاقها");
+  check(/GET \/api\/patients.*canViewPatients/s.test(acg)
+    && /مستخدم محاسبة بلا canViewPatients/.test(acg)
+    && /قائمة اختيار المريض.*403/s.test(acg)
+    && /GET \/api\/patients\/:id.*canViewPatients/s.test(acg),
+    "ض.١٤ب المحاسبة لا تمنح صلاحية المرضى");
+  check(/patients\/:id\/financial-summary/.test(acg)
+    && /لا يفحص\s+canViewPatients ولا canManageAccounting/.test(acg)
+    && /بلا branchId.*أي فرع/s.test(acg),
+    "ض.١٤ج فجوة الملخص المالي للمريض");
   check(/الوضع specific/.test(acg) && /الوضع full/.test(acg)
     && /paidNow.*عملية خادمية واحدة/s.test(acg)
     && /بلا branchId.*POST يحتفظ بفرع الجسم/s.test(acg)
