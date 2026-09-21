@@ -169,7 +169,9 @@
     "test:merge-followup-collision": "tsx server/merge_followup_collision.test.ts",
     "test:replacement-parallel-episode": "tsx server/replacement_parallel_episode.test.ts",
     "test:patient-header-branches": "tsx client/src/pages/patient_header_branches.test.ts",
-    "test:branch-access-operations": "tsx shared/branch_access_operations.test.ts"
+    "test:branch-access-operations": "tsx shared/branch_access_operations.test.ts",
+    "test:physio-free": "tsx server/physio_free_sessions.test.ts",
+    "test:case-cost-edit-phone": "tsx client/src/components/patient/case_cost_edit_phone.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

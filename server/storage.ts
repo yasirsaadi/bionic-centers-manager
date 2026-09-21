@@ -41,7 +41,7 @@ import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } fro
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
-import { mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { mergePhysioPlan, describePhysioPlan, physioSessionsEnterPlan, physioPlanKeyForPayment, type PhysioPlanEntry } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
@@ -1593,7 +1593,13 @@ export class DatabaseStorage implements IStorage {
     tx?: DbTransactionLike;
   }): Promise<Patient> {
     const body = async (tx: any) => {
-      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
+      //  ══ **وكلُّ كاتبٍ للخطة يقفل صفَّ المريض أوّلاً** (تصحيحُ مراجعةٍ
+      //  لاحقة) ═════════════════════════════════════════════════════════
+      //  هذه الدالّةُ قراءةٌ‑تعديلٌ‑كتابةٌ على `physio_plan` أيضاً. فتسعيرٌ
+      //  يقرأ خطةَ عشرٍ بينما معاملةُ هديّةٍ تكتب ثلاثَ عشرة، ثمّ ينتظرها
+      //  ويكتب «العشرَ القديمة + الجديد» — **فتضيع الهديّةُ وصفُّها باقٍ**.
+      //  فالقفلُ هو قفلُ `adjustPhysioPlanForGift` نفسُه، فيتسلسلان.
+      const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId)).for("update");
       if (!existing) throw new Error("المريض غير موجود");
       if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
       // Remember HOW MANY sessions were sold, not just their price (036). The
@@ -1610,13 +1616,35 @@ export class DatabaseStorage implements IStorage {
       let base = existing.physioPlan;
       if (!Array.isArray(base) || base.length === 0) {
         const priorPayments = await tx
-          .select({ type: payments.paymentTreatmentType, n: payments.sessionCount })
+          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount })
           .from(payments)
           .where(eq(payments.patientId, patientId));
-        const legacy = (priorPayments as { type: string | null; n: number | null }[])
-          .filter((r) => (r.n ?? 0) > 0)
-          .map((r) => ({ treatmentType: (r.type ?? "").trim() || "غير محدد", sessionCount: r.n ?? 0 }));
+        //  **الصفوفُ المستورَدة تُحسَب مرّةً واحدة ثمّ تُوسَم بأعيانها** —
+        //  `physioPlanKeyForPayment` هي قاعدةُ هذه البذرة نفسُها، فما دخل
+        //  الخطةَ هو بالضبط ما يُوسَم، ولا شرطَ SQL ثانٍ ينحرف عنها.
+        const seeded = (priorPayments as { id: number; type: string | null; n: number | null }[])
+          .map((r) => ({ id: r.id, key: physioPlanKeyForPayment(r.type, r.n ?? 0), sessionCount: r.n ?? 0 }))
+          .filter((r): r is { id: number; key: string; sessionCount: number } => r.key !== null);
+        const legacy = seeded.map((r) => ({ treatmentType: r.key, sessionCount: r.sessionCount }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
+        //  ══ **وما استوردَته الخطةُ صار فيها فعلاً — فيُوسَم** ════════════
+        //  البذرةُ أعلاه تسحب **كلَّ** دفعةٍ حاملةٍ لجلسات، ومنها الهدايا.
+        //  فهديّةُ مريضِ المفرد كانت موسومةً `false` («مُنحت ولم تُقيَّد»)،
+        //  وتبقى كذلك بعد أن صارت في الخطة — فحذفُها لاحقاً لا يطرح منها
+        //  شيئاً وجلساتُها تبقى في العدّاد إلى الأبد.
+        //  **والمدفوعُ يُوسَم كالمُهدى**: البذرةُ لا تفرّق بينهما، فكلاهما
+        //  صار في الخطة حقّاً. ووسمُ المُهدى وحده كان يترك صفّاً مدفوعاً
+        //  مستورَداً يُقرأ «ليس في الخطة» — فتصحيحُه إلى «مجاني» لاحقاً
+        //  **يُضيف جلساته مرّةً ثانية** وهي فيها أصلاً.
+        //  **والوسمُ بالمعرّفات لا بشرطِ نوع**: شرطٌ يقيس بقائمة الأنواع
+        //  المعروفة كان يترك صفّاً **بلا نوعٍ مسجَّل** مستورَداً في دلو «غير
+        //  محدد» بـ`plan_credited = NULL` — فحذفُه لاحقاً لا يطرح منه شيئاً
+        //  وجلساتُه تبقى في العدّاد إلى الأبد. و«استشارة طبية» تسقط من
+        //  `seeded` أصلاً فلا تُوسَم.
+        if (seeded.length > 0) {
+          await tx.update(payments).set({ planCredited: true })
+            .where(inArray(payments.id, seeded.map((r) => r.id)));
+        }
       }
       const plan = mergePhysioPlan(base, params.entries);
       const [updated] = await tx.update(patients).set({
@@ -1650,6 +1678,351 @@ export class DatabaseStorage implements IStorage {
       return updated;
     };
     return params.tx ? await body(params.tx) : await db.transaction(body);
+  }
+
+  /**
+   * **الجلسةُ المُهداة ترفع خطّةَ صاحب الخطة — بقفلٍ وبدلتا** (٢٠٢٦-٠٩-٢١).
+   *
+   * عدّادُ الجلسات يقرأ `physio_plan` **وحدها** متى وُجدت ولا يجمعها مع
+   * الدفعات أبداً. فهديّةٌ تُكتب في صفّ دفعةٍ فقط تختفي عن صاحب الخطة —
+   * وهذه الدالّةُ هي **البابُ الوحيد** الذي يُبقي الاثنين متّسقين، يناديه
+   * إنشاءُ الدفعة وتعديلُها وحذفُها بالدلتا نفسِها.
+   *
+   * ══ ولماذا دلتا لا كتابةٌ كاملة ═══════════════════════════════════════
+   * تصحيحُ هديّةٍ من ستٍّ إلى ثلاث، أو حذفُها، يجب أن يُنقص الخطةَ بالمقدار
+   * عينه — وإلّا بقيت الستُّ محسوبةً في العدّاد إلى الأبد.
+   *
+   * ══ والقفلُ شرطُ صحّةٍ لا تحسين ═══════════════════════════════════════
+   * قراءةُ الخطة وتعديلُها وكتابتُها ثلاثُ خطوات على عمود jsonb واحد. فمنحان
+   * متزامنان لنفس المريض كانا يقرآن الخطةَ عينها ويكتب الأخيرُ فوق الأوّل،
+   * **فتضيع هديّةٌ صحيحة**. والقفلُ على صفّ المريض يُسلسلهما.
+   *
+   * **ولا تُنشئ خطةً لمن لا خطةَ له** (حادثةُ ذي قار ٢٠٢٦-٠٧-٢٩): مريضُ
+   * المفرد تاريخُه كلُّه على دفعاته، وعدّادُه يقرؤها فيرى الهديّةَ بلا خطة.
+   * **وأنواعُ العلاج الطبيعي وحدها** — دفعةُ طرفٍ أو مسندٍ ليست جلسة.
+   * **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر ولا دفعة.
+   */
+  async adjustPhysioPlanForGift(
+    patientId: number,
+    deltas: { treatmentType: string; delta: number }[],
+    tx?: DbTransactionLike,
+  ): Promise<void> {
+    //  **والمفتاحُ يُحَلّ بقاعدة البذرة نفسِها**: صفٌّ بلا نوعٍ مسجَّل يعيش
+    //  في دلو «غير محدد»، فطرحٌ يقيس بالنوع الخام لا يجده. و«استشارة طبية»
+    //  لا مفتاحَ لها أصلاً، فلا تُزاد ولا تُنقَص.
+    const wanted = (deltas ?? [])
+      .map((d) => ({ key: physioPlanKeyForPayment(d?.treatmentType, 1), delta: Math.trunc(Number(d?.delta) || 0) }))
+      .filter((d): d is { key: string; delta: number } => d.key !== null && d.delta !== 0);
+    if (wanted.length === 0) return;
+
+    const body = async (t: any) => {
+      //  القفلُ أوّلاً، ثمّ القراءة — فالخطةُ التي نعدّلها هي التي نكتب فوقها.
+      const [row] = await t
+        .select({ plan: patients.physioPlan, text: patients.treatmentType })
+        .from(patients).where(eq(patients.id, patientId)).for("update");
+      if (!row) return;
+      const current = Array.isArray(row.plan) ? (row.plan as PhysioPlanEntry[]) : null;
+      //  بلا خطةٍ قائمة ⟶ لا شيء. عدّادُه يقرأ الدفعات، والهديّةُ فيها.
+      if (!current || current.length === 0) return;
+
+      const byType: Record<string, number> = {};
+      for (const e of current) {
+        const type = String(e?.treatmentType ?? "").trim();
+        if (type) byType[type] = (byType[type] ?? 0) + Math.max(0, Math.floor(Number(e?.sessionCount) || 0));
+      }
+      for (const d of wanted) byType[d.key] = Math.max(0, (byType[d.key] ?? 0) + d.delta);
+      const next: PhysioPlanEntry[] = Object.keys(byType)
+        .filter((t2) => byType[t2] > 0)
+        .map((t2) => ({ treatmentType: t2, sessionCount: byType[t2] }));
+
+      await t.update(patients)
+        .set({ physioPlan: next as any, treatmentType: describePhysioPlan(next) || row.text })
+        .where(eq(patients.id, patientId));
+    };
+    return tx ? await body(tx) : await db.transaction(body);
+  }
+
+  /**
+   * **قيدُ الهديّة في الخطة — ويُوسَم الصفُّ بأنه قُيِّد** (ترحيل ٠٨٧).
+   *
+   * يُنادى **داخل معاملة إدراج الدفعة** فيقعان معاً أو لا يقع شيء: صفٌّ
+   * مُهدىً بلا قيدٍ في الخطة يترك عدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
+   * تُنتج هديّةً ثانية.
+   *
+   * **والوسمُ هو ما يسمح بالطرح لاحقاً**: `true` قُيِّد · `false` مُنح ولم
+   * يُقيَّد (مريضُ المفرد بلا خطة — وعدّادُه يقرأ الدفعات فيرى الهديّة) ·
+   * و`null` صفٌّ سابقٌ للترحيل لا يُطرَح منه شيء أبداً.
+   */
+  /**
+   * **قفلُ صفّ المريض قبل إدراج هديّةٍ بجلسات** (تصحيحُ مراجعةٍ لاحقة).
+   *
+   * إدراجُ صفّ الدفعة يأخذ `FOR KEY SHARE` على صفّ المريض بحكم مفتاحه
+   * الأجنبيّ — **وهو متوافقٌ مع نفسِه**. فهديّتان متزامنتان تُدرِجان معاً،
+   * ثمّ تطلب كلٌّ منهما ترقيةَ قفلِها إلى `FOR UPDATE` في
+   * `creditGiftToPlanTx` فتنتظر الأخرى ⟶ **جمودٌ حقيقيّ** (`deadlock
+   * detected`) تقتل فيه Postgres إحداهما، لا تسلسلٌ نظيف.
+   *
+   * فالتصعيدُ يقع **قبل** الإدراج: الأولى تمسك `FOR UPDATE` فتنتظرها
+   * الثانية قبل أن تُدرج شيئاً، ثمّ تمضي. **وترتيبُ القفل واحد** في
+   * المسارين، ولا حلقةَ انتظارٍ ممكنة.
+   *
+   * **ولا يُقفَل إلّا ما سيُقيَّد**: الشرطُ هو شرطُ `creditGiftToPlanTx`
+   * بحرفه — فدفعةٌ عادية لا تُسلسَل بلا سبب، وطرفٌ أو مسندٌ لا يُعَدّ جلسة.
+   */
+  /**
+   * **ترتيبُ قفلٍ واحد لا اثنان: صفُّ المريض ثمّ صفُّ الدفعة** (تصحيحُ
+   * مراجعةٍ لاحقة).
+   *
+   * بذرةُ `pricePhysiotherapy` تقفل صفَّ المريض ثمّ تكتب على صفوف دفعاته
+   * (وسمُ ما استوردته)، بينما مسارا التعديل والحذف كانا يقفلان **صفَّ
+   * الدفعة أوّلاً** ثمّ يطلبان صفَّ المريض من `adjustPhysioPlanForGift` —
+   * فتسعيرٌ يزامن تصحيحاً ⟶ **جمودٌ حقيقيّ** تقتل فيه Postgres إحداهما،
+   * فيُردّ تسعيرٌ أو تصحيحٌ مشروع.
+   *
+   * فصار صفُّ المريض هو الخارجيَّ في المسارين معاً — وهو الترتيبُ نفسُه
+   * الذي أرساه `lockPatientForGiftTx` على مسار الإدراج.
+   *
+   * ولا يُقفَل شيءٌ لدفعةٍ لا وجودَ لها: الاستعلامُ الفرعيُّ يعيد `NULL`
+   * فلا صفَّ يُطابق، ويتولّى قفلُ الدفعة بعده أن يقول إنها غير موجودة.
+   *
+   * ══ **والقفلُ الإرشاديُّ أوّلَ الثلاثة** (مراجعةُ Codex التاسعة) ═══════
+   * إعادةُ وسمِ نوع العلاج تنادي `reattachPaymentCase` ⟶ `syncPatientCases`،
+   * **وتلك تأخذ `pg_advisory_xact_lock(919, patientId)` أوّلاً ثمّ تكتب على
+   * صفوف دفعات المريض**. فمعاملتُنا كانت تمسك صفَّ الدفعة ثمّ تطلب
+   * الإرشاديّ، ومزامنةٌ أخرى تمسك الإرشاديَّ ثمّ تطلب صفَّ الدفعة —
+   * **جمودٌ حقيقيّ** (`deadlock detected`) تقتل فيه Postgres إحداهما.
+   *
+   * فالترتيبُ صار واحداً في المسارات كلِّها: **إرشاديّ ⟶ صفُّ المريض ⟶
+   * صفُّ الدفعة** — وهو ترتيبُ `syncPatientCases` و`executeNewService`
+   * نفسُه. والإرشاديُّ خاصٌّ بالمعاملة ويُعاد أخذُه فيها بلا أثر، فلا يضرّ
+   * مُنادياً يملكه سلفاً.
+   *
+   * **ورقمُ المريض يُقرأ مرّةً واحدة** ويُقفَل به الاثنان معاً — فلا يقع
+   * إرشاديٌّ على مريضٍ وصفٌّ على آخر.
+   */
+  async lockPatientForPaymentWriteTx(tx: any, paymentId: number): Promise<void> {
+    const res: any = await tx.execute(sql`
+      SELECT patient_id FROM payments WHERE id = ${paymentId}`);
+    const patientId = Number((res?.rows ?? res ?? [])[0]?.patient_id);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  }
+
+  /**
+   * **وخطةٌ كتبها الموظّفُ بيده ليست مُشتقّةً من دفعةٍ بعد اليوم** (تصحيحُ
+   * مراجعةٍ لاحقة).
+   *
+   * `PUT /api/patients/:id/physio-plan` **يستبدل** الخطةَ بما يكتبه الموظّف
+   * — وهي عندئذٍ رقمٌ مؤلَّف لا حاصلُ جمع دفعات. وإبقاءُ وسم `plan_credited`
+   * على صفوفه كان يجعل تصحيحاً لاحقاً يطرح من رقمٍ لم يُبنَ منه: خطةُ ستَّ
+   * عشرةَ تُستبدَل بعشر، ثمّ تُحذف هديّةُ ستٍّ ⟶ **أربع**، فيُهدَم تصحيحُ
+   * الموظّف بلا أن يعلم.
+   *
+   * فتُرفَع الأوسمةُ القائمة: الرقمُ المؤلَّف هو الحقيقة، ولا تحرّكه
+   * تصحيحاتُ الدفعات بعده. **و`NULL` تبقى `NULL`** (صفٌّ سابقٌ للترحيل، لا
+   * نَدَّعي أننا سألناه)، **وهديّةٌ جديدة تُقيَّد وتُوسَم كالمعتاد** — هي
+   * دخلت الخطةَ القائمة فعلاً.
+   */
+  async clearPhysioPlanProvenanceTx(tx: any, patientId: number): Promise<void> {
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+    await tx.update(payments).set({ planCredited: false }).where(and(
+      eq(payments.patientId, patientId),
+      eq(payments.planCredited, true),
+    ));
+  }
+
+  /**
+   * **ودمجُ ملفَّين: خطّتان مؤلَّفتان تُجمعان، وإلّا رُفع الوسم** (مراجعةُ
+   * Codex الثانية عشرة).
+   *
+   * `plan_credited = true` معناه «جلساتُ هذا الصفّ في الخطة **الآن**».
+   * والدمجُ ينقل صفوفَ الدفعات إلى الهدف **ويُسقط خطةَ المصدر مع صفّه** —
+   * فكان الوسمُ يبقى يشير إلى خطةٍ لم تعد موجودة، ويُقاس على خطةِ الهدف
+   * التي لم تُبنَ منه قطّ: خطةُ هدفٍ ١٠ + مصدرٌ فيه هديّةُ ستٍّ مقيَّدة ⟶
+   * حذفُ الهديّة بعد الدمج يُنزلها إلى **٤**. مُعادٌ إنتاجُه حيّاً.
+   *
+   * ══ **والخطّتان تُجمعان حين يملك الطرفان واحدة** ═══════════════════════
+   * كلتاهما **رقمٌ مؤلَّف** كتبه موظّف، والمريضُ واحدٌ اشترى في الملفّين
+   * معاً — تماماً كما يجمع الدمجُ `total_cost` والدفعاتِ والزياراتِ وقيودَ
+   * الكلف. وحينها يبقى وسمُ الصفّ المنقول **صادقاً**: جلساتُه انتقلت مع
+   * خطتها إلى خطة الهدف.
+   *
+   * ══ **ولا تُخترَع خطةٌ لمن لا خطةَ له** (حادثةُ ذي قار) ═════════════════
+   * هدفٌ بلا خطة عدّادُه يقرأ دفعاتِه، وإنشاءُ خطةٍ له من خطة المصدر يقلبه
+   * إلى القراءة من الخطة وحدها **فتختفي جلساتُ دفعاته هو**. والحارسُ قائمٌ
+   * في `adjustPhysioPlanForGift` نفسِها (تنصرف حين لا خطةَ للهدف)، فنُنادي
+   * الكاتبَ القانونيَّ ولا نكتب فرعاً ثانياً — **وعندئذٍ يُرفَع الوسمُ عن
+   * الصفوف المنقولة** لأن لا خطةَ تحمل جلساتِها، فلا يُطرَح منها لاحقاً.
+   *
+   * **و`NULL` تبقى `NULL`** (صفٌّ سابقٌ للترحيل، لا نَدَّعي أننا سألناه)،
+   * **و`false` تبقى `false`**، **وصفوفُ الهدف نفسِه لا تُمَسّ** — الشرطُ
+   * على المعرّفات المنقولة بأعيانها.
+   *
+   * **ولا دينارَ يتحرّك هنا**: لا كلفةَ ولا قيدَ دفتر ولا دفعة.
+   */
+  async carryPhysioPlanOnMergeTx(
+    tx: any, sourceId: number, targetId: number, movedPaymentIds: number[],
+  ): Promise<void> {
+    //  القراءةُ تحت القفل: الهدفُ أوّلاً ثمّ المصدر — **نفسُ ترتيب الكتابة
+    //  في `mergePatients`** (تحديثُ الهدف ثمّ حذفُ المصدر)، فلا ترتيبَ ثانٍ.
+    const [tgt] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, targetId)).for("update");
+    const [src] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, sourceId)).for("update");
+    const targetPlan = Array.isArray(tgt?.plan) ? (tgt!.plan as PhysioPlanEntry[]) : [];
+    const sourcePlan = Array.isArray(src?.plan) ? (src!.plan as PhysioPlanEntry[]) : [];
+
+    if (targetPlan.length > 0 && sourcePlan.length > 0) {
+      await this.adjustPhysioPlanForGift(targetId, sourcePlan.map((e) => ({
+        treatmentType: String(e?.treatmentType ?? ""),
+        delta: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
+      })), tx);
+      return;
+    }
+
+    if (movedPaymentIds.length === 0) return;
+    await tx.update(payments).set({ planCredited: false }).where(and(
+      inArray(payments.id, movedPaymentIds),
+      eq(payments.planCredited, true),
+    ));
+  }
+
+  /**
+   * **أيدخل هذا البندُ خطةَ الجلسات؟** — البوّابةُ الواحدة التي يقرؤها
+   * القفلُ والقيدُ معاً، فلا يقفل أحدُهما ما لا يقيّده الآخر ولا العكس.
+   *
+   * ويقرؤها **مَن يقرّر القفلَ للدفعة كلِّها قبل أوّل إدراج** أيضاً
+   * (`POST /api/payments`) — فلا شرطَ ثالثٌ ينحرف عن الاثنين.
+   */
+  giftEntersPlan(values: any): boolean {
+    if (!values?.isFreeSessions) return false;
+    return physioSessionsEnterPlan(values.paymentTreatmentType, values.sessionCount);
+  }
+
+  /**
+   * قفلُ المريض **بالترتيب الواحد**: إرشاديّ ⟶ صفُّ المريض — راجع
+   * `lockPatientForPaymentWriteTx`.
+   *
+   * ══ **ويُؤخَذ قبل أوّل إدراجٍ في المعاملة، لا عند أوّل هديّة** ══════════
+   * (مراجعةُ Codex العاشرة) إدراجُ صفّ دفعةٍ يأخذ `FOR KEY SHARE` على صفّ
+   * المريض بحكم مفتاحه الأجنبيّ — **وهي متوافقةٌ مع نفسِها**. فدفعةٌ
+   * مختلطة (بندٌ مدفوعٌ ثمّ هديّة) تُدرج المدفوعَ أوّلاً ثمّ تطلب هنا
+   * ترقيةَ القفل إلى `FOR UPDATE`: طلبان متزامنان بالشكل نفسِه يمسكان
+   * `KEY SHARE` معاً ثمّ ينتظر كلٌّ ترقيةَ الآخر ⟶ **`deadlock detected`
+   * حقيقيّ** (`40P01`) يُردّ به طلبٌ مشروع.
+   *
+   * فالمُنادي يسأل `giftEntersPlan` عن **بنود الدفعة كلِّها** ويقفل مرّةً
+   * واحدة قبل أن يُدرج شيئاً. وإعادةُ أخذ القفلين في المعاملة نفسِها بعد
+   * ذلك لا تفعل شيئاً — الإرشاديُّ معدودٌ و`FOR UPDATE` على صفٍّ مقفولٍ
+   * منها لا ينتظر — فيبقى الحارسُ لكلّ بندٍ حزاماً ثانياً بلا كلفة.
+   */
+  async lockPatientPlanRowTx(tx: any, patientId: number): Promise<void> {
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  }
+
+  async lockPatientForGiftTx(tx: any, values: any): Promise<void> {
+    if (!this.giftEntersPlan(values)) return;
+    await this.lockPatientPlanRowTx(tx, Number(values.patientId));
+  }
+
+  async creditGiftToPlanTx(tx: any, payment: any): Promise<void> {
+    if (!payment?.isFreeSessions) return;
+    const n = Math.max(0, Math.floor(Number(payment.sessionCount) || 0));
+    const type = String(payment.paymentTreatmentType ?? "").trim();
+    //  ══ **وقاعدةُ الخطة هي الحارس، لا العضويةُ في قائمة الأنواع** ═══════
+    //  `PHYSIO_TREATMENT_TYPES` تضمّ «استشارة طبية»، فحارسٌ بها كان يقبل
+    //  هديّةَ استشارةٍ بجلسات **ويُوسِم صفَّها «قُيِّد»** بينما
+    //  `mergePhysioPlan` لا تُدخلها الخطةَ أبداً — وسمٌ يكذب، وطرحٌ لاحق
+    //  يُنقص من نوعٍ لا وجود له فيها.
+    if (!physioSessionsEnterPlan(type, n)) return;
+    //  ══ **والقراءةُ تحت قفل صفّ المريض** ═══════════════════════════════
+    //  السؤالُ «أله خطة؟» قرارٌ، وقراءتُه على حالةٍ بائتة تَسِم الصفَّ
+    //  `planCredited = false` بينما تسعيرٌ يُنشئ الخطةَ في اللحظة عينها —
+    //  فتختفي الهديّةُ عن عدّادٍ صار يقرأ الخطةَ وحدها. وهو **القفلُ نفسُه**
+    //  الذي يأخذه `lockPatientForGiftTx` قبل الإدراج، فإعادةُ أخذه داخل
+    //  المعاملة عينها لا تفعل شيئاً — والترتيبُ يبقى واحداً في المسارين.
+    const [row] = await tx.select({ plan: patients.physioPlan })
+      .from(patients).where(eq(patients.id, payment.patientId)).for("update");
+    const hasPlan = Array.isArray(row?.plan) && (row!.plan as any[]).length > 0;
+    if (hasPlan) await this.adjustPhysioPlanForGift(payment.patientId, [{ treatmentType: type, delta: n }], tx);
+    await tx.update(payments).set({ planCredited: hasPlan }).where(eq(payments.id, payment.id));
+  }
+
+  /**
+   * **والطرحُ لا يقع إلّا على ما قُيِّد فعلاً** — وهذا ما يمنع إفسادَ خطةٍ
+   * مشروعة: هديّةٌ سابقةٌ للترحيل لم تدخل الخطةَ قطّ، فحذفُها الآن بطرحٍ
+   * أعمى كان يُنزل خطةَ عشرِ جلساتٍ إلى أربع.
+   *
+   * `before` يجب أن يكون مقروءاً **تحت قفل صفّ الدفعة** في المعاملة نفسِها.
+   */
+  async reconcileGiftPlanTx(tx: any, before: any, after: any): Promise<void> {
+    const giftOf = (p: any) =>
+      p && p.isFreeSessions && Number(p.sessionCount) > 0
+        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+        : null;
+    //  ══ **وصفٌّ صار هديّةً بعد أن لم يكن هديّةٌ جديدة** ═══════════════════
+    //  صفٌّ مدفوع يُصحَّح إلى «مجاني» لا تاريخَ له في الخطة **بحكم التعريف**
+    //  (المدفوعُ لا يُقيَّد فيها أبداً)، ووسمُه `null` أو `false` يصف ماضيه
+    //  لا حاضره. فكان الشرطُ القديم يقرؤه «غيرَ مقيَّد» فينصرف: الصفُّ يصير
+    //  هديّةً والعدّادُ لا يتحرّك.
+    //  **فيُعامَل معاملةَ الهديّة الجديدة بالكاتب القانونيّ نفسِه** — يقرأ
+    //  الخطةَ تحت القفل، ويقيّد إن وُجدت، ويَسِم الصفَّ بالحقيقة.
+    //
+    //  **إلّا ما كان في الخطة سلفاً** (`planCredited === true`): صفٌّ مدفوع
+    //  استوردته بذرةُ التسعير من سجلّ الدفعات جلساتُه **فيها بالفعل**،
+    //  فتقييدُه ثانيةً لأنه صار مجّانياً يعدّها مرّتين. والتغيُّرُ هنا
+    //  وصفُ المال لا عددُ الجلسات.
+    if (before?.planCredited !== true && !giftOf(before) && giftOf(after)) {
+      await this.creditGiftToPlanTx(tx, after);
+      return;
+    }
+    //  ══ **وما هو في الخطة يُقاس بالوسم لا بالمجّانيّة** ════════════════
+    //  `planCredited === true` معناه **«جلساتُ هذا الصفّ في الخطة الآن»** —
+    //  مُهدىً كان أم مدفوعاً استوردته بذرةُ التسعير. فقياسُ مساهمته
+    //  بـ`giftOf` كان يقرأ المدفوعَ المستورَد «صفراً» ويقرأ حالتَه بعد
+    //  التصحيح جلستين ⟹ **فيضيفهما وهما فيها أصلاً**.
+    const inPlanOf = (p: any) =>
+      p && Number(p.sessionCount) > 0
+        ? { type: String(p.paymentTreatmentType ?? ""), n: Number(p.sessionCount) }
+        : null;
+    const credited = before?.planCredited === true;
+    const b = credited ? inPlanOf(before) : null;
+    const after0 = credited ? inPlanOf(after) : null;
+    //  ══ **ولا يُدخَل الخطةَ مفتاحٌ ليس من العلاج الطبيعي** (مراجعةُ Codex
+    //  التاسعة) ═══════════════════════════════════════════════════════════
+    //  نافذةُ تعديل الدفعة تعرض «أطراف صناعية» و«مساند طبية» صراحةً، وإعادةُ
+    //  الوسم إليهما تنقل الدفعةَ إلى حالة الجهاز. وكانت الإضافةُ تمضي بلا
+    //  فحص، فتبقى الجلساتُ في `physio_plan` **تحت اسم الجهاز** — عدّادُ
+    //  علاجٍ طبيعيّ يحمل مفتاحاً لا يخصّه.
+    //
+    //  **فالإضافةُ تُفحَص كما تُفحَص الهديّةُ الجديدة** (`physioSessionsEnterPlan`
+    //  نفسُها)، **والطرحُ يبقى بالمفتاح الذي قُيِّد به فعلاً** — وإلّا بقيت
+    //  بقيّةٌ في الخطة لا يطرحها أحد.
+    //
+    //  **والمفتاحُ الذي لم يتغيّر يُعدَّل في مكانه**: صفٌّ استوردته بذرةُ
+    //  التسعير بوسمٍ غريب موجودٌ في الخطة فعلاً، وتعديلُ عدده وحده ليس
+    //  إدخالاً لمفتاحٍ جديد — وطرحُه كان يمحو تاريخاً بتعديلٍ لا علاقةَ له به.
+    const sameKey = Boolean(b && after0
+      && physioPlanKeyForPayment(b.type, 1) === physioPlanKeyForPayment(after0.type, 1));
+    const a = after0 && (sameKey || physioSessionsEnterPlan(after0.type, after0.n)) ? after0 : null;
+    if (!b && !a) {
+      //  صفٌّ غيرُ مقيَّد: لا يُطرَح منه ولا يُضاف إليه — يبقى كما هو.
+      return;
+    }
+    const patientId = Number(after?.patientId ?? before?.patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    const deltas = b && a && sameKey
+      ? [{ treatmentType: b.type, delta: a.n - b.n }]
+      : [
+        ...(b ? [{ treatmentType: b.type, delta: -b.n }] : []),
+        ...(a ? [{ treatmentType: a.type, delta: a.n }] : []),
+      ];
+    await this.adjustPhysioPlanForGift(patientId, deltas, tx);
+    //  صارت الهديّةُ صفراً أو غيرَ مجّانية ⟹ لم يعد لها رصيدٌ في الخطة.
+    if (after && !a) await tx.update(payments).set({ planCredited: false }).where(eq(payments.id, after.id));
   }
 
   // Add a service's price onto the case it belongs to (resolved from its
@@ -2955,9 +3328,16 @@ export class DatabaseStorage implements IStorage {
           .where(eq(column, sourceId))
           .returning();
         moved[label] = rows.length;
+        return rows as any[];
       };
       await repoint("visits", visits, visits.patientId);
-      await repoint("payments", payments, payments.patientId);
+      //  **ومعرّفاتُ الدفعات المنقولة تُحفَظ**: وسمُ `plan_credited` عليها
+      //  يصف خطةَ المصدر، وتلك تُسقَط مع صفّه — فيُحسَم مصيرُه بعد تحديث
+      //  الهدف أدناه (`carryPhysioPlanOnMergeTx`). وصفوفُ الهدف نفسِه لا
+      //  تُمَسّ، فالشرطُ على هذه المعرّفات بأعيانها.
+      const movedPaymentIds = (await repoint("payments", payments, payments.patientId))
+        .map((r: any) => Number(r?.id))
+        .filter((n: number) => Number.isInteger(n) && n > 0);
       await repoint("documents", documents, documents.patientId);
       await repoint("invoices", invoices, invoices.patientId);
       await repoint("installmentPlans", installmentPlans, installmentPlans.patientId);
@@ -3132,6 +3512,11 @@ export class DatabaseStorage implements IStorage {
         .where(eq(patients.id, targetId))
         .returning();
 
+      //  **وخطةُ الجلسات بعد الرقعة لا قبلها**: `adjustPhysioPlanForGift`
+      //  تكتب `treatment_type` من نصّ الخطة، والرقعةُ أعلاه قد تكتبه من
+      //  المصدر — فالترتيبُ يجعل نصَّ الخطة المجموعة هو الأخير.
+      await this.carryPhysioPlanOnMergeTx(tx, sourceId, targetId, movedPaymentIds);
+
       await tx.delete(patients).where(eq(patients.id, sourceId));
       return { patient, moved };
     });
@@ -3249,8 +3634,11 @@ export class DatabaseStorage implements IStorage {
       requestedEpisodeId: unknown;
       explicitLegacy: boolean;
     },
+    //  معاملةُ المُستدعي، إن كان الإدراجُ جزءاً من عمليةٍ أكبر — فتُدرَج
+    //  الدفعةُ ويُقيَّد رصيدُها في خطة الجلسات **معاً أو لا يقع شيء**.
+    outerTx?: any,
   ): Promise<Payment> {
-    return await db.transaction(async (tx) => {
+    const run = async (tx: any) => {
       const episodeId = await resolveDeviceTargetTx(tx, {
         patientId: insertPayment.patientId as number,
         serviceType: attribution.serviceType,
@@ -3261,7 +3649,8 @@ export class DatabaseStorage implements IStorage {
         chooseMessage: "حدّد الجهاز الذي تخصّه الدفعة — أو اختر «رصيد جهاز قديم/غير مخصَّص»",
       });
       return await this.insertPaymentRow({ ...insertPayment, deviceEpisodeId: episodeId } as any, tx);
-    });
+    };
+    return outerTx ? await run(outerTx) : await db.transaction(run);
   }
 
   async createPayment(insertPayment: InsertPayment, tx?: any): Promise<Payment> {
@@ -3305,16 +3694,32 @@ export class DatabaseStorage implements IStorage {
   // العمودُ خارج توقيع هذه الدالّة كلّياً: لا معاملَ يُغري باستدعاءٍ
   // خاطئ، ولا كاتبَ إعادةِ وسمٍ ثانياً غير `updatePayment`/تصحيح الدفعات.
   async updatePaymentSessionInfo(id: number, sessionCount: number | null): Promise<any> {
-    const [updated] = await db.update(payments)
-      .set({ sessionCount })
-      .where(eq(payments.id, id))
-      .returning();
-    return updated;
+    //  **قفلُ صفّ الدفعة قبل قراءة `before`**: تعديلان متزامنان كانا يقرآن
+    //  العددَ القديم نفسَه فتُطرَح دلتاهما من الخطة مرّتين (٦⟶٣ و٦⟶٤ يطرحان
+    //  ٥ بينما الصفُّ يقول ٤). والقراءةُ والكتابةُ والمصالحةُ في معاملةٍ واحدة.
+    return await db.transaction(async (tx) => {
+      //  صفُّ المريض أوّلاً — راجع `lockPatientForPaymentWriteTx`.
+      await this.lockPatientForPaymentWriteTx(tx, id);
+      await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
+      const [before] = await tx.select().from(payments).where(eq(payments.id, id));
+      const [updated] = await tx.update(payments)
+        .set({ sessionCount })
+        .where(eq(payments.id, id))
+        .returning();
+      await this.reconcileGiftPlanTx(tx, before ?? null, updated ?? null);
+      return updated;
+    });
   }
 
   async updatePayment(id: number, data: { amount?: number, notes?: string | null, sessionCount?: number | null, paymentTreatmentType?: string | null, date?: Date | null, isFreeSessions?: boolean }): Promise<any> {
-    const [before] = await db.select().from(payments).where(eq(payments.id, id));
-    const [updated] = await db.update(payments)
+    //  **القراءةُ والكتابةُ ومصالحةُ الخطة في معاملةٍ واحدة بقفل صفّ الدفعة**
+    //  — تعديلان متزامنان كانا يقرآن `before` نفسَه فتُطرَح دلتاهما مرّتين.
+    return await db.transaction(async (tx) => {
+    //  صفُّ المريض أوّلاً — راجع `lockPatientForPaymentWriteTx`.
+    await this.lockPatientForPaymentWriteTx(tx, id);
+    await tx.execute(sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`);
+    const [before] = await tx.select().from(payments).where(eq(payments.id, id));
+    const [updated] = await tx.update(payments)
       .set(data)
       .where(eq(payments.id, id))
       .returning();
@@ -3325,9 +3730,13 @@ export class DatabaseStorage implements IStorage {
     // re-run the cost floor over admin-set numbers. total_cost/flags are never
     // touched, so reports are unaffected.
     if (updated && data.paymentTreatmentType !== undefined && tagChanged(before?.paymentTreatmentType, data.paymentTreatmentType)) {
-      await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null);
+      await this.reattachPaymentCase(updated.id, updated.patientId, data.paymentTreatmentType ?? null, tx);
     }
+    //  وتصحيحُ هديّةٍ **مقيَّدة** يُصحِّح الخطةَ معها — والقديمةُ غيرُ
+    //  المقيَّدة لا يُطرَح منها شيء (ترحيل ٠٨٧).
+    await this.reconcileGiftPlanTx(tx, before ?? null, updated ?? null);
     return updated;
+    });
   }
 
   // Re-resolve (and if needed create) the case a payment belongs to after its

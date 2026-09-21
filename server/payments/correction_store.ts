@@ -254,6 +254,7 @@ async function applyCorrectionWriteTx(tx: any, params: {
       await reverseJournalForPaymentTx(tx, before.id, params.reversedBy, "حذفٌ مصحَّح");
     }
     await tx.delete(payments).where(eq(payments.id, before.id));
+    await storage.reconcileGiftPlanTx(tx, before, null);
     return { payment: null, journalRebuilt: touchesJournal };
   }
 
@@ -268,6 +269,25 @@ async function applyCorrectionWriteTx(tx: any, params: {
   if (changed.paymentTreatmentType !== undefined) setFields.paymentTreatmentType = changed.paymentTreatmentType;
   if (changed.isFreeSessions !== undefined) setFields.isFreeSessions = changed.isFreeSessions;
   if (changed.date !== undefined) setFields.date = changed.date;
+
+  //  ══ **والمجّانيُّ صفرٌ حتماً هنا أيضاً** (مراجعةُ Codex الحادية عشرة) ══
+  //  الثابتُ واحد: صفٌّ موسومٌ `is_free_sessions` لا يحمل مالاً. وقد وُجد
+  //  توأمُ عطبِ نقطةِ الإنشاء وأنا أتحقّق منه: تحويلُ دفعةٍ مقبوضة إلى
+  //  «مجّانيّة» بلا إرسال مبلغٍ يُبقي المالَ في `payments.amount` (فيبقى في
+  //  «الوارد») بينما **يُعكَس قيدُها ولا يُعاد** (`touchesJournal` يفيره
+  //  تغيُّرُ العلم، و`!updated.isFreeSessions` يمنع إعادةَ البناء) — فيقول
+  //  الدفترُ إن المالَ رُدّ ويقول جدولُ الدفعات إنه ما زال مقبوضاً.
+  //
+  //  **ولا يُلمَس صفٌّ متّسقٌ أصلاً**: الكتابةُ تقع فقط حين يكون الناتجُ
+  //  مجّانياً بمبلغٍ غيرِ صفر — فتعديلُ ملاحظةٍ على صفٍّ مجّانيٍّ صفريّ لا
+  //  يُضيف حقلاً إلى `setFields` ولا يُنتج تحديثاً لم يُطلَب.
+  const willBeFree = changed.isFreeSessions !== undefined
+    ? changed.isFreeSessions
+    : Boolean(before.isFreeSessions);
+  const resultingAmount = changed.amount !== undefined
+    ? Number(changed.amount)
+    : Number(before.amount ?? 0);
+  if (willBeFree && resultingAmount !== 0) setFields.amount = 0;
 
   const [updated] = Object.keys(setFields).length > 0
     ? await tx.update(payments).set(setFields).where(eq(payments.id, before.id)).returning()
@@ -285,6 +305,8 @@ async function applyCorrectionWriteTx(tx: any, params: {
   if (touchesJournal && updated.amount > 0 && !updated.isFreeSessions) {
     await createJournalForPaymentTx(tx, updated, params.reversedBy);
   }
+
+  await storage.reconcileGiftPlanTx(tx, before, updated);
 
   return { payment: updated, journalRebuilt: touchesJournal };
 }
@@ -305,6 +327,9 @@ export async function requestPaymentCorrection(params: {
   if (!reason) throw new CorrectionError("سبب التصحيح مطلوب", 400);
 
   const body = async (tx: any) => {
+    //  صفُّ المريض أوّلاً ثمّ صفُّ الدفعة — ترتيبٌ واحد مع بذرة التسعير،
+    //  وإلّا وقع جمودٌ حقيقيّ (راجع `storage.lockPatientForPaymentWriteTx`).
+    await storage.lockPatientForPaymentWriteTx(tx, params.paymentId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
@@ -364,6 +389,9 @@ export async function applyPaymentCorrectionDirect(params: {
   if (!reason) throw new CorrectionError("سبب التصحيح مطلوب", 400);
 
   const body = async (tx: any) => {
+    //  صفُّ المريض أوّلاً ثمّ صفُّ الدفعة — ترتيبٌ واحد مع بذرة التسعير،
+    //  وإلّا وقع جمودٌ حقيقيّ (راجع `storage.lockPatientForPaymentWriteTx`).
+    await storage.lockPatientForPaymentWriteTx(tx, params.paymentId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
@@ -414,6 +442,8 @@ export async function approveCorrection(params: {
     if (reqRow.status !== "pending") throw new CorrectionError("طلبُ التصحيح لم يعد معلَّقاً", 409);
     if (reqRow.targetType !== "payment") throw new CorrectionError("نوعُ الهدف غير مدعوم", 400);
 
+    //  وكذلك هنا — راجع `storage.lockPatientForPaymentWriteTx`.
+    await storage.lockPatientForPaymentWriteTx(tx, reqRow.targetId);
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${reqRow.targetId} FOR UPDATE`);
     const [current] = await tx.select().from(payments).where(eq(payments.id, reqRow.targetId));
     if (!current) throw new CorrectionError("الدفعة الهدف لم تعد موجودة", 409);

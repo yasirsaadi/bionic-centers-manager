@@ -728,6 +728,10 @@ export const payments = pgTable("payments", {
   paymentTreatmentType: text("payment_treatment_type"),
   sessionCount: integer("session_count"),
   isFreeSessions: boolean("is_free_sessions").default(false),
+  //  **أدخلت هذه الهديّةُ خطةَ الجلسات؟** (ترحيل ٠٨٧) — ثلاثيّةٌ صادقة:
+  //  `null` لم يُسأل (صفٌّ سابقٌ للترحيل) · `false` مُنح ولم يُقيَّد في خطة ·
+  //  `true` قُيِّد فعلاً، وهو وحدَه يُطرَح عند الحذف أو التصحيح. بلا افتراض.
+  planCredited: boolean("plan_credited"),
   // Which case this payment settles. Nullable during the additive phase;
   // backfilled best-effort from the treatment-type tag.
   caseId: integer("case_id").references(() => patientCases.id),

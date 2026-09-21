@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
@@ -337,17 +337,26 @@ function buildStoredPermissions(systemUser: SystemUser) {
 function summarizePaymentSessions(
   payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
 ): { treatmentType: string | null; sessionCount: number }[] {
-  const byType = new Map<string, number>();
+  //  ══ **ولا رايةَ مجّانيّةٍ تخرج من هنا** (تصحيحُ ٢٠٢٦-٠٩-٢١) ═══════════
+  //  حاولت تمريرةٌ سابقة أن تفصل المُهدى عن المدفوع في هذا الملخّص كي تصل
+  //  الرايةُ إلى `resolvePurchasedSessions` في العميل — **وذاك تسريب**:
+  //  «كم جلسةً أُهديت مقابل كم دُفعت» قرارٌ ماليّ (تبرّعٌ أو خصم)، وهذا
+  //  المسارُ بعينه يحجب المالَ عمّن لا يملك `canViewPayments`. والعدّادُ
+  //  الصحيح يُحسَب الآن **في الخادم** ويصل مجموعاً بلا تصنيف
+  //  (`physioSessionsResolved` أدناه).
+  //
+  //  فالشكلُ عاد كما كان: حقلان لا غير، مُجمَّعان بنوع العلاج — **لا مبلغَ
+  //  ولا تاريخَ ولا معرّفَ دفعةٍ ولا رايةَ مجّانيّة**.
+  const byType = new Map<string, { treatmentType: string | null; sessionCount: number }>();
   for (const p of payments) {
     const n = Number(p.sessionCount) || 0;
     if (n <= 0) continue;
-    const key = p.paymentTreatmentType ?? "";
-    byType.set(key, (byType.get(key) ?? 0) + n);
+    const type = p.paymentTreatmentType ?? "";
+    const row = byType.get(type);
+    if (row) row.sessionCount += n;
+    else byType.set(type, { treatmentType: type || null, sessionCount: n });
   }
-  return Array.from(byType, ([key, sessionCount]) => ({
-    treatmentType: key || null,
-    sessionCount,
-  }));
+  return Array.from(byType.values());
 }
 
 export async function registerRoutes(
@@ -2239,6 +2248,33 @@ export async function registerRoutes(
     const canViewPaymentsForThisPatient =
       ctx.isAdmin || Boolean(branchSessionForView?.permissions?.canViewPayments);
 
+    //  ══ **وعدّادُ الجلسات يُحسَب في الخادم لمن حُجب عنه المال** ═══════════
+    //  (تصحيحُ ٢٠٢٦-٠٩-٢١). الجلسةُ المُهداة تزيد الرصيدَ ولا تزيد المال،
+    //  فلا يراها اشتقاقٌ من الكلفة ما لم تُميَّز — **وتمييزُها في الردّ
+    //  تسريب**: «كم أُهديت مقابل كم دُفعت» قرارٌ ماليّ على مسارٍ يحجب المال.
+    //
+    //  فالحسابُ يقع هنا بالدالّة المُختبَرة نفسِها (`resolvePurchasedSessions`
+    //  — `test:physio-sessions`)، ويصل العميلَ **مجموعاً بلا تصنيف**: كم
+    //  جلسةً لكلّ نوع، وهي حقيقةٌ سريريّةٌ يعرضها بادجُ الرأس وبطاقةُ «ملخّص
+    //  الجلسات». والمدخلاتُ نفسُها التي كان العميلُ يمرّرها: الخطةُ المخزَّنة
+    //  ونصُّها وكلفةُ حالة العلاج الطبيعي (وإلّا مجموعُ المريض، كما تفعل
+    //  الشاشةُ حين لا تكون الحالاتُ قد وصلت بعد).
+    let physioSessionsResolved: ReturnType<typeof resolvePurchasedSessions> | undefined;
+    if (!canViewPaymentsForThisPatient && patient.isPhysiotherapy) {
+      const cases = await storage.getCasesByPatientId(id);
+      const physioCase = cases.find((c) => c.caseType === "physiotherapy");
+      physioSessionsResolved = resolvePurchasedSessions({
+        plan: (patient as any).physioPlan,
+        treatmentTypeText: patient.treatmentType,
+        caseCost: physioCase?.cost ?? patient.totalCost ?? 0,
+        paymentSessions: payments.map((p) => ({
+          treatmentType: p.paymentTreatmentType ?? null,
+          sessionCount: p.sessionCount ?? null,
+          isFree: Boolean(p.isFreeSessions),
+        })),
+      });
+    }
+
     res.json({
       ...patient,
       ...(canViewPaymentsForThisPatient
@@ -2246,6 +2282,7 @@ export async function registerRoutes(
         //  ══ ملخّصُ جلساتٍ غيرُ ماليّ — راجع تعليق `summarizePaymentSessions`
         //  أعلاه ═════════════════════════════════════════════════════════
         : { paymentSessionsSummary: summarizePaymentSessions(payments) }),
+      ...(physioSessionsResolved ? { physioSessionsResolved } : {}),
       documents,
       visits,
     });
@@ -3610,10 +3647,19 @@ export async function registerRoutes(
       // the user sees, so merging would silently double what they just edited.
       const plan = mergePhysioPlan(null, cleaned);
 
-      const updated = await storage.updatePatient(patientId, {
-        physioPlan: plan,
-        treatmentType: describePhysioPlan(plan) || patient.treatmentType,
-      } as any);
+      //  ══ **والخطةُ المؤلَّفة ترفع أوسمةَ الاشتقاق معها** ═══════════════
+      //  هذه الشاشةُ **تستبدل** الخطةَ بما كتبه الموظّف، فلا يبقى سطرٌ فيها
+      //  مُشتقّاً من دفعةٍ بعينها. وإبقاءُ `plan_credited` كان يجعل تصحيحاً
+      //  لاحقاً يطرح من رقمٍ لم يُبنَ منه فيهدم تصحيحَ الموظّف — راجع
+      //  `storage.clearPhysioPlanProvenanceTx`. **والاثنان في معاملةٍ
+      //  واحدة**: رفعُ وسمٍ عن خطةٍ لم تُستبدَل عيبٌ بالقدر نفسِه.
+      const updated = await db.transaction(async (tx) => {
+        await storage.clearPhysioPlanProvenanceTx(tx, patientId);
+        return await storage.updatePatient(patientId, {
+          physioPlan: plan,
+          treatmentType: describePhysioPlan(plan) || patient.treatmentType,
+        } as any, "manual_edit", null, tx);
+      });
 
       await logAudit({
         entityType: "patient", entityId: patientId, action: "update",
@@ -4124,7 +4170,18 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const isBranchManager = branchSession?.role === "branch_manager";
-    const isFreeSessions = (isAdmin || isBranchManager) ? (req.body.isFreeSessions || false) : false;
+    const mayGrantFree = isAdmin || isBranchManager;
+    const isFreeSessions = mayGrantFree ? (req.body.isFreeSessions || false) : false;
+    //  ══ **والنافذةُ تؤشّر «مجاني» لكلّ بند، لا علماً علوياً** ════════════
+    //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) `PaymentModal` يبني البندَ المُهدى بـ`isFree`
+    //  عليه هو ويرسل `treatmentEntries` بلا `isFreeSessions` علويّ — فالبندُ
+    //  كان يصل بكلفةِ صفرٍ وعلمٍ علويٍّ مُطفأ، **فتتخطّاه حلقةُ الإدراج
+    //  ولا يُسجَّل شيءٌ إطلاقاً** والردُّ ٢٠١. مُثبَتٌ حيّاً قبل الإصلاح.
+    //
+    //  والعلمُ العلويُّ يبقى مقبولاً (مُنادٍ آخر أو عميلٌ سابق) فيُعمَّم على
+    //  البنود كلِّها. **ونفسُ بوّابة الصلاحية للاثنين**: مَن لا يملك المنحَ
+    //  المجّانيّ لا يصنعه من بابٍ خلفيّ، ويبقى بندُه بكلفته كما وصل.
+    const entryIsFree = (e: any) => mayGrantFree && (e?.isFree === true || isFreeSessions);
 
     // ══ **مَن يملك كتابة دفعة أصلاً؟** ═══════════════════════════════════
     // `isAuthenticated` وحدها تتحقّق من وجود جلسة، لا من الصلاحية — أيّ
@@ -4168,7 +4225,24 @@ export async function registerRoutes(
     input.branchId = (await actingBranchFor(req, livePatient)) ?? livePatient.branchId;
 
     // Check if patient has remaining balance before accepting payment (skip for free sessions)
-    if (!isFreeSessions) {
+    //  **والمجّانيُّ بالبنود يتخطّاه أيضاً**: حمولةٌ كلُّ بنودها مُهداة لا
+    //  تقبض ديناراً، فحارسُ «لا متبقّي» لا موضوعَ له فيها — وكان يردّها ٤٠٠
+    //  لصاحب ملفٍّ سُدِّد بالكامل، فيتعذّر منحُه هديّةً أصلاً.
+    //  **والمبلغُ العلويُّ يبقى محسوباً** (تصحيحُ مراجعةٍ لاحقة): أنواعُ
+    //  الطرف/المسند تصل ببنودٍ كلفتُها صفرٌ ومبلغٍ يدويٍّ في الأعلى — وهي
+    //  الحالةُ التي تخدمها «شبكةُ الأمان» أدناه بإنشاء دفعةٍ واحدة به. فجمعُ
+    //  كلف البنود وحدَه كان يُخرج صفراً فيتخطّى الحارس، ثمّ تُدرَج الدفعةُ
+    //  الموجبة على ملفٍّ سُدِّد بالكامل. فالقاعدةُ: **يُتخطّى الحارسُ حين
+    //  لا يُقبَض دينارٌ أصلاً — أي حين تكون البنودُ كلُّها مُهداة.**
+    const entriesArr = Array.isArray(treatmentEntries) ? treatmentEntries : [];
+    const allEntriesFree = entriesArr.length > 0 && entriesArr.every((e: any) => entryIsFree(e));
+    const payableTotal = allEntriesFree
+      ? 0
+      : Math.max(
+        entriesArr.reduce((sum: number, e: any) => sum + (entryIsFree(e) ? 0 : Math.max(0, Number(e?.cost) || 0)), 0),
+        Math.max(0, Number((req.body as any)?.amount) || 0),
+      );
+    if (!isFreeSessions && payableTotal > 0) {
       const patient = await storage.getPatient(input.patientId);
       if (patient) {
         const payments = await storage.getPaymentsByPatientId(input.patientId);
@@ -4230,57 +4304,119 @@ export async function registerRoutes(
           explicitLegacy: unallocatedDeviceBalance === true,
         }
       : null;
-    const writePayment = (values: any) => attribution
-      ? storage.createPaymentAttributed(values, attribution)
-      : storage.createPayment(values);
+    //  ══ **ولا علمَ مجّانيّةٍ من العميل يُخزَّن** (إصلاحُ ٢٠٢٦-٠٩-٢١) ═══
+    //  `input` مبنيٌّ من جسم الطلب، فيحمل `isFreeSessions` كما أرسله العميل.
+    //  والمسارُ المفرد كان يكتب `{ ...input }` كما هو — فموظّفُ استقبالٍ
+    //  يملك `canAddPayments` يرسل `isFreeSessions: true` بعددِ جلسات،
+    //  **فتُخزَّن الهديّةُ وترتفع خطتُه** رغم أنه لا يملك المنحَ المجّانيّ.
+    //  مُثبَتٌ حيّاً قبل الإصلاح: الخطةُ ١٠ ⟶ ١٥ من حساب استقبال.
+    //  فالقيمةُ المُصرَّح بها تُكتب فوقها **قبل أيّ إدراج**، فلا يبقى للعميل
+    //  أثرٌ في العمود — والبنودُ لها `entryIsFree` بالبوّابة نفسِها.
+    (input as any).isFreeSessions = isFreeSessions;
+    //  ══ **والمجّانيُّ صفرٌ حتماً** (مراجعةُ Codex الحادية عشرة) ══════════
+    //  قاعدةُ المالك: «وان اشر مجاني فتحسب جلسات لكن **اموال لاتحسب**».
+    //  والمسارُ المفرد (بلا `treatmentEntries`) كان يكتب `input.amount` كما
+    //  وصل: طلبٌ بـ`isFreeSessions: true` ومبلغٍ موجب **يتخطّى حارس «لا
+    //  متبقّي»** (لأنه «مجّانيّ»)، ثمّ يُخزَّن المالُ مقبوضاً، **ولا قيدَ
+    //  يومية يُنشأ له** (`!isFreeSessions` شرطُ القيد) — فيرتفع مدفوعُ
+    //  المريض بلا سطرٍ في الدفتر. مُثبَتٌ حيّاً قبل الإصلاح.
+    //
+    //  **والبنودُ لم تكن تُصاب**: علمٌ علويٌّ مرفوع يجعل `entryIsFree` صادقةً
+    //  لكلّ بند، فتُكتب أصفاراً أصلاً؛ و«شبكةُ الأمان» محروسةٌ بـ
+    //  `!isFreeSessions`. فالتصحيحُ يمسّ المسارَ المفرد وحده.
+    if (isFreeSessions) (input as any).amount = 0;
+    //  ══ **والصفُّ ورصيدُه في الخطة يقعان معاً أو لا يقع شيء** ═══════════
+    //  كان الإدراجُ يُلتزَم ثمّ تُفتَح معاملةٌ ثانية للخطة — ففشلٌ بينهما
+    //  يترك هديّةً مخزَّنةً وعدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
+    //  تُنتج هديّةً ثانية. فصارا في معاملةٍ واحدة، والوسمُ `plan_credited`
+    //  يُكتب فيها فلا يُقيَّد الصفُّ مرّتين.
+    const writePaymentTx = async (tx: any, values: any) => {
+      //  **والقفلُ قبل الإدراج لا بعده**: الإدراجُ يأخذ `FOR KEY SHARE`
+      //  (متوافقٌ مع نفسِه)، ثمّ يطلب `creditGiftToPlanTx` ترقيتَه إلى
+      //  `FOR UPDATE` — فهديّتان متزامنتان تتجمّدان بدل أن تتسلسلا.
+      await storage.lockPatientForGiftTx(tx, values);
+      const payment = attribution
+        ? await storage.createPaymentAttributed(values, attribution, tx)
+        : await storage.createPayment(values, tx);
+      await storage.creditGiftToPlanTx(tx, payment);
+      return payment;
+    };
+    const writePayment = async (values: any) => await db.transaction((tx) => writePaymentTx(tx, values));
+
+    //  كم صفَّ دفعةٍ **التُزم فعلاً** — لا يُقال «لم يُحفَظ شيء» بعد التزام.
+    let committedPayments = 0;
 
     try {
 
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
-      const results = [];
-      for (const entry of treatmentEntries) {
-        if (entry.cost > 0 || isFreeSessions) {
-          const payment = await writePayment({
-            ...input,
-            amount: isFreeSessions ? 0 : entry.cost,
-            notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
-            paymentTreatmentType: entry.treatmentType,
-            sessionCount: entry.sessionCount,
-            isFreeSessions: isFreeSessions,
-          });
-          results.push(payment);
-          // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
-          if (!isFreeSessions && payment.amount > 0) {
-            await createJournalForPayment(payment, userId);
+      //  ══ **وبنودُ الطلب الواحد تُلتزَم معاً أو لا يقع منها شيء** ════════
+      //  كلُّ بندٍ كان معاملةً مستقلّة، فبندٌ يلتزم وآخرُ يفشل يترك دفعةً
+      //  محفوظة **ورصيدَها في الخطة** بينما يقول الردُّ «لم يُحفَظ شيء» —
+      //  فيُعيد الموظّفُ الإرسالَ فتتضاعف الدفعةُ والهديّةُ معاً. فصار
+      //  الإدراجُ كلُّه معاملةً واحدة. **واليوميةُ والتدقيقُ يبقيان بعدها
+      //  خارجها كما كانا** — لا تتغيّر معامَليّتُهما في هذه التمريرة.
+      const created: { payment: any; freeEntry: boolean }[] = await db.transaction(async (tx) => {
+        const rows: { payment: any; freeEntry: boolean }[] = [];
+        //  ══ **والقفلُ مرّةً واحدة قبل أوّل إدراج** (مراجعةُ Codex العاشرة) ══
+        //  إدراجُ صفّ دفعةٍ يأخذ `FOR KEY SHARE` على صفّ المريض بمفتاحه
+        //  الأجنبيّ — **وهي متوافقةٌ مع نفسِها**. فدفعةٌ مختلطة (بندٌ مدفوعٌ
+        //  ثمّ هديّة) كانت تُدرج المدفوعَ أوّلاً ثمّ يطلب `lockPatientForGiftTx`
+        //  ترقيتَه إلى `FOR UPDATE` عند بند الهديّة: طلبان متزامنان بالشكل
+        //  نفسِه يمسكان `KEY SHARE` معاً ثمّ ينتظر كلٌّ ترقيةَ الآخر ⟶
+        //  **`deadlock detected`** يُردّ به طلبٌ مشروع بـ٥٠٠.
+        //
+        //  فيُسأل `giftEntersPlan` عن **البنود كلِّها** ويُقفَل قبل أيّ إدراج.
+        //  **والبوّابةُ هي بوّابةُ القيد بحرفها** — لا شرطَ ثالث — فلا يُقفَل
+        //  ما لا يُقيَّد (دفعةٌ كلُّها مدفوعة لا تُسلسَل بلا سبب).
+        const batchLocksPlan = treatmentEntries.some((e: any) => storage.giftEntersPlan({
+          isFreeSessions: entryIsFree(e),
+          paymentTreatmentType: e?.treatmentType,
+          sessionCount: e?.sessionCount,
+        }));
+        if (batchLocksPlan) await storage.lockPatientPlanRowTx(tx, Number((input as any).patientId));
+        for (const entry of treatmentEntries) {
+          const freeEntry = entryIsFree(entry);
+          if (entry.cost > 0 || freeEntry) {
+            const payment = await writePaymentTx(tx, {
+              ...input,
+              amount: freeEntry ? 0 : entry.cost,
+              notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+              paymentTreatmentType: entry.treatmentType,
+              sessionCount: entry.sessionCount,
+              isFreeSessions: freeEntry,
+            });
+            rows.push({ payment, freeEntry });
           }
-          await logAudit({
-            entityType: "payment",
-            entityId: payment.id,
-            action: "create",
-            userId, userName,
-            branchId: payment.branchId,
-            newValues: payment,
-            ipAddress: req.ip ?? null,
-            userAgent: req.get("user-agent") ?? null,
-          });
         }
-      }
-      // SAFETY NET: أنواع الطرف/المسند بمبلغ يدوي تصل بكلفة إدخال = 0، فلا
-      // ينشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
-      // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
-      if (results.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
-        const payment = await writePayment({ ...input });
-        results.push(payment);
-        if (payment.amount > 0) await createJournalForPayment(payment, userId);
+        // SAFETY NET: أنواع الطرف/المسند بمبلغ يدوي تصل بكلفة إدخال = 0، فلا
+        // تنشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
+        // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
+        if (rows.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
+          rows.push({ payment: await writePaymentTx(tx, { ...input }), freeEntry: false });
+        }
+        return rows;
+      });
+      committedPayments = created.length;
+      for (const { payment, freeEntry } of created) {
+        // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
+        if (!freeEntry && payment.amount > 0) {
+          await createJournalForPayment(payment, userId);
+        }
         await logAudit({
-          entityType: "payment", entityId: payment.id, action: "create",
-          userId, userName, branchId: payment.branchId, newValues: payment,
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          entityType: "payment",
+          entityId: payment.id,
+          action: "create",
+          userId, userName,
+          branchId: payment.branchId,
+          newValues: payment,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
         });
       }
-      res.status(201).json(results[0] || { message: "No payments created" });
+      res.status(201).json(created[0]?.payment || { message: "No payments created" });
     } else {
       const payment = await writePayment({ ...input });
+      committedPayments = 1;
       if (!isFreeSessions && payment.amount > 0) {
         await createJournalForPayment(payment, userId);
       }
@@ -4301,7 +4437,24 @@ export async function registerRoutes(
       if (err instanceof DeviceEpisodeError) {
         return res.status(err.status).json({ message: err.message });
       }
-      throw err;
+      //  ══ **والفشلُ يُقال، ولا يبقى الطلبُ معلَّقاً** ══════════════════════
+      //  المعالِجُ غيرُ متزامن، وExpress 4 لا يلتقط رفضَ الوعود — فخطأٌ غيرُ
+      //  متوقَّع (عطلُ قاعدةٍ عابر، مهلةُ قفل) كان يخرج رفضاً غيرَ ملتقَط:
+      //  **لا يصل الطلبَ ردٌّ إطلاقاً** وتدور شاشةُ الموظّف بلا نهاية.
+      //  والمعاملةُ تكون قد تراجعت كاملةً، فلا صفَّ ولا نصفَ كتابة — والذي
+      //  ينقص هو أن يُقال ذلك. (نفسُ درس نقاط المحادثات، القسم ٤.ag.)
+      console.error("[payments] فشلٌ غيرُ متوقَّع في تسجيل الدفعة:", err);
+      //  **ولا يُقال «لم يُحفَظ شيء» بعد التزام.** الإدراجُ صار معاملةً
+      //  واحدة، فالفشلُ قبلها يعني صفرَ كتابة فعلاً؛ أمّا الفشلُ بعدها
+      //  (اليوميةُ أو التدقيق) فالدفعةُ محفوظةٌ — وإعادةُ الإرسال تضاعفها.
+      if (committedPayments > 0) {
+        return res.status(500).json({
+          message: "سُجِّلت الدفعة، لكن تعذّر إكمال قيدها المحاسبي. لا تُعِد التسجيل — أبلغ المسؤول.",
+        });
+      }
+      return res.status(500).json({
+        message: "تعذّر تسجيل الدفعة — لم يُحفَظ شيء. أعد المحاولة، وإن تكرّر فأبلغ المسؤول.",
+      });
     }
   });
 
@@ -4487,7 +4640,22 @@ export async function registerRoutes(
       return res.status(202).json({ status: "pending", request: result.request });
     } catch (err: any) {
       if (err instanceof CorrectionError) return res.status(err.status).json({ message: err.message });
-      throw err;
+      //  ══ **ولا رفضٌ عارٍ يخرج من معالجٍ غيرِ متزامن** ═══════════════════
+      //  `throw err` هنا كان يصير رفضاً غيرَ ملتقَط في Express 4: **فلا يصل
+      //  الطلبَ ردٌّ إطلاقاً**، وتخرج العمليةُ نفسُها حيث لا معالجَ لـ
+      //  `unhandledRejection`. أمسكه شكلُ الجمود أعلاه حيّاً — خطأُ قاعدةٍ
+      //  عابر (`deadlock detected`) يُسقط الخادم بدل أن يُردّ ٥٠٠.
+      //
+      //  **و«لم يُحفَظ شيء» صادقةٌ هنا بلا شرط**: كلُّ كاتبٍ في هذا المسار
+      //  معاملةٌ واحدة ترتدّ بكاملها (`storage.updatePayment` ·
+      //  `applyPaymentCorrectionDirect` · `requestPaymentCorrection`)، ولا
+      //  خطوةَ بعد الالتزام تصل هذه المصيدة — `logAudit` تبتلع خطأها بحكم
+      //  تصميمها فلا تُفشل الطلبَ أصلاً (مُثبَتٌ حيّاً). فلو أُضيفت يوماً
+      //  خطوةٌ بعد الالتزام وجب أن تُفرَّق الرسالةُ كما في `POST /api/payments`.
+      console.error("Error updating payment:", err);
+      return res.status(500).json({
+        message: "تعذّر تعديل الدفعة — لم يُحفَظ شيء. أعد المحاولة.",
+      });
     }
   });
 

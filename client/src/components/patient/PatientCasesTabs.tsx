@@ -425,20 +425,29 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
 
       {/* Financial summary for THIS case */}
       <div className={`grid gap-3 ${canViewCasePayments ? "grid-cols-3" : "grid-cols-1"}`}>
-        <div className="rounded-xl p-3 text-center text-slate-700 bg-slate-50 relative">
+        {/*  ══ **والتحريرُ يخرج من خليةِ الثلث على الهاتف** ══════════════════
+            مقيسٌ بمتصفّحٍ حقيقيّ عند ٣٩٠px قبل الإصلاح: الخليةُ ١٠٦px،
+            فمربّعُ الإدخال **٤٧×٣٢** وزرّا الحسم **١٦×١٦** وزرُّ القلم
+            **١٢×١٢** — وأدنى هدفِ لمسٍ معتمَد ٤٤ (Apple) / ٤٨ (Material).
+            فيأخذ المحرِّرُ عرضَ الصفّ كلَّه على الهاتف وحده، **وسطحُ المكتب
+            كما كان بحرفه** (`md:` تُعيد كلَّ مقاسٍ إلى قيمته السابقة). */}
+        <div className={`rounded-xl p-3 text-center text-slate-700 bg-slate-50 relative${
+          editing && canViewCasePayments ? " col-span-3 md:col-span-1" : ""}`}>
           <div className="text-xs opacity-80 flex items-center justify-center gap-1">
             التكلفة
             {canEditCost && !editing && (
-              <button type="button" onClick={() => { setDraft(caseRow.cost || 0); setEditing(true); }} data-testid={`edit-case-cost-${caseRow.id}`} className="text-primary hover:opacity-70">
-                <Pencil className="w-3 h-3" />
+              //  الحشوةُ تكبّر هدفَ اللمس، والهامشُ السالب يمنعها من دفع
+              //  سطر العنوان — فالشكلُ كما هو والضغطةُ تصير ممكنة.
+              <button type="button" onClick={() => { setDraft(caseRow.cost || 0); setEditing(true); }} data-testid={`edit-case-cost-${caseRow.id}`} className="text-primary hover:opacity-70 inline-flex items-center justify-center p-2 -m-2 md:p-0 md:m-0 relative before:absolute before:-inset-2.5 before:content-[''] md:before:hidden" aria-label="تعديل التكلفة">
+                <Pencil className="w-3.5 h-3.5 md:w-3 md:h-3" />
               </button>
             )}
           </div>
           {editing ? (
-            <div className="flex items-center gap-1 mt-1">
-              <MoneyInput value={draft} onValueChange={setDraft} className="h-8 text-center" />
-              <button type="button" disabled={save.isPending} onClick={() => save.mutate()} className="text-green-600" data-testid={`save-case-cost-${caseRow.id}`}><Check className="w-4 h-4" /></button>
-              <button type="button" onClick={() => setEditing(false)} className="text-red-500"><X className="w-4 h-4" /></button>
+            <div className="flex items-center gap-2 md:gap-1 mt-1">
+              <MoneyInput value={draft} onValueChange={setDraft} className="h-11 md:h-8 text-base md:text-sm text-center" />
+              <button type="button" disabled={save.isPending} onClick={() => save.mutate()} className="text-green-600 shrink-0 inline-flex items-center justify-center h-11 w-11 md:h-auto md:w-auto rounded-lg bg-green-50 md:bg-transparent disabled:opacity-50" data-testid={`save-case-cost-${caseRow.id}`} aria-label="حفظ التكلفة"><Check className="w-5 h-5 md:w-4 md:h-4" /></button>
+              <button type="button" onClick={() => setEditing(false)} className="text-red-500 shrink-0 inline-flex items-center justify-center h-11 w-11 md:h-auto md:w-auto rounded-lg bg-red-50 md:bg-transparent" aria-label="إلغاء التعديل"><X className="w-5 h-5 md:w-4 md:h-4" /></button>
             </div>
           ) : (
             <div className="font-bold text-sm md:text-base">{fmtIQD(caseRow.cost)}</div>

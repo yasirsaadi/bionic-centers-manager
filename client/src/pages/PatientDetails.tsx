@@ -20,6 +20,7 @@ import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolvePurchasedSessions } from "@shared/pricing";
+import { pickPhysioSessions, perVisitSessionMode } from "./physio_sessions_source";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -661,15 +662,53 @@ export default function PatientDetails() {
   //  أدناه فقط؛ الجدولُ الزمنيُّ التفصيليّ (تبويب الزيارات) يبقى يعتمد
   //  `casePayments` كما كان — فارغاً لمن لا يملك الصلاحية، بلا رقمٍ مزيَّفٍ
   //  هناك أيضاً، إذ يحتاج تواريخَ حقيقية لا تصل هذا المستخدم أصلاً.
-  const legacyPaymentSessions: { treatmentType: string | null; sessionCount: number | null }[] =
+  //  **ولا رايةَ مجّانيّةٍ في الملخّص** (تصحيحُ ٢٠٢٦-٠٩-٢١): تمييزُ المُهدى
+  //  عن المدفوع قرارٌ ماليّ، ومسارُ المحجوب عنه المالُ لا يحمله. فالعدّادُ
+  //  الصحيح — الذي يرى الهديّةَ فوق الاشتقاق من الكلفة — يصل **محسوباً من
+  //  الخادم** في `physioSessionsResolved` أدناه؛ وهذا الملخّصُ يبقى
+  //  لمجموع بادج الرأس كما كان دائماً. ومَن يرى الدفعاتِ الخام يمرّر
+  //  `isFree` منها كما هي.
+  const legacyPaymentSessions: {
+    treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
+  }[] =
     patient.payments
       ? patient.payments.map((p) => ({
           treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+          isFree: Boolean((p as any).isFreeSessions),
         }))
       : ((patient as any).paymentSessionsSummary ?? []);
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
   const caseVisits = showAll ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId || v.caseId == null);
   const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
+  //  ══ **عدّادُ الجلسات مصدرٌ واحد في الصفحة كلِّها** ══════════════════
+  //  `patient.payments` تغيب عمّن لا يملك `canViewPayments`، فكلُّ حسابٍ
+  //  محلّيٍّ من صفوفها يقرأ **صفراً** لذلك المستخدم: لا رايةَ مجّانيّةٍ ولا
+  //  عدد. فكانت بطاقةُ الملخّص تعرض ١٦ (رقمُ الخادم) بينما يعرض تبويبُ
+  //  الزيارات ١٠ للمريض نفسِه في الشاشة نفسِها.
+  //
+  //  فالقرارُ في مكانٍ واحد: **رقمُ الخادم متى غابت الصفوفُ الخام**، وإلّا
+  //  الحسابُ المحلّيُّ من الصفوف كما كان بحرفه — بمدخلاته هو في كلّ موضع
+  //  (بطاقةُ الملخّص تقرأ دفعاتِ المريض كلَّها، وتبويبُ الزيارات دفعاتِ
+  //  الحالة المختارة)، فلا تتبدّل دلالةُ موضعٍ قائم.
+  const serverResolvedSessions = (patient as any).physioSessionsResolved as
+    ReturnType<typeof resolvePurchasedSessions> | undefined;
+  const rawPaymentsRedacted = !patient.payments;
+  const resolveSessionsFor = (
+    caseCost: number,
+    paymentSessions: { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null }[],
+  ) =>
+    pickPhysioSessions(serverResolvedSessions, rawPaymentsRedacted, () =>
+      resolvePurchasedSessions({
+        plan: (patient as any).physioPlan,
+        treatmentTypeText: patient.treatmentType,
+        caseCost,
+        paymentSessions,
+      }));
+  const casePaymentSessions = (): { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null }[] =>
+    (casePayments ?? []).map((p: any) => ({
+      treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
+      isFree: Boolean(p.isFreeSessions),
+    }));
   // Sessions are a PHYSIOTHERAPY concept only (owner's rule): the remaining-
   // sessions counter must never appear for a prosthetic/support case — device
   // visits are not "sessions" and showing a decreasing number there confused
@@ -1035,12 +1074,12 @@ export default function PatientDetails() {
             const physioCaseCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
             //  `legacyPaymentSessions` — الدفعاتُ الخام حين تصل، وإلّا
             //  ملخّصُ الجلسات غيرُ الماليّ من الخادم (إصلاحٌ 2026-09-03).
-            const purchased = resolvePurchasedSessions({
-              plan: (patient as any).physioPlan,
-              treatmentTypeText: patient.treatmentType,
-              caseCost: physioCaseCost,
-              paymentSessions: legacyPaymentSessions,
-            });
+            //
+            //  **ومَن حُجب عنه المالُ يأخذ النتيجةَ محسوبةً من الخادم**
+            //  (تصحيحُ ٢٠٢٦-٠٩-٢١): الهديّةُ لا تُميَّز في الردّ — تمييزُها
+            //  تسريبٌ ماليّ — فلا سبيلَ لحسابها هنا. والخادمُ يحسبها
+            //  بالدالّة نفسِها وبالمدخلات نفسِها.
+            const purchased = resolveSessionsFor(physioCaseCost, legacyPaymentSessions);
             const sessionsByType = purchased.byType;
             const totalSessions = purchased.total;
             // The card now shows even at zero: a physiotherapy patient with no
@@ -1205,14 +1244,7 @@ export default function PatientDetails() {
                 // their payments, so that stays the fallback. Never both, or a
                 // patient who was priced AND paid would read double.
                 const physioCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
-                const sessionsByType = resolvePurchasedSessions({
-                  plan: (patient as any).physioPlan,
-                  treatmentTypeText: patient.treatmentType,
-                  caseCost: physioCost,
-                  paymentSessions: (casePayments ?? []).map((p) => ({
-                    treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
-                  })),
-                }).byType;
+                const sessionsByType = resolveSessionsFor(physioCost, casePaymentSessions()).byType;
                 const visitsByType: Record<string, number> = {};
                 caseVisits?.forEach((v) => {
                   const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
@@ -1280,18 +1312,21 @@ export default function PatientDetails() {
                         // so seed the credit and skip the payment walk entirely —
                         // otherwise every row would count down from zero.
                         const physioCostRows = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
-                        const purchasedRows = resolvePurchasedSessions({
-                          plan: (patient as any).physioPlan,
-                          treatmentTypeText: patient.treatmentType,
-                          caseCost: physioCostRows,
-                          paymentSessions: (casePayments ?? []).map((p) => ({
-                            treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
-                          })),
-                        });
+                        const purchasedRows = resolveSessionsFor(physioCostRows, casePaymentSessions());
                         // Anything but the old payment-by-payment flow means the
                         // whole course was bought up front: seed the credit and
                         // skip the chronological payment walk below.
-                        const usePlan = purchasedRows.source !== "payments" && purchasedRows.total > 0;
+                        //  ══ **ومَن حُجبت عنه الصفوفُ لا يُزرَع له مجموع** ══
+                        //  (مراجعةُ Codex العاشرة) الزرعُ صادقٌ حين تكون
+                        //  الدورةُ مشتراةً سلفاً فعلاً (خطةٌ أو نصٌّ أو
+                        //  اشتقاقٌ من الكلفة). أمّا مريضُ المفرد — مصدرُه
+                        //  الدفعاتُ — فزرعُ مجموعه **يُقدِّم شراءً لاحقاً على
+                        //  زياراتٍ سبقته**، فيقرأ المحجوبُ عنه رقماً يخالف ما
+                        //  يقرؤه المخوَّل. **فلا رقمَ يُعرَض له هنا**،
+                        //  والمجموعُ الصحيح في بطاقة «ملخّص الجلسات» فوقه.
+                        const visitMode = perVisitSessionMode(
+                          purchasedRows.source, purchasedRows.total, rawPaymentsRedacted);
+                        const usePlan = visitMode === "seed";
                         if (usePlan) Object.assign(paidByType, purchasedRows.byType);
                         const visitsOldestFirst = [...(caseVisits || [])].sort((a, b) => new Date(a.visitDate || 0).getTime() - new Date(b.visitDate || 0).getTime());
                         const paymentsSorted = usePlan ? [] : [...(casePayments || [])].sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
@@ -1314,7 +1349,7 @@ export default function PatientDetails() {
                           if (!isServiceVisit && !isConsultation) {
                             visitCountByType[type] = (visitCountByType[type] || 0) + 1;
                           }
-                          if (isConsultation || isServiceVisit || !v.treatmentType) {
+                          if (visitMode === "hidden" || isConsultation || isServiceVisit || !v.treatmentType) {
                             remainingMap[v.id] = -999;
                           } else {
                             remainingMap[v.id] = (paidByType[type] || sessionsByType[type] || 0) - (visitCountByType[type] || 0);
