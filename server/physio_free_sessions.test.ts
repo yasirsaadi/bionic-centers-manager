@@ -1560,6 +1560,123 @@ async function state(pid: number) {
         "زز١٥. **ويُزرَع له المجموعُ رغم ذلك** — لا صفَّ يمشي عليه", "");
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── حح. ولا يدخل الخطةَ مفتاحٌ ليس من العلاج الطبيعي ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  نافذةُ تعديل الدفعة تعرض «أطراف صناعية» و«مساند طبية» صراحةً، وإعادةُ
+    //  الوسم إليهما تنقل الدفعةَ إلى حالة الجهاز. وكانت الإضافةُ تمضي بلا
+    //  فحص، فتبقى الجلساتُ في `physio_plan` **تحت اسم الجهاز**.
+    {
+      const pid = await mk("وسمٌ-إلى-جهاز", true);
+      const b = await state(pid);
+      await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0].id;
+      const mid = await state(pid);
+      check(mid.sessions === b.sessions + 6, "حح١. الأساس: ١٠ ⟶ ١٦ بهديّة الروبوت",
+        `${b.sessions} ⟶ ${mid.sessions}`);
+
+      const fix = await http("PATCH", `/api/payments/${gid}`, S, {
+        paymentTreatmentType: "أطراف صناعية", reason: "وُسِمت خطأً",
+      });
+      const a = await state(pid);
+      const row = (await q(`SELECT plan_credited, payment_treatment_type t FROM payments WHERE id=$1`, [gid])).rows[0];
+      const keys = ((a.plan ?? []) as any[]).map((e: any) => e.treatmentType);
+      check(fix.status < 300, "حح٢. إعادةُ الوسم نجحت",
+        `${fix.status} ${JSON.stringify(fix.body).slice(0, 140)}`);
+      check(row?.t === "أطراف صناعية", "حح٣. والصفُّ صار موسوماً بالجهاز", String(row?.t));
+      check(!keys.includes("أطراف صناعية"),
+        "حح٤. **ولا مفتاحَ «أطراف صناعية» في خطة العلاج الطبيعي**", JSON.stringify(a.plan));
+      check(a.sessions === b.sessions, "حح٥. **والعدّادُ عاد ١٠** — الجلساتُ خرجت مع وسمها",
+        `${mid.sessions} ⟶ ${a.sessions}`);
+      check(row?.plan_credited === false, "حح٦. والصفُّ لم يعد مقيَّداً", String(row?.plan_credited));
+    }
+    {
+      //  ووسمٌ إلى **نوع علاجٍ طبيعيّ آخر** ينتقل كما كان بحرفه.
+      const pid = await mk("وسمٌ-إلى-فيزيو", true);
+      const b = await state(pid);
+      await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 6,
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6, cost: 0, isFree: true }],
+      });
+      const gid = (await q(
+        `SELECT id FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0].id;
+      const fix = await http("PATCH", `/api/payments/${gid}`, S, {
+        paymentTreatmentType: "أبر صينية", reason: "تصحيحُ نوع",
+      });
+      const a = await state(pid);
+      const row = (await q(`SELECT plan_credited FROM payments WHERE id=$1`, [gid])).rows[0];
+      const byType: Record<string, number> = {};
+      for (const e of ((a.plan ?? []) as any[])) byType[e.treatmentType] = e.sessionCount;
+      check(fix.status < 300, "حح٧. إعادةُ الوسم إلى نوعٍ فيزيويّ نجحت", String(fix.status));
+      check(byType["أبر صينية"] === 6 && !byType["روبوت"] === false,
+        "حح٨. **والستُّ انتقلت إلى «أبر صينية»**", JSON.stringify(a.plan));
+      check(a.sessions === b.sessions + 6, "حح٩. والعدّادُ ما زال ١٦", String(a.sessions));
+      check(row?.plan_credited === true, "حح١٠. والصفُّ ما زال مقيَّداً", String(row?.plan_credited));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── طط. وإعادةُ الوسم لا تتجمّد مع مزامنةِ حالاتٍ متزامنة ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  `syncPatientCases` تأخذ `pg_advisory_xact_lock(919, patientId)` **أوّلاً**
+    //  ثمّ تكتب على صفوف دفعات المريض. وكانت معاملةُ التعديل تمسك صفَّ الدفعة
+    //  ثمّ تطلب الإرشاديَّ عبر `reattachPaymentCase` ⟶ **جمودٌ حقيقيّ**.
+    {
+      const pid = await mk("جمودُ-إعادة-الوسم", true);
+      //  صفٌّ بمبلغٍ صفر وبلا جلسات: موضوعُ هذا القسم ترتيبُ القفل وحده،
+      //  فلا قيدَ يومية يُعاد بناؤه ولا خطةَ تُصالَح.
+      const payId = (await q(
+        `INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type)
+         VALUES ($1,$2,0,'روبوت') RETURNING id`, [pid, BR])).rows[0].id;
+
+      //  المزامنةُ المزاحِمة: تمسك الإرشاديَّ ثمّ — بعد أن ينتظر التعديلُ —
+      //  تكتب على صفوف الدفعات، تماماً كما تفعل `syncPatientCases`.
+      const other = await pool.connect();
+      let otherErr: any = null, patchRes: any = null;
+      try {
+        await other.query("BEGIN");
+        await other.query("SELECT pg_advisory_xact_lock(919, $1)", [pid]);
+
+        const patch = http("PATCH", `/api/payments/${payId}`, S, {
+          paymentTreatmentType: "أبر صينية", reason: "تصحيحُ نوع",
+        });
+
+        //  ننتظر حتى يقف التعديلُ فعلاً على قفلٍ — لا مهلةً عمياء.
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i++) {
+          const r = await q(
+            `SELECT count(*)::int n FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock' AND state = 'active'`);
+          waiting = Number(r.rows[0].n) > 0;
+          if (!waiting) await new Promise((rs) => setTimeout(rs, 50));
+        }
+        check(waiting, "طط١. التعديلُ يقف على قفلٍ فعلاً — السيناريو ليس فارغاً", "");
+
+        try {
+          await other.query("UPDATE payments SET case_id = case_id WHERE patient_id = $1", [pid]);
+          await other.query("COMMIT");
+        } catch (e) { otherErr = e; try { await other.query("ROLLBACK"); } catch { /* */ } }
+        patchRes = await patch;
+      } finally {
+        other.release();
+      }
+      check(otherErr === null,
+        "طط٢. **والمزامنةُ مضت بلا جمود**", String(otherErr?.message ?? ""));
+      check(!/deadlock/i.test(String(otherErr?.message ?? "")),
+        "طط٣. ولا `deadlock detected`", String(otherErr?.message ?? ""));
+      check(patchRes?.status < 300,
+        "طط٤. **والتعديلُ نجح** — لا ٥٠٠", `${patchRes?.status} ${JSON.stringify(patchRes?.body).slice(0, 120)}`);
+      const t = (await q(`SELECT payment_treatment_type t FROM payments WHERE id=$1`, [payId])).rows[0].t;
+      check(t === "أبر صينية", "طط٥. والوسمُ الجديدُ محفوظ", String(t));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

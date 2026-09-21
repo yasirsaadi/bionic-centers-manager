@@ -1784,12 +1784,29 @@ export class DatabaseStorage implements IStorage {
    *
    * ولا يُقفَل شيءٌ لدفعةٍ لا وجودَ لها: الاستعلامُ الفرعيُّ يعيد `NULL`
    * فلا صفَّ يُطابق، ويتولّى قفلُ الدفعة بعده أن يقول إنها غير موجودة.
+   *
+   * ══ **والقفلُ الإرشاديُّ أوّلَ الثلاثة** (مراجعةُ Codex التاسعة) ═══════
+   * إعادةُ وسمِ نوع العلاج تنادي `reattachPaymentCase` ⟶ `syncPatientCases`،
+   * **وتلك تأخذ `pg_advisory_xact_lock(919, patientId)` أوّلاً ثمّ تكتب على
+   * صفوف دفعات المريض**. فمعاملتُنا كانت تمسك صفَّ الدفعة ثمّ تطلب
+   * الإرشاديّ، ومزامنةٌ أخرى تمسك الإرشاديَّ ثمّ تطلب صفَّ الدفعة —
+   * **جمودٌ حقيقيّ** (`deadlock detected`) تقتل فيه Postgres إحداهما.
+   *
+   * فالترتيبُ صار واحداً في المسارات كلِّها: **إرشاديّ ⟶ صفُّ المريض ⟶
+   * صفُّ الدفعة** — وهو ترتيبُ `syncPatientCases` و`executeNewService`
+   * نفسُه. والإرشاديُّ خاصٌّ بالمعاملة ويُعاد أخذُه فيها بلا أثر، فلا يضرّ
+   * مُنادياً يملكه سلفاً.
+   *
+   * **ورقمُ المريض يُقرأ مرّةً واحدة** ويُقفَل به الاثنان معاً — فلا يقع
+   * إرشاديٌّ على مريضٍ وصفٌّ على آخر.
    */
   async lockPatientForPaymentWriteTx(tx: any, paymentId: number): Promise<void> {
-    await tx.execute(sql`
-      SELECT p.id FROM patients p
-       WHERE p.id = (SELECT pay.patient_id FROM payments pay WHERE pay.id = ${paymentId})
-       FOR UPDATE`);
+    const res: any = await tx.execute(sql`
+      SELECT patient_id FROM payments WHERE id = ${paymentId}`);
+    const patientId = Number((res?.rows ?? res ?? [])[0]?.patient_id);
+    if (!Number.isInteger(patientId) || patientId <= 0) return;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+    await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
   }
 
   /**
@@ -1822,6 +1839,8 @@ export class DatabaseStorage implements IStorage {
     if (!physioSessionsEnterPlan(values.paymentTreatmentType, values.sessionCount)) return;
     const patientId = Number(values.patientId);
     if (!Number.isInteger(patientId) || patientId <= 0) return;
+    //  **وبالترتيب الواحد نفسِه** — راجع `lockPatientForPaymentWriteTx`.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
     await tx.execute(sql`SELECT id FROM patients WHERE id = ${patientId} FOR UPDATE`);
   }
 
@@ -1887,14 +1906,31 @@ export class DatabaseStorage implements IStorage {
         : null;
     const credited = before?.planCredited === true;
     const b = credited ? inPlanOf(before) : null;
-    const a = credited ? inPlanOf(after) : null;
+    const after0 = credited ? inPlanOf(after) : null;
+    //  ══ **ولا يُدخَل الخطةَ مفتاحٌ ليس من العلاج الطبيعي** (مراجعةُ Codex
+    //  التاسعة) ═══════════════════════════════════════════════════════════
+    //  نافذةُ تعديل الدفعة تعرض «أطراف صناعية» و«مساند طبية» صراحةً، وإعادةُ
+    //  الوسم إليهما تنقل الدفعةَ إلى حالة الجهاز. وكانت الإضافةُ تمضي بلا
+    //  فحص، فتبقى الجلساتُ في `physio_plan` **تحت اسم الجهاز** — عدّادُ
+    //  علاجٍ طبيعيّ يحمل مفتاحاً لا يخصّه.
+    //
+    //  **فالإضافةُ تُفحَص كما تُفحَص الهديّةُ الجديدة** (`physioSessionsEnterPlan`
+    //  نفسُها)، **والطرحُ يبقى بالمفتاح الذي قُيِّد به فعلاً** — وإلّا بقيت
+    //  بقيّةٌ في الخطة لا يطرحها أحد.
+    //
+    //  **والمفتاحُ الذي لم يتغيّر يُعدَّل في مكانه**: صفٌّ استوردته بذرةُ
+    //  التسعير بوسمٍ غريب موجودٌ في الخطة فعلاً، وتعديلُ عدده وحده ليس
+    //  إدخالاً لمفتاحٍ جديد — وطرحُه كان يمحو تاريخاً بتعديلٍ لا علاقةَ له به.
+    const sameKey = Boolean(b && after0
+      && physioPlanKeyForPayment(b.type, 1) === physioPlanKeyForPayment(after0.type, 1));
+    const a = after0 && (sameKey || physioSessionsEnterPlan(after0.type, after0.n)) ? after0 : null;
     if (!b && !a) {
       //  صفٌّ غيرُ مقيَّد: لا يُطرَح منه ولا يُضاف إليه — يبقى كما هو.
       return;
     }
     const patientId = Number(after?.patientId ?? before?.patientId);
     if (!Number.isInteger(patientId) || patientId <= 0) return;
-    const deltas = b && a && b.type === a.type
+    const deltas = b && a && sameKey
       ? [{ treatmentType: b.type, delta: a.n - b.n }]
       : [
         ...(b ? [{ treatmentType: b.type, delta: -b.n }] : []),
