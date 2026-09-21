@@ -1219,7 +1219,13 @@ async function main() {
 
   check(/الموظف \*\*لا يدرب الذكاء\*\*/.test(adg)
     && /المسؤول\/الفريق المركزي/.test(adg)
-    && /management\/progress.*مدير الفرع/s.test(adg), "ظ.١٩ التدريب من الإدارة والموظف متلقٍ");
+    && /المقالات \*\*الفعالة\s+العامة\*\*/.test(adg)
+    && /الخادم عند الحفظ.*لا يشترط أن تلك النسخة نفسها فعالة/s.test(adg)
+    && /resolveActiveArticle/.test(adg), "ظ.١٩ التدريب من الإدارة ومعنى مقالاته");
+  check(/management\/progress.*مدير الفرع.*operationalBranches/s.test(adg)
+    && /branchId الأساسي فقط/.test(adg)
+    && /لا\s+branchIds المتعددة/.test(adg)
+    && /قد لا يظهر.*branchIds فقط/s.test(adg), "ظ.١٩ب نطاق مدير الفرع في تقدم التدريب");
 
   check(/ليست «نسبة أخطاء صحيحة\/خاطئة»/.test(adg)
     && /إنتاجية 40/.test(adg) && /استمرارية 20/.test(adg)
