@@ -1149,7 +1149,10 @@ async function main() {
     && /مسؤول عام.*canManageAccounting.*canAddExpenses/s.test(acg)
     && /branch_manager بلا أي\s+من هاتين الصلاحيتين.*403/s.test(acg)
     && /PUT وDELETE\s+يحتاجان المسؤول أو canManageAccounting/.test(acg)
-    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف الفعلية");
+    && /PUT \/api\/expenses\/:id.*المصروف\s+الحالي.*فرع الجلسة/s.test(acg)
+    && /storage\.updateExpense/.test(acg)
+    && /نقل مصروف من فرعه إلى branchId آخر صالح/.test(acg)
+    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف وفجوة نقل الفرع");
   check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
     && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
     && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
@@ -1171,13 +1174,28 @@ async function main() {
   check(/totalPaid.*payments المؤرخة داخل الفترة/s.test(acg)
     && /totalRevenue.*cost_entries المنشأة داخل الفترة/s.test(acg)
     && /netProfit = الوارد المقبوض ناقص المصروفات/.test(acg), "ض.١٠ معنى تدفقات المال");
+  check(/legacyDevicesUnsplit/.test(acg)
+    && /assign_manufacturing أو maintenance/.test(acg)
+    && /أجهزة قديمة — غير مقسَّمة/.test(acg)
+    && /devicesCombined.*prosthetic \+ medical_support \+\s+legacyDevicesUnsplit/s.test(acg)
+    && /classifiedTotal.*لا يضم القديم غير المقسم/s.test(acg),
+    "ض.١٠ب صف الأجهزة القديمة وتجميع الأجهزة");
   check(/المصروفات فتبقى موزعة إلى prosthetic وphysio وshared/.test(acg)
-    && !/المصروفات فتبقى موزعة إلى devices/.test(acg), "ض.١٠ب قيمة قسم المصروف القانونية");
+    && !/المصروفات فتبقى موزعة إلى devices/.test(acg), "ض.١٠ج قيمة قسم المصروف القانونية");
   check(/totalRemaining.*العمر كله.*حد أدنى صفر/s.test(acg)
     && /لا يُعرض دين سالب/.test(acg) && /collectionRate.*العمر كله/s.test(acg)
     && /لا يحول\s+الدين ونسبة التحصيل إلى «دين تلك الفترة»/.test(acg), "ض.١١ المخزون المالي وحد الدين الأدنى");
-  check(/يوم بغداد \(\+03:00\)/.test(acg) && /todayRevenue فيه هو النقد المقبوض/.test(acg)
-    && /قد تختلف لقطة يوم واحد عن الملخص اليومي/.test(acg), "ض.١٢ فرق الملخص اليومي عن نطاق الصفحة");
+  check(/حدود يوم\s+بغداد \(\+03:00\)/.test(acg)
+    && /todayRevenue هو النقد المقبوض/.test(acg)
+    && /todayISO/.test(acg)
+    && /toISOString\(\)\.split\("T"\)\[0\]/.test(acg)
+    && /00:00 و02:59 بتوقيت بغداد/.test(acg)
+    && /اليوم السابق/.test(acg)
+    && /زر مرشح الفترة «اليوم».*getTodayIraq/s.test(acg),
+    "ض.١٢ تاريخ UTC الافتراضي مقابل يوم بغداد");
+  check(/تاريخ مصروف جديد.*تاريخ فاتورة\s+جديدة.*تاريخ شراء جديد/s.test(acg)
+    && /قد يُملأ تاريخ اليوم السابق/.test(acg),
+    "ض.١٢ب تواريخ الإدخال الافتراضية تستخدم UTC");
   check(/قائمة GET \/api\/invoices محمية بتسجيل الدخول فقط/.test(acg)
     && /invoices\/:id/.test(acg) && /invoice-items\/bulk/.test(acg)
     && /invoices\/next-number/.test(acg)
