@@ -121,14 +121,49 @@ check(box.includes("e.nativeEvent.isComposing"),
 
 check(/grownInputHeight\(el\.scrollHeight\)/.test(drawer),
   "هـ.٩ **والارتفاعُ من الدالّة الخالصة كذلك**");
-const effect = drawer.slice(drawer.indexOf("useLayoutEffect(("),
-  drawer.indexOf("const send = (text: string)"));
-const autoAt = effect.indexOf('el.style.height = "auto"');
-const growAt = effect.indexOf("grownInputHeight");
+
+//  قاعدةُ القياس في موضعٍ واحد — `measureAiChatInput` — يناديه البابان.
+const measure = drawer.slice(drawer.indexOf("function measureAiChatInput("),
+  drawer.indexOf("export function AiChatDrawer()"));
+check(measure.startsWith("function measureAiChatInput("),
+  "هـ.٩أ٠ وقُرئت دالّةُ القياس");
+const autoAt = measure.indexOf('el.style.height = "auto"');
+const growAt = measure.indexOf("grownInputHeight");
 check(autoAt >= 0 && growAt > autoAt,
   "هـ.٩أ **ويُصفَّر قبل القياس** — وإلّا لم ينكمش المربّعُ بعد الحذف أبداً");
+check((drawer.match(/el\.style\.height = "auto"/g) ?? []).length === 1
+  && (drawer.match(/grownInputHeight\(/g) ?? []).length === 1,
+  "هـ.٩أ٢ **ولا نسخةَ ثانية من القاعدة في الشاشة** — بابان ينادِيان دالّةً واحدة");
+
+const effect = drawer.slice(drawer.indexOf("useLayoutEffect(("),
+  drawer.indexOf("const send = (text: string)"));
 check(/\[draft, open\]/.test(effect),
   "هـ.٩ب ويُعاد الحسابُ مع كلّ حرفٍ ومع فتح النافذة");
+check(/measureAiChatInput\(el\)/.test(effect),
+  "هـ.٩ج والأثرُ ينادي الدالّةَ نفسَها");
+
+//  ══ هـ.١٠ **وإعادةُ التركيب تُقاس — لا تغيُّرُ المحتوى وحده** ═════════════
+//  المربّعُ يُفكَّك حين تُفتَح لوحةُ التدريب ويُعاد تركيبُه حين تُغلَق،
+//  و`draft`/`open` لا يتغيّران عبر ذلك التبديل — فمسوّدةُ سطرين كانت تبقى في
+//  مربّعٍ ارتفاعُه سطرٌ واحد حتى يكتب الموظّفُ حرفاً آخر.
+const condAt = drawer.lastIndexOf("{!trainingOpen && (", i);
+check(condAt > 0 && condAt < i,
+  "هـ.١٠ **والمربّعُ مشروطٌ فعلاً بإغلاق لوحة التدريب** — فالتفكيكُ واقعٌ لا " +
+  "مفترَض، وبدونه كان هذا القسمُ يحرس لا شيء");
+
+check(/ref=\{attachInput\}/.test(box) && !/ref=\{inputRef\}/.test(box),
+  "هـ.١٠أ **والربطُ دالّةٌ تقيس لحظةَ التركيب** لا كائنُ مرجعٍ صامت");
+const attach = drawer.slice(drawer.indexOf("const attachInput = useCallback("),
+  drawer.indexOf("const scrollRef"));
+check(attach.startsWith("const attachInput = useCallback("),
+  "هـ.١٠ب وقُرئ جسمُ الربط");
+check(/measureAiChatInput\(el\)/.test(attach),
+  "هـ.١٠ج **ويقيس العنصرَ الجديد فور ربطه** — فأيُّ إعادة تركيبٍ تُقاس مهما " +
+  "كان الشرطُ الذي فكّكه، لا هذا الشرطُ وحده");
+check(/\}, \[\]\);/.test(attach),
+  "هـ.١٠د **وثابتٌ بـ`useCallback([])`** — وإلّا فُكّ الربطُ وأُعيد في كلّ رسم");
+check(/inputRef\.current = el/.test(attach),
+  "هـ.١٠هـ **ويكتب المرجعَ كما كان** — فإعادةُ المؤشّر في `send` تبقى تعمل");
 
 console.log(failures
   ? `\n❌ ${failures} حالة فاشلة`
