@@ -21,7 +21,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
-import { mergePhysioPlan, allocateApprovedCost } from "@shared/pricing";
+import { mergePhysioPlan, allocateApprovedCost, entersPhysioPlan, PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
 import { NEW_SERVICE_DEPARTMENT, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 
 export { NEW_SERVICE_LABELS };
@@ -173,6 +173,22 @@ export async function executeNewService(params: {
       }
       : {};
 
+    //  ══ **والهديّةُ تُوسَم بأنها قُيِّدت في الخطة** (ترحيل ٠٨٧) ═══════════
+    //  هذا البابُ يرفع الخطةَ بنفسه أعلاه — فصفُّ الدفعة المجّانيّة كان
+    //  يبقى `plan_credited = NULL`، ومعناه «لم يُقيَّد». فحذفُ تلك الهديّة
+    //  أو تصحيحُها لاحقاً لا يُنقص الخطةَ، **فتبقى جلساتُها فيها إلى الأبد**.
+    //
+    //  والشرطُ شرطان معاً، ولا ثالثَ يُخمَّن: أن تكون الجلساتُ **دخلت**
+    //  الخطةَ فعلاً (`entersPhysioPlan` — قاعدةُ `mergePhysioPlan` نفسُها
+    //  مُصدَّرةً، لا نسخةٌ منها)، وأن يكون النوعُ ممّا **يقدر**
+    //  `adjustPhysioPlanForGift` أن يُنقصه (`PHYSIO_TREATMENT_TYPES`) —
+    //  فوسمٌ لا يستطيع الطرحُ الوفاءَ به وسمٌ كاذب.
+    const planMerged = hasPlan && Boolean(entries && entries.length > 0);
+    const giftCreditedToPlan = (treatmentType: unknown, sessionCount: unknown) =>
+      planMerged
+      && entersPhysioPlan(String(treatmentType ?? ""), Number(sessionCount) || 0)
+      && PHYSIO_TREATMENT_TYPES.includes(String(treatmentType ?? "").trim());
+
     // ══ قسمُ «خدمة جديدة» — علاجٌ طبيعي بحكم التصنيف ═══════════════════
     //  الأنواعُ الثلاثة — جلساتٌ إضافية · استشارة · خدمة أخرى — **كلُّها
     //  علاجٌ طبيعي**، تحسمها خريطةٌ مهيكلة على نوع الخدمة لا مطابقةُ نصٍّ حرّ.
@@ -275,6 +291,10 @@ export async function executeNewService(params: {
             caseId: nsCaseId!,
             amount: isFree ? 0 : (paymentShares[i] ?? 0),
             isFreeSessions: isFree,
+            //  المدفوعةُ تبقى `NULL` («لم يُسأل») كما في `creditGiftToPlanTx`.
+            planCredited: isFree
+              ? giftCreditedToPlan(entry.treatmentType, entry.sessionCount)
+              : undefined,
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: entry.treatmentType,
             sessionCount: entry.sessionCount,
@@ -304,6 +324,9 @@ export async function executeNewService(params: {
           caseId: nsCaseId!,
           amount: isFree ? 0 : paidNow,
           isFreeSessions: isFree,
+          //  هذا الفرعُ بلا `entries`، فـ`planPatch` لم يمسّ الخطةَ إطلاقاً:
+          //  هديّةٌ مُنحت ولم تُقيَّد — وهو ما يقوله `false` بصدق.
+          planCredited: isFree ? false : undefined,
           notes: `${serviceLabel}${sc ? ` (${sc} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
           paymentTreatmentType: params.paymentTreatmentType || null,
           sessionCount: sc ? Number(sc) : null,

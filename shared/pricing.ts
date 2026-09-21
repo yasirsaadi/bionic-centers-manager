@@ -30,6 +30,19 @@ export interface PhysioPlanEntry {
  * 10 robot sessions and later 5 more reads as one line of 15 rather than two
  * lines the counter would have to reconcile.
  */
+/**
+ * **أتدخل هذه الجلساتُ الخطةَ المحفوظة؟** — قاعدةُ `mergePhysioPlan` نفسُها،
+ * مُصدَّرةً كي يقرأها مَن يحتاج أن يعرف **ماذا أضاف** لا أن يضيف فقط.
+ *
+ * و«استشارة طبية» زيارةٌ واحدة لا دورةُ علاج، فلا تدخل الخطةَ أبداً.
+ * **ولا نسخةَ ثانية من هذا الشرط**: مَن نسخه انحرف عنه يوماً.
+ */
+export function entersPhysioPlan(treatmentType: string, sessionCount: number): boolean {
+  const type = String(treatmentType ?? "").trim();
+  const n = Math.max(0, Math.floor(Number(sessionCount) || 0));
+  return Boolean(type) && n > 0 && type !== "استشارة طبية";
+}
+
 export function mergePhysioPlan(
   existing: PhysioPlanEntry[] | null | undefined,
   additions: { treatmentType: string; sessionCount: number }[],
@@ -43,8 +56,7 @@ export function mergePhysioPlan(
   for (const a of additions ?? []) {
     const type = String(a?.treatmentType ?? "").trim();
     const n = Math.max(0, Math.floor(Number(a?.sessionCount) || 0));
-    // A consultation is a single visit, not a course — it never enters the plan.
-    if (!type || n <= 0 || type === "استشارة طبية") continue;
+    if (!entersPhysioPlan(type, n)) continue;
     byType[type] = (byType[type] ?? 0) + n;
   }
   return Object.keys(byType)

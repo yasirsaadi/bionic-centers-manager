@@ -707,6 +707,120 @@ async function state(pid: number) {
       check(credited === true, "ق٤. والصفُّ موسومٌ **مقيَّداً** — لا وسمٌ كاذب", String(credited));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ر. و«خدمة جديدة» توسم هديّتَها بأنها قُيِّدت ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  هذا البابُ يرفع الخطةَ **بنفسه** (`mergePhysioPlan` في منسّقه) ولا
+    //  يمرّ بـ`creditGiftToPlanTx`، فكان صفُّ الهديّة يبقى `NULL` — ومعناه
+    //  «لم يُقيَّد». فحذفُها لاحقاً لا يُنقص الخطة، **وتبقى جلساتُها فيها
+    //  إلى الأبد**. والوسمُ يُكتب الآن في معاملة الخدمة نفسِها.
+    {
+      const pid = await mk("وسم-خدمة", true);
+      const b = await state(pid);
+      const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", discount: { isFree: true, reason: "تبرع" },
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 6 }],
+      });
+      const row = (await q(
+        `SELECT id, plan_credited FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0];
+      const a = await state(pid);
+      check(r.status === 201, "ر١. المنح نجح", String(r.status));
+      check(a.sessions === b.sessions + 6, "ر٢. الخطةُ ارتفعت ١٠ ⟶ ١٦", `${b.sessions} ⟶ ${a.sessions}`);
+      check(row?.plan_credited === true, "ر٣. **والصفُّ موسومٌ مقيَّداً** — لا `NULL`", String(row?.plan_credited));
+
+      //  والحذفُ يُنقص الخطةَ بالمقدار عينه — وهو ما كان يستحيل بلا الوسم.
+      const del = await http("DELETE", `/api/payments/${row.id}`, S, { reason: "إلغاء التبرع" });
+      const c = await state(pid);
+      check(del.status < 300, "ر٤. الحذفُ نجح", String(del.status));
+      check(c.sessions === b.sessions, "ر٥. **والخطةُ عادت ١٠** — لا جلساتٌ خالدة", `${a.sessions} ⟶ ${c.sessions}`);
+      check(c.cost === b.cost && c.paid === b.paid, "ر٦. ولا دينارَ تحرّك في الرحلة كلِّها",
+        `${b.cost}/${b.paid} ⟶ ${c.cost}/${c.paid}`);
+    }
+    {
+      //  ومريضُ المفرد: الخطةُ لا تُنشأ له (ذي قار)، فالوسمُ `false` بصدق.
+      const pid = await mk("وسم-مفرد", false);
+      const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
+        serviceType: "additional_therapy", discount: { isFree: true, reason: "تبرع" },
+        treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 3 }],
+      });
+      const row = (await q(
+        `SELECT plan_credited FROM payments WHERE patient_id=$1 AND is_free_sessions=true ORDER BY id DESC LIMIT 1`,
+        [pid])).rows[0];
+      const plan = (await q(`SELECT physio_plan FROM patients WHERE id=$1`, [pid])).rows[0].physio_plan;
+      const a = await state(pid);
+      check(r.status === 201, "ر٧. المنح نجح لمريض المفرد", String(r.status));
+      check(row?.plan_credited === false, "ر٨. **والوسمُ `false`** — مُنح ولم يُقيَّد", String(row?.plan_credited));
+      check(!plan || (plan as any[]).length === 0, "ر٩. ولا خطةَ أُنشئت له (ذي قار)", JSON.stringify(plan));
+      check(a.sessions === 3, "ر١٠. وعدّادُه يقرأ الهديّةَ من دفعاته", String(a.sessions));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── ش. وبنودُ الطلب الواحد تُلتزَم معاً أو لا شيء ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  كلُّ بندٍ كان معاملةً مستقلّة: يلتزم الأوّلُ ويفشل الثاني، فيبقى صفٌّ
+    //  محفوظ (ورصيدُه في الخطة) بينما يقول الردُّ «لم يُحفَظ شيء» — فتُعاد
+    //  المحاولةُ فتتضاعف الدفعةُ والهديّةُ معاً. فيُحقَن فشلٌ حقيقيٌّ على
+    //  **الإدراج الثاني** ويُقاس الأثر.
+    {
+      const pid = await mk("ذرّيةُ البنود", true);
+      const before = await state(pid);
+      const origConnect = (pool as any).connect.bind(pool);
+      let inserts = 0;
+      let fired = false;
+      (pool as any).connect = async (...cArgs: any[]) => {
+        if (cArgs.some((x) => typeof x === "function")) return origConnect(...cArgs);
+        const client: any = await origConnect();
+        if (!client || typeof client.query !== "function") return client;
+        const cq = client.query.bind(client);
+        client.query = async (...args: any[]) => {
+          const text = typeof args[0] === "string" ? args[0] : String(args[0]?.text ?? "");
+          if (/insert\s+into\s+"?payments"?/i.test(text)) {
+            inserts += 1;
+            if (inserts === 2) { fired = true; throw new Error("عطلٌ محقونٌ على البند الثاني"); }
+          }
+          return cq(...args);
+        };
+        return client;
+      };
+      let r: any;
+      try {
+        r = await http("POST", "/api/payments", S, {
+          patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+          paymentTreatmentType: "روبوت", sessionCount: 4,
+          treatmentEntries: [
+            { treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true },
+            { treatmentType: "أبر صينية", sessionCount: 2, cost: 0, isFree: true },
+          ],
+        });
+      } finally {
+        (pool as any).connect = origConnect;
+      }
+      const rows = (await q(`SELECT id FROM payments WHERE patient_id=$1`, [pid])).rows;
+      const a = await state(pid);
+      check(fired, "ش١. العطلُ حُقن على الإدراج الثاني فعلاً", `${inserts}`);
+      check(r.status >= 400, "ش٢. والطلبُ يُردّ بخطأ", String(r.status));
+      check(rows.length === 0, "ش٣. **وصفرُ صفوفٍ بقيت** — لا البندُ الأوّل", JSON.stringify(rows));
+      check(String(r.body?.message ?? "").includes("لم يُحفَظ شيء"),
+        "ش٤. والرسالةُ تقول الحقيقةَ: لم يُحفَظ شيء", String(r.body?.message));
+      check(a.sessions === before.sessions, "ش٥. والخطةُ كما كانت", `${before.sessions} ⟶ ${a.sessions}`);
+
+      //  وبلا حقنٍ: البندان يمضيان معاً كما كانا.
+      const ok = await http("POST", "/api/payments", S, {
+        patientId: pid, branchId: BR, amount: 0, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 4,
+        treatmentEntries: [
+          { treatmentType: "روبوت", sessionCount: 4, cost: 0, isFree: true },
+          { treatmentType: "أبر صينية", sessionCount: 2, cost: 0, isFree: true },
+        ],
+      });
+      const n = (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1`, [pid])).rows[0].n;
+      const g = await state(pid);
+      check(ok.status === 201, "ش٦. وبلا حقنٍ الطلبُ ينجح", String(ok.status));
+      check(n === 2, "ش٧. وصفّان أُدرجا معاً", String(n));
+      check(g.sessions === before.sessions + 6, "ش٨. والخطةُ ١٠ + ٤ + ٢ = ١٦", String(g.sessions));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

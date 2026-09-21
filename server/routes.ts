@@ -4279,62 +4279,72 @@ export async function registerRoutes(
     //  يترك هديّةً مخزَّنةً وعدّادَ صاحب الخطة ساكناً، وإعادةُ المحاولة
     //  تُنتج هديّةً ثانية. فصارا في معاملةٍ واحدة، والوسمُ `plan_credited`
     //  يُكتب فيها فلا يُقيَّد الصفُّ مرّتين.
-    const writePayment = async (values: any) => await db.transaction(async (tx) => {
+    const writePaymentTx = async (tx: any, values: any) => {
       const payment = attribution
         ? await storage.createPaymentAttributed(values, attribution, tx)
         : await storage.createPayment(values, tx);
       await storage.creditGiftToPlanTx(tx, payment);
       return payment;
-    });
+    };
+    const writePayment = async (values: any) => await db.transaction((tx) => writePaymentTx(tx, values));
+
+    //  كم صفَّ دفعةٍ **التُزم فعلاً** — لا يُقال «لم يُحفَظ شيء» بعد التزام.
+    let committedPayments = 0;
 
     try {
 
     if (treatmentEntries && Array.isArray(treatmentEntries) && treatmentEntries.length > 0) {
-      const results = [];
-      for (const entry of treatmentEntries) {
-        const freeEntry = entryIsFree(entry);
-        if (entry.cost > 0 || freeEntry) {
-          const payment = await writePayment({
-            ...input,
-            amount: freeEntry ? 0 : entry.cost,
-            notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
-            paymentTreatmentType: entry.treatmentType,
-            sessionCount: entry.sessionCount,
-            isFreeSessions: freeEntry,
-          });
-          results.push(payment);
-          // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
-          if (!freeEntry && payment.amount > 0) {
-            await createJournalForPayment(payment, userId);
+      //  ══ **وبنودُ الطلب الواحد تُلتزَم معاً أو لا يقع منها شيء** ════════
+      //  كلُّ بندٍ كان معاملةً مستقلّة، فبندٌ يلتزم وآخرُ يفشل يترك دفعةً
+      //  محفوظة **ورصيدَها في الخطة** بينما يقول الردُّ «لم يُحفَظ شيء» —
+      //  فيُعيد الموظّفُ الإرسالَ فتتضاعف الدفعةُ والهديّةُ معاً. فصار
+      //  الإدراجُ كلُّه معاملةً واحدة. **واليوميةُ والتدقيقُ يبقيان بعدها
+      //  خارجها كما كانا** — لا تتغيّر معامَليّتُهما في هذه التمريرة.
+      const created: { payment: any; freeEntry: boolean }[] = await db.transaction(async (tx) => {
+        const rows: { payment: any; freeEntry: boolean }[] = [];
+        for (const entry of treatmentEntries) {
+          const freeEntry = entryIsFree(entry);
+          if (entry.cost > 0 || freeEntry) {
+            const payment = await writePaymentTx(tx, {
+              ...input,
+              amount: freeEntry ? 0 : entry.cost,
+              notes: input.notes ? `${input.notes} - ${entry.treatmentType} (${entry.sessionCount} جلسة)` : `${entry.treatmentType} (${entry.sessionCount} جلسة)`,
+              paymentTreatmentType: entry.treatmentType,
+              sessionCount: entry.sessionCount,
+              isFreeSessions: freeEntry,
+            });
+            rows.push({ payment, freeEntry });
           }
-          await logAudit({
-            entityType: "payment",
-            entityId: payment.id,
-            action: "create",
-            userId, userName,
-            branchId: payment.branchId,
-            newValues: payment,
-            ipAddress: req.ip ?? null,
-            userAgent: req.get("user-agent") ?? null,
-          });
         }
-      }
-      // SAFETY NET: أنواع الطرف/المسند بمبلغ يدوي تصل بكلفة إدخال = 0، فلا
-      // ينشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
-      // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
-      if (results.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
-        const payment = await writePayment({ ...input });
-        results.push(payment);
-        if (payment.amount > 0) await createJournalForPayment(payment, userId);
+        // SAFETY NET: أنواع الطرف/المسند بمبلغ يدوي تصل بكلفة إدخال = 0، فلا
+        // تنشئ الحلقة أعلاه أي دفعة رغم وجود مبلغ حقيقي في input.amount. في هذه
+        // الحالة ننشئ دفعة واحدة بالمبلغ اليدوي ووسم النوع — فلا يضيع أي مبلغ.
+        if (rows.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
+          rows.push({ payment: await writePaymentTx(tx, { ...input }), freeEntry: false });
+        }
+        return rows;
+      });
+      committedPayments = created.length;
+      for (const { payment, freeEntry } of created) {
+        // تلقائي: إنشاء قيد محاسبي مزدوج (لا يؤثر على الدفعة في حال فشل)
+        if (!freeEntry && payment.amount > 0) {
+          await createJournalForPayment(payment, userId);
+        }
         await logAudit({
-          entityType: "payment", entityId: payment.id, action: "create",
-          userId, userName, branchId: payment.branchId, newValues: payment,
-          ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          entityType: "payment",
+          entityId: payment.id,
+          action: "create",
+          userId, userName,
+          branchId: payment.branchId,
+          newValues: payment,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
         });
       }
-      res.status(201).json(results[0] || { message: "No payments created" });
+      res.status(201).json(created[0]?.payment || { message: "No payments created" });
     } else {
       const payment = await writePayment({ ...input });
+      committedPayments = 1;
       if (!isFreeSessions && payment.amount > 0) {
         await createJournalForPayment(payment, userId);
       }
@@ -4362,6 +4372,14 @@ export async function registerRoutes(
       //  والمعاملةُ تكون قد تراجعت كاملةً، فلا صفَّ ولا نصفَ كتابة — والذي
       //  ينقص هو أن يُقال ذلك. (نفسُ درس نقاط المحادثات، القسم ٤.ag.)
       console.error("[payments] فشلٌ غيرُ متوقَّع في تسجيل الدفعة:", err);
+      //  **ولا يُقال «لم يُحفَظ شيء» بعد التزام.** الإدراجُ صار معاملةً
+      //  واحدة، فالفشلُ قبلها يعني صفرَ كتابة فعلاً؛ أمّا الفشلُ بعدها
+      //  (اليوميةُ أو التدقيق) فالدفعةُ محفوظةٌ — وإعادةُ الإرسال تضاعفها.
+      if (committedPayments > 0) {
+        return res.status(500).json({
+          message: "سُجِّلت الدفعة، لكن تعذّر إكمال قيدها المحاسبي. لا تُعِد التسجيل — أبلغ المسؤول.",
+        });
+      }
       return res.status(500).json({
         message: "تعذّر تسجيل الدفعة — لم يُحفَظ شيء. أعد المحاولة، وإن تكرّر فأبلغ المسؤول.",
       });
