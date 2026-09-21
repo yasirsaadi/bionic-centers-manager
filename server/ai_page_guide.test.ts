@@ -1149,7 +1149,8 @@ async function main() {
     && /PUT وDELETE يحتاجان canManageAccounting/.test(acg)
     && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ صلاحيات وقواعد المصروف");
   check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
-    && /قيداً محاسبياً تلقائياً/.test(acg), "ض.٧ إكمال المصروف والقيد التلقائي");
+    && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
+    && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
   check(/اقتراح بالذكاء.*expensesOnly/s.test(acg)
     && /categorize-expense يشترط\s+canManageAccounting/.test(acg), "ض.٨ زر تصنيف الذكاء لا يعني صلاحية");
   check(/لا تستخدم accessibleBranches/.test(acg) && /بلا branchId يعيد undefined/.test(acg)
@@ -1171,7 +1172,8 @@ async function main() {
     && /canAddPayments/.test(acg), "ض.١٥ إنشاء الفاتورة والقبض");
   check(/تعديل المورد وإلغاء تفعيله\s+للمسؤول العام فقط/.test(acg)
     && /تعديل\/حذف الشراء للمسؤول العام فقط/.test(acg)
-    && /دفعة المورد تنشئ قيدها/.test(acg), "ض.١٦ الموردون والمشتريات");
+    && /حفظ الشراء أو دفعة المورد.*بأفضل\s+جهد/s.test(acg)
+    && /لا يُفشل العملية الأصلية/.test(acg), "ض.١٦ الموردون والمشتريات وحدود القيود");
   check(/المديونيات والاتجاهات والربحية والمقارنة والتنبيهات/.test(acg)
     && /canManageAccounting أو المسؤول/.test(acg), "ض.١٧ تقارير المحاسبة الكاملة");
   same("ض.١٨ دليل المحاسبة ساكن", pageGuideFor(ACC, rep), pageGuideFor(ACC, adm));
