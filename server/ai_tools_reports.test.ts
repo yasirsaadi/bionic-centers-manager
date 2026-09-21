@@ -15,6 +15,7 @@ import { storage } from "./storage";
 import { executeTool, toolsFor } from "./ai/tools/registry";
 import { resolveAiAccess, type AiAccessContext } from "./ai/access";
 import { computeComparison } from "./ai/tools/reports";
+import { REPORT_ROW_LABELS } from "@shared/service_taxonomy";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -35,10 +36,12 @@ const TODAY = new Date().toISOString().slice(0, 10);
 async function q(sql: string, params: any[] = []) { return pool.query(sql, params); }
 
 async function cleanup() {
+  //  **الأبناء قبل `patient_cases`**: `cost_entries.case_id` و`payments.case_id`
+  //  مفتاحان أجنبيّان إليها، فحذفُها أوّلاً يرتدّ بانتهاك مفتاح.
   await q(`DELETE FROM visits WHERE patient_id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
-  await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
   await q(`DELETE FROM cost_entries WHERE patient_id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
   await q(`DELETE FROM payments WHERE patient_id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
+  await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [[P1, P2, P3_OTHER_BRANCH, P4_DELETED, P5_PHYSIO]]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[RECEPTION, RECEPTION_NO_VIEW, ADMIN, ACCOUNTANT]]);
   await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
@@ -107,11 +110,28 @@ async function main() {
     VALUES ($1, $2, 'زيارة عادية', NOW(), 0)
   `, [P1, B1]);
 
+  const [prostheticCase] = (await q(
+    `INSERT INTO patient_cases (patient_id, case_type, status) VALUES ($1, 'prosthetic', 'active') RETURNING id`,
+    [P2],
+  )).rows;
+
   //  ══ مبيعاتٌ ونقدٌ مقبوض **بمبلغين مختلفين عمداً** ══════════════════════
   //  لو تساوى الرقمان (كما كانا صفرَين قبل هذه الإضافة) يمرّ اختبارُ
   //  التطابق حتى لو انعكس الحقلان خطأً — ٥٠٠,٠٠٠ مقابل ٢٠٠,٠٠٠ يفضح أيّ
   //  تبديلٍ مستقبليّ بين salesValue وrevenue فوراً.
-  const SALES_AMOUNT = 500000, PAID_AMOUNT = 200000;
+  //
+  //  ══ وبأقسامٍ مختلفة عمداً كذلك (قسم ج.١٩) ════════════════════════════
+  //  خمسةُ دلاءٍ لكلٍّ مبلغٌ **فريد**: فانعكاسُ قسمين، أو خلطُ «ما بِيع»
+  //  بـ«ما قُبض» في قسمٍ واحد، أو سقوطُ دلوٍ في آخر — كلُّها تُفضَح برقمٍ
+  //  لا يطابق. ومبالغُ متساوية كانت ستُمرِّر أيّاً منها.
+  const SALES_AMOUNT = 500000, PAID_AMOUNT = 200000;      // ⟵ «غير مبوَّب» (بلا حالة)
+  const PHYSIO_SALES = 310000, PHYSIO_PAID = 130000;      // ⟵ العلاج الطبيعي
+  const PROS_SALES = 720000, PROS_PAID = 410000;          // ⟵ الأطراف الصناعية
+  const LEGACY_DEV_SALES = 90000;                          // ⟵ أجهزة قديمة — مبيعاتٌ فقط
+  //  الإجماليُّ مشتقٌّ من الأجزاء لا مكتوبٌ ثانيةً — فإضافةُ دلوٍ لاحقاً
+  //  تُحدِّثه معها، ولا يبقى رقمٌ ثابتٌ يكذب بصمت.
+  const TOTAL_SALES = SALES_AMOUNT + PHYSIO_SALES + PROS_SALES + LEGACY_DEV_SALES;
+  const TOTAL_PAID = PAID_AMOUNT + PHYSIO_PAID + PROS_PAID;
   await q(`
     INSERT INTO cost_entries (patient_id, branch_id, amount, source, notes)
     VALUES ($1, $2, $3, 'registration', '${MARK}')
@@ -120,6 +140,30 @@ async function main() {
     INSERT INTO payments (patient_id, branch_id, amount, notes)
     VALUES ($1, $2, $3, '${MARK}')
   `, [P1, B1, PAID_AMOUNT]);
+  //  علاجٌ طبيعيّ — بالعلاقة المهيكلة `case_id` في الطرفين.
+  await q(`
+    INSERT INTO cost_entries (patient_id, branch_id, case_id, amount, source, notes)
+    VALUES ($1, $2, $3, $4, 'physio_pricing', '${MARK}')
+  `, [P5_PHYSIO, B1, physioCase.id, PHYSIO_SALES]);
+  await q(`
+    INSERT INTO payments (patient_id, branch_id, case_id, amount, notes)
+    VALUES ($1, $2, $3, $4, '${MARK}')
+  `, [P5_PHYSIO, B1, physioCase.id, PHYSIO_PAID]);
+  //  أطرافٌ صناعية — كذلك.
+  await q(`
+    INSERT INTO cost_entries (patient_id, branch_id, case_id, amount, source, notes)
+    VALUES ($1, $2, $3, $4, 'assign_manufacturing', '${MARK}')
+  `, [P2, B1, prostheticCase.id, PROS_SALES]);
+  await q(`
+    INSERT INTO payments (patient_id, branch_id, case_id, amount, notes)
+    VALUES ($1, $2, $3, $4, '${MARK}')
+  `, [P2, B1, prostheticCase.id, PROS_PAID]);
+  //  **أجهزةٌ قديمة غير مقسَّمة**: مصدرٌ قاطعٌ أنها مالُ أجهزة، وبلا حالةٍ
+  //  ولا حلقة فلا يُعرَف أطرافاً هي أم مساند. ولا نظيرَ لها في المقبوض.
+  await q(`
+    INSERT INTO cost_entries (patient_id, branch_id, amount, source, notes)
+    VALUES ($1, $2, $3, 'maintenance', '${MARK}')
+  `, [P1, B1, LEGACY_DEV_SALES]);
 
   try {
     // ══ أ. patient_search ═══════════════════════════════════════════════
@@ -464,8 +508,10 @@ async function main() {
     //  totalPaid — لا العكس.
     same("ج.٤ **قيمةُ المبيعات (salesValue) مطابقةٌ حرفياً** لـ`totalRevenue` — لا حسابَ مُوازٍ", finData.current.salesValue, canonical.totalRevenue);
     same("ج.٥ **الإيرادُ الفعليّ (revenue) مطابقٌ حرفياً** لـ`totalPaid` — النقدُ المقبوض لا المبيعات", finData.current.revenue, canonical.totalPaid);
-    check(finData.current.salesValue === SALES_AMOUNT, "ج.٥.١ salesValue = مبلغُ قيد الكلفة المُدرَج (٥٠٠,٠٠٠)", `got=${finData.current.salesValue}`);
-    check(finData.current.revenue === PAID_AMOUNT, "ج.٥.٢ revenue = مبلغُ الدفعة المُدرَجة (٢٠٠,٠٠٠) — **وليس** ٥٠٠,٠٠٠", `got=${finData.current.revenue}`);
+    check(finData.current.salesValue === TOTAL_SALES,
+      "ج.٥.١ salesValue = مجموعُ قيود الكلفة المُدرَجة (١,٦٢٠,٠٠٠)", `got=${finData.current.salesValue}`);
+    check(finData.current.revenue === TOTAL_PAID,
+      "ج.٥.٢ revenue = مجموعُ الدفعات المُدرَجة (٧٤٠,٠٠٠) — **وليس** قيمةَ المبيعات", `got=${finData.current.revenue}`);
     check(finData.current.salesValue !== finData.current.revenue,
       "ج.٥.٣ **الحقلان مختلفان فعلياً في هذه البيانات** — فتطابقٌ صدفويّ (كلاهما صفر) لا يمكن أن يُخفي انعكاساً مستقبلياً");
     check(!("receivedCash" in finData.current), "ج.٥.٤ لا حقلَ `receivedCash` قديماً متروكاً في المخرَج");
@@ -586,8 +632,8 @@ async function main() {
     console.log("\n── ج.١٨ uncollectedSalesValue — صحّةٌ واستقلالٌ عن outstandingLifetime ──");
     same("ج.١٨.١ current.uncollectedSalesValue = salesValue − revenue **بالضبط** — لا حسابَ آخر",
       curFin.uncollectedSalesValue, curFin.salesValue - curFin.revenue);
-    check(curFin.uncollectedSalesValue === SALES_AMOUNT - PAID_AMOUNT,
-      "ج.١٨.٢ وبالأرقام المعروفة للفترة: ٥٠٠,٠٠٠ − ٢٠٠,٠٠٠ = ٣٠٠,٠٠٠",
+    check(curFin.uncollectedSalesValue === TOTAL_SALES - TOTAL_PAID,
+      "ج.١٨.٢ وبالأرقام المعروفة للفترة: ١,٦٢٠,٠٠٠ − ٧٤٠,٠٠٠ = ٨٨٠,٠٠٠",
       `got=${curFin.uncollectedSalesValue}`);
     //  ══ **مفهومٌ منفصل لا اسمٌ بديل لنفس الرقم**: مبيعاتُ الفترة التي لم
     //  تُقبَض بعد **في نفس الفترة** ≠ إجماليُّ ما لم يُقبَض من المريض مدى
@@ -613,6 +659,106 @@ async function main() {
       "ج.١٨.٦ وصفُ الأداة يذكر uncollectedSalesValue صراحةً للنموذج");
     check(Boolean(finSpec) && /يدويّاً|يدوياً/.test(finSpec!.description) && finSpec!.description.includes("لا تحسبها بنفسك"),
       "ج.١٨.٧ **ويمنع صراحةً حسابها يدوياً بالطرح** — لا تعليمة نموذجٍ مفقودة", finSpec?.description);
+
+    // ══ ج.١٩ byDepartment — التفصيلُ بالأقسام يصل النموذجَ فعلاً ═════════
+    //  `storage.getAccountingSummary` كان يحسبه ويرميه المحوِّل، فسؤالٌ
+    //  مشروع («كم إيراد العلاج الطبيعي في كربلاء في آب؟») لا جواب له.
+    console.log("\n── ج.١٩ byDepartment — الأقسام تصل النموذج ──");
+    const dep = finData.current.byDepartment;
+    check(dep && typeof dep === "object", "ج.١٩.١ byDepartment حاضرٌ في current", JSON.stringify(finData.current));
+
+    //  ① **المطابقةُ الحرفية مع المصدر، بعد إعادة التسمية الموثَّقة**:
+    //     `salesValue ⟵ .revenue` و`revenue ⟵ .paid`. وانعكاسُها هنا هو
+    //     بعينه الخطأ الذي صحّحته مراجعةُ #٢٨١ على الحقلين الرئيسيّين.
+    const cdep = canonical.byDepartment as any;
+    for (const [key, cashMeasured] of [
+      ["prosthetic", true], ["medical_support", true], ["physiotherapy", true],
+      ["legacyDevicesUnsplit", false], ["unclassified", true],
+    ] as const) {
+      same(`ج.١٩.٢ ${key}: salesValue ⟵ .revenue حرفياً`, dep[key].salesValue, cdep[key].revenue);
+      same(`ج.١٩.٣ ${key}: revenue ⟵ ${cashMeasured ? ".paid حرفياً" : "null (لا نظيرَ مقبوضاً مقاساً)"}`,
+        dep[key].revenue, cashMeasured ? cdep[key].paid : null);
+    }
+
+    //  ② **أرقامٌ حقيقية مختلفة لكلّ دلو** — فانعكاسُ قسمين أو خلطُ
+    //     «بِيع» بـ«قُبض» في واحدٍ منها يُفضَح برقمٍ لا يطابق.
+    same("ج.١٩.٤ العلاجُ الطبيعي: ٣١٠,٠٠٠ بِيع · ١٣٠,٠٠٠ قُبض",
+      [dep.physiotherapy.salesValue, dep.physiotherapy.revenue], [PHYSIO_SALES, PHYSIO_PAID]);
+    same("ج.١٩.٥ الأطرافُ الصناعية: ٧٢٠,٠٠٠ بِيع · ٤١٠,٠٠٠ قُبض",
+      [dep.prosthetic.salesValue, dep.prosthetic.revenue], [PROS_SALES, PROS_PAID]);
+    same("ج.١٩.٦ غيرُ المبوَّب: ٥٠٠,٠٠٠ بِيع · ٢٠٠,٠٠٠ قُبض — يُعرَض ولا يُوزَّع",
+      [dep.unclassified.salesValue, dep.unclassified.revenue], [SALES_AMOUNT, PAID_AMOUNT]);
+    same("ج.١٩.٧ المساندُ الطبية: صفرٌ حقيقيّ — لا بياناتٍ لها في هذه الفترة",
+      [dep.medical_support.salesValue, dep.medical_support.revenue], [0, 0]);
+
+    //  ③ **`null` غيابُ قياسٍ لا صفر** — وكتابةُ صفرٍ كانت ستدّعي قياساً
+    //     لم يقع، فيقرؤها النموذجُ «لم يُقبض منها شيء».
+    same("ج.١٩.٨ «أجهزة قديمة — غير مقسَّمة»: ٩٠,٠٠٠ بِيع", dep.legacyDevicesUnsplit.salesValue, LEGACY_DEV_SALES);
+    check(dep.legacyDevicesUnsplit.revenue === null,
+      "ج.١٩.٩ **وrevenue = null لا صفر** — غيابُ قياسٍ لا نتيجةُ قياس", JSON.stringify(dep.legacyDevicesUnsplit));
+
+    //  ④ **الخمسةُ تصالِح الإجماليَّ إلى الدينار** — فلا دلوٌ يسقط ولا
+    //     يُحسَب مرّتين، والنموذجُ لا يحتاج أن يجمع شيئاً بنفسه.
+    const depKeys = ["prosthetic", "medical_support", "physiotherapy", "legacyDevicesUnsplit", "unclassified"] as const;
+    same("ج.١٩.١٠ مجموعُ salesValue للخمسة = الإجماليّ بالضبط",
+      depKeys.reduce((n, k) => n + dep[k].salesValue, 0), finData.current.salesValue);
+    same("ج.١٩.١١ ومجموعُ revenue للأربعة التي تقيسه = الإيرادُ الفعليّ بالضبط",
+      depKeys.reduce((n, k) => n + (dep[k].revenue ?? 0), 0), finData.current.revenue);
+
+    //  ⑤ **`devicesCombined` تجميعٌ مشتقّ لا دلوٌ سادس** — من `rollups`
+    //     القانونية لا بجمعٍ موازٍ، وخارجَ `byDepartment` كي لا يجمعه
+    //     النموذجُ معها فيحسب مالَ الأجهزة مرّتين.
+    same("ج.١٩.١٢ devicesCombined.salesValue = rollups.devicesCombined.revenue حرفياً",
+      finData.current.devicesCombined.salesValue, (canonical.rollups as any).devicesCombined.revenue);
+    same("ج.١٩.١٣ devicesCombined.revenue = rollups.devicesCombined.paid حرفياً",
+      finData.current.devicesCombined.revenue, (canonical.rollups as any).devicesCombined.paid);
+    check(!("devicesCombined" in dep),
+      "ج.١٩.١٤ **وليس دلواً داخل byDepartment** — وإلّا جمعه النموذجُ سادساً", JSON.stringify(Object.keys(dep)));
+    same("ج.١٩.١٥ وقيمتُه = الأطراف + المساند + القديم غير المقسَّم",
+      finData.current.devicesCombined.salesValue,
+      dep.prosthetic.salesValue + dep.medical_support.salesValue + dep.legacyDevicesUnsplit.salesValue);
+
+    //  ⑥ **التسمياتُ من `REPORT_ROW_LABELS` القانونية** — لا معجمَ ثانٍ
+    //     ينحرف عن الشاشة (نفسُ مبدأ `semantics.ts`).
+    for (const k of [...depKeys, "devicesCombined"] as const) {
+      const got = k === "devicesCombined" ? finData.current.devicesCombined.label : dep[k].label;
+      same(`ج.١٩.١٦ تسميةُ ${k} من المعجم القانونيّ`, got, REPORT_ROW_LABELS[k]);
+    }
+
+    //  ⑦ **وكلُّ صفٍّ في byBranch يحمله كذلك** — سؤالُ «كم إيراد العلاج
+    //     الطبيعي في فرع كذا» يُجاب من الصفّ نفسِه.
+    const finAdminDep = await executeTool(financeAdminAccess, "financial_summary", { startDate: TODAY, endDate: TODAY });
+    check(finAdminDep.ok === true, "ج.١٩.١٧ المسؤولُ يقرأ كلَّ الفروع");
+    const rowsDep = (finAdminDep.data as any).byBranch as any[];
+    check(Array.isArray(rowsDep) && rowsDep.every((r) => r.byDepartment && r.devicesCombined),
+      "ج.١٩.١٨ byDepartment وdevicesCombined على **كلّ** صفّ فرع", JSON.stringify(rowsDep?.map((r) => Object.keys(r))));
+    const rowB1 = rowsDep.find((r) => r.branchId === B1);
+    same("ج.١٩.١٩ وصفُّ الفرع الأوّل يحمل أرقامَه هو",
+      [rowB1.byDepartment.physiotherapy.salesValue, rowB1.byDepartment.prosthetic.salesValue],
+      [PHYSIO_SALES, PROS_SALES]);
+
+    //  ⑧ **ولا يدخل `comparison`** — تفصيلٌ لخمسة أقسامٍ في مقارنةٍ
+    //     تاريخية ضجيجٌ لا يُقرأ، والمقارنةُ تبقى على مقاييسها الخمسة.
+    const finCmpDep = await executeTool(financeAccess, "financial_summary",
+      { startDate: TODAY, endDate: TODAY, compare: true });
+    const cmpDep = (finCmpDep.data as any).comparison;
+    check(cmpDep && !("byDepartment" in cmpDep) && !("byDepartment" in cmpDep.metrics),
+      "ج.١٩.٢٠ **وبلا byDepartment في comparison** — المقارنةُ على مقاييسها وحدها",
+      JSON.stringify(Object.keys(cmpDep?.metrics ?? {})));
+
+    //  ⑨ **ووصفُ الأداة يقول ذلك للنموذج** — حقلٌ لا يعرفه النموذجُ لا
+    //     يُستعمَل، وحقلٌ يسيء فهمَه أسوأُ من غيابه.
+    const finSpecDep = toolsFor(financeAccess).find((t) => t.name === "financial_summary");
+    check(Boolean(finSpecDep) && finSpecDep!.description.includes("byDepartment")
+      && finSpecDep!.description.includes("devicesCombined"),
+      "ج.١٩.٢١ وصفُ الأداة يذكر byDepartment وdevicesCombined");
+    check(Boolean(finSpecDep) && /مبيعاتٌ فقط بلا نظيرٍ مقبوضٍ مقاس/.test(finSpecDep!.description)
+      && /لا تقرأها صفراً/.test(finSpecDep!.description),
+      "ج.١٩.٢٢ **ويمنع قراءة null صفراً** صراحةً", finSpecDep?.description);
+    check(Boolean(finSpecDep) && /ليس دلواً "?سادساً/.test(finSpecDep!.description.replace(/\*\*/g, "")),
+      "ج.١٩.٢٣ **ويمنع جمع devicesCombined مع الدلاء** — لا مالَ أجهزةٍ مرّتين", finSpecDep?.description);
+    check(Boolean(finSpecDep) && /ولا مصاريفَ ولا صافيَ لقسمٍ بعينه/.test(finSpecDep!.description.replace(/\*\*/g, "")),
+      "ج.١٩.٢٤ **ولا يَعِد بصافٍ لقسمٍ** — المصاريفُ إجماليةٌ للفترة لا مقسَّمة", finSpecDep?.description);
 
     // ══ د. computeComparison — حسابٌ خالص، دقيقٌ حرفياً («exact arithmetic») ══
     //  الدالّةُ الواحدة التي يبنى عليها comparison.metrics.* في كلا التقريرين
