@@ -1832,6 +1832,105 @@ async function state(pid: number) {
         "كك٨. **وبطاقةُ الملخّص تبقى تعرض ٢٠** — الرقمُ لم يضع", "");
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── لل. والمجّانيُّ صفرٌ حتماً — ولو أرسل العميلُ مبلغاً ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  العلمُ العلويُّ (بلا `treatmentEntries`) كان يمرّ بمبلغه كما وصل:
+    //  يتخطّى حارسَ «لا متبقّي» (لأنه «مجّانيّ»)، ثمّ يُخزَّن المالُ مقبوضاً،
+    //  **ولا قيدَ يومية يُنشأ له** — فيرتفع مدفوعُ المريض بلا سطرٍ في الدفتر.
+    //  وقاعدةُ المالك صريحة: «وان اشر مجاني فتحسب جلسات لكن اموال لاتحسب».
+    {
+      const pid = await mk("مجّانيٌّ-بمبلغ", true);
+      //  يُسدَّد الملفُّ بالكامل فيصير المتبقّي صفراً — فالحارسُ مسلَّحٌ فعلاً.
+      await http("POST", `/api/payments`, S, {
+        patientId: pid, branchId: BR, amount: 500000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت",
+      });
+      const b = await state(pid);
+      const blocked = await http("POST", `/api/payments`, S, {
+        patientId: pid, branchId: BR, amount: 50000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت",
+      });
+      check(blocked.status === 400,
+        "لل١. الحارسُ مسلَّحٌ فعلاً — دفعةٌ عادية تُردّ ٤٠٠", `${blocked.status}`);
+
+      const gift = await http("POST", `/api/payments`, S, {
+        patientId: pid, branchId: BR, amount: 300000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 2, isFreeSessions: true,
+      });
+      check(gift.status === 201,
+        "لل٢. **والهديّةُ تمضي على ملفٍّ سُدِّد بالكامل** — كما هي القاعدة",
+        `${gift.status} ${JSON.stringify(gift.body).slice(0, 140)}`);
+      const row = (await q(
+        `SELECT amount, is_free_sessions f, session_count n, plan_credited c
+           FROM payments WHERE id=$1`, [gift.body?.id])).rows[0];
+      check(Number(row?.amount) === 0,
+        "لل٣. **والمبلغُ المخزَّن صفرٌ ولو أُرسل ٣٠٠,٠٠٠**", JSON.stringify(row));
+      const a = await state(pid);
+      check(a.paid === b.paid,
+        "لل٤. فالمقبوضُ لم يتحرّك بديناً", `${b.paid} ⟶ ${a.paid}`);
+      check(a.sessions === b.sessions + 2 && row?.c === true,
+        "لل٥. **والجلستان حُسبتا** — تُسجَّل الجلسات ولا يُحتسب المال",
+        `${b.sessions} ⟶ ${a.sessions} ${JSON.stringify(a.plan)}`);
+      const je = (await q(
+        `SELECT count(*)::int n FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [gift.body?.id])).rows[0].n;
+      check(Number(je) === 0 && Number(row?.amount) === 0,
+        "لل٦. **والصفُّ والدفترُ متّفقان**: صفرٌ هنا وصفرٌ هناك", `${je} / ${row?.amount}`);
+      //  والمدفوعُ العاديُّ لم يُمَسّ: العلمُ مُطفأٌ فيبقى المبلغُ كما وصل.
+      check(b.paid === 500000,
+        "لل٧. والدفعةُ العادية قبله خُزّنت بمبلغها كاملاً", String(b.paid));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    console.log("\n── مم. وتوأمُه في مسار التصحيح: المالُ يتبع العلم ──");
+    // ═══════════════════════════════════════════════════════════════════
+    //  تحويلُ دفعةٍ مقبوضة إلى «مجّانيّة» كان يُبقي مالَها في `payments`
+    //  (فيبقى في «الوارد») بينما **يُعكَس قيدُها ولا يُعاد** — فيقول الدفترُ
+    //  إن المالَ رُدّ ويقول جدولُ الدفعات إنه ما زال مقبوضاً.
+    {
+      const pid = await mk("تصحيحٌ-إلى-مجّانيّ", true);
+      const paid = await http("POST", `/api/payments`, S, {
+        patientId: pid, branchId: BR, amount: 200000, paymentMethod: "cash",
+        paymentTreatmentType: "روبوت", sessionCount: 4,
+      });
+      check(paid.status === 201, "مم١. دفعةٌ مقبوضة ٢٠٠,٠٠٠", String(paid.status));
+      const b = await state(pid);
+      const jeBefore = (await q(
+        `SELECT count(*)::int n FROM journal_entries WHERE source_type='payment' AND source_id=$1`,
+        [paid.body?.id])).rows[0].n;
+
+      //  **بلا إرسال مبلغ** — العلمُ وحده يتغيّر.
+      const flip = await http("PATCH", `/api/payments/${paid.body?.id}`, S, {
+        isFreeSessions: true, reason: "الجلساتُ صارت هديّة",
+      });
+      check(flip.status < 300, "مم٢. والتحويلُ إلى «مجّانيّ» مضى",
+        `${flip.status} ${JSON.stringify(flip.body).slice(0, 120)}`);
+      const row = (await q(
+        `SELECT amount, is_free_sessions f FROM payments WHERE id=$1`, [paid.body?.id])).rows[0];
+      check(row?.f === true && Number(row?.amount) === 0,
+        "مم٣. **فالمالُ تبع العلمَ إلى الصفر**", JSON.stringify(row));
+      const a = await state(pid);
+      check(a.paid === b.paid - 200000,
+        "مم٤. والمقبوضُ نزل بمقداره", `${b.paid} ⟶ ${a.paid}`);
+      const jeAfter = (await q(
+        `SELECT count(*)::int n FROM journal_entries
+           WHERE source_type='payment' AND source_id=$1 AND status <> 'reversed'
+             AND reversal_of IS NULL`, [paid.body?.id])).rows[0].n;
+      check(Number(jeAfter) === 0 && Number(row?.amount) === 0,
+        "مم٥. **والدفترُ والصفُّ متّفقان بعده**", `${jeBefore} ⟶ ${jeAfter} / ${row?.amount}`);
+      //  **ولا يُلمَس صفٌّ متّسقٌ أصلاً**: تعديلُ ملاحظةٍ على المجّانيّ الصفريّ.
+      const note = await http("PATCH", `/api/payments/${paid.body?.id}`, S, {
+        notes: "ملاحظةٌ فقط",
+      });
+      check(note.status < 300, "مم٦. وتعديلُ ملاحظةٍ بعده يمضي بلا سبب",
+        `${note.status} ${JSON.stringify(note.body).slice(0, 120)}`);
+      const row2 = (await q(
+        `SELECT amount, is_free_sessions f, notes FROM payments WHERE id=$1`, [paid.body?.id])).rows[0];
+      check(Number(row2?.amount) === 0 && row2?.f === true && row2?.notes === "ملاحظةٌ فقط",
+        "مم٧. والصفُّ كما هو — صفرٌ ومجّانيٌّ وملاحظتُه الجديدة", JSON.stringify(row2));
+    }
+
     console.log(`\n${failures === 0 ? "✅ كل البنود ناجحة" : `❌ ${failures} بنداً فاشلاً`}`);
   } finally {
     httpServer.close();

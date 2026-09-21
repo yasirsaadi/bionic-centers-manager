@@ -270,6 +270,25 @@ async function applyCorrectionWriteTx(tx: any, params: {
   if (changed.isFreeSessions !== undefined) setFields.isFreeSessions = changed.isFreeSessions;
   if (changed.date !== undefined) setFields.date = changed.date;
 
+  //  ══ **والمجّانيُّ صفرٌ حتماً هنا أيضاً** (مراجعةُ Codex الحادية عشرة) ══
+  //  الثابتُ واحد: صفٌّ موسومٌ `is_free_sessions` لا يحمل مالاً. وقد وُجد
+  //  توأمُ عطبِ نقطةِ الإنشاء وأنا أتحقّق منه: تحويلُ دفعةٍ مقبوضة إلى
+  //  «مجّانيّة» بلا إرسال مبلغٍ يُبقي المالَ في `payments.amount` (فيبقى في
+  //  «الوارد») بينما **يُعكَس قيدُها ولا يُعاد** (`touchesJournal` يفيره
+  //  تغيُّرُ العلم، و`!updated.isFreeSessions` يمنع إعادةَ البناء) — فيقول
+  //  الدفترُ إن المالَ رُدّ ويقول جدولُ الدفعات إنه ما زال مقبوضاً.
+  //
+  //  **ولا يُلمَس صفٌّ متّسقٌ أصلاً**: الكتابةُ تقع فقط حين يكون الناتجُ
+  //  مجّانياً بمبلغٍ غيرِ صفر — فتعديلُ ملاحظةٍ على صفٍّ مجّانيٍّ صفريّ لا
+  //  يُضيف حقلاً إلى `setFields` ولا يُنتج تحديثاً لم يُطلَب.
+  const willBeFree = changed.isFreeSessions !== undefined
+    ? changed.isFreeSessions
+    : Boolean(before.isFreeSessions);
+  const resultingAmount = changed.amount !== undefined
+    ? Number(changed.amount)
+    : Number(before.amount ?? 0);
+  if (willBeFree && resultingAmount !== 0) setFields.amount = 0;
+
   const [updated] = Object.keys(setFields).length > 0
     ? await tx.update(payments).set(setFields).where(eq(payments.id, before.id)).returning()
     : [before];
