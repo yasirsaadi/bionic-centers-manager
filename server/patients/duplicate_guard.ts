@@ -126,13 +126,50 @@ const PATIENT_IDENTITY_LOCK_NAMESPACE = 83101;
 /** مساحةُ أسماء القفل الاستشاريّ لتكرار الهاتف. */
 const PATIENT_PHONE_LOCK_NAMESPACE = 83102;
 
-/** رسالةُ التعارض على اسمٍ **فعّال** — معتمَدةٌ بالحرف، لا تتغيّر بهذا التصحيح. */
+/**
+ * رسالةُ التعارض على اسمٍ **فعّال** — معتمَدةٌ بالحرف.
+ *
+ * **ولها موضعٌ واحدٌ بعد اليوم: البادئةُ وحدها** — أي حين يكون الاسمُ القائم
+ * **أطولَ** من المُدخَل («أحمد حسين» يُكتب وعندنا «أحمد حسين فايق»). فذاك قد
+ * يكون شخصاً آخر فعلاً، و«أكمل كتابة الاسم» هي النصيحةُ الصحيحة له —
+ * والقاعدةُ تقبل الاسمَ الأطول عمداً (الاتجاهُ واحدٌ لا اثنان).
+ */
 export const NAME_PREFIX_CONFLICT_MESSAGE = "يوجد اسم مسجل يبدأ بهذا الاسم، أكمل كتابة الاسم.";
 
-/** يُرمى حين يبدأ اسمُ مريضٍ فعّالٍ قائم بالنصّ المطبَّع نفسه عند التسجيل. */
+/**
+ * **ورسالةُ المطابقة التامّة** — حالةُ لمياء بعينها (حادثةُ ٢٠٢٦-٠٩-٢٢).
+ *
+ * ══ العطبُ الذي تغلقه ════════════════════════════════════════════════════
+ * المنعُ كان يعمل، **والكلامُ وحده كان يضلّل**: موظّفةٌ تسجّل مريضةً عائدةً من
+ * فرعٍ آخر تُحجَب برسالةٍ تأمرها بـ«إكمال كتابة الاسم» — **وإطالةُ الاسم
+ * مقبولةٌ بالقاعدة** — فتضيف كلمةً فيمرّ الحفظُ ويُولَد الملفُّ الثاني. فالرسالةُ
+ * العامّة كانت تدلّ على التكرار بدل أن تمنعه، ولا تقول للموظّفة أصلاً أن
+ * المريضَ مسجَّلٌ عندنا ولا في أيّ فرع.
+ *
+ * **ولا شيءَ في القاعدة يتغيّر**: مَن كان يُحجَب يبقى محجوباً بالشرط نفسِه،
+ * ومَن كان يمرّ يمرّ. المتبدِّلُ نصُّ الرسالة في هذه الحالة وحدها.
+ *
+ * **واسمُ الفرع يُذكَر حين يُعرَف** — هو ما يجعل الرسالةَ قابلةً للتنفيذ (تعرف
+ * الموظّفةُ بمن تتّصل ولأيّ ملفّ). وصفٌّ بلا فرعٍ يُقال بلا اسمِ فرع، ولا
+ * يُخمَّن.
+ */
+export function nameAlreadyRegisteredMessage(branchName: string | null): string {
+  //  **والبياضُ يُقرأ غياباً** — اسمُ فرعٍ فارغ يُنتج «في فرع  —» بلا معنى.
+  const named = (branchName ?? "").trim();
+  const where = named ? ` في فرع ${named}` : "";
+  return `هذا المريض مسجَّل مسبقاً${where} — لا تفتح له ملفاً جديداً. `
+    + `راجع المسؤول لإتاحة ملفّه لفرعك.`;
+}
+
+/**
+ * يُرمى حين يبدأ اسمُ مريضٍ فعّالٍ قائم بالنصّ المطبَّع نفسه عند التسجيل.
+ *
+ * **والرسالةُ معامِلٌ افتراضُه رسالةُ البادئة** — فأيُّ مُنادٍ قائمٍ يرميه بلا
+ * معامِل يبقى على نصِّه السابق حرفاً بحرف.
+ */
 export class PatientNameConflictError extends Error {
-  constructor() {
-    super(NAME_PREFIX_CONFLICT_MESSAGE);
+  constructor(message: string = NAME_PREFIX_CONFLICT_MESSAGE) {
+    super(message);
     this.name = "PatientNameConflictError";
   }
 }
@@ -197,6 +234,53 @@ export async function acquirePatientIdentityLock(tx: SqlRunner): Promise<void> {
  * المُدخَل الأطول). واسمٌ مُدخَلٌ يطبَّع إلى فراغ (فراغٌ أو علاماتٌ فقط) لا
  * يطابق أحداً أبداً — فراغٌ لا يعني «أيّ اسم».
  */
+/**
+ * **تصنيفُ التعارض** — هل هو مطابقةٌ تامّة (نفسُ الشخص) أم بادئةٌ فقط (قد
+ * يكون شخصاً آخر)؟ ومن أيّ فرع؟
+ *
+ * ══ الشرطُ المانع لم يتغيّر بحرف ═══════════════════════════════════════
+ * استعلامُ البادئة أدناه (`hasActiveNamePrefixConflict`) **يبقى كما هو نصّاً
+ * وخطّةَ تنفيذ**، ويبقى هو مَن يقرّر **مَن يُحجَب**. وكلُّ ما يضيفه هذا
+ * التصنيفُ فحصُ تطابقٍ تامّ **قبله**، وهو مساواةٌ على العمود المفهرَس
+ * (`ix_patients_name_norm_prefix`) فتُحسَم بمسبارٍ واحد — لا فرزَ ولا مسحاً
+ * لمجموعة المطابقات. فالكتابةُ بحرفٍ واحد («ا») تبقى على مسارها السريع
+ * السابق بلا زيادةٍ تُذكَر.
+ *
+ * **والفراغُ يُستثنى هنا كما يُستثنى هناك** (`patient_search_norm(…) <> ''`):
+ * بدونه كان اسمٌ يطبَّع إلى فراغٍ «يطابق تماماً» صفّاً اسمُه فراغ، فيُنتج
+ * تعارضاً لا وجودَ له اليوم — وذاك تغييرُ سلوكٍ لا تغييرُ رسالة.
+ *
+ * **والأقدمُ أوّلاً** (`ORDER BY ap.id`) — قرارٌ حتميّ لا يتبدّل بين نداءين،
+ * وهو الملفُّ الأصليُّ غالباً فيصحّ ذكرُ فرعه.
+ */
+export async function findActiveNameConflict(
+  runner: SqlRunner,
+  name: string,
+): Promise<{ exact: boolean; branchName: string | null } | null> {
+  const exact = await runner.execute(sql`
+    SELECT b.name AS branch_name
+    FROM patients ap
+    LEFT JOIN branches b ON b.id = ap.branch_id
+    WHERE ${activePatientSql("ap")}
+      AND ap.name_norm IS NOT NULL
+      AND patient_search_norm(${name}) <> ''
+      AND ap.name_norm = patient_search_norm(${name})
+    ORDER BY ap.id
+    LIMIT 1
+  `);
+  const row = firstRow(exact);
+  if (row) {
+    const branchName = typeof row.branch_name === "string" && row.branch_name.trim()
+      ? row.branch_name
+      : null;
+    return { exact: true, branchName };
+  }
+  if (await hasActiveNamePrefixConflict(runner, name)) {
+    return { exact: false, branchName: null };
+  }
+  return null;
+}
+
 export async function hasActiveNamePrefixConflict(
   runner: SqlRunner,
   name: string,
@@ -230,8 +314,17 @@ export async function checkNameAvailability(
   runner: SqlRunner,
   name: string,
 ): Promise<NameAvailability> {
-  if (await hasActiveNamePrefixConflict(runner, name)) {
-    return { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE };
+  const conflict = await findActiveNameConflict(runner, name);
+  if (conflict) {
+    //  **`reason` كما هو** — العقدُ مع الشاشة لم يتغيّر، والمتبدِّلُ نصُّ
+    //  الرسالة وحده، والشاشةُ تعرض ما يصلها منها أصلاً.
+    return {
+      available: false,
+      reason: "active_conflict",
+      message: conflict.exact
+        ? nameAlreadyRegisteredMessage(conflict.branchName)
+        : NAME_PREFIX_CONFLICT_MESSAGE,
+    };
   }
   return { available: true };
 }
@@ -257,8 +350,13 @@ export async function assertNameAvailableForRegistration(
   // استعادةٍ متزامنة أيضاً (القسم ٥): تلك تُصيّر الهويّةَ فعّالة، فلا يجوز
   // أن يُدرِج تسجيلٌ بعد التزامها على قراءةٍ سبقته.
   await acquirePatientIdentityLock(tx);
-  if (await hasActiveNamePrefixConflict(tx, name)) {
-    throw new PatientNameConflictError();
+  const conflict = await findActiveNameConflict(tx, name);
+  if (conflict) {
+    throw new PatientNameConflictError(
+      conflict.exact
+        ? nameAlreadyRegisteredMessage(conflict.branchName)
+        : NAME_PREFIX_CONFLICT_MESSAGE,
+    );
   }
 }
 
