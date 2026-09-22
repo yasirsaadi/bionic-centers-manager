@@ -96,6 +96,26 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     return await scopeReachesPatient(scope, patient as any);
   };
 
+  /**
+   * **وأمرُ العمل يُفتَح بفرعه أو بإتاحةِ ملفّ صاحبه** (§4.t، ٢٠٢٦-٠٩-٢٢).
+   *
+   * لوحةُ التصنيع صارت تُظهر للفرع المُتاح له الملفُّ عملَ صاحبه، فكان يرى
+   * الصفَّ ويُردّ ٤٠٣ على الضغطة — نصفُ إصلاحٍ أسوأُ من غيابه.
+   *
+   * **واتّحادٌ لا استبدال**: فرعُ الأمر يبقى كافياً وحدَه، ولا يُقرأ صفُّ
+   * المريض إلّا حين لا يكفي. **والقياسُ بالملفّ كاملاً** — فرعُ التسجيل
+   * **أو** إتاحةٌ صريحة — لا بالإتاحة وحدها: أمرٌ فُتح في الفرع المضاف
+   * يبقى مرئياً لفرع التسجيل. وملفٌّ في السلّة يُردّ كما كان
+   * (`storage.getPatient` تُرجع الفعّالَ وحده).
+   */
+  const reachesOrderPatient = async (
+    s: ReturnType<typeof getSession>, raw: { branchId: number; patientId: number },
+  ): Promise<boolean> => {
+    if (branchInScope(s, raw.branchId)) return true;
+    const patient = await storage.getPatient(raw.patientId);
+    return patient ? await reachesPatient(s, patient as any) : false;
+  };
+
   // ---- experts roster for a branch (for reception's patient form + admin) ----
   app.get("/api/manufacturing/experts", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
@@ -195,8 +215,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const assignedToMe = worksAsExpert(s) && raw.expertUserId === s.userId;
     if (s.isAdmin) {
       // all
-    } else if (isManager(s) && branchInScope(s, raw.branchId)) {
-      // own branch
+    } else if (isManager(s) && await reachesOrderPatient(s, raw)) {
+      // own branch — or a branch the patient's file is shared with (§4.t)
     } else if (assignedToMe) {
       // own assigned order
     } else {
@@ -690,8 +710,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const assignedToMe = worksAsExpert(s) && raw.expertUserId === s.userId;
     if (s.isAdmin) {
       // all
-    } else if (isManager(s) && branchInScope(s, raw.branchId)) {
-      // own branch
+    } else if (isManager(s) && await reachesOrderPatient(s, raw)) {
+      // own branch — or a branch the patient's file is shared with (§4.t)
     } else if (assignedToMe) {
       // own assigned order
     } else {
@@ -970,7 +990,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     } else if (s.isAdmin) {
       // any branch
     } else if (isManager(s)) {
-      if (!branchInScope(s, raw.branchId)) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+      //  فرعُ الأمر أو الفرعُ المُتاح له الملفّ (§4.t) — والخبيرُ المسنَد
+      //  قد يكون من الفرع المضاف نفسِه، فمديرُه هو مَن يعيد إسنادَه.
+      if (!(await reachesOrderPatient(s, raw))) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     } else {
       // reception: only its own branch AND only before work has started.
       if (raw.branchId !== s.branchId) return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });

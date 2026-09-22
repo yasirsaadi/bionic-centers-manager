@@ -26,6 +26,7 @@ interface Props {
 
 interface ReviewRow {
   id: number; serviceType: string; requestedPath: ReviewPath; reviewKind: ReviewKind;
+  branchName: string | null;
   status: string; createdAt: string; decidedAt: string | null;
   doctorNote: string | null; decidedByName: string | null; createdByName: string | null;
 }
@@ -191,6 +192,9 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
               {history.slice(0, 5).map((h) => (
                 <div key={h.id} className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
                   <span>{formatDateTimeIraq(h.createdAt)}</span>
+                  {/*  التاريخُ صار يشمل فروعَ الإتاحة (§4.t)، فيُسمّى فرعُ كلّ
+                      طلبٍ وإلّا قُرئ طلبُ فرعين سطراً واحداً. */}
+                  {h.branchName && <span>· {h.branchName}</span>}
                   <span>· {specialtyLabel(h.serviceType)}</span>
                   <span>· {REVIEW_KIND_LABELS[h.reviewKind]}</span>
                   <span className="font-medium text-foreground">
