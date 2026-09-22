@@ -37,7 +37,7 @@ import {
   aiToolStep, classifyAiError, safeAiComplete,
   type AiConversationBlock, type AiResult, type AiToolSpec, type AiTurn,
 } from "./provider";
-import { denied, executeTool, toolsFor } from "./tools/registry";
+import { denied, executeTool, toolsFor, type CapabilityContext } from "./tools/registry";
 import type { AiAccessContext, AiMode } from "./access";
 import { retrieveKnowledge } from "./knowledge/retrieval";
 import {
@@ -242,6 +242,12 @@ const TOOL_TRUST_RULES = `قواعد الأدوات والمعرفة:
 - **عددُ الأجهزة ليس مبلغاً — سؤالُ «كم طرف؟» أداتُه device_sales_summary لا financial_summary.** أيُّ سؤالٍ عن **عدد/كمّية** الأطراف الصناعية الكاملة المباعة في فترةٍ أو فرع يُجاب من device_sales_summary وحدها. **ولا تستعمل financial_summary لعددِ أجهزة إطلاقاً** — هي للقيمة المالية للمبيعات والإيراد والمصاريف والتحصيل وسائر المبالغ، لا للكمّيات. مثال: «كم طرف تم بيعه في مركز بغداد خلال آخر عشرة أيام؟» ⟵ device_sales_summary بـdays=10 وbranchName="بغداد".
 - **وأسئلةُ الأصناف كلُّها من byCategory في الأداة نفسِها** — «كم إصبعاً سليكونياً؟» · «كم قالباً بِيع؟» · «كم مسنداً طبياً؟» · «كم طرفاً ثنائياً؟». **لا تعتذر عن رقمٍ تحمله الأداة**، ولا تجمع صفوفاً بنفسك (totals جاهزة)، ولا توزّع صنفَ «نوعٌ غير مسجَّل» على الأنواع.
 
+- **وقدراتُ قراءة شاشات النظام (list_capabilities ثمّ read_capability) هي بابُك إلى كلّ ما لا أداةَ مخصَّصةً له.** الطوابيرُ والمتأخّرون والخبراءُ والمصاريفُ والفواتيرُ والأقساطُ والاستطلاعاتُ والشذوذُ وتتبّعُ الجلسات وسلّةُ المرضى وغيرُها — كلُّها شاشاتٌ في الفهرس.
+- **ولا تعتذر عن نقص أداةٍ ولا تصف نفسك بأنك «محاسبيّ فقط» قبل أن تبحث في الفهرس.** ابحث بـlist_capabilities بكلماتٍ من سؤال المستخدم، فإن لم تجد شاشةً مطابقة **حينئذٍ فقط** قل إن هذه المعلومة غير مسجَّلة في النظام.
+- **ولا تُحِل المستخدمَ إلى شاشةٍ ليقرأها بنفسه وأنت تستطيع قراءتها له.** «انظر شاشة التنبيهات» جوابٌ ناقص؛ اقرأها بـread_capability وأعطِه الجواب.
+- **والعدُّ والترتيبُ في read_capability بـaggregate لا بيدك**: where يرشّح، وgroupBy يجمّع، وsum يجمع حقلاً رقمياً، وsort يرتّب. وما يعود منها (count وsum وgroups) أرقامٌ جاهزة تُنقَل كما هي.
+- **وإن وصلك truncated: true فقل العددَ الحقيقيّ** (matched) ولا تقدّم المعروضَ على أنه الكلّ.
+- **ورفضُ read_capability برسالةٍ عن الصلاحية جوابٌ صحيح يُنقَل كما هو** — النقطةُ تُنفَّذ بصلاحية السائل نفسِه، فما لا يراه على شاشته لا تراه له.
 ${TRAINING_AND_SUPPORT_RULES}`;
 
 const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدارة مراكز "بايونيك" الطبية في العراق.
@@ -636,8 +642,11 @@ async function runWithTools(params: {
   system: string;
   history: ChatMessage[];
   step: ToolStepper;
+  //  سياقُ قدرات القراءة — غيابُه يعني أنّ أداتَي القدرات تردّان بلطف،
+  //  لا أنّ الحلقةَ تنهار. (المسارُ المحقون في الاختبارات بلا سياق.)
+  ctx?: CapabilityContext;
 }): Promise<AiResult<{ reply: string; tools: ToolRunReport }>> {
-  const { access, system, history, step: stepFn } = params;
+  const { access, system, history, step: stepFn, ctx } = params;
   //  ══ نيّةُ التدريب تُحسَب **مرّةً واحدة** من رسالة المستخدم المُطلِقة لهذه
   //  الرسالة — لا من كل جولة، فهي تمثّل ما طلبه الموظّف طوال هذا الردّ.
   const latestQuestion = latestUserQuestion(history);
@@ -686,7 +695,7 @@ async function runWithTools(params: {
 
     const syntheticId = `forced_training_lesson_${moduleId}`;
     used.push("training_lesson");
-    const outcome = await executeTool(access, "training_lesson", { moduleId });
+    const outcome = await executeTool(access, "training_lesson", { moduleId }, ctx);
     if (outcome.ok) trainingLessonOpened = true;
     messages.push({
       role: "assistant",
@@ -724,7 +733,7 @@ async function runWithTools(params: {
           moduleId: (call.input as Record<string, unknown> | null | undefined)?.moduleId,
           trainingProgressOnly, trainingLessonOpened, explicitNav, catalogResult,
         });
-        const outcome = refusal ? denied(refusal) : await executeTool(access, call.name, call.input);
+        const outcome = refusal ? denied(refusal) : await executeTool(access, call.name, call.input, ctx);
         if (call.name === "training_lesson" && outcome.ok) trainingLessonOpened = true;
         if (call.name === "training_catalog" && outcome.ok) catalogResult = outcome.data;
         results.push({
@@ -815,6 +824,10 @@ export async function aiChat(
   //  سياقَ صفحة» لا صفحةً مخترَعة. وهو **خارج `AiAccessContext`** قصداً —
   //  ذاك عقدُ الإذن، وهذا إخبارُ ملاحة، فلا يختلطان في نوعٍ واحد.
   page: PageContext | null = null,
+  //  **اختياريٌّ عمداً** كسابقه: كلُّ مُستدعٍ قائم يبقى كما هو، وغيابُه
+  //  يعني «بلا قدراتِ قراءة» لا تطبيقاً مخترَعاً. وهو **خارج**
+  //  `AiAccessContext` قصداً — ذاك عقدُ الإذن، وهذا وصلةُ تنفيذ.
+  ctx?: CapabilityContext,
 ): Promise<AiResult<ChatOutcome>> {
   if (history.length === 0 || history[history.length - 1].role !== "user") {
     return { ok: false, reason: "unknown", message: "آخر رسالة يجب أن تكون من المستخدم" };
@@ -833,7 +846,7 @@ export async function aiChat(
     }
     const knowledge = await resolveKnowledge(access, history, page);
     const system = `${GENERAL_SYSTEM_PROMPT}${identityBlock(access)}${pageContextBlock(page)}${pageGuideFor(page, access)}${knowledgeBlock(knowledge)}`;
-    const run = await runWithTools({ access, system, history, step });
+    const run = await runWithTools({ access, system, history, step, ctx });
     if (!run.ok) return run;
     return {
       ok: true,
@@ -880,7 +893,7 @@ ${snapshotJson}
 ${snapshotJson}
 \`\`\`${knowledgeBlock(knowledge)}`;
 
-  const run = await runWithTools({ access, system: systemText, history, step });
+  const run = await runWithTools({ access, system: systemText, history, step, ctx });
   if (!run.ok) return run;
   return {
     ok: true,

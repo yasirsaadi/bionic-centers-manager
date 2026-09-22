@@ -7332,7 +7332,10 @@ export async function registerRoutes(
     //  وضعاً. والتنظيفُ في الخادم لا في العميل (المرحلة ٢).
     const page = resolvePageContext(pagePath);
 
-    const result = await aiChat(access, history, undefined, undefined, page);
+    //  **وصلةُ قدرات القراءة**: التطبيقُ نفسُه والطلبُ الحقيقيُّ بجلسته.
+    //  فما يناديه المساعدُ يمرّ بالمعالِج نفسِه الذي يفتحه الموظّفُ بيده
+    //  — ولا نسخةَ ثانية من الصلاحية تُكتب له.
+    const result = await aiChat(access, history, undefined, undefined, page, { app, source: req });
 
     // أثرٌ صغير لكلّ طلب: مَن سأل، من أي فرع، بأي وضع، وهل مُنح المال،
     // وأسماءُ الأدوات التي نُفِّذت وعددُها. **ولا وسائطَ ولا نتائج ولا رمزَ

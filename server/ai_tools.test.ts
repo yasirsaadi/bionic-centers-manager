@@ -737,9 +737,15 @@ async function main() {
     //  قراءةٌ فقط كبقيّتها، بصلاحية `canViewReports` نفسِها التي تحرس
     //  `operational_summary` — لا صلاحيةً مالية. والعددُ يتغيّر بإضافةٍ
     //  مشروعة كما ينصّ التعليقُ أعلاه؛ **المغلقُ هو السجلّ لا الرقم**.
-    same("م. إحدى عشرةَ أداةً لا غير", TOOL_NAMES.sort(), [
-      "device_sales_summary", "financial_summary", "my_worklist", "operational_summary",
-      "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
+    //  ══ وأُضيفت قدرتا القراءة العامّة ══
+    //  `list_capabilities`/`read_capability` تفتحان شاشاتِ التطبيق القائمة
+    //  بجلسة السائل — **ولا تفتحان باب بياناتٍ جديداً**، فالحارسُ حارسُ
+    //  النقطة نفسِه. والعددُ يتغيّر بإضافةٍ مشروعة كما ينصّ التعليقُ أعلاه؛
+    //  **المغلقُ هو السجلّ لا الرقم**.
+    same("م. ثلاثَ عشرةَ أداةً لا غير", TOOL_NAMES.sort(), [
+      "device_sales_summary", "financial_summary", "list_capabilities", "my_worklist",
+      "operational_summary", "patient_clinical_summary", "patient_finance", "patient_lookup",
+      "patient_search", "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",
     ]);
     for (const bogus of ["run_sql", "query", "exec", "patient_update", "delete_patient", "__proto__"]) {

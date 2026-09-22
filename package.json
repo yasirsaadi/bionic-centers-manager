@@ -161,7 +161,7 @@
     "test:ai-tools-reports": "tsx server/ai_tools_reports.test.ts",
     "test:ai-knowledge-ui": "tsx client/src/pages/ai_knowledge_admin_ui.test.ts",
     "test:ai-knowledge-save": "tsx client/src/pages/ai_knowledge_admin_save.test.ts",
-    "test:ai-capabilities": "tsx shared/ai_capabilities.test.ts",
+    "test:ai-capabilities": "tsx server/ai/capabilities.test.ts",
     "test:ai-training-rules": "tsx shared/ai_training.test.ts",
     "test:training": "tsx server/training.test.ts",
     "test:training-ui": "tsx client/src/components/training_admin_ui.test.ts",
@@ -174,7 +174,8 @@
     "test:branch-access-operations": "tsx shared/branch_access_operations.test.ts",
     "test:physio-free": "tsx server/physio_free_sessions.test.ts",
     "test:case-cost-edit-phone": "tsx client/src/components/patient/case_cost_edit_phone.test.ts",
-    "test:review-share": "tsx server/medical_review/branch_share_visibility.test.ts"
+    "test:review-share": "tsx server/medical_review/branch_share_visibility.test.ts",
+    "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
