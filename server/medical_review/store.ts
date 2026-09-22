@@ -16,6 +16,7 @@ import {
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 import { activeExamSql } from "../medical/active_exam";
+import { branchOrPatientAccessSql } from "../patients/branch_access";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 export class ReviewError extends Error {
@@ -31,6 +32,12 @@ export interface ReviewRow {
   serviceType: ReviewServiceType;
   caseId: number | null;
   branchId: number | null;
+  /**
+   * **اسمُ فرع الطلب** — رُفع من `ReviewCard` إلى هنا لأنّ سطحَي الإشراف
+   * وتاريخِ المريض صارا يعرضان طلباتِ أكثرَ من فرعٍ معاً (§4.t)، فلا يُقرأ
+   * صفٌّ بلا أن يقول أين وقع. `null` حين لا يُضَمّ جدولُ الفروع.
+   */
+  branchName: string | null;
   deviceEpisodeId: number | null;
   workOrderId: number | null;
   visitId: number | null;
@@ -54,7 +61,6 @@ export interface ReviewCard extends ReviewRow {
   patientName: string;
   patientCode: string | null;
   patientPhone: string | null;
-  branchName: string | null;
   /** تصنيفُ الاستقبال للمريض نفسه (`new` | `past`) — سياقٌ لا قاعدة. */
   patientClassification: string | null;
   /** الجهاز الحالي أو السابق كما هو مسجَّل على الخيط. */
@@ -642,6 +648,14 @@ export async function pendingFullRequestsFor(params: {
  * تحتاج فحصاً — وهو بالضبط ما يمنعه هذا الشرط.
  *
  * والاختصاصات تُرشَّح في **الخادم**: طبيبُ الأطراف لا يرى طلبَ مساند.
+ *
+ * **والفرعُ اتّحادٌ لا استبدال** (§4.t، ٢٠٢٦-٠٩-٢٢): فرعُ الطلب في النطاق
+ * **أو** الفرعُ يصل ملفَّ المريض بإتاحةٍ صريحة. فمريضٌ سُجّل في فرعٍ وأُتيح
+ * لآخر تُقرأ حركتُه في الفرعين معاً — «تخبر الفرعَ الجديد ماذا فعل بالقديم
+ * وتخبر القديمَ ماذا سيفعل في الجديد» (قرارُ المالك). وكلُّ بطاقةٍ تحمل
+ * `branchName` فتُقرأ أحداثُ كلّ فرعٍ بمعزلٍ عن الآخر.
+ *
+ * **وأوسعُ دائماً لا أضيق**: صفٌّ في فرعي يبقى لي ولو لم يصل ملفُّ صاحبه.
  */
 export async function listPendingReviews(params: {
   branchIds: number[] | null;
@@ -706,7 +720,7 @@ export async function listPendingReviews(params: {
        -- **والمحذوفُ يخرج من سطح الإشراف** (ترحيل ٠٦٨).
        AND p.deleted_at IS NULL
        AND ${windowClause}
-       AND ${scopeClause(branchIds, "r.branch_id")}
+       AND ${branchOrPatientAccessSql(branchIds, "r.branch_id", "r.patient_id")}
        AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
      ORDER BY r.created_at ASC
   `);
@@ -757,17 +771,25 @@ export async function listPendingFullRequests(params: {
   return (rows.rows ?? []).map(toCard);
 }
 
-/** تاريخُ طلبات مريضٍ واحد — لصفحة المريض. مرتَّبٌ بالأحدث. */
+/**
+ * تاريخُ طلبات مريضٍ واحد — لصفحة المريض. مرتَّبٌ بالأحدث.
+ *
+ * **وبنفس اتّحاد §4.t**: مَن يفتح الملفَّ يقرأ تاريخَه كلَّه لا شطرَ فرعِه
+ * وحده — وإلّا أرسل الفرعُ المضاف طلباً ثانياً عن طلبٍ قائمٍ لا يراه. ومعه
+ * `branchName` لكلّ سطر، فلا يُقرأ طلبُ فرعين سطراً واحداً.
+ */
 export async function listReviewsForPatient(
   patientId: number, branchIds: number[] | null,
 ): Promise<ReviewRow[]> {
   const rows = await db.execute<Record<string, any>>(sql`
-    SELECT r.*, cu.display_name AS created_by_name, du.display_name AS decided_by_name
+    SELECT r.*, b.name AS branch_name,
+           cu.display_name AS created_by_name, du.display_name AS decided_by_name
       FROM medical_review_requests r
+      LEFT JOIN branches b ON b.id = r.branch_id
       LEFT JOIN system_users cu ON cu.id = r.created_by
       LEFT JOIN system_users du ON du.id = r.decided_by
      WHERE r.patient_id = ${patientId}
-       AND ${scopeClause(branchIds, "r.branch_id")}
+       AND ${branchOrPatientAccessSql(branchIds, "r.branch_id", "r.patient_id")}
      ORDER BY r.created_at DESC
   `);
   return (rows.rows ?? []).map(toRow);
@@ -890,6 +912,7 @@ function toRow(r: Record<string, any>): ReviewRow {
     serviceType: String(r.service_type) as ReviewServiceType,
     caseId: r.case_id === null || r.case_id === undefined ? null : Number(r.case_id),
     branchId: r.branch_id === null || r.branch_id === undefined ? null : Number(r.branch_id),
+    branchName: r.branch_name ?? null,
     deviceEpisodeId: numOrNull(r.device_episode_id),
     workOrderId: numOrNull(r.work_order_id),
     visitId: numOrNull(r.visit_id),
@@ -915,7 +938,6 @@ function toCard(r: Record<string, any>): ReviewCard {
     patientName: String(r.patient_name ?? ""),
     patientCode: r.patient_code ?? null,
     patientPhone: r.patient_phone ?? null,
-    branchName: r.branch_name ?? null,
     patientClassification: r.patient_classification ?? null,
     caseDetails: (r.case_details ?? null) as Record<string, any> | null,
     episode: r.device_episode_id
