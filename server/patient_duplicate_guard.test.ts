@@ -41,6 +41,7 @@ import { registerRoutes } from "./routes";
 import { normalizePhone } from "@shared/phone";
 import {
   assertNameAvailableForRegistration, PatientNameConflictError, NAME_PREFIX_CONFLICT_MESSAGE,
+  nameAlreadyRegisteredMessage,
   acquirePatientIdentityLock, assertPhoneAvailable,
   PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
@@ -266,8 +267,8 @@ async function main() {
         short2.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
 
       const exact = await nameAvailability(S.recv, "أحمد حسين فايق");
-      same("٣. **مطابقةٌ تامّة ⟶ محجوب أيضاً (البادئةُ تشمل التطابق)**",
-        exact.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+      same("٣. **مطابقةٌ تامّة ⟶ محجوبٌ أيضاً، وبرسالةِ «مسجَّل مسبقاً» لا برسالة البادئة**",
+        exact.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
 
       const longer = await nameAvailability(S.recv, "أحمد حسين فايق صالح");
       same("٤. **اسمٌ أطول يمدِّد الاسمَ القائم ⟶ متاح (الاتجاهُ واحدٌ لا اثنان)**",
@@ -310,20 +311,20 @@ async function main() {
       await mkActivePatient("إسراء", "07711000020"); // همزة تحت الألف
       const bareAlif = await nameAvailability(S.recv, "اسراء"); // ألفٌ عارية
       same("١٠. **«إسراء» المخزَّنة تُطابِق «اسراء» المكتوبة (توحيدُ الهمزات)**",
-        bareAlif.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+        bareAlif.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
 
       await mkActivePatient("فاطمة", "07711000021"); // تاء مربوطة
       const withHeh = await nameAvailability(S.recv, "فاطمه"); // هاء
-      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
 
       await mkActivePatient("مُحَمَّد", "07711000022"); // بتشكيل كامل
       const bareLetters = await nameAvailability(S.recv, "محمد");
-      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
 
       await mkActivePatient("نور  الهدى", "07711000023"); // مسافةٌ مضاعفة
       const singleSpace = await nameAvailability(S.recv, "نور الهدى");
       same("١٣. **المسافاتُ المكرَّرة تُطوى فلا تُخفي المطابقة**",
-        singleSpace.body, { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+        singleSpace.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -559,7 +560,7 @@ async function main() {
       const dupName = await registerPatient(S.recv, { name: NM, phone: "07755000302" });
       same("٢٦.٨ **مريضٌ نشطٌ بنفس الاسم يبقى مانعاً ⟶ ٤٠٩**",
         [dupName.status, dupName.body?.code, dupName.body?.message],
-        [409, "patient_name_conflict", NAME_PREFIX_CONFLICT_MESSAGE]);
+        [409, "patient_name_conflict", nameAlreadyRegisteredMessage("بغداد")]);
       same("      ولم يُفتَح له صفٌّ — صفٌّ واحدٌ بالاسم",
         await countByExactName(NM), 1);
 
@@ -571,10 +572,10 @@ async function main() {
         await countByExactName("اسمٌ مختلفٌ تماماً لا صلة له بسجاد"), 0);
 
       const availActive = await nameAvailability(S.recv, NM);
-      same("٢٦.١٠ **وفحصُ توفّر الاسم يبقى يحجب الفعّالَ برسالته المعتمَدة**",
+      same("٢٦.١٠ **وفحصُ توفّر الاسم يبقى يحجب الفعّال**",
         availActive.body,
-        { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
-      same("      **وجسمُ الردّ لا يكشف شيئاً** — لا اسمَ ولا رقمَ ولا فرع",
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+      same("      **وجسمُ الردّ ثلاثةُ مفاتيح لا غير** — لا اسمَ ولا رقمَ ولا حقلَ فرعٍ منظَّم",
         Object.keys(availActive.body ?? {}).sort(), ["available", "message", "reason"]);
     }
 
@@ -896,6 +897,54 @@ async function main() {
       same("٤٤. **وتسجيلٌ حقيقيٌّ بالاسم بعد استعادته ⟶ ٤٠٩ — قاعدةُ الفعّالين تسري عليه فوراً**",
         [afterRestore.status, afterRestore.body?.code], [409, "patient_name_conflict"]);
       same("      وصفٌّ واحدٌ بالضبط بهذا الاسم", await countByExactName(NM_A), 1);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  م. **شكلُ لمياء بعينه** — مطابقةٌ تامّة عبر الفروع: تُحجَب كما كانت،
+    //     **والرسالةُ تسمّي الفرعَ وتدلّ على الإتاحة** بدل «أكمل الاسم»
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── م. رسالةُ المطابقة التامّة (شكلُ لمياء) ──");
+    {
+      const NM = "لمياء حسين علي";
+      await mkActivePatient(NM, "07766000401", 1); // بغداد
+
+      //  استقبالُ الفرع ٢ (الموصل في الواقع) يكتب الاسمَ نفسَه حرفاً بحرف.
+      const live = await nameAvailability(S.recv2, NM);
+      same("٤٥. **فحصُ الاسم الحيّ من فرعٍ آخر ⟶ محجوب، والرسالةُ تسمّي فرعَ بغداد**",
+        live.body,
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+
+      //  **والمنعُ نفسُه لم يضعف بحرف** — نفسُ الردّ ونفسُ الرمز، وصفرُ كتابة.
+      const post = await registerPatient(S.recv2, { name: NM, phone: "07766000402", branchId: 2 });
+      same("٤٦. **والتسجيلُ الفعليُّ يُردّ ٤٠٩ بالرسالة نفسِها — المنعُ كما كان**",
+        [post.status, post.body?.code, post.body?.message],
+        [409, "patient_name_conflict", nameAlreadyRegisteredMessage("بغداد")]);
+      same("      وصفٌّ واحدٌ بالاسم — لا ملفَّ ثانياً", await countByExactName(NM), 1);
+
+      //  **ورسالةُ البادئة تبقى في موضعها بالحرف** — اسمٌ قائمٌ أطولُ من
+      //  المُدخَل قد يكون شخصاً آخر، و«أكمل كتابة الاسم» نصيحتُه الصحيحة.
+      const prefix = await nameAvailability(S.recv2, "لمياء حسين");
+      same("٤٧. **وبادئةٌ أقصرُ ⟶ الرسالةُ القديمة بحرفها، لا تسمّي فرعاً ولا تتغيّر**",
+        prefix.body,
+        { available: false, reason: "active_conflict", message: NAME_PREFIX_CONFLICT_MESSAGE });
+
+      //  **والاسمُ الأطول يمرّ كما كان** — القاعدةُ لم تتغيّر، الرسالةُ فقط.
+      const longer = await registerPatient(S.recv2,
+        { name: `${NM} محمد`, phone: "07766000403", branchId: 2 });
+      same("٤٨. **والاسمُ الأطول يُسجَّل كما كان — لا قاعدةَ تغيّرت**",
+        [longer.status, typeof longer.body?.id], [201, "number"]);
+
+      //  **واسمُ فرعٍ غائبٌ أو فارغ ⟶ رسالةٌ بلا عبارة «في فرع»** — لا
+      //  يُخمَّن ولا يُترك فراغاً معلَّقاً. و`patients.branch_id` عمودٌ
+      //  `NOT NULL` بمفتاحٍ أجنبيّ إلى `branches` (مُتحقَّقٌ في القاعدة)،
+      //  فالانضمامُ لا يُرجع فراغاً عملياً — والحارسُ لاسمِ فرعٍ فارغ.
+      //  فيُفحَص على الدالّة الخالصة مباشرةً، بلا اختلاق حالةٍ لا تقع.
+      const bare = nameAlreadyRegisteredMessage(null);
+      check(!/ في فرع /.test(bare), "٤٩. **بلا اسمِ فرع ⟶ لا عبارةَ «في فرع» في الرسالة**", bare);
+      check(bare.includes("مسجَّل مسبقاً") && bare.includes("راجع المسؤول"),
+        "      وتبقى تقول «مسجَّل مسبقاً» وتدلّ على المسؤول", bare);
+      check(nameAlreadyRegisteredMessage("  ").includes("في فرع") === false,
+        "      واسمُ فرعٍ بياضاً يُقرأ غياباً لا فرعاً اسمُه فراغ");
     }
 
   } finally {
