@@ -18,6 +18,7 @@ import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { buildPatientSearch, trigramReady } from "../patient_search/sql";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { branchOrPatientAccessSql } from "../patients/branch_access";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import { activeExamSql } from "../medical/active_exam";
 import {
@@ -715,8 +716,20 @@ function orderConditions(f: OrderFilters) {
   //  على الصفّ المنضَمّ نفسِه.
   const c: any[] = [activePatientDrizzle()];
   if (f.expertUserId !== undefined) c.push(eq(WO.expertUserId, f.expertUserId));
-  if (f.branchId !== undefined) c.push(eq(WO.branchId, f.branchId));
-  if (f.branchIds && f.branchIds.length > 0) c.push(inArray(WO.branchId, f.branchIds));
+  //  ══ **الفرعُ المُتاحُ له الملفّ يرى عملَ صاحبه** (ترحيل ٠٨٠) ══════════
+  //  كان الشرطُ فرعَ الأمر وحده، فمريضٌ أُتيح ملفُّه لكربلاء يظهر في سجلّها
+  //  ولا يظهر أمرُ تصنيعه في لوحتها — ويراه خبيرُه لأن قائمته ترشّح برقم
+  //  الخبير بلا فرعٍ أصلاً. والإتاحةُ وصولٌ كامل: مَن يرى الملفَّ يرى عملَه.
+  //  **والشرطُ اتّحادٌ لا استبدال** فلا يُخفي أمراً كان ظاهراً، **ولا يغيّر
+  //  نسبةَ الأمر لفرعه** — المالُ والتقاريرُ لكلّ فرعٍ كما هي بحرفها.
+  if (f.branchId !== undefined) {
+    c.push(branchOrPatientAccessSql([f.branchId], "prosthetic_work_orders.branch_id",
+      "prosthetic_work_orders.patient_id"));
+  }
+  if (f.branchIds && f.branchIds.length > 0) {
+    c.push(branchOrPatientAccessSql(f.branchIds, "prosthetic_work_orders.branch_id",
+      "prosthetic_work_orders.patient_id"));
+  }
   if (f.serviceType) c.push(eq(WO.serviceType, f.serviceType));
   if (f.stage) c.push(eq(WO.currentStage, f.stage));
   if (f.status) c.push(eq(WO.status, f.status));
@@ -1657,8 +1670,10 @@ export async function getAllOrdersForPatient(patientId: number) {
 // ---- admin / manager overview aggregations (done in SQL) ---------------------
 
 export async function getOverview(scope: { branchIds?: number[] | null }) {
+  //  نفسُ شرط القائمة بحرفه — فلا تقول اللوحةُ عدداً وتقول القائمةُ غيرَه.
   const branchCond = scope.branchIds && scope.branchIds.length > 0
-    ? inArray(WO.branchId, scope.branchIds)
+    ? branchOrPatientAccessSql(scope.branchIds, "prosthetic_work_orders.branch_id",
+      "prosthetic_work_orders.patient_id")
     : sql`TRUE`;
 
   const orders = await db.select({

@@ -131,6 +131,45 @@ export function patientVisibleToScopeSql(scope: number[] | null, table = "patien
 }
 
 /**
+ * **يرى الفرعُ هذا الصفَّ؟** — فرعُ الصفّ في نطاقه، **أو** الفرعُ يصل ملفَّ
+ * المريض (فرعُ تسجيله أو إتاحةٌ صريحة، ترحيل ٠٨٠).
+ *
+ * ══ لماذا اتّحادٌ لا استبدال ═══════════════════════════════════════════════
+ * الإتاحةُ **وصولٌ كامل**: مَن أُتيح له الملفُّ يرى عملَ صاحبه كما يراه فرعُ
+ * تسجيله تماماً — وإلّا ظهر المريضُ في سجلّه ولم تظهر عمليتُه في لوحة عمله.
+ * وشرطُ فرع الصفّ يبقى **إلى جانبه لا مكانَه**: صفٌّ في فرعي يبقى لي ولو
+ * سُحبت الإتاحةُ عن ملفّه، أو كان فرعُ تسجيل صاحبه `NULL` (صفٌّ قديم نادر).
+ * فالشرطُ **أوسعُ دائماً**، ولا يُخفي ما كان ظاهراً.
+ *
+ * **ولا تُنسَب به حركةٌ لفرعٍ لم تقع فيه**: هذا شرطُ **قراءة** وحده —
+ * والنسبةُ تبقى لـ`resolveActingBranchId` بحرفها، فالمالُ والتقاريرُ لكلّ
+ * فرعٍ كما هي.
+ *
+ * @param rowBranchCol عمودُ فرع الصفّ كما يُكتب في SQL (`"w.branch_id"`)، أو
+ *   `null` حين لا فرعَ للصفّ فيُقاس بالمريض وحده.
+ * @param patientIdCol عمودُ رقم المريض في الصفّ (`"w.patient_id"`).
+ */
+export function branchOrPatientAccessSql(
+  scope: number[] | null,
+  rowBranchCol: string | null,
+  patientIdCol: string,
+) {
+  if (scope === null) return sql`TRUE`;
+  if (scope.length === 0) return sql`FALSE`;
+  const list = sql.join(scope.map((b) => sql`${b}`), sql`, `);
+  //  `EXISTS` على المفتاح الأساسيّ — فلا يلزم ضمُّ جدول المرضى في كلّ قارئ.
+  const reaches = sql`EXISTS (
+    SELECT 1 FROM patients pv
+     WHERE pv.id = ${sql.raw(patientIdCol)}
+       AND (pv.branch_id IN (${list})
+            OR EXISTS (SELECT 1 FROM patient_branch_access pba2
+                        WHERE pba2.patient_id = pv.id AND pba2.branch_id IN (${list})))
+  )`;
+  if (rowBranchCol === null) return reaches;
+  return sql`(${sql.raw(rowBranchCol)} IN (${list}) OR ${reaches})`;
+}
+
+/**
  * **الفرعُ الذي تُنسَب إليه حركةٌ جديدة** — «الفرع الذي حدثت فيه».
  *
  * ══ القاعدة ══════════════════════════════════════════════════════════════
