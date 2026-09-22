@@ -78,6 +78,15 @@ const MARK = "اختبار-منع-تكرار-التسجيل";
 //  الشيفرة قيد الاختبار. فنطاقٌ فارغٌ تماماً بالكامل (مُتحقَّقٌ) يمنعه جذرياً.
 const ADMIN = 8801, RECV = 8802, RECV2 = 8803, NOPERM = 8804;
 
+//  ══ **اسمُ الفرع ١ يُقرأ من القاعدة، لا يُفترَض** ═══════════════════════
+//  الفِكستشرُ يُدرج «بغداد» بـ`ON CONFLICT DO NOTHING`، فقاعدةٌ يوجد فيها
+//  الفرعُ ١ سلفاً باسمٍ آخر (قالبٌ مبنيٌّ من بياناتٍ حقيقية مثلاً) تُبقي
+//  اسمَها — وكانت التأكيداتُ تقارن بـ«بغداد» حرفياً فتفشل جميعاً بسبب
+//  **بيئةٍ لا بسبب شيفرة**. فيُقرأ الاسمُ الفعليُّ بعد الإدراج ويُبنى منه
+//  المتوقَّعُ: يقيس الاختبارُ **صياغةَ الرسالة** لا اسمَ فرعٍ في قاعدةٍ
+//  بعينها.
+let B1 = "بغداد";
+
 const S: Record<string, any> = {
   admin: {
     userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -209,6 +218,8 @@ async function cleanup() {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **الاسمُ الفعليُّ للفرع ١** — راجع تعليقَ `B1` أعلاه.
+  B1 = (await q<{ name: string }>(`SELECT name FROM branches WHERE id = 1`))[0]?.name ?? "بغداد";
   for (const [id, role, branchId, branchIds, name, canAddPatients] of [
     [ADMIN, "admin", 1, "[1,2]", "المسؤول", true],
     [RECV, "reception", 1, "[1]", "ريام", true],
@@ -268,7 +279,7 @@ async function main() {
 
       const exact = await nameAvailability(S.recv, "أحمد حسين فايق");
       same("٣. **مطابقةٌ تامّة ⟶ محجوبٌ أيضاً، وبرسالةِ «مسجَّل مسبقاً» لا برسالة البادئة**",
-        exact.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+        exact.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
 
       const longer = await nameAvailability(S.recv, "أحمد حسين فايق صالح");
       same("٤. **اسمٌ أطول يمدِّد الاسمَ القائم ⟶ متاح (الاتجاهُ واحدٌ لا اثنان)**",
@@ -311,20 +322,20 @@ async function main() {
       await mkActivePatient("إسراء", "07711000020"); // همزة تحت الألف
       const bareAlif = await nameAvailability(S.recv, "اسراء"); // ألفٌ عارية
       same("١٠. **«إسراء» المخزَّنة تُطابِق «اسراء» المكتوبة (توحيدُ الهمزات)**",
-        bareAlif.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+        bareAlif.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
 
       await mkActivePatient("فاطمة", "07711000021"); // تاء مربوطة
       const withHeh = await nameAvailability(S.recv, "فاطمه"); // هاء
-      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+      same("١١. **«فاطمة» تُطابِق «فاطمه» (ة⟵ه)**", withHeh.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
 
       await mkActivePatient("مُحَمَّد", "07711000022"); // بتشكيل كامل
       const bareLetters = await nameAvailability(S.recv, "محمد");
-      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+      same("١٢. **التشكيلُ لا يُخفي المطابقة**", bareLetters.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
 
       await mkActivePatient("نور  الهدى", "07711000023"); // مسافةٌ مضاعفة
       const singleSpace = await nameAvailability(S.recv, "نور الهدى");
       same("١٣. **المسافاتُ المكرَّرة تُطوى فلا تُخفي المطابقة**",
-        singleSpace.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+        singleSpace.body, { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -560,7 +571,7 @@ async function main() {
       const dupName = await registerPatient(S.recv, { name: NM, phone: "07755000302" });
       same("٢٦.٨ **مريضٌ نشطٌ بنفس الاسم يبقى مانعاً ⟶ ٤٠٩**",
         [dupName.status, dupName.body?.code, dupName.body?.message],
-        [409, "patient_name_conflict", nameAlreadyRegisteredMessage("بغداد")]);
+        [409, "patient_name_conflict", nameAlreadyRegisteredMessage(B1)]);
       same("      ولم يُفتَح له صفٌّ — صفٌّ واحدٌ بالاسم",
         await countByExactName(NM), 1);
 
@@ -574,7 +585,7 @@ async function main() {
       const availActive = await nameAvailability(S.recv, NM);
       same("٢٦.١٠ **وفحصُ توفّر الاسم يبقى يحجب الفعّال**",
         availActive.body,
-        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
       same("      **وجسمُ الردّ ثلاثةُ مفاتيح لا غير** — لا اسمَ ولا رقمَ ولا حقلَ فرعٍ منظَّم",
         Object.keys(availActive.body ?? {}).sort(), ["available", "message", "reason"]);
     }
@@ -900,25 +911,25 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  م. **شكلُ لمياء بعينه** — مطابقةٌ تامّة عبر الفروع: تُحجَب كما كانت،
+    //  س. **شكلُ لمياء بعينه** — مطابقةٌ تامّة عبر الفروع: تُحجَب كما كانت،
     //     **والرسالةُ تسمّي الفرعَ وتدلّ على الإتاحة** بدل «أكمل الاسم»
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── م. رسالةُ المطابقة التامّة (شكلُ لمياء) ──");
+    console.log("\n── س. رسالةُ المطابقة التامّة (شكلُ لمياء) ──");
     {
       const NM = "لمياء حسين علي";
       await mkActivePatient(NM, "07766000401", 1); // بغداد
 
       //  استقبالُ الفرع ٢ (الموصل في الواقع) يكتب الاسمَ نفسَه حرفاً بحرف.
       const live = await nameAvailability(S.recv2, NM);
-      same("٤٥. **فحصُ الاسم الحيّ من فرعٍ آخر ⟶ محجوب، والرسالةُ تسمّي فرعَ بغداد**",
+      same("٤٥. **فحصُ الاسم الحيّ من فرعٍ آخر ⟶ محجوب، والرسالةُ تسمّي فرعَ تسجيله**",
         live.body,
-        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage("بغداد") });
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
 
       //  **والمنعُ نفسُه لم يضعف بحرف** — نفسُ الردّ ونفسُ الرمز، وصفرُ كتابة.
       const post = await registerPatient(S.recv2, { name: NM, phone: "07766000402", branchId: 2 });
       same("٤٦. **والتسجيلُ الفعليُّ يُردّ ٤٠٩ بالرسالة نفسِها — المنعُ كما كان**",
         [post.status, post.body?.code, post.body?.message],
-        [409, "patient_name_conflict", nameAlreadyRegisteredMessage("بغداد")]);
+        [409, "patient_name_conflict", nameAlreadyRegisteredMessage(B1)]);
       same("      وصفٌّ واحدٌ بالاسم — لا ملفَّ ثانياً", await countByExactName(NM), 1);
 
       //  **ورسالةُ البادئة تبقى في موضعها بالحرف** — اسمٌ قائمٌ أطولُ من
@@ -945,6 +956,93 @@ async function main() {
         "      وتبقى تقول «مسجَّل مسبقاً» وتدلّ على المسؤول", bare);
       check(nameAlreadyRegisteredMessage("  ").includes("في فرع") === false,
         "      واسمُ فرعٍ بياضاً يُقرأ غياباً لا فرعاً اسمُه فراغ");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ع. **والإرشادُ محايدٌ لأنّ نطاقَ السائل غيرُ معلومٍ للحارس**
+    //     (تصحيحُ مراجعةٍ آلية على الطلب ٣٨٢، ٢٠٢٦-٠٩-٢٢)
+    //
+    //  أوّلُ صياغةٍ أمرت صراحةً: «راجع المسؤول لإتاحة ملفّه لفرعك» —
+    //  **وهي خاطئةٌ في أشيع حالاتها**: المنعُ عالميٌّ عبر الفروع، وأكثرُ ما
+    //  يقع أن يكون المريضُ في **فرع السائل نفسِه**، فلا إتاحةَ تلزم.
+    //  وكذلك ملفٌّ أُتيح لفرعه سلفاً، وكذلك المسؤولُ العام نفسُه.
+    //
+    //  **والحارسُ لا يقرأ نطاقاً**: `checkNameAvailability(db, name)` و
+    //  `assertNameAvailableForRegistration(tx, name)` — بلا جلسةٍ ولا فرع.
+    //  فالإرشادُ يصف **فعلاً يصحّ في الحالات الأربع**، ويُثبَت هنا حيّاً
+    //  أنّ ذلك الفعل قابلٌ للتنفيذ في كلّ نطاق.
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ع. الإرشادُ محايدٌ ويصحّ في نطاق كلّ سائل ──");
+    {
+      //  هل يجد السائلُ المريضَ في سجلّ المرضى فعلاً؟ — **النقطةُ الحقيقية**
+      //  `/api/patients/registry` بحُرّاسها، لا وصفٌ مكتوب.
+      const registryFinds = async (session: any, name: string): Promise<boolean> => {
+        const r = await http("GET",
+          `/api/patients/registry?search=${encodeURIComponent(name)}&pageSize=50`, session);
+        const rows = Array.isArray(r.body?.rows) ? r.body.rows : [];
+        return rows.some((p: any) => p?.name === name);
+      };
+
+      //  **أمرٌ غيرُ مشروطٍ بالإتاحة** — الشكلُ الذي لا يجوز أن يصل سائلاً
+      //  يملك الملفَّ أصلاً. الفحصُ على **العلاقة** لا على نصٍّ حرفيّ.
+      const ordersEscalationUnconditionally = (m: string) =>
+        m.includes("راجع المسؤول") && !m.includes("وإن لم يظهر لك");
+
+      const NM2 = "نور صباح كريم";
+      await mkActivePatient(NM2, "07766000411", 1); // بغداد
+
+      // ── ع١. **فرعُ السائل نفسُه** — الحالةُ الأشيع ──────────────────
+      const sameLive = await nameAvailability(S.recv, NM2);
+      same("٥٠. **مطابقةٌ تامّة داخل فرع السائل ⟶ محجوبةٌ كما كانت**",
+        sameLive.body,
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
+      const seenBySame = await registryFinds(S.recv, NM2);
+      check(seenBySame, "      والسجلُّ يُظهره لها فعلاً — فلا إتاحةَ تلزم أصلاً");
+      check(!(seenBySame && ordersEscalationUnconditionally(sameLive.body?.message ?? "")),
+        "٥١. **فلا تأمرها الرسالةُ بالإتاحة أمراً غيرَ مشروط**",
+        String(sameLive.body?.message));
+
+      //  **والمنعُ نفسُه لم يضعف بحرف** في هذا النطاق أيضاً.
+      const samePost = await registerPatient(S.recv, { name: NM2, phone: "07766000412", branchId: 1 });
+      same("٥٢. **والتسجيلُ من فرعه نفسِه يُردّ ٤٠٩ — القاعدةُ كما هي**",
+        [samePost.status, samePost.body?.code], [409, "patient_name_conflict"]);
+      same("      وصفٌّ واحدٌ بالاسم", await countByExactName(NM2), 1);
+
+      // ── ع٢. **ملفٌّ أُتيح لفرعها سلفاً** (ترحيل ٠٨٠) ────────────────
+      const [pid] = await q<{ id: number }>(
+        `SELECT id FROM patients WHERE referral_source=$1 AND name=$2`, [MARK, NM2]);
+      await q(`INSERT INTO patient_branch_access (patient_id, branch_id, granted_by_user_id, granted_by_name)
+               VALUES ($1, 2, $2, 'المسؤول') ON CONFLICT DO NOTHING`, [pid.id, ADMIN]);
+      const sharedLive = await nameAvailability(S.recv2, NM2);
+      same("٥٣. **ومُتاحٌ لفرعٍ آخر ⟶ محجوبٌ كما كان**",
+        sharedLive.body,
+        { available: false, reason: "active_conflict", message: nameAlreadyRegisteredMessage(B1) });
+      const seenByShared = await registryFinds(S.recv2, NM2);
+      check(seenByShared, "      والسجلُّ يُظهره لفرعٍ أُتيح له — فلا إتاحةَ ثانية تلزم");
+      check(!(seenByShared && ordersEscalationUnconditionally(sharedLive.body?.message ?? "")),
+        "٥٤. **ولا تأمره الرسالةُ بإتاحةٍ يملكها سلفاً**",
+        String(sharedLive.body?.message));
+
+      // ── ع٣. **المسؤولُ العام** — يقرأ «راجع المسؤول» وهو هو ─────────
+      const adminLive = await nameAvailability(S.admin, NM2);
+      check(adminLive.body?.available === false, "٥٥. **والمسؤولُ يُحجَب كغيره — القاعدةُ لا تستثني أحداً**");
+      const seenByAdmin = await registryFinds(S.admin, NM2);
+      check(seenByAdmin, "      والسجلُّ يُظهره له");
+      check(!(seenByAdmin && ordersEscalationUnconditionally(adminLive.body?.message ?? "")),
+        "٥٦. **ولا تُرسله الرسالةُ إلى نفسِه**", String(adminLive.body?.message));
+
+      // ── ع٤. **وبلا إتاحةٍ يصحّ الشقُّ الثاني فعلاً** ─────────────────
+      //  فالإرشادُ ليس تليينَ رسالةٍ — «فراجع المسؤول» تبقى الخطوةَ
+      //  الصحيحة حيث لا يملك السائلُ الملفَّ، وهنا يُثبَت أنها تقع فعلاً.
+      const NM3 = "هدى ناصر جبار";
+      await mkActivePatient(NM3, "07766000413", 1); // بغداد، بلا إتاحة
+      const farLive = await nameAvailability(S.recv2, NM3);
+      check(farLive.body?.available === false, "٥٧. **ومريضُ فرعٍ آخر بلا إتاحة ⟶ محجوب**");
+      check(!(await registryFinds(S.recv2, NM3)),
+        "      والسجلُّ لا يُظهره له — فالشقُّ الثاني («فراجع المسؤول») هو الصواب هنا");
+      check(String(farLive.body?.message).includes("راجع المسؤول"),
+        "٥٨. **والرسالةُ تدلّه عليه — الإرشادُ لم يسقط، صار مشروطاً**",
+        String(farLive.body?.message));
     }
 
   } finally {
