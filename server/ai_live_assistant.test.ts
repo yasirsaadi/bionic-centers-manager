@@ -178,25 +178,30 @@ async function main() {
     //  training_catalog/training_lesson/training_submit_answer مثل my_worklist
     //  بالحرف — لا يستثنيها أيّ دورٍ أو صلاحية، فتُضاف إلى كلّ قائمةٍ أدناه.
     console.log("\n── ما يُعرَض على النموذج ──");
-    same("ب. الموظّف العادي (بلا canViewReports): سبعُ أدواتٍ بلا المالية ولا التقارير",
+    //  ══ وقدرتا القراءة معروضتان للجميع ══ الحدُّ في النقطة المنفَّذة لا
+    //  في العرض: موظّفُ الاستقبال يناديهما ويقرأ فرعَه، ومَن لا يملك
+    //  عرضَ المرضى تردّه النقطةُ نفسُها برسالتها.
+    same("ب. الموظّف العادي (بلا canViewReports): تسعٌ بلا المالية ولا التقارير",
       seen[0].tools.sort(),
-      ["my_worklist", "patient_clinical_summary", "patient_lookup", "patient_search",
+      ["list_capabilities", "my_worklist", "patient_clinical_summary", "patient_lookup",
+        "patient_search", "read_capability",
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.recvReports), ask("مرحباً"));
     //  ══ تسعٌ الآن — `device_sales_summary` تتبع `canViewReports` نفسَها ══
     //  (والمحاسبُ أدناه بلا هذا العَلَم فلا تصله — دليلٌ حيٌّ أنها ليست
     //  صلاحيةً مالية.)
-    same("   ومعه canViewReports: تسعٌ (يضاف operational_summary وdevice_sales_summary)",
+    same("   ومعه canViewReports: إحدى عشرةَ (يضاف operational_summary وdevice_sales_summary)",
       seen[0].tools.sort(),
-      ["device_sales_summary", "my_worklist", "operational_summary", "patient_clinical_summary",
-        "patient_lookup", "patient_search",
+      ["device_sales_summary", "list_capabilities", "my_worklist", "operational_summary",
+        "patient_clinical_summary", "patient_lookup", "patient_search", "read_capability",
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب (بلا canViewReports أيضاً): تسعٌ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
-      "financial_summary", "my_worklist",
+    same("   والمحاسب (بلا canViewReports أيضاً): إحدى عشرةَ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
+      "financial_summary", "list_capabilities", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
+      "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",
     ]);
 

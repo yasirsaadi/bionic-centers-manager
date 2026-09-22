@@ -13,8 +13,14 @@
 //
 // ══ وما لا يوجد هنا عمداً ═══════════════════════════════════════════════
 // لا أداةَ «نفّذ SQL»، ولا «اقرأ جدولاً»، ولا «شغّل أمراً». فالنموذج لا يملك
-// إلا نوافذَ محدّدة الشكل (سبعاً اليوم — راجع TOOL_NAMES)، وكلُّ واحدةٍ
-// تعرف مَن يحقّ له فتحها.
+// إلا نوافذَ محدّدة الشكل (راجع TOOL_NAMES)، وكلُّ واحدةٍ تعرف مَن يحقّ له
+// فتحها.
+//
+// ══ وأداتا القدرات ══════════════════════════════════════════════════════
+// `list_capabilities`/`read_capability` تفتحان شاشاتِ التطبيق القائمة
+// **بجلسة السائل نفسِها** (راجع `capabilities/`). وهما استثناءٌ ظاهريٌّ لا
+// حقيقيّ: لا تفتحان باب بياناتٍ جديداً، بل ينفّذان النقطةَ المحروسة نفسَها
+// التي يفتحها الموظّف بيده — فالحارسُ هو حارسُ التطبيق لا نسخةٌ منه.
 //
 // ══ ونتيجة الأداة **بيانات لا تعليمات** ═════════════════════════════════
 // اسمُ مريضٍ أو ملاحظةٌ في ملفّه قد تحوي نصّاً يشبه الأمر. فالمخرَج يُعاد
@@ -37,6 +43,11 @@ import { activeExamDrizzle } from "../../medical/active_exam";
 import { activePatientDrizzle } from "../../patients/active_patient";
 import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
 import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
+import {
+  listCapabilities, readCapability, LIST_SPEC, READ_SPEC,
+  type CapabilityContext,
+} from "../capabilities/tools";
+export type { CapabilityContext };
 import {
   getDeviceSalesSummary, MAX_SALES_DAYS, rangeForDays, resolveBranchByName, resolveDays,
 } from "./device_sales";
@@ -1029,7 +1040,9 @@ interface ToolEntry {
   spec: AiToolSpec;
   /** هل تُعرَض لهذه الجلسة أصلاً. */
   offeredTo: (a: AiAccessContext) => boolean;
-  run: (a: AiAccessContext, input: any) => Promise<ToolOutcome>;
+  //  `ctx` **اختياريٌّ عمداً**: كلُّ أداةٍ قائمة تتجاهله وتبقى كما هي
+  //  حرفاً، ولا مُستدعٍ قديم ينكسر. ولا تقرؤه إلا أداتا القدرات.
+  run: (a: AiAccessContext, input: any, ctx?: CapabilityContext) => Promise<ToolOutcome>;
 }
 
 //  **بلا نموذجٍ أصلي**: بحثٌ عادي في كائنٍ عادي يجد `__proto__` و
@@ -1300,6 +1313,20 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     offeredTo: () => true,
     run: trainingSubmitAnswer,
   },
+  //  ══ قدراتُ القراءة العامّة ══════════════════════════════════════════
+  //  **مُتاحتان لكلّ جلسةٍ مصادَقة** — والحدُّ في النقطة المنفَّذة لا هنا.
+  //  فموظّفُ الاستقبال يناديهما ويقرأ فرعَه، والمسؤولُ يقرأ كلَّ الفروع،
+  //  بلا سطرِ صلاحيةٍ واحدٍ يُكتب في هذا الملفّ.
+  list_capabilities: {
+    spec: LIST_SPEC as any,
+    offeredTo: () => true,
+    run: listCapabilities,
+  },
+  read_capability: {
+    spec: READ_SPEC as any,
+    offeredTo: () => true,
+    run: readCapability,
+  },
   } satisfies Record<string, ToolEntry>,
 );
 
@@ -1319,13 +1346,13 @@ export const TOOL_NAMES = Object.keys(REGISTRY);
  * النموذج اسمها. وأي عطلٍ يُبتلع ويُعاد نصّاً آمناً — لا SQL ولا أثر مكدّس.
  */
 export async function executeTool(
-  access: AiAccessContext, name: string, input: unknown,
+  access: AiAccessContext, name: string, input: unknown, ctx?: CapabilityContext,
 ): Promise<ToolOutcome> {
   const entry = typeof name === "string" ? REGISTRY[name] : undefined;
   if (!entry || typeof entry.run !== "function") return denied("أداة غير معروفة.");
   if (!entry.offeredTo(access)) return denied("هذه الأداة غير متاحة لصلاحيتك.");
   try {
-    return await entry.run(access, input ?? {});
+    return await entry.run(access, input ?? {}, ctx);
   } catch (err) {
     console.error(`[ai-tools] ${name} failed:`, err);
     return denied("تعذّرت قراءة البيانات.");
