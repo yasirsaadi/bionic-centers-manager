@@ -16,7 +16,9 @@
 // حتى يظهر اسمُ القالب — ثم تُرسَل الصفوفُ **نفسُها** بلا تدخّل.
 
 import { renderNotification, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
-import { patientWhatsappEnabled, templateReady, type TemplateKind } from "../patient_whatsapp/config";
+import {
+  patientWhatsappEnabled, patientWhatsappStatusLine, templateReady, type TemplateKind,
+} from "../patient_whatsapp/config";
 import { sendTemplate } from "../patient_whatsapp/client";
 import { patientCodeOf } from "../patient_code/store";
 import { isCanonicalPatientCode } from "@shared/patient_code";
@@ -198,11 +200,26 @@ let running = false;
  */
 export function startNotificationDispatcher(): void {
   if (timer) return;
-  if (!patientWhatsappEnabled()) {
-    console.log("[patient-notifications] dispatcher idle — WhatsApp not configured");
-    return;
-  }
-  console.log("[patient-notifications] dispatcher started — channel: whatsapp");
+
+  // ── سطرُ الحالةِ الواحد — **أسماءُ الناقص لا قيمُه** ─────────────────────
+  // كان هنا نصّان مكتوبان باليد، وكلاهما يُخفي ما يلزم لتشخيص العطل:
+  // «غيرُ مضبوط» بلا أن **يسمّي** المتغيّرَ الناقص، فلا يعرف المشغّل أيَّ
+  // اسمٍ يضيف؛ و«بدأ العامل» ولو لم يُضبَط اسمُ قالبٍ واحد — فحالةٌ لا
+  // تُرسِل حرفاً واحداً تُقرأ في سجلّ الإقلاع سليمةً تماماً.
+  //
+  // و`patientWhatsappStatusLine` كُتبت لهذا بعينه (`patient_whatsapp/
+  // config.ts`) **وبقيت بلا مُنادٍ واحد** — شيفرةٌ ميّتة لا سطرَ حالة.
+  // وأشكالُها الثلاثة تقول حالةَ العامل كاملةً بلا سطرٍ ثانٍ:
+  //   `disabled — missing env: …`     ⟶ لا مؤقّتَ يبدأ، والناقصُ مسمّى.
+  //   `enabled — templates pending: …` ⟶ المؤقّتُ يبدأ، وكلُّ دورةٍ تعيد
+  //                                       قراءةَ القوالب فيبدأ الإرسالُ
+  //                                       من تلقائه حين يظهر الاسم.
+  //   `enabled`                        ⟶ مضبوطٌ بالكامل.
+  //
+  // **وأسماءٌ لا قيم**: التوكنُ سرٌّ، وسجلُّ Render يُقرأ ويُحفَظ.
+  console.log(patientWhatsappStatusLine());
+
+  if (!patientWhatsappEnabled()) return;
   timer = setInterval(() => {
     if (running) return;
     running = true;
