@@ -33,6 +33,33 @@ export const INVOKE_TIMEOUT_MS = 12_000;
 
 const PATH_PARAM = /:([A-Za-z0-9_]+)/g;
 
+//  ══ ترويساتٌ لا تُورَّث من طلب المساعد ═════════════════════════════════
+//
+//  الطلبُ الصناعيُّ **قراءةٌ بلا جسم**، ومصدرُه طلبُ المساعد وهو `POST`
+//  بجسمٍ حقيقيّ. فوراثةُ ترويسات الجسم تجعل `express.json()` يرى جسماً
+//  موعوداً فيسلّم الكائنَ إلى قارئ الجسم، وذاك يعامله معاملةَ مجرى قراءةٍ
+//  حقيقيّ فينهار (`Readable.removeListener` على كائنٍ ليس مجرى) — ولا
+//  يُلتقَط انهيارُه في دورةٍ لاحقة، فيُحبَس النداءُ حتى المهلة ويُردّ
+//  «تأخّرت قراءةُ البيانات».
+//
+//  **وقع على الإنتاج يوم ٢٠٢٦-٠٩-٢٢**، ولم يمسكه الاختبارُ لأن مصدرَه كان
+//  بلا ترويسات أصلاً — فصار الاختبارُ يمرّر ترويسات متصفّحٍ حقيقية.
+const NOT_INHERITED = new Set([
+  "content-type", "content-length", "transfer-encoding", "content-encoding",
+]);
+
+/** ترويساتُ الطلب الصناعيّ — موروثةٌ إلّا ما يصف جسماً لا وجودَ له. */
+export function inheritHeaders(source: Record<string, any> | null | undefined): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(source ?? {})) {
+    if (NOT_INHERITED.has(k.toLowerCase())) continue;
+    out[k] = v;
+  }
+  //  يُكتب أخيراً فلا يُزيحه مصدرٌ يحمل الاسمَ نفسَه.
+  out["x-internal-capability"] = "1";
+  return out;
+}
+
 /**
  * يملأ معاملاتِ المسار من كائنٍ يرسله النموذج.
  *
@@ -183,7 +210,7 @@ export async function invokeCapability(params: {
     req.url = url;
     req.originalUrl = url;
     req.baseUrl = "";
-    req.headers = { ...(source.headers ?? {}), "x-internal-capability": "1" };
+    req.headers = inheritHeaders(source.headers);
     req.body = {};
     req.params = {};
     req.cookies = {};

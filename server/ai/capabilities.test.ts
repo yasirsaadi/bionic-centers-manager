@@ -12,6 +12,7 @@ import { registerRoutes } from "../routes";
 import { buildCatalog, BLOCKED, DESCRIBED } from "./capabilities/catalog";
 import { executeTool } from "./tools/registry";
 import { resolveAiAccess } from "./access";
+import { invokeCapability, inheritHeaders } from "./capabilities/invoke";
 
 let pass = 0, fail = 0;
 const ok = (c: boolean, m: string) => { c ? (pass++, console.log("  ✓ " + m)) : (fail++, console.log("  ✗ " + m)); };
@@ -31,6 +32,27 @@ function session(u: any) {
   s.destroy = (cb: any) => { s.destroyed = true; if (cb) cb(); return s; };
   return s;
 }
+
+//  ══ وترويساتُ مصدرٍ حقيقية — لا مصدرٌ عارٍ ═════════════════════════════
+//
+//  مصدرُ النداء في الإنتاج هو طلبُ `POST /api/ai/chat` بجسمٍ حقيقيّ، فيحمل
+//  `content-type` و`content-length`. وكان هذا الملفّ يمرّر جلسةً بلا ترويسةٍ
+//  واحدة، فمرّ **لسببٍ خاطئ**: قارئُ الجسم لا يرى جسماً موعوداً فلا يُنادى
+//  أصلاً. وبترويسات المتصفّح كان يُنادى فينهار على كائنٍ ليس مجرى قراءة،
+//  ويُحبَس النداءُ حتى المهلة (وقع على الإنتاج ٢٠٢٦-٠٩-٢٢).
+const BROWSER_HEADERS = {
+  host: "example.invalid",
+  connection: "keep-alive",
+  "content-length": "312",
+  accept: "*/*",
+  "content-type": "application/json",
+  origin: "https://example.invalid",
+  referer: "https://example.invalid/",
+  "accept-encoding": "gzip, deflate, br",
+  "accept-language": "ar",
+  "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+  cookie: "connect.sid=s%3Afake.signature",
+};
 const access = (u: any, branchId: number | null, branchName: string | null = null) =>
   resolveAiAccess({ session: u, branchName, scopeBranchId: branchId });
 
@@ -106,7 +128,7 @@ async function main() {
   //  النداءُ كما يقع في الإنتاج بالضبط: عبر `executeTool` بسياقٍ يحمل
   //  التطبيقَ والجلسة — لا عبر الدوالّ الداخلية مباشرةً.
   const call = (a: any, sess: any, name: string, input: any) =>
-    executeTool(a, name, input, { app, source: { session: session(sess) } } as any);
+    executeTool(a, name, input, { app, source: { session: session(sess), headers: BROWSER_HEADERS } } as any);
 
   const adminSess = { userId: null, role: "admin", isAdmin: true, branchId: null, accessibleBranches: null, permissions: {} };
   const adminAccess = access(adminSess, null);
@@ -199,7 +221,7 @@ async function main() {
     console.log("\nهـ — والممنوعُ لا يُنادى ولو اخترع النموذجُ اسمَه");
     const sess = session(adminSess);
     const out = await executeTool(adminAccess, "read_capability", { name: "/api/logout" },
-      { app, source: { session: sess } } as any);
+      { app, source: { session: sess, headers: BROWSER_HEADERS } } as any);
     ok(!out.ok, "نداءُ الخروج يُردّ");
     ok(sess.destroyed === false, "ولم تُنهَ الجلسةُ إطلاقاً — لم يبلغ المعالِجَ أصلاً");
     ok(sess.branchSession === adminSess, "وهي كما هي");
@@ -207,6 +229,33 @@ async function main() {
     ok(!bogus.ok, "ومسارٌ مخترَعٌ يُردّ");
     const secret = await call(adminAccess, adminSess, "read_capability", { name: "/api/admin/settings/telegram" });
     ok(!secret.ok, "وسرُّ التكامل لا يُقرأ في محادثة");
+
+    console.log("\nز — وترويساتُ الجسم لا تُورَّث (شكلُ عطبِ الإنتاج ٢٠٢٦-٠٩-٢٢)");
+    const inherited = inheritHeaders(BROWSER_HEADERS);
+    ok(inherited["content-type"] === undefined && inherited["content-length"] === undefined,
+      "ترويساتُ الجسم تسقط — فلا يرى قارئُ الجسم جسماً موعوداً");
+    ok(inherited["transfer-encoding"] === undefined && inherited["content-encoding"] === undefined,
+      "ومعها الترميزُ والنقلُ المجزّأ");
+    ok(inherited["user-agent"] === BROWSER_HEADERS["user-agent"] && inherited["accept-language"] === "ar",
+      "وما ليس جسماً يبقى كما هو");
+    ok(inherited["x-internal-capability"] === "1", "والوسمُ الداخليّ يُكتب");
+    ok(inheritHeaders({ "x-internal-capability": "مزوَّر" })["x-internal-capability"] === "1",
+      "ولا يُزيحه مصدرٌ يحمل اسمَه");
+
+    //  **مهلةٌ قصيرة عمداً**: الانحدارُ يُحبَس حتى المهلة، فلو تُركت اثنتَي
+    //  عشرةَ ثانية لبدا الفشلُ بطئاً لا عطباً. وأربعُ ثوانٍ تفصلهما.
+    const live = await invokeCapability({
+      app, source: { session: session(adminSess), headers: BROWSER_HEADERS },
+      path: "/api/medical/pending", timeoutMs: 4000,
+    });
+    ok(live.status === 200 && !live.timedOut,
+      `والنداءُ بترويسات المتصفّح يمضي — ${live.status}${live.timedOut ? " (انقضت المهلة)" : ""}`);
+    const noHeaders = await invokeCapability({
+      app, source: { session: session(adminSess) },
+      path: "/api/medical/pending", timeoutMs: 4000,
+    });
+    ok(noHeaders.status === 200 && JSON.stringify(noHeaders.body) === JSON.stringify(live.body),
+      "وجوابُه هو جوابُ المصدر العاري نفسُه");
 
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);
