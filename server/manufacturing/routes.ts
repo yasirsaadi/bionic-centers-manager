@@ -1134,7 +1134,11 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!(await reachesPatient(s, patient))) return res.status(403).json({ error: "غير مصرح" });
     const canView = s.isAdmin || isManager(s) || s.permissions?.canViewPatients;
     if (!canView) return res.status(403).json({ error: "غير مصرح" });
-    res.json(await store.getAllOrdersForPatient(patientId));
+    //  ══ **والمالُ خلف بوّابته لا خلف بوّابة الملفّ** ═══════════════════
+    //  هذه النقطة محروسةٌ بـ`canViewPatients`، ومالُ الجهاز يحرسه
+    //  `canViewPayments` في كلّ سطحٍ آخر. فيُقرَّر هنا ولا يُترَك للدالّة.
+    const includeMoney = Boolean(s.isAdmin || s.permissions?.canViewPayments);
+    res.json(await store.getAllOrdersForPatient(patientId, { includeMoney }));
   });
 }
 

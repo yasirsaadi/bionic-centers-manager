@@ -500,10 +500,15 @@ export async function getEpisodeDisplayFieldsByIds(
 ): Promise<Map<number, {
   requestedItem: string | null; agreedCost: number;
   componentSaleOriginalPrice: number | null;
+  //  **ترتيبُ الجهاز على خيط المريض** — «الأول» و«الثاني». أُضيف كي يقول
+  //  صفُّ الدفعة في ملفّ المريض **لأيّ جهازٍ هو**: مريضٌ بجهازين كان يرى
+  //  دفعاتٍ متطابقةَ الشكل لا تدلّ على شيء، فلا يعرف أيَّ عمليةٍ تخصّ.
+  sequenceNumber: number;
 }>> {
   const map = new Map<number, {
     requestedItem: string | null; agreedCost: number;
     componentSaleOriginalPrice: number | null;
+    sequenceNumber: number;
   }>();
   if (episodeIds.length === 0) return map;
   //  ══ **مصفوفةٌ نصّيةً واحدة، لا سجلَّ ربطٍ** — نفسُ درس `patient_code/
@@ -515,9 +520,9 @@ export async function getEpisodeDisplayFieldsByIds(
     .filter((n) => Number.isFinite(n)).join(",")}}`;
   const r = await db.execute<{
     id: number; requested_item: string | null; agreed_cost: number;
-    component_sale_original_price: number | null;
+    component_sale_original_price: number | null; sequence_number: number;
   }>(sql`
-    SELECT id, requested_item, agreed_cost, component_sale_original_price
+    SELECT id, requested_item, agreed_cost, component_sale_original_price, sequence_number
       FROM patient_device_episodes WHERE id = ANY(${idArray}::int[])
   `);
   for (const row of r.rows ?? []) {
@@ -525,6 +530,7 @@ export async function getEpisodeDisplayFieldsByIds(
       requestedItem: row.requested_item, agreedCost: Number(row.agreed_cost),
       componentSaleOriginalPrice: row.component_sale_original_price === null
         ? null : Number(row.component_sale_original_price),
+      sequenceNumber: Number(row.sequence_number),
     });
   }
   return map;
