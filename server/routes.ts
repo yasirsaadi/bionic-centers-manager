@@ -2230,14 +2230,25 @@ export async function registerRoutes(
         );
       }
     }
-    const paymentsWithDisplay = payments.map((p) => ({
-      ...p,
-      displayDescription: p.deviceEpisodeId !== null
-        ? deriveDevicePaymentDisplay(p, episodeFields.get(p.deviceEpisodeId) ?? null, {
-            linkedPaymentsCount: paymentCountByEpisode.get(p.deviceEpisodeId) ?? 0,
-          })
-        : null,
-    }));
+    const paymentsWithDisplay = payments.map((p) => {
+      const ep = p.deviceEpisodeId !== null ? episodeFields.get(p.deviceEpisodeId) ?? null : null;
+      return {
+        ...p,
+        displayDescription: p.deviceEpisodeId !== null
+          ? deriveDevicePaymentDisplay(p, ep, {
+              linkedPaymentsCount: paymentCountByEpisode.get(p.deviceEpisodeId) ?? 0,
+            })
+          : null,
+        //  ══ **لأيّ جهازٍ هذه الدفعة** (٢٠٢٦-٠٩-٢٣) ══════════════════════
+        //  مريضٌ بجهازين كان يرى في جدول الدفعات صفوفاً لا تدلّ على شيء،
+        //  فلا يعرف أيَّ عمليةٍ تخصّ ولا يتبيّن أثرَ نقلِ دفعةٍ بين جهازين.
+        //  والحقلان مشتقّان للعرض — لا عمودَ جديد ولا حسابَ يتغيّر.
+        //  **ولا يصلان إلّا مع الدفعات نفسِها**، وتلك محجوبةٌ عمّن لا يملك
+        //  `canViewPayments` (الفحصُ أدناه)، فلا يفتحان باباً جديداً.
+        deviceSequence: ep ? ep.sequenceNumber : null,
+        deviceRequestedItem: ep ? ep.requestedItem : null,
+      };
+    });
 
     //  ══ `canViewPayments` — دفعاتُ الملفّ لا تصل لمن لا يملك عرضَها
     //  (إصلاحٌ 2026-09-02) ═══════════════════════════════════════════════

@@ -899,6 +899,11 @@ export async function getOrderDetail(id: number) {
       //  مواصفاتُه من معاينة تلك الحلقة لا من أعمدة المريض المشتركة.
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
+      deviceSequence: PDE.sequenceNumber,
+      agreedCost: PDE.agreedCost,
+      maintenanceFinalPrice: WO.maintenanceFinalPrice,
+      maintenanceOriginalPrice: WO.maintenanceOriginalPrice,
+      maintenanceUnderWarranty: WO.maintenanceUnderWarranty,
       sequenceNumber: PDE.sequenceNumber,
     })
     .from(WO)
@@ -1598,7 +1603,28 @@ export async function getActiveOrderSummaryForPatient(patientId: number) {
 // history (e.g. عناد built the limb in June, أيوب did a maintenance mold in
 // July). Each order is an independent episode with its own expert, service
 // type, dates and lifecycle. Read-only shape for the patient page.
-export async function getAllOrdersForPatient(patientId: number) {
+/**
+ * ══ **بطاقةُ كلّ أمرٍ تقول هويّتَها ومالَها** (٢٠٢٦-٠٩-٢٣) ═══════════════
+ *
+ * كان ملفُّ المريض يعرض بطاقتين متطابقتَي النصّ («أطراف صناعية — الخبير:
+ * فلان») لا يفرّق بينهما إلّا المرحلةُ والتاريخ. فمَن يقرأ الملفَّ لا يعرف
+ * أيُّ بطاقةٍ هي «أمر ٣٦٢» الذي يُكلَّم عنه، ولا أين المالُ منهما.
+ *
+ * فصارت تحمل **رقمَ الأمر وترتيبَ الجهاز على خيط المريض**، ومعهما المالُ
+ * حين يملك السائلُ عرضَه.
+ *
+ * **والمالُ خلف بوّابته**: نقطةُ هذه الدالّة محروسةٌ بـ`canViewPatients`
+ * لا بـ`canViewPayments`، فلو خرجت الأرقامُ بلا شرطٍ لفتحت باباً مالياً
+ * جانبياً لمن حُجب عنه. و`includeMoney` يقرّرها **المنادي** من الجلسة.
+ *
+ * **والحقولُ تُحذَف ولا تُصفَّر** (درسُ إصلاح ٢٠٢٦-٠٩-٠٢): صفرٌ يُقرأ «لم
+ * يدفع شيئاً» — كذبةٌ ماليةٌ لا حالةَ صلاحية.
+ */
+export async function getAllOrdersForPatient(
+  patientId: number,
+  opts: { includeMoney?: boolean } = {},
+) {
+  const includeMoney = opts.includeMoney === true;
   const rows = await db
     .select({
       id: WO.id, serviceType: WO.serviceType, purpose: WO.purpose, status: WO.status, currentStage: WO.currentStage,
@@ -1610,6 +1636,11 @@ export async function getAllOrdersForPatient(patientId: number) {
       maintenanceComponent: WO.maintenanceComponent,
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
+      deviceSequence: PDE.sequenceNumber,
+      agreedCost: PDE.agreedCost,
+      maintenanceFinalPrice: WO.maintenanceFinalPrice,
+      maintenanceOriginalPrice: WO.maintenanceOriginalPrice,
+      maintenanceUnderWarranty: WO.maintenanceUnderWarranty,
       //  **الأمرُ المُبطَل إدارياً يُقال مُبطَلاً** (ترحيل ٠٦٤): يبقى في
       //  السجلّ بمراحله وختمه، لكن الشاشةَ لا تعرضه كعمليةٍ قائمة ولا تفتح
       //  عليه بابَ تصحيحٍ ثانٍ.
@@ -1637,6 +1668,25 @@ export async function getAllOrdersForPatient(patientId: number) {
         .where(and(inArray(WH.workOrderId, orderIds), eq(WH.actionType, "date_change")))
         .orderBy(asc(WH.createdAt))
     : [];
+  //  ══ **المدفوعُ على كلّ جهاز** — تجميعٌ واحد لا استعلامٌ لكلّ بطاقة ══
+  //  ولا يُسأل أصلاً حين لا يملك السائلُ عرضَ المال.
+  const episodeIds = Array.from(new Set(
+    rows.map((r) => r.deviceEpisodeId).filter((v): v is number => v !== null && v !== undefined),
+  ));
+  const paidByEpisode = new Map<number, number>();
+  if (includeMoney && episodeIds.length > 0) {
+    const idArray = `{${episodeIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).join(",")}}`;
+    const paid = await db.execute<{ device_episode_id: number; paid: number }>(sql`
+      SELECT device_episode_id, COALESCE(SUM(amount), 0)::int AS paid
+        FROM payments
+       WHERE device_episode_id = ANY(${idArray}::int[])
+       GROUP BY device_episode_id
+    `);
+    for (const row of paid.rows ?? []) {
+      paidByEpisode.set(Number(row.device_episode_id), Number(row.paid));
+    }
+  }
+
   const changesByOrder = new Map<number, { note: string; byName: string | null; at: string | null }[]>();
   for (const c of changes) {
     const list = changesByOrder.get(c.workOrderId) ?? [];
@@ -1664,6 +1714,23 @@ export async function getAllOrdersForPatient(patientId: number) {
     active: r.status !== "completed" && r.status !== "cancelled",
     adminVoidReversalId: r.adminVoidReversalId ?? null,
     dateChanges: changesByOrder.get(r.id) ?? [],
+    //  هويّةُ الجهاز — تُعرَض للجميع: رقمٌ وترتيبٌ لا مال.
+    deviceEpisodeId: r.deviceEpisodeId ?? null,
+    deviceSequence: r.deviceSequence ?? null,
+    requestedItem: r.requestedItem ?? null,
+    //  والمالُ بشرطه، محذوفاً لا مصفَّراً.
+    ...(includeMoney
+      ? {
+        agreedCost: r.deviceEpisodeId === null ? null : Number(r.agreedCost ?? 0),
+        paidOnDevice: r.deviceEpisodeId === null
+          ? null : (paidByEpisode.get(r.deviceEpisodeId) ?? 0),
+        maintenanceFinalPrice: r.maintenanceFinalPrice === null
+          || r.maintenanceFinalPrice === undefined ? null : Number(r.maintenanceFinalPrice),
+        maintenanceOriginalPrice: r.maintenanceOriginalPrice === null
+          || r.maintenanceOriginalPrice === undefined ? null : Number(r.maintenanceOriginalPrice),
+        maintenanceUnderWarranty: r.maintenanceUnderWarranty ?? null,
+      }
+      : {}),
   }));
 }
 

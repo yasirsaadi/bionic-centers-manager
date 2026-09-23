@@ -7,6 +7,8 @@ import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS, FINAL_RESULT_LABELS } from "@shared/manufacturing";
+import { deviceOrdinalLabel } from "@shared/device_label";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 
 interface OrderRow {
   id: number;
@@ -23,7 +25,20 @@ interface OrderRow {
   active: boolean;
   adminVoidReversalId?: number | null;
   dateChanges?: { note: string; byName: string | null; at: string | null }[];
+  //  هويّةُ الجهاز — للجميع.
+  deviceEpisodeId?: number | null;
+  deviceSequence?: number | null;
+  requestedItem?: string | null;
+  //  والمالُ — **يصل فقط لمن يملك عرضَ الدفعات**، والخادمُ يحذف الحقول
+  //  حذفاً لا يصفّرها. فـ`undefined` هنا تعني «محجوب»، لا «صفر».
+  agreedCost?: number | null;
+  paidOnDevice?: number | null;
+  maintenanceFinalPrice?: number | null;
+  maintenanceOriginalPrice?: number | null;
+  maintenanceUnderWarranty?: boolean | null;
 }
+
+const iqd = (n: number) => `${n.toLocaleString("en-US")} د.ع`;
 
 // Full manufacturing HISTORY on the patient page for authorized NON-expert
 // users (reception / branch manager / admin). Each work order is its own
@@ -94,6 +109,21 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                   <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200 text-[11px] px-1.5 py-0">صيانة</Badge>
                 )}
                 <span className="text-xs text-muted-foreground">— الخبير: {o.expertName ?? "—"}</span>
+                {/*  ══ **هويّةُ البطاقة** (٢٠٢٦-٠٩-٢٣) ═══════════════════════
+                    بطاقتان بنفس النوع والخبير كانتا لا تُميَّزان إلّا
+                    بالمرحلة والتاريخ — فلا يعرف القارئ أيُّهما «أمر ٣٦٢».
+                    والترتيبُ يربطها بصفّ الدفعة في الجدول أدناه. */}
+                {deviceOrdinalLabel(o.deviceSequence) && (
+                  <Badge variant="outline"
+                    className="bg-indigo-50 text-indigo-800 border-indigo-200 text-[11px] px-1.5 py-0"
+                    data-testid={`badge-order-device-${o.id}`}>
+                    {deviceOrdinalLabel(o.deviceSequence)}
+                    {o.requestedItem
+                      ? ` · ${requestedItemLabel(o.requestedItem, o.serviceType as any)}` : ""}
+                  </Badge>
+                )}
+                <span className="text-xs font-mono text-muted-foreground"
+                  data-testid={`text-order-number-${o.id}`}>أمر #{o.id}</span>
               </div>
               <div className="flex items-center gap-2">
                 {/*  الأمرُ المُبطَل يُقال مُبطَلاً — ولا يُفتَح عليه تصحيحٌ ثانٍ. */}
@@ -131,6 +161,32 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
               <Item label="التسليم المتوقّع" value={fmtD(o.expectedDeliveryDate)} />
               <Item label={o.completedAt ? "تاريخ التسليم" : "الإنشاء"} value={fmtD(o.completedAt ?? o.createdAt)} />
             </div>
+            {/*  ══ **مالُ هذه العملية على بطاقتها** ═══════════════════════
+                المستخدمُ كان يفتح نافذةَ التصحيح ليعرف كم عليها — وهي
+                تعرض الكلفة لا المدفوع. وهنا يُقرأ الاثنان بنظرة.
+                **والحجبُ بغياب الحقل لا بصفرٍ**: الخادمُ لا يرسلها أصلاً
+                لمن لا يملك عرضَ الدفعات. */}
+            {o.purpose !== "maintenance" && o.deviceEpisodeId != null
+              && typeof o.agreedCost === "number" && typeof o.paidOnDevice === "number" && (
+              <div className="mt-2 grid grid-cols-3 gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 text-sm"
+                data-testid={`box-order-money-${o.id}`}>
+                <Item label="كلفة هذا الجهاز" value={iqd(o.agreedCost)} />
+                <Item label="المدفوع عليه" value={iqd(o.paidOnDevice)} />
+                <Item label="المتبقّي" value={iqd(o.agreedCost - o.paidOnDevice)} />
+              </div>
+            )}
+            {o.purpose === "maintenance" && typeof o.maintenanceFinalPrice === "number" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 text-sm"
+                data-testid={`box-order-maintenance-money-${o.id}`}>
+                <span className="text-xs text-muted-foreground">أجور الصيانة:</span>
+                <span className="font-medium">{iqd(o.maintenanceFinalPrice)}</span>
+                {o.maintenanceUnderWarranty && (
+                  <Badge variant="outline" className="bg-sky-100 text-sky-800 border-sky-200 text-[11px] px-1.5 py-0">
+                    ضمن الضمان
+                  </Badge>
+                )}
+              </div>
+            )}
             {(o.dateChanges?.length ?? 0) > 0 && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 space-y-1">
                 <div className="text-[11px] font-bold text-amber-900">تغييرات موعد التسليم</div>

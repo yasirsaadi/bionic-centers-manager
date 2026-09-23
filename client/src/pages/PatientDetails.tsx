@@ -79,6 +79,7 @@ import {
   HelpCircle
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
+import { deviceOrdinalLabel } from "@shared/device_label";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { PatientServiceLauncher } from "@/components/PatientServiceLauncher";
@@ -162,6 +163,9 @@ export default function PatientDetails() {
   // expose the buttons.
   const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
   const { data: patient, isLoading } = usePatient(Number(id));
+  //  **عمودُ «الجهاز» في جدول الدفعات يظهر لمريض الأجهزة وحده** — مريضُ
+  //  العلاج الطبيعي لا حلقاتِ أجهزةٍ له، فعمودٌ كلُّه شرطاتٌ ضجيجٌ لا خبر.
+  const hasDeviceService = Boolean(patient?.isAmputee || patient?.isMedicalSupport);
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
   const { mutate: deleteDocument } = useDeleteDocument();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
@@ -1494,6 +1498,16 @@ export default function PatientDetails() {
                     <tr className="bg-slate-100">
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.amount}</th>
                       <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.date}</th>
+                      {/*  ══ **لأيّ جهازٍ هذه الدفعة** (٢٠٢٦-٠٩-٢٣) ═══════════
+                          مريضٌ بجهازين كان يرى صفوفَ دفعاتٍ لا تدلّ على شيء،
+                          فلا يعرف أيَّ عمليةٍ تخصّ ولا يتبيّن أثرَ نقلِ دفعةٍ
+                          بين جهازين. والعبارةُ هي عينُها التي تحملها بطاقةُ
+                          أمر التصنيع أعلاه — من `deviceOrdinalLabel` نفسِها،
+                          فلا نصّان ينحرفان. ولا يظهر العمودُ لمريضٍ بلا
+                          أجهزة، فلا عمودَ كلُّه شرطات. */}
+                      {hasDeviceService && (
+                        <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">الجهاز</th>
+                      )}
                       {patient.isPhysiotherapy && (
                         <th className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{t.patientDetails.treatmentType}</th>
                       )}
@@ -1506,7 +1520,8 @@ export default function PatientDetails() {
                   </thead>
                   <tbody>
                     {casePayments?.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3)} className="border border-slate-300 p-8 text-center text-muted-foreground">{t.patientDetails.noPayments}</td></tr>
+                      <tr><td colSpan={(isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3))
+                        + (hasDeviceService ? 1 : 0)} className="border border-slate-300 p-8 text-center text-muted-foreground">{t.patientDetails.noPayments}</td></tr>
                     ) : (
                       casePayments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
@@ -1520,6 +1535,13 @@ export default function PatientDetails() {
                             <div>{formatDateTimeIraq(payment.date)}</div>
                             <div className="text-xs text-slate-400">{formatTimeIraq(payment.date)}</div>
                           </td>
+                          {hasDeviceService && (
+                            <td className="border border-slate-300 px-3 py-2 text-center text-slate-600"
+                              data-testid={`text-payment-device-${payment.id}`}>
+                              {deviceOrdinalLabel((payment as any).deviceSequence)
+                                ?? <span className="text-slate-400">—</span>}
+                            </td>
+                          )}
                           {patient.isPhysiotherapy && (
                             <td className="border border-slate-300 px-3 py-2 text-center" data-testid={`text-payment-treatment-${payment.id}`}>
                               {payment.paymentTreatmentType 

@@ -246,6 +246,18 @@ export function AdministrativeReversalDialog({
                   <b>{preview.saleAmount.toLocaleString("en-US")} د.ع</b>
                 </div>
               )}
+              {/*  ══ **والمدفوعُ يُقرأ قبل الاختيار لا بعده** (٢٠٢٦-٠٩-٢٣) ═══
+                  كان الرقمُ لا يظهر إلّا بعد اختيار نوع التصحيح، وداخل قسم
+                  «تفاصيل ما سيحدث» المطويّ — **وهو الرقمُ الذي يقرّر** هل
+                  يُطرح سؤالُ إرجاع المبلغ وكم يُردّ. فمَن لا يراه يُفاجأ
+                  بالسؤال ويجيب بلا علم. وهو هو المقروءُ تحت القفل في
+                  الخادم، لا حسابٌ ثانٍ هنا. */}
+              <div className="flex justify-between" data-testid="row-operation-paid">
+                <span className="text-muted-foreground">المدفوع على هذه العملية:</span>
+                <b className={Number(preview.paidAmount) > 0 ? "text-emerald-700" : ""}>
+                  {Number(preview.paidAmount ?? 0).toLocaleString("en-US")} د.ع
+                </b>
+              </div>
             </div>
 
             {/* الموظف يصف المقصود، والخادم يختار آلية العكس الآمنة. */}
