@@ -151,6 +151,134 @@ export function invalidatePermissionShapedQueries(client: QueryClient): void {
   });
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  **التحديثُ الحيّ — قانونٌ واحد بدل مئتين وأربعٍ وثلاثين قائمة**
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ══ العطبُ الذي يغلقه (شكوى المالك ٢٠٢٦-٠٩-٢٣) ═══════════════════════════
+ * «حين تضيف شيئاً أو تحذف أو تغيّر، **بعضُ نوافذ التطبيق لا تُظهر التعديل
+ * إلّا بعد إعادة تحميل الصفحة**.»
+ *
+ * والسببُ بنيويّ لا عرَضيّ: كلُّ عمليةِ كتابةٍ كانت تحمل **قائمةً مكتوبةً
+ * بيد مَن كتبها** بما يجب تحديثه. وفي الواجهة ١٦٧ استعلامَ قراءة و١٠٧
+ * عمليةَ كتابة و**٢٣٤ نداءَ تنظيفٍ يدويّ** في ٤١ ملفاً — ومعها ثمانيةُ
+ * ملفّاتٍ تكتب ولا تنظّف شيئاً إطلاقاً (منها حذفُ المريض، وخطّةُ الجلسات،
+ * وإضافةُ نوع الحالة، و«خدمة جديدة»).
+ *
+ * فمَن نسي مفتاحاً — أو كتب مفتاحاً من عائلةٍ أخرى — بقيت شاشتُه قديمة.
+ * وهذا الملفُّ نفسُه يسجّل العطبَ **ثلاث مرّات** بأسماء حوادثه أعلاه:
+ * كلفةٌ لم تظهر **فأُدخلت الخدمةُ مرّتين** (٢٠٢٦-٠٨-٠٦) · ومريضٌ محذوفٌ
+ * بقي ظاهراً فيُضغط «حذف» ثانيةً · ومفتاحٌ يحمل رقمَه في جسمه (الطلب ٣٨٤).
+ * **ثلاثةُ إصلاحاتٍ كلُّها بقائمةٍ رابعة** — والقائمةُ التالية ستُنسى.
+ *
+ * ══ القاعدةُ الآن ════════════════════════════════════════════════════════
+ * **كلُّ كتابةٍ تنجح على الخادم ⟶ تُحدَّث كلُّ شاشةٍ مفتوحة.** بلا قائمةٍ
+ * يكتبها أحد، وبلا مفتاحٍ يُنسى، ومهما كانت عائلةُ المفتاح أو شكلُه.
+ *
+ * ══ ولماذا عند `fetch` لا عند `useMutation` ══════════════════════════════
+ * لأنها **نقطةُ الخنق الحقيقية الوحيدة**: الواجهةُ تكتب بثلاثة أشكال —
+ * `useMutation` (١٠٧) · و`apiRequest` مباشرةً (٤١) · و`fetch` خاماً (٧١) —
+ * وكلُّها تنتهي إلى `fetch`. فحارسٌ عند `MutationCache` وحده يترك الشكلين
+ * الآخرين، وحارسٌ عند `apiRequest` وحده يترك الثالث. **وما لا يُغطّى كلُّه
+ * يعود العطبُ منه.**
+ *
+ * ══ وما لا يُحدِّث ═══════════════════════════════════════════════════════
+ * القراءةُ (`GET`/`HEAD`) · وما لم ينجح (`res.ok === false`) — فردٌّ بخطأ
+ * لم يغيّر شيئاً · وما ليس من نقاط هذا التطبيق (`/api/…` على أصله) — فلا
+ * نداءَ لطرفٍ ثالث يُحرّك الشاشة · و`POST /api/ai/chat` صراحةً: رسالةٌ
+ * للمساعد ليست تغييراً في بيانات العمل، وتحديثُ الشاشة عندها ضجيجٌ خالص.
+ *
+ * ══ والتأخيرُ الصغير شرطُ صحّةٍ لا تحسين ══════════════════════════════════
+ * `MutationCache` تنادي حرّاسَها **قبل** `onSuccess` الخاصّ بالعملية. وبعضُ
+ * العمليات تنزع مفاتيحَ صفٍّ لم يعد له وجود (`removeQueries` عند حذف مريض،
+ * فصفحتُه لو أُعيد جلبُها ارتدّت ٤٠٤ وعرضت خطأً). فلو وقع التحديثُ فوراً
+ * لسبق النزعَ. والنافذةُ تُجمِّع كذلك دفعةَ كتاباتٍ متتابعة في تحديثٍ واحد،
+ * فلا عاصفةَ طلباتٍ من حلقةٍ تكتب مراراً.
+ */
+export const LIVE_REFRESH_DELAY_MS = 50;
+
+/** نقاطٌ تُكتب ولا تُغيّر بياناتِ عملٍ تُعرَض في شاشة. */
+const LIVE_REFRESH_EXEMPT = [/^\/api\/ai\/chat$/];
+
+/**
+ * **أهذا نداءُ كتابةٍ يستحقّ تحديثَ الشاشات؟** — دالّةٌ خالصة.
+ *
+ * والمسارُ يُقرأ من العنوان: نسبيّاً كان (`/api/…`) أو مطلقاً على أصل
+ * الصفحة. وعنوانُ طرفٍ ثالث يُردّ — ولو كان كتابةً.
+ */
+export function isLiveRefreshWrite(method: string, url: string): boolean {
+  const m = String(method ?? "").toUpperCase();
+  if (m !== "POST" && m !== "PUT" && m !== "PATCH" && m !== "DELETE") return false;
+  const raw = String(url ?? "");
+  let path: string;
+  if (raw.startsWith("/")) {
+    path = raw;
+  } else {
+    //  **عنوانٌ مطلق يُقبل إن كان على أصل الصفحة نفسِه وحده** — فنداءُ طرفٍ
+    //  ثالث لا يحرّك شاشةَ هذا التطبيق. وبلا أصلٍ معلوم (خارج المتصفّح) لا
+    //  يُقبَل: الواجهةُ كلُّها تكتب بمساراتٍ نسبية، فالمطلقُ حينئذٍ غريب.
+    if (typeof location === "undefined") return false;
+    let parsed: URL;
+    try { parsed = new URL(raw, location.href); } catch { return false; }
+    if (parsed.origin !== location.origin) return false;
+    path = parsed.pathname;
+  }
+  const clean = path.split("?")[0].split("#")[0];
+  if (!clean.startsWith("/api/")) return false;
+  return !LIVE_REFRESH_EXEMPT.some((re) => re.test(clean));
+}
+
+let liveRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * يجدول تحديثاً واحداً لكلّ الشاشات المفتوحة — **مجمَّعاً** ضمن النافذة.
+ *
+ * `invalidateQueries()` بلا مفتاح تُبطل الجميع، **وتُعيد جلبَ الفعّال وحده**
+ * (ما هو مركَّبٌ على الشاشة الآن). أمّا المخبّأُ غيرُ المعروض فيُوسَم قديماً
+ * ويُعاد جلبُه عند أوّل عرضٍ له — فلا طلباتٍ لشاشاتٍ لا يراها أحد.
+ */
+export function scheduleLiveRefresh(client: QueryClient): void {
+  if (liveRefreshTimer !== null) return;
+  liveRefreshTimer = setTimeout(() => {
+    liveRefreshTimer = null;
+    void client.invalidateQueries();
+  }, LIVE_REFRESH_DELAY_MS);
+}
+
+/** للاختبار وحده: يُفرغ المؤقّتَ المعلَّق بين الحالات. */
+export function resetLiveRefreshForTest(): void {
+  if (liveRefreshTimer !== null) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = null;
+}
+
+const LIVE_REFRESH_INSTALLED = Symbol.for("bcm.liveRefreshInstalled");
+
+/**
+ * يلفّ `fetch` مرّةً واحدة — **وهو الحارسُ الوحيد**.
+ *
+ * ولا يُركَّب مرّتين ولو أُعيد تحميلُ الوحدة في التطوير (`Symbol.for` على
+ * الكائن العامّ)، وإلّا تضاعف الغلافُ مع كلّ حفظِ ملفّ.
+ */
+export function installLiveRefresh(client: QueryClient): void {
+  const g = globalThis as any;
+  if (g[LIVE_REFRESH_INSTALLED]) return;
+  const native = g.fetch;
+  if (typeof native !== "function") return;
+  g[LIVE_REFRESH_INSTALLED] = true;
+  g.fetch = async (input: any, init?: any) => {
+    const res = await native(input, init);
+    try {
+      const url = typeof input === "string" ? input
+        : input instanceof URL ? input.href
+          : String(input?.url ?? "");
+      const method = String(init?.method ?? input?.method ?? "GET");
+      if (res?.ok && isLiveRefreshWrite(method, url)) scheduleLiveRefresh(client);
+    } catch { /* التحديثُ زينةٌ لا شرطُ نجاحٍ — لا يُفشل نداءً نجح */ }
+    return res;
+  };
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
@@ -174,7 +302,10 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: false,
+      //  **وتعودُ إلى النافذة فترى ما فعله زملاؤك** — التحديثُ الحيّ أدناه
+      //  يغطّي كتابتَك أنت في الحال، وهذا يغطّي كتابةَ غيرك على جهازٍ آخر
+      //  لحظةَ عودتك إلى التبويب. وكان مطفأً، فكانت الشاشةُ تشيخ بصمت.
+      refetchOnWindowFocus: true,
       // Was Infinity which made every query a one-shot for the session.
       // 60s gives a good balance: same query within a minute uses cache
       // (no flicker, no re-fetch on tab switch) but stale data doesn't
@@ -188,3 +319,6 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+//  **ويُركَّب الحارسُ مع الوحدة** — قبل أن تقع أوّلُ كتابة.
+installLiveRefresh(queryClient);
