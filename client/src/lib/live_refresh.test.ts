@@ -249,9 +249,21 @@ async function main() {
       return "";
     }
 
+    /** ما بعد قائمةِ معامِلاتٍ تبدأ عند أوّل `(` من `from` — أو `-1`. */
+    function parenEnd(code: string, from: number): number {
+      const i = code.indexOf("(", from);
+      if (i < 0) return -1;
+      let depth = 0;
+      for (let j = i; j < code.length; j++) {
+        if (code[j] === "(") depth++;
+        else if (code[j] === ")") { depth--; if (depth === 0) return j + 1; }
+      }
+      return -1;
+    }
+
     /**
-     * قيمةُ خاصّيةٍ **بلا أقواس** من `at` — بموازنة الأقواس، فتقف عند الفاصلة
-     * التي تفصلها عن أختها أو عند قوس الكائن الحاوي، ولا تبتلع ما بعدها.
+     * قيمةٌ **بلا أقواس** من `at` — بموازنة الأقواس، فتقف عند الفاصلة التي
+     * تفصلها عن أختها أو عند قوس الكائن الحاوي، ولا تبتلع ما بعدها.
      * وبحدٍّ أعلى: قيمةٌ أطولُ من ذلك ليست تعبيراً يُقرأ، والانفلاتُ فيها
      * يجعل الماسحَ يقرأ ملفّاً كاملاً بوصفه «استعلاماً».
      */
@@ -274,34 +286,84 @@ async function main() {
     //  علاقةَ لها بالاستعلام.
     const ARROW_HEAD = /^\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/;
 
+    /**
+     * ما يُقرأ من قيمةٍ تبدأ عند `at`: **جسمُها بأقواس** أو **التعبيرُ نفسُه**.
+     *
+     * **وقاعدةٌ واحدة للطرفين** — قيمةِ `queryFn` وتعريفِ الدالّة المساعِدة —
+     * فلا تنحرف إحداهما عن الأخرى. وأخذُ «أوّلِ `{` بعد التعريف» كان يقرأ
+     * على مساعِدٍ بسهمٍ بلا أقواس (`const h = (id) => apiRequest("POST", …, { id })`)
+     * **كائنَ الحمولة** بدل مُهيّئه، فلا يُمسَح فعلُ الكتابة ولا عنوانُه.
+     */
+    function valueBody(code: string, at: number): { text: string; isBlock: boolean } {
+      const head = ARROW_HEAD.exec(code.slice(at, at + 200));
+      if (head) {
+        const body = at + head[0].length;
+        if (/^\s*\{/.test(code.slice(body, body + 40))) {
+          return { text: blockAt(code, body), isBlock: true };
+        }
+        return { text: expressionAt(code, body), isBlock: false };
+      }
+      //  **ودالّةٌ بكلمة `function`**: قائمةُ معامِلاتها قد تحمل `{` (تفكيكاً
+      //  أو قيمةً افتراضية)، فيُقفَز عنها إلى جسمها لا إلى أوّل قوسٍ يصادَف.
+      if (/^\s*(?:async\s+)?function\b/.test(code.slice(at, at + 40))) {
+        const end = parenEnd(code, at);
+        if (end > 0) return { text: blockAt(code, end), isBlock: true };
+      }
+      //  **وإلّا فتعبير**: إحالةٌ باسمٍ مجرَّد (`fetchUser`) أو نداءٌ
+      //  (`getQueryFn({…})`).
+      return { text: expressionAt(code, at), isBlock: false };
+    }
+
+    /** موضعُ **قيمةِ** تعريفِ `id` في هذا الملفّ — أو `-1` إن لم يُعرَّف فيه. */
+    function definitionAt(code: string, id: string): number {
+      const esc = id.replace(/\$/g, "\\$");
+      const fn = new RegExp(`(?:async\\s+)?function\\s+${esc}\\b`).exec(code);
+      if (fn) return fn.index;
+      //  **وبعد علامةِ الإسناد لا عند `const`** — والنوعُ المكتوب قد يحمل
+      //  `=>`، فعلامتُه ليست إسناداً.
+      const assign = new RegExp(
+        `(?:const|let|var)\\s+${esc}\\b[^;]{0,200}?=(?!=|>)`).exec(code);
+      return assign ? assign.index + assign[0].length : -1;
+    }
+
+    const NOT_A_NAME = new Set(["async", "await", "return", "new", "typeof", "void"]);
+
+    /**
+     * النصُّ المقروء، ومعه نصوصُ ما يُحيل إليه من تعاريف الملفّ نفسِه —
+     * وإلّا بقي ما خلف الاسم بقعةً عمياء.
+     *
+     * **والملاحقةُ عبر التعابير وحدها**: التعبيرُ قصيرٌ وأسماؤه هي ما
+     * ينادِيه فعلاً؛ أمّا **الجسمُ بأقواس فيُقرأ كما هو ولا تُلاحَق أسماؤه**.
+     * وهذا **مقيسٌ لا مُقدَّر**: ملاحقتُها تجرّ معظمَ الوحدة إلى الماسح،
+     * فأنتجت في هذا المستودع النظيف **٩٢ اتّهاماً باطلاً** في تسعة ملفّات
+     * (`Accounting.tsx` وأخواتها) — وحارسٌ يُسقط الحزمةَ بلا مخالفة يُعطَّل
+     * بعد أوّل مرّة فلا يحرس شيئاً. **وحدُّه معلوم**: استعلامٌ بجسمٍ بأقواس
+     * ينادي مساعِداً يكتب لا يُمسَك — وهو حدُّه قبل هذه التمريرة أيضاً، لا
+     * انحدارٌ فيها. و`seen` تمنع الدورانَ بين مساعِدَين يُحيل كلٌّ للآخر.
+     */
+    function collect(
+      code: string, text: string, out: string[], seen: Set<string>, chase: boolean,
+    ) {
+      out.push(text);
+      if (!chase) return;
+      for (const id of text.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+        if (NOT_A_NAME.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        const at = definitionAt(code, id);
+        if (at < 0) continue;
+        const v = valueBody(code, at);
+        if (v.text) collect(code, v.text, out, seen, !v.isBlock);
+      }
+    }
+
     /** كتلُ `queryFn` كلُّها — بجسمٍ بأقواس، أو بتعبير، أو بإحالةٍ باسم. */
     function queryFnBodies(code: string): string[] {
       const out: string[] = [];
       const re = /queryFn\s*:/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(code))) {
-        const at = m.index + m[0].length;
-        const head = ARROW_HEAD.exec(code.slice(at, at + 200));
-        const body = at + (head ? head[0].length : 0);
-        //  **جسمٌ بأقواس** ⟵ يُقرأ كما هو، ولا إحالةَ فيه.
-        if (head && /^\s*\{/.test(code.slice(body, body + 40))) {
-          const block = blockAt(code, body);
-          if (block) { out.push(block); continue; }
-        }
-        //  **وإلّا فتعبير**: سهمٌ بلا أقواس (`() => fetchX(id)`) أو إحالةٌ
-        //  باسمٍ مجرَّد (`fetchUser`) أو نداءٌ (`getQueryFn({…})`). يُقرأ
-        //  التعبيرُ نفسُه — فنداءُ كتابةٍ مكتوبٌ فيه لا يفلت — **وتُحَلّ
-        //  أسماؤه** في الملفّ نفسِه، وإلّا بقي ما خلف الاسم بقعةً عمياء.
-        const expr = expressionAt(code, body);
-        out.push(expr);
-        for (const id of expr.match(/[A-Za-z_$][\w$]*/g) ?? []) {
-          if (["async", "await", "return"].includes(id)) continue;
-          const def = code.search(
-            new RegExp(`(?:async\\s+)?function\\s+${id}\\b|const\\s+${id}\\s*=`));
-          if (def < 0) continue;
-          const block = blockAt(code, def);
-          if (block) out.push(block);
-        }
+        const v = valueBody(code, m.index + m[0].length);
+        if (v.text) collect(code, v.text, out, new Set(), !v.isBlock);
       }
       return out;
     }
@@ -338,16 +400,18 @@ async function main() {
     //   الأشكالُ صراحةً — ومنها الشكلُ الذي كان يفلت: سهمٌ بتعبيرٍ يُحيل
     //   إلى دالّةٍ تكتب، فيُقرأ أوّلُ `{` بعده (كائنُ التسميات هنا) ويُقفَل
     //   بابُ حلِّ الاسم.
-    const fixture = (fn: string) => `
+    const DECLARED = `
       async function helper(id: number) {
         const res = await apiRequest("POST", "/api/__probe__", { id });
         return res.json();
-      }
+      }`;
+    const fixture = (fn: string, helper = DECLARED) => `
+      ${helper}
       useQuery({ queryKey: ["k"], queryFn: ${fn}, enabled: true });
       const SERVICE_LABEL = { prosthetic: "طرف صناعي" };
     `;
-    const caught = (fn: string) =>
-      scan([{ name: "fixture.tsx", code: fixture(fn) }]).offenders.length > 0;
+    const caught = (fn: string, helper?: string) =>
+      scan([{ name: "fixture.tsx", code: fixture(fn, helper) }]).offenders.length > 0;
 
     check("ط٤. **سهمٌ بتعبيرٍ يُحيل إلى دالّةٍ تكتب** — الشكلُ الذي كان يفلت",
       caught("() => helper(id)"));
@@ -360,6 +424,62 @@ async function main() {
       !caught(`() => apiRequest("POST", "/api/ai/chat").then((r) => r.json())`));
     check("ط٩. (ولا قراءةٌ عادية)",
       !caught(`() => apiRequest("GET", "/api/__probe__").then((r) => r.json())`));
+
+    //  ══ **والمساعِدُ يُقرأ من مُهيّئه لا من أوّلِ `{` بعده** ═══════════════
+    //   سهمٌ بلا أقواس يجعل أوّلَ `{` **كائنَ حمولة النداء**، فلا فعلُ
+    //   الكتابة يُمسَح ولا عنوانُه — والحلقةُ تعود من هذا الباب.
+    const ARROW_EXPR = `
+      const helper = (id: number) => apiRequest("POST", "/api/__probe__", { id });`;
+    const ARROW_BARE = `
+      const helper = id => apiRequest("POST", "/api/__probe__", { id });`;
+    const ARROW_BLOCK = `
+      const helper = async (id: number) => {
+        const res = await apiRequest("POST", "/api/__probe__", { id });
+        return res.json();
+      };`;
+    const ARROW_TYPED = `
+      const helper: (id: number) => Promise<unknown> =
+        (id) => apiRequest("POST", "/api/__probe__", { id });`;
+    const CHAINED = `
+      const write = (id: number) => apiRequest("POST", "/api/__probe__", { id });
+      const helper = (id: number) => write(id);`;
+    const DEFAULT_BRACE = `
+      async function helper(id: number, opts = { retry: false }) {
+        const res = await apiRequest("POST", "/api/__probe__", { id, opts });
+        return res.json();
+      }`;
+
+    check("ط١٠. **مساعِدٌ بسهمٍ بلا أقواس** — الشكلُ الذي كان يفلت",
+      caught("() => helper(9)", ARROW_EXPR));
+    check("ط١١. **وبمعامِلٍ عارٍ بلا قوسين**",
+      caught("() => helper(9)", ARROW_BARE));
+    check("ط١٢. **وبنوعٍ مكتوبٍ يحمل `=>`** — فعلامتُه ليست إسناداً",
+      caught("() => helper(9)", ARROW_TYPED));
+    check("ط١٣. **وسلسلةٌ**: تعبيرٌ يُحيل إلى تعبيرٍ يكتب",
+      caught("() => helper(9)", CHAINED));
+    check("ط١٤. (وسهمٌ بجسمٍ بأقواس يبقى ممسوكاً)",
+      caught("() => helper(9)", ARROW_BLOCK));
+    check("ط١٥. (ودالّةٌ مُعلَنة بقيمةٍ افتراضية تحمل `{`)",
+      caught("() => helper(9)", DEFAULT_BRACE));
+    //  ══ **ولا يُتّهم بريء** ══════════════════════════════════════════════
+    //   ملفٌّ فيه استعلامُ قراءةٍ **ودالّةُ كتابةٍ مستقلّة لا ينادِيها** — وهو
+    //   شكلُ معظم شاشات المستودع. ولوحقت أسماءُ الأجسام بأقواس في تجربةٍ
+    //   حيّة فسقطت ط٣ **باثنين وتسعين اتّهاماً باطلاً**، فبقيت الملاحقةُ عبر
+    //   التعابير وحدها.
+    const INNOCENT = `
+      async function saveThing(id: number) {
+        const res = await apiRequest("POST", "/api/__probe__", { id });
+        return res.json();
+      }
+      async function readThing(id: number) {
+        const res = await apiRequest("GET", "/api/__read__/" + id);
+        return res.json();
+      }
+      useQuery({ queryKey: ["k"], queryFn: () => readThing(9), enabled: true });
+      export function useSave() { return useMutation({ mutationFn: saveThing }); }
+    `;
+    check("ط١٦. **ولا يُتّهم بريء**: كتابةٌ مستقلّةٌ في الملفّ لا يُبلَّغ عنها",
+      scan([{ name: "innocent.tsx", code: INNOCENT }]).offenders.length === 0);
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
