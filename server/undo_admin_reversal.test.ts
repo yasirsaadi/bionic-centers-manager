@@ -270,6 +270,49 @@ async function main() {
     "هـ١ · التشغيلُ الثاني يُردّ برسالةٍ صريحة", String(secondErr?.message ?? "لم يُردّ"));
   same("هـ٢ · والبصمةُ لم تتغيّر بعده", await shape(patientId), after);
 
+  // ── و · نقلُ دفعةٍ بين جهازَي المريض نفسِه — لا يتحرّك دينار ────────
+  //  الحاجةُ الحقيقية: أمرُ تصنيعٍ مكرَّر يحمل دفعةً، فلا يُلغى قبل أن
+  //  تُنسَب دفعتُه إلى الجهاز القائم — وإلّا فرض النظامُ استرجاعَ مالٍ
+  //  قُبض فعلاً. ونقطةُ تعديل الدفعة لا تغيّر الجهاز، فلا بابَ إلّا السكربت.
+  const ep2 = await episodes.startDeviceEpisode({
+    patientId, serviceType: "prosthetic", createdBy: MGR, requestedItem: "full_device" as any,
+  });
+  const ep2Id = Number((ep2 as any).id ?? ep2);
+  await q(`UPDATE patient_device_episodes SET status='in_manufacturing' WHERE id=$1`, [ep2Id]);
+
+  const moneyBefore = await shape(patientId);
+  const moveSql = readFileSync("move_payment_between_devices.sql", "utf8")
+    .replace("v_patient_code  text    := 'WB-01982';", `v_patient_code  text    := '${code}';`)
+    .replace("v_from_episode  integer := 257;", `v_from_episode  integer := ${episodeId};`)
+    .replace("v_to_episode    integer := 258;", `v_to_episode    integer := ${ep2Id};`);
+  let moveErr: any = null;
+  try { await pool.query(moveSql); } catch (e: any) { moveErr = e; }
+  check(moveErr === null, "و١ · نُفّذ سكربتُ النقل بلا خطأ", String(moveErr?.message ?? ""));
+
+  const paidOn = async (id: number) => Number((await q<{ s: string }>(
+    `SELECT COALESCE(SUM(amount),0)::int AS s FROM payments WHERE device_episode_id=$1`,
+    [id]))[0]?.s ?? 0);
+  same("و٢ · الجهازُ المصدر صار بلا مدفوع", await paidOn(episodeId), 0);
+  same("و٣ · والمدفوعُ صار على الجهاز الهدف", await paidOn(ep2Id), PAID);
+
+  const moneyAfter = await shape(patientId);
+  same("و٤ · مجموعُ مبالغ الدفعات لم يتغيّر",
+    moneyAfter.pays.map((x: any) => x.amount), moneyBefore.pays.map((x: any) => x.amount));
+  same("و٥ · كلفةُ المريض لم تتغيّر", moneyAfter.total, moneyBefore.total);
+  same("و٦ · قيودُ الدفتر لم تتغيّر", moneyAfter.entries, moneyBefore.entries);
+  same("و٧ · قيودُ اليومية لم تتغيّر", moneyAfter.jl, moneyBefore.jl);
+  const mvAudit = await q(`SELECT COUNT(*)::int AS n FROM audit_log
+      WHERE entity_type='payment' AND notes LIKE 'نقلُ الدفعة%'
+        AND entity_id IN (SELECT id FROM payments WHERE patient_id=$1)`, [patientId]);
+  same("و٨ · سطرُ تدقيقٍ لكلّ دفعة منقولة", Number(mvAudit[0].n), 1);
+
+  //  والتشغيلُ الثاني لا يجد ما ينقل فيُردّ صراحةً بلا كتابة.
+  let moveTwice: any = null;
+  try { await pool.query(moveSql); } catch (e: any) { moveTwice = e; }
+  check(moveTwice !== null && String(moveTwice.message).includes("لا دفعةَ على الجهاز"),
+    "و٩ · التشغيلُ الثاني يُردّ برسالةٍ صريحة", String(moveTwice?.message ?? "لم يُردّ"));
+  same("و١٠ · والبصمةُ لم تتغيّر بعده", (await shape(patientId)).pays, moneyAfter.pays);
+
   await cleanup();
   server.close();
   await pool.end();
