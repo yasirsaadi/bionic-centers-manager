@@ -337,22 +337,59 @@ async function main() {
     const NOT_A_NAME = new Set(["async", "await", "return", "new", "typeof", "void"]);
 
     /**
+     * **وسائطُ النداء التي هي اسمٌ مجرَّدٌ وحدَه** — وهي مواضعُ استدعاءٍ لا
+     * قيمٍ خاملة: `‎.then(saveThing)` و`runIt(saveThing)` يناديان ما مُرِّر
+     * إليهما، فكتابتُه كتابةٌ يفعلها الاستعلام.
+     *
+     * **والوسيطُ يُقرأ على مستوى قائمته وحدها**: `readThing(9, { onDone:
+     * saveThing })` وسيطُه الثاني كائنٌ لا اسم، فيبقى خارجَ الملاحقة كما
+     * كان — والقوسُ الذي لا يسبقه نداءٌ (تجميعُ تعبير) لا يُقرأ قائمةً.
+     */
+    function callbackArguments(text: string): string[] {
+      const out: string[] = [];
+      const push = (arg: string) => {
+        const lone = arg.trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(lone)) out.push(lone);
+      };
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] !== "(") continue;
+        const before = text.slice(0, i).replace(/\s+$/, "").slice(-1);
+        if (!/[\w$)\]]/.test(before)) continue;
+        let depth = 0, start = i + 1;
+        for (let j = i; j < text.length; j++) {
+          const c = text[j];
+          if (c === "(" || c === "[" || c === "{") { depth++; continue; }
+          if (c === ")" || c === "]" || c === "}") {
+            depth--;
+            if (depth === 0) { push(text.slice(start, j)); break; }
+            continue;
+          }
+          if (c === "," && depth === 1) { push(text.slice(start, j)); start = j + 1; }
+        }
+      }
+      return out;
+    }
+
+    /**
      * الأسماءُ التي **تُنادى** في هذا النصّ — لا كلُّ اسمٍ يُذكَر فيه.
      *
-     * فاسمٌ يُمرَّر **قيمةً** (`() => ({ saveThing })` أو
+     * فاسمٌ يُمرَّر **قيمةً خاملة** (`() => ({ saveThing })` أو
      * `() => readThing(9, { onDone: saveThing })`) لا يُنادى هنا، وحلُّه كان
      * يُلصِق بالاستعلام كتابةً لا يفعلها — **اتّهامٌ باطلٌ يُسقط الحزمةَ بلا
      * مخالفة** فيُعطَّل الحارسُ بعد أوّل مرّة (مقيسٌ حيّاً، وهو المبدأ نفسُه
      * الذي ردّ ملاحقةَ الأجسام بأقواس).
      *
-     * **والقيمةُ التي هي اسمٌ مجرَّدٌ وحدَه** (`queryFn: helper`) مُنادَاةٌ
-     * **بحكم موضعها** — تنادِيها مكتبةُ الاستعلام — فتُحَلّ.
+     * **وثلاثةُ مواضعِ نداءٍ لا واحد**: رأسُ النداء (`saveThing(`) ·
+     * **والوسيطُ المجرَّد** (`‎.then(saveThing)` — يناديه المُستقبِل) ·
+     * **والقيمةُ التي هي اسمٌ وحدَه** (`queryFn: helper` — تنادِيها مكتبةُ
+     * الاستعلام بحكم موضعها).
      */
     function calledNames(text: string): string[] {
       const lone = text.trim();
       if (/^[A-Za-z_$][\w$]*$/.test(lone)) return [lone];
-      return (text.match(/[A-Za-z_$][\w$]*\s*\(/g) ?? [])
+      const targets = (text.match(/[A-Za-z_$][\w$]*\s*\(/g) ?? [])
         .map((s) => s.replace(/\s*\($/, ""));
+      return [...targets, ...callbackArguments(text)];
     }
 
     /**
@@ -548,6 +585,56 @@ async function main() {
     check("ط١٩. **ونداءٌ مستثنىً لا يبتلع عنوانَ جاره**",
       offendersOf("neighbour.tsx", NEIGHBOUR).length === 0,
       offendersOf("neighbour.tsx", NEIGHBOUR).join(" · "));
+
+    //  **والوسيطُ المجرَّد يُنادى**: مَن يستقبله يناديه، فكتابتُه كتابةُ
+    //  الاستعلام. وقصرُ الملاحقة على رأس النداء وحده كان يُفلته — والحلقةُ
+    //  تعود صامتة.
+    const THEN_CALLBACK = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      useQuery({
+        queryKey: ["k"],
+        queryFn: () => Promise.resolve().then(saveThing),
+        enabled: true,
+      });
+    `;
+    const PASSED_ARGUMENT = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const runIt = (f: () => Promise<unknown>) => f();
+      useQuery({ queryKey: ["k"], queryFn: () => runIt(saveThing), enabled: true });
+    `;
+    check("ط٢٠. **ووسيطٌ يُنادِيه مُستقبِلُه يُمسَك** — `‎.then(saveThing)`",
+      offendersOf("then.tsx", THEN_CALLBACK).length > 0);
+    check("ط٢٠أ. (والعنوانُ هو عنوانُ ما يكتبه لا غيرُه)",
+      offendersOf("then.tsx", THEN_CALLBACK).length > 0 &&
+      offendersOf("then.tsx", THEN_CALLBACK)
+        .every((o) => o.endsWith("/api/__probe__")),
+      offendersOf("then.tsx", THEN_CALLBACK).join(" · "));
+    check("ط٢١. **وكذلك وسيطٌ مُمرَّرٌ لدالّةٍ تنادِيه**",
+      offendersOf("passed.tsx", PASSED_ARGUMENT).length > 0);
+    check("ط٢١أ. (وشاهدُ عدم الفراغ: الوسيطُ نفسُه في كائنٍ يبقى خاملاً)",
+      offendersOf("inert.tsx",
+        PASSED_ARGUMENT.replace("runIt(saveThing)", "runIt({ saveThing })")).length === 0,
+      offendersOf("inert.tsx",
+        PASSED_ARGUMENT.replace("runIt(saveThing)", "runIt({ saveThing })")).join(" · "));
+
+    //  **والقوسُ الذي لا يسبقه نداءٌ ليس قائمةَ وسائط**: `(row) =>` قائمةُ
+    //  **معامِلات**، والماسحُ بلا نطاقٍ يعرفه — فلولا هذا الشرط لَحُلَّ
+    //  اسمُ المعامِل إلى مساعِدٍ يشاركه الاسمَ في الوحدة، **فيُتَّهم بريء**.
+    const SHADOWED_PARAM = `
+      const row = () => apiRequest("POST", "/api/__probe__");
+      const readRows = () => apiRequest("GET", "/api/__read__");
+      useQuery({
+        queryKey: ["k"],
+        queryFn: () => readRows().then((row) => row),
+        enabled: true,
+      });
+    `;
+    check("ط٢٢. **ومعامِلُ سهمٍ يشارك اسمَ مساعِدٍ يكتب لا يُتَّهم به**",
+      offendersOf("param.tsx", SHADOWED_PARAM).length === 0,
+      offendersOf("param.tsx", SHADOWED_PARAM).join(" · "));
+    check("ط٢٢أ. (وشاهدُ عدم الفراغ: المساعِدُ نفسُه لو مُرِّر وسيطاً لَأُمسِك)",
+      offendersOf("passed2.tsx",
+        SHADOWED_PARAM.replace("then((row) => row)", "then(row)")).length > 0);
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
