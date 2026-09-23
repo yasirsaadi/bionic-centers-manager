@@ -113,6 +113,44 @@ export function invalidateAfterPatientTrashChange(
   client.invalidateQueries({ queryKey: ["/api/patient-trash/count"] });
 }
 
+/**
+ * **مفاتيحُ يتغيّر شكلُ ردّها بتغيّر الصلاحية، ورقمُ المريض داخلَ المفتاح.**
+ *
+ * ══ العطبُ الذي تغلقه (مراجعةٌ آلية على الطلب ٣٨٤) ══════════════════════
+ * `App.tsx` يُبطل عائلاتِ المفاتيح عند تغيّر لقطة الصلاحيات (إصلاحُ
+ * ٢٠٢٦-٠٩-٠٣)، **بقائمةٍ مكتوبةٍ حرفاً**. وذاك يكفي لمفتاحٍ ثابت
+ * (`"/api/patients/registry"`) لأن المطابقةَ بالبادئة تصيب كلّ توليفاته.
+ *
+ * أمّا `GET /api/manufacturing/patient/:id/orders` فمفتاحُه **نصٌّ واحدٌ
+ * يحمل رقمَ المريض في جسمه** (`` [`/api/manufacturing/patient/${id}/orders`] ``)،
+ * فلا بادئةَ تصيبه ولا يعرف `App.tsx` أرقامَ المرضى المخبَّأة أصلاً.
+ * وردُّ تلك النقطة **صار يتبع الصلاحية** (الطلب ٣٨٤): مالُ الجهاز يُحذَف
+ * من الردّ لمن لا يملك `canViewPayments`. فسحبُ الصلاحية وصفحةُ المريض
+ * مفتوحةٌ كان يترك المبلغَ معروضاً من ردٍّ مخبَّأٍ سابق، ومنحُها كان يُبقيه
+ * محجوباً — والخادمُ يبقى الحارسَ الحقيقيّ، لكنّ الشاشةَ تكذب حتى تُعيد
+ * الجلب.
+ *
+ * فالمطابقةُ هنا **بمُسنِدٍ لا ببادئة** — وهو الشيءُ الوحيد الذي يبلغ مفتاحاً
+ * يحمل رقماً في جسمه.
+ */
+export function isPermissionShapedOrdersKey(key: readonly unknown[]): boolean {
+  const first = key[0];
+  return typeof first === "string"
+    && /^\/api\/manufacturing\/patient\/\d+\/orders$/.test(first);
+}
+
+/**
+ * تغيّرت لقطةُ الصلاحيات ⟶ أبطِل كلَّ ما خُبِّئ من `…/orders` **لأيّ مريض**.
+ *
+ * **إبطالٌ لا نزع**: الصفحةُ ما زالت مشروعة، والمطلوبُ إعادةُ جلبٍ بالشكل
+ * الجديد — لا إفراغُ الشاشة.
+ */
+export function invalidatePermissionShapedQueries(client: QueryClient): void {
+  client.invalidateQueries({
+    predicate: (query) => isPermissionShapedOrdersKey(query.queryKey as readonly unknown[]),
+  });
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

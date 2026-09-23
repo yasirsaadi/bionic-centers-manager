@@ -313,6 +313,194 @@ async function main() {
     "و٩ · التشغيلُ الثاني يُردّ برسالةٍ صريحة", String(moveTwice?.message ?? "لم يُردّ"));
   same("و١٠ · والبصمةُ لم تتغيّر بعده", (await shape(patientId)).pays, moneyAfter.pays);
 
+  // ══════════════════════════════════════════════════════════════════
+  //  الأشكالُ التي **لا يجوز أن يُخمَّن فيها** — مراجعةٌ آلية على الطلب ٣٨٤
+  //
+  //  سطرُ التدقيق يحمل **الحالاتِ وحدها**: `orderStatus`/`episodeStatus`/
+  //  `followupStatus`. ولا يحمل `closed_at`/`closed_reason` للمتابعة ولا
+  //  `cancelled_at`/`cancel_reason` للحلقة. والإلغاءُ الإداريّ يكتب فوق
+  //  هذين الزوجين حين يكون الصفُّ مغلقاً/ملغىً **قبله**. فإرجاعُ الحالة
+  //  وتصفيرُ الزوج يُنتج صفّاً يدّعي حالةً بلا وقتها ولا سببها — وذاك
+  //  تزويرٌ لا استعادة. فالسكربتُ يقف، ولا يكتب حرفاً.
+  // ══════════════════════════════════════════════════════════════════
+  /** يبني عمليةً كاملة (طلب ⟶ معاينة ⟶ خبير ⟶ شراء ⟶ أمر) ويُرجع هويّاتِها. */
+  async function buildOperation(suffix: string) {
+    const [{ id: pid }] = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, referral_source, age, height, weight,
+         medical_condition, amputation_site, branch_id, is_amputee, is_medical_support,
+         total_cost, patient_classification)
+       VALUES ($1,'07701234567',$2,'40','172','78','بتر',
+               'احادي - طرف سفلي - يمين - تحت الركبة',1,true,false,0,'past') RETURNING id`,
+      [`${MARK} ${suffix}`, MARK]);
+    await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+             VALUES ($1,1,'prosthetic',0,'manual','active')`, [pid]);
+    const ep = await episodes.startDeviceEpisode({
+      patientId: pid, serviceType: "prosthetic", createdBy: MGR,
+      requestedItem: "full_device" as any,
+    });
+    const epId = Number((ep as any).id ?? ep);
+    const exam = await http("POST", `/api/medical/patients/${pid}/exams`, S.doc, {
+      idempotencyKey: crypto.randomUUID(),
+      caseType: "prosthetic", diagnosis: "بتر تحت الركبة", prescription: {},
+    });
+    await q(`UPDATE post_exam_followups SET approved_price=$2 WHERE medical_exam_id=$1`,
+      [exam.body?.id, PRICE]);
+    const list = await http("GET", `/api/followups/patient/${pid}`, S.admin);
+    const fu = (Array.isArray(list.body) ? list.body : [])[0];
+    await http("POST", `/api/followups/${fu.id}/expert`, S.recv, { expertUserId: EXPERT });
+    await http("POST", `/api/followups/${fu.id}/confirm-purchase`, S.recv, {});
+    const [{ code: pcode }] = await q<{ code: string }>(
+      `SELECT patient_code AS code FROM patients WHERE id=$1`, [pid]);
+    return { pid, epId, fuId: Number(fu.id), examId: Number(exam.body?.id), code: pcode };
+  }
+
+  /** يُنفّذ الإلغاءَ الكامل على متابعةٍ بعينها ويُرجع رقمَ التصحيح. */
+  async function runReversal(fuId: number) {
+    const pv2 = await http("POST", "/api/admin/operation-reversal/preview", S.admin,
+      { followupId: fuId });
+    const ex2 = await http("POST", "/api/admin/operation-reversal/execute", S.admin, {
+      followupId: fuId, intent: "cancel_operation",
+      reasonNote: "خطأُ إدخال", refundAnswer: "no", stateStamp: pv2.body?.stateStamp,
+    });
+    return { status: ex2.status, body: ex2.body, reversalId: Number(ex2.body?.reversalId) };
+  }
+
+  /** نصُّ السكربت مضبوطاً على رمزِ مريضٍ بعينه. */
+  const undoFor = (code: string, operatorLine?: string) => {
+    let t = readFileSync("undo_admin_reversal_apply.sql", "utf8")
+      .replace("v_patient_code  text    := 'WB-01982';",
+        `v_patient_code  text    := '${code}';`);
+    if (operatorLine !== undefined) {
+      t = t.replace("v_operator_id   integer := 0;", operatorLine);
+    }
+    return t;
+  };
+
+  // ── ز · متابعةٌ كانت مغلقةً قبل الإلغاء ⟶ يقف ولا يكتب ─────────────
+  {
+    const op = await buildOperation("متابعة-مغلقة");
+    //  الشكلُ الخطر: أُغلقت المتابعةُ بسببها ووقتها، ثمّ وقع الإلغاءُ فوقها.
+    await q(`UPDATE post_exam_followups
+                SET status='closed_without_purchase', closed_at=NOW() - INTERVAL '2 hours',
+                    closed_reason='other'
+              WHERE id=$1`, [op.fuId]);
+    const rev = await runReversal(op.fuId);
+    check(rev.status === 200, "ز١ · وقع الإلغاءُ فوق متابعةٍ مغلقة", JSON.stringify(rev.body));
+    const [fuBroken] = await q(`SELECT status, closed_reason, closed_at
+        FROM post_exam_followups WHERE id=$1`, [op.fuId]);
+    check(String((fuBroken as any).closed_reason) === "admin_void",
+      "ز٢ · **والإلغاءُ كتب فوق سببِ الإغلاق السابق** — لا شيءَ يُستعاد منه",
+      JSON.stringify(fuBroken));
+    const brokenShape = await shape(op.pid);
+    let err: any = null;
+    try { await pool.query(undoFor(op.code)); } catch (e: any) { err = e; }
+    check(err !== null && String(err.message).includes("كانت مغلقةً أصلاً"),
+      "ز٣ · **السكربت يقف ويقول لماذا**", String(err?.message ?? "لم يقف"));
+    same("ز٤ · **وصفرُ كتابة** — البصمةُ كما كانت بايتاً", await shape(op.pid), brokenShape);
+  }
+
+  // ── ح · حلقةٌ كانت ملغاةً قبل الإلغاء ⟶ يقف ولا يكتب ───────────────
+  {
+    const op = await buildOperation("حلقة-ملغاة");
+    await q(`UPDATE patient_device_episodes
+                SET status='cancelled', cancelled_at=NOW() - INTERVAL '3 hours',
+                    cancel_reason='طلبٌ سُحب بقرارٍ سابق'
+              WHERE id=$1`, [op.epId]);
+    const rev = await runReversal(op.fuId);
+    check(rev.status === 200, "ح١ · وقع الإلغاءُ فوق حلقةٍ ملغاة", JSON.stringify(rev.body));
+    const [epBroken] = await q(`SELECT cancel_reason FROM patient_device_episodes WHERE id=$1`,
+      [op.epId]);
+    check(String((epBroken as any).cancel_reason).startsWith("إلغاء إداري"),
+      "ح٢ · **والإلغاءُ كتب فوق سببِ الإلغاء السابق**", JSON.stringify(epBroken));
+    const brokenShape = await shape(op.pid);
+    let err: any = null;
+    try { await pool.query(undoFor(op.code)); } catch (e: any) { err = e; }
+    check(err !== null && String(err.message).includes("كانت ملغاةً أصلاً"),
+      "ح٣ · **السكربت يقف ويقول لماذا**", String(err?.message ?? "لم يقف"));
+    same("ح٤ · **وصفرُ كتابة** — البصمةُ كما كانت بايتاً", await shape(op.pid), brokenShape);
+  }
+
+  // ── ط · معاينةٌ كانت ملغاةً قبل الإلغاء ⟶ شهادتُها **لا تُحذَف** ────
+  //  الإلغاءُ الإداريّ يتخطّى كتابةَ الشهادة حين تكون المعاينةُ ملغاةً سلفاً،
+  //  فحذفٌ بمطابقة نصّ السبب كان يُعيد سلطةَ معاينةٍ سُحبت قبل الضغطة الخاطئة.
+  {
+    const op = await buildOperation("معاينة-ملغاة");
+    await q(`INSERT INTO medical_exam_cancellations
+               (exam_id, patient_id, branch_id, cancelled_by, cancelled_by_name, reason)
+             VALUES ($1,$2,1,$3,'د. المعاين',$4)`,
+      [op.examId, op.pid, DOC, "إلغاء إداري للعملية — سببٌ سابقٌ تماماً"]);
+    const rev = await runReversal(op.fuId);
+    check(rev.status === 200, "ط١ · وقع الإلغاءُ فوق معاينةٍ ملغاة", JSON.stringify(rev.body));
+    const auditNew = await q<{ nv: string }>(`SELECT new_values AS nv FROM audit_log
+        WHERE entity_type='administrative_operation_reversal' AND entity_id=$1
+        ORDER BY id DESC LIMIT 1`, [rev.reversalId]);
+    same("ط٢ · **والتدقيقُ يقول إنه لم يُنشئ شهادة**",
+      JSON.parse(auditNew[0].nv).examCancelled, null);
+    let err: any = null;
+    try { await pool.query(undoFor(op.code)); } catch (e: any) { err = e; }
+    check(err === null, "ط٣ · التراجعُ يمضي", String(err?.message ?? ""));
+    const cancels = await q(`SELECT exam_id, reason FROM medical_exam_cancellations
+        WHERE patient_id=$1`, [op.pid]);
+    same("ط٤ · **وشهادةُ الإلغاء السابقة باقيةٌ بنصّها**",
+      cancels.map((c: any) => c.reason), ["إلغاء إداري للعملية — سببٌ سابقٌ تماماً"]);
+    const [fuBack] = await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [op.fuId]);
+    same("ط٥ · وبقيّةُ التراجع وقعت كما يجب", (fuBack as any).status, "converted");
+  }
+
+  // ── ي · التراجعُ يُنسَب لمن نفّذه لا لمن أوقع الإلغاء ───────────────
+  {
+    const op = await buildOperation("نسبة-الفعل");
+    const rev = await runReversal(op.fuId);
+    check(rev.status === 200, "ي١ · وقع الإلغاءُ بحساب المسؤول", JSON.stringify(rev.body));
+
+    //  رقمُ حسابٍ لا وجودَ له ⟶ يُردّ قبل أوّل كتابة.
+    const shapeBefore = await shape(op.pid);
+    let badErr: any = null;
+    try {
+      await pool.query(undoFor(op.code, "v_operator_id   integer := 999777;"));
+    } catch (e: any) { badErr = e; }
+    check(badErr !== null && String(badErr.message).includes("لا حسابَ بالرقم"),
+      "ي٢ · **رقمُ منفّذٍ لا وجودَ له يُردّ**", String(badErr?.message ?? "لم يُردّ"));
+    same("ي٣ · **وصفرُ كتابة**", await shape(op.pid), shapeBefore);
+
+    //  وبمنفّذٍ حقيقيّ: التدقيقُ وسجلُّ الأمر يحملانه هو، لا مَن ألغى.
+    let err: any = null;
+    try {
+      await pool.query(undoFor(op.code, `v_operator_id   integer := ${MGR};`));
+    } catch (e: any) { err = e; }
+    check(err === null, "ي٤ · التراجعُ بمنفّذٍ صريح", String(err?.message ?? ""));
+    const [au] = await q<{ uid: number; uname: string; nv: string }>(
+      `SELECT user_id AS uid, user_name AS uname, new_values AS nv FROM audit_log
+        WHERE entity_type='administrative_operation_reversal' AND entity_id=$1
+          AND action='delete' ORDER BY id DESC LIMIT 1`, [rev.reversalId]);
+    same("ي٥ · **سطرُ التدقيق يحمل رقمَ المنفّذ**", Number(au.uid), MGR);
+    check(String(au.uname) === "مدير الفرع",
+      "ي٦ · وباسمه هو لا باسم مَن ألغى", String(au.uname));
+    same("ي٧ · ويُسمّى مَن أوقع الإلغاءَ الأصليّ صراحةً",
+      JSON.parse(au.nv).originalReversalBy, "المسؤول");
+    const [hist] = await q<{ pb: number; notes: string }>(
+      `SELECT performed_by AS pb, notes FROM prosthetic_work_history
+        WHERE notes LIKE 'تراجُع إداري عن الإلغاء%' ORDER BY id DESC LIMIT 1`);
+    same("ي٨ · **وسجلُّ الأمر ينسبه للمنفّذ**", Number(hist.pb), MGR);
+    check(String(hist.notes).includes("نفّذه: مدير الفرع"),
+      "ي٩ · ويقول اسمَه في السطر", String(hist.notes));
+
+    //  وبلا رقمٍ (تنفيذٌ من Console): لا يُنسَب لأحدٍ كذباً.
+    const op2 = await buildOperation("بلا-منفّذ");
+    const rev2 = await runReversal(op2.fuId);
+    check(rev2.status === 200, "ي١٠ · عمليةٌ ثانية أُلغيت", JSON.stringify(rev2.body));
+    let err2: any = null;
+    try { await pool.query(undoFor(op2.code)); } catch (e: any) { err2 = e; }
+    check(err2 === null, "ي١١ · التراجعُ بلا رقمِ منفّذ", String(err2?.message ?? ""));
+    const [au2] = await q<{ uid: number | null; uname: string }>(
+      `SELECT user_id AS uid, user_name AS uname FROM audit_log
+        WHERE entity_type='administrative_operation_reversal' AND entity_id=$1
+          AND action='delete' ORDER BY id DESC LIMIT 1`, [rev2.reversalId]);
+    same("ي١٢ · **لا رقمَ مستخدمٍ يُلفَّق**", au2.uid, null);
+    check(String(au2.uname).includes("تدخّلٌ يدويّ"),
+      "ي١٣ · والاسمُ يقول إنه تدخّلٌ يدويّ", String(au2.uname));
+  }
+
   await cleanup();
   server.close();
   await pool.end();

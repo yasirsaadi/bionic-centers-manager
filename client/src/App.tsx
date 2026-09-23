@@ -1,5 +1,5 @@
 import { Switch, Route, Redirect } from "wouter";
-import { queryClient } from "./lib/queryClient";
+import { queryClient, invalidatePermissionShapedQueries } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -210,6 +210,13 @@ function Router() {
         //  نصّية لـ`"/api/patients"`) — يغطّي `GET /api/patients/:id` نفسَها
         //  و`GET /api/patients/:id/cases` معاً (`PatientDetails.tsx` سطر ١٩٢).
         queryClient.invalidateQueries({ queryKey: ["/api/patients/:id"] });
+        //  ومفتاحٌ يحمل رقمَ المريض في **جسمه** لا في عنصرٍ تالٍ:
+        //  `` [`/api/manufacturing/patient/${id}/orders`] ``. لا بادئةَ تصيبه،
+        //  ولا نعرف هنا أرقامَ المرضى المخبَّأة — فيُبطَل بمُسنِدٍ لا بمفتاح
+        //  (`invalidatePermissionShapedQueries`). وردُّ تلك النقطة يحذف مالَ
+        //  الجهاز عمّن لا يملك `canViewPayments` (الطلب ٣٨٤)، فسحبُ الصلاحية
+        //  وصفحةُ المريض مفتوحةٌ كان يُبقي المبلغَ معروضاً من ردٍّ مخبَّأ.
+        invalidatePermissionShapedQueries(queryClient);
       }
       //  ٢) تقارير/إحصاءات: نفسُ الأبواب الأربعة المحروسة بـ`canViewReports`
       //  زائداً البابَ الخامسَ المشترك مع المحاسبة (القسم ط أعلاه).
