@@ -243,6 +243,9 @@ function saleAmountOf(op: ResolvedOperation): number {
  *
  * **وفي البيانات السليمة لا يفعل شيئاً**: البيعُ أضاف `sale` إلى الاثنين،
  * فكلاهما ≥ `sale` ولا يبيت الحدُّ إلّا حيث وقع تخفيضٌ فعلاً.
+ *
+ * **وحدٌّ ثالثٌ معهما — أرضيّةُ الأجهزة الباقية**: لا تنزل الدفاتر تحت مجموع
+ * ما تحمله للأجهزة الحيّة الأخرى. والتفصيلُ في جسم الدالّة.
  */
 async function standingCostOf(
   h: { execute: (q: any) => Promise<any> },
@@ -255,7 +258,67 @@ async function standingCostOf(
     ? sql`SELECT total_cost FROM patients WHERE id = ${op.patientId} FOR UPDATE`
     : sql`SELECT total_cost FROM patients WHERE id = ${op.patientId}`);
   const total = Number((p.rows ?? [])[0]?.total_cost ?? 0);
-  let bound = Number.isFinite(total) ? total : 0;
+
+  // ══ **أرضيّةُ الأجهزة الباقية — لا يُسحب مالُ جهازٍ لم يُلغَ** ═══════════
+  //  الحدُّ أعلاه يسأل «كم على دفاتر المريض؟» ولا يسأل «كم وضع هذا الجهاز
+  //  بعينه؟» — وهما سؤالان مختلفان لمريضٍ بجهازين. بِيع كلٌّ منهما بـ٢,٧٠٠,٠٠٠
+  //  فصار المجموعُ ٥,٤٠٠,٠٠٠، ثمّ خفّضه المسؤولُ يدوياً إلى ٢,٧٠٠,٠٠٠ لأن
+  //  أحدهما مكرَّر. فصارت الدفاتر تحمل **جهازاً واحداً**، والحدُّ القديم يقرؤها
+  //  «كلَّها لهذا الجهاز» فيعكسها كاملةً: المجموعُ صفرٌ، والمريضُ يقرأ رصيداً
+  //  بمقدار ما دفع، **والجهازُ الحيُّ قيد التصنيع بلا كلفةٍ على الدفاتر**.
+  //  (وقع على الملفّ WB-01982 وأُمسك قبل التأكيد — ٢٠٢٦-٠٩-٢٣.)
+  //
+  //  **فالقاعدة: لا تنزل الدفاتر تحت ما تحمله للأجهزة الحيّة الباقية.**
+  //
+  //  ══ **والقياسُ من الدفتر لا من سعر البيع** ═══════════════════════════
+  //  `agreed_cost` سعرُ بيعٍ على الحلقة، و**ليس دليلاً على أن مبلغاً قُيِّد**:
+  //  ترحيلا ٠٥٠ و٠٦٣ ملآ حلقاتٍ تاريخية بأسعارها **بلا مسِّ `total_cost` ولا
+  //  كلفةِ الخيط** بنصِّهما. فمريضٌ عائدٌ بجهازٍ قديمٍ مسلَّم كانت أرضيّةٌ
+  //  مبنيّةٌ على السعر تُلغي تصحيحَ جهازه الجديد كلَّه — عطبٌ أسوأُ من الأوّل،
+  //  أمسكه الاختبارُ الحيّ قبل الدمج.
+  //
+  //  فالأرضيّةُ **مجموعُ ما قيّده كلُّ جهازٍ باقٍ في `cost_entries`** — أثرٌ
+  //  مكتوبٌ لا استنتاج (`device_episode_id` يكتبه `applyDeviceSaleFinancialsTx`
+  //  لكلّ بيعِ جهازٍ حيّ). وصافياً لا موجباً فقط، فتصحيحُ سعرٍ لاحقٌ منسوبٌ
+  //  إلى جهازه يُنقص أرضيّتَه. و`GREATEST(0, …)` لكلّ جهازٍ على حدة كي لا
+  //  يوسّع صافٍ سالبٌ شاذٌّ أرضيّةَ غيره.
+  //
+  //  **وما لا أثرَ له في الدفتر لا أرضيّةَ له** — الحدُّ القديم (الدفاتر
+  //  كلُّها) يبقى حارسَه كما كان، ولا يُخمَّن له نصيب.
+  //
+  //  **والباقي هو المُباعُ الحيُّ وحده**: `in_manufacturing` و`delivered` — فما
+  //  دون البيع لم يُقيَّد له شيءٌ أصلاً، والمُبطَلُ إدارياً عُكست كلفتُه سلفاً
+  //  (وقيدُه المعاكس منسوبٌ إليه فيصفّر صافيه) فلا تُحسَب له أرضيّةٌ ثانية.
+  //  **وبلا هويّةِ حلقةٍ** (الموروثُ) تُحسَب الأجهزةُ الباقية كلُّها أرضيّةً —
+  //  وهو الصدق: لا قيدَ في الدفتر منسوبٌ إلى هذه العملية بعينها.
+  //
+  //  **وبلا قفلٍ جديد ولا ترتيبٍ ثانٍ**: قراءةٌ **بعد** قفل صفّ المريض، فبيعٌ
+  //  متزامن إمّا التزم قبله فيُرى في الطرفين، أو يقف عليه فلا يُرى في أيّهما.
+  //  **والانحرافُ بين المعاينة والتنفيذ يحرسه الختمُ نفسُه** (`stampOf` يحمل
+  //  المقدار)، فطلبٌ بائتٌ يُردّ ٤٠٩ بلا كتابةِ حرف.
+  const surv = await h.execute(sql`
+    SELECT
+      COALESCE(SUM(net), 0)::int AS all_threads,
+      COALESCE(SUM(net) FILTER (WHERE case_id = ${op.caseId ?? -1}), 0)::int
+        AS same_case
+      FROM (
+        SELECT e.id, e.case_id,
+               GREATEST(0, COALESCE(SUM(ce.amount), 0))::int AS net
+          FROM patient_device_episodes e
+          LEFT JOIN cost_entries ce ON ce.device_episode_id = e.id
+         WHERE e.patient_id = ${op.patientId}
+           AND e.id IS DISTINCT FROM ${op.deviceEpisodeId}
+           AND e.status IN ('in_manufacturing', 'delivered')
+           AND e.admin_void_reversal_id IS NULL
+         GROUP BY e.id, e.case_id
+      ) t
+  `);
+  const survRow = (surv.rows ?? [])[0] as any;
+  const survAll = Number(survRow?.all_threads ?? 0);
+  const survCase = Number(survRow?.same_case ?? 0);
+
+  let bound = (Number.isFinite(total) ? total : 0)
+    - (Number.isFinite(survAll) ? survAll : 0);
   if (op.caseId !== null) {
     //  **وترتيبُ القفل كترتيب الكتابة القائم**: صفُّ المريض أوّلاً ثمّ صفُّ
     //  الخيط — وهو بعينه ترتيبُ `UPDATE`ين في ⑤. فلا قفلَ جديدٌ يعكس ترتيباً.
@@ -265,7 +328,8 @@ async function standingCostOf(
     const caseRow = (c.rows ?? [])[0];
     if (caseRow) {
       const caseCost = Number(caseRow.cost ?? 0);
-      bound = Math.min(bound, Number.isFinite(caseCost) ? caseCost : 0);
+      bound = Math.min(bound, (Number.isFinite(caseCost) ? caseCost : 0)
+        - (Number.isFinite(survCase) ? survCase : 0));
     }
   }
   return Math.max(0, Math.min(sale, bound));

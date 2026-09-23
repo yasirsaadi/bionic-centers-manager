@@ -1474,6 +1474,198 @@ async function main() {
         && /setLocation\(`\/patients\/\$\{patient\.id\}\/edit/.test(launcher),
       "٨٤-ج. **والموزِّعُ يحفظ ويفتح شاشةَ التعديل القائمة ثمّ يستأنف**", "");
     }
+
+    // ══ (ص) **أرضيّةُ الأجهزة الباقية** — لا يُسحب مالُ جهازٍ لم يُلغَ ═══════
+    //  الحدُّ القديم كان يسأل «كم على دفاتر المريض؟» لا «كم وضع هذا الجهاز
+    //  بعينه؟». ومريضٌ بجهازين خفّض المسؤولُ دفاترَه يدوياً يجعل السؤالين
+    //  مختلفين — فيعكس التصحيحُ مالَ الجهاز **الباقي** ويُنتج رصيداً لم يقع.
+    {
+      /** يبيع جهازاً ثانياً على المريض نفسِه بالمسار الحقيقيّ كاملاً. */
+      async function sellAnother(patientId: number, price: number) {
+        const ep = await episodes.startDeviceEpisode({
+          patientId, serviceType: "prosthetic", createdBy: MGR,
+          requestedItem: "full_device" as any,
+        });
+        const episodeId = Number((ep as any).id ?? ep);
+        //  والحلقةُ الأولى صارت `in_manufacturing`، فالمنتظِرةُ واحدةٌ لا
+        //  التباسَ فيها (§٤.p) — والتوقيعُ يصيبها بلا معرّفٍ صريح.
+        await signExam(patientId, price, S.doc);
+        const [f2] = await q<{ id: number }>(
+          `SELECT id FROM post_exam_followups WHERE device_episode_id=$1
+            ORDER BY id DESC LIMIT 1`, [episodeId]);
+        await http("POST", `/api/followups/${f2.id}/expert`, S.recv,
+          { expertUserId: EXPERT });
+        await http("POST", `/api/followups/${f2.id}/confirm-purchase`, S.recv, {});
+        const [wo] = await q<{ id: number }>(
+          `SELECT id FROM prosthetic_work_orders WHERE device_episode_id=$1
+            ORDER BY id DESC LIMIT 1`, [episodeId]);
+        return { episodeId, followupId: Number(f2.id), workOrderId: Number(wo?.id ?? 0) };
+      }
+      const revEntries = (s: any) =>
+        s.entries.filter((e: any) => e.source === "administrative_reversal");
+
+      // ── ص١. **البيانات السليمة — الحدُّ لا يفعل شيئاً** ────────────────
+      {
+        const a = await soldOperation("أرضيّة-سليم", 2_700_000);
+        const b = await sellAnother(a.patientId, 2_700_000);
+        const before = await shape(a.patientId);
+        same("ص١. بيعان سليمان ⟵ الدفاتر تحمل الجهازين",
+          [before.total, before.caseCost], [5_400_000, 5_400_000]);
+
+        const pv = await preview({ workOrderId: a.workOrderId });
+        same("ص٢. والمعاينةُ تعكس سعرَ هذا الجهاز وحده",
+          pv.body?.financialDelta, -2_700_000);
+
+        const r = await execute({
+          workOrderId: a.workOrderId, intent: "work_order_mistake",
+          reasonNote: "مكرر", stateStamp: pv.body?.stateStamp,
+        });
+        same("ص٣. والتنفيذُ يمضي", r.status, 200);
+        const after = await shape(a.patientId);
+        same("ص٤. فتبقى للجهاز الباقي كلفتُه كاملةً",
+          [after.total, after.caseCost], [2_700_000, 2_700_000]);
+        const bEp = after.eps.find((e: any) => e.id === b.episodeId);
+        same("ص٥. والجهازُ الباقي لم يُمَسّ",
+          [bEp?.status, bEp?.cost, bEp?.admin_void_reversal_id],
+          ["in_manufacturing", 2_700_000, null]);
+        const bWo = after.wos.find((w: any) => w.id === b.workOrderId);
+        check(bWo?.admin_void_reversal_id === null,
+          "ص٦. وأمرُه قائمٌ لم يُبطَل", JSON.stringify(bWo));
+        same("ص٧. وقيدٌ معاكسٌ واحدٌ بمقدار الجهاز الملغى",
+          revEntries(after).map((e: any) => e.amount), [-2_700_000]);
+      }
+
+      // ── ص٢. **شكلُ الملفّ WB-01982 — الدفاتر قصيرةٌ سلفاً ⟶ صفر** ──────
+      //  بيعان بـ٢,٧٠٠,٠٠٠ لكلٍّ، ثمّ خفّض المسؤولُ كلفةَ الخيط يدوياً إلى
+      //  ٢,٧٠٠,٠٠٠ لأن أحدهما مكرَّر — فصار مالُ المكرَّر خارج الدفاتر سلفاً.
+      {
+        const a = await soldOperation("أرضيّة-مكرر", 2_700_000);
+        const b = await sellAnother(a.patientId, 2_700_000);
+        await q(`INSERT INTO payments (patient_id, branch_id, amount, device_episode_id, notes)
+                 VALUES ($1, 1, 2000000, $2, $3)`,
+        [a.patientId, b.episodeId, `${MARK} دفعة على الجهاز الباقي`]);
+
+        const edit = await http("PATCH",
+          `/api/patients/${a.patientId}/cases/${a.caseId}`, S.admin, { cost: 2_700_000 });
+        same("ص٨. تخفيضُ كلفة الخيط يمضي من بابه", edit.status, 200);
+        const mid = await shape(a.patientId);
+        same("ص٩. فالدفاتر تحمل جهازاً واحداً بينما الجهازان حيّان",
+          [mid.total, mid.caseCost,
+            mid.entries.reduce((s: number, e: any) => s + e.amount, 0)],
+          [2_700_000, 2_700_000, 2_700_000]);
+
+        const pv = await preview({ workOrderId: a.workOrderId });
+        same("ص١٠. **فالمعاينةُ تعكس صفراً** — مالُ المكرَّر خرج سلفاً",
+          pv.body?.financialDelta, 0);
+        check(!(pv.body?.summary?.full_operation ?? [])
+          .some((l: any) => String(l.text).includes("عكس كلفة")),
+        "ص١١. ولا سطرَ «عكس كلفة» في الملخّص",
+        JSON.stringify(pv.body?.summary?.full_operation));
+        same("ص١٢. ولا سؤالَ إرجاعٍ — المدفوعُ على المكرَّر صفر",
+          pv.body?.paidAmount, 0);
+
+        const r = await execute({
+          workOrderId: a.workOrderId, intent: "work_order_mistake",
+          reasonNote: "مكرر", stateStamp: pv.body?.stateStamp,
+        });
+        same("ص١٣. والإلغاءُ يمضي — العمليةُ تُلغى والمالُ لا يتحرّك", r.status, 200);
+
+        const after = await shape(a.patientId);
+        same("ص١٤. **فالدفاتر كما هي بالضبط**",
+          [after.total, after.caseCost], [2_700_000, 2_700_000]);
+        same("ص١٥. ولا قيدَ معاكسٌ يُكتب أصلاً", revEntries(after).length, 0);
+        same("ص١٦. وصفُّ التصحيح يقول صفراً بصدق",
+          after.revs.map((x: any) => [x.mode, x.delta]),
+          [["full_operation", 0]]);
+        const aEp = after.eps.find((e: any) => e.id === a.episodeId);
+        check(aEp?.status === "cancelled" || aEp?.admin_void_reversal_id !== null,
+          "ص١٧. والمكرَّرُ أُلغي فعلاً", JSON.stringify(aEp));
+        const bEp = after.eps.find((e: any) => e.id === b.episodeId);
+        same("ص١٨. والجهازُ الباقي مطابقٌ بايتاً",
+          [bEp?.status, bEp?.cost, bEp?.admin_void_reversal_id],
+          ["in_manufacturing", 2_700_000, null]);
+        same("ص١٩. والدفعةُ لم تُمَسّ", after.pays.map((p: any) => p.amount), [2_000_000]);
+        //  والقراءةُ التي يراها المالك: كلفة ٢,٧٠٠,٠٠٠ · مدفوع ٢,٠٠٠,٠٠٠
+        //  · متبقٍّ ٧٠٠,٠٠٠ — لا رصيدٌ للمريض.
+        same("ص٢٠. فيقرأ الملفُّ متبقّياً ٧٠٠,٠٠٠ لا رصيداً",
+          after.total - after.pays.reduce((s: number, p: any) => s + p.amount, 0), 700_000);
+      }
+
+      // ── ص٣. **جهازٌ واحد — بلا تضييقٍ على السليم** ─────────────────────
+      {
+        const c = await soldOperation("أرضيّة-واحد", 1_000_000);
+        const pv = await preview({ workOrderId: c.workOrderId });
+        same("ص٢١. جهازٌ وحيدٌ يُعكَس كاملاً كما كان",
+          pv.body?.financialDelta, -1_000_000);
+        same("ص٢٢. والتنفيذُ يمضي", (await execute({
+          workOrderId: c.workOrderId, intent: "work_order_mistake",
+          reasonNote: "خطأ", stateStamp: pv.body?.stateStamp,
+        })).status, 200);
+        const after = await shape(c.patientId);
+        same("ص٢٣. فتصير دفاترُه صفراً", [after.total, after.caseCost], [0, 0]);
+      }
+
+      // ── ص٤. **أرضيّةٌ على مستوى المريض لا الخيط وحده** ─────────────────
+      //  تخفيضُ مجموع المريض وحده (من «تعديل مريض») يترك كلفةَ الخيط أعلى —
+      //  فالحدُّ الخيطيُّ لا يبيت، ولا يمسك العطبَ إلّا الحدُّ المريضيّ.
+      {
+        const a = await soldOperation("أرضيّة-مجموع", 2_700_000);
+        const b = await sellAnother(a.patientId, 2_700_000);
+        //  وخيطٌ ثانٍ كي لا تُزامِن «تعديل مريض» كلفةَ الخيط الوحيد مع
+        //  المجموع — فيبقى المجموعُ أقلَّ منها، وهو الشكلُ المقصود هنا.
+        await mkCase(a.patientId, 1, "physiotherapy");
+        const edit = await http("PUT", `/api/patients/${a.patientId}`, S.admin,
+          { totalCost: 2_700_000 });
+        same("ص٢٤. تخفيضُ مجموع المريض وحده يمضي", edit.status, 200);
+        const mid = await shape(a.patientId);
+        same("ص٢٥. فالمجموعُ أقلُّ من كلفة الخيط",
+          [mid.total, mid.caseCost], [2_700_000, 5_400_000]);
+        const pv = await preview({ workOrderId: a.workOrderId });
+        same("ص٢٦. **والمعاينةُ تعكس صفراً** — الحدُّ المريضيُّ وحدَه يمسكها",
+          pv.body?.financialDelta, 0);
+        same("ص٢٧. والتنفيذُ يمضي بلا مال", (await execute({
+          workOrderId: a.workOrderId, intent: "work_order_mistake",
+          reasonNote: "مكرر", stateStamp: pv.body?.stateStamp,
+        })).status, 200);
+        const after = await shape(a.patientId);
+        same("ص٢٨. فيبقى المجموعُ كما هو", after.total, 2_700_000);
+        const bEp = after.eps.find((e: any) => e.id === b.episodeId);
+        same("ص٢٩. والجهازُ الباقي لم يُمَسّ",
+          [bEp?.status, bEp?.cost], ["in_manufacturing", 2_700_000]);
+      }
+
+      // ── ص٥. **وأرضيّةُ الخيط لا تُغني عنها أرضيّةُ المريض** ────────────
+      //  خيطٌ ثانٍ بمالٍ حقيقيّ (علاجٌ طبيعي) يجعل مجموعَ المريض واسعاً بينما
+      //  خيطُ الأجهزة قصيرٌ سلفاً. فالحدُّ المريضيُّ لا يبيت، ولولا الحدُّ
+      //  الخيطيُّ لسحب التصحيحُ مالَ العلاج الطبيعي وترك الجهازَ الباقي مكشوفاً.
+      {
+        const a = await soldOperation("أرضيّة-خيطان", 2_700_000);
+        const b = await sellAnother(a.patientId, 2_700_000);
+        const physioCaseId = await mkCase(a.patientId, 1, "physiotherapy");
+        same("ص٣٠. تسعيرُ خيط العلاج الطبيعي يمضي", (await http("PATCH",
+          `/api/patients/${a.patientId}/cases/${physioCaseId}`, S.admin,
+          { cost: 3_000_000 })).status, 200);
+        same("ص٣١. وتخفيضُ خيط الأجهزة يمضي", (await http("PATCH",
+          `/api/patients/${a.patientId}/cases/${a.caseId}`, S.admin,
+          { cost: 2_700_000 })).status, 200);
+        const mid = await shape(a.patientId);
+        same("ص٣٢. فالمجموعُ واسعٌ وخيطُ الأجهزة قصير",
+          [mid.total, mid.caseCost], [5_700_000, 2_700_000]);
+        const pv = await preview({ workOrderId: a.workOrderId });
+        same("ص٣٣. **والمعاينةُ تعكس صفراً** — الحدُّ الخيطيُّ وحدَه يمسكها",
+          pv.body?.financialDelta, 0);
+        same("ص٣٤. والتنفيذُ يمضي بلا مال", (await execute({
+          workOrderId: a.workOrderId, intent: "work_order_mistake",
+          reasonNote: "مكرر", stateStamp: pv.body?.stateStamp,
+        })).status, 200);
+        const after = await shape(a.patientId);
+        same("ص٣٥. فلا مالَ تحرّك — لا للعلاج الطبيعي ولا للأجهزة",
+          [after.total, after.caseCost], [5_700_000, 2_700_000]);
+        const bEp2 = after.eps.find((e: any) => e.id === b.episodeId);
+        same("ص٣٦. والجهازُ الباقي مكسوٌّ بكلفته",
+          [bEp2?.status, bEp2?.cost], ["in_manufacturing", 2_700_000]);
+      }
+    }
   } finally {
     server.close();
     await cleanup();
