@@ -1665,6 +1665,28 @@ async function main() {
         same("ص٣٦. والجهازُ الباقي مكسوٌّ بكلفته",
           [bEp2?.status, bEp2?.cost], ["in_manufacturing", 2_700_000]);
       }
+
+      // ── ص٦. **والقراءةُ تمرّ بفهرسٍ لا بمسحِ الدفتر كلِّه** ─────────────
+      //  `cost_entries` بلا فهرسٍ على `device_episode_id`، فوصلٌ به وحده
+      //  يمسح الدفترَ كلَّه في كلّ معاينةٍ وكلّ تنفيذ. وقيدُ المريض على
+      //  الوصل يفتح `idx_cost_entries_patient` — ولا يغيّر الناتجَ بحرف،
+      //  لأن القيدَ المركَّب يضمن أن مريضَ القيد هو مريضُ حلقته.
+      {
+        const src = readFileSync("server/admin_reversal/store.ts", "utf8");
+        const join = src.split("LEFT JOIN cost_entries")[1]?.split("WHERE")[0] ?? "";
+        check(/ce\.patient_id\s*=\s*\$\{op\.patientId\}/.test(join),
+          "ص٣٧. **وصلُ الدفتر مقيَّدٌ بالمريض** — فيُخدَم بفهرسه القائم", join.trim());
+        check(!/\bWHERE[\s\S]*ce\.patient_id/.test(src.split("LEFT JOIN cost_entries")[1]
+          ?.split("GROUP BY")[0] ?? ""),
+        "ص٣٨. **وموضعُه `ON` لا `WHERE`** — وإلّا انقلب الوصلُ داخلياً"
+          + " فسقطت حلقةٌ بلا قيد", "");
+        const [fk] = await q<{ ok: boolean }>(
+          `SELECT convalidated AS ok FROM pg_constraint
+            WHERE conname = 'cost_entries_patient_episode_fk'`);
+        check(fk?.ok === true,
+          "ص٣٩. **والقيدُ المركَّب مُتحقَّقٌ منه** — فالشرطُ صادقٌ أصلاً لا يضيّق",
+          JSON.stringify(fk));
+      }
     }
   } finally {
     server.close();

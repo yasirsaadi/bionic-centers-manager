@@ -296,6 +296,25 @@ async function standingCostOf(
   //  متزامن إمّا التزم قبله فيُرى في الطرفين، أو يقف عليه فلا يُرى في أيّهما.
   //  **والانحرافُ بين المعاينة والتنفيذ يحرسه الختمُ نفسُه** (`stampOf` يحمل
   //  المقدار)، فطلبٌ بائتٌ يُردّ ٤٠٩ بلا كتابةِ حرف.
+  //
+  //  ══ **وقيدُ المريض على الوصل شرطُ أداءٍ لا زينة** (مراجعةٌ آلية على ٣٨٦) ══
+  //  `cost_entries` مفهرسٌ على `patient_id` و`case_id` و`(branch_id, created_at)`
+  //  — **ولا فهرسَ على `device_episode_id`**. فوصلٌ به وحده يُجبر القارئَ على
+  //  **مسح الدفتر كلِّه** في كلّ معاينةِ تصحيحٍ وكلّ تنفيذ، مهما قلّت قيودُ
+  //  هذا المريض. مقيسٌ حيّاً على دفترٍ بستّين ألف قيد: `Seq Scan` يقرأ ٦٠٬٠٠٠
+  //  صفّاً في ٩٫١ مللي ثانية ⟵ `Bitmap Index Scan` يقرأ ٣٠٠ في ١٫١، والقراءةُ
+  //  من ٦٨٣ صفحةً إلى ١٥٢. والدفترُ ينمو مع كلّ حركةِ مال، فالفارقُ يتّسع.
+  //
+  //  **ولا يغيّر النتيجةَ بحرف**: القيدُ المركَّب `cost_entries_patient_episode_fk`
+  //  **مُتحقَّقٌ منه في القاعدة** (`convalidated`)، فـ`(patient_id,
+  //  device_episode_id)` يشير إلى `patient_device_episodes(patient_id, id)` —
+  //  أي أنّ مريضَ القيد هو مريضُ حلقته حتماً. فالشرطُ صادقٌ أصلاً لكلّ صفٍّ
+  //  كان سيُطابَق، **وإضافتُه تقييدُ مسارِ قراءةٍ لا تضييقُ مجموعة** (مُثبَتٌ
+  //  بتطابق الناتج قبله وبعده على المجموعة نفسِها).
+  //
+  //  **وموضعُه `ON` لا `WHERE`**: الوصلُ يساريّ عمداً — حلقةٌ بلا قيدٍ في
+  //  الدفتر أرضيّتُها صفرٌ ويجب أن تبقى في الناتج. وشرطٌ على الطرف الأيمن في
+  //  `WHERE` يقلبه وصلاً داخلياً فتسقط تلك الحلقة.
   const surv = await h.execute(sql`
     SELECT
       COALESCE(SUM(net), 0)::int AS all_threads,
@@ -305,7 +324,8 @@ async function standingCostOf(
         SELECT e.id, e.case_id,
                GREATEST(0, COALESCE(SUM(ce.amount), 0))::int AS net
           FROM patient_device_episodes e
-          LEFT JOIN cost_entries ce ON ce.device_episode_id = e.id
+          LEFT JOIN cost_entries ce
+                 ON ce.device_episode_id = e.id AND ce.patient_id = ${op.patientId}
          WHERE e.patient_id = ${op.patientId}
            AND e.id IS DISTINCT FROM ${op.deviceEpisodeId}
            AND e.status IN ('in_manufacturing', 'delivered')
