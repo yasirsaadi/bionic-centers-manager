@@ -44,6 +44,7 @@
     "test:episode-integration": "tsx server/device_episode_integration.test.ts",
     "test:migration-051": "tsx server/migration_051.test.ts",
     "test:maintenance-concurrent": "tsx server/maintenance_concurrent.test.ts",
+    "test:undo-admin-reversal": "tsx server/undo_admin_reversal.test.ts",
     "test:manufacturing-share": "tsx server/manufacturing/branch_share_visibility.test.ts",
     "test:maintenance-warranty": "tsx server/maintenance_warranty_similar.test.ts",
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
