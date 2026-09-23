@@ -89,6 +89,7 @@
     "test:money-input": "tsx client/src/components/money_input.test.ts",
     "test:patient-cache": "tsx client/src/lib/patient_cache.test.ts",
     "test:permission-cache": "tsx client/src/lib/permission_cache.test.ts",
+    "test:live-refresh": "tsx client/src/lib/live_refresh.test.ts",
     "test:parts": "tsx shared/prosthetic_parts.test.ts",
     "test:patient-required": "tsx shared/patient_required.test.ts",
     "test:pay-attribution": "tsx client/src/components/payment_attribution.test.ts",
