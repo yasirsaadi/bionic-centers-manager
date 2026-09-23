@@ -357,28 +357,52 @@ async function main() {
     const NOT_A_NAME = new Set(["async", "await", "return", "new", "typeof", "void"]);
 
     //  **ما يُنادي ما يُمرَّر إليه بحكم عقده** — لا يُقرأ من ملفٍّ لأنه ليس
-    //  فيه: طرائقُ الوعد والمصفوفة، ومؤقّتاتُ المتصفّح.
+    //  فيه: طرائقُ الوعد والمصفوفة، والواجهاتُ الساكنة، ومؤقّتاتُ المتصفّح.
     //
     //  **ومجموعةٌ مغلقة على الصنف كلِّه لا على ما صادفنا منه**: نقصانُ طريقةٍ
     //  واحدة يفتح مخرجاً صامتاً (`rows.findLast(saveThing)` كان يفلت).
     //  فتُعدُّ الطرائقُ المعياريةُ كلُّها التي تنادي وسيطَها الدالّيّ.
     //
-    //  **والمُلتبِسُ يُترَك عمداً**: `Array.from(rows, fn)` تنادي مُعامِلَها
-    //  الثاني حقّاً، لكنّ `‎.from(` تقع في سلاسلَ كثيرةٍ لا تنادي شيئاً
-    //  (تواريخُ وبناةُ استعلامات)، فإدراجُها يُلاحق وسيطاً بريئاً — والاتّهامُ
-    //  الباطل يُعطِّل الحارسَ، والمخرجُ هنا شكلٌ لا يقع (دالّةُ كتابةٍ مسمّاة
-    //  مُمرَّرةً مُحوِّلاً لـ`Array.from` داخل استعلام).
-    const INVOKING_METHODS = new Set([
-      //  الوعد
-      "then", "catch", "finally",
-      //  المصفوفة — وكلُّ ما يأخذ ردَّ نداءٍ منها
-      "map", "forEach", "filter", "find", "findIndex", "findLast",
-      "findLastIndex", "some", "every", "flatMap", "sort", "toSorted",
-      "reduce", "reduceRight", "groupBy",
+    //  **والموضعُ جزءٌ من العقد لا تفصيلٌ فيه**: `‎.map(cb, thisArg)` تنادي
+    //  الأوّلَ وحدَه، و`‎.reduce(cb, seed)` كذلك — فقراءةُ **كلّ** وسيطٍ
+    //  ردَّ نداءٍ تُلصِق بالاستعلام كتابةَ قيمةٍ لا تُنفَّذ أبداً: اتّهامٌ
+    //  باطل (مقيسٌ حيّاً) يُعطَّل به الحارسُ فلا يحرس شيئاً. فلكلّ طريقةٍ
+    //  مواضعُها، ويُطابَق الوسيطُ بموضعه لا بوجوده.
+    const INVOKING_METHODS = new Map<string, Set<number>>([
+      //  الوعد — و`then` وحدَها تنادي موضعين
+      ["then", new Set([0, 1])], ["catch", new Set([0])], ["finally", new Set([0])],
+      //  المصفوفة — الردُّ أوّلُ وسائطها، وما بعده `thisArg` أو قيمةٌ ابتدائية
+      ["map", new Set([0])], ["forEach", new Set([0])], ["filter", new Set([0])],
+      ["find", new Set([0])], ["findIndex", new Set([0])],
+      ["findLast", new Set([0])], ["findLastIndex", new Set([0])],
+      ["some", new Set([0])], ["every", new Set([0])], ["flatMap", new Set([0])],
+      ["sort", new Set([0])], ["toSorted", new Set([0])],
+      ["reduce", new Set([0])], ["reduceRight", new Set([0])],
     ]);
-    const INVOKING_GLOBALS = new Set([
-      "setTimeout", "setInterval", "setImmediate",
-      "queueMicrotask", "requestAnimationFrame", "requestIdleCallback",
+
+    //  **والساكنةُ بناقلتها — اسمُ الطريقة وحدَه ليس عقداً**: `groupBy` ليست
+    //  في `Array.prototype` إطلاقاً، بل `Object.groupBy(items, cb)` و
+    //  `Map.groupBy(items, cb)` — **الردُّ في الموضع الثاني، والأوّلُ بيانات**.
+    //  فـ`‎.groupBy(` مجرَّدةً قد تكون بانيَ استعلامٍ لا عقدَ له، وقراءتُها
+    //  عقداً تُلاحق وسيطاً بريئاً.
+    //
+    //  **وبالناقلة زال سببُ استثناء `Array.from`** (٣٩٤): استُثنيت لأن
+    //  `‎.from(` تقع في سلاسلَ لا تنادي شيئاً — ولم تعد تُقرأ إلّا بناقلتها
+    //  وفي موضعها، فدخلت.
+    //
+    //  **وشرطُ الدخول أن يكون الموضعُ دالّةً في توقيعه**: فـ`JSON.stringify`
+    //  موضعُها الثاني `دالّة أو مصفوفةُ مفاتيح`، و`String.replace` الثاني
+    //  `نصٌّ أو دالّة` — والمُلتبِسُ يُترَك، فالاتّهامُ الباطل أخطرُ من مخرجٍ
+    //  لا يقع (رَدُّ استبدالٍ يكتب على الخادم).
+    const INVOKING_STATICS = new Map<string, Set<number>>([
+      ["Object.groupBy", new Set([1])], ["Map.groupBy", new Set([1])],
+      ["Array.from", new Set([1])], ["JSON.parse", new Set([1])],
+    ]);
+
+    const INVOKING_GLOBALS = new Map<string, Set<number>>([
+      ["setTimeout", new Set([0])], ["setInterval", new Set([0])],
+      ["setImmediate", new Set([0])], ["queueMicrotask", new Set([0])],
+      ["requestAnimationFrame", new Set([0])], ["requestIdleCallback", new Set([0])],
     ]);
 
     /** فصلُ قائمةٍ بفواصلها على مستواها هي — لا داخل أقواسٍ متداخلة. */
@@ -468,10 +492,16 @@ async function main() {
       const out: string[] = [];
       for (let i = 0; i < text.length; i++) {
         if (text[i] !== "(") continue;
-        const head = /(\?\.|\.)?\s*([A-Za-z_$][\w$]*)\s*$/.exec(text.slice(0, i));
+        //  الناقلةُ (إن كانت اسماً مجرَّداً) · والنقطةُ · واسمُ المُنادى.
+        const head = /([A-Za-z_$][\w$]*)?\s*(\?\.|\.)?\s*([A-Za-z_$][\w$]*)\s*$/
+          .exec(text.slice(0, i));
         if (!head) continue;
-        const isMethod = Boolean(head[1]);
-        const callee = head[2];
+        const isMethod = Boolean(head[2]);
+        const callee = head[3];
+        //  **مواضعُ الردّ في هذا النداء** — والساكنةُ بناقلتها تسبق الطريقة.
+        const slots = isMethod
+          ? INVOKING_STATICS.get(`${head[1]}.${callee}`) ?? INVOKING_METHODS.get(callee)
+          : INVOKING_GLOBALS.get(callee);
         let depth = 0, close = -1;
         for (let j = i; j < text.length; j++) {
           const c = text[j];
@@ -485,10 +515,9 @@ async function main() {
         splitTop(text.slice(i + 1, close)).forEach((raw, idx) => {
           const lone = raw.trim();
           if (!/^[A-Za-z_$][\w$]*$/.test(lone)) return;
-          const invokes = isMethod
-            ? INVOKING_METHODS.has(callee)
-            : INVOKING_GLOBALS.has(callee)
-              || invokesParam(code, callee, idx, new Set(seen));
+          const invokes = slots
+            ? slots.has(idx)
+            : !isMethod && invokesParam(code, callee, idx, new Set(seen));
           if (invokes) out.push(lone);
         });
       }
@@ -849,7 +878,7 @@ async function main() {
       const saveThing = () => apiRequest("POST", "/api/__probe__");
       useQuery({ queryKey: ["k"], queryFn: () => rows.${m}(saveThing), enabled: true });
     `).length > 0;
-    const MISSED = ["findLast", "findLastIndex", "toSorted", "groupBy"];
+    const MISSED = ["findLast", "findLastIndex", "toSorted"];
     check("ط٢٨. **والطرائقُ التي كانت ناقصةً تُمسَك**",
       MISSED.every(viaMethod), MISSED.filter((m) => !viaMethod(m)).join(" · "));
     const KEPT = ["map", "forEach", "filter", "find", "findIndex", "some",
@@ -864,14 +893,68 @@ async function main() {
       ["setTimeout", "setInterval", "setImmediate", "queueMicrotask",
         "requestAnimationFrame", "requestIdleCallback"].every(viaGlobal));
 
-    //  **والمُلتبِسُ متروكٌ بقرارٍ مقيس**: `‎.from(` تقع في سلاسلَ لا تنادي
-    //  شيئاً، فإدراجُها يُلاحق وسيطاً بريئاً — والاتّهامُ الباطل يُعطِّل الحارس.
-    check("ط٢٨ج. **و`Array.from` متروكةٌ عمداً** — لا تُلاحَق ولا يُدَّعى خلافُه",
-      offendersOf("from.tsx", `
-        const saveThing = () => apiRequest("POST", "/api/__probe__");
-        useQuery({ queryKey: ["k"], queryFn: () => Array.from(rows, saveThing), enabled: true });
-      `).length === 0);
+    //  ══ الموضعُ والناقلة ══
+    //
+    //  نداءٌ داخل استعلام، بتصريحاته — أيُلاحَق ما فيه أم لا؟
+    const WRITER = `const saveThing = () => apiRequest("POST", "/api/__probe__");`;
+    //  مصفوفةُ دوالّ **لا تُنفَّذ**، ومعها ردُّ نداءٍ بريء.
+    const DATA = `const fns = [() => apiRequest("POST", "/api/__probe__")];
+      const keyFn = (f: unknown) => "k";`;
+    const chases = (expr: string, decls: string) => offendersOf("slot.tsx", `
+      ${decls}
+      useQuery({ queryKey: ["k"], queryFn: () => ${expr}, enabled: true });
+    `).length > 0;
+
+    //  **⚠ وانقلب عقدُ هذا البند** (٣٩٥، بقرارِ التصحيح لا لتخضير اختبار):
+    //  استُثنيت `Array.from` في ٣٩٤ لأن `‎.from(` تقع في سلاسلَ لا تنادي
+    //  شيئاً — وبالناقلة والموضع زال ذلك السبب بعينه، فدخلت.
+    check("ط٢٨ج. **و`Array.from` دخلت بناقلتها وموضعها** (كانت متروكةً في ٣٩٤)",
+      chases("Array.from(items, saveThing)", WRITER)
+        && !chases("d.from(a, saveThing)", WRITER));
     check("ط٢٨د. (وطريقةٌ ليست من الصنف لا تُلاحَق)", !viaMethod("pipe"));
+
+    //  **وموضعُ البيانات ليس موضعَ ردٍّ**: `‎.map(cb, thisArg)` تنادي الأوّلَ
+    //  وحدَه، و`‎.reduce(cb, seed)` كذلك — وقراءةُ الثاني ردَّ نداءٍ تُلصِق
+    //  بالاستعلام كتابةَ قيمةٍ لا تُنفَّذ أبداً.
+    const THIS_ARG = `const holder = { go: () => apiRequest("POST", "/api/__probe__") };
+      const pick = (r: unknown) => r;`;
+    const SEED = `const seedFns = [() => apiRequest("POST", "/api/__probe__")];
+      const combine = (a: unknown, b: unknown) => a;`;
+    check("ط٢٩. **وموضعُ البيانات لا يُلاحَق** — `thisArg` والقيمةُ الابتدائية",
+      !chases("rows.map(pick, holder)", THIS_ARG)
+        && !chases("rows.reduce(combine, seedFns)", SEED));
+    //  **وشاهدُ عدم الفراغ**: التصريحاتُ عينُها، والمتبدِّلُ ترتيبُ الوسيطين.
+    check("ط٢٩أ. (وشاهدُ عدم الفراغ: نفسُهما في الموضع الأوّل يُمسَكان)",
+      chases("rows.map(holder, pick)", THIS_ARG)
+        && chases("rows.reduce(seedFns, combine)", SEED));
+    check("ط٢٩ب. **و`then` تنادي موضعين**",
+      chases("p.then(ok, saveThing)", `${WRITER}
+        const ok = (r: unknown) => r;`)
+        && chases("p.then(saveThing, ok)", `${WRITER}
+        const ok = (r: unknown) => r;`));
+
+    //  **والساكنةُ بناقلتها**: `groupBy` ليست في `Array.prototype` إطلاقاً —
+    //  بل `Object.groupBy(items, cb)` و`Map.groupBy(items, cb)`، الردُّ في
+    //  الموضع الثاني **والأوّلُ بياناتٌ لا تُنفَّذ**.
+    const STATIC_DATA = ["Object.groupBy(fns, keyFn)", "Map.groupBy(fns, keyFn)",
+      "Array.from(fns, keyFn)"];
+    check("ط٣٠. **والساكنةُ لا تُلاحق بياناتِ موضعها الأوّل**",
+      STATIC_DATA.every((e) => !chases(e, DATA)),
+      STATIC_DATA.filter((e) => chases(e, DATA)).join(" · "));
+    const STATIC_CB = ["Object.groupBy(items, saveThing)", "Map.groupBy(items, saveThing)",
+      "Array.from(items, saveThing)", "JSON.parse(text, saveThing)"];
+    check("ط٣٠أ. **وتُلاحق ردَّها في موضعه الثاني**",
+      STATIC_CB.every((e) => chases(e, WRITER)),
+      STATIC_CB.filter((e) => !chases(e, WRITER)).join(" · "));
+    check("ط٣٠ب. **والناقلةُ شرطٌ** — `‎.groupBy(` مجرَّدةً ليست عقداً",
+      !chases("rows.groupBy(saveThing)", WRITER)
+        && !chases("qb.groupBy(col, saveThing)", WRITER));
+    //  **والموضعُ المُلتبِسُ متروكٌ ولا يُدَّعى خلافُه**: `JSON.stringify`
+    //  موضعُها الثاني `دالّةٌ أو مصفوفةُ مفاتيح`، و`String.replace` الثاني
+    //  `نصٌّ أو دالّة` — فالاتّهامُ الباطل أخطرُ من مخرجٍ لا يقع.
+    check("ط٣٠ج. **والموضعُ الذي يقبل غيرَ الدالّة متروكٌ عمداً**",
+      !chases("JSON.stringify(v, saveThing)", WRITER)
+        && !chases("s.replace(re, saveThing)", WRITER));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
