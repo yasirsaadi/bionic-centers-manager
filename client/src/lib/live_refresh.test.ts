@@ -289,10 +289,31 @@ async function main() {
       return code.slice(at, end);
     }
 
-    //  **رأسُ دالّةِ سهمٍ في أوّلِ القيمة** — لا «`=>` في الجوار»: الثانيةُ
-    //  كانت تُصيب سهماً لخاصّيةٍ تالية، فيُقرأ أوّلُ `{` بعده وهو كتلةٌ لا
-    //  علاقةَ لها بالاستعلام.
-    const ARROW_HEAD = /^\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/;
+    /**
+     * **رأسُ دالّةِ سهمٍ في أوّلِ القيمة** — ما بعد `=>`، أو `-1`.
+     *
+     * ولا «`=>` في الجوار»: تلك كانت تُصيب سهماً لخاصّيةٍ تالية، فيُقرأ أوّلُ
+     * `{` بعده وهو كتلةٌ لا علاقةَ لها بالاستعلام.
+     *
+     * **وقائمةُ المعامِلات تُقرأ بموازنة الأقواس** لا بـ`\([^)]*\)`: تلك تقف
+     * عند أوّل `)` فتبتر قائمةً تحمل نوعاً بأقواس (`(f: () => void) => f()`)،
+     * فيُقرأ جسمُ المساعِد ` Promise<…>` بدل `f()` — ولا يُمسَح ما فيه.
+     */
+    function arrowHeadEnd(code: string, at: number): number {
+      const lead = (/^\s*(?:async\s+)?/.exec(code.slice(at, at + 40)) ?? [""])[0].length;
+      let p = at + lead;
+      if (code[p] === "(") {
+        const end = parenEnd(code, p);
+        if (end < 0) return -1;
+        p = end;
+      } else {
+        const one = /^[A-Za-z_$][\w$]*/.exec(code.slice(p, p + 80));
+        if (!one) return -1;
+        p += one[0].length;
+      }
+      const arrow = /^\s*(?::[^=;]{0,120})?=>/.exec(code.slice(p, p + 160));
+      return arrow ? p + arrow[0].length : -1;
+    }
 
     /**
      * ما يُقرأ من قيمةٍ تبدأ عند `at`: **جسمُها بأقواس** أو **التعبيرُ نفسُه**.
@@ -303,9 +324,8 @@ async function main() {
      * **كائنَ الحمولة** بدل مُهيّئه، فلا يُمسَح فعلُ الكتابة ولا عنوانُه.
      */
     function valueBody(code: string, at: number): { text: string; isBlock: boolean } {
-      const head = ARROW_HEAD.exec(code.slice(at, at + 200));
-      if (head) {
-        const body = at + head[0].length;
+      const body = arrowHeadEnd(code, at);
+      if (body >= 0) {
         if (/^\s*\{/.test(code.slice(body, body + 40))) {
           return { text: blockAt(code, body), isBlock: true };
         }
@@ -336,36 +356,124 @@ async function main() {
 
     const NOT_A_NAME = new Set(["async", "await", "return", "new", "typeof", "void"]);
 
+    //  **ما يُنادي ما يُمرَّر إليه بحكم عقده** — لا يُقرأ من ملفٍّ لأنه ليس
+    //  فيه: طرائقُ الوعد والمصفوفة، ومؤقّتاتُ المتصفّح.
+    const INVOKING_METHODS = new Set([
+      "then", "catch", "finally", "map", "forEach", "filter", "find",
+      "findIndex", "some", "every", "flatMap", "sort", "reduce", "reduceRight",
+    ]);
+    const INVOKING_GLOBALS = new Set([
+      "setTimeout", "setInterval", "queueMicrotask", "requestAnimationFrame",
+    ]);
+
+    /** فصلُ قائمةٍ بفواصلها على مستواها هي — لا داخل أقواسٍ متداخلة. */
+    function splitTop(inner: string): string[] {
+      const out: string[] = [];
+      let depth = 0, start = 0;
+      for (let j = 0; j < inner.length; j++) {
+        const c = inner[j];
+        if (c === "(" || c === "[" || c === "{") depth++;
+        else if (c === ")" || c === "]" || c === "}") depth--;
+        else if (c === "," && depth === 0) { out.push(inner.slice(start, j)); start = j + 1; }
+      }
+      out.push(inner.slice(start));
+      return out;
+    }
+
     /**
-     * **وسائطُ النداء التي هي اسمٌ مجرَّدٌ وحدَه** — وهي مواضعُ استدعاءٍ لا
-     * قيمٍ خاملة: `‎.then(saveThing)` و`runIt(saveThing)` يناديان ما مُرِّر
-     * إليهما، فكتابتُه كتابةٌ يفعلها الاستعلام.
+     * أسماءُ معامِلاتِ الدالّة التي قيمتُها عند `at` — بترتيبها.
+     *
+     * وما ليس اسماً مجرَّداً (تفكيكاً أو بقيّةً) يُقرأ فراغاً، فلا يُطابَق —
+     * فالوسيطُ في ذلك الموضع لا يُلاحَق، والصمتُ أصدقُ من مطابقةٍ بالتخمين.
+     */
+    function paramNames(code: string, at: number): string[] {
+      const slice = code.slice(at, at + 400);
+      const lead = (/^\s*(?:async\s+)?/.exec(slice) ?? [""])[0].length;
+      const rest = slice.slice(lead);
+      let inner: string;
+      if (rest.startsWith("(")) {
+        const end = parenEnd(code, at + lead);
+        if (end < 0) return [];
+        inner = code.slice(at + lead + 1, end - 1);
+      } else if (/^function\b/.test(rest)) {
+        const open = code.indexOf("(", at + lead);
+        const end = parenEnd(code, at + lead);
+        if (open < 0 || end <= open) return [];
+        inner = code.slice(open + 1, end - 1);
+      } else {
+        const one = /^([A-Za-z_$][\w$]*)\s*=>/.exec(rest);
+        return one ? [one[1]] : [];
+      }
+      return splitTop(inner).map((p) => {
+        const n = /^\s*([A-Za-z_$][\w$]*)\s*(?::|=[^>]|$)/.exec(p);
+        return n ? n[1] : "";
+      });
+    }
+
+    /**
+     * **أيُنادي `callee` معامِلَه رقم `index` في جسمه؟** — يُقرأ من تعريفه في
+     * الملفّ نفسِه، بقاعدة «ما يُنادى» عينها (فالمعامِلُ قد يُنادى مباشرةً
+     * `f()` أو يُمرَّر إلى مَن يناديه `‎.then(f)`).
+     *
+     * و`seen` تمنع الدوران بين مساعِدَين يُمرِّر كلٌّ منهما إلى الآخر.
+     */
+    function invokesParam(
+      code: string, callee: string, index: number, seen: Set<string>,
+    ): boolean {
+      if (seen.has(callee)) return false;
+      seen.add(callee);
+      const at = definitionAt(code, callee);
+      if (at < 0) return false;
+      const name = paramNames(code, at)[index];
+      if (!name) return false;
+      const body = valueBody(code, at).text;
+      return body ? calledNames(body, code, seen).includes(name) : false;
+    }
+
+    /**
+     * **وسائطُ النداء التي هي اسمٌ مجرَّدٌ وحدَه ويُنادِيها مُستقبِلُها.**
+     *
+     * **و«وسيطٌ مجرَّد» ليس «رَدَّ نداءٍ» بذاته**: `cacheValue(saveThing)` قد
+     * يخزّنه أو يقارنه أو يُرجعه ولا يناديه، فقراءتُه نداءً تُلصِق بالاستعلام
+     * كتابةً لا يفعلها — **وهو صنفُ الاتّهام الباطل نفسُه** الذي يُعطَّل به
+     * الحارسُ فلا يحرس شيئاً. فيُشترَط دليلُ نداءٍ لا احتمالُه:
+     * **طريقةٌ تنادي بحكم عقدها** (`‎.then` وأخواتُها) · **أو تعريفٌ في الملفّ
+     * يُثبت أن معامِلَه في ذلك الموضع يُنادى**. وما لا يُعرَف — طريقةٌ ليست
+     * منها، أو دالّةٌ مستورَدة لا تُقرأ — **لا يُلاحَق**: الصمتُ أصدقُ.
      *
      * **والوسيطُ يُقرأ على مستوى قائمته وحدها**: `readThing(9, { onDone:
-     * saveThing })` وسيطُه الثاني كائنٌ لا اسم، فيبقى خارجَ الملاحقة كما
-     * كان — والقوسُ الذي لا يسبقه نداءٌ (تجميعُ تعبير) لا يُقرأ قائمةً.
+     * saveThing })` وسيطُه الثاني كائنٌ لا اسم، فيبقى خارجَ الملاحقة — والقوسُ
+     * الذي لا يسبقه اسمٌ (قائمةُ معامِلات) لا يُقرأ قائمةَ وسائط.
      */
-    function callbackArguments(text: string): string[] {
+    function callbackArguments(
+      text: string, code: string, seen: Set<string>,
+    ): string[] {
       const out: string[] = [];
-      const push = (arg: string) => {
-        const lone = arg.trim();
-        if (/^[A-Za-z_$][\w$]*$/.test(lone)) out.push(lone);
-      };
       for (let i = 0; i < text.length; i++) {
         if (text[i] !== "(") continue;
-        const before = text.slice(0, i).replace(/\s+$/, "").slice(-1);
-        if (!/[\w$)\]]/.test(before)) continue;
-        let depth = 0, start = i + 1;
+        const head = /(\?\.|\.)?\s*([A-Za-z_$][\w$]*)\s*$/.exec(text.slice(0, i));
+        if (!head) continue;
+        const isMethod = Boolean(head[1]);
+        const callee = head[2];
+        let depth = 0, close = -1;
         for (let j = i; j < text.length; j++) {
           const c = text[j];
-          if (c === "(" || c === "[" || c === "{") { depth++; continue; }
-          if (c === ")" || c === "]" || c === "}") {
+          if (c === "(" || c === "[" || c === "{") depth++;
+          else if (c === ")" || c === "]" || c === "}") {
             depth--;
-            if (depth === 0) { push(text.slice(start, j)); break; }
-            continue;
+            if (depth === 0) { close = j; break; }
           }
-          if (c === "," && depth === 1) { push(text.slice(start, j)); start = j + 1; }
         }
+        if (close < 0) continue;
+        splitTop(text.slice(i + 1, close)).forEach((raw, idx) => {
+          const lone = raw.trim();
+          if (!/^[A-Za-z_$][\w$]*$/.test(lone)) return;
+          const invokes = isMethod
+            ? INVOKING_METHODS.has(callee)
+            : INVOKING_GLOBALS.has(callee)
+              || invokesParam(code, callee, idx, new Set(seen));
+          if (invokes) out.push(lone);
+        });
       }
       return out;
     }
@@ -380,16 +488,18 @@ async function main() {
      * الذي ردّ ملاحقةَ الأجسام بأقواس).
      *
      * **وثلاثةُ مواضعِ نداءٍ لا واحد**: رأسُ النداء (`saveThing(`) ·
-     * **والوسيطُ المجرَّد** (`‎.then(saveThing)` — يناديه المُستقبِل) ·
-     * **والقيمةُ التي هي اسمٌ وحدَه** (`queryFn: helper` — تنادِيها مكتبةُ
-     * الاستعلام بحكم موضعها).
+     * **والوسيطُ المجرَّد الذي يُثبَت أن مُستقبِلَه يناديه** · **والقيمةُ التي
+     * هي اسمٌ وحدَه** (`queryFn: helper` — تنادِيها مكتبةُ الاستعلام بحكم
+     * موضعها).
      */
-    function calledNames(text: string): string[] {
+    function calledNames(
+      text: string, code: string, seen: Set<string> = new Set(),
+    ): string[] {
       const lone = text.trim();
       if (/^[A-Za-z_$][\w$]*$/.test(lone)) return [lone];
       const targets = (text.match(/[A-Za-z_$][\w$]*\s*\(/g) ?? [])
         .map((s) => s.replace(/\s*\($/, ""));
-      return [...targets, ...callbackArguments(text)];
+      return [...targets, ...callbackArguments(text, code, seen)];
     }
 
     /**
@@ -411,7 +521,7 @@ async function main() {
     ) {
       out.push(text);
       if (!chase) return;
-      for (const id of calledNames(text)) {
+      for (const id of calledNames(text, code)) {
         if (NOT_A_NAME.has(id) || seen.has(id)) continue;
         seen.add(id);
         const at = definitionAt(code, id);
@@ -635,6 +745,62 @@ async function main() {
     check("ط٢٢أ. (وشاهدُ عدم الفراغ: المساعِدُ نفسُه لو مُرِّر وسيطاً لَأُمسِك)",
       offendersOf("passed2.tsx",
         SHADOWED_PARAM.replace("then((row) => row)", "then(row)")).length > 0);
+
+    //  ── **ووسيطٌ مجرَّدٌ ليس رَدَّ نداءٍ بذاته** ──────────────────────────
+    //  مَن يستقبله قد يخزّنه أو يقارنه أو يُرجعه ولا يناديه، فقراءتُه نداءً
+    //  **اتّهامٌ باطل** يُسقط الحزمةَ بلا مخالفة (مقيسٌ حيّاً قبل الإصلاح).
+    //  فيُشترَط دليلُ نداءٍ: عقدُ الطريقة، أو تعريفٌ يُثبت أن معامِلَه يُنادى.
+    const STORED_NOT_CALLED = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const cacheValue = (f: () => Promise<unknown>) => { store.push(f); return 1; };
+      useQuery({ queryKey: ["k"], queryFn: () => cacheValue(saveThing), enabled: true });
+    `;
+    check("ط٢٣. **ووسيطٌ يُخزَّن ولا يُنادى لا يُتَّهم به الاستعلام**",
+      offendersOf("cache.tsx", STORED_NOT_CALLED).length === 0,
+      offendersOf("cache.tsx", STORED_NOT_CALLED).join(" · "));
+    check("ط٢٣أ. (وشاهدُ عدم الفراغ: المُستقبِلُ نفسُه لو ناداه لَأُمسِك)",
+      offendersOf("called.tsx",
+        STORED_NOT_CALLED.replace("{ store.push(f); return 1; }", "f()")).length > 0);
+
+    const FORWARDED = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const runIt = (f: () => Promise<unknown>) => Promise.resolve().then(f);
+      useQuery({ queryKey: ["k"], queryFn: () => runIt(saveThing), enabled: true });
+    `;
+    check("ط٢٤. **ومُستقبِلٌ يُمرِّره إلى مَن يناديه يُمسَك**",
+      offendersOf("fwd.tsx", FORWARDED).length > 0);
+
+    const IMPORTED_CALLEE = `
+      import { mystery } from "./elsewhere";
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      useQuery({ queryKey: ["k"], queryFn: () => mystery(saveThing), enabled: true });
+    `;
+    check("ط٢٥. **ومُستقبِلٌ لا يُقرأ تعريفُه لا يُلاحَق** — الصمتُ أصدقُ",
+      offendersOf("imp.tsx", IMPORTED_CALLEE).length === 0,
+      offendersOf("imp.tsx", IMPORTED_CALLEE).join(" · "));
+    check("ط٢٥أ. (وشاهدُ عدم الفراغ: لو عُرِّف في الملفّ ونادى لَأُمسِك)",
+      offendersOf("imp2.tsx", IMPORTED_CALLEE.replace(
+        'import { mystery } from "./elsewhere";',
+        "const mystery = (f: () => Promise<unknown>) => f();")).length > 0);
+
+    //  **والمطابقةُ بموضع الوسيط لا بوجوده**: مساعِدٌ ينادي معامِلَه الثاني
+    //  لا يجعل الأوّلَ منادىً.
+    const POSITIONAL = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const pick = (a: unknown, f: () => Promise<unknown>) => f();
+      useQuery({ queryKey: ["k"], queryFn: () => pick(1, saveThing), enabled: true });
+    `;
+    check("ط٢٦. **ووسيطٌ في الموضع الذي يُنادى يُمسَك**",
+      offendersOf("idx.tsx", POSITIONAL).length > 0);
+    check("ط٢٦أ. **وفي موضعٍ لا يُنادى لا يُمسَك**",
+      offendersOf("idx2.tsx",
+        POSITIONAL.replace("(a: unknown, f: () => Promise<unknown>) => f()",
+          "(f: () => Promise<unknown>, a: unknown) => a")
+          .replace("pick(1, saveThing)", "pick(saveThing, 1)")).length === 0,
+      offendersOf("idx2.tsx",
+        POSITIONAL.replace("(a: unknown, f: () => Promise<unknown>) => f()",
+          "(f: () => Promise<unknown>, a: unknown) => a")
+          .replace("pick(1, saveThing)", "pick(saveThing, 1)")).join(" · "));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
