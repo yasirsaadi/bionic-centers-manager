@@ -492,15 +492,27 @@ async function main() {
       const out: string[] = [];
       for (let i = 0; i < text.length; i++) {
         if (text[i] !== "(") continue;
-        //  الناقلةُ (إن كانت اسماً مجرَّداً) · والنقطةُ · واسمُ المُنادى.
-        const head = /([A-Za-z_$][\w$]*)?\s*(\?\.|\.)?\s*([A-Za-z_$][\w$]*)\s*$/
-          .exec(text.slice(0, i));
+        const before = text.slice(0, i);
+        //  **اسمُ المُنادى يُقرأ وحدَه أوّلاً، ولا تُقتطَع منه ناقلةٌ لا تفصلها
+        //  نقطة**: ناقلةً اختياريةً منفردةً كانت تبتلع أوّلَ الاسم حين لا
+        //  يسبقه فاصل — `queryFn:()=>setTimeout(` تُقرأ `setTimeou` ناقلةً
+        //  و`t` مُنادىً، فلا يُعرَف المؤقّتُ ولا يُلاحَق ما يكتبه (مقيسٌ
+        //  حيّاً، ويُصيب النداءَ المجرَّدَ كلَّه: مؤقّتاً ومساعِداً محلّياً).
+        const head = /(\?\.|\.)?\s*([A-Za-z_$][\w$]*)\s*$/.exec(before);
         if (!head) continue;
-        const isMethod = Boolean(head[2]);
-        const callee = head[3];
+        const isMethod = Boolean(head[1]);
+        const callee = head[2];
+        //  **والناقلةُ خطوةٌ ثانية بعد النقطة لا تُزاحم الاسم**: لا تُقرأ في
+        //  نداءٍ مجرَّدٍ أصلاً. وناقلةٌ ليست اسماً مجرَّداً (`rows.filter(x)
+        //  .map`) تبقى `undefined` **والطريقةُ تبقى طريقة** — ولو رُبطت
+        //  الناقلةُ بالنقطة في مطابقةٍ واحدة لَقُرئت السلسلةُ نداءً مجرَّداً
+        //  فأفلت ردُّها (مقيسٌ حيّاً على الاقتراح الحرفيّ).
+        const recv = isMethod
+          ? /([A-Za-z_$][\w$]*)\s*$/.exec(before.slice(0, head.index))?.[1]
+          : undefined;
         //  **مواضعُ الردّ في هذا النداء** — والساكنةُ بناقلتها تسبق الطريقة.
         const slots = isMethod
-          ? INVOKING_STATICS.get(`${head[1]}.${callee}`) ?? INVOKING_METHODS.get(callee)
+          ? INVOKING_STATICS.get(`${recv}.${callee}`) ?? INVOKING_METHODS.get(callee)
           : INVOKING_GLOBALS.get(callee);
         let depth = 0, close = -1;
         for (let j = i; j < text.length; j++) {
@@ -955,6 +967,45 @@ async function main() {
     check("ط٣٠ج. **والموضعُ الذي يقبل غيرَ الدالّة متروكٌ عمداً**",
       !chases("JSON.stringify(v, saveThing)", WRITER)
         && !chases("s.replace(re, saveThing)", WRITER));
+
+    //  ══ اسمُ المُنادى لا تُقتطَع منه ناقلة ══
+    //
+    //  **بلا فراغٍ واحد حول السهم** — وهو شكلٌ يكتبه كلُّ مُنسِّقٍ يضغط
+    //  المسافات، وكان يفلت لأن الناقلةَ الاختيارية تبتلع أوّلَ الاسم:
+    //  `setTimeou` ناقلةً و`t` مُنادىً. و`chases` أعلاه تضع فراغاً فلا
+    //  تستطيع أن تصفه، فهذا شكلُه بالحرف.
+    const tight = (expr: string, decls: string) => offendersOf("tight.tsx",
+      `${decls}\nuseQuery({queryKey:["k"],queryFn:()=>${expr},enabled:true});`,
+    ).length > 0;
+    //  ردُّ نداءٍ **يقرأ ولا يكتب** — بنفس شكل `saveThing` تماماً.
+    const READER = `${WRITER}\nconst readThing = () => apiRequest("GET", "/api/__probe__");`;
+    const HELPER = `${WRITER}\nconst runIt = (f: () => unknown) => f();`;
+
+    const TIGHT_GLOBAL = ["setTimeout(saveThing)", "queueMicrotask(saveThing)",
+      "requestAnimationFrame(saveThing)"];
+    check("ط٣١. **ونداءٌ مجرَّدٌ بلا فراغٍ قبله يُمسَك** — الشكلُ الذي كان يفلت",
+      TIGHT_GLOBAL.every((e) => tight(e, WRITER)),
+      TIGHT_GLOBAL.filter((e) => !tight(e, WRITER)).join(" · "));
+    check("ط٣١أ. **والمساعِدُ المحلّيُّ كذلك** — لا المؤقّتَ وحدَه",
+      tight("runIt(saveThing)", HELPER));
+    //  **وشاهدُ عدم الفراغ**: الشكلُ عينُه بردٍّ يقرأ ولا يكتب يبقى صامتاً،
+    //  فالمُمسَكُ هو الكتابةُ لا ضيقُ المسافات.
+    check("ط٣١ب. (وشاهدُ عدم الفراغ: الشكلُ عينُه بردٍّ لا يكتب يبقى صامتاً)",
+      !tight("setTimeout(readThing)", READER)
+        && !tight("runIt(readThing)", `${READER}\nconst runIt = (f: () => unknown) => f();`));
+
+    //  **والسلسلةُ تبقى طريقة** — ناقلتُها `)` لا اسمٌ مجرَّد. ولو رُبطت
+    //  الناقلةُ بالنقطة في مطابقةٍ واحدة (الاقتراحُ الحرفيّ) لَقُرئت نداءً
+    //  مجرَّداً فلا تُسأل `INVOKING_METHODS` وأفلت ردُّها (مقيسٌ حيّاً).
+    const TIGHT_CHAIN = ["rows.filter(x).map(saveThing)", "rows.map(saveThing)",
+      "a.b.map(saveThing)", "obj?.then(saveThing)"];
+    check("ط٣٢. **والطريقةُ تبقى طريقةً ولو لم تكن ناقلتُها اسماً**",
+      TIGHT_CHAIN.every((e) => tight(e, WRITER)),
+      TIGHT_CHAIN.filter((e) => !tight(e, WRITER)).join(" · "));
+    check("ط٣٢أ. **والساكنةُ تبلغ ناقلتَها وموضعَها بلا فراغٍ أيضاً**",
+      tight("Object.groupBy(items,saveThing)", WRITER)
+        && tight("Array.from(items,saveThing)", WRITER)
+        && !tight("Object.groupBy(fns,keyFn)", DATA));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
