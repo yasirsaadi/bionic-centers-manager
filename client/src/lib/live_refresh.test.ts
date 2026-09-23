@@ -146,8 +146,10 @@ async function main() {
   // ══ (و) الافتراضاتُ والتركيب ══════════════════════════════════════════
   {
     const q = queryClient.getDefaultOptions().queries as any;
-    check("و١. **والعودةُ إلى النافذة تُحدِّث** — فيُرى عملُ الزملاء",
-      q?.refetchOnWindowFocus === true, String(q?.refetchOnWindowFocus));
+    check("و١. **والعودةُ إلى النافذة تُحدِّث دائماً** — لا القديمَ وحده",
+      q?.refetchOnWindowFocus === "always", String(q?.refetchOnWindowFocus));
+    check("و١أ. و`staleTime` باقٍ ستّين ثانية — فلا يُعاد الجلبُ مع كلّ تركيب",
+      q?.staleTime === 60_000, String(q?.staleTime));
     check("و٢. وبلا استطلاعٍ دوريّ", q?.refetchInterval === false);
     const before = (globalThis as any).fetch;
     installLiveRefresh(queryClient);
@@ -169,6 +171,130 @@ async function main() {
       /installLiveRefresh\(queryClient\)/.test(code));
     check("ز٢. والغلافُ على `fetch` وحدَه — نقطةُ الخنق الحقيقية",
       /g\.fetch\s*=/.test(code));
+  }
+
+  // ══ (ح) **الحلقةُ اللانهائية**: `POST` بوصفه `queryFn` ══════════════════
+  //  استعلامٌ **فعّال** نقطتُه `POST`: التحديثُ يُبطله فيُعاد جلبُه، وإعادةُ
+  //  الجلب تنادي النقطةَ فتُجدول تحديثاً — فلا تنتهي. أمسكها Codex على ٣٨٧،
+  //  وأُعيد إنتاجُها حيّاً قبل الإصلاح: ٢٤ طلباً في ١٢٠٠ مللي ثانية.
+  //
+  //  **ولا يكفي أن تُقرأ القاعدة**: يُبنى `QueryObserver` حقيقيّ ويُشترَك فيه
+  //  (فيصير الاستعلامُ فعّالاً كما على الشاشة)، ثمّ تُعدّ النداءاتُ الفعلية.
+  {
+    const { QueryObserver } = await import("@tanstack/react-query");
+    const WINDOW_MS = 700;
+
+    /** يُشغّل استعلاماً فعّالاً نقطتُه `POST` ويعدّ نداءاته خلال النافذة. */
+    async function countWhileActive(url: string, opts: any = {}): Promise<number> {
+      resetLiveRefreshForTest();
+      queryClient.clear();
+      const before = calls.length;
+      const obs = new QueryObserver(queryClient, {
+        queryKey: [url, "ح"],
+        queryFn: async () => { await apiRequest("POST", url, {}); return {}; },
+        ...opts,
+      });
+      const unsub = obs.subscribe(() => {});
+      await new Promise((r) => setTimeout(r, WINDOW_MS));
+      unsub();
+      resetLiveRefreshForTest();
+      const n = calls.slice(before).filter((c) => c.url === url).length;
+      queryClient.clear();
+      return n;
+    }
+
+    same("ح١. **تلميحاتُ المصروف: نداءٌ واحد لا حلقة**",
+      await countWhileActive("/api/guidance/expense", { staleTime: 30_000 }), 1);
+    same("ح٢. **ومعاينةُ التصحيح الإداريّ كذلك** — وهي بـ`staleTime: 0`",
+      await countWhileActive("/api/admin/operation-reversal/preview",
+        { staleTime: 0, gcTime: 0 }), 1);
+
+    //  **وليس الهدوءُ من الأداة**: نقطةٌ غيرُ مستثناةٍ بالشكل نفسِه تدور فعلاً،
+    //  فالاستثناءُ وحدَه هو ما أوقف الحلقةَ لا شيءٌ آخر في هذا الفحص.
+    const loops = await countWhileActive("/api/__not_exempt__");
+    check("ح٣. (والقياسُ ليس فارغاً: غيرُ المستثناة تدور فعلاً)",
+      loops > 3, `عدد النداءات: ${loops}`);
+    seed();
+  }
+
+  // ══ (ط) **الحارسُ المعماريّ**: لا نقطةَ كتابةٍ جديدة داخل `queryFn` ═════
+  //  القائمةُ اليدويّة تشيخ — ونقطةٌ جديدة تُقرأ بـ`POST` وتُستعمَل استعلاماً
+  //  تعيد الحلقةَ صامتةً. فتُقرأ مصادرُ الواجهة: كلُّ نداءٍ بفعلِ كتابةٍ داخل
+  //  `queryFn` يجب أن يكون عنوانُه **مستثنى** — وإلّا تسقط الحزمة.
+  {
+    const { readFileSync, readdirSync, statSync } = await import("fs");
+    const { join } = await import("path");
+
+    function sources(dir: string, out: string[] = []): string[] {
+      for (const e of readdirSync(dir)) {
+        const f = join(dir, e);
+        if (statSync(f).isDirectory()) { sources(f, out); continue; }
+        if (!/\.tsx?$/.test(f) || /\.test\.tsx?$/.test(f)) continue;
+        out.push(f);
+      }
+      return out;
+    }
+    const strip = (t: string) =>
+      t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+    /** جسمُ الدالّة ابتداءً من أوّل `{` عند `from` — بموازنة الأقواس. */
+    function blockAt(code: string, from: number): string {
+      let i = code.indexOf("{", from);
+      if (i < 0) return "";
+      let depth = 0;
+      for (let j = i; j < code.length; j++) {
+        if (code[j] === "{") depth++;
+        else if (code[j] === "}") { depth--; if (depth === 0) return code.slice(i, j + 1); }
+      }
+      return "";
+    }
+
+    /** كتلُ `queryFn` كلُّها — المكتوبةَ في مكانها والمُحالَ إليها باسمها. */
+    function queryFnBodies(code: string): string[] {
+      const out: string[] = [];
+      const re = /queryFn\s*:/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(code))) {
+        const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 400);
+        const arrow = tail.indexOf("=>");
+        const comma = tail.search(/,\s*\n/);
+        if (arrow >= 0 && arrow < 200) {
+          const body = blockAt(code, m.index + m[0].length + arrow);
+          if (body) { out.push(body); continue; }
+        }
+        //  إحالةٌ باسمٍ (`queryFn: fetchUser` أو `() => fetchThing(x)`) —
+        //  تُحَلّ في الملفّ نفسِه، وإلّا بقيت بقعةً عمياء.
+        const head = tail.slice(0, comma < 0 ? tail.length : comma);
+        for (const id of head.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+          if (["async", "await", "return"].includes(id)) continue;
+          const def = code.search(
+            new RegExp(`(?:async\\s+)?function\\s+${id}\\b|const\\s+${id}\\s*=`));
+          if (def < 0) continue;
+          const body = blockAt(code, def);
+          if (body) out.push(body);
+        }
+      }
+      return out;
+    }
+
+    const offenders: string[] = [];
+    let scanned = 0, withWrite = 0;
+    for (const f of sources("client/src")) {
+      const code = strip(readFileSync(f, "utf8"));
+      for (const body of queryFnBodies(code)) {
+        scanned++;
+        if (!/["'](?:POST|PUT|PATCH|DELETE)["']/i.test(body)) continue;
+        withWrite++;
+        for (const lit of body.match(/["'`](\/api\/[^"'`\s]*)["'`]/g) ?? []) {
+          const url = lit.slice(1, -1);
+          if (isLiveRefreshWrite("POST", url)) offenders.push(`${f} ⟵ ${url}`);
+        }
+      }
+    }
+    check("ط١. (الماسحُ يرى كتلَ `queryFn` فعلاً)", scanned > 100, `عدد الكتل: ${scanned}`);
+    check("ط٢. (ومنها ما ينادي بفعلِ كتابة)", withWrite >= 2, `عددها: ${withWrite}`);
+    check("ط٣. **ولا واحدةٌ منها خارج الاستثناء** — وإلّا عادت الحلقة",
+      offenders.length === 0, offenders.join(" · "));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
