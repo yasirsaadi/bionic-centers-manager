@@ -263,7 +263,15 @@ async function main() {
 
     /**
      * قيمةٌ **بلا أقواس** من `at` — بموازنة الأقواس، فتقف عند الفاصلة التي
-     * تفصلها عن أختها أو عند قوس الكائن الحاوي، ولا تبتلع ما بعدها.
+     * تفصلها عن أختها، **أو عند الفاصلة المنقوطة التي تُنهي تعريفَها**، أو
+     * عند قوس الكائن الحاوي، ولا تبتلع ما بعدها.
+     *
+     * **و`;` شرطُ صحّةٍ لا تجميل**: قيمةُ خاصّيةٍ تنتهي بفاصلة، أمّا قيمةُ
+     * تعريفٍ (`const h = …;`) فتنتهي بها وحدها. وبلا الوقوف عندها كان
+     * مساعِدٌ يبتلع الأسطرَ التالية إلى حدّ الأربعمئة، **فتُنسَب إليه
+     * عناوينُ جيرانه** — ومنها اتّهامُ استعلامٍ مستثنىً حقيقيٍّ بعنوانِ
+     * دالّةٍ مجاورة لا علاقةَ له بها (مقيسٌ حيّاً).
+     *
      * وبحدٍّ أعلى: قيمةٌ أطولُ من ذلك ليست تعبيراً يُقرأ، والانفلاتُ فيها
      * يجعل الماسحَ يقرأ ملفّاً كاملاً بوصفه «استعلاماً».
      */
@@ -276,7 +284,7 @@ async function main() {
         else if (c === ")" || c === "]" || c === "}") {
           if (depth === 0) return code.slice(at, j);
           depth--;
-        } else if (c === "," && depth === 0) return code.slice(at, j);
+        } else if ((c === "," || c === ";") && depth === 0) return code.slice(at, j);
       }
       return code.slice(at, end);
     }
@@ -329,11 +337,31 @@ async function main() {
     const NOT_A_NAME = new Set(["async", "await", "return", "new", "typeof", "void"]);
 
     /**
+     * الأسماءُ التي **تُنادى** في هذا النصّ — لا كلُّ اسمٍ يُذكَر فيه.
+     *
+     * فاسمٌ يُمرَّر **قيمةً** (`() => ({ saveThing })` أو
+     * `() => readThing(9, { onDone: saveThing })`) لا يُنادى هنا، وحلُّه كان
+     * يُلصِق بالاستعلام كتابةً لا يفعلها — **اتّهامٌ باطلٌ يُسقط الحزمةَ بلا
+     * مخالفة** فيُعطَّل الحارسُ بعد أوّل مرّة (مقيسٌ حيّاً، وهو المبدأ نفسُه
+     * الذي ردّ ملاحقةَ الأجسام بأقواس).
+     *
+     * **والقيمةُ التي هي اسمٌ مجرَّدٌ وحدَه** (`queryFn: helper`) مُنادَاةٌ
+     * **بحكم موضعها** — تنادِيها مكتبةُ الاستعلام — فتُحَلّ.
+     */
+    function calledNames(text: string): string[] {
+      const lone = text.trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(lone)) return [lone];
+      return (text.match(/[A-Za-z_$][\w$]*\s*\(/g) ?? [])
+        .map((s) => s.replace(/\s*\($/, ""));
+    }
+
+    /**
      * النصُّ المقروء، ومعه نصوصُ ما يُحيل إليه من تعاريف الملفّ نفسِه —
      * وإلّا بقي ما خلف الاسم بقعةً عمياء.
      *
-     * **والملاحقةُ عبر التعابير وحدها**: التعبيرُ قصيرٌ وأسماؤه هي ما
-     * ينادِيه فعلاً؛ أمّا **الجسمُ بأقواس فيُقرأ كما هو ولا تُلاحَق أسماؤه**.
+     * **والملاحقةُ عبر التعابير وحدها، ولِما يُنادى منها وحدَه**
+     * (`calledNames`)؛ أمّا **الجسمُ بأقواس فيُقرأ كما هو ولا تُلاحَق
+     * أسماؤه**.
      * وهذا **مقيسٌ لا مُقدَّر**: ملاحقتُها تجرّ معظمَ الوحدة إلى الماسح،
      * فأنتجت في هذا المستودع النظيف **٩٢ اتّهاماً باطلاً** في تسعة ملفّات
      * (`Accounting.tsx` وأخواتها) — وحارسٌ يُسقط الحزمةَ بلا مخالفة يُعطَّل
@@ -346,7 +374,7 @@ async function main() {
     ) {
       out.push(text);
       if (!chase) return;
-      for (const id of text.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+      for (const id of calledNames(text)) {
         if (NOT_A_NAME.has(id) || seen.has(id)) continue;
         seen.add(id);
         const at = definitionAt(code, id);
@@ -480,6 +508,46 @@ async function main() {
     `;
     check("ط١٦. **ولا يُتّهم بريء**: كتابةٌ مستقلّةٌ في الملفّ لا يُبلَّغ عنها",
       scan([{ name: "innocent.tsx", code: INNOCENT }]).offenders.length === 0);
+
+    //  ══ **وما يُمرَّر قيمةً لا يُنادى** ══════════════════════════════════
+    //   اسمٌ يُذكَر في تعبير الاستعلام ولا يُنادى فيه ليس كتابةً يفعلها
+    //   الاستعلام. وحلُّ كلِّ اسمٍ كان يُنتج **اتّهاماً باطلاً**، والباطلُ
+    //   يُسقط الحزمةَ بلا مخالفةٍ فيُعطَّل الحارسُ بعد أوّل مرّة.
+    const AS_VALUE = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      useQuery({ queryKey: ["k"], queryFn: () => ({ saveThing }), enabled: true });
+    `;
+    const AS_CALLBACK = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const readThing = (id: number) => apiRequest("GET", "/api/__read__/" + id);
+      useQuery({
+        queryKey: ["k"],
+        queryFn: () => readThing(9, { onDone: saveThing }),
+        enabled: true,
+      });
+    `;
+    //   **والابتلاعُ يتّهم استعلاماً مستثنىً حقيقياً**: تعبيرُ المساعِد كان
+    //   لا يقف عند فاصلته المنقوطة، فيبتلع سطرَ جاره ويُنسَب إليه عنوانُه.
+    const NEIGHBOUR = `
+      const askAi = (msg: string) => apiRequest("POST", "/api/ai/chat", { msg });
+      const loadReport = (id: number) => apiRequest("GET", "/api/__read__/" + id);
+      useQuery({ queryKey: ["k"], queryFn: () => askAi("hi"), enabled: true });
+    `;
+    const offendersOf = (name: string, code: string) =>
+      scan([{ name, code }]).offenders;
+
+    check("ط١٧. **واسمٌ يُمرَّر قيمةً لا يُنادى** — فلا يُتَّهم به الاستعلام",
+      offendersOf("as_value.tsx", AS_VALUE).length === 0,
+      offendersOf("as_value.tsx", AS_VALUE).join(" · "));
+    check("ط١٧أ. (وشاهدُ عدم الفراغ: لو نُوديَ فعلاً لَأُمسِك)",
+      offendersOf("called.tsx",
+        AS_VALUE.replace("({ saveThing })", "saveThing()")).length > 0);
+    check("ط١٨. **ولا مُمرَّراً في كائن إعدادٍ داخل نداءِ قراءة**",
+      offendersOf("callback.tsx", AS_CALLBACK).length === 0,
+      offendersOf("callback.tsx", AS_CALLBACK).join(" · "));
+    check("ط١٩. **ونداءٌ مستثنىً لا يبتلع عنوانَ جاره**",
+      offendersOf("neighbour.tsx", NEIGHBOUR).length === 0,
+      offendersOf("neighbour.tsx", NEIGHBOUR).join(" · "));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
