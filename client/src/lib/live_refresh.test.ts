@@ -249,52 +249,117 @@ async function main() {
       return "";
     }
 
-    /** كتلُ `queryFn` كلُّها — المكتوبةَ في مكانها والمُحالَ إليها باسمها. */
+    /**
+     * قيمةُ خاصّيةٍ **بلا أقواس** من `at` — بموازنة الأقواس، فتقف عند الفاصلة
+     * التي تفصلها عن أختها أو عند قوس الكائن الحاوي، ولا تبتلع ما بعدها.
+     * وبحدٍّ أعلى: قيمةٌ أطولُ من ذلك ليست تعبيراً يُقرأ، والانفلاتُ فيها
+     * يجعل الماسحَ يقرأ ملفّاً كاملاً بوصفه «استعلاماً».
+     */
+    function expressionAt(code: string, at: number): string {
+      const end = Math.min(code.length, at + 400);
+      let depth = 0;
+      for (let j = at; j < end; j++) {
+        const c = code[j];
+        if (c === "(" || c === "[" || c === "{") depth++;
+        else if (c === ")" || c === "]" || c === "}") {
+          if (depth === 0) return code.slice(at, j);
+          depth--;
+        } else if (c === "," && depth === 0) return code.slice(at, j);
+      }
+      return code.slice(at, end);
+    }
+
+    //  **رأسُ دالّةِ سهمٍ في أوّلِ القيمة** — لا «`=>` في الجوار»: الثانيةُ
+    //  كانت تُصيب سهماً لخاصّيةٍ تالية، فيُقرأ أوّلُ `{` بعده وهو كتلةٌ لا
+    //  علاقةَ لها بالاستعلام.
+    const ARROW_HEAD = /^\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/;
+
+    /** كتلُ `queryFn` كلُّها — بجسمٍ بأقواس، أو بتعبير، أو بإحالةٍ باسم. */
     function queryFnBodies(code: string): string[] {
       const out: string[] = [];
       const re = /queryFn\s*:/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(code))) {
-        const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 400);
-        const arrow = tail.indexOf("=>");
-        const comma = tail.search(/,\s*\n/);
-        if (arrow >= 0 && arrow < 200) {
-          const body = blockAt(code, m.index + m[0].length + arrow);
-          if (body) { out.push(body); continue; }
+        const at = m.index + m[0].length;
+        const head = ARROW_HEAD.exec(code.slice(at, at + 200));
+        const body = at + (head ? head[0].length : 0);
+        //  **جسمٌ بأقواس** ⟵ يُقرأ كما هو، ولا إحالةَ فيه.
+        if (head && /^\s*\{/.test(code.slice(body, body + 40))) {
+          const block = blockAt(code, body);
+          if (block) { out.push(block); continue; }
         }
-        //  إحالةٌ باسمٍ (`queryFn: fetchUser` أو `() => fetchThing(x)`) —
-        //  تُحَلّ في الملفّ نفسِه، وإلّا بقيت بقعةً عمياء.
-        const head = tail.slice(0, comma < 0 ? tail.length : comma);
-        for (const id of head.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+        //  **وإلّا فتعبير**: سهمٌ بلا أقواس (`() => fetchX(id)`) أو إحالةٌ
+        //  باسمٍ مجرَّد (`fetchUser`) أو نداءٌ (`getQueryFn({…})`). يُقرأ
+        //  التعبيرُ نفسُه — فنداءُ كتابةٍ مكتوبٌ فيه لا يفلت — **وتُحَلّ
+        //  أسماؤه** في الملفّ نفسِه، وإلّا بقي ما خلف الاسم بقعةً عمياء.
+        const expr = expressionAt(code, body);
+        out.push(expr);
+        for (const id of expr.match(/[A-Za-z_$][\w$]*/g) ?? []) {
           if (["async", "await", "return"].includes(id)) continue;
           const def = code.search(
             new RegExp(`(?:async\\s+)?function\\s+${id}\\b|const\\s+${id}\\s*=`));
           if (def < 0) continue;
-          const body = blockAt(code, def);
-          if (body) out.push(body);
+          const block = blockAt(code, def);
+          if (block) out.push(block);
         }
       }
       return out;
     }
 
-    const offenders: string[] = [];
-    let scanned = 0, withWrite = 0;
-    for (const f of sources("client/src")) {
-      const code = strip(readFileSync(f, "utf8"));
-      for (const body of queryFnBodies(code)) {
-        scanned++;
-        if (!/["'](?:POST|PUT|PATCH|DELETE)["']/i.test(body)) continue;
-        withWrite++;
-        for (const lit of body.match(/["'`](\/api\/[^"'`\s]*)["'`]/g) ?? []) {
-          const url = lit.slice(1, -1);
-          if (isLiveRefreshWrite("POST", url)) offenders.push(`${f} ⟵ ${url}`);
+    /** الحكمُ على مجموعةِ مصادر — المخالفاتُ بصيغة «ملفّ ⟵ عنوان». */
+    function scan(files: Array<{ name: string; code: string }>) {
+      const offenders: string[] = [];
+      let scanned = 0, withWrite = 0;
+      for (const f of files) {
+        for (const body of queryFnBodies(strip(f.code))) {
+          scanned++;
+          if (!/["'](?:POST|PUT|PATCH|DELETE)["']/i.test(body)) continue;
+          withWrite++;
+          for (const lit of body.match(/["'`](\/api\/[^"'`\s]*)["'`]/g) ?? []) {
+            const url = lit.slice(1, -1);
+            if (isLiveRefreshWrite("POST", url)) offenders.push(`${f.name} ⟵ ${url}`);
+          }
         }
       }
+      return { offenders, scanned, withWrite };
     }
-    check("ط١. (الماسحُ يرى كتلَ `queryFn` فعلاً)", scanned > 100, `عدد الكتل: ${scanned}`);
-    check("ط٢. (ومنها ما ينادي بفعلِ كتابة)", withWrite >= 2, `عددها: ${withWrite}`);
+
+    const repo = scan(sources("client/src").map(
+      (name) => ({ name, code: readFileSync(name, "utf8") })));
+    check("ط١. (الماسحُ يرى كتلَ `queryFn` فعلاً)", repo.scanned > 100,
+      `عدد الكتل: ${repo.scanned}`);
+    check("ط٢. (ومنها ما ينادي بفعلِ كتابة)", repo.withWrite >= 2,
+      `عددها: ${repo.withWrite}`);
     check("ط٣. **ولا واحدةٌ منها خارج الاستثناء** — وإلّا عادت الحلقة",
-      offenders.length === 0, offenders.join(" · "));
+      repo.offenders.length === 0, repo.offenders.join(" · "));
+
+    //  ══ **والحارسُ يُقاس على شكلٍ يمسكه، لا على مستودعٍ نظيفٍ اليوم** ═══
+    //   مستودعٌ بلا مخالفةٍ يُخضِّر ط٣ ولو كان الماسحُ أعمى. فتُعرَض عليه
+    //   الأشكالُ صراحةً — ومنها الشكلُ الذي كان يفلت: سهمٌ بتعبيرٍ يُحيل
+    //   إلى دالّةٍ تكتب، فيُقرأ أوّلُ `{` بعده (كائنُ التسميات هنا) ويُقفَل
+    //   بابُ حلِّ الاسم.
+    const fixture = (fn: string) => `
+      async function helper(id: number) {
+        const res = await apiRequest("POST", "/api/__probe__", { id });
+        return res.json();
+      }
+      useQuery({ queryKey: ["k"], queryFn: ${fn}, enabled: true });
+      const SERVICE_LABEL = { prosthetic: "طرف صناعي" };
+    `;
+    const caught = (fn: string) =>
+      scan([{ name: "fixture.tsx", code: fixture(fn) }]).offenders.length > 0;
+
+    check("ط٤. **سهمٌ بتعبيرٍ يُحيل إلى دالّةٍ تكتب** — الشكلُ الذي كان يفلت",
+      caught("() => helper(id)"));
+    check("ط٥. **وإحالةٌ باسمٍ مجرَّد**", caught("helper"));
+    check("ط٦. **ونداءُ كتابةٍ مكتوبٌ في التعبير نفسِه**",
+      caught(`() => apiRequest("POST", "/api/__probe__").then((r) => r.json())`));
+    check("ط٧. **وجسمٌ بأقواس** — وهو ما كان يُمسَك أصلاً",
+      caught(`async () => { const r = await apiRequest("POST", "/api/__probe__"); return r.json(); }`));
+    check("ط٨. (والمستثنى لا يُبلَّغ عنه)",
+      !caught(`() => apiRequest("POST", "/api/ai/chat").then((r) => r.json())`));
+    check("ط٩. (ولا قراءةٌ عادية)",
+      !caught(`() => apiRequest("GET", "/api/__probe__").then((r) => r.json())`));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
