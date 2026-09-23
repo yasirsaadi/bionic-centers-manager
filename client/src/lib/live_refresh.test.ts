@@ -358,12 +358,27 @@ async function main() {
 
     //  **ما يُنادي ما يُمرَّر إليه بحكم عقده** — لا يُقرأ من ملفٍّ لأنه ليس
     //  فيه: طرائقُ الوعد والمصفوفة، ومؤقّتاتُ المتصفّح.
+    //
+    //  **ومجموعةٌ مغلقة على الصنف كلِّه لا على ما صادفنا منه**: نقصانُ طريقةٍ
+    //  واحدة يفتح مخرجاً صامتاً (`rows.findLast(saveThing)` كان يفلت).
+    //  فتُعدُّ الطرائقُ المعياريةُ كلُّها التي تنادي وسيطَها الدالّيّ.
+    //
+    //  **والمُلتبِسُ يُترَك عمداً**: `Array.from(rows, fn)` تنادي مُعامِلَها
+    //  الثاني حقّاً، لكنّ `‎.from(` تقع في سلاسلَ كثيرةٍ لا تنادي شيئاً
+    //  (تواريخُ وبناةُ استعلامات)، فإدراجُها يُلاحق وسيطاً بريئاً — والاتّهامُ
+    //  الباطل يُعطِّل الحارسَ، والمخرجُ هنا شكلٌ لا يقع (دالّةُ كتابةٍ مسمّاة
+    //  مُمرَّرةً مُحوِّلاً لـ`Array.from` داخل استعلام).
     const INVOKING_METHODS = new Set([
-      "then", "catch", "finally", "map", "forEach", "filter", "find",
-      "findIndex", "some", "every", "flatMap", "sort", "reduce", "reduceRight",
+      //  الوعد
+      "then", "catch", "finally",
+      //  المصفوفة — وكلُّ ما يأخذ ردَّ نداءٍ منها
+      "map", "forEach", "filter", "find", "findIndex", "findLast",
+      "findLastIndex", "some", "every", "flatMap", "sort", "toSorted",
+      "reduce", "reduceRight", "groupBy",
     ]);
     const INVOKING_GLOBALS = new Set([
-      "setTimeout", "setInterval", "queueMicrotask", "requestAnimationFrame",
+      "setTimeout", "setInterval", "setImmediate",
+      "queueMicrotask", "requestAnimationFrame", "requestIdleCallback",
     ]);
 
     /** فصلُ قائمةٍ بفواصلها على مستواها هي — لا داخل أقواسٍ متداخلة. */
@@ -405,7 +420,9 @@ async function main() {
         return one ? [one[1]] : [];
       }
       return splitTop(inner).map((p) => {
-        const n = /^\s*([A-Za-z_$][\w$]*)\s*(?::|=[^>]|$)/.exec(p);
+        //  **و`?` علامةُ اختيارٍ لا فاصلَ اسم**: `(f?: () => void)` معامِلٌ
+        //  اسمُه `f`، وردُّه فراغاً كان يُسقط ملاحقةَ ما يُمرَّر إليه.
+        const n = /^\s*([A-Za-z_$][\w$]*)\s*\??\s*(?::|=[^>]|$)/.exec(p);
         return n ? n[1] : "";
       });
     }
@@ -801,6 +818,60 @@ async function main() {
         POSITIONAL.replace("(a: unknown, f: () => Promise<unknown>) => f()",
           "(f: () => Promise<unknown>, a: unknown) => a")
           .replace("pick(1, saveThing)", "pick(saveThing, 1)")).join(" · "));
+
+    //  **و`?` علامةُ اختيارٍ لا فاصلَ اسم** (مراجعةُ ٣٩٤): معامِلٌ اختياريّ
+    //  كان اسمُه يُقرأ فراغاً، فلا يُطابَق الوسيطُ في موضعه ويفلتُ ما يكتب.
+    const OPTIONAL_PARAM = `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      const runIt = (f?: () => Promise<unknown>) => { if (f) return f(); };
+      useQuery({ queryKey: ["k"], queryFn: () => runIt(saveThing), enabled: true });
+    `;
+    check("ط٢٧. **ومعامِلٌ اختياريّ `f?` يُقرأ باسمه** — الشكلُ الذي كان يفلت",
+      offendersOf("opt.tsx", OPTIONAL_PARAM).length > 0);
+    check("ط٢٧أ. **وبلا نوعٍ مكتوب** (`(f?) => …`)",
+      offendersOf("opt2.tsx", OPTIONAL_PARAM.replace(
+        "(f?: () => Promise<unknown>)", "(f?)")).length > 0);
+    check("ط٢٧ب. (وشاهدُ عدم الفراغ: المطابقُ له بلا `?` كان يُمسَك وما زال)",
+      offendersOf("req.tsx", OPTIONAL_PARAM.replace("(f?:", "(f:")).length > 0);
+    const OPTIONAL_WRONG_SLOT = offendersOf("opt3.tsx", OPTIONAL_PARAM
+      .replace("(f?: () => Promise<unknown>) => { if (f) return f(); }",
+        "(f?: () => Promise<unknown>, g?: () => Promise<unknown>) => { if (g) return g(); }")
+      .replace("runIt(saveThing)", "runIt(saveThing, other)"));
+    check("ط٢٧ج. **والموضعُ لا يزال يحكم** — اختياريٌّ لا يُنادى لا يُمسَك",
+      OPTIONAL_WRONG_SLOT.length === 0, OPTIONAL_WRONG_SLOT.join(" · "));
+    check("ط٢٧د. **والمُخزَّنُ يبقى صامتاً** — تصحيحُ ٣٩٣ بحرفه",
+      offendersOf("opt4.tsx", OPTIONAL_PARAM.replace(
+        "{ if (f) return f(); }", "{ store.push(f); return 1; }")).length === 0);
+
+    //  **ومجموعةُ الطرائق مغلقةٌ على الصنف كلِّه** (مراجعةُ ٣٩٤): نقصانُ
+    //  واحدةٍ يفتح مخرجاً صامتاً — `findLast` و`findLastIndex` كانتا ناقصتين.
+    const viaMethod = (m: string) => offendersOf(`${m}.tsx`, `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      useQuery({ queryKey: ["k"], queryFn: () => rows.${m}(saveThing), enabled: true });
+    `).length > 0;
+    const MISSED = ["findLast", "findLastIndex", "toSorted", "groupBy"];
+    check("ط٢٨. **والطرائقُ التي كانت ناقصةً تُمسَك**",
+      MISSED.every(viaMethod), MISSED.filter((m) => !viaMethod(m)).join(" · "));
+    const KEPT = ["map", "forEach", "filter", "find", "findIndex", "some",
+      "every", "flatMap", "sort", "reduce", "reduceRight", "then", "catch", "finally"];
+    check("ط٢٨أ. (والباقيةُ كما كانت)",
+      KEPT.every(viaMethod), KEPT.filter((m) => !viaMethod(m)).join(" · "));
+    const viaGlobal = (g: string) => offendersOf(`${g}.tsx`, `
+      const saveThing = () => apiRequest("POST", "/api/__probe__");
+      useQuery({ queryKey: ["k"], queryFn: () => ${g}(saveThing), enabled: true });
+    `).length > 0;
+    check("ط٢٨ب. **والمؤقّتاتُ كذلك**",
+      ["setTimeout", "setInterval", "setImmediate", "queueMicrotask",
+        "requestAnimationFrame", "requestIdleCallback"].every(viaGlobal));
+
+    //  **والمُلتبِسُ متروكٌ بقرارٍ مقيس**: `‎.from(` تقع في سلاسلَ لا تنادي
+    //  شيئاً، فإدراجُها يُلاحق وسيطاً بريئاً — والاتّهامُ الباطل يُعطِّل الحارس.
+    check("ط٢٨ج. **و`Array.from` متروكةٌ عمداً** — لا تُلاحَق ولا يُدَّعى خلافُه",
+      offendersOf("from.tsx", `
+        const saveThing = () => apiRequest("POST", "/api/__probe__");
+        useQuery({ queryKey: ["k"], queryFn: () => Array.from(rows, saveThing), enabled: true });
+      `).length === 0);
+    check("ط٢٨د. (وطريقةٌ ليست من الصنف لا تُلاحَق)", !viaMethod("pipe"));
   }
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص التحديث الحيّ نجحت" : `❌ ${failures} فحصاً فشل`}`);
