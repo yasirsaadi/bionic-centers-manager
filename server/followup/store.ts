@@ -946,13 +946,6 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   newPrice: number;
   /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
   reason: string;
-  /**
-   * **نطاقُ المُصحِّح — إلزاميّ** (٢٠٢٦-٠٩-٢٤). `null` = المسؤولُ العام.
-   * الفرقُ يُقيَّد في **فرع البيع** (`cur.branchId`، وقد ينتقل إليه البيعُ عن
-   * فرع المعاينة منذ ٤٠٩)، فيُحكَم عليه تحت القفل — لا بفرع المعاينة الذي
-   * فحصته النقطة.
-   */
-  scope: number[] | null;
   actor: Actor;
   tx: any;
 }): Promise<{ followup: FollowupRow; delta: number; deviceEpisodeId: number }> {
@@ -980,23 +973,6 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   const curRow = (r.rows ?? [])[0];
   if (!curRow) throw new FollowupError("المتابعة غير موجودة", 404);
   const cur = toRow(curRow);
-
-  // ①-ب **والبيعُ يُصحِّحه فرعُه** (٢٠٢٦-٠٩-٢٤ — شقيقُ ملاحظة المراجعة على
-  //    التصحيح الإداريّ). النقطةُ فحصت فرعَ **المعاينة**، والفرقُ يُكتب في فرع
-  //    **البيع** — وقد انتقل البيعُ إلى فرع الخبير المختار (٤٠٩). فمديرُ ذي قار
-  //    كان يقيّد في بغداد مالاً لا يصله. **العمليةُ يُصحِّحها فرعُها** (٤٠٨)،
-  //    والحكمُ تحت القفل لا قبله.
-  if (params.scope !== null
-      && !(cur.branchId !== null && params.scope.includes(cur.branchId))) {
-    const bn = cur.branchId === null ? null : await tx.execute(sql`
-      SELECT name FROM branches WHERE id = ${cur.branchId}
-    `);
-    const name = (bn?.rows ?? [])[0]?.name;
-    throw new FollowupError(
-      `هذا البيعُ في فرع ${typeof name === "string" && name.trim() ? name : "آخر"}`
-      + " — يُصحِّح سعرَه ذلك الفرعُ أو المسؤول العام. لم يُعدَّل شيء.", 403,
-    );
-  }
 
   // ② **وأنها متابعةُ هذه المعاينة بعينها** — لا أوّلُ متابعةٍ للمريض.
   const belongs = (cur.medicalExamId !== null && cur.medicalExamId === params.medicalExamId)
@@ -1968,22 +1944,9 @@ export async function confirmPurchase(params: {
    * تبقى لحظةٌ يكون فيها الطلبُ «معتمَداً» والبيعُ لم يقع.
    */
   tx?: any;
-  /**
-   * **فرعُ البيع — يحسمه الخبيرُ المختار** (٢٠٢٦-٠٩-٢٤، `sale_branch.ts`).
-   *
-   * يحسبه المُستدعي بنطاق الجلسة (فروعُ ملفّ المريض ∩ نطاقُ الفاعل ∩ فروعُ
-   * الخبير)، **ويُعاد فحصُه هنا تحت قفل المتابعة**: الخبيرُ ما زال يعمل فيه،
-   * والفرعُ ما زال يصل ملفَّ المريض — وإلّا ٤٠٩ بلا كتابة. ثمّ تنتقل
-   * المتابعةُ وحلقتُها إليه إن لم تكونا فيه، فيقع الأمرُ والقيدُ حيث يعمل
-   * الخبير.
-   *
-   * **وغيابُه** (اعتمادُ خصمٍ قديمٍ معلَّق، أو نداءٌ داخليّ) ⟶ لا نقل، والعمليةُ
-   * في فرع حلقتها — لا فرعَ التسجيل الذي كان يردّ ٤٠٩ على حلقةٍ في فرعٍ مُتاح.
-   */
-  saleBranchId?: number | null;
 }): Promise<{ followup: FollowupRow; workOrderId: number }> {
   const body = async (tx: any) => {
-    let cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
+    const cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
     if (cur.approvedPrice <= 0 && params.allowFreeDonation !== true) {
       throw new FollowupError(
         "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
@@ -2001,77 +1964,6 @@ export async function confirmPurchase(params: {
     if (expertUserId === null) {
       throw new FollowupError(
         "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء", 409);
-    }
-
-    // ══ **فرعُ البيع يُعاد فحصُه تحت القفل، ثمّ تتبعه المتابعة** ══════════
-    //  بين حساب المُستدعي وهذا القفل قد يُسحَب فرعٌ من الخبير أو تُسحَب
-    //  إتاحةُ الملفّ. فالقرارُ يُقرأ الآن ولا يُصدَّق — والرفضُ قبل أيّ كتابة.
-    const saleBranchId = params.saleBranchId === undefined || params.saleBranchId === null
-      ? null : Number(params.saleBranchId);
-    if (saleBranchId !== null) {
-      const mf = await import("../manufacturing/store");
-      const v = await mf.validateExpertForBranchTx(tx, expertUserId, saleBranchId);
-      if (!v.ok) {
-        throw new FollowupError(`${v.reason} — حدّث الصفحة واختر الخبير من جديد`, 409);
-      }
-      //  ══ **والإتاحةُ تُقفَل لا تُقرأ** (٢٠٢٦-٠٩-٢٤، مراجعةٌ مستقلّة) ════════
-      //  كانت قراءةً حرّة، والسحبُ (`revokeBranchAccess`) لا يأخذ قفلَ المتابعة:
-      //  فسحبُ إتاحة بغداد وبيعُها معلَّقٌ لم يُلتزَم **يمضي ٢٠٠ في عشرين
-      //  مللي ثانية** — ثمّ يلتزم البيعُ فيصير لبغداد أمرُ تصنيعٍ حيٌّ ومالٌ
-      //  على ملفٍّ لم تعد تفتحه (٤٠٤). مُعادٌ حيّاً. فصفُّ الإتاحة يُقفَل هنا
-      //  `FOR KEY SHARE` حتى الالتزام، والسحبُ يقفله `FOR UPDATE` **قبل** فحص
-      //  العمل الحيّ: أيُّهما سبق انتظره الآخر، فإمّا يرى السحبُ أمرَ البيع
-      //  (٤٠٩) وإمّا يرى البيعُ الإتاحةَ ذهبت (٤٠٩) — ولا ثالث.
-      //
-      //  **وفرعُ التسجيل لا صفَّ له** — لا يُسحَب أصلاً (ترحيل ٠٨٠)، فلا قفل.
-      //  **ولا قفلَ جديداً في ترتيب البيع**: السحبُ لا ينتظر شيئاً يمسكه البيع
-      //  غيرَ هذا الصفّ، والبيعُ لا يأخذ قفلَ المريض (٩١٩) بعده.
-      const pr = await tx.execute(sql`
-        SELECT branch_id FROM patients WHERE id = ${cur.patientId}
-      `);
-      const home = (pr.rows ?? [])[0]?.branch_id;
-      let reaches = home !== null && home !== undefined && Number(home) === saleBranchId;
-      if (!reaches && (pr.rows ?? []).length > 0) {
-        const ar = await tx.execute(sql`
-          SELECT id FROM patient_branch_access
-           WHERE patient_id = ${cur.patientId} AND branch_id = ${saleBranchId}
-           FOR KEY SHARE
-        `);
-        reaches = (ar.rows ?? []).length > 0;
-      }
-      if (!reaches) {
-        throw new FollowupError(
-          "لم يعد هذا الفرع يصل ملفّ المريض — حدّث الصفحة وأعد المحاولة", 409);
-      }
-      //  **المتابعةُ تتبع فرعَ البيع** — بكاتبها القانونيّ (الحيّةُ وحدها،
-      //  وهذه مقفولةٌ حيّةٌ أعلاه)، وحدثٌ يقول مِن أين إلى أين ولماذا.
-      if (cur.branchId !== saleBranchId) {
-        const moved = await moveLiveFollowupsToBranchTx(tx, {
-          patientId: cur.patientId, branchId: saleBranchId, followupIds: [cur.id],
-        });
-        if (moved.length !== 1) throw new FollowupError(CONFLICT, 409);
-        //  **والأسماءُ لقطةٌ في الحمولة** — سجلُّ الإجراءات يقول «من فرع ذي قار
-        //  إلى فرع بغداد» لا رقمين، ويبقى مقروءاً ولو تغيّر اسمُ فرعٍ بعدها.
-        const bn = await tx.execute(sql`
-          SELECT id, name FROM branches WHERE id IN (${cur.branchId}, ${saleBranchId})
-        `);
-        const nameOf = (id: number | null) => {
-          if (id === null) return null;
-          const r = (bn.rows ?? []).find((x: any) => Number(x.id) === Number(id));
-          return r && typeof r.name === "string" ? r.name : null;
-        };
-        await appendEvent(tx, {
-          followupId: cur.id, patientId: cur.patientId, branchId: saleBranchId,
-          eventType: "sale_branch_moved", fromStatus: cur.status, toStatus: cur.status,
-          payload: {
-            fromBranchId: cur.branchId, fromBranchName: nameOf(cur.branchId),
-            toBranchId: saleBranchId, toBranchName: nameOf(saleBranchId),
-            expertUserId,
-          },
-          actor: params.actor,
-        });
-        cur = { ...cur, branchId: saleBranchId };
-      }
     }
 
     //  سجلُّ التأكيد يُكتب **قبل** البيع وفي معاملته: فلا أمرُ تصنيعٍ
@@ -2110,8 +2002,6 @@ export async function confirmPurchase(params: {
         patientId: cur.patientId,
         serviceType: cur.serviceType,
         createdBy: params.actor.userId,
-        //  **وتُولَد في فرع البيع** حين يُحسَم — فالأمرُ وحلقتُه في فرعٍ واحد.
-        branchId: saleBranchId,
       });
       //  لا خيطَ لهذا الاختصاص ⟶ `null`، فيمضي البيعُ على مساره القديم
       //  بلا كسر. ورفضُه هنا كان سيوقف بيعاً صحيحاً لأجل هويّةٍ إدارية.
@@ -2128,13 +2018,18 @@ export async function confirmPurchase(params: {
       }
     }
 
-    // ══ **فرعُ العملية: فرعُ البيع، وإلّا فرعُ الحلقة** (٢٠٢٦-٠٩-٢٤) ══════
-    //  كان يُترك فارغاً فيُفتَح الأمرُ بفرع تسجيل المريض — وحلقةٌ في فرعٍ
-    //  أُتيح له الملفُّ تصطدم عندها بحارس «لا أمرَ في فرعٍ وحلقتُه في آخر»
-    //  (٤٠٩ لبيعٍ صحيح). فالعمليةُ تقع حيث حلقتُها، أو حيث يعمل الخبيرُ الذي
-    //  اختاره البائع — **وتنتقل الحلقةُ معها تحت قفل الخيط** لا قبله.
-    let operationBranchId: number | null = saleBranchId;
-    if (operationBranchId === null && episodeId !== null) {
+    // ══ **البيعُ في فرع الجهاز نفسِه — لا ينتقل شيء** (٢٠٢٦-٠٩-٢٤) ═════════
+    //  كان الأمرُ يُفتَح دائماً بفرع تسجيل المريض. وجهازٌ فتحه الفرعُ المُتاحُ
+    //  له الملفّ (٤٠٧) حلقتُه في ذلك الفرع، فيصطدم البيعُ بحارس «لا أمرَ في
+    //  فرعٍ وحلقتُه في آخر» ويُرمى من معالجٍ غير متزامن — **فلا يصل الطلبَ
+    //  ردٌّ إطلاقاً** ولا يُكتب شيء. مُعادٌ حيّاً قبل الإصلاح.
+    //
+    //  **والقاعدةُ المتّفقُ عليها**: كلُّ فرعٍ يسجّل عملياتِه عنده. فالعمليةُ
+    //  تبقى في فرع جهازها كما فُتح — أمرُها وكلفتُها ودفعتُها هناك — **ولا
+    //  تُنقَل متابعةٌ ولا حلقةٌ ولا مالٌ من فرعٍ إلى آخر**. وبلا جهازٍ يبقى
+    //  السلوكُ القائم بحرفه (فرعُ التسجيل).
+    let operationBranchId: number | null = null;
+    if (episodeId !== null) {
       const eb = await tx.execute(sql`
         SELECT branch_id FROM patient_device_episodes WHERE id = ${episodeId}
       `);
@@ -2152,7 +2047,6 @@ export async function confirmPurchase(params: {
       assignedBy: params.actor.userId,
       deviceEpisodeId: episodeId,
       actingBranchId: operationBranchId,
-      relocateEpisodeToActingBranch: saleBranchId !== null,
       tx,
     });
 
@@ -2250,15 +2144,10 @@ export async function setCommercialFields(params: {
   actor: Actor;
   session: CommercialSessionLike;
   asDoctor: boolean;
-  /**
-   * يتحقّق أن الخبير **يعمل في فرعٍ يجوز أن يقع فيه البيع** — ويُمرَّر فتبقى
-   * الطبقةُ نقيّة. و`branchId` في الجواب هو **فرعُ البيع** الذي حسمه
-   * (`sale_branch.ts`) — يُمرَّر إلى `confirmPurchase` فتقع العمليةُ حيث يعمل
-   * الخبير. وغيابُه يُبقي العمليةَ في فرع حلقتها.
-   */
+  /** يتحقّق أن الخبير **فعّالٌ في فرع المريض** — ويُمرَّر فتبقى الطبقةُ نقيّة. */
   validateExpert: (
     expertUserId: number, branchId: number | null,
-  ) => Promise<{ ok: boolean; reason?: string; branchId?: number | null }>;
+  ) => Promise<{ ok: boolean; reason?: string }>;
   /** لقطةُ اسمٍ للخبير — للعرض في السجلّ لا للقرار. */
   expertLabel?: (expertUserId: number) => Promise<string | null>;
   tx?: any;
@@ -2320,19 +2209,15 @@ export async function setCommercialFields(params: {
     }
     let expertId: number | null = null;
     let expertName: string | null = null;
-    //  فرعُ البيع كما حسمه المتحقِّق — `undefined` حين لم يُلمَس الخبير هنا.
-    let saleBranchId: number | null | undefined;
     if (touchesExpert) {
       expertId = Number(patch.expertUserId);
       if (!Number.isInteger(expertId) || expertId <= 0) {
         throw new FollowupError("الخبير غير صالح", 400);
       }
-      //  **والفرعُ من صفّ المتابعة لا من الطلب**: `cur.branchId` هويّةٌ رسمية
-      //  كُتبت عند فتح المتابعة، ولا يُقبل فرعٌ يعلنه العميل. والمتحقِّقُ
-      //  يحسم منه ومن فروع ملفّ المريض أين يقع البيع.
+      //  **والفرعُ من صفّ المريض لا من الطلب**: `cur.branchId` هويّةٌ رسمية
+      //  كُتبت عند فتح المتابعة، ولا يُقبل فرعٌ يعلنه العميل.
       const v = await params.validateExpert(expertId, cur.branchId);
       if (!v.ok) throw new FollowupError(v.reason ?? "الخبير غير صالح لهذا الفرع", 400);
-      saleBranchId = v.branchId ?? undefined;
       expertName = params.expertLabel ? await params.expertLabel(expertId) : null;
     }
     const reasonText = String(patch.notBoughtReason ?? "").trim();
@@ -2458,7 +2343,6 @@ export async function setCommercialFields(params: {
         //  **البابُ الصريحُ للصفر**: `free` قرارٌ له صاحبٌ وسعرٌ أصليّ —
         //  لا ملفٌّ لم يُسعَّر. والنوعُ هو ما يفرّق، لا الرقم.
         allowFreeDonation: next.priceKind === "free",
-        saleBranchId,
         tx,
       });
       return {
@@ -2608,10 +2492,9 @@ export async function completeReceptionSale(params: {
   note?: string | null;
   actor: Actor;
   session: CommercialSessionLike;
-  /** راجع `setCommercialFields` — و`branchId` في الجواب فرعُ البيع. */
   validateExpert: (
     expertUserId: number, branchId: number | null,
-  ) => Promise<{ ok: boolean; reason?: string; branchId?: number | null }>;
+  ) => Promise<{ ok: boolean; reason?: string }>;
   expertLabel?: (expertUserId: number) => Promise<string | null>;
   tx?: any;
 }): Promise<CommercialResult & { payment: Payment | null }> {

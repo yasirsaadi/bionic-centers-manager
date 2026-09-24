@@ -18,47 +18,19 @@ export interface PurchaseFollowupLike {
 }
 
 /**
- * قائمةُ الخبراء كما أعادها الخادمُ **لهذا البائع** (`sale_experts.ts`) —
- * `undefined` حين لم تُحمَّل بعد، فلا يُحكَم بها على شيء.
- */
-export type PurchaseCandidates = readonly { id: number }[] | null | undefined;
-
-/**
- * **الخبيرُ المحفوظ لا يصلح لهذا البائع** (٢٠٢٦-٠٩-٢٤، مراجعةٌ على ٤٠٩).
- *
- * اختار الفرعُ المُتاح (بغداد) أيوبَ على متابعةٍ في ذي قار، ثمّ ضغط استقبالُ
- * ذي قار «اشترى»: النافذةُ تعرض أيوب للقراءة بلا قائمة، والخادمُ يردّ «الخبير
- * لا يعمل في أيّ فرعٍ من فروع هذا المريض المتاحة لك — اختر خبيراً من القائمة»
- * — **ولا قائمة**. فحين تُحمَّل القائمةُ ولا يكون المحفوظُ فيها، يُسأل
- * البائعُ عن خبيرٍ يصلح له في النافذة نفسِها. **ولا يُحكَم قبل التحميل** —
- * القائمةُ الغائبة لا تقول إن المحفوظ لا يصلح.
- */
-export function savedExpertOutOfList(
-  f: PurchaseFollowupLike | null | undefined, candidates: PurchaseCandidates,
-): boolean {
-  const saved = f?.selectedExpertUserId;
-  if (saved === null || saved === undefined || !Array.isArray(candidates)) return false;
-  return !candidates.some((e) => Number(e.id) === Number(saved));
-}
-
-/**
  * **ما ينقص لإتمام البيع** — وهو كلُّ ما تسأل عنه النافذة.
  *
  * الموجودُ يُعرَض ولا يُسأل عنه: سعرٌ محفوظٌ لا يُعاد إدخاله (تخفيضُه خصمٌ
  * له بابه)، وخبيرٌ اختير صراحةً لا يُبدَّل من باب البيع.
  */
-export function purchaseGaps(
-  f: PurchaseFollowupLike | null | undefined, candidates?: PurchaseCandidates,
-): {
+export function purchaseGaps(f: PurchaseFollowupLike | null | undefined): {
   needsFirstPrice: boolean; needsExpert: boolean;
 } {
   return {
     //  **الصفرُ والفراغ والقيمةُ الغائبة سواء**: «لم يحدّد الطبيب كلفة».
     needsFirstPrice: !(Number(f?.approvedPrice) > 0),
-    //  و`null` و`undefined` سواء: لم يُختَر خبيرٌ بعد. **أو اختير خبيرٌ لا
-    //  يصلح لهذا البائع** — فيُسأل عن غيره بدل نافذةٍ لا مخرجَ منها.
-    needsExpert: f?.selectedExpertUserId === null || f?.selectedExpertUserId === undefined
-      || savedExpertOutOfList(f, candidates),
+    //  و`null` و`undefined` سواء: لم يُختَر خبيرٌ بعد.
+    needsExpert: f?.selectedExpertUserId === null || f?.selectedExpertUserId === undefined,
   };
 }
 
@@ -88,10 +60,9 @@ export function purchaseBlocked(params: {
   expertId: string;
   discount: DiscountDraft;
   busy?: boolean;
-  candidates?: PurchaseCandidates;
 }): boolean {
   if (params.busy === true) return true;
-  const { needsExpert } = purchaseGaps(params.followup, params.candidates);
+  const { needsExpert } = purchaseGaps(params.followup);
   const original = purchaseOriginalPrice(params.followup, params.firstPrice);
   //  سعرٌ غيرُ موجب: إمّا لم يُكتب بعد، أو كُتب صفراً — وكلاهما لا يُباع به.
   if (!(original > 0)) return true;
@@ -113,9 +84,8 @@ export function purchaseBody(params: {
   firstPrice: number;
   expertId: string;
   discount: DiscountDraft;
-  candidates?: PurchaseCandidates;
 }): Record<string, any> {
-  const { needsFirstPrice, needsExpert } = purchaseGaps(params.followup, params.candidates);
+  const { needsFirstPrice, needsExpert } = purchaseGaps(params.followup);
   const original = purchaseOriginalPrice(params.followup, params.firstPrice);
   return {
     ...(needsFirstPrice ? { originalPrice: Number(params.firstPrice) || 0 } : {}),

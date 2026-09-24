@@ -52,15 +52,11 @@ import {
 } from "@/components/ServiceDiscountFields";
 import {
   purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
-  purchaseSubmitLabel, savedExpertOutOfList, type PurchaseFollowupLike,
+  purchaseSubmitLabel, type PurchaseFollowupLike,
 } from "@/components/purchase_dialog_ui";
 import {
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, type FollowupReason,
 } from "@shared/followup";
-import {
-  fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
-  saleExpertsPlaceholder, type SaleExpert,
-} from "@/components/sale_experts";
 
 export interface LegacyDecisionActionsFollowup extends PurchaseFollowupLike {
   /** اسمُ الخبير المحفوظ للعرض — لا يُشترَط، `#الرقم` يكفي حين يغيب. */
@@ -70,11 +66,7 @@ export interface LegacyDecisionActionsFollowup extends PurchaseFollowupLike {
 export interface LegacyDecisionActionsProps {
   followupId: number;
   patientId: number;
-  /**
-   * فرعُ **العملية** — للسياق. **وقائمةُ الخبراء لم تعد تُبنى منه**
-   * (٢٠٢٦-٠٩-٢٤): تُطلب بالمريض (`sale_experts.ts`)، نفسُ مبدأ
-   * `ExamPathDecisionActions`، ويحسم الخادمُ فرعَ البيع من الخبير المختار.
-   */
+  /** فرعُ **العملية** — لقائمة الخبراء، لا فرعُ جلسة الفاعل (نفسُ مبدأ `ExamPathDecisionActions`). */
   branchId: number | null;
   /** الأفعالُ المتاحة من الخادم (`allowedActions`) — يُقرَأ منها `confirm_purchase`/`close` فقط؛ أيُّ فعلٍ آخر فيها يُتجاهَل عمداً. */
   actions: string[];
@@ -101,7 +93,7 @@ export interface LegacyDecisionActionsProps {
 }
 
 export function LegacyDecisionActions({
-  followupId, patientId, actions, followup,
+  followupId, patientId, branchId, actions, followup,
   mayCancelDecision = false, onResolved,
 }: LegacyDecisionActionsProps) {
   const { toast } = useToast();
@@ -123,19 +115,18 @@ export function LegacyDecisionActions({
     setReason("needs_time"); setNote(""); setCancelReason("");
   };
 
-  //  **خبراءُ هذا المريض — لا خبراءُ فرعٍ واحد** (٢٠٢٦-٠٩-٢٤): نفسُ
-  //  الاستعلام بنفس المفتاح الذي تستعمله بطاقةُ المريض و«إتمام البيع»، والفشلُ
-  //  يُقال في النافذة لا يصير قائمةً فارغةً بصمت (شكوى «زهراء»).
-  //
-  //  **وتُجلَب حين تُفتَح نافذةُ «اشترى» لا مع كلّ صفّ** (مراجعةٌ على ٤٠٩) —
-  //  نفسُ تعليل `ExamPathDecisionActions`: المكوّنُ يُركَّب لكلّ صفٍّ في الطابور.
-  const { data: experts, error: expertsError, isLoading: expertsLoading } =
-    useQuery<SaleExpert[]>({
-      queryKey: saleExpertsQueryKey(patientId),
-      queryFn: () => fetchSaleExperts(patientId),
-      enabled: dialog === "confirm_purchase",
-    });
-  const showExpertBranches = spansSeveralBranches(experts ?? []);
+  //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقةُ المريض —
+  //  فرعُ العملية لا فرعُ جلسة الفاعل.
+  const { data: experts } = useQuery<any[]>({
+    queryKey: ["/api/manufacturing/experts", branchId],
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`,
+        { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: branchId !== null,
+  });
 
   //  ══ إبطالٌ مشترك للنجاح وللفشل معاً (نفسُ نمط `ExamPathDecisionActions`) ══
   const invalidateAll = () => {
@@ -175,10 +166,7 @@ export function LegacyDecisionActions({
   const busy = act.isPending;
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
-  //  ══ **والمحفوظُ الذي لا يصلح لهذا البائع يُسأل عن غيره** (مراجعةٌ على
-  //  ٤٠٩) — كانت النافذةُ تعرضه للقراءة بلا قائمة، والخادمُ يردّه: لا مخرج.
-  const savedOutOfList = savedExpertOutOfList(followup, experts);
-  const { needsFirstPrice, needsExpert } = purchaseGaps(followup, experts);
+  const { needsFirstPrice, needsExpert } = purchaseGaps(followup);
   const originalPrice = purchaseOriginalPrice(followup, firstPrice);
 
   return (
@@ -249,32 +237,16 @@ export function LegacyDecisionActions({
                 <Label className="text-sm font-semibold">
                   الخبير المسؤول <span className="text-destructive">*</span>
                 </Label>
-                {savedOutOfList && (
-                  <p className="text-xs text-amber-700" data-testid="text-legacy-saved-expert-out-of-list">
-                    الخبير المختار سابقاً
-                    ({followup.selectedExpertName ?? `#${followup.selectedExpertUserId}`})
-                    لا يعمل في فروع هذا المريض المتاحة لك — اختر خبيراً من القائمة.
-                  </p>
-                )}
                 <Select value={expertId} onValueChange={setExpertId}>
                   <SelectTrigger data-testid="select-legacy-purchase-expert">
-                    <SelectValue placeholder={saleExpertsPlaceholder({
-                      loading: expertsLoading, count: (experts ?? []).length,
-                    })} />
+                    <SelectValue placeholder="اختر الخبير" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(experts ?? []).map((e) => (
-                      <SelectItem key={e.id} value={String(e.id)}>
-                        {saleExpertLabel(e, showExpertBranches)}
-                      </SelectItem>
+                    {(experts ?? []).map((e: any) => (
+                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {expertsError && (
-                  <p className="text-xs text-destructive" data-testid="text-legacy-purchase-experts-error">
-                    {(expertsError as Error).message}
-                  </p>
-                )}
               </div>
             ) : (
               <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"
@@ -305,12 +277,10 @@ export function LegacyDecisionActions({
           </div>
           <DialogFooter>
             <Button
-              disabled={purchaseBlocked({
-                followup, firstPrice, expertId, discount, busy, candidates: experts,
-              })}
+              disabled={purchaseBlocked({ followup, firstPrice, expertId, discount, busy })}
               data-testid="button-legacy-confirm-purchase-submit"
               onClick={() => submit(`/api/followups/${followupId}/confirm-purchase`,
-                purchaseBody({ followup, firstPrice, expertId, discount, candidates: experts }))}>
+                purchaseBody({ followup, firstPrice, expertId, discount }))}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" />
                 : purchaseSubmitLabel({ followup, firstPrice, discount })}
             </Button>

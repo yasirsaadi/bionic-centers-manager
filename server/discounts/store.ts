@@ -114,12 +114,6 @@ export interface DiscountPayload {
   /** أجهزة: الخبيرُ المسؤول. */
   expertUserId?: number | null;
   /**
-   * أجهزة (متابعة): **فرعُ البيع** الذي حسمه البائعُ من الخبير المختار
-   * (`followup/sale_branch.ts`). و`confirmPurchase` يعيد فحصَه تحت القفل، فلا
-   * يُصدَّق رقمٌ لم يعد صالحاً. وغيابُه (طلبٌ معلَّقٌ قديم) = فرعُ الحلقة.
-   */
-  saleBranchId?: number | null;
-  /**
    * أجهزة: مواصفاتُ الجهاز **كما رشّحتها النقطةُ بعد فلترتها بالدور وفرضِ
    * وصفة الطبيب فوقها**. تُحفظ لا لتُصدَّق بل لئلّا يُعاد إدخالُها.
    */
@@ -274,17 +268,6 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
     //  «لا حلقة حيّة» بصدق — لا تخميناً بديلاً.
     const ep = Number(raw?.deviceEpisodeId);
     out.deviceEpisodeId = Number.isFinite(ep) && ep > 0 ? ep : null;
-    //  ══ فرعُ البيع — **يُحفَظ مع المتابعة وحدها** (٢٠٢٦-٠٩-٢٤) ═════════════
-    //  حسمه البائعُ في الخادم من الخبير المختار (`followup/sale_branch.ts`)
-    //  قبل أن يصل هنا، و`confirmPurchase` يعيد فحصَه تحت القفل. **وكان يُسقَط
-    //  في هذا السطر بالذات**، فيصل `applyApproved` فارغاً دائماً: بيعٌ بخصمٍ
-    //  أو مجّاناً يبقى في فرع المتابعة بخبيرٍ لا يعمل فيه، بينما البيعُ
-    //  بسعره الكامل ينتقل. **ولا معنى له بلا متابعة** — «تخصيص» لا ينقل
-    //  عمليةً — فلا يُحفَظ هناك ولا يتغيّر شكلُ حمولته.
-    if (out.followupId) {
-      const sb = Number(raw?.saleBranchId);
-      out.saleBranchId = Number.isInteger(sb) && sb > 0 ? sb : null;
-    }
   }
   return out;
 }
@@ -674,7 +657,6 @@ async function applyApproved(
     });
     const out = await followupStore.confirmPurchase({
       followupId: payload.followupId, actor, tx,
-      saleBranchId: payload.saleBranchId ?? null,
       //  **الصفرُ يُقبل هنا وحده**: تبرّعٌ معتمَد صراحةً — والحارسُ العامّ
       //  «لا سعر معتمد» يبقى قائماً لكلّ نداءٍ آخر.
       allowFreeDonation: req.isFree,

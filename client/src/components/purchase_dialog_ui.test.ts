@@ -14,7 +14,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
-  purchaseSubmitLabel, savedExpertOutOfList,
+  purchaseSubmitLabel,
 } from "./purchase_dialog_ui";
 import { EMPTY_DISCOUNT, hasDiscount, type DiscountDraft } from "./service_discount_ui";
 
@@ -337,42 +337,6 @@ for (const [what, id] of [
   check(`٥٤. **والمسارُ الحديث يرسم «${what}» بلا شرطٍ سابق**`,
     at > 0 && !/&&\s*\(\s*$/.test(head), head.slice(-120));
 }
-
-//  ══ ٥٥–٦٤. **الخبيرُ المحفوظ الذي لا يصلح لهذا البائع** (مراجعةٌ على ٤٠٩) ══
-//  بغدادُ اختارت أيوب (#٧) على متابعةٍ في ذي قار، ثمّ فتح استقبالُ ذي قار
-//  «اشترى»: كانت النافذةُ تعرض أيوب للقراءة بلا قائمة، والخادمُ يردّه — لا
-//  مخرج. فحين تصل القائمةُ **لهذا البائع** ولا يكون المحفوظُ فيها، يُسأل عن غيره.
-console.log("\n── الخبيرُ المحفوظ خارج قائمة البائع ──");
-const DQ_LIST = [{ id: 3 }, { id: 9 }]; // خبراءُ ذي قار — بلا أيوب
-same("٥٥. **المحفوظُ خارج القائمة ⟵ يُسأل عن غيره**",
-  [savedExpertOutOfList(CASE_A, DQ_LIST), purchaseGaps(CASE_A, DQ_LIST).needsExpert], [true, true]);
-same("٥٦. والمحفوظُ فيها ⟵ يبقى للقراءة كما كان",
-  [savedExpertOutOfList(CASE_A, [{ id: 7 }, { id: 3 }]),
-    purchaseGaps(CASE_A, [{ id: 7 }]).needsExpert], [false, false]);
-same("٥٧. **ولا يُحكَم قبل وصول القائمة** — الغائبةُ لا تقول إن المحفوظ لا يصلح",
-  [savedExpertOutOfList(CASE_A, undefined), savedExpertOutOfList(CASE_A, null),
-    purchaseGaps(CASE_A).needsExpert], [false, false, false]);
-same("٥٨. وبلا خبيرٍ محفوظ ⟵ «ينقص» كما كان، لا «خارج القائمة»",
-  [savedExpertOutOfList(CASE_B, DQ_LIST), purchaseGaps(CASE_B, DQ_LIST).needsExpert], [false, true]);
-same("٥٩. والقائمةُ الفارغة (لا خبيرَ للبائع) ⟵ المحفوظُ خارجها",
-  savedExpertOutOfList(CASE_A, []), true);
-check("٦٠. **والزرُّ مغلقٌ حتى يُختار البديل**",
-  purchaseBlocked({ followup: CASE_A, firstPrice: 0, expertId: "", discount: draft(),
-    candidates: DQ_LIST }) === true);
-check("٦١. وبعد الاختيار يُفتَح",
-  purchaseBlocked({ followup: CASE_A, firstPrice: 0, expertId: "3", discount: draft(),
-    candidates: DQ_LIST }) === false);
-same("٦٢. **والبديلُ يُرسَل** — كان المحفوظُ لا يُرسَل فيردّه الخادم",
-  purchaseBody({ followup: CASE_A, firstPrice: 0, expertId: "3", discount: draft(),
-    candidates: DQ_LIST }), { expertUserId: 3 });
-same("٦٣. والمحفوظُ الصالح لا يُرسَل بديلُه — **لا يُبدَّل من باب البيع**",
-  purchaseBody({ followup: CASE_A, firstPrice: 0, expertId: "3", discount: draft(),
-    candidates: [{ id: 7 }] }), {});
-check("٦٤. **والنافذةُ تمرّر القائمةَ إلى الثلاث** (ما ينقص · الزرّ · الجسم)",
-  legacySrc.includes("purchaseGaps(followup, experts)")
-  && /purchaseBlocked\(\{[^}]*candidates:\s*experts/.test(legacySrc)
-  && /purchaseBody\(\{[^}]*candidates:\s*experts/.test(legacySrc)
-  && legacySrc.includes("savedExpertOutOfList(followup, experts)"));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

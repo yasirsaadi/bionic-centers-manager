@@ -30,10 +30,6 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
-import {
-  fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
-  saleExpertsPlaceholder, type SaleExpert,
-} from "@/components/sale_experts";
 
 export interface ExamPathDecisionActionsPrefill {
   originalPrice?: number | null;
@@ -45,11 +41,7 @@ export interface ExamPathDecisionActionsPrefill {
 export interface ExamPathDecisionActionsProps {
   followupId: number;
   patientId: number;
-  /**
-   * فرعُ **العملية** — للعرض والسياق. **وقائمةُ الخبراء لم تعد تُبنى منه**
-   * (٢٠٢٦-٠٩-٢٤): تُطلب بالمريض (`sale_experts.ts`) — فروعُ ملفّه المتاحة
-   * للفاعل — ويحسم الخادمُ فرعَ البيع من الخبير المختار.
-   */
+  /** فرعُ **العملية** — لقائمة الخبراء، لا فرعُ جلسة الفاعل. */
   branchId: number | null;
   /** الأفعالُ المتاحة من الخادم (`active.actions`) — `complete_sale`/`not_bought`. */
   actions: string[];
@@ -79,7 +71,7 @@ export interface ExamPathDecisionActionsProps {
  * جملةَ حجب، أو أكثر من واحدةٍ معاً.
  */
 export function ExamPathDecisionActions({
-  followupId, patientId, actions, examNotes, statusLine, prefill, mayCancelDecision = false, onResolved,
+  followupId, patientId, branchId, actions, examNotes, statusLine, prefill, mayCancelDecision = false, onResolved,
 }: ExamPathDecisionActionsProps) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -112,24 +104,18 @@ export function ExamPathDecisionActions({
     setNote("");
   };
 
-  //  ══ **خبراءُ هذا المريض — لا خبراءُ فرعٍ واحد** (٢٠٢٦-٠٩-٢٤) ═════════
-  //  كانت تُطلب بفرع المتابعة، فاستقبالُ الفرع المُتاح له الملفُّ يُردّ ٤٠٣
-  //  وتصير القائمةُ فارغةً بصمت، والمسؤولُ يرى فرعاً واحداً (شكوى «زهراء»).
-  //  فصارت بالمريض — نفسُ القاعدة التي يحسم بها الخادمُ فرعَ البيع — والفشلُ
-  //  يُقال في النافذة لا يُبتلَع. ونفسُ المفتاح في بطاقة المريض و«اشترى».
-  //
-  //  ══ **وتُجلَب حين تُفتَح النافذةُ لا مع كلّ صفّ** (مراجعةٌ على ٤٠٩) ══════
-  //  هذا المكوّنُ يُركَّب لكلّ صفٍّ في طابور «بانتظار الحسم»، والمفتاحُ بالمريض:
-  //  فطابورٌ بواحدٍ وخمسين صفّاً كان يطلق واحداً وخمسين طلباً عند فتحه، ثمّ
-  //  يعيدها كلَّها بعد كلّ كتابة (التحديثُ الحيّ، ٤.an). والقائمةُ لا تلزم إلّا
-  //  في نافذة «إتمام البيع» — نفسُ قاعدة بطاقة المريض (`enabled: active`).
-  const { data: experts, error: expertsError, isLoading: expertsLoading } =
-    useQuery<SaleExpert[]>({
-      queryKey: saleExpertsQueryKey(patientId),
-      queryFn: () => fetchSaleExperts(patientId),
-      enabled: dialog === "complete_sale",
-    });
-  const showExpertBranches = spansSeveralBranches(experts ?? []);
+  //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
+  //  فرعُ العملية لا فرعُ جلسة الفاعل (تصحيحٌ 2026-08-28، القسم 4.i).
+  const { data: experts } = useQuery<any[]>({
+    queryKey: ["/api/manufacturing/experts", branchId],
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`,
+        { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: branchId !== null,
+  });
 
   //  ══ **إبطالٌ مشترك للنجاح وللفشل معاً** (تصحيحٌ لاحق) ══════════════════
   //  النجاحُ يُحدِّث لأن شيئاً تغيّر؛ والفشلُ يُحدِّث لأن ما ظنّه المستخدم
@@ -328,23 +314,15 @@ export function ExamPathDecisionActions({
               <Select value={cExpert} onValueChange={setCExpert}>
                 <SelectTrigger id="cs-expert" className="bg-white"
                   data-testid="select-complete-sale-expert">
-                  <SelectValue placeholder={saleExpertsPlaceholder({
-                    loading: expertsLoading, count: (experts ?? []).length,
-                  })} />
+                  <SelectValue placeholder={(experts ?? []).length
+                    ? "اختر الخبير" : "لا يوجد خبير في هذا الفرع"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {(experts ?? []).map((e) => (
-                    <SelectItem key={e.id} value={String(e.id)}>
-                      {saleExpertLabel(e, showExpertBranches)}
-                    </SelectItem>
+                  {(experts ?? []).map((e: any) => (
+                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {expertsError && (
-                <p className="text-xs text-destructive" data-testid="text-complete-sale-experts-error">
-                  {(expertsError as Error).message}
-                </p>
-              )}
             </div>
             <div className="space-y-1">
               <Label htmlFor="cs-original" className="text-xs">السعر الأصلي (د.ع)</Label>

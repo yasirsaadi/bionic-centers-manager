@@ -1838,6 +1838,40 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
   return chosen.length > 0 ? chosen : [...MEDICAL_SPECIALTIES];
 }
 
+/**
+ * **ما سجّله الاستقبالُ سريرياً عند التسجيل** — لتفتح نافذةُ المعاينة عليه
+ * (٢٠٢٦-٠٩-٢٤).
+ *
+ * كانت النافذةُ تقرؤه من ملفّ المريض (`GET /api/patients/:id`)، وذلك البابُ
+ * يردّ **صامتاً** طبيباً لا يحمل «عرض المرضى»، وطبيباً يعمل في فرعين والمريضُ
+ * في غير فرع جلسته — فتفتح المعاينةُ فارغةً من نوع البتر ونوع المسند وجهة
+ * الإصابة (شكوى المالك، مُعادٌ حيّاً). فصار يُقرأ من باب المعاينة نفسِها
+ * بنطاقها الذي يفتح قائمةَ الطبيب — **حقولٌ سريريةٌ وحدها، بلا مال**.
+ */
+export async function registrationClinicalOf(patientId: number): Promise<{
+  amputationSite: string | null;
+  supportType: string | null;
+  injurySide: string | null;
+  diseaseType: string | null;
+  injuries: string | null;
+  injuryType: string | null;
+  injuryArea: string | null;
+} | null> {
+  const [row] = await db
+    .select({
+      amputationSite: patients.amputationSite,
+      supportType: patients.supportType,
+      injurySide: patients.injurySide,
+      diseaseType: patients.diseaseType,
+      injuries: patients.injuries,
+      injuryType: patients.injuryType,
+      injuryArea: patients.injuryArea,
+    })
+    .from(patients)
+    .where(and(eq(patients.id, patientId), activePatientDrizzle()));
+  return (row as any) ?? null;
+}
+
 /** Patient identity + branch, for authorization and for stamping the exam. */
 export async function getPatientScope(
   patientId: number,
