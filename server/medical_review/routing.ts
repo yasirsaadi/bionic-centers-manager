@@ -99,5 +99,7 @@ export async function routeServiceToDoctorReview(req: Req, params: {
     visitId: params.visitId ?? null,
     createdBy: (s?.userId ?? null) as number | null,
     branchIds: reviewBranchScope(req),
+    //  **فرعُ الحركة** — الطلبُ يقع حيث وقعت الخدمةُ التي وجّهته (ترحيل ٠٨٠).
+    sessionBranchId: (s?.branchId ?? null) as number | null,
   });
 }

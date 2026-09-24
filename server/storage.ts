@@ -167,6 +167,7 @@ export interface IStorage {
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
     skipWorkOrder?: boolean;
+    actingBranchId?: number | null;
   }): Promise<{ patient: Patient; workOrderId: number | null }>;
   mergePatients(sourceId: number, targetId: number): Promise<{ patient: Patient; moved: Record<string, number> }>;
   getPatientsSince(branchId: number, cutoff: Date | null): Promise<Patient[]>;
@@ -2674,12 +2675,24 @@ export class DatabaseStorage implements IStorage {
     expectedDeliveryDate?: string | null;
     performedBy: number | null;
     skipWorkOrder?: boolean;
+    /**
+     * **فرعُ الحركة** (ترحيل ٠٨٠) — تُنسَب إليه الحالةُ الجديدة وزيارةُ
+     * العلامة وأمرُ التصنيع. يحسمه المنادي بـ`resolveActingBranchId`؛
+     * وغيابُه ⟶ فرعُ التسجيل، وهو السلوكُ القائم قبل هذا الإصلاح بحرفه.
+     */
+    actingBranchId?: number | null;
   }): Promise<{ patient: Patient; workOrderId: number | null }> {
     const { patientId, caseType, fields } = params;
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!existing) throw new Error("المريض غير موجود");
       if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
+      //  ══ **الحركةُ الجديدة في فرعها** (إصلاحٌ ٢٠٢٦-٠٩-٢٤) ══════════════
+      //  موظّفُ بغداد يضيف نوعَ حالةٍ لمريضٍ مسجَّلٍ في ذي قار ومُتاحٍ لها:
+      //  الحالةُ الجديدة وعلامتُها في بغداد — فيقع طلبُ المعاينة المرافق
+      //  لها (المنسوبُ لفرع الحركة) مع حالته في الطوابير نفسِها، لا في
+      //  فرعٍ لم يعمل فيه. **والحالةُ القائمة لا يتحرّك فرعُها** (تُفعَّل).
+      const opBranchId = params.actingBranchId ?? existing.branchId;
 
       const flagPatch: any = { ...fields };
       if (caseType === "amputee") flagPatch.isAmputee = true;
@@ -2723,7 +2736,7 @@ export class DatabaseStorage implements IStorage {
       } else {
         //  حالةٌ جديدة تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
         const [newCase] = await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: caseTypeKey, cost: 0, details: cleanDetails,
+          patientId, branchId: opBranchId, caseType: caseTypeKey, cost: 0, details: cleanDetails,
           costSource: "auto",
         }).onConflictDoNothing().returning();
         // Unique-index race: another path created the case between our select
@@ -2744,7 +2757,7 @@ export class DatabaseStorage implements IStorage {
       // type started — attributed to the new case.
       await tx.insert(visits).values({
         patientId,
-        branchId: existing.branchId,
+        branchId: opBranchId,
         caseId,
         details: "إضافة نوع حالة",
         notes: `إضافة نوع حالة: ${caseLabel}`,
@@ -2761,7 +2774,7 @@ export class DatabaseStorage implements IStorage {
         if (!params.expertUserId) throw new Error("يجب اختيار الخبير المسؤول عن التصنيع");
         const [wo] = await tx.insert(prostheticWorkOrders).values({
           patientId,
-          branchId: existing.branchId,
+          branchId: opBranchId,
           expertUserId: params.expertUserId,
           serviceType: caseType === "amputee" ? "prosthetic" : "medical_support",
           status: "active",

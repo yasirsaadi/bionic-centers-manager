@@ -661,7 +661,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       const out = await returnToPurchase.executeReturnToPurchase({
         patientId, deviceEpisodeId, followupId,
         receptionNote: req.body?.receptionNote,
-        createdBy: s.userId, branchIds: branchScope(req),
+        createdBy: s.userId, branchIds: branchScope(req), sessionBranchId: s.branchId,
       });
       await logAudit({
         entityType: "medical_review_request", entityId: out.reviewRequest.id, action: "create",

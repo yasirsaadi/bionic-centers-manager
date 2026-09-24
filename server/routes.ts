@@ -3173,7 +3173,15 @@ export async function registerRoutes(
 
     // Branch isolation: a non-admin must not learn about patients
     // outside their branch — even just their financial summary.
-    if (!isAdmin && branchSession?.branchId && patient.branchId !== branchSession.branchId) {
+    //  ══ **وبالقاعدة التي تفتح الملفَّ نفسَه** (ترحيل ٠٨٠ — إصلاحٌ
+    //  ٢٠٢٦-٠٩-٢٤) ══════════════════════════════════════════════════════
+    //  كان الشرطُ `patient.branchId !== branchSession.branchId` — فرعُ
+    //  التسجيل وحده. والنطاقُ الآن هو نطاقُ `GET /api/patients/:id` بحرفه:
+    //  مسؤولٌ أو جلسةٌ بلا فرعٍ ⟶ يمرّ كما كان، وإلّا فرعُ الجلسة ويصل
+    //  الملفَّ بفرع التسجيل **أو** إتاحةٍ صريحة.
+    const summaryScope: number[] | null =
+      isAdmin || !branchSession?.branchId ? null : [Number(branchSession.branchId)];
+    if (!(await scopeReachesPatient(summaryScope, patient))) {
       return res.status(403).json({ error: "لا يمكنك الوصول لهذا المريض" });
     }
 
@@ -3791,6 +3799,9 @@ export async function registerRoutes(
         expertUserId: null, expectedDeliveryDate: null,
         skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,
+        //  **والحالةُ الجديدة في فرع الحركة** (ترحيل ٠٨٠) — فرعُ الموظّف إن
+        //  كان يصل الملفّ، وإلّا فرعُ التسجيل.
+        actingBranchId: await actingBranchFor(req, patient),
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
@@ -3903,6 +3914,15 @@ export async function registerRoutes(
         return res.status(any ? 409 : 404).json({
           message: any ? PATIENT_IN_TRASH_ERROR : "المريض غير موجود",
         });
+      }
+      //  ══ **ولا زيارةَ على ملفٍّ لا يصله الموظّف** (إصلاحٌ ٢٠٢٦-٠٩-٢٤) ══════
+      //  هذا البابُ لم يكن يفحص الفرعَ إطلاقاً: موظّفُ أيّ فرعٍ يُنشئ زيارةً
+      //  على أيّ ملفّ برقمه، فتُنسَب لفرع التسجيل، ثمّ يرفض توجيهُ المراجعة
+      //  (زيارةُ جهاز) فيبقى الطلبُ بلا ردٍّ والزيارةُ مكتوبة. **والقاعدةُ
+      //  قاعدةُ فتح الملفّ نفسِه**: فرعُ التسجيل أو فرعٌ أُتيح له — **قبل**
+      //  أيّ كتابة.
+      if (!(await reachesPatient(req, live))) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
       }
       //  ══ **والزيارةُ تُنسَب لفرع الحركة** (ترحيل ٠٨٠) ═══════════════════
       //  زيارةُ ذي قار على ملفٍّ مسجَّلٍ في كربلاء تُسجَّل في ذي قار — ولا

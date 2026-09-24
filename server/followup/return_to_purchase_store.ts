@@ -227,6 +227,8 @@ export async function executeReturnToPurchase(params: {
   receptionNote?: unknown;
   createdBy: number | null;
   branchIds: number[] | null;
+  /** فرعُ جلسة المنادي — لنسبة الطلب الجديد (ترحيل ٠٨٠). */
+  sessionBranchId?: number | null;
 }): Promise<{ reviewRequest: ReviewRow; episodeId: number | null; serviceType: string }> {
   const episodeId = numOrNull(params.deviceEpisodeId);
   if (episodeId === null) {
@@ -319,6 +321,9 @@ export async function executeReturnToPurchase(params: {
         deviceEpisodeId: episodeId,
         createdBy: params.createdBy,
         branchIds: params.branchIds,
+        //  **الطلبُ يتبع حلقتَه** — يقع في طوابير الفرع الذي يملك العملية.
+        sessionBranchId: params.sessionBranchId ?? null,
+        operationBranchId: ep.branch_id === null ? null : Number(ep.branch_id),
       });
     } catch (err) {
       //  ══ ترجمةٌ عند الحدود — لا نوعَ خطأٍ ثانياً يتسرّب من هذه الطبقة ══
@@ -348,6 +353,7 @@ async function executeReturnToPurchaseWithoutEpisode(params: {
   receptionNote?: unknown;
   createdBy: number | null;
   branchIds: number[] | null;
+  sessionBranchId?: number | null;
 }): Promise<{ reviewRequest: ReviewRow; episodeId: null; serviceType: string }> {
   const followupId = numOrNull(params.followupId);
   if (followupId === null || followupId <= 0) {
@@ -445,6 +451,9 @@ async function executeReturnToPurchaseWithoutEpisode(params: {
         deviceEpisodeId: null,
         createdBy: params.createdBy,
         branchIds: params.branchIds,
+        //  **والطلبُ يتبع القرارَ السابق** الذي يستأنفه.
+        sessionBranchId: params.sessionBranchId ?? null,
+        operationBranchId: fu.branch_id === null ? null : Number(fu.branch_id),
       });
     } catch (err) {
       if (err instanceof ReviewError) throw new FollowupError(err.message, err.status);
