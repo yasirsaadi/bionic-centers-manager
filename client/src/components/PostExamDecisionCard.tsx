@@ -54,7 +54,7 @@ import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import {
   fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
-  NO_SALE_EXPERTS, type SaleExpert,
+  saleExpertsPlaceholder, type SaleExpert,
 } from "@/components/sale_experts";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
@@ -212,12 +212,13 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  قائمةً فارغة، والمسؤولَ خبراءَ فرعٍ واحد بلا خبير الفرع الآخر. فصارت
   //  فروعَ ملفّ المريض المتاحة للفاعل (`sale_experts.ts`) — ونفسُ المفتاح في
   //  «إتمام البيع» و«اشترى»، فلا طلبٌ ثانٍ ولا قائمتان تنحرفان.
-  const { data: experts, error: expertsError } = useQuery<SaleExpert[]>({
-    queryKey: saleExpertsQueryKey(patientId),
-    queryFn: () => fetchSaleExperts(patientId),
-    //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة — بلا متابعةٍ لا بيعَ يُختار له.
-    enabled: active !== null,
-  });
+  const { data: experts, error: expertsError, isLoading: expertsLoading } =
+    useQuery<SaleExpert[]>({
+      queryKey: saleExpertsQueryKey(patientId),
+      queryFn: () => fetchSaleExperts(patientId),
+      //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة — بلا متابعةٍ لا بيعَ يُختار له.
+      enabled: active !== null,
+    });
   const showExpertBranches = spansSeveralBranches(experts ?? []);
 
   //  **الخصمُ المعلَّق معلومةُ حالةٍ لا زينة**: بيعٌ رُفع له طلبُ خصمٍ لم
@@ -961,8 +962,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <Label>الخبير</Label>
               <Select value={expertId} onValueChange={setExpertId}>
                 <SelectTrigger data-testid="select-followup-expert">
-                  <SelectValue placeholder={(experts ?? []).length
-                    ? "اختر الخبير" : NO_SALE_EXPERTS} />
+                  <SelectValue placeholder={saleExpertsPlaceholder({
+                      loading: expertsLoading, count: (experts ?? []).length,
+                    })} />
                 </SelectTrigger>
                 <SelectContent>
                   {(experts ?? []).map((e) => (

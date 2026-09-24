@@ -274,6 +274,17 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
     //  «لا حلقة حيّة» بصدق — لا تخميناً بديلاً.
     const ep = Number(raw?.deviceEpisodeId);
     out.deviceEpisodeId = Number.isFinite(ep) && ep > 0 ? ep : null;
+    //  ══ فرعُ البيع — **يُحفَظ مع المتابعة وحدها** (٢٠٢٦-٠٩-٢٤) ═════════════
+    //  حسمه البائعُ في الخادم من الخبير المختار (`followup/sale_branch.ts`)
+    //  قبل أن يصل هنا، و`confirmPurchase` يعيد فحصَه تحت القفل. **وكان يُسقَط
+    //  في هذا السطر بالذات**، فيصل `applyApproved` فارغاً دائماً: بيعٌ بخصمٍ
+    //  أو مجّاناً يبقى في فرع المتابعة بخبيرٍ لا يعمل فيه، بينما البيعُ
+    //  بسعره الكامل ينتقل. **ولا معنى له بلا متابعة** — «تخصيص» لا ينقل
+    //  عمليةً — فلا يُحفَظ هناك ولا يتغيّر شكلُ حمولته.
+    if (out.followupId) {
+      const sb = Number(raw?.saleBranchId);
+      out.saleBranchId = Number.isInteger(sb) && sb > 0 ? sb : null;
+    }
   }
   return out;
 }

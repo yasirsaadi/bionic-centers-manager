@@ -453,6 +453,18 @@ export async function revokeBranchAccess(params: {
   return await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${params.patientId})`);
 
+    //  ══ **صفُّ الإتاحة يُقفَل قبل فحص العمل الحيّ** (٢٠٢٦-٠٩-٢٤) ══════════
+    //  البيعُ لا يأخذ قفلَ المريض (٩١٩) — يقفل هذا الصفَّ نفسَه `FOR KEY SHARE`
+    //  حين يقع في هذا الفرع (`confirmPurchase`). فالقفلُ هنا ينتظر بيعاً معلَّقاً
+    //  حتى يلتزم، **ثمّ** يُقرأ العملُ الحيّ فيُرى أمرُه ويُردّ السحبُ ٤٠٩. وبلا
+    //  هذا كان السحبُ يقرأ قبل التزام البيع فيمضي، فيبقى للفرع عملٌ حيٌّ على
+    //  ملفٍّ لا يفتحه. مُعادٌ حيّاً قبل الإصلاح.
+    await tx.execute(sql`
+      SELECT id FROM patient_branch_access
+       WHERE patient_id = ${params.patientId} AND branch_id = ${params.branchId}
+       FOR UPDATE
+    `);
+
     //  **تُقرأ تحت القفل** كما في المنح — لا لقطةَ شاشة.
     const owned = operationsOwnedByBranch(
       await listOpenOperations(params.patientId, tx as any), params.branchId,

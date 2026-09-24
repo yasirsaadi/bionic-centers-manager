@@ -946,6 +946,13 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   newPrice: number;
   /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
   reason: string;
+  /**
+   * **نطاقُ المُصحِّح — إلزاميّ** (٢٠٢٦-٠٩-٢٤). `null` = المسؤولُ العام.
+   * الفرقُ يُقيَّد في **فرع البيع** (`cur.branchId`، وقد ينتقل إليه البيعُ عن
+   * فرع المعاينة منذ ٤٠٩)، فيُحكَم عليه تحت القفل — لا بفرع المعاينة الذي
+   * فحصته النقطة.
+   */
+  scope: number[] | null;
   actor: Actor;
   tx: any;
 }): Promise<{ followup: FollowupRow; delta: number; deviceEpisodeId: number }> {
@@ -973,6 +980,23 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   const curRow = (r.rows ?? [])[0];
   if (!curRow) throw new FollowupError("المتابعة غير موجودة", 404);
   const cur = toRow(curRow);
+
+  // ①-ب **والبيعُ يُصحِّحه فرعُه** (٢٠٢٦-٠٩-٢٤ — شقيقُ ملاحظة المراجعة على
+  //    التصحيح الإداريّ). النقطةُ فحصت فرعَ **المعاينة**، والفرقُ يُكتب في فرع
+  //    **البيع** — وقد انتقل البيعُ إلى فرع الخبير المختار (٤٠٩). فمديرُ ذي قار
+  //    كان يقيّد في بغداد مالاً لا يصله. **العمليةُ يُصحِّحها فرعُها** (٤٠٨)،
+  //    والحكمُ تحت القفل لا قبله.
+  if (params.scope !== null
+      && !(cur.branchId !== null && params.scope.includes(cur.branchId))) {
+    const bn = cur.branchId === null ? null : await tx.execute(sql`
+      SELECT name FROM branches WHERE id = ${cur.branchId}
+    `);
+    const name = (bn?.rows ?? [])[0]?.name;
+    throw new FollowupError(
+      `هذا البيعُ في فرع ${typeof name === "string" && name.trim() ? name : "آخر"}`
+      + " — يُصحِّح سعرَه ذلك الفرعُ أو المسؤول العام. لم يُعدَّل شيء.", 403,
+    );
+  }
 
   // ② **وأنها متابعةُ هذه المعاينة بعينها** — لا أوّلُ متابعةٍ للمريض.
   const belongs = (cur.medicalExamId !== null && cur.medicalExamId === params.medicalExamId)
@@ -1990,19 +2014,32 @@ export async function confirmPurchase(params: {
       if (!v.ok) {
         throw new FollowupError(`${v.reason} — حدّث الصفحة واختر الخبير من جديد`, 409);
       }
+      //  ══ **والإتاحةُ تُقفَل لا تُقرأ** (٢٠٢٦-٠٩-٢٤، مراجعةٌ مستقلّة) ════════
+      //  كانت قراءةً حرّة، والسحبُ (`revokeBranchAccess`) لا يأخذ قفلَ المتابعة:
+      //  فسحبُ إتاحة بغداد وبيعُها معلَّقٌ لم يُلتزَم **يمضي ٢٠٠ في عشرين
+      //  مللي ثانية** — ثمّ يلتزم البيعُ فيصير لبغداد أمرُ تصنيعٍ حيٌّ ومالٌ
+      //  على ملفٍّ لم تعد تفتحه (٤٠٤). مُعادٌ حيّاً. فصفُّ الإتاحة يُقفَل هنا
+      //  `FOR KEY SHARE` حتى الالتزام، والسحبُ يقفله `FOR UPDATE` **قبل** فحص
+      //  العمل الحيّ: أيُّهما سبق انتظره الآخر، فإمّا يرى السحبُ أمرَ البيع
+      //  (٤٠٩) وإمّا يرى البيعُ الإتاحةَ ذهبت (٤٠٩) — ولا ثالث.
+      //
+      //  **وفرعُ التسجيل لا صفَّ له** — لا يُسحَب أصلاً (ترحيل ٠٨٠)، فلا قفل.
+      //  **ولا قفلَ جديداً في ترتيب البيع**: السحبُ لا ينتظر شيئاً يمسكه البيع
+      //  غيرَ هذا الصفّ، والبيعُ لا يأخذ قفلَ المريض (٩١٩) بعده.
       const pr = await tx.execute(sql`
-        SELECT id, branch_id FROM patients WHERE id = ${cur.patientId}
+        SELECT branch_id FROM patients WHERE id = ${cur.patientId}
       `);
-      const prow = (pr.rows ?? [])[0];
-      const { patientBranchIdsOf } = await import("../patients/branch_access");
-      const reach = prow
-        ? await patientBranchIdsOf({
-          id: Number(prow.id),
-          branchId: prow.branch_id === null || prow.branch_id === undefined
-            ? null : Number(prow.branch_id),
-        }, tx)
-        : [];
-      if (!reach.includes(saleBranchId)) {
+      const home = (pr.rows ?? [])[0]?.branch_id;
+      let reaches = home !== null && home !== undefined && Number(home) === saleBranchId;
+      if (!reaches && (pr.rows ?? []).length > 0) {
+        const ar = await tx.execute(sql`
+          SELECT id FROM patient_branch_access
+           WHERE patient_id = ${cur.patientId} AND branch_id = ${saleBranchId}
+           FOR KEY SHARE
+        `);
+        reaches = (ar.rows ?? []).length > 0;
+      }
+      if (!reaches) {
         throw new FollowupError(
           "لم يعد هذا الفرع يصل ملفّ المريض — حدّث الصفحة وأعد المحاولة", 409);
       }

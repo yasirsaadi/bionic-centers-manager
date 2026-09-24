@@ -55,6 +55,21 @@ export function saleExpertLabel(expert: SaleExpert, showBranches: boolean): stri
 /** نصُّ القائمة الفارغة — يقول أين بحث، لا «لا يوجد» عارية. */
 export const NO_SALE_EXPERTS = "لا يوجد خبير في فروع هذا المريض المتاحة لك";
 
+export const SALE_EXPERTS_LOADING = "جارٍ تحميل الخبراء…";
+
+/**
+ * **نصُّ خانة الاختيار — والتحميلُ ليس فراغاً** (٢٠٢٦-٠٩-٢٤).
+ *
+ * صارت القائمةُ تُجلَب حين تُفتَح النافذة لا مع كلّ صفٍّ في طابور «بانتظار
+ * الحسم» (مراجعةٌ على ٤٠٩: واحدٌ وخمسون طلباً لطابورٍ واحد). فبين الفتح
+ * والوصول تكون القائمةُ غائبة — وقراءتُها «لا يوجد خبير في فروع هذا المريض»
+ * هي بعينها القائمةُ الفارغةُ بلا سبب التي حيّرت الموظّفة («زهراء»).
+ */
+export function saleExpertsPlaceholder(p: { loading: boolean; count: number }): string {
+  if (p.loading) return SALE_EXPERTS_LOADING;
+  return p.count > 0 ? "اختر الخبير" : NO_SALE_EXPERTS;
+}
+
 /**
  * **المجلبُ** — يرمي برسالة الخادم حين يُردّ، فتعرضها النافذةُ بدل قائمةٍ
  * فارغة بلا سبب.

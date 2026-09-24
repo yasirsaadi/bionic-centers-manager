@@ -32,7 +32,7 @@ import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
 import {
   fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
-  NO_SALE_EXPERTS, type SaleExpert,
+  saleExpertsPlaceholder, type SaleExpert,
 } from "@/components/sale_experts";
 
 export interface ExamPathDecisionActionsPrefill {
@@ -117,10 +117,18 @@ export function ExamPathDecisionActions({
   //  وتصير القائمةُ فارغةً بصمت، والمسؤولُ يرى فرعاً واحداً (شكوى «زهراء»).
   //  فصارت بالمريض — نفسُ القاعدة التي يحسم بها الخادمُ فرعَ البيع — والفشلُ
   //  يُقال في النافذة لا يُبتلَع. ونفسُ المفتاح في بطاقة المريض و«اشترى».
-  const { data: experts, error: expertsError } = useQuery<SaleExpert[]>({
-    queryKey: saleExpertsQueryKey(patientId),
-    queryFn: () => fetchSaleExperts(patientId),
-  });
+  //
+  //  ══ **وتُجلَب حين تُفتَح النافذةُ لا مع كلّ صفّ** (مراجعةٌ على ٤٠٩) ══════
+  //  هذا المكوّنُ يُركَّب لكلّ صفٍّ في طابور «بانتظار الحسم»، والمفتاحُ بالمريض:
+  //  فطابورٌ بواحدٍ وخمسين صفّاً كان يطلق واحداً وخمسين طلباً عند فتحه، ثمّ
+  //  يعيدها كلَّها بعد كلّ كتابة (التحديثُ الحيّ، ٤.an). والقائمةُ لا تلزم إلّا
+  //  في نافذة «إتمام البيع» — نفسُ قاعدة بطاقة المريض (`enabled: active`).
+  const { data: experts, error: expertsError, isLoading: expertsLoading } =
+    useQuery<SaleExpert[]>({
+      queryKey: saleExpertsQueryKey(patientId),
+      queryFn: () => fetchSaleExperts(patientId),
+      enabled: dialog === "complete_sale",
+    });
   const showExpertBranches = spansSeveralBranches(experts ?? []);
 
   //  ══ **إبطالٌ مشترك للنجاح وللفشل معاً** (تصحيحٌ لاحق) ══════════════════
@@ -320,8 +328,9 @@ export function ExamPathDecisionActions({
               <Select value={cExpert} onValueChange={setCExpert}>
                 <SelectTrigger id="cs-expert" className="bg-white"
                   data-testid="select-complete-sale-expert">
-                  <SelectValue placeholder={(experts ?? []).length
-                    ? "اختر الخبير" : NO_SALE_EXPERTS} />
+                  <SelectValue placeholder={saleExpertsPlaceholder({
+                    loading: expertsLoading, count: (experts ?? []).length,
+                  })} />
                 </SelectTrigger>
                 <SelectContent>
                   {(experts ?? []).map((e) => (

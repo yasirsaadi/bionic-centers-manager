@@ -126,6 +126,7 @@
     "test:patient-branch-access": "tsx server/patient_branch_access.test.ts",
     "test:branch-share-review": "tsx server/patient_branch_share_review.test.ts",
     "test:sale-branch-share": "tsx server/sale_branch_share.test.ts",
+    "test:sale-branch-review": "tsx server/sale_branch_review.test.ts",
     "test:sale-experts": "tsx client/src/components/sale_experts.test.ts",
     "test:decision-queue-rules": "tsx shared/decision_queue.test.ts",
     "test:resolved-sale-presentation": "tsx client/src/pages/post_exam_followups_presentation.test.ts",
