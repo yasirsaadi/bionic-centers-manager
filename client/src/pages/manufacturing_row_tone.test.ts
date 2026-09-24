@@ -139,6 +139,12 @@ eq("ح١. متأخّرٌ بلا عذرٍ ⟶ شارةٌ حمراء",
   lateNoExcuse.overdueBadgeClass, "bg-red-100 text-red-800 border-red-200");
 eq("ح٢. متأخّرٌ بعذرٍ ⟶ شارةٌ كهرمانيّة",
   lateExcused.overdueBadgeClass, "bg-amber-100 text-amber-800 border-amber-200");
+//  «لا تحسبهم متأخرون، وإنما نقول عنهم متأخرون بعذر» (٢٠٢٦-٠٩-٢٤) — الشارةُ
+//  تقول الكلمتين كما يقولهما المالك، لا «متأخر» واحدةً للاثنين.
+eq("ح٣. **ونصُّ الشارة الكهرمانيّة «متأخر بعذر»**", lateExcused.overdueBadgeLabel, "متأخر بعذر");
+eq("ح٤. والحمراءُ «متأخر بدون عذر» — كالشريط الذي يُرشِّحها", lateNoExcuse.overdueBadgeLabel, "متأخر بدون عذر");
+eq("ح٥. وبياضٌ وحده ليس عذراً فشارتُه حمراء",
+  rowToneOf(order({ isOverdue: true, holdReasonCode: "  " })).overdueBadgeLabel, "متأخر بدون عذر");
 
 // ══ ط. عقدُ الشاشة ═════════════════════════════════════════════════════════
 console.log("\n── ط. عقدُ الشاشة ──");
@@ -162,6 +168,12 @@ ok("ط٧. والسببُ يُرسَم كاملاً — العنوانُ والم
 ok("ط٨. ولا يُرسَم إلّا حين يوجد", /\{t\.reason && \(/.test(noComments));
 ok("ط٩. وشارةُ «متأخر» تلبس صنفَ القرار",
   /<Badge className=\{`text-xs gap-1 \$\{t\.overdueBadgeClass\}`\}>/.test(noComments));
+ok("ط٩ب. **ونصُّها من القرار لا «متأخر» مكتوبةً** للاثنين",
+  /<AlertTriangle className="w-3 h-3" \/> \{t\.overdueBadgeLabel\}/.test(noComments)
+  && !/<AlertTriangle className="w-3 h-3" \/> متأخر\s*</.test(noComments));
+ok("ط٩ج. **وقاعدةُ العذر واحدة**: اللونُ يستورد التعريفَ المشترك ولا يكتب نسخةً منه",
+  /import \{[^}]*\bwrittenHoldExcuse\b[^}]*\} from "@shared\/manufacturing"/.test(toneSrc)
+  && !/function writtenExcuse/.test(toneSrc));
 ok("ط١٠. والحقلان يصلان العقدَ من الخادم",
   /holdReasonCode: string \| null; holdNote: string \| null;/.test(noComments));
 
@@ -191,7 +203,9 @@ console.log("\n── ك. نقاءُ القرار ──");
 ok("ك١. بلا قراءةِ ساعةِ الجهاز", !/new Date\(/.test(toneSrc) && !/Date\.now\(/.test(toneSrc));
 ok("ك٢. وبلا React", !/from "react"/.test(toneSrc));
 ok("ك٣. ومعجمُه واحدٌ مستورَد لا مكتوبٌ فيه",
-  /import \{ REASON_CODE_LABELS \} from "@shared\/manufacturing"/.test(toneSrc)
+  //  يُطابَق الاستيرادُ بما فيه لا بنصّه كاملاً — فاستيرادُ التعريف المشترك
+  //  بجواره (`writtenHoldExcuse`) لا يُقرأ «معجماً مكتوباً هنا».
+  /import \{[^}]*\bREASON_CODE_LABELS\b[^}]*\} from "@shared\/manufacturing"/.test(toneSrc)
   && !/waiting_patient:\s*"/.test(toneSrc));
 
 // ══ ل. اللونُ يصل البطاقةَ لأن `cn` تُسقط `bg-card` ════════════════════════

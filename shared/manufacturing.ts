@@ -233,6 +233,41 @@ export function isValidHoldReason(status: string, code: unknown): boolean {
   return typeof code === "string" && HOLD_REASONS[status].some((r) => r.code === code);
 }
 
+// ══ ٦ب. «متأخرٌ بدون عذر» و«متأخرٌ بعذر» — تعريفٌ واحد ════════════════════
+//  قرارُ المالك ٢٠٢٦-٠٩-٢٤: «المتأخرون هم الذين ليس لديهم أي عذر للتأخير —
+//  أي لم يكتب الخبير أي عذر لتأخيرهم — لذلك يكونوا أحمر. أما من لديه عذر
+//  … أو أي عذر فيجب أن يكون أصفر.» ثمّ: «لا تحسبهم متأخرون، وإنما نقول
+//  عنهم متأخرون بعذر، فلا يُعرَضون بالمتأخرون بدون عذر.»
+//
+//  **والعذرُ المكتوب واقعةٌ في القاعدة لا استنتاج**: `hold_reason_code`
+//  إلزاميٌّ على كلّ توقّف، والاستئنافُ والإلغاءُ يُصفّرانه. ونصٌّ فارغ أو
+//  بياضٌ وحده **ليس عذراً**.
+//
+//  **وهنا وحدَه** — تقرؤه شاشةُ التصنيع (الشرائط، ولونُ الصفّ، وشارتُه)
+//  ولوحةُ الأداء في الخادم (`getOverview`) معاً، فلا تعدّ الشاشةُ شيئاً
+//  ويعدّ الخادمُ غيرَه.
+
+/** العذرُ المكتوب على الأمر كما هو — و`null` حين لا عذر. */
+export function writtenHoldExcuse(code: string | null | undefined): string | null {
+  if (typeof code !== "string") return null;
+  const t = code.trim();
+  return t === "" ? null : t;
+}
+
+/** `late` = متأخرٌ بدون عذر · `late_excused` = متأخرٌ بعذر · `not_late` = ليس متأخراً. */
+export type Lateness = "not_late" | "late" | "late_excused";
+
+/**
+ *  تصنيفُ التأخّر. و`isOverdue` هو ما يحسبه الخادمُ (موعدُ التسليم مضى
+ *  والأمرُ لم ينتهِ) — لا يُعاد حسابُه هنا.
+ */
+export function latenessOf(
+  o: { isOverdue: boolean; holdReasonCode: string | null | undefined },
+): Lateness {
+  if (o.isOverdue !== true) return "not_late";
+  return writtenHoldExcuse(o.holdReasonCode) === null ? "late" : "late_excused";
+}
+
 /** نوع إعادة العمل المسجَّل في `prosthetic_rework_events` من اليوم فصاعداً. */
 export const REWORK_TYPE = "technical_rework";
 export const REWORK_TYPE_LABELS: Record<string, string> = {

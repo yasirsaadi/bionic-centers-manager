@@ -84,7 +84,7 @@ function OrderRow({ o }: { o: OrderCard }) {
                 {o.itemType && <span className="text-xs text-muted-foreground">{o.itemType}</span>}
                 {o.isOverdue && (
                   <Badge className={`text-xs gap-1 ${t.overdueBadgeClass}`}>
-                    <AlertTriangle className="w-3 h-3" /> متأخر
+                    <AlertTriangle className="w-3 h-3" /> {t.overdueBadgeLabel}
                   </Badge>
                 )}
               </div>
@@ -211,12 +211,16 @@ export default function Manufacturing() {
         )}
       </div>
 
-      {/* Admin/manager overview */}
+      {/* Admin/manager overview —
+          «متأخرة» كانت رقماً واحداً يخلط مَن كتب خبيرُه عذرَه بمَن لم يكتب،
+          فانقسمت اثنين بقرار المالك (٢٠٢٦-٠٩-٢٤): الأحمرُ بدون عذرٍ وحدَه،
+          والكهرمانيُّ بعذر — ومجموعُهما الرقمُ القديم بالضبط. */}
       {(isAdmin || isManager) && overview && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-5">
           <StatTile label="إجمالي الأوامر" value={overview.totals.total} />
           <StatTile label="جاهز للتسليم" value={overview.totals.ready} tone="green" />
-          <StatTile label="متأخرة" value={overview.totals.overdue} tone="red" />
+          <StatTile label="متأخرة بدون عذر" value={overview.totals.overdue} tone="red" />
+          <StatTile label="متأخرة بعذر" value={overview.totals.overdueExcused} tone="amber" />
           <StatTile label="لم تتحرّك ≥14 يوم" value={overview.totals.stale} tone="amber" />
           <StatTile label="مكتملة" value={overview.totals.completed} />
         </div>
@@ -357,7 +361,8 @@ export default function Manufacturing() {
                       <th className="text-right py-2">الخبير</th>
                       <th className="py-2">قيد العمل</th>
                       <th className="py-2">مكتمل</th>
-                      <th className="py-2">متأخر</th>
+                      <th className="py-2">متأخر بدون عذر</th>
+                      <th className="py-2">متأخر بعذر</th>
                       <th className="py-2">إعادة قالب</th>
                       <th className="py-2">إعادة سوكت</th>
                       <th className="py-2">نجاح أول تجربة</th>
@@ -371,6 +376,7 @@ export default function Manufacturing() {
                         <td>{e.active}</td>
                         <td>{e.completed}</td>
                         <td className={e.overdue > 0 ? "text-red-600 font-bold" : ""}>{e.overdue}</td>
+                        <td className={e.overdueExcused > 0 ? "text-amber-700 font-bold" : ""}>{e.overdueExcused}</td>
                         <td>{e.recasts}</td>
                         <td>{e.resockets}</td>
                         <td>{e.firstFitRate != null ? `${e.firstFitRate}%` : "—"}</td>
@@ -404,7 +410,7 @@ export default function Manufacturing() {
                     {overview.branches.map((b: any) => (
                       <li key={b.branchId} className="flex justify-between border-b last:border-0 py-1">
                         <span>{b.branchName}</span>
-                        <span className="text-muted-foreground">إجمالي {b.total} • مكتمل {b.completed} • متأخر {b.overdue}</span>
+                        <span className="text-muted-foreground">إجمالي {b.total} • مكتمل {b.completed} • متأخر بدون عذر {b.overdue} • متأخر بعذر {b.overdueExcused}</span>
                       </li>
                     ))}
                   </ul>

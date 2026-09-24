@@ -25,7 +25,7 @@
 //  **ولا سلطةَ هنا**: الخادمُ يحرس النطاقَ والصلاحيةَ من مصدره، وهذا
 //  **عرضٌ وترشيح** لا منحُ وصول.
 
-import { FIRST_STAGE } from "@shared/manufacturing";
+import { FIRST_STAGE, latenessOf } from "@shared/manufacturing";
 
 /** أقلُّ ما يلزم من صفّ الأمر ليُصنَّف — لا أكثر. */
 export interface BucketOrderLike {
@@ -33,6 +33,8 @@ export interface BucketOrderLike {
   status: string;
   completedAt: string | null;
   isOverdue: boolean;
+  /** العذرُ المكتوب على الأمر — يفرّق «متأخرٌ بدون عذر» عن «متأخرٌ بعذر». */
+  holdReasonCode: string | null;
 }
 
 /** لونُ الشريط — يتبع معنى الحالة لا ترتيبَها. */
@@ -47,9 +49,10 @@ export interface BucketDef {
   match: (o: BucketOrderLike, nowMonth: string) => boolean;
 }
 
-//  ══ الشروطُ التسعة — **منقولةٌ بحرفها** من الصفحة قبل هذه التمريرة ══════
-//  فالأعدادُ التي يقرؤها المالكُ اليوم لا يتحرّك منها رقم، والمتبدِّلُ أن
-//  الشريطَ صار يُضغَط. وترتيبُها ترتيبُ الشاشة نفسُه فلا يزيح شيءٌ مكانه.
+//  ══ الشروطُ — الثمانيةُ الأولى **منقولةٌ بحرفها** من الصفحة ═══════════════
+//  فالأعدادُ التي يقرؤها المالكُ لا يتحرّك منها رقم، وترتيبُها ترتيبُ
+//  الشاشة نفسُه فلا يزيح شيءٌ مكانه. **والتاسعُ انقسم اثنين** بقرار المالك
+//  (آخرُ القائمة): المتأخّرُ بدون عذر، والمتأخّرُ بعذر.
 export const BUCKET_DEFS: readonly BucketDef[] = [
   {
     key: "new", label: "أوامر جديدة", tone: "blue",
@@ -86,9 +89,21 @@ export const BUCKET_DEFS: readonly BucketDef[] = [
     match: (o, nowMonth) => o.status === "completed"
       && (o.completedAt ?? "").slice(0, 7) === nowMonth,
   },
+  //  ══ «متأخرون بدون عذر» و«متأخرون بعذر» — شريطان لا شريط (٢٠٢٦-٠٩-٢٤) ══
+  //  كان الشريطُ الأحمر «متأخرون» يعدّ **كلَّ** ما مضى موعدُه، فيضغطه المالكُ
+  //  فتخرج بطاقاتٌ كهرمانيّة كتب خبراؤها عذرَها. وقرارُه: «لا تحسبهم
+  //  متأخرون، وإنما نقول عنهم متأخرون بعذر، فلا يُعرَضون بالمتأخرون بدون
+  //  عذر. الأحمرُ فقط وفقط لمن متأخرٌ وليس لديه عذر.» فانقسم الشريطُ على
+  //  التعريف المشترك (`latenessOf`) — ولا يضيع صفّ: مجموعُهما ما كان يعدّه
+  //  الشريطُ القديم بالضبط. **والمفتاحُ `overdue` باقٍ للأحمر** فلا يتبدّل
+  //  معناه في شيءٍ غيرِ ما قرّره المالك.
   {
-    key: "overdue", label: "متأخرون", tone: "red",
-    match: (o) => o.isOverdue === true,
+    key: "overdue", label: "متأخرون بدون عذر", tone: "red",
+    match: (o) => latenessOf(o) === "late",
+  },
+  {
+    key: "overdue_excused", label: "متأخرون بعذر", tone: "amber",
+    match: (o) => latenessOf(o) === "late_excused",
   },
 ] as const;
 
