@@ -161,7 +161,7 @@ export async function hasOpenOrderTx(
 import {
   FIRST_STAGE, MAINTENANCE_DONE_STAGES, REWORK_TYPE, stagesForOrder,
   currentStageEnteredAt, parseDeliveryDateNote,
-  deliveryDateSetNote, deliveryDateChangeNote,
+  deliveryDateSetNote, deliveryDateChangeNote, latenessOf,
   type StageHistoryRow,
 } from "@shared/manufacturing";
 
@@ -1748,6 +1748,8 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     status: WO.status, currentStage: WO.currentStage, expectedDeliveryDate: WO.expectedDeliveryDate,
     startedAt: WO.startedAt, completedAt: WO.completedAt, finalResult: WO.finalResult,
     createdAt: WO.createdAt, updatedAt: WO.updatedAt,
+    //  العذرُ المكتوب — يفرّق «متأخرٌ بدون عذر» عن «متأخرٌ بعذر».
+    holdReasonCode: WO.holdReasonCode,
     expertName: systemUsers.displayName, branchName: branches.name,
   })
     .from(WO)
@@ -1769,7 +1771,12 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
   const stageCounts: Record<string, number> = {};
   const reasonCounts: Record<string, number> = {};
   const branchAgg = new Map<number, any>();
-  let overdue = 0, ready = 0, completed = 0, stale = 0;
+  //  ══ «متأخرة» صارت اثنتين (قرارُ المالك ٢٠٢٦-٠٩-٢٤) ═══════════════════
+  //  `overdue` = **متأخرةٌ بدون عذرٍ مكتوب** وحدَها — «الأحمرُ فقط وفقط لمن
+  //  متأخرٌ وليس لديه عذر» — و`overdueExcused` = متأخرةٌ بعذر. ومجموعُهما ما
+  //  كان `overdue` يعدّه قبلها بالضبط. والتعريفُ `latenessOf` نفسُه الذي
+  //  تُرشِّح به شرائطُ الشاشة، فلا يقول المربّعُ رقماً ويقول الشريطُ غيرَه.
+  let overdue = 0, overdueExcused = 0, ready = 0, completed = 0, stale = 0;
 
   const reworkByOrder = new Map<number, number>();
   for (const r of reworkRows) {
@@ -1779,14 +1786,22 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
 
   for (const o of orders) {
     stageCounts[o.currentStage] = (stageCounts[o.currentStage] ?? 0) + 1;
-    if (!!o.expectedDeliveryDate && notFinished(o.status) && String(o.expectedDeliveryDate) < today) overdue++;
+    //  «مضى موعدُه ولم ينتهِ» — الشرطُ نفسُه الذي يحسب به `listOrders`
+    //  حقلَ `isOverdue` — ثمّ يُصنَّف بالعذر المكتوب مرّةً واحدة للصفّ.
+    const late = latenessOf({
+      isOverdue: !!o.expectedDeliveryDate && notFinished(o.status)
+        && String(o.expectedDeliveryDate) < today,
+      holdReasonCode: o.holdReasonCode,
+    });
+    if (late === "late") overdue++;
+    else if (late === "late_excused") overdueExcused++;
     if (o.currentStage === "ready_for_fitting") ready++;
     if (o.status === "completed") completed++;
     if (notFinished(o.status) && daysSince(o.updatedAt) >= 14) stale++;
 
     const e = experts.get(o.expertUserId) ?? {
       expertUserId: o.expertUserId, expertName: o.expertName ?? `#${o.expertUserId}`,
-      total: 0, active: 0, completed: 0, overdue: 0, reworks: 0,
+      total: 0, active: 0, completed: 0, overdue: 0, overdueExcused: 0, reworks: 0,
       firstFitSuccess: 0, completedWithResult: 0, durationSum: 0, durationCount: 0,
     };
     e.total++;
@@ -1802,14 +1817,16 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
         e.durationCount++;
       }
     }
-    if (!!o.expectedDeliveryDate && notFinished(o.status) && String(o.expectedDeliveryDate) < today) e.overdue++;
+    if (late === "late") e.overdue++;
+    else if (late === "late_excused") e.overdueExcused++;
     e.reworks += reworkByOrder.get(o.id) ?? 0;
     experts.set(o.expertUserId, e);
 
-    const b = branchAgg.get(o.branchId) ?? { branchId: o.branchId, branchName: o.branchName ?? `#${o.branchId}`, total: 0, completed: 0, overdue: 0 };
+    const b = branchAgg.get(o.branchId) ?? { branchId: o.branchId, branchName: o.branchName ?? `#${o.branchId}`, total: 0, completed: 0, overdue: 0, overdueExcused: 0 };
     b.total++;
     if (o.status === "completed") b.completed++;
-    if (!!o.expectedDeliveryDate && notFinished(o.status) && String(o.expectedDeliveryDate) < today) b.overdue++;
+    if (late === "late") b.overdue++;
+    else if (late === "late_excused") b.overdueExcused++;
     branchAgg.set(o.branchId, b);
   }
 
@@ -1824,7 +1841,7 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     .sort((a, b) => b.count - a.count);
 
   return {
-    totals: { total: orders.length, overdue, ready, completed, stale },
+    totals: { total: orders.length, overdue, overdueExcused, ready, completed, stale },
     stageCounts,
     experts: expertList,
     topReasons,

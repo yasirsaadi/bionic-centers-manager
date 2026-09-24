@@ -28,7 +28,7 @@
 //  **ولا سلطةَ هنا**: الخادمُ يحرس النطاقَ والصلاحيةَ من مصدره، وهذا
 //  **عرضٌ** لا منحُ وصول.
 
-import { REASON_CODE_LABELS } from "@shared/manufacturing";
+import { REASON_CODE_LABELS, writtenHoldExcuse } from "@shared/manufacturing";
 
 /** أقلُّ ما يلزم من صفّ الأمر ليُلوَّن — لا أكثر. */
 export interface RowToneOrderLike {
@@ -56,6 +56,8 @@ export interface RowToneDecision {
   cardClass: string;
   /** صنفُ شارة «متأخر» — كهرمانيّةٌ لمن له عذر، حمراءُ لمن لا عذرَ له. */
   overdueBadgeClass: string;
+  /** نصُّ الشارة — «متأخر بدون عذر» أو «متأخر بعذر»، بكلمات المالك. */
+  overdueBadgeLabel: string;
   /** يُعرَض متى وُجد عذرٌ مكتوب، و`null` وإلّا. */
   reason: RowReason | null;
 }
@@ -90,12 +92,11 @@ const CARD_CLASS: Record<RowTone, string> = {
 const OVERDUE_BADGE_RED = "bg-red-100 text-red-800 border-red-200";
 const OVERDUE_BADGE_AMBER = "bg-amber-100 text-amber-800 border-amber-200";
 
-/** نصٌّ فارغ أو بياضٌ وحده **ليس عذراً** — ولا يُقرأ عذراً ملفَّقاً. */
-function writtenExcuse(code: string | null | undefined): string | null {
-  if (typeof code !== "string") return null;
-  const t = code.trim();
-  return t === "" ? null : t;
-}
+//  «متأخرٌ بعذر» لا «متأخر» (قرارُ المالك ٢٠٢٦-٠٩-٢٤): «لا تحسبهم متأخرون،
+//  وإنما نقول عنهم متأخرون بعذر». فالشارةُ تقول الكلمتين كما يقولهما هو،
+//  والأحمرُ يقول «بدون عذر» صراحةً كالشريط الذي يُرشِّحه.
+const OVERDUE_LABEL_RED = "متأخر بدون عذر";
+const OVERDUE_LABEL_AMBER = "متأخر بعذر";
 
 /**
  *  لونُ الصفّ وسببُه.
@@ -105,7 +106,9 @@ function writtenExcuse(code: string | null | undefined): string | null {
  *  أصفرُ لا أحمر، وهو نصُّ قرار المالك.
  */
 export function rowToneOf(o: RowToneOrderLike): RowToneDecision {
-  const excuse = writtenExcuse(o.holdReasonCode);
+  //  التعريفُ المشترك نفسُه الذي يعدّ به الخادمُ لوحةَ الأداء — نصٌّ فارغ أو
+  //  بياضٌ وحده **ليس عذراً** ولا يُقرأ عذراً ملفَّقاً.
+  const excuse = writtenHoldExcuse(o.holdReasonCode);
   const note = typeof o.holdNote === "string" && o.holdNote.trim() !== ""
     ? o.holdNote.trim() : null;
 
@@ -123,6 +126,7 @@ export function rowToneOf(o: RowToneOrderLike): RowToneDecision {
     tone,
     cardClass: CARD_CLASS[tone],
     overdueBadgeClass: excuse ? OVERDUE_BADGE_AMBER : OVERDUE_BADGE_RED,
+    overdueBadgeLabel: excuse ? OVERDUE_LABEL_AMBER : OVERDUE_LABEL_RED,
     reason: showReason
       ? {
           prefix: o.isOverdue ? "سببُ التأخير" : "سببُ التوقّف",
