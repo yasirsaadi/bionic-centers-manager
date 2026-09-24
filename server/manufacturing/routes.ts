@@ -16,7 +16,9 @@ import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
   hasSignedExamForEpisode, latestDeviceCostForEpisode, prescribedSpecsForEpisode,
+  branchNames,
 } from "../medical/store";
+import { saleCandidateBranches } from "../followup/sale_branch";
 import {
   getOpenDeviceEpisode, resolveIntendedOpenEpisode, listDeliveredEpisodes, DeviceEpisodeError,
 } from "../device_episodes/store";
@@ -128,6 +130,48 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const canRead = s.isAdmin || isManager(s) || canConfirmPurchase(s)
       || s.permissions?.canAddPatients || s.permissions?.canViewPatients;
     if (!canRead) return res.status(403).json({ error: "غير مصرح" });
+
+    // ══ **خبراءُ هذا المريض — لا خبراءُ فرعٍ واحد** (٢٠٢٦-٠٩-٢٤) ═══════════
+    //  نافذةُ «اشترى»/«إتمام البيع» كانت تطلب خبراءَ **فرع المتابعة**. فمريضةٌ
+    //  مسجَّلةٌ في ذي قار ومُتاحةٌ لبغداد (شكوى «زهراء»): استقبالُ بغداد يُردّ
+    //  ٤٠٣ فتصير القائمةُ فارغة، والمسؤولُ يرى ذي قار وحدها **بلا أيوب**.
+    //  فصارت تُطلب بالمريض: فروعُ ملفّه (تسجيلٌ وإتاحة) ∩ نطاقُ الفاعل —
+    //  **القاعدةُ نفسُها** التي يحسم بها الحفظُ فرعَ البيع (`sale_branch.ts`)،
+    //  فلا تُعرَض قائمةٌ يردّها الحفظ. ولكلّ خبيرٍ فروعُه بأسمائها.
+    if (req.query.patientId !== undefined) {
+      const patientId = Number(req.query.patientId);
+      if (!Number.isInteger(patientId) || patientId <= 0) {
+        return res.status(400).json({ error: "معرّف المريض غير صالح" });
+      }
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+      if (!(await reachesPatient(s, patient as any))) {
+        return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+      }
+      const scope = s.isAdmin
+        ? null
+        : (s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []));
+      const candidates = saleCandidateBranches(
+        scope, await patientBranchIdsOf(patient as any),
+      );
+      const names = await branchNames();
+      const byId = new Map<number, {
+        id: number; displayName: string; branchIds: number[]; branchNames: string[];
+      }>();
+      for (const b of candidates) {
+        for (const e of await store.getExpertsForBranch(b)) {
+          const row = byId.get(e.id) ?? {
+            id: e.id, displayName: e.displayName, branchIds: [], branchNames: [],
+          };
+          row.branchIds.push(b);
+          row.branchNames.push(names[b] ?? `فرع #${b}`);
+          byId.set(e.id, row);
+        }
+      }
+      const list = Array.from(byId.values())
+        .sort((a, b) => a.displayName.localeCompare(b.displayName, "ar"));
+      return res.json(list);
+    }
 
     // Non-admins are pinned to a branch they can access; admins pass ?branchId=.
     let branchId: number | undefined;

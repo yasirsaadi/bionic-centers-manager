@@ -52,6 +52,10 @@ import { POST_EXAM_CARD_ANCHOR } from "@/components/device_flow_resume";
 import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
+import {
+  fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
+  NO_SALE_EXPERTS, type SaleExpert,
+} from "@/components/sale_experts";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
   followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
@@ -203,20 +207,18 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  دائماً (`validateExpertForBranch` عند `/complete-sale`) — هذا الطلبُ
   //  لجلب القائمة فقط، وليس مصدرَ ثقةٍ لسلطة البيع.
   const activeBranchId = active?.branchId ?? null;
-  const { data: experts } = useQuery<any[]>({
-    //  **مفتاحٌ يحمل الفرع** — فتنقّل المسؤول بين مريضَي فرعين لا يُبقي
-    //  ذاكرةَ التخزين المؤقّت خبراءَ الفرع الأوّل معروضةً على الثاني.
-    queryKey: ["/api/manufacturing/experts", activeBranchId],
-    queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/experts?branchId=${activeBranchId}`,
-        { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة وفرعُها — خبراءُ فرعٍ خاطئ
-    //  (أو طلبٌ بلا فرع يُردّه الخادم ٤٠٠) أسوأ من قائمةٍ فارغة مؤقّتة.
-    enabled: activeBranchId !== null,
+  //  ══ **وصارت بالمريض لا بفرع المتابعة** (٢٠٢٦-٠٩-٢٤، شكوى «زهراء») ════
+  //  فرعُ المتابعة وحده كان يعطي استقبالَ الفرع المُتاحِ له الملفُّ ٤٠٣ ⟵
+  //  قائمةً فارغة، والمسؤولَ خبراءَ فرعٍ واحد بلا خبير الفرع الآخر. فصارت
+  //  فروعَ ملفّ المريض المتاحة للفاعل (`sale_experts.ts`) — ونفسُ المفتاح في
+  //  «إتمام البيع» و«اشترى»، فلا طلبٌ ثانٍ ولا قائمتان تنحرفان.
+  const { data: experts, error: expertsError } = useQuery<SaleExpert[]>({
+    queryKey: saleExpertsQueryKey(patientId),
+    queryFn: () => fetchSaleExperts(patientId),
+    //  لا تُقرأ حتى تُعرف المتابعةُ الفعّالة — بلا متابعةٍ لا بيعَ يُختار له.
+    enabled: active !== null,
   });
+  const showExpertBranches = spansSeveralBranches(experts ?? []);
 
   //  **الخصمُ المعلَّق معلومةُ حالةٍ لا زينة**: بيعٌ رُفع له طلبُ خصمٍ لم
   //  يُعتمد بعد **لم يقع**، فلا يُقال عنه «بانتظار إتمام البيع» كأن الموظّف
@@ -431,7 +433,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
     if (id === active.selectedExpertUserId && active.selectedExpertName) {
       return active.selectedExpertName;
     }
-    return (experts ?? []).find((x: any) => Number(x.id) === id)?.displayName ?? null;
+    return (experts ?? []).find((x) => Number(x.id) === id)?.displayName ?? null;
   };
 
   //  **أين وقف الشراء فعلاً** — من الحالة لا من نصٍّ محفوظ.
@@ -959,14 +961,22 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               <Label>الخبير</Label>
               <Select value={expertId} onValueChange={setExpertId}>
                 <SelectTrigger data-testid="select-followup-expert">
-                  <SelectValue placeholder="اختر الخبير" />
+                  <SelectValue placeholder={(experts ?? []).length
+                    ? "اختر الخبير" : NO_SALE_EXPERTS} />
                 </SelectTrigger>
                 <SelectContent>
-                  {(experts ?? []).map((e: any) => (
-                    <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                  {(experts ?? []).map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {saleExpertLabel(e, showExpertBranches)}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {expertsError && (
+                <p className="text-xs text-destructive" data-testid="text-followup-experts-error">
+                  {(expertsError as Error).message}
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>

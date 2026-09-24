@@ -1603,6 +1603,12 @@ export async function ensureFirstDeviceEpisodeForSale(
     createdBy: number | null;
     /** ما طُلب إن كان معروفاً — والغيابُ «جهازٌ كامل»، وهو حالُ الأول. */
     requestedItem?: RequestedItem | null;
+    /**
+     * **فرعُ البيع** (٢٠٢٦-٠٩-٢٤) — حين يقع البيعُ في فرعٍ آخر من فروع ملفّ
+     * المريض (خبيرُه يعمل هناك)، تُولَد الحلقةُ فيه فيكون الأمرُ وحلقتُه في
+     * فرعٍ واحد. وغيابُه يُبقي فرعَ الخيط كما كان بحرفه.
+     */
+    branchId?: number | null;
   },
 ): Promise<LockedEpisode | null> {
   //  القفلُ أوّلاً: الخيطُ ثابتُ الوجود، وكلُّ مَن يفتح حلقةً يمرّ به.
@@ -1652,7 +1658,7 @@ export async function ensureFirstDeviceEpisodeForSale(
     INSERT INTO patient_device_episodes
       (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
        requested_item, component, service_path, created_by, created_at, updated_at)
-    VALUES (${params.patientId}, ${caseRow.id}, ${caseRow.branch_id ?? null},
+    VALUES (${params.patientId}, ${caseRow.id}, ${params.branchId ?? caseRow.branch_id ?? null},
             ${nextSeq}, 'examined', 0, ${requestedItem}, ${component}, 'exam',
             ${params.createdBy}, NOW(), NOW())
     RETURNING id, case_id, patient_id, status, agreed_cost, service_path, requested_item

@@ -93,7 +93,7 @@ function getSession(req: Req) {
 }
 
 /** Branch IDs the caller may read. `null` = admin, i.e. every branch. */
-import { scopeReachesPatient } from "../patients/branch_access";
+import { scopeReachesPatient, patientBranchIdsOf } from "../patients/branch_access";
 
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
@@ -593,10 +593,28 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  الجهازُ عملٌ له فرعُه، ونقلُ مسؤوليته (٠٨٠) ينقله. فيُقرأ هنا **قبل**
       //  فحص التطابق ليتّسق ما يُقارَن مع ما سيُخزَّن — وإلّا قرأت إعادةُ
       //  إرسالٍ مشروعة «تعارضاً» لأن الصفَّ المحفوظ يحمل فرعَ الحلقة والطلبُ
-      //  يتوقّع فرعَ التسجيل. والصفُّ بلا حلقة يبقى على فرع الحالة/التسجيل.
+      //  يتوقّع فرعَ التسجيل.
+      //
+      //  ══ **وبلا حلقة: فرعُ مَن أرسل المريضَ لهذه المعاينة** (٢٠٢٦-٠٩-٢٤) ══
+      //  كانت المعاينةُ العاريةُ تُنسَب لفرع الحالة/التسجيل وحده — فمريضةٌ
+      //  أرسلها الفرعُ المُتاحُ له ملفُّها (شكوى «زهراء») وُلدت متابعةُ قرار
+      //  شرائها في طابور فرع التسجيل، لا حيث تقف. فصار يُقرأ الطلبُ الذي
+      //  سيُغلقه هذا التوقيعُ (`referringRequestBranch` — مجموعةُ الإغلاق
+      //  نفسُها، وثابتٌ عند إعادة الإرسال)، **بشرطِ أن يصل فرعُه الملفَّ الآن**.
+      //  وإلّا فالقاعدةُ القائمة بحرفها: فرعُ الحالة ثمّ فرعُ التسجيل.
+      let referralBranchId: number | null = null;
+      if (deviceEpisodeId === null) {
+        const referral = await reviewStore.referringRequestBranch({
+          patientId, serviceType: caseType, idempotencyKey,
+        });
+        if (referral !== null
+          && (await patientBranchIdsOf(patient)).includes(referral)) {
+          referralBranchId = referral;
+        }
+      }
       const operationBranchId =
         (await store.examOperationBranch(patientId, deviceEpisodeId))
-        ?? earlyCaseRow?.branchId ?? patient.branchId;
+        ?? referralBranchId ?? earlyCaseRow?.branchId ?? patient.branchId;
       const replayContent = {
         patientId,
         doctorId: session.userId,
@@ -698,6 +716,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         ? earlyCaseRow
         : await store.findCaseFor(patientId, caseType as MedicalSpecialty);
 
+      //  **والفرعُ الذي يُمرَّر للتوقيع يطابق ما سيُخزَّن**: جهازٌ حُسم هنا بلا
+      //  معرّفٍ صريح (المنتظرُ الوحيد) يُسجَّل بفرعه تحت القفل — فيُمرَّر
+      //  فرعُه نفسُه، كي لا تُقرأ إعادةُ إرسالٍ خسرت سباقاً «فرعاً مختلفاً».
+      //  والصريحُ والعاري كما حُسما أعلاه بحرفهما.
+      const createBranchId = resolvedEpisodeId !== null && deviceEpisodeId === null
+        ? ((await store.examOperationBranch(patientId, resolvedEpisodeId)) ?? operationBranchId)
+        : operationBranchId;
+
       let created: boolean;
       let retypedFrom: string | null = null;
       let exam: Awaited<ReturnType<typeof store.createExam>>["exam"];
@@ -706,7 +732,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           patientId,
           caseId: caseRow?.id ?? null,
           caseType: caseType as MedicalSpecialty,
-          branchId: operationBranchId,
+          branchId: createBranchId,
           doctorId: session.userId,
           doctorName,
           prescription,
