@@ -225,22 +225,28 @@ async function main() {
       "ج٥. والعزلُ لم يضعف: مديرُ الفرع الآخر يرى متأخّرَه وحده");
     void o9;
 
-    console.log("\nد — العذرُ يُكتب فيتحوّل الصفّ، ويُرفَع فيعود");
-    //  الاستئنافُ بالكاتب القانونيّ يُصفّر العذر ⟶ صار «متأخراً بدون عذر».
-    await store.resumeOrder({ order: (await store.getRawOrder(o2))!, performedBy: null });
+    console.log("\nد — العذرُ يُكتب فيتحوّل الصفّ، والاستئنافُ لا يُسقطه");
+    //  **انقلب هذا العقدُ بقرار المالك (٢٠٢٦-٠٩-٢٤)**: كان الاستئنافُ يُصفّر
+    //  العذرَ فيعود الأمرُ أحمر («لا يضيع عذرٌ مهما كان»). والآن يبقى.
+    const before2 = await store.getRawOrder(o2);
+    await store.resumeOrder({ order: before2!, performedBy: null });
+    const after2 = await store.getRawOrder(o2);
+    eq([after2?.status, after2?.holdReasonCode, after2?.holdNote],
+      ["active", before2?.holdReasonCode, before2?.holdNote],
+      "د١. استُؤنف أمرُ صورة المالك فعاد يعمل **وعذرُه باقٍ بحرفه**");
     const ov2 = await store.getOverview({ branchIds: [bA] });
-    eq([ov2.totals.overdue, ov2.totals.overdueExcused], [3, 1],
-      "د١. استُؤنف أمرُ صورة المالك فسقط عذرُه ⟶ ٣ بدون عذر · ١ بعذر");
+    eq([ov2.totals.overdue, ov2.totals.overdueExcused], [2, 2],
+      "د١أ. فالمربّعان لم يتحرّكا: ٢ بدون عذر · ٢ بعذر");
     //  والتوقّفُ بالكاتب القانونيّ يكتب العذر ⟶ صار «متأخراً بعذر».
     await store.holdOrder({
       order: (await store.getRawOrder(o1))!, status: "waiting_materials",
       reasonCode: "component_delay", note: "المفصل من تركيا", performedBy: null,
     });
     const ov3 = await store.getOverview({ branchIds: [bA] });
-    eq([ov3.totals.overdue, ov3.totals.overdueExcused], [2, 2],
+    eq([ov3.totals.overdue, ov3.totals.overdueExcused], [1, 3],
       "د٢. وكتب الخبيرُ عذراً لأمرٍ آخر ⟶ انتقل من الأحمر إلى الكهرمانيّ");
     const rows3 = await store.listOrders({ branchIds: [bA] } as any);
-    eq([chipOf(rows3, "overdue"), chipOf(rows3, "overdue_excused")], [2, 2],
+    eq([chipOf(rows3, "overdue"), chipOf(rows3, "overdue_excused")], [1, 3],
       "د٣. والشريطان يتبعان المربّعين في كلّ لحظة");
     eq(ov3.totals.overdue + ov3.totals.overdueExcused, oldCount,
       "د٤. والمجموعُ لا يتحرّك — التأخّرُ واقعٌ، والعذرُ وحدَه يُصنّفه");

@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { orderLatenessNotice } from "./manufacturing_row_tone";
 import {
   STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
   REWORK_TYPE_LABELS, REASON_CODE_LABELS,
@@ -84,6 +85,11 @@ export default function ManufacturingOrder() {
   const stages = stagesForOrder(order.serviceType, order.purpose);
   const isCompleted = order.status === "completed" || order.status === "cancelled";
   const onHold = isHoldStatus(order.status);
+  //  متأخّرٌ بعذر أم بدونه — القرارُ الخالصُ نفسُه الذي يلوّن صفَّ اللوحة.
+  const lateness = orderLatenessNotice({
+    status: order.status, isOverdue: order.isOverdue === true,
+    holdReasonCode: order.holdReasonCode ?? null, holdNote: order.holdNote ?? null,
+  });
   // شريط التقدّم من المرحلة الحالية وحدها — يرجع للخلف حين يرجع العمل.
   const progress = toPatientStageView(order);
   const forward = nextStages(order.serviceType, order.currentStage, order.purpose);
@@ -235,6 +241,23 @@ export default function ManufacturingOrder() {
             {REASON_CODE_LABELS[order.holdReasonCode] ?? order.holdReasonCode}
             {order.holdNote && <p className="text-xs text-muted-foreground mt-1">{order.holdNote}</p>}
             <p className="text-[11px] text-muted-foreground mt-2">داخلي — لا يظهر للمريض. والمرحلة لم تتغيّر.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* متأخّرٌ بعذر أم بدونه — ويدلّ على المكان الواحد لكتابة العذر */}
+      {lateness && (
+        <Card className={`mb-4 ${lateness.cardClass}`} data-testid={`notice-lateness-${lateness.tone}`}>
+          <CardContent className="p-4 text-sm">
+            <span className={`font-semibold ${lateness.tone === "red" ? "text-red-700" : "text-amber-800"}`}>
+              {lateness.title}
+            </span>
+            {lateness.reason && (
+              <span> — {lateness.reason.prefix}: {lateness.reason.label}
+                {lateness.reason.note && <span className="text-muted-foreground"> — {lateness.reason.note}</span>}
+              </span>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">{lateness.hint}</p>
           </CardContent>
         </Card>
       )}
@@ -442,6 +465,9 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
                 className="mt-1 bg-white"
                 data-testid="input-delivery-date-reason"
               />
+              <p className="text-xs text-muted-foreground mt-1" data-testid="hint-date-reason-not-excuse">
+                سببُ تغيير الموعد لا يُحسب عذراً للتأخير — العذرُ يُكتب من «توقّف / مشكلة».
+              </p>
             </div>
           )}
         </div>
@@ -539,6 +565,9 @@ function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
           <div>
             <label className="text-sm font-medium">ملاحظات فنّية (اختياري)</label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="mt-1" />
+            <p className="text-xs text-muted-foreground mt-1" data-testid="hint-notes-not-excuse">
+              ملاحظةٌ فنّية لا عذرُ تأخير — سببُ التأخير يُكتب من «توقّف / مشكلة».
+            </p>
           </div>
         </div>
         <DialogFooter>
@@ -615,6 +644,9 @@ function HoldDialog({ open, onOpenChange, order, onDone }: any) {
           </div>
           <p className="text-xs text-muted-foreground">
             {isRework ? "إعادة العمل الفني هي المسار الوحيد للرجوع بمرحلة." : "التوقّف لا يغيّر المرحلة الحالية."}
+          </p>
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="hint-single-excuse-place">
+            هنا وحدَه يُكتب سببُ التأخير. ويبقى السببُ عذراً للأمر بعد «إلغاء التوقّف ومتابعة العمل» حتى التسليم.
           </p>
         </div>
         <DialogFooter>

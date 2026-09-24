@@ -844,9 +844,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
         { currentStage: r.currentStage, serviceType: r.serviceType, purpose: r.purpose },
         histByOrder.get(r.id) ?? [],
       ) ?? r.startedAt ?? r.assignedAt;
-    const notFinished = r.status !== "completed" && r.status !== "cancelled";
-    const isOverdue = !!r.expectedDeliveryDate && notFinished
-      && String(r.expectedDeliveryDate) < today;
+    const isOverdue = isOrderOverdue(r.expectedDeliveryDate, r.status, today);
     return {
       id: r.id,
       patientId: r.patientId,
@@ -872,6 +870,18 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       holdNote: r.holdNote ?? null,
     };
   });
+}
+
+/**
+ *  «متأخر» — **تعريفٌ واحد**: مضى موعدُ تسليمه بتقويم بغداد، ولم يكتمل ولم
+ *  يُلغَ. تقرؤه القائمةُ وصفحةُ الأمر ولوحةُ الأداء، فلا يقول موضعٌ «متأخر»
+ *  ويقول غيرُه «في موعده» للأمر نفسِه.
+ */
+export function isOrderOverdue(
+  expectedDeliveryDate: unknown, status: string, today: string,
+): boolean {
+  return !!expectedDeliveryDate && status !== "completed" && status !== "cancelled"
+    && String(expectedDeliveryDate) < today;
 }
 
 // ---- single order (raw, for authorization checks) ----------------------------
@@ -981,6 +991,10 @@ export async function getOrderDetail(id: number) {
       completedAt: order.completedAt ? new Date(order.completedAt).toISOString() : null,
       createdAt: order.createdAt ? new Date(order.createdAt).toISOString() : null,
       reworkCount,
+      //  صفحةُ الأمر تقول «متأخر بعذر» أو «متأخر بدون عذر» — بالتعريف نفسِه
+      //  الذي تعدّ به القائمةُ واللوحة، لا بحسابٍ ثالثٍ في المتصفّح.
+      isOverdue: isOrderOverdue(order.expectedDeliveryDate, order.status,
+        new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" })),
     },
     patient: patient ? { ...patient, branchName: order.branchName ?? null } : null,
     deviceSpecs,
@@ -1019,8 +1033,6 @@ export async function updateStage(params: {
   deliveryDate?: string | null;
   /** الحالة الجديدة — تُمرَّر فقط من مسارَي الاستئناف وإعادة العمل. */
   newStatus?: string | null;
-  /** يُفرَغ سبب التوقّف حين يعود الأمر إلى العمل. */
-  clearHold?: boolean;
   finalResult?: string | null;
   finalNotes?: string | null;
   performedBy: number | null;
@@ -1060,7 +1072,11 @@ export async function updateStage(params: {
     if (!live.startedAt && fromStage === firstStageFor(order.serviceType, order.purpose)) patch.startedAt = new Date();
     if (commitsDate) patch.expectedDeliveryDate = params.deliveryDate;
     if (params.newStatus) patch.status = params.newStatus;
-    if (params.clearHold) { patch.holdReasonCode = null; patch.holdNote = null; }
+    //  ══ **العذرُ المكتوب لا يمحوه التقدّم** (قرارُ المالك ٢٠٢٦-٠٩-٢٤) ══════
+    //  «لا يضيع عذرٌ مهما كان». كان التقدّمُ يُفرغ `holdReasonCode`/`holdNote`
+    //  فيعود أمرٌ متأخّرٌ كتب خبيرُه سببَ تأخيره أحمرَ كأنّ شيئاً لم يُكتب.
+    //  فالعذرُ يبقى حتى **ينتهي الأمر** (تسليمٌ أو إنجازُ صيانةٍ أدناه، أو
+    //  إلغاء) أو **يحلّ محلَّه عذرٌ أحدث** («توقّف / مشكلة» مرّةً ثانية).
     // ختمٌ واحد للحظة واحدة: تسليم الحلقة هو تسليم أمرها بعينه، فلو ولّد
     // كلٌّ وقته لاختلف الرقمان بأجزاء الثانية وصار لكل جدولٍ روايةٌ.
     const completedAt = new Date();
@@ -1075,6 +1091,9 @@ export async function updateStage(params: {
     if (maintenanceDone) {
       patch.status = "completed";
       patch.completedAt = completedAt;
+      //  انتهى الأمر فانتهى عذرُه — كالتسليم أعلاه بحرفه.
+      patch.holdReasonCode = null;
+      patch.holdNote = null;
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
@@ -1309,7 +1328,15 @@ export async function holdOrder(params: {
   });
 }
 
-/** إلغاء التوقّف: الحالة تعود `active`، والمرحلة **كما هي**. */
+/**
+ * إلغاء التوقّف: الحالة تعود `active`، والمرحلة **كما هي**.
+ *
+ * **والعذرُ يبقى** (قرارُ المالك ٢٠٢٦-٠٩-٢٤): كان الاستئنافُ يُفرغ سببَ
+ * التوقّف، فأمرٌ تأخّر لأن المادّة لم تصل ثمّ وصلت يعود أحمرَ «بدون عذر»
+ * لحظةَ استئناف العمل عليه — وهو بعينه ما اشتكى منه المالكُ في أمر «وهج».
+ * فالسببُ المكتوبُ من «توقّف / مشكلة» يبقى عذرَ التأخير حتى يُسلَّم الأمرُ
+ * أو يُلغى أو يُكتب سببٌ أحدث. و«أهو متوقّفٌ الآن؟» تقوله `status` وحدها.
+ */
 export async function resumeOrder(params: {
   order: ProstheticWorkOrder;
   note?: string | null;
@@ -1323,7 +1350,7 @@ export async function resumeOrder(params: {
     assertNotTerminal(live);
     if (live.status === "active") throw new WorkOrderConflictError(live);
     const [updated] = await tx.update(WO)
-      .set({ status: "active", holdReasonCode: null, holdNote: null, updatedAt: new Date() })
+      .set({ status: "active", updatedAt: new Date() })
       .where(eq(WO.id, order.id)).returning();
     await tx.insert(WH).values({
       workOrderId: order.id,
@@ -1789,8 +1816,7 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     //  «مضى موعدُه ولم ينتهِ» — الشرطُ نفسُه الذي يحسب به `listOrders`
     //  حقلَ `isOverdue` — ثمّ يُصنَّف بالعذر المكتوب مرّةً واحدة للصفّ.
     const late = latenessOf({
-      isOverdue: !!o.expectedDeliveryDate && notFinished(o.status)
-        && String(o.expectedDeliveryDate) < today,
+      isOverdue: isOrderOverdue(o.expectedDeliveryDate, o.status, today),
       holdReasonCode: o.holdReasonCode,
     });
     if (late === "late") overdue++;
