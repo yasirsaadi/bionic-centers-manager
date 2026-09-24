@@ -483,7 +483,8 @@ async function main() {
     let raced: unknown = null;
     try {
       await store.documentHoldReason({ order: stale, status: "technical_rework",
-        reasonCode: HOLD_REASONS.technical_rework[3].code, note: "لقطة بائتة", performedBy: X });
+        reasonCode: HOLD_REASONS.technical_rework[3].code, note: "لقطة بائتة", performedBy: X,
+        authority: { via: "assignment", expertUserId: X } });
     } catch (e) { raced = e; }
     const tz = await snap(TZ);
     eq([raced instanceof store.WorkOrderConflictError, tz.reason, tz.note, tz.history],

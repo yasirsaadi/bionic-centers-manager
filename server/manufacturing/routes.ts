@@ -688,6 +688,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
    * يُرجع `true` إن كان الخطأ تعارضاً وقد رُدّ عليه.
    */
   function handledConflict(res: any, e: unknown): boolean {
+    //  (مراجعة Codex على ٤٠٥) أُسنِد الأمرُ إلى خبيرٍ آخر بين إذن الطلب وقفله، فلم
+    //  يعد لصاحبه أن يكتب عليه. ويُقرأ **قبل** أبيه: «حدّث وأعد المحاولة» كذبٌ هنا،
+    //  فالمحاولةُ مردودةٌ أصلاً — والأمرُ لم يعد أمرَه.
+    if (e instanceof store.WorkOrderReassignedError) {
+      res.status(403).json({ error: "أُسنِد هذا الأمرُ إلى خبيرٍ آخر أثناء طلبك — لم يُكتب شيء." });
+      return true;
+    }
     if (e instanceof store.WorkOrderConflictError) {
       res.status(409).json({
         error: "تغيّر أمر التصنيع بواسطة مستخدم آخر. حدّث الصفحة وحاول مجدداً.",
@@ -699,7 +706,12 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     return false;
   }
 
-  async function loadWritable(req: Req, res: any): Promise<any | null> {
+  //  `loadWritable` تُرجع مع الأمر **أساسَ الإذن** (`WriteAuthority`) فيحمله الطلبُ إلى
+  //  الكاتب، ويُحكَم عليه هناك تحت القفل (مراجعة Codex على ٤٠٥): إذنُ الخبير هو الإسنادُ
+  //  نفسُه، والإسنادُ قد يتغيّر بين هذه القراءة والقفل. ولا يُبنى الأساسُ في غيرها.
+  async function loadWritable(
+    req: Req, res: any,
+  ): Promise<{ raw: any; authority: store.WriteAuthority } | null> {
     const s = getSession(req);
     const id = parseInt(req.params.id);
     if (Number.isNaN(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
@@ -708,16 +720,20 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // Same union model as the read path: admin, manager-in-branch, or anyone
     // working as the assigned expert may WRITE to the order.
     const assignedToMe = worksAsExpert(s) && raw.expertUserId === s.userId;
+    let authority: store.WriteAuthority;
     if (s.isAdmin) {
       // all
+      authority = { via: "role" };
     } else if (isManager(s) && await reachesOrderPatient(s, raw)) {
       // own branch — or a branch the patient's file is shared with (§4.t)
+      authority = { via: "role" };
     } else if (assignedToMe) {
-      // own assigned order
+      // own assigned order — the assignment IS the authority, rechecked under the lock
+      authority = { via: "assignment", expertUserId: raw.expertUserId };
     } else {
       res.status(403).json({ error: "غير مصرح" }); return null;
     }
-    return raw;
+    return { raw, authority };
   }
 
   // ---- advance to the NEXT stage --------------------------------------------
@@ -725,8 +741,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // المرحلة التالية في الترتيب (ولمسند لا يحتاج قالباً: تخطّي القالب إلى
   // التصنيع). الرجوع للخلف ليس هنا إطلاقاً — مساره «إعادة عمل فني».
   app.patch("/api/manufacturing/orders/:id/advance", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     if (raw.status === "completed" || raw.status === "cancelled") {
       return res.status(409).json({ error: "الأمر منتهٍ — لا يمكن نقله" });
     }
@@ -760,7 +777,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     try {
       const updated = await store.updateStage({
-        order: raw, toStage,
+        order: raw, authority, toStage,
         notes: strOrU(req.body?.notes) ?? null,
         deliveryDate,
         // التقدّم يعيد الأمر إلى العمل: توقّفٌ سابق ينتهي بمجرّد المضيّ قُدُماً.
@@ -788,8 +805,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!(s.isAdmin || isManager(s))) {
       return res.status(403).json({ error: "تعديل المرحلة مباشرةً للإدارة — استعمل «الانتقال للمرحلة التالية»" });
     }
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     const toStage = strOrU(req.body?.toStage);
     if (!toStage || !isValidStageFor(raw.serviceType, toStage, raw.purpose)) {
       return res.status(400).json({ error: "المرحلة غير صالحة لهذا النوع" });
@@ -807,7 +825,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     try {
       const updated = await store.updateStage({
-        order: raw, toStage,
+        order: raw, authority, toStage,
         notes: `تعديل إداري — ${reason}`,
         deliveryDate: null,
         finalResult: finalResult ?? null,
@@ -824,8 +842,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
   // ---- hold: stop the work WITHOUT moving the stage --------------------------
   app.post("/api/manufacturing/orders/:id/hold", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     if (raw.status === "completed" || raw.status === "cancelled") {
       return res.status(409).json({ error: "الأمر منتهٍ" });
     }
@@ -845,7 +864,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       }
       try {
         const updated = await store.reworkToStage({
-          order: raw, returnToStage, reasonCode: reasonCode!, note,
+          order: raw, authority, returnToStage, reasonCode: reasonCode!, note,
           performedBy: getSession(req).userId ?? null,
         });
         await audit(req, "prosthetic_work_order", raw.id, "rework", raw.branchId,
@@ -859,7 +878,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     try {
       const updated = await store.holdOrder({
-        order: raw, status, reasonCode: reasonCode!, note,
+        order: raw, authority, status, reasonCode: reasonCode!, note,
         performedBy: getSession(req).userId ?? null,
       });
       res.json(updated);
@@ -876,8 +895,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   //  فكانت كتابةُ سبب إعادة عملٍ موروثة تُرجعها مرّةً ثانية. والفحوصُ هنا ردٌّ
   //  مبكّرٌ برسالةٍ واضحة، والحكمُ الأخير تحت القفل في `documentHoldReason`.
   app.post("/api/manufacturing/orders/:id/hold-reason", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     if (raw.status === "completed" || raw.status === "cancelled") {
       return res.status(409).json({ error: "الأمر منتهٍ" });
     }
@@ -896,7 +916,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     try {
       const updated = await store.documentHoldReason({
-        order: raw, status, reasonCode: reasonCode!, note,
+        order: raw, authority, status, reasonCode: reasonCode!, note,
         performedBy: getSession(req).userId ?? null,
       });
       res.json(updated);
@@ -911,15 +931,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
   // ---- resume: back to active, stage untouched -------------------------------
   app.post("/api/manufacturing/orders/:id/resume", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     if (raw.status === "completed" || raw.status === "cancelled") {
       return res.status(409).json({ error: "الأمر منتهٍ" });
     }
     if (raw.status === "active") return res.status(409).json({ error: "الأمر يعمل أصلاً" });
     try {
       const updated = await store.resumeOrder({
-        order: raw, note: strOrU(req.body?.note) ?? null,
+        order: raw, authority, note: strOrU(req.body?.note) ?? null,
         performedBy: getSession(req).userId ?? null,
       });
       res.json(updated);
@@ -933,12 +954,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   app.post("/api/manufacturing/orders/:id/cancel", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     if (!(s.isAdmin || isManager(s))) return res.status(403).json({ error: "إلغاء الأمر للإدارة" });
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     if (raw.status === "cancelled") return res.status(409).json({ error: "الأمر ملغى أصلاً" });
     try {
       const updated = await store.cancelOrder({
-        order: raw, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null,
+        order: raw, authority, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null,
       });
       await audit(req, "prosthetic_work_order", raw.id, "cancel", raw.branchId, "إلغاء أمر التصنيع");
       res.json(updated);
@@ -958,8 +980,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
   // موعدٍ قائم فسببه إلزامي — عليه تُقاس دقّة التسليم، فلا يتحرّك صامتاً.
   // وفي الحالتين يُكتب سطر في سجلّ الأمر بمَن فعل ومتى.
   app.patch("/api/manufacturing/orders/:id/delivery-date", isAuthenticated, async (req: Req, res) => {
-    const raw = await loadWritable(req, res);
-    if (!raw) return;
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
     const date = strOrU(req.body?.expectedDeliveryDate);
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: "تاريخ غير صالح" });
@@ -985,7 +1008,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
     try {
       const updated = await store.updateDeliveryDate({
-        order: raw, expectedDeliveryDate: date,
+        order: raw, authority, expectedDeliveryDate: date,
         performedBy: getSession(req).userId ?? null,
         reason: isChange ? reason : null,
         ...(hasBase ? { ifCurrentDate: strOrU(req.body?.ifCurrentDate) ?? null } : {}),

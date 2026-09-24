@@ -547,6 +547,7 @@ async function main() {
         await store.updateStage({
           order: staleSnap, toStage: "mold", deliveryDate: "2026-09-18",
           newStatus: "active", performedBy: EXPERT,
+          authority: { via: "assignment", expertUserId: EXPERT },
         });
       } catch (e) { rejected = e; }
       check(rejected instanceof store.WorkOrderConflictError,
@@ -568,6 +569,7 @@ async function main() {
         await store.updateStage({
           order: snapX, toStage: "mold", deliveryDate: "2026-09-20",
           newStatus: "active", performedBy: EXPERT,
+          authority: { via: "assignment", expertUserId: EXPERT },
         });
       } catch (e) { rejX = e; }
       check(rejX instanceof store.WorkOrderConflictError, "ولا تُحيي أمراً ملغى");
@@ -696,13 +698,16 @@ async function main() {
       const tries: [string, () => Promise<any>][] = [
         ["نقل المرحلة", () => store.updateStage({
           order: snap, toStage: "delivered", finalResult: "first_fit_success", performedBy: EXPERT,
+          authority: { via: "assignment", expertUserId: EXPERT },
         })],
-        ["الإلغاء", () => store.cancelOrder({ order: snap, note: "قديم", performedBy: MANAGER })],
+        ["الإلغاء", () => store.cancelOrder({ order: snap, note: "قديم", performedBy: MANAGER, authority: { via: "role" } })],
         ["تغيير الموعد", () => store.updateDeliveryDate({
           order: snap, expectedDeliveryDate: "2026-10-11", reason: "قديم", performedBy: EXPERT,
+          authority: { via: "assignment", expertUserId: EXPERT },
         })],
         ["التوقّف", () => store.holdOrder({
           order: snap, status: "medical_hold", reasonCode: "swelling", performedBy: EXPERT,
+          authority: { via: "assignment", expertUserId: EXPERT },
         })],
       ];
       for (const [label, run] of tries) {

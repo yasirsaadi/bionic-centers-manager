@@ -159,7 +159,7 @@ async function deliverOrder(orderId: number) {
       order: order as any, toStage: st,
       deliveryDate: st === "mold" ? "2026-12-01" : null,
       finalResult: st === "delivered" ? "success" : null,
-      performedBy: MANAGER,
+      performedBy: MANAGER, authority: { via: "role" },
     });
   }
 }
@@ -503,7 +503,7 @@ async function main() {
     const [oC] = await ordersOf(pC);
     await mfg.cancelOrder({
       order: (await mfg.getRawOrder(Number(oC.id))) as any,
-      note: "عدل المريض عن الشراء", performedBy: MANAGER,
+      note: "عدل المريض عن الشراء", performedBy: MANAGER, authority: { via: "role" },
     });
     same("ك. الأمر أُلغي", (await ordersOf(pC))[0].status, "cancelled");
     const epC = await epRow(eC);
@@ -523,7 +523,7 @@ async function main() {
       [pMnt, EXPERT, eMnt]);
     const [mntOrder] = await q(`SELECT id FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pMnt]);
     await mfg.cancelOrder({
-      order: (await mfg.getRawOrder(Number(mntOrder.id))) as any, note: "لا حاجة", performedBy: MANAGER,
+      order: (await mfg.getRawOrder(Number(mntOrder.id))) as any, note: "لا حاجة", performedBy: MANAGER, authority: { via: "role" },
     });
     same("   وإلغاء صيانةٍ لا يُلغي حلقةً حيّة", (await epRow(eMnt))?.status, "in_manufacturing");
     same("   ولا يضع لها ختم إلغاء", (await epRow(eMnt))?.cancelled_at, null);
@@ -539,7 +539,7 @@ async function main() {
     const [mnt2] = await q(`SELECT id FROM prosthetic_work_orders WHERE patient_id=$1 AND purpose='maintenance'`, [pMnt2]);
     await mfg.updateStage({
       order: (await mfg.getRawOrder(Number(mnt2.id))) as any,
-      toStage: "maintenance_cast_done", performedBy: MANAGER,
+      toStage: "maintenance_cast_done", performedBy: MANAGER, authority: { via: "role" },
     });
     same("   وإنجاز صيانةٍ لا يُسلّم حلقةً حيّة", (await epRow(eMnt2))?.status, "in_manufacturing");
     same("   ولا يضع لها ختم تسليم", (await epRow(eMnt2))?.delivered_at, null);

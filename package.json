@@ -52,6 +52,7 @@
     "test:manufacturing-share": "tsx server/manufacturing/branch_share_visibility.test.ts",
     "test:manufacturing-overview-lateness": "tsx server/manufacturing/overview_lateness.test.ts",
     "test:manufacturing-excuse": "tsx server/manufacturing/excuse_persistence.test.ts",
+    "test:manufacturing-write-authority": "tsx server/manufacturing/write_authority.test.ts",
     "test:maintenance-warranty": "tsx server/maintenance_warranty_similar.test.ts",
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
     "test:registry-assignment-api": "tsx server/registry_assignment_api.test.ts",

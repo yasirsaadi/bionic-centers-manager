@@ -196,7 +196,7 @@ async function deliverOrder(orderId: number) {
       order: order as any, toStage: st,
       deliveryDate: st === "mold" ? "2026-12-01" : null,
       finalResult: st === "delivered" ? "success" : null,
-      performedBy: MANAGER,
+      performedBy: MANAGER, authority: { via: "role" },
     });
   }
 }
@@ -347,7 +347,7 @@ async function main() {
     const maintOrder = allOrders.find((o: any) => o.purpose === "maintenance");
     await mfg.updateStage({
       order: (await mfg.getRawOrder(Number(maintOrder!.id))) as any,
-      toStage: "maintenance_cast_done", performedBy: MANAGER,
+      toStage: "maintenance_cast_done", performedBy: MANAGER, authority: { via: "role" },
     });
     same("٧. الصيانة اكتملت", (await ordersOf(P)).find((o: any) => o.purpose === "maintenance")?.status, "completed");
     same("   والقديم ما زال «مُسلَّماً»", (await epRow(dev1))?.status, "delivered");
@@ -697,7 +697,7 @@ async function main() {
     const deliveryTx = (async () => {
       await mfg.updateStage({
         order: (await mfg.getRawOrder(Number(oTrue[0].id))) as any,
-        toStage: "delivered", finalResult: "success", performedBy: MANAGER,
+        toStage: "delivered", finalResult: "success", performedBy: MANAGER, authority: { via: "role" },
       });
       deliveryFinished = true;
     })();

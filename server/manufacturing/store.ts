@@ -1037,6 +1037,8 @@ export async function updateStage(params: {
   finalResult?: string | null;
   finalNotes?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order, toStage } = params;
   const delivered = toStage === "delivered";
@@ -1046,6 +1048,7 @@ export async function updateStage(params: {
   const maintenanceDone = MAINTENANCE_DONE_STAGES.has(toStage);
   return await db.transaction(async (tx) => {
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
 
     // **الأمر المنتهي لا يتحرّك.** ولا تُغني عنه مقارنةُ الانحراف تحتَه:
     // لقطةٌ تقول `completed` تساوي الحالَ `completed` فتمرّ المقارنة، فيصير
@@ -1181,6 +1184,38 @@ export class WorkOrderConflictError extends Error {
   }
 }
 
+/**
+ * **على أيّ أساسٍ أُذِن بالكتابة** — ويُعاد فحصُه تحت القفل (مراجعة Codex على ٤٠٥).
+ *
+ * `loadWritable` تأذن لثلاثة: المسؤولِ، ومديرِ الفرع في نطاقه، والخبيرِ المسنَد.
+ * والأوّلان سلطتُهما دورُهما ونطاقُهما، لا تتبع مَن هو الخبير. أمّا الخبيرُ فسلطتُه
+ * **هي الإسنادُ نفسُه** — وكانت تُقرأ قبل القفل وحدَه. فإسنادٌ إلى خبيرٍ آخر يلتزم
+ * بين الفحص والقفل كان يترك طلبَ الأوّل يكتب **بعد أن فقد الأمر**: يوقفه ويستأنفه،
+ * ويُرجعه بمرحلة، ويلتزم بموعد تسليمه — مُعادٌ حيّاً في الأبواب الستّة المتاحة له.
+ *
+ * فيُمرَّر الأساسُ إلى كلّ كاتب، ويُحكَم على **الصفّ المقفول** لا على اللقطة:
+ * - `role` — لا شيءَ يُعاد فحصُه هنا، فالمديرُ والمسؤولُ لا يُردّان لأن الخبيرَ تغيّر.
+ * - `assignment` — الأمرُ ما زال مسنَداً إلى هذا الخبير بعينه، وإلّا فلا كتابة.
+ *
+ * والفحصُ على **الإسناد الحاليّ** لا على «أتغيّر؟»: أمرٌ أُسنِد إلى غيره ثمّ أُعيد إليه
+ * قبل القفل هو أمرُه لحظةَ الكتابة، فيكتب.
+ */
+export type WriteAuthority =
+  | { readonly via: "role" }
+  | { readonly via: "assignment"; readonly expertUserId: number };
+
+/**
+ * الخبيرُ لم يعد صاحبَ الأمر لحظةَ القفل. صنفٌ فرعيٌّ من `WorkOrderConflictError`
+ * عمداً: كلُّ نقطةٍ تلتقط التعارضَ تلتقطه فلا يبقى طلبٌ بلا ردّ، ومعالجُ النقاط يقرؤه
+ * قبل أبيه فيقول الحقيقةَ بعينها — لا «حدّث وأعد المحاولة» لمحاولةٍ مردودةٍ أصلاً.
+ */
+export class WorkOrderReassignedError extends WorkOrderConflictError {
+  constructor(state: { currentStage: string; status: string }) {
+    super(state);
+    this.name = "WorkOrderReassignedError";
+  }
+}
+
 /** قيمة عمود التاريخ كنصّ `YYYY-MM-DD` أو `null`. */
 function dateStr(v: unknown): string | null {
   return v ? String(v).slice(0, 10) : null;
@@ -1231,6 +1266,16 @@ function assertNotTerminal(live: LockedOrder) {
   }
 }
 
+/**
+ * أساسُ الإذن ما زال قائماً على الصفّ المقفول (`WriteAuthority`). ويُنادى **أوّلَ**
+ * ما بعد القفل: مَن لم يعد مأذوناً يُقال له ذلك، لا تفاصيلُ حالٍ لم يعد له.
+ */
+function assertWriteAuthority(live: LockedOrder, authority: WriteAuthority) {
+  if (authority.via === "assignment" && live.expertUserId !== authority.expertUserId) {
+    throw new WorkOrderReassignedError(live);
+  }
+}
+
 export async function updateDeliveryDate(params: {
   order: ProstheticWorkOrder;
   expectedDeliveryDate: string;
@@ -1245,6 +1290,8 @@ export async function updateDeliveryDate(params: {
    * فتبويبةٌ قديمة تُردّ بتعارض بدل أن تكتب فوق قرار غيرها.
    */
   ifCurrentDate?: string | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order, expectedDeliveryDate } = params;
   const base = params.ifCurrentDate !== undefined
@@ -1253,6 +1300,7 @@ export async function updateDeliveryDate(params: {
 
   return await db.transaction(async (tx) => {
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     // الموعد هو الوعد الذي تُقاس عليه دقّة التسليم. تحريكه بعد أن انتهى
     // الأمر يعني إعادة كتابة الوعد **بعد معرفة النتيجة** — فيصير كل تسليم
     // في موعده، ويفقد المؤشّر معناه.
@@ -1311,12 +1359,15 @@ export async function holdOrder(params: {
   reasonCode: string;
   note?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order, status, reasonCode } = params;
   return await db.transaction(async (tx) => {
     // التوقّف لا يشترط مرحلةً بعينها، فلا يُردّ لتقدّم الأمر — لكنه يُسجَّل
     // على المرحلة **الفعلية** لا على لقطةٍ غادرها. والمنتهي لا يُوقَف.
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
     const [updated] = await tx.update(WO)
       .set({ status, holdReasonCode: reasonCode, holdNote: params.note ?? null, updatedAt: new Date() })
@@ -1360,10 +1411,13 @@ export async function documentHoldReason(params: {
   reasonCode: string;
   note?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order, status, reasonCode } = params;
   return await db.transaction(async (tx) => {
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
     if (!isHoldStatus(live.status) || live.status !== status
         || writtenHoldExcuse(live.holdReasonCode) !== null) {
@@ -1396,12 +1450,15 @@ export async function resumeOrder(params: {
   order: ProstheticWorkOrder;
   note?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order } = params;
   return await db.transaction(async (tx) => {
     // استئنافٌ لأمرٍ استُؤنف أو انتهى بعد قراءتنا ليس استئنافاً — والحكم
     // من الصفّ المقفول لا من حارس المسار الذي قرأ قبل القفل.
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
     if (live.status === "active") throw new WorkOrderConflictError(live);
     const [updated] = await tx.update(WO)
@@ -1434,6 +1491,8 @@ export async function reworkToStage(params: {
   reasonCode: string;
   note?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order, returnToStage, reasonCode } = params;
   return await db.transaction(async (tx) => {
@@ -1441,6 +1500,7 @@ export async function reworkToStage(params: {
     // فلو تقدّم الأمر بعدها لَصار «الرجوع» قفزاً إلى الأمام بمصادقةٍ باطلة،
     // ولَكذب `stageWhenDetected` على المرحلة التي اكتُشف فيها العطب.
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
     if (live.currentStage !== order.currentStage) throw new WorkOrderConflictError(live);
 
@@ -1484,6 +1544,8 @@ export async function cancelOrder(params: {
   order: ProstheticWorkOrder;
   note?: string | null;
   performedBy: number | null;
+  /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
+  authority: WriteAuthority;
 }): Promise<ProstheticWorkOrder> {
   const { order } = params;
   return await db.transaction(async (tx) => {
@@ -1491,6 +1553,7 @@ export async function cancelOrder(params: {
     // للإلغاء أصلاً: جهازٌ سُلِّم لا يُلغى أمرُه بأثر رجعي، وإلا مُحيت
     // نتيجته من الأرقام. والمرحلة من الصفّ المقفول.
     const live = await lockOrder(tx, order.id);
+    assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
     const cancelledAt = new Date();
     const [updated] = await tx.update(WO)
