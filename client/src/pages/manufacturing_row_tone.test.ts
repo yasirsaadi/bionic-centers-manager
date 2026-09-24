@@ -10,11 +10,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { rowToneOf, type RowToneOrderLike } from "./manufacturing_row_tone";
 import { REASON_CODE_LABELS } from "../../../shared/manufacturing";
+import { cn } from "../lib/utils";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pageSrc = fs.readFileSync(path.join(here, "Manufacturing.tsx"), "utf8");
 const toneSrc = fs.readFileSync(path.join(here, "manufacturing_row_tone.ts"), "utf8");
 const notifSrc = fs.readFileSync(path.join(here, "Notifications.tsx"), "utf8");
+const cardSrc = fs.readFileSync(path.join(here, "../components/ui/card.tsx"), "utf8");
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -34,18 +36,18 @@ console.log("\n── أ. الأحمر والأصفر والأخضر ──");
 
 const lateNoExcuse = rowToneOf(order({ isOverdue: true }));
 eq("أ١. متأخّرٌ ولم يكتب الخبيرُ عذراً ⟶ أحمر", lateNoExcuse.tone, "red");
-eq("أ٢. وبطاقتُه حمراءُ كاملة", lateNoExcuse.cardClass, "border-red-300 !bg-red-50");
+eq("أ٢. وبطاقتُه حمراءُ كاملة", lateNoExcuse.cardClass, "border-red-300 bg-red-50");
 eq("أ٣. ولا سببَ يُعرَض — لا عذرَ أصلاً", lateNoExcuse.reason, null);
 
 const lateExcused = rowToneOf(order({
   isOverdue: true, status: "waiting_patient", holdReasonCode: "patient_no_show",
 }));
 eq("أ٤. متأخّرٌ ولديه عذرٌ مكتوب ⟶ أصفر", lateExcused.tone, "amber");
-eq("أ٥. وبطاقتُه كهرمانيّةٌ كاملة", lateExcused.cardClass, "border-amber-300 !bg-amber-50");
+eq("أ٥. وبطاقتُه كهرمانيّةٌ كاملة", lateExcused.cardClass, "border-amber-300 bg-amber-50");
 
 const done = rowToneOf(order({ status: "completed" }));
 eq("أ٦. المكتملُ ⟶ أخضر", done.tone, "green");
-eq("أ٧. وبطاقتُه خضراءُ كاملة", done.cardClass, "border-green-300 !bg-green-50");
+eq("أ٧. وبطاقتُه خضراءُ كاملة", done.cardClass, "border-green-300 bg-green-50");
 
 // ══ ب. «أو أيّ عذر» — الأربعةُ كلُّها ══════════════════════════════════════
 console.log("\n── ب. كلُّ عذرٍ مكتوبٍ أصفر، متأخّراً كان أو في موعده ──");
@@ -84,7 +86,7 @@ eq("د٣. مكتملٌ ومتأخّرُ التسليم ⟶ يبقى أخضر",
 eq("د٤. الملغى ⟶ رماديّ",
   rowToneOf(order({ status: "cancelled", isOverdue: true })).tone, "slate");
 eq("د٥. وبطاقتُه رماديّةٌ كاملة",
-  rowToneOf(order({ status: "cancelled" })).cardClass, "border-slate-300 !bg-slate-50");
+  rowToneOf(order({ status: "cancelled" })).cardClass, "border-slate-300 bg-slate-50");
 eq("د٦. ولا سببَ على ملغى",
   rowToneOf(order({ status: "cancelled", holdReasonCode: "swelling" })).reason, null);
 
@@ -166,26 +168,22 @@ ok("ط١٠. والحقلان يصلان العقدَ من الخادم",
 // ══ ي. الشاشتان لا تفترقان في المعنى ولا في درجة اللون ═════════════════════
 console.log("\n── ي. لا لونَ ثالثٌ يُخترَع ──");
 
-//  الدرجاتُ عينُها التي تستعملها شاشةُ التنبيهات للمعنى نفسِه — **والفارقُ
-//  الوحيد علامةُ `!` على الخلفيّة** لأن اللوحةَ تلبس اللونَ على `Card`
-//  فتزاحمها `bg-card`، وذاك مقيسٌ في الحزمة (انظر تعليقَ `CARD_CLASS`).
+//  السلسلةُ عينُها التي تلبسها شاشةُ التنبيهات للمعنى نفسِه — **حرفاً
+//  بحرف**: الشاشتان تلبسان اللونَ على `Card` نفسِها بالطريقة نفسِها.
 for (const [border, bg] of [
   ["border-red-300", "bg-red-50"],
   ["border-amber-300", "bg-amber-50"],
   ["border-green-300", "bg-green-50"],
 ] as [string, string][]) {
-  ok(`ي. «${border} ${bg}» درجتُها عينُها في شاشة التنبيهات`,
-    notifSrc.includes(`${border} ${bg}`) && toneSrc.includes(`${border} !${bg}`));
+  ok(`ي. «${border} ${bg}» سلسلتُها عينُها في شاشة التنبيهات`,
+    notifSrc.includes(`"${border} ${bg}"`) && toneSrc.includes(`"${border} ${bg}"`));
 }
 ok("ي٤. والشاشتان تقيسان العذرَ بالشيء نفسِه — سببُ التوقّف القادمُ من الخادم",
   /i\.holdReasonLabel/.test(notifSrc) && /holdReasonCode/.test(toneSrc));
 ok("ي٥. وشاشةُ التنبيهات تعرض سببَها كاملاً كما تفعل اللوحةُ الآن",
   /سببُ التأخير: \{i\.holdReasonLabel\}/.test(notifSrc));
-//  **وخلفيّةُ اللوحة تفوز على `bg-card` دائماً** — الحارسُ على الآليّة لا
-//  على لونٍ بعينه، فأيُّ درجةٍ تُضاف يوماً تحمل العلامةَ أيضاً.
-ok("ي٦. وكلُّ خلفيّةٍ في اللوحة تحمل علامةَ الأولوية",
-  [...toneSrc.matchAll(/^\s{2}(red|amber|green|slate): "([^"]+)",$/gm)]
-    .every(([, , cls]) => /(^| )!bg-/.test(cls)));
+ok("ي٦. ولا علامةَ أولويةٍ في اللوحة — لا عطبَ تُعالجه (القسم ل)",
+  !/!bg-/.test(toneSrc.replace(/^\s*\/\/.*$/gm, "")));
 
 // ══ ك. لا ساعةَ ولا شبكةَ في القرار ════════════════════════════════════════
 console.log("\n── ك. نقاءُ القرار ──");
@@ -195,6 +193,48 @@ ok("ك٢. وبلا React", !/from "react"/.test(toneSrc));
 ok("ك٣. ومعجمُه واحدٌ مستورَد لا مكتوبٌ فيه",
   /import \{ REASON_CODE_LABELS \} from "@shared\/manufacturing"/.test(toneSrc)
   && !/waiting_patient:\s*"/.test(toneSrc));
+
+// ══ ل. اللونُ يصل البطاقةَ لأن `cn` تُسقط `bg-card` ════════════════════════
+console.log("\n── ل. البطاقةُ الحقيقيّة تلبس اللون ──");
+
+//  **الحارسُ على الآليّة الحقيقيّة لا على صفحةٍ تُكتب باليد**: `Card` تمرّر
+//  صنفَها عبر `cn` (`twMerge`)، فتُسقط `bg-card` حين يصلها لونٌ آخر — فلا
+//  يجتمع الصنفان على العنصر ولا ترتيبَ في الحزمة يُحسَم به شيء. وقياسٌ
+//  سابقٌ جمعهما باليد متخطّياً `cn` فادّعى أن الكهرمانيَّ يخسر — وهو لا يخسر.
+//  فيُشغَّل هنا `cn` الحقيقيّ على قاعدة `Card` الحقيقيّة المقروءة من ملفّها.
+const cardBase = cardSrc.match(/const Card = React\.forwardRef[\s\S]*?cn\(\s*"([^"]+)"/)?.[1] ?? "";
+ok("ل١. قاعدةُ البطاقة مقروءةٌ من ملفّها وتحمل `bg-card`",
+  cardBase.split(/\s+/).includes("bg-card"), JSON.stringify(cardBase));
+
+const tokens = (s: string) => s.split(/\s+/).filter(Boolean);
+const boardTones = (["red", "amber", "green", "slate"] as const).map((tone) => {
+  const d = rowToneOf(order(
+    tone === "red" ? { isOverdue: true }
+      : tone === "amber" ? { status: "waiting_materials", holdReasonCode: "component_delay", isOverdue: true }
+      : tone === "green" ? { status: "completed" }
+      : { status: "cancelled" }));
+  return [`اللوحة/${tone}`, `hover:shadow-sm transition-shadow cursor-pointer ${d.cardClass}`] as const;
+});
+const notifTones = [
+  ...[...notifSrc.matchAll(/tone: "([^"]+)"/g)].map((m) => m[1]),
+  ...[...notifSrc.matchAll(/function toneFor[\s\S]*?return "([^"]+)"/g)].map((m) => m[1]),
+].map((cls) => [`التنبيهات/${cls}`, `${cls} hover:shadow-sm transition-shadow cursor-pointer`] as const);
+ok("ل٢. وألوانُ التنبيهات مقروءةٌ كلُّها (خمسةُ أقسامٍ ولونُ العذر)", notifTones.length === 6,
+  String(notifTones.length));
+
+for (const [label, cls] of [...boardTones, ...notifTones]) {
+  const bg = tokens(cls).find((t) => /^bg-[a-z]+-50$/.test(t));
+  const merged = tokens(cn(cardBase, cls));
+  ok(`ل. ${label}: لا \`bg-card\` على العنصر، ولونُه حاضر`,
+    !!bg && !merged.includes("bg-card") && merged.includes(bg), merged.join(" "));
+}
+//  **وشاهدُ عدم الفراغ**: الجمعُ باليد — ما فعلته صفحةُ القياس السابقة —
+//  يُبقي الصنفين معاً. فالحارسُ أعلاه يقيس دالّةَ الدمج لا فراغاً.
+ok("ل٣. والجمعُ باليد بلا `cn` يُبقي الصنفين معاً (شاهدُ القياس الخاطئ)",
+  tokens(`${cardBase} border-amber-300 bg-amber-50`).includes("bg-card"));
+ok("ل٤. والشاشتان تلبسان اللونَ على `Card` لا على عنصرٍ سواها",
+  /<Card className=\{`hover:shadow-sm transition-shadow cursor-pointer \$\{t\.cardClass\}`\}>/.test(pageSrc)
+  && /<Card className=\{`\$\{toneFor\(i, tone\)\}/.test(notifSrc));
 
 console.log(`\n${pass} نجحت، ${fail} أخفقت`);
 process.exit(fail === 0 ? 0 : 1);
