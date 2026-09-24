@@ -309,6 +309,8 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       if (trashGuard(res, patient)) return;
         //  **ومَن فتح الطلبَ يُلغيه** — الفرعُ المُتاحُ له الملفّ يفتح طلبَ
         //  الجهاز (ترحيل ٠٨٠)، فلا يُحبَس عن إلغائه لأن المريضَ سُجّل في غيره.
+        //  وهذا البابُ المبكّر على **الملفّ**؛ أمّا **العمليةُ** فلا يُلغيها
+        //  إلّا فرعُها — يُحكَم عليه في المخزن تحت قفل الحلقة (`actorBranchScope`).
         if (!(await scopeReachesPatient(branchScope(req),
           { id: patientId, branchId: patient.branch_id ?? null }))) {
           return res.status(403).json({ error: "لا يمكنك التعديل على مريض فرع آخر" });
@@ -320,6 +322,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         const episode = await episodes.cancelPreManufacturingDeviceEpisode({
           patientId, episodeId, reason,
           actor: { userId: session.userId, userName: session.userName ?? null },
+          actorBranchScope: branchScope(req),
         });
 
         await logAudit({

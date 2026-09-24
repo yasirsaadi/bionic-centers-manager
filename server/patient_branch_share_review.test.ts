@@ -16,6 +16,14 @@
 //  والحدُّ محفوظ: فرعٌ **لا** يصل الملفّ يُردّ كما كان وبلا كتابة، وقرارُ فرعٍ
 //  على عمليةِ فرعٍ آخر (حلقةٌ في ذي قار) يبقى لصاحبها.
 //
+//  **ومراجعةُ Codex على ٤٠٧** أمسكت ما وسّعه الإصلاحُ أكثرَ ممّا يجب — مُعادٌ
+//  حيّاً قبل أيّ تعديل:
+//    • مريضٌ مُتاحٌ لبغداد **وكربلاء معاً**: فتحت بغداد طلبَ جهاز، فألغته كربلاء
+//      ⟵ ٢٠٠، وسُحب معه طلبُ مراجعته. وألغاه فرعُ التسجيل كذلك. فصار الإلغاءُ
+//      يقاس بالملفّ لا بالعملية (القسم ط).
+//    • «إضافة نوع حالة» من بغداد تفتح الحالةَ في بغداد **وسطرُ تدقيقها في ذي
+//      قار** — فيُنسَب فعلُ بغداد إلى غيرها في تقارير التدقيق (القسم ي).
+//
 //  حيٌّ على Postgres وعلى النقاط الحقيقية عبر Express حقيقيّ.
 //  التشغيل: `DATABASE_URL=… npm run test:branch-share-review`
 import { pool } from "./db";
@@ -108,7 +116,7 @@ const msg = (r: Res) => String(r.body?.error ?? r.body?.message ?? "");
 
 const DENIED = "غير مصرح لك بهذا الفرع";
 
-async function mkPatient(label: string, shared: boolean) {
+async function mkPatient(label: string, shared: boolean, alsoShareWith: number[] = []) {
   const [p] = await q<{ id: number }>(
     `INSERT INTO patients (name, phone, referral_source, age, height, weight, medical_condition,
        amputation_site, branch_id, is_amputee, is_medical_support, is_physiotherapy, total_cost,
@@ -123,7 +131,23 @@ async function mkPatient(label: string, shared: boolean) {
     await q(`INSERT INTO patient_branch_access (patient_id, branch_id, granted_by_name, note)
              VALUES ($1,$2,'المسؤول','إتاحة لبغداد')`, [p.id, BAGHDAD]);
   }
+  for (const b of alsoShareWith) {
+    await q(`INSERT INTO patient_branch_access (patient_id, branch_id, granted_by_name, note)
+             VALUES ($1,$2,'المسؤول','إتاحة لفرعٍ ثانٍ')`, [p.id, b]);
+  }
   return { id: Number(p.id), caseId: Number(c.id) };
+}
+
+/** ينتظر حتى يقف طلبٌ على قفل صفٍّ فعلاً — فالسباقُ واقعٌ لا مفترَض. */
+async function waitForLockWaiter(ms = 5000): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const [r] = await q(`SELECT count(*)::int n FROM pg_stat_activity
+                          WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+    if (Number(r?.n ?? 0) > 0) return true;
+    await new Promise((res) => setTimeout(res, 25));
+  }
+  return false;
 }
 
 /** بصمةُ ما يُكتب على الملفّ — لإثبات «صفر كتابة» على كلّ ردّ. */
@@ -342,6 +366,115 @@ async function main() {
     const routes = strip(readFileSync("server/routes.ts", "utf8"));
     ok(!/patient\.branchId\s*!==\s*branchSession\.branchId/.test(routes),
       "ح٥. ولا مقارنةَ بفرع التسجيل في الملخّص الماليّ");
+    const addFrom = routes.indexOf('"/api/patients/:id/add-case-type"');
+    const addHandler = addFrom < 0 ? "" : routes.slice(addFrom, routes.indexOf("app.post(", addFrom));
+    ok(addHandler.length > 500 && !/branchId:\s*patient\.branchId/.test(addHandler),
+      "ح٦. وتدقيقُ «إضافة نوع حالة» لا يكتب فرعَ التسجيل", `طول الكتلة ${addHandler.length}`);
+    ok(/actorBranchScope:\s*branchScope\(req\)/.test(episodes),
+      "ح٧. وإلغاءُ طلب الجهاز يمرّر نطاقَ الفاعل إلى المخزن فيُحكَم عليه تحت القفل");
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ط. إلغاءُ طلب الجهاز يُلغيه فرعُه — لا كلُّ فرعٍ يصل الملفّ (مراجعة Codex على ٤٠٧) ──");
+    // ══════════════════════════════════════════════════════════════════
+    //  مريضٌ مُتاحٌ لبغداد **وكربلاء معاً** — شكلُ الملاحظة بعينه.
+    const p7 = await mkPatient("مُتاح لفرعين", true, [KARBALA]);
+    const cancelUrl = (e: number) => `/api/patients/${p7.id}/device-episodes/${e}/cancel`;
+    const openBy = async (se: any) =>
+      Number((await http("POST", `/api/patients/${p7.id}/device-episodes`, se, devBody)).body?.id ?? 0);
+    /** بصمةُ العملية: الحلقةُ · طلبُ مراجعتها · سطورُ تدقيقها — لإثبات «صفر كتابة». */
+    const trace = async (e: number) => ({
+      episode: (await q(`SELECT status, cancelled_at, cancel_reason, branch_id
+                           FROM patient_device_episodes WHERE id=$1`, [e]))[0] ?? null,
+      requests: await q(`SELECT id, status, decision, doctor_note FROM medical_review_requests
+                          WHERE device_episode_id=$1 ORDER BY id`, [e]),
+      audit: Number((await q(`SELECT count(*)::int n FROM audit_log
+                               WHERE entity_type='patient_device_episode' AND entity_id=$1`, [e]))[0].n),
+    });
+
+    const e7 = await openBy(S.baghdad);
+    ok(e7 > 0, "ط١. بغداد تفتح طلبَ جهازٍ لمريضٍ مُتاحٍ لها ولكربلاء");
+    const t0 = await trace(e7);
+    eq([Number(t0.episode?.branch_id), t0.requests.map((r: any) => r.status)], [BAGHDAD, ["pending"]],
+      "ط٢. والحلقةُ في بغداد وطلبُ مراجعتها معلَّق");
+    const byK = await http("POST", cancelUrl(e7), S.karbala, { reason: "كربلاء تسحب طلبَ بغداد" });
+    eq(byK.status, 403,
+      "ط٣. **كربلاء — وقد أُتيح لها الملفّ أيضاً — لا تُلغي طلبَ بغداد** — كان ٢٠٠ ويُسحب معه طلبُ مراجعته");
+    ok(msg(byK).includes("بغداد"), "ط٤. والرسالةُ تسمّي الفرعَ الذي يملكه", msg(byK));
+    eq(await trace(e7), t0, "ط٥. **وبلا كتابة**: الحلقةُ منتظرة، وطلبُ مراجعتها معلَّق، ولا سطرَ تدقيق");
+    const byA = await http("POST", cancelUrl(e7), S.dhiqar, { reason: "ذي قار تسحب طلبَ بغداد" });
+    eq(byA.status, 403, "ط٦. **وفرعُ التسجيل كذلك** — العمليةُ لفرعها لا لمَن سجّل المريض");
+    eq(await trace(e7), t0, "ط٧. وبلا كتابة");
+    const byB = await http("POST", cancelUrl(e7), S.baghdad, { reason: "فُتح بالخطأ" });
+    eq(byB.status, 200, "ط٨. **وبغداد تُلغي طلبَها** كما كانت");
+    const t1 = await trace(e7);
+    eq([t1.episode?.status, t1.requests.map((r: any) => r.status)], ["cancelled", ["cancelled"]],
+      "ط٩. والحلقةُ ملغاة وطلبُ مراجعتها سُحب معها");
+
+    const eK = await openBy(S.karbala);
+    const byBonK = await http("POST", cancelUrl(eK), S.baghdad, { reason: "بغداد تسحب طلبَ كربلاء" });
+    eq(byBonK.status, 403, "ط١٠. **والقاعدةُ في الاتّجاهين**: بغداد لا تُلغي طلبَ كربلاء");
+    const byKonK = await http("POST", cancelUrl(eK), S.karbala, { reason: "فُتح بالخطأ" });
+    eq(byKonK.status, 200, "ط١١. وكربلاء تُلغي طلبَها");
+    const eM = await openBy(S.baghdad);
+    const byM = await http("POST", cancelUrl(eM), S.both, { reason: "المديرُ يسحبه" });
+    eq(byM.status, 200, "ط١٢. ومديرٌ نطاقُه يشمل بغداد يُلغي طلبَها");
+
+    //  **تحت القفل لا قبله**: نقلُ مسؤولية العملية إلى فرعٍ آخر يكتب على صفّ
+    //  الحلقة نفسِه (`moveLiveEpisodeToBranchTx`). فمعاملةٌ تنقلها إلى كربلاء
+    //  وتمسك صفَّها، وبغداد تضغط «إلغاء» في اللحظة نفسِها: يقف إلغاؤها على
+    //  القفل، ثمّ يُحكَم بالفرع الذي التزم — لا بالذي قُرئ قبل القفل.
+    const eR = await openBy(S.baghdad);
+    const tR0 = await trace(eR);
+    const mover = await pool.connect();
+    let raced: Res = { status: 0, body: null };
+    try {
+      await mover.query("BEGIN");
+      await mover.query(`UPDATE patient_device_episodes SET branch_id=$1, updated_at=NOW() WHERE id=$2`,
+        [KARBALA, eR]);
+      const pending = http("POST", cancelUrl(eR), S.baghdad, { reason: "بغداد تُلغي أثناء النقل" });
+      ok(await waitForLockWaiter(),
+        "ط١٣. إلغاءُ بغداد وقف فعلاً على قفل الحلقة — فالسباقُ واقعٌ لا مفترَض");
+      await mover.query("COMMIT");
+      raced = await pending;
+    } finally {
+      mover.release();
+    }
+    eq(raced.status, 403,
+      "ط١٤. **ويُحكَم بالفرع الذي التزم** — صارت العمليةُ لكربلاء فلا تُلغيها بغداد");
+    const tR1 = await trace(eR);
+    eq([tR1.episode?.status, tR1.requests, tR1.audit],
+      ["awaiting_exam", tR0.requests, tR0.audit], "ط١٥. وبلا كتابة");
+
+    //  **وطلبٌ موروثٌ بلا فرعٍ مكتوب** يملكه فرعُ خيطه — ترتيبُ
+    //  `startDeviceEpisodeTx` نفسُه حين يكتب الفرع — لا «لا أحد» فيُحبَس عن
+    //  الجميع إلّا المسؤول.
+    const [legacyEp] = await q<{ id: number }>(
+      `INSERT INTO patient_device_episodes (patient_id, case_id, sequence_number, status,
+         service_path, branch_id)
+       VALUES ($1,$2,90,'awaiting_exam','exam',NULL) RETURNING id`, [p7.id, p7.caseId]);
+    const eL = Number(legacyEp.id);
+    const tL0 = await trace(eL);
+    const legB = await http("POST", cancelUrl(eL), S.baghdad, { reason: "بغداد تسحب طلباً موروثاً" });
+    eq([legB.status, await trace(eL)], [403, tL0],
+      "ط١٦. طلبٌ موروثٌ بلا فرعٍ مكتوب لا تُلغيه بغداد — وبلا كتابة");
+    const legA = await http("POST", cancelUrl(eL), S.dhiqar, { reason: "فُتح بالخطأ" });
+    eq(legA.status, 200, "ط١٧. **ويُلغيه فرعُ خيطه** (ذي قار) — لا يُحبَس عن الجميع");
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ي. «إضافة نوع حالة» — سطرُ التدقيق في فرع الحركة (مراجعة Codex على ٤٠٧) ──");
+    // ══════════════════════════════════════════════════════════════════
+    const auditOf = async (pid: number) =>
+      (await q(`SELECT branch_id FROM audit_log WHERE entity_type='patient' AND entity_id=$1
+                  AND notes LIKE 'إضافة نوع حالة%' ORDER BY id`, [pid]))
+        .map((r: any) => Number(r.branch_id));
+    eq(await auditOf(p3.id), [BAGHDAD],
+      "ي١. **سطرُ تدقيق ما أضافته بغداد في بغداد** — كان يُكتب في ذي قار، فرعِ التسجيل");
+    eq((await auditOf(p3.id))[0], Number(newCase?.branch_id),
+      "ي٢. والسطرُ والحالةُ التي يصفها في فرعٍ واحد");
+    const addA = await http("POST", `/api/patients/${p6.id}/add-case-type`, S.dhiqar,
+      { caseType: "medical_support" });
+    eq(addA.status, 200, "ي٣. وفرعُ التسجيل يضيف على مريضه");
+    eq(await auditOf(p6.id), [DHIQAR], "ي٤. وسطرُه في ذي قار كما كان");
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     await cleanup();
