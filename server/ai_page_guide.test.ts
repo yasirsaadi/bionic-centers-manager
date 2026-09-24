@@ -131,7 +131,7 @@ import {
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES, HOLD_REASONS,
 } from "@shared/manufacturing";
 import { BUCKET_DEFS } from "../client/src/pages/manufacturing_buckets";
-import { rowToneOf } from "../client/src/pages/manufacturing_row_tone";
+import { rowToneOf, holdButtonShown, orderLatenessNotice } from "../client/src/pages/manufacturing_row_tone";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
@@ -984,6 +984,16 @@ async function main() {
   }
   check(/إعادة عمل فني» وحدها ترجع/.test(og) && /إلغاء التوقف\s+ومتابعة العمل/.test(og),
     "ي.١٩ إعادة العمل والاستئناف موضحان");
+  //  مراجعةُ Codex على ٤٠٣: المتوقّفُ الموروثُ بلا سببٍ مكتوب — والدليلُ يقول ما
+  //  تفعله الصفحةُ فعلاً، مقيساً على القرارين الخالصين أنفسِهما لا على وصف.
+  const heldNoCause = { status: "waiting_materials", isOverdue: true, holdReasonCode: null, holdNote: null };
+  const heldWithCause = { ...heldNoCause, holdReasonCode: HOLD_REASONS.waiting_materials[0].code };
+  check(/المتوقف بلا سبب مكتوب ليس معذوراً/.test(og) && /يظهر له زر «توقّف \/ مشكلة»/.test(og)
+    && orderLatenessNotice(heldNoCause)?.title === "متأخر بدون عذر" && holdButtonShown(heldNoCause) === true,
+    "ي.١٩أ المتوقف بلا سبب مكتوب: تنبيه «متأخر بدون عذر» وزر «توقّف / مشكلة» — في الدليل وفي القرار");
+  check(/المتوقف بسبب مكتوب[\s\S]{0,80}ولا يظهر\s+له الزر/.test(og)
+    && orderLatenessNotice(heldWithCause) === null && holdButtonShown(heldWithCause) === false,
+    "ي.١٩ب والمتوقف بسبب مكتوب: بطاقته تقوله ولا زر — في الدليل وفي القرار");
   check(/أول تحديد لا يحتاج سبباً/.test(og) && /تغيير موعد قائم يحتاج سبباً مكتوباً/.test(og)
     && /اختيار التاريخ نفسه مرفوض/.test(og), "ي.٢٠ قواعد الموعد دقيقة");
   check(/الإدارة ومدير الفرع فقط/.test(og) && /تحويل لخبير/.test(og)

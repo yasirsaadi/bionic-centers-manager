@@ -22,9 +22,10 @@ import express from "express";
 import { createServer } from "http";
 import * as store from "./store";
 import { registerRoutes } from "../routes";
-import { HOLD_REASONS, FINAL_RESULTS, latenessOf } from "@shared/manufacturing";
+import { HOLD_REASONS, FINAL_RESULTS, latenessOf, writtenHoldExcuse } from "@shared/manufacturing";
 import {
   rowToneOf, orderLatenessNotice, EXCUSE_PLACE_HINT_RED, EXCUSE_PLACE_HINT_AMBER,
+  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown,
 } from "../../client/src/pages/manufacturing_row_tone";
 
 const PORT = 6031 + (Date.now() % 7);
@@ -292,6 +293,63 @@ async function main() {
     //  الأحياءُ المتأخّرة: R (بلا عذر) · K (بعذر). وW وMT مكتملان، وCN ملغى.
     eq([ov?.totals?.overdue, ov?.totals?.overdueExcused], [1, 1],
       "ح١. واحدٌ بدون عذر (R) · واحدٌ بعذر (K)");
+
+    //  ══ ط. المتوقّفُ الموروثُ بلا سببٍ مكتوب (مراجعة Codex على ٤٠٣) ══════════
+    //  ترحيلا ٠٤٥ و٠٤٦ حوّلا `waiting_components` ⟶ `waiting_materials` و
+    //  `needs_recast`/`needs_resocket` ⟶ `technical_rework` **بلا تعبئة
+    //  `hold_reason_code`** — فأمرٌ متوقّفٌ يبقى بلا عذرٍ مكتوب. والصفحةُ كانت
+    //  تُسقط تنبيهَه لأنه «متوقّف»، وتُخفي بطاقةَ التوقّف لأنه «بلا سبب»،
+    //  وتُخفي «توقّف / مشكلة» لأنه متوقّف — فلا يقول شيئاً ولا بابَ للعذر.
+    console.log("\nط — المتوقّفُ الموروثُ بلا سببٍ مكتوب");
+    const L = await mkOrder({ name: "متوقف موروث", stage: "manufacturing", due: PAST });
+    const TR = await mkOrder({ name: "إعادة عمل موروثة", stage: "manufacturing", due: PAST });
+    //  الشكلُ الذي تتركه الترحيلتان حرفياً: الحالةُ تُحوَّل، والسببُ لا يُمَسّ.
+    await db.execute(sql`UPDATE prosthetic_work_orders SET status = 'waiting_materials' WHERE id = ${L}`);
+    await db.execute(sql`UPDATE prosthetic_work_orders SET status = 'technical_rework' WHERE id = ${TR}`);
+
+    const detL = (await http("GET", `/api/manufacturing/orders/${L}`, S.expert)).body;
+    eq([detL?.order?.status, detL?.order?.holdReasonCode, detL?.order?.isOverdue],
+      ["waiting_materials", null, true],
+      "ط١. متوقّفٌ متأخّرٌ بلا سببٍ مكتوب — كما تتركه الترحيلتان");
+    const rowL = await rowOf(L);
+    eq([latenessOf(rowL), rowToneOf(rowL).tone, rowToneOf(rowL).overdueBadgeLabel],
+      ["late", "red", "متأخر بدون عذر"],
+      "ط٢. واللوحةُ تعدّه «متأخر بدون عذر» أحمر");
+    const nL = orderLatenessNotice(detL.order);
+    eq([nL?.tone, nL?.title, nL?.reason ?? null, nL?.hint],
+      ["red", "متأخر بدون عذر", null, EXCUSE_PLACE_HINT_RED_HELD],
+      "ط٣. **وصفحتُه تقول ذلك أيضاً** — تنبيهٌ أحمر يقول لماذا، لا صمت");
+    eq([heldExcuseOf(detL.order), writtenHoldExcuse(detL.order.holdReasonCode)], [null, null],
+      "ط٤. ولا بطاقةَ «متوقّف» تعرض سبباً — فالتنبيهُ وحدَه يقول الحال");
+    eq(holdButtonShown(detL.order), true,
+      "ط٤أ. **و«توقّف / مشكلة» ظاهرٌ له** — المكانُ الواحد لا يُحبَس خلف «إلغاء التوقّف»");
+    const detTR = (await http("GET", `/api/manufacturing/orders/${TR}`, S.expert)).body;
+    eq([orderLatenessNotice(detTR.order)?.tone, holdButtonShown(detTR.order)], ["red", true],
+      "ط٥. وإعادةُ العمل الموروثةُ بلا سبب كذلك — تنبيهٌ أحمر وبابُ العذر");
+
+    ov = (await http("GET", `/api/manufacturing/overview?branchId=${bE}`, S.admin)).body;
+    eq([ov?.totals?.overdue, ov?.totals?.overdueExcused], [3, 1],
+      "ط٦. واللوحة: ثلاثةٌ بدون عذر (R · L · TR) · واحدٌ بعذر (K)");
+
+    r = await http("POST", `/api/manufacturing/orders/${L}/hold`, S.expert,
+      { status: "waiting_materials", reasonCode: MAT, note: "تأخّر المفصل" });
+    eq(r.status, 200, "ط٧. والخادمُ يقبل كتابةَ السبب على الأمر المتوقّف نفسِه");
+    const l = await raw(L);
+    eq([l.status, l.holdReasonCode, l.holdNote], ["waiting_materials", MAT, "تأخّر المفصل"],
+      "ط٨. فصار للتوقّف سببُه المكتوب");
+    const detL2 = (await http("GET", `/api/manufacturing/orders/${L}`, S.expert)).body;
+    eq([orderLatenessNotice(detL2.order), heldExcuseOf(detL2.order)],
+      [null, MAT],
+      "ط٩. **فتقول بطاقةُ «متوقّف» سببَه، ولا تنبيهَ ثانٍ يكرّره**");
+    eq(holdButtonShown(detL2.order), false,
+      "ط٩أ. وصار كأيّ متوقّفٍ بسببه: يُستأنَف ثمّ يُكتب الأحدث");
+    const rowL2 = await rowOf(L);
+    eq([latenessOf(rowL2), rowToneOf(rowL2).tone, rowToneOf(rowL2).reason?.note],
+      ["late_excused", "amber", "تأخّر المفصل"],
+      "ط١٠. وصفُّه كهرمانيّ «متأخر بعذر» بسببه");
+    ov = (await http("GET", `/api/manufacturing/overview?branchId=${bE}`, S.admin)).body;
+    eq([ov?.totals?.overdue, ov?.totals?.overdueExcused], [2, 2],
+      "ط١١. واللوحة: اثنان بدون عذر (R · TR) · اثنان بعذر (K · L)");
   } finally {
     if (srv) await new Promise((res) => srv.close(() => res(null)));
     const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);

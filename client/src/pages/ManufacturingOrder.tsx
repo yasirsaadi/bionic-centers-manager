@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
-import { orderLatenessNotice } from "./manufacturing_row_tone";
+import { orderLatenessNotice, heldExcuseOf, holdButtonShown } from "./manufacturing_row_tone";
 import {
   STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
   REWORK_TYPE_LABELS, REASON_CODE_LABELS,
@@ -90,6 +90,10 @@ export default function ManufacturingOrder() {
     status: order.status, isOverdue: order.isOverdue === true,
     holdReasonCode: order.holdReasonCode ?? null, holdNote: order.holdNote ?? null,
   });
+  //  سببُ التوقّف المكتوب — **الشرطُ نفسُه** الذي يُسقَط به التنبيهُ المكرِّر،
+  //  فلا تجتمع البطاقةُ والتنبيهُ ولا يغيبان معاً عن متوقّفٍ متأخّر.
+  const holdShape = { status: order.status, holdReasonCode: order.holdReasonCode ?? null };
+  const heldExcuse = heldExcuseOf(holdShape);
   // شريط التقدّم من المرحلة الحالية وحدها — يرجع للخلف حين يرجع العمل.
   const progress = toPatientStageView(order);
   const forward = nextStages(order.serviceType, order.currentStage, order.purpose);
@@ -234,11 +238,11 @@ export default function ManufacturingOrder() {
       </Card>
 
       {/* سبب التوقّف — داخلي، لا يصل المريض */}
-      {onHold && order.holdReasonCode && (
-        <Card className="mb-4 border-amber-300 bg-amber-50/50">
+      {heldExcuse && (
+        <Card className="mb-4 border-amber-300 bg-amber-50/50" data-testid="card-hold-reason">
           <CardContent className="p-4 text-sm">
             <span className="font-semibold">{STATUS_LABELS[order.status]} — </span>
-            {REASON_CODE_LABELS[order.holdReasonCode] ?? order.holdReasonCode}
+            {REASON_CODE_LABELS[heldExcuse] ?? heldExcuse}
             {order.holdNote && <p className="text-xs text-muted-foreground mt-1">{order.holdNote}</p>}
             <p className="text-[11px] text-muted-foreground mt-2">داخلي — لا يظهر للمريض. والمرحلة لم تتغيّر.</p>
           </CardContent>
@@ -272,7 +276,9 @@ export default function ManufacturingOrder() {
               <ArrowRight className="w-5 h-5" /> الانتقال للمرحلة التالية{nextLabel ? `: ${nextLabel}` : ""}
             </Button>
           ) : null}
-          {!onHold && (
+          {/* المكانُ الوحيد للعذر — ويظهر للمتوقّف بلا سببٍ مكتوب أيضاً، وإلّا
+              حُبس خلف «إلغاء التوقّف» وحدَه ولا بابَ لعذره (مراجعة Codex على ٤٠٣). */}
+          {holdButtonShown(holdShape) && (
             <Button size="lg" variant="outline" onClick={() => setHoldOpen(true)} className="gap-2" data-testid="button-hold">
               <PauseCircle className="w-5 h-5" /> توقّف / مشكلة
             </Button>
