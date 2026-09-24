@@ -52,14 +52,14 @@ import {
 } from "@/components/ServiceDiscountFields";
 import {
   purchaseGaps, purchaseOriginalPrice, purchaseBlocked, purchaseBody,
-  purchaseSubmitLabel, type PurchaseFollowupLike,
+  purchaseSubmitLabel, savedExpertOutOfList, type PurchaseFollowupLike,
 } from "@/components/purchase_dialog_ui";
 import {
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, type FollowupReason,
 } from "@shared/followup";
 import {
   fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
-  NO_SALE_EXPERTS, type SaleExpert,
+  saleExpertsPlaceholder, type SaleExpert,
 } from "@/components/sale_experts";
 
 export interface LegacyDecisionActionsFollowup extends PurchaseFollowupLike {
@@ -126,10 +126,15 @@ export function LegacyDecisionActions({
   //  **خبراءُ هذا المريض — لا خبراءُ فرعٍ واحد** (٢٠٢٦-٠٩-٢٤): نفسُ
   //  الاستعلام بنفس المفتاح الذي تستعمله بطاقةُ المريض و«إتمام البيع»، والفشلُ
   //  يُقال في النافذة لا يصير قائمةً فارغةً بصمت (شكوى «زهراء»).
-  const { data: experts, error: expertsError } = useQuery<SaleExpert[]>({
-    queryKey: saleExpertsQueryKey(patientId),
-    queryFn: () => fetchSaleExperts(patientId),
-  });
+  //
+  //  **وتُجلَب حين تُفتَح نافذةُ «اشترى» لا مع كلّ صفّ** (مراجعةٌ على ٤٠٩) —
+  //  نفسُ تعليل `ExamPathDecisionActions`: المكوّنُ يُركَّب لكلّ صفٍّ في الطابور.
+  const { data: experts, error: expertsError, isLoading: expertsLoading } =
+    useQuery<SaleExpert[]>({
+      queryKey: saleExpertsQueryKey(patientId),
+      queryFn: () => fetchSaleExperts(patientId),
+      enabled: dialog === "confirm_purchase",
+    });
   const showExpertBranches = spansSeveralBranches(experts ?? []);
 
   //  ══ إبطالٌ مشترك للنجاح وللفشل معاً (نفسُ نمط `ExamPathDecisionActions`) ══
@@ -170,7 +175,10 @@ export function LegacyDecisionActions({
   const busy = act.isPending;
   const submit = (path: string, body: any) => act.mutate({ path, body });
 
-  const { needsFirstPrice, needsExpert } = purchaseGaps(followup);
+  //  ══ **والمحفوظُ الذي لا يصلح لهذا البائع يُسأل عن غيره** (مراجعةٌ على
+  //  ٤٠٩) — كانت النافذةُ تعرضه للقراءة بلا قائمة، والخادمُ يردّه: لا مخرج.
+  const savedOutOfList = savedExpertOutOfList(followup, experts);
+  const { needsFirstPrice, needsExpert } = purchaseGaps(followup, experts);
   const originalPrice = purchaseOriginalPrice(followup, firstPrice);
 
   return (
@@ -241,10 +249,18 @@ export function LegacyDecisionActions({
                 <Label className="text-sm font-semibold">
                   الخبير المسؤول <span className="text-destructive">*</span>
                 </Label>
+                {savedOutOfList && (
+                  <p className="text-xs text-amber-700" data-testid="text-legacy-saved-expert-out-of-list">
+                    الخبير المختار سابقاً
+                    ({followup.selectedExpertName ?? `#${followup.selectedExpertUserId}`})
+                    لا يعمل في فروع هذا المريض المتاحة لك — اختر خبيراً من القائمة.
+                  </p>
+                )}
                 <Select value={expertId} onValueChange={setExpertId}>
                   <SelectTrigger data-testid="select-legacy-purchase-expert">
-                    <SelectValue placeholder={(experts ?? []).length
-                      ? "اختر الخبير" : NO_SALE_EXPERTS} />
+                    <SelectValue placeholder={saleExpertsPlaceholder({
+                      loading: expertsLoading, count: (experts ?? []).length,
+                    })} />
                   </SelectTrigger>
                   <SelectContent>
                     {(experts ?? []).map((e) => (
@@ -289,10 +305,12 @@ export function LegacyDecisionActions({
           </div>
           <DialogFooter>
             <Button
-              disabled={purchaseBlocked({ followup, firstPrice, expertId, discount, busy })}
+              disabled={purchaseBlocked({
+                followup, firstPrice, expertId, discount, busy, candidates: experts,
+              })}
               data-testid="button-legacy-confirm-purchase-submit"
               onClick={() => submit(`/api/followups/${followupId}/confirm-purchase`,
-                purchaseBody({ followup, firstPrice, expertId, discount }))}>
+                purchaseBody({ followup, firstPrice, expertId, discount, candidates: experts }))}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" />
                 : purchaseSubmitLabel({ followup, firstPrice, discount })}
             </Button>

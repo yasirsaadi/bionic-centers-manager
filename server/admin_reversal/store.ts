@@ -55,6 +55,52 @@ export class ReversalError extends Error {
   }
 }
 
+/** ردُّ مديرِ فرعٍ لا يصل ملفَّ المريض — نصُّه القائم بحرفه. */
+export const REVERSAL_OTHER_BRANCH = "لا يمكنك تصحيح عملية في فرع آخر";
+
+/**
+ * **هل يصحّح مديرُ الفرع هذه العملية؟** — `null` نعم، وإلّا سببُ الرفض
+ * (٢٠٢٦-٠٩-٢٤، مراجعةٌ مستقلّة على ٤٠٩).
+ *
+ * ══ الواقعة ══════════════════════════════════════════════════════════════
+ * كان الإذنُ بفرع **تسجيل** المريض، وآثارُ التصحيح تُكتب في فرع **المتابعة**
+ * (صفُّ التصحيح · القيدُ المعاكس · حدثُه · ردُّ المال). ومنذ ٤٠٩ ينتقل البيعُ
+ * إلى فرع الخبير المختار: بغدادُ تبيع مريضةَ ذي قار بأيوب فيقع المالُ كلُّه
+ * في بغداد — **فيُردّ مديرُ بغداد ٤٠٣ عن عملية فرعه، ويمضي مديرُ ذي قار
+ * فيقيّد في بغداد −١,٥٠٠,٠٠٠** وهو لا يصلها. مُعادٌ حيّاً.
+ *
+ * ══ القاعدة — قاعدةُ ٤٠٨ بحرفها: «العمليةُ يُصحِّحها فرعُها» ═════════════════
+ *   ① أن يصل ملفَّ المريض (فرعُ التسجيل أو إتاحةٌ صريحة) — البابُ الذي يفتح
+ *      الملفَّ نفسَه، فلا يُصحِّح مَن لا يرى ما يُصحِّحه؛
+ *   ② **وأن تكون العمليةُ في نطاقه** — فرعُ المتابعة حيث يُكتب كلُّ أثر، وإلّا
+ *      فرعُ التسجيل (احتياطُ الردّ نفسُه، `refundBranchId`).
+ * **والمسؤولُ العام خارجها** — سلطتُه في كلّ الفروع، يفحصه المُنادي قبلها.
+ */
+export async function reversalScopeRefusal(ex: any, p: {
+  scope: number[]; patientId: number; followupId: number;
+}): Promise<string | null> {
+  const r = await ex.execute(sql`
+    SELECT p.branch_id AS home, f.branch_id AS op, b.name AS op_name
+      FROM post_exam_followups f
+      JOIN patients p ON p.id = f.patient_id
+      LEFT JOIN branches b ON b.id = COALESCE(f.branch_id, p.branch_id)
+     WHERE f.id = ${p.followupId} AND f.patient_id = ${p.patientId}
+  `);
+  const row = (r.rows ?? [])[0];
+  if (!row) return REVERSAL_OTHER_BRANCH;
+  const home = row.home === null || row.home === undefined ? null : Number(row.home);
+  const { patientBranchIdsOf, scopeReachesPatientBranches } =
+    await import("../patients/branch_access");
+  const file = await patientBranchIdsOf({ id: p.patientId, branchId: home }, ex);
+  if (!scopeReachesPatientBranches(p.scope, file)) return REVERSAL_OTHER_BRANCH;
+  const op = row.op === null || row.op === undefined ? home : Number(row.op);
+  if (op !== null && !p.scope.includes(op)) {
+    const name = typeof row.op_name === "string" && row.op_name.trim() ? row.op_name : "آخر";
+    return `هذه العمليةُ في فرع ${name} — يُصحِّحها ذلك الفرعُ أو المسؤول العام`;
+  }
+  return null;
+}
+
 /** الرسالةُ الواحدة حين تتغيّر العمليةُ بين المعاينة المسبقة والتنفيذ. */
 const DRIFT =
   "تغيّرت العملية منذ فتح نافذة التصحيح. حدّث الصفحة وراجع الأثر من جديد.";
@@ -717,9 +763,14 @@ export async function executeReversal(params: {
         throw new ReversalError(
           "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط", 403);
       }
-      if (liveBranch !== null && !params.authz.scope.includes(Number(liveBranch))) {
-        throw new ReversalError("لا يمكنك تصحيح عملية في فرع آخر", 403);
-      }
+      //  ══ **يصل الملفَّ، والعمليةُ في نطاقه** (٢٠٢٦-٠٩-٢٤) ══════════════
+      //  لا فرعُ التسجيل وحده: البيعُ قد انتقل إلى فرع الخبير المختار (٤٠٩)،
+      //  وكلُّ أثرٍ يُكتب أدناه في فرع المتابعة. والمتابعةُ مقفولةٌ أعلاه
+      //  وصفُّ المريض الآن، فلا يُحكَم على فرعٍ يتغيّر تحت الحكم.
+      const refusal = await reversalScopeRefusal(tx, {
+        scope: params.authz.scope, patientId: op.patientId, followupId: op.followupId,
+      });
+      if (refusal) throw new ReversalError(refusal, 403);
     }
     if (op.existingReversalId !== null) {
       throw new ReversalError("هذه العملية ملغاة إدارياً بالفعل", 409);

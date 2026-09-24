@@ -13,7 +13,8 @@
 
 import {
   saleExpertsQueryKey, saleExpertsUrl, spansSeveralBranches, saleExpertLabel,
-  fetchSaleExperts, NO_SALE_EXPERTS, type SaleExpert,
+  fetchSaleExperts, NO_SALE_EXPERTS, SALE_EXPERTS_LOADING, saleExpertsPlaceholder,
+  type SaleExpert,
 } from "./sale_experts";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -102,6 +103,32 @@ async function main() {
     check(/saleExpertLabel\(e,\s*showExpertBranches\)/.test(src),
       `د. ${f}: والعنوانُ من الدالّة المشتركة (الفرعُ حين تمتدّ القائمة)`);
     check(/expertsError/.test(src), `د. ${f}: والفشلُ يُعرَض في النافذة`);
+  }
+
+  //  ══ هـ. **تُجلَب حين تُفتَح النافذةُ، والتحميلُ ليس فراغاً** (مراجعةٌ على ٤٠٩)
+  //  المكوّنان يُركَّبان لكلّ صفٍّ في طابور «بانتظار الحسم» والمفتاحُ بالمريض:
+  //  واحدٌ وخمسون صفّاً = واحدٌ وخمسون طلباً عند الفتح وبعد كلّ كتابة. فصارت
+  //  القائمةُ تُجلَب حين تُفتَح نافذتُها وحدها — وبين الفتح والوصول لا تُقرأ
+  //  «لا يوجد خبير» (القائمةُ الفارغةُ بلا سبب التي حيّرت الموظّفة).
+  console.log("\n── هـ. الجلبُ عند فتح النافذة، والتحميلُ ليس فراغاً ──");
+  same("هـ١. **التحميلُ يُقال تحميلاً** — لا «لا يوجد خبير»",
+    saleExpertsPlaceholder({ loading: true, count: 0 }), SALE_EXPERTS_LOADING);
+  same("هـ٢. والقائمةُ الفارغة بعد الوصول ⟵ نصُّها كما كان",
+    saleExpertsPlaceholder({ loading: false, count: 0 }), NO_SALE_EXPERTS);
+  same("هـ٣. وقائمةٌ فيها خبراء ⟵ «اختر الخبير»",
+    saleExpertsPlaceholder({ loading: false, count: 2 }), "اختر الخبير");
+  const gated: [string, RegExp][] = [
+    ["ExamPathDecisionActions.tsx", /enabled:\s*dialog\s*===\s*"complete_sale"/],
+    ["LegacyDecisionActions.tsx", /enabled:\s*dialog\s*===\s*"confirm_purchase"/],
+    ["PostExamDecisionCard.tsx", /enabled:\s*active\s*!==\s*null/],
+  ];
+  for (const [f, rx] of gated) {
+    const src = read(f);
+    check(rx.test(src),
+      `هـ٤. ${f}: **القائمةُ تُجلَب حين تلزم** لا مع كلّ تركيبٍ للمكوّن`);
+    check(/saleExpertsPlaceholder\(\{\s*loading:\s*expertsLoading/.test(src)
+      && !/\?\s*"اختر الخبير"\s*:\s*NO_SALE_EXPERTS/.test(src),
+      `هـ٥. ${f}: **ونصُّ الخانة من الدالّة المشتركة** — التحميلُ لا يُقرأ فراغاً`);
   }
 
   console.log(failures === 0 ? "\n✅ كل فحوص قائمة خبراء البيع نجحت" : `\n❌ ${failures} فشل`);

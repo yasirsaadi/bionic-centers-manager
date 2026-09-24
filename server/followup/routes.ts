@@ -1216,10 +1216,20 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     //     حسابٌ فعّال، صفةُ خبير.
     //   • وبوّابتُه `canSelectExpert` — «مَن يُتمّ البيع يختار خبيرَه».
     let workingFollowup = f;
-    if (f.selectedExpertUserId === null) {
-      const rawExpert = req.body?.expertUserId;
-      const askedExpert = rawExpert === undefined || rawExpert === null || rawExpert === ""
-        ? null : Number(rawExpert);
+    //  ══ **والمحفوظُ الذي لا يصلح لهذا البائع يُبدَّل هنا** (مراجعةٌ على ٤٠٩) ══
+    //  بغدادُ تختار أيوبَ على متابعةٍ في ذي قار، ثمّ يضغط استقبالُ ذي قار
+    //  «اشترى»: أيوبُ لا يعمل في أيّ فرعٍ من فروع الملفّ في نطاقه، فيُردّ —
+    //  والنافذةُ تعرض المحفوظَ للقراءة بلا قائمة: لا مخرجَ إلّا بابٌ آخر في
+    //  بطاقة المريض. فصار يُقبل خبيرٌ من الجسم **حين لا يصلح المحفوظُ لهذا
+    //  البائع وحده** — والصالحُ يبقى لا يُبدَّل من باب البيع كما كان. والإبدالُ
+    //  بنقطة الاختيار نفسِها (`store.selectExpert` بمالكيّتها وحدثِها) لا
+    //  بكتابةٍ جانبية، ومَن لا يرسل بديلاً يُردّ برسالة المحفوظ كما كان.
+    const rawExpert = req.body?.expertUserId;
+    const sentExpert = rawExpert !== undefined && rawExpert !== null && rawExpert !== "";
+    const savedUnusable = f.selectedExpertUserId !== null && sentExpert
+      && !(await saleExpertCheck(req, patient as any)(f.selectedExpertUserId, f.branchId)).ok;
+    if (f.selectedExpertUserId === null || savedUnusable) {
+      const askedExpert = sentExpert ? Number(rawExpert) : null;
       if (askedExpert === null || !Number.isFinite(askedExpert) || !Number.isInteger(askedExpert)
         || askedExpert <= 0) {
         return res.status(400).json({
@@ -1244,10 +1254,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         await logAudit({
           entityType: "post_exam_followup", entityId: f.id, action: "update",
           userId: s.userId, userName: s.userName, branchId: f.branchId,
-          oldValues: { selectedExpertUserId: null },
+          oldValues: { selectedExpertUserId: f.selectedExpertUserId },
           newValues: { selectedExpertUserId: askedExpert },
           ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: `اختيار الخبير #${askedExpert} ضمن نافذة «اشترى»`,
+          notes: savedUnusable
+            ? `استبدال الخبير #${f.selectedExpertUserId} (لا يعمل في فروع البائع) `
+              + `بالخبير #${askedExpert} ضمن نافذة «اشترى»`
+            : `اختيار الخبير #${askedExpert} ضمن نافذة «اشترى»`,
         });
       } catch (e) { if (!fail(res, e)) throw e; return; }
     }
@@ -1324,7 +1337,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  (`retiredOnExamPath` يردّ مسارَ المعاينة قبل أن يصل الطلبُ هنا).
         const out = await discountStore.applyDiscountImmediately({
           patientId: f.patientId, department: f.serviceType as any,
-          branchId: f.branchId, contextRef: followupDiscountRef(f.id),
+          //  **صفُّ الخصم في فرع البيع** لا في فرع المتابعة (٢٠٢٦-٠٩-٢٤):
+          //  هو قرارٌ على مالٍ يُقيَّد هناك، وسطرُ تدقيقه يُكتب بفرعه.
+          branchId: saleBranchId, contextRef: followupDiscountRef(f.id),
           originalPrice: workingFollowup.approvedPrice,
           finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
           isFree: wantsFree,

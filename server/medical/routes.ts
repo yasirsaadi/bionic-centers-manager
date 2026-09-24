@@ -94,6 +94,7 @@ function getSession(req: Req) {
 
 /** Branch IDs the caller may read. `null` = admin, i.e. every branch. */
 import { scopeReachesPatient, patientBranchIdsOf } from "../patients/branch_access";
+import { pickBareExamBranch } from "./exam_branch";
 
 function branchScope(req: Req): number[] | null {
   const s = getSession(req);
@@ -107,6 +108,30 @@ function canReachBranch(req: Req, branchId: number | null): boolean {
   if (scope === null) return true;
   if (branchId === null) return false;
   return scope.includes(branchId);
+}
+
+/**
+ * **صاحبُ المعاينة يصل معاينتَه ما دام يصل ملفَّ مريضها** (٢٠٢٦-٠٩-٢٤).
+ *
+ * الحارسُ على الصفّ فرعُ المعاينة (`canReachBranch`)، ويبقى كما هو لكلّ أحد.
+ * لكنّ معاينةً نُسبت قبل هذا الإصلاح لفرعٍ لا يصله موقِّعُها (إرسالٌ من فرعٍ
+ * آخر في ٤٠٩، أو طبيبُ الفرع المُتاح منذ ٠٨٠) كانت تحبس صاحبَها عن تعديلها
+ * وملحقها وإلغائها — **توقيعُه باسمه ولا يصله**. فيمرّ صاحبُها وحدَه متى وصل
+ * ملفَّ المريض (فرعُ التسجيل أو إتاحةٌ صريحة).
+ *
+ * **ولا يتّسع لغيره**: طبيبٌ آخر يبقى على فرع المعاينة، **والمديرُ المسؤولُ
+ * كذلك ولو كان صاحبَها** — إذنُه الإداريّ (ومنه تصحيحُ السعر بعد البيع) لا
+ * يُنال من بابٍ سريريّ.
+ */
+async function reachesExam(
+  req: Req, exam: { branchId: number | null; doctorId: number | null; patientId: number },
+): Promise<boolean> {
+  if (canReachBranch(req, exam.branchId)) return true;
+  const s = getSession(req);
+  if (s.isAdmin || s.role === "branch_manager") return false;
+  if (exam.doctorId === null || s.userId === null || exam.doctorId !== s.userId) return false;
+  const patient = await store.getPatientScope(exam.patientId);
+  return patient !== null && await scopeReachesPatient(branchScope(req), patient);
 }
 
 /** Trim to null so a whitespace-only field never counts as clinical content. */
@@ -601,20 +626,28 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  شرائها في طابور فرع التسجيل، لا حيث تقف. فصار يُقرأ الطلبُ الذي
       //  سيُغلقه هذا التوقيعُ (`referringRequestBranch` — مجموعةُ الإغلاق
       //  نفسُها، وثابتٌ عند إعادة الإرسال)، **بشرطِ أن يصل فرعُه الملفَّ الآن**.
-      //  وإلّا فالقاعدةُ القائمة بحرفها: فرعُ الحالة ثمّ فرعُ التسجيل.
-      let referralBranchId: number | null = null;
-      if (deviceEpisodeId === null) {
-        const referral = await reviewStore.referringRequestBranch({
-          patientId, serviceType: caseType, idempotencyKey,
-        });
-        if (referral !== null
-          && (await patientBranchIdsOf(patient)).includes(referral)) {
-          referralBranchId = referral;
-        }
-      }
+      //
+      //  ══ **وأن يصله الطبيبُ الموقِّع** (مراجعةٌ مستقلّة على ٤٠٩) ════════════
+      //  كان الشرطُ الأوّل وحدَه: فبغدادُ ترسل مريضةَ ذي قار ويوقّع طبيبُ ذي
+      //  قار، فتُكتب المعاينةُ في بغداد — ويُردّ هو ٤٠٣ على تعديلها وملحقها
+      //  وإلغائها. **والعطبُ نفسُه أقدم**: طبيبُ الفرع المُتاح يوقّع بلا إرسالٍ
+      //  فتُنسَب لفرع الحالة الذي لا يصله. فصار الفرعُ **دائماً فرعاً يصله
+      //  الموقِّع** بالمفاضلة القائمة نفسِها (`exam_branch.ts`)، والمسؤولُ العام
+      //  على ترتيبها السابق بحرفه.
       const operationBranchId =
         (await store.examOperationBranch(patientId, deviceEpisodeId))
-        ?? referralBranchId ?? earlyCaseRow?.branchId ?? patient.branchId;
+        ?? pickBareExamBranch({
+          scope: branchScope(req),
+          fileBranchIds: await patientBranchIdsOf(patient),
+          referralBranchId: deviceEpisodeId === null
+            ? await reviewStore.referringRequestBranch({
+              patientId, serviceType: caseType, idempotencyKey,
+            })
+            : null,
+          caseBranchId: earlyCaseRow?.branchId ?? null,
+          registrationBranchId: patient.branchId ?? null,
+          sessionBranchId: session.branchId,
+        });
       const replayContent = {
         patientId,
         doctorId: session.userId,
@@ -820,7 +853,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const session = getSession(req);
       const exam = await store.getExam(examId);
       if (!exam) return res.status(404).json({ error: "المعاينة غير موجودة" });
-      if (!canReachBranch(req, exam.branchId)) {
+      if (!(await reachesExam(req, exam))) {
         return res.status(403).json({ error: "لا يمكنك التعديل على معاينة فرع آخر" });
       }
 
@@ -1055,6 +1088,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
             medicalExamId: examId,
             examDeviceEpisodeId: exam.deviceEpisodeId ?? null,
             newPrice: deviceCost, reason: correctionReason, actor: editor, tx,
+            //  **والفرقُ يُكتب في فرع البيع، فنطاقُ المُصحِّح يُقاس به** تحت
+            //  القفل — لا بفرع المعاينة الذي فُحص أعلاه.
+            scope: branchScope(req),
           });
           priceSyncNote = "تم تصحيح السعر بعد البيع: "
             + `${vd.previousPrice.toLocaleString("en-US")} ⟶ ${deviceCost.toLocaleString("en-US")} د.ع`
@@ -1103,7 +1139,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const session = getSession(req);
       const exam = await store.getExam(examId);
       if (!exam) return res.status(404).json({ error: "المعاينة غير موجودة" });
-      if (!canReachBranch(req, exam.branchId)) {
+      if (!(await reachesExam(req, exam))) {
         return res.status(403).json({ error: "لا يمكنك إلغاء معاينة فرع آخر" });
       }
       //  **والمنحُ السريريّ يُقرأ من القاعدة لا من الجلسة**: سحبُ الاختصاص
@@ -1180,7 +1216,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           .status(403)
           .json({ error: `لا تملك صلاحية الكتابة في اختصاص ${specialtyLabel(exam.caseType)}` });
       }
-      if (!canReachBranch(req, exam.branchId)) {
+      if (!(await reachesExam(req, exam))) {
         return res.status(403).json({ error: "لا يمكنك الكتابة على معاينة فرع آخر" });
       }
       //  **ولا كتابةَ على ملغاة** (ترحيل ٠٦١): ملحقٌ على سجلٍّ سُحبت سلطتُه
