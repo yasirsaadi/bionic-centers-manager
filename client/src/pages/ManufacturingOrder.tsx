@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
-import { orderLatenessNotice, heldExcuseOf, holdButtonShown } from "./manufacturing_row_tone";
+import { orderLatenessNotice, heldExcuseOf, holdButtonShown, holdDialogKind } from "./manufacturing_row_tone";
 import {
   STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
   REWORK_TYPE_LABELS, REASON_CODE_LABELS,
@@ -57,6 +57,9 @@ export default function ManufacturingOrder() {
 
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [holdOpen, setHoldOpen] = useState(false);
+  // نوعُ التوقّف القائم الذي تُكتب له نافذةُ «سبب التوقّف» — يُلتقَط لحظةَ الضغط،
+  // فلا تتبدّل النافذةُ تحت يد الخبير إن حُدِّث الأمرُ وهي مفتوحة.
+  const [reasonFor, setReasonFor] = useState<string | null>(null);
   const [adminStageOpen, setAdminStageOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
@@ -279,7 +282,11 @@ export default function ManufacturingOrder() {
           {/* المكانُ الوحيد للعذر — ويظهر للمتوقّف بلا سببٍ مكتوب أيضاً، وإلّا
               حُبس خلف «إلغاء التوقّف» وحدَه ولا بابَ لعذره (مراجعة Codex على ٤٠٣). */}
           {holdButtonShown(holdShape) && (
-            <Button size="lg" variant="outline" onClick={() => setHoldOpen(true)} className="gap-2" data-testid="button-hold">
+            <Button size="lg" variant="outline" className="gap-2" data-testid="button-hold"
+              // متوقّفٌ أصلاً بلا سببٍ مكتوب ⟶ يُكتب سببُ توقّفه القائم وحدَه (مراجعة
+              // Codex على ٤٠٤) — لا نافذةَ توقّفٍ جديد تُلزم إعادةَ العمل برجوعٍ بمرحلة.
+              onClick={() => holdDialogKind(holdShape) === "document_existing"
+                ? setReasonFor(order.status) : setHoldOpen(true)}>
               <PauseCircle className="w-5 h-5" /> توقّف / مشكلة
             </Button>
           )}
@@ -347,6 +354,7 @@ export default function ManufacturingOrder() {
                     : h.actionType === "rework" ? "إعادة عمل"
                     : h.actionType === "date_change" ? "تغيير موعد التسليم"
                     : h.actionType === "status_change" ? "تغيير حالة"
+                    : h.actionType === "hold_reason" ? "كتابة سبب التوقّف"
                     : h.actionType === "delivered" ? "تسليم"
                     : h.actionType === "created" ? "إنشاء الأمر"
                     : `${STAGE_LABELS[h.fromStage] ?? h.fromStage ?? ""} ← ${STAGE_LABELS[h.toStage] ?? h.toStage ?? ""}`}
@@ -381,6 +389,7 @@ export default function ManufacturingOrder() {
 
       <AdvanceDialog open={advanceOpen} onOpenChange={setAdvanceOpen} order={order} onDone={invalidate} />
       <HoldDialog open={holdOpen} onOpenChange={setHoldOpen} order={order} onDone={invalidate} />
+      <HoldReasonDialog status={reasonFor} onClose={() => setReasonFor(null)} order={order} onDone={invalidate} />
       {canReassign && <AdminStageDialog open={adminStageOpen} onOpenChange={setAdminStageOpen} order={order} stages={stages} onDone={invalidate} />}
       <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
@@ -662,6 +671,59 @@ function HoldDialog({ open, onOpenChange, order, onDone }: any) {
             disabled={!status || !reasonCode || (isRework && !returnToStage) || m.isPending}
             onClick={() => m.mutate({ status, reasonCode, note: note || undefined, returnToStage: isRework ? returnToStage : undefined })}>
             تأكيد
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// كتابةُ سببِ توقّفٍ قائم — للأمر المتوقّف أصلاً بلا سببٍ مكتوب (مراجعة Codex
+// على ٤٠٤). **النوعُ نوعُه والمرحلةُ مرحلتُه**: لا سؤالَ عن نوعٍ ولا عن مرحلة
+// رجوع، ولا `/hold` — فإعادةُ العمل الفنّي هناك توقّفٌ جديد يرجع بمرحلة، وكانت
+// تُرجِع إعادةَ عملٍ موروثةً مرّةً ثانية لمجرّد كتابة سببها.
+function HoldReasonDialog({ status, onClose, order, onDone }: any) {
+  const open = status !== null;
+  const [reasonCode, setReasonCode] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => { setReasonCode(""); setNote(""); }, [status]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/hold-reason`, "POST", () => { onClose(); onDone(); }, onDone);
+  const reasons = status && isHoldStatus(status) ? HOLD_REASONS[status] : [];
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>توقّف / مشكلة</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm" data-testid="text-existing-hold-type">
+            هذا الأمر متوقّفٌ أصلاً: <span className="font-semibold">{STATUS_LABELS[status] ?? status}</span> — اكتب سبب توقّفه.
+          </p>
+          <div>
+            <label className="text-sm font-medium">السبب <span className="text-red-500">*</span></label>
+            <Select value={reasonCode} onValueChange={setReasonCode}>
+              <SelectTrigger className="mt-1" data-testid="select-existing-hold-reason"><SelectValue placeholder="اختر السبب" /></SelectTrigger>
+              <SelectContent>
+                {reasons.map((r) => <SelectItem key={r.code} value={r.code}>{r.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">ملاحظة داخلية (اختياري)</label>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1" />
+          </div>
+          <p className="text-xs text-muted-foreground" data-testid="hint-existing-hold">
+            لا تتغيّر المرحلة ولا نوع التوقّف — يُكتب السبب وحده. ولتغيير نوع التوقّف: «إلغاء التوقّف ومتابعة العمل» ثمّ «توقّف / مشكلة».
+          </p>
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="hint-single-excuse-place-existing">
+            هنا وحدَه يُكتب سببُ التأخير. ويبقى السببُ عذراً للأمر بعد «إلغاء التوقّف ومتابعة العمل» حتى التسليم.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          <Button
+            data-testid="button-confirm-hold-reason"
+            disabled={!reasonCode || m.isPending}
+            onClick={() => m.mutate({ status, reasonCode, note: note || undefined })}>
+            حفظ السبب
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1445,7 +1445,7 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
 export const prostheticWorkHistory = pgTable("prosthetic_work_history", {
   id: serial("id").primaryKey(),
   workOrderId: integer("work_order_id").references(() => prostheticWorkOrders.id).notNull(),
-  actionType: text("action_type").notNull(), // created | stage_change | status_change | reassigned | rework | delivered
+  actionType: text("action_type").notNull(), // created | stage_change | status_change | reassigned | rework | delivered | date_change | hold_reason
   fromStage: text("from_stage"),
   toStage: text("to_stage"),
   notes: text("notes"),

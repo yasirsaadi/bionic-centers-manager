@@ -10,7 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   rowToneOf, orderLatenessNotice, EXCUSE_PLACE_HINT_RED, EXCUSE_PLACE_HINT_AMBER,
-  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown,
+  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown, holdDialogKind,
   type RowToneOrderLike,
 } from "./manufacturing_row_tone";
 import { REASON_CODE_LABELS, HOLD_STATUSES, HOLD_REASONS } from "../../../shared/manufacturing";
@@ -393,6 +393,66 @@ ok("ف١٦. وزرُّ «توقّف / مشكلة» بالقرار الخالص �
   && !/\{!onHold && \(\s*<Button[\s\S]{0,200}?data-testid="button-hold"/.test(orderCode));
 ok("ف١٧. والصفحةُ تستورد القرارين من الملفّ الخالص",
   /import \{[^}]*\bheldExcuseOf\b[^}]*\bholdButtonShown\b[^}]*\} from "\.\/manufacturing_row_tone"/.test(orderCode));
+
+
+// ══ ص. أيُّ نافذةٍ يفتحها الزرّ — مراجعة Codex على ٤٠٤ ═══════════════════
+//  المتوقّفُ بلا سببٍ مكتوب يُكتب سببُ توقّفه **القائم**: النوعُ نوعُه والمرحلةُ
+//  مرحلتُه. ونافذةُ التوقّف الجديد كانت تُلزم «إعادة العمل الفنّي» بمرحلةٍ
+//  سابقة، فتُرجِع إعادةَ عملٍ موروثةً مرّةً ثانية لمجرّد كتابة سببها.
+console.log("\n── ص. نافذةُ سبب التوقّف القائم ──");
+
+eq("ص١. عاملٌ ⟶ نافذةُ توقّفٍ جديد كما كانت", holdDialogKind(order({ status: "active" })), "new_hold");
+eq("ص٢. عاملٌ بعذرٍ باقٍ ⟶ توقّفٌ جديد (يُكتب الأحدث)",
+  holdDialogKind(order({ status: "active", holdReasonCode: "component_delay" })), "new_hold");
+let docAll = true; const docBroken: string[] = [];
+for (const st of HOLD_STATUSES) for (const c of [null, "", "   "]) {
+  if (holdDialogKind(order({ status: st, holdReasonCode: c })) !== "document_existing") {
+    docAll = false; docBroken.push(`${st}/${JSON.stringify(c)}`);
+  }
+}
+ok("ص٣. **متوقّفٌ بلا سببٍ مكتوب ⟶ نافذةُ سبب التوقّف القائم** (الحالاتُ الأربع، والبياضُ كالغياب)",
+  docAll, docBroken.join(" · "));
+eq("ص٤. **وإعادةُ العمل الموروثة منها بعينها** — لا نافذةَ تُلزم برجوعٍ بمرحلة",
+  holdDialogKind(order({ status: "technical_rework", holdReasonCode: null })), "document_existing");
+let noneWithCause = true;
+for (const st of HOLD_STATUSES) {
+  if (holdDialogKind(order({ status: st, holdReasonCode: HOLD_REASONS[st][0].code })) !== null) noneWithCause = false;
+}
+ok("ص٥. متوقّفٌ بسببٍ مكتوب ⟶ لا نافذة (لا زرَّ أصلاً)", noneWithCause);
+eq("ص٦. مكتمل ⟶ لا نافذة", holdDialogKind(order({ status: "completed" })), null);
+eq("ص٧. ملغى ⟶ لا نافذة", holdDialogKind(order({ status: "cancelled", holdReasonCode: null })), null);
+let agrees = true;
+for (const st of ["active", ...HOLD_STATUSES, "completed", "cancelled"])
+  for (const c of [null, "", "  ", "component_delay", HOLD_REASONS.technical_rework[0].code]) {
+    const o = order({ status: st, holdReasonCode: c });
+    if ((holdDialogKind(o) !== null) !== holdButtonShown(o)) agrees = false;
+  }
+ok("ص٨. والنافذةُ تُفتح حيث يظهر الزرّ بالضبط — لا زرَّ بلا نافذة ولا نافذةَ بلا زرّ", agrees);
+
+//  عقدُ الصفحة: النافذةُ تُختار بالقرار الخالص، ونافذةُ السبب لا تمرّ بـ`/hold`.
+const reasonDialog = (orderCode.match(/function HoldReasonDialog\([\s\S]*?\n\}\n/) ?? [""])[0];
+const holdDialog = (orderCode.match(/function HoldDialog\([\s\S]*?\n\}\n/) ?? [""])[0];
+ok("ص٩. زرُّ «توقّف / مشكلة» يختار النافذةَ بـ`holdDialogKind` لحظةَ الضغط",
+  /onClick=\{\(\) => holdDialogKind\(holdShape\) === "document_existing"\s*\?\s*setReasonFor\(order\.status\) : setHoldOpen\(true\)\}/.test(orderCode));
+ok("ص١٠. والصفحةُ تستورد القرارَ من الملفّ الخالص",
+  /import \{[^}]*\bholdDialogKind\b[^}]*\} from "\.\/manufacturing_row_tone"/.test(orderCode));
+ok("ص١١. ونافذةُ السبب موصولة بنوع التوقّف الملتقَط",
+  /<HoldReasonDialog status=\{reasonFor\} onClose=\{\(\) => setReasonFor\(null\)\}/.test(orderCode));
+ok("ص١٢. **نافذةُ السبب تنادي `/hold-reason` وحدَه** — لا `/hold`",
+  /\/api\/manufacturing\/orders\/\$\{order\.id\}\/hold-reason`/.test(reasonDialog)
+  && !/\/hold`/.test(reasonDialog));
+ok("ص١٣. **ولا سؤالَ عن مرحلة رجوع ولا عن نوع** — لا `returnToStage` ولا `reworkReturnStages` ولا منتقي نوع",
+  reasonDialog.length > 0 && !/returnToStage|reworkReturnStages|select-hold-type|HOLD_STATUSES/.test(reasonDialog));
+ok("ص١٤. وحمولتُها النوعُ القائم والسببُ والملاحظة لا غير",
+  /m\.mutate\(\{ status, reasonCode, note: note \|\| undefined \}\)/.test(reasonDialog));
+ok("ص١٥. وتقول إن المرحلةَ والنوعَ لا يتغيّران، وكيف يُغيَّر النوع",
+  /data-testid="hint-existing-hold"[\s\S]{0,120}لا تتغيّر المرحلة ولا نوع التوقّف[\s\S]{0,120}«إلغاء التوقّف ومتابعة العمل» ثمّ «توقّف \/ مشكلة»/.test(reasonDialog));
+ok("ص١٦. ونافذةُ التوقّف الجديد كما هي: `/hold` ومرحلةُ الرجوع لإعادة العمل",
+  /\/api\/manufacturing\/orders\/\$\{order\.id\}\/hold`/.test(holdDialog)
+  && /reworkReturnStages\(order\.serviceType, order\.currentStage, order\.purpose\)/.test(holdDialog)
+  && /returnToStage: isRework \? returnToStage : undefined/.test(holdDialog));
+ok("ص١٧. والخطُّ الزمنيّ يسمّي السطرَ الجديد بالعربية",
+  /h\.actionType === "hold_reason" \? "كتابة سبب التوقّف"/.test(orderCode));
 
 console.log(`\n${pass} نجحت، ${fail} أخفقت`);
 process.exit(fail === 0 ? 0 : 1);

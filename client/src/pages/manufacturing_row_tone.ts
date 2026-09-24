@@ -219,6 +219,23 @@ export function holdButtonShown(o: HoldShapeLike): boolean {
   return heldExcuseOf(o) === null;
 }
 
+/**
+ *  أيُّ نافذةٍ يفتحها «توقّف / مشكلة» (مراجعة Codex على ٤٠٤):
+ *  - `document_existing` — أمرٌ **متوقّفٌ أصلاً** بلا سببٍ مكتوب (الشكلُ الموروث):
+ *    يُكتب سببُ توقّفه القائم وحدَه — **النوعُ نوعُه والمرحلةُ مرحلتُه**، لا توقّفَ
+ *    جديد ولا رجوعَ بمرحلة. وكانت نافذةُ التوقّف الجديد تُلزم «إعادةَ العمل
+ *    الفنّي» بمرحلةٍ سابقة، فتُرجِع إعادةَ عملٍ موروثةً مرّةً ثانية لمجرّد كتابة
+ *    سببها، وفي أوّل المراحل لا تُكتب أصلاً.
+ *  - `new_hold` — أمرٌ يعمل: توقّفٌ جديد بنوعه وسببه (وإعادةُ العمل الفنّي وحدها
+ *    ترجع بمرحلة) — كما كانت بحرفها.
+ *  - `null` — لا زرَّ أصلاً (`holdButtonShown`): منتهٍ، أو متوقّفٌ بسببٍ مكتوب.
+ */
+export type HoldDialogKind = "document_existing" | "new_hold";
+export function holdDialogKind(o: HoldShapeLike): HoldDialogKind | null {
+  if (!holdButtonShown(o)) return null;
+  return isHoldStatus(o.status) ? "document_existing" : "new_hold";
+}
+
 export function orderLatenessNotice(o: RowToneOrderLike): LatenessNotice | null {
   if (o.status === "completed" || o.status === "cancelled") return null;
   if (!o.isOverdue) return null;

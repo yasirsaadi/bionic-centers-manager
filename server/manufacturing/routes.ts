@@ -23,7 +23,7 @@ import {
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
-  MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS,
+  MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS, writtenHoldExcuse,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
 import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
@@ -866,6 +866,46 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     } catch (e) {
       if (handledConflict(res, e)) return;
       throw e;
+    }
+  });
+
+  // ---- hold-reason: write the reason of a stop that ALREADY exists -----------
+  //  (مراجعة Codex على ٤٠٤) أمرٌ متوقّفٌ بلا سببٍ مكتوب — الشكلُ الموروث من
+  //  ترحيلَي ٠٤٥ و٠٤٦ — يُكتب عذرُه هنا: **النوعُ نوعُه والمرحلةُ مرحلتُه**.
+  //  و`/hold` أعلاه يُنشئ توقّفاً جديداً — وإعادةُ العمل الفنّي فيه ترجع بمرحلة،
+  //  فكانت كتابةُ سبب إعادة عملٍ موروثة تُرجعها مرّةً ثانية. والفحوصُ هنا ردٌّ
+  //  مبكّرٌ برسالةٍ واضحة، والحكمُ الأخير تحت القفل في `documentHoldReason`.
+  app.post("/api/manufacturing/orders/:id/hold-reason", isAuthenticated, async (req: Req, res) => {
+    const raw = await loadWritable(req, res);
+    if (!raw) return;
+    if (raw.status === "completed" || raw.status === "cancelled") {
+      return res.status(409).json({ error: "الأمر منتهٍ" });
+    }
+    const status = strOrU(req.body?.status);
+    if (!status || !isHoldStatus(status)) return res.status(400).json({ error: "نوع التوقّف غير صالح" });
+    const reasonCode = strOrU(req.body?.reasonCode);
+    if (!isValidHoldReason(status, reasonCode)) return res.status(400).json({ error: "السبب غير صالح لهذا النوع" });
+    const note = strOrU(req.body?.note) ?? null;
+    if (!isHoldStatus(raw.status)) {
+      return res.status(409).json({ error: "الأمر يعمل ولا توقّفَ قائمٌ يُكتب سببُه — سجّل التوقّف من «توقّف / مشكلة»" });
+    }
+    if (writtenHoldExcuse(raw.holdReasonCode) !== null) {
+      return res.status(409).json({
+        error: "لهذا التوقّف سببٌ مكتوب — لتغييره: «إلغاء التوقّف ومتابعة العمل» ثمّ «توقّف / مشكلة»",
+      });
+    }
+    try {
+      const updated = await store.documentHoldReason({
+        order: raw, status, reasonCode: reasonCode!, note,
+        performedBy: getSession(req).userId ?? null,
+      });
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      //  لا رميَ من معالجٍ غير متزامن (Express 4 لا يلتقطه فيبقى الطلبُ بلا ردّ).
+      //  والكتابةُ معاملةٌ واحدة ترتدّ كاملةً، فـ«لم يتغيّر شيء» صادقةٌ هنا.
+      console.error("[manufacturing] hold-reason failed:", e);
+      res.status(500).json({ error: "تعذّر حفظ سبب التوقّف — لم يتغيّر شيء. أعد المحاولة." });
     }
   });
 
