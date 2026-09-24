@@ -8,6 +8,7 @@ import { resolveManufacturingView } from "./manufacturing_view_mode";
 import {
   bucketCounts, ordersInBucket, nextBucket, bucketDef, type BucketTone,
 } from "./manufacturing_buckets";
+import { rowToneOf } from "./manufacturing_row_tone";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,9 @@ interface OrderCard {
   expertUserId: number; expertName: string | null; assignedAt: string | null; startedAt: string | null;
   expectedDeliveryDate: string | null; completedAt: string | null; finalResult: string | null;
   reworkCount: number; daysInStage: number; isOverdue: boolean;
+  //  سببُ التوقّف الحاليّ — يرسله `listOrders` منذ ٢٠٢٦-٠٨-٣١،
+  //  وكانت الشاشةُ تُسقطه فلا تعرف متأخّراً بعذرٍ من متأخّرٍ بلا عذر.
+  holdReasonCode: string | null; holdNote: string | null;
 }
 
 interface Branch { id: number; name: string; }
@@ -60,19 +64,26 @@ const CHIP_RING: Record<BucketTone, string> = {
   green: "ring-green-500",
 };
 
+//  ══ صفُّ الأمر — اللونُ يقول الحالةَ، والاسمُ يُقرأ أوّلاً ══════════════
+//  كان الاسمُ محشوراً في سطرٍ واحد مع الشارات فينضغط على الهاتف، وكان
+//  اللونُ حاشيةً حمراء رفيعة للمتأخّر وحده — فلا يفرّق بين متأخّرٍ بعذرٍ
+//  ومتأخّرٍ بلا عذر. والقرارُ كلُّه في `manufacturing_row_tone` ليُختبَر
+//  دخلاً وخرجاً، فلا قاعدةَ لونٍ ثانيةٌ مكتوبةٌ هنا.
 function OrderRow({ o }: { o: OrderCard }) {
+  const t = rowToneOf(o);
   return (
     <Link href={`/manufacturing/orders/${o.id}`}>
-      <Card className={`hover:shadow-sm transition-shadow cursor-pointer ${o.isOverdue ? "border-red-300" : ""}`}>
+      <Card className={`hover:shadow-sm transition-shadow cursor-pointer ${t.cardClass}`}>
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold">{o.patientName}</span>
+            <div className="min-w-0 flex-1">
+              {/* الاسمُ سطرٌ قائمٌ بذاته — لا ينضغط بين الشارات */}
+              <div className="text-base font-bold leading-tight break-words">{o.patientName}</div>
+              <div className="flex items-center gap-2 flex-wrap mt-1">
                 <Badge variant="outline" className="text-xs">{SERVICE_TYPE_LABELS[o.serviceType as "prosthetic"] ?? o.serviceType}</Badge>
                 {o.itemType && <span className="text-xs text-muted-foreground">{o.itemType}</span>}
                 {o.isOverdue && (
-                  <Badge className="text-xs bg-red-100 text-red-800 border-red-200 gap-1">
+                  <Badge className={`text-xs gap-1 ${t.overdueBadgeClass}`}>
                     <AlertTriangle className="w-3 h-3" /> متأخر
                   </Badge>
                 )}
@@ -85,8 +96,15 @@ function OrderRow({ o }: { o: OrderCard }) {
                 <span>في المرحلة منذ {o.daysInStage} يوم</span>
                 {o.reworkCount > 0 && <span>إعادة عمل فني: {o.reworkCount}</span>}
               </div>
+              {/* السببُ كاملاً — لا يظهر إلّا حين يحمله الأمرُ فعلاً (لا استنتاج) */}
+              {t.reason && (
+                <div className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 mt-1.5 inline-block">
+                  {t.reason.prefix}: {t.reason.label}
+                  {t.reason.note && <span className="text-amber-700"> — {t.reason.note}</span>}
+                </div>
+              )}
             </div>
-            <div className="text-left flex flex-col items-end gap-1">
+            <div className="text-left flex flex-col items-end gap-1 shrink-0">
               <Badge variant="outline" className={`text-xs ${statusTone(o.status)}`}>{STATUS_LABELS[o.status] ?? o.status}</Badge>
               <span className="text-xs font-medium text-slate-700">{STAGE_LABELS[o.currentStage] ?? o.currentStage}</span>
             </div>
