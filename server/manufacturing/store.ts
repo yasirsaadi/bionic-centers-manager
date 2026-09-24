@@ -162,6 +162,7 @@ import {
   FIRST_STAGE, MAINTENANCE_DONE_STAGES, REWORK_TYPE, stagesForOrder,
   currentStageEnteredAt, parseDeliveryDateNote,
   deliveryDateSetNote, deliveryDateChangeNote, latenessOf,
+  isHoldStatus, writtenHoldExcuse,
   type StageHistoryRow,
 } from "@shared/manufacturing";
 
@@ -1191,6 +1192,8 @@ interface LockedOrder {
   expectedDeliveryDate: string | null;
   expertUserId: number;
   startedAt: Date | null;
+  /** سببُ التوقّف المكتوب كما هو في الصفّ — يقرؤه `documentHoldReason` تحت القفل. */
+  holdReasonCode: string | null;
 }
 
 /**
@@ -1206,6 +1209,7 @@ async function lockOrder(tx: any, orderId: number): Promise<LockedOrder> {
       currentStage: WO.currentStage, status: WO.status,
       expectedDeliveryDate: WO.expectedDeliveryDate,
       expertUserId: WO.expertUserId, startedAt: WO.startedAt,
+      holdReasonCode: WO.holdReasonCode,
     })
     .from(WO)
     .where(eq(WO.id, orderId))
@@ -1216,6 +1220,7 @@ async function lockOrder(tx: any, orderId: number): Promise<LockedOrder> {
     expectedDeliveryDate: dateStr(locked?.expectedDeliveryDate),
     expertUserId: locked?.expertUserId ?? 0,
     startedAt: locked?.startedAt ?? null,
+    holdReasonCode: locked?.holdReasonCode ?? null,
   };
 }
 
@@ -1322,6 +1327,56 @@ export async function holdOrder(params: {
       // نفس المرحلة على الطرفين — توثيق صريح في السجلّ أن التوقّف لم يحرّكها.
       fromStage: live.currentStage, toStage: live.currentStage,
       notes: `توقّف: ${status} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/**
+ * كتابةُ سببِ توقّفٍ **قائم** — لا توقّفَ جديد ولا رجوعَ بمرحلة (مراجعة Codex
+ * على ٤٠٤).
+ *
+ * ترحيلا ٠٤٥ و٠٤٦ تركا أوامرَ متوقّفةً **بلا سببٍ مكتوب** (غيّرا الحالةَ ولم
+ * يكتبا السبب). و«توقّف / مشكلة» هو المكانُ الوحيد للعذر، لكنّ بابه
+ * `holdOrder`/`reworkToStage` يُنشئ توقّفاً جديداً: و«إعادة العمل الفنّي» فيه لا
+ * تُكتب إلّا برجوعٍ إلى مرحلةٍ سابقة. فأمرٌ موروثٌ في `technical_rework` —
+ * **رجع فعلاً في النظام القديم** — كان يُرجَع مرّةً ثانية، ويُسجَّل له صفُّ إعادة
+ * عملٍ ثانٍ، ويُكتب للمريض حدثُ مرحلة، **لمجرّد أن الخبيرَ أراد كتابةَ سببه**؛ وفي
+ * أوّل المراحل لا مرحلةَ سابقة فلا يُكتب السببُ أصلاً (مُعادٌ حيّاً).
+ *
+ * فهذا بابُه الخاصّ: **النوعُ نوعُه والمرحلةُ مرحلتُه، ويُكتب السببُ وحده.**
+ * - تحت القفل: الأمرُ ما زال متوقّفاً **بالنوع الذي رآه الخبير**، ولا سببَ
+ *   مكتوباً عليه — وإلّا فقد تغيّر بين القراءة والكتابة (٤٠٩)، ولا يُكتب فوق
+ *   سببٍ كتبه غيرُه.
+ * - لا يمسّ الحالةَ ولا المرحلةَ ولا صفوفَ إعادة العمل، ولا حدثَ للمريض: السببُ
+ *   داخليٌّ بحت كسائر أسباب التوقّف.
+ * - وسطرٌ واحد في الخطّ الزمني بنوعه الخاصّ (`hold_reason`) — لا «تغيير حالة»
+ *   لحالةٍ لم تتغيّر.
+ */
+export async function documentHoldReason(params: {
+  order: ProstheticWorkOrder;
+  status: string;          // نوعُ التوقّف كما رآه الخبير — يُطابَق بالصفّ المقفول
+  reasonCode: string;
+  note?: string | null;
+  performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  const { order, status, reasonCode } = params;
+  return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, order.id);
+    assertNotTerminal(live);
+    if (!isHoldStatus(live.status) || live.status !== status
+        || writtenHoldExcuse(live.holdReasonCode) !== null) {
+      throw new WorkOrderConflictError(live);
+    }
+    const [updated] = await tx.update(WO)
+      .set({ holdReasonCode: reasonCode, holdNote: params.note ?? null, updatedAt: new Date() })
+      .where(eq(WO.id, order.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: order.id,
+      actionType: "hold_reason",
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: `سبب التوقّف: ${live.status} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
     return updated;

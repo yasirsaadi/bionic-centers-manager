@@ -13,7 +13,7 @@
 //  إلغاء) أو **يحلّ محلَّه عذرٌ أحدث** من المكان نفسِه. وتغييرُ الموعد لا يمحوه.
 //
 //  حيٌّ على Postgres وعلى النقاط الحقيقية عبر Express حقيقيّ:
-//  `/hold` · `/resume` · `/advance` · `/delivery-date` · `/cancel` ·
+//  `/hold` · `/hold-reason` · `/resume` · `/advance` · `/delivery-date` · `/cancel` ·
 //  `/orders` · `/orders/:id` · `/overview` · `/notifications`.
 //  التشغيل: `DATABASE_URL=… npm run test:manufacturing-excuse`
 import { db } from "../db";
@@ -25,8 +25,9 @@ import { registerRoutes } from "../routes";
 import { HOLD_REASONS, FINAL_RESULTS, latenessOf, writtenHoldExcuse } from "@shared/manufacturing";
 import {
   rowToneOf, orderLatenessNotice, EXCUSE_PLACE_HINT_RED, EXCUSE_PLACE_HINT_AMBER,
-  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown,
+  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown, holdDialogKind,
 } from "../../client/src/pages/manufacturing_row_tone";
+import { workHistoryMovementLabel } from "@shared/daily_review";
 
 const PORT = 6031 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -107,6 +108,7 @@ async function main() {
   };
   const X = await mkUser("prosthetics_expert", "مصطفى شرف");
   const M = await mkUser("branch_manager", "مدير الفرع");
+  const X2 = await mkUser("prosthetics_expert", "خبير آخر");
 
   const S = {
     expert: { userId: X, role: "prosthetics_expert", isAdmin: false, branchId: bE,
@@ -114,6 +116,9 @@ async function main() {
     manager: { userId: M, role: "branch_manager", isAdmin: false, branchId: bE,
       accessibleBranches: [bE], displayName: "مدير", permissions: { canViewPatients: true } },
     admin: { userId: 0, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [], permissions: {} },
+    //  خبيرٌ في الفرع نفسِه **غيرُ مسنَدٍ** إليه أيٌّ من الأوامر.
+    other: { userId: X2, role: "prosthetics_expert", isAdmin: false, branchId: bE,
+      accessibleBranches: [bE], displayName: "خبير آخر", permissions: {} },
   };
 
   //  مريضٌ لكلّ أمر — القاعدةُ تمنع بناءين مفتوحين لمريضٍ واحد.
@@ -350,6 +355,151 @@ async function main() {
     ov = (await http("GET", `/api/manufacturing/overview?branchId=${bE}`, S.admin)).body;
     eq([ov?.totals?.overdue, ov?.totals?.overdueExcused], [2, 2],
       "ط١١. واللوحة: اثنان بدون عذر (R · TR) · اثنان بعذر (K · L)");
+
+    //  ══ ي. كتابةُ سبب التوقّف القائم (مراجعة Codex على ٤٠٤) ════════════════
+    //  أمرٌ موروثٌ في `technical_rework` **رجع فعلاً في النظام القديم** (وصفُّ
+    //  إعادة عمله باقٍ كما تركه ٠٤٥). وكان البابُ الوحيد لكتابة سببه `/hold`،
+    //  وفيه «إعادة العمل الفنّي» لا تُكتب إلّا برجوعٍ إلى مرحلةٍ سابقة: فيُرجَع
+    //  مرّةً ثانية، ويُسجَّل له صفُّ إعادة عملٍ ثانٍ، ويُكتب للمريض حدثُ مرحلة —
+    //  وفي أوّل المراحل لا مرحلةَ سابقة فلا يُكتب السببُ أصلاً (مُعادٌ حيّاً).
+    console.log("\nي — المتوقّفُ الموروثُ يُكتب سببُه: النوعُ نوعُه والمرحلةُ مرحلتُه");
+    const legacyRework = async (id: number) => db.execute(sql`
+      INSERT INTO prosthetic_rework_events (work_order_id, rework_type, reason_code, stage_when_detected, created_by)
+      VALUES (${id}, 'resocket', 'legacy', 'socket_adjustment', ${X})`);
+    const legacyShape = async (id: number) =>
+      db.execute(sql`UPDATE prosthetic_work_orders SET status = 'technical_rework' WHERE id = ${id}`);
+    await legacyRework(TR);
+    const TM = await mkOrder({ name: "إعادة عمل موروثة في القياسات", stage: "measurements", due: PAST });
+    const TX = await mkOrder({ name: "صيانة بإعادة عمل موروثة", stage: "new_assignment", due: PAST, purpose: "maintenance" });
+    const TY = await mkOrder({ name: "إعادة عمل موروثة لشاشةٍ بائتة", stage: "manufacturing", due: PAST });
+    const TZ = await mkOrder({ name: "إعادة عمل موروثة للسباق", stage: "manufacturing", due: PAST });
+    for (const id of [TM, TX, TY, TZ]) { await legacyShape(id); await legacyRework(id); }
+
+    const snap = async (id: number) => {
+      const o = await raw(id);
+      const n = async (q: any) => Number(((await db.execute(q)).rows[0] as any).n);
+      return {
+        status: o.status, stage: o.currentStage, reason: o.holdReasonCode, note: o.holdNote,
+        reworks: await n(sql`SELECT count(*) n FROM prosthetic_rework_events WHERE work_order_id = ${id}`),
+        patientEvents: await n(sql`SELECT count(*) n FROM patient_events WHERE patient_id = ${o.patientId}`),
+        history: await n(sql`SELECT count(*) n FROM prosthetic_work_history WHERE work_order_id = ${id}`),
+      };
+    };
+
+    const kindOf = async (id: number) =>
+      holdDialogKind((await http("GET", `/api/manufacturing/orders/${id}`, S.expert)).body.order);
+    eq([await kindOf(TR), await kindOf(TM), await kindOf(TX)],
+      ["document_existing", "document_existing", "document_existing"],
+      "ي١. «توقّف / مشكلة» يفتح لكلٍّ منها نافذةَ «سبب التوقّف القائم» لا نافذةَ توقّفٍ جديد");
+    eq([await kindOf(R), await kindOf(L)], ["new_hold", null],
+      "ي٢. والعاملُ يفتح توقّفاً جديداً كما كان · والمتوقّفُ بسببه لا زرَّ له");
+
+    const trBefore = await snap(TR);
+    eq([trBefore.status, trBefore.stage, trBefore.reason, trBefore.reworks, trBefore.patientEvents],
+      ["technical_rework", "manufacturing", null, 1, 0],
+      "ي٣. قبل: إعادةُ عملٍ موروثة في «التصنيع» بلا سبب، ولها صفُّ إعادة عملٍ قديم واحد");
+    r = await http("POST", `/api/manufacturing/orders/${TR}/hold-reason`, S.expert,
+      { status: "technical_rework", reasonCode: RWK, note: "السوكت القديم ضيّق" });
+    eq(r.status, 200, "ي٤. الخبيرُ يكتب السببَ من «توقّف / مشكلة»");
+    const trAfter = await snap(TR);
+    eq([trAfter.status, trAfter.stage, trAfter.reason, trAfter.note],
+      ["technical_rework", "manufacturing", RWK, "السوكت القديم ضيّق"],
+      "ي٥. **النوعُ نوعُه والمرحلةُ مرحلتُه** — لم يُرجَع بمرحلة، والسببُ مكتوب");
+    eq([trAfter.reworks, trAfter.patientEvents], [1, 0],
+      "ي٦. **ولا صفَّ إعادة عملٍ ثانٍ، ولا حدثَ يصل المريض**");
+    eq(trAfter.history, trBefore.history + 1, "ي٧. وسطرٌ واحدٌ في الخطّ الزمني");
+    const trLine = ((await db.execute(sql`
+      SELECT action_type, from_stage, to_stage, notes FROM prosthetic_work_history
+       WHERE work_order_id = ${TR} ORDER BY id DESC LIMIT 1`)).rows[0]) as any;
+    eq([trLine.action_type, trLine.from_stage, trLine.to_stage], ["hold_reason", "manufacturing", "manufacturing"],
+      "ي٨. بنوعه الخاصّ «كتابة سبب التوقّف» — لا «تغيير حالة» لحالةٍ لم تتغيّر");
+    ok(String(trLine.notes).includes(RWK) && String(trLine.notes).includes("السوكت القديم ضيّق"),
+      "ي٩. ومعه السببُ والملاحظة", String(trLine.notes));
+    eq(workHistoryMovementLabel(trLine.action_type, trLine.notes), "كتابة سبب التوقّف",
+      "ي١٠. والمراجعةُ اليومية تسمّيه بالعربية لا برمزه الخام");
+
+    const detTR2 = (await http("GET", `/api/manufacturing/orders/${TR}`, S.expert)).body;
+    eq([heldExcuseOf(detTR2.order), orderLatenessNotice(detTR2.order), holdDialogKind(detTR2.order)],
+      [RWK, null, null],
+      "ي١١. فبطاقةُ «متوقّف» تقول سببَه، ولا تنبيهَ يكرّره، ولا زرَّ — كأيّ متوقّفٍ بسببه");
+    const rowTR = await rowOf(TR);
+    eq([latenessOf(rowTR), rowToneOf(rowTR).tone, rowToneOf(rowTR).reason?.note],
+      ["late_excused", "amber", "السوكت القديم ضيّق"],
+      "ي١٢. وصفُّه كهرمانيّ «متأخر بعذر» بسببه");
+
+    //  ما كان مستحيلاً: لا مرحلةَ سابقة يُرجَع إليها.
+    for (const [id, stage, label] of [
+      [TM, "measurements", "ي١٣أ. في «القياسات» (لا مرحلةَ سابقة)"],
+      [TX, "new_assignment", "ي١٣ب. صيانةٌ في أوّل مراحلها"],
+    ] as const) {
+      const before = await snap(id);
+      r = await http("POST", `/api/manufacturing/orders/${id}/hold-reason`, S.expert,
+        { status: "technical_rework", reasonCode: RWK });
+      const after = await snap(id);
+      eq([r.status, after.status, after.stage, after.reason, after.reworks, after.patientEvents],
+        [200, "technical_rework", stage, RWK, before.reworks, before.patientEvents],
+        `${label}: يُكتب السببُ ولا شيءَ غيره — وكان هذا مستحيلاً`);
+    }
+
+    console.log("\nي — وما يُردّ بلا كتابة");
+    r = await http("POST", `/api/manufacturing/orders/${TR}/hold-reason`, S.expert,
+      { status: "technical_rework", reasonCode: HOLD_REASONS.technical_rework[2].code });
+    let tr3 = await snap(TR);
+    eq([r.status, tr3.reason, tr3.note, tr3.history], [409, RWK, "السوكت القديم ضيّق", trAfter.history],
+      "ي١٤. سببٌ مكتوبٌ سلفاً لا يُكتب فوقه (٤٠٩) — والأمرُ كما هو");
+    ok(/«إلغاء التوقّف ومتابعة العمل» ثمّ «توقّف \/ مشكلة»/.test(String(r.body?.error)),
+      "ي١٥. والرسالةُ تقول كيف يُغيَّر", String(r.body?.error));
+    const rBefore = await snap(R);
+    r = await http("POST", `/api/manufacturing/orders/${R}/hold-reason`, S.expert,
+      { status: "waiting_materials", reasonCode: MAT });
+    const rAfter = await snap(R);
+    eq([r.status, rAfter.status, rAfter.reason, rAfter.history], [409, "active", null, rBefore.history],
+      "ي١٦. والأمرُ العامل لا «توقّفَ قائماً» له — ٤٠٩ بلا كتابة");
+    const tyBefore = await snap(TY);
+    r = await http("POST", `/api/manufacturing/orders/${TY}/hold-reason`, S.expert,
+      { status: "waiting_materials", reasonCode: MAT });
+    eq([r.status, (await snap(TY)).reason, (await snap(TY)).status], [409, null, "technical_rework"],
+      "ي١٧. ونوعٌ غيرُ نوعِه القائم (شاشةٌ بائتة) ⟶ ٤٠٩ ولا يتغيّر نوعُه");
+    r = await http("POST", `/api/manufacturing/orders/${TY}/hold-reason`, S.expert,
+      { status: "technical_rework", reasonCode: MAT });
+    eq(r.status, 400, "ي١٨. وسببٌ لا يخصّ النوع ⟶ ٤٠٠");
+    eq((await snap(TY)).history, tyBefore.history, "ي١٨أ. ولا سطرَ في خطّه الزمني من ذلك");
+    r = await http("POST", `/api/manufacturing/orders/${W}/hold-reason`, S.expert,
+      { status: "waiting_materials", reasonCode: MAT });
+    eq(r.status, 409, "ي١٩. والمنتهي لا يُكتب عليه");
+    const tzBefore = await snap(TZ);
+    r = await http("POST", `/api/manufacturing/orders/${TZ}/hold-reason`, S.other,
+      { status: "technical_rework", reasonCode: RWK });
+    const tz0 = await snap(TZ);
+    eq([r.status, tz0.reason, tz0.history], [403, null, tzBefore.history],
+      "ي٢٠. وخبيرٌ غيرُ مسنَدٍ إليه ⟶ ٤٠٣ بلا كتابةٍ ولا سطر");
+
+    //  الحكمُ الأخير **تحت القفل** لا في فحوص النقطة: لقطةٌ بائتة قبل أن يكتب
+    //  كاتبٌ آخر، ثمّ نداءُ المخزن مباشرةً — فلا تحميه فحوصُ النقطة المبكّرة.
+    const stale = await raw(TZ);
+    r = await http("POST", `/api/manufacturing/orders/${TZ}/hold-reason`, S.manager,
+      { status: "technical_rework", reasonCode: RWK, note: "كتبه المدير أوّلاً" });
+    eq(r.status, 200, "ي٢١. كتب المديرُ السبب");
+    let raced: unknown = null;
+    try {
+      await store.documentHoldReason({ order: stale, status: "technical_rework",
+        reasonCode: HOLD_REASONS.technical_rework[3].code, note: "لقطة بائتة", performedBy: X });
+    } catch (e) { raced = e; }
+    const tz = await snap(TZ);
+    eq([raced instanceof store.WorkOrderConflictError, tz.reason, tz.note, tz.history],
+      [true, RWK, "كتبه المدير أوّلاً", tzBefore.history + 1],
+      "ي٢٢. **وكاتبٌ بلقطةٍ بائتة يُردّ تحت القفل** — لا يُكتب فوق سببٍ كتبه غيرُه، ولا سطرَ ثانٍ");
+
+    console.log("\nي — والسببُ المكتوبُ هكذا عذرٌ كسائر الأعذار");
+    r = await http("POST", `/api/manufacturing/orders/${TR}/resume`, S.expert, {});
+    tr3 = await snap(TR);
+    eq([r.status, tr3.status, tr3.stage, tr3.reason], [200, "active", "manufacturing", RWK],
+      "ي٢٣. استُؤنف العملُ في مرحلته نفسِها والعذرُ باقٍ");
+    eq(latenessOf(await rowOf(TR)), "late_excused", "ي٢٤. فبقي «متأخر بعذر»");
+    ov = (await http("GET", `/api/manufacturing/overview?branchId=${bE}`, S.admin)).body;
+    //  الأحياءُ المتأخّرة: R وTY بلا عذر · وK وL وTR وTM وTX وTZ بعذر.
+    eq([ov?.totals?.overdue, ov?.totals?.overdueExcused], [2, 6],
+      "ي٢٥. واللوحة: اثنان بدون عذر (R · TY) · ستّةٌ بعذر");
   } finally {
     if (srv) await new Promise((res) => srv.close(() => res(null)));
     const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);

@@ -131,7 +131,7 @@ import {
   STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES, HOLD_REASONS,
 } from "@shared/manufacturing";
 import { BUCKET_DEFS } from "../client/src/pages/manufacturing_buckets";
-import { rowToneOf, holdButtonShown, orderLatenessNotice } from "../client/src/pages/manufacturing_row_tone";
+import { rowToneOf, holdButtonShown, holdDialogKind, orderLatenessNotice } from "../client/src/pages/manufacturing_row_tone";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
@@ -994,6 +994,15 @@ async function main() {
   check(/المتوقف بسبب مكتوب[\s\S]{0,80}ولا يظهر\s+له الزر/.test(og)
     && orderLatenessNotice(heldWithCause) === null && holdButtonShown(heldWithCause) === false,
     "ي.١٩ب والمتوقف بسبب مكتوب: بطاقته تقوله ولا زر — في الدليل وفي القرار");
+  //  مراجعةُ Codex على ٤٠٤: نافذةُ المتوقّف بلا سبب تكتب سببَ توقّفه القائم وحدَه —
+  //  وإعادةُ العمل الموروثة بعينها لا تُرجَع بمرحلة. مقيسٌ على القرار الخالص.
+  const legacyRework = { ...heldNoCause, status: "technical_rework" };
+  check(/تكتب سبب التوقف القائم وحده/.test(og)
+    && /نوع التوقف كما هو والمرحلة كما هي، بلا رجوع بمرحلة/.test(og)
+    && /«إعادة عمل فني» الموروثة يُكتب سببها هكذا ولا تُرجَع مرة ثانية/.test(og)
+    && holdDialogKind(heldNoCause) === "document_existing" && holdDialogKind(legacyRework) === "document_existing"
+    && holdDialogKind({ ...heldNoCause, status: "active" }) === "new_hold",
+    "ي.١٩ج ونافذته تكتب سبب التوقف القائم وحده بلا رجوع بمرحلة — في الدليل وفي القرار");
   check(/أول تحديد لا يحتاج سبباً/.test(og) && /تغيير موعد قائم يحتاج سبباً مكتوباً/.test(og)
     && /اختيار التاريخ نفسه مرفوض/.test(og), "ي.٢٠ قواعد الموعد دقيقة");
   check(/الإدارة ومدير الفرع فقط/.test(og) && /تحويل لخبير/.test(og)
