@@ -221,7 +221,10 @@ async function main() {
       const resumed = await order(oid);
       same(`${status}: الاستئناف يعيد active`, resumed.status, "active");
       same(`${status}: والمرحلة ما زالت كما هي`, resumed.currentStage, before);
-      same(`${status}: والسبب أُفرغ`, [resumed.holdReasonCode, resumed.holdNote], [null, null]);
+      //  **انقلب هذا العقدُ بقرار المالك (٢٠٢٦-٠٩-٢٤)**: كان الاستئنافُ يُفرغ
+      //  السبب فيضيع عذرُ التأخير؛ والآن يبقى حتى ينتهي الأمر أو يُكتب أحدث.
+      same(`${status}: والسبب باقٍ عذراً بعد الاستئناف`,
+        [resumed.holdReasonCode, resumed.holdNote], [reason, "ملاحظة داخلية"]);
     }
     r = await req("POST", `/api/manufacturing/orders/${oid}/hold`, S.expert, { status: "medical_hold", reasonCode: "patient_no_show" });
     same("سبب لا يخصّ النوع مرفوض", r.status, 400);
@@ -260,7 +263,9 @@ async function main() {
     const advanced = await order(oid);
     same("عاد للعمل", advanced.status, "active");
     same("وتقدّم", advanced.currentStage, "ready_for_fitting");
-    same("والسبب أُفرغ", advanced.holdReasonCode, null);
+    //  **انقلب هذا العقدُ بقرار المالك (٢٠٢٦-٠٩-٢٤)**: التقدّمُ لا يمحو العذر
+    //  المكتوب — يبقى حتى ينتهي الأمر أو يُكتب سببٌ أحدث.
+    same("والسبب باقٍ عذراً بعد التقدّم", advanced.holdReasonCode, "socket_fit");
 
     console.log("\n── التسليم يتطلّب نتيجة ──");
     r = await req("PATCH", `/api/manufacturing/orders/${oid}/advance`, S.expert, {});
@@ -541,7 +546,7 @@ async function main() {
       try {
         await store.updateStage({
           order: staleSnap, toStage: "mold", deliveryDate: "2026-09-18",
-          newStatus: "active", clearHold: true, performedBy: EXPERT,
+          newStatus: "active", performedBy: EXPERT,
         });
       } catch (e) { rejected = e; }
       check(rejected instanceof store.WorkOrderConflictError,
@@ -562,7 +567,7 @@ async function main() {
       try {
         await store.updateStage({
           order: snapX, toStage: "mold", deliveryDate: "2026-09-20",
-          newStatus: "active", clearHold: true, performedBy: EXPERT,
+          newStatus: "active", performedBy: EXPERT,
         });
       } catch (e) { rejX = e; }
       check(rejX instanceof store.WorkOrderConflictError, "ولا تُحيي أمراً ملغى");

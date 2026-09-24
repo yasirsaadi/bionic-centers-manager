@@ -16,9 +16,14 @@
 //  ══ و«العذرُ المكتوب» واقعةٌ في القاعدة لا استنتاج ═══════════════════════
 //  `holdReasonCode` **إلزاميّ** على كلّ توقّف: `holdOrder` تشترطه للحالات
 //  الأربع (`waiting_patient` · `waiting_materials` · `medical_hold` ·
-//  `technical_rework`)، وإعادةُ العمل الفنّي تكتبه كذلك؛ والاستئنافُ
-//  والإلغاءُ يُصفّرانه. فحضورُه **هو بعينه** «كتب الخبيرُ عذراً»، وغيابُه
-//  «لم يكتب» — ولا يُخمَّن عذرٌ من حالةٍ ولا من مرحلة.
+//  `technical_rework`)، وإعادةُ العمل الفنّي تكتبه كذلك. فحضورُه **هو بعينه**
+//  «كتب الخبيرُ عذراً»، وغيابُه «لم يكتب» — ولا يُخمَّن عذرٌ من حالةٍ ولا من
+//  مرحلة.
+//
+//  ══ **والعذرُ يبقى بعد الاستئناف** (قرارُ المالك ٢٠٢٦-٠٩-٢٤ — ثانياً) ══════
+//  «لا يضيع عذرٌ مهما كان»: الاستئنافُ والتقدّمُ لم يعودا يُصفّرانه، وإنما
+//  **التسليمُ والإلغاءُ** أو عذرٌ أحدث يحلّ محلَّه. فحضورُه وحدَه لم يعد يعني
+//  «متوقّف» — و«أهو متوقّفٌ الآن؟» تقوله `status` وحدها (`isHoldStatus`).
 //
 //  ══ ولا يُخترَع لونٌ ثالث ════════════════════════════════════════════════
 //  سلاسلُ الأصناف هي **عينُها** التي تستعملها شاشةُ التنبيهات
@@ -28,7 +33,7 @@
 //  **ولا سلطةَ هنا**: الخادمُ يحرس النطاقَ والصلاحيةَ من مصدره، وهذا
 //  **عرضٌ** لا منحُ وصول.
 
-import { REASON_CODE_LABELS, writtenHoldExcuse } from "@shared/manufacturing";
+import { REASON_CODE_LABELS, isHoldStatus, writtenHoldExcuse } from "@shared/manufacturing";
 
 /** أقلُّ ما يلزم من صفّ الأمر ليُلوَّن — لا أكثر. */
 export interface RowToneOrderLike {
@@ -112,15 +117,20 @@ export function rowToneOf(o: RowToneOrderLike): RowToneDecision {
   const note = typeof o.holdNote === "string" && o.holdNote.trim() !== ""
     ? o.holdNote.trim() : null;
 
+  //  **الأصفرُ لعذرٍ مكتوبٍ يعمل الآن**: الأمرُ متوقّفٌ به، أو متأخّرٌ وهو
+  //  عذرُ تأخّره. أمّا أمرٌ استُؤنف وبقي عذرُه ولم يحِن موعدُه فيعمل في
+  //  موعده — لا معذوراً عن شيء — فلا لونَ له، ويعود العذرُ إن تأخّر.
+  const onHold = isHoldStatus(o.status);
   const tone: RowTone = o.status === "completed" ? "green"
     : o.status === "cancelled" ? "slate"
-    : excuse ? "amber"
+    : excuse && (onHold || o.isOverdue) ? "amber"
     : o.isOverdue ? "red"
     : "plain";
 
-  //  السببُ يُقرأ ما دام مكتوباً — **ولا يُعرَض على منتهٍ**: أمرٌ اكتمل أو
-  //  أُلغي انتهى ظرفُه، وعرضُ «سببُ توقّفه» عليه يقول عملاً قائماً لا يقوم.
-  const showReason = excuse !== null && tone !== "green" && tone !== "slate";
+  //  السببُ يُقرأ حين يكون هو ما يلوّن الصفّ — **ولا يُعرَض على منتهٍ** (أمرٌ
+  //  اكتمل أو أُلغي انتهى ظرفُه) **ولا على عاملٍ في موعده** (عذرٌ لا يعذر شيئاً
+  //  الآن يقول عملاً متوقّفاً لا يتوقّف).
+  const showReason = tone === "amber";
 
   return {
     tone,
@@ -137,5 +147,53 @@ export function rowToneOf(o: RowToneOrderLike): RowToneDecision {
           note,
         }
       : null,
+  };
+}
+
+// ══ تنبيهُ التأخّر في صفحة الأمر — والمكانُ الواحد للعذر ══════════════════
+//  قرارُ المالك (٢٠٢٦-٠٩-٢٤ — ثانياً): «تُلزم الخبير بمكان كتابة عذرٍ واحد،
+//  وتجعل التطبيق يقرأ فقط من هذا المكان». والمكانُ زرُّ «توقّف / مشكلة» —
+//  وهو ما يقرؤه `latenessOf` وحدَه. فصفحةُ الأمر المتأخّر تقول الحالَ
+//  وتدلّ على ذلك المكان بعينه **في اللحظة التي يلزم فيها**: متأخّرٌ بلا عذرٍ
+//  يُقال له أين يُكتب، ومتأخّرٌ بعذرٍ يرى عذرَه وأنه باقٍ.
+//
+//  **ولا تنبيهَ على متوقّف**: بطاقةُ «متوقّف» في الصفحة تعرض سببَه أصلاً،
+//  فتنبيهٌ ثانٍ يكرّر السببَ نفسَه في موضعين. **ولا على منتهٍ ولا على
+//  عاملٍ في موعده** — لا تأخّرَ يُقال عنه شيء.
+
+export interface LatenessNotice {
+  tone: "red" | "amber";
+  /** «متأخر بدون عذر» أو «متأخر بعذر» — كشارة الصفّ بحرفها. */
+  title: string;
+  /** صنفُ البطاقة كاملاً — **سلسلةٌ حرفية** يقرؤها ماسحُ أدوات التنسيق. */
+  cardClass: string;
+  /** العذرُ المكتوب كما يُقرأ في الصفّ — للكهرمانيّ وحده. */
+  reason: RowReason | null;
+  /** الجملةُ التي تدلّ على المكان الواحد لكتابة العذر. */
+  hint: string;
+}
+
+export const EXCUSE_PLACE_HINT_RED =
+  "إن كان للتأخير سبب فاكتبه من زرّ «توقّف / مشكلة» — هو المكان الوحيد الذي يُقرأ منه عذر التأخير. "
+  + "ثمّ اضغط «إلغاء التوقّف ومتابعة العمل» متى زال السبب، ويبقى العذر محفوظاً.";
+export const EXCUSE_PLACE_HINT_AMBER =
+  "كُتب هذا العذر من «توقّف / مشكلة»، ويبقى حتى يُسلَّم الأمر أو يُكتب سببٌ أحدث منه.";
+
+export function orderLatenessNotice(o: RowToneOrderLike): LatenessNotice | null {
+  if (o.status === "completed" || o.status === "cancelled") return null;
+  if (!o.isOverdue) return null;
+  if (isHoldStatus(o.status)) return null;
+  const t = rowToneOf(o);
+  if (t.tone === "amber") {
+    return {
+      tone: "amber", title: t.overdueBadgeLabel,
+      cardClass: "border-amber-300 bg-amber-50/50",
+      reason: t.reason, hint: EXCUSE_PLACE_HINT_AMBER,
+    };
+  }
+  return {
+    tone: "red", title: t.overdueBadgeLabel,
+    cardClass: "border-red-300 bg-red-50/50",
+    reason: null, hint: EXCUSE_PLACE_HINT_RED,
   };
 }

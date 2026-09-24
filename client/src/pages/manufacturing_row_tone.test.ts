@@ -8,7 +8,10 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { rowToneOf, type RowToneOrderLike } from "./manufacturing_row_tone";
+import {
+  rowToneOf, orderLatenessNotice, EXCUSE_PLACE_HINT_RED, EXCUSE_PLACE_HINT_AMBER,
+  type RowToneOrderLike,
+} from "./manufacturing_row_tone";
 import { REASON_CODE_LABELS } from "../../../shared/manufacturing";
 import { cn } from "../lib/utils";
 
@@ -111,7 +114,7 @@ eq("هـ٦. ومَن توقّف في موعده يُقال «سببُ التوق
   onTimeHold.reason?.prefix, "سببُ التوقّف");
 eq("هـ٧. وبلا ملاحظةٍ يبقى السببُ وحدَه", onTimeHold.reason?.note, null);
 eq("هـ٨. وملاحظةٌ بياضٌ وحدَها تُقرأ غياباً",
-  rowToneOf(order({ holdReasonCode: "swelling", holdNote: "   " })).reason?.note, null);
+  rowToneOf(order({ status: "medical_hold", holdReasonCode: "swelling", holdNote: "   " })).reason?.note, null);
 
 // ══ و. الفراغُ ليس عذراً ═══════════════════════════════════════════════════
 console.log("\n── و. لا عذرَ يُلفَّق ──");
@@ -125,12 +128,36 @@ for (const bad of ["", "   ", null]) {
 // ══ ز. رمزٌ لا نعرفه يُقال كما هو ══════════════════════════════════════════
 console.log("\n── ز. المجهولُ يُقال ولا يُفرَّغ ──");
 
-const unknown = rowToneOf(order({ holdReasonCode: "some_new_code_2030" }));
+const unknown = rowToneOf(order({ status: "waiting_materials", holdReasonCode: "some_new_code_2030" }));
 eq("ز١. رمزٌ خارج المعجم ⟶ يُعرَض كما هو", unknown.reason?.label, "some_new_code_2030");
 eq("ز٢. وهو أصفرُ كغيره", unknown.tone, "amber");
 ok("ز٣. والخادمُ يفعل الشيءَ نفسَه في نقطة التنبيهات",
   /REASON_CODE_LABELS\[o\.holdReasonCode\] \?\? o\.holdReasonCode/.test(
     fs.readFileSync(path.join(here, "../../../server/manufacturing/routes.ts"), "utf8")));
+
+// ══ س. العذرُ يبقى بعد الاستئناف (قرارُ المالك ٢٠٢٦-٠٩-٢٤ — ثانياً) ══════
+//  «لا يضيع عذرٌ مهما كان»: الاستئنافُ لم يعد يُصفّر العذر، فأمرٌ يعمل
+//  (`active`) قد يحمل عذراً مكتوباً. يُلوِّنه متى تأخّر، ويسكت متى كان في موعده.
+console.log("\n── س. الاستئنافُ لا يُسقط العذر ──");
+
+const resumedLate = rowToneOf(order({
+  status: "active", isOverdue: true, holdReasonCode: "component_delay", holdNote: "البرلون",
+}));
+eq("س١. استُؤنف وبقي عذرُه وهو متأخّر ⟶ أصفر لا أحمر (شكلُ وهج)", resumedLate.tone, "amber");
+eq("س٢. وشارتُه «متأخر بعذر»", resumedLate.overdueBadgeLabel, "متأخر بعذر");
+eq("س٣. وسببُه يُقال «سببُ التأخير»", resumedLate.reason?.prefix, "سببُ التأخير");
+eq("س٤. بعنوانه وما كتبه الخبيرُ بيده",
+  [resumedLate.reason?.label, resumedLate.reason?.note].join(" — "), "تأخّر وصول مكوّن — البرلون");
+
+const resumedOnTime = rowToneOf(order({
+  status: "active", isOverdue: false, holdReasonCode: "component_delay", holdNote: "البرلون",
+}));
+eq("س٥. استُؤنف ولم يحِن موعدُه ⟶ بلا لون — عذرٌ لا يعذر شيئاً الآن", resumedOnTime.tone, "plain");
+eq("س٦. ولا يُعرَض عليه سببُ توقّفٍ وهو لا يتوقّف", resumedOnTime.reason, null);
+eq("س٧. ومتوقّفٌ في موعده يبقى أصفر كما كان",
+  rowToneOf(order({ status: "waiting_materials", isOverdue: false, holdReasonCode: "component_delay" })).tone, "amber");
+eq("س٨. وعاملٌ متأخّرٌ لم يُكتب له عذرٌ قطّ يبقى أحمر",
+  rowToneOf(order({ status: "active", isOverdue: true })).tone, "red");
 
 // ══ ح. شارةُ «متأخر» تتبع العذرَ كذلك ══════════════════════════════════════
 console.log("\n── ح. الشارة ──");
@@ -249,6 +276,55 @@ ok("ل٣. والجمعُ باليد بلا `cn` يُبقي الصنفين معا
 ok("ل٤. والشاشتان تلبسان اللونَ على `Card` لا على عنصرٍ سواها",
   /<Card className=\{`hover:shadow-sm transition-shadow cursor-pointer \$\{t\.cardClass\}`\}>/.test(pageSrc)
   && /<Card className=\{`\$\{toneFor\(i, tone\)\}/.test(notifSrc));
+
+// ══ ع. صفحةُ الأمر: تنبيهُ التأخّر والمكانُ الواحد للعذر ═══════════════════
+//  قرارُ المالك (٢٠٢٦-٠٩-٢٤ — ثانياً): «تُلزم الخبير بمكان كتابة عذرٍ واحد،
+//  وتجعل التطبيق يقرأ فقط من هذا المكان». فالصفحةُ تدلّ عليه حين يلزم.
+console.log("\n── ع. صفحةُ الأمر تدلّ على المكان الواحد ──");
+
+const orderSrc = fs.readFileSync(path.join(here, "ManufacturingOrder.tsx"), "utf8");
+const orderCode = orderSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+const nRed = orderLatenessNotice(order({ status: "active", isOverdue: true }));
+eq("ع١. عاملٌ متأخّرٌ بلا عذر ⟶ تنبيهٌ أحمر", nRed?.tone, "red");
+eq("ع٢. عنوانُه «متأخر بدون عذر» كشارة الصفّ", nRed?.title, "متأخر بدون عذر");
+eq("ع٣. وجملتُه تدلّ على المكان الواحد", nRed?.hint, EXCUSE_PLACE_HINT_RED);
+ok("ع٤. والجملةُ تسمّي «توقّف / مشكلة» وتقول «الوحيد»",
+  /«توقّف \/ مشكلة»/.test(EXCUSE_PLACE_HINT_RED) && /الوحيد/.test(EXCUSE_PLACE_HINT_RED));
+
+const nAmber = orderLatenessNotice(order({
+  status: "active", isOverdue: true, holdReasonCode: "component_delay", holdNote: "البرلون",
+}));
+eq("ع٥. عاملٌ متأخّرٌ بعذرٍ باقٍ ⟶ تنبيهٌ كهرمانيّ", nAmber?.tone, "amber");
+eq("ع٦. عنوانُه «متأخر بعذر»", nAmber?.title, "متأخر بعذر");
+eq("ع٧. وعذرُه ظاهر بما كتبه الخبير", nAmber?.reason?.note, "البرلون");
+eq("ع٨. وجملتُه تقول إن العذر باقٍ", nAmber?.hint, EXCUSE_PLACE_HINT_AMBER);
+
+eq("ع٩. متوقّفٌ متأخّر ⟶ لا تنبيهَ ثانٍ (بطاقةُ «متوقّف» تعرض سببَه)",
+  orderLatenessNotice(order({ status: "waiting_materials", isOverdue: true, holdReasonCode: "component_delay" })), null);
+eq("ع١٠. في موعده ⟶ لا تنبيه",
+  orderLatenessNotice(order({ status: "active", isOverdue: false, holdReasonCode: "component_delay" })), null);
+eq("ع١١. مكتمل ⟶ لا تنبيه",
+  orderLatenessNotice(order({ status: "completed", isOverdue: true })), null);
+eq("ع١٢. ملغى ⟶ لا تنبيه",
+  orderLatenessNotice(order({ status: "cancelled", isOverdue: true })), null);
+eq("ع١٣. صنفُ الأحمر سلسلةٌ حرفية كاملة", nRed?.cardClass, "border-red-300 bg-red-50/50");
+eq("ع١٤. وصنفُ الكهرمانيّ كذلك", nAmber?.cardClass, "border-amber-300 bg-amber-50/50");
+
+ok("ع١٥. الصفحةُ تستورد القرارَ الخالص ولا تعيد كتابتَه",
+  /import \{ orderLatenessNotice \} from "\.\/manufacturing_row_tone"/.test(orderCode)
+  && /orderLatenessNotice\(\{/.test(orderCode));
+ok("ع١٦. وتعرض التنبيهَ بلونه",
+  /data-testid=\{`notice-lateness-\$\{lateness\.tone\}`\}/.test(orderCode)
+  && /\{lateness\.hint\}/.test(orderCode));
+ok("ع١٧. «ملاحظات فنّية» تقول إنها ليست عذراً وتدلّ على المكان الواحد",
+  /data-testid="hint-notes-not-excuse"[\s\S]{0,200}لا عذرُ تأخير[\s\S]{0,80}«توقّف \/ مشكلة»/.test(orderCode));
+ok("ع١٨. و«سبب التغيير» في نافذة الموعد كذلك",
+  /data-testid="hint-date-reason-not-excuse"[\s\S]{0,200}لا يُحسب عذراً للتأخير[\s\S]{0,80}«توقّف \/ مشكلة»/.test(orderCode));
+ok("ع١٩. ونافذةُ «توقّف / مشكلة» تقول إنها وحدَها مكانُ العذر وإنه يبقى",
+  /data-testid="hint-single-excuse-place"[\s\S]{0,200}هنا وحدَه يُكتب سببُ التأخير[\s\S]{0,120}حتى التسليم/.test(orderCode));
+ok("ع٢٠. وحقلُ «متأخر» يأتي من الخادم لا من حسابٍ في المتصفّح",
+  /isOverdue: order\.isOverdue === true/.test(orderCode) && !/toLocaleDateString\("en-CA"/.test(orderCode));
 
 console.log(`\n${pass} نجحت، ${fail} أخفقت`);
 process.exit(fail === 0 ? 0 : 1);

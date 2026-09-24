@@ -764,8 +764,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         notes: strOrU(req.body?.notes) ?? null,
         deliveryDate,
         // التقدّم يعيد الأمر إلى العمل: توقّفٌ سابق ينتهي بمجرّد المضيّ قُدُماً.
+        // **والعذرُ المكتوب يبقى** — لا يمحوه التقدّم (قرارُ المالك ٢٠٢٦-٠٩-٢٤).
         newStatus: MAINTENANCE_DONE_STAGES.has(toStage) || delivered ? null : "active",
-        clearHold: true,
         finalResult: finalResult ?? null,
         finalNotes: strOrU(req.body?.finalNotes) ?? null,
         performedBy: getSession(req).userId ?? null,
@@ -1077,9 +1077,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         branchId: o.branchId, branchName: o.branchName,
         expectedDeliveryDate: o.expectedDeliveryDate, currentStage: o.currentStage,
         status: o.status, days,
-        //  **سببُ التوقّف — لتمييز «متأخّرٌ حقّاً» عن «متأخّرٌ بعذرٍ مسجَّل»**
-        //  (نفسُ التصحيح). فارغٌ خارج حالات التوقّف الأربع، ولا يُستنتَج من
-        //  أيّ شيءٍ آخر — القيمةُ المخزَّنة نفسُها أو لا شيء.
+        //  **العذرُ المكتوب — لتمييز «متأخّرٌ حقّاً» عن «متأخّرٌ بعذرٍ مسجَّل»**
+        //  (نفسُ التصحيح). آخرُ سببٍ كُتب من «توقّف / مشكلة»، **ويبقى بعد
+        //  استئناف العمل** حتى ينتهي الأمر أو يُكتب أحدثُ منه (٢٠٢٦-٠٩-٢٤)،
+        //  ولا يُستنتَج من أيّ شيءٍ آخر — القيمةُ المخزَّنة نفسُها أو لا شيء.
         holdReasonCode: o.holdReasonCode ?? null,
         holdReasonLabel: o.holdReasonCode ? (REASON_CODE_LABELS[o.holdReasonCode] ?? o.holdReasonCode) : null,
         holdNote: o.holdNote ?? null,
