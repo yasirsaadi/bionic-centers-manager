@@ -229,7 +229,7 @@ async function main() {
     //  **انقلب هذا العقدُ بقرار المالك (٢٠٢٦-٠٩-٢٤)**: كان الاستئنافُ يُصفّر
     //  العذرَ فيعود الأمرُ أحمر («لا يضيع عذرٌ مهما كان»). والآن يبقى.
     const before2 = await store.getRawOrder(o2);
-    await store.resumeOrder({ order: before2!, performedBy: null });
+    await store.resumeOrder({ order: before2!, performedBy: null, authority: { via: "role" } });
     const after2 = await store.getRawOrder(o2);
     eq([after2?.status, after2?.holdReasonCode, after2?.holdNote],
       ["active", before2?.holdReasonCode, before2?.holdNote],
@@ -241,6 +241,7 @@ async function main() {
     await store.holdOrder({
       order: (await store.getRawOrder(o1))!, status: "waiting_materials",
       reasonCode: "component_delay", note: "المفصل من تركيا", performedBy: null,
+      authority: { via: "role" },
     });
     const ov3 = await store.getOverview({ branchIds: [bA] });
     eq([ov3.totals.overdue, ov3.totals.overdueExcused], [1, 3],
