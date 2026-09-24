@@ -128,8 +128,10 @@ import { DAILY_REVIEW_FAMILY_LABELS } from "@shared/daily_review";
 import { TRASH_TITLE, RESTORE_WINDOW_DAYS } from "@shared/patient_trash";
 import {
   BUILD_STAGES, PROSTHETIC_MAINTENANCE_STAGES, SUPPORT_MAINTENANCE_STAGES,
-  STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES,
+  STAGE_LABELS, STATUS_LABELS, HOLD_STATUSES, HOLD_REASONS,
 } from "@shared/manufacturing";
+import { BUCKET_DEFS } from "../client/src/pages/manufacturing_buckets";
+import { rowToneOf } from "../client/src/pages/manufacturing_row_tone";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
@@ -899,6 +901,53 @@ async function main() {
   check(/الملخص يتبع مرشح الفرع فقط/.test(mg)
     && /البحث ومرشحات\s+النوع والمرحلة والحالة والخبير/.test(mg),
     "ي.٧أ الملخص الإشرافي لا يتبع بقية مرشحات القائمة");
+
+  //  ══ ي.٧ب–ي.٧ز: أسماءُ المتأخّرين في الدليل هي أسماؤها في الشاشة ══════
+  //  مراجعةُ Codex على ٤٠١: قُسِّم «متأخرون» في الشاشة شريطين و«متأخر»
+  //  مربّعين، وبقي الدليلُ يصف واحداً — فيشرح المساعدُ عدّاداً لم يعد موجوداً.
+  //  **والأسماءُ تُقرأ من مصادرها لا من نصٍّ يُكتب هنا**: الشرائطُ من
+  //  `BUCKET_DEFS`، والمربّعاتُ وأعمدةُ الخبراء وسطرُ الفروع من نصّ
+  //  `Manufacturing.tsx`، والشارتان من `rowToneOf` نفسِها. فتسميةٌ تتغيّر في
+  //  الشاشة تُسقط الحارسَ حتى يلحقها الدليل.
+  const mfgSrc = readFileSync(new URL("../client/src/pages/Manufacturing.tsx", import.meta.url), "utf8");
+  const LATE = "متأخر";
+  const lateChips = BUCKET_DEFS
+    .filter((d) => d.key === "overdue" || d.key === "overdue_excused" || d.label.includes(LATE))
+    .map((d) => d.label);
+  const lateTiles = [...mfgSrc.matchAll(/<StatTile\s+label="([^"]+)"/g)]
+    .map((m) => m[1]).filter((l) => l.includes(LATE));
+  const lateHeaders = [...mfgSrc.matchAll(/<th[^>]*>([^<]+)<\/th>/g)]
+    .map((m) => m[1].trim()).filter((l) => l.includes(LATE));
+  const branchLine = mfgSrc.split("\n").find((l) => l.includes("{b.overdueExcused}")) ?? "";
+  const lateBranchLabels = [...branchLine.matchAll(/(متأخر[^{}•<]*?)\s*\{b\.overdue(?:Excused)?\}/g)]
+    .map((m) => m[1].trim());
+  const anExcuse = Object.values(HOLD_REASONS).flat()[0].code;
+  const badgeOf = (holdReasonCode: string | null) =>
+    rowToneOf({ status: "active", isOverdue: true, holdReasonCode, holdNote: null }).overdueBadgeLabel;
+  const lateBadges = [badgeOf(null), badgeOf(anExcuse)];
+  const found = { lateChips, lateTiles, lateHeaders, lateBranchLabels, lateBadges };
+
+  //  شاهدُ عدم الفراغ: لو لم يجد القارئُ شيئاً لمرّت ي.٧ج وي.٧هـ لسببٍ خاطئ.
+  check(lateChips.length >= 2 && lateTiles.length >= 2 && lateHeaders.length >= 2
+    && lateBranchLabels.length >= 2 && new Set(lateBadges).size === 2,
+    "ي.٧ب الشاشة تقسم المتأخرين اثنين في كل موضع (والقارئ وجدها)", JSON.stringify(found));
+  const missing = [...lateChips, ...lateTiles, ...lateHeaders, ...lateBadges]
+    .filter((l) => !mg.includes(`«${l}»`));
+  check(missing.length === 0, "ي.٧ج كل اسم للمتأخرين في الشاشة مذكور في الدليل بحرفه",
+    `غائبٌ عن الدليل: ${JSON.stringify(missing)}`);
+  check(lateBranchLabels.every((l) => lateHeaders.includes(l))
+    && /مقارنة الفروع بالتقسيم نفسه/.test(mg),
+    "ي.٧د سطر الفروع يقسم كأعمدة الخبراء، والدليل يقول ذلك", JSON.stringify(found));
+  const uiLate = new Set([...lateChips, ...lateTiles, ...lateHeaders, ...lateBadges]);
+  const stale = [...mg.matchAll(/«([^»]*متأخر[^»]*)»/g)].map((m) => m[1]).filter((l) => !uiLate.has(l));
+  check(stale.length === 0, "ي.٧هـ لا اسم للمتأخرين في الدليل ليس في الشاشة (لا «متأخرون» الواحد)",
+    `في الدليل وليس في الشاشة: ${JSON.stringify(stale)}`);
+  check(/تُضغط فتُرشّح/.test(mg) && /عدد ما يظهر بالضبط/.test(mg) && /الضغطة\s+الثانية/.test(mg),
+    "ي.٧و الشريحة تُضغط فتُرشّح، وعددها عدد ما يظهر");
+  check(/الأحمر لمن لا عذر له وحده/.test(mg)
+    && /المتأخر بعذر\s+لا يُعدّ في «متأخرون بدون عذر»/.test(mg)
+    && /لا يُستنتج عذر من الحالة/.test(mg),
+    "ي.٧ز الأحمر لمن لا عذر له وحده، والعذر مكتوب لا مستنتج");
   check(/أمر تصنيع لمريض موجود/.test(mg) && /زر إداري فقط/.test(mg)
     && /ليس\s+باب الصيانة/.test(mg) && /إضافة خدمة جديدة/.test(mg),
     "ي.٨ اختصار إنشاء الأمر مضبوط بحدوده");
