@@ -192,6 +192,8 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
         visitId: req.body?.visitId ?? null,
         createdBy: s.userId,
         branchIds: branchScope(req),
+        //  والطلبُ يُنسَب لفرع مُرسِله حين يصل الملفّ (ترحيل ٠٨٠).
+        sessionBranchId: s.branchId,
       });
       await logAudit({
         entityType: "medical_review_request", entityId: row.id, action: "create",

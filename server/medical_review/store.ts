@@ -16,7 +16,9 @@ import {
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 import { activeExamSql } from "../medical/active_exam";
-import { branchOrPatientAccessSql } from "../patients/branch_access";
+import {
+  branchOrPatientAccessSql, patientBranchIdsOf, resolveActingBranchId, scopeReachesPatient,
+} from "../patients/branch_access";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 export class ReviewError extends Error {
@@ -123,6 +125,8 @@ export async function createReviewRequest(params: {
   createdBy: number | null;
   /** نطاقُ المنادي — `null` للمسؤول. */
   branchIds: number[] | null;
+  /** فرعُ جلسة المنادي — يحسم فرعَ الطلب الجديد (راجع `createReviewRequestTx`). */
+  sessionBranchId?: number | null;
 }): Promise<ReviewRow> {
   //  ══ **«عاد للشراء» مملوكةٌ لتدفّقها الخاصّ وحده** (ترحيل ٠٧٢) ═════════
   //  صار `return_to_purchase` قيمةً صحيحة في `isReviewKind`، فهذا البابُ
@@ -167,6 +171,19 @@ export async function createReviewRequestTx(tx: any, params: {
   createdBy: number | null;
   /** نطاقُ المنادي — `null` للمسؤول. */
   branchIds: number[] | null;
+  /**
+   * **فرعُ جلسة المنادي** — يحسم فرعَ الطلب الجديد: فرعُ الموظّف إن كان
+   * يصل الملفّ، وإلّا فرعُ التسجيل (`resolveActingBranchId`). وغيابُه ⟶
+   * فرعُ التسجيل، وهو السلوكُ القائم قبل هذا الإصلاح بحرفه.
+   */
+  sessionBranchId?: number | null;
+  /**
+   * **فرعُ العملية التي يخصّها الطلب** حين تُعرَف مسبقاً (حلقةٌ قائمة أو قرارٌ
+   * سابق في «عاد للشراء») — فيقع الطلبُ في طوابير عمليته لا في فرعٍ آخر.
+   * **يُفحَص ولا يُصدَّق**: يُقبل إن كان يصل الملفّ وفي نطاق المنادي، وإلّا
+   * يسقط إلى فرع الجلسة ثمّ فرع التسجيل.
+   */
+  operationBranchId?: number | null;
 }): Promise<ReviewRow> {
   const {
     patientId, serviceType, requestedPath, reviewKind, createdBy, branchIds,
@@ -189,9 +206,35 @@ export async function createReviewRequestTx(tx: any, params: {
   if (!patient) throw new ReviewError("المريض غير موجود", 404);
   //  **ولا طلبَ مراجعةٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
   if (patient.deleted_at) throw new ReviewError(PATIENT_IN_TRASH_ERROR, 409);
-  if (branchIds !== null && !branchIds.includes(Number(patient.branch_id))) {
+  //  ══ **الفرعُ المُتاحُ له الملفّ يُرسل كما يُرسل فرعُ التسجيل** (ترحيل ٠٨٠
+  //  — إصلاحٌ ٢٠٢٦-٠٩-٢٤) ═════════════════════════════════════════════════
+  //  كان الشرطُ `branchIds.includes(patient.branch_id)` — **فرعُ التسجيل
+  //  وحده**، وهو النمطُ الذي يمنعه `patients/branch_access.ts` صراحةً. وهذه
+  //  النواةُ هي البابُ الواحد لكلّ طلبِ مراجعة: الإرسالُ اليدويّ، وطلبُ
+  //  الجهاز، وإضافةُ نوع الحالة، وزيارةُ الجهاز، و«عاد للشراء». فكان موظّفُ
+  //  الفرع المُتاح له الملفُّ يُردّ «غير مصرح لك بهذا الفرع» في الخمسة —
+  //  وثلاثةٌ منها بعد أن كتبت نصفَ عملها (الحلقة · الحالة · الزيارة).
+  //  والفحصُ الآن بالقاعدة التي تفتح له الملفَّ نفسَه: فرعُ التسجيل **أو**
+  //  إتاحةٌ صريحة. **ولا يتّسع لأحدٍ لا يصل الملفّ**.
+  const patientRef = {
+    id: patientId,
+    branchId: patient.branch_id === null || patient.branch_id === undefined
+      ? null : Number(patient.branch_id),
+  };
+  if (!(await scopeReachesPatient(branchIds, patientRef, tx))) {
     throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
   }
+  //  **والطلبُ يُنسَب للفرع الذي وقع فيه** — لا لفرع التسجيل. فطلبُ جهازٍ
+  //  يفتحه موظّفُ بغداد لمريضٍ مُتاحٍ لها يقع في طوابير بغداد مع حلقته
+  //  وزيارته (وكلتاهما تُنسَبان لفرع الحركة أصلاً)، لا في طوابير فرعٍ لم
+  //  يعمل فيه. ومَن لا فرعَ لجلسته يبقى على فرع التسجيل كما كان.
+  const requestBranchId = resolveActingBranchId({
+    scope: branchIds,
+    requestedBranchId: params.operationBranchId ?? null,
+    sessionBranchId: params.sessionBranchId ?? null,
+    homeBranchId: patientRef.branchId,
+    patientBranchIds: await patientBranchIdsOf(patientRef, tx),
+  });
 
   //  الخيط إن وُجد. **ليس شرط وجود**: المريض القديم قد لا يحمل خيطاً
   //  مصنَّفاً بعد، وحجبُ المراجعة عنه هو العطبُ الذي جئنا نصلحه.
@@ -234,7 +277,7 @@ export async function createReviewRequestTx(tx: any, params: {
         (patient_id, service_type, case_id, branch_id,
          device_episode_id, work_order_id, visit_id,
          requested_path, review_kind, reception_note, created_by)
-      VALUES (${patientId}, ${serviceType}, ${caseId}, ${patient.branch_id ?? null},
+      VALUES (${patientId}, ${serviceType}, ${caseId}, ${requestBranchId},
               ${episodeId}, ${orderId}, ${visitId},
               ${requestedPath}, ${reviewKind}, ${clean(params.receptionNote)}, ${createdBy})
       RETURNING *
@@ -275,6 +318,8 @@ export async function ensureReviewRouting(params: {
   visitId?: number | null;
   createdBy: number | null;
   branchIds: number[] | null;
+  /** فرعُ جلسة المنادي — يحسم فرعَ الطلب الجديد. */
+  sessionBranchId?: number | null;
 }): Promise<{ created: boolean; request: ReviewRow | null }> {
   //  حارسٌ صامت: العلاج الطبيعي (أو أي نوعٍ آخر) لا يُوجَّه ولا يُخطئ.
   if (!isReviewServiceType(params.serviceType)) return { created: false, request: null };

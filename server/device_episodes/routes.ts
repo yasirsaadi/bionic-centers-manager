@@ -51,13 +51,6 @@ function branchScope(req: Req): number[] | null {
   return s.branchId ? [s.branchId] : [];
 }
 
-function canReachBranch(req: Req, branchId: number | null): boolean {
-  const scope = branchScope(req);
-  if (scope === null) return true;
-  if (branchId === null) return false;
-  return scope.includes(branchId);
-}
-
 /** بوّابة الكتابة — مطابقة لـ«خدمة جديدة» في routes.ts. */
 function canStartService(req: Req): boolean {
   const s = getSession(req);
@@ -121,7 +114,12 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const patient = await patientScope(patientId);
       if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
       if (trashGuard(res, patient)) return;
-      if (!canReachBranch(req, patient.branch_id)) {
+      //  فرعُ التسجيل **أو** فرعٌ أُتيح له الملفّ (ترحيل ٠٨٠ — إصلاحٌ
+      //  ٢٠٢٦-٠٩-٢٤). كان `canReachBranch(patient.branch_id)` — فرعُ التسجيل
+      //  وحده — فيفتح الفرعُ المُتاحُ له الملفَّ صفحتَه ولا يرى أجهزتَه:
+      //  «ما سبب حضور المريض اليوم؟» يُبنى على قائمةٍ فارغة.
+      if (!(await scopeReachesPatient(branchScope(req),
+        { id: patientId, branchId: patient.branch_id ?? null }))) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
       res.json({ episodes: await episodes.getDeviceEpisodesForPatient(patientId) });
@@ -309,7 +307,10 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
         if (trashGuard(res, patient)) return;
       if (trashGuard(res, patient)) return;
-        if (!canReachBranch(req, patient.branch_id)) {
+        //  **ومَن فتح الطلبَ يُلغيه** — الفرعُ المُتاحُ له الملفّ يفتح طلبَ
+        //  الجهاز (ترحيل ٠٨٠)، فلا يُحبَس عن إلغائه لأن المريضَ سُجّل في غيره.
+        if (!(await scopeReachesPatient(branchScope(req),
+          { id: patientId, branchId: patient.branch_id ?? null }))) {
           return res.status(403).json({ error: "لا يمكنك التعديل على مريض فرع آخر" });
         }
 
