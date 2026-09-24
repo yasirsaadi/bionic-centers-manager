@@ -157,9 +157,23 @@ export function rowToneOf(o: RowToneOrderLike): RowToneDecision {
 //  وتدلّ على ذلك المكان بعينه **في اللحظة التي يلزم فيها**: متأخّرٌ بلا عذرٍ
 //  يُقال له أين يُكتب، ومتأخّرٌ بعذرٍ يرى عذرَه وأنه باقٍ.
 //
-//  **ولا تنبيهَ على متوقّف**: بطاقةُ «متوقّف» في الصفحة تعرض سببَه أصلاً،
-//  فتنبيهٌ ثانٍ يكرّر السببَ نفسَه في موضعين. **ولا على منتهٍ ولا على
-//  عاملٍ في موعده** — لا تأخّرَ يُقال عنه شيء.
+//  **ولا تنبيهَ على متوقّفٍ بسببٍ مكتوب**: بطاقةُ «متوقّف» في الصفحة تعرض
+//  سببَه أصلاً، فتنبيهٌ ثانٍ يكرّر السببَ نفسَه في موضعين. **ولا على منتهٍ
+//  ولا على عاملٍ في موعده** — لا تأخّرَ يُقال عنه شيء.
+//
+//  ══ والمتوقّفُ بلا سببٍ مكتوب ليس معذوراً (مراجعة Codex على ٤٠٣) ═══════════
+//  ترحيلا ٠٤٥ و٠٤٦ حوّلا `waiting_components` ⟶ `waiting_materials` و
+//  `needs_recast`/`needs_resocket` ⟶ `technical_rework` **بلا تعبئة السبب** —
+//  فأمرٌ متوقّفٌ قد لا يحمل عذراً مكتوباً. واللوحةُ تعدّه «متأخر بدون عذر»
+//  (`latenessOf` لا يقرأ الحالة)، بينما كانت صفحتُه **صامتة**: التنبيهُ يُسقَط
+//  لأنه «متوقّف»، وبطاقةُ التوقّف تُخفى لأنه «بلا سبب»، و«توقّف / مشكلة»
+//  يُخفى لأنه متوقّف — فلا يقول شيئاً ولا بابَ للمكان الواحد.
+//
+//  فالشرطُ واحدٌ للبطاقة وللتنبيه (`heldExcuseOf`): **سببٌ مكتوبٌ على أمرٍ
+//  متوقّف** ⟶ البطاقةُ تقوله ولا تنبيه؛ وإلّا ⟶ التنبيه. فلا يجتمعان ولا
+//  يغيبان معاً عن أمرٍ متأخّر. و«توقّف / مشكلة» يظهر لكلّ أمرٍ حيٍّ **لا عذرَ
+//  مكتوباً لتوقّفه** (`holdButtonShown`) — والخادمُ يقبل كتابةَ السبب على
+//  الأمر المتوقّف نفسِه أصلاً (`holdOrder` لا يردّ المتوقّف).
 
 export interface LatenessNotice {
   tone: "red" | "amber";
@@ -178,11 +192,39 @@ export const EXCUSE_PLACE_HINT_RED =
   + "ثمّ اضغط «إلغاء التوقّف ومتابعة العمل» متى زال السبب، ويبقى العذر محفوظاً.";
 export const EXCUSE_PLACE_HINT_AMBER =
   "كُتب هذا العذر من «توقّف / مشكلة»، ويبقى حتى يُسلَّم الأمر أو يُكتب سببٌ أحدث منه.";
+//  للمتوقّف بلا سببٍ مكتوب — يقول **لماذا** يُعدّ بلا عذر وهو متوقّف، فلا يُقرأ
+//  الأحمرُ خطأً، ويدلّ على الزرّ الظاهر له الآن.
+export const EXCUSE_PLACE_HINT_RED_HELD =
+  "هذا الأمر متوقّفٌ بلا سببٍ مكتوب، فيُحسب متأخراً بدون عذر. "
+  + "اكتب سببه من زرّ «توقّف / مشكلة» — هو المكان الوحيد الذي يُقرأ منه عذر التأخير.";
+
+/** أقلُّ ما يلزم لقرارَي البطاقة والزرّ — الحالةُ والسببُ لا أكثر. */
+export type HoldShapeLike = Pick<RowToneOrderLike, "status" | "holdReasonCode">;
+
+/**
+ *  سببُ التوقّف الذي تعرضه بطاقةُ «متوقّف» في صفحة الأمر — أو `null`.
+ *  **الشرطُ الواحد** الذي يُسقَط به التنبيهُ المكرِّر: لا تُسقِطه الحالةُ وحدها.
+ */
+export function heldExcuseOf(o: HoldShapeLike): string | null {
+  return isHoldStatus(o.status) ? writtenHoldExcuse(o.holdReasonCode) : null;
+}
+
+/**
+ *  أيظهر «توقّف / مشكلة» — المكانُ الوحيد للعذر؟ لكلّ أمرٍ حيٍّ **إلّا**
+ *  متوقّفاً كُتب سببُ توقّفه (ذاك يُستأنَف ثمّ يُكتب الأحدث). فالمتوقّفُ بلا
+ *  سببٍ مكتوب يجد البابَ ولا يُحبَس خلف «إلغاء التوقّف» وحدَه.
+ */
+export function holdButtonShown(o: HoldShapeLike): boolean {
+  if (o.status === "completed" || o.status === "cancelled") return false;
+  return heldExcuseOf(o) === null;
+}
 
 export function orderLatenessNotice(o: RowToneOrderLike): LatenessNotice | null {
   if (o.status === "completed" || o.status === "cancelled") return null;
   if (!o.isOverdue) return null;
-  if (isHoldStatus(o.status)) return null;
+  //  بطاقةُ «متوقّف» تعرض سببَه المكتوب — فلا تنبيهَ ثانٍ. **والمتوقّفُ بلا سبب
+  //  لا يُسكَت**: لا بطاقةَ له، فالتنبيهُ وحدَه يقول الحال.
+  if (heldExcuseOf(o) !== null) return null;
   const t = rowToneOf(o);
   if (t.tone === "amber") {
     return {
@@ -194,6 +236,7 @@ export function orderLatenessNotice(o: RowToneOrderLike): LatenessNotice | null 
   return {
     tone: "red", title: t.overdueBadgeLabel,
     cardClass: "border-red-300 bg-red-50/50",
-    reason: null, hint: EXCUSE_PLACE_HINT_RED,
+    reason: null,
+    hint: isHoldStatus(o.status) ? EXCUSE_PLACE_HINT_RED_HELD : EXCUSE_PLACE_HINT_RED,
   };
 }

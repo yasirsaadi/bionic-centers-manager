@@ -10,9 +10,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   rowToneOf, orderLatenessNotice, EXCUSE_PLACE_HINT_RED, EXCUSE_PLACE_HINT_AMBER,
+  EXCUSE_PLACE_HINT_RED_HELD, heldExcuseOf, holdButtonShown,
   type RowToneOrderLike,
 } from "./manufacturing_row_tone";
-import { REASON_CODE_LABELS } from "../../../shared/manufacturing";
+import { REASON_CODE_LABELS, HOLD_STATUSES, HOLD_REASONS } from "../../../shared/manufacturing";
 import { cn } from "../lib/utils";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -312,7 +313,7 @@ eq("ع١٣. صنفُ الأحمر سلسلةٌ حرفية كاملة", nRed?.car
 eq("ع١٤. وصنفُ الكهرمانيّ كذلك", nAmber?.cardClass, "border-amber-300 bg-amber-50/50");
 
 ok("ع١٥. الصفحةُ تستورد القرارَ الخالص ولا تعيد كتابتَه",
-  /import \{ orderLatenessNotice \} from "\.\/manufacturing_row_tone"/.test(orderCode)
+  /import \{[^}]*\borderLatenessNotice\b[^}]*\} from "\.\/manufacturing_row_tone"/.test(orderCode)
   && /orderLatenessNotice\(\{/.test(orderCode));
 ok("ع١٦. وتعرض التنبيهَ بلونه",
   /data-testid=\{`notice-lateness-\$\{lateness\.tone\}`\}/.test(orderCode)
@@ -325,6 +326,73 @@ ok("ع١٩. ونافذةُ «توقّف / مشكلة» تقول إنها وحد�
   /data-testid="hint-single-excuse-place"[\s\S]{0,200}هنا وحدَه يُكتب سببُ التأخير[\s\S]{0,120}حتى التسليم/.test(orderCode));
 ok("ع٢٠. وحقلُ «متأخر» يأتي من الخادم لا من حسابٍ في المتصفّح",
   /isOverdue: order\.isOverdue === true/.test(orderCode) && !/toLocaleDateString\("en-CA"/.test(orderCode));
+
+// ══ ف. المتوقّفُ بلا سببٍ مكتوب — مراجعة Codex على ٤٠٣ ══════════════════
+//  ترحيلا ٠٤٥ و٠٤٦ حوّلا الحالاتِ القديمة إلى حالات توقّفٍ **بلا تعبئة
+//  السبب**. واللوحةُ تعدّ الأمرَ «متأخر بدون عذر»، فصفحتُه يجب أن تقول ذلك
+//  وتفتح له المكانَ الواحد — لا أن تصمت لأنه «متوقّف».
+console.log("\n── ف. المتوقّفُ بلا سببٍ مكتوب ──");
+
+for (const st of HOLD_STATUSES) {
+  const n = orderLatenessNotice(order({ status: st, isOverdue: true }));
+  ok(`ف١. «${st}» بلا سبب ومتأخّر ⟶ تنبيهٌ أحمر «متأخر بدون عذر» بجملة المتوقّف`,
+    n?.tone === "red" && n?.title === "متأخر بدون عذر" && n?.reason === null
+      && n?.hint === EXCUSE_PLACE_HINT_RED_HELD,
+    JSON.stringify(n));
+}
+eq("ف٢. والبياضُ ليس سبباً — تنبيهٌ أحمر كذلك",
+  orderLatenessNotice(order({ status: "waiting_materials", isOverdue: true, holdReasonCode: "  " }))?.tone,
+  "red");
+eq("ف٣. متوقّفٌ بلا سبب **في موعده** ⟶ لا تنبيه (لا تأخّرَ يُقال عنه شيء)",
+  orderLatenessNotice(order({ status: "waiting_materials", isOverdue: false })), null);
+ok("ف٤. وجملتُه تقول لماذا يُعدّ بلا عذر، وتسمّي «توقّف / مشكلة» وتقول «الوحيد»",
+  /متوقّفٌ بلا سببٍ مكتوب/.test(EXCUSE_PLACE_HINT_RED_HELD)
+  && /«توقّف \/ مشكلة»/.test(EXCUSE_PLACE_HINT_RED_HELD) && /الوحيد/.test(EXCUSE_PLACE_HINT_RED_HELD));
+eq("ف٥. والعاملُ بلا عذر يبقى على جملته القديمة بحرفها",
+  orderLatenessNotice(order({ status: "active", isOverdue: true }))?.hint, EXCUSE_PLACE_HINT_RED);
+
+//  البطاقةُ والتنبيهُ **شرطٌ واحد**: لكلّ متوقّفٍ متأخّر يظهر أحدُهما بالضبط.
+const causes: Array<string | null> = [null, "", "  ", "component_delay", "legacy_code_x"];
+let exactlyOne = true; const broken: string[] = [];
+for (const st of HOLD_STATUSES) for (const c of causes) {
+  const o = order({ status: st, isOverdue: true, holdReasonCode: c });
+  const card = heldExcuseOf(o) !== null;
+  const notice = orderLatenessNotice(o) !== null;
+  if (card === notice) { exactlyOne = false; broken.push(`${st}/${JSON.stringify(c)}`); }
+}
+ok("ف٦. **لكلّ متوقّفٍ متأخّر: بطاقةُ السبب أو التنبيه — أحدُهما بالضبط**", exactlyOne, broken.join(" · "));
+eq("ف٧. والبطاقةُ تعرض السببَ مقصوصاً كما يقرؤه التعريفُ المشترك",
+  heldExcuseOf(order({ status: "medical_hold", holdReasonCode: " doctor_review " })), "doctor_review");
+eq("ف٨. ولا بطاقةَ توقّفٍ لأمرٍ عاملٍ بعذرٍ باقٍ (استُؤنف)",
+  heldExcuseOf(order({ status: "active", holdReasonCode: "component_delay" })), null);
+
+//  والمكانُ الواحد يُبلَغ من كلّ حالٍ حيٍّ لا عذرَ مكتوباً لتوقّفه.
+eq("ف٩. عاملٌ ⟶ «توقّف / مشكلة» ظاهر", holdButtonShown(order({ status: "active" })), true);
+eq("ف١٠. عاملٌ بعذرٍ باقٍ ⟶ ظاهر (يُكتب الأحدث)",
+  holdButtonShown(order({ status: "active", holdReasonCode: "component_delay" })), true);
+let heldNoCause = true, heldWithCause = true;
+for (const st of HOLD_STATUSES) {
+  if (!holdButtonShown(order({ status: st }))) heldNoCause = false;
+  if (!holdButtonShown(order({ status: st, holdReasonCode: "   " }))) heldNoCause = false;
+  const code = HOLD_REASONS[st][0].code;
+  if (holdButtonShown(order({ status: st, holdReasonCode: code }))) heldWithCause = false;
+}
+ok("ف١١. **متوقّفٌ بلا سببٍ مكتوب ⟶ الزرّ ظاهر** (الحالاتُ الأربع، والبياضُ كالغياب)", heldNoCause);
+ok("ف١٢. متوقّفٌ بسببٍ مكتوب ⟶ الزرّ مخفيّ كما كان (يُستأنَف ثمّ يُكتب الأحدث)", heldWithCause);
+eq("ف١٣. مكتمل ⟶ لا زرّ", holdButtonShown(order({ status: "completed" })), false);
+eq("ف١٤. ملغى ⟶ لا زرّ", holdButtonShown(order({ status: "cancelled" })), false);
+
+//  عقدُ الصفحة: القراران من هنا لا من شرطٍ ثانٍ ينحرف.
+ok("ف١٥. بطاقةُ «متوقّف» تُعرَض بالشرط المشترك لا بـ`order.holdReasonCode` خاماً",
+  /const heldExcuse = heldExcuseOf\(holdShape\)/.test(orderCode)
+  && /\{heldExcuse && \(/.test(orderCode)
+  && !/onHold && order\.holdReasonCode/.test(orderCode));
+ok("ف١٦. وزرُّ «توقّف / مشكلة» بالقرار الخالص لا بـ`!onHold`",
+  //  (والسهمُ `=>` داخل `onClick` يحمل «>»، فلا يُقرأ الوسمُ بـ`[^>]*`.)
+  /\{holdButtonShown\(holdShape\) && \(\s*<Button[\s\S]{0,200}?data-testid="button-hold"/.test(orderCode)
+  && !/\{!onHold && \(\s*<Button[\s\S]{0,200}?data-testid="button-hold"/.test(orderCode));
+ok("ف١٧. والصفحةُ تستورد القرارين من الملفّ الخالص",
+  /import \{[^}]*\bheldExcuseOf\b[^}]*\bholdButtonShown\b[^}]*\} from "\.\/manufacturing_row_tone"/.test(orderCode));
 
 console.log(`\n${pass} نجحت، ${fail} أخفقت`);
 process.exit(fail === 0 ? 0 : 1);
