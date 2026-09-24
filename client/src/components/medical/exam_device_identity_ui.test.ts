@@ -40,10 +40,19 @@ check("٢. ولا يُرسَل في التحرير (النسخةُ الثاني�
 console.log("\n── الحسم ──");
 check("٣. النافذةُ تقرأ الأجهزةَ المنتظرة من نقطة المعاينات (`awaitingEpisodes`)",
   dlg.includes("awaitingEpisodes") && dlg.includes("/api/medical/patients/${patientId}/exams"));
-check("٤. **ولا تجلبها حين يصلها المعرّفُ ثابتاً** من صفّ القائمة — بالهويّة الفعّالة",
-  dlg.includes("enabled: open && !isEdit && !fixedActive")
+//  ⚠ **تغيّر عقدُ البند ٤ (٢٠٢٦-٠٩-٢٤)**: كان يثبت أن القائمةَ **لا تُجلَب**
+//  حين يصل الجهازُ ثابتاً من «معايناتي». وصارت تُجلَب لكلّ معاينةٍ جديدة، لأن منها
+//  يُقرأ ما سجّله الاستقبال (نوعُ البتر ونوعُ المسند) فتفتح عليه النافذة — وذلك
+//  المسارُ أشيعُ أبواب الطبيب، فحجبُها فيه كان يُفرغه (شكوى المالك). **والمحروسُ
+//  بقي بحرفه**: القرارُ لا يقرأ القائمةَ حين يكون الجهازُ الثابت هو المقصود، ولا
+//  ينتظرها الحفظ، و`fixedActive` لا تعتمد عليها فلا يدور الشرطُ على نفسه.
+check("٤. **والجهازُ الثابت لا يتبع القائمة** — تُجلَب لما سجّله الاستقبال ولا يُقرَّر بها ولا يُنتظَر لها",
+  dlg.includes("enabled: open && !isEdit,")
   //  و`fixedActive` لا تعتمد على القائمة، وإلّا دار الشرطُ على نفسه.
-  && mod.includes("fixedActive: activeFixed !== null"));
+  && dlg.includes("resolveExamEpisodeChoice({ ...choiceInput, awaiting: [] }).fixedActive")
+  && mod.includes("fixedActive: activeFixed !== null")
+  //  ولا يُنتظَر تحميلُها للحفظ في ذلك المسار.
+  && dlg.includes("const candidatesLoading = !isEdit && !choice.fixedActive"));
 check("٥. المرشَّحون بالاختصاص المختار أوّلاً",
   mod.includes("awaiting.filter((e) => e.caseType === specialty)"));
 check("٦. **أكثرُ من مرشَّح بلا اختيار ⟵ لا حفظ** — لا تخمينَ في الشاشة كما لا تخمينَ في الخادم",

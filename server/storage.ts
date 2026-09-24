@@ -60,7 +60,7 @@ import {
   lockCaseAndReadOpenEpisode, lockCaseAndReadExactEpisode,
   markEpisodeInManufacturing,
   startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
-  resolveDeviceTargetTx, moveLiveEpisodeToBranchTx,
+  resolveDeviceTargetTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
 import {
@@ -418,14 +418,6 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
    * يُبقي السلوكَ القائم: فرعُ تسجيل المريض.
    */
   actingBranchId?: number | null;
-  /**
-   * **الحلقةُ تتبع فرعَ البيع** (٢٠٢٦-٠٩-٢٤) — تُنقَل إلى `actingBranchId`
-   * **تحت قفل الخيط والحلقة المأخوذ هنا**، قبل حارس «لا أمرَ في فرعٍ وحلقتُه
-   * في آخر». يرفعه بيعُ ما بعد المعاينة وحده حين اختار البائعُ خبيراً يعمل في
-   * فرعٍ آخر من فروع ملفّ المريض — فالعمليةُ كلُّها (حلقةٌ وأمرٌ وقيد) تقع
-   * حيث يعمل خبيرُها. **وغيابُه يُبقي الحارسَ كما هو بحرفه** لكلّ مُستدعٍ آخر.
-   */
-  relocateEpisodeToActingBranch?: boolean;
 }): Promise<DeviceSaleOperation> {
   const { patientId, serviceType, fields, expertUserId, assignedBy } = params;
   const wantEpisode = params.deviceEpisodeId ?? null;
@@ -535,17 +527,6 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   //  **ولا يُعاد كتابةُ صفٍّ قائم**: خيطُ حالةٍ موجودٌ يبقى بفرعه، وإنما
   //  الجديدُ وحده (الحالةُ إن لم تكن، وأمرُ العمل) يأخذ فرعَ العملية.
   const opBranchId = params.actingBranchId ?? existing.branchId;
-
-  //  **النقلُ قبل الحارس لا بدلاً منه**: الحلقةُ مقفولةٌ أعلاه مع خيطها، فلا
-  //  ترتيبَ أقفالٍ جديد. و`moveLiveEpisodeToBranchTx` تنقل الحيّةَ وحدها
-  //  (لا مسلَّمةً ولا ملغاةً ولا مُبطَلةً إدارياً) — وحالتُها هنا «مُعايَنة»
-  //  أو «بلا معاينة» بحكم الفحص أعلاه.
-  if (params.relocateEpisodeToActingBranch === true && episode
-    && params.actingBranchId !== null && params.actingBranchId !== undefined) {
-    await moveLiveEpisodeToBranchTx(tx, {
-      episodeId: episode.id, branchId: Number(params.actingBranchId),
-    });
-  }
 
   // ══ **ولا أمرَ في فرعٍ مرتبطٍ بحلقةٍ من فرعٍ آخر** ═════════════════════
   //  الأمرُ والحلقةُ عمليةٌ واحدة: افتراقُ فرعيهما يجعل مالَها يُنسَب بعد شهرٍ
@@ -2908,8 +2889,6 @@ export class DatabaseStorage implements IStorage {
     tx?: DbTransactionLike;
     /** الفرعُ الذي تقع فيه العملية (ترحيل ٠٨٠) — غيابُه = فرعُ التسجيل. */
     actingBranchId?: number | null;
-    /** الحلقةُ تتبع فرعَ البيع — راجع `startDeviceSaleOperationallyTx`. */
-    relocateEpisodeToActingBranch?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number; deviceEpisodeId: number | null }> {
     const body = async (tx: any) => {
       const op = await startDeviceSaleOperationallyTx(tx, {
@@ -2920,7 +2899,6 @@ export class DatabaseStorage implements IStorage {
         assignedBy: params.assignedBy,
         deviceEpisodeId: params.deviceEpisodeId ?? null,
         actingBranchId: params.actingBranchId ?? null,
-        relocateEpisodeToActingBranch: params.relocateEpisodeToActingBranch === true,
       });
       const { patient } = await applyDeviceSaleFinancialsTx(tx, {
         operation: op, cost: params.cost,

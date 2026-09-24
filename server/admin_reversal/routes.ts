@@ -41,9 +41,7 @@ function getSession(req: Req) {
  * ولا قدرةَ دقيقة (`can*`) تفتحه: هذه سلطةُ إبطالٍ تمسّ المالَ والسجلَّ
  * السريريَّ معاً، ومنحُها بعلمٍ في صفّ مستخدمٍ يجعلها تُوزَّع بالخطأ.
  */
-async function mayReverse(
-  req: Req, target: { patientId: number; followupId: number },
-): Promise<{ ok: boolean; error?: string }> {
+function mayReverse(req: Req, branchId: number | null): { ok: boolean; error?: string } {
   const s = getSession(req);
   if (s.isAdmin) return { ok: true };
   if (s.role !== "branch_manager") {
@@ -52,13 +50,11 @@ async function mayReverse(
       error: "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط",
     };
   }
-  //  ══ **يصل الملفَّ، والعمليةُ في نطاقه** (٢٠٢٦-٠٩-٢٤) — لا فرعُ التسجيل
-  //  وحده: البيعُ ينتقل إلى فرع الخبير المختار (٤٠٩)، وكلُّ أثرٍ للتصحيح يُكتب
-  //  هناك. **القاعدةُ نفسُها** التي يعيد التنفيذُ فحصَها تحت القفل.
   const scope = s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []);
-  const { db } = await import("../db");
-  const refusal = await reversal.reversalScopeRefusal(db, { scope, ...target });
-  return refusal ? { ok: false, error: refusal } : { ok: true };
+  if (branchId !== null && !scope.includes(branchId)) {
+    return { ok: false, error: "لا يمكنك تصحيح عملية في فرع آخر" };
+  }
+  return { ok: true };
 }
 
 /** هويّةُ العملية كما تصل من الشاشات الثلاث — واحدةٌ منها تكفي. */
@@ -87,9 +83,7 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       const preview = await reversal.previewReversal(target);
       if (!preview) return res.status(404).json({ error: "العملية غير موجودة" });
 
-      const perm = await mayReverse(req, {
-        patientId: preview.patientId, followupId: preview.followupId,
-      });
+      const perm = mayReverse(req, await branchOf(preview.patientId));
       if (!perm.ok) return res.status(403).json({ error: perm.error });
 
       res.json(preview);
@@ -188,4 +182,15 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       res.status(500).json({ error: "تعذّر تنفيذ التصحيح" });
     }
   });
+}
+
+/** فرعُ المريض من صفّه — مصدرُ الحقيقة للنطاق. */
+async function branchOf(patientId: number): Promise<number | null> {
+  const { db } = await import("../db");
+  const { sql } = await import("drizzle-orm");
+  const r = await db.execute<{ branch_id: number | null }>(sql`
+    SELECT branch_id FROM patients WHERE id = ${patientId} AND deleted_at IS NULL
+  `);
+  const v = (r.rows ?? [])[0]?.branch_id;
+  return v === null || v === undefined ? null : Number(v);
 }

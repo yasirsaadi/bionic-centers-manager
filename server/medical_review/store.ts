@@ -890,55 +890,6 @@ export async function closeRequestsAwaitingExam(params: {
 }
 
 /**
- * **الفرعُ الذي أرسل المريضَ لهذه المعاينة** — حين لا حلقةَ جهازٍ تحسم فرعَها
- * (٢٠٢٦-٠٩-٢٤).
- *
- * ══ الواقعة (المريضة «زهراء») ═══════════════════════════════════════════
- * مسجَّلةٌ في ذي قار ومُتاحةٌ لبغداد. أرسلها استقبالُ بغداد «لمراجعة الطبيب»
- * (طلبٌ بلا حلقة، بفرع بغداد منذ ٤٠٧)، فعاينها الطبيب — **وسُجّلت المعاينةُ
- * بفرع حالتها (ذي قار)**، فوُلدت متابعةُ قرار الشراء في طابور ذي قار لا في
- * طابور الفرع الذي أرسلها والمريضةُ واقفةٌ فيه.
- *
- * ══ القاعدة ══════════════════════════════════════════════════════════════
- * أحدثُ طلبٍ **على مستوى الاختصاص** سيُغلقه هذا التوقيعُ — **نفسُ مجموعة
- * `closeRequestsAwaitingExam` بحرفها** (`pending` كاملٌ أو `escalated`، عارٍ
- * أو مرساتُه جهازٌ حيٌّ لا ينتظر) — فرعُه هو فرعُ المعاينة.
- *
- * **وثابتٌ عند إعادة الإرسال**: بعد التوقيع يصير الطلبُ `examined` بمعرّف
- * المعاينة، فيُقرأ **أيضاً** الطلبُ الذي أغلقته معاينةٌ بلا جهازٍ بمفتاح
- * التطابق نفسِه — فتُعيد إعادةُ الإرسال الفرعَ نفسَه فتطابق الصفَّ المحفوظ،
- * ولا تُقرأ «هويّةً مختلفة» (٠٧٤). ومعاينةٌ حجزت جهازاً لا تُقرأ هنا: فرعُها
- * فرعُ جهازها.
- *
- * `null` ⟶ لا طلبَ أرسل المريض، فيبقى المنادي على قاعدته القائمة بحرفها.
- */
-export async function referringRequestBranch(params: {
-  patientId: number; serviceType: string; idempotencyKey: string;
-}): Promise<number | null> {
-  if (!isReviewServiceType(params.serviceType)) return null;
-  const r = await db.execute(sql`
-    SELECT r.branch_id FROM medical_review_requests r
-     WHERE r.patient_id = ${params.patientId}
-       AND r.service_type = ${params.serviceType}
-       AND r.branch_id IS NOT NULL
-       AND ${specialtyLevelRequestSql("r")}
-       AND (
-         r.status = 'escalated'
-         OR (r.status = 'pending' AND r.requested_path = 'full')
-         OR (r.status = 'examined' AND EXISTS (
-               SELECT 1 FROM medical_exams me
-                WHERE me.id = r.exam_id
-                  AND me.idempotency_key = ${params.idempotencyKey}
-                  AND me.device_episode_id IS NULL))
-       )
-     ORDER BY r.created_at DESC, r.id DESC
-     LIMIT 1
-  `);
-  const b = (r.rows ?? [])[0]?.branch_id;
-  return b === null || b === undefined ? null : Number(b);
-}
-
-/**
  * **طلبُ المراجعة يتبع طلبَ الجهاز حين يُصحَّح نوعه.**
  *
  * الاستعلاماتُ فتحت الطلبَ بنوعٍ خاطئ، والطبيبُ صحّحه فانتقلت الحلقةُ إلى

@@ -31,6 +31,17 @@ import {
   type AwaitingEpisodeOption,
 } from "./exam_episode_choice";
 
+/** ما سجّله الاستقبالُ سريرياً عند التسجيل — يصل من باب المعاينة نفسِها. */
+interface RegistrationClinical {
+  amputationSite: string | null;
+  supportType: string | null;
+  injurySide: string | null;
+  diseaseType: string | null;
+  injuries: string | null;
+  injuryType: string | null;
+  injuryArea: string | null;
+}
+
 export interface ExamToEdit {
   id: number;
   caseType: string;
@@ -180,10 +191,16 @@ export function NewExamDialog({
   };
   const fixedActive = resolveExamEpisodeChoice({ ...choiceInput, awaiting: [] }).fixedActive;
 
-  const { data: examsData, isLoading: examsLoading } = useQuery<{ awaitingEpisodes?: AwaitingEpisodeOption[] }>({
+  const { data: examsData, isLoading: examsLoading } = useQuery<{
+    awaitingEpisodes?: AwaitingEpisodeOption[];
+    registration?: RegistrationClinical | null;
+  }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
-    //  لا تُجلَب حين يصل الجهازُ جاهزاً ويكون هو المقصود.
-    enabled: open && !isEdit && !fixedActive,
+    //  **تُجلَب لكلّ معاينةٍ جديدة** — ولو وصل الجهازُ جاهزاً من «معايناتي»:
+    //  منها يُقرأ ما سجّله الاستقبالُ فتفتح النافذةُ عليه (أدناه). والقائمةُ
+    //  لا تغيّر قرارَ الجهاز المُمرَّر (`resolveExamEpisodeChoice` لا يقرؤها
+    //  حين يكون هو المقصود)، ولا يُنتظَر تحميلُها للحفظ في ذلك المسار.
+    enabled: open && !isEdit,
   });
 
   const awaiting = examsData?.awaitingEpisodes ?? [];
@@ -234,18 +251,17 @@ export function NewExamDialog({
     if (open && !isEdit) newExamIdempotencyKeyRef.current = crypto.randomUUID();
   }, [open, isEdit]);
 
-  // The patient row: prefills what reception already recorded (physiotherapy
-  // diagnosis, injuries, amputation site, support type) so the doctor completes
-  // or corrects it instead of retyping — purely clinical, nothing commercial.
-  const { data: patientRow } = useQuery<any>({
-    queryKey: ["/api/patients", patientId, "exam-prefill"],
-    enabled: open,
-    queryFn: async () => {
-      const res = await fetch(`/api/patients/${patientId}`, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json();
-    },
-  });
+  // What reception already recorded (physiotherapy diagnosis, injuries,
+  // amputation site, support type, injured side) so the doctor completes or
+  // corrects it instead of retyping — purely clinical, nothing commercial.
+  //
+  // ══ **من باب المعاينة نفسِها لا من ملفّ المريض** (٢٠٢٦-٠٩-٢٤) ═══════════
+  //  كان يُقرأ من `GET /api/patients/:id`، وذلك البابُ يردّ طبيباً لا يحمل
+  //  «عرض المرضى» (٤٠٣)، وطبيباً يعمل في فرعين والمريضُ في غير فرع جلسته
+  //  (٤٠٤) — **وكان الردُّ يُبتلَع** فتفتح المعاينةُ فارغةً من نوع البتر ونوع
+  //  المسند وجهة الإصابة (شكوى المالك، مُعادٌ حيّاً). وباب المعاينة يصله كلُّ
+  //  مَن تصله قائمةُ الطبيب — بنطاقها نفسِه.
+  const patientRow = examsData?.registration ?? null;
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
