@@ -15,6 +15,7 @@
     "test:manufacturing": "tsx server/manufacturing/isolation.test.ts",
     "test:manufacturing-view": "tsx client/src/pages/manufacturing_view_mode.test.ts",
     "test:manufacturing-buckets": "tsx client/src/pages/manufacturing_buckets.test.ts",
+    "test:manufacturing-row-tone": "tsx client/src/pages/manufacturing_row_tone.test.ts",
     "test:mold-stage": "tsx server/manufacturing/mold_stage.test.ts",
     "test:stages": "tsx server/manufacturing/stages.test.ts",
     "test:workflow": "tsx server/manufacturing/workflow.test.ts",
