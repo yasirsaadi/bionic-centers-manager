@@ -58,6 +58,13 @@ function pos(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** اسمُ الفرع من لقطة الحمولة، وإلّا رقمُه — **ولا يُخترَع اسم**. */
+function branchLabel(name: unknown, id: unknown): string | null {
+  if (typeof name === "string" && name.trim()) return name.trim();
+  const n = pos(id);
+  return n === null ? null : `#${n}`;
+}
+
 /** عنوانُ سببٍ من القائمة — والمجهولُ يُعاد كما هو لا يُخفى. */
 function reasonLabel(v: unknown): string | null {
   if (typeof v !== "string" || !v) return null;
@@ -130,6 +137,12 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   closed_decision_cancelled: "أُلغي الحسم — خرجت المتابعة من «بانتظار الحسم»",
   administrative_reversal: "أُلغيت العملية إدارياً",
   reopened: "أُعيد فتح الملف",
+  //  ══ **فرعُ البيع يتبع الخبير المختار** (٢٠٢٦-٠٩-٢٤) ══════════════════
+  //  ملفٌّ مُتاحٌ لأكثر من فرع يُباع جهازُه في فرع الخبير الذي اختاره
+  //  الموظّف، فتنتقل المتابعةُ إليه في معاملة البيع نفسِها. **ولا يُترك
+  //  للعبارة العامّة**: الموظّفُ يحتاج أن يعرف من أين إلى أين ولماذا، لا أن
+  //  أحداً لمس الملفّ.
+  sale_branch_moved: "انتقلت العملية إلى فرع الخبير المختار",
   //  ══ مسارٌ قديم — يُقرأ ولا يُنشأ ═══════════════════════════════════
   patient_accepted_price: "وافق المريض على السعر (مسار قديم)",
   price_request_cancelled: "أُلغي طلب تعديل السعر",
@@ -359,6 +372,15 @@ export function followupEventView(
         ? "عاد للمتابعة بموعد" : "عاد بانتظار قرار المريض");
       const prev = reasonLabel(p.previousClosedReason);
       if (prev) out.facts.push(`سبب الإغلاق السابق: ${prev}`);
+      break;
+    }
+    case "sale_branch_moved": {
+      const from = branchLabel(p.fromBranchName, p.fromBranchId);
+      const to = branchLabel(p.toBranchName, p.toBranchId);
+      if (from) out.facts.push(`من فرع: ${from}`);
+      if (to) out.facts.push(`إلى فرع: ${to}`);
+      const who = expert(p.expertUserId);
+      if (who) out.facts.push(`الخبير: ${who}`);
       break;
     }
     case "price_request_cancelled": {

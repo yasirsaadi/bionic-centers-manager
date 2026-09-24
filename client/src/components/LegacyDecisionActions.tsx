@@ -57,6 +57,10 @@ import {
 import {
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, type FollowupReason,
 } from "@shared/followup";
+import {
+  fetchSaleExperts, saleExpertsQueryKey, spansSeveralBranches, saleExpertLabel,
+  NO_SALE_EXPERTS, type SaleExpert,
+} from "@/components/sale_experts";
 
 export interface LegacyDecisionActionsFollowup extends PurchaseFollowupLike {
   /** اسمُ الخبير المحفوظ للعرض — لا يُشترَط، `#الرقم` يكفي حين يغيب. */
@@ -66,7 +70,11 @@ export interface LegacyDecisionActionsFollowup extends PurchaseFollowupLike {
 export interface LegacyDecisionActionsProps {
   followupId: number;
   patientId: number;
-  /** فرعُ **العملية** — لقائمة الخبراء، لا فرعُ جلسة الفاعل (نفسُ مبدأ `ExamPathDecisionActions`). */
+  /**
+   * فرعُ **العملية** — للسياق. **وقائمةُ الخبراء لم تعد تُبنى منه**
+   * (٢٠٢٦-٠٩-٢٤): تُطلب بالمريض (`sale_experts.ts`)، نفسُ مبدأ
+   * `ExamPathDecisionActions`، ويحسم الخادمُ فرعَ البيع من الخبير المختار.
+   */
   branchId: number | null;
   /** الأفعالُ المتاحة من الخادم (`allowedActions`) — يُقرَأ منها `confirm_purchase`/`close` فقط؛ أيُّ فعلٍ آخر فيها يُتجاهَل عمداً. */
   actions: string[];
@@ -93,7 +101,7 @@ export interface LegacyDecisionActionsProps {
 }
 
 export function LegacyDecisionActions({
-  followupId, patientId, branchId, actions, followup,
+  followupId, patientId, actions, followup,
   mayCancelDecision = false, onResolved,
 }: LegacyDecisionActionsProps) {
   const { toast } = useToast();
@@ -115,18 +123,14 @@ export function LegacyDecisionActions({
     setReason("needs_time"); setNote(""); setCancelReason("");
   };
 
-  //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقةُ المريض —
-  //  فرعُ العملية لا فرعُ جلسة الفاعل.
-  const { data: experts } = useQuery<any[]>({
-    queryKey: ["/api/manufacturing/experts", branchId],
-    queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`,
-        { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: branchId !== null,
+  //  **خبراءُ هذا المريض — لا خبراءُ فرعٍ واحد** (٢٠٢٦-٠٩-٢٤): نفسُ
+  //  الاستعلام بنفس المفتاح الذي تستعمله بطاقةُ المريض و«إتمام البيع»، والفشلُ
+  //  يُقال في النافذة لا يصير قائمةً فارغةً بصمت (شكوى «زهراء»).
+  const { data: experts, error: expertsError } = useQuery<SaleExpert[]>({
+    queryKey: saleExpertsQueryKey(patientId),
+    queryFn: () => fetchSaleExperts(patientId),
   });
+  const showExpertBranches = spansSeveralBranches(experts ?? []);
 
   //  ══ إبطالٌ مشترك للنجاح وللفشل معاً (نفسُ نمط `ExamPathDecisionActions`) ══
   const invalidateAll = () => {
@@ -239,14 +243,22 @@ export function LegacyDecisionActions({
                 </Label>
                 <Select value={expertId} onValueChange={setExpertId}>
                   <SelectTrigger data-testid="select-legacy-purchase-expert">
-                    <SelectValue placeholder="اختر الخبير" />
+                    <SelectValue placeholder={(experts ?? []).length
+                      ? "اختر الخبير" : NO_SALE_EXPERTS} />
                   </SelectTrigger>
                   <SelectContent>
-                    {(experts ?? []).map((e: any) => (
-                      <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
+                    {(experts ?? []).map((e) => (
+                      <SelectItem key={e.id} value={String(e.id)}>
+                        {saleExpertLabel(e, showExpertBranches)}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {expertsError && (
+                  <p className="text-xs text-destructive" data-testid="text-legacy-purchase-experts-error">
+                    {(expertsError as Error).message}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm"

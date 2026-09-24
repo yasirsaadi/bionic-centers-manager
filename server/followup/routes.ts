@@ -55,6 +55,8 @@ import * as store from "./store";
 import { FollowupError } from "./store";
 import * as decisionQueue from "./decision_queue_store";
 import { scopeReachesPatient } from "../patients/branch_access";
+import { DeviceEpisodeError } from "../device_episodes/store";
+import { resolveSaleBranch } from "./sale_branch";
 import {
   canActCommercially, canCancelDecision, canConfirmPurchase,
   canDecideLegacyPriceRequest, canSetCommercialPrice, canSignalPurchaseInterest,
@@ -179,6 +181,20 @@ function fail(res: any, err: unknown): boolean {
     res.status(409).json({ error: LOCK_CONFLICT_ERROR, code: LOCK_CONFLICT_CODE });
     return true;
   }
+  //  ══ **وأخطاءُ طبقة الحلقات تُقال أيضاً** (٢٠٢٦-٠٩-٢٤) ═════════════════
+  //   البيعُ يمرّ بـ`assignManufacturing` داخل المعاملة، وحارسُها يرمي
+  //   `DeviceEpisodeError` بحالته ورسالته العربية. وكان يصعد من هنا فيُرمى
+  //   من معالجٍ غيرِ متزامن — **فلا يصل الطلبَ ردٌّ إطلاقاً** والموظّفُ أمام
+  //   دوّارة (شكوى «زهراء»، مُعادٌ حيّاً). والمعاملةُ تراجعت كاملةً أصلاً.
+  if (err instanceof DeviceEpisodeError) {
+    res.status(err.status).json({ error: err.message });
+    return true;
+  }
+  //   وضغطةٌ متزامنة سبقت إلى أمر البناء — حارسُ «تخصيص» القائم نفسُه.
+  if ((err as any)?.name === "ActiveAssignmentError") {
+    res.status(409).json({ error: "لدى المريض أمر تصنيع نشط لهذه الخدمة — حدّث الصفحة" });
+    return true;
+  }
   return false;
 }
 
@@ -213,12 +229,41 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       res.status(404).json({ error: "المتابعة غير موجودة" });
       return null;
     }
+    //  ══ **فرعُ المتابعة، أو فرعٌ يصل ملفَّ المريض** (٢٠٢٦-٠٩-٢٤) ═══════════
+    //  بطاقةُ المريض تُعرَض لكلّ فرعٍ يصل ملفَّه (فرعُ التسجيل أو إتاحةٌ
+    //  صريحة، ترحيل ٠٨٠) بأزرارها — وكانت الضغطةُ تُردّ «غير مصرح لك بهذا
+    //  الفرع» لأن المتابعةَ وُلدت في فرعٍ آخر (شكوى «زهراء»). وقاعدةُ المالك:
+    //  «الفرعُ الذي يُتاح له المريض يرى هذا المريضَ كما في فرعه الأصليّ
+    //  تماماً». **واتّحادٌ لا استبدال**: فرعُ المتابعة يبقى كافياً وحدَه، ولا
+    //  يُقرأ ملفُّ المريض إلّا حين لا يكفي — نفسُ قاعدة صفحة أمر التصنيع.
+    //  **والطوابيرُ لم تتغيّر**: «بانتظار الحسم» يبقى بفرع المتابعة.
     if (!canReachBranch(req, f.branchId)) {
-      res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
-      return null;
+      const patient = await storage.getPatient(f.patientId);
+      if (!patient || !(await scopeReachesPatient(branchScope(req), patient as any))) {
+        res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
+        return null;
+      }
     }
     return f;
   }
+
+  /**
+   * **متحقِّقُ خبيرِ البيع** — يحسم فرعَ البيع من الخبير المختار (`sale_branch.ts`):
+   * فروعُ ملفّ المريض ∩ نطاقُ الفاعل ∩ فروعُ الخبير. فاستقبالُ الفرع المُتاح
+   * يبيع بخبير فرعه، والمسؤولُ بخبير أيّ فرعٍ من فروع الملفّ — وتقع العمليةُ
+   * حيث يعمل الخبير. ونفسُ القاعدة تبني قائمةَ الخبراء في الشاشة
+   * (`/api/manufacturing/experts?patientId=`)، فلا تُعرَض قائمةٌ يردّها الحفظ.
+   */
+  const saleExpertCheck = (req: Req, patient: { id: number; branchId: number | null }) =>
+    async (expertUserId: number, followupBranchId: number | null) => {
+      const r = await resolveSaleBranch({
+        scope: branchScope(req), patient, expertUserId, followupBranchId,
+        sessionBranchId: getSession(req).branchId,
+      });
+      return r.ok
+        ? { ok: true as const, branchId: r.branchId }
+        : { ok: false as const, reason: r.reason };
+    };
 
   // ── قراءة: متابعات مريض + تاريخها ────────────────────────────────────
   app.get("/api/followups/patient/:patientId", isAuthenticated, async (req: Req, res) => {
@@ -706,8 +751,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    //  نفس تحقّق «تخصيص»: فعّالٌ وفي فرع المريض — لا قائمة خبراء ثانية.
-    const v = await validateExpert(expertUserId, patient.branchId);
+    //  فعّالٌ ويعمل في فرعٍ من فروع ملفّ المريض المتاحة للفاعل — نفسُ قاعدة
+    //  قائمة الخبراء في الشاشة (`sale_branch.ts`)، لا قائمةٌ ثانية. والبيعُ
+    //  نفسُه يحسم فرعَه من هذا الخبير لاحقاً، تحت القفل.
+    const v = await saleExpertCheck(req, patient as any)(expertUserId, f.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
     try {
       const updated = await store.selectExpert({
@@ -772,6 +819,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const f = await loadInScope(req, res);
     if (!f) return;
     if (await retiredOnExamPath(res, f.id)) return;
+    const commercialPatient = await storage.getPatient(f.patientId);
+    if (!commercialPatient) return res.status(404).json({ error: "المريض غير موجود" });
     try {
       const out = await store.setCommercialFields({
         followupId: f.id,
@@ -788,7 +837,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  صاحبُ معاينةِ هذه المتابعة بعينه. فطبيبٌ آخر — ولو بنفس
         //  الاختصاص — يكتب بوصفه موظّفاً، ولا يُقفِل حقلاً على زميله.
         asDoctor: await store.isExamDoctorOf(f.id, s.userId),
-        validateExpert,
+        validateExpert: saleExpertCheck(req, commercialPatient as any),
         expertLabel: async (id: number) => {
           const m = await import("../medical/store");
           return (await m.userNames([id]))[id] ?? null;
@@ -858,6 +907,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const f = await loadInScope(req, res);
     if (!f) return;
+    const salePatient = await storage.getPatient(f.patientId);
+    if (!salePatient) return res.status(404).json({ error: "المريض غير موجود" });
     try {
       const out = await store.completeReceptionSale({
         followupId: f.id,
@@ -870,16 +921,20 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         note: str(req.body?.note),
         actor: actorOf(req),
         session: ownerSessionOf(req),
-        validateExpert,
+        //  **فرعُ البيع من الخبير المختار** — فاستقبالُ الفرع المُتاح يبيع
+        //  بخبير فرعه وتقع العمليةُ هناك، لا يُردّ لأن المتابعةَ وُلدت في غيره.
+        validateExpert: saleExpertCheck(req, salePatient as any),
         expertLabel: async (id: number) => {
           const m = await import("../medical/store");
           return (await m.userNames([id]))[id] ?? null;
         },
       });
       const discountAmount = (out.followup.originalPrice ?? 0) - out.followup.approvedPrice;
+      //  **فرعُ العملية بعد البيع** — قد تكون انتقلت إلى فرع الخبير المختار.
+      const soldBranchId = out.followup.branchId ?? f.branchId;
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",
-        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        userId: s.userId, userName: s.userName, branchId: soldBranchId,
         oldValues: {
           approvedPrice: f.approvedPrice, priceKind: f.priceKind,
           selectedExpertUserId: f.selectedExpertUserId, purchaseDecision: f.purchaseDecision,
@@ -898,7 +953,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       });
       await logAudit({
         entityType: "prosthetic_work_order", entityId: out.workOrderId ?? 0,
-        action: "create", userId: s.userId, userName: s.userName, branchId: f.branchId,
+        action: "create", userId: s.userId, userName: s.userName, branchId: soldBranchId,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         notes: `تم الشراء وبدأ التصنيع — متابعة #${f.id} بسعر`
           + ` ${out.followup.approvedPrice.toLocaleString()} د.ع`
@@ -929,7 +984,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         decisionLabel: PURCHASE_DECISION_LABELS.bought,
         payment: out.payment,
       });
-    } catch (e) { if (!fail(res, e)) throw e; }
+    } catch (e) {
+      if (fail(res, e)) return;
+      //  **والفشلُ يُقال لا يُترك معلَّقاً** (درسُ ٤.c): `throw` من معالجٍ غيرِ
+      //  متزامن لا يصل الطلبَ معه ردٌّ إطلاقاً.
+      console.error("[followup] complete-sale failed:", e);
+      res.status(500).json({
+        error: "تعذّر إتمام البيع — حدّث الصفحة لترى حالة الملف قبل إعادة المحاولة.",
+      });
+    }
   });
 
   // ── «لم يشترِ» — فعلٌ منفصل، بسببٍ حرٍّ إلزاميّ (المرحلة الثانية) ─────
@@ -1167,7 +1230,11 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       //  وهي **نصفُ `canSelectExpert` الأوّل بعينه**. وحياةُ الملفّ — نصفُها
       //  الثاني — يحرسها `store.selectExpert` بـ٤٠٩، فلا يُكتب خبيرٌ على
       //  ملفٍّ تحوّل أو أُغلق.
-      const okExpert = await validateExpert(askedExpert, patient.branchId);
+      //
+      //  **والخبيرُ من فروع ملفّ المريض المتاحة للفاعل** (٢٠٢٦-٠٩-٢٤) — لا
+      //  من فرع التسجيل وحده: كان استقبالُ الفرع المُتاح يرى قائمةً ويُردّ
+      //  على كلّ اسمٍ فيها.
+      const okExpert = await saleExpertCheck(req, patient as any)(askedExpert, f.branchId);
       if (!okExpert.ok) return res.status(400).json({ error: okExpert.reason });
       try {
         workingFollowup = await store.selectExpert({
@@ -1186,9 +1253,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
 
     //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع أو عُطّل حسابُه
-    //  منذ اختياره.
-    const v = await validateExpert(workingFollowup.selectedExpertUserId!, patient.branchId);
+    //  منذ اختياره. **ومنه يُحسَم فرعُ البيع** — ويعيد `confirmPurchase`
+    //  فحصَه تحت القفل ثمّ ينقل المتابعةَ وحلقتَها إليه إن لزم.
+    const v = await saleExpertCheck(req, patient as any)(
+      workingFollowup.selectedExpertUserId!, workingFollowup.branchId);
     if (!v.ok) return res.status(400).json({ error: v.reason });
+    const saleBranchId = v.branchId;
 
     // ══ أولُ سعرٍ حين سكتت المعاينة — **ليس خصماً** ════════════════════
     // الطبيبُ قد يترك كلفةَ الجهاز فارغة، فلا يكون للجهاز سعرٌ أصليٌّ قطّ.
@@ -1265,6 +1335,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           //  — برسالةٍ تطلب خبيراً **اختير فعلاً في النداء نفسه**.
           payload: {
             followupId: f.id, expertUserId: workingFollowup.selectedExpertUserId,
+            //  فرعُ البيع المحسوم أعلاه — والاعتمادُ يعيد فحصَه تحت القفل.
+            saleBranchId,
           },
           actor: actorOf(req),
           //  **سطرُ التدقيق داخل المعاملة** — فلا يتحرّك مالٌ بإذنٍ لا أثرَ له.
@@ -1294,10 +1366,11 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     try {
       const out = await store.confirmPurchase({
         followupId: f.id, note: str(req.body?.note), actor: actorOf(req),
+        saleBranchId,
       });
       await logAudit({
         entityType: "post_exam_followup", entityId: f.id, action: "update",
-        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        userId: s.userId, userName: s.userName, branchId: out.followup.branchId ?? f.branchId,
         oldValues: { status: f.status },
         newValues: {
           status: "converted", workOrderId: out.workOrderId,
@@ -1326,13 +1399,4 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  الاسمُ القديم يبقى مسنَداً إلى المعالج نفسه: نافذةٌ مفتوحةٌ منذ ما قبل
   //  النشر تصيبه، ولا يجوز أن تُردّ بـ404 وهي تفعل الصواب.
   app.post("/api/followups/:id/approve-purchase", isAuthenticated, confirmPurchaseHandler);
-}
-
-/** يعيد استعمال تحقّق «تخصيص» نفسه — لا قائمة خبراء ثانية تنحرف عنها. */
-async function validateExpert(
-  expertUserId: number, branchId: number | null,
-): Promise<{ ok: boolean; reason?: string }> {
-  if (branchId === null) return { ok: false, reason: "المريض بلا فرع — لا يمكن إسناد خبير" };
-  const m = await import("../manufacturing/store");
-  return await m.validateExpertForBranch(expertUserId, branchId);
 }

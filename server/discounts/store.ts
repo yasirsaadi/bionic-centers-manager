@@ -114,6 +114,12 @@ export interface DiscountPayload {
   /** أجهزة: الخبيرُ المسؤول. */
   expertUserId?: number | null;
   /**
+   * أجهزة (متابعة): **فرعُ البيع** الذي حسمه البائعُ من الخبير المختار
+   * (`followup/sale_branch.ts`). و`confirmPurchase` يعيد فحصَه تحت القفل، فلا
+   * يُصدَّق رقمٌ لم يعد صالحاً. وغيابُه (طلبٌ معلَّقٌ قديم) = فرعُ الحلقة.
+   */
+  saleBranchId?: number | null;
+  /**
    * أجهزة: مواصفاتُ الجهاز **كما رشّحتها النقطةُ بعد فلترتها بالدور وفرضِ
    * وصفة الطبيب فوقها**. تُحفظ لا لتُصدَّق بل لئلّا يُعاد إدخالُها.
    */
@@ -657,6 +663,7 @@ async function applyApproved(
     });
     const out = await followupStore.confirmPurchase({
       followupId: payload.followupId, actor, tx,
+      saleBranchId: payload.saleBranchId ?? null,
       //  **الصفرُ يُقبل هنا وحده**: تبرّعٌ معتمَد صراحةً — والحارسُ العامّ
       //  «لا سعر معتمد» يبقى قائماً لكلّ نداءٍ آخر.
       allowFreeDonation: req.isFree,

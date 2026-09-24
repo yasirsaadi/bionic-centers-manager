@@ -234,15 +234,35 @@ export async function validateExpertForBranchTx(
   expertUserId: number,
   branchId: number,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const w = await expertWorkBranchesTx(tx, expertUserId);
+  if (!w.ok) return w;
+  if (!w.branches.includes(Number(branchId))) {
+    return { ok: false, reason: "الخبير غير مسموح له بالعمل في هذا الفرع" };
+  }
+  return { ok: true };
+}
+
+/**
+ * **الفروعُ التي يعمل فيها هذا الخبير** — والقاعدةُ واحدة لا اثنتان.
+ *
+ * `validateExpertForBranchTx` تسأل «أيعمل في هذا الفرع؟»، وبيعُ جهازٍ لمريضٍ
+ * أُتيح ملفُّه لفرعين يسأل «في أيٍّ من فروع هذا الملفّ يعمل؟» (٢٠٢٦-٠٩-٢٤).
+ * فالسؤالان يُجابان من هنا بقراءةٍ واحدة: حسابٌ موجود · فعّال · خبيرٌ أو
+ * يحمل صفةَ الخبير · وفروعُه (`branch_ids` مع فرعه الأساسيّ).
+ */
+export async function expertWorkBranchesTx(
+  tx: any,
+  expertUserId: number,
+): Promise<{ ok: true; branches: number[] } | { ok: false; reason: string }> {
   const [u] = await tx.select().from(systemUsers).where(eq(systemUsers.id, expertUserId));
   if (!u) return { ok: false, reason: "الخبير غير موجود" };
   if (!u.isActive) return { ok: false, reason: "حساب الخبير غير فعّال" };
   // Pure expert OR a user carrying the expert capability flag.
   if (u.role !== EXPERT_ROLE && !u.canWorkAsExpert) return { ok: false, reason: "المستخدم ليس خبير أطراف" };
-  const branchIds = Array.isArray(u.branchIds) ? (u.branchIds as number[]) : [];
-  const allowed = branchIds.includes(branchId) || u.branchId === branchId;
-  if (!allowed) return { ok: false, reason: "الخبير غير مسموح له بالعمل في هذا الفرع" };
-  return { ok: true };
+  const branchIds = Array.isArray(u.branchIds) ? (u.branchIds as unknown[]).map(Number) : [];
+  const branches = new Set(branchIds.filter((b) => Number.isInteger(b) && b > 0));
+  if (u.branchId !== null && u.branchId !== undefined) branches.add(Number(u.branchId));
+  return { ok: true, branches: Array.from(branches) };
 }
 
 // ---- expert-safe patient projection (financial fields NEVER selected) --------
