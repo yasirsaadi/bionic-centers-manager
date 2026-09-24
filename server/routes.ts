@@ -3794,14 +3794,20 @@ export async function registerRoutes(
       // to smuggle money through this endpoint). The expert is assigned
       // afterward, and commits to the delivery date only when reaching the
       // mold stage.
+      //  **والحالةُ الجديدة في فرع الحركة** (ترحيل ٠٨٠) — فرعُ الموظّف إن
+      //  كان يصل الملفّ، وإلّا فرعُ التسجيل. **ويُحسَب مرّةً واحدة**: الحالةُ
+      //  وعلامتُها وسطرا التدقيق أدناه كلُّها منه (مراجعةُ Codex على ٤٠٧ —
+      //  كان التدقيقُ وحده يكتب فرعَ التسجيل، فيُنسَب فعلُ بغداد إلى ذي قار في
+      //  تقارير التدقيق). و`?? patient.branchId` احتياطُ `addPatientCaseType`
+      //  نفسُه حرفياً، فلا يختلف السطرُ عن الصفّ الذي يصفه.
+      const actingBranchId = await actingBranchFor(req, patient);
+      const auditBranchId = actingBranchId ?? patient.branchId;
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
         patientId, caseType, fields,
         expertUserId: null, expectedDeliveryDate: null,
         skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,
-        //  **والحالةُ الجديدة في فرع الحركة** (ترحيل ٠٨٠) — فرعُ الموظّف إن
-        //  كان يصل الملفّ، وإلّا فرعُ التسجيل.
-        actingBranchId: await actingBranchFor(req, patient),
+        actingBranchId,
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
@@ -3819,7 +3825,7 @@ export async function registerRoutes(
       await logAudit({
         entityType: "patient", entityId: patientId, action: "update",
         userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-        branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        branchId: auditBranchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         notes: `إضافة نوع حالة: ${caseType}${workOrderId ? ` مع أمر تصنيع #${workOrderId}` : ""}`
           + (caseRouting.request ? ` — طلب مراجعة #${caseRouting.request.id} (معاينة كاملة)` : ""),
       });
@@ -3827,7 +3833,7 @@ export async function registerRoutes(
         await logAudit({
           entityType: "prosthetic_work_order", entityId: workOrderId, action: "create",
           userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
-          branchId: patient.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          branchId: auditBranchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
           notes: `أمر تصنيع عند إضافة نوع حالة لمريض موجود #${patientId}`,
         });
       }

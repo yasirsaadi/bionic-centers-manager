@@ -690,6 +690,15 @@ export interface CancelEpisodeParams {
   reason: string;
   /** مَن سحب — يُكتب على طلبات المراجعة التي تُسحَب معه. */
   actor?: { userId?: number | null; userName?: string | null };
+  /**
+   * **نطاقُ فروع الفاعل** (مراجعةُ Codex على ٤٠٧) — حين يُمرَّر يُشترط أن
+   * يكون **فرعُ هذا الطلب بعينه** فيه، ويُقرأ تحت قفل الحلقة. `null` =
+   * المسؤولُ العام، بلا قيد.
+   *
+   * **وغيابُه** = المُنادي حكم الصلاحيةَ بنفسه تحت قفله (زرُّ «إلغاء
+   * المعاينة» في قائمة عمل الطبيب، §4.s) — فلا يتغيّر عليه حرف.
+   */
+  actorBranchScope?: number[] | null;
 }
 
 export type CancelledEpisodeView = DeviceEpisodeView & {
@@ -731,6 +740,39 @@ export async function cancelPreManufacturingDeviceEpisodeTx(
   //  آخر لا يجوز أن يُلغى لمجرّد أنه ورد في عنوان صحيح.
   if (Number(ep.patient_id) !== patientId) {
     throw new DeviceEpisodeError("الحلقة لا تخصّ هذا المريض", 404);
+  }
+
+  //  ══ **وطلبُ الجهاز يُلغيه فرعُه** (مراجعةُ Codex على ٤٠٧) ═══════════
+  //  الإتاحةُ (ترحيل ٠٨٠) تفتح الملفَّ لفرعٍ آخر **ولا تنقل إليه قرارَ
+  //  عمليةِ فرعٍ غيره**: مريضٌ أُتيح لبغداد وكربلاء معاً فتحت بغداد له طلبَ
+  //  جهاز — فلا تسحبه كربلاء ولا ذي قار، ولا يُسحب معه طلبُ مراجعته. وهي
+  //  قاعدةُ «عاد للشراء» بحرفها (`executeReturnToPurchase`).
+  //
+  //  **ويُحكَم عليه تحت قفل الحلقة** لا قبله: نقلُ مسؤولية العملية إلى فرعٍ
+  //  آخر (`moveLiveEpisodeToBranchTx`) يكتب على هذا الصفّ نفسِه فيتسلسل معنا،
+  //  فلا يُحكَم على فرعٍ قُرئ قبل أن يتغيّر. **وقبل الحالة**: مَن لا يملك
+  //  العمليةَ يُقال له ذلك، لا تفاصيلُ حالِ عمليةٍ ليست له.
+  if (params.actorBranchScope !== undefined && params.actorBranchScope !== null) {
+    //  فرعُ العملية: فرعُ الحلقة، وإلّا فرعُ خيطها، وإلّا فرعُ تسجيل المريض
+    //  — ترتيبُ `startDeviceEpisodeTx` نفسُه حين يكتبه. ولا `Number(null)`:
+    //  تلك صفرٌ لا «بلا فرع».
+    const own = await tx.execute(sql`
+      SELECT COALESCE(de.branch_id, pc.branch_id, p.branch_id) AS branch_id, b.name
+        FROM patient_device_episodes de
+        LEFT JOIN patient_cases pc ON pc.id = de.case_id
+        LEFT JOIN patients p ON p.id = de.patient_id
+        LEFT JOIN branches b ON b.id = COALESCE(de.branch_id, pc.branch_id, p.branch_id)
+       WHERE de.id = ${episodeId}
+    `);
+    const o = (own.rows ?? [])[0];
+    const ownerBranchId = o?.branch_id === null || o?.branch_id === undefined
+      ? null : Number(o.branch_id);
+    if (ownerBranchId === null || !params.actorBranchScope.includes(ownerBranchId)) {
+      throw new DeviceEpisodeError(
+        `طلبُ الجهاز هذا يخصّ ${o?.name ? `فرع ${o.name}` : "فرعاً آخر"} — يُلغيه ذلك الفرع`,
+        403,
+      );
+    }
   }
 
   const status = String(ep.status);
