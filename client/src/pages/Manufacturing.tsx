@@ -5,6 +5,9 @@ import { Link } from "wouter";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { resolveManufacturingView } from "./manufacturing_view_mode";
+import {
+  bucketCounts, ordersInBucket, nextBucket, bucketDef, type BucketTone,
+} from "./manufacturing_buckets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Wrench, Search, AlertTriangle, PlusCircle } from "lucide-react";
 import {
-  STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, FIRST_STAGE, BUILD_STAGES,
+  STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, BUILD_STAGES,
 } from "@shared/manufacturing";
 import { CreateOrderDialog } from "@/components/manufacturing/CreateOrderDialog";
 
@@ -40,6 +43,22 @@ function statusTone(status: string): string {
   if (status.startsWith("waiting") || status === "medical_hold") return "bg-amber-100 text-amber-800 border-amber-200";
   return "bg-blue-100 text-blue-800 border-blue-200";
 }
+
+//  ألوانُ شرائط التصنيف — **سلاسلُ أصنافٍ كاملة لا مركَّبة**: ماسحُ
+//  أدوات التنسيق يقرأ النصَّ الحرفيّ، فاسمٌ يُبنى بالدمج لا يصل الحزمةَ
+//  فيخرج الشريطُ بلا لون.
+const CHIP_TONE: Record<BucketTone, string> = {
+  blue: "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200",
+  amber: "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200",
+  red: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200",
+  green: "bg-green-100 text-green-800 border-green-200 hover:bg-green-200",
+};
+const CHIP_RING: Record<BucketTone, string> = {
+  blue: "ring-blue-500",
+  amber: "ring-amber-500",
+  red: "ring-red-500",
+  green: "ring-green-500",
+};
 
 function OrderRow({ o }: { o: OrderCard }) {
   return (
@@ -100,6 +119,9 @@ export default function Manufacturing() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expertFilter, setExpertFilter] = useState<string>("all");
+  //  التصنيفُ المختار من الشرائط — `null` يعني «كلَّها». وهو **فوق**
+  //  مرشِّحات الخادم لا بدلاً منها، فيتركّب مع الخبير والفرع والبحث.
+  const [bucket, setBucket] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   const { data: branches = [] } = useQuery<Branch[]>({
@@ -141,17 +163,13 @@ export default function Manufacturing() {
 
   // Client-side buckets (from the fetched list) for the summary chips.
   const nowMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
-  const buckets = useMemo(() => ({
-    "أوامر جديدة": orders.filter((o) => o.currentStage === FIRST_STAGE && o.status !== "cancelled"),
-    "قيد العمل": orders.filter((o) => o.status === "active" && o.currentStage !== FIRST_STAGE),
-    "بانتظار المريض": orders.filter((o) => o.status === "waiting_patient"),
-    "بانتظار المواد": orders.filter((o) => o.status === "waiting_materials"),
-    "متوقّفون لسبب طبي": orders.filter((o) => o.status === "medical_hold"),
-    "إعادة عمل فني": orders.filter((o) => o.status === "technical_rework"),
-    "جاهزون للتجربة والتسليم": orders.filter((o) => o.currentStage === "ready_for_fitting"),
-    "مكتملون هذا الشهر": orders.filter((o) => o.status === "completed" && (o.completedAt ?? "").slice(0, 7) === nowMonth),
-    "متأخرون": orders.filter((o) => o.isOverdue),
-  }), [orders, nowMonth]);
+  //  **العددُ والقائمةُ من مصدرٍ واحد** (`manufacturing_buckets`): الشريطُ
+  //  يقول «متأخرون ٢١» وضغطُه يعرض الواحدَ والعشرين بعينهم — لأن كليهما
+  //  من `orders` نفسِها بعد مرشِّحات الخادم.
+  const chips = useMemo(() => bucketCounts(orders, nowMonth), [orders, nowMonth]);
+  const visibleOrders = useMemo(
+    () => ordersInBucket(orders, bucket, nowMonth), [orders, bucket, nowMonth]);
+  const activeBucket = bucketDef(bucket);
 
   const experts: { expertUserId: number; expertName: string }[] = overview?.experts ?? [];
 
@@ -243,24 +261,68 @@ export default function Manufacturing() {
         </Select>
       </div>
 
-      {/* Bucket summary chips (click to filter status where applicable) */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {Object.entries(buckets).map(([label, list]) => (
-          <div key={label} className="text-xs px-3 py-1.5 rounded-full border bg-white flex items-center gap-1.5">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-bold">{list.length}</span>
-          </div>
-        ))}
+      {/*  ══ **شرائطُ التصنيف — تُضغَط فتُرشِّح** (٢٠٢٦-٠٩-٢٤) ══════════════
+          كانت تعدّ ولا تُضغَط. وهي الآن أزرارٌ ملوّنةٌ بمعنى حالتها،
+          **تتركّب فوق مرشِّحات الخادم**: «عناد» ثمّ «متأخرون» ⟶ متأخرو
+          عناد وحدهم. والضغطةُ الثانية على الشريط نفسِه تُلغي اختيارَه. */}
+      <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="تصنيفات أوامر التصنيع">
+        {chips.map(({ def, count }) => {
+          const on = bucket === def.key;
+          return (
+            <button
+              key={def.key}
+              type="button"
+              aria-pressed={on}
+              data-testid={`chip-bucket-${def.key}`}
+              onClick={() => setBucket((cur) => nextBucket(cur, def.key))}
+              className={[
+                "text-xs px-3 py-2.5 sm:py-1.5 rounded-lg border flex items-center gap-1.5",
+                "transition-colors cursor-pointer",
+                CHIP_TONE[def.tone],
+                on ? `ring-2 ring-offset-1 font-bold ${CHIP_RING[def.tone]}` : "",
+              ].join(" ")}
+            >
+              <span>{def.label}</span>
+              <span className="font-bold">{count}</span>
+              {on && <span aria-hidden className="opacity-70">✕</span>}
+            </button>
+          );
+        })}
+        {activeBucket && (
+          <button
+            type="button"
+            data-testid="chip-bucket-clear"
+            onClick={() => setBucket(null)}
+            className="text-xs px-3 py-2.5 sm:py-1.5 rounded-lg border bg-white text-slate-600 hover:bg-slate-50"
+          >
+            إظهار الكل
+          </button>
+        )}
       </div>
 
       {/* Orders list */}
       {isLoading ? (
         <div className="text-center py-12 text-muted-foreground text-sm">جارٍ التحميل…</div>
-      ) : orders.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-sm">لا توجد أوامر مطابقة.</div>
+      ) : visibleOrders.length === 0 ? (
+        //  **ويُقال أيُّ تصنيفٍ أفرغ الشاشة** ومعه بابُ الخروج منه — وإلّا
+        //  قرأ الموظّفُ «لا توجد أوامر» وظنّ أن العمل اختفى.
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          {activeBucket ? (
+            <>
+              <div>لا توجد أوامر ضمن «{activeBucket.label}» بهذه المرشِّحات.</div>
+              <button
+                type="button"
+                onClick={() => setBucket(null)}
+                className="mt-2 text-primary underline underline-offset-4"
+              >
+                إظهار كل الأوامر
+              </button>
+            </>
+          ) : "لا توجد أوامر مطابقة."}
+        </div>
       ) : (
         <div className="space-y-3">
-          {orders.map((o) => <OrderRow key={o.id} o={o} />)}
+          {visibleOrders.map((o) => <OrderRow key={o.id} o={o} />)}
         </div>
       )}
 
