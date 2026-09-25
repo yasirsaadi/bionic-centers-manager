@@ -105,6 +105,7 @@ import { registerTrainingRoutes } from "./training/routes";
 import { detectAnomalies, type Anomaly } from "./anomalies/detector";
 import { computeActiveReminders, getReminderSnapshot } from "./followups/service";
 import { logAudit } from "./accounting/ledger";
+import { auditableUser, userAuditDiff } from "./system_user_audit";
 import { registerPaymentCorrectionRoutes } from "./payments/correction_routes";
 import { registerDailyReviewRoutes } from "./daily_review/routes";
 import {
@@ -1457,6 +1458,19 @@ export async function registerRoutes(
         passwordPlain: password, // admin-only visibility
       });
 
+      //  أثرُ الإنشاء — الحسابُ كما حُفظ، بلا كلمة المرور (`system_user_audit.ts`).
+      await logAudit({
+        entityType: "system_user",
+        entityId: user.id,
+        action: "create",
+        userId: branchSession?.userId ?? null,
+        userName: branchSession?.displayName ?? null,
+        newValues: auditableUser(user as any),
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        notes: `إنشاءُ حساب الموظّف «${user.username}»`,
+      });
+
       res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
     } catch (err) {
       throw err;
@@ -1564,9 +1578,29 @@ export async function registerRoutes(
         }
       }
       
+      //  ══ الصفُّ قبل الحفظ — ليُكتب ما تغيّر فعلاً بقيمته قبل وبعد ══════
+      //  (٢٠٢٦-٠٩-٢٥). كانت هذه النافذةُ تغيّر الفروعَ والدورَ والصلاحياتِ
+      //  وكلمةَ المرور بلا أثر، فلم يُعرَف مَن أزال فروعَ أيوب وعناد.
+      const before = await storage.getSystemUser(id);
       const user = await storage.updateSystemUser(id, updateData);
       if (!user) {
         return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
+
+      const diff = userAuditDiff(before as any, user as any);
+      if (!diff.empty) {
+        await logAudit({
+          entityType: "system_user",
+          entityId: id,
+          action: "update",
+          userId: branchSession?.userId ?? null,
+          userName: branchSession?.displayName ?? null,
+          oldValues: diff.oldValues,
+          newValues: diff.newValues,
+          ipAddress: req.ip,
+          userAgent: req.get("user-agent"),
+          notes: `تعديلُ حساب الموظّف «${user.username}»`,
+        });
       }
 
       res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
@@ -1620,6 +1654,22 @@ export async function registerRoutes(
       if (!user) {
         diagPhase(req, "before_response");
         return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
+      //  أثرُ التعطيل — بالشكل نفسِه الذي يكتبه التعطيلُ من نافذة التعديل.
+      const diff = userAuditDiff(target as any, user as any);
+      if (!diff.empty) {
+        await logAudit({
+          entityType: "system_user",
+          entityId: id,
+          action: "update",
+          userId: branchSession?.userId ?? null,
+          userName: branchSession?.displayName ?? null,
+          oldValues: diff.oldValues,
+          newValues: diff.newValues,
+          ipAddress: req.ip,
+          userAgent: req.get("user-agent"),
+          notes: `تعطيلُ حساب الموظّف «${user.username}»`,
+        });
       }
       diagPhase(req, "before_response");
       res.json({ success: true, deactivated: true });
