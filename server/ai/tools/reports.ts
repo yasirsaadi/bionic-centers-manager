@@ -14,7 +14,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
 import { patients, visits, branches } from "@shared/schema";
-import { activePatientDrizzle } from "../../patients/active_patient";
+import { activePatientDrizzle, belongsToActivePatientSql } from "../../patients/active_patient";
 import { REPORT_ROW_LABELS } from "@shared/service_taxonomy";
 import * as medical from "../../medical/store";
 
@@ -281,6 +281,8 @@ export async function getOperationalSummary(params: {
         COUNT(*) FILTER (WHERE current_stage = 'ready_for_fitting')::int AS ready_for_fitting
       FROM prosthetic_work_orders
       WHERE status NOT IN ('completed','cancelled') AND ${branchScopeSql("branch_id", scope)}
+        --  مرضى السلّة خارجَ العدّ — كلوحة التصنيع وقائمتها (٢٠٢٦-٠٩-٢٥).
+        AND ${belongsToActivePatientSql("prosthetic_work_orders")}
     `),
     //  ══ مرضى علاجٍ طبيعيّ نشطون **الآن** — نفسُ حقيقة `my_worklist` بالحرف
     //  (`patients.is_physiotherapy = TRUE` + `patient_cases` بنوعٍ physiotherapy

@@ -23,6 +23,9 @@ import { latenessOf } from "@shared/manufacturing";
 import { bucketCounts, ordersInBucket } from "../../client/src/pages/manufacturing_buckets";
 import { rowToneOf } from "../../client/src/pages/manufacturing_row_tone";
 import { sectionOf } from "../../client/src/pages/notifications_sections";
+import { getOperationalSummary } from "../ai/tools/reports";
+import { executeTool } from "../ai/tools/registry";
+import { resolveAiAccess } from "../ai/access";
 
 const PORT = 6011 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -49,8 +52,10 @@ async function bootRealRoutes() {
   return httpServer;
 }
 
-async function http(path: string, session: any) {
+async function http(path: string, session: any, method = "GET", body?: unknown) {
   const res = await fetch(BASE + path, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     headers: {
       "content-type": "application/json",
       "x-test-session": Buffer.from(JSON.stringify(session), "utf8").toString("base64"),
@@ -281,6 +286,64 @@ async function main() {
       "د٣. والشريطان يتبعان المربّعين في كلّ لحظة");
     eq(ov3.totals.overdue + ov3.totals.overdueExcused, oldCount,
       "د٤. والمجموعُ لا يتحرّك — التأخّرُ واقعٌ، والعذرُ وحدَه يُصنّفه");
+
+    //  ══ و: المحذوفُ إلى السلّة خارجَ اللوحة كما هو خارجَ القائمة (٢٠٢٦-٠٩-٢٥)
+    //  كانت `getOverview` تعدّ أمرَ مريض السلّة و`listOrders` لا تعدّه، فيزيد
+    //  المربّعُ على الشريط بعددهم. والحذفُ والاستعادةُ بالنقطتين الحقيقيتين.
+    console.log("\nو — مريضُ السلّة لا يُعدّ في اللوحة ولا في المساعد، ويعود بالاستعادة");
+    //  مسؤولٌ حقيقيٌّ في `system_users` — الحذفُ والاستعادةُ يكتبان سطرَ تدقيقٍ
+    //  مفتاحُه الأجنبيّ رقمُ المستخدم، فلا يصلح `userId: 0`.
+    const realAdminId = await mkUser("admin", bA, "مسؤول");
+    const realAdmin = { ...admin, userId: realAdminId };
+    const p5 = Number((await one(sql`SELECT patient_id FROM prosthetic_work_orders WHERE id = ${o5}`)).patient_id);
+    const nowCounts = async () => {
+      const ov = (await http(`/api/manufacturing/overview?branchId=${bA}`, admin)).body;
+      const list = (await http(`/api/manufacturing/orders?branchId=${bA}`, admin)).body;
+      const op = await getOperationalSummary({
+        operationalBranches: null, isAdmin: true, requestedBranchId: bA,
+        start: "2020-01-01", end: "2020-01-01", compare: false,
+      });
+      const wl = async (session: any) => ((await executeTool(
+        resolveAiAccess({ session, scopeBranchId: session.branchId || null }), "my_worklist", {})) as any).data ?? {};
+      const mgrWl = await wl({ ...mgr(mgrA, bA), permissions: { canViewPatients: true } });
+      const expWl = await wl({ userId: Y, role: "prosthetics_expert", isAdmin: false, branchId: bA,
+        accessibleBranches: [bA], permissions: {} });
+      return {
+        tiles: [ov?.totals?.total, ov?.totals?.overdue, ov?.totals?.overdueExcused],
+        chips: [list.length, chipOf(list, "overdue"), chipOf(list, "overdue_excused")],
+        expertY: [expertOf(ov, Y)?.total, expertOf(ov, Y)?.overdue, expertOf(ov, Y)?.reworks],
+        branch: [branchOf(ov, bA)?.total, branchOf(ov, bA)?.overdue],
+        stageMold: ov?.stageCounts?.mold ?? 0,
+        aiActiveBuilds: op.manufacturingNow.activeBuilds,
+        aiMgrActiveBuilds: mgrWl.manufacturing?.activeBuilds,
+        aiExpertMine: expWl.myManufacturingOrders?.total,
+      };
+    };
+    const before = await nowCounts();
+    eq([before.tiles, before.chips], [[8, 1, 3], [8, 1, 3]],
+      "و١. قبل الحذف: المربّعاتُ = الشرائطُ = القائمة (ثمانية، والأحمرُ «البياض» وحده)");
+    ok(typeof before.aiActiveBuilds === "number" && typeof before.aiMgrActiveBuilds === "number"
+      && typeof before.aiExpertMine === "number",
+      "و٢. وعدّاداتُ المساعد الثلاثة مقروءة", JSON.stringify(before));
+
+    const del = await http(`/api/patients/${p5}`, realAdmin, "DELETE", { reason: "اختبار: ملفّ مكرّر" });
+    eq(del.status, 200, "و٣. حُذف مريضُ الأمر الأحمر إلى السلّة بالنقطة الحقيقية");
+    const inTrash = await nowCounts();
+    eq(inTrash.tiles, inTrash.chips,
+      "و٤. **المربّعاتُ = الشرائط** بعد الحذف — لا يزيد المربّعُ بمريض السلّة");
+    eq(inTrash.tiles, [before.tiles[0]! - 1, before.tiles[1]! - 1, before.tiles[2]],
+      "و٥. خرج أمرُه من الإجماليّ ومن «متأخرة بدون عذر»، والكهرمانيُّ لم يُمَسّ");
+    eq([inTrash.expertY, inTrash.branch, inTrash.stageMold],
+      [[before.expertY[0]! - 1, before.expertY[1]! - 1, before.expertY[2]! - 1],
+       [before.branch[0]! - 1, before.branch[1]! - 1], before.stageMold - 1],
+      "و٦. وعمودُ خبيره (أوامره · متأخّره · إعاداتُ عمله) وسطرُ الفرع وعدُّ المرحلة تبعته");
+    eq([inTrash.aiActiveBuilds, inTrash.aiMgrActiveBuilds, inTrash.aiExpertMine],
+      [before.aiActiveBuilds - 1, before.aiMgrActiveBuilds - 1, before.aiExpertMine - 1],
+      "و٧. **والمساعدُ كذلك**: ملخّصُ التشغيل · قائمةُ عمل المدير · أوامرُ الخبير");
+
+    const res = await http(`/api/patient-trash/${p5}/restore`, realAdmin, "POST", {});
+    eq(res.status, 200, "و٨. واستُعيد المريضُ بالنقطة الحقيقية");
+    eq(await nowCounts(), before, "و٩. **فعادت الأرقامُ كلُّها كما كانت بالضبط** — لا شيءَ ضاع");
   } finally {
     if (srv) await new Promise((r) => srv.close(() => r(null)));
     const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);
@@ -288,6 +351,7 @@ async function main() {
     await db.execute(sql`DELETE FROM prosthetic_work_history WHERE work_order_id IN (${idList})`);
     await db.execute(sql`DELETE FROM prosthetic_work_orders WHERE id IN (${idList})`);
     await db.execute(sql`DELETE FROM patients WHERE id IN (${sql.join(patientIds.map((i) => sql`${i}`), sql`, `)})`);
+    await db.execute(sql`DELETE FROM audit_log WHERE user_id IN (${sql.join(userIds.map((i) => sql`${i}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM system_users WHERE id IN (${sql.join(userIds.map((i) => sql`${i}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM branches WHERE id IN (${bA}, ${bB})`);
   }
