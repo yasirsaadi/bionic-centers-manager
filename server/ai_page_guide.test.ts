@@ -132,6 +132,7 @@ import {
 } from "@shared/manufacturing";
 import { BUCKET_DEFS } from "../client/src/pages/manufacturing_buckets";
 import { rowToneOf, holdButtonShown, holdDialogKind, orderLatenessNotice } from "../client/src/pages/manufacturing_row_tone";
+import { NOTIFICATION_SECTIONS } from "../client/src/pages/notifications_sections";
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
@@ -968,6 +969,18 @@ async function main() {
     && /المتأخر بعذر\s+لا يُعدّ في «متأخرون بدون عذر»/.test(mg)
     && /لا يُستنتج عذر من الحالة/.test(mg),
     "ي.٧ز الأحمر لمن لا عذر له وحده، والعذر مكتوب لا مستنتج");
+  //  ══ ي.٧ح: عمودُ «إعادات العمل» (٢٠٢٦-٠٩-٢٥) — اسمُه من الشاشة لا من هنا ══
+  //  كان عمودا «إعادة قالب» و«إعادة سوكت» يقرآن حقلين لا يحسبهما الخادم
+  //  فيظهران فارغين دائماً؛ حلّ محلَّهما عمودٌ واحد من `reworks`.
+  const allHeaders = [...mfgSrc.matchAll(/<th[^>]*>([^<]+)<\/th>/g)].map((m) => m[1].trim());
+  const reworkHeaders = allHeaders.filter((h) => h.includes("إعاد"));
+  check(JSON.stringify(reworkHeaders) === JSON.stringify(["إعادات العمل"])
+    && mfgSrc.includes("<td>{e.reworks}</td>")
+    && !/e\.recasts|e\.resockets/.test(mfgSrc),
+    "ي.٧ح عمود واحد «إعادات العمل» من reworks في الشاشة", JSON.stringify(reworkHeaders));
+  check(reworkHeaders.every((h) => mg.includes(`«${h}»`))
+    && !/إعادة قالب|إعادة سوكت/.test(mg),
+    "ي.٧ط الدليل يسمّي عمود إعادات العمل بحرفه ولا يذكر العمودين القديمين");
   check(/أمر تصنيع لمريض موجود/.test(mg) && /زر إداري فقط/.test(mg)
     && /ليس\s+باب الصيانة/.test(mg) && /إضافة خدمة جديدة/.test(mg),
     "ي.٨ اختصار إنشاء الأمر مضبوط بحدوده");
@@ -1253,6 +1266,16 @@ async function main() {
     && /canViewPatients/.test(notiG) && /canManageAccounting/.test(notiG), "س.١٨ نطاق التنبيهات الخادمي");
   check(/لا يوسّع النطاق/.test(notiG) && /مشتقة من\s+items/.test(notiG), "س.١٩ فلاتر الشاشة تضييق فقط");
   check(/holdReasonLabel/.test(notiG) && /لا يُخترع عذر/.test(notiG), "س.٢٠ سبب التأخير لا يُستنتج");
+  //  س.٢٠أ–ب: الشاشةُ قسمت المتأخّرين قسمين كلوحة التصنيع (٢٠٢٦-٠٩-٢٥)،
+  //  **والأسماءُ من `NOTIFICATION_SECTIONS` نفسِها** لا من نصٍّ يُكتب هنا.
+  const notiLate = NOTIFICATION_SECTIONS.filter((d) => d.title.includes("متأخر")).map((d) => d.title);
+  check(notiLate.length === 2 && notiLate.every((t) => notiG.includes(`«${t}»`)),
+    "س.٢٠أ الدليل يسمّي قسمي المتأخرين بحرفهما", JSON.stringify(notiLate));
+  const notiStale = [...notiG.matchAll(/«([^»]*متأخر[^»]*)»/g)].map((m) => m[1])
+    .filter((l) => !notiLate.includes(l));
+  check(notiStale.length === 0 && !/المتأخر يبقى متأخراً سواء/.test(notiG)
+    && /لا يُعدّ في «متأخرة بدون عذر»/.test(notiG) && /كلوحة التصنيع/.test(notiG),
+    "س.٢٠ب لا قسم جامع في الدليل، والمعذور لا يُعدّ في الأحمر", JSON.stringify(notiStale));
   check(/الاستقبال أو المحاسب/.test(notiG) && /لا تصبح رابطاً/.test(notiG), "س.٢١ رؤية التنبيه لا تعني فتح أمر التصنيع");
 
   same("س.٢٢ دليل اللوحة ساكن", pageGuideFor(DASH, rep), pageGuideFor(DASH, adm));

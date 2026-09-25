@@ -22,6 +22,7 @@ import { registerRoutes } from "../routes";
 import { latenessOf } from "@shared/manufacturing";
 import { bucketCounts, ordersInBucket } from "../../client/src/pages/manufacturing_buckets";
 import { rowToneOf } from "../../client/src/pages/manufacturing_row_tone";
+import { sectionOf } from "../../client/src/pages/notifications_sections";
 
 const PORT = 6011 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -225,6 +226,35 @@ async function main() {
       "ج٥. والعزلُ لم يضعف: مديرُ الفرع الآخر يرى متأخّرَه وحده");
     void o9;
 
+    //  ══ هـ: شاشةُ التنبيهات تقسم كاللوحة (٢٠٢٦-٠٩-٢٥) ══════════════════
+    //  قبل «د» لأن «د» يغيّر العيّنة. والقسمُ بـ`sectionOf` التي تعرض بها
+    //  الشاشةُ فعلاً — فوق ما تُرجعه نقطةُ التنبيهات الحقيقية.
+    console.log("\nهـ — التنبيهاتُ تقسم المتأخّرين كاللوحة، وعمودُ «إعادات العمل»");
+    const notif = await http(`/api/manufacturing/notifications`, mgr(mgrA, bA));
+    ok(notif.status === 200 && Array.isArray(notif.body?.items), "هـ١. نقطةُ التنبيهات تُقرأ بجلسة المدير");
+    const items: any[] = notif.body?.items ?? [];
+    const secOf = (id: number) => { const i = items.find((x) => x.orderId === id); return i ? sectionOf(i) : null; };
+    eq([items.filter((i) => sectionOf(i) === "overdue").length, items.filter((i) => sectionOf(i) === "overdue_excused").length],
+      [ovMgr.body?.totals?.overdue, ovMgr.body?.totals?.overdueExcused],
+      "هـ٢. **«متأخرة بدون عذر» و«متأخرة بعذر» في التنبيهات = مربّعا اللوحة** بالنطاق نفسِه");
+    eq([secOf(o1), secOf(o5), secOf(o2), secOf(o4)], ["overdue", "overdue", "overdue_excused", "overdue_excused"],
+      "هـ٣. صفّاً صفّاً: بلا عذر · بياضٌ ليس عذراً · صورةُ المالك بعذر · إعادةُ عملٍ بعذر");
+    const n5 = items.find((i) => i.orderId === o5);
+    const n2 = items.find((i) => i.orderId === o2);
+    eq([n5?.holdReasonLabel, n2?.holdReasonLabel, n2?.holdNote],
+      [null, "يحتاج مراجعة المريض", "المريض لن يعمل الاجراءات المالية"],
+      "هـ٤. **البياضُ لا اسمَ له** فلا سطرَ سببٍ في الأحمر، والمعذورُ يحمل سببَه وملاحظتَه");
+    ok(!items.some((i) => i.orderId === o9), "هـ٥. والعزلُ لم يضعف: أمرُ الفرع الآخر لا يصل");
+
+    //  عمودُ «إعادات العمل» يقرأ `reworks` — ويعدّ الأنواعَ القديمة معه.
+    await db.execute(sql`INSERT INTO prosthetic_rework_events (work_order_id, rework_type, reason_code)
+      VALUES (${o4}, 'technical_rework', 'socket_fit'), (${o4}, 'recast', NULL), (${o5}, 'resocket', NULL)`);
+    const ovR = await http(`/api/manufacturing/overview`, mgr(mgrA, bA));
+    eq([expertOf(ovR.body, Y)?.reworks, expertOf(ovR.body, X)?.reworks], [3, 0],
+      "هـ٦. **`reworks` لكلّ خبير يعدّ كلَّ إعاداته** — الحديثةَ والقديمةَ (قالب/سوكت) معاً");
+    ok(!("recasts" in (expertOf(ovR.body, Y) ?? {})) && !("resockets" in (expertOf(ovR.body, Y) ?? {})),
+      "هـ٧. ولا حقلَ `recasts`/`resockets` في الردّ — فعمودٌ يقرؤهما يبقى فارغاً (سببُ الاستبدال)");
+
     console.log("\nد — العذرُ يُكتب فيتحوّل الصفّ، والاستئنافُ لا يُسقطه");
     //  **انقلب هذا العقدُ بقرار المالك (٢٠٢٦-٠٩-٢٤)**: كان الاستئنافُ يُصفّر
     //  العذرَ فيعود الأمرُ أحمر («لا يضيع عذرٌ مهما كان»). والآن يبقى.
@@ -254,6 +284,7 @@ async function main() {
   } finally {
     if (srv) await new Promise((r) => srv.close(() => r(null)));
     const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+    await db.execute(sql`DELETE FROM prosthetic_rework_events WHERE work_order_id IN (${idList})`);
     await db.execute(sql`DELETE FROM prosthetic_work_history WHERE work_order_id IN (${idList})`);
     await db.execute(sql`DELETE FROM prosthetic_work_orders WHERE id IN (${idList})`);
     await db.execute(sql`DELETE FROM patients WHERE id IN (${sql.join(patientIds.map((i) => sql`${i}`), sql`, `)})`);
