@@ -201,7 +201,7 @@ export default function Manufacturing() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             {expertOnly ? "الحالات المسندة إليك — تابع مراحل التصنيع وسجّل إعادة العمل والنتائج."
-              : "متابعة أوامر التصنيع، مراحلها، وإعادة القالب والسوكت."}
+              : "متابعة أوامر التصنيع، مراحلها، وإعادات العمل."}
           </p>
         </div>
         {(isAdmin || isManager) && (
@@ -363,8 +363,10 @@ export default function Manufacturing() {
                       <th className="py-2">مكتمل</th>
                       <th className="py-2">متأخر بدون عذر</th>
                       <th className="py-2">متأخر بعذر</th>
-                      <th className="py-2">إعادة قالب</th>
-                      <th className="py-2">إعادة سوكت</th>
+                      {/* عمودٌ واحد من `reworks` الذي يحسبه `getOverview` — كان هنا عمودا
+                          «إعادة قالب» و«إعادة سوكت» يقرآن حقلين لا يحسبهما الخادم
+                          فيظهران فارغين دائماً (§4.ao). */}
+                      <th className="py-2">إعادات العمل</th>
                       <th className="py-2">نجاح أول تجربة</th>
                       <th className="py-2">متوسط المدة</th>
                     </tr>
@@ -377,8 +379,7 @@ export default function Manufacturing() {
                         <td>{e.completed}</td>
                         <td className={e.overdue > 0 ? "text-red-600 font-bold" : ""}>{e.overdue}</td>
                         <td className={e.overdueExcused > 0 ? "text-amber-700 font-bold" : ""}>{e.overdueExcused}</td>
-                        <td>{e.recasts}</td>
-                        <td>{e.resockets}</td>
+                        <td>{e.reworks}</td>
                         <td>{e.firstFitRate != null ? `${e.firstFitRate}%` : "—"}</td>
                         <td>{e.avgDurationDays != null ? `${e.avgDurationDays} يوم` : "—"}</td>
                       </tr>

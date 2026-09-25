@@ -7,6 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Bell, AlertTriangle, CalendarClock, CheckCircle2 } from "lucide-react";
 import { SERVICE_TYPE_LABELS, STAGE_LABELS } from "@shared/manufacturing";
+import {
+  NOTIFICATION_SECTIONS, sectionOf, isLateSection, type AlertKind, type SectionKey,
+} from "./notifications_sections";
 
 interface AlertItem {
   orderId: number;
@@ -21,11 +24,11 @@ interface AlertItem {
   currentStage: string;
   status: string;
   days: number;
-  kind: "overdue" | "due_today" | "due_tomorrow" | "due_in_2_days" | "completed";
+  kind: AlertKind;
   /**
-   * سببُ التوقّف الحاليّ — لا يمتلئ إلّا حين يكون الأمرُ متوقّفاً فعلاً
-   * (تصحيحُ تباين تنبيهات التسليم، 2026-08-31). فارغةٌ لأمرٍ يعمل بلا
-   * توقّفٍ ولو كان متأخّراً — فلا عذرَ يُخترَع له.
+   * العذرُ المكتوب على الأمر — آخرُ سببٍ كُتب من «توقّف / مشكلة»، ويبقى
+   * بعد استئناف العمل (٢٠٢٦-٠٩-٢٤). فارغٌ لأمرٍ لم يُكتب له سبب — فلا
+   * عذرَ يُخترَع له. **ومنه وحدَه يُقرَّر القسم** (`sectionOf`)، لا من اسمه.
    */
   holdReasonCode: string | null;
   holdReasonLabel: string | null;
@@ -35,24 +38,16 @@ interface AlertItem {
 const ALL_BRANCHES = "__all__";
 const ALL_EXPERTS = "__all__";
 
-const SECTIONS: { kind: AlertItem["kind"]; title: string; tone: string; icon: any }[] = [
-  { kind: "overdue", title: "متأخرة عن موعد التسليم", tone: "border-red-300 bg-red-50", icon: AlertTriangle },
-  { kind: "due_today", title: "موعد تسليمها اليوم", tone: "border-orange-300 bg-orange-50", icon: CalendarClock },
-  { kind: "due_tomorrow", title: "موعد تسليمها غداً", tone: "border-amber-300 bg-amber-50", icon: CalendarClock },
-  { kind: "due_in_2_days", title: "موعد تسليمها بعد يومين", tone: "border-yellow-300 bg-yellow-50", icon: CalendarClock },
-  { kind: "completed", title: "اكتملت في موعدها", tone: "border-green-300 bg-green-50", icon: CheckCircle2 },
-];
-
-//  ══ **متأخّرٌ بعذرٍ مسجَّل ≠ متأخّرٌ بلا عذر** (تصحيحُ تباين تنبيهات
-//  التسليم، 2026-08-31) ═══════════════════════════════════════════════════
-//  الأمرُ متأخّرٌ فعلاً في الحالتين فيبقى تحت القسم نفسِه («متأخرة عن موعد
-//  التسليم») — لكنّ اللونَ يختلف: أحمر لمن لا عذرَ له، وكهرمانيّ (لونُ
-//  «غداً» نفسُه — لا لونٌ ثالثٌ يُخترَع) لمن يحمل سبباً حقيقياً مسجَّلاً على
-//  أمره الآن (`holdReasonCode`/`holdNote` القادمان من الخادم — لا استنتاج).
-function toneFor(i: AlertItem, sectionTone: string): string {
-  if (i.kind === "overdue" && i.holdReasonLabel) return "border-amber-300 bg-amber-50";
-  return sectionTone;
-}
+//  أيقونةُ كلّ قسم — والأقسامُ نفسُها وقرارُ انتماء التنبيه إليها في
+//  `notifications_sections.ts` (منطقٌ خالص يُختبَر، لا يعيش داخل المكوّن).
+const SECTION_ICONS: Record<SectionKey, any> = {
+  overdue: AlertTriangle,
+  overdue_excused: AlertTriangle,
+  due_today: CalendarClock,
+  due_tomorrow: CalendarClock,
+  due_in_2_days: CalendarClock,
+  completed: CheckCircle2,
+};
 
 function fmtDate(d: string): string {
   return new Date(d + "T00:00:00").toLocaleDateString("ar-IQ", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -158,21 +153,25 @@ export default function Notifications() {
         </div>
       ) : (
         <div className="space-y-6">
-          {SECTIONS.map(({ kind, title, tone, icon: Icon }) => {
-            const list = items.filter((i) => i.kind === kind);
+          {NOTIFICATION_SECTIONS.map(({ key, title, tone, iconTone }) => {
+            //  **القسمُ من `sectionOf` وحدها** — تعريفُ لوحة التصنيع نفسُه
+            //  (`latenessOf`)، فلا يقع متأخرٌ بعذرٍ تحت «متأخرة بدون عذر».
+            const list = items.filter((i) => sectionOf(i) === key);
             if (list.length === 0) return null;
+            const Icon = SECTION_ICONS[key];
+            const late = isLateSection(key);
+            const excused = key === "overdue_excused";
             return (
-              <div key={kind}>
+              <div key={key}>
                 <h2 className="text-sm font-bold mb-2 flex items-center gap-2">
-                  <Icon className={`w-4 h-4 ${kind === "completed" ? "text-green-600" : kind === "overdue" ? "text-red-600" : "text-amber-600"}`} />
+                  <Icon className={`w-4 h-4 ${iconTone}`} />
                   {title}
                   <Badge variant="secondary" className="text-xs">{list.length}</Badge>
                 </h2>
                 <div className="space-y-2">
                   {list.map((i) => {
-                    const onHold = kind === "overdue" && !!i.holdReasonLabel;
                     const card = (
-                      <Card className={`${toneFor(i, tone)} ${canOpenOrder ? "hover:shadow-sm transition-shadow cursor-pointer" : ""}`}>
+                      <Card className={`${tone} ${canOpenOrder ? "hover:shadow-sm transition-shadow cursor-pointer" : ""}`}>
                         <CardContent className="p-3">
                           <div className="flex items-start justify-between gap-3 flex-wrap">
                             <div className="min-w-0">
@@ -183,8 +182,8 @@ export default function Notifications() {
                                 {i.branchName && <span>الفرع: {i.branchName}</span>}
                                 <span>المرحلة: {STAGE_LABELS[i.currentStage] ?? i.currentStage}</span>
                               </div>
-                              {/* سببُ التوقّف — لا يظهر إلّا حين يحمله الأمرُ فعلاً (لا استنتاج) */}
-                              {onHold && (
+                              {/* سببُ التأخير — في قسم «متأخرة بعذر» وحدَه، وهو ما وضعه فيه (لا استنتاج) */}
+                              {excused && (
                                 <div className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 mt-1.5 inline-block">
                                   سببُ التأخير: {i.holdReasonLabel}
                                   {i.holdNote && <span className="text-amber-700"> — {i.holdNote}</span>}
@@ -193,14 +192,14 @@ export default function Notifications() {
                             </div>
                             <div className="text-left">
                               <div className="text-xs font-medium">{fmtDate(i.expectedDeliveryDate)}</div>
-                              {kind === "overdue" && (
+                              {late && (
                                 <Badge
-                                  className={`mt-1 text-xs ${onHold ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-red-100 text-red-800 border-red-200"}`}
+                                  className={`mt-1 text-xs ${excused ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-red-100 text-red-800 border-red-200"}`}
                                 >
                                   متأخر {Math.abs(i.days)} يوم
                                 </Badge>
                               )}
-                              {kind === "completed" && (
+                              {key === "completed" && (
                                 <Badge className="mt-1 text-xs bg-green-100 text-green-800 border-green-200">
                                   ✓ مكتمل
                                 </Badge>

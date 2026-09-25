@@ -1129,6 +1129,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     for (const o of orders) {
       if (!o.expectedDeliveryDate || o.status === "cancelled") continue;
       const days = daysUntil(o.expectedDeliveryDate);
+      const excuse = writtenHoldExcuse(o.holdReasonCode);
       const base = {
         orderId: o.id, patientId: o.patientId, patientName: o.patientName,
         serviceType: o.serviceType,
@@ -1144,8 +1145,11 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         //  (نفسُ التصحيح). آخرُ سببٍ كُتب من «توقّف / مشكلة»، **ويبقى بعد
         //  استئناف العمل** حتى ينتهي الأمر أو يُكتب أحدثُ منه (٢٠٢٦-٠٩-٢٤)،
         //  ولا يُستنتَج من أيّ شيءٍ آخر — القيمةُ المخزَّنة نفسُها أو لا شيء.
+        //  **والاسمُ بتعريف `writtenHoldExcuse` نفسِه** الذي تُقسِّم به الشاشةُ
+        //  (٢٠٢٦-٠٩-٢٥): البياضُ وحده لا اسمَ له، فلا يحمل تنبيهٌ في قسم
+        //  «متأخرة بدون عذر» سبباً يُعرَض.
         holdReasonCode: o.holdReasonCode ?? null,
-        holdReasonLabel: o.holdReasonCode ? (REASON_CODE_LABELS[o.holdReasonCode] ?? o.holdReasonCode) : null,
+        holdReasonLabel: excuse === null ? null : (REASON_CODE_LABELS[excuse] ?? excuse),
         holdNote: o.holdNote ?? null,
       };
       if (o.status === "completed") {

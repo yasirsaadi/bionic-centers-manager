@@ -20,6 +20,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const pageSrc = fs.readFileSync(path.join(here, "Manufacturing.tsx"), "utf8");
 const toneSrc = fs.readFileSync(path.join(here, "manufacturing_row_tone.ts"), "utf8");
 const notifSrc = fs.readFileSync(path.join(here, "Notifications.tsx"), "utf8");
+//  أقسامُ التنبيهات وألوانُها انتقلت إلى ملفٍّ خالص (٢٠٢٦-٠٩-٢٥) — فتُقرأ منه.
+const notifSectionsSrc = fs.readFileSync(path.join(here, "notifications_sections.ts"), "utf8");
 const cardSrc = fs.readFileSync(path.join(here, "../components/ui/card.tsx"), "utf8");
 
 let pass = 0, fail = 0;
@@ -133,7 +135,7 @@ const unknown = rowToneOf(order({ status: "waiting_materials", holdReasonCode: "
 eq("ز١. رمزٌ خارج المعجم ⟶ يُعرَض كما هو", unknown.reason?.label, "some_new_code_2030");
 eq("ز٢. وهو أصفرُ كغيره", unknown.tone, "amber");
 ok("ز٣. والخادمُ يفعل الشيءَ نفسَه في نقطة التنبيهات",
-  /REASON_CODE_LABELS\[o\.holdReasonCode\] \?\? o\.holdReasonCode/.test(
+  /REASON_CODE_LABELS\[excuse\] \?\? excuse/.test(
     fs.readFileSync(path.join(here, "../../../server/manufacturing/routes.ts"), "utf8")));
 
 // ══ س. العذرُ يبقى بعد الاستئناف (قرارُ المالك ٢٠٢٦-٠٩-٢٤ — ثانياً) ══════
@@ -216,7 +218,7 @@ for (const [border, bg] of [
   ["border-green-300", "bg-green-50"],
 ] as [string, string][]) {
   ok(`ي. «${border} ${bg}» سلسلتُها عينُها في شاشة التنبيهات`,
-    notifSrc.includes(`"${border} ${bg}"`) && toneSrc.includes(`"${border} ${bg}"`));
+    notifSectionsSrc.includes(`"${border} ${bg}"`) && toneSrc.includes(`"${border} ${bg}"`));
 }
 ok("ي٤. والشاشتان تقيسان العذرَ بالشيء نفسِه — سببُ التوقّف القادمُ من الخادم",
   /i\.holdReasonLabel/.test(notifSrc) && /holdReasonCode/.test(toneSrc));
@@ -258,10 +260,9 @@ const boardTones = (["red", "amber", "green", "slate"] as const).map((tone) => {
   return [`اللوحة/${tone}`, `hover:shadow-sm transition-shadow cursor-pointer ${d.cardClass}`] as const;
 });
 const notifTones = [
-  ...[...notifSrc.matchAll(/tone: "([^"]+)"/g)].map((m) => m[1]),
-  ...[...notifSrc.matchAll(/function toneFor[\s\S]*?return "([^"]+)"/g)].map((m) => m[1]),
+  ...[...notifSectionsSrc.matchAll(/\btone: "([^"]+)"/g)].map((m) => m[1]),
 ].map((cls) => [`التنبيهات/${cls}`, `${cls} hover:shadow-sm transition-shadow cursor-pointer`] as const);
-ok("ل٢. وألوانُ التنبيهات مقروءةٌ كلُّها (خمسةُ أقسامٍ ولونُ العذر)", notifTones.length === 6,
+ok("ل٢. وألوانُ التنبيهات مقروءةٌ كلُّها (ستّةُ أقسامٍ، منها «متأخرة بعذر»)", notifTones.length === 6,
   String(notifTones.length));
 
 for (const [label, cls] of [...boardTones, ...notifTones]) {
@@ -276,7 +277,7 @@ ok("ل٣. والجمعُ باليد بلا `cn` يُبقي الصنفين معا
   tokens(`${cardBase} border-amber-300 bg-amber-50`).includes("bg-card"));
 ok("ل٤. والشاشتان تلبسان اللونَ على `Card` لا على عنصرٍ سواها",
   /<Card className=\{`hover:shadow-sm transition-shadow cursor-pointer \$\{t\.cardClass\}`\}>/.test(pageSrc)
-  && /<Card className=\{`\$\{toneFor\(i, tone\)\}/.test(notifSrc));
+  && /<Card className=\{`\$\{tone\} \$\{canOpenOrder/.test(notifSrc));
 
 // ══ ع. صفحةُ الأمر: تنبيهُ التأخّر والمكانُ الواحد للعذر ═══════════════════
 //  قرارُ المالك (٢٠٢٦-٠٩-٢٤ — ثانياً): «تُلزم الخبير بمكان كتابة عذرٍ واحد،
