@@ -248,7 +248,15 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     if (!(await scopeReachesPatient(branchScope(req), patient))) {
       return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
-    const rows = await store.getFollowupsForPatient(patientId);
+    //  ══ **القرارُ المنتظر لفرعه وللمسؤول وحدهما** (قرارُ المالك
+    //  ٢٠٢٦-٠٩-٢٥) ═══════════════════════════════════════════════════════
+    //  «لا منطقَ من رؤية فرعٍ آخر القرار، لأن الفرعَ الآخر لم ولن يعرف أن
+    //  اشترى المريضُ أو لم يشترِ». فملفٌّ مُتاحٌ لعدّة فروع يعرض لكلّ فرعٍ
+    //  قراراتِه المنتظرة وحدها، والمحسومُ تاريخٌ يقرؤه الجميعُ كما كان.
+    //  والشرطُ شرطُ الأفعال نفسُه (`canReachBranch` في `loadInScope`): ما
+    //  لا يُعرَض هو بعينه ما كان الخادمُ سيردّه ٤٠٣ عند الضغط.
+    const rows = (await store.getFollowupsForPatient(patientId))
+      .filter((f) => isTerminal(f.status) || canReachBranch(req, f.branchId));
     const s = getSession(req);
     const owner = ownerSessionOf(req);
     const withDetail = await Promise.all(rows.map(async (f) => {
@@ -721,8 +729,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     }
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
-    //  نفس تحقّق «تخصيص»: فعّالٌ وفي فرع المريض — لا قائمة خبراء ثانية.
-    const v = await validateExpert(expertUserId, patient.branchId);
+    //  نفس تحقّق «تخصيص»: فعّالٌ وفي فرع القرار — لا قائمة خبراء ثانية.
+    const v = await validateExpert(expertUserId, await expertBranchOf(f, patient));
     if (!v.ok) return res.status(400).json({ error: v.reason });
     try {
       const updated = await store.selectExpert({
@@ -1160,6 +1168,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
 
     const patient = await storage.getPatient(f.patientId);
     if (!patient) return res.status(404).json({ error: "المريض غير موجود" });
+    //  **فرعُ القرار يحسم الخبير** (قرارُ المالك ٢٠٢٦-٠٩-٢٥) — مرّةً واحدة
+    //  للاختيار أدناه وللتحقّق من المحفوظ معاً.
+    const expertBranch = await expertBranchOf(f, patient);
 
     // ══ الخبيرُ الناقص يُختار **هنا**، والموجودُ لا يُستبدَل ═════════════
     //
@@ -1190,7 +1201,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       //  وهي **نصفُ `canSelectExpert` الأوّل بعينه**. وحياةُ الملفّ — نصفُها
       //  الثاني — يحرسها `store.selectExpert` بـ٤٠٩، فلا يُكتب خبيرٌ على
       //  ملفٍّ تحوّل أو أُغلق.
-      const okExpert = await validateExpert(askedExpert, patient.branchId);
+      const okExpert = await validateExpert(askedExpert, expertBranch);
       if (!okExpert.ok) return res.status(400).json({ error: okExpert.reason });
       try {
         workingFollowup = await store.selectExpert({
@@ -1210,7 +1221,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
 
     //  ويُتحقَّق من الخبير **المحفوظ**: قد يكون غادر الفرع أو عُطّل حسابُه
     //  منذ اختياره.
-    const v = await validateExpert(workingFollowup.selectedExpertUserId!, patient.branchId);
+    const v = await validateExpert(workingFollowup.selectedExpertUserId!, expertBranch);
     if (!v.ok) return res.status(400).json({ error: v.reason });
 
     // ══ أولُ سعرٍ حين سكتت المعاينة — **ليس خصماً** ════════════════════
@@ -1349,6 +1360,20 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   //  الاسمُ القديم يبقى مسنَداً إلى المعالج نفسه: نافذةٌ مفتوحةٌ منذ ما قبل
   //  النشر تصيبه، ولا يجوز أن تُردّ بـ404 وهي تفعل الصواب.
   app.post("/api/followups/:id/approve-purchase", isAuthenticated, confirmPurchaseHandler);
+}
+
+/**
+ * **الفرعُ الذي يُتحقَّق فيه خبيرُ القرار** — فرعُ القرار ما دام يصل ملفَّ
+ * المريض، وإلّا فرعُ التسجيل كما كان (قرارُ المالك ٢٠٢٦-٠٩-٢٥).
+ *
+ * قرارٌ أرسلته بغداد يُحسَم في بغداد، والبطاقةُ تعرض خبراءَ فرع القرار — فكان
+ * الخادمُ يردّ خبيرَ بغداد لأنه ليس في فرع التسجيل، والقائمةُ لا تعرض غيرَه.
+ */
+async function expertBranchOf(
+  f: { branchId: number | null },
+  patient: { id: number; branchId: number | null },
+): Promise<number | null> {
+  return (await store.decisionBranchReachingPatient(f, patient)) ?? patient.branchId;
 }
 
 /** يعيد استعمال تحقّق «تخصيص» نفسه — لا قائمة خبراء ثانية تنحرف عنها. */

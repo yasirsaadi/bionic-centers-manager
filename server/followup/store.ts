@@ -33,6 +33,24 @@ import {
 } from "@shared/commercial";
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
 import type { Payment } from "@shared/schema";
+import { scopeReachesPatient } from "../patients/branch_access";
+
+/**
+ * **فرعُ القرار ما دام يصل ملفَّ المريض** — وإلّا `null`، فيبقى المنادي على
+ * سلوكه القائم بحرفه (فرعُ التسجيل للخبير، وفرعُ الحالة للجهاز).
+ *
+ * قرارُ المالك (٢٠٢٦-٠٩-٢٥): القرارُ لفرعه حصراً، فبيعُه يقع فيه — خبيرُه من
+ * خبراء ذلك الفرع (وهم مَن تعرضهم البطاقةُ أصلاً)، وجهازُه يُفتَح فيه. وقرارٌ
+ * لم يعد فرعُه يصل الملفَّ (إتاحةٌ سُحبت بعده) لا يُفتَح له جهازٌ خارج الملفّ.
+ */
+export async function decisionBranchReachingPatient(
+  f: { branchId: number | null },
+  patient: { id: number; branchId: number | null },
+  tx?: { execute: (q: any) => Promise<any> },
+): Promise<number | null> {
+  if (f.branchId === null || f.branchId === undefined) return null;
+  return (await scopeReachesPatient([f.branchId], patient, tx)) ? f.branchId : null;
+}
 
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
 export class FollowupError extends Error {
@@ -1998,10 +2016,18 @@ export async function confirmPurchase(params: {
     let episodeId = cur.deviceEpisodeId;
     const eps = await import("../device_episodes/store");
     if (episodeId === null && eps.isDeviceServiceType(cur.serviceType)) {
+      //  **والجهازُ يُفتَح في فرع القرار** (قرارُ المالك ٢٠٢٦-٠٩-٢٥): قرارٌ
+      //  أرسلته بغداد يُباع في بغداد — فأمرُه وكلفتُه هناك لا في فرع الحالة.
+      const pr = await tx.execute(sql`SELECT branch_id FROM patients WHERE id = ${cur.patientId}`);
+      const home = (pr.rows ?? [])[0]?.branch_id;
+      const saleBranchId = await decisionBranchReachingPatient(cur, {
+        id: cur.patientId, branchId: home === null || home === undefined ? null : Number(home),
+      }, tx);
       const ep = await eps.ensureFirstDeviceEpisodeForSale(tx, {
         patientId: cur.patientId,
         serviceType: cur.serviceType,
         createdBy: params.actor.userId,
+        branchId: saleBranchId,
       });
       //  لا خيطَ لهذا الاختصاص ⟶ `null`، فيمضي البيعُ على مساره القديم
       //  بلا كسر. ورفضُه هنا كان سيوقف بيعاً صحيحاً لأجل هويّةٍ إدارية.

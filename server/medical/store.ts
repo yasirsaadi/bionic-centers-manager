@@ -29,6 +29,7 @@ import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { scopeReachesPatient } from "../patients/branch_access";
 import { ensureActiveCaseTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
@@ -40,7 +41,7 @@ import { ensureFollowupForSignedExam } from "../followup/store";
 import { activeExamDrizzle, activeExamSql } from "./active_exam";
 import {
   closeRequestsAwaitingExam, specialtyLevelRequestSql,
-  retagReviewRequestsForRetypedEpisode,
+  retagReviewRequestsForRetypedEpisode, type ClosedReviewRequest,
 } from "../medical_review/store";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
@@ -485,10 +486,23 @@ export async function createExam(values: {
         });
       }
 
-      await closeRequestsAwaitingExam({
+      const closedRequests = await closeRequestsAwaitingExam({
         patientId: values.patientId, serviceType: values.caseType, examId: row.id,
         deviceEpisodeId: episodeId, tx,
       });
+
+      //  ══ **قرارُ ما بعد المعاينة للفرع الذي أرسل المريض** (قرارُ المالك
+      //  ٢٠٢٦-٠٩-٢٥) ═══════════════════════════════════════════════════════
+      //  «إن احتاج معاينةً إضافية أو أُرسل للمعاينة وهو متاحٌ لعدّة أفرع…
+      //  يعود القرارُ لهذا الفرع حصراً». المعاينةُ **بجهاز** قرارُها لفرع
+      //  الجهاز أصلاً — طلبُ الجهاز هو الإرسال. أمّا **بلا جهاز** فكان القرارُ
+      //  يُفتَح في فرع الحالة ولو أرسلته بغداد، فتحسمه ذي قار وهي لا تعرف
+      //  بالإرسال (مُعادٌ حيّاً). فصار لفرع أوّل طلبٍ أغلقته هذه المعاينة.
+      //  **والمعاينةُ نفسُها على فرعها** — القرارُ وحده ما يتغيّر، ومعاينةٌ لم
+      //  يُرسَل لها أحد تبقى على فرع الحالة كما كانت.
+      const decisionBranchId = episodeId === null
+        ? (await senderBranchOf(tx, values.patientId, closedRequests)) ?? operationBranchId
+        : operationBranchId;
 
       // ══ متابعةُ ما بعد المعاينة (ترحيل ٠٥٣) ═══════════════════════════
       // الطبيب قرّر، والمريض لم يقرّر بعد. فتُفتح متابعةٌ بحالة «بانتظار قرار
@@ -526,8 +540,9 @@ export async function createExam(values: {
               deviceEpisodeId: episodeId,
               medicalExamId: row.id,
               //  **فرعُ العملية لا فرعُ التسجيل**: متابعةُ جهازٍ نُقلت
-              //  مسؤوليتُه تُفتَح في فرع مَن يعمل عليه.
-              branchId: operationBranchId,
+              //  مسؤوليتُه تُفتَح في فرع مَن يعمل عليه — وبلا جهازٍ في فرع
+              //  مَن أرسل المريض (أعلاه).
+              branchId: decisionBranchId,
               serviceType: values.caseType as "prosthetic" | "medical_support",
               deviceCost: values.deviceCost,
               //  اقتراحُ الطبيب يُبذَر في المتابعة — والاستعلامات تُبقيه أو
@@ -571,6 +586,30 @@ export async function createExam(values: {
 }
 
 export { ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError };
+
+/**
+ * **فرعُ الإرسال** — فرعُ أوّل طلبِ مراجعةٍ أغلقته المعاينةُ **ويصل ملفَّ
+ * المريض الآن**، أو `null` حين لا إرسال.
+ *
+ * **والوصولُ شرطٌ لا زينة**: فرعٌ أرسل ثمّ سُحبت إتاحتُه قبل المعاينة لا
+ * يفتح ملفَّ المريض أصلاً، فقرارٌ في فرعه لا يراه أحدٌ فيه — فيبقى القرارُ
+ * لفرع الحالة كما كان.
+ */
+async function senderBranchOf(
+  tx: { execute: (q: any) => Promise<any> },
+  patientId: number,
+  closed: ClosedReviewRequest[],
+): Promise<number | null> {
+  const senders = closed.map((c) => c.branchId).filter((b): b is number => b !== null);
+  if (senders.length === 0) return null;
+  const pr = await tx.execute(sql`SELECT branch_id FROM patients WHERE id = ${patientId}`);
+  const home = (pr.rows ?? [])[0]?.branch_id;
+  const patient = { id: patientId, branchId: home === null || home === undefined ? null : Number(home) };
+  for (const b of senders) {
+    if (await scopeReachesPatient([b], patient, tx)) return b;
+  }
+  return null;
+}
 
 /**
  * **فرعُ العملية لتوقيعٍ بعينه** — فرعُ الحلقة حين يُطلَب جهازٌ محدَّد، وإلّا
