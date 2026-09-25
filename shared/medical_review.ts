@@ -232,3 +232,58 @@ export function canSuperviseReview(s: ReviewSessionLike | null | undefined): boo
   if (s?.role === "branch_manager") return true;
   return canDecideReview(s);
 }
+
+// ── فرعُ الطلب: مَن يرى ومَن يؤشّر ──────────────────────────────────────────
+//
+// قرارُ المالك ٢٠٢٦-٠٩-٢٥: «فيجب ان ترى الفروع المشتركة لمريض واحد ترى كل
+// شيء يحدث لهذا المريض سواء بفرعهم ام بغيره ليعلموا مافعل اما القرارات
+// فبالتاكيد تحصر لصاحب الفرع هو من يقرر».
+//
+// فطابورُ المراجعة يعرض لكلّ فرعٍ يصل الملفَّ حركاتِه كلَّها (§4.t)، والتأشيرُ
+// على الحركة **لفرع الطلب وحده**. وكانت الشاشةُ تُظهر الأزرارَ بقدرة
+// المستخدم العامّة فيضغطها فرعٌ آخر ويُردّ «غير مصرح لك بهذا الفرع».
+
+/**
+ * **أفرعُ الطلب في نطاق المنادي؟** — `null` نطاقُ المسؤول العام، أي الكلّ.
+ *
+ * **دالّةٌ واحدة يقرؤها الحارسُ والشاشةُ معاً**: `decideReviewRequest` و
+ * `returnFullRequestToReception` تردّان بها «غير مصرح لك بهذا الفرع»، ونقطةُ
+ * الطابور ترسل ناتجَها على كلّ صفٍّ (`branchInScope`). فلا يُعرَض زرٌّ يردّه
+ * الخادمُ، ولا يُخفى زرٌّ يقبله.
+ *
+ * و`Number(null)` صفرٌ لا يطابق فرعاً: طلبٌ بلا فرعٍ لا يؤشّر عليه إلّا
+ * المسؤول — كما كان الحارسُ قبل هذه الدالّة بحرفه.
+ */
+export function requestBranchInScope(
+  scope: readonly number[] | null, branchId: number | null | undefined,
+): boolean {
+  return scope === null || scope.includes(Number(branchId));
+}
+
+/** ما تعرضه بطاقةُ الطابور في منطقة الفعل. */
+export type ReviewCardMode = "act" | "other_branch" | "read_only";
+
+/**
+ * **قرارُ منطقة الفعل في بطاقة المراجعة** — خالصٌ يُختبَر دخلاً وخرجاً.
+ *
+ * • لا قدرةَ إشرافية ⟶ `read_only`: سطرُ «يمكنك القراءة فقط» كما كان.
+ * • قدرةٌ وفرعُ الطلب في النطاق ⟶ `act`: الأزرارُ كما كانت.
+ * • قدرةٌ وفرعُ الطلب خارج النطاق ⟶ `other_branch`: البطاقةُ للعلم، بلا زرّ.
+ *
+ * **والغيابُ «لا»**: صفٌّ بلا العلَم لا تُعرَض عليه أزرار — زرٌّ مخفيٌّ
+ * أهونُ من زرٍّ يُردّ ضاغطُه.
+ */
+export function reviewCardMode(p: {
+  canSupervise: boolean; branchInScope: boolean | null | undefined;
+}): ReviewCardMode {
+  if (!p.canSupervise) return "read_only";
+  return p.branchInScope === true ? "act" : "other_branch";
+}
+
+/** سطرُ بطاقة الفرع الآخر — يسمّي فرعَها، ويقول مَن يراجعها. */
+export function otherBranchNotice(branchName: string | null | undefined): string {
+  const name = String(branchName ?? "").trim();
+  return name
+    ? `هذه الحركة لفرع ${name} — يراجعها ذلك الفرع`
+    : "هذه الحركة لفرعٍ آخر — يراجعها ذلك الفرع";
+}
