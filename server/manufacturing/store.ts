@@ -17,7 +17,7 @@ import {
 import { and, eq, or, inArray, notInArray, sql, desc, asc } from "drizzle-orm";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { buildPatientSearch, trigramReady } from "../patient_search/sql";
-import { activePatientDrizzle } from "../patients/active_patient";
+import { activePatientDrizzle, belongsToActivePatientSql } from "../patients/active_patient";
 import { branchOrPatientAccessSql } from "../patients/branch_access";
 import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
 import { activeExamSql } from "../medical/active_exam";
@@ -1887,6 +1887,13 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     ? branchOrPatientAccessSql(scope.branchIds, "prosthetic_work_orders.branch_id",
       "prosthetic_work_orders.patient_id")
     : sql`TRUE`;
+  //  ══ **والمحذوفُ خارجَ اللوحة كما هو خارجَ القائمة** (٢٠٢٦-٠٩-٢٥) ══════
+  //  `listOrders` تُخرج أوامرَ مرضى السلّة (`orderConditions` ⟵
+  //  `activePatientDrizzle`)، وكانت اللوحةُ تعدّها — فيزيد المربّعُ على
+  //  الشريط بعددهم، ويضغط المالكُ الشريطَ فلا يجد الفرق. والشرطُ هنا على
+  //  الأوامر نفسِها، فيتبعه كلُّ ما يُشتقّ منها: المربّعات · الخبراء ·
+  //  الفروع · المراحل · أسبابُ إعادة العمل. والاستعادةُ تُعيده كما كان.
+  const activeCond = belongsToActivePatientSql("prosthetic_work_orders");
 
   const orders = await db.select({
     id: WO.id, branchId: WO.branchId, expertUserId: WO.expertUserId, serviceType: WO.serviceType,
@@ -1900,7 +1907,7 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     .from(WO)
     .leftJoin(systemUsers, eq(systemUsers.id, WO.expertUserId))
     .leftJoin(branches, eq(branches.id, WO.branchId))
-    .where(branchCond);
+    .where(and(branchCond, activeCond));
 
   const ids = orders.map((o) => o.id);
   const reworkRows = ids.length

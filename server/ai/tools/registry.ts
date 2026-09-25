@@ -40,7 +40,7 @@ import * as medical from "../../medical/store";
 import { branchInOperationalScope, type AiAccessContext } from "../access";
 import type { AiToolSpec } from "../provider";
 import { activeExamDrizzle } from "../../medical/active_exam";
-import { activePatientDrizzle } from "../../patients/active_patient";
+import { activePatientDrizzle, belongsToActivePatientSql } from "../../patients/active_patient";
 import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
 import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
 import {
@@ -620,6 +620,8 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
       .where(and(
         eq(prostheticWorkOrders.expertUserId, access.userId),
         sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+        //  مرضى السلّة خارجَ قائمة الخبير — كشاشته (`listOrders`) (٢٠٢٦-٠٩-٢٥).
+        activePatientDrizzle(),
       ))
       .orderBy(desc(prostheticWorkOrders.id));
     out.myManufacturingOrders = {
@@ -734,6 +736,8 @@ async function myWorklist(access: AiAccessContext): Promise<ToolOutcome> {
       currentStage: prostheticWorkOrders.currentStage,
     }).from(prostheticWorkOrders).where(and(
       sql`${prostheticWorkOrders.status} NOT IN ('completed','cancelled')`,
+      //  مرضى السلّة خارجَ العدّ — كلوحة التصنيع وقائمتها (٢٠٢٦-٠٩-٢٥).
+      belongsToActivePatientSql("prosthetic_work_orders"),
       scope === null ? sql`TRUE`
         : scope.length === 0 ? sql`FALSE`
           : inArray(prostheticWorkOrders.branchId, scope),
