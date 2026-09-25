@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   isReviewServiceType, isReviewKind, isReviewPath, isReviewDecision,
-  isPathAllowedForKind, isAwaitingFullExam, STATUS_AFTER,
+  isPathAllowedForKind, isAwaitingFullExam, STATUS_AFTER, requestBranchInScope,
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
 import { activeExamSql } from "../medical/active_exam";
@@ -401,7 +401,8 @@ export async function decideReviewRequest(params: {
     `);
     const row = (cur.rows ?? [])[0];
     if (!row) throw new ReviewError("طلب المراجعة غير موجود", 404);
-    if (branchIds !== null && !branchIds.includes(Number(row.branch_id))) {
+    //  التأشيرُ لفرع الطلب وحده — والدالّةُ نفسُها تقول للشاشة أتُظهر الزرّ.
+    if (!requestBranchInScope(branchIds, row.branch_id)) {
       throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
     }
     if (row.requested_path === "full") {
@@ -474,7 +475,7 @@ export async function returnFullRequestToReception(params: {
     `);
     const row = (cur.rows ?? [])[0];
     if (!row) throw new ReviewError("طلب المراجعة غير موجود", 404);
-    if (params.branchIds !== null && !params.branchIds.includes(Number(row.branch_id))) {
+    if (!requestBranchInScope(params.branchIds, row.branch_id)) {
       throw new ReviewError("غير مصرح لك بهذا الفرع", 403);
     }
     //  المنتظرُ معاينةً كاملة وحده: المُرسَل كاملاً، أو المُحال بعد نظرة.

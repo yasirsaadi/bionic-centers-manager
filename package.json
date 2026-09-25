@@ -188,6 +188,8 @@
     "test:physio-free": "tsx server/physio_free_sessions.test.ts",
     "test:case-cost-edit-phone": "tsx client/src/components/patient/case_cost_edit_phone.test.ts",
     "test:review-share": "tsx server/medical_review/branch_share_visibility.test.ts",
+    "test:review-card-actions": "tsx server/medical_review/review_card_actions.test.ts",
+    "test:review-card-ui": "tsx client/src/pages/medical_review_card.test.ts",
     "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts"
   },
   "dependencies": {

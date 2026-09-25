@@ -135,7 +135,7 @@ import { rowToneOf, holdButtonShown, holdDialogKind, orderLatenessNotice } from 
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
-  REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath,
+  REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath, otherBranchNotice,
 } from "@shared/medical_review";
 import {
   canCompleteReceptionSale,
@@ -655,6 +655,26 @@ async function main() {
   same("ح.٦ج **ورسالةُ القراءة فقط كما تقولها الشاشة**",
     /«(المراجعة الإشرافية[^»]+)»/.exec(mr.replace(/\s+/g, " "))?.[1],
     "المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص — يمكنك القراءة فقط.");
+
+  //  ⑤ب **وفرعُ البطاقة معها** (قرارُ المالك ٢٠٢٦-٠٩-٢٥): الطابورُ يعرض لكلّ
+  //  فرعٍ يشارك ملفَّ المريض حركاتِه كلَّها للعلم، والتأشيرُ لفرع الطلب وحده.
+  //  والدليلُ يقول الحالاتِ الثلاث كما تعرضها الشاشة — وسطرُ الفرع الآخر من
+  //  الدالّة نفسِها التي تعرضه بها الشاشة.
+  const flatMr0 = mr.replace(/\s+/g, " ");
+  check(/وتتبع معها `branchInScope` على كلّ صفّ/.test(flatMr0),
+    "ح.٦د **والأفعالُ تتبع `branchInScope` على كلّ صفّ**");
+  check(flatMr0.includes("**والتأشيرُ على الحركة لفرع الطلب وحده**"),
+    "ح.٦هـ **والتأشيرُ لفرع الطلب وحده**");
+  check(/\*\*`canSupervise === true` و`branchInScope === true`\*\* ⟵ تظهر في منطقة الفعل/.test(flatMr0),
+    "ح.٦و **القدرةُ والفرعُ معاً ⟵ الأزرار**");
+  check(/\*\*`canSupervise === true` و`branchInScope === false`\*\* ⟵ \*\*لا أفعال\*\*/.test(flatMr0),
+    "ح.٦ز **وبطاقةُ فرعٍ آخر ⟵ لا أفعال**");
+  check(flatMr0.includes(`«${otherBranchNotice("(اسم الفرع)")}»`),
+    "ح.٦ح **وسطرُ الفرع الآخر من الدالّة التي تعرضه بها الشاشة**");
+  check(/\*\*ويقع في منطقة الفعل نفسِها\*\*، فلا يظهر على بطاقة فرعٍ آخر/.test(flatMr0),
+    "ح.٦ط **و«يتطلّب معاينة كاملة» لا يظهر على بطاقة فرعٍ آخر**");
+  check(/ولا `branchInScope` لصفٍّ بعينه/.test(flatMr0),
+    "ح.٦ي **ولا يجزم بـ`branchInScope` لصفٍّ بعينه**");
 
   //  ⑥ السببُ للإرجاع وحده.
   //  **ومربوطٌ بالفعل بعينه** لا بجملةٍ عائمة — الإرجاعُ هو الذي يطلب السبب.

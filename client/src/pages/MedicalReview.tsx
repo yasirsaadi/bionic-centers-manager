@@ -16,7 +16,7 @@ import { formatDateTimeIraq } from "@/lib/utils";
 import { SPECIALTY_COLORS, isMedicalSpecialty, specialtyLabel, sortBySpecialty } from "@shared/medical";
 import { componentLabel } from "@shared/prosthetic_parts";
 import {
-  REVIEW_KIND_LABELS,
+  REVIEW_KIND_LABELS, reviewCardMode, otherBranchNotice,
   type ReviewDecision, type ReviewKind, type ReviewPath,
 } from "@shared/medical_review";
 
@@ -29,6 +29,12 @@ interface ReviewCard {
   patientPhone: string | null;
   branchId: number | null;
   branchName: string | null;
+  /**
+   * **أفرعُ الطلب في نطاقك؟** — يرسله الخادمُ على كلّ صفّ من الدالّة التي
+   * يردّ بها التأشيرَ نفسِها. الطابورُ يعرض حركاتِ كلّ فرعٍ يشاركك ملفَّ
+   * المريض للعلم، والتأشيرُ لفرع الطلب وحده (قرارُ المالك ٢٠٢٦-٠٩-٢٥).
+   */
+  branchInScope?: boolean;
   patientClassification: string | null;
   requestedPath: ReviewPath;
   reviewKind: ReviewKind;
@@ -358,6 +364,9 @@ export default function MedicalReview() {
           {filtered.map((r) => {
             const a = accent(r.serviceType);
             const who = handledBy(r);
+            //  منطقةُ الفعل بفرع البطاقة لا بقدرة المستخدم وحدها — فلا يُعرَض
+            //  على بطاقة فرعٍ آخر زرٌّ يردّه الخادم.
+            const mode = reviewCardMode({ canSupervise, branchInScope: r.branchInScope });
             return (
               <Card key={r.id} className={`border ${a.ring}`} data-testid={`review-card-${r.id}`}>
                 <CardContent className="p-3.5 space-y-2">
@@ -399,7 +408,7 @@ export default function MedicalReview() {
                   )}
 
                   {/* ── التأشير ─────────────────────────────────────── */}
-                  {canSupervise ? (
+                  {mode === "act" ? (
                     <div className="border-t pt-2.5 space-y-2">
                       {openNote === r.id && (
                         <Textarea
@@ -453,6 +462,21 @@ export default function MedicalReview() {
                           </Button>
                         )}
                       </div>
+                    </div>
+                  ) : mode === "other_branch" ? (
+                    /*  **بطاقةُ فرعٍ آخر يشاركك ملفَّ المريض — للعلم لا للتأشير.**
+                        تظهر ليعرف فرعُك ما جرى للمريض هناك، والقرارُ عليها لفرعها. */
+                    <div className="border-t pt-2 flex items-center justify-between gap-2 flex-wrap"
+                      data-testid={`review-other-branch-${r.id}`}>
+                      <span className="text-[11px] text-muted-foreground">
+                        {otherBranchNotice(r.branchName)}
+                      </span>
+                      <Link href={`/patients/${r.patientId}`}>
+                        <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5"
+                          data-testid={`review-open-${r.id}`}>
+                          <Eye className="w-3.5 h-3.5" /> فتح ملف المريض
+                        </Button>
+                      </Link>
                     </div>
                   ) : (
                     <div className="border-t pt-2 text-[11px] text-muted-foreground">

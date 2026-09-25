@@ -33,7 +33,8 @@
  * القاعدة عند كلّ طلب** (`role` و`can_write_medical_exam` و`is_active` من
  * `system_users`) ويعودان **مع الطابور** (`/api/medical-review/queue`) — لا
  * من الجلسة، التي قد تكون على قيمٍ شاخت. ولذلك `medicalReviewGuide()` **لا
- * تأخذ `AiAccessContext` أصلاً** كأختها.
+ * تأخذ `AiAccessContext` أصلاً** كأختها. ومعهما `branchInScope` على **كلّ
+ * صفّ** (٢٠٢٦-٠٩-٢٥): أفرعُ الطلب في نطاق المستخدم — وهو حيٌّ كذلك.
  */
 
 import {
@@ -63,7 +64,7 @@ import {
 import { specialtyLabel } from "@shared/medical";
 import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
-  REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath,
+  REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath, otherBranchNotice,
 } from "@shared/medical_review";
 import type { AiAccessContext } from "./access";
 import type { PageContext } from "./page_context";
@@ -354,9 +355,14 @@ function medicalReviewGuide(label: string): string {
 الخادم.
 
 **وأفعالُ الصفّ تتبع \`canSupervise\` — وهي حالةٌ حيّةٌ يرسلها الخادمُ مع
-الطابور**:
-- **\`canSupervise === true\`** ⟵ تظهر في منطقة الفعل: ${approve} ·
-  «إضافة ملاحظة» · ${returnToReception} · «فتح ملف المريض».
+الطابور — وتتبع معها \`branchInScope\` على كلّ صفّ**: أفرعُ الطلب في نطاق
+المستخدم؟ فالطابورُ يعرض لكلّ فرعٍ يشارك ملفَّ المريض حركاتِه كلَّها **للعلم**،
+**والتأشيرُ على الحركة لفرع الطلب وحده** (قرارُ المالك):
+- **\`canSupervise === true\` و\`branchInScope === true\`** ⟵ تظهر في منطقة
+  الفعل: ${approve} · «إضافة ملاحظة» · ${returnToReception} · «فتح ملف المريض».
+- **\`canSupervise === true\` و\`branchInScope === false\`** ⟵ **لا أفعال**:
+  بطاقةُ فرعٍ آخر يشاركه ملفَّ المريض، تظهر للعلم بسطر
+  «${otherBranchNotice("(اسم الفرع)")}» ومعه «فتح ملف المريض» وحده.
 - **\`canSupervise === false\`** ⟵ **لا أفعال**، وتعرض الشاشةُ سطرَ القراءة
   فقط: «المراجعة الإشرافية للمسؤول أو مدير الفرع أو طبيب الاختصاص — يمكنك
   القراءة فقط.»
@@ -365,7 +371,8 @@ function medicalReviewGuide(label: string): string {
 مكتوب**. أمّا الملاحظةُ مع ${approve} فاختيارية.
 
 **و${requireFull} فعلٌ مختلف**: يظهر **فقط حين تكون \`canDecide === true\`**
-— **قرارٌ سريريٌّ لا إشرافيّ**، يقول إن هذه الحالة تحتاج فحصَ طبيب.
+— **قرارٌ سريريٌّ لا إشرافيّ**، يقول إن هذه الحالة تحتاج فحصَ طبيب. **ويقع
+في منطقة الفعل نفسِها**، فلا يظهر على بطاقة فرعٍ آخر.
 
 **⚠ والعلاقةُ بينهما اتّجاهٌ واحد لا استقلال**:
 **\`canDecide === true\` تستلزم \`canSupervise === true\` دائماً** — فمَن
@@ -384,7 +391,8 @@ function medicalReviewGuide(label: string): string {
 
 **⚠ وقاعدةٌ لا تُخالَف**: هذا الدليلُ يصف **القواعدَ** لا حالةَ الشاشة الآن.
 **ولا تعرف** قيمةَ \`canSupervise\` ولا \`canDecide\` لهذا المستخدم، ولا
-اختصاصاتِه، ولا صفوفَ طابوره، ولا أَظاهرٌ قسمُ «بانتظار الطبيب» أم لا —
+\`branchInScope\` لصفٍّ بعينه، ولا اختصاصاتِه، ولا صفوفَ طابوره، ولا أَظاهرٌ
+قسمُ «بانتظار الطبيب» أم لا —
 وهذه كلُّها حيّةٌ ليست عندك. فإن سُئلتَ «ليش ما أشوف زرّ «${requireFull}»؟»
 أو «وين قسم المعاينات المنتظرة؟» فاشرح القاعدةَ أعلاه، **وقل صراحةً إنك لا
 تستطيع الجزمَ بحالة شاشته الآن** — ولا تجزم بوجود زرٍّ ولا قسمٍ ولا بغيابه.`;

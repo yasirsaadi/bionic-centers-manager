@@ -41,7 +41,7 @@ import * as medical from "../medical/store";
 import {
   canCreateReview, canDecideReview, canSuperviseReview, REVIEW_DECISION_LABELS,
   REVIEW_PATH_LABELS, REVIEW_KIND_LABELS, REVIEW_SERVICE_TYPES,
-  isReviewDecision, type ReviewDecision,
+  isReviewDecision, requestBranchInScope, type ReviewDecision,
 } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
 
@@ -222,9 +222,13 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
       const window = raw === "older" || raw === "all" ? raw : "today";
       const scope = branchScope(req);
       const canSupervise = await liveCanSupervise(s.userId);
-      const rows = specialties.length === 0
+      //  **ولكلّ صفٍّ: أفرعُه في نطاقك؟** — الطابورُ يعرض حركاتِ كلّ فرعٍ يصل
+      //  الملفّ (§4.t)، والتأشيرُ لفرع الطلب وحده. فالعلَمُ من الدالّة التي
+      //  يردّ بها `decideReviewRequest` نفسُه، فلا تُظهر الشاشةُ زرّاً يُردّ.
+      const rows = (specialties.length === 0
         ? []
-        : await store.listPendingReviews({ branchIds: scope, specialties, window });
+        : await store.listPendingReviews({ branchIds: scope, specialties, window }))
+        .map((r) => ({ ...r, branchInScope: requestBranchInScope(scope, r.branchId) }));
       //  **وقسمُ المعاينات المنتظرة** — لمن يملك الإرجاع وحده. ومَن أنشأ
       //  الطلبَ بنفسه لا يُعرض له (والخادمُ يردّه أيضاً عند الضغط).
       const awaitingFull = canSupervise && specialties.length > 0
