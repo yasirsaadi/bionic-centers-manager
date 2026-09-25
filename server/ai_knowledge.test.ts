@@ -88,6 +88,9 @@ async function cleanup() {
              AND user_id = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1]]);
   await q(`DELETE FROM ai_knowledge_suggestions WHERE submitted_by = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1]]);
   await q(`DELETE FROM ai_knowledge_articles WHERE title LIKE $1`, [`${MARK}%`]);
+  //  تعديلُ الحسابات يكتب سطرَ تدقيقٍ باسم المسؤول منذ ٢٠٢٦-٠٩-٢٥ — فيُمحى قبل صفّه.
+  await q(`DELETE FROM audit_log WHERE entity_type = 'system_user'
+             AND (user_id = ANY($1::int[]) OR entity_id = ANY($1::int[]))`, [[STAFF, ADMIN, MANAGER1, DOCTOR1, DELETE_VICTIM]]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[STAFF, ADMIN, MANAGER1, DOCTOR1, DELETE_VICTIM]]);
   await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
 }

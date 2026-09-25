@@ -181,7 +181,9 @@ async function main() {
     same("د.٣ **وصفُّ system_users زال فعلاً من القاعدة**", goneRow.exists, false);
 
     const { rows: auditRows } = await q(
-      `SELECT action FROM audit_log WHERE entity_type = 'system_user' AND entity_id = $1`, [CLEAN]);
+      //  سطرُ «delete» وحدَه — والتعطيلُ الذي يسبقه يكتب سطورَ «update» منذ
+      //  ٢٠٢٦-٠٩-٢٥ (`system_user_audit.ts`)، وتلك شهادةُ فعلٍ آخر.
+      `SELECT action FROM audit_log WHERE entity_type = 'system_user' AND entity_id = $1 AND action = 'delete'`, [CLEAN]);
     same("د.٤ **وسطرُ تدقيقٍ واحدٌ يشهد على الفعل الذي لا رجعةَ فيه**",
       auditRows.map((r: any) => r.action), ["delete"]);
 
@@ -200,7 +202,7 @@ async function main() {
     same("هـ.٤ **وسطرُ التاريخ المرتبط باقٍ بلا مسّ — لا كاسكيد ولا تنظيف**",
       historyStill.length, 1);
     const { rows: noDeleteAudit } = await q(
-      `SELECT id FROM audit_log WHERE entity_type = 'system_user' AND entity_id = $1`, [HISTORIC]);
+      `SELECT id FROM audit_log WHERE entity_type = 'system_user' AND entity_id = $1 AND action = 'delete'`, [HISTORIC]);
     same("هـ.٥ **ولا سطرَ «حذف» كُتب لحذفٍ لم يقع**", noDeleteAudit.length, 0);
 
     // ══ و. حسابُ المسؤول العام — لا يُعطَّل ولا يُحذَف من أيّ باب ════════
