@@ -855,7 +855,13 @@ export async function listReviewsForPatient(
  * **وفشلُها لا يجوز أن يُسقط توقيعَ سجلٍّ سريري** — فالمنادي يبتلع خطأه
  * عمداً، وقائمةُ العمل تصحّح نفسها على أي حال: شرطُ «لا معاينةَ بعد الطلب»
  * يُخرج المريض منها ولو بقي الصفُّ معلَّقاً.
+ *
+ * **ويُرجع ما أغلقه، الأقدمُ أوّلاً** (قرارُ المالك ٢٠٢٦-٠٩-٢٥): الطلبُ
+ * المُغلَق هو **الإرسالُ** الذي جاء بالمريض إلى هذه المعاينة، وفرعُه فرعُ مَن
+ * أرسله. يقرؤه `createExam` فيعطي قرارَ ما بعد المعاينة بلا جهاز لذلك الفرع.
  */
+export type ClosedReviewRequest = { id: number; branchId: number | null };
+
 export async function closeRequestsAwaitingExam(params: {
   patientId: number; serviceType: string; examId: number;
   /**
@@ -872,21 +878,33 @@ export async function closeRequestsAwaitingExam(params: {
   deviceEpisodeId: number | null;
   /** معاملةُ التوقيع نفسُها — فالإغلاقُ والتوقيعُ حدثٌ واحد لا حدثان. */
   tx?: { execute: (q: any) => Promise<any> };
-}): Promise<void> {
-  if (!isReviewServiceType(params.serviceType)) return;
+}): Promise<ClosedReviewRequest[]> {
+  if (!isReviewServiceType(params.serviceType)) return [];
   //  الطلبُ على مستوى الاختصاص (عارٍ أو مرساتُه جهازٌ حيّ لا ينتظر) يُنجزه
   //  أيُّ توقيع؛ وطلبُ حلقةٍ منتظرة لا يُنجزه إلّا توقيعُها هي.
   const anchor = params.deviceEpisodeId === null
     ? specialtyLevelRequestSql("r")
     : sql`(${specialtyLevelRequestSql("r")} OR r.device_episode_id = ${params.deviceEpisodeId})`;
-  await (params.tx ?? db).execute(sql`
+  const closed = await (params.tx ?? db).execute(sql`
     UPDATE medical_review_requests r
        SET exam_id = ${params.examId}, status = 'examined', updated_at = NOW()
      WHERE r.patient_id = ${params.patientId}
        AND r.service_type = ${params.serviceType}
        AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
        AND ${anchor}
+    RETURNING r.id, r.branch_id, r.created_at
   `);
+  //  **الأقدمُ أوّلاً** — ترتيبُ `pendingFullRequestsFor` بحرفه
+  //  (`created_at ASC`): صفُّ «معايناتي» بلا جهاز يحمل أقدمَ طلبٍ على
+  //  مستوى الاختصاص وسببَ زيارته، فهو الطلبُ الذي فتح منه الطبيبُ المعاينة.
+  return ((closed.rows ?? []) as Record<string, any>[])
+    .map((x) => ({
+      id: Number(x.id),
+      branchId: x.branch_id === null || x.branch_id === undefined ? null : Number(x.branch_id),
+      at: new Date(x.created_at).getTime(),
+    }))
+    .sort((a, b) => a.at - b.at || a.id - b.id)
+    .map(({ id, branchId }) => ({ id, branchId }));
 }
 
 /**
