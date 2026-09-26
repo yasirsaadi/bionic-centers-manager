@@ -835,6 +835,14 @@ export async function applyPrescription(
     put("injurySide", prescription.injurySide);
     patch.isMedicalSupport = true;
   } else {
+    //  ══ **وعَلَمُ القسم يُرفَع كالجهازين** (٢٠٢٦-٠٩-٢٦) ═══════════════════
+    //  كان الفرعُ يكتب التفاصيلَ وحدها بلا `isPhysiotherapy`، و`wantedServices`
+    //  لا تُنشئ خيطَ العلاج الطبيعي إلّا بالعَلَم أو بدفعةٍ موسومة — فمعاينةُ
+    //  علاجٍ طبيعيّ لمريضٍ سجّله الاستعلاماتُ مسنداً كانت تُحفَظ **معاينةً بلا
+    //  قسم** (`case_id = NULL`)، ويبقى الملفُّ مسنداً. (واقعةُ زين العابدين.)
+    //  **ومرفوعٌ قبل الخروج المبكّر** أدناه: معاينةٌ بلا تشخيصٍ ولا جلساتٍ
+    //  مكتوبة قرارٌ سريريّ بالقسم مثلُ غيرها.
+    patch.isPhysiotherapy = true;
     put("diseaseType", prescription.diseaseType);
     // Injuries travel as three columns kept in sync, exactly as the patient
     // form writes them: the JSON array plus the two joined legacy strings.
@@ -990,6 +998,85 @@ export async function retireRetypedSourceCase(
   } catch (err: any) {
     return { retired: false, reason: err?.message || "تعذّر رفع الخيط السابق" };
   }
+}
+
+/**
+ * **قرارُ الطبيب يحلّ محلَّ تخمين الاستعلامات — والعلاجُ الطبيعيُّ منه** (٢٠٢٦-٠٩-٢٦).
+ *
+ * ══ الواقعة ══════════════════════════════════════════════════════════════
+ * زين العابدين — سجّله استعلاماتُ كربلاء «مساند»، وعاينه الطبيبُ فوجده علاجاً
+ * طبيعياً. `retireSupersededCase` تبادل الجهازين وحدهما (أطراف ⇄ مساند)
+ * وتستثني العلاجَ الطبيعيَّ بالاسم، فبقي الملفُّ مسنداً. وقرارُ المالك:
+ * «حين يختار الطبيبُ في المعاينة القسمَ يتغيّر النظامُ إلى ذلك القسم، لأن
+ * قرارَ الطبيب أهمّ، وتُلغى القسمَ الذي كتبه الموظّف».
+ *
+ * ══ متى — القاعدةُ نفسُها التي يقوم عليها التبادلُ القائم ════════════════
+ * **حين كان على الملفّ قسمٌ واحد لا غير، واختار الطبيبُ غيرَه**، وأحدُ
+ * الطرفين علاجٌ طبيعيّ. (والجهازان بينهما يتولّاهما `retireSupersededCase`
+ * بحرفها — لا يتغيّر فيها شيء.) فمريضٌ يحمل قسمين مشروعين لا يُمَسّ: الطبيبُ
+ * يوثّق أحدهما، ولا يُهدَم الآخر.
+ *
+ * ══ وحُرّاسٌ — فما له تاريخٌ حقيقيّ يبقى، ويُقال للطبيب لماذا ═══════════
+ * ① **كلفةٌ غيرُ صفرية ⟶ لا يُمَسّ**: سحبُ القسم ينقل كلفتَه إلى القسم الباقي
+ *   (`deleteCaseType`)، فثمنُ مسندٍ كان سيصير دَيناً على العلاج الطبيعي. فيبقى
+ *   هذا البابُ **محايداً مالياً بالبناء** — كنظيره في ٤.y.
+ * ② **علاجٌ طبيعيٌّ له جلساتٌ أو خطّةُ علاج ⟶ لا يُمَسّ**: المريضُ يُعالَج
+ *   فعلاً، وحارسُ السحب القائم لا يعدّ الجلسات.
+ * ③ **ثمّ الحُرّاسُ الثمانية القائمة** عبر `storage.deleteCaseType` بلا حرفٍ
+ *   يتغيّر — معاينةٌ موقّعة · متابعة · أمرُ عمل · دفعةٌ موسومة · مبلغٌ معلَّق ·
+ *   طلبُ خصم · حلقةٌ حيّة · طلبُ مراجعةٍ حسمه إنسان. فالمعاينةُ الموقّعة تحمي
+ *   قرارَ الطبيب نفسِه: معاينةٌ ثانيةٌ لقسمٍ آخر لا تهدم الأولى.
+ */
+export async function retireAcrossPhysiotherapy(
+  patientId: number,
+  keepType: MedicalSpecialty,
+  /** كلُّ أقسام المريض **قبل** تطبيق الوصفة — للسبب نفسِه في `retireSupersededCase`. */
+  caseTypesBefore: string[],
+): Promise<{ switched: boolean; reason?: string }> {
+  if (caseTypesBefore.length !== 1) return { switched: false };
+  const dropType = caseTypesBefore[0];
+  if (dropType === keepType) return { switched: false };
+  if (keepType !== "physiotherapy" && dropType !== "physiotherapy") return { switched: false };
+  if (dropType !== "prosthetic" && dropType !== "medical_support" && dropType !== "physiotherapy") {
+    return { switched: false };
+  }
+
+  const [row] = await db
+    .select({ id: patientCases.id, cost: patientCases.cost })
+    .from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, dropType)));
+  if (!row) return { switched: false };
+  if ((row.cost || 0) !== 0) {
+    return { switched: false, reason: "على القسم السابق كلفةٌ مسجَّلة — يُراجَع إدارياً" };
+  }
+  if (dropType === "physiotherapy") {
+    const r = await db.execute(sql`
+      SELECT 1 FROM visits WHERE patient_id = ${patientId} AND deleted_at IS NULL
+      UNION ALL
+      SELECT 1 FROM treatment_plans WHERE patient_id = ${patientId}
+      LIMIT 1
+    `);
+    if ((r.rows ?? []).length > 0) {
+      return { switched: false, reason: "للعلاج الطبيعي جلساتٌ أو خطّةُ علاجٍ مسجَّلة" };
+    }
+  }
+  try {
+    await storage.deleteCaseType(patientId, dropType, {
+      reason: "قرارُ الطبيب في المعاينة: قسمٌ آخر غيرُ الذي سجّله الاستعلامات",
+    });
+    return { switched: true };
+  } catch (err: any) {
+    return { switched: false, reason: err?.message || "تعذّر استبدال القسم السابق" };
+  }
+}
+
+/** كلُّ أقسام المريض كما هي الآن — الثلاثة. */
+export async function allCaseTypes(patientId: number): Promise<string[]> {
+  const rows = await db
+    .select({ caseType: patientCases.caseType })
+    .from(patientCases)
+    .where(eq(patientCases.patientId, patientId));
+  return rows.map((r) => r.caseType);
 }
 
 /** The patient's DEVICE case types (أطراف/مساند) as they stand right now. */
