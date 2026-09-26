@@ -254,15 +254,24 @@ async function applyDecision(
    * دالّةُ التنظيف إطلاقاً ويبقى المسارُ القديم بحرفه.
    */
   retypedFromCaseType?: string | null,
-): Promise<{ switchNote?: string }> {
+  /**
+   * **تنقيحُ معاينةٍ قائمة يؤجّل سحبَ القسم عبر العلاج الطبيعي** (٢٠٢٦-٠٩-٢٦):
+   * هذه الدالّةُ تُنادى هناك **قبل** أن تنتقل المعاينةُ إلى قسمها الجديد،
+   * فالقسمُ القديم ما زال يحمل معاينتَها الموقّعة ويردّه حارسُها — فيُسحَب
+   * بعد التنقيح بـ`caseTypesBefore` المُعادة من هنا.
+   */
+  opts: { deferCrossRetire?: boolean } = {},
+): Promise<{ switchNote?: string; caseTypesBefore: string[] }> {
   let switchNote: string | undefined;
 
   // Read the device cases BEFORE anything is applied — once the prescription
   // has run, the new case exists and a change is indistinguishable from an
   // addition.
   let deviceTypesBefore: string[] = [];
+  let caseTypesBefore: string[] = [];
   try {
     deviceTypesBefore = await store.deviceCaseTypes(patientId);
+    caseTypesBefore = await store.allCaseTypes(patientId);
   } catch (err) {
     console.error("[medical] reading device cases failed:", err);
   }
@@ -280,6 +289,18 @@ async function applyDecision(
     }
   } catch (err) {
     console.error("[medical] retiring superseded case failed:", err);
+  }
+
+  //  ══ **والعلاجُ الطبيعيُّ طرفٌ في الاستبدال أيضاً** (٢٠٢٦-٠٩-٢٦) ═════════
+  //  قسمٌ واحدٌ سجّله الاستعلامات والطبيبُ اختار غيرَه، وأحدُهما علاجٌ طبيعيّ
+  //  ⟶ يُسحَب قسمُ الاستعلامات بحُرّاسه. والجهازان بينهما بقيا لما فوق بحرفه.
+  if (!opts.deferCrossRetire) try {
+    const crossed = await store.retireAcrossPhysiotherapy(patientId, caseType, caseTypesBefore);
+    if (crossed.reason) {
+      switchNote = `بقي القسم السابق مفتوحاً: ${crossed.reason}`;
+    }
+  } catch (err) {
+    console.error("[medical] retiring case across physiotherapy failed:", err);
   }
 
   // ══ **وأثرُ الخطأ التشغيليّ يُرفَع مع الطلب الذي صُحِّح** (٤.y) ═════════
@@ -303,7 +324,7 @@ async function applyDecision(
     }
   }
 
-  return { switchNote };
+  return { switchNote, caseTypesBefore };
 }
 
 /**
@@ -697,7 +718,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  التصحيحُ صفّاً لم يعد موجوداً.
       const caseFirst =
         (earlyCaseRow !== null && earlyCaseRow !== undefined) || retypeEpisode;
-      let applied: Awaited<ReturnType<typeof applyDecision>> = {};
+      let applied: Partial<Awaited<ReturnType<typeof applyDecision>>> = {};
       if (!caseFirst) applied = await applyDecision(patientId, caseType, prescription);
 
       const caseRow = caseFirst
@@ -965,7 +986,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const editorName = session.userName?.trim() || "مستخدم";
       // Same ordering rule as signing: the decision lands on the case first, so
       // a specialty change has a case to point the revised exam at.
-      const applied = await applyDecision(exam.patientId, caseType, prescription);
+      const applied = await applyDecision(exam.patientId, caseType, prescription, null,
+        { deferCrossRetire: true });
 
       const revisionValues = {
         caseType, prescription, deviceCost, proposedExpertUserId, ...body,
@@ -1048,8 +1070,20 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         await auditFor(updated.version);
       }
 
+      //  ══ **وسحبُ القسم عبر العلاج الطبيعي بعد أن انتقلت المعاينة** ═══════
+      //  (٢٠٢٦-٠٩-٢٦) — الآن لا يحمل القسمُ القديم معاينتَها، فحارسُ «معاينةٌ
+      //  موقّعة» يقيس ما بقي عليه فعلاً. وفشلُه لا يُسقط تنقيحاً التزم.
+      let switchNote = applied.switchNote ?? null;
+      try {
+        const crossed = await store.retireAcrossPhysiotherapy(
+          exam.patientId, caseType, applied.caseTypesBefore);
+        if (crossed.reason) switchNote = `بقي القسم السابق مفتوحاً: ${crossed.reason}`;
+      } catch (err) {
+        console.error("[medical] retiring case across physiotherapy after revision failed:", err);
+      }
+
       res.json({
-        ...updated, switchNote: applied.switchNote ?? null,
+        ...updated, switchNote,
         priceNote: priceSyncNote,
       });
     } catch (err: any) {
