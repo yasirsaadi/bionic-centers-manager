@@ -192,6 +192,38 @@ async function main() {
     const prot = await call("PATCH", `/api/admin/users/${BOSS}`, adminS, { isActive: false });
     same("ح.٣ تعطيلُ حساب المسؤول العام ⟶ ٤٠٣", prot.status, 403);
     same("ح.٤ ولا سطر", (await auditRows(BOSS)).length, 0);
+
+    // ══ ط. نافذةٌ قديمة لا تكتب فوق الجديد (٢٠٢٦-٠٩-٢٦) ══════════════════
+    //  السيناريو بعينه: الحاسوبُ فتح القائمةَ، ثمّ أُضيف فرعٌ من الهاتف، ثمّ
+    //  غيّر الحاسوبُ كلمةَ المرور من صفحته القديمة.
+    console.log("\n── ط. النافذةُ القديمة ──");
+    const listStamp = async (uid: number) =>
+      ((await call("GET", "/api/admin/users", adminS)).body as any[]).find((u) => u.id === uid)?.updatedAt;
+    const branchesOf = async (uid: number) =>
+      (await q(`SELECT branch_ids b FROM system_users WHERE id=$1`, [uid])).rows[0]?.b;
+    const onComputer = await listStamp(MGR);
+    check(!!onComputer, "ط.١ (الإعداد: القائمةُ تحمل وقتَ آخر حفظ)", String(onComputer));
+    const phone = await call("PATCH", `/api/admin/users/${MGR}`, adminS,
+      { branchIds: [B1, B2], branchId: B1, expectedUpdatedAt: await listStamp(MGR) });
+    same("ط.٢ الهاتفُ يضيف فرعاً", [phone.status, await branchesOf(MGR)], [200, [B1, B2]]);
+    const rowsBefore = (await auditRows(MGR)).length;
+    const stale = await call("PATCH", `/api/admin/users/${MGR}`, adminS,
+      { password: NEW_PASSWORD, expectedUpdatedAt: onComputer });
+    same("ط.٣ **حفظُ الحاسوب من صفحته القديمة يُردّ ٤٠٩**", [stale.status, stale.body?.code], [409, "stale_user_edit"]);
+    same("ط.٤ **والفرعُ المضاف باقٍ** ولا سطرَ تدقيقٍ كُتب",
+      [await branchesOf(MGR), (await auditRows(MGR)).length], [[B1, B2], rowsBefore]);
+    const pwOnly = await call("PATCH", `/api/admin/users/${MGR}`, adminS,
+      { password: NEW_PASSWORD, expectedUpdatedAt: await listStamp(MGR) });
+    same("ط.٥ **وبعد إعادة الفتح: كلمةُ المرور وحدها تُحفَظ والفروعُ لا تُمَسّ**",
+      [pwOnly.status, await branchesOf(MGR)], [200, [B1, B2]]);
+    const roleOnly = await call("PATCH", `/api/admin/users/${MGR}`, adminS,
+      { role: "reception", expectedUpdatedAt: await listStamp(MGR) });
+    same("ط.٦ **تغييرُ الدور وحده يُقبَل** — الفرعُ يُقرأ من المخزَّن لا يُطلَب ثانيةً",
+      [roleOnly.status, (await q(`SELECT role FROM system_users WHERE id=$1`, [MGR])).rows[0]?.role],
+      [200, "reception"]);
+    const noBranch = await call("PATCH", `/api/admin/users/${MGR}`, adminS,
+      { branchIds: [], branchId: null, expectedUpdatedAt: await listStamp(MGR) });
+    same("ط.٧ وإفراغُ الفروع لغير المسؤول ما زال يُردّ", noBranch.status, 400);
   } finally {
     await new Promise((r) => httpServer.close(() => r(null)));
     await cleanup();

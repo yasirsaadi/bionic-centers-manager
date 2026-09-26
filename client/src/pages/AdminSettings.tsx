@@ -79,6 +79,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Pencil, Download } from "lucide-react";
+import { userEditPatch } from "./user_edit_patch";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -2588,6 +2589,8 @@ export default function AdminSettings() {
   // User management states
   const [showUserDialog, setShowUserDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
+  //  النافذةُ كما فُتحت — ليُرسَل عند الحفظ ما تغيّر وحدَه (`user_edit_patch.ts`).
+  const [editInitialForm, setEditInitialForm] = useState<Record<string, unknown> | null>(null);
   const [userToDeactivate, setUserToDeactivate] = useState<SystemUser | null>(null);
   //  ══ تبسيطُ إدارة الموظّفين (٢٠٢٦-٠٩-١٨) ═══════════════════════════════
   //  فلترةُ عرضٍ محضة — لا تمسّ ما يُجلَب من الخادم ولا ما يُكتب فيه.
@@ -2872,7 +2875,7 @@ export default function AdminSettings() {
 
   const openEditUserDialog = (user: SystemUser) => {
     setEditingUser(user);
-    setUserFormData({
+    const initialForm = {
       username: user.username,
       displayName: user.displayName || "",
       password: "",
@@ -2905,13 +2908,28 @@ export default function AdminSettings() {
         ? ((user as any).medicalSpecialties as string[])
         : [],
       language: (user as any).language || "ar",
-    });
+    };
+    setUserFormData(initialForm);
+    setEditInitialForm(initialForm);
     setShowUserDialog(true);
   };
 
   const handleSaveUser = () => {
     if (editingUser) {
-      updateUserMutation.mutate({ id: editingUser.id, data: userFormData });
+      //  ══ **ما تغيّر وحدَه، ومعه وقتُ آخر حفظٍ رأته النافذة** (٢٠٢٦-٠٩-٢٦) ══
+      //  كان الحفظُ يرسل الحسابَ كلَّه — ومنه فروعُه كما كانت ساعةَ فُتحت
+      //  الصفحة — فيكتب القديمَ فوق الجديد بصمت (واقعةُ فروع أيوب وعناد).
+      const { patch, empty } = userEditPatch(
+        editInitialForm ?? {}, userFormData, (editingUser as any).updatedAt ?? null);
+      if (empty) {
+        toast({ title: "لا تغييرات للحفظ" });
+        setShowUserDialog(false);
+        setEditingUser(null);
+        setEditInitialForm(null);
+        resetUserForm();
+        return;
+      }
+      updateUserMutation.mutate({ id: editingUser.id, data: patch as any });
     } else {
       createUserMutation.mutate(userFormData);
     }

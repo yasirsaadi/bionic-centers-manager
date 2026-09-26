@@ -1502,7 +1502,24 @@ export async function registerRoutes(
       }
       
       const id = Number(req.params.id);
-      const { password, ...userData } = req.body;
+      const { password, expectedUpdatedAt, ...userData } = req.body;
+
+      //  ══ **حفظٌ من نافذةٍ قديمة يُردّ لا يكتب فوق الجديد** (٢٠٢٦-٠٩-٢٦) ══
+      //  النافذةُ ترسل وقتَ آخر حفظٍ للحساب كما رأته. فإن حُفظ بعدها — من جهازٍ
+      //  آخر أو تبويبٍ آخر — يُردّ الحفظُ بدل أن يكتب قيماً قديمة فوق الجديدة
+      //  (واقعةُ فروع أيوب وعناد). وغيابُ الحقل يُبقي السلوكَ القديم لغير
+      //  النافذة (زرُّ التعطيل في القائمة مثلاً).
+      if (expectedUpdatedAt !== undefined) {
+        const current = await storage.getSystemUser(id);
+        if (!current) return res.status(404).json({ message: "المستخدم غير موجود" });
+        const stamp = (v: unknown) => (v == null ? null : new Date(v as any).getTime());
+        if (stamp(current.updatedAt) !== stamp(expectedUpdatedAt)) {
+          return res.status(409).json({
+            message: "تغيّر هذا الحساب منذ فتحت النافذة — أغلقها وافتحها من جديد ثم أعد التعديل",
+            code: "stale_user_edit",
+          });
+        }
+      }
 
       //  ══ **ولا يُعطَّل حسابُ المسؤول العام من هنا** ═══════════════════════
       //  الشرطُ على الصفّ المخزَّن لا على الدور القادم في الطلب: طلبٌ يُنزل
@@ -1557,10 +1574,19 @@ export async function registerRoutes(
         }
       }
 
-      // Non-admin users require a branch (single or multi)
-      if (userData.role && userData.role !== "admin" && !userData.branchId &&
-          (!Array.isArray(userData.branchIds) || userData.branchIds.length === 0)) {
-        return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
+      // Non-admin users require a branch (single or multi).
+      //  **بالقيم الفعّالة** (٢٠٢٦-٠٩-٢٦): النافذةُ صارت ترسل ما تغيّر وحدَه،
+      //  فحقلٌ غائبٌ عن الطلب يُقرأ من الصفّ المخزَّن — وإلّا رُدّ تغييرُ الدور
+      //  وحده بـ«الفرع مطلوب» والفرعُ قائمٌ لم يُمَسّ.
+      if (userData.role !== undefined || userData.branchId !== undefined || userData.branchIds !== undefined) {
+        const stored = await storage.getSystemUser(id);
+        const role = userData.role ?? stored?.role;
+        const branchId = userData.branchId !== undefined ? userData.branchId : stored?.branchId;
+        const branchIds = userData.branchIds !== undefined ? userData.branchIds : stored?.branchIds;
+        if (role && role !== "admin" && !branchId &&
+            (!Array.isArray(branchIds) || branchIds.length === 0)) {
+          return res.status(400).json({ message: "الفرع مطلوب لغير المسؤولين" });
+        }
       }
 
       // If password is being updated, hash it
