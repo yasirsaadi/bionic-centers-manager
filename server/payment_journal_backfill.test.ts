@@ -10,7 +10,12 @@
 // (و) مرّةٌ واحدة، وتشغيلان معاً لا يعملان معاً، والترقيمُ الحيّ لا يتأثّر.
 
 import { pool } from "./db";
-import { backfillPaymentJournals, PAYMENT_JOURNAL_BACKFILL_GUARD } from "./accounting/payment_journal_backfill";
+import {
+  backfillPaymentJournals, PAYMENT_JOURNAL_BACKFILL_GUARD, withJournalBackfillLock,
+} from "./accounting/payment_journal_backfill";
+import express from "express";
+import { createServer } from "http";
+import { registerAccountingV2Routes } from "./accounting/routes";
 import { createJournalForPayment } from "./accounting/auto_journal";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -49,13 +54,14 @@ async function mkPatient(name: string, flags: { amputee?: boolean; physio?: bool
 
 async function mkPayment(patientId: number, amount: number, date: string, extra: {
   type?: string | null; notes?: string; free?: boolean; invoiceId?: number | null; branch?: number;
+  caseId?: number | null;
 } = {}): Promise<number> {
   const { rows } = await pool.query<{ id: number }>(
     `INSERT INTO payments (patient_id, branch_id, amount, date, notes, payment_treatment_type,
-       is_free_sessions, invoice_id)
-     VALUES ($1,$2,$3,$4::timestamp,$5,$6,$7,$8) RETURNING id`,
+       is_free_sessions, invoice_id, case_id)
+     VALUES ($1,$2,$3,$4::timestamp,$5,$6,$7,$8,$9) RETURNING id`,
     [patientId, extra.branch ?? 1, amount, date, extra.notes ?? null, extra.type ?? null,
-     !!extra.free, extra.invoiceId ?? null]);
+     !!extra.free, extra.invoiceId ?? null, extra.caseId ?? null]);
   return rows[0].id;
 }
 
@@ -107,6 +113,15 @@ async function main() {
   const tr = await mkPayment(trashed, 60000, "2026-06-01 10:00", { type: null });
   // (د) فرعٌ بلا صندوق.
   const f2 = await mkPayment(br2, 90000, "2026-06-05 10:00", { type: "علاج طبيعي", branch: 2 });
+  // (ز) قسمُ الدفعة يحكم (مراجعة Codex): نوعٌ فرعيّ لا تعرفه الخريطة، ومريضٌ بقسمين بلا نوع.
+  const mkCase = async (pid: number, t: string) => (await pool.query<{ id: number }>(
+    `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost) VALUES ($1,1,$2,0) RETURNING id`,
+    [pid, t])).rows[0].id;
+  const physioCase = await mkCase(physio, "physiotherapy");
+  const ampPhysioCase = await mkCase(amp, "physiotherapy");
+  const robot = await mkPayment(physio, 33000, "2026-07-01 10:00",
+    { type: "روبوت", notes: "جلسات علاج إضافية - روبوت (٣ جلسة)", caseId: physioCase });
+  const twoCase = await mkPayment(amp, 44000, "2026-07-02 10:00", { type: null, caseId: ampPhysioCase });
 
   const jeBefore = (await pool.query(`SELECT COUNT(*)::int AS n FROM journal_entries WHERE entry_number LIKE 'JE-%'`)).rows[0].n;
 
@@ -119,8 +134,11 @@ async function main() {
   const out = await run1;
 
   same("النتيجة: مرشّحون · مكتوب · متعذّر", [out.status, out.candidates, out.written, out.failed.length],
-    ["done", 6, 5, 1]);
-  same("المجموعُ المكتوب", out.writtenAmount, 50000 + 20000 + 700000 + 15000 + 60000);
+    ["done", 8, 7, 1]);
+  same("المجموعُ المكتوب", out.writtenAmount, 50000 + 20000 + 700000 + 15000 + 60000 + 33000 + 44000);
+  same("(ز) «روبوت» على قسم علاجٍ طبيعيّ ⟵ 4100 لا 4900", (await journalsOf(robot)).map((r: any) => r.rev), ["4100"]);
+  same("(ز) مريضٌ مبتورٌ بقسم علاجٍ طبيعيّ، دفعةٌ بلا نوعٍ على قسمه ⟵ 4100 لا 4200",
+    (await journalsOf(twoCase)).map((r: any) => r.rev), ["4100"]);
 
   const ja1 = await journalsOf(a1);
   same("(أ) قيدُ الدفعة الأولى: رقمٌ خاصّ · تاريخُها · 4100 · متوازن",
@@ -146,13 +164,13 @@ async function main() {
   same("سطرُ تدقيقٍ واحد بالأعداد والمتعذّر",
     audit.map((r: any) => typeof r.new_values === "string" ? JSON.parse(r.new_values) : r.new_values)
       .map((v: any) => [v.written, v.failedCount, v.failed?.[0]?.paymentId]),
-    [[5, 1, f2]]);
+    [[7, 1, f2]]);
   same("مسجَّلةٌ في `_migrations`",
     (await pool.query(`SELECT COUNT(*)::int AS n FROM _migrations WHERE name=$1`, [PAYMENT_JOURNAL_BACKFILL_GUARD])).rows[0].n, 1);
 
   const again = await backfillPaymentJournals({ delayMs: 0 });
   same("(و) مرّةٌ واحدة — التشغيلُ التالي لا يعمل", again.status, "already_applied");
-  same("(و) ولا قيدَ زائد", (await pool.query(`SELECT COUNT(*)::int AS n FROM journal_entries WHERE entry_number LIKE 'JB-%'`)).rows[0].n, 5);
+  same("(و) ولا قيدَ زائد", (await pool.query(`SELECT COUNT(*)::int AS n FROM journal_entries WHERE entry_number LIKE 'JB-%'`)).rows[0].n, 7);
 
   same("(و) الترقيمُ الحيّ لم يتحرّك", (await pool.query(
     `SELECT COUNT(*)::int AS n FROM journal_entries WHERE entry_number LIKE 'JE-%'`)).rows[0].n, jeBefore);
@@ -161,6 +179,30 @@ async function main() {
     patientId: liveP.patient_id, date: liveP.date, notes: liveP.notes,
     paymentTreatmentType: liveP.payment_treatment_type } as any, null);
   same("(و) قيدٌ حيّ بعد الاستدراك يُكتب برقم JE", (await journalsOf(late)).map((r: any) => r.entry_number.slice(0, 3)), ["JE-"]);
+
+  // (ز) والبابُ الحيّ نفسُه (#423) — «روبوت» على قسمه ⟵ 4100.
+  const liveRobot = await mkPayment(physio, 12000, "2026-09-27 11:00", { type: "روبوت", caseId: physioCase });
+  const lr = (await pool.query(`SELECT * FROM payments WHERE id=$1`, [liveRobot])).rows[0];
+  await createJournalForPayment({ id: lr.id, amount: lr.amount, branchId: lr.branch_id, patientId: lr.patient_id,
+    date: lr.date, notes: lr.notes, paymentTreatmentType: lr.payment_treatment_type, caseId: lr.case_id } as any, null);
+  same("(ز) البابُ الحيّ: «روبوت» على قسمه ⟵ 4100", (await journalsOf(liveRobot)).map((r: any) => r.rev), ["4100"]);
+
+  // (ح) نقطةُ الاستدراك القديمة تأخذ القفلَ نفسَه (مراجعة Codex) — فلا تعمل مع الأداة معاً.
+  const app = express();
+  app.use(express.json());
+  app.use((r: any, _res, next) => { r.session = { branchSession: { userId: 1, isAdmin: true } }; next(); });
+  registerAccountingV2Routes(app as any, (_q: any, _s: any, next: any) => next());
+  const srv = createServer(app);
+  await new Promise<void>((r) => srv.listen(6811, () => r()));
+  let release!: () => void;
+  const held = withJournalBackfillLock(() => new Promise<void>((r) => { release = r; }));
+  await new Promise((r) => setTimeout(r, 200));
+  const blocked = await fetch("http://127.0.0.1:6811/api/accounting/v2/backfill", { method: "POST" });
+  same("(ح) النقطةُ القديمة أثناء الاستدراك ⟵ ٤٠٩ بلا كتابة", blocked.status, 409);
+  release();
+  check((await held) !== null, "(ح) والقفلُ كان مأخوذاً فعلاً");
+  check((await withJournalBackfillLock(async () => true)) !== null, "(ح) ويُحرَّر بعد الانتهاء");
+  await new Promise<void>((r) => srv.close(() => r()));
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
   await pool.end();

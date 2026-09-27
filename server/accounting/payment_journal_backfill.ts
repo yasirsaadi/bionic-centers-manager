@@ -87,64 +87,77 @@ async function backfillOne(paymentId: number): Promise<{ kind: "written" | "skip
   });
 }
 
-export async function backfillPaymentJournals(opts: { delayMs?: number } = {}): Promise<PaymentJournalBackfillResult> {
-  const result: PaymentJournalBackfillResult = {
-    status: "done", candidates: 0, written: 0, writtenAmount: 0, skipped: 0, failed: [],
-  };
+/**
+ *  قفلُ استدراك القيود — **مشتركٌ بين هذه الأداة ونقطة `POST /api/accounting/v2/backfill`
+ *  القديمة**: كلتاهما تكتب قيودَ دفعاتٍ «ناقصة»، ولا قيدَ فريداً على `(source_type, source_id)`،
+ *  فلو عملتا معاً لرأتا الدفعةَ نفسَها ناقصةً فكتبت كلٌّ قيداً (مراجعة Codex على #424).
+ *  `null` حين يكون القفلُ مأخوذاً — فلا تعمل.
+ */
+export async function withJournalBackfillLock<T>(fn: () => Promise<T>): Promise<{ value: T } | null> {
   const lockClient = await pool.connect();
   try {
     const got = await lockClient.query("SELECT pg_try_advisory_lock($1) AS ok", [LOCK_KEY]);
-    if (!got.rows[0]?.ok) return { ...result, status: "locked" };
+    if (!got.rows[0]?.ok) return null;
     try {
-      const done = await pool.query("SELECT 1 FROM _migrations WHERE name = $1 LIMIT 1", [PAYMENT_JOURNAL_BACKFILL_GUARD]);
-      if ((done.rowCount ?? 0) > 0) return { ...result, status: "already_applied" };
-
-      const snap = await pool.query<{ max: number | null }>("SELECT MAX(id)::int AS max FROM payments");
-      const maxId = snap.rows[0]?.max ?? 0;
-      const delay = opts.delayMs ?? 60_000;
-      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-
-      const { rows } = await pool.query<{ id: number }>(
-        `SELECT p.id FROM payments p WHERE p.id <= $1 AND ${MISSING_WHERE} ORDER BY p.id`, [maxId]);
-      result.candidates = rows.length;
-      console.log(`[backfill-journals] ${rows.length} payment(s) without a posted journal (id <= ${maxId})`);
-
-      for (const r of rows) {
-        try {
-          const out = await backfillOne(r.id);
-          if (out.kind === "written") { result.written++; result.writtenAmount += out.amount; }
-          else result.skipped++;
-        } catch (e: any) {
-          result.failed.push({ paymentId: r.id, reason: String(e?.message ?? e).slice(0, 200) });
-        }
-      }
-
-      await logAudit({
-        entityType: "system",
-        entityId: 0,
-        action: "backfill_payment_journals",
-        userName: "system",
-        newValues: {
-          guard: PAYMENT_JOURNAL_BACKFILL_GUARD,
-          snapshotMaxPaymentId: maxId,
-          candidates: result.candidates,
-          written: result.written,
-          writtenAmount: result.writtenAmount,
-          skipped: result.skipped,
-          failedCount: result.failed.length,
-          failed: result.failed.slice(0, MAX_LISTED_FAILURES),
-        },
-        notes: "استدراكُ قيود الدفعات القديمة — §4.ar البند ٥",
-      });
-      await pool.query("INSERT INTO _migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
-        [PAYMENT_JOURNAL_BACKFILL_GUARD]);
-      console.log(`[backfill-journals] done: written ${result.written} (${result.writtenAmount}), `
-        + `skipped ${result.skipped}, failed ${result.failed.length}`);
-      return result;
+      return { value: await fn() };
     } finally {
       await lockClient.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]);
     }
   } finally {
     lockClient.release();
   }
+}
+
+export async function backfillPaymentJournals(opts: { delayMs?: number } = {}): Promise<PaymentJournalBackfillResult> {
+  const result: PaymentJournalBackfillResult = {
+    status: "done", candidates: 0, written: 0, writtenAmount: 0, skipped: 0, failed: [],
+  };
+  const out = await withJournalBackfillLock(async () => {
+    const done = await pool.query("SELECT 1 FROM _migrations WHERE name = $1 LIMIT 1", [PAYMENT_JOURNAL_BACKFILL_GUARD]);
+    if ((done.rowCount ?? 0) > 0) return { ...result, status: "already_applied" as const };
+
+    const snap = await pool.query<{ max: number | null }>("SELECT MAX(id)::int AS max FROM payments");
+    const maxId = snap.rows[0]?.max ?? 0;
+    const delay = opts.delayMs ?? 60_000;
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+
+    const { rows } = await pool.query<{ id: number }>(
+      `SELECT p.id FROM payments p WHERE p.id <= $1 AND ${MISSING_WHERE} ORDER BY p.id`, [maxId]);
+    result.candidates = rows.length;
+    console.log(`[backfill-journals] ${rows.length} payment(s) without a posted journal (id <= ${maxId})`);
+
+    for (const r of rows) {
+      try {
+        const one = await backfillOne(r.id);
+        if (one.kind === "written") { result.written++; result.writtenAmount += one.amount; }
+        else result.skipped++;
+      } catch (e: any) {
+        result.failed.push({ paymentId: r.id, reason: String(e?.message ?? e).slice(0, 200) });
+      }
+    }
+
+    await logAudit({
+      entityType: "system",
+      entityId: 0,
+      action: "backfill_payment_journals",
+      userName: "system",
+      newValues: {
+        guard: PAYMENT_JOURNAL_BACKFILL_GUARD,
+        snapshotMaxPaymentId: maxId,
+        candidates: result.candidates,
+        written: result.written,
+        writtenAmount: result.writtenAmount,
+        skipped: result.skipped,
+        failedCount: result.failed.length,
+        failed: result.failed.slice(0, MAX_LISTED_FAILURES),
+      },
+      notes: "استدراكُ قيود الدفعات القديمة — §4.ar البند ٥",
+    });
+    await pool.query("INSERT INTO _migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+      [PAYMENT_JOURNAL_BACKFILL_GUARD]);
+    console.log(`[backfill-journals] done: written ${result.written} (${result.writtenAmount}), `
+      + `skipped ${result.skipped}, failed ${result.failed.length}`);
+    return result;
+  });
+  return out ? out.value : { ...result, status: "locked" };
 }

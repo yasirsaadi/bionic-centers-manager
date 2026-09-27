@@ -214,6 +214,44 @@ async function getAccountIdByCode(code: string): Promise<number | null> {
   return acc?.id ?? null;
 }
 
+//  **حسابُ إيراد الدفعة** — النصُّ المعروف أوّلاً كما كان، ثمّ **قسمُ الدفعة نفسِها**
+//  (`case_id` ⟵ `patient_cases.case_type`)، ثمّ أعلامُ المريض لدفعةٍ بلا نصّ، ثمّ 4900.
+//  والقسمُ قبل الأعلام لأن الدفعةَ مربوطةٌ به صراحةً: نوعٌ فرعيّ لا تعرفه الخريطة
+//  («روبوت» في «خدمة جديدة») كان يسقط في 4900، ومريضٌ بقسمين كان يُحسم بأولوية الأعلام
+//  لا بقسم دفعته (مراجعة Codex على #424).
+const CASE_TYPE_REVENUE_CODE: Record<string, string> = {
+  physiotherapy: "4100",
+  prosthetic: "4200",
+  medical_support: "4300",
+};
+
+async function resolvePaymentRevenueCode(
+  exec: { execute: (q: any) => Promise<any> },
+  payment: { paymentTreatmentType?: string | null; patientId?: number | null; caseId?: number | null },
+  includeTrashedPatient: boolean,
+): Promise<string> {
+  const text = payment.paymentTreatmentType ?? null;
+  const fromText = revenueTypeToAccountCode(text);
+  if (fromText !== "4900") return fromText;
+  if (payment.caseId) {
+    const r = await exec.execute(sql`SELECT case_type FROM patient_cases WHERE id = ${payment.caseId}`);
+    const code = CASE_TYPE_REVENUE_CODE[(r.rows?.[0] as any)?.case_type];
+    if (code) return code;
+  }
+  if (!text && payment.patientId) {
+    const r = await exec.execute(sql`
+      SELECT is_amputee, is_physiotherapy, is_medical_support
+      FROM patients WHERE id = ${payment.patientId}
+        AND (${includeTrashedPatient} OR deleted_at IS NULL)
+    `);
+    const row = r.rows?.[0] as any;
+    if (row?.is_amputee) return "4200";
+    if (row?.is_physiotherapy) return "4100";
+    if (row?.is_medical_support) return "4300";
+  }
+  return "4900";
+}
+
 function dateToISO(d: Date | string | null | undefined): string {
   if (!d) return new Date().toISOString().split("T")[0];
   if (typeof d === "string") return d.split("T")[0];
@@ -238,28 +276,13 @@ export async function createJournalForPayment(
       return;
     }
 
-    // If the payment didn't carry an explicit treatment type, infer it
-    // from the patient's clinical flags so the revenue lands in the
-    // right account (4100/4200/4300) instead of the catch-all 4900.
-    let effectiveType: string | null = payment.paymentTreatmentType ?? null;
-    if (!effectiveType && payment.patientId) {
-      try {
-        const patientRes = await db.execute(sql`
-          SELECT is_amputee, is_physiotherapy, is_medical_support
-          FROM patients WHERE id = ${payment.patientId} AND deleted_at IS NULL
-        `);
-        const row = patientRes.rows?.[0] as any;
-        if (row) {
-          if (row.is_amputee) effectiveType = "طرف صناعي";
-          else if (row.is_physiotherapy) effectiveType = "علاج طبيعي";
-          else if (row.is_medical_support) effectiveType = "مساند طبية";
-        }
-      } catch (err) {
-        // non-fatal: fall back to "other revenue" code below
-      }
+    let revenueCode: string;
+    try {
+      revenueCode = await resolvePaymentRevenueCode(db, payment, false);
+    } catch (err) {
+      // non-fatal: fall back to the text alone, as before
+      revenueCode = revenueTypeToAccountCode(payment.paymentTreatmentType ?? null);
     }
-
-    const revenueCode = revenueTypeToAccountCode(effectiveType);
     const revenueAccountId = await getAccountIdByCode(revenueCode);
     if (!revenueAccountId) {
       console.warn(`[auto-journal] revenue account ${revenueCode} not found for payment ${payment.id}`);
@@ -829,23 +852,8 @@ export async function createJournalForPaymentTx(
     throw new Error(`[auto-journal-tx] no cash account for branch ${payment.branchId}`);
   }
 
-  let effectiveType: string | null = payment.paymentTreatmentType ?? null;
-  if (!effectiveType && payment.patientId) {
-    //  مريضُ السلّة يُستدرَك قيدُه بأقسامه — فإن استُعيد ظهر مالُه في حسابه الصحيح.
-    const patientRes = await tx.execute(sql`
-      SELECT is_amputee, is_physiotherapy, is_medical_support
-      FROM patients WHERE id = ${payment.patientId}
-        AND (${opts.includeTrashedPatient === true} OR deleted_at IS NULL)
-    `);
-    const row = patientRes.rows?.[0] as any;
-    if (row) {
-      if (row.is_amputee) effectiveType = "طرف صناعي";
-      else if (row.is_physiotherapy) effectiveType = "علاج طبيعي";
-      else if (row.is_medical_support) effectiveType = "مساند طبية";
-    }
-  }
-
-  const revenueCode = revenueTypeToAccountCode(effectiveType);
+  //  مريضُ السلّة يُستدرَك قيدُه بأقسامه — فإن استُعيد ظهر مالُه في حسابه الصحيح.
+  const revenueCode = await resolvePaymentRevenueCode(tx, payment, opts.includeTrashedPatient === true);
   const revenueAccountId = await getAccountIdByCode(revenueCode);
   if (!revenueAccountId) {
     throw new Error(`[auto-journal-tx] revenue account ${revenueCode} not found`);
