@@ -459,6 +459,16 @@ async function main() {
         (await q<{ paid_amount: number }>(`SELECT paid_amount FROM invoices WHERE id = $1`, [invJ1Id]))[0].paid_amount],
       [100_000, 0, 180_000]);
 
+    //  ══ **«إجمالي ما دفعه المريض» لا يعدّ مالَ الفاتورة مرّتين** (§4.ar البند ١٤) ══
+    //  الدفعةُ الفورية صفٌّ في `payments`، والرصيدُ السابق دفعاتٌ قائمة — وكلاهما داخلٌ في `paid_amount` أيضاً.
+    const fin = await http("GET", `/api/patients/${p2}/financial-summary`, S.admin);
+    const payAgg = (await q<{ s: string; n: string }>(
+      `SELECT COALESCE(SUM(amount),0)::text AS s, COUNT(*)::text AS n FROM payments WHERE patient_id = $1`, [p2]))[0];
+    same("ط٨.٥ **إجمالي المدفوع = مجموعُ صفوف الدفعات بالضبط** (١٨٠٠٠٠ لا ٣٦٠٠٠٠)، وعددُها كذلك",
+      [fin.status, fin.body?.totalPaidLifetime, fin.body?.paymentCountLifetime],
+      [200, Number(payAgg.s), Number(payAgg.n)]);
+    same("   والرصيدُ المتاح بعد الفاتورة صفر — كما كان", fin.body?.availableCredit, 0);
+
     // ── ط.ب: paidNow يتجاوز المتبقّي بعد الرصيد ⟶ تراجعٌ كامل ──
     // **مريضٌ جديدٌ مستقلّ (p4)** لهذه الفقرة تحديداً — لا p2 نفسِها: p2
     // أنفقت رصيدَها الوحيد (٨٠٠٠٠) بالفعل في ط١ أعلاه (صار جزءاً من

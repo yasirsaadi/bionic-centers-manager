@@ -3301,30 +3301,21 @@ export async function registerRoutes(
       }
     }
 
-    // Lifetime totals from BOTH payment streams. Many clinics record
-    // session/visit payments in the `payments` table directly (no
-    // invoice issued yet), so summing only invoice.paidAmount would
-    // miss most of what a returning patient has actually paid.
+    //  ══ **المالُ المقبوض كلُّه صفوفٌ في `payments` — فهو وحدَه المجموع** (§4.ar البند ١٤) ══
+    //  كان المجموعُ «دفعاتُ الجلسات + `invoice.paidAmount`». لكنّ كلَّ قبضٍ على فاتورة يكتب صفَّ دفعةٍ
+    //  حقيقيّاً (`applyInvoiceCashTx`)، والرصيدُ السابق المطبَّق على فاتورة **هو** دفعاتٌ قائمة — فكلا
+    //  شقَّي `paidAmount` داخلٌ في `payments` أصلاً، وجمعُهما يعدّ مالَ الفاتورة مرّتين. وكذلك عددُ
+    //  الدفعات وتاريخُ آخرها.
     const sessionPaid = allPayments.reduce((s, p) => s + p.amount, 0);
-    const totalPaidLifetime = sessionPaid + totalInvoicePaid;
-    const totalPaymentEvents = allPayments.length + allInvoices.filter((i) => (i.paidAmount || 0) > 0).length;
+    const totalPaidLifetime = sessionPaid;
+    const totalPaymentEvents = allPayments.length;
 
-    // Last activity date — newest of the two streams.
-    const lastSessionDate = allPayments.length > 0
+    const lastPaymentDate = allPayments.length > 0
       ? allPayments
           .map((p) => new Date(p.date).toISOString())
           .sort()
           .reverse()[0]
       : null;
-    const lastInvoicePaymentDate = allInvoices
-      .filter((i) => (i.paidAmount || 0) > 0)
-      .map((i) => i.invoiceDate)
-      .sort()
-      .reverse()[0] ?? null;
-    const lastPaymentDate =
-      lastSessionDate && lastInvoicePaymentDate
-        ? lastSessionDate > lastInvoicePaymentDate ? lastSessionDate : lastInvoicePaymentDate
-        : lastSessionDate ?? lastInvoicePaymentDate ?? null;
 
     // Available credit = session payments that haven't been
     // allocated to any invoice yet. This is what we'd auto-apply
