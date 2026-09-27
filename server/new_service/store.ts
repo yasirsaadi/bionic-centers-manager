@@ -226,8 +226,13 @@ export async function executeNewService(params: {
     const nsDepartment = NEW_SERVICE_DEPARTMENT[String(params.serviceType)] ?? null;
     //  هل كان الخيطُ مفتوحاً قبلنا؟ يُقرأ **قبل** الفتح كي يُذكَر في التدقيق
     //  ويُخبَر به الموظّف — فتحُ قسمٍ للمريض حدثٌ يُعلَن لا أثرٌ صامت.
+    const casesBefore = await storage.getCasesByPatientId(params.patientId, tx);
     const hadPhysioBefore = Boolean(patient.isPhysiotherapy)
-      || (await storage.getCasesByPatientId(params.patientId, tx)).some((c: any) => c.caseType === "physiotherapy");
+      || casesBefore.some((c: any) => c.caseType === "physiotherapy");
+    //  **والفتحُ من إغلاقٍ يُعلَن كذلك** (§4.ar البند ٤، وجارُه البند ٣ «إغلاقٌ يُفتَح بصمت»):
+    //  `ensurePhysiotherapyCase` تفتح الخيطَ المغلق، وسطرُ التدقيق يقول ذلك باسمه.
+    const reopenedPhysioCase = nsDepartment === "physiotherapy"
+      && casesBefore.some((c: any) => c.caseType === "physiotherapy" && c.status === "closed");
     const nsCaseId = nsDepartment === "physiotherapy"
       ? await storage.ensurePhysiotherapyCase(params.patientId, tx)
       : null;
@@ -377,7 +382,8 @@ export async function executeNewService(params: {
       userAgent: params.audit?.userAgent ?? null,
       notes: `خدمة جديدة (${serviceLabel}) بكلفة ${serviceCost.toLocaleString()} د.ع`
         + `${isFree ? " — مجّانية (تبرع معتمد)" : ""}`
-        + `${openedPhysioCase ? " — وفُتحت حالة علاج طبيعي للمريض" : ""}`,
+        + `${openedPhysioCase ? " — وفُتحت حالة علاج طبيعي للمريض" : ""}`
+        + `${reopenedPhysioCase ? " — وأُعيد فتح حالة العلاج الطبيعي المغلقة" : ""}`,
       tx,
     });
 
