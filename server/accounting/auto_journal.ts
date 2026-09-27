@@ -705,6 +705,8 @@ async function createJournalEntryTx(tx: any, input: {
   sourceId: number;
   createdBy?: number | null;
   lines: TxJournalLineInput[];
+  /** رقمٌ صريح بدل المولَّد — للاستدراك وحدَه (`JB-…`)، كي لا يزاحم ترقيمَ `JE-…` الحيّ. */
+  entryNumber?: string;
 }): Promise<{ id: number }> {
   if (input.lines.length < 2) {
     throw new Error("القيد يجب أن يحتوي على سطرين على الأقل");
@@ -728,7 +730,7 @@ async function createJournalEntryTx(tx: any, input: {
     throw new Error("لا يمكن إضافة قيود في فترة محاسبية مغلقة");
   }
 
-  const entryNumber = await generateEntryNumberTx(tx, input.entryDate);
+  const entryNumber = input.entryNumber ?? await generateEntryNumberTx(tx, input.entryDate);
   const [entry] = await tx.insert(journalEntries).values({
     entryNumber,
     entryDate: input.entryDate,
@@ -817,6 +819,7 @@ export async function reverseJournalForPaymentTx(
  */
 export async function createJournalForPaymentTx(
   tx: any, payment: Payment, createdBy?: number | null,
+  opts: { entryNumber?: string; includeTrashedPatient?: boolean } = {},
 ): Promise<void> {
   const amount = payment.amount ?? 0;
   if (amount <= 0) return;
@@ -828,9 +831,11 @@ export async function createJournalForPaymentTx(
 
   let effectiveType: string | null = payment.paymentTreatmentType ?? null;
   if (!effectiveType && payment.patientId) {
+    //  مريضُ السلّة يُستدرَك قيدُه بأقسامه — فإن استُعيد ظهر مالُه في حسابه الصحيح.
     const patientRes = await tx.execute(sql`
       SELECT is_amputee, is_physiotherapy, is_medical_support
-      FROM patients WHERE id = ${payment.patientId} AND deleted_at IS NULL
+      FROM patients WHERE id = ${payment.patientId}
+        AND (${opts.includeTrashedPatient === true} OR deleted_at IS NULL)
     `);
     const row = patientRes.rows?.[0] as any;
     if (row) {
@@ -847,6 +852,7 @@ export async function createJournalForPaymentTx(
   }
 
   await createJournalEntryTx(tx, {
+    entryNumber: opts.entryNumber,
     entryDate: dateToISO(payment.date),
     branchId: payment.branchId,
     description: `دفعة مريض - ${payment.paymentTreatmentType || "غير محدد"}`,
