@@ -81,6 +81,7 @@ import {
   createJournalForExpense,
   createJournalForInvoice,
   createJournalForInvoicePayment,
+  createJournalForInvoicePriorCredit,
   createJournalForPurchase,
   createJournalForVendorPayment,
   reverseJournalForSource,
@@ -6916,13 +6917,12 @@ export async function registerRoutes(
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
       };
 
-      // Note: prior-credit allocation still double-counts revenue when it
-      // applies (the original session payments already posted their own
-      // Cr Revenue / Dr Cash entries, and issuing this invoice posts a
-      // second Dr AR / Cr Revenue for the full total) — a pre-existing
-      // accounting-model note this PR does not touch. paidNow is unrelated:
-      // it is fresh cash collected right now, and posts its own correct
-      // Dr Cash / Cr AR entry below, same as /collect.
+      // Prior credit: the session payments behind it already posted
+      // Dr Cash / Cr Revenue when collected, and issuing this invoice posts
+      // Dr AR / Cr Revenue for the full total — so the credited part was
+      // revenue twice. `createJournalForInvoicePriorCredit` below settles it
+      // (Dr Revenue / Cr AR for the credit) — §4.ar item 6. paidNow is fresh
+      // cash and posts its own Dr Cash / Cr AR entry, same as /collect.
       const result = await createInvoiceWithCash({
         invoiceData,
         items: Array.isArray(items) ? items : [],
@@ -6934,6 +6934,9 @@ export async function registerRoutes(
       // Auto-journal (safe to fail, logged) — issuance first, then the
       // up-front collection's own entry, exactly like /collect's ordering.
       await createJournalForInvoice(result.invoice, result.items, userId);
+      if (result.creditApplied > 0) {
+        await createJournalForInvoicePriorCredit(result.invoice, result.items, result.creditApplied, userId);
+      }
       if (result.payment) {
         await createJournalForInvoicePayment(result.invoice, result.payment.amount, userId);
       }
