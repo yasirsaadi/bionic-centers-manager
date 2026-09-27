@@ -80,7 +80,9 @@ async function main() {
   const mgrB = await mkUser({ username: "cm" + t, name: "مدير ب " + t, role: "branch_manager", branch: bB.id, viewPatients: true });
   const recB = await mkUser({ username: "cr" + t, name: "استقبال ب " + t, role: "reception", branch: bB.id, viewPatients: true });
   const bare = await mkUser({ username: "cb" + t, name: "بلا صلاحية " + t, role: "reception", branch: bB.id });
-  ids.push(expX, expY, mgrB, recB, bare);
+  const recR = await mkUser({ username: "cq" + t, name: "استقبال بتقارير " + t, role: "reception", branch: bB.id,
+    viewPatients: true, reports: true });
+  ids.push(expX, expY, mgrB, recB, bare, recR);
 
   const mkPatient = async (branch: number, n: string) => Number((await one(sql`
     INSERT INTO patients (name, phone, branch_id, is_amputee, referral_source, age, medical_condition)
@@ -115,6 +117,24 @@ async function main() {
   await mkOrder(bA.id, expX, day(-2), "waiting_parts");
   await mkOrder(bA.id, expX, day(+30));
   await mkOrder(bB.id, expY, day(-6));
+
+  //  ══ ح — سؤالُ استعلامات بغداد (٢٠٢٦-٠٩-٢٧): مرضى البارحة بجلسات علاجٍ طبيعيّ ══
+  //  مريضان في فرع ب زارا البارحة (بتوقيت بغداد): علاجٌ طبيعيٌّ بنوعٍ فرعيّ «روبوت»،
+  //  وأطرافٌ صناعية. ونصُّ نوع العلاج وحده لا يقول «علاج طبيعي» — القسمُ يقوله.
+  const baghdadDay = (offset: number) =>
+    new Date(Date.now() + 3 * 3_600_000 + offset * 86_400_000).toISOString().slice(0, 10);
+  const yesterday = baghdadDay(-1);
+  const mkVisit = async (caseType: string, treatment: string, n: string) => {
+    const p = await mkPatient(bB.id, n);
+    patients.push(p);
+    const c = await one(sql`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost)
+      VALUES (${p}, ${bB.id}, ${caseType}, 0) RETURNING id`);
+    await db.execute(sql`INSERT INTO visits (patient_id, branch_id, case_id, visit_date, treatment_type, session_count, cost)
+      VALUES (${p}, ${bB.id}, ${c.id}, ${yesterday + " 09:00:00"}::timestamp, ${treatment}, 1, 0)`);
+    return p;
+  };
+  const physioP = await mkVisit("physiotherapy", "روبوت", "مريض علاج طبيعي " + t);
+  await mkVisit("prosthetic", "قياس", "مريض أطراف " + t);
 
   const snapshot = async () => {
     const r = await one(sql`SELECT
@@ -257,11 +277,36 @@ async function main() {
     ok(noHeaders.status === 200 && JSON.stringify(noHeaders.body) === JSON.stringify(live.body),
       "وجوابُه هو جوابُ المصدر العاري نفسُه");
 
+    console.log("\nح — «مرضى البارحة الذين أخذوا جلسات علاج طبيعي» (استعلامات بغداد، ٢٠٢٦-٠٩-٢٧)");
+    const qSess = { userId: recR, role: "reception", isAdmin: false, branchId: bB.id,
+      accessibleBranches: [bB.id], permissions: { canViewPatients: true, canViewReports: true } };
+    const qAccess = access(qSess, bB.id, "فرع ب " + t);
+    same("وضعُها عامٌّ (لا محاسبة)", qAccess.mode, "general");
+    for (const topic of ["مرضى البارحة الذين اخذوا جلسات علاج طبيعي", "جلسات علاج طبيعي"]) {
+      const l = await call(qAccess, qSess, "list_capabilities", { topic });
+      const names = ((l.data?.capabilities ?? []) as any[]).map((c) => String(c.name));
+      const rank = names.indexOf("/api/reports/daily-patient-report");
+      ok(rank !== -1 && rank < 3, `«${topic}» ⟵ التقريرُ اليوميّ للمرضى بين أوّل ثلاث (الترتيب ${rank + 1})`);
+    }
+    const physioYesterday = await call(qAccess, qSess, "read_capability", {
+      name: "/api/reports/daily-patient-report", query: { date: yesterday },
+      aggregate: { where: [{ field: "serviceType", equals: "علاج طبيعي" }] },
+    });
+    ok(physioYesterday.ok, "وتقرؤه بصلاحيتها");
+    same("مريضُ العلاج الطبيعي وحده — لا مريضُ الأطراف", physioYesterday.data?.matched, 1);
+    same("وباسمه", ((physioYesterday.data?.rows ?? physioYesterday.data?.items ?? []) as any[])
+      .map((r: any) => r.patientId), [physioP]);
+
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);
   } finally {
     if (srv) await new Promise((r) => srv.close(() => r(null)));
     if (orders.length) await db.execute(sql`DELETE FROM prosthetic_work_orders WHERE id IN (${sql.join(orders.map((i) => sql`${i}`), sql`, `)})`);
+    if (patients.length) {
+      const inList = sql.join(patients.map((i) => sql`${i}`), sql`, `);
+      await db.execute(sql`DELETE FROM visits WHERE patient_id IN (${inList})`);
+      await db.execute(sql`DELETE FROM patient_cases WHERE patient_id IN (${inList})`);
+    }
     if (patients.length) await db.execute(sql`DELETE FROM patients WHERE id IN (${sql.join(patients.map((i) => sql`${i}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM system_users WHERE id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM branches WHERE id IN (${bA.id}, ${bB.id})`);

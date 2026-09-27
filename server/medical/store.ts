@@ -1027,27 +1027,100 @@ export async function retireRetypedSourceCase(
  *   طلبُ خصم · حلقةٌ حيّة · طلبُ مراجعةٍ حسمه إنسان. فالمعاينةُ الموقّعة تحمي
  *   قرارَ الطبيب نفسِه: معاينةٌ ثانيةٌ لقسمٍ آخر لا تهدم الأولى.
  */
+/**
+ *  **القسمُ الذي سيُسحَب عبر العلاج الطبيعي** — شروطُ السحب الأولى وحدها (قسمٌ واحدٌ سابق،
+ *  غيرُ ما اختاره الطبيب، وأحدُهما علاجٌ طبيعيّ، وبلا كلفة). `null` = لا سحبَ أصلاً.
+ */
+async function crossRetireCandidate(
+  patientId: number, keepType: string, caseTypesBefore: string[],
+): Promise<{ dropType: string; caseId: number; cost: number } | null> {
+  if (caseTypesBefore.length !== 1) return null;
+  const dropType = caseTypesBefore[0];
+  if (dropType === keepType) return null;
+  if (keepType !== "physiotherapy" && dropType !== "physiotherapy") return null;
+  if (dropType !== "prosthetic" && dropType !== "medical_support" && dropType !== "physiotherapy") {
+    return null;
+  }
+  const [row] = await db
+    .select({ id: patientCases.id, cost: patientCases.cost })
+    .from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, dropType)));
+  if (!row) return null;
+  return { dropType, caseId: row.id, cost: row.cost || 0 };
+}
+
+/**
+ *  الطلباتُ المنتظرة على القسم، قسمين: **ما ينتظر طبيباً** (بمعرّفاتها — الطبيبُ يُسأل عنها بعينها)
+ *  و**عملياتُ «بلا معاينة»** (لا طبيبَ لها يُسأل، وسحبُ القسم كان سيحذفها سقالةً — فتحجب السحبَ).
+ *  والحدُّ هو حدُّ قائمة العمل بالحرف: `service_path IS DISTINCT FROM 'no_exam'`.
+ */
+async function awaitingRequestsOnCase(caseId: number): Promise<{ examIds: number[]; noExam: number }> {
+  const r = await db.execute(sql`
+    SELECT id, (service_path IS NOT DISTINCT FROM 'no_exam') AS no_exam
+      FROM patient_device_episodes
+     WHERE case_id = ${caseId} AND status = 'awaiting_exam'
+     ORDER BY id
+  `);
+  const rows = (r.rows ?? []) as any[];
+  return {
+    examIds: rows.filter((x) => !x.no_exam).map((x) => Number(x.id)),
+    noExam: rows.filter((x) => x.no_exam).length,
+  };
+}
+
+/** المجموعتان متساويتان — التأكيدُ يخصّ الطلباتِ التي رآها الطبيبُ بعينها لا عددَها. */
+function sameIds(a: number[] | null | undefined, b: number[]): boolean {
+  const x = Array.from(new Set((a ?? []).map(Number))).sort((m, n) => m - n);
+  const y = Array.from(new Set(b)).sort((m, n) => m - n);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/**
+ *  **البند ١ من فحص المنطق — قرارُ المالك ٢٠٢٦-٠٩-٢٧ (الخيار «أ»)**: سحبُ القسم عبر العلاج
+ *  الطبيعي يهدم طلبَ الجهاز المنتظرَ معه (سقالةً في عين `deleteCaseType`) — والتطبيقُ لا يفرّق
+ *  بين خطأ إدخالٍ ومريضٍ يحتاج القسمين وطلبُه ينتظر طبيبَه. **فالطبيبُ يُسأل.**
+ *  تُعيد القسمَ وعددَ طلباته المنتظرة حين يكون السحبُ سيقع **وعليه طلبٌ ينتظر**؛ وإلّا `null`
+ *  فيبقى السحبُ تلقائياً كما كان.
+ */
+export async function crossRetirePendingRequest(
+  patientId: number, keepType: string, caseTypesBefore: string[],
+): Promise<{ dropType: string; pendingCount: number; episodeIds: number[] } | null> {
+  const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
+  if (!c || c.cost !== 0) return null;
+  const w = await awaitingRequestsOnCase(c.caseId);
+  //  عمليةُ «بلا معاينة» تحجب السحبَ أصلاً (في `retireAcrossPhysiotherapy`) — فلا سؤالَ عن شيءٍ لن يقع.
+  if (w.noExam > 0 || w.examIds.length === 0) return null;
+  return { dropType: c.dropType, pendingCount: w.examIds.length, episodeIds: w.examIds };
+}
+
 export async function retireAcrossPhysiotherapy(
   patientId: number,
   keepType: MedicalSpecialty,
   /** كلُّ أقسام المريض **قبل** تطبيق الوصفة — للسبب نفسِه في `retireSupersededCase`. */
   caseTypesBefore: string[],
+  /**
+   *  **الطلباتُ المنتظرة التي أكّد الطبيبُ أن تسجيلَها خطأ — بمعرّفاتها** (البند ١، ومراجعة Codex):
+   *  شرطٌ لسحب قسمٍ عليه طلبٌ ينتظر، **ويجب أن تطابق ما على القسم الآن بعينه**. فطلبٌ فُتح أو
+   *  تبدّل بين السؤال والجواب لم يُعرَض على الطبيب — فلا يُهدَم، ويبقى القسمُ ويُقال لماذا.
+   */
+  opts: { confirmedPendingEpisodeIds?: number[] | null } = {},
 ): Promise<{ switched: boolean; reason?: string }> {
-  if (caseTypesBefore.length !== 1) return { switched: false };
-  const dropType = caseTypesBefore[0];
-  if (dropType === keepType) return { switched: false };
-  if (keepType !== "physiotherapy" && dropType !== "physiotherapy") return { switched: false };
-  if (dropType !== "prosthetic" && dropType !== "medical_support" && dropType !== "physiotherapy") {
-    return { switched: false };
-  }
-
-  const [row] = await db
-    .select({ id: patientCases.id, cost: patientCases.cost })
-    .from(patientCases)
-    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, dropType)));
-  if (!row) return { switched: false };
+  const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
+  if (!c) return { switched: false };
+  const { dropType } = c;
+  const row = { id: c.caseId, cost: c.cost };
   if ((row.cost || 0) !== 0) {
     return { switched: false, reason: "على القسم السابق كلفةٌ مسجَّلة — يُراجَع إدارياً" };
+  }
+  const waiting = await awaitingRequestsOnCase(row.id);
+  if (waiting.noExam > 0) {
+    return { switched: false, reason: "على القسم السابق عمليةٌ «بلا معاينة» مفتوحة" };
+  }
+  if (waiting.examIds.length > 0 && !sameIds(opts.confirmedPendingEpisodeIds, waiting.examIds)) {
+    return {
+      switched: false,
+      reason: "على القسم السابق طلبُ جهازٍ ينتظر معاينته، ولم يُؤكَّد أن تسجيله خطأ",
+    };
   }
   if (dropType === "physiotherapy") {
     const r = await db.execute(sql`
@@ -1061,8 +1134,10 @@ export async function retireAcrossPhysiotherapy(
     }
   }
   try {
-    await storage.deleteCaseType(patientId, dropType, {
+    await storage.deleteCaseType(patientId, dropType as MedicalSpecialty, {
       reason: "قرارُ الطبيب في المعاينة: قسمٌ آخر غيرُ الذي سجّله الاستعلامات",
+      //  **والفحصُ أعلاه يُعاد تحت قفل الحذف** — ما رآه الطبيبُ بعينه، أو لا شيءَ ينتظر.
+      pendingGuard: { expectedExamEpisodeIds: waiting.examIds },
     });
     return { switched: true };
   } catch (err: any) {

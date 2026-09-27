@@ -177,7 +177,9 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/reports/overall": { d: "التقريرُ الشامل.", f: true },
   "/api/reports/detailed/:branchId": { d: "تقريرٌ مفصَّل لفرع.", f: true },
   "/api/reports/nightly": { d: "التقريرُ الليليّ.", f: true },
-  "/api/reports/daily-patient-report": { d: "تقريرُ مرضى اليوم.", q: ["date", "branchId"] },
+  //  **بكلمات السائل لا باسم الملفّ** (استعلاماتُ بغداد ٢٠٢٦-٠٩-٢٧): «تقريرُ مرضى اليوم» وحدها لم تطابق
+  //  «جلسات علاج طبيعي»، فظهرت شاشاتُ تتبّع الأجهزة قبلها ورُدّت بصلاحيتها فاعتذر المساعد.
+  "/api/reports/daily-patient-report": { d: "التقريرُ اليوميّ للمرضى: زياراتُ المرضى وجلساتُهم في يومٍ واحد (اليوم أو البارحة أو أيّ تاريخ YYYY-MM-DD) لفرع السائل — اسمُ المريض وقسمُه serviceType (علاج طبيعي · أطراف صناعية · مساند طبية) ونوعُ العلاج treatment ومشكلتُه وما عُمل له.", q: ["date", "branchId"] },
   "/api/daily-review": { d: "المراجعةُ اليومية: ما جرى فعلياً في الأطراف والمساند اليوم عبر الفروع، الأحدثُ أوّلاً.", q: ["date"], f: true },
   //  ══ الإحصاءُ والشذوذ ══
   "/api/statistics/monthly-new-patients": { d: "المرضى الجدد شهرياً.", q: ["branchId"] },

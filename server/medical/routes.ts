@@ -38,7 +38,7 @@
 // from the session, so revoking a doctor's capability takes effect at once
 // instead of at their next login.
 
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
@@ -244,6 +244,56 @@ function parseDeviceCost(raw: unknown, caseType: string): number | null {
  * bookkeeping failure downstream, so problems are logged and reported, not
  * thrown.
  */
+/**
+ *  **جوابُ الطبيب عن القسم السابق** (البند ١ — قرارُ المالك ٢٠٢٦-٠٩-٢٧): `retire` — تسجيلُه كان
+ *  خطأً فيُسحَب مع طلبه · `keep` — المريضُ يحتاج القسمين فيبقيان. وغيرُهما = لم يُسأل بعد.
+ */
+type CrossRetireDecision = "retire" | "keep";
+interface CrossRetireAnswer {
+  decision: CrossRetireDecision | null;
+  /** الطلباتُ التي عُرضت على الطبيب بعينها — يعيدها العميلُ كما وصلته في الـ٤٠٩. */
+  episodeIds: number[];
+}
+function parseCrossRetire(body: any): CrossRetireAnswer {
+  const v = body?.crossRetireDecision;
+  const ids = Array.isArray(body?.crossRetireEpisodeIds)
+    ? body.crossRetireEpisodeIds.map(Number).filter((n: number) => Number.isInteger(n) && n > 0)
+    : [];
+  return { decision: v === "retire" || v === "keep" ? v : null, episodeIds: ids };
+}
+function sameIdSet(a: number[], b: number[]): boolean {
+  const x = Array.from(new Set(a)).sort((m, n) => m - n);
+  const y = Array.from(new Set(b)).sort((m, n) => m - n);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/**
+ *  **السؤالُ قبل أيّ كتابة**: حين سيسحب قرارُ الطبيب قسماً عليه طلبُ جهازٍ ينتظر معاينته، ولم
+ *  يُجِب الطبيبُ بعد ⟵ ٤٠٩ بصفر كتابة، والنافذةُ تسأله ثمّ تعيد الإرسالَ بجوابه. `true` = رُدّ.
+ *  والحارسُ الأخير في `retireAcrossPhysiotherapy` نفسِها: بلا تأكيدٍ لا يُسحَب طلبٌ ينتظر.
+ */
+async function askCrossRetireIfNeeded(
+  res: Response, patientId: number, caseType: string, answer: CrossRetireAnswer,
+): Promise<boolean> {
+  //  «يحتاج القسمين» لا يهدم شيئاً — يصحّ أيّاً كانت الطلبات.
+  if (answer.decision === "keep") return false;
+  const pending = await store.crossRetirePendingRequest(
+    patientId, caseType, await store.allCaseTypes(patientId));
+  if (!pending) return false;
+  //  و«نعم، ألغِه» يخصّ الطلباتِ التي رآها بعينها: تبدّلت بعد السؤال ⟵ يُسأل من جديد.
+  if (answer.decision === "retire" && sameIdSet(answer.episodeIds, pending.episodeIds)) return false;
+  const label = specialtyLabel(pending.dropType as MedicalSpecialty);
+  res.status(409).json({
+    error: `على ملف المريض طلبُ ${label} ينتظر معاينته. هل كان تسجيلُ ${label} خطأً؟`,
+    code: "cross_retire_decision_required",
+    dropType: pending.dropType,
+    dropLabel: label,
+    pendingCount: pending.pendingCount,
+    episodeIds: pending.episodeIds,
+  });
+  return true;
+}
+
 async function applyDecision(
   patientId: number,
   caseType: MedicalSpecialty,
@@ -260,7 +310,7 @@ async function applyDecision(
    * فالقسمُ القديم ما زال يحمل معاينتَها الموقّعة ويردّه حارسُها — فيُسحَب
    * بعد التنقيح بـ`caseTypesBefore` المُعادة من هنا.
    */
-  opts: { deferCrossRetire?: boolean } = {},
+  opts: { deferCrossRetire?: boolean; crossRetire?: CrossRetireAnswer } = {},
 ): Promise<{ switchNote?: string; caseTypesBefore: string[] }> {
   let switchNote: string | undefined;
 
@@ -294,8 +344,11 @@ async function applyDecision(
   //  ══ **والعلاجُ الطبيعيُّ طرفٌ في الاستبدال أيضاً** (٢٠٢٦-٠٩-٢٦) ═════════
   //  قسمٌ واحدٌ سجّله الاستعلامات والطبيبُ اختار غيرَه، وأحدُهما علاجٌ طبيعيّ
   //  ⟶ يُسحَب قسمُ الاستعلامات بحُرّاسه. والجهازان بينهما بقيا لما فوق بحرفه.
-  if (!opts.deferCrossRetire) try {
-    const crossed = await store.retireAcrossPhysiotherapy(patientId, caseType, caseTypesBefore);
+  //  **وجوابُ الطبيب «يحتاج القسمين»** يُبقي القسمَ السابق كما هو — لا سحبَ ولا ملاحظة.
+  if (!opts.deferCrossRetire && opts.crossRetire?.decision !== "keep") try {
+    const crossed = await store.retireAcrossPhysiotherapy(patientId, caseType, caseTypesBefore, {
+      confirmedPendingEpisodeIds: opts.crossRetire?.decision === "retire" ? opts.crossRetire.episodeIds : null,
+    });
     if (crossed.reason) {
       switchNote = `بقي القسم السابق مفتوحاً: ${crossed.reason}`;
     }
@@ -647,6 +700,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         throw err;
       }
 
+      //  ══ **القسمُ السابق وطلبُه المنتظر — الطبيبُ يُسأل قبل أيّ كتابة** (البند ١) ══
+      const crossRetire = parseCrossRetire(req.body);
+      if (await askCrossRetireIfNeeded(res, patientId, caseType, crossRetire)) return;
+
       const doctorName = session.userName?.trim() || "طبيب";
 
       // ══ **بلا مسؤوليةٍ تجارية على الإطلاق** ═══════════════════════════════
@@ -719,7 +776,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const caseFirst =
         (earlyCaseRow !== null && earlyCaseRow !== undefined) || retypeEpisode;
       let applied: Partial<Awaited<ReturnType<typeof applyDecision>>> = {};
-      if (!caseFirst) applied = await applyDecision(patientId, caseType, prescription);
+      if (!caseFirst) applied = await applyDecision(patientId, caseType, prescription, null, { crossRetire });
 
       const caseRow = caseFirst
         ? earlyCaseRow
@@ -763,7 +820,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  الوصفةُ على الملفّ **بعد** توقيعٍ التزم فعلاً — ومرّةً واحدة لكلّ
       //  محاولةٍ منطقية: إعادةُ إرسالٍ (`created: false`) لا تعيد كتابتها.
       if (caseFirst && created) {
-        applied = await applyDecision(patientId, caseType, prescription, retypedFrom);
+        applied = await applyDecision(patientId, caseType, prescription, retypedFrom, { crossRetire });
       }
 
       // ══ ما دون هذا كلُّه **آثارٌ يُنشئها الإنشاءُ الحقيقيّ وحده** ═══════
@@ -983,6 +1040,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
+      //  ══ **والتنقيحُ يسأل كالإنشاء** (البند ١) — قبل أيّ كتابة ══
+      const crossRetire = parseCrossRetire(req.body);
+      if (await askCrossRetireIfNeeded(res, exam.patientId, caseType, crossRetire)) return;
+
       const editorName = session.userName?.trim() || "مستخدم";
       // Same ordering rule as signing: the decision lands on the case first, so
       // a specialty change has a case to point the revised exam at.
@@ -1074,9 +1135,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  (٢٠٢٦-٠٩-٢٦) — الآن لا يحمل القسمُ القديم معاينتَها، فحارسُ «معاينةٌ
       //  موقّعة» يقيس ما بقي عليه فعلاً. وفشلُه لا يُسقط تنقيحاً التزم.
       let switchNote = applied.switchNote ?? null;
-      try {
+      if (crossRetire.decision !== "keep") try {
         const crossed = await store.retireAcrossPhysiotherapy(
-          exam.patientId, caseType, applied.caseTypesBefore);
+          exam.patientId, caseType, applied.caseTypesBefore, {
+            confirmedPendingEpisodeIds: crossRetire.decision === "retire" ? crossRetire.episodeIds : null,
+          });
         if (crossed.reason) switchNote = `بقي القسم السابق مفتوحاً: ${crossed.reason}`;
       } catch (err) {
         console.error("[medical] retiring case across physiotherapy after revision failed:", err);
