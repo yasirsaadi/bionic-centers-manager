@@ -154,10 +154,20 @@ const SERVICE_FLAG: Record<PatientService, string> = {
 
 /** للمريض هذا القسم — عَلَمُ ملفّه أو خيطُ قسمٍ قائم (الاثنان ما يعرضه عمودُ «الحالة الطبية»). */
 export function patientHasService(service: PatientService): SQL {
+  return patientHasServiceAs("patients", service);
+}
+
+/**
+ * **تعريفُ «مريض القسم» الواحد** (§4.ar البند ١١) — العَلَمُ **أو** صفُّ حالةٍ من النوع، مغلقاً كان أو نشطاً.
+ * كانت لوحةُ التحكم تعدّ بالعَلَم وحده، والإحصاءاتُ والسجلّ بالعَلَم أو القسم — فمريضٌ له قسمٌ بلا عَلَم يُعدّ هنا
+ * ولا يُعدّ هناك. و`alias` اسمُ جدول المرضى في الاستعلام المنادي (`patients` أو `p`).
+ */
+export function patientHasServiceAs(alias: string, service: PatientService): SQL {
+  const a = sql.raw(alias);
   return sql`(
-    patients.${sql.raw(SERVICE_FLAG[service])} = TRUE
-    OR EXISTS (SELECT 1 FROM patient_cases pc
-                WHERE pc.patient_id = patients.id AND pc.case_type = ${service})
+    ${a}.${sql.raw(SERVICE_FLAG[service])} = TRUE
+    OR EXISTS (SELECT 1 FROM patient_cases pc_hs
+                WHERE pc_hs.patient_id = ${a}.id AND pc_hs.case_type = ${service})
   )`;
 }
 
