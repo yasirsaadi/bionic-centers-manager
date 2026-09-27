@@ -347,6 +347,12 @@ async function main() {
       const r: any = await chat(access(S.recv), ask("سؤال"));
       same(`هـ٢.٥ «${legit}» يمرّ جواباً بلا تنبيه`, [r.value.reply, seen.length], [legit, 1]);
     }
+    //  **وإعلانٌ يليه حشوُ انتظار وعدٌ أيضاً** (السابعة): يُردّ إلى النموذج فيكمل.
+    for (const filler of ["دعني أبحث في السجل. لحظة من فضلك.", "سأتحقق من السجل.\nانتظرني قليلاً"]) {
+      runScript([{ text: filler }, { text: "هذه النتيجة." }]);
+      const r: any = await chat(access(S.recv), ask("سؤال"));
+      same(`هـ٢.٧ «${filler.replace("\n", " ⏎ ")}» يُردّ إلى النموذج`, [r.value.reply, seen.length], ["هذه النتيجة.", 2]);
+    }
     //  **والتنبيهُ لا يأكل جولةَ أداة**: بعده ثلاثُ جولاتِ أدواتٍ كاملة، ثمّ الختام.
     runScript([
       { text: "دعني أبحث لك." },

@@ -321,6 +321,11 @@ async function main() {
       name: "/api/patients/registry", query: { visitDate: yesterday, pageSize: 5 },
     });
     same("وصفحةُ خمسة ⟵ serverTotal = 30 مع تنبيهٍ صريح", [paged.data?.serverTotal, /صفحةٌ لا الكلّ/.test(String(paged.data?.partial))], [30, true]);
+    //  **وتاريخٌ بغير صيغته يُرفض** — لا يعود السجلُّ كلُّه على أنه مرضى ذلك اليوم.
+    const badDate = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: "yesterday" },
+    });
+    ok(!badDate.ok && /YYYY-MM-DD/.test(String(badDate.data?.error)), "visitDate بغير صيغته يُرفض برسالةٍ تقول الصيغة");
     //  **والبحثُ لا يُجمع مع التاريخ** (مراجعة Codex على #427): النقطةُ تُسقط التاريخَ بصمت مع البحث.
     const mixed = await call(access(rSess, bB.id), rSess, "read_capability", {
       name: "/api/patients/registry", query: { visitDate: yesterday, search: "مريض" },
