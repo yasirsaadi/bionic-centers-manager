@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import * as ledger from "./ledger";
 import { backfillJournalEntries } from "../migrations/backfill_journal_entries";
+import { withJournalBackfillLock } from "./payment_journal_backfill";
 import { insertChartOfAccountSchema } from "@shared/schema";
 
 /**
@@ -418,7 +419,12 @@ export function registerAccountingV2Routes(
       return res.status(403).json({ message: "فقط المسؤول يستطيع تشغيل Backfill" });
     }
     try {
-      const result = await backfillJournalEntries();
+      //  القفلُ نفسُه الذي يأخذه استدراكُ القيود الآليّ — فلا يعملان معاً على دفعةٍ واحدة.
+      const locked = await withJournalBackfillLock(() => backfillJournalEntries());
+      if (!locked) {
+        return res.status(409).json({ message: "استدراكُ قيودٍ آخر يعمل الآن — أعد المحاولة بعد انتهائه" });
+      }
+      const result = locked.value;
       await ledger.logAudit({
         entityType: "system",
         entityId: 0,

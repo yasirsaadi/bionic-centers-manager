@@ -164,6 +164,10 @@ app.use((req, res, next) => {
       import("./migrations/backfill_phone_normalization")
         .then((m) => m.backfillPhoneNormalization())
         .catch((e) => console.error("[backfill-phone] launch failed:", e));
+      // استدراكُ قيود الدفعات القديمة (§4.ar البند ٥) — مرّةً واحدة، في الخلفية.
+      import("./accounting/payment_journal_backfill")
+        .then((m) => m.backfillPaymentJournals())
+        .catch((e) => console.error("[backfill-journals] launch failed:", e));
     },
   );
 })();
