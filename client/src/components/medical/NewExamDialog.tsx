@@ -506,8 +506,8 @@ export function NewExamDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>هل كان تسجيلُ «{crossPrompt?.dropLabel}» خطأً؟</AlertDialogTitle>
           <AlertDialogDescription>
-            {crossPrompt?.message} إن كان خطأً من الاستعلامات يُلغى هذا القسم وطلبُه، وإن كان
-            المريضُ يحتاج القسمين يبقيان معاً ويبقى الطلبُ ينتظر طبيبَه.
+            على ملف المريض طلبُ {crossPrompt?.dropLabel} ينتظر معاينته. إن كان تسجيلُه خطأً من الاستعلامات
+            يُلغى هذا القسم وطلبُه، وإن كان المريضُ يحتاج القسمين يبقيان معاً ويبقى الطلبُ ينتظر طبيبَه.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="gap-2">
