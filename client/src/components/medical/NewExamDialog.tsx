@@ -265,10 +265,14 @@ export function NewExamDialog({
   //  حين يختار الطبيبُ قسماً غيرَ الذي سجّله الاستعلامات، وعلى القسم السابق طلبُ جهازٍ
   //  ينتظر معاينته، يردّ الخادمُ ٤٠٩ **بصفر كتابة** فتسأله النافذة: أكان تسجيلُه خطأً؟
   //  ثمّ يُعاد الإرسالُ بجوابه. والجوابُ يخصّ هذا الاختصاصَ في هذه الفتحة وحدها.
-  const [crossPrompt, setCrossPrompt] = useState<{ dropLabel: string; message: string } | null>(null);
+  const [crossPrompt, setCrossPrompt] =
+    useState<{ dropLabel: string; message: string; episodeIds: number[] } | null>(null);
   const crossDecisionRef = useRef<"retire" | "keep" | null>(null);
+  //  **الطلباتُ التي عُرضت عليه بعينها** — تُعاد مع الجواب، فطلبٌ تبدّل بعد السؤال يُسأل عنه من جديد.
+  const crossEpisodeIdsRef = useRef<number[]>([]);
   useEffect(() => {
     crossDecisionRef.current = null;
+    crossEpisodeIdsRef.current = [];
     setCrossPrompt(null);
   }, [open, specialty]);
 
@@ -405,7 +409,9 @@ export function NewExamDialog({
             //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
             //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
             ...(retypeRequested ? { retypeDeviceEpisode: true } : {}),
-            ...(crossDecisionRef.current ? { crossRetireDecision: crossDecisionRef.current } : {}),
+            ...(crossDecisionRef.current
+              ? { crossRetireDecision: crossDecisionRef.current, crossRetireEpisodeIds: crossEpisodeIdsRef.current }
+              : {}),
           }),
         },
       );
@@ -414,6 +420,7 @@ export function NewExamDialog({
         const err: any = new Error(body?.error || "تعذّر حفظ المعاينة");
         err.code = body?.code ?? null;
         err.dropLabel = body?.dropLabel ?? null;
+        err.episodeIds = Array.isArray(body?.episodeIds) ? body.episodeIds : [];
         throw err;
       }
       return res.json();
@@ -450,7 +457,9 @@ export function NewExamDialog({
     },
     onError: (err: any) => {
       if (err?.code === "cross_retire_decision_required") {
-        setCrossPrompt({ dropLabel: err.dropLabel || "القسم السابق", message: err.message });
+        //  سؤالٌ جديد يُبطل جواباً سابقاً — فالطلباتُ تبدّلت منذ أجاب.
+        crossDecisionRef.current = null;
+        setCrossPrompt({ dropLabel: err.dropLabel || "القسم السابق", message: err.message, episodeIds: err.episodeIds });
         return;
       }
       //  ══ هويّةُ الجهاز تغيّرت تحت أيدينا ═══════════════════════════════
@@ -485,6 +494,7 @@ export function NewExamDialog({
 
   const answerCross = (decision: "retire" | "keep") => {
     crossDecisionRef.current = decision;
+    crossEpisodeIdsRef.current = crossPrompt?.episodeIds ?? [];
     setCrossPrompt(null);
     save.mutate();
   };

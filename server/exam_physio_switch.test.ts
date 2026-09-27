@@ -174,7 +174,9 @@ async function main() {
       [(await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [zain]))[0].n,
        await casesOf(zain), (await flagsOf(zain)).s, (await flagsOf(zain)).f, await pendingOf(zain)],
       [0, ["medical_support"], true, false, ["medical_support"]]);
-    const ex = await signExam(zain, "physiotherapy", { crossRetireDecision: "retire" });
+    same("أ.١ج والسؤالُ يحمل الطلبَ بعينه", asked.body?.episodeIds, [sup.episodeId]);
+    const ex = await signExam(zain, "physiotherapy",
+      { crossRetireDecision: "retire", crossRetireEpisodeIds: asked.body?.episodeIds });
     check(ex.status < 300, "أ.٢ المعاينةُ تُحفَظ علاجاً طبيعياً — بجواب «نعم، كان خطأً»", JSON.stringify(ex.body));
     same("أ.٣ **ومربوطةٌ بقسم العلاج الطبيعي** — لا معاينةٌ بلا قسم", await examCaseType(Number(ex.body?.id)), "physiotherapy");
     same("أ.٤ **الملفُّ صار علاجاً طبيعياً وحده** — سُحب قسمُ المساند", await casesOf(zain), ["physiotherapy"]);
@@ -285,12 +287,15 @@ async function main() {
     // ══ ي. الحارسُ الأخير في المخزن — بلا تأكيدٍ لا يُسحَب طلبٌ ينتظر ═════════
     console.log("\n── ي. السحبُ بلا تأكيد لا يهدم طلباً ينتظر ──");
     const y = await mkPatient("ي-حارس", "medical_support");
-    await openEpisode(y, "medical_support");
+    const yEp = await openEpisode(y, "medical_support");
     const noConfirm = await retireAcrossPhysiotherapy(y, "physiotherapy", ["medical_support"]);
     same("ي.١ **لا سحب** ويُقال لماذا", [noConfirm.switched, /ينتظر/.test(noConfirm.reason ?? "")], [false, true]);
     same("ي.٢ والقسمُ وطلبُه باقيان", [await casesOf(y), await pendingOf(y)], [["medical_support"], ["medical_support"]]);
+    const wrongIds = await retireAcrossPhysiotherapy(y, "physiotherapy", ["medical_support"],
+      { confirmedPendingEpisodeIds: [yEp.episodeId + 99999] });
+    same("ي.٢ب **وتأكيدٌ لطلبٍ غيرِه لا يكفي**", [wrongIds.switched, await casesOf(y)], [false, ["medical_support"]]);
     const withConfirm = await retireAcrossPhysiotherapy(y, "physiotherapy", ["medical_support"],
-      { confirmedPendingRequest: true });
+      { confirmedPendingEpisodeIds: [yEp.episodeId] });
     same("ي.٣ وبالتأكيد يُسحَب كما كان", [withConfirm.switched, await casesOf(y)], [true, []]);
 
     // ══ ك. والتنقيحُ يسأل كالإنشاء ════════════════════════════════════════
@@ -307,11 +312,44 @@ async function main() {
     same("ك.١ **التنقيحُ يسأل أيضاً** — ٤٠٩ بصفر كتابة",
       [revAsk.status, revAsk.body?.code, await examCaseType(mExam), await casesOf(m)],
       [409, "cross_retire_decision_required", "medical_support", ["medical_support"]]);
+    same("ك.١ب والسؤالُ يحمل الطلبَ بعينه", Array.isArray(revAsk.body?.episodeIds) && revAsk.body.episodeIds.length, 1);
     const revKeep = await http("PATCH", `/api/medical/exams/${mExam}`, S.doc,
       { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {}, crossRetireDecision: "keep" });
     same("ك.٢ وبجواب «يحتاج القسمين» ⟵ المعاينةُ على العلاج الطبيعي والقسمان باقيان",
       [revKeep.status < 300, await examCaseType(mExam), await casesOf(m), await pendingOf(m)],
       [true, "physiotherapy", ["medical_support", "physiotherapy"], ["medical_support"]]);
+
+    // ══ ل. الجوابُ يخصّ الطلبَ الذي عُرض — طلبٌ تبدّل بعد السؤال يُسأل عنه من جديد (مراجعة Codex) ══
+    console.log("\n── ل. طلبٌ تبدّل بين السؤال والجواب ──");
+    const l = await mkPatient("ل-تبدّل", "medical_support");
+    const lEp1 = await openEpisode(l, "medical_support");
+    const lAsk = await signExam(l, "physiotherapy");
+    same("ل.١ (السؤالُ عن الطلب الأوّل)", [lAsk.status, lAsk.body?.episodeIds], [409, [lEp1.episodeId]]);
+    //  قبل أن يجيب: أُلغي الطلبُ الأوّل وفُتح طلبٌ ثانٍ لم يُعرَض عليه.
+    await q(`UPDATE patient_device_episodes SET status='cancelled' WHERE id=$1`, [lEp1.episodeId]);
+    const lEp2 = await openEpisode(l, "medical_support");
+    const lStale = await signExam(l, "physiotherapy",
+      { crossRetireDecision: "retire", crossRetireEpisodeIds: lAsk.body?.episodeIds });
+    same("ل.٢ **«نعم» بالطلب القديم ⟵ يُسأل من جديد عن الجديد** بصفر كتابة",
+      [lStale.status, lStale.body?.episodeIds,
+       (await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [l]))[0].n, await casesOf(l)],
+      [409, [lEp2.episodeId], 0, ["medical_support"]]);
+    const lOk = await signExam(l, "physiotherapy",
+      { crossRetireDecision: "retire", crossRetireEpisodeIds: lStale.body?.episodeIds });
+    same("ل.٣ وبالطلب الذي رآه ⟵ يُسحَب", [lOk.status < 300, await casesOf(l)], [true, ["physiotherapy"]]);
+
+    // ══ م. عمليةُ «بلا معاينة» لا يُسأل عنها طبيب — ولا تُحذَف سقالةً ══════════
+    console.log("\n── م. عمليةُ «بلا معاينة» منتظرة على قسم المساند ──");
+    const nx = await mkPatient("م-بلا-معاينة", "medical_support");
+    const nxCase = (await q(`SELECT id FROM patient_cases WHERE patient_id=$1`, [nx]))[0].id;
+    const nxEp = (await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+        status, service_path) VALUES ($1,$2,1,1,'awaiting_exam','no_exam') RETURNING id`, [nx, nxCase]))[0].id;
+    const exNx = await signExam(nx, "physiotherapy");
+    check(exNx.status < 300, "م.١ **لا سؤال** — لا طلبَ ينتظر طبيباً", JSON.stringify(exNx.body));
+    same("م.٢ **والقسمُ وعمليتُه باقيان** — لا حذفَ سقاليّ",
+      [await casesOf(nx), (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [nxEp]))[0]?.status],
+      [["medical_support", "physiotherapy"], "awaiting_exam"]);
+    check(/بلا معاينة/.test(exNx.body?.switchNote ?? ""), "م.٣ ويُقال للطبيب لماذا", String(exNx.body?.switchNote));
   } finally {
     await new Promise((r) => httpServer.close(() => r(null)));
     await cleanup();

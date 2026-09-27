@@ -1049,12 +1049,30 @@ async function crossRetireCandidate(
   return { dropType, caseId: row.id, cost: row.cost || 0 };
 }
 
-async function awaitingRequestsOnCase(caseId: number): Promise<number> {
+/**
+ *  الطلباتُ المنتظرة على القسم، قسمين: **ما ينتظر طبيباً** (بمعرّفاتها — الطبيبُ يُسأل عنها بعينها)
+ *  و**عملياتُ «بلا معاينة»** (لا طبيبَ لها يُسأل، وسحبُ القسم كان سيحذفها سقالةً — فتحجب السحبَ).
+ *  والحدُّ هو حدُّ قائمة العمل بالحرف: `service_path IS DISTINCT FROM 'no_exam'`.
+ */
+async function awaitingRequestsOnCase(caseId: number): Promise<{ examIds: number[]; noExam: number }> {
   const r = await db.execute(sql`
-    SELECT count(*)::int AS n FROM patient_device_episodes
+    SELECT id, (service_path IS NOT DISTINCT FROM 'no_exam') AS no_exam
+      FROM patient_device_episodes
      WHERE case_id = ${caseId} AND status = 'awaiting_exam'
+     ORDER BY id
   `);
-  return Number((r.rows?.[0] as any)?.n ?? 0);
+  const rows = (r.rows ?? []) as any[];
+  return {
+    examIds: rows.filter((x) => !x.no_exam).map((x) => Number(x.id)),
+    noExam: rows.filter((x) => x.no_exam).length,
+  };
+}
+
+/** المجموعتان متساويتان — التأكيدُ يخصّ الطلباتِ التي رآها الطبيبُ بعينها لا عددَها. */
+function sameIds(a: number[] | null | undefined, b: number[]): boolean {
+  const x = Array.from(new Set((a ?? []).map(Number))).sort((m, n) => m - n);
+  const y = Array.from(new Set(b)).sort((m, n) => m - n);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
 }
 
 /**
@@ -1066,11 +1084,13 @@ async function awaitingRequestsOnCase(caseId: number): Promise<number> {
  */
 export async function crossRetirePendingRequest(
   patientId: number, keepType: string, caseTypesBefore: string[],
-): Promise<{ dropType: string; pendingCount: number } | null> {
+): Promise<{ dropType: string; pendingCount: number; episodeIds: number[] } | null> {
   const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
   if (!c || c.cost !== 0) return null;
-  const pendingCount = await awaitingRequestsOnCase(c.caseId);
-  return pendingCount > 0 ? { dropType: c.dropType, pendingCount } : null;
+  const w = await awaitingRequestsOnCase(c.caseId);
+  //  عمليةُ «بلا معاينة» تحجب السحبَ أصلاً (في `retireAcrossPhysiotherapy`) — فلا سؤالَ عن شيءٍ لن يقع.
+  if (w.noExam > 0 || w.examIds.length === 0) return null;
+  return { dropType: c.dropType, pendingCount: w.examIds.length, episodeIds: w.examIds };
 }
 
 export async function retireAcrossPhysiotherapy(
@@ -1079,10 +1099,11 @@ export async function retireAcrossPhysiotherapy(
   /** كلُّ أقسام المريض **قبل** تطبيق الوصفة — للسبب نفسِه في `retireSupersededCase`. */
   caseTypesBefore: string[],
   /**
-   *  **الطبيبُ أكّد أن تسجيلَ القسم خطأ** — شرطٌ لسحب قسمٍ عليه طلبُ جهازٍ ينتظر (البند ١).
-   *  بلا تأكيد يبقى القسمُ وطلبُه، فلا يُهدَم طلبٌ حقيقيّ بصمت ولو فات السؤالَ سباق.
+   *  **الطلباتُ المنتظرة التي أكّد الطبيبُ أن تسجيلَها خطأ — بمعرّفاتها** (البند ١، ومراجعة Codex):
+   *  شرطٌ لسحب قسمٍ عليه طلبٌ ينتظر، **ويجب أن تطابق ما على القسم الآن بعينه**. فطلبٌ فُتح أو
+   *  تبدّل بين السؤال والجواب لم يُعرَض على الطبيب — فلا يُهدَم، ويبقى القسمُ ويُقال لماذا.
    */
-  opts: { confirmedPendingRequest?: boolean } = {},
+  opts: { confirmedPendingEpisodeIds?: number[] | null } = {},
 ): Promise<{ switched: boolean; reason?: string }> {
   const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
   if (!c) return { switched: false };
@@ -1091,7 +1112,11 @@ export async function retireAcrossPhysiotherapy(
   if ((row.cost || 0) !== 0) {
     return { switched: false, reason: "على القسم السابق كلفةٌ مسجَّلة — يُراجَع إدارياً" };
   }
-  if (!opts.confirmedPendingRequest && (await awaitingRequestsOnCase(row.id)) > 0) {
+  const waiting = await awaitingRequestsOnCase(row.id);
+  if (waiting.noExam > 0) {
+    return { switched: false, reason: "على القسم السابق عمليةٌ «بلا معاينة» مفتوحة" };
+  }
+  if (waiting.examIds.length > 0 && !sameIds(opts.confirmedPendingEpisodeIds, waiting.examIds)) {
     return {
       switched: false,
       reason: "على القسم السابق طلبُ جهازٍ ينتظر معاينته، ولم يُؤكَّد أن تسجيله خطأ",
