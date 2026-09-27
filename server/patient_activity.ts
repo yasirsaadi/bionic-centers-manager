@@ -141,3 +141,67 @@ export function patientActiveOnDateBySource(
 //  يُبقي `patients` مستوردةً كي يبقى اسمُ الجدول مرتبطاً بالمخطّط: لو
 //  أُعيدت تسميتُه انكسر البناءُ هنا بدل أن يسقط الاستعلامُ وقتَ التشغيل.
 void patients;
+
+// ══ **الترشيحُ بالقسم** — تصديرُ «علاج طبيعي» أو «أطراف» أو «مساند» وحدها (طلبُ المالك ٢٠٢٦-٠٩-٢٧) ══
+export const PATIENT_SERVICES = ["physiotherapy", "prosthetic", "medical_support"] as const;
+export type PatientService = (typeof PATIENT_SERVICES)[number];
+export function isPatientService(v: unknown): v is PatientService {
+  return typeof v === "string" && (PATIENT_SERVICES as readonly string[]).includes(v);
+}
+const SERVICE_FLAG: Record<PatientService, string> = {
+  physiotherapy: "is_physiotherapy", prosthetic: "is_amputee", medical_support: "is_medical_support",
+};
+
+/** للمريض هذا القسم — عَلَمُ ملفّه أو خيطُ قسمٍ قائم (الاثنان ما يعرضه عمودُ «الحالة الطبية»). */
+export function patientHasService(service: PatientService): SQL {
+  return sql`(
+    patients.${sql.raw(SERVICE_FLAG[service])} = TRUE
+    OR EXISTS (SELECT 1 FROM patient_cases pc
+                WHERE pc.patient_id = patients.id AND pc.case_type = ${service})
+  )`;
+}
+
+/**
+ * **نشاطُ اليوم من هذا القسم وحده** — مصادرُ `patientActiveOnDate` الستّة نفسُها، كلٌّ مقيَّدٌ بقسمه:
+ * الزيارةُ والدفعةُ والطلبُ بقسم خيطها (`case_id`)، والمعاينةُ باختصاصها، وأمرُ التصنيع بخدمته، والتسجيلُ
+ * بأقسام الملفّ. فمريضٌ بقسمين جاء البارحة لقياس طرفٍ وحده **لا يظهر** تحت «علاج طبيعي».
+ */
+export function patientActiveOnDateForService(date: string, service: PatientService): SQL {
+  const P = "patients.id";
+  const caseOf = (col: string) =>
+    sql.raw(`${col} IN (SELECT pc.id FROM patient_cases pc WHERE pc.patient_id = ${P} AND pc.case_type = `);
+  return sql`(
+    (${bgdNaive("patients.created_at")} = ${date}::date AND ${patientHasService(service)})
+    OR EXISTS (
+      SELECT 1 FROM visits v
+       WHERE v.patient_id = ${sql.raw(P)} AND v.deleted_at IS NULL
+         AND ${bgdNaive("v.visit_date")} = ${date}::date
+         AND ${caseOf("v.case_id")}${service})
+    )
+    OR EXISTS (
+      SELECT 1 FROM payments pm
+       WHERE pm.patient_id = ${sql.raw(P)}
+         AND ${bgdNaive("pm.date")} = ${date}::date
+         AND ${caseOf("pm.case_id")}${service})
+    )
+    OR EXISTS (
+      SELECT 1 FROM medical_exams me
+       WHERE me.patient_id = ${sql.raw(P)}
+         AND ${bgdTz("me.signed_at")} = ${date}::date
+         AND me.case_type = ${service}
+         AND ${activeExamSql("me")}
+    )
+    OR EXISTS (
+      SELECT 1 FROM patient_device_episodes de
+       WHERE de.patient_id = ${sql.raw(P)}
+         AND ${bgdTz("de.created_at")} = ${date}::date
+         AND ${caseOf("de.case_id")}${service})
+    )
+    OR EXISTS (
+      SELECT 1 FROM prosthetic_work_orders wo
+       WHERE wo.patient_id = ${sql.raw(P)}
+         AND ${bgdTz("wo.created_at")} = ${date}::date
+         AND wo.service_type = ${service}
+    )
+  )`;
+}

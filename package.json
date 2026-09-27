@@ -146,6 +146,8 @@
     "test:case-closure": "tsx server/case_closure.test.ts",
     "test:manufacturing-order-ui": "tsx client/src/pages/manufacturing_order_ui.test.ts",
     "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",
+    "test:registry-export-services": "tsx client/src/pages/registry_export_services.test.ts",
+    "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
     "test:trash-badge": "tsx server/patient_trash_badge.test.ts",
     "test:worklist-count": "tsx server/medical_worklist_count.test.ts",

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
+import { sql, eq, and, or, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS } from "@shared/medical";
@@ -39,7 +39,7 @@ import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
-import { patientActiveOnDate } from "./patient_activity";
+import { patientActiveOnDate, patientActiveOnDateForService, patientHasService, isPatientService } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
@@ -1983,6 +1983,10 @@ export async function registerRoutes(
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
     const visitDate = typeof req.query.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.visitDate)
       ? req.query.visitDate : null;
+    //  **أقسامُ التصدير** (طلبُ المالك ٢٠٢٦-٠٩-٢٧): يختار الموظّفُ قبل التصدير قسماً أو قسمين —
+    //  `services=physiotherapy,prosthetic`. وغيابُها (أو الثلاثة معاً، فالنافذةُ لا ترسلها حينئذٍ) = الكلّ.
+    const services = Array.from(new Set(String(req.query.services ?? "").split(",").map((x) => x.trim())))
+      .filter(isPatientService);
 
     //  **والمحذوفُ لا يظهر في السجلّ** (ترحيل ٠٦٨) — لا في الصفحة ولا في
     //  العدّاد ولا في نتيجة بحثٍ باسمٍ أو رمز. وبابُه «المحذوفات» وحدها.
@@ -2033,7 +2037,13 @@ export async function registerRoutes(
       //
       //  والتعريفُ الآن في `patient_activity` وحده — **يستعمله العدّادُ
       //  والصفوفُ معاً** لأنه شرطٌ واحد على `patients` نفسها، فلا يفترقان.
-      conditions.push(patientActiveOnDate(visitDate));
+      //  وبقسمٍ: نشاطُ اليوم **من ذلك القسم** — لا نشاطٌ ما لمريضٍ يحمل القسمَ في ملفّه.
+      conditions.push(services.length
+        ? or(...services.map((sv) => patientActiveOnDateForService(visitDate, sv)))!
+        : patientActiveOnDate(visitDate));
+    }
+    if (services.length && !(visitDate && !search)) {
+      conditions.push(or(...services.map((sv) => patientHasService(sv)))!);
     }
     const where = conditions.length ? and(...conditions) : sql`TRUE`;
 
