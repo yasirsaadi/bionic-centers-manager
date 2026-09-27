@@ -304,6 +304,12 @@ async function main() {
     ok(noRep.ok, "ومَن لا يملك التقارير يقرأ تبويبَ «حسب التاريخ» بتاريخ البارحة");
     ok(((noRep.data?.rows ?? noRep.data?.items ?? []) as any[]).some((r: any) => r.id === physioP),
       "وفيه مريضُ العلاج الطبيعي الذي زار البارحة");
+    //  **والبحثُ لا يُجمع مع التاريخ** (مراجعة Codex على #427): النقطةُ تُسقط التاريخَ بصمت مع البحث.
+    const mixed = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday, search: "مريض" },
+    });
+    ok(!mixed.ok && /لا يُجمع search مع visitDate/.test(String(mixed.data?.error)),
+      "search مع visitDate يُرفض برسالةٍ تقول لماذا — لا نتيجةً تبدو مقيَّدةً بالتاريخ وليست");
 
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);

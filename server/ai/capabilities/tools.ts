@@ -110,12 +110,21 @@ export async function readCapability(
     return fail("لا توجد شاشةٌ بهذا الاسم ضمن المتاح لك. ابحث أوّلاً بـ list_capabilities.");
   }
 
+  //  **البحثُ والتاريخُ لا يجتمعان في سجلّ المرضى** (مراجعة Codex على #427): النقطةُ تأخذ `search` وتُسقط
+  //  `visitDate` بصمت، فـ«هل كان فلانٌ نشطاً البارحة؟» كان سيعود بالمريض أيّاً كان نشاطُه — جوابٌ كاذبٌ بالتاريخ.
+  const query = asObject(input?.query);
+  if (cap.path === "/api/patients/registry"
+      && String(query?.search ?? "").trim() && String(query?.visitDate ?? "").trim()) {
+    return fail("لا يُجمع search مع visitDate في سجلّ المرضى: البحثُ يُلغي شرطَ التاريخ. "
+      + "اقرأ اليومَ بـ visitDate وحده وابحث عن المريض في النتيجة، أو اقرأ زيارات ملفّه ودفعاته.");
+  }
+
   const result = await invokeCapability({
     app: ctx.app,
     source: ctx.source,
     path: cap.path,
     pathParams: asObject(input?.pathParams),
-    query: asObject(input?.query),
+    query,
   });
 
   if (result.status < 200 || result.status >= 300) {
