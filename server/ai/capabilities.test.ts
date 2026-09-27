@@ -297,6 +297,14 @@ async function main() {
     same("وباسمه", ((physioYesterday.data?.rows ?? physioYesterday.data?.items ?? []) as any[])
       .map((r: any) => r.patientId), [physioP]);
 
+    //  **ومَن لا يملك التقارير** يقرأ تبويبَ «حسب التاريخ» نفسَه الذي يراه على شاشته (visitDate).
+    const noRep = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday, pageSize: 100 },
+    });
+    ok(noRep.ok, "ومَن لا يملك التقارير يقرأ تبويبَ «حسب التاريخ» بتاريخ البارحة");
+    ok(((noRep.data?.rows ?? noRep.data?.items ?? []) as any[]).some((r: any) => r.id === physioP),
+      "وفيه مريضُ العلاج الطبيعي الذي زار البارحة");
+
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);
   } finally {

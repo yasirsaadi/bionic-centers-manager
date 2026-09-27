@@ -93,7 +93,10 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/manufacturing/patient/:patientId/orders": { d: "أوامرُ التصنيع والصيانة لمريضٍ بعينه." },
   "/api/manufacturing/patient/:patientId/summary": { d: "ملخّصُ حالة التصنيع في بطاقة المريض." },
   //  ══ المرضى ══
-  "/api/patients/registry": { d: "سجلُّ المرضى بالبحث والترشيح — الاسمُ والرمزُ والفرعُ والتصنيف.", q: ["search", "branchId", "limit", "offset"] },
+  //  **و`visitDate` تبويبُ «حسب التاريخ» نفسُه** (٢٠٢٦-٠٩-٢٧): مفتوحٌ لكلّ مَن يرى المرضى، والمساعدُ كان
+  //  ممنوعاً من تمريره فيُحيل الموظّفَ إليه ليفرز بيده. **والصفُّ مريضٌ لا زيارة**: نشاطُ اليوم (تسجيل ·
+  //  زيارة · دفعة · معاينة) وأعلامُ أقسام ملفّه — وجلساتُ قسمٍ بعينه في يومٍ بعينه في التقرير اليوميّ للمرضى.
+  "/api/patients/registry": { d: "سجلُّ المرضى بالبحث والترشيح — الاسمُ والرمزُ والفرعُ والتصنيف. ومع visitDate (YYYY-MM-DD: اليوم أو البارحة أو أيّ تاريخ) هو تبويبُ «حسب التاريخ»: المرضى الذين كان لهم نشاطٌ في ذلك اليوم (تسجيل أو زيارة أو دفعة أو معاينة) مع أقسام ملفّهم (isPhysiotherapy · isAmputee · isMedicalSupport) — لا نوعُ جلسة ذلك اليوم.", q: ["search", "branchId", "limit", "offset", "visitDate", "page", "pageSize"] },
   "/api/patients/:id/cases": { d: "خيوطُ خدمات المريض (أطراف · مساند · علاج طبيعي) بحالاتها." },
   "/api/patients/:id/financial-summary": { d: "الكلفةُ والمدفوعُ والمتبقّي لمريضٍ بعينه.", f: true },
   "/api/patients/:patientId/device-episodes": { d: "حلقاتُ أجهزة المريض: ما طُلب وحالتُه ومسارُه وتسلسلُه." },
