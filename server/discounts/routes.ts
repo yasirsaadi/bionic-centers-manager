@@ -15,6 +15,7 @@
 import type { Express } from "express";
 import * as store from "./store";
 import { DiscountError } from "./store";
+import { journalNewServicePayments } from "../new_service/store";
 import {
   canApproveServiceDiscount, discountReasonLabel, FREE_DONATION_LABEL,
 } from "@shared/discount";
@@ -175,6 +176,14 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
           note: (row, d) => discountAuditNote(row, d === "approve" ? "اعتماد" : "رفض"),
         },
       });
+      //  ══ **قيدُ دفعات «خدمة جديدة» بعد الالتزام** (٢٠٢٦-٠٩-٢٧) — الاعتمادُ
+      //  ينفّذ `executeNewService` داخل معاملته، والقيدُ يُكتب بعدها كبقيّة أبواب
+      //  القبض. ولا تُعاد صفوفُ الدفعات في الردّ — لم تكن تُعاد قبل اليوم.
+      const created = (out.applied as any)?.createdPayments;
+      if (Array.isArray(created)) {
+        await journalNewServicePayments(created, s.userId ?? null);
+        delete (out.applied as any).createdPayments;
+      }
       res.json(out);
     } catch (e) {
       if (fail(res, e)) return;

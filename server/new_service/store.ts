@@ -21,6 +21,8 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
+import { createJournalForPayment } from "../accounting/auto_journal";
+import type { Payment } from "@shared/schema";
 import { mergePhysioPlan, allocateApprovedCost, physioSessionsEnterPlan } from "@shared/pricing";
 import { NEW_SERVICE_DEPARTMENT, NEW_SERVICE_LABELS } from "@shared/service_taxonomy";
 
@@ -52,6 +54,31 @@ export interface NewServiceResult {
   newTotalCost: number;
   openedPhysiotherapyCase: boolean;
   caseId: number | null;
+  /**
+   * **الدفعاتُ التي كُتبت** — ليُكتب قيدُها المحاسبيّ **بعد** التزام المعاملة
+   * (`journalNewServicePayments`)، كما تفعل أبوابُ القبض الأخرى كلُّها.
+   */
+  createdPayments: Payment[];
+}
+
+/**
+ * **قيدُ الدفتر لدفعات «خدمة جديدة»** (٢٠٢٦-٠٩-٢٧).
+ *
+ * كان هذا البابُ وحدَه يكتب الدفعةَ في `payments` ولا يكتب قيدَها: الدفعةُ في
+ * الوارد اليوميّ وصفحة المريض، **وغائبةٌ عن قائمة الدخل وميزان المراجعة**.
+ * وكلُّ بابِ قبضٍ آخر (`/api/payments` · إتمامُ البيع · العمليةُ المعلَّقة)
+ * ينادي `createJournalForPayment` **بعد** التزام معاملته — وهو ما يُفعَل هنا
+ * بحرفه: فشلُ القيد يُسجَّل ولا يُسقط دفعةً ثبتت. والمجّانيّةُ والصفريّةُ بلا قيد
+ * (الدالّةُ نفسُها تتخطّى الصفر، و`/api/payments` تتخطّى الهديّة).
+ */
+export async function journalNewServicePayments(
+  created: Payment[] | null | undefined,
+  createdBy: number | null,
+): Promise<void> {
+  for (const p of created ?? []) {
+    if ((p as any).isFreeSessions || !(p.amount > 0)) continue;
+    await createJournalForPayment(p, createdBy);
+  }
 }
 
 /** تنقيةُ بنود الجلسات كما كانت النقطةُ تنقّيها حرفياً. */
@@ -134,6 +161,7 @@ export async function executeNewService(params: {
   }
 
   const body = async (tx: any): Promise<NewServiceResult> => {
+    const createdPayments: Payment[] = [];
     //  ══ **وكلُّ كاتبٍ للخطة يقفل صفَّ المريض أوّلاً** ═════════════════════
     //  هذه الدالّةُ قراءةٌ‑تعديلٌ‑كتابةٌ على `physio_plan` أيضاً (سطرُ
     //  `mergePhysioPlan` أدناه): تقرأ الخطةَ هنا وتكتبها بعد عشرات الأسطر.
@@ -284,7 +312,7 @@ export async function executeNewService(params: {
         //  لا من كلفته** — فقد يُسجَّل صفراً على بندٍ كلفتُه موجبة، ولو لم
         //  يُقبَض شيءٌ الآن.
         if (entry.cost > 0 || isFree || entry.sessionCount > 0) {
-          await storage.createPayment({
+          createdPayments.push(await storage.createPayment({
             patientId: params.patientId,
             branchId: opBranchId ?? patient.branchId,
             caseId: nsCaseId!,
@@ -305,7 +333,7 @@ export async function executeNewService(params: {
             notes: `${serviceLabel} - ${entry.treatmentType} (${entry.sessionCount} جلسة)${notes ? ` - ${notes}` : ""}`,
             paymentTreatmentType: entry.treatmentType,
             sessionCount: entry.sessionCount,
-          } as any, tx);
+          } as any, tx));
         }
       }
     } else {
@@ -325,7 +353,7 @@ export async function executeNewService(params: {
       // as a remaining balance the accountant collects later.
       const paidNow = Math.max(0, Math.min(Number(params.initialPayment) || 0, serviceCost));
       if (paidNow > 0 || isFree) {
-        await storage.createPayment({
+        createdPayments.push(await storage.createPayment({
           patientId: params.patientId,
           branchId: opBranchId ?? patient.branchId,
           caseId: nsCaseId!,
@@ -337,7 +365,7 @@ export async function executeNewService(params: {
           notes: `${serviceLabel}${sc ? ` (${sc} جلسة)` : ""}${notes ? ` - ${notes}` : ""}`,
           paymentTreatmentType: params.paymentTreatmentType || null,
           sessionCount: sc ? Number(sc) : null,
-        } as any, tx);
+        } as any, tx));
       }
     }
 
@@ -353,7 +381,7 @@ export async function executeNewService(params: {
       tx,
     });
 
-    return { newTotalCost, openedPhysiotherapyCase: openedPhysioCase, caseId: nsCaseId };
+    return { newTotalCost, openedPhysiotherapyCase: openedPhysioCase, caseId: nsCaseId, createdPayments };
   };
 
   return params.tx ? await body(params.tx) : await db.transaction(body);

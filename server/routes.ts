@@ -59,7 +59,7 @@ import {
   PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import {
-  executeNewService, normalizeEntries, NewServiceError,
+  executeNewService, journalNewServicePayments, normalizeEntries, NewServiceError,
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
 import { newServiceDiscountRef } from "@shared/discount";
@@ -3531,6 +3531,7 @@ export async function registerRoutes(
             discountRequestId: out.request.id,
             newTotalCost: out.applied?.newTotalCost ?? patient.totalCost ?? 0,
             openedPhysiotherapyCase: out.applied?.openedPhysiotherapyCase ?? false,
+            createdPayments: (out.applied?.createdPayments ?? []) as any[],
           };
         }
 
@@ -3563,8 +3564,16 @@ export async function registerRoutes(
           kind: "full" as const,
           newTotalCost: done.newTotalCost,
           openedPhysiotherapyCase: done.openedPhysiotherapyCase,
+          createdPayments: done.createdPayments,
         };
       });
+
+      //  ══ **القيدُ المحاسبيّ بعد الالتزام — كبقيّة أبواب القبض** (٢٠٢٦-٠٩-٢٧) ══
+      //  كانت دفعاتُ هذا البابِ تُكتب ولا يُكتب قيدُها، فتغيب عن قائمة الدخل
+      //  وميزان المراجعة. وفشلُ القيد لا يُسقط دفعةً ثبتت.
+      if (result.kind === "full" || result.kind === "discount") {
+        await journalNewServicePayments(result.createdPayments, branchSession?.userId ?? null);
+      }
 
       if (result.kind === "duplicate") {
         return res.json({
