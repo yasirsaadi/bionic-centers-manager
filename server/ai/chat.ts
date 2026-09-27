@@ -523,9 +523,14 @@ export const MAX_TOOL_ROUNDS = 3;
 export function isDanglingPromise(text: string | null | undefined): boolean {
   const t = String(text ?? "").trim();
   if (!t) return false;
-  if (/(?:[:：…]|\.\.\.)$/.test(t)) return true;
   const first = t.split("\n")[0].replace(/^[«"'\s]+/, "");
-  return t.length < 240 && /^(?:سأ|سوف |دعني|لحظة|جار[ٍي] )/.test(first);
+  const opensWithPromise = /^(?:سأ|سوف |دعني|لحظة|جار[ٍي] )/.test(first);
+  if (t.length < 240 && opensWithPromise) return true;
+  //  **والنقطتان وحدهما لا تكفيان** (مراجعة Codex على #427): «أيّ فرعٍ تقصد…» سؤالُ توضيحٍ صحيح، و«لا أستطيع
+  //  الوصول إلى هذه البيانات…» رفضٌ تامّ. فالنهايةُ المعلَّقة وعدٌ **حين يحمل النصُّ فعلاً سيُنفَّذ** — لا منفيّاً.
+  const endsOpen = /(?:[:：…]|\.\.\.)$/.test(t);
+  const promisesAction = /(?:^|[\s،,.(«"])(?:سأ|سوف|دعني|إليك|(?<!لا )(?<!لا\s)(?:يمكنني|أستطيع|بإمكاني))/.test(t);
+  return endsOpen && promisesAction;
 }
 
 /** ما يُقال للنموذج حين يعد ولا يفعل — جولةٌ واحدة إضافيّة لا أكثر. */
@@ -741,6 +746,7 @@ async function runWithTools(params: {
 
   try {
     let nudged = false;
+    //  **وتنبيهُ الإكمال لا يأكل جولةَ أداة** (مراجعة Codex على #427): الجولاتُ الثلاث للأدوات، والتنبيهُ مرّةٌ واحدة فوقها.
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const step = await stepFn({ system, messages, tools, model: "haiku", maxTokens: 900 });
       if (step.toolCalls.length === 0) {
@@ -749,6 +755,7 @@ async function runWithTools(params: {
           nudged = true;
           messages.push({ role: "assistant", content: step.text });
           messages.push({ role: "user", content: DANGLING_NUDGE });
+          round--;
           continue;
         }
         //  محاولةُ إنهاءٍ — قبل قبولها نهائياً، تحقّق أن الملاحةَ الصريحة (إن

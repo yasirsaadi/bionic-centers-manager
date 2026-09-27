@@ -334,6 +334,22 @@ async function main() {
     const cut: any = await chat(access(S.recv), ask("مرضى البارحة"));
     check(!/:\s*$/.test(cut.value.reply) && /لم يكتمل البحثُ/.test(cut.value.reply),
       "هـ٢.٣ **والجوابُ الختاميّ المقطوع عند النقطتين يُقال للمستخدم إنه لم يكتمل**", cut.value.reply);
+    //  **سؤالُ التوضيح والرفضُ التامّ ليسا وعداً** (مراجعة Codex على #427) — يمرّان كما هما.
+    for (const legit of ["أيّ فرعٍ تقصد…", "لا أستطيع الوصول إلى هذه البيانات…", "اختر أحد الخيارين:"]) {
+      runScript([{ text: legit }]);
+      const r: any = await chat(access(S.recv), ask("سؤال"));
+      same(`هـ٢.٥ «${legit}» يمرّ جواباً بلا تنبيه`, [r.value.reply, seen.length], [legit, 1]);
+    }
+    //  **والتنبيهُ لا يأكل جولةَ أداة**: بعده ثلاثُ جولاتِ أدواتٍ كاملة، ثمّ الختام.
+    runScript([
+      { text: "دعني أبحث لك." },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "الخلاصة." },
+    ]);
+    const full: any = await chat(access(S.recv), ask("ابحث"));
+    same("هـ٢.٦ **بعد التنبيه تبقى الجولاتُ الثلاث كاملة**", [full.value.tools.count, full.value.reply], [3, "الخلاصة."]);
     runScript([{ text: "المريض في فرع بغداد." }]);
     const plain: any = await chat(access(S.recv), ask("أين المريض؟"));
     same("هـ٢.٤ وجوابٌ عاديٌّ يمرّ كما هو بلا جولةٍ زائدة", [plain.value.reply, seen.length], ["المريض في فرع بغداد.", 1]);
