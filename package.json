@@ -84,6 +84,7 @@
     "test:worklist-order": "tsx client/src/pages/my_exams_order.test.ts",
     "test:medical-review": "tsx server/medical_review.test.ts",
     "test:taxonomy": "tsx shared/service_taxonomy.test.ts",
+    "test:add-type-via-door": "tsx server/add_type_via_door.test.ts",
     "test:departments": "tsx server/departments.test.ts",
     "test:schema-parity": "tsx server/schema_parity_056.test.ts",
     "test:discount-rules": "tsx shared/discount.test.ts",

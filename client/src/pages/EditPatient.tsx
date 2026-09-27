@@ -117,6 +117,14 @@ export default function EditPatient() {
   const patientId = Number(id);
   
   const { data: patient, isLoading: isLoadingPatient } = usePatient(patientId);
+  //  **لا يُضاف قسمٌ جديد من هنا** (§4.ar البند ٢): الاختيارُ يرفع العلَمَ وحده بلا قسمٍ ولا طلبِ معاينة، فيعلق
+  //  المريض بين «مفعّل أصلاً» و«أضف نوع الحالة أولاً». فالأقسامُ التي ليست على الملفّ معطَّلةٌ، والبابُ «إضافة نوع حالة».
+  const hasType: Record<string, boolean> = {
+    amputee: !!patient?.isAmputee,
+    physiotherapy: !!patient?.isPhysiotherapy,
+    medical_support: !!patient?.isMedicalSupport,
+  };
+  const missingSomeType = !!patient && Object.values(hasType).some((v) => !v);
   const { mutate, isPending } = useUpdatePatient();
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -658,25 +666,25 @@ export default function EditPatient() {
                         value={field.value}
                         className="flex flex-col sm:flex-row gap-4"
                       >
-                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:hover:bg-transparent">
                           <FormControl>
-                            <RadioGroupItem value="amputee" />
+                            <RadioGroupItem value="amputee" disabled={!!patient && !hasType.amputee} data-testid="radio-condition-amputee" />
                           </FormControl>
                           <FormLabel className="font-normal cursor-pointer flex-1">
                             {t.patientForm.amputeeCase}
                           </FormLabel>
                         </FormItem>
-                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:hover:bg-transparent">
                           <FormControl>
-                            <RadioGroupItem value="physiotherapy" />
+                            <RadioGroupItem value="physiotherapy" disabled={!!patient && !hasType.physiotherapy} data-testid="radio-condition-physiotherapy" />
                           </FormControl>
                           <FormLabel className="font-normal cursor-pointer flex-1">
                             {t.patientForm.physiotherapyCase}
                           </FormLabel>
                         </FormItem>
-                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary">
+                        <FormItem className="flex items-center space-x-3 space-x-reverse space-y-0 border rounded-xl p-4 flex-1 cursor-pointer hover:bg-slate-50 transition-colors has-[:checked]:bg-primary/5 has-[:checked]:border-primary has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:hover:bg-transparent">
                           <FormControl>
-                            <RadioGroupItem value="medical_support" />
+                            <RadioGroupItem value="medical_support" disabled={!!patient && !hasType.medical_support} data-testid="radio-condition-medical_support" />
                           </FormControl>
                           <FormLabel className="font-normal cursor-pointer flex-1">
                             {t.patientForm.medicalSupportCase}
@@ -684,6 +692,11 @@ export default function EditPatient() {
                         </FormItem>
                       </RadioGroup>
                     </FormControl>
+                    {missingSomeType && (
+                      <p className="text-xs text-muted-foreground" data-testid="text-add-type-hint">
+                        لإضافة قسمٍ جديد للمريض استعمل زرّ «إضافة نوع حالة» في صفحته — فيُنشأ القسمُ ويصل الطبيب.
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
