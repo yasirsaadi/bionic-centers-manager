@@ -119,12 +119,20 @@ export async function readCapability(
       + "اقرأ اليومَ بـ visitDate وحده وابحث عن المريض في النتيجة، أو اقرأ زيارات ملفّه ودفعاته.");
   }
 
+  //  **ويومُ «حسب التاريخ» يُقرأ كاملاً** (مراجعة Codex الرابعة على #427): الصفحةُ الافتراضيةُ ٢٥ صفّاً، والعدُّ
+  //  والتجميعُ يجريان على ما وصل وحده — فيومٌ بثلاثين مريضاً كان يُعَدّ خمسةً وعشرين. فبلا صفحةٍ يطلبها النموذج
+  //  تُطلب الصفحةُ الواحدةُ بحدّ النقطة نفسِه (١٠٬٠٠٠)، ونشاطُ يومٍ واحد لا يقاربه.
+  const effectiveQuery = cap.path === "/api/patients/registry" && String(query?.visitDate ?? "").trim()
+      && query?.page == null && query?.pageSize == null
+    ? { ...query, page: 1, pageSize: 10000 }
+    : query;
+
   const result = await invokeCapability({
     app: ctx.app,
     source: ctx.source,
     path: cap.path,
     pathParams: asObject(input?.pathParams),
-    query,
+    query: effectiveQuery,
   });
 
   if (result.status < 200 || result.status >= 300) {
@@ -145,7 +153,15 @@ export async function readCapability(
     fields: Array.isArray(input?.fields) ? input.fields.filter((f: unknown) => typeof f === "string") : null,
   });
 
-  return { ok: true, data: { source: cap.path, ...shaped } };
+  //  **وصفحةٌ من كلّ لا تُقرأ كلّاً**: جوابٌ يحمل `total` أكبرَ من صفوفه يُقال ذلك صراحةً بجانب النتيجة.
+  const body = asObject(result.body);
+  const serverTotal = typeof body?.total === "number" ? body.total : null;
+  const got = Array.isArray(body?.rows) ? (body!.rows as unknown[]).length : null;
+  const partial = serverTotal !== null && got !== null && serverTotal > got
+    ? { serverTotal, partial: `هذه ${got} صفّاً من ${serverTotal} — صفحةٌ لا الكلّ؛ فالعددُ الكلّيّ ${serverTotal}، والتجميعُ على هذه الصفحة وحدها.` }
+    : {};
+
+  return { ok: true, data: { source: cap.path, ...shaped, ...partial } };
 }
 
 export const LIST_SPEC = {
