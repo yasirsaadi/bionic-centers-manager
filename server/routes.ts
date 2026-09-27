@@ -5,7 +5,7 @@ import { db } from "./db";
 import { sql, eq, and, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
-import { isMedicalSpecialty } from "@shared/medical";
+import { isMedicalSpecialty, SPECIALTY_LABELS } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
@@ -5469,12 +5469,14 @@ export async function registerRoutes(
           v.details AS "details",
           v.notes AS "notes",
           v.treatment_type AS "treatment",
+          pc.case_type AS "caseType",
           b.id AS "branchId",
           b.name AS "branchName",
           u.id AS "employeeId",
           u.display_name AS "employeeName"
         FROM visits v
         INNER JOIN patients p ON p.id = v.patient_id
+        LEFT  JOIN patient_cases pc ON pc.id = v.case_id
         LEFT  JOIN branches b ON b.id = v.branch_id
         LEFT  JOIN system_users u ON u.id = v.created_by
         WHERE v.visit_date >= ${startTs}::timestamp
@@ -5509,6 +5511,9 @@ export async function registerRoutes(
           problem,
           actionToday,
           treatment: r.treatment,
+          //  **قسمُ الزيارة بالعربية** (٢٠٢٦-٠٩-٢٧) — «روبوت» نوعٌ لا قسم، والسؤالُ «مَن أخذ علاجاً
+          //  طبيعياً؟» يُجاب بالقسم. من `visits.case_id`، و`null` لزيارةٍ بلا قسم.
+          serviceType: r.caseType ? (SPECIALTY_LABELS as Record<string, string>)[r.caseType] ?? null : null,
           notes: r.notes,
           branchId: r.branchId ?? null,
           branchName: r.branchName ?? null,
