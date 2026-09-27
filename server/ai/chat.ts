@@ -526,6 +526,12 @@ export const MAX_TOOL_ROUNDS = 3;
  */
 const FUTURE_SA = "سأ(?!ل(?:ت|وا|ني|ك|ه|ها|نا|هم|تم|تني|تك|ته|تها)?(?=[\\s،,.؟?!:؛]|$))";
 
+/**
+ *  **والقدرةُ المنفيّة رفضٌ لا وعد** (مراجعة Codex الثالثة على #427): «لن أستطيع…» · «ليس بإمكاني…» · «ما أقدر/ما يمكنني…»
+ *  · «لم يعد يمكنني» — لا «لا» وحدها. أداةُ النفي كلمةٌ كاملة قبل الفعل مباشرةً.
+ */
+const NOT_NEGATED = "(?<!(?:^|[\\s،,.(«\"])(?:لا|لن|لم|ما|ليس|ليست|لست|غير|عاد|يعد|أعد)\\s+)";
+
 export function isDanglingPromise(text: string | null | undefined): boolean {
   const t = String(text ?? "").trim();
   if (!t) return false;
@@ -539,7 +545,7 @@ export function isDanglingPromise(text: string | null | undefined): boolean {
   //  الوصول إلى هذه البيانات…» رفضٌ تامّ. فالنهايةُ المعلَّقة وعدٌ **حين يحمل النصُّ فعلاً سيُنفَّذ** — لا منفيّاً.
   const endsOpen = /(?:[:：…]|\.\.\.)$/.test(t);
   const promisesAction = new RegExp(
-    `(?:^|[\\s،,.(«"])(?:${FUTURE_SA}|سوف|دعني|إليك|(?<!لا )(?<!لا\\s)(?:يمكنني|أستطيع|بإمكاني))`).test(t);
+    `(?:^|[\\s،,.(«"])(?:${FUTURE_SA}|سوف|دعني|إليك|${NOT_NEGATED}(?:يمكنني|أستطيع|بإمكاني))`).test(t);
   return endsOpen && promisesAction;
 }
 
