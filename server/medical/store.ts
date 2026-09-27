@@ -1602,6 +1602,47 @@ export async function getPendingExams(
 }
 
 /**
+ * **قسمُ جهازٍ لم يُحدَّد سببُ حضوره** (واقعةُ سامان خليل ابراهيم، ٢٠٢٦-٠٩-٢٧).
+ *
+ * بعد تسجيل مريض أطرافٍ أو مساند تُطرَح «ما سبب حضور المريض اليوم؟» مرّةً واحدة، واختيارُها هو ما يُنشئ طلبَ
+ * الجهاز (معاينة · بيع جزء · صيانة). وإغلاقُها بلا اختيار كان يُبقي القسمَ **بلا أيّ طلب** — فلا يظهر عند الطبيب
+ * ولا في أيّ طابور، ولا أثرَ يدلّ عليه. فهذه القائمةُ تجعله مرئيّاً حتى يُختار السبب.
+ *
+ * الشرطُ: قسمُ أطرافٍ أو مساند **نشط**، أُنشئ **بعد بدء عهد «مسار العملية»** (ما قبله يمرّ من المسار القديم ولا يُسأل)،
+ * **بلا أيّ طلبِ جهاز**، ولا طلبِ معاينةٍ معلَّق، ولا معاينةٍ فعّالة، والمريضُ ليس في السلّة.
+ */
+export async function getUnroutedDeviceCases(
+  branchIds: number[] | null,
+): Promise<{ patientId: number; caseType: string }[]> {
+  const era = await servicePathEraStartedAt();
+  if (!era) return [];
+  const scoped =
+    branchIds === null
+      ? sql`TRUE`
+      : branchIds.length === 0
+        ? sql`FALSE`
+        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(branchIds.map((id) => sql`${id}`), sql`, `)})`;
+  const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
+    SELECT pc.patient_id, pc.case_type
+      FROM patient_cases pc
+      JOIN patients p ON p.id = pc.patient_id
+     WHERE pc.status = 'active'
+       AND pc.case_type IN ('prosthetic', 'medical_support')
+       AND pc.created_at >= ${era}
+       AND p.deleted_at IS NULL
+       AND ${scoped}
+       AND NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+       AND NOT EXISTS (SELECT 1 FROM medical_review_requests r
+                        WHERE r.patient_id = pc.patient_id AND r.service_type = pc.case_type
+                          AND r.status IN ('pending', 'escalated'))
+       AND NOT EXISTS (SELECT 1 FROM medical_exams me
+                        WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type
+                          AND ${activeExamSql("me")})
+  `);
+  return (rows.rows ?? []).map((r) => ({ patientId: Number(r.patient_id), caseType: String(r.case_type) }));
+}
+
+/**
  * The positive counterpart: specialties the doctor has already DECIDED, so the
  * registry can say "تم تحديد مسند" rather than merely dropping the amber chip.
  * Reception reads this as their cue to assign an expert and take payment.

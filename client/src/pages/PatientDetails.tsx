@@ -151,6 +151,16 @@ export default function PatientDetails() {
   //  الحالةُ هنا لأنّ الزرَّ في الرأس والحوارَ داخل الموزِّع أسفلَ الصفحة —
   //  فتُمرَّر إليه إدارةً بدل أن يُبنى حوارٌ ثانٍ بنسخةٍ ثانية من الخيارات.
   const [routingOpen, setRoutingOpen] = useState(false);
+  //  **قسمُ جهازٍ لم يُحدَّد سببُ حضوره** — المفتاحُ مفتاحُ السجلّ نفسُه، وكلُّ نافذةٍ تفتح طلبَ جهازٍ تُبطله، فيختفي الشريطُ بالاختيار.
+  const { data: medicalPending } = useQuery<{ unrouted?: Record<number, string[]> }>({
+    queryKey: ["/api/medical/pending"],
+    queryFn: async () => {
+      const res = await fetch("/api/medical/pending", { credentials: "include" });
+      if (!res.ok) return { pending: {}, decided: {} } as any;
+      return res.json();
+    },
+  });
+  const unroutedHere = medicalPending?.unrouted?.[Number(id)] ?? [];
   //  والتبويبُ صار مُداراً لسببٍ واحد: الموزِّعُ (وحوارُه) يعيش داخل تبويب
   //  «الزيارات»، وتبويبُ Radix غيرُ النشط **يُفكَّك**. فزرُّ الرأس يعيد
   //  التبويبَ إلى مكانه ثمّ يفتح الحوار — وإلّا ضُغط الزرُّ من «المدفوعات»
@@ -886,6 +896,22 @@ export default function PatientDetails() {
                 </Button>
               )}
             </div>
+            {/*  ══ **لم يُحدَّد سببُ الحضور** (واقعةُ سامان خليل ابراهيم) ══════════
+                أُغلقت النافذةُ بعد التسجيل بلا اختيار: لا طلبَ جهاز، فلا يراه الطبيب. يبقى الشريطُ حتى يُختار السبب. */}
+            {unroutedHere.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 print:hidden"
+                data-testid="banner-unrouted">
+                <span className="font-semibold">لم يُحدَّد سبب حضور المريض</span>
+                <span>— لن يظهر عند الطبيب ولا في أيّ قائمة حتى يُختار.</span>
+                {permissions.canAddPatients && (
+                  <Button size="sm" variant="destructive" className="h-7"
+                    onClick={() => { setTab("visits"); setRoutingOpen(true); }}
+                    data-testid="button-banner-reception-routing">
+                    اختر الآن
+                  </Button>
+                )}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> {t.patientDetails.age}: {patient.age}</span>
               {patient.phone && (

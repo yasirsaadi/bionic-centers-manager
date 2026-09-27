@@ -60,18 +60,20 @@ function getTodayDateString(): string {
 // full picture is visible straight from the search results.
 // `pending` lists the specialties whose case is active but has no signed exam
 // yet, so the doctor can spot who is waiting on THEM without opening a file.
-function CaseTypeBadges({ patient, labels, pending = [], decided = [], assignments = [] }: {
+function CaseTypeBadges({ patient, labels, pending = [], decided = [], assignments = [], unrouted = [] }: {
   patient: { isAmputee: boolean | null; isPhysiotherapy: boolean | null; isMedicalSupport: boolean | null };
   labels: { amputee: string; physiotherapy: string; medicalSupport: string };
   pending?: string[];
   decided?: string[];
   assignments?: ActiveAssignment[];
+  /** أقسامُ جهازٍ لم يُحدَّد سببُ حضورها — لا طلبَ عليها، فلا تصل الطبيب. */
+  unrouted?: string[];
 }) {
   const types: { label: string; variant: "default" | "secondary" | "outline" }[] = [];
   if (patient.isAmputee) types.push({ label: labels.amputee, variant: "default" });
   if (patient.isPhysiotherapy) types.push({ label: labels.physiotherapy, variant: "secondary" });
   if (patient.isMedicalSupport) types.push({ label: labels.medicalSupport, variant: "outline" });
-  if (types.length === 0 && pending.length === 0 && decided.length === 0 && assignments.length === 0) {
+  if (types.length === 0 && pending.length === 0 && decided.length === 0 && assignments.length === 0 && unrouted.length === 0) {
     return <span className="text-slate-400">-</span>;
   }
   return (
@@ -99,6 +101,18 @@ function CaseTypeBadges({ patient, labels, pending = [], decided = [], assignmen
           data-testid={`badge-decided-${c}`}
         >
           تم تحديد {specialtyShortLabel(c)}
+        </Badge>
+      ))}
+      {/*  **لم يُحدَّد سببُ الحضور** (واقعةُ سامان): أُغلقت «ما سبب حضور المريض اليوم؟» بلا اختيار، فلا طلبَ ولا طبيب. */}
+      {unrouted.map((u) => (
+        <Badge
+          key={`unrouted-${u}`}
+          variant="outline"
+          className="font-normal text-xs shrink-0 bg-red-100 text-red-800 border-red-300"
+          title="لم يُختَر سببُ حضور المريض — افتح ملفّه واختر «ما سبب حضور المريض اليوم؟»، وإلّا لا يصل الطبيب"
+          data-testid={`badge-unrouted-${u}`}
+        >
+          لم يُحدَّد سبب الحضور ({specialtyShortLabel(u)})
         </Badge>
       ))}
       {pending.map((p) => (
@@ -285,6 +299,7 @@ export default function PatientsList() {
     pending: Record<number, string[]>;
     decided: Record<number, string[]>;
     optional?: Record<number, string[]>;
+    unrouted?: Record<number, string[]>;
     activatedAt?: string | null;
   }>({
     queryKey: ["/api/medical/pending"],
@@ -296,6 +311,7 @@ export default function PatientsList() {
   });
   const pendingByPatient = pendingExams?.pending ?? {};
   const decidedByPatient = pendingExams?.decided ?? {};
+  const unroutedByPatient = pendingExams?.unrouted ?? {};
   // Legacy patients: no amber badge (no obligation) but the doctor may still
   // examine them voluntarily, so their un-examined specialties feed the button.
   const optionalByPatient = pendingExams?.optional ?? {};
@@ -690,7 +706,7 @@ export default function PatientsList() {
                             </div>
                           </div>
                         </div>
-                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
+                        <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} unrouted={unroutedByPatient[patient.id] ?? []} />
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-1 mb-2">
                         {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
@@ -784,7 +800,7 @@ export default function PatientsList() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} />
+                          <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} unrouted={unroutedByPatient[patient.id] ?? []} />
                         </TableCell>
                         {/*  التفاصيلُ الطويلة تُقصّ عند ثلاثة أسطرٍ مقروءة
                             ويبقى النصُّ كاملاً في `title` — لا يُحذَف منه

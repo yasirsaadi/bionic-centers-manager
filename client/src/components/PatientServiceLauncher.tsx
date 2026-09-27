@@ -228,7 +228,11 @@ export function PatientServiceLauncher({
           خدمة جديدة» — **وكلُّها تفتح هذا الحوار بعينه**، لا نسخةً ثانية. */}
       {hasRouting && (
         <Dialog open={routingOpen} onOpenChange={setRoutingOpen}>
-          <DialogContent className="sm:max-w-[480px]" dir="rtl">
+          {/*  **لا يُغلَق بالنقر خارجه ولا بمفتاح الخروج** (واقعةُ سامان): إغلاقٌ بالسهو كان يترك القسمَ بلا طلب.
+              زرُّ الإغلاق باقٍ لإغلاقٍ مقصود — والشريطُ الأحمر في الصفحة يذكّر به حتى يُختار السبب. */}
+          <DialogContent className="sm:max-w-[480px]" dir="rtl"
+            onInteractOutside={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => e.preventDefault()}>
             <DialogHeader>
               <DialogTitle className="text-xl text-primary">
                 {RECEPTION_ROUTING_QUESTION}

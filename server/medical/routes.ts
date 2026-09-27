@@ -1528,11 +1528,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
   app.get("/api/medical/pending", isAuthenticated, async (req: Req, res) => {
     try {
       const scope = branchScope(req);
-      const [rows, decidedRows, optionalRows] = await Promise.all([
+      const [rows, decidedRows, optionalRows, unroutedRows] = await Promise.all([
         store.getPendingExams(scope),
         store.getDecidedExams(scope),
         store.getPendingExams(scope, true),
+        store.getUnroutedDeviceCases(scope),
       ]);
+      //  **قسمُ جهازٍ بلا سبب حضور** — شارةٌ حمراء في السجلّ وشريطٌ في صفحة المريض حتى يُختار السبب.
+      const unroutedByPatient: Record<number, string[]> = {};
+      for (const r of unroutedRows) (unroutedByPatient[r.patientId] ||= []).push(r.caseType);
       const byPatient: Record<number, string[]> = {};
       for (const r of rows) {
         (byPatient[r.patientId] ||= []).push(r.caseType);
@@ -1551,6 +1555,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         pending: byPatient,
         decided: decidedByPatient,
         optional: optionalByPatient,
+        unrouted: unroutedByPatient,
         total: rows.length,
         // The exam system's go-live moment: patients registered before it are
         // legacy-exempt, and the registry compares createdAt against this to
