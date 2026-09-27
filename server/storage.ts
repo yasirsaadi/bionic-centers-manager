@@ -1240,6 +1240,13 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId),
           eq(patientCases.caseType, "physiotherapy")));
       if (existing) {
+        //  ══ **والمغلقةُ تُفتَح قبل أن يُكتب عليها دينار** (§4.ar البند ٤) ══
+        //  مريضٌ أنهى علاجَه فأُغلق خيطُه، ثمّ عاد فاشترى «خدمة جديدة»: كان
+        //  المالُ والجلساتُ يُكتبان على الخيط المغلق كما هو — وسبعةُ قرّاءٍ
+        //  يشترطون `status = 'active'` (عدّادُ الجلسات، أدواتُ المساعد، …) فلا
+        //  يراه أحد. والشراءُ **هو** استئنافُ الخدمة، كما يفتح `syncPatientCases`
+        //  ويفتح طلبُ الجهاز (`device_episodes/store.ts`) — بالصفّ نفسِه.
+        if (existing.status === "closed") await reopenClosedCaseTx(tx, existing.id);
         //  حالةٌ قائمة والعلمُ منخفض (ملفٌّ قديم) — يُرفع فيتّسق الاثنان.
         if (!p.isPhysiotherapy) {
           await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));

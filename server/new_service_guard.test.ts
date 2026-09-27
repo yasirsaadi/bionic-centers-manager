@@ -523,6 +523,29 @@ async function main() {
       (await ledgerOf(pE)).map((r: any) => [r.amount, r.debit]), [[10000, 10000]]);
     same("ح.٤ **والمجّانيُّ بلا قيد** — لا مالَ دخل الصندوق",
       (await ledgerOf(pF)).map((r: any) => [r.amount, r.free, r.debit]), [[0, true, 0]]);
+
+    // ══ ط. **مريضٌ عائد وخيطُه مغلق — الشراءُ يفتحه** (§4.ar البند ٤) ═════
+    //  كان المالُ يُكتب على الخيط المغلق كما هو، فلا يراه عدّادٌ ولا شاشةٌ
+    //  تشترط `status = 'active'`.
+    console.log("\n── ط. خدمةٌ جديدة لمريضٍ خيطُ علاجه مغلق ──");
+    const pClosed = await mkPatient("مريض عائد خيطه مغلق", true);
+    await pool.query(`UPDATE patient_cases SET status = 'closed' WHERE patient_id = $1`, [pClosed]);
+    const [before] = (await pool.query(`SELECT id FROM patient_cases WHERE patient_id = $1`, [pClosed])).rows;
+    r = await req(`/api/patients/${pClosed}/new-service`, S.manager, {
+      serviceType: "consultation", serviceCost: 25000, initialPayment: 25000,
+      submissionToken: token(),
+    });
+    same("ط.١ الخدمةُ تُسجَّل ⇒ 200", r.status, 200);
+    const cs = (await pool.query(`SELECT id, status, cost FROM patient_cases WHERE patient_id = $1`, [pClosed])).rows;
+    same("ط.٢ **الخيطُ نفسُه فُتح** — لا خيطٌ ثانٍ، وكلفتُه عليه",
+      cs.map((c: any) => [c.id, c.status, Number(c.cost)]), [[before.id, "active", 25000]]);
+    same("ط.٣ والدفعةُ والزيارةُ على الخيط نفسِه",
+      [(await pool.query(`SELECT case_id FROM payments WHERE patient_id = $1`, [pClosed])).rows.map((x: any) => x.case_id),
+       (await pool.query(`SELECT case_id FROM visits WHERE patient_id = $1`, [pClosed])).rows.map((x: any) => x.case_id)],
+      [[before.id], [before.id]]);
+    const aud = (await pool.query(`SELECT notes FROM audit_log WHERE entity_type = 'patient' AND entity_id = $1`, [pClosed])).rows;
+    check(aud.some((a: any) => /أُعيد فتح حالة العلاج الطبيعي المغلقة/.test(String(a.notes))),
+      "ط.٤ **والفتحُ مُعلَنٌ في سجلّ التدقيق** — لا فتحٌ صامت (جارُه البند ٣)", JSON.stringify(aud));
   } finally {
     httpServer.close();
   }
