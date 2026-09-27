@@ -67,7 +67,8 @@ import {
   classifyCaseDisposal, disposeCaseScaffolding,
   CaseDisposalBlockedError, type CaseScaffolding,
 } from "./patient_cases/disposal";
-import { reopenClosedCaseTx } from "./patient_cases/reopen";
+import { reopenClosedCaseTx, reopenClosedCaseAuditedTx } from "./patient_cases/reopen";
+import { noteCaseReopened } from "./patient_cases/reopen_notice";
 import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
 import {
@@ -1246,7 +1247,10 @@ export class DatabaseStorage implements IStorage {
         //  يشترطون `status = 'active'` (عدّادُ الجلسات، أدواتُ المساعد، …) فلا
         //  يراه أحد. والشراءُ **هو** استئنافُ الخدمة، كما يفتح `syncPatientCases`
         //  ويفتح طلبُ الجهاز (`device_episodes/store.ts`) — بالصفّ نفسِه.
-        if (existing.status === "closed") await reopenClosedCaseTx(tx, existing.id);
+        if (existing.status === "closed" && await reopenClosedCaseTx(tx, existing.id)) {
+          //  سطرُ التدقيق يكتبه بابُ «خدمة جديدة» باسم الموظّف؛ وهنا يُعلَن للواجهة (§4.ar البند ٣).
+          noteCaseReopened("علاج طبيعي");
+        }
         //  حالةٌ قائمة والعلمُ منخفض (ملفٌّ قديم) — يُرفع فيتّسق الاثنان.
         if (!p.isPhysiotherapy) {
           await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
@@ -1470,10 +1474,10 @@ export class DatabaseStorage implements IStorage {
         //  يمنعه، وهو الصواب: كلُّ التاريخ مربوطٌ بهذا المعرّف). ولا تُمَسّ
         //  كلفتُه ولا تفاصيلُه، فحسابُ `movedFromHolder` أدناه لا يتحرّك:
         //  الفتحُ ليس إنشاءً ولا يحرّك ديناراً.
-        const existing = preExisting.find((c) => c.caseType === t);
-        if (existing && existing.status === "closed") {
-          await reopenClosedCaseTx(tx, existing.id);
-        }
+        //  ══ **والمزامنةُ لا تفتح المغلقة** (§4.ar البند ٣ — قرارُ المالك «أ») ══
+        //  كانت تفتحها هنا — والإغلاقُ لا يُطفئ العَلَم، فكلُّ مزامنةٍ (دمجُ ملفّين، إعادةُ وسم دفعة،
+        //  تنقيحُ معاينة) كانت تفتح **كلَّ** قسمٍ مغلقٍ عَلَمُه مرفوع، بصمت. فصار الفتحُ في أبواب عودة
+        //  المريض لخدمةٍ وحدها، مُدقَّقاً (`reopenClosedCaseAuditedTx`)، والمزامنةُ تُبقي المغلقَ مغلقاً.
         return;
       }
       let cost = markerCostOf(t);
@@ -1666,6 +1670,11 @@ export class DatabaseStorage implements IStorage {
       //  وقسمُ التسعير هو حالةُ العلاج الطبيعي بعينها.
       const [physioCase] = await tx.select().from(patientCases)
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
+      //  **وتسعيرُ جلساتٍ على قسمٍ مغلق يفتحه مُدقَّقاً** (§4.ar البند ٣): بيعُ جلساتٍ عودةٌ للخدمة، وكانت الكلفةُ
+      //  تُكتب على القسم المغلق فلا يراها عدّادُ الجلسات. (المستخدمُ في سطر تدقيق نقطة التسعير نفسِها.)
+      if (physioCase?.status === "closed") {
+        await reopenClosedCaseAuditedTx(tx, { caseId: physioCase.id, reason: "تسعير جلسات علاج طبيعي" });
+      }
       if (params.totalCost > 0) {
         await tx.insert(costEntries).values({
           patientId, branchId: existing.branchId, amount: params.totalCost,
@@ -2738,8 +2747,12 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
       let caseId: number;
       if (existingCase) {
-        //  حالةٌ قائمة أصلاً — قرارٌ يفعّلها، بلا لمسِ كلفتها القائمة.
+        //  حالةٌ قائمة أصلاً — قرارٌ يفعّلها، بلا لمسِ كلفتها القائمة. **ومغلقةٌ تُفتَح مُدقَّقةً**
+        //  (§4.ar البند ٣): إضافةُ نوع الحالة عودةٌ للخدمة، وكانت الحالةُ تبقى مغلقةً وطلبُ المعاينة عليها.
         caseId = existingCase.id;
+        await reopenClosedCaseAuditedTx(tx, {
+          caseId, reason: "إضافة نوع حالة", actor: { userId: params.performedBy },
+        });
       } else {
         //  حالةٌ جديدة تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
         const [newCase] = await tx.insert(patientCases).values({
@@ -3152,13 +3165,19 @@ export class DatabaseStorage implements IStorage {
           const [created] = await tx.insert(patientCases).values({
             patientId: targetId, branchId: target.branchId, caseType: sc.caseType,
             cost: sc.cost || 0, details: sc.details ?? {}, costSource: sc.costSource ?? "auto",
+            //  **والحالةُ تنتقل بحالتها** (§4.ar البند ٣): قسمٌ مغلقٌ في المصدر كان يُولَد نشطاً في الهدف
+            //  (افتراضُ العمود) — فتحٌ صامتٌ بالدمج.
+            status: sc.status ?? "active",
           }).returning();
           tc = created;
           targetCases.push(created);
         } else {
           // Summed cost stays human-owned if EITHER side was priced by a human.
           const mergedSource = tc.costSource === "manual" || sc.costSource === "manual" ? "manual" : "auto";
-          await tx.update(patientCases).set({ cost: (tc.cost || 0) + (sc.cost || 0), costSource: mergedSource, updatedAt: new Date() }).where(eq(patientCases.id, tc.id));
+          //  **ونشطٌ + مغلق = نشط**: خدمةٌ جاريةٌ في المصدر لا تختفي بدمجها في قسمٍ مغلق — كانت المزامنةُ بعد
+          //  الدمج تفتحه (وتفتح معه كلَّ مغلقٍ آخر)، وصارت لا تفتح شيئاً، فيُحفظ النشاطُ هنا صراحةً. ومغلقان يبقيان مغلقاً.
+          const mergedStatus = tc.status === "closed" && sc.status === "closed" ? "closed" : "active";
+          await tx.update(patientCases).set({ cost: (tc.cost || 0) + (sc.cost || 0), costSource: mergedSource, status: mergedStatus, updatedAt: new Date() }).where(eq(patientCases.id, tc.id));
         }
         await tx.update(visits).set({ caseId: tc.id }).where(eq(visits.caseId, sc.id));
         await tx.update(payments).set({ caseId: tc.id }).where(eq(payments.caseId, sc.id));

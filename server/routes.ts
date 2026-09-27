@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
@@ -365,6 +366,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  //  إعادةُ فتح قسمٍ مغلق تُعلَن للموظّف بترويسةٍ على الردّ الناجح (§4.ar البند ٣).
+  app.use("/api", caseReopenNoticeMiddleware);
   //  ══ تشخيصٌ مؤقّت — «وصولُ الطلب الخام» قبل أيّ كود جلسة ═══════════════
   //  محصورٌ بفحص نمطٍ رخيص على طريقين محدَّدين فقط (راجع الملفّ)؛ كلُّ طلبٍ
   //  آخر يمرّ بلا أثر. يُزال مع بقيّة الاستدعاءات المذكورة أعلاه.
@@ -3843,9 +3846,11 @@ export async function registerRoutes(
         : caseType === "medical_support" ? patient.isMedicalSupport
         : patient.isPhysiotherapy;
       const caseRowType = caseType === "amputee" ? "prosthetic" : caseType;
+      //  **والمغلقُ ليس «مفعّلاً»** (§4.ar البند ٣): الإغلاقُ يُبقي العَلَم، فكان مريضٌ عائد يُردّ «مفعّل أصلاً»
+      //  عن قسمٍ مغلق — وهذا البابُ عودةٌ للخدمة، فيفتحه (`addPatientCaseType`) مُدقَّقاً.
       const hasCaseRow = flagOn
         ? ((await db.execute(sql`SELECT 1 FROM patient_cases WHERE patient_id = ${patientId}
-             AND case_type = ${caseRowType} LIMIT 1`)).rows ?? []).length > 0
+             AND case_type = ${caseRowType} AND status = 'active' LIMIT 1`)).rows ?? []).length > 0
         : false;
       const alreadyHas = flagOn && hasCaseRow;
       if (alreadyHas) return res.status(409).json({ message: "هذا النوع مفعّل أصلاً على ملف المريض" });

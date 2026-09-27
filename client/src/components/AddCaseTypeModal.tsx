@@ -79,7 +79,7 @@ export function AddCaseTypeModal({
 
   //  **والناقصُ = بلا عَلَمٍ أو بلا قسم** (§4.ar البند ٢): عَلَمٌ بلا صفّ حالة نصفُ قسمٍ — كان «تعديل مريض» يتركه —
   //  وهذه النافذةُ هي ما يُكمله. والاستعلامُ مفتاحُه مفتاحُ صفحة المريض نفسُه، فيُقرأ من ذاكرتها بلا طلبٍ ثانٍ.
-  const { data: caseRows = [], isSuccess: casesLoaded } = useQuery<{ caseType: string }[]>({
+  const { data: caseRows = [], isSuccess: casesLoaded } = useQuery<{ caseType: string; status?: string }[]>({
     queryKey: ["/api/patients/:id", Number(patient.id), "cases"],
     enabled: !!patient.id,
     queryFn: async () => {
@@ -89,7 +89,8 @@ export function AddCaseTypeModal({
     },
   });
   //  وقبل وصول القائمة يُحكَم بالعَلَم وحده — كي لا تومض الأقسامُ الموجودة «ناقصةً» لحظةَ الفتح.
-  const hasCase = (t: string) => !casesLoaded || caseRows.some((c) => c.caseType === t);
+  //  **والمغلقُ ناقص** (§4.ar البند ٣): مريضٌ عائد يُضاف له نوعُه من هنا فيُفتَح قسمُه.
+  const hasCase = (t: string) => !casesLoaded || caseRows.some((c) => c.caseType === t && c.status !== "closed");
   const missingTypes = [
     (!patient.isAmputee || !hasCase("prosthetic")) && "amputee",
     (!patient.isMedicalSupport || !hasCase("medical_support")) && "medical_support",

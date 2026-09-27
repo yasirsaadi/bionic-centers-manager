@@ -30,7 +30,7 @@ import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
 import { scopeReachesPatient } from "../patients/branch_access";
-import { ensureActiveCaseTx } from "../patient_cases/reopen";
+import { ensureActiveCaseTx, reopenClosedCaseAuditedTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
   ExamEpisodeAmbiguousError, ExamEpisodeStaleError, ExamEpisodeBranchError,
@@ -417,6 +417,18 @@ export async function createExam(values: {
           patientId: values.patientId,
           caseType: values.caseType,
           branchId: values.branchId ?? null,
+          reason: "معاينة طبيب",
+          actor: { userId: values.doctorId, userName: values.doctorName },
+        });
+      }
+
+      //  ══ **ومعاينةٌ على قسمٍ مغلق تفتحه — هو وحدَه، مُدقَّقاً** (§4.ar البند ٣) ══
+      //  كانت المعاينةُ تُحفَظ على القسم المغلق، ثمّ تفتحه مزامنةُ `applyPrescription` **ومعه كلَّ قسمٍ مغلقٍ آخر**
+      //  عَلَمُه مرفوع، بصمت. والمزامنةُ صارت لا تفتح شيئاً؛ فالمعاينةُ — عودةُ المريض لطبيب — تفتح قسمَها هنا.
+      if (targetCaseId !== null) {
+        await reopenClosedCaseAuditedTx(tx, {
+          caseId: targetCaseId, reason: "معاينة طبيب",
+          actor: { userId: values.doctorId, userName: values.doctorName },
         });
       }
 
