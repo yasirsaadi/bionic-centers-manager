@@ -1027,27 +1027,75 @@ export async function retireRetypedSourceCase(
  *   طلبُ خصم · حلقةٌ حيّة · طلبُ مراجعةٍ حسمه إنسان. فالمعاينةُ الموقّعة تحمي
  *   قرارَ الطبيب نفسِه: معاينةٌ ثانيةٌ لقسمٍ آخر لا تهدم الأولى.
  */
+/**
+ *  **القسمُ الذي سيُسحَب عبر العلاج الطبيعي** — شروطُ السحب الأولى وحدها (قسمٌ واحدٌ سابق،
+ *  غيرُ ما اختاره الطبيب، وأحدُهما علاجٌ طبيعيّ، وبلا كلفة). `null` = لا سحبَ أصلاً.
+ */
+async function crossRetireCandidate(
+  patientId: number, keepType: string, caseTypesBefore: string[],
+): Promise<{ dropType: string; caseId: number; cost: number } | null> {
+  if (caseTypesBefore.length !== 1) return null;
+  const dropType = caseTypesBefore[0];
+  if (dropType === keepType) return null;
+  if (keepType !== "physiotherapy" && dropType !== "physiotherapy") return null;
+  if (dropType !== "prosthetic" && dropType !== "medical_support" && dropType !== "physiotherapy") {
+    return null;
+  }
+  const [row] = await db
+    .select({ id: patientCases.id, cost: patientCases.cost })
+    .from(patientCases)
+    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, dropType)));
+  if (!row) return null;
+  return { dropType, caseId: row.id, cost: row.cost || 0 };
+}
+
+async function awaitingRequestsOnCase(caseId: number): Promise<number> {
+  const r = await db.execute(sql`
+    SELECT count(*)::int AS n FROM patient_device_episodes
+     WHERE case_id = ${caseId} AND status = 'awaiting_exam'
+  `);
+  return Number((r.rows?.[0] as any)?.n ?? 0);
+}
+
+/**
+ *  **البند ١ من فحص المنطق — قرارُ المالك ٢٠٢٦-٠٩-٢٧ (الخيار «أ»)**: سحبُ القسم عبر العلاج
+ *  الطبيعي يهدم طلبَ الجهاز المنتظرَ معه (سقالةً في عين `deleteCaseType`) — والتطبيقُ لا يفرّق
+ *  بين خطأ إدخالٍ ومريضٍ يحتاج القسمين وطلبُه ينتظر طبيبَه. **فالطبيبُ يُسأل.**
+ *  تُعيد القسمَ وعددَ طلباته المنتظرة حين يكون السحبُ سيقع **وعليه طلبٌ ينتظر**؛ وإلّا `null`
+ *  فيبقى السحبُ تلقائياً كما كان.
+ */
+export async function crossRetirePendingRequest(
+  patientId: number, keepType: string, caseTypesBefore: string[],
+): Promise<{ dropType: string; pendingCount: number } | null> {
+  const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
+  if (!c || c.cost !== 0) return null;
+  const pendingCount = await awaitingRequestsOnCase(c.caseId);
+  return pendingCount > 0 ? { dropType: c.dropType, pendingCount } : null;
+}
+
 export async function retireAcrossPhysiotherapy(
   patientId: number,
   keepType: MedicalSpecialty,
   /** كلُّ أقسام المريض **قبل** تطبيق الوصفة — للسبب نفسِه في `retireSupersededCase`. */
   caseTypesBefore: string[],
+  /**
+   *  **الطبيبُ أكّد أن تسجيلَ القسم خطأ** — شرطٌ لسحب قسمٍ عليه طلبُ جهازٍ ينتظر (البند ١).
+   *  بلا تأكيد يبقى القسمُ وطلبُه، فلا يُهدَم طلبٌ حقيقيّ بصمت ولو فات السؤالَ سباق.
+   */
+  opts: { confirmedPendingRequest?: boolean } = {},
 ): Promise<{ switched: boolean; reason?: string }> {
-  if (caseTypesBefore.length !== 1) return { switched: false };
-  const dropType = caseTypesBefore[0];
-  if (dropType === keepType) return { switched: false };
-  if (keepType !== "physiotherapy" && dropType !== "physiotherapy") return { switched: false };
-  if (dropType !== "prosthetic" && dropType !== "medical_support" && dropType !== "physiotherapy") {
-    return { switched: false };
-  }
-
-  const [row] = await db
-    .select({ id: patientCases.id, cost: patientCases.cost })
-    .from(patientCases)
-    .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, dropType)));
-  if (!row) return { switched: false };
+  const c = await crossRetireCandidate(patientId, keepType, caseTypesBefore);
+  if (!c) return { switched: false };
+  const { dropType } = c;
+  const row = { id: c.caseId, cost: c.cost };
   if ((row.cost || 0) !== 0) {
     return { switched: false, reason: "على القسم السابق كلفةٌ مسجَّلة — يُراجَع إدارياً" };
+  }
+  if (!opts.confirmedPendingRequest && (await awaitingRequestsOnCase(row.id)) > 0) {
+    return {
+      switched: false,
+      reason: "على القسم السابق طلبُ جهازٍ ينتظر معاينته، ولم يُؤكَّد أن تسجيله خطأ",
+    };
   }
   if (dropType === "physiotherapy") {
     const r = await db.execute(sql`
@@ -1061,7 +1109,7 @@ export async function retireAcrossPhysiotherapy(
     }
   }
   try {
-    await storage.deleteCaseType(patientId, dropType, {
+    await storage.deleteCaseType(patientId, dropType as MedicalSpecialty, {
       reason: "قرارُ الطبيب في المعاينة: قسمٌ آخر غيرُ الذي سجّله الاستعلامات",
     });
     return { switched: true };

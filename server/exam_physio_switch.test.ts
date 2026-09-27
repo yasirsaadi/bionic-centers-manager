@@ -13,6 +13,7 @@ import { createServer } from "http";
 import crypto from "crypto";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { retireAcrossPhysiotherapy } from "./medical/store";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -164,8 +165,17 @@ async function main() {
     const sup = await openEpisode(zain, "medical_support");
     same("أ.١ (الإعداد: قسمُ مساند، وطلبُه بانتظار المعاينة)",
       [await casesOf(zain), await pendingOf(zain)], [["medical_support"], ["medical_support"]]);
-    const ex = await signExam(zain, "physiotherapy");
-    check(ex.status < 300, "أ.٢ المعاينةُ تُحفَظ علاجاً طبيعياً", JSON.stringify(ex.body));
+    //  ══ البند ١ (قرارُ المالك ٢٠٢٦-٠٩-٢٧): على قسم المساند طلبٌ ينتظر ⟵ **يُسأل الطبيبُ أوّلاً** ══
+    const asked = await signExam(zain, "physiotherapy");
+    same("أ.١أ **الطبيبُ يُسأل** — ٤٠٩ برمز السؤال واسم القسم",
+      [asked.status, asked.body?.code, asked.body?.dropLabel, asked.body?.pendingCount],
+      [409, "cross_retire_decision_required", "مساند طبية", 1]);
+    same("أ.١ب **وبصفر كتابة**: لا معاينة · الأقسامُ والأعلامُ والطلبُ كما كانت",
+      [(await q(`SELECT count(*)::int n FROM medical_exams WHERE patient_id=$1`, [zain]))[0].n,
+       await casesOf(zain), (await flagsOf(zain)).s, (await flagsOf(zain)).f, await pendingOf(zain)],
+      [0, ["medical_support"], true, false, ["medical_support"]]);
+    const ex = await signExam(zain, "physiotherapy", { crossRetireDecision: "retire" });
+    check(ex.status < 300, "أ.٢ المعاينةُ تُحفَظ علاجاً طبيعياً — بجواب «نعم، كان خطأً»", JSON.stringify(ex.body));
     same("أ.٣ **ومربوطةٌ بقسم العلاج الطبيعي** — لا معاينةٌ بلا قسم", await examCaseType(Number(ex.body?.id)), "physiotherapy");
     same("أ.٤ **الملفُّ صار علاجاً طبيعياً وحده** — سُحب قسمُ المساند", await casesOf(zain), ["physiotherapy"]);
     same("أ.٥ والأعلامُ تتبعه: مساند ✗ · علاج طبيعي ✓", [(await flagsOf(zain)).s, (await flagsOf(zain)).f], [false, true]);
@@ -255,6 +265,53 @@ async function main() {
     same("ح.٣ **والملفُّ صار مسنداً وحده** — سُحب العلاجُ الطبيعيّ بعد انتقال المعاينة",
       await casesOf(h), ["medical_support"]);
     same("ح.٤ ولا ملاحظةَ تعثّر", revh.body?.switchNote ?? null, null);
+
+    // ══ ط. البند ١ — «لا، المريضُ يحتاج القسمين» ═══════════════════════════
+    console.log("\n── ط. الطبيبُ: المريضُ يحتاج القسمين ──");
+    const k = await mkPatient("ط-قسمان", "medical_support");
+    const kEp = await openEpisode(k, "medical_support");
+    const exk = await signExam(k, "physiotherapy", { crossRetireDecision: "keep" });
+    check(exk.status < 300, "ط.١ المعاينةُ تُحفَظ علاجاً طبيعياً", JSON.stringify(exk.body));
+    same("ط.٢ **القسمان باقيان** — والمعاينةُ على العلاج الطبيعي",
+      [await casesOf(k), await examCaseType(Number(exk.body?.id))],
+      [["medical_support", "physiotherapy"], "physiotherapy"]);
+    same("ط.٣ **وطلبُ المساند ما زال ينتظر طبيبَه** — حلقتُه وطلبُ مراجعته كما هما",
+      [await pendingOf(k),
+       (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [kEp.episodeId]))[0]?.status,
+       (await q(`SELECT status FROM medical_review_requests WHERE id=$1`, [kEp.requestId]))[0]?.status],
+      [["medical_support"], "awaiting_exam", "pending"]);
+    same("ط.٤ ولا ملاحظةَ تعثّر — هذا قرارُ الطبيب لا عائق", exk.body?.switchNote ?? null, null);
+
+    // ══ ي. الحارسُ الأخير في المخزن — بلا تأكيدٍ لا يُسحَب طلبٌ ينتظر ═════════
+    console.log("\n── ي. السحبُ بلا تأكيد لا يهدم طلباً ينتظر ──");
+    const y = await mkPatient("ي-حارس", "medical_support");
+    await openEpisode(y, "medical_support");
+    const noConfirm = await retireAcrossPhysiotherapy(y, "physiotherapy", ["medical_support"]);
+    same("ي.١ **لا سحب** ويُقال لماذا", [noConfirm.switched, /ينتظر/.test(noConfirm.reason ?? "")], [false, true]);
+    same("ي.٢ والقسمُ وطلبُه باقيان", [await casesOf(y), await pendingOf(y)], [["medical_support"], ["medical_support"]]);
+    const withConfirm = await retireAcrossPhysiotherapy(y, "physiotherapy", ["medical_support"],
+      { confirmedPendingRequest: true });
+    same("ي.٣ وبالتأكيد يُسحَب كما كان", [withConfirm.switched, await casesOf(y)], [true, []]);
+
+    // ══ ك. والتنقيحُ يسأل كالإنشاء ════════════════════════════════════════
+    console.log("\n── ك. تنقيحُ معاينةٍ إلى علاجٍ طبيعيّ وعلى المساند طلبٌ ينتظر ──");
+    const m = await mkPatient("ك-تنقيح", "medical_support");
+    await openEpisode(m, "medical_support");
+    const mCase = (await q(`SELECT id FROM patient_cases WHERE patient_id=$1`, [m]))[0].id;
+    //  معاينةٌ على قسم المساند **بلا جهاز** — تُدرَج مباشرةً (التوقيعُ عبر النقطة يستهلك الطلبَ المنتظر).
+    const mExam = (await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id,
+        doctor_name, diagnosis, prescription) VALUES ($1,$2,'medical_support',1,$3,'طبيب','مسند','{}'::jsonb)
+        RETURNING id`, [m, mCase, DOC]))[0].id;
+    const revAsk = await http("PATCH", `/api/medical/exams/${mExam}`, S.doc,
+      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {} });
+    same("ك.١ **التنقيحُ يسأل أيضاً** — ٤٠٩ بصفر كتابة",
+      [revAsk.status, revAsk.body?.code, await examCaseType(mExam), await casesOf(m)],
+      [409, "cross_retire_decision_required", "medical_support", ["medical_support"]]);
+    const revKeep = await http("PATCH", `/api/medical/exams/${mExam}`, S.doc,
+      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {}, crossRetireDecision: "keep" });
+    same("ك.٢ وبجواب «يحتاج القسمين» ⟵ المعاينةُ على العلاج الطبيعي والقسمان باقيان",
+      [revKeep.status < 300, await examCaseType(mExam), await casesOf(m), await pendingOf(m)],
+      [true, "physiotherapy", ["medical_support", "physiotherapy"], ["medical_support"]]);
   } finally {
     await new Promise((r) => httpServer.close(() => r(null)));
     await cleanup();

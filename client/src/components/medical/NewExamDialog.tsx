@@ -13,6 +13,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -251,6 +261,17 @@ export function NewExamDialog({
     if (open && !isEdit) newExamIdempotencyKeyRef.current = crypto.randomUUID();
   }, [open, isEdit]);
 
+  //  ══ **سؤالُ القسم السابق** (البند ١ — قرارُ المالك ٢٠٢٦-٠٩-٢٧) ══════════
+  //  حين يختار الطبيبُ قسماً غيرَ الذي سجّله الاستعلامات، وعلى القسم السابق طلبُ جهازٍ
+  //  ينتظر معاينته، يردّ الخادمُ ٤٠٩ **بصفر كتابة** فتسأله النافذة: أكان تسجيلُه خطأً؟
+  //  ثمّ يُعاد الإرسالُ بجوابه. والجوابُ يخصّ هذا الاختصاصَ في هذه الفتحة وحدها.
+  const [crossPrompt, setCrossPrompt] = useState<{ dropLabel: string; message: string } | null>(null);
+  const crossDecisionRef = useRef<"retire" | "keep" | null>(null);
+  useEffect(() => {
+    crossDecisionRef.current = null;
+    setCrossPrompt(null);
+  }, [open, specialty]);
+
   // What reception already recorded (physiotherapy diagnosis, injuries,
   // amputation site, support type, injured side) so the doctor completes or
   // corrects it instead of retyping — purely clinical, nothing commercial.
@@ -384,6 +405,7 @@ export function NewExamDialog({
             //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
             //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
             ...(retypeRequested ? { retypeDeviceEpisode: true } : {}),
+            ...(crossDecisionRef.current ? { crossRetireDecision: crossDecisionRef.current } : {}),
           }),
         },
       );
@@ -391,6 +413,7 @@ export function NewExamDialog({
         const body = await res.json().catch(() => null);
         const err: any = new Error(body?.error || "تعذّر حفظ المعاينة");
         err.code = body?.code ?? null;
+        err.dropLabel = body?.dropLabel ?? null;
         throw err;
       }
       return res.json();
@@ -426,6 +449,10 @@ export function NewExamDialog({
       onDone?.();
     },
     onError: (err: any) => {
+      if (err?.code === "cross_retire_decision_required") {
+        setCrossPrompt({ dropLabel: err.dropLabel || "القسم السابق", message: err.message });
+        return;
+      }
       //  ══ هويّةُ الجهاز تغيّرت تحت أيدينا ═══════════════════════════════
       //  التباسٌ (فُتح طلبٌ ثانٍ بعد فتح النافذة) أو بياتٌ (وقّعه زميلٌ، أو
       //  أُلغي): تُحدَّث قائمةُ الأجهزة والطابورُ فيرى الطبيبُ الحالَ الجديد
@@ -456,7 +483,34 @@ export function NewExamDialog({
   );
   const hasContent = hasNarrative || hasPrescription;
 
+  const answerCross = (decision: "retire" | "keep") => {
+    crossDecisionRef.current = decision;
+    setCrossPrompt(null);
+    save.mutate();
+  };
+
   return (
+    <>
+    <AlertDialog open={crossPrompt !== null} onOpenChange={(o) => { if (!o) setCrossPrompt(null); }}>
+      <AlertDialogContent dir="rtl" data-testid="dialog-cross-retire">
+        <AlertDialogHeader>
+          <AlertDialogTitle>هل كان تسجيلُ «{crossPrompt?.dropLabel}» خطأً؟</AlertDialogTitle>
+          <AlertDialogDescription>
+            {crossPrompt?.message} إن كان خطأً من الاستعلامات يُلغى هذا القسم وطلبُه، وإن كان
+            المريضُ يحتاج القسمين يبقيان معاً ويبقى الطلبُ ينتظر طبيبَه.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="gap-2">
+          <AlertDialogCancel>رجوع</AlertDialogCancel>
+          <Button variant="outline" onClick={() => answerCross("keep")} data-testid="button-cross-keep">
+            لا، المريض يحتاج القسمين
+          </Button>
+          <AlertDialogAction onClick={() => answerCross("retire")} data-testid="button-cross-retire">
+            نعم، ألغِه
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto" dir="rtl">
         <DialogHeader>
@@ -597,5 +651,6 @@ export function NewExamDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
