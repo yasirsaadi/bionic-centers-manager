@@ -85,6 +85,7 @@
     "test:medical-review": "tsx server/medical_review.test.ts",
     "test:taxonomy": "tsx shared/service_taxonomy.test.ts",
     "test:case-reopen-rules": "tsx server/case_reopen_rules.test.ts",
+    "test:unrouted-device-cases": "tsx server/unrouted_device_cases.test.ts",
     "test:add-type-via-door": "tsx server/add_type_via_door.test.ts",
     "test:departments": "tsx server/departments.test.ts",
     "test:schema-parity": "tsx server/schema_parity_056.test.ts",
