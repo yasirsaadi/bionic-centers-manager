@@ -2940,16 +2940,45 @@ export class DatabaseStorage implements IStorage {
   async deleteCaseType(
     patientId: number,
     caseType: "prosthetic" | "medical_support" | "physiotherapy",
-    actor?: { userId?: number | null; userName?: string | null; reason?: string | null },
+    actor?: {
+      userId?: number | null; userName?: string | null; reason?: string | null;
+      /**
+       *  **حارسُ الطلبات المنتظرة تحت القفل نفسِه** (البند ١، مراجعة Codex على #425): سحبُ القسم عبر
+       *  العلاج الطبيعي يشترط أن تكون طلباتُ القسم المنتظرةُ طبيباً **هي بعينها** ما أكّده الطبيب،
+       *  وألّا تكون عليه عمليةُ «بلا معاينة» منتظرة. يُفحَص **داخل** المعاملة بعد قفل صفّ القسم —
+       *  وفتحُ طلبٍ (`startDeviceEpisodeTx`) يقفل الصفَّ نفسَه — فلا يولد طلبٌ بين الفحص والحذف.
+       */
+      pendingGuard?: { expectedExamEpisodeIds: number[] };
+    },
   ): Promise<{ movedRows: number; disposed: CaseScaffolding }> {
     return await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!p) throw new Error("المريض غير موجود");
       if (p.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
+      //  **`FOR UPDATE`**: القفلُ نفسُه الذي يأخذه فتحُ طلب جهازٍ على هذا القسم — والصفُّ يُحذف بعد
+      //  أسطرٍ على كلّ حال، فأخذُه من البداية لا يغيّر شيئاً غيرَ أن يُسلسِل الاثنين.
       const [row] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)));
+        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseType)))
+        .for("update");
       if (!row) throw new Error("لا توجد حالة من هذا النوع لهذا المريض");
+      if (actor?.pendingGuard) {
+        const w = await tx.execute(sql`
+          SELECT id, (service_path IS NOT DISTINCT FROM 'no_exam') AS no_exam
+            FROM patient_device_episodes
+           WHERE case_id = ${row.id} AND status = 'awaiting_exam'
+        `);
+        const rows = (w.rows ?? []) as any[];
+        if (rows.some((x) => x.no_exam)) {
+          throw new Error("على القسم السابق عمليةٌ «بلا معاينة» مفتوحة");
+        }
+        const now = rows.map((x) => Number(x.id)).sort((a, b) => a - b);
+        const want = Array.from(new Set(actor.pendingGuard.expectedExamEpisodeIds.map(Number)))
+          .sort((a, b) => a - b);
+        if (now.length !== want.length || now.some((v, i) => v !== want[i])) {
+          throw new Error("على القسم السابق طلبُ جهازٍ ينتظر معاينته، ولم يُؤكَّد أن تسجيله خطأ");
+        }
+      }
 
       //  **القرارُ يُؤخَذ هنا، تحت القفل، لا قبله.** ويُرفَض قبل أيّ كتابة،
       //  فالمردودُ لا يترك أثراً — لا نصفَ تنظيف.

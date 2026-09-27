@@ -14,6 +14,7 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { retireAcrossPhysiotherapy } from "./medical/store";
+import { storage } from "./storage";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -350,6 +351,24 @@ async function main() {
       [await casesOf(nx), (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [nxEp]))[0]?.status],
       [["medical_support", "physiotherapy"], "awaiting_exam"]);
     check(/بلا معاينة/.test(exNx.body?.switchNote ?? ""), "م.٣ ويُقال للطبيب لماذا", String(exNx.body?.switchNote));
+
+    // ══ ن. الحارسُ تحت قفل الحذف نفسِه (مراجعة Codex) ════════════════════════
+    //  الفحصُ خارج المعاملة قد يسبق طلباً يولد قبل الحذف مباشرةً — فيُعاد داخلها بعد قفل صفّ القسم.
+    //  يُنادى الحذفُ هنا **مباشرةً** بتوقّع «لا طلب» كما يمرّره السحبُ حين لم يرَ شيئاً، وعلى القسم طلبٌ ولد للتوّ.
+    console.log("\n── ن. طلبٌ ولد بين الفحص والحذف ──");
+    const n = await mkPatient("ن-سباق", "medical_support");
+    const nEp = await openEpisode(n, "medical_support");
+    let nErr = "";
+    try {
+      await storage.deleteCaseType(n, "medical_support", { reason: "اختبار", pendingGuard: { expectedExamEpisodeIds: [] } });
+    } catch (e: any) { nErr = String(e?.message ?? e); }
+    same("ن.١ **الحذفُ يُرفَض تحت القفل** — والقسمُ وطلبُه باقيان",
+      [/ينتظر معاينته/.test(nErr), await casesOf(n),
+       (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [nEp.episodeId]))[0]?.status],
+      [true, ["medical_support"], "awaiting_exam"]);
+    await storage.deleteCaseType(n, "medical_support",
+      { reason: "اختبار", pendingGuard: { expectedExamEpisodeIds: [nEp.episodeId] } });
+    same("ن.٢ وبالطلب الذي أُكِّد ⟵ يُحذف", await casesOf(n), []);
   } finally {
     await new Promise((r) => httpServer.close(() => r(null)));
     await cleanup();

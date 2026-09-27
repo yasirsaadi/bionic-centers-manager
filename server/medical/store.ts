@@ -1136,6 +1136,8 @@ export async function retireAcrossPhysiotherapy(
   try {
     await storage.deleteCaseType(patientId, dropType as MedicalSpecialty, {
       reason: "قرارُ الطبيب في المعاينة: قسمٌ آخر غيرُ الذي سجّله الاستعلامات",
+      //  **والفحصُ أعلاه يُعاد تحت قفل الحذف** — ما رآه الطبيبُ بعينه، أو لا شيءَ ينتظر.
+      pendingGuard: { expectedExamEpisodeIds: waiting.examIds },
     });
     return { switched: true };
   } catch (err: any) {
