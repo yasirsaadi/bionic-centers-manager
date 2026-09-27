@@ -18,6 +18,12 @@ import {
   type ActiveAssignment, type DeviceService,
 } from "./patient_registry_assignment";
 import { registryExportMoney } from "./patients_registry_export";
+import {
+  EXPORT_SERVICES, ALL_EXPORT_SERVICES, exportServicesParam, exportServicesLabel, exportServicesFileTag,
+  type ExportService,
+} from "./registry_export_services";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { PhysioPricingDialog } from "@/components/PhysioPricingDialog";
 import { Activity } from "lucide-react";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -344,8 +350,12 @@ export default function PatientsList() {
 
   // Exports need the full filtered list (not just the visible page) — fetch
   // it on demand with the same filters.
-  const fetchAllForExport = async (): Promise<RegistryRow[]> => {
-    const res = await fetch(`/api/patients/registry?${buildRegistryParams(1, 10000)}`, { credentials: "include" });
+  //  **وأقسامُ التصدير** يختارها الموظّفُ في النافذة قبل Excel أو PDF — الثلاثةُ افتراضاً (= الكلّ).
+  const fetchAllForExport = async (services: readonly string[] = ALL_EXPORT_SERVICES): Promise<RegistryRow[]> => {
+    const params = buildRegistryParams(1, 10000);
+    const svc = exportServicesParam(services);
+    if (svc) params.set("services", svc);
+    const res = await fetch(`/api/patients/registry?${params}`, { credentials: "include" });
     if (!res.ok) return [];
     return (await res.json()).rows;
   };
@@ -370,9 +380,21 @@ export default function PatientsList() {
     setCurrentPage(1);
   };
 
-  const exportToExcel = async () => {
+  //  **نافذةُ اختيار الأقسام** قبل التصدير (طلبُ المالك ٢٠٢٦-٠٩-٢٧): قسمٌ أو قسمان أو الكلّ.
+  const [exportKind, setExportKind] = useState<"excel" | "pdf" | null>(null);
+  const [exportServices, setExportServices] = useState<ExportService[]>(ALL_EXPORT_SERVICES);
+  const toggleExportService = (key: ExportService, on: boolean) =>
+    setExportServices((prev) => (on ? Array.from(new Set([...prev, key])) : prev.filter((k) => k !== key)));
+  const runExport = () => {
+    const kind = exportKind;
+    setExportKind(null);
+    if (kind === "excel") void exportToExcel(exportServices);
+    if (kind === "pdf") void exportToPDF(exportServices);
+  };
+
+  const exportToExcel = async (services: readonly string[] = ALL_EXPORT_SERVICES) => {
     const XLSX = await import("xlsx");
-    const dataToExport = await fetchAllForExport();
+    const dataToExport = await fetchAllForExport(services);
 
     if (dataToExport.length === 0) {
       alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
@@ -420,18 +442,18 @@ export default function PatientsList() {
     XLSX.utils.book_append_sheet(wb, ws, "المرضى");
     
     const dateStr = viewMode === "date" ? selectedDate : "all";
-    XLSX.writeFile(wb, `patients_${dateStr}.xlsx`);
+    XLSX.writeFile(wb, `patients_${dateStr}_${exportServicesFileTag(services)}.xlsx`);
   };
 
-  const exportToPDF = async () => {
-    const dataToExport = await fetchAllForExport();
+  const exportToPDF = async (services: readonly string[] = ALL_EXPORT_SERVICES) => {
+    const dataToExport = await fetchAllForExport(services);
 
     if (dataToExport.length === 0) {
       alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
       return;
     }
     
-    const dateLabel = viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى";
+    const dateLabel = `${viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى"} — ${exportServicesLabel(services)}`;
     
     const printContent = `
       <!DOCTYPE html>
@@ -616,7 +638,7 @@ export default function PatientsList() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={exportToExcel}
+                onClick={() => setExportKind("excel")}
                 className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
                 data-testid="button-export-excel"
               >
@@ -626,7 +648,7 @@ export default function PatientsList() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={exportToPDF}
+                onClick={() => setExportKind("pdf")}
                 className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
                 data-testid="button-export-pdf"
               >
@@ -893,6 +915,37 @@ export default function PatientsList() {
           onDone={() => setExamPatient(null)}
         />
       )}
+      {/* ══ اختيارُ الأقسام قبل التصدير (طلبُ المالك ٢٠٢٦-٠٩-٢٧) ══ */}
+      <Dialog open={exportKind !== null} onOpenChange={(o) => { if (!o) setExportKind(null); }}>
+        <DialogContent dir="rtl" className="max-w-sm" data-testid="dialog-export-services">
+          <DialogHeader>
+            <DialogTitle>تصدير {exportKind === "pdf" ? "PDF" : "Excel"} — اختر الأقسام</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {EXPORT_SERVICES.map((s) => (
+              <label key={s.key} className="flex items-center gap-3 cursor-pointer select-none">
+                <Checkbox
+                  checked={exportServices.includes(s.key)}
+                  onCheckedChange={(v) => toggleExportService(s.key, v === true)}
+                  data-testid={`checkbox-export-${s.key}`}
+                />
+                <span className="text-sm">{s.label}</span>
+              </label>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              {viewMode === "date"
+                ? "في «حسب التاريخ» يُصدَّر مَن كان نشاطُه في ذلك اليوم من القسم المختار."
+                : "يُصدَّر مَن في ملفّه القسمُ المختار. والأقسامُ الثلاثة معاً = كلّ المرضى."}
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setExportKind(null)}>إلغاء</Button>
+            <Button onClick={runExport} disabled={exportServices.length === 0} data-testid="button-export-run">
+              تصدير
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
