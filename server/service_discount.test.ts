@@ -1488,6 +1488,38 @@ async function main() {
                                      WHERE patient_id=$1`, [p]))[0].s);
       same("٩٢. **والمقبوضُ لا يفوق المتَّفَقَ عليه** — ٤٠,٠٠٠ لا ٩٩٩,٩٩٩", paid, 40_000);
     }
+    {
+      //  ══ (٢٠٢٦-٠٩-٢٧) **اعتمادُ «خدمة جديدة» من البابِ التاريخيّ يكتب قيدَ
+      //  دفعتها** — كان `executeNewService` يكتب الدفعةَ ولا يكتب قيدَها، فتغيب
+      //  عن قائمة الدخل وميزان المراجعة. والقيدُ يُقرأ من الدفتر نفسِه.
+      await q(`INSERT INTO chart_of_accounts (account_code, account_name_ar, account_type,
+                 branch_id, is_active, normal_balance)
+               VALUES ('1111','صندوق بغداد','asset',1,true,'debit') ON CONFLICT DO NOTHING`);
+      for (const code of ["4100", "4200", "4300", "4900"]) {
+        await q(`INSERT INTO chart_of_accounts (account_code, account_name_ar, account_type,
+                   branch_id, is_active, normal_balance)
+                 VALUES ($1,'إيراد '||$1,'revenue',NULL,true,'credit') ON CONFLICT DO NOTHING`, [code]);
+      }
+      const p = await mkPatient("استشارة بخصمٍ معلَّق يُعتمَد", { device: false, physio: true });
+      await mkCase(p, 1, "physiotherapy");
+      const id = await mkPendingRow({
+        patientId: p, department: "physiotherapy", originalPrice: 100_000, finalPrice: 60_000,
+        payload: { kind: "new_service", serviceType: "consultation", entries: undefined, initialPayment: 60_000 },
+      });
+      const r = await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" });
+      same("٩٢.أ الاعتمادُ التاريخيّ ينجح", r.status, 200);
+      const led = await q(`SELECT p.amount,
+          (SELECT COALESCE(SUM(l.debit),0) FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
+            WHERE e.source_type = 'payment' AND e.source_id = p.id AND e.status = 'posted')::int AS debit
+          FROM payments p WHERE p.patient_id = $1`, [p]);
+      same("٩٢.ب **ودفعتُه لها قيدٌ بمبلغها في الدفتر**", led.map((x: any) => [x.amount, x.debit]), [[60_000, 60_000]]);
+      check(r.body?.applied?.createdPayments === undefined,
+        "٩٢.ج ولا تُعاد صفوفُ الدفعات في الردّ — كما قبل اليوم", JSON.stringify(Object.keys(r.body?.applied ?? {})));
+      await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE source_type='payment'
+                 AND source_id IN (SELECT id FROM payments WHERE patient_id=$1))`, [p]);
+      await q(`DELETE FROM journal_entries WHERE source_type='payment'
+                 AND source_id IN (SELECT id FROM payments WHERE patient_id=$1)`, [p]);
+    }
 
     // ══ ١٨. عدُّ الطابور الموروث — للشريط الجانبيّ ═══════════════════════
     console.log("\n── (١٨) GET /api/discounts/pending/count ──");

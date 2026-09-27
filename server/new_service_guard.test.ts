@@ -115,6 +115,16 @@ function token(): string {
 
 async function main() {
   await pool.query(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
+  //  دليلُ حساباتٍ يكفي لقيد الدفعة (القسم ح) — كما في `undo_admin_reversal.test.ts`؛
+  //  وإلّا لم يُكتب قيدٌ أصلاً فلا يُختبَر وجودُه.
+  await pool.query(`INSERT INTO chart_of_accounts (account_code, account_name_ar, account_type,
+      branch_id, is_active, normal_balance)
+    VALUES ('1111','صندوق بغداد','asset',1,true,'debit') ON CONFLICT DO NOTHING`);
+  for (const code of ["4100", "4200", "4300", "4900"]) {
+    await pool.query(`INSERT INTO chart_of_accounts (account_code, account_name_ar, account_type,
+        branch_id, is_active, normal_balance)
+      VALUES ($1,'إيراد '||$1,'revenue',NULL,true,'credit') ON CONFLICT DO NOTHING`, [code]);
+  }
   await pool.query(
     `INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
      VALUES ($1,$2,'x','مدير','branch_manager',1,'[1]'::jsonb,true) ON CONFLICT (id) DO NOTHING`,
@@ -491,6 +501,28 @@ async function main() {
     });
     same("ز.ب. **والحقلُ الغائبُ تماماً مرفوضٌ كذلك ٤٠٠**", rZb.status, 400);
     same("ولا كلفةَ تحرّكت", (await storage.getPatient(pZb))?.totalCost ?? 0, 0);
+
+    // ══ ح. **كلُّ دفعةٍ مقبوضة لها قيدٌ في الدفتر** (٢٠٢٦-٠٩-٢٧) ═════════
+    //  كان هذا البابُ وحدَه يكتب الدفعةَ ولا يكتب قيدَها — فتغيب عن قائمة
+    //  الدخل وميزان المراجعة. والقيدُ يُقرأ هنا من الدفتر نفسِه، صفّاً صفّاً.
+    console.log("\n── ح. القيدُ المحاسبيّ لدفعات «خدمة جديدة» ──");
+    const ledgerOf = async (pid: number) => (await pool.query(
+      `SELECT p.id, p.amount, p.is_free_sessions AS free,
+              (SELECT COALESCE(SUM(l.debit), 0) FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
+                WHERE e.source_type = 'payment' AND e.source_id = p.id AND e.status = 'posted')::int AS debit,
+              (SELECT COALESCE(SUM(l.credit), 0) FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
+                WHERE e.source_type = 'payment' AND e.source_id = p.id AND e.status = 'posted')::int AS credit
+         FROM payments p WHERE p.patient_id = $1 ORDER BY p.id`, [pid])).rows;
+    const phys = await ledgerOf(pPhysio);
+    same("ح.١ **استشارةٌ مقبوضة ⟶ قيدٌ بمبلغها** (مدينٌ = دائن)",
+      phys.map((r: any) => [r.amount, r.debit, r.credit]), [[25000, 25000, 25000]]);
+    const lD = await ledgerOf(pD);
+    check(lD.length > 0 && lD.every((r: any) => (r.amount > 0 ? r.debit === r.amount && r.credit === r.amount : r.debit === 0)),
+      "ح.٢ **جلساتٌ ببنودٍ متعدّدة ⟶ قيدٌ لكلّ بندٍ مقبوض بمبلغه**", JSON.stringify(lD));
+    same("ح.٣ **ومسارُ الخصم الفوريّ كذلك** — قيدٌ بالمقبوض الفعليّ لا بالكلفة",
+      (await ledgerOf(pE)).map((r: any) => [r.amount, r.debit]), [[10000, 10000]]);
+    same("ح.٤ **والمجّانيُّ بلا قيد** — لا مالَ دخل الصندوق",
+      (await ledgerOf(pF)).map((r: any) => [r.amount, r.free, r.debit]), [[0, true, 0]]);
   } finally {
     httpServer.close();
   }
