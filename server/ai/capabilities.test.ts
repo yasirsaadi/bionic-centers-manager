@@ -135,6 +135,8 @@ async function main() {
   };
   const physioP = await mkVisit("physiotherapy", "روبوت", "مريض علاج طبيعي " + t);
   await mkVisit("prosthetic", "قياس", "مريض أطراف " + t);
+  //  **ويومٌ فوق الصفحة الافتراضية (٢٥)** — مراجعة Codex الرابعة على #427.
+  for (let i = 0; i < 28; i++) await mkVisit("prosthetic", "قياس", `مريض يوم مزدحم ${i} ${t}`);
 
   const snapshot = async () => {
     const r = await one(sql`SELECT
@@ -296,6 +298,40 @@ async function main() {
     same("مريضُ العلاج الطبيعي وحده — لا مريضُ الأطراف", physioYesterday.data?.matched, 1);
     same("وباسمه", ((physioYesterday.data?.rows ?? physioYesterday.data?.items ?? []) as any[])
       .map((r: any) => r.patientId), [physioP]);
+
+    //  **ومَن لا يملك التقارير** يقرأ تبويبَ «حسب التاريخ» نفسَه الذي يراه على شاشته (visitDate).
+    const noRep = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday, pageSize: 100 },
+    });
+    ok(noRep.ok, "ومَن لا يملك التقارير يقرأ تبويبَ «حسب التاريخ» بتاريخ البارحة");
+    ok(((noRep.data?.rows ?? noRep.data?.items ?? []) as any[]).some((r: any) => r.id === physioP),
+      "وفيه مريضُ العلاج الطبيعي الذي زار البارحة");
+    //  **واليومُ يُقرأ كاملاً**: بلا صفحةٍ يطلبها النموذج يُعَدّ الثلاثون كلُّهم لا أوّلُ خمسةٍ وعشرين.
+    const whole = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday },
+      aggregate: { where: [{ field: "isPhysiotherapy", equals: false }] },
+    });
+    const wholeCount = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday }, aggregate: { groupBy: "branchId" },
+    });
+    same("بلا صفحة ⟵ اليومُ كلُّه (٣٠ مريضاً في الفرع)", wholeCount.data?.total, 30);
+    ok(whole.ok && !whole.data?.partial, "ولا تنبيهَ «صفحة لا الكلّ» حين وصل الكلّ");
+    //  **وصفحةٌ يطلبها النموذج تُقال صفحةً**: العددُ الكلّيّ من الخادم بجانبها.
+    const paged = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday, pageSize: 5 },
+    });
+    same("وصفحةُ خمسة ⟵ serverTotal = 30 مع تنبيهٍ صريح", [paged.data?.serverTotal, /صفحةٌ لا الكلّ/.test(String(paged.data?.partial))], [30, true]);
+    //  **وتاريخٌ بغير صيغته يُرفض** — لا يعود السجلُّ كلُّه على أنه مرضى ذلك اليوم.
+    const badDate = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: "yesterday" },
+    });
+    ok(!badDate.ok && /YYYY-MM-DD/.test(String(badDate.data?.error)), "visitDate بغير صيغته يُرفض برسالةٍ تقول الصيغة");
+    //  **والبحثُ لا يُجمع مع التاريخ** (مراجعة Codex على #427): النقطةُ تُسقط التاريخَ بصمت مع البحث.
+    const mixed = await call(access(rSess, bB.id), rSess, "read_capability", {
+      name: "/api/patients/registry", query: { visitDate: yesterday, search: "مريض" },
+    });
+    ok(!mixed.ok && /لا يُجمع search مع visitDate/.test(String(mixed.data?.error)),
+      "search مع visitDate يُرفض برسالةٍ تقول لماذا — لا نتيجةً تبدو مقيَّدةً بالتاريخ وليست");
 
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);

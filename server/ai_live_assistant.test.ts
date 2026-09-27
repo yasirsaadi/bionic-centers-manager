@@ -314,6 +314,59 @@ async function main() {
     same("   ثمّ تُجيب ممّا تجمّع بدل أن تنقطع", looped.value.reply, "خلاصة ممّا جمعت.");
     same("   والجولة الأخيرة بلا أدوات", seen[seen.length - 1].tools, []);
 
+    // ══ هـ٢. وعدٌ بلا فعل — المحادثتان ٤١ و٤٢ على الإنتاج (٢٠٢٦-٠٩-٢٧) ══
+    console.log("\n── وعدٌ بلا فعل ──");
+    runScript([
+      { text: "سأساعدك في البحث عن مرضى البارحة (2026-09-26) الذين أخذوا جلسات علاج طبيعي فقط.\n" },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "هذه النتيجة." },
+    ]);
+    const promised: any = await chat(access(S.recv), ask("اريد مرضى البارحة الذين اخذوا جلسات علاج طبيعي فقط"));
+    same("هـ٢.١ **«سأساعدك…» بلا أداة لا يُسلَّم جواباً** — يُردّ إلى النموذج فيكمل",
+      [promised.value.reply, promised.value.tools.count], ["هذه النتيجة.", 1]);
+    same("هـ٢.٢ ثلاثُ جولات: الوعدُ ثمّ الأداةُ ثمّ الجواب", seen.length, 3);
+    runScript([
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "آه، لا أملك صلاحية التقارير. لكن يمكنني الوصول إلى سجل تتبع الجلسات:" },
+    ]);
+    const cut: any = await chat(access(S.recv), ask("مرضى البارحة"));
+    check(!/:\s*$/.test(cut.value.reply) && /لم يكتمل البحثُ/.test(cut.value.reply),
+      "هـ٢.٣ **والجوابُ الختاميّ المقطوع عند النقطتين يُقال للمستخدم إنه لم يكتمل**", cut.value.reply);
+    //  **سؤالُ التوضيح والرفضُ التامّ ليسا وعداً** (مراجعة Codex على #427) — يمرّان كما هما.
+    //  **و«سأل» ماضٍ لا وعد، والإعلانُ الذي يليه محتوى جوابٌ تامّ** (مراجعة Codex الثانية على #427).
+    for (const legit of ["أيّ فرعٍ تقصد…", "لا أستطيع الوصول إلى هذه البيانات…", "اختر أحد الخيارين:",
+                         "سأل المريض عن موعده، وهو غدًا.", "سألت عن هذا المريض: هو في بغداد.",
+                         "سأوضح لك: افتح سجل المرضى ثم اختر تبويب حسب التاريخ.",
+                         "لن أستطيع الوصول إلى هذه البيانات…", "ليس بإمكاني قراءة التقارير:",
+                         "آسف، ما يمكنني فتح هذه الشاشة…",
+                         "سأجيبك باختصار، المريض زار أمس", "سأوضح النتيجة؛ وجدنا ثلاثة مرضى",
+                         "سأوضح لك أن المريض في بغداد.", "سأوضح لك أنني بحثت عن المريض ووجدته في بغداد."]) {
+      runScript([{ text: legit }]);
+      const r: any = await chat(access(S.recv), ask("سؤال"));
+      same(`هـ٢.٥ «${legit}» يمرّ جواباً بلا تنبيه`, [r.value.reply, seen.length], [legit, 1]);
+    }
+    //  **وإعلانٌ يليه حشوُ انتظار وعدٌ أيضاً** (السابعة): يُردّ إلى النموذج فيكمل.
+    for (const filler of ["دعني أبحث في السجل. لحظة من فضلك.", "سأتحقق من السجل.\nانتظرني قليلاً"]) {
+      runScript([{ text: filler }, { text: "هذه النتيجة." }]);
+      const r: any = await chat(access(S.recv), ask("سؤال"));
+      same(`هـ٢.٧ «${filler.replace("\n", " ⏎ ")}» يُردّ إلى النموذج`, [r.value.reply, seen.length], ["هذه النتيجة.", 2]);
+    }
+    //  **والتنبيهُ لا يأكل جولةَ أداة**: بعده ثلاثُ جولاتِ أدواتٍ كاملة، ثمّ الختام.
+    runScript([
+      { text: "دعني أبحث لك." },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "الخلاصة." },
+    ]);
+    const full: any = await chat(access(S.recv), ask("ابحث"));
+    same("هـ٢.٦ **بعد التنبيه تبقى الجولاتُ الثلاث كاملة**", [full.value.tools.count, full.value.reply], [3, "الخلاصة."]);
+    runScript([{ text: "المريض في فرع بغداد." }]);
+    const plain: any = await chat(access(S.recv), ask("أين المريض؟"));
+    same("هـ٢.٤ وجوابٌ عاديٌّ يمرّ كما هو بلا جولةٍ زائدة", [plain.value.reply, seen.length], ["المريض في فرع بغداد.", 1]);
+
     // ══ و. تعدّد الأدوار في محادثةٍ واحدة ════════════════════════════
     console.log("\n── المحادثة المتصلة ──");
     runScript([
