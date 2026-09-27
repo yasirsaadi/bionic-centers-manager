@@ -4,6 +4,7 @@ import type { Payment, Expense, Invoice, InvoiceItem, Purchase } from "@shared/s
 import { eq, and, sql, asc } from "drizzle-orm";
 import { createJournalEntry, logAudit } from "./ledger";
 import type { JournalLineInput } from "./ledger";
+import { allocateApprovedCost } from "@shared/pricing";
 
 /**
  * Auto Journal
@@ -486,6 +487,83 @@ export async function createJournalForInvoice(
     });
   } catch (err) {
     console.error(`[auto-journal] failed to create journal for invoice ${invoice.id}:`, err);
+  }
+}
+
+/**
+ * **الرصيدُ السابق المطبَّق على فاتورة ليس إيراداً جديداً** (§4.ar البند ٦).
+ *
+ * دفعاتُ الجلسات التي يتكوّن منها الرصيدُ قُيِّدت يومَ قُبضت: مدين صندوق / دائن إيراد. ثمّ تُصدر الفاتورةُ قيدَها للكامل:
+ * مدين ذمم / دائن إيراد. فالجزءُ المغطّى بالرصيد صار إيراداً **مرّتين**، وبقي في الذمم دَيناً لا يسدّده شيء.
+ * فيُكتب عند التطبيق قيدُ تسويةٍ واحد: **مدين الإيراد** (بحسابات الفاتورة نفسِها، موزَّعاً على حصصها) / **دائن الذمم**
+ * بمبلغ الرصيد — فيبقى من الفاتورة إيراداً ما لم يُقيَّد قبلها وحده، وتنزل الذممُ إلى ما بقي فعلاً.
+ */
+export async function createJournalForInvoicePriorCredit(
+  invoice: Invoice,
+  items: InvoiceItem[] | undefined,
+  creditApplied: number,
+  createdBy?: number | null
+): Promise<void> {
+  try {
+    const credit = Math.round(Number(creditApplied) || 0);
+    if (credit <= 0) return;
+    const arAccountId = await getAccountIdByCode("1130");
+    if (!arAccountId) {
+      console.warn(`[auto-journal] AR account 1130 not found (invoice credit ${invoice.id})`);
+      return;
+    }
+    //  حصصُ الإيراد كما قيّدتها `createJournalForInvoice` بالضبط: البنودُ بحساباتها، والباقي إلى 4900.
+    const byCode = new Map<string, number>();
+    let itemsSum = 0;
+    for (const it of items ?? []) {
+      const amount = it.total ?? 0;
+      if (amount <= 0) continue;
+      const code = revenueTypeToAccountCode(it.serviceType ?? null);
+      byCode.set(code, (byCode.get(code) ?? 0) + amount);
+      itemsSum += amount;
+    }
+    const subtotal = invoice.subtotal ?? (invoice.total ?? 0) + (invoice.discount ?? 0);
+    if (subtotal - itemsSum > 0) byCode.set("4900", (byCode.get("4900") ?? 0) + (subtotal - itemsSum));
+    const codes = Array.from(byCode.keys());
+    if (codes.length === 0) return;
+    const shares = allocateApprovedCost(codes.map((c) => byCode.get(c)!), credit);
+
+    const lines: JournalLineInput[] = [];
+    for (let i = 0; i < codes.length; i++) {
+      if (!(shares[i] > 0)) continue;
+      const accountId = await getAccountIdByCode(codes[i]);
+      if (!accountId) {
+        console.warn(`[auto-journal] revenue account ${codes[i]} not found (invoice credit ${invoice.id})`);
+        return;
+      }
+      lines.push({
+        accountId, debit: shares[i],
+        description: `رصيد سابق مقيَّد إيراداً قبل الفاتورة ${invoice.invoiceNumber}`,
+        branchId: invoice.branchId, patientId: invoice.patientId,
+      });
+    }
+    lines.push({
+      accountId: arAccountId, credit,
+      description: `تسديد من رصيد سابق - فاتورة ${invoice.invoiceNumber}`,
+      branchId: invoice.branchId, patientId: invoice.patientId,
+    });
+    const dr = lines.reduce((t, l) => t + (l.debit ?? 0), 0);
+    if (dr !== credit) {
+      console.error(`[auto-journal] invoice credit ${invoice.id} unbalanced: Dr ${dr} vs Cr ${credit}. Skipping.`);
+      return;
+    }
+    await createJournalEntry({
+      entryDate: dateToISO(invoice.invoiceDate),
+      branchId: invoice.branchId,
+      description: `تطبيق رصيد سابق على فاتورة ${invoice.invoiceNumber}`,
+      reference: invoice.invoiceNumber,
+      sourceType: "invoice_credit",
+      sourceId: invoice.id,
+      createdBy: createdBy ?? null,
+      lines,
+    });
+  } catch (err) {
+    console.error(`[auto-journal] failed to create prior-credit journal for invoice ${invoice.id}:`, err);
   }
 }
 

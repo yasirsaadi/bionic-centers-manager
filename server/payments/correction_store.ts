@@ -60,6 +60,19 @@ export class CorrectionError extends Error {
   }
 }
 
+/**
+ *  **دفعةُ الفاتورة لا تُصحَّح من هنا** (§4.ar البند ٦). مالُها يعيش في ثلاثة أماكن: صفُّ الدفعة، و`invoices.paid_amount`
+ *  وحالتُها، وقيدُ `invoice_payment` (مدين صندوق / دائن ذمم). وهذا المسارُ يعرف الأوّلَ وحده: الحذفُ كان يترك الفاتورةَ
+ *  «مدفوعة» وقيدَها قائماً، والتعديلُ يكتب فوق ذلك قيدَ إيرادٍ **ثانياً** (`createJournalForPaymentTx`). فيُرفض بدل أن يُفسد
+ *  الدفاتر — ولا فواتيرَ على الإنتاج يومَ الإصلاح (استعلامُ المالك ٢٠٢٦-٠٩-٢٧: صفر).
+ */
+export function assertNotInvoicePayment(p: { invoiceId?: number | null }): void {
+  if (p.invoiceId != null) {
+    throw new CorrectionError(
+      "هذه دفعةُ فاتورة — لا تُعدَّل ولا تُحذف من هنا، فالفاتورةُ وقيدُها يبقيان على حالهما. صحّحها من شاشة المحاسبة.", 409);
+  }
+}
+
 export type CorrectionActor = {
   userId: number | null;
   userName: string | null;
@@ -246,6 +259,8 @@ async function applyCorrectionWriteTx(tx: any, params: {
   reversedBy: number | null;
 }): Promise<{ payment: Payment | null; journalRebuilt: boolean }> {
   const { before, action, changed } = params;
+  //  والحارسُ هنا أيضاً: طلبٌ معلَّقٌ قديم يُعتمَد بعد اليوم يمرّ من هذه الكتابة وحدها.
+  assertNotInvoicePayment(before);
   const touchesJournal = action === "delete"
     || PROTECTED_KEYS.some((k) => (changed as any)[k] !== undefined);
 
@@ -333,6 +348,7 @@ export async function requestPaymentCorrection(params: {
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
+    assertNotInvoicePayment(before);
     if (params.accessibleBranches !== null && !params.accessibleBranches.includes(before.branchId)) {
       throw new CorrectionError("لا يمكنك تعديل دفعة من فرع آخر", 403);
     }
@@ -395,6 +411,7 @@ export async function applyPaymentCorrectionDirect(params: {
     await tx.execute(sql`SELECT id FROM payments WHERE id = ${params.paymentId} FOR UPDATE`);
     const [before] = await tx.select().from(payments).where(eq(payments.id, params.paymentId));
     if (!before) throw new CorrectionError("الدفعة غير موجودة", 404);
+    assertNotInvoicePayment(before);
 
     let changed: NormalizedPatch = {};
     if (params.action === "update") {

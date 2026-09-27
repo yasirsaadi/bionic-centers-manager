@@ -182,7 +182,7 @@ async function insertIssuedInvoice(patientId: number, branchId: number, total: n
 async function journalTypesFor(sourceId: number): Promise<Record<string, number>> {
   const rows = await q<{ source_type: string; n: string }>(
     `SELECT source_type, COUNT(*)::text AS n FROM journal_entries
-       WHERE source_id = $1 AND source_type IN ('invoice','invoice_payment','payment')
+       WHERE source_id = $1 AND source_type IN ('invoice','invoice_payment','payment','invoice_credit')
        GROUP BY source_type`,
     [sourceId]);
   const m: Record<string, number> = {};
@@ -432,6 +432,32 @@ async function main() {
     const payLinesJ1 = await journalLinesFor("invoice_payment", invJ1Id);
     same("ط٨. **قيدُ القبض على الدفعة الفورية وحدها = ١٠٠٠٠٠** — لا ١٨٠٠٠٠",
       payLinesJ1.filter((l) => l.debit > 0).reduce((s, l) => s + l.debit, 0), 100_000);
+
+    //  ══ **والرصيدُ السابق لا يصير إيراداً ثانياً** (§4.ar البند ٦) ══════════
+    //  دفعةُ الجلسة (٨٠٠٠٠) قُيِّدت إيراداً يومَ قُبضت؛ فالفاتورةُ تُسوّي ذلك بقيدٍ واحد.
+    const creditLines = await journalLinesFor("invoice_credit", invJ1Id);
+    same("ط٨.١ **قيدُ تسوية الرصيد: مدين الإيراد ٨٠٠٠٠ / دائن الذمم ٨٠٠٠٠**",
+      [creditLines.filter((l) => l.debit > 0 && l.code.startsWith("4")).reduce((t, l) => t + l.debit, 0),
+        creditLines.filter((l) => l.credit > 0 && l.code === "1130").reduce((t, l) => t + l.credit, 0)],
+      [80_000, 80_000]);
+    const allInv = [...issueLines, ...payLinesJ1, ...creditLines];
+    const net = (pred: (c: string) => boolean) =>
+      allInv.filter((l) => pred(l.code)).reduce((t, l) => t + l.credit - l.debit, 0);
+    same("ط٨.٢ **فالإيرادُ الجديد من الفاتورة ١٢٠٠٠٠ لا ٢٠٠٠٠٠**، والذممُ الباقية ٢٠٠٠٠ = الإجماليّ − المدفوع",
+      [net((c) => c.startsWith("4")), -net((c) => c === "1130")], [120_000, 20_000]);
+
+    //  ══ **ودفعةُ الفاتورة لا تُعدَّل ولا تُحذف من مسار الدفعات** (§4.ar البند ٦) ══
+    const invPayId = payRowsJ1[0]?.id;
+    //  صلاحيتا التعديل والحذف على الحساب نفسِه — الصلاحياتُ تُقرأ حيّةً من صفّه، فبدونهما يُردّ ٤٠٣ قبل أن يصل الحارس.
+    await q(`UPDATE system_users SET can_edit_payments = true, can_delete_payments = true WHERE id = $1`, [ADMIN]);
+    const fixer = { ...S.admin, permissions: { ...S.admin.permissions, canEditPayments: true, canDeletePayments: true } };
+    const rDel = await http("DELETE", `/api/payments/${invPayId}`, fixer, { reason: "اختبار" });
+    const rEdit = await http("PATCH", `/api/payments/${invPayId}`, fixer, { amount: 90_000, reason: "اختبار" });
+    same("ط٨.٣ **حذفُ دفعة الفاتورة وتعديلُ مبلغها يُرفضان (٤٠٩)**", [rDel.status, rEdit.status], [409, 409]);
+    same("ط٨.٤ والدفعةُ والفاتورةُ وقيودُها كما كانت — لا قيدَ إيرادٍ ثانٍ",
+      [(await paymentsFor(invJ1Id))[0]?.amount, (await journalTypesFor(invJ1Id)).payment ?? 0,
+        (await q<{ paid_amount: number }>(`SELECT paid_amount FROM invoices WHERE id = $1`, [invJ1Id]))[0].paid_amount],
+      [100_000, 0, 180_000]);
 
     // ── ط.ب: paidNow يتجاوز المتبقّي بعد الرصيد ⟶ تراجعٌ كامل ──
     // **مريضٌ جديدٌ مستقلّ (p4)** لهذه الفقرة تحديداً — لا p2 نفسِها: p2
