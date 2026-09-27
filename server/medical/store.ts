@@ -1493,10 +1493,22 @@ export async function getPendingExams(
       ? sql`TRUE`
       : branchIds.length === 0
         ? sql`FALSE`
-        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(
-            branchIds.map((id) => sql`${id}`),
-            sql`, `,
-          )})`;
+        : (() => {
+            //  **وفرعُ الشارة فرعُ قائمة الطبيب** (§4.ar البند ١١): طلبُ جهازٍ نُقلت مسؤوليتُه إلى فرعٍ آخر يظهر
+            //  عند طبيب ذلك الفرع (`getWorklist`: `COALESCE(ep.branch_id, pc.branch_id, p.branch_id)`)، وكانت الشارةُ
+            //  تبقى في سجلّ الفرع القديم. فطلبٌ ينتظر يُقاس بفرعه، وما عداه بفرع القسم فالمريض.
+            const inList = sql.join(branchIds.map((id) => sql`${id}`), sql`, `);
+            return sql`(
+              EXISTS (SELECT 1 FROM patient_device_episodes eb
+                       WHERE eb.case_id = pc.id AND eb.status = 'awaiting_exam'
+                         AND eb.service_path IS DISTINCT FROM 'no_exam'
+                         AND COALESCE(eb.branch_id, pc.branch_id, p.branch_id) IN (${inList}))
+              OR (NOT EXISTS (SELECT 1 FROM patient_device_episodes eb
+                               WHERE eb.case_id = pc.id AND eb.status = 'awaiting_exam'
+                                 AND eb.service_path IS DISTINCT FROM 'no_exam')
+                  AND COALESCE(pc.branch_id, p.branch_id) IN (${inList}))
+            )`;
+          })();
 
   // Legacy patients are exempt from the exam requirement, so they never
   // appear as "waiting" — the amber badges and the doctor's queue stay clean

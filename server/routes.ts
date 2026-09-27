@@ -40,7 +40,7 @@ import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
-import { patientActiveOnDate, patientActiveOnDateForService, patientHasService, isPatientService } from "./patient_activity";
+import { patientActiveOnDate, patientActiveOnDateForService, patientHasService, patientHasServiceAs, isPatientService } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
@@ -2122,8 +2122,10 @@ export async function registerRoutes(
 
     // Tab-badge counts: patients in the selected branch scope, and of those,
     // patients with a visit on the selected day — independent of the search.
+    //  **ونطاقُ الرقم نطاقُ القائمة تحته** (§4.ar البند ١١): كان الرقمُ لفرع التسجيل وحده، والقائمةُ تُظهر
+    //  معه المُتاحَ للفرع (ترحيل ٠٨٠) — فلا يطابق الرقمُ ما تحته.
     const badgeConds: any[] = [activePatientDrizzle()];
-    if (!isAdmin) badgeConds.push(eq(patients.branchId, branchSession?.branchId ?? -1));
+    if (!isAdmin) badgeConds.push(patientVisibleToScopeSql([branchSession?.branchId ?? -1]));
     else if (req.query.branchId && req.query.branchId !== "all") {
       const b = parseInt(String(req.query.branchId));
       if (Number.isFinite(b)) badgeConds.push(eq(patients.branchId, b));
@@ -2134,12 +2136,10 @@ export async function registerRoutes(
       visitDate
         ? db.select({ count: sql<number>`COUNT(*)::int` }).from(patients).where(and(
             badgeWhere,
-            sql`EXISTS (
-              SELECT 1 FROM visits v
-              WHERE v.patient_id = ${patients.id}
-                AND v.deleted_at IS NULL
-                AND ((v.visit_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = ${visitDate}::date
-            )`,
+            //  **وعدُّ «حسب التاريخ» بتعريف قائمته** (§4.ar البند ١١): كان زياراتٍ وحدها، والقائمةُ تعدّ
+            //  المصادرَ الستّة (تسجيل · زيارة · دفعة · معاينة · طلب جهاز · أمر تصنيع) — فمَن دفع يومَها ولم يزُر
+            //  كان في القائمة لا في الرقم.
+            patientActiveOnDate(visitDate),
           ))
         : Promise.resolve([{ count: 0 }]),
     ]);
@@ -4903,9 +4903,9 @@ export async function registerRoutes(
       db.execute(sql`
         SELECT COUNT(*)::int AS total,
                COALESCE(SUM(total_cost), 0)::bigint AS sold,
-               COUNT(*) FILTER (WHERE is_amputee)::int AS amputees,
-               COUNT(*) FILTER (WHERE is_physiotherapy)::int AS physiotherapy,
-               COUNT(*) FILTER (WHERE is_medical_support)::int AS medical_support
+               COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "prosthetic")})::int AS amputees,
+               COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "physiotherapy")})::int AS physiotherapy,
+               COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "medical_support")})::int AS medical_support
         FROM patients WHERE deleted_at IS NULL ${branchWhere}
       `),
       db.execute(sql`
@@ -5310,9 +5310,9 @@ export async function registerRoutes(
         ? await db.execute(sql`
             SELECT 
               COUNT(*) as total,
-              COUNT(*) FILTER (WHERE is_amputee = true) as amputees,
-              COUNT(*) FILTER (WHERE is_physiotherapy = true) as physiotherapy,
-              COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "prosthetic")}) as amputees,
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "physiotherapy")}) as physiotherapy,
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "medical_support")}) as medical_support
             FROM patients 
             WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp AND branch_id = ${filterBranchId}
               AND deleted_at IS NULL
@@ -5320,9 +5320,9 @@ export async function registerRoutes(
         : await db.execute(sql`
             SELECT 
               COUNT(*) as total,
-              COUNT(*) FILTER (WHERE is_amputee = true) as amputees,
-              COUNT(*) FILTER (WHERE is_physiotherapy = true) as physiotherapy,
-              COUNT(*) FILTER (WHERE is_medical_support = true) as medical_support
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "prosthetic")}) as amputees,
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "physiotherapy")}) as physiotherapy,
+              COUNT(*) FILTER (WHERE ${patientHasServiceAs("patients", "medical_support")}) as medical_support
             FROM patients 
             WHERE created_at >= ${startTs}::timestamp AND created_at < ${endTs}::timestamp
               AND deleted_at IS NULL
@@ -5346,9 +5346,9 @@ export async function registerRoutes(
         ? await db.execute(sql`
             SELECT 
               COUNT(DISTINCT v.patient_id) as visiting_patients,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_amputee = true) as visiting_amputees,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_physiotherapy = true) as visiting_physiotherapy,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "prosthetic")}) as visiting_amputees,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "physiotherapy")}) as visiting_physiotherapy,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "medical_support")}) as visiting_medical_support
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
             WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.branch_id = ${filterBranchId} AND v.deleted_at IS NULL
@@ -5357,9 +5357,9 @@ export async function registerRoutes(
         : await db.execute(sql`
             SELECT
               COUNT(DISTINCT v.patient_id) as visiting_patients,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_amputee = true) as visiting_amputees,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_physiotherapy = true) as visiting_physiotherapy,
-              COUNT(DISTINCT v.patient_id) FILTER (WHERE p.is_medical_support = true) as visiting_medical_support
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "prosthetic")}) as visiting_amputees,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "physiotherapy")}) as visiting_physiotherapy,
+              COUNT(DISTINCT v.patient_id) FILTER (WHERE ${patientHasServiceAs("p", "medical_support")}) as visiting_medical_support
             FROM visits v
             JOIN patients p ON v.patient_id = p.id
             WHERE v.visit_date >= ${startTs}::timestamp AND v.visit_date < ${endTs}::timestamp AND v.deleted_at IS NULL
