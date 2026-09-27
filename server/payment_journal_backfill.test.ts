@@ -9,14 +9,15 @@
 // (هـ) دفعةٌ بعد اللقطة لا تُمَسّ — يكتب بابُها قيدَها.
 // (و) مرّةٌ واحدة، وتشغيلان معاً لا يعملان معاً، والترقيمُ الحيّ لا يتأثّر.
 
-import { pool } from "./db";
+import { pool, db } from "./db";
 import {
   backfillPaymentJournals, PAYMENT_JOURNAL_BACKFILL_GUARD, withJournalBackfillLock,
 } from "./accounting/payment_journal_backfill";
 import express from "express";
 import { createServer } from "http";
 import { registerAccountingV2Routes } from "./accounting/routes";
-import { createJournalForPayment } from "./accounting/auto_journal";
+import { createJournalForPayment, createJournalForPaymentTx } from "./accounting/auto_journal";
+import { sql } from "drizzle-orm";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -186,6 +187,19 @@ async function main() {
   await createJournalForPayment({ id: lr.id, amount: lr.amount, branchId: lr.branch_id, patientId: lr.patient_id,
     date: lr.date, notes: lr.notes, paymentTreatmentType: lr.payment_treatment_type, caseId: lr.case_id } as any, null);
   same("(ز) البابُ الحيّ: «روبوت» على قسمه ⟵ 4100", (await journalsOf(liveRobot)).map((r: any) => r.rev), ["4100"]);
+
+  // (ز) والتصحيحُ: القسمُ يُقرأ من صفّ الدفعة الآن لا من كائنٍ التُقط قبل إعادة الإسناد.
+  const protCase = await mkCase(physio, "prosthetic");
+  const corr = await mkPayment(physio, 21000, "2026-09-27 12:00", { type: "روبوت", caseId: protCase });
+  const stale = (await pool.query(`SELECT * FROM payments WHERE id=$1`, [corr])).rows[0];
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`UPDATE payments SET case_id = ${physioCase} WHERE id = ${corr}`);
+    await createJournalForPaymentTx(tx, { id: stale.id, amount: stale.amount, branchId: stale.branch_id,
+      patientId: stale.patient_id, date: stale.date, notes: stale.notes,
+      paymentTreatmentType: stale.payment_treatment_type, caseId: stale.case_id } as any, null);
+  });
+  same("(ز) تصحيحٌ نقل الدفعةَ إلى قسم العلاج الطبيعي ⟵ 4100 لا 4200 من الكائن القديم",
+    (await journalsOf(corr)).map((r: any) => r.rev), ["4100"]);
 
   // (ح) نقطةُ الاستدراك القديمة تأخذ القفلَ نفسَه (مراجعة Codex) — فلا تعمل مع الأداة معاً.
   const app = express();

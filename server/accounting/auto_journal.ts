@@ -227,17 +227,23 @@ const CASE_TYPE_REVENUE_CODE: Record<string, string> = {
 
 async function resolvePaymentRevenueCode(
   exec: { execute: (q: any) => Promise<any> },
-  payment: { paymentTreatmentType?: string | null; patientId?: number | null; caseId?: number | null },
+  payment: { id?: number | null; paymentTreatmentType?: string | null; patientId?: number | null; caseId?: number | null },
   includeTrashedPatient: boolean,
 ): Promise<string> {
   const text = payment.paymentTreatmentType ?? null;
   const fromText = revenueTypeToAccountCode(text);
   if (fromText !== "4900") return fromText;
-  if (payment.caseId) {
-    const r = await exec.execute(sql`SELECT case_type FROM patient_cases WHERE id = ${payment.caseId}`);
-    const code = CASE_TYPE_REVENUE_CODE[(r.rows?.[0] as any)?.case_type];
-    if (code) return code;
-  }
+  //  القسمُ من **صفّ الدفعة الآن** لا من الكائن الممرَّر: التصحيحُ يعيد إسنادَ القسم
+  //  (`reattachPaymentCase`) بعد أن التقط نسختَه، فالكائنُ يحمل القسمَ القديم (مراجعة Codex الثانية).
+  const r = payment.id
+    ? await exec.execute(sql`
+        SELECT pc.case_type FROM payments p JOIN patient_cases pc ON pc.id = p.case_id
+         WHERE p.id = ${payment.id}`)
+    : payment.caseId
+      ? await exec.execute(sql`SELECT case_type FROM patient_cases WHERE id = ${payment.caseId}`)
+      : null;
+  const caseCode = CASE_TYPE_REVENUE_CODE[(r?.rows?.[0] as any)?.case_type];
+  if (caseCode) return caseCode;
   if (!text && payment.patientId) {
     const r = await exec.execute(sql`
       SELECT is_amputee, is_physiotherapy, is_medical_support
