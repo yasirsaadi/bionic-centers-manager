@@ -77,10 +77,23 @@ export function AddCaseTypeModal({
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
 
+  //  **والناقصُ = بلا عَلَمٍ أو بلا قسم** (§4.ar البند ٢): عَلَمٌ بلا صفّ حالة نصفُ قسمٍ — كان «تعديل مريض» يتركه —
+  //  وهذه النافذةُ هي ما يُكمله. والاستعلامُ مفتاحُه مفتاحُ صفحة المريض نفسُه، فيُقرأ من ذاكرتها بلا طلبٍ ثانٍ.
+  const { data: caseRows = [], isSuccess: casesLoaded } = useQuery<{ caseType: string }[]>({
+    queryKey: ["/api/patients/:id", Number(patient.id), "cases"],
+    enabled: !!patient.id,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patient.id}/cases`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  //  وقبل وصول القائمة يُحكَم بالعَلَم وحده — كي لا تومض الأقسامُ الموجودة «ناقصةً» لحظةَ الفتح.
+  const hasCase = (t: string) => !casesLoaded || caseRows.some((c) => c.caseType === t);
   const missingTypes = [
-    !patient.isAmputee && "amputee",
-    !patient.isMedicalSupport && "medical_support",
-    !patient.isPhysiotherapy && "physiotherapy",
+    (!patient.isAmputee || !hasCase("prosthetic")) && "amputee",
+    (!patient.isMedicalSupport || !hasCase("medical_support")) && "medical_support",
+    (!patient.isPhysiotherapy || !hasCase("physiotherapy")) && "physiotherapy",
   ].filter(Boolean) as string[];
 
   const isManufacturing = caseType === "amputee" || caseType === "medical_support";

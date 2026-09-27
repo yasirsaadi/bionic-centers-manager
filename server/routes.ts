@@ -2996,6 +2996,24 @@ export async function registerRoutes(
       //
       //  والانتقالُ `true ⟶ false` وحده يُمسَك — الرفعُ حرٌّ كما كان،
       //  و«تعديل مريض» يرسل الكائنَ كاملاً في كلّ حفظ فلا يُقاس الحضور.
+      //  ══ **ولا يُرفَع عَلَمُ قسمٍ جديد من هنا** (§4.ar البند ٢) ════════════
+      //  الرفعُ كان «حرّاً»: يكتب العَلَم وحده — بلا صفّ حالة، ولا علامةِ «إضافة نوع حالة»، ولا طلبِ
+      //  معاينةٍ عند الطبيب. ثمّ «إضافة نوع حالة» تردّ ٤٠٩ «مفعّل أصلاً» (تقرأ العَلَم)، وفتحُ طلب الجهاز
+      //  يردّ «أضف نوع الحالة أولاً» — فيعلق المريضُ بين بابين (واقعةُ زين العابدين). فالقسمُ الجديد
+      //  بابُه واحد، ويُردّ هنا صراحةً بدل أن يُكتب نصفُه.
+      for (const [field, label] of [
+        ["isAmputee", "أطراف صناعية"],
+        ["isMedicalSupport", "مساند طبية"],
+        ["isPhysiotherapy", "علاج طبيعي"],
+      ] as const) {
+        if (patch[field] === true && (existingPatient as any)[field] !== true) {
+          return res.status(409).json({
+            message: `لإضافة قسم «${label}» للمريض استعمل زرّ «إضافة نوع حالة» في صفحته — فيُنشأ القسمُ ويصل الطبيب. تعديلُ الملفّ لا يضيف قسماً.`,
+            code: "ADD_TYPE_VIA_DOOR",
+          });
+        }
+      }
+
       const orphanedFlags: string[] = [];
       for (const [field, caseType, label] of [
         ["isAmputee", "prosthetic", "أطراف صناعية"],
@@ -3819,9 +3837,17 @@ export async function registerRoutes(
       if (!["amputee", "medical_support", "physiotherapy"].includes(caseType)) {
         return res.status(400).json({ message: "نوع الحالة غير صالح" });
       }
-      const alreadyHas = caseType === "amputee" ? patient.isAmputee
+      //  **«مفعّلٌ أصلاً» = عَلَمٌ وقسمٌ معاً** (§4.ar البند ٢): عَلَمٌ بلا صفّ حالة — ما كان يتركه «تعديل مريض»
+      //  قبل أن يُغلَق ذلك الباب — نصفُ قسم، وهذا البابُ هو ما يُكمله (الحالةُ وعلامتُها وطلبُ المعاينة).
+      const flagOn = caseType === "amputee" ? patient.isAmputee
         : caseType === "medical_support" ? patient.isMedicalSupport
         : patient.isPhysiotherapy;
+      const caseRowType = caseType === "amputee" ? "prosthetic" : caseType;
+      const hasCaseRow = flagOn
+        ? ((await db.execute(sql`SELECT 1 FROM patient_cases WHERE patient_id = ${patientId}
+             AND case_type = ${caseRowType} LIMIT 1`)).rows ?? []).length > 0
+        : false;
+      const alreadyHas = flagOn && hasCaseRow;
       if (alreadyHas) return res.status(409).json({ message: "هذا النوع مفعّل أصلاً على ملف المريض" });
 
       // Only allow the type-specific descriptive fields through.
