@@ -30,7 +30,7 @@ import {
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
-import { reopenClosedCaseTx } from "../patient_cases/reopen";
+import { reopenClosedCaseAuditedTx } from "../patient_cases/reopen";
 import {
   cancelScaffoldRequestsForEpisode, retireFollowupForCancelledEpisode,
 } from "../patient_cases/disposal";
@@ -630,7 +630,10 @@ export async function startDeviceEpisodeTx(
   //  سبعةَ قرّاءٍ يشترطون `status = 'active'`. والصفُّ نفسُه يُفتَح — بكلفته
   //  وتفاصيله وتاريخه كما هي — تحت القفل الذي أُخذ لتوّه.
   if (String(caseRow.status) === "closed") {
-    await reopenClosedCaseTx(tx, Number(caseRow.id));
+    //  **ويُكتب في التدقيق ويُقال للموظّف** (§4.ar البند ٣) — كان الفتحُ هنا صامتاً.
+    await reopenClosedCaseAuditedTx(tx, {
+      caseId: Number(caseRow.id), reason: "فتح طلب جهاز / بيع جزء", actor: { userId: params.createdBy },
+    });
   }
 
   //  ══ **لم يعد فتحُ حلقةٍ جديدة يُرفَض لمجرّد وجود حلقةٍ أخرى مفتوحة**

@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { toEnglishDigits } from "./lib/utils";
+import { toast } from "./hooks/use-toast";
 
 // Deploy-safety: after a new release, an app that was ALREADY OPEN still holds
 // references to the PREVIOUS build's hashed lazy-chunk URLs. Navigating then
@@ -47,6 +48,15 @@ window.addEventListener("vite:preloadError", (event) => {
         localStorage.removeItem("branch_session");
         localStorage.removeItem("admin_verified");
         window.location.reload();
+      }
+      //  **إعادةُ فتح قسمٍ مغلق تُقال للموظّف** (§4.ar البند ٣): الخادمُ يكتب الترويسةَ على الردّ الناجح
+      //  لأيّ بابٍ أعاد فتحَ قسم (خدمةٌ جديدة، طلبُ جهاز، صيانة، معاينة، إضافةُ نوع حالة، تسعيرُ جلسات).
+      const reopened = res.headers.get("X-Case-Reopened");
+      if (reopened) {
+        toast({
+          title: "أُعيد فتح قسمٍ مغلق",
+          description: `أُعيد فتح قسم «${decodeURIComponent(reopened)}» لهذا المريض لأنه عاد لخدمة — وسُجّل ذلك في سجلّ التدقيق.`,
+        });
       }
     } catch {
       /* never let the guard break a request */

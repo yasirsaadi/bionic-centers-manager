@@ -47,6 +47,43 @@ export async function reopenClosedCaseTx(
   return (r.rows ?? []).length > 0;
 }
 
+const CASE_LABEL: Record<string, string> = {
+  prosthetic: "أطراف صناعية", medical_support: "مساند طبية", physiotherapy: "علاج طبيعي",
+};
+
+/**
+ * **الفتحُ من إغلاقٍ لا يقع صامتاً** (§4.ar البند ٣ — قرارُ المالك «أ»، ٢٠٢٦-٠٩-٢٧).
+ *
+ * الحالةُ المغلقةُ تُفتَح **حين يعود المريضُ لخدمة** وحده: خدمةٌ جديدة، طلبُ جهازٍ أو بيعُ جزء، صيانةٌ، معاينةُ
+ * طبيب، إضافةُ نوع حالة، تسعيرُ جلسات. وكلُّ فتحٍ منها يُكتب في `audit_log` (مَن ولماذا) داخل المعاملة نفسِها.
+ * وما عداها — مزامنةٌ في الخلفية، دمجُ ملفّين، إعادةُ وسم دفعة، تنقيحُ معاينة — **لا يفتح أبداً**.
+ *
+ * يُرجع `{ caseType }` إن وقع الفتحُ فعلاً، و`null` إن كانت نشطةً أصلاً — فيستطيع المنادي أن يُخبر الموظّف.
+ */
+export async function reopenClosedCaseAuditedTx(
+  tx: Executor,
+  params: { caseId: number; reason: string; actor?: { userId?: number | null; userName?: string | null } },
+): Promise<{ caseType: string; label: string } | null> {
+  if (!(await reopenClosedCaseTx(tx, params.caseId))) return null;
+  const r = await tx.execute(sql`SELECT patient_id, case_type, branch_id FROM patient_cases WHERE id = ${params.caseId}`);
+  const row = (r.rows ?? [])[0] as any;
+  const caseType = String(row?.case_type ?? "");
+  const label = CASE_LABEL[caseType] ?? caseType;
+  const { logAudit } = await import("../accounting/ledger");
+  const { noteCaseReopened } = await import("./reopen_notice");
+  noteCaseReopened(label);
+  await logAudit({
+    entityType: "patient_case", entityId: params.caseId, action: "update",
+    userId: params.actor?.userId ?? null, userName: params.actor?.userName ?? null,
+    branchId: row?.branch_id ?? null,
+    oldValues: { status: "closed" },
+    newValues: { status: "active", caseType, patientId: row?.patient_id ?? null, reopenedBy: params.reason },
+    notes: `إعادة فتح حالة ${label} المغلقة — ${params.reason}`,
+    tx,
+  });
+  return { caseType, label };
+}
+
 // ══ **والخيطُ الهدفُ يُضمَن وجودُه حين يُصحَّح نوعُ طلبٍ** (٤.y، تكملة) ════
 //
 // الطبيبُ يبدّل نوعَ الطلب إلى اختصاصٍ **لا خيطَ له على الملفّ بعد**. ولا
@@ -64,7 +101,11 @@ export async function reopenClosedCaseTx(
 // **ورفضٌ في أيّ خطوةٍ بعدها يتراجع عنه معها** — فالصفُّ داخل المعاملة.
 export async function ensureActiveCaseTx(
   tx: Executor,
-  params: { patientId: number; caseType: string; branchId: number | null },
+  params: {
+    patientId: number; caseType: string; branchId: number | null;
+    /** مَن يفتح ولماذا — الفتحُ من إغلاقٍ يُكتب في التدقيق (§4.ar البند ٣). */
+    reason?: string; actor?: { userId?: number | null; userName?: string | null };
+  },
 ): Promise<number> {
   const ins = await tx.execute(sql`
     INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
@@ -84,6 +125,8 @@ export async function ensureActiveCaseTx(
   const row = (got.rows ?? [])[0];
   if (!row) throw new Error("ensureActiveCaseTx: تعذّر فتح خيط الاختصاص");
   const id = Number(row.id);
-  if (String(row.status) === "closed") await reopenClosedCaseTx(tx, id);
+  if (String(row.status) === "closed") {
+    await reopenClosedCaseAuditedTx(tx, { caseId: id, reason: params.reason ?? "معاينة طبيب", actor: params.actor });
+  }
   return id;
 }
