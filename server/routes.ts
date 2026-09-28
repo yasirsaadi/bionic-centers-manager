@@ -40,7 +40,7 @@ import * as discountStore from "./discounts/store";
 import {
   buildPatientSearch, hasTrigram, searchTieBreaker,
 } from "./patient_search/sql";
-import { patientActiveOnDate, patientActiveOnDateForService, patientHasService, patientHasServiceAs, isPatientService } from "./patient_activity";
+import { patientActiveOnDate, patientActiveOnDateForService, patientActiveBetween, patientActiveBetweenForService, patientHasService, patientHasServiceAs, isPatientService } from "./patient_activity";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨).
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
@@ -1991,6 +1991,15 @@ export async function registerRoutes(
     //  `services=physiotherapy,prosthetic`. وغيابُها (أو الثلاثة معاً، فالنافذةُ لا ترسلها حينئذٍ) = الكلّ.
     const services = Array.from(new Set(String(req.query.services ?? "").split(",").map((x) => x.trim())))
       .filter(isPatientService);
+    //  **فترةُ التصدير** (طلبُ المالك ٢٠٢٦-٠٩-٢٨): `activeFrom`/`activeTo` (YYYY-MM-DD، يومان من أيام بغداد شاملان) —
+    //  مَن كان له نشاطٌ في الفترة (المصادرُ الستّة نفسُها)، ومع `services` نشاطُ ذلك القسم وحده. وتتقدّم على `visitDate`
+    //  (اليومُ الواحد فترةٌ طرفاها واحد)، ويتقدّم عليهما البحث كما كان. وطرفان مقلوبان يُرتَّبان لا يُردّان.
+    const isYmd = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const activeRange = isYmd(req.query.activeFrom) && isYmd(req.query.activeTo)
+      ? (req.query.activeFrom <= req.query.activeTo
+          ? { from: req.query.activeFrom, to: req.query.activeTo }
+          : { from: req.query.activeTo, to: req.query.activeFrom })
+      : null;
 
     //  **والمحذوفُ لا يظهر في السجلّ** (ترحيل ٠٦٨) — لا في الصفحة ولا في
     //  العدّاد ولا في نتيجة بحثٍ باسمٍ أو رمز. وبابُه «المحذوفات» وحدها.
@@ -2032,6 +2041,10 @@ export async function registerRoutes(
       conditions.push(built.where);
       searchRank = built.rank;
       searchTie = searchTieBreaker(search, { trigram });
+    } else if (activeRange) {
+      conditions.push(services.length
+        ? or(...services.map((sv) => patientActiveBetweenForService(activeRange.from, activeRange.to, sv)))!
+        : patientActiveBetween(activeRange.from, activeRange.to));
     } else if (visitDate) {
       // ══ **«مرضى اليوم» تعني نشاطاً حقيقياً لا صفَّ زيارة** ═══════════
       //  كان الشرط يسأل جدول الزيارات وحده، والزيارةُ صفٌّ يُنشئه الموظّف
@@ -2046,7 +2059,7 @@ export async function registerRoutes(
         ? or(...services.map((sv) => patientActiveOnDateForService(visitDate, sv)))!
         : patientActiveOnDate(visitDate));
     }
-    if (services.length && !(visitDate && !search)) {
+    if (services.length && !((visitDate || activeRange) && !search)) {
       conditions.push(or(...services.map((sv) => patientHasService(sv)))!);
     }
     const where = conditions.length ? and(...conditions) : sql`TRUE`;
