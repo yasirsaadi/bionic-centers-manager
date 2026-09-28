@@ -82,6 +82,17 @@ async function main() {
       await names(`services=physiotherapy`), [A.id, B.id].sort((m, n) => m - n));
     same("وقيمةٌ غريبة لا ترشّح شيئاً", await names(`visitDate=${DAY}&services=xyz`), all);
     same("ويومٌ آخر لا يُظهر أحداً بالقسم", await names(`visitDate=2026-01-16&services=physiotherapy`), []);
+
+    // ══ **الفترة** (طلبُ المالك ٢٠٢٦-٠٩-٢٨): `activeFrom`/`activeTo` — نشاطٌ بين يومين شاملَين ══
+    same("فترةٌ تشمل اليوم ⟵ الأربعة", await names(`activeFrom=2026-01-10&activeTo=2026-01-20`), all);
+    same("**فترةٌ + علاج طبيعي ⟵ أ وحده** (قسمُ النشاط لا أعلامُ الملفّ)",
+      await names(`activeFrom=2026-01-01&activeTo=2026-01-31&services=physiotherapy`), [A.id]);
+    same("**والطرفان شاملان** — فترةٌ تنتهي يومَ النشاط تشمله",
+      await names(`activeFrom=2026-01-01&activeTo=${DAY}&services=medical_support`), [C.id]);
+    same("وفترةٌ لا تشمله ⟵ لا أحد", await names(`activeFrom=2026-01-16&activeTo=2026-02-15`), []);
+    same("**والفترةُ تتقدّم على visitDate** (يومٌ خارجها لا يرشّح)",
+      await names(`visitDate=2026-03-01&activeFrom=2026-01-01&activeTo=2026-01-31&services=prosthetic`), [B.id]);
+    same("وطرفان مقلوبان يُرتَّبان", await names(`activeFrom=2026-01-31&activeTo=2026-01-01&services=prosthetic`), [B.id]);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     //  تنظيفٌ كي تُعاد الحزمةُ على القاعدة نفسِها.

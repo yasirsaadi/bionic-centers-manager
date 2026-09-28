@@ -66,22 +66,30 @@ export type PatientActivitySource = (typeof PATIENT_ACTIVITY_SOURCES)[number];
  * @param date `YYYY-MM-DD` — يومُ بغداد كما اختاره المستخدم.
  */
 export function patientActiveOnDate(date: string): SQL {
+  return patientActiveBetween(date, date);
+}
+
+/**
+ * **النشاطُ في فترة** (تصديرُ السجلّ بالتاريخ — طلبُ المالك ٢٠٢٦-٠٩-٢٨): مصادرُ `patientActiveOnDate` الستّة نفسُها،
+ * كلٌّ بين يومَي بغداد `from` و`to` شاملَين. واليومُ الواحد فترةٌ طرفاها واحد — فالشرطان شرطٌ واحد لا نسختان.
+ */
+export function patientActiveBetween(from: string, to: string): SQL {
   const P = "patients.id";
   return sql`(
     -- ① سُجِّل اليوم — ولو لم تُفتح له زيارةٌ بعد.
-    ${bgdNaive("patients.created_at")} = ${date}::date
+    ${bgdNaive("patients.created_at")} BETWEEN ${from}::date AND ${to}::date
     -- ② زيارةٌ غيرُ محذوفة (الحذفُ الناعم يُحترَم كما في كل قراءة).
     OR EXISTS (
       SELECT 1 FROM visits v
        WHERE v.patient_id = ${sql.raw(P)}
          AND v.deleted_at IS NULL
-         AND ${bgdNaive("v.visit_date")} = ${date}::date
+         AND ${bgdNaive("v.visit_date")} BETWEEN ${from}::date AND ${to}::date
     )
     -- ③ دفعةٌ على حسابه.
     OR EXISTS (
       SELECT 1 FROM payments pm
        WHERE pm.patient_id = ${sql.raw(P)}
-         AND ${bgdNaive("pm.date")} = ${date}::date
+         AND ${bgdNaive("pm.date")} BETWEEN ${from}::date AND ${to}::date
     )
     -- ④ معاينةٌ وقّعها الطبيب — **الفعّالة وحدها**.
     --    معاينةٌ أُلغيت (ترحيل ٠٦١) لا تُثبت حضوراً: أشيعُ سببٍ للإلغاء
@@ -89,20 +97,20 @@ export function patientActiveOnDate(date: string): SQL {
     OR EXISTS (
       SELECT 1 FROM medical_exams me
        WHERE me.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("me.signed_at")} = ${date}::date
+         AND ${bgdTz("me.signed_at")} BETWEEN ${from}::date AND ${to}::date
          AND ${activeExamSql("me")}
     )
     -- ⑤ طلبُ جهازٍ أو جزءٍ جديد.
     OR EXISTS (
       SELECT 1 FROM patient_device_episodes de
        WHERE de.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("de.created_at")} = ${date}::date
+         AND ${bgdTz("de.created_at")} BETWEEN ${from}::date AND ${to}::date
     )
     -- ⑥ أمرُ تصنيعٍ فُتح — بناءً كان (اشترى فبدأ تصنيعُه) أو صيانة.
     OR EXISTS (
       SELECT 1 FROM prosthetic_work_orders wo
        WHERE wo.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("wo.created_at")} = ${date}::date
+         AND ${bgdTz("wo.created_at")} BETWEEN ${from}::date AND ${to}::date
     )
   )`;
 }
@@ -177,40 +185,46 @@ export function patientHasServiceAs(alias: string, service: PatientService): SQL
  * بأقسام الملفّ. فمريضٌ بقسمين جاء البارحة لقياس طرفٍ وحده **لا يظهر** تحت «علاج طبيعي».
  */
 export function patientActiveOnDateForService(date: string, service: PatientService): SQL {
+  return patientActiveBetweenForService(date, date, service);
+}
+
+/** **نشاطُ الفترة من هذا القسم وحده** — كـ`patientActiveOnDateForService` بين يومَي بغداد شاملَين. */
+export function patientActiveBetweenForService(from: string, to: string, service: PatientService): SQL {
   const P = "patients.id";
   const caseOf = (col: string) =>
     sql.raw(`${col} IN (SELECT pc.id FROM patient_cases pc WHERE pc.patient_id = ${P} AND pc.case_type = `);
+  const within = (expr: SQL) => sql`${expr} BETWEEN ${from}::date AND ${to}::date`;
   return sql`(
-    (${bgdNaive("patients.created_at")} = ${date}::date AND ${patientHasService(service)})
+    (${within(bgdNaive("patients.created_at"))} AND ${patientHasService(service)})
     OR EXISTS (
       SELECT 1 FROM visits v
        WHERE v.patient_id = ${sql.raw(P)} AND v.deleted_at IS NULL
-         AND ${bgdNaive("v.visit_date")} = ${date}::date
+         AND ${within(bgdNaive("v.visit_date"))}
          AND ${caseOf("v.case_id")}${service})
     )
     OR EXISTS (
       SELECT 1 FROM payments pm
        WHERE pm.patient_id = ${sql.raw(P)}
-         AND ${bgdNaive("pm.date")} = ${date}::date
+         AND ${within(bgdNaive("pm.date"))}
          AND ${caseOf("pm.case_id")}${service})
     )
     OR EXISTS (
       SELECT 1 FROM medical_exams me
        WHERE me.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("me.signed_at")} = ${date}::date
+         AND ${within(bgdTz("me.signed_at"))}
          AND me.case_type = ${service}
          AND ${activeExamSql("me")}
     )
     OR EXISTS (
       SELECT 1 FROM patient_device_episodes de
        WHERE de.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("de.created_at")} = ${date}::date
+         AND ${within(bgdTz("de.created_at"))}
          AND ${caseOf("de.case_id")}${service})
     )
     OR EXISTS (
       SELECT 1 FROM prosthetic_work_orders wo
        WHERE wo.patient_id = ${sql.raw(P)}
-         AND ${bgdTz("wo.created_at")} = ${date}::date
+         AND ${within(bgdTz("wo.created_at"))}
          AND wo.service_type = ${service}
     )
   )`;

@@ -22,6 +22,10 @@ import {
   EXPORT_SERVICES, ALL_EXPORT_SERVICES, exportServicesParam, exportServicesLabel, exportServicesFileTag,
   type ExportService,
 } from "./registry_export_services";
+import {
+  EXPORT_PERIODS, exportPeriodRange, exportPeriodLabel, exportPeriodFileTag, baghdadToday,
+  type ExportPeriod,
+} from "./registry_export_period";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PhysioPricingDialog } from "@/components/PhysioPricingDialog";
@@ -367,10 +371,17 @@ export default function PatientsList() {
   // Exports need the full filtered list (not just the visible page) — fetch
   // it on demand with the same filters.
   //  **وأقسامُ التصدير** يختارها الموظّفُ في النافذة قبل Excel أو PDF — الثلاثةُ افتراضاً (= الكلّ).
-  const fetchAllForExport = async (services: readonly string[] = ALL_EXPORT_SERVICES): Promise<RegistryRow[]> => {
+  //  **وفترتُه** (طلبُ المالك ٢٠٢٦-٠٩-٢٨): الفترةُ في النافذة هي الحَكَم — تحلّ محلّ يوم التبويب، و«الكل» بلا تاريخ.
+  const fetchAllForExport = async (
+    services: readonly string[] = ALL_EXPORT_SERVICES,
+    period: ExportPeriod = { kind: "all" },
+  ): Promise<RegistryRow[]> => {
     const params = buildRegistryParams(1, 10000);
     const svc = exportServicesParam(services);
     if (svc) params.set("services", svc);
+    params.delete("visitDate");
+    const range = exportPeriodRange(period, baghdadToday());
+    if (range) { params.set("activeFrom", range.from); params.set("activeTo", range.to); }
     const res = await fetch(`/api/patients/registry?${params}`, { credentials: "include" });
     if (!res.ok) return [];
     return (await res.json()).rows;
@@ -399,21 +410,37 @@ export default function PatientsList() {
   //  **نافذةُ اختيار الأقسام** قبل التصدير (طلبُ المالك ٢٠٢٦-٠٩-٢٧): قسمٌ أو قسمان أو الكلّ.
   const [exportKind, setExportKind] = useState<"excel" | "pdf" | null>(null);
   const [exportServices, setExportServices] = useState<ExportService[]>(ALL_EXPORT_SERVICES);
+  const [exportPeriod, setExportPeriod] = useState<ExportPeriod>({ kind: "all" });
   const toggleExportService = (key: ExportService, on: boolean) =>
     setExportServices((prev) => (on ? Array.from(new Set([...prev, key])) : prev.filter((k) => k !== key)));
+  //  تُفتَح النافذةُ على فترة التبويب: «حسب التاريخ» ⟵ ذلك اليوم، و«جميع المرضى» ⟵ الكل.
+  const openExport = (kind: "excel" | "pdf") => {
+    setExportPeriod(viewMode === "date" ? { kind: "day", anchor: selectedDate } : { kind: "all" });
+    setExportKind(kind);
+  };
   const runExport = () => {
     const kind = exportKind;
     setExportKind(null);
-    if (kind === "excel") void exportToExcel(exportServices);
-    if (kind === "pdf") void exportToPDF(exportServices);
+    if (kind === "excel") void exportToExcel(exportServices, exportPeriod);
+    if (kind === "pdf") void exportToPDF(exportServices, exportPeriod);
   };
+  //  **كلُّ فرعٍ بفرعه**: الموظّفُ مقيَّدٌ بفرعه في الخادم (ومعه ما أُتيح له)، والمسؤولُ بالفرع المختار في الشاشة.
+  //  واسمُ الفرع يُكتب في عنوان PDF واسم الملفّ، فلا يُخلَط ملفُّ فرعٍ بآخر.
+  const exportBranchLabel = isAdmin
+    ? (selectedBranch === "all" ? "كل الفروع" : getBranchName(Number(selectedBranch)))
+    : (branchSession?.branchName || getBranchName(userBranchId || 0));
+  const exportBranchTag = isAdmin && selectedBranch === "all" ? "all-branches" : `branch-${isAdmin ? selectedBranch : (userBranchId ?? "")}`;
+  const EMPTY_EXPORT = "لا يوجد مرضى بهذه الأقسام في هذه الفترة. جرّب فترةً أوسع أو أقساماً أخرى.";
 
-  const exportToExcel = async (services: readonly string[] = ALL_EXPORT_SERVICES) => {
+  const exportToExcel = async (
+    services: readonly string[] = ALL_EXPORT_SERVICES,
+    period: ExportPeriod = { kind: "all" },
+  ) => {
     const XLSX = await import("xlsx");
-    const dataToExport = await fetchAllForExport(services);
+    const dataToExport = await fetchAllForExport(services, period);
 
     if (dataToExport.length === 0) {
-      alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
+      alert(EMPTY_EXPORT);
       return;
     }
 
@@ -457,19 +484,24 @@ export default function PatientsList() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "المرضى");
     
-    const dateStr = viewMode === "date" ? selectedDate : "all";
-    XLSX.writeFile(wb, `patients_${dateStr}_${exportServicesFileTag(services)}.xlsx`);
+    const today = baghdadToday();
+    XLSX.writeFile(wb,
+      `patients_${exportBranchTag}_${exportPeriodFileTag(period, today)}_${exportServicesFileTag(services)}.xlsx`);
   };
 
-  const exportToPDF = async (services: readonly string[] = ALL_EXPORT_SERVICES) => {
-    const dataToExport = await fetchAllForExport(services);
+  const exportToPDF = async (
+    services: readonly string[] = ALL_EXPORT_SERVICES,
+    period: ExportPeriod = { kind: "all" },
+  ) => {
+    const dataToExport = await fetchAllForExport(services, period);
 
     if (dataToExport.length === 0) {
-      alert("لا يوجد مرضى للتصدير. جرب اختيار تاريخ آخر أو تبويب 'جميع المرضى'");
+      alert(EMPTY_EXPORT);
       return;
     }
-    
-    const dateLabel = `${viewMode === "date" ? `التاريخ: ${selectedDate}` : "جميع المرضى"} — ${exportServicesLabel(services)}`;
+
+    const dateLabel = `${exportBranchLabel} — ${exportPeriodLabel(period, baghdadToday())} — ${exportServicesLabel(services)}`
+      + ` — ${dataToExport.length} مريض`;
     
     const printContent = `
       <!DOCTYPE html>
@@ -654,7 +686,7 @@ export default function PatientsList() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setExportKind("excel")}
+                onClick={() => openExport("excel")}
                 className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
                 data-testid="button-export-excel"
               >
@@ -664,7 +696,7 @@ export default function PatientsList() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setExportKind("pdf")}
+                onClick={() => openExport("pdf")}
                 className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
                 data-testid="button-export-pdf"
               >
@@ -935,7 +967,7 @@ export default function PatientsList() {
       <Dialog open={exportKind !== null} onOpenChange={(o) => { if (!o) setExportKind(null); }}>
         <DialogContent dir="rtl" className="max-w-sm" data-testid="dialog-export-services">
           <DialogHeader>
-            <DialogTitle>تصدير {exportKind === "pdf" ? "PDF" : "Excel"} — اختر الأقسام</DialogTitle>
+            <DialogTitle>تصدير {exportKind === "pdf" ? "PDF" : "Excel"} — الأقسام والفترة</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             {EXPORT_SERVICES.map((s) => (
@@ -948,10 +980,59 @@ export default function PatientsList() {
                 <span className="text-sm">{s.label}</span>
               </label>
             ))}
+            {/*  ══ **الفترة** (طلبُ المالك ٢٠٢٦-٠٩-٢٨) — الفتراتُ المتعارفُ عليها في التقارير ══ */}
+            <div className="border-t pt-3 space-y-2">
+              <div className="text-sm font-semibold">الفترة</div>
+              <div className="grid grid-cols-3 gap-1.5" data-testid="group-export-period">
+                {EXPORT_PERIODS.map((p) => (
+                  <Button
+                    key={p.key}
+                    type="button"
+                    size="sm"
+                    variant={exportPeriod.kind === p.key ? "default" : "outline"}
+                    className="h-8 text-xs px-1"
+                    onClick={() => setExportPeriod((prev) => ({
+                      kind: p.key,
+                      anchor: p.key === "month"
+                        ? (prev.kind === "month" && prev.anchor ? prev.anchor : baghdadToday().slice(0, 7))
+                        : (p.key === "day" || p.key === "week")
+                          ? (prev.anchor && prev.anchor.length === 10 ? prev.anchor : baghdadToday())
+                          : undefined,
+                    }))}
+                    data-testid={`button-export-period-${p.key}`}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+              {(exportPeriod.kind === "day" || exportPeriod.kind === "week") && (
+                <Input
+                  type="date"
+                  value={exportPeriod.anchor ?? ""}
+                  max={baghdadToday()}
+                  onChange={(e) => setExportPeriod({ kind: exportPeriod.kind, anchor: e.target.value })}
+                  className="h-9"
+                  data-testid="input-export-period-date"
+                />
+              )}
+              {exportPeriod.kind === "month" && (
+                <Input
+                  type="month"
+                  value={exportPeriod.anchor ?? ""}
+                  max={baghdadToday().slice(0, 7)}
+                  onChange={(e) => setExportPeriod({ kind: "month", anchor: e.target.value })}
+                  className="h-9"
+                  data-testid="input-export-period-month"
+                />
+              )}
+              <p className="text-xs font-medium text-primary" data-testid="text-export-period">
+                {exportPeriodLabel(exportPeriod, baghdadToday())} · {exportBranchLabel}
+              </p>
+            </div>
             <p className="text-xs text-muted-foreground">
-              {viewMode === "date"
-                ? "في «حسب التاريخ» يُصدَّر مَن كان نشاطُه في ذلك اليوم من القسم المختار."
-                : "يُصدَّر مَن في ملفّه القسمُ المختار. والأقسامُ الثلاثة معاً = كلّ المرضى."}
+              {exportPeriod.kind === "all"
+                ? "يُصدَّر مَن في ملفّه القسمُ المختار. والأقسامُ الثلاثة مع «الكل» = كلّ المرضى."
+                : "يُصدَّر مَن كان له في الفترة نشاطٌ من القسم المختار: تسجيل أو زيارة أو دفعة أو معاينة أو طلب جهاز أو أمر تصنيع."}
             </p>
           </div>
           <DialogFooter className="gap-2">
