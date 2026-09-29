@@ -27,6 +27,7 @@ import { AmiriRegular } from "@/lib/amiri-font";
 import ArabicReshaper from "arabic-reshaper";
 import { useBranchSession } from "@/components/BranchGate";
 import { formatDateIraq, getTodayIraq } from "@/lib/utils";
+import { patientDepartmentsLabel } from "@shared/medical";
 import { 
   DollarSign,
   Banknote,
@@ -5027,11 +5028,8 @@ export default function Accounting() {
                                         ? "medical_support"
                                         : "";
                                       const description =
-                                        patient.medicalCondition?.trim() ||
-                                        (patient.isAmputee ? "خدمة طرف صناعي" :
-                                         patient.isPhysiotherapy ? "علاج طبيعي" :
-                                         patient.isMedicalSupport ? "مساند طبية" :
-                                         "خدمة طبية");
+                                        //  رمزُ القسم (`amputee`) لا يُكتب خاماً في الفاتورة — النصُّ الحرّ أو أقسامُه بالعربية (البند ٣١).
+                                        patientDepartmentsLabel(patient) || "خدمة طبية";
                                       const unitPrice = 0;
                                       setInvoiceItems([
                                         {
@@ -5372,7 +5370,7 @@ export default function Accounting() {
                     {patientRecord.medicalCondition && (
                       <div className="col-span-2">
                         <span className="text-muted-foreground">الحالة الطبية: </span>
-                        <span>{patientRecord.medicalCondition}</span>
+                        <span>{patientDepartmentsLabel(patientRecord)}</span>
                       </div>
                     )}
                     {patientRecord.classification && (
