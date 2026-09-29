@@ -784,12 +784,7 @@ export function NoExamOperationDialog({
           </div>
           {/*  **ولا حقلَ خصمٍ مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق لا
               بخصمٍ يُمنَح، فلا يُسأل الموظّفُ سؤالاً لا معنى له. */}
-          {!warrantyOn && !mayDiscount && (
-            <p className="text-xs text-muted-foreground" data-testid="discount-no-authority">
-              الخصم والخدمة المجّانية يحتاجان صلاحية «اعتماد الخصومات» — احفظ بالسعر الكامل، أو اطلبه من مدير الفرع.
-            </p>
-          )}
-          {!warrantyOn && mayDiscount && (
+          {!warrantyOn && (mayDiscount ? (
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
               <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
@@ -798,7 +793,11 @@ export function NoExamOperationDialog({
                 صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
               </p>
             </div>
-          )}
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="discount-no-authority">
+              الخصم والخدمة المجّانية يحتاجان صلاحية «اعتماد الخصومات» — احفظ بالسعر الكامل، أو اطلبه من مدير الفرع.
+            </p>
+          ))}
           <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
             data-testid="no-exam-op-final-price">
             {offer.ok ? (
