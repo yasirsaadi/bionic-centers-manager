@@ -154,10 +154,11 @@ async function main() {
     [ADMIN, "admin", "المسؤول"],
     [MGR, "branch_manager", "مدير بغداد"],
   ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-             VALUES ($1,$2,'x',$4,$3,1,'[1,2]'::jsonb,true)
+    //  **ومفتاحُ «حذف المرضى» مُشغَّل** كما يتركه الترحيلُ ٠٨٩ لمدير الفرع (§4.ar البند ٢٤).
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,can_delete_patients)
+             VALUES ($1,$2,'x',$4,$3,1,'[1,2]'::jsonb,true,true)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, display_name=EXCLUDED.display_name,
-               is_active=true, branch_id=1, branch_ids='[1,2]'::jsonb`,
+               is_active=true, branch_id=1, branch_ids='[1,2]'::jsonb, can_delete_patients=true`,
       [id, `pm_u${id}`, role, name]);
   }
   await cleanup();
