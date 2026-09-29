@@ -60,7 +60,7 @@ function same(msg: string, got: unknown, expected: unknown, detail = "") {
 const PORT = 6831;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-التكامل-النهائي";
-const MANAGER = 9841, DOCTOR = 9842, EXPERT = 9843, RECEPTION = 9844;
+const MANAGER = 9841, DOCTOR = 9842, EXPERT = 9843, RECEPTION = 9844, ADMIN = 9845;
 
 const S = {
   manager: { userId: MANAGER, role: "branch_manager", isAdmin: false, branchId: 1,
@@ -74,7 +74,8 @@ const S = {
   reception: { userId: RECEPTION, role: "reception", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "recv",
     permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true } },
-  admin: { userId: MANAGER, role: "admin", isAdmin: true, branchId: 1,
+  //  **حسابٌ مسؤولٌ مستقلّ** (§4.ar البند ٧): كانت تستعير صفَّ `MANAGER` (مدير فرع)، والدورُ يُعاد من الصفّ مع كلّ طلب.
+  admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1,
     accessibleBranches: [1], displayName: "adm",
     permissions: { canViewPatients: true, canAddPatients: true, canEditPayments: true, canEditVisits: true } },
 };
@@ -174,8 +175,8 @@ async function cleanup() {
   await q(`DELETE FROM medical_exam_revisions WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`);
   await q(`DELETE FROM medical_exams WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM journal_lines WHERE patient_id IN (${ids})`);
-  await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE created_by = ANY(ARRAY[${MANAGER},${DOCTOR},${EXPERT},${RECEPTION}]))`);
-  await q(`DELETE FROM journal_entries WHERE created_by = ANY(ARRAY[${MANAGER},${DOCTOR},${EXPERT},${RECEPTION}])`);
+  await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE created_by = ANY(ARRAY[${MANAGER},${DOCTOR},${EXPERT},${RECEPTION},${ADMIN}]))`);
+  await q(`DELETE FROM journal_entries WHERE created_by = ANY(ARRAY[${MANAGER},${DOCTOR},${EXPERT},${RECEPTION},${ADMIN}])`);
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
@@ -205,7 +206,7 @@ async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   for (const [id, role, spec] of [
     [MANAGER, "branch_manager", "null"], [DOCTOR, "doctor", '["prosthetic","medical_support"]'],
-    [EXPERT, "prosthetics_expert", "null"], [RECEPTION, "reception", "null"],
+    [EXPERT, "prosthetics_expert", "null"], [RECEPTION, "reception", "null"], [ADMIN, "admin", "null"],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x','موظّف',$3,1,'[1]'::jsonb,true,$4::jsonb)
@@ -740,8 +741,8 @@ async function main() {
     same("ولا صفَّ تاريخيّاً رُبِط بجهاز", linkedAfter, linkedBefore);
   } finally {
     await cleanup();
-    await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR, EXPERT, RECEPTION]]);
-    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[MANAGER, DOCTOR, EXPERT, RECEPTION]]);
+    await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[MANAGER, DOCTOR, EXPERT, RECEPTION, ADMIN]]);
+    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[MANAGER, DOCTOR, EXPERT, RECEPTION, ADMIN]]);
     httpServer.close();
   }
 

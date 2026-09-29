@@ -71,8 +71,8 @@ const PORT = 6874;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-الضمان-والتشابه";
 const TOK = "mw-tok-";
-const ADMIN = 9881, RECV = 9882, EXPERT = 9883, EXPERT2 = 9884, DOC = 9885;
-const USERS = [ADMIN, RECV, EXPERT, EXPERT2, DOC];
+const ADMIN = 9881, RECV = 9882, EXPERT = 9883, EXPERT2 = 9884, DOC = 9885, RECV2 = 9886;
+const USERS = [ADMIN, RECV, EXPERT, EXPERT2, DOC, RECV2];
 
 const S = {
   recv: {
@@ -87,8 +87,9 @@ const S = {
     userId: DOC, role: "doctor", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "الطبيب", permissions: { canWriteMedicalExam: true, canAddPatients: true },
   },
+  //  **حسابٌ مستقلٌّ على الفرع الثاني وحده** (§4.ar البند ٧): كانت تستعير صفَّ `RECV`، والفروعُ تُعاد من الصفّ.
   other: {
-    userId: RECV, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
+    userId: RECV2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "استقبال فرع آخر", permissions: { canAddPatients: true },
   },
 };
@@ -229,13 +230,16 @@ async function main() {
     [EXPERT, "prosthetics_expert", "الخبير الأول"],
     [EXPERT2, "prosthetics_expert", "الخبير الثاني"],
     [DOC, "doctor", "الطبيب"],
+    [RECV2, "reception", "استقبال فرع آخر"],
   ] as any[]) {
+    //  **فروعُ الصفّ = فروعُ الجلسة** (§4.ar البند ٧): الاستقبالُ والطبيبُ على بغداد وحدها، واستقبالُ الفرع الآخر على الثاني.
+    const own = id === RECV2 ? [2] : (id === RECV || id === DOC) ? [1] : [1, 2];
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-             VALUES ($1,$2,'x',$4,$3,1,'[1,2]'::jsonb,true)
+             VALUES ($1,$2,'x',$4,$3,$5,$6::jsonb,true)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role,
                display_name=EXCLUDED.display_name, is_active=true,
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
-      [id, `mw_u${id}`, role, name]);
+      [id, `mw_u${id}`, role, name, own[0], JSON.stringify(own)]);
   }
   await cleanup();
 

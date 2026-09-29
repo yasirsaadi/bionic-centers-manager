@@ -229,6 +229,10 @@ async function main() {
                medical_specialties=EXCLUDED.medical_specialties, is_active=true`,
       [id, `fu_u${id}`, name, role, branch, JSON.stringify([branch]), spec]);
   }
+  //  **«المسؤولُ الطبيب» كما يوجد فعلاً** (§4.ar البند ٧): المسؤوليّةُ من الدور `admin` نفسِه (`isAdmin = role === "admin"`
+  //  عند الدخول وفي كلّ طلب)، والمعاينةُ من عَلَمها — لا دورُ «طبيب» يحمل `isAdmin`، فتلك جلسةٌ لا يُنتجها الدخول،
+  //  والدورُ والمسؤوليّةُ يُعادان من الصفّ مع كلّ طلب. وفروعُه كجلسته.
+  await q(`UPDATE system_users SET role='admin', can_write_medical_exam=true, branch_ids='[1,2]'::jsonb WHERE id=$1`, [ADMIN_DOC]);
   await cleanup();
 
   const app = express();
