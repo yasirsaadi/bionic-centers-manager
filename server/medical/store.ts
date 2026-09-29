@@ -1291,6 +1291,36 @@ export async function reviseExam(
       .where(eq(EX.id, examId))
       .returning();
 
+    // ══ **علاجٌ طبيعيّ صار جهازاً ⟵ «بانتظار الحسم»** (البند ١٠ — §4.ar) ═══
+    //  التوقيعُ الجديد لمعاينة جهاز يفتح متابعتَه في معاملته (`createExam`).
+    //  أمّا تعديلُ معاينةِ علاجٍ طبيعيّ إلى أطراف/مساند فكان يُضيف القسمَ
+    //  ولا يفتح شيئاً — فيخرج المريضُ بلا بطاقةٍ في أيّ طابور. فالقاعدةُ
+    //  هنا هي نفسُها بحرفها: `ensureFollowupForSignedExam` بحرّاسها (لا بعد
+    //  تصنيعٍ أو تسليم، ولا تكرارَ لمتابعةٍ حيّة)، **وداخل نقطة حفظ** — فشلُها
+    //  لا يُسقط تنقيحاً سريرياً. والمعاينةُ المرتبطة بحلقة لا تبلغ هذا:
+    //  تغييرُ اختصاصها مردودٌ أعلاه.
+    const wasDevice = current.caseType === "prosthetic" || current.caseType === "medical_support";
+    const isDevice = values.caseType === "prosthetic" || values.caseType === "medical_support";
+    if (!wasDevice && isDevice && current.deviceEpisodeId === null) {
+      try {
+        await tx.transaction(async (inner: any) => {
+          await ensureFollowupForSignedExam(inner, {
+            patientId: current.patientId,
+            caseId: updated.caseId ?? null,
+            deviceEpisodeId: null,
+            medicalExamId: current.id,
+            branchId: current.branchId ?? null,
+            serviceType: values.caseType as "prosthetic" | "medical_support",
+            deviceCost: values.deviceCost,
+            proposedExpertUserId: values.proposedExpertUserId,
+            actor: { userId: editor.userId, userName: editor.userName },
+          });
+        });
+      } catch (err) {
+        console.error("[medical] opening followup after physio→device revision failed:", err);
+      }
+    }
+
     return updated;
   };
   return opts?.tx ? await body(opts.tx) : await db.transaction(body);

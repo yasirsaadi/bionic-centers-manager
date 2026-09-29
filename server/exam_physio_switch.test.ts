@@ -41,6 +41,8 @@ type Svc = "prosthetic" | "medical_support" | "physiotherapy";
 const S = {
   recv: { userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "استعلامات كربلاء", permissions: { canViewPatients: true, canAddPatients: true } },
+  admin: { userId: 88302, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1],
+    displayName: "المسؤول", permissions: {} },
   doc: { userId: DOC, role: "doctor", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "د. المعاين", permissions: { canViewPatients: true, canWriteMedicalExam: true } },
 };
@@ -268,6 +270,19 @@ async function main() {
     same("ح.٣ **والملفُّ صار مسنداً وحده** — سُحب العلاجُ الطبيعيّ بعد انتقال المعاينة",
       await casesOf(h), ["medical_support"]);
     same("ح.٤ ولا ملاحظةَ تعثّر", revh.body?.switchNote ?? null, null);
+    //  ══ البند ١٠ (§4.ar): **والمريضُ يدخل «بانتظار الحسم»** كأنّ معاينةَ الجهاز وُقّعت للتوّ ══
+    const fuOf = async (p: number) => q<{ service_type: string; status: string; medical_exam_id: number }>(
+      `SELECT service_type, status, medical_exam_id FROM post_exam_followups WHERE patient_id=$1 ORDER BY id`, [p]);
+    same("ح.٥ **متابعةُ قرار المريض فُتحت** — على المساند، بانتظار قراره، ومن هذه المعاينة",
+      await fuOf(h), [{ service_type: "medical_support", status: "awaiting_patient_decision",
+        medical_exam_id: Number(exh.body?.id) }]);
+    const queue = await http("GET", "/api/followups/decision-queue?state=waiting&limit=200", S.admin);
+    check(queue.status === 200 && (queue.body?.rows ?? []).some((r: any) => Number(r.patientId) === h),
+      "ح.٦ **وظهر في طابور «بانتظار الحسم»**", `${queue.status} ${JSON.stringify(queue.body)?.slice(0, 200)}`);
+    const revh2 = await http("PATCH", `/api/medical/exams/${exh.body?.id}`, S.doc, {
+      caseType: "medical_support", diagnosis: "يحتاج مسنداً — تصحيحُ فقرة", prescription: {},
+    });
+    same("ح.٧ وتعديلٌ نصّيٌّ لاحق **لا يكرّرها**", [revh2.status < 300, (await fuOf(h)).length], [true, 1]);
 
     // ══ ط. البند ١ — «لا، المريضُ يحتاج القسمين» ═══════════════════════════
     console.log("\n── ط. الطبيبُ: المريضُ يحتاج القسمين ──");
