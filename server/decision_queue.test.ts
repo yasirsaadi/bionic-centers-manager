@@ -310,7 +310,8 @@ async function main() {
   for (const [id, role, branchId, branchIds, name] of [
     [ADMIN, "admin", 1, "[1,2]", "المسؤول"],
     [MANAGER, "branch_manager", 1, "[1]", "مدير الفرع"],
-    [DOC, "doctor", 1, "[1]", "سعد"],
+    //  **فروعُ الصفّ = فروعُ الجلسة** (§4.ar البند ٧): جلسةُ الطبيب بفرعين (قسمُ نطاق الفرع)، والفروعُ تُعاد من الصفّ.
+    [DOC, "doctor", 1, "[1,2]", "سعد"],
     [RECV, "reception", 1, "[1]", "ريام"],
     [ACCT, "accountant", 1, "[1]", "المحاسب"],
     [EXPERT, "prosthetics_expert", 1, "[1]", "الخبير الأول"],
