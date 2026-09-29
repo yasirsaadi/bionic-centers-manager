@@ -183,6 +183,9 @@ function Router() {
       permissions: raw.permissions ?? current?.permissions,
       shift: raw.shift ?? current?.shift,
       language: raw.language ?? current?.language,
+      //  **الفروعُ تتحدّث حيّاً** (§4.ar البند ٧): فرعٌ سُحب يختفي من المبدّل، والفرعُ النشطُ يُسمّى باسمه.
+      accessibleBranches: raw.accessibleBranches ?? current?.accessibleBranches,
+      branchName: raw.branchName ?? current?.branchName,
     } as any);
 
     //  ══ اللقطةُ الحاليّة — نفسُ صيغة `isAdmin || العَلَم` التي يفرضها

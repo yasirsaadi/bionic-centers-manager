@@ -13,6 +13,7 @@ import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notification
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
+import { accessibleBranchesOf, applyFreshUser } from "./auth/session_refresh";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — تعليقُ كتابتين إداريَّتين إلى الأبد ══════
 //  يُزال الملفّ والاستيرادُ معاً بعد تحديد مصدر التعليق. راجع
@@ -416,7 +417,9 @@ export async function registerRoutes(
   app.use(async (req, res, next) => {
     if (!req.path.startsWith("/api")) return next();
     const branchSession = (req.session as any)?.branchSession;
-    if (!branchSession || branchSession.isAdmin || !branchSession.userId) return next();
+    //  **والمسؤولُ ذو الحساب يُقرأ حيّاً كذلك** (§4.ar البند ٧): كان مستثنىً، فتخفيضُه أو تعطيلُه لا يسري حتى
+    //  يخرج. ودخولُ الطوارئ القديم (بلا `userId`) وحده يمرّ بلا لمس.
+    if (!branchSession || !branchSession.userId) return next();
     let fresh: SystemUser | undefined;
     try {
       fresh = await storage.getSystemUser(branchSession.userId);
@@ -424,12 +427,28 @@ export async function registerRoutes(
       console.error("[permissions] تعذّر التحقّقُ من الصلاحيات حيّاً — عطلٌ في القاعدة، فالطلبُ يُردّ لا يُفوَّض بمنحةٍ قديمة:", err);
       return res.status(503).json({ message: "تعذّر التحقّق من الصلاحيات — أعد المحاولة" });
     }
+    //  مسؤولٌ **بلا صفّ** لا يقع من التطبيق — حسابُ المسؤول لا يُحذف ولا يُعطَّل (`ADMIN_ACCOUNT_PROTECTED_MESSAGE`)
+    //  — فيمرّ كما كان قبل البند ٧ (وجلساتُ الاختبار تعتمد عليه). وصفٌّ قائم يُطبَّق حيّاً، ومنه التخفيض.
+    if (!fresh && branchSession.isAdmin) return next();
     if (!fresh || fresh.isActive === false) {
       return req.session.destroy(() => {
         res.status(401).json({ message: "انتهت صلاحية الجلسة — الحساب لم يعد نشطاً، سجّل الدخول من جديد" });
       });
     }
-    branchSession.permissions = buildStoredPermissions(fresh);
+    //  **والفروعُ والدورُ والمسؤوليّةُ مع الصلاحيات** (§4.ar البند ٧) — بقواعد الدخول نفسِها.
+    const { branchChanged, revoked } = applyFreshUser(branchSession, fresh, buildStoredPermissions(fresh));
+    if (revoked) {
+      return req.session.destroy(() => {
+        res.status(401).json({ message: "لم يعد لحسابك فرعٌ تعمل فيه — راجع المسؤول ثمّ سجّل الدخول من جديد" });
+      });
+    }
+    if (branchChanged) {
+      try {
+        branchSession.branchName = branchSession.branchId
+          ? ((await storage.getBranch(branchSession.branchId))?.name ?? "فرع غير معروف")
+          : (branchSession.isAdmin ? "مسؤول النظام" : null);
+      } catch { /* الاسمُ للعرض وحده — لا يحجب الطلب */ }
+    }
     next();
   });
 
@@ -670,10 +689,8 @@ export async function registerRoutes(
           // list this user can act on. For legacy single-branch users
           // it's just [branchId]. The active branchId starts as the
           // first entry; the user can switch via /api/auth/switch-branch.
-          const branchIdsRaw: number[] = Array.isArray(systemUser.branchIds) ? systemUser.branchIds as number[] : [];
-          const accessibleBranches: number[] = branchIdsRaw.length > 0
-            ? branchIdsRaw
-            : (systemUser.branchId ? [systemUser.branchId] : []);
+          //  القاعدةُ نفسُها التي تُعيد بها المِعترِضةُ الحيّة بناءَ الجلسة (البند ٧) — لا نسختان.
+          const accessibleBranches: number[] = accessibleBranchesOf(systemUser);
           const userBranchId = isAdmin ? 0 : (accessibleBranches[0] ?? 0);
 
           // For non-admin users, verify the selected branch matches one
@@ -719,6 +736,7 @@ export async function registerRoutes(
             shift: userShift,
             language: systemUser.language || "ar",
             permissions,
+            branchName,
           };
 
           console.log("System user authenticated:", { username: normalizedUsername, role: systemUser.role, branchId: userBranchId });
@@ -888,6 +906,7 @@ export async function registerRoutes(
     if (!branch) return res.status(404).json({ message: "الفرع غير موجود" });
 
     (req.session as any).branchSession.branchId = targetBranchId;
+    (req.session as any).branchSession.branchName = branch.name;
     res.json({ branchId: targetBranchId, branchName: branch.name });
   });
 
