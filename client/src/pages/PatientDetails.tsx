@@ -322,6 +322,17 @@ export default function PatientDetails() {
     enabled: !!patient?.isPhysiotherapy,
   });
 
+  //  **الخطةُ حُفظت والملفُّ لم يتغيّر** (§4.ar البند ٨): إصاباتُ ملفّ المريض تُكتب بصلاحية «تعديل بيانات المرضى»
+  //  وحدها، فمَن لا يملكها يُقال له ذلك لا يظنّ أن الملفَّ تحدّث.
+  const warnInjuriesNotSynced = (result: any) => {
+    if (result?.injuriesSynced === false) {
+      toast({
+        title: "حُفظت الخطة — ولم تتغيّر إصاباتُ ملفّ المريض",
+        description: "تحديثُ إصابات الملفّ يحتاج صلاحية «تعديل بيانات المرضى». اطلبها من المسؤول أو من مدير الفرع.",
+      });
+    }
+  };
+
   const createTreatmentPlanMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
       const res = await fetch(`/api/patients/${id}/treatment-plans`, {
@@ -336,12 +347,13 @@ export default function PatientDetails() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
       setShowTreatmentPlanDialog(false);
       resetTreatmentPlanForm();
+      warnInjuriesNotSynced(result);
       toast({ title: t.patientDetails.savedSuccess, description: t.patientDetails.planCreated });
     },
     onError: (error: Error) => {
@@ -363,13 +375,14 @@ export default function PatientDetails() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id), "treatment-plans"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patients", Number(id)] });
       setShowTreatmentPlanDialog(false);
       setEditingTreatmentPlan(null);
       resetTreatmentPlanForm();
+      warnInjuriesNotSynced(result);
       toast({ title: t.patientDetails.updated, description: t.patientDetails.planUpdated });
     },
     onError: (error: Error) => {
