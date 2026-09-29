@@ -67,7 +67,7 @@ import {
   classifyCaseDisposal, disposeCaseScaffolding,
   CaseDisposalBlockedError, type CaseScaffolding,
 } from "./patient_cases/disposal";
-import { reopenClosedCaseTx, reopenClosedCaseAuditedTx } from "./patient_cases/reopen";
+import { ensureCaseTx } from "./patient_cases/reopen";
 import { noteCaseReopened } from "./patient_cases/reopen_notice";
 import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
@@ -634,28 +634,18 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
 
 
 
-  let caseId: number;
-  if (existingCase) {
-    caseId = existingCase.id;
+  //  حالةٌ جديدة تُفتَح **بكلفةٍ صفر**: الكلفةُ يكتبها النصفُ الماليّ وحده، فما لم يُعتمَد مبلغُه
+  //  لا يظهر رقمٌ في أيّ تقرير. **وقائمةٌ مغلقةٌ تُفتَح مُدقَّقةً** (§4.ar البند ٣٣): كان البيعُ يُكتب على
+  //  القسم المغلق كما هو — طلبٌ ينتظر البيع، ثمّ أُغلق القسم، ثمّ أُتمّ — فلا يراه قارئٌ يشترط `active`.
+  const ensured = (await ensureCaseTx(tx, {
+    patientId, caseType: serviceType, branchId: opBranchId,
+    create: { cost: 0, details: cleanDetails, costSource: "manual" },
+    reopen: { reason: "إتمام بيع جهاز", actor: { userId: assignedBy } },
+  }))!;
+  const caseId: number = ensured.id;
+  if (!ensured.created) {
     await tx.update(patientCases).set({ details: cleanDetails, updatedAt: new Date() })
       .where(eq(patientCases.id, caseId));
-  } else {
-    //  حالةٌ جديدة تُفتَح **بكلفةٍ صفر**: الكلفةُ يكتبها النصفُ الماليّ
-    //  وحده، فما لم يُعتمَد مبلغُه لا يظهر رقمٌ في أيّ تقرير.
-    const [nc] = await tx.insert(patientCases).values({
-      patientId, branchId: opBranchId, caseType: serviceType, cost: 0,
-      details: cleanDetails, costSource: "manual",
-    }).onConflictDoNothing().returning();
-    if (nc) {
-      caseId = nc.id;
-    } else {
-      // Unique-index race: fall back to the row the concurrent path made.
-      const [raced] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, serviceType)));
-      caseId = raced.id;
-      await tx.update(patientCases).set({ details: cleanDetails, updatedAt: new Date() })
-        .where(eq(patientCases.id, caseId));
-    }
   }
 
   //  الحلقةُ تدخل التصنيع **بلا سعر**: `agreed_cost` معناه «كم قُيِّد في
@@ -1229,7 +1219,10 @@ export class DatabaseStorage implements IStorage {
   //  `tx` اختيارية — حين يكون الفتحُ جزءاً من عمليةٍ أكبر (اعتمادُ خصمٍ على
   //  «خدمة جديدة» مثلاً) ينضمّ إلى معاملة مُستدعيه فيقع الفتحُ والمالُ معاً
   //  أو لا يقع شيء. ومَن لا يمرّر شيئاً يفتح معاملته كما كان دائماً.
-  async ensurePhysiotherapyCase(patientId: number, outerTx?: any): Promise<number | null> {
+  async ensurePhysiotherapyCase(
+    patientId: number, outerTx?: any,
+    actor?: { userId?: number | null; userName?: string | null },
+  ): Promise<number | null> {
     const body = async (tx: any) => {
       //  نفسُ قفل `syncPatientCases` (919) — فلا يتسابق الفتحُ مع مزامنةٍ
       //  جارية على المريض نفسه.
@@ -1237,46 +1230,28 @@ export class DatabaseStorage implements IStorage {
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!p) return null;
 
-      const [existing] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId),
-          eq(patientCases.caseType, "physiotherapy")));
-      if (existing) {
-        //  ══ **والمغلقةُ تُفتَح قبل أن يُكتب عليها دينار** (§4.ar البند ٤) ══
-        //  مريضٌ أنهى علاجَه فأُغلق خيطُه، ثمّ عاد فاشترى «خدمة جديدة»: كان
-        //  المالُ والجلساتُ يُكتبان على الخيط المغلق كما هو — وسبعةُ قرّاءٍ
-        //  يشترطون `status = 'active'` (عدّادُ الجلسات، أدواتُ المساعد، …) فلا
-        //  يراه أحد. والشراءُ **هو** استئنافُ الخدمة، كما يفتح `syncPatientCases`
-        //  ويفتح طلبُ الجهاز (`device_episodes/store.ts`) — بالصفّ نفسِه.
-        if (existing.status === "closed" && await reopenClosedCaseTx(tx, existing.id)) {
-          //  سطرُ التدقيق يكتبه بابُ «خدمة جديدة» باسم الموظّف؛ وهنا يُعلَن للواجهة (§4.ar البند ٣).
-          noteCaseReopened("علاج طبيعي");
-        }
-        //  حالةٌ قائمة والعلمُ منخفض (ملفٌّ قديم) — يُرفع فيتّسق الاثنان.
-        if (!p.isPhysiotherapy) {
-          await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
-        }
-        return existing.id;
-      }
-
+      //  ══ **والمغلقةُ تُفتَح قبل أن يُكتب عليها دينار** (§4.ar البندان ٤ و٣٣) ══
+      //  مريضٌ أنهى علاجَه فأُغلق خيطُه، ثمّ عاد فاشترى «خدمة جديدة»: الشراءُ **هو**
+      //  استئنافُ الخدمة. والقانونُ واحدٌ لكلّ الأبواب (`ensureCaseTx`) — مُدقَّقاً ومُعلَناً.
       const clean = (o: Record<string, any>) =>
         Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
-      await tx.insert(patientCases).values({
-        patientId, branchId: p.branchId, caseType: "physiotherapy",
-        cost: 0, costSource: "auto",
-        //  نفسُ حقول `syncPatientCases` لحالة العلاج الطبيعي.
-        details: clean({
-          diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea,
-          injuries: p.injuries, treatmentType: p.treatmentType,
-        }),
-      }).onConflictDoNothing();
-      await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
-
-      //  إعادةُ القراءة لا `returning()`: مع `onConflictDoNothing` يرجع
-      //  الإدراجُ المتخطّى صفراً، والقارئُ يريد المعرّف الحيّ لا العدم.
-      const [created] = await tx.select({ id: patientCases.id }).from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId),
-          eq(patientCases.caseType, "physiotherapy")));
-      return created?.id ?? null;
+      const ensured = await ensureCaseTx(tx, {
+        patientId, caseType: "physiotherapy", branchId: p.branchId,
+        create: {
+          cost: 0, costSource: "auto",
+          //  نفسُ حقول `syncPatientCases` لحالة العلاج الطبيعي.
+          details: clean({
+            diseaseType: p.diseaseType, injuryType: p.injuryType, injuryArea: p.injuryArea,
+            injuries: p.injuries, treatmentType: p.treatmentType,
+          }),
+        },
+        reopen: { reason: "خدمة جديدة", actor },
+      });
+      //  العلمُ يُرفع مع الحالة فيتّسق الاثنان (وملفٌّ قديم حالتُه قائمةٌ وعلمُه منخفض كذلك).
+      if (!p.isPhysiotherapy) {
+        await tx.update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, patientId));
+      }
+      return ensured?.id ?? null;
     };
     return outerTx ? await body(outerTx) : await db.transaction(body);
   }
@@ -1485,13 +1460,14 @@ export class DatabaseStorage implements IStorage {
       else if (!firstEver && cost > 0) movedFromHolder += cost; // moving this out of the pre-existing holder
       // onConflictDoNothing: if a concurrent path already created this case
       // (unique index uq_patient_cases_patient_type), keep the existing row.
-      const inserted = await tx.insert(patientCases)
-        .values({ patientId, branchId: p.branchId, caseType: t, cost, details: detailsFor(t) })
-        .onConflictDoNothing()
-        .returning({ id: patientCases.id });
+      //  **`reopen: false`** — المزامنةُ لا تفتح مغلقاً (البند ٣)، والقانونُ نفسُه لكلّ الأبواب (البند ٣٣).
+      const ensured = await ensureCaseTx(tx, {
+        patientId, caseType: t, branchId: p.branchId,
+        create: { cost, details: detailsFor(t) }, reopen: false,
+      });
       // If the insert was skipped, the marker cost was NOT placed on a new
       // case — undo its contribution so the holder isn't debited for it.
-      if (inserted.length === 0 && !firstEver && cost > 0) movedFromHolder -= cost;
+      if (!ensured?.created && !firstEver && cost > 0) movedFromHolder -= cost;
     };
     if (wantProsthetic) await create("prosthetic");
     if (wantSupport) await create("medical_support");
@@ -1668,30 +1644,24 @@ export class DatabaseStorage implements IStorage {
       }).where(eq(patients.id, patientId)).returning();
       //  الحالةُ تُقرأ **قبل** القيد لا بعده: القيدُ يحمل قسمَه (ترحيل ٠٥٦)،
       //  وقسمُ التسعير هو حالةُ العلاج الطبيعي بعينها.
-      const [physioCase] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, "physiotherapy")));
-      //  **وتسعيرُ جلساتٍ على قسمٍ مغلق يفتحه مُدقَّقاً** (§4.ar البند ٣): بيعُ جلساتٍ عودةٌ للخدمة، وكانت الكلفةُ
-      //  تُكتب على القسم المغلق فلا يراها عدّادُ الجلسات. (المستخدمُ في سطر تدقيق نقطة التسعير نفسِها.)
-      if (physioCase?.status === "closed") {
-        await reopenClosedCaseAuditedTx(tx, { caseId: physioCase.id, reason: "تسعير جلسات علاج طبيعي" });
-      }
+      //  **وتسعيرُ جلساتٍ على قسمٍ مغلق يفتحه مُدقَّقاً** (§4.ar البندان ٣ و٣٣): بيعُ جلساتٍ عودةٌ للخدمة، وكانت الكلفةُ
+      //  تُكتب على القسم المغلق فلا يراها عدّادُ الجلسات. (المستخدمُ في سطر تدقيق نقطة التسعير نفسِها.) والحالةُ
+      //  تُضمَن **قبل** القيد: القيدُ يحمل قسمَه (ترحيل ٠٥٦)، وكان قيدُ مريضٍ بلا حالةٍ يُكتب بلا قسم.
+      const physioCase = (await ensureCaseTx(tx, {
+        patientId, caseType: "physiotherapy", branchId: existing.branchId,
+        create: { cost: 0, costSource: "auto" },
+        reopen: { reason: "تسعير جلسات علاج طبيعي" },
+      }))!;
       if (params.totalCost > 0) {
         await tx.insert(costEntries).values({
           patientId, branchId: existing.branchId, amount: params.totalCost,
           source: "physio_pricing", notes: `الكلفة والجلسات: ${params.treatmentType}`,
-          caseId: physioCase?.id ?? null,
+          caseId: physioCase.id,
         });
       }
-
-      if (physioCase) {
-        await tx.update(patientCases)
-          .set({ cost: (physioCase.cost || 0) + params.totalCost, updatedAt: new Date() })
-          .where(eq(patientCases.id, physioCase.id));
-      } else {
-        await tx.insert(patientCases).values({
-          patientId, branchId: existing.branchId, caseType: "physiotherapy", cost: params.totalCost,
-        }).onConflictDoNothing();
-      }
+      await tx.update(patientCases)
+        .set({ cost: (physioCase.cost || 0) + params.totalCost, updatedAt: new Date() })
+        .where(eq(patientCases.id, physioCase.id));
       return updated;
     };
     return params.tx ? await body(params.tx) : await db.transaction(body);
@@ -2743,32 +2713,13 @@ export class DatabaseStorage implements IStorage {
         injuries: patient.injuries, treatmentType: patient.treatmentType,
       };
       const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
-      const [existingCase] = await tx.select().from(patientCases)
-        .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
-      let caseId: number;
-      if (existingCase) {
-        //  حالةٌ قائمة أصلاً — قرارٌ يفعّلها، بلا لمسِ كلفتها القائمة. **ومغلقةٌ تُفتَح مُدقَّقةً**
-        //  (§4.ar البند ٣): إضافةُ نوع الحالة عودةٌ للخدمة، وكانت الحالةُ تبقى مغلقةً وطلبُ المعاينة عليها.
-        caseId = existingCase.id;
-        await reopenClosedCaseAuditedTx(tx, {
-          caseId, reason: "إضافة نوع حالة", actor: { userId: params.performedBy },
-        });
-      } else {
-        //  حالةٌ جديدة تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
-        const [newCase] = await tx.insert(patientCases).values({
-          patientId, branchId: opBranchId, caseType: caseTypeKey, cost: 0, details: cleanDetails,
-          costSource: "auto",
-        }).onConflictDoNothing().returning();
-        // Unique-index race: another path created the case between our select
-        // and insert — fall back to the existing row.
-        if (newCase) {
-          caseId = newCase.id;
-        } else {
-          const [raced] = await tx.select().from(patientCases)
-            .where(and(eq(patientCases.patientId, patientId), eq(patientCases.caseType, caseTypeKey)));
-          caseId = raced.id;
-        }
-      }
+      //  حالةٌ قائمة أصلاً ⟵ قرارٌ يفعّلها بلا لمسِ كلفتها، **ومغلقةٌ تُفتَح مُدقَّقةً** (§4.ar البندان ٣ و٣٣):
+      //  إضافةُ نوع الحالة عودةٌ للخدمة. وغائبةٌ ⟵ تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
+      const caseId: number = (await ensureCaseTx(tx, {
+        patientId, caseType: caseTypeKey, branchId: opBranchId,
+        create: { cost: 0, details: cleanDetails, costSource: "auto" },
+        reopen: { reason: "إضافة نوع حالة", actor: { userId: params.performedBy } },
+      }))!.id;
 
       //  لا قيدَ كلفةٍ هنا بعد اليوم — راجع صدقَ القرار في توثيق الدالّة
       //  أعلاه. التسعيرُ من مسار الخدمة المخصَّص وحده.
