@@ -34,6 +34,7 @@
  */
 
 import type { Express } from "express";
+import { canApproveServiceDiscount, DISCOUNT_AUTHORITY_MESSAGE } from "@shared/discount";
 import { logAudit } from "../accounting/ledger";
 import { createJournalForPayment } from "../accounting/auto_journal";
 import * as store from "./store";
@@ -379,6 +380,10 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
       });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
+      //  **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — ولا يُعدّ «ضمن الضمان» خصماً.
+      if ((offer.discountAmount ?? 0) > 0 && !canApproveServiceDiscount((req.session as any)?.branchSession)) {
+        return res.status(403).json({ error: DISCOUNT_AUTHORITY_MESSAGE });
+      }
 
       //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
       //  ═══════════════════════════════════════════════════════════════════
@@ -606,6 +611,10 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         underWarranty: req.body?.underWarranty,
       });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
+      //  **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — ولا يُعدّ «ضمن الضمان» خصماً.
+      if ((offer.discountAmount ?? 0) > 0 && !canApproveServiceDiscount((req.session as any)?.branchSession)) {
+        return res.status(403).json({ error: DISCOUNT_AUTHORITY_MESSAGE });
+      }
 
       //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
       //  (نفسُ قاعدة بيع الجزء بحرفها) ═══════════════════════════════════════

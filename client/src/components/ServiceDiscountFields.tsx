@@ -4,8 +4,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BadgePercent, HeartHandshake } from "lucide-react";
 import {
   computeServiceDiscount, DISCOUNT_REASONS, DISCOUNT_REASON_LABELS,
-  FREE_DONATION_LABEL, type DiscountReason,
+  FREE_DONATION_LABEL, type DiscountReason, canApproveServiceDiscount,
 } from "@shared/discount";
+import { useBranchSession } from "@/components/BranchGate";
 import {
   EMPTY_DISCOUNT, discountBlocked, discountPayload, hasDiscount, paymentEntryRequired,
   type DiscountDraft,
@@ -39,11 +40,23 @@ export function ServiceDiscountFields({
   disabled?: boolean;
   testIdPrefix?: string;
 }) {
+  //  **بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥): مَن لا يملكه لا تُعرض له حقولٌ يردّها الخادم عند الحفظ.
+  const mayDiscount = canApproveServiceDiscount(useBranchSession() as any);
   const set = (patch: Partial<DiscountDraft>) => onChange({ ...value, ...patch });
   const active = hasDiscount(value, originalPrice);
   const calc = computeServiceDiscount({
     originalPrice, finalPrice: value.finalPrice, isFree: value.isFree,
   });
+
+  if (!mayDiscount) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3" data-testid={`${testIdPrefix}-block`}>
+        <p className="text-xs text-muted-foreground" data-testid="discount-no-authority">
+          الخصم والخدمة المجّانية يحتاجان صلاحية «اعتماد الخصومات» — احفظ بالسعر الكامل، أو اطلبه من مدير الفرع.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-2.5"
