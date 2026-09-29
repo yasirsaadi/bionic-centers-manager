@@ -1,10 +1,10 @@
-// §4.ar البند ٢٥ — الخصمُ والمجّانيُّ بمفتاح «اعتماد الخصومات» (قرارُ المالك ٢٠٢٦-٠٩-٢٩: «المفتاح حاكم»).
-// قاعدة محلّية: `npm run test:discount-authority`.
+// §4.ar البند ٢٥ — **قرارُ المالك (٢٠٢٦-٠٩-٢٩، بعد تجربة يوم): لا قيدَ على خصم الاستقبال**.
+// «حين ضغط الموظف تم الشراء ويحتاج كتابة السعر ثم مقدار الخصم ثم المدفوع فيحفظ، هنا يجب ان يفعلها بدون اذن…
+//  لا اريد قيود كثيرة تربك العمل والموظف». قاعدة محلّية: `npm run test:discount-authority`.
 //
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
-// استقبالٌ **بلا** المفتاح: تسعيرُ جلساتٍ بخصم ⟵ ٤٠٣ بلا أثر · «خدمة جديدة» مجّانية ⟵ ٤٠٣ بلا أثر · إتمامُ بيعٍ بخصم ⟵ ٤٠٣
-// (قبل أيّ قراءة) · جلساتٌ مجّانية في نافذة الدفع ⟵ تُسقَط رايتُها. **والسعرُ الكامل يبقى له**. واستقبالٌ **بالمفتاح** ومديرُ الفرع:
-// يمرّ كلُّ ذلك.
+// استقبالٌ **بلا** مفتاح «اعتماد الخصومات» يخصم فوراً: تسعيرُ الجلسات · «خدمة جديدة» مجّانية · إتمامُ البيع (لا ٤٠٣).
+// فلا يعود حارسٌ يمنعه بلا قرارٍ جديد من المالك. **وجلساتُ الدفع المجّانية** بقيت كما كانت قبل البند: المسؤول ومديرُ الفرع.
 import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
@@ -98,9 +98,7 @@ async function main() {
     console.log("\n── أ. تسعيرُ الجلسات ──");
     const p1 = await mkP("تسعير");
     const d1 = await http("POST", `/api/patients/${p1}/price-physio`, S.recv, cut);
-    same("أ١. **استقبالٌ بلا مفتاح: الخصمُ يُردّ ٤٠٣ — ولا أثر**", [d1.status, await totalOf(p1), await discountsOf(p1)], [403, 0, 0]);
-    same("أ٢. **والسعرُ الكامل يبقى له**",
-      (await http("POST", `/api/patients/${p1}/price-physio`, S.recv, { entries: cut.entries })).status, 200);
+    same("أ١. **استقبالٌ بلا مفتاح يخصم فوراً** — بلا إذن (قرارُ المالك)", [d1.status, await totalOf(p1), await discountsOf(p1)], [200, 400000, 1]);
     const p2 = await mkP("تسعير بالمفتاح");
     same("أ٣. **وبالمفتاح يمرّ الخصم**", [(await http("POST", `/api/patients/${p2}/price-physio`, S.ok, cut)).status, await totalOf(p2)], [200, 400000]);
     const p3 = await mkP("تسعير مدير");
@@ -109,17 +107,11 @@ async function main() {
     console.log("\n── ب. «خدمة جديدة» مجّانية ──");
     const p4 = await mkP("خدمة");
     const n1 = await http("POST", `/api/patients/${p4}/new-service`, S.recv, freeService());
-    same("ب١. **بلا مفتاح: ٤٠٣ — ولا زيارةَ ولا خصمَ ولا كلفة**",
-      [n1.status, (await q(`SELECT count(*)::int n FROM visits WHERE patient_id=$1`, [p4]))[0].n, await discountsOf(p4), await totalOf(p4)],
-      [403, 0, 0, 0]);
-    const n2 = await http("POST", `/api/patients/${p4}/new-service`, S.ok, freeService());
-    same("ب٢. **وبالمفتاح تمرّ**", [n2.status < 300, await discountsOf(p4)], [true, 1]);
+    same("ب١. **«خدمة جديدة» مجّانية من استقبالٍ بلا مفتاح تمرّ**", [n1.status < 300, await discountsOf(p4)], [true, 1]);
 
     console.log("\n── ج. إتمامُ البيع بخصم ──");
-    same("ج١. **بلا مفتاح: ٤٠٣ قبل قراءة المتابعة** (لا ٤٠٤)",
-      (await http("POST", `/api/followups/999999999/complete-sale`, S.recv, { originalPrice: 1000, discountAmount: 100 })).status, 403);
-    same("ج٢. وبلا خصم يمضي إلى قراءتها ⟵ ٤٠٤ (الحارسُ للخصم وحده)",
-      (await http("POST", `/api/followups/999999999/complete-sale`, S.recv, { originalPrice: 1000, discountAmount: 0 })).status, 404);
+    same("ج١. **إتمامُ البيع بخصمٍ من استقبالٍ بلا مفتاح لا يُردّ للسلطة** — يمضي إلى قراءة المتابعة (٤٠٤ هنا لأنها غير موجودة)",
+      (await http("POST", `/api/followups/999999999/complete-sale`, S.recv, { originalPrice: 1000, discountAmount: 100 })).status, 404);
 
     console.log("\n── د. الجلساتُ المجّانية في نافذة الدفع ──");
     const p5 = await mkP("مجاني");
@@ -130,10 +122,10 @@ async function main() {
     const r1 = await pay(S.recv);
     const byRecv = await q(`SELECT is_free_sessions f FROM payments WHERE patient_id=$1`, [p5]);
     void r1;
-    same("د١. **بلا مفتاح: لا جلساتٌ مجّانية تُمنح** — الرايةُ تُسقَط",
+    same("د١. **وجلساتُ الدفع المجّانية كما كانت**: الاستقبالُ لا يمنحها",
       byRecv.filter((r) => r.f).length, 0);
-    const r2 = await pay(S.ok);
-    same("د٢. **وبالمفتاح تُمنح**", [r2.status, (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND is_free_sessions`, [p5]))[0].n], [201, 1]);
+    const r2 = await pay(S.mgr);
+    same("د٢. ومديرُ الفرع يمنحها", [r2.status, (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND is_free_sessions`, [p5]))[0].n], [201, 1]);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     await cleanup();

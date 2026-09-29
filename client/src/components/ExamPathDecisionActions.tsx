@@ -12,8 +12,6 @@
 // **ولا حقيقةً ماليةً جديدة هنا**: هذا المكوّنُ لا يكتب شيئاً بنفسه — ينادي
 // البابين القانونيَّين القائمين حرفياً كما كانت البطاقةُ تنادِيهما.
 
-import { canApproveServiceDiscount } from "@shared/discount";
-import { useBranchSession } from "@/components/BranchGate";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { XCircle, Loader2, HandCoins, Ban } from "lucide-react";
@@ -189,9 +187,7 @@ export function ExamPathDecisionActions({
   //  **والمُرسَلُ هو هذا بعينه** لا حالةُ المربّع: العميلُ لا يرسل نوعَ سعرٍ
   //  ولا سعراً نهائياً أبداً (القسم 4.i) — الخادمُ يشتقّهما من
   //  `originalPrice`/`discountAmount` وحدهما ويعتمدهما وحده.
-  //  **الخصمُ والمجّانيُّ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — مَن لا يملكه يبيع بالسعر الكامل.
-  const mayDiscount = canApproveServiceDiscount(useBranchSession() as any);
-  const csEffectiveDiscount = !mayDiscount ? "" : cFree ? cOriginal : cDiscount;
+  const csEffectiveDiscount = cFree ? cOriginal : cDiscount;
   const csOffer = deriveOfferFromDiscount({
     originalPrice: cOriginal === "" ? null : Number(cOriginal),
     discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
@@ -336,16 +332,11 @@ export function ExamPathDecisionActions({
             </div>
             <div className="space-y-1">
               <Label htmlFor="cs-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
-              {!mayDiscount && (
-                <p className="text-xs text-muted-foreground" data-testid="discount-no-authority">
-                  الخصم والخدمة المجّانية يحتاجان صلاحية «اعتماد الخصومات» — احفظ بالسعر الكامل، أو اطلبه من مدير الفرع.
-                </p>
-              )}
               {/*  مؤشَّرٌ «مجاني» ⟶ الحقلُ **معطَّلٌ ويعرض السعر الأصليّ**:
                   لا يُترَك مفتوحاً برقمٍ يناقض المربّع، ولا يُخفى فيختفي
                   معه سببُ كون النهائيّ صفراً. */}
               <MoneyInput id="cs-discount" allowEmpty value={csEffectiveDiscount}
-                disabled={cFree || !mayDiscount}
+                disabled={cFree}
                 onValueChange={(v) => setCDiscount(v === null ? "" : String(v))}
                 className="bg-white" data-testid="input-complete-sale-discount" />
             </div>
@@ -353,7 +344,7 @@ export function ExamPathDecisionActions({
                 والسعرُ الأصليُّ يبقى مطلوباً وهو مؤشَّر: التبرّعُ يُقاس
                 بقيمته (دلالةُ ٠٦٦)، فمجّانيٌّ بلا أصلٍ موجب يردّه الخادم. */}
             <div className="flex items-center gap-3 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/50 p-2.5">
-              <Checkbox id="cs-free" checked={cFree && mayDiscount} disabled={!mayDiscount}
+              <Checkbox id="cs-free" checked={cFree}
                 onCheckedChange={(v) => setCFree(!!v)}
                 data-testid="checkbox-complete-sale-free" />
               <Label htmlFor="cs-free" className="cursor-pointer text-sm font-medium">

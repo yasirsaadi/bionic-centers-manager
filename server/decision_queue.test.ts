@@ -325,9 +325,6 @@ async function main() {
                branch_ids=EXCLUDED.branch_ids, display_name=EXCLUDED.display_name, is_active=true`,
       [id, `dq_u${id}`, role, name, branchId, branchIds]);
   }
-  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
-  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
-  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[RECV, ACCT]]);
   await cleanup();
 
   const app = express();

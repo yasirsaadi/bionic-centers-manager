@@ -71,7 +71,7 @@ import {
   LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
 } from "@shared/lock_conflict";
 import * as discountStore from "../discounts/store";
-import { followupDiscountRef, canApproveServiceDiscount, DISCOUNT_AUTHORITY_MESSAGE, declaresDiscountAmount } from "@shared/discount";
+import { followupDiscountRef } from "@shared/discount";
 import { discountAuditNote } from "../discounts/routes";
 import { actorRoleSnapshotOf, isDecisionQueueState } from "@shared/decision_queue";
 import * as returnToPurchase from "./return_to_purchase_store";
@@ -879,11 +879,6 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         error: "إتمامُ البيع للاستقبال والمحاسب ومدير الفرع والمسؤول العام — لا الطبيب",
       });
     }
-    //  **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — البيعُ بالسعر الكامل يبقى لمن يُتمّ البيع.
-    if (declaresDiscountAmount(req.body?.discountAmount)
-      && !canApproveServiceDiscount((req.session as any)?.branchSession)) {
-      return res.status(403).json({ error: DISCOUNT_AUTHORITY_MESSAGE });
-    }
     const f = await loadInScope(req, res);
     if (!f) return;
     try {
@@ -1271,10 +1266,6 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
       && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== workingFollowup.approvedPrice;
     if (wantsFree || wantsCut) {
-      //  **بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥).
-      if (!canApproveServiceDiscount((req.session as any)?.branchSession)) {
-        return res.status(403).json({ error: DISCOUNT_AUTHORITY_MESSAGE });
-      }
       try {
         //  ══ ورايةُ «يرغب بالشراء» تُرفع **قبل** التطبيق — لا بعده ══════
         //  (تصحيحٌ: كانت تُرفَع بعد `applyDiscountImmediately`، فتصطدم

@@ -236,9 +236,6 @@ async function main() {
                is_active=true`,
       [id, `ra_u${id}`, role, b, JSON.stringify([b]), spec]);
   }
-  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
-  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
-  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[RECV, RECV2]]);
   await cleanup();
 
   const app = express();
