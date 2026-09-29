@@ -44,7 +44,7 @@
  */
 
 import { db } from "../db";
-import { reopenClosedCaseAuditedTx } from "../patient_cases/reopen";
+import { ensureCaseTx } from "../patient_cases/reopen";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { belongsToActivePatientSql } from "../patients/active_patient";
@@ -887,18 +887,11 @@ export async function createMaintenanceOperation(p: {
     //  لاحقاً — فلا نصفَ صيانةٍ على حالةٍ اختفت للتوّ.
     //  **والمغلقةُ تُفتَح مُدقَّقةً** (§4.ar البند ٣ — قرارُ المالك «أ»): الصيانةُ عودةٌ للخدمة، وكانت تُردّ ٤٠٠
     //  «لا حالة نشطة» فيعلق مريضٌ عائد بجهازه. فيُقرأ الصفُّ بأيّ حالةٍ، ويُفتَح إن كان مغلقاً.
-    const caseCheck = await tx.execute(sql`
-      SELECT id, status FROM patient_cases
-       WHERE patient_id = ${p.patientId} AND case_type = ${p.serviceType}
-       FOR UPDATE
-    `);
-    const caseRow = (caseCheck.rows ?? [])[0];
-    if (caseRow && String(caseRow.status) === "closed") {
-      await reopenClosedCaseAuditedTx(tx, {
-        caseId: Number(caseRow.id), reason: "صيانة",
-        actor: p.actor,
-      });
-    }
+    //  والقانونُ واحدٌ لكلّ الأبواب (`ensureCaseTx`، البند ٣٣) — والصيانةُ لا تُنشئ قسماً (`create: false`).
+    const caseRow = await ensureCaseTx(tx, {
+      patientId: p.patientId, caseType: p.serviceType, branchId: null, create: false,
+      reopen: { reason: "صيانة", actor: p.actor },
+    });
     if (!caseRow) {
       throw new ChargeError(
         `لا توجد حالة ${DEPARTMENT_LABELS[p.serviceType]} نشطة مسجَّلة لهذا المريض`

@@ -84,21 +84,82 @@ export async function reopenClosedCaseAuditedTx(
   return { caseType, label };
 }
 
+// ══ **قانونٌ واحد: «تأكّد أن القسم موجود»** (§4.ar البند ٣٣ — ٢٠٢٦-٠٩-٢٩) ══════════
+//
+// كان المنطقُ نفسُه — ابحث عن القسم، أنشئه إن غاب، وافتحه إن كان مغلقاً — مكتوباً
+// مستقلّاً في ستّة أبواب، وكلٌّ يعامل المغلقَ بطريقته: بابٌ يفتحه مُدقَّقاً، وآخرُ
+// يفتحه صامتاً، وثالثٌ («إتمام بيع الجهاز») يكتب المالَ عليه **وهو مغلق** فلا يراه
+// قارئٌ يشترط `status = 'active'`. فصار البابُ هنا واحداً، وكلُّ بابٍ يقول فقط:
+//   · `create` — ما يُكتب إن غاب القسم (`false` = شرطُ وجود: بابٌ لا يُنشئ قسماً)؛
+//   · `reopen` — لماذا يُفتَح إن كان مغلقاً (`false` = لا يُفتَح: المزامنةُ وحدها،
+//     قرارُ المالك «أ» في البند ٣ — الفتحُ لعودة المريض لخدمةٍ وحدها).
+//
+// **القفل**: `SELECT … FOR UPDATE` على الصفّ القائم، و`ON CONFLICT DO NOTHING` على
+// `uq_patient_cases_patient_type` لإدراجٍ سبقَنا إليه أحد فيُقرأ ولا يُكسَر. والإنشاءُ
+// **بلا `status`** صريح — افتراضُ العمود `active`.
+export type EnsuredCase = {
+  id: number; created: boolean; reopened: boolean;
+  status: string; cost: number; costSource: string; branchId: number | null;
+};
+
+export async function ensureCaseTx(
+  tx: Executor,
+  params: {
+    patientId: number; caseType: string; branchId: number | null;
+    create: { cost?: number; costSource?: "auto" | "manual"; details?: Record<string, any> } | false;
+    reopen: { reason: string; actor?: { userId?: number | null; userName?: string | null } } | false;
+  },
+): Promise<EnsuredCase | null> {
+  const read = async () => {
+    const r = await tx.execute(sql`
+      SELECT id, status, cost, cost_source, branch_id FROM patient_cases
+       WHERE patient_id = ${params.patientId} AND case_type = ${params.caseType}
+       FOR UPDATE
+    `);
+    return (r.rows ?? [])[0] as any;
+  };
+  const settle = async (row: any, created: boolean): Promise<EnsuredCase> => {
+    const id = Number(row.id);
+    let reopened = false;
+    if (!created && String(row.status) === "closed" && params.reopen) {
+      reopened = Boolean(await reopenClosedCaseAuditedTx(tx, {
+        caseId: id, reason: params.reopen.reason, actor: params.reopen.actor,
+      }));
+    }
+    return {
+      id, created, reopened,
+      status: reopened ? "active" : String(row.status ?? "active"),
+      cost: Number(row.cost ?? 0), costSource: String(row.cost_source ?? "auto"),
+      branchId: row.branch_id == null ? null : Number(row.branch_id),
+    };
+  };
+
+  const existing = await read();
+  if (existing) return settle(existing, false);
+  if (!params.create) return null;
+
+  const c = params.create;
+  const ins = await tx.execute(sql`
+    INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, details)
+    VALUES (${params.patientId}, ${params.branchId}, ${params.caseType},
+            ${c.cost ?? 0}, ${c.costSource ?? "auto"}, ${JSON.stringify(c.details ?? {})}::jsonb)
+    ON CONFLICT (patient_id, case_type) DO NOTHING
+    RETURNING id, status, cost, cost_source, branch_id
+  `);
+  const fresh = (ins.rows ?? [])[0];
+  if (fresh) return settle(fresh, true);
+  //  سبقَنا إليه أحد بين القراءة والإدراج — يُقرأ الصفُّ القائم ويُعامَل كقائم.
+  const raced = await read();
+  if (!raced) throw new Error("ensureCaseTx: تعذّر فتح خيط الاختصاص");
+  return settle(raced, false);
+}
+
 // ══ **والخيطُ الهدفُ يُضمَن وجودُه حين يُصحَّح نوعُ طلبٍ** (٤.y، تكملة) ════
 //
-// الطبيبُ يبدّل نوعَ الطلب إلى اختصاصٍ **لا خيطَ له على الملفّ بعد**. ولا
-// يمكن نقلُ الطلب إلى خيطٍ غير موجود، فكان النظامُ يُسقط التصحيحَ ويتولّاه
-// مسارُ §4.b: يُنشئ الخيطَ الجديد **ويهدم** الخيطَ القديم بما فيه الطلبُ
-// نفسُه (حلقةٌ `awaiting_exam` = سقالةٌ بحكم §4.r). فيخرج المريضُ من التوقيع
-// **بلا طلبِ جهازٍ إطلاقاً** ومعاينتُه ومتابعتُه بلا هويّة — لا «كأنّه
-// سُجّل أطرافاً من البداية».
-//
-// فيُفتَح الخيطُ الهدف **داخل معاملة التوقيع نفسِها** قبل نقل الطلب إليه:
-//   · بكلفةِ صفر — فتحُ خيطٍ لا يحرّك ديناراً (نفسُ قاعدة §4.e)؛
-//   · و`ON CONFLICT DO NOTHING` على `uq_patient_cases_patient_type`، فسباقٌ
-//     أنشأه بيننا يُقرأ ولا يُكسَر (نفسُ نمط `syncPatientCases` بحرفه)؛
-//   · ومغلقٌ يُفتَح بـ`reopenClosedCaseTx` أعلاه — بالصفّ نفسِه لا بثانٍ.
-// **ورفضٌ في أيّ خطوةٍ بعدها يتراجع عنه معها** — فالصفُّ داخل المعاملة.
+// الطبيبُ يبدّل نوعَ الطلب إلى اختصاصٍ **لا خيطَ له على الملفّ بعد**، فيُفتَح الخيطُ
+// الهدف داخل معاملة التوقيع نفسِها قبل نقل الطلب إليه: بكلفةِ صفر، ومغلقٌ يُفتَح
+// مُدقَّقاً بالصفّ نفسِه. **ورفضٌ في أيّ خطوةٍ بعدها يتراجع عنه معها.** — غلافٌ رقيق
+// فوق `ensureCaseTx` بقانونها.
 export async function ensureActiveCaseTx(
   tx: Executor,
   params: {
@@ -107,26 +168,10 @@ export async function ensureActiveCaseTx(
     reason?: string; actor?: { userId?: number | null; userName?: string | null };
   },
 ): Promise<number> {
-  const ins = await tx.execute(sql`
-    INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
-    VALUES (${params.patientId}, ${params.branchId}, ${params.caseType}, 0, 'auto', 'active')
-    ON CONFLICT (patient_id, case_type) DO NOTHING
-    RETURNING id
-  `);
-  const fresh = (ins.rows ?? [])[0];
-  if (fresh) return Number(fresh.id);
-
-  //  سبقَنا إليه أحد — يُقرأ الصفُّ القائم ويُفتَح إن كان مغلقاً.
-  const got = await tx.execute(sql`
-    SELECT id, status FROM patient_cases
-     WHERE patient_id = ${params.patientId} AND case_type = ${params.caseType}
-     FOR UPDATE
-  `);
-  const row = (got.rows ?? [])[0];
-  if (!row) throw new Error("ensureActiveCaseTx: تعذّر فتح خيط الاختصاص");
-  const id = Number(row.id);
-  if (String(row.status) === "closed") {
-    await reopenClosedCaseAuditedTx(tx, { caseId: id, reason: params.reason ?? "معاينة طبيب", actor: params.actor });
-  }
-  return id;
+  const got = await ensureCaseTx(tx, {
+    patientId: params.patientId, caseType: params.caseType, branchId: params.branchId,
+    create: { cost: 0, costSource: "auto" },
+    reopen: { reason: params.reason ?? "معاينة طبيب", actor: params.actor },
+  });
+  return got!.id;
 }

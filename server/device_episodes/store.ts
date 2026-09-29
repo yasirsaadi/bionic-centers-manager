@@ -30,7 +30,7 @@ import {
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
-import { reopenClosedCaseAuditedTx } from "../patient_cases/reopen";
+import { ensureCaseTx } from "../patient_cases/reopen";
 import {
   cancelScaffoldRequestsForEpisode, retireFollowupForCancelledEpisode,
 } from "../patient_cases/disposal";
@@ -612,29 +612,21 @@ export async function startDeviceEpisodeTx(
   //  **ولا يُفتَح طلبُ جهازٍ على ملفٍّ في السلّة** (ترحيل ٠٦٨).
   if (patient.deleted_at) throw new DeviceEpisodeError(PATIENT_IN_TRASH_ERROR, 409);
 
-  //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد.
-  const cs = await tx.execute(sql`
-    SELECT id, branch_id, status FROM patient_cases
-     WHERE patient_id = ${patientId} AND case_type = ${serviceType}
-     FOR UPDATE
-  `);
-  const caseRow = (cs.rows ?? [])[0];
-  if (!caseRow) {
+  //  القفل. الخيط شرط وجود: لا يُفتح جهاز على اختصاص لم يُصنَّف بعد (`create: false`).
+  //  ══ **وحالةٌ مغلقةٌ تُفتَح بفتح طلبِ جهازٍ عليها** — مُدقَّقةً ومُعلَنة (§4.ar البندان ٣ و٣٣) ══
+  //  فتحُ الطلب **هو** استئنافُ الخدمة. وبلا هذا كانت تُولَد حلقةٌ حيّةٌ على
+  //  حالةٍ مغلقة: عملٌ قائمٌ لا يظهر في طابورِ طبيبٍ ولا عدّادِ فرع، لأن
+  //  سبعةَ قرّاءٍ يشترطون `status = 'active'`. والصفُّ نفسُه يُفتَح تحت القفل.
+  const ensured = await ensureCaseTx(tx, {
+    patientId, caseType: serviceType, branchId: null, create: false,
+    reopen: { reason: "فتح طلب جهاز / بيع جزء", actor: { userId: params.createdBy } },
+  });
+  if (!ensured) {
     throw new DeviceEpisodeError(
       "لا توجد حالة من هذا النوع على ملف المريض — أضف نوع الحالة أولاً", 400,
     );
   }
-  //  ══ **وحالةٌ مغلقةٌ تُفتَح بفتح طلبِ جهازٍ عليها** ═══════════════════════
-  //  فتحُ الطلب **هو** استئنافُ الخدمة. وبلا هذا كانت تُولَد حلقةٌ حيّةٌ على
-  //  حالةٍ مغلقة: عملٌ قائمٌ لا يظهر في طابورِ طبيبٍ ولا عدّادِ فرع، لأن
-  //  سبعةَ قرّاءٍ يشترطون `status = 'active'`. والصفُّ نفسُه يُفتَح — بكلفته
-  //  وتفاصيله وتاريخه كما هي — تحت القفل الذي أُخذ لتوّه.
-  if (String(caseRow.status) === "closed") {
-    //  **ويُكتب في التدقيق ويُقال للموظّف** (§4.ar البند ٣) — كان الفتحُ هنا صامتاً.
-    await reopenClosedCaseAuditedTx(tx, {
-      caseId: Number(caseRow.id), reason: "فتح طلب جهاز / بيع جزء", actor: { userId: params.createdBy },
-    });
-  }
+  const caseRow = { id: ensured.id, branch_id: ensured.branchId };
 
   //  ══ **لم يعد فتحُ حلقةٍ جديدة يُرفَض لمجرّد وجود حلقةٍ أخرى مفتوحة**
   //  (ترحيل ٠٧٣ — قرارُ المالك: أيّ عددٍ من عمليات الأجهزة المستقلّة
@@ -1613,16 +1605,16 @@ export async function ensureFirstDeviceEpisodeForSale(
     branchId?: number | null;
   },
 ): Promise<LockedEpisode | null> {
-  //  القفلُ أوّلاً: الخيطُ ثابتُ الوجود، وكلُّ مَن يفتح حلقةً يمرّ به.
-  const cs = await tx.execute(sql`
-    SELECT id, branch_id FROM patient_cases
-     WHERE patient_id = ${params.patientId} AND case_type = ${params.serviceType}
-     FOR UPDATE
-  `);
-  const caseRow = (cs.rows ?? [])[0];
+  //  القفلُ أوّلاً: الخيطُ ثابتُ الوجود، وكلُّ مَن يفتح حلقةً يمرّ به. **ومغلقٌ يُفتَح مُدقَّقاً**
+  //  (§4.ar البند ٣٣): بيعُ متابعةٍ عودةٌ للخدمة، وكانت الحلقةُ تُولَد حيّةً على قسمٍ مغلق لا يراها أحد.
+  const ensured = await ensureCaseTx(tx, {
+    patientId: params.patientId, caseType: params.serviceType, branchId: null, create: false,
+    reopen: { reason: "بيع جهاز لمتابعة", actor: { userId: params.createdBy } },
+  });
   //  لا خيط ⟶ لا حلقةَ ممكنة. والمُستدعي يمضي كما كان يمضي دائماً:
   //  رفضُ البيع هنا كان سيكسر مساراً قائماً لأجل هويّةٍ إدارية.
-  if (!caseRow) return null;
+  if (!ensured) return null;
+  const caseRow = { id: ensured.id, branch_id: ensured.branchId };
 
   //  **ولا تُقرأ حلقةٌ قائمة هنا أصلاً** (قرارُ المالك ٢٠٢٦-٠٩-١٥).
   //

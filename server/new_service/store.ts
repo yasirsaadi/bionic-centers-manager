@@ -234,7 +234,7 @@ export async function executeNewService(params: {
     const reopenedPhysioCase = nsDepartment === "physiotherapy"
       && casesBefore.some((c: any) => c.caseType === "physiotherapy" && c.status === "closed");
     const nsCaseId = nsDepartment === "physiotherapy"
-      ? await storage.ensurePhysiotherapyCase(params.patientId, tx)
+      ? await storage.ensurePhysiotherapyCase(params.patientId, tx, params.actor)
       : null;
     const openedPhysioCase = nsDepartment === "physiotherapy" && !hadPhysioBefore;
     if (nsDepartment === "physiotherapy" && nsCaseId === null) {

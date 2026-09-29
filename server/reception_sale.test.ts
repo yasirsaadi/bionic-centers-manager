@@ -1101,6 +1101,24 @@ async function main() {
     console.log(
       "\nملاحظة: سلامةُ سلوك المعاينة الطبّية من المرحلة الأولى (٢٦) تُختبَر"
       + " في server/exam_edit_commercial.test.ts — شغّله ضمن الحزمة الكاملة.");
+    // ══════════════════════════════════════════════════════════════════
+    //  ق. **إتمامُ البيع على قسمٍ أُغلق بعد الطلب** (§4.ar البند ٣٣)
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ق. إتمامُ البيع على قسمٍ مغلق ──");
+    {
+      const { pid, fid } = await readySale("قسمٌ أُغلق قبل البيع");
+      const [c] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pid]);
+      await q(`UPDATE patient_cases SET status='closed' WHERE id=$1`, [c.id]);
+      const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
+        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+      const [after] = await q(`SELECT status, cost::int cost FROM patient_cases WHERE id=$1`, [c.id]);
+      const reopenRows = await q(`SELECT user_id FROM audit_log WHERE entity_type='patient_case' AND entity_id=$1
+                                     AND notes LIKE 'إعادة فتح%'`, [c.id]);
+      same("ق١. **البيعُ ينجح والقسمُ يُفتَح — والمبلغُ على قسمٍ نشطٍ لا مغلق**",
+        [r.status, after?.status, after?.cost], [200, "active", 1_000_000]);
+      same("   وسطرُ تدقيقٍ واحد باسم الاستقبال", reopenRows.map((x: any) => Number(x.user_id)), [RECV]);
+    }
+
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`,

@@ -152,6 +152,7 @@
     "test:registry-export": "tsx client/src/pages/patients_registry_export.test.ts",
     "test:registry-export-period": "tsx client/src/pages/registry_export_period.test.ts",
     "test:medical-condition-sync": "tsx server/medical_condition_sync.test.ts",
+    "test:ensure-case": "tsx server/ensure_case.test.ts",
     "test:registry-export-services": "tsx client/src/pages/registry_export_services.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
