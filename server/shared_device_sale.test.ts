@@ -290,8 +290,10 @@ async function main() {
     eq([saleO.status, msg(saleO)], [403, "غير مصرح لك بهذا الفرع"],
       "ج١. **بغدادُ لا تحسم قرارَ ذي قار** — كما كان قبل ٤٠٩");
     eq(await writes(own.id), w0, "ج٢. وبلا كتابة");
-    eq((await http("GET", `/api/manufacturing/experts?branchId=${DHIQAR}`, S.bg)).status, 403,
-      "ج٣. وقائمةُ خبراء ذي قار ليست لاستقبال بغداد — كما كانت");
+    //  (واقعةُ ٢٠٢٦-٠٩-٢٩) لا رفض — **قائمةُ بغداد نفسِها**، ولا خبيرٌ من ذي قار يتسرّب.
+    const forgedDq = await http("GET", `/api/manufacturing/experts?branchId=${DHIQAR}`, S.bg);
+    eq([forgedDq.status, (Array.isArray(forgedDq.body) ? forgedDq.body : []).some((e: any) => Number(e.id) === DQ_EXPERT)], [200, false],
+      "ج٣. وقائمةُ خبراء ذي قار ليست لاستقبال بغداد — يصله خبراءُ فرعه");
     const byPatient = await http("GET", `/api/manufacturing/experts?patientId=${own.id}`, S.admin);
     eq(byPatient.status, 400, "ج٤. **ولا قائمةَ «بملفّ المريض» بعد اليوم** — تُطلب بفرعٍ كما كانت");
     const listDq = await http("GET", `/api/manufacturing/experts?branchId=${DHIQAR}`, S.admin);

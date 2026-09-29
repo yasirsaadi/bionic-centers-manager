@@ -121,7 +121,13 @@ async function main() {
   // inactive expert excluded
   assert(!(await req("GET", "/api/manufacturing/experts?branchId=1", S.recBaghdad)).json.some((e: any) => e.displayName === "خامل"), "   inactive expert excluded");
   // reception can't read another branch's experts by forging branchId
-  assert((await req("GET", "/api/manufacturing/experts?branchId=2", S.recBaghdad)).status === 403, "   reception بغداد can't read كربلاء experts (403)");
+  //  (واقعةُ ٢٠٢٦-٠٩-٢٩) فرعٌ خارج النطاق ⟵ **قائمةُ فرعه هو** لا رفض — ولا يتسرّب من خبراء كربلاء اسم.
+  {
+    const forged = await req("GET", "/api/manufacturing/experts?branchId=2", S.recBaghdad);
+    const own = await req("GET", "/api/manufacturing/experts?branchId=1", S.recBaghdad);
+    assert(forged.status === 200 && names(forged.json) === names(own.json),
+      "   reception بغداد asking كربلاء gets بغداد's own experts — never كربلاء's");
+  }
 
   // ---- scenario 6: physiotherapy → no service type / no expert needed ----
   const svc = (p: any) => (p.isAmputee ? "prosthetic" : p.isMedicalSupport ? "medical_support" : null);

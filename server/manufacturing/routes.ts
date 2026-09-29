@@ -137,7 +137,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     } else {
       const requested = req.query.branchId ? parseInt(String(req.query.branchId)) : undefined;
       branchId = requested && !Number.isNaN(requested) ? requested : s.branchId;
-      if (branchId === undefined || !branchInScope(s, branchId)) {
+      //  ══ **فرعٌ خارج نطاق الموظّف ⟵ خبراءُ فرعه هو، لا رفض** (واقعةُ استقبال بغداد ٢٠٢٦-٠٩-٢٩) ══
+      //  النوافذُ تطلب القائمةَ بفرع **تسجيل** المريض؛ ومريضُ كربلاء المُتاحُ لبغداد كان يردّ ٤٠٣ «تعذّر تحميل قائمة
+      //  الخبراء» فيقف البيع. والعمليةُ تُسجَّل في **فرع الحركة** (`resolveActingBranchId` — فرعُ جلسة الموظّف حين
+      //  يصل الملفّ، ترحيل ٠٨٠)، والخبيرُ يُفحَص عند الحفظ على ذلك الفرع — فخبراءُ فرعه هم القائمةُ الصحيحة. والقائمةُ
+      //  أسماءٌ لا مال، والحفظُ يبقى الحارسَ الحقيقيّ.
+      if (branchId === undefined || !branchInScope(s, branchId)) branchId = s.branchId;
+      if (branchId === undefined || branchId === null || !branchInScope(s, branchId)) {
         return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
       }
     }
