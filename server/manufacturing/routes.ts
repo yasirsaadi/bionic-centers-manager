@@ -496,6 +496,16 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
           error: "لا توجد معاينة موقّعة لهذا الطلب بالذات — يفحصه الطبيب أولاً",
         });
       }
+    } else if (await store.hasCompletedPriorBuild({ patientId, serviceType })) {
+      // ══ **ولا جهازَ ثانٍ من المعاينة القديمة** (البند ٩ — §4.ar) ══════
+      //  بلا حلقةٍ حيّة كان يكفي «معاينةٌ موقّعة في أيّ وقت» — ومعاينةُ
+      //  الجهاز الأوّل المسلَّم تبقى موقّعةً للأبد، فيُصنَع جهازٌ ثانٍ
+      //  بمواصفات الأوّل وسعرِه ولم يرَ الطبيبُ المريض. والقاعدةُ نفسُها
+      //  التي يطبّقها «بدء التصنيع» أعلاه: الجديدُ من «إضافة خدمة جديدة».
+      //  **ولا إعفاءَ للمريض القديم هنا** — جهازُه الأوّل وحده المعفى.
+      return res.status(409).json({
+        error: "لهذا المريض جهاز سابق — الجهاز أو الجزء الجديد يبدأ من «إضافة خدمة جديدة»",
+      });
     } else if (!legacyExempt && !(await hasSignedExam(patientId, serviceType))) {
       return res.status(409).json({
         error: serviceType === "prosthetic"

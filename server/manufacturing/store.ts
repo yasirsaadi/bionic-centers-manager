@@ -142,6 +142,33 @@ export async function hasPriorDevice(params: {
   return (eps.rows ?? []).length > 0;
 }
 
+/**
+ * **جهازٌ أوّل اكتمل** لهذا (المريض، الخدمة) — البند ٩ من §4.ar.
+ *
+ * أضيقُ من `hasPriorDevice` عمداً («قلّل القيود»): الأمرُ **الملغى** لا
+ * يُحسب — إلغاءُ أمرٍ لخطأٍ في الخبير لا يجعل المريضَ «صاحبَ جهازٍ سابق».
+ * والحلقةُ **المسلَّمة** تُحسب ولو لم يبقَ أمرٌ مكتمل يشهد لها.
+ */
+export async function hasCompletedPriorBuild(params: {
+  patientId: number; serviceType: string;
+}): Promise<boolean> {
+  const rows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM prosthetic_work_orders
+     WHERE patient_id = ${params.patientId}
+       AND service_type = ${params.serviceType}
+       AND purpose = 'initial_build'
+       AND status = 'completed'
+    UNION ALL
+    SELECT e.id FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
+     WHERE e.patient_id = ${params.patientId}
+       AND pc.case_type = ${params.serviceType}
+       AND e.status = 'delivered'
+     LIMIT 1
+  `);
+  return (rows.rows ?? []).length > 0;
+}
+
 /** نفس الشرط، داخل معاملة المُستدعي. */
 export async function hasOpenOrderTx(
   tx: { execute: (q: any) => Promise<any> },
