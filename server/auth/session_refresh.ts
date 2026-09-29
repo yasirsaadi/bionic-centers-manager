@@ -54,6 +54,8 @@ export function applyFreshUser(
   bs.displayName = fresh.displayName ?? bs.displayName;
   bs.accessibleBranches = accessible;
   bs.branchId = branchId;
-  bs.permissions = permissions;
+  //  **ومسؤولٌ بقي مسؤولاً تبقى صلاحياتُه كما بُنيت عند دخوله** — كما كانت قبل هذا البند (كانت جلستُه كلُّها
+  //  مستثناة)، فلا أثرَ جانبيّاً على المسؤول. والتخفيضُ وحده يُعيد بناءها — وهو ما جاء البندُ له.
+  if (!(isAdmin && wasAdmin)) bs.permissions = permissions;
   return { branchChanged: branchId !== before, revoked: false };
 }
