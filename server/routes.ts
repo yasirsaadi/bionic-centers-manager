@@ -65,6 +65,7 @@ import {
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
 import { newServiceDiscountRef } from "@shared/discount";
+import { checkVisitDate } from "@shared/visit_date";
 import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
@@ -4076,6 +4077,16 @@ export async function registerRoutes(
     }
 
     const branchSession = (req.session as any).branchSession;
+    //  ══ **صلاحيةُ الزرّ نفسِه، وتاريخٌ لا يتجاوز القاعدة** (§4.ar البند ٢٦) ══════════════════════════════════
+    //  زرُّ «إضافة زيارة» لا يظهر إلّا بـ`canAddPatients`، والخادمُ لم يكن يفحصها. والتاريخُ كان يقبل أيَّ يوم:
+    //  المستقبلُ مرفوضٌ للجميع، وأقدمُ من ٣ أيام للمسؤول العام وحده (قرارُ المالك).
+    if (!(branchSession?.isAdmin || branchSession?.permissions?.canAddPatients)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية إضافة زيارة" });
+    }
+    {
+      const v = checkVisitDate((input as any).customDate, Boolean(branchSession?.isAdmin));
+      if (!v.ok) return res.status(v.status).json({ message: v.message });
+    }
     let visitShift = branchSession?.shift;
     if (visitShift !== "morning" && visitShift !== "evening") {
       const now = new Date();
@@ -4257,6 +4268,11 @@ export async function registerRoutes(
       return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
+    //  **وتعديلُ التاريخ بالقاعدة نفسِها** (§4.ar البند ٢٦): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول العام وحده.
+    if (customDate !== undefined && customDate !== null && customDate !== "") {
+      const v = checkVisitDate(String(customDate), Boolean(branchSession?.isAdmin));
+      if (!v.ok) return res.status(v.status).json({ message: v.message });
+    }
 
     // ══ الكلفةُ غير قابلةٍ للتغيير من محرّر الزيارة (تحكّمُ تصحيح الدفعات،
     // القسم أ، 2026-08-29) ═══════════════════════════════════════════════

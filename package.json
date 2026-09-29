@@ -157,6 +157,7 @@
     "test:treatment-plan-guard": "tsx server/treatment_plan_guard.test.ts",
     "test:delete-switch-migration": "tsx server/delete_switch_migration.test.ts",
     "test:discount-authority": "tsx server/discount_authority.test.ts",
+    "test:visit-date-rule": "tsx server/visit_date_rule.test.ts",
     "test:registry-export-services": "tsx client/src/pages/registry_export_services.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",

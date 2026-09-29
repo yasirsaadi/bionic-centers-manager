@@ -37,6 +37,8 @@ import {
 import { z } from "zod";
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
+import { checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
+import { useBranchSession } from "@/components/BranchGate";
 
 // تسجيلُ زيارة — **مراجعةٌ ومتابعةٌ فقط**.
 //
@@ -155,7 +157,14 @@ export function VisitModal({
     form.reset({ patientId, branchId, notes: "", treatmentType: "", customDate: getTodayDate() });
   };
 
+  //  **تاريخُ الزيارة بالقاعدة نفسِها التي يفرضها الخادم** (§4.ar البند ٢٦) — يُقال قبل الحفظ لا بعده.
+  const isAdminSession = Boolean((useBranchSession() as any)?.isAdmin);
   function onSubmit(values: z.infer<typeof formSchema>) {
+    const dateVerdict = checkVisitDate(values.customDate || null, isAdminSession);
+    if (!dateVerdict.ok) {
+      form.setError("customDate", { message: dateVerdict.message });
+      return;
+    }
     if (isPhysioVisit && !values.treatmentType) {
       form.setError("treatmentType", { message: t.modals.treatmentTypeRequired || "يجب اختيار نوع العلاج" });
       return;
@@ -221,6 +230,11 @@ export function VisitModal({
                     data-testid="input-visit-date"
                   />
                   <p className="text-xs text-muted-foreground">{t.modals.visitDateNote}</p>
+                  {!isAdminSession && (
+                    <p className="text-xs text-muted-foreground" data-testid="visit-date-rule">
+                      لا تاريخ مستقبلي، وأقدمُ من {VISIT_BACKDATE_STAFF_DAYS} أيام يسجّله المسؤول العام فقط.
+                    </p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
