@@ -425,7 +425,9 @@ export async function registerRoutes(
       fresh = await storage.getSystemUser(branchSession.userId);
     } catch (err) {
       console.error("[permissions] تعذّر التحقّقُ من الصلاحيات حيّاً — عطلٌ في القاعدة، فالطلبُ يُردّ لا يُفوَّض بمنحةٍ قديمة:", err);
-      return res.status(503).json({ message: "تعذّر التحقّق من الصلاحيات — أعد المحاولة" });
+      //  `error` كبقيّة ردود «الخادم مشغول» (تشبّعُ المِجمَع — `server/db.ts`)، و`message` لقارئها القديم.
+      const busy = "الخادم مشغولٌ الآن — تعذّر التحقّق من الصلاحيات، أعد المحاولة بعد لحظات";
+      return res.status(503).json({ message: busy, error: busy });
     }
     //  مسؤولٌ **بلا صفّ** لا يقع من التطبيق — حسابُ المسؤول لا يُحذف ولا يُعطَّل (`ADMIN_ACCOUNT_PROTECTED_MESSAGE`)
     //  — فيمرّ كما كان قبل البند ٧ (وجلساتُ الاختبار تعتمد عليه). وصفٌّ قائم يُطبَّق حيّاً، ومنه التخفيض.
