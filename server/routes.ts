@@ -8107,10 +8107,67 @@ export async function registerRoutes(
   });
 
   // ======================= TREATMENT PLAN ROUTES =======================
+  //
+  //  ══ **الخطةُ في نطاق الملفّ، والإصاباتُ بصلاحية تعديل المريض، وكلُّ كتابةٍ بأثر** (§4.ar البند ٨) ══
+  //  كانت النقاطُ الأربع بلا حارس فرع (أيُّ موظّفٍ يقرأ ويعدّل ويحذف خطةَ مريضِ أيّ فرع)، و`PUT` تقبل الجسمَ كما هو
+  //  (فتنقل الخطةَ إلى مريضٍ أو فرعٍ آخر)، والإنشاءُ والتعديلُ يعيدان كتابةَ إصابات **ملفّ المريض** بصلاحية الخطط
+  //  وحدها وبلا سطرِ تدقيق. فصار:
+  //   · القراءةُ بـ`canViewPatients` والكتابةُ بـ`canManageTreatmentPlans` — **وكلاهما في نطاق الملفّ** (`reachesPatient`:
+  //     فرعُ التسجيل أو فرعٌ أُتيح له، ترحيل ٠٨٠)؛
+  //   · `PUT` تكتب حقولَ الخطة السريرية وحدها — لا `patientId` ولا `branchId` ولا المعالِج؛
+  //   · مزامنةُ الإصابات إلى الملفّ **بـ`canEditPatients`** (بابُ تعديل المريض نفسُه) — ومَن لا يملكها تُحفَظ خطتُه
+  //     ويبقى الملفُّ كما هو، ويُقال له ذلك في الردّ (`injuriesSynced: false`)؛
+  //   · وكلُّ إنشاءٍ وتعديلٍ وحذفٍ ومزامنةٍ يُكتب في `audit_log` بالقديم والجديد.
+  const planFields = insertTreatmentPlanSchema
+    .omit({ patientId: true, branchId: true, therapistId: true, therapistName: true })
+    .partial();
+  const canEditPatientFile = (req: any) => {
+    const bs = (req.session as any)?.branchSession;
+    return Boolean(bs?.isAdmin) || Boolean(bs?.permissions?.canEditPatients);
+  };
+  const actorOfReq = (req: any) => {
+    const bs = (req.session as any)?.branchSession;
+    return { userId: bs?.userId ?? null, userName: bs?.displayName ?? null };
+  };
+  const loadPlan = async (id: number) => {
+    const r = await db.execute(sql`SELECT * FROM treatment_plans WHERE id = ${id}`);
+    return (r.rows ?? [])[0] as any;
+  };
+  /** يكتب إصاباتِ الخطة على ملفّ المريض — بصلاحية تعديله وحدها، وبسطر تدقيقٍ بالقديم والجديد. */
+  //  `null` = لا إصاباتَ في الطلب · `true` = الملفُّ مطابق · `false` = **أُسقطت لغياب صلاحية تعديل المريض** (تُقال للموظّف).
+  const syncPlanInjuries = async (req: any, patient: Patient, injuriesJson: unknown, planId: number): Promise<boolean | null> => {
+    if (injuriesJson === undefined || injuriesJson === null || injuriesJson === "") return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(String(injuriesJson)); } catch { return null; }
+    if (!Array.isArray(parsed)) return null;
+    if (!canEditPatientFile(req)) return parsed.length > 0 ? false : null;
+    const injuryType = parsed.map((e: any) => e?.type).filter(Boolean).join("، ");
+    const injuryArea = parsed.map((e: any) => e?.area).filter(Boolean).join("، ");
+    const before = { injuries: patient.injuries ?? null, injuryType: patient.injuryType ?? null, injuryArea: patient.injuryArea ?? null };
+    const after = { injuries: String(injuriesJson), injuryType, injuryArea };
+    if (JSON.stringify(before) === JSON.stringify(after)) return true;
+    await storage.updatePatient(patient.id, after);
+    await logAudit({
+      entityType: "patient", entityId: patient.id, action: "update", ...actorOfReq(req),
+      branchId: patient.branchId ?? null, oldValues: before, newValues: after,
+      ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      notes: `تحديث إصابات المريض من الخطة العلاجية #${planId}`,
+    });
+    return true;
+  };
 
   app.get("/api/patients/:patientId/treatment-plans", isAuthenticated, async (req, res) => {
     try {
+      const permissions = getPermissions(req);
+      if (!permissions.canViewPatients) {
+        return res.status(403).json({ message: "غير مصرح لك بعرض المرضى" });
+      }
       const patientId = parseInt(req.params.patientId);
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!(await reachesPatient(req, patient))) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا المريض" });
+      }
       const plans = await storage.getTreatmentPlans(patientId);
       res.json(plans);
     } catch (err) {
@@ -8130,38 +8187,27 @@ export async function registerRoutes(
       if (!patient) {
         return res.status(404).json({ message: "المريض غير موجود" });
       }
+      if (!(await reachesPatient(req, patient))) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا المريض" });
+      }
 
       const branchSession = (req.session as any).branchSession;
-      const planData = {
-        ...req.body,
+      const parsed = insertTreatmentPlanSchema.parse({
+        ...planFields.parse(req.body ?? {}),
         patientId,
         branchId: patient.branchId,
         therapistId: branchSession?.userId || null,
         therapistName: branchSession?.displayName || null,
-      };
-
-      const parsed = insertTreatmentPlanSchema.parse(planData);
+      });
       const plan = await storage.createTreatmentPlan(parsed);
-
-      if (req.body.injuries) {
-        const injuriesJson = req.body.injuries;
-        try {
-          const injuriesParsed = JSON.parse(injuriesJson);
-          if (Array.isArray(injuriesParsed)) {
-            const injuryTypeStr = injuriesParsed.map((e: any) => e.type).filter(Boolean).join("، ");
-            const injuryAreaStr = injuriesParsed.map((e: any) => e.area).filter(Boolean).join("، ");
-            await storage.updatePatient(patientId, {
-              injuries: injuriesJson,
-              injuryType: injuryTypeStr,
-              injuryArea: injuryAreaStr,
-            });
-          }
-        } catch (e) {
-          console.error("Failed to sync injuries to patient:", e);
-        }
-      }
-
-      res.json(plan);
+      await logAudit({
+        entityType: "treatment_plan", entityId: plan.id, action: "create", ...actorOfReq(req),
+        branchId: plan.branchId ?? null, newValues: plan,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `إنشاء خطة علاجية للمريض #${patientId}`,
+      });
+      const injuriesSynced = await syncPlanInjuries(req, patient, req.body?.injuries, plan.id);
+      res.json({ ...plan, injuriesSynced });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message });
@@ -8178,28 +8224,29 @@ export async function registerRoutes(
       }
 
       const id = parseInt(req.params.id);
-      const plan = await storage.updateTreatmentPlan(id, req.body);
-
-      if (req.body.injuries && plan.patientId) {
-        const injuriesJson = req.body.injuries;
-        try {
-          const injuriesParsed = JSON.parse(injuriesJson);
-          if (Array.isArray(injuriesParsed)) {
-            const injuryTypeStr = injuriesParsed.map((e: any) => e.type).filter(Boolean).join("، ");
-            const injuryAreaStr = injuriesParsed.map((e: any) => e.area).filter(Boolean).join("، ");
-            await storage.updatePatient(plan.patientId, {
-              injuries: injuriesJson,
-              injuryType: injuryTypeStr,
-              injuryArea: injuryAreaStr,
-            });
-          }
-        } catch (e) {
-          console.error("Failed to sync injuries to patient:", e);
-        }
+      const existing = await loadPlan(id);
+      if (!existing) return res.status(404).json({ message: "الخطة غير موجودة" });
+      const patient = await storage.getPatient(Number(existing.patient_id));
+      if (!patient || !(await reachesPatient(req, patient))) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا المريض" });
       }
-
-      res.json(plan);
+      //  حقولُ الخطة السريرية وحدها — المريضُ والفرعُ والمعالِجُ لا تُنقَل من هنا.
+      const patch = planFields.parse(req.body ?? {});
+      const plan = await storage.updateTreatmentPlan(id, patch);
+      await logAudit({
+        entityType: "treatment_plan", entityId: id, action: "update", ...actorOfReq(req),
+        branchId: plan.branchId ?? null,
+        oldValues: Object.fromEntries(Object.keys(patch).map((k) => [k, (existing as any)[k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())] ?? null])),
+        newValues: patch,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `تعديل الخطة العلاجية #${id}`,
+      });
+      const injuriesSynced = await syncPlanInjuries(req, patient, req.body?.injuries, id);
+      res.json({ ...plan, injuriesSynced });
     } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
       res.status(500).json({ message: "فشل في تحديث الخطة العلاجية" });
     }
   });
@@ -8212,7 +8259,19 @@ export async function registerRoutes(
       }
 
       const id = parseInt(req.params.id);
+      const existing = await loadPlan(id);
+      if (!existing) return res.status(404).json({ message: "الخطة غير موجودة" });
+      const patient = await storage.getPatient(Number(existing.patient_id));
+      if (!patient || !(await reachesPatient(req, patient))) {
+        return res.status(403).json({ message: "غير مصرح لك بهذا المريض" });
+      }
       await storage.deleteTreatmentPlan(id);
+      await logAudit({
+        entityType: "treatment_plan", entityId: id, action: "delete", ...actorOfReq(req),
+        branchId: existing.branch_id ?? null, oldValues: existing,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `حذف الخطة العلاجية #${id} للمريض #${existing.patient_id}`,
+      });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "فشل في حذف الخطة العلاجية" });
