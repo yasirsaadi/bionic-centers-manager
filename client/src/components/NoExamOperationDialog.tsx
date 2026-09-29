@@ -39,6 +39,8 @@
 // فتبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب. فصار استعمالُها للمساند
 // **الصيانةَ وحدها**: جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
 
+import { canApproveServiceDiscount } from "@shared/discount";
+import { useBranchSession } from "@/components/BranchGate";
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -192,7 +194,10 @@ export function NoExamOperationDialog({
   //  (المرحلة الرابعة) نفسُ الاشتقاق حرفياً في البابين — فلا حسابَ مكرَّر
   //  ولا حقلَ سعرٍ نهائيٍّ يُكتب يدوياً في أيٍّ منهما.
   const [originalPrice, setOriginalPrice] = useState(0);
-  const [discountAmount, setDiscountAmount] = useState(0);
+  const [discountAmountRaw, setDiscountAmount] = useState(0);
+  //  **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — مَن لا يملكه يحفظ بالسعر الكامل.
+  const mayDiscount = canApproveServiceDiscount(useBranchSession() as any);
+  const discountAmount = mayDiscount ? discountAmountRaw : 0;
 
   //  ══ **«المبلغ المدفوع الآن» — يبدأ فارغاً دائماً، لا صفراً** ══════════
   //  (المرحلة الخامسة) الفراغُ يعني «لم يُسأل الموظّفُ بعد» — يُرفَض. والصفرُ
@@ -779,7 +784,7 @@ export function NoExamOperationDialog({
           </div>
           {/*  **ولا حقلَ خصمٍ مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق لا
               بخصمٍ يُمنَح، فلا يُسأل الموظّفُ سؤالاً لا معنى له. */}
-          {!warrantyOn && (
+          {!warrantyOn && (mayDiscount ? (
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">مقدار الخصم (د.ع)</Label>
               <MoneyInput value={discountAmount} onValueChange={setDiscountAmount}
@@ -788,7 +793,11 @@ export function NoExamOperationDialog({
                 صفرٌ = بلا خصم. ومساواةُ الخصم للسعر الأصلي = مجّانيّ صراحةً.
               </p>
             </div>
-          )}
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="discount-no-authority">
+              الخصم والخدمة المجّانية يحتاجان صلاحية «اعتماد الخصومات» — احفظ بالسعر الكامل، أو اطلبه من مدير الفرع.
+            </p>
+          ))}
           <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
             data-testid="no-exam-op-final-price">
             {offer.ok ? (

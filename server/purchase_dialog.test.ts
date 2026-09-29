@@ -49,8 +49,10 @@ const ADMIN = 9901, RECV = 9902, MGR = 9903, DOC = 9904, ACCT = 9905;
 const EXPERT = 9906, EXPERT2 = 9907, PHYSIO = 9908;
 const EXPERT_B2 = 9909, RECV_B2 = 9910, DOC_B2 = 9911, EXPERT_OFF = 9912;
 const ACCT_BARE = 9913;
+//  **محاسبٌ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — القسمُ م: الخصمُ صار بالمفتاح لا بمن يسعّر.
+const ACCT_DISC = 9914;
 const ALL = [ADMIN, RECV, MGR, DOC, ACCT, EXPERT, EXPERT2, PHYSIO,
-  EXPERT_B2, RECV_B2, DOC_B2, EXPERT_OFF, ACCT_BARE];
+  EXPERT_B2, RECV_B2, DOC_B2, EXPERT_OFF, ACCT_BARE, ACCT_DISC];
 
 const S = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -212,6 +214,7 @@ async function main() {
     [DOC, "doctor", "د. المعاين", 1, '["prosthetic","medical_support"]', true],
     [ACCT, "accountant", "المحاسب", 1, "[]", true],
     [ACCT_BARE, "accountant", "المحاسب العاري", 1, "[]", true],
+    [ACCT_DISC, "accountant", "محاسبٌ بمفتاح الخصم", 1, "[]", true],
     [EXPERT, "prosthetics_expert", "الخبير", 1, "[]", true],
     [EXPERT2, "prosthetics_expert", "الخبير الثاني", 1, "[]", true],
     [PHYSIO, "therapist", "مُدخِل الجلسات", 1, "[]", true],
@@ -229,6 +232,9 @@ async function main() {
                medical_specialties=EXCLUDED.medical_specialties, is_active=EXCLUDED.is_active`,
       [id, `pd_u${id}`, name, role, branch, JSON.stringify([branch]), active, spec]);
   }
+  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
+  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
+  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[RECV, RECV_B2, ACCT_DISC]]);
   await cleanup();
 
   const app = express();
@@ -582,15 +588,14 @@ async function main() {
           Number((await q(`SELECT total_cost FROM patients WHERE id=$1`, [pid]))[0].total_cost)],
         [1, 800_000]);
     }
-    //  ══ والمحاسبُ يطبّق خصمَه بنفسه — القاعدةُ انقلبت ═══════════════════
-    //  كان «يطلب الخصم ولا يعتمده» — طبقةُ إذنٍ ثانية لم تعد موجودة. مَن
-    //  يملك تنفيذ العملية بسعرها الكامل (والمحاسبُ منهم، القسم ب أعلاه)
-    //  يملك تنفيذَها بخصمٍ صحيح أيضاً — بلا وسيط.
+    //  ══ والمحاسبُ **ذو مفتاح «اعتماد الخصومات»** يطبّق خصمَه بنفسه ═══════
+    //  لا طابورَ اعتماد (٢٠٢٦-٠٨-٢٨)، **والخصمُ بالمفتاح** (§4.ar البند ٢٥ — قرارُ المالك ٢٠٢٦-٠٩-٢٩): مَن يملكه
+    //  يطبّقه فوراً بلا وسيط، ومَن لا يملكه يبيع بالسعر الكامل (`test:discount-authority`).
     {
       const { pid, f } = await scenario("خصم-المحاسب", { price: 900_000, expert: true });
-      const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.acct,
+      const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, { ...S.acct, userId: ACCT_DISC },
         { discount: { finalPrice: 700_000, reason: "negotiation" } });
-      same("م. **والمحاسبُ يطبّق خصمَه فوراً كأيّ فاعلٍ آخر — لا يرفعه لأحد**",
+      same("م. **والمحاسبُ ذو المفتاح يطبّق خصمَه فوراً — لا يرفعه لأحد**",
         [r.status, r.body?.ok], [200, true]);
       same("   وأمرُ تصنيعٍ وُلد بالسعر المخفَّض",
         [(await ordersOf(pid)).length,
