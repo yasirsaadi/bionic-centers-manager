@@ -275,6 +275,8 @@ export default function PatientsList() {
      * من `permissions.canViewPayments` قبل قراءته، لا من قيمته.
      */
     totalPaid?: number;
+    /** مالُ الأقسام المختارة للتصدير وحدها — حاضرٌ حين يختلف عن الكامل (مريضٌ له قسمٌ خارج الاختيار). */
+    scopedCost?: number; scopedPaid?: number;
     /** أوامر البناء الأولي الفعّالة — واحدٌ لكل خدمة على الأكثر. */
     activeDeviceAssignments?: ActiveAssignment[];
   }
@@ -458,10 +460,10 @@ export default function PatientsList() {
     //  (`?? null`) بدل توسيع عقد الدالّة نفسِها. **ولا تُنادى إطلاقاً**
     //  حين تُحجَب الدفعات، فلا صفرَ زائف ولا التفافَ حول نوعها.
     const excelData = dataToExport.map((patient, index) => {
-      const totalCost = patient.totalCost ?? 0;
+      const totalCost = patient.scopedCost ?? patient.totalCost ?? 0; //  بالأقسام المختارة (طلبُ المالك ٢٠٢٦-٠٩-٢٩)
       const paymentFields = permissions.canViewPayments
         ? (() => {
-            const money = registryExportMoney({ totalCost: patient.totalCost, totalPaid: patient.totalPaid ?? null });
+            const money = registryExportMoney({ totalCost: patient.scopedCost ?? patient.totalCost, totalPaid: patient.scopedPaid ?? patient.totalPaid ?? null });
             return { "المبلغ المدفوع": money.totalPaid, "المبلغ المتبقي": money.remaining };
           })()
         : null;
@@ -543,13 +545,13 @@ export default function PatientsList() {
           </thead>
           <tbody>
             ${dataToExport.map((patient, index) => {
-              const totalCost = patient.totalCost ?? 0;
+              const totalCost = patient.scopedCost ?? patient.totalCost ?? 0; //  بالأقسام المختارة (طلبُ المالك ٢٠٢٦-٠٩-٢٩)
               //  ══ `canViewPayments` — نفسُ تصحيح تصدير Excel أعلاه: الدالّةُ
               //  تُنادى فقط حين الدفعاتُ ظاهرة فعلياً، مع تطبيعٍ صريح لنوع
               //  `totalPaid` (إصلاحٌ 2026-09-02، مُصحَّحٌ 2026-09-03).
               const paymentCells = permissions.canViewPayments
                 ? (() => {
-                    const money = registryExportMoney({ totalCost: patient.totalCost, totalPaid: patient.totalPaid ?? null });
+                    const money = registryExportMoney({ totalCost: patient.scopedCost ?? patient.totalCost, totalPaid: patient.scopedPaid ?? patient.totalPaid ?? null });
                     return `<td>${money.totalPaid.toLocaleString()}</td>
                 <td style="color: ${money.remaining > 0 ? '#dc2626' : '#16a34a'}; font-weight: bold;">${money.remaining.toLocaleString()}</td>`;
                   })()

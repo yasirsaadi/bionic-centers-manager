@@ -2118,6 +2118,31 @@ export async function registerRoutes(
       for (const r of sums.rows as any[]) paidByPatient.set(Number(r.patient_id), Number(r.total));
     }
 
+    //  ══ **مالُ الأقسام المختارة وحدها** (طلبُ المالك ٢٠٢٦-٠٩-٢٩ — تصديرُ السجلّ بالقسم) ═══════════════════════
+    //  تصديرُ «علاج طبيعي» كان يُخرج كلفةَ الملفّ كلِّه ومدفوعَه كلَّه — مالَ الأطراف والمساند معه. فحين يُختار قسمٌ أو
+    //  قسمان: **الكلفةُ** = كلفُ حالات تلك الأقسام (`patient_cases.cost`)، **والمدفوعُ** = الدفعاتُ الموسومةُ بحالةٍ منها
+    //  (`payments.case_id`). ومريضٌ أقسامُه كلُّها داخل الاختيار يبقى على رقمَيه الكاملين حرفاً (كلفةُ الملفّ وكلُّ ما دفع) —
+    //  فلا تُسقَط دفعةٌ قديمةٌ بلا وسمٍ عن مريضِ قسمٍ واحد. والنتيجةُ `scopedCost`/`scopedPaid` بجوار الكاملين لا بدلهما.
+    const scopedMoney = new Map<number, { cost: number; paid: number }>();
+    if (ids.length > 0 && services.length > 0 && services.length < 3) {
+      const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+      const sel = sql.join(services.map((x) => sql`${x}`), sql`, `);
+      const m = await db.execute(sql`
+        SELECT p.id AS patient_id,
+               COALESCE((SELECT SUM(pc.cost) FROM patient_cases pc
+                          WHERE pc.patient_id = p.id AND pc.case_type IN (${sel})), 0)::bigint AS cost,
+               COALESCE((SELECT SUM(py.amount) FROM payments py JOIN patient_cases pc ON pc.id = py.case_id
+                          WHERE py.patient_id = p.id AND pc.case_type IN (${sel})), 0)::bigint AS paid,
+               NOT EXISTS (SELECT 1 FROM patient_cases pc
+                            WHERE pc.patient_id = p.id AND pc.case_type NOT IN (${sel})) AS all_inside
+          FROM patients p WHERE p.id IN (${idList})
+      `);
+      for (const r of m.rows as any[]) {
+        if (r.all_inside === true) continue; //  أقسامُه كلُّها في الاختيار ⟵ الرقمان الكاملان.
+        scopedMoney.set(Number(r.patient_id), { cost: Number(r.cost), paid: Number(r.paid) });
+      }
+    }
+
     // ══ إسنادُ الخبير الفعّال لأجهزة هذه الصفحة ═══════════════════════
     // استعلامٌ واحد إضافي لمرضى الصفحة الظاهرة — لا واحدٌ لكل صفّ.
     //
@@ -2191,6 +2216,9 @@ export async function registerRoutes(
         //  الصلاحية. `patients_registry_export.ts` (العميل) يبقى كما هو —
         //  حاسبةٌ نقيّة تُستدعى من الشاشة فقط حين `canViewPayments` صحيح.
         ...(canViewPayments ? { totalPaid: paidByPatient.get(r.id) ?? 0 } : {}),
+        //  مالُ الأقسام المختارة (غائبٌ حين يطابق الكامل) — والمدفوعُ بصلاحيته كالكامل.
+        ...(scopedMoney.has(r.id) ? { scopedCost: scopedMoney.get(r.id)!.cost } : {}),
+        ...(canViewPayments && scopedMoney.has(r.id) ? { scopedPaid: scopedMoney.get(r.id)!.paid } : {}),
         activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
       })),
     });

@@ -93,6 +93,23 @@ async function main() {
     same("**والفترةُ تتقدّم على visitDate** (يومٌ خارجها لا يرشّح)",
       await names(`visitDate=2026-03-01&activeFrom=2026-01-01&activeTo=2026-01-31&services=prosthetic`), [B.id]);
     same("وطرفان مقلوبان يُرتَّبان", await names(`activeFrom=2026-01-31&activeTo=2026-01-01&services=prosthetic`), [B.id]);
+
+    // ══ **مالُ الأقسام المختارة وحدها** (طلبُ المالك ٢٠٢٦-٠٩-٢٩) — تصديرُ «علاج طبيعي» لا يحمل مالَ الأطراف ══
+    await q(`UPDATE patient_cases SET cost = 1000000 WHERE id = $1`, [B.cases.prosthetic]);
+    await q(`UPDATE patient_cases SET cost = 100000 WHERE id = $1`, [B.cases.physiotherapy]);
+    await q(`UPDATE patients SET total_cost = 1100000 WHERE id = $1`, [B.id]);
+    await q(`INSERT INTO payments (patient_id, branch_id, case_id, amount, date) VALUES ($1,1,$2,500000,'2026-01-10 09:00'),($1,1,$3,50000,'2026-01-10 09:00')`,
+      [B.id, B.cases.prosthetic, B.cases.physiotherapy]);
+    const money = async (qs: string, id: number) => {
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/patients/registry?pageSize=100&branchId=1&${qs}`);
+      const row = ((await r.json() as any).rows ?? []).find((x: any) => x.id === id);
+      return [row?.totalCost, row?.totalPaid, row?.scopedCost ?? null, row?.scopedPaid ?? null];
+    };
+    same("**علاج طبيعي ⟵ مريضُ القسمين: كلفةُ علاجه ومدفوعُه وحدهما** (والكاملان بجوارهما)",
+      await money("services=physiotherapy", B.id), [1100000, 550000, 100000, 50000]);
+    same("وأطراف ⟵ كلفةُ الأطراف ومدفوعُها", await money("services=prosthetic", B.id), [1100000, 550000, 1000000, 500000]);
+    same("**ومريضُ قسمٍ واحد داخل الاختيار ⟵ رقماه الكاملان** (لا مالٌ مقسوم)", (await money("services=physiotherapy", A.id)).slice(2), [null, null]);
+    same("وبلا اختيار أقسام ⟵ الكاملان وحدهما", (await money("", B.id)).slice(2), [null, null]);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     //  تنظيفٌ كي تُعاد الحزمةُ على القاعدة نفسِها.
