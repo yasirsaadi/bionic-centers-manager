@@ -130,3 +130,38 @@ export type ExamFieldKey = (typeof EXAM_FIELDS)[number]["key"];
  * ويُستورَد في الطرفين كبقيّة مفردات هذا الملفّ، فلا تنحرف السلسلةُ يوماً.
  */
 export const EXAM_CANCEL_OPERATION_EXISTS = "exam_cancel_operation_exists";
+
+/**
+ * **رمزُ «الحالة المرضية» ⟵ قسمُه** (البند ٣١، ٢٠٢٦-٠٩-٢٩). `patients.medical_condition` يحمل
+ * `amputee` / `medical_support` / `physiotherapy` — و`amputee` هو قسمُ الأطراف. وما سواها نصٌّ حرٌّ
+ * قديم كتبه إنسان ⟵ `null` هنا، فيُعرض كما هو.
+ */
+export const MEDICAL_CONDITION_SPECIALTY: Record<string, MedicalSpecialty> = {
+  amputee: "prosthetic",
+  medical_support: "medical_support",
+  physiotherapy: "physiotherapy",
+};
+
+/** هل النصُّ أحدُ الرموز الثلاثة؟ — `hasOwnProperty` لا فهرسةٌ عارية: «constructor» ليس رمزاً. */
+export function isMedicalConditionCode(v: string): boolean {
+  return Object.prototype.hasOwnProperty.call(MEDICAL_CONDITION_SPECIALTY, v);
+}
+
+/**
+ * **«الحالة المرضية» بالعربية** — نصٌّ حرٌّ قديم كتبه إنسان يُعرض كما هو؛ وإلّا فأقسامُ المريض من
+ * أعلامه («أطراف صناعية + علاج طبيعي» بالترتيب الثابت) — والأعلامُ هي ما يتحدّث مع إضافة قسمٍ لا رمزُ
+ * التسجيل. ولا علَمَ قائمٌ ⟵ قسمُ الرمز.
+ */
+export function patientDepartmentsLabel(p: {
+  isAmputee?: boolean | null; isMedicalSupport?: boolean | null; isPhysiotherapy?: boolean | null;
+  medicalCondition?: string | null;
+}): string {
+  const raw = String(p.medicalCondition ?? "").trim();
+  if (raw && !isMedicalConditionCode(raw)) return raw;
+  const on: MedicalSpecialty[] = [];
+  if (p.isAmputee) on.push("prosthetic");
+  if (p.isMedicalSupport) on.push("medical_support");
+  if (p.isPhysiotherapy) on.push("physiotherapy");
+  if (on.length) return on.map((s) => SPECIALTY_LABELS[s]).join(" + ");
+  return isMedicalConditionCode(raw) ? SPECIALTY_LABELS[MEDICAL_CONDITION_SPECIALTY[raw]] : raw;
+}

@@ -6,7 +6,7 @@ import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
-import { isMedicalSpecialty, SPECIALTY_LABELS } from "@shared/medical";
+import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
@@ -1849,7 +1849,8 @@ export async function registerRoutes(
         p.phone || "",
         p.address || "",
         p.referralSource || "",
-        p.medicalCondition === "amputee" ? "بتر" : p.medicalCondition === "physiotherapy" ? "علاج طبيعي" : "مساند طبية",
+        //  أقسامُه الحاليّة من أعلامه — لا رمزُ التسجيل الذي لا يتحدّث (البند ٣١).
+        patientDepartmentsLabel(p),
         branchMap.get(p.branchId) || "",
         p.weight || "",
         p.height || "",
@@ -5507,6 +5508,9 @@ export async function registerRoutes(
           p.age AS "age",
           p.phone AS "phone",
           p.medical_condition AS "medicalCondition",
+          p.is_amputee AS "isAmputee",
+          p.is_medical_support AS "isMedicalSupport",
+          p.is_physiotherapy AS "isPhysiotherapy",
           p.amputation_site AS "amputationSite",
           p.disease_type AS "diseaseType",
           p.support_type AS "supportType",
@@ -5535,13 +5539,17 @@ export async function registerRoutes(
       `);
 
       const rows = (result.rows || []).map((r: any) => {
+        //  رمزُ القسم (`amputee`…) ليس «مشكلة» — كان يُعرض خاماً بالإنجليزية فيسبق التفصيل. فالنصُّ
+        //  الحرُّ القديم وحده يتقدّم، ثمّ التفصيل، ثمّ أقسامُ المريض بالعربية (البند ٣١).
+        const rawCondition = r.medicalCondition ? String(r.medicalCondition).trim() : "";
         const problem =
-          (r.medicalCondition && String(r.medicalCondition).trim()) ||
+          (rawCondition && !isMedicalConditionCode(rawCondition) ? rawCondition : null) ||
           (r.amputationSite && String(r.amputationSite).trim()) ||
           (r.diseaseType && String(r.diseaseType).trim()) ||
           (r.supportType && String(r.supportType).trim()) ||
           (r.injuryType && String(r.injuryType).trim()) ||
           (r.injuryArea && String(r.injuryArea).trim()) ||
+          patientDepartmentsLabel(r) ||
           null;
         const actionToday =
           (r.details && String(r.details).trim()) ||
