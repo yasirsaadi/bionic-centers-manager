@@ -186,9 +186,6 @@ async function main() {
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, medical_specialties=EXCLUDED.medical_specialties`,
       [id, `rp_u${id}`, role, spec]);
   }
-  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
-  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
-  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[RECEPTION]]);
   await cleanup();
 
   const app = express();

@@ -68,10 +68,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-الخصم-الموحَّد";
 const ADMIN = 9881, RECV = 9882, MGR = 9883, DOC = 9884, DOC_OK = 9885;
 const EXPERT = 9886, RECV_B2 = 9887, MGR_B2 = 9888, DOC_B2 = 9889, EXPERT_B2 = 9890;
-//  **استقبالٌ بلا مفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥): `RECV` يخصم هنا فمفتاحُه مُشغَّل، وأسئلةُ السلطة
-//  (الحسم · الطابور · العدّاد) تُسأل لاستقبالٍ لا يملكه — كما يكون الاستقبالُ افتراضاً.
-const RECV_PLAIN = 9892;
-const ALL = [ADMIN, RECV, MGR, DOC, DOC_OK, EXPERT, RECV_B2, MGR_B2, DOC_B2, EXPERT_B2, RECV_PLAIN];
+const ALL = [ADMIN, RECV, MGR, DOC, DOC_OK, EXPERT, RECV_B2, MGR_B2, DOC_B2, EXPERT_B2];
 
 const S = {
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2],
@@ -79,8 +76,6 @@ const S = {
     permissions: { canViewPatients: true, canAddPatients: true, canDeletePatients: true } },
   recv: { userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "استعلامات", permissions: { canViewPatients: true, canAddPatients: true } },
-  recvPlain: { userId: RECV_PLAIN, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
-    displayName: "استعلامات بلا مفتاح", permissions: { canViewPatients: true, canAddPatients: true } },
   mgr: { userId: MGR, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "مدير الفرع", permissions: { canViewPatients: true, canAddPatients: true } },
   //  طبيبٌ عاديّ — **لا يعتمد خصماً**: الخصمُ قرارٌ ماليّ لا سريريّ.
@@ -284,14 +279,12 @@ async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'ذي قار') ON CONFLICT DO NOTHING`);
   for (const [id, role, name, branch, spec, flag] of [
     [ADMIN, "admin", "المسؤول", 1, "[]", false],
-    //  **مفتاحُ «اعتماد الخصومات» مُشغَّل** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذا الاستقبالُ هو مَن يخصم هنا.
-    [RECV, "reception", "استعلامات", 1, "[]", true],
+    [RECV, "reception", "استعلامات", 1, "[]", false],
     [MGR, "branch_manager", "مدير الفرع", 1, "[]", false],
     [DOC, "doctor", "د. المعاين", 1, '["prosthetic","medical_support","physiotherapy"]', false],
     [DOC_OK, "doctor", "د. المخوَّل", 1, '["prosthetic","physiotherapy"]', true],
     [EXPERT, "prosthetics_expert", "الخبير", 1, "[]", false],
     [RECV_B2, "reception", "استعلامات ٢", 2, "[]", false],
-    [RECV_PLAIN, "reception", "استعلامات بلا مفتاح", 1, "[]", false],
     [MGR_B2, "branch_manager", "مدير الفرع ٢", 2, "[]", false],
     [DOC_B2, "doctor", "د. الفرع ٢", 2, '["prosthetic"]', false],
     [EXPERT_B2, "prosthetics_expert", "الخبير ٢", 2, "[]", false],
@@ -493,22 +486,6 @@ async function main() {
         [m.totalCost, m.ledger, m.payments], [0, 0, 0]);
       same("١٥. **لكنّ الخدمةَ حقيقية**: الجلساتُ العشر مشتراة",
         await plan(p), [["روبوت", 10]]);
-    }
-
-    // ══ ٥ب. **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — تأكيدُ الشراء بلا المفتاح ══
-    console.log("\n── (٥ب) تأكيدُ الشراء بخصمٍ بلا مفتاح ──");
-    {
-      const p = await mkPatient("طرفٌ بخصمٍ بلا مفتاح");
-      await mkCase(p);
-      await signExam(p, S.doc, { deviceCost: 2_000_000 });
-      const f = await followupOf(p);
-      await http("POST", `/api/followups/${f.id}/expert`, S.recv, { expertUserId: EXPERT });
-      const r = await http("POST", `/api/followups/${f.id}/confirm-purchase`, S.recvPlain, {
-        discount: { finalPrice: 1_600_000, reason: "negotiation" },
-      });
-      same("١٥ب. **استقبالٌ بلا مفتاح ⟵ ٤٠٣، ولا صفَّ خصمٍ ولا أمرَ تصنيع**",
-        [r.status, (await q(`SELECT count(*)::int n FROM service_discount_requests WHERE patient_id=$1`, [p]))[0].n,
-          (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`, [p]))[0].n], [403, 0, 0]);
     }
 
     // ══ ٦. الأجهزة — الخصمُ عبر بابٍ حيّ يُطبَّق فوراً؛ والبابُ التاريخيّ
@@ -767,7 +744,7 @@ async function main() {
     console.log("\n── (٧) مَن يعتمد ومَن لا يعتمد ──");
     {
       same("١٩. **الاستقبالُ لا يعتمد**",
-        (await http("POST", `/api/discounts/${devReq}/decide`, S.recvPlain, { decision: "approve" })).status, 403);
+        (await http("POST", `/api/discounts/${devReq}/decide`, S.recv, { decision: "approve" })).status, 403);
       same("٢٠. **ولا الطبيبُ العاديّ** — الخصم قرارٌ ماليّ لا سريريّ",
         (await http("POST", `/api/discounts/${devReq}/decide`, S.doc, { decision: "approve" })).status, 403);
       same("٢١. ولا خبيرُ الأطراف",
@@ -781,7 +758,7 @@ async function main() {
         ((await http("GET", "/api/discounts", S.mgr)).body?.requests ?? [])
           .filter((x: any) => x.id === devReq).length, 1);
       same("٢٤. والاستقبالُ لا يفتح الطابور أصلاً",
-        (await http("GET", "/api/discounts", S.recvPlain)).status, 403);
+        (await http("GET", "/api/discounts", S.recv)).status, 403);
     }
 
     // ══ ٨. الاعتمادُ ينادي المسارَ القائم ═════════════════════════════
@@ -1560,7 +1537,7 @@ async function main() {
       same("٩٣. **عددُ فرعه يزيد بواحدٍ بالضبط**", afterMgr, beforeMgr + 1);
       same("   **ولا يتأثّر عدُّ فرعٍ آخر**", afterMgr2, beforeMgr2);
       //  ومَن لا يملك أهليّة الحسم التاريخيّ يقرأ صفراً — لا ٤٠٣ خاماً.
-      const forbidden = await http("GET", "/api/discounts/pending/count", S.recvPlain);
+      const forbidden = await http("GET", "/api/discounts/pending/count", S.recv);
       same("   **والاستقبالُ يقرأ صفراً بلا ٤٠٣** — لا يملك أهليّة الحسم",
         [forbidden.status, Number(forbidden.body?.count ?? 0)], [200, 0]);
       //  والمسؤولُ يرى على الأقلّ ما يراه مديرُ الفرع (كلَّ الفروع).

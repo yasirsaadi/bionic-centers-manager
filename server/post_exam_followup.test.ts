@@ -229,9 +229,6 @@ async function main() {
                medical_specialties=EXCLUDED.medical_specialties, is_active=true`,
       [id, `fu_u${id}`, name, role, branch, JSON.stringify([branch]), spec]);
   }
-  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
-  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
-  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[RECV, RECV_B2, ACCT]]);
   //  **«المسؤولُ الطبيب» كما يوجد فعلاً** (§4.ar البند ٧): المسؤوليّةُ من الدور `admin` نفسِه (`isAdmin = role === "admin"`
   //  عند الدخول وفي كلّ طلب)، والمعاينةُ من عَلَمها — لا دورُ «طبيب» يحمل `isAdmin`، فتلك جلسةٌ لا يُنتجها الدخول،
   //  والدورُ والمسؤوليّةُ يُعادان من الصفّ مع كلّ طلب. وفروعُه كجلسته.

@@ -64,7 +64,7 @@ import {
   executeNewService, journalNewServicePayments, normalizeEntries, NewServiceError,
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
-import { newServiceDiscountRef, canApproveServiceDiscount, DISCOUNT_AUTHORITY_MESSAGE } from "@shared/discount";
+import { newServiceDiscountRef } from "@shared/discount";
 import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
@@ -3568,10 +3568,6 @@ export async function registerRoutes(
             400);
         }
         if (isPhysioService && (wantsFree || wantsCut)) {
-          //  **بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — داخل المعاملة، فالرفضُ يرجع التذكرةَ معه.
-          if (!canApproveServiceDiscount((req.session as any)?.branchSession)) {
-            throw new NewServiceError(DISCOUNT_AUTHORITY_MESSAGE, 403);
-          }
           if (!(stdPrice > 0)) {
             throw new NewServiceError(
               "السعر الأصلي يجب أن يكون موجباً — اختر نوع العلاج وعدد الجلسات أولاً", 400);
@@ -3758,12 +3754,9 @@ export async function registerRoutes(
       const wantsCut = dsc && dsc.finalPrice !== undefined && dsc.finalPrice !== null
         && dsc.finalPrice !== "" && Number(dsc.finalPrice) !== totalCost;
       if (wantsFree || wantsCut) {
-        //  **بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — لا بوّابةُ التسعير وحدها.
-        if (!canApproveServiceDiscount((req.session as any)?.branchSession)) {
-          return res.status(403).json({ message: DISCOUNT_AUTHORITY_MESSAGE });
-        }
         try {
-          //  **التطبيقُ فوريّ دائماً** لمن يملك المفتاح.
+          //  **التطبيقُ فوريّ دائماً** — `canAccess` أعلاه (نفسُ بوّابة
+          //  الحفظ بلا خصم) فحصت الإذنَ بالفعل، فلا فحصَ ثانياً هنا.
           const out = await discountStore.applyDiscountImmediately({
             patientId, department: "physiotherapy", branchId: patient.branchId,
             contextRef: null,
@@ -4390,11 +4383,11 @@ export async function registerRoutes(
     } = req.body ?? {};
     const input = api.payments.create.input.parse(bodyWithoutEntries);
     
-    //  **الجلساتُ المجّانية بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥): المسؤول · مديرُ الفرع · أو مَن شُغِّل له المفتاح —
-    //  كانت بالدور وحده، والمفتاحُ لا يُقرأ. (ومَن لا يملكه تُسقَط رايتُه كما كانت تُسقَط للاستقبال.)
+    // Authorization: Only admin or branch_manager can set isFreeSessions to true
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const mayGrantFree = canApproveServiceDiscount(branchSession);
+    const isBranchManager = branchSession?.role === "branch_manager";
+    const mayGrantFree = isAdmin || isBranchManager;
     const isFreeSessions = mayGrantFree ? (req.body.isFreeSessions || false) : false;
     //  ══ **والنافذةُ تؤشّر «مجاني» لكلّ بند، لا علماً علوياً** ════════════
     //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) `PaymentModal` يبني البندَ المُهدى بـ`isFree`

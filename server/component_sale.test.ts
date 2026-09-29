@@ -272,9 +272,6 @@ async function main() {
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
       [id, `cs_u${id}`, role, name, branch, JSON.stringify(branchIds)]);
   }
-  //  **مفتاحُ «اعتماد الخصومات» للاستقبال والمحاسب الذين يخصمون هنا** (§4.ar البند ٢٥): الخصمُ صار بالمفتاح، وهذه
-  //  الحزمةُ تختبر آليّةَ الخصم لا سلطتَه (السلطةُ في `test:discount-authority`).
-  await q(`UPDATE system_users SET can_approve_discount = TRUE WHERE id = ANY($1::int[])`, [[ACC, RECV, RECV_BRANCH2]]);
   await cleanup();
 
   const app = express();
@@ -1628,22 +1625,6 @@ async function main() {
       same("    ودفعةٌ واحدةٌ بمبلغها الصحيح، مربوطةٌ بالحلقة القائمة بعينها",
         [pays.length, pays[0]?.amount, pays[0]?.device_episode_id], [1, 25_000, ep.id]);
     }
-    // ══ **الخصمُ بمفتاح «اعتماد الخصومات»** (§4.ar البند ٢٥) — استقبالٌ بلا المفتاح ══
-    console.log("\n── الخصمُ بلا مفتاح «اعتماد الخصومات» ──");
-    {
-      await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,can_approve_discount)
-               VALUES ($1,$2,'x','استقبال بلا مفتاح','reception',1,'[1]'::jsonb,true,false)
-               ON CONFLICT (id) DO UPDATE SET can_approve_discount=false, is_active=true`, [9957, "plain_9957"]);
-      const plain = { ...S.recv, userId: 9957 };
-      const pid = await mkPatient("بيعُ الجزء-بلا-مفتاح");
-      await mkCase(pid, "prosthetic");
-      const denied = await sale({ patientId: pid, expertUserId: EXPERT, component: "knee", originalPrice: 300_000, discountAmount: 50_000 }, plain);
-      same("ك١. **بيعُ الجزء بخصمٍ بلا مفتاح ⟵ ٤٠٣**", [denied.status, denied.body?.error?.includes("اعتماد الخصومات")], [403, true]);
-      const full = await sale({ patientId: pid, expertUserId: EXPERT, component: "knee", originalPrice: 300_000, discountAmount: 0 }, plain);
-      same("ك٢. **وبالسعر الكامل يمضي**", full.status, 201);
-      await q(`DELETE FROM audit_log WHERE user_id = $1`, [9957]);
-    }
-
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
