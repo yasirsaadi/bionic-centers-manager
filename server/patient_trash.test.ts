@@ -254,6 +254,8 @@ async function cleanup() {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **فروعُ الصفّ = فروعُ الجلسة** (§4.ar البند ٧): الجلسةُ تُعاد بناءً من الصفّ مع كلّ طلب، فصفٌّ بفرعين
+  //  كان يمنح «مديرَ الفرع الثاني» الفرعَ الأوّل. وجلسةٌ حقيقيةٌ لا تدّعي غيرَ ما في صفّها.
   for (const [id, role, spec, name, branch] of [
     [ADMIN, "admin", "null", "المسؤول", 1],
     [MGR, "branch_manager", "null", "مدير بغداد", 1],
@@ -267,7 +269,7 @@ async function main() {
     [SURVEYOR, "surveyor", "null", "المسّاح", 1],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
-             VALUES ($1,$2,'x',$5,$3,$6,'[1,2]'::jsonb,true,$4::jsonb)
+             VALUES ($1,$2,'x',$5,$3,$6,jsonb_build_array($6::int),true,$4::jsonb)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role,
                medical_specialties=EXCLUDED.medical_specialties,
                display_name=EXCLUDED.display_name, is_active=true,

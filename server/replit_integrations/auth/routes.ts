@@ -22,6 +22,9 @@ export function registerAuthRoutes(app: Express): void {
       language: branchSession.language || "ar",
       shift: branchSession.shift || "auto",
       displayName: branchSession.displayName || null,
+      //  **الفروعُ واسمُ الفرع النشط** (§4.ar البند ٧) — تتحدّث حيّاً في الخادم، فتصل الواجهةَ معها.
+      accessibleBranches: Array.isArray(branchSession.accessibleBranches) ? branchSession.accessibleBranches : null,
+      branchName: branchSession.branchName ?? null,
     });
   });
 

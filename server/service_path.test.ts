@@ -214,7 +214,8 @@ async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
   for (const [id, role, spec] of [
-    [MANAGER, "branch_manager", "null"], [DOCTOR, "doctor", '["prosthetic","medical_support"]'],
+    //  **دورُ الصفّ = دورُ الجلسة** (§4.ar البند ٧): جلسةُ `MANAGER` مسؤولٌ عامّ، والدورُ يُعاد من الصفّ مع كلّ طلب.
+    [MANAGER, "admin", "null"], [DOCTOR, "doctor", '["prosthetic","medical_support"]'],
     [EXPERT, "prosthetics_expert", "null"], [RECEPTION, "reception", "null"],
     [OTHER, "reception", "null"],
   ] as any[]) {

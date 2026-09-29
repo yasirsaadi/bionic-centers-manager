@@ -101,7 +101,10 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-بلا-معاينة";
 const ADMIN = 9931, MANAGER = 9932, DOC = 9933, DOCSUP = 9934, DOCPHYS = 9935;
 const RECV = 9936, RECV2 = 9937, EXPERT = 9938, ACC = 9939, EXPERT2 = 9940;
-const USERS = [ADMIN, MANAGER, DOC, DOCSUP, DOCPHYS, RECV, RECV2, EXPERT, ACC, EXPERT2];
+//  **حسابان مستقلّان للفرع الآخر** (§4.ar البند ٧): كانت `docOther`/`recvOther` تستعيران صفَّي `DOC`/`RECV2`،
+//  والفروعُ تُعاد من الصفّ مع كلّ طلب — فصفٌّ واحدٌ لا يكون على فرعٍ في جلسةٍ وعلى غيره في أخرى.
+const DOC_B2 = 9941, RECV_B2 = 9942;
+const USERS = [ADMIN, MANAGER, DOC, DOCSUP, DOCPHYS, RECV, RECV2, EXPERT, ACC, EXPERT2, DOC_B2, RECV_B2];
 
 const S = {
   admin: {
@@ -134,7 +137,7 @@ const S = {
   },
   /** طبيبُ أطرافٍ في **فرعٍ آخر** — الاختصاصُ يصحّ والفرعُ لا. */
   docOther: {
-    userId: DOC, role: "doctor", isAdmin: false, branchId: 2, accessibleBranches: [2],
+    userId: DOC_B2, role: "doctor", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "سعد",
     permissions: { canViewPatients: true, canWriteMedicalExam: true },
   },
@@ -151,7 +154,7 @@ const S = {
   },
   /** استقبالُ فرعٍ آخر — لا يصحّح عمليةَ فرعٍ ليس له. */
   recvOther: {
-    userId: RECV2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
+    userId: RECV_B2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
     displayName: "زهراء",
     permissions: { canViewPatients: true, canAddPatients: true },
   },
@@ -367,9 +370,12 @@ async function main() {
     [EXPERT, "prosthetics_expert", "null", "الخبير", 1],
     [EXPERT2, "prosthetics_expert", "null", "الخبير الثاني", 1],
     [ACC, "accountant", "null", "المحاسب", 1],
+    [DOC_B2, "doctor", '["prosthetic","medical_support"]', "سعد", 2],
+    [RECV_B2, "reception", "null", "زهراء", 2],
   ] as any[]) {
+    //  فروعُ الصفّ = فروعُ الجلسة: المسؤولُ بالفرعين، والبقيّةُ بفرعهم وحده.
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
-             VALUES ($1,$2,'x',$5,$3,$6,'[1,2]'::jsonb,true,$4::jsonb)
+             VALUES ($1,$2,'x',$5,$3,$6,CASE WHEN $3 = 'admin' THEN '[1,2]'::jsonb ELSE jsonb_build_array($6::int) END,true,$4::jsonb)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role,
                medical_specialties=EXCLUDED.medical_specialties,
                display_name=EXCLUDED.display_name, is_active=true,

@@ -52,7 +52,7 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6837;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-المريض-العائد";
-const MANAGER = 9861, DOCTOR = 9862, EXPERT = 9863, RECEPTION = 9864;
+const MANAGER = 9861, DOCTOR = 9862, EXPERT = 9863, RECEPTION = 9864, ADMIN = 9865;
 
 const S = {
   manager: {
@@ -179,7 +179,7 @@ async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   for (const [id, role, spec] of [
     [MANAGER, "branch_manager", "null"], [DOCTOR, "doctor", '["prosthetic","medical_support"]'],
-    [EXPERT, "prosthetics_expert", "null"], [RECEPTION, "reception", "null"],
+    [EXPERT, "prosthetics_expert", "null"], [RECEPTION, "reception", "null"], [ADMIN, "admin", "null"],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
              VALUES ($1,$2,'x','موظّف',$3,1,'[1]'::jsonb,true,$4::jsonb)
@@ -918,7 +918,8 @@ async function main() {
       //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
       //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
       //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
-      const killer = { ...S.manager, isAdmin: true, role: "admin",
+      //  **حسابٌ مسؤولٌ حقيقيّ** (§4.ar البند ٧): كانت تستعير صفَّ مدير الفرع، والدورُ يُعاد من الصفّ مع كلّ طلب.
+      const killer = { ...S.manager, userId: ADMIN, isAdmin: true, role: "admin",
         permissions: { ...S.manager.permissions, canDeletePatients: true } };
       await http("DELETE", `/api/patients/${p}`, killer, { reason: "اختبار الكاسكيد" });
       //  **والحذفُ النهائيُّ مقفلٌ حتى تنقضي مهلةُ الاستعادة** (المراجعة
@@ -950,9 +951,9 @@ async function main() {
     await cleanup();
     //  سطورُ التدقيق تشير إلى المستخدم — تُمسح قبله، وإلّا رُدّ الحذفُ بمفتاح.
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`,
-      [[MANAGER, DOCTOR, EXPERT, RECEPTION]]);
+      [[MANAGER, DOCTOR, EXPERT, RECEPTION, ADMIN]]);
     await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`,
-      [[MANAGER, DOCTOR, EXPERT, RECEPTION]]);
+      [[MANAGER, DOCTOR, EXPERT, RECEPTION, ADMIN]]);
     httpServer.close();
   }
 

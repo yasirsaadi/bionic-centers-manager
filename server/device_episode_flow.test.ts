@@ -204,9 +204,11 @@ async function main() {
     [EXPERT, "prosthetics_expert", ""], [RECEPTION, "reception", ""],
   ] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
-             VALUES ($1,$2,'x','موظّف',$3,1,'[1]'::jsonb,true,$4::jsonb)
-             ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, medical_specialties = EXCLUDED.medical_specialties`,
-      [id, `de_f${id}`, role, id === DOCTOR ? '["prosthetic","medical_support"]' : "null"]);
+             VALUES ($1,$2,'x','موظّف',$3,$5,jsonb_build_array($5::int),true,$4::jsonb)
+             ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, medical_specialties = EXCLUDED.medical_specialties,
+               branch_id = EXCLUDED.branch_id, branch_ids = EXCLUDED.branch_ids`,
+      //  **فرعُ الصفّ = فرعُ الجلسة** (§4.ar البند ٧): جلسةُ `RECEPTION` الوحيدة «فرعٌ آخر» (٢)، والفروعُ تُعاد من الصفّ.
+      [id, `de_f${id}`, role, id === DOCTOR ? '["prosthetic","medical_support"]' : "null", id === RECEPTION ? 2 : 1]);
   }
   await cleanup();
 
