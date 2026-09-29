@@ -776,9 +776,8 @@ export default function PatientDetails() {
           </Link>
         )}
         {/*  ══ **الحذفُ صار سلّةً** (ترحيل ٠٦٨) ═════════════════════════
-              والصلاحيةُ روليّةٌ صريحة لا عَلَمُ `canDeletePatients`: ذاك
-              عَلَمُ هدمٍ لا رجعةَ فيه، وهذا فعلٌ يُرَدّ بضغطة. والنافذةُ
-              تقرأ الأثرَ من الخادم قبل أن تعرض زرّاً.  */}
+              والصلاحيةُ مفتاحُ «حذف المرضى» (`canDeletePatients`، §4.ar البند ٢٤)
+              أو المسؤول. والنافذةُ تقرأ الأثرَ من الخادم قبل أن تعرض زرّاً.  */}
         {canTrashPatients(branchSession as any) && (
           <DeletePatientDialog
             patientId={patient.id}

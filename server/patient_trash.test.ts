@@ -268,9 +268,11 @@ async function main() {
     [THERAPIST, "therapist", "null", "المعالج", 1],
     [SURVEYOR, "surveyor", "null", "المسّاح", 1],
   ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
-             VALUES ($1,$2,'x',$5,$3,$6,jsonb_build_array($6::int),true,$4::jsonb)
-             ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role,
+    //  **ومفتاحُ «حذف المرضى» كما يتركه الترحيلُ ٠٨٩** (§4.ar البند ٢٤): مُشغَّلٌ للمسؤول ومديري الفروع والأطباء.
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties,
+               can_delete_patients)
+             VALUES ($1,$2,'x',$5,$3,$6,jsonb_build_array($6::int),true,$4::jsonb, $3 IN ('admin','branch_manager','doctor'))
+             ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, can_delete_patients=EXCLUDED.can_delete_patients,
                medical_specialties=EXCLUDED.medical_specialties,
                display_name=EXCLUDED.display_name, is_active=true,
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
@@ -309,17 +311,23 @@ async function main() {
       [DELETE_REASON_LABEL, RESTORE_LABEL, PURGE_LABEL],
       ["سبب الحذف", "استعادة", "حذف نهائي"]);
     check(canTrashPatients({ isAdmin: true }), "أ٤. المسؤولُ العام يحذف");
-    check(canTrashPatients({ role: "branch_manager" }), "أ٥. ومديرُ الفرع");
-    check(canTrashPatients({ role: "doctor" }), "أ٦. والطبيب");
-    check(!canTrashPatients({ role: "reception" }), "أ٧. **ولا الاستقبال**");
+    //  ══ **المفتاحُ هو الحاكم لا الدور** (§4.ar البند ٢٤ — قرارُ المالك ٢٠٢٦-٠٩-٢٩) ══
+    const on = { canDeletePatients: true };
+    check(canTrashPatients({ role: "branch_manager", permissions: on }), "أ٥. ومديرُ الفرع **ومفتاحُه مُشغَّل**");
+    check(canTrashPatients({ role: "doctor", permissions: on }), "أ٦. والطبيبُ ومفتاحُه مُشغَّل");
+    check(!canTrashPatients({ role: "doctor" }) && !canTrashPatients({ role: "doctor", permissions: { canDeletePatients: false } }),
+      "أ٦ب. **وطبيبٌ مفتاحُه مُطفَأ لا يحذف** — لم يعد «كلُّ طبيبٍ يحذف»");
+    check(!canTrashPatients({ role: "branch_manager", permissions: { canDeletePatients: false } }),
+      "أ٦ج. **ومديرُ فرعٍ مفتاحُه مُطفَأ لا يحذف**");
+    check(!canTrashPatients({ role: "reception" }), "أ٧. **ولا الاستقبال** بلا مفتاح");
     check(!canTrashPatients({ role: "accountant" }), "أ٨. ولا المحاسب");
     check(!canTrashPatients({ role: "prosthetics_expert" }), "أ٩. ولا الخبير");
     check(!canTrashPatients({ role: "therapist" }), "أ١٠. ولا المعالج");
     check(!canTrashPatients({ role: "surveyor" }), "أ١١. ولا المسّاح");
     check(!canTrashPatients({ role: "reception", permissions: { canWriteMedicalExam: true } }),
       "أ١٢. **ولا يفتحها `canWriteMedicalExam`** — تلك صلاحيةٌ سريرية");
-    check(!canTrashPatients({ role: "reception", permissions: { canDeletePatients: true } }),
-      "أ١٣. ولا العَلَمُ القديم `canDeletePatients`");
+    check(canTrashPatients({ role: "reception", permissions: on }),
+      "أ١٣. **والمفتاحُ يمنح مَن شغّله المسؤولُ له** — أيّاً كان دورُه");
     check(canRestorePatients === canTrashPatients, "أ١٤. والاستعادةُ لمن يحذف — الطرفُ نفسُه");
     check(canPurgePatients({ isAdmin: true }) && !canPurgePatients({ role: "branch_manager" })
       && !canPurgePatients({ role: "doctor" }),

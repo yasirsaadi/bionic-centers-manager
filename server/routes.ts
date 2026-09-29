@@ -3276,9 +3276,8 @@ export async function registerRoutes(
    * ولا شيءَ هنا ينادي الكاسكيدَ الهادم: `storage.deletePatient` بابُها
    * الوحيد صار «حذف نهائي» في `/api/patient-trash/:id/purge`.
    *
-   * **والصلاحيةُ روليّةٌ صريحة** (`canTrashPatients`): مسؤولٌ عام · مديرُ
-   * فرعٍ في نطاقه · طبيبٌ في نطاقه. وحلّت محلَّ علم `canDeletePatients`
-   * القديم — ذاك عَلَمُ **هدمٍ لا رجعةَ فيه**، وهذا فعلٌ يُرَدّ بضغطة.
+   * **والصلاحيةُ مفتاحُ «حذف المرضى»** (`canTrashPatients`، §4.ar البند ٢٤): مسؤولٌ عام ·
+   * أو مَن مفتاحُه مُشغَّل، في نطاقه. (كانت روليّةً والمفتاحُ لا يقرؤه شيء.)
    * وكلُّ الحراسة في `deleteDecision` **تحت القفل** لا هنا.
    */
   app.delete(api.patients.delete.path, isAuthenticated, async (req, res) => {
