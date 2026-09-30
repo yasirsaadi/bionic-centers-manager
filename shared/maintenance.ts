@@ -162,6 +162,17 @@ export type MaintenancePaidNowResult = PaidNowResult;
 
 export const MAINTENANCE_WARRANTY_LABEL = "ضمن الضمان";
 
+/**
+ * **صيانةٌ بتاريخٍ سابق ومبلغٌ مقبوض — متى دُفع؟** (طلبُ المالك ٢٠٢٦-٠٩-٣٠). يومَ الصيانة ⟵ المبلغُ بتاريخها
+ * (ويُنبَّه الموظّفُ ليحدّث السجلَّ الورقيَّ لذلك اليوم)، أو اليوم ⟵ يدخل صندوقَ اليوم. ولا يُخمَّن أحدُهما.
+ */
+export const MAINTENANCE_PAID_ON_REQUIRED_MESSAGE =
+  "الصيانة بتاريخ سابق وفيها مبلغ مدفوع — حدّد متى دُفع المبلغ: يوم الصيانة أم اليوم";
+export const MAINTENANCE_PAID_ON_LABELS = {
+  visit_day: "يوم الصيانة",
+  today: "اليوم",
+} as const;
+
 /** علمٌ يصل بغير بوليان = عميلٌ ملفَّق أو بائت — يُردّ ولا يُصحَّح بصمت. */
 export const MAINTENANCE_WARRANTY_FLAG_ERROR =
   "قيمة «ضمن الضمان» يجب أن تكون نعم أو لا";

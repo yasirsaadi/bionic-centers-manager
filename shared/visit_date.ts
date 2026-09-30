@@ -36,3 +36,16 @@ export function checkVisitDate(
   if (back > VISIT_BACKDATE_STAFF_DAYS && !isAdmin) return { ok: false, status: 403, message: VISIT_BACKDATE_MESSAGE };
   return { ok: true };
 }
+
+/**
+ * **لحظةٌ في يومٍ سابق بساعة الآن** — كما تفعل `storage.createVisit` للزيارة المؤرَّخة سلفاً بحرفها: التاريخُ المختار
+ * والساعةُ الحاليّة بتوقيت بغداد. يُعيد اللحظةَ (`at`) ونصَّها بتوقيت بغداد بلا منطقة (`wall`) — وهو الشكلُ الذي يقرؤه
+ * كاتبُ الدفعات (`insertPaymentRow`) صحيحاً. واليومُ نفسُه ⟵ الآن بلا تعديل. (§4.ar — التسجيلُ بتاريخٍ قديم، ٢٠٢٦-٠٩-٣٠)
+ */
+export function baghdadMomentOn(ymd: string, now: Date = new Date()): { at: Date; wall: string } {
+  const offset = 3 * 60 * 60 * 1000;
+  const b = new Date(now.getTime() + offset);
+  const [y, m, d] = ymd.split("-").map(Number);
+  const wallUtc = new Date(Date.UTC(y, m - 1, d, b.getUTCHours(), b.getUTCMinutes(), b.getUTCSeconds()));
+  return { at: new Date(wallUtc.getTime() - offset), wall: wallUtc.toISOString().slice(0, 19) };
+}

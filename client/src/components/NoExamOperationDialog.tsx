@@ -70,6 +70,10 @@ import {
   ATTACH_TO_IN_MANUFACTURING_QUESTION,
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
+import { DatePickerIraq } from "@/components/DatePickerIraq";
+import { useBranchSession } from "@/components/BranchGate";
+import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
+import { MAINTENANCE_PAID_ON_LABELS } from "@shared/maintenance";
 import {
   resolveResumeTarget, nextSubmissionToken, mintSubmissionToken,
 } from "./patient_service_launcher_logic";
@@ -200,6 +204,13 @@ export function NoExamOperationDialog({
   //  يُستنتَج أحدُهما من الآخر أبداً**، فالحالةُ تبدأ `null` (`MoneyInput`
   //  بـ`allowEmpty` تعرضه فراغاً حقيقياً لا صفراً معروضاً).
   const [paidNow, setPaidNow] = useState<number | null>(null);
+  //  ══ **صيانةٌ حدثت في يومٍ سابق** (طلبُ المالك ٢٠٢٦-٠٩-٣٠) ══════════════════
+  //  تاريخُها بقاعدة «تسجيل زيارة» نفسِها، و«متى دُفع المبلغ؟» يُسأل حين يوجد مبلغٌ مقبوض — والمجّانيُّ والضمانُ
+  //  والدَّينُ بلا مقبوضٍ فلا سؤال.
+  const todayYmd = baghdadTodayYmd();
+  const [maintDate, setMaintDate] = useState(todayYmd);
+  const [paidOn, setPaidOn] = useState<"" | "visit_day" | "today">("");
+  const isAdminSession = Boolean((useBranchSession() as any)?.isAdmin);
 
   //  ══ **الصيانةُ المبسّطة — حقلها الخاصّ** (المرحلة الثالثة) ═══════════
   //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
@@ -329,6 +340,13 @@ export function NoExamOperationDialog({
     ? parsePaidNowAmount({ raw: paidNow, finalPrice: offer.finalPrice! })
     : { ok: false, amount: 0, error: undefined as string | undefined };
 
+  //  صيانةٌ بتاريخٍ سابق ومبلغٌ مقبوض ⟵ «متى دُفع المبلغ؟». وتاريخُ غير الصيانة لا يُقرأ.
+  const maintBackdated = kind === "maintenance" && maintDate !== todayYmd;
+  const askPaidOn = maintBackdated && paidNowCheck.ok && paidNowCheck.amount > 0;
+  const maintDateVerdict = kind === "maintenance"
+    ? checkVisitDate(maintDate || null, isAdminSession)
+    : { ok: true as const };
+
   const save = useMutation({
     mutationFn: async () => {
       if (kind === "maintenance") {
@@ -345,6 +363,8 @@ export function NoExamOperationDialog({
           ...(warrantyOn ? { underWarranty: true } : { originalPrice, discountAmount }),
           //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
           paidNow: paidNowCheck.amount,
+          visitDate: maintDate,
+          ...(askPaidOn ? { paidOn } : {}),
           note: note.trim() || null,
           //  **وتذكرةُ الإرسال** — الخادمُ يحجزها داخل معاملة العملية قبل أيّ
           //  كتابة، فإعادةُ الإرسال بالرمز عينه تُقرأ «مسجَّلة سابقاً» ولا
@@ -393,6 +413,9 @@ export function NoExamOperationDialog({
         title: attaching
           ? COMPONENT_ATTACH_SUCCESS_MESSAGE
           : kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
+        //  **ومبلغٌ دُفع يومَ صيانةٍ سابقة** دخل صندوقَ ذلك اليوم — فيُحدَّث سجلُّه الورقيّ.
+        ...(askPaidOn && paidOn === "visit_day"
+          ? { description: `المبلغ سُجّل بتاريخ ${maintDate} — حدّث السجل الورقي لذلك اليوم.` } : {}),
       });
     },
     onError: (err: any) => toast({
@@ -466,7 +489,8 @@ export function NoExamOperationDialog({
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
     && !maintenanceDeviceUnready && !maintenanceTokenUnready
     && !attachUnanswered && !attachUnpicked && !resumeUnpicked
-    && Boolean(offer.ok) && paidNowCheck.ok;
+    && Boolean(offer.ok) && paidNowCheck.ok
+    && maintDateVerdict.ok && !(askPaidOn && !paidOn);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -849,6 +873,44 @@ export function NoExamOperationDialog({
               </>
             )}
           </div>
+
+          {/*  ── تاريخُ الصيانة — صيانةٌ حدثت في يومٍ سابق تُسجَّل بيومها ── */}
+          {kind === "maintenance" && (
+            <div className="space-y-1.5" data-testid="no-exam-op-maint-date-box">
+              <Label className="text-sm font-medium">تاريخ الصيانة</Label>
+              <DatePickerIraq value={maintDate} onChange={(v: string) => { setMaintDate(v); setPaidOn(""); }}
+                data-testid="no-exam-op-maint-date" />
+              {!isAdminSession && (
+                <p className="text-xs text-muted-foreground">
+                  صيانةٌ حدثت ولم تُسجَّل؟ اختر يومها — حتى {VISIT_BACKDATE_STAFF_DAYS} أيام، وأقدمُ من ذلك يسجّله المسؤول العام.
+                </p>
+              )}
+              {!maintDateVerdict.ok && (
+                <p className="text-xs text-destructive" data-testid="no-exam-op-maint-date-error">{maintDateVerdict.message}</p>
+              )}
+              {askPaidOn && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 space-y-2"
+                  data-testid="no-exam-op-paid-on">
+                  <p className="text-sm font-medium">متى دُفع المبلغ؟</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(["visit_day", "today"] as const).map((v) => (
+                      <Button key={v} type="button" size="sm" variant={paidOn === v ? "default" : "outline"}
+                        onClick={() => setPaidOn(v)} data-testid={`no-exam-op-paid-on-${v}`}>
+                        {MAINTENANCE_PAID_ON_LABELS[v]}{v === "visit_day" ? ` (${maintDate})` : ""}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {paidOn === "visit_day"
+                      ? "يُسجَّل المبلغ بتاريخ يوم الصيانة — حدّث السجل الورقي لذلك اليوم."
+                      : paidOn === "today"
+                        ? "الصيانة بتاريخها، والمبلغ يدخل صندوق اليوم."
+                        : "اختر أحدهما — لا يُخمَّن."}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">ملاحظة (اختياري)</Label>

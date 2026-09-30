@@ -57,7 +57,7 @@ export const RECEPTION_ROUTING_QUESTION = "ما سبب حضور المريض ا�
 export type ReceptionRoutingServiceType = "prosthetic" | "medical_support";
 
 export interface ReceptionRoutingChoice {
-  id: "exam_required" | "device_sale" | "maintenance";
+  id: "exam_required" | "device_sale" | "maintenance" | "device_followup";
   label: string;
   flow: ServiceFlow;
 }
@@ -100,6 +100,7 @@ const SALE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   //  هنا كي يظلّ السجلّ مكتملَ الشكل، ولا يصير غيابُه هو الحارس.
   medical_support: "شراء مسند طبي",
 };
+export const DEVICE_FOLLOWUP_LABEL = "متابعة أو تعديل على جهاز قائم";
 const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   prosthetic: "صيانة طرف صناعي",
   medical_support: "صيانة مسند طبي",
@@ -162,6 +163,13 @@ export function receptionRoutingChoices(
       label: MAINTENANCE_LABEL[serviceType],
       flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "maintenance" as const },
     }] : []),
+    //  **متابعة أو تعديل على جهاز قائم** (فصلُ الزرّين، قرارُ المالك ٢٠٢٦-٠٩-٣٠): زيارةٌ بتاريخها وطلبُ مراجعة —
+    //  كانت تُسجَّل من «تسجيل زيارة جديدة»، وصار كلُّ ما يخصّ الجهاز هنا. بلا مال، فلا شرطَ صلاحيةٍ ماليّ.
+    {
+      id: "device_followup" as const,
+      label: DEVICE_FOLLOWUP_LABEL,
+      flow: { kind: "device_followup" as const, serviceType },
+    },
   ];
 }
 
