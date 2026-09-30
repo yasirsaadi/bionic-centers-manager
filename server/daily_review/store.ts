@@ -274,7 +274,7 @@ async function fetchMaintenanceOpenedRows(f: DailyReviewFilters): Promise<DailyR
   const r = await db.execute<Record<string, any>>(sql`
     SELECT wo.id AS order_id, wo.patient_id, wo.branch_id, wo.service_type,
            wo.maintenance_component, wo.maintenance_original_price,
-           wo.maintenance_final_price, wo.maintenance_price_kind,
+           wo.maintenance_final_price, wo.maintenance_price_kind, wo.maintenance_under_warranty,
            wo.expert_user_id, xu.display_name AS expert_name,
            p.name, p.patient_code, b.name AS branch_name,
            wh.id AS history_id, wh.created_at AS opened_at, wh.performed_by,
@@ -316,7 +316,10 @@ async function fetchMaintenanceOpenedRows(f: DailyReviewFilters): Promise<DailyR
     expertName: row.expert_name ?? null,
     purchaseDecision: null,
     notBoughtReason: null,
-    money: moneyFromParts(row.maintenance_original_price, row.maintenance_final_price, row.maintenance_price_kind),
+    //  **ضمانٌ بلا أرقام** (٠٩١) صيانةٌ بصفرٍ صريح — لا «قديمٌ بلا سعر».
+    money: row.maintenance_under_warranty === true && row.maintenance_original_price === null
+      ? moneyFromParts(null, 0, "free")
+      : moneyFromParts(row.maintenance_original_price, row.maintenance_final_price, row.maintenance_price_kind),
     actualAmountPaid: null,
     paymentActorName: null,
     paymentActorDirect: false,

@@ -621,7 +621,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         maintenanceComponent: item.component,
         deviceEpisodeId: item.deviceEpisodeId,
         legacyUnrecordedDevice: item.legacyUnrecordedDevice,
-        originalPrice: offer.originalPrice!, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
+        originalPrice: offer.originalPrice, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
         //  **وعلمُ الضمان** (ترحيل ٠٨٣) — مُشتقٌّ سلفاً، يُحفَظ على الأمر.
         underWarranty: offer.underWarranty,
         paidNow: paidNowResult.amount,
@@ -666,7 +666,8 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         },
         notes: (offer.underWarranty
           ? `صيانة — ${MAINTENANCE_WARRANTY_LABEL}، بلا أجور`
-            + ` (القيمة الاسمية ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
+            + (offer.originalPrice !== null
+              ? ` (القيمة الاسمية ${offer.originalPrice.toLocaleString("en-US")} د.ع)` : "")
           : offer.kind === "free"
           ? `صيانة — مجّاني (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
           : `صيانة — ${offer.finalPrice!.toLocaleString("en-US")} د.ع`

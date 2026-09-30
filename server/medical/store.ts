@@ -1652,6 +1652,9 @@ export async function getPendingExams(
  *
  * الشرطُ: قسمُ أطرافٍ أو مساند **نشط**، أُنشئ **بعد بدء عهد «مسار العملية»** (ما قبله يمرّ من المسار القديم ولا يُسأل)،
  * **بلا أيّ طلبِ جهاز**، ولا طلبِ معاينةٍ معلَّق، ولا معاينةٍ فعّالة، والمريضُ ليس في السلّة.
+ *
+ * **ولا أمرَ عملٍ لخدمته** (واقعةُ دموع جاسم عطية، ٢٠٢٦-٠٩-٣٠): صيانةُ «جهازٍ قديمٍ غير مسجَّل» تفتح أمرَ صيانةٍ **بلا
+ * حلقة**، فبقيت الشارةُ بعد صيانتين. وأمرُ العمل — أيّاً كان غرضُه، ما لم يُلغَ — جوابٌ عن «سبب الحضور» كالحلقة تماماً.
  */
 export async function getUnroutedDeviceCases(
   branchIds: number[] | null,
@@ -1674,6 +1677,9 @@ export async function getUnroutedDeviceCases(
        AND p.deleted_at IS NULL
        AND ${scoped}
        AND NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+       AND NOT EXISTS (SELECT 1 FROM prosthetic_work_orders wo
+                        WHERE wo.patient_id = pc.patient_id AND wo.service_type = pc.case_type
+                          AND wo.status <> 'cancelled')
        AND NOT EXISTS (SELECT 1 FROM medical_review_requests r
                         WHERE r.patient_id = pc.patient_id AND r.service_type = pc.case_type
                           AND r.status IN ('pending', 'escalated'))

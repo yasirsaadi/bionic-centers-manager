@@ -317,8 +317,9 @@ export function NoExamOperationDialog({
   //  **وبالضمان يشتقّ المسارُ الصيانيُّ نفسُه** الذي يعتمده الخادم — أصليٌّ
   //  محفوظ، ونهائيٌّ صفر، وبلا خصم. وبلا ضمانٍ يبقى الاشتقاقُ المشترك كما
   //  كان بحرفه (بيعُ الجزء لا يعرف الضمانَ أصلاً).
+  //  **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): لا سعرَ أصليّاً يُسأل عنه ولا يُرسَل.
   const offer = warrantyOn
-    ? deriveMaintenanceTerms({ originalPrice, discountAmount: 0, underWarranty: true })
+    ? deriveMaintenanceTerms({ originalPrice: null, discountAmount: 0, underWarranty: true })
     : deriveOfferFromDiscount({ originalPrice, discountAmount });
 
   //  ══ **جهوزيّةُ «المبلغ المدفوع الآن»** — نفسُ الحدّ الذي سيُطبَّق خادميّاً
@@ -340,10 +341,8 @@ export function NoExamOperationDialog({
           maintenanceComponent: serviceType === "prosthetic" ? component : null,
           deviceEpisodeId: target.deviceEpisodeId,
           legacyUnrecordedDevice: target.legacyUnrecordedDevice,
-          originalPrice,
-          //  **ولا خصمَ يُرسَل مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق
-          //  لا بخصمٍ يُمنَح، والخادمُ يردّ الاثنين معاً.
-          ...(warrantyOn ? { underWarranty: true } : { discountAmount }),
+          //  **ولا سعرَ ولا خصمَ يُرسَلان مع الضمان** — خاناتُ المال كلُّها منطفئة (طلبُ المالك ٢٠٢٦-٠٩-٣٠).
+          ...(warrantyOn ? { underWarranty: true } : { originalPrice, discountAmount }),
           //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
           paidNow: paidNowCheck.amount,
           note: note.trim() || null,
@@ -713,9 +712,8 @@ export function NoExamOperationDialog({
               )}
 
               {/*  ── ضمن الضمان — قرارُ الموظّف، بلا أهليّةٍ محسوبة ──
-                  **والسعرُ الأصليُّ يبقى مطلوباً**: القيمةُ الاسمية للصيانة
-                  تُحفَظ ولو لم يُدفَع منها دينار — وإلّا لم يُعرَف يوماً كم
-                  كلّف الالتزامُ المركزَ. */}
+                  **وتنطفئ خاناتُ المال كلُّها** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): السعرُ
+                  والخصمُ والمدفوع — الأمرُ يُحفَظ بلا أرقام وعلمُ الضمان يقول السبب. */}
               <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
                 <Checkbox id="no-exam-op-warranty-box" checked={underWarranty}
                   onCheckedChange={(v) => {
@@ -723,13 +721,13 @@ export function NoExamOperationDialog({
                     setUnderWarranty(on);
                     //  **ولا بقايا من قرارٍ سابق**: خصمٌ أو مبلغٌ مدفوعٌ
                     //  كُتبا قبل التأشير لا معنى لهما بعده.
-                    if (on) { setDiscountAmount(0); setPaidNow(null); }
+                    if (on) { setOriginalPrice(0); setDiscountAmount(0); setPaidNow(null); }
                   }}
                   data-testid="no-exam-op-warranty" />
                 <Label htmlFor="no-exam-op-warranty-box"
                   className="cursor-pointer text-sm font-normal leading-5">
-                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — بلا أجور: لا مبلغ يُقيَّد ولا
-                  دَين ولا دفعة. والسعرُ الأصليُّ يبقى مطلوباً ومحفوظاً كقيمةٍ اسمية.
+                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — بلا أجور: لا سعر ولا مبلغ يُقيَّد ولا
+                  دَين ولا دفعة.
                 </Label>
               </div>
             </>
@@ -772,11 +770,13 @@ export function NoExamOperationDialog({
           )}
 
           {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين ── */}
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">السعر الأصلي (د.ع)</Label>
-            <MoneyInput value={originalPrice} onValueChange={setOriginalPrice}
-              data-testid="no-exam-op-original-price" />
-          </div>
+          {!warrantyOn && (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">السعر الأصلي (د.ع)</Label>
+              <MoneyInput value={originalPrice} onValueChange={setOriginalPrice}
+                data-testid="no-exam-op-original-price" />
+            </div>
+          )}
           {/*  **ولا حقلَ خصمٍ مع الضمان** — الأجرُ صفرٌ بقرار التزامٍ سابق لا
               بخصمٍ يُمنَح، فلا يُسأل الموظّفُ سؤالاً لا معنى له. */}
           {!warrantyOn && (
@@ -794,10 +794,7 @@ export function NoExamOperationDialog({
             {offer.ok ? (
               warrantyOn ? (
                 <span data-testid="no-exam-op-final-warranty">
-                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — السعر النهائي: 0 د.ع
-                  <span className="text-muted-foreground">
-                    {" "}(القيمة الاسمية {offer.originalPrice!.toLocaleString("en-US")} د.ع)
-                  </span>
+                  <b>{MAINTENANCE_WARRANTY_LABEL}</b> — بلا أجور: 0 د.ع
                 </span>
               ) : offer.kind === "free" ? (
                 <span><b>مجاني</b> — السعر النهائي: 0 د.ع</span>
