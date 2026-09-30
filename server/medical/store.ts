@@ -24,7 +24,7 @@ import {
   type MedicalExamAddendum,
   type MedicalExamRevision,
 } from "@shared/schema";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
@@ -1724,9 +1724,24 @@ export async function getDecidedExams(
     SELECT 1 FROM medical_exams m2
       JOIN patient_device_episodes e2 ON e2.id = m2.device_episode_id
      WHERE e2.case_id = pc.id AND ${activeExamSql("m2")})`;
+  //  ══ **و«لم يشترِ» يُطفئها** (§4.ar البند ١٩) ══════════════════════════
+  //  «لم يشترِ» يغلق المتابعةَ ويُبقي الحلقةَ `examined` — فكانت الشارةُ تقول
+  //  «خصّص واقبض» عن مريضٍ رفض، و«تخصيص» نفسُه يُردّ عليه
+  //  (`purchaseGovernedByFollowup`: آخرُ متابعةٍ ليست `converted`). فالشرطُ
+  //  هنا **قاعدتُها بحرفها**: آخرُ متابعةٍ للحلقة — أو للخدمة بلا حلقة — ليست
+  //  `closed_without_purchase`. و«إلغاء الحسم» أو معاينةٌ جديدة تُعيدها.
+  const lastFollowupDeclined = (episodeIdExpr: SQL | null) => episodeIdExpr === null
+    ? sql`COALESCE((SELECT f.status FROM post_exam_followups f
+                     WHERE f.patient_id = me.patient_id AND f.service_type = me.case_type
+                       AND f.device_episode_id IS NULL
+                     ORDER BY f.id DESC LIMIT 1), '') = 'closed_without_purchase'`
+    : sql`COALESCE((SELECT f.status FROM post_exam_followups f
+                     WHERE f.device_episode_id = ${episodeIdExpr}
+                     ORDER BY f.id DESC LIMIT 1), '') = 'closed_without_purchase'`;
   const openExamined = sql`EXISTS (
     SELECT 1 FROM patient_device_episodes e
-     WHERE e.case_id = pc.id AND e.status = 'examined')`;
+     WHERE e.case_id = pc.id AND e.status = 'examined'
+       AND NOT ${lastFollowupDeclined(sql`e.id`)})`;
   const noOpenEpisode = sql`NOT EXISTS (
     SELECT 1 FROM patient_device_episodes e
      WHERE e.case_id = pc.id AND e.status NOT IN ('delivered', 'cancelled'))`;
@@ -1742,7 +1757,7 @@ export async function getDecidedExams(
       AND ${activeExamSql("me")}
       AND (
         ${openExamined}
-        OR (${noOpenEpisode} AND NOT ${episodeAware})
+        OR (${noOpenEpisode} AND NOT ${episodeAware} AND NOT ${lastFollowupDeclined(null)})
       )
   `);
 
