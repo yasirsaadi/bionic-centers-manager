@@ -1203,18 +1203,18 @@ export default function Accounting() {
   const { t } = useTranslation();
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
-  // Branch managers get admin-equivalent power inside their branch.
-  // Use this for action gates (edit / delete) — for cross-branch UI
-  // toggles like "all-branches view", continue using `isAdmin` alone.
-  const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
+  //  (كان هنا `isAdminOrManager` — أُزيل في تدقيق لوحة الصلاحيات ٢٠٢٦-٠٩-٣٠: تعديلُ الموردين
+  //  والمشتريات وحذفُهما للمسؤول وحده في الخادم، فكان الزرّ يظهر لمدير الفرع ثمّ يُردّ.)
   const userBranchId = branchSession?.branchId;
 
   // Accounting access tiers:
-  //  - fullAccounting: admin / branch_manager / canManageAccounting → everything.
+  //  - fullAccounting: admin / canManageAccounting → everything.
   //  - expensesOnly: has the narrow "add expenses" grant but NOT full
   //    management → sees ONLY the expenses tab, can add & view (no edit/delete).
   const perms = (branchSession as any)?.permissions ?? {};
-  const fullAccounting = isAdmin || isAdminOrManager || Boolean(perms.canManageAccounting);
+  //  **والمفتاحُ يحكم لا الدور** (تدقيقُ لوحة الصلاحيات ٢٠٢٦-٠٩-٣٠): نقاطُ المحاسبة في الخادم
+  //  تشترط `canManageAccounting` — فمديرُ فرعٍ مفتاحُه مطفأ كان يرى الصفحةَ كاملةً ثمّ تُردّ كلُّ نداءاتها.
+  const fullAccounting = isAdmin || Boolean(perms.canManageAccounting);
   const canAddExpenses = fullAccounting || Boolean(perms.canAddExpenses);
   const expensesOnly = !fullAccounting && canAddExpenses;
 
@@ -2951,6 +2951,15 @@ export default function Accounting() {
     [profitKey]: item.netProfit
   }));
 
+  //  **ولا صفحةَ لمن لا يملك أيّاً من مفتاحَي المحاسبة** (تدقيقُ لوحة الصلاحيات ٢٠٢٦-٠٩-٣٠): الشريطُ
+  //  الجانبيّ يُخفيها، لكنّ الرابطَ المباشر كان يفتحها كاملةً ثمّ تُردّ كلُّ نداءاتها. (بعد كلّ الخطّافات.)
+  if (!fullAccounting && !canAddExpenses) {
+    return (
+      <div className="container mx-auto p-6" dir="rtl">
+        <p className="text-sm text-muted-foreground">ليس لديك صلاحية المحاسبة — راجع المسؤول.</p>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto p-4 md:p-6">
@@ -4179,7 +4188,7 @@ export default function Accounting() {
                           <TableCell>{v.contactPerson || "—"}</TableCell>
                           <TableCell dir="ltr" className="text-right">{v.phone || "—"}</TableCell>
                           <TableCell>{v.address || "—"}</TableCell>
-                          {isAdminOrManager && (
+                          {isAdmin && (
                             <TableCell>
                               <div className="flex gap-2">
                                 <Button
@@ -4312,7 +4321,7 @@ export default function Accounting() {
                                     دفع
                                   </Button>
                                 )}
-                                {isAdminOrManager && (
+                                {isAdmin && (
                                   <>
                                     <Button
                                       size="sm"
