@@ -247,9 +247,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // WRITES (creates a work order), so it requires the add-patients
     // capability. canViewPatients alone stays read-only (roster/lists) and
     // must never mutate patients or orders.
-    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
-      && Boolean(s.permissions?.canAddPatients);
-    if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
+    //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+    //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+    const mayWrite = s.isAdmin || (!isExpert(s) && Boolean(s.permissions?.canAddPatients));
+    if (!mayWrite) return res.status(403).json({ error: "غير مصرح" });
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
     // The delivery date is NO LONGER set at assignment. The expert commits to it
@@ -388,9 +389,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const s = getSession(req);
     // WRITE endpoint (mutates flags/cost/total_cost + creates the order):
     // requires canAddPatients. canViewPatients alone is read-only by design.
-    const isReceptionish = !s.isAdmin && !isManager(s) && !isExpert(s)
-      && Boolean(s.permissions?.canAddPatients);
-    if (!(s.isAdmin || isManager(s) || isReceptionish)) return res.status(403).json({ error: "غير مصرح" });
+    //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+    //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+    const mayWrite = s.isAdmin || (!isExpert(s) && Boolean(s.permissions?.canAddPatients));
+    if (!mayWrite) return res.status(403).json({ error: "غير مصرح" });
 
     const patientId = parseInt(req.params.id);
     const expertUserId = parseInt(req.body?.expertUserId);

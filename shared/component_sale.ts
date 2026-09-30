@@ -60,11 +60,16 @@ export const ATTACH_TO_IN_MANUFACTURING_QUESTION = "هل هذا الجزء إض�
 export interface ComponentSaleSessionLike {
   role?: string | null;
   isAdmin?: boolean | null;
+  permissions?: Record<string, any> | null;
 }
 
 /**
  * **صلاحيةُ إتمام بيع الجزء المبسّط** — دالّةٌ مخصَّصة قائمة بذاتها، **لا
  * امتداداً لـ`canOperateNoExam`** (`shared/pending_charge.ts`).
+ *
+ * **تحديثُ ٢٠٢٦-٠٩-٣٠ — المفتاحُ يحكم لا الدور** (قرارُ المالك، تدقيقُ لوحة الصلاحيات): صارت
+ * بمفتاح «إضافة مدفوعات» لا بقائمة أدوار — فالطبيبُ كغيره: مفتاحُه مطفأٌ فلا يتمّ، ومفعّلٌ فيتمّ.
+ * وما تحته تاريخُ القرار الأوّل.
  *
  * ══ ولماذا لا تلك ═══════════════════════════════════════════════════════
  * `canOperateNoExam` تعتمد `permissions.canAddPatients` — علمٌ عامّ قد
@@ -84,7 +89,10 @@ export function canCompleteComponentSale(
   s: ComponentSaleSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  return s?.role === "reception" || s?.role === "accountant" || s?.role === "branch_manager";
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+  //  «تم الشراء» والصيانة وبيعُ الجزء تقبض مالاً ⟵ مفتاحُ «إضافة مدفوعات» (اختيارُ المالك).
+  return s?.permissions?.canAddPayments === true;
 }
 
 // ── السعر — نفسُ اشتقاق المرحلة الثانية بحرفه، بلا حسابٍ ثانٍ ─────────────

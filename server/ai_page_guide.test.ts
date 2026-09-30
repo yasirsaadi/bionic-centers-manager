@@ -203,9 +203,10 @@ async function main() {
       branchName: `كربلاء ${MARK}`, scopeBranchId: B,
     });
 
-  const rep = mk("reception", false, U.rep);
-  const acc = mk("accountant", false, U.acc);
-  const mgr = mk("branch_manager", false, U.mgr);
+  //  «إضافة مدفوعات» مفعّلٌ — هو ما يفتح البيعَ لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠).
+  const rep = mk("reception", false, U.rep, { canAddPayments: true });
+  const acc = mk("accountant", false, U.acc, { canAddPayments: true });
+  const mgr = mk("branch_manager", false, U.mgr, { canAddPayments: true });
   const adm = resolveAiAccess({
     session: {
       userId: U.adm, role: "admin", isAdmin: true, branchId: B, accessibleBranches: [B, B2],
@@ -291,11 +292,11 @@ async function main() {
       /\*\*يملكها\*\*/.test(g), canCompleteReceptionSale(a as any));
     check(/\*\*يملكها\*\*/.test(g), `ج.٣ب و${name} يملكها فعلاً`);
   }
-  //  **والطبيبُ بلا صفةِ مسؤول ليس بائعاً** — لا في الدالّة ولا في الدليل.
-  same("ج.٤ **الطبيبُ لا يملكها في الدالّة القانونية**", canCompleteReceptionSale(doc as any), false);
+  //  **ومَن «إضافة مدفوعات» مطفأٌ عنده ليس بائعاً** — لا في الدالّة ولا في الدليل (والطبيبُ هنا بلا المفتاح).
+  same("ج.٤ **الطبيبُ بلا المفتاح لا يملكها في الدالّة القانونية**", canCompleteReceptionSale(doc as any), false);
   const docGuide = pageGuideFor(PAGE, doc);
   check(/\*\*لا يملكها\*\*/.test(docGuide), "ج.٥ **والدليلُ يقول ذلك له**", docGuide.slice(-500));
-  check(/الطبيبُ بلا صفةِ مسؤولٍ عامّ ليس منهم/.test(docGuide), "ج.٦ ويسمّي الحالةَ صراحةً");
+  check(/مفتاحُ «إضافة مدفوعات» مطفأٌ على حسابه/.test(docGuide), "ج.٦ ويسمّي المفتاحَ صراحةً");
 
   // ═══ د: مرشِّحُ الفرع يتبع النطاق الفعليّ — **والحالاتُ الأربع متمايزة** ══
   //  `operationalBranches`: `null` = كلّ الفروع · `[]` = **لا فرعَ إطلاقاً** ·

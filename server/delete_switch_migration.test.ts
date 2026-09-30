@@ -28,7 +28,7 @@ async function main() {
              VALUES ($1,$2,'x','موظف',$3,1,true,$4)`, [id, `ds_u${id}`, role, on]);
   }
   const state = async (id: number) => (await q(`SELECT can_delete_patients v FROM system_users WHERE id=$1`, [id]))[0].v;
-  const audit = async (id: number) => (await q(`SELECT user_name FROM audit_log WHERE entity_type='system_user' AND entity_id=$1`, [id])).map((r) => r.user_name);
+  const audit = async (id: number) => (await q(`SELECT user_name FROM audit_log WHERE entity_type='system_user' AND entity_id=$1 AND user_name = 'ترحيل ٠٨٩'` /* ٠٩٠ يكتب للمدراء سطرَه هو */, [id])).map((r) => r.user_name);
   try {
     same("٠. قبل الترحيل: الطبيبُ ومديرُ الفرع المُطفَآن **لا يحذفان بالقاعدة الجديدة**",
       [canTrashPatients({ role: "doctor", permissions: { canDeletePatients: await state(DOC) } }),

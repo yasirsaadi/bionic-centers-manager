@@ -54,7 +54,9 @@ function branchScope(req: Req): number[] | null {
 /** بوّابة الكتابة — مطابقة لـ«خدمة جديدة» في routes.ts. */
 function canStartService(req: Req): boolean {
   const s = getSession(req);
-  return s.isAdmin || s.role === "branch_manager" || s.canAddPatients;
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+  return s.isAdmin || s.canAddPatients;
 }
 
 async function patientScope(patientId: number) {

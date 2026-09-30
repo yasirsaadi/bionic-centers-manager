@@ -876,7 +876,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const s = getSession(req);
     if (!canCompleteReceptionSale(s)) {
       return res.status(403).json({
-        error: "إتمامُ البيع للاستقبال والمحاسب ومدير الفرع والمسؤول العام — لا الطبيب",
+        error: "إتمامُ البيع يحتاج مفتاح «إضافة مدفوعات» — راجع المسؤول",
       });
     }
     const f = await loadInScope(req, res);
@@ -970,7 +970,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const s = getSession(req);
     if (!canCompleteReceptionSale(s)) {
       return res.status(403).json({
-        error: "«لم يشترِ» للاستقبال والمحاسب ومدير الفرع والمسؤول العام — لا الطبيب",
+        error: "«لم يشترِ» يحتاج مفتاح «إضافة مدفوعات» — راجع المسؤول",
       });
     }
     const f = await loadInScope(req, res);

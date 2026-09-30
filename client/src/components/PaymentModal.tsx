@@ -169,7 +169,8 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
   const dir = t.dir;
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
-  const canEnterZeroSessions = isAdmin || branchSession?.role === "branch_manager";
+  //  الجلسةُ المجّانية بمفتاح «اعتماد الخصم» لا بالدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
+  const canEnterZeroSessions = isAdmin || (branchSession as any)?.permissions?.canApproveDiscount === true;
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),

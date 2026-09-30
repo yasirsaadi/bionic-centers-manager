@@ -258,6 +258,11 @@ async function main() {
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
       [id, `sm_u${id}`, role, name, branch, JSON.stringify(branchIds)]);
   }
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): الحساباتُ كما هي بعد النشر — المديرُ بما شغّله الترحيلُ ٠٩٠،
+  //  والطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً كقالبَي دورَيهما (عمودُ القاعدة افتراضُه مفعّل).
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
+  await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
   await cleanup();
 
   const app = express();
@@ -287,11 +292,13 @@ async function main() {
     console.log("\n── ٠. العقدُ الخالص — بلا قاعدة بيانات ──");
     // ══════════════════════════════════════════════════════════════════
     check(canCompleteMaintenance({ isAdmin: true }), "٠١. المسؤولُ يمرّ دائماً");
-    check(canCompleteMaintenance({ role: "reception" }), "٠٢. الاستقبالُ يمرّ");
-    check(canCompleteMaintenance({ role: "accountant" }), "٠٣. المحاسبُ يمرّ");
-    check(canCompleteMaintenance({ role: "branch_manager" }), "٠٤. مديرُ الفرع يمرّ");
-    check(!canCompleteMaintenance({ role: "doctor" }), "٠٥. الطبيبُ يُرفَض دائماً");
-    check(!canCompleteMaintenance({ role: "prosthetics_expert" }), "٠٦. الخبيرُ يُرفَض");
+    //  **المفتاحُ يحكم لا الدور** (٢٠٢٦-٠٩-٣٠): «إضافة مدفوعات».
+    check(canCompleteMaintenance({ role: "reception", permissions: { canAddPayments: true } }), "٠٢. الاستقبالُ بالمفتاح يمرّ");
+    check(canCompleteMaintenance({ role: "accountant", permissions: { canAddPayments: true } }), "٠٣. المحاسبُ بالمفتاح يمرّ");
+    check(canCompleteMaintenance({ role: "branch_manager", permissions: { canAddPayments: true } }), "٠٤. مديرُ الفرع بالمفتاح يمرّ");
+    check(!canCompleteMaintenance({ role: "branch_manager" }), "٠٤ب. ومديرُ الفرع بلا المفتاح يُرفَض");
+    check(!canCompleteMaintenance({ role: "doctor" }), "٠٥. الطبيبُ بلا المفتاح يُرفَض");
+    check(!canCompleteMaintenance({ role: "prosthetics_expert" }), "٠٦. الخبيرُ بلا المفتاح يُرفَض");
     check(!canCompleteMaintenance(null), "٠٧. جلسةٌ غائبة تُرفَض");
     same("٠٨. عاديّ: خصمٌ صفر", deriveOfferFromDiscount({ originalPrice: 1000, discountAmount: 0 }),
       { ok: true, kind: "normal", originalPrice: 1000, finalPrice: 1000, discountAmount: 0 });

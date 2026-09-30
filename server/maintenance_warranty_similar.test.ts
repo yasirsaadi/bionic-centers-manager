@@ -241,6 +241,8 @@ async function main() {
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
       [id, `mw_u${id}`, role, name, own[0], JSON.stringify(own)]);
   }
+  //  الطبيبُ بـ«إضافة مدفوعات» مطفأً — كقالب دوره في شاشة المستخدمين؛ فالمفتاحُ يحكم لا الدور (٢٠٢٦-٠٩-٣٠).
+  await q(`UPDATE system_users SET can_add_payments=false WHERE id=$1`, [DOC]);
   await cleanup();
 
   const app = express();
@@ -551,7 +553,7 @@ async function main() {
     console.log("\n── ع. الصلاحيةُ والنطاقُ على نقطة التنبيه ──");
     // ══════════════════════════════════════════════════════════════════
     const docCheck = await similar({ ...base }, S.doctor);
-    check(docCheck.status === 403, "ع١. **الطبيبُ يُردّ ٤٠٣** — لا سلطةَ له على الصيانة",
+    check(docCheck.status === 403, "ع١. **الطبيبُ بلا «إضافة مدفوعات» يُردّ ٤٠٣** — المفتاحُ يحكم الصيانة",
       JSON.stringify(docCheck.body));
     const outOfScope = await similar({ ...base }, S.other);
     check(outOfScope.status === 403, "ع٢. وفرعٌ خارج النطاق يُردّ ٤٠٣",

@@ -150,8 +150,8 @@ export default function PatientsList() {
   const isExpert = branchSession?.role === "prosthetics_expert";
   // Mirrors the server gate: assigning creates a work order (a WRITE), so it
   // needs canAddPatients — view-only users don't get the button.
-  const canAssignExpert = !isExpert && (isAdmin || branchSession?.role === "branch_manager"
-    || !!permissions.canAddPatients);
+  //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
+  const canAssignExpert = !isExpert && (isAdmin || !!permissions.canAddPatients);
   const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null; assignableServices?: DeviceService[] } | null>(null);
   // «الكلفة والجلسات» — post-exam physiotherapy pricing (same gate: it writes).
   const [physioPricingPatient, setPhysioPricingPatient] = useState<{ id: number; name: string } | null>(null);

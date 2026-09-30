@@ -115,7 +115,7 @@ const S = {
   manager: {
     userId: MANAGER, role: "branch_manager", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "مدير الفرع",
-    permissions: { canViewPatients: true },
+    permissions: { canViewPatients: true, canAddPayments: true, canAddPatients: true },
   },
   /** طبيبُ أطرافٍ ومساند في الفرع ١. */
   doc: {
@@ -144,7 +144,7 @@ const S = {
   recv: {
     userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "ريام",
-    permissions: { canViewPatients: true, canAddPatients: true },
+    permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true },
   },
   /** زميلٌ في الفرع نفسِه — يصحّح ما أعاده الطبيبُ ولو غاب صاحبُه. */
   recv2: {
@@ -161,7 +161,7 @@ const S = {
   acc: {
     userId: ACC, role: "accountant", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "المحاسب",
-    permissions: { canViewPatients: true, canManageAccounting: true },
+    permissions: { canViewPatients: true, canManageAccounting: true, canAddPayments: true },
   },
   expert: {
     userId: EXPERT, role: "prosthetics_expert", isAdmin: false, branchId: 1,
@@ -382,6 +382,11 @@ async function main() {
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
       [id, `pc_u${id}`, role, spec, name, branch]);
   }
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): الحساباتُ كما هي بعد النشر — المديرُ بما شغّله الترحيلُ ٠٩٠،
+  //  والطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً كقالبَي دورَيهما (عمودُ القاعدة افتراضُه مفعّل).
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
+  await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
   await cleanup();
 
   const app = express();

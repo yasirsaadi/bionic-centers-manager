@@ -265,7 +265,7 @@ export default function CreatePatient() {
   
   const [injuryEntries, setInjuryEntries] = useState<InjuryEntry[]>([{ type: "", area: "", side: "" }]);
   const [manualCostOverride, setManualCostOverride] = useState(false);
-  const canEnterZeroSessions = isAdmin || userRole === "branch_manager";
+  const canEnterZeroSessions = isAdmin || (branchSession as any)?.permissions?.canApproveDiscount === true;
   const [treatmentEntries, setTreatmentEntries] = useState<TreatmentEntry[]>([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
 
   // Silicone prosthetics state

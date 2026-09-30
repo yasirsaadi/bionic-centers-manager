@@ -111,9 +111,8 @@ export default function EditPatient() {
   const branchParam = fromBranch ? `?branch=${fromBranch}` : "";
   const { t, dir } = useTranslation();
   const branchSession = useBranchSession();
-  // Cost is management-only: mirrors the server, which strips totalCost for
-  // anyone below branch manager.
-  const canEditCost = !!branchSession?.isAdmin || branchSession?.role === "branch_manager";
+  //  الكلفةُ بمفتاح «تعديل مرضى» لا بالدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
+  const canEditCost = !!branchSession?.isAdmin || (branchSession as any)?.permissions?.canEditPatients === true;
   const patientId = Number(id);
   
   const { data: patient, isLoading: isLoadingPatient } = usePatient(patientId);

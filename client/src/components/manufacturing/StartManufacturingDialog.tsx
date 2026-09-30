@@ -29,7 +29,8 @@ export function StartManufacturingDialog({ patient }: {
   const permissions = usePermissions();
 
   const isExpertRole = session?.role === "prosthetics_expert";
-  const mayStart = !isExpertRole && (session?.isAdmin || session?.role === "branch_manager" || permissions.canAddPatients);
+  //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
+  const mayStart = !isExpertRole && (session?.isAdmin || permissions.canAddPatients);
 
   // Same key as PatientWorkOrderCard — deduped by react-query.
   const { data: summary } = useQuery<any>({

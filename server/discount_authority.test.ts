@@ -53,7 +53,8 @@ async function cleanup() {
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
-  for (const [id, role, disc] of [[RECV, "reception", false], [RECV_OK, "reception", true], [MGR, "branch_manager", false]] as any[]) {
+  for (const [id, role, disc] of [[RECV, "reception", false], [RECV_OK, "reception", true], [MGR, "branch_manager", true]] as any[]) {
+    //  المديرُ بمفتاح «اعتماد الخصم» مفعّلاً — كما يتركه الترحيلُ ٠٩٠ (المفتاحُ يحكم لا الدور، ٢٠٢٦-٠٩-٣٠).
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
                can_view_patients,can_add_patients,can_add_payments,can_approve_discount)
              VALUES ($1,$2,'x','موظف',$3,1,'[1]'::jsonb,true,true,true,true,$4)
@@ -125,7 +126,12 @@ async function main() {
     same("د١. **وجلساتُ الدفع المجّانية كما كانت**: الاستقبالُ لا يمنحها",
       byRecv.filter((r) => r.f).length, 0);
     const r2 = await pay(S.mgr);
-    same("د٢. ومديرُ الفرع يمنحها", [r2.status, (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND is_free_sessions`, [p5]))[0].n], [201, 1]);
+    same("د٢. ومديرُ الفرع بمفتاح «اعتماد الخصم» يمنحها", [r2.status, (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND is_free_sessions`, [p5]))[0].n], [201, 1]);
+    //  **والمفتاحُ يحكم لا الدور** (٢٠٢٦-٠٩-٣٠): مديرٌ أُطفئ مفتاحُه لا يمنحها.
+    await q(`UPDATE system_users SET can_approve_discount=false WHERE id=$1`, [MGR]);
+    await pay(S.mgr);
+    same("د٣. ومديرُ الفرع بمفتاحٍ مطفأ لا يمنحها", (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND is_free_sessions`, [p5]))[0].n, 1);
+    await q(`UPDATE system_users SET can_approve_discount=true WHERE id=$1`, [MGR]);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     await cleanup();

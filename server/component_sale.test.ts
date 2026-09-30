@@ -272,6 +272,10 @@ async function main() {
                branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
       [id, `cs_u${id}`, role, name, branch, JSON.stringify(branchIds)]);
   }
+  //  **المفتاحُ يحكم لا الدور** (٢٠٢٦-٠٩-٣٠): الطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً — كقالبَي دورَيهما في شاشة
+  //  المستخدمين (عمودُ القاعدة افتراضُه مفعّل) — والبائعون به مفعّلاً.
+  await q(`UPDATE system_users SET can_add_payments = (role IN ('reception','accountant','branch_manager'))
+            WHERE id = ANY($1::int[])`, [[MANAGER, ACC, RECV, RECV_BRANCH2, DOC, EXPERT, EXPERT2, EXPERT_OTHER_BRANCH]]);
   await cleanup();
 
   const app = express();
@@ -301,11 +305,13 @@ async function main() {
     console.log("\n── ٠. العقدُ الخالص — بلا قاعدة بيانات ──");
     // ══════════════════════════════════════════════════════════════════
     check(canCompleteComponentSale({ isAdmin: true }), "٠١. المسؤولُ يمرّ دائماً");
-    check(canCompleteComponentSale({ role: "reception" }), "٠٢. الاستقبالُ يمرّ");
-    check(canCompleteComponentSale({ role: "accountant" }), "٠٣. المحاسبُ يمرّ");
-    check(canCompleteComponentSale({ role: "branch_manager" }), "٠٤. مديرُ الفرع يمرّ");
-    check(!canCompleteComponentSale({ role: "doctor" }), "٠٥. الطبيبُ يُرفَض دائماً");
-    check(!canCompleteComponentSale({ role: "prosthetics_expert" }), "٠٦. الخبيرُ يُرفَض");
+    //  **المفتاحُ يحكم لا الدور** (٢٠٢٦-٠٩-٣٠): «إضافة مدفوعات».
+    check(canCompleteComponentSale({ role: "reception", permissions: { canAddPayments: true } }), "٠٢. الاستقبالُ بالمفتاح يمرّ");
+    check(canCompleteComponentSale({ role: "accountant", permissions: { canAddPayments: true } }), "٠٣. المحاسبُ بالمفتاح يمرّ");
+    check(canCompleteComponentSale({ role: "branch_manager", permissions: { canAddPayments: true } }), "٠٤. مديرُ الفرع بالمفتاح يمرّ");
+    check(!canCompleteComponentSale({ role: "branch_manager" }), "٠٤ب. ومديرُ الفرع بلا المفتاح يُرفَض");
+    check(!canCompleteComponentSale({ role: "doctor" }), "٠٥. الطبيبُ بلا المفتاح يُرفَض");
+    check(!canCompleteComponentSale({ role: "prosthetics_expert" }), "٠٦. الخبيرُ بلا المفتاح يُرفَض");
     check(!canCompleteComponentSale(null), "٠٧. جلسةٌ غائبة تُرفَض");
     same("٠٨. عاديّ: خصمٌ صفر", deriveComponentSaleOffer({ originalPrice: 1_500_000, discountAmount: 0 }),
       { ok: true, kind: "normal", originalPrice: 1_500_000, finalPrice: 1_500_000, discountAmount: 0 });
@@ -355,7 +361,7 @@ async function main() {
         patientId: pid, component: "knee", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       }, S.doc);
-      check(r.status === 403, "أ. الطبيبُ يُرفَض ٤٠٣ ولو حمل canAddPatients", String(r.status));
+      check(r.status === 403, "أ. الطبيبُ بلا «إضافة مدفوعات» يُرفَض ٤٠٣ ولو حمل canAddPatients", String(r.status));
       same("أ. ولا أثرَ ماليّاً أو تشغيلياً لمحاولة الطبيب", await moneyOf(pid), ZERO);
     }
     {
@@ -365,7 +371,7 @@ async function main() {
         patientId: pid, component: "knee", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       }, S.expert);
-      check(r.status === 403, "أ. الخبيرُ (منفّذٌ لا بائع) يُرفَض ٤٠٣", String(r.status));
+      check(r.status === 403, "أ. الخبيرُ بلا «إضافة مدفوعات» يُرفَض ٤٠٣", String(r.status));
       same("أ. صفرُ كتابة لمحاولة الخبير", await moneyOf(pid), ZERO);
     }
 
@@ -1038,11 +1044,11 @@ async function main() {
     console.log("\n── ع. رؤيةُ المُوجِّه `reception_routing.ts` ──");
     // ══════════════════════════════════════════════════════════════════
     {
-      const forRecv = receptionRoutingChoices("prosthetic", { role: "reception" });
+      const forRecv = receptionRoutingChoices("prosthetic", { role: "reception", permissions: { canAddPayments: true } });
       check(forRecv.some((c) => c.id === "device_sale"), "ع١. الاستقبالُ يرى «بيع جزء» للأطراف");
-      const forAcc = receptionRoutingChoices("prosthetic", { role: "accountant" });
+      const forAcc = receptionRoutingChoices("prosthetic", { role: "accountant", permissions: { canAddPayments: true } });
       check(forAcc.some((c) => c.id === "device_sale"), "ع٢. المحاسبُ يرى «بيع جزء»");
-      const forMgr = receptionRoutingChoices("prosthetic", { role: "branch_manager" });
+      const forMgr = receptionRoutingChoices("prosthetic", { role: "branch_manager", permissions: { canAddPayments: true } });
       check(forMgr.some((c) => c.id === "device_sale"), "ع٣. مديرُ الفرع يرى «بيع جزء»");
       const forAdmin = receptionRoutingChoices("prosthetic", { isAdmin: true });
       check(forAdmin.some((c) => c.id === "device_sale"), "ع٤. المسؤولُ يرى «بيع جزء»");

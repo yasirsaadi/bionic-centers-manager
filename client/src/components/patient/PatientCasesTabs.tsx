@@ -113,7 +113,8 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
   const Icon = m.icon;
 
   const session = useBranchSession();
-  const canEditCost = !!session?.isAdmin || session?.role === "branch_manager";
+  //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — «تعديل مرضى»، كالخادم.
+  const canEditCost = !!session?.isAdmin || (session as any)?.permissions?.canEditPatients === true;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
