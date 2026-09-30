@@ -386,6 +386,14 @@ async function main() {
         const retA = await http("POST", `/api/medical-review/requests/${A.requestId}/return`, S.doc, { reason: "بيانٌ خاطئ" });
         same("٢٣. **وإرجاعُ طلب A ممكنٌ — معاينةُ B ليست معاينتَه**", retA.status, 200);
         same("   والطلبُ صار returned", (await requestRow(A.requestId)).status, "returned");
+        //  البند ١٨ (§4.ar): المُرجَعُ يخرج من «معايناتي» — ويعود بإعادة الإرسال.
+        same("٢٣أ. **المُرجَعُ خرج من «معايناتي»**", (await rowsOf(p)).length, 0);
+        const resend = await http("POST", "/api/medical-review/requests", S.recv, {
+          patientId: p, serviceType: svc, requestedPath: "full", reviewKind: "new_device",
+          receptionNote: "صُحّحت البيانات", deviceEpisodeId: A.episodeId,
+        });
+        check(resend.status < 300, "٢٣ب. الاستعلاماتُ يعيد الإرسال", JSON.stringify(resend.body));
+        same("٢٣ج. **وبإعادة الإرسال عاد إلى القائمة**", (await rowsOf(p)).map((r) => r.episodeId), [A.episodeId]);
         //  ثمّ يُوقَّع A بعينه — والطلبُ المُرجَع لا يُقلَب examined.
         const exA = await signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId });
         check(exA.status === 200 || exA.status === 201, "٢٤. توقيعُ A بعد الإرجاع ينجح", JSON.stringify(exA.body));

@@ -1860,6 +1860,12 @@ export async function getWorklist(
       -- معاينة لا ينضمّ، فلا يظهر في قائمة عمل الطبيب. و«NULL» (حلقةُ ما
       -- قبل ٠٦٥) تنضمّ كما كانت — الغيابُ ليس إعفاءً.
      AND ep.service_path IS DISTINCT FROM 'no_exam'
+      -- **والمُرجَعُ للاستعلامات يخرج من القائمة** (§4.ar البند ١٨): آخرُ طلبٍ على
+      -- الحلقة returned ⟵ لا صفّ، حتى يُعيد الاستعلاماتُ إرسالَه. والحلقةُ بلا
+      -- طلبٍ قطّ (ما قبل ٠٥٥) تبقى كما كانت.
+     AND COALESCE((SELECT r.status FROM medical_review_requests r
+                    WHERE r.device_episode_id = ep.id
+                    ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '') <> 'returned'
     -- **واسمُ الفرع بعد الحلقة لا قبلها**: الانضمامُ يقرأ عمودَ فرع الحلقة،
     -- ولا يراه لو سبقه. فرُتِّب بعده ليطابق الاسمُ الرقمَ المعروض.
     LEFT JOIN branches b ON b.id = COALESCE(ep.branch_id, pc.branch_id, p.branch_id)
