@@ -1894,6 +1894,8 @@ export async function getAllOrdersForPatient(
     deviceEpisodeId: r.deviceEpisodeId ?? null,
     deviceSequence: r.deviceSequence ?? null,
     requestedItem: r.requestedItem ?? null,
+    //  **وجزءُ الصيانة** — كان يُقرأ ولا يُرسَل؛ بطاقةُ التعديل تقول به «صيانة الركبة» (§4.ar البند ٢١).
+    maintenanceComponent: r.maintenanceComponent ?? null,
     //  والمالُ بشرطه، محذوفاً لا مصفَّراً.
     ...(includeMoney
       ? {

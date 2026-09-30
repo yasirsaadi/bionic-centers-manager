@@ -10,16 +10,34 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
 import { Wrench, Loader2 } from "lucide-react";
-import { STAGE_LABELS, STATUS_LABELS } from "@shared/manufacturing";
+import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS } from "@shared/manufacturing";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 
-interface Summary {
+/** أمرٌ كما تُعيده `/api/manufacturing/patient/:id/orders` — الحقولُ التي تحتاجها البطاقة وحدها. */
+interface OpenOrder {
   id: number;
   expertUserId: number;
   expertName: string | null;
   serviceType: string;
+  purpose: string;
   status: string;
   currentStage: string;
   expectedDeliveryDate: string | null;
+  active: boolean;
+  adminVoidReversalId?: number | null;
+  requestedItem?: string | null;
+  maintenanceComponent?: string | null;
+  deviceSequence?: number | null;
+}
+
+/** ما يُصنَع — «صيانة الركبة» · «قالب» · «أطراف صناعية». */
+function orderLabel(o: OpenOrder): string {
+  if (o.purpose === "maintenance") {
+    return o.maintenanceComponent
+      ? `صيانة ${requestedItemLabel(o.maintenanceComponent, o.serviceType as any)}` : "صيانة";
+  }
+  if (o.requestedItem) return requestedItemLabel(o.requestedItem, o.serviceType as any);
+  return SERVICE_TYPE_LABELS[o.serviceType as keyof typeof SERVICE_TYPE_LABELS] ?? o.serviceType;
 }
 
 // Manufacturing data inside the patient EDIT page: the expert and expected
@@ -27,36 +45,69 @@ interface Summary {
 // form never showed them. This card exposes both — expert reassignment (with
 // a mandatory reason, same server rules: reception only before work starts)
 // and delivery-date update (appends a history row).
+//
+// **كلُّ أمرٍ مفتوح بقسمه — لا «آخرُ أمرٍ أُنشئ»** (§4.ar البند ٢١، ٢٠٢٦-٠٩-٣٠): كانت البطاقةُ تقرأ آخرَ أمرٍ للمريض
+// أيّاً كانت حالتُه، فصيانةٌ أُنجزت اليوم أو أمرٌ مكرَّرٌ أُلغي كان يُخفيها عن طرفٍ ما زال يُصنَع — ولا تغييرَ لخبيره
+// ولا لموعده من هنا. وأمران مفتوحان معاً كان يظهر أحدثُهما وحده. فصارت تعرض كلَّ أمرٍ مفتوح (غيرِ منتهٍ ولا ملغى
+// ولا مُبطَلٍ إدارياً) بقسمه ورقمه وما يُصنَع فيه، والمنتهي والملغى مكانُهما سجلُّ التصنيع في صفحة المريض.
 export function ManufacturingEditCard({ patient }: {
   patient: { id: number; branchId: number; isAmputee?: boolean | null; isMedicalSupport?: boolean | null };
 }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
   const session = useBranchSession();
   const isExpertRole = session?.role === "prosthetics_expert";
+
+  const { data: orders = [] } = useQuery<OpenOrder[]>({
+    queryKey: [`/api/manufacturing/patient/${patient.id}/orders`],
+    // Enabled for every non-expert viewer regardless of the patient's
+    // case-type flag: the work order is the source of truth.
+    enabled: !isExpertRole && !!patient.id,
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/patient/${patient.id}/orders`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const open = orders.filter((o) => o.active && !o.adminVoidReversalId);
+
+  const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
+    queryKey: ["/api/manufacturing/experts", patient.branchId],
+    enabled: open.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`/api/manufacturing/experts?branchId=${patient.branchId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  if (isExpertRole || open.length === 0) return null;
+
+  return (
+    <Card className="p-6 rounded-2xl border-primary/30 bg-primary/5 space-y-4">
+      <h3 className="text-lg font-bold text-primary flex items-center gap-2">
+        <Wrench className="w-5 h-5" />
+        بيانات التصنيع
+        {open.length > 1 && (
+          <span className="text-xs font-normal text-muted-foreground">— {open.length} أوامر مفتوحة</span>
+        )}
+      </h3>
+      {open.map((o) => (
+        <OrderEditBlock key={o.id} order={o} patientId={patient.id} experts={experts} />
+      ))}
+    </Card>
+  );
+}
+
+function OrderEditBlock({ order, patientId, experts }: {
+  order: OpenOrder; patientId: number; experts: { id: number; displayName: string }[];
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const summary = order;
 
   const [newExpertId, setNewExpertId] = useState("");
   const [reason, setReason] = useState("");
   const [newDate, setNewDate] = useState("");
   const [dateReason, setDateReason] = useState("");
-
-  const summaryKey = [`/api/manufacturing/patient/${patient.id}/summary`];
-  const { data: summary } = useQuery<Summary | null>({
-    queryKey: summaryKey,
-    // Enabled for every non-expert viewer regardless of the patient's
-    // case-type flag: the work order is the source of truth. A patient with an
-    // active order but a missing isAmputee flag (e.g. after a merge/import)
-    // must still get the card. The endpoint returns null when no order exists,
-    // so a stray request for a non-manufacturing patient is cheap and harmless.
-    enabled: !isExpertRole && !!patient.id,
-    queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/patient/${patient.id}/summary`, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json();
-    },
-  });
-
-  const active = summary && summary.status !== "cancelled" && summary.status !== "completed";
 
   // Pre-fill the date field with the current delivery date. An EMPTY controlled
   // <input type="date"> misbehaves on iOS Safari (the pick often doesn't stick),
@@ -66,19 +117,9 @@ export function ManufacturingEditCard({ patient }: {
     if (summary?.expectedDeliveryDate) setNewDate(summary.expectedDeliveryDate);
   }, [summary?.expectedDeliveryDate]);
 
-  const { data: experts = [] } = useQuery<{ id: number; displayName: string }[]>({
-    queryKey: ["/api/manufacturing/experts", patient.branchId],
-    enabled: Boolean(active),
-    queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/experts?branchId=${patient.branchId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: summaryKey });
-    queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patient.id}/orders`] });
+    queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
+    queryClient.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
     queryClient.invalidateQueries({ queryKey: ["/api/manufacturing/notifications"] });
   };
 
@@ -114,17 +155,18 @@ export function ManufacturingEditCard({ patient }: {
     onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" }),
   });
 
-  if (isExpertRole || !active) return null;
-
   // Only meaningful to save when the picked date differs from the stored one.
   const dateChanged = !!newDate && newDate !== (summary!.expectedDeliveryDate ?? "");
 
   return (
-    <Card className="p-6 rounded-2xl border-primary/30 bg-primary/5 space-y-4">
-      <h3 className="text-lg font-bold text-primary flex items-center gap-2">
-        <Wrench className="w-5 h-5" />
-        بيانات التصنيع
-      </h3>
+    <div className="space-y-3 rounded-xl border border-primary/20 bg-white/60 p-3" data-testid={`edit-order-${order.id}`}>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold">{orderLabel(order)}</span>
+        {order.deviceSequence != null && (
+          <span className="text-xs text-muted-foreground">جهاز #{order.deviceSequence}</span>
+        )}
+        <span className="text-xs font-mono text-muted-foreground">أمر #{order.id}</span>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div><div className="text-xs text-muted-foreground">الخبير الحالي</div><div className="font-semibold">{summary!.expertName ?? "—"}</div></div>
         <div><div className="text-xs text-muted-foreground">المرحلة</div><div>{STAGE_LABELS[summary!.currentStage] ?? summary!.currentStage}</div></div>
@@ -137,7 +179,7 @@ export function ManufacturingEditCard({ patient }: {
         <div className="bg-white border rounded-lg p-3 space-y-2">
           <label className="text-sm font-semibold">تغيير الخبير المسؤول</label>
           <Select value={newExpertId} onValueChange={setNewExpertId}>
-            <SelectTrigger data-testid="select-edit-expert"><SelectValue placeholder="اختر الخبير الجديد" /></SelectTrigger>
+            <SelectTrigger data-testid={`select-edit-expert-${order.id}`}><SelectValue placeholder="اختر الخبير الجديد" /></SelectTrigger>
             <SelectContent>
               {experts.filter((e) => e.id !== summary!.expertUserId).map((e) => (
                 <SelectItem key={e.id} value={String(e.id)}>{e.displayName}</SelectItem>
@@ -146,7 +188,7 @@ export function ManufacturingEditCard({ patient }: {
           </Select>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="سبب التحويل (إلزامي)" />
           <Button type="button" size="sm" className="w-full" disabled={!newExpertId || !reason.trim() || reassign.isPending}
-            onClick={() => reassign.mutate()} data-testid="button-edit-reassign">
+            onClick={() => reassign.mutate()} data-testid={`button-edit-reassign-${order.id}`}>
             {reassign.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "تحويل"}
           </Button>
           <p className="text-[11px] text-muted-foreground">للاستقبال: التحويل متاح قبل بدء الخبير العمل فقط؛ بعده يحوّل المدير أو المسؤول.</p>
@@ -155,23 +197,23 @@ export function ManufacturingEditCard({ patient }: {
         {/* Change expected delivery date — reason mandatory when a date exists */}
         <div className="bg-white border rounded-lg p-3 space-y-2">
           <label className="text-sm font-semibold">تغيير موعد التسليم المتوقع</label>
-          <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} data-testid="input-edit-delivery" />
+          <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} data-testid={`input-edit-delivery-${order.id}`} />
           {summary!.expectedDeliveryDate && (
             <Input
               value={dateReason}
               onChange={(e) => setDateReason(e.target.value)}
               placeholder="سبب التغيير (إلزامي) — مثال: تأخّر المورّد"
-              data-testid="input-edit-delivery-reason"
+              data-testid={`input-edit-delivery-reason-${order.id}`}
             />
           )}
           <Button type="button" size="sm" className="w-full"
             disabled={!dateChanged || (!!summary!.expectedDeliveryDate && !dateReason.trim()) || updateDate.isPending}
-            onClick={() => updateDate.mutate()} data-testid="button-edit-delivery">
+            onClick={() => updateDate.mutate()} data-testid={`button-edit-delivery-${order.id}`}>
             {updateDate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : dateChanged ? "حفظ الموعد الجديد" : "اختر تاريخاً مختلفاً"}
           </Button>
           <p className="text-[11px] text-muted-foreground">يُسجَّل التغيير وسببه في الخط الزمني وملف المريض، وتُحدَّث التنبيهات عليه.</p>
         </div>
       </div>
-    </Card>
+    </div>
   );
 }
