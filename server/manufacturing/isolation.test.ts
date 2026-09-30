@@ -32,7 +32,8 @@ const S = {
   recKirkuk: { userId: 205, role: "reception", isAdmin: false, branchId: 5, accessibleBranches: [5], permissions: { canAddPatients: true, canViewPatients: true } },
   anad: { userId: 101, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1, 3, 5], permissions: {} },
   ayoub: { userId: 102, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1, 3, 5], permissions: {} },
-  mgr1: { userId: 301, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: { canViewPatients: true } },
+  //  المديرُ بمفاتيحه كما يتركه الترحيلُ ٠٩٠ — المفتاحُ يحكم لا الدور (٢٠٢٦-٠٩-٣٠).
+  mgr1: { userId: 301, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1], permissions: { canViewPatients: true, canAddPatients: true } },
   admin: { userId: 999, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [], permissions: {} },
 };
 

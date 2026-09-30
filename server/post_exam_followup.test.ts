@@ -233,6 +233,11 @@ async function main() {
   //  عند الدخول وفي كلّ طلب)، والمعاينةُ من عَلَمها — لا دورُ «طبيب» يحمل `isAdmin`، فتلك جلسةٌ لا يُنتجها الدخول،
   //  والدورُ والمسؤوليّةُ يُعادان من الصفّ مع كلّ طلب. وفروعُه كجلسته.
   await q(`UPDATE system_users SET role='admin', can_write_medical_exam=true, branch_ids='[1,2]'::jsonb WHERE id=$1`, [ADMIN_DOC]);
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): الحساباتُ كما هي بعد النشر — المديرُ بما شغّله الترحيلُ ٠٩٠،
+  //  والطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً كقالبَي دورَيهما (عمودُ القاعدة افتراضُه مفعّل).
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
+  await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
   await cleanup();
 
   const app = express();

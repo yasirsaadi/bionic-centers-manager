@@ -278,7 +278,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
     try {
       if (!canCompleteComponentSale(chargeSession(req))) {
         return res.status(403).json({
-          error: "بيع جزء من طرف صناعي للاستقبال والمحاسب ومدير الفرع والمسؤول",
+          error: "بيع جزء من طرف صناعي يحتاج مفتاح «إضافة مدفوعات» — راجع المسؤول",
         });
       }
 
@@ -504,7 +504,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
     try {
       if (!canCompleteMaintenance(chargeSession(req))) {
         return res.status(403).json({
-          error: "إتمام الصيانة للاستقبال والمحاسب ومدير الفرع والمسؤول",
+          error: "إتمام الصيانة يحتاج مفتاح «إضافة مدفوعات» — راجع المسؤول",
         });
       }
       const ctx = await maintenanceContext(req);
@@ -543,7 +543,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
     try {
       if (!canCompleteMaintenance(chargeSession(req))) {
         return res.status(403).json({
-          error: "إتمام الصيانة للاستقبال والمحاسب ومدير الفرع والمسؤول",
+          error: "إتمام الصيانة يحتاج مفتاح «إضافة مدفوعات» — راجع المسؤول",
         });
       }
       //  ══ **الحقولُ القديمة تُرفَض صراحةً** ══════════════════════════════

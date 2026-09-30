@@ -206,7 +206,8 @@ export function canApproveServiceDiscount(
   s: DiscountSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager") return true;
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
   //  المقارنة صريحة: صلاحيةٌ غامضة القيمة تُقرأ «لا».
   return s?.permissions?.canApproveDiscount === true;
 }
@@ -221,7 +222,9 @@ export function canRequestServiceDiscount(
   s: DiscountSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager" || s?.role === "reception") return true;
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+  //  **وقرارُ البند ٢٥ قائم**: الخصمُ لكلّ مَن يسعّر — ومَن يسعّر هو صاحبُ «إضافة مرضى».
   return s?.permissions?.canAddPatients === true;
 }
 

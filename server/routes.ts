@@ -507,11 +507,19 @@ export async function registerRoutes(
     return Number.isNaN(id) ? undefined : id;
   };
 
+  //  **مالُ التقارير بمفتاح «عرض المدفوعات» لا بالدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ
+  //  لوحة الصلاحيات). لوحةُ التحكّم تُخفي البطاقاتِ المالية به منذ زمن، والخادمُ كان يرسل
+  //  الأرقامَ لكلّ مسجَّل — فالإخفاءُ كان تجميلاً. الآن يرسل الأعدادَ ويُصفِّر المال.
+  const mayViewMoney = (req: any): boolean => {
+    const bs = req.session?.branchSession;
+    return Boolean(bs?.isAdmin) || bs?.permissions?.canViewPayments === true;
+  };
+
   // Returns true when the requester is the system admin OR a
-  // branch_manager. Used to gate "admin-style" branch-scoped operations
-  // (delete a visit, edit a payment's session info, etc.) that the
-  // user explicitly wants branch managers to perform within their own
-  // branches. Branch isolation is checked separately at each call site.
+  // branch_manager. Left only where no permission switch exists (the retired
+  // transfer door, deleting a document). Anything a switch covers is gated
+  // by that switch instead (owner, 2026-09-30: the switch governs, not the role).
+  // Branch isolation is checked separately at each call site.
   const isAdminOrManager = (req: any): boolean => {
     const branchSession = (req.session as any).branchSession;
     return Boolean(branchSession?.isAdmin) || branchSession?.role === "branch_manager";
@@ -2531,8 +2539,11 @@ export async function registerRoutes(
     const caseId = Number(req.params.caseId);
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const isManager = branchSession?.role === "branch_manager";
-    if (!isAdmin && !isManager) return res.status(403).json({ message: "غير مصرح" });
+    //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+    //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+    //  كلفةُ الحالة تعديلٌ لبيانات المريض ⟵ مفتاحُ «تعديل مرضى».
+    const mayEdit = isAdmin || Boolean(branchSession?.permissions?.canEditPatients);
+    if (!mayEdit) return res.status(403).json({ message: "ليس لديك صلاحية تعديل بيانات المرضى" });
 
     const patient = await storage.getPatient(patientId);
     if (!patient) return res.status(404).json({ message: "المريض غير موجود" });
@@ -2968,8 +2979,11 @@ export async function registerRoutes(
   });
 
   app.put("/api/patients/:id/created-at", isAuthenticated, async (req, res) => {
-    if (!isAdminOrManager(req)) {
-      return res.status(403).json({ message: "فقط المدير يمكنه تعديل تاريخ الإضافة" });
+    //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+    //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+    const cs = (req.session as any)?.branchSession;
+    if (!(cs?.isAdmin || cs?.permissions?.canEditPatients)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية تعديل بيانات المرضى" });
     }
 
     const id = Number(req.params.id);
@@ -3029,7 +3043,9 @@ export async function registerRoutes(
       // COST is management-only (owner's rule): even an accountant with
       // edit-patient rights must not change totalCost — only branch managers
       // and the admin may. Everyone else gets the field silently stripped.
-      const mayEditCost = branchSession?.isAdmin || branchSession?.role === "branch_manager";
+      //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): مَن وصل هنا يحمل «تعديل مرضى»
+      //  أصلاً (الفحصُ أعلاه) — فالكلفةُ معه، لا بدور «مدير فرع».
+      const mayEditCost = canEditThisPatient;
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
 
@@ -3337,6 +3353,11 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (!Number.isFinite(id)) {
       return res.status(400).json({ error: "معرّف غير صالح" });
+    }
+
+    //  **المفتاحُ يحكم** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): ملخّصٌ ماليّ ⟵ «عرض المدفوعات».
+    if (!isAdmin && branchSession?.permissions?.canViewPayments !== true) {
+      return res.status(403).json({ error: "ليس لديك صلاحية عرض المدفوعات" });
     }
 
     const patient = await storage.getPatient(id);
@@ -4408,11 +4429,12 @@ export async function registerRoutes(
     } = req.body ?? {};
     const input = api.payments.create.input.parse(bodyWithoutEntries);
     
-    // Authorization: Only admin or branch_manager can set isFreeSessions to true
+    //  **الجلسةُ المجّانية خصمٌ كامل ⟵ مفتاحُ «اعتماد الخصم»، لا دورُ «مدير فرع»**
+    //  (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً على أيٍّ كان
+    //  — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const isBranchManager = branchSession?.role === "branch_manager";
-    const mayGrantFree = isAdmin || isBranchManager;
+    const mayGrantFree = isAdmin || branchSession?.permissions?.canApproveDiscount === true;
     const isFreeSessions = mayGrantFree ? (req.body.isFreeSessions || false) : false;
     //  ══ **والنافذةُ تؤشّر «مجاني» لكلّ بند، لا علماً علوياً** ════════════
     //  (إصلاحُ ٢٠٢٦-٠٩-٢١.) `PaymentModal` يبني البندَ المُهدى بـ`isFree`
@@ -4432,9 +4454,8 @@ export async function registerRoutes(
     // `/api/patients/:id/new-service` حرفياً — لا صلاحية محاسبةٍ أوسع
     // (`canManageAccounting`) تُشترَط هنا، وهذه صلاحيةُ الإضافة وحدها.
     //
-    // **ولا منحَ دورٍ إضافي بعد اليوم** (إصلاحٌ 2026-09-01): `isBranchManager`
-    // تبقى فوق لغرضها الآخر (`isFreeSessions`، سطرٌ محميٌّ ماليّاً مستقلّ)،
-    // لكنها لم تعد تفتح بابَ الإضافة نفسِه — `canAddPayments` وحدها تفتحه.
+    // **ولا منحَ دورٍ إضافي بعد اليوم** (إصلاحٌ 2026-09-01): `canAddPayments`
+    // وحدها تفتح بابَ الإضافة، والمنحُ المجّانيّ فوق بمفتاحه هو.
     const canAddPaymentPermission =
       isAdmin || branchSession?.permissions?.canAddPayments === true;
     if (!canAddPaymentPermission) {
@@ -4765,8 +4786,11 @@ export async function registerRoutes(
   // (الذي كان يمنع تعارضاً بعد وقوعه) لم يعد له موضع: التعارضُ لا يصل
   // إلى الكتابة أصلاً.
   app.patch("/api/payments/:id/session-info", isAuthenticated, async (req, res) => {
-    if (!isAdminOrManager(req)) {
-      return res.status(403).json({ message: "فقط المدير يمكنه تعديل بيانات الجلسات" });
+    //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+    //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+    const ps = (req.session as any)?.branchSession;
+    if (!(ps?.isAdmin || ps?.permissions?.canEditPayments)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية تعديل الدفعات" });
     }
     const id = Number(req.params.id);
     const [existing] = await db.select().from(payments).where(eq(payments.id, id));
@@ -4961,6 +4985,9 @@ export async function registerRoutes(
     if (!branchSession?.isAdmin && branchSession?.branchId !== branchId) {
       return res.status(403).json({ message: "غير مصرح لك بالوصول لهذا الفرع" });
     }
+    if (!mayViewMoney(req)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية عرض المدفوعات" });
+    }
     const branchPatients = await storage.getPatients(branchId);
     const branchPayments = await storage.getPaymentsByBranch(branchId);
     
@@ -5004,11 +5031,12 @@ export async function registerRoutes(
     const totalPaid = Number((payAgg.rows[0] as any)?.paid ?? 0);
     const totalSold = Number(p?.sold ?? 0);
 
+    const money = mayViewMoney(req);
     res.json({
-      revenue: totalPaid,
-      sold: totalSold,
-      paid: totalPaid,
-      remaining: totalSold - totalPaid,
+      revenue: money ? totalPaid : 0,
+      sold: money ? totalSold : 0,
+      paid: money ? totalPaid : 0,
+      remaining: money ? totalSold - totalPaid : 0,
       totalPatients: Number(p?.total ?? 0),
       amputees: Number(p?.amputees ?? 0),
       physiotherapy: Number(p?.physiotherapy ?? 0),
@@ -5020,6 +5048,9 @@ export async function registerRoutes(
   // Non-admins only see their own branch in the response (a single-row map);
   // admins see every branch.
   app.get("/api/reports/all-branches", isAuthenticated, async (req, res) => {
+    if (!mayViewMoney(req)) {
+      return res.status(403).json({ message: "ليس لديك صلاحية عرض المدفوعات" });
+    }
     const allowedBranchId = enforceBranchAccess(req);
     const allBranches = await storage.getBranches();
     const branches = allowedBranchId !== undefined
@@ -5500,8 +5531,8 @@ export async function registerRoutes(
         visitingPhysiotherapy: Number(visitingStats.visiting_physiotherapy) || 0,
         visitingMedicalSupport: Number(visitingStats.visiting_medical_support) || 0,
         totalVisits: Number(visitStats.total_visits) || 0,
-        paid: todayPaid,
-        branchRevenues
+        paid: mayViewMoney(req) ? todayPaid : 0,
+        branchRevenues: mayViewMoney(req) ? branchRevenues : [],
       });
     } catch (error) {
       console.error("Daily stats error:", error);
@@ -6930,8 +6961,18 @@ export async function registerRoutes(
 
   // ======================= INVOICE ENDPOINTS =======================
 
+  const mayReadInvoices = (req: any): boolean => {
+    const bs = req.session?.branchSession;
+    return Boolean(bs?.isAdmin) || bs?.permissions?.canManageAccounting === true;
+  };
+
   // Get all invoices (admin-only or branch-filtered)
   app.get("/api/invoices", isAuthenticated, async (req: any, res) => {
+    //  **المفتاحُ يحكم** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): الفواتيرُ وثائقُ المحاسبة،
+    //  وكانت تُقرأ لكلّ مسجَّل. تُقرأ الآن بمفتاح «إدارة المحاسبة» — نفسِ ما يُظهر تبويبَها.
+    if (!mayReadInvoices(req)) {
+      return res.status(403).json({ error: "ليس لديك صلاحية المحاسبة" });
+    }
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     
@@ -6949,6 +6990,9 @@ export async function registerRoutes(
   // filtered them by branch). Returns a flat array — caller groups by
   // invoiceId.
   app.get("/api/invoice-items/bulk", isAuthenticated, async (req: any, res) => {
+    if (!mayReadInvoices(req)) {
+      return res.status(403).json({ error: "ليس لديك صلاحية المحاسبة" });
+    }
     const raw = String(req.query.invoiceIds ?? "");
     if (!raw) return res.json([]);
     const ids = raw
@@ -6965,10 +7009,18 @@ export async function registerRoutes(
 
   // Get single invoice with items
   app.get("/api/invoices/:id", isAuthenticated, async (req: any, res) => {
+    if (!mayReadInvoices(req)) {
+      return res.status(403).json({ error: "ليس لديك صلاحية المحاسبة" });
+    }
     const id = parseInt(req.params.id);
     const invoice = await storage.getInvoiceById(id);
     if (!invoice) {
       return res.status(404).json({ error: "الفاتورة غير موجودة" });
+    }
+    //  وفاتورةُ فرعٍ آخر لا تُقرأ برقمها — كانت بلا فحصِ فرعٍ إطلاقاً.
+    const allowedInv = accessibleBranchesFor(req);
+    if (allowedInv !== null && !allowedInv.includes(invoice.branchId)) {
+      return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });
     }
     const items = await storage.getInvoiceItems(id);
     res.json({ ...invoice, items });
@@ -8351,7 +8403,19 @@ export async function registerRoutes(
     }
   });
 
+  //  **قراءةُ الاستبيانات بمفتاحها** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): كانت تُقرأ
+  //  لكلّ مسجَّل. «إدارة الاستبيانات» تفتحها — وصفحةُ «الإحصائيات» تقرأ القائمةَ نفسَها
+  //  بمفتاح «عرض التقارير» (كبقيّة نقاطها)، فهو يفتح القائمةَ والنتائجَ المجمَّعة وحدَهما.
+  const maySurveys = (req: any, alsoReports: boolean): boolean => {
+    const bs = req.session?.branchSession;
+    if (bs?.isAdmin) return true;
+    if (bs?.permissions?.canManageSurveys === true) return true;
+    return alsoReports && bs?.permissions?.canViewReports === true;
+  };
+  const surveyDenied = (res: any) => res.status(403).json({ message: "غير مصرح لك بالاستبيانات" });
+
   app.get("/api/survey-responses", isAuthenticated, async (req, res) => {
+    if (!maySurveys(req, true)) return surveyDenied(res);
     try {
       const branchSession = (req.session as any).branchSession;
       const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
@@ -8364,8 +8428,13 @@ export async function registerRoutes(
   });
 
   app.get("/api/survey-responses/patient/:patientId", isAuthenticated, async (req, res) => {
+    if (!maySurveys(req, false)) return surveyDenied(res);
     try {
       const patientId = parseInt(req.params.patientId);
+      //  وملفُّ مريضٍ من فرعٍ آخر لا يُقرأ برقمه — كان بلا فحصِ فرعٍ إطلاقاً.
+      const sp = await storage.getPatient(patientId);
+      if (!sp) return res.status(404).json({ message: "المريض غير موجود" });
+      if (!(await reachesPatient(req, sp))) return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
       const responses = await storage.getSurveyResponsesByPatient(patientId);
       res.json(responses);
     } catch (err) {
@@ -8431,6 +8500,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/survey-responses/:id/answers", isAuthenticated, async (req, res) => {
+    if (!maySurveys(req, false)) return surveyDenied(res);
     try {
       const id = parseInt(req.params.id);
       const answers = await storage.getSurveyAnswers(id);
@@ -8441,6 +8511,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/survey-results", isAuthenticated, async (req, res) => {
+    if (!maySurveys(req, true)) return surveyDenied(res);
     try {
       const branchSession = (req.session as any).branchSession;
       const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;

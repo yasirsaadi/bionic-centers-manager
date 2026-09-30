@@ -186,6 +186,11 @@ async function main() {
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, medical_specialties=EXCLUDED.medical_specialties`,
       [id, `rp_u${id}`, role, spec]);
   }
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): الحساباتُ كما هي بعد النشر — المديرُ بما شغّله الترحيلُ ٠٩٠،
+  //  والطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً كقالبَي دورَيهما (عمودُ القاعدة افتراضُه مفعّل).
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
+  await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
   await cleanup();
 
   const app = express();

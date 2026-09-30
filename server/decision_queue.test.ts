@@ -55,7 +55,7 @@ const S: Record<string, any> = {
   manager: {
     userId: MANAGER, role: "branch_manager", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "مدير الفرع",
-    permissions: { canViewPatients: true, canAddPatients: true },
+    permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true },
   },
   doc: {
     //  فروعٌ مزدوجة عمداً (خلافاً لـ`reception_sale.test.ts`): قسمُ نطاق
@@ -68,12 +68,12 @@ const S: Record<string, any> = {
   recv: {
     userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "ريام",
-    permissions: { canViewPatients: true, canAddPatients: true },
+    permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true },
   },
   acct: {
     userId: ACCT, role: "accountant", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "المحاسب",
-    permissions: { canViewPatients: true },
+    permissions: { canViewPatients: true, canAddPayments: true },
   },
 };
 
@@ -325,6 +325,11 @@ async function main() {
                branch_ids=EXCLUDED.branch_ids, display_name=EXCLUDED.display_name, is_active=true`,
       [id, `dq_u${id}`, role, name, branchId, branchIds]);
   }
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠): الحساباتُ كما هي بعد النشر — المديرُ بما شغّله الترحيلُ ٠٩٠،
+  //  والطبيبُ والخبيرُ بـ«إضافة مدفوعات» مطفأً كقالبَي دورَيهما (عمودُ القاعدة افتراضُه مفعّل).
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
+  await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
   await cleanup();
 
   const app = express();

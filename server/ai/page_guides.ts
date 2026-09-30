@@ -149,7 +149,7 @@ function decisionQueueGuide(access: AiAccessContext): string {
   //  **الدالّةُ القانونية نفسُها** التي تحرس `/complete-sale` و`/not-bought`
   //  في الخادم — لا قائمةَ أدوارٍ ثانية هنا.
   const maySell = canCompleteReceptionSale({
-    isAdmin: access.isAdmin, role: access.role,
+    isAdmin: access.isAdmin, role: access.role, permissions: access.permissions,
   } as any);
 
   return `
@@ -176,7 +176,7 @@ function decisionQueueGuide(access: AiAccessContext): string {
 
 **وصلاحيةُ هذا المستخدم للبيع على هذه الشاشة**: ${maySell
     ? "**يملكها** (بحسب الدالّة القانونية في الخادم)."
-    : "**لا يملكها** — والطبيبُ بلا صفةِ مسؤولٍ عامّ ليس منهم."}
+    : "**لا يملكها** — مفتاحُ «إضافة مدفوعات» مطفأٌ على حسابه، والمفتاحُ يحكم لا الدور (يشغّله المسؤولُ من شاشة المستخدمين)."}
 
 **⚠ وقاعدةٌ لا تُخالَف**: صلاحيةُ المستخدم **لا تُثبت** أن زرّاً بعينه ظاهرٌ
 على صفٍّ بعينه. فظهورُ الزرّ يقرّره الخادمُ **لكلّ صفٍّ على حدة** من

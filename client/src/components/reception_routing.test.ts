@@ -75,7 +75,8 @@ const DUAL = { isAmputee: true, isMedicalSupport: true };
 //  مخوَّلة (استقبال) تُمرَّر صراحةً فيما تبقّى من هذا الملفّ — فما كان
 //  يثبته قبل هذه المرحلة (شكلُ الخيارات الثلاثة/الاثنين) يبقى مُثبَتاً
 //  بحرفه، والتغطيةُ الجديدة (الإخفاءُ عن غير المخوَّل) في القسم أدناه.
-const RECEPTION = { role: "reception", isAdmin: false };
+//  **بمفتاح «إضافة مدفوعات»** — هو ما يفتح الصيانةَ وبيعَ الجزء لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠).
+const RECEPTION = { role: "reception", isAdmin: false, permissions: { canAddPayments: true } };
 
 function main() {
   // ══ (أ) القرار: ثلاثةُ خيارات لكلّ قسم ═════════════════════════════════
@@ -237,6 +238,8 @@ function main() {
   const proNoSession = receptionRoutingChoices("prosthetic");
   same("١٧.ح **وجلسةٌ غائبة كذلك تُخفيهما احتياطاً**",
     proNoSession.map((c) => c.id), ["exam_required"]);
+  same("١٧.ح٢ **واستقبالٌ بلا «إضافة مدفوعات» كذلك** — المفتاحُ يحكم لا الدور",
+    receptionRoutingChoices("prosthetic", { role: "reception", isAdmin: false }).map((c) => c.id), ["exam_required"]);
   const proForAdmin = receptionRoutingChoices("prosthetic", { isAdmin: true });
   same("١٧.ط **والمسؤولُ العامّ يراهما بلا قيد**",
     proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance"]);

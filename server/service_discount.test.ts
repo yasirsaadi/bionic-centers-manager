@@ -297,6 +297,9 @@ async function main() {
                can_approve_discount=EXCLUDED.can_approve_discount`,
       [id, `sd_u${id}`, name, role, branch, JSON.stringify([branch]), spec, flag]);
   }
+  //  **المديرُ بمفاتيحه لا بدوره** (٢٠٢٦-٠٩-٣٠): حالُه كما يتركه الترحيلُ ٠٩٠.
+  await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
+             can_approve_discount=true, can_edit_payments=true WHERE id = ANY($1::int[])`, [[MGR, MGR_B2]]);
   await cleanup();
 
   const app = express();

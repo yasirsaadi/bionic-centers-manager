@@ -197,7 +197,8 @@ export const RETURNED_FROM_DOCTOR_TITLE = "المُرجَعون من الطبي�
  */
 export function canCreateReview(s: ReviewSessionLike | null | undefined): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager" || s?.role === "reception") return true;
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
   return s?.permissions?.canAddPatients === true;
 }
 

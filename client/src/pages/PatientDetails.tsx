@@ -171,7 +171,8 @@ export default function PatientDetails() {
   // within their own branch (delete visit, edit visit, etc.). The
   // server already enforces branch isolation; the UI just needs to
   // expose the buttons.
-  const isAdminOrManager = isAdmin || branchSession?.role === "branch_manager";
+  //  «تعديل تاريخ الإضافة» بمفتاح «تعديل مرضى» لا بالدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
+  const mayEditCreatedAt = isAdmin || Boolean(permissions.canEditPatients);
   const { data: patient, isLoading } = usePatient(Number(id));
   //  **عمودُ «الجهاز» في جدول الدفعات يظهر لمريض الأجهزة وحده** — مريضُ
   //  العلاج الطبيعي لا حلقاتِ أجهزةٍ له، فعمودٌ كلُّه شرطاتٌ ضجيجٌ لا خبر.
@@ -794,7 +795,7 @@ export default function PatientDetails() {
             يملكها يقرأ الحالةَ ولا يرى زرَّ الحفظ. */}
         <PatientBranchAccessDialog patientId={patient.id} />
 
-        {isAdminOrManager && (
+        {mayEditCreatedAt && (
           <Dialog open={editCreatedAtOpen} onOpenChange={setEditCreatedAtOpen}>
             <DialogTrigger asChild>
               <Button
@@ -2189,7 +2190,7 @@ export default function PatientDetails() {
                 />
               </div>
             )}
-            {(isAdmin || branchSession?.role === "branch_manager") && patient.isPhysiotherapy && (
+            {(isAdmin || permissions.canApproveDiscount) && patient.isPhysiotherapy && (
               <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
                 <Checkbox 
                   id="editFreeSessions"

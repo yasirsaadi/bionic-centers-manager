@@ -221,7 +221,9 @@ export function canOperateNoExam(s: ChargeSessionLike | null | undefined): boole
   //  **البوّابةُ نفسُها التي تفتح «بدء جهاز» و«خدمة جديدة» حرفاً بحرف** —
   //  `canAddPatients` هو ما يعنيه «استقبال» في هذا النظام، ولا بوّابةَ
   //  ثانية تنحرف عن الأولى يوماً.
-  return s?.role === "branch_manager" || s?.permissions?.canAddPatients === true;
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً
+  //  على أيٍّ كان — مدير أو موظّف — فلا يتمكّن؛ وإن كان مفعّلاً فيتمكّن». والمسؤولُ العامّ وحده فوقه.
+  return s?.permissions?.canAddPatients === true;
 }
 
 /**

@@ -72,7 +72,8 @@ const EXPERT = 9601, MANAGER = 9602;
 const S = {
   manager: {
     userId: MANAGER, role: "branch_manager", isAdmin: false, branchId: 1,
-    accessibleBranches: [1], permissions: { canViewPatients: true, canAddPatients: true },
+    //  «إضافة مدفوعات» — هو ما يفتح الصيانةَ لا الدور (المفتاحُ يحكم، ٢٠٢٦-٠٩-٣٠).
+    accessibleBranches: [1], permissions: { canViewPatients: true, canAddPatients: true, canAddPayments: true },
   },
 };
 

@@ -134,7 +134,10 @@ console.log("\n═══ عقد الخصم والتبرّع ═══\n");
   check("٢٥. المسؤولُ يعتمد", canApproveServiceDiscount({ isAdmin: true, role: "reception" }));
   check("٢٦. **وسلطتُه تسبق دورَه**: مسؤولٌ دورُه استقبال يعتمد",
     canApproveServiceDiscount({ isAdmin: true, role: "reception", permissions: {} }));
-  check("٢٧. ومديرُ الفرع يعتمد", canApproveServiceDiscount({ role: "branch_manager" }));
+  //  **المفتاحُ يحكم لا الدور** (قرارُ المالك ٢٠٢٦-٠٩-٣٠).
+  check("٢٧. ومديرُ الفرع بمفتاح «اعتماد الخصم» يعتمد",
+    canApproveServiceDiscount({ role: "branch_manager", permissions: { canApproveDiscount: true } }));
+  check("٢٧ب. **ومديرُ الفرع بلا المفتاح لا يعتمد**", !canApproveServiceDiscount({ role: "branch_manager" }));
   check("٢٨. **ولا كلُّ طبيبٍ يعتمد** — الخصم قرارٌ ماليّ لا سريريّ",
     !canApproveServiceDiscount({ role: "doctor" }));
   check("٢٩. ولا طبيبٌ يكتب المعاينة",
@@ -153,12 +156,14 @@ console.log("\n═══ عقد الخصم والتبرّع ═══\n");
       && !canApproveServiceDiscount({ role: "doctor", permissions: { canApproveDiscount: 1 } }));
 }
 {
-  check("٣٥. الطلبُ لمن يسعّر: استقبالٌ ومديرٌ ومسؤول",
-    canRequestServiceDiscount({ role: "reception" })
-      && canRequestServiceDiscount({ role: "branch_manager" })
+  check("٣٥. الطلبُ لمن يسعّر (يحمل «إضافة مرضى»): استقبالٌ ومديرٌ — ومسؤولٌ بلا شرط",
+    canRequestServiceDiscount({ role: "reception", permissions: { canAddPatients: true } })
+      && canRequestServiceDiscount({ role: "branch_manager", permissions: { canAddPatients: true } })
       && canRequestServiceDiscount({ isAdmin: true, role: "accountant" }));
   check("٣٦. ومَن يحمل صلاحية إضافة المرضى",
     canRequestServiceDiscount({ role: "therapist", permissions: { canAddPatients: true } }));
+  check("٣٦ب. **ومديرُ الفرع بلا المفتاح لا يطلبه** — المفتاحُ يحكم لا الدور",
+    !canRequestServiceDiscount({ role: "branch_manager" }));
   check("٣٧. ولا يطلبه خبيرُ الأطراف ولا المحاسب",
     !canRequestServiceDiscount({ role: "prosthetics_expert" })
       && !canRequestServiceDiscount({ role: "accountant" }));
