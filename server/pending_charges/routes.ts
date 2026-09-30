@@ -33,6 +33,8 @@
  * باقيةٌ في القاعدة كما هي.
  */
 
+import { baghdadMomentOn, baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
+import { MAINTENANCE_PAID_ON_REQUIRED_MESSAGE } from "@shared/maintenance";
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { createJournalForPayment } from "../accounting/auto_journal";
@@ -614,6 +616,28 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       });
       if (!paidNowResult.ok) return res.status(400).json({ error: paidNowResult.error });
 
+      //  ══ **صيانةٌ حدثت في يومٍ سابق** (طلبُ المالك ٢٠٢٦-٠٩-٣٠) ══════════════
+      //  بقاعدة «تسجيل زيارة» نفسِها (`checkVisitDate`): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول وحده. والزيارةُ
+      //  وقيدُ الكلفة بتاريخ الصيانة. **والمقبوضُ يُسأل عنه صراحةً** حين يوجد: دُفع يومَ الصيانة ⟵ بتاريخها،
+      //  أو دُفع اليوم ⟵ يدخل صندوقَ اليوم. والمجّانيُّ والضمانُ والدَّينُ بلا مقبوضٍ فلا سؤال.
+      const rawVisitDate = typeof req.body?.visitDate === "string" ? req.body.visitDate.trim() : "";
+      const visitYmd = rawVisitDate && rawVisitDate !== baghdadTodayYmd() ? rawVisitDate : null;
+      let visitAt: Date | undefined;
+      let paymentAtWall: string | undefined;
+      if (visitYmd) {
+        const dv = checkVisitDate(visitYmd, Boolean(getSession(req).isAdmin));
+        if (!dv.ok) return res.status(dv.status).json({ error: dv.message });
+        const moment = baghdadMomentOn(visitYmd);
+        visitAt = moment.at;
+        if (paidNowResult.amount > 0) {
+          const paidOn = req.body?.paidOn;
+          if (paidOn !== "visit_day" && paidOn !== "today") {
+            return res.status(400).json({ error: MAINTENANCE_PAID_ON_REQUIRED_MESSAGE });
+          }
+          if (paidOn === "visit_day") paymentAtWall = moment.wall;
+        }
+      }
+
       const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
       const out = await store.createMaintenanceOperation({
@@ -625,6 +649,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         //  **وعلمُ الضمان** (ترحيل ٠٨٣) — مُشتقٌّ سلفاً، يُحفَظ على الأمر.
         underWarranty: offer.underWarranty,
         paidNow: paidNowResult.amount,
+        visitAt, paymentAtWall,
         visitNotes: note || "صيانة طرف/مسند",
         actor: actorOf(req),
         submissionToken,

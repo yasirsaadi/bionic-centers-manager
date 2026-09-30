@@ -1655,6 +1655,9 @@ export async function getPendingExams(
  *
  * **ولا أمرَ عملٍ لخدمته** (واقعةُ دموع جاسم عطية، ٢٠٢٦-٠٩-٣٠): صيانةُ «جهازٍ قديمٍ غير مسجَّل» تفتح أمرَ صيانةٍ **بلا
  * حلقة**، فبقيت الشارةُ بعد صيانتين. وأمرُ العمل — أيّاً كان غرضُه، ما لم يُلغَ — جوابٌ عن «سبب الحضور» كالحلقة تماماً.
+ *
+ * **ولا زيارةَ على القسم** (٢٠٢٦-٠٩-٣٠): «متابعة أو تعديل على جهاز قائم» تكتب زيارةً وطلبَ مراجعة — والطلبُ يُحسَم فتعود
+ * الشارةُ لو كان وحده الجواب. والزيارةُ نفسُها واقعةٌ لا تزول، فهي الجواب.
  */
 export async function getUnroutedDeviceCases(
   branchIds: number[] | null,
@@ -1680,6 +1683,11 @@ export async function getUnroutedDeviceCases(
        AND NOT EXISTS (SELECT 1 FROM prosthetic_work_orders wo
                         WHERE wo.patient_id = pc.patient_id AND wo.service_type = pc.case_type
                           AND wo.status <> 'cancelled')
+       --  «متابعة أو تعديل على جهاز قائم» (فصلُ الزرّين، ٤.av): زيارةٌ **تحمل طلبَ مراجعة** — أيّاً كان قرارُ الطبيب
+       --  بعدها. ولا تُعدّ زيارةٌ بلا طلب: زيارةُ أمر الصيانة تبقى بعد إلغائه، فتُطفئ العلامةَ عن أمرٍ لم يعد قائماً.
+       AND NOT EXISTS (SELECT 1 FROM visits v
+                         JOIN medical_review_requests vr ON vr.visit_id = v.id
+                        WHERE v.case_id = pc.id AND v.deleted_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM medical_review_requests r
                         WHERE r.patient_id = pc.patient_id AND r.service_type = pc.case_type
                           AND r.status IN ('pending', 'escalated'))

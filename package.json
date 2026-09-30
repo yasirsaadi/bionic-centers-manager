@@ -110,6 +110,7 @@
     "test:returned-from-doctor": "tsx server/returned_from_doctor.test.ts",
     "test:switch-governs": "tsx server/switch_governs.test.ts",
     "test:no-exam-reversal": "tsx server/no_exam_reversal.test.ts",
+    "test:visit-split": "tsx server/visit_split.test.ts",
     "test:add-case-ui": "tsx client/src/components/add_case_type_ui.test.ts",
     "test:reception-agreement": "tsx server/reception_agreement.test.ts",
     "test:supervisor-ui": "tsx client/src/pages/supervisor_ui.test.ts",

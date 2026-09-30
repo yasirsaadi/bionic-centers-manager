@@ -236,6 +236,8 @@ async function createPaidNowPaymentTx(tx: any, p: {
   deviceEpisodeId: number | null; visitId: number | null;
   serviceType: "prosthetic" | "medical_support";
   paidNow: number; notes: string;
+  /** تاريخُ القبض بتوقيت بغداد (`YYYY-MM-DDTHH:MM:SS`) حين يسبق اليوم — وإلّا الآن. */
+  dateWall?: string;
 }): Promise<Payment | null> {
   //  ══ الصفُّ كاملاً لا المعرّفُ وحده (تصحيحٌ لاحق) ═══════════════════════
   //  القيدُ اليوميّ (`createJournalForPayment`) والتدقيقُ (`payment`/`create`)
@@ -249,6 +251,7 @@ async function createPaidNowPaymentTx(tx: any, p: {
     deviceEpisodeId: p.deviceEpisodeId, visitId: p.visitId,
     amount: p.paidNow, paymentTreatmentType: DEVICE_PAYMENT_TAGS[p.serviceType],
     notes: p.notes,
+    ...(p.dateWall ? { date: p.dateWall } : {}),
   } as any, tx);
   return payment;
 }
@@ -822,6 +825,10 @@ export async function createMaintenanceOperation(p: {
    * بحرفها: صفرٌ = دَينٌ صريح، والمجّانيّ يصل صفراً دائماً.
    */
   paidNow: number;
+  /** **صيانةٌ حدثت في يومٍ سابق** — لحظةُ الزيارة وقيدِ الكلفة؛ وغيابُه = الآن. */
+  visitAt?: Date;
+  /** والمقبوضُ **يومَ الصيانة** — نصُّه بتوقيت بغداد؛ وغيابُه = يدخل صندوقَ اليوم. */
+  paymentAtWall?: string;
   /**
    * **صيانةٌ ضمن الضمان** (ترحيل ٠٨٣) — يصل مُشتقّاً ومُتحقَّقاً سلفاً
    * بـ`deriveMaintenanceTerms` (لا قرارَ هنا). والمسارُ المبسّط يسأل عنه
@@ -916,7 +923,7 @@ export async function createMaintenanceOperation(p: {
       expectedDeliveryDate: null,
       assignedBy: p.actor.userId,
       visitNotes: p.visitNotes,
-      visitDate: new Date(),
+      visitDate: p.visitAt ?? new Date(),
       //  **المبلغُ النهائيُّ هنا** — يقيّده `postMaintenanceFee` من داخل هذه
       //  الدالّة، وتخرج مبكّراً عند الصفر (مجّانيّ صريح: لا قيدَ ولا كلفةَ
       //  ولا دينار، لكنّ الأمرَ والزيارةَ يُفتحان دائماً — عملٌ حقيقيّ بقيمة صفر).
@@ -948,6 +955,7 @@ export async function createMaintenanceOperation(p: {
       patientId: p.patientId, branchId: p.branchId ?? 0, caseId,
       deviceEpisodeId: order.deviceEpisodeId ?? null, visitId: order.visitId,
       serviceType: p.serviceType, paidNow: p.paidNow,
+      dateWall: p.paymentAtWall,
       //  ══ نصٌّ غنيّ لحظةَ الكتابة — لا اشتقاقَ لصفوف الصيانة القديمة
       //  (لا رابطَ آمناً من دفعةٍ إلى أمر صيانتها بعينه حين تتعدّد أوامرُ
       //  الصيانة على حلقةٍ واحدة؛ الشرحُ الكامل في `shared/

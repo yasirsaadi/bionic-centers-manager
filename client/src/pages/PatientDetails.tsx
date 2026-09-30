@@ -1271,7 +1271,10 @@ export default function PatientDetails() {
                   والبوّابة كما كانت: `canAddPatients` بلا توسيع. */}
               {permissions.canAddPatients && (
               <div className="flex justify-end gap-2 mb-4 flex-wrap">
-                <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
+                {/*  **جلساتُ العلاج الطبيعي وحدها** (فصلُ الزرّين ٢٠٢٦-٠٩-٣٠) — والأجهزةُ بابُها «ما سبب حضور المريض اليوم؟». */}
+                {patient.isPhysiotherapy && (
+                  <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
+                )}
                 <PatientServiceLauncher
                   patient={patient}
                   routingOpen={routingOpen}

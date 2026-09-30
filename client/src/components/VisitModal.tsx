@@ -40,6 +40,14 @@ import type { ReviewKind, ReviewPath } from "@shared/medical_review";
 import { checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
 import { useBranchSession } from "@/components/BranchGate";
 
+// **«تسجيل زيارة جلسة علاج طبيعي» — للعلاج الطبيعي وحده** (فصلُ الزرّين، قرارُ المالك ٢٠٢٦-٠٩-٣٠).
+//
+// كانت «تسجيل زيارة جديدة» تسجّل زيارةَ مريض الأطراف والمساند أيضاً وترسلها للطبيب، وفيها «صيانة» بلا خبيرٍ ولا أمرٍ ولا
+// أجور تُشبه «صيانة» الحقيقية — فارتبك الموظّفون. فصار كلُّ ما يخصّ الجهاز في «ما سبب حضور المريض اليوم؟» (ومنه
+// «متابعة أو تعديل على جهاز قائم» — `DeviceFollowupVisitDialog`، بما كانت تفعله هذه حرفاً)، وهذه لجلسات العلاج الطبيعي:
+// التاريخُ بقاعدته، ونوعُ الجلسة، والتفاصيل. ولا تُعرَض إلّا لمن له قسمُ علاج طبيعي (`PatientDetails.tsx`).
+//
+// ══ تاريخُ هذه النافذة قبل الفصل ═══════════════════════════════════════════
 // تسجيلُ زيارة — **مراجعةٌ ومتابعةٌ فقط**.
 //
 // ══ ولا صيانةَ من هنا ═══════════════════════════════════════════════════
@@ -117,10 +125,11 @@ export function VisitModal({
     },
   });
   const CASE_LABELS: Record<string, string> = { physiotherapy: "علاج طبيعي", prosthetic: "أطراف صناعية", medical_support: "مساند طبية" };
-  const multiCase = patientCasesList.length > 1;
-  const selectedCase = patientCasesList.find((c) => c.id === visitCaseId) ?? null;
-  const effectiveCase = selectedCase ?? patientCasesList.find((c) => c.caseType === "physiotherapy") ?? patientCasesList[0] ?? null;
-  const isPhysioVisit = !multiCase ? isPhysiotherapy !== false : effectiveCase?.caseType === "physiotherapy";
+  //  **جلسةُ علاجٍ طبيعي دائماً** — على قسم العلاج الطبيعي، ولا اختيارَ قسمٍ آخر (الأجهزةُ بابُها «سبب الحضور»).
+  const multiCase = false;
+  const effectiveCase = patientCasesList.find((c) => c.caseType === "physiotherapy") ?? null;
+  const isPhysioVisit = true;
+  void CASE_LABELS; void visitCaseId; void isPhysiotherapy;
   // والزيارة العامّة تقبل أي جهازٍ قائم أو قيد الصنع — زياراتُ المتابعة
   // تحدث أثناء التصنيع كما تحدث بعده.
   const visitDeviceSvc = !isPhysioVisit && effectiveCase
@@ -210,8 +219,8 @@ export function VisitModal({
             {(isAmputee || isMedicalSupport) && (
               <p className="text-[11px] text-muted-foreground rounded-md bg-slate-50 border px-3 py-2"
                 data-testid="visit-maintenance-hint">
-                للصيانة أو شراء جزء: استعمل <b>«ما سبب حضور المريض اليوم؟»</b> من
-                صفحة المريض — تُفتَح هناك بخبيرها وأجورها في مسارٍ واحد.
+                هذه لجلسات العلاج الطبيعي وحدها. للأطراف والمساند (متابعة أو تعديل، صيانة، شراء جزء، معاينة):
+                استعمل <b>«ما سبب حضور المريض اليوم؟»</b>.
               </p>
             )}
 

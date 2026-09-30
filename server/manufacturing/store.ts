@@ -636,6 +636,8 @@ export async function createMaintenanceOrderWithVisit(params: {
         patientId: params.patientId, branchId: params.branchId,
         serviceType: params.serviceType, cost: params.cost,
         deviceEpisodeId: targetEpisodeId,
+        //  **قيدُ الكلفة بتاريخ الصيانة** — صيانةٌ حدثت الأحد وسُجّلت الثلاثاء كلفتُها كلفةُ الأحد.
+        at: params.visitDate,
       });
     }
     return { ...workOrder, visitId: visit.id };
@@ -664,6 +666,8 @@ export async function postMaintenanceFee(tx: any, params: {
   serviceType: string;
   cost: number;
   deviceEpisodeId: number | null;
+  /** لحظةُ القيد — غيابُها = الآن (الاعتمادُ الموروث يناديها بلا تاريخ). */
+  at?: Date;
 }): Promise<void> {
   if (!(params.cost > 0)) return;
   const caseRows: { id: number; caseType: string }[] = await tx
@@ -685,6 +689,7 @@ export async function postMaintenanceFee(tx: any, params: {
     //  قسمُ الأجور هو حالةُ الجهاز المُصان بعينه (ترحيل ٠٥٦) — وهي نفسها
     //  التي رُفعت كلفتُها أعلاه، فلا مصدرَ حقيقةٍ ثانٍ.
     caseId: deviceCase?.id ?? null,
+    ...(params.at ? { createdAt: params.at } : {}),
   });
 }
 

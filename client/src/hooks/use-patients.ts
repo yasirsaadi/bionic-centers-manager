@@ -265,8 +265,15 @@ export function useAddVisit() {
         credentials: "include",
       });
 
-      if (!res.ok) throw new Error("فشل في تسجيل الزيارة");
+      //  **والسببُ يُقال** — قاعدةُ التاريخ أو الصلاحية تُردّ برسالتها، لا «فشل» عامّاً.
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || body?.error || "فشل في تسجيل الزيارة");
+      }
       return api.visits.create.responses[201].parse(await res.json());
+    },
+    onError: (err: any) => {
+      toast({ title: "لم تُسجَّل الزيارة", description: err?.message, variant: "destructive" });
     },
     //  السجلّ (تحكّمُ الذاكرة، 2026-08-30): تبويبُ التاريخ في سجلّ المرضى
     //  يقرأ زياراتِ اليوم — زيارةٌ جديدة لم تكن تُظهر مريضَها فيه حتى تحديثٍ يدويّ.

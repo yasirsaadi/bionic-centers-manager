@@ -11,6 +11,7 @@ import { NewServiceModal } from "./NewServiceModal";
 import { NewDeviceEpisodeModal } from "./NewDeviceEpisodeModal";
 import { NoExamOperationDialog } from "./NoExamOperationDialog";
 import { ReturnToPurchaseDialog } from "./ReturnToPurchaseDialog";
+import { DeviceFollowupVisitDialog } from "./DeviceFollowupVisitDialog";
 import { ReturnToPurchaseRoutingChoice } from "./ReturnToPurchaseRoutingChoice";
 import {
   launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes, GROUP_LABELS,
@@ -389,6 +390,17 @@ export function PatientServiceLauncher({
           initialKind={flow.initialKind}
           resumeCandidates={saleResumeCandidates}
           attachCandidates={attachCandidates}
+          open
+          onOpenChange={closeFlow}
+        />
+      )}
+
+      {/*  **متابعة أو تعديل على جهاز قائم** — زيارةٌ بتاريخها وطلبُ مراجعة (فصلُ الزرّين، ٢٠٢٦-٠٩-٣٠). */}
+      {flow?.kind === "device_followup" && (
+        <DeviceFollowupVisitDialog
+          patientId={patient.id}
+          branchId={patient.branchId}
+          serviceType={flow.serviceType}
           open
           onOpenChange={closeFlow}
         />
