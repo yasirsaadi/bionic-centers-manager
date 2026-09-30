@@ -1414,7 +1414,7 @@ export default function PatientDetails() {
                               <div className="text-xs text-slate-400 mt-1" dir="auto" style={{ unicodeBidi: "plaintext" }}>{visit.notes}</div>
                             )}
                             {patientCasesList.length > 1 && (
-                              (permissions.canEditVisits || isAdminOrManager) ? (
+                              (permissions.canEditVisits || isAdmin) ? (
                                 <select
                                   className="mt-1 text-xs border border-slate-200 rounded px-1 py-0.5 bg-slate-50 text-slate-600"
                                   value={(visit as any).caseId ?? ""}
@@ -1446,7 +1446,7 @@ export default function PatientDetails() {
                           )}
                           <td className="border border-slate-300 px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
-                              {(permissions.canEditVisits || isAdminOrManager) && (
+                              {(permissions.canEditVisits || isAdmin) && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1457,7 +1457,7 @@ export default function PatientDetails() {
                                 <Pencil className="w-4 h-4" />
                               </Button>
                               )}
-                              {(permissions.canDeleteVisits || isAdminOrManager) && (
+                              {(permissions.canDeleteVisits || isAdmin) && (
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
                                     <Button
@@ -1513,7 +1513,9 @@ export default function PatientDetails() {
                   // editor specifically. Treat anyone with the new
                   // canEditVisits permission as having that power
                   // too — that's the whole point of the new flag.
-                  isAdmin={isAdminOrManager || permissions.canEditVisits}
+                  //  **والمفتاحُ وحده يحكم** (تدقيقُ لوحة الصلاحيات ٢٠٢٦-٠٩-٣٠): الخادمُ
+                  //  (`PATCH /api/visits/:id`) لا يقبل الدورَ بديلاً عن `canEditVisits`.
+                  isAdmin={isAdmin || permissions.canEditVisits}
                   isPhysiotherapy={patient.isPhysiotherapy || false}
                 />
               )}
