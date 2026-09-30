@@ -15,6 +15,7 @@
 
 import type { Express } from "express";
 import * as reversal from "./store";
+import * as noExam from "./no_exam";
 import { ReversalError } from "./store";
 import {
   CORRECTION_INTENT_MODE, CORRECTION_INTENT_REASON,
@@ -80,7 +81,10 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       if (target.followupId === null && target.workOrderId === null && target.episodeId === null) {
         return res.status(400).json({ error: "حدّد العملية المطلوب تصحيحها" });
       }
-      const preview = await reversal.previewReversal(target);
+      //  **وأمرُ الصيانة وبيعُ الجزء «بلا معاينة» بابُهما `no_exam.ts`** (واقعةُ دموع جاسم عطية، ٢٠٢٦-٠٩-٣٠):
+      //  لا متابعةَ لهما، فكان التصحيحُ القائم يجيب «العملية غير موجودة».
+      const preview = await reversal.previewReversal(target)
+        ?? (target.workOrderId !== null ? await noExam.previewNoExamReversal(target.workOrderId) : null);
       if (!preview) return res.status(404).json({ error: "العملية غير موجودة" });
 
       const perm = mayReverse(req, await branchOf(preview.patientId));
@@ -144,6 +148,25 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         return res.status(403).json({
           error: "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط",
         });
+      }
+
+      if (target.workOrderId !== null && target.followupId === null
+        && await noExam.isNoExamOrder(target.workOrderId)) {
+        if (mode !== "full_operation") {
+          return res.status(400).json({ error: "هذه العملية تُلغى بالكامل فقط" });
+        }
+        const out = await noExam.executeNoExamReversal({
+          orderId: target.workOrderId, reasonCode, reasonNote,
+          expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : "",
+          authz: {
+            isAdmin: s.isAdmin, role: s.role,
+            scope: s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []),
+          },
+          actor: { userId: s.userId, userName: s.userName },
+          audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
+          refundAnswer: req.body?.refundAnswer,
+        });
+        return res.json(out);
       }
 
       const outcome = await reversal.executeReversal({
