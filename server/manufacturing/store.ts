@@ -1803,6 +1803,9 @@ export async function getAllOrdersForPatient(
       startedAt: WO.startedAt, expectedDeliveryDate: WO.expectedDeliveryDate,
       completedAt: WO.completedAt, finalResult: WO.finalResult, createdAt: WO.createdAt,
       expertUserId: WO.expertUserId, expertName: systemUsers.displayName,
+      //  **مَن أعطى الأمر** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): يُقرأ مع التاريخ والوقت على البطاقة، فيُعرَف في
+      //  الأوامر المكرّرة مَن كرّرها ومتى. `assigned_by` مكتوبٌ على كلّ أمرٍ منذ إنشائه.
+      createdByName: sql<string | null>`(SELECT su.display_name FROM system_users su WHERE su.id = ${WO.assignedBy})`,
       //  **ماذا يُصنَع أو يُصان** (ترحيل ٠٦٠) — يقرؤه الخبيرُ في أمره
       //  والفريقُ في ملفّ المريض، بلا أن يسأل أحد.
       maintenanceComponent: WO.maintenanceComponent,
@@ -1882,6 +1885,7 @@ export async function getAllOrdersForPatient(
     expectedDeliveryDate: r.expectedDeliveryDate ? String(r.expectedDeliveryDate) : null,
     completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
     createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+    createdByName: r.createdByName ?? null,
     finalResult: r.finalResult ?? null,
     active: r.status !== "completed" && r.status !== "cancelled",
     adminVoidReversalId: r.adminVoidReversalId ?? null,
