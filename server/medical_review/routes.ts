@@ -283,6 +283,62 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
+  // ── «إلغاء المعاينة» من قائمة المُرجَعين — للطبيب ──────────────────────
+  //  **لماذا بابٌ خاصّ** (واقعةُ المالك ٢٠٢٦-٠٩-٣٠، طيبه حسن ضمد): نقطةُ
+  //  «معايناتي» (`/api/medical/worklist/cancel-request`) تسحب حلقةً تنتظر أو طلباً
+  //  معلَّقاً — والمُرجَعُ ليس أيّاً منهما حين لا حلقةَ تنتظر له، فكانت تردّ
+  //  «لا يوجد طلبُ معاينةٍ قابلٌ للإلغاء». فهنا:
+  //  • حلقةٌ تنتظر ⟵ **الدالّةُ نفسُها** `cancelExamRequest` بحرفها.
+  //  • وإلّا ⟵ الطلبُ المُرجَع يُسحَب (`cancelled`) بالكتابة القانونية نفسِها
+  //    (`cancelScaffoldRequestsById`): **قرارُ الطبيب وسببُه يبقيان**، ويُلحَق
+  //    سطرٌ بمَن سحب ولماذا. لا حلقةَ ولا مالَ يُمَسّ.
+  //  والصفُّ يُقرأ من القائمة نفسِها بنطاق الجلسة — فلا يُسحَب ما لا يراه.
+  app.post("/api/medical-review/requests/:id/close-returned", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canDecideReview(s)) return res.status(403).json({ error: "غير مصرح" });
+    const requestId = parseInt(String(req.params.id));
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!Number.isFinite(requestId)) return res.status(400).json({ error: "معرّف غير صالح" });
+    if (!reason) return res.status(400).json({ error: "سبب الإلغاء إلزامي" });
+    try {
+      const rows = await returnedFor(req);
+      const row = (rows ?? []).find((r) => r.requestId === requestId);
+      if (!row) return res.status(409).json({ error: "تغيّر هذا الطلب — حدّث الصفحة" });
+      const actor = { userId: s.userId, userName: s.userName };
+      if (row.episodeAwaiting && row.deviceEpisodeId !== null) {
+        const { cancelExamRequest } = await import("../medical/cancel_exam_request");
+        await cancelExamRequest({
+          patientId: row.patientId, caseType: row.serviceType as any,
+          deviceEpisodeId: row.deviceEpisodeId, reason, actor, branchIds: branchScope(req),
+        });
+      } else {
+        const { cancelScaffoldRequestsById } = await import("../patient_cases/disposal");
+        const moved = await db.transaction(async (tx) => {
+          const cur = await tx.execute(sql`
+            SELECT status FROM medical_review_requests WHERE id = ${requestId} FOR UPDATE
+          `);
+          if (String((cur.rows ?? [])[0]?.status ?? "") !== "returned") return false;
+          await cancelScaffoldRequestsById(tx, { ids: [requestId], reason, actor });
+          return true;
+        });
+        if (!moved) return res.status(409).json({ error: "تغيّر هذا الطلب — حدّث الصفحة" });
+      }
+      await logAudit({
+        entityType: "medical_review_request", entityId: requestId, action: "update",
+        userId: s.userId, userName: s.userName, branchId: s.branchId,
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `إلغاء طلب معاينة مُرجَع (${specialtyLabel(row.serviceType)}) للمريض #${row.patientId} — ${reason}`,
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.name === "CancelExamRequestError") {
+        return res.status(err.status ?? 409).json({ error: err.message, code: err.code });
+      }
+      console.error("[medical-review] close-returned failed:", err);
+      res.status(500).json({ error: "تعذّر إلغاء الطلب" });
+    }
+  });
+
   // ── تاريخُ طلبات مريض ──────────────────────────────────────────────────
   app.get("/api/medical-review/patients/:id/requests", isAuthenticated, async (req: Req, res) => {
     try {

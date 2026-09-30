@@ -263,6 +263,46 @@ async function main() {
     await q(`UPDATE patient_device_episodes SET status='cancelled' WHERE id=$1`, [E.episodeId]);
     same("هـ٤. **حلقتُه أُلغيت ⟵ خرج**", (await returnedOf(p5)).length, 0);
 
+    console.log("\n── ز. «إلغاء المعاينة» من هذه الصفحة (واقعةُ المالك) ──");
+    //  طلبٌ عارٍ بلا حلقةٍ تنتظر — أُرسل من نافذة صفحة المريض ثمّ أُرجع.
+    const p6 = await mkPatient("طيبه", "medical_support");
+    await mkCase(p6, "medical_support");
+    const bareReq = await http("POST", "/api/medical-review/requests", S.recv, {
+      patientId: p6, serviceType: "medical_support", requestedPath: "full", reviewKind: "new_device",
+      receptionNote: "جهاز جديد",
+    });
+    check(bareReq.status < 300, "ز١. (الإعداد) طلبٌ عارٍ أُرسل", JSON.stringify(bareReq.body));
+    await doReturn(Number(bareReq.body.id), "ملء الحقول جميعا");
+    same("ز٢. (الإعداد) في القائمة بلا حلقةٍ تنتظر",
+      (await returnedOf(p6)).map((r) => [r.requestId, r.episodeAwaiting]), [[Number(bareReq.body.id), false]]);
+    const oldPath = await http("POST", "/api/medical/worklist/cancel-request", S.doc, {
+      patientId: p6, caseType: "medical_support", deviceEpisodeId: null, reason: "منور",
+    });
+    same("ز٣. **نقطةُ «معايناتي» لا تجد ما تسحبه** (ما رآه المالك)", oldPath.body?.code, "nothing_to_cancel");
+    const byRecv = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.recv, { reason: "x" });
+    same("ز٤. والاستعلاماتُ لا يملك هذا الزرّ ⟵ ٤٠٣", byRecv.status, 403);
+    const noReason = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.doc, { reason: " " });
+    same("ز٥. وبلا سبب ⟵ ٤٠٠", noReason.status, 400);
+    const closed = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.doc, { reason: "منور" });
+    same("ز٦. **البابُ الجديد يلغيه**", closed.status, 200);
+    same("ز٧. **خرج من القائمة**", (await returnedOf(p6)).length, 0);
+    const rr = (await q(`SELECT status, decision, doctor_note FROM medical_review_requests WHERE id=$1`, [bareReq.body.id]))[0];
+    same("ز٨. **وقرارُ الطبيب وسببُه باقيان** ويُلحَق سطرُ الإلغاء",
+      [rr.status, rr.decision, rr.doctor_note.startsWith("ملء الحقول جميعا"), /منور/.test(rr.doctor_note)],
+      ["cancelled", "return_to_reception", true, true]);
+    const again = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.doc, { reason: "منور" });
+    same("ز٩. ومرّةً ثانية ⟵ ٤٠٩ «حدّث الصفحة»", again.status, 409);
+    //  وحلقةٌ تنتظر ⟵ الدالّةُ نفسُها تسحب الحلقةَ معه.
+    const p7 = await mkPatient("نور", svc);
+    await mkCase(p7, svc);
+    const F = await openEpisode(p7, svc);
+    await doReturn(F.requestId!, "خطأ");
+    const closedF = await http("POST", `/api/medical-review/requests/${F.requestId}/close-returned`, S.doc, { reason: "لا يحتاج" });
+    const fStatus = (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [F.episodeId]))[0]?.status ?? "deleted";
+    same("ز١٠. حلقةٌ تنتظر ⟵ لم تعد تنتظر، وخرج من القائمة",
+      [closedF.status, (await returnedOf(p7)).length, fStatus !== "awaiting_exam"], [200, 0, true]);
+    same("ز١١. ولا تعود إلى «معايناتي»", await worklistEpisodes(p7), []);
+
     console.log("\n── و. المحذوفُ في السلّة خارجها ──");
     const p4 = await mkPatient("سلمان", svc);
     await mkCase(p4, svc);
