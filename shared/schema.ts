@@ -1413,10 +1413,11 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   //  يُصنَع، لا إصلاحُ جهازٍ سابقٍ في ضمانه.
   check("maintenance_warranty_purpose_check",
     sql`${t.maintenanceUnderWarranty} IS NULL OR ${t.purpose} = 'maintenance'`),
-  //  **وضمانٌ بأجرٍ تناقضٌ**: النهائيُّ صفرٌ حتماً، والأصليُّ يبقى محفوظاً
-  //  موجباً — القيمةُ الاسمية للصيانة كما أدخلها الموظّف.
+  //  **وضمانٌ بأجرٍ تناقضٌ**: النهائيُّ صفرٌ حتماً — أو لا أرقامَ أصلاً (ترحيل ٠٩١: الضمانُ بلا خانات مال)،
+  //  أو قيمةٌ اسميةٌ موجبة كما أدخلها الموظّف.
   check("maintenance_warranty_shape_check", sql`
     ${t.maintenanceUnderWarranty} IS NOT TRUE
+    OR (${t.maintenanceOriginalPrice} IS NULL AND ${t.maintenanceFinalPrice} IS NULL)
     OR (${t.maintenanceOriginalPrice} IS NOT NULL AND ${t.maintenanceOriginalPrice} > 0
         AND ${t.maintenanceFinalPrice} = 0)`),
   //  فهرسٌ ضيّقٌ لسؤال «كم ركبةً صُلّحت هذا العام» — جزئيٌّ على المسجَّلة

@@ -224,6 +224,15 @@ export function deriveMaintenanceTerms(params: {
   if (discountSent) {
     return { ...nilTerms, underWarranty: true, error: MAINTENANCE_WARRANTY_NO_DISCOUNT_ERROR };
   }
+  //  **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): «حين نؤشّر ضمن الصيانة فالأصحّ أن تنطفئ خانات
+  //  المبالغ كلّها». فالأصليُّ **اختياريّ**: غيابُه ⟶ أمرٌ بلا أرقامٍ أصلاً (الأعمدةُ الثلاثة `NULL`، ترحيل ٠٩١)
+  //  وعلمُ الضمان يقول السبب. وإن أُرسل موجباً (عميلٌ قديم) حُفظ قيمةً اسميةً كما كان.
+  const op = params.originalPrice;
+  if (op === undefined || op === null || op === "" || Number(op) === 0) {
+    return {
+      ok: true, kind: "free", originalPrice: null, finalPrice: 0, discountAmount: 0, underWarranty: true,
+    } as MaintenanceTerms;
+  }
   //  تحقّقُ الأصليّ برسائله المعتادة — «السعر الأصلي يجب أن يكون…».
   const base = deriveMaintenanceOffer({
     originalPrice: params.originalPrice, discountAmount: 0,

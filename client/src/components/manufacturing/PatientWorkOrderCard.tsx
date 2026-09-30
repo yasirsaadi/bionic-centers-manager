@@ -175,11 +175,12 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                 <Item label="المتبقّي" value={iqd(o.agreedCost - o.paidOnDevice)} />
               </div>
             )}
-            {o.purpose === "maintenance" && typeof o.maintenanceFinalPrice === "number" && (
+            {/*  وضمانٌ بلا أرقام (٠٩١) يُقال كذلك — أجورُه صفرٌ لا «غير مسجَّلة». */}
+            {o.purpose === "maintenance" && (typeof o.maintenanceFinalPrice === "number" || o.maintenanceUnderWarranty === true) && (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 text-sm"
                 data-testid={`box-order-maintenance-money-${o.id}`}>
                 <span className="text-xs text-muted-foreground">أجور الصيانة:</span>
-                <span className="font-medium">{iqd(o.maintenanceFinalPrice)}</span>
+                <span className="font-medium">{iqd(o.maintenanceFinalPrice ?? 0)}</span>
                 {o.maintenanceUnderWarranty && (
                   <Badge variant="outline" className="bg-sky-100 text-sky-800 border-sky-200 text-[11px] px-1.5 py-0">
                     ضمن الضمان

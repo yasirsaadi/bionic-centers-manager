@@ -514,10 +514,36 @@ async function main() {
     const bad2 = await maint({ ...nBody, underWarranty: "yes" });
     same("ن٢. وعلمٌ غيرُ بوليان يُردّ ٤٠٠ ولا يُصحَّح بصمت",
       [bad2.status, bad2.body?.error], [400, MAINTENANCE_WARRANTY_FLAG_ERROR]);
-    const bad3 = await maint({ ...nBody, underWarranty: true, originalPrice: 0 });
-    check(bad3.status === 400, "ن٣. وضمانٌ بلا سعرٍ أصليٍّ موجب يُردّ ٤٠٠",
-      JSON.stringify(bad3.body));
-    same("ن٤. **وصفرُ كتابةٍ في الثلاثة**", await snap(PN), beforeN);
+    same("ن٤. **وصفرُ كتابةٍ في الاثنين**", await snap(PN), beforeN);
+
+    //  ══ **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠، ترحيل ٠٩١) — كان يُردّ ٤٠٠ بلا سعرٍ أصليّ ══
+    console.log("\n── ن′. ضمانٌ بلا سعرٍ أصليّ ⟶ يُقبَل بلا أرقام ──");
+    const PNW = await mkPatient("ن′");
+    const CNW = await mkCase(PNW);
+    const EPNW = await mkEpisode(PNW, CNW, 1);
+    const nwBody = {
+      patientId: PNW, serviceType: "prosthetic", deviceEpisodeId: EPNW,
+      maintenanceComponent: "knee", expertUserId: EXPERT,
+    };
+    const beforeNW = await snap(PNW);
+    const nw0 = await maint({ ...nwBody, underWarranty: true });
+    same("ن٣. **ضمانٌ بلا سعرٍ أصليّ يُقبَل** — النهائيُّ صفرٌ ولا أصليّ",
+      [nw0.status, nw0.body?.originalPrice, nw0.body?.finalPrice, nw0.body?.underWarranty, nw0.body?.paidNow],
+      [201, null, 0, true, 0]);
+    const nw1 = await maint({ ...nwBody, maintenanceComponent: "foot", underWarranty: true, originalPrice: 0 });
+    same("ن٣ب. وأصليٌّ صفرٌ صريحٌ كالغياب", [nw1.status, nw1.body?.originalPrice], [201, null]);
+    const nwRows = await ordersOf(PNW);
+    same("ن٣ج. **والأمران بلا أرقامٍ وبعلم الضمان** — لا نوعَ ولا أصليَّ ولا نهائيّ",
+      nwRows.map((o: any) => [o.mop, o.mfp, o.mpk, o.warranty]),
+      [[null, null, null, true], [null, null, null, true]]);
+    const afterNW = await snap(PNW);
+    same("ن٣د. **ولا مالَ يتحرّك**: لا كلفةَ ولا قيدَ ولا دفعة — والأمرُ والزيارةُ فُتحا",
+      [afterNW.total, afterNW.ledger, afterNW.ledger_rows, afterNW.payments, afterNW.paid,
+        afterNW.orders - beforeNW.orders, afterNW.visits - beforeNW.visits],
+      [0, 0, 0, 0, 0, 2, 2]);
+    const nwPaid = await maint({ ...nwBody, maintenanceComponent: "tube", underWarranty: true, paidNow: 5000 });
+    same("ن٣هـ. ومبلغٌ مدفوعٌ مع ضمانٍ بلا أجر لا يُقبَض — الأجرُ صفرٌ فالمدفوعُ صفر (القاعدةُ القائمة)",
+      [nwPaid.status, nwPaid.body?.paidNow, (await snap(PNW)).payments], [201, 0, 0]);
 
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── س. العاديُّ والخصمُ والمجّانيُّ — دلالاتُها كما كانت ──");
@@ -596,8 +622,10 @@ async function main() {
       .test(DIALOG_SRC), "ف١٠. و«رجوع» لا تحفظ شيئاً");
     check(/data-testid="no-exam-op-warranty"/.test(DIALOG_SRC),
       "ف١١. ومربّعُ «ضمن الضمان» في نافذة الصيانة");
-    check(/\.\.\.\(warrantyOn \? \{ underWarranty: true \} : \{ discountAmount \}\)/.test(DIALOG_SRC),
-      "ف١٢. **ولا خصمَ يُرسَل مع الضمان**");
+    check(/\.\.\.\(warrantyOn \? \{ underWarranty: true \} : \{ originalPrice, discountAmount \}\)/.test(DIALOG_SRC),
+      "ف١٢. **ولا سعرَ ولا خصمَ يُرسَلان مع الضمان**");
+    check(/\{!warrantyOn && \(\s*<div className="space-y-1\.5">\s*<Label className="text-sm font-medium">السعر الأصلي/.test(DIALOG_SRC),
+      "ف١٢ب. **وحقلُ السعر الأصلي يختفي مع الضمان** (طلبُ المالك ٢٠٢٦-٠٩-٣٠)");
     check(/\{!warrantyOn && \([\s\S]*?no-exam-op-discount-amount/.test(DIALOG_SRC),
       "ف١٣. وحقلُ الخصم يختفي مع الضمان");
     check(/no-exam-op-paid-now-warranty/.test(DIALOG_SRC),

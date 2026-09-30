@@ -808,8 +808,9 @@ export async function createMaintenanceOperation(p: {
   maintenanceComponent: string | null;
   deviceEpisodeId: number | null;
   legacyUnrecordedDevice: boolean;
-  /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveMaintenanceOffer` — لا حسابَ هنا. */
-  originalPrice: number;
+  /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveMaintenanceOffer` — لا حسابَ هنا.
+   *  و`null` لضمانٍ بلا سعرٍ اسميّ (٠٩١) ⟵ الأمرُ بلا أعمدةٍ تجارية، وعلمُ الضمان يقول السبب. */
+  originalPrice: number | null;
   priceKind: "normal" | "discount" | "free";
   /** = `originalPrice - discountAmount`؛ هو ما يُقيَّد فعلاً (`cost`). */
   finalPrice: number;
@@ -928,7 +929,9 @@ export async function createMaintenanceOperation(p: {
       //  **توافقٌ تاريخيٌّ فقط**: مجّانيٌّ ⟶ `true`، وإلّا `false` — صفٌّ
       //  جديد يعرف قيمتَه دائماً، فلا `NULL` «لم يُسأل» على صفٍّ سُئل فعلاً.
       noExamNoCharge: p.priceKind === "free",
-      commercialTerms: { originalPrice: p.originalPrice, kind: p.priceKind },
+      commercialTerms: p.originalPrice === null
+        ? undefined
+        : { originalPrice: p.originalPrice, kind: p.priceKind },
       //  **وعلمُ الضمان صريحٌ دائماً من هذا المسار** — `false` تعني «سُئل
       //  الموظّفُ وأجاب: ليست ضماناً»، وهي حقيقةٌ عن الصفّ لا فراغٌ فيه.
       underWarranty: p.underWarranty === true,

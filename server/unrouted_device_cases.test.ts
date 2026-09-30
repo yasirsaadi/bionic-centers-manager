@@ -192,6 +192,22 @@ async function main() {
     const pAdd = await mk("إضافة نوع");
     const add = await http("POST", `/api/patients/${pAdd}/add-case-type`, S.recv, { caseType: "medical_support" });
     same("٤. **و«إضافة نوع حالة» (طلبُ معاينةٍ معلَّق) لا يُعلَّم**", [add.status, await unrouted(pAdd)], [200, []]);
+
+    //  **واقعةُ دموع جاسم عطية** (٢٠٢٦-٠٩-٣٠): صيانةُ «جهازٍ قديمٍ غير مسجَّل» تفتح أمرَ صيانةٍ **بلا حلقة** —
+    //  فبقيت العلامةُ بعد صيانتين. وأمرُ العمل جوابٌ عن «سبب الحضور» كالحلقة.
+    const pLegacy = await mk("دموع");
+    await q(`UPDATE patients SET is_amputee = true, amputation_site = 'احادي - طرف علوي - يسار - كف' WHERE id = $1`, [pLegacy]);
+    await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost) VALUES ($1,1,'prosthetic',0)`, [pLegacy]);
+    same("٥. (الإعداد) قسمُ أطرافٍ بلا طلب يُعلَّم", await unrouted(pLegacy), ["prosthetic"]);
+    const mnt = await http("POST", "/api/no-exam/maintenance", S.admin, {
+      patientId: pLegacy, serviceType: "prosthetic", legacyUnrecordedDevice: true,
+      maintenanceComponent: "socket", expertUserId: EXPERT, underWarranty: true, paidNow: 0,
+      submissionToken: `udc-${Date.now()}`,
+    });
+    same("٥ب. **صيانةٌ ضمن الضمان على جهازٍ قديمٍ غير مسجَّل تُزيل العلامة** — بلا حلقة",
+      [mnt.status, mnt.body?.deviceEpisodeId ?? null, await unrouted(pLegacy)], [201, null, []]);
+    await q(`UPDATE prosthetic_work_orders SET status = 'cancelled' WHERE patient_id = $1`, [pLegacy]);
+    same("٥ج. **وأمرٌ ملغى لا يُعدّ** — العلامةُ تعود", await unrouted(pLegacy), ["prosthetic"]);
   } finally {
     await cleanup();
     await q(`UPDATE audit_log SET user_id = NULL WHERE user_id = ANY($1::int[])`, [ALL]);
