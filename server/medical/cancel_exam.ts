@@ -70,6 +70,8 @@ export interface CancelOutcome {
   episodeReset: number | null;
   /** المتابعةُ التي أُغلقت بسبب الإلغاء — أو `null`. */
   followupRetired: number | null;
+  /** طلباتُ المراجعة التي كانت هذه المعاينةُ أغلقتها فعادت تنتظر (البند ٢٠). */
+  requestsReopened: number[];
 }
 
 export interface ExamForPermission {
@@ -315,6 +317,41 @@ export async function cancelExam(params: {
       await revertEpisodeToAwaitingExam(tx, episodeReset);
     }
 
+    // ── ⑤ب **وطلبُ المراجعة الذي أغلقته يعود ينتظر** (§4.ar البند ٢٠) ────
+    //  التوقيعُ وسم الطلبَ `examined` بهذه المعاينة (`closeRequestsAwaitingExam`).
+    //  والإلغاءُ كان يتركه كذلك — فالطلبُ **العاري** (من «إرسال لمراجعة الطبيب»
+    //  في صفحة المريض، بلا حلقة) يُخرج المريضَ من كلّ قائمة: لا «معايناتي» ولا
+    //  «بانتظار معاينة» ولا «بانتظار الحسم». **مقيسٌ حيّاً قبل الإصلاح.**
+    //  فيعود إلى ما كان عليه قبل التوقيع بحرفه: المُحالُ (له قرارُ طبيب) مُحالاً،
+    //  والمُرسَلُ كاملاً معلَّقاً — **وقرارُ الطبيب لا يُمَسّ**، ويُلحَق سطرٌ يقول لماذا.
+    //  **ولا يُزاحم معلَّقاً أحدث** على مرساته نفسِها (فهارسُ التفرّد ٠٥٥): عندئذٍ
+    //  يبقى كما هو، فالمريضُ حاضرٌ في القوائم بذاك الأحدث أصلاً.
+    const reopened = await tx.execute(sql`
+      UPDATE medical_review_requests r
+         SET status = CASE WHEN r.decision IS NOT NULL THEN 'escalated' ELSE 'pending' END,
+             exam_id = NULL,
+             updated_at = NOW(),
+             doctor_note = CASE
+               WHEN COALESCE(btrim(r.doctor_note), '') = ''
+                 THEN ${`أُعيد ينتظر المعاينة بعد إلغاء المعاينة #${params.examId}: ${reason}`}
+               ELSE r.doctor_note || E'\n' || ${`أُعيد ينتظر المعاينة بعد إلغاء المعاينة #${params.examId}: ${reason}`}
+             END
+       WHERE r.exam_id = ${params.examId}
+         AND r.status = 'examined'
+         AND (r.decision IS NOT NULL OR NOT EXISTS (
+           SELECT 1 FROM medical_review_requests o
+            WHERE o.id <> r.id AND o.status = 'pending'
+              AND ((r.device_episode_id IS NOT NULL AND o.device_episode_id = r.device_episode_id)
+                OR (r.work_order_id IS NOT NULL AND o.work_order_id = r.work_order_id)
+                OR (r.visit_id IS NOT NULL AND o.visit_id = r.visit_id)
+                OR (r.device_episode_id IS NULL AND r.work_order_id IS NULL AND r.visit_id IS NULL
+                    AND o.device_episode_id IS NULL AND o.work_order_id IS NULL AND o.visit_id IS NULL
+                    AND o.patient_id = r.patient_id AND o.service_type = r.service_type))))
+      RETURNING r.id
+    `);
+    const requestsReopened = ((reopened.rows ?? []) as Record<string, any>[])
+      .map((x) => Number(x.id)).sort((a, b) => a - b);
+
     // ── ⑥ تقاعدُ المتابعة — بسببها الحقيقي لا بـ«لم يشترِ» ────────────
     if (followupRetired !== null) {
       const fst = String(fu.status);
@@ -344,15 +381,16 @@ export async function cancelExam(params: {
       newValues: {
         cancelled: true, reason, patientId,
         caseType: String(exam.case_type),
-        episodeReset, followupRetired,
+        episodeReset, followupRetired, requestsReopened,
       },
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
       notes: `إلغاء معاينة موقّعة #${params.examId} لمريض #${patientId} — ${reason}`
-        + `${episodeReset !== null ? " · أُعيد طلب الجهاز إلى بانتظار المعاينة" : ""}`,
+        + `${episodeReset !== null ? " · أُعيد طلب الجهاز إلى بانتظار المعاينة" : ""}`
+        + `${requestsReopened.length ? ` · وعاد طلبُ المراجعة ${requestsReopened.map((i) => `#${i}`).join("، ")} ينتظر` : ""}`,
       tx,
     });
 
-    return { examId: params.examId, patientId, episodeReset, followupRetired };
+    return { examId: params.examId, patientId, episodeReset, followupRetired, requestsReopened };
   });
 }

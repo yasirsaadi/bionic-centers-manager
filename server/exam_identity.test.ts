@@ -1456,6 +1456,63 @@ async function main() {
       same("ف١٠. **واختفت الشارة بلا حلقةٍ أيضاً**", await decidedOf(p2), []);
     }
 
+    // ══ ص. البند ٢٠ (§4.ar): إلغاءُ المعاينة يُعيد طلبَ المراجعة ═══════════
+    console.log("\n── ص. إلغاءُ المعاينة يُعيد الطلبَ ينتظر ──");
+    {
+      const pendingOf = async (p: number) => {
+        const r = await http("GET", "/api/medical/pending", S.recv);
+        return ((r.body?.pending ?? {})[String(p)] ?? []).slice().sort();
+      };
+      const cancelExam = (id: number) =>
+        http("POST", `/api/medical/exams/${id}/cancel`, S.admin, { reason: "على المريض الخطأ" });
+      //  الطلبُ العاري — من «إرسال لمراجعة الطبيب» في صفحة المريض (واقعةُ البند).
+      const p = await mkPatient("ق-عارٍ", "prosthetic");
+      await mkCase(p, "prosthetic");
+      const rq = await http("POST", "/api/medical-review/requests", S.recv, {
+        patientId: p, serviceType: "prosthetic", requestedPath: "full", reviewKind: "new_device", receptionNote: "x" });
+      check(rq.status < 300, "ص١. (الإعداد) طلبٌ عارٍ", JSON.stringify(rq.body));
+      const ex = await signExam(p, S.doc, "prosthetic");
+      same("ص٢. (الإعداد) التوقيعُ أغلق الطلبَ وأخرجه من «معايناتي»",
+        [(await requestRow(Number(rq.body.id))).status, (await rowsOf(p)).length], ["examined", 0]);
+      const c = await cancelExam(Number(ex.body.id));
+      same("ص٣. الإلغاءُ ينجح ويسمّي الطلبَ الذي عاد", [c.status, c.body?.requestsReopened], [200, [Number(rq.body.id)]]);
+      const after = await reviewRow(Number(rq.body.id));
+      same("ص٤. **الطلبُ عاد معلَّقاً** بلا معاينةٍ ولا قرارٍ مُدَّعى، وسطرُ السبب ملحَق",
+        [after.status, after.exam_id, after.decision, /بعد إلغاء المعاينة/.test(after.doctor_note ?? "")],
+        ["pending", null, null, true]);
+      same("ص٥. **والمريضُ عاد إلى «معايناتي»**", (await rowsOf(p)).length, 1);
+      same("ص٦. **وإلى «بانتظار معاينة»** في السجلّ", await pendingOf(p), ["prosthetic"]);
+      const ex2 = await signExam(p, S.doc, "prosthetic");
+      same("ص٧. ومعاينةٌ صحيحة بعدها تُغلقه كالمعتاد",
+        [ex2.status < 300, (await requestRow(Number(rq.body.id))).status, (await rowsOf(p)).length], [true, "examined", 0]);
+
+      //  طلبُ حلقة: الحلقةُ كانت تعود أصلاً — والطلبُ يعود معها الآن.
+      const p2 = await mkPatient("ق-حلقة", "prosthetic");
+      await mkCase(p2, "prosthetic");
+      const A = await openEpisode(p2, "prosthetic");
+      const exA = await signExam(p2, S.doc, "prosthetic", { deviceEpisodeId: A.episodeId });
+      const cA = await cancelExam(Number(exA.body.id));
+      same("ص٨. طلبُ الحلقة يعود معلَّقاً مع حلقته، وصفُّها في «معايناتي» بطلبه",
+        [cA.status, (await requestRow(A.requestId!)).status, await episodeStatus(A.episodeId),
+         (await rowsOf(p2)).map((r) => [r.episodeId, r.returnableRequestId])],
+        [200, "pending", "awaiting_exam", [[A.episodeId, A.requestId]]]);
+
+      //  ولا يُزاحم معلَّقاً أحدث على المرساة نفسِها.
+      const p3 = await mkPatient("ق-مزاحمة", "prosthetic");
+      await mkCase(p3, "prosthetic");
+      const r1 = await http("POST", "/api/medical-review/requests", S.recv, {
+        patientId: p3, serviceType: "prosthetic", requestedPath: "full", reviewKind: "new_device", receptionNote: "1" });
+      const ex3 = await signExam(p3, S.doc, "prosthetic");
+      const r2 = await http("POST", "/api/medical-review/requests", S.recv, {
+        patientId: p3, serviceType: "prosthetic", requestedPath: "full", reviewKind: "new_device", receptionNote: "2" });
+      check(r2.status < 300, "ص٩. (الإعداد) طلبٌ أحدثُ معلَّق", JSON.stringify(r2.body));
+      const c3 = await cancelExam(Number(ex3.body.id));
+      same("ص١٠. **لا يُزاحم الأحدث**: الأقدمُ يبقى examined والإلغاءُ ينجح",
+        [c3.status, c3.body?.requestsReopened, (await requestRow(Number(r1.body.id))).status,
+         (await requestRow(Number(r2.body.id))).status],
+        [200, [], "examined", "pending"]);
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {
