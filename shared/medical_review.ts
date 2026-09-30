@@ -184,6 +184,9 @@ export interface ReviewSessionLike {
   permissions?: Record<string, any> | null;
 }
 
+/** عنوانُ قائمة «المُرجَعون من الطبيب» — للشريط الجانبيّ وللصفحة معاً. */
+export const RETURNED_FROM_DOCTOR_TITLE = "المُرجَعون من الطبيب";
+
 /**
  * مَن **ينشئ** الطلب ويصنّفه — الاستقبال ومَن فوقه.
  *

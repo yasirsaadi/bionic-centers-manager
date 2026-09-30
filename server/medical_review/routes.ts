@@ -252,6 +252,37 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
+  // ── «المُرجَعون من الطبيب» — للاستعلامات وللطبيب (§4.ar، تكملةُ البند ١٨) ──
+  //  الاستعلاماتُ ومَن فوقه يرى اختصاصَي الجهاز معاً، والطبيبُ اختصاصَه وحده.
+  //  والفرعُ كطابور المراجعة بحرفه. **قراءةٌ محضة** — والأفعالُ أبوابُها القائمة.
+  const returnedFor = async (req: Req) => {
+    const s = getSession(req);
+    if (!canCreateReview(s) && !canDecideReview(s)) return null;
+    const specialties = canCreateReview(s)
+      ? REVIEW_SERVICE_TYPES
+      : await reviewSpecialtiesFor(s.userId);
+    return await store.listReturnedRequests({ branchIds: branchScope(req), specialties });
+  };
+  app.get("/api/medical-review/returned", isAuthenticated, async (req: Req, res) => {
+    try {
+      const rows = await returnedFor(req);
+      if (rows === null) return res.status(403).json({ error: "غير مصرح" });
+      res.json({ rows });
+    } catch (err: any) {
+      console.error("[medical-review] returned list failed:", err);
+      res.status(500).json({ error: "تعذّر تحميل المُرجَعين" });
+    }
+  });
+  app.get("/api/medical-review/returned/count", isAuthenticated, async (req: Req, res) => {
+    try {
+      const rows = await returnedFor(req);
+      res.json({ count: rows === null ? 0 : rows.length });
+    } catch (err: any) {
+      console.error("[medical-review] returned count failed:", err);
+      res.status(500).json({ error: "تعذّر تحميل العدد" });
+    }
+  });
+
   // ── تاريخُ طلبات مريض ──────────────────────────────────────────────────
   app.get("/api/medical-review/patients/:id/requests", isAuthenticated, async (req: Req, res) => {
     try {
