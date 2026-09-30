@@ -1418,6 +1418,44 @@ async function main() {
           returnedBefore.requested_path, returnedBefore.review_kind]);
     }
 
+    // ══ ف. البند ١٩ (§4.ar): «لم يشترِ» يُطفئ «تم تحديد» ═══════════════════
+    console.log("\n── ف. «لم يشترِ» يُطفئ «تم تحديد» ──");
+    {
+      const decidedOf = async (p: number) => {
+        const r = await http("GET", "/api/medical/pending", S.recv);
+        return ((r.body?.decided ?? {})[String(p)] ?? []).slice().sort();
+      };
+      //  بحلقة: فتحٌ ⟵ توقيع ⟵ الشارة ⟵ «لم يشترِ» ⟵ لا شارة.
+      const p = await mkPatient("ف-حلقة", "prosthetic");
+      await mkCase(p, "prosthetic");
+      const { episodeId } = await openEpisode(p, "prosthetic");
+      const ex = await signExam(p, S.doc, "prosthetic", { deviceEpisodeId: episodeId });
+      check(ex.status < 300, "ف١. (الإعداد) التوقيع", JSON.stringify(ex.body));
+      same("ف٢. **بعد التوقيع: «تم تحديد»**", await decidedOf(p), ["prosthetic"]);
+      const f = await q<{ id: number }>(
+        `SELECT id FROM post_exam_followups WHERE device_episode_id=$1 ORDER BY id DESC LIMIT 1`, [episodeId]);
+      const nb = await http("POST", `/api/followups/${f[0].id}/not-bought`, S.recv, { reason: "غالٍ" });
+      check(nb.status < 300, "ف٣. (الإعداد) «لم يشترِ»", JSON.stringify(nb.body));
+      same("ف٤. **بعد «لم يشترِ»: الشارةُ اختفت**", await decidedOf(p), []);
+      //  «عاد للشراء» ⟵ معاينةٌ جديدة ⟵ الشارةُ تعود.
+      await rtp(p, episodeId);
+      const ex2 = await signExam(p, S.doc, "prosthetic", { deviceEpisodeId: episodeId });
+      check(ex2.status < 300, "ف٥. (الإعداد) «عاد للشراء» ثمّ معاينةٌ جديدة", JSON.stringify(ex2.body));
+      same("ف٦. **وعادت الشارة**", await decidedOf(p), ["prosthetic"]);
+
+      //  بلا حلقة (المسارُ القديم): معاينةٌ على خيطٍ بلا أجهزة ⟵ «لم يشترِ» ⟵ لا شارة.
+      const p2 = await mkPatient("ف-بلا-حلقة", "medical_support");
+      await mkCase(p2, "medical_support");
+      const exb = await signExam(p2, S.doc, "medical_support");
+      check(exb.status < 300, "ف٧. (الإعداد) توقيعٌ بلا حلقة", JSON.stringify(exb.body));
+      same("ف٨. «تم تحديد» بلا حلقة", await decidedOf(p2), ["medical_support"]);
+      const fb = await q<{ id: number }>(
+        `SELECT id FROM post_exam_followups WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [p2]);
+      const nb2 = await http("POST", `/api/followups/${fb[0]?.id}/close`, S.recv, { reason: "price" });
+      check(nb2.status < 300, "ف٩. (الإعداد) «لم يشترِ»", JSON.stringify(nb2.body));
+      same("ف١٠. **واختفت الشارة بلا حلقةٍ أيضاً**", await decidedOf(p2), []);
+    }
+
     // ══ ع. عزلُ العلاج الطبيعي ══════════════════════════════════════════════
     console.log("\n── ع. العلاجُ الطبيعي ──");
     {
