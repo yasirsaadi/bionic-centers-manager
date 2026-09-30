@@ -773,6 +773,96 @@ export async function listPendingReviews(params: {
   return (rows.rows ?? []).map(toCard);
 }
 
+/** صفٌّ في قائمة «المُرجَعون من الطبيب». */
+export interface ReturnedRequestRow {
+  requestId: number;
+  patientId: number;
+  patientName: string;
+  patientCode: string | null;
+  serviceType: string;
+  requestedPath: string;
+  reviewKind: string;
+  deviceEpisodeId: number | null;
+  episodeSequence: number | null;
+  /** الحلقةُ ما زالت تنتظر معاينتَها — فتُمرَّر لنافذة المعاينة بعينها. */
+  episodeAwaiting: boolean;
+  doctorNote: string | null;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  branchName: string | null;
+}
+
+/**
+ * **«المُرجَعون من الطبيب»** (§4.ar — تكملةُ البند ١٨، طلبُ المالك ٢٠٢٦-٠٩-٣٠).
+ *
+ * كان الإرجاعُ يُخرج المريضَ من «معايناتي» ولا يُدخله قائمةً عند الاستعلامات —
+ * فلا يعرف الموظّفُ به إلّا إن فتح ملفَّه صدفةً. هذه **قراءةٌ محضة** لما هو
+ * قائمٌ أصلاً في `medical_review_requests`: لا عمودَ ولا حالةَ جديدة.
+ *
+ * طلبٌ `returned` **ما زال معلَّقاً** ما لم يَحدث بعده أيٌّ من:
+ * • **طلبٌ لاحقٌ** لنفس (المريض، الاختصاص) — على حلقته نفسِها أو عارٍ (إعادةُ الإرسال).
+ * • **معاينةٌ فعّالة وُقّعت بعد الإرجاع** — وحلقتُه إن كانت تنتظر فمعاينتُها هي.
+ * • **حلقتُه أُلغيت أو حُذفت** («إلغاء المعاينة»)، **أو القسمُ لم يعد فعّالاً**.
+ * والمحذوفُ في السلّة خارجها. والنطاقُ كنطاق طابور المراجعة بحرفه.
+ */
+export async function listReturnedRequests(params: {
+  branchIds: number[] | null;
+  specialties: readonly string[];
+}): Promise<ReturnedRequestRow[]> {
+  const device = params.specialties.filter(isReviewServiceType);
+  if (device.length === 0) return [];
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT r.id, r.patient_id, r.service_type, r.requested_path, r.review_kind,
+           r.device_episode_id, r.doctor_note, r.decided_at,
+           p.name AS patient_name, p.patient_code,
+           b.name AS branch_name, du.display_name AS decided_by_name,
+           e.sequence_number AS ep_seq, e.status AS ep_status
+      FROM medical_review_requests r
+      JOIN patients p ON p.id = r.patient_id
+      LEFT JOIN branches b ON b.id = r.branch_id
+      LEFT JOIN system_users du ON du.id = r.decided_by
+      LEFT JOIN patient_device_episodes e ON e.id = r.device_episode_id
+     WHERE r.status = 'returned'
+       AND p.deleted_at IS NULL
+       AND ${branchOrPatientAccessSql(params.branchIds, "r.branch_id", "r.patient_id")}
+       AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
+       AND (r.device_episode_id IS NULL OR (e.id IS NOT NULL AND e.status <> 'cancelled'))
+       AND EXISTS (SELECT 1 FROM patient_cases pc
+                    WHERE pc.patient_id = r.patient_id AND pc.case_type = r.service_type
+                      AND pc.status = 'active')
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_review_requests r2
+          WHERE r2.patient_id = r.patient_id AND r2.service_type = r.service_type
+            AND r2.id <> r.id AND r2.created_at > r.created_at
+            AND (r.device_episode_id IS NULL OR r2.device_episode_id IS NULL
+                 OR r2.device_episode_id = r.device_episode_id))
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_exams me
+          WHERE me.patient_id = r.patient_id AND me.case_type = r.service_type
+            AND me.created_at >= COALESCE(r.decided_at, r.created_at)
+            AND ${activeExamSql("me")}
+            AND (r.device_episode_id IS NULL OR e.status IS DISTINCT FROM 'awaiting_exam'
+                 OR me.device_episode_id = r.device_episode_id))
+     ORDER BY r.decided_at DESC NULLS LAST, r.id DESC
+  `);
+  return (rows.rows ?? []).map((r) => ({
+    requestId: Number(r.id),
+    patientId: Number(r.patient_id),
+    patientName: String(r.patient_name ?? ""),
+    patientCode: r.patient_code ?? null,
+    serviceType: String(r.service_type),
+    requestedPath: String(r.requested_path),
+    reviewKind: String(r.review_kind),
+    deviceEpisodeId: r.device_episode_id == null ? null : Number(r.device_episode_id),
+    episodeSequence: r.ep_seq == null ? null : Number(r.ep_seq),
+    episodeAwaiting: r.ep_status === "awaiting_exam",
+    doctorNote: r.doctor_note ?? null,
+    decidedAt: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+    decidedByName: r.decided_by_name ?? null,
+    branchName: r.branch_name ?? null,
+  }));
+}
+
 /**
  * **طلباتُ المعاينة الكاملة المنتظرة — لسطح الإشراف.**
  *

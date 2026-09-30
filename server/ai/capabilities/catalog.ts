@@ -117,6 +117,8 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/medical/me": { d: "صلاحيةُ صاحب الجلسة الطبّية واختصاصاتُه." },
   "/api/medical-review/queue": { d: "طابورُ مراجعة حركة مرضى الأطراف والمساند: مَن جاء وماذا جرى ومتى ومَن تولّاه." },
   "/api/medical-review/patients/:id/requests": { d: "تاريخُ طلبات مراجعة الطبيب لمريضٍ بعينه." },
+  "/api/medical-review/returned": { d: "المرضى الذين أرجعهم الطبيبُ للاستعلامات ولم يُعَد إرسالُهم، وسببُ إرجاع كلٍّ منهم." },
+  "/api/medical-review/returned/count": { d: "عددُ المُرجَعين من الطبيب." },
   //  ══ ما بعد المعاينة ══
   "/api/followups/decision-queue": { d: "طابورُ «بانتظار الحسم» و«تم الحسم» بعد المعاينة.", q: ["state", "branchId", "serviceType"] },
   "/api/followups/decision-queue/count": { d: "عددُ المنتظرين للحسم." },

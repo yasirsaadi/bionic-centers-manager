@@ -22,6 +22,19 @@ interface Props {
   patientId: number;
   /** ما يملكه المريض فعلاً — الزرّ لا يظهر أصلاً لمن لا يملك أيّهما. */
   services: ("prosthetic" | "medical_support")[];
+  /**
+   * **إعادةُ إرسال طلبٍ أرجعه الطبيب** (قائمة «المُرجَعون من الطبيب»): النافذةُ نفسُها،
+   * مملوءةً بالطلب المُرجَع — وعلى حلقته نفسِها حين تكون له، فيعود الجهازُ بعينه
+   * إلى «معايناتي». وغيابُها يُبقي النافذةَ كما كانت حرفاً.
+   */
+  resend?: {
+    serviceType: "prosthetic" | "medical_support";
+    requestedPath: ReviewPath;
+    reviewKind: ReviewKind;
+    deviceEpisodeId: number | null;
+  };
+  /** نصُّ زرّ الفتح — الافتراضُ كما كان. */
+  triggerLabel?: string;
 }
 
 interface ReviewRow {
@@ -42,13 +55,14 @@ interface ReviewRow {
  * والاختيار بين بابين لا أكثر: خفيفٌ لما لا قرار سريريّ فيه، وكاملٌ لما فيه.
  * والطبيب يبقى صاحب الكلمة الأخيرة: يوافق، أو يطلب معاينةً كاملة، أو يعيد.
  */
-export function SendToDoctorReviewDialog({ patientId, services }: Props) {
+export function SendToDoctorReviewDialog({ patientId, services, resend, triggerLabel }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [serviceType, setServiceType] = useState<string>(services[0] ?? "prosthetic");
-  const [path, setPath] = useState<ReviewPath>("quick");
-  const [kind, setKind] = useState<ReviewKind>("maintenance");
+  const [serviceType, setServiceType] = useState<string>(resend?.serviceType ?? services[0] ?? "prosthetic");
+  const [path, setPath] = useState<ReviewPath>(resend?.requestedPath ?? "quick");
+  const [kind, setKind] = useState<ReviewKind>(
+    resend && MANUALLY_SELECTABLE_REVIEW_KINDS.includes(resend.reviewKind) ? resend.reviewKind : "maintenance");
   const [note, setNote] = useState("");
 
   //  الجهازُ الجديد لا يكون سريعاً — تُقفَل البطاقة ويُثبَّت المسار. والخادم
@@ -77,6 +91,8 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
         body: JSON.stringify({
           patientId, serviceType, requestedPath: effectivePath, reviewKind: kind,
           receptionNote: note.trim() || null,
+          //  الحلقةُ المُرجَعة ما دام الاختصاصُ اختصاصَها — وإلّا طلبٌ عارٍ كما كان.
+          deviceEpisodeId: resend && resend.serviceType === serviceType ? resend.deviceEpisodeId : null,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -100,7 +116,7 @@ export function SendToDoctorReviewDialog({ patientId, services }: Props) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-send-doctor-review">
-          <ClipboardCheck className="w-4 h-4" /> إرسال لمراجعة الطبيب
+          <ClipboardCheck className="w-4 h-4" /> {triggerLabel ?? "إرسال لمراجعة الطبيب"}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-lg" dir="rtl">

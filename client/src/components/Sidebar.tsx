@@ -16,6 +16,7 @@ import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
 //  متطابقٌ اليوم، لكنّه ينحرف صامتاً إن تغيّرت القاعدةُ القانونية في
 //  `shared/commercial.ts` ولم يتذكّر أحدٌ هذا الملفّ.
 import { canCompleteReceptionSale } from "@shared/commercial";
+import { canCreateReview, canDecideReview, RETURNED_FROM_DOCTOR_TITLE } from "@shared/medical_review";
 //  ══ **«خصومات سابقة»** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═══════════════════
 //  نفسُ المبدأ أعلاه بالضبط: `canApproveServiceDiscount` هي الدالّةُ
 //  القانونية التي تحرس `/api/discounts/:id/decide` فعلياً
@@ -179,6 +180,22 @@ export function Sidebar() {
   });
   const worklistCount = worklistCountData?.count ?? 0;
 
+  //  ══ **«المُرجَعون من الطبيب»** (§4.ar، تكملةُ البند ١٨) ══════════════
+  //  للاستعلامات وللطبيب — بالدالّتين اللتين تحرسان النقطةَ نفسَها. **بلا
+  //  استطلاعٍ دوريّ** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): التحديثُ الحيُّ عند الكتابة
+  //  وعند العودة إلى النافذة يكفيه.
+  const returnedFromDoctorEligible = canCreateReview(branchSession as any) || canDecideReview(branchSession as any);
+  const { data: returnedFromDoctorData } = useQuery<{ count: number }>({
+    queryKey: ["/api/medical-review/returned", "count"],
+    enabled: returnedFromDoctorEligible,
+    queryFn: async () => {
+      const res = await fetch("/api/medical-review/returned/count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const returnedFromDoctorCount = returnedFromDoctorData?.count ?? 0;
+
   //  ══ **شارةُ «بانتظار الحسم»** (المرحلة الخامسة) ═══════════════════════
   //  **نفسُ الدالّة القانونية بعينها** — لا نسخةٌ يدوية من قائمة الأدوار.
   //  `canCompleteReceptionSale` هي مَن تفتح البابين `/complete-sale`/
@@ -292,6 +309,7 @@ export function Sidebar() {
     //  طابورُ عمل — لا تُخفيها المشاهدة، وحدها القائمةُ تفرغ.
     { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const, badge: worklistCount },
     { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
+    { label: RETURNED_FROM_DOCTOR_TITLE, icon: Undo2, href: "/returned-from-doctor", adminOnly: false, settingKey: null, permission: null, eligible: returnedFromDoctorEligible, badge: returnedFromDoctorCount },
     //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
     //  «معايناتي» و«مراجعة الطبيب»: سؤالٌ واحد له شاشتُه.
     //
