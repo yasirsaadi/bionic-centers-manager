@@ -7,9 +7,10 @@
 //
 // **قراءةٌ محضة، والأفعالُ أبوابُها القائمة**: «فتح الملف» صفحةُ المريض،
 // و«إعادة إرسال» نافذةُ الإرسال نفسُها مملوءةً بالطلب، و«كتابة معاينة» نافذةُ
-// المعاينة نفسُها، و«إلغاء المعاينة» نقطةُ «معايناتي» نفسُها — لا بابَ كتابةٍ
+// المعاينة نفسُها، و«إلغاء المعاينة» بالكتابة القانونية نفسِها — لا بابَ كتابةٍ
 // جديد. (والأخيرُ هنا لأن المُرجَعَ خرج من «معايناتي» بالبند ١٨، فلولاه لفقد
-// الطبيبُ زرَّ سحبِ طلبٍ لا لزوم له.)
+// الطبيبُ زرَّ سحبِ طلبٍ لا لزوم له. ونقطتُه `close-returned` لأن نقطةَ
+// «معايناتي» لا تجد ما تسحبه حين لا حلقةَ تنتظر.)
 
 import { useState } from "react";
 import { Link } from "wouter";
@@ -66,14 +67,11 @@ export default function ReturnedFromDoctor() {
     if (!row || !reason) return;
     setCancelBusy(true);
     try {
-      const res = await fetch("/api/medical/worklist/cancel-request", {
+      const res = await fetch(`/api/medical-review/requests/${row.requestId}/close-returned`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          patientId: row.patientId, caseType: row.serviceType,
-          deviceEpisodeId: row.episodeAwaiting ? row.deviceEpisodeId : null, reason,
-        }),
+        body: JSON.stringify({ reason }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "تعذّر إلغاء طلب المعاينة");
