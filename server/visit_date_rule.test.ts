@@ -56,7 +56,7 @@ async function cleanup() {
 async function main() {
   console.log("── أ. القاعدةُ الخالصة ──");
   const T = "2026-09-29";
-  same("أ١. اليومُ و٣ أيام للموظّف", [checkVisitDate(T, false).ok, checkVisitDate("2026-09-26", false).ok], [true, true]);
+  same("أ١. اليومُ و٣ أيام للموظّف", [checkVisitDate(T, false, T).ok, checkVisitDate("2026-09-26", false, T).ok], [true, true]);
   same("أ٢. **٤ أيام ⟵ للمسؤول العام وحده**", [checkVisitDate("2026-09-25", false, T), checkVisitDate("2026-09-25", true, T)],
     [{ ok: false, status: 403, message: VISIT_BACKDATE_MESSAGE }, { ok: true }]);
   same("أ٣. **المستقبلُ مرفوضٌ حتى للمسؤول**", checkVisitDate("2026-09-30", true, T), { ok: false, status: 400, message: VISIT_FUTURE_MESSAGE });
@@ -111,6 +111,16 @@ async function main() {
     same("ج١. **مُعدِّلُ الزيارات يُرجعها ٥ أيام ⟵ ٤٠٣**", (await http("PATCH", `/api/visits/${vid}`, sess(EDITOR, "reception"), { customDate: ago(5) })).status, 403);
     same("ج٢. وإلى أمس يمرّ", (await http("PATCH", `/api/visits/${vid}`, sess(EDITOR, "reception"), { customDate: ago(1) })).status, 200);
     same("ج٣. والمسؤولُ يُرجعها ٥ أيام", (await http("PATCH", `/api/visits/${vid}`, sess(ADMIN, "admin", true), { customDate: ago(5) })).status, 200);
+    //  واقعةُ المالك (حيدر حسون): زيارةٌ عمرُها ٥ أيام، والنافذةُ ترسل تاريخَها **نفسَه** مع تغيير النوع وحده.
+    const before = (await q(`SELECT visit_date FROM visits WHERE id=$1`, [vid]))[0].visit_date;
+    const same5 = await http("PATCH", `/api/visits/${vid}`, sess(EDITOR, "reception"),
+      { customDate: ago(5), treatmentType: "استشارة طبية" });
+    same("ج٤. **تعديلُ النوع وحده على زيارةٍ قديمة يمرّ** — التاريخُ نفسُه ليس تعديلاً", same5.status, 200);
+    const after = (await q(`SELECT visit_date, treatment_type FROM visits WHERE id=$1`, [vid]))[0];
+    same("ج٥. **والنوعُ تغيّر، وتاريخُ الزيارة وساعتُها لم يُمَسّا**",
+      [after.treatment_type, new Date(after.visit_date).getTime()], ["استشارة طبية", new Date(before).getTime()]);
+    same("ج٦. **ونقلُها إلى تاريخٍ قديمٍ آخر يبقى ٤٠٣**",
+      (await http("PATCH", `/api/visits/${vid}`, sess(EDITOR, "reception"), { customDate: ago(6) })).status, 403);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     await cleanup();

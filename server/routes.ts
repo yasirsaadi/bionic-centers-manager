@@ -65,7 +65,7 @@ import {
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
 import { newServiceDiscountRef } from "@shared/discount";
-import { checkVisitDate } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
 import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
@@ -4269,7 +4269,16 @@ export async function registerRoutes(
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
     //  **وتعديلُ التاريخ بالقاعدة نفسِها** (§4.ar البند ٢٦): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول العام وحده.
-    if (customDate !== undefined && customDate !== null && customDate !== "") {
+    //  **وحين يتغيّر التاريخُ فعلاً فقط** (واقعةُ المالك ٢٠٢٦-٠٩-٣٠، حيدر حسون): نافذةُ «تحرير
+    //  الزيارة» ترسل التاريخَ دائماً، فكان تغييرُ «نوع العلاج» وحده على زيارةٍ عمرُها ٤ أيام يُردّ
+    //  «من صلاحية المسؤول العام» — والتاريخُ لم يُمَسّ. فالتاريخُ نفسُه (بيومه في بغداد) ليس تعديلاً:
+    //  لا يُفحَص ولا يُعاد كتابتُه (فلا تتغيّر ساعةُ الزيارة بحفظٍ لم يلمسها).
+    const existingYmd = existing.visitDate
+      ? baghdadTodayYmd(new Date(existing.visitDate))
+      : null;
+    const dateChanged = customDate !== undefined && customDate !== null && customDate !== ""
+      && String(customDate) !== existingYmd;
+    if (dateChanged) {
       const v = checkVisitDate(String(customDate), Boolean(branchSession?.isAdmin));
       if (!v.ok) return res.status(v.status).json({ message: v.message });
     }
@@ -4304,7 +4313,7 @@ export async function registerRoutes(
     // المخزَّن، فتجاهُله كلّياً يعادل تمريره بلا تغيير.
     const updateData: any = { details, notes, treatmentType, sessionCount };
 
-    if (customDate !== undefined) {
+    if (dateChanged) {
       const baghdadOffset = 3 * 60 * 60 * 1000;
       const nowBaghdad = new Date(Date.now() + baghdadOffset);
       const currentHours = nowBaghdad.getUTCHours();
