@@ -195,6 +195,16 @@ async function main() {
     const mB1 = await maint({ patientId: pB, legacyUnrecordedDevice: true, underWarranty: true });
     const mB2 = await maint({ patientId: pB, legacyUnrecordedDevice: true, underWarranty: true }, S.admin);
     const woB2 = Number(mB2.body?.workOrderId);
+    //  **مَن أعطى الأمرَ ومتى** على بطاقة سجلّ التصنيع (طلبُ المالك ٢٠٢٦-٠٩-٣٠) — في المكرَّر يُعرَف مَن كرّره.
+    await q(`UPDATE system_users SET display_name = CASE id WHEN $1 THEN 'ريام الاستقبال' WHEN $2 THEN 'المسؤول' END
+              WHERE id IN ($1, $2)`, [RECV, ADMIN]);
+    const ordB = await http("GET", `/api/manufacturing/patient/${pB}/orders`, S.admin);
+    const rowsB = (Array.isArray(ordB.body) ? ordB.body : ordB.body?.orders ?? []) as any[];
+    const byId = (id: number) => rowsB.find((o) => o.id === id);
+    same("ب٠. **البطاقةُ تقول مَن أعطى كلَّ أمرٍ ومتى** — الأوّلُ من الاستقبال والمكرَّرُ من المسؤول",
+      [byId(Number(mB1.body?.workOrderId))?.createdByName, byId(woB2)?.createdByName,
+        typeof byId(woB2)?.createdAt === "string"],
+      ["ريام الاستقبال", "المسؤول", true]);
     const beforeB = await snap(pB);
     const pvB = await preview(woB2, S.admin);
     same("ب١. المعاينةُ: لا كلفةَ ولا مقبوض", [pvB.status, pvB.body?.saleAmount, pvB.body?.paidAmount], [200, 0, 0]);

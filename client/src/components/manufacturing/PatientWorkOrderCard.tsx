@@ -9,6 +9,7 @@ import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS, FINAL_RESULT_LABELS } from "@shared/manufacturing";
 import { deviceOrdinalLabel } from "@shared/device_label";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { formatDateTimeIraq } from "@/lib/utils";
 
 interface OrderRow {
   id: number;
@@ -21,6 +22,7 @@ interface OrderRow {
   expectedDeliveryDate: string | null;
   completedAt: string | null;
   createdAt: string | null;
+  createdByName?: string | null;
   finalResult: string | null;
   active: boolean;
   adminVoidReversalId?: number | null;
@@ -161,6 +163,11 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
               <Item label="التسليم المتوقّع" value={fmtD(o.expectedDeliveryDate)} />
               <Item label={o.completedAt ? "تاريخ التسليم" : "الإنشاء"} value={fmtD(o.completedAt ?? o.createdAt)} />
             </div>
+            {/*  **مَن أعطى الأمر ومتى** (طلبُ المالك ٢٠٢٦-٠٩-٣٠) — في الأوامر المكرّرة يُعرَف مَن كرّرها وفي أيّ ساعة. */}
+            <p className="mt-1.5 text-xs text-muted-foreground" data-testid={`text-order-created-by-${o.id}`}>
+              أُنشئ الأمر: {o.createdAt ? formatDateTimeIraq(o.createdAt) : "—"}
+              {" "}— بواسطة {o.createdByName ?? "غير معروف"}
+            </p>
             {/*  ══ **مالُ هذه العملية على بطاقتها** ═══════════════════════
                 المستخدمُ كان يفتح نافذةَ التصحيح ليعرف كم عليها — وهي
                 تعرض الكلفة لا المدفوع. وهنا يُقرأ الاثنان بنظرة.
