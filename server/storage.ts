@@ -149,6 +149,14 @@ interface EmployeeAccuracyAccum {
   lastActivityAt: Date | null;
 }
 
+/** رصيدُ مريضٍ في فرع (البند ١٢، §4.bc) — انظر `getPatientBranchBalances`. */
+export interface PatientBranchBalance {
+  patientId: number;
+  cost: number;
+  paid: number;
+  lastPaymentDate: Date | string | null;
+}
+
 export interface IStorage {
   // Branches
   getBranches(): Promise<Branch[]>;
@@ -224,6 +232,7 @@ export interface IStorage {
   deleteInstallmentPlan(id: number): Promise<void>;
 
   // Accounting
+  getPatientBranchBalances(branchId?: number): Promise<PatientBranchBalance[]>;
   getAccountingSummary(branchId?: number, startDate?: string, endDate?: string): Promise<{
     totalRevenue: number;
     totalPaid: number;
@@ -4030,6 +4039,49 @@ export class DatabaseStorage implements IStorage {
    * سيزحزح كلَّ رقمٍ تاريخيّ عند حدود اليوم بلا أن يطلب أحد. فالخيارُ
    * صريحٌ ومَن يحتاجه يطلبه.
    */
+  /**
+   *  ══ رصيدُ كلّ مريضٍ في فرعٍ بعينه — البند ١٢ (§4.bc، ٢٠٢٦-١٠-٠١) ══════════════════════════
+   *  قاعدةُ المالك: «الدينُ يُسدَّد في الفرع الذي عليه الدين». فكلفةُ المريض على الفرع = ما قُيِّد له في دفتر الكلف
+   *  **في ذلك الفرع**، ومدفوعُه = ما دُفع **في ذلك الفرع**. وكان الدَّينُ يُنسَب إلى فرع التسجيل كلُّه (`patients.total_cost`)
+   *  والدفعُ إلى فرع القبض، فمريضٌ مسجَّلٌ في كربلاء خدمتُه ودَينُه ودفعُه في ذي قار (زين العابدين وليد) يظهر ديناً
+   *  كاملاً على كربلاء وسالباً على ذي قار.
+   *  **وما لا يغطّيه الدفتر** (`total_cost` − مجموعُ قيوده — ملفٌّ واحد على الإنتاج) يُنسَب إلى فرع التسجيل: فلا يختفي
+   *  دَين، ومجموعُ الفروع = مجموعُ `total_cost` كما كان. وبلا فرع (كلُّ الفروع): `total_cost` وكلُّ الدفعات.
+   *  **مصدرٌ واحد** لـ«الديون» و«نسبة التحصيل» في `getAccountingSummary` ولقائمة المدينين.
+   */
+  async getPatientBranchBalances(branchId?: number): Promise<PatientBranchBalance[]> {
+    const rows = branchId
+      ? await db.execute(sql`
+          SELECT p.id AS patient_id,
+                 COALESCE(l.amt, 0)
+                   + CASE WHEN p.branch_id = ${branchId} THEN COALESCE(p.total_cost, 0) - COALESCE(lt.amt, 0) ELSE 0 END
+                   AS cost,
+                 COALESCE(y.amt, 0) AS paid,
+                 y.last AS last_payment
+            FROM patients p
+            LEFT JOIN (SELECT patient_id, SUM(amount) AS amt FROM cost_entries WHERE branch_id = ${branchId} GROUP BY 1) l
+                   ON l.patient_id = p.id
+            LEFT JOIN (SELECT patient_id, SUM(amount) AS amt FROM cost_entries GROUP BY 1) lt
+                   ON lt.patient_id = p.id
+            LEFT JOIN (SELECT patient_id, SUM(amount) AS amt, MAX(date) AS last FROM payments WHERE branch_id = ${branchId} GROUP BY 1) y
+                   ON y.patient_id = p.id
+           WHERE p.deleted_at IS NULL
+             AND (p.branch_id = ${branchId} OR l.patient_id IS NOT NULL OR y.patient_id IS NOT NULL)`)
+      : await db.execute(sql`
+          SELECT p.id AS patient_id, COALESCE(p.total_cost, 0) AS cost,
+                 COALESCE(y.amt, 0) AS paid, y.last AS last_payment
+            FROM patients p
+            LEFT JOIN (SELECT patient_id, SUM(amount) AS amt, MAX(date) AS last FROM payments GROUP BY 1) y
+                   ON y.patient_id = p.id
+           WHERE p.deleted_at IS NULL`);
+    return ((rows as any).rows ?? []).map((r: any) => ({
+      patientId: Number(r.patient_id),
+      cost: Number(r.cost) || 0,
+      paid: Number(r.paid) || 0,
+      lastPaymentDate: r.last_payment ?? null,
+    }));
+  }
+
   async getAccountingSummary(branchId?: number, startDate?: string, endDate?: string, opts?: { baghdadDays?: boolean }): Promise<{
     totalRevenue: number;
     totalPaid: number;
@@ -4136,18 +4188,11 @@ export class DatabaseStorage implements IStorage {
     //  **والمحذوفُ خارج الطرفين معاً** (ترحيل ٠٦٨): كلفتُه لا تُحسب ديناً
     //  ومدفوعُه لا يُحسب تحصيلاً. وإسقاطُ أحدهما دون الآخر يقلب «نسبة
     //  التحصيل» — وهي قسمةُ الثاني على الأول.
-    const lifeCostQ = branchId
-      ? await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients).where(and(eq(patients.branchId, branchId), activePatientDrizzle()))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${patients.totalCost}), 0)` })
-          .from(patients).where(activePatientDrizzle());
-    const lifePaidQ = branchId
-      ? await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments).where(and(eq(payments.branchId, branchId), belongsToActivePatientSql("payments")))
-      : await db.select({ total: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
-          .from(payments).where(belongsToActivePatientSql("payments"));
-    const lifetimeCost = Number(lifeCostQ[0]?.total) || 0;
-    const lifetimePaid = Number(lifePaidQ[0]?.total) || 0;
+    //  **والفرعُ بقاعدة البند ١٢** (§4.bc): كلفةُ المريض على الفرع ما قُيِّد له فيه، ومدفوعُه ما دُفع فيه —
+    //  من `getPatientBranchBalances` نفسِها التي تبني قائمةَ المدينين، فلا يفترق الرقمان.
+    const balances = await this.getPatientBranchBalances(branchId);
+    const lifetimeCost = balances.reduce((s, b) => s + b.cost, 0);
+    const lifetimePaid = balances.reduce((s, b) => s + b.paid, 0);
 
     // Get total expenses
     const expenseConditions = [];
