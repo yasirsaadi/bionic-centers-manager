@@ -37,6 +37,7 @@
 // باباً. والقائمةُ تُشتقّ من قاعدة `shared/prosthetic_parts` نفسِها
 // (`noExamSaleServiceTypes`) لا من شرطٍ مكتوبٍ بيدٍ ثانية هنا ينحرف عنها.
 
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import type { ServiceFlow } from "./patient_service_launcher_logic";
 import type { ResumeStore } from "./device_flow_resume";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
@@ -57,7 +58,7 @@ export const RECEPTION_ROUTING_QUESTION = "ما سبب حضور المريض ا�
 export type ReceptionRoutingServiceType = "prosthetic" | "medical_support";
 
 export interface ReceptionRoutingChoice {
-  id: "exam_required" | "device_sale" | "maintenance" | "device_followup";
+  id: "exam_required" | "device_sale" | "maintenance" | "device_followup" | "device_training";
   label: string;
   flow: ServiceFlow;
 }
@@ -169,6 +170,12 @@ export function receptionRoutingChoices(
       id: "device_followup" as const,
       label: DEVICE_FOLLOWUP_LABEL,
       flow: { kind: "device_followup" as const, serviceType },
+    },
+    //  **تدريب على الجهاز** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.aw): زيارةٌ سببُها التدريب — تتكرّر أيّاماً أو أشهراً بلا مالٍ ولا طبيب.
+    {
+      id: "device_training" as const,
+      label: ATTENDANCE_REASONS.training,
+      flow: { kind: "device_training" as const, serviceType },
     },
   ];
 }

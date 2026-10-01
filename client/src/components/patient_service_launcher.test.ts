@@ -192,15 +192,16 @@ function main() {
   //  لاحق، ٢٠٢٦-٠٩-٠٨: كانت هذه الحارسةُ تنسى `return_to_purchase` —
   //  نقطةٌ قائمة أصلاً منذ ترحيل ٠٧٢، لم يذكرها هذا الحارسُ قطّ فبقي عمياً
   //  عنها لا شاهداً على غيابها.)
-  same("٢٠. ولا نقطة سابعة يعرفها الموزِّع — والسادسةُ زيارةُ المتابعة (فصلُ الزرّين)",
+  same("٢٠. ولا نقطة ثامنة يعرفها الموزِّع — والسادسةُ زيارةُ المتابعة والسابعةُ التدريب، كلتاهما زيارة",
     Object.keys(FLOW_ENDPOINTS).sort(),
-    ["case_type", "device_episode", "device_followup", "new_service", "no_exam_operation", "return_to_purchase"]);
+    ["case_type", "device_episode", "device_followup", "device_training", "new_service", "no_exam_operation", "return_to_purchase"]);
   same("وعناوينها هي القائمة نفسها", Object.values(FLOW_ENDPOINTS), [
     "/api/patients/:id/add-case-type",
     "/api/patients/:id/new-service",
     "/api/patients/:patientId/device-episodes",
     "/api/no-exam/device-sale",
     "/api/followups/return-to-purchase",
+    "/api/visits",
     "/api/visits",
   ]);
   //  **و«maintenance-visit» خرجت من خريطة الموزِّع** — ولم تُحذَف من الخادم.

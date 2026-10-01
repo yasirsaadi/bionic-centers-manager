@@ -20,6 +20,8 @@
 // شرطٍ يُعاد قراءتُه من القاعدة **تحت `FOR UPDATE`** لحظةَ التنفيذ، لا من
 // قائمة الأهليّة التي عُرضت قبل ثوانٍ.
 
+import { recordAttendanceVisitTx } from "../visits/attendance";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { FollowupError } from "./store";
@@ -331,6 +333,15 @@ export async function executeReturnToPurchase(params: {
       throw err;
     }
 
+    //  **و«عاد للشراء» حضورٌ** — زيارةٌ في سجلّ المريض بالمعاملة نفسِها (§4.aw)، بلا ربطٍ بالحلقة كطلب المعاينة.
+    await recordAttendanceVisitTx(tx, {
+      patientId: params.patientId, serviceType,
+      branchId: ep.branch_id === null ? null : Number(ep.branch_id),
+      reason: ATTENDANCE_REASONS.returnToPurchase,
+      notes: typeof params.receptionNote === "string" ? params.receptionNote : null,
+      createdBy: params.createdBy,
+    });
+
     return { reviewRequest, episodeId, serviceType };
   });
 }
@@ -459,6 +470,14 @@ async function executeReturnToPurchaseWithoutEpisode(params: {
       if (err instanceof ReviewError) throw new FollowupError(err.message, err.status);
       throw err;
     }
+
+    await recordAttendanceVisitTx(tx, {
+      patientId: params.patientId, serviceType,
+      branchId: fu.branch_id === null ? null : Number(fu.branch_id),
+      reason: ATTENDANCE_REASONS.returnToPurchase,
+      notes: typeof params.receptionNote === "string" ? params.receptionNote : null,
+      createdBy: params.createdBy,
+    });
 
     return { reviewRequest, episodeId: null, serviceType };
   });

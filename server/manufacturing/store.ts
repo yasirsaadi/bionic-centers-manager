@@ -5,6 +5,8 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
+import { recordAttendanceVisitTx } from "../visits/attendance";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { db } from "../db";
 import {
   patients, branches, systemUsers, visits, patientCases, costEntries,
@@ -613,6 +615,8 @@ export async function createMaintenanceOrderWithVisit(params: {
       patientId: params.patientId,
       branchId: params.branchId,
       visitDate: params.visitDate,
+      //  **السببُ عنوانُ السطر** في سجلّ الزيارات (§4.aw).
+      details: ATTENDANCE_REASONS.maintenance,
       // Deliberately NOT the "تكلفة:" marker format — syncPatientCases parses
       // that marker to reallocate base costs, and maintenance fees are booked
       // directly below, not via markers.
@@ -1142,6 +1146,12 @@ export async function updateStage(params: {
     if (delivered) {
       await syncEpisodeToOrderTerminalState(tx, updated, {
         status: "delivered", at: completedAt,
+      });
+      //  **واستلامُ الجهاز حضورٌ** — زيارةٌ في سجلّ المريض بالمعاملة نفسِها (§4.aw).
+      await recordAttendanceVisitTx(tx, {
+        patientId: updated.patientId, serviceType: updated.serviceType, branchId: updated.branchId,
+        deviceEpisodeId: updated.deviceEpisodeId ?? null, reason: ATTENDANCE_REASONS.delivery,
+        createdBy: params.performedBy,
       });
     }
 
