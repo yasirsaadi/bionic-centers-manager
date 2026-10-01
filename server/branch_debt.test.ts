@@ -11,6 +11,8 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
+import { executeTool } from "./ai/tools/registry";
+import { resolveAiAccess } from "./ai/access";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -140,6 +142,20 @@ async function main() {
     same("ب٥. **والقائمةُ والملخّصُ من مصدرٍ واحد**: مجموعُ المدينين = الديون حين لا رصيدَ دائن",
       [mine(dA.body).reduce((s: number, r: any) => s + r[3], 0), mine((await http(`/api/accounting/debtors`, S.accB)).body).reduce((s: number, r: any) => s + r[3], 0)],
       [sA.totalRemaining, sB.totalRemaining]);
+
+    console.log("\n── ج. الرصيدُ الدائن (البند ١٦) ──");
+    //  رنا: كلفتُها ١٠٠ ألف ودفعت ٣٠٠ ألف — لها ٢٠٠ ألف تحتاج تسوية.
+    const Cr = await mk("رنا", A, 100_000); await cost(Cr, A, 100_000); await pay(Cr, A, 300_000);
+    const sA2 = await storage.getAccountingSummary(A);
+    same("ج١. **«الديون» لا تنقص برصيد رنا** — ما على المدينين وحدهم (٧٠٠ ألف كما كان)", sA2.totalRemaining, 700000);
+    same("ج٢. **ورصيدُها رقمٌ ظاهر مستقلّ**", sA2.totalCredits, 200000);
+    const dA2 = await http(`/api/accounting/debtors`, S.accA);
+    same("ج٣. **و«الديون» = مجموعُ قائمة المدينين** ولو وُجد رصيدٌ دائن",
+      mine(dA2.body).reduce((s: number, r: any) => s + r[3], 0), sA2.totalRemaining);
+    const [{ patient_code: crCode }] = await q(`SELECT patient_code FROM patients WHERE id = $1`, [Cr]);
+    const fin = await executeTool(resolveAiAccess({ session: S.accA, scopeBranchId: A }), "patient_finance", { patientCode: crCode });
+    same("ج٤. **والمساعدُ يقول رصيدَها** — لا «صفر» وحده",
+      [fin.ok, (fin as any).data?.remaining, (fin as any).data?.creditBalance], [true, 0, 200000]);
   } finally {
     await cleanup();
     await q(`UPDATE audit_log SET user_id = NULL WHERE user_id = ANY($1::int[])`, [[ADMIN, ACC_A, ACC_B]]);

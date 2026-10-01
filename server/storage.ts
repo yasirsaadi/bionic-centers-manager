@@ -254,6 +254,8 @@ export interface IStorage {
     totalRevenue: number;
     totalPaid: number;
     totalRemaining: number;
+    /** أرصدةُ المرضى الدائنة (دفعوا أكثر من كلفتهم) — تحتاج تسوية (البند ١٦، §4.bf). */
+    totalCredits: number;
     totalExpenses: number;
     netProfit: number;
     collectionRate: number;
@@ -4103,6 +4105,8 @@ export class DatabaseStorage implements IStorage {
     totalRevenue: number;
     totalPaid: number;
     totalRemaining: number;
+    /** أرصدةُ المرضى الدائنة (دفعوا أكثر من كلفتهم) — تحتاج تسوية (البند ١٦، §4.bf). */
+    totalCredits: number;
     totalExpenses: number;
     netProfit: number;
     collectionRate: number;
@@ -4403,7 +4407,10 @@ export class DatabaseStorage implements IStorage {
     }
 
     // الديون المستحقة — a stock, not a flow: what all patients still owe now.
-    const totalRemaining = Math.max(0, lifetimeCost - lifetimePaid);
+    //  ══ البند ١٦ (§4.bf) ══ «الديون» = مجموعُ ما على المدينين وحدهم — يطابق قائمةَ المدينين حرفاً؛ وكان صافياً
+    //  (الكلفةُ − المدفوع) فيطرح رصيدَ مَن دفع زيادةً من ديون غيره صامتاً. والزيادةُ رقمُها المستقلّ «أرصدةٌ للمرضى».
+    const totalRemaining = balances.reduce((s, b) => s + Math.max(0, b.cost - b.paid), 0);
+    const totalCredits = balances.reduce((s, b) => s + Math.max(0, b.paid - b.cost), 0);
     // الصافي — the cash view the owner asked for (وارد − مصاريف), matching the
     // daily financial report exactly.
     const netProfit = totalPaid - totalExpenses;
@@ -4416,6 +4423,7 @@ export class DatabaseStorage implements IStorage {
       totalRevenue,
       totalPaid,
       totalRemaining,
+      totalCredits,
       totalExpenses,
       netProfit,
       collectionRate,
