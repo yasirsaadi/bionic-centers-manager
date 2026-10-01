@@ -13,7 +13,9 @@ import { useBranchSession } from "@/components/BranchGate";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch } from "@shared/schema";
 import { REPORT_SERVICES, REPORT_SERVICE_LABELS, reportServicesLabel, type ReportService } from "@shared/daily_report_scope";
-import { financialRows, expenseLines, type DailyFinancial } from "./daily_report_rows";
+import {
+  financialRows, expenseLines, dailyBreakdownTable, DAILY_TOTAL_LABEL, type DailyFinancial, type DailyBreakdown,
+} from "./daily_report_rows";
 
 interface DailyPatientRow {
   visitId: number;
@@ -45,6 +47,8 @@ interface DailyReportResponse {
   visits: DailyPatientRow[];
   /** `null` لمن لا يملك صلاحية المحاسبة — الجدولُ يبقى، والمال يُحجب. */
   financial: DailyFinancial | null;
+  /** «حسب اليوم» لفترةٍ من أكثر من يوم (§4.az) — `null` ليومٍ واحد. */
+  daily: DailyBreakdown | null;
 }
 
 /**
@@ -109,6 +113,43 @@ function DailyFinancialSummary({ f, isAr, services, title }: {
             مصاريف مشتركة لا تخصّ قسماً (غير مطروحة): {money(ex.sharedExpenses)}
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** جدولُ «حسب اليوم» — صفٌّ لكلّ يوم ثمّ «المجموع» (§4.az). أرقامُه كلُّها من الخادم. */
+function DailyBreakdownTable({ d, isAr }: { d: DailyBreakdown; isAr: boolean }) {
+  if ("tooLong" in d) {
+    return (
+      <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800" data-testid="daily-breakdown-too-long">
+        التفصيلُ حسب اليوم يظهر لفترةٍ حتى {d.maxDays} يوماً — اختر فترةً أقصر لتراه.
+      </div>
+    );
+  }
+  const t = dailyBreakdownTable(d, (day) => formatDateIraq(day));
+  const fmt = (c: string | number | null, i: number) =>
+    c === null ? "—" : t.moneyCols.includes(i) ? `${Number(c).toLocaleString("en-US")} ${isAr ? "د.ع" : "IQD"}` : String(c);
+  return (
+    <div className="mb-5 rounded-lg border p-4" data-testid="card-daily-breakdown">
+      <div className="mb-3 text-sm font-semibold">حسب اليوم</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-slate-500">{t.head.map((h) => <th key={h} className="p-2 text-right font-medium whitespace-nowrap">{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {t.rows.map((r) => {
+              const total = r[0] === DAILY_TOTAL_LABEL;
+              return (
+                <tr key={String(r[0])} className={`border-t ${total ? "font-semibold bg-slate-50" : ""}`}
+                  data-testid={total ? "row-daily-total" : "row-daily-day"}>
+                  {r.map((c, i) => <td key={i} className="p-2 whitespace-nowrap">{fmt(c, i)}</td>)}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -304,6 +345,12 @@ export default function DailyPatientReport() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summarySheet), "الملخص المالي");
     }
 
+    //  «حسب اليوم» — صفٌّ لكلّ يوم ثمّ المجموع، بالأرقام نفسِها التي على الشاشة.
+    if (data?.daily && "days" in data.daily) {
+      const t = dailyBreakdownTable(data.daily, (day) => formatDateIraq(day));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.head, ...t.rows.map((r) => r.map((c) => c === null ? "—" : c))]), "حسب اليوم");
+    }
+
     //  ورقةُ «النطاق» أوّلاً: الفترةُ والفرعُ والأقسام — فلا يُقرأ الملفُّ بغير نطاقه.
     const scopeSheet = XLSX.utils.json_to_sheet([
       { البيان: "الفترة", القيمة: periodLabel },
@@ -352,6 +399,16 @@ export default function DailyPatientReport() {
      &nbsp;·&nbsp; ${esc(labels.netCash)}: <b>${esc(fmt(ex.netCash ?? 0))}</b></p>`;
     const sharedHtml = ex?.sharedExpenses
       ? `<p class="totals">مصاريف مشتركة لا تخصّ قسماً (غير مطروحة): <b>${esc(fmt(ex.sharedExpenses))}</b></p>` : "";
+    const dailyHtml = data?.daily && "days" in data.daily ? (() => {
+      const t = dailyBreakdownTable(data.daily, (day) => formatDateIraq(day));
+      const cell = (c: string | number | null, i: number) =>
+        c === null ? "—" : t.moneyCols.includes(i) ? fmt(Number(c)) : String(c);
+      return `<h2 class="sec">حسب اليوم</h2>
+  <table class="summary">
+    <thead><tr>${t.head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${t.rows.map((r) => `<tr class="${r[0] === DAILY_TOTAL_LABEL ? "strong" : ""}">${r.map((c, i) => `<td>${esc(cell(c, i))}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table>`;
+    })() : "";
     const summaryHtml = financial
       ? `<h2 class="sec">${esc(labels.financialTitle)}</h2>
   <table class="summary">
@@ -395,6 +452,7 @@ export default function DailyPatientReport() {
   <h1>${esc(labels.title)} — مراكز د. ياسر الساعدي</h1>
   <h3>${esc(periodLabel)} · ${esc(scopeLabel)} · ${esc(servicesLabel)} · ${esc(labels.rowsCount(rows.length))}</h3>
   ${summaryHtml}
+  ${dailyHtml}
   <table>
     <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
     <tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
@@ -532,6 +590,7 @@ export default function DailyPatientReport() {
               زيارةٍ قد يحمل قبضاً من مريضٍ سابق، وإخفاؤه كان يُضيّع المال
               من التقرير. وأرقامُه كلُّها محسوبةٌ في الخادم. */}
           {financial && <DailyFinancialSummary f={financial} isAr={isAr} services={servicesParam} title={labels.financialTitle} />}
+          {data?.daily && <DailyBreakdownTable d={data.daily} isAr={isAr} />}
           {rows.length === 0 ? (
           <div className="py-12 text-center text-slate-500" data-testid="state-empty">
             {labels.empty}

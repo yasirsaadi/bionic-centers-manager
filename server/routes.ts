@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
-import { parseReportRange, parseReportServices, scopeDepartmentMoney } from "@shared/daily_report_scope";
+import {
+  parseReportRange, parseReportServices, scopeDepartmentMoney,
+  enumerateReportDays, dayMoney, sumDailyRows, MAX_DAILY_BREAKDOWN_DAYS, type DailyRow,
+} from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -5677,7 +5680,8 @@ export async function registerRoutes(
           b.id AS "branchId",
           b.name AS "branchName",
           u.id AS "employeeId",
-          u.display_name AS "employeeName"
+          u.display_name AS "employeeName",
+          to_char(v.visit_date + interval '3 hours', 'YYYY-MM-DD') AS "baghdadDay"
         FROM visits v
         INNER JOIN patients p ON p.id = v.patient_id
         LEFT  JOIN patient_cases pc ON pc.id = v.case_id
@@ -5761,6 +5765,33 @@ export async function registerRoutes(
         ? scopeDepartmentMoney(services, acct.byDepartment, acct.expensesBySection)
         : null;
 
+      //  ══ التفصيلُ اليوميّ (§4.az) ══ لفترةٍ من أكثر من يوم: صفٌّ لكلّ يوم ثمّ مجموعُها. المالُ من
+      //  `getAccountingSummary` ليومٍ واحد بحدود بغداد (للمخوَّل وحده)، وعددُ الزيارات من الجدول أعلاه بنطاقه نفسِه.
+      let daily: { days: DailyRow[]; total: Omit<DailyRow, "day">; withMoney: boolean } | { tooLong: true; maxDays: number } | null = null;
+      if (range.from !== range.to) {
+        const days = enumerateReportDays(range.from, range.to);
+        if (days.length > MAX_DAILY_BREAKDOWN_DAYS) {
+          daily = { tooLong: true, maxDays: MAX_DAILY_BREAKDOWN_DAYS };
+        } else {
+          const visitsByDay = new Map<string, number>();
+          for (const r of (result.rows || []) as any[]) {
+            visitsByDay.set(r.baghdadDay, (visitsByDay.get(r.baghdadDay) ?? 0) + 1);
+          }
+          const out: DailyRow[] = [];
+          //  دفعاتٌ من خمسة أيام — لا تُغرَق الاتصالاتُ بفترةٍ طويلة.
+          for (let i = 0; i < days.length; i += 5) {
+            const chunk = await Promise.all(days.slice(i, i + 5).map(async (day) => {
+              const visits = visitsByDay.get(day) ?? 0;
+              if (!canSeeMoney) return { day, visits };
+              const a = await storage.getAccountingSummary(effectiveBranchId ?? undefined, day, day, { baghdadDays: true });
+              return { day, visits, ...dayMoney(a, services) };
+            }));
+            out.push(...chunk);
+          }
+          daily = { days: out, total: sumDailyRows(out, canSeeMoney), withMoney: canSeeMoney };
+        }
+      }
+
       res.json({
         date: reportDay,
         from: range.from,
@@ -5768,6 +5799,7 @@ export async function registerRoutes(
         services,
         branchId: effectiveBranchId,
         visits: rows,
+        daily,
         //  **المقبوض والمبيعات منفصلان** ولا يُسمَّيان «وارداً» معاً:
         //  `paid` نقدٌ وصل، و`revenue` كلفةٌ قُيِّدت. وخلطُهما هو العطبُ
         //  الذي جاء هذا التقسيم يصلحه.

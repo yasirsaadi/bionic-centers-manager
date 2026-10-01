@@ -82,3 +82,33 @@ export function expenseLines(f: DailyFinancial, services: readonly ReportService
   if (!services || !f.scoped) return { expenses: f.expenses, netCash: f.netCash, sharedExpenses: null };
   return { expenses: f.scoped.expenses, netCash: f.scoped.netCash, sharedExpenses: f.scoped.sharedExpenses };
 }
+
+// ══ جدولُ «حسب اليوم» (§4.az) — مصدرٌ واحد للشاشة وExcel والطباعة ══════════
+export interface DailyBreakdownRow {
+  day: string; visits: number;
+  paid?: number; revenue?: number; expenses?: number | null; net?: number | null;
+}
+export type DailyBreakdown =
+  | { days: DailyBreakdownRow[]; total: Omit<DailyBreakdownRow, "day">; withMoney: boolean }
+  | { tooLong: true; maxDays: number };
+
+export const DAILY_TOTAL_LABEL = "المجموع";
+
+/**
+ *  رؤوسُ الجدول وصفوفُه — خلايا خام (رقمٌ أو `null` = لا ينفصل)، والمُخرِجُ يُنسّقها. وآخرُ صفّ «المجموع».
+ *  وبلا صلاحية المال: اليومُ وعددُ الزيارات وحدهما.
+ */
+export function dailyBreakdownTable(
+  d: Extract<DailyBreakdown, { days: DailyBreakdownRow[] }>,
+  dayLabel: (day: string) => string,
+): { head: string[]; rows: (string | number | null)[][]; moneyCols: number[] } {
+  const money = d.withMoney;
+  const head = ["اليوم", ...(money ? ["الوارد (المقبوض)", "المبيعات (كلفة مسجَّلة)", "المصاريف", "الصافي"] : []), "عدد الزيارات"];
+  const cells = (label: string, r: Omit<DailyBreakdownRow, "day">) =>
+    [label, ...(money ? [r.paid ?? 0, r.revenue ?? 0, r.expenses ?? null, r.net ?? null] : []), r.visits];
+  return {
+    head,
+    rows: [...d.days.map((r) => cells(dayLabel(r.day), r)), cells(DAILY_TOTAL_LABEL, d.total)],
+    moneyCols: money ? [1, 2, 3, 4] : [],
+  };
+}
