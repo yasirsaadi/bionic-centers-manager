@@ -34,6 +34,7 @@ import {
 import { discountAuditNote } from "../discounts/routes";
 import {
   scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+  adminMustChooseBranch, ADMIN_BRANCH_CHOICE_ERROR,
 } from "../patients/branch_access";
 
 type Req = any;
@@ -360,6 +361,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       });
     }
 
+    //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay).
+    if (adminMustChooseBranch({
+      isAdmin: s.isAdmin, sessionBranchId: s.branchId ?? null,
+      patientBranchIds: await patientBranchIdsOf(patient as any),
+    })) {
+      return res.status(409).json({ error: ADMIN_BRANCH_CHOICE_ERROR });
+    }
     try {
       //  **فرعُ الحركة** (§4.ax) — بقاعدة «تخصيص الطرف» أدناه نفسِها، لا فرعُ تسجيل المريض.
       const actingBranchId = resolveActingBranchId({
@@ -649,6 +657,13 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       }
     }
 
+    //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay).
+    if (adminMustChooseBranch({
+      isAdmin: s.isAdmin, sessionBranchId: s.branchId ?? null,
+      patientBranchIds: await patientBranchIdsOf(patient as any),
+    })) {
+      return res.status(409).json({ error: ADMIN_BRANCH_CHOICE_ERROR });
+    }
     try {
       //  **والعمليةُ تُنسَب لفرع الحركة** (ترحيل ٠٨٠) — لا لفرع تسجيل
       //  المريض حين يخصّصها موظّفُ فرعٍ أُتيح له الملفّ.

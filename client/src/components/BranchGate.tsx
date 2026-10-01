@@ -48,6 +48,8 @@ interface BranchSession {
   // dropdown; switching updates branchId / branchName here and on
   // the server session.
   accessibleBranches?: number[];
+  /** فروعُ الحساب كلُّها — للمبدِّل (§4.ay)؛ و`accessibleBranches` الفرعُ النشطُ وحده. */
+  assignedBranches?: number[];
 }
 
 interface BranchGateProps {
@@ -193,6 +195,7 @@ export function BranchGate({ children }: BranchGateProps) {
           shift: data.shift,
           language: effectiveLanguage,
           accessibleBranches: Array.isArray(data.accessibleBranches) ? data.accessibleBranches : undefined,
+          assignedBranches: Array.isArray(data.assignedBranches) ? data.assignedBranches : undefined,
         };
         setBranchSession(branchSession);
         setLanguage(effectiveLanguage as "ar" | "en");

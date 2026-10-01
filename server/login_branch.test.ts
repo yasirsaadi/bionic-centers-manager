@@ -194,9 +194,11 @@ async function main() {
     const pay3 = await call("dq2", "POST", "/api/payments", {
       patientId: p3.id, branchId: BAGHDAD, amount: 50000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
     });
-    same("د١. **مريضُ بغداد غيرُ المتاح لذي قار: دفعتُه في ذي قار** حيث قُبض المال — لا في فرع التسجيل",
-      [pay3.status < 300, (await q(`SELECT branch_id FROM payments WHERE patient_id=$1`, [p3.id])).map((r: any) => r.branch_id)],
-      [true, [DHIQAR]]);
+    //  (§4.ay يحلّ محلّ ما كان هنا: الداخلُ على ذي قار يُعامَل بذي قار وحدها — مريضُ بغداد غيرُ المتاح لذي قار لا يُقبَض له
+    //  من جلسة ذي قار إطلاقاً، بل بعد «تبديل الفرع» إلى بغداد.)
+    same("د١. **مريضُ بغداد غيرُ المتاح لذي قار: لا يُقبَض له من جلسة ذي قار** — يبدّل الموظّفُ الفرعَ أوّلاً",
+      [pay3.status >= 400, (await q(`SELECT branch_id FROM payments WHERE patient_id=$1`, [p3.id])).map((r: any) => r.branch_id)],
+      [true, []]);
 
     //  قسمٌ كلفتُه ٤٠٠,٠٠٠ قيّدت بغدادُ ربعَها وذي قار ثلاثةَ أرباعها — يُسحَب.
     const [p4] = await q<{ id: number }>(
@@ -214,6 +216,57 @@ async function main() {
       [del.status, (await q(`SELECT branch_id, amount FROM cost_entries WHERE patient_id=$1 AND source='case_retired' ORDER BY branch_id`, [p4.id]))
         .map((r: any) => [r.branch_id, r.amount])],
       [200, [[BAGHDAD, -100000], [DHIQAR, -300000]]]);
+
+    //  ══ §4.ay: الفرعُ النشط وحده نطاقُ العمل، والمسؤولُ يختار الفرعَ لمريضٍ بفرعين ══
+    console.log("\n── هـ. الموظّفُ في فرعه المختار وحده · والمسؤولُ يُسأل ──");
+    const [pk] = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, total_cost)
+       VALUES ('مريض كربلاء وحدها','07701234567',$1,'30','علاج',$2,true,100000) RETURNING id`, [MARK, KARBALA]);
+    await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+             VALUES ($1,$2,'physiotherapy',100000,'manual','active')`, [pk.id, KARBALA]);
+    await login("e1", "dhiqar");
+    const seenDq = await call("e1", "GET", `/api/patients/${pk.id}`);
+    const payDq = await call("e1", "POST", "/api/payments", {
+      patientId: pk.id, branchId: KARBALA, amount: 10000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("هـ١. **داخلٌ على ذي قار لا يرى مريضَ كربلاء وحدها ولا يقبض له** — ولو كانت كربلاء من فروع حسابه",
+      [seenDq.status >= 400, payDq.status >= 400, sessions.get("e1")?.branchSession?.accessibleBranches],
+      [true, true, [DHIQAR]]);
+    const sw = await call("e1", "POST", "/api/auth/switch-branch", { branchId: KARBALA });
+    const seenKb = await call("e1", "GET", `/api/patients/${pk.id}`);
+    const payKb = await call("e1", "POST", "/api/payments", {
+      patientId: pk.id, branchId: KARBALA, amount: 10000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("هـ٢. **وبعد «تبديل الفرع» إلى كربلاء يراه ويقبض له في كربلاء**",
+      [sw.status, seenKb.status, payKb.status < 300,
+        (await q(`SELECT branch_id FROM payments WHERE patient_id=$1`, [pk.id])).map((r: any) => r.branch_id)],
+      [200, 200, true, [KARBALA]]);
+    const badSw = await call("e1", "POST", "/api/auth/switch-branch", { branchId: BAGHDAD });
+    same("هـ٣. ولا تبديلَ إلى فرعٍ ليس من فروع حسابه", badSw.status, 403);
+
+    //  مريضٌ بفرعين (كربلاء ومتاحٌ لذي قار): المسؤولُ على «كل الفروع» يُسأل، وعلى فرعٍ من فرعيه يُسجَّل فيه.
+    sessions.set("ad2", { branchSession: { userId: 1, isAdmin: true, role: "admin", branchId: 0, accessibleBranches: [], permissions: {} } });
+    const payAll = await call("ad2", "POST", "/api/payments", {
+      patientId: p.id, branchId: KARBALA, amount: 5000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("هـ٤. **المسؤولُ على «كل الفروع» لمريضٍ بفرعين: يُطلَب اختيارُ الفرع** بلا كتابة",
+      [payAll.status, String(payAll.body?.message ?? "").includes("اختر الفرع"),
+        (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND amount=5000`, [p.id]))[0].n],
+      [409, true, 0]);
+    await call("ad2", "POST", "/api/auth/switch-branch", { branchId: DHIQAR });
+    const payAd = await call("ad2", "POST", "/api/payments", {
+      patientId: p.id, branchId: KARBALA, amount: 5000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("هـ٥. **وبعد اختيار ذي قار تُسجَّل فيها**",
+      [payAd.status < 300, (await q(`SELECT branch_id FROM payments WHERE patient_id=$1 AND amount=5000`, [p.id])).map((r: any) => r.branch_id)],
+      [true, [DHIQAR]]);
+    sessions.set("ad3", { branchSession: { userId: 1, isAdmin: true, role: "admin", branchId: 0, accessibleBranches: [], permissions: {} } });
+    const paySingle = await call("ad3", "POST", "/api/payments", {
+      patientId: pk.id, branchId: KARBALA, amount: 7000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("هـ٦. ومريضٌ بفرعٍ واحد لا سؤالَ فيه — يُسجَّل في فرعه",
+      [paySingle.status < 300, (await q(`SELECT branch_id FROM payments WHERE patient_id=$1 AND amount=7000`, [pk.id])).map((r: any) => r.branch_id)],
+      [true, [KARBALA]]);
   } finally {
     await cleanup();
     await q(`UPDATE system_users SET is_active=false WHERE id = ANY($1::int[])`, [[EMP, EXP, EMP2]]);

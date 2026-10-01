@@ -51,6 +51,7 @@ import { registerPatientBranchAccessRoutes } from "./patients/branch_access_rout
 import {
   scopeReachesPatient, patientBranchIdsOf, scopeReachesPatientBranches,
   resolveActingBranchId, patientVisibleToScopeSql,
+  adminMustChooseBranch, ADMIN_BRANCH_CHOICE_ERROR,
 } from "./patients/branch_access";
 import { softDeletePatient, TrashError } from "./patients/trash_store";
 import { CaseDisposalBlockedError } from "./patient_cases/disposal";
@@ -552,6 +553,17 @@ export async function registerRoutes(
   //  **الفرعُ الذي تُنسَب إليه حركةٌ جديدة** — «الفرع الذي حدثت فيه».
   //  موظّفُ ذي قار يقبض على ملفٍّ مسجَّلٍ في كربلاء ⟶ الدفعةُ في ذي قار،
   //  وحسابُ كربلاء لا يتغيّر بحرف.
+  //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay) — يُسأل قبل أيّ كتابة.
+  const adminBranchChoiceNeeded = async (
+    req: any, patient: { id: number; branchId: number | null },
+  ): Promise<boolean> => {
+    const bs = (req.session as any).branchSession;
+    return adminMustChooseBranch({
+      isAdmin: Boolean(bs?.isAdmin), sessionBranchId: bs?.branchId ?? null,
+      patientBranchIds: await patientBranchIdsOf(patient as any),
+    });
+  };
+
   const actingBranchFor = async (
     req: any, patient: { id: number; branchId: number | null },
   ): Promise<number | null> => {
@@ -745,7 +757,8 @@ export async function registerRoutes(
             branchId: userBranchId,
             // Full set of branches this user can switch between. Used
             // by the branch-switcher in the header.
-            accessibleBranches,
+            accessibleBranches: isAdmin ? accessibleBranches : (userBranchId ? [userBranchId] : []),
+            assignedBranches: accessibleBranches,
             isAdmin: isAdmin,
             userId: systemUser.id,
             role: systemUser.role,
@@ -775,7 +788,8 @@ export async function registerRoutes(
           return res.json({
             branchId: userBranchId,
             branchName: branchName,
-            accessibleBranches,
+            accessibleBranches: isAdmin ? accessibleBranches : (userBranchId ? [userBranchId] : []),
+            assignedBranches: accessibleBranches,
             isAdmin: isAdmin,
             userId: systemUser.id,
             displayName: systemUser.displayName,
@@ -910,12 +924,19 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const { branchId } = req.body ?? {};
     const targetBranchId = Number(branchId);
+    //  **والمسؤولُ العامّ يعود إلى «كل الفروع»** (§4.ay) — فرعُه `0` كما يدخل.
+    if (branchSession?.isAdmin && targetBranchId === 0) {
+      (req.session as any).branchSession.branchId = 0;
+      (req.session as any).branchSession.branchName = "مسؤول النظام";
+      return res.json({ branchId: 0, branchName: "كل الفروع" });
+    }
     if (!Number.isFinite(targetBranchId) || targetBranchId <= 0) {
       return res.status(400).json({ message: "معرّف الفرع غير صالح" });
     }
-    const accessible: number[] = Array.isArray(branchSession?.accessibleBranches)
-      ? branchSession.accessibleBranches
-      : [];
+    //  **التبديلُ بين فروع الحساب كلِّها** (§4.ay) — لا النطاقِ المُضيَّق على الفرع النشط.
+    const accessible: number[] = Array.isArray(branchSession?.assignedBranches)
+      ? branchSession.assignedBranches
+      : Array.isArray(branchSession?.accessibleBranches) ? branchSession.accessibleBranches : [];
     if (!branchSession?.isAdmin && !accessible.includes(targetBranchId)) {
       return res.status(403).json({ message: "هذا الفرع ليس ضمن صلاحيّاتك" });
     }
@@ -924,6 +945,10 @@ export async function registerRoutes(
 
     (req.session as any).branchSession.branchId = targetBranchId;
     (req.session as any).branchSession.branchName = branch.name;
+    if (!branchSession?.isAdmin) {
+      (req.session as any).branchSession.assignedBranches = accessible;
+      (req.session as any).branchSession.accessibleBranches = [targetBranchId];
+    }
     res.json({ branchId: targetBranchId, branchName: branch.name });
   });
 
@@ -3520,6 +3545,9 @@ export async function registerRoutes(
         if (!(await reachesPatient(req, patient))) {
           throw new NewServiceError("غير مصرح لك بهذا الفرع", 403);
         }
+        if (await adminBranchChoiceNeeded(req, patient)) {
+          throw new NewServiceError(ADMIN_BRANCH_CHOICE_ERROR, 409);
+        }
 
         if (NEW_SERVICE_REDIRECTS[serviceType]) {
           throw new NewServiceError(NEW_SERVICE_REDIRECTS[serviceType], 400);
@@ -3753,6 +3781,9 @@ export async function registerRoutes(
       const allowedPp = accessibleBranchesFor(req);
       if (!(await reachesPatient(req, patient))) {
         return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+      }
+      if (await adminBranchChoiceNeeded(req, patient)) {
+        return res.status(409).json({ message: ADMIN_BRANCH_CHOICE_ERROR });
       }
 
       const rawEntries = Array.isArray(req.body?.entries) ? req.body.entries : [];
@@ -4011,6 +4042,9 @@ export async function registerRoutes(
       //  كان التدقيقُ وحده يكتب فرعَ التسجيل، فيُنسَب فعلُ بغداد إلى ذي قار في
       //  تقارير التدقيق). و`?? patient.branchId` احتياطُ `addPatientCaseType`
       //  نفسُه حرفياً، فلا يختلف السطرُ عن الصفّ الذي يصفه.
+      if (await adminBranchChoiceNeeded(req, patient)) {
+        return res.status(409).json({ message: ADMIN_BRANCH_CHOICE_ERROR });
+      }
       const actingBranchId = await actingBranchFor(req, patient);
       const auditBranchId = actingBranchId ?? patient.branchId;
       const { patient: updated, workOrderId } = await storage.addPatientCaseType({
@@ -4153,6 +4187,9 @@ export async function registerRoutes(
       //  أيّ كتابة.
       if (!(await reachesPatient(req, live))) {
         return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+      }
+      if (await adminBranchChoiceNeeded(req, live)) {
+        return res.status(409).json({ message: ADMIN_BRANCH_CHOICE_ERROR });
       }
       //  ══ **والزيارةُ تُنسَب لفرع الحركة** (ترحيل ٠٨٠) ═══════════════════
       //  زيارةُ ذي قار على ملفٍّ مسجَّلٍ في كربلاء تُسجَّل في ذي قار — ولا
@@ -4493,6 +4530,9 @@ export async function registerRoutes(
     const allowedBranchesForPayment = accessibleBranchesFor(req);
     if (!(await reachesPatient(req, livePatient))) {
       return res.status(403).json({ message: "غير مصرح لك بهذا الفرع" });
+    }
+    if (await adminBranchChoiceNeeded(req, livePatient)) {
+      return res.status(409).json({ message: ADMIN_BRANCH_CHOICE_ERROR });
     }
     //  والصفُّ يُكتب **بفرع الحركة** — لا بما أرسله العميل، ولا بفرع
     //  التسجيل حين يكون الموظّفُ في فرعٍ آخر أُتيح له الملفّ (ترحيل ٠٨٠).

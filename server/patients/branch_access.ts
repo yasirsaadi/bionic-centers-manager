@@ -223,6 +223,21 @@ export function resolveActingBranchId(params: {
   return home;
 }
 
+/**
+ * **المسؤولُ العامّ يختار الفرع** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ay) — لمريضٍ له أكثرُ من فرع، والفرعُ المختار من
+ * أعلى الشاشة ليس منها، لا تُنسَب العمليةُ تخميناً: تُردّ ويُطلَب الاختيار. ولمريضٍ بفرعٍ واحد لا سؤال.
+ */
+export const ADMIN_BRANCH_CHOICE_ERROR =
+  "لهذا المريض أكثر من فرع — اختر الفرع من أعلى الشاشة (تبديل الفرع) ثمّ احفظ";
+
+export function adminMustChooseBranch(params: {
+  isAdmin: boolean; sessionBranchId: number | null | undefined; patientBranchIds: number[];
+}): boolean {
+  if (!params.isAdmin || params.patientBranchIds.length < 2) return false;
+  const s = Number(params.sessionBranchId ?? 0);
+  return !(s > 0 && params.patientBranchIds.includes(s));
+}
+
 // ── الكتابة ───────────────────────────────────────────────────────────────
 
 export class BranchAccessError extends Error {

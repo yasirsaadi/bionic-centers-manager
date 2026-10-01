@@ -195,8 +195,11 @@ async function main() {
     eq(exSupNo.status, 200, "أ٣. **وباب المعاينة يصله** — بنطاق قائمته نفسِه");
     eq([exSupNo.body?.registration?.supportType, exSupNo.body?.registration?.injurySide],
       ["مسند ظهر", "يمين"], "أ٤. **ويحمل نوعَ المسند وجهتَه كما سجّلهما الاستقبال**");
-    const exProMulti = await http("GET", `/api/medical/patients/${pro.id}/exams`, S.multi);
-    eq(exProMulti.status, 200, "أ٥. وطبيبُ الفرعين يصله كذلك");
+    //  §4.ay: طبيبُ الفرعين يعمل في فرعه النشط — يصله وهو على ذي قار، لا وهو على بغداد.
+    eq((await http("GET", `/api/medical/patients/${pro.id}/exams`, S.multi)).status, 403,
+      "أ٥أ. طبيبُ الفرعين وجلستُه على بغداد لا يصله — يبدّل الفرع أوّلاً");
+    const exProMulti = await http("GET", `/api/medical/patients/${pro.id}/exams`, { ...S.multi, branchId: DHIQAR });
+    eq(exProMulti.status, 200, "أ٥. وبعد التبديل إلى ذي قار يصله");
     eq(exProMulti.body?.registration?.amputationSite, "احادي - طرف سفلي - يمين - جوبارت",
       "أ٦. **ويحمل نوعَ البتر بحرفه** — فتفتح عليه النافذة");
     //  **حقولٌ سريريةٌ وحدها — بلا مال.**

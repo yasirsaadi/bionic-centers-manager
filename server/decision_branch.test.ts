@@ -302,7 +302,9 @@ async function main() {
       "ج٢. **بغدادُ تفتح الملفَّ ولا ترى قرارَ ذي قار المنتظر**");
     eq((await cardFor(pc, S.dq)).ids, [fd.id], "ج٣. وذي قار تراه");
     eq((await cardFor(pc, S.admin)).ids, [fd.id], "ج٤. والمسؤولُ يراه");
-    eq((await cardFor(pc, S.mgrBoth)).ids, [fd.id], "ج٥. ومديرٌ نطاقُه يشمل ذي قار يراه");
+    //  §4.ay: نطاقُ العمل الفرعُ النشط وحده — يراه حين يبدّل إلى ذي قار لا قبلها.
+    eq([(await cardFor(pc, S.mgrBoth)).ids, (await cardFor(pc, { ...S.mgrBoth, branchId: DHIQAR })).ids],
+      [[], [fd.id]], "ج٥. ومديرُ الفرعين يراه وهو على ذي قار — لا وهو على بغداد");
     eq((await cardFor(pc, S.kr)).status, 403, "ج٦. وفرعٌ لا يصل الملفَّ يُردّ كما كان");
     //  **وحين يُحسَم يصير تاريخاً يقرؤه كلُّ فرعٍ يصل الملفّ** — كما كان.
     const closed = await http("POST", `/api/followups/${fd.id}/close`, S.dq,

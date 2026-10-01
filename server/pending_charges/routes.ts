@@ -74,7 +74,7 @@ function getSession(req: Req) {
 
 /** الفروع التي يصلها المستخدم. `null` = مسؤول، أي كلّ الفروع. */
 import {
-  scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+  scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId, adminMustChooseBranch, ADMIN_BRANCH_CHOICE_ERROR,
 } from "../patients/branch_access";
 
 function branchScope(req: Req): number[] | null {
@@ -171,12 +171,19 @@ async function maintenanceContext(req: Req): Promise<
   }
   //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
   //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+  const patientBranchIds = await patientBranchIdsOf(
+    { id: patientId, branchId: patient.branch_id ?? null });
+  //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay).
+  if (adminMustChooseBranch({
+    isAdmin: branchScope(req) === null, sessionBranchId: getSession(req).branchId ?? null, patientBranchIds,
+  })) {
+    return { ok: false, status: 409, error: ADMIN_BRANCH_CHOICE_ERROR };
+  }
   const opBranchId = resolveActingBranchId({
     scope: branchScope(req),
     sessionBranchId: getSession(req).branchId ?? null,
     homeBranchId: patient.branch_id ?? null,
-    patientBranchIds: await patientBranchIdsOf(
-      { id: patientId, branchId: patient.branch_id ?? null }),
+    patientBranchIds,
   });
 
   //  **أيُّ جهازٍ يُصان؟** — قاعدةُ الصيانة القائمة بحرفها: صاحبُ نوعٍ
@@ -308,12 +315,19 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       }
       //  **وفرعُ الحركة**: فرعُ الموظّف إن كان يصل هذا الملفّ، وإلّا فرعُ
       //  التسجيل — فعمليةُ ذي قار تُفتَح وتُقيَّد في ذي قار.
+      const patientBranchIds = await patientBranchIdsOf(
+        { id: patientId, branchId: patient.branch_id ?? null });
+      //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay).
+      if (adminMustChooseBranch({
+        isAdmin: branchScope(req) === null, sessionBranchId: getSession(req).branchId ?? null, patientBranchIds,
+      })) {
+        return res.status(409).json({ error: ADMIN_BRANCH_CHOICE_ERROR });
+      }
       const opBranchId = resolveActingBranchId({
         scope: branchScope(req),
         sessionBranchId: getSession(req).branchId ?? null,
         homeBranchId: patient.branch_id ?? null,
-        patientBranchIds: await patientBranchIdsOf(
-          { id: patientId, branchId: patient.branch_id ?? null }),
+        patientBranchIds,
       });
 
       //  ══ **ثلاثةُ أوضاع — حلقةٌ جديدة، استئنافُ حلقةٍ موروثة، أو إلحاقٌ

@@ -136,7 +136,8 @@ async function readySale(label: string, opts: { notes?: string; branchId?: numbe
     branchId === 1 ? S.recv : S.admin,
     { serviceType: "prosthetic", requestedItem: "full_device", servicePath: "exam" });
   if (ep.status !== 201) throw new Error(`startEpisode failed: ${JSON.stringify(ep.body)}`);
-  const ex = await signExam(pid, { notes: opts.notes });
+  //  §4.ay: الطبيبُ يعمل في فرعٍ واحدٍ نشط — فيوقّع وهو على فرع المريض.
+  const ex = await signExam(pid, { notes: opts.notes, session: { ...S.doc, branchId } });
   if (ex.status >= 300) throw new Error(`signExam failed: ${JSON.stringify(ex.body)}`);
   return { pid, fid: await followupOf(pid) };
 }

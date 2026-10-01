@@ -52,9 +52,14 @@ export function applyFreshUser(
   bs.isAdmin = isAdmin;
   bs.role = fresh.role;
   bs.displayName = fresh.displayName ?? bs.displayName;
-  bs.accessibleBranches = accessible;
   //  **لا يُكتب الفرعُ إلّا إن تغيّر** — `null` في جلسةٍ لا يصير `0` بلا سبب (سطرُ تدقيقٍ بفرعٍ `0` يكسر مفتاحَه الأجنبيّ).
   if (branchId !== before) bs.branchId = branchId;
+  //  ══ **الفرعُ النشط وحده نطاقُ العمل** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ay) ══
+  //  «حيدر له بغداد وكربلاء؛ دخل كربلاء ⟵ يُعامَل بصلاحيات كربلاء وحدها، وكلُّ ما يفعله في كربلاء؛ بدّل إلى بغداد ⟵
+  //  بغداد حصراً». `assignedBranches` فروعُ الحساب كلُّها (للمبدِّل وحده)، و`accessibleBranches` — التي يقرؤها كلُّ
+  //  حارسِ نطاقٍ في الخادم — **الفرعُ النشط وحده**. والمسؤولُ العامّ بلا نطاقٍ أصلاً (`accessibleBranchesFor` ⟵ `null`).
+  bs.assignedBranches = accessible;
+  bs.accessibleBranches = isAdmin ? accessible : (branchId > 0 ? [branchId] : []);
   //  **ومسؤولٌ بقي مسؤولاً تبقى صلاحياتُه كما بُنيت عند دخوله** — كما كانت قبل هذا البند (كانت جلستُه كلُّها
   //  مستثناة)، فلا أثرَ جانبيّاً على المسؤول. والتخفيضُ وحده يُعيد بناءها — وهو ما جاء البندُ له.
   if (!(isAdmin && wasAdmin)) bs.permissions = permissions;

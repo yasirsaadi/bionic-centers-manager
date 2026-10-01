@@ -603,8 +603,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         // why a save he had every right to make was refused.
         const names = await store.branchNames();
         const mine = branchScope(req)?.map((b) => names[b] ?? `#${b}`).join("، ") || "لا شيء";
+        //  **فرعُ المريض من فروع حسابك؟ بدّل إليه** (§4.ay) — تعمل في الفرع المختار وحده، فلا يُقال «راجع المسؤول»
+        //  لمن يملك الفرعَ أصلاً.
+        const assigned: number[] = Array.isArray((req.session as any)?.branchSession?.assignedBranches)
+          ? (req.session as any).branchSession.assignedBranches : [];
+        const patientBranch = names[patient.branchId ?? -1] ?? "غير معروف";
         return res.status(403).json({
-          error: `المريض في فرع ${names[patient.branchId ?? -1] ?? "غير معروف"} وحسابك على فرع ${mine} — راجع المسؤول لإضافة الفرع لحسابك`,
+          error: patient.branchId !== null && assigned.includes(patient.branchId)
+            ? `المريض في فرع ${patientBranch} وأنت تعمل الآن في ${mine} — بدّل الفرع إلى ${patientBranch} من «تبديل الفرع» ثمّ احفظ`
+            : `المريض في فرع ${patientBranch} وحسابك على فرع ${mine} — راجع المسؤول لإضافة الفرع لحسابك`,
         });
       }
 
