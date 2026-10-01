@@ -515,7 +515,8 @@ function departmentMoney(
   };
 }
 
-async function summaryFor(branchId: number | undefined, start: string, end: string): Promise<FinancialPeriodFigures> {
+/** مُصدَّرةٌ للقطة الوضع الماليّ في `chat.ts` (§4.ba) — الدالّةُ نفسُها لا نسخةٌ ثانية. */
+export async function summaryFor(branchId: number | undefined, start: string, end: string): Promise<FinancialPeriodFigures> {
   const s = await storage.getAccountingSummary(branchId, start, end, { baghdadDays: true });
   const dep = s.byDepartment;
   const salesValue = s.totalRevenue;

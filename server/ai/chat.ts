@@ -11,8 +11,8 @@
 //
 // Original architecture note (still true of the financial snapshot):
 // We pre-compute a compact JSON summary of the branch's data
-// (last-30-days revenue/expenses, outstanding invoices, top expense
-// categories, recent anomalies) and embed it in the system prompt.
+// (today / month-to-date / 7 / 30-day money from the accounting source,
+// outstanding invoices, top expense categories) and embed it in the system prompt.
 // This avoids tool-use round-trips, keeps latency low, and lets us
 // cache the system+snapshot block aggressively.
 //
@@ -49,6 +49,7 @@ import {
   explicitTrainingNavigation, isTrainingProgressOnlyQuery, type ExplicitTrainingNavigation,
 } from "@shared/ai_training_intent";
 import { toolProvenanceLabels } from "./semantics";
+import { summaryFor, todayInBaghdad } from "./tools/reports";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -61,69 +62,91 @@ export interface ChatScope {
   branchName?: string | null;
 }
 
+/**
+ *  مالُ فترةٍ في اللقطة — **من `summaryFor` نفسِها التي تُجيب بها أداةُ `financial_summary`**، أي
+ *  `storage.getAccountingSummary` بحدود يوم بغداد: الرقمُ الذي يقرؤه التقريرُ اليومي وصفحةُ المحاسبة.
+ */
+interface SnapshotPeriod {
+  start: string;
+  end: string;
+  /** الإيرادُ الفعليّ — النقدُ المقبوض في الفترة («الوارد»). */
+  revenue: number;
+  /** قيمةُ المبيعات — قيودُ الكلفة في الفترة. **ليست نقداً.** */
+  salesValue: number;
+  expenses: number;
+  /** الإيراد − المصاريف. */
+  net: number;
+}
+
 interface FinancialSnapshot {
   scope: { branchId: number | null; branchName: string | null };
   generatedAt: string;
-  ranges: {
-    last30Days: { start: string; end: string };
-    last7Days: { start: string; end: string };
-    today: string;
-  };
-  invoices30d: {
-    totalInvoices: number;
-    totalAmount: number;
-    paidAmount: number;
-    pendingAmount: number;
+  /** أيامُ بغداد، والطرفان شاملان. */
+  periods: {
+    today: SnapshotPeriod;
+    /** من أوّل الشهر التقويميّ حتى اليوم — «هذا الشهر». */
+    monthToDate: SnapshotPeriod;
+    /** آخر ٧ أيام بما فيها اليوم. */
+    last7Days: SnapshotPeriod;
+    /** آخر ٣٠ يوماً بما فيها اليوم. */
+    last30Days: SnapshotPeriod;
   };
   expenses30d: {
     total: number;
     byCategory: { category: string; total: number }[];
-  };
-  payments7d: {
-    total: number;
-    count: number;
   };
   outstandingInvoices: {
     count: number;
     totalDue: number;
     sample: { invoiceNumber: string; patientName: string | null; branchName: string | null; total: number; paid: number; due: number; ageDays: number }[];
   };
-  todayCash: {
-    revenue: number;
-    expenses: number;
-    net: number;
-    closing: number;
-  };
 }
 
-const isoDate = (d: Date) => d.toISOString().split("T")[0];
+/** يومُ بغداد قبل `n` يوماً من `day` (YYYY-MM-DD). */
+function baghdadDayMinus(day: string, n: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().split("T")[0];
+}
 
+/**
+ *  ══ اللقطةُ على مصدر الحقيقة المحاسبي (§4.ba، واقعةُ مدير فرع الناصرية ٢٠٢٦-٠٩-٢٣) ══
+ *  كانت تُبنى من توابعَ قديمة بحدود يوم UTC: «آخر ٧ أيام» تنتهي عند ٠٣:٠٠ بغداد من اليوم فيسقط قبضُه،
+ *  و«هذا الشهر» كان آخر ٣٠ يوماً من **الفواتير** لا من المقبوض — فسُئل المساعدُ «كم بلغت الإيرادات هذا
+ *  الشهر؟» فأجاب برقم سبعة أيامٍ مقصوص وسمّاه ثلاثين. والآن كلُّ رقمِ فترةٍ هنا هو رقمُ `financial_summary`
+ *  والتقرير اليومي وصفحة المحاسبة بالدينار.
+ */
 async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
-  const today = new Date();
-  const todayStr = isoDate(today);
-  const last7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const last30 = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  const today = todayInBaghdad();
+  const monthStart = `${today.slice(0, 8)}01`;
+  const last7Start = baghdadDayMinus(today, 6);
+  const last30Start = baghdadDayMinus(today, 29);
   const branchId = scope.branchId ?? undefined;
 
+  const period = async (start: string, end: string): Promise<SnapshotPeriod> => {
+    const f = await summaryFor(branchId, start, end);
+    return { start, end, revenue: f.revenue, salesValue: f.salesValue, expenses: f.expenses, net: f.net };
+  };
+
   const [
-    invoiceStats,
+    pToday, pMonth, p7, p30,
     expensesByCat,
-    payments7d,
     outstandingInvoices,
-    cashToday,
+    partialInvoices,
     patients,
     allBranches,
   ] = await Promise.all([
-    storage.getInvoiceStats(branchId, isoDate(last30), todayStr),
-    storage.getExpensesByCategory(branchId, isoDate(last30), todayStr),
-    storage.getAllPayments(branchId, isoDate(last7), todayStr),
+    period(today, today),
+    period(monthStart, today),
+    period(last7Start, today),
+    period(last30Start, today),
+    storage.getExpensesByCategory(branchId, last30Start, today),
     storage.getInvoices(branchId, "pending"),
-    storage.getDailyCashSummary(todayStr, branchId),
+    storage.getInvoices(branchId, "partial"),
     storage.getPatients(branchId),
     storage.getBranches(),
   ]);
 
-  const partialInvoices = await storage.getInvoices(branchId, "partial");
   const allOutstanding = [...outstandingInvoices, ...partialInvoices];
   const patientById = new Map(patients.map((p) => [p.id, p]));
   const branchById = new Map(allBranches.map((b) => [b.id, b]));
@@ -136,7 +159,7 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
   const sortedOutstanding = allOutstanding
     .map((inv) => {
       const ageDays = Math.floor(
-        (today.getTime() - new Date(inv.invoiceDate).getTime()) / (24 * 60 * 60 * 1000)
+        (now.getTime() - new Date(inv.invoiceDate).getTime()) / (24 * 60 * 60 * 1000)
       );
       return {
         invoiceNumber: inv.invoiceNumber,
@@ -153,41 +176,23 @@ async function buildSnapshot(scope: ChatScope): Promise<FinancialSnapshot> {
     .sort((a, b) => b.ageDays - a.ageDays);
 
   const totalDue = sortedOutstanding.reduce((s, x) => s + x.due, 0);
-
   const expensesTotal30 = expensesByCat.reduce((s, x) => s + x.total, 0);
-
-  const payments7dTotal = payments7d.reduce((s, p) => s + p.amount, 0);
 
   return {
     scope: {
       branchId: scope.branchId,
       branchName: scope.branchName ?? null,
     },
-    generatedAt: today.toISOString(),
-    ranges: {
-      last30Days: { start: isoDate(last30), end: todayStr },
-      last7Days: { start: isoDate(last7), end: todayStr },
-      today: todayStr,
-    },
-    invoices30d: invoiceStats,
+    generatedAt: now.toISOString(),
+    periods: { today: pToday, monthToDate: pMonth, last7Days: p7, last30Days: p30 },
     expenses30d: {
       total: expensesTotal30,
       byCategory: expensesByCat,
-    },
-    payments7d: {
-      total: payments7dTotal,
-      count: payments7d.length,
     },
     outstandingInvoices: {
       count: sortedOutstanding.length,
       totalDue,
       sample: sortedOutstanding.slice(0, 8).map(({ invoiceDate: _i, ...rest }) => rest),
-    },
-    todayCash: {
-      revenue: cashToday.todayRevenue,
-      expenses: cashToday.todayExpenses,
-      net: cashToday.todayNet,
-      closing: cashToday.todayClosing,
     },
   };
 }
@@ -262,8 +267,10 @@ const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لنظام إدار
 - إن كانت البيانات لا تحتوي الجواب، قل ذلك صراحةً ولا تخمّن.
 - لا تخترع أسماء مرضى أو أرقام فواتير.
 - اجعل الإجابات قصيرة: 2-4 جمل عادةً، وقائمة نقاط فقط عند طلبها صراحةً.
-- إن سُئلت عن "هذا الشهر" أو "آخر شهر"، استخدم نطاق last30Days من الـ snapshot.
-- إن سُئلت عن "هذا اليوم"، استخدم todayCash من الـ snapshot.
+- أرقامُ الفترات في الـ snapshot (periods) محسوبةٌ في الخادم بأيام بغداد — انقلها كما هي، واذكر في الجواب الفترةَ بتاريخَي بدايتها ونهايتها كما وصلا:
+  · "اليوم" ⟶ periods.today · "هذا الشهر" ⟶ periods.monthToDate (من أوّل الشهر التقويميّ حتى اليوم — لا آخرَ ثلاثين يوماً) · "آخر أسبوع"/"آخر 7 أيام" ⟶ periods.last7Days · "آخر 30 يوماً" ⟶ periods.last30Days.
+  · **الإيراد = revenue (النقدُ المقبوض فعلاً)**، وsalesValue قيمةُ المبيعات وليست إيراداً.
+  · وأيُّ فترةٍ غيرُ هذه الأربع (شهرٌ سابق، تاريخان محدّدان، مقارنة، قسمٌ بعينه) ⟶ أداة financial_summary — **ولا تُقرِّب فترةً بفترةٍ أخرى من الـ snapshot أبداً**.
 - إن طُلب اسم مريض، اعرضه فقط إن وُجد في القائمة المعطاة.
 - إن سُئلت "في أيّ فرع" عن مريض أو فاتورة، انظر إلى الحقل branchName داخل سجلّ الفاتورة في outstandingInvoices.sample. كلّ سجلّ يحوي اسم الفرع صراحةً.
 - لا تذكر أسماء حقول الـ snapshot التقنية في إجاباتك للمستخدم.
