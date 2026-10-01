@@ -171,6 +171,7 @@
     "test:daily-report-rows": "tsx client/src/pages/daily_report_rows.test.ts",
     "test:ai-snapshot-accuracy": "tsx server/ai_snapshot_accuracy.test.ts",
     "test:branch-debt": "tsx server/branch_debt.test.ts",
+    "test:day-boundary": "tsx server/day_boundary.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
     "test:trash-badge": "tsx server/patient_trash_badge.test.ts",
