@@ -736,9 +736,13 @@ function AdminStageDialog({ open, onOpenChange, order, stages, onDone }: any) {
   const [toStage, setToStage] = useState("");
   const [reason, setReason] = useState("");
   const [finalResult, setFinalResult] = useState("");
-  useEffect(() => { setToStage(""); setReason(""); setFinalResult(""); }, [open]);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  useEffect(() => { setToStage(""); setReason(""); setFinalResult(""); setDeliveryDate(""); }, [open]);
   const m = useAction(`/api/manufacturing/orders/${order.id}/stage`, "PATCH", () => { onOpenChange(false); onDone(); }, onDone);
   const needsResult = toStage === DELIVERED_STAGE;
+  //  البند ٢٢: التصحيحُ يطلب الموعدَ بقاعدة «الانتقال للمرحلة التالية» نفسِها — لا يقفز فوقها.
+  const needsDelivery = !!toStage && !order.expectedDeliveryDate
+    && isAtOrBeyondMoldStage(order.serviceType, toStage, order.purpose);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md">
@@ -761,12 +765,23 @@ function AdminStageDialog({ open, onOpenChange, order, stages, onDone }: any) {
               <SelectContent>{FINAL_RESULTS.map((r) => <SelectItem key={r} value={r}>{FINAL_RESULT_LABELS[r]}</SelectItem>)}</SelectContent>
             </Select>
           )}
+          {needsDelivery && (
+            <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
+              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+              <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-admin-stage-delivery-date" />
+              <p className="text-xs text-muted-foreground mt-1">الأمر بلا موعد تسليم — وهو إلزامي من مرحلة القالب فما بعدها.</p>
+            </div>
+          )}
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="سبب التعديل الإداري (إلزامي)" />
+          <p className="text-xs text-muted-foreground" data-testid="hint-admin-stage-effects">
+            لا تُرسَل للمريض رسالةٌ عن هذا التصحيح، وإن كان الأمر متوقّفاً عاد إلى العمل (ويبقى سببُ التوقّف المكتوب).
+          </p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button disabled={!toStage || !reason.trim() || (needsResult && !finalResult) || m.isPending}
-            onClick={() => m.mutate({ toStage, reason: reason.trim(), finalResult: finalResult || undefined })}>
+          <Button disabled={!toStage || !reason.trim() || (needsResult && !finalResult) || (needsDelivery && !deliveryDate) || m.isPending}
+            data-testid="button-confirm-admin-stage"
+            onClick={() => m.mutate({ toStage, reason: reason.trim(), finalResult: finalResult || undefined, expectedDeliveryDate: needsDelivery ? deliveryDate : undefined })}>
             تأكيد
           </Button>
         </DialogFooter>
