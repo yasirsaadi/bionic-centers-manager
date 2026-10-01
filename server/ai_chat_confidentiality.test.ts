@@ -62,6 +62,8 @@ const S = {
 const FINANCIAL_METHODS = [
   "getDailyCashSummary", "getInvoiceStats", "getExpensesByCategory",
   "getAllPayments", "getInvoices", "getPatients",
+  //  §4.ba: أرقامُ الفترات في اللقطة من مصدر الحقيقة المحاسبي — والفرعُ وسيطُه الأوّل.
+  "getAccountingSummary",
 ] as const;
 
 const calls: { method: string; args: any[] }[] = [];
@@ -119,8 +121,8 @@ function capturingCompleter() {
 }
 
 const MONEY_MARKERS = [
-  "snapshot", "invoices30d", "expenses30d", "payments7d",
-  "outstandingInvoices", "todayCash", "totalDue", "patientName",
+  "snapshot", "periods", "monthToDate", "last30Days", "expenses30d",
+  "outstandingInvoices", "totalDue", "patientName",
 ];
 
 async function cleanup() {
@@ -260,14 +262,14 @@ async function main() {
     const finSystem = finCap.sent[0]?.system ?? "";
     const snapJson = finSystem.slice(finSystem.indexOf("{"), finSystem.lastIndexOf("}") + 1);
     const snap = JSON.parse(snapJson);
-    same("   **وبنيةُ اللقطة كما كانت حرفياً**", Object.keys(snap).sort(),
-      ["expenses30d", "generatedAt", "invoices30d", "outstandingInvoices",
-        "payments7d", "ranges", "scope", "todayCash"].sort());
+    //  §4.ba: أرقامُ الفترات صارت من مصدر الحقيقة المحاسبي (periods) بدل التوابع القديمة بحدود UTC.
+    same("   **وبنيةُ اللقطة**", Object.keys(snap).sort(),
+      ["expenses30d", "generatedAt", "outstandingInvoices", "periods", "scope"].sort());
     same("   ونطاقُها فرعُ المحاسب", [snap.scope.branchId, snap.scope.branchName], [1, "بغداد"]);
-    same("   وحقولُ اليوم والذمم موجودة",
-      [typeof snap.todayCash.revenue, typeof snap.outstandingInvoices.totalDue,
-        Array.isArray(snap.outstandingInvoices.sample), typeof snap.invoices30d.totalAmount],
-      ["number", "number", true, "number"]);
+    same("   وحقولُ الفترات والذمم موجودة",
+      [Object.keys(snap.periods).sort(), typeof snap.periods.today.revenue, typeof snap.periods.monthToDate.salesValue,
+        typeof snap.outstandingInvoices.totalDue, Array.isArray(snap.outstandingInvoices.sample)],
+      [["last30Days", "last7Days", "monthToDate", "today"], "number", "number", "number", true]);
 
     //  والمحاسب بلا فرعٍ محسوم: صلاحيته قائمة، لكن لا نطاق ⟶ يُخفَّض.
     reset();

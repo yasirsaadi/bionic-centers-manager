@@ -169,6 +169,7 @@
     "test:registry-export-services": "tsx client/src/pages/registry_export_services.test.ts",
     "test:daily-report-scope": "tsx server/daily_report_scope.test.ts",
     "test:daily-report-rows": "tsx client/src/pages/daily_report_rows.test.ts",
+    "test:ai-snapshot-accuracy": "tsx server/ai_snapshot_accuracy.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
     "test:trash-badge": "tsx server/patient_trash_badge.test.ts",
