@@ -1415,6 +1415,18 @@ export async function servicePathEraStartedAt(): Promise<Date | null> {
 }
 
 /**
+ * **معاينةُ العلاج الطبيعي إلزاميةٌ للجديد — والدفعُ لا ينتظرها** (البند ١٧، قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bi).
+ * «المعاينة إجبارية مثل الأطراف والمساند، لكن الدفع لا يشترط إتمام المعاينة». فمريضُ علاجٍ طبيعيّ جديد ينتظر
+ * الطبيبَ في الشاشات الثلاث (سجلّ المرضى · ملفّ المريض · «معايناتي») حتى تُكتب معاينتُه، ولا يُمنَع شيءٌ قبلها.
+ * **وكلُّ قسمِ علاجٍ طبيعيّ أُنشئ قبل بداية يوم ٢٠٢٦-١٠-٠٢ ببغداد مُعفى** («يُعفى السجلُّ كلُّه ونبدأ غداً يوماً جديداً»):
+ * يبقى في القائمة الاختيارية (يجوز أن تُكتب له) لا في الطابور.
+ */
+export const PHYSIO_EXAM_MANDATORY_FROM = new Date("2026-10-01T21:00:00.000Z");
+function physioExamExemptSql() {
+  return sql`(pc.case_type = 'physiotherapy' AND pc.created_at < ${PHYSIO_EXAM_MANDATORY_FROM})`;
+}
+
+/**
  * **خيطٌ بلا حلقةٍ إطلاقاً — أيُقرأ «ينتظر معاينة»؟**
  *
  * `TRUE` فقط لمن تبقى القاعدةُ القديمة سارية عليه:
@@ -1548,13 +1560,11 @@ export async function getPendingExams(
   const isLegacy = activated
     ? sql`(p.created_at < ${activated} OR COALESCE(p.patient_classification, '') = 'past')`
     : sql`COALESCE(p.patient_classification, '') = 'past'`;
-  // PHYSIOTHERAPY IS NEVER MANDATORY (owner, 2026-08-01, all branches):
-  // reception registers, prices and runs the whole course on its own. A
-  // doctor's exam is welcome — «فزايد خير» — so the case still shows up as an
-  // OPTIONAL one (the «كتابة معاينة» button stays), it just never wears the
-  // amber "waiting" badge or blocks anybody. Only the device specialties keep
-  // the obligation, because there تخصيص genuinely cannot proceed without it.
-  const isExempt = sql`(${isLegacy} OR pc.case_type = 'physiotherapy')`;
+  // PHYSIOTHERAPY (owner, 2026-08-01): reception registers, prices and runs the
+  // whole course on its own — nothing is ever BLOCKED waiting for the exam.
+  // Until 2026-10-02 the exam was optional too (no amber badge); see below.
+  //  **ومن ٢٠٢٦-١٠-٠٢ صار إلزامياً للجديد** (البند ١٧ أعلاه) — والقديمُ وحده مُعفى.
+  const isExempt = sql`(${isLegacy} OR ${physioExamExemptSql()})`;
 
   // ══ A NEW DEVICE IS ALWAYS WAITING ═══════════════════════════════════
   // An open episode still `awaiting_exam` means the patient asked for a
@@ -1942,6 +1952,8 @@ export async function getWorklist(
           -- أجهزةٍ وُلد في حقبة المسار بلا حلقةٍ قطّ لم يُطلَب فيه جهاز.
           -- والسابقُ للحقبة يبقى على قاعدته حرفاً، والعلاجُ الطبيعي كذلك.
           AND ${preServicePathThreadSql(await servicePathEraStartedAt())}
+          -- **وعلاجٌ طبيعيّ سبق ٢٠٢٦-١٠-٠٢ مُعفى** (البند ١٧) — فلا يعلق في القائمة صفٌّ لا يُلغى.
+          AND NOT ${physioExamExemptSql()}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
@@ -2122,6 +2134,8 @@ export async function getPendingForPatient(patientId: number): Promise<string[]>
           -- **وتسجيلُ المريض وحده لا يعني انتظاراً** — كما في الطابور
           -- وقائمة الطبيب بالضبط.
           AND ${preServicePath}
+          -- **وعلاجٌ طبيعيّ سبق ٢٠٢٦-١٠-٠٢ مُعفى** — كالطابور وقائمة الطبيب (البند ١٧).
+          AND NOT ${physioExamExemptSql()}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
