@@ -119,6 +119,11 @@ export interface StageEventParams {
   stage: string;
   /** معرّف سطر `prosthetic_work_history` الذي وثّق هذا الانتقال. */
   historyId: number;
+  /**
+   * **بلا رسالة للمريض** — للتصحيح الإداري وحده (البند ٢٢، §4.ar). الحدثُ يُكتب كما هو فيبقى خطُّ المريض الزمنيُّ
+   * صادقاً، ولا يُستحقّ عنه واتساب: تصحيحٌ للخلف ثمّ للأمام كان يصل المريضَ رسالتين متناقضتين عن جهازٍ لم يتحرّك.
+   */
+  silent?: boolean;
 }
 
 /**
@@ -149,6 +154,7 @@ export async function recordStageEvent(
     // بلا فاعل: `actor_user_id` و`actor_name` يبقيان فارغين في الصفّ.
     dedupeKey: transitionKey(order.id, historyId, eventType),
   });
+  if (params.silent) return;
   await fanOut(tx, recorded, order, eventType, { stage });
 }
 

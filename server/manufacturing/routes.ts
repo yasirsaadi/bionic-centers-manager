@@ -841,13 +841,27 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         return res.status(400).json({ error: "نتيجة التصنيع والملاءمة إلزامية عند التسليم" });
       }
     }
+    //  ══ **التصحيحُ لا يتجاوز قواعد التقدّم** (البند ٢٢، §4.ar) ══════════════
+    //  (١) بلوغُ القالب أو ما بعده بلا موعدٍ ملتزَمٍ به يطلب الموعدَ كما يطلبه «الانتقال للمرحلة التالية» —
+    //  كان التصحيحُ يقفز فوقه فيبقى الأمرُ بلا موعدٍ تُقاس عليه دقّةُ التسليم.
+    let deliveryDate: string | null = null;
+    if (isAtOrBeyondMoldStage(raw.serviceType, toStage, raw.purpose) && !raw.expectedDeliveryDate) {
+      deliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
+      if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
+        return res.status(400).json({ error: "تاريخ التسليم المتوقّع إلزامي عند هذه المرحلة — الأمر بلا موعد" });
+      }
+    }
     try {
       const updated = await store.updateStage({
         order: raw, authority, toStage,
         notes: `تعديل إداري — ${reason}`,
-        deliveryDate: null,
+        deliveryDate,
+        //  (٢) والتوقّفُ ينتهي كما ينتهي بالتقدّم — كان الأمرُ يتحرّك ويبقى «موقوفاً». والعذرُ المكتوب يبقى.
+        newStatus: MAINTENANCE_DONE_STAGES.has(toStage) || delivered ? null : "active",
         finalResult: finalResult ?? null,
         performedBy: s.userId ?? null,
+        //  (٣) ولا واتساب عن مرحلةٍ صحّحها المكتب — الحدثُ يُكتب والرسالةُ لا تُستحقّ.
+        silentStageEvent: true,
       });
       await audit(req, "prosthetic_work_order", raw.id, "update", raw.branchId,
         `تعديل إداري للمرحلة من ${raw.currentStage} إلى ${toStage} — السبب: ${reason}`);

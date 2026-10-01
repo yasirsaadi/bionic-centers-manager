@@ -21,6 +21,7 @@
     "test:workflow": "tsx server/manufacturing/workflow.test.ts",
     "test:legacy-catchup": "tsx server/migrations/legacy_catchup.test.ts",
     "test:manufacturing-events": "tsx server/manufacturing/events.test.ts",
+    "test:admin-stage-correction": "tsx server/manufacturing/admin_stage_correction.test.ts",
     "telegram:patient-webhook": "tsx scripts/patient_telegram_webhook.ts",
     "test:switch-case": "tsx server/medical/switch_case.test.ts",
     "test:case-signals": "tsx server/medical/case_signals.test.ts",

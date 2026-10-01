@@ -1071,6 +1071,8 @@ export async function updateStage(params: {
   performedBy: number | null;
   /** على أيّ أساسٍ أُذِن بالكتابة — يُعاد فحصُه تحت القفل (`WriteAuthority`). */
   authority: WriteAuthority;
+  /** التصحيحُ الإداريّ: حدثُ المرحلة يُكتب بلا رسالة للمريض (البند ٢٢). والموعدُ الأوّل يصله كعادته. */
+  silentStageEvent?: boolean;
 }): Promise<ProstheticWorkOrder> {
   const { order, toStage } = params;
   const delivered = toStage === "delivered";
@@ -1158,6 +1160,7 @@ export async function updateStage(params: {
     if (toStage !== fromStage) {
       await recordStageEvent(tx, {
         order: updated, stage: toStage, historyId: moved.id,
+        silent: params.silentStageEvent,
       });
     }
     // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
