@@ -8,7 +8,7 @@ import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { sql, eq, and, or, isNull, desc, gte, lte } from "drizzle-orm";
+import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
@@ -6783,27 +6783,27 @@ export async function registerRoutes(
     const { minAmount } = req.query;
     const branchId = enforceBranchAccess(req);
 
-    // Get all patients
-    let patients = await storage.getPatients(branchId);
-    
-    // Calculate outstanding balances for each patient
-    const debtors = [];
-    for (const patient of patients) {
-      const payments = await storage.getPaymentsByPatientId(patient.id);
-      const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-      const remaining = (patient.totalCost || 0) - totalPaid;
-      
-      if (remaining > 0 && (!minAmount || remaining >= parseInt(minAmount as string))) {
-        debtors.push({
-          patient,
-          totalCost: patient.totalCost || 0,
-          totalPaid,
-          remaining,
-          lastPaymentDate: payments.length > 0 ? payments[0].date : null
-        });
-      }
-    }
-    
+    //  ══ البند ١٢ (§4.bc) ══ المريضُ في قائمة الفرع الذي عليه الدين فعلاً: كلفتُه المقيَّدة في الفرع ناقصَ ما دفعه
+    //  فيه — من `getPatientBranchBalances` نفسِها التي تحسب «الديون» في الملخّص. وكلُّ الفروع: الملفُّ كلُّه.
+    const balances = await storage.getPatientBranchBalances(branchId);
+    const min = minAmount ? parseInt(minAmount as string) : 0;
+    const owing = balances
+      .map((b) => ({ ...b, remaining: b.cost - b.paid }))
+      .filter((b) => b.remaining > 0 && (!min || b.remaining >= min));
+    const patientRows = owing.length
+      ? await db.select().from(patients).where(inArray(patients.id, owing.map((b) => b.patientId)))
+      : [];
+    const byId = new Map(patientRows.map((p) => [p.id, p]));
+    const debtors = owing
+      .filter((b) => byId.has(b.patientId))
+      .map((b) => ({
+        patient: byId.get(b.patientId)!,
+        totalCost: b.cost,
+        totalPaid: b.paid,
+        remaining: b.remaining,
+        lastPaymentDate: b.lastPaymentDate,
+      }));
+
     // Sort by remaining amount (descending)
     debtors.sort((a, b) => b.remaining - a.remaining);
     
