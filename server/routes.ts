@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import {
   parseReportRange, parseReportServices, scopeDepartmentMoney,
-  enumerateReportDays, dayMoney, sumDailyRows, MAX_DAILY_BREAKDOWN_DAYS, type DailyRow,
+  enumerateReportDays, dayMoney, sumDailyRows, MAX_DAILY_BREAKDOWN_DAYS, NON_ATTENDANCE_VISIT_DETAILS, type DailyRow,
 } from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
@@ -5695,6 +5695,8 @@ export async function registerRoutes(
           AND (${employeeFilterId}::int IS NULL OR v.created_by = ${employeeFilterId}::int)
           --  قسمُ الزيارة من خيطها (visits.case_id) — وزيارةٌ بلا قسمٍ لا تُنسَب لقسمٍ بالتخمين.
           AND (${servicesCsv}::text IS NULL OR pc.case_type = ANY(string_to_array(${servicesCsv}::text, ',')))
+          --  صفوفُ الشراء والإدارة ليست حضوراً (NON_ATTENDANCE_VISIT_DETAILS) — تبقى في سجلّ زيارات المريض.
+          AND COALESCE(v.details, '') <> ALL(string_to_array(${NON_ATTENDANCE_VISIT_DETAILS.join(",")}::text, ','))
         ORDER BY v.visit_date ASC
       `);
 
@@ -5767,6 +5769,8 @@ export async function registerRoutes(
 
       //  ══ التفصيلُ اليوميّ (§4.az) ══ لفترةٍ من أكثر من يوم: صفٌّ لكلّ يوم ثمّ مجموعُها. المالُ من
       //  `getAccountingSummary` ليومٍ واحد بحدود بغداد (للمخوَّل وحده)، وعددُ الزيارات من الجدول أعلاه بنطاقه نفسِه.
+      //  المرضى الذين حضروا في الفترة — كلُّ مريضٍ مرّة.
+      const patientsCount = new Set(((result.rows || []) as any[]).map((r) => Number(r.patientId))).size;
       let daily: { days: DailyRow[]; total: Omit<DailyRow, "day">; withMoney: boolean } | { tooLong: true; maxDays: number } | null = null;
       if (range.from !== range.to) {
         const days = enumerateReportDays(range.from, range.to);
@@ -5774,21 +5778,25 @@ export async function registerRoutes(
           daily = { tooLong: true, maxDays: MAX_DAILY_BREAKDOWN_DAYS };
         } else {
           const visitsByDay = new Map<string, number>();
+          const patientsByDay = new Map<string, Set<number>>();
           for (const r of (result.rows || []) as any[]) {
             visitsByDay.set(r.baghdadDay, (visitsByDay.get(r.baghdadDay) ?? 0) + 1);
+            if (!patientsByDay.has(r.baghdadDay)) patientsByDay.set(r.baghdadDay, new Set());
+            patientsByDay.get(r.baghdadDay)!.add(Number(r.patientId));
           }
           const out: DailyRow[] = [];
           //  دفعاتٌ من خمسة أيام — لا تُغرَق الاتصالاتُ بفترةٍ طويلة.
           for (let i = 0; i < days.length; i += 5) {
             const chunk = await Promise.all(days.slice(i, i + 5).map(async (day) => {
               const visits = visitsByDay.get(day) ?? 0;
-              if (!canSeeMoney) return { day, visits };
+              const patients = patientsByDay.get(day)?.size ?? 0;
+              if (!canSeeMoney) return { day, visits, patients };
               const a = await storage.getAccountingSummary(effectiveBranchId ?? undefined, day, day, { baghdadDays: true });
-              return { day, visits, ...dayMoney(a, services) };
+              return { day, visits, patients, ...dayMoney(a, services) };
             }));
             out.push(...chunk);
           }
-          daily = { days: out, total: sumDailyRows(out, canSeeMoney), withMoney: canSeeMoney };
+          daily = { days: out, total: sumDailyRows(out, canSeeMoney, patientsCount), withMoney: canSeeMoney };
         }
       }
 
@@ -5799,6 +5807,7 @@ export async function registerRoutes(
         services,
         branchId: effectiveBranchId,
         visits: rows,
+        patientsCount,
         daily,
         //  **المقبوض والمبيعات منفصلان** ولا يُسمَّيان «وارداً» معاً:
         //  `paid` نقدٌ وصل، و`revenue` كلفةٌ قُيِّدت. وخلطُهما هو العطبُ

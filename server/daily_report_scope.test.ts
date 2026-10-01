@@ -164,6 +164,10 @@ async function main() {
     const v3 = await visit(A, aPhy, bg(D2, "09:00"), "جلسة علاج");          // D2 علاج طبيعي
     const v4 = await visit(A, null, bg(D3, "23:30"), "زيارة قديمة بلا قسم"); // D3 آخرُ يومٍ بتوقيت بغداد
     const v5 = await visit(A, aPhy, bg(D4, "00:30"), "بعد الفترة");          // D4 خارجها
+    //  صفوفٌ ليست حضوراً — شراءُ جلسات وعلامةٌ إدارية (تقريرُ مدير ذي قار: ٦٧ بدل ٥٤). لا تُعدّ.
+    const mk1 = await visit(A, aPhy, bg(D1, "10:30"), "خدمة جديدة");
+    const mk2 = await visit(A, aPhy, bg(D2, "09:05"), "خدمة جديدة");
+    const mk3 = await visit(B, bSup, bg(D2, "12:05"), "إضافة نوع حالة");
     await visit(C, cPhy, bg(D2, "10:00"), "فرعٌ آخر", BR_OTHER);
 
     await pay(A, aPro, 100_000, bg(D1, "10:05"));
@@ -244,12 +248,12 @@ async function main() {
     const dly = all3.body?.daily;
     same("و١. **صفٌّ لكلّ يوم بأرقام الفِكستشر** — ومنها زيارةُ ٢٣:٣٠ بغداد في يومها",
       dly?.days, [
-        { day: D1, visits: 2, paid: 100000, revenue: 500000, expenses: 20000, net: 80000 },
-        { day: D2, visits: 1, paid: 80000, revenue: 260000, expenses: 5000, net: 75000 },
-        { day: D3, visits: 1, paid: 7000, revenue: 90000, expenses: 1000, net: 6000 },
+        { day: D1, visits: 2, patients: 2, paid: 100000, revenue: 500000, expenses: 20000, net: 80000 },
+        { day: D2, visits: 1, patients: 1, paid: 80000, revenue: 260000, expenses: 5000, net: 75000 },
+        { day: D3, visits: 1, patients: 1, paid: 7000, revenue: 90000, expenses: 1000, net: 6000 },
       ]);
     same("و٢. **والمجموع = الملخّصُ المالي للفترة نفسِها وعددُ زياراتها**",
-      dly?.total, { visits: all3.body?.visits?.length, paid: f?.rollups?.grandTotal?.paid, revenue: f?.rollups?.grandTotal?.revenue,
+      dly?.total, { visits: all3.body?.visits?.length, patients: all3.body?.patientsCount, paid: f?.rollups?.grandTotal?.paid, revenue: f?.rollups?.grandTotal?.revenue,
         expenses: f?.expenses, net: f?.netCash });
     const dPhy = (await http(url(`${rng}&services=physiotherapy`), S.admin)).body;
     same("و٣. **وبقسمٍ مختار: أيامُه بماله وحده، ومجموعُها = مالُ الاختيار**",
@@ -260,7 +264,7 @@ async function main() {
          expenses: dPhy?.financial?.scoped?.expenses, net: dPhy?.financial?.scoped?.netCash }]);
     same("و٤. وأطرافٌ وحدها: المصاريفُ والصافي لا ينفصلان يوماً ولا مجموعاً (null)",
       (await http(url(`${rng}&services=prosthetic`), S.admin)).body?.daily?.total,
-      { visits: 1, paid: 100000, revenue: 500000, expenses: null, net: null });
+      { visits: 1, patients: 1, paid: 100000, revenue: 500000, expenses: null, net: null });
     same("و٥. ويومٌ واحد بلا تفصيل", (await http(url(`date=${D2}`), S.admin)).body?.daily, null);
     same("و٦. وفترةٌ أطولُ من ٩٢ يوماً تُقال لا تُحسب",
       (await http(url(`from=2001-01-01&to=2001-06-01`), S.admin)).body?.daily, { tooLong: true, maxDays: 92 });
@@ -270,7 +274,18 @@ async function main() {
     await q(`UPDATE system_users SET can_manage_accounting = true WHERE id = $1`, [RECV]);
     same("و٧. **وبلا صلاحية المال: اليومُ وعددُ زياراته وحدهما**",
       [noMoney.body?.financial, noMoney.body?.daily?.withMoney, noMoney.body?.daily?.days, noMoney.body?.daily?.total],
-      [null, false, [{ day: D1, visits: 2 }, { day: D2, visits: 1 }, { day: D3, visits: 1 }], { visits: 4 }]);
+      [null, false, [{ day: D1, visits: 2, patients: 2 }, { day: D2, visits: 1, patients: 1 }, { day: D3, visits: 1, patients: 1 }],
+       { visits: 4, patients: 2 }]);
+
+    // ══ ز. الحضورُ لا الشراء (تقريرُ مدير ذي قار ٢٠٢٦-١٠-٠١) ═══════════════
+    console.log("\n── ز. الحضور ──");
+    same("ز١. **«خدمة جديدة» و«إضافة نوع حالة» خارج الجدول والعدد** — ولو بقسمٍ مختار",
+      [ids(all3).filter((i: number) => [mk1, mk2, mk3].includes(i)),
+       ids(await http(url(`${rng}&services=physiotherapy`), S.admin))], [[], [v3]]);
+    same("ز٢. **وتبقى في سجلّ زيارات المريض** (لا تُحذَف)",
+      (await q(`SELECT COUNT(*)::int AS n FROM visits WHERE id = ANY($1::int[]) AND deleted_at IS NULL`, [[mk1, mk2, mk3]]))[0].n, 3);
+    same("ز٣. **والمرضى الذين حضروا: كلُّ مريضٍ مرّةً في الفترة** — أحمد ثلاثةَ أيام وبشرى يوماً = ٢، والزيارات ٤",
+      [all3.body?.patientsCount, all3.body?.visits?.length], [2, 4]);
 
     // ══ هـ. الفرع ══════════════════════════════════════════════════════
     console.log("\n── هـ. نطاقُ الفرع ──");
