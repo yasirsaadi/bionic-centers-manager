@@ -167,6 +167,7 @@ interface AccountingSummary {
   totalRevenue: number;
   totalPaid: number;
   totalRemaining: number;
+  totalCredits?: number;
   totalExpenses: number;
   netProfit: number;
   collectionRate: number;
@@ -2823,6 +2824,7 @@ export default function Accounting() {
       ['إجمالي الإيرادات (د.ع)', summary.totalRevenue],
       ['المدفوعات (د.ع)', summary.totalPaid],
       ['المتبقي (د.ع)', summary.totalRemaining],
+      ['أرصدة للمرضى تحتاج تسوية (د.ع)', summary.totalCredits || 0],
       ['المصروفات (د.ع)', summary.totalExpenses],
       ['صافي الربح (د.ع)', summary.netProfit],
       ['نسبة التحصيل (%)', summary.collectionRate]
@@ -3279,6 +3281,11 @@ export default function Accounting() {
                     <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{t.accounting.dueBalance}</p>
+                  {(summary?.totalCredits || 0) > 0 && (
+                    <p className="mt-1 text-xs text-emerald-700" data-testid="text-total-credits">
+                      أرصدة للمرضى (تحتاج تسوية): {formatNumberOnly(summary?.totalCredits || 0)} د.ع
+                    </p>
+                  )}
                 </CardContent>
               </Card>
 

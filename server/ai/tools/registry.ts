@@ -562,6 +562,8 @@ async function patientFinance(access: AiAccessContext, input: any): Promise<Tool
       totalCost,
       totalPaid,
       remaining: Math.max(0, totalCost - totalPaid),
+      //  البند ١٦ (§4.bf): رصيدُ المريض حين دفع أكثر من كلفته — كصفحة المريض «رصيد للمريض … يحتاج تسوية مالية».
+      creditBalance: Math.max(0, totalPaid - totalCost),
       outstandingInvoices: outstanding.length,
       outstandingTotal: outstanding.reduce((s, d) => s + d, 0),
     },

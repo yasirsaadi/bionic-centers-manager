@@ -455,6 +455,7 @@ export interface FinancialByDepartment {
 export interface FinancialPeriodFigures extends FinancialPeriodMetrics {
   collectionRateLifetime: number; // **ليست فترةً** — نسبةٌ إجمالية حتى الآن (توثيقٌ صريح للحقل)
   outstandingLifetime: number; // **ليست فترةً** — رصيدٌ إجماليّ مستحقّ حتى الآن
+  creditsLifetime: number; // **ليست فترةً** — أرصدةُ المرضى الذين دفعوا أكثر من كلفتهم (تحتاج تسوية)
   /**
    * التفصيلُ بالأقسام **لهذه الفترة بعينها** — مقياسُ فترةٍ كبقيّة
    * `FinancialPeriodMetrics`، لا حالةً حاضرة.
@@ -533,6 +534,8 @@ export async function summaryFor(branchId: number | undefined, start: string, en
     //  ══ محسوبةٌ هنا لا في النموذج (القسم K) — راجع تعليق الحقل في الواجهة. ══
     uncollectedSalesValue: salesValue - revenue,
     collectionRateLifetime: s.collectionRate, outstandingLifetime: s.totalRemaining,
+    //  البند ١٦ (§4.bf): أرصدةُ المرضى الدائنة — لا تُطرح من الديون. **ليست فترةً** كالدَّين.
+    creditsLifetime: s.totalCredits,
     byDepartment: {
       prosthetic: departmentMoney("prosthetic", dep.prosthetic, true),
       medical_support: departmentMoney("medical_support", dep.medical_support, true),
