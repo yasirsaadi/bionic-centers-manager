@@ -703,17 +703,22 @@ export async function registerRoutes(
           // first entry; the user can switch via /api/auth/switch-branch.
           //  القاعدةُ نفسُها التي تُعيد بها المِعترِضةُ الحيّة بناءَ الجلسة (البند ٧) — لا نسختان.
           const accessibleBranches: number[] = accessibleBranchesOf(systemUser);
-          const userBranchId = isAdmin ? 0 : (accessibleBranches[0] ?? 0);
+          let userBranchId = isAdmin ? 0 : (accessibleBranches[0] ?? 0);
 
           // For non-admin users, verify the selected branch matches one
           // of their assigned branches. Multi-branch users can pick any
           // of their branches at login time and we'll respect it.
+          //  ══ **والفرعُ المختار هو فرعُ الجلسة** (واقعةُ زين العابدين وليد، ٢٠٢٦-١٠-٠١) ══
+          //  كان يُفحَص ثمّ يُهمَل: الجلسةُ تأخذ **أوّلَ** فرعٍ في حساب الموظّف أيّاً كان ما اختاره. فموظّفُ ذي قار
+          //  الذي يبدأ حسابُه بكربلاء يدخل «ذي قار» ويعمل في جلسة كربلاء — وكلُّ دفعةٍ يقبضها تُنسَب لكربلاء
+          //  (`actingBranchFor` تقرأ فرعَ الجلسة). والفرعُ المختار يُعتمَد الآن بعد ثبوت أنه من فروعه.
           if (!isAdmin && accessibleBranches.length > 0) {
             const branchMapping = usernameToBranch[normalizedBranchKey];
             if (branchMapping && branchMapping.branchId !== "admin" && typeof branchMapping.branchId === "number") {
               if (!accessibleBranches.includes(branchMapping.branchId)) {
                 return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
               }
+              userBranchId = branchMapping.branchId;
             }
           }
 
@@ -3601,7 +3606,8 @@ export async function registerRoutes(
           //  **وبمعاملة `tx` نفسِها التي سكّت التذكرة** (`...Tx` لا الغلاف
           //  الذي يفتح معاملته الخاصّة) — فرفضُ الخصم يرجع التذكرةَ معه.
           const out = await discountStore.applyDiscountImmediatelyTx(tx, {
-            patientId, department: "physiotherapy", branchId: patient.branchId,
+            //  **فرعُ الحركة لا فرعُ التسجيل** (§4.ax): الخصمُ يحمل فرعَه، وتنفيذُه يكتب الخدمةَ ودفعتَها فيه.
+            patientId, department: "physiotherapy", branchId: await actingBranchFor(req, patient),
             //  **مرجعٌ من رمز الإرسالة**: ضغطةٌ واحدة = طلبٌ واحد.
             contextRef: newServiceDiscountRef(submissionToken, serviceType),
             originalPrice: stdPrice,
@@ -3781,7 +3787,7 @@ export async function registerRoutes(
           //  **التطبيقُ فوريّ دائماً** — `canAccess` أعلاه (نفسُ بوّابة
           //  الحفظ بلا خصم) فحصت الإذنَ بالفعل، فلا فحصَ ثانياً هنا.
           const out = await discountStore.applyDiscountImmediately({
-            patientId, department: "physiotherapy", branchId: patient.branchId,
+            patientId, department: "physiotherapy", branchId: await actingBranchFor(req, patient),
             contextRef: null,
             originalPrice: totalCost,
             finalPrice: wantsFree ? 0 : Number(dsc.finalPrice),
@@ -3810,6 +3816,8 @@ export async function registerRoutes(
 
       const updated = await storage.pricePhysiotherapy(patientId, {
         entries, totalCost, totalSessions, treatmentType: typesJoined,
+        //  **فرعُ الحركة** (§4.ax): قيدُ الكلفة في فرع الموظّف الذي سعّر — لا في فرع تسجيل المريض.
+        branchId: await actingBranchFor(req, patient),
       });
 
       await logAudit({

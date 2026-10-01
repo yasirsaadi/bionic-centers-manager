@@ -136,6 +136,7 @@
     "test:decision-queue": "tsx server/decision_queue.test.ts",
     "test:cancel-decision": "tsx server/cancel_decision.test.ts",
     "test:decision-queue-sold": "tsx server/decision_queue_sold.test.ts",
+    "test:login-branch": "tsx server/login_branch.test.ts",
     "test:patient-branch-access": "tsx server/patient_branch_access.test.ts",
     "test:branch-share-review": "tsx server/patient_branch_share_review.test.ts",
     "test:shared-device-sale": "tsx server/shared_device_sale.test.ts",

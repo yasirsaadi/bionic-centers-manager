@@ -1581,7 +1581,9 @@ export class DatabaseStorage implements IStorage {
      * كما كان دائماً.
      */
     tx?: DbTransactionLike;
-  }): Promise<Patient> {
+      /** **فرعُ الحركة** (§4.ax) — غيابُه = فرعُ تسجيل المريض كما كان. */
+    branchId?: number | null;
+}): Promise<Patient> {
     const body = async (tx: any) => {
       //  ══ **وكلُّ كاتبٍ للخطة يقفل صفَّ المريض أوّلاً** (تصحيحُ مراجعةٍ
       //  لاحقة) ═════════════════════════════════════════════════════════
@@ -1650,13 +1652,13 @@ export class DatabaseStorage implements IStorage {
       //  تُكتب على القسم المغلق فلا يراها عدّادُ الجلسات. (المستخدمُ في سطر تدقيق نقطة التسعير نفسِها.) والحالةُ
       //  تُضمَن **قبل** القيد: القيدُ يحمل قسمَه (ترحيل ٠٥٦)، وكان قيدُ مريضٍ بلا حالةٍ يُكتب بلا قسم.
       const physioCase = (await ensureCaseTx(tx, {
-        patientId, caseType: "physiotherapy", branchId: existing.branchId,
+        patientId, caseType: "physiotherapy", branchId: params.branchId ?? existing.branchId,
         create: { cost: 0, costSource: "auto" },
         reopen: { reason: "تسعير جلسات علاج طبيعي" },
       }))!;
       if (params.totalCost > 0) {
         await tx.insert(costEntries).values({
-          patientId, branchId: existing.branchId, amount: params.totalCost,
+          patientId, branchId: params.branchId ?? existing.branchId, amount: params.totalCost,
           source: "physio_pricing", notes: `الكلفة والجلسات: ${params.treatmentType}`,
           caseId: physioCase.id,
         });
