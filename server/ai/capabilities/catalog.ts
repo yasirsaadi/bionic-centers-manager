@@ -142,7 +142,7 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/accounting/visits": { d: "الزياراتُ في فترةٍ بجانبها المحاسبيّ.", q: ["startDate", "endDate", "branchId"], f: true },
   "/api/accounting/branch-comparison": { d: "مقارنةُ الفروع مالياً.", q: ["startDate", "endDate"], f: true },
   "/api/accounting/monthly-trends": { d: "اتّجاهاتٌ شهرية للمال.", q: ["branchId"], f: true },
-  "/api/accounting/profitability-by-service": { d: "ربحيّةُ كلّ خدمة.", q: ["startDate", "endDate", "branchId"], f: true },
+  "/api/accounting/profitability-by-service": { d: "ربحيّةُ كلّ قسم (أطراف · مساند · علاج طبيعي) منذ البداية — مبيعاتُ القسم ومقبوضُه وحده، وصفُّ «مالٌ قديم غير مصنَّف».", q: ["branchId"], f: true },
   "/api/dashboard/live-revenue": { d: "الإيرادُ الحيُّ في لوحة التحكّم.", q: ["branchId"], f: true },
   "/api/expenses": { d: "المصاريف المسجَّلة.", q: ["startDate", "endDate", "branchId"], f: true },
   "/api/expenses/:id": { d: "مصروفٌ واحد بتفصيله.", f: true },

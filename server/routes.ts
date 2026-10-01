@@ -6870,36 +6870,38 @@ export async function registerRoutes(
     }
 
     const branchId = enforceBranchAccess(req);
-    const patients = await storage.getPatients(branchId);
 
-    const serviceTypes = [
-      { key: "amputee", name: "مرضى البتر", filter: (p: any) => p.isAmputee },
-      { key: "physiotherapy", name: "العلاج الطبيعي", filter: (p: any) => p.isPhysiotherapy },
-      { key: "medicalSupport", name: "المساند الطبية", filter: (p: any) => p.isMedicalSupport }
+    //  ══ البند ١٥ (§4.be) — مالُ القسم وحده ══ كان كلُّ قسمٍ يأخذ مرضاه بعلَم الملفّ (`is_amputee`…) ثمّ **كلفةَ الملفّ
+    //  كلَّها وكلَّ دفعاته** — فمريضُ الطرف والعلاج الطبيعي يُعدّ في الاثنين كاملاً، ومجموعُ البطاقات ضعفُ الحقيقة.
+    //  والآن من `getAccountingSummary` نفسِها (منذ البداية، بلا فترة): المبيعاتُ قيودُ الدفتر بقسم حالتها، والمقبوضُ الدفعاتُ
+    //  الموسومةُ بحالةٍ من القسم، وبقاعدة البند ١٢ للفرع (ما قُيِّد ودُفع فيه). وما لم يُصنَّف صفٌّ ظاهر — فيتساوى المجموعُ والإجماليّ.
+    const acct = await storage.getAccountingSummary(branchId);
+    const dep = acct.byDepartment;
+    const counts = await db.execute(sql`
+      SELECT pc.case_type AS dept, COUNT(DISTINCT pc.patient_id)::int AS n
+        FROM patient_cases pc
+        JOIN patients p ON p.id = pc.patient_id AND p.deleted_at IS NULL
+       WHERE EXISTS (SELECT 1 FROM cost_entries e WHERE e.case_id = pc.id
+                       AND (${branchId ?? null}::int IS NULL OR e.branch_id = ${branchId ?? null}::int))
+          OR EXISTS (SELECT 1 FROM payments y WHERE y.case_id = pc.id
+                       AND (${branchId ?? null}::int IS NULL OR y.branch_id = ${branchId ?? null}::int))
+       GROUP BY 1`);
+    const countOf = (k: string) => Number(((counts as any).rows ?? []).find((r: any) => r.dept === k)?.n ?? 0);
+    const row = (key: string, name: string, revenue: number, paid: number, patientCount: number) => ({
+      serviceType: key, serviceName: name, patientCount,
+      totalRevenue: revenue, totalPaid: paid, remaining: revenue - paid,
+      collectionRate: revenue > 0 ? Math.round((paid / revenue) * 100) : 0,
+    });
+    const profitability = [
+      row("prosthetic", "الأطراف الصناعية", dep.prosthetic.revenue, dep.prosthetic.paid, countOf("prosthetic")),
+      row("medical_support", "المساند الطبية", dep.medical_support.revenue, dep.medical_support.paid, countOf("medical_support")),
+      row("physiotherapy", "العلاج الطبيعي", dep.physiotherapy.revenue, dep.physiotherapy.paid, countOf("physiotherapy")),
     ];
-    
-    const profitability = [];
-    
-    for (const serviceType of serviceTypes) {
-      const servicePatients = patients.filter(serviceType.filter);
-      let totalRevenue = 0;
-      let totalPaid = 0;
-      
-      for (const patient of servicePatients) {
-        totalRevenue += patient.totalCost || 0;
-        const payments = await storage.getPaymentsByPatientId(patient.id);
-        totalPaid += payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-      }
-      
-      profitability.push({
-        serviceType: serviceType.key,
-        serviceName: serviceType.name,
-        patientCount: servicePatients.length,
-        totalRevenue,
-        totalPaid,
-        remaining: totalRevenue - totalPaid,
-        collectionRate: totalRevenue > 0 ? Math.round((totalPaid / totalRevenue) * 100) : 0
-      });
+    //  مالٌ قديم لم يُثبَت قسمُه (أجهزةٌ قديمة غيرُ مفصولة + غيرُ المصنَّف) — يُعرَض ولا يُوزَّع بالتخمين.
+    const otherRevenue = (dep.legacyDevicesUnsplit?.revenue || 0) + (dep.unclassified.revenue || 0);
+    const otherPaid = dep.unclassified.paid || 0;
+    if (otherRevenue !== 0 || otherPaid !== 0) {
+      profitability.push(row("unclassified", "مالٌ قديم غير مصنَّف", otherRevenue, otherPaid, 0));
     }
     
     res.json(profitability);
