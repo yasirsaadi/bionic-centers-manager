@@ -101,6 +101,30 @@ async function lockInvoiceTx(tx: any, id: number): Promise<LockedInvoice | undef
   };
 }
 
+//  قيمُ «نوع الخدمة» في بند الفاتورة: الشاشةُ ترسل الرمز، والقديمُ قد يحمل الاسمَ العربيّ.
+const INVOICE_DEPARTMENT: Record<string, "prosthetic" | "medical_support" | "physiotherapy"> = {
+  prosthetic: "prosthetic", "طرف صناعي": "prosthetic", "أطراف صناعية": "prosthetic",
+  medical_support: "medical_support", "مسند طبي": "medical_support", "مساند طبية": "medical_support",
+  physiotherapy: "physiotherapy", "علاج طبيعي": "physiotherapy",
+};
+
+/**
+ *  **البند ٣٥ — قسمُ قبض الفاتورة من بنودها** (§4.bg). الدفعةُ هنا لا تحمل وسماً، فكانت تذهب إلى «القسم
+ *  الأوّل» (الأطراف) لمريضٍ له قسمان. فإن كانت بنودُ الفاتورة كلُّها من قسمٍ واحد وللمريض حالتُه ⟵ تلك الحالة.
+ *  وإلّا (بنودٌ بلا نوع، أو من قسمين، أو استشارة/أخرى) ⟵ `{}` فيبقى السلوكُ القائم بحرفه.
+ *  تُقرأ البنودُ **بمعاملة المستدعي** — `createInvoiceWithCash` أدرجها للتوّ داخلها.
+ */
+async function invoiceCaseIdTx(tx: any, invoice: LockedInvoice): Promise<{ caseId?: number }> {
+  if (!invoice.patientId) return {};
+  const items = (await tx.execute(sql`SELECT service_type FROM invoice_items WHERE invoice_id = ${invoice.id}`)).rows as { service_type: string | null }[];
+  const departments = new Set<string | null>(items.map((i) => INVOICE_DEPARTMENT[String(i.service_type ?? "").trim()] ?? null));
+  if (departments.size !== 1) return {};
+  const [dept] = Array.from(departments);
+  if (!dept) return {};
+  const cases = (await tx.execute(sql`SELECT id FROM patient_cases WHERE patient_id = ${invoice.patientId} AND case_type = ${dept} ORDER BY id LIMIT 1`)).rows as { id: number }[];
+  return cases[0] ? { caseId: Number(cases[0].id) } : {};
+}
+
 /**
  * **الكتابةُ الأساسيةُ الوحيدة لكلّ قبضٍ نقديٍّ على فاتورة.**
  *
@@ -141,6 +165,8 @@ export async function applyInvoiceCashTx(
       amount: roundedAmount,
       notes: `قبض فاتورة رقم ${invoice.invoiceNumber ?? invoice.id}`,
       invoiceId: invoice.id,
+      //  البند ٣٥: قسمُ القبض من بنود الفاتورة — لا الأطرافُ تخميناً لمريضٍ له قسمان.
+      ...(await invoiceCaseIdTx(tx, invoice)),
     } as any,
     tx,
   );

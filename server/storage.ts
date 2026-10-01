@@ -3848,6 +3848,9 @@ export class DatabaseStorage implements IStorage {
    * (القيدَ والدفعةَ وحالةَ الطلب معاً)، لا خطوةً بعديةً قد تضيع بصمت.
    */
   async reattachPaymentCase(paymentId: number, patientId: number, tag: string | null, tx?: any): Promise<void> {
+    //  البند ٣٥ (§4.bg): **مسحُ الوسم لا ينقل المال**. وسمٌ فارغ لا يقول قسماً، فإعادةُ النسبة كانت تخمّن —
+    //  إلى العلاج الطبيعي (احتياطيّ المزامنة) أو إلى «القسم الأوّل». فتبقى الدفعةُ في حالتها.
+    if (!tag || tag.trim() === "") return;
     const body = async (t: any) => {
       await t.update(payments).set({ caseId: null }).where(eq(payments.id, paymentId));
       await this.syncPatientCases(patientId, t);
