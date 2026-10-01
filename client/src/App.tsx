@@ -186,6 +186,7 @@ function Router() {
       language: raw.language ?? current?.language,
       //  **الفروعُ تتحدّث حيّاً** (§4.ar البند ٧): فرعٌ سُحب يختفي من المبدّل، والفرعُ النشطُ يُسمّى باسمه.
       accessibleBranches: raw.accessibleBranches ?? current?.accessibleBranches,
+      assignedBranches: raw.assignedBranches ?? current?.assignedBranches,
       branchName: raw.branchName ?? current?.branchName,
     } as any);
 

@@ -82,7 +82,8 @@ async function main() {
       [[3], [1, 2], []]);
 
     console.log("\n── أ. سحبُ فرعٍ نشط ──");
-    same("أ٠. قبل السحب: على ذي قار", await me("recv"), [2, [1, 2], false, "reception", null]);
+    // §4.ay: نطاقُ العمل الفرعُ النشط وحده، وفروعُ الحساب كلُّها في `assignedBranches` للمبدِّل.
+    same("أ٠. قبل السحب: على ذي قار — نطاقُه الفرعُ النشط، وفروعُ حسابه للمبدِّل", [await me("recv"), (await call("recv", "GET", "/api/auth/user")).body.assignedBranches], [[2, [2], false, "reception", null], [1, 2]]);
     await q(`UPDATE system_users SET branch_ids='[1]'::jsonb WHERE id=$1`, [RECV]);
     same("أ١. **الطلبُ التالي: انتقل إلى بغداد، وذي قار خرجت من فروعه**", await me("recv"), [1, [1], false, "reception", "بغداد"]);
     same("أ٢. **والتبديلُ إلى الفرع المسحوب يُردّ**", (await call("recv", "POST", "/api/auth/switch-branch", { branchId: 2 })).status, 403);

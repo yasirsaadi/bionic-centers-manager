@@ -230,8 +230,10 @@ async function main() {
       "ب٢. ومديرُ ذي قار بالعكس — العلَمُ يتبع فرعَ الطلب لا فرعَ تسجيل المريض");
     eq(await flags(S.admin), { dq: true, bg: true, kr: true },
       "ب٣. والمسؤولُ له الكلّ");
-    eq(await flags(S.mgrBoth), { dq: true, bg: true, kr: undefined },
-      "ب٤. ومديرٌ يشمل نطاقُه الفرعين له الاثنان");
+    //  §4.ay: مديرُ الفرعين يعمل في فرعه النشط وحده — فكمدير بغداد، ثمّ كمدير ذي قار حين يبدّل.
+    eq([await flags(S.mgrBoth), await flags({ ...S.mgrBoth, branchId: DHIQAR })],
+      [{ dq: false, bg: true, kr: undefined }, { dq: true, bg: false, kr: undefined }],
+      "ب٤. ومديرُ الفرعين له بطاقةُ فرعه النشط وحده — ويبدّل فتصير له الأخرى");
     eq(await flags(S.bgDoc), { dq: false, bg: true, kr: undefined },
       "ب٥. وطبيبُ بغداد كمديرها");
     eq(await flags(S.krMgr), { dq: undefined, bg: undefined, kr: true },

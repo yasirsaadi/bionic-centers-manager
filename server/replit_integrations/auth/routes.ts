@@ -24,6 +24,9 @@ export function registerAuthRoutes(app: Express): void {
       displayName: branchSession.displayName || null,
       //  **الفروعُ واسمُ الفرع النشط** (§4.ar البند ٧) — تتحدّث حيّاً في الخادم، فتصل الواجهةَ معها.
       accessibleBranches: Array.isArray(branchSession.accessibleBranches) ? branchSession.accessibleBranches : null,
+      //  فروعُ الحساب كلُّها — للمبدِّل وحده (§4.ay)؛ و`accessibleBranches` أعلاه الفرعُ النشط.
+      assignedBranches: Array.isArray(branchSession.assignedBranches) ? branchSession.assignedBranches
+        : Array.isArray(branchSession.accessibleBranches) ? branchSession.accessibleBranches : null,
       branchName: branchSession.branchName ?? null,
     });
   });

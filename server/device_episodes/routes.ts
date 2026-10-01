@@ -45,6 +45,7 @@ function getSession(req: Req) {
 /** الفروع التي يصلها المستخدم. `null` = مسؤول، أي كل الفروع. */
 import {
   scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
+  adminMustChooseBranch, ADMIN_BRANCH_CHOICE_ERROR,
 } from "../patients/branch_access";
 
 function branchScope(req: Req): number[] | null {
@@ -238,11 +239,18 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const session = getSession(req);
       //  **وطلبُ الجهاز يُفتَح في فرع الحركة** (ترحيل ٠٨٠) — لا في فرع
       //  تسجيل المريض حين يفتحه موظّفُ فرعٍ أُتيح له الملفّ.
+      const patientBranchIds = await patientBranchIdsOf(patientRef);
+      //  **المسؤولُ العامّ يختار الفرعَ لمريضٍ بفرعين** (§4.ay).
+      if (adminMustChooseBranch({
+        isAdmin: branchScope(req) === null, sessionBranchId: session.branchId ?? null, patientBranchIds,
+      })) {
+        return res.status(409).json({ error: ADMIN_BRANCH_CHOICE_ERROR });
+      }
       const actingBranchId = resolveActingBranchId({
         scope: branchScope(req),
         sessionBranchId: session.branchId ?? null,
         homeBranchId: patientRef.branchId,
-        patientBranchIds: await patientBranchIdsOf(patientRef),
+        patientBranchIds,
       });
       //  **وطلبُ المعاينة حضورٌ** — زيارةُ «طلب معاينة طبية» في معاملة الطلب نفسِها (§4.aw). **وبلا ربطٍ بالحلقة**:
       //  حلقةٌ تشير إليها زيارةٌ تصير تاريخاً لا يُسحَب (`classifyCaseDisposal`)، والطلبُ الخاطئ يبقى قابلاً للسحب كما كان.

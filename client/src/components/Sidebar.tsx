@@ -496,12 +496,11 @@ export function Sidebar() {
               )}
             </div>
           )}
-          {Array.isArray((branchSession as any).accessibleBranches) &&
-           (branchSession as any).accessibleBranches.length > 1 && (
-            <div className="mb-2">
-              <BranchSwitcher />
-            </div>
-          )}
+          {/*  **مبدِّلُ الفرع ظاهرٌ جداً** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ay): الموظّفُ يعمل في الفرع المختار وحده،
+              فيجب أن يرى أين هو وأن يبدّل بضغطة. يقرّر المكوّنُ نفسُه متى يظهر. */}
+          <div className="mb-2">
+            <BranchSwitcher />
+          </div>
           <div className="flex items-center justify-between gap-2 text-xs md:text-sm">
             <div className="flex items-center gap-2">
               {branchSession.isAdmin ? (
@@ -575,7 +574,8 @@ export function Sidebar() {
             <img src={logoImage} alt="Logo" className="w-8 h-8 object-contain" />
             <span className="font-display font-bold text-sm text-primary">مراكز د. ياسر الساعدي</span>
           </div>
-          <div className="w-10" /> {/* Spacer for centering */}
+          {/*  الفرعُ النشط ظاهرٌ في شريط الهاتف أيضاً — ويُبدَّل منه (§4.ay). */}
+          <BranchSwitcher compact />
         </div>
       </div>
 
