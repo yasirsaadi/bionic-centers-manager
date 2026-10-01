@@ -5771,6 +5771,41 @@ export async function registerRoutes(
       //  `getAccountingSummary` ليومٍ واحد بحدود بغداد (للمخوَّل وحده)، وعددُ الزيارات من الجدول أعلاه بنطاقه نفسِه.
       //  المرضى الذين حضروا في الفترة — كلُّ مريضٍ مرّة.
       const patientsCount = new Set(((result.rows || []) as any[]).map((r) => Number(r.patientId))).size;
+
+      //  ══ بعد الفحص: فُحصوا · باشروا · لم يباشروا (§4.az، قرارُ المالك ٢٠٢٦-١٠-٠١) ══
+      //  «فُحصوا»: معاينةٌ موقّعةٌ غيرُ ملغاة داخل الفترة. «باشروا»: **يومُ المباشرة داخل الفترة** — أوّلُ دفعةٍ بعد الفحص على
+      //  حالةٍ من قسم المعاينة (مبلغٌ موجب، أو جلساتٌ مجّانية — «المجاني يُعدّ باشر»)، **لا يومُ الفحص**: فتقريرُ يومٍ مضى لا
+      //  يتغيّر حين يدفع المريضُ لاحقاً. «لم يباشروا»: فُحصوا في الفترة ولم يباشروا حتى نهايتها. بالفرع والأقسام المختارة.
+      const examRows = await db.execute(sql`
+        WITH ex AS (
+          SELECT e.id, e.patient_id, e.case_type, e.signed_at,
+                 date_trunc('day', (e.signed_at AT TIME ZONE 'UTC') + interval '3 hours') - interval '3 hours' AS exam_day
+            FROM medical_exams e
+            JOIN patients p ON p.id = e.patient_id AND p.deleted_at IS NULL
+           WHERE NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = e.id)
+             AND (${effectiveBranchId}::int IS NULL OR e.branch_id = ${effectiveBranchId}::int)
+             AND (${servicesCsv}::text IS NULL OR e.case_type = ANY(string_to_array(${servicesCsv}::text, ',')))
+             AND e.signed_at < (${endTs}::timestamp AT TIME ZONE 'UTC')
+        ),
+        st AS (
+          SELECT ex.patient_id, ex.signed_at,
+                 (SELECT MIN(y.date) FROM payments y JOIN patient_cases pc ON pc.id = y.case_id
+                   WHERE y.patient_id = ex.patient_id AND pc.case_type = ex.case_type
+                     AND (y.amount > 0 OR y.is_free_sessions = true)
+                     AND y.date >= ex.exam_day
+                     AND (${effectiveBranchId}::int IS NULL OR y.branch_id = ${effectiveBranchId}::int)) AS started_at
+            FROM ex
+        )
+        SELECT
+          (SELECT COUNT(DISTINCT patient_id) FROM st
+            WHERE signed_at >= (${startTs}::timestamp AT TIME ZONE 'UTC'))::int AS examined,
+          (SELECT COUNT(DISTINCT patient_id) FROM st
+            WHERE started_at >= ${startTs}::timestamp AND started_at < ${endTs}::timestamp)::int AS started,
+          (SELECT COUNT(DISTINCT patient_id) FROM st
+            WHERE signed_at >= (${startTs}::timestamp AT TIME ZONE 'UTC')
+              AND (started_at IS NULL OR started_at >= ${endTs}::timestamp))::int AS not_started`);
+      const er = ((examRows as any).rows ?? [])[0] ?? {};
+      const afterExam = { examined: Number(er.examined) || 0, started: Number(er.started) || 0, notStarted: Number(er.not_started) || 0 };
       let daily: { days: DailyRow[]; total: Omit<DailyRow, "day">; withMoney: boolean } | { tooLong: true; maxDays: number } | null = null;
       if (range.from !== range.to) {
         const days = enumerateReportDays(range.from, range.to);
@@ -5808,6 +5843,7 @@ export async function registerRoutes(
         branchId: effectiveBranchId,
         visits: rows,
         patientsCount,
+        afterExam,
         daily,
         //  **المقبوض والمبيعات منفصلان** ولا يُسمَّيان «وارداً» معاً:
         //  `paid` نقدٌ وصل، و`revenue` كلفةٌ قُيِّدت. وخلطُهما هو العطبُ
