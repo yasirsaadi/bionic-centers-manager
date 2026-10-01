@@ -59,7 +59,6 @@ const formSchema = z.object({
   details: z.string().optional(),
   notes: z.string().optional(),
   treatmentType: z.string().optional(),
-  sessionCount: z.number().nullable().optional(),
   cost: z.number().nullable().optional(),
   customDate: z.string().optional(),
 });
@@ -90,7 +89,6 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
       details: visit.details || "",
       notes: visit.notes || "",
       treatmentType: visit.treatmentType || "",
-      sessionCount: visit.sessionCount || undefined,
       cost: visit.cost || undefined,
       customDate: getVisitDateFormatted(),
     },
@@ -102,7 +100,6 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
         details: visit.details || "",
         notes: visit.notes || "",
         treatmentType: visit.treatmentType || "",
-        sessionCount: visit.sessionCount || undefined,
         cost: visit.cost || undefined,
         customDate: getVisitDateFormatted(),
       });
@@ -120,7 +117,6 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
       details: values.details || "",
       notes: values.notes || "",
       treatmentType: values.treatmentType || null,
-      sessionCount: values.sessionCount || null,
       cost: values.cost || null,
       customDate: values.customDate || undefined,
     }, {
@@ -216,27 +212,6 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="sessionCount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t.modals.sessionCountOptional}</FormLabel>
-                  <FormControl>
-                    <Input 
-                      {...field}
-                      type="number" 
-                      placeholder={t.modals.sessionCountPlaceholder}
-                      value={field.value === null || field.value === undefined ? "" : field.value}
-                      onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
-                      data-testid="input-edit-visit-session-count"
-                    />
-                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
