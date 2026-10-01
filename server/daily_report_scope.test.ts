@@ -65,6 +65,8 @@ async function cleanup() {
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM medical_exam_cancellations WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM medical_exams WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
@@ -184,6 +186,22 @@ async function main() {
     await expense("physio", 5_000, D2);
     await expense(null, 1_000, D3);                                // مشترك
     await expense("physio", 777_000, D4);                          // خارج الفترة
+    //  معايناتٌ — «بعد الفحص» (فُحصوا · باشروا يومَ المباشرة · لم يباشروا).
+    const exam = async (pid: number, type: string, at: string) =>
+      (await q<{ id: number }>(`INSERT INTO medical_exams (patient_id, case_type, branch_id, doctor_name, signed_at)
+         VALUES ($1,$2,$3,'د. اختبار',($4::timestamp AT TIME ZONE 'UTC')) RETURNING id`, [pid, type, BR, at]))[0].id;
+    const C2 = await mkPatient("كريم");          // فُحص ولم يباشر
+    const F = await mkPatient("فرح");            // فُحصت وأخذت جلساتٍ مجّانية
+    const fPhy = await mkCase(F, "physiotherapy");
+    await exam(A, "physiotherapy", bg(D1, "09:00"));      // يباشر D2 (دفعةُ ٣٠ ألفاً)
+    await exam(B, "medical_support", bg(D1, "11:00"));    // يباشر D2 (دفعةُ ٥٠ ألفاً)
+    await exam(C2, "physiotherapy", bg(D2, "10:00"));     // لم يباشر
+    await exam(A, "prosthetic", bg(D3, "09:00"));         // لا دفعةَ أطرافٍ بعدها — لم يباشر
+    await exam(F, "physiotherapy", bg(D3, "08:00"));      // مجّانيّ D3 ⟵ باشر
+    await q(`INSERT INTO payments (patient_id, branch_id, case_id, amount, is_free_sessions, date) VALUES ($1,$2,$3,0,true,$4::timestamp)`,
+      [F, BR, fPhy, bg(D3, "10:00")]);
+    const exCancel = await exam(B, "physiotherapy", bg(D2, "13:00"));   // ملغاة — لا تُعدّ
+    await q(`INSERT INTO medical_exam_cancellations (exam_id, patient_id, reason) VALUES ($1,$2,'خطأ')`, [exCancel, B]);
 
     const url = (qs: string) => `/api/reports/daily-patient-report?branchId=${BR}&${qs}`;
     const ids = (r: any) => (r.body?.visits ?? []).map((v: any) => v.visitId).sort((a: number, b: number) => a - b);
@@ -286,6 +304,17 @@ async function main() {
       (await q(`SELECT COUNT(*)::int AS n FROM visits WHERE id = ANY($1::int[]) AND deleted_at IS NULL`, [[mk1, mk2, mk3]]))[0].n, 3);
     same("ز٣. **والمرضى الذين حضروا: كلُّ مريضٍ مرّةً في الفترة** — أحمد ثلاثةَ أيام وبشرى يوماً = ٢، والزيارات ٤",
       [all3.body?.patientsCount, all3.body?.visits?.length], [2, 4]);
+
+    // ══ ط. بعد الفحص (قرارُ المالك ٢٠٢٦-١٠-٠١) ═══════════════════════════════
+    console.log("\n── ط. بعد الفحص ──");
+    const ae = async (qs: string) => (await http(url(qs), S.admin)).body?.afterExam;
+    same("ط١. **D1–D3: فُحص ٤ (والملغاة لا تُعدّ) · باشر ٣ (والمجّانيُّ باشر) · لم يباشر ٢**",
+      await ae(rng), { examined: 4, started: 3, notStarted: 2 });
+    same("ط٢. **يومُ الفحص D1: فُحص ٢ ولم يباشر أحد — ولا يتغيّر حين يدفعان D2**",
+      await ae(`date=${D1}`), { examined: 2, started: 0, notStarted: 2 });
+    same("ط٣. **يومُ المباشرة D2: باشر ٢ (فُحصا D1)، وفُحص كريم ولم يباشر**",
+      await ae(`date=${D2}`), { examined: 1, started: 2, notStarted: 1 });
+    same("ط٤. وبالقسم: علاجٌ طبيعيّ وحده", await ae(`${rng}&services=physiotherapy`), { examined: 3, started: 2, notStarted: 1 });
 
     // ══ هـ. الفرع ══════════════════════════════════════════════════════
     console.log("\n── هـ. نطاقُ الفرع ──");

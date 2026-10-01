@@ -50,6 +50,8 @@ interface DailyReportResponse {
   financial: DailyFinancial | null;
   /** «حسب اليوم» لفترةٍ من أكثر من يوم (§4.az) — `null` ليومٍ واحد. */
   daily: DailyBreakdown | null;
+  /** بعد الفحص (§4.az): فُحصوا في الفترة · باشروا في الفترة (يومَ المباشرة) · فُحصوا ولم يباشروا حتى نهايتها. */
+  afterExam?: { examined: number; started: number; notStarted: number };
 }
 
 /**
@@ -218,6 +220,9 @@ export default function DailyPatientReport() {
   });
   //  المرضى الذين حضروا — كلُّ مريضٍ مرّةً في الفترة (= `patientsCount` من الخادم).
   const attendedCount = new Set(rows.map((r) => r.patientId)).size;
+  const afterExam = noService ? null : data?.afterExam ?? null;
+  const afterExamLine = (a: { examined: number; started: number; notStarted: number }) =>
+    `فُحصوا: ${a.examined} · باشروا العلاج: ${a.started} · فُحصوا ولم يباشروا: ${a.notStarted}`;
 
   // The branch column earns its place only when the list actually mixes
   // branches — i.e. an admin viewing "all branches". Otherwise every row would
@@ -362,6 +367,11 @@ export default function DailyPatientReport() {
       { البيان: "الأقسام", القيمة: servicesLabel },
       { البيان: "عدد الزيارات", القيمة: rows.length },
       { البيان: PATIENTS_ATTENDED_LABEL, القيمة: attendedCount },
+      ...(afterExam ? [
+        { البيان: "فُحصوا في الفترة", القيمة: afterExam.examined },
+        { البيان: "باشروا العلاج في الفترة", القيمة: afterExam.started },
+        { البيان: "فُحصوا ولم يباشروا", القيمة: afterExam.notStarted },
+      ] : []),
     ]);
     XLSX.utils.book_append_sheet(wb, scopeSheet, "النطاق");
     XLSX.writeFile(wb, `daily_patients_${fileTag}.xlsx`);
@@ -457,6 +467,7 @@ export default function DailyPatientReport() {
 <body>
   <h1>${esc(labels.title)} — مراكز د. ياسر الساعدي</h1>
   <h3>${esc(periodLabel)} · ${esc(scopeLabel)} · ${esc(servicesLabel)} · ${esc(labels.rowsCount(rows.length))}</h3>
+  ${afterExam ? `<h3>${esc(afterExamLine(afterExam))}</h3>` : ""}
   ${summaryHtml}
   ${dailyHtml}
   <table>
@@ -595,6 +606,13 @@ export default function DailyPatientReport() {
           {/*  الملخّصُ المالي — **يظهر ولو لم تكن ثمّة زيارات**: يومٌ بلا
               زيارةٍ قد يحمل قبضاً من مريضٍ سابق، وإخفاؤه كان يُضيّع المال
               من التقرير. وأرقامُه كلُّها محسوبةٌ في الخادم. */}
+          {afterExam && (
+            <div className="mb-4 flex flex-wrap gap-2 text-sm" data-testid="text-after-exam">
+              <span className="rounded-md bg-slate-100 px-3 py-1">فُحصوا: <b>{afterExam.examined}</b></span>
+              <span className="rounded-md bg-emerald-50 px-3 py-1 text-emerald-800">باشروا العلاج: <b>{afterExam.started}</b></span>
+              <span className="rounded-md bg-amber-50 px-3 py-1 text-amber-800">فُحصوا ولم يباشروا: <b>{afterExam.notStarted}</b></span>
+            </div>
+          )}
           {financial && <DailyFinancialSummary f={financial} isAr={isAr} services={servicesParam} title={labels.financialTitle} />}
           {data?.daily && <DailyBreakdownTable d={data.daily} isAr={isAr} />}
           {rows.length === 0 ? (
