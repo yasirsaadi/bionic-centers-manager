@@ -239,6 +239,39 @@ async function main() {
     same("د٩. ويومٌ واحد (D2) يأخذ مالَ يومه وحده",
       (await http(url(`from=${D2}&to=${D2}`), S.admin)).body?.financial?.rollups?.grandTotal, { revenue: 260000, paid: 80000 });
 
+    // ══ و. حسب اليوم (§4.az) ═══════════════════════════════════════════
+    console.log("\n── و. حسب اليوم ──");
+    const dly = all3.body?.daily;
+    same("و١. **صفٌّ لكلّ يوم بأرقام الفِكستشر** — ومنها زيارةُ ٢٣:٣٠ بغداد في يومها",
+      dly?.days, [
+        { day: D1, visits: 2, paid: 100000, revenue: 500000, expenses: 20000, net: 80000 },
+        { day: D2, visits: 1, paid: 80000, revenue: 260000, expenses: 5000, net: 75000 },
+        { day: D3, visits: 1, paid: 7000, revenue: 90000, expenses: 1000, net: 6000 },
+      ]);
+    same("و٢. **والمجموع = الملخّصُ المالي للفترة نفسِها وعددُ زياراتها**",
+      dly?.total, { visits: all3.body?.visits?.length, paid: f?.rollups?.grandTotal?.paid, revenue: f?.rollups?.grandTotal?.revenue,
+        expenses: f?.expenses, net: f?.netCash });
+    const dPhy = (await http(url(`${rng}&services=physiotherapy`), S.admin)).body;
+    same("و٣. **وبقسمٍ مختار: أيامُه بماله وحده، ومجموعُها = مالُ الاختيار**",
+      [dPhy?.daily?.days?.map((r: any) => [r.day, r.paid, r.expenses, r.visits]),
+       { paid: dPhy?.daily?.total?.paid, revenue: dPhy?.daily?.total?.revenue, expenses: dPhy?.daily?.total?.expenses, net: dPhy?.daily?.total?.net }],
+      [[[D1, 0, 0, 0], [D2, 30000, 5000, 1], [D3, 0, 0, 0]],
+       { paid: dPhy?.financial?.scoped?.selected?.paid, revenue: dPhy?.financial?.scoped?.selected?.revenue,
+         expenses: dPhy?.financial?.scoped?.expenses, net: dPhy?.financial?.scoped?.netCash }]);
+    same("و٤. وأطرافٌ وحدها: المصاريفُ والصافي لا ينفصلان يوماً ولا مجموعاً (null)",
+      (await http(url(`${rng}&services=prosthetic`), S.admin)).body?.daily?.total,
+      { visits: 1, paid: 100000, revenue: 500000, expenses: null, net: null });
+    same("و٥. ويومٌ واحد بلا تفصيل", (await http(url(`date=${D2}`), S.admin)).body?.daily, null);
+    same("و٦. وفترةٌ أطولُ من ٩٢ يوماً تُقال لا تُحسب",
+      (await http(url(`from=2001-01-01&to=2001-06-01`), S.admin)).body?.daily, { tooLong: true, maxDays: 92 });
+    //  الصلاحياتُ تُقرأ حيّةً من صفّ المستخدم (المِعترِضة) — فتُسحَب منه ثمّ تُعاد.
+    await q(`UPDATE system_users SET can_manage_accounting = false WHERE id = $1`, [RECV]);
+    const noMoney = await http(url(rng), { ...S.recv, permissions: { canViewPatients: true, canViewReports: true } });
+    await q(`UPDATE system_users SET can_manage_accounting = true WHERE id = $1`, [RECV]);
+    same("و٧. **وبلا صلاحية المال: اليومُ وعددُ زياراته وحدهما**",
+      [noMoney.body?.financial, noMoney.body?.daily?.withMoney, noMoney.body?.daily?.days, noMoney.body?.daily?.total],
+      [null, false, [{ day: D1, visits: 2 }, { day: D2, visits: 1 }, { day: D3, visits: 1 }], { visits: 4 }]);
+
     // ══ هـ. الفرع ══════════════════════════════════════════════════════
     console.log("\n── هـ. نطاقُ الفرع ──");
     const rv = await http(`/api/reports/daily-patient-report?${rng}&branchId=${BR_OTHER}`, S.recv);
