@@ -1,4 +1,6 @@
 import { db } from "./db";
+import { recordAttendanceVisitTx } from "./visits/attendance";
+import { devicePurchaseReason } from "@shared/attendance";
 import {
   patients, payments, documents, visits, branches, users, customStats, expenses, installmentPlans, invoices, invoiceItems, vendors, purchases,
   anomalyDecisions, aiMemoryNotes, followUpCalls, auditLog, journalLines,
@@ -2860,6 +2862,11 @@ export class DatabaseStorage implements IStorage {
     tx?: DbTransactionLike;
     /** الفرعُ الذي تقع فيه العملية (ترحيل ٠٨٠) — غيابُه = فرعُ التسجيل. */
     actingBranchId?: number | null;
+    /**
+     * **زيارةُ «شراء طرف/مسند» في المعاملة نفسِها** (§4.aw) — يمرّرها بابا الشراء بحضور المريض («تم الشراء»
+     * و«تخصيص الطرف»). وتنفيذُ خصمٍ موروثٍ معتمَد لا يمرّرها: ليس حضوراً.
+     */
+    recordAttendance?: boolean;
   }): Promise<{ patient: Patient; workOrderId: number; deviceEpisodeId: number | null }> {
     const body = async (tx: any) => {
       const op = await startDeviceSaleOperationallyTx(tx, {
@@ -2874,6 +2881,13 @@ export class DatabaseStorage implements IStorage {
       const { patient } = await applyDeviceSaleFinancialsTx(tx, {
         operation: op, cost: params.cost,
       });
+      if (params.recordAttendance) {
+        await recordAttendanceVisitTx(tx, {
+          patientId: params.patientId, caseId: op.caseId, branchId: op.branchId,
+          deviceEpisodeId: op.episodeId, reason: devicePurchaseReason(params.serviceType),
+          createdBy: params.assignedBy,
+        });
+      }
       return { patient, workOrderId: op.workOrderId, deviceEpisodeId: op.episodeId };
     };
     return params.tx ? await body(params.tx) : await db.transaction(body);

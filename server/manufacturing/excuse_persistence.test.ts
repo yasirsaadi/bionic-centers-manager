@@ -511,6 +511,8 @@ async function main() {
     await db.execute(sql`DELETE FROM prosthetic_rework_events WHERE work_order_id IN (${idList})`);
     await db.execute(sql`DELETE FROM prosthetic_work_history WHERE work_order_id IN (${idList})`);
     await db.execute(sql`DELETE FROM prosthetic_work_orders WHERE id IN (${idList})`);
+    //  التسليمُ يكتب زيارةَ «استلام الجهاز» (§4.aw) — تُحذف قبل المريض.
+    await db.execute(sql`DELETE FROM visits WHERE patient_id IN (${pList})`);
     await db.execute(sql`DELETE FROM patients WHERE id IN (${pList})`);
     //  سطورُ التدقيق التي كتبتها نقاطُ الموعد والإلغاء تشير إلى مستخدمي الاختبار.
     const uList = sql.join(userIds.map((i) => sql`${i}`), sql`, `);

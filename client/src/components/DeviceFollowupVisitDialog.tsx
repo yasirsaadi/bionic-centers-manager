@@ -25,6 +25,7 @@ import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
 import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
 import { DEVICE_FOLLOWUP_LABEL } from "./reception_routing";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 
 /** أنواعُ المراجعة المتاحة هنا — بلا «صيانة» (خيارُها مستقلّ) ولا «جهاز جديد» ولا «عاد للشراء» (لكلٍّ خيارُه). */
 export const DEVICE_FOLLOWUP_REVIEW_KINDS: readonly ReviewKind[] = ["follow_up", "adjustment", "other"];
@@ -32,14 +33,18 @@ export const DEVICE_FOLLOWUP_REVIEW_KINDS: readonly ReviewKind[] = ["follow_up",
 const SERVICE_LABELS = { prosthetic: "أطراف صناعية", medical_support: "مساند طبية" } as const;
 
 export function DeviceFollowupVisitDialog({
-  patientId, branchId, serviceType, open, onOpenChange,
+  patientId, branchId, serviceType, open, onOpenChange, mode = "followup",
 }: {
   patientId: number;
   branchId: number;
   serviceType: "prosthetic" | "medical_support";
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** «تدريب على الجهاز» (§4.aw): النافذةُ نفسُها بلا مراجعة طبيب — السببُ «تدريب» يكتبه الخادم. */
+  mode?: "followup" | "training";
 }) {
+  const training = mode === "training";
+  const title = training ? ATTENDANCE_REASONS.training : DEVICE_FOLLOWUP_LABEL;
   const { mutate, isPending } = useAddVisit();
   const isAdmin = Boolean((useBranchSession() as any)?.isAdmin);
 
@@ -73,20 +78,23 @@ export function DeviceFollowupVisitDialog({
     setDateError(null);
     mutate({
       patientId, branchId,
-      notes: notes.trim() || DEVICE_FOLLOWUP_LABEL,
+      notes: notes.trim() || null,
       treatmentType: null,
       caseId,
       customDate: date || null,
       ...(needsDeviceChoice && device && device !== UNALLOCATED ? { deviceEpisodeId: Number(device) } : {}),
-      reviewPath, reviewKind, reviewNote: reviewNote.trim() || undefined,
+      //  **السببُ عنوانُ السطر** في سجلّ الزيارات (§4.aw).
+      ...(training
+        ? { visitReason: "training" }
+        : { details: ATTENDANCE_REASONS.followup, reviewPath, reviewKind, reviewNote: reviewNote.trim() || undefined }),
     } as any, { onSuccess: () => onOpenChange(false) });
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]" dir="rtl" data-testid="device-followup-dialog">
+      <DialogContent className="sm:max-w-[500px]" dir="rtl" data-testid={training ? "device-training-dialog" : "device-followup-dialog"}>
         <DialogHeader>
-          <DialogTitle>{DEVICE_FOLLOWUP_LABEL} — {SERVICE_LABELS[serviceType]}</DialogTitle>
+          <DialogTitle>{title} — {SERVICE_LABELS[serviceType]}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
@@ -120,12 +128,14 @@ export function DeviceFollowupVisitDialog({
             </div>
           )}
 
-          <ReviewPathPicker
-            path={reviewPath} onPathChange={setReviewPath}
-            kind={reviewKind} onKindChange={setReviewKind}
-            note={reviewNote} onNoteChange={setReviewNote}
-            kinds={DEVICE_FOLLOWUP_REVIEW_KINDS}
-          />
+          {!training && (
+            <ReviewPathPicker
+              path={reviewPath} onPathChange={setReviewPath}
+              kind={reviewKind} onKindChange={setReviewKind}
+              note={reviewNote} onNoteChange={setReviewNote}
+              kinds={DEVICE_FOLLOWUP_REVIEW_KINDS}
+            />
+          )}
 
           <p className="text-[11px] text-muted-foreground rounded-md bg-slate-50 border px-3 py-2">
             للصيانة أو شراء جزء: عُد إلى «ما سبب حضور المريض اليوم؟» واختر خيارهما — يُفتح هناك أمرُ العمل بخبيره وأجوره.

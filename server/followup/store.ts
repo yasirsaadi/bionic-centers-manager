@@ -2074,6 +2074,7 @@ export async function confirmPurchase(params: {
       deviceEpisodeId: episodeId,
       actingBranchId: operationBranchId,
       tx,
+      recordAttendance: true,
     });
 
     const upd = await tx.execute(sql`

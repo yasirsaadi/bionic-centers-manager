@@ -315,8 +315,9 @@ async function main() {
           "أ٨. ومَن سحب ولماذا محفوظان", JSON.stringify(reqs[0]));
 
         const vs = await visitRows(p);
-        check(vs.length === 1 && vs[0].deleted_at !== null && vs[0].case_id === null,
-          "أ٩. وزيارةُ العلامة حُذفت ناعماً وفُصلت — لا تُنقَل لخيطٍ باقٍ", JSON.stringify(vs));
+        //  زيارتا العلامة و«طلب معاينة طبية» (§4.aw) — كلتاهما من المسار نفسِه، فتُسحبان معاً.
+        check(vs.length === 2 && vs.every((v: any) => v.deleted_at !== null && v.case_id === null),
+          "أ٩. وزيارتا العلامة وطلب المعاينة حُذفتا ناعماً وفُصلتا — لا تُنقَلان لخيطٍ باقٍ", JSON.stringify(vs));
         same("أ١٠. ولا سطرَ جنائيّ — الحذفُ الناعم لا يستثير الترِكر",
           (await q(`SELECT 1 FROM visits_forensic_log WHERE patient_id=$1`, [p])).length, 0);
 

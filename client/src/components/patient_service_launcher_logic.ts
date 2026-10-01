@@ -69,7 +69,8 @@ export type ServiceFlow =
    * `POST /api/visits` — **متابعة أو تعديل على جهاز قائم** (فصلُ الزرّين، ٢٠٢٦-٠٩-٣٠). زيارةٌ على قسم الجهاز بتاريخها
    * (حتى ٣ أيام للموظّف) وطلبُ مراجعةٍ للطبيب — ما كانت تفعله «تسجيل زيارة جديدة» لمرضى الأجهزة، انتقل إلى هنا بحرفه.
    */
-  | { kind: "device_followup"; serviceType: "prosthetic" | "medical_support" };
+  | { kind: "device_followup"; serviceType: "prosthetic" | "medical_support" }
+  | { kind: "device_training"; serviceType: "prosthetic" | "medical_support" };
 
 /** النقاط التي يجوز أن يصل إليها موزِّع الخدمات — قائمة مغلقة. */
 export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
@@ -79,6 +80,7 @@ export const FLOW_ENDPOINTS: Record<ServiceFlow["kind"], string> = {
   no_exam_operation: "/api/no-exam/device-sale",
   return_to_purchase: "/api/followups/return-to-purchase",
   device_followup: "/api/visits",
+  device_training: "/api/visits",
 };
 
 /**

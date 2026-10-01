@@ -24,6 +24,7 @@
 //
 // ولا تُقرَّر السقالةُ بالنيّة: تُقرَّر بأن **لا شيءَ يشير إليها**.
 
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { sql } from "drizzle-orm";
 import { isTerminal } from "@shared/followup";
 import { deleteScaffoldingEpisodesTx } from "../device_episodes/store";
@@ -346,10 +347,13 @@ export async function classifyCaseDisposal(
   //  **والمطابقةُ على `details` وحده** — وهو ما يكتبه `addPatientCaseType`
   //  حرفياً. و`notes LIKE '%…%'` كانت تلتقط أيّ ملاحظةٍ بشريّةٍ تصادف أن
   //  تذكر العبارة، فتحذف زيارةً حقيقية.
+  //
+  //  **وزيارةُ «طلب معاينة طبية»** (§4.aw) يكتبها طلبُ الجهاز نفسُه — فإن سُحب الطلبُ سقالةً أُدخلت بالخطأ سُحبت معه
+  //  بالحذف الناعم نفسِه، ولا تبقى زيارةً بلا قسم.
   const markers = await rows(tx, sql`
     SELECT id FROM visits
      WHERE case_id = ${caseId} AND deleted_at IS NULL
-       AND details = 'إضافة نوع حالة'
+       AND details IN ('إضافة نوع حالة', ${ATTENDANCE_REASONS.examRequest})
      ORDER BY id
   `);
 

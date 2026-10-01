@@ -43,6 +43,8 @@
  * الاستقبالُ ومديرُ الفرع والمسؤول، لا طبيب.
  */
 
+import { recordAttendanceVisitTx } from "../visits/attendance";
+import { partPurchaseReason } from "@shared/attendance";
 import { db } from "../db";
 import { ensureCaseTx } from "../patient_cases/reopen";
 import { sql } from "drizzle-orm";
@@ -615,6 +617,13 @@ export async function createComponentSaleOperation(params: {
       }),
     });
 
+    //  ══ **وزيارةُ الحضور في الحفظة نفسِها** (§4.aw) — «شراء جزء: …» في سجلّ الزيارات. ══
+    await recordAttendanceVisitTx(tx, {
+      patientId: params.patientId, caseId: op.caseId, branchId: actualOperationBranchId,
+      deviceEpisodeId: episodeId, reason: partPurchaseReason(requestedItemLabel(component, "prosthetic")),
+      notes: params.note, createdBy: params.actor.userId,
+    });
+
     return {
       workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
       component, finalPrice: params.finalPrice, expertUserId: params.expertUserId,
@@ -730,6 +739,13 @@ async function attachComponentToDeviceInManufacturing(
       kind: "sale", itemLabel: requestedItemLabel(params.component, "prosthetic"),
       operationFinalPrice: params.finalPrice, paidNow: params.paidNow,
     }),
+  });
+
+  //  وزيارةُ الحضور — الإلحاقُ شراءُ جزءٍ كذلك (§4.aw).
+  await recordAttendanceVisitTx(tx, {
+    patientId: op.patientId, caseId: op.caseId, branchId: op.branchId,
+    deviceEpisodeId: episodeId, reason: partPurchaseReason(label),
+    notes: params.note, createdBy: params.actor.userId,
   });
 
   return {

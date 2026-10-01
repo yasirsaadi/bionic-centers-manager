@@ -406,6 +406,18 @@ export function PatientServiceLauncher({
         />
       )}
 
+      {/*  **تدريب على الجهاز** — النافذةُ نفسُها بلا مراجعة طبيب (§4.aw). */}
+      {flow?.kind === "device_training" && (
+        <DeviceFollowupVisitDialog
+          patientId={patient.id}
+          branchId={patient.branchId}
+          serviceType={flow.serviceType}
+          mode="training"
+          open
+          onOpenChange={closeFlow}
+        />
+      )}
+
       {/*  **عاد للشراء** (ترحيل ٠٧٢) — الحلقةُ نفسُها تعود لمعاينةٍ ثانية. */}
       {flow?.kind === "return_to_purchase" && (
         <ReturnToPurchaseDialog

@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -4081,8 +4082,11 @@ export async function registerRoutes(
   app.post(api.visits.create.path, isAuthenticated, async (req, res) => {
     // `deviceEpisodeId` حقلُ طلبٍ لا يُدرَج كما وصل: يُنزَع، ثم يُعاد بعد
     // التحقّق من أن الجهاز يخصّ هذا المريض وهذه الخدمة.
-    const { deviceEpisodeId: requestedVisitEpisode, ...visitBody } = req.body ?? {};
+    const { deviceEpisodeId: requestedVisitEpisode, visitReason, ...visitBody } = req.body ?? {};
     const input = api.visits.create.input.parse(visitBody);
+    //  **«تدريب على الجهاز»** (§4.aw): زيارةٌ سببُها التدريب — بلا مالٍ ولا طبيب. السببُ يُكتب هنا لا من العميل.
+    const isTraining = visitReason === "training";
+    if (isTraining) (input as any).details = ATTENDANCE_REASONS.training;
 
     // ══ صدقُ الإيصال (تصحيحٌ تشغيليّ) ═══════════════════════════════════
     // زيارةٌ عامّة جديدة **لا تعني قبضاً أبداً**. كلفةٌ موجبة هنا كانت
@@ -4198,7 +4202,7 @@ export async function registerRoutes(
     const visitService = deviceServiceOfCaseType((input as any).treatmentType)
       ?? await deviceServiceOfCaseId(visit.caseId, visit.patientId);
     let visitRouting: { created: boolean; request: { id: number } | null } = { created: false, request: null };
-    if (visitService) {
+    if (visitService && !isTraining) {
       const cls = classifyFromBody(req.body, "follow_up");
       visitRouting = await routeServiceToDoctorReview(req, {
         patientId: visit.patientId, caseType: visitService,

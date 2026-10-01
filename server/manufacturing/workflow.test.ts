@@ -99,6 +99,8 @@ async function cleanup() {
   await pool.query(`DELETE FROM patient_notification_deliveries WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
+  //  التسليمُ يكتب زيارةَ «استلام الجهاز» (§4.aw) — قبل الحالات: `visits.case_id` مفتاحٌ أجنبيّ.
+  await pool.query(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await pool.query(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   // المخرج الإداري يكتب في audit_log باسم المستخدم، فيمنع حذفه بعد الاختبار.

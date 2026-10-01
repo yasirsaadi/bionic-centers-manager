@@ -14,6 +14,9 @@
 
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { db } from "../db";
+import { recordAttendanceVisitTx } from "../visits/attendance";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { routeServiceToDoctorReview } from "../medical_review/routing";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
@@ -241,9 +244,20 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         homeBranchId: patientRef.branchId,
         patientBranchIds: await patientBranchIdsOf(patientRef),
       });
-      const episode = await episodes.startDeviceEpisode({
-        patientId, serviceType, createdBy: session.userId,
-        requestedItem: parsedItem.value, servicePath, actingBranchId,
+      //  **وطلبُ المعاينة حضورٌ** — زيارةُ «طلب معاينة طبية» في معاملة الطلب نفسِها (§4.aw). **وبلا ربطٍ بالحلقة**:
+      //  حلقةٌ تشير إليها زيارةٌ تصير تاريخاً لا يُسحَب (`classifyCaseDisposal`)، والطلبُ الخاطئ يبقى قابلاً للسحب كما كان.
+      const episode = await db.transaction(async (tx) => {
+        const ep = await episodes.startDeviceEpisodeTx(tx, {
+          patientId, serviceType, createdBy: session.userId,
+          requestedItem: parsedItem.value, servicePath, actingBranchId,
+        });
+        await recordAttendanceVisitTx(tx, {
+          patientId, caseId: ep.caseId, branchId: ep.branchId,
+          reason: ATTENDANCE_REASONS.examRequest,
+          notes: parsedItem.value ? requestedItemLabel(parsedItem.value, serviceType) : null,
+          createdBy: session.userId ?? null,
+        });
+        return ep;
       });
 
       // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────

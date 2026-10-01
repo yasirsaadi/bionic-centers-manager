@@ -655,6 +655,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
         patientId, serviceType, fields, cost: effectiveCost, expertUserId, assignedBy: s.userId ?? null,
         deviceEpisodeId: liveEpisode?.id ?? null,
         actingBranchId,
+        recordAttendance: true,
       });
       await audit(req, "prosthetic_work_order", workOrderId, "create", patient.branchId,
         `تخصيص ${serviceType === "prosthetic" ? "طرف" : "مسند"} + إسناد الخبير #${expertUserId} لمريض #${patientId} (كلفة ${effectiveCost}${mayWriteClinical ? "" : " — سعر الطبيب المعتمد"})`);
