@@ -184,7 +184,7 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/reports/nightly": { d: "التقريرُ الليليّ.", f: true },
   //  **بكلمات السائل لا باسم الملفّ** (استعلاماتُ بغداد ٢٠٢٦-٠٩-٢٧): «تقريرُ مرضى اليوم» وحدها لم تطابق
   //  «جلسات علاج طبيعي»، فظهرت شاشاتُ تتبّع الأجهزة قبلها ورُدّت بصلاحيتها فاعتذر المساعد.
-  "/api/reports/daily-patient-report": { d: "التقريرُ اليوميّ للمرضى: زياراتُ المرضى وجلساتُهم في يومٍ واحد (اليوم أو البارحة أو أيّ تاريخ YYYY-MM-DD) لفرع السائل — اسمُ المريض وقسمُه serviceType (علاج طبيعي · أطراف صناعية · مساند طبية) ونوعُ العلاج treatment ومشكلتُه وما عُمل له.", q: ["date", "branchId"] },
+  "/api/reports/daily-patient-report": { d: "التقريرُ اليوميّ للمرضى: زياراتُ المرضى وجلساتُهم في يومٍ واحد (date بصيغة YYYY-MM-DD) أو فترةٍ من from إلى to لفرع السائل، ويُرشَّح بالقسم services (prosthetic · medical_support · physiotherapy، واحدٌ أو اثنان بفاصلة) — اسمُ المريض وقسمُه serviceType (علاج طبيعي · أطراف صناعية · مساند طبية) ونوعُ العلاج treatment ومشكلتُه وما عُمل له.", q: ["date", "from", "to", "services", "branchId"] },
   "/api/daily-review": { d: "المراجعةُ اليومية: ما جرى فعلياً في الأطراف والمساند اليوم عبر الفروع، الأحدثُ أوّلاً.", q: ["date"], f: true },
   //  ══ الإحصاءُ والشذوذ ══
   "/api/statistics/monthly-new-patients": { d: "المرضى الجدد شهرياً.", q: ["branchId"] },
