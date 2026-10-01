@@ -3000,10 +3000,33 @@ export class DatabaseStorage implements IStorage {
             //  بلا إسنادٍ عمداً (ترحيل ٠٥٦): صفُّ الحالة يُحذف بعد أسطر،
             //  فمفتاحٌ إليه ينكسر. وهذا عكسٌ إداريٌّ نادر لا مسارُ عملٍ
             //  يومي — يظهر «غير مبوَّب» ويُقرأ على حقيقته.
-            await tx.insert(costEntries).values({
-              patientId, branchId: p.branchId, amount: -reduction, source: "case_retired",
-              notes: `سحب حالة ${caseType === "prosthetic" ? "أطراف" : caseType === "medical_support" ? "مساند" : "علاج طبيعي"}`,
-            });
+            //  ══ **يُطرح من الفرع الذي سُجّلت فيه الكلفة** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ax) ══
+            //  كان يُطرح كلُّه من فرع تسجيل المريض — فكلفةٌ قيّدها فرعٌ آخر تبقى عليه، ويُسحَب من التسجيل
+            //  ما لم يُقيَّد فيه. فيُوزَّع الطرحُ على فروع قيود هذا القسم بنسبة ما قيّده كلٌّ منها (والأخيرُ يأخذ
+            //  باقي التقريب)، وبلا قيودٍ مُفرَّعة يبقى فرعُ القسم ثمّ فرعُ التسجيل.
+            const label = `سحب حالة ${caseType === "prosthetic" ? "أطراف" : caseType === "medical_support" ? "مساند" : "علاج طبيعي"}`;
+            const byBranch = ((await tx.execute(sql`
+              SELECT branch_id, SUM(amount)::int AS total FROM cost_entries
+               WHERE case_id = ${row.id} AND branch_id IS NOT NULL
+               GROUP BY branch_id HAVING SUM(amount) > 0 ORDER BY branch_id
+            `)).rows ?? []) as { branch_id: number; total: number }[];
+            const grand = byBranch.reduce((s, r) => s + Number(r.total), 0);
+            if (byBranch.length === 0 || grand <= 0) {
+              await tx.insert(costEntries).values({
+                patientId, branchId: row.branchId ?? p.branchId, amount: -reduction, source: "case_retired", notes: label,
+              });
+            } else {
+              let left = reduction;
+              for (let i = 0; i < byBranch.length; i++) {
+                const part = i === byBranch.length - 1
+                  ? left : Math.round(reduction * Number(byBranch[i].total) / grand);
+                left -= part;
+                if (part === 0) continue;
+                await tx.insert(costEntries).values({
+                  patientId, branchId: Number(byBranch[i].branch_id), amount: -part, source: "case_retired", notes: label,
+                });
+              }
+            }
           }
         }
       }

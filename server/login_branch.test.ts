@@ -29,7 +29,7 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6973;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-فرع-الدخول";
-const EMP = 99730, EXP = 99731;
+const EMP = 99730, EXP = 99731, EMP2 = 99732;
 const PASSWORD = "pw-login-branch";
 const BAGHDAD = 1, KARBALA = 2, DHIQAR = 3;
 
@@ -51,12 +51,16 @@ async function call(sid: string, method: string, path: string, body?: any) {
 }
 const login = (sid: string, branchKey: string) =>
   call(sid, "POST", "/api/verify-branch", { branchKey, username: "lb-emp", password: PASSWORD });
+const login2 = (sid: string, branchKey: string) =>
+  call(sid, "POST", "/api/verify-branch", { branchKey, username: "lb-emp2", password: PASSWORD });
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM journal_lines WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE created_by = $1)`, [EMP]);
   await q(`DELETE FROM journal_entries WHERE created_by = $1`, [EMP]);
+  await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE created_by = $1)`, [EMP2]);
+  await q(`DELETE FROM journal_entries WHERE created_by = $1`, [EMP2]);
   await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
@@ -67,7 +71,7 @@ async function cleanup() {
   await q(`DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
-  await q(`DELETE FROM audit_log WHERE user_id = $1`, [EMP]);
+  await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[EMP, EMP2, 1]]);
   await q(`DELETE FROM submission_tokens WHERE token LIKE 'lb-tok-%'`);
 }
 
@@ -85,6 +89,13 @@ async function main() {
            VALUES ($1,'lb-exp','x','خبير','prosthetics_expert',$2,$3::jsonb,true)
            ON CONFLICT (id) DO UPDATE SET branch_ids=EXCLUDED.branch_ids, is_active=true`,
     [EXP, BAGHDAD, JSON.stringify([BAGHDAD, DHIQAR])]);
+  //  حسابٌ [بغداد، ذي قار] — يصل مريضَ بغداد بفرع بغداد ولو لم يُتَح الملفُّ لذي قار.
+  await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
+             can_view_patients,can_add_patients,can_add_payments,can_view_payments)
+           VALUES ($1,'lb-emp2',$2,'موظّف ذي قار ٢','reception',$3,$4::jsonb,true,true,true,true,true)
+           ON CONFLICT (id) DO UPDATE SET password_hash=EXCLUDED.password_hash, branch_ids=EXCLUDED.branch_ids,
+             is_active=true, can_add_payments=true, can_view_patients=true`,
+    [EMP2, hash, BAGHDAD, JSON.stringify([BAGHDAD, DHIQAR])]);
   await cleanup();
 
   const app = express();
@@ -170,9 +181,42 @@ async function main() {
     same("ج٤. **وأمرُ التصنيع لمريضٍ قديم يُفتَح في ذي قار** — لا في فرع تسجيله",
       [wo.status, (await q(`SELECT branch_id FROM prosthetic_work_orders WHERE patient_id=$1`, [p2.id])).map((r: any) => r.branch_id)],
       [201, [DHIQAR]]);
+
+    //  ══ قرارا المالك (٢٠٢٦-١٠-٠١) ══
+    console.log("\n── د. فرعُ الجلسة ولو لم يُتَح الملفّ · والسحبُ من فرع القيد ──");
+    const [p3] = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, total_cost)
+       VALUES ('مريض بغداد','07701234567',$1,'30','علاج',$2,true,100000) RETURNING id`, [MARK, BAGHDAD]);
+    await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+             VALUES ($1,$2,'physiotherapy',100000,'manual','active')`, [p3.id, BAGHDAD]);
+    const in2 = await login2("dq2", "dhiqar");
+    check(in2.status === 200, "د٠. (الإعداد) موظّفُ [بغداد، ذي قار] دخل ذي قار", JSON.stringify(in2.body));
+    const pay3 = await call("dq2", "POST", "/api/payments", {
+      patientId: p3.id, branchId: BAGHDAD, amount: 50000, paymentMethod: "cash", paymentTreatmentType: "علاج طبيعي",
+    });
+    same("د١. **مريضُ بغداد غيرُ المتاح لذي قار: دفعتُه في ذي قار** حيث قُبض المال — لا في فرع التسجيل",
+      [pay3.status < 300, (await q(`SELECT branch_id FROM payments WHERE patient_id=$1`, [p3.id])).map((r: any) => r.branch_id)],
+      [true, [DHIQAR]]);
+
+    //  قسمٌ كلفتُه ٤٠٠,٠٠٠ قيّدت بغدادُ ربعَها وذي قار ثلاثةَ أرباعها — يُسحَب.
+    const [p4] = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, is_medical_support, total_cost)
+       VALUES ('مريض قسمين','07701234567',$1,'30','علاج',$2,true,true,400000) RETURNING id`, [MARK, BAGHDAD]);
+    await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+             VALUES ($1,$2,'physiotherapy',0,'manual','active')`, [p4.id, BAGHDAD]);
+    const [ms] = await q<{ id: number }>(`INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+             VALUES ($1,$2,'medical_support',400000,'manual','active') RETURNING id`, [p4.id, BAGHDAD]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id) VALUES
+             ($1,$2,100000,'manual_edit',$4),($1,$3,300000,'manual_edit',$4)`, [p4.id, BAGHDAD, DHIQAR, ms.id]);
+    sessions.set("adm", { branchSession: { userId: 1, isAdmin: true, role: "admin", branchId: 0, accessibleBranches: [], permissions: {} } });
+    const del = await call("adm", "DELETE", `/api/patients/${p4.id}/case-type/medical_support`, { reason: "خطأ إدخال" });
+    same("د٢. **سحبُ القسم يطرح من كلّ فرعٍ ما قيّده** — بغداد ١٠٠,٠٠٠ وذي قار ٣٠٠,٠٠٠",
+      [del.status, (await q(`SELECT branch_id, amount FROM cost_entries WHERE patient_id=$1 AND source='case_retired' ORDER BY branch_id`, [p4.id]))
+        .map((r: any) => [r.branch_id, r.amount])],
+      [200, [[BAGHDAD, -100000], [DHIQAR, -300000]]]);
   } finally {
     await cleanup();
-    await q(`UPDATE system_users SET is_active=false WHERE id = ANY($1::int[])`, [[EMP, EXP]]);
+    await q(`UPDATE system_users SET is_active=false WHERE id = ANY($1::int[])`, [[EMP, EXP, EMP2]]);
     httpServer.close();
     await pool.end();
   }
