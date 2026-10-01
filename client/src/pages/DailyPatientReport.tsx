@@ -10,10 +10,10 @@ import { formatDateIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useBranchSession } from "@/components/BranchGate";
-import {
-  DEPARTMENT_LABELS, DEVICES_ROLLUP_LABEL, GRAND_TOTAL_LABEL, REPORT_ROW_LABELS,
-} from "@shared/service_taxonomy";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch } from "@shared/schema";
+import { REPORT_SERVICES, REPORT_SERVICE_LABELS, reportServicesLabel, type ReportService } from "@shared/daily_report_scope";
+import { financialRows, expenseLines, type DailyFinancial } from "./daily_report_rows";
 
 interface DailyPatientRow {
   visitId: number;
@@ -25,6 +25,8 @@ interface DailyPatientRow {
   problem: string | null;
   actionToday: string | null;
   treatment: string | null;
+  /** قسمُ الزيارة بالعربية من خيطها — `null` لزيارةٍ بلا قسم. */
+  serviceType: string | null;
   notes: string | null;
   branchId: number | null;
   branchName: string | null;
@@ -34,65 +36,15 @@ interface DailyPatientRow {
 
 
 /** استجابةُ التقرير: جدولُ الزيارات كما كان، ومعه ملخّصٌ مالي محسوبٌ في الخادم. */
-interface DepartmentMoneyRow { revenue: number; paid: number }
 interface DailyReportResponse {
   date: string;
+  from: string;
+  to: string;
+  services: ReportService[] | null;
   branchId: number | null;
   visits: DailyPatientRow[];
   /** `null` لمن لا يملك صلاحية المحاسبة — الجدولُ يبقى، والمال يُحجب. */
-  financial: {
-    byDepartment: {
-      prosthetic: DepartmentMoneyRow;
-      medical_support: DepartmentMoneyRow;
-      physiotherapy: DepartmentMoneyRow;
-      /** أجهزةٌ قديمة مؤكَّدة لم يُثبَت نوعُها — مبيعاتٌ فقط. */
-      legacyDevicesUnsplit: { revenue: number };
-      unclassified: DepartmentMoneyRow;
-    };
-    rollups: {
-      devicesCombined: DepartmentMoneyRow;
-      classifiedTotal: DepartmentMoneyRow;
-      grandTotal: DepartmentMoneyRow;
-    };
-    expenses: number;
-    netCash: number;
-  } | null;
-}
-type DailyFinancial = NonNullable<DailyReportResponse["financial"]>;
-
-/**
- * صفوفُ الملخّص بترتيبها — **مصدرٌ واحد للشاشة وللتصدير وللطباعة**.
- *
- * لو بنى كلُّ مخرجٍ صفوفَه لنفسه لانحرف المطبوعُ عن المعروض أوّلَ تعديل،
- * والورقةُ المطبوعة تُوقَّع وتُحفظ — فخلافُها للشاشة أسوأُ من غيابها.
- */
-function financialRows(f: DailyFinancial) {
-  type Row = { key: string; label: string; m: { revenue: number; paid: number | null }; strong?: boolean };
-  const legacy = f.byDepartment.legacyDevicesUnsplit?.revenue || 0;
-  const unclassified = f.byDepartment.unclassified;
-  const rows: Row[] = [
-    { key: "prosthetic", label: DEPARTMENT_LABELS.prosthetic, m: f.byDepartment.prosthetic },
-    { key: "medical_support", label: DEPARTMENT_LABELS.medical_support, m: f.byDepartment.medical_support },
-  ];
-  //  قبل مجموع الأجهزة مباشرة، فيرى القارئ لماذا يزيد المجموعُ على الصفّين
-  //  فوقه. و`paid: null` لا صفر: لا نظيرَ له في المقبوض، والصفرُ ادّعاءُ قياس.
-  if (legacy !== 0) {
-    rows.push({ key: "legacyDevicesUnsplit", label: REPORT_ROW_LABELS.legacyDevicesUnsplit,
-      m: { revenue: legacy, paid: null } });
-  }
-  rows.push(
-    { key: "devices", label: DEVICES_ROLLUP_LABEL, m: f.rollups.devicesCombined, strong: true },
-    { key: "physiotherapy", label: DEPARTMENT_LABELS.physiotherapy, m: f.byDepartment.physiotherapy },
-  );
-  //  «مجموع الأقسام المعروفة» يُعرَض فقط حين يختلف عن الإجمالي — وإلّا
-  //  فهو صفٌّ مكرَّر يشوّش بلا أن يضيف.
-  const hasGap = legacy !== 0 || (unclassified.revenue || 0) !== 0 || (unclassified.paid || 0) !== 0;
-  if (hasGap) {
-    rows.push({ key: "classifiedTotal", label: REPORT_ROW_LABELS.classifiedTotal, m: f.rollups.classifiedTotal });
-    rows.push({ key: "unclassified", label: REPORT_ROW_LABELS.unclassified, m: unclassified });
-  }
-  rows.push({ key: "grand", label: GRAND_TOTAL_LABEL, m: f.rollups.grandTotal, strong: true });
-  return rows;
+  financial: DailyFinancial | null;
 }
 
 /**
@@ -105,16 +57,17 @@ function financialRows(f: DailyFinancial) {
  * و**المقبوض والمبيعات عمودان منفصلان**: «الوارد» نقدٌ وصل، و«المبيعات»
  * كلفةٌ قُيِّدت. وقد كانا يُسمَّيان باسمٍ واحد فيُقرأ أحدهما مكان الآخر.
  */
-function DailyFinancialSummary({ f, isAr }: {
-  f: DailyFinancial; isAr: boolean;
+function DailyFinancialSummary({ f, isAr, services, title }: {
+  f: DailyFinancial; isAr: boolean; services: ReportService[] | null; title: string;
 }) {
   const money = (n: number | null) =>
     n === null ? "—" : `${(n || 0).toLocaleString("en-US")} ${isAr ? "د.ع" : "IQD"}`;
-  const rows = financialRows(f);
+  const rows = financialRows(f, services);
+  const ex = expenseLines(f, services);
 
   return (
     <div className="mb-5 rounded-lg border bg-slate-50/60 p-4" data-testid="card-daily-financial">
-      <div className="mb-3 text-sm font-semibold">الملخّص المالي لليوم</div>
+      <div className="mb-3 text-sm font-semibold">{title}</div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -141,8 +94,21 @@ function DailyFinancialSummary({ f, isAr }: {
         </table>
       </div>
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-        <span>المصاريف: <b data-testid="daily-expenses">{money(f.expenses)}</b></span>
-        <span>الصافي النقدي: <b data-testid="daily-net">{money(f.netCash)}</b></span>
+        {ex.expenses === null ? (
+          <span className="text-amber-700" data-testid="daily-expenses-unsplit">
+            المصاريف: مصروفُ الأجهزة واحدٌ للأطراف والمساند ولا ينفصل — اختر القسمين معاً لترى المصاريف والصافي
+          </span>
+        ) : (
+          <>
+            <span>المصاريف: <b data-testid="daily-expenses">{money(ex.expenses)}</b></span>
+            <span>الصافي النقدي: <b data-testid="daily-net">{money(ex.netCash)}</b></span>
+          </>
+        )}
+        {ex.sharedExpenses !== null && ex.sharedExpenses !== 0 && (
+          <span className="text-slate-500" data-testid="daily-shared-expenses">
+            مصاريف مشتركة لا تخصّ قسماً (غير مطروحة): {money(ex.sharedExpenses)}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -152,7 +118,19 @@ export default function DailyPatientReport() {
   const { language } = useTranslation();
   const isAr = language === "ar";
 
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayIraq());
+  //  الفترةُ من وإلى — يومُ اليوم ابتداءً، فالسلوكُ القديم نفسُه بلا نقرة.
+  const [fromDate, setFromDate] = useState<string>(getTodayIraq());
+  const [toDate, setToDate] = useState<string>(getTodayIraq());
+  //  الأقسام — الثلاثةُ مؤشَّرةٌ ابتداءً (= الكلّ، بلا ترشيح).
+  const [selectedServices, setSelectedServices] = useState<ReportService[]>([...REPORT_SERVICES]);
+  const toggleService = (k: ReportService) =>
+    setSelectedServices((cur) => cur.includes(k) ? cur.filter((x) => x !== k) : REPORT_SERVICES.filter((x) => x === k || cur.includes(x)));
+  //  `null` = الكلّ. وطرفان مقلوبان يُرتَّبان كما في الخادم.
+  const servicesParam: ReportService[] | null =
+    selectedServices.length === REPORT_SERVICES.length ? null : selectedServices;
+  const noService = selectedServices.length === 0;
+  const [rangeFrom, rangeTo] = fromDate <= toDate ? [fromDate, toDate] : [toDate, fromDate];
+  const singleDay = rangeFrom === rangeTo;
   const branchSession = useBranchSession();
   const isAdmin = !!branchSession?.isAdmin;
   const userBranchId = branchSession?.branchId;
@@ -169,12 +147,14 @@ export default function DailyPatientReport() {
     enabled: isAdmin,
   });
 
-  const params = new URLSearchParams({ date: selectedDate });
+  const params = new URLSearchParams({ from: rangeFrom, to: rangeTo });
   if (effectiveBranchId) params.set("branchId", effectiveBranchId);
+  if (servicesParam) params.set("services", servicesParam.join(","));
   const queryString = `?${params.toString()}`;
 
   const { data, isLoading, isError } = useQuery<DailyReportResponse>({
-    queryKey: ["/api/reports/daily-patient-report", { date: selectedDate, branchId: effectiveBranchId }],
+    queryKey: ["/api/reports/daily-patient-report", { from: rangeFrom, to: rangeTo, branchId: effectiveBranchId, services: servicesParam }],
+    enabled: !noService,
     queryFn: async () => {
       const res = await fetch(`/api/reports/daily-patient-report${queryString}`, {
         credentials: "include",
@@ -188,7 +168,7 @@ export default function DailyPatientReport() {
   //  حسابُ الأقسام هنا كان سينتج رقماً ثانياً يخالف صفحة المحاسبة يوماً.
   const financial = data?.financial ?? null;
 
-  const rows = (data?.visits ?? []).slice().sort((a, b) => {
+  const rows = (noService ? [] : data?.visits ?? []).slice().sort((a, b) => {
     const ta = new Date(a.date).getTime();
     const tb = new Date(b.date).getTime();
     return ta - tb;
@@ -202,7 +182,7 @@ export default function DailyPatientReport() {
   const labels = isAr
     ? {
         title: "التقرير اليومي للمرضى",
-        subtitle: "زيارات اليوم المختار مرتبة حسب الوقت",
+        subtitle: "زيارات اليوم أو الفترة المختارة مرتبة حسب الوقت",
         patientName: "اسم المريض",
         age: "العمر",
         phone: "الهاتف",
@@ -211,16 +191,20 @@ export default function DailyPatientReport() {
         treatment: "العلاج",
         notes: "ملاحظات",
         date: "التاريخ",
+        from: "من",
+        to: "إلى",
+        department: "القسم",
+        departments: "الأقسام",
+        noService: "اختر قسماً واحداً على الأقل",
         branch: "الفرع",
         allBranches: "كل الفروع",
         assignedBranch: "الفرع المعتمد",
-        empty: "لا توجد زيارات في هذا اليوم",
+        empty: "لا توجد زيارات في هذه الفترة",
         error: "تعذّر تحميل التقرير",
         rowsCount: (n: number) => `إجمالي الزيارات: ${n}`,
         print: "طباعة / PDF",
         excel: "إكسل",
-        financialTitle: "الملخّص المالي لليوم",
-        department: "القسم",
+        financialTitle: singleDay ? "الملخّص المالي لليوم" : "الملخّص المالي للفترة",
         paidColumn: "الوارد (المقبوض)",
         revenueColumn: "المبيعات (كلفة مسجَّلة)",
         expenses: "المصاريف",
@@ -237,18 +221,22 @@ export default function DailyPatientReport() {
         treatment: "Treatment",
         notes: "Notes",
         date: "Date",
+        from: "From",
+        to: "To",
+        department: "Department",
+        departments: "Departments",
+        noService: "Select at least one department",
         branch: "Branch",
         allBranches: "All branches",
         assignedBranch: "Assigned branch",
-        empty: "No visits on this day",
+        empty: "No visits in this period",
         error: "Failed to load report",
         rowsCount: (n: number) => `Total visits: ${n}`,
         print: "Print / PDF",
         excel: "Excel",
         //  أسماءُ الأقسام تبقى عربيةً في الحالين: هي قيمُ التصنيف نفسُها
         //  في `service_taxonomy`، وترجمتُها هنا تُنشئ اسماً ثانياً للقسم.
-        financialTitle: "Daily financial summary",
-        department: "Department",
+        financialTitle: singleDay ? "Daily financial summary" : "Period financial summary",
         paidColumn: "Collected",
         revenueColumn: "Booked (cost entries)",
         expenses: "Expenses",
@@ -263,6 +251,13 @@ export default function DailyPatientReport() {
         ? ((branches ?? []).find((b) => String(b.id) === adminBranchId)?.name ?? labels.allBranches)
         : (userBranchName || "-"));
 
+  //  الفترةُ والأقسامُ في العنوان المطبوع واسم الملفّ — فلا تلتبس ورقةٌ بأخرى.
+  const periodLabel = singleDay
+    ? formatDateIraq(rangeFrom)
+    : `${formatDateIraq(rangeFrom)} إلى ${formatDateIraq(rangeTo)}`;
+  const servicesLabel = reportServicesLabel(servicesParam);
+  const fileTag = `${singleDay ? rangeFrom : `${rangeFrom}_to_${rangeTo}`}${servicesParam ? `_${servicesParam.join("-")}` : ""}`;
+
   const exportToExcel = async () => {
     const XLSX = await import("xlsx");
     const sheetRows = rows.map((row, index) => {
@@ -270,6 +265,7 @@ export default function DailyPatientReport() {
       base[labels.patientName] = row.patientName || "";
       base[labels.age] = row.age ?? "";
       base[labels.phone] = row.phone || "";
+      base[labels.department] = row.serviceType || "";
       base[labels.problem] = row.problem || "";
       base[labels.actionToday] = row.actionToday || "";
       base[labels.treatment] = row.treatment || "";
@@ -287,25 +283,36 @@ export default function DailyPatientReport() {
     //  الجدولُ صفٌّ لكلّ زيارة، والملخّصُ صفٌّ لكلّ قسم — خلطهما يفسدهما معاً.
     if (financial) {
       //  خليةٌ فارغة لا صفر حين لا مقبوضَ يُقاس أصلاً (الأجهزة القديمة).
-      const summarySheet = financialRows(financial).map((r) => ({
+      const ex = expenseLines(financial, servicesParam);
+      const summarySheet = financialRows(financial, servicesParam).map((r) => ({
         [labels.department]: r.label,
         [labels.paidColumn]: r.m.paid === null ? ("" as unknown as number) : (r.m.paid || 0),
         [labels.revenueColumn]: r.m.revenue || 0,
       }));
-      summarySheet.push({
-        [labels.department]: labels.expenses,
-        [labels.paidColumn]: financial.expenses || 0,
-        [labels.revenueColumn]: "" as unknown as number,
-      });
-      summarySheet.push({
-        [labels.department]: labels.netCash,
-        [labels.paidColumn]: financial.netCash || 0,
-        [labels.revenueColumn]: "" as unknown as number,
-      });
+      const blank = "" as unknown as number;
+      if (ex.expenses === null) {
+        summarySheet.push({ [labels.department]: `${labels.expenses}: غير مفصولة بين الأطراف والمساند`,
+          [labels.paidColumn]: blank, [labels.revenueColumn]: blank });
+      } else {
+        summarySheet.push({ [labels.department]: labels.expenses, [labels.paidColumn]: ex.expenses || 0, [labels.revenueColumn]: blank });
+        summarySheet.push({ [labels.department]: labels.netCash, [labels.paidColumn]: ex.netCash || 0, [labels.revenueColumn]: blank });
+      }
+      if (ex.sharedExpenses) {
+        summarySheet.push({ [labels.department]: "مصاريف مشتركة لا تخصّ قسماً (غير مطروحة)",
+          [labels.paidColumn]: ex.sharedExpenses, [labels.revenueColumn]: blank });
+      }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summarySheet), "الملخص المالي");
     }
 
-    XLSX.writeFile(wb, `daily_patients_${selectedDate}.xlsx`);
+    //  ورقةُ «النطاق» أوّلاً: الفترةُ والفرعُ والأقسام — فلا يُقرأ الملفُّ بغير نطاقه.
+    const scopeSheet = XLSX.utils.json_to_sheet([
+      { البيان: "الفترة", القيمة: periodLabel },
+      { البيان: "الفرع", القيمة: scopeLabel },
+      { البيان: "الأقسام", القيمة: servicesLabel },
+      { البيان: "عدد الزيارات", القيمة: rows.length },
+    ]);
+    XLSX.utils.book_append_sheet(wb, scopeSheet, "النطاق");
+    XLSX.writeFile(wb, `daily_patients_${fileTag}.xlsx`);
   };
 
   // One window serves both "print" and "save as PDF" — the browser's own print
@@ -315,7 +322,7 @@ export default function DailyPatientReport() {
       String(v ?? "-").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
 
     const head = [
-      "#", labels.patientName, labels.age, labels.phone, labels.problem,
+      "#", labels.patientName, labels.age, labels.phone, labels.department, labels.problem,
       labels.actionToday, labels.treatment, labels.notes,
       ...(showBranchColumn ? [labels.branch] : []),
       labels.date,
@@ -326,6 +333,7 @@ export default function DailyPatientReport() {
       row.patientName || "-",
       row.age ?? "-",
       row.phone || "-",
+      row.serviceType || "-",
       row.problem || "-",
       row.actionToday || "-",
       row.treatment || "-",
@@ -337,28 +345,34 @@ export default function DailyPatientReport() {
     //  الملخّصُ يُطبَع فوق الجدول لا تحته: مَن يستلم الورقة يقرأ الأرقامَ
     //  أوّلاً، والتفصيلُ بعدها. ونفسُ `financialRows` فلا ينحرف عن الشاشة.
     const fmt = (n: number) => `${(n || 0).toLocaleString("en-US")} د.ع`;
+    const ex = financial ? expenseLines(financial, servicesParam) : null;
+    const expensesHtml = !ex ? "" : ex.expenses === null
+      ? `<p class="totals warn">${esc(labels.expenses)}: مصروفُ الأجهزة واحدٌ للأطراف والمساند ولا ينفصل</p>`
+      : `<p class="totals">${esc(labels.expenses)}: <b>${esc(fmt(ex.expenses))}</b>
+     &nbsp;·&nbsp; ${esc(labels.netCash)}: <b>${esc(fmt(ex.netCash ?? 0))}</b></p>`;
+    const sharedHtml = ex?.sharedExpenses
+      ? `<p class="totals">مصاريف مشتركة لا تخصّ قسماً (غير مطروحة): <b>${esc(fmt(ex.sharedExpenses))}</b></p>` : "";
     const summaryHtml = financial
       ? `<h2 class="sec">${esc(labels.financialTitle)}</h2>
   <table class="summary">
     <thead><tr>
       <th>${esc(labels.department)}</th><th>${esc(labels.paidColumn)}</th><th>${esc(labels.revenueColumn)}</th>
     </tr></thead>
-    <tbody>${financialRows(financial).map((r) =>
+    <tbody>${financialRows(financial, servicesParam).map((r) =>
         `<tr class="${r.strong ? "strong" : ""}${
           r.key === "unclassified" || r.key === "legacyDevicesUnsplit" ? " warn" : ""}">
         <td>${esc(r.label)}</td><td>${esc(r.m.paid === null ? "—" : fmt(r.m.paid))}</td>
         <td>${esc(fmt(r.m.revenue))}</td></tr>`).join("")}
     </tbody>
   </table>
-  <p class="totals">${esc(labels.expenses)}: <b>${esc(fmt(financial.expenses))}</b>
-     &nbsp;·&nbsp; ${esc(labels.netCash)}: <b>${esc(fmt(financial.netCash))}</b></p>`
+  ${expensesHtml}${sharedHtml}`
       : "";
 
     const html = `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>${esc(labels.title)} - ${esc(selectedDate)}</title>
+  <title>${esc(labels.title)} - ${esc(fileTag)}</title>
   <style>
     * { font-family: Tajawal, Arial, sans-serif; }
     body { padding: 20px; direction: rtl; }
@@ -373,12 +387,13 @@ export default function DailyPatientReport() {
     table.summary tr.strong td { font-weight: bold; background: #ecfdf5; }
     table.summary tr.warn td { color: #b45309; }
     p.totals { font-size: 12px; margin: 6px 0 0; }
+    p.totals.warn { color: #b45309; }
     @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
 </head>
 <body>
   <h1>${esc(labels.title)} — مراكز د. ياسر الساعدي</h1>
-  <h3>${esc(formatDateIraq(selectedDate))} · ${esc(scopeLabel)} · ${esc(labels.rowsCount(rows.length))}</h3>
+  <h3>${esc(periodLabel)} · ${esc(scopeLabel)} · ${esc(servicesLabel)} · ${esc(labels.rowsCount(rows.length))}</h3>
   ${summaryHtml}
   <table>
     <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
@@ -411,11 +426,19 @@ export default function DailyPatientReport() {
       <Card className="p-4 md:p-6">
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-4" data-testid="filters-bar">
           <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-slate-700">{labels.date}</label>
+            <label className="text-sm font-medium text-slate-700">{labels.from}</label>
             <DatePickerIraq
-              value={selectedDate}
-              onChange={setSelectedDate}
-              data-testid="input-report-date"
+              value={fromDate}
+              onChange={setFromDate}
+              data-testid="input-report-from"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-slate-700">{labels.to}</label>
+            <DatePickerIraq
+              value={toDate}
+              onChange={setToDate}
+              data-testid="input-report-to"
             />
           </div>
 
@@ -454,7 +477,7 @@ export default function DailyPatientReport() {
               variant="outline"
               className="gap-2"
               onClick={printReport}
-              disabled={rows.length === 0}
+              disabled={rows.length === 0 && !financial}
               data-testid="button-print-report"
             >
               <Printer className="w-4 h-4" />
@@ -464,7 +487,7 @@ export default function DailyPatientReport() {
               variant="outline"
               className="gap-2"
               onClick={exportToExcel}
-              disabled={rows.length === 0}
+              disabled={rows.length === 0 && !financial}
               data-testid="button-export-excel"
             >
               <FileSpreadsheet className="w-4 h-4" />
@@ -473,7 +496,26 @@ export default function DailyPatientReport() {
           </div>
         </div>
 
-        {isLoading ? (
+        {/*  الأقسام: واحدٌ أو اثنان أو الثلاثة — الجدولُ والملخّصُ والتصديرُ بالاختيار نفسِه. */}
+        <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="filter-services">
+          <span className="text-sm font-medium text-slate-700">{labels.departments}:</span>
+          {REPORT_SERVICES.map((k) => (
+            <label key={k} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <Checkbox
+                checked={selectedServices.includes(k)}
+                onCheckedChange={() => toggleService(k)}
+                data-testid={`checkbox-service-${k}`}
+              />
+              {REPORT_SERVICE_LABELS[k]}
+            </label>
+          ))}
+        </div>
+
+        {noService ? (
+          <div className="py-12 text-center text-amber-700" data-testid="state-no-service">
+            {labels.noService}
+          </div>
+        ) : isLoading ? (
           <div className="space-y-3" data-testid="state-loading">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -489,7 +531,7 @@ export default function DailyPatientReport() {
           {/*  الملخّصُ المالي — **يظهر ولو لم تكن ثمّة زيارات**: يومٌ بلا
               زيارةٍ قد يحمل قبضاً من مريضٍ سابق، وإخفاؤه كان يُضيّع المال
               من التقرير. وأرقامُه كلُّها محسوبةٌ في الخادم. */}
-          {financial && <DailyFinancialSummary f={financial} isAr={isAr} />}
+          {financial && <DailyFinancialSummary f={financial} isAr={isAr} services={servicesParam} title={labels.financialTitle} />}
           {rows.length === 0 ? (
           <div className="py-12 text-center text-slate-500" data-testid="state-empty">
             {labels.empty}
@@ -506,6 +548,7 @@ export default function DailyPatientReport() {
                     <TableHead>{labels.patientName}</TableHead>
                     <TableHead>{labels.age}</TableHead>
                     <TableHead>{labels.phone}</TableHead>
+                    <TableHead>{labels.department}</TableHead>
                     <TableHead>{labels.problem}</TableHead>
                     <TableHead>{labels.actionToday}</TableHead>
                     <TableHead>{labels.treatment}</TableHead>
@@ -525,6 +568,9 @@ export default function DailyPatientReport() {
                       </TableCell>
                       <TableCell data-testid={`text-phone-${row.visitId}`}>
                         {row.phone || "-"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" data-testid={`text-service-${row.visitId}`}>
+                        {row.serviceType || "-"}
                       </TableCell>
                       <TableCell className="max-w-[220px] whitespace-pre-wrap" data-testid={`text-problem-${row.visitId}`}>
                         {row.problem || "-"}

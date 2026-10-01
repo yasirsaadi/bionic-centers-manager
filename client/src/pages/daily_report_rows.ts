@@ -1,0 +1,84 @@
+//  صفوفُ الملخّص المالي للتقرير اليومي — **مصدرٌ واحد للشاشة وللتصدير وللطباعة** (§4.az).
+//  لو بنى كلُّ مخرجٍ صفوفَه لنفسه لانحرف المطبوعُ عن المعروض أوّلَ تعديل، والورقةُ المطبوعة تُوقَّع وتُحفظ.
+//  منطقٌ خالص بلا React — ولا حسابَ ماليّاً فيه: كلُّ رقمٍ يصل محسوباً من الخادم، وهذا يختار الصفوفَ فقط.
+import {
+  DEPARTMENT_LABELS, DEVICES_ROLLUP_LABEL, GRAND_TOTAL_LABEL, REPORT_ROW_LABELS,
+} from "@shared/service_taxonomy";
+import type { ReportService, ScopedMoney } from "@shared/daily_report_scope";
+
+interface DepartmentMoneyRow { revenue: number; paid: number }
+export interface DailyFinancial {
+  byDepartment: {
+    prosthetic: DepartmentMoneyRow;
+    medical_support: DepartmentMoneyRow;
+    physiotherapy: DepartmentMoneyRow;
+    /** أجهزةٌ قديمة مؤكَّدة لم يُثبَت نوعُها — مبيعاتٌ فقط. */
+    legacyDevicesUnsplit: { revenue: number };
+    unclassified: DepartmentMoneyRow;
+  };
+  rollups: {
+    devicesCombined: DepartmentMoneyRow;
+    classifiedTotal: DepartmentMoneyRow;
+    grandTotal: DepartmentMoneyRow;
+  };
+  expenses: number;
+  netCash: number;
+  /** للاختيار الجزئيّ وحده (`null` حين تُختار الأقسامُ كلُّها). */
+  scoped?: ScopedMoney | null;
+}
+
+export const SELECTED_TOTAL_LABEL = "مجموع الأقسام المختارة";
+
+export type FinancialRow = {
+  key: string; label: string; m: { revenue: number; paid: number | null }; strong?: boolean;
+};
+
+/**
+ *  الصفوفُ بترتيبها. **`services = null` = الكلّ** — الصفوفُ كما كانت حرفاً.
+ *  ولاختيارٍ جزئيّ: القسمُ المختار وحده، و«الأطراف + المساند» ومعها الأجهزةُ القديمة حين يُختار القسمان،
+ *  ثمّ «مجموع الأقسام المختارة» من الخادم حين يُختار أكثرُ من قسم. و«غيرُ المصنَّف» لا يظهر: لا يُنسَب لقسم.
+ */
+export function financialRows(f: DailyFinancial, services: readonly ReportService[] | null): FinancialRow[] {
+  const legacy = f.byDepartment.legacyDevicesUnsplit?.revenue || 0;
+  const unclassified = f.byDepartment.unclassified;
+  const all = !services;
+  const has = (k: ReportService) => all || services!.includes(k);
+  const bothDevices = has("prosthetic") && has("medical_support");
+  const rows: FinancialRow[] = [];
+  if (has("prosthetic")) rows.push({ key: "prosthetic", label: DEPARTMENT_LABELS.prosthetic, m: f.byDepartment.prosthetic });
+  if (has("medical_support")) rows.push({ key: "medical_support", label: DEPARTMENT_LABELS.medical_support, m: f.byDepartment.medical_support });
+  //  قبل مجموع الأجهزة مباشرة، فيرى القارئ لماذا يزيد المجموعُ على الصفّين فوقه.
+  //  و`paid: null` لا صفر: لا نظيرَ له في المقبوض، والصفرُ ادّعاءُ قياس.
+  if (bothDevices) {
+    if (legacy !== 0) {
+      rows.push({ key: "legacyDevicesUnsplit", label: REPORT_ROW_LABELS.legacyDevicesUnsplit,
+        m: { revenue: legacy, paid: null } });
+    }
+    rows.push({ key: "devices", label: DEVICES_ROLLUP_LABEL, m: f.rollups.devicesCombined, strong: true });
+  }
+  if (has("physiotherapy")) rows.push({ key: "physiotherapy", label: DEPARTMENT_LABELS.physiotherapy, m: f.byDepartment.physiotherapy });
+  if (all) {
+    //  «مجموع الأقسام المعروفة» يُعرَض فقط حين يختلف عن الإجمالي — وإلّا فهو صفٌّ مكرَّر.
+    const hasGap = legacy !== 0 || (unclassified.revenue || 0) !== 0 || (unclassified.paid || 0) !== 0;
+    if (hasGap) {
+      rows.push({ key: "classifiedTotal", label: REPORT_ROW_LABELS.classifiedTotal, m: f.rollups.classifiedTotal });
+      rows.push({ key: "unclassified", label: REPORT_ROW_LABELS.unclassified, m: unclassified });
+    }
+    rows.push({ key: "grand", label: GRAND_TOTAL_LABEL, m: f.rollups.grandTotal, strong: true });
+  } else if (services!.length > 1 && f.scoped && !(bothDevices && services!.length === 2)) {
+    //  والقسمان من الأجهزة وحدهما: «الأطراف + المساند» هو مجموعُهما — فلا صفٌّ مكرَّر.
+    rows.push({ key: "selected", label: SELECTED_TOTAL_LABEL, m: f.scoped.selected, strong: true });
+  }
+  return rows;
+}
+
+/**
+ *  سطرُ المصاريف والصافي — للكلّ كما كان، وللاختيار الجزئيّ مصاريفُ قسمه. وحين لا تنفصل (الأطرافُ وحدها أو
+ *  المساندُ وحدها: مصروفُ الأجهزة واحدٌ لهما) يُقال ذلك ولا يُخترَع رقم. والمشتركُ يُذكر ولا يُطرَح.
+ */
+export function expenseLines(f: DailyFinancial, services: readonly ReportService[] | null): {
+  expenses: number | null; netCash: number | null; sharedExpenses: number | null;
+} {
+  if (!services || !f.scoped) return { expenses: f.expenses, netCash: f.netCash, sharedExpenses: null };
+  return { expenses: f.scoped.expenses, netCash: f.scoped.netCash, sharedExpenses: f.scoped.sharedExpenses };
+}

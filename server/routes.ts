@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
+import { parseReportRange, parseReportServices, scopeDepartmentMoney } from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -5596,21 +5597,18 @@ export async function registerRoutes(
   app.get("/api/reports/daily-patient-report", isAuthenticated, async (req, res) => {
     try {
       const BAGHDAD_OFFSET_MS = 3 * 60 * 60 * 1000;
-      const dateParam = req.query.date as string | undefined;
-      let startOfDayUTC: Date;
-      let endOfDayUTC: Date;
-      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        const [year, month, day] = dateParam.split('-').map(Number);
-        startOfDayUTC = new Date(Date.UTC(year, month - 1, day) - BAGHDAD_OFFSET_MS);
-        endOfDayUTC = new Date(Date.UTC(year, month - 1, day + 1) - BAGHDAD_OFFSET_MS);
-      } else {
-        const baghdadNow = new Date(Date.now() + BAGHDAD_OFFSET_MS);
-        const year = baghdadNow.getUTCFullYear();
-        const month = baghdadNow.getUTCMonth();
-        const day = baghdadNow.getUTCDate();
-        startOfDayUTC = new Date(Date.UTC(year, month, day) - BAGHDAD_OFFSET_MS);
-        endOfDayUTC = new Date(Date.UTC(year, month, day + 1) - BAGHDAD_OFFSET_MS);
-      }
+      //  ══ الفترةُ والأقسام (§4.az) ══ `from`/`to` يومان شاملان بتوقيت بغداد، و`date` القديمُ يومٌ واحد؛
+      //  و`services` قسمٌ أو قسمان (`null` = الكلّ). جدولُ الزيارات والملخّصُ المالي بالنطاق نفسِه حرفاً.
+      const todayBaghdad = new Date(Date.now() + BAGHDAD_OFFSET_MS).toISOString().split("T")[0];
+      const range = parseReportRange(req.query as any, todayBaghdad);
+      const services = parseReportServices(req.query.services);
+      const servicesCsv = services ? services.join(",") : null;
+      const dayStartUTC = (d: string, plus = 0) => {
+        const [year, month, day] = d.split('-').map(Number);
+        return new Date(Date.UTC(year, month - 1, day + plus) - BAGHDAD_OFFSET_MS);
+      };
+      const startOfDayUTC = dayStartUTC(range.from);
+      const endOfDayUTC = dayStartUTC(range.to, 1);
       const startTs = startOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
       const endTs = endOfDayUTC.toISOString().replace('T', ' ').replace('Z', '');
 
@@ -5691,6 +5689,8 @@ export async function registerRoutes(
           AND p.deleted_at IS NULL
           AND (${effectiveBranchId}::int IS NULL OR v.branch_id = ${effectiveBranchId}::int)
           AND (${employeeFilterId}::int IS NULL OR v.created_by = ${employeeFilterId}::int)
+          --  قسمُ الزيارة من خيطها (visits.case_id) — وزيارةٌ بلا قسمٍ لا تُنسَب لقسمٍ بالتخمين.
+          AND (${servicesCsv}::text IS NULL OR pc.case_type = ANY(string_to_array(${servicesCsv}::text, ',')))
         ORDER BY v.visit_date ASC
       `);
 
@@ -5739,9 +5739,7 @@ export async function registerRoutes(
       //
       //  والنطاق مطابقٌ لجدول الزيارات أعلاه حرفاً: `effectiveBranchId`
       //  نفسها، و`dateParam` نفسه (أو يومُ بغداد الحالي حين يُترك فارغاً).
-      const reportDay = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
-        ? dateParam
-        : new Date(Date.now() + BAGHDAD_OFFSET_MS).toISOString().split("T")[0];
+      const reportDay = range.from;
 
       //  **والمال محجوبٌ بنفس بوّابته القائمة.** جدولُ الزيارات نقطةٌ يقرأها
       //  كلُّ موظّف (`isAuthenticated`)، فإلحاقُ المال بها بلا شرطٍ كان
@@ -5755,12 +5753,19 @@ export async function registerRoutes(
       //  حُسب بـUTC لاختلف النطاقان ثلاثَ ساعات، فظهرت زيارةٌ بلا مالها.
       const acct = canSeeMoney
         ? await storage.getAccountingSummary(
-            effectiveBranchId ?? undefined, reportDay, reportDay, { baghdadDays: true },
+            effectiveBranchId ?? undefined, range.from, range.to, { baghdadDays: true },
           )
+        : null;
+      //  مالُ الأقسام المختارة — جمعٌ من أرقام المصدر نفسِه لا حسابٌ ثانٍ.
+      const scoped = acct && services
+        ? scopeDepartmentMoney(services, acct.byDepartment, acct.expensesBySection)
         : null;
 
       res.json({
         date: reportDay,
+        from: range.from,
+        to: range.to,
+        services,
         branchId: effectiveBranchId,
         visits: rows,
         //  **المقبوض والمبيعات منفصلان** ولا يُسمَّيان «وارداً» معاً:
@@ -5772,6 +5777,8 @@ export async function registerRoutes(
           expenses: acct.totalExpenses,
           //  الصافي النقدي — نفس تعريف صفحة المحاسبة.
           netCash: acct.rollups.grandTotal.paid - acct.totalExpenses,
+          //  للاختيار الجزئيّ وحده: مجموعُه ومصاريفُه وصافيه (`null` حين لا تنفصل المصاريف).
+          scoped,
         } : null,
       });
     } catch (error) {
