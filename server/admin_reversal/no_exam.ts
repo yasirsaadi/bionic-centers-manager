@@ -13,6 +13,14 @@
 //   `maintenance_final_price` على الأمر نفسِه، والمقبوضُ هو الدفعةُ التي سجّلها سطرُ تدقيق العملية
 //   (`no_exam_operation` ⟵ `paymentId`) — الرابطُ الوحيد بين الأمر ودفعته. **والحلقةُ المُصانة لا تُمَسّ.**
 //   وأمرٌ قديمٌ بلا سعرٍ مسجَّل يُلغى ولا يُعكَس له مال، ويُقال ذلك صراحةً.
+//
+// **وأمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢، §4.ar — ٢٠٢٦-١٠-٠١): مريضٌ قديمٌ فُتح له «تخصيص الطرف» بلا مسار
+// المعاينة، فلا متابعةَ ولا صيانةَ ولا جزء — وكان يجاب «العملية غير موجودة» فيبقى الأمرُ مفتوحاً والسعرُ ديناً.
+// - **بحلقة**: مالُه ما على حلقته — بلا أجور الصيانة (`source = 'maintenance'`) ولا دفعاتها (من سطر تدقيقها) —
+//   والحلقةُ تُبطَل كحلقة الجزء.
+// - **بلا حلقة** (المسار الموروث): الكلفةُ قيودُ `assign_manufacturing` **التي كُتبت في معاملة الأمر نفسِها** —
+//   `now()` واحدةٌ للمعاملة، فختمُ القيد يساوي ختمَ الأمر حرفاً، ولا قيدَ لأمرٍ آخر يطابقه. **والمقبوضُ لا رابطَ له**
+//   بالأمر في هذا المسار، فلا يُردّ آلياً ويُقال ذلك صراحةً: يبقى في حساب المريض، ويُردّ يدوياً إن لزم.
 
 import { sql } from "drizzle-orm";
 import { db } from "../db";
@@ -35,7 +43,7 @@ const DRIFT =
   "تغيّرت حالة هذه العملية منذ فتح نافذة التصحيح — أعد فتحها لمراجعة الأثر الجديد";
 const money = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 
-type Kind = "maintenance" | "component_sale";
+type Kind = "maintenance" | "component_sale" | "device_build";
 
 interface NoExamOrder {
   kind: Kind;
@@ -59,6 +67,17 @@ interface NoExamOrder {
   paid: number;
   /** الدفعةُ المقبوضةُ للصيانة (للفرع والقسم والحلقة التي يُسجَّل عليها الردّ). */
   payment: { id: number; branchId: number | null; caseId: number | null; episodeId: number | null } | null;
+  /** أمرُ تصنيعٍ موروثٌ بلا حلقة: ما دفعه المريضُ لا يرتبط بالأمر، فلا يُعرَف ولا يُردّ آلياً. */
+  paidUntracked?: boolean;
+  /** للجهاز أمرُ بناءٍ آخرُ قائم — مالُ الحلقة لا ينفصل، فيُلغى هذا الأمرُ وحده بلا مالٍ ولا مساسٍ بالحلقة. */
+  sharedEpisode?: boolean;
+}
+
+/** معرّفُ الدفعة التي سجّلها سطرُ تدقيق عملية «بلا معاينة» — الرابطُ الوحيد بين الأمر ودفعته. */
+function paymentIdOfAudit(newValues: unknown): number | null {
+  try {
+    return num(JSON.parse(String(newValues ?? "{}"))?.paymentId);
+  } catch { return null; }
 }
 
 const num = (v: unknown): number | null =>
@@ -109,10 +128,7 @@ export async function resolveNoExamOrder(h: any, orderId: number, lock = false):
        WHERE entity_type = 'no_exam_operation' AND entity_id = ${base.orderId} AND action = 'create'
        ORDER BY id LIMIT 1
     `);
-    let paymentId: number | null = null;
-    try {
-      paymentId = num(JSON.parse(String((link.rows ?? [])[0]?.new_values ?? "{}"))?.paymentId);
-    } catch { paymentId = null; }
+    const paymentId = paymentIdOfAudit((link.rows ?? [])[0]?.new_values);
     let payment: NoExamOrder["payment"] = null;
     let paid = 0;
     if (paymentId !== null) {
@@ -142,7 +158,8 @@ export async function resolveNoExamOrder(h: any, orderId: number, lock = false):
   const episodeId = num(row.device_episode_id);
   if (episodeId === null || row.service_path !== "no_exam"
     || !row.requested_item || row.requested_item === "full_device") {
-    return null;
+    if ((row.purpose ?? "initial_build") !== "initial_build") return null;
+    return await resolveDeviceBuild(h, base, episodeId, row.requested_item ?? null);
   }
   const money2 = await h.execute(sql`
     SELECT
@@ -160,6 +177,75 @@ export async function resolveNoExamOrder(h: any, orderId: number, lock = false):
   };
 }
 
+/** **أمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢) — مالُه من حلقته، أو من قيود معاملته إن لم تكن له حلقة. */
+async function resolveDeviceBuild(
+  h: any, base: Omit<NoExamOrder, "kind" | "ownEpisodeId" | "itemLabel" | "cost" | "costUnknown" | "paid" | "payment">,
+  episodeId: number | null, requestedItem: string | null,
+): Promise<NoExamOrder> {
+  const deviceLabel = base.serviceType === "prosthetic" ? "طرف صناعي" : "مسند طبي";
+  if (episodeId !== null) {
+    //  **أمرُ بناءٍ آخرُ قائمٌ على الحلقة نفسِها** (أمرٌ قديمٌ أُلغي وفُتح بدلَه): مالُها لذلك الأمر — فلا يُعكَس
+    //  هنا ولا تُبطَل حلقتُه.
+    const other = await h.execute(sql`
+      SELECT 1 FROM prosthetic_work_orders
+       WHERE device_episode_id = ${episodeId} AND id <> ${base.orderId}
+         AND COALESCE(purpose, 'initial_build') = 'initial_build'
+         AND status <> 'cancelled' AND admin_void_reversal_id IS NULL
+       LIMIT 1
+    `);
+    if ((other.rows ?? []).length > 0) {
+      return {
+        ...base, kind: "device_build", ownEpisodeId: null, itemLabel: deviceLabel,
+        cost: 0, costUnknown: false, paid: 0, payment: null, sharedEpisode: true,
+      };
+    }
+    //  دفعاتُ صيانات هذا الجهاز ليست من ثمنه — تُعرَف من سطر تدقيق كلّ صيانة.
+    const mnt = await h.execute(sql`
+      SELECT a.new_values FROM audit_log a
+        JOIN prosthetic_work_orders m ON m.id = a.entity_id
+       WHERE a.entity_type = 'no_exam_operation' AND a.action = 'create'
+         AND m.device_episode_id = ${episodeId} AND m.purpose = 'maintenance'
+    `);
+    const exclude = (mnt.rows ?? []).map((r: any) => paymentIdOfAudit(r.new_values))
+      .filter((v: number | null): v is number => v !== null);
+    const m = await h.execute(sql`
+      SELECT
+        (SELECT COALESCE(SUM(amount), 0)::int FROM cost_entries
+          WHERE patient_id = ${base.patientId} AND device_episode_id = ${episodeId}
+            AND source <> 'maintenance') AS cost,
+        (SELECT COALESCE(SUM(amount), 0)::int FROM payments
+          WHERE patient_id = ${base.patientId} AND device_episode_id = ${episodeId}
+            AND NOT (id = ANY(${`{${exclude.join(",")}}`}::int[]))) AS paid
+    `);
+    const row = (m.rows ?? [])[0] as any;
+    return {
+      ...base, kind: "device_build", ownEpisodeId: episodeId,
+      itemLabel: requestedItem ? requestedItemLabel(requestedItem, base.serviceType) : deviceLabel,
+      cost: Math.max(0, Number(row?.cost ?? 0)), costUnknown: false,
+      paid: Math.max(0, Number(row?.paid ?? 0)), payment: null,
+    };
+  }
+  //  الموروثُ بلا حلقة: قيودُ معاملة الأمر نفسِها — ختمُها ختمُه.
+  const legacy = await h.execute(sql`
+    SELECT COALESCE(SUM(ce.amount), 0)::int AS cost, MIN(ce.case_id) AS case_id
+      FROM cost_entries ce
+      JOIN prosthetic_work_orders wo ON wo.id = ${base.orderId}
+     WHERE ce.patient_id = ${base.patientId} AND ce.source = 'assign_manufacturing'
+       AND ce.device_episode_id IS NULL AND ce.created_at = wo.created_at
+  `);
+  const l = (legacy.rows ?? [])[0] as any;
+  return {
+    ...base, kind: "device_build", ownEpisodeId: null, itemLabel: deviceLabel,
+    caseId: num(l?.case_id) ?? base.caseId,
+    cost: Math.max(0, Number(l?.cost ?? 0)), costUnknown: false,
+    paid: 0, payment: null, paidUntracked: true,
+  };
+}
+
+const KIND_LABEL: Record<Kind, string> = {
+  maintenance: "أمر الصيانة", component_sale: "بيع الجزء", device_build: "أمر التصنيع",
+};
+
 function stampOf(op: NoExamOrder): string {
   return ["no_exam", op.orderId, op.orderStatus, op.existingReversalId ?? "-", op.cost, op.paid].join("|");
 }
@@ -170,7 +256,7 @@ export async function previewNoExamReversal(orderId: number): Promise<ReversalPr
   const alreadyReversed = op.existingReversalId !== null;
   const delivered = op.orderStatus === "completed";
   const started = op.orderStartedAt !== null && op.orderStatus !== "cancelled";
-  const what = op.kind === "maintenance" ? "أمر الصيانة" : "بيع الجزء";
+  const what = KIND_LABEL[op.kind];
 
   const lines: ReversalImpactLine[] = [
     { kind: "check", text: `إلغاء ${what} #${op.orderId} إدارياً` },
@@ -183,13 +269,24 @@ export async function previewNoExamReversal(orderId: number): Promise<ReversalPr
     ...(op.paid > 0
       ? [{ kind: "check" as const, text: `رد المبلغ المقبوض ${money(op.paid)} د.ع للمريض — يُسجَّل صفاً مالياً معاكساً مع قيده المحاسبي.` }]
       : []),
-    ...(op.kind === "component_sale" ? [{ kind: "check" as const, text: "إلغاء طلب الجزء" }] : []),
+    ...(op.sharedEpisode
+      ? [{ kind: "warn" as const, text: "لهذا الجهاز أمرُ تصنيعٍ آخر قائم — يُلغى هذا الأمر وحده، ومالُ الجهاز يبقى لذلك الأمر." }]
+      : []),
+    ...(op.paidUntracked
+      ? [{ kind: "warn" as const, text: "ما دفعه المريض لهذا الأمر لا يرتبط به في هذا المسار القديم — يبقى في حسابه، ويُردّ يدوياً إن لزم." }]
+      : []),
+    ...(op.kind === "component_sale" ? [{ kind: "check" as const, text: "إلغاء طلب الجزء" }]
+      : op.kind === "device_build" && op.ownEpisodeId !== null
+        ? [{ kind: "check" as const, text: "إلغاء طلب الجهاز" }] : []),
     { kind: "check", text: "الاحتفاظ بجميع السجلات في التاريخ" },
   ];
   const summary: ReversalImpactLine[] = [
     { kind: "check", text: `إلغاء ${what} بالكامل` },
     ...(op.cost > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(op.cost)} د.ع` }] : []),
     ...(op.paid > 0 ? [{ kind: "check" as const, text: `رد ${money(op.paid)} د.ع للمريض` }] : []),
+    //  **والتحذيرُ في الملخّص الظاهر لا في التفاصيل المطويّة وحدها** — هو ما يجب أن يقرأه المسؤولُ قبل التأكيد.
+    ...(op.paidUntracked ? [{ kind: "warn" as const, text: "ما دفعه المريض لا يُردّ آلياً — يُردّ يدوياً إن لزم" }] : []),
+    ...(op.sharedEpisode ? [{ kind: "warn" as const, text: "يُلغى هذا الأمر وحده — مالُ الجهاز للأمر القائم" }] : []),
     { kind: "check", text: "الاحتفاظ بكامل السجل السابق" },
   ];
 
@@ -206,7 +303,8 @@ export async function previewNoExamReversal(orderId: number): Promise<ReversalPr
     summary: { purchase_only: [], full_operation: summary },
     replacementImpact: [],
     currentStatusText: alreadyReversed ? "ملغاة إدارياً"
-      : op.kind === "maintenance" ? "صيانة مسجَّلة" : "بيع جزء مسجَّل",
+      : op.kind === "maintenance" ? "صيانة مسجَّلة"
+        : op.kind === "component_sale" ? "بيع جزء مسجَّل" : "أمر تصنيع مسجَّل",
     manufacturingStarted: started, delivered, alreadyReversed,
     stateStamp: stampOf(op),
   } as ReversalPreview;
@@ -331,7 +429,7 @@ export async function executeNoExamReversal(params: {
       refundJournalPosted = written.journalPosted;
     }
 
-    // ⑦ بيعُ الجزء: حلقتُه الخاصّة تُبطَل. والصيانةُ لا تمسّ حلقةَ الجهاز المُصان.
+    // ⑦ بيعُ الجزء وتصنيعُ الجهاز: حلقتُهما الخاصّة تُبطَل. والصيانةُ لا تمسّ حلقةَ الجهاز المُصان.
     if (op.ownEpisodeId !== null) {
       await markEpisodeAdministrativelyVoid(tx, {
         episodeId: op.ownEpisodeId, reversalId, reason: `إلغاء إداري للعملية — ${reasonNote}`,
@@ -347,11 +445,12 @@ export async function executeNoExamReversal(params: {
         mode: "full_operation", operationKind: op.kind, reasonCode: params.reasonCode, reasonNote,
         financialDelta: -op.cost, workOrderVoided: op.orderId, deviceEpisodeId: op.ownEpisodeId,
         refundedAmount: refundAmount, refundPaymentId, refundJournalPosted, costUnknown: op.costUnknown,
+        paidUntracked: op.paidUntracked ?? false,
       },
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
       notes: `${REVERSAL_EVENT_TITLES.full_operation} #${reversalId}`
-        + ` — ${op.kind === "maintenance" ? "صيانة" : "بيع جزء"} (أمر #${op.orderId}) لمريض #${op.patientId}`
+        + ` — ${op.kind === "maintenance" ? "صيانة" : op.kind === "component_sale" ? "بيع جزء" : "تصنيع جهاز"} (أمر #${op.orderId}) لمريض #${op.patientId}`
         + ` — ${reversalReasonLabel(params.reasonCode as any)}: ${reasonNote}`
         + (op.cost > 0 ? ` · عُكست كلفة ${money(op.cost)} د.ع` : "")
         + (refundAmount > 0
