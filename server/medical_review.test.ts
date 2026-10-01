@@ -405,12 +405,13 @@ async function main() {
         [physio]))[0].c), 0);
     same("   ولا يظهر في طابور المراجعة",
       ((await queue(S.doc1)).body?.rows ?? []).some((x: any) => x.patientId === physio), false);
-    //  وقائمةُ عمل الطبيب لعلاجه لم تتغيّر: لا وسمَ إلزاميّاً له كما كان.
+    //  **وقائمةُ الانتظار تغيّرت بقرار المالك** (البند ١٧، ٢٠٢٦-١٠-٠٢، §4.bi): معاينةُ العلاج الطبيعي صارت إلزاميةً
+    //  لقسمٍ جديد — بلا طابور مراجعة ولا شرطٍ على الدفع. والقديمُ (قبل الحدّ) مُعفى: `physio_exam_mandatory.test.ts`.
     const phyPend = await http("GET", "/api/medical/pending", S.doc1);
-    same("   ووسمُ الانتظار الإلزامي لا يشمله كما كان",
-      (phyPend.body?.pending?.[String(physio)] ?? []).includes("physiotherapy"), false);
-    check((phyPend.body?.optional?.[String(physio)] ?? []).includes("physiotherapy"),
-      "   ويبقى في القائمة الاختيارية كما كان",
+    same("   ووسمُ الانتظار الإلزامي يشمل قسمَه الجديد (البند ١٧)",
+      (phyPend.body?.pending?.[String(physio)] ?? []).includes("physiotherapy"), true);
+    check(!(phyPend.body?.optional?.[String(physio)] ?? []).includes("physiotherapy"),
+      "   ولا يقع في القائمة الاختيارية — هو في الطابور",
       JSON.stringify(phyPend.body?.optional?.[String(physio)]));
     //  والقاعدة نفسها ترفضه حتى بالإدراج المباشر.
     let dbRejected = false;
