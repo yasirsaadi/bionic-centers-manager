@@ -139,13 +139,29 @@ export function dayMoney(
   return { paid: s.selected.paid, revenue: s.selected.revenue, expenses: s.expenses, net: s.netCash };
 }
 
-export interface DailyRow extends Partial<DailyMoney> { day: string; visits: number }
+/**
+ *  ══ صفوفٌ في سجلّ الزيارات ليست حضوراً (§4.az، تقريرُ مدير ذي قار ٢٠٢٦-١٠-٠١) ══
+ *  «خدمة جديدة» قيدُ شراء جلسات، و«إضافة نوع حالة» علامةٌ إدارية — يبقيان في سجلّ زيارات المريض (§4.aw)،
+ *  ولا يُعدّان في التقرير اليومي: مريضٌ اشترى وأخذ جلسته يومَها كان يُعدّ زيارتين (١ تشرين الأول: ٦٧ بدل ٥٤).
+ */
+export const NON_ATTENDANCE_VISIT_DETAILS = ["خدمة جديدة", "إضافة نوع حالة"] as const;
 
-/** مجموعُ الأيام — والمصاريفُ والصافي `null` إن غابا عن يومٍ واحد (لا يُجمَع مجهول). */
-export function sumDailyRows(rows: readonly DailyRow[], withMoney: boolean): Omit<DailyRow, "day"> {
+export interface DailyRow extends Partial<DailyMoney> {
+  day: string;
+  visits: number;
+  /** المرضى الذين حضروا يومَها — كلُّ مريضٍ مرّةً ولو تعدّدت زياراتُه. */
+  patients: number;
+}
+
+/**
+ *  مجموعُ الأيام — والمصاريفُ والصافي `null` إن غابا عن يومٍ واحد (لا يُجمَع مجهول).
+ *  و**المرضى في المجموع عددُ المختلفين في الفترة** (`periodPatients`) لا جمعُ الأيام: مريضٌ حضر ثلاثة أيام مريضٌ واحد.
+ */
+export function sumDailyRows(rows: readonly DailyRow[], withMoney: boolean, periodPatients: number): Omit<DailyRow, "day"> {
   const visits = rows.reduce((s, r) => s + (r.visits || 0), 0);
-  if (!withMoney) return { visits };
+  const patients = periodPatients;
+  if (!withMoney) return { visits, patients };
   const add = (k: keyof DailyMoney) =>
     rows.some((r) => r[k] === null || r[k] === undefined) ? null : rows.reduce((s, r) => s + (r[k] as number), 0);
-  return { visits, paid: add("paid") ?? 0, revenue: add("revenue") ?? 0, expenses: add("expenses"), net: add("net") };
+  return { visits, patients, paid: add("paid") ?? 0, revenue: add("revenue") ?? 0, expenses: add("expenses"), net: add("net") };
 }

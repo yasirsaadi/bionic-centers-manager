@@ -14,7 +14,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch } from "@shared/schema";
 import { REPORT_SERVICES, REPORT_SERVICE_LABELS, reportServicesLabel, type ReportService } from "@shared/daily_report_scope";
 import {
-  financialRows, expenseLines, dailyBreakdownTable, DAILY_TOTAL_LABEL, type DailyFinancial, type DailyBreakdown,
+  financialRows, expenseLines, dailyBreakdownTable, DAILY_TOTAL_LABEL, DAILY_PATIENTS_TOTAL_NOTE, PATIENTS_ATTENDED_LABEL,
+  type DailyFinancial, type DailyBreakdown,
 } from "./daily_report_rows";
 
 interface DailyPatientRow {
@@ -151,6 +152,7 @@ function DailyBreakdownTable({ d, isAr }: { d: DailyBreakdown; isAr: boolean }) 
           </tbody>
         </table>
       </div>
+      <div className="mt-2 text-xs text-slate-500" data-testid="daily-patients-note">{DAILY_PATIENTS_TOTAL_NOTE}</div>
     </div>
   );
 }
@@ -214,6 +216,8 @@ export default function DailyPatientReport() {
     const tb = new Date(b.date).getTime();
     return ta - tb;
   });
+  //  المرضى الذين حضروا — كلُّ مريضٍ مرّةً في الفترة (= `patientsCount` من الخادم).
+  const attendedCount = new Set(rows.map((r) => r.patientId)).size;
 
   // The branch column earns its place only when the list actually mixes
   // branches — i.e. an admin viewing "all branches". Otherwise every row would
@@ -242,7 +246,7 @@ export default function DailyPatientReport() {
         assignedBranch: "الفرع المعتمد",
         empty: "لا توجد زيارات في هذه الفترة",
         error: "تعذّر تحميل التقرير",
-        rowsCount: (n: number) => `إجمالي الزيارات: ${n}`,
+        rowsCount: (n: number) => `إجمالي الزيارات: ${n} · ${PATIENTS_ATTENDED_LABEL}: ${attendedCount}`,
         print: "طباعة / PDF",
         excel: "إكسل",
         financialTitle: singleDay ? "الملخّص المالي لليوم" : "الملخّص المالي للفترة",
@@ -272,7 +276,7 @@ export default function DailyPatientReport() {
         assignedBranch: "Assigned branch",
         empty: "No visits in this period",
         error: "Failed to load report",
-        rowsCount: (n: number) => `Total visits: ${n}`,
+        rowsCount: (n: number) => `Total visits: ${n} · Patients attended: ${attendedCount}`,
         print: "Print / PDF",
         excel: "Excel",
         //  أسماءُ الأقسام تبقى عربيةً في الحالين: هي قيمُ التصنيف نفسُها
@@ -357,6 +361,7 @@ export default function DailyPatientReport() {
       { البيان: "الفرع", القيمة: scopeLabel },
       { البيان: "الأقسام", القيمة: servicesLabel },
       { البيان: "عدد الزيارات", القيمة: rows.length },
+      { البيان: PATIENTS_ATTENDED_LABEL, القيمة: attendedCount },
     ]);
     XLSX.utils.book_append_sheet(wb, scopeSheet, "النطاق");
     XLSX.writeFile(wb, `daily_patients_${fileTag}.xlsx`);
@@ -407,7 +412,8 @@ export default function DailyPatientReport() {
   <table class="summary">
     <thead><tr>${t.head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
     <tbody>${t.rows.map((r) => `<tr class="${r[0] === DAILY_TOTAL_LABEL ? "strong" : ""}">${r.map((c, i) => `<td>${esc(cell(c, i))}</td>`).join("")}</tr>`).join("")}</tbody>
-  </table>`;
+  </table>
+  <p class="totals">${esc(DAILY_PATIENTS_TOTAL_NOTE)}</p>`;
     })() : "";
     const summaryHtml = financial
       ? `<h2 class="sec">${esc(labels.financialTitle)}</h2>
