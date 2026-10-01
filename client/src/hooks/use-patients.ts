@@ -293,11 +293,11 @@ export function useUpdateVisit() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ visitId, patientId, details, notes, treatmentType, sessionCount, cost, customDate }: { visitId: number; patientId: number; details: string; notes: string; treatmentType: string | null; sessionCount: number | null; cost: number | null; customDate?: string }) => {
+    mutationFn: async ({ visitId, patientId, details, notes, treatmentType, cost, customDate }: { visitId: number; patientId: number; details: string; notes: string; treatmentType: string | null; cost: number | null; customDate?: string }) => {
       const res = await fetch(`/api/visits/${visitId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ details, notes, treatmentType, sessionCount, cost, customDate }),
+        body: JSON.stringify({ details, notes, treatmentType, cost, customDate }),
         credentials: "include",
       });
 
