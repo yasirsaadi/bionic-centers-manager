@@ -149,6 +149,23 @@ interface EmployeeAccuracyAccum {
   lastActivityAt: Date | null;
 }
 
+/**
+ *  ══ البند ١٣ (§4.bd) — **يومُ بغداد، والطرفان شاملان** ══ تعريفٌ واحد لحدود الفترة في قوائم المال: `YYYY-MM-DD`
+ *  ⟵ منتصفُ ليل بغداد (= ٢١:٠٠ UTC من اليوم السابق)، والنهايةُ حصريّةً عند منتصف ليل اليوم التالي. وقيمةٌ بغير هذه الصيغة
+ *  تُقرأ كما كانت (`new Date`)، ونهايتُها حدٌّ شامل.
+ */
+export function baghdadDayBounds(startDate?: string, endDate?: string): { start: Date | null; endExclusive: Date | null } {
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const midnight = (d: string, plus: number) => {
+    const [y, m, dd] = d.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, dd + plus) - 3 * 60 * 60 * 1000);
+  };
+  const start = !startDate ? null : DAY.test(startDate) ? midnight(startDate, 0) : new Date(startDate);
+  const endExclusive = !endDate ? null
+    : DAY.test(endDate) ? midnight(endDate, 1) : new Date(new Date(endDate).getTime() + 1);
+  return { start, endExclusive };
+}
+
 /** رصيدُ مريضٍ في فرع (البند ١٢، §4.bc) — انظر `getPatientBranchBalances`. */
 export interface PatientBranchBalance {
   patientId: number;
@@ -4152,7 +4169,9 @@ export class DatabaseStorage implements IStorage {
     // here now matches the daily report's definitions.
     //  يومُ بغداد يبدأ قبل يوم UTC بثلاث ساعات، فتُزاح الحدّتان معاً.
     const BAGHDAD_MS = 3 * 60 * 60 * 1000;
-    const shift = opts?.baghdadDays ? -BAGHDAD_MS : 0;
+    //  ══ البند ١٣ (§4.bd): **يومُ بغداد افتراضاً** ══ كان بلا الخيار يومَ UTC (٠٣:٠٠–٠٣:٠٠ بغداد) لملخّص المحاسبة
+    //  ومقارنة الفروع والاتجاه الشهري، ويومَ بغداد للتقرير اليومي والمساعد — تعريفان لليوم. و`baghdadDays: false` وحده يُبقي القديم.
+    const shift = opts?.baghdadDays === false ? 0 : -BAGHDAD_MS;
     const rangeStart = startDate ? new Date(new Date(startDate).getTime() + shift) : null;
     const endExclusive = endDate
       ? new Date(new Date(endDate).getTime() + 24 * 60 * 60 * 1000 + shift)
@@ -4540,8 +4559,10 @@ export class DatabaseStorage implements IStorage {
   async getAllPayments(branchId?: number, startDate?: string, endDate?: string): Promise<Payment[]> {
     const conditions: any[] = [belongsToActivePatientSql("payments")];
     if (branchId) conditions.push(eq(payments.branchId, branchId));
-    if (startDate) conditions.push(gte(payments.date, new Date(startDate)));
-    if (endDate) conditions.push(lte(payments.date, new Date(endDate)));
+    //  البند ١٣ (§4.bd): يوما الطرفين **بتوقيت بغداد وشاملان** — كان `lte(منتصفَ ليل UTC ليوم النهاية)` فيسقط يومُ النهاية كلُّه.
+    const b = baghdadDayBounds(startDate, endDate);
+    if (b.start) conditions.push(gte(payments.date, b.start));
+    if (b.endExclusive) conditions.push(sql`${payments.date} < ${b.endExclusive}`);
 
     //  الشرطُ الأوّل قائمٌ دائماً (تصفيةُ المحذوف)، فلا فرعَ «بلا شروط».
     return await db.select().from(payments).where(and(...conditions)).orderBy(desc(payments.date));
@@ -4550,8 +4571,9 @@ export class DatabaseStorage implements IStorage {
   async getAllVisits(branchId?: number, startDate?: string, endDate?: string): Promise<Visit[]> {
     const conditions = [isNull(visits.deletedAt), belongsToActivePatientSql("visits")];
     if (branchId) conditions.push(eq(visits.branchId, branchId));
-    if (startDate) conditions.push(gte(visits.visitDate, new Date(startDate)));
-    if (endDate) conditions.push(lte(visits.visitDate, new Date(endDate)));
+    const b = baghdadDayBounds(startDate, endDate);   // البند ١٣ — كالدفعات أعلاه
+    if (b.start) conditions.push(gte(visits.visitDate, b.start));
+    if (b.endExclusive) conditions.push(sql`${visits.visitDate} < ${b.endExclusive}`);
 
     return await db.select().from(visits).where(and(...conditions)).orderBy(desc(visits.visitDate));
   }
