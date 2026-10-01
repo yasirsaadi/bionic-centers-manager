@@ -361,8 +361,15 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
 
     try {
+      //  **فرعُ الحركة** (§4.ax) — بقاعدة «تخصيص الطرف» أدناه نفسِها، لا فرعُ تسجيل المريض.
+      const actingBranchId = resolveActingBranchId({
+        scope: s.isAdmin ? null : (s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : [])),
+        sessionBranchId: s.branchId ?? null,
+        homeBranchId: patient.branchId,
+        patientBranchIds: await patientBranchIdsOf(patient as any),
+      }) ?? patient.branchId;
       const order = await store.createWorkOrderForExisting({
-        patientId, branchId: patient.branchId, serviceType, expertUserId,
+        patientId, branchId: actingBranchId, serviceType, expertUserId,
         expectedDeliveryDate, assignedBy: s.userId ?? null, purpose,
       });
       await audit(req, "prosthetic_work_order", order.id, "create", patient.branchId,

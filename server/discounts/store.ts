@@ -596,6 +596,9 @@ async function applyApproved(
       isFree: effectiveIsFree,
       actor,
       tx,
+      //  **فرعُ الحركة** (§4.ax): فرعُ طلب الخصم هو فرعُ الموظّف الذي قدّم الخدمة — كان يغيب فتُكتب الخدمةُ
+      //  ودفعتُها في فرع تسجيل المريض.
+      actingBranchId: req.branchId ?? null,
     });
     return { kind: "new_service", totalCost: finalPrice, ...out };
   }
@@ -615,6 +618,7 @@ async function applyApproved(
     //  ويبقى `physioEntryCost` مرجعَ السعر الأصلي في نقطة الطلب.
     const patient = await storage.pricePhysiotherapy(req.patientId, {
       entries, totalCost: finalPrice, totalSessions, treatmentType: typesJoined, tx,
+      branchId: req.branchId ?? null,
     });
     return { kind: "physiotherapy", totalCost: finalPrice, totalSessions, patient };
   }
