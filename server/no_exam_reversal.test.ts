@@ -3,6 +3,7 @@
 //
 // كان «تصحيح / إلغاء العملية» على أمر الصيانة يُجيب «العملية غير موجودة». والآن يُلغيه ويعكس ما أنشأه من مال:
 // الكلفةُ بقيدٍ معاكس، والمقبوضُ يُردّ، والأمرُ يُبطَل — ولبيع الجزء حلقتُه كذلك — والجهازُ المُصان لا يُمَسّ.
+// **وأمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢، §4.ar): هـ · و · ز.
 
 import express from "express";
 import { createServer } from "http";
@@ -249,6 +250,90 @@ async function main() {
     same("د٥. **وحلقةُ الجزء تُبطَل** والأمرُ كذلك",
       [(await q(`SELECT admin_void_reversal_id IS NOT NULL AS v FROM patient_device_episodes WHERE id=$1`, [epD]))[0].v,
         (await orderOf(woD)).voided], [true, true]);
+
+    //  ══ البند ٣٢ (§4.ar): أمرُ تصنيعِ جهازٍ بلا متابعة — كان «العملية غير موجودة» فيبقى مفتوحاً والسعرُ ديناً ══
+    console.log("\n── هـ. مريضٌ قديم: «تخصيص الطرف» بلا مسار المعاينة ولا حلقة ──");
+    const pE = await mkPatient("هـ");
+    await q(`UPDATE patients SET patient_classification = 'past' WHERE id = $1`, [pE]);
+    //  قيدُ بيعٍ قديمٍ آخر على القسم نفسِه (بختمٍ آخر) — لا يُعكَس معه.
+    const [cE] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1`, [pE]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, created_at)
+             VALUES ($1,1,50000,'assign_manufacturing',$2,'2025-01-01')`, [pE, cE.id]);
+    await q(`UPDATE patients SET total_cost = 50000 WHERE id = $1`, [pE]);
+    await q(`UPDATE patient_cases SET cost = 50000 WHERE id = $1`, [cE.id]);
+    const aE = await http("POST", `/api/patients/${pE}/assign-manufacturing`, S.admin,
+      { serviceType: "prosthetic", expertUserId: EXPERT, cost: 950000 });
+    check(aE.status === 201, "هـ١. (الإعداد) «تخصيص الطرف» لمريضٍ قديمٍ بلا حلقة", JSON.stringify(aE.body));
+    const woE = Number(aE.body?.workOrderId);
+    same("هـ٢. (الإعداد) الأمرُ بلا حلقة ولا متابعة",
+      (await q(`SELECT device_episode_id FROM prosthetic_work_orders WHERE id=$1`, [woE]))[0].device_episode_id, null);
+    await q(`INSERT INTO payments (patient_id, branch_id, case_id, amount) VALUES ($1,1,$2,300000)`, [pE, cE.id]);
+    const beforeE = await snap(pE);
+    same("هـ٣. (الإعداد) الكلفةُ ٩٥٠,٠٠٠ والمقبوضُ ٣٠٠,٠٠٠", [beforeE.total, beforeE.ledger, beforeE.paid], [950000, 950000, 300000]);
+    const pvE = await preview(woE);
+    same("هـ٤. **المعاينةُ لا تقول «العملية غير موجودة»** — الكلفةُ قيدُ معاملة الأمر وحدَه (٩٠٠,٠٠٠ لا ٩٥٠,٠٠٠)",
+      [pvE.status, pvE.body?.availableIntents, pvE.body?.saleAmount, pvE.body?.paidAmount],
+      [200, ["cancel_operation"], 900000, 0]);
+    check((pvE.body?.impact?.full_operation ?? []).some((l: any) => l.kind === "warn" && /يُردّ يدوياً/.test(l.text)),
+      "هـ٥. **وتقول صراحةً إن المقبوضَ لا يُردّ آلياً** في هذا المسار");
+    const okE = await execute(woE, pvE.body?.stateStamp);
+    check(okE.status === 200, "هـ٦. **الأمرُ يُلغى** — بلا سؤال ردٍّ لا جوابَ له", JSON.stringify(okE.body));
+    const afterE = await snap(pE);
+    same("هـ٧. **والكلفةُ تُعكَس وحدَها**: يبقى القيدُ القديم، والمقبوضُ لا يُمَسّ",
+      [afterE.total, afterE.case_cost, afterE.ledger, afterE.paid, afterE.payment_rows], [50000, 50000, 50000, 300000, 1]);
+    same("هـ٨. والأمرُ ملغى إدارياً — يخرج من لوحة التصنيع", await orderOf(woE), { status: "cancelled", voided: true });
+
+    console.log("\n── و. أمرُ بناءٍ على حلقةٍ بلا متابعة — وصيانتُه لا تُعكَس معه ──");
+    const pF = await mkPatient("و");
+    const [cF] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1`, [pF]);
+    const [epF] = await q<{ id: number }>(
+      `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, created_by, delivered_at)
+       VALUES ($1,$2,1,1,'delivered',600000,$3,NOW()) RETURNING id`, [pF, cF.id, ADMIN]);
+    const [woF] = await q<{ id: number }>(
+      `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, device_episode_id, assigned_by, completed_at)
+       VALUES ($1,1,$2,'prosthetic','completed','delivered','initial_build',$3,$4,NOW()) RETURNING id`, [pF, EXPERT, epF.id, ADMIN]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id)
+             VALUES ($1,1,600000,'assign_manufacturing',$2,$3)`, [pF, cF.id, epF.id]);
+    await q(`INSERT INTO payments (patient_id, branch_id, case_id, device_episode_id, amount) VALUES ($1,1,$2,$3,200000)`, [pF, cF.id, epF.id]);
+    await q(`UPDATE patients SET total_cost = 600000 WHERE id = $1`, [pF]);
+    await q(`UPDATE patient_cases SET cost = 600000 WHERE id = $1`, [cF.id]);
+    const mF = await maint({ patientId: pF, deviceEpisodeId: epF.id, originalPrice: 15000, discountAmount: 0, paidNow: 15000 });
+    check(mF.status === 201, "و١. (الإعداد) صيانةٌ مدفوعةٌ على الجهاز نفسِه", JSON.stringify(mF.body));
+    const pvF = await preview(woF.id);
+    same("و٢. **المعاينةُ: ثمنُ الجهاز ومقبوضُه وحدهما** — بلا أجر الصيانة ولا دفعتها",
+      [pvF.status, pvF.body?.saleAmount, pvF.body?.paidAmount], [200, 600000, 200000]);
+    const okF = await execute(woF.id, pvF.body?.stateStamp, { refundAnswer: "yes" });
+    check(okF.status === 200, "و٣. **أمرُ البناء يُلغى ويُردّ مقبوضُه**", JSON.stringify(okF.body));
+    const afterF = await snap(pF);
+    same("و٤. **ويبقى مالُ الصيانة وحدَه**", [afterF.total, afterF.ledger, afterF.paid], [15000, 15000, 15000]);
+    same("و٥. والحلقةُ مُبطَلةٌ وتبقى «مسلَّمة» (التسليمُ واقعة)",
+      (await q(`SELECT status, admin_void_reversal_id IS NOT NULL AS v FROM patient_device_episodes WHERE id=$1`, [epF.id]))[0],
+      { status: "delivered", v: true });
+    same("و٦. وأمرُ الصيانة لا يُمَسّ", (await orderOf(Number(mF.body?.workOrderId))).voided, false);
+
+    console.log("\n── ز. أمرٌ قديمٌ ملغى وأمرٌ قائمٌ على الحلقة نفسِها ──");
+    const pG = await mkPatient("ز");
+    const [cG] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1`, [pG]);
+    const [epG] = await q<{ id: number }>(
+      `INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, created_by)
+       VALUES ($1,$2,1,1,'in_manufacturing',400000,$3) RETURNING id`, [pG, cG.id, ADMIN]);
+    const [oldG] = await q<{ id: number }>(
+      `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, device_episode_id, assigned_by)
+       VALUES ($1,1,$2,'prosthetic','cancelled','order_received','initial_build',$3,$4) RETURNING id`, [pG, EXPERT, epG.id, ADMIN]);
+    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, device_episode_id, assigned_by)
+             VALUES ($1,1,$2,'prosthetic','active','order_received','initial_build',$3,$4)`, [pG, EXPERT, epG.id, ADMIN]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id)
+             VALUES ($1,1,400000,'assign_manufacturing',$2,$3)`, [pG, cG.id, epG.id]);
+    await q(`UPDATE patients SET total_cost = 400000 WHERE id = $1`, [pG]);
+    const beforeG = await snap(pG);
+    const pvG = await preview(oldG.id);
+    same("ز١. **مالُ الحلقة للأمر القائم** — الملغى القديمُ بلا كلفة",
+      [pvG.status, pvG.body?.saleAmount, pvG.body?.paidAmount], [200, 0, 0]);
+    const okG = await execute(oldG.id, pvG.body?.stateStamp);
+    same("ز٢. **ولا مالَ يتحرّك ولا تُبطَل الحلقة**",
+      [okG.status, (await snap(pG)).ledger, (await snap(pG)).total, beforeG.ledger,
+        (await q(`SELECT admin_void_reversal_id FROM patient_device_episodes WHERE id=$1`, [epG.id]))[0].admin_void_reversal_id],
+      [200, 400000, 400000, 400000, null]);
   } finally {
     await cleanup();
     await q(`UPDATE system_users SET is_active = false WHERE id = ANY($1::int[])`, [USERS]);
