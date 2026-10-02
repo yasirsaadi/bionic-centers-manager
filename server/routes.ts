@@ -43,6 +43,7 @@ import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
+import { caseNotBoughtByCase } from "./followup/case_not_bought";
 import { registerDiscountRoutes, discountAuditNote } from "./discounts/routes";
 import * as discountStore from "./discounts/store";
 import {
@@ -2365,10 +2366,12 @@ export async function registerRoutes(
     const canAccess = await reachesPatient(req, patient);
     if (!patient || !canAccess) return res.status(404).json({ message: "Patient not found or unauthorized" });
 
-    const [cases, payments, visits] = await Promise.all([
+    const [cases, payments, visits, notBought] = await Promise.all([
       storage.getCasesByPatientId(id),
       storage.getPaymentsByPatientId(id),
       storage.getVisitsByPatientId(id),
+      //  «لم يشترِ» وسببُه على بطاقة القسم (§4.bm) — ليس مالاً، فيصل الطبيبَ ومَن لا يرى الدفعات أيضاً.
+      caseNotBoughtByCase(id),
     ]);
     // A PURE doctor is financially locked out like the expert is — but unlike
     // the expert they DO work in the patient page, and the case rows are what
@@ -2387,7 +2390,9 @@ export async function registerRoutes(
     const canViewPayments = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
     // Attach per-case paid total + visit count (case-attributed rows).
-    const enriched = cases.map((c) => {
+    const enriched = cases.map((c0) => {
+      const nb = notBought.get(c0.id);
+      const c = nb ? { ...c0, notBought: nb } : c0;
       const caseVisits = visits.filter((v: any) => v.caseId === c.id);
       if (financiallyBlind) {
         const { cost, costSource, ...clinical } = c as any;
