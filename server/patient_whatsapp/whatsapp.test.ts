@@ -461,25 +461,24 @@ async function main() {
       && !/\d{6,}/.test((upd?.params[1] ?? "").replace(/\d{2}\/\d{2}\/\d{4}/g, "")),
       "م.٤ ولا اسمَ ولا مبلغَ في نصّ الحالة", upd?.params[1]);
 
-    // ══ ن. لا أثرَ تشغيليّ لتلغرام المرضى ═══════════════════════════════
+    // ══ ن. تلغرامُ المرضى قناةٌ ثانية — بربطٍ صريح، لا تلقائيّ (§4.bl، قرارُ المالك ٢٠٢٦-١٠-٠٢) ══
     console.log("\n── ن. تلغرام المرضى ──");
-    check(!existsSync(join(import.meta.dirname, "..", "patient_telegram")),
-      "ن. **مجلّد `server/patient_telegram/` أُزيل**");
+    check(existsSync(join(import.meta.dirname, "..", "patient_telegram", "webhook.ts")),
+      "ن. **`server/patient_telegram/` عاد**");
     const routesSrc = readFileSync(join(import.meta.dirname, "..", "routes.ts"), "utf8");
-    check(!/patient_telegram|registerPatientTelegramWebhook/.test(routesSrc),
-      "ن.١ **ولا تسجيلَ نقطةِ تلغرام للمرضى**",
-      (routesSrc.match(/.*patient_telegram.*/g) ?? []).join(" | "));
+    check(/registerPatientTelegramWebhook\(app\)/.test(routesSrc),
+      "ن.١ **ونقطةُ تلغرام المرضى مسجَّلة**");
     check(!existsSync(join(import.meta.dirname, "..", "patient_notifications", "transports.ts")),
       "ن.٢ **ولا سجلَّ نواقلَ ثنائياً**");
-    same("ن.٣ **والقناةُ المدعومة واحدة**", [...CONTACT_CHANNELS], ["whatsapp"]);
+    same("ن.٣ **والقناتان المدعومتان: واتساب ثمّ تلغرام**", [...CONTACT_CHANNELS], ["whatsapp", "telegram"]);
     //  **بلا تعليقات**: سطرٌ يشرح ما أُزيل ليس هو الشيءَ المُزال.
     const cardSrc = readFileSync(
       join(import.meta.dirname, "../../client/src/components/PatientCommunicationCard.tsx"), "utf8")
       .split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")
         && !l.trim().startsWith("/*")).join("\n");
-    check(!/Telegram|QRCode|qrcode|ربط واتساب|deepLink|link-token/i.test(cardSrc),
-      "ن.٤ **ولا واجهةَ ربطٍ ولا رمزَ QR في البطاقة**",
-      (cardSrc.match(/.*(Telegram|QR|deepLink).*/gi) ?? []).join(" | "));
+    check(!/ربط واتساب|channel: "whatsapp"/i.test(cardSrc) && /channel: "telegram"/.test(cardSrc),
+      "ن.٤ **ورمزُ الربط في البطاقة لتلغرام وحده** — واتساب بلا ربط",
+      (cardSrc.match(/.*channel: .*/gi) ?? []).join(" | "));
     //  ولا صفَّ تلغرامٍ **جديد** يُنشأ لأي مريضٍ من هذه الحزمة.
     same("ن.٥ **ولا جهةَ تلغرامٍ أُنشئت**",
       Number((await q(
@@ -709,8 +708,9 @@ async function main() {
       "ر.٤ **والحفظُ يرسل النموذجَ كاملاً** — فالحقلُ في حمولة PUT",
       (editSrc.match(/.*mutate\(\{ id: patientId.*/g) ?? []).join(" | "));
     //  ولا بابَ ثانٍ: البطاقةُ حالةٌ تُقرأ لا شاشةُ إدارة.
-    check(!/checkbox|onChange|mutate|apiRequest/.test(cardSrc),
-      "ر.٥ **والبطاقةُ بلا أيّ زرٍّ أو تبديل**", cardSrc.slice(0, 120));
+    //  (والبطاقةُ صار فيها زرُّ ربط تلغرام — §4.bl — لكن **لا تبديلَ لراية واتساب**.)
+    check(!/checkbox|whatsappNotificationsEnabled\s*:/.test(cardSrc),
+      "ر.٥ **والبطاقةُ بلا تبديلٍ لراية واتساب**", cardSrc.slice(0, 120));
     //  والخادمُ يقبل الحقل فعلاً على PUT (مُثبَتٌ حيّاً في ك/ل أعلاه).
     same("ر.٦ **والخادمُ يقبله على PUT** (أُثبت حيّاً في ك/ل)",
       (await http("PUT", `/api/patients/${rS2.body.id}`,

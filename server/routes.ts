@@ -14,6 +14,8 @@ import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysi
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
+import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
+import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
@@ -8645,13 +8647,16 @@ export async function registerRoutes(
   registerPatientTrashRoutes(app, isAuthenticated);
   registerPatientBranchAccessRoutes(app, isAuthenticated);
 
-  // ══ تواصلُ المريض — **صادرٌ فقط، بلا نقطةٍ عامّة واحدة** ═══════════════
-  //  لا webhook، ولا تذاكرَ ربط، ولا استهلاك، ولا أوامرَ واردة. الرقمُ
-  //  المسجَّل في الملفّ هو الوجهة، والترحيبُ يُستحقّ لحظةَ الحفظ، والعاملُ
-  //  الدوريّ يرسل. فما لا يُستقبَل لا يُفتَح له باب.
+  // ══ تواصلُ المريض ═══════════════════════════════════════════════════════
+  //  واتساب صادرٌ فقط: الرقمُ المسجَّل هو الوجهة، والترحيبُ يُستحقّ لحظةَ الحفظ.
+  //  **وتلغرام عاد قناةً ثانية** (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bl): الاستقبالُ يُصدر رمز QR من ملفّ المريض
+  //  (`/api/patients/:id/communication/*`)، والمريضُ يضغط «ابدأ» في بوت المرضى فيصل الـwebhook — بابٌ عامّ واحد
+  //  يحرسه سرٌّ في الترويسة وحدها. معطَّلٌ تماماً (٥٠٣) بلا متغيّرات `PATIENT_TELEGRAM_*`.
   //
   //  (وتنبيهاتُ المالك الداخلية في `notifications/telegram.ts` شأنٌ آخر
-  //   تماماً ولم تُمَسّ: تلك للإدارة لا للمرضى.)
+  //   تماماً ولم تُمَسّ: بوتٌ آخر للإدارة لا للمرضى.)
+  registerPatientCommunicationRoutes(app, isAuthenticated);
+  registerPatientTelegramWebhook(app);
 
   return httpServer;
 }

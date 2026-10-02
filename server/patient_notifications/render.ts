@@ -227,6 +227,30 @@ export function templateKindFor(notificationType: string): "welcome" | "update" 
 }
 
 /**
+ * **نصُّ تلغرام** (§4.bl) — المعلومةُ نفسُها التي يحملها قالبا واتساب، **نصّاً كاملاً** لا معامِلات: تلغرامُ لا قوالبَ فيه.
+ * والصياغةُ من هذا الملفّ وحده كي لا يصير للرسائل كتالوجان:
+ *   • الترحيب = `welcomePreview` حرفاً، و«عبر هذا الرقم» ⟵ «عبر Telegram» (المريضُ يقرؤه في تلغرام لا على رقمه).
+ *   • التحديث = جسمُ قالب واتساب المعتمَد بعينه، و`{{2}}` نصُّ `renderNotification`.
+ * والرمزُ يمرّره المستدعي **قانونيّاً** (`patientCodeOf` حيّاً وقت الإرسال) — ولا اسم ولا هاتف ولا مبلغ.
+ * و`null` = لا رسالة (نوعٌ صامت أو حمولةٌ ناقصة أو رمزٌ غير قانونيّ).
+ */
+export function renderTelegramText(
+  notificationType: string,
+  payload: Record<string, unknown> | null | undefined,
+  patientCode: string | null,
+): string | null {
+  if (!isCanonicalPatientCode(patientCode)) return null;
+  const code = String(patientCode);
+  if (templateKindFor(notificationType) === "welcome") {
+    if (welcomeParam(payload ?? {}) === null) return null;
+    return welcomePreview(code).replace("عبر هذا الرقم", "عبر Telegram");
+  }
+  const body = renderNotification(notificationType, payload);
+  if (!body) return null;
+  return `تحديث بخصوص الخدمة المسجلة في ملفكم رقم ${code}.\nالحالة الحالية:\n${body}\nهذه رسالة خدمية تخص الخدمة المسجلة مسبقاً.`;
+}
+
+/**
  * الأنواعُ التي يخدمها قالبُ **الترحيب** — **مشتقّةٌ من التصنيف نفسه**.
  *
  * تُقرأ في `claimDue` لتصفية الطابور **قبل** `LIMIT`. وهي قائمةٌ صغيرة
