@@ -250,6 +250,7 @@ export interface IStorage {
 
   // Accounting
   getPatientBranchBalances(branchId?: number): Promise<PatientBranchBalance[]>;
+  getDebtsTotal(branchId?: number): Promise<number>;
   getAccountingSummary(branchId?: number, startDate?: string, endDate?: string): Promise<{
     totalRevenue: number;
     totalPaid: number;
@@ -4124,6 +4125,16 @@ export class DatabaseStorage implements IStorage {
       paid: Number(r.paid) || 0,
       lastPaymentDate: r.last_payment ?? null,
     }));
+  }
+
+  /**
+   *  **«الديون» برقمٍ واحد** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) — مجموعُ أرصدة المدينين وحدهم بفرع القيد، بالصيغة نفسِها
+   *  التي يحسب بها `getAccountingSummary.totalRemaining` (§4.bc، §4.bf). فـ«المتبقّي» في الرئيسية وصفحة الإيرادات والبريد
+   *  الليلي يقرأ من هنا، ولا يطرح رصيدَ مريضٍ دائنٍ من دَين آخر، ولا ينسب دَيناً إلى غير فرعه.
+   */
+  async getDebtsTotal(branchId?: number): Promise<number> {
+    const balances = await this.getPatientBranchBalances(branchId);
+    return balances.reduce((s, b) => s + Math.max(0, b.cost - b.paid), 0);
   }
 
   async getAccountingSummary(branchId?: number, startDate?: string, endDate?: string, opts?: { baghdadDays?: boolean }): Promise<{

@@ -229,6 +229,7 @@ async function countPeriodMetrics(
       SELECT COUNT(*)::int AS n FROM visits
        WHERE deleted_at IS NULL AND ${branchScopeSql("branch_id", scope)}
          AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
+         AND ${belongsToActivePatientSql("visits")}
     `),
     //  **نفسُ تعريف `patient_lookup` للجلسة**: زيارةُ خيط العلاج الطبيعي
     //  وحده، بلا «خدمة جديدة» (قيدٌ ماليّ لا جلسة) ولا «استشارة طبية».
@@ -314,6 +315,7 @@ export async function getOperationalSummary(params: {
       db.execute(sql`
         SELECT branch_id, COUNT(*)::int AS n FROM visits
          WHERE deleted_at IS NULL AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
+           AND ${belongsToActivePatientSql("visits")}
          GROUP BY branch_id
       `),
     ]);

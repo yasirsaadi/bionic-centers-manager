@@ -6,7 +6,7 @@ import {
 } from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
@@ -4955,11 +4955,13 @@ export async function registerRoutes(
     const totalSold = Number(p?.sold ?? 0);
 
     const money = mayViewMoney(req);
+    //  «المتبقّي» = «الديون» (§4.bo): المدينون وحدهم بفرع القيد — كان صافياً يطرح أرصدةَ الدائنين.
+    const debts = money ? await storage.getDebtsTotal(enforced ?? undefined) : 0;
     res.json({
       revenue: money ? totalPaid : 0,
       sold: money ? totalSold : 0,
       paid: money ? totalPaid : 0,
-      remaining: money ? totalSold - totalPaid : 0,
+      remaining: money ? debts : 0,
       totalPatients: Number(p?.total ?? 0),
       amputees: Number(p?.amputees ?? 0),
       physiotherapy: Number(p?.physiotherapy ?? 0),
@@ -4981,10 +4983,13 @@ export async function registerRoutes(
       : allBranches;
     const daily = req.query.daily === "true";
 
-    // Today's range (same semantics the in-memory version used).
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    //  ══ **«اليوم» يومُ بغداد** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo؛ §4.bd) ══
+    //  كان `new Date(y, m, d)` بتوقيت الخادم (UTC على Render) — فاليومُ يبدأ الثالثةَ فجراً بتوقيت بغداد، وبطاقةُ
+    //  الرئيسية التي تفتح هذه الصفحة تبدأه منتصفَ الليل، فيختلف الرقمان لدفعات ما بعد منتصف الليل.
+    const todayYmd = baghdadTodayYmd();
+    const todayBounds = baghdadDayBounds(todayYmd, todayYmd);
+    const startOfDay = todayBounds.start!;
+    const endOfDay = todayBounds.endExclusive!;
 
     // Two grouped aggregates instead of loading every patient + N payment
     // queries. Daily mode (owner's definitions, 2026-07-28): "sold" is the
@@ -5021,11 +5026,17 @@ export async function registerRoutes(
     const soldBy = new Map((soldRows.rows as any[]).map((r) => [Number(r.branch_id), Number(r.sold)]));
     const paidBy = new Map((paidRows.rows as any[]).map((r) => [Number(r.branch_id), Number(r.paid)]));
 
+    //  «المتبقّي» خارج وضع اليوم = «الديون» بفرع القيد (§4.bo، §4.bc) — كان كلفةَ فرع التسجيل ناقصَ دفع فرع القبض،
+    //  فمريضٌ خدمتُه ودفعُه في فرعٍ آخر يظهر ديناً هنا وسالباً هناك. ووضعُ اليوم يبقى «بيعُ اليوم ناقصَ قبضِه».
+    const debtsBy = new Map<number, number>();
+    if (!daily) {
+      await Promise.all(branches.map(async (b) => { debtsBy.set(b.id, await storage.getDebtsTotal(b.id)); }));
+    }
     const result: Record<number, { revenue: number; sold: number; paid: number; remaining: number }> = {};
     for (const branch of branches) {
       const sold = soldBy.get(branch.id) ?? 0;
       const paid = paidBy.get(branch.id) ?? 0;
-      result[branch.id] = { revenue: paid, sold, paid, remaining: sold - paid };
+      result[branch.id] = { revenue: paid, sold, paid, remaining: daily ? sold - paid : (debtsBy.get(branch.id) ?? 0) };
     }
 
     res.json(result);
@@ -5055,13 +5066,15 @@ export async function registerRoutes(
     const days = Number.isFinite(daysRaw) && daysRaw >= 0 ? daysRaw : 45;
     const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 
-    const [patients, payments, visits, financeTotals, dayCostEntries, branchExpenses] = await Promise.all([
+    const [patients, payments, visits, financeTotals, dayCostEntries, branchExpenses, branchDebts] = await Promise.all([
       storage.getPatientsSince(branchId, cutoff),
       storage.getPaymentsByBranchSince(branchId, cutoff),
       storage.getVisitsByBranchSince(branchId, cutoff),
       storage.getBranchFinanceTotals(branchId),
       storage.getCostEntriesByBranchSince(branchId, cutoff),
       storage.getExpenses(branchId, cutoff ? cutoff.toISOString().split("T")[0] : undefined),
+      //  «المتبقّي» = «الديون» بفرع القيد (§4.bo).
+      storage.getDebtsTotal(branchId),
     ]);
 
     // Create patient lookup map
@@ -5307,7 +5320,7 @@ export async function registerRoutes(
       overall: {
         totalCost: financeTotals.totalCost,
         totalPaid: financeTotals.totalPaid,
-        remaining: financeTotals.totalCost - financeTotals.totalPaid,
+        remaining: branchDebts,
         totalPatients: financeTotals.totalPatients,
         totalPayments: financeTotals.totalPayments
       }
@@ -5375,11 +5388,13 @@ export async function registerRoutes(
             SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
             FROM visits
             WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND branch_id = ${filterBranchId} AND deleted_at IS NULL
+              AND ${belongsToActivePatientSql("visits")}
           `)
         : await db.execute(sql`
             SELECT COUNT(*) as total_visits, COUNT(DISTINCT patient_id) as unique_patients
             FROM visits
             WHERE visit_date >= ${startTs}::timestamp AND visit_date < ${endTs}::timestamp AND deleted_at IS NULL
+              AND ${belongsToActivePatientSql("visits")}
           `);
       const visitStats = visitsResult.rows[0] || { total_visits: 0, unique_patients: 0 };
       
@@ -5417,12 +5432,14 @@ export async function registerRoutes(
             SELECT branch_id, COALESCE(SUM(amount), 0) as paid
             FROM payments 
             WHERE date >= ${startTs}::timestamp AND date < ${endTs}::timestamp AND branch_id = ${filterBranchId}
+              AND ${belongsToActivePatientSql("payments")}
             GROUP BY branch_id
           `)
         : await db.execute(sql`
             SELECT branch_id, COALESCE(SUM(amount), 0) as paid
             FROM payments 
             WHERE date >= ${startTs}::timestamp AND date < ${endTs}::timestamp
+              AND ${belongsToActivePatientSql("payments")}
             GROUP BY branch_id
           `);
       
@@ -6902,7 +6919,7 @@ export async function registerRoutes(
         SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0)::int AS total
         FROM payments pay
         WHERE pay.branch_id = ${branch.id}
-          AND (pay.date AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+          AND ((pay.date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
           AND ${belongsToActivePatientSql("pay")}
       `);
       const pRow = paymentsResult.rows[0] as any;
@@ -6912,7 +6929,7 @@ export async function registerRoutes(
         SELECT COUNT(*)::int AS cnt
         FROM patients
         WHERE branch_id = ${branch.id}
-          AND (created_at AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
+          AND ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date = COALESCE(${targetDate ?? null}::date, (NOW() AT TIME ZONE 'Asia/Baghdad')::date)
           AND deleted_at IS NULL
       `);
       const ptRow = patientsResult.rows[0] as any;
