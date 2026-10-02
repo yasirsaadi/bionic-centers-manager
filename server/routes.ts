@@ -128,11 +128,6 @@ const strOrNull = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
 
 // Validation schemas for admin settings
-const adminPasswordSchema = z.object({
-  currentPassword: z.string().min(1, "كلمة المرور الحالية مطلوبة"),
-  newPassword: z.string().min(4, "كلمة المرور يجب أن تكون 4 أحرف على الأقل"),
-});
-
 const branchPasswordSchema = z.object({
   branchId: z.number().positive("معرف الفرع مطلوب"),
   newPassword: z.string().min(4, "كلمة المرور يجب أن تكون 4 أحرف على الأقل"),
@@ -158,10 +153,6 @@ const usernameToBranch: Record<string, { branchId: number | "admin"; branchName:
   "mosul": { branchId: 4, branchName: "بايونك الموصل" },
   "kirkuk": { branchId: 5, branchName: "بايونك كركوك" },
 };
-
-const verifyAdminSchema = z.object({
-  code: z.string().min(1, "كود المسؤول مطلوب"),
-});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -649,47 +640,11 @@ export async function registerRoutes(
   };
 
   // Admin code verification (legacy - uses same logic as branch login with admin branchId)
+  //  **كلمةُ المسؤول المشتركة أُغلقت** (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bk): الصفحاتُ التي كانت تطلبها (`AdminGate`) تُفتح الآن
+  //  لجلسة مسؤولٍ عامّ بحسابه الشخصيّ وحدها — بلا كود. وما يُرسَل من كودٍ يُتجاهَل.
   app.post("/api/verify-admin", isAuthenticated, async (req, res) => {
-    try {
-      const parsed = verifyAdminSchema.parse(req.body);
-      const { code } = parsed;
-      const trimmedCode = code.trim();
-      
-      // Check for hashed password first, then plaintext, then env variable
-      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
-      const dbAdminPassword = await storage.getSystemSetting("admin_password");
-      const envAdminCode = process.env.ADMIN_CODE?.trim();
-      
-      let isValidPassword = false;
-      let needsMigration = false;
-      
-      if (dbAdminPasswordHash) {
-        isValidPassword = await bcrypt.compare(trimmedCode, dbAdminPasswordHash);
-      } else if (dbAdminPassword) {
-        isValidPassword = trimmedCode === dbAdminPassword;
-        needsMigration = isValidPassword;
-      } else if (envAdminCode) {
-        isValidPassword = trimmedCode === envAdminCode;
-        needsMigration = isValidPassword;
-      }
-      
-      if (isValidPassword) {
-        // Auto-migrate: hash plaintext password on successful login
-        if (needsMigration) {
-          const hashedPassword = await bcrypt.hash(trimmedCode, 10);
-          await storage.setSystemSetting("admin_password_hash", hashedPassword);
-          await storage.setSystemSetting("admin_password", "");
-        }
-        res.json({ success: true });
-      } else {
-        res.status(401).json({ message: "الكود غير صحيح" });
-      }
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ message: err.errors[0].message });
-      }
-      throw err;
-    }
+    if ((req.session as any)?.branchSession?.isAdmin === true) return res.json({ success: true });
+    return res.status(403).json({ message: "هذه الصفحة للمسؤول العام — ادخل بحسابك الشخصي" });
   });
 
   // Branch password verification - supports both system_users and legacy auth
@@ -821,76 +776,10 @@ export async function registerRoutes(
         return res.status(401).json({ message: "اسم المستخدم غير صحيح لهذا الفرع" });
       }
       
-      // Check if admin login
+      //  **دخولُ الطوارئ القديم أُغلق** (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bk): «مسؤول» بكلمة مرورٍ مشتركة بلا حساب — كلُّ ما يفعله
+      //  يُسجَّل بلا اسم. فالمسؤولُ يدخل بحسابه الشخصيّ وحده (فرعُ `system_users` أعلاه).
       if (branchId === "admin") {
-        // Check for hashed password first, then plaintext, then env variable
-        const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
-        const dbAdminPassword = await storage.getSystemSetting("admin_password");
-        const envAdminCode = process.env.ADMIN_CODE?.trim();
-        
-        let isValidPassword = false;
-        let needsMigration = false;
-        
-        if (dbAdminPasswordHash) {
-          // Compare with hashed password
-          isValidPassword = await bcrypt.compare(trimmedInput, dbAdminPasswordHash);
-        } else if (dbAdminPassword) {
-          // Legacy plaintext comparison
-          isValidPassword = trimmedInput === dbAdminPassword;
-          needsMigration = isValidPassword;
-        } else if (envAdminCode) {
-          // Fall back to environment variable
-          isValidPassword = trimmedInput === envAdminCode;
-          needsMigration = isValidPassword;
-        }
-        
-        console.log("Admin code check:", { dbHashExists: !!dbAdminPasswordHash, dbExists: !!dbAdminPassword, envExists: !!envAdminCode, isValid: isValidPassword });
-        
-        if (isValidPassword) {
-          // Auto-migrate: hash plaintext password on successful login
-          if (needsMigration) {
-            const hashedPassword = await bcrypt.hash(trimmedInput, 10);
-            await storage.setSystemSetting("admin_password_hash", hashedPassword);
-            await storage.setSystemSetting("admin_password", "");
-          }
-          // Store admin session info (legacy - full permissions)
-          const legacyAdminPermissions = {
-            canViewPatients: true,
-            canAddPatients: true,
-            canEditPatients: true,
-            canDeletePatients: true,
-            canViewPayments: true,
-            canAddPayments: true,
-            canEditPayments: true,
-            canDeletePayments: true,
-            canViewReports: true,
-            canManageAccounting: true,
-            canManageSettings: true,
-            canManageUsers: true,
-            canManageTreatmentPlans: true,
-            canManageSurveys: true,
-            canEditVisits: true,
-            canDeleteVisits: true,
-            canEnterSessions: true,
-            canManageSessionTargets: true,
-            canViewSessionsReport: true,
-          };
-          (req.session as any).branchSession = {
-            branchId: 0,
-            isAdmin: true,
-            shift: "auto",
-            permissions: legacyAdminPermissions,
-          };
-          return res.json({
-            branchId: 0,
-            branchName: "مسؤول النظام",
-            isAdmin: true,
-            role: "admin",
-            shift: "auto",
-            permissions: legacyAdminPermissions,
-          });
-        }
-        return res.status(401).json({ message: "كلمة سر المسؤول غير صحيحة" });
+        return res.status(401).json({ message: "دخولُ «مسؤول» بكلمة المرور المشتركة أُغلق — ادخل باسم المستخدم وكلمة المرور الخاصّة بك" });
       }
 
       // ===== LEGACY BRANCH-SHARED LOGIN — DISABLED =====
@@ -1042,51 +931,9 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
-  app.post("/api/admin/settings/admin-password", isAuthenticated, async (req, res) => {
-    try {
-      const branchSession = (req.session as any).branchSession;
-      if (!branchSession?.isAdmin) {
-        return res.status(403).json({ message: "غير مصرح" });
-      }
-      
-      const parsed = adminPasswordSchema.parse(req.body);
-      const { currentPassword, newPassword } = parsed;
-      
-      // Check if password is hashed (starts with $2) or plaintext
-      const dbAdminPasswordHash = await storage.getSystemSetting("admin_password_hash");
-      const dbAdminPassword = await storage.getSystemSetting("admin_password");
-      const envAdminCode = process.env.ADMIN_CODE?.trim();
-      
-      let isValidPassword = false;
-      
-      if (dbAdminPasswordHash) {
-        // Compare with hashed password
-        isValidPassword = await bcrypt.compare(currentPassword.trim(), dbAdminPasswordHash);
-      } else if (dbAdminPassword) {
-        // Legacy plaintext comparison
-        isValidPassword = currentPassword.trim() === dbAdminPassword;
-      } else if (envAdminCode) {
-        // Fall back to environment variable
-        isValidPassword = currentPassword.trim() === envAdminCode;
-      }
-      
-      if (!isValidPassword) {
-        return res.status(401).json({ message: "كلمة المرور الحالية غير صحيحة" });
-      }
-      
-      // Hash and store new password
-      const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
-      await storage.setSystemSetting("admin_password_hash", hashedPassword);
-      // Remove plaintext password if it exists
-      await storage.setSystemSetting("admin_password", "");
-      
-      res.json({ success: true, message: "تم تغيير كلمة مرور المسؤول بنجاح" });
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ message: err.errors[0].message });
-      }
-      throw err;
-    }
+  app.post("/api/admin/settings/admin-password", isAuthenticated, async (_req, res) => {
+    //  أُغلق مع دخول الطوارئ (§4.bk): لا كلمةَ مسؤولٍ مشتركة بعد اليوم تُغيَّر.
+    return res.status(410).json({ message: "كلمةُ مرور المسؤول المشتركة أُغلقت — يُدار كلُّ حسابٍ من «المستخدمين»" });
   });
   
   // Update branch password

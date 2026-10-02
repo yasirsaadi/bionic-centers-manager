@@ -175,6 +175,7 @@
     "test:untagged-payment-case": "tsx server/untagged_payment_case.test.ts",
     "test:physio-exam-mandatory": "tsx server/physio_exam_mandatory.test.ts",
     "test:order-create-no-date": "tsx server/order_create_no_date.test.ts",
+    "test:emergency-login-closed": "tsx server/emergency_login_closed.test.ts",
     "test:service-profitability": "tsx server/service_profitability.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
