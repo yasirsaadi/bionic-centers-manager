@@ -43,11 +43,15 @@ import { belongsToActivePatientSql } from "../patients/active_patient";
  * `telegram` وتبقى مقروءةً للمدقّق، وقناةٌ ثالثة يوماً تجد عمودَها جاهزاً.
  * لكنّ **المدعومَ تشغيلياً واحد** — والقائمةُ البيضاء هنا هي مَن يقول ذلك.
  */
-export const SUPPORTED_CHANNELS = ["whatsapp"] as const;
+//  **وتلغرام عاد قناةً ثانية** (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bl): صفٌّ لكلّ جهةٍ نشِطة — واتساب من الرقم المسجَّل،
+//  وتلغرام لمن ربطه برمز QR. وصفوفُه القديمة (آب) خُتمت `skipped` في الترحيل ٠٩٢ قبل أن يعود الإرسال.
+export const SUPPORTED_CHANNELS = ["whatsapp", "telegram"] as const;
 export type DeliveryChannel = (typeof SUPPORTED_CHANNELS)[number];
 
-/** القناةُ الوحيدة التي تُنشأ لها صفوفٌ جديدة. */
+/** قناةُ الجهة التي تُنشأ تلقائياً من الرقم المسجَّل (التسجيلُ ومزامنةُ الهاتف). */
 export const PATIENT_CHANNEL: DeliveryChannel = "whatsapp";
+/** قناةُ الجهة التي يربطها المريضُ بنفسه من رمز QR. */
+export const TELEGRAM_CHANNEL: DeliveryChannel = "telegram";
 
 export function isDeliveryChannel(v: unknown): v is DeliveryChannel {
   return typeof v === "string" && (SUPPORTED_CHANNELS as readonly string[]).includes(v);
@@ -64,8 +68,7 @@ export type DeliveryStatus = "pending" | "processing" | "sent" | "failed" | "ski
  * كان سيجعل قارئَ التقرير يرى رمزاً لا يعرفه النظام.
  */
 export type DeliveryErrorCode =
-  //  رموزُ تلغرام **للصفوف التاريخية وحدها**: لا يكتبها شيءٌ بعد اليوم،
-  //  وحذفُها من النوع كان سيجعل قارئَ تقريرٍ قديم يرى رمزاً لا يعرفه النظام.
+  //  رموزُ تلغرام — عادت تُكتب مع عودته (§4.bl).
   | "telegram_timeout"
   | "telegram_network"
   | "telegram_api_error"

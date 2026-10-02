@@ -15,7 +15,9 @@
 // ولا يُنادى المزوّد، ولا يُزاد عدّادُ محاولة. تبقى `pending` بـ٠ محاولات
 // حتى يظهر اسمُ القالب — ثم تُرسَل الصفوفُ **نفسُها** بلا تدخّل.
 
-import { renderNotification, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
+import { renderNotification, renderTelegramText, templateKindFor, WELCOME_NOTIFICATION_TYPES } from "./render";
+import { patientBotEnabled, patientBotStatusLine } from "../patient_telegram/config";
+import { sendMessage } from "../patient_telegram/client";
 import {
   patientWhatsappEnabled, patientWhatsappStatusLine, templateReady, type TemplateKind,
 } from "../patient_whatsapp/config";
@@ -24,7 +26,7 @@ import { patientCodeOf } from "../patient_code/store";
 import { isCanonicalPatientCode } from "@shared/patient_code";
 import {
   claimDue, contactForDelivery, markFailed, markSent, markSkipped,
-  PATIENT_CHANNEL, type DeliveryErrorCode, type TypeFilter,
+  PATIENT_CHANNEL, TELEGRAM_CHANNEL, type DeliveryErrorCode, type TypeFilter,
 } from "./outbox";
 
 /** كل دقيقة. الإشعارُ ليس آنيّاً بطبعه، والدفعة تُفرِّغ المتراكم سريعاً. */
@@ -75,7 +77,73 @@ function eligibleTypes(kinds: TemplateKind[]): TypeFilter {
  * **لا ترمي أبداً**: هي تعمل في مؤقّت، ورميةٌ غير ملتقَطة هناك تُسقط
  * العملية كلّها على Render.
  */
+/**
+ *  **دورةٌ واحدة = قناتان مستقلّتان** (§4.bl): واتساب كما كانت بحرفها، ثمّ تلغرام. كلٌّ تطالب بصفوف قناتها وحدها
+ *  (`claimDue(..., [channel])`) فلا تلمس إحداهما صفَّ الأخرى، وتعطّلُ واحدة لا يوقف الثانية.
+ */
 export async function dispatchOnce(limit = BATCH): Promise<DispatchSummary> {
+  const w = await dispatchWhatsapp(limit);
+  const t = await dispatchTelegram(limit);
+  return { claimed: w.claimed + t.claimed, sent: w.sent + t.sent, failed: w.failed + t.failed, skipped: w.skipped + t.skipped };
+}
+
+/**
+ *  **تلغرام** — نصٌّ كامل من `renderTelegramText` (لا قوالب)، والرمزُ يُقرأ حيّاً. معطَّلٌ بلا متغيّرات البيئة ⟵ لا يطالب
+ *  بصفّ، فتبقى صفوفُه `pending` حتى يُفعَّل. وجهةٌ مسحوبة أو قناةٌ مختلفة ⟵ `skipped` (كواتساب).
+ */
+export async function dispatchTelegram(limit = BATCH): Promise<DispatchSummary> {
+  const summary: DispatchSummary = { claimed: 0, sent: 0, failed: 0, skipped: 0 };
+  if (!patientBotEnabled()) return summary;
+
+  let claimed: Awaited<ReturnType<typeof claimDue>>;
+  try {
+    claimed = await claimDue(limit, [TELEGRAM_CHANNEL], null);
+  } catch {
+    console.error("[patient-notifications] telegram claim failed");
+    return summary;
+  }
+
+  for (const row of claimed) {
+    try {
+      summary.claimed++;
+      const contact = await contactForDelivery(row.patientContactId);
+      if (!contact || contact.revokedAt !== null || contact.channel !== row.channel) {
+        await markSkipped(row.id);
+        summary.skipped++;
+        continue;
+      }
+      const text = renderTelegramText(row.notificationType, row.payload as any, await patientCodeOf(row.patientId));
+      if (!text) {
+        await markSkipped(row.id, "render_failed");
+        summary.skipped++;
+        continue;
+      }
+      const res = await sendMessage(contact.externalId, text);
+      if (res.ok) {
+        await markSent(row.id);
+        summary.sent++;
+        continue;
+      }
+      const code: DeliveryErrorCode =
+        res.reason === "timeout" ? "telegram_timeout"
+        : res.reason === "network" ? "telegram_network"
+        : res.reason === "disabled" ? "telegram_disabled"
+        : "telegram_api_error";
+      await markFailed(row.id, row.attemptCount, code);
+      summary.failed++;
+    } catch {
+      console.error("[patient-notifications] telegram delivery failed");
+      try {
+        await markFailed(row.id, row.attemptCount, "telegram_api_error");
+        summary.failed++;
+      } catch { /* القاعدة نفسها متعثّرة — الدورة التالية تلتقطه */ }
+    }
+  }
+  return summary;
+}
+
+/** **واتساب — بحرفها كما كانت** قبل عودة تلغرام (لا تغيير في السلوك). */
+export async function dispatchWhatsapp(limit = BATCH): Promise<DispatchSummary> {
   const summary: DispatchSummary = { claimed: 0, sent: 0, failed: 0, skipped: 0 };
   if (!patientWhatsappEnabled()) return summary;
 
@@ -218,8 +286,10 @@ export function startNotificationDispatcher(): void {
   //
   // **وأسماءٌ لا قيم**: التوكنُ سرٌّ، وسجلُّ Render يُقرأ ويُحفَظ.
   console.log(patientWhatsappStatusLine());
+  console.log(patientBotStatusLine());
 
-  if (!patientWhatsappEnabled()) return;
+  //  المؤقّتُ يعمل إن عملت **إحدى** القناتين — وكلُّ دورةٍ تتخطّى المعطَّلة منهما بنفسها.
+  if (!patientWhatsappEnabled() && !patientBotEnabled()) return;
   timer = setInterval(() => {
     if (running) return;
     running = true;
