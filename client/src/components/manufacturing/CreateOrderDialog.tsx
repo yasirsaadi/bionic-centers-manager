@@ -31,7 +31,6 @@ export function CreateOrderDialog({
   const queryClient = useQueryClient();
   const [patientId, setPatientId] = useState<string>("");
   const [expertUserId, setExpertUserId] = useState<string>("");
-  const [expected, setExpected] = useState<string>("");
   const [search, setSearch] = useState("");
 
   const { data: patients = [] } = useQuery<PatientLite[]>({
@@ -76,7 +75,6 @@ export function CreateOrderDialog({
         body: JSON.stringify({
           patientId: Number(patientId),
           expertUserId: Number(expertUserId),
-          expectedDeliveryDate: expected || null,
         }),
       });
       if (!res.ok) {
@@ -96,7 +94,7 @@ export function CreateOrderDialog({
   });
 
   function reset() {
-    setPatientId(""); setExpertUserId(""); setExpected(""); setSearch("");
+    setPatientId(""); setExpertUserId(""); setSearch("");
   }
 
   return (
@@ -138,11 +136,6 @@ export function CreateOrderDialog({
             </div>
           )}
 
-          <div>
-            <label className="text-sm font-medium">تاريخ التسليم المتوقع (اختياري)</label>
-            <Input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className="mt-1" />
-            <p className="text-xs text-muted-foreground mt-1">يُترك فارغاً عادةً — الخبير يحدّده عند أخذ القالب ويُقفل بعدها.</p>
-          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => { reset(); onOpenChange(false); }}>إلغاء</Button>

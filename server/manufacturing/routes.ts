@@ -255,11 +255,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     const patientId = parseInt(req.body?.patientId);
     const expertUserId = parseInt(req.body?.expertUserId);
     // The delivery date is NO LONGER set at assignment. The expert commits to it
-    // later, when they reach the mold stage. So it is optional here (null now).
-    const expectedDeliveryDate = strOrU(req.body?.expectedDeliveryDate) ?? null;
-    if (expectedDeliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
-      return res.status(400).json({ error: "تاريخ غير صالح" });
-    }
+    // later, when they reach the mold stage.
+    //  **البند ٢٣ (§4.bj): ولا يُقبَل هنا أصلاً** — موعدٌ يُكتب عند الإنشاء كان يُحفظ كأنه وعدُ الخبير، فلا يُسأل عند
+    //  القالب ويُحاسَب على ما لم يقطعه (٦٠ أمراً حتى ٢٠٢٦-٠٨-١٠). فيُتجاهَل ما يصل، ويبقى الموعدُ بيد الخبير عند القالب.
+    const expectedDeliveryDate = null;
     // Order purpose: a first build or a later maintenance episode.
     // **الصيانة لها بابٌ واحد.** هذه النقطة تنشئ أمراً مجرَّداً: بلا جهازٍ
     // مقصود، وبلا زيارة، وبلا أجرةٍ مقيَّدة. فقبولُها للصيانة يفتح طريقاً
