@@ -99,14 +99,22 @@ export async function deactivateAccount(id: number): Promise<void> {
 
 // ==================== القيود اليومية ====================
 
-async function generateEntryNumber(entryDate: string): Promise<string> {
+/**
+ * ══ **رقمُ القيد التالي — تحت قفل الشهر، ومن أكبر رقمٍ لا من العدد** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
+ * كان `COUNT(*)+1` خارجَ المعاملة: دفعتان في اللحظة نفسها (في أيّ فرعين) تأخذان الرقمَ نفسَه، فيُرفض القيدُ الثاني
+ * على `UNIQUE(entry_number)` — وكاتبُ القيد التلقائيّ يبتلع الخطأ، فتبقى الدفعةُ بلا قيدٍ في قائمة الدخل، بصمت.
+ * فالرقمُ يُحسب **داخل معاملة الإدراج** بعد `pg_advisory_xact_lock` على الشهر (فلا يتزامن حسابان)، ومن **أكبر
+ * لاحقةٍ رقمية** لا من العدد (فقيدٌ محذوفٌ أو رقمٌ مكتوبٌ يدوياً لا يعيد رقماً مستعملاً).
+ */
+export const JOURNAL_NUMBER_LOCK_NAMESPACE = 83103;
+
+export function entryNumberMonthKey(entryDate: string): { prefix: string; lockKey: number } {
   const [year, month] = entryDate.split("-");
-  const result = await db.execute(sql`
-    SELECT COUNT(*)::int AS cnt FROM journal_entries
-    WHERE entry_number LIKE ${`JE-${year}${month}-%`}
-  `);
-  const cnt = (result.rows?.[0] as any)?.cnt ?? 0;
-  return `JE-${year}${month}-${String(cnt + 1).padStart(4, "0")}`;
+  return { prefix: `JE-${year}${month}-`, lockKey: Number(`${year}${month}`) };
+}
+
+export function formatEntryNumber(prefix: string, maxSuffix: number): string {
+  return `${prefix}${String(maxSuffix + 1).padStart(4, "0")}`;
 }
 
 export async function createJournalEntry(input: CreateJournalEntryInput): Promise<JournalEntry> {
@@ -134,7 +142,6 @@ export async function createJournalEntry(input: CreateJournalEntryInput): Promis
     }
   }
 
-  const entryNumber = await generateEntryNumber(input.entryDate);
 
   // ابحث عن الفترة المحاسبية المفتوحة التي تحتوي التاريخ
   const periodResult = await db.execute(sql`
@@ -152,6 +159,15 @@ export async function createJournalEntry(input: CreateJournalEntryInput): Promis
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    const { prefix, lockKey } = entryNumberMonthKey(input.entryDate);
+    await client.query("SELECT pg_advisory_xact_lock($1, $2)", [JOURNAL_NUMBER_LOCK_NAMESPACE, lockKey]);
+    const maxRes = await client.query(
+      `SELECT COALESCE(MAX(substring(entry_number from '[0-9]+$')::int), 0) AS mx
+         FROM journal_entries WHERE entry_number ~ ('^' || $1 || '[0-9]+$')`,
+      [prefix],
+    );
+    const entryNumber = formatEntryNumber(prefix, Number(maxRes.rows?.[0]?.mx ?? 0));
 
     const entryRes = await client.query(
       `INSERT INTO journal_entries

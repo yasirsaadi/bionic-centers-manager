@@ -2,7 +2,7 @@ import { db } from "../db";
 import { chartOfAccounts, journalEntries, journalLines } from "@shared/schema";
 import type { Payment, Expense, Invoice, InvoiceItem, Purchase } from "@shared/schema";
 import { eq, and, sql, asc } from "drizzle-orm";
-import { createJournalEntry, logAudit } from "./ledger";
+import { createJournalEntry, logAudit, JOURNAL_NUMBER_LOCK_NAMESPACE, entryNumberMonthKey, formatEntryNumber } from "./ledger";
 import type { JournalLineInput } from "./ledger";
 import { allocateApprovedCost } from "@shared/pricing";
 
@@ -785,13 +785,14 @@ export async function reverseJournalForSource(
 // ولا تُستعمَل من أيّ مسارٍ آخر، ولا تمسّ الدوالَّ التاريخية أعلاه بحرف.
 
 async function generateEntryNumberTx(tx: any, entryDate: string): Promise<string> {
-  const [year, month] = entryDate.split("-");
+  //  نفسُ قاعدة `createJournalEntry` (§4.bo): قفلُ الشهر داخل معاملة المستدعي، ثمّ أكبرُ لاحقةٍ + ١.
+  const { prefix, lockKey } = entryNumberMonthKey(entryDate);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${JOURNAL_NUMBER_LOCK_NAMESPACE}, ${lockKey})`);
   const result = await tx.execute(sql`
-    SELECT COUNT(*)::int AS cnt FROM journal_entries
-    WHERE entry_number LIKE ${`JE-${year}${month}-%`}
+    SELECT COALESCE(MAX(substring(entry_number from '[0-9]+$')::int), 0) AS mx
+      FROM journal_entries WHERE entry_number ~ ('^' || ${prefix} || '[0-9]+$')
   `);
-  const cnt = (result.rows?.[0] as any)?.cnt ?? 0;
-  return `JE-${year}${month}-${String(cnt + 1).padStart(4, "0")}`;
+  return formatEntryNumber(prefix, Number((result.rows?.[0] as any)?.mx ?? 0));
 }
 
 type TxJournalLineInput = {
