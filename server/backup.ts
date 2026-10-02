@@ -4,6 +4,7 @@ import { db } from "./db";
 import { patients, branches, payments, expenses, systemSettings } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
+import { storage } from "./storage";
 
 const BACKUP_EMAIL = "yasir.s81@gmail.com";
 
@@ -314,6 +315,9 @@ export async function getNightlyReportData(): Promise<NightlyReportData> {
   const paymentMap = new Map(paymentStats.map(r => [r.branchId, r]));
   const expenseMap = new Map(expenseStats.map(r => [r.branchId, r]));
 
+  const debtsBy = new Map<number, number>();
+  await Promise.all(sortedBranches.map(async (b) => { debtsBy.set(b.id, await storage.getDebtsTotal(b.id)); }));
+
   let totalWorked = 0, totalSpent = 0, totalRemaining = 0;
   let totalProsthetics = 0, totalPhysiotherapy = 0;
 
@@ -324,8 +328,8 @@ export async function getNightlyReportData(): Promise<NightlyReportData> {
 
     const worked = Number(py?.totalPaid ?? 0);
     const spent = Number(ex?.totalExpenses ?? 0);
-    const cost = Number(ps?.totalCost ?? 0);
-    const remaining = cost - worked;
+    //  «المتبقّي» = «الديون» بفرع القيد (§4.bo) — كان كلفةَ فرع التسجيل ناقصَ دفع فرع القبض.
+    const remaining = debtsBy.get(branch.id) ?? 0;
     const prosthetics = Number(ps?.amputeeCount ?? 0);
     const physiotherapy = Number(ps?.physioCount ?? 0);
 
@@ -344,7 +348,8 @@ export async function getNightlyReportData(): Promise<NightlyReportData> {
     totals: {
       worked: totalWorked,
       spent: totalSpent,
-      remaining: totalRemaining,
+      //  والمجموعُ «ديونُ» المركز كلّه كصفحة «الديون» — مدينٌ في فرعٍ ودائنٌ في آخر لا يتقاصّان.
+      remaining: await storage.getDebtsTotal(),
       prosthetics: totalProsthetics,
       physiotherapy: totalPhysiotherapy,
     },
