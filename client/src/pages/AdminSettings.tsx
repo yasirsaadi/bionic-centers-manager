@@ -2565,11 +2565,6 @@ export default function AdminSettings() {
   const roleLabels = getRoleLabels(t);
   const dir = t.dir;
 
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newAdminPassword, setNewAdminPassword] = useState("");
-  const [confirmAdminPassword, setConfirmAdminPassword] = useState("");
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
 
   const [selectedBranch, setSelectedBranch] = useState<number | null>(null);
   const [newBranchPassword, setNewBranchPassword] = useState("");
@@ -2935,31 +2930,6 @@ export default function AdminSettings() {
     }
   };
 
-  const updateAdminPasswordMutation = useMutation({
-    mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      const res = await fetch("/api/admin/settings/admin-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message);
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: t.adminSettings.toastAdminPasswordChanged });
-      setCurrentPassword("");
-      setNewAdminPassword("");
-      setConfirmAdminPassword("");
-    },
-    onError: (error: Error) => {
-      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
-    },
-  });
-
   const updateBranchPasswordMutation = useMutation({
     mutationFn: async (data: { branchId: number; newPassword: string }) => {
       const res = await fetch("/api/admin/settings/branch-password", {
@@ -3126,22 +3096,6 @@ export default function AdminSettings() {
     },
   });
 
-  const handleUpdateAdminPassword = () => {
-    if (!currentPassword || !newAdminPassword) {
-      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastFillAllFields, variant: "destructive" });
-      return;
-    }
-    if (newAdminPassword !== confirmAdminPassword) {
-      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordsNotMatch, variant: "destructive" });
-      return;
-    }
-    if (newAdminPassword.length < 4) {
-      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordMinLength, variant: "destructive" });
-      return;
-    }
-    updateAdminPasswordMutation.mutate({ currentPassword, newPassword: newAdminPassword });
-  };
-
   const handleUpdateBranchPassword = () => {
     if (!selectedBranch || !newBranchPassword) {
       toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastSelectBranchAndPassword, variant: "destructive" });
@@ -3272,10 +3226,6 @@ export default function AdminSettings() {
           <TabsTrigger value="management" className="gap-2">
             <Layers className="w-4 h-4" />
             {t.adminSettings.tabManagement}
-          </TabsTrigger>
-          <TabsTrigger value="passwords" className="gap-2">
-            <Key className="w-4 h-4" />
-            {t.adminSettings.tabPasswords}
           </TabsTrigger>
           <TabsTrigger value="branches" className="gap-2">
             <Building2 className="w-4 h-4" />
@@ -3494,87 +3444,7 @@ export default function AdminSettings() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="passwords" className="space-y-6">
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-6">
-              <Shield className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.changeAdminPassword}</h2>
-            </div>
-
-            <div className="space-y-4 max-w-md">
-              <div>
-                <Label htmlFor="currentPassword">{t.adminSettings.currentPassword}</Label>
-                <div className="relative mt-1">
-                  <Input
-                    id="currentPassword"
-                    type={showCurrentPassword ? "text" : "password"}
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    placeholder={t.adminSettings.currentPasswordPlaceholder}
-                    className="pl-10"
-                    data-testid="input-current-password"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute left-1 top-1/2 -translate-y-1/2 h-8 w-8"
-                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                  >
-                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="newAdminPassword">{t.adminSettings.newPassword}</Label>
-                <div className="relative mt-1">
-                  <Input
-                    id="newAdminPassword"
-                    type={showNewPassword ? "text" : "password"}
-                    value={newAdminPassword}
-                    onChange={(e) => setNewAdminPassword(e.target.value)}
-                    placeholder={t.adminSettings.newPasswordPlaceholder}
-                    className="pl-10"
-                    data-testid="input-new-password"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute left-1 top-1/2 -translate-y-1/2 h-8 w-8"
-                    onClick={() => setShowNewPassword(!showNewPassword)}
-                  >
-                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="confirmAdminPassword">{t.adminSettings.confirmNewPassword}</Label>
-                <Input
-                  id="confirmAdminPassword"
-                  type="password"
-                  value={confirmAdminPassword}
-                  onChange={(e) => setConfirmAdminPassword(e.target.value)}
-                  placeholder={t.adminSettings.confirmNewPasswordPlaceholder}
-                  className="mt-1"
-                  data-testid="input-confirm-password"
-                />
-              </div>
-
-              <Button 
-                onClick={handleUpdateAdminPassword}
-                disabled={updateAdminPasswordMutation.isPending}
-                className="w-full gap-2"
-                data-testid="button-save-admin-password"
-              >
-                <Save className="w-4 h-4" />
-                {updateAdminPasswordMutation.isPending ? t.adminSettings.saving : t.adminSettings.savePassword}
-              </Button>
-            </div>
-          </Card>
-        </TabsContent>
+        {/*  «كلمةُ مرور المسؤول» المشتركة أُغلقت (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bk): الدخولُ بالحساب الشخصيّ وحده. */}
 
         <TabsContent value="branches" className="space-y-6">
           <Card className="p-6">

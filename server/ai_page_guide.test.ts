@@ -1171,9 +1171,10 @@ async function main() {
   check(/لا ترسل\s+مرشح موظف من واجهتها/.test(dpg), "م.١٤ لا يخترع فلتر موظف ظاهر");
 
   const rvg = pageGuideFor(REV, rep);
-  check(/AdminGate/.test(rvg) && /\/api\/verify-admin/.test(rvg) && /admin_verified/.test(rvg),
-    "م.١٥ بوابة الإيرادات كود واجهة");
-  check(/معرفة كود AdminGate\s+لا توسّع نطاق بيانات/.test(rvg), "م.١٦ الكود لا يوسّع النطاق الخادمي");
+  //  كودُ المسؤول المشترك أُغلق بقرار المالك (٢٠٢٦-١٠-٠٢، §4.bk): البوابةُ بالجلسة لا بكود.
+  check(/AdminGate/.test(rvg) && /\/api\/verify-admin/.test(rvg) && /بحسابه الشخصي وحدها/.test(rvg) && !/admin_verified/.test(rvg),
+    "م.١٥ بوابة الإيرادات بجلسة المسؤول لا بكود");
+  check(/البوابةُ نفسُها\s+لا توسّع نطاق بيانات/.test(rvg), "م.١٦ البوابة لا توسّع النطاق الخادمي");
   check(/sold = مجموع total_cost/.test(rvg) && /paid = مجموع الدفعات الفعلية/.test(rvg),
     "م.١٧ معنى أرقام الإجمالي");
   check(/cost_entries المنشأة في يوم الخادم/.test(rvg) && /كل الدفعات المحصلة في ذلك اليوم/.test(rvg),
@@ -1193,10 +1194,10 @@ async function main() {
   same("ن.٢ مسار تفاصيل الفرع يُقنّن الرقم", BRD?.path, BRANCH_DETAILS_PAGE_PATH);
 
   const bg = pageGuideFor(BRS, rep);
-  check(/AdminGate/.test(bg) && /\/api\/verify-admin/.test(bg) && /admin_verified/.test(bg),
-    "ن.٣ بوابة الفروع كود واجهة");
-  check(/لا يحوّل الجلسة إلى مسؤول/.test(bg) && /لا يغير role أو\s+permissions أو branchId/.test(bg),
-    "ن.٤ اجتياز الكود لا يرفع سلطة الجلسة");
+  check(/AdminGate/.test(bg) && /\/api\/verify-admin/.test(bg) && /بحسابه الشخصي وحدها/.test(bg) && !/admin_verified/.test(bg),
+    "ن.٣ بوابة الفروع بجلسة المسؤول لا بكود");
+  check(/تقرأ الجلسة/.test(bg) && /لا تغيّر role أو permissions أو branchId/.test(bg),
+    "ن.٤ البوابة لا ترفع سلطة الجلسة");
   check(/\/api\/branches/.test(bg) && /لكل مستخدم\s+مصادق عليه/.test(bg),
     "ن.٥ قائمة الفروع ليست حارس مرضى");
   check(/\/api\/patients/.test(bg) && /canViewPatients/.test(bg) && /فرع الجلسة/.test(bg),
@@ -1368,9 +1369,8 @@ async function main() {
     && /تغيير role من admin إلى\s+دور آخر/.test(adg)
     && /لا تفترض وجود حارس.*مسؤول واحد/s.test(adg), "ظ.٨ فجوة خفض دور المسؤول");
 
-  check(/admin-password/.test(adg) && /مفتاح admin القديم/.test(adg)
-    && /لا يغيّر passwordHash/.test(adg)
-    && /\/api\/auth\/change-password/.test(adg), "ظ.٩ كلمة admin القديمة ليست كلمة حساب المستخدم");
+  check(/admin-password/.test(adg) && /أُزيل/.test(adg) && /410/.test(adg)
+    && /\/api\/auth\/change-password/.test(adg), "ظ.٩ كلمة admin المشتركة أُغلقت، وكلمةُ الحساب بابُها change-password");
 
   check(/branch-password/.test(adg) && /BRANCH_PASSWORD_<id>/.test(adg)
     && /hashed/.test(adg) && /لا يمكن\s+استخراج نصها/.test(adg), "ظ.١٠ كلمات مرور الفروع");
