@@ -626,9 +626,11 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.branch}</FormLabel>
+                    {/*  فرعُ التسجيل لا يتغيّر إلّا تصحيحاً من المسؤول العامّ — والخادمُ يُسقطه لغيره (§4.bo). */}
                     <Select 
                       onValueChange={(val) => field.onChange(Number(val))} 
                       value={String(field.value)}
+                      disabled={!branchSession?.isAdmin}
                     >
                       <FormControl>
                         <SelectTrigger className="bg-slate-50" data-testid="select-branch">
