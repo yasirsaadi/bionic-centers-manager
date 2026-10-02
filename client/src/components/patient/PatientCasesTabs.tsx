@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Activity, Wrench, HeartPulse, Pencil, Check, X, Trash2 } from "lucide-react";
+import { Activity, Wrench, HeartPulse, Pencil, Check, X, Trash2, Ban } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -33,6 +33,8 @@ export interface CaseRow {
   remaining?: number;
   visitCount: number;
   details: Record<string, any> | null;
+  /** آخرُ قرار شراءٍ على قسم الجهاز «لم يشترِ» ولا جهازَ حيٌّ بعده (§4.bm) — غائبةٌ في غير ذلك. */
+  notBought?: { at: string | null; reason: string | null; note: string | null };
 }
 
 const CASE_META: Record<string, { label: string; icon: any }> = {
@@ -423,6 +425,22 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
           </AlertDialog>
         )}
       </h3>
+
+      {/*  ══ «لم يشترِ» وسببُه (§4.bm) ═══════════════════════════════════════════
+          قسمٌ مفتوحٌ بكلفة صفر كان يُقرأ «مسندٌ دُفع ثمنُه وضاع» (واقعةُ سيناء). والقسمُ يبقى مفتوحاً عمداً
+          («عاد للشراء»)، فتقول البطاقةُ لماذا هو بلا مال. */}
+      {caseRow.notBought && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 space-y-1" data-testid={`case-not-bought-${caseRow.id}`}>
+          <div className="font-semibold flex items-center gap-1.5">
+            <Ban className="w-4 h-4" />
+            لم يشترِ{caseRow.notBought.at ? ` — ${formatDateIraq(caseRow.notBought.at)}` : ""}
+          </div>
+          <div data-testid={`case-not-bought-reason-${caseRow.id}`}>
+            السبب: {caseRow.notBought.reason ?? "لم يُسجَّل سبب"}
+          </div>
+          {caseRow.notBought.note && <div className="text-amber-800/80">ملاحظة: {caseRow.notBought.note}</div>}
+        </div>
+      )}
 
       {/* Financial summary for THIS case */}
       <div className={`grid gap-3 ${canViewCasePayments ? "grid-cols-3" : "grid-cols-1"}`}>
