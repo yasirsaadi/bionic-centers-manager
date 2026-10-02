@@ -2388,13 +2388,15 @@ export class DatabaseStorage implements IStorage {
       .where(eq(patients.id, id))
       .returning();
     let caseCostSync: "synced" | "ambiguous" | null = null;
+    let insertedEntryId: number | null = null;
     if (updated && wantsCost && before) {
       const delta = (updated.totalCost || 0) - (before.totalCost || 0);
       if (delta !== 0) {
-        await h.insert(costEntries).values({
+        const [entryRow] = await h.insert(costEntries).values({
           patientId: id, branchId: costBranchId ?? updated.branchId, amount: delta, source: costSource,
           caseId: costCaseId,
-        });
+        }).returning({ id: costEntries.id });
+        insertedEntryId = entryRow?.id ?? null;
 
         // ══ إكمالُ الاتساق — بطاقةُ الحالة تتبع الإجماليّ (تصحيحٌ لاحقٌ
         // على PR #267، 2026-08-31) ═══════════════════════════════════════
@@ -2404,13 +2406,29 @@ export class DatabaseStorage implements IStorage {
         // — لا مكانَ آخر يذهب إليه المال. والتعدّدُ **لا يُخمَّن**: صفٌّ
         // واحد فقط تُكتب كلفتُه، وأكثرَ من صفٍّ لا تُمَسّ أيُّ حالة.
         if (syncSoleCaseCost) {
-          const activeCases = await h.select({ id: patientCases.id })
+          const allCases = await h.select({ id: patientCases.id, cost: patientCases.cost, status: patientCases.status })
             .from(patientCases)
-            .where(and(eq(patientCases.patientId, id), eq(patientCases.status, "active")));
+            .where(eq(patientCases.patientId, id));
+          const activeCases = allCases.filter((c: any) => c.status === "active");
           if (activeCases.length === 1) {
+            //  ══ **وقسمٌ مغلقٌ يحمل كلفةً يبقى له مالُه** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
+            //  الإغلاقُ لا يصفّر الكلفة، فكانت الكتابةُ فوق تنقل الإجماليَّ كلَّه — ومعه طرفٌ مسلَّمٌ مغلق — إلى
+            //  القسم المفتوح الوحيد، فيتضخّم متبقّيه. فحين يحمل غيرُه كلفةً يُنقل **الفرقُ** وحده، وإلّا بقيت
+            //  الكتابةُ فوق كما كانت (تشفي بطاقةً قديمةً لمريضٍ بقسمٍ واحد — §4.bn).
+            const othersCost = allCases
+              .filter((c: any) => c.id !== activeCases[0].id)
+              .reduce((sum: number, c: any) => sum + (Number(c.cost) || 0), 0);
+            const delta = (updated.totalCost || 0) - (before?.totalCost || 0);
+            const nextCost = othersCost > 0
+              ? Math.max(0, (Number(activeCases[0].cost) || 0) + delta)
+              : updated.totalCost;
             await h.update(patientCases)
-              .set({ cost: updated.totalCost, costSource: "manual", updatedAt: new Date() })
+              .set({ cost: nextCost, costSource: "manual", updatedAt: new Date() })
               .where(eq(patientCases.id, activeCases[0].id));
+            //  وقيدُ الدفتر يُنسب إلى القسم الذي حمل الفرق — فلا يسقط من إيراد الأقسام (§4.be).
+            if (insertedEntryId !== null && costCaseId == null) {
+              await h.update(costEntries).set({ caseId: activeCases[0].id }).where(eq(costEntries.id, insertedEntryId));
+            }
             caseCostSync = "synced";
           } else if (activeCases.length > 1) {
             caseCostSync = "ambiguous";
@@ -3021,6 +3039,10 @@ export class DatabaseStorage implements IStorage {
       if (cost > 0) {
         if (row.costSource !== "manual" && target) {
           await tx.update(patientCases).set({ cost: (target.cost || 0) + cost, updatedAt: new Date() }).where(eq(patientCases.id, target.id));
+          //  ══ **وقيودُ الدفتر تتبع كلفتَها** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
+          //  الكلفةُ انتقلت إلى القسم الباقي، وقيودُها كانت تبقى على صفٍّ يُحذف بعد أسطر فتصير `case_id = NULL`
+          //  (ترحيل ٠٥٦) — فتخرج من إيراد الأقسام. فتُنقل معها، كما ينقلها الدمج.
+          await tx.update(costEntries).set({ caseId: target.id }).where(eq(costEntries.caseId, row.id));
         } else {
           const reduction = Math.min(cost, p.totalCost || 0);
           await tx.update(patients).set({ totalCost: Math.max(0, (p.totalCost || 0) - cost) }).where(eq(patients.id, patientId));

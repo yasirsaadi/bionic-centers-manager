@@ -179,6 +179,7 @@
     "test:patient-telegram": "tsx server/patient_telegram/relaunch.test.ts",
     "test:case-not-bought": "tsx server/followup/case_not_bought.test.ts",
     "test:review-batch-a": "tsx server/review_batch_a.test.ts",
+    "test:review-batch-b": "tsx server/review_batch_b.test.ts",
     "test:service-profitability": "tsx server/service_profitability.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",

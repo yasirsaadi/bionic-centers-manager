@@ -32,7 +32,10 @@ import { sql } from "drizzle-orm";
 import { createJournalForPaymentTx } from "./auto_journal";
 import { logAudit } from "./ledger";
 
-export const PAYMENT_JOURNAL_BACKFILL_GUARD = "backfill_payment_journals_v1";
+//  **v2** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo): ترقيمُ القيود كان `COUNT+1` بلا قفل، فدفعتان متزامنتان تأخذان رقماً
+//  واحداً ويُرفض قيدُ الثانية بصمت — أي أن دفعاتٍ بعد v1 قد تكون بلا قيد. أُصلح الترقيم، وتشغيلٌ ثانٍ بالشرط نفسه
+//  وبالضمانات نفسِها يستدرك ما ضاع منذ ذلك. (v1 مسجّلٌ في الإنتاج فلا يُعاد؛ v2 يعمل مرّةً عند أوّل إقلاع.)
+export const PAYMENT_JOURNAL_BACKFILL_GUARD = "backfill_payment_journals_v2";
 const LOCK_KEY = 8801; // pg_advisory_lock — لا يُستعمل رقمُه في مكانٍ آخر.
 const MAX_LISTED_FAILURES = 200;
 
