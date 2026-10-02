@@ -964,6 +964,7 @@ export async function executeReversal(params: {
         await markEpisodeAdministrativelyVoid(tx, {
           episodeId: op.deviceEpisodeId, reversalId,
           reason: `إلغاء إداري للعملية — ${reasonNote}`,
+          actor: { userId: params.actor.userId ?? null, userName: params.actor.userName ?? null },
         });
       }
       const closed = await tx.execute(sql`

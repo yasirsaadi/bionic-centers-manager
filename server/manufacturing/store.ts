@@ -1611,6 +1611,7 @@ export async function cancelOrder(params: {
     await syncEpisodeToOrderTerminalState(tx, updated, {
       status: "cancelled", at: cancelledAt,
       reason: (params.note ?? "").trim() || null,
+      actor: { userId: params.performedBy, userName: null },
     });
 
     await tx.insert(WH).values({
