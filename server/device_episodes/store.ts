@@ -1841,8 +1841,17 @@ export async function createReplacementEpisodeTx(
  */
 export async function markEpisodeAdministrativelyVoid(
   tx: { execute: (q: any) => Promise<any> },
-  params: { episodeId: number; reversalId: number; reason: string },
+  params: {
+    episodeId: number; reversalId: number; reason: string;
+    actor?: { userId: number | null; userName: string | null };
+  },
 ): Promise<void> {
+  //  ══ **وطلباتُ المراجعة المعلَّقة على الجهاز تُسحب معه** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
+  //  كان الطبيبُ يبقى يرى «مراجعةً سريعة» عن جهازٍ أُبطلت عمليتُه. والكاتبُ الواحد للسحب (INT-06) في المعاملة نفسِها.
+  await cancelScaffoldRequestsForEpisode(tx, {
+    episodeId: params.episodeId, reason: params.reason,
+    actor: params.actor ?? { userId: null, userName: null },
+  });
   await tx.execute(sql`
     UPDATE patient_device_episodes
        SET admin_void_reversal_id = ${params.reversalId},
@@ -1965,7 +1974,10 @@ export async function correctEpisodeAgreedCost(
 export async function syncEpisodeToOrderTerminalState(
   tx: { execute: (q: any) => Promise<any> },
   order: { deviceEpisodeId: number | null; purpose: string | null },
-  terminal: { status: "delivered" | "cancelled"; at: Date; reason?: string | null },
+  terminal: {
+    status: "delivered" | "cancelled"; at: Date; reason?: string | null;
+    actor?: { userId: number | null; userName: string | null };
+  },
 ): Promise<void> {
   if (order.deviceEpisodeId === null || order.deviceEpisodeId === undefined) return;
   if (order.purpose !== "initial_build") return;
@@ -1979,13 +1991,22 @@ export async function syncEpisodeToOrderTerminalState(
     `);
     return;
   }
-  await tx.execute(sql`
+  const cancelled = await tx.execute(sql`
     UPDATE patient_device_episodes
        SET status = 'cancelled', cancelled_at = ${terminal.at},
            cancel_reason = ${terminal.reason ?? null}, updated_at = NOW()
      WHERE id = ${order.deviceEpisodeId}
        AND status NOT IN ('delivered', 'cancelled')
+     RETURNING id
   `);
+  //  **وإلغاءُ الأمر يسحب طلباتِ مراجعة جهازه المعلَّقة** (§4.bo) — كإلغاء الطلب قبل التصنيع (INT-06).
+  if ((cancelled.rows ?? []).length > 0) {
+    await cancelScaffoldRequestsForEpisode(tx, {
+      episodeId: order.deviceEpisodeId,
+      reason: terminal.reason?.trim() || "أُلغي أمر التصنيع",
+      actor: terminal.actor ?? { userId: null, userName: null },
+    });
+  }
 }
 
 //  ══ `caseHasEpisodes` أُزيلت (المرحلة الثالثة — CASEDEL-01) ══════════════

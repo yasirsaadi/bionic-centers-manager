@@ -433,6 +433,7 @@ export async function executeNoExamReversal(params: {
     if (op.ownEpisodeId !== null) {
       await markEpisodeAdministrativelyVoid(tx, {
         episodeId: op.ownEpisodeId, reversalId, reason: `إلغاء إداري للعملية — ${reasonNote}`,
+          actor: { userId: params.actor.userId ?? null, userName: params.actor.userName ?? null },
       });
     }
 
