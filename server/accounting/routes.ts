@@ -47,6 +47,16 @@ function requireAccountingPermission(req: AuthenticatedRequest, res: Response): 
   return true;
 }
 
+/**
+ * **فرعُ القراءة** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo): المسؤولُ العامّ يختار أيَّ فرعٍ أو الكلَّ بالاستعلام؛
+ * وغيرُه — ولو حمل «إدارة المحاسبة» — يقرأ **فرعَه النشط وحده** (§4.ay)، أيّاً كان ما أرسله.
+ */
+function scopedBranchId(req: AuthenticatedRequest): number | undefined {
+  const session = req.session?.branchSession;
+  if (session?.isAdmin) return req.query.branchId ? Number(req.query.branchId) : undefined;
+  return session?.branchId ? Number(session.branchId) : -1;
+}
+
 function getUserContext(req: AuthenticatedRequest) {
   const session = req.session?.branchSession;
   return {
@@ -88,9 +98,10 @@ export function registerAccountingV2Routes(
   // ==================== شجرة الحسابات ====================
 
   app.get("/api/accounting/v2/accounts", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
-      const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-      const accounts = await ledger.getAllAccounts(branchId);
+      const accounts = await ledger.getAllAccounts(scopedBranchId(req));
       res.json(accounts);
     } catch (err: any) {
       console.error(err);
@@ -99,6 +110,8 @@ export function registerAccountingV2Routes(
   });
 
   app.get("/api/accounting/v2/accounts/:id", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const account = await ledger.getAccountById(Number(req.params.id));
       if (!account) return res.status(404).json({ message: "الحساب غير موجود" });
@@ -194,9 +207,11 @@ export function registerAccountingV2Routes(
   // ==================== القيود اليومية ====================
 
   app.get("/api/accounting/v2/journal", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const entries = await ledger.getJournalEntries({
-        branchId: req.query.branchId ? Number(req.query.branchId) : undefined,
+        branchId: scopedBranchId(req),
         startDate: req.query.startDate as string | undefined,
         endDate: req.query.endDate as string | undefined,
         sourceType: req.query.sourceType as string | undefined,
@@ -210,9 +225,15 @@ export function registerAccountingV2Routes(
   });
 
   app.get("/api/accounting/v2/journal/:id", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const data = await ledger.getJournalEntryWithLines(Number(req.params.id));
       if (!data) return res.status(404).json({ message: "القيد غير موجود" });
+      const scope = scopedBranchId(req);
+      if (scope !== undefined && data.entry.branchId != null && Number(data.entry.branchId) !== scope) {
+        return res.status(404).json({ message: "القيد غير موجود" });
+      }
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -291,9 +312,11 @@ export function registerAccountingV2Routes(
   // ==================== التقارير المالية ====================
 
   app.get("/api/accounting/v2/reports/trial-balance", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const trial = await ledger.getTrialBalance({
-        branchId: req.query.branchId ? Number(req.query.branchId) : undefined,
+        branchId: scopedBranchId(req),
         startDate: req.query.startDate as string | undefined,
         endDate: req.query.endDate as string | undefined,
       });
@@ -304,6 +327,8 @@ export function registerAccountingV2Routes(
   });
 
   app.get("/api/accounting/v2/reports/income-statement", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const startDate = req.query.startDate as string;
       const endDate = req.query.endDate as string;
@@ -311,7 +336,7 @@ export function registerAccountingV2Routes(
         return res.status(400).json({ message: "startDate و endDate مطلوبان" });
       }
       const statement = await ledger.getIncomeStatement({
-        branchId: req.query.branchId ? Number(req.query.branchId) : undefined,
+        branchId: scopedBranchId(req),
         startDate,
         endDate,
       });
@@ -322,10 +347,12 @@ export function registerAccountingV2Routes(
   });
 
   app.get("/api/accounting/v2/reports/balance-sheet", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const asOfDate = (req.query.asOfDate as string) || new Date().toISOString().split("T")[0];
       const sheet = await ledger.getBalanceSheet({
-        branchId: req.query.branchId ? Number(req.query.branchId) : undefined,
+        branchId: scopedBranchId(req),
         asOfDate,
       });
       res.json(sheet);
@@ -343,7 +370,7 @@ export function registerAccountingV2Routes(
         entityType: req.query.entityType as string | undefined,
         entityId: req.query.entityId ? Number(req.query.entityId) : undefined,
         userId: req.query.userId ? Number(req.query.userId) : undefined,
-        branchId: req.query.branchId ? Number(req.query.branchId) : undefined,
+        branchId: scopedBranchId(req),
         startDate: req.query.startDate as string | undefined,
         endDate: req.query.endDate as string | undefined,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
@@ -357,6 +384,8 @@ export function registerAccountingV2Routes(
   // ==================== الفترات المحاسبية ====================
 
   app.get("/api/accounting/v2/periods", isAuthenticated, async (req: AuthenticatedRequest, res) => {
+    //  القراءةُ لصاحب «إدارة المحاسبة» وحده، كالكتابة (§4.bo) — كانت لأيّ مستخدمٍ مسجَّل.
+    if (!requireAccountingPermission(req, res)) return;
     try {
       const periods = await ledger.getAccountingPeriods();
       res.json(periods);

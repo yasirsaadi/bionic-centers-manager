@@ -2938,6 +2938,17 @@ export async function registerRoutes(
       const patch: any = { ...req.body };
       if (!mayEditCost) delete patch.totalCost;
 
+      //  ══ **فرعُ التسجيل وأعمدةُ الحذف ليست حقولَ تعديل** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
+      //  كان `patch` يُحفَظ بأيّ عمودٍ أُرسل: فرعُ التسجيل يتغيّر من هنا وقد أُغلق «نقل المريض» بقرار المالك
+      //  («فرعُ التسجيل وحساباتُه لا تتغيّر»)، وأعمدةُ السلّة تُكتب على مريضٍ حيّ. فالفرعُ تصحيحٌ للمسؤول العامّ
+      //  وحده (مريضٌ سُجّل في فرعٍ خطأً)، وأعمدةُ الحذف لا يكتبها إلّا بابُ السلّة.
+      if (!branchSession?.isAdmin) delete patch.branchId;
+      else if (patch.branchId !== undefined && (patch.branchId === null || !Number.isFinite(Number(patch.branchId)))) delete patch.branchId;
+      for (const k of ["id", "createdAt", "deletedAt", "deletedByUserId", "deletedByName", "deletedByRole", "deletedReason",
+        "deletedTotalCost", "deletedTotalPaid", "deletedRemaining", "deletedPendingJson", "deletedNeededAdmin"]) {
+        delete patch[k];
+      }
+
       // ══ ولا التفاف من هنا أيضاً (ترحيل ٠٥٣) ═══════════════════════════
       // `total_cost` هو ما يبتلع سعر الجهاز في النهاية، فبابُ «تعديل مريض»
       // كان طريقاً ثانياً إليه. ومريضٌ تحت متابعةٍ حيّة سعرُه معتمَد —
@@ -4847,7 +4858,9 @@ export async function registerRoutes(
       const documentType = req.body.documentType || "report";
       
       const patient = await storage.getPatient(patientId);
-      if (!patient) {
+      //  ومريضُ فرعٍ لا يصله المستخدمُ لا يُرفَع إلى ملفّه (§4.bo) — كان يُقبل أيُّ معرّف.
+      if (!patient || !(await reachesPatient(req, patient))) {
+        fs.promises.unlink(file.path).catch(() => {});
         return res.status(404).json({ message: "المريض غير موجود" });
       }
       
@@ -5839,7 +5852,12 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
     const userBranchId = branchSession?.branchId;
-    const targetBranchId = stat.isGlobal ? null : (stat.branchId || userBranchId);
+    //  ══ غيرُ المسؤول يحسب على فرعه النشط وحده، والمجموعُ مالٌ لا يُحسَب إلّا لمن يرى الدفعات (§4.bo) ══
+    //  كان الحقلُ العامّ يُحسَب على كلّ الفروع لأيّ مستخدم، و«المجموع» يعيد مالاً للطبيب والخبير.
+    if (!isAdmin && stat.statType === "sum" && !mayViewMoney(req)) {
+      return res.status(403).json({ error: "غير مصرح لك بعرض المبالغ" });
+    }
+    const targetBranchId = !isAdmin ? (userBranchId ?? -1) : stat.isGlobal ? null : (stat.branchId || userBranchId);
     
     // Get patients for calculation
     let patients = await storage.getPatients(targetBranchId || undefined);
@@ -6225,12 +6243,20 @@ export async function registerRoutes(
   });
 
   app.get("/api/installment-plans/patient/:patientId", isAuthenticated, async (req: any, res) => {
+    //  للمسؤول العامّ وحده كقائمتها (§4.bo) — كانت تُقرأ لأيّ مستخدمٍ مسجَّل بأيّ معرّف.
+    if (!(req.session as any)?.branchSession?.isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول لخطط التقسيط" });
+    }
     const patientId = parseInt(req.params.patientId);
     const plans = await storage.getInstallmentPlansByPatient(patientId);
     res.json(plans);
   });
 
   app.get("/api/installment-plans/:id", isAuthenticated, async (req: any, res) => {
+    //  للمسؤول العامّ وحده كقائمتها (§4.bo) — كانت تُقرأ لأيّ مستخدمٍ مسجَّل بأيّ معرّف.
+    if (!(req.session as any)?.branchSession?.isAdmin) {
+      return res.status(403).json({ error: "غير مصرح لك بالوصول لخطط التقسيط" });
+    }
     const id = parseInt(req.params.id);
     const plan = await storage.getInstallmentPlan(id);
     if (!plan) {
@@ -6995,7 +7021,20 @@ export async function registerRoutes(
     if (ids.length > 500) {
       return res.status(400).json({ error: "تم طلب عدد كبير جداً من الفواتير" });
     }
-    const items = await storage.getInvoiceItemsForInvoices(ids);
+    //  وفواتيرُ فرعٍ آخر تُسقَط كقراءة الفاتورة الواحدة (§4.bo) — كانت تُقرأ بنودُها بأرقامها.
+    const allowedBulk = accessibleBranchesFor(req);
+    let visibleIds = ids;
+    if (allowedBulk !== null) {
+      if (allowedBulk.length === 0) return res.json([]);
+      const r = await db.execute(sql`
+        SELECT id FROM invoices
+         WHERE id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})
+           AND branch_id IN (${sql.join(allowedBulk.map((b) => sql`${b}`), sql`, `)})
+      `);
+      visibleIds = (r.rows ?? []).map((x: any) => Number(x.id));
+      if (visibleIds.length === 0) return res.json([]);
+    }
+    const items = await storage.getInvoiceItemsForInvoices(visibleIds);
     res.json(items);
   });
 
