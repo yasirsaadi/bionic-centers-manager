@@ -255,7 +255,7 @@ export function VisitModal({
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.visitReason}</FormLabel>
+                  <FormLabel>{t.modals.visitReason} <PatientVisibleBadge className="ms-2" /></FormLabel>
                   <FormControl>
                     <Textarea
                       {...field}

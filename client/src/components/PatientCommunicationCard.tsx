@@ -159,8 +159,6 @@ export default function PatientCommunicationCard({ patientId, enabled, hasPhone 
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">واتساب يُدار من «تعديل المريض» مع رقم الاتصال.</p>
-
       <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setDeepLink(null); }}>
         <DialogContent className="max-w-sm" dir="rtl">
           <DialogHeader>

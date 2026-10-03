@@ -61,11 +61,11 @@ async function main() {
   same("أ٤. وتوقيعٌ عمره يومان يُرفض", verifyInitData(initFor(TG, now() - 2 * 86400), TOKEN), { ok: false, reason: "expired" });
   same("أ٥. وفارغٌ يُرفض", verifyInitData("", TOKEN), { ok: false, reason: "missing" });
 
-  console.log("\n── ب. عنوانُ الزيارة بلا نصٍّ حرّ ──");
-  same("ب١. سببٌ يكتبه النظام يظهر", cardVisitLabel("تدريب على الجهاز", null), "تدريب على الجهاز");
-  same("ب٢. «شراء جزء» بلا مبلغ", cardVisitLabel("شراء جزء: الركبة — 1,500,000 د.ع", null), "شراء جزء: الركبة");
-  same("ب٣. ونصٌّ حرٌّ لا يظهر — «زيارة»", cardVisitLabel("المريض مزعج ودفع ناقص", null), "زيارة");
-  same("ب٤. ونوعُ العلاج يظهر جلسةً", cardVisitLabel(null, "روبوت"), "جلسة روبوت");
+  console.log("\n── ب. عنوانُ الزيارة = سببُها كما في سجلّ الملفّ ──");
+  same("ب١. السببُ (details) يظهر بحرفه", cardVisitLabel("تدريب على الجهاز", "ملاحظة", null), "تدريب على الجهاز");
+  same("ب٢. وبلا details ⟵ تفاصيلُ الزيارة (notes) كما يعرضها الملفّ", cardVisitLabel(null, "تبديل الجورب وقياس", null), "تبديل الجورب وقياس");
+  same("ب٣. ولا سبب ⟵ «زيارة»", cardVisitLabel("  ", null, null), "زيارة");
+  same("ب٤. ونوعُ العلاج جلسةً، ومعه السبب", [cardVisitLabel(null, null, "روبوت"), cardVisitLabel(null, "تمارين", "روبوت")], ["جلسة روبوت", "جلسة روبوت — تمارين"]);
 
   console.log("\n── ج. أمرُ «بطاقتي» ──");
   same("ج١. «/card» و«بطاقتي» أمرٌ، و«/card 5» لا", [isCardCommand("/card"), isCardCommand("بطاقتي"), isCardCommand("/card 5")], [true, true, false]);
@@ -120,10 +120,10 @@ async function main() {
              VALUES ($1,$2,1,1,'in_manufacturing',3000000,'full_device')`, [pid, caseId]);
     await q(`INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, is_active)
              VALUES (9941,'card_exp','x','خبير-سري','prosthetics_expert',1,true) ON CONFLICT (id) DO NOTHING`);
-    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, expected_delivery_date, hold_reason_code)
-             VALUES ($1,1,9941,'prosthetic','active','mold','initial_build','2026-11-01','materials')`, [pid]);
+    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, expected_delivery_date, hold_reason_code, created_at)
+             VALUES ($1,1,9941,'prosthetic','active','mold','initial_build','2026-11-01','materials','2026-09-30 22:30+00')`, [pid]);
     const v1 = (await q(`INSERT INTO visits (patient_id, branch_id, visit_date, details, notes) VALUES ($1,1,'2026-10-01 09:00','تدريب على الجهاز','ملاحظة-زيارة-سرية') RETURNING id`, [pid]))[0].id;
-    await q(`INSERT INTO visits (patient_id, branch_id, visit_date, details) VALUES ($1,2,'2026-10-02 10:00','نص-حر-سري')`, [pid]);
+    await q(`INSERT INTO visits (patient_id, branch_id, visit_date, details) VALUES ($1,2,'2026-10-02 10:00','تبديل الجورب')`, [pid]);
     await q(`INSERT INTO payments (patient_id, branch_id, amount, notes, visit_id, date) VALUES ($1,1,1000000,'ملاحظة-دفعة-سرية',$2,'2026-10-01 09:05')`, [pid, v1]);
     await q(`INSERT INTO payments (patient_id, branch_id, amount, date) VALUES ($1,2,500000,'2026-10-02 10:10')`, [pid]);
     await q(`INSERT INTO patient_contacts (patient_id, channel, external_id, relation) VALUES ($1,'telegram',$2,'self')`, [pid, TG]);
@@ -145,11 +145,12 @@ async function main() {
     same("هـ٤. المراحلُ: القالبُ الحاليّ وما قبله منجز", c.orders?.[0]?.stages?.map((s: any) => s.state),
       ["done", "done", "current", "todo", "todo", "todo"]);
     same("هـ٥. وموعدُ التسليم", c.orders?.[0]?.expectedDeliveryDate, "2026-11-01");
+    same("هـ٥ب. وتاريخُ فتح الأمر بيوم بغداد (٢٢:٣٠ UTC ⟵ اليومُ التالي)", c.orders?.[0]?.openedAt, "2026-10-01");
     same("هـ٦. الأيّامُ بالأحدث، ودفعةُ كلّ زيارة بلا مجموع", c.days?.map((d: any) => [d.date, d.entries.map((e: any) => [e.label, e.amount])]),
-      [["2026-10-02", [["زيارة", null], ["دفعة", 500000]]], ["2026-10-01", [["تدريب على الجهاز", null], ["دفعة", 1000000]]]]);
+      [["2026-10-02", [["تبديل الجورب", null], ["دفعة", 500000]]], ["2026-10-01", [["تدريب على الجهاز", null], ["دفعة", 1000000]]]]);
     same("هـ٧. والمتبقّي = الكلفة − المدفوع", c.remaining, 1500000);
     const raw = r.raw;
-    same("هـ٨. **ولا نصٌّ حرٌّ ولا ملاحظةٌ ولا اسمُ موظّفٍ ولا سببُ توقّف**",
+    same("هـ٨. **ولا ملاحظةٌ ثانويّةٌ ولا عامّةٌ ولا اسمُ موظّفٍ ولا سببُ توقّف**",
       ["سرية", "سري", "materials", "خبير", "general", "notes"].filter((s) => raw.includes(s)), []);
     same("هـ٩. ولا مفاتيحَ خارجَ شكل البطاقة", Object.keys(c).sort(),
       ["address", "branches", "code", "days", "departments", "name", "orders", "phone", "remaining"]);
