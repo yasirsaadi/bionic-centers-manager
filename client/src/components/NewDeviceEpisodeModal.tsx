@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -227,7 +228,7 @@ export function NewDeviceEpisodeModal({
         {asksItem && (
           <div className="space-y-2 text-right" data-testid="block-requested-item">
             <Label className="font-semibold">
-              ما المطلوب؟ <span className="text-destructive">*</span>
+              ما المطلوب؟ <span className="text-destructive">*</span> <PatientVisibleBadge className="ms-2" />
             </Label>
             <Select value={item} onValueChange={(v) => setItem(v as RequestedItem)}>
               <SelectTrigger data-testid="select-requested-item">

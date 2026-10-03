@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import dayjs from "dayjs";
@@ -197,7 +198,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
               name="treatmentType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.treatmentType} {isPhysiotherapy && <span className="text-red-500">*</span>}</FormLabel>
+                  <FormLabel>{t.modals.treatmentType} {isPhysiotherapy && <span className="text-red-500">*</span>} <PatientVisibleBadge className="ms-2" /></FormLabel>
                   <Select value={field.value || ""} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger data-testid="select-edit-visit-treatment-type">

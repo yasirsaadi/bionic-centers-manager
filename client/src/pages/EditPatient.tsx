@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -428,7 +429,7 @@ export default function EditPatient() {
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.patientForm.fullName}</FormLabel>
+                    <FormLabel>{t.patientForm.fullName} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input {...field} className="bg-slate-50" placeholder={t.patientForm.fullNamePlaceholder} />
                     </FormControl>
@@ -442,7 +443,7 @@ export default function EditPatient() {
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.patientForm.phone}</FormLabel>
+                    <FormLabel>{t.patientForm.phone} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-slate-50" dir="ltr" inputMode="tel" placeholder={t.patientForm.phonePlaceholder} />
                     </FormControl>
@@ -522,7 +523,7 @@ export default function EditPatient() {
                 name="address"
                 render={({ field }) => (
                   <FormItem className="md:col-span-2">
-                    <FormLabel>{t.patientForm.address}</FormLabel>
+                    <FormLabel>{t.patientForm.address} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.addressPlaceholder} />
                     </FormControl>
@@ -710,7 +711,7 @@ export default function EditPatient() {
                       تفاصيلَ الثنائيّ. والآن `AmputationBuilder` نفسُه
                       المستعمَل في التسجيل وفي «إضافة نوع حالة». */}
                   <div className="space-y-4">
-                    <FormLabel className="text-base">{t.patientForm.amputationType}</FormLabel>
+                    <FormLabel className="text-base">{t.patientForm.amputationType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <AmputationBuilder
                       value={amp}
                       onChange={(next) => { setAmp(next); setAmpTouched(true); }}
@@ -839,7 +840,7 @@ export default function EditPatient() {
                     name="diseaseType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t.patientForm.diagnosisType}</FormLabel>
+                        <FormLabel>{t.patientForm.diagnosisType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.diagnosisPlaceholder} />
                         </FormControl>
@@ -857,7 +858,7 @@ export default function EditPatient() {
                     name="supportType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t.patientForm.supportType}</FormLabel>
+                        <FormLabel>{t.patientForm.supportType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-slate-50" placeholder={t.patientForm.supportTypePlaceholder} />
                         </FormControl>

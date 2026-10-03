@@ -12,6 +12,7 @@
 // **ولا حقيقةً ماليةً جديدة هنا**: هذا المكوّنُ لا يكتب شيئاً بنفسه — ينادي
 // البابين القانونيَّين القائمين حرفياً كما كانت البطاقةُ تنادِيهما.
 
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { XCircle, Loader2, HandCoins, Ban } from "lucide-react";
@@ -380,7 +381,7 @@ export function ExamPathDecisionActions({
                 يمنع شيئاً — الدفعةُ تُسجَّل لاحقاً من «تسجيل دفعة». */}
             <div className="space-y-1">
               <Label htmlFor="cs-paid-now" className="text-xs">
-                المبلغ المدفوع الآن (اختياري)
+                المبلغ المدفوع الآن (اختياري) <PatientVisibleBadge className="ms-2" />
               </Label>
               <MoneyInput id="cs-paid-now" allowEmpty value={cPaidNow}
                 onValueChange={(v) => setCPaidNow(v === null ? "" : String(v))}
