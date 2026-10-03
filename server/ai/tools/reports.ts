@@ -10,6 +10,7 @@
 // مسؤولاً فعلاً — وإلا يبقى محصوراً بـ`operationalBranches`/`financeBranchId`
 // من الجلسة، بصرف النظر عمّا طلبه. نفسُ قاعدة `enforceBranchAccess` تماماً.
 
+import { NON_ATTENDANCE_VISIT_DETAILS } from "@shared/daily_report_scope";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
@@ -205,6 +206,14 @@ function branchScopeSql(col: string, scope: number[] | null) {
  * لا «اليوم» — `test:ai-tools-reports` يثبت الفرق بمريضٍ حقيقيّ عند هذه
  * اللحظة بعينها.
  */
+/**
+ * **الحضورُ لا الشراء** — تعريفُ التقرير اليومي نفسُه (`NON_ATTENDANCE_VISIT_DETAILS`، §4.az): صفوفُ «خدمة جديدة» و«إضافة نوع حالة»
+ * قيودُ شراءٍ وإدارة لا حضور. كان المساعدُ يعدّها زيارات فيجيب مديرَ بغداد عن أيلول بـ١٬٠٦٧ والتقريرُ أقلّ (٢٠٢٦-١٠-٠٣).
+ */
+function attendanceOnlySql(col: string) {
+  return sql`COALESCE(${sql.raw(col)}, '') <> ALL(${`{${NON_ATTENDANCE_VISIT_DETAILS.map((d) => `"${d}"`).join(",")}}`}::text[])`;
+}
+
 function baghdadRangeBounds(start: string, end: string): { startTs: Date; endExclusiveTs: Date } {
   const BAGHDAD_MS = 3 * 60 * 60 * 1000;
   return {
@@ -230,6 +239,7 @@ async function countPeriodMetrics(
        WHERE deleted_at IS NULL AND ${branchScopeSql("branch_id", scope)}
          AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
          AND ${belongsToActivePatientSql("visits")}
+         AND ${attendanceOnlySql("details")}
     `),
     //  **نفسُ تعريف `patient_lookup` للجلسة**: زيارةُ خيط العلاج الطبيعي
     //  وحده، بلا «خدمة جديدة» (قيدٌ ماليّ لا جلسة) ولا «استشارة طبية».
@@ -245,7 +255,7 @@ async function countPeriodMetrics(
          --  المقارنةَ NULL لا FALSE، وNOT NULL يبقى NULL — أي أن WHERE
          --  يستبعدها رغم أنها زيارةٌ حقيقية. أُمسكت حيّاً في
          --  test:ai-tools-reports (فحصٌ ب.٧) قبل أن تصل الإنتاج.
-         AND COALESCE(v.details, '') <> 'خدمة جديدة'
+         AND ${attendanceOnlySql("v.details")}
          AND COALESCE(v.notes, '') NOT LIKE 'خدمة جديدة:%'
          AND v.treatment_type IS DISTINCT FROM 'استشارة طبية'
     `),
@@ -316,6 +326,7 @@ export async function getOperationalSummary(params: {
         SELECT branch_id, COUNT(*)::int AS n FROM visits
          WHERE deleted_at IS NULL AND visit_date >= ${startTs} AND visit_date < ${endExclusiveTs}
            AND ${belongsToActivePatientSql("visits")}
+           AND ${attendanceOnlySql("details")}
          GROUP BY branch_id
       `),
     ]);
