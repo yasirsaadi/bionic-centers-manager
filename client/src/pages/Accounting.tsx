@@ -3075,6 +3075,8 @@ export default function Accounting() {
             
             <Separator orientation="vertical" className="h-8 mx-1" />
 
+            {/*  الملخّصُ والتقريران من نقاطٍ تشترط «إدارة المحاسبة» — فلا تظهر لموظّف المصاريف وحده (§4.bt). */}
+            {fullAccounting && (<>
             <Button
               variant="default"
               onClick={() => {
@@ -3112,6 +3114,7 @@ export default function Accounting() {
               <span className="hidden md:inline">تقرير Excel</span>
               <span className="md:hidden">Excel</span>
             </Button>
+            </>)}
           </div>
         </div>
 
@@ -4639,7 +4642,7 @@ export default function Accounting() {
                     <FormItem>
                       <div className="flex items-center justify-between">
                         <FormLabel>{t.accounting.categoryCol}</FormLabel>
-                        {aiEnabled && (
+                        {aiEnabled && fullAccounting && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -4777,11 +4780,12 @@ export default function Accounting() {
                   )}
                 />
 
-                <ExpenseHintsPanel
+                {/*  إرشادُ المصاريف من نقطةٍ تشترط «إدارة المحاسبة» — كان يفشل صامتاً لموظّف المصاريف (§4.bt). */}
+                {fullAccounting && <ExpenseHintsPanel
                   description={form.watch("description") || ""}
                   amount={Number(form.watch("amount")) || 0}
                   category={form.watch("category") || ""}
-                />
+                />}
 
                 <FormField
                   control={form.control}

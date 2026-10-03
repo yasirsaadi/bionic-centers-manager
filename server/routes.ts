@@ -2458,8 +2458,8 @@ export async function registerRoutes(
         patientId, serviceType: caseRow.caseType as "prosthetic" | "medical_support",
       })) {
       return res.status(409).json({
-        //  طلبُ تعديل السعر تقاعد؛ البابُ الحيّ «تحديد السعر النهائي» على بطاقة القرار في الملفّ نفسه (§4.bp).
-        message: "سعر هذا الجهاز تحت متابعةٍ قائمة — يُعدَّل من «تحديد السعر النهائي» في بطاقة القرار بعد المعاينة (لمدير الفرع أو المسؤول العام)",
+        //  طلبُ تعديل السعر تقاعد؛ والسعرُ في البيع الجديد يُكتب داخل «إتمام البيع» (§4.bt — «تحديد السعر النهائي» للمسار الموروث وحده).
+        message: "لهذا القسم جهازٌ ينتظر قرار البيع — احسمه أوّلاً من بطاقة «قرار المريض بعد المعاينة»: «إتمام البيع» (والسعرُ يُكتب فيه) أو «لم يشترِ»، ثمّ عدّل الكلفة",
       });
     }
 
@@ -2915,7 +2915,13 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Patient not found" });
       }
 
-      const canAccess = ctx.role === 'admin' || !ctx.branchId || existingPatient.branchId === ctx.branchId;
+      //  ══ **الفرعُ المُتاحُ له الملفُّ كفرع التسجيل تماماً** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bt) ══
+      //  «الإتاحةُ بدل النقل — بصلاحياتٍ كاملة مثل الفرع الأصلي». كان الشرطُ فرعَ التسجيل وحده، فيفتح موظّفُ
+      //  الفرعِ المُتاحِ له «تعديل» ويملأ ثمّ يُردّ ٤٠٣ عند الحفظ. فالنطاقُ نفسُه الذي يفتح الملفَّ (GET أعلاه).
+      //  وفرعُ التسجيل نفسُه يبقى تصحيحاً للمسؤول العامّ وحده (أدناه).
+      const editScope: number[] | null =
+        ctx.role === 'admin' || !ctx.branchId ? null : [Number(ctx.branchId)];
+      const canAccess = await scopeReachesPatient(editScope, existingPatient as any);
       if (!canAccess) {
         return res.status(403).json({ message: "غير مصرح لك بتعديل هذا المريض" });
       }
@@ -3200,7 +3206,7 @@ export async function registerRoutes(
       res.json(costLockedByFollowup
         ? {
           ...withNote,
-          costNote: "لم تُعدَّل الكلفة: للمريض جهازٌ ينتظر قرار البيع — احسم القرار أو عدّل السعر من «تحديد السعر النهائي» في بطاقة «قرار المريض بعد المعاينة»",
+          costNote: "لم تُعدَّل الكلفة: للمريض جهازٌ ينتظر قرار البيع — احسمه أوّلاً من بطاقة «قرار المريض بعد المعاينة»: «إتمام البيع» (والسعرُ يُكتب فيه) أو «لم يشترِ»",
         }
         : caseCostAmbiguousNote
           ? { ...withNote, costNote: caseCostAmbiguousNote }

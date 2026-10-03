@@ -341,7 +341,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                 value={requestedItemLabel(replacement.requestedItem, replacement.serviceType)} />
               <Field label="الحالة"
                 value={replacement.status === "awaiting_exam"
-                  ? "بانتظار المعاينة" : "بانتظار التخصيص"} />
+                  ? "بانتظار المعاينة" : "بانتظار إتمام البيع"} />
               <Field label="الكلفة" value="—" hint="تُحدَّد بعد المعاينة" />
             </CardContent>
           </Card>
@@ -729,7 +729,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           {/*  الخبير اختيارُ الاستعلامات — بصلاحية المتابعة لا بقائمة
               الأزرار: قائمتُها تفرغ في حالتَي الاعتماد، والخبير يبقى
               اختيارَها هناك. */}
-          {canSelectExpert(session as any, active.status) && (
+          {/*  **وفي البيع الجديد لا** (§4.bt): الخبيرُ يُختار داخل «إتمام البيع»، والنقطةُ تردّ ٤٠٩ `retiredOnExamPath`. */}
+          {!examPath && canSelectExpert(session as any, active.status) && (
             <Button size="sm" variant="outline" disabled={busy}
               onClick={() => { setExpertId(String(active.selectedExpertUserId ?? "")); setDialog("expert"); }}
               data-testid="button-select-expert">

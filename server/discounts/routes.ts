@@ -89,7 +89,7 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
   app.get("/api/discounts", isAuthenticated, async (req: Req, res) => {
     const s = getDiscountSession(req);
     if (!canApproveServiceDiscount(s)) {
-      return res.status(403).json({ error: "اعتماد الخصومات للمسؤول ومدير الفرع والمخوَّل" });
+      return res.status(403).json({ error: "اعتماد الخصومات للمسؤول العام ولمن يملك صلاحية «يعتمد الخصومات والخدمات المجّانية»" });
     }
     const rows = await store.listRequests({
       scope: discountBranchScope(req),
@@ -135,7 +135,7 @@ export function registerDiscountRoutes(app: Express, isAuthenticated: any) {
       return res.status(403).json({
         error: canApproveServiceDiscount(s)
           ? "غير مصرح لك بهذا الفرع"
-          : "اعتماد الخصومات للمسؤول ومدير الفرع والمخوَّل",
+          : "اعتماد الخصومات للمسؤول العام ولمن يملك صلاحية «يعتمد الخصومات والخدمات المجّانية»",
       });
     }
 

@@ -72,7 +72,7 @@ export default function ReturnedCharges() {
       setEditing(null);
       toast({
         title: "أُعيد الإرسال للمراجعة",
-        description: "العملية نفسها عادت إلى الطبيب بالمبلغ المصحَّح — ولا صفّ ثانٍ.",
+        description: "العملية نفسها عادت إلى «مبالغ سابقة بانتظار الإكمال» بالمبلغ المصحَّح — ولا صفّ ثانٍ.",
       });
     },
     onError: (err: any) => toast({
@@ -105,7 +105,7 @@ export default function ReturnedCharges() {
         )}
       </div>
       <p className="text-sm text-muted-foreground">
-        عملياتٌ أعادها الطبيب لتصحيح مبلغها. <b>العملية قائمة ولم تُحذف</b>،
+        عملياتٌ أُعيدت لتصحيح مبلغها. <b>العملية قائمة ولم تُحذف</b>،
         ولم يُقيَّد منها دينار. صحّح المبلغ ثم أعِد إرسالها للمراجعة.
       </p>
 
@@ -212,7 +212,7 @@ export default function ReturnedCharges() {
                   data-testid="returned-note" />
               </div>
               <p className="text-xs text-muted-foreground">
-                يعود الصفّ نفسه إلى مراجعة الطبيب — ولا يُنشأ صفّ ثانٍ ولا
+                يعود الصفّ نفسه إلى «مبالغ سابقة بانتظار الإكمال» — ولا يُنشأ صفّ ثانٍ ولا
                 يُحسَب البيع مرّتين.
               </p>
             </div>

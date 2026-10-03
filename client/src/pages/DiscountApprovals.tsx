@@ -15,6 +15,10 @@
 // ══ والمعلَّقُ افتراضاً ═════════════════════════════════════════════════
 // الشاشةُ إكمالُ ما تبقّى لا أرشيفٌ يُتصفَّح. والمحسومُ يُقرأ بتبديل الفلتر.
 
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -173,7 +177,7 @@ export default function DiscountApprovals() {
         <Card><CardContent className="py-10 text-center space-y-2">
           <ShieldAlert className="w-8 h-8 mx-auto text-muted-foreground" />
           <p className="text-sm text-muted-foreground" data-testid="text-discount-forbidden">
-            {DISCOUNT_HISTORY_TITLE} — للمسؤول العام ومدير الفرع والمخوَّل صراحةً.
+            {DISCOUNT_HISTORY_TITLE} — للمسؤول العام ولمن يملك صلاحية «يعتمد الخصومات والخدمات المجّانية».
           </p>
         </CardContent></Card>
       </div>
@@ -330,11 +334,31 @@ export default function DiscountApprovals() {
                         }}>
                         <Check className="w-4 h-4" /> إكمال وتطبيق السعر
                       </Button>
-                      <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
-                        data-testid={`reject-${r.id}`}
-                        onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
-                        <X className="w-4 h-4" /> إلغاء الطلب
-                      </Button>
+                      {/*  الإلغاءُ نهائيّ (الطلبُ المحسوم لا يُعاد فتحُه) وبجانب زرّ الاعتماد — فبتأكيد (§4.bt). */}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="destructive" disabled={decide.isPending} className="gap-1"
+                            data-testid={`reject-${r.id}`}>
+                            <X className="w-4 h-4" /> إلغاء الطلب
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent dir="rtl">
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>إلغاء طلب الخصم؟</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              لا يمكن التراجع عن الإلغاء، ولا يُعاد فتح الطلب بعده. لا يتحرّك أيّ مبلغ.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter className="gap-2">
+                            <AlertDialogCancel>رجوع</AlertDialogCancel>
+                            <AlertDialogAction className="bg-red-600 hover:bg-red-700"
+                              data-testid={`confirm-reject-${r.id}`}
+                              onClick={() => decide.mutate({ id: r.id, body: { decision: "reject" } })}>
+                              نعم، ألغِ الطلب
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                       <Button size="sm" variant="ghost" disabled={decide.isPending}
                         className="gap-1 text-muted-foreground"
                         data-testid={`modify-${r.id}`}

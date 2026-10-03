@@ -267,7 +267,11 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
     try {
       const rows = await returnedFor(req);
       if (rows === null) return res.status(403).json({ error: "غير مصرح" });
-      res.json({ rows });
+      //  **اختصاصاتُ المعاينة لصاحب الجلسة** (§4.bt) — فلا تظهر «كتابة معاينة» على صفّ اختصاصٍ تردّه
+      //  نقطةُ المعاينة ٤٠٣. القائمةُ نفسُها تُظهر الاختصاصين لمن يُرسل الطلبات.
+      const s = getSession(req);
+      const examSpecialties = canDecideReview(s) ? await medical.doctorSpecialties(s.userId) : [];
+      res.json({ rows, examSpecialties });
     } catch (err: any) {
       console.error("[medical-review] returned list failed:", err);
       res.status(500).json({ error: "تعذّر تحميل المُرجَعين" });

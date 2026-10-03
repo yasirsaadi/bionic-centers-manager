@@ -15,8 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Wallet, Clock, Undo2, CheckCircle2 } from "lucide-react";
 import {
   PENDING_CHARGE_STATUS_LABELS, RETURN_REASON_LABEL,
-  type PendingChargeStatus,
-} from "@shared/pending_charge";
+  type PendingChargeStatus, LEGACY_QUEUE_TITLE } from "@shared/pending_charge";
 import { requestedItemLabel, componentLabel } from "@shared/prosthetic_parts";
 import { DEVICE_ORIGIN_LABELS, isDeviceOrigin } from "@shared/device_origin";
 
@@ -92,7 +91,7 @@ export function PendingChargesCard({ patientId }: { patientId: number }) {
         {live.length > 0 && (
           <p className="text-xs text-muted-foreground" data-testid="pending-charges-note">
             المبالغ المعلّقة <b>لم تُضَف إلى كلفة المريض ولا إلى حساباته</b> —
-            تدخلها فور اعتماد الطبيب.
+            تدخلها فور إكمالها من «{LEGACY_QUEUE_TITLE}» (الاستقبال أو مدير الفرع أو المسؤول).
           </p>
         )}
         {rows.map((r) => {

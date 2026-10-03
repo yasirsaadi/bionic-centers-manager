@@ -37,7 +37,9 @@ function DashboardContent() {
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const userBranchId = branchSession?.branchId;
-  const { canViewPayments } = usePermissions();
+  //  صفحةُ الإيرادات للمسؤول العام وحده (`AdminGate`) — فبطاقتاها لا تُضغطان لغيره (§4.bt).
+  //  والتقاريرُ بصلاحيتها هي، كالشريط الجانبيّ والخادم (`canViewReports`).
+  const { canViewPayments, canViewReports } = usePermissions();
   const { t } = useTranslation();
   
   const todayISO = useMemo(() => {
@@ -233,7 +235,7 @@ function DashboardContent() {
               value={`${(stats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
               icon={Banknote} 
               color="primary"
-              onClick={() => navigate("/revenues")}
+              onClick={isAdmin ? () => navigate("/revenues") : undefined}
               data-testid="card-total-revenue"
             />
           )}
@@ -362,7 +364,7 @@ function DashboardContent() {
                     value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
                     icon={Banknote} 
                     color="primary"
-                    onClick={() => navigate("/revenues?daily=true")}
+                    onClick={isAdmin ? () => navigate("/revenues?daily=true") : undefined}
                     data-testid="card-daily-revenue"
                   />
                   {dailyStats?.branchRevenues?.map(br => (
@@ -407,7 +409,7 @@ function DashboardContent() {
           </div>
         </div>
 
-        {canViewPayments && (
+        {(isAdmin || canViewReports) && (
           <div className="bg-gradient-to-br from-primary to-primary/80 p-6 rounded-2xl text-white shadow-xl shadow-primary/20">
             <h3 className="text-xl font-bold mb-2 font-display">{t.dashboard.welcomeTitle}</h3>
             <p className="text-white/80 mb-6 leading-relaxed">

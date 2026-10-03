@@ -2186,6 +2186,8 @@ export default function Statistics() {
                         className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl border border-purple-200 relative group"
                         data-testid={`custom-stat-${stat.id}`}
                       >
+                        {/*  الإحصاءُ العامّ للمسؤول وحده — والخادمُ يردّ غيرَه (فرعُه وحده، §4.bt). */}
+                        {(isAdmin || (!stat.isGlobal && stat.branchId != null)) && (
                         <div className="absolute top-2 left-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button
                             size="icon"
@@ -2210,6 +2212,7 @@ export default function Statistics() {
                             <Trash2 className="w-3 h-3" />
                           </Button>
                         </div>
+                        )}
                         <div className="flex items-center gap-2 mb-2">
                           {stat.isGlobal ? (
                             <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200">

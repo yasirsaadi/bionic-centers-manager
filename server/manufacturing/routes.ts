@@ -143,6 +143,17 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       //  الخبراء» فيقف البيع. والعمليةُ تُسجَّل في **فرع الحركة** (`resolveActingBranchId` — فرعُ جلسة الموظّف حين
       //  يصل الملفّ، ترحيل ٠٨٠)، والخبيرُ يُفحَص عند الحفظ على ذلك الفرع — فخبراءُ فرعه هم القائمةُ الصحيحة. والقائمةُ
       //  أسماءٌ لا مال، والحفظُ يبقى الحارسَ الحقيقيّ.
+      //  ══ **إلّا قائمةَ تحويل أمرٍ قائم** (§4.bt) — `?orderId=` ══
+      //  التحويلُ يفحص الخبيرَ على **فرع الأمر** (`validateExpertForBranch`)، لا على فرع الجلسة. فمديرٌ وصل الأمرَ
+      //  عبر ملفٍّ مُتاحٍ لفرعه كان يُعطى خبراءَ فرعه فيُردّ كلُّ اختيار ٤٠٠. فحين يصل الأمرَ (القاعدةُ نفسُها التي
+      //  يحرس بها `reassign`) تُعطى قائمةُ فرع الأمر.
+      const orderId = req.query.orderId ? parseInt(String(req.query.orderId)) : NaN;
+      if (Number.isFinite(orderId)) {
+        const raw = await store.getRawOrder(orderId);
+        if (raw && (isManager(s) || raw.branchId === s.branchId) && await reachesOrderPatient(s, raw)) {
+          return res.json(await store.getExpertsForBranch(raw.branchId));
+        }
+      }
       if (branchId === undefined || !branchInScope(s, branchId)) branchId = s.branchId;
       if (branchId === undefined || branchId === null || !branchInScope(s, branchId)) {
         return res.status(403).json({ error: "غير مصرح لك بهذا الفرع" });

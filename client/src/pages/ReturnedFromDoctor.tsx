@@ -85,7 +85,7 @@ export default function ReturnedFromDoctor() {
     }
   };
 
-  const { data, isLoading, isError } = useQuery<{ rows: Row[] }>({
+  const { data, isLoading, isError } = useQuery<{ rows: Row[]; examSpecialties?: string[] }>({
     queryKey: ["/api/medical-review/returned"],
     queryFn: async () => {
       const res = await fetch("/api/medical-review/returned", { credentials: "include" });
@@ -162,12 +162,12 @@ export default function ReturnedFromDoctor() {
                       }}
                     />
                   )}
-                  {mayExam && (
+                  {mayExam && (data?.examSpecialties ?? []).includes(r.serviceType) && (
                     <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setExamFor(r)}>
                       <Stethoscope className="w-4 h-4" /> كتابة معاينة
                     </Button>
                   )}
-                  {mayExam && (
+                  {mayExam && (data?.examSpecialties ?? []).includes(r.serviceType) && (
                     <Button variant="outline" size="sm"
                       className="gap-1.5 text-destructive hover:text-destructive"
                       onClick={() => { setCancelling(r); setCancelReason(""); }}>
