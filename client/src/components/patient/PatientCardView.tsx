@@ -1,5 +1,5 @@
 import logoImage from "@/assets/logo.png";
-import { CENTER_CLOSING, CENTER_CONTACTS, type PatientCard } from "@shared/patient_card";
+import { CENTER_CLOSING, CENTER_CONTACT_NOTE, CENTER_CONTACTS, type PatientCard } from "@shared/patient_card";
 import { Phone, MapPin, Building2, CalendarDays, Wallet, Wrench, HeartPulse, Activity, Check } from "lucide-react";
 
 //  بطاقةُ المريض (§4.bv) — العرضُ وحدَه، يُستعمَل في صفحة تلغرام وفي «معاينة ما يراه المريض» عند الموظّف.
@@ -132,11 +132,19 @@ export function PatientCardView({ card }: { card: PatientCard }) {
       {/* ── الخاتمة: الدعاءُ ثمّ فروعُ المراكز وأرقامُها ── */}
       <section className={`${glass} p-5 text-center`} data-testid="card-closing">
         <p className="font-bold text-white">{CENTER_CLOSING}</p>
+        <p className="mt-2 text-xs text-white/75 leading-relaxed">{CENTER_CONTACT_NOTE}</p>
         <div className="mt-4 grid gap-2 text-sm text-start">
           {CENTER_CONTACTS.map((c) => (
-            <div key={c.branch} className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
-              <span className="flex items-center gap-2"><Building2 className="w-4 h-4 text-white/70" />{c.branch}</span>
-              {c.phone && <a href={`tel:${c.phone}`} className="font-semibold text-cyan-100" dir="ltr">{c.phone}</a>}
+            <div key={c.branch} className="rounded-xl bg-white/10 px-3 py-2.5" data-testid="card-contact">
+              <div className="flex items-center gap-2 font-semibold"><Building2 className="w-4 h-4 text-white/70" />{c.branch}</div>
+              <div className="text-xs text-white/70 mt-0.5">{c.services}</div>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                {c.phones.map((ph) => (
+                  <a key={ph} href={`tel:${ph}`} className="flex items-center gap-1.5 font-semibold text-cyan-100" dir="ltr">
+                    <Phone className="w-3.5 h-3.5" />{ph}
+                  </a>
+                ))}
+              </div>
             </div>
           ))}
         </div>

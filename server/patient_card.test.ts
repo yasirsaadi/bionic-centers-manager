@@ -5,7 +5,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { verifyInitData, signInitData } from "./patient_card/init_data";
-import { cardVisitLabel } from "@shared/patient_card";
+import { cardVisitLabel, CENTER_CONTACTS } from "@shared/patient_card";
 import { isCardCommand, cardButtonMarkup } from "./patient_telegram/webhook";
 import { sql as m093 } from "./migrations/093_patient_card";
 
@@ -66,6 +66,10 @@ async function main() {
   same("ب٢. وبلا details ⟵ تفاصيلُ الزيارة (notes) كما يعرضها الملفّ", cardVisitLabel(null, "تبديل الجورب وقياس", null), "تبديل الجورب وقياس");
   same("ب٣. ولا سبب ⟵ «زيارة»", cardVisitLabel("  ", null, null), "زيارة");
   same("ب٤. ونوعُ العلاج جلسةً، ومعه السبب", [cardVisitLabel(null, null, "روبوت"), cardVisitLabel(null, "تمارين", "روبوت")], ["جلسة روبوت", "جلسة روبوت — تمارين"]);
+
+  same("ب٥. الخاتمة: أربعةُ فروعٍ بنصّ المالك، ورقمان صحيحان لكلٍّ منها",
+    CENTER_CONTACTS.map((c) => [c.branch, c.phones.length, c.phones.every((p) => /^07\d{9}$/.test(p))]),
+    [["بغداد بايونك", 2, true], ["ذي قار بايونك", 2, true], ["كربلاء الوارث", 2, true], ["الموصل بايونك", 2, true]]);
 
   console.log("\n── ج. أمرُ «بطاقتي» ──");
   same("ج١. «/card» و«بطاقتي» أمرٌ، و«/card 5» لا", [isCardCommand("/card"), isCardCommand("بطاقتي"), isCardCommand("/card 5")], [true, true, false]);
