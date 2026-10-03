@@ -5,7 +5,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { verifyInitData, signInitData } from "./patient_card/init_data";
-import { cardVisitLabel, CENTER_CONTACTS } from "@shared/patient_card";
+import { cardDeviceStatus, cardVisitLabel, CENTER_CONTACTS } from "@shared/patient_card";
 import { isCardCommand, cardButtonMarkup } from "./patient_telegram/webhook";
 import { sql as m093 } from "./migrations/093_patient_card";
 
@@ -47,7 +47,7 @@ async function card(initData: string) {
 const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
 async function cleanup() {
   await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
-  for (const t of ["prosthetic_work_orders", "payments", "visits", "patient_device_episodes", "patient_contacts", "patient_branch_access", "cost_entries", "patient_cases"])
+  for (const t of ["post_exam_followups", "prosthetic_work_orders", "payments", "visits", "patient_device_episodes", "patient_contacts", "patient_branch_access", "cost_entries", "patient_cases"])
     await q(`DELETE FROM ${t} WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
 }
@@ -67,6 +67,10 @@ async function main() {
   same("ب٣. ولا سبب ⟵ «زيارة»", cardVisitLabel("  ", null, null), "زيارة");
   same("ب٤. ونوعُ العلاج جلسةً، ومعه السبب", [cardVisitLabel(null, null, "روبوت"), cardVisitLabel(null, "تمارين", "روبوت")], ["جلسة روبوت", "جلسة روبوت — تمارين"]);
 
+  same("ب٦. حالةُ الجهاز من حالة الحلقة وقرار «لم يشترِ»",
+    [cardDeviceStatus("awaiting_exam", false), cardDeviceStatus("examined", false), cardDeviceStatus("examined", true),
+     cardDeviceStatus("in_manufacturing", false), cardDeviceStatus("delivered", false), cardDeviceStatus(null, false)],
+    ["بانتظار المعاينة الطبية", "تمّت المعاينة — بانتظار قرار الشراء", "تمّ الفحص فقط — لم يتمّ الشراء", "قيد التصنيع", "تمّ التسليم", null]);
   same("ب٥. الخاتمة: أربعةُ فروعٍ بنصّ المالك، ورقمان صحيحان لكلٍّ منها",
     CENTER_CONTACTS.map((c) => [c.branch, c.phones.length, c.phones.every((p) => /^07\d{9}$/.test(p))]),
     [["بغداد بايونك", 2, true], ["ذي قار بايونك", 2, true], ["كربلاء الوارث", 2, true], ["الموصل بايونك", 2, true]]);
@@ -115,20 +119,28 @@ async function main() {
 
     const pid = (await q<{ id: number }>(
       `INSERT INTO patients (name, phone, address, referral_source, age, height, weight, medical_condition, branch_id, total_cost,
-                             is_amputee, amputation_site, is_physiotherapy, disease_type, patient_classification, general_notes)
-       VALUES ($1,'07701234567','كربلاء — حيّ الحسين',$2,'40','170','70','x',1,3000000,true,'فوق الركبة - يمين',true,'شلل نصفي','new','ملاحظة-عامة-سرية')
+                             is_amputee, amputation_site, is_physiotherapy, disease_type, patient_classification, general_notes,
+                             is_medical_support, support_type, created_at)
+       VALUES ($1,'07701234567','كربلاء — حيّ الحسين',$2,'40','170','70','x',1,3000000,true,'فوق الركبة - يمين',true,'شلل نصفي','new','ملاحظة-عامة-سرية',
+               true,'عوين','2026-09-15 22:00')
        RETURNING id`, [`${MARK} أحمد`, MARK]))[0].id;
     await q(`INSERT INTO patient_branch_access (patient_id, branch_id) VALUES ($1, 2)`, [pid]);
     const caseId = (await q(`INSERT INTO patient_cases (patient_id, case_type, status, cost) VALUES ($1,'prosthetic','active',3000000) RETURNING id`, [pid]))[0].id;
     await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status, agreed_cost, requested_item)
              VALUES ($1,$2,1,1,'in_manufacturing',3000000,'full_device')`, [pid, caseId]);
+    //  مسندٌ عوين ثمّ «لم يشترِ» — واقعةُ سيناء علي رشم (§4.bm).
+    const supCase = (await q(`INSERT INTO patient_cases (patient_id, case_type, status, cost) VALUES ($1,'medical_support','active',0) RETURNING id`, [pid]))[0].id;
+    const supEp = (await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status, agreed_cost)
+             VALUES ($1,$2,1,1,'examined',0) RETURNING id`, [pid, supCase]))[0].id;
+    await q(`INSERT INTO post_exam_followups (patient_id, case_id, branch_id, service_type, device_episode_id, status)
+             VALUES ($1,$2,1,'medical_support',$3,'closed_without_purchase')`, [pid, supCase, supEp]);
     await q(`INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, is_active)
              VALUES (9941,'card_exp','x','خبير-سري','prosthetics_expert',1,true) ON CONFLICT (id) DO NOTHING`);
     await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type, status, current_stage, purpose, expected_delivery_date, hold_reason_code, created_at)
              VALUES ($1,1,9941,'prosthetic','active','mold','initial_build','2026-11-01','materials','2026-09-30 22:30+00')`, [pid]);
     const v1 = (await q(`INSERT INTO visits (patient_id, branch_id, visit_date, details, notes) VALUES ($1,1,'2026-10-01 09:00','تدريب على الجهاز','ملاحظة-زيارة-سرية') RETURNING id`, [pid]))[0].id;
     await q(`INSERT INTO visits (patient_id, branch_id, visit_date, details) VALUES ($1,2,'2026-10-02 10:00','تبديل الجورب')`, [pid]);
-    await q(`INSERT INTO payments (patient_id, branch_id, amount, notes, visit_id, date) VALUES ($1,1,1000000,'ملاحظة-دفعة-سرية',$2,'2026-10-01 09:05')`, [pid, v1]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, notes, visit_id, date) VALUES ($1,1,1000000,'دفعة أولى من سعر الطرف',$2,'2026-10-01 09:05')`, [pid, v1]);
     await q(`INSERT INTO payments (patient_id, branch_id, amount, date) VALUES ($1,2,500000,'2026-10-02 10:10')`, [pid]);
     await q(`INSERT INTO patient_contacts (patient_id, channel, external_id, relation) VALUES ($1,'telegram',$2,'self')`, [pid, TG]);
 
@@ -144,20 +156,25 @@ async function main() {
     const c = r.body?.cards?.[0] ?? {};
     same("هـ١. الاسمُ والهاتفُ والعنوان", [c.name, c.phone, c.address], [`${MARK} أحمد`, "07701234567", "كربلاء — حيّ الحسين"]);
     same("هـ٢. الفروعُ: التسجيلُ أوّلاً ثمّ المُتاح", c.branches, ["بغداد", "كربلاء"]);
-    same("هـ٣. الأقسامُ بالنوع وحده", c.departments?.map((d: any) => [d.key, d.detail]),
-      [["prosthetic", "طرف صناعي كامل — فوق الركبة - يمين"], ["physiotherapy", "شلل نصفي"]]);
+    same("هـ٣. الأقسامُ بالنوع وحالتِها كما في التطبيق — والمسندُ «فحصٌ فقط»", c.departments?.map((d: any) => [d.key, d.detail, d.status]),
+      [["prosthetic", "طرف صناعي كامل — فوق الركبة - يمين", "قيد التصنيع"],
+       ["medical_support", "عوين", "تمّ الفحص فقط — لم يتمّ الشراء"],
+       ["physiotherapy", "شلل نصفي", null]]);
+    same("هـ٣ب. وتاريخُ التسجيل بيوم بغداد", c.registeredAt, "2026-09-16");
     same("هـ٤. المراحلُ: القالبُ الحاليّ وما قبله منجز", c.orders?.[0]?.stages?.map((s: any) => s.state),
       ["done", "done", "current", "todo", "todo", "todo"]);
     same("هـ٥. وموعدُ التسليم", c.orders?.[0]?.expectedDeliveryDate, "2026-11-01");
     same("هـ٥ب. وتاريخُ فتح الأمر بيوم بغداد (٢٢:٣٠ UTC ⟵ اليومُ التالي)", c.orders?.[0]?.openedAt, "2026-10-01");
-    same("هـ٦. الأيّامُ بالأحدث، ودفعةُ كلّ زيارة بلا مجموع", c.days?.map((d: any) => [d.date, d.entries.map((e: any) => [e.label, e.amount])]),
-      [["2026-10-02", [["تبديل الجورب", null], ["دفعة", 500000]]], ["2026-10-01", [["تدريب على الجهاز", null], ["دفعة", 1000000]]]]);
+    same("هـ٦. الأيّامُ بالأحدث، بوقت بغداد، ووصفُ الدفعة كما في سجلّ الدفعات، بلا مجموع",
+      c.days?.map((d: any) => [d.date, d.entries.map((e: any) => [e.label, e.time, e.amount])]),
+      [["2026-10-02", [["تبديل الجورب", "13:00", null], ["دفعة", "13:10", 500000]]],
+       ["2026-10-01", [["تدريب على الجهاز", "12:00", null], ["دفعة أولى من سعر الطرف", "12:05", 1000000]]]]);
     same("هـ٧. والمتبقّي = الكلفة − المدفوع", c.remaining, 1500000);
     const raw = r.raw;
     same("هـ٨. **ولا ملاحظةٌ ثانويّةٌ ولا عامّةٌ ولا اسمُ موظّفٍ ولا سببُ توقّف**",
       ["سرية", "سري", "materials", "خبير", "general", "notes"].filter((s) => raw.includes(s)), []);
     same("هـ٩. ولا مفاتيحَ خارجَ شكل البطاقة", Object.keys(c).sort(),
-      ["address", "branches", "code", "days", "departments", "name", "orders", "phone", "remaining"]);
+      ["address", "branches", "code", "days", "departments", "name", "orders", "phone", "registeredAt", "remaining"]);
 
     console.log("\n── ز. معاينةُ الموظّف ومفتاحُ التفعيل (الدفعة ٣) ──");
     await q(`UPDATE patients SET patient_card_enabled = false WHERE id = $1`, [pid]);

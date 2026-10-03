@@ -35,15 +35,18 @@ export interface PatientCardOrder {
 }
 export interface PatientCardDay {
   date: string;                  // YYYY-MM-DD بتوقيت بغداد
-  entries: { kind: "visit" | "payment"; label: string; branch: string | null; amount: number | null }[];
+  //  `time` ساعةُ بغداد «HH:MM» — المريضُ يعرف متى حضر (قرارُ المالك).
+  entries: { kind: "visit" | "payment"; label: string; time: string | null; branch: string | null; amount: number | null }[];
 }
 export interface PatientCard {
   name: string;
   code: string;
+  registeredAt: string | null;   // YYYY-MM-DD بتوقيت بغداد — «تاريخ تسجيلك»
   phone: string | null;
   address: string | null;
   branches: string[];
-  departments: { key: "prosthetic" | "medical_support" | "physiotherapy"; label: string; detail: string | null }[];
+  //  `status` حالةُ الجهاز كما في التطبيق (فحصٌ فقط، بانتظار…، قيد التصنيع، سُلِّم) — للأطراف والمساند وحدهما.
+  departments: { key: "prosthetic" | "medical_support" | "physiotherapy"; label: string; detail: string | null; status: string | null }[];
   orders: PatientCardOrder[];
   days: PatientCardDay[];
   remaining: number;             // ≥ ٠ — المتبقّي عليه
@@ -58,6 +61,20 @@ export function cardVisitLabel(details: string | null | undefined, notes: string
   const t = String(treatmentType ?? "").trim();
   if (t) return reason ? `جلسة ${t} — ${reason}` : `جلسة ${t}`;
   return reason || "زيارة";
+}
+
+/**
+ * **حالةُ قسم الجهاز كما يراها المريض** — من آخر جهازٍ غير ملغى وقرار «لم يشترِ» (§4.bm)، لا تخمين.
+ * مثالُ المالك: مسندٌ عوين ثمّ «لم يشترِ» ⟵ «تمّ الفحص فقط — لم يتمّ الشراء»، لا «مسند» كأنه اشتُري.
+ */
+export function cardDeviceStatus(episodeStatus: string | null | undefined, notBought: boolean): string | null {
+  switch (episodeStatus) {
+    case "awaiting_exam": return "بانتظار المعاينة الطبية";
+    case "examined": return notBought ? "تمّ الفحص فقط — لم يتمّ الشراء" : "تمّت المعاينة — بانتظار قرار الشراء";
+    case "in_manufacturing": return "قيد التصنيع";
+    case "delivered": return "تمّ التسليم";
+    default: return null;
+  }
 }
 
 /**
