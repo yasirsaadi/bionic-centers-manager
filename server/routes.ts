@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { diffPatientEdit, patientEditNote } from "./patients/patient_edit_audit";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import {
   parseReportRange, parseReportServices, scopeDepartmentMoney,
@@ -3174,6 +3175,20 @@ export async function registerRoutes(
       // "ambiguous"` وحدها، تُترجَم هنا إلى ملاحظةٍ صريحة (نفسُ قناة
       // `costNote` القائمة أصلاً لقفل الطبيب) — لا صمتَ ولا كتابةً عشوائية.
       const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true);
+      //  ══ **ولا يمرّ تعديلٌ بلا تدقيق** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bs) — بالقديم والجديد لِما تغيّر فعلاً. ══
+      {
+        const diff = diffPatientEdit(existingPatient as any, (patient ?? {}) as any, Object.keys(patch));
+        if (diff.fields.length > 0) {
+          await logAudit({
+            entityType: "patient", entityId: id, action: "update",
+            userId: branchSession?.userId ?? null, userName: branchSession?.displayName ?? null,
+            branchId: existingPatient.branchId ?? null,
+            oldValues: diff.oldValues, newValues: diff.newValues,
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            notes: patientEditNote(diff),
+          });
+        }
+      }
       const caseCostAmbiguousNote = (patient as any)?.caseCostSync === "ambiguous"
         ? "تحديث الإجماليّ لم يغيّر كلفة أيّ حالةٍ بعينها — لهذا المريض أكثر من حالة نشطة. عدّل كلفة الحالة المطلوبة من تبويبها في ملف المريض."
         : null;
@@ -3185,7 +3200,7 @@ export async function registerRoutes(
       res.json(costLockedByFollowup
         ? {
           ...withNote,
-          costNote: "لم تُعدَّل الكلفة: سعر الجهاز معتمد من الطبيب — التعديل يمرّ بطلب تعديل سعر يعتمده طبيب أو المسؤول العام",
+          costNote: "لم تُعدَّل الكلفة: للمريض جهازٌ ينتظر قرار البيع — احسم القرار أو عدّل السعر من «تحديد السعر النهائي» في بطاقة «قرار المريض بعد المعاينة»",
         }
         : caseCostAmbiguousNote
           ? { ...withNote, costNote: caseCostAmbiguousNote }
