@@ -8634,6 +8634,16 @@ export async function registerRoutes(
     if (!maySurveys(req, false)) return surveyDenied(res);
     try {
       const id = parseInt(req.params.id);
+      //  إجاباتُ استبيانٍ من فرعٍ آخر لا تُقرأ برقمها — كانت بلا فحصِ فرعٍ إطلاقاً.
+      //  تصل إن كان الاستبيانُ في فرعٍ من فروع الجلسة (كقائمة الصفحة) أو كان
+      //  الملفُّ يصلها (كنقطة استبيانات المريض). وغيرُ ذلك 404 لا يكشف وجودَه.
+      const response = await storage.getSurveyResponse(id);
+      if (!response) return res.status(404).json({ message: "الاستبيان غير موجود" });
+      const allowed = accessibleBranchesFor(req);
+      if (allowed !== null && !allowed.includes(response.branchId)
+          && !(await reachesPatient(req, await storage.getPatient(response.patientId)))) {
+        return res.status(404).json({ message: "الاستبيان غير موجود" });
+      }
       const answers = await storage.getSurveyAnswers(id);
       res.json(answers);
     } catch (err) {

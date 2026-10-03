@@ -373,6 +373,7 @@ export interface IStorage {
   getSurveyResponses(branchId?: number): Promise<SurveyResponse[]>;
   getSurveyResponsesByPatient(patientId: number): Promise<SurveyResponse[]>;
   createSurveyResponse(response: InsertSurveyResponse): Promise<SurveyResponse>;
+  getSurveyResponse(id: number): Promise<SurveyResponse | undefined>;
   getSurveyAnswers(responseId: number): Promise<SurveyAnswer[]>;
   createSurveyAnswer(answer: InsertSurveyAnswer): Promise<SurveyAnswer>;
 }
@@ -4979,6 +4980,11 @@ export class DatabaseStorage implements IStorage {
   async createSurveyResponse(response: InsertSurveyResponse): Promise<SurveyResponse> {
     const [created] = await db.insert(surveyResponses).values(response).returning();
     return created;
+  }
+
+  async getSurveyResponse(id: number): Promise<SurveyResponse | undefined> {
+    const [row] = await db.select().from(surveyResponses).where(eq(surveyResponses.id, id));
+    return row;
   }
 
   async getSurveyAnswers(responseId: number): Promise<SurveyAnswer[]> {
