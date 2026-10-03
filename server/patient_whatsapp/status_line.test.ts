@@ -166,9 +166,16 @@ check(callAt > 0 && gateAt > 0 && callAt < gateAt,
   `callAt=${callAt} gateAt=${gateAt}`);
 check(!dispatcher.includes("dispatcher idle") && !dispatcher.includes("dispatcher started"),
   "هـ٤. والنصّان المكتوبان باليد زالا — لا سطرَ حالةٍ ثانٍ ينحرف عن الأوّل");
-check((body.match(/console\.log\(/g) ?? []).length === 1,
-  "هـ٥. **وسطرُ إقلاعٍ واحد لا سطران** — كما وُعد",
-  String((body.match(/console\.log\(/g) ?? []).length));
+//  **سطرٌ واحد لكلّ قناة** — منذ عودة تلغرام المرضى قناةً ثانية (#484، §4.bl)
+//  صار للعامل سطرُ حالةٍ ثانٍ **لقناةٍ ثانية** (`patientBotStatusLine`)، لا سطرٌ
+//  ثانٍ لواتساب. فالعقدُ: نداءان بالضبط، كلٌّ منهما دالّةُ حالةِ قناته مرّةً
+//  واحدة، ولا `console.log` آخرَ مكتوبٌ باليد بجانبهما.
+const bootLogs = body.match(/console\.log\([^\n]*\)/g) ?? [];
+check(bootLogs.length === 2
+    && bootLogs.filter((l) => l === "console.log(patientWhatsappStatusLine())").length === 1
+    && bootLogs.filter((l) => l === "console.log(patientBotStatusLine())").length === 1,
+  "هـ٥. **وسطرُ إقلاعٍ واحد لواتساب لا سطران** — وسطرُ تلغرام لقناته وحدها",
+  bootLogs.join(" | "));
 check(/startNotificationDispatcher\s*\(\s*\)/.test(bootIndex),
   "هـ٦. و`server/index.ts` ينادي الدالّةَ فعلاً — فالسطرُ يبلغ سجلَّ Render");
 

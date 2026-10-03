@@ -21,6 +21,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { createJournalForPayment } from "./accounting/auto_journal";
+import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -125,6 +126,11 @@ async function cleanup() {
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع النقديّ كما يُنشئه الخادمُ الحقيقيّ** — `seedChartOfAccounts`
+  //  تُنادى عند كلّ إقلاع (`migrations/runner.ts`) وتشتقّ صندوقاً لكلّ فرعٍ موجود.
+  //  والفروعُ هنا تُدرَج بعد الترحيلات، فعلى قاعدةٍ جديدة لا صندوقَ (111101) ولا قيد،
+  //  فتُنادى الآن — بلا رمزٍ يُخترَع، والزارعُ يتخطّى الموجودَ (idempotent).
+  await seedChartOfAccounts();
   await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
            VALUES ($1,$2,'x','المسؤول','admin',1,'[1]'::jsonb,true)
            ON CONFLICT (id) DO UPDATE SET role='admin', display_name='المسؤول',

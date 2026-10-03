@@ -502,6 +502,8 @@ async function main() {
       await q(`UPDATE post_exam_followups SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
       await q(`UPDATE prosthetic_work_orders SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
       await q(`UPDATE cost_entries SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
+      //  وزيارةُ الحضور التي يكتبها البيعُ منذ §4.aw (#464) تحمل الهويّةَ أيضاً، ولم تكن قبل الإغلاق.
+      await q(`UPDATE visits SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
       await q(`DELETE FROM patient_device_episodes WHERE patient_id=$1`, [p]);
       const legacy = await shape(p);
       same("١٨. (الشكلُ الإنتاجيّ: بيعٌ وأمرٌ بلا هويّة)",
@@ -645,6 +647,8 @@ async function main() {
       await q(`UPDATE prosthetic_work_orders SET device_episode_id=NULL WHERE patient_id=$1`,
         [patientId]);
       await q(`UPDATE cost_entries SET device_episode_id=NULL WHERE patient_id=$1`, [patientId]);
+      //  وزيارةُ الحضور التي يكتبها البيعُ منذ §4.aw (#464) تحمل الهويّةَ أيضاً، ولم تكن قبل الإغلاق.
+      await q(`UPDATE visits SET device_episode_id=NULL WHERE patient_id=$1`, [patientId]);
       await q(`DELETE FROM patient_device_episodes WHERE patient_id=$1`, [patientId]);
     };
     //  (ب) حلقةٌ قائمةٌ **أقدم**، والمفقودُ أحدثُ منها ⟶ يُلحَق بأمان.
@@ -721,6 +725,8 @@ async function main() {
                 WHERE patient_id=$1`, [p]);
       await q(`UPDATE prosthetic_work_orders SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
       await q(`UPDATE cost_entries SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
+      //  وزيارةُ الحضور التي يكتبها البيعُ منذ §4.aw (#464) تحمل الهويّةَ أيضاً، ولم تكن قبل الإغلاق.
+      await q(`UPDATE visits SET device_episode_id=NULL WHERE patient_id=$1`, [p]);
       await q(`DELETE FROM patient_device_episodes WHERE patient_id=$1`, [p]);
       const before = await shape(p);
       await runRepair();

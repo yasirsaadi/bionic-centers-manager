@@ -950,10 +950,8 @@ export async function getOrderDetail(id: number) {
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
       deviceSequence: PDE.sequenceNumber,
-      agreedCost: PDE.agreedCost,
-      maintenanceFinalPrice: WO.maintenanceFinalPrice,
-      maintenanceOriginalPrice: WO.maintenanceOriginalPrice,
-      maintenanceUnderWarranty: WO.maintenanceUnderWarranty,
+      //  **ولا مالَ هنا** — صفحةُ الأمر يفتحها الخبيرُ المسنَد بلا صلاحية مال، ولا شاشةَ تقرأ منها
+      //  سعراً. مالُ العملية بابُه `getAllOrdersForPatient` خلف `includeMoney` (§4.al).
       sequenceNumber: PDE.sequenceNumber,
     })
     .from(WO)

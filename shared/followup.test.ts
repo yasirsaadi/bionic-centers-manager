@@ -291,10 +291,13 @@ same("   والسببُ المعروف يُقبل", isFollowupReason("waiting_sa
 //  و`closed_admin_void` تُغلق عمليةً بطلت بقرارٍ إداريٍّ مدقَّق. ولم تُوسَم
 //  أيٌّ منهما `closed_without_purchase`: معناها المعروض «مغلق بدون شراء»،
 //  والمريضُ لم يرفض الشراء في الحالتين.
-same("ك. النهائيّاتُ أربعٌ لا غير",
+//  **ثمّ خمساً بترحيل ٠٧٩** (`closed_request_cancelled` — سُحب طلبُ الجهاز قبل
+//  التصنيع، §4.r، #294) **وستّاً بترحيل ٠٨١** (`closed_decision_cancelled` —
+//  «إلغاء الحسم»، §4.v، #309).
+same("ك. النهائيّاتُ ستٌّ لا غير",
   FOLLOWUP_STATUSES.filter(isTerminal),
   ["closed_without_purchase", "converted", "closed_exam_cancelled",
-    "closed_admin_void"]);
+    "closed_admin_void", "closed_request_cancelled", "closed_decision_cancelled"]);
 same("ك.ج **وعنوانُ الملغاة إدارياً يقول سببَها**",
   FOLLOWUP_STATUS_LABELS.closed_admin_void, "ملغاة إدارياً");
 same("ك.ب وعنوانُها يقول سببَها",
@@ -357,9 +360,16 @@ console.log("\n── لا حالةَ تنتظر طبيباً ──");
 //  تبقى في القائمة لأن إعادةَ فتحها فعلٌ مشروعٌ يملكه الفرع.)
 //  و`closed_admin_void` كذلك (ترحيل ٠٦٤): عمليةٌ بطلت إدارياً لا تُبعَث —
 //  الطلبُ الصحيح يُفتَح من جديد بمتابعته هو.
+//  و`closed_request_cancelled` (٠٧٩) و`closed_decision_cancelled` (٠٨١) كذلك:
+//  طلبٌ سُحب أو حسمٌ لم يكن مستحقّاً لا يُبعثان — ولا فعلَ عليهما لأحد (أدناه).
+const UNREVIVABLE = ["converted", "closed_exam_cancelled", "closed_admin_void",
+  "closed_request_cancelled", "closed_decision_cancelled"] as const;
 const NON_TERMINAL = FOLLOWUP_STATUSES.filter(
-  (st) => st !== "converted" && st !== "closed_exam_cancelled"
-    && st !== "closed_admin_void");
+  (st) => !(UNREVIVABLE as readonly string[]).includes(st));
+same("   **والطرفيّتان الجديدتان (٠٧٩، ٠٨١) بلا فعلٍ لأحد** — لا تُبعثان",
+  (["closed_request_cancelled", "closed_decision_cancelled"] as const)
+    .map((st) => [recv, mgr, doc, admin].map((x) => allowedActions(x, st).length)),
+  [[0, 0, 0, 0], [0, 0, 0, 0]]);
 same("ت. **الاستقبالُ يملك فعلاً في كلّ حالةٍ حيّة إلّا الطلبَ القديم**",
   NON_TERMINAL.filter((st) => allowedActions(recv, st).length === 0),
   ["price_approval_pending"]);

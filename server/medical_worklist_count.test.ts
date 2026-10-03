@@ -70,6 +70,8 @@ async function http(method: string, path: string, session: any, body?: any) {
 
 async function cleanup() {
   await q(`DELETE FROM medical_review_requests WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
+  //  فتحُ طلب الجهاز يكتب زيارةَ حضورٍ معه (§4.aw، #464) تشير إلى الحالة — تُحذف قبلها.
+  await q(`DELETE FROM visits WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (SELECT id FROM patients WHERE referral_source = $1)`, [MARK]);
   await q(`DELETE FROM patients WHERE referral_source = $1`, [MARK]);
@@ -90,6 +92,10 @@ async function mkCase(patientId: number, branchId = 1) {
 }
 
 async function main() {
+  //  الفرعان اللذان تشير إليهما الحساباتُ والملفّاتُ أدناه (`system_users_branch_id` مفتاحٌ أجنبيّ) —
+  //  قاعدةٌ مبنيّةٌ من الصفر لا تحملهما، فلا يتّكئ الاختبارُ على بقايا قاعدةٍ أخرى.
+  await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
   const mkDoctor = (id: number, username: string, specialties: string[], branchId: number) => q(
     `INSERT INTO system_users
        (id, username, password_hash, role, display_name, branch_id, branch_ids, medical_specialties, is_active)

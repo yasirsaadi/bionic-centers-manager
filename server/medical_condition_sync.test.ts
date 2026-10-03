@@ -47,7 +47,14 @@ async function main() {
   same("٠.٤ «constructor» ليس رمزاً", patientDepartmentsLabel({ medicalCondition: "constructor" }), "constructor");
 
   const applied = await q(`SELECT 1 FROM _migrations WHERE name='088_sync_medical_condition'`);
-  if (applied.length) { console.error("القاعدةُ طُبِّق عليها ٠٨٨ — استعمل قالباً بلا الترحيل."); process.exit(2); }
+  //  **قاعدةُ الاختبار تُعاد إلى ما قبل ٠٨٨ بنفسها** — القالبُ المعتاد (`bcm_base`) مُرحَّلٌ كاملاً، فكان
+  //  الاختبارُ يخرج بلا قياس. يُزال ما أنشأه الترحيلُ وحده (مُطلِقُه ودالّتُه وسطرُ تسجيله)، ثمّ يُقاس التصحيحُ
+  //  الرجعيُّ والمُطلِقُ من الصفر كما لو كان أوّلَ إقلاع. (الحارسُ أعلاه يقصر هذا على قاعدةٍ محلّية.)
+  if (applied.length) {
+    await q(`DROP TRIGGER IF EXISTS trg_sync_medical_condition ON patients`);
+    await q(`DROP FUNCTION IF EXISTS sync_patient_medical_condition()`);
+    await q(`DELETE FROM _migrations WHERE name='088_sync_medical_condition'`);
+  }
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
 
   const STALE = await mk("أ أطراف صار علاجاً", "amputee", { physio: true });

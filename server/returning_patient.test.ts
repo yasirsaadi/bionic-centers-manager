@@ -718,6 +718,9 @@ async function main() {
       const ok = await create({
         name: "مبتورٌ معرَّف", isAmputee: true,
         amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة",
+        //  هاتفٌ خاصّ به: ٦٤ سجّل `NEW_PATIENT.phone` لمريضٍ آخر، ومنعُ تكرار
+        //  التسجيل بالهاتف (#279) يردّه ٤٠٩ — وليس هو محلَّ هذا الفحص.
+        phone: "07701234570",
       });
       check(ok.status === 200 || ok.status === 201,
         "٧٠. **والتعريفُ المنظَّم يمرّ**", `${ok.status} ${JSON.stringify(ok.body)}`);

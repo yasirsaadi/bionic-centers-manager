@@ -516,7 +516,7 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    console.log("\n── ز. إعادةُ الفتح وإعادةُ الحسم من فاعلٍ آخر ──");
+    console.log("\n── ز. إعادةُ الفتح على مسار المعاينة — بابٌ مغلق (٠٧٢) ──");
     // ══════════════════════════════════════════════════════════════════
     {
       const { fid } = await readySale("إعادةُ-حسم");
@@ -525,28 +525,37 @@ async function main() {
       const beforeRow = before.find((x: any) => x.followupId === fid);
       same("٢٥. الإعدادُ: حسمتها ريام أوّلاً", beforeRow?.resolvedByName, "ريام");
 
+      //  ══ **بابُ `reopen` العامّ مغلقٌ على مسار المعاينة** (ترحيل ٠٧٢، #265) ══
+      //  متابعةٌ مرساتُها حلقةُ جهازٍ على مسار المعاينة لا تُعاد فتحها مباشرةً
+      //  إلى حالةٍ تجارية — تُردّ ٤٠٩ عقدَ مسار، وتدلّ على «عاد للشراء» (معاينةٌ
+      //  ثانية). فلا «إعادةَ حسمٍ من فاعلٍ آخر» من هذا الباب: الحسمُ الأوّل يبقى
+      //  كما هو، والطابورُ والتاريخُ لا يُمَسّان.
+      const eventsBefore = await q(
+        `SELECT id, event_type, actor_name FROM post_exam_followup_events
+          WHERE followup_id=$1 ORDER BY id ASC`, [fid]);
       const reopenR = await http("POST", `/api/followups/${fid}/reopen`, S.manager, {});
-      same("٢٦. الإعدادُ: أُعيد فتحها", reopenR.status, 200);
+      same("٢٦. **إعادةُ الفتح على مسار المعاينة تُردّ ٤٠٩** — وتدلّ على «عاد للشراء»",
+        [reopenR.status, reopenR.body?.error],
+        [409, "هذه متابعةُ جهازٍ على مسار المعاينة — لا تُعاد فتحها مباشرةً. "
+          + "استعمل «ما سبب حضور المريض اليوم؟» ⟵ «عاد للشراء» لإرساله لمعاينةٍ طبية جديدة."]);
 
       const midW = await waiting(S.admin);
-      check(idsOf(midW.body).includes(fid),
-        "٢٧. **وتعود «بانتظار الحسم» فعلاً** — لا تبقى في «تم الحسم»");
+      const midR = (await resolved(S.admin)).body?.rows ?? [];
+      check(!idsOf(midW.body).includes(fid) && midR.some((x: any) => x.followupId === fid),
+        "٢٧. **ولا تعود «بانتظار الحسم»** — تبقى في «تم الحسم»");
 
-      await http("POST", `/api/followups/${fid}/complete-sale`, S.acct,
-        { originalPrice: 700_000, discountAmount: 0, expertUserId: EXPERT });
-      const after = (await resolved(S.admin)).body?.rows ?? [];
-      const afterRow = after.find((x: any) => x.followupId === fid);
-      same("٢٨. **والحاسمُ الآن هو المحاسب — الأحدث لا الأقدم**",
-        [afterRow?.resolvedByName, afterRow?.result], ["المحاسب", "bought"]);
+      const afterRow = midR.find((x: any) => x.followupId === fid);
+      same("٢٨. **والحاسمُ باقٍ ريام بـ«لم يشترِ»** — والمتابعةُ لم تتحرّك",
+        [afterRow?.resolvedByName, afterRow?.result,
+         (await q(`SELECT status FROM post_exam_followups WHERE id=$1`, [fid]))[0]?.status],
+        ["ريام", "not_bought", "closed_without_purchase"]);
 
       const events = await q(
-        `SELECT event_type, actor_name FROM post_exam_followup_events
+        `SELECT id, event_type, actor_name FROM post_exam_followup_events
           WHERE followup_id=$1 ORDER BY id ASC`, [fid]);
-      const types = events.map((e: any) => e.event_type);
-      check(types.includes("closed_without_purchase") && types.includes("reopened")
-        && types.includes("converted"),
-        "٢٩. **والتاريخُ كاملٌ محفوظ** — الحدثُ الأوّل («لم يشترِ» بريام) لم يُمحَ",
-        JSON.stringify(events));
+      same("٢٩. **والتاريخُ كما هو** — لا حدثَ «إعادة فتح» كُتب، والحدثُ الأوّل («لم يشترِ» بريام) باقٍ",
+        [events, events.map((e: any) => e.event_type).includes("closed_without_purchase")],
+        [eventsBefore, true]);
     }
 
     // ══════════════════════════════════════════════════════════════════

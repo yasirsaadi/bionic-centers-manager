@@ -39,8 +39,8 @@ const MARK = "اختبار-إتاحة-المراجعة";
 
 //  ذي قار = فرعُ التسجيل · بغداد = الفرعُ المُتاح · كربلاء = فرعٌ لا يصل الملفّ.
 const DHIQAR = 61, BAGHDAD = 62, KARBALA = 63;
-const R_DHIQAR = 9611, R_BAGHDAD = 9612, R_KARBALA = 9613, M_BOTH = 9614;
-const USERS = [R_DHIQAR, R_BAGHDAD, R_KARBALA, M_BOTH];
+const R_DHIQAR = 9611, R_BAGHDAD = 9612, R_KARBALA = 9613, M_BOTH = 9614, A_ADMIN = 9615;
+const USERS = [R_DHIQAR, R_BAGHDAD, R_KARBALA, M_BOTH, A_ADMIN];
 
 const S = {
   dhiqar: { userId: R_DHIQAR, role: "reception", isAdmin: false, branchId: DHIQAR,
@@ -52,6 +52,13 @@ const S = {
   //  مديرٌ يصل الفرعين وجلستُه على بغداد — لإثبات أن «عاد للشراء» يتبع عمليتَه.
   both: { userId: M_BOTH, role: "branch_manager", isAdmin: false, branchId: BAGHDAD,
     accessibleBranches: [DHIQAR, BAGHDAD], displayName: "مدير الفرعين", permissions: {} },
+  //  **والمديرُ نفسُه بعد «تبديل الفرع» إلى ذي قار** — الفرعُ النشط وحده نطاقُ عمله (§4.ay).
+  bothOnDhiqar: { userId: M_BOTH, role: "branch_manager", isAdmin: false, branchId: DHIQAR,
+    accessibleBranches: [DHIQAR], displayName: "مدير الفرعين", permissions: {} },
+  //  المسؤولُ العامّ وجلستُه على بغداد — نطاقُه كلُّ الفروع (§4.ay البند ٢)، فيبقى به قياسُ «الطلبُ يتبع
+  //  عمليتَه لا فرعَ الجلسة» الذي لم يعد ممكناً بمديرٍ نطاقُه فرعُه النشط وحده.
+  adminOnBaghdad: { userId: A_ADMIN, role: "admin", isAdmin: true, branchId: BAGHDAD,
+    accessibleBranches: [DHIQAR, BAGHDAD, KARBALA], displayName: "المسؤول", permissions: {} },
 };
 
 async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
@@ -185,6 +192,7 @@ async function main() {
     [R_BAGHDAD, "reception", BAGHDAD, [BAGHDAD], "استقبال بغداد"],
     [R_KARBALA, "reception", KARBALA, [KARBALA], "استقبال كربلاء"],
     [M_BOTH, "branch_manager", BAGHDAD, [DHIQAR, BAGHDAD], "مدير الفرعين"],
+    [A_ADMIN, "admin", BAGHDAD, [DHIQAR, BAGHDAD, KARBALA], "المسؤول"],
   ] as any[]) {
     //  صلاحياتُ قالب «الاستقبال» في شاشة المستخدمين — تُقرأ حيّاً من هنا على
     //  كلّ طلب، فالجلسةُ لا تحملها.
@@ -252,8 +260,9 @@ async function main() {
       "ج٣. **بغداد تفتح طلبَ الجهاز** — كان ٥٠٠ «تعذّر بدء الجهاز» بعد أن فُتحت الحلقة");
     //  صفرٌ لا `NaN` حين يُردّ الفتح — فتسقط البنودُ التالية ببندها لا بانهيار الحزمة.
     const epB = Number(devOpen.body?.id ?? 0);
-    eq(await writes(p2.id), { ...c0, requests: c0.requests + 1, episodes: c0.episodes + 1 },
-      "ج٤. حلقةٌ واحدة وطلبٌ واحد — **لا نصفَ كتابة**");
+    //  **وزيارةُ حضورٍ واحدة** «طلب معاينة طبية» تُكتب في معاملة الفتح نفسِها (§4.aw، #464) — جزءٌ من الكتابة الكاملة.
+    eq(await writes(p2.id), { ...c0, requests: c0.requests + 1, episodes: c0.episodes + 1, visits: c0.visits + 1 },
+      "ج٤. حلقةٌ واحدة وطلبٌ واحد وزيارةُ حضورٍ واحدة — **لا نصفَ كتابة**");
     const [epRow] = await q(`SELECT branch_id FROM patient_device_episodes WHERE id=$1`, [epB]);
     const [epReq] = await q(`SELECT branch_id FROM medical_review_requests WHERE device_episode_id=$1`, [epB]);
     eq([Number(epRow?.branch_id), Number(epReq?.branch_id)], [BAGHDAD, BAGHDAD],
@@ -342,13 +351,26 @@ async function main() {
       { patientId: p5.id, deviceEpisodeId: epInDhiqar });
     eq(rtpBonA.status, 403,
       "ز٣. **وعمليةُ ذي قار تبقى لذي قار** — الإتاحةُ لا تنقل قرارَ عمليةِ فرعٍ آخر");
+    //  **الفرعُ النشط وحده نطاقُ العمل** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ay): مديرٌ يصل الفرعين وجلستُه على بغداد
+    //  لا يمسّ عمليةَ ذي قار حتى يبدّل الفرع — وبعد التبديل يُعيدها، وطلبُها في ذي قار.
     const rtpM = await http("POST", "/api/followups/return-to-purchase", S.both,
       { patientId: p5.id, deviceEpisodeId: epInDhiqar });
-    eq(rtpM.status, 201, "ز٤. ومديرٌ يصل الفرعين يُعيدها");
+    eq(rtpM.status, 403, "ز٤. **ومديرٌ يصل الفرعين وجلستُه على بغداد لا يُعيدها** — حتى يبدّل الفرع (§4.ay)");
+    const rtpMD = await http("POST", "/api/followups/return-to-purchase", S.bothOnDhiqar,
+      { patientId: p5.id, deviceEpisodeId: epInDhiqar });
+    eq(rtpMD.status, 201, "ز٤ب. **وبعد تبديل الفرع إلى ذي قار يُعيدها**");
     const [rtpReqM] = await q(`SELECT branch_id FROM medical_review_requests WHERE id=$1`,
-      [Number(rtpM.body?.reviewRequestId ?? 0)]);
-    eq(Number(rtpReqM?.branch_id), DHIQAR,
-      "ز٥. **وطلبُها في ذي قار مع حلقتها** — لا في فرع جلسته (بغداد)");
+      [Number(rtpMD.body?.reviewRequestId ?? 0)]);
+    eq(Number(rtpReqM?.branch_id), DHIQAR, "ز٥. وطلبُها في ذي قار مع حلقتها");
+    //  والمسؤولُ العامّ على بغداد — نطاقُه كلُّ الفروع — يُعيد عمليةَ ذي قار، **وطلبُها في ذي قار لا في فرع جلسته**.
+    const epInDhiqar2 = await mkClosed(3, DHIQAR);
+    const rtpA = await http("POST", "/api/followups/return-to-purchase", S.adminOnBaghdad,
+      { patientId: p5.id, deviceEpisodeId: epInDhiqar2 });
+    eq(rtpA.status, 201, "ز٦. والمسؤولُ العامّ وجلستُه على بغداد يُعيد عمليةَ ذي قار");
+    const [rtpReqA] = await q(`SELECT branch_id FROM medical_review_requests WHERE id=$1`,
+      [Number(rtpA.body?.reviewRequestId ?? 0)]);
+    eq(Number(rtpReqA?.branch_id), DHIQAR,
+      "ز٧. **وطلبُها في ذي قار مع حلقتها** — لا في فرع جلسته (بغداد)");
 
     // ══════════════════════════════════════════════════════════════════
     console.log("\n── ح. حارسٌ معماريّ: لا قياسَ بفرع التسجيل وحده في هذه الأبواب ──");

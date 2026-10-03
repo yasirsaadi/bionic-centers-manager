@@ -174,6 +174,8 @@ async function cleanup() {
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_contacts WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_code_aliases WHERE patient_id IN (${ids})`);
+  //  الإتاحةُ التي يمنحها الاختبارُ نفسُه (ترحيل ٠٨٠) تشير إلى المريض — تُحذف قبله.
+  await q(`DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   await q(`DELETE FROM patient_code_aliases a
             WHERE NOT EXISTS (SELECT 1 FROM patients p WHERE p.id = a.patient_id)`);

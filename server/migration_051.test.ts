@@ -21,9 +21,17 @@
 // يمرّ هنا لأن هذا الملفّ يعيد إنشاء فهارس ٠٥١ بنفسه قبل أن يفحصها.
 // وصفُ المخطَّط الحيّ اليوم في `test:parallel-device-operations` و
 // `test:maintenance-concurrent`.
+//
+// ══ والقاعدةُ التي يعمل عليها مخطَّطُها حيٌّ (بعد ٠٧٣ و٠٨٢) ════════════════
+// فإعادةُ ٠٥١ عليها تُعيد فهارسَه الثلاثة **بجانب** بديلَي ٠٧٣ — لا مكانهما.
+// فيُفحَص ما يضمنه ٠٥١ **وحدَه**: رفضُ البناء المكرَّر داخل معاملةٍ يُرفَع فيها
+// `uq_pwo_one_open_legacy_build` (٠٧٣) مؤقّتاً ثمّ تُلغى. **وفي الختام يُعاد
+// المخطَّطُ الحيّ** بـSQL ٠٧٣ و٠٨٢ نفسِه، ويُقارَن بلقطة البدء.
 
 import { pool } from "./db";
 import { sql as MIG051, name as NAME051 } from "./migrations/051_device_order_purpose_uniqueness";
+import { sql as MIG073 } from "./migrations/073_parallel_device_operations";
+import { sql as MIG082 } from "./migrations/082_concurrent_maintenance_orders";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -59,6 +67,16 @@ async function runMigration() {
     await c.query("INSERT INTO _migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING", [NAME051]);
     await c.query("COMMIT");
   } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
+}
+/** يُعيد المخطَّطَ الحيّ بعد أن أحيا هذا الملفُّ فهارسَ ٠٥١ — بـSQL الترحيلين نفسِه. */
+async function restoreLiveSchema() {
+  await q(MIG073);
+  await q(MIG082);
+}
+async function uqIndexes() {
+  return (await q<{ indexname: string }>(
+    `SELECT indexname FROM pg_indexes WHERE tablename='prosthetic_work_orders'
+       AND indexname LIKE 'uq_pwo%' ORDER BY indexname`)).map((i) => i.indexname);
 }
 async function mkPatient(name: string) {
   const r = await q<{ id: number }>(
@@ -104,15 +122,19 @@ async function main() {
   await cleanup();
 
   const rowsBefore = await q(`SELECT count(*)::int n FROM prosthetic_work_orders`);
+  const liveIndexes = await uqIndexes();
+  same("المخطَّطُ الحيّ قبل البدء: بديلا ٠٧٣ وحدهما (٠٨٢ رفع فهرسَي الصيانة)", liveIndexes,
+    ["uq_pwo_one_open_build_per_episode", "uq_pwo_one_open_legacy_build"]);
 
   console.log("\n── الفهارس ──");
   await runMigration();
   await runMigration();   // idempotent: مرّتان بلا خطأ
-  const idx = await q<{ indexname: string }>(
-    `SELECT indexname FROM pg_indexes WHERE tablename='prosthetic_work_orders'
-       AND indexname LIKE 'uq_pwo%' ORDER BY indexname`);
-  same("الثلاثة البديلة موجودة والقديم مرفوع", idx.map((i) => i.indexname),
-    ["uq_pwo_one_open_build_per_service", "uq_pwo_one_open_legacy_maint", "uq_pwo_one_open_maint_per_episode"]);
+  const idx = (await uqIndexes()).map((indexname) => ({ indexname }));
+  //  الثلاثةُ التي ينشئها ٠٥١ — **بجانب** بديلَي ٠٧٣ اللذين لا يمسّهما ٠٥١.
+  same("الثلاثة البديلة موجودة والقديم مرفوع — وبديلا ٠٧٣ بجانبها لم يُمَسّا",
+    idx.map((i) => i.indexname),
+    ["uq_pwo_one_open_build_per_episode", "uq_pwo_one_open_build_per_service",
+     "uq_pwo_one_open_legacy_build", "uq_pwo_one_open_legacy_maint", "uq_pwo_one_open_maint_per_episode"]);
   check(!idx.some((i) => i.indexname === "uq_pwo_one_active_per_service"),
     "و«uq_pwo_one_active_per_service» لم يعد موجوداً");
   same("والتشغيل مرّتين لم يغيّر شيئاً",
@@ -121,10 +143,35 @@ async function main() {
   console.log("\n── ما يبقى ممنوعاً ──");
   const p1 = await mkPatient("بناءان");
   await mkCase(p1);
-  await mkOrder(p1, "initial_build", null);
-  const dupBuild = await refused(() => mkOrder(p1, "initial_build", null));
+  //  **فهرسُ ٠٥١ وحدَه يرفض**: داخل معاملةٍ يُرفَع فيها بديلُ ٠٧٣ المطابق
+  //  (`uq_pwo_one_open_legacy_build`) — ثمّ تُلغى، فيعود كما كان.
+  let dupBuild: string | null = null;
+  {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("DROP INDEX uq_pwo_one_open_legacy_build");
+      const ins = `INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id, service_type,
+                     purpose, status, device_episode_id)
+                   VALUES ($1,1,$2,'prosthetic','initial_build','active',NULL)`;
+      await c.query(ins, [p1, EXPERT]);
+      dupBuild = await refused(() => c.query(ins, [p1, EXPERT]));
+    } finally {
+      await c.query("ROLLBACK");
+      c.release();
+    }
+  }
   check(!!dupBuild && /uq_pwo_one_open_build_per_service/.test(dupBuild),
-    "بناءان مفتوحان لخدمةٍ واحدة ⟶ مرفوض", String(dupBuild));
+    "بناءان مفتوحان لخدمةٍ واحدة ⟶ مرفوض (بفهرس ٠٥١ وحدَه)", String(dupBuild));
+  same("   والمعاملةُ أُلغيت: بديلُ ٠٧٣ عاد، ولا أمرَ بقي",
+    [(await uqIndexes()).includes("uq_pwo_one_open_legacy_build"),
+     (await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`, [p1]))[0].n],
+    [true, 0]);
+  //  وبديلُ ٠٧٣ يرفض المكرَّرَ نفسَه على المخطَّط كما هو.
+  await mkOrder(p1, "initial_build", null);
+  check(/uq_pwo_one_open_(legacy_build|build_per_service)/.test(
+    String(await refused(() => mkOrder(p1, "initial_build", null)))),
+    "   وعلى المخطَّط كاملاً يُرفض كذلك");
 
   const p2 = await mkPatient("صيانتان لجهاز");
   const c2 = await mkCase(p2);
@@ -169,6 +216,8 @@ async function main() {
 
   await cleanup();
   await q(`DELETE FROM system_users WHERE id = $1`, [EXPERT]);
+  await restoreLiveSchema();
+  same("والمخطَّطُ الحيّ أُعيد كما كان قبل البدء", await uqIndexes(), liveIndexes);
   console.log(`\n${failures === 0 ? "✅ كل الاختبارات نجحت" : `❌ ${failures} فشل`}`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);
@@ -176,6 +225,6 @@ async function main() {
 
 main().catch(async (e) => {
   console.error(e);
-  try { await cleanup(); await pool.end(); } catch { /* ignore */ }
+  try { await cleanup(); await restoreLiveSchema(); await pool.end(); } catch { /* ignore */ }
   process.exit(1);
 });

@@ -86,11 +86,30 @@ async function mkPatient(branchId = 1) {
 }
 
 async function main() {
+  //  الفرعان اللذان تشير إليهما الحساباتُ والملفّاتُ أدناه (`system_users_branch_id` مفتاحٌ أجنبيّ) —
+  //  قاعدةٌ مبنيّةٌ من الصفر لا تحملهما، فلا يتّكئ الاختبارُ على بقايا قاعدةٍ أخرى.
+  await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
   await q(
     `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids)
      VALUES ($1,$2,'x','admin',$3,1,'[1,2]'::jsonb)
      ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, branch_id = EXCLUDED.branch_id`,
     [ADMIN, "ptb_admin", "المسؤول"]);
+  //  **وكلُّ جلسةٍ لها صفُّها** (#275، §4.ar البند ٧): الجلسةُ غيرُ الإدارية تُعاد قراءتُها حيّاً من
+  //  `system_users` مع كلّ طلب، فجلسةٌ بلا صفّ تُغلَق بـ٤٠١. ومفتاحُ «حذف المرضى» كما يتركه الترحيلُ ٠٨٩.
+  for (const [id, username, role, name, branch] of [
+    [RECV, "ptb_recv", "reception", "الاستقبال", 1],
+    [MANAGER_OTHER, "ptb_mgr2", "branch_manager", "مديرُ فرعٍ آخر", 2],
+  ] as const) {
+    await q(
+      `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids, is_active,
+         can_delete_patients)
+       VALUES ($1,$2,'x',$3,$4,$5,jsonb_build_array($5::int),true, $3 = 'branch_manager')
+       ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, display_name = EXCLUDED.display_name,
+         branch_id = EXCLUDED.branch_id, branch_ids = EXCLUDED.branch_ids, is_active = true,
+         can_delete_patients = EXCLUDED.can_delete_patients`,
+      [id, username, role, name, branch]);
+  }
 
   await cleanup();
 

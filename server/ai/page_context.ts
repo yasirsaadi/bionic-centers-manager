@@ -60,6 +60,7 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/discount-approvals": "اعتماد الخصومات",
   "/no-exam-review": "مبالغ سابقة بانتظار الإكمال",
   "/returned-charges": "مبالغ مُعادة للتصحيح",
+  "/returned-from-doctor": "المُرجَعون من الطبيب",
   "/payment-corrections": "تصحيح الدفعات",
   "/daily-review": "المراجعة اليومية",
   "/patient-trash": "المحذوفات",

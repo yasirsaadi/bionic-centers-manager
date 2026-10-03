@@ -14,6 +14,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { deriveMaintenanceTerms } from "../../../shared/maintenance";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -190,22 +191,46 @@ const noExamOp = read("./NoExamOperationDialog.tsx");
 check("٣٧. **ولا وعدَ بأن الصفر مبلغٌ مقبول**",
   !visit.includes("صفر أو أي مبلغ") && !noExamOp.includes("صفر أو أي مبلغ"),
   (noExamOp.match(/.*صفر.*/g) ?? []).join("\n"));
+//  ══ **والقاعدةُ انتقلت إلى الاشتقاق المشترك** (المرحلة الثالثة، #257، §4.j) ══
+//  أُزيل مربّعُ «بلا أجور» وحقلُ الأجر الواحد عمداً: الصيانةُ صارت «سعرٌ أصليّ
+//  وخصمٌ ⟵ نهائيٌّ يشتقّه الخادم» (`deriveMaintenanceTerms` فوق
+//  `deriveOfferFromDiscount`). فالصفرُ يُردّ **في الاشتقاق نفسِه** الذي تقرؤه
+//  الشاشةُ ويعتمده الخادم، والمجّانيُّ خصمٌ يساوي الأصليَّ صراحةً، والضمانُ
+//  (٠٨٣/٠٩١) علمٌ صريحٌ مستقلّ — لا صفرٌ متروك.
+const zeroTerms = deriveMaintenanceTerms({ originalPrice: 0, discountAmount: 0 });
 check("٣٨. **بل يُقال إنه يجب أن يكون أكبر من صفر**",
-  noExamOp.includes("المبلغ يجب أن يكون أكبر من صفر"));
+  !zeroTerms.ok && zeroTerms.error === "السعر الأصلي يجب أن يكون أكبر من صفر"
+    && noExamOp.includes("deriveOfferFromDiscount"),
+  JSON.stringify(zeroTerms));
+//  والشاشةُ لا ترسل ما لم يقبله الاشتقاق — `ready` مشروطٌ بـ`offer.ok`، وزرُّ الحفظ بـ`ready`.
 check("٣٩. **والشاشةُ تمنع الإرسال بصفر**",
-  noExamOp.includes("(!charged || amount > 0)"),
-  (noExamOp.match(/.*amount > 0.*/g) ?? []).join("\n"));
+  /const ready = [\s\S]*?Boolean\(offer\.ok\)[\s\S]*?;/.test(noExamOp)
+    && noExamOp.includes("disabled={!ready || save.isPending"),
+  (noExamOp.match(/.*offer\.ok.*/g) ?? []).join("\n"));
+const freeTerms = deriveMaintenanceTerms({ originalPrice: 50_000, discountAmount: 50_000 });
+const warrantyTerms = deriveMaintenanceTerms({ originalPrice: null, discountAmount: 0, underWarranty: true });
 check("٤٠. **والمجّانيُّ يُختار صراحةً — لا يُترَك صفراً**",
-  noExamOp.includes('data-testid="no-exam-op-no-charge"')
-  && noExamOp.includes("بلا أجور"));
+  freeTerms.ok && freeTerms.kind === "free" && freeTerms.finalPrice === 0
+    && freeTerms.originalPrice === 50_000
+    && warrantyTerms.ok && warrantyTerms.underWarranty === true
+    && noExamOp.includes('data-testid="no-exam-op-discount-amount"')
+    && noExamOp.includes('data-testid="no-exam-op-warranty"')
+    && noExamOp.includes("<b>مجاني</b>"),
+  JSON.stringify({ freeTerms, warrantyTerms }));
 //  **ونافذةُ الزيارة خلت من الصيانة كلِّها** — فلا بابَ ثانٍ بقاعدةٍ ثانية.
 check("٤٠.ب **ولا أثرَ لأجور الصيانة في نافذة الزيارة**",
   !visit.includes("maintCost") && !visit.includes("ServiceDiscountFields"),
   (visit.match(/.*maintCost.*/g) ?? []).join("\n"));
-//  والخادمُ يبقى الحارسَ الأخير على البابين معاً.
+//  والخادمُ يبقى الحارسَ الأخير: البابُ الوحيد يشتقّ بالدالّة نفسِها ويردّ خطأها
+//  ٤٠٠، والنقطةُ القديمة تقاعدت (#257) فلا تفتح صيانةً بأيّ مبلغ.
+const pcRoutes = read("../../../server/pending_charges/routes.ts");
 const mfgRoutes = read("../../../server/manufacturing/routes.ts");
-check("٤٠.ج **والخادمُ يردّ الصفرَ على نقطة الصيانة القائمة كما كان**",
-  /cost <= 0/.test(mfgRoutes));
+const maintHandler = pcRoutes.slice(pcRoutes.indexOf('app.post("/api/no-exam/maintenance", '));
+const oldHandler = mfgRoutes.slice(mfgRoutes.indexOf('app.post("/api/manufacturing/maintenance-visit"'));
+check("٤٠.ج **والخادمُ يردّ الصفرَ على باب الصيانة الوحيد — والبابُ القديم متقاعد (٤٠٩)**",
+  /const offer = deriveMaintenanceTerms\([\s\S]*?if \(!offer\.ok\) return res\.status\(400\)/.test(maintHandler)
+    && oldHandler.slice(0, 700).includes("res.status(409)"),
+  maintHandler.slice(0, 80));
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);
