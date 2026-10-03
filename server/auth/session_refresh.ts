@@ -34,11 +34,12 @@ export function accessibleBranchesOf(u: Pick<FreshUser, "branchId" | "branchIds"
  * `permissions` تُبنى بدالّة المُنادي (`buildStoredPermissions`) — مصدرٌ واحد لا نسختان.
  */
 export function applyFreshUser(
-  bs: any, fresh: FreshUser, permissions: unknown,
+  bs: any, fresh: FreshUser, permissions: unknown, closed: ReadonlySet<number> = new Set(),
 ): { branchChanged: boolean; revoked: boolean } {
   const wasAdmin = Boolean(bs.isAdmin);
   const isAdmin = fresh.role === "admin";
-  const accessible = accessibleBranchesOf(fresh);
+  //  **والفرعُ المغلقُ مؤقتاً كأنه سُحب** لغير المسؤول (ترحيل ٠٩٤، §4.bw) — بقواعد السحب أدناه نفسِها.
+  const accessible = isAdmin ? accessibleBranchesOf(fresh) : accessibleBranchesOf(fresh).filter((id) => !closed.has(id));
   const before = Number(bs.branchId ?? 0);
   let branchId = before;
   if (isAdmin) {

@@ -9,6 +9,7 @@
 // **والقراءةُ لمن يصل الملفَّ أصلاً** — ليرى الموظّفُ أن ملفَّه متاحٌ لفرعٍ آخر.
 
 import type { Express } from "express";
+import { closedBranchIds, BRANCH_CLOSED_MESSAGE } from "../branches/closure";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
@@ -69,7 +70,8 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
       //  **الفروعُ المؤهَّلة** — كلُّ فرعٍ ليس فرعَ التسجيل ولا مُتاحاً سلفاً.
       eligibleBranches: branches
         .filter((b: any) => b.id !== patient.branchId
-          && !access.some((a) => a.branchId === b.id))
+          && !access.some((a) => a.branchId === b.id)
+          && !b.temporarilyClosed)
         .map((b: any) => ({ id: b.id, name: b.name })),
       //  ولا يُعرَض زرُّ المنح لمن لا يملكه — والخادمُ هو الحارس.
       canManage: session(req).isAdmin,
@@ -88,6 +90,8 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
     const branchId = parseId(req.body?.branchId);
     if (patientId === null) return res.status(400).json({ message: "معرّف غير صالح" });
     if (branchId === null) return res.status(400).json({ message: "اختر الفرع المضاف" });
+    //  **ولا إتاحةَ لفرعٍ مغلقٍ مؤقتاً** (ترحيل ٠٩٤، §4.bw).
+    if ((await closedBranchIds()).has(branchId)) return res.status(400).json({ message: `${BRANCH_CLOSED_MESSAGE} — اختر فرعاً آخر` });
 
     //  **بوليانٌ صريح أو غياب** — نصٌّ أو `null` لا يُقرأ «لا» بصمت.
     const moveRaw = req.body?.moveOpenOperations;

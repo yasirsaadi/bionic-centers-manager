@@ -851,7 +851,7 @@ export default function CreatePatient() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {branches?.map((branch) => (
+                          {branches?.filter((b) => !b.temporarilyClosed).map((branch) => (
                             <SelectItem key={branch.id} value={String(branch.id)}>
                               {branch.name}
                             </SelectItem>

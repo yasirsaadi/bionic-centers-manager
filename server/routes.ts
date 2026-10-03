@@ -23,6 +23,7 @@ import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
 import { accessibleBranchesOf, applyFreshUser } from "./auth/session_refresh";
+import { closedBranchIds, invalidateClosedBranches, BRANCH_CLOSED_MESSAGE } from "./branches/closure";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 //  ══ تشخيصٌ مؤقّت (٢٠٢٦-٠٩-١٢) — تعليقُ كتابتين إداريَّتين إلى الأبد ══════
 //  يُزال الملفّ والاستيرادُ معاً بعد تحديد مصدر التعليق. راجع
@@ -424,8 +425,10 @@ export async function registerRoutes(
     //  يخرج. ودخولُ الطوارئ القديم (بلا `userId`) وحده يمرّ بلا لمس.
     if (!branchSession || !branchSession.userId) return next();
     let fresh: SystemUser | undefined;
+    let closed: Set<number>;
     try {
       fresh = await storage.getSystemUser(branchSession.userId);
+      closed = await closedBranchIds();
     } catch (err) {
       console.error("[permissions] تعذّر التحقّقُ من الصلاحيات حيّاً — عطلٌ في القاعدة، فالطلبُ يُردّ لا يُفوَّض بمنحةٍ قديمة:", err);
       //  `error` كبقيّة ردود «الخادم مشغول» (تشبّعُ المِجمَع — `server/db.ts`)، و`message` لقارئها القديم.
@@ -441,10 +444,12 @@ export async function registerRoutes(
       });
     }
     //  **والفروعُ والدورُ والمسؤوليّةُ مع الصلاحيات** (§4.ar البند ٧) — بقواعد الدخول نفسِها.
-    const { branchChanged, revoked } = applyFreshUser(branchSession, fresh, buildStoredPermissions(fresh));
+    const { branchChanged, revoked } = applyFreshUser(branchSession, fresh, buildStoredPermissions(fresh), closed);
     if (revoked) {
       return req.session.destroy(() => {
-        res.status(401).json({ message: "لم يعد لحسابك فرعٌ تعمل فيه — راجع المسؤول ثمّ سجّل الدخول من جديد" });
+        res.status(401).json({ message: accessibleBranchesOf(fresh!).some((id) => closed.has(id))
+          ? "فرعك مغلق مؤقتاً — لا دخول إليه حتى يُعاد فتحه"
+          : "لم يعد لحسابك فرعٌ تعمل فيه — راجع المسؤول ثمّ سجّل الدخول من جديد" });
       });
     }
     if (branchChanged) {
@@ -678,7 +683,13 @@ export async function registerRoutes(
           // it's just [branchId]. The active branchId starts as the
           // first entry; the user can switch via /api/auth/switch-branch.
           //  القاعدةُ نفسُها التي تُعيد بها المِعترِضةُ الحيّة بناءَ الجلسة (البند ٧) — لا نسختان.
-          const accessibleBranches: number[] = accessibleBranchesOf(systemUser);
+          //  **والفرعُ المغلقُ مؤقتاً لا يُدخَل** (ترحيل ٠٩٤، §4.bw) — يسقط من فروع غير المسؤول كأنه سُحب.
+          const closed = await closedBranchIds();
+          const allAssigned: number[] = accessibleBranchesOf(systemUser);
+          const accessibleBranches: number[] = isAdmin ? allAssigned : allAssigned.filter((id) => !closed.has(id));
+          if (!isAdmin && allAssigned.length > 0 && accessibleBranches.length === 0) {
+            return res.status(401).json({ message: "فرعك مغلق مؤقتاً — لا دخول إليه حتى يُعاد فتحه" });
+          }
           let userBranchId = isAdmin ? 0 : (accessibleBranches[0] ?? 0);
 
           // For non-admin users, verify the selected branch matches one
@@ -691,6 +702,9 @@ export async function registerRoutes(
           if (!isAdmin && accessibleBranches.length > 0) {
             const branchMapping = usernameToBranch[normalizedBranchKey];
             if (branchMapping && branchMapping.branchId !== "admin" && typeof branchMapping.branchId === "number") {
+              if (closed.has(branchMapping.branchId)) {
+                return res.status(401).json({ message: `${BRANCH_CLOSED_MESSAGE} — لا دخول إليه حتى يُعاد فتحه` });
+              }
               if (!accessibleBranches.includes(branchMapping.branchId)) {
                 return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
               }
@@ -837,6 +851,9 @@ export async function registerRoutes(
       : Array.isArray(branchSession?.accessibleBranches) ? branchSession.accessibleBranches : [];
     if (!branchSession?.isAdmin && !accessible.includes(targetBranchId)) {
       return res.status(403).json({ message: "هذا الفرع ليس ضمن صلاحيّاتك" });
+    }
+    if (!branchSession?.isAdmin && (await closedBranchIds()).has(targetBranchId)) {
+      return res.status(403).json({ message: BRANCH_CLOSED_MESSAGE });
     }
     const branch = await storage.getBranch(targetBranchId);
     if (!branch) return res.status(404).json({ message: "الفرع غير موجود" });
@@ -1276,6 +1293,43 @@ export async function registerRoutes(
       }
       throw err;
     }
+  });
+
+  //  ══ **إغلاقُ الفرع مؤقتاً وإعادةُ فتحه** (ترحيل ٠٩٤، §4.bw) — للمسؤول وحده، بسطر تدقيق ══
+  app.post("/api/admin/branches/:id/closure", isAuthenticated, async (req: any, res) => {
+    const bs = (req.session as any).branchSession;
+    if (!bs?.isAdmin) return res.status(403).json({ message: "غير مصرح" });
+    const branchId = Number(req.params.id);
+    if (!Number.isInteger(branchId) || branchId <= 0) return res.status(400).json({ message: "معرف الفرع غير صالح" });
+    const body = req.body ?? {};
+    if (Object.keys(body).some((k) => k !== "closed") || typeof body.closed !== "boolean") {
+      return res.status(400).json({ message: "المطلوب: closed صحيح أو خطأ" });
+    }
+    const before = await storage.getBranch(branchId);
+    if (!before) return res.status(404).json({ message: "الفرع غير موجود" });
+    if (Boolean((before as any).temporarilyClosed) === body.closed) return res.json({ success: true, changed: false });
+    const userId = typeof bs.userId === "number" ? bs.userId : null;
+    await db.update(branches).set({
+      temporarilyClosed: body.closed,
+      closedAt: body.closed ? new Date() : null,
+      closedBy: body.closed ? userId : null,
+    }).where(eq(branches.id, branchId));
+    invalidateClosedBranches();
+    await logAudit({
+      entityType: "branch", entityId: branchId,
+      action: body.closed ? "branch_temporarily_closed" : "branch_reopened",
+      userId, userName: bs.displayName ?? null, branchId,
+      oldValues: { temporarilyClosed: Boolean((before as any).temporarilyClosed) },
+      newValues: { temporarilyClosed: body.closed },
+      ipAddress: req.ip ?? null, userAgent: req.get?.("user-agent") ?? null,
+    });
+    res.json({ success: true, changed: true });
+  });
+
+  //  **قائمةُ شاشة الدخول** — معرّفاتُ الفروع المغلقة وحدها، بلا جلسة (الشاشةُ قبل الدخول). لا سرَّ فيها.
+  app.get("/api/public/closed-branches", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ids: Array.from(await closedBranchIds()) });
   });
 
   // ========== System Users Management ==========
@@ -2671,6 +2725,10 @@ export async function registerRoutes(
       }
       if (!branchId || branchId === 0) {
         return res.status(400).json({ message: "يجب اختيار الفرع" });
+      }
+      //  **ولا مريضَ جديدٌ في فرعٍ مغلقٍ مؤقتاً** (ترحيل ٠٩٤، §4.bw).
+      if ((await closedBranchIds()).has(Number(branchId))) {
+        return res.status(400).json({ message: `${BRANCH_CLOSED_MESSAGE} — اختر فرعاً آخر` });
       }
 
       // ══ **لم يعد الاستقبالُ يُسأل «جديد أم قديم؟»** (ترحيل ٠٦٥) ════════

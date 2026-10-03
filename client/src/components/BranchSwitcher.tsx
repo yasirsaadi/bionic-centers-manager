@@ -41,7 +41,10 @@ export function BranchSwitcher({ compact = false }: { compact?: boolean }) {
 
   if (!visible) return compact ? <div className="w-10" /> : null;
 
-  const options = isAdmin ? branches : branches.filter((b) => assigned.includes(b.id));
+  //  **الفرعُ المغلقُ مؤقتاً** (§4.bw): يختفي لغير المسؤول، ويبقى للمسؤول موسوماً (يراجع تاريخه).
+  const options = isAdmin
+    ? branches.map((b) => (b.temporarilyClosed ? { ...b, name: `${b.name} — مغلق مؤقتاً` } : b))
+    : branches.filter((b) => assigned.includes(b.id) && !b.temporarilyClosed);
   const currentId = Number(session.branchId ?? 0);
   const currentName = currentId > 0
     ? (branches.find((b) => b.id === currentId)?.name ?? session.branchName ?? "—")

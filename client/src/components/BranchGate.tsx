@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,11 @@ import { useTranslation } from "@/i18n/LanguageContext";
 
 const userOptions = [
   { value: "admin", label: "مسؤول النظام", labelEn: "System Admin", icon: ShieldCheck },
-  { value: "baghdad", label: "بايونك بغداد", labelEn: "Bionic Baghdad", icon: Building2 },
-  { value: "karbala", label: "الوارث كربلاء", labelEn: "Al-Warith Karbala", icon: Building2 },
-  { value: "dhiqar", label: "بايونك ذي قار", labelEn: "Bionic Dhi Qar", icon: Building2 },
-  { value: "mosul", label: "بايونك الموصل", labelEn: "Bionic Mosul", icon: Building2 },
-  { value: "kirkuk", label: "بايونك كركوك", labelEn: "Bionic Kirkuk", icon: Building2 },
+  { value: "baghdad", branchId: 1, label: "بايونك بغداد", labelEn: "Bionic Baghdad", icon: Building2 },
+  { value: "karbala", branchId: 2, label: "الوارث كربلاء", labelEn: "Al-Warith Karbala", icon: Building2 },
+  { value: "dhiqar", branchId: 3, label: "بايونك ذي قار", labelEn: "Bionic Dhi Qar", icon: Building2 },
+  { value: "mosul", branchId: 4, label: "بايونك الموصل", labelEn: "Bionic Mosul", icon: Building2 },
+  { value: "kirkuk", branchId: 5, label: "بايونك كركوك", labelEn: "Bionic Kirkuk", icon: Building2 },
 ];
 
 interface UserPermissions {
@@ -155,6 +155,12 @@ export function BranchGate({ children }: BranchGateProps) {
   //  الوحدة، قبل أوّل عرض) — لا فجوةً غير متزامنة تحتاج طيفَ تحميل.
   const session = useBranchSession();
   const [selectedBranch, setSelectedBranch] = useState("");
+  //  **الفرعُ المغلقُ مؤقتاً لا يُعرَض للدخول** (ترحيل ٠٩٤، §4.bw) — والخادمُ يرفضه على كلّ حال.
+  const [closedIds, setClosedIds] = useState<number[]>([]);
+  useEffect(() => {
+    fetch("/api/public/closed-branches").then((r) => (r.ok ? r.json() : { ids: [] }))
+      .then((d) => setClosedIds(Array.isArray(d?.ids) ? d.ids.map(Number) : [])).catch(() => setClosedIds([]));
+  }, []);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -250,7 +256,7 @@ export function BranchGate({ children }: BranchGateProps) {
                 <SelectValue placeholder={t.login.selectBranch} />
               </SelectTrigger>
               <SelectContent>
-                {userOptions.map((option) => (
+                {userOptions.filter((o) => !("branchId" in o) || !closedIds.includes((o as any).branchId)).map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     <span className="flex items-center gap-2">
                       <option.icon className="w-4 h-4 text-primary" />

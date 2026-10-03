@@ -75,6 +75,7 @@ export const BLOCKED: Record<string, string> = {
   "/api/auth/user": "هويّةُ الجلسة — يعرفها المساعدُ أصلاً.",
   "/api/patients/name-availability": "فحصُ نموذجٍ لحظةَ التسجيل.",
   "/api/patients/lookup-by-name": "تنبيهُ تكرارٍ داخل نموذج التسجيل.",
+  "/api/public/closed-branches": "قائمةُ شاشة الدخول — وحالةُ الإغلاق تصل المساعدَ مع `/api/branches` نفسِها.",
 };
 
 /**
@@ -207,7 +208,7 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   //  ══ نقاطٌ سُجّلت بأنماطٍ أخرى (`app.get(\n  \"...\"` و`app.get(api.x.path`)
   //  — لم يجدها بحثٌ نصّيّ، ووجدها **الاكتشافُ من جدول المسارات**. وهذا
   //  بعينه الفرقُ بين فهرسٍ يُكتب باليد وفهرسٍ يُشتَقّ.
-  "/api/branches": { d: "قائمةُ فروع المجموعة بأسمائها." },
+  "/api/branches": { d: "قائمةُ فروع المجموعة بأسمائها، وأيُّها مغلقٌ مؤقتاً (`temporarilyClosed`)." },
   "/api/patients": { d: "سجلُّ المرضى الكامل بزياراتهم وأسمائهم البديلة وأنواع حالاتهم (القائمةُ القديمة).", q: ["branchId"] },
   "/api/patients/:id": { d: "ملفُّ مريضٍ كامل: بياناتُه وزياراتُه ودفعاتُه ومستنداتُه — والمالُ فيه محجوبٌ عمّن لا يملك عرضَ الدفعات." },
   "/api/reports/daily/:branchId": { d: "التقريرُ اليوميّ لفرعٍ بعينه.", q: ["date"], f: true },

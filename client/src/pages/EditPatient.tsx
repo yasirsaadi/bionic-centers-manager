@@ -639,7 +639,7 @@ export default function EditPatient() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {branches?.map((branch) => (
+                        {branches?.filter((b) => !b.temporarilyClosed || b.id === Number(field.value)).map((branch) => (
                           <SelectItem key={branch.id} value={String(branch.id)}>
                             {branch.name}
                           </SelectItem>
