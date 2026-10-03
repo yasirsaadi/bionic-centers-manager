@@ -329,7 +329,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       return res.status(409).json({
         error: live.servicePath === "no_exam"
           ? NO_EXAM_PENDING_BOUNDARY
-          : "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة",
+          : "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «إتمام البيع» بعد المعاينة",
       });
     }
 

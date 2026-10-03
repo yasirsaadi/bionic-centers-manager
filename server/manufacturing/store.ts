@@ -401,7 +401,7 @@ export async function createWorkOrderForExisting(params: {
       });
       if (episode) {
         throw new DeviceEpisodeError(
-          "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «تخصيص وإسناد خبير» بعد المعاينة", 409,
+          "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «إتمام البيع» بعد المعاينة", 409,
         );
       }
     }

@@ -11,11 +11,10 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download, UserCog } from "lucide-react";
-import { AssignExpertDialog } from "@/components/manufacturing/AssignExpertDialog";
+import { Plus, Search, Eye, Building2, ChevronRight, ChevronLeft, CalendarDays, Users, Calendar, FileSpreadsheet, FileText, Download } from "lucide-react";
 import {
-  assignableServices, assignmentBadgeLabel, visibleDecided,
-  type ActiveAssignment, type DeviceService,
+  assignmentBadgeLabel, visibleDecided,
+  type ActiveAssignment,
 } from "./patient_registry_assignment";
 import { registryExportMoney } from "./patients_registry_export";
 import {
@@ -152,7 +151,6 @@ export default function PatientsList() {
   // needs canAddPatients — view-only users don't get the button.
   //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
   const canAssignExpert = !isExpert && (isAdmin || !!permissions.canAddPatients);
-  const [assignExpertPatient, setAssignExpertPatient] = useState<{ id: number; branchId: number; name: string; isAmputee?: boolean | null; isMedicalSupport?: boolean | null; assignableServices?: DeviceService[] } | null>(null);
   // «الكلفة والجلسات» — post-exam physiotherapy pricing (same gate: it writes).
   const [physioPricingPatient, setPhysioPricingPatient] = useState<{ id: number; name: string } | null>(null);
   // «كتابة معاينة» straight from the registry row. The doctor searching a name
@@ -161,16 +159,6 @@ export default function PatientsList() {
   const { specialties: mySpecialties } = useDoctorGrant();
   const [examPatient, setExamPatient] = useState<{ id: number; name: string; specialty: string } | null>(null);
   
-  //  الخدماتُ التي يحكمها ملفُّ متابعةٍ حيّ — تُخفي بابَ «تخصيص» المكرَّر.
-  const { data: governedData } = useQuery<{ governed: Record<number, string[]> }>({
-    queryKey: ["/api/followups/governed"],
-    queryFn: async () => {
-      const res = await fetch("/api/followups/governed", { credentials: "include" });
-      if (!res.ok) return { governed: {} };
-      return res.json();
-    },
-  });
-  const governedByPatient = governedData?.governed ?? {};
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -321,14 +309,6 @@ export default function PatientsList() {
   // Legacy patients: no amber badge (no obligation) but the doctor may still
   // examine them voluntarily, so their un-examined specialties feed the button.
   const optionalByPatient = pendingExams?.optional ?? {};
-  // Legacy ⇒ exempt from the exam gate, تخصيص opens directly (the server
-  // applies the same rule): registered before the exam system went live, OR
-  // classified «مريض قديم» by reception — a returning patient's SYSTEM file
-  // is often created today even though his paper file is years old.
-  const examActivatedAt = pendingExams?.activatedAt ? new Date(pendingExams.activatedAt).getTime() : null;
-  const isLegacyPatientRow = (p: { createdAt?: string | Date | null; patientClassification?: string | null }) =>
-    p.patientClassification === "past" ||
-    (examActivatedAt !== null && !!p.createdAt && new Date(p.createdAt).getTime() < examActivatedAt);
 
   // Show the button only where the doctor can actually act: this patient has a
   // pending case AND it falls in one of their own specialties. Returns the
@@ -337,21 +317,10 @@ export default function PatientsList() {
     [...(pendingByPatient[patientId] ?? []), ...(optionalByPatient[patientId] ?? [])]
       .find((c) => mySpecialties.includes(c as any)) ?? null;
 
-  // الخدمات القابلة للتخصيص لهذا المريض الآن — **لكل خدمة على حدة**، فمريضٌ
-  // أُسنِد طرفُه وبقي مسندُه ينتظر يبقى زرُّه ظاهراً لمسنده وحده.
-  //
-  // شرطان: معاينةٌ موقّعة لتلك الخدمة (`decided` — وهو نفس ما يفرضه الخادم)
-  // أو إعفاءٌ تاريخي، **وألّا يكون لها أمر بناءٍ فعّال أصلاً**.
-  const assignableFor = (patient: RegistryRow): DeviceService[] =>
-    assignableServices({
-      patient,
-      decided: decidedByPatient[patient.id] ?? [],
-      legacyExempt: isLegacyPatientRow(patient),
-      //  **بابٌ واحد لا بابان**: خدمةٌ يحكمها ملفُّ متابعةٍ حيّ تُباع من
-      //  بطاقة «قرار المريض بعد المعاينة»، والخادمُ يردّ «تخصيص» المباشر
-      //  عليها. فيُخفى الزرُّ بدل أن يُضغط ويُردّ.
-      governed: governedByPatient[patient.id] ?? [],
-    });
+  //  ══ **«تخصيص وإسناد خبير» أُزيل من السجلّ** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bp) ══
+  //  كان يظهر على ٨٦ مريضاً قديماً سُلّم جهازُه فيردّه الخادم دائماً، وعلى ٦٧٠ مريضاً قديماً بلا أمرِ تصنيعٍ مسجَّل —
+  //  ومنهم مَن اشترى جهازَه قبل نظام التصنيع (مالاً فقط)، فكان يُنشئ له جهازاً ثانياً بلا معاينة. فكلُّ جهازٍ جديد
+  //  بابُه واحد: «إضافة خدمة جديدة» ⟵ معاينة الطبيب ⟵ «إتمام البيع».
 
   const openExamFor = (patient: { id: number; name: string }) => {
     const specialty = examableSpecialty(patient.id);
@@ -750,12 +719,6 @@ export default function PatientsList() {
                           {formatDateTimeIraq(patient.createdAt)}
                         </span>
                         <div className="flex items-center gap-1">
-                          {canAssignExpert && assignableFor(patient).length > 0 && (
-                            <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport, assignableServices: assignableFor(patient) })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1 h-8 text-xs" data-testid={`assign-expert-${patient.id}`}>
-                              <UserCog className="w-3.5 h-3.5" />
-                              تخصيص
-                            </Button>
-                          )}
                           {canAssignExpert && patient.isPhysiotherapy && (
                             <Button variant="ghost" size="sm" onClick={() => setPhysioPricingPatient({ id: patient.id, name: patient.name })} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1 h-8 text-xs" data-testid={`price-physio-${patient.id}`}>
                               <Activity className="w-3.5 h-3.5" />
@@ -863,12 +826,6 @@ export default function PatientsList() {
                                 كتابة معاينة
                               </Button>
                             )}
-                            {canAssignExpert && assignableFor(patient).length > 0 && (
-                              <Button variant="ghost" size="sm" onClick={() => setAssignExpertPatient({ id: patient.id, branchId: patient.branchId, name: patient.name, isAmputee: patient.isAmputee, isMedicalSupport: patient.isMedicalSupport, assignableServices: assignableFor(patient) })} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 gap-1.5" data-testid={`assign-expert-${patient.id}`}>
-                                <UserCog className="w-4 h-4" />
-                                تخصيص وإسناد خبير
-                              </Button>
-                            )}
                             {canAssignExpert && patient.isPhysiotherapy && (
                               <Button variant="ghost" size="sm" onClick={() => setPhysioPricingPatient({ id: patient.id, name: patient.name })} className="text-teal-700 hover:text-teal-800 hover:bg-teal-50 gap-1.5" data-testid={`price-physio-${patient.id}`}>
                                 <Activity className="w-4 h-4" />
@@ -942,12 +899,6 @@ export default function PatientsList() {
           </div>
         </div>
       </div>
-
-      <AssignExpertDialog
-        patient={assignExpertPatient}
-        open={!!assignExpertPatient}
-        onOpenChange={(o) => { if (!o) setAssignExpertPatient(null); }}
-      />
 
       <PhysioPricingDialog
         patient={physioPricingPatient}
