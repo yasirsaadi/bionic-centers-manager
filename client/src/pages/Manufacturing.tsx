@@ -178,13 +178,14 @@ export default function Manufacturing() {
   });
 
   // Client-side buckets (from the fetched list) for the summary chips.
-  const nowMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
+  const nowDay = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+  const nowMonth = nowDay.slice(0, 7);
   //  **العددُ والقائمةُ من مصدرٍ واحد** (`manufacturing_buckets`): الشريطُ
   //  يقول «متأخرون ٢١» وضغطُه يعرض الواحدَ والعشرين بعينهم — لأن كليهما
   //  من `orders` نفسِها بعد مرشِّحات الخادم.
-  const chips = useMemo(() => bucketCounts(orders, nowMonth), [orders, nowMonth]);
+  const chips = useMemo(() => bucketCounts(orders, nowMonth, nowDay), [orders, nowMonth, nowDay]);
   const visibleOrders = useMemo(
-    () => ordersInBucket(orders, bucket, nowMonth), [orders, bucket, nowMonth]);
+    () => ordersInBucket(orders, bucket, nowMonth, nowDay), [orders, bucket, nowMonth, nowDay]);
   const activeBucket = bucketDef(bucket);
 
   const experts: { expertUserId: number; expertName: string }[] = overview?.experts ?? [];
