@@ -797,7 +797,8 @@ function ReassignDialog({ open, onOpenChange, orderId, branchId, currentExpert, 
     queryKey: ["/api/manufacturing/experts", branchId, open],
     enabled: open,
     queryFn: async () => {
-      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}`, { credentials: "include" });
+      //  `orderId` — قائمةُ فرع الأمر نفسِه، فيقبلها التحويل (§4.bt).
+      const res = await fetch(`/api/manufacturing/experts?branchId=${branchId}&orderId=${orderId}`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },

@@ -1639,7 +1639,7 @@ export default function CreatePatient() {
                   form never asks for an expert or a delivery date anymore. */}
               {needsExpert && (
                 <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
-                  يُسجَّل المريض الآن <b>دون خبير</b>. بعد الحفظ، حدِّد الخبير من زر <b>«تحديد خبير»</b> بجانب المريض في سجل المرضى. ويحدّد الخبير تاريخ التسليم عند أخذ القالب.
+                  يُسجَّل المريض الآن <b>دون خبير</b>. بعد الحفظ يصل طلبُه إلى الطبيب للمعاينة، ثمّ يُختار الخبير داخل <b>«إتمام البيع»</b> في ملفّه. ويحدّد الخبير تاريخ التسليم عند أخذ القالب.
                 </div>
               )}
             </div>

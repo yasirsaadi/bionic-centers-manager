@@ -2575,7 +2575,6 @@ export default function AdminSettings() {
   // Branch management states
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchLocation, setNewBranchLocation] = useState("");
-  const [newBranchPw, setNewBranchPw] = useState("");
   const [showAddBranchDialog, setShowAddBranchDialog] = useState(false);
   const [showAddConfirmation, setShowAddConfirmation] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState<BranchWithDetails | null>(null);
@@ -3040,7 +3039,6 @@ export default function AdminSettings() {
       toast({ title: t.adminSettings.toastBranchAdded });
       setNewBranchName("");
       setNewBranchLocation("");
-      setNewBranchPw("");
       setShowAddBranchDialog(false);
       queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
@@ -3121,10 +3119,6 @@ export default function AdminSettings() {
       toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastBranchNameMinLength, variant: "destructive" });
       return;
     }
-    if (newBranchPw && newBranchPw.length < 4) {
-      toast({ title: t.adminSettings.toastError, description: t.adminSettings.toastPasswordMinLength, variant: "destructive" });
-      return;
-    }
     setShowAddConfirmation(true);
   };
 
@@ -3132,7 +3126,6 @@ export default function AdminSettings() {
     createBranchMutation.mutate({
       name: newBranchName,
       location: newBranchLocation || undefined,
-      password: newBranchPw || undefined,
     });
     setShowAddConfirmation(false);
   };
@@ -3226,10 +3219,6 @@ export default function AdminSettings() {
           <TabsTrigger value="management" className="gap-2">
             <Layers className="w-4 h-4" />
             {t.adminSettings.tabManagement}
-          </TabsTrigger>
-          <TabsTrigger value="branches" className="gap-2">
-            <Building2 className="w-4 h-4" />
-            {t.adminSettings.tabBranches}
           </TabsTrigger>
           <TabsTrigger value="backup" className="gap-2">
             <Mail className="w-4 h-4" />
@@ -3446,89 +3435,8 @@ export default function AdminSettings() {
 
         {/*  «كلمةُ مرور المسؤول» المشتركة أُغلقت (قرارُ المالك ٢٠٢٦-١٠-٠٢، §4.bk): الدخولُ بالحساب الشخصيّ وحده. */}
 
-        <TabsContent value="branches" className="space-y-6">
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-6">
-              <Building2 className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-bold text-slate-800">{t.adminSettings.branchPasswords}</h2>
-            </div>
-
-            <div className="grid gap-4 mb-6">
-              {branches?.map((branch) => (
-                <div 
-                  key={branch.id}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    selectedBranch === branch.id 
-                      ? "border-primary bg-primary/5" 
-                      : "border-border hover:border-primary/50"
-                  }`}
-                  onClick={() => setSelectedBranch(branch.id)}
-                  data-testid={`branch-card-${branch.id}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-primary/10 rounded-lg">
-                        <Building2 className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-800">{branch.name}</h3>
-                        {branch.currentPassword && (
-                          <p className="text-sm font-mono text-primary mt-1">كلمة المرور: {branch.currentPassword}</p>
-                        )}
-                      </div>
-                    </div>
-                    {selectedBranch === branch.id && (
-                      <Badge variant="default">{t.adminSettings.selected}</Badge>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {selectedBranch && (
-              <div className="space-y-4 max-w-md border-t pt-6">
-                <div className="flex items-center gap-2 text-sm text-slate-600 mb-4">
-                  <Lock className="w-4 h-4" />
-                  <span>{t.adminSettings.changePasswordFor} {branches?.find(b => b.id === selectedBranch)?.name}</span>
-                </div>
-
-                <div>
-                  <Label htmlFor="newBranchPassword">{t.adminSettings.newBranchPassword}</Label>
-                  <div className="relative mt-1">
-                    <Input
-                      id="newBranchPassword"
-                      type={showBranchPassword ? "text" : "password"}
-                      value={newBranchPassword}
-                      onChange={(e) => setNewBranchPassword(e.target.value)}
-                      placeholder={t.adminSettings.newPasswordPlaceholder}
-                      className="pl-10"
-                      data-testid="input-branch-password"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute left-1 top-1/2 -translate-y-1/2 h-8 w-8"
-                      onClick={() => setShowBranchPassword(!showBranchPassword)}
-                    >
-                      {showBranchPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                  </div>
-                </div>
-
-                <Button 
-                  onClick={handleUpdateBranchPassword}
-                  disabled={updateBranchPasswordMutation.isPending}
-                  className="w-full gap-2"
-                  data-testid="button-save-branch-password"
-                >
-                  <Save className="w-4 h-4" />
-                  {updateBranchPasswordMutation.isPending ? t.adminSettings.saving : t.adminSettings.saveBranchPassword}
-                </Button>
-              </div>
-            )}
-          </Card>
-        </TabsContent>
+        {/*  تبويبُ «كلمات مرور الفروع» أُزيل (§4.bt): الدخولُ المشترك للفروع مُغلَق (§4.bk)، فكلمةُ مرور الفرع لا تفتح شيئاً.
+            كلُّ موظّفٍ يدخل بحسابه الشخصيّ من تبويب «المستخدمون». */}
 
         <TabsContent value="management" className="space-y-6">
           <Card className="p-6">
@@ -3899,18 +3807,6 @@ export default function AdminSettings() {
                 placeholder={t.adminSettings.locationPlaceholder}
                 className="mt-1"
                 data-testid="input-new-branch-location"
-              />
-            </div>
-            <div>
-              <Label htmlFor="newBranchPw">{t.adminSettings.passwordOptional}</Label>
-              <Input
-                id="newBranchPw"
-                type="password"
-                value={newBranchPw}
-                onChange={(e) => setNewBranchPw(e.target.value)}
-                placeholder={t.adminSettings.passwordPlaceholder}
-                className="mt-1"
-                data-testid="input-new-branch-password"
               />
             </div>
           </div>

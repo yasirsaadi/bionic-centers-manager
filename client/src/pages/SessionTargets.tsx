@@ -187,7 +187,14 @@ export default function SessionTargets() {
             <Button
               variant="outline"
               className="w-full"
-              onClick={() => copyMut.mutate()}
+              onClick={() => {
+                //  النسخُ يكتب فوق أهداف هذا الشهر (§4.bt) — فيُسأل حين يكون للشهر أهدافٌ قائمة.
+                const hasTargets = (monthlyQ.data?.devices ?? []).some((d) => (d.target ?? 0) > 0);
+                if (hasTargets && !window.confirm(lang === "ar"
+                  ? "لهذا الشهر أهدافٌ محفوظة، والنسخ سيستبدلها بأهداف الشهر السابق. هل تريد المتابعة؟"
+                  : "This month already has targets; copying will replace them. Continue?")) return;
+                copyMut.mutate();
+              }}
               disabled={copyMut.isPending || branchId === null}
             >
               {lang === "ar" ? "نسخ من الشهر السابق" : "Copy previous month"}

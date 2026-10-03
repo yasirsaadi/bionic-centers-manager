@@ -176,7 +176,7 @@ export default function PatientTrash() {
         <Card className="max-w-lg mx-auto">
           <CardContent className="p-8 text-center space-y-2">
             <ShieldAlert className="w-10 h-10 mx-auto text-muted-foreground" />
-            <p className="font-medium">هذه الصفحة للمسؤول العام ومدير الفرع والطبيب.</p>
+            <p className="font-medium">هذه الصفحة للمسؤول العام ولمن يملك صلاحية «حذف المرضى».</p>
           </CardContent>
         </Card>
       </div>

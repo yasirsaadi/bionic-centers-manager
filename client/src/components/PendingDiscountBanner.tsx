@@ -13,7 +13,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { BadgePercent, HeartHandshake } from "lucide-react";
-import { discountReasonLabel, DISCOUNT_HISTORY_TITLE, FREE_DONATION_LABEL } from "@shared/discount";
+import { discountReasonLabel, DISCOUNT_HISTORY_TITLE, FREE_DONATION_LABEL, canApproveServiceDiscount } from "@shared/discount";
+import { useBranchSession } from "@/components/BranchGate";
 import { PriceTransition } from "@/components/PriceTransition";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 
@@ -33,6 +34,8 @@ const fmt = (iso: string) => {
 };
 
 export function PendingDiscountBanner({ patientId }: { patientId: number }) {
+  //  الصفحةُ لمن يعتمد الخصمَ وحده (§4.bt) — فلا يُرسَل إليها مَن لا يراها.
+  const mayComplete = canApproveServiceDiscount(useBranchSession() as any);
   const { data } = useQuery<{ requests: Row[] }>({
     queryKey: [`/api/discounts/patient/${patientId}`],
     queryFn: async () => {
@@ -73,7 +76,9 @@ export function PendingDiscountBanner({ patientId }: { patientId: number }) {
           <p className="mt-1 text-xs">
             طلبها {r.requestedByName ?? "—"} · {fmt(r.requestedAt)} —
             <b> لم تُسجَّل كلفة ولم تبدأ الخدمة</b>؛ من فترةٍ سابقة على التطبيق
-            الفوريّ، أكمِله من «{DISCOUNT_HISTORY_TITLE}».
+            الفوريّ، {mayComplete
+              ? <>أكمِله من «{DISCOUNT_HISTORY_TITLE}».</>
+              : <>اطلب إكماله من المسؤول أو مَن يملك صلاحية اعتماد الخصم.</>}
           </p>
         </div>
       ))}

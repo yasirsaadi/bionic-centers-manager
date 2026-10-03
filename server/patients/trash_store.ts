@@ -121,7 +121,7 @@ export function deleteDecision(
   actor: TrashActor, branchId: number | null, snap: TrashFinancialSnapshot,
 ): { allowed: true } | { allowed: false; status: number; message: string } {
   if (!canTrashPatients(actor)) {
-    return { allowed: false, status: 403, message: "حذف الملفات صلاحية إدارية — للمسؤول العام أو مدير الفرع أو الطبيب" };
+    return { allowed: false, status: 403, message: "حذف الملفات للمسؤول العام ولمن يملك صلاحية «حذف المرضى»" };
   }
   if (!inScope(actor, branchId)) {
     return { allowed: false, status: 403, message: "لا يمكنك حذف ملف في فرع آخر" };
@@ -289,7 +289,7 @@ export async function restorePatient(params: {
 }): Promise<{ patientId: number; restoredAt: string }> {
   const { patientId, actor } = params;
   if (!canRestorePatients(actor)) {
-    throw new TrashError("استعادة الملفات صلاحية إدارية — للمسؤول العام أو مدير الفرع أو الطبيب", 403);
+    throw new TrashError("استعادة الملفات للمسؤول العام ولمن يملك صلاحية «حذف المرضى»", 403);
   }
   return await db.transaction(async (tx: any) => {
     //  قفلُ الهويّة المشترك أوّلاً — قبل أيّ قراءةٍ أو قفلِ صفّ (راجع

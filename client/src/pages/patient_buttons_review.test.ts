@@ -51,9 +51,10 @@ check(/reviewKindsForDialog\(resend\?\.reviewKind\)/.test(dialog) && /kinds\.map
   "٢ز. والنافذةُ تعرض هذه القائمةَ، وافتراضُها ليس «صيانة»");
 
 console.log("\n── ٣. رسالةُ قلم الكلفة ──");
-const msg = (routes.match(/message: "سعر هذا الجهاز[^"]*"/) ?? [""])[0];
-check(/تحديد السعر النهائي/.test(msg) && !/طلب تعديل سعر/.test(msg),
-  "٣. رفضُ تعديل كلفة جهازٍ تحت متابعة يدلّ على «تحديد السعر النهائي»", msg);
+const msg = (routes.match(/message: "(?:سعر هذا الجهاز|لهذا القسم جهازٌ)[^"]*"/) ?? [""])[0];
+//  وتصحيحٌ (§4.bt): «تحديد السعر النهائي» لا يظهر في البيع الجديد — السعرُ يُكتب في «إتمام البيع».
+check(/إتمام البيع/.test(msg) && /لم يشترِ/.test(msg) && !/طلب تعديل سعر/.test(msg) && !/تحديد السعر النهائي/.test(msg),
+  "٣. رفضُ تعديل كلفة جهازٍ تحت متابعة يدلّ على «إتمام البيع» أو «لم يشترِ»", msg);
 
 console.log("\n── ٤. حذفُ المستند ──");
 check(/const mayDeleteDocuments = isAdmin \|\| branchSession\?\.role === "branch_manager";/.test(details),
