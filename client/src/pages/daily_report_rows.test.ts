@@ -33,12 +33,18 @@ same("وللاختيار من الخادم", expenseLines(fs, ["prosthetic", "me
 const dd = { withMoney: true, days: [{ day: "2026-10-01", visits: 2, patients: 1, paid: 10, revenue: 20, expenses: 1, net: 9 }],
   total: { visits: 2, patients: 1, paid: 10, revenue: 20, expenses: 1, net: 9 } };
 same("حسب اليوم: الرؤوس ثمّ الأيام ثمّ «المجموع»", dailyBreakdownTable(dd, (d) => d).rows,
-  [["2026-10-01", 10, 20, 1, 9, 2, 1], ["المجموع", 10, 20, 1, 9, 2, 1]]);
+  [["2026-10-01", 10, 20, 0, 1, 9, 2, 1], ["المجموع", 10, 20, 0, 1, 9, 2, 1]]);
+//  **التصحيحاتُ عمودُها** (قرارُ المالك ٢٠٢٦-١٠-٠٣): يومُ ٢١ أيلول — جلساتٌ ٢٢٠٬٠٠٠ وتصحيحٌ ‎−١٬٢٠٠٬٠٠٠ ⟵ المبيعاتُ ٢٢٠٬٠٠٠ لا ‎−٩٨٠٬٠٠٠.
+const dc = { withMoney: true, days: [{ day: "2026-09-21", visits: 9, patients: 9, paid: 195000, revenue: -980000, corrections: -1200000, expenses: 7000, net: 188000 }],
+  total: { visits: 9, patients: 9, paid: 195000, revenue: -980000, corrections: -1200000, expenses: 7000, net: 188000 } };
+const tc = dailyBreakdownTable(dc, (d) => d);
+same("حسب اليوم: المبيعاتُ إجماليّةٌ موجبة والتصحيحُ عمودُه", [tc.head[2], tc.head[3], tc.rows[0][2], tc.rows[0][3]],
+  ["المبيعات (كلفة مسجَّلة)", "التصحيحات والتخفيضات", 220000, -1200000]);
 same("وبلا مال: اليوم والعدد", dailyBreakdownTable({ withMoney: false, days: [{ day: "d", visits: 3, patients: 2 }], total: { visits: 3, patients: 2 } }, (d) => d).head,
   ["اليوم", "عدد الزيارات", "المرضى الذين حضروا"]);
 same("أيامُ الفترة عبر نهاية الشهر", enumerateReportDays("2026-09-29", "2026-10-02"), ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]);
 same("والمجموع: يومٌ بلا مصاريف منفصلة ⟵ المجموعُ null",
   sumDailyRows([{ day: "a", visits: 1, patients: 1, paid: 5, revenue: 6, expenses: null, net: null }, { day: "b", visits: 2, patients: 1, paid: 1, revenue: 1, expenses: null, net: null }], true, 1),
-  { visits: 3, patients: 1, paid: 6, revenue: 7, expenses: null, net: null });
+  { visits: 3, patients: 1, paid: 6, revenue: 7, corrections: 0, expenses: null, net: null });
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -117,7 +117,11 @@ export function enumerateReportDays(from: string, to: string): string[] {
 
 export interface DailyMoney {
   /** المقبوض. */ paid: number;
-  /** المبيعات. */ revenue: number;
+  /** المبيعات **الصافية** (بعد التصحيحات) — رقمُ الملخّص المالي. */ revenue: number;
+  /**
+   * **التصحيحاتُ والتخفيضات** (≤ ٠) — قيودُ الكلفة السالبة، عمودٌ مستقلّ بقرار المالك (٢٠٢٦-١٠-٠٣) كي لا تُقرأ «المبيعات» سالبةً.
+   * و«المبيعات» المعروضة = `revenue − corrections`.
+   */ corrections: number;
   /** `null` حين لا تنفصل مصاريفُ الاختيار. */ expenses: number | null;
   net: number | null;
 }
@@ -126,17 +130,33 @@ export interface DailyMoney {
  *  مالُ يومٍ من ملخّصه المحاسبيّ — **بتعريف الملخّص المالي نفسِه**: للكلّ الإجماليُّ والمصاريفُ والصافي
  *  (المقبوض − المصاريف)، وللاختيار الجزئيّ `scopeDepartmentMoney`.
  */
+export interface Reductions {
+  total: number;
+  byDepartment: { prosthetic: number; medical_support: number; physiotherapy: number; legacyDevicesUnsplit: number; unclassified: number };
+}
+
+/** تصحيحاتُ الاختيار — **بقاعدة `scopeDepartmentMoney` للمبيعات نفسِها** (والأجهزةُ القديمة حين يُختار الطرفُ والمسندُ معاً). */
+export function scopeReductions(services: readonly ReportService[] | null, r: Reductions | undefined): number {
+  if (!r) return 0;
+  if (!services) return r.total || 0;
+  let s = 0;
+  for (const k of services) s += r.byDepartment[k] || 0;
+  if (services.includes("prosthetic") && services.includes("medical_support")) s += r.byDepartment.legacyDevicesUnsplit || 0;
+  return s;
+}
+
 export function dayMoney(
-  a: { byDepartment: DepartmentMoney; rollups: { grandTotal: MoneyPair }; totalExpenses: number; expensesBySection: ExpenseSections },
+  a: { byDepartment: DepartmentMoney; rollups: { grandTotal: MoneyPair }; totalExpenses: number; expensesBySection: ExpenseSections; reductions?: Reductions },
   services: readonly ReportService[] | null,
 ): DailyMoney {
+  const corrections = scopeReductions(services, a.reductions);
   if (!services) {
     const paid = a.rollups.grandTotal.paid || 0;
     const expenses = a.totalExpenses || 0;
-    return { paid, revenue: a.rollups.grandTotal.revenue || 0, expenses, net: paid - expenses };
+    return { paid, revenue: a.rollups.grandTotal.revenue || 0, corrections, expenses, net: paid - expenses };
   }
   const s = scopeDepartmentMoney(services, a.byDepartment, a.expensesBySection);
-  return { paid: s.selected.paid, revenue: s.selected.revenue, expenses: s.expenses, net: s.netCash };
+  return { paid: s.selected.paid, revenue: s.selected.revenue, corrections, expenses: s.expenses, net: s.netCash };
 }
 
 /**
@@ -163,5 +183,5 @@ export function sumDailyRows(rows: readonly DailyRow[], withMoney: boolean, peri
   if (!withMoney) return { visits, patients };
   const add = (k: keyof DailyMoney) =>
     rows.some((r) => r[k] === null || r[k] === undefined) ? null : rows.reduce((s, r) => s + (r[k] as number), 0);
-  return { visits, patients, paid: add("paid") ?? 0, revenue: add("revenue") ?? 0, expenses: add("expenses"), net: add("net") };
+  return { visits, patients, paid: add("paid") ?? 0, revenue: add("revenue") ?? 0, corrections: add("corrections") ?? 0, expenses: add("expenses"), net: add("net") };
 }

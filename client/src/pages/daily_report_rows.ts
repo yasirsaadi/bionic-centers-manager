@@ -86,13 +86,14 @@ export function expenseLines(f: DailyFinancial, services: readonly ReportService
 // ══ جدولُ «حسب اليوم» (§4.az) — مصدرٌ واحد للشاشة وExcel والطباعة ══════════
 export interface DailyBreakdownRow {
   day: string; visits: number; patients: number;
-  paid?: number; revenue?: number; expenses?: number | null; net?: number | null;
+  paid?: number; revenue?: number; corrections?: number; expenses?: number | null; net?: number | null;
 }
 export type DailyBreakdown =
   | { days: DailyBreakdownRow[]; total: Omit<DailyBreakdownRow, "day">; withMoney: boolean }
   | { tooLong: true; maxDays: number };
 
 export const DAILY_TOTAL_LABEL = "المجموع";
+export const DAILY_CORRECTIONS_LABEL = "التصحيحات والتخفيضات";
 export const PATIENTS_ATTENDED_LABEL = "المرضى الذين حضروا";
 /** يُكتب تحت الجدول: خانةُ المرضى في «المجموع» ليست جمعَ الأيام. */
 export const DAILY_PATIENTS_TOTAL_NOTE = "المرضى في «المجموع» = عددُ المرضى المختلفين في الفترة — مَن حضر أكثرَ من يومٍ يُعدّ مرّة.";
@@ -106,12 +107,14 @@ export function dailyBreakdownTable(
   dayLabel: (day: string) => string,
 ): { head: string[]; rows: (string | number | null)[][]; moneyCols: number[] } {
   const money = d.withMoney;
-  const head = ["اليوم", ...(money ? ["الوارد (المقبوض)", "المبيعات (كلفة مسجَّلة)", "المصاريف", "الصافي"] : []), "عدد الزيارات", PATIENTS_ATTENDED_LABEL];
+  //  **المبيعاتُ إجماليّةً، والتصحيحاتُ عمودُها** (قرارُ المالك ٢٠٢٦-١٠-٠٣): تصحيحٌ كبير كان يجعل «المبيعات» سالبةً يوماً فيُقرأ خطأً.
+  //  والاثنان معاً = المبيعاتُ الصافية في الملخّص المالي.
+  const head = ["اليوم", ...(money ? ["الوارد (المقبوض)", "المبيعات (كلفة مسجَّلة)", DAILY_CORRECTIONS_LABEL, "المصاريف", "الصافي"] : []), "عدد الزيارات", PATIENTS_ATTENDED_LABEL];
   const cells = (label: string, r: Omit<DailyBreakdownRow, "day">) =>
-    [label, ...(money ? [r.paid ?? 0, r.revenue ?? 0, r.expenses ?? null, r.net ?? null] : []), r.visits, r.patients];
+    [label, ...(money ? [r.paid ?? 0, (r.revenue ?? 0) - (r.corrections ?? 0), r.corrections ?? 0, r.expenses ?? null, r.net ?? null] : []), r.visits, r.patients];
   return {
     head,
     rows: [...d.days.map((r) => cells(dayLabel(r.day), r)), cells(DAILY_TOTAL_LABEL, d.total)],
-    moneyCols: money ? [1, 2, 3, 4] : [],
+    moneyCols: money ? [1, 2, 3, 4, 5] : [],
   };
 }
