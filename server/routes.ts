@@ -8744,7 +8744,7 @@ export async function registerRoutes(
   registerPatientCommunicationRoutes(app, isAuthenticated);
   registerPatientTelegramWebhook(app);
   //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
-  registerPatientCardRoutes(app);
+  registerPatientCardRoutes(app, isAuthenticated);
 
   return httpServer;
 }

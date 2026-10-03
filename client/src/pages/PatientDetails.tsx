@@ -1243,6 +1243,7 @@ export default function PatientDetails() {
             patientId={patient.id}
             enabled={(patient as any).whatsappNotificationsEnabled}
             hasPhone={Boolean((patient as any).phoneE164)}
+            isAdmin={isAdmin}
           />
         </div>
 
