@@ -1,5 +1,5 @@
 import logoImage from "@/assets/logo.png";
-import type { PatientCard } from "@shared/patient_card";
+import { CENTER_CLOSING, CENTER_CONTACTS, type PatientCard } from "@shared/patient_card";
 import { Phone, MapPin, Building2, CalendarDays, Wallet, Wrench, HeartPulse, Activity, Check } from "lucide-react";
 
 //  بطاقةُ المريض (§4.bv) — العرضُ وحدَه، يُستعمَل في صفحة تلغرام وفي «معاينة ما يراه المريض» عند الموظّف.
@@ -30,15 +30,18 @@ export function PatientCardView({ card }: { card: PatientCard }) {
             <div className="text-xs text-white/80 font-mono mt-0.5" dir="ltr">{card.code}</div>
           </div>
         </div>
+        {/*  الفرعُ أو الفروعُ المُتاحُ فيها الملفّ — أعلى البطاقة (قرارُ المالك). */}
+        {card.branches.length > 0 && (
+          <div className="mt-3 flex items-center gap-2 flex-wrap relative" data-testid="card-branches">
+            <Building2 className="w-4 h-4 text-white/70" />
+            <span className="text-xs text-white/75">{card.branches.length > 1 ? "فروعك:" : "فرعك:"}</span>
+            {card.branches.map((b) => (
+              <span key={b} className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-semibold">{b}</span>))}
+          </div>
+        )}
         <div className="mt-4 grid gap-2 text-sm relative">
           {card.phone && <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-white/70" /><span dir="ltr">{card.phone}</span></div>}
           {card.address && <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-white/70" /><span>{card.address}</span></div>}
-          {card.branches.length > 0 && (
-            <div className="flex items-start gap-2"><Building2 className="w-4 h-4 text-white/70 mt-0.5" />
-              <div className="flex flex-wrap gap-1.5">{card.branches.map((b) => (
-                <span key={b} className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs">{b}</span>))}</div>
-            </div>
-          )}
         </div>
       </section>
 
@@ -74,6 +77,7 @@ export function PatientCardView({ card }: { card: PatientCard }) {
             <h2 className="font-bold text-white">{o.kindLabel} — {o.serviceLabel}</h2>
             {o.delivered && <span className="rounded-full bg-emerald-400/25 text-emerald-100 text-xs px-2.5 py-0.5">مكتمل</span>}
           </div>
+          <div className="mt-1 text-xs text-white/75" data-testid={`card-order-opened-${o.id}`}>تاريخ فتح الأمر: {arDate(o.openedAt)}</div>
           {/*  المراحلُ كلُّها في عرض الشاشة بلا تمرير — أعمدةٌ متساوية وخطٌّ يصل كلَّ دائرةٍ بسابقتها. */}
           <ol className="mt-4 grid" style={{ gridTemplateColumns: `repeat(${o.stages.length}, minmax(0, 1fr))` }}>
             {o.stages.map((s, i) => (
@@ -123,6 +127,19 @@ export function PatientCardView({ card }: { card: PatientCard }) {
             ))}
           </ol>
         )}
+      </section>
+
+      {/* ── الخاتمة: الدعاءُ ثمّ فروعُ المراكز وأرقامُها ── */}
+      <section className={`${glass} p-5 text-center`} data-testid="card-closing">
+        <p className="font-bold text-white">{CENTER_CLOSING}</p>
+        <div className="mt-4 grid gap-2 text-sm text-start">
+          {CENTER_CONTACTS.map((c) => (
+            <div key={c.branch} className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2">
+              <span className="flex items-center gap-2"><Building2 className="w-4 h-4 text-white/70" />{c.branch}</span>
+              {c.phone && <a href={`tel:${c.phone}`} className="font-semibold text-cyan-100" dir="ltr">{c.phone}</a>}
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

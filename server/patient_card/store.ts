@@ -1,5 +1,5 @@
 // بناءُ بطاقة المريض (§4.bv) — **قراءةٌ محضة**، ولا يخرج منها حقلٌ خارجَ `PatientCard`.
-// ملاحظاتُ الطبيب والخصوماتُ وأسماءُ الموظّفين وأسبابُ التوقّف وكلُّ نصٍّ حرّ: لا تُقرأ هنا أصلاً.
+// ملاحظاتُ الطبيب والخصوماتُ وأسماءُ الموظّفين وأسبابُ التوقّف: لا تُقرأ هنا أصلاً. وسببُ الزيارة يظهر كما في سجلّ الملفّ (قرارُ المالك).
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { SPECIALTY_LABELS } from "@shared/medical";
@@ -51,7 +51,7 @@ export async function buildPatientCard(patientId: number): Promise<PatientCard |
 
   //  أوامرُ التصنيع والصيانة — المرحلةُ وموعدُ التسليم، **بلا سبب توقّفٍ ولا اسم خبير**.
   const ordersRaw = await rows(sql`
-    SELECT id, service_type, purpose, status, current_stage, expected_delivery_date::text AS edd
+    SELECT id, service_type, purpose, status, current_stage, expected_delivery_date::text AS edd, to_char(created_at AT TIME ZONE 'Asia/Baghdad', 'YYYY-MM-DD') AS opened
       FROM prosthetic_work_orders
      WHERE patient_id = ${patientId} AND status <> 'cancelled'
      ORDER BY created_at DESC, id DESC`);
@@ -69,14 +69,15 @@ export async function buildPatientCard(patientId: number): Promise<PatientCard |
         key: k, label: STAGE_LABELS[k] ?? k,
         state: (done || i < idx ? "done" : i === idx ? "current" : "todo") as "done" | "current" | "todo",
       })),
+      openedAt: String(o.opened),
       delivered: done,
       expectedDeliveryDate: !maintenance && !done && o.edd ? String(o.edd) : null,
     };
   });
 
-  //  الأيّام: زياراتٌ (بعنوانٍ يكتبه النظام وحده) ودفعاتٌ (بمبالغها، بلا مجموع).
+  //  الأيّام: زياراتٌ (بسببها كما في سجلّ الملفّ) ودفعاتٌ (بمبالغها، بلا مجموع).
   const visits = await rows(sql`
-    SELECT v.id, ${BAGHDAY("v.visit_date")} AS d, v.visit_date, v.details, v.treatment_type, b.name AS branch
+    SELECT v.id, ${BAGHDAY("v.visit_date")} AS d, v.visit_date, v.details, v.notes, v.treatment_type, b.name AS branch
       FROM visits v LEFT JOIN branches b ON b.id = v.branch_id
      WHERE v.patient_id = ${patientId} AND v.deleted_at IS NULL`);
   const pays = await rows(sql`
@@ -89,7 +90,7 @@ export async function buildPatientCard(patientId: number): Promise<PatientCard |
     byDay.get(d)!.push({ at, e });
   };
   for (const v of visits) push(String(v.d), new Date(v.visit_date).getTime(),
-    { kind: "visit", label: cardVisitLabel(v.details, v.treatment_type), branch: v.branch ?? null, amount: null });
+    { kind: "visit", label: cardVisitLabel(v.details, v.notes, v.treatment_type), branch: v.branch ?? null, amount: null });
   for (const y of pays) push(String(y.d), new Date(y.date).getTime(),
     { kind: "payment", label: Number(y.amount) < 0 ? "استرجاع" : "دفعة", branch: y.branch ?? null, amount: Number(y.amount) });
   const days: PatientCardDay[] = Array.from(byDay.entries())

@@ -28,6 +28,9 @@ const CASES: [PatientVisibleKey, string, string][] = [
   ["requestedItem", "client/src/components/NewDeviceEpisodeModal.tsx", "ما المطلوب؟"],
   ["visitTreatmentType", "client/src/components/VisitModal.tsx", "<FormLabel>{t.modals.treatmentType}"],
   ["visitTreatmentType", "client/src/components/EditVisitModal.tsx", "<FormLabel>{t.modals.treatmentType}"],
+  ["visitReason", "client/src/components/VisitModal.tsx", "<FormLabel>{t.modals.visitReason}"],
+  ["visitReason", "client/src/components/EditVisitModal.tsx", "<FormLabel>{t.modals.visitDetails}"],
+  ["visitReason", "client/src/components/EditVisitModal.tsx", "<FormLabel>{t.modals.additionalNotes}"],
   ["paymentAmount", "client/src/components/PaymentModal.tsx", "<FormLabel>{t.modals.paidAmount}"],
   ["paymentAmount", "client/src/components/ExamPathDecisionActions.tsx", "المبلغ المدفوع الآن (اختياري)"],
   ["paymentAmount", "client/src/components/NoExamOperationDialog.tsx", "المبلغ المدفوع الآن (د.ع)"],
@@ -50,8 +53,8 @@ for (const [k, file, label] of CASES) {
 //  وكلُّ حقلٍ في القائمة له موضعٌ واحدٌ على الأقلّ — فلا يُضاف إلى القائمة حقلٌ بلا علامة.
 const covered = new Set(CASES.map((c) => c[0]));
 check(Object.keys(PATIENT_VISIBLE_FIELDS).every((k) => covered.has(k as PatientVisibleKey)), "كلُّ حقول القائمة معلَّمة في شاشةٍ واحدةٍ على الأقلّ");
-//  والعلامةُ لا تُوضع على ما لا يراه المريض: ملاحظةُ الزيارة (سبب الزيارة) نصٌّ حرٌّ داخليّ.
-check(!/\{t\.modals\.visitReason\}[^<]*<PatientVisibleBadge/.test(src("client/src/components/VisitModal.tsx")), "ولا علامةَ على «سبب الزيارة» — نصٌّ حرٌّ لا يظهر");
+//  وسببُ الزيارة صار يظهر (قرارُ المالك ٢٠٢٦-١٠-٠٣ اللاحق) — فهو في القائمة أعلاه، والعلامةُ لا تُوضع على ما لا يصل البطاقة:
+check(!/\{t\.modals\.cost\}[^<]*<PatientVisibleBadge/.test(src("client/src/components/EditVisitModal.tsx")), "ولا علامةَ على كلفة الزيارة — لا تظهر");
 check(/يظهر للمريض/.test(src("client/src/components/patient/PatientVisibleBadge.tsx")), "والعلامةُ تقول «يظهر للمريض»");
 
 if (failures > 0) { console.log(`\n❌ ${failures} فشل`); process.exit(1); }

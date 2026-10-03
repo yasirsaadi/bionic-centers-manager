@@ -162,7 +162,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
               name="details"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.visitDetails}</FormLabel>
+                  <FormLabel>{t.modals.visitDetails} <PatientVisibleBadge className="ms-2" /></FormLabel>
                   <FormControl>
                     <Textarea 
                       {...field} 
@@ -184,7 +184,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.additionalNotes}</FormLabel>
+                  <FormLabel>{t.modals.additionalNotes} <PatientVisibleBadge className="ms-2" /></FormLabel>
                   <FormControl>
                     <Input {...field} value={field.value || ""} placeholder={t.modals.additionalNotesPlaceholder} dir="auto" style={{ unicodeBidi: "plaintext" }} data-testid="input-edit-visit-notes" />
                   </FormControl>

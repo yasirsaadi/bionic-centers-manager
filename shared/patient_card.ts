@@ -1,8 +1,8 @@
 // بطاقةُ المريض في تلغرام (§4.bv) — **الحقولُ التي يراها المريض**، قائمةٌ واحدة.
 //
 // كلُّ حقلٍ هنا يحمل في شاشات الموظّفين علامةَ «يظهر للمريض» (`PatientVisibleBadge`)، ولا يصل البطاقةَ حقلٌ غيرُها.
-// وما لا يظهر أبداً: ملاحظاتُ الطبيب، والخصوماتُ وأسبابُها، وأسماءُ الموظّفين، وكلُّ ملاحظةٍ نصّيةٍ حرّة،
-// وأسبابُ التوقّف (قراراتُ المالك ٢٠٢٦-١٠-٠٣).
+// وما لا يظهر أبداً: ملاحظاتُ الطبيب، والخصوماتُ وأسبابُها، وأسماءُ الموظّفين، وأسبابُ التوقّف (قراراتُ المالك ٢٠٢٦-١٠-٠٣).
+// **وسببُ الزيارة يظهر** كما هو مكتوبٌ في سجلّ زيارات الملفّ (قرارُ المالك اللاحق، اليومَ نفسَه) — فحقلُه معلَّم.
 export const PATIENT_VISIBLE_FIELDS = {
   //  الاستعلامات
   name: "الاسم",
@@ -10,6 +10,7 @@ export const PATIENT_VISIBLE_FIELDS = {
   address: "العنوان",
   requestedItem: "المطلوب (طرفٌ كامل أو جزء)",
   visitTreatmentType: "نوع الزيارة / العلاج",
+  visitReason: "سبب الزيارة / تفاصيلها (كما في سجلّ الزيارات)",
   paymentAmount: "مبلغ الدفعة",
   //  الطبيب (ومَن يعدّل الملفّ)
   amputation: "نوع البتر وجهته",
@@ -28,6 +29,7 @@ export interface PatientCardOrder {
   serviceLabel: string;          // «طرف صناعي» · «مسند طبي»
   kindLabel: string;             // «تصنيع» · «صيانة»
   stages: PatientCardStage[];
+  openedAt: string;              // YYYY-MM-DD بتوقيت بغداد — تاريخُ فتح الأمر
   delivered: boolean;
   expectedDeliveryDate: string | null; // YYYY-MM-DD
 }
@@ -47,24 +49,25 @@ export interface PatientCard {
   remaining: number;             // ≥ ٠ — المتبقّي عليه
 }
 
-/** عنوانُ الزيارة كما يراه المريض — **النصوصُ التي يكتبها النظامُ وحده**، لا نصٌّ حرٌّ أبداً. */
-export const CARD_VISIT_LABEL_PREFIXES = [
-  "تدريب على الجهاز", "طلب معاينة طبية", "عاد للشراء", "استلام الجهاز", "صيانة",
-  "متابعة أو تعديل على جهاز قائم", "شراء جزء:", "شراء طرف صناعي", "شراء مسند طبي",
-] as const;
-
-export function cardVisitLabel(details: string | null | undefined, treatmentType: string | null | undefined): string {
-  const d = String(details ?? "").trim();
-  for (const p of CARD_VISIT_LABEL_PREFIXES) {
-    if (d.startsWith(p)) {
-      if (p.endsWith(":")) {
-        //  «شراء جزء: الركبة» — الجزءُ بعد النقطتين حتى أوّل فاصل، بلا مبلغٍ ولا ملاحظة.
-        const rest = d.slice(p.length).split(/\s[—-]\s|،|\(|\d/)[0].trim();
-        return rest ? `${p} ${rest}` : p.slice(0, -1);
-      }
-      return p;
-    }
-  }
+/**
+ * عنوانُ الزيارة كما يراه المريض — **سببُها كما هو مكتوبٌ في سجلّ زيارات ملفّه** (قرارُ المالك ٢٠٢٦-١٠-٠٣):
+ * السطرُ الأوّل نفسُه الذي تعرضه صفحةُ المريض (`details` وإلّا `notes`)، ومعه نوعُ الجلسة إن وُجد.
+ */
+export function cardVisitLabel(details: string | null | undefined, notes: string | null | undefined, treatmentType: string | null | undefined): string {
+  const reason = String(details ?? "").trim() || String(notes ?? "").trim();
   const t = String(treatmentType ?? "").trim();
-  return t ? `جلسة ${t}` : "زيارة";
+  if (t) return reason ? `جلسة ${t} — ${reason}` : `جلسة ${t}`;
+  return reason || "زيارة";
 }
+
+/**
+ * خاتمةُ البطاقة: فروعُ المراكز وأرقامُ هواتفها (قرارُ المالك ٢٠٢٦-١٠-٠٣). **الأرقامُ يعطيها المالك** — والفرعُ بلا رقمٍ يظهر اسماً وحده.
+ */
+export const CENTER_CLOSING = "نتمنى لكم الصحة والسلامة الدائمة";
+export const CENTER_CONTACTS: { branch: string; phone: string | null }[] = [
+  { branch: "بغداد", phone: null },
+  { branch: "كربلاء", phone: null },
+  { branch: "ذي قار", phone: null },
+  { branch: "الموصل", phone: null },
+  { branch: "كركوك", phone: null },
+];
