@@ -11,6 +11,14 @@ const arDate = (ymd: string) => {
   const [y, m, d] = ymd.split("-").map(Number);
   return y && m && d ? `${d} ${AR_MONTHS[m - 1]} ${y}` : ymd;
 };
+/** «2026-10-03» ⟵ «03/10/2026» — كما طلبه المالك (../../....). */
+const slashDate = (ymd: string) => { const [y, m, d] = ymd.split("-"); return y && m && d ? `${d}/${m}/${y}` : ymd; };
+/** «14:05» ⟵ «2:05 م». */
+const arTime = (hm: string) => {
+  const [h, m] = hm.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hm;
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "ص" : "م"}`;
+};
 const DEPT_ICON = { prosthetic: Wrench, medical_support: HeartPulse, physiotherapy: Activity } as const;
 const glass = "rounded-3xl border border-white/25 bg-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.18)]";
 
@@ -26,10 +34,19 @@ export function PatientCardView({ card }: { card: PatientCard }) {
           </div>
           <div className="min-w-0">
             <div className="text-[11px] text-white/70">مجموعة مراكز د. ياسر الساعدي</div>
-            <h1 className="text-xl font-bold leading-tight break-words text-white">{card.name}</h1>
-            <div className="text-xs text-white/80 font-mono mt-0.5" dir="ltr">{card.code}</div>
+            {/*  الرمزُ بجانب الاسم، أوضح (قرارُ المالك). */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold leading-tight break-words text-white">{card.name}</h1>
+              <span className="rounded-lg bg-white/90 text-slate-900 px-2 py-0.5 text-sm font-bold font-mono tracking-wide" dir="ltr"
+                data-testid="card-code">{card.code}</span>
+            </div>
           </div>
         </div>
+        {card.registeredAt && (
+          <p className="mt-3 text-sm text-white/90 relative" data-testid="card-registered">
+            تاريخ تسجيلك في مراكز الدكتور ياسر الساعدي هو <b dir="ltr">{slashDate(card.registeredAt)}</b>
+          </p>
+        )}
         {/*  الفرعُ أو الفروعُ المُتاحُ فيها الملفّ — أعلى البطاقة (قرارُ المالك). */}
         {card.branches.length > 0 && (
           <div className="mt-3 flex items-center gap-2 flex-wrap relative" data-testid="card-branches">
@@ -63,7 +80,9 @@ export function PatientCardView({ card }: { card: PatientCard }) {
               <div key={d.key} className="flex items-start gap-3 rounded-2xl bg-white/10 p-3">
                 <Icon className="w-5 h-5 mt-0.5 text-cyan-200" />
                 <div><div className="font-semibold text-white">{d.label}</div>
-                  {d.detail && <div className="text-sm text-white/80">{d.detail}</div>}</div>
+                  {d.detail && <div className="text-sm text-white/80">{d.detail}</div>}
+                  {d.status && <div className="mt-1 inline-block rounded-full bg-cyan-300/20 text-cyan-100 text-xs px-2.5 py-0.5"
+                    data-testid={`card-dept-status-${d.key}`}>{d.status}</div>}</div>
               </div>
             );
           })}
@@ -116,7 +135,11 @@ export function PatientCardView({ card }: { card: PatientCard }) {
                   {d.entries.map((e, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 rounded-xl bg-white/10 px-3 py-2 text-sm">
                       <div className="min-w-0"><span className="font-medium">{e.label}</span>
-                        {e.branch && <span className="text-white/60 text-xs"> · {e.branch}</span>}</div>
+                        <div className="text-white/60 text-xs mt-0.5">
+                          {e.time && <span dir="rtl">الساعة {arTime(e.time)}</span>}
+                          {e.time && e.branch && " · "}
+                          {e.branch}
+                        </div></div>
                       {e.amount !== null && (
                         <span className={`font-bold shrink-0 ${e.amount < 0 ? "text-rose-200" : "text-emerald-200"}`}>{money(e.amount)}</span>
                       )}
