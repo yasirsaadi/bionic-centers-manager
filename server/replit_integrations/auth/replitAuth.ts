@@ -8,6 +8,7 @@ import { resolveDatabaseUrl } from "../../db_url";
 //  قبل أن يُبنى مِجمَعُ الجلسات هنا، فلا يُفتَح مِجمَعٌ ثانٍ على قاعدةٍ رفضها
 //  الحارسُ للأوّل.
 import { DB_CONNECTION_TIMEOUT_MS } from "../../db";
+import { TRUST_PROXY } from "../../net/trust_proxy";
 
 // ══ مِجمَعُ مخزن الجلسات — منفصلٌ كما كان، لكن مقيَّدٌ وقانونيّ (تصحيحٌ
 // إنتاجيّ، ٢٠٢٦-٠٩-١٢) ═══════════════════════════════════════════════════
@@ -101,7 +102,8 @@ export function getSession() {
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  //  بالشبكات لا بعدد القفزات — فيصير `req.ip` جهازَ الموظّف لا حافّةَ Cloudflare (§4.bq).
+  app.set("trust proxy", TRUST_PROXY);
   app.use(getSession());
 }
 

@@ -53,7 +53,6 @@ export const BLOCKED: Record<string, string> = {
   "/api/admin/settings": "تحمل إعداداتٍ إداريةً منها أسرارُ تكامل.",
   "/api/admin/settings/telegram": "توكنُ تلغرام — سرٌّ لا يُقال في محادثة.",
   "/api/admin/settings/backup-email": "بريدُ النسخة الاحتياطية — إعدادٌ لا جواب.",
-  "/api/admin/ip-check": "فحصٌ تقنيٌّ مؤقّت لعنوان الطالب — لا جوابَ فيه لسؤال عمل.",
   //  ══ تفريغٌ ضخم لا يُقرأ في محادثة ══
   "/api/admin/export/patients": "تفريغُ كلّ المرضى — حجمٌ لا يُقرأ في جواب.",
   "/api/invoice-items/bulk": "إدخالٌ مجمَّع، لا سؤالَ يُجاب عنه.",

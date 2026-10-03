@@ -1034,26 +1034,6 @@ export async function registerRoutes(
   });
 
   // Get backup status
-  // ══ فحصُ عنوان الجهاز — مؤقّت، للمسؤول العام وحده ═══════════════════════
-  //  سجلُّ التدقيق يحفظ `req.ip` فيظهر عنوانُ حافّةٍ لا جهازُ الموظّف (القسم ٥). وقبل أن نختار
-  //  ترويسةً نقيس: يفتح المسؤولُ هذا الرابطَ من رابط Render المباشر فيرى ما يصل الخادمَ فعلاً،
-  //  ويقارنه بعنوانه الحقيقيّ. **يُزال بعد اختيار المصدر.** لا سرَّ فيه: عنوانُ الطالب نفسِه.
-  app.get("/api/admin/ip-check", isAuthenticated, (req, res) => {
-    const branchSession = (req.session as any).branchSession;
-    if (!branchSession?.isAdmin) return res.status(403).json({ message: "غير مصرح" });
-    const h = (k: string) => req.get(k) ?? null;
-    res.json({
-      reqIp: req.ip ?? null,
-      socket: req.socket?.remoteAddress ?? null,
-      xForwardedFor: h("x-forwarded-for"),
-      cfConnectingIp: h("cf-connecting-ip"),
-      trueClientIp: h("true-client-ip"),
-      xRealIp: h("x-real-ip"),
-      cfRay: h("cf-ray"),
-      host: h("host"),
-    });
-  });
-
   app.get("/api/admin/backup-status", isAuthenticated, async (req, res) => {
     const branchSession = (req.session as any).branchSession;
     if (!branchSession?.isAdmin) {
