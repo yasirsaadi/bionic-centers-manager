@@ -324,7 +324,7 @@ async function main() {
       const d = await detail(woA, S.expert);
       same("٢٧. الخبيرُ يفتح أمره ويرى مواصفاتِ الجهاز من معاينته", [d.status, stripExam(specsOf(d))], [200, expectA]);
       const raw = JSON.stringify(d.body).toLowerCase();
-      check(!/"cost"|"totalcost"|"approvedprice"|"agreedcost"|"remaining"/.test(raw), "٢٨. وبلا مبلغٍ واحد في الاستجابة", raw.slice(0, 200));
+      check(!/"cost"|"totalcost"|"approvedprice"|"agreedcost"|"remaining"|"maintenancefinalprice"|"maintenanceoriginalprice"/.test(raw), "٢٨. وبلا مبلغٍ واحد في الاستجابة", raw.slice(0, 200));
       const my = await http("GET", "/api/manufacturing/my-orders", S.expert);
       const mine = (Array.isArray(my.body) ? my.body : []).find((o: any) => Number(o.id) === woA);
       same("٢٩. وقائمتُه تسمّي نوعَ جهازه من معاينته", mine?.itemType ?? null, "نوع-A");
