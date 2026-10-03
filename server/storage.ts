@@ -4183,6 +4183,14 @@ export class DatabaseStorage implements IStorage {
       physio: number;
       shared: number;
     };
+    /**
+     * **التصحيحاتُ والتخفيضات** — قيودُ الكلفة السالبة في الفترة (قلمُ الكلفة، الإلغاء، التصحيح)، ≤ ٠ وبالأقسام نفسِها.
+     * جزءٌ من `totalRevenue` لا يُضاف إليه: «المبيعات الإجمالية» = `totalRevenue − reductions.total` (قرارُ المالك ٢٠٢٦-١٠-٠٣).
+     */
+    reductions: {
+      total: number;
+      byDepartment: { prosthetic: number; medical_support: number; physiotherapy: number; legacyDevicesUnsplit: number; unclassified: number };
+    };
     // يبقى للتوافق الرجعي مع كل قارئٍ قائم — مشتقٌّ من التفصيل أعلاه.
     bySection: {
       devices: { revenue: number; paid: number; expenses: number };
@@ -4321,7 +4329,7 @@ export class DatabaseStorage implements IStorage {
     const bRevBranch = branchId ? sql` AND e.branch_id = ${branchId}` : sql``;
     const bRevStart = rangeStart ? sql` AND e.created_at >= ${rangeStart}` : sql``;
     const bRevEnd = endExclusive ? sql` AND e.created_at < ${endExclusive}` : sql``;
-    const revenueRowsRaw = await db.execute<{ bucket: string; total: string }>(sql`
+    const revenueRowsRaw = await db.execute<{ bucket: string; total: string; neg: string }>(sql`
       SELECT CASE
                WHEN e.case_id IS NOT NULL AND c.case_type IS NOT NULL THEN c.case_type
                WHEN e.device_episode_id IS NOT NULL AND ec.case_type IS NOT NULL THEN ec.case_type
@@ -4330,7 +4338,8 @@ export class DatabaseStorage implements IStorage {
                WHEN e.source IN ('assign_manufacturing', 'maintenance') THEN 'legacy_devices'
                ELSE 'unclassified'
              END AS bucket,
-             COALESCE(SUM(e.amount), 0)::bigint AS total
+             COALESCE(SUM(e.amount), 0)::bigint AS total,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.amount < 0), 0)::bigint AS neg
         FROM cost_entries e
         LEFT JOIN patient_cases c ON c.id = e.case_id
         LEFT JOIN patient_device_episodes pe ON pe.id = e.device_episode_id
@@ -4341,6 +4350,15 @@ export class DatabaseStorage implements IStorage {
     const revenueByDept = (revenueRowsRaw.rows ?? []).map((r: any) => ({
       dept: String(r.bucket), total: String(r.total),
     }));
+    const negOf = (k: string) => Number((revenueRowsRaw.rows ?? []).find((r: any) => String(r.bucket) === k)?.neg) || 0;
+    const reductionsByDept = {
+      prosthetic: negOf("prosthetic"), medical_support: negOf("medical_support"), physiotherapy: negOf("physiotherapy"),
+      legacyDevicesUnsplit: negOf("legacy_devices"), unclassified: negOf("unclassified"),
+    };
+    const reductions = {
+      total: Object.values(reductionsByDept).reduce((s, v) => s + v, 0),
+      byDepartment: reductionsByDept,
+    };
 
     // Expenses per section (NULL/legacy → shared).
     const expWhere = expenseConditions.length > 0 ? and(...expenseConditions) : sql`TRUE`;
@@ -4469,6 +4487,7 @@ export class DatabaseStorage implements IStorage {
       byDepartment,
       rollups: summaryRollups,
       expensesBySection,
+      reductions,
       bySection,
     };
   }

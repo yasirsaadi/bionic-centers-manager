@@ -266,13 +266,13 @@ async function main() {
     const dly = all3.body?.daily;
     same("و١. **صفٌّ لكلّ يوم بأرقام الفِكستشر** — ومنها زيارةُ ٢٣:٣٠ بغداد في يومها",
       dly?.days, [
-        { day: D1, visits: 2, patients: 2, paid: 100000, revenue: 500000, expenses: 20000, net: 80000 },
-        { day: D2, visits: 1, patients: 1, paid: 80000, revenue: 260000, expenses: 5000, net: 75000 },
-        { day: D3, visits: 1, patients: 1, paid: 7000, revenue: 90000, expenses: 1000, net: 6000 },
+        { day: D1, visits: 2, patients: 2, paid: 100000, revenue: 500000, corrections: 0, expenses: 20000, net: 80000 },
+        { day: D2, visits: 1, patients: 1, paid: 80000, revenue: 260000, corrections: 0, expenses: 5000, net: 75000 },
+        { day: D3, visits: 1, patients: 1, paid: 7000, revenue: 90000, corrections: 0, expenses: 1000, net: 6000 },
       ]);
     same("و٢. **والمجموع = الملخّصُ المالي للفترة نفسِها وعددُ زياراتها**",
       dly?.total, { visits: all3.body?.visits?.length, patients: all3.body?.patientsCount, paid: f?.rollups?.grandTotal?.paid, revenue: f?.rollups?.grandTotal?.revenue,
-        expenses: f?.expenses, net: f?.netCash });
+        corrections: 0, expenses: f?.expenses, net: f?.netCash });
     const dPhy = (await http(url(`${rng}&services=physiotherapy`), S.admin)).body;
     same("و٣. **وبقسمٍ مختار: أيامُه بماله وحده، ومجموعُها = مالُ الاختيار**",
       [dPhy?.daily?.days?.map((r: any) => [r.day, r.paid, r.expenses, r.visits]),
@@ -282,7 +282,7 @@ async function main() {
          expenses: dPhy?.financial?.scoped?.expenses, net: dPhy?.financial?.scoped?.netCash }]);
     same("و٤. وأطرافٌ وحدها: المصاريفُ والصافي لا ينفصلان يوماً ولا مجموعاً (null)",
       (await http(url(`${rng}&services=prosthetic`), S.admin)).body?.daily?.total,
-      { visits: 1, patients: 1, paid: 100000, revenue: 500000, expenses: null, net: null });
+      { visits: 1, patients: 1, paid: 100000, revenue: 500000, corrections: 0, expenses: null, net: null });
     same("و٥. ويومٌ واحد بلا تفصيل", (await http(url(`date=${D2}`), S.admin)).body?.daily, null);
     same("و٦. وفترةٌ أطولُ من ٩٢ يوماً تُقال لا تُحسب",
       (await http(url(`from=2001-01-01&to=2001-06-01`), S.admin)).body?.daily, { tooLong: true, maxDays: 92 });
@@ -294,6 +294,19 @@ async function main() {
       [noMoney.body?.financial, noMoney.body?.daily?.withMoney, noMoney.body?.daily?.days, noMoney.body?.daily?.total],
       [null, false, [{ day: D1, visits: 2, patients: 2 }, { day: D2, visits: 1, patients: 1 }, { day: D3, visits: 1, patients: 1 }],
        { visits: 4, patients: 2 }]);
+
+    // ══ وب. التصحيحاتُ عمودُها (قرارُ المالك ٢٠٢٦-١٠-٠٣ — يومُ ٢١ أيلول في بغداد) ══
+    console.log("\n── وب. التصحيحات ──");
+    await cost(A, aPhy, -40_000, "case_cost_edit", bg(D2, "15:00"));
+    const cor = (await http(url(`from=${D1}&to=${D3}`), S.admin)).body?.daily;
+    same("وب١. **قلمُ الكلفة السالب في عمود التصحيحات**، والمبيعاتُ الصافية كما في الملخّص",
+      cor?.days?.map((r: any) => [r.day, r.revenue, r.corrections]), [[D1, 500000, 0], [D2, 220000, -40000], [D3, 90000, 0]]);
+    same("وب٢. والمجموع", [cor?.total?.revenue, cor?.total?.corrections], [810000, -40000]);
+    const corPhy = (await http(url(`from=${D1}&to=${D3}&services=physiotherapy`), S.admin)).body?.daily;
+    same("وب٣. وبقسم العلاج الطبيعي: تصحيحُه وحده", corPhy?.days?.map((r: any) => [r.day, r.revenue, r.corrections]),
+      [[D1, 0, 0], [D2, 20000, -40000], [D3, 0, 0]]);
+    same("وب٤. والأطرافُ لا تحمله", (await http(url(`from=${D1}&to=${D3}&services=prosthetic`), S.admin)).body?.daily?.total?.corrections, 0);
+    await q(`DELETE FROM cost_entries WHERE amount = -40000 AND patient_id = $1`, [A]);
 
     // ══ ز. الحضورُ لا الشراء (تقريرُ مدير ذي قار ٢٠٢٦-١٠-٠١) ═══════════════
     console.log("\n── ز. الحضور ──");
