@@ -46,7 +46,8 @@ export interface BucketDef {
   key: string;
   label: string;
   tone: BucketTone;
-  match: (o: BucketOrderLike, nowMonth: string) => boolean;
+  /** `nowDay` يومُ بغداد «YYYY-MM-DD» — لـ«مكتملون اليوم» وحده، وبدونه لا يطابق شيءٌ «اليوم». */
+  match: (o: BucketOrderLike, nowMonth: string, nowDay?: string) => boolean;
 }
 
 //  ══ الشروطُ — الثمانيةُ الأولى **منقولةٌ بحرفها** من الصفحة ═══════════════
@@ -89,6 +90,13 @@ export const BUCKET_DEFS: readonly BucketDef[] = [
     match: (o, nowMonth) => o.status === "completed"
       && (o.completedAt ?? "").slice(0, 7) === nowMonth,
   },
+  //  ══ **«مكتملون اليوم»** (طلبُ المالك ٢٠٢٦-١٠-٠٣) ══ «ما تمّ إكمالُه اليوم من أطرافٍ أو مساند، مع اختيار الخبير والفرع» —
+  //  يتركّب مع مرشِّحات الخادم كبقيّة الشرائط (الخبير · الفرع · النوع). **واليومُ يومُ بغداد** لا يومُ UTC: أمرٌ اكتمل ٠١:٠٠ بغداد
+  //  (٢٢:٠٠ UTC من أمس) مكتملٌ اليوم.
+  {
+    key: "completed_today", label: "مكتملون اليوم", tone: "green",
+    match: (o, _nowMonth, nowDay) => o.status === "completed" && !!nowDay && baghdadDayOf(o.completedAt) === nowDay,
+  },
   //  ══ «متأخرون بدون عذر» و«متأخرون بعذر» — شريطان لا شريط (٢٠٢٦-٠٩-٢٤) ══
   //  كان الشريطُ الأحمر «متأخرون» يعدّ **كلَّ** ما مضى موعدُه، فيضغطه المالكُ
   //  فتخرج بطاقاتٌ كهرمانيّة كتب خبراؤها عذرَها. وقرارُه: «لا تحسبهم
@@ -107,6 +115,27 @@ export const BUCKET_DEFS: readonly BucketDef[] = [
   },
 ] as const;
 
+/**
+ * يومُ بغداد لطابعٍ زمنيّ (UTC+3 بلا توقيتٍ صيفيّ) — و`null` لما لا يُقرأ.
+ * **بلا كائن تاريخٍ يقرأ ساعةَ الجهاز** (حارسُ و.٢): `Date.parse` للطابع وحده، ثمّ تحويلُ أيّام الحقبة إلى تاريخٍ مدنيّ.
+ */
+export function baghdadDayOf(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  //  أيّامٌ منذ ١٩٧٠-٠١-٠١ بتوقيت بغداد ⟵ سنة/شهر/يوم (خوارزميةُ Howard Hinnant «civil_from_days»).
+  const z = Math.floor((t + 3 * 60 * 60 * 1000) / 86_400_000) + 719_468;
+  const era = Math.floor(z / 146_097);
+  const doe = z - era * 146_097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36_524) - Math.floor(doe / 146_096)) / 365);
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 const BY_KEY = new Map(BUCKET_DEFS.map((d) => [d.key, d]));
 
 /** تعريفُ التصنيف بمفتاحه — و`null` لمفتاحٍ لا نعرفه. */
@@ -119,10 +148,10 @@ export interface BucketCount { def: BucketDef; count: number; }
 
 /** عددُ كلّ تصنيف **من القائمة المعروضة نفسِها** — فلا يخالف العددُ ما يظهر. */
 export function bucketCounts(
-  orders: readonly BucketOrderLike[], nowMonth: string,
+  orders: readonly BucketOrderLike[], nowMonth: string, nowDay?: string,
 ): BucketCount[] {
   return BUCKET_DEFS.map((def) => ({
-    def, count: orders.reduce((n, o) => (def.match(o, nowMonth) ? n + 1 : n), 0),
+    def, count: orders.reduce((n, o) => (def.match(o, nowMonth, nowDay) ? n + 1 : n), 0),
   }));
 }
 
@@ -133,11 +162,11 @@ export function bucketCounts(
  *  أو تصنيفٌ حُذف يوماً يجب ألّا يُفرغ الشاشةَ على الموظّف بلا سببٍ يراه.
  */
 export function ordersInBucket<T extends BucketOrderLike>(
-  orders: readonly T[], key: string | null | undefined, nowMonth: string,
+  orders: readonly T[], key: string | null | undefined, nowMonth: string, nowDay?: string,
 ): T[] {
   const def = bucketDef(key);
   if (!def) return orders.slice();
-  return orders.filter((o) => def.match(o, nowMonth));
+  return orders.filter((o) => def.match(o, nowMonth, nowDay));
 }
 
 /**

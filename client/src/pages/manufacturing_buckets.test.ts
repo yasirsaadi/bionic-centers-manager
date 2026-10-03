@@ -18,7 +18,7 @@
 //      شقيقٌ كهرمانيٌّ «متأخرون بعذر»، ولا صفَّ يضيع بينهما.
 
 import {
-  BUCKET_DEFS, bucketCounts, ordersInBucket, nextBucket, bucketDef,
+  BUCKET_DEFS, bucketCounts, ordersInBucket, nextBucket, bucketDef, baghdadDayOf,
   type BucketOrderLike,
 } from "./manufacturing_buckets";
 import { rowToneOf } from "./manufacturing_row_tone";
@@ -88,7 +88,7 @@ console.log("\n── أ: الثمانيةُ الأولى بحرفها ──");
 same("أ.١ الترتيبُ والمفاتيح كما على الشاشة — والجديدُ آخرَها",
   BUCKET_DEFS.map((d) => d.key),
   ["new", "active", "waiting_patient", "waiting_materials", "medical_hold",
-    "technical_rework", "ready", "completed_month", "overdue", "overdue_excused"]);
+    "technical_rework", "ready", "completed_month", "completed_today", "overdue", "overdue_excused"]);
 same("أ.٢ **أوامر جديدة** — المرحلةُ الأولى والملغى خارجها", idsOf("new"), [1, 2]);
 same("أ.٣ **قيد العمل** — فعّالٌ خارج المرحلة الأولى", idsOf("active"), [4, 5, 6, 11, 17]);
 same("أ.٤ بانتظار المريض", idsOf("waiting_patient"), [7, 15, 16]);
@@ -156,6 +156,17 @@ same("و.١ شهرٌ آخر يُغيّر «مكتملون هذا الشهر»",
 check(!readFileSync(join(dirname(fileURLToPath(import.meta.url)), "manufacturing_buckets.ts"), "utf8")
   .includes("new Date("), "و.٢ **ولا ساعةَ جهازٍ داخل الحاسم الخالص**");
 
+// ═══ ط: «مكتملون اليوم» (طلبُ المالك ٢٠٢٦-١٠-٠٣) ═══════════════════════════
+console.log("\n── ط: مكتملون اليوم ──");
+same("ط.١ المكتملُ يومَ بغداد المعطى وحده", ordersInBucket(ORDERS, "completed_today", MONTH, "2026-09-20").map((o) => o.id), [14]);
+same("ط.٢ **ويومُ بغداد لا يومُ UTC**: ٢٢:٣٠ UTC أمس = ٠١:٣٠ بغداد اليوم، و٢٠:٥٩ UTC أمس = أمس",
+  [baghdadDayOf("2026-09-19T22:30:00Z"), baghdadDayOf("2026-09-19T20:59:00Z"), baghdadDayOf("2024-02-28T21:00:00Z"), baghdadDayOf("2026-12-31T21:00:00Z"), baghdadDayOf(null), baghdadDayOf("x")],
+  ["2026-09-20", "2026-09-19", "2024-02-29", "2027-01-01", null, null]);
+same("ط.٣ وبلا يومٍ ممرَّر لا يطابق شيء", ordersInBucket(ORDERS, "completed_today", MONTH).length, 0);
+same("ط.٤ وغيرُ المكتمل لا يدخل ولو حمل تاريخاً",
+  ordersInBucket([{ currentStage: "delivered", status: "active", completedAt: "2026-09-20T09:00:00Z", isOverdue: false, holdReasonCode: null }],
+    "completed_today", MONTH, "2026-09-20").length, 0);
+
 // ═══ ح: «الأحمرُ فقط وفقط لمن متأخرٌ وليس لديه عذر» ══════════════════════
 console.log("\n── ح: قرارُ المالك ٢٠٢٦-٠٩-٢٤ ──");
 const redIds = new Set(idsOf("overdue"));
@@ -200,11 +211,11 @@ const page = readFileSync(
 const pageCode = page.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 check(/from "\.\/manufacturing_buckets"/.test(pageCode),
   "ز.١ الصفحةُ تستورد الحاسم");
-check(pageCode.includes("bucketCounts(orders, nowMonth)"),
+check(pageCode.includes("bucketCounts(orders, nowMonth, nowDay)"),
   "ز.٢ والأعدادُ منه لا من نسخةٍ ثانية");
 check(!/orders\.filter\(\(o\)\s*=>\s*o\.isOverdue/.test(pageCode),
   "ز.٣ **ولا شرطَ تصنيفٍ مكتوبٌ في الصفحة** ينحرف عنه يوماً");
-check(pageCode.includes("ordersInBucket(orders, bucket, nowMonth)"),
+check(pageCode.includes("ordersInBucket(orders, bucket, nowMonth, nowDay)"),
   "ز.٤ والقائمةُ المعروضةُ هي المُرشَّحة");
 check(pageCode.includes("visibleOrders.map((o) => <OrderRow"),
   "ز.٥ **والصفوفُ تُرسَم من المُرشَّحة لا من كلّ الأوامر**");
