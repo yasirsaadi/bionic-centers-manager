@@ -20,6 +20,22 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6960, BASE = `http://127.0.0.1:${PORT}`, MARK = "اختبار-بطاقة-المريض";
 const TOKEN = "123456:TEST-token-for-card", TG = "777000111";
 const q = async <T = any>(t: string, p: any[] = []) => (await pool.query(t, p)).rows as T[];
+const ADMIN = 9942, RECV1 = 9943, RECV2 = 9944, DOC = 9945, USERS = [ADMIN, RECV1, RECV2, DOC];
+const S = {
+  admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1, 2, 3], displayName: "المسؤول", permissions: {} },
+  recv1: { userId: RECV1, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1], displayName: "استقبال بغداد", permissions: { canViewPatients: true } },
+  recv2: { userId: RECV2, role: "reception", isAdmin: false, branchId: 3, accessibleBranches: [3], displayName: "استقبال فرع آخر", permissions: { canViewPatients: true } },
+  doc: { userId: DOC, role: "doctor", isAdmin: false, branchId: 1, accessibleBranches: [1], displayName: "طبيب", permissions: { canViewPatients: true } },
+};
+async function http(method: string, path: string, session: any, body?: any) {
+  const res = await fetch(BASE + path, {
+    method, headers: { "content-type": "application/json",
+      "x-test-session-b64": Buffer.from(JSON.stringify(session), "utf8").toString("base64") },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json: any = null; try { json = await res.json(); } catch { /* empty */ }
+  return { status: res.status, body: json };
+}
 const now = () => Math.floor(Date.now() / 1000);
 const initFor = (userId: string, authDate = now()) =>
   signInitData({ auth_date: String(authDate), query_id: "AAH", user: JSON.stringify({ id: Number(userId), first_name: "م" }) }, TOKEN);
@@ -59,9 +75,32 @@ async function main() {
 
   //  ── الخادم الحقيقيّ ──
   await q(m093);
-  await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'كربلاء') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'كربلاء'),(3,'الموصل') ON CONFLICT DO NOTHING`);
   await cleanup();
   const app = express(); app.use(express.json());
+  app.use((req: any, _res, next) => {
+    const raw = req.headers["x-test-session-b64"];
+    req.session = raw ? { branchSession: JSON.parse(Buffer.from(String(raw), "base64").toString("utf8")) } : {};
+    next();
+  });
+  const realUse = app.use.bind(app);
+  (app as any).use = (...args: any[]) => {
+    if (args.length === 1 && typeof args[0] === "function" && args[0].name === "session") return app;
+    return realUse(...(args as [any]));
+  };
+  //  رسائلُ تلغرام تُلتقَط ولا تخرج.
+  const sent: any[] = [];
+  const realFetch = globalThis.fetch;
+  (globalThis as any).fetch = async (url: any, init?: any) => {
+    if (String(url).startsWith("https://api.telegram.org/")) { sent.push(JSON.parse(String(init?.body ?? "{}"))); return new Response("{\"ok\":true}", { status: 200 }); }
+    return realFetch(url, init);
+  };
+  for (const [id, role, b] of [[ADMIN, "admin", 1], [RECV1, "reception", 1], [RECV2, "reception", 3], [DOC, "doctor", 1]] as any[]) {
+    await q(`INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, branch_ids, is_active, can_view_patients)
+             VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true,true)
+             ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids, is_active=true, can_view_patients=true`,
+      [id, `card_u${id}`, `مستخدم ${id}`, role, b, JSON.stringify([b])]);
+  }
   const srv = createServer(app); await registerRoutes(srv, app); srv.listen(PORT);
   await new Promise<void>((r) => srv.once("listening", r));
   try {
@@ -115,6 +154,37 @@ async function main() {
     same("هـ٩. ولا مفاتيحَ خارجَ شكل البطاقة", Object.keys(c).sort(),
       ["address", "branches", "code", "days", "departments", "name", "orders", "phone", "remaining"]);
 
+    console.log("\n── ز. معاينةُ الموظّف ومفتاحُ التفعيل (الدفعة ٣) ──");
+    await q(`UPDATE patients SET patient_card_enabled = false WHERE id = $1`, [pid]);
+    const pv = await http("GET", `/api/patients/${pid}/patient-card`, S.recv1);
+    same("ز١. استقبالُ فرع المريض يعاين: مطفأة، مربوط، والبطاقةُ نفسُها", [pv.status, pv.body?.enabled, pv.body?.telegramLinked, pv.body?.card?.remaining], [200, false, true, 1500000]);
+    same("ز٢. والمعاينةُ = ما يصل المريضَ حرفاً", JSON.stringify(pv.body?.card), JSON.stringify(c));
+    same("ز٣. واستقبالُ فرعٍ آخر ⟵ ٤٠٣، والطبيب ⟵ ٤٠٣",
+      [(await http("GET", `/api/patients/${pid}/patient-card`, S.recv2)).status, (await http("GET", `/api/patients/${pid}/patient-card`, S.doc)).status], [403, 403]);
+    same("ز٤. والاستقبالُ لا يفعّل ⟵ ٤٠٣ ولا يتغيّر شيء",
+      [(await http("POST", `/api/patients/${pid}/patient-card`, S.recv1, { enabled: true })).status,
+       (await q(`SELECT patient_card_enabled FROM patients WHERE id=$1`, [pid]))[0].patient_card_enabled], [403, false]);
+    same("ز٥. وجسمٌ غيرُ صالح ⟵ ٤٠٠", [
+      (await http("POST", `/api/patients/${pid}/patient-card`, S.admin, { enabled: "yes" })).status,
+      (await http("POST", `/api/patients/${pid}/patient-card`, S.admin, { enabled: true, enabledBy: 1 })).status], [400, 400]);
+    sent.length = 0;
+    const on = await http("POST", `/api/patients/${pid}/patient-card`, S.admin, { enabled: true });
+    same("ز٦. المسؤولُ يفعّل ⟵ مفعّلة، ورسالةٌ واحدة", [on.status, on.body?.enabled, on.body?.changed, on.body?.notified], [200, true, true, 1]);
+    same("ز٧. والرسالةُ لحساب المريض بزرّ البطاقة",
+      [sent[0]?.chat_id, sent[0]?.reply_markup?.inline_keyboard?.[0]?.[0]?.web_app?.url], [TG, "https://bionic.example.com/card"]);
+    const row = (await q(`SELECT patient_card_enabled_at IS NOT NULL AS at, patient_card_enabled_by AS by FROM patients WHERE id=$1`, [pid]))[0];
+    same("ز٨. ومتى ومَن على الصفّ", [row.at, row.by], [true, ADMIN]);
+    same("ز٩. وسطرُ تدقيقٍ بالقديم والجديد", (await q(`SELECT action, old_values::jsonb->>'patientCardEnabled' AS o, new_values::jsonb->>'patientCardEnabled' AS n
+             FROM audit_log WHERE entity_type='patient' AND entity_id=$1 AND action LIKE 'patient_card_%' ORDER BY id`, [pid])).map((a) => [a.action, a.o, a.n]),
+      [["patient_card_enabled", "false", "true"]]);
+    same("ز١٠. والمريضُ يفتحها الآن", (await card(good)).body?.cards?.length, 1);
+    sent.length = 0;
+    const again = await http("POST", `/api/patients/${pid}/patient-card`, S.admin, { enabled: true });
+    same("ز١١. وتفعيلٌ ثانٍ لا يكتب ولا يرسل", [again.body?.changed, sent.length], [false, 0]);
+    const off = await http("POST", `/api/patients/${pid}/patient-card`, S.admin, { enabled: false });
+    same("ز١٢. والإطفاءُ يُغلقها بلا رسالة", [off.body?.enabled, sent.length, (await card(good)).body?.cards], [false, 0, []]);
+    await q(`UPDATE patients SET patient_card_enabled = true WHERE id = $1`, [pid]);
+
     console.log("\n── و. الربطُ يُسحَب والمريضُ يُحذف ──");
     await q(`UPDATE patient_contacts SET revoked_at = NOW() WHERE patient_id = $1`, [pid]);
     same("و١. ربطٌ مسحوب ⟵ لا بطاقة", (await card(good)).body?.cards, []);
@@ -126,7 +196,10 @@ async function main() {
              WHERE id = $1`, [pid]);
     same("و٢. ومريضٌ في السلّة ⟵ لا بطاقة", (await card(good)).body?.cards, []);
   } finally {
-    await cleanup(); await q(`DELETE FROM system_users WHERE id = 9941`); srv.close();
+    await cleanup();
+    await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [USERS]);
+    await q(`DELETE FROM system_users WHERE id = ANY($1::int[]) OR id = 9941`, [USERS]);
+    (globalThis as any).fetch = realFetch; srv.close();
   }
   console.log(`\n${failures === 0 ? "✅ كل فحوص بطاقة المريض نجحت" : `❌ ${failures} فشل`}`);
   process.exit(failures === 0 ? 0 : 1);

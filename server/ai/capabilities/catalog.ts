@@ -105,6 +105,7 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
   "/api/patients/:id/branch-access": { d: "الفروعُ التي أُتيح لها ملفُّ هذا المريض." },
   //  بقرار المالك ٢٠٢٦-١٠-٠٣ (§4.bl): حالةُ ربط المريض بتلغرام/واتساب — قنواتٌ وتواريخ، بلا رقمٍ ولا معرّف حساب.
   "/api/patients/:patientId/communication": { d: "حالةُ تواصل المريض: هل هو مربوطٌ بتلغرام أو واتساب ومنذ متى، ورموزُ الربط المعلَّقة." },
+  "/api/patients/:patientId/patient-card": { d: "بطاقةُ المريض في تلغرام: أمفعّلةٌ هي، وأمربوطٌ بتلغرام، وما يراه فيها بالضبط (الخدمات والمراحل والزيارات بدفعاتها والمتبقّي).", f: true },
   "/api/patients/:id/branch-access/:branchId/experts": { d: "خبراءُ فرعٍ مُتاحٍ لهذا المريض." },
   "/api/patients/:id/case-type/:caseType/removal-preview": { d: "أثرُ سحب نوع حالةٍ أو إغلاقها قبل التنفيذ." },
   "/api/patient-trash": { d: "سلّةُ المرضى المحذوفين: مَن حذف ومتى ولماذا وكم بقي من مهلة الاستعادة." },

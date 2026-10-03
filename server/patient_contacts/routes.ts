@@ -110,7 +110,7 @@ interface ScopedPatient { id: number; branchId: number }
  *
  * يكتب الردّ بنفسه ويُرجع `null` عند المنع، فتبقى النقطة سطراً واحداً.
  */
-async function resolvePatient(req: Req, res: any): Promise<ScopedPatient | null> {
+export async function resolvePatient(req: Req, res: any): Promise<ScopedPatient | null> {
   // نفس الصرامة لمعرّف المريض: `/patients/5.5/...` طلبٌ خاطئ لا مريضٌ يُبحث
   // عنه، فيُردّ ٤٠٠ صراحةً بدل ٤٠٤ يوحي بأن الرقم صالح والمريض غير موجود.
   const patientId = pathId(req.params.patientId);

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PatientCardControls } from "@/components/patient/PatientCardControls";
 
 export interface PatientCommunicationCardProps {
   patientId: number;
@@ -24,6 +25,8 @@ export interface PatientCommunicationCardProps {
   enabled?: boolean | null;
   /** هل للملفّ رقمٌ مطبَّع صالح؟ بدونه لا وجهةَ مهما رُفعت الراية. */
   hasPhone?: boolean;
+  /** مفتاحُ «بطاقة المريض مفعّلة» للمسؤول وحده — والخادمُ يفرضه (§4.bv). */
+  isAdmin?: boolean;
 }
 
 interface ActiveContact { id: number; channel: string; relation: string; linkedAt: string }
@@ -35,7 +38,7 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("ar-IQ", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Baghdad" });
 }
 
-export default function PatientCommunicationCard({ patientId, enabled, hasPhone = true }: PatientCommunicationCardProps) {
+export default function PatientCommunicationCard({ patientId, enabled, hasPhone = true, isAdmin = false }: PatientCommunicationCardProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const key = ["/api/patients", patientId, "communication"];
@@ -152,6 +155,7 @@ export default function PatientCommunicationCard({ patientId, enabled, hasPhone 
               </Button>
             ))}
           </div>
+          <PatientCardControls patientId={patientId} isAdmin={isAdmin} />
         </div>
       )}
 
