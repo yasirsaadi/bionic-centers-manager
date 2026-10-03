@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type Branch } from "@shared/schema";
 import { SUPPORT_SPECS } from "@shared/case_fields";
@@ -574,7 +575,7 @@ export default function CreatePatient() {
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.patientForm.fullName}</FormLabel>
+                    <FormLabel>{t.patientForm.fullName} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input
                         {...field}
@@ -608,7 +609,7 @@ export default function CreatePatient() {
                   <FormItem>
                     {/* النجمة هنا وحدها: الحقل إلزامي عند فتح ملف جديد، أما
                         «تعديل مريض» فيقبل ملفاً قديماً بلا رقم إطلاقاً. */}
-                    <FormLabel>{t.patientForm.phone} *</FormLabel>
+                    <FormLabel>{t.patientForm.phone} * <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-white" dir="ltr" inputMode="tel" placeholder={t.patientForm.phonePlaceholder} />
                     </FormControl>
@@ -650,7 +651,7 @@ export default function CreatePatient() {
                 name="address"
                 render={({ field }) => (
                   <FormItem className="md:col-span-2">
-                    <FormLabel>{t.patientForm.address}</FormLabel>
+                    <FormLabel>{t.patientForm.address} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.addressPlaceholder} />
                     </FormControl>
@@ -1055,7 +1056,7 @@ export default function CreatePatient() {
                 <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-300">
                   {/* Amputation Type Selection */}
                   <div className="space-y-4">
-                    <FormLabel className="text-base">{t.patientForm.amputationType}</FormLabel>
+                    <FormLabel className="text-base">{t.patientForm.amputationType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <RadioGroup
                       value={amputationType}
                       onValueChange={(val) => setAmputationType(val as "single" | "double" | "silicone")}
@@ -1491,7 +1492,7 @@ export default function CreatePatient() {
                     name="diseaseType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t.patientForm.diagnosisType}</FormLabel>
+                        <FormLabel>{t.patientForm.diagnosisType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                         <FormControl>
                           <Input {...field} value={field.value || ""} className="bg-white" placeholder={t.patientForm.diagnosisPlaceholder} />
                         </FormControl>

@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPaymentSchema } from "@shared/schema";
 import { useAddPayment } from "@/hooks/use-patients";
@@ -514,7 +515,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
               name="amount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t.modals.paidAmount}</FormLabel>
+                  <FormLabel>{t.modals.paidAmount} <PatientVisibleBadge className="ms-2" /></FormLabel>
                   <FormControl>
                     <MoneyInput
                       className={`${!isAdmin && amountIsAutoPricedPhysio ? "bg-muted" : ""}`}

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -120,7 +121,7 @@ export function PrescriptionFields({
           `amputationSite` from them in the identical legacy string format. */}
       {caseType === "prosthetic" && (
         <div className="space-y-2 border-b border-teal-200 pb-3">
-          <Label className="text-xs font-semibold">نوع البتر</Label>
+          <Label className="text-xs font-semibold">نوع البتر <PatientVisibleBadge className="ms-2" /></Label>
           <div className="flex flex-wrap gap-2">
             {AMPUTATION_TYPE_OPTIONS.map((opt) => (
               <Button
@@ -339,7 +340,7 @@ export function PrescriptionFields({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {specs.map((f) => (
             <div key={f.key} className="space-y-1.5">
-              <Label htmlFor={`rx-${f.key}`} className="text-xs">{f.label}</Label>
+              <Label htmlFor={`rx-${f.key}`} className="text-xs">{f.label}{f.key === "supportType" && <PatientVisibleBadge className="ms-2" />}</Label>
               <Input
                 id={`rx-${f.key}`}
                 inputMode={f.numeric ? "numeric" : undefined}
@@ -369,7 +370,7 @@ export function PrescriptionFields({
       {caseType === "physiotherapy" && (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="rx-diseaseType" className="text-xs">{DISEASE_TYPE_LABEL}</Label>
+            <Label htmlFor="rx-diseaseType" className="text-xs">{DISEASE_TYPE_LABEL} <PatientVisibleBadge className="ms-2" /></Label>
             <Input
               id="rx-diseaseType"
               placeholder={DISEASE_TYPE_PLACEHOLDER}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBranchSession } from "@/components/BranchGate";
@@ -461,7 +462,7 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
             </div>
           )}
           <div>
-            <label className="text-sm font-medium">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+            <label className="text-sm font-medium">تاريخ التسليم للمريض <span className="text-red-500">*</span> <PatientVisibleBadge className="ms-2" /></label>
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 bg-white" data-testid="input-delivery-date" />
             <p className="text-xs text-muted-foreground mt-1">
               {isFirstCommit
@@ -533,7 +534,7 @@ function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md">
-        <DialogHeader><DialogTitle>الانتقال للمرحلة التالية</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>الانتقال للمرحلة التالية <PatientVisibleBadge className="ms-2" /></DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="rounded-md bg-slate-50 p-3 text-sm">
             <span className="text-muted-foreground">من: </span>{STAGE_LABELS[order.currentStage] ?? order.currentStage}
@@ -572,7 +573,7 @@ function AdvanceDialog({ open, onOpenChange, order, onDone }: any) {
           )}
           {needsDelivery && (
             <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
-              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span> <PatientVisibleBadge className="ms-2" /></label>
               <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-mold-delivery-date" />
               <p className="text-xs text-muted-foreground mt-1">إلزامي عند بلوغ القالب — وعليه تُقاس دقّة التسليم. وبعد تحديده يمكنك أنت أو مدير الفرع أو الإدارة تغييره، وكلّ تغيير يتطلّب سبباً ويُسجَّل في السجلّ.</p>
             </div>
@@ -767,7 +768,7 @@ function AdminStageDialog({ open, onOpenChange, order, stages, onDone }: any) {
           )}
           {needsDelivery && (
             <div className="border border-amber-300 bg-amber-50 rounded-md p-3">
-              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span></label>
+              <label className="text-sm font-semibold">تاريخ التسليم للمريض <span className="text-red-500">*</span> <PatientVisibleBadge className="ms-2" /></label>
               <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 bg-white" data-testid="input-admin-stage-delivery-date" />
               <p className="text-xs text-muted-foreground mt-1">الأمر بلا موعد تسليم — وهو إلزامي من مرحلة القالب فما بعدها.</p>
             </div>

@@ -39,6 +39,7 @@
 // فتبيع بلا معاينةٍ **أشدَّ** ما يحتاج الطبيب. فصار استعمالُها للمساند
 // **الصيانةَ وحدها**: جهازٌ قائمٌ يُصلَح، لا جهازٌ يُوصَف.
 
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -843,7 +844,7 @@ export function NoExamOperationDialog({
           {/* ── المبلغ المدفوع الآن — إلزاميّ على سعرٍ موجب، معطَّلٌ على
               المجّانيّ. مشتركٌ بين البابين كنظيره السعر أعلاه. ── */}
           <div className="space-y-1.5">
-            <Label className="text-sm font-medium">المبلغ المدفوع الآن (د.ع)</Label>
+            <Label className="text-sm font-medium">المبلغ المدفوع الآن (د.ع) <PatientVisibleBadge className="ms-2" /></Label>
             {warrantyOn ? (
               <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground"
                 data-testid="no-exam-op-paid-now-warranty">

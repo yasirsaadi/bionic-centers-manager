@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertVisitSchema } from "@shared/schema";
 import { useAddVisit } from "@/hooks/use-patients";
@@ -299,7 +300,7 @@ export function VisitModal({
                 name="treatmentType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span></FormLabel>
+                    <FormLabel>{t.modals.treatmentType} <span className="text-red-500">*</span> <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger className="border border-slate-300 bg-slate-100" data-testid="select-treatment-type">
