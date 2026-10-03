@@ -13,6 +13,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
+import { soldDevicesTotal, needsBelowSoldConfirm, type EpisodeLike } from "./case_cost_guard";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -121,6 +122,23 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<number>(caseRow.cost || 0);
+  //  ══ **تأكيدٌ تحت سعر المُباع** (§4.br) — أجهزةُ القسم بالمفتاح نفسِه الذي تقرؤه صفحةُ المريض، فلا طلبَ ثانٍ. ══
+  const isDeviceCase = caseRow.caseType === "prosthetic" || caseRow.caseType === "medical_support";
+  const { data: episodeData } = useQuery<{ episodes?: EpisodeLike[] }>({
+    queryKey: [`/api/patients/${patientId}/device-episodes`],
+    enabled: editing && isDeviceCase,
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/device-episodes`, { credentials: "include" });
+      if (!res.ok) return { episodes: [] };
+      return res.json();
+    },
+  });
+  const soldTotal = isDeviceCase ? soldDevicesTotal(episodeData?.episodes, caseRow.id) : 0;
+  const [confirmBelowSold, setConfirmBelowSold] = useState(false);
+  const trySave = () => {
+    if (needsBelowSoldConfirm(draft, soldTotal)) setConfirmBelowSold(true);
+    else save.mutate();
+  };
 
   const save = useMutation({
     mutationFn: async () => {
@@ -465,12 +483,37 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
           {editing ? (
             <div className="flex items-center gap-2 md:gap-1 mt-1">
               <MoneyInput value={draft} onValueChange={setDraft} className="h-11 md:h-8 text-base md:text-sm text-center" />
-              <button type="button" disabled={save.isPending} onClick={() => save.mutate()} className="text-green-600 shrink-0 inline-flex items-center justify-center h-11 w-11 md:h-auto md:w-auto rounded-lg bg-green-50 md:bg-transparent disabled:opacity-50" data-testid={`save-case-cost-${caseRow.id}`} aria-label="حفظ التكلفة"><Check className="w-5 h-5 md:w-4 md:h-4" /></button>
+              <button type="button" disabled={save.isPending} onClick={trySave} className="text-green-600 shrink-0 inline-flex items-center justify-center h-11 w-11 md:h-auto md:w-auto rounded-lg bg-green-50 md:bg-transparent disabled:opacity-50" data-testid={`save-case-cost-${caseRow.id}`} aria-label="حفظ التكلفة"><Check className="w-5 h-5 md:w-4 md:h-4" /></button>
               <button type="button" onClick={() => setEditing(false)} className="text-red-500 shrink-0 inline-flex items-center justify-center h-11 w-11 md:h-auto md:w-auto rounded-lg bg-red-50 md:bg-transparent" aria-label="إلغاء التعديل"><X className="w-5 h-5 md:w-4 md:h-4" /></button>
             </div>
           ) : (
             <div className="font-bold text-sm md:text-base">{fmtIQD(caseRow.cost)}</div>
           )}
+          {editing && soldTotal > 0 && (
+            <div className="text-[11px] text-muted-foreground mt-1" data-testid={`case-cost-sold-hint-${caseRow.id}`}>
+              أسعار الأجهزة المُباعة في هذا القسم: {fmtIQD(soldTotal)}
+            </div>
+          )}
+          <AlertDialog open={confirmBelowSold} onOpenChange={setConfirmBelowSold}>
+            <AlertDialogContent dir="rtl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>هل أنت متأكّد؟</AlertDialogTitle>
+                <AlertDialogDescription>
+                  سعر الأجهزة المُباعة في هذا القسم {fmtIQD(soldTotal)}، وأنت كتبت {fmtIQD(draft)}.
+                  الفرق يُسجَّل تخفيضاً بتاريخ اليوم، ويبقى سعرُ البيع الأصليّ في السجلّ كما هو.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="gap-2">
+                <AlertDialogCancel data-testid={`cancel-below-sold-${caseRow.id}`}>إلغاء</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => save.mutate()}
+                  data-testid={`confirm-below-sold-${caseRow.id}`}
+                >
+                  نعم، احفظ
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
         {/*  `canViewCasePayments` — بلا صندوقَي «المدفوع»/«المتبقّي» إطلاقاً
             حين لا تصل القيمتان من الخادم؛ لا صفرَ زائفاً في مكانهما. */}
