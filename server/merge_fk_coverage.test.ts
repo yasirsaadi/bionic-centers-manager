@@ -64,6 +64,10 @@ const MERGE_DECISIONS: Record<string, string> = {
   "pending_service_charge_events.patient_id": "repoint — الرحلة تتبع صفّها وصاحبَه",
   "patient_contacts.patient_id": "ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ",
   "patient_notification_deliveries.patient_id": "repoint — الصادر يتبع المريض، ولا تصادم فيه",
+  //  إتاحةُ الفروع الإضافية (ترحيل ٠٨٠، #304): اتّحادٌ لا استبدال. صفُّ المصدر
+  //  المكرَّرُ في الهدف (`uq_pba_patient_branch`) أو المساوي لفرع تسجيل الهدف يُحذف
+  //  قبل النقل، والباقي يُنقل — فلا يفقد فرعٌ ملفّاً مُنح رؤيتَه.
+  "patient_branch_access.patient_id": "حذف المكرَّر وفرع تسجيل الهدف من صفوف المصدر ثم repoint — اتّحادُ الفروع",
 
   "patient_device_episodes.patient_id": "repoint إلى الملف الهدف مع إعادة الترقيم",
 

@@ -39,9 +39,11 @@ function eq_(msg: string, got: unknown, expected: unknown) {
 const MARK = "اختبار-دمج-المعاينات";
 const DOCTOR_ID = 9101;
 
+//  رقمٌ فريدٌ لكلّ ملفّ: حارسُ تكرار الهاتف (#279) يرفض ملفّاً ثانياً بالرقم نفسه.
+let phoneSeq = 0;
 async function mkPatient(name: string): Promise<number> {
   const p = await storage.createPatient({
-    name, phone: "07701234567", referralSource: MARK,
+    name, phone: `0770123${String(4600 + ++phoneSeq).padStart(4, "0")}`, referralSource: MARK,
     age: "40", medicalCondition: "physiotherapy", branchId: 1,
   } as any);
   return p.id;

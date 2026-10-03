@@ -31,6 +31,7 @@ import { registerRoutes } from "./routes";
 //  — لا عبر `POST /api/admin/patients/merge`، فيبقى الفحصُ عند منطق
 //  `mergePatients` وحده بلا حاجةٍ لجلسة مسؤول.
 import { storage } from "./storage";
+import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -311,6 +312,10 @@ async function cleanup() {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع كما يُنشئه الخادمُ الحقيقيّ** (كما في `case_closure.test.ts`): `seedChartOfAccounts`
+  //  تُنادى عند كلّ إقلاع وتشتقّ صندوقاً لكلّ فرع، والفرعان هنا يُدرَجان بعد الترحيلات — فيُنادى الآن
+  //  كي يجد `mkJournalForPayment` صندوقَ الفرع (`1111…`) على قاعدةٍ مبنيّةٍ من الصفر.
+  await seedChartOfAccounts();
   // ══ الأعلامُ المخزَّنة صارت الحُجّةَ الحيّة (إصلاحٌ 2026-09-01) ══════════
   // المِعترِضةُ الجديدة في `routes.ts` تعيد بناء `branchSession.permissions`
   // من صفّ `system_users` الفعليّ على كل طلب — فلم يعد كافياً أن يحمل كائنُ

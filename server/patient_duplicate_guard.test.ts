@@ -210,6 +210,8 @@ async function cleanup() {
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[ADMIN, RECV, RECV2, NOPERM]]);
+  //  الإتاحةُ التي يمنحها الاختبارُ نفسُه (ترحيل ٠٨٠) تشير إلى المريض — تُحذف قبله.
+  await q(`DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   await q(`DELETE FROM patient_code_aliases a
             WHERE NOT EXISTS (SELECT 1 FROM patients p WHERE p.id = a.patient_id)`);

@@ -140,16 +140,38 @@ async function caseRow(caseId: number) {
 }
 
 async function main() {
+  //  الفرعان اللذان تشير إليهما الحساباتُ والملفّاتُ أدناه (`system_users_branch_id` مفتاحٌ أجنبيّ) —
+  //  قاعدةٌ مبنيّةٌ من الصفر لا تحملهما، فلا يتّكئ الاختبارُ على بقايا قاعدةٍ أخرى.
+  await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
   await q(
     `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids)
      VALUES ($1,$2,'x','admin',$3,1,'[1,2]'::jsonb)
      ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, branch_id = EXCLUDED.branch_id`,
     [ADMIN, "clp_admin", "المسؤول"]);
+  //  **المفتاحُ يحكم لا الدور** (#456، ترحيل ٠٩٠): كلفةُ الحالة بمفتاح «تعديل مرضى» — فالمديران يحملانه
+  //  مُشغَّلاً، كي يبقى «٢» رفضَ الفرع و«٣» قبولَ مالك المفتاح في فرعه.
   await q(
-    `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids)
-     VALUES ($1,$2,'x','branch_manager',$3,1,'[1]'::jsonb)
-     ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, branch_id = EXCLUDED.branch_id`,
+    `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids, can_edit_patients)
+     VALUES ($1,$2,'x','branch_manager',$3,1,'[1]'::jsonb,true)
+     ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, branch_id = EXCLUDED.branch_id,
+       can_edit_patients = EXCLUDED.can_edit_patients`,
     [MANAGER, "clp_mgr", "مدير بغداد"]);
+  //  **وكلُّ جلسةٍ لها صفُّها** (#275، §4.ar البند ٧): الجلسةُ غيرُ الإدارية تُعاد قراءتُها حيّاً من
+  //  `system_users` مع كلّ طلب، فجلسةٌ بلا صفّ تُغلَق بـ٤٠١ — ورفضُ «١» و«٢» يجب أن يكون ٤٠٣ الدورِ والفرع.
+  for (const [id, username, role, name, branch] of [
+    [MANAGER_OTHER_BRANCH, "clp_mgr2", "branch_manager", "مدير فرعٍ آخر", 2],
+    [RECV, "clp_recv", "reception", "الاستقبال", 1],
+  ] as const) {
+    await q(
+      `INSERT INTO system_users (id, username, password_hash, role, display_name, branch_id, branch_ids, is_active,
+         can_edit_patients)
+       VALUES ($1,$2,'x',$3,$4,$5,jsonb_build_array($5::int),true, $3 = 'branch_manager')
+       ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, display_name = EXCLUDED.display_name,
+         branch_id = EXCLUDED.branch_id, branch_ids = EXCLUDED.branch_ids, is_active = true,
+         can_edit_patients = EXCLUDED.can_edit_patients`,
+      [id, username, role, name, branch]);
+  }
 
   await cleanup();
 
@@ -237,9 +259,11 @@ async function main() {
     same("١٧. «تعديل مريض» ينجح", [r.status, r.body?.totalCost], [200, 700_000]);
     same("١٨. **والاستجابةُ تُقرّ بالمزامنة صراحةً**", r.body?.caseCostSync, "synced");
     check(!r.body?.costNote, "١٩. وبلا ملاحظةٍ — لا غموضَ هنا", JSON.stringify(r.body?.costNote));
-    same("٢٠. **وقيدُ الدفتر يبقى بلا ربط حالة** (لم أغيّر إسناد القيد، فقط زامنتُ البطاقة)",
-      (await q(`SELECT case_id FROM cost_entries WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pA]))[0]?.case_id,
-      null);
+    //  **وقيدُ الفرق يُنسب إلى القسم الذي حمله** (§4.bo الدفعة ب، #489): كان يبقى `case_id = NULL` فيسقط
+    //  من إيراد الأقسام (§4.be). فالقيدُ الأخير يحمل الحالةَ الوحيدة بعينها — لا غيرَها ولا لا شيء.
+    same("٢٠. **وقيدُ الدفتر يُنسب إلى الحالة الوحيدة** التي زامنتُ بطاقتَها",
+      Number((await q(`SELECT case_id FROM cost_entries WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pA]))[0]?.case_id),
+      cA);
     cr = await caseRow(cA);
     same("٢١. **وكلفةُ الحالة الوحيدة صارت مساويةً للإجماليّ الجديد حرفياً**",
       [cr.cost, cr.cost_source], [700_000, "manual"]);
