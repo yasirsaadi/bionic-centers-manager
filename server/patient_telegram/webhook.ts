@@ -29,7 +29,8 @@ import { createHash, timingSafeEqual } from "crypto";
 import { redeemLinkToken, LinkTokenError, patientsForExternalId } from "../patient_contacts/store";
 // الرمز وحده — هذه الوحدة لا تعرف الملفّ ولا تقرأ منه شيئاً آخر.
 import { patientCodesFor } from "../patient_code/store";
-import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH } from "./config";
+import { patientBotConfig, patientBotStatusLine, PATIENT_WEBHOOK_PATH, publicBaseUrl } from "./config";
+import { cardPatientIdsForTelegram } from "../patient_card/store";
 import { sendMessage } from "./client";
 // الوسيط: هو مَن يعرف التصنيع، لا هذه الوحدة.
 import { redeemAndWelcome } from "../patient_notifications/telegram_link";
@@ -44,7 +45,25 @@ export const MESSAGES = {
   invalid: "رابط الربط غير صالح أو انتهت صلاحيته. يرجى طلب رابط جديد من المركز.",
   noPayload: "لبدء الربط، افتح رابط الربط الذي زوّدك به المركز.",
   noLinkedPatient: "لا يوجد ملف مريض مرتبط بهذا الحساب حالياً. يرجى طلب رابط ربط جديد من المركز.",
+  //  بطاقةُ المريض (§4.bv).
+  cardReady: "بطاقتك في مراكز د. ياسر الساعدي جاهزة — اضغط الزرّ لفتحها.",
+  cardUnavailable: "البطاقة غير متاحة لحسابك بعد. سيخبرك المركز حين تُفعَّل.",
+  cardButton: "فتح بطاقتي",
 } as const;
+
+/** «/card» أو «بطاقتي» — بلا وسائط، كـ`/id`. */
+export function isCardCommand(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  const t = text.trim();
+  return /^\/card(?:@[A-Za-z0-9_]+)?$/.test(t) || t === "بطاقتي";
+}
+
+/** زرُّ فتح البطاقة داخل تلغرام (`web_app`) — أو `null` حين لا عنوانَ عامّاً. */
+export function cardButtonMarkup(): unknown | null {
+  const base = publicBaseUrl();
+  if (!base) return null;
+  return { inline_keyboard: [[{ text: MESSAGES.cardButton, web_app: { url: `${base}/card` } }]] };
+}
 
 /**
  * مقارنة ثابتة الزمن للسرّ.
@@ -112,8 +131,8 @@ export function patientCodesMessage(codes: string[]): string {
  */
 export async function ensurePatientWebhook(): Promise<"set" | "skipped" | "failed"> {
   const config = patientBotConfig();
-  const base = (process.env.PATIENT_TELEGRAM_WEBHOOK_BASE_URL || process.env.RENDER_EXTERNAL_URL || "").trim().replace(/\/+$/, "");
-  if (!config || !/^https:\/\/[^/\s]+$/.test(base)) return "skipped";
+  const base = publicBaseUrl();
+  if (!config || !base) return "skipped";
   try {
     const res = await fetch(`https://api.telegram.org/bot${config.token}/setWebhook`, {
       method: "POST",
@@ -181,6 +200,15 @@ export function registerPatientTelegramWebhook(app: Express) {
         const contacts = await patientsForExternalId("telegram", String(fromId));
         const codes = await patientCodesFor(contacts.map((c) => c.patientId));
         await sendMessage(chatId, patientCodesMessage(codes));
+        return res.json({ ok: true });
+      }
+
+      // ══ `/card` · «بطاقتي» — زرُّ البطاقة لمن فُعّلت له (§4.bv) ══════════
+      //  الهويّةُ من تلغرام وحده، والبطاقةُ نفسُها تتحقّق من التوقيع ثانيةً عند الفتح.
+      if (isCardCommand(message.text)) {
+        const ids = await cardPatientIdsForTelegram(String(fromId));
+        const markup = ids.length ? cardButtonMarkup() : null;
+        await sendMessage(chatId, markup ? MESSAGES.cardReady : MESSAGES.cardUnavailable, markup ?? undefined);
         return res.json({ ok: true });
       }
 

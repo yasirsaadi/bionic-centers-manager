@@ -27,7 +27,7 @@ export interface SendResult {
  * الرمي هنا كان سيصعد إلى معالج الـwebhook فيُفشل طلباً نجح فيه ما يهمّ
  * (الربط في القاعدة). فالإرسال «أطلق وأبلغ»: يقول نجح أم لا، ولا يُسقط شيئاً.
  */
-export async function sendMessage(chatId: string, text: string): Promise<SendResult> {
+export async function sendMessage(chatId: string, text: string, replyMarkup?: unknown): Promise<SendResult> {
   const config = patientBotConfig();
   if (!config) return { ok: false, reason: "disabled" };
 
@@ -37,7 +37,7 @@ export async function sendMessage(chatId: string, text: string): Promise<SendRes
     const res = await fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
       signal: controller.signal,
     });
     if (!res.ok) {

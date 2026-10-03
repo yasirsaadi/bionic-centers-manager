@@ -151,6 +151,10 @@ export const patients = pgTable("patients", {
    * الحالةَ فحسب، فتعود الصفوفُ نفسُها بمعرّفاتها ومبالغها.
    */
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  //  بطاقةُ المريض في تلغرام (ترحيل ٠٩٣، §4.bv) — تُفتح لمن فُعّلت له صراحةً.
+  patientCardEnabled: boolean("patient_card_enabled").notNull().default(false),
+  patientCardEnabledAt: timestamp("patient_card_enabled_at", { withTimezone: true }),
+  patientCardEnabledBy: integer("patient_card_enabled_by"),
   deletedByUserId: integer("deleted_by_user_id"),
   /**
    * **لقطةُ اسمِ مَن حذف — لا `join`**: الحسابُ قد يُعاد تسميتُه أو يُحذف،
@@ -1494,6 +1498,8 @@ export const insertPatientSchema = createInsertSchema(patients).omit({
   deletedReason: true, restoreUntil: true,
   deletedTotalCost: true, deletedTotalPaid: true, deletedRemaining: true,
   deletedPendingJson: true, deletedNeededAdmin: true,
+  //  مفتاحُ بطاقة المريض بابُه الوحيد نقطتُه (§4.bv) — لا يُكتب من التسجيل.
+  patientCardEnabled: true, patientCardEnabledAt: true, patientCardEnabledBy: true,
 }).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });

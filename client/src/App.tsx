@@ -302,7 +302,17 @@ function Router() {
   );
 }
 
+//  «بطاقتي» (§4.bv) — صفحةُ المريض داخل تلغرام: خارج دخول الموظّفين كلّياً.
+const PatientCardPage = lazy(() => import("@/pages/PatientCardPage"));
+
 function App() {
+  if (typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/card") {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+        <PatientCardPage />
+      </Suspense>
+    );
+  }
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>

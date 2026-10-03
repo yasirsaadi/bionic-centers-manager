@@ -90,3 +90,12 @@ export function patientBotStatusLine(): string {
     ? "[patient-telegram] enabled"
     : `[patient-telegram] disabled — missing env: ${missing.join(", ")}`;
 }
+
+/**
+ * **عنوانُ الخادم العامّ** (`PATIENT_TELEGRAM_WEBHOOK_BASE_URL`، وإلّا `RENDER_EXTERNAL_URL` الذي تضعه Render) — بلا شرطةٍ
+ * أخيرة، و`https` وحده (تلغرام لا يفتح غيرَه). يبني الـwebhook وزرَّ «بطاقتي» (§4.bv) من مصدرٍ واحد.
+ */
+export function publicBaseUrl(): string | null {
+  const base = (process.env.PATIENT_TELEGRAM_WEBHOOK_BASE_URL || process.env.RENDER_EXTERNAL_URL || "").trim().replace(/\/+$/, "");
+  return /^https:\/\/[^/\s]+$/.test(base) ? base : null;
+}
