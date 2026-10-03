@@ -187,6 +187,7 @@
     "test:case-cost-guard": "tsx client/src/components/patient/case_cost_guard.test.ts",
     "test:patient-edit-audit": "tsx server/patient_edit_audit.test.ts",
     "test:buttons-batch": "tsx server/buttons_batch.test.ts",
+    "test:whatsapp-off-on-create": "tsx server/whatsapp_off_on_create.test.ts",
     "test:service-profitability": "tsx server/service_profitability.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",

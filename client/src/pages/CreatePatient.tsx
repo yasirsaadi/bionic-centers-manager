@@ -175,9 +175,10 @@ export default function CreatePatient() {
     defaultValues: {
       name: "",
       phone: "",
-      //  **مرفوعةٌ افتراضاً** — والقاعدةُ افتراضُها `FALSE`، فالمرضى القدامى
-      //  لا يستيقظون على رسالةٍ بعد النشر. الجديدُ وحده يرسل `true`.
-      whatsappNotificationsEnabled: true,
+      //  **مطفأةٌ ولا مربّعَ لها** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bu): الترحيبُ يأتي من تلغرام بمسح الرمز، فلا
+      //  موافقةَ واتساب تُسجَّل ولا ترحيبَ يُجهَّز في طابورٍ معطَّل. تُرسَل `false` صراحةً — فافتراضُ الخادم
+      //  (`!== false`) لا يرفعها. ونموذجُ «تعديل» يبقى بابَ تفعيلها لمريضٍ بعينه.
+      whatsappNotificationsEnabled: false,
       address: "",
       referralSource: "",
       referralSubSource: "",
@@ -511,6 +512,8 @@ export default function CreatePatient() {
       totalCost: 0,
       treatmentType: "",
       sessionCount: 0,
+      //  صراحةً (§4.bu) — لا موافقةَ واتساب عند التسجيل؛ الخادمُ يرفعها إن غاب الحقل.
+      whatsappNotificationsEnabled: false,
     };
     mutate(submitData as any, {
       onSuccess: (data) => {
@@ -612,32 +615,7 @@ export default function CreatePatient() {
                     <p className="text-xs text-muted-foreground">{t.patientForm.phoneHint}</p>
                     <FormMessage />
 
-                    {/* ══ إشعاراتُ واتساب — **مربّعٌ واحد، بلا نافذةٍ ولا اعتماد** ══
-                        الموظّفُ يكلّم المريضَ وهو يكتب رقمه، فيسأله في الجملة
-                        نفسها. ومربّعٌ مرفوعٌ افتراضاً هو المسلك المتوقَّع في
-                        أي مؤسّسةٍ حديثة — ومَن رفض يُطفئه بضغطةٍ واحدة.
-                        وحفظُ الملفّ هو الموافقة: لا شاشةَ ثانية ولا توقيع. */}
-                    <label
-                      className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-2 cursor-pointer"
-                      data-testid="label-whatsapp-consent"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-4 w-4 accent-emerald-600"
-                        checked={form.watch("whatsappNotificationsEnabled") !== false}
-                        onChange={(e) =>
-                          form.setValue("whatsappNotificationsEnabled", e.target.checked)}
-                        data-testid="checkbox-whatsapp-consent"
-                      />
-                      <span className="text-xs leading-relaxed">
-                        <span className="font-medium text-emerald-900">
-                          إرسال إشعارات وتحديثات المركز عبر واتساب على الرقم المسجل
-                        </span>
-                        <span className="block text-muted-foreground mt-0.5">
-                          بحفظ الملف سيُستخدم الرقم لإرسال رسائل الخدمة وتحديثاتها.
-                        </span>
-                      </span>
-                    </label>
+                    {/*  مربّعُ «إشعارات واتساب» أُزيل بقرار المالك (§4.bu) — الترحيبُ عبر تلغرام. */}
 
                     {/* ══ **تاريخُ المريض مع المركز — معلومةٌ لا قرار** ══════
                         حلّ محلَّ «تصنيف المريض: جديد / قديم». ذاك كان يقول
