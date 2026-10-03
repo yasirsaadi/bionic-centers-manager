@@ -184,6 +184,7 @@
     "test:review-batch-d": "tsx server/review_batch_d.test.ts",
     "test:patient-buttons": "tsx client/src/pages/patient_buttons_review.test.ts",
     "test:trust-proxy": "tsx server/net/trust_proxy.test.ts",
+    "test:case-cost-guard": "tsx client/src/components/patient/case_cost_guard.test.ts",
     "test:service-profitability": "tsx server/service_profitability.test.ts",
     "test:registry-services-api": "tsx server/registry_services_api.test.ts",
     "test:cost-ledger-parity": "tsx server/cost_ledger_parity.test.ts",
