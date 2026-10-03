@@ -575,16 +575,26 @@ async function main() {
       same("٣٤. **(س) والاستقبالُ (صاحبُ طلبٍ بلا معاينة) لا يكتسب صلاحيةً طبية**",
         (await http("POST", `/api/medical/patients/${p}/exams`, S.recv,
           { caseType: "prosthetic", diagnosis: "x", idempotencyKey: crypto.randomUUID() })).status, 403);
-      same("٣٥. **(ع) وحلقةٌ مفتوحةٌ واحدة لا اثنتان**",
-        (await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
-          { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" })).status, 409);
+      //  **(ع) عملياتٌ متوازية** — ترحيل ٠٧٣ (#274، قرارُ المالك) رفع
+      //  `uq_pde_case_open`: حلقةٌ ثانية مفتوحة على الخيط نفسه تُفتَح، صفّاً
+      //  مستقلّاً بتسلسله، والأولى تبقى مفتوحةً كما هي.
+      const parallel = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
+        { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" });
+      same("٣٥. **(ع) وحلقةٌ ثانية مفتوحة تُفتَح صفّاً مستقلّاً بتسلسله (ترحيل ٠٧٣)**",
+        [parallel.status, parallel.body?.id !== first.id,
+         (await epRow(parallel.body?.id))?.sequence_number,
+         (await epRow(first.id))?.status,
+         (await q(`SELECT count(*)::int n FROM patient_device_episodes
+                    WHERE case_id=$1 AND status NOT IN ('delivered','cancelled')`, [c]))[0].n],
+        [201, true, 2, "awaiting_exam", 2]);
       //  **(ف) والتسلسلُ يتقدّم بعد الإلغاء — لا يُعاد استعمالُ رقم.**
       await http("POST", `/api/patients/${p}/device-episodes/${first.id}/cancel`,
         S.manager, { reason: "اعتذر المريض" });
       const second = await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
         { serviceType: "prosthetic", requestedItem: "knee", servicePath: "exam" });
-      same("٣٦. **(ف) والتسلسلُ سليم بعد الإلغاء**",
-        [second.status, (await epRow(second.body?.id))?.sequence_number], [201, 2]);
+      same("٣٦. **(ف) والتسلسلُ سليم بعد الإلغاء** — لا يُعاد رقمُ الملغاة",
+        [second.status, (await epRow(second.body?.id))?.sequence_number,
+         (await epRow(first.id))?.status], [201, 3, "cancelled"]);
       same("   **(ص) وتصنيفُ ما طُلب لم يتغيّر** — المخترَعُ يُردّ",
         (await http("POST", `/api/patients/${p}/device-episodes`, S.recv,
           { serviceType: "prosthetic", requestedItem: "elbow", servicePath: "exam" })).status, 400);

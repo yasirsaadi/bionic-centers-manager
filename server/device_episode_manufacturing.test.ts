@@ -552,7 +552,10 @@ async function main() {
     const bypass = await http("POST", `/api/manufacturing/orders`, S.manager,
       { patientId: pJ, serviceType: "prosthetic", expertUserId: EXPERT, purpose: "initial_build" });
     same("ل. إنشاء بناءٍ أولي مباشرةً ⟶ 409", bypass.status, 409);
-    check(/تخصيص وإسناد خبير/.test(bypass.body?.error ?? ""), "   ويدلّ على المسار الصحيح", bypass.body?.error);
+    //  «تخصيص وإسناد خبير» خرج من سجلّ المرضى (§4.bp، #492) — فالرسالةُ تدلّ على
+    //  «إتمام البيع» بعد المعاينة، ولا تدلّ على البابِ المُزال.
+    same("   ويدلّ على المسار الصحيح — «إتمام البيع» بعد المعاينة (§4.bp)", bypass.body?.error,
+      "لدى المريض طلب جهاز جديد قيد الإجراء — أكمِله عبر «إتمام البيع» بعد المعاينة");
     same("   ولا أمر أُنشئ", (await ordersOf(pJ)).length, 0);
     same("   والحلقة كما هي", (await epRow(eJ))?.status, "examined");
 

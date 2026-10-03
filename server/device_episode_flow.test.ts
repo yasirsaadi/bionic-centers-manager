@@ -8,9 +8,9 @@
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
 // (١) **العائد بعد سنتين لا يُسجَّل من جديد**: تُفتح حلقة #٢ على خيطه
 //     القائم، ولو كان #١ مسلَّماً أو ملغى.
-// (٢) **شراءٌ مفتوحٌ واحد**: محاولة ثانية تُردّ بـ409 — من الحالات الثلاث
-//     المفتوحة كلّها.
-// (٣) **السباق**: طلبان متزامنان ⟶ حلقة واحدة، بلا تسلسل مكرَّر.
+// (٢) **عملياتٌ متوازية** (ترحيل ٠٧٣، #274 — قرارُ المالك): حلقةٌ مفتوحة على
+//     الخيط — بأيّ حالةٍ من الثلاث — لا تمنع فتحَ أخرى؛ كلٌّ صفٌّ بتسلسله.
+// (٣) **السباق**: طلباتٌ متزامنة ⟶ كلٌّ حلقتُه، بتسلسلٍ متّصل بلا تكرار.
 // (٤) **المعاينة تعرف جهازها**: التوقيع على حلقة منتظرة يكتب `deviceEpisodeId`
 //     ويحرّك الحلقة إلى `examined` — في معاملة واحدة.
 // (٥) **الإعفاء التاريخي لا يعفي جهازاً جديداً**: مريض «قديم» طلب جهازاً
@@ -203,12 +203,17 @@ async function main() {
     [MANAGER, "branch_manager", ""], [DOCTOR, "doctor", ""],
     [EXPERT, "prosthetics_expert", ""], [RECEPTION, "reception", ""],
   ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties)
-             VALUES ($1,$2,'x','موظّف',$3,$5,jsonb_build_array($5::int),true,$4::jsonb)
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,medical_specialties,can_add_patients)
+             VALUES ($1,$2,'x','موظّف',$3,$5,jsonb_build_array($5::int),true,$4::jsonb,$6)
              ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, medical_specialties = EXCLUDED.medical_specialties,
-               branch_id = EXCLUDED.branch_id, branch_ids = EXCLUDED.branch_ids`,
+               branch_id = EXCLUDED.branch_id, branch_ids = EXCLUDED.branch_ids,
+               can_add_patients = EXCLUDED.can_add_patients`,
       //  **فرعُ الصفّ = فرعُ الجلسة** (§4.ar البند ٧): جلسةُ `RECEPTION` الوحيدة «فرعٌ آخر» (٢)، والفروعُ تُعاد من الصفّ.
-      [id, `de_f${id}`, role, id === DOCTOR ? '["prosthetic","medical_support"]' : "null", id === RECEPTION ? 2 : 1]);
+      //  **وصلاحياتُ الصفّ = صلاحياتُ الجلسة**: المِعترِضةُ تعيد بناءَ `permissions` من الصفّ مع كلّ طلب
+      //  (`server/auth/session_refresh.ts`)، و`can_add_patients` افتراضُه `true` — فالطبيبُ والخبيرُ
+      //  (جلستاهما بلا `canAddPatients`) يُكتبان بلا المفتاح صراحةً.
+      [id, `de_f${id}`, role, id === DOCTOR ? '["prosthetic","medical_support"]' : "null", id === RECEPTION ? 2 : 1,
+       id === MANAGER || id === RECEPTION]);
   }
   await cleanup();
 
@@ -268,24 +273,36 @@ async function main() {
     const eC = await episodes.startDeviceEpisode({ patientId: pC, serviceType: "prosthetic", createdBy: MANAGER });
     same("ج. خيطٌ بلا حلقات ⟶ الأولى #١", [eC.sequenceNumber, eC.status], [1, "awaiting_exam"]);
 
-    // ══ د/هـ/و. شراءٌ مفتوحٌ واحد لكل خيط ══════════════════════════════
-    console.log("\n── شراءٌ مفتوحٌ واحد ──");
-    const dupD = await refused(() =>
-      episodes.startDeviceEpisode({ patientId: pC, serviceType: "prosthetic", createdBy: MANAGER }));
-    same("د. حلقة `awaiting_exam` مفتوحة ⟶ الثانية مرفوضة بـ409", dupD?.status, 409);
-    check(/قيد الإجراء/.test(dupD?.msg ?? ""), "   برسالة عربية صريحة", dupD?.msg);
+    // ══ د/هـ/و. عملياتٌ متوازية — لا «شراءٌ مفتوحٌ واحد» بعد ترحيل ٠٧٣ ══
+    //  رفع ٠٧٣ (#274) `uq_pde_case_open` وحارسَ `startDeviceEpisodeTx` معه:
+    //  أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد. فالثانيةُ تُفتَح صفّاً
+    //  مستقلّاً بالتسلسل التالي، والأولى لا تتغيّر — من الحالات الثلاث كلّها.
+    console.log("\n── عملياتٌ متوازية ──");
+    const openOnCase = async (caseId: number) => (await q<{ n: number }>(
+      `SELECT count(*)::int n FROM patient_device_episodes
+        WHERE case_id=$1 AND status NOT IN ('delivered','cancelled')`, [caseId]))[0].n;
+    const eD = await episodes.startDeviceEpisode({ patientId: pC, serviceType: "prosthetic", createdBy: MANAGER });
+    same("د. حلقة `awaiting_exam` مفتوحة ⟶ الثانية تُفتَح #٢ صفّاً مستقلّاً",
+      [eD.sequenceNumber, eD.status, eD.id !== eC.id, eD.caseId], [2, "awaiting_exam", true, cC]);
+    same("   والأولى باقيةٌ كما هي، وعلى الخيط حلقتان مفتوحتان",
+      [(await episodeRow(eC.id))?.status, (await episodeRow(eC.id))?.sequence_number, await openOnCase(cC)],
+      ["awaiting_exam", 1, 2]);
 
     const pE = await mkPatient("هـ. حلقة معاينة");
     const cE2 = await mkCase(pE);
-    await mkHistoricalEpisode(pE, cE2, 1, "examined");
-    same("هـ. حلقة `examined` مفتوحة ⟶ مرفوضة",
-      (await refused(() => episodes.startDeviceEpisode({ patientId: pE, serviceType: "prosthetic", createdBy: MANAGER })))?.status, 409);
+    const hE = await mkHistoricalEpisode(pE, cE2, 1, "examined");
+    const eE = await episodes.startDeviceEpisode({ patientId: pE, serviceType: "prosthetic", createdBy: MANAGER });
+    same("هـ. حلقة `examined` مفتوحة ⟶ الثانية تُفتَح #٢ والأولى لم تُمَسّ",
+      [eE.sequenceNumber, eE.status, (await episodeRow(hE))?.status, await openOnCase(cE2)],
+      [2, "awaiting_exam", "examined", 2]);
 
     const pF = await mkPatient("و. حلقة تصنيع");
     const cF = await mkCase(pF);
     const hF = await mkHistoricalEpisode(pF, cF, 1, "in_manufacturing");
-    same("و. حلقة `in_manufacturing` مفتوحة ⟶ مرفوضة",
-      (await refused(() => episodes.startDeviceEpisode({ patientId: pF, serviceType: "prosthetic", createdBy: MANAGER })))?.status, 409);
+    const eF = await episodes.startDeviceEpisode({ patientId: pF, serviceType: "prosthetic", createdBy: MANAGER });
+    same("و. حلقة `in_manufacturing` مفتوحة ⟶ الثانية تُفتَح #٢ والأولى لم تُمَسّ",
+      [eF.sequenceNumber, eF.status, (await episodeRow(hF))?.status, await openOnCase(cF)],
+      [2, "awaiting_exam", "in_manufacturing", 2]);
 
     // ══ ز. خيط غير موجود ══════════════════════════════════════════════
     const pG = await mkPatient("ز. بلا خيط");
@@ -305,21 +322,20 @@ async function main() {
       Array.from({ length: 6 }, () =>
         episodes.startDeviceEpisode({ patientId: pH, serviceType: "prosthetic", createdBy: MANAGER })),
     );
+    //  بعد ترحيل ٠٧٣ لا «فائزَ واحد»: الستّةُ تنجح، **والقفلُ على صفّ الخيط**
+    //  هو ما يجعل تسلسلاتها ١..٦ متّصلةً بلا تكرار — بلا القفل يقرأ اثنان
+    //  `MAX+1` نفسَه فيصطدمان بـ`uq_pde_case_seq` (خطأ ٥٠٠ خام).
     const ok = both.filter((r) => r.status === "fulfilled").length;
     const rows = await q<{ n: number }>(`SELECT count(*)::int n FROM patient_device_episodes WHERE case_id=$1`, [cH]);
-    same("ح. طلبان متزامنان ⟶ نجاح واحد فقط", ok, 1);
-    same("   وحلقة واحدة في القاعدة", rows[0].n, 1);
+    same("ح. ستّةُ طلبات متزامنة ⟶ الستّةُ تنجح (عملياتٌ متوازية)", ok, 6);
+    same("   وستُّ حلقات في القاعدة", rows[0].n, 6);
     const seqs = await q<{ sequence_number: number }>(
-      `SELECT sequence_number FROM patient_device_episodes WHERE case_id=$1`, [cH]);
-    same("   بتسلسل ١ بلا تكرار", seqs.map((s) => s.sequence_number), [1]);
-    //  الفهرس وحده يمنع الفساد حتى بلا قفل — لكن الخاسر عندئذٍ يتلقّى
-    //  «duplicate key» خاماً أي 500. القفل هو ما يجعله خطأ عملٍ مفهوماً.
-    const losers: any[] = both.filter((r) => r.status === "rejected").map((r: any) => r.reason);
-    same("   وكل الخاسرين تلقّوا خطأ عملٍ نظيفاً (409)",
-      losers.map((e) => Number(e?.status ?? 0)), losers.map(() => 409));
-    check(!losers.some((e) => /duplicate key/i.test(String(e?.message ?? ""))),
-      "   بلا رسالة قاعدة بيانات مسرَّبة",
-      losers.map((e) => String(e?.message).slice(0, 60)).join(" | "));
+      `SELECT sequence_number FROM patient_device_episodes WHERE case_id=$1 ORDER BY sequence_number`, [cH]);
+    same("   بتسلسل ١..٦ متّصلٍ بلا تكرار", seqs.map((s) => s.sequence_number), [1, 2, 3, 4, 5, 6]);
+    const failed: any[] = both.filter((r) => r.status === "rejected").map((r: any) => r.reason);
+    check(failed.length === 0,
+      "   ولا طلبَ فشل — ولا رسالة قاعدة بيانات مسرَّبة",
+      failed.map((e) => String(e?.message).slice(0, 60)).join(" | "));
 
     // ══ ط/ي. الإعفاء التاريخي لا يعفي جهازاً جديداً ════════════════════
     console.log("\n── الإعفاء التاريخي والجهاز الجديد ──");
@@ -581,8 +597,12 @@ async function main() {
       [1, "awaiting_exam", 0]);
     const again = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
       { servicePath: "exam", serviceType: "medical_support" });
-    same("والثانية تُردّ بـ409", again.status, 409);
-    same("   برسالة عربية", again.body?.error, "يوجد طلب طرف/جزء قيد الإجراء لهذا المريض — أكمِله أو صحّحه قبل بدء طلب جديد");
+    //  ترحيل ٠٧٣ (#274): الثانيةُ عمليةٌ مستقلّة تُفتَح — لا 409.
+    same("والثانية تُفتَح 201 عمليةً مستقلّة بالتسلسل التالي (ترحيل ٠٧٣)",
+      [again.status, again.body?.sequenceNumber, again.body?.status, again.body?.id !== started.body?.id],
+      [201, 2, "awaiting_exam", true]);
+    same("   والأولى باقيةٌ منتظرة",
+      (await episodeRow(started.body?.id))?.status, "awaiting_exam");
 
     const badType = await http("POST", `/api/patients/${pX}/device-episodes`, S.manager,
       { servicePath: "exam", serviceType: "physiotherapy" });
@@ -602,7 +622,8 @@ async function main() {
       Object.keys(list.body?.episodes?.[0] ?? {}).sort(),
       //  و`servicePath` (ترحيل ٠٦٥) حقلُ **توجيهٍ** لا سريريٌّ ولا ماليّ:
       //  يقول أتحتاج هذه العمليةُ معاينةً أم لا، ولا يحمل تشخيصاً ولا سعراً.
-      ["agreedCost", "branchId", "cancelReason", "cancelledAt", "caseId", "component",
+      //  و`awaitingSince` (ترحيل ٠٧٧، #291) **ساعةُ انتظار** الطلب — توقيتٌ لا سريريٌّ ولا ماليّ.
+      ["agreedCost", "awaitingSince", "branchId", "cancelReason", "cancelledAt", "caseId", "component",
        "createdAt", "deliveredAt", "id", "requestedItem", "sequenceNumber",
        "servicePath", "serviceType", "status"]);
     same("   ومسارُ العملية محفوظٌ كما اختاره الموظّف",

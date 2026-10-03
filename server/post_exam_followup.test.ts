@@ -1173,23 +1173,37 @@ async function main() {
       "   **ولا حدثَ اعتمادٍ واحدٍ في تاريخه**",
       JSON.stringify(eventTypes(await followupOf(pDisc))));
 
-    // ══ ٣٢. أمرُ تصنيعٍ متعارضٌ يمنع التحويل ══════════════════════════
+    // ══ ٣٢. أمرُ بناءٍ مستقلٌّ لا يمنع التحويل — عملياتٌ متوازية (ترحيل ٠٧٣) ══
+    //  كان أمرُ بناءٍ فعّالٌ لنفس (المريض، الخدمة) يمنع التأكيد بـ409
+    //  (`uq_pwo_one_open_build_per_service`). رفعه ٠٧٣ (#274، قرارُ المالك):
+    //  **أيّ عددٍ من عمليات الأجهزة المستقلّة لمريضٍ واحد** — والممنوعُ وحده
+    //  أمرا بناءٍ مفتوحان **لنفس الحلقة**. فأمرٌ قائمٌ بلا هويّة حلقة (بيعٌ سابق)
+    //  لا يزاحم بيعَ هذه المتابعة: يُنشأ لها أمرُها هي، والقائمُ لا يُمَسّ.
     const pConf = await mkPatient("تعارضُ التصنيع");
     await mkCase(pConf);
     await signExam(pConf, S.doc, { deviceCost: 600_000 });
     const fConf = await followupOf(pConf);
     await http("POST", `/api/followups/${fConf.id}/expert`, S.recv, { expertUserId: EXPERT });
     //  أمرُ بناءٍ فعّالٌ يُزرَع من خارج المسار — كما لو سبق بيعٌ آخر.
-    await q(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id,
+    const [prior] = await q<{ id: number }>(`INSERT INTO prosthetic_work_orders (patient_id, branch_id, expert_user_id,
                service_type, purpose, status, current_stage)
-             VALUES ($1,1,$2,'prosthetic','initial_build','active','order_received')`,
+             VALUES ($1,1,$2,'prosthetic','initial_build','active','order_received') RETURNING id`,
     [pConf, EXPERT]);
     const conflict = await http("POST", `/api/followups/${fConf.id}/confirm-purchase`, S.recv, {});
-    same("٣٢. **أمرُ بناءٍ فعّالٌ يمنع التأكيد**", conflict.status, 409);
-    same("   ولا كلفةَ تحرّكت",
-      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pConf]))[0].total_cost), 0);
-    same("   والمتابعة بقيت حيّةً كما هي",
-      (await followupOf(pConf))?.status, "awaiting_patient_decision");
+    same("٣٢. **أمرُ بناءٍ مستقلٌّ (بلا حلقة) لا يمنع التأكيد** — ترحيل ٠٧٣",
+      [conflict.status, conflict.body?.followup?.status], [200, "converted"]);
+    same("   والكلفةُ قُيّدت بسعر المعاينة",
+      Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [pConf]))[0].total_cost), 600_000);
+    const confOrders = await q<{ id: number; device_episode_id: number | null; status: string; current_stage: string }>(
+      `SELECT id, device_episode_id, status, current_stage FROM prosthetic_work_orders
+        WHERE patient_id=$1 ORDER BY id`, [pConf]);
+    const fConfAfter = await followupOf(pConf);
+    same("   **وأمرُ هذا البيع صفٌّ مستقلٌّ على حلقته، والقائمُ لم يُمَسّ**",
+      [confOrders.length, confOrders[0]?.id === prior.id, confOrders[0]?.device_episode_id,
+       confOrders[0]?.status, confOrders[0]?.current_stage,
+       Number(confOrders[1]?.device_episode_id) > 0,
+       Number(confOrders[1]?.device_episode_id) === Number(fConfAfter?.deviceEpisodeId)],
+      [2, true, null, "active", "order_received", true, true]);
 
     // ══ ٣٣. العلاجُ الطبيعي لم يتغيّر بحرف ═══════════════════════════
     const pPhy = await mkPatient("العلاج الطبيعي");

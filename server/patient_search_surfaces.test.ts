@@ -185,11 +185,19 @@ async function main() {
     await alias(OLD_A, A.id);
     await alias(OLD_X, X.id);
 
-    //  حالةُ أطراف نشطة بلا معاينة ⟶ يدخل صاحبها قائمة عمل طبيب الأطراف.
+    //  حالةُ أطراف نشطة **وطلبُ جهازٍ ينتظر المعاينة** ⟶ يدخل صاحبها قائمة عمل
+    //  طبيب الأطراف. (خيطٌ بلا حلقةٍ قطّ وُلد في حقبة المسار لا يُدرَج —
+    //  «تسجيلُ المريض وحده لا يضع أحداً في قائمة عمل الطبيب»، #249 —
+    //  فالطلبُ هو ما يُدرجه، كما في الإنتاج.)
     for (const p of [A, B, X]) {
-      await q(`INSERT INTO patient_cases (patient_id, case_type, status, branch_id, created_at)
-               VALUES ($1,'prosthetic','active',$2, NOW() - INTERVAL '2 days')`,
-        [p.id, p.id === X.id ? 2 : 1]);
+      const br = p.id === X.id ? 2 : 1;
+      const [c] = await q<{ id: number }>(
+        `INSERT INTO patient_cases (patient_id, case_type, status, branch_id, created_at)
+         VALUES ($1,'prosthetic','active',$2, NOW() - INTERVAL '2 days') RETURNING id`,
+        [p.id, br]);
+      await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number,
+                 status, agreed_cost, requested_item, service_path)
+               VALUES ($1,$2,$3,1,'awaiting_exam',0,'full_device','exam')`, [p.id, c.id, br]);
     }
     //  زيارةٌ قديمة ⟶ تذكيرُ متابعة نشط (STOP_DAYS = 7).
     for (const p of [A, B, X]) {
