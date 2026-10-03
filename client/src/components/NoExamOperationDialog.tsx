@@ -486,7 +486,7 @@ export function NoExamOperationDialog({
   //  يكون فيها الزرُّ ظاهراً والتذكرةُ فارغة؛ وإرسالٌ فيها يُردّ ٤٠٠ من
   //  الخادم. فيُمنَع الزرُّ حتى توجد — والخادمُ يبقى الحارسَ الحقيقيّ.
   //  **وبيعُ الجزء يرسلها كذلك منذ §4.bx** — فالشرطُ للبابين.
-  const maintenanceTokenUnready = !submissionToken;
+  const submissionTokenUnready = !submissionToken;
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
   //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
@@ -495,7 +495,7 @@ export function NoExamOperationDialog({
   //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
   //  كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !maintenanceTokenUnready
+    && !maintenanceDeviceUnready && !submissionTokenUnready
     && !attachUnanswered && !attachUnpicked && !resumeUnpicked
     && Boolean(offer.ok) && paidNowCheck.ok
     && maintDateVerdict.ok && !(askPaidOn && !paidOn);

@@ -670,10 +670,11 @@ async function main() {
     same("ك٩. وتذكرةٌ واحدة حُجزت الآن", (await tokenRows(tokK)).length, 1);
 
     //  ── عقدُ الشاشة: زرُّ الحفظ لا يجهز قبل أن تُسكّ التذكرة ──
-    check(/const\s+maintenanceTokenUnready\s*=\s*kind === "maintenance"\s*&&\s*!submissionToken;/
-      .test(DIALOG_SRC),
-      "ك١٠. **والشاشةُ تعدّ الصيانةَ غيرَ جاهزةٍ بلا تذكرة** — وللصيانة وحدها");
-    check(/const ready = [^;]*!maintenanceTokenUnready/.test(DIALOG_SRC),
+    check(/const\s+submissionTokenUnready\s*=\s*!submissionToken;/.test(DIALOG_SRC)
+      && /!submissionTokenUnready/.test(DIALOG_SRC)
+      && /"\/api\/no-exam\/device-sale",[\s\S]{0,1600}?submissionToken,/.test(DIALOG_SRC),
+      "ك١٠. **والشاشةُ تعدّ الحفظَ غيرَ جاهزٍ بلا تذكرة** — للبابين منذ §4.bx، وبيعُ الجزء يرسلها");
+    check(/const ready = [^;]*!submissionTokenUnready/.test(DIALOG_SRC),
       "ك١١. **والشرطُ موصولٌ فعلاً بـ`ready`** الذي يعطّل زرَّ الحفظ");
     check(/disabled=\{!ready \|\| save\.isPending\}/.test(DIALOG_SRC),
       "ك١٢. وزرُّ الحفظ معطَّلٌ بـ`ready` كما كان");
