@@ -703,6 +703,8 @@ export interface OrderFilters {
   branchId?: number;        // restrict to one branch
   branchIds?: number[];     // manager scope (allowed branches)
   serviceType?: string;
+  /** **تصنيعٌ كامل أم صيانة** (طلبُ المالك ٢٠٢٦-١٠-٠٣). */
+  purpose?: "initial_build" | "maintenance";
   stage?: string;
   status?: string;
   completed?: boolean;      // true = completed only, false = not completed
@@ -768,6 +770,7 @@ function orderConditions(f: OrderFilters) {
       "prosthetic_work_orders.patient_id"));
   }
   if (f.serviceType) c.push(eq(WO.serviceType, f.serviceType));
+  if (f.purpose) c.push(sql`COALESCE(${WO.purpose}, 'initial_build') = ${f.purpose}`);
   if (f.stage) c.push(eq(WO.currentStage, f.stage));
   if (f.status) c.push(eq(WO.status, f.status));
   if (f.completed === true) c.push(eq(WO.status, "completed"));

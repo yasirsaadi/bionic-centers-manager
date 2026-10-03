@@ -179,6 +179,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       expertUserId: s.userId,        // HARD isolation — never trust a client id
       branchId,
       serviceType: strOrU(req.query.serviceType),
+      purpose: purposeOrU(req.query.purpose),
       stage: strOrU(req.query.stage),
       status: strOrU(req.query.status),
       completed: boolOrU(req.query.completed),
@@ -193,6 +194,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!(s.isAdmin || isManager(s))) return res.status(403).json({ error: "غير مصرح" });
     const filters: store.OrderFilters = {
       serviceType: strOrU(req.query.serviceType),
+      purpose: purposeOrU(req.query.purpose),
       stage: strOrU(req.query.stage),
       status: strOrU(req.query.status),
       completed: boolOrU(req.query.completed),
@@ -1277,6 +1279,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
 // ---- small helpers -----------------------------------------------------------
 
+/** «تصنيعٌ كامل» أو «صيانة» — وغيرُهما يُهمَل (لا ترشيح) بدل أن يُفرغ القائمة. */
+function purposeOrU(v: unknown): "initial_build" | "maintenance" | undefined {
+  return v === "initial_build" || v === "maintenance" ? v : undefined;
+}
 function strOrU(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }

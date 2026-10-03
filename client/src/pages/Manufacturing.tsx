@@ -133,6 +133,8 @@ export default function Manufacturing() {
   const debouncedSearch = useDebouncedSearch(search);
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
+  //  **تصنيعٌ كامل أم صيانة** (طلبُ المالك ٢٠٢٦-١٠-٠٣) — يتركّب مع «مكتملون اليوم» وبقيّة المرشِّحات.
+  const [purposeFilter, setPurposeFilter] = useState<string>("all");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expertFilter, setExpertFilter] = useState<string>("all");
@@ -150,12 +152,13 @@ export default function Manufacturing() {
     const p = new URLSearchParams();
     if (debouncedSearch) p.set("search", debouncedSearch);
     if (serviceFilter !== "all") p.set("serviceType", serviceFilter);
+    if (purposeFilter !== "all") p.set("purpose", purposeFilter);
     if (stageFilter !== "all") p.set("stage", stageFilter);
     if (statusFilter !== "all") p.set("status", statusFilter);
     if (branchFilter !== "all") p.set("branchId", branchFilter);
     if (!expertOnly && expertFilter !== "all") p.set("expertUserId", expertFilter);
     return p.toString();
-  }, [debouncedSearch, serviceFilter, stageFilter, statusFilter, branchFilter, expertFilter, expertOnly]);
+  }, [debouncedSearch, serviceFilter, purposeFilter, stageFilter, statusFilter, branchFilter, expertFilter, expertOnly]);
 
   const { data: orders = [], isLoading } = useQuery<OrderCard[]>({
     queryKey: [endpoint, qs],
@@ -261,6 +264,14 @@ export default function Manufacturing() {
             <SelectItem value="all">كل الأنواع</SelectItem>
             <SelectItem value="prosthetic">أطراف صناعية</SelectItem>
             <SelectItem value="medical_support">مساند طبية</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={purposeFilter} onValueChange={setPurposeFilter}>
+          <SelectTrigger className="w-[150px]" data-testid="select-purpose"><SelectValue placeholder="العملية" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">تصنيع وصيانة</SelectItem>
+            <SelectItem value="initial_build">تصنيع كامل</SelectItem>
+            <SelectItem value="maintenance">صيانة</SelectItem>
           </SelectContent>
         </Select>
         <Select value={stageFilter} onValueChange={setStageFilter}>
