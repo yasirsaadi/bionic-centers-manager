@@ -25,6 +25,7 @@
 //   • هـ: أمرا عملٍ مفتوحان لنفس الحلقة بعينها — يبقيان مرفوضَين (القيدان
 //     الجديدان معاً: الهويّةُ المحدَّدة، والموروثُ بلا حلقة).
 
+import { randomUUID } from "crypto";
 import express from "express";
 import { createServer } from "http";
 import { pool, db } from "./db";
@@ -154,7 +155,7 @@ async function moneyOf(patientId: number) {
 }
 
 const sale = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/device-sale", session, { submissionToken: randomUUID(),  paidNow: 0, ...body });
 
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;

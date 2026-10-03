@@ -197,7 +197,7 @@ async function main() {
       (await visitsOf(pB)).slice(1).map((v: any) => [v.details, v.device_episode_id]), [["شراء طرف صناعي", epB]]);
     const wo = Number(sale.body?.workOrderId);
     //  إلحاقُ جزءٍ بالطرف قيد التصنيع — المسارُ الثاني لشراء الجزء.
-    const att = await http("POST", "/api/no-exam/device-sale", S.recv, {
+    const att = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
       patientId: pB, component: "foot", expertUserId: EXPERT, originalPrice: 100000, discountAmount: 0, paidNow: 0,
       attachToDeviceEpisodeId: epB,
     });
@@ -241,7 +241,7 @@ async function main() {
 
     console.log("\n── د. شراءُ جزء · صيانة · تخصيصُ الطرف لمريضٍ قديم ──");
     const pD = await mkPatient("جزء وصيانة");
-    const part = await http("POST", "/api/no-exam/device-sale", S.recv, {
+    const part = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
       patientId: pD, component: "knee", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 0,
     });
     check(part.status === 201, "د١. (الإعداد) بيعُ جزء", JSON.stringify(part.body));

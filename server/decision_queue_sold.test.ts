@@ -132,7 +132,7 @@ async function readySale(label: string, requestedItem = "full_device") {
 
 /** بيعُ جزءٍ حقيقيّ من بابِ «بلا معاينة» — البابُ الحيّ الذي أعاد إنتاج العطب. */
 const sellComponent = (pid: number, price = 400_000) =>
-  http("POST", "/api/no-exam/device-sale", S.recv, {
+  http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: crypto.randomUUID(), 
     patientId: pid, expertUserId: EXPERT, component: "socket",
     originalPrice: price, discountAmount: 0, paidNow: price, note: "بيع جزء",
   });

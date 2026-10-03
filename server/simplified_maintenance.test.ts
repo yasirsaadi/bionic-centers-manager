@@ -29,6 +29,7 @@
 //   • **م**: عقدُ الشاشة (`NoExamOperationDialog.tsx`).
 //   • **ن**: بقاءُ المرحلتين ١ و٢ — انحدارٌ صفريّ.
 
+import { randomUUID } from "crypto";
 import express from "express";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -797,7 +798,7 @@ async function main() {
       //  بيعُ جزءٍ بلا معاينة (المرحلة الأولى) لا يزال يعمل — بعقده الجديد.
       const pid = await mkPatient("انحدار-بيع-جزء");
       await mkCase(pid, "prosthetic");
-      const saleRes = await http("POST", "/api/no-exam/device-sale", S.recv, {
+      const saleRes = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
         patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 30_000, discountAmount: 0, paidNow: 0,
       });
@@ -807,7 +808,7 @@ async function main() {
         + " — بلا reviewRouted، ورسالةُ النجاح الموحَّدة",
         JSON.stringify(saleRes.body));
       //  والعقدُ القديم صار يُرفَض صراحةً — لا يُقرأ بصمت.
-      const oldContract = await http("POST", "/api/no-exam/device-sale", S.recv, {
+      const oldContract = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
         patientId: pid, serviceType: "prosthetic", deviceEpisodeId: 1,
         expertUserId: EXPERT, charged: true, amount: 30_000,
       });

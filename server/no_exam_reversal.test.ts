@@ -5,6 +5,7 @@
 // الكلفةُ بقيدٍ معاكس، والمقبوضُ يُردّ، والأمرُ يُبطَل — ولبيع الجزء حلقتُه كذلك — والجهازُ المُصان لا يُمَسّ.
 // **وأمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢، §4.ar): هـ · و · ز.
 
+import { randomUUID } from "crypto";
 import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
@@ -234,7 +235,7 @@ async function main() {
 
     console.log("\n── د. بيعُ جزءٍ مستقلّ ──");
     const pD = await mkPatient("د");
-    const sD = await http("POST", "/api/no-exam/device-sale", S.recv, {
+    const sD = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
       patientId: pD, component: "knee", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 100000,
     });
     check(sD.status === 201, "د١. (الإعداد) بيعُ الجزء سُجّل", JSON.stringify(sD.body));

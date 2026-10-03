@@ -487,7 +487,7 @@ async function main() {
     {
       componentSalePid = await mkPatientRaw("بيع-جزء-١", { isAmputee: true });
       await mkCase(componentSalePid, 1, "prosthetic");
-      const s = await http("POST", "/api/no-exam/device-sale", S.recv, {
+      const s = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: crypto.randomUUID(), 
         patientId: componentSalePid, expertUserId: EXPERT, component: "socket",
         originalPrice: 400_000, discountAmount: 0, paidNow: 0,
       });
