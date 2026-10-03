@@ -17,6 +17,7 @@ import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
+import { registerPatientCardRoutes } from "./patient_card/routes";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
@@ -2953,7 +2954,9 @@ export async function registerRoutes(
       if (!branchSession?.isAdmin) delete patch.branchId;
       else if (patch.branchId !== undefined && (patch.branchId === null || !Number.isFinite(Number(patch.branchId)))) delete patch.branchId;
       for (const k of ["id", "createdAt", "deletedAt", "deletedByUserId", "deletedByName", "deletedByRole", "deletedReason",
-        "deletedTotalCost", "deletedTotalPaid", "deletedRemaining", "deletedPendingJson", "deletedNeededAdmin"]) {
+        "deletedTotalCost", "deletedTotalPaid", "deletedRemaining", "deletedPendingJson", "deletedNeededAdmin",
+        //  ومفتاحُ بطاقة المريض بابُه نقطتُه وحدها (§4.bv).
+        "patientCardEnabled", "patientCardEnabledAt", "patientCardEnabledBy"]) {
         delete patch[k];
       }
 
@@ -8740,6 +8743,8 @@ export async function registerRoutes(
   //   تماماً ولم تُمَسّ: بوتٌ آخر للإدارة لا للمرضى.)
   registerPatientCommunicationRoutes(app, isAuthenticated);
   registerPatientTelegramWebhook(app);
+  //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
+  registerPatientCardRoutes(app);
 
   return httpServer;
 }
