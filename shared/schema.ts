@@ -9,6 +9,10 @@ export const branches = pgTable("branches", {
   name: text("name").notNull().unique(), // بغداد، كربلاء، ذي قار، الموصل، كركوك
   location: text("location"),
   createdAt: timestamp("created_at").defaultNow(),
+  //  **مغلقٌ مؤقتاً** (ترحيل ٠٩٤، §4.bw): يختفي من قوائم العمل الجديد ولا يدخله موظّفوه، وتاريخُه باقٍ.
+  temporarilyClosed: boolean("temporarily_closed").notNull().default(false),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  closedBy: integer("closed_by"),
 });
 
 // Update users to associate with a branch
@@ -1485,7 +1489,7 @@ export const customStats = pgTable("custom_stats", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
+export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true, temporarilyClosed: true, closedAt: true, closedBy: true });
 //  `patientCode` مُسقَطٌ من العقد عمداً (ترحيل ٠٥٢): الهوية العلنية يولّدها
 //  الخادم/القاعدة ولا يختارها عميل. وإسقاطُها هنا يجعل قيمةً ملفَّقة في جسم
 //  الطلب لا تصل النوعَ أصلاً — قبل أن تصل أي حراسة في التطبيق.

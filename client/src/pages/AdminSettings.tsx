@@ -3071,6 +3071,26 @@ export default function AdminSettings() {
     },
   });
 
+  //  **إغلاقُ الفرع مؤقتاً وإعادةُ فتحه** (ترحيل ٠٩٤، §4.bw).
+  const branchClosureMutation = useMutation({
+    mutationFn: async (data: { branchId: number; closed: boolean }) => {
+      const res = await fetch(`/api/admin/branches/${data.branchId}/closure`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ closed: data.closed }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "تعذّر الحفظ");
+      return res.json();
+    },
+    onSuccess: (_r, v) => {
+      toast({ title: v.closed ? "أُغلق الفرع مؤقتاً" : "أُعيد فتح الفرع" });
+      queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/branches/full"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: t.adminSettings.toastError, description: error.message, variant: "destructive" });
+    },
+  });
+
   const updateBranchSettingsMutation = useMutation({
     mutationFn: async (data: { branchId: number } & Partial<BranchSetting>) => {
       const res = await fetch("/api/admin/branches/settings", {
@@ -3471,7 +3491,14 @@ export default function AdminSettings() {
                         <Building2 className="w-5 h-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-slate-800">{branch.name}</h3>
+                        <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                          {branch.name}
+                          {branch.temporarilyClosed && (
+                            <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50" data-testid={`badge-branch-closed-${branch.id}`}>
+                              مغلق مؤقتاً
+                            </Badge>
+                          )}
+                        </h3>
                         <div className="flex items-center gap-2 text-sm text-slate-500">
                           {branch.location && (
                             <span className="flex items-center gap-1">
@@ -3487,6 +3514,20 @@ export default function AdminSettings() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer me-2">
+                        مغلق مؤقتاً
+                        <Switch
+                          checked={Boolean(branch.temporarilyClosed)}
+                          disabled={branchClosureMutation.isPending}
+                          onCheckedChange={(v) => {
+                            const msg = v
+                              ? `إغلاق «${branch.name}» مؤقتاً؟\n\n• يختفي من الدخول ومن قوائم تسجيل المرضى وإتاحة الملفّات.\n• موظّفوه لا يدخلونه (مَن له فرعٌ آخر يعمل فيه).\n• ملفّات مرضاه وتاريخُه وتقاريرُه تبقى كما هي.`
+                              : `إعادة فتح «${branch.name}»؟ يعود إلى كلّ القوائم ويدخله موظّفوه.`;
+                            if (window.confirm(msg)) branchClosureMutation.mutate({ branchId: branch.id, closed: v });
+                          }}
+                          data-testid={`switch-branch-closed-${branch.id}`}
+                        />
+                      </label>
                       {branch.currentPassword ? (
                         <Badge variant="secondary" className="gap-1 font-mono text-xs">
                           <Lock className="w-3 h-3" />
