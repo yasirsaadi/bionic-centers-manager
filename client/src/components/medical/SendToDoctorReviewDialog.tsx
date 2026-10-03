@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ClipboardCheck, Zap, Stethoscope } from "lucide-react";
 import { specialtyLabel } from "@shared/medical";
 import {
-  MANUALLY_SELECTABLE_REVIEW_KINDS, REVIEW_KIND_LABELS, REVIEW_PATH_HINTS, REVIEW_PATH_LABELS,
+  REVIEW_KIND_LABELS, reviewKindsForDialog, REVIEW_PATH_HINTS, REVIEW_PATH_LABELS,
   REVIEW_STATUS_LABELS, requiresFullPath, type ReviewKind, type ReviewPath,
 } from "@shared/medical_review";
 import { formatDateTimeIraq } from "@/lib/utils";
@@ -61,8 +61,10 @@ export function SendToDoctorReviewDialog({ patientId, services, resend, triggerL
   const [open, setOpen] = useState(false);
   const [serviceType, setServiceType] = useState<string>(resend?.serviceType ?? services[0] ?? "prosthetic");
   const [path, setPath] = useState<ReviewPath>(resend?.requestedPath ?? "quick");
+  //  الأسبابُ المعروضة: من ملفّ المريض الأضيقُ (§4.bp)، ولإعادة الإرسال سببُها الأصليّ معها.
+  const kinds = reviewKindsForDialog(resend?.reviewKind);
   const [kind, setKind] = useState<ReviewKind>(
-    resend && MANUALLY_SELECTABLE_REVIEW_KINDS.includes(resend.reviewKind) ? resend.reviewKind : "maintenance");
+    resend && kinds.includes(resend.reviewKind) ? resend.reviewKind : kinds[0]);
   const [note, setNote] = useState("");
 
   //  الجهازُ الجديد لا يكون سريعاً — تُقفَل البطاقة ويُثبَّت المسار. والخادم
@@ -167,8 +169,8 @@ export function SendToDoctorReviewDialog({ patientId, services, resend, triggerL
               <SelectTrigger data-testid="select-review-kind"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {/*  «عاد للشراء» مملوكةٌ لتدفّقها الخاصّ — لا تُعرَض هنا،
-                    راجع MANUALLY_SELECTABLE_REVIEW_KINDS. */}
-                {MANUALLY_SELECTABLE_REVIEW_KINDS.map((k) => (
+                    راجع PATIENT_PAGE_REVIEW_KINDS. */}
+                {kinds.map((k) => (
                   <SelectItem key={k} value={k}>{REVIEW_KIND_LABELS[k]}</SelectItem>
                 ))}
               </SelectContent>

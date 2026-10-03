@@ -16,11 +16,10 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Wrench, Search, AlertTriangle, PlusCircle } from "lucide-react";
+import { Wrench, Search, AlertTriangle } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, BUILD_STAGES,
 } from "@shared/manufacturing";
-import { CreateOrderDialog } from "@/components/manufacturing/CreateOrderDialog";
 
 interface OrderCard {
   id: number; patientId: number; patientName: string; branchId: number; branchName: string | null;
@@ -140,7 +139,6 @@ export default function Manufacturing() {
   //  التصنيفُ المختار من الشرائط — `null` يعني «كلَّها». وهو **فوق**
   //  مرشِّحات الخادم لا بدلاً منها، فيتركّب مع الخبير والفرع والبحث.
   const [bucket, setBucket] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
 
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -204,11 +202,8 @@ export default function Manufacturing() {
               : "متابعة أوامر التصنيع، مراحلها، وإعادات العمل."}
           </p>
         </div>
-        {(isAdmin || isManager) && (
-          <Button onClick={() => setCreateOpen(true)} className="gap-1">
-            <PlusCircle className="w-4 h-4" /> أمر تصنيع لمريض موجود
-          </Button>
-        )}
+        {/*  «أمر تصنيع لمريض موجود» خرج من هنا (§4.bp): كان يُنشئ أمراً بلا معاينةٍ ولا كلفة.
+            الجهازُ الجديد بابُه «إضافة خدمة جديدة» ⟵ معاينة ⟵ «إتمام البيع» في ملفّ المريض. */}
       </div>
 
       {/* Admin/manager overview —
@@ -422,9 +417,6 @@ export default function Manufacturing() {
         </div>
       )}
 
-      {(isAdmin || isManager) && (
-        <CreateOrderDialog open={createOpen} onOpenChange={setCreateOpen} branches={branches} isAdmin={isAdmin} />
-      )}
     </div>
   );
 }

@@ -94,6 +94,23 @@ export const isReviewKind = (v: unknown): v is ReviewKind =>
 export const MANUALLY_SELECTABLE_REVIEW_KINDS: readonly ReviewKind[] =
   REVIEW_KINDS.filter((k) => k !== "return_to_purchase");
 
+/**
+ * **ما تعرضه النافذةُ من ملفّ المريض** (§4.bp) — أضيقُ من السابقة: لا «صيانة» ولا «جهاز جديد».
+ * الصيانةُ «بلا معاينة» بلا طبيب (§4.j)، والجهازُ الجديد بابُه «إضافة خدمة جديدة» الذي يفتح حلقتَه
+ * (طلبٌ عارٍ بلا حلقةٍ لا يصل «إتمام البيع»). **وإعادةُ إرسال طلبٍ مُرجَع تُبقي سببَه الأصليّ** —
+ * تلك على حلقتها، فلا تُقيَّد بهذه القائمة. والخادمُ يقبل الأسبابَ كلَّها كما كان.
+ */
+export const PATIENT_PAGE_REVIEW_KINDS: readonly ReviewKind[] =
+  MANUALLY_SELECTABLE_REVIEW_KINDS.filter((k) => k !== "maintenance" && k !== "new_device");
+
+/** قائمةُ النافذة: الأضيقُ، ومعها سببُ الطلب المُرجَع حين يُعاد إرسالُه (إن كان يدوياً أصلاً). */
+export function reviewKindsForDialog(resendKind?: ReviewKind | null): readonly ReviewKind[] {
+  return resendKind && MANUALLY_SELECTABLE_REVIEW_KINDS.includes(resendKind)
+    && !PATIENT_PAGE_REVIEW_KINDS.includes(resendKind)
+    ? [resendKind, ...PATIENT_PAGE_REVIEW_KINDS]
+    : PATIENT_PAGE_REVIEW_KINDS;
+}
+
 export const isReviewPath = (v: unknown): v is ReviewPath =>
   typeof v === "string" && (REVIEW_PATHS as readonly string[]).includes(v);
 
