@@ -387,6 +387,11 @@ async function main() {
   await q(`UPDATE system_users SET can_add_patients=true, can_add_payments=true, can_edit_patients=true,
              can_approve_discount=true, can_edit_payments=true WHERE role='branch_manager'`);
   await q(`UPDATE system_users SET can_add_payments=false WHERE role IN ('doctor','prosthetics_expert')`);
+  //  **و«إضافة مرضى» كما تقوله جلساتُ `S` حرفاً** — المِعترِضةُ الحيّة (`buildStoredPermissions`) تعيد بناءَ
+  //  الصلاحيات من الصفّ مع كلّ طلب، وعمودُ `can_add_patients` افتراضُه مفعّل. فالأطبّاءُ والمحاسبُ والخبير — وجلساتُهم
+  //  بلا `canAddPatients` — كانوا يحملونه من القاعدة صامتين، فيمرّ «الطبيبُ بدوره» من بوّابة `canOperateNoExam`.
+  await q(`UPDATE system_users SET can_add_patients=false WHERE id = ANY($1::int[])`,
+    [[DOC, DOCSUP, DOCPHYS, DOC_B2, ACC, EXPERT, EXPERT2]]);
   await cleanup();
 
   const app = express();

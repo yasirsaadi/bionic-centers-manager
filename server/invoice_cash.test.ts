@@ -85,6 +85,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { createJournalForPayment, createJournalForInvoice, createJournalForInvoicePayment } from "./accounting/auto_journal";
+import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
 
 const PORT = 6891;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -245,6 +246,11 @@ async function waitForBlockedLockWaiter(excludePid: number, timeoutMs = 5000): P
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع النقديّ كما يُنشئه الخادمُ الحقيقيّ** — `seedChartOfAccounts`
+  //  تُنادى عند كلّ إقلاع (`migrations/runner.ts`) وتشتقّ صندوقاً لكلّ فرعٍ موجود.
+  //  والفروعُ هنا تُدرَج بعد الترحيلات، فعلى قاعدةٍ جديدة لا صندوقَ (1111xx) ولا قيد،
+  //  فتُنادى الآن — بلا رمزٍ يُخترَع، والزارعُ يتخطّى الموجودَ (idempotent).
+  await seedChartOfAccounts();
   for (const [id, role, name, branchId] of [
     [ADMIN, "admin", "المسؤول", 1],
     [MGR1, "branch_manager", "مدير الفرع ١", 1],
@@ -252,11 +258,18 @@ async function main() {
     [MGR2, "branch_manager", "مدير الفرع ٢", 2],
     [NOPERM, "reception", "استقبالٌ بلا صلاحية", 1],
   ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-             VALUES ($1,$2,'x',$4,$3,$5,to_jsonb(ARRAY[$5]::int[]),true)
+    //  **الصلاحياتُ في صفّ الحساب لا في الجلسة وحدها** — المِعترِضةُ الحيّة في `routes.ts`
+    //  (`buildStoredPermissions`، §4.ar البند ٧) تُعيد بناءَ `permissions` من `system_users` مع كلّ
+    //  طلب، فما في رأس الجلسة يُستبدَل. فيُكتب في الصفّ بالضبط ما تقوله `S` لكلّ مستخدم — وإلّا
+    //  أخذ «بلا صلاحية» `can_add_payments` الافتراضيَّ (true) وفقد المديرُ `can_manage_accounting`.
+    const perms = (Object.values(S).find((s: any) => s.userId === id) as any).permissions;
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
+                                       can_add_payments,can_manage_accounting)
+             VALUES ($1,$2,'x',$4,$3,$5,to_jsonb(ARRAY[$5]::int[]),true,$6,$7)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, display_name=EXCLUDED.display_name,
-               is_active=true, branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids`,
-      [id, `ic_u${id}`, role, name, branchId]);
+               is_active=true, branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids,
+               can_add_payments=EXCLUDED.can_add_payments, can_manage_accounting=EXCLUDED.can_manage_accounting`,
+      [id, `ic_u${id}`, role, name, branchId, Boolean(perms.canAddPayments), Boolean(perms.canManageAccounting)]);
   }
   await cleanup();
 

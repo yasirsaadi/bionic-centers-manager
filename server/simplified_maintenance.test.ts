@@ -43,6 +43,7 @@ import { COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
 //  **قسم س** ينادي المخزن مباشرةً — متجاوزاً نقطة REST وفحصَها المبكّر —
 //  ليثبت أن الحارسَ المعامَليّ نفسَه هو السلطة، لا الفحصُ المبكّر وحده.
 import * as pendingChargeStore from "./pending_charges/store";
+import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
 
 //  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
 //  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
@@ -238,6 +239,11 @@ async function cleanup() {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع النقديّ كما يُنشئه الخادمُ الحقيقيّ** — `seedChartOfAccounts`
+  //  تُنادى عند كلّ إقلاع (`migrations/runner.ts`) وتشتقّ صندوقاً لكلّ فرعٍ موجود.
+  //  والفروعُ هنا تُدرَج بعد الترحيلات، فعلى قاعدةٍ جديدة لا صندوقَ (1111xx) ولا قيد،
+  //  فتُنادى الآن — بلا رمزٍ يُخترَع، والزارعُ يتخطّى الموجودَ (idempotent).
+  await seedChartOfAccounts();
   for (const [id, role, name, branch, branchIds] of [
     [ADMIN, "admin", "المسؤول", 1, [1, 2]],
     [MANAGER, "branch_manager", "مدير الفرع", 1, [1]],

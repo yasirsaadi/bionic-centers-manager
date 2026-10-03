@@ -136,6 +136,12 @@ async function main() {
                is_active=true`,
     [id, `dp_u${id}`, role, b, JSON.stringify([b]), spec]);
   }
+  //  **الصفُّ يحكم لا رأسُ الجلسة** — المِعترِضةُ الحيّة (`buildStoredPermissions`، #275) تعيد بناءَ
+  //  الصلاحيات من `system_users` مع كلّ طلب. فالاستقبالان يقرآن التقريرَ اليوميّ بمفتاحه (`canViewReports`،
+  //  بوّابةُ النقطة منذ ٢٠٢٦-٠٩-٠٢) وبلا محاسبة؛ و«إدارة المحاسبة» تُشغَّل في الصفّ حيث يقولها القسمُ ٧
+  //  (`withAccounting` أدناه) لا في رأس الجلسة وحده.
+  await q(`UPDATE system_users SET can_view_reports=true, can_manage_accounting=false
+            WHERE id = ANY($1::int[])`, [[RECV, RECV_B2]]);
   await cleanup();
 
   const app = express();
@@ -163,26 +169,45 @@ async function main() {
 
   try {
     // ══ ١. كلُّ قسمٍ يحمل قسمَه — والأطرافُ تفترق عن المساند ═══════════
+    //  ⚠ **«إضافة نوع حالة» تفعيلٌ فقط منذ #261 (٢٠٢٦-٠٨-٣٠، صدقُ القرار)**: كلفةٌ موجبة
+    //  عليها تُردّ ٤٠٠ قبل أيّ لمس، فلم تعد كاتبَ مالٍ (`routes.ts`، `add-case-type`). فالتسعيرُ
+    //  هنا ببابه الحيّ — قلمُ كلفة القسم (`PATCH /api/patients/:id/cases/:caseId` ⟵
+    //  `storage.updateCaseCost`، قيدٌ بمصدر `case_cost_edit` على حالته) — والتبويبُ محلُّ
+    //  الفحص لم يتغيّر بحرف: كلُّ قيدٍ على قسمه.
+    const SITE = "احادي - طرف سفلي - يمين - تحت الركبة";
+    const caseIdOf = async (pid: number, t: string) =>
+      Number((await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type=$2`,
+        [pid, t]))[0]?.id);
+    /** تفعيلُ القسم (بلا مال) ثمّ تسعيرُه بقلم كلفة القسم — المساران الحيّان اليوم. */
+    const activateAndPrice = async (pid: number, body: any, caseType: string, cost: number) => {
+      const add = await http("POST", `/api/patients/${pid}/add-case-type`, S.recv, body);
+      const price = await http("PATCH", `/api/patients/${pid}/cases/${await caseIdOf(pid, caseType)}`,
+        S.admin, { cost });
+      return [add.status, price.status];
+    };
     console.log("\n── ١. إسنادُ كلّ قسم ──");
     const pPro = await mk("أطراف");
-    same("١. إضافةُ حالة أطراف تنجح",
+    same("١.أ **«إضافة نوع حالة» بكلفةٍ تُردّ ٤٠٠** — لا كاتبَ مالٍ مختفياً (#261)",
       (await http("POST", `/api/patients/${pPro}/add-case-type`, S.recv,
         { caseType: "amputee", serviceCost: 1_000_000,
-          amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة", height: "170", weight: "70" })).status, 200);
+          amputationSite: SITE, height: "170", weight: "70" })).status, 400);
+    same("   ولا قيدَ ولا حالةَ من الردّ", [await deptOfEntries(pPro),
+      (await q(`SELECT count(*)::int n FROM patient_cases WHERE patient_id=$1`, [pPro]))[0].n], [[], 0]);
+    same("١. إضافةُ حالة أطراف تنجح، وتسعيرُها",
+      await activateAndPrice(pPro, { caseType: "amputee",
+        amputationSite: SITE, height: "170", weight: "70" }, "prosthetic", 1_000_000), [200, 200]);
     same("   **وقيدُ كلفتها مبوَّبٌ أطرافاً**", await deptOfEntries(pPro),
-      [["prosthetic", "add_case_type", 1_000_000]]);
+      [["prosthetic", "case_cost_edit", 1_000_000]]);
 
     const pSup = await mk("مساند");
-    await http("POST", `/api/patients/${pSup}/add-case-type`, S.recv,
-      { caseType: "medical_support", serviceCost: 250_000 });
+    await activateAndPrice(pSup, { caseType: "medical_support" }, "medical_support", 250_000);
     same("   **وقيدُ المساند مبوَّبٌ مساندَ لا «أجهزة»**", await deptOfEntries(pSup),
-      [["medical_support", "add_case_type", 250_000]]);
+      [["medical_support", "case_cost_edit", 250_000]]);
 
     const pPhy = await mk("علاج");
-    await http("POST", `/api/patients/${pPhy}/add-case-type`, S.recv,
-      { caseType: "physiotherapy", serviceCost: 300_000 });
+    await activateAndPrice(pPhy, { caseType: "physiotherapy" }, "physiotherapy", 300_000);
     same("   وقيدُ العلاج الطبيعي مبوَّبٌ كذلك", await deptOfEntries(pPhy),
-      [["physiotherapy", "add_case_type", 300_000]]);
+      [["physiotherapy", "case_cost_edit", 300_000]]);
 
     // ══ ٢. «خدمة جديدة» — الاستشارةُ وغيرُها علاجٌ طبيعي مالياً ═════════
     console.log("\n── ٢. خدمةٌ جديدة ⟶ علاجٌ طبيعي ──");
@@ -309,11 +334,9 @@ async function main() {
     //  أعلامُ صاحبِ المعاملة لا تقول شيئاً عن **هذه** المعاملة، والربطُ
     //  على المريض بدل الحالة يضرب كلَّ قيدٍ في كلّ حالةٍ له فيتضاعف المال.
     const pBoth = await mk("قسمان معاً");
-    await http("POST", `/api/patients/${pBoth}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 500_000,
-        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة", height: "170", weight: "70" });
-    await http("POST", `/api/patients/${pBoth}/add-case-type`, S.recv,
-      { caseType: "medical_support", serviceCost: 150_000 });
+    await activateAndPrice(pBoth, { caseType: "amputee",
+      amputationSite: SITE, height: "170", weight: "70" }, "prosthetic", 500_000);
+    await activateAndPrice(pBoth, { caseType: "medical_support" }, "medical_support", 150_000);
     //  ودفعتُه موسومةٌ بحالةِ أطرافه وحدها — فإن رُبط المقبوضُ بالمريض بدل
     //  الحالة ظهر نفسُ الدينار في القسمين معاً.
     await q(`INSERT INTO payments (patient_id, branch_id, case_id, amount, notes)
@@ -328,11 +351,15 @@ async function main() {
       [d.prosthetic.revenue, d.prosthetic.paid], [1_575_000, 490_000]);
     same("   **والمساندُ قسمٌ مستقلّ لا يُجمع معه**",
       [d.medical_support.revenue, d.medical_support.paid], [400_000, 100_000]);
+    //  ⚠ **والمقبوضُ يحمل «المدفوع الآن» الإلزاميّ** (#266، ٢٠٢٦-٠٨-٣٠): نداءاتُ «خدمة جديدة» أعلاه
+    //  صارت ترسل `initialPayment` كاملاً — ٤٠ + ٦٠ (pPhy) + ٢٥ (pPro) + ٣٠ (pSup) + ١٥ (pBare) = ١٧٠ ألفاً
+    //  على حالات العلاج الطبيعي — فوق دفعة الـ٢٧٥ المدرَجة هنا. (والقسمُ ١ كان ينهار قبل هذا السطر منذ #261
+    //  فلم يُرَ الرقمُ حين أُضيف المبلغ.)
     same("   والعلاجُ الطبيعي ثالثُها",
-      [d.physiotherapy.revenue, d.physiotherapy.paid], [470_000, 300_000]);
+      [d.physiotherapy.revenue, d.physiotherapy.paid], [470_000, 275_000 + 170_000]);
     same("   **ومريضُ القسمين يقع نصفُه هنا ونصفُه هناك — لا مضاعفةَ**",
       await deptOfEntries(pBoth),
-      [["prosthetic", "add_case_type", 500_000], ["medical_support", "add_case_type", 150_000]]);
+      [["prosthetic", "case_cost_edit", 500_000], ["medical_support", "case_cost_edit", 150_000]]);
     same("٦. **والأطراف+المساند = جمعُ القسمين**",
       acct.rollups.devicesCombined,
       { revenue: 1_575_000 + 400_000, paid: 590_000 });
@@ -491,8 +518,14 @@ async function main() {
     //  ونطاقُ الفرع: محاسبُ ذي قار لا يرى مالَ بغداد — ومَن يملك المال
     //  هو مَن يُختبَر به الحجبُ الجغرافي، وإلّا اختلط حاجزُ الفرع بحاجز
     //  الصلاحية فمرّ أحدُهما مختبئاً خلف الآخر.
-    const repB2 = await http("GET", `/api/reports/daily-patient-report?date=${TODAY}`,
-      { ...S.recvB2, permissions: { ...perms, canManageAccounting: true } });
+    /** «إدارة المحاسبة» مشغَّلةً في صفّ الحساب للنداء وحده ثمّ مُطفأةً — الصفُّ مصدرُ الصلاحية. */
+    const withAccounting = async <T>(userId: number, fn: () => Promise<T>): Promise<T> => {
+      await q(`UPDATE system_users SET can_manage_accounting=true WHERE id=$1`, [userId]);
+      try { return await fn(); }
+      finally { await q(`UPDATE system_users SET can_manage_accounting=false WHERE id=$1`, [userId]); }
+    };
+    const repB2 = await withAccounting(RECV_B2, () => http("GET", `/api/reports/daily-patient-report?date=${TODAY}`,
+      { ...S.recvB2, permissions: { ...perms, canManageAccounting: true } }));
     same("١٢. **ونطاقُ الفرع محترَم — لا يرى محاسبُ ذي قار مالَ بغداد**",
       repB2.body?.financial?.rollups?.grandTotal, { revenue: 0, paid: 0 });
     same("   ولا زياراتِه", (repB2.body?.visits ?? []).length, 0);
@@ -506,8 +539,8 @@ async function main() {
     check((repRecv.body?.visits ?? []).length > 0,
       "   **لكنّ جدولَ زياراته يبقى كاملاً** — الحجبُ للمال وحده",
       String((repRecv.body?.visits ?? []).length));
-    const repAcct = await http("GET", `/api/reports/daily-patient-report?date=${TODAY}`,
-      { ...S.recv, permissions: { ...perms, canManageAccounting: true } });
+    const repAcct = await withAccounting(RECV, () => http("GET", `/api/reports/daily-patient-report?date=${TODAY}`,
+      { ...S.recv, permissions: { ...perms, canManageAccounting: true } }));
     check(typeof repAcct.body?.financial === "object" && repAcct.body?.financial !== null,
       "   ومَن يملك `canManageAccounting` يراه — ولا دورَ جديدٌ اختُرع",
       JSON.stringify(repAcct.body?.financial));
@@ -535,9 +568,11 @@ async function main() {
     //  **ولا يُقبل من العميل في أيّ اتجاه**: «قديم» في جسم الطلب كانت
     //  ستدّعي إعفاءً لم يقرّره أحد.
     const okPast = await http("POST", "/api/patients", S.recv,
-      { ...base, name: `${MARK} قديم`, phone: "07708888888", patientClassification: "past" });
+      //  ⚠ الاسمُ ليس بادئةً لاسمٍ فعّال: حارسُ التكرار (#279، ٢٠٢٦-٠٩-٠٨) يردّ ٤٠٩ على «… قديم» لوجود
+      //  «… قديمٌ غامض» أعلاه (القسم ٦) — وهو حارسٌ آخر لا ما يفحصه هذا البند.
+      { ...base, name: `${MARK} ادّعاءُ تصنيفٍ قديم`, phone: "07708888888", patientClassification: "past" });
     check(okPast.status === 200 || okPast.status === 201,
-      "١٤. و«قديم» في جسم الطلب لا يُردّ", String(okPast.status));
+      "١٤. و«قديم» في جسم الطلب لا يُردّ", `${okPast.status} ${JSON.stringify(okPast.body)}`);
     same("   **لكنّه لا يُكتب** — الخادمُ يختم «جديد»",
       await classOfEarly(Number(okPast.body?.id)), "new");
     same("   وقيمةٌ مخترَعة لا تُكتب كذلك",
@@ -636,9 +671,10 @@ async function main() {
     // ══ ٩. حذفٌ ودمجٌ مع العمود الجديد ═════════════════════════════════
     console.log("\n── ٩. الحذف والدمج ──");
     const pDel = await mk("للحذف");
-    await http("POST", `/api/patients/${pDel}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 120_000,
-        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
+    //  (التسعيرُ بقلم كلفة القسم — «إضافة نوع حالة» لا تكتب مالاً منذ #261، راجع القسم ١.)
+    await activateAndPrice(pDel, { caseType: "amputee", amputationSite: SITE }, "prosthetic", 120_000);
+    same("   والقيدُ المبوَّب قائمٌ قبل الحذف — فالكاسكيدُ يُختبَر على صفٍّ حقيقيّ",
+      await deptOfEntries(pDel), [["prosthetic", "case_cost_edit", 120_000]]);
     //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
     //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
     //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
@@ -658,18 +694,14 @@ async function main() {
 
     const mSrc = await mk("مصدر الدمج");
     const mDst = await mk("هدف الدمج");
-    await http("POST", `/api/patients/${mSrc}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 200_000,
-        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
-    await http("POST", `/api/patients/${mDst}/add-case-type`, S.recv,
-      { caseType: "amputee", serviceCost: 100_000,
-        amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" });
+    await activateAndPrice(mSrc, { caseType: "amputee", amputationSite: SITE }, "prosthetic", 200_000);
+    await activateAndPrice(mDst, { caseType: "amputee", amputationSite: SITE }, "prosthetic", 100_000);
     await storage.mergePatients(mSrc, mDst);
     check(true, "١٧. **والدمج ينجح**");
     same("   **وقسمُ القيد المنقول محفوظٌ لا مُفرَّغ**",
       (await q(`SELECT c.case_type FROM cost_entries e
                   JOIN patient_cases c ON c.id = e.case_id
-                 WHERE e.patient_id = $1 AND e.source = 'add_case_type'`, [mDst]))
+                 WHERE e.patient_id = $1 AND e.source = 'case_cost_edit'`, [mDst]))
         .map((r: any) => r.case_type), ["prosthetic", "prosthetic"]);
   } finally {
     await cleanup();

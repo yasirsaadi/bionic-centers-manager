@@ -24,6 +24,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { createJournalForPayment, createJournalForInvoice } from "./accounting/auto_journal";
+import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -150,6 +151,11 @@ async function balanceSheet(session: any) {
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO branches (id,name) VALUES (2,'فرعٌ آخر') ON CONFLICT DO NOTHING`);
+  //  **صندوقُ الفرع النقديّ كما يُنشئه الخادمُ الحقيقيّ** — `seedChartOfAccounts`
+  //  تُنادى عند كلّ إقلاع (`migrations/runner.ts`) وتشتقّ صندوقاً لكلّ فرعٍ موجود.
+  //  والفروعُ هنا تُدرَج بعد الترحيلات، فعلى قاعدةٍ جديدة لا صندوقَ (111101) ولا قيد،
+  //  فتُنادى الآن — بلا رمزٍ يُخترَع، والزارعُ يتخطّى الموجودَ (idempotent).
+  await seedChartOfAccounts();
   for (const [id, role, name] of [
     [ADMIN, "admin", "المسؤول"],
     [MGR, "branch_manager", "مدير بغداد"],

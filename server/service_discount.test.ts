@@ -1036,13 +1036,30 @@ async function main() {
         (await q<{ status: string }>(`SELECT status FROM service_discount_requests WHERE id=$1`,
           [id]))[0].status, "pending");
 
-      //  حاجزُ الفشل: أمرُ بناءٍ فعّال يسبق الاعتماد.
+      //  حاجزُ الفشل: أمرُ بناءٍ فعّال يسبق الاعتماد **على حلقة المتابعة نفسِها**.
+      //  ⚠ منذ ترحيل ٠٧٣ (قرارُ المالك: عملياتٌ متوازية مستقلّة، #274) لا يزاحم بناءٌ
+      //  أوليٌّ إلّا بناءً **لنفس الحلقة بعينها** (`storage.ts`، فحصُ `openWo`)، ومتابعةٌ بلا
+      //  حلقة تُفتَح لها حلقةٌ جديدة داخل الاعتماد (`ensureFirstDeviceEpisodeForSale`) لا
+      //  يسبقها إليها أحد — فأمرٌ بلا حلقة لم يعد يُسقط الاعتماد. فتحمل المتابعةُ حلقتَها
+      //  (شكلُ المريض العائد: «طلب جهاز جديد» يربطها قبل المعاينة)، والحاجزُ على تلك الحلقة —
+      //  وهو بعينه «أحدٌ سبقنا إلى الأمر» اليوم. والصفُّ بأعمدة `ensureFirstDeviceEpisodeForSale` حرفاً.
+      const fEp = (await q<{ id: number }>(
+        `INSERT INTO patient_device_episodes
+           (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
+            requested_item, component, service_path, created_by, created_at, updated_at)
+         SELECT $1, pc.id, 1,
+                (SELECT COALESCE(MAX(sequence_number),0)+1 FROM patient_device_episodes WHERE case_id = pc.id),
+                'examined', 0, 'full_device', NULL, 'exam', $2, NOW(), NOW()
+           FROM patient_cases pc WHERE pc.patient_id = $1 AND pc.case_type = 'prosthetic'
+         RETURNING id`, [p, ADMIN]))[0]?.id ?? null;
+      await q(`UPDATE post_exam_followups SET device_episode_id = $2 WHERE id = $1`, [f.id, fEp]);
+      check(fEp !== null, "٥١.ب المتابعةُ تحمل حلقةَ جهازها — ليقع الحاجزُ عليها");
       const blocker = await q<{ id: number }>(
         `INSERT INTO prosthetic_work_orders
            (patient_id, branch_id, expert_user_id, service_type, status, current_stage,
-            assigned_by, purpose)
-         VALUES ($1, 1, $2, 'prosthetic', 'active', 'measurement', $3, 'initial_build')
-         RETURNING id`, [p, EXPERT, ADMIN]);
+            assigned_by, purpose, device_episode_id)
+         VALUES ($1, 1, $2, 'prosthetic', 'active', 'measurement', $3, 'initial_build', $4)
+         RETURNING id`, [p, EXPERT, ADMIN, fEp]);
 
       const boom = await http("POST", `/api/discounts/${id}/decide`, S.mgr, { decision: "approve" });
       same("٥٢. **الاعتمادُ يفشل حين يفشل التنفيذ** — ولا يُعلَن نجاحاً", boom.status, 409);
@@ -1554,7 +1571,10 @@ async function main() {
     {
       const migDir = join(HERE, "migrations");
       const files = readdirSync(migDir);
-      check(!files.some((f) => f.startsWith("071")),
+      //  ⚠ **و٠٧١ صار رقماً مأخوذاً لاحقاً بميزةٍ أخرى** — `071_financial_correction_requests.ts`
+      //  (#261، ٢٠٢٦-٠٨-٣٠: طلباتُ التصحيح الماليّ للدفعات، لا الخصم). فالمقصودُ — لا ترحيلَ لهذه
+      //  المرحلة — يُقاس بأن لا ملفَّ ٠٧١ **غيرَه**.
+      check(!files.some((f) => f.startsWith("071") && f !== "071_financial_correction_requests.ts"),
         "٩٤. **لا ملفَّ ترحيلٍ ٠٧١** — هذه المرحلة تشتقّ من الأعمدة القائمة فقط",
         JSON.stringify(files.filter((f) => /^0\d{2}/.test(f)).sort().slice(-5)));
     }

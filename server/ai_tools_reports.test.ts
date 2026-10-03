@@ -16,6 +16,7 @@ import { executeTool, toolsFor } from "./ai/tools/registry";
 import { resolveAiAccess, type AiAccessContext } from "./ai/access";
 import { computeComparison } from "./ai/tools/reports";
 import { REPORT_ROW_LABELS } from "@shared/service_taxonomy";
+import { baghdadTodayYmd } from "@shared/visit_date";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -31,7 +32,10 @@ const B1 = 9940, B2 = 9941;
 const RECEPTION = 9942, RECEPTION_NO_VIEW = 9943, ADMIN = 9944, ACCOUNTANT = 9945;
 const P1 = 89401, P2 = 89402, P3_OTHER_BRANCH = 89403, P4_DELETED = 89404, P5_PHYSIO = 89405;
 const MARK = "اختبار-تقارير-المساعد";
-const TODAY = new Date().toISOString().slice(0, 10);
+//  **«اليوم» يومُ بغداد لا يومُ UTC** — تعريفُ الخادم الواحد (§4.bd، البند ١٣؛ `baghdadTodayYmd`). ويومُ
+//  UTC كان يُسقط هذا الملفَّ كلَّ ليلة بين ٢١:٠٠ و٢٤:٠٠ UTC: الصفوفُ تُكتب بـ`NOW()` فتقع في يوم بغداد
+//  التالي، والاستعلامُ يسأل عن يوم UTC — فتصير الأرقامُ أصفاراً (ب.٣، ب.٧، ج.٥ …) ويقرأ الغيابُ «اليوم» يومَ بغداد (ب.١٩ج/د).
+const TODAY = baghdadTodayYmd();
 
 async function q(sql: string, params: any[] = []) { return pool.query(sql, params); }
 
