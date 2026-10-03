@@ -14,8 +14,8 @@ import { PatientDepartmentBadges } from "@/components/PatientDepartmentBadges";
 import { MoneyInput } from "@/components/ui/money-input";
 import { PatientCodeBadge } from "@/components/PatientCodeBadge";
 import { MergePatientDialog } from "@/components/MergePatientDialog";
-import { StartManufacturingDialog } from "@/components/manufacturing/StartManufacturingDialog";
 import { SendToDoctorReviewDialog } from "@/components/medical/SendToDoctorReviewDialog";
+import { canCreateReview } from "@shared/medical_review";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { invalidatePatientData } from "@/lib/queryClient";
@@ -167,6 +167,7 @@ export default function PatientDetails() {
   //  فلا يظهر شيء. ولا حوارَ ثانٍ يُبنى لأجل ذلك.
   const [tab, setTab] = useState("visits");
   const isAdmin = branchSession?.isAdmin || false;
+  const mayDeleteDocuments = isAdmin || branchSession?.role === "branch_manager";
   // Branch managers should be able to perform "admin-style" actions
   // within their own branch (delete visit, edit visit, etc.). The
   // server already enforces branch isolation; the UI just needs to
@@ -999,10 +1000,12 @@ export default function PatientDetails() {
       {(patient.isAmputee || patient.isMedicalSupport) && (
         <div className="mb-6 space-y-3">
           <PatientWorkOrderCard patientId={patient.id} />
+          {/*  «بدء التصنيع وإسناد خبير» خرج من هنا (§4.bp): الجهازُ الجديد بابُه
+              «إضافة خدمة جديدة» ⟵ معاينة ⟵ «إتمام البيع»، والصيانةُ «بلا معاينة». */}
+          {/*  بابُ الاستقبال إلى الطبيب — للأطراف والمساند وحدهما، ولمن يملك
+              إرسالَه وحدَه (`canCreateReview` — نفسُ حارس الخادم). */}
+          {canCreateReview(branchSession as any) && (
           <div className="flex flex-wrap gap-2 items-center">
-            <StartManufacturingDialog patient={patient} />
-            {/*  بابُ الاستقبال إلى الطبيب — للأطراف والمساند وحدهما.
-                والعلاج الطبيعي لا يمرّ من هنا إطلاقاً (شرط الإظهار نفسه). */}
             <SendToDoctorReviewDialog
               patientId={patient.id}
               services={[
@@ -1011,6 +1014,7 @@ export default function PatientDetails() {
               ].filter(Boolean) as ("prosthetic" | "medical_support")[]}
             />
           </div>
+          )}
         </div>
       )}
 
@@ -1687,15 +1691,40 @@ export default function PatientDetails() {
                       >
                         <Download className="w-5 h-5" />
                       </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="text-slate-400 hover:text-red-500"
-                        onClick={() => deleteDocument({ documentId: doc.id, patientId: patient.id })}
-                        data-testid={`button-delete-doc-${doc.id}`}
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </Button>
+                      {/*  الحذفُ للمسؤول ومدير الفرع — كحارس الخادم (`isAdminOrManager`) —
+                          وبتأكيدٍ، فالمستندُ يُمحى ولا سلّةَ له. */}
+                      {mayDeleteDocuments && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-slate-400 hover:text-red-500"
+                              data-testid={`button-delete-doc-${doc.id}`}
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>حذف المستند؟</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                سيُحذف «{doc.fileName}» من ملف المريض نهائياً، ولا يمكن استعادته.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter className="gap-2">
+                              <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteDocument({ documentId: doc.id, patientId: patient.id })}
+                                className="bg-red-600 hover:bg-red-700"
+                                data-testid={`confirm-delete-doc-${doc.id}`}
+                              >
+                                نعم، احذف
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
                     </div>
                   ))
                 )}
