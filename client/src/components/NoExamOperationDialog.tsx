@@ -399,12 +399,19 @@ export function NoExamOperationDialog({
         //  الذي سيُطبَّق خادميّاً حرفاً بحرف.
         paidNow: paidNowCheck.amount,
         note: note.trim() || null,
+        //  **وتذكرةُ الإرسال — كالصيانة** (§4.bx): إعادةُ الإرسال بالرمز عينه تُقرأ «مسجَّل سابقاً» بلا قيدٍ ثانٍ.
+        submissionToken,
       });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       invalidate();
       onOpenChange(false);
+      //  **الرمزُ نفسُه وصل مرّتين** — العمليةُ مسجَّلةٌ سلفاً ولم يُكتب شيءٌ الآن: يُقال ذلك بنصّ الخادم، لا «تمّ» ثانية.
+      if (data?.duplicate) {
+        toast({ title: String(data.message ?? "") });
+        return;
+      }
       //  **بلا مراجعةٍ لاحقة في أيّ من البابين** — لا `reviewRouted` تُقرأ:
       //  الطبيبُ بلا سلطةٍ على أيّ منهما من أوّلهما (المرحلتان الثالثة
       //  والرابعة)، فلا حاجةَ لإخباره حيّاً ولا استرجاعياً. ونجاحٌ واحد
@@ -475,11 +482,11 @@ export function NoExamOperationDialog({
   const missingComponent = kind === "maintenance" && serviceType === "prosthetic" && !component;
   const maintenanceDeviceUnready = kind === "maintenance"
     && maintenanceDeviceBlocksSave({ phase: devicePhase, selection: deviceSelection });
-  //  **ولا حفظَ قبل أن تُسكَّ تذكرةُ الإرسال** (الصيانةُ وحدها — بيعُ الجزء
-  //  لا يرسلها أصلاً). `useEffect` يسكّها **بعد** أوّل رسم، فثمّة لحظةٌ
+  //  **ولا حفظَ قبل أن تُسكَّ تذكرةُ الإرسال** (البابان — الصيانةُ وبيعُ الجزء). `useEffect` يسكّها **بعد** أوّل رسم، فثمّة لحظةٌ
   //  يكون فيها الزرُّ ظاهراً والتذكرةُ فارغة؛ وإرسالٌ فيها يُردّ ٤٠٠ من
   //  الخادم. فيُمنَع الزرُّ حتى توجد — والخادمُ يبقى الحارسَ الحقيقيّ.
-  const maintenanceTokenUnready = kind === "maintenance" && !submissionToken;
+  //  **وبيعُ الجزء يرسلها كذلك منذ §4.bx** — فالشرطُ للبابين.
+  const submissionTokenUnready = !submissionToken;
   //  **والسعرُ جاهزٌ حين يشتقّه الخادمُ بنجاح** — شرطٌ مشتركٌ بين البابين.
   //  **والخبيرُ لازمٌ إلّا عند الإلحاق** — يُشتقّ خادميّاً حينها فلا يُشترَط
   //  اختيارُه؛ **وسؤالُ الإلحاق نفسُه لازمُ جوابٍ** ما دام مطروحاً (لا
@@ -488,7 +495,7 @@ export function NoExamOperationDialog({
   //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
   //  كسعرٍ ناقص.
   const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
-    && !maintenanceDeviceUnready && !maintenanceTokenUnready
+    && !maintenanceDeviceUnready && !submissionTokenUnready
     && !attachUnanswered && !attachUnpicked && !resumeUnpicked
     && Boolean(offer.ok) && paidNowCheck.ok
     && maintDateVerdict.ok && !(askPaidOn && !paidOn);

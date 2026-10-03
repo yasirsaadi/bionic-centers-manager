@@ -38,6 +38,7 @@
 //     مسار، ودفعةٌ بلا `deviceEpisodeId` (غير جهازية) لا تكتسب
 //     `displayDescription` إطلاقاً (`null` دائماً، بصرف النظر عن النصّ).
 
+import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
 import express from "express";
@@ -130,7 +131,7 @@ async function mkCase(patientId: number, caseType = "prosthetic") {
 //  **`paidNow: 0` افتراضٌ آمن هنا** — صفرٌ صريحٌ يعني «دَينٌ كامل، لا دفعة»،
 //  فلا يُنشئ صفَّ دفعةٍ يحتاج فحصاً (نفسُ اتفاقية `component_sale.test.ts`).
 const sale = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/device-sale", session, { submissionToken: randomUUID(),  paidNow: 0, ...body });
 const maint = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 

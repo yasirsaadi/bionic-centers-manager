@@ -55,6 +55,7 @@ import {
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
   parseComponentSalePaidNow, COMPONENT_SALE_SUCCESS_MESSAGE,
+  COMPONENT_SALE_DUPLICATE_MESSAGE, COMPONENT_SALE_TOKEN_REQUIRED_MESSAGE,
 } from "@shared/component_sale";
 
 type Req = any;
@@ -302,6 +303,16 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         });
       }
 
+      //  ══ **تذكرةُ الإرسال إلزاميةٌ** — كالصيانة بحرفها (§4.bx) ══════════
+      //  كان بيعان بالجسم نفسِه يُقيَّدان كلاهما (فهرسُ ٠٧٣ الذي كان يمنعه
+      //  عَرَضاً رُفع). والحجزُ نفسُه داخل معاملة `createComponentSaleOperation`.
+      const submissionToken = typeof req.body?.submissionToken === "string"
+        ? req.body.submissionToken.trim().slice(0, 100)
+        : "";
+      if (!submissionToken) {
+        return res.status(400).json({ error: COMPONENT_SALE_TOKEN_REQUIRED_MESSAGE });
+      }
+
       const patientId = Number(req.body?.patientId);
       if (!Number.isFinite(patientId)) {
         return res.status(400).json({ error: "بيانات ناقصة" });
@@ -411,7 +422,13 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
         finalPrice: offer.finalPrice!, paidNow: paidNowResult.amount,
         note, actor: actorOf(req), component, existingEpisodeId, attachToDeviceEpisodeId,
+        submissionToken,
       });
+
+      //  **الرمزُ نفسُه وصل مرّتين ⟶ نجاحٌ آمن، وصفرُ كتابة** — قبل التدقيق والقيد اليوميّ.
+      if ("duplicate" in out) {
+        return res.json({ ok: true, duplicate: true, message: COMPONENT_SALE_DUPLICATE_MESSAGE });
+      }
 
       await logAudit({
         entityType: "no_exam_operation",

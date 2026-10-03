@@ -49,6 +49,7 @@
 //   • **ع**: رؤيةُ المُوجِّه (`reception_routing.ts`) — بابُ البيع بصلاحيةٍ
 //     مخصَّصة لا الأدوار وحدها، وغائبٌ عن المساند كلّياً.
 
+import { randomUUID } from "crypto";
 import express from "express";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -184,7 +185,7 @@ async function mkLegacyNoExamEpisode(
 //  المرحلة الخامسة نفسِها (قسم «ق» أدناه) تُرسل `paidNow` صريحاً فتَكتب
 //  فوق هذا الافتراض.
 const sale = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/device-sale", session, { submissionToken: randomUUID(),  paidNow: 0, ...body });
 const oldEpisodeDoor = (body: any, session: any = S.recv) =>
   http("POST", `/api/patients/${body.patientId}/device-episodes`, session, body);
 
@@ -700,7 +701,7 @@ async function main() {
         note: null, actor: { userId: RECV, userName: "ريام" },
         component: "knee" as any, existingEpisodeId: null,
       });
-      check(Boolean(out.workOrderId) && Boolean(out.deviceEpisodeId),
+      check(!("duplicate" in out) && Boolean(out.workOrderId) && Boolean(out.deviceEpisodeId),
         "ف٣. فرعٌ صحيحٌ مطابق ⟶ العمليةُ تمضي بنجاح", JSON.stringify(out));
       const after = await moneyOf(pid);
       same("    والمالُ تحرّك بمقدار السعر كاملاً، وحلقةٌ وأمرٌ فُتحا",
@@ -1579,7 +1580,7 @@ async function main() {
       //  **بلا `paidNow` إطلاقاً في جسم الطلب** — الحقلُ غائبٌ تماماً، لا
       //  `null` ولا نصٌّ فارغ؛ نداءٌ مباشرٌ (لا عبر `sale()` التي تفرض
       //  الافتراضَ الآمن `paidNow: 0` للاختبارات القديمة وحدها).
-      const r = await http("POST", "/api/no-exam/device-sale", S.recv, {
+      const r = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
         patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 75_000, discountAmount: 0,
       });

@@ -426,7 +426,12 @@ export async function createComponentSaleOperation(params: {
    * بحكم القاعدة (`finalPrice === 0`).
    */
   paidNow: number;
-}): Promise<{
+  /**
+   * **تذكرةُ الإرسال** (§4.bx) — تُحجَز في `submission_tokens` بنطاق `component_sale` أوّلَ شيءٍ في المعاملة.
+   * اختياريةٌ هنا لمُنادٍ داخليّ؛ والإلزامُ عقدُ البابِ العامّ وحده (كالصيانة).
+   */
+  submissionToken?: string | null;
+}): Promise<{ duplicate: true } | {
   workOrderId: number; deviceEpisodeId: number; component: string | null;
   finalPrice: number;
   /**
@@ -452,6 +457,18 @@ export async function createComponentSaleOperation(params: {
   const episodes = await import("../device_episodes/store");
   const mfg = await import("../manufacturing/store");
   return await db.transaction(async (tx) => {
+    //  ══ **التذكرةُ أوّلاً** — نفسُ حجز الصيانة بحرفه (`createMaintenanceOperation`): مفتاحٌ أساسيّ، فالثانيةُ
+    //  تنتظر الأولى ثمّ تقرأ نتيجتَها — التزمت ⟶ تكرار بصفر كتابة، وارتدّت ⟶ تُدرِج هي وتمضي.
+    const token = typeof params.submissionToken === "string" ? params.submissionToken.trim() : "";
+    if (token) {
+      const claimed = await tx.execute(sql`
+        INSERT INTO submission_tokens (token, scope)
+        VALUES (${token}, ${"component_sale"})
+        ON CONFLICT (token) DO NOTHING
+        RETURNING token
+      `);
+      if ((claimed.rowCount ?? 0) === 0) return { duplicate: true as const };
+    }
     let episodeId: number;
     let component: string | null;
     //  ══ **الفرعُ الفعليّ — من الحلقة المقفولة، لا من `params.branchId`** ══

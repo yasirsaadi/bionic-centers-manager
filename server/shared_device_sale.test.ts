@@ -19,6 +19,7 @@
 //
 //  حيٌّ على Postgres وعلى النقاط الحقيقية عبر Express حقيقيّ.
 //  التشغيل: `DATABASE_URL=… npm run test:shared-device-sale`
+import { randomUUID } from "crypto";
 import { pool } from "./db";
 import express from "express";
 import { createServer } from "http";
@@ -351,11 +352,11 @@ async function main() {
     eq(await snap(), before, "د٢. **ولا يتحرّك بالإتاحة صفٌّ واحد** — لا دفعةَ ولا كلفةَ ولا أمر");
 
     const sock = await http("POST", "/api/no-exam/device-sale", S.bg,
-      { patientId: ex1.id, component: "socket", expertUserId: AYOUB,
+      { submissionToken: randomUUID(),  patientId: ex1.id, component: "socket", expertUserId: AYOUB,
         originalPrice: 300000, discountAmount: 0, paidNow: 200000 });
     eq(sock.status, 201, "د٣. بغدادُ تبدّل القالبَ بأيوب وتقبض", msg(sock));
     const foot = await http("POST", "/api/no-exam/device-sale", S.dq,
-      { patientId: ex1.id, component: "foot", expertUserId: DQ_EXPERT,
+      { submissionToken: randomUUID(),  patientId: ex1.id, component: "foot", expertUserId: DQ_EXPERT,
         originalPrice: 400000, discountAmount: 0, paidNow: 100000 });
     eq(foot.status, 201, "د٤. ثمّ عاد لذي قار فاشترى قدماً", msg(foot));
 

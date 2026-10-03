@@ -40,6 +40,7 @@
 //   • **الحارسُ المعماريّ**: لا محاسبةَ ثانية، ولا استدعاءَ مراجعةٍ
 //     استرجاعية من بيع الجزء بعد اليوم.
 
+import { randomUUID } from "crypto";
 import express from "express";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -54,7 +55,10 @@ import {
 } from "@shared/pending_charge";
 import { noExamSaleRefusal } from "@shared/prosthetic_parts";
 import { MAINTENANCE_SUCCESS_MESSAGE } from "@shared/maintenance";
-import { canCompleteComponentSale, COMPONENT_SALE_SUCCESS_MESSAGE } from "@shared/component_sale";
+import {
+  canCompleteComponentSale, COMPONENT_SALE_SUCCESS_MESSAGE,
+  COMPONENT_SALE_DUPLICATE_MESSAGE, COMPONENT_SALE_TOKEN_REQUIRED_MESSAGE,
+} from "@shared/component_sale";
 
 
 //  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
@@ -222,7 +226,7 @@ const startNoExam = (patientId: number, serviceType = "prosthetic", item = "sock
 //  الآن») صيّرته إلزامياً على سعرٍ موجب؛ صفرٌ صريحٌ = «دَينٌ كامل» وهذا ما
 //  تفترضه هذه الاختباراتُ ضمناً أصلاً (بلا دفعاتٍ إطلاقاً)، فلا يغيّر شيئاً.
 const sale = (body: any, session: any = S.recv) =>
-  http("POST", "/api/no-exam/device-sale", session, { paidNow: 0, ...body });
+  http("POST", "/api/no-exam/device-sale", session, { submissionToken: randomUUID(),  paidNow: 0, ...body });
 const maint = (body: any, session: any = S.recv) =>
   http("POST", "/api/no-exam/maintenance", session, { submissionToken: maintTok(), paidNow: 0, ...body });
 
@@ -638,19 +642,45 @@ async function main() {
       [mA2.total, mA2.ledger_rows, mA2.orders],
       [300_000, 1, 1]);
 
-    //  (هـ٣) **ضغطتان متزامنتان على بيعٍ جديد** — واحدةٌ تكتب والأخرى تُردّ.
+    //  (هـ٣) **ضغطتان متزامنتان على بيعٍ جديد — بتذكرة الإرسال نفسِها** (§4.bx): واحدةٌ تكتب، والأخرى «مسجَّل
+    //  سابقاً» بصفر كتابة. كان فهرسُ ٠٧٣ يمنعها عَرَضاً، فلمّا رُفع صارتا تُقيَّدان كلتاهما — والتذكرةُ هي المنعُ الآن.
     const pE = await mkPatient("تزامن البيع");
     await mkCase(pE);
     const bodyE = {
       patientId: pE, component: "knee", expertUserId: EXPERT, originalPrice: 120_000,
-      discountAmount: 0,
+      discountAmount: 0, paidNow: 50_000, submissionToken: randomUUID(),
     };
     const raceE = await Promise.all([sale(bodyE), sale(bodyE)]);
-    same("هـ٣. **ضغطتان ⟶ نجاحٌ واحد**",
-      raceE.filter((r) => r.status === 201).length, 1);
+    const dupE = raceE.find((r) => r.status === 200);
+    same("هـ٣. **ضغطتان بالتذكرة نفسِها ⟶ نجاحٌ واحد، والأخرى «مسجَّل سابقاً»**",
+      [raceE.map((r) => r.status).sort(), dupE?.body?.duplicate, dupE?.body?.message],
+      [[200, 201], true, COMPONENT_SALE_DUPLICATE_MESSAGE]);
     const mE = await moneyOf(pE);
-    same("هـ٤. **وقيدُ كلفةٍ واحد وأمرٌ واحد**",
-      [mE.total, mE.ledger_rows, mE.orders], [120_000, 1, 1]);
+    same("هـ٤. **وقيدُ كلفةٍ واحد وأمرٌ واحد ودفعةٌ واحدة**",
+      [mE.total, mE.ledger_rows, mE.orders, mE.payment_rows, mE.paid], [120_000, 1, 1, 1, 50_000]);
+    //  (هـ٤ب) **وبلا تذكرةٍ يُردّ بصفر كتابة** — عميلٌ بائت، والرسالةُ تقول المخرج.
+    const pE2 = await mkPatient("بيع بلا تذكرة");
+    await mkCase(pE2);
+    const noTok = await http("POST", "/api/no-exam/device-sale", S.recv, {
+      patientId: pE2, component: "knee", expertUserId: EXPERT, originalPrice: 120_000,
+      discountAmount: 0, paidNow: 0,
+    });
+    const mE2 = await moneyOf(pE2);
+    same("هـ٤ب. **بلا تذكرةِ إرسال ⟶ ٤٠٠ ولا أمرَ ولا قيد**",
+      [noTok.status, noTok.body?.error, mE2.total, mE2.ledger_rows, mE2.orders],
+      [400, COMPONENT_SALE_TOKEN_REQUIRED_MESSAGE, 0, 0, 0]);
+    //  (هـ٤ج) **ولا قيدَ تجاريّ يُعاد**: بيعان حقيقيّان بتذكرتين مختلفتين (نافذتان فُتحتا عمداً) ينجحان كلاهما.
+    const twoReal = await Promise.all([
+      sale({ ...bodyE, patientId: pE2, paidNow: 0, submissionToken: randomUUID() }),
+      sale({ ...bodyE, patientId: pE2, paidNow: 0, submissionToken: randomUUID() }),
+    ]);
+    const mE3 = await moneyOf(pE2);
+    same("هـ٤ج. **تذكرتان مختلفتان ⟶ عمليتان مستقلّتان** (ترحيل ٠٧٣)",
+      [twoReal.map((r) => r.status), mE3.total, mE3.ledger_rows, mE3.orders], [[201, 201], 240_000, 2, 2]);
+    //  (هـ٤د) **والتذكرةُ المستعملة لا تفتح بيعاً على ملفٍّ آخر** — الرمزُ هويّةُ الضغطة لا المريض.
+    const reuse = await sale({ ...bodyE, patientId: pE2 });
+    same("هـ٤د. **تذكرةٌ مستعملة على مريضٍ آخر ⟶ «مسجَّل سابقاً» بصفر كتابة**",
+      [reuse.status, reuse.body?.duplicate, (await moneyOf(pE2)).orders], [200, true, 2]);
 
     //  (هـ٥) **وضغطتان على الصيانة**.
     //  ⚠ **انقلب عقدُ هذين البندين بترحيل ٠٨٢** (قرارُ المالك ٢٠٢٦-٠٩-١٧):
