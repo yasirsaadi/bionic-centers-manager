@@ -197,10 +197,13 @@ async function retrieve(q: string) {
   //  اختبار. والمدخلُ `admin` ليس مركزاً (branchId نصّيّ) فيُستبعَد بالشرط
   //  نفسِه الذي يميّزه في الشيفرة: رقمُ فرعٍ حقيقيّ.
   const routesSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "routes.ts"), "utf8");
-  const mapBlock = routesSrc.slice(
-    routesSrc.indexOf("const usernameToBranch"),
-    routesSrc.indexOf("const verifyAdminSchema"));
-  check(mapBlock.length > 0 && mapBlock.includes("branchName"),
+  //  **والكتلةُ تنتهي بإغلاق الكائن نفسِه** — كانت تنتهي عند `verifyAdminSchema`
+  //  التالية لها، فلمّا أُزيلت مع دخول الطوارئ (#483، §4.bk) صار `indexOf` ‎-1
+  //  فامتدّت الكتلةُ إلى آخر الملفّ وابتلعت `{ branchId: 0, branchName: "كل الفروع" }`.
+  const mapStart = routesSrc.indexOf("const usernameToBranch");
+  const mapEnd = mapStart < 0 ? -1 : routesSrc.indexOf("\n};", mapStart);
+  const mapBlock = mapStart >= 0 && mapEnd > mapStart ? routesSrc.slice(mapStart, mapEnd + 3) : "";
+  check(mapBlock.length > 0 && mapBlock.includes("branchName") && mapBlock.includes('"admin"'),
     "د٠. خريطةُ الفروع موجودةٌ في المصدر بالشكل المتوقَّع");
   const liveBranches = Array.from(
     mapBlock.matchAll(/branchId:\s*\d+\s*,\s*branchName:\s*"([^"]+)"/g),

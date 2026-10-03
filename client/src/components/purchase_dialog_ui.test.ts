@@ -188,17 +188,24 @@ same("٣٥. ومع التبرّع كذلك",
 console.log("\n── عقد البطاقة ──");
 const cardSrc = readFileSync(
   join(import.meta.dirname, "./PostExamDecisionCard.tsx"), "utf8");
-check("٣٦. **البطاقةُ تستورد القاعدة ولا تكرّرها**",
-  cardSrc.includes("purchase_dialog_ui"));
+//  **ونافذةُ «اشترى» الموروثة خرجت من البطاقة إلى مكوّنٍ مشترك** (#285،
+//  `LegacyDecisionActions.tsx`) — تستعمله البطاقةُ وطابورُ «بانتظار الحسم»
+//  معاً. فالعقدُ: البطاقةُ ترسم ذلك المكوّن، والمكوّنُ يستورد القاعدة.
+const legacyActionsSrc = readFileSync(
+  join(import.meta.dirname, "./LegacyDecisionActions.tsx"), "utf8");
+check("٣٦. **البطاقةُ ترسم المكوّنَ المشترك، وهو يستورد القاعدة ولا يكرّرها**",
+  cardSrc.includes('from "@/components/LegacyDecisionActions"')
+    && cardSrc.includes("<LegacyDecisionActions")
+    && legacyActionsSrc.includes('from "@/components/purchase_dialog_ui"'));
 check("٣٧. وزرُّ الإرسال مربوطٌ بـ`purchaseBlocked`",
-  cardSrc.includes("purchaseBlocked({"));
-check("٣٨. وجسمُه من `purchaseBody`", cardSrc.includes("purchaseBody({"));
-check("٣٩. وما ينقص من `purchaseGaps`", cardSrc.includes("purchaseGaps(active)"));
+  legacyActionsSrc.includes("purchaseBlocked({"));
+check("٣٨. وجسمُه من `purchaseBody`", legacyActionsSrc.includes("purchaseBody({"));
+check("٣٩. وما ينقص من `purchaseGaps`", legacyActionsSrc.includes("purchaseGaps(followup)"));
 //  **ولا شرطَ خبيرٍ مكتوبٌ في الشاشة بيدها** — وهو الشرطُ الذي كان يعطّل
 //  الزرَّ الرئيسي. لو عاد يوماً، عاد بلا اختبارٍ يكسره — فيُمنَع نصّاً.
 check("٤٠. **ولا `selectedExpertUserId === null` تحرس زرّاً في الشاشة**",
-  !/selectedExpertUserId\s*===\s*null/.test(cardSrc),
-  (cardSrc.match(/.*selectedExpertUserId\s*===.*/g) ?? []).join("\n"));
+  ![cardSrc, legacyActionsSrc].some((s) => /selectedExpertUserId\s*===\s*null/.test(s)),
+  [cardSrc, legacyActionsSrc].flatMap((s) => s.match(/.*selectedExpertUserId\s*===.*/g) ?? []).join("\n"));
 
 // ── ٨. **سهمُ السعر يُقرأ من الأعلى إلى الأدنى** ─────────────────────────
 //  ══ العطبُ الذي يغلقه ══════════════════════════════════════════════════

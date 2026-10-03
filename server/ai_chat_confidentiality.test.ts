@@ -132,14 +132,23 @@ async function cleanup() {
 
 async function main() {
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد'),(2,'ذي قار') ON CONFLICT DO NOTHING`);
-  for (const [id, role, name] of [
-    [STAFF, "reception", "موظّف"], [ACC1, "reception", "محاسب بغداد"],
-    [ACC2, "reception", "محاسب ذي قار"], [ADMIN, "admin", "المسؤول"],
-  ] as any[]) {
-    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active)
-             VALUES ($1,$2,'x',$3,$4,1,'[1]'::jsonb,true)
-             ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, display_name=EXCLUDED.display_name`,
-      [id, `aic_u${id}`, name, role]);
+  //  **صفُّ الحساب يطابق الجلسةَ التي يحملها الطلب** — فالمِعترِضةُ الحيّة تعيد بناءَ الجلسة من
+  //  صفّ الحساب مع كلّ طلب: الصلاحياتُ الدقيقة (منذ ٢٠٢٦-٠٩-٠١) والفروعُ والدور (البند ٧، #439،
+  //  `server/auth/session_refresh.ts`). فمحاسبٌ صفُّه بلا `can_manage_accounting` أو بفرعٍ غيرِ فرعه
+  //  يُقرأ موظّفاً عاديّاً على ذلك الفرع — والاختبارُ يقيس حينها جلسةً لم يرسلها.
+  for (const s of [S.staff, S.acc1, S.acc2, S.admin]) {
+    const branch = s.isAdmin ? 1 : s.branchId;
+    await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
+                                       can_view_patients,can_add_patients,can_manage_accounting)
+             VALUES ($1,$2,'x',$3,$4,$5,$6::jsonb,true,$7,$8,$9)
+             ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, display_name=EXCLUDED.display_name,
+               branch_id=EXCLUDED.branch_id, branch_ids=EXCLUDED.branch_ids,
+               can_view_patients=EXCLUDED.can_view_patients, can_add_patients=EXCLUDED.can_add_patients,
+               can_manage_accounting=EXCLUDED.can_manage_accounting`,
+      [s.userId, `aic_u${s.userId}`, s.displayName, s.role, branch,
+        JSON.stringify(s.isAdmin ? s.accessibleBranches : [s.branchId]),
+        Boolean((s.permissions as any).canViewPatients), Boolean((s.permissions as any).canAddPatients),
+        Boolean((s.permissions as any).canManageAccounting)]);
   }
   await cleanup();
   installSpies();
