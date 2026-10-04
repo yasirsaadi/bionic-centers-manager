@@ -49,6 +49,8 @@ async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM prosthetic_work_history WHERE work_order_id IN (SELECT id FROM prosthetic_work_orders WHERE patient_id IN (${ids}))`);
   await q(`DELETE FROM prosthetic_work_orders WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM medical_exam_revisions WHERE exam_id IN (SELECT id FROM medical_exams WHERE patient_id IN (${ids}))`);
+  await q(`DELETE FROM medical_exams WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_branch_access WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
@@ -105,6 +107,22 @@ async function main() {
     same("أ٣. وملفٌّ غيرُ مُتاحٍ يُردّ كما كان", (await http("PUT", `/api/patients/${other}`, S.recv1, { phone: "07704445599" })).status, 403);
     await http("PUT", `/api/patients/${pid}`, S.recv1, { branchId: 1 });
     same("أ٤. وفرعُ التسجيل لا يتغيّر من الفرع المُتاح", (await q(`SELECT branch_id FROM patients WHERE id=$1`, [pid]))[0].branch_id, 2);
+
+    console.log("\n── أب. شاراتُ السجلّ لملفٍّ مُتاح ──");
+    //  واقعةُ زين العابدين وليد (٢٠٢٦-١٠-٠٤): مسجَّلٌ في كربلاء ومُتاحٌ لذي قار، عوين علاجاً طبيعياً في كربلاء —
+    //  فالمسؤولُ يرى «تم تحديد علاج طبيعي» واستقبالُ ذي قار لا يراها. والقرار: المُتاحُ له كفرع التسجيل تماماً.
+    for (const p of [pid, other]) {
+      const c = (await q<{ id: number }>(`INSERT INTO patient_cases (patient_id, branch_id, case_type) VALUES ($1,2,'physiotherapy') RETURNING id`, [p]))[0].id;
+      await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, version, signed_at)
+               VALUES ($1,$2,'physiotherapy',2,$3,'د. كربلاء',1,NOW())`, [p, c, DOC]);
+    }
+    const pend = await http("GET", "/api/medical/pending", S.recv1);
+    same("أب١. **الملفُّ المُتاح يحمل شارةَ «تم تحديد» في الفرع المُتاح له** كما في فرع تسجيله",
+      [pend.status, pend.body?.decided?.[pid] ?? null], [200, ["physiotherapy"]]);
+    same("أب٢. وملفٌّ غيرُ مُتاحٍ لا تظهر شارتُه", pend.body?.decided?.[other] ?? null, null);
+    const medical = await import("./medical/store");
+    same("أب٣. **وعدُّ التقارير يبقى بفرع الصفّ** — المريضُ لا يُعدّ في فرعين",
+      (await medical.getDecidedExams([1])).some((r) => r.patientId === pid), false);
 
     console.log("\n── ب. تحويلٌ لخبير من ملفٍّ مُتاح ──");
     const oid = (await q<{ id: number }>(

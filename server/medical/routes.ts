@@ -1536,10 +1536,11 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
     try {
       const scope = branchScope(req);
       const [rows, decidedRows, optionalRows, unroutedRows] = await Promise.all([
-        store.getPendingExams(scope),
-        store.getDecidedExams(scope),
-        store.getPendingExams(scope, true),
-        store.getUnroutedDeviceCases(scope),
+        //  **شاراتُ السجلّ تتبع الملفّ**: مريضٌ مُتاحٌ للفرع يُرى بشاراته كفرع تسجيله (قرارُ المالك، §4.t).
+        store.getPendingExams(scope, false, true),
+        store.getDecidedExams(scope, true),
+        store.getPendingExams(scope, true, true),
+        store.getUnroutedDeviceCases(scope, true),
       ]);
       //  **قسمُ جهازٍ بلا سبب حضور** — شارةٌ حمراء في السجلّ وشريطٌ في صفحة المريض حتى يُختار السبب.
       const unroutedByPatient: Record<number, string[]> = {};
