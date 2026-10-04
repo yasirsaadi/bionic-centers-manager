@@ -170,6 +170,12 @@ async function main() {
     /reject-\$\{r\.id\}`\}>\s*<X[\s\S]{0,1200}confirm-reject-\$\{r\.id\}`\}\s*onClick=\{\(\) => decide\.mutate\(\{ id: r\.id, body: \{ decision: "reject" \} \}\)\}/.test(da), true);
   same("د١٧. «نسخ من الشهر السابق» يسأل حين للشهر أهداف",
     /hasTargets && !window\.confirm\(/.test(code("client/src/pages/SessionTargets.tsx")), true);
+  //  اسمُ المريض في سجلّ المرضى يفتح ملفَّه — في البطاقة (الهاتف) وفي الجدول، بالرابط نفسِه الذي يفتحه «فتح الملف».
+  const pl = code("client/src/pages/PatientsList.tsx");
+  const fileHref = "href={`/patients/${patient.id}${selectedBranch !== \"all\" ? `?branch=${selectedBranch}` : \"\"}`}";
+  const nameLinks = pl.split(fileHref).length - 1;
+  same("د١٨. اسمُ المريض رابطٌ إلى ملفّه في البطاقة والجدول — وبرابط «فتح الملف» نفسِه",
+    [(pl.match(/data-testid=\{`patient-name-link-\$\{patient\.id\}`\}/g) ?? []).length, nameLinks >= 4], [2, true]);
 
   console.log(`\n${failures === 0 ? "✅ كل فحوص دفعة الأزرار نجحت" : `❌ ${failures} فشل`}`);
   process.exit(failures === 0 ? 0 : 1);

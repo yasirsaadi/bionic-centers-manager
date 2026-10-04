@@ -700,7 +700,12 @@ export default function PatientsList() {
                             {startIndex + index + 1}
                           </span>
                           <div className="min-w-0">
-                            <h3 className="font-bold text-slate-900 text-base">{patient.name}</h3>
+                            {/*  **الاسمُ نفسُه يفتح الملفّ** (طلبُ المالك ٢٠٢٦-١٠-٠٤): زرُّ «فتح الملف» قد يقع خارج
+                                الشاشة الضيّقة، والاسمُ دائماً تحت الإصبع. الرابطُ نفسُه بحرفه، بلا شرطٍ زائد. */}
+                            <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`} data-testid={`patient-name-link-${patient.id}`}
+                              className="font-bold text-slate-900 text-base hover:text-primary hover:underline underline-offset-4">
+                              <h3 className="inline">{patient.name}</h3>
+                            </Link>
                             <div
                               className="text-xs font-mono text-slate-500"
                               data-testid={`patient-code-${patient.id}`}
@@ -779,7 +784,10 @@ export default function PatientsList() {
                           {startIndex + index + 1}
                         </TableCell>
                         <TableCell className="font-medium text-slate-900 py-4">
-                          <div>{patient.name}</div>
+                          <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`} data-testid={`patient-name-link-${patient.id}`}
+                            className="hover:text-primary hover:underline underline-offset-4">
+                            {patient.name}
+                          </Link>
                           {/*  الهوية العلنية: صغيرةٌ لكنها ظاهرة، وبخطٍّ ثابت
                               العرض كي تُقرأ رقماً رقماً على الهاتف. */}
                           <div
