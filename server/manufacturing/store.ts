@@ -5,6 +5,7 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
+import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework } from "../staff_telegram/notify";
 import { recordAttendanceVisitTx } from "../visits/attendance";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { db } from "../db";
@@ -417,6 +418,10 @@ export async function createWorkOrderForExisting(params: {
       expectedDeliveryDate: params.expectedDeliveryDate ?? null,
       assignedBy: params.assignedBy,
     }).returning();
+    await notifyOrderAssigned(tx as any, {
+      orderId: workOrder.id, patientId: params.patientId, branchId: params.branchId, expertUserId: params.expertUserId,
+      purpose, serviceType: params.serviceType, actorUserId: params.assignedBy,
+    });
     const [created] = await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
@@ -593,6 +598,11 @@ export async function createMaintenanceOrderWithVisit(params: {
       //  **وعلمُ الضمان** (ترحيل ٠٨٣) — `undefined` تبقى `NULL`: لم يُسأل.
       maintenanceUnderWarranty: params.underWarranty ?? null,
     }).returning();
+    //  **تنبيهُ الخبير** (§4.by) — أمرُ صيانةٍ أُسند إليه.
+    await notifyOrderAssigned(tx as any, {
+      orderId: workOrder.id, patientId: params.patientId, branchId: params.branchId, expertUserId: params.expertUserId,
+      purpose: "maintenance", serviceType: params.serviceType, actorUserId: params.assignedBy,
+    });
     await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
@@ -1174,6 +1184,13 @@ export async function updateStage(params: {
         silent: params.silentStageEvent,
       });
     }
+    //  **تنبيهُ الاستقبال** (§4.by): «جاهز للتجربة والتسليم» يستدعي المريض، والتسليمُ (أو إنجازُ الصيانة) للعلم.
+    if (toStage !== fromStage && (toStage === "ready_for_fitting" || delivered || maintenanceDone)) {
+      await notifyStage(tx, {
+        orderId: order.id, patientId: updated.patientId, branchId: updated.branchId,
+        stage: delivered || maintenanceDone ? "delivered" : "ready_for_fitting", actorUserId: params.performedBy,
+      });
+    }
     // الموعد الأول يُلتزَم به عادةً **هنا** — في نافذة بلوغ القالب، لا في
     // نافذة الموعد المستقلّة. فلولا هذا السطر لَما ظهر أشيعُ التزامٍ بموعد
     // في سجلّ المواعيد إطلاقاً، وبدا الأمر كأنّ موعده وُلد من العدم.
@@ -1426,6 +1443,10 @@ export async function holdOrder(params: {
       notes: `توقّف: ${status} — السبب: ${reasonCode}${params.note ? ` — ${params.note}` : ""}`,
       performedBy: params.performedBy,
     });
+    await notifyHoldRework(tx, {
+      orderId: order.id, patientId: updated.patientId, branchId: updated.branchId, kind: "hold",
+      reasonCode, note: params.note ?? null, actorUserId: params.performedBy,
+    });
     return updated;
   });
 }
@@ -1581,6 +1602,10 @@ export async function reworkToStage(params: {
     await recordStageEvent(tx, {
       order: updated, stage: returnToStage, historyId: back.id,
     });
+    await notifyHoldRework(tx, {
+      orderId: order.id, patientId: updated.patientId, branchId: updated.branchId, kind: "rework",
+      reasonCode, note: params.note ?? null, actorUserId: params.performedBy,
+    });
     return updated;
   });
 }
@@ -1727,6 +1752,12 @@ export async function reassignExpertTx(
     fromStage: live.currentStage, toStage: live.currentStage,
     notes: `تحويل من الخبير ${await expertNameOf(tx, live.expertUserId)} إلى ${await expertNameOf(tx, params.newExpertUserId)} — السبب: ${params.reason}`,
     performedBy: params.performedBy,
+  });
+  //  **تنبيهُ الخبيرين** (§4.by، وقرارُ المالك): الجديدُ «حُوِّل إليك»، والسابقُ «سُحب منك».
+  await notifyOrderReassigned(tx, {
+    orderId: params.orderId, patientId: updated.patientId, branchId: updated.branchId,
+    oldExpertUserId: live.expertUserId, newExpertUserId: params.newExpertUserId,
+    reason: params.reason, actorUserId: params.performedBy,
   });
   return updated;
 }

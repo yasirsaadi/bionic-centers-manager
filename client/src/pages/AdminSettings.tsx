@@ -80,6 +80,7 @@ import {
 } from "@/components/ui/select";
 import { Pencil, Download } from "lucide-react";
 import { userEditPatch } from "./user_edit_patch";
+import StaffNotificationsTab from "@/components/admin/StaffNotificationsTab";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -3264,6 +3265,10 @@ export default function AdminSettings() {
             <Activity className="w-4 h-4" />
             دقّة الموظفين
           </TabsTrigger>
+          <TabsTrigger value="staff-notifications" className="gap-2" data-testid="tab-staff-notifications">
+            <Bell className="w-4 h-4" />
+            تنبيهات الموظفين
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="space-y-6">
@@ -3750,6 +3755,10 @@ export default function AdminSettings() {
               {isExporting ? t.adminSettings.exporting : t.adminSettings.exportPatientsCsv}
             </Button>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="staff-notifications" className="space-y-6">
+          <StaffNotificationsTab />
         </TabsContent>
 
         <TabsContent value="ai-memory" className="space-y-6">

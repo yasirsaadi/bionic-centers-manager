@@ -17,6 +17,7 @@ import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
+import { registerStaffTelegramRoutes } from "./staff_telegram/routes";
 import { registerPatientCardRoutes } from "./patient_card/routes";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
@@ -8811,6 +8812,8 @@ export async function registerRoutes(
   //   تماماً ولم تُمَسّ: بوتٌ آخر للإدارة لا للمرضى.)
   registerPatientCommunicationRoutes(app, isAuthenticated);
   registerPatientTelegramWebhook(app);
+  //  تنبيهاتُ الموظّفين — بوتٌ ثالثٌ منفصل (§4.by): ربطٌ بتذكرةٍ يصدرها المسؤول، ولوحةُ «مَن يستلم ماذا» له وحده.
+  registerStaffTelegramRoutes(app, isAuthenticated);
   //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
   registerPatientCardRoutes(app, isAuthenticated);
 

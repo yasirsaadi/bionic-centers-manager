@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { notifyOrderAssigned } from "./staff_telegram/notify";
 import { recordAttendanceVisitTx } from "./visits/attendance";
 import { devicePurchaseReason } from "@shared/attendance";
 import {
@@ -707,6 +708,10 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
   // مسار إنشاء رابع — «تخصيص وإسناد خبير» من سجلّ المرضى.
   await recordOrderCreatedEvent(tx, {
     order: wo, stage: FIRST_STAGE, historyId: created.id,
+  });
+  //  **تنبيهُ الخبير** (§4.by) — بيعٌ على مسار المعاينة، أو بيعُ جزءٍ بلا معاينة، أو خصمٌ اعتُمد.
+  await notifyOrderAssigned(tx as any, {
+    orderId: wo.id, patientId, branchId: opBranchId, expertUserId, purpose: "initial_build", serviceType, actorUserId: assignedBy,
   });
 
   return {

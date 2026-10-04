@@ -24,6 +24,7 @@
 // **ولا يُفتَح إلّا المغلق**: الشرطُ `status = 'closed'` في `UPDATE` نفسِه،
 // فحالةٌ نشطةٌ لا تُلمَس ولا يُحدَّث ختمُها الزمنيُّ بلا سبب.
 
+import { notifyExamRequest } from "../staff_telegram/notify";
 import { sql } from "drizzle-orm";
 
 type Executor = { execute: (q: any) => Promise<any> };
@@ -147,6 +148,11 @@ export async function ensureCaseTx(
     RETURNING id, status, cost, cost_source, branch_id
   `);
   const fresh = (ins.rows ?? [])[0];
+  //  **حالةُ علاجٍ طبيعيٍّ جديدة تدخل «معايناتي»** (البند ١٧ — معاينتُها إلزامية) ⟵ تنبيهُ الطبيب (§4.by).
+  //  والأطرافُ والمساند لا تدخل الطابورَ بحالتها بل بجهازها، فتنبيهُها هناك.
+  if (fresh && params.caseType === "physiotherapy") {
+    await notifyExamRequest(tx as any, { patientId: params.patientId, specialty: "physiotherapy", branchId: params.branchId });
+  }
   if (fresh) return settle(fresh, true);
   //  سبقَنا إليه أحد بين القراءة والإدراج — يُقرأ الصفُّ القائم ويُعامَل كقائم.
   const raced = await read();
