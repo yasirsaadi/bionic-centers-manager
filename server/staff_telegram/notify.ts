@@ -163,6 +163,34 @@ export function notifyPaymentCorrection(ex: Executor | null | undefined, p: {
   });
 }
 
+/**
+ * **كلُّ مبلغٍ يدخل أيَّ فرع** (قرارُ المالك ٢٠٢٦-١٠-٠٤، للمسؤول وحده) — يُنادى من `insertPaymentRow`، الكاتبِ
+ * الوحيد لصفوف الدفعات الموجبة، فلا بابَ دفعٍ يفلت. والقسمُ من حالة الدفعة، وإن غابت فوسمُها كما كُتب.
+ * والصفرُ (جلساتٌ مُهداة) ليس مالاً يدخل فلا يُنبَّه به.
+ */
+export function notifyPaymentReceived(ex: Executor | null | undefined, p: {
+  paymentId: number; patientId: number; branchId: number; amount: number; caseId?: number | null;
+  treatmentTag?: string | null; date?: Date | null;
+}) {
+  return safe(ex, async () => {
+    if (!(p.amount > 0)) return;
+    const c = await ctx(ex, p.patientId, p.branchId);
+    let section = "";
+    if (p.caseId != null) {
+      const r = await (ex ?? db).execute(sql`SELECT case_type FROM patient_cases WHERE id = ${p.caseId}`);
+      section = dept((r.rows[0] as any)?.case_type);
+    }
+    if (!section && p.treatmentTag) section = dept(p.treatmentTag) || String(p.treatmentTag).trim();
+    const day = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+    const back = p.date && day(p.date) !== day(new Date()) ? `\nبتاريخ ${day(p.date)}` : "";
+    await enqueueStaffEvent(ex, {
+      event: "payment_received",
+      text: `💰 دفعة ${p.amount.toLocaleString("en-US")} د.ع من ${c.who}${section ? ` — ${section}` : ""}${c.branch}${back}`,
+      linkPath: `/patients/${p.patientId}`,
+    });
+  });
+}
+
 export function notifyAiSuggestion(p: { title: string; actorName?: string | null; actorUserId?: number | null }) {
   return safe(null, async () => {
     await enqueueStaffEvent(null, {

@@ -1,4 +1,4 @@
-// **أنواعُ تنبيهات الموظّفين** (§4.by) — ثلاثةَ عشرَ نوعاً. وثلاثةٌ عرضها المساعدُ ثمّ أُسقطت لأنها لا تقع اليوم:
+// **أنواعُ تنبيهات الموظّفين** (§4.by) — أربعةَ عشرَ نوعاً (الرابعَ عشرَ «كلُّ مبلغٍ يدخل» للمسؤول وحده). وثلاثةٌ عرضها المساعدُ ثمّ أُسقطت لأنها لا تقع اليوم:
 // «خصمٌ ينتظر الاعتماد» و«خصمٌ قُرِّر» (الطلبُ يُعتمَد في حفظه نفسِه — `applyDiscountImmediatelyTx`)، و«مبلغٌ أُعيد للتصحيح»
 // (`pending_service_charges` تاريخٌ لا مسار).
 // — مصدرٌ واحد يقرؤه الخادمُ ولوحةُ المسؤول.
@@ -26,6 +26,7 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "ready_for_fitting", label: "طرف جاهز للتركيب — يُستدعى المريض", group: "الاستقبال ومدير الفرع", scope: "branch" },
   { key: "delivered", label: "طرف سُلِّم", group: "الاستقبال ومدير الفرع", scope: "branch" },
   { key: "followups_digest", label: "تذكير صباحي بالمتابعات المستحقّة اليوم", group: "الاستقبال ومدير الفرع", scope: "branch", digest: true },
+  { key: "payment_received", label: "كلّ مبلغ يدخل أيّ فرع — المبلغ والمريض والقسم والفرع", group: "المسؤول", scope: "global" },
   { key: "payment_correction_pending", label: "طلب تصحيح دفعة ينتظر القرار", group: "المسؤول", scope: "global" },
   { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل", group: "المسؤول", scope: "branch" },
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
@@ -55,7 +56,7 @@ const DOCTOR_EVENTS = ["exam_request"];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
 const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
-const ADMIN_ONLY_EVENTS = ["payment_correction_pending", "ai_suggestion"];
+const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "ai_suggestion"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   const out = new Set<string>();
@@ -63,9 +64,8 @@ export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   if (role === "admin") return STAFF_EVENT_KEYS.slice();
   if (role === "doctor" || u.canWriteMedicalExam) DOCTOR_EVENTS.forEach((k) => out.add(k));
   if (role === "prosthetics_expert" || u.canWorkAsExpert) EXPERT_EVENTS.forEach((k) => out.add(k));
-  if (role === "branch_manager") {
-    [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS, ...DOCTOR_EVENTS].forEach((k) => out.add(k));
-  }
+  //  والمديرُ بلا «طلب معاينة» — «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤)؛ ومَن مُنح كتابةَ المعاينة يصله بالسطر أعلاه.
+  if (role === "branch_manager") [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));
   if (role === "reception" || role === "accountant") FRONT_DESK_EVENTS.forEach((k) => out.add(k));
   void ADMIN_ONLY_EVENTS;
   return STAFF_EVENT_KEYS.filter((k) => out.has(k));
