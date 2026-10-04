@@ -14,7 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { StaffEventDef } from "@shared/staff_notifications";
 
-interface StaffRow { id: number; displayName: string; role: string; linkedAt: string | null; events: string[] }
+interface StaffRow { id: number; displayName: string; role: string; branches: string[]; eligible: string[]; linkedAt: string | null; events: string[] }
 interface Payload { botReady: boolean; events: StaffEventDef[]; users: StaffRow[] }
 
 const KEY = ["/api/admin/staff-notifications"];
@@ -97,6 +97,9 @@ export default function StaffNotificationsTab() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">
                 {u.displayName} <span className="text-xs font-normal text-muted-foreground">— {ROLE_LABELS[u.role] ?? u.role}</span>
+                <span className="block text-xs font-normal text-muted-foreground" data-testid={`staff-branches-${u.id}`}>
+                  {u.branches.join("، ")}
+                </span>
               </CardTitle>
               <div className="flex flex-wrap items-center gap-2">
                 {u.linkedAt
@@ -117,7 +120,13 @@ export default function StaffNotificationsTab() {
             </div>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
-            {groups.map(([group, evs]) => (
+            {u.eligible.length === 0 && (
+              <p className="text-sm text-muted-foreground">لا توجد تنبيهات تخصّ دور هذا الموظف.</p>
+            )}
+            {/*  **ما يخصّ دورَه وحده** (قرارُ المالك): مجموعةٌ لا نوعَ فيها له لا تُعرض أصلاً. */}
+            {groups.map(([group, all]) => [group, all.filter((e) => u.eligible.includes(e.key))] as const)
+              .filter(([, evs]) => evs.length > 0)
+              .map(([group, evs]) => (
               <div key={group} className="space-y-1">
                 <p className="text-xs font-semibold text-muted-foreground">{group}</p>
                 {evs.map((e) => (
