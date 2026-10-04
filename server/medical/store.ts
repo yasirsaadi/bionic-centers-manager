@@ -29,7 +29,7 @@ import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
-import { scopeReachesPatient } from "../patients/branch_access";
+import { scopeReachesPatient, branchOrPatientAccessSql } from "../patients/branch_access";
 import { ensureActiveCaseTx, reopenClosedCaseAuditedTx } from "../patient_cases/reopen";
 import {
   claimAwaitingEpisodeForExam, markEpisodeExamined, DeviceEpisodeError,
@@ -1519,6 +1519,16 @@ export async function findCaseFor(
  * waiting on the prosthetics doctor while the physiotherapy side is already
  * seen. Scoped by branch for non-admins; `branchIds === null` means admin/all.
  */
+/**
+ * **شاراتُ سجلّ المرضى تتبع الملفَّ لا فرعَ الصفّ** (قرارُ المالك: «إتاحةُ المريض لفرعٍ تجعله كالفرع الأصليّ تماماً»).
+ * مريضٌ مُتاحٌ لذي قار يُرى فيها بشاراته كما يراها فرعُ تسجيله والمسؤول. **للشارات وحدها** (`/api/medical/pending`):
+ * عدُّ التقارير وطابورُ الطبيب يبقيان بفرع الصفّ، فلا يُعدّ مريضٌ في فرعين ولا ينتقل طابور.
+ */
+function withSharedAccess(scoped: SQL, branchIds: number[] | null, viaAccess: boolean): SQL {
+  if (!viaAccess || branchIds === null || branchIds.length === 0) return scoped;
+  return sql`(${scoped} OR ${branchOrPatientAccessSql(branchIds, null, "p.id")})`;
+}
+
 export async function getPendingExams(
   branchIds: number[] | null,
   /**
@@ -1529,8 +1539,9 @@ export async function getPendingExams(
    * registry — the exemption lifted the requirement, not the possibility.
    */
   legacyOnly = false,
+  viaAccess = false,
 ): Promise<{ patientId: number; caseType: string }[]> {
-  const scoped =
+  const scopedRow =
     branchIds === null
       ? sql`TRUE`
       : branchIds.length === 0
@@ -1551,6 +1562,8 @@ export async function getPendingExams(
                   AND COALESCE(pc.branch_id, p.branch_id) IN (${inList}))
             )`;
           })();
+
+  const scoped = withSharedAccess(scopedRow, branchIds, viaAccess);
 
   // Legacy patients are exempt from the exam requirement, so they never
   // appear as "waiting" — the amber badges and the doctor's queue stay clean
@@ -1671,15 +1684,17 @@ export async function getPendingExams(
  */
 export async function getUnroutedDeviceCases(
   branchIds: number[] | null,
+  viaAccess = false,
 ): Promise<{ patientId: number; caseType: string }[]> {
   const era = await servicePathEraStartedAt();
   if (!era) return [];
-  const scoped =
+  const scoped = withSharedAccess(
     branchIds === null
       ? sql`TRUE`
       : branchIds.length === 0
         ? sql`FALSE`
-        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(branchIds.map((id) => sql`${id}`), sql`, `)})`;
+        : sql`COALESCE(pc.branch_id, p.branch_id) IN (${sql.join(branchIds.map((id) => sql`${id}`), sql`, `)})`,
+    branchIds, viaAccess);
   const rows = await db.execute<{ patient_id: number; case_type: string }>(sql`
     SELECT pc.patient_id, pc.case_type
       FROM patient_cases pc
@@ -1717,8 +1732,9 @@ export async function getUnroutedDeviceCases(
  */
 export async function getDecidedExams(
   branchIds: number[] | null,
+  viaAccess = false,
 ): Promise<{ patientId: number; caseType: string }[]> {
-  const scoped =
+  const scoped = withSharedAccess(
     branchIds === null
       ? sql`TRUE`
       : branchIds.length === 0
@@ -1726,7 +1742,8 @@ export async function getDecidedExams(
         : sql`COALESCE(me.branch_id, p.branch_id) IN (${sql.join(
             branchIds.map((id) => sql`${id}`),
             sql`, `,
-          )})`;
+          )})`,
+    branchIds, viaAccess);
 
   // ══ "تم تحديد" must describe the device in hand ══════════════════════
   // Reception reads this badge as its cue to assign an expert and take money,

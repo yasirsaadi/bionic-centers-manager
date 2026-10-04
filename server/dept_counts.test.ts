@@ -181,8 +181,15 @@ async function main() {
     await q(`INSERT INTO patient_device_episodes (patient_id, case_id, branch_id, sequence_number, status, service_path)
              VALUES ($1,$2,2,1,'awaiting_exam','exam')`, [pMoved, cMoved]);
     const pendingIn = async (sess: any) => ((await http("GET", "/api/medical/pending", sess)).body?.pending ?? {})[pMoved] ?? [];
-    same("٢. **طلبٌ مسؤوليتُه في الفرع ٢ يُشار إليه في سجلّ الفرع ٢ لا ١** — كقائمة الطبيب",
-      [await pendingIn(S.recvB2), await pendingIn(S.recv)], [["prosthetic"], []]);
+    //  ⚠ **تعدّل بقرار المالك ٢٠٢٦-١٠-٠٤** (§4.bx — واقعةُ زين العابدين وليد): شاراتُ السجلّ تتبع **الملفّ** —
+    //  الفرعُ الذي يصل الملفَّ يرى شاراته كفرع التسجيل تماماً. فالطلبُ المنقولةُ مسؤوليتُه يُشار إليه في الفرع ٢ (كما
+    //  أراد البند ١١ — وهو ما كان ناقصاً) **وفي فرع تسجيله ١ أيضاً**. وطابورُ الطبيب وعدُّ التقارير يبقيان بفرع الطلب وحده.
+    same("٢. **طلبٌ مسؤوليتُه في الفرع ٢ يُشار إليه في سجلّ الفرع ٢ — وفي فرع تسجيله ١** (الشارةُ تتبع الملفّ)",
+      [await pendingIn(S.recvB2), await pendingIn(S.recv)], [["prosthetic"], ["prosthetic"]]);
+    const medicalStore = await import("./medical/store");
+    same("٢ب. **وعدُّ الانتظار (طابورُ الطبيب والتقارير) بفرع الطلب وحده** — ٢ لا ١",
+      [(await medicalStore.getPendingExams([2])).some((r) => r.patientId === pMoved),
+       (await medicalStore.getPendingExams([1])).some((r) => r.patientId === pMoved)], [true, false]);
 
     // ══ ٣. **رقمُ تبويب السجلّ = القائمةُ تحته** ═══════════════════════════════
     console.log("\n── ٣. رقمُ السجلّ ونطاقُه ──");
