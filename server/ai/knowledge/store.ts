@@ -15,6 +15,7 @@
 // اقتراحٍ أو اعتمادُه **لا يحذف صفّ الاقتراح** — يُحسَم بعمودَي الحالة
 // والقرار، فيبقى سجلّاً كاملاً مقروءاً للأبد (القسم أ، الفقرة ٨).
 
+import { notifyAiSuggestion } from "../../staff_telegram/notify";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { aiKnowledgeArticles, aiKnowledgeSuggestions } from "@shared/schema";
@@ -532,6 +533,12 @@ export async function createSuggestion(params: {
     suggestedText: params.suggestedText.trim(),
     reason: params.reason.trim(),
   }).returning();
+  //  **تنبيهُ المسؤول** (§4.by) — اقتراحُ معرفةٍ جديد. بلا معاملة: الإدراجُ أعلاه التزم بنفسه.
+  const brief = params.suggestedText.trim().replace(/\s+/g, " ");
+  await notifyAiSuggestion({
+    title: brief.length > 120 ? `${brief.slice(0, 120)}…` : brief,
+    actorName: params.actor.name ?? null, actorUserId: params.actor.userId,
+  });
   //  ══ سجلُّ الاقتراح نفسُه هو الأثرُ التدقيقيّ الكامل (لا يُحذف أبداً) ══
   //  فسطرُ audit_log هنا خفيفٌ عمداً: مَن قدّم ومتى، بلا نسخِ نصّ السؤال/
   //  الجواب/الاقتراح إلى جدولٍ ثانٍ — نفسُ مبدأ تقليل البيانات في سطر

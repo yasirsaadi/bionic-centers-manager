@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -2676,3 +2676,40 @@ export const serviceDiscountRequests = pgTable("service_discount_requests", {
   index("ix_sdr_branch_status").on(t.branchId, t.status, sql`requested_at DESC`),
   index("ix_sdr_patient").on(t.patientId),
 ]);
+
+// ══ تنبيهاتُ الموظّفين عبر بوت تلغرام (ترحيل ٠٩٥، §4.by) — مطابقةٌ للترحيل حرفاً ══════════════════════
+export const staffTelegramLinks = pgTable("staff_telegram_links", {
+  userId: integer("user_id").primaryKey().references(() => systemUsers.id, { onDelete: "cascade" }),
+  chatId: text("chat_id").notNull(),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const staffLinkTokens = pgTable("staff_link_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: integer("user_id").notNull().references(() => systemUsers.id, { onDelete: "cascade" }),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+}, (t) => [index("idx_staff_link_tokens_user").on(t.userId)]);
+
+export const staffNotificationPrefs = pgTable("staff_notification_prefs", {
+  userId: integer("user_id").notNull().references(() => systemUsers.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.eventType] })]);
+
+export const staffNotificationOutbox = pgTable("staff_notification_outbox", {
+  id: serial("id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  branchId: integer("branch_id"),
+  targetUserIds: integer("target_user_ids").array(),
+  excludeUserId: integer("exclude_user_id"),
+  specialty: text("specialty"),
+  text: text("text").notNull(),
+  linkPath: text("link_path"),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+}, (t) => [index("idx_staff_outbox_pending").on(t.id).where(sql`status = 'pending'`)]);
+

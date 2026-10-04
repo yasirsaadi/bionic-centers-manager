@@ -16,6 +16,7 @@
 // وسجلُّ الاعتماد حدثاً واحداً. فلا منطقَ تصنيعٍ ثانٍ يُكتب هنا ولا ينحرف
 // عن الأول لاحقاً.
 
+import { notifyAwaitingDecision } from "../staff_telegram/notify";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
@@ -373,6 +374,8 @@ export async function ensureFollowupForSignedExam(tx: any, params: {
   `);
   const created = (ins.rows ?? [])[0];
   if (!created) return null; // متابعةٌ حيّةٌ قائمة — وهذا هو التفرّد يعمل.
+  //  **«بانتظار الحسم»** (§4.by) — تنبيهُ الاستقبال: عوين المريضُ ويُسأل يشتري أم لا.
+  await notifyAwaitingDecision(tx, { patientId, branchId: params.branchId ?? null, actorUserId: params.actor.userId ?? null });
 
   await appendEvent(tx, {
     followupId: Number(created.id), patientId, branchId: params.branchId,

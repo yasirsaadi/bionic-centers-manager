@@ -41,6 +41,7 @@
 // القيدَ والدفعةَ وحالةَ الطلب معاً — لا خطأً يُبتلع بصمت. `storage`
 // تحتفظ بسلوكها التاريخيّ (أطلِق وانسَ) لكلّ مُستدعٍ آخر لا يمرّر `tx`.
 
+import { notifyPaymentCorrection } from "../staff_telegram/notify";
 import { db } from "../db";
 import { payments, financialCorrectionRequests, patients, branches } from "@shared/schema";
 import type { Payment } from "@shared/schema";
@@ -386,6 +387,12 @@ export async function requestPaymentCorrection(params: {
       requestedByName: params.actor.userName,
       requestedRole: params.actor.role,
     }).returning();
+    //  **تنبيهُ المسؤول** (§4.by) — طلبُ تصحيحٍ ينتظر قراره.
+    await notifyPaymentCorrection(tx as any, {
+      patientId: before.patientId, branchId: before.branchId ?? null,
+      kind: params.action === "delete" ? "حذف" : "تعديل", reason,
+      actorName: params.actor.userName ?? null, actorUserId: params.actor.userId ?? null,
+    });
     return { request: inserted };
   };
   return params.tx ? await body(params.tx) : await db.transaction(body);

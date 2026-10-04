@@ -18,6 +18,7 @@
 // لا مال، ولا أمر تصنيع، ولا صيانة. `agreedCost` يبقى صفراً حتى تُبنى نقطة
 // اعتماده في المرحلة التالية.
 
+import { notifyExamRequest } from "../staff_telegram/notify";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import {
@@ -657,6 +658,12 @@ export async function startDeviceEpisodeTx(
               created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
   `);
   const row = (ins.rows ?? [])[0];
+  //  **تنبيهُ الطبيب** (§4.by): جهازٌ ينتظر المعاينة يدخل «معايناتي» — إلّا مسار «بلا معاينة».
+  if (servicePath !== "no_exam") {
+    await notifyExamRequest(tx, {
+      patientId, branchId: row?.branch_id ?? null, specialty: serviceType, actorUserId: createdBy,
+    });
+  }
   return toView({ ...row, service_type: serviceType });
 }
 
@@ -1168,11 +1175,18 @@ export async function revertEpisodeToAwaitingExam(
   //  **و`awaiting_since = NOW()`** (ترحيل ٠٧٧): عودةٌ إلى الطابور دخولٌ
   //  جديدٌ إليه — «عاد للشراء» اليوم ينتظر منذ اليوم لا منذ فتح الطلب.
   //  و`created_at` لا يُمَسّ: تاريخُ الطلب الحقيقيّ.
-  await tx.execute(sql`
-    UPDATE patient_device_episodes
+  const back = await tx.execute(sql`
+    UPDATE patient_device_episodes e
        SET status = 'awaiting_exam', awaiting_since = NOW(), updated_at = NOW()
-     WHERE id = ${episodeId} AND status = 'examined'
+      FROM patient_cases c
+     WHERE e.id = ${episodeId} AND e.status = 'examined' AND c.id = e.case_id
+    RETURNING e.patient_id, e.branch_id, c.case_type
   `);
+  //  **وعودتُه إلى «معايناتي» تنبيهٌ للطبيب** (§4.by) — «عاد للشراء» أو معاينةٌ أُلغيت.
+  const r = (back.rows ?? [])[0];
+  if (r) {
+    await notifyExamRequest(tx, { patientId: Number(r.patient_id), branchId: r.branch_id ?? null, specialty: String(r.case_type) });
+  }
 }
 
 /**

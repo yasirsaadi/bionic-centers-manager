@@ -8,6 +8,7 @@
 //     'pending'` فيحسم السباقَ صفُّ القاعدة لا ترتيبُ الشيفرة.
 // (٤) **ولا معاينةً زائفة**: لا شيء هنا يكتب في `medical_exams` إطلاقاً.
 
+import { notifyExamRequest, notifyReturnedFromDoctor } from "../staff_telegram/notify";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -282,6 +283,11 @@ export async function createReviewRequestTx(tx: any, params: {
               ${requestedPath}, ${reviewKind}, ${clean(params.receptionNote)}, ${createdBy})
       RETURNING *
     `);
+    //  **تنبيهُ الطبيب** (§4.by) — طلبٌ «كامل» بلا جهازٍ يدخل «معايناتي» بنفسه. وذو الجهاز نبّه عنه الجهازُ
+    //  نفسُه حين فُتح أو عاد (`startDeviceEpisodeTx` · `revertEpisodeToAwaitingExam`)، فلا تنبيهان لمعاينةٍ واحدة.
+    if (episodeId === null && requestedPath === "full") {
+      await notifyExamRequest(tx, { patientId, branchId: requestBranchId, specialty: serviceType, actorUserId: createdBy });
+    }
     return toRow((ins.rows ?? [])[0]);
   } catch (err: any) {
     //  فهرسُ التفرّد الجزئي — طلبٌ معلَّقٌ واحد لكلّ حدث.
@@ -424,6 +430,12 @@ export async function decideReviewRequest(params: {
     `);
     const out = (upd.rows ?? [])[0];
     if (!out) throw new ReviewError("تمّ البتّ في هذا الطلب بالفعل", 409);
+    //  **«المُرجَعون من الطبيب»** (§4.by) — تنبيهُ الاستقبال حين يكون القرارُ إرجاعاً.
+    if (out.status === "returned") {
+      await notifyReturnedFromDoctor(tx, {
+        patientId: Number(out.patient_id), branchId: out.branch_id ?? null, reason: returnNote, actorUserId: doctorUserId,
+      });
+    }
     return toRow(out);
   });
 }
@@ -530,6 +542,9 @@ export async function returnFullRequestToReception(params: {
     `);
     const out = (upd.rows ?? [])[0];
     if (!out) throw new ReviewError("تغيّرت حالة الطلب — حدّث الصفحة", 409);
+    await notifyReturnedFromDoctor(tx, {
+      patientId: Number(out.patient_id), branchId: out.branch_id ?? null, reason, actorUserId: params.actorUserId,
+    });
     return toRow(out);
   });
 }
