@@ -139,13 +139,27 @@ async function main() {
     same("أ٤. نوعٌ مجهول ⟵ ٤٠٠", (await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["nope"] })).status, 400);
     const prefs: [number, string[]][] = [
       [ADMIN, ["exam_request", "payment_correction_pending", "ai_suggestion", "order_hold_rework", "evening_summary"]],
-      [RECV1, ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "exam_request"]],
-      [RECV2, ["ready_for_fitting", "exam_request"]],
+      [RECV1, ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered"]],
+      [RECV2, ["ready_for_fitting"]],
       [DOC_P, ["exam_request"]], [DOC_PH, ["exam_request"]],
       [EXP1, ["order_assigned", "order_reassigned", "expert_due_digest"]], [EXP2, ["order_assigned", "order_reassigned"]],
       [MGR1, ["order_hold_rework", "evening_summary"]],
     ];
     for (const [u, evs] of prefs) await http("PUT", `/api/admin/staff-notifications/${u}`, S.admin, { events: evs });
+    //  **ما يخصّ الدورَ وحده** (قرارُ المالك ٢٠٢٦-١٠-٠٤ — «هند موظّفةُ استقبال يظهر لها مربّعُ المعاينات»).
+    const bad = await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["exam_request"] });
+    same("أ٤ب. **نوعٌ لا يخصّ دورَه يُرفض** — معاينةٌ لموظّفة استقبال ⟵ ٤٠٠ ولا يُحفَظ",
+      [bad.status, (await q(`SELECT count(*)::int n FROM staff_notification_prefs WHERE user_id=$1 AND event_type='exam_request'`, [RECV1]))[0].n], [400, 0]);
+    const g2 = (await http("GET", "/api/admin/staff-notifications", S.admin)).body;
+    const el = (id: number) => g2.users.find((u: any) => u.id === id)?.eligible;
+    same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول)",
+      el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"]);
+    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ الثلاثةَ عشر",
+      [el(DOC_P), el(EXP1), el(MGR1)?.includes("exam_request") && el(MGR1)?.includes("evening_summary") && !el(MGR1)?.includes("order_assigned"), el(ADMIN)?.length],
+      [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"], true, 13]);
+    same("أ٤هـ. **الترتيبُ من الأهمّ**: المسؤول ⟵ المدير ⟵ الخبيران ⟵ الطبيبان ⟵ الاستقبال، وفرعُ كلٍّ ظاهر",
+      [g2.users.filter((u: any) => USERS.includes(u.id)).map((u: any) => u.role), g2.users.find((u: any) => u.id === RECV2)?.branches],
+      [["admin", "branch_manager", "prosthetics_expert", "prosthetics_expert", "doctor", "doctor", "reception", "reception"], ["كربلاء"]]);
     const audit = await q(`SELECT new_values FROM audit_log WHERE entity_type='staff_notification_prefs' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [String(EXP1)]);
     same("أ٥. الحفظُ يُكتب في سجلّ التدقيق بالقديم والجديد",
       JSON.parse(audit[0]?.new_values ?? "{}").events, ["expert_due_digest", "order_assigned", "order_reassigned"]);
@@ -180,11 +194,14 @@ async function main() {
     console.log("\n── ج. المستلِمون ──");
     const ids = async (row: any) => (await resolveStaffRecipients({ branch_id: null, target_user_ids: null, exclude_user_id: null, specialty: null, ...row })).map((r) => r.userId).sort();
     same("ج١. معاينةُ أطراف في بغداد ⟵ المسؤول واستقبالُ بغداد وطبيبُ الأطراف — لا كربلاء ولا طبيبُ العلاج الطبيعي ولا غيرُ النشط",
-      await ids({ event_type: "exam_request", branch_id: 1, specialty: "prosthetic" }), [ADMIN, RECV1, DOC_P].sort());
+      await ids({ event_type: "exam_request", branch_id: 1, specialty: "prosthetic" }), [ADMIN, DOC_P].sort());
     same("ج٢. ومعاينةُ علاجٍ طبيعيّ ⟵ طبيبُ العلاج الطبيعي لا طبيبُ الأطراف",
-      await ids({ event_type: "exam_request", branch_id: 1, specialty: "physiotherapy" }), [ADMIN, RECV1, DOC_PH].sort());
-    same("ج٣. وفي كربلاء ⟵ المسؤولُ واستقبالُ كربلاء", await ids({ event_type: "exam_request", branch_id: 2, specialty: "prosthetic" }), [ADMIN, RECV2].sort());
-    same("ج٤. والفاعلُ لا يُنبَّه بما فعله", await ids({ event_type: "exam_request", branch_id: 1, specialty: "prosthetic", exclude_user_id: RECV1 }), [ADMIN, DOC_P].sort());
+      await ids({ event_type: "exam_request", branch_id: 1, specialty: "physiotherapy" }), [ADMIN, DOC_PH].sort());
+    same("ج٣. «جاهز» في كربلاء ⟵ استقبالُ كربلاء وحده — لا استقبالُ بغداد", await ids({ event_type: "ready_for_fitting", branch_id: 2 }), [RECV2]);
+    same("ج٤. والفاعلُ لا يُنبَّه بما فعله", await ids({ event_type: "exam_request", branch_id: 1, specialty: "prosthetic", exclude_user_id: DOC_P }), [ADMIN]);
+    await q(`INSERT INTO staff_notification_prefs (user_id, event_type) VALUES ($1,'exam_request') ON CONFLICT DO NOTHING`, [RECV1]);
+    same("ج٤ب. **واختيارٌ قديمٌ لا يخصّ الدورَ لا يُرسَل** — صفٌّ مزروع لموظّفة استقبال يتخطّاه المُرسِل",
+      await ids({ event_type: "exam_request", branch_id: 1, specialty: "prosthetic" }), [ADMIN, DOC_P].sort());
     same("ج٥. الموجَّهُ لصاحبه وحده", await ids({ event_type: "order_assigned", target_user_ids: [EXP2] }), [EXP2]);
     same("ج٦. والموجَّهُ بلا صاحبٍ لا يصل أحداً", await ids({ event_type: "order_assigned" }), []);
     same("ج٧. ومختارٌ غيرُ مربوط لا يُحسَب", await ids({ event_type: "order_hold_rework", branch_id: 1 }), [ADMIN]);
@@ -272,7 +289,7 @@ async function main() {
     sent.length = 0;
     await dispatchStaffOnce();
     same("هـ١. أُرسلت لمحادثات المستحقّين وحدهم",
-      sent.map((x) => x.chatId).sort(), ["5550", "5551", "5553"].sort());
+      sent.map((x) => x.chatId).sort(), ["5550", "5553"].sort());
     same("هـ٢. والصفُّ خُتم «أُرسل»", (await q(`SELECT status FROM staff_notification_outbox WHERE id > $1`, [m])).map((r) => r.status), ["sent"]);
     sent.length = 0;
     await dispatchStaffOnce();

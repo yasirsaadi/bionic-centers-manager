@@ -6,7 +6,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { accessibleBranchesOf } from "../auth/session_refresh";
-import { staffEventDef } from "@shared/staff_notifications";
+import { staffEventDef, eligibleStaffEvents } from "@shared/staff_notifications";
 import { staffBotConfig } from "./config";
 import { appUrl } from "./config";
 import { sendStaffMessage } from "./client";
@@ -29,7 +29,7 @@ export async function resolveStaffRecipients(row: Pick<OutboxRow,
   const def = staffEventDef(row.event_type);
   if (!def) return [];
   const r = await db.execute(sql`
-    SELECT u.id, u.role, u.branch_id, u.branch_ids, u.can_write_medical_exam, u.medical_specialties, l.chat_id
+    SELECT u.id, u.role, u.branch_id, u.branch_ids, u.can_write_medical_exam, u.can_work_as_expert, u.medical_specialties, l.chat_id
       FROM staff_notification_prefs p
       JOIN system_users u ON u.id = p.user_id
       JOIN staff_telegram_links l ON l.user_id = u.id
@@ -38,6 +38,9 @@ export async function resolveStaffRecipients(row: Pick<OutboxRow,
   const out: Recipient[] = [];
   for (const u of r.rows as any[]) {
     const id = Number(u.id);
+    //  **ودورُه يحقّ له النوعَ اليوم** — اختيارٌ قديمٌ قبل تغيّر الدور لا يُرسَل.
+    if (!eligibleStaffEvents({ role: String(u.role), canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert })
+      .includes(row.event_type)) continue;
     if (row.exclude_user_id && id === Number(row.exclude_user_id)) continue;
     if (row.target_user_ids && row.target_user_ids.length > 0) {
       if (!row.target_user_ids.map(Number).includes(id)) continue;

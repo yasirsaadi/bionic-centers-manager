@@ -8,7 +8,8 @@ import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
-import { STAFF_EVENTS, isStaffEventKey } from "@shared/staff_notifications";
+import { accessibleBranchesOf } from "../auth/session_refresh";
+import { STAFF_EVENTS, isStaffEventKey, eligibleStaffEvents, staffRoleRank } from "@shared/staff_notifications";
 import { staffBotConfig, staffBotStatusLine, staffBotDeepLink, STAFF_WEBHOOK_PATH, publicBaseUrl } from "./config";
 import { sendStaffMessage } from "./client";
 import { startStaffDispatcher } from "./dispatcher";
@@ -126,21 +127,28 @@ export function registerStaffTelegramRoutes(app: Express, isAuthenticated: Reque
   app.get("/api/admin/staff-notifications", isAuthenticated, async (req: any, res) => {
     if (!isAdmin(req)) return res.status(403).json({ message: "غير مصرح" });
     const users = await db.execute(sql`
-      SELECT u.id, u.display_name, u.role, u.branch_id, u.branch_ids, l.linked_at,
+      SELECT u.id, u.display_name, u.role, u.branch_id, u.branch_ids, u.can_write_medical_exam, u.can_work_as_expert,
+             l.linked_at,
              COALESCE((SELECT array_agg(p.event_type ORDER BY p.event_type) FROM staff_notification_prefs p WHERE p.user_id = u.id), '{}') AS events
         FROM system_users u
         LEFT JOIN staff_telegram_links l ON l.user_id = u.id
-       WHERE COALESCE(u.is_active, true) = true
-       ORDER BY u.display_name`);
-    res.json({
-      botReady: staffBotConfig() !== null,
-      events: STAFF_EVENTS,
-      users: (users.rows as any[]).map((u) => ({
-        id: Number(u.id), displayName: u.display_name, role: u.role,
+       WHERE COALESCE(u.is_active, true) = true`);
+    const branchRows = await db.execute(sql`SELECT id, name FROM branches`);
+    const branchName = new Map((branchRows.rows as any[]).map((b) => [Number(b.id), String(b.name)]));
+    //  **لكلّ موظّفٍ ما يخصّ دورَه وحده** (قرارُ المالك)، وفروعُه بأسمائها، والترتيبُ من الأهمّ: المسؤول ⟵ المدراء ⟵ الخبراء ⟵
+    //  الأطبّاء ⟵ بقيّة الموظّفين، ثمّ بالاسم.
+    const list = (users.rows as any[]).map((u) => {
+      const who = { role: String(u.role), canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert };
+      const branches = u.role === "admin" ? ["كل الفروع"]
+        : accessibleBranchesOf({ branchId: u.branch_id, branchIds: u.branch_ids }).map((b) => branchName.get(b) ?? `#${b}`);
+      return {
+        id: Number(u.id), displayName: String(u.display_name ?? ""), role: u.role, branches,
+        rank: staffRoleRank(who), eligible: eligibleStaffEvents(who),
         linkedAt: u.linked_at ? new Date(u.linked_at).toISOString() : null,
         events: (u.events ?? []).map(String),
-      })),
-    });
+      };
+    }).sort((a, b) => a.rank - b.rank || a.displayName.localeCompare(b.displayName, "ar"));
+    res.json({ botReady: staffBotConfig() !== null, events: STAFF_EVENTS, users: list });
   });
 
   app.put("/api/admin/staff-notifications/:userId", isAuthenticated, async (req: any, res) => {
@@ -152,8 +160,12 @@ export function registerStaffTelegramRoutes(app: Express, isAuthenticated: Reque
     }
     const wanted = Array.from(new Set(events as string[])).sort();
     const before = await db.transaction(async (tx) => {
-      const u = await tx.execute(sql`SELECT id FROM system_users WHERE id = ${userId} FOR UPDATE`);
+      const u = await tx.execute(sql`SELECT id, role, can_write_medical_exam, can_work_as_expert FROM system_users WHERE id = ${userId} FOR UPDATE`);
       if (!u.rows.length) return null;
+      //  **وما لا يخصّ دورَه يُرفض** — لا يُحفَظ مربّعُ معاينةٍ لموظّفة استقبال.
+      const row = u.rows[0] as any;
+      const allowed = eligibleStaffEvents({ role: String(row.role), canWriteMedicalExam: row.can_write_medical_exam, canWorkAsExpert: row.can_work_as_expert });
+      if (wanted.some((k) => !allowed.includes(k))) return "ineligible" as const;
       const old = await tx.execute(sql`SELECT event_type FROM staff_notification_prefs WHERE user_id = ${userId} ORDER BY event_type`);
       await tx.execute(sql`DELETE FROM staff_notification_prefs WHERE user_id = ${userId}`);
       for (const ev of wanted) {
@@ -162,6 +174,7 @@ export function registerStaffTelegramRoutes(app: Express, isAuthenticated: Reque
       return (old.rows as any[]).map((r) => String(r.event_type));
     });
     if (before === null) return res.status(404).json({ message: "المستخدم غير موجود" });
+    if (before === "ineligible") return res.status(400).json({ message: "هذا التنبيه لا يخصّ دور هذا الموظّف" });
     const bs = req.session.branchSession;
     await logAudit({
       entityType: "staff_notification_prefs", entityId: userId, action: "update",

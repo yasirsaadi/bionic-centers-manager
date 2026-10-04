@@ -41,3 +41,41 @@ export function isStaffEventKey(k: unknown): k is string {
 export function staffEventDef(key: string): StaffEventDef | undefined {
   return STAFF_EVENTS.find((e) => e.key === key);
 }
+
+// ══ **مَن يحقّ له النوع — بالدور** (قرارُ المالك ٢٠٢٦-١٠-٠٤) ══════════════════════════════════════════════
+// «هند موظّفةُ استقبال يظهر لها مربّعُ المعاينات — وهذا غير صحيح». فكلُّ موظّفٍ يُعرض له ما يخصّ دورَه وحده، والمسؤولُ
+// يختار منه. **والخادمُ يرفض غيرَه، والمُرسِلُ يتخطّاه** — فتغيّرُ دور موظّفٍ يوقف ما لم يعد له بلا تنظيف.
+export interface StaffEligibilityUser {
+  role: string;
+  canWriteMedicalExam?: boolean | null;
+  canWorkAsExpert?: boolean | null;
+}
+
+const DOCTOR_EVENTS = ["exam_request"];
+const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
+const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"];
+const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
+const ADMIN_ONLY_EVENTS = ["payment_correction_pending", "ai_suggestion"];
+
+export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
+  const out = new Set<string>();
+  const role = String(u.role ?? "");
+  if (role === "admin") return STAFF_EVENT_KEYS.slice();
+  if (role === "doctor" || u.canWriteMedicalExam) DOCTOR_EVENTS.forEach((k) => out.add(k));
+  if (role === "prosthetics_expert" || u.canWorkAsExpert) EXPERT_EVENTS.forEach((k) => out.add(k));
+  if (role === "branch_manager") {
+    [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS, ...DOCTOR_EVENTS].forEach((k) => out.add(k));
+  }
+  if (role === "reception" || role === "accountant") FRONT_DESK_EVENTS.forEach((k) => out.add(k));
+  void ADMIN_ONLY_EVENTS;
+  return STAFF_EVENT_KEYS.filter((k) => out.has(k));
+}
+
+/** ترتيبُ اللوحة: المسؤول ⟵ المدراء ⟵ الخبراء ⟵ الأطبّاء ⟵ بقيّة الموظّفين. */
+export function staffRoleRank(u: StaffEligibilityUser): number {
+  if (u.role === "admin") return 0;
+  if (u.role === "branch_manager") return 1;
+  if (u.role === "prosthetics_expert" || u.canWorkAsExpert) return 2;
+  if (u.role === "doctor" || u.canWriteMedicalExam) return 3;
+  return 4;
+}
