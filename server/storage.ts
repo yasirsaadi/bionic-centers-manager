@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { notifyOrderAssigned } from "./staff_telegram/notify";
+import { notifyOrderAssigned, notifyPaymentReceived } from "./staff_telegram/notify";
 import { recordAttendanceVisitTx } from "./visits/attendance";
 import { devicePurchaseReason } from "@shared/attendance";
 import {
@@ -3796,6 +3796,11 @@ export class DatabaseStorage implements IStorage {
       paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null }, tx);
     }
     const [payment] = await (tx ?? db).insert(payments).values(paymentData).returning();
+    //  تنبيهُ المسؤول بكلّ مبلغٍ يدخل (§4.by) — داخل المعاملة نفسِها، فدفعةٌ تُلغى بالتراجع لا تُبلَّغ.
+    await notifyPaymentReceived(tx ?? null, {
+      paymentId: payment.id, patientId: payment.patientId, branchId: payment.branchId, amount: payment.amount,
+      caseId: payment.caseId, treatmentTag: payment.paymentTreatmentType, date: payment.date,
+    });
     return payment;
   }
   async deletePayment(id: number): Promise<void> {

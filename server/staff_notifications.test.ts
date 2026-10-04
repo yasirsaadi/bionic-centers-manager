@@ -1,12 +1,12 @@
 // تنبيهاتُ الموظّفين عبر بوت تلغرام (§4.by) — حيّاً على Postgres وعلى النقاط والكتّاب الحقيقيّين، وتلغرامُ مُعترَض.
 // قاعدة محلّية: `npm run test:staff-notifications`.
 //
-// (أ) لوحةُ المسؤول: له وحده · الأنواعُ الثلاثةَ عشر · الحفظُ يُدقَّق · رمزُ الربط.
+// (أ) لوحةُ المسؤول: له وحده · الأنواعُ الأربعةَ عشر · الحفظُ يُدقَّق · رمزُ الربط.
 // (ب) الـwebhook: السرُّ · الربطُ بالتذكرة لمرّةٍ واحدة · التذكرةُ الباطلة.
 // (ج) المستلِمون: الفرعُ · الموجَّه · الفاعلُ لا يُنبَّه · اختصاصُ الطبيب · غيرُ المربوط وغيرُ النشط وغيرُ المختار.
 // (د) الكتّابُ الحقيقيّون يكتبون الصندوقَ في معاملتهم: معاينةٌ (جهاز · علاجٌ طبيعيّ) · أمرٌ · تحويلٌ (للخبيرين) ·
-//     جاهزٌ وتسليم · توقّف · اقتراحٌ — والمعاملةُ المرتدّة لا تترك صفّاً، وخطأُ التحضير لا يُفسد المعاملة.
-// (هـ) المُرسِلُ يرسل لمن يستحقّ ويختم. (و) الرسائلُ المجدولة رسالةٌ لكلّ مستلِم.
+//     جاهزٌ وتسليم · توقّف · اقتراحٌ · دفعةٌ تدخل (للمسؤول وحده) — والمعاملةُ المرتدّة لا تترك صفّاً، وخطأُ التحضير لا يُفسد المعاملة.
+// (هـ) المُرسِلُ يرسل لمن يستحقّ ويختم. (و) الرسائلُ المجدولة رسالةٌ لكلّ مستلِم، و«متأخّرة» = الأحمرُ بلا عذر وحده.
 import express from "express";
 import { createServer } from "http";
 import { sql } from "drizzle-orm";
@@ -73,6 +73,7 @@ async function cleanup() {
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_device_episodes WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patients WHERE referral_source = '${MARK}'`);
   await q(`DELETE FROM ai_knowledge_suggestions WHERE submitted_by = ANY($1)`, [USERS]);
@@ -132,13 +133,13 @@ async function main() {
     console.log("\n── أ. لوحة المسؤول ──");
     same("أ١. لغير المسؤول ⟵ ٤٠٣", (await http("GET", "/api/admin/staff-notifications", S.recv1)).status, 403);
     const g = await http("GET", "/api/admin/staff-notifications", S.admin);
-    same("أ٢. البوتُ جاهز والأنواعُ ثلاثةَ عشر، والموظّفُ غيرُ النشط لا يظهر",
-      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 13, false]);
+    same("أ٢. البوتُ جاهز والأنواعُ أربعةَ عشر، والموظّفُ غيرُ النشط لا يظهر",
+      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 14, false]);
     same("أ٣. الأنواعُ الثلاثة التي لا تقع اليوم ليست فيها",
       ["charge_returned", "discount_pending", "discount_decided"].some((k) => g.body?.events?.some((e: any) => e.key === k)), false);
     same("أ٤. نوعٌ مجهول ⟵ ٤٠٠", (await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["nope"] })).status, 400);
     const prefs: [number, string[]][] = [
-      [ADMIN, ["exam_request", "payment_correction_pending", "ai_suggestion", "order_hold_rework", "evening_summary"]],
+      [ADMIN, ["exam_request", "payment_received", "payment_correction_pending", "ai_suggestion", "order_hold_rework", "evening_summary"]],
       [RECV1, ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered"]],
       [RECV2, ["ready_for_fitting"]],
       [DOC_P, ["exam_request"]], [DOC_PH, ["exam_request"]],
@@ -154,9 +155,14 @@ async function main() {
     const el = (id: number) => g2.users.find((u: any) => u.id === id)?.eligible;
     same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول)",
       el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"]);
-    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ الثلاثةَ عشر",
-      [el(DOC_P), el(EXP1), el(MGR1)?.includes("exam_request") && el(MGR1)?.includes("evening_summary") && !el(MGR1)?.includes("order_assigned"), el(ADMIN)?.length],
-      [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"], true, 13]);
+    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ الأربعةَ عشر",
+      [el(DOC_P), el(EXP1), el(MGR1), el(ADMIN)?.length],
+      [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"],
+       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "order_hold_rework", "evening_summary"], 14]);
+    //  «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤) — و«كلُّ مبلغٍ يدخل» للمسؤول وحده.
+    const mgrBad = await Promise.all(["exam_request", "payment_received"].map(async (k) =>
+      (await http("PUT", `/api/admin/staff-notifications/${MGR1}`, S.admin, { events: [k] })).status));
+    same("أ٤و. **المديرُ لا يُختار له «طلب معاينة» ولا «كلُّ مبلغٍ يدخل»** ⟵ ٤٠٠ لكليهما", mgrBad, [400, 400]);
     same("أ٤هـ. **الترتيبُ من الأهمّ**: المسؤول ⟵ المدير ⟵ الخبيران ⟵ الطبيبان ⟵ الاستقبال، وفرعُ كلٍّ ظاهر",
       [g2.users.filter((u: any) => USERS.includes(u.id)).map((u: any) => u.role), g2.users.find((u: any) => u.id === RECV2)?.branches],
       [["admin", "branch_manager", "prosthetics_expert", "prosthetics_expert", "doctor", "doctor", "reception", "reception"], ["كربلاء"]]);
@@ -267,6 +273,26 @@ async function main() {
     ob = await outbox(m);
     same("د٨. اقتراحُ معرفة ⟵ تنبيهٌ عامّ بنصّه", ob.map((r) => [r.event_type, r.text.includes("سعر الركبة")]), [["ai_suggestion", true]]);
 
+    //  «كلُّ مبلغٍ يدخل أيَّ فرع» (المالك ٢٠٢٦-١٠-٠٤) — من الكاتب الوحيد `insertPaymentRow`.
+    const { storage } = await import("./storage");
+    const caseA = (await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pA]))[0].id;
+    m = await maxId();
+    await storage.createPayment({ patientId: pA, branchId: 2, amount: 150000, caseId: caseA } as any);
+    ob = await outbox(m);
+    same("د١١. دفعةٌ تُكتب ⟵ تنبيهٌ عامّ بالمبلغ واسم المريض وقسمه وفرع الدفعة (لا فرع التسجيل)",
+      ob.map((r) => [r.event_type, r.branch_id, r.text.includes("150,000 د.ع") && r.text.includes(`${MARK} علي`)
+        && r.text.includes("الأطراف الصناعية") && r.text.includes("فرع كربلاء")]), [["payment_received", null, true]]);
+    same("د١١ب. ويصل المسؤولَ وحده", await ids({ event_type: "payment_received" }), [ADMIN]);
+    m = await maxId();
+    await storage.createPayment({ patientId: pA, branchId: 1, amount: 0, caseId: caseA, isFreeSessions: true } as any);
+    same("د١١ج. والصفرُ (جلساتٌ مُهداة) ليس مالاً يدخل ⟵ لا تنبيه", (await outbox(m)).length, 0);
+    m = await maxId();
+    await db.transaction(async (tx) => {
+      await storage.createPayment({ patientId: pA, branchId: 1, amount: 50000, caseId: caseA } as any, tx);
+      throw new Error("rollback");
+    }).catch(() => undefined);
+    same("د١١د. ودفعةٌ ارتدّت معاملتُها لا تُبلَّغ", (await outbox(m)).length, 0);
+
     m = await maxId();
     await db.transaction(async (tx) => {
       await notify.notifyExamRequest(tx as any, { patientId: pA, branchId: 1, specialty: "prosthetic" });
@@ -308,6 +334,21 @@ async function main() {
     ob = await outbox(m);
     same("و٢. الملخّصُ المسائيّ ⟵ رسالةٌ واحدة للمسؤول تجمع الفرعين، ولا شيءَ لمختارٍ غيرِ مربوط",
       ob.map((r) => [r.target_user_ids, r.text.includes("فرع بغداد") && r.text.includes("فرع كربلاء")]), [[[ADMIN], true]]);
+    same("و٢ب. وأمرُ كربلاء المتأخّرُ بلا عذر يُعدّ «متأخّرة بلا عذر ١»",
+      /فرع كربلاء:[^\n]*متأخّرة بلا عذر 1(?!\d)/.test(ob[0]?.text ?? ""), true);
+
+    //  **الأصفرُ ليس تأخيراً** (المالك ٢٠٢٦-١٠-٠٤): «التأخير يقصد به الأحمر — بدون عذر؛ أما الأصفر بعذر فليس تأخيراً».
+    await q(`UPDATE prosthetic_work_orders SET hold_reason_code='materials_unavailable' WHERE id=$1`, [bld.id]);
+    m = await maxId();
+    await buildEveningSummaries();
+    const ev = (await outbox(m))[0]?.text ?? "";
+    same("و٣. **أمرٌ فات موعدُه بعذرٍ مكتوب لا يُعدّ متأخّراً** — «بلا عذر 0» ويُذكر بعذره منفصلاً",
+      [/فرع كربلاء:[^\n]*متأخّرة بلا عذر 0(?!\d)/.test(ev), /فرع كربلاء:[^\n]*وبعذر مكتوب 1 — ليست تأخيراً/.test(ev)], [true, true]);
+    m = await maxId();
+    await buildExpertDueDigests();
+    const dg = (await outbox(m))[0]?.text ?? "";
+    same("و٤. وتذكيرُ الخبير يضعه تحت «بعذر مكتوب» لا تحت «متأخّرة بلا عذر»",
+      [dg.includes("متأخّرة بلا عذر"), dg.includes("بعذر مكتوب") && dg.includes(`${MARK} زينب`)], [false, true]);
   } finally {
     await cleanup();
     httpServer.close();

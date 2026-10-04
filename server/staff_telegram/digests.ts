@@ -48,7 +48,9 @@ export async function buildExpertDueDigests(): Promise<number> {
     const r = await db.execute(sql`
       WITH d AS (SELECT (NOW() AT TIME ZONE 'Asia/Baghdad')::date AS today)
       SELECT wo.id, wo.expected_delivery_date::text AS due, p.name, p.patient_code,
-             CASE WHEN wo.expected_delivery_date < d.today THEN 'late'
+             CASE WHEN wo.expected_delivery_date < d.today
+                       AND NULLIF(btrim(COALESCE(wo.hold_reason_code, '')), '') IS NULL THEN 'late'
+                  WHEN wo.expected_delivery_date < d.today THEN 'late_excused'
                   WHEN wo.expected_delivery_date = d.today THEN 'today' ELSE 'tomorrow' END AS bucket
         FROM prosthetic_work_orders wo
         JOIN patients p ON p.id = wo.patient_id AND p.deleted_at IS NULL, d
@@ -61,9 +63,9 @@ export async function buildExpertDueDigests(): Promise<number> {
     if (!rows.length) continue;
     const part = (b: string, title: string) => {
       const xs = rows.filter((x) => x.bucket === b);
-      return xs.length ? `\n${title}:\n` + xs.map((x) => `• ${who(x.name, x.patient_code)} — أمر ${x.id}${b === "late" ? ` (موعده ${x.due})` : ""}`).join("\n") : "";
+      return xs.length ? `\n${title}:\n` + xs.map((x) => `• ${who(x.name, x.patient_code)} — أمر ${x.id}${b.startsWith("late") ? ` (موعده ${x.due})` : ""}`).join("\n") : "";
     };
-    const text = `🗓️ صباح الخير — مواعيد التسليم:${part("late", "⚠️ متأخّرة")}${part("today", "اليوم")}${part("tomorrow", "غداً")}`;
+    const text = `🗓️ صباح الخير — مواعيد التسليم:${part("late", "🔴 متأخّرة بلا عذر")}${part("late_excused", "🟡 فات موعدها بعذر مكتوب — ليست تأخيراً")}${part("today", "اليوم")}${part("tomorrow", "غداً")}`;
     await enqueueStaffEvent(null, { event: "expert_due_digest", targetUserIds: [h.userId], text, linkPath: "/manufacturing" });
     n++;
   }
@@ -97,10 +99,14 @@ export async function buildFollowupDigests(): Promise<number> {
   return n;
 }
 
-/** الملخّصُ المسائيّ لكلّ فرعٍ من فروع المستلِم، في رسالةٍ واحدة. */
+/**
+ * الملخّصُ المسائيّ لكلّ فرعٍ من فروع المستلِم، في رسالةٍ واحدة. و«متأخّرة» = **الأحمرُ وحده** — فات موعدُها ولا عذرَ
+ * مكتوب (`latenessOf` في `shared/manufacturing.ts`، والشرطُ نفسُه بـSQL)؛ والأصفرُ بعذرٍ يُذكر منفصلاً ولا يُعدّ تأخيراً
+ * (المالك ٢٠٢٦-١٠-٠٤).
+ */
 export async function buildEveningSummaries(): Promise<number> {
   const open = await openBranches();
-  const stats = new Map<number, { newPatients: number; exams: number; delivered: number; late: number }>();
+  const stats = new Map<number, { newPatients: number; exams: number; delivered: number; late: number; lateExcused: number }>();
   const statOf = async (branchId: number) => {
     if (stats.has(branchId)) return stats.get(branchId)!;
     const r = await db.execute(sql`
@@ -114,9 +120,14 @@ export async function buildEveningSummaries(): Promise<number> {
            AND (wo.completed_at AT TIME ZONE 'Asia/Baghdad')::date = d.today)::int AS delivered,
         (SELECT count(*) FROM prosthetic_work_orders wo JOIN patients p ON p.id = wo.patient_id AND p.deleted_at IS NULL, d
           WHERE wo.branch_id = ${branchId} AND wo.status NOT IN ('completed', 'cancelled')
-            AND wo.expected_delivery_date < d.today)::int AS late`);
+            AND wo.expected_delivery_date < d.today
+            AND NULLIF(btrim(COALESCE(wo.hold_reason_code, '')), '') IS NULL)::int AS late,
+        (SELECT count(*) FROM prosthetic_work_orders wo JOIN patients p ON p.id = wo.patient_id AND p.deleted_at IS NULL, d
+          WHERE wo.branch_id = ${branchId} AND wo.status NOT IN ('completed', 'cancelled')
+            AND wo.expected_delivery_date < d.today
+            AND NULLIF(btrim(COALESCE(wo.hold_reason_code, '')), '') IS NOT NULL)::int AS late_excused`);
     const x = r.rows[0] as any;
-    const v = { newPatients: Number(x.new_patients), exams: Number(x.exams), delivered: Number(x.delivered), late: Number(x.late) };
+    const v = { newPatients: Number(x.new_patients), exams: Number(x.exams), delivered: Number(x.delivered), late: Number(x.late), lateExcused: Number(x.late_excused) };
     stats.set(branchId, v);
     return v;
   };
@@ -127,7 +138,7 @@ export async function buildEveningSummaries(): Promise<number> {
     const parts: string[] = [];
     for (const b of bs) {
       const s = await statOf(b.id);
-      parts.push(`\nفرع ${b.name}: مرضى جدد ${s.newPatients} · معاينات ${s.exams} · تسليمات وصيانات منجزة ${s.delivered} · أوامر متأخّرة ${s.late}`);
+      parts.push(`\nفرع ${b.name}: مرضى جدد ${s.newPatients} · معاينات ${s.exams} · تسليمات وصيانات منجزة ${s.delivered} · أوامر متأخّرة بلا عذر ${s.late}${s.lateExcused ? ` (وبعذر مكتوب ${s.lateExcused} — ليست تأخيراً)` : ""}`);
     }
     await enqueueStaffEvent(null, {
       event: "evening_summary", targetUserIds: [h.userId], text: `🌙 ملخّص اليوم:${parts.join("")}`, linkPath: null,
