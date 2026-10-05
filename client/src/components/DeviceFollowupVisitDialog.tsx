@@ -24,7 +24,7 @@ import { DeviceEpisodeSelect, useDeviceEpisodes, UNALLOCATED } from "./DeviceEpi
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
 import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
-import { DEVICE_FOLLOWUP_LABEL } from "./reception_routing";
+import { DEVICE_FOLLOWUP_LABEL, DEVICE_FOLLOWUP_HINT } from "./reception_routing";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 
 /** أنواعُ المراجعة المتاحة هنا — بلا «صيانة» (خيارُها مستقلّ) ولا «جهاز جديد» ولا «عاد للشراء» (لكلٍّ خيارُه). */
@@ -95,6 +95,11 @@ export function DeviceFollowupVisitDialog({
       <DialogContent className="sm:max-w-[500px]" dir="rtl" data-testid={training ? "device-training-dialog" : "device-followup-dialog"}>
         <DialogHeader>
           <DialogTitle>{title} — {SERVICE_LABELS[serviceType]}</DialogTitle>
+          {!training && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2" data-testid="followup-not-expert-warning">
+              {DEVICE_FOLLOWUP_HINT}
+            </p>
+          )}
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
