@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { soldDevicesTotal, needsBelowSoldConfirm, type EpisodeLike } from "./case_cost_guard";
+import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { COMPONENT_LABELS, FULL_DEVICE_LABELS } from "@shared/prosthetic_parts";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -34,6 +36,12 @@ export interface CaseRow {
   remaining?: number;
   visitCount: number;
   details: Record<string, any> | null;
+  /**
+   * **أجهزةُ الخيط المبيعة بمواصفات كلٍّ منها** — يرسلها الخادمُ حين للخيط جهازان فأكثر (المالك ٢٠٢٦-١٠-٠٥).
+   * `details` صفٌّ واحد يحمل آخرَ بيع، فمواصفاتُ الجهاز تُعرض من هنا لكلّ جهاز، ووقائعُ المريض (السبب والتاريخ) تبقى من `details`.
+   * و`specs = null`: لا معاينةَ تقول شيئاً عن هذا الجهاز وحده.
+   */
+  devices?: { episodeId: number; sequenceNumber: number; status: string; requestedItem: string; specs: Record<string, string> | null }[];
   /** آخرُ قرار شراءٍ على قسم الجهاز «لم يشترِ» ولا جهازَ حيٌّ بعده (§4.bm) — غائبةٌ في غير ذلك. */
   notBought?: { at: string | null; reason: string | null; note: string | null };
 }
@@ -54,6 +62,16 @@ const DETAIL_LABELS: Record<string, string> = {
   injuryType: "نوع الإصابة", diseaseType: "التشخيص", injuryArea: "منطقة الإصابة",
   treatmentType: "نوع العلاج", supportType: "نوع المسند",
 };
+
+/** مفاتيحُ مواصفات الجهاز — تخصّ جهازاً بعينه لا المريضَ كلَّه (`deviceSpecsFromPrescription` في الخادم). */
+const DEVICE_SPEC_KEYS = new Set<string>([
+  ...PROSTHETIC_SPECS.map((f) => f.key), ...SUPPORT_SPECS.map((f) => f.key), "injurySide", "amputationSite",
+]);
+const DEVICE_STATUS_LABELS: Record<string, string> = { in_manufacturing: "قيد التصنيع", delivered: "مُسلَّم" };
+const deviceItemLabel = (caseType: string, item: string) =>
+  item === "full_device"
+    ? (FULL_DEVICE_LABELS as Record<string, string>)[caseType] ?? "جهاز كامل"
+    : `جزء: ${(COMPONENT_LABELS as Record<string, string>)[item] ?? item}`;
 
 const fmtIQD = (n: number | undefined) => `${(n || 0).toLocaleString("en-US")} د.ع`;
 
@@ -111,7 +129,9 @@ export function PatientCaseChips({ cases, selectedId, onSelect }: {
 // so they are NOT duplicated here.
 export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; patientId: number }) {
   const details = caseRow.details || {};
-  const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k]);
+  const devices = caseRow.devices && caseRow.devices.length >= 2 ? caseRow.devices : null;
+  //  بأجهزةٍ متعدّدة: «التفاصيل» وقائعُ المريض وحدها، ومواصفاتُ كلّ جهازٍ في سطره — لا لقطةُ آخر بيعٍ على الخيط كلّه.
+  const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k] && !(devices && DEVICE_SPEC_KEYS.has(k)));
   const m = meta(caseRow.caseType);
   const Icon = m.icon;
 
@@ -536,6 +556,34 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {devices && (
+        <div className="rounded-xl border p-3 space-y-3" data-testid={`case-devices-${caseRow.id}`}>
+          <p className="text-sm font-semibold text-primary">مواصفات كلّ جهاز — من معاينته</p>
+          {devices.map((d) => {
+            const keys = d.specs ? Object.keys(DETAIL_LABELS).filter((k) => d.specs![k]) : [];
+            return (
+              <div key={d.episodeId} className="rounded-lg bg-muted/40 p-2" data-testid={`case-device-${d.episodeId}`}>
+                <p className="text-sm font-medium mb-1">
+                  الجهاز #{d.sequenceNumber} — {deviceItemLabel(caseRow.caseType, d.requestedItem)} · {DEVICE_STATUS_LABELS[d.status] ?? d.status}
+                </p>
+                {keys.length > 0 ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    {keys.map((k) => (
+                      <div key={k}>
+                        <div className="text-xs text-muted-foreground">{DETAIL_LABELS[k]}</div>
+                        <div className="font-medium">{String(d.specs![k])}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">لا معاينةَ تحدّد مواصفات هذا الجهاز وحده</p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </Card>

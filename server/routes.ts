@@ -40,6 +40,7 @@ import { registerAccountingV2Routes } from "./accounting/routes";
 import { registerSessionTrackingRoutes } from "./sessions_module/routes";
 import { registerManufacturingRoutes } from "./manufacturing/routes";
 import { registerMedicalRoutes } from "./medical/routes";
+import { caseDeviceSpecs } from "./medical/episode_prescription";
 import { registerMedicalReviewRoutes } from "./medical_review/routes";
 import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/routing";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
@@ -2446,8 +2447,13 @@ export async function registerRoutes(
     //  يتحقّق الشرطان معاً يسود `financiallyBlind`.
     const canViewPayments = branchSession?.isAdmin || Boolean(branchSession?.permissions?.canViewPayments);
 
+    //  ══ **مواصفاتُ كلّ جهازٍ على حدة** (المالك ٢٠٢٦-١٠-٠٥) — حين للخيط جهازان مَبيعان فأكثر: `details` صفٌّ واحد يحمل
+    //  آخرَ بيع، فتُرفَق الأجهزةُ بمواصفات معاينة كلٍّ منها وتعرضها البطاقةُ بدلَه. وجهازٌ واحد يبقى كما كان (لقطتُه هي معاينتُه).
+    const devicesByCase = await caseDeviceSpecs(cases.map((c) => c.id));
     // Attach per-case paid total + visit count (case-attributed rows).
-    const enriched = cases.map((c0) => {
+    const enriched = cases.map((c00) => {
+      const devs = devicesByCase.get(c00.id);
+      const c0 = devs && devs.length >= 2 ? { ...c00, devices: devs } : c00;
       const nb = notBought.get(c0.id);
       const c = nb ? { ...c0, notBought: nb } : c0;
       const caseVisits = visits.filter((v: any) => v.caseId === c.id);

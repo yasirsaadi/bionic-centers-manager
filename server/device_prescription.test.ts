@@ -420,6 +420,41 @@ async function main() {
       same("٤٢. وبطاقةُ A على وصفتها", specsOf(await detail(woA)).prostheticType, "نوع-A");
       same("٤٣. وحلقةُ B لم تُمَسّ", (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [B]))[0].status, "examined");
     }
+
+    // ══ ك. بطاقةُ القسم في ملفّ المريض: مواصفاتُ كلّ جهازٍ على حدة (المالك ٢٠٢٦-١٠-٠٥) ═══════════
+    //  `patient_cases.details` صفٌّ واحد: بيعُ B يكتب فوق لقطة A. فـ`/api/patients/:id/cases` يُرفق للخيط ذي الجهازين
+    //  المبيعين أجهزتَه بمواصفات معاينة كلٍّ منها — والبطاقةُ تعرضها بدل اللقطة.
+    console.log("\n── ك. بطاقةُ القسم: لكلّ جهازٍ مواصفاتُه ──");
+    {
+      const p = await mkPatient("ك", ["prosthetic"]);
+      const A = await openEpisode(p, "prosthetic");
+      await signExam(p, S.doc, "prosthetic", A, A_RX);
+      await sell(A);
+      const B = await openEpisode(p, "prosthetic");
+      await signExam(p, S.doc2, "prosthetic", B, B_RX);
+      await sell(B);
+      same("٤٤. الإعداد — **لقطةُ الخيط صارت مواصفاتِ B** (العطبُ نفسُه)", (await caseDetails(p, "prosthetic")).prostheticType, B_RX.prostheticType);
+      const cases = await http("GET", `/api/patients/${p}/cases`, S.admin);
+      const devs = (cases.body ?? []).find((c: any) => c.caseType === "prosthetic")?.devices ?? null;
+      same("٤٥. **جهازان بمواصفات معاينة كلٍّ منهما** — A بنوعه وقدمه وموقع بتره، وB بنوعه",
+        devs?.map((d: any) => [d.episodeId, d.sequenceNumber, d.status, d.specs?.prostheticType, d.specs?.footType, d.specs?.amputationSite ?? null]),
+        [[A, 1, "in_manufacturing", "نوع-A", "قدم-A", A_SITE], [B, 2, "in_manufacturing", B_RX.prostheticType, B_RX.footType, devs?.[1]?.specs?.amputationSite ?? null]]);
+      const docCases = await http("GET", `/api/patients/${p}/cases`, S.doc);
+      same("٤٦. والطبيبُ يراها أيضاً (مواصفاتٌ سريرية لا مال)",
+        (docCases.body ?? []).find((c: any) => c.caseType === "prosthetic")?.devices?.length ?? 0, 2);
+
+      const p1 = await mkPatient("ك١", ["prosthetic"]);
+      const A1 = await openEpisode(p1, "prosthetic");
+      await signExam(p1, S.doc, "prosthetic", A1, A_RX);
+      await sell(A1);
+      const one = (await http("GET", `/api/patients/${p1}/cases`, S.admin)).body?.find((c: any) => c.caseType === "prosthetic");
+      same("٤٧. **وجهازٌ واحد يبقى كما كان** — لا قائمةَ أجهزة، ولقطتُه هي معاينتُه", [one?.devices ?? null, one?.details?.prostheticType], [null, "نوع-A"]);
+
+      //  جهازٌ لم يُبَع (ينتظر المعاينة) لا يُعدّ — والملغى كذلك.
+      await openEpisode(p1, "prosthetic");
+      const still = (await http("GET", `/api/patients/${p1}/cases`, S.admin)).body?.find((c: any) => c.caseType === "prosthetic");
+      same("٤٨. وحلقةٌ لم تُبَع بعد لا تجعله «جهازين»", still?.devices ?? null, null);
+    }
   } finally {
     await cleanup();
     await deactivateTestUsers();
