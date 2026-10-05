@@ -760,6 +760,11 @@ export interface OrderCard {
    */
   holdReasonCode: string | null;
   holdNote: string | null;
+  /** **القالبُ الاختباري** (§4.bz): ينتظر النهائي؟ وموعدُه وكم مرّة، و`trialCallState` = ما تفعله الاستعلاماتُ اليوم. */
+  trialAwaiting: boolean;
+  trialFinalDate: string | null;
+  trialSocketCount: number;
+  trialCallState: TrialCallState;
 }
 
 function daysSince(d: Date | string | null | undefined): number {
@@ -821,6 +826,8 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
       expectedDeliveryDate: WO.expectedDeliveryDate, completedAt: WO.completedAt,
       finalResult: WO.finalResult,
       holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
+      //  القالبُ الاختباري (§4.bz) — شريطُه في اللوحة وتفصيلُه على الصفّ.
+      trialFinalDate: WO.trialFinalDate, trialSocketCount: WO.trialSocketCount, trialLastCallAt: WO.trialLastCallAt,
       patientName: patients.name, prostheticType: patients.prostheticType, supportType: patients.supportType,
       branchName: branches.name, expertName: systemUsers.displayName,
       deviceEpisodeId: WO.deviceEpisodeId,
@@ -910,6 +917,10 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
         histByOrder.get(r.id) ?? [],
       ) ?? r.startedAt ?? r.assignedAt;
     const isOverdue = isOrderOverdue(r.expectedDeliveryDate, r.status, today);
+    const trialAwaiting = isTrialAwaiting({ status: r.status, holdReasonCode: r.holdReasonCode });
+    const trialFinalDate = r.trialFinalDate ? String(r.trialFinalDate).slice(0, 10) : null;
+    const lastCallDay = r.trialLastCallAt
+      ? new Date(r.trialLastCallAt).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }) : null;
     return {
       id: r.id,
       patientId: r.patientId,
@@ -934,6 +945,10 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       isOverdue,
       holdReasonCode: r.holdReasonCode ?? null,
       holdNote: r.holdNote ?? null,
+      trialAwaiting,
+      trialFinalDate,
+      trialSocketCount: Number(r.trialSocketCount ?? 0),
+      trialCallState: trialAwaiting ? trialCallState(trialFinalDate, lastCallDay, today) : null,
     };
   });
 }

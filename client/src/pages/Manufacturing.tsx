@@ -9,6 +9,7 @@ import {
   bucketCounts, ordersInBucket, nextBucket, bucketDef, type BucketTone,
 } from "./manufacturing_buckets";
 import { rowToneOf } from "./manufacturing_row_tone";
+import { TRIAL_CALL_STATE_EXPERT_LABELS, type TrialCallState } from "@shared/trial_socket";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,8 @@ interface OrderCard {
   //  سببُ التوقّف الحاليّ — يرسله `listOrders` منذ ٢٠٢٦-٠٨-٣١،
   //  وكانت الشاشةُ تُسقطه فلا تعرف متأخّراً بعذرٍ من متأخّرٍ بلا عذر.
   holdReasonCode: string | null; holdNote: string | null;
+  //  القالبُ الاختباري (§4.bz).
+  trialAwaiting?: boolean; trialFinalDate?: string | null; trialSocketCount?: number; trialCallState?: TrialCallState;
 }
 
 interface Branch { id: number; name: string; }
@@ -96,7 +99,15 @@ function OrderRow({ o }: { o: OrderCard }) {
                 {o.reworkCount > 0 && <span>إعادة عمل فني: {o.reworkCount}</span>}
               </div>
               {/* السببُ كاملاً — لا يظهر إلّا حين يحمله الأمرُ فعلاً (لا استنتاج) */}
-              {t.reason && (
+              {/* القالبُ الاختباري — موعدُ النهائي وما تفعله الاستعلاماتُ اليوم (للعلم: الاتصالُ لها وحدها) */}
+              {o.trialAwaiting && (
+                <div className="text-xs text-sky-900 bg-sky-50 border border-sky-300 rounded px-2 py-1 mt-1.5 inline-block"
+                  data-testid={`row-trial-${o.id}`}>
+                  🦿 قالب اختباري{(o.trialSocketCount ?? 0) > 1 ? ` (${o.trialSocketCount})` : ""} — موعد القالب النهائي: <b>{fmtDate(o.trialFinalDate ?? null)}</b>
+                  <span className="text-sky-800"> · {o.trialCallState ? TRIAL_CALL_STATE_EXPERT_LABELS[o.trialCallState] : "لم يحن موعد الاتصال"}</span>
+                </div>
+              )}
+              {t.reason && !o.trialAwaiting && (
                 <div className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-1 mt-1.5 inline-block">
                   {t.reason.prefix}: {t.reason.label}
                   {t.reason.note && <span className="text-amber-700"> — {t.reason.note}</span>}

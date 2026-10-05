@@ -209,6 +209,14 @@ async function main() {
       [((await http("GET", "/api/manufacturing/trial-awaiting", S.other)).body ?? []).some((r: any) => r.orderId === A.orderId),
        (await http("GET", "/api/manufacturing/trial-awaiting", S.expert)).status], [false, 403]);
 
+    console.log("\n── د′. لوحةُ التصنيع — للمسؤول وللخبير على أوامره (طلبُ المالك ٢٠٢٦-١٠-٠٥) ──");
+    const pick = (list: any[]) => (list ?? []).filter((o: any) => o.id === A.orderId)
+      .map((o: any) => [o.trialAwaiting, o.trialFinalDate, o.trialSocketCount, o.trialCallState]);
+    same("د٤. **المسؤولُ يرى في اللوحة أنه ينتظر النهائي** وموعدَه، وما تفعله الاستعلاماتُ اليوم",
+      pick((await http("GET", "/api/manufacturing/orders", S.admin)).body), [[true, final1, 1, "before"]]);
+    same("د٥. **والخبيرُ في «أوامري» يرى الشيءَ نفسَه** — ليرتّب أمره",
+      pick((await http("GET", "/api/manufacturing/my-orders", S.expert)).body), [[true, final1, 1, "before"]]);
+
     console.log("\n── هـ. الاتصال ──");
     same("هـ١. **الخبيرُ لا يتّصل** — ٤٠٣", (await call(A.orderId, { note: "x", nextDate: final1 }, S.expert)).status, 403);
     same("هـ٢. **بلا نتيجة أو بموعدٍ ماضٍ ⟵ ٤٠٠**",

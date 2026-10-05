@@ -26,6 +26,7 @@
 //  **عرضٌ وترشيح** لا منحُ وصول.
 
 import { FIRST_STAGE, latenessOf } from "@shared/manufacturing";
+import { isTrialAwaiting } from "@shared/trial_socket";
 
 /** أقلُّ ما يلزم من صفّ الأمر ليُصنَّف — لا أكثر. */
 export interface BucketOrderLike {
@@ -112,6 +113,12 @@ export const BUCKET_DEFS: readonly BucketDef[] = [
   {
     key: "overdue_excused", label: "متأخرون بعذر", tone: "amber",
     match: (o) => latenessOf(o) === "late_excused",
+  },
+  //  ══ **«قالب اختباري»** (طلبُ المالك ٢٠٢٦-١٠-٠٥، §4.bz) ══ مَن سُلِّم قالباً اختبارياً وما زال بحاجة القالب النهائي —
+  //  بالتعريف المشترك (`isTrialAwaiting`) لا بشرطٍ ثانٍ. وآخرَ القائمة، فلا يزيح شريطٌ مكانه.
+  {
+    key: "trial_socket", label: "قالب اختباري — بانتظار النهائي", tone: "blue",
+    match: (o) => isTrialAwaiting(o),
   },
 ] as const;
 

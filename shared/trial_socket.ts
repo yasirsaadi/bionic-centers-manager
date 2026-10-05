@@ -73,3 +73,9 @@ export function trialAwaitingOrders<T extends { trialAwaiting?: boolean; service
 ): T[] {
   return (orders ?? []).filter((o) => o.trialAwaiting === true && (!serviceType || o.serviceType === serviceType));
 }
+
+/** **ما يقرؤه الخبير** على صفّ أمره (§4.bz) — للعلم وحده، فالاتصالُ للاستعلامات. */
+export const TRIAL_CALL_STATE_EXPERT_LABELS: Record<Exclude<TrialCallState, null>, string> = {
+  before: "الاستعلامات تتّصل به اليوم لتذكيره بموعده",
+  missed: "فاته موعده — الاستعلامات تتّصل به",
+};
