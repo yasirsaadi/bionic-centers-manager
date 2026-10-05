@@ -173,6 +173,11 @@ export const MAINTENANCE_PAID_ON_LABELS = {
   today: "اليوم",
 } as const;
 
+/** **«متابعة» داخل الصيانة** (ترحيل ٠٩٦): عملُ الخبير بلا أجور — وعلمُها بوليانٌ صريح، والمالُ معها يُردّ. */
+export const MAINTENANCE_FOLLOWUP_LABEL = "متابعة";
+export const MAINTENANCE_FOLLOWUP_FLAG_ERROR = "قيمة «متابعة» يجب أن تكون نعم أو لا";
+export const MAINTENANCE_FOLLOWUP_NO_MONEY_ERROR = "المتابعة بلا أجور — لا سعرَ ولا خصمَ ولا ضمانَ ولا مبلغَ مدفوعاً معها";
+
 /** علمٌ يصل بغير بوليان = عميلٌ ملفَّق أو بائت — يُردّ ولا يُصحَّح بصمت. */
 export const MAINTENANCE_WARRANTY_FLAG_ERROR =
   "قيمة «ضمن الضمان» يجب أن تكون نعم أو لا";

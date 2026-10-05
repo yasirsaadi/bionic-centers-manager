@@ -60,7 +60,7 @@ import { PROSTHETIC_COMPONENTS, COMPONENT_LABELS } from "@shared/prosthetic_part
 import { PENDING_CHARGE_KIND_LABELS, type PendingChargeKind } from "@shared/pending_charge";
 import { deriveOfferFromDiscount, parsePaidNowAmount } from "@shared/commercial";
 import {
-  MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_WARRANTY_LABEL,
+  MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_WARRANTY_LABEL, MAINTENANCE_FOLLOWUP_LABEL,
   MAINTENANCE_SIMILAR_TITLE, MAINTENANCE_SIMILAR_HINT,
   MAINTENANCE_SIMILAR_BACK, MAINTENANCE_SIMILAR_CONTINUE,
   deriveMaintenanceTerms, describeSimilarMaintenance,
@@ -222,6 +222,10 @@ export function NoExamOperationDialog({
   //  ولا تاريخَ شراءٍ ولا عدَّ مرّات — الموظّفُ هو مَن يقرّر.
   const [underWarranty, setUnderWarranty] = useState(false);
   const warrantyOn = kind === "maintenance" && underWarranty;
+  //  ══ **«صيانة» أم «متابعة»** (قرارُ المالك ٢٠٢٦-١٠-٠٥، ترحيل ٠٩٦) — بابٌ واحد للعمل على الجهاز ══
+  //  المتابعةُ عملُ الخبير بلا أجور (إتمامُ قالبٍ مؤقّت، فطرٌ في قالبٍ جديد، تيست): تصل الخبيرَ كالصيانة، وخاناتُ المال لا تظهر.
+  const [maintenanceMode, setMaintenanceMode] = useState<"maintenance" | "followup">("maintenance");
+  const followupOn = kind === "maintenance" && maintenanceMode === "followup";
 
   //  ══ **تنبيهُ الصيانة المشابهة — معلوماتيٌّ لا يمنع** ═══════════════════
   //  `rows === null` لم يُسأل بعد (أو رجع الموظّفُ فأُغلق)؛ ومصفوفةٌ غيرُ
@@ -236,6 +240,7 @@ export function NoExamOperationDialog({
   //  فلا يُورَّث قرارُ عمليةٍ سابقة إلى عمليةٍ جديدة.
   useEffect(() => {
     setUnderWarranty(false);
+    setMaintenanceMode("maintenance");
     setSimilarRows(null);
     setSimilarAck(false);
   }, [open]);
@@ -330,7 +335,7 @@ export function NoExamOperationDialog({
   //  محفوظ، ونهائيٌّ صفر، وبلا خصم. وبلا ضمانٍ يبقى الاشتقاقُ المشترك كما
   //  كان بحرفه (بيعُ الجزء لا يعرف الضمانَ أصلاً).
   //  **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): لا سعرَ أصليّاً يُسأل عنه ولا يُرسَل.
-  const offer = warrantyOn
+  const offer = warrantyOn || followupOn
     ? deriveMaintenanceTerms({ originalPrice: null, discountAmount: 0, underWarranty: true })
     : deriveOfferFromDiscount({ originalPrice, discountAmount });
 
@@ -361,9 +366,9 @@ export function NoExamOperationDialog({
           deviceEpisodeId: target.deviceEpisodeId,
           legacyUnrecordedDevice: target.legacyUnrecordedDevice,
           //  **ولا سعرَ ولا خصمَ يُرسَلان مع الضمان** — خاناتُ المال كلُّها منطفئة (طلبُ المالك ٢٠٢٦-٠٩-٣٠).
-          ...(warrantyOn ? { underWarranty: true } : { originalPrice, discountAmount }),
+          ...(followupOn ? { followup: true } : warrantyOn ? { underWarranty: true } : { originalPrice, discountAmount }),
           //  **المُتحقَّقُ لا الخام** — نفسُ ما اعتمده الخادمُ في `ready` أعلاه.
-          paidNow: paidNowCheck.amount,
+          paidNow: followupOn ? 0 : paidNowCheck.amount,
           visitDate: maintDate,
           ...(askPaidOn ? { paidOn } : {}),
           note: note.trim() || null,
@@ -727,6 +732,24 @@ export function NoExamOperationDialog({
                 )}
               </div>
 
+              <div className="space-y-1.5" data-testid="no-exam-op-maint-mode-box">
+                <Label className="text-sm font-medium">نوع العملية</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([["maintenance", "صيانة", "بأجور أو مجّانية أو ضمن الضمان"],
+                    ["followup", MAINTENANCE_FOLLOWUP_LABEL, "إتمام قالب، فطر في قالب جديد، تيست — بلا أجور"]] as const).map(([v, t, d]) => (
+                    <button key={v} type="button" data-testid={`no-exam-op-maint-mode-${v}`}
+                      onClick={() => {
+                        setMaintenanceMode(v);
+                        if (v === "followup") { setUnderWarranty(false); setOriginalPrice(0); setDiscountAmount(0); setPaidNow(null); setPaidOn(""); }
+                      }}
+                      className={`rounded-md border px-3 py-2 text-right ${maintenanceMode === v ? "border-primary bg-primary/5" : "hover:bg-slate-50"}`}>
+                      <div className="text-sm font-medium">{t}</div>
+                      <div className="text-[11px] text-muted-foreground">{d}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {serviceType === "prosthetic" && (
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium">الجزء المراد صيانته</Label>
@@ -746,7 +769,7 @@ export function NoExamOperationDialog({
               {/*  ── ضمن الضمان — قرارُ الموظّف، بلا أهليّةٍ محسوبة ──
                   **وتنطفئ خاناتُ المال كلُّها** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): السعرُ
                   والخصمُ والمدفوع — الأمرُ يُحفَظ بلا أرقام وعلمُ الضمان يقول السبب. */}
-              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+              {!followupOn && <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
                 <Checkbox id="no-exam-op-warranty-box" checked={underWarranty}
                   onCheckedChange={(v) => {
                     const on = !!v;
@@ -761,7 +784,7 @@ export function NoExamOperationDialog({
                   <b>{MAINTENANCE_WARRANTY_LABEL}</b> — بلا أجور: لا سعر ولا مبلغ يُقيَّد ولا
                   دَين ولا دفعة.
                 </Label>
-              </div>
+              </div>}
             </>
           )}
 
@@ -801,6 +824,11 @@ export function NoExamOperationDialog({
             </div>
           )}
 
+          {followupOn ? (
+            <p className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-muted-foreground" data-testid="no-exam-op-followup-no-money">
+              <b>{MAINTENANCE_FOLLOWUP_LABEL}</b> — بلا أجور: لا سعر ولا مبلغ يُقيَّد ولا دَين ولا دفعة. تصل الخبيرَ المختار.
+            </p>
+          ) : (<>
           {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين ── */}
           {!warrantyOn && (
             <div className="space-y-1.5">
@@ -881,6 +909,7 @@ export function NoExamOperationDialog({
               </>
             )}
           </div>
+          </>)}
 
           {/*  ── تاريخُ الصيانة — صيانةٌ حدثت في يومٍ سابق تُسجَّل بيومها ── */}
           {kind === "maintenance" && (

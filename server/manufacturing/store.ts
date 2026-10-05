@@ -509,6 +509,8 @@ export async function createMaintenanceOrderWithVisit(params: {
    * shape_check` في القاعدة، ويشتقّه `deriveMaintenanceTerms` قبل الوصول.
    */
   underWarranty?: boolean | null;
+  /** **«متابعة» لا صيانة** (ترحيل ٠٩٦): بلا أرقامٍ (`commercialTerms` غائبة)، والزيارةُ «متابعة لدى الخبير». */
+  isFollowup?: boolean;
   /**
    * **الجزءُ المُصان** (ترحيل ٠٦٠) — إلزاميٌّ للأطراف الصناعية.
    *
@@ -597,18 +599,21 @@ export async function createMaintenanceOrderWithVisit(params: {
       maintenancePriceKind: params.commercialTerms?.kind ?? null,
       //  **وعلمُ الضمان** (ترحيل ٠٨٣) — `undefined` تبقى `NULL`: لم يُسأل.
       maintenanceUnderWarranty: params.underWarranty ?? null,
+      maintenanceIsFollowup: params.isFollowup === true,
     }).returning();
+    const opWord = params.isFollowup ? "متابعة" : "صيانة";
     //  **تنبيهُ الخبير** (§4.by) — أمرُ صيانةٍ أُسند إليه.
     await notifyOrderAssigned(tx as any, {
       orderId: workOrder.id, patientId: params.patientId, branchId: params.branchId, expertUserId: params.expertUserId,
       purpose: "maintenance", serviceType: params.serviceType, actorUserId: params.assignedBy,
+      kindLabel: params.isFollowup ? "متابعة" : undefined,
     });
     await tx.insert(WH).values({
       workOrderId: workOrder.id,
       actionType: "created",
       fromStage: null,
       toStage: firstStageFor(params.serviceType, "maintenance"),
-      notes: `إنشاء أمر صيانة${component ? ` — ${componentLabel(component)}` : ""}`
+      notes: `إنشاء أمر ${opWord}${component ? ` — ${componentLabel(component)}` : ""}`
         + ` لمريض موجود — الخبير المسؤول: ${await expertNameOf(tx, params.expertUserId)}`,
       performedBy: params.assignedBy,
     });
@@ -626,7 +631,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       branchId: params.branchId,
       visitDate: params.visitDate,
       //  **السببُ عنوانُ السطر** في سجلّ الزيارات (§4.aw).
-      details: ATTENDANCE_REASONS.maintenance,
+      details: params.isFollowup ? ATTENDANCE_REASONS.expertFollowup : ATTENDANCE_REASONS.maintenance,
       // Deliberately NOT the "تكلفة:" marker format — syncPatientCases parses
       // that marker to reallocate base costs, and maintenance fees are booked
       // directly below, not via markers.
@@ -635,7 +640,7 @@ export async function createMaintenanceOrderWithVisit(params: {
       //
       //  **وملاحظةُ الموظّف تبقى كما كتبها**: الجزءُ يُضاف إليها ولا يحلّ
       //  محلّها — «صيانة الطرف القديم» معلومةٌ لا يملكها النظام.
-      notes: [component ? `صيانة ${componentLabel(component)}` : null,
+      notes: [component ? `${opWord} ${componentLabel(component)}` : null,
         params.visitNotes,
         params.cost > 0 ? `أجور الصيانة: ${params.cost.toLocaleString("en-US")} د.ع` : ""]
         .filter(Boolean).join(" — "),
@@ -714,7 +719,8 @@ export interface OrderFilters {
   branchIds?: number[];     // manager scope (allowed branches)
   serviceType?: string;
   /** **تصنيعٌ كامل أم صيانة** (طلبُ المالك ٢٠٢٦-١٠-٠٣). */
-  purpose?: "initial_build" | "maintenance";
+  /** و«متابعة» (٠٩٦) تُعدّ وحدها: `maintenance` = صيانةٌ لا متابعة، و`followup` = المتابعاتُ وحدها. */
+  purpose?: "initial_build" | "maintenance" | "followup";
   stage?: string;
   status?: string;
   completed?: boolean;      // true = completed only, false = not completed
@@ -729,6 +735,8 @@ export interface OrderCard {
   branchId: number;
   branchName: string | null;
   serviceType: string;
+  /** «متابعة» لا صيانة (٠٩٦) — أمرُ صيانةٍ بلا أجور. */
+  isFollowup: boolean;
   itemType: string | null;   // prostheticType or supportType
   currentStage: string;
   status: string;
@@ -780,7 +788,11 @@ function orderConditions(f: OrderFilters) {
       "prosthetic_work_orders.patient_id"));
   }
   if (f.serviceType) c.push(eq(WO.serviceType, f.serviceType));
-  if (f.purpose) c.push(sql`COALESCE(${WO.purpose}, 'initial_build') = ${f.purpose}`);
+  if (f.purpose === "followup") c.push(sql`${WO.maintenanceIsFollowup} = true`);
+  else if (f.purpose) {
+    c.push(sql`COALESCE(${WO.purpose}, 'initial_build') = ${f.purpose}`);
+    if (f.purpose === "maintenance") c.push(sql`${WO.maintenanceIsFollowup} = false`);
+  }
   if (f.stage) c.push(eq(WO.currentStage, f.stage));
   if (f.status) c.push(eq(WO.status, f.status));
   if (f.completed === true) c.push(eq(WO.status, "completed"));
@@ -802,6 +814,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
     .select({
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId,
       serviceType: WO.serviceType, purpose: WO.purpose, currentStage: WO.currentStage, status: WO.status,
+      isFollowup: WO.maintenanceIsFollowup,
       expertUserId: WO.expertUserId, assignedAt: WO.createdAt, startedAt: WO.startedAt,
       expectedDeliveryDate: WO.expectedDeliveryDate, completedAt: WO.completedAt,
       finalResult: WO.finalResult,
@@ -903,6 +916,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
       purpose: r.purpose ?? "initial_build",
+      isFollowup: r.isFollowup === true,
       itemType: itemTypeOf(r),
       currentStage: r.currentStage,
       status: r.status,
@@ -946,7 +960,7 @@ export async function getOrderDetail(id: number) {
   const [order] = await db
     .select({
       id: WO.id, patientId: WO.patientId, branchId: WO.branchId, serviceType: WO.serviceType,
-      purpose: WO.purpose,
+      purpose: WO.purpose, isFollowup: WO.maintenanceIsFollowup,
       status: WO.status, currentStage: WO.currentStage, expectedDeliveryDate: WO.expectedDeliveryDate,
       // سبب التوقّف — تقرؤه بطاقة «متوقّف» في صفحة الأمر. داخلي: هذه النقطة
       // للخبير والإدارة، ولا يمرّ منها شيء إلى المريض.
@@ -1860,6 +1874,7 @@ export async function getAllOrdersForPatient(
       //  **ماذا يُصنَع أو يُصان** (ترحيل ٠٦٠) — يقرؤه الخبيرُ في أمره
       //  والفريقُ في ملفّ المريض، بلا أن يسأل أحد.
       maintenanceComponent: WO.maintenanceComponent,
+      isFollowup: WO.maintenanceIsFollowup,
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
       deviceSequence: PDE.sequenceNumber,
@@ -1945,6 +1960,7 @@ export async function getAllOrdersForPatient(
     deviceEpisodeId: r.deviceEpisodeId ?? null,
     deviceSequence: r.deviceSequence ?? null,
     requestedItem: r.requestedItem ?? null,
+    isFollowup: r.isFollowup === true,
     //  **وجزءُ الصيانة** — كان يُقرأ ولا يُرسَل؛ بطاقةُ التعديل تقول به «صيانة الركبة» (§4.ar البند ٢١).
     maintenanceComponent: r.maintenanceComponent ?? null,
     //  والمالُ بشرطه، محذوفاً لا مصفَّراً.

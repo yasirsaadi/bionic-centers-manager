@@ -108,7 +108,7 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                   {SERVICE_TYPE_LABELS[o.serviceType as "prosthetic"] ?? o.serviceType}
                 </span>
                 {o.purpose === "maintenance" && (
-                  <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200 text-[11px] px-1.5 py-0">صيانة</Badge>
+                  <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200 text-[11px] px-1.5 py-0">{(o as any).isFollowup === true ? "متابعة" : "صيانة"}</Badge>
                 )}
                 <span className="text-xs text-muted-foreground">— الخبير: {o.expertName ?? "—"}</span>
                 {/*  ══ **هويّةُ البطاقة** (٢٠٢٦-٠٩-٢٣) ═══════════════════════

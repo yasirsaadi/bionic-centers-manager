@@ -51,6 +51,7 @@ import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceTerms,
   parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
   MAINTENANCE_TOKEN_REQUIRED_MESSAGE, MAINTENANCE_WARRANTY_LABEL,
+  MAINTENANCE_FOLLOWUP_FLAG_ERROR, MAINTENANCE_FOLLOWUP_NO_MONEY_ERROR,
 } from "@shared/maintenance";
 import {
   canCompleteComponentSale, deriveComponentSaleOffer, parseComponentSaleComponent,
@@ -634,10 +635,26 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً. و«ضمن الضمان»
       //  **حالةٌ مستقلّة**: الأصليُّ يبقى محفوظاً، والنهائيُّ صفر، ولا خصمَ
       //  معها — ولا تُقرأ من `kind === "free"` بعد اليوم.
-      const offer = deriveMaintenanceTerms({
-        originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
-        underWarranty: req.body?.underWarranty,
-      });
+      //  ══ **«متابعة» لا صيانة** (قرارُ المالك ٢٠٢٦-١٠-٠٥، ترحيل ٠٩٦) — عملُ الخبير بلا أجور: لا سعرَ ولا ضمانَ
+      //  ولا قبض، والأمرُ بلا أرقامٍ أصلاً. ومالٌ يُرسَل معها يُردّ لا يُبتلَع.
+      const followupRaw = req.body?.followup;
+      if (followupRaw !== undefined && followupRaw !== null && typeof followupRaw !== "boolean") {
+        return res.status(400).json({ error: MAINTENANCE_FOLLOWUP_FLAG_ERROR });
+      }
+      const isFollowup = followupRaw === true;
+      if (isFollowup) {
+        const moneySent = [req.body?.originalPrice, req.body?.discountAmount, req.body?.paidNow]
+          .some((v) => v !== undefined && v !== null && v !== "" && Number(v) !== 0);
+        if (moneySent || req.body?.underWarranty === true) {
+          return res.status(400).json({ error: MAINTENANCE_FOLLOWUP_NO_MONEY_ERROR });
+        }
+      }
+      const offer = isFollowup
+        ? { ok: true as const, kind: "free" as const, originalPrice: null, finalPrice: 0, discountAmount: 0, underWarranty: false, error: undefined }
+        : deriveMaintenanceTerms({
+          originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
+          underWarranty: req.body?.underWarranty,
+        });
       if (!offer.ok) return res.status(400).json({ error: offer.error });
 
       //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
@@ -679,9 +696,10 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         originalPrice: offer.originalPrice, priceKind: offer.kind!, finalPrice: offer.finalPrice!,
         //  **وعلمُ الضمان** (ترحيل ٠٨٣) — مُشتقٌّ سلفاً، يُحفَظ على الأمر.
         underWarranty: offer.underWarranty,
+        isFollowup,
         paidNow: paidNowResult.amount,
         visitAt, paymentAtWall,
-        visitNotes: note || "صيانة طرف/مسند",
+        visitNotes: note || (isFollowup ? "متابعة لدى الخبير" : "صيانة طرف/مسند"),
         actor: actorOf(req),
         submissionToken,
       });
@@ -714,13 +732,14 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           //  **وسببُ صفرِ الأجر يُقال صريحاً** — التزامُ ضمانٍ سابق أم
           //  تبرّعٌ جديد. ولا يُقرأ أحدُهما من الآخر.
           underWarranty: offer.underWarranty,
+          isFollowup,
           //  **حقيقةُ القبض — لا تُستنتَج من السعر**: كم دُفع الآن، وكم
           //  تبقّى ديناً على هذه العمليةِ بعينها (لا على المريض كلِّه).
           paidNow: out.paidNow, paymentId: out.paymentId,
           remainingUnpaid: offer.finalPrice! - out.paidNow,
           note: note || null,
         },
-        notes: (offer.underWarranty
+        notes: isFollowup ? "متابعة لدى الخبير — بلا أجور" : (offer.underWarranty
           ? `صيانة — ${MAINTENANCE_WARRANTY_LABEL}، بلا أجور`
             + (offer.originalPrice !== null
               ? ` (القيمة الاسمية ${offer.originalPrice.toLocaleString("en-US")} د.ع)` : "")

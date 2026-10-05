@@ -622,8 +622,9 @@ async function main() {
       .test(DIALOG_SRC), "ف١٠. و«رجوع» لا تحفظ شيئاً");
     check(/data-testid="no-exam-op-warranty"/.test(DIALOG_SRC),
       "ف١١. ومربّعُ «ضمن الضمان» في نافذة الصيانة");
-    check(/\.\.\.\(warrantyOn \? \{ underWarranty: true \} : \{ originalPrice, discountAmount \}\)/.test(DIALOG_SRC),
-      "ف١٢. **ولا سعرَ ولا خصمَ يُرسَلان مع الضمان**");
+    //  ومنذ «متابعة» (٢٠٢٦-١٠-٠٥) يسبقها فرعُ المتابعة — والضمانُ بعده بلا سعرٍ ولا خصمٍ كما كان.
+    check(/\.\.\.\(followupOn \? \{ followup: true \} : warrantyOn \? \{ underWarranty: true \} : \{ originalPrice, discountAmount \}\)/.test(DIALOG_SRC),
+      "ف١٢. **ولا سعرَ ولا خصمَ يُرسَلان مع الضمان** — ولا مع «متابعة»");
     check(/\{!warrantyOn && \(\s*<div className="space-y-1\.5">\s*<Label className="text-sm font-medium">السعر الأصلي/.test(DIALOG_SRC),
       "ف١٢ب. **وحقلُ السعر الأصلي يختفي مع الضمان** (طلبُ المالك ٢٠٢٦-٠٩-٣٠)");
     check(/\{!warrantyOn && \([\s\S]*?no-exam-op-discount-amount/.test(DIALOG_SRC),
@@ -675,6 +676,51 @@ async function main() {
         shouldPromptSimilarMaintenance({ rows: [{} as any], acknowledged: true }),
         shouldPromptSimilarMaintenance({ rows: null, acknowledged: false })],
       [false, true, false, false]);
+
+    // ══════════════════════════════════════════════════════════════════
+    console.log("\n── ق. «متابعة» داخل الصيانة — تصل الخبيرَ بلا أجور (قرارُ المالك ٢٠٢٦-١٠-٠٥، ترحيل ٠٩٦) ──");
+    // ══════════════════════════════════════════════════════════════════
+    {
+      const PF = await mkPatient("ف");
+      const CF = await mkCase(PF);
+      const EPF = await mkEpisode(PF, CF, 1);
+      const fBody = { patientId: PF, serviceType: "prosthetic", deviceEpisodeId: EPF, maintenanceComponent: "socket", expertUserId: EXPERT };
+      const fu = await maint({ ...fBody, followup: true, note: "إتمام القالب النهائي" });
+      check(fu.status === 201, "ق١. **«متابعة» تُحفَظ ٢٠١**", JSON.stringify(fu.body));
+      const [row] = await q<any>(`SELECT purpose, status, expert_user_id, maintenance_is_followup f, maintenance_original_price mop,
+                                          maintenance_final_price mfp, maintenance_price_kind mpk, maintenance_under_warranty w
+                                     FROM prosthetic_work_orders WHERE id=$1`, [fu.body?.workOrderId]);
+      same("ق٢. **أمرُ صيانةٍ مفتوح للخبير المختار، بعلم «متابعة» وبلا أرقامٍ أصلاً**",
+        [row?.purpose, row?.status, row?.expert_user_id, row?.f, row?.mop, row?.mfp, row?.mpk, row?.w],
+        ["maintenance", "active", EXPERT, true, null, null, null, false]);
+      const fSnap = await snap(PF);
+      same("ق٣. **ولا كلفةَ ولا قيدَ ولا دفعةَ ولا دَين**، والأمرُ والزيارةُ موجودان",
+        [fSnap.total, fSnap.case_cost, fSnap.ledger_rows, fSnap.payments, fSnap.orders, fSnap.visits],
+        [0, 0, 0, 0, 1, 1]);
+      const [v] = await q<any>(`SELECT details, notes FROM visits WHERE patient_id=$1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`, [PF]);
+      same("ق٤. **والزيارةُ «متابعة لدى الخبير»** بجزئها وملاحظتها",
+        [v?.details, /متابعة القالب/.test(String(v?.notes)) && /إتمام القالب النهائي/.test(String(v?.notes))], ["متابعة لدى الخبير", true]);
+      const mine = await http("GET", "/api/manufacturing/my-orders", { userId: EXPERT, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1], displayName: "الخبير الأول", permissions: {} });
+      const seen = (mine.body ?? []).find((o: any) => o.id === fu.body?.workOrderId);
+      same("ق٥. **ويظهر في «أوامري» عند الخبير** موسوماً «متابعة»", [Boolean(seen), seen?.isFollowup], [true, true]);
+      //  والمالُ معها يُردّ لا يُبتلَع — ولا يُكتب شيء.
+      const before = (await snap(PF)).orders;
+      const bad = await Promise.all([
+        maint({ ...fBody, followup: true, originalPrice: 50000 }),
+        maint({ ...fBody, followup: true, underWarranty: true }),
+        maint({ ...fBody, followup: true, paidNow: 10000 }),
+        maint({ ...fBody, followup: "yes" }),
+      ]);
+      same("ق٦. **ومالٌ أو ضمانٌ مع «متابعة» ⟵ ٤٠٠**، وعلمٌ غيرُ بوليانيّ ⟵ ٤٠٠ — بصفر كتابة",
+        [bad.map((r) => r.status), (await snap(PF)).orders - before], [[400, 400, 400, 400], 0]);
+      //  والمرشِّح يعدّها وحدها.
+      const adminS = { userId: ADMIN, role: "admin", isAdmin: true, branchId: 1, accessibleBranches: [1], permissions: {} };
+      const fl = await http("GET", "/api/manufacturing/orders?purpose=followup", adminS);
+      const ml = await http("GET", "/api/manufacturing/orders?purpose=maintenance", adminS);
+      same("ق٧. **«متابعة» في المرشِّح وحدها، و«صيانة» بدونها**",
+        [(fl.body ?? []).some((o: any) => o.id === fu.body?.workOrderId), (ml.body ?? []).some((o: any) => o.id === fu.body?.workOrderId)],
+        [true, false]);
+    }
 
     // ══════════════════════════════════════════════════════════════════
   } finally {

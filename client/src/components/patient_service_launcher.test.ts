@@ -105,8 +105,9 @@ function main() {
       `ولا «${forbidden}» في الموزِّع`, launcherCode.slice(0, 120));
   }
   const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
-  same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض",
-    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
+  //  **وقراءتان لا أكثر** — حلقاتُ المريض، وأهليّةُ «عاد للشراء» (قرارُ المالك ٢٠٢٦-١٠-٠٥: الزرُّ لمن يستحقّه وحده).
+  same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض وأهليّةِ «عاد للشراء»",
+    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
   for (const flow of ["AddCaseTypeModal", "NewServiceModal", "NewDeviceEpisodeModal",
     "NoExamOperationDialog", "ReturnToPurchaseDialog"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);
@@ -214,7 +215,7 @@ function main() {
   //  ظهورَه، فيغيب كلّياً حين لا تُرجع صفاً — فيرى الموظّفُ قسماً بلا بابٍ
   //  كان يعرفه، بلا تفسير. فصار زرّاً بسيطاً دائماً، والحوارُ (المفتوحُ من
   //  نفس الزرّ، بنفس نقطة النهاية القائمة) هو مَن يحسم الأهليّةَ ويشرحها.
-  console.log("\n── «عاد للشراء»: زرٌّ بسيط، بلا استعلامٍ يقرّر وجودَه ──");
+  console.log("\n── «عاد للشراء»: مكوّنُ الزرّ بسيط، والموزِّعُ يقرّر ظهورَه بالأهليّة ──");
   const routingChoiceCode = code(RETURN_ROUTING_CHOICE);
   for (const gone of ["useQuery", "fetch(", "apiRequest(", "EligibleRow"]) {
     check(!routingChoiceCode.includes(gone),

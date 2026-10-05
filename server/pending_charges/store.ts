@@ -869,6 +869,8 @@ export async function createMaintenanceOperation(p: {
    * سُئل، تماماً كنمط `noExamNoCharge` بحرفه.
    */
   underWarranty?: boolean;
+  /** **«متابعة» لا صيانة** (ترحيل ٠٩٦) — بلا أرقام ولا قبض، تصل الخبيرَ كالصيانة. */
+  isFollowup?: boolean;
   /**
    * **تذكرةُ الإرسال — ضغطةٌ واحدة = عمليةُ صيانةٍ واحدة.**
    *
@@ -975,6 +977,7 @@ export async function createMaintenanceOperation(p: {
       //  **وعلمُ الضمان صريحٌ دائماً من هذا المسار** — `false` تعني «سُئل
       //  الموظّفُ وأجاب: ليست ضماناً»، وهي حقيقةٌ عن الصفّ لا فراغٌ فيه.
       underWarranty: p.underWarranty === true,
+      isFollowup: p.isFollowup === true,
       tx,
     });
 

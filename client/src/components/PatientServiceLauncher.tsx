@@ -22,7 +22,7 @@ import {
   saveDeviceFlowResume, takeDeviceFlowResume, clearDeviceFlowResume, sessionResumeStore,
 } from "./device_flow_resume";
 import {
-  RECEPTION_ROUTING_QUESTION, receptionRoutingGroups, takeReceptionRoutingPending,
+  RECEPTION_ROUTING_QUESTION, receptionRoutingGroups, takeReceptionRoutingPending, returnToPurchaseVisible,
 } from "./reception_routing";
 import { useBranchSession } from "./BranchGate";
 
@@ -137,6 +137,13 @@ export function PatientServiceLauncher({
     queryKey: [`/api/patients/${patient.id}/device-episodes`],
     enabled: Boolean(patient.isAmputee || patient.isMedicalSupport),
   });
+
+  //  **أهليّةُ «عاد للشراء» لكلّ قسم** — المفتاحُ نفسُه الذي تقرؤه نافذتُها، فلا طلبَ ثانٍ حين تُفتح.
+  const eligibleQ = useQuery<{ rows: { serviceType: string }[] }>({
+    queryKey: [`/api/followups/patient/${patient.id}/return-to-purchase-eligible`],
+    enabled: routingOpen,
+  });
+  const returnQ = { rows: eligibleQ.data?.rows ?? null, isLoading: eligibleQ.isLoading, isError: eligibleQ.isError };
 
   const options = launcherOptions(patient);
 
@@ -256,10 +263,12 @@ export function PatientServiceLauncher({
                       بعد اليوم — الأهليّةُ الفعلية داخل الحوار الذي يفتحه).
                       ملفٌّ مستقلٌّ (راجع تعليق الملفّ) فيبقى هذا المكوّنُ
                       وموزِّعُ المنطق خالصَين بلا شبكة. */}
-                  <ReturnToPurchaseRoutingChoice
-                    serviceType={section.serviceType}
-                    onChoose={() => chooseFlow({ kind: "return_to_purchase", serviceType: section.serviceType })}
-                  />
+                  {returnToPurchaseVisible(returnQ, section.serviceType) && (
+                    <ReturnToPurchaseRoutingChoice
+                      serviceType={section.serviceType}
+                      onChoose={() => chooseFlow({ kind: "return_to_purchase", serviceType: section.serviceType })}
+                    />
+                  )}
                   {section.choices.map((choice) => (
                     <button
                       key={choice.id}
