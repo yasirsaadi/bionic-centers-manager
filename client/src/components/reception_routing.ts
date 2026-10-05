@@ -60,6 +60,11 @@ export type ReceptionRoutingServiceType = "prosthetic" | "medical_support";
 export interface ReceptionRoutingChoice {
   id: "exam_required" | "device_sale" | "maintenance" | "device_followup" | "device_training";
   label: string;
+  /**
+   * **سطرٌ تحت الاسم يقول أين يذهب الطلب** (واقعةُ بغداد ٢٠٢٦-١٠-٠٤): «تعيار» سُجِّل من «متابعة أو تعديل» فذهب إلى الطبيب
+   * ولم يصل الخبيرَ عناد — لأن «تعديل» في الاسم يشبه التعيار. الصيانةُ تصل الخبيرَ، والمتابعةُ تصل الطبيبَ وحده.
+   */
+  hint?: string;
   flow: ServiceFlow;
 }
 
@@ -102,6 +107,10 @@ const SALE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   medical_support: "شراء مسند طبي",
 };
 export const DEVICE_FOLLOWUP_LABEL = "متابعة أو تعديل على جهاز قائم";
+/** أين تذهب الصيانة — الخبيرُ بأمر عمل. */
+export const MAINTENANCE_HINT = "تصل الخبيرَ مباشرةً بأمر صيانة — تعيار، قالب، تبديل جزء، أيّ عمل على الجهاز";
+/** وأين تذهب المتابعة — الطبيبُ وحده، بلا خبير ولا أمر. */
+export const DEVICE_FOLLOWUP_HINT = "تصل الطبيبَ للمراجعة لا الخبير — بلا أمر عمل. للتعيار أو أيّ عمل من الخبير اختر «صيانة»";
 const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   prosthetic: "صيانة طرف صناعي",
   medical_support: "صيانة مسند طبي",
@@ -162,6 +171,7 @@ export function receptionRoutingChoices(
     ...(mayMaintain ? [{
       id: "maintenance" as const,
       label: MAINTENANCE_LABEL[serviceType],
+      hint: MAINTENANCE_HINT,
       flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "maintenance" as const },
     }] : []),
     //  **متابعة أو تعديل على جهاز قائم** (فصلُ الزرّين، قرارُ المالك ٢٠٢٦-٠٩-٣٠): زيارةٌ بتاريخها وطلبُ مراجعة —
@@ -169,6 +179,7 @@ export function receptionRoutingChoices(
     {
       id: "device_followup" as const,
       label: DEVICE_FOLLOWUP_LABEL,
+      hint: DEVICE_FOLLOWUP_HINT,
       flow: { kind: "device_followup" as const, serviceType },
     },
     //  **تدريب على الجهاز** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.aw): زيارةٌ سببُها التدريب — تتكرّر أيّاماً أو أشهراً بلا مالٍ ولا طبيب.

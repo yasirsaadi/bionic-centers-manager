@@ -270,6 +270,11 @@ export function PatientServiceLauncher({
                         hover:bg-slate-50 hover:border-primary/40"
                     >
                       <div className="text-sm font-medium">{choice.label}</div>
+                      {choice.hint && (
+                        <div className="text-[11px] text-muted-foreground mt-0.5" data-testid={`reception-routing-hint-${section.serviceType}-${choice.id}`}>
+                          {choice.hint}
+                        </div>
+                      )}
                     </button>
                   ))}
                 </div>

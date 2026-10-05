@@ -525,6 +525,20 @@ function main() {
     launcherOptions(DUAL as any).map((o) => o.flow.kind)
       .filter((k) => k === "device_episode" || k === "no_exam_operation"), []);
 
+  //  **أين يذهب الطلب يُقال تحت الاسم** (واقعةُ بغداد ٢٠٢٦-١٠-٠٤): «تعيار» سُجِّل متابعةً فلم يصل الخبيرَ.
+  {
+    const ch = receptionRoutingChoices("prosthetic", { isAdmin: true } as any);
+    const hintOf = (id: string) => ch.find((c) => c.id === id)?.hint ?? "";
+    check(/الخبير/.test(hintOf("maintenance")) && /تعيار/.test(hintOf("maintenance")),
+      "ت١. **الصيانةُ تقول إنها تصل الخبيرَ** وتسمّي التعيار");
+    check(/الطبيب/.test(hintOf("device_followup")) && /لا الخبير/.test(hintOf("device_followup")) && /صيانة/.test(hintOf("device_followup")),
+      "ت٢. **والمتابعةُ تقول إنها تصل الطبيبَ لا الخبير** وتحيل التعيارَ إلى «صيانة»");
+    const launcher = read("PatientServiceLauncher.tsx");
+    const dialog = read("DeviceFollowupVisitDialog.tsx");
+    check(/choice\.hint/.test(launcher) && /DEVICE_FOLLOWUP_HINT/.test(dialog),
+      "ت٣. والسطرُ يُعرَض تحت الخيار وفي رأس نافذة المتابعة");
+  }
+
   console.log(failures === 0 ? "\n✅ all reception-routing cases pass" : `\n❌ ${failures} case(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
 }
