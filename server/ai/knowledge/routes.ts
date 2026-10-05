@@ -13,7 +13,7 @@
 import type { Express } from "express";
 import { storage } from "../../storage";
 import {
-  approveSuggestion, ARTICLE_EDIT_SERVER_BUSY_ERROR, createArticle, createSuggestion, editArticle,
+  approveSuggestion, ARTICLE_EDIT_SERVER_BUSY_ERROR, createArticle, isPoolCheckoutTimeoutError, createSuggestion, editArticle,
   isKnowledgeContentType, isKnowledgeScope, listArticlesForAdmin, listSuggestions,
   parseAudience, rejectSuggestion, setArticleActive, type Actor,
 } from "./store";
@@ -22,6 +22,26 @@ import {
 import { diagPhase, diagRouteHandlerReached } from "../../diagnostics/request_timing";
 
 type Req = any;
+
+/**
+ * ══ كلُّ معالجٍ هنا يردّ — لا يبقى طلبٌ معلَّقاً (تصحيحٌ إنتاجيّ ٢٠٢٦-١٠-٠٥) ══
+ * «مقالة جديدة» ظهر لها «انتهت مهلة الاتصال» بعد ١٥ث: نقطةُ الإنشاء بلا `try/catch`، وExpress 4 لا يلتقط رفضَ الوعود،
+ * فأيُّ خطأٍ — وأوّلُه تعذّرُ اقتناء اتّصالٍ من المِجمَع خلال ٨ث (`server/db.ts`) — يترك الطلبَ بلا ردٍّ حتى ييأس المتصفّح.
+ * نقطةُ التعديل أُصلحت هكذا في ٢٠٢٦-٠٩-١٢ وبقيت الأخرياتُ. فالمِجمَعُ المشغول ⟵ ٥٠٣ بنصّ «الخادم مشغول» (لا معاملةَ بدأت،
+ * فلا شيءَ كُتب)، وأيُّ خطأٍ آخر ⟵ `next(err)` فيصل معالجُ الأخطاء العامّ بردّ.
+ */
+function guarded(fn: (req: Req, res: any) => Promise<unknown>) {
+  return async (req: Req, res: any, next: (err?: unknown) => void) => {
+    try {
+      await fn(req, res);
+    } catch (err) {
+      if (isPoolCheckoutTimeoutError(err) && !res.headersSent) {
+        return res.status(503).json({ error: ARTICLE_EDIT_SERVER_BUSY_ERROR });
+      }
+      next(err);
+    }
+  };
+}
 
 function actorFrom(req: Req): Actor {
   const s = (req.session as any)?.branchSession;
@@ -116,7 +136,7 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   // **لا يغيّر معرفةً فعّالة بحرف** — صفٌّ `pending` وحده، ثم القرارُ
   // للمسؤول لاحقاً. القسمُ و«ما اقترحه/سُئل» يصلان من الجسم (نصٌّ حرّ لا
   // سلطة)، والهويّةُ من الجلسة وحدها.
-  app.post("/api/ai/knowledge/suggestions", isAuthenticated, async (req: Req, res) => {
+  app.post("/api/ai/knowledge/suggestions", isAuthenticated, guarded(async (req: Req, res) => {
     const actor = actorFrom(req);
     if (!actor.userId) return res.status(401).json({ error: "الجلسة غير صالحة" });
 
@@ -135,19 +155,19 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     res.status(201).json({
       id: suggestion.id, status: suggestion.status, submittedAt: suggestion.submittedAt,
     });
-  });
+  }));
 
   // ══ ٢. قائمةُ الاقتراحات — للمسؤول العام وحده ═════════════════════════
-  app.get("/api/ai/knowledge/suggestions", isAuthenticated, async (req: Req, res) => {
+  app.get("/api/ai/knowledge/suggestions", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const status = req.query?.status;
     const filter = status === "pending" || status === "approved" || status === "rejected" ? status : undefined;
     const rows = await listSuggestions(filter);
     res.json({ rows });
-  });
+  }));
 
   // ══ ٣. اعتمادُ اقتراح — يكتب مقالةً (جديدة أو نسخةً) في نفس المعاملة ═══
-  app.patch("/api/ai/knowledge/suggestions/:id/approve", isAuthenticated, async (req: Req, res) => {
+  app.patch("/api/ai/knowledge/suggestions/:id/approve", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     //  ══ `parsePositiveIntId` لا `parseInt` — `parseInt("12abc")` يُرجع
     //  ١٢ صامتاً (يقرأ حتى أوّل حرفٍ غيرِ رقميّ ثمّ يتوقّف)، فيصيب الطلبُ
@@ -197,10 +217,10 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     });
     if (!result.ok) return res.status(409).json({ error: result.error });
     res.json({ suggestion: result.suggestion, article: result.article });
-  });
+  }));
 
   // ══ ٤. رفضُ اقتراح — بسببٍ حرٍّ إلزاميّ ════════════════════════════════
-  app.patch("/api/ai/knowledge/suggestions/:id/reject", isAuthenticated, async (req: Req, res) => {
+  app.patch("/api/ai/knowledge/suggestions/:id/reject", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const idParsed = parsePositiveIntId(req.params.id);
     if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
@@ -211,17 +231,17 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const result = await rejectSuggestion({ id, decisionNote, actor: actorFrom(req) });
     if (!result.ok) return res.status(409).json({ error: result.error });
     res.json({ suggestion: result.suggestion });
-  });
+  }));
 
   // ══ ٥. المقالات — قائمةٌ كاملة بكلّ نسخها، للمسؤول العام وحده ═════════
-  app.get("/api/ai/knowledge/articles", isAuthenticated, async (req: Req, res) => {
+  app.get("/api/ai/knowledge/articles", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const rows = await listArticlesForAdmin();
     res.json({ rows });
-  });
+  }));
 
   // ══ ٦. إنشاءُ مقالةٍ مباشرة (بلا اقتراح) ═══════════════════════════════
-  app.post("/api/ai/knowledge/articles", isAuthenticated, async (req: Req, res) => {
+  app.post("/api/ai/knowledge/articles", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const title = str(req.body?.title);
     const body = str(req.body?.body);
@@ -240,7 +260,7 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
       title, body, scope, branchId: resolvedBranch.value, ...metadata.fields, actor: actorFrom(req),
     });
     res.status(201).json({ article });
-  });
+  }));
 
   // ══ ٧. تعديلُ مقالةٍ قائمة — نسخةٌ جديدة ═══════════════════════════════
   app.patch("/api/ai/knowledge/articles/:id", isAuthenticated, async (req: Req, res, next) => {
@@ -293,7 +313,7 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
   });
 
   // ══ ٨. تفعيل/تعطيل ═════════════════════════════════════════════════════
-  app.patch("/api/ai/knowledge/articles/:id/active", isAuthenticated, async (req: Req, res) => {
+  app.patch("/api/ai/knowledge/articles/:id/active", isAuthenticated, guarded(async (req: Req, res) => {
     if (!isGlobalAdmin(req)) return res.status(403).json({ error: "لإدارة معرفة المساعد المسؤولُ العام وحده" });
     const idParsed = parsePositiveIntId(req.params.id);
     if (idParsed === INVALID_ID) return res.status(400).json({ error: "معرّفٌ غير صالح" });
@@ -309,5 +329,5 @@ export function registerAiKnowledgeRoutes(app: Express, isAuthenticated: any) {
     const result = await setArticleActive({ id, active, actor: actorFrom(req) });
     if (!result.ok) return res.status(409).json({ error: result.error });
     res.json({ article: result.article });
-  });
+  }));
 }

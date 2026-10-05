@@ -947,6 +947,28 @@ async function main() {
           "ر.٤ ورسالةٌ عربيةٌ واضحة تدلّ على انشغال الخادم لا تعارضَ تعديل", JSON.stringify(body));
       }
 
+      //  ر.٦ **و«مقالة جديدة» كذلك** (واقعةُ ٢٠٢٦-١٠-٠٥: «انتهت مهلة الاتصال» بعد ١٥ث على «من هو الدكتور مصطفى العضاض») —
+      //  نقطةُ الإنشاء كانت بلا `try/catch` فيبقى الطلبُ بلا ردّ. ومعها تقديمُ الاقتراح، والبقيّةُ بالحارس نفسِه.
+      for (const [label, path, payload] of [
+        ["إنشاءُ مقالة", "/api/ai/knowledge/articles", { title: `${MARK} — إنشاءٌ أثناء التشبّع`, body: "نصّ", scope: "general", branchId: null }],
+        ["تقديمُ اقتراح", "/api/ai/knowledge/suggestions", { suggestedText: `${MARK} — اقتراحٌ أثناء التشبّع`, reason: "سبب" }],
+      ] as const) {
+        const c2 = new AbortController();
+        const g2 = setTimeout(() => c2.abort(), 15_000);
+        const t1 = Date.now();
+        let st = -1, ab = false, bd: any = null;
+        try {
+          const r = await fetch(`${BASE}${path}`, {
+            method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader },
+            signal: c2.signal, body: JSON.stringify(payload),
+          });
+          st = r.status; bd = await r.json().catch(() => null);
+        } catch { ab = true; } finally { clearTimeout(g2); }
+        check(!ab && st === 503 && Date.now() - t1 < 10_000 && String(bd?.error ?? "").includes("مشغول"),
+          `ر.٦ **${label} أثناء التشبّع ⟵ ٥٠٣ «الخادم مشغول» خلال ثوانٍ** (يردّه حارسُ الصلاحيات قبل المعالج — ر.٨ يحرس المعالجَ نفسَه)`,
+          `aborted=${ab} status=${st} body=${JSON.stringify(bd)}`);
+      }
+
       //  ر.٥ تحريرُ اتّصالٍ واحدٍ فقط يُعيد التعديل الطبيعيّ فوراً.
       const released = held.pop();
       released.release();
@@ -959,6 +981,28 @@ async function main() {
         `status=${afterRes.status}`);
 
       for (const c of held) c.release();
+      //  ر.٨ **خطأٌ داخل معالج الإنشاء نفسِه يُردّ ولا يُعلِّق الطلب** — قيدٌ مؤقّت يُفشل الإدراجَ بعد عبور الحارس والتحقّق.
+      //  وبلا `guarded` يبقى الطلبُ بلا ردٍّ حتى مهلة العميل — وهو ما رآه المالكُ على «مقالة جديدة».
+      await q(`ALTER TABLE ai_knowledge_articles ADD CONSTRAINT zz_test_boom CHECK (title NOT LIKE '%قنبلة-اختبار%')`);
+      try {
+        const c3 = new AbortController();
+        const g3 = setTimeout(() => c3.abort(), 12_000);
+        let st = -1, ab = false;
+        try {
+          const r = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+            method: "POST", headers: { "content-type": "application/json", "x-test-session": adminHeader }, signal: c3.signal,
+            body: JSON.stringify({ title: `${MARK} — قنبلة-اختبار`, body: "نصّ", scope: "general", branchId: null }),
+          });
+          st = r.status;
+        } catch { ab = true; } finally { clearTimeout(g3); }
+        check(!ab && st >= 500, "ر.٨ **خطأُ قاعدةٍ داخل «مقالة جديدة» ⟵ ردٌّ بخطأ** لا طلبٌ معلَّقٌ حتى مهلة المتصفّح", `aborted=${ab} status=${st}`);
+      } finally {
+        await q(`ALTER TABLE ai_knowledge_articles DROP CONSTRAINT IF EXISTS zz_test_boom`);
+      }
+      same("ر.٧ ولا مقالةَ ولا اقتراحَ كُتب من المحاولتين — لا معاملةَ بدأت",
+        [(await q(`SELECT count(*)::int n FROM ai_knowledge_articles WHERE title LIKE $1`, [`${MARK} — إنشاءٌ أثناء التشبّع%`])).rows[0].n,
+         (await q(`SELECT count(*)::int n FROM ai_knowledge_suggestions WHERE suggested_text LIKE $1`, [`${MARK} — اقتراحٌ أثناء التشبّع%`])).rows[0].n],
+        [0, 0]);
     }
   } finally {
     await cleanup();
