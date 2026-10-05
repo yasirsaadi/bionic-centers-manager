@@ -93,6 +93,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
   app.post("/api/cash-book/opening", isAuthenticated, async (req: Req, res) => {
     const g = await gate(req, res, req.body?.branchId, req.body?.book);
     if (!g) return;
+    //  قرارُ المالك (٢٠٢٦-١٠-٠٦): بدايةُ الدفتر يسجّلها المسؤولُ وحده، ويعدّلها متى شاء — والحسابُ يبدأ منها.
+    if (!g.s.isAdmin) return res.status(403).json({ error: "بداية الدفتر يسجّلها المسؤول وحده" });
     const today = baghdadTodayYmd();
     const openingDate = req.body?.openingDate;
     if (!isYmd(openingDate) || openingDate > today) return res.status(400).json({ error: "تاريخ البداية غير صالح" });

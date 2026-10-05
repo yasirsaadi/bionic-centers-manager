@@ -155,13 +155,18 @@ async function main() {
     const s0 = await sheet(S.acc);
     same("ب١. قبله: لا رصيد، ولا كتابة", [s0.body?.opening, s0.body?.canWrite], [null, false]);
     same("ب٢. **ولا سطرَ قبل الرصيد** — ٤٠٩", (await row(S.acc, { kind: "dr_transfer", amount: 1000 })).status, 409);
-    same("ب٣. المحاسبُ يسجّله (أمس، ١٠٠ ألف نقداً و٥٠ ألفاً في النسبة)",
-      (await http("POST", "/api/cash-book/opening", S.acc, { book: "devices", openingDate: YDAY, cash: 100_000, ratio: 50_000 })).status, 200);
-    same("ب٤. **ومرّةً واحدة** — تعديلُه للمسؤول (٤٠٩ للمحاسب، ٢٠٠ للمسؤول)",
-      [(await http("POST", "/api/cash-book/opening", S.acc, { book: "devices", openingDate: YDAY, cash: 1, ratio: 0 })).status,
-       (await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: YDAY, cash: 100_000, ratio: 50_000 })).status],
-      [409, 200]);
-    await http("POST", "/api/cash-book/opening", S.acc, { book: "physio", openingDate: TODAY, cash: 0, ratio: 0 });
+    same("ب٣. **بدايةُ الدفتر للمسؤول وحده** — ٤٠٣ للمحاسب ولمدير الفرع، ولا صفَّ يُكتب",
+      [(await http("POST", "/api/cash-book/opening", S.acc, { book: "devices", openingDate: YDAY, cash: 100_000, ratio: 50_000 })).status,
+       (await http("POST", "/api/cash-book/opening", S.mgr, { book: "devices", openingDate: YDAY, cash: 100_000, ratio: 50_000 })).status,
+       (await q(`SELECT count(*)::int AS n FROM cash_book_openings WHERE branch_id=$1`, [BGD]))[0].n],
+      [403, 403, 0]);
+    same("ب٤. **والمسؤولُ يسجّلها ثمّ يعدّلها** — بدأ خطأً بأصفارٍ اليوم، ثمّ صحّحها (أمس، ١٠٠ ألف و٥٠ ألفاً)",
+      [(await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: TODAY, cash: 0, ratio: 0 })).status,
+       (await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: YDAY, cash: 100_000, ratio: 50_000 })).status,
+       (await sheet(S.acc)).body?.opening,
+       (await q(`SELECT count(*)::int AS n FROM cash_book_openings WHERE branch_id=$1 AND book='devices'`, [BGD]))[0].n],
+      [200, 200, { date: YDAY, cash: 100_000, ratio: 50_000 }, 1]);
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "physio", openingDate: TODAY, cash: 0, ratio: 0 });
 
     console.log("\n── ج. الوارد ──");
     let d = (await sheet(S.acc)).body;
@@ -199,14 +204,14 @@ async function main() {
 
     const PD = await mkPatient(DQ);
     await pay(PD.id, DQ, 800_000, PD.dev, noon(TODAY));
-    await http("POST", "/api/cash-book/opening", S.accDq, { book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: DQ, book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
     const h1 = await ratio(S.accDq, { kind: "hospital_ratio" });
     await ratio(S.accDq, { kind: "hospital_ratio" });
     const hosp = await q(`SELECT amount, section, category FROM expenses WHERE branch_id=$1 AND category='hospital_percentage'`, [DQ]);
     same("هـ٥. **نسبةُ مستشفى ذي قار ١٠٪ مصروفاً حقيقيّاً، صفّاً واحداً لليوم**", [h1.body?.amount, hosp], [80_000, [{ amount: 80_000, section: "prosthetic", category: "hospital_percentage" }]]);
     same("هـ٦. **ونسبةُ الدكتور لذي قار ١٠٪**", (await ratio(S.accDq, { kind: "dr_ratio" })).body?.amount, 80_000);
 
-    await http("POST", "/api/cash-book/opening", S.accKrb, { book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: KRB, book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
     const at = await row(S.accKrb, { kind: "atabah_ratio", amount: 70_000, note: "حصة العتبة" });
     const [atr] = await q(`SELECT category, amount FROM expenses WHERE id=$1`, [at.body?.id]);
     same("هـ٧. **نسبةُ العتبة لكربلاء بيد المحاسب — مصروفٌ بفئتها**", atr, { category: "shrine_percentage", amount: 70_000 });
