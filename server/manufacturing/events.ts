@@ -219,6 +219,30 @@ export async function recordDeliveryDateEvent(
 }
 
 /**
+ * **قالبٌ اختباريٌّ سُلِّم** (٠٩٧، §4.bz) — وحمولتُه موعدُ القالب النهائي وحده، كحدث الموعد أعلاه.
+ * والمفتاحُ على سطر السجلّ: كلُّ قالبٍ اختباريٍّ حدثٌ، وإعادةُ كتابة السطر نفسه لا شيء.
+ */
+export async function recordTrialSocketEvent(
+  tx: DbTransaction,
+  params: { order: EventOrderRef; finalDate: string; historyId: number },
+): Promise<void> {
+  const { order, finalDate, historyId } = params;
+  if (!isInitialBuild(order) || !finalDate) return;
+  const eventType = PATIENT_EVENT_TYPES.MANUFACTURING_TRIAL_SOCKET_DELIVERED;
+  const recorded = await recordPatientEvent(tx, {
+    patientId: order.patientId,
+    eventType,
+    branchId: order.branchId,
+    sourceType: "work_order",
+    sourceId: order.id,
+    payload: { finalDate },
+    visibility: "patient",
+    dedupeKey: transitionKey(order.id, historyId, eventType),
+  });
+  await fanOut(tx, recorded, order, eventType, { finalDate });
+}
+
+/**
  * يستحقّ الرسائل **داخل معاملة الحدث نفسها** — فإمّا وقع الحدث وللمريض
  * رسالة مستحقّة، وإمّا لم يقع شيء.
  *

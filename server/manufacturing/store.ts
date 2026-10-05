@@ -5,7 +5,9 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
-import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework } from "../staff_telegram/notify";
+import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn } from "../staff_telegram/notify";
+import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { recordAttendanceVisitTx } from "../visits/attendance";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { db } from "../db";
@@ -22,7 +24,7 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 import { buildPatientSearch, trigramReady } from "../patient_search/sql";
 import { activePatientDrizzle, belongsToActivePatientSql } from "../patients/active_patient";
 import { branchOrPatientAccessSql } from "../patients/branch_access";
-import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent } from "./events";
+import { recordOrderCreatedEvent, recordStageEvent, recordDeliveryDateEvent, recordTrialSocketEvent } from "./events";
 import { activeExamSql } from "../medical/active_exam";
 import {
   orderDeviceSpecs, deviceSpecsFromPrescription, hasAnySpec, type OrderDeviceSpecs,
@@ -965,6 +967,9 @@ export async function getOrderDetail(id: number) {
       // سبب التوقّف — تقرؤه بطاقة «متوقّف» في صفحة الأمر. داخلي: هذه النقطة
       // للخبير والإدارة، ولا يمرّ منها شيء إلى المريض.
       holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
+      //  القالبُ الاختباري (§4.bz) — بطاقتُه وزرُّه في صفحة الأمر.
+      trialSocketCount: WO.trialSocketCount, trialFinalDate: WO.trialFinalDate,
+      trialDeliveredAt: WO.trialDeliveredAt, trialLastCallAt: WO.trialLastCallAt, trialLastCallNote: WO.trialLastCallNote,
       startedAt: WO.startedAt, completedAt: WO.completedAt, finalResult: WO.finalResult,
       finalNotes: WO.finalNotes, expertUserId: WO.expertUserId, assignedBy: WO.assignedBy,
       createdAt: WO.createdAt,
@@ -1556,6 +1561,148 @@ export async function resumeOrder(params: {
   });
 }
 
+// ══ القالبُ الاختباري (ترحيل ٠٩٧، §4.bz) ════════════════════════════════════
+//  الخبيرُ يسلّمه فيتوقّف الأمرُ «بانتظار المريض» بسببه ومعه موعدُ النهائي — **لا تسليمَ ولا إغلاق**: المرحلةُ
+//  «جاهز للتجربة والتسليم» كما هي، والحلقةُ في التصنيع، والعذرُ المكتوب يجعل تأخّرَه أصفر. والاستعلاماتُ تتّصل
+//  وتسجّل موعداً جديداً، وحين يعود المريضُ يعود الأمرُ نفسُه نشطاً إلى خبيره. ويتكرّر ما شاء الخبير.
+
+/** الأمرُ مقفولاً بما تحتاجه أبوابُ القالب الاختباري — والحكمُ منه لا من اللقطة. */
+async function lockTrialOrder(tx: any, orderId: number) {
+  const r = await tx.execute(sql`
+    SELECT id, patient_id, branch_id, expert_user_id, service_type, purpose, status, current_stage,
+           hold_reason_code, device_episode_id, trial_socket_count, trial_final_date::text AS trial_final_date
+      FROM prosthetic_work_orders WHERE id = ${orderId} FOR UPDATE`);
+  const o = (r.rows ?? [])[0] as any;
+  if (!o) return null;
+  return {
+    id: Number(o.id), patientId: Number(o.patient_id), branchId: Number(o.branch_id), expertUserId: Number(o.expert_user_id),
+    serviceType: String(o.service_type), purpose: String(o.purpose), status: String(o.status), currentStage: String(o.current_stage),
+    holdReasonCode: o.hold_reason_code ?? null, deviceEpisodeId: o.device_episode_id == null ? null : Number(o.device_episode_id),
+    trialSocketCount: Number(o.trial_socket_count ?? 0), trialFinalDate: o.trial_final_date ?? null,
+  };
+}
+
+/** الخبيرُ سلّم قالباً اختبارياً: توقّفٌ بانتظار المريض بسببه، وموعدُ النهائي، وزيارةُ حضور، ورسالةٌ للمريض. */
+export async function deliverTrialSocket(params: {
+  order: ProstheticWorkOrder; authority: WriteAuthority; finalDate: string; note: string | null; performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, params.order.id);
+    assertWriteAuthority(live, params.authority);
+    assertNotTerminal(live);
+    const o = (await lockTrialOrder(tx, params.order.id))!;
+    if (!canDeliverTrialSocket(o)) throw new WorkOrderConflictError(live);
+    const count = o.trialSocketCount + 1;
+    const [updated] = await tx.update(WO).set({
+      status: "waiting_patient", holdReasonCode: TRIAL_SOCKET_REASON, holdNote: params.note,
+      trialSocketCount: count, trialFinalDate: params.finalDate, trialDeliveredAt: new Date(),
+      trialLastCallAt: null, trialLastCallNote: null, updatedAt: new Date(),
+    }).where(eq(WO.id, o.id)).returning();
+    const [row] = await tx.insert(WH).values({
+      workOrderId: o.id, actionType: "trial_socket",
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: `تسليم قالب اختباري (المرّة ${count}) — موعد القالب النهائي ${params.finalDate}${params.note ? ` — ${params.note}` : ""}`,
+      performedBy: params.performedBy,
+    }).returning({ id: WH.id });
+    await recordAttendanceVisitTx(tx, {
+      patientId: o.patientId, serviceType: o.serviceType, branchId: o.branchId, deviceEpisodeId: o.deviceEpisodeId,
+      reason: ATTENDANCE_REASONS.trialSocket, notes: params.note, createdBy: params.performedBy,
+    });
+    await recordTrialSocketEvent(tx, { order: updated, finalDate: params.finalDate, historyId: row.id });
+    return updated;
+  });
+}
+
+export class TrialNotAwaitingError extends Error {
+  constructor() { super("work order is not awaiting the final socket"); this.name = "TrialNotAwaitingError"; }
+}
+
+/** **عاد المريضُ للقالب النهائي** — من الاستعلامات: الأمرُ نفسُه نشطٌ لخبيره، وزيارةُ حضور، وتنبيهُ الخبير. */
+export async function returnFromTrial(params: {
+  orderId: number; actingBranchId: number | null; performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const o = await lockTrialOrder(tx, params.orderId);
+    if (!o || !isTrialAwaiting(o)) throw new TrialNotAwaitingError();
+    //  العذرُ يبقى (قرارُ المالك ٢٠٢٦-٠٩-٢٤ كالاستئناف) — والموعدُ يبقى تاريخاً؛ «الانتظار» تقوله الحالةُ وحدها.
+    const [updated] = await tx.update(WO).set({ status: "active", updatedAt: new Date() })
+      .where(eq(WO.id, o.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: o.id, actionType: "trial_return",
+      fromStage: o.currentStage, toStage: o.currentStage,
+      notes: "عاد المريض للقالب النهائي — سجّلته الاستعلامات",
+      performedBy: params.performedBy,
+    });
+    await recordAttendanceVisitTx(tx, {
+      patientId: o.patientId, serviceType: o.serviceType, branchId: params.actingBranchId ?? o.branchId,
+      deviceEpisodeId: o.deviceEpisodeId, reason: ATTENDANCE_REASONS.trialReturn, createdBy: params.performedBy,
+    });
+    await notifyTrialReturn(tx, {
+      orderId: o.id, patientId: o.patientId, branchId: params.actingBranchId ?? o.branchId,
+      expertUserId: o.expertUserId, actorUserId: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/** **اتّصلت الاستعلاماتُ بالمريض** — نتيجتُه وموعدٌ جديد للقالب النهائي (قد يكون الموعدَ نفسَه). */
+export async function recordTrialCall(params: {
+  orderId: number; note: string; nextDate: string; performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const o = await lockTrialOrder(tx, params.orderId);
+    if (!o || !isTrialAwaiting(o)) throw new TrialNotAwaitingError();
+    const [updated] = await tx.update(WO).set({
+      trialFinalDate: params.nextDate, trialLastCallAt: new Date(), trialLastCallNote: params.note, updatedAt: new Date(),
+    }).where(eq(WO.id, o.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: o.id, actionType: "trial_call",
+      fromStage: o.currentStage, toStage: o.currentStage,
+      notes: `اتصال الاستعلامات: ${params.note} — موعد القالب النهائي ${params.nextDate}`
+        + (o.trialFinalDate && o.trialFinalDate !== params.nextDate ? ` (كان ${o.trialFinalDate})` : ""),
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+export interface TrialAwaitingRow {
+  orderId: number; patientId: number; patientName: string; patientCode: string | null; phone: string | null;
+  branchId: number; branchName: string | null; expertName: string | null;
+  trialSocketCount: number; trialFinalDate: string; trialDeliveredAt: string | null;
+  lastCallAt: string | null; lastCallNote: string | null; callState: TrialCallState;
+}
+
+/** **مَن ينتظر القالبَ النهائي** — في الفروع المعطاة (`null` = الكلّ)، ومَن يُطلَب الاتصال به اليوم أوّلاً. */
+export async function listTrialAwaiting(branchIds: number[] | null, now: Date = new Date()): Promise<TrialAwaitingRow[]> {
+  if (branchIds && branchIds.length === 0) return [];
+  const r = await db.execute(sql`
+    SELECT w.id, w.patient_id, p.name AS patient_name, p.patient_code, p.phone, w.branch_id, b.name AS branch_name,
+           su.display_name AS expert_name, w.trial_socket_count, w.trial_final_date::text AS trial_final_date,
+           w.trial_delivered_at, w.trial_last_call_at, w.trial_last_call_note,
+           to_char((w.trial_last_call_at AT TIME ZONE 'Asia/Baghdad')::date, 'YYYY-MM-DD') AS last_call_day
+      FROM prosthetic_work_orders w
+      JOIN patients p ON p.id = w.patient_id AND p.deleted_at IS NULL
+      LEFT JOIN branches b ON b.id = w.branch_id
+      LEFT JOIN system_users su ON su.id = w.expert_user_id
+     WHERE w.status = 'waiting_patient' AND w.hold_reason_code = ${TRIAL_SOCKET_REASON}
+       ${branchIds ? sql`AND w.branch_id = ANY(${`{${branchIds.map((n) => Math.trunc(Number(n))).filter(Number.isFinite).join(",")}}`}::int[])` : sql``}
+     ORDER BY w.trial_final_date, w.id`);
+  const today = baghdadTodayYmd(now);
+  const rows: TrialAwaitingRow[] = (r.rows as any[]).map((x) => ({
+    orderId: Number(x.id), patientId: Number(x.patient_id), patientName: String(x.patient_name ?? ""),
+    patientCode: x.patient_code ?? null, phone: x.phone ?? null,
+    branchId: Number(x.branch_id), branchName: x.branch_name ?? null, expertName: x.expert_name ?? null,
+    trialSocketCount: Number(x.trial_socket_count ?? 0), trialFinalDate: String(x.trial_final_date),
+    trialDeliveredAt: x.trial_delivered_at ? new Date(x.trial_delivered_at).toISOString() : null,
+    lastCallAt: x.trial_last_call_at ? new Date(x.trial_last_call_at).toISOString() : null,
+    lastCallNote: x.trial_last_call_note ?? null,
+    callState: trialCallState(String(x.trial_final_date), x.last_call_day ?? null, today),
+  }));
+  //  مَن يُطلَب الاتصال به أوّلاً، ثمّ الأقربُ موعداً.
+  return rows.sort((a, b) => Number(b.callState !== null) - Number(a.callState !== null));
+}
+
 /**
  * إعادة عمل فني — المسار **الوحيد** للرجوع بمرحلة إلى الخلف.
  *
@@ -1875,6 +2022,9 @@ export async function getAllOrdersForPatient(
       //  والفريقُ في ملفّ المريض، بلا أن يسأل أحد.
       maintenanceComponent: WO.maintenanceComponent,
       isFollowup: WO.maintenanceIsFollowup,
+      //  **القالبُ الاختباري** (§4.bz) — شريطُ صفحة المريض وخيارُ «سبب الحضور» يقرآنه من هنا.
+      holdReasonCode: WO.holdReasonCode,
+      trialSocketCount: WO.trialSocketCount, trialFinalDate: WO.trialFinalDate,
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
       deviceSequence: PDE.sequenceNumber,
@@ -1961,6 +2111,10 @@ export async function getAllOrdersForPatient(
     deviceSequence: r.deviceSequence ?? null,
     requestedItem: r.requestedItem ?? null,
     isFollowup: r.isFollowup === true,
+    //  **القالبُ الاختباري** (§4.bz): بانتظار النهائي أم لا، وموعدُه، وكم مرّة — للشريط وخيار «سبب الحضور».
+    trialAwaiting: isTrialAwaiting({ status: r.status, holdReasonCode: r.holdReasonCode }),
+    trialFinalDate: r.trialFinalDate ? String(r.trialFinalDate) : null,
+    trialSocketCount: Number(r.trialSocketCount ?? 0),
     //  **وجزءُ الصيانة** — كان يُقرأ ولا يُرسَل؛ بطاقةُ التعديل تقول به «صيانة الركبة» (§4.ar البند ٢١).
     maintenanceComponent: r.maintenanceComponent ?? null,
     //  والمالُ بشرطه، محذوفاً لا مصفَّراً.

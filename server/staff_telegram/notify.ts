@@ -70,6 +70,21 @@ export function notifyOrderAssigned(ex: Executor | null | undefined, p: {
   });
 }
 
+/** **عاد المريضُ للقالب النهائي** (§4.bz) — الأمرُ نفسُه يعود إلى خبيره؛ بنوع «أمرٌ مُسند إليك» نفسِه، فلا نوعَ جديد. */
+export function notifyTrialReturn(ex: Executor | null | undefined, p: {
+  orderId: number; patientId: number; branchId: number | null; expertUserId: number; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    if (p.actorUserId && p.actorUserId === p.expertUserId) return;
+    const c = await ctx(ex, p.patientId, p.branchId);
+    await enqueueStaffEvent(ex, {
+      event: "order_assigned", targetUserIds: [p.expertUserId],
+      text: `🦿 عاد المريض للقالب النهائي (أمر رقم ${p.orderId}): ${c.who}${c.branch}`,
+      linkPath: `/manufacturing/orders/${p.orderId}`,
+    });
+  });
+}
+
 export function notifyOrderReassigned(ex: Executor | null | undefined, p: {
   orderId: number; patientId: number; branchId: number | null; oldExpertUserId: number | null; newExpertUserId: number;
   reason?: string | null; actorUserId?: number | null;

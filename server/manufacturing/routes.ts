@@ -12,6 +12,11 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
+import {
+  TRIAL_ALREADY_AWAITING_ERROR, TRIAL_NOT_ELIGIBLE_ERROR, TRIAL_DATE_ERROR, TRIAL_NOT_AWAITING_ERROR, TRIAL_CALL_NOTE_ERROR,
+  canDeliverTrialSocket, isTrialAwaiting, isValidTrialDate,
+} from "@shared/trial_socket";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
@@ -1014,6 +1019,111 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     } catch (e) {
       if (handledConflict(res, e)) return;
       throw e;
+    }
+  });
+
+  // ══ القالبُ الاختباري (ترحيل ٠٩٧، §4.bz) ══════════════════════════════════
+  //  الخبيرُ يسلّمه من صفحة أمره، والاستعلاماتُ **وحدها** تتّصل بالمريض وتسجّل عودتَه للنهائي.
+
+  // ---- trial-socket: الخبيرُ سلّم قالباً اختبارياً — لا تسليمَ ولا إغلاق ---------
+  app.post("/api/manufacturing/orders/:id/trial-socket", isAuthenticated, async (req: Req, res) => {
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
+    if (isTrialAwaiting(raw)) return res.status(409).json({ error: TRIAL_ALREADY_AWAITING_ERROR });
+    if (!canDeliverTrialSocket(raw)) return res.status(409).json({ error: TRIAL_NOT_ELIGIBLE_ERROR });
+    const finalDate = strOrU(req.body?.finalDate);
+    if (!isValidTrialDate(finalDate, baghdadTodayYmd())) return res.status(400).json({ error: TRIAL_DATE_ERROR });
+    const note = (strOrU(req.body?.note) ?? "").trim() || null;
+    try {
+      const updated = await store.deliverTrialSocket({
+        order: raw, authority, finalDate, note, performedBy: getSession(req).userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "trial_socket", raw.branchId,
+        `تسليم قالب اختباري — موعد القالب النهائي ${finalDate}`);
+      res.json(updated);
+    } catch (e) {
+      if (handledConflict(res, e)) return;
+      console.error("[manufacturing] trial-socket failed:", e);
+      res.status(500).json({ error: "تعذّر حفظ القالب الاختباري — لم يتغيّر شيء. أعد المحاولة." });
+    }
+  });
+
+  //  مَن يتّصل ويسجّل العودة: الاستعلاماتُ والإدارة — **لا الخبير** (قرارُ المالك: «الاستعلامات حصراً يتّصل»).
+  async function loadTrialFrontDesk(req: Req, res: any, need: "call" | "return") {
+    const s = getSession(req);
+    if (isExpert(s)) { res.status(403).json({ error: "الاتصال بالمريض وتسجيل عودته للاستعلامات" }); return null; }
+    const allowed = s.isAdmin || isManager(s)
+      || (need === "return" ? Boolean(s.permissions?.canAddPatients) : Boolean(s.permissions?.canViewPatients || s.permissions?.canAddPatients));
+    if (!allowed) { res.status(403).json({ error: "غير مصرح" }); return null; }
+    const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
+    const raw = await store.getRawOrder(id);
+    if (!raw) { res.status(404).json({ error: "الأمر غير موجود" }); return null; }
+    if (!(await reachesOrderPatient(s, raw))) { res.status(403).json({ error: "غير مصرح" }); return null; }
+    if (!isTrialAwaiting(raw)) { res.status(409).json({ error: TRIAL_NOT_AWAITING_ERROR }); return null; }
+    return { s, raw };
+  }
+
+  // ---- trial-return: عاد المريضُ للقالب النهائي — الأمرُ نفسُه يعود إلى خبيره ------
+  app.post("/api/manufacturing/orders/:id/trial-return", isAuthenticated, async (req: Req, res) => {
+    const l = await loadTrialFrontDesk(req, res, "return");
+    if (!l) return;
+    const { s, raw } = l;
+    try {
+      const updated = await store.returnFromTrial({
+        orderId: raw.id, actingBranchId: s.branchId && s.branchId > 0 ? s.branchId : null, performedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "trial_return", raw.branchId, "عاد المريض للقالب النهائي");
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof store.TrialNotAwaitingError) return res.status(409).json({ error: TRIAL_NOT_AWAITING_ERROR });
+      console.error("[manufacturing] trial-return failed:", e);
+      res.status(500).json({ error: "تعذّر تسجيل العودة — لم يتغيّر شيء. أعد المحاولة." });
+    }
+  });
+
+  // ---- trial-call: اتّصلت الاستعلاماتُ — النتيجةُ وموعدٌ جديد ---------------------
+  app.post("/api/manufacturing/orders/:id/trial-call", isAuthenticated, async (req: Req, res) => {
+    const note = (strOrU(req.body?.note) ?? "").trim();
+    const nextDate = strOrU(req.body?.nextDate);
+    const l = await loadTrialFrontDesk(req, res, "call");
+    if (!l) return;
+    const { s, raw } = l;
+    if (!note) return res.status(400).json({ error: TRIAL_CALL_NOTE_ERROR });
+    if (!isValidTrialDate(nextDate, baghdadTodayYmd())) return res.status(400).json({ error: TRIAL_DATE_ERROR });
+    try {
+      const updated = await store.recordTrialCall({ orderId: raw.id, note, nextDate, performedBy: s.userId ?? null });
+      await audit(req, "prosthetic_work_order", raw.id, "trial_call", raw.branchId,
+        `اتصال بشأن القالب النهائي — ${note} — الموعد ${nextDate}`);
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof store.TrialNotAwaitingError) return res.status(409).json({ error: TRIAL_NOT_AWAITING_ERROR });
+      console.error("[manufacturing] trial-call failed:", e);
+      res.status(500).json({ error: "تعذّر حفظ الاتصال — لم يتغيّر شيء. أعد المحاولة." });
+    }
+  });
+
+  // ---- trial-awaiting: مَن ينتظر القالبَ النهائي، ومَن يُتّصل به اليوم ----------------
+  app.get("/api/manufacturing/trial-awaiting", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (isExpert(s)) return res.status(403).json({ error: "غير مصرح" });
+    let branchIds: number[] | null;
+    if (s.isAdmin) {
+      branchIds = null;
+    } else if (isManager(s)) {
+      branchIds = s.accessible.length ? s.accessible : (s.branchId ? [s.branchId] : []);
+    } else if (s.branchId && (s.permissions?.canViewPatients || s.permissions?.canAddPatients)) {
+      branchIds = [s.branchId];
+    } else {
+      return res.status(403).json({ error: "غير مصرح" });
+    }
+    //  لا رميَ من معالجٍ غير متزامن (Express 4 لا يلتقطه فيسقط الخادم).
+    try {
+      res.json(await store.listTrialAwaiting(branchIds));
+    } catch (e) {
+      console.error("[manufacturing] trial-awaiting failed:", e);
+      res.status(500).json({ error: "تعذّر تحميل قائمة القالب الاختباري" });
     }
   });
 

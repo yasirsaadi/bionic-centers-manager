@@ -85,6 +85,8 @@ export const PATIENT_EVENT_TYPES = {
   // معلَنان ولم يُوصَلا بعد.
   MANUFACTURING_DELIVERY_DATE_CHANGED: "manufacturing.delivery_date_changed",
   MANUFACTURING_EXPERT_REASSIGNED: "manufacturing.expert_reassigned",
+  /** **قالبٌ اختباريٌّ سُلِّم** (٠٩٧، §4.bz) — موصول: حمولتُه موعدُ القالب النهائي وحده `{ finalDate }`. */
+  MANUFACTURING_TRIAL_SOCKET_DELIVERED: "manufacturing.trial_socket_delivered",
 
   // الصيانة
   MAINTENANCE_OPENED: "maintenance.opened",
@@ -133,6 +135,8 @@ export const PATIENT_EVENT_POLICY: Record<PatientEventType, VisibilityPolicy> = 
   "manufacturing.ready_for_delivery": "patient_default",
   "manufacturing.delivered": "patient_default",
   "manufacturing.delivery_date_changed": "patient_default",
+  //  بقرار المالك: «الأفضل أن تصل ليعرف أنه استلم، ومعها موعدُ القالب النهائي كي يتذكّره».
+  "manufacturing.trial_socket_delivered": "patient_default",
   // إسناد داخلي — مَن يصنع جهازه ليس خبراً يُرسَل إليه.
   "manufacturing.expert_reassigned": "internal_only",
 
@@ -187,6 +191,7 @@ export const PATIENT_EVENT_LABELS_AR: Record<PatientEventType, string> = {
   "manufacturing.delivered": "تسليم الجهاز",
   "manufacturing.delivery_date_changed": "تغيير موعد التسليم",
   "manufacturing.expert_reassigned": "تغيير الخبير",
+  "manufacturing.trial_socket_delivered": "تسليم قالب اختباري",
 
   "maintenance.opened": "فتح صيانة",
   "maintenance.completed": "إنجاز الصيانة",

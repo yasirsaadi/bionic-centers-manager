@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { TRIAL_SOCKET_LABEL, canDeliverTrialSocket, isTrialAwaiting } from "@shared/trial_socket";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { orderLatenessNotice, heldExcuseOf, holdButtonShown, holdDialogKind } from "./manufacturing_row_tone";
 import {
   STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS,
@@ -64,6 +66,7 @@ export default function ManufacturingOrder() {
   const [adminStageOpen, setAdminStageOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
+  const [trialOpen, setTrialOpen] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: orderKey });
@@ -98,6 +101,9 @@ export default function ManufacturingOrder() {
   //  فلا تجتمع البطاقةُ والتنبيهُ ولا يغيبان معاً عن متوقّفٍ متأخّر.
   const holdShape = { status: order.status, holdReasonCode: order.holdReasonCode ?? null };
   const heldExcuse = heldExcuseOf(holdShape);
+  //  القالبُ الاختباري (§4.bz): بانتظار النهائي ⟵ بطاقتُه بدل بطاقة السبب العامّة؛ وزرُّه في «جاهز للتجربة والتسليم».
+  const trialAwaiting = isTrialAwaiting(holdShape);
+  const trialAllowed = canDeliverTrialSocket(order);
   // شريط التقدّم من المرحلة الحالية وحدها — يرجع للخلف حين يرجع العمل.
   const progress = toPatientStageView(order);
   const forward = nextStages(order.serviceType, order.currentStage, order.purpose);
@@ -245,7 +251,27 @@ export default function ManufacturingOrder() {
       </Card>
 
       {/* سبب التوقّف — داخلي، لا يصل المريض */}
-      {heldExcuse && (
+      {trialAwaiting && (
+        <Card className="mb-4 border-sky-300 bg-sky-50/60" data-testid="card-trial-awaiting">
+          <CardContent className="p-4 text-sm space-y-1">
+            <p className="font-semibold text-sky-900">
+              سُلِّم قالب اختباري{order.trialSocketCount > 1 ? ` (المرّة ${order.trialSocketCount})` : ""} — بانتظار عودة المريض للقالب النهائي
+            </p>
+            <p>موعد القالب النهائي: <span className="font-semibold">{fmtD(order.trialFinalDate)}</span></p>
+            {order.holdNote && <p className="text-xs text-muted-foreground">{order.holdNote}</p>}
+            {order.trialLastCallAt && (
+              <p className="text-xs text-muted-foreground" data-testid="text-trial-last-call">
+                آخر اتصال من الاستعلامات ({fmt(order.trialLastCallAt)}): {order.trialLastCallNote}
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              الاستعلامات تتّصل بالمريض وتسجّل عودته، فيعود هذا الأمر إليك نشطاً. وإن حضر إليك مباشرةً: «إلغاء التوقّف ومتابعة العمل».
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {heldExcuse && !trialAwaiting && (
         <Card className="mb-4 border-amber-300 bg-amber-50/50" data-testid="card-hold-reason">
           <CardContent className="p-4 text-sm">
             <span className="font-semibold">{STATUS_LABELS[order.status]} — </span>
@@ -283,6 +309,13 @@ export default function ManufacturingOrder() {
               <ArrowRight className="w-5 h-5" /> الانتقال للمرحلة التالية{nextLabel ? `: ${nextLabel}` : ""}
             </Button>
           ) : null}
+          {/* القالبُ الاختباري — لا تسليمَ ولا إغلاق: الأمرُ ينتظر عودة المريض للنهائي (§4.bz). */}
+          {trialAllowed && (
+            <Button size="lg" variant="outline" className="gap-2 border-sky-400 text-sky-800" data-testid="button-trial-socket"
+              onClick={() => setTrialOpen(true)}>
+              <CalendarDays className="w-5 h-5" /> {TRIAL_SOCKET_LABEL}
+            </Button>
+          )}
           {/* المكانُ الوحيد للعذر — ويظهر للمتوقّف بلا سببٍ مكتوب أيضاً، وإلّا
               حُبس خلف «إلغاء التوقّف» وحدَه ولا بابَ لعذره (مراجعة Codex على ٤٠٣). */}
           {holdButtonShown(holdShape) && (
@@ -394,6 +427,7 @@ export default function ManufacturingOrder() {
       <AdvanceDialog open={advanceOpen} onOpenChange={setAdvanceOpen} order={order} onDone={invalidate} />
       <HoldDialog open={holdOpen} onOpenChange={setHoldOpen} order={order} onDone={invalidate} />
       <HoldReasonDialog status={reasonFor} onClose={() => setReasonFor(null)} order={order} onDone={invalidate} />
+      <TrialSocketDialog open={trialOpen} onOpenChange={setTrialOpen} order={order} onDone={invalidate} />
       {canReassign && <AdminStageDialog open={adminStageOpen} onOpenChange={setAdminStageOpen} order={order} stages={stages} onDone={invalidate} />}
       <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
@@ -431,6 +465,45 @@ function useAction(url: string, method: string, onDone: () => void, onFail?: () 
       onFail?.();
     },
   });
+}
+
+// **تسليم قالب اختباري** (§4.bz) — موعدُ القالب النهائي إلزاميّ: يصل المريضَ، وتتّصل حوله الاستعلامات.
+function TrialSocketDialog({ open, onOpenChange, order, onDone }: any) {
+  const today = baghdadTodayYmd();
+  const [finalDate, setFinalDate] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => { if (open) { setFinalDate(""); setNote(""); } }, [open]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/trial-socket`, "POST", () => { onOpenChange(false); onDone(); }, onDone);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>{TRIAL_SOCKET_LABEL}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground" data-testid="hint-trial-socket">
+            لا يُغلَق الأمر: يبقى عندك بانتظار عودة المريض للقالب النهائي، والاستعلامات تتّصل به قبل الموعد. والتسليمُ النهائي من «الانتقال للمرحلة التالية».
+          </p>
+          <div>
+            <label className="text-sm font-medium">موعد القالب النهائي <span className="text-red-500">*</span></label>
+            <Input type="date" min={today} value={finalDate} onChange={(e) => setFinalDate(e.target.value)}
+              className="mt-1" data-testid="input-trial-final-date" />
+            <p className="text-[11px] text-muted-foreground mt-1">يصل المريضَ مع رسالة استلام القالب الاختباري.</p>
+          </div>
+          <div>
+            <label className="text-sm font-medium">ملاحظة داخلية (اختياري)</label>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1"
+              placeholder="مثلاً: المريض غير جاهز بعد — يحتاج تعوّداً على القالب" data-testid="input-trial-note" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
+          <Button data-testid="button-confirm-trial-socket" disabled={!finalDate || finalDate < today || m.isPending}
+            onClick={() => m.mutate({ finalDate, note: note.trim() || undefined })}>
+            تسليم القالب الاختباري
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // Standalone delivery-date entry, reachable from the order page the expert

@@ -386,7 +386,8 @@ eq("ف١٤. ملغى ⟶ لا زرّ", holdButtonShown(order({ status: "cancelle
 //  عقدُ الصفحة: القراران من هنا لا من شرطٍ ثانٍ ينحرف.
 ok("ف١٥. بطاقةُ «متوقّف» تُعرَض بالشرط المشترك لا بـ`order.holdReasonCode` خاماً",
   /const heldExcuse = heldExcuseOf\(holdShape\)/.test(orderCode)
-  && /\{heldExcuse && \(/.test(orderCode)
+  //  والقالبُ الاختباري (§4.bz) له بطاقتُه بدلها — فالشرطُ المشترك نفسُه يبقى أوّلَ ما يُقرأ.
+  && /\{heldExcuse && (!trialAwaiting && )?\(/.test(orderCode)
   && !/onHold && order\.holdReasonCode/.test(orderCode));
 ok("ف١٦. وزرُّ «توقّف / مشكلة» بالقرار الخالص لا بـ`!onHold`",
   //  (والسهمُ `=>` داخل `onClick` يحمل «>»، فلا يُقرأ الوسمُ بـ`[^>]*`.)

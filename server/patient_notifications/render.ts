@@ -164,6 +164,14 @@ function deliveryDateText(payload: Record<string, unknown>): string | null {
   return date ? `موعد التسليم المتوقع ل${patientDeviceName(payload.serviceType)}: ${date}.` : null;
 }
 
+/** القالبُ الاختباري (§4.bz): استلمه، وموعدُ النهائي — ولا شيءَ غيرُهما. */
+function trialSocketText(payload: Record<string, unknown>): string | null {
+  const date = formatPatientDate(payload.finalDate);
+  return date
+    ? `تم تسليم القالب الاختباري ل${patientDeviceName(payload.serviceType)}. موعد القالب النهائي: ${date}.`
+    : null;
+}
+
 /**
  * النوع + الحمولة ⇒ نصّ، أو `null` لما لا نصّ له.
  *
@@ -188,6 +196,9 @@ export function renderNotification(
 
     case PATIENT_EVENT_TYPES.MANUFACTURING_DELIVERY_DATE_CHANGED:
       return deliveryDateText(p);
+
+    case PATIENT_EVENT_TYPES.MANUFACTURING_TRIAL_SOCKET_DELIVERED:
+      return trialSocketText(p);
 
     //  **ترحيبُ التسجيل يخرج بمعامِله لا بنصّه**: الصياغةُ الثابتة في
     //  القالب المعتمَد، والمتغيّرُ الوحيد رمزُ المريض. فما يعيده العارضُ

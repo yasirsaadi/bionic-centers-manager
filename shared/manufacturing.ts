@@ -216,6 +216,8 @@ export const REASON_CODE_LABELS: Record<string, string> = {
   ...Object.fromEntries(
     Object.values(HOLD_REASONS).flat().map((r) => [r.code, r.label]),
   ),
+  //  القالبُ الاختباري (§4.bz) — سببُ توقّفٍ لا يُختار من «توقّف / مشكلة»، يكتبه بابُه وحده.
+  trial_socket: "قالب اختباري — بانتظار القالب النهائي",
   // قديمة من نظام إعادة العمل السابق
   measurement_error: "خطأ في القياس (سابقاً)",
   cast_error: "خطأ في القالب (سابقاً)",
