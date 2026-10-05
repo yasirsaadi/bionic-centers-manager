@@ -269,6 +269,16 @@ export function Sidebar() {
   });
   const paymentCorrectionsCount = paymentCorrectionsData?.count ?? 0;
 
+  //  ══ **شارةُ «القالب الاختباري»** (§4.bz) — مرضى يُطلَب الاتصالُ بهم اليوم بشأن قالبهم النهائي ════════
+  //  للاستعلامات والإدارة لا للخبير. **بلا `refetchInterval`** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): تتحدّث عند الكتابة والعودة.
+  const trialEligible = Boolean(branchSession) && branchSession?.role !== "prosthetics_expert"
+    && Boolean(branchSession?.isAdmin || permissions.canViewPatients);
+  const { data: trialRows } = useQuery<{ callState: string | null }[]>({
+    queryKey: ["/api/manufacturing/trial-awaiting"],
+    enabled: trialEligible,
+  });
+  const trialCallCount = (trialRows ?? []).filter((r) => r.callState !== null).length;
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -278,7 +288,7 @@ export function Sidebar() {
     { label: t.sidebar.dashboard, icon: LayoutDashboard, href: "/", adminOnly: false, settingKey: "showDashboard" as const, permission: null },
     { label: t.sidebar.patientRegistry, icon: Users, href: "/patients", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const },
     { label: t.sidebar.addPatient, icon: UserPlus, href: "/patients/new", adminOnly: false, settingKey: "showPatients" as const, permission: "canAddPatients" as const },
-    { label: t.sidebar.followUps, icon: PhoneCall, href: "/follow-ups", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const },
+    { label: t.sidebar.followUps, icon: PhoneCall, href: "/follow-ups", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const, badge: trialCallCount },
     { label: t.sidebar.financialReports, icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: language === "ar" ? "التقرير اليومي للمرضى" : "Daily Patient Report", icon: CalendarDays, href: "/reports/daily-patients", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },

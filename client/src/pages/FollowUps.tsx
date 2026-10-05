@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
+import { TrialCallsList, useTrialAwaitingRows } from "@/components/trial/TrialCallsList";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,6 +106,9 @@ export default function FollowUps() {
     setHistoryPage(1);
   }, [search, branchFilter, pageSize, sortOrder]);
 
+  //  القالبُ الاختباري (§4.bz) — تبويبُه الثالث وعدّادُ مَن يُطلَب الاتصالُ به اليوم.
+  const { data: trialRows = [] } = useTrialAwaitingRows();
+  const trialDue = trialRows.filter((r) => r.callState !== null).length;
   const { data: reminders = [], isLoading } = useQuery<ReminderItem[]>({
     queryKey: ["/api/follow-ups"],
     queryFn: async () => {
@@ -307,6 +311,13 @@ export default function FollowUps() {
               <Badge variant="secondary" className="ml-1">{filteredActive.length}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="trial" className="gap-2" data-testid="tab-trial-socket">
+            <PhoneCall className="w-4 h-4" />
+            القالب الاختباري
+            {trialRows.length > 0 && (
+              <Badge variant={trialDue > 0 ? "destructive" : "secondary"} className="ml-1">{trialDue > 0 ? trialDue : trialRows.length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="history" className="gap-2">
             <History className="w-4 h-4" />
             السجل
@@ -424,6 +435,11 @@ export default function FollowUps() {
               />
             </>
           )}
+        </TabsContent>
+
+        {/* ===================== القالب الاختباري (§4.bz) ===================== */}
+        <TabsContent value="trial">
+          <TrialCallsList />
         </TabsContent>
       </Tabs>
     </div>

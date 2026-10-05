@@ -1,3 +1,4 @@
+import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
@@ -926,6 +927,9 @@ export default function PatientDetails() {
                 )}
               </div>
             )}
+            {/*  ══ **قالبٌ اختباريٌّ ينتظر النهائي** (§4.bz) — شريطٌ دائم، وسؤالُه في «سبب الحضور». */}
+            <TrialSocketBanner patientId={patient.id}
+              onAnswer={permissions.canAddPatients ? () => { setTab("visits"); setRoutingOpen(true); } : undefined} />
             <div className="flex flex-wrap gap-2 md:gap-3 mt-1 md:mt-2 text-xs md:text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-3 h-3 md:w-4 md:h-4" /> {t.patientDetails.age}: {patient.age}</span>
               {patient.phone && (

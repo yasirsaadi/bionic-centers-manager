@@ -1375,6 +1375,15 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
   /** **«متابعة» لا صيانة** (ترحيل ٠٩٦): عملُ الخبير على جهازٍ قائم بلا أجور — بلا أرقامٍ أصلاً، ويُعدّ وحده. */
   maintenanceIsFollowup: boolean("maintenance_is_followup").notNull().default(false),
   /**
+   * **القالبُ الاختباري** (ترحيل ٠٩٧، §4.bz): كم مرّةً سُلِّم، ومتى آخرُها، و**موعدُ القالب النهائي** الذي يصل المريضَ
+   * وتتّصل حوله الاستعلامات، وآخرُ اتّصال. «بانتظار النهائي» = `waiting_patient` بسبب `trial_socket` وحدهما.
+   */
+  trialSocketCount: integer("trial_socket_count").notNull().default(0),
+  trialFinalDate: date("trial_final_date"),
+  trialDeliveredAt: timestamp("trial_delivered_at", { withTimezone: true }),
+  trialLastCallAt: timestamp("trial_last_call_at", { withTimezone: true }),
+  trialLastCallNote: text("trial_last_call_note"),
+  /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
    * أمرٌ اكتمل يبقى `completed` بختمه وسجلِّ مراحله كاملاً، ويخرج من
