@@ -153,37 +153,71 @@ export default function CashBook() {
 
         {q.isLoading && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
-        {sheet && !sheet.opening && <OpeningCard sheet={sheet} branchId={branchId!} book={book} onSave={(b) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: b })} />}
+        {sheet && !sheet.opening && (sheet.isAdmin
+          ? <OpeningCard sheet={sheet} branchId={branchId!} book={book} onSave={(b) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: b })} />
+          : <p className="border-2 border-dashed rounded-md p-4 text-center text-muted-foreground" data-testid="cash-opening-waiting">
+              بانتظار أن يسجّل المسؤول بداية دفتر «{CASH_BOOK_LABELS[book]}» لهذا الفرع.
+            </p>)}
         {sheet && sheet.opening && <SheetBody sheet={sheet} branchId={branchId!} book={book} day={day} write={write} />}
       </div>
     </div>
   );
 }
 
-/** أوّلُ يوم: النقدُ الموجود في القاصة الآن — ومنه يبدأ الحساب. */
+/** أوّلُ يوم: النقدُ الموجود في القاصة الآن — ومنه يبدأ الحساب. يسجّله المسؤولُ وحده. */
 function OpeningCard({ sheet, branchId, book, onSave }: { sheet: Sheet; branchId: number; book: Book; onSave: (b: any) => void }) {
-  const [cash, setCash] = useState("");
-  const [ratio, setRatio] = useState("");
-  const [date, setDate] = useState(sheet.today);
   return (
     <div className="border-2 border-dashed border-[#1d2b55]/40 rounded-md p-4 space-y-3" data-testid="cash-opening">
       <p className="font-semibold">ابدأ دفتر «{CASH_BOOK_LABELS[book]}» لهذا الفرع</p>
-      <p className="text-sm text-muted-foreground">اكتب النقد الموجود فعلاً في القاصة في بداية يوم البدء، والمتبقي في النسبة إن وُجد. من هذا اليوم يبدأ حساب «الباقي من أمس». ويُسجَّل مرّة واحدة.</p>
-      <div className="flex flex-wrap gap-4 items-end">
-        <label className="grid gap-1 text-sm">يوم البدء<Input type="date" value={date} max={sheet.today} onChange={(e) => setDate(e.target.value)} className="w-40" /></label>
-        <label className="grid gap-1 text-sm">النقد في القاصة<AmountInput id="open-cash" value={cash} onChange={setCash} /></label>
-        <label className="grid gap-1 text-sm">المتبقي في النسبة<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>
-        <Button onClick={() => onSave({ branchId, book, openingDate: date, cash: Number(cash || 0), ratio: Number(ratio || 0) })} data-testid="cash-opening-save">
-          ابدأ الدفتر
-        </Button>
-      </div>
+      <p className="text-sm text-muted-foreground">اكتب النقد الموجود فعلاً في القاصة في بداية يوم البدء، والمتبقي في النسبة إن وُجد. من هذا اليوم يبدأ حساب «الباقي من أمس». وتستطيع تعديله لاحقاً.</p>
+      <OpeningFields today={sheet.today} initial={null} label="ابدأ الدفتر"
+        onSave={(v) => onSave({ branchId, book, ...v })} />
     </div>
+  );
+}
+
+/** حقولُ البداية — للبدء أوّلَ مرّة وللتعديل معاً. */
+function OpeningFields({ today, initial, label, onSave }: {
+  today: string; initial: { date: string; cash: number; ratio: number } | null; label: string;
+  onSave: (v: { openingDate: string; cash: number; ratio: number }) => void;
+}) {
+  const [cash, setCash] = useState(initial ? String(initial.cash) : "");
+  const [ratio, setRatio] = useState(initial ? String(initial.ratio) : "");
+  const [date, setDate] = useState(initial?.date ?? today);
+  return (
+    <div className="flex flex-wrap gap-4 items-end">
+      <label className="grid gap-1 text-sm">يوم البدء<Input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} className="w-40" /></label>
+      <label className="grid gap-1 text-sm">النقد في القاصة<AmountInput id="open-cash" value={cash} onChange={setCash} /></label>
+      <label className="grid gap-1 text-sm">المتبقي في النسبة<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>
+      <Button disabled={!date} onClick={() => onSave({ openingDate: date, cash: Number(cash || 0), ratio: Number(ratio || 0) })} data-testid="cash-opening-save">
+        {label}
+      </Button>
+    </div>
+  );
+}
+
+/** تعديلُ بداية الدفتر — للمسؤول وحده. يتغيّر منه «الباقي من أمس» لكلّ يومٍ بعده. */
+function EditOpeningDialog({ sheet, branchId, book, write, open, onClose }: {
+  sheet: Sheet; branchId: number; book: Book; write: any; open: boolean; onClose: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-xl">
+        <DialogHeader><DialogTitle>تعديل بداية دفتر «{CASH_BOOK_LABELS[book]}»</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">منه يُحسب «الباقي من أمس» و«المتبقي في النسبة» من يوم البدء فما بعده. والأيامُ قبل يوم البدء لا تدخل الحساب.</p>
+        {open && sheet.opening && (
+          <OpeningFields today={sheet.today} initial={sheet.opening} label="حفظ"
+            onSave={(v) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: { branchId, book, ...v } }, { onSuccess: onClose })} />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId: number; book: Book; day: string; write: any }) {
   const cfg = sheet.branch.config;
   const [editing, setEditing] = useState<Row | null>(null);
+  const [editOpening, setEditOpening] = useState(false);
   const income = sheet.rows.filter((r) => r.column === "income");
   const outflow = sheet.rows.filter((r) => r.column !== "income");
   const editable = (r: Row) => sheet.canWrite && r.source !== "payment"
@@ -201,6 +235,13 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
 
   return (
     <div className="space-y-4">
+      {sheet.isAdmin && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="cash-opening-line">
+          <span>بداية الدفتر: {sheet.opening!.date.split("-").reverse().join("/")} · النقد {fmt(sheet.opening!.cash)} · النسبة {fmt(sheet.opening!.ratio)}</span>
+          <Button size="sm" variant="outline" className="h-7" onClick={() => setEditOpening(true)} data-testid="cash-opening-edit">تعديل بداية الدفتر</Button>
+          <EditOpeningDialog sheet={sheet} branchId={branchId} book={book} write={write} open={editOpening} onClose={() => setEditOpening(false)} />
+        </div>
+      )}
       {!sheet.canWrite && (
         <p className="text-xs text-muted-foreground bg-slate-50 border rounded px-3 py-1.5">
           {day < sheet.opening!.date ? "هذا اليوم قبل بداية الدفتر." : "يومٌ ماضٍ — للقراءة. تعديله للمسؤول وحده."}
