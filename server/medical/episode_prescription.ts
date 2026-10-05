@@ -143,3 +143,52 @@ export async function orderDeviceSpecs(
     specs,
   };
 }
+
+/** جهازٌ مَبيعٌ في خيطه بمواصفاته — `specs = null` حين لا معاينةَ تقول شيئاً عنه (موروثٌ أو جزءٌ بلا معاينة). */
+export interface CaseDeviceSpecsRow {
+  episodeId: number;
+  sequenceNumber: number;
+  status: string;
+  requestedItem: string;
+  specs: DeviceSpecs | null;
+}
+
+/**
+ * **مواصفاتُ كلّ جهازٍ مَبيع في خيطه — من معاينته هو** (§4.q «مرحلةٌ لاحقة»، المالك ٢٠٢٦-١٠-٠٥).
+ * `patient_cases.details` صفٌّ واحد للخيط: بيعُ الجهاز B يكتب فوق لقطة A، فتعرض بطاقةُ القسم مواصفاتِ B على مريضٍ أمرُ A
+ * ما زال يُصنَع. فلكلّ خيطٍ أجهزتُه المبيعة (`in_manufacturing`/`delivered`) بترتيبها، ولكلّ جهازٍ مواصفاتُ أحدث معاينةٍ
+ * فعّالة **على حلقته بعينها** — القاعدةُ نفسُها التي يقرأ بها أمرُ التصنيع (`orderDeviceSpecs`). قراءةٌ محضة، بلا كتابة.
+ */
+export async function caseDeviceSpecs(
+  caseIds: number[],
+  executor: Executor = db,
+): Promise<Map<number, CaseDeviceSpecsRow[]>> {
+  const out = new Map<number, CaseDeviceSpecsRow[]>();
+  if (!caseIds.length) return out;
+  const r = await executor.execute(sql`
+    SELECT e.id, e.case_id, e.sequence_number, e.status, e.requested_item, pc.case_type, ex.prescription
+      FROM patient_device_episodes e
+      JOIN patient_cases pc ON pc.id = e.case_id
+      LEFT JOIN LATERAL (
+        SELECT me.prescription FROM medical_exams me
+         WHERE me.device_episode_id = e.id AND me.case_type = pc.case_type AND ${activeExamSql("me")}
+         ORDER BY me.signed_at DESC, me.id DESC LIMIT 1
+      ) ex ON TRUE
+     WHERE e.case_id IN (${sql.join(caseIds.map((id) => sql`${id}`), sql`, `)})
+       AND e.status IN ('in_manufacturing', 'delivered')
+       AND pc.case_type IN ('prosthetic', 'medical_support')
+     ORDER BY e.case_id, e.sequence_number, e.id`);
+  for (const row of (r.rows ?? []) as any[]) {
+    const rx = row.prescription && typeof row.prescription === "object" && !Array.isArray(row.prescription)
+      ? row.prescription as Record<string, unknown> : null;
+    const specs = rx ? deviceSpecsFromPrescription(row.case_type as DeviceServiceType, rx) : null;
+    const list = out.get(Number(row.case_id)) ?? [];
+    list.push({
+      episodeId: Number(row.id), sequenceNumber: Number(row.sequence_number), status: String(row.status),
+      requestedItem: String(row.requested_item ?? "full_device"),
+      specs: specs && hasAnySpec(specs) ? specs : null,
+    });
+    out.set(Number(row.case_id), list);
+  }
+  return out;
+}
