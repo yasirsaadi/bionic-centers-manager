@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, Fragment } from "react";
+import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -80,24 +81,8 @@ import {
 
 // Labels match the categories returned by the AI categorize endpoint exactly,
 // so the AI suggestion can be matched on either `label` or `value`.
-const EXPENSE_CATEGORIES = [
-  { value: "salaries", label: "رواتب" },
-  { value: "rent", label: "إيجارات" },
-  { value: "medical_supplies", label: "مستلزمات طبية" },
-  { value: "maintenance", label: "صيانة" },
-  { value: "utilities", label: "كهرباء ومياه" },
-  { value: "communications", label: "اتصالات" },
-  { value: "marketing", label: "تسويق" },
-  { value: "transport", label: "نقل" },
-  { value: "hospitality", label: "ضيافة" },
-  { value: "stationery", label: "قرطاسية" },
-  { value: "bank_fees", label: "رسوم بنكية" },
-  // Karbala-only: the shrine's percentage. Offered in the expense form only
-  // when the selected branch is كربلاء (karbalaOnly), but still labelled
-  // everywhere so existing records display correctly.
-  { value: "shrine_percentage", label: "نسبة العتبة", karbalaOnly: true },
-  { value: "other", label: "أخرى" }
-];
+//  القائمةُ في ملفٍّ مشترك تقرؤه صفحةُ «دفتر القاصة» أيضاً (§4.ca) — فلا قائمتان تفترقان.
+
 
 const CATEGORY_COLORS: Record<string, string> = {
   salaries: "#3b82f6",
@@ -1822,7 +1807,7 @@ export default function Accounting() {
     },
   });
   const categoriesForForm = [
-    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).karbalaOnly || selectedBranchIsKarbala),
+    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).sheetOnly && (!(c as any).karbalaOnly || selectedBranchIsKarbala)),
     ...customCategories
       .filter((c) => c.branchId == null || c.branchId === watchedBranchId)
       .map((c) => ({ value: c.label, label: c.label, custom: true })),

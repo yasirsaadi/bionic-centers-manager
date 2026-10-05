@@ -930,6 +930,43 @@ export const expenses = pgTable("expenses", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ══ دفترُ القاصة اليوميّ (ترحيل ٠٩٨، §4.ca) ══════════════════════════════════
+//  ما ليس مصروفاً من صفحة الدفتر: «وارد آخر» · التحويلُ إلى قاصة الدكتور · نسبةُ الدكتور · استلامُ النسبة.
+//  والمصاريفُ ونسبتا المستشفى والعتبة صفوفٌ في `expenses` نفسِها — لا تُكتب مرّتين.
+export const cashBookEntries = pgTable("cash_book_entries", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  book: text("book").notNull(), // 'devices' | 'physio'
+  entryDate: date("entry_date").notNull(),
+  kind: text("kind").notNull(), // 'income_other' | 'dr_transfer' | 'dr_ratio' | 'ratio_received'
+  amount: integer("amount").notNull(),
+  note: text("note"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedBy: integer("deleted_by").references(() => systemUsers.id),
+}, (t) => [
+  index("ix_cash_book_entries_day").on(t.branchId, t.book, t.entryDate).where(sql`deleted_at IS NULL`),
+  uniqueIndex("uq_cash_book_dr_ratio_day").on(t.branchId, t.book, t.entryDate)
+    .where(sql`kind = 'dr_ratio' AND deleted_at IS NULL`),
+]);
+
+/** الرصيدُ الافتتاحيّ لكلّ دفتر — من يومه يبدأ حسابُ «الباقي من أمس» و«المتبقي من نسبة أمس». */
+export const cashBookOpenings = pgTable("cash_book_openings", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  book: text("book").notNull(),
+  openingDate: date("opening_date").notNull(),
+  cashBalance: integer("cash_balance").notNull().default(0),
+  ratioBalance: integer("ratio_balance").notNull().default(0),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique("cash_book_openings_branch_id_book_key").on(t.branchId, t.book),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and

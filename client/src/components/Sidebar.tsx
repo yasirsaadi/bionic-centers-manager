@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
@@ -292,6 +292,8 @@ export function Sidebar() {
     { label: t.sidebar.financialReports, icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: language === "ar" ? "التقرير اليومي للمرضى" : "Daily Patient Report", icon: CalendarDays, href: "/reports/daily-patients", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
+    //  دفترُ القاصة اليوميّ (§4.ca) — للمحاسب ومدير الفرع والمسؤول وحدهم، كبوّابة الخادم.
+    { label: "دفتر القاصة", icon: BookOpen, href: "/cash-book", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager", "accountant"] as const },
     { label: t.sidebar.branches, icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
     { label: t.sidebar.statistics, icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
     { label: t.sidebar.surveys, icon: ClipboardCheck, href: "/surveys", adminOnly: false, settingKey: null, permission: "canManageSurveys" as const },
