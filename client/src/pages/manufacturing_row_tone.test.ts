@@ -195,7 +195,8 @@ ok("ط٦. واسمُ المريض سطرٌ قائمٌ بذاته بخطٍّ أع
 ok("ط٧. والسببُ يُرسَم كاملاً — العنوانُ والملاحظة",
   /\{t\.reason\.prefix\}: \{t\.reason\.label\}/.test(noComments)
   && /\{t\.reason\.note && <span className="text-amber-700"> — \{t\.reason\.note\}<\/span>\}/.test(noComments));
-ok("ط٨. ولا يُرسَم إلّا حين يوجد", /\{t\.reason && \(/.test(noComments));
+//  والقالبُ الاختباري (§4.bz) له سطرُه بدل السبب العامّ — والشرطُ نفسُه يبقى أوّلَ ما يُقرأ.
+ok("ط٨. ولا يُرسَم إلّا حين يوجد", /\{t\.reason && (!o\.trialAwaiting && )?\(/.test(noComments));
 ok("ط٩. وشارةُ «متأخر» تلبس صنفَ القرار",
   /<Badge className=\{`text-xs gap-1 \$\{t\.overdueBadgeClass\}`\}>/.test(noComments));
 ok("ط٩ب. **ونصُّها من القرار لا «متأخر» مكتوبةً** للاثنين",

@@ -88,7 +88,20 @@ console.log("\n── أ: الثمانيةُ الأولى بحرفها ──");
 same("أ.١ الترتيبُ والمفاتيح كما على الشاشة — والجديدُ آخرَها",
   BUCKET_DEFS.map((d) => d.key),
   ["new", "active", "waiting_patient", "waiting_materials", "medical_hold",
-    "technical_rework", "ready", "completed_month", "completed_today", "overdue", "overdue_excused"]);
+    "technical_rework", "ready", "completed_month", "completed_today", "overdue", "overdue_excused", "trial_socket"]);
+//  ══ «قالب اختباري» (§4.bz) — بالتعريف المشترك وحده: بانتظار المريض **بسبب القالب**، لا كلُّ «بانتظار المريض» ══
+{
+  const TRIAL: Row[] = [
+    row(101, "عناد", "ready_for_fitting", "waiting_patient", { holdReasonCode: "trial_socket", isOverdue: true }),
+    row(102, "عناد", "ready_for_fitting", "waiting_patient", { holdReasonCode: "patient_no_show" }),
+    row(103, "فاضل", "ready_for_fitting", "active", { holdReasonCode: "trial_socket" }),   // عاد للنهائي — خرج منه
+    row(104, "فاضل", "delivered", "completed", { holdReasonCode: null }),
+  ];
+  same("أ.١ب **«قالب اختباري»** — المنتظِرُ بسبب القالب وحده، والعائدُ والمسلَّمُ وسائرُ «بانتظار المريض» خارجه",
+    idsOf("trial_socket", TRIAL), [101]);
+  same("أ.١ج وهو «بانتظار المريض» و«متأخرٌ بعذر» معاً — لا يُسحَب من شريطٍ قائم",
+    [idsOf("waiting_patient", TRIAL), idsOf("overdue_excused", TRIAL)], [[101, 102], [101]]);
+}
 same("أ.٢ **أوامر جديدة** — المرحلةُ الأولى والملغى خارجها", idsOf("new"), [1, 2]);
 same("أ.٣ **قيد العمل** — فعّالٌ خارج المرحلة الأولى", idsOf("active"), [4, 5, 6, 11, 17]);
 same("أ.٤ بانتظار المريض", idsOf("waiting_patient"), [7, 15, 16]);
