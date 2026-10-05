@@ -34,6 +34,7 @@ reason_labels(code, label) AS (VALUES
   ('alignment_or_calibration', 'المحاذاة أو المعايرة'),
   ('device_adjustment', 'تعديل الجهاز'),
   ('remake', 'إعادة تصنيع'),
+  ('trial_socket', 'قالب اختباري — بانتظار القالب النهائي'),
   ('measurement_error', 'خطأ في القياس (سابقاً)'),
   ('cast_error', 'خطأ في القالب (سابقاً)'),
   ('socket_fit_error', 'مشكلة في ملاءمة السوكت (سابقاً)'),
