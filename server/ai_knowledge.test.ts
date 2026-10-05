@@ -999,6 +999,22 @@ async function main() {
       } finally {
         await q(`ALTER TABLE ai_knowledge_articles DROP CONSTRAINT IF EXISTS zz_test_boom`);
       }
+      //  ر.٩ **السببُ الحقيقيّ لواقعة ٢٠٢٦-١٠-٠٥**: المسؤولُ في «كل الفروع» جلستُه `branchId = 0`، فسطرُ التدقيق كان يحمل
+      //  فرع ٠ ويُسقط الإدراجَ على مفتاح `audit_log.branch_id` — «مقالة جديدة» تفشل كلَّ مرّة، و«تعديل» كذلك.
+      const allBranchesAdmin = sessionHeader({ userId: ADMIN, displayName: "مسؤول اختبار", role: "admin", branchId: 0, isAdmin: true, permissions: {} });
+      const zr = await fetch(`${BASE}/api/ai/knowledge/articles`, {
+        method: "POST", headers: { "content-type": "application/json", "x-test-session": allBranchesAdmin },
+        body: JSON.stringify({ title: `${MARK} — مقالة من كل الفروع`, body: "نصّ", scope: "general", branchId: null, audience: [], contentType: "workflow" }),
+      });
+      const zb = await zr.json().catch(() => null);
+      const ze = zb?.article?.id ? await fetch(`${BASE}/api/ai/knowledge/articles/${zb.article.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json", "x-test-session": allBranchesAdmin },
+        body: JSON.stringify({ title: `${MARK} — مقالة من كل الفروع`, body: "نصّ ٢", scope: "general", branchId: null }),
+      }) : null;
+      const za = (await q(`SELECT action, branch_id FROM audit_log WHERE entity_type = 'ai_knowledge_article' AND user_id = $1
+                            AND new_values LIKE $2 ORDER BY id`, [ADMIN, `%${MARK} — مقالة من كل الفروع%`])).rows;
+      same("ر.٩ **«مقالة جديدة» و«تعديل» من «كل الفروع» يُحفظان، وسطرا التدقيق بلا فرع**",
+        [zr.status, ze?.status, za.map((r: any) => [r.action, r.branch_id])], [201, 200, [["create", null], ["edit", null]]]);
       same("ر.٧ ولا مقالةَ ولا اقتراحَ كُتب من المحاولتين — لا معاملةَ بدأت",
         [(await q(`SELECT count(*)::int n FROM ai_knowledge_articles WHERE title LIKE $1`, [`${MARK} — إنشاءٌ أثناء التشبّع%`])).rows[0].n,
          (await q(`SELECT count(*)::int n FROM ai_knowledge_suggestions WHERE suggested_text LIKE $1`, [`${MARK} — اقتراحٌ أثناء التشبّع%`])).rows[0].n],
