@@ -59,6 +59,7 @@
     "test:manufacturing-write-authority": "tsx server/manufacturing/write_authority.test.ts",
     "test:maintenance-warranty": "tsx server/maintenance_warranty_similar.test.ts",
     "test:trial-socket": "tsx server/trial_socket.test.ts",
+    "test:cash-book": "tsx server/cash_book.test.ts",
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
     "test:registry-assignment-api": "tsx server/registry_assignment_api.test.ts",
     "test:ai-access": "tsx server/ai/access.test.ts",

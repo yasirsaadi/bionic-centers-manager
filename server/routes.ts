@@ -46,6 +46,7 @@ import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/r
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
+import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
 import { caseNotBoughtByCase } from "./followup/case_not_bought";
@@ -8788,6 +8789,8 @@ export async function registerRoutes(
   //  **المراجعةُ المالية لعملياتِ «بلا معاينة»** (ترحيل ٠٦٧): العمليةُ
   //  تمضي والمالُ ينتظر اعتمادَ طبيبٍ مخوَّل.
   registerPendingChargeRoutes(app, isAuthenticated);
+  //  دفترُ القاصة اليوميّ (§4.ca).
+  registerCashBookRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerPaymentCorrectionRoutes(app, isAuthenticated);
   //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —

@@ -1,0 +1,360 @@
+// **دفترُ القاصة اليوميّ** (ترحيل ٠٩٨، §4.ca) — طبقةُ البيانات.
+//
+// صفحةُ اليوم تُبنى من ثلاثة مصادر لا مصدرٍ جديدٍ ينحرف عنها:
+//   ١) **الوارد**: دفعاتُ المرضى المسجّلة في الفرع واليوم (بقسم حالتها) + «وارد آخر» من جدول الدفتر.
+//   ٢) **المصاريف** (ومعها نسبتا المستشفى والعتبة): صفوفُ `expenses` نفسُها بقسمها — فما كُتب في صفحة المحاسبة يظهر هنا،
+//      وما كُتب هنا يدخل تقاريرَ المحاسبة وقيودَها كما يدخلها أيُّ مصروف.
+//   ٣) **ما ليس مصروفاً**: التحويلُ إلى قاصة الدكتور ونسبتُه واستلامُها — في `cash_book_entries`.
+// و«الباقي من أمس» يُحسب من الرصيد الافتتاحيّ للدفتر وما بعده وحدَه.
+
+import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { db } from "../db";
+import {
+  payments, patients, patientCases, expenses, branches, cashBookEntries, cashBookOpenings, type Expense,
+} from "@shared/schema";
+import { activePatientDrizzle } from "../patients/active_patient";
+import { baghdadDayBounds } from "../storage";
+import { createJournalForExpense, reverseJournalForSource } from "../accounting/auto_journal";
+import {
+  type CashBook, type CashEntryKind, type OutflowKind, BOOK_EXPENSE_SECTION, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY,
+  branchCashConfig, ratioAmount, dayTotals, ratioBox, type BranchCashConfig,
+} from "@shared/cash_book";
+
+export class CashBookError extends Error {
+  constructor(public status: number, message: string) { super(message); this.name = "CashBookError"; }
+}
+
+export async function branchConfigOf(branchId: number): Promise<{ name: string; config: BranchCashConfig } | null> {
+  const [b] = await db.select({ name: branches.name }).from(branches).where(eq(branches.id, branchId));
+  return b ? { name: b.name, config: branchCashConfig(b.name) } : null;
+}
+
+function addDays(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+//  ══ تصفيةُ الدفتر — قاعدةٌ واحدة للدفعات وللمصاريف ═══════════════════════════════
+//  فرعٌ بدفترٍ واحد: كلُّ ماله فيه. وفرعٌ بدفترين: العلاجُ الطبيعيُّ ما كانت حالتُه/قسمُه علاجاً طبيعياً، والباقي كلُّه
+//  لدفتر الأطراف والمساند — ومنه ما بلا قسم (دفعةٌ بلا حالة، مصروفٌ مشترك) **موسوماً بذلك** لا مخفيّاً.
+function paymentBookFilter(cfg: BranchCashConfig, book: CashBook) {
+  if (cfg.books.length === 1) return sql`TRUE`;
+  return book === "physio"
+    ? sql`${patientCases.caseType} = 'physiotherapy'`
+    : sql`(${patientCases.caseType} IS NULL OR ${patientCases.caseType} <> 'physiotherapy')`;
+}
+function expenseBookFilter(cfg: BranchCashConfig, book: CashBook) {
+  if (cfg.books.length === 1) return sql`TRUE`;
+  return book === "physio" ? sql`${expenses.section} = 'physio'` : sql`(${expenses.section} IS NULL OR ${expenses.section} <> 'physio')`;
+}
+
+/** مجموعُ وارد الدفتر في مدى أيّام بغداد [from, toExclusive) — الدفعاتُ ثمّ «وارد آخر». */
+async function incomeSum(branchId: number, cfg: BranchCashConfig, book: CashBook, from: string, toExclusive: string): Promise<number> {
+  const { start } = baghdadDayBounds(from);
+  const { start: end } = baghdadDayBounds(toExclusive);
+  const [p] = await db.select({ t: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+    .from(payments)
+    .innerJoin(patients, eq(patients.id, payments.patientId))
+    .leftJoin(patientCases, eq(patientCases.id, payments.caseId))
+    .where(and(eq(payments.branchId, branchId), gte(payments.date, start!), lt(payments.date, end!),
+      activePatientDrizzle(), paymentBookFilter(cfg, book)));
+  const other = await entrySum(branchId, book, "income_other", from, toExclusive);
+  return Number(p?.t ?? 0) + other;
+}
+
+async function expenseSum(branchId: number, cfg: BranchCashConfig, book: CashBook, from: string, toExclusive: string): Promise<number> {
+  const [e] = await db.select({ t: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
+    .from(expenses)
+    .where(and(eq(expenses.branchId, branchId), sql`${expenses.expenseDate} >= ${from}`, sql`${expenses.expenseDate} < ${toExclusive}`,
+      expenseBookFilter(cfg, book)));
+  return Number(e?.t ?? 0);
+}
+
+async function entrySum(branchId: number, book: CashBook, kind: CashEntryKind, from: string, toExclusive: string): Promise<number> {
+  const [r] = await db.select({ t: sql<string>`COALESCE(SUM(${cashBookEntries.amount}), 0)` })
+    .from(cashBookEntries)
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), eq(cashBookEntries.kind, kind),
+      sql`${cashBookEntries.deletedAt} IS NULL`,
+      sql`${cashBookEntries.entryDate} >= ${from}`, sql`${cashBookEntries.entryDate} < ${toExclusive}`));
+  return Number(r?.t ?? 0);
+}
+
+export async function getOpening(branchId: number, book: CashBook) {
+  const [o] = await db.select().from(cashBookOpenings)
+    .where(and(eq(cashBookOpenings.branchId, branchId), eq(cashBookOpenings.book, book)));
+  return o ?? null;
+}
+
+/** صفُّ الجدول كما يُعرَض — والمصدرُ والمعرّفُ للتعديل. */
+export interface SheetRow {
+  source: "payment" | "entry" | "expense";
+  id: number;
+  column: "income" | "expense" | "transfer";
+  kind: "payment" | "income_other" | OutflowKind;
+  amount: number;
+  note: string;
+  category: string | null;
+  /** دفعةٌ بلا قسم، أو مصروفٌ مشترك/بلا قسم، في دفتر الأطراف — موسومةٌ لا مخفيّة. */
+  unsectioned: boolean;
+  createdBy: number | null;
+  at: string | null;
+}
+
+function expenseKind(category: string): OutflowKind {
+  if (category === HOSPITAL_RATIO_CATEGORY) return "hospital_ratio";
+  if (category === ATABAH_RATIO_CATEGORY) return "atabah_ratio";
+  return "expense";
+}
+
+/** صفحةُ يومٍ واحد لدفترٍ واحد. */
+export async function getSheet(branchId: number, book: CashBook, day: string) {
+  const b = await branchConfigOf(branchId);
+  if (!b) throw new CashBookError(404, "الفرع غير موجود");
+  const cfg = b.config;
+  if (!cfg.books.includes(book)) throw new CashBookError(400, "هذا الفرع بلا دفتر علاج طبيعي");
+  const opening = await getOpening(branchId, book);
+  const next = addDays(day, 1);
+  const { start, endExclusive } = baghdadDayBounds(day, day);
+
+  const payRows = await db.select({
+    id: payments.id, amount: payments.amount, notes: payments.notes, date: payments.date,
+    patientName: patients.name, patientCode: patients.patientCode, caseType: patientCases.caseType,
+  })
+    .from(payments)
+    .innerJoin(patients, eq(patients.id, payments.patientId))
+    .leftJoin(patientCases, eq(patientCases.id, payments.caseId))
+    .where(and(eq(payments.branchId, branchId), gte(payments.date, start!), lt(payments.date, endExclusive!),
+      activePatientDrizzle(), paymentBookFilter(cfg, book)))
+    .orderBy(payments.date, payments.id);
+
+  const expRows = await db.select().from(expenses)
+    .where(and(eq(expenses.branchId, branchId), eq(expenses.expenseDate, day), expenseBookFilter(cfg, book)))
+    .orderBy(expenses.createdAt, expenses.id);
+
+  const entRows = await db.select().from(cashBookEntries)
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), eq(cashBookEntries.entryDate, day),
+      sql`${cashBookEntries.deletedAt} IS NULL`))
+    .orderBy(cashBookEntries.createdAt, cashBookEntries.id);
+
+  const twoBooks = cfg.books.length > 1;
+  const rows: SheetRow[] = [];
+  for (const p of payRows) {
+    const who = `${p.patientName ?? ""}${p.patientCode ? ` (${p.patientCode})` : ""}`.trim();
+    rows.push({
+      source: "payment", id: p.id, column: "income", kind: "payment", amount: Number(p.amount),
+      note: [`دفعة: ${who}`, p.notes?.trim()].filter(Boolean).join(" — "), category: null,
+      unsectioned: twoBooks && book === "devices" && !p.caseType, createdBy: null,
+      at: p.date ? new Date(p.date).toISOString() : null,
+    });
+  }
+  for (const e of entRows.filter((x) => x.kind === "income_other")) {
+    rows.push({ source: "entry", id: e.id, column: "income", kind: "income_other", amount: e.amount, note: e.note ?? "",
+      category: null, unsectioned: false, createdBy: e.createdBy, at: e.createdAt.toISOString() });
+  }
+  const outflow: SheetRow[] = [];
+  for (const x of expRows) {
+    const kind = expenseKind(x.category);
+    outflow.push({
+      source: "expense", id: x.id, column: "expense", kind, amount: x.amount,
+      note: [x.subcategory?.trim(), x.description?.trim(), x.notes?.trim()].filter(Boolean).join(" — "),
+      category: x.category, unsectioned: twoBooks && book === "devices" && x.section !== "prosthetic",
+      createdBy: x.createdBy && /^\d+$/.test(x.createdBy) ? Number(x.createdBy) : null,
+      at: x.createdAt ? new Date(x.createdAt).toISOString() : null,
+    });
+  }
+  for (const e of entRows.filter((x) => x.kind === "dr_transfer" || x.kind === "dr_ratio")) {
+    outflow.push({ source: "entry", id: e.id, column: "transfer", kind: e.kind as OutflowKind, amount: e.amount, note: e.note ?? "",
+      category: null, unsectioned: false, createdBy: e.createdBy, at: e.createdAt.toISOString() });
+  }
+  outflow.sort((a, c) => (a.at ?? "").localeCompare(c.at ?? "") || a.id - c.id);
+  rows.push(...outflow);
+
+  const income = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
+  const out = outflow.reduce((s, r) => s + r.amount, 0);
+
+  //  الباقي من أمس — من الرصيد الافتتاحيّ وأيّامه وحدَها.
+  let prevRemaining = 0;
+  let prevRatio = 0;
+  if (opening && day > opening.openingDate) {
+    const from = opening.openingDate;
+    const prevIncome = await incomeSum(branchId, cfg, book, from, day);
+    const prevExp = await expenseSum(branchId, cfg, book, from, day);
+    const prevTransfer = await entrySum(branchId, book, "dr_transfer", from, day);
+    const prevDrRatio = await entrySum(branchId, book, "dr_ratio", from, day);
+    const prevReceived = await entrySum(branchId, book, "ratio_received", from, day);
+    prevRemaining = opening.cashBalance + prevIncome - prevExp - prevTransfer - prevDrRatio;
+    prevRatio = opening.ratioBalance + prevDrRatio - prevReceived;
+  } else if (opening && day === opening.openingDate) {
+    prevRemaining = opening.cashBalance;
+    prevRatio = opening.ratioBalance;
+  }
+  const todayDrRatio = entRows.filter((x) => x.kind === "dr_ratio").reduce((s, x) => s + x.amount, 0);
+  const receivedRows = entRows.filter((x) => x.kind === "ratio_received");
+  const received = receivedRows.reduce((s, x) => s + x.amount, 0);
+
+  //  النسبتان الثابتتان كما تُحسبان الآن من وارد اليوم — والمسجَّلُ قد يكون أقدمَ من دفعةٍ لحقته.
+  const drRatioExpected = ratioAmount(income, cfg.drRatioPct);
+  const hospitalExpected = ratioAmount(income, cfg.hospitalRatioPct);
+  const hospitalRow = outflow.find((r) => r.kind === "hospital_ratio") ?? null;
+  const drRatioRow = outflow.find((r) => r.kind === "dr_ratio") ?? null;
+
+  return {
+    branch: { id: branchId, name: b.name, config: cfg },
+    book, day,
+    opening: opening ? { date: opening.openingDate, cash: opening.cashBalance, ratio: opening.ratioBalance } : null,
+    rows,
+    totals: dayTotals(income, out, prevRemaining),
+    ratio: {
+      ...ratioBox(todayDrRatio, prevRatio, received),
+      receipts: receivedRows.map((x) => ({ id: x.id, amount: x.amount, note: x.note ?? "" })),
+    },
+    expected: {
+      drRatio: cfg.drRatioPct ? { pct: cfg.drRatioPct, amount: drRatioExpected, recorded: drRatioRow?.amount ?? null } : null,
+      hospitalRatio: cfg.hospitalRatioPct ? { pct: cfg.hospitalRatioPct, amount: hospitalExpected, recorded: hospitalRow?.amount ?? null } : null,
+    },
+    nextDay: next,
+  };
+}
+
+//  ══ الكتابة ════════════════════════════════════════════════════════════════════════
+//  كلُّ كتابةٍ على يومٍ من دفترٍ تتسلسل بقفلٍ استشاريّ على (الفرع، الدفتر، اليوم) — فلا تُكتب نسبةٌ مرّتين بضغطتين.
+async function lockDay(tx: any, branchId: number, book: CashBook, day: string) {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`cash_book:${branchId}:${book}:${day}`}))`);
+}
+
+export async function setOpening(p: {
+  branchId: number; book: CashBook; openingDate: string; cash: number; ratio: number; userId: number | null; isAdmin: boolean;
+}) {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`cash_book_opening:${p.branchId}:${p.book}`}))`);
+    const [cur] = await tx.select().from(cashBookOpenings)
+      .where(and(eq(cashBookOpenings.branchId, p.branchId), eq(cashBookOpenings.book, p.book)));
+    if (cur && !p.isAdmin) throw new CashBookError(409, "الرصيد الافتتاحيّ مسجَّل — تعديلُه للمسؤول وحده");
+    if (cur) {
+      const [row] = await tx.update(cashBookOpenings).set({
+        openingDate: p.openingDate, cashBalance: p.cash, ratioBalance: p.ratio, updatedAt: new Date(),
+      }).where(eq(cashBookOpenings.id, cur.id)).returning();
+      return { before: cur, after: row };
+    }
+    const [row] = await tx.insert(cashBookOpenings).values({
+      branchId: p.branchId, book: p.book, openingDate: p.openingDate, cashBalance: p.cash, ratioBalance: p.ratio, createdBy: p.userId,
+    }).returning();
+    return { before: null, after: row };
+  });
+}
+
+export async function addEntry(p: {
+  branchId: number; book: CashBook; day: string; kind: "income_other" | "dr_transfer" | "ratio_received";
+  amount: number; note: string | null; userId: number | null;
+}) {
+  return await db.transaction(async (tx) => {
+    await lockDay(tx, p.branchId, p.book, p.day);
+    const [row] = await tx.insert(cashBookEntries).values({
+      branchId: p.branchId, book: p.book, entryDate: p.day, kind: p.kind, amount: p.amount, note: p.note, createdBy: p.userId,
+    }).returning();
+    return row;
+  });
+}
+
+/** مصروفٌ من صفحة الدفتر — صفٌّ في `expenses` بقسم الدفتر وقيدُه، كما تكتبه صفحةُ المحاسبة. */
+export async function addExpense(p: {
+  branchId: number; book: CashBook; day: string; category: string; amount: number; note: string | null; userId: number | null;
+}): Promise<Expense> {
+  const [row] = await db.insert(expenses).values({
+    branchId: p.branchId, category: p.category, section: BOOK_EXPENSE_SECTION[p.book],
+    subcategory: p.category === "other" ? p.note : null, description: p.note,
+    amount: p.amount, expenseDate: p.day, paymentMethod: "نقدي",
+    createdBy: p.userId === null ? "unknown" : String(p.userId),
+  }).returning();
+  await createJournalForExpense(row, p.userId);
+  return row;
+}
+
+/**
+ * **نسبةُ الدكتور أو نسبةُ المستشفى** — تُحسب من وارد الدفتر اليوم وتُكتب أو تُحدَّث في صفٍّ واحدٍ لليوم.
+ * نسبةُ الدكتور في جدول الدفتر (ليست مصروفاً)، ونسبةُ المستشفى صفُّ مصروفٍ حقيقيّ بقيده.
+ */
+export async function syncRatio(p: {
+  branchId: number; book: CashBook; day: string; kind: "dr_ratio" | "hospital_ratio"; userId: number | null;
+}): Promise<{ amount: number; before: number | null; source: "entry" | "expense"; id: number }> {
+  const b = await branchConfigOf(p.branchId);
+  if (!b) throw new CashBookError(404, "الفرع غير موجود");
+  const pct = p.kind === "dr_ratio" ? b.config.drRatioPct : b.config.hospitalRatioPct;
+  if (!pct) throw new CashBookError(400, p.kind === "dr_ratio" ? "لا نسبةَ للدكتور مقرَّرة لهذا الفرع" : "نسبةُ المستشفى لفرع ذي قار وحده");
+  const next = addDays(p.day, 1);
+  const income = await incomeSum(p.branchId, b.config, p.book, p.day, next);
+  const amount = ratioAmount(income, pct);
+  if (amount <= 0) throw new CashBookError(400, "لا وارد في هذا اليوم تُحسب منه النسبة");
+
+  if (p.kind === "dr_ratio") {
+    return await db.transaction(async (tx) => {
+      await lockDay(tx, p.branchId, p.book, p.day);
+      const [cur] = await tx.select().from(cashBookEntries).where(and(
+        eq(cashBookEntries.branchId, p.branchId), eq(cashBookEntries.book, p.book), eq(cashBookEntries.entryDate, p.day),
+        eq(cashBookEntries.kind, "dr_ratio"), sql`${cashBookEntries.deletedAt} IS NULL`));
+      const note = `نسبة الدكتور ${pct}٪ من وارد اليوم`;
+      if (cur) {
+        await tx.update(cashBookEntries).set({ amount, note, updatedAt: new Date() }).where(eq(cashBookEntries.id, cur.id));
+        return { amount, before: cur.amount, source: "entry" as const, id: cur.id };
+      }
+      const [row] = await tx.insert(cashBookEntries).values({
+        branchId: p.branchId, book: p.book, entryDate: p.day, kind: "dr_ratio", amount, note, createdBy: p.userId,
+      }).returning();
+      return { amount, before: null, source: "entry" as const, id: row.id };
+    });
+  }
+
+  //  نسبةُ المستشفى: صفُّ مصروفٍ واحدٍ لليوم والدفتر — يُحدَّث ولا يتكرّر، وقيدُه يُعكَس ويُعاد كتعديل المصروف.
+  const result = await db.transaction(async (tx) => {
+    await lockDay(tx, p.branchId, p.book, p.day);
+    const [cur] = await tx.select().from(expenses).where(and(
+      eq(expenses.branchId, p.branchId), eq(expenses.expenseDate, p.day), eq(expenses.category, HOSPITAL_RATIO_CATEGORY),
+      eq(expenses.section, BOOK_EXPENSE_SECTION[p.book])));
+    const description = `نسبة المستشفى ${pct}٪ من وارد اليوم`;
+    if (cur) {
+      const [row] = await tx.update(expenses).set({ amount, description }).where(eq(expenses.id, cur.id)).returning();
+      return { row, before: cur.amount as number | null, updated: true };
+    }
+    const [row] = await tx.insert(expenses).values({
+      branchId: p.branchId, category: HOSPITAL_RATIO_CATEGORY, section: BOOK_EXPENSE_SECTION[p.book],
+      description, amount, expenseDate: p.day, paymentMethod: "نقدي",
+      createdBy: p.userId === null ? "unknown" : String(p.userId),
+    }).returning();
+    return { row, before: null, updated: false };
+  });
+  if (result.updated) await reverseJournalForSource("expense", result.row.id, p.userId, "تحديث نسبة المستشفى");
+  await createJournalForExpense(result.row, p.userId);
+  return { amount, before: result.before, source: "expense", id: result.row.id };
+}
+
+export async function getEntry(id: number) {
+  const [e] = await db.select().from(cashBookEntries).where(and(eq(cashBookEntries.id, id), sql`${cashBookEntries.deletedAt} IS NULL`));
+  return e ?? null;
+}
+
+export async function updateEntry(id: number, patch: { amount?: number; note?: string | null }) {
+  const [row] = await db.update(cashBookEntries).set({ ...patch, updatedAt: new Date() })
+    .where(and(eq(cashBookEntries.id, id), sql`${cashBookEntries.deletedAt} IS NULL`)).returning();
+  return row ?? null;
+}
+
+/** حذفٌ ناعم — الصفُّ يبقى للتدقيق بختمه ومَن حذفه. */
+export async function deleteEntry(id: number, userId: number | null) {
+  const [row] = await db.update(cashBookEntries).set({ deletedAt: new Date(), deletedBy: userId, updatedAt: new Date() })
+    .where(and(eq(cashBookEntries.id, id), sql`${cashBookEntries.deletedAt} IS NULL`)).returning();
+  return row ?? null;
+}
+
+export async function updateExpenseRow(id: number, patch: { amount?: number; description?: string | null; category?: string }, userId: number | null) {
+  const [row] = await db.update(expenses).set(patch).where(eq(expenses.id, id)).returning();
+  if (!row) return null;
+  await reverseJournalForSource("expense", id, userId, "تعديل المصروف من دفتر القاصة");
+  await createJournalForExpense(row, userId);
+  return row;
+}
+
+export async function deleteExpenseRow(id: number, userId: number | null) {
+  await reverseJournalForSource("expense", id, userId, "حذف المصروف من دفتر القاصة");
+  await db.delete(expenses).where(eq(expenses.id, id));
+}
