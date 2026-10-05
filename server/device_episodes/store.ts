@@ -605,8 +605,14 @@ export async function startDeviceEpisodeTx(
   //  هنا يمنع أن يُكتب العمودان بيدين فينحرفا.
   const component = componentOfRequest(requestedItem);
 
+  //  ══ **صفُّ المريض قبل صفّ الحالة — ترتيبُ الأقفال** (٢٠٢٦-١٠-٠٥) ══════════════════════════════════════
+  //  كان الطلبُ يقفل الحالةَ (`ensureCaseTx` — `FOR UPDATE`) ثمّ يحتاج صفَّ المريض بمفتاح الإدراج (`KEY SHARE`)، بينما
+  //  «تصحيح العملية» (`executeReversal`) يقفل المريضَ (`FOR UPDATE`) ثمّ الحالة — ترتيبان متعاكسان ⟵ `deadlock detected`
+  //  و٥٠٠ حين يسابق طلبٌ جديد تصحيحاً على المريض نفسِه (`test:administrative-reversal` ١٣٨، أحمرُ متقطّع قبل اليوم).
+  //  فالمريضُ يُقفَل أوّلاً **بـ`FOR KEY SHARE`**: القفلُ نفسُه الذي كان الإدراجُ سيأخذه — يُقدَّم لا يُشدَّد، فينتظر خلف
+  //  التصحيح ولا يحجب إدراجَ دفعةٍ أو زيارةٍ متزامنة. `test:episode-lock-order`.
   const pat = await tx.execute(sql`
-    SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId}
+    SELECT id, branch_id, deleted_at FROM patients WHERE id = ${patientId} FOR KEY SHARE
   `);
   const patient = (pat.rows ?? [])[0];
   if (!patient) throw new DeviceEpisodeError("المريض غير موجود", 404);
