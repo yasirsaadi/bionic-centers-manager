@@ -845,6 +845,17 @@ async function main() {
     });
     check(validUpdateRes.status === 200,
       "ف.٥ ومرجعٌ عامٌّ صحيح (بلا فرع) يبقى مقبولاً كما كان — الحارسُ الجديد لا يفرط", `status=${validUpdateRes.status}`);
+
+    //  ص.١ **المسؤولُ في «كل الفروع» — جلستُه `branchId = 0`** (واقعةُ ٢٠٢٦-١٠-٠٥): سطرُ التدقيق كان يحمل فرع ٠ فيُسقط المعاملة.
+    const allBranchesAdmin = sessionHeader({ ...S.admin, branchId: 0 });
+    const zeroRes = await fetch(`${BASE}/api/training/admin/tracks`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-session": allBranchesAdmin },
+      body: JSON.stringify({ title: `${MARK} — مسار من كل الفروع`, description: "وصف" }),
+    });
+    const zeroBody = await zeroRes.json().catch(() => null);
+    const zeroAudit = zeroBody?.track?.id ? (await q(
+      `SELECT branch_id FROM audit_log WHERE entity_type = 'training_track' AND entity_id = $1 ORDER BY id DESC LIMIT 1`, [zeroBody.track.id])).rows : [];
+    same("ص.١ **مسارٌ جديد من «كل الفروع» يُحفَظ، وسطرُ تدقيقه بلا فرع**", [zeroRes.status, zeroAudit.map((r: any) => r.branch_id)], [201, [null]]);
   } finally {
     await cleanup(TRACK_ID);
     httpServer.close();

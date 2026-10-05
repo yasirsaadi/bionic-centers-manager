@@ -1246,7 +1246,7 @@ function AiMemoryTab() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "تعذّر الحفظ");
+        throw new Error(err.error || err.message || "تعذّر الحفظ");
       }
       return res.json();
     },
@@ -1566,7 +1566,7 @@ function AiKnowledgeTab() {
       }, SAVE_ARTICLE_TIMEOUT_MS);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "تعذّر الحفظ");
+        throw new Error(err.error || err.message || "تعذّر الحفظ");
       }
       return res.json();
     },

@@ -49,7 +49,9 @@ function actorFrom(req: Req): Actor {
     userId: typeof s?.userId === "number" ? s.userId : null,
     name: typeof s?.displayName === "string" ? s.displayName : null,
     role: typeof s?.role === "string" ? s.role : (s?.isAdmin ? "admin" : null),
-    branchId: typeof s?.branchId === "number" ? s.branchId : null,
+    //  «كل الفروع» للمسؤول تُحفَظ في الجلسة `0` (routes.ts) — وليست فرعاً: سطرُ التدقيق بها يُسقط المعاملةَ على
+    //  مفتاح `audit_log.branch_id` (واقعةُ «مقالة جديدة» ٢٠٢٦-١٠-٠٥). فما ليس رقماً موجباً ⟵ `null`.
+    branchId: Number.isInteger(s?.branchId) && s.branchId > 0 ? s.branchId : null,
     ipAddress: req.ip ?? null,
     userAgent: req.get?.("user-agent") ?? null,
   };
