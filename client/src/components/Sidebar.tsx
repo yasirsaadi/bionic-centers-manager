@@ -294,6 +294,8 @@ export function Sidebar() {
     { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
     //  دفترُ القاصة اليوميّ (§4.ca) — للمحاسب ومدير الفرع والمسؤول وحدهم، كبوّابة الخادم.
     { label: "دفتر القاصة", icon: BookOpen, href: "/cash-book", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager", "accountant"] as const },
+    //  قاصةُ الدكتور (§4.cb) — للمسؤول وحده بقرار المالك.
+    { label: "قاصة الدكتور", icon: Wallet, href: "/dr-box", adminOnly: true, settingKey: null, permission: null },
     { label: t.sidebar.branches, icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
     { label: t.sidebar.statistics, icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
     { label: t.sidebar.surveys, icon: ClipboardCheck, href: "/surveys", adminOnly: false, settingKey: null, permission: "canManageSurveys" as const },

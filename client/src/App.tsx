@@ -31,6 +31,7 @@ const BranchDetails = lazy(() => import("@/pages/BranchDetails"));
 const BranchRevenues = lazy(() => import("@/pages/BranchRevenues"));
 const Accounting = lazy(() => import("@/pages/Accounting"));
 const CashBook = lazy(() => import("@/pages/CashBook"));
+const DrBox = lazy(() => import("@/pages/DrBox"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
@@ -289,6 +290,7 @@ function Router() {
             <Route path="/statistics" component={Statistics} />
             <Route path="/accounting" component={Accounting} />
             <Route path="/cash-book" component={CashBook} />
+            <Route path="/dr-box" component={DrBox} />
             <Route path="/surveys" component={Surveys} />
             <Route path="/session-tracking/entry" component={SessionEntry} />
             <Route path="/session-tracking/targets" component={SessionTargets} />
