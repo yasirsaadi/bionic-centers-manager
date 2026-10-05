@@ -19,7 +19,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  RECEPTION_ROUTING_QUESTION, receptionRoutingChoices, receptionRoutingDepartments,
+  RECEPTION_ROUTING_QUESTION, receptionRoutingChoices, receptionRoutingDepartments, returnToPurchaseVisible,
   receptionRoutingGroups, markReceptionRoutingPending, takeReceptionRoutingPending,
 } from "./reception_routing";
 import { launcherOptions } from "./patient_service_launcher_logic";
@@ -86,10 +86,10 @@ function main() {
     RECEPTION_ROUTING_QUESTION, "ما سبب حضور المريض اليوم؟");
 
   const pro = receptionRoutingChoices("prosthetic", RECEPTION);
-  same("٢. **خمسةُ خياراتٍ للأطراف — والرابعُ «متابعة أو تعديل» (فصلُ الزرّين) والخامسُ «تدريب على الجهاز» (§4.aw)**", pro.map((c) => c.id),
-    ["exam_required", "device_sale", "maintenance", "device_followup", "device_training"]);
+  same("٢. **أربعةُ خياراتٍ للأطراف** — و«متابعة أو تعديل» أُزيلت (المتابعةُ داخل «صيانة»، ٢٠٢٦-١٠-٠٥) والرابعُ «تدريب على الجهاز» (§4.aw)", pro.map((c) => c.id),
+    ["exam_required", "device_sale", "maintenance", "device_training"]);
   same("٣. وعناوينُها بالضبط", pro.map((c) => c.label), [
-    "يحتاج معاينة طبية", "شراء جزء من طرف صناعي", "صيانة طرف صناعي", "متابعة أو تعديل على جهاز قائم", "تدريب على الجهاز",
+    "يحتاج معاينة طبية", "شراء جزء من طرف صناعي", "صيانة طرف صناعي", "تدريب على الجهاز",
   ]);
 
   //  ══ **والمساندُ اثنان لا ثلاثة** (قرارُ المالك بعد ٢٤٩) ═══════════════
@@ -98,9 +98,9 @@ function main() {
   //  أشدَّ ما يحتاج الطبيب. والمسندُ الكاملُ كالطرف الكامل: معاينةٌ أوّلاً.
   const sup = receptionRoutingChoices("medical_support", RECEPTION);
   same("٤. **وللمساند أربعة — ولا بيعَ بلا معاينة فيها**",
-    sup.map((c) => c.id), ["exam_required", "maintenance", "device_followup", "device_training"]);
+    sup.map((c) => c.id), ["exam_required", "maintenance", "device_training"]);
   same("٥. وعناوينُها بالضبط", sup.map((c) => c.label), [
-    "يحتاج معاينة طبية", "صيانة مسند طبي", "متابعة أو تعديل على جهاز قائم", "تدريب على الجهاز",
+    "يحتاج معاينة طبية", "صيانة مسند طبي", "تدريب على الجهاز",
   ]);
   check(!sup.some((c) => c.label.includes("شراء")),
     "**ولا عنوانَ شراءٍ يبلغ الشاشة إطلاقاً** — لا معطَّلاً ولا ظاهراً",
@@ -147,13 +147,10 @@ function main() {
   same("١٢. ونافذةُ البيع والصيانة هي نفسُها (`no_exam_operation`)",
     [...new Set(pro.filter((c) => c.id === "device_sale" || c.id === "maintenance").map((c) => c.flow.kind))],
     ["no_exam_operation"]);
-  //  **و«متابعة أو تعديل» نافذتُها زيارةُ الجهاز** — بخدمة قسمها هي.
-  same("١٢.٠ «متابعة أو تعديل» ⇒ نافذةُ زيارة الجهاز لقسمها (الأطراف)",
-    pro.find((c) => c.id === "device_followup")?.flow,
-    { kind: "device_followup", serviceType: "prosthetic" });
-  same("والمساندُ كذلك",
-    sup.find((c) => c.id === "device_followup")?.flow,
-    { kind: "device_followup", serviceType: "medical_support" });
+  //  **و«متابعة أو تعديل» أُزيلت** (قرارُ المالك ٢٠٢٦-١٠-٠٥): المتابعةُ داخل «صيانة» وتصل الخبيرَ.
+  same("١٢.٠ «متابعة أو تعديل» لم تعد باباً — في الأطراف ولا المساند",
+    [pro.some((c) => (c.id as string) === "device_followup"), sup.some((c) => (c.id as string) === "device_followup")],
+    [false, false]);
   same("١٢.٠أ «تدريب على الجهاز» ⇒ نافذةُ الزيارة نفسُها بوضع التدريب",
     pro.find((c) => c.id === "device_training")?.flow,
     { kind: "device_training", serviceType: "prosthetic" });
@@ -210,15 +207,15 @@ function main() {
   //  في الثانية. والمهمُّ أن **القسمين معاً** حاضران بخياراتِ كلٍّ الصحيحة.
   same("١٧.ج **وخياراتُ القسمين معاً** — لا يضيع قسمٌ منهما ولا تُخلَط قواعدُهما",
     dualGroups.flatMap((g) => g.choices.map((c) => `${g.serviceType}:${c.id}`)),
-    ["prosthetic:exam_required", "prosthetic:device_sale", "prosthetic:maintenance", "prosthetic:device_followup", "prosthetic:device_training",
-      "medical_support:exam_required", "medical_support:maintenance", "medical_support:device_followup", "medical_support:device_training"]);
+    ["prosthetic:exam_required", "prosthetic:device_sale", "prosthetic:maintenance", "prosthetic:device_training",
+      "medical_support:exam_required", "medical_support:maintenance", "medical_support:device_training"]);
   same("وصاحبُ الأطراف وحدها يرى خمسةً",
     receptionRoutingGroups(PRO, RECEPTION).flatMap((g) => g.choices.map((c) => c.id)),
-    ["exam_required", "device_sale", "maintenance", "device_followup", "device_training"]);
+    ["exam_required", "device_sale", "maintenance", "device_training"]);
   //  **ولا تُضاف صيانةُ الأطراف لصاحب المساند** — القسمُ الغائبُ غائبٌ كلُّه.
   same("وصاحبُ المساند وحدها يرى خيارَيه هو لا خيارَ أطرافٍ واحداً",
     receptionRoutingGroups(SUP, RECEPTION).flatMap((g) => g.choices.map((c) => c.label)),
-    ["يحتاج معاينة طبية", "صيانة مسند طبي", "متابعة أو تعديل على جهاز قائم", "تدريب على الجهاز"]);
+    ["يحتاج معاينة طبية", "صيانة مسند طبي", "تدريب على الجهاز"]);
   //  **ولا أثرَ للتفضيل الصامت في المصدر** — لا هنا ولا في الموزِّع.
   const routingCode = code(ROUTING);
   check(!/isAmputee\s*\)\s*return "prosthetic"/.test(routingCode)
@@ -244,15 +241,15 @@ function main() {
   const doctorSession = { role: "doctor", isAdmin: false };
   const proForDoctor = receptionRoutingChoices("prosthetic", doctorSession);
   same("١٧.ز **الطبيبُ لا يرى خيارَي الصيانة وبيع الجزء معاً** (المرحلة الرابعة)",
-    proForDoctor.map((c) => c.id), ["exam_required", "device_followup", "device_training"]);
+    proForDoctor.map((c) => c.id), ["exam_required", "device_training"]);
   const proNoSession = receptionRoutingChoices("prosthetic");
   same("١٧.ح **وجلسةٌ غائبة كذلك تُخفيهما احتياطاً**",
-    proNoSession.map((c) => c.id), ["exam_required", "device_followup", "device_training"]);
+    proNoSession.map((c) => c.id), ["exam_required", "device_training"]);
   same("١٧.ح٢ **واستقبالٌ بلا «إضافة مدفوعات» كذلك** — المفتاحُ يحكم لا الدور",
-    receptionRoutingChoices("prosthetic", { role: "reception", isAdmin: false }).map((c) => c.id), ["exam_required", "device_followup", "device_training"]);
+    receptionRoutingChoices("prosthetic", { role: "reception", isAdmin: false }).map((c) => c.id), ["exam_required", "device_training"]);
   const proForAdmin = receptionRoutingChoices("prosthetic", { isAdmin: true });
   same("١٧.ط **والمسؤولُ العامّ يراهما بلا قيد**",
-    proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance", "device_followup", "device_training"]);
+    proForAdmin.map((c) => c.id), ["exam_required", "device_sale", "maintenance", "device_training"]);
 
   //  ══ (ج٢) **والعلاجُ الطبيعي لا يغيّر حضورَ أيّ قسم** — تركيباتٌ صريحة
   //  (تصحيحٌ لاحق، ٢٠٢٦-٠٩-٠٨، «عاد للشراء» زرٌّ بسيطٌ دائم) ══════════════
@@ -296,9 +293,13 @@ function main() {
     //  آخر — لا أهليّةً مستقلّة تقرّر ظهورَه بعد اليوم.
     const withoutGroupHeading = sectionBlock.replace(
       /\{routingSections\.length > 1 && \([\s\S]*?\)\}/, "");
+    //  **وشرطُه الوحيد أهليّتُه** (قرارُ المالك ٢٠٢٦-١٠-٠٥ — ينقض «بلا شرط»): `returnToPurchaseVisible` ولا شيءَ غيره.
+    const withoutEligibility = withoutGroupHeading.replace(
+      /\{returnToPurchaseVisible\(returnQ, section\.serviceType\) && \(/, "{(");
     check(withoutGroupHeading.includes("<ReturnToPurchaseRoutingChoice")
-      && !/&&\s*\(/.test(withoutGroupHeading) && !/\?\s*\(/.test(withoutGroupHeading),
-    "١٧.ع **وبلا أيّ شرطٍ آخر يلفّه** — يظهر بحضور القسم فقط",
+      && /returnToPurchaseVisible\(returnQ, section\.serviceType\) && \(/.test(withoutGroupHeading)
+      && !/&&\s*\(/.test(withoutEligibility) && !/\?\s*\(/.test(withoutEligibility),
+    "١٧.ع **وشرطُه الوحيد أهليّتُه** — `returnToPurchaseVisible` لقسمه، ولا شرطَ آخر يلفّه",
     withoutGroupHeading.trim());
   }
   same("١٧.ف **ومرّةٌ واحدة في مصدر الموزِّع** — لا استدعاءَ ثانياً منسوخاً",
@@ -450,8 +451,8 @@ function main() {
     check(!launcherCode.includes(forbidden), `٣٧. ولا «${forbidden}» في الموزِّع بعد إضافة المُوجِّه`);
   }
   const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
-  same("٣٨. **ولا نقطةَ جديدة أُضيفت** — القراءةُ نفسُها وحدها",
-    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes"]);
+  same("٣٨. **وقراءتان لا أكثر** — حلقاتُ المريض وأهليّةُ «عاد للشراء» (٢٠٢٦-١٠-٠٥)",
+    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
   check(!routingCode.includes("/api/"),
     "٣٩. **وملفُّ منطق التوجيه بلا أيّ نقطة نهاية** — موزِّعٌ فوق موزِّع لا نظامٌ ثانٍ");
 
@@ -531,12 +532,26 @@ function main() {
     const hintOf = (id: string) => ch.find((c) => c.id === id)?.hint ?? "";
     check(/الخبير/.test(hintOf("maintenance")) && /تعيار/.test(hintOf("maintenance")),
       "ت١. **الصيانةُ تقول إنها تصل الخبيرَ** وتسمّي التعيار");
-    check(/الطبيب/.test(hintOf("device_followup")) && /لا الخبير/.test(hintOf("device_followup")) && /صيانة/.test(hintOf("device_followup")),
-      "ت٢. **والمتابعةُ تقول إنها تصل الطبيبَ لا الخبير** وتحيل التعيارَ إلى «صيانة»");
+    check(/متابعة بلا أجور/.test(hintOf("maintenance")),
+      "ت٢. **والصيانةُ تقول إن فيها المتابعةَ بلا أجور** — البابُ الوحيد للعمل على الجهاز");
     const launcher = read("PatientServiceLauncher.tsx");
     const dialog = read("DeviceFollowupVisitDialog.tsx");
     check(/choice\.hint/.test(launcher) && /DEVICE_FOLLOWUP_HINT/.test(dialog),
-      "ت٣. والسطرُ يُعرَض تحت الخيار وفي رأس نافذة المتابعة");
+      "ت٣. والسطرُ يُعرَض تحت الخيار");
+  }
+
+  //  **«عاد للشراء» لمن يستحقّه وحده** (قرارُ المالك ٢٠٢٦-١٠-٠٥).
+  {
+    const pro = [{ serviceType: "prosthetic" }];
+    same("ع١. **مؤهَّلٌ في الأطراف ⟵ يظهر فيها وحدها**، لا في المساند",
+      [returnToPurchaseVisible({ rows: pro }, "prosthetic"), returnToPurchaseVisible({ rows: pro }, "medical_support")], [true, false]);
+    same("ع٢. **ولا مؤهَّلَ ⟵ لا زرّ** — كان يظهر للكلّ ثمّ تقول النافذةُ «لا يوجد»",
+      returnToPurchaseVisible({ rows: [] }, "prosthetic"), false);
+    same("ع٣. وأثناء التحميل يُخفى، وعند فشل السؤال يظهر فلا يضيع البابُ لعطلٍ عابر",
+      [returnToPurchaseVisible({ rows: null, isLoading: true }, "prosthetic"), returnToPurchaseVisible({ rows: null, isError: true }, "prosthetic")],
+      [false, true]);
+    check(/returnToPurchaseVisible\(returnQ, section\.serviceType\)/.test(read("PatientServiceLauncher.tsx")),
+      "ع٤. والموزِّعُ يشترطه قبل رسم الزرّ");
   }
 
   console.log(failures === 0 ? "\n✅ all reception-routing cases pass" : `\n❌ ${failures} case(s) failed`);

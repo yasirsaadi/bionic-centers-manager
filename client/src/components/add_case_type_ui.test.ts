@@ -228,7 +228,9 @@ const mfgRoutes = read("../../../server/manufacturing/routes.ts");
 const maintHandler = pcRoutes.slice(pcRoutes.indexOf('app.post("/api/no-exam/maintenance", '));
 const oldHandler = mfgRoutes.slice(mfgRoutes.indexOf('app.post("/api/manufacturing/maintenance-visit"'));
 check("٤٠.ج **والخادمُ يردّ الصفرَ على باب الصيانة الوحيد — والبابُ القديم متقاعد (٤٠٩)**",
-  /const offer = deriveMaintenanceTerms\([\s\S]*?if \(!offer\.ok\) return res\.status\(400\)/.test(maintHandler)
+  //  ومنذ «متابعة» (٢٠٢٦-١٠-٠٥، ترحيل ٠٩٦) يسبق الاشتقاقَ فرعُها وحده — صفرٌ بلا مال، والخادمُ يردّ أيَّ مالٍ معها ٤٠٠ قبله.
+  /const offer = isFollowup\s*\?[\s\S]{0,200}?finalPrice: 0[\s\S]*?: deriveMaintenanceTerms\([\s\S]*?if \(!offer\.ok\) return res\.status\(400\)/.test(maintHandler)
+    && /if \(isFollowup\) \{[\s\S]*?MAINTENANCE_FOLLOWUP_NO_MONEY_ERROR[\s\S]*?const offer = /.test(maintHandler)
     && oldHandler.slice(0, 700).includes("res.status(409)"),
   maintHandler.slice(0, 80));
 

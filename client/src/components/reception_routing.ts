@@ -107,8 +107,22 @@ const SALE_LABEL: Record<ReceptionRoutingServiceType, string> = {
   medical_support: "شراء مسند طبي",
 };
 export const DEVICE_FOLLOWUP_LABEL = "متابعة أو تعديل على جهاز قائم";
+
+/**
+ * **«عاد للشراء» لمن يستحقّه وحده** (قرارُ المالك ٢٠٢٦-١٠-٠٥ — ينقض «زرٌّ لا يستطلع أهليّةً» ٢٠٢٦-٠٩-٠٨): كان يظهر للكلّ ثمّ
+ * تقول النافذةُ «لا يوجد». فيظهر حين يقول الخادمُ إن لهذا القسم جهازاً مؤهَّلاً (عوين و«لم يشترِ» بلا طلبٍ معلَّق —
+ * `return-to-purchase-eligible`). **وأثناء التحميل يُخفى**، **وعند فشل السؤال يظهر** فلا يضيع بابٌ لعطلٍ عابر — والنافذةُ تقول الخطأ.
+ */
+export function returnToPurchaseVisible(
+  q: { rows?: { serviceType: string }[] | null; isLoading?: boolean; isError?: boolean } | null | undefined,
+  serviceType: string,
+): boolean {
+  if (!q || q.isError) return true;
+  if (q.isLoading || !q.rows) return false;
+  return q.rows.some((r) => r.serviceType === serviceType);
+}
 /** أين تذهب الصيانة — الخبيرُ بأمر عمل. */
-export const MAINTENANCE_HINT = "تصل الخبيرَ مباشرةً بأمر صيانة — تعيار، قالب، تبديل جزء، أيّ عمل على الجهاز";
+export const MAINTENANCE_HINT = "تصل الخبيرَ مباشرةً — صيانة بأجور، أو متابعة بلا أجور (إتمام قالب، فطر في قالب جديد، تيست، تعيار)";
 /** وأين تذهب المتابعة — الطبيبُ وحده، بلا خبير ولا أمر. */
 export const DEVICE_FOLLOWUP_HINT = "تصل الطبيبَ للمراجعة لا الخبير — بلا أمر عمل. للتعيار أو أيّ عمل من الخبير اختر «صيانة»";
 const MAINTENANCE_LABEL: Record<ReceptionRoutingServiceType, string> = {
@@ -174,14 +188,9 @@ export function receptionRoutingChoices(
       hint: MAINTENANCE_HINT,
       flow: { kind: "no_exam_operation" as const, serviceType, initialKind: "maintenance" as const },
     }] : []),
-    //  **متابعة أو تعديل على جهاز قائم** (فصلُ الزرّين، قرارُ المالك ٢٠٢٦-٠٩-٣٠): زيارةٌ بتاريخها وطلبُ مراجعة —
-    //  كانت تُسجَّل من «تسجيل زيارة جديدة»، وصار كلُّ ما يخصّ الجهاز هنا. بلا مال، فلا شرطَ صلاحيةٍ ماليّ.
-    {
-      id: "device_followup" as const,
-      label: DEVICE_FOLLOWUP_LABEL,
-      hint: DEVICE_FOLLOWUP_HINT,
-      flow: { kind: "device_followup" as const, serviceType },
-    },
+    //  **«متابعة أو تعديل على جهاز قائم» أُزيلت** (قرارُ المالك ٢٠٢٦-١٠-٠٥، §4.av تكملة): «نبقي فقط خانة الصيانة هي الباب
+    //  الوحيد وبداخلها نصنّف صيانة أو متابعة». كانت تذهب إلى الطبيب فلا يعلم الخبير — والمتابعةُ اليوم داخل «صيانة» (٠٩٦)،
+    //  والشكوى الطبية بابُها «يحتاج معاينة طبية».
     //  **تدريب على الجهاز** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.aw): زيارةٌ سببُها التدريب — تتكرّر أيّاماً أو أشهراً بلا مالٍ ولا طبيب.
     {
       id: "device_training" as const,

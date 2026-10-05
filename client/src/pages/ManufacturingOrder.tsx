@@ -122,6 +122,9 @@ export default function ManufacturingOrder() {
           </h1>
           <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1">
             <span>{SERVICE_TYPE_LABELS[order.serviceType as "prosthetic"] ?? order.serviceType}</span>
+            {(order as any).isFollowup === true && (
+              <span className="font-medium text-blue-700" data-testid="order-followup-badge">متابعة — بلا أجور</span>
+            )}
             <span>الفرع: {patient?.branchName ?? "—"}</span>
             <span>الخبير: {order.expertName ?? "—"}</span>
           </div>

@@ -33,8 +33,9 @@ interface OpenOrder {
 /** ما يُصنَع — «صيانة الركبة» · «قالب» · «أطراف صناعية». */
 function orderLabel(o: OpenOrder): string {
   if (o.purpose === "maintenance") {
+    const word = (o as any).isFollowup === true ? "متابعة" : "صيانة";
     return o.maintenanceComponent
-      ? `صيانة ${requestedItemLabel(o.maintenanceComponent, o.serviceType as any)}` : "صيانة";
+      ? `${word} ${requestedItemLabel(o.maintenanceComponent, o.serviceType as any)}` : word;
   }
   if (o.requestedItem) return requestedItemLabel(o.requestedItem, o.serviceType as any);
   return SERVICE_TYPE_LABELS[o.serviceType as keyof typeof SERVICE_TYPE_LABELS] ?? o.serviceType;

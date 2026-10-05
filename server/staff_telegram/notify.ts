@@ -55,11 +55,13 @@ export function notifyExamRequest(ex: Executor | null | undefined, p: {
 export function notifyOrderAssigned(ex: Executor | null | undefined, p: {
   orderId: number; patientId: number; branchId: number | null; expertUserId: number; purpose?: string | null;
   serviceType?: string | null; actorUserId?: number | null;
+  /** «متابعة» بدل عنوان الغرض (ترحيل ٠٩٦). */
+  kindLabel?: string;
 }) {
   return safe(ex, async () => {
     if (p.actorUserId && p.actorUserId === p.expertUserId) return;
     const c = await ctx(ex, p.patientId, p.branchId);
-    const kind = PURPOSE_LABELS[p.purpose ?? "initial_build"] ?? "";
+    const kind = p.kindLabel ?? PURPOSE_LABELS[p.purpose ?? "initial_build"] ?? "";
     await enqueueStaffEvent(ex, {
       event: "order_assigned", targetUserIds: [p.expertUserId],
       text: `🛠️ أمر ${kind} جديد مُسند إليك (رقم ${p.orderId}): ${c.who} — ${dept(p.serviceType)}${c.branch}`,

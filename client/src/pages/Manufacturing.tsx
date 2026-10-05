@@ -272,6 +272,7 @@ export default function Manufacturing() {
             <SelectItem value="all">تصنيع وصيانة</SelectItem>
             <SelectItem value="initial_build">تصنيع كامل</SelectItem>
             <SelectItem value="maintenance">صيانة</SelectItem>
+            <SelectItem value="followup">متابعة</SelectItem>
           </SelectContent>
         </Select>
         <Select value={stageFilter} onValueChange={setStageFilter}>

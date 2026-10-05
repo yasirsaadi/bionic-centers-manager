@@ -1280,8 +1280,8 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 // ---- small helpers -----------------------------------------------------------
 
 /** «تصنيعٌ كامل» أو «صيانة» — وغيرُهما يُهمَل (لا ترشيح) بدل أن يُفرغ القائمة. */
-function purposeOrU(v: unknown): "initial_build" | "maintenance" | undefined {
-  return v === "initial_build" || v === "maintenance" ? v : undefined;
+function purposeOrU(v: unknown): "initial_build" | "maintenance" | "followup" | undefined {
+  return v === "initial_build" || v === "maintenance" || v === "followup" ? v : undefined;
 }
 function strOrU(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;

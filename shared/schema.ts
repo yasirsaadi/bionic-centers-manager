@@ -1372,6 +1372,8 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    * **الموظّفُ هو مَن يقرّر**، وصيانةُ ضمانٍ سابقة لا تمنع لاحقة.
    */
   maintenanceUnderWarranty: boolean("maintenance_under_warranty"),
+  /** **«متابعة» لا صيانة** (ترحيل ٠٩٦): عملُ الخبير على جهازٍ قائم بلا أجور — بلا أرقامٍ أصلاً، ويُعدّ وحده. */
+  maintenanceIsFollowup: boolean("maintenance_is_followup").notNull().default(false),
   /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — كنظيره على الحلقة.
    *
