@@ -390,7 +390,7 @@ export async function editArticleTx(
  * بدأت فعلاً). النصّان حرفيّان من `node_modules/pg-pool/index.js` — تحقّقٌ
  * لا تخمين.
  */
-function isPoolCheckoutTimeoutError(err: any): boolean {
+export function isPoolCheckoutTimeoutError(err: any): boolean {
   const msg = typeof err?.message === "string" ? err.message : "";
   return msg.includes("timeout exceeded when trying to connect")
     || msg.includes("Connection terminated due to connection timeout");
