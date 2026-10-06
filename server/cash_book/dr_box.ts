@@ -8,16 +8,42 @@
 
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
-import { cashBookEntries, drBoxExpenses } from "@shared/schema";
+import { cashBookEntries, drBoxExpenses, drBoxOpenings } from "@shared/schema";
 import { CashBookError } from "./store";
 
 const alive = sql`${drBoxExpenses.deletedAt} IS NULL`;
 
+export async function getDrBoxOpening(branchId: number) {
+  const [row] = await db.select().from(drBoxOpenings).where(eq(drBoxOpenings.branchId, branchId));
+  return row ?? null;
+}
+
+/** الرصيدُ الافتتاحيّ — يضعه المسؤولُ ويعدّله، صفٌّ واحد لكلّ فرع. */
+export async function setDrBoxOpening(p: { branchId: number; openingDate: string; amount: number; userId: number | null }) {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`dr_box_opening:${p.branchId}`}))`);
+    const [cur] = await tx.select().from(drBoxOpenings).where(eq(drBoxOpenings.branchId, p.branchId));
+    if (cur) {
+      const [row] = await tx.update(drBoxOpenings).set({ openingDate: p.openingDate, amount: p.amount, updatedAt: new Date() })
+        .where(eq(drBoxOpenings.id, cur.id)).returning();
+      return { before: cur, after: row };
+    }
+    const [row] = await tx.insert(drBoxOpenings).values({
+      branchId: p.branchId, openingDate: p.openingDate, amount: p.amount, createdBy: p.userId,
+    }).returning();
+    return { before: null, after: row };
+  });
+}
+
 export async function drBoxReport(branchId: number, from: string, to: string) {
+  //  من الرصيد الافتتاحيّ يبدأ الحساب (قرارُ المالك): ما قبل يومه لا يدخل الرصيد. وبلا افتتاحيّ: من البداية.
+  const opening = await getDrBoxOpening(branchId);
+  const since = opening?.openingDate ?? null;
   const [recAll] = await db.select({ n: sql<number>`COALESCE(SUM(${cashBookEntries.amount}), 0)::bigint` }).from(cashBookEntries)
-    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.kind, "dr_transfer"), sql`${cashBookEntries.deletedAt} IS NULL`));
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.kind, "dr_transfer"), sql`${cashBookEntries.deletedAt} IS NULL`,
+      since ? gte(cashBookEntries.entryDate, since) : undefined));
   const [spentAll] = await db.select({ n: sql<number>`COALESCE(SUM(${drBoxExpenses.amount}), 0)::bigint` }).from(drBoxExpenses)
-    .where(and(eq(drBoxExpenses.branchId, branchId), alive));
+    .where(and(eq(drBoxExpenses.branchId, branchId), alive, since ? gte(drBoxExpenses.expenseDate, since) : undefined));
 
   const transfers = await db.select({
     id: cashBookEntries.id, date: cashBookEntries.entryDate, book: cashBookEntries.book, amount: cashBookEntries.amount, note: cashBookEntries.note,
@@ -33,9 +59,11 @@ export async function drBoxReport(branchId: number, from: string, to: string) {
 
   const received = Number(recAll?.n ?? 0);
   const spentTotal = Number(spentAll?.n ?? 0);
+  const openingAmount = opening?.amount ?? 0;
   return {
     from, to,
-    totals: { received, spent: spentTotal, balance: received - spentTotal },
+    opening: opening ? { date: opening.openingDate, amount: opening.amount } : null,
+    totals: { received, spent: spentTotal, balance: openingAmount + received - spentTotal },
     period: {
       received: transfers.reduce((s, r) => s + r.amount, 0),
       spent: spent.reduce((s, r) => s + r.amount, 0),

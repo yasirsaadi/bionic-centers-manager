@@ -120,3 +120,13 @@ export function parseAmount(v: unknown): number | null {
   const n = typeof v === "string" ? Number(v.replace(/[,\s]/g, "")) : Number(v);
   return Number.isInteger(n) && n > 0 && n <= 10_000_000_000 ? n : null;
 }
+
+/** حسابُ قاصة الدكتور لكلّ فرع كما يسمّيه المالكُ في تطبيق «كي كارت» على هاتفه (قرارُه ٢٠٢٦-١٠-٠٦، §4.cb):
+ *  آخرُ أربعة أرقام من الحساب، أو اسمُه — ليميّز الحسابات. وفرعٌ لم يُسمِّ له حساباً: لا شيء، ولا يُخترع. */
+export function drBoxAccountLabel(branchName: string | null | undefined): string | null {
+  const n = String(branchName ?? "");
+  if (n.includes("بغداد")) return "كي كارت 2009";
+  if (n.includes("ذي قار")) return "كي كارت 4325";
+  if (n.includes("كربلاء")) return "حساب السوبر";
+  return null;
+}
