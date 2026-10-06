@@ -14,7 +14,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay } from "@shared/cash_book";
+import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -81,6 +81,7 @@ async function cleanup() {
   await q(`DELETE FROM journal_entries WHERE source_type='expense' AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[]))`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM dr_box_expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
+  await q(`DELETE FROM dr_box_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_entries WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM staff_notification_outbox WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
@@ -285,6 +286,30 @@ async function main() {
     same("ي١٠. **وكلُّ كتابةٍ بسطر تدقيق**",
       (await q(`SELECT action FROM audit_log WHERE entity_type='dr_box_expense' AND entity_id=$1 ORDER BY id`, [sp.body.id])).map((a) => a.action),
       ["create", "update", "delete"]);
+
+    //  الرصيدُ الافتتاحيّ لقاصة الدكتور (تكملة §4.cb): يضعه المسؤولُ، ومن يومه يبدأ الحساب.
+    const setOpen = (s: any, body: any) => http("POST", "/api/dr-box/opening", s, { branchId: BGD, ...body });
+    same("ي١١. **الافتتاحيُّ للمسؤول وحده** — ٤٠٣ للمحاسب، ولا صفّ",
+      [(await setOpen(S.acc, { openingDate: TODAY, amount: 1_000_000 })).status,
+       Number((await q(`SELECT count(*)::int n FROM dr_box_openings WHERE branch_id=$1`, [BGD]))[0].n)], [403, 0]);
+    await setOpen(S.admin, { openingDate: TODAY, amount: 1_000_000 });
+    await spend(S.admin, { date: YDAY, amount: 50_000 });
+    rep = (await box(S.admin)).body;
+    same("ي١٢. **ومن يومه يبدأ الحساب**: الافتتاحيّ مليون + تحويلُ اليوم ٥٠٠ ألف — وتحويلُ أمس ومصروفُه خارجه",
+      [rep.opening, rep.totals], [{ date: TODAY, amount: 1_000_000 }, { received: 500_000, spent: 0, balance: 1_500_000 }]);
+    await setOpen(S.admin, { openingDate: YDAY, amount: 200_000 });
+    rep = (await box(S.admin)).body;
+    same("ي١٣. **ويعدّله المسؤولُ** — من أمس بمئتي ألف: + ٥٠١ ألف − ٥٠ ألفاً، وصفٌّ واحد وسطرا تدقيق",
+      [rep.totals, Number((await q(`SELECT count(*)::int n FROM dr_box_openings WHERE branch_id=$1`, [BGD]))[0].n),
+       (await q(`SELECT action FROM audit_log WHERE entity_type='dr_box_opening' AND branch_id=$1 ORDER BY id`, [BGD])).map((a) => a.action)],
+      [{ received: 501_000, spent: 50_000, balance: 651_000 }, 1, ["create", "update"]]);
+    same("ي١٤. **وحسابُ كلّ فرعٍ كما في تطبيق «كي كارت»**: بغداد ٢٠٠٩ · ذي قار ٤٣٢٥ · كربلاء «حساب السوبر» · والموصل بلا حساب",
+      [rep.branch.account, (await box(S.admin, YDAY, TODAY, DQ)).body?.branch?.account, (await box(S.admin, YDAY, TODAY, KRB)).body?.branch?.account,
+       drBoxAccountLabel("بايونك الموصل")],
+      ["كي كارت 2009", "كي كارت 4325", "حساب السوبر", null]);
+    same("ي١٥. **وتاريخٌ لم يأتِ أو رصيدٌ سالب** — ٤٠٠",
+      [(await setOpen(S.admin, { openingDate: addDays(TODAY, 1), amount: 1 })).status, (await setOpen(S.admin, { openingDate: TODAY, amount: -5 })).status],
+      [400, 400]);
 
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);

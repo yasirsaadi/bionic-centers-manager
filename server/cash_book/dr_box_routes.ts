@@ -4,7 +4,7 @@ import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { getSession } from "../sessions_module/permissions";
 import { baghdadTodayYmd } from "@shared/visit_date";
-import { isYmd, parseAmount } from "@shared/cash_book";
+import { drBoxAccountLabel, isYmd, parseAmount } from "@shared/cash_book";
 import { CashBookError, branchConfigOf } from "./store";
 import * as box from "./dr_box";
 
@@ -30,7 +30,7 @@ export function registerDrBoxRoutes(app: Express, isAuthenticated: any) {
     if (!s.isAdmin) { res.status(403).json({ error: ADMIN_ONLY }); return null; }
     return s;
   }
-  function audit(req: Req, s: any, p: { entityId: number; action: string; branchId: number; oldValues?: any; newValues?: any }) {
+  function audit(req: Req, s: any, p: { entityType?: string; entityId: number; action: string; branchId: number; oldValues?: any; newValues?: any }) {
     return logAudit({
       entityType: "dr_box_expense", ...p, userId: s.userId ?? null, userName: s.displayName ?? null,
       ipAddress: req.ip ?? null, userAgent: req.get?.("user-agent") ?? null,
@@ -49,7 +49,26 @@ export function registerDrBoxRoutes(app: Express, isAuthenticated: any) {
     try {
       const b = await branchConfigOf(branchId);
       if (!b) return res.status(404).json({ error: "الفرع غير موجود" });
-      res.json({ branch: { id: branchId, name: b.name }, today, ...(await box.drBoxReport(branchId, from, to)) });
+      res.json({ branch: { id: branchId, name: b.name, account: drBoxAccountLabel(b.name) }, today, ...(await box.drBoxReport(branchId, from, to)) });
+    } catch (e) { fail(res, e); }
+  });
+
+  // ---- الرصيدُ الافتتاحيّ: يضعه المسؤولُ ويعدّله، ومنه يبدأ الحساب ---------------------------------
+  app.post("/api/dr-box/opening", isAuthenticated, async (req: Req, res) => {
+    const s = admin(req, res);
+    if (!s) return;
+    const branchId = Number(req.body?.branchId);
+    if (!Number.isInteger(branchId) || branchId <= 0) return res.status(400).json({ error: "اختر الفرع" });
+    const openingDate = req.body?.openingDate;
+    if (!isYmd(openingDate) || openingDate > baghdadTodayYmd()) return res.status(400).json({ error: "تاريخ البداية غير صالح" });
+    const amount = req.body?.amount === undefined || req.body?.amount === "" ? 0 : Number(req.body.amount);
+    if (!Number.isInteger(amount) || amount < 0) return res.status(400).json({ error: "اكتب الرصيد رقماً صحيحاً" });
+    try {
+      if (!(await branchConfigOf(branchId))) return res.status(404).json({ error: "الفرع غير موجود" });
+      const r = await box.setDrBoxOpening({ branchId, openingDate, amount, userId: s.userId ?? null });
+      await audit(req, s, { entityType: "dr_box_opening", entityId: r.after.id, action: r.before ? "update" : "create", branchId,
+        oldValues: r.before, newValues: r.after });
+      res.json(r.after);
     } catch (e) { fail(res, e); }
   });
 

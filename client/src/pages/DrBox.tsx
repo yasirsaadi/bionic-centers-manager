@@ -12,12 +12,13 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
 import { Pencil, Trash2 } from "lucide-react";
-import { CASH_BOOK_LABELS, dayNameOf } from "@shared/cash_book";
+import { CASH_BOOK_LABELS, dayNameOf, drBoxAccountLabel } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 interface Report {
-  branch: { id: number; name: string };
+  branch: { id: number; name: string; account: string | null };
   today: string; from: string; to: string;
+  opening: { date: string; amount: number } | null;
   totals: { received: number; spent: number; balance: number };
   period: { received: number; spent: number };
   transfers: { id: number; date: string; book: "devices" | "physio"; amount: number; note: string }[];
@@ -101,10 +102,20 @@ export default function DrBox() {
         <div className="flex flex-wrap items-end gap-x-6 gap-y-3 text-sm">
           <label className="grid gap-1"><span className="text-muted-foreground">الفرع</span>
             <Select value={branchId ? String(branchId) : ""} onValueChange={(v) => setBranchId(Number(v))}>
-              <SelectTrigger className="w-44" data-testid="drbox-branch"><SelectValue placeholder="اختر الفرع" /></SelectTrigger>
-              <SelectContent>{branchList.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent>
+              <SelectTrigger className="w-64" data-testid="drbox-branch"><SelectValue placeholder="اختر الفرع" /></SelectTrigger>
+              <SelectContent>{branchList.map((b) => {
+                const acc = drBoxAccountLabel(b.name);
+                return <SelectItem key={b.id} value={String(b.id)}>{b.name}{acc ? ` — ${acc}` : ""}</SelectItem>;
+              })}</SelectContent>
             </Select>
           </label>
+          {r?.branch.account && (
+            <div className="grid gap-1"><span className="text-muted-foreground">الحساب</span>
+              <span className="h-9 flex items-center px-3 rounded-md border-2 border-[#1d2b55] font-bold text-[#1d2b55] text-base" dir="auto" data-testid="drbox-account">
+                {r.branch.account}
+              </span>
+            </div>
+          )}
           <label className="grid gap-1"><span className="text-muted-foreground">من</span>
             <Input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} className="w-40" />
           </label>
@@ -117,10 +128,13 @@ export default function DrBox() {
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
         {r && (
           <>
+            <OpeningLine report={r} write={write} />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="drbox-totals">
-              <Box title="مجموع ما وصل" value={r.totals.received} sub={`في الفترة: ${fmt(r.period.received)}`} tone="blue" />
-              <Box title="مجموع ما صُرف" value={r.totals.spent} sub={`في الفترة: ${fmt(r.period.spent)}`} tone="rose" />
-              <Box title="الرصيد الآن" value={r.totals.balance} sub="ما وصل − ما صُرف، من البداية" tone={r.totals.balance < 0 ? "rose" : "emerald"} testId="drbox-balance" />
+              <Box title={r.opening ? "ما وصل منذ البداية" : "مجموع ما وصل"} value={r.totals.received} sub={`في الفترة: ${fmt(r.period.received)}`} tone="blue" />
+              <Box title={r.opening ? "ما صُرف منذ البداية" : "مجموع ما صُرف"} value={r.totals.spent} sub={`في الفترة: ${fmt(r.period.spent)}`} tone="rose" />
+              <Box title="الرصيد الآن" value={r.totals.balance}
+                sub={r.opening ? "الافتتاحي + ما وصل − ما صُرف" : "ما وصل − ما صُرف، من البداية"}
+                tone={r.totals.balance < 0 ? "rose" : "emerald"} testId="drbox-balance" />
             </div>
 
             <AddExpense branchId={r.branch.id} today={r.today} write={write} />
@@ -170,6 +184,44 @@ export default function DrBox() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** الرصيدُ الافتتاحيّ — يضعه المالكُ بنفسه ويعدّله، ومن يومه يبدأ الحساب. */
+function OpeningLine({ report, write }: { report: Report; write: any }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(report.today);
+  const [amount, setAmount] = useState("");
+  const start = () => {
+    setDate(report.opening?.date ?? report.today);
+    setAmount(report.opening ? String(report.opening.amount) : "");
+    setOpen(true);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm border rounded-md px-3 py-2 bg-slate-50" data-testid="drbox-opening">
+      {report.opening
+        ? <span>الرصيد الافتتاحي: <b className="tabular-nums" dir="ltr">{fmt(report.opening.amount)}</b> من يوم <span dir="ltr">{dmy(report.opening.date)}</span> — ومنه يبدأ الحساب.</span>
+        : <span className="text-amber-800">لم تضع رصيداً افتتاحياً لهذا الفرع — الحساب الآن من أوّل تحويل.</span>}
+      <Button size="sm" variant="outline" className="h-7" onClick={start} data-testid="drbox-opening-edit">
+        {report.opening ? "تعديل الرصيد الافتتاحي" : "ضع الرصيد الافتتاحي"}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader><DialogTitle>الرصيد الافتتاحي — {report.branch.name}{report.branch.account ? ` (${report.branch.account})` : ""}</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">المبلغ الموجود في القاصة في بداية يوم البدء. ما قبل هذا اليوم من تحويلات ومصاريف لا يدخل الرصيد.</p>
+          <div className="space-y-3">
+            <label className="grid gap-1 text-sm">يوم البدء<Input type="date" value={date} max={report.today} onChange={(e) => e.target.value && setDate(e.target.value)} /></label>
+            <label className="grid gap-1 text-sm">الرصيد<AmountInput id="drbox-opening-amount" value={amount} onChange={setAmount} /></label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)}>إلغاء</Button>
+            <Button disabled={!date} data-testid="drbox-opening-save" onClick={() => write.mutate({
+              method: "POST", url: "/api/dr-box/opening", body: { branchId: report.branch.id, openingDate: date, amount: Number(amount || 0) },
+            }, { onSuccess: () => setOpen(false) })}>حفظ</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
