@@ -967,6 +967,23 @@ export const cashBookOpenings = pgTable("cash_book_openings", {
   unique("cash_book_openings_branch_id_book_key").on(t.branchId, t.book),
 ]);
 
+/** قاصةُ الدكتور (ترحيل ٠٩٩، §4.cb) — ما يصرفه المالكُ منها لكلّ فرع. خارجَ `expenses` وتقارير الفرع عمداً. */
+export const drBoxExpenses = pgTable("dr_box_expenses", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  expenseDate: date("expense_date").notNull(),
+  category: text("category").notNull(),
+  amount: integer("amount").notNull(),
+  note: text("note"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedBy: integer("deleted_by").references(() => systemUsers.id),
+}, (t) => [
+  index("ix_dr_box_expenses_day").on(t.branchId, t.expenseDate).where(sql`deleted_at IS NULL`),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and

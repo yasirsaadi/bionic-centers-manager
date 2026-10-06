@@ -33,6 +33,8 @@ interface Sheet {
     hospitalRatio: { pct: number; amount: number; recorded: number | null } | null;
   };
   canWrite: boolean; isAdmin: boolean; userId: number | null; canManageExpenses: boolean;
+  /** ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم — البابُ وحده بلا مبلغ (§4.cb). */
+  drBoxLines?: { id: number; category: string }[];
 }
 
 const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "" : n.toLocaleString("en-US"));
@@ -285,7 +287,14 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
                 </td>
               </tr>
             ))}
-            {sheet.rows.length === 0 && (
+            {(sheet.drBoxLines ?? []).map((l) => (
+              <tr key={`drbox-${l.id}`} className="bg-slate-50 text-slate-500" data-testid={`cash-drbox-${l.id}`}>
+                <td className="border" /><td className="border" /><td className="border" />
+                <td className="border px-2 py-1.5 italic">صُرف من قاصة الدكتور — {categoryLabel(l.category)}</td>
+                <td className="border" />
+              </tr>
+            ))}
+            {sheet.rows.length === 0 && !(sheet.drBoxLines ?? []).length && (
               <tr><td colSpan={5} className="border p-6 text-center text-muted-foreground">لا وارد ولا صادر في هذا اليوم بعد.</td></tr>
             )}
             <tr className="bg-slate-100 font-bold">

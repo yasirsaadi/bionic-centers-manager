@@ -80,6 +80,7 @@ async function cleanup() {
              AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[])))`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM journal_entries WHERE source_type='expense' AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[]))`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
+  await q(`DELETE FROM dr_box_expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_entries WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM staff_notification_outbox WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
@@ -243,6 +244,47 @@ async function main() {
     const tr = d.rows.find((r: any) => r.kind === "dr_transfer");
     same("ز٤. **والحذفُ ناعم** — يبقى الصفُّ بختمه", [(await http("DELETE", `/api/cash-book/rows/entry/${tr.id}`, S.acc)).status,
       (await q(`SELECT deleted_at IS NOT NULL del, deleted_by FROM cash_book_entries WHERE id=$1`, [tr.id]))[0]], [200, { del: true, deleted_by: ACC }]);
+
+    console.log("\n── ي. قاصة الدكتور (§4.cb) ──");
+    await row(S.acc, { kind: "dr_transfer", amount: 500_000, note: "اليوم" });
+    await row(S.accDq, { kind: "dr_transfer", amount: 70_000 });
+    const box = (s: any, from = YDAY, to = TODAY, branchId = BGD) => http("GET", `/api/dr-box?branchId=${branchId}&from=${from}&to=${to}`, s);
+    const spend = (s: any, body: any) => http("POST", "/api/dr-box/expenses", s, { branchId: BGD, date: TODAY, category: "salaries", amount: 300_000, ...body });
+    same("ي١. **للمسؤول وحده** — التقريرُ والصرفُ ٤٠٣ للمحاسب ولمدير الفرع، ولا صفَّ يُكتب",
+      [(await box(S.acc)).status, (await box(S.mgr)).status, (await spend(S.acc, {})).status, (await spend(S.mgr, {})).status,
+       Number((await q(`SELECT count(*)::int n FROM dr_box_expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]))[0].n)],
+      [403, 403, 403, 403, 0]);
+    const expBefore = Number((await q(`SELECT count(*)::int n FROM expenses WHERE branch_id=$1`, [BGD]))[0].n);
+    const sheetBefore = (await sheet(S.acc)).body;
+    const sp = await spend(S.admin, { note: "ملاحظة سرية" });
+    let rep = (await box(S.admin)).body;
+    same("ي٢. **الواردُ تحويلاتُ الفرع وحده، والرصيدُ = ما وصل − ما صُرف** (٥٠٠ ألف + ألف أمس − ٣٠٠ ألف) — وتحويلُ ذي قار خارجه",
+      [sp.status, rep.totals], [200, { received: 501_000, spent: 300_000, balance: 201_000 }]);
+    const sheetAfter = (await sheet(S.acc)).body;
+    same("ي٣. **ولا يمسّ قاصةَ الفرع**: لا صفَّ في `expenses`، ومجموعُ الصادر والمتبقي كما هما",
+      [Number((await q(`SELECT count(*)::int n FROM expenses WHERE branch_id=$1`, [BGD]))[0].n), sheetAfter.totals], [expBefore, sheetBefore.totals]);
+    same("ي٤. **والفرعُ يرى اليومَ والبابَ فقط** — بلا مبلغٍ ولا ملاحظة",
+      [sheetAfter.drBoxLines, JSON.stringify(sheetAfter).includes("سرية")], [[{ id: sp.body.id, category: "salaries" }], false]);
+    same("ي٥. **وفي فرعه وحده** — ذي قار لا يرى صرفَ بغداد، ولا في يومٍ آخر",
+      [(await sheet(S.accDq)).body?.drBoxLines, (await sheet(S.acc, "devices", YDAY)).body?.drBoxLines], [[], []]);
+    rep = (await box(S.admin, TODAY, TODAY)).body;
+    same("ي٦. **والفترةُ تحصر الحركةَ ولا تحصر الرصيد**", [rep.period, rep.transfers.length, rep.totals.balance],
+      [{ received: 500_000, spent: 300_000 }, 1, 201_000]);
+    same("ي٧. **مبلغٌ صفر، وبلا باب، وتاريخٌ لم يأتِ** — ٤٠٠",
+      [(await spend(S.admin, { amount: 0 })).status, (await spend(S.admin, { category: "" })).status, (await spend(S.admin, { date: addDays(TODAY, 1) })).status],
+      [400, 400, 400]);
+    await http("PATCH", `/api/dr-box/expenses/${sp.body.id}`, S.admin, { amount: 350_000 });
+    same("ي٨. **والتعديلُ للمسؤول** (٤٠٣ للمحاسب) ويغيّر الرصيد",
+      [(await http("PATCH", `/api/dr-box/expenses/${sp.body.id}`, S.acc, { amount: 1 })).status, (await box(S.admin)).body.totals.balance], [403, 151_000]);
+    same("ي٩. **والحذفُ للمسؤول، ناعم** — يعود الرصيد ويختفي السطرُ من دفتر الفرع",
+      [(await http("DELETE", `/api/dr-box/expenses/${sp.body.id}`, S.acc)).status,
+       (await http("DELETE", `/api/dr-box/expenses/${sp.body.id}`, S.admin)).status,
+       (await box(S.admin)).body.totals.balance, (await sheet(S.acc)).body.drBoxLines,
+       (await q(`SELECT deleted_at IS NOT NULL del, deleted_by FROM dr_box_expenses WHERE id=$1`, [sp.body.id]))[0]],
+      [403, 200, 501_000, [], { del: true, deleted_by: ADMIN }]);
+    same("ي١٠. **وكلُّ كتابةٍ بسطر تدقيق**",
+      (await q(`SELECT action FROM audit_log WHERE entity_type='dr_box_expense' AND entity_id=$1 ORDER BY id`, [sp.body.id])).map((a) => a.action),
+      ["create", "update", "delete"]);
 
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);

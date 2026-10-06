@@ -13,6 +13,8 @@ import {
   type CashBook, ATABAH_RATIO_CATEGORY, HOSPITAL_RATIO_CATEGORY, canWriteCashBook, canWriteDay, isCashBook, isYmd, parseAmount,
 } from "@shared/cash_book";
 import * as store from "./store";
+import { drBoxLinesForDay } from "./dr_box";
+import { registerDrBoxRoutes } from "./dr_box_routes";
 
 type Req = any;
 
@@ -85,6 +87,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         canWrite: canWriteDay(g.s, day, today, sheet.opening?.date ?? null),
         isAdmin: Boolean(g.s.isAdmin), userId: g.s.userId ?? null,
         canManageExpenses: Boolean(g.s.isAdmin || g.s.permissions?.canManageAccounting),
+        //  ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم: البابُ وحده، بلا مبلغٍ ولا ملاحظة (§4.cb).
+        drBoxLines: await drBoxLinesForDay(g.branchId, day),
       });
     } catch (e) { fail(res, e); }
   });
@@ -260,4 +264,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
       res.json({ success: true });
     } catch (e) { fail(res, e); }
   });
+
+  //  قاصةُ الدكتور (§4.cb) — نقاطُها للمسؤول وحده.
+  registerDrBoxRoutes(app, isAuthenticated);
 }

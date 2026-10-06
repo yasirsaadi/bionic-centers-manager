@@ -77,6 +77,7 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/statistics": "الإحصاءات",
   "/accounting": "النظام المحاسبي",
   "/cash-book": "دفتر القاصة",
+  "/dr-box": "قاصة الدكتور",
   "/surveys": "الاستطلاعات",
   "/session-tracking/entry": "إدخال الجلسات",
   "/session-tracking/targets": "أهداف الجلسات",
