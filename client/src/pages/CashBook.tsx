@@ -71,13 +71,19 @@ export default function CashBook() {
     if (!isAdmin && session?.branchId) setBranchId(session.branchId);
     else if (isAdmin) setBranchId(session?.branchId && session.branchId > 0 ? session.branchId : (branchList[0]?.id ?? null));
   }, [isAdmin, session?.branchId, branchList, branchId]);
-  const [book, setBook] = useState<Book>("devices");
+  //  الدفترُ الافتتاحيّ من إعداد الفرع (ذي قار ⟵ «علاج طبيعي»)، ويعود إليه عند تبديل الفرع —
+  //  ولا يُطلَب دفترٌ قبل أن يُعرَف الفرع، فلا يومض الدفترُ الآخر أوّلاً.
+  const configBranchName = isAdmin ? branchList.find((b) => b.id === branchId)?.name : session?.branchName;
+  const [book, setBook] = useState<Book | null>(null);
+  useEffect(() => {
+    if (branchId && configBranchName) setBook(branchCashConfig(configBranchName).defaultBook);
+  }, [branchId, configBranchName]);
   const [day, setDay] = useState(today);
 
   const key = ["/api/cash-book", branchId, book, day];
   const q = useQuery<Sheet>({
     queryKey: key,
-    enabled: Boolean(branchId),
+    enabled: Boolean(branchId && book),
     queryFn: async () => {
       const res = await fetch(`/api/cash-book?branchId=${branchId}&book=${book}&date=${day}`, { credentials: "include" });
       const j = await res.json().catch(() => ({}));
@@ -88,8 +94,8 @@ export default function CashBook() {
   const sheet = q.data;
   //  فرعٌ بدفترٍ واحد: لا يبقى الاختيارُ على «علاج طبيعي».
   const books: Book[] = sheet?.branch.config.books
-    ?? branchCashConfig(branchList.find((b) => b.id === branchId)?.name).books;
-  useEffect(() => { if (!books.includes(book)) setBook("devices"); }, [books.join(","), book]);
+    ?? branchCashConfig(configBranchName).books;
+  useEffect(() => { if (book && !books.includes(book)) setBook("devices"); }, [books.join(","), book]);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["/api/cash-book"] });
@@ -129,7 +135,7 @@ export default function CashBook() {
           <label className="grid gap-1">
             <span className="text-muted-foreground">القسم</span>
             {books.length > 1 ? (
-              <Select value={book} onValueChange={(v) => setBook(v as Book)}>
+              <Select value={book ?? undefined} onValueChange={(v) => setBook(v as Book)}>
                 <SelectTrigger className="w-40" data-testid="cash-book-select"><SelectValue /></SelectTrigger>
                 <SelectContent>{books.map((b) => <SelectItem key={b} value={b}>{CASH_BOOK_LABELS[b]}</SelectItem>)}</SelectContent>
               </Select>
@@ -160,11 +166,11 @@ export default function CashBook() {
         {q.isLoading && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
         {sheet && !sheet.opening && (sheet.isAdmin
-          ? <OpeningCard sheet={sheet} branchId={branchId!} book={book} onSave={(b) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: b })} />
+          ? <OpeningCard sheet={sheet} branchId={branchId!} book={book!} onSave={(b) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: b })} />
           : <p className="border-2 border-dashed rounded-md p-4 text-center text-muted-foreground" data-testid="cash-opening-waiting">
-              بانتظار أن يسجّل المسؤول بداية دفتر «{CASH_BOOK_LABELS[book]}» لهذا الفرع.
+              بانتظار أن يسجّل المسؤول بداية دفتر «{CASH_BOOK_LABELS[book!]}» لهذا الفرع.
             </p>)}
-        {sheet && sheet.opening && <SheetBody sheet={sheet} branchId={branchId!} book={book} day={day} write={write} />}
+        {sheet && sheet.opening && <SheetBody sheet={sheet} branchId={branchId!} book={book!} day={day} write={write} />}
       </div>
     </div>
   );

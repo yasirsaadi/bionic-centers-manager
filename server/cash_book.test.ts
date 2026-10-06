@@ -390,6 +390,8 @@ async function main() {
     same("ط١. إعدادُ الفروع من الاسم", ["بايونك بغداد", "بايونك ذي قار", "الوارث كربلاء", "بايونك الموصل", "بايونك كركوك"].map((n) => {
       const c = branchCashConfig(n); return [c.books.length, c.drRatioPct, c.hospitalRatioPct, c.hasAtabahRatio];
     }), [[2, 20, null, false], [2, 10, 10, false], [1, 10, null, true], [1, 10, null, false], [1, null, null, false]]);
+    same("ط١ب. الدفترُ الافتتاحيّ — ذي قار على «علاج طبيعي» والبقيّة على الأطراف", ["بايونك بغداد", "بايونك ذي قار", "الوارث كربلاء", "بايونك الموصل", "بايونك كركوك"]
+      .map((n) => branchCashConfig(n).defaultBook), ["devices", "physio", "devices", "devices", "devices"]);
     same("ط٢. النسبةُ بالدينار الصحيح", [ratioAmount(1_250_000, 20), ratioAmount(15, 10), ratioAmount(0, 10), ratioAmount(100, null)], [250_000, 2, 0, 0]);
     same("ط٣. اسمُ اليوم من التاريخ وحده", [dayNameOf("2026-10-04"), dayNameOf("2026-10-03")], ["الأحد", "السبت"]);
     same("ط٤. اليومُ المفتوح", [canWriteDay({}, "2026-10-05", "2026-10-05", "2026-10-01"), canWriteDay({}, "2026-10-04", "2026-10-05", "2026-10-01"),
