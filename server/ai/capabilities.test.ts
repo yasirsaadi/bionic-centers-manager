@@ -240,6 +240,19 @@ async function main() {
     });
     ok(finRead.ok, "ويقرؤها فعلاً");
 
+    //  أرصدةُ المالك (§4.cb تكملة): خلاصةُ كلّ الفروع يقرؤها المساعدُ بجلسة المالك، ويردّها حارسُ النقطة لغيره.
+    const boxList = await call(adminAccess, adminSess, "list_capabilities", { topic: "مجموع الارصدة في قاصة الدكتور" });
+    ok(((boxList.data?.capabilities ?? []) as any[]).some((c) => c.name === "/api/dr-box/summary"),
+      "«مجموع الأرصدة في قاصة الدكتور» يجد خلاصةَ المالك");
+    const boxRead = await call(adminAccess, adminSess, "read_capability", { name: "/api/dr-box/summary" });
+    const boxVal = boxRead.data?.value as any;
+    ok(boxRead.ok && typeof boxVal?.totals?.drBoxBalance === "number" && Object.values(boxVal?.branches ?? {}).some((b: any) => b.id === bB.id && typeof b.drBox?.balance === "number"),
+      "ويقرؤها المالكُ كاملةً — المجاميعُ الكلّيّة والفروعُ معاً، لا تُسقَط المجاميع");
+    const accSess = { userId: null, role: "accountant", isAdmin: false, branchId: bB.id, accessibleBranches: [bB.id],
+      permissions: { canManageAccounting: true, canViewReports: true } };
+    const accBox = await call(access(accSess, bB.id), accSess, "read_capability", { name: "/api/dr-box/summary" });
+    ok(!accBox.ok, "والمحاسبُ لا يقرؤها ولو بوضعٍ ماليّ — قاصةُ الدكتور للمالك وحده");
+
     console.log("\nهـ — والممنوعُ لا يُنادى ولو اخترع النموذجُ اسمَه");
     const sess = session(adminSess);
     const out = await executeTool(adminAccess, "read_capability", { name: "/api/logout" },

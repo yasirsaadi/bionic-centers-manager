@@ -311,6 +311,26 @@ async function main() {
       [(await setOpen(S.admin, { openingDate: addDays(TODAY, 1), amount: 1 })).status, (await setOpen(S.admin, { openingDate: TODAY, amount: -5 })).status],
       [400, 400]);
 
+    //  خلاصةُ المالك لكلّ الفروع (§4.cb تكملة) — يقرؤها المساعدُ الذكيّ بجلسة المالك.
+    const sumOf = (s: any, q = "") => http("GET", `/api/dr-box/summary${q}`, s);
+    same("ي١٦. **خلاصةُ المالك للمسؤول وحده** — ٤٠٣ للمحاسب ولمدير الفرع", [(await sumOf(S.acc)).status, (await sumOf(S.mgr)).status], [403, 403]);
+    const sm = (await sumOf(S.admin, `?from=${YDAY}&to=${TODAY}`)).body;
+    const smList: any[] = Object.values(sm.branches);
+    const sb = smList.find((b: any) => b.id === BGD);
+    const boxB = (await box(S.admin)).body;
+    const devB = (await sheet(S.admin, "devices", TODAY, BGD)).body;
+    same("ي١٧. **أرقامُها هي أرقامُ الشاشتين نفسِها** — رصيدُ القاصة والحساب، والمتبقي في القاصة والنسبة من دفتر اليوم",
+      [sb.account, sb.drBox.balance, sb.drBox.received, sb.books.find((k: any) => k.book === "devices").cashRemaining,
+       sb.books.find((k: any) => k.book === "devices").ratioRemaining],
+      ["كي كارت 2009", boxB.totals.balance, boxB.totals.received, devB.totals.remaining, devB.ratio.remaining]);
+    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها والمستلَم، وتحويلُ ذي قار وحده لذي قار",
+      [sb.books.find((k: any) => k.book === "devices").period, smList.find((b: any) => b.id === DQ).books[0].period.drTransfers],
+      [{ drTransfers: 501_000, drRatio: 260_000, ratioReceived: 100_000 }, 70_000]);
+    same("ي١٩. **والمجاميعُ الكلّية جمعُ الفروع**",
+      [sm.totals.drBoxBalance, sm.totals.periodDrTransfers],
+      [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
+       smList.reduce((a: number, b: any) => a + b.books.reduce((x: number, k: any) => x + k.period.drTransfers, 0), 0)]);
+
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);
     check(aud.length >= 10 && aud.some((a) => a.entity_type === "cash_book_opening") && aud.some((a) => a.action === "delete"),
