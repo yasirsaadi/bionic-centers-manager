@@ -84,6 +84,7 @@ async function cleanup() {
   await q(`DELETE FROM dr_box_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_entries WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
+  await q(`DELETE FROM cash_book_prints WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM staff_notification_outbox WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM payments WHERE patient_id IN (${pids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${pids})`);
@@ -330,6 +331,39 @@ async function main() {
       [sm.totals.drBoxBalance, sm.totals.periodDrTransfers],
       [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
        smList.reduce((a: number, b: any) => a + b.books.reduce((x: number, k: any) => x + k.period.drTransfers, 0), 0)]);
+
+    console.log("\n── ك. طباعة ورقة الدفتر (§4.ca تكملة) ──");
+    const printed = (s: any, body: any) => http("POST", "/api/cash-book/printed", s, { book: "devices", date: TODAY, ...body });
+    same("ك١. **الاستقبالُ لا يطبع**، وتاريخٌ لم يأتِ ٤٠٠، ويومٌ قبل بداية الدفتر ٤٠٩",
+      [(await printed(S.recv, {})).status, (await printed(S.acc, { date: addDays(TODAY, 1) })).status,
+       (await printed(S.admin, { branchId: BGD, date: addDays(YDAY, -3) })).status], [403, 400, 409]);
+    const p1 = await printed(S.acc, {});
+    let ps = (await sheet(S.acc)).body;
+    same("ك٢. **المحاسبُ يطبع ورقةَ اليوم** — تُسجَّل باسمه، ولا «تعديلَ بعد الطباعة»",
+      [p1.status, ps.lastPrint?.by, ps.changedAfterPrint], [200, `u${ACC}`, false]);
+    await row(S.acc, { kind: "income_other", amount: 5_000, note: "بعد الطباعة" });
+    same("ك٣. **سطرٌ بعد الطباعة ⟵ «عُدّلت بعد الطباعة»**", (await sheet(S.acc)).body.changedAfterPrint, true);
+    await printed(S.acc, {});
+    same("ك٤. **والطباعةُ من جديد تُطفئها** — وطباعتان في السجلّ",
+      [(await sheet(S.acc)).body.changedAfterPrint, Number((await q(`SELECT count(*)::int n FROM cash_book_prints WHERE branch_id=$1 AND day=$2`, [BGD, TODAY]))[0].n)],
+      [false, 2]);
+    //  الملاحظةُ وحدها تتغيّر (لا مبلغ) ⟵ سطورُ الورقة وحدها تختلف.
+    const after = (await sheet(S.acc)).body.rows.find((r: any) => r.note === "بعد الطباعة");
+    await http("PATCH", `/api/cash-book/rows/entry/${after.id}`, S.acc, { note: "بعد الطباعة — مصحّحة" });
+    same("ك٤ب. **تصحيحُ ملاحظةٍ بلا مبلغ يُعلَّم أيضاً** — ما طُبع نصُّه تغيّر", (await sheet(S.acc)).body.changedAfterPrint, true);
+    await printed(S.acc, {});
+    //  سطرٌ في الأمس ⟵ «الباقي من أمس» لليوم يتغيّر، وسطورُ اليوم كما هي.
+    const yRow = await row(S.admin, { branchId: BGD, kind: "income_other", amount: 7_000, note: "وارد متأخّر", date: YDAY });
+    same("ك٤ج. **سطرٌ في يومٍ سابق يغيّر «الباقي من أمس» فتُعلَّم ورقةُ اليوم**", (await sheet(S.acc)).body.changedAfterPrint, true);
+    await http("DELETE", `/api/cash-book/rows/entry/${yRow.body.id}`, S.admin);
+    same("ك٤د. **وحذفُه يعيد ورقةَ اليوم مطابقةً**", (await sheet(S.acc)).body.changedAfterPrint, false);
+    await printed(S.admin, { branchId: BGD, date: YDAY });
+    const op = (await sheet(S.admin, "devices", TODAY, BGD)).body.opening;
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: op.date, cash: op.cash + 1_000, ratio: op.ratio });
+    same("ك٥. **وتغييرُ ما قبل اليوم يغيّر «الباقي من أمس» فيُعلَّم كذلك** — تعديلُ بداية الدفتر بعد طباعة الأمس",
+      (await sheet(S.admin, "devices", YDAY, BGD)).body.changedAfterPrint, true);
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: op.date, cash: op.cash, ratio: op.ratio });
+    same("ك٦. **وإعادتُها كما كانت تُعيد الورقةَ مطابقةً لما طُبع**", (await sheet(S.admin, "devices", YDAY, BGD)).body.changedAfterPrint, false);
 
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);

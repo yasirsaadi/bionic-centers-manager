@@ -11,7 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
-import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw } from "lucide-react";
+import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_text";
+import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
 } from "@shared/cash_book";
@@ -35,6 +36,9 @@ interface Sheet {
   canWrite: boolean; isAdmin: boolean; userId: number | null; canManageExpenses: boolean;
   /** ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم — البابُ وحده بلا مبلغ (§4.cb). */
   drBoxLines?: { id: number; category: string }[];
+  /** آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما فيها بعدها (§4.ca تكملة). */
+  lastPrint?: { at: string; by: string | null } | null;
+  changedAfterPrint?: boolean;
 }
 
 const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "" : n.toLocaleString("en-US"));
@@ -42,7 +46,7 @@ const digits = (v: string) => v.replace(/[^\d]/g, "");
 function shiftDay(ymd: string, n: number) {
   const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
 }
-const categoryLabel = (c: string | null) => (c ? EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c : "");
+const categoryLabel = cashCategoryLabel;
 
 /** حقلُ مبلغٍ بالدينار — يكتب أرقاماً ويرى الفواصل. */
 function AmountInput({ value, onChange, id, autoFocus }: { value: string; onChange: (v: string) => void; id: string; autoFocus?: boolean }) {
@@ -224,19 +228,12 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   const outflow = sheet.rows.filter((r) => r.column !== "income");
   const editable = (r: Row) => sheet.canWrite && r.source !== "payment"
     && (r.source === "entry" || sheet.isAdmin || sheet.canManageExpenses || r.createdBy === sheet.userId);
-  const noteOf = (r: Row) => {
-    if (r.kind === "income_other") return `${INCOME_OTHER_LABEL}${r.note ? ` — ${r.note}` : ""}`;
-    if (r.kind === "dr_transfer") return `${OUTFLOW_LABELS.dr_transfer}${r.note ? ` (${r.note})` : ""}`;
-    if (r.kind === "dr_ratio" || r.kind === "hospital_ratio" || r.kind === "atabah_ratio") {
-      return `${OUTFLOW_LABELS[r.kind as "dr_ratio"]}${r.note && r.kind === "atabah_ratio" ? ` — ${r.note}` : ""}`;
-    }
-    if (r.source === "expense") return `${categoryLabel(r.category)}${r.note ? ` — ${r.note}` : ""}`;
-    return r.note;
-  };
+  const noteOf = (r: Row) => cashRowNote(r);
   const stale = (x: { amount: number; recorded: number | null } | null) => x && x.recorded !== null && x.recorded !== x.amount;
 
   return (
     <div className="space-y-4">
+      <PrintBar sheet={sheet} branchId={branchId} book={book} day={day} />
       {sheet.isAdmin && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="cash-opening-line">
           <span>بداية الدفتر: {sheet.opening!.date.split("-").reverse().join("/")} · النقد {fmt(sheet.opening!.cash)} · النسبة {fmt(sheet.opening!.ratio)}</span>
@@ -290,7 +287,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
             {(sheet.drBoxLines ?? []).map((l) => (
               <tr key={`drbox-${l.id}`} className="bg-slate-50 text-slate-500" data-testid={`cash-drbox-${l.id}`}>
                 <td className="border" /><td className="border" /><td className="border" />
-                <td className="border px-2 py-1.5 italic">صُرف من قاصة الدكتور — {categoryLabel(l.category)}</td>
+                <td className="border px-2 py-1.5 italic">{drBoxLineText(l.category)}</td>
                 <td className="border" />
               </tr>
             ))}
@@ -458,5 +455,52 @@ function EditRowDialog({ row, onClose, write }: { row: Row | null; onClose: () =
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** يفتح ورقةَ الطباعة في نافذةٍ جديدة — ومنها الطابعةُ أو «حفظ كملف PDF». */
+function openPrint(q: Record<string, string | number>) {
+  const qs = new URLSearchParams(Object.entries(q).map(([k, v]) => [k, String(v)])).toString();
+  window.open(`/cash-book/print?${qs}`, "_blank");
+}
+
+/** شريطُ الطباعة (§4.ca تكملة): ورقةُ اليوم مملوءةً، وشهرٌ كامل للمسؤول، وورقةٌ فارغة لانقطاع الإنترنت — ومتى طُبعت آخرَ مرّة. */
+function PrintBar({ sheet, branchId, book, day }: { sheet: Sheet; branchId: number; book: Book; day: string }) {
+  const [month, setMonth] = useState(day.slice(0, 7));
+  const monthRange = () => {
+    const from = `${month}-01`;
+    const d = new Date(`${from}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0);
+    const end = d.toISOString().slice(0, 10);
+    return { from, to: end > sheet.today ? sheet.today : end };
+  };
+  const at = sheet.lastPrint ? new Date(sheet.lastPrint.at).toLocaleString("en-GB", {
+    timeZone: "Asia/Baghdad", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border rounded-md px-3 py-2 bg-slate-50 text-sm" data-testid="cash-print-bar">
+      <Button size="sm" className="h-8" onClick={() => openPrint({ branchId, book, from: day, to: day })} data-testid="cash-print-day">
+        <Printer className="w-4 h-4 me-1" />طباعة ورقة اليوم
+      </Button>
+      {sheet.isAdmin && (
+        <span className="flex items-center gap-1">
+          <Input type="month" value={month} max={sheet.today.slice(0, 7)} onChange={(e) => e.target.value && setMonth(e.target.value)} className="h-8 w-36" />
+          <Button size="sm" variant="outline" className="h-8" onClick={() => openPrint({ branchId, book, ...monthRange() })} data-testid="cash-print-month">
+            طباعة الشهر كاملاً
+          </Button>
+        </span>
+      )}
+      <Button size="sm" variant="ghost" className="h-8 text-muted-foreground" onClick={() => openPrint({ blank: 1, branchId, book })} data-testid="cash-print-blank"
+        title="لانقطاع الإنترنت فقط — وما يُكتب عليها يُدخَل في التطبيق حين يعود">
+        ورقة فارغة
+      </Button>
+      <span className="ms-auto text-xs text-muted-foreground" data-testid="cash-print-stamp">
+        {at ? `آخر طباعة: ${at}${sheet.lastPrint?.by ? ` — ${sheet.lastPrint.by}` : ""}` : "لم تُطبع هذه الورقة بعد"}
+      </span>
+      {sheet.changedAfterPrint && (
+        <Badge className="bg-amber-100 text-amber-900 border border-amber-400 hover:bg-amber-100" data-testid="cash-changed-after-print">
+          عُدّلت بعد الطباعة — اطبعها من جديد
+        </Badge>
+      )}
+    </div>
   );
 }

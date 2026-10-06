@@ -14,6 +14,7 @@ import {
 } from "@shared/cash_book";
 import * as store from "./store";
 import { drBoxLinesForDay } from "./dr_box";
+import { sheetFingerprint, lastPrint, recordPrint } from "./prints";
 import { registerDrBoxRoutes } from "./dr_box_routes";
 
 type Req = any;
@@ -82,14 +83,37 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     try {
       const sheet = await store.getSheet(g.branchId, g.book, day);
       const today = baghdadTodayYmd();
+      //  ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم: البابُ وحده، بلا مبلغٍ ولا ملاحظة (§4.cb).
+      const drBoxLines = await drBoxLinesForDay(g.branchId, day);
+      //  آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما تطبعه بعدها (بصمةُ ما طُبع ≠ بصمةُ الآن).
+      const printed = await lastPrint(g.branchId, g.book, day);
       res.json({
         ...sheet, today,
         canWrite: canWriteDay(g.s, day, today, sheet.opening?.date ?? null),
         isAdmin: Boolean(g.s.isAdmin), userId: g.s.userId ?? null,
         canManageExpenses: Boolean(g.s.isAdmin || g.s.permissions?.canManageAccounting),
-        //  ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم: البابُ وحده، بلا مبلغٍ ولا ملاحظة (§4.cb).
-        drBoxLines: await drBoxLinesForDay(g.branchId, day),
+        drBoxLines,
+        lastPrint: printed ? { at: printed.printedAt.toISOString(), by: printed.printedByName ?? null } : null,
+        changedAfterPrint: printed ? printed.fingerprint !== sheetFingerprint(sheet, drBoxLines) : false,
       });
+    } catch (e) { fail(res, e); }
+  });
+
+  // ---- طباعةُ ورقة اليوم: تُسجَّل مع بصمة ما طُبع (§4.ca تكملة) -------------------------------------
+  app.post("/api/cash-book/printed", isAuthenticated, async (req: Req, res) => {
+    const g = await gate(req, res, req.body?.branchId, req.body?.book);
+    if (!g) return;
+    const day = req.body?.date;
+    if (!isYmd(day) || day > baghdadTodayYmd()) return res.status(400).json({ error: "التاريخ غير صالح" });
+    try {
+      const sheet = await store.getSheet(g.branchId, g.book, day);
+      if (!sheet.opening || day < sheet.opening.date) return res.status(409).json({ error: "هذا اليوم قبل بداية الدفتر" });
+      const row = await recordPrint({
+        branchId: g.branchId, book: g.book, day,
+        fingerprint: sheetFingerprint(sheet, await drBoxLinesForDay(g.branchId, day)),
+        userId: g.s.userId ?? null, userName: g.s.displayName ?? null,
+      });
+      res.json({ at: row.printedAt.toISOString(), by: row.printedByName });
     } catch (e) { fail(res, e); }
   });
 

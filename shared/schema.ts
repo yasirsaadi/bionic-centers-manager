@@ -997,6 +997,20 @@ export const drBoxOpenings = pgTable("dr_box_openings", {
   unique("dr_box_openings_branch_id_key").on(t.branchId),
 ]);
 
+/** سجلُّ طباعة ورقة الدفتر (ترحيل ١٠١): مَن ومتى، وبصمةُ ما طُبع — فيُعرف «عُدّل بعد الطباعة». */
+export const cashBookPrints = pgTable("cash_book_prints", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  book: text("book").notNull(),
+  day: date("day").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  printedBy: integer("printed_by").references(() => systemUsers.id),
+  printedByName: text("printed_by_name"),
+  printedAt: timestamp("printed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("ix_cash_book_prints_day").on(t.branchId, t.book, t.day, t.printedAt),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and
