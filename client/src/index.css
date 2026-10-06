@@ -114,3 +114,11 @@
 ::-webkit-scrollbar-thumb {
   @apply bg-primary/20 rounded-full hover:bg-primary/40 transition-colors;
 }
+
+/*  **نصوصُ المخطّطات داخل الرسم تُحسب يساراً-يميناً** (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.cc تكملة): Recharts يضع تسمياتِ المحاور والدوائر
+    بـ text-anchor محسوبٍ لاتّجاه LTR، والصفحةُ RTL فتنقلب «البداية» و«النهاية»: تسمياتُ المحور العموديّ تنزلق تحت الأعمدة
+    («الجهات المحوّل منها» و«التوزيع العمري») وتسمياتُ الدائرة تُقصّ. فالرسمُ وحده LTR — والحروفُ العربية تبقى عربيةً بخوارزمية
+    الاتّجاه — بينما التلميحُ ومفتاحُ الألوان (HTML) يبقيان RTL. */
+.recharts-surface { direction: ltr; }
+.recharts-legend-wrapper .recharts-legend-item { margin-inline: 6px !important; }
+.recharts-legend-wrapper .recharts-legend-item svg { margin: 0 4px !important; }
