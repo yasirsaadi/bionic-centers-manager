@@ -48,16 +48,18 @@ export interface BranchCashConfig {
   drRatioPct: number | null;
   hospitalRatioPct: number | null;
   hasAtabahRatio: boolean;
+  /** الدفترُ الذي تفتح عليه الصفحة — ذي قار على «علاج طبيعي» لأنه الأكثر فيها (قرارُ المالك ٢٠٢٦-١٠-٠٦). */
+  defaultBook: CashBook;
 }
 
 export function branchCashConfig(branchName: string | null | undefined): BranchCashConfig {
   const n = String(branchName ?? "");
-  if (n.includes("بغداد")) return { books: ["devices", "physio"], drRatioPct: 20, hospitalRatioPct: null, hasAtabahRatio: false };
-  if (n.includes("ذي قار")) return { books: ["devices", "physio"], drRatioPct: 10, hospitalRatioPct: 10, hasAtabahRatio: false };
-  if (n.includes("كربلاء")) return { books: ["devices"], drRatioPct: 10, hospitalRatioPct: null, hasAtabahRatio: true };
-  if (n.includes("الموصل")) return { books: ["devices"], drRatioPct: 10, hospitalRatioPct: null, hasAtabahRatio: false };
+  if (n.includes("بغداد")) return { books: ["devices", "physio"], drRatioPct: 20, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "devices" };
+  if (n.includes("ذي قار")) return { books: ["devices", "physio"], drRatioPct: 10, hospitalRatioPct: 10, hasAtabahRatio: false, defaultBook: "physio" };
+  if (n.includes("كربلاء")) return { books: ["devices"], drRatioPct: 10, hospitalRatioPct: null, hasAtabahRatio: true, defaultBook: "devices" };
+  if (n.includes("الموصل")) return { books: ["devices"], drRatioPct: 10, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "devices" };
   //  فرعٌ لم يقرّر له المالكُ نسبةً (كركوك المغلقُ مؤقتاً): دفترٌ واحد بلا نسب — لا تُخترع نسبة.
-  return { books: ["devices"], drRatioPct: null, hospitalRatioPct: null, hasAtabahRatio: false };
+  return { books: ["devices"], drRatioPct: null, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "devices" };
 }
 
 /** النسبةُ من وارد الدفتر — بالدينار الصحيح، والنصفُ يُجبَر للأعلى. */
