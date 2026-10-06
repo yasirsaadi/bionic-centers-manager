@@ -207,10 +207,12 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
   }
   outflow.sort((a, c) => (a.at ?? "").localeCompare(c.at ?? "") || a.id - c.id);
   const income = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
-  //  نسبةُ الدكتور سطرٌ محسوبٌ من وارد اليوم — آخرَ الصادر، بلا زرٍّ ولا تعديلٍ بيد.
+  //  نسبةُ الدكتور سطرٌ محسوبٌ من وارد اليوم — آخرَ الصادر في عمود «مصاريف»، بلا زرٍّ ولا كتابةٍ ولا تعديلٍ بيد.
+  //  **لا في عمود «تحويل إلى قاصة الدكتور»** (قرارُ المالك ٢٠٢٦-١٠-٠٦): النسبةُ تُعزَل في مربّعها ويستلمها المالكُ متى شاء،
+  //  ولا تذهب إلى قاصته يومَها — والصادرُ رقمٌ واحد، فلا يتغيّر مجموعٌ ولا متبقٍّ بموضعها. ولا تدخل جدولَ `expenses`.
   const todayDrRatio = ratioAmount(income, cfg.drRatioPct);
   if (todayDrRatio > 0) {
-    outflow.push({ source: "auto", id: 0, column: "transfer", kind: "dr_ratio", amount: todayDrRatio, note: `${cfg.drRatioPct}٪ من وارد اليوم`,
+    outflow.push({ source: "auto", id: 0, column: "expense", kind: "dr_ratio", amount: todayDrRatio, note: `عزل — ${cfg.drRatioPct}٪ من وارد اليوم`,
       category: null, unsectioned: false, createdBy: null, at: null });
   }
   rows.push(...outflow);

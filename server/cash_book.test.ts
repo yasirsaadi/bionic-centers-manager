@@ -196,11 +196,13 @@ async function main() {
     console.log("\n── هـ. النسب ──");
     //  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — بلا زرّ.
     const drRows = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => [r.source, r.amount]);
+    const drCols = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => r.column);
     d = (await sheet(S.acc)).body;
     same("هـ١. **نسبةُ الدكتور لبغداد ٢٠٪ من وارد الدفتر وحده، تلقائياً بلا زرّ** (١,٢٥٠,٠٠٠ ⟵ ٢٥٠,٠٠٠)", drRows(d), [["auto", 250_000]]);
     await row(S.acc, { kind: "income_other", amount: 50_000, note: "استرداد" });
     d = (await sheet(S.acc)).body;
     same("هـ٢. **ووارد جديد يغيّرها وحده** — كالمجموع", drRows(d), [["auto", 260_000]]);
+    same("هـ٢ب. **وفي عمود «مصاريف» لا «تحويل إلى قاصة الدكتور»** — تُعزَل ولا تذهب إلى قاصة المالك يومَها", drCols(d), ["expense"]);
     const noBtn = await ratio(S.acc, { kind: "dr_ratio" });
     same("هـ٣. **ولا تُضاف بزرّ** — ٤٠٠ برسالةٍ تقول لماذا", [noBtn.status, /تلقائياً/.test(noBtn.body?.error ?? "")], [400, true]);
     //  ما سُجّل يدوياً قبل القرار لا يُقرأ بعده — فلا تُحسب النسبةُ مرّتين.
