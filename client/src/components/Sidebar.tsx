@@ -3,7 +3,7 @@ import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, Shie
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession } from "@/components/BranchGate";
-import { BranchSwitcher } from "@/components/BranchSwitcher";
+import { BranchSwitcher, branchSwitcherVisible } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { canTrashPatients, TRASH_TITLE, trashBadgeSeenKey } from "@shared/patient_trash";
@@ -483,47 +483,42 @@ export function Sidebar() {
         })}
       </nav>
 
-      {branchSession && (
-        <div className="px-4 md:px-6 py-3 md:py-4 border-t border-border/50 bg-slate-50/50">
-          {branchSession.displayName && (
-            <div className="flex items-center gap-2 text-xs md:text-sm mb-2">
-              <User className="w-4 h-4 text-primary" />
-              <span className="font-medium text-slate-700">{branchSession.displayName}</span>
-              {branchSession.role && (
-                <span className="text-xs text-muted-foreground">
-                  ({t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role})
-                </span>
-              )}
-              {/* Only a real staff account has a personal password to change;
-                  the legacy admin key changes its own from admin settings. */}
-              {(branchSession as any).userId && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 mr-auto"
-                  onClick={() => setPasswordOpen(true)}
-                  title="تغيير كلمة السر"
-                  data-testid="button-change-password"
-                >
-                  <KeyRound className="w-4 h-4 text-muted-foreground" />
-                </Button>
-              )}
+      {/*  **أسفلُ الشريط نحيف** (قرارُ المالك ٢٠٢٦-١٠-٠٦): كان أربعَ طبقاتٍ تغطّي جزءاً من القائمة المتحرّكة على الشاشات القصيرة.
+          صار سطرين: مبدِّلُ الفرع (سطرٌ واحد، ظاهرٌ كما قرّر — §4.ay)، ثمّ المستخدمُ وأزرارُه الصغيرة والخروج. */}
+      <div className="shrink-0 px-3 md:px-4 py-2 border-t border-border/50 bg-slate-50/50 space-y-1.5">
+        {branchSession && <BranchSwitcher />}
+        <div className="flex items-center gap-1.5 text-xs">
+          {branchSession?.displayName && (
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              {branchSession.isAdmin
+                ? <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+                : <User className="w-4 h-4 text-primary shrink-0" />}
+              <div className="min-w-0 leading-tight">
+                <div className="font-medium text-slate-700 truncate">{branchSession.displayName}</div>
+                <div className="text-[10px] text-muted-foreground truncate">
+                  {branchSession.role ? (t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role) : ""}
+                  {/*  اسمُ الفرع هنا لمن لا مبدِّلَ له وحده — فلا يتكرّر. */}
+                  {!branchSwitcherVisible(branchSession) && branchSession.branchName
+                    ? ` · ${t.branches[branchSession.branchName as keyof typeof t.branches] || branchSession.branchName}` : ""}
+                </div>
+              </div>
             </div>
           )}
-          {/*  **مبدِّلُ الفرع ظاهرٌ جداً** (قرارُ المالك ٢٠٢٦-١٠-٠١، §4.ay): الموظّفُ يعمل في الفرع المختار وحده،
-              فيجب أن يرى أين هو وأن يبدّل بضغطة. يقرّر المكوّنُ نفسُه متى يظهر. */}
-          <div className="mb-2">
-            <BranchSwitcher />
-          </div>
-          <div className="flex items-center justify-between gap-2 text-xs md:text-sm">
-            <div className="flex items-center gap-2">
-              {branchSession.isAdmin ? (
-                <ShieldCheck className="w-4 h-4 text-primary" />
-              ) : (
-                <Building2 className="w-4 h-4 text-muted-foreground" />
-              )}
-              <span className="font-medium text-slate-700">{t.branches[branchSession.branchName as keyof typeof t.branches] || branchSession.branchName}</span>
-            </div>
+          {/* Only a real staff account has a personal password to change;
+              the legacy admin key changes its own from admin settings. */}
+          {(branchSession as any)?.userId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              onClick={() => setPasswordOpen(true)}
+              title="تغيير كلمة السر"
+              data-testid="button-change-password"
+            >
+              <KeyRound className="w-4 h-4 text-muted-foreground" />
+            </Button>
+          )}
+          {branchSession && (
             <Button
               variant="ghost"
               size="icon"
@@ -539,28 +534,26 @@ export function Sidebar() {
                   } catch {}
                 }
               }}
-              className="h-7 w-7"
+              className="h-7 w-7 shrink-0"
               data-testid="button-toggle-language"
               title={language === "ar" ? "Switch to English" : "التبديل إلى العربية"}
             >
               <Globe className="w-4 h-4" />
             </Button>
-          </div>
+          )}
+          <button
+            onClick={() => {
+              clearBranchSession();
+              logout();
+            }}
+            className="shrink-0 flex items-center gap-1 px-2 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors duration-200"
+            title={t.sidebar.logout}
+            data-testid="button-logout"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="font-medium">{language === "ar" ? "خروج" : t.sidebar.logout}</span>
+          </button>
         </div>
-      )}
-
-      <div className="p-4 md:p-6 border-t border-border/50">
-        <button 
-          onClick={() => {
-            clearBranchSession();
-            logout();
-          }}
-          className="flex items-center gap-3 w-full px-3 md:px-4 py-2.5 md:py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-colors duration-200"
-          data-testid="button-logout"
-        >
-          <LogOut className="w-5 h-5" />
-          <span className="font-medium text-sm md:text-base">{t.sidebar.logout}</span>
-        </button>
       </div>
     </>
   );

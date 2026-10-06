@@ -20,6 +20,11 @@ function assignedOf(session: any): number[] {
   return Array.isArray(session?.accessibleBranches) ? session.accessibleBranches : [];
 }
 
+/** أيظهر المبدِّل؟ — المسؤولُ ومتعدّدُ الفروع. فالشريطُ الجانبيّ لا يكرّر اسمَ الفرع حين يكون المبدِّلُ ظاهراً. */
+export function branchSwitcherVisible(session: any): boolean {
+  return Boolean(session) && (Boolean(session?.isAdmin) || assignedOf(session).length > 1);
+}
+
 export function BranchSwitcher({ compact = false }: { compact?: boolean }) {
   const session = useBranchSession() as any;
   const { toast } = useToast();
@@ -123,27 +128,25 @@ export function BranchSwitcher({ compact = false }: { compact?: boolean }) {
     );
   }
 
+  //  **سطرٌ واحد نحيف** (قرارُ المالك ٢٠٢٦-١٠-٠٦: أسفلُ الشريط كان يغطّي جزءاً من القائمة): «تعمل الآن في ‹الفرع›» وزرُّ
+  //  «تبديل الفرع» بجانبه، باللون الكهرمانيّ نفسِه — ظاهرٌ كما قرّر المالك (§4.ay)، والشرحُ في تلميح السطر.
   return (
     <div className="relative" data-testid="branch-switcher">
-      <div className="rounded-lg border-2 border-amber-400 bg-amber-50 p-2.5">
-        <div className="flex items-center gap-2 text-amber-900">
-          <Building2 className="h-5 w-5 shrink-0" />
-          <div className="min-w-0">
-            <div className="text-[11px] leading-tight">تعمل الآن في</div>
-            <div className="text-base font-bold leading-tight truncate" data-testid="text-active-branch">{currentName}</div>
-          </div>
+      <div className="flex items-center gap-2 rounded-lg border-2 border-amber-400 bg-amber-50 px-2 py-1 text-amber-900"
+        title={isAdmin
+          ? "لمريضٍ له أكثر من فرع اختر فرعه هنا قبل الحفظ."
+          : "ترى وتعمل على مرضى هذا الفرع فقط — ولمريضٍ من فرعٍ آخر بدّل الفرع."}>
+        <Building2 className="h-4 w-4 shrink-0" />
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="text-[10px]">تعمل الآن في</div>
+          <div className="text-sm font-bold truncate" data-testid="text-active-branch">{currentName}</div>
         </div>
         <button type="button" onClick={() => setOpen((o) => !o)}
-          className="mt-2 w-full flex items-center justify-center gap-2 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold py-2"
+          className="shrink-0 flex items-center gap-1 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-2 py-1.5"
           data-testid="button-branch-switcher">
-          <ArrowLeftRight className="h-4 w-4" />
+          <ArrowLeftRight className="h-3.5 w-3.5" />
           تبديل الفرع
         </button>
-        <p className="mt-1.5 text-[11px] leading-snug text-amber-800">
-          {isAdmin
-            ? "لمريضٍ له أكثر من فرع اختر فرعه هنا قبل الحفظ."
-            : "ترى وتعمل على مرضى هذا الفرع فقط — ولمريضٍ من فرعٍ آخر بدّل الفرع."}
-        </p>
       </div>
       {list}
     </div>
