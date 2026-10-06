@@ -210,6 +210,12 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const source = req.params.source;
     const id = parseInt(req.params.id);
     if (Number.isNaN(id) || (source !== "entry" && source !== "expense")) { res.status(400).json({ error: "سطر غير صالح" }); return null; }
+    //  **تعديلُ سطرٍ مكتوب وحذفُه للمسؤول وحده** (قرارُ المالك ٢٠٢٦-١٠-٠٧، §4.ca تكملة ٦): «إذا أدخل موظّفٌ رقماً غلطاً — صادراً
+    //  أو تحويلاً إلى قاصة الدكتور أو وارداً — فأنا أعدّله له قبل أن يطبع». فالموظّفُ يضيف ولا يغيّر ما كُتب، ولا يحذفه ليعيد كتابته.
+    if (!sessionOf(req)?.isAdmin) {
+      res.status(403).json({ error: "تصحيحُ سطرٍ في الدفتر للمسؤول وحده — اطلب منه التعديل قبل الطباعة" });
+      return null;
+    }
     if (source === "entry") {
       const e = await store.getEntry(id);
       if (!e) { res.status(404).json({ error: "السطر غير موجود" }); return null; }
@@ -225,12 +231,6 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const g = await gate(req, res, x.branchId, book);
     if (!g) return null;
     if (!(await dayOpen(res, g.s, g.branchId, g.book, x.expenseDate))) return null;
-    //  المصروفُ يعدّله مَن كتبه، أو صاحبُ «إدارة المحاسبة»، أو المسؤول — كصفحة المحاسبة.
-    const mine = g.s.userId != null && x.createdBy === String(g.s.userId);
-    if (!(g.s.isAdmin || g.s.permissions?.canManageAccounting || mine)) {
-      res.status(403).json({ error: "هذا المصروف كتبه غيرك — تعديله لصاحب «إدارة المحاسبة»" });
-      return null;
-    }
     return { g, source, entry: null as any, expense: x };
   }
 

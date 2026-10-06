@@ -7,11 +7,11 @@
 // • كلُّ ورقةٍ تُطبع تُسجَّل مع بصمة ما فيها (`POST /api/cash-book/printed`)، فإن تغيّر شيءٌ بعدها قالت الصفحةُ «عُدّل بعد الطباعة».
 // • السطورُ الكثيرة تُكمل في صفحةٍ ثانية برأسها، والمجموعُ والمربّعان في آخر صفحة.
 // • وفي أسفل كلّ صفحة: متى طُبعت ومَن طبعها، ورقمُ الصفحة.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { cashRowNote, drBoxLineText } from "@/lib/cash_book_text";
-import { type CashBook as Book, CASH_BOOK_LABELS, dayNameOf, isYmd, isCashBook } from "@shared/cash_book";
+import { type CashBook as Book, CASH_BOOK_LABELS, dayNameOf, isYmd, isCashBook, packSheetPages } from "@shared/cash_book";
 
 interface Row { source: string; id: number; column: "income" | "expense" | "transfer"; kind: string; amount: number; note: string; category: string | null }
 interface Sheet {
@@ -25,9 +25,10 @@ interface Sheet {
 }
 type Line = { income?: number; expense?: number; transfer?: number; note: string; muted?: boolean };
 
-/** سطورُ الصفحة الأخيرة (معها المجموعُ والمربّعان)، وسطورُ ما قبلها. محسوبةٌ لأسوأ حال: ملاحظةٌ في سطرين. */
-const LAST_PAGE_ROWS = 14;
-const FULL_PAGE_ROWS = 20;
+/** سطورُ الورقة الفارغة (للطوارئ) — تتّسع لها صفحةٌ واحدة مع المربّعين. */
+const BLANK_ROWS = 19;
+/** هامشُ أمانٍ تحت الحساب (مم) — فرقُ تقريب المتصفّح والطابعة لا يدفع سطراً إلى ورقةٍ جديدة. */
+const SAFETY_MM = 4;
 const MAX_DAYS = 31;
 
 const fmt = (n: number | undefined) => (n === undefined ? "" : n.toLocaleString("en-US"));
@@ -46,16 +47,6 @@ function linesOf(s: Sheet): Line[] {
   }));
   for (const l of s.drBoxLines ?? []) out.push({ note: drBoxLineText(l.category), muted: true });
   return out;
-}
-
-/** تقطيعُ السطور على الصفحات: صفحاتٌ ممتلئة ثمّ صفحةٌ أخيرة تتّسع للمجموع والمربّعين. */
-function paginate(lines: Line[]): Line[][] {
-  const rest = [...lines];
-  const pages: Line[][] = [];
-  //  والصفحةُ الأخيرة لا تخلو من سطرٍ مع المجموع: ما يزيد يبقى منه سطرٌ على الأقلّ لها.
-  while (rest.length > LAST_PAGE_ROWS) pages.push(rest.splice(0, Math.min(FULL_PAGE_ROWS, rest.length - 1)));
-  pages.push(rest);
-  return pages;
 }
 
 export default function CashBookPrint() {
@@ -103,7 +94,14 @@ export default function CashBookPrint() {
   //  نافذةُ الطباعة بعد أن يكتمل الرسمُ والشعار — ومنها «حفظ كملف PDF».
   useEffect(() => {
     if (!sheets) return;
-    const t = setTimeout(() => window.print(), 600);
+    //  وبعد أن تُقطَّع كلُّ ورقةٍ بقياسها — لا تُفتح النافذةُ وورقةٌ ما زالت تُقاس.
+    let tries = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const go = () => {
+      if (document.querySelector(".cb-measure") && tries++ < 50) { t = setTimeout(go, 100); return; }
+      window.print();
+    };
+    t = setTimeout(go, 600);
     return () => clearTimeout(t);
   }, [sheets]);
 
@@ -122,102 +120,160 @@ export default function CashBookPrint() {
         <span>{blank ? "ورقة فارغة — لانقطاع الإنترنت فقط" : `${sheets.length} ${sheets.length === 1 ? "ورقة" : "أوراق"}`}</span>
       </div>
       {blank
-        ? <SheetPages branchName={branchName} book={book} day={null} pages={[Array(LAST_PAGE_ROWS + 5).fill({ note: "" })]} sheet={null} stamp="" blank />
+        ? <SheetPages branchName={branchName} book={book} day={null} lines={Array(BLANK_ROWS).fill({ note: "" })} sheet={null} stamp="" blank />
         : sheets.map((s) => (
-          <SheetPages key={s.day} branchName={s.branch.name} book={s.book} day={s.day} pages={paginate(linesOf(s))} sheet={s} stamp={stamp} />
+          <SheetPages key={s.day} branchName={s.branch.name} book={s.book} day={s.day} lines={linesOf(s)} sheet={s} stamp={stamp} />
         ))}
     </div>
   );
 }
 
-function SheetPages({ branchName, book, day, pages, sheet, stamp, blank }: {
-  branchName: string; book: Book; day: string | null; pages: Line[][]; sheet: Sheet | null; stamp: string; blank?: boolean;
+function SheetPages({ branchName, book, day, lines, sheet, stamp, blank }: {
+  branchName: string; book: Book; day: string | null; lines: Line[]; sheet: Sheet | null; stamp: string; blank?: boolean;
 }) {
+  //  **القياسُ أوّلاً ثمّ التقطيع** — ورقةٌ مخفيّة بكلّ السطور تُرسم مرّةً فيُقاس ارتفاعُ كلّ سطرٍ وما حوله، ثمّ تُقطَّع بـ`packSheetPages`.
+  //  والورقةُ الفارغة صفحةٌ واحدة كما صُمّمت.
+  const [plan, setPlan] = useState<{ counts: number[]; pad: number } | null>(blank ? { counts: [lines.length], pad: 0 } : null);
+  const measureRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (plan || !measureRef.current) return;
+    let cancelled = false;
+    const run = () => {
+      const sec = measureRef.current;
+      if (cancelled || !sec) return;
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:absolute;visibility:hidden;height:100mm;width:1px";
+      document.body.appendChild(probe);
+      const mm = probe.getBoundingClientRect().height / 100;
+      probe.remove();
+      const h = (el: Element | null) => (el ? el.getBoundingClientRect().height : 0);
+      const rows = Array.from(sec.querySelectorAll("tbody tr.line")).map(h);
+      const blankH = h(sec.querySelector("tr.probe-blank"));
+      const contH = h(sec.querySelector("tr.cont"));
+      const totalH = h(sec.querySelector("tr.total"));
+      const boxes = sec.querySelector(".boxes");
+      const boxesBlock = boxes ? h(boxes) + 4 * mm : 0;
+      const sumRows = rows.reduce((t, x) => t + x, 0);
+      //  ما في الورقة المقيسة سوى السطور = الحشوةُ والرأسُ والعناوينُ والمجموعُ و«يتبع» والسطرُ الفارغ والمربّعان والختم والفجوات.
+      const others = h(sec) - sumRows - blankH;
+      const page = 297 * mm - SAFETY_MM * mm;
+      //  فجوةُ الفاصل المرن (`grow`) بين الجدول والختم في الورقة الحقيقية.
+      const lastRoom = page - (others - contH) - 4 * mm;
+      const fullRoom = page - (others - totalH - boxesBlock) - 4 * mm;
+      const counts = packSheetPages(rows, fullRoom, lastRoom);
+      const lastRows = rows.slice(rows.length - counts[counts.length - 1]).reduce((t, x) => t + x, 0);
+      const pad = blankH > 0 ? Math.max(0, Math.floor((lastRoom - lastRows) / blankH)) : 0;
+      setPlan({ counts, pad });
+    };
+    //  الخطوطُ أوّلاً — قياسٌ بخطٍّ احتياطيٍّ يخطئ في ارتفاع السطر.
+    (document as any).fonts?.ready ? (document as any).fonts.ready.then(run) : run();
+    return () => { cancelled = true; };
+  }, [plan]);
+
+  if (!plan) {
+    return (
+      <div className="cb-measure" aria-hidden="true">
+        <Page {...{ branchName, book, day, sheet, stamp, blank }} lines={lines} last pad={0} pageNo={1} pageCount={1} measuring sectionRef={measureRef} />
+      </div>
+    );
+  }
+  let start = 0;
   return (
     <>
-      {pages.map((lines, i) => {
-        const last = i === pages.length - 1;
-        const pad = last && !blank ? Math.max(0, LAST_PAGE_ROWS - lines.length) : 0;
-        return (
-          <section className="a4" key={i} data-testid="cb-print-page">
-            <div className="brand">
-              <div className="brand-name">
-                <span className="brand-ar">مجموعة مراكز الدكتور ياسر الساعدي</span>
-                <span className="brand-rule" aria-hidden="true" />
-              </div>
-              <img className="brand-logo" src="/cash-book-logo.png" alt="Dr. Y" />
-            </div>
-            <div className="head">
-              <span className="field">الفرع: <b>{branchName || " "}</b></span>
-              <span className="field">القسم: <b>{branchName ? CASH_BOOK_LABELS[book] : " "}</b></span>
-              <span className="field">اليوم: <b className="day">{day ? dayNameOf(day) : " "}</b></span>
-              <span className="field">التاريخ: <b className="date" dir="ltr">{day ? dmy(day) : "  /  /    "}</b></span>
-            </div>
-            <table>
-              <colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "49%" }} /></colgroup>
-              <thead>
-                <tr>
-                  <th className="in" rowSpan={2}>الوارد</th>
-                  <th className="out" colSpan={2}>الصادر</th>
-                  <th rowSpan={2} className="notes-h">الملاحظات</th>
-                </tr>
-                <tr><th className="out">مصاريف</th><th className="dr">تحويل إلى قاصة الدكتور</th></tr>
-              </thead>
-              <tbody>
-                {lines.map((l, j) => (
-                  <tr key={j} className={blank ? "blank" : l.muted ? "muted" : ""}>
-                    <td className="num">{fmt(l.income)}</td>
-                    <td className="num">{fmt(l.expense)}</td>
-                    <td className="num dr">{fmt(l.transfer)}</td>
-                    <td className="note"><span>{l.note}</span></td>
-                  </tr>
-                ))}
-                {Array.from({ length: pad }).map((_, j) => (
-                  <tr key={`p${j}`} className="blank"><td /><td /><td className="dr" /><td /></tr>
-                ))}
-                {last ? (
-                  <tr className="total">
-                    <td className="num">{sheet ? fmt(sheet.totals.income) : ""}</td>
-                    <td className="num" colSpan={2}>{sheet ? fmt(sheet.totals.outflow) : ""}</td>
-                    <td>المجموع</td>
-                  </tr>
-                ) : (
-                  <tr className="cont"><td colSpan={4}>يتبع في الصفحة التالية ←</td></tr>
-                )}
-              </tbody>
-            </table>
-            {last && (
-              <div className="boxes">
-                <div className="box">
-                  <h3>القاصة</h3>
-                  <div className="sum">
-                    <div>مجموع اليوم<span className="colhint">(الوارد − الصادر)</span></div><div>{sheet ? fmt(sheet.totals.dayNet) : " "}</div>
-                    <div>الباقي من أمس</div><div>{sheet ? fmt(sheet.totals.prevRemaining) : " "}</div>
-                    <div className="eq">المتبقي في القاصة<span className="colhint">(مجموع اليوم + الباقي من أمس)</span></div><div>{sheet ? fmt(sheet.totals.remaining) : " "}</div>
-                  </div>
-                </div>
-                {(blank || sheet?.branch.config.drRatioPct) && (
-                  <div className="box ratio">
-                    <h3>نسبة العزل</h3>
-                    <div className="sum">
-                      <div>نسبة اليوم</div><div>{sheet ? fmt(sheet.ratio.today) : " "}</div>
-                      <div>المتبقي من نسبة أمس</div><div>{sheet ? fmt(sheet.ratio.prev) : " "}</div>
-                      {sheet && sheet.ratio.received > 0 && (<><div>استلمه المالك اليوم</div><div>{fmt(sheet.ratio.received)}</div></>)}
-                      <div className="eq">المتبقي في النسبة<span className="colhint">(نسبة اليوم + المتبقي من نسبة أمس)</span></div><div>{sheet ? fmt(sheet.ratio.remaining) : " "}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="grow" />
-            <footer className="stamp">
-              <span>{stamp}</span>
-              {pages.length > 1 && <span>صفحة {i + 1} من {pages.length}</span>}
-            </footer>
-          </section>
-        );
+      {plan.counts.map((n, i) => {
+        const pageLines = lines.slice(start, start + n);
+        start += n;
+        const last = i === plan.counts.length - 1;
+        return <Page key={i} {...{ branchName, book, day, sheet, stamp, blank }} lines={pageLines} last={last}
+          pad={last ? plan.pad : 0} pageNo={i + 1} pageCount={plan.counts.length} />;
       })}
     </>
+  );
+}
+
+function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pageNo, pageCount, measuring, sectionRef }: {
+  branchName: string; book: Book; day: string | null; lines: Line[]; sheet: Sheet | null; stamp: string; blank?: boolean;
+  last: boolean; pad: number; pageNo: number; pageCount: number; measuring?: boolean; sectionRef?: React.Ref<HTMLElement>;
+}) {
+  return (
+      <section className={measuring ? "a4 measuring" : "a4"} ref={sectionRef} data-testid={measuring ? undefined : "cb-print-page"}>
+        <div className="brand">
+          <div className="brand-name">
+            <span className="brand-ar">مجموعة مراكز الدكتور ياسر الساعدي</span>
+            <span className="brand-rule" aria-hidden="true" />
+          </div>
+          <img className="brand-logo" src="/cash-book-logo.png" alt="Dr. Y" />
+        </div>
+        <div className="head">
+          <span className="field">الفرع: <b>{branchName || " "}</b></span>
+          <span className="field">القسم: <b>{branchName ? CASH_BOOK_LABELS[book] : " "}</b></span>
+          <span className="field">اليوم: <b className="day">{day ? dayNameOf(day) : " "}</b></span>
+          <span className="field">التاريخ: <b className="date" dir="ltr">{day ? dmy(day) : "  /  /    "}</b></span>
+        </div>
+        <table>
+          <colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "49%" }} /></colgroup>
+          <thead>
+            <tr>
+              <th className="in" rowSpan={2}>الوارد</th>
+              <th className="out" colSpan={2}>الصادر</th>
+              <th rowSpan={2} className="notes-h">الملاحظات</th>
+            </tr>
+            <tr><th className="out">مصاريف</th><th className="dr">تحويل إلى قاصة الدكتور</th></tr>
+          </thead>
+          <tbody>
+            {lines.map((l, j) => (
+              <tr key={j} className={blank ? "line blank" : l.muted ? "line muted" : "line"}>
+                <td className="num">{fmt(l.income)}</td>
+                <td className="num">{fmt(l.expense)}</td>
+                <td className="num dr">{fmt(l.transfer)}</td>
+                <td className="note"><span>{l.note}</span></td>
+              </tr>
+            ))}
+            {Array.from({ length: pad }).map((_, j) => (
+              <tr key={`p${j}`} className="blank"><td /><td /><td className="dr" /><td /></tr>
+            ))}
+            {measuring && <tr className="blank probe-blank"><td /><td /><td className="dr" /><td /></tr>}
+            {measuring && <tr className="cont"><td colSpan={4}>يتبع في الصفحة التالية ←</td></tr>}
+            {last ? (
+              <tr className="total">
+                <td className="num">{sheet ? fmt(sheet.totals.income) : ""}</td>
+                <td className="num" colSpan={2}>{sheet ? fmt(sheet.totals.outflow) : ""}</td>
+                <td>المجموع</td>
+              </tr>
+            ) : (
+              <tr className="cont"><td colSpan={4}>يتبع في الصفحة التالية ←</td></tr>
+            )}
+          </tbody>
+        </table>
+        {last && (
+          <div className="boxes">
+            <div className="box">
+              <h3>القاصة</h3>
+              <div className="sum">
+                <div>مجموع اليوم<span className="colhint">(الوارد − الصادر)</span></div><div>{sheet ? fmt(sheet.totals.dayNet) : " "}</div>
+                <div>الباقي من أمس</div><div>{sheet ? fmt(sheet.totals.prevRemaining) : " "}</div>
+                <div className="eq">المتبقي في القاصة<span className="colhint">(مجموع اليوم + الباقي من أمس)</span></div><div>{sheet ? fmt(sheet.totals.remaining) : " "}</div>
+              </div>
+            </div>
+            {(blank || sheet?.branch.config.drRatioPct) && (
+              <div className="box ratio">
+                <h3>نسبة العزل</h3>
+                <div className="sum">
+                  <div>نسبة اليوم</div><div>{sheet ? fmt(sheet.ratio.today) : " "}</div>
+                  <div>المتبقي من نسبة أمس</div><div>{sheet ? fmt(sheet.ratio.prev) : " "}</div>
+                  {sheet && sheet.ratio.received > 0 && (<><div>استلمه المالك اليوم</div><div>{fmt(sheet.ratio.received)}</div></>)}
+                  <div className="eq">المتبقي في النسبة<span className="colhint">(نسبة اليوم + المتبقي من نسبة أمس)</span></div><div>{sheet ? fmt(sheet.ratio.remaining) : " "}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {!measuring && <div className="grow" />}
+        <footer className="stamp">
+          <span>{stamp}</span>
+          {pageCount > 1 && <span>صفحة {pageNo} من {pageCount}</span>}
+        </footer>
+      </section>
   );
 }
 
@@ -243,6 +299,7 @@ const PRINT_CSS = `
 .cb-print .field b.day { min-width:4.5em; }
 .cb-print table { width:100%; table-layout:fixed; border-collapse:collapse; font-variant-numeric:tabular-nums; }
 .cb-print th, .cb-print td { border:1px solid var(--rule); padding:1.4mm 2mm; vertical-align:middle; }
+.cb-print td { padding:0.9mm 2mm; }
 .cb-print th { font-weight:600; font-size:0.85rem; text-align:center; border-bottom:2px solid var(--rule-strong); }
 .cb-print th.in { color:var(--in); background:var(--tint-in); font-size:1.05rem; }
 .cb-print th.out { color:var(--out); background:var(--tint-out); }
@@ -266,12 +323,17 @@ const PRINT_CSS = `
 .cb-print .sum .eq { font-weight:700; margin-top:2mm; }
 .cb-print .sum .eq + div { font-weight:700; border-bottom:2px solid var(--rule-strong); margin-top:2mm; }
 .cb-print .grow { flex:1; }
+.cb-measure { position:absolute; inset-inline-start:-10000px; top:0; visibility:hidden; pointer-events:none; }
+.cb-print .a4.measuring { height:auto; overflow:visible; }
 .cb-print .stamp { display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted); border-top:1px solid var(--rule); padding-top:1.5mm; }
 @media print {
   html, body { background:#fff !important; }
   .cb-print { background:#fff; padding:0; }
   .cb-toolbar { display:none; }
-  .cb-print .a4 { box-shadow:none; margin:0; break-after:page; }
-  .cb-print .a4:last-child { break-after:auto; }
+  html, body, #root { margin:0 !important; padding:0 !important; height:auto !important; min-height:0 !important; }
+  .cb-print { min-height:0; }
+  .cb-measure { display:none; }
+  .cb-print .a4 { box-shadow:none; margin:0; break-after:page; break-inside:avoid; }
+  .cb-print .a4:last-of-type { break-after:auto; }
 }
 `;

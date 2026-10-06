@@ -1,7 +1,7 @@
 // **دفترُ القاصة اليوميّ** (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.ca) — ورقةُ الدفتر نفسُها على الشاشة: الرأسُ والأعمدةُ والمربّعان.
 // الفرقُ وحده أن الموظّف يكتب بلوحة المفاتيح ويختار من القوائم، والمجاميعُ تُحسب وحدها في الخادم.
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +84,9 @@ export default function CashBook() {
   const q = useQuery<Sheet>({
     queryKey: key,
     enabled: Boolean(branchId && book),
+    //  **الورقةُ لا تختفي بين يومٍ ويوم** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٧: «ليست ناعمة، وتختفي المعلومات ببياض»): تبقى السابقةُ
+    //  باهتةً مقفلةً حتى تصل الجديدة، بدل «جارٍ التحميل» على صفحةٍ بيضاء.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const res = await fetch(`/api/cash-book?branchId=${branchId}&book=${book}&date=${day}`, { credentials: "include" });
       const j = await res.json().catch(() => ({}));
@@ -93,8 +96,9 @@ export default function CashBook() {
   });
   const sheet = q.data;
   //  فرعٌ بدفترٍ واحد: لا يبقى الاختيارُ على «علاج طبيعي».
-  const books: Book[] = sheet?.branch.config.books
-    ?? branchCashConfig(configBranchName).books;
+  //  من فرع الصفحة نفسِه لا من الورقة المعروضة — فالورقةُ الباهتةُ لفرعٍ سابق لا تردّ «علاج طبيعي» إلى الأطراف.
+  const books: Book[] = configBranchName ? branchCashConfig(configBranchName).books
+    : (sheet && !q.isPlaceholderData ? sheet.branch.config.books : ["devices"]);
   useEffect(() => { if (book && !books.includes(book)) setBook("devices"); }, [books.join(","), book]);
 
   const refresh = () => {
@@ -163,14 +167,17 @@ export default function CashBook() {
           </div>
         </div>
 
-        {q.isLoading && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
+        {!sheet && !q.isError && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
+        <div className={q.isPlaceholderData ? "opacity-50 pointer-events-none transition-opacity" : "transition-opacity"}
+          aria-busy={q.isPlaceholderData} data-testid="cash-sheet-wrap">
         {sheet && !sheet.opening && (sheet.isAdmin
           ? <OpeningCard sheet={sheet} branchId={branchId!} book={book!} onSave={(b) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: b })} />
           : <p className="border-2 border-dashed rounded-md p-4 text-center text-muted-foreground" data-testid="cash-opening-waiting">
               بانتظار أن يسجّل المسؤول بداية دفتر «{CASH_BOOK_LABELS[book!]}» لهذا الفرع.
             </p>)}
-        {sheet && sheet.opening && <SheetBody sheet={sheet} branchId={branchId!} book={book!} day={day} write={write} />}
+        {sheet && sheet.opening && <SheetBody sheet={sheet} branchId={sheet.branch.id} book={sheet.book} day={sheet.day} write={write} />}
+        </div>
       </div>
     </div>
   );
@@ -232,8 +239,8 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   const [editOpening, setEditOpening] = useState(false);
   const income = sheet.rows.filter((r) => r.column === "income");
   const outflow = sheet.rows.filter((r) => r.column !== "income");
-  const editable = (r: Row) => sheet.canWrite && r.source !== "payment" && r.source !== "auto"
-    && (r.source === "entry" || sheet.isAdmin || sheet.canManageExpenses || r.createdBy === sheet.userId);
+  //  تصحيحُ سطرٍ مكتوب للمسؤول وحده (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والموظّفُ يطلبه منه قبل الطباعة.
+  const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto";
   const noteOf = (r: Row) => cashRowNote(r);
   const stale = (x: { amount: number; recorded: number | null } | null) => x && x.recorded !== null && x.recorded !== x.amount;
 
@@ -311,6 +318,11 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       </div>
 
       {sheet.canWrite && <AddRow sheet={sheet} branchId={branchId} book={book} day={day} write={write} />}
+      {sheet.canWrite && !sheet.isAdmin && (
+        <p className="text-xs text-muted-foreground" data-testid="cash-fix-hint">
+          كتبتَ رقماً غلطاً؟ تصحيحُ السطر أو حذفُه للمسؤول وحده — اطلبه منه قبل الطباعة.
+        </p>
+      )}
 
       {/*  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — لا زرَّ لها. ونسبةُ المستشفى لذي قار باقيةٌ بزرّها. */}
       {sheet.canWrite && cfg.hospitalRatioPct && (

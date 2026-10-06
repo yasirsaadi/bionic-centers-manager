@@ -132,3 +132,26 @@ export function drBoxAccountLabel(branchName: string | null | undefined): string
   if (n.includes("كربلاء")) return "حساب السوبر";
   return null;
 }
+
+/**
+ * **تقطيعُ ورقة الطباعة بالارتفاع المقيس لا بعددٍ ثابت** (شكوى الموظّفين ٢٠٢٦-١٠-٠٧: «تُطبع ورقةٌ إضافية دون الحاجة لها»).
+ * كان الحدُّ ١٤ سطراً للصفحة الأخيرة لأسوأ حال، فيومٌ بخمسة عشر سطراً قصيراً يطبع ورقتين: الثانيةُ سطرٌ واحد والمجموع.
+ * والآن: `heights` ارتفاعُ كلّ سطرٍ كما رسمه المتصفّح، و`full` ما يتّسع له جدولُ صفحةٍ وسطى، و`last` ما يبقى للسطور في الأخيرة
+ * بعد المجموع والمربّعين. **فما يتّسع في صفحةٍ واحدة يبقى فيها**، والأخيرةُ لا تخلو من سطرٍ مع المجموع.
+ * يُرجع عددَ السطور في كلّ صفحة.
+ */
+export function packSheetPages(heights: number[], full: number, last: number): number[] {
+  const counts: number[] = [];
+  let i = 0;
+  const rest = (from: number) => heights.slice(from).reduce((s, h) => s + h, 0);
+  while (rest(i) > last) {
+    let used = 0, n = 0;
+    while (i + n < heights.length - 1 && used + heights[i + n] <= full) { used += heights[i + n]; n++; }
+    if (n === 0) n = 1;
+    if (i + n >= heights.length) break;
+    counts.push(n);
+    i += n;
+  }
+  counts.push(heights.length - i);
+  return counts;
+}
