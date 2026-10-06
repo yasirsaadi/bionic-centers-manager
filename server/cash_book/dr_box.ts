@@ -11,7 +11,11 @@ import { db } from "../db";
 import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings } from "@shared/schema";
 import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, type CashBook } from "@shared/cash_book";
 import { categoryArabicLabel } from "../anomalies/detector";
-import { CashBookError, getSheet } from "./store";
+import { CashBookError, getSheet, autoDrRatioSum } from "./store";
+
+const addDaysYmd = (ymd: string, n: number) => {
+  const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
+};
 
 const alive = sql`${drBoxExpenses.deletedAt} IS NULL`;
 
@@ -161,7 +165,7 @@ export async function ownerSummary(from: string, to: string, today: string) {
         ratioRemaining: s.opening ? s.ratio.remaining : null,
         period: {
           drTransfers: periodOf(b.id, book, "dr_transfer"),
-          drRatio: periodOf(b.id, book, "dr_ratio"),
+          drRatio: await autoDrRatioSum(b.id, book, from, addDaysYmd(to, 1)),
           ratioReceived: periodOf(b.id, book, "ratio_received"),
         },
       });

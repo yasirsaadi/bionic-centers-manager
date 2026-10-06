@@ -190,7 +190,9 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const day = req.body?.date;
     const kind = req.body?.kind;
     if (!isYmd(day)) return res.status(400).json({ error: "التاريخ غير صالح" });
-    if (kind !== "dr_ratio" && kind !== "hospital_ratio") return res.status(400).json({ error: "نوع النسبة غير صالح" });
+    //  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — لا تُضاف بزرّ.
+    if (kind === "dr_ratio") return res.status(400).json({ error: "نسبة الدكتور تُحسب تلقائياً من وارد اليوم" });
+    if (kind !== "hospital_ratio") return res.status(400).json({ error: "نوع النسبة غير صالح" });
     if (!(await dayOpen(res, g.s, g.branchId, g.book, day))) return;
     try {
       const r = await store.syncRatio({ branchId: g.branchId, book: g.book, day, kind, userId: g.s.userId ?? null });

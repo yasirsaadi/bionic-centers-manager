@@ -7,7 +7,9 @@ export const cashCategoryLabel = (c: string | null) => (c ? EXPENSE_CATEGORIES.f
 export function cashRowNote(r: { kind: string; source: string; note: string; category: string | null }): string {
   if (r.kind === "income_other") return `${INCOME_OTHER_LABEL}${r.note ? ` — ${r.note}` : ""}`;
   if (r.kind === "dr_transfer") return `${OUTFLOW_LABELS.dr_transfer}${r.note ? ` (${r.note})` : ""}`;
-  if (r.kind === "dr_ratio" || r.kind === "hospital_ratio" || r.kind === "atabah_ratio") {
+  //  نسبةُ الدكتور محسوبةٌ تلقائياً، وملاحظتُها نسبتُها («٢٠٪ من وارد اليوم»).
+  if (r.kind === "dr_ratio") return `${OUTFLOW_LABELS.dr_ratio}${r.note ? ` (${r.note})` : ""}`;
+  if (r.kind === "hospital_ratio" || r.kind === "atabah_ratio") {
     return `${OUTFLOW_LABELS[r.kind as "dr_ratio"]}${r.note && r.kind === "atabah_ratio" ? ` — ${r.note}` : ""}`;
   }
   if (r.source === "expense") return `${cashCategoryLabel(r.category)}${r.note ? ` — ${r.note}` : ""}`;

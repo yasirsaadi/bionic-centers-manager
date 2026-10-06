@@ -194,14 +194,20 @@ async function main() {
       [(await row(S.acc, { kind: "dr_transfer", amount: 0 })).status, (await row(S.acc, { kind: "dr_transfer", amount: 10.5 })).status], [400, 400]);
 
     console.log("\n── هـ. النسب ──");
-    const r1 = await ratio(S.acc, { kind: "dr_ratio" });
-    same("هـ١. **نسبةُ الدكتور لبغداد ٢٠٪ من وارد الدفتر وحده** (١,٢٥٠,٠٠٠ ⟵ ٢٥٠,٠٠٠)", [r1.status, r1.body?.amount], [200, 250_000]);
+    //  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — بلا زرّ.
+    const drRows = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => [r.source, r.amount]);
+    const drCols = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => r.column);
+    d = (await sheet(S.acc)).body;
+    same("هـ١. **نسبةُ الدكتور لبغداد ٢٠٪ من وارد الدفتر وحده، تلقائياً بلا زرّ** (١,٢٥٠,٠٠٠ ⟵ ٢٥٠,٠٠٠)", drRows(d), [["auto", 250_000]]);
     await row(S.acc, { kind: "income_other", amount: 50_000, note: "استرداد" });
     d = (await sheet(S.acc)).body;
-    same("هـ٢. **وبعد وارد جديد: المحسوبُ الآن غيرُ المسجَّل** — فتُعرَف الحاجةُ للتحديث", [d.expected.drRatio.amount, d.expected.drRatio.recorded], [260_000, 250_000]);
-    await ratio(S.acc, { kind: "dr_ratio" });
-    d = (await sheet(S.acc)).body;
-    same("هـ٣. **والتحديثُ يعدّل الصفَّ نفسَه ولا يكرّره**", d.rows.filter((r: any) => r.kind === "dr_ratio").map((r: any) => r.amount), [260_000]);
+    same("هـ٢. **ووارد جديد يغيّرها وحده** — كالمجموع", drRows(d), [["auto", 260_000]]);
+    same("هـ٢ب. **وفي عمود «مصاريف» لا «تحويل إلى قاصة الدكتور»** — تُعزَل ولا تذهب إلى قاصة المالك يومَها", drCols(d), ["expense"]);
+    const noBtn = await ratio(S.acc, { kind: "dr_ratio" });
+    same("هـ٣. **ولا تُضاف بزرّ** — ٤٠٠ برسالةٍ تقول لماذا", [noBtn.status, /تلقائياً/.test(noBtn.body?.error ?? "")], [400, true]);
+    //  ما سُجّل يدوياً قبل القرار لا يُقرأ بعده — فلا تُحسب النسبةُ مرّتين.
+    await q(`INSERT INTO cash_book_entries (branch_id, book, entry_date, kind, amount) VALUES ($1,'devices',$2,'dr_ratio',999)`, [BGD, TODAY]);
+    same("هـ٣ب. **والنسبةُ المسجَّلةُ يدوياً قديماً لا تُحسب مرّةً ثانية**", drRows((await sheet(S.acc)).body), [["auto", 260_000]]);
     same("هـ٤. **ولا نسبةَ مستشفى ولا عتبة لبغداد** — ٤٠٠", [(await ratio(S.acc, { kind: "hospital_ratio" })).status,
       (await row(S.acc, { kind: "atabah_ratio", amount: 1000 })).status], [400, 400]);
 
@@ -212,7 +218,7 @@ async function main() {
     await ratio(S.accDq, { kind: "hospital_ratio" });
     const hosp = await q(`SELECT amount, section, category FROM expenses WHERE branch_id=$1 AND category='hospital_percentage'`, [DQ]);
     same("هـ٥. **نسبةُ مستشفى ذي قار ١٠٪ مصروفاً حقيقيّاً، صفّاً واحداً لليوم**", [h1.body?.amount, hosp], [80_000, [{ amount: 80_000, section: "prosthetic", category: "hospital_percentage" }]]);
-    same("هـ٦. **ونسبةُ الدكتور لذي قار ١٠٪**", (await ratio(S.accDq, { kind: "dr_ratio" })).body?.amount, 80_000);
+    same("هـ٦. **ونسبةُ الدكتور لذي قار ١٠٪**", drRows((await sheet(S.accDq)).body), [["auto", 80_000]]);
 
     await http("POST", "/api/cash-book/opening", S.admin, { branchId: KRB, book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
     const at = await row(S.accKrb, { kind: "atabah_ratio", amount: 70_000, note: "حصة العتبة" });
@@ -221,25 +227,25 @@ async function main() {
 
     console.log("\n── و. الحساب ──");
     d = (await sheet(S.acc)).body;
-    same("و١. **مجموعُ اليوم والباقي من أمس والمتبقي** — الباقي من أمس = افتتاحيّ ١٠٠ ألف + وارد أمس ٣٠٠ ألف",
-      d.totals, { income: 1_300_000, outflow: 810_000, dayNet: 490_000, prevRemaining: 400_000, remaining: 890_000 });
+    same("و١. **مجموعُ اليوم والباقي من أمس والمتبقي** — الباقي من أمس = افتتاحيّ ١٠٠ ألف + وارد أمس ٣٠٠ ألف − نسبةُ أمس ٦٠ ألفاً (تلقائياً)",
+      d.totals, { income: 1_300_000, outflow: 810_000, dayNet: 490_000, prevRemaining: 340_000, remaining: 830_000 });
     same("و٢. **ولا مجموعَ للتحويلات في الردّ** — الصادرُ رقمٌ واحد", Object.keys(d.totals).some((k) => /transfer/i.test(k)), false);
-    same("و٣. **مربّعُ النسبة**: نسبةُ اليوم ٢٦٠ ألفاً + المتبقي من أمس ٥٠ ألفاً", [d.ratio.today, d.ratio.prev, d.ratio.remaining], [260_000, 50_000, 310_000]);
+    same("و٣. **مربّعُ النسبة**: نسبةُ اليوم ٢٦٠ ألفاً + المتبقي من أمس (٥٠ ألفاً افتتاحيّ + ٦٠ ألفاً نسبةُ أمس)", [d.ratio.today, d.ratio.prev, d.ratio.remaining], [260_000, 110_000, 370_000]);
     same("و٤. **واستلامُ النسبة للمسؤول وحده** (٤٠٣ للمحاسب)", (await row(S.acc, { kind: "ratio_received", amount: 100_000 })).status, 403);
     await row(S.admin, { branchId: BGD, kind: "ratio_received", amount: 100_000, note: "استلمت" });
     d = (await sheet(S.acc)).body;
-    same("و٥. **فينقص المتبقي في النسبة ولا يمسّ القاصة**", [d.ratio.remaining, d.totals.remaining], [210_000, 890_000]);
+    same("و٥. **فينقص المتبقي في النسبة ولا يمسّ القاصة**", [d.ratio.remaining, d.totals.remaining], [270_000, 830_000]);
     const tomorrowLike = (await sheet(S.admin, "devices", TODAY, BGD)).body;
     same("و٦. **وكلُّ يومٍ يبدأ من باقي سابقه**: يومُ الافتتاح باقيه الافتتاحيّ",
       (await sheet(S.acc, "devices", YDAY)).body?.totals?.prevRemaining, 100_000);
-    check(tomorrowLike?.totals?.remaining === 890_000, "و٧. والمسؤولُ يرى الصفحةَ نفسَها بالأرقام نفسِها");
+    check(tomorrowLike?.totals?.remaining === 830_000, "و٧. والمسؤولُ يرى الصفحةَ نفسَها بالأرقام نفسِها");
 
     console.log("\n── ز. الأقفال ──");
     same("ز١. **الأمسُ مقفلٌ على المحاسب** (٤٠٣)، **ومفتوحٌ للمسؤول** (٢٠٠)",
       [(await row(S.acc, { kind: "dr_transfer", amount: 1000, date: YDAY })).status,
        (await row(S.admin, { branchId: BGD, kind: "dr_transfer", amount: 1000, date: YDAY })).status], [403, 200]);
-    const drId = d.rows.find((r: any) => r.kind === "dr_ratio").id;
-    same("ز٢. **مبلغُ نسبة الدكتور لا يُكتب بيد** — ٤٠٠", (await http("PATCH", `/api/cash-book/rows/entry/${drId}`, S.acc, { amount: 1 })).status, 400);
+    same("ز٢. **مبلغُ نسبة الدكتور لا يُكتب بيد ولا يُحذف** — سطرٌ محسوب، ٤٠٠",
+      [(await http("PATCH", `/api/cash-book/rows/auto/0`, S.acc, { amount: 1 })).status, (await http("DELETE", `/api/cash-book/rows/auto/0`, S.acc)).status], [400, 400]);
     same("ز٣. **ومصروفُ المحاسب لا يعدّله المديرُ بلا «إدارة المحاسبة»** (٤٠٣)، ويعدّله كاتبُه (٢٠٠)",
       [(await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.mgr, { amount: 160_000 })).status,
        (await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.acc, { amount: 160_000 })).status], [403, 200]);
@@ -324,9 +330,9 @@ async function main() {
       [sb.account, sb.drBox.balance, sb.drBox.received, sb.books.find((k: any) => k.book === "devices").cashRemaining,
        sb.books.find((k: any) => k.book === "devices").ratioRemaining],
       ["كي كارت 2009", boxB.totals.balance, boxB.totals.received, devB.totals.remaining, devB.ratio.remaining]);
-    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها والمستلَم، وتحويلُ ذي قار وحده لذي قار",
+    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها (٦٠ ألف أمس + ٢٦٠ ألف اليوم، تلقائياً) والمستلَم، وتحويلُ ذي قار وحده لذي قار",
       [sb.books.find((k: any) => k.book === "devices").period, smList.find((b: any) => b.id === DQ).books[0].period.drTransfers],
-      [{ drTransfers: 501_000, drRatio: 260_000, ratioReceived: 100_000 }, 70_000]);
+      [{ drTransfers: 501_000, drRatio: 320_000, ratioReceived: 100_000 }, 70_000]);
     same("ي١٩. **والمجاميعُ الكلّية جمعُ الفروع**",
       [sm.totals.drBoxBalance, sm.totals.periodDrTransfers],
       [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
