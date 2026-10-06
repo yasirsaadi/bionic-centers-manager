@@ -19,7 +19,7 @@ import {
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 interface Row {
-  source: "payment" | "entry" | "expense"; id: number; column: "income" | "expense" | "transfer";
+  source: "payment" | "entry" | "expense" | "auto"; id: number; column: "income" | "expense" | "transfer";
   kind: string; amount: number; note: string; category: string | null; unsectioned: boolean; createdBy: number | null;
 }
 interface Sheet {
@@ -226,7 +226,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   const [editOpening, setEditOpening] = useState(false);
   const income = sheet.rows.filter((r) => r.column === "income");
   const outflow = sheet.rows.filter((r) => r.column !== "income");
-  const editable = (r: Row) => sheet.canWrite && r.source !== "payment"
+  const editable = (r: Row) => sheet.canWrite && r.source !== "payment" && r.source !== "auto"
     && (r.source === "entry" || sheet.isAdmin || sheet.canManageExpenses || r.createdBy === sheet.userId);
   const noteOf = (r: Row) => cashRowNote(r);
   const stale = (x: { amount: number; recorded: number | null } | null) => x && x.recorded !== null && x.recorded !== x.amount;
@@ -306,15 +306,9 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
 
       {sheet.canWrite && <AddRow sheet={sheet} branchId={branchId} book={book} day={day} write={write} />}
 
-      {sheet.canWrite && (cfg.drRatioPct || cfg.hospitalRatioPct) && (
+      {/*  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — لا زرَّ لها. ونسبةُ المستشفى لذي قار باقيةٌ بزرّها. */}
+      {sheet.canWrite && cfg.hospitalRatioPct && (
         <div className="flex flex-wrap gap-2 items-center">
-          {sheet.expected.drRatio && (
-            <Button variant="outline" size="sm" className="gap-1" data-testid="cash-dr-ratio"
-              onClick={() => write.mutate({ method: "POST", url: "/api/cash-book/ratio", body: { branchId, book, date: day, kind: "dr_ratio" } })}>
-              <RefreshCw className="w-3.5 h-3.5" />
-              {sheet.expected.drRatio.recorded === null ? "أضف" : "حدّث"} نسبة الدكتور ({sheet.expected.drRatio.pct}٪ = {fmt(sheet.expected.drRatio.amount)})
-            </Button>
-          )}
           {sheet.expected.hospitalRatio && (
             <Button variant="outline" size="sm" className="gap-1" data-testid="cash-hospital-ratio"
               onClick={() => write.mutate({ method: "POST", url: "/api/cash-book/ratio", body: { branchId, book, date: day, kind: "hospital_ratio" } })}>
@@ -322,7 +316,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
               {sheet.expected.hospitalRatio.recorded === null ? "أضف" : "حدّث"} نسبة المستشفى ({sheet.expected.hospitalRatio.pct}٪ = {fmt(sheet.expected.hospitalRatio.amount)})
             </Button>
           )}
-          {(stale(sheet.expected.drRatio) || stale(sheet.expected.hospitalRatio)) && (
+          {stale(sheet.expected.hospitalRatio) && (
             <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1" data-testid="cash-ratio-stale">
               دخل وارد بعد حساب النسبة — اضغط «حدّث» لتصير من وارد اليوم كلّه.
             </span>

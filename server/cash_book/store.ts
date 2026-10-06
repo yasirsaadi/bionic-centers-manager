@@ -80,6 +80,44 @@ async function entrySum(branchId: number, book: CashBook, kind: CashEntryKind, f
   return Number(r?.t ?? 0);
 }
 
+/** واردُ الدفتر يوماً يوماً في [from, toExclusive) — يومُ بغداد كما يقطعه `baghdadDayBounds`. */
+async function dailyIncome(branchId: number, cfg: BranchCashConfig, book: CashBook, from: string, toExclusive: string): Promise<Map<string, number>> {
+  const { start } = baghdadDayBounds(from);
+  const { start: end } = baghdadDayBounds(toExclusive);
+  const out = new Map<string, number>();
+  const add = (d: string, n: number) => out.set(d, (out.get(d) ?? 0) + n);
+  const pays = await db.select({ amount: payments.amount, date: payments.date })
+    .from(payments)
+    .innerJoin(patients, eq(patients.id, payments.patientId))
+    .leftJoin(patientCases, eq(patientCases.id, payments.caseId))
+    .where(and(eq(payments.branchId, branchId), gte(payments.date, start!), lt(payments.date, end!),
+      activePatientDrizzle(), paymentBookFilter(cfg, book)));
+  for (const p of pays) {
+    if (!p.date) continue;
+    add(new Date(new Date(p.date).getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10), Number(p.amount));
+  }
+  const others = await db.select({ day: cashBookEntries.entryDate, amount: cashBookEntries.amount }).from(cashBookEntries)
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), eq(cashBookEntries.kind, "income_other"),
+      sql`${cashBookEntries.deletedAt} IS NULL`,
+      sql`${cashBookEntries.entryDate} >= ${from}`, sql`${cashBookEntries.entryDate} < ${toExclusive}`));
+  for (const o of others) add(String(o.day), o.amount);
+  return out;
+}
+
+/**
+ * **نسبةُ الدكتور تُحسب ولا تُكتب** (قرارُ المالك ٢٠٢٦-١٠-٠٦): نسبةُ كلّ يومٍ من واردِه، كالمجموع — فدفعةٌ تُضاف أو تُحذف
+ * تغيّرها وحدها، بلا زرّ. وما سُجّل يدوياً قبل القرار (`dr_ratio` في جدول الدفتر) لا يُقرأ بعده.
+ * المجموعُ = مجموعُ نسبة كلّ يومٍ مقرَّبةً وحدها (كما تُكتب في ورقة كلّ يوم).
+ */
+export async function autoDrRatioSum(branchId: number, book: CashBook, from: string, toExclusive: string): Promise<number> {
+  const b = await branchConfigOf(branchId);
+  if (!b?.config.drRatioPct || from >= toExclusive) return 0;
+  const days = await dailyIncome(branchId, b.config, book, from, toExclusive);
+  let sum = 0;
+  for (const v of Array.from(days.values())) sum += ratioAmount(v, b.config.drRatioPct);
+  return sum;
+}
+
 export async function getOpening(branchId: number, book: CashBook) {
   const [o] = await db.select().from(cashBookOpenings)
     .where(and(eq(cashBookOpenings.branchId, branchId), eq(cashBookOpenings.book, book)));
@@ -88,7 +126,7 @@ export async function getOpening(branchId: number, book: CashBook) {
 
 /** صفُّ الجدول كما يُعرَض — والمصدرُ والمعرّفُ للتعديل. */
 export interface SheetRow {
-  source: "payment" | "entry" | "expense";
+  source: "payment" | "entry" | "expense" | "auto";
   id: number;
   column: "income" | "expense" | "transfer";
   kind: "payment" | "income_other" | OutflowKind;
@@ -163,14 +201,20 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
       at: x.createdAt ? new Date(x.createdAt).toISOString() : null,
     });
   }
-  for (const e of entRows.filter((x) => x.kind === "dr_transfer" || x.kind === "dr_ratio")) {
+  for (const e of entRows.filter((x) => x.kind === "dr_transfer")) {
     outflow.push({ source: "entry", id: e.id, column: "transfer", kind: e.kind as OutflowKind, amount: e.amount, note: e.note ?? "",
       category: null, unsectioned: false, createdBy: e.createdBy, at: e.createdAt.toISOString() });
   }
   outflow.sort((a, c) => (a.at ?? "").localeCompare(c.at ?? "") || a.id - c.id);
+  const income = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
+  //  نسبةُ الدكتور سطرٌ محسوبٌ من وارد اليوم — آخرَ الصادر، بلا زرٍّ ولا تعديلٍ بيد.
+  const todayDrRatio = ratioAmount(income, cfg.drRatioPct);
+  if (todayDrRatio > 0) {
+    outflow.push({ source: "auto", id: 0, column: "transfer", kind: "dr_ratio", amount: todayDrRatio, note: `${cfg.drRatioPct}٪ من وارد اليوم`,
+      category: null, unsectioned: false, createdBy: null, at: null });
+  }
   rows.push(...outflow);
 
-  const income = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
   const out = outflow.reduce((s, r) => s + r.amount, 0);
 
   //  الباقي من أمس — من الرصيد الافتتاحيّ وأيّامه وحدَها.
@@ -178,10 +222,11 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
   let prevRatio = 0;
   if (opening && day > opening.openingDate) {
     const from = opening.openingDate;
-    const prevIncome = await incomeSum(branchId, cfg, book, from, day);
+    const days = await dailyIncome(branchId, cfg, book, from, day);
+    const prevIncome = Array.from(days.values()).reduce((s, v) => s + v, 0);
     const prevExp = await expenseSum(branchId, cfg, book, from, day);
     const prevTransfer = await entrySum(branchId, book, "dr_transfer", from, day);
-    const prevDrRatio = await entrySum(branchId, book, "dr_ratio", from, day);
+    const prevDrRatio = Array.from(days.values()).reduce((s, v) => s + ratioAmount(v, cfg.drRatioPct), 0);
     const prevReceived = await entrySum(branchId, book, "ratio_received", from, day);
     prevRemaining = opening.cashBalance + prevIncome - prevExp - prevTransfer - prevDrRatio;
     prevRatio = opening.ratioBalance + prevDrRatio - prevReceived;
@@ -189,15 +234,12 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
     prevRemaining = opening.cashBalance;
     prevRatio = opening.ratioBalance;
   }
-  const todayDrRatio = entRows.filter((x) => x.kind === "dr_ratio").reduce((s, x) => s + x.amount, 0);
   const receivedRows = entRows.filter((x) => x.kind === "ratio_received");
   const received = receivedRows.reduce((s, x) => s + x.amount, 0);
 
   //  النسبتان الثابتتان كما تُحسبان الآن من وارد اليوم — والمسجَّلُ قد يكون أقدمَ من دفعةٍ لحقته.
-  const drRatioExpected = ratioAmount(income, cfg.drRatioPct);
   const hospitalExpected = ratioAmount(income, cfg.hospitalRatioPct);
   const hospitalRow = outflow.find((r) => r.kind === "hospital_ratio") ?? null;
-  const drRatioRow = outflow.find((r) => r.kind === "dr_ratio") ?? null;
 
   return {
     branch: { id: branchId, name: b.name, config: cfg },
@@ -210,7 +252,7 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
       receipts: receivedRows.map((x) => ({ id: x.id, amount: x.amount, note: x.note ?? "" })),
     },
     expected: {
-      drRatio: cfg.drRatioPct ? { pct: cfg.drRatioPct, amount: drRatioExpected, recorded: drRatioRow?.amount ?? null } : null,
+      drRatio: cfg.drRatioPct ? { pct: cfg.drRatioPct, amount: todayDrRatio, recorded: todayDrRatio } : null,
       hospitalRatio: cfg.hospitalRatioPct ? { pct: cfg.hospitalRatioPct, amount: hospitalExpected, recorded: hospitalRow?.amount ?? null } : null,
     },
     nextDay: next,
