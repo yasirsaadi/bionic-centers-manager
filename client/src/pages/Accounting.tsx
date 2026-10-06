@@ -176,6 +176,8 @@ interface AccountingSummary {
     legacyDevicesUnsplit?: { revenue: number };
     unclassified: { revenue: number; paid: number };
   };
+  /** نسبةُ الدكتور — مسحوباتُ المالك (§4.ca تكملةٌ رابعة): سطرٌ مستقلّ بنسبته، لا ضمن المصاريف. */
+  ownerDrawings?: { total: number; netAfter: number; byBranch: { branchId: number; name: string; pct: number; amount: number }[] };
   rollups?: {
     devicesCombined: { revenue: number; paid: number };
     classifiedTotal: { revenue: number; paid: number };
@@ -2342,6 +2344,11 @@ export default function Accounting() {
       [reshapeArabic(formatCurrency(summary.totalRemaining)), reshapeArabic("المتبقي")],
       [reshapeArabic(formatCurrency(summary.totalExpenses)), reshapeArabic("المصروفات")],
       [reshapeArabic(formatCurrency(summary.netProfit)), reshapeArabic("صافي الربح")],
+      //  نسبةُ الدكتور — مسحوباتُ المالك: سطرٌ مستقلّ بنسبة كلّ فرع، لا ضمن المصروفات.
+      ...(summary.ownerDrawings?.byBranch ?? []).map((b) => [
+        reshapeArabic(formatCurrency(b.amount)), reshapeArabic(`نسبة الدكتور (مسحوبات المالك) — ${b.name} ${b.pct}%`),
+      ]),
+      ...(summary.ownerDrawings?.byBranch?.length ? [[reshapeArabic(formatCurrency(summary.ownerDrawings.netAfter)), reshapeArabic("الصافي بعد نسبة الدكتور")]] : []),
       [reshapeArabic(`${summary.collectionRate}%`), reshapeArabic("نسبة التحصيل")]
     ];
     
@@ -2814,6 +2821,9 @@ export default function Accounting() {
       ['أرصدة للمرضى تحتاج تسوية (د.ع)', summary.totalCredits || 0],
       ['المصروفات (د.ع)', summary.totalExpenses],
       ['صافي الربح (د.ع)', summary.netProfit],
+      //  نسبةُ الدكتور — مسحوباتُ المالك: بنسبة كلّ فرع، لا ضمن المصروفات (§4.ca تكملةٌ رابعة).
+      ...(summary.ownerDrawings?.byBranch ?? []).map((b) => [`نسبة الدكتور (مسحوبات المالك) — ${b.name} ${b.pct}% (د.ع)`, b.amount]),
+      ...(summary.ownerDrawings?.byBranch?.length ? [['الصافي بعد نسبة الدكتور (د.ع)', summary.ownerDrawings.netAfter]] : []),
       ['نسبة التحصيل (%)', summary.collectionRate]
     ];
     
@@ -3244,6 +3254,30 @@ export default function Accounting() {
                   <p className="mt-1 text-xs text-muted-foreground">{t.accounting.revenueMinusExpenses}</p>
                 </CardContent>
               </Card>
+
+              {/*  نسبةُ الدكتور — مسحوباتُ المالك: بنسبة كلّ فرع، لا ضمن المصاريف — كي لا يلتبس على المدقّق (§4.ca تكملةٌ رابعة). */}
+              {(summary?.ownerDrawings?.byBranch?.length ?? 0) > 0 && (
+                <Card data-testid="card-owner-drawings">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+                    <CardTitle className="text-sm font-medium">نسبة الدكتور — مسحوبات المالك</CardTitle>
+                    <TrendingUp className="h-4 w-4 text-blue-700" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-baseline gap-1.5" data-testid="text-owner-drawings">
+                      <span className="text-lg md:text-xl font-bold tabular-nums text-blue-800 truncate">
+                        {summaryLoading ? "..." : formatNumberOnly(summary?.ownerDrawings?.total || 0)}
+                      </span>
+                      <span className="text-xs font-medium text-muted-foreground shrink-0">د.ع</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {(summary?.ownerDrawings?.byBranch ?? []).map((b) => `${b.name} ${b.pct}٪`).join(" · ")} — من وارد كلّ يوم، وليست من المصاريف
+                    </p>
+                    <p className="mt-1 text-xs font-semibold" data-testid="text-net-after-drawings">
+                      الصافي بعد نسبة الدكتور: <span className="tabular-nums" dir="ltr">{formatNumberOnly(summary?.ownerDrawings?.netAfter || 0)}</span> د.ع
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
