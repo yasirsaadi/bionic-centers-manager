@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient, invalidatePermissionShapedQueries } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -32,6 +32,7 @@ const BranchRevenues = lazy(() => import("@/pages/BranchRevenues"));
 const Accounting = lazy(() => import("@/pages/Accounting"));
 const CashBook = lazy(() => import("@/pages/CashBook"));
 const DrBox = lazy(() => import("@/pages/DrBox"));
+const CashBookPrint = lazy(() => import("@/pages/CashBookPrint"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
@@ -113,6 +114,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Router() {
   const { user, isLoading } = useAuth();
+  const [location] = useLocation();
 
   //  ══ ربطُ `useAuth()` بمخزن `useBranchSession` المشترك — «بلا خروجٍ
   //  وعودة» تصل الشاشاتِ فعلاً (إصلاحٌ 2026-09-02) ══════════════════════
@@ -249,6 +251,17 @@ function Router() {
     );
   }
 
+  //  ورقةُ الدفتر للطباعة (§4.ca تكملة): صفحةٌ بلا شريطٍ جانبيّ ولا إطار — ما يُطبع هو الورقةُ وحدها.
+  if (location.startsWith("/cash-book/print")) {
+    return (
+      <BranchGate>
+        <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+          <CashBookPrint />
+        </Suspense>
+      </BranchGate>
+    );
+  }
+
   return (
     <BranchGate>
       <Layout>
@@ -290,6 +303,7 @@ function Router() {
             <Route path="/statistics" component={Statistics} />
             <Route path="/accounting" component={Accounting} />
             <Route path="/cash-book" component={CashBook} />
+            <Route path="/cash-book/print" component={CashBookPrint} />
             <Route path="/dr-box" component={DrBox} />
             <Route path="/surveys" component={Surveys} />
             <Route path="/session-tracking/entry" component={SessionEntry} />
