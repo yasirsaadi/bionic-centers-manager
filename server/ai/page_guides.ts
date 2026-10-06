@@ -66,6 +66,7 @@ import {
   REVIEW_SERVICE_TYPES, REVIEW_KINDS, REVIEW_KIND_LABELS,
   REVIEW_DECISIONS, REVIEW_DECISION_LABELS, requiresFullPath, otherBranchNotice,
 } from "@shared/medical_review";
+import { CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL } from "@shared/cash_book";
 import type { AiAccessContext } from "./access";
 import type { PageContext } from "./page_context";
 
@@ -92,6 +93,8 @@ export const BRANCHES_PAGE_PATH = "/branches";
 export const BRANCH_DETAILS_PAGE_PATH = "/branches/:id";
 export const DASHBOARD_PAGE_PATH = "/";
 export const PATIENT_TRASH_PAGE_PATH = "/patient-trash";
+export const CASH_BOOK_PAGE_PATH = "/cash-book";
+export const DR_BOX_PAGE_PATH = "/dr-box";
 export const NOTIFICATIONS_PAGE_PATH = "/notifications";
 export const SESSION_ENTRY_PAGE_PATH = "/session-tracking/entry";
 export const SESSION_TARGETS_PAGE_PATH = "/session-tracking/targets";
@@ -1417,6 +1420,55 @@ entries أو deleteCount في الشهر يتفعل quality وحده ويعاد 
 }
 
 /** النظام المحاسبي — ما تعرضه الصفحة فعلاً، وما تحرسه النقاط فعلاً. */
+/** دفترُ القاصة اليوميّ (§4.ca) — ورقةُ الدفتر نفسُها. التسمياتُ من `shared/cash_book.ts` لا تُنسَخ. */
+function cashBookGuide(label: string): string {
+  return `
+
+دليلُ هذه الشاشة — «${label}»:
+
+نسخةٌ إلكترونية من ورقة دفتر القاصة الورقيّ: صفحةٌ لكلّ فرعٍ ودفترٍ ويوم. **يقرؤها ويكتب فيها المحاسبُ ومديرُ الفرع
+والمسؤولُ وحدهم**، والموظّفُ في فرعه النشط وحده، وفي اليوم نفسِه وحده؛ والأيامُ الماضيةُ للمسؤول.
+
+**الدفاتر**: بغداد وذي قار دفتران («${CASH_BOOK_LABELS.devices}» · «${CASH_BOOK_LABELS.physio}»)، وكربلاء والموصل دفترُ
+«${CASH_BOOK_LABELS.devices}» وحده.
+
+**الوارد**: دفعاتُ المرضى المسجَّلة في الفرع واليوم بقسم حالتها، و«${INCOME_OTHER_LABEL}» بملاحظةٍ تقول مصدره.
+**الصادر عمودان بمجموعٍ واحد**: «${OUTFLOW_LABELS.expense}» (وفيها «${OUTFLOW_LABELS.hospital_ratio}» لذي قار و«${OUTFLOW_LABELS.atabah_ratio}» لكربلاء
+— مصروفٌ حقيقيّ لجهةٍ خارجية)، و«${OUTFLOW_LABELS.dr_transfer}» (ومعه «${OUTFLOW_LABELS.dr_ratio}» — مالُ المالك، ليس مصروفاً).
+**ولا مجموعَ للتحويلات في أيّ مكان** بقرار المالك.
+
+**نسبةُ الدكتور** («نسبة العزل»): من وارد كلّ دفترٍ على حدة — بغداد ٢٠٪، وكربلاء وذي قار والموصل ١٠٪ — تُحسب ولا تُكتب
+بيد (زرّ «أضف/حدّث نسبة الدكتور»). ومربّعُها: نسبةُ اليوم + المتبقي من نسبة أمس − ما استلمه المالك = المتبقي في النسبة.
+واستلامُ النسبة للمسؤول وحده.
+
+**مربّعُ القاصة**: مجموعُ اليوم (الوارد − الصادر) + الباقي من أمس = المتبقي في القاصة. **والحسابُ يبدأ من «بداية الدفتر»**
+(الرصيدُ الافتتاحيّ: يومُ البدء والنقدُ والمتبقي في النسبة) — **يسجّلها المسؤولُ وحده ويعدّلها**؛ والموظّفُ قبلها يرى «بانتظار…».
+
+**والسطرُ الرماديّ «صُرف من قاصة الدكتور — الباب»**: مصروفٌ دفعه المالكُ من قاصته الخاصّة لهذا الفرع — يظهر للفرع بابُه
+ويومُه فقط بلا مبلغ، **ولا يدخل مجموعَ الدفتر ولا المتبقي**.`;
+}
+
+/** قاصةُ الدكتور (§4.cb) — للمسؤول وحده. */
+function drBoxGuide(label: string): string {
+  return `
+
+دليلُ هذه الشاشة — «${label}» (للمسؤول وحده):
+
+قاصةُ المالك الخاصّة لكلّ فرع. **ما وصل** = مجموعُ «${OUTFLOW_LABELS.dr_transfer}» من دفاتر ذلك الفرع (لا يُكتب هنا مرّةً ثانية).
+**ما صُرف** = ما يكتبه المالكُ هنا بزرّ «صرف من قاصتي» (التاريخ · باب الصرف · المبلغ · ملاحظاتٌ له وحده).
+**الرصيدُ الآن** = الرصيدُ الافتتاحيّ + ما وصل منذ يومه − ما صُرف منذ يومه؛ وبلا افتتاحيّ: من أوّل تحويل. وما قبل يوم البدء
+لا يدخل الرصيد. والرصيدُ الافتتاحيّ يضعه المالكُ ويعدّله بزرّ «ضع/تعديل الرصيد الافتتاحي».
+
+**الحساب** بجانب الفرع كما في تطبيق «كي كارت» على هاتف المالك: بغداد «كي كارت 2009»، ذي قار «كي كارت 4325»، كربلاء
+«حساب السوبر».
+
+ومصروفُ هذه القاصة **لا يدخل مصاريفَ الفرع ولا تقاريرَه** (المالُ خرج من قاصة الفرع يومَ التحويل)؛ والفرعُ يرى في دفتره سطراً
+رماديّاً بالباب وحده. وفي الجدول: التاريخ · وصل · صُرف · الباب/الملاحظات، ومجموعُ الفترة (من/إلى، الشهرُ الجاري افتراضاً).
+
+**ولأرقام كلّ الفروع معاً** (مجموعُ الأرصدة · المتبقي في كلّ دفتر · المتبقي من النسبة · تحويلاتُ الشهر) اقرأ قدرةَ
+/api/dr-box/summary — **ولا تحسب رقماً بنفسك**.`;
+}
+
 function accountingGuide(label: string): string {
   return `
 
@@ -1834,6 +1886,8 @@ export function pageGuideFor(page: PageContext | null, access: AiAccessContext):
   if (page?.path === SESSION_ANALYTICS_PAGE_PATH) return sessionAnalyticsGuide(page.label);
   if (page?.path === ADMIN_PAGE_PATH) return adminGuide(page.label);
   if (page?.path === ACCOUNTING_PAGE_PATH) return accountingGuide(page.label);
+  if (page?.path === CASH_BOOK_PAGE_PATH) return cashBookGuide(page.label);
+  if (page?.path === DR_BOX_PAGE_PATH) return drBoxGuide(page.label);
   if (page?.path === STATISTICS_PAGE_PATH) return statisticsGuide(page.label);
   if (page?.path === SURVEYS_PAGE_PATH) return surveysGuide(page.label);
   return "";

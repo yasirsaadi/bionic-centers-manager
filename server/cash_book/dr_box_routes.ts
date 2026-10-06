@@ -53,6 +53,16 @@ export function registerDrBoxRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
+  // ---- خلاصةُ المالك لكلّ الفروع — يقرؤها المساعدُ الذكيّ بجلسة المالك (§4.cb تكملة) -----------------
+  app.get("/api/dr-box/summary", isAuthenticated, async (req: Req, res) => {
+    if (!admin(req, res)) return;
+    const today = baghdadTodayYmd();
+    const from = isYmd(req.query.from) ? String(req.query.from) : `${today.slice(0, 7)}-01`;
+    const to = isYmd(req.query.to) ? String(req.query.to) : today;
+    if (from > to) return res.status(400).json({ error: "بداية الفترة بعد نهايتها" });
+    try { res.json(await box.ownerSummary(from, to, today)); } catch (e) { fail(res, e); }
+  });
+
   // ---- الرصيدُ الافتتاحيّ: يضعه المسؤولُ ويعدّله، ومنه يبدأ الحساب ---------------------------------
   app.post("/api/dr-box/opening", isAuthenticated, async (req: Req, res) => {
     const s = admin(req, res);

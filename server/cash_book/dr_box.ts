@@ -8,8 +8,10 @@
 
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
-import { cashBookEntries, drBoxExpenses, drBoxOpenings } from "@shared/schema";
-import { CashBookError } from "./store";
+import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings } from "@shared/schema";
+import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, type CashBook } from "@shared/cash_book";
+import { categoryArabicLabel } from "../anomalies/detector";
+import { CashBookError, getSheet } from "./store";
 
 const alive = sql`${drBoxExpenses.deletedAt} IS NULL`;
 
@@ -113,4 +115,80 @@ export async function deleteDrBoxExpense(id: number, userId: number | null) {
     .where(and(eq(drBoxExpenses.id, id), alive)).returning();
   if (!row) throw new CashBookError(404, "السطر غير موجود");
   return row;
+}
+
+/**
+ * **خلاصةُ المالك** (للمسؤول وحده — `GET /api/dr-box/summary`): ما يسأل عنه المساعدُ الذكيّ بجلسة المالك (§4.cb تكملة).
+ * لكلّ فرع: قاصةُ الدكتور (الافتتاحيّ · ما وصل · ما صُرف · الرصيد، وحركةُ الفترة ومصروفُها بالباب)، ولكلّ دفترٍ من دفاتره:
+ * المتبقي في القاصة والمتبقي في النسبة كما يقولهما دفترُ اليوم، ومجاميعُ الفترة (التحويلات · نسبةُ الدكتور · المستلَمُ منها).
+ * **كلُّ رقمٍ يُحسب هنا بالمصادر نفسِها** (`drBoxReport` و`getSheet`) — لا حسابٌ ثانٍ ينحرف.
+ */
+export async function ownerSummary(from: string, to: string, today: string) {
+  const list = await db.select({ id: branches.id, name: branches.name, closed: branches.temporarilyClosed }).from(branches).orderBy(asc(branches.id));
+
+  const periodRows = await db.select({
+    branchId: cashBookEntries.branchId, book: cashBookEntries.book, kind: cashBookEntries.kind,
+    n: sql<number>`COALESCE(SUM(${cashBookEntries.amount}), 0)::bigint`,
+  }).from(cashBookEntries)
+    .where(and(sql`${cashBookEntries.deletedAt} IS NULL`, gte(cashBookEntries.entryDate, from), lte(cashBookEntries.entryDate, to)))
+    .groupBy(cashBookEntries.branchId, cashBookEntries.book, cashBookEntries.kind);
+  const periodOf = (b: number, book: string, kind: string) =>
+    Number(periodRows.find((r) => r.branchId === b && r.book === book && r.kind === kind)?.n ?? 0);
+
+  interface BookState {
+    book: CashBook; label: string; started: boolean; cashRemaining: number | null; ratioRemaining: number | null;
+    period: { drTransfers: number; drRatio: number; ratioReceived: number };
+  }
+  interface BranchState {
+    id: number; name: string; temporarilyClosed: boolean; account: string | null;
+    drBox: {
+      opening: { date: string; amount: number } | null; received: number; spent: number; balance: number;
+      period: { received: number; spent: number }; periodSpentByCategory: { category: string; amount: number }[];
+    };
+    books: BookState[];
+  }
+  const out: BranchState[] = [];
+  for (const b of list) {
+    const box = await drBoxReport(b.id, from, to);
+    const byCat = new Map<string, number>();
+    for (const e of box.expenses) byCat.set(e.category, (byCat.get(e.category) ?? 0) + e.amount);
+    const books: BookState[] = [];
+    for (const book of branchCashConfig(b.name).books) {
+      const s = await getSheet(b.id, book, today);
+      books.push({
+        book, label: CASH_BOOK_LABELS[book], started: Boolean(s.opening),
+        cashRemaining: s.opening ? s.totals.remaining : null,
+        ratioRemaining: s.opening ? s.ratio.remaining : null,
+        period: {
+          drTransfers: periodOf(b.id, book, "dr_transfer"),
+          drRatio: periodOf(b.id, book, "dr_ratio"),
+          ratioReceived: periodOf(b.id, book, "ratio_received"),
+        },
+      });
+    }
+    out.push({
+      id: b.id, name: b.name, temporarilyClosed: b.closed, account: drBoxAccountLabel(b.name),
+      drBox: {
+        opening: box.opening, received: box.totals.received, spent: box.totals.spent, balance: box.totals.balance,
+        period: box.period,
+        periodSpentByCategory: Array.from(byCat.entries()).map(([category, amount]) => ({ category: categoryArabicLabel(category), amount }))
+          .sort((x, y) => y.amount - x.amount),
+      },
+      books,
+    });
+  }
+  const sum = (f: (x: BranchState) => number) => out.reduce((s, x) => s + f(x), 0);
+  return {
+    today, from, to,
+    totals: {
+      drBoxBalance: sum((x) => x.drBox.balance),
+      cashRemaining: sum((x) => x.books.reduce((s, k) => s + (k.cashRemaining ?? 0), 0)),
+      ratioRemaining: sum((x) => x.books.reduce((s, k) => s + (k.ratioRemaining ?? 0), 0)),
+      periodDrTransfers: sum((x) => x.books.reduce((s, k) => s + k.period.drTransfers, 0)),
+      periodDrBoxSpent: sum((x) => x.drBox.period.spent),
+    },
+    //  **الفروعُ كائنٌ باسمها لا مصفوفة** عمداً: طبقةُ تشكيل المساعد (`capabilities/shape.ts`) تأخذ من جوابٍ فيه مصفوفةٌ
+    //  في مستواه الأوّل تلك المصفوفةَ وحدها وتُسقط ما حولها — فتضيع `totals`. وبلا مصفوفةٍ يمضي الجوابُ كاملاً.
+    branches: Object.fromEntries(out.map((b) => [b.name, b])),
+  };
 }

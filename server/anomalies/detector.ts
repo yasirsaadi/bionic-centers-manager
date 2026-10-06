@@ -366,7 +366,7 @@ async function detectCostLedgerMismatch(branchId?: number): Promise<Anomaly[]> {
 
 // --------------------------------- helpers ---------------------------------
 
-function categoryArabicLabel(category: string): string {
+export function categoryArabicLabel(category: string): string {
   const labels: Record<string, string> = {
     salaries: "رواتب",
     rent: "إيجارات",
