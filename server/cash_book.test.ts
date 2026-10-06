@@ -338,6 +338,16 @@ async function main() {
       [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
        smList.reduce((a: number, b: any) => a + b.books.reduce((x: number, k: any) => x + k.period.drTransfers, 0), 0)]);
 
+    console.log("\n── ل. نسبة الدكتور في التقرير المحاسبي — مسحوبات المالك (§4.ca تكملةٌ رابعة) ──");
+    const acct = (await http("GET", `/api/accounting/summary?branchId=${BGD}&startDate=${YDAY}&endDate=${TODAY}`, S.admin)).body;
+    const odB = acct.ownerDrawings?.byBranch?.find((b: any) => b.branchId === BGD);
+    same("ل١. **سطرٌ مستقلّ بنسبة الفرع** — بغداد ٢٠٪: أمس ٦٠ ألفاً + اليوم ٢٦٠ ألفاً (أطراف) + ١٠٠ ألف (علاج طبيعي)",
+      [odB?.pct, odB?.amount, acct.ownerDrawings?.total], [20, 420_000, 420_000]);
+    same("ل٢. **وليست من المصاريف** — المصاريفُ والصافي كما هما، والصافي بعدها مطروحاً منه",
+      [acct.ownerDrawings?.netAfter, acct.netProfit - 420_000, Number(acct.totalExpenses) === Number((await q(
+        `SELECT COALESCE(SUM(amount),0)::bigint n FROM expenses WHERE branch_id=$1 AND expense_date BETWEEN $2 AND $3`, [BGD, YDAY, TODAY]))[0].n)],
+      [acct.netProfit - 420_000, acct.ownerDrawings?.netAfter, true]);
+
     console.log("\n── ك. طباعة ورقة الدفتر (§4.ca تكملة) ──");
     const printed = (s: any, body: any) => http("POST", "/api/cash-book/printed", s, { book: "devices", date: TODAY, ...body });
     same("ك١. **الاستقبالُ لا يطبع**، وتاريخٌ لم يأتِ ٤٠٠، ويومٌ قبل بداية الدفتر ٤٠٩",

@@ -47,6 +47,7 @@ import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
+import { ownerDrawingsForPeriod } from "./cash_book/store";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
 import { caseNotBoughtByCase } from "./followup/case_not_bought";
@@ -6760,7 +6761,9 @@ export async function registerRoutes(
       startDate as string,
       endDate as string
     );
-    res.json(summary);
+    //  نسبةُ الدكتور — مسحوباتُ المالك (§4.ca تكملةٌ رابعة): سطرٌ مستقلّ بنسبته، لا ضمن المصاريف، والصافي قبلها وبعدها.
+    const drawings = await ownerDrawingsForPeriod(branchId, summary.effectiveStartDate ?? "2000-01-01", summary.effectiveEndDate);
+    res.json({ ...summary, ownerDrawings: { ...drawings, netAfter: summary.netProfit - drawings.total } });
   });
 
   // Get all payments for accounting

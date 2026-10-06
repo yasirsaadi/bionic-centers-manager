@@ -402,3 +402,23 @@ export async function deleteExpenseRow(id: number, userId: number | null) {
   await reverseJournalForSource("expense", id, userId, "حذف المصروف من دفتر القاصة");
   await db.delete(expenses).where(eq(expenses.id, id));
 }
+
+/**
+ * **نسبةُ الدكتور — مسحوباتُ المالك** في التقرير المحاسبيّ (قرارُ المالك ٢٠٢٦-١٠-٠٦): تُعرض سطراً مستقلّاً بنسبتها
+ * (بغداد ٢٠٪، والباقي ١٠٪) **لا ضمن المصاريف** — فلا يُنقص ربحُ الفرع بمال المالك، ولا يلتبس على المدقّق.
+ * الحسابُ نفسُه الذي في الدفتر: نسبةُ كلّ يومٍ من وارده (`autoDrRatioSum`)، لكلّ دفترٍ من دفاتر الفرع.
+ */
+export async function ownerDrawingsForPeriod(branchId: number | undefined, from: string, toInclusive: string) {
+  const list = await db.select({ id: branches.id, name: branches.name }).from(branches)
+    .where(branchId ? eq(branches.id, branchId) : sql`TRUE`).orderBy(branches.id);
+  const next = addDays(toInclusive, 1);
+  const byBranch: { branchId: number; name: string; pct: number; amount: number }[] = [];
+  for (const b of list) {
+    const cfg = branchCashConfig(b.name);
+    if (!cfg.drRatioPct) continue;
+    let amount = 0;
+    for (const book of cfg.books) amount += await autoDrRatioSum(b.id, book, from, next);
+    byBranch.push({ branchId: b.id, name: b.name, pct: cfg.drRatioPct, amount });
+  }
+  return { total: byBranch.reduce((s, b) => s + b.amount, 0), byBranch };
+}
