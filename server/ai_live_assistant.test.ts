@@ -48,7 +48,8 @@ const S = {
   //  ذلك العَلَم وحده، لاختبار الفرق بدقّة.
   recvReports: { userId: RECV, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "r", permissions: { canViewPatients: true, canAddPatients: true, canViewReports: true } },
-  acc: { userId: ACC, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+  //  **مديرُ فرع** — المالُ في المساعد للمسؤول ولمدير الفرع وحدهما (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.cd)، فصار حاملُ المال غيرُ المسؤول مديراً.
+  acc: { userId: ACC, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "a", permissions: { canViewPatients: true, canManageAccounting: true } },
   expert: { userId: EXPERT, role: "prosthetics_expert", isAdmin: false, branchId: 1,
     accessibleBranches: [1], displayName: "e", permissions: {} },
@@ -198,8 +199,8 @@ async function main() {
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   والمحاسب (بلا canViewReports أيضاً): إحدى عشرةَ (financial_summary لا operational_summary)", seen[0].tools.sort(), [
-      "financial_summary", "list_capabilities", "my_worklist",
+    same("   ومديرُ الفرع (بلا canViewReports أيضاً): ثلاثَ عشرةَ (financial_summary وأداتا المدقّق، لا operational_summary)", seen[0].tools.sort(), [
+      "financial_audit", "financial_ledger", "financial_summary", "list_capabilities", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
       "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",

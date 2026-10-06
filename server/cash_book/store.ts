@@ -422,3 +422,78 @@ export async function ownerDrawingsForPeriod(branchId: number | undefined, from:
   }
   return { total: byBranch.reduce((s, b) => s + b.amount, 0), byBranch };
 }
+
+/**
+ * **دفترُ فترةٍ كاملة** — للمدقّق في المساعد (§4.cd): ما بدأت به الفترة وما انتهت إليه، ومجاميعُها، والأيامُ التي نزل فيها
+ * المتبقّي تحت الصفر، والأيامُ التي لا تطابق فيها «نسبة المستشفى» المسجَّلةُ ما يُحسب من وارد اليوم.
+ * الحسابُ حسابُ `getSheet` نفسُه يوماً يوماً من الرصيد الافتتاحيّ: متبقّي اليوم = متبقّي أمس + الوارد − المصاريف − التحويل − نسبةُ الدكتور.
+ */
+export async function cashBookPeriod(branchId: number, book: CashBook, from: string, toInclusive: string) {
+  const b = await branchConfigOf(branchId);
+  if (!b || !b.config.books.includes(book)) return null;
+  const cfg = b.config;
+  const opening = await getOpening(branchId, book);
+  const base = { branchId, branchName: b.name, book, from, to: toInclusive };
+  if (!opening) return { ...base, started: false as const };
+  if (opening.openingDate > toInclusive) return { ...base, started: false as const, openingDate: opening.openingDate };
+  const first = opening.openingDate;
+  const next = addDays(toInclusive, 1);
+
+  const income = await dailyIncome(branchId, cfg, book, first, next);
+  const otherIncome = new Map<string, number>();
+  const exp = new Map<string, number>();
+  const hospital = new Map<string, number>();
+  const transfer = new Map<string, number>();
+  const received = new Map<string, number>();
+  const add = (m: Map<string, number>, d: string, n: number) => m.set(d, (m.get(d) ?? 0) + n);
+  const expRows = await db.select({ day: expenses.expenseDate, amount: expenses.amount, category: expenses.category }).from(expenses)
+    .where(and(eq(expenses.branchId, branchId), sql`${expenses.expenseDate} >= ${first}`, sql`${expenses.expenseDate} < ${next}`,
+      expenseBookFilter(cfg, book)));
+  for (const e of expRows) {
+    add(exp, String(e.day), e.amount);
+    if (e.category === HOSPITAL_RATIO_CATEGORY) add(hospital, String(e.day), e.amount);
+  }
+  const entRows = await db.select({ day: cashBookEntries.entryDate, kind: cashBookEntries.kind, amount: cashBookEntries.amount }).from(cashBookEntries)
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), sql`${cashBookEntries.deletedAt} IS NULL`,
+      sql`${cashBookEntries.entryDate} >= ${first}`, sql`${cashBookEntries.entryDate} < ${next}`));
+  for (const e of entRows) {
+    if (e.kind === "dr_transfer") add(transfer, String(e.day), e.amount);
+    else if (e.kind === "ratio_received") add(received, String(e.day), e.amount);
+    else if (e.kind === "income_other") add(otherIncome, String(e.day), e.amount);
+  }
+
+  let cash = opening.cashBalance;
+  let ratio = opening.ratioBalance;
+  let startCash = cash, startRatio = ratio;
+  const period = { income: 0, otherIncome: 0, expenses: 0, drTransfers: 0, drRatio: 0, ratioReceived: 0 };
+  const negativeDays: { date: string; remaining: number }[] = [];
+  const hospitalMismatches: { date: string; expected: number; recorded: number }[] = [];
+  let lowest: { date: string; remaining: number } | null = null;
+  for (let d = first; d <= toInclusive; d = addDays(d, 1)) {
+    if (d === from) { startCash = cash; startRatio = ratio; }
+    const inc = income.get(d) ?? 0;
+    const dr = ratioAmount(inc, cfg.drRatioPct);
+    cash = cash + inc - (exp.get(d) ?? 0) - (transfer.get(d) ?? 0) - dr;
+    ratio = ratio + dr - (received.get(d) ?? 0);
+    if (d < from) continue;
+    period.income += inc; period.otherIncome += otherIncome.get(d) ?? 0; period.expenses += exp.get(d) ?? 0;
+    period.drTransfers += transfer.get(d) ?? 0; period.drRatio += dr; period.ratioReceived += received.get(d) ?? 0;
+    if (cash < 0) negativeDays.push({ date: d, remaining: cash });
+    if (!lowest || cash < lowest.remaining) lowest = { date: d, remaining: cash };
+    if (cfg.hospitalRatioPct) {
+      const expected = ratioAmount(inc, cfg.hospitalRatioPct);
+      const recorded = hospital.get(d) ?? 0;
+      if (expected !== recorded) hospitalMismatches.push({ date: d, expected, recorded });
+    }
+  }
+  //  فترةٌ تبدأ قبل الافتتاح: ما قبله ليس في الدفتر، فرصيدُ البداية هو الافتتاحيّ.
+  if (from < first) { startCash = opening.cashBalance; startRatio = opening.ratioBalance; }
+  return {
+    ...base, started: true as const,
+    opening: { date: opening.openingDate, cash: opening.cashBalance, ratio: opening.ratioBalance },
+    coveredFrom: from < first ? first : from,
+    startRemaining: startCash, endRemaining: cash,
+    startRatioBalance: startRatio, endRatioBalance: ratio,
+    period, negativeDays, lowest, drRatioPct: cfg.drRatioPct, hospitalRatioPct: cfg.hospitalRatioPct, hospitalMismatches,
+  };
+}

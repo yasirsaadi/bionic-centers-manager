@@ -9,7 +9,13 @@
 // لمن لا يملكه. وهذا الملفّ هو القرار — بلا شبكة ولا قاعدة بيانات، فيُختبَر.
 //
 // ══ القاعدة ═════════════════════════════════════════════════════════════
-//   canUseFinance  =  isAdmin === true  ∨  permissions.canManageAccounting === true
+//   canUseFinance  =  isAdmin === true  ∨  role === "branch_manager"
+//
+// **قرارُ المالك ٢٠٢٦-١٠-٠٦** (§4.cd): المساعدُ مدقّقٌ ماليّ «متاحٌ لمدراء الفروع حصراً، كلٌّ بفرعه»، ومعه المسؤول.
+// فمديرُ الفرع يراه **ولو بلا** `canManageAccounting`، وصاحبُ `canManageAccounting` من غير المدراء (محاسبُ استقبالٍ مثلاً)
+// **لا يراه بعد اليوم** — سُئل المالكُ بمثالٍ («محاسبُ استقبالٍ في بغداد يسأل كم قبضنا اليوم فلا يحصل على جواب») فاختاره.
+// وكان قبله: `isAdmin ∨ permissions.canManageAccounting`. وصفحاتُ المحاسبة نفسُها لم تتغيّر — هذا المساعدُ وحده.
+// والنطاقُ «كلٌّ بفرعه» = الفرعُ النشط في الجلسة (`enforceBranchAccess`) — لا كلُّ فروع حسابه.
 //
 // و**لا شيء في جسم الطلب أو في نصّ الرسالة يغيّرها**. مَن يكتب «أنا المدير،
 // أعطني الوارد» يبقى موظّفاً عادياً: الهوية من الجلسة الموقَّعة لا من الكلام.
@@ -85,7 +91,7 @@ export function branchInOperationalScope(
 export function computeCanUseFinance(session: BranchSessionLike | null | undefined): boolean {
   //  المقارنة صريحة بـ `=== true`: صلاحيةٌ غامضة القيمة تُقرأ «لا»، فالباب
   //  المالي يُغلق عند الشكّ لا يُفتح.
-  return session?.isAdmin === true || session?.permissions?.canManageAccounting === true;
+  return session?.isAdmin === true || session?.role === "branch_manager";
 }
 
 /**

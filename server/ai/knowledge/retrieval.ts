@@ -30,7 +30,9 @@ export async function retrieveKnowledge(
 ): Promise<KnowledgeMatch[]> {
   const candidates = await listActiveArticlesInScope({
     operationalBranches: access.operationalBranches,
-    allowFinance: access.mode === "financial",
+    //  **وصاحبُ «إدارة المحاسبة» باقٍ على المقالات** بعد أن خرج من أرقام المساعد الحيّة (§4.cd): المقالةُ متنٌ مكتوبٌ بلا رقم،
+    //  وقرارُ المالك يخصّ المالَ الحيّ — كما في دروس التدريب (`training/store.ts`).
+    allowFinance: access.mode === "financial" || access.permissions?.canManageAccounting === true,
     //  «سلطةٌ إدارية» هنا = نفسُ مَن يملك التصحيح الإداريّ فعلياً في
     //  التطبيق: المسؤولُ العام، أو مديرُ الفرع ضمن فرعه.
     allowAdministration: access.isAdmin || access.role === "branch_manager",

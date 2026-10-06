@@ -43,6 +43,7 @@ import { activeExamDrizzle } from "../../medical/active_exam";
 import { activePatientDrizzle, belongsToActivePatientSql } from "../../patients/active_patient";
 import { buildPatientSearch, hasTrigram, searchTieBreaker } from "../../patient_search/sql";
 import { getFinancialSummary, getOperationalSummary, resolveDateRange } from "./reports";
+import { financialAudit, financialLedger, LEDGER_KINDS, type LedgerKind } from "./audit";
 import {
   listCapabilities, readCapability, LIST_SPEC, READ_SPEC,
   type CapabilityContext,
@@ -524,7 +525,7 @@ async function patientFinance(access: AiAccessContext, input: any): Promise<Tool
   //  **الحارس أوّلاً وقبل أي قراءة.** الأداة لا تُعرَض أصلاً لغير المخوَّل،
   //  لكنّ النموذج قد يخترع اسمها — فيُردّ هنا قبل أن تُلمس القاعدة.
   if (access.mode !== "financial") {
-    return denied("البيانات المالية متاحة لمن يملك صلاحية المحاسبة فقط.");
+    return denied("البيانات المالية في المساعد متاحة للمسؤول ولمدير الفرع (لفرعه) فقط.");
   }
   const raw = strArg(input, "patientCode");
   if (!raw) return denied("رمز المريض مطلوب بصيغة WB-xxxxx.");
@@ -926,7 +927,7 @@ async function financialSummaryTool(access: AiAccessContext, input: any): Promis
   //  **الحارس أوّلاً** — نفسُ نمط `patient_finance` بالحرف: لا تُعرَض أصلاً
   //  لغير المخوَّل، والمنفِّذ يفحص ثانيةً على أي حال.
   if (access.mode !== "financial") {
-    return denied("البيانات المالية متاحة لمن يملك صلاحية المحاسبة فقط.");
+    return denied("البيانات المالية في المساعد متاحة للمسؤول ولمدير الفرع (لفرعه) فقط.");
   }
   //  حدٌّ أقصى سنةٌ واحدة — يكفي أطول مقارنةٍ معقولة (شهرٌ مقابل شهر قبله
   //  مضروبةً باثني عشر) بلا مسحٍ غير محدود.
@@ -939,6 +940,48 @@ async function financialSummaryTool(access: AiAccessContext, input: any): Promis
   const result = await getFinancialSummary({
     isAdmin: access.isAdmin, accessBranchId: access.branchId, requestedBranchId: branchResolved.branchId,
     start: range.start, end: range.end, compare,
+  });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
+// ══ ٧ب. المدقّقُ الماليّ — جردٌ ومطابقة، وكشفُ حركات (§4.cd) ══════════════════════════
+//
+// **النطاقُ نطاقُ `financial_summary` بالحرف**: غيرُ المسؤول على فرعه الماليّ (`access.branchId` — الفرعُ النشط في
+// الجلسة)، و`branchId` من طلبه لا يُقرأ. والمسؤولُ وحده يختار فرعاً أو يترك كلَّ الفروع. وقاصةُ الدكتور للمسؤول وحده.
+
+async function auditScope(access: AiAccessContext, input: any, maxDays: number) {
+  if (access.mode !== "financial") return { ok: false as const, error: "التدقيقُ الماليّ في المساعد متاحٌ للمسؤول ولمدير الفرع (لفرعه) فقط." };
+  const range = resolveDateRange(input ?? {}, maxDays);
+  if (!range.ok) return { ok: false as const, error: range.error };
+  const branchResolved = await resolveAdminRequestedBranchId(access, input);
+  if (!branchResolved.ok) return { ok: false as const, error: branchResolved.error };
+  const branchId = access.isAdmin
+    ? (branchResolved.branchId ?? access.branchId ?? undefined)
+    : (access.branchId ?? undefined);
+  //  غيرُ المسؤول بلا فرعٍ ماليّ لا يصل هنا (وضعُه عامّ) — والحارسُ ثانيةً: لا «كلَّ الفروع» لغير المسؤول.
+  if (!access.isAdmin && branchId === undefined) return { ok: false as const, error: "لا فرعَ ماليّاً محسوماً لجلستك." };
+  return { ok: true as const, branchId, start: range.start, end: range.end };
+}
+
+async function financialAuditTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  const sc = await auditScope(access, input, 366);
+  if (!sc.ok) return denied(sc.error);
+  const result = await financialAudit({ branchId: sc.branchId, start: sc.start, end: sc.end, includeDrBox: access.isAdmin });
+  return { ok: true, data: result as unknown as Record<string, unknown> };
+}
+
+async function financialLedgerTool(access: AiAccessContext, input: any): Promise<ToolOutcome> {
+  const sc = await auditScope(access, input, 366);
+  if (!sc.ok) return denied(sc.error);
+  const kind = input?.kind as LedgerKind;
+  if (!LEDGER_KINDS.includes(kind)) return denied(`kind يجب أن يكون واحداً من: ${LEDGER_KINDS.join("، ")}`);
+  const limitRaw = Number(input?.limit ?? 50);
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 50;
+  const minAmount = input?.minAmount === undefined || input?.minAmount === null ? null : Number(input.minAmount);
+  if (minAmount !== null && !Number.isFinite(minAmount)) return denied("minAmount يجب أن يكون رقماً.");
+  const result = await financialLedger({
+    branchId: sc.branchId, start: sc.start, end: sc.end, kind, limit, minAmount,
+    department: strArg(input, "department"), category: strArg(input, "category"), text: strArg(input, "text"),
   });
   return { ok: true, data: result as unknown as Record<string, unknown> };
 }
@@ -1196,7 +1239,7 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
         + "**مبيعاتٌ فقط بلا نظيرٍ مقبوضٍ مقاس** — لا تقرأها صفراً ولا توزّعها بالتخمين. "
         + "**ولا مصاريفَ ولا صافيَ لقسمٍ بعينه** (المصاريف إجماليةٌ للفترة)، فلا يُقال إن قسماً "
         + "رابحٌ أو خاسر. "
-        + "ضمن النطاق الماليّ للمستخدم. متاحةٌ فقط لمن يملك صلاحية المحاسبة. المسؤولُ العام وحده "
+        + "ضمن النطاق الماليّ للمستخدم. متاحةٌ للمسؤول ولمدير الفرع (لفرعه) فقط. المسؤولُ العام وحده "
         + "يستطيع طلب فرعٍ بعينه أو كلّ الفروع — وbranchId غائبٌ (لا يُرسَل) وحده يعني كلّ الفروع؛ "
         + "فارغٌ أو غير صحيح من المسؤول يُرفَض صراحةً بدل أن يتحوّل صمتاً إلى كلّ الفروع.",
       input_schema: {
@@ -1211,6 +1254,65 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     },
     offeredTo: (a) => a.mode === "financial",
     run: financialSummaryTool,
+  },
+  financial_audit: {
+    spec: {
+      name: "financial_audit",
+      description:
+        "**جردٌ وتدقيقٌ ماليّ لفترة** — نادِها لكلّ طلب «جرد» أو «دقّق» أو «تقرير تدقيق» أو «راجع الحسابات» أو «هل الأرقام سليمة». "
+        + "تُرجع **كلَّ شيءٍ محسوباً في الخادم**: totals (cashIn الوارد المقبوض، expenses، net الصافي، salesValue قيمة المبيعات، "
+        + "reductions التصحيحات، ownerDrawings نسبةُ الدكتور — مسحوباتُ المالك وليست مصروفاً، netAfterOwnerDrawings)، "
+        + "وownerDrawings بنسبة كلّ فرع، وcashIn (عددُ الدفعات، وتوزيعُها بالأقسام بنسبها، والأكبر، وأكثرُ الأيام، والدفعاتُ بلا قسم)، "
+        + "وexpenses (بالأبواب بنسبها، وبالأقسام، والأكبر، والمكرّرُ المحتمل duplicates، وما بلا وصف withoutDescription، "
+        + "وما كُتب بعد يومه بأكثر من ثلاثة أيام enteredLate)، وcashBooks (لكلّ دفترٍ: متبقّي البداية والنهاية والوارد والمصاريف "
+        + "والتحويل إلى قاصة الدكتور ونسبتُه ورصيدُ النسبة، والأيامُ التي نزل فيها المتبقّي تحت الصفر، وأيامُ نسبة المستشفى غير المطابقة)، "
+        + "وdebts (الديون وأكبرُ المدينين وأرصدةُ المرضى الدائنة)، وchanges (تعديلُ القيود المالية وحذفُها: مَن وكم ومتى)، "
+        + "وanomalies (تنبيهاتُ كاشف الشذوذ في الفترة)، وchecks — **المطابقاتُ محكومةٌ في الخادم** لكلٍّ status: ok/warn/fail وdetail، "
+        + "وsummary بعددها. وdrBox (قاصةُ الدكتور) للمسؤول وحده. "
+        + "**انقل الأرقامَ والأحكامَ كما هي، ولا تجمع ولا تطرح ولا تحسب نسبةً بنفسك.** "
+        + "النطاق: مديرُ الفرع على فرعه النشط وحده؛ والمسؤولُ يحدّد branchId أو يتركه لكلّ الفروع. أقصى مدى سنة.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "YYYY-MM-DD — افتراضاً اليوم" },
+          endDate: { type: "string", description: "YYYY-MM-DD — افتراضاً نفس startDate أو اليوم" },
+          branchId: { type: "number", description: "للمسؤول العام فقط — رقم فرعٍ لتضييق النطاق" },
+        },
+      } as any,
+    },
+    offeredTo: (a) => a.mode === "financial",
+    run: financialAuditTool,
+  },
+  financial_ledger: {
+    spec: {
+      name: "financial_ledger",
+      description:
+        "**كشفُ حركاتٍ بالسطور** — لِـ«اجرد لي …» و«اعطني كلَّ …» و«كم صرفنا على …» و«من حذف …». "
+        + "kind: payments (دفعات المرضى) · expenses (المصاريف) · cash_book_entries (سطورُ الدفتر غير المصاريف: وارد آخر، "
+        + "تحويل إلى قاصة الدكتور، استلام النسبة) · changes (تعديلُ القيود المالية وحذفُها). "
+        + "مرشّحاتٌ اختيارية: department (قسمٌ للدفعات أو المصاريف: أطراف/مساند/علاج طبيعي/مشترك)، category (باب المصروف "
+        + "بالعربية أو رمزه، أو نوع سطر الدفتر)، text (بحثٌ في الاسم والرمز والوصف، أو اسم الموظّف في changes)، minAmount، "
+        + "limit (افتراضاً ٥٠ وأقصاه ١٠٠). **matchedCount وmatchedTotal محسوبان على كلّ ما طابق لا على المعروض وحده** — "
+        + "أجب بالمجموع منهما، واذكر إن كان الكشفُ مقطوعاً (truncated). وفي changes يكون matchedTotal مجموعَ المبالغ قبل التعديل/الحذف. "
+        + "النطاقُ كنطاق financial_audit.",
+      input_schema: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: ["payments", "expenses", "cash_book_entries", "changes"] },
+          startDate: { type: "string", description: "YYYY-MM-DD" },
+          endDate: { type: "string", description: "YYYY-MM-DD" },
+          department: { type: "string" },
+          category: { type: "string" },
+          text: { type: "string" },
+          minAmount: { type: "number" },
+          limit: { type: "number" },
+          branchId: { type: "number", description: "للمسؤول العام فقط" },
+        },
+        required: ["kind"],
+      } as any,
+    },
+    offeredTo: (a) => a.mode === "financial",
+    run: financialLedgerTool,
   },
   device_sales_summary: {
     spec: {

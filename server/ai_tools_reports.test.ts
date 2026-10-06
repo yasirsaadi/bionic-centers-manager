@@ -490,7 +490,8 @@ async function main() {
     // ══ ج. financial_summary ══════════════════════════════════════════════
     console.log("\n── ج. financial_summary ──");
     const financeAccess = resolveAiAccess({
-      session: { userId: ACCOUNTANT, role: "accountant", isAdmin: false, branchId: B1, permissions: { canManageAccounting: true } },
+      //  مديرُ فرع — المالُ في المساعد للمسؤول ولمدير الفرع وحدهما (§4.cd).
+      session: { userId: ACCOUNTANT, role: "branch_manager", isAdmin: false, branchId: B1, permissions: { canManageAccounting: true } },
       scopeBranchId: B1,
     });
     const generalAccess = access({ userId: RECEPTION, role: "reception", operationalBranches: [B1], mode: "general" });

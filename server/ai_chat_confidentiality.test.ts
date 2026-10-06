@@ -49,10 +49,15 @@ const STAFF = 9881, ACC1 = 9882, ACC2 = 9883, ADMIN = 9884;
 const S = {
   staff: { userId: STAFF, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "موظّف", permissions: { canViewPatients: true, canAddPatients: true } },
-  acc1: { userId: ACC1, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+  //  **مديرا فرعين** — المالُ في المساعد للمسؤول ولمدير الفرع وحدهما (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.cd)، فصار حاملُ
+  //  المال غيرُ المسؤول مديراً بعد أن كان محاسبَ استقبال. والعزلُ المقيس هنا نفسُه: كلٌّ على فرعه.
+  acc1: { userId: ACC1, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
+    displayName: "مدير بغداد", permissions: { canViewPatients: true, canManageAccounting: true } },
+  acc2: { userId: ACC2, role: "branch_manager", isAdmin: false, branchId: 2, accessibleBranches: [2],
+    displayName: "مدير ذي قار", permissions: { canViewPatients: true, canManageAccounting: true } },
+  //  ومحاسبُ الاستقبال صاحبُ «إدارة المحاسبة» — لا مالَ له في المساعد بعد القرار.
+  accRecv: { userId: ACC2 + 10, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "محاسب بغداد", permissions: { canViewPatients: true, canManageAccounting: true } },
-  acc2: { userId: ACC2, role: "reception", isAdmin: false, branchId: 2, accessibleBranches: [2],
-    displayName: "محاسب ذي قار", permissions: { canViewPatients: true, canManageAccounting: true } },
   admin: { userId: ADMIN, role: "admin", isAdmin: true, branchId: 0, accessibleBranches: [1, 2],
     displayName: "المسؤول", permissions: { canViewPatients: true, canManageAccounting: true } },
 };
@@ -127,7 +132,7 @@ const MONEY_MARKERS = [
 
 async function cleanup() {
   await q(`DELETE FROM audit_log WHERE entity_type = 'ai_chat'`);
-  await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[STAFF, ACC1, ACC2, ADMIN]]);
+  await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[STAFF, ACC1, ACC2, ACC2 + 10, ADMIN]]);
 }
 
 async function main() {
@@ -136,7 +141,7 @@ async function main() {
   //  صفّ الحساب مع كلّ طلب: الصلاحياتُ الدقيقة (منذ ٢٠٢٦-٠٩-٠١) والفروعُ والدور (البند ٧، #439،
   //  `server/auth/session_refresh.ts`). فمحاسبٌ صفُّه بلا `can_manage_accounting` أو بفرعٍ غيرِ فرعه
   //  يُقرأ موظّفاً عاديّاً على ذلك الفرع — والاختبارُ يقيس حينها جلسةً لم يرسلها.
-  for (const s of [S.staff, S.acc1, S.acc2, S.admin]) {
+  for (const s of [S.staff, S.acc1, S.acc2, S.accRecv, S.admin]) {
     const branch = s.isAdmin ? 1 : s.branchId;
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
                                        can_view_patients,can_add_patients,can_manage_accounting)
@@ -209,23 +214,27 @@ async function main() {
       { isAdmin: true, role: "admin", branchId: 2, permissions: { canManageAccounting: true } });
     same("   وحقنُ الحقول في **جسم الطلب** ⟶ صفرٌ أيضاً",
       financialCalls().map((c) => c.method), []);
+    reset();
+    await ask(S.accRecv, "كم وارد اليوم؟");
+    same("   **ومحاسبُ الاستقبال بصلاحية المحاسبة ⟶ صفرٌ أيضاً** (§4.cd: المدراءُ وحدهم والمسؤول)",
+      financialCalls().map((c) => c.method), []);
 
     // ══ د. عزل فرع المحاسب ═══════════════════════════════════════════
     console.log("\n── عزل الفروع ──");
     reset();
     await ask(S.acc1, "كم وارد اليوم؟");
-    check(financialCalls().length > 0, "د. محاسب الفرع ١ يقرأ فعلاً",
+    check(financialCalls().length > 0, "د. مدير الفرع ١ يقرأ فعلاً",
       String(financialCalls().length));
     same("   **وكلّ قراءاته على الفرع ١ حصراً**", branchesTouched(), [1]);
 
     reset();
     await ask(S.acc2, "كم وارد اليوم؟");
-    same("   ومحاسب الفرع ٢ على الفرع ٢ حصراً", branchesTouched(), [2]);
+    same("   ومدير الفرع ٢ على الفرع ٢ حصراً", branchesTouched(), [2]);
 
     // ══ هـ. لا يفرض المحاسب فرعاً آخر ════════════════════════════════
     reset();
     await ask(S.acc1, "كم وارد الفرع الثاني؟", { branchId: 2 }, "?branchId=2");
-    same("هـ. **محاسب الفرع ١ يطلب الفرع ٢ (جسماً واستعلاماً) ⟶ يبقى على ١**",
+    same("هـ. **مدير الفرع ١ يطلب الفرع ٢ (جسماً واستعلاماً) ⟶ يبقى على ١**",
       branchesTouched(), [1]);
 
     // ══ و. المسؤول ═══════════════════════════════════════════════════
@@ -321,7 +330,7 @@ async function main() {
     same("   وبلا قراءةٍ مالية عند الرفض", financialCalls().map((c) => c.method), []);
   } finally {
     await cleanup();
-    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[STAFF, ACC1, ACC2, ADMIN]]);
+    await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [[STAFF, ACC1, ACC2, ACC2 + 10, ADMIN]]);
     httpServer.close();
   }
 

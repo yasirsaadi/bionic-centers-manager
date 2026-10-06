@@ -59,7 +59,8 @@ const sess = {
     displayName: "e1", permissions: {} },
   expert2: { userId: EXP2, role: "prosthetics_expert", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "e2", permissions: {} },
-  accountant1: { userId: ACC1, role: "reception", isAdmin: false, branchId: 1, accessibleBranches: [1],
+  //  **مديرُ فرع** — المالُ في المساعد للمسؤول ولمدير الفرع وحدهما (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.cd)، فصار حاملُ المال غيرُ المسؤول مديراً.
+  accountant1: { userId: ACC1, role: "branch_manager", isAdmin: false, branchId: 1, accessibleBranches: [1],
     displayName: "acc", permissions: { canViewPatients: true, canManageAccounting: true } },
   //  مُدخِلا الجلسات — **القدرة الحقيقية `canEnterSessions`، لا دورٌ مخترَع**.
   //  واحدٌ في كلّ فرع، ليُقاس أن الطابور بالفرع لا بالقدرة وحدها.
@@ -742,8 +743,8 @@ async function main() {
     //  بجلسة السائل — **ولا تفتحان باب بياناتٍ جديداً**، فالحارسُ حارسُ
     //  النقطة نفسِه. والعددُ يتغيّر بإضافةٍ مشروعة كما ينصّ التعليقُ أعلاه؛
     //  **المغلقُ هو السجلّ لا الرقم**.
-    same("م. ثلاثَ عشرةَ أداةً لا غير", TOOL_NAMES.sort(), [
-      "device_sales_summary", "financial_summary", "list_capabilities", "my_worklist",
+    same("م. خمسَ عشرةَ أداةً لا غير — ومعها أداتا المدقّق (§4.cd)", TOOL_NAMES.sort(), [
+      "device_sales_summary", "financial_audit", "financial_ledger", "financial_summary", "list_capabilities", "my_worklist",
       "operational_summary", "patient_clinical_summary", "patient_finance", "patient_lookup",
       "patient_search", "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",
