@@ -24,6 +24,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from "recharts";
+import { bigSliceLabel } from "@/lib/pie_labels";
 import type { Patient, Branch, SurveyTemplate, SurveyQuestion, SurveyResponse, SurveyAnswer } from "@shared/schema";
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
@@ -771,7 +772,8 @@ function ResultsTab() {
                   cy="50%"
                   outerRadius={100}
                   dataKey="value"
-                  label={({ name, value }) => `${name}: ${value}%`}
+                  label={bigSliceLabel(({ name, value }) => `${name}: ${value}%`)}
+                  labelLine={false}
                 >
                   {deptChartData.map((entry, index) => (
                     <Cell key={index} fill={entry.color} />

@@ -31,6 +31,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from "recharts";
+import { bigSliceLabel } from "@/lib/pie_labels";
 import type { Branch, Patient, Visit, Payment, CustomStat, SurveyResponse, SurveyTemplate } from "@shared/schema";
 import { useBranchSession } from "@/components/BranchGate";
 import jsPDF from "jspdf";
@@ -1462,7 +1463,7 @@ export default function Statistics() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      label={bigSliceLabel(({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`)}
                       outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
@@ -1496,7 +1497,7 @@ export default function Statistics() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      label={bigSliceLabel(({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`)}
                       outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
