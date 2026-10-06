@@ -101,7 +101,9 @@ async function resolveActiveArticle(
 
   const caps = capabilitiesFor(access);
   //  القدرةُ الماليةُ الحقيقية — لا نطاقٌ حيّ (راجع التعليق أعلاه).
-  const allowFinance = access.canUseFinance;
+  //  **وصاحبُ «إدارة المحاسبة» باقٍ هنا** بعد أن خرج من مال المساعد (§4.cd): قرارُ المالك يخصّ أرقامَ المساعد الحيّة،
+  //  وهذا متنُ تدريبٍ مكتوبٌ بلا رقم يستحقّه المحاسبُ بحكم عمله. فالبابُ = قدرةُ المساعد الماليّة ∨ صلاحيةُ المحاسبة.
+  const allowFinance = access.canUseFinance || access.permissions?.canManageAccounting === true;
   const allowAdministration = access.isAdmin || access.role === "branch_manager";
   if (row.scope === "finance" && !allowFinance) return null;
   if (row.scope === "administration" && !allowAdministration) return null;

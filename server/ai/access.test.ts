@@ -2,7 +2,7 @@
 // `npm run test:ai-access`.
 //
 // ══ ما يحرسه ═══════════════════════════════════════════════════════════
-// (١) **القاعدة بحرفها**: مسؤولٌ أو صاحب `canManageAccounting`، لا غير.
+// (١) **القاعدة بحرفها**: مسؤولٌ أو مديرُ فرع، لا غير (قرارُ المالك ٢٠٢٦-١٠-٠٦، §4.cd).
 // (٢) **لا شيء من العميل يرفع صلاحية**: الدالّة لا تقبل طلباً أصلاً، وما
 //     يُرسَل في الجسم أو في نصّ الرسالة لا سبيل له إليها.
 // (٣) **الغموض يُقرأ «لا»**: قيمةٌ ليست `true` تماماً لا تفتح باب المال.
@@ -29,10 +29,11 @@ const admin = { userId: 1, role: "admin", isAdmin: true, branchId: 0, permission
 // ══ أ. القاعدة ════════════════════════════════════════════════════════
 console.log("\n── القاعدة ──");
 same("أ. المسؤول ⟶ نعم", computeCanUseFinance(admin), true);
-same("   وصاحب canManageAccounting ⟶ نعم", computeCanUseFinance(accountant), true);
+same("   **وصاحب canManageAccounting من غير المدراء ⟶ لا** (قرارُ المالك: «المدراء وحدهم والمسؤول»)", computeCanUseFinance(accountant), false);
 same("   **والموظّف العادي ⟶ لا**", computeCanUseFinance(staff), false);
-same("   ومدير الفرع بلا محاسبة ⟶ لا",
-  computeCanUseFinance({ ...manager, permissions: {} }), false);
+same("   ومدير الفرع ⟶ نعم", computeCanUseFinance(manager), true);
+same("   **ومدير الفرع بلا محاسبة ⟶ نعم** — الدورُ لا العَلَم",
+  computeCanUseFinance({ ...manager, permissions: {} }), true);
 same("   وجلسةٌ غائبة ⟶ لا", computeCanUseFinance(undefined), false);
 same("   وجلسةٌ بلا صلاحيات ⟶ لا", computeCanUseFinance({ userId: 9 }), false);
 
@@ -40,6 +41,9 @@ console.log("\n── الغموض يُقرأ «لا» ──");
 for (const [label, value] of [["نصّ \"true\"", "true"], ["الرقم ١", 1], ["كائن", {}], ["null", null]] as any[]) {
   same(`   canManageAccounting = ${label} ⟶ لا`,
     computeCanUseFinance({ permissions: { canManageAccounting: value } }), false);
+}
+for (const [label, value] of [["\"Branch_Manager\"", "Branch_Manager"], ["\"manager\"", "manager"], ["\"branch_manager \"", "branch_manager "], ["مصفوفة", ["branch_manager"]]] as any[]) {
+  same(`   role = ${label} ⟶ لا`, computeCanUseFinance({ role: value } as any), false);
 }
 same("   isAdmin = \"yes\" ⟶ لا", computeCanUseFinance({ isAdmin: "yes" } as any), false);
 
@@ -56,27 +60,29 @@ same("   ودورُه من الجلسة لا من ادّعائه", forged.role, 
 const forgedPermsInSession = resolveAiAccess({
   //  حتى لو حُقنت الصلاحية في **الجلسة نفسها** فهي المصدر الشرعي الوحيد،
   //  وتلك مسؤولية تسجيل الدخول لا مسؤولية هذا الملفّ.
-  session: { ...staff, permissions: { ...staff.permissions, canManageAccounting: true } },
+  session: { ...staff, role: "branch_manager" },
   scopeBranchId: 1,
 });
 same("   والجلسة وحدها هي التي تُرقّي",
   [forgedPermsInSession.canUseFinance, forgedPermsInSession.mode], [true, "financial"]);
+const accountantAccess = resolveAiAccess({ session: accountant, branchName: "بغداد", scopeBranchId: 1 });
+same("   **ومحاسبُ الاستقبال بصلاحية المحاسبة ⟶ الوضع العام**", [accountantAccess.canUseFinance, accountantAccess.mode], [false, "general"]);
 
 // ══ ج. النطاق ═════════════════════════════════════════════════════════
 console.log("\n── النطاق ──");
-const acc1 = resolveAiAccess({ session: accountant, branchName: "بغداد", scopeBranchId: 1 });
-same("ج. محاسب الفرع ١ ⟶ نطاقه ١", [acc1.mode, acc1.branchId, acc1.branchName],
+const acc1 = resolveAiAccess({ session: { ...manager, userId: 6, branchId: 1 }, branchName: "بغداد", scopeBranchId: 1 });
+same("ج. مدير الفرع ١ ⟶ نطاقه ١", [acc1.mode, acc1.branchId, acc1.branchName],
   ["financial", 1, "بغداد"]);
 const acc2 = resolveAiAccess({ session: manager, branchName: "ذي قار", scopeBranchId: 2 });
-same("   ومحاسب الفرع ٢ ⟶ نطاقه ٢", [acc2.mode, acc2.branchId], ["financial", 2]);
+same("   ومدير الفرع ٢ ⟶ نطاقه ٢", [acc2.mode, acc2.branchId], ["financial", 2]);
 const adm = resolveAiAccess({ session: admin, scopeBranchId: undefined });
 same("   والمسؤول بلا اختيار ⟶ كل الفروع", [adm.mode, adm.branchId], ["financial", null]);
 const admPicked = resolveAiAccess({ session: admin, branchName: "ذي قار", scopeBranchId: 2 });
 same("   والمسؤول باختياره ⟶ الفرع المختار", [admPicked.mode, admPicked.branchId], ["financial", 2]);
 
 console.log("\n── غياب النطاق ليس إذناً بأوسعه ──");
-const orphan = resolveAiAccess({ session: { ...accountant, branchId: null }, scopeBranchId: undefined });
-same("   **محاسبٌ بلا فرعٍ محسوم ⟶ يُخفَّض إلى العام لا يُرقّى إلى كل الفروع**",
+const orphan = resolveAiAccess({ session: { ...manager, branchId: null }, scopeBranchId: undefined });
+same("   **مديرٌ بلا فرعٍ محسوم ⟶ يُخفَّض إلى العام لا يُرقّى إلى كل الفروع**",
   [orphan.canUseFinance, orphan.mode, orphan.financeScopeMissing, orphan.branchId],
   [true, "general", true, null]);
 same("   والمسؤول ليس كذلك — «كل الفروع» نطاقُه الشرعي",
@@ -84,7 +90,7 @@ same("   والمسؤول ليس كذلك — «كل الفروع» نطاقُه
 
 // ══ د. حقول السياق ════════════════════════════════════════════════════
 console.log("\n── السياق ──");
-same("د. المعرّفات تُنقل كما هي", [acc1.userId, acc1.isAdmin, acc1.role], [6, false, "reception"]);
+same("د. المعرّفات تُنقل كما هي", [acc1.userId, acc1.isAdmin, acc1.role], [6, false, "branch_manager"]);
 same("   والدور يُشتقّ حين يغيب",
   resolveAiAccess({ session: { isAdmin: true } }).role, "admin");
 same("   وغير المسؤول بلا دور ⟶ staff",

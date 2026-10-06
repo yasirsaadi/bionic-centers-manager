@@ -63,6 +63,7 @@
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
     "test:registry-assignment-api": "tsx server/registry_assignment_api.test.ts",
     "test:ai-access": "tsx server/ai/access.test.ts",
+    "test:ai-audit": "tsx server/ai_audit.test.ts",
     "test:ai-confidentiality": "tsx server/ai_chat_confidentiality.test.ts",
     "test:ai-ui": "tsx client/src/components/ai_assistant_access.test.ts",
     "test:assistant-markdown": "tsx client/src/components/assistant_markdown.test.ts",
