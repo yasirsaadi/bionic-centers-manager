@@ -13,6 +13,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell,
 } from "recharts";
+import { bigSliceLabel } from "@/lib/pie_labels";
 
 type Branch = { id: number; name: string };
 type ByDevice = {
@@ -256,7 +257,8 @@ export default function SessionAnalytics() {
                       cx="50%"
                       cy="50%"
                       outerRadius={100}
-                      label={(entry) => `${entry.name}: ${entry.value}`}
+                      label={bigSliceLabel(({ name, value }) => `${name}: ${value}`)}
+                      labelLine={false}
                     >
                       {shiftPie.map((_entry, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />

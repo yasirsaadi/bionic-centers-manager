@@ -78,6 +78,7 @@ import {
   Cell,
   Legend
 } from "recharts";
+import { bigSliceLabel, groupSmallSlices, colorForName } from "@/lib/pie_labels";
 
 // Labels match the categories returned by the AI categorize endpoint exactly,
 // so the AI suggestion can be matched on either `label` or `value`.
@@ -1006,7 +1007,8 @@ function AccountingRevenueByTreatment({ selectedBranch }: { selectedBranch: stri
                 fill="#8884d8"
                 paddingAngle={5}
                 dataKey="value"
-                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                label={bigSliceLabel(({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`)}
+                labelLine={false}
               >
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} />
@@ -2924,8 +2926,11 @@ export default function Accounting() {
   const expenseChartData = expensesByCategory.map(item => ({
     name: getCategoryLabelTranslated(item.category),
     value: item.total,
-    color: CATEGORY_COLORS[item.category as keyof typeof CATEGORY_COLORS] || "#6b7280"
+    color: CATEGORY_COLORS[item.category as keyof typeof CATEGORY_COLORS] || colorForName(String(item.category))
   }));
+  //  للمخطّط وحده: أكبرُ الأبواب والباقي شريحةٌ واحدة — والقائمةُ تحته كاملة (§ تسمياتُ الدائرة لا تتراكب).
+  const expensePieData = groupSmallSlices(expenseChartData);
+  const expenseTotal = expenseChartData.reduce((sum, d) => sum + d.value, 0);
 
   const revenueKey = t.accounting.chartRevenue;
   const expensesKey = t.accounting.chartExpenses;
@@ -3514,21 +3519,36 @@ export default function Accounting() {
                     <ResponsiveContainer width="100%" height="100%">
                       <RechartsPieChart>
                         <Pie
-                          data={expenseChartData}
+                          data={expensePieData}
                           cx="50%"
                           cy="50%"
-                          outerRadius={100}
+                          outerRadius={95}
                           dataKey="value"
-                          label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                          label={bigSliceLabel(({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`)}
                           labelLine={false}
                         >
-                          {expenseChartData.map((entry, index) => (
+                          {expensePieData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={entry.color} />
                           ))}
                         </Pie>
                         <Tooltip formatter={(value: number) => formatCurrency(value)} />
                       </RechartsPieChart>
                     </ResponsiveContainer>
+                  </div>
+                  {/*  كلُّ باب بمبلغه ونسبته — ما لم تكتبه الدائرةُ يُقرأ هنا. */}
+                  <div className="mt-3 max-h-56 overflow-y-auto space-y-1.5 pe-1" data-testid="expense-distribution-list">
+                    {[...expenseChartData].sort((a, b) => b.value - a.value).map((item) => (
+                      <div key={item.name} className="flex items-center justify-between gap-2 text-sm">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                          <span className="truncate">{item.name}</span>
+                        </div>
+                        <div className="shrink-0 tabular-nums">
+                          <span className="font-semibold">{formatCurrency(item.value)}</span>
+                          <span className="text-xs text-muted-foreground ms-1">({expenseTotal > 0 ? ((item.value / expenseTotal) * 100).toFixed(1) : 0}%)</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
