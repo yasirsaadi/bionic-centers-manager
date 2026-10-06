@@ -14,7 +14,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel } from "@shared/cash_book";
+import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -246,12 +246,18 @@ async function main() {
        (await row(S.admin, { branchId: BGD, kind: "dr_transfer", amount: 1000, date: YDAY })).status], [403, 200]);
     same("ز٢. **مبلغُ نسبة الدكتور لا يُكتب بيد ولا يُحذف** — سطرٌ محسوب، ٤٠٠",
       [(await http("PATCH", `/api/cash-book/rows/auto/0`, S.acc, { amount: 1 })).status, (await http("DELETE", `/api/cash-book/rows/auto/0`, S.acc)).status], [400, 400]);
-    same("ز٣. **ومصروفُ المحاسب لا يعدّله المديرُ بلا «إدارة المحاسبة»** (٤٠٣)، ويعدّله كاتبُه (٢٠٠)",
-      [(await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.mgr, { amount: 160_000 })).status,
-       (await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.acc, { amount: 160_000 })).status], [403, 200]);
+    //  **تصحيحُ سطرٍ مكتوب للمسؤول وحده** (قرارُ المالك ٢٠٢٦-١٠-٠٧): الموظّفُ — محاسباً أو مديراً، كاتباً للسطر أو غيرَه — لا يعدّل ولا يحذف.
     const tr = d.rows.find((r: any) => r.kind === "dr_transfer");
-    same("ز٤. **والحذفُ ناعم** — يبقى الصفُّ بختمه", [(await http("DELETE", `/api/cash-book/rows/entry/${tr.id}`, S.acc)).status,
-      (await q(`SELECT deleted_at IS NOT NULL del, deleted_by FROM cash_book_entries WHERE id=$1`, [tr.id]))[0]], [200, { del: true, deleted_by: ACC }]);
+    same("ز٣. **ولا يعدّل الموظّفُ سطراً كتبه** — مصروفاً أو تحويلاً، كاتبَه أو مديراً (٤٠٣)، **والمسؤولُ يعدّل** (٢٠٠)",
+      [(await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.acc, { amount: 160_000 })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.mgr, { amount: 160_000 })).status,
+       (await http("PATCH", `/api/cash-book/rows/entry/${tr.id}`, S.acc, { amount: 1 })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.admin, { amount: 160_000 })).status], [403, 403, 403, 200]);
+    same("ز٣ب. **ولا يحذفه ليعيد كتابته** (٤٠٣) — والسطرُ باقٍ",
+      [(await http("DELETE", `/api/cash-book/rows/entry/${tr.id}`, S.acc)).status, (await http("DELETE", `/api/cash-book/rows/expense/${ex.body.id}`, S.mgr)).status,
+       (await q(`SELECT deleted_at IS NULL alive FROM cash_book_entries WHERE id=$1`, [tr.id]))[0].alive], [403, 403, true]);
+    same("ز٤. **والمسؤولُ يحذف، والحذفُ ناعم** — يبقى الصفُّ بختمه", [(await http("DELETE", `/api/cash-book/rows/entry/${tr.id}`, S.admin)).status,
+      (await q(`SELECT deleted_at IS NOT NULL del, deleted_by FROM cash_book_entries WHERE id=$1`, [tr.id]))[0]], [200, { del: true, deleted_by: ADMIN }]);
 
     console.log("\n── ي. قاصة الدكتور (§4.cb) ──");
     await row(S.acc, { kind: "dr_transfer", amount: 500_000, note: "اليوم" });
@@ -365,7 +371,7 @@ async function main() {
       [false, 2]);
     //  الملاحظةُ وحدها تتغيّر (لا مبلغ) ⟵ سطورُ الورقة وحدها تختلف.
     const after = (await sheet(S.acc)).body.rows.find((r: any) => r.note === "بعد الطباعة");
-    await http("PATCH", `/api/cash-book/rows/entry/${after.id}`, S.acc, { note: "بعد الطباعة — مصحّحة" });
+    await http("PATCH", `/api/cash-book/rows/entry/${after.id}`, S.admin, { note: "بعد الطباعة — مصحّحة" });
     same("ك٤ب. **تصحيحُ ملاحظةٍ بلا مبلغ يُعلَّم أيضاً** — ما طُبع نصُّه تغيّر", (await sheet(S.acc)).body.changedAfterPrint, true);
     await printed(S.acc, {});
     //  سطرٌ في الأمس ⟵ «الباقي من أمس» لليوم يتغيّر، وسطورُ اليوم كما هي.
@@ -392,6 +398,12 @@ async function main() {
     }), [[2, 20, null, false], [2, 10, 10, false], [1, 10, null, true], [1, 10, null, false], [1, null, null, false]]);
     same("ط١ب. الدفترُ الافتتاحيّ — ذي قار على «علاج طبيعي» والبقيّة على الأطراف", ["بايونك بغداد", "بايونك ذي قار", "الوارث كربلاء", "بايونك الموصل", "بايونك كركوك"]
       .map((n) => branchCashConfig(n).defaultBook), ["devices", "physio", "devices", "devices", "devices"]);
+    //  تقطيعُ ورقة الطباعة بالارتفاع (شكوى «ورقة إضافية»): سطورٌ بارتفاع ٣٠، صفحةٌ وسطى ٦٠٠ والأخيرة ٥٤٠ بعد المجموع والمربّعين.
+    const thirty = (n: number) => Array(n).fill(30);
+    same("ط٥. **ما يتّسع في صفحةٍ واحدة يبقى فيها** — ١٨ سطراً (٥٤٠) ورقةٌ واحدة، لا ١٤ ثمّ ٤ كالحدّ الثابت القديم",
+      [packSheetPages(thirty(18), 600, 540), packSheetPages(thirty(0), 600, 540), packSheetPages(thirty(5), 600, 540)], [[18], [0], [5]]);
+    same("ط٦. وما يزيد يكمل في صفحةٍ تالية، والأخيرةُ لا تخلو من سطرٍ مع المجموع",
+      [packSheetPages(thirty(19), 600, 540), packSheetPages(thirty(45), 600, 540), packSheetPages([700, 30], 600, 540)], [[18, 1], [20, 20, 5], [1, 1]]);
     same("ط٢. النسبةُ بالدينار الصحيح", [ratioAmount(1_250_000, 20), ratioAmount(15, 10), ratioAmount(0, 10), ratioAmount(100, null)], [250_000, 2, 0, 0]);
     same("ط٣. اسمُ اليوم من التاريخ وحده", [dayNameOf("2026-10-04"), dayNameOf("2026-10-03")], ["الأحد", "السبت"]);
     same("ط٤. اليومُ المفتوح", [canWriteDay({}, "2026-10-05", "2026-10-05", "2026-10-01"), canWriteDay({}, "2026-10-04", "2026-10-05", "2026-10-01"),
