@@ -2923,3 +2923,58 @@ export const physioDeviceBranches = pgTable("physio_device_branches", {
   updatedBy: integer("updated_by").references(() => systemUsers.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ pk: primaryKey({ columns: [t.deviceId, t.branchId] }) }));
+
+// ══ خطّةُ العلاج الطبيعي للمريض (ترحيل ١٠٩، §4.cm) ══════════════════════════
+export const physioPlans = pgTable("physio_plans", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  protocolId: integer("protocol_id").references(() => physioProtocols.id),
+  titleAr: text("title_ar").notNull(),
+  titleEn: text("title_en"),
+  goals: text("goals"), goalsEn: text("goals_en"),
+  exercises: text("exercises"), exercisesEn: text("exercises_en"),
+  precautions: text("precautions"), precautionsEn: text("precautions_en"),
+  notes: text("notes"), notesEn: text("notes_en"),
+  sessionsPerWeek: integer("sessions_per_week"),
+  durationWeeks: integer("duration_weeks"),
+  sessionMinutes: integer("session_minutes"),
+  status: text("status").notNull().default("draft"),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  decidedBy: integer("decided_by").references(() => systemUsers.id),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  returnNote: text("return_note"),
+  stopReason: text("stop_reason"),
+  stoppedAt: timestamp("stopped_at", { withTimezone: true }),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name"),
+  updatedBy: integer("updated_by").references(() => systemUsers.id),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  byPatient: index("idx_physio_plans_patient").on(t.patientId),
+  byStatus: index("idx_physio_plans_status").on(t.status),
+}));
+export type PhysioPlan = typeof physioPlans.$inferSelect;
+
+export const physioPlanDevices = pgTable("physio_plan_devices", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  deviceId: integer("device_id").notNull().references(() => devices.id),
+  minutes: integer("minutes"),
+  parameters: text("parameters"), parametersEn: text("parameters_en"),
+  note: text("note"), noteEn: text("note_en"),
+  displayOrder: integer("display_order").notNull().default(0),
+}, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
+
+export const physioPlanAssignees = pgTable("physio_plan_assignees", {
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => systemUsers.id),
+  assignedBy: integer("assigned_by").references(() => systemUsers.id),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.planId, t.userId] }),
+  byUser: index("idx_physio_plan_assignees_user").on(t.userId),
+}));

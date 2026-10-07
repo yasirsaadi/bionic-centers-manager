@@ -30,6 +30,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_roles";
 import { canWriteCashBook } from "@shared/cash_book";
+import { canReadPlans } from "@shared/physio_plans";
 import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 
@@ -289,6 +290,8 @@ export function Sidebar() {
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     //  مكتبةُ بروتوكولات العلاج الطبيعي (§4.cj) — بالقاعدة نفسِها التي تحرس قراءتَها في الخادم.
     { label: "بروتوكولات العلاج الطبيعي", icon: Dumbbell, href: "/physio/protocols", adminOnly: false, settingKey: null, permission: null, eligible: canReadProtocols(branchSession ? { ...branchSession, permissions } : null) },
+    //  خططُ العلاج الطبيعي (§4.cm) — الاعتماداتُ والمسندةُ إليّ، لمن يقرأ الخطط كبوّابة الخادم.
+    { label: "خطط العلاج الطبيعي", icon: ClipboardList, href: "/physio/plans", adminOnly: false, settingKey: null, permission: null, eligible: canReadPlans(branchSession ? { ...branchSession, permissions } : null) },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
     //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل

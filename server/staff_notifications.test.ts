@@ -1,7 +1,7 @@
 // تنبيهاتُ الموظّفين عبر بوت تلغرام (§4.by) — حيّاً على Postgres وعلى النقاط والكتّاب الحقيقيّين، وتلغرامُ مُعترَض.
 // قاعدة محلّية: `npm run test:staff-notifications`.
 //
-// (أ) لوحةُ المسؤول: له وحده · الأنواعُ الأربعةَ عشر · الحفظُ يُدقَّق · رمزُ الربط.
+// (أ) لوحةُ المسؤول: له وحده · الأنواعُ السبعةَ عشر (ومنها ثلاثةُ خطط العلاج الطبيعي، §4.cm) · الحفظُ يُدقَّق · رمزُ الربط.
 // (ب) الـwebhook: السرُّ · الربطُ بالتذكرة لمرّةٍ واحدة · التذكرةُ الباطلة.
 // (ج) المستلِمون: الفرعُ · الموجَّه · الفاعلُ لا يُنبَّه · اختصاصُ الطبيب · غيرُ المربوط وغيرُ النشط وغيرُ المختار.
 // (د) الكتّابُ الحقيقيّون يكتبون الصندوقَ في معاملتهم: معاينةٌ (جهاز · علاجٌ طبيعيّ) · أمرٌ · تحويلٌ (للخبيرين) ·
@@ -133,8 +133,8 @@ async function main() {
     console.log("\n── أ. لوحة المسؤول ──");
     same("أ١. لغير المسؤول ⟵ ٤٠٣", (await http("GET", "/api/admin/staff-notifications", S.recv1)).status, 403);
     const g = await http("GET", "/api/admin/staff-notifications", S.admin);
-    same("أ٢. البوتُ جاهز والأنواعُ أربعةَ عشر، والموظّفُ غيرُ النشط لا يظهر",
-      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 14, false]);
+    same("أ٢. البوتُ جاهز والأنواعُ سبعةَ عشر (ومنها ثلاثةُ خطط العلاج الطبيعي)، والموظّفُ غيرُ النشط لا يظهر",
+      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 17, false]);
     same("أ٣. الأنواعُ الثلاثة التي لا تقع اليوم ليست فيها",
       ["charge_returned", "discount_pending", "discount_decided"].some((k) => g.body?.events?.some((e: any) => e.key === k)), false);
     same("أ٤. نوعٌ مجهول ⟵ ٤٠٠", (await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["nope"] })).status, 400);
@@ -155,10 +155,10 @@ async function main() {
     const el = (id: number) => g2.users.find((u: any) => u.id === id)?.eligible;
     same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول)",
       el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"]);
-    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ الأربعةَ عشر",
+    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ السبعةَ عشر",
       [el(DOC_P), el(EXP1), el(MGR1), el(ADMIN)?.length],
       [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"],
-       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "order_hold_rework", "evening_summary"], 14]);
+       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "order_hold_rework", "evening_summary"], 17]);
     //  «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤) — و«كلُّ مبلغٍ يدخل» للمسؤول وحده.
     const mgrBad = await Promise.all(["exam_request", "payment_received"].map(async (k) =>
       (await http("PUT", `/api/admin/staff-notifications/${MGR1}`, S.admin, { events: [k] })).status));

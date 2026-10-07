@@ -31,6 +31,10 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل", group: "المسؤول", scope: "branch" },
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
   { key: "evening_summary", label: "ملخّص يومي مسائي لكلّ فرع", group: "المسؤول", scope: "branch", digest: true },
+  //  خطّةُ العلاج الطبيعي (§4.cm) — للمسؤول والمشرف العام، ولكاتبها، ولمنفّذيها.
+  { key: "physio_plan_pending", label: "خطة علاج طبيعي تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_plan_decided", label: "خطته اعتُمدت أو أُعيدت بملاحظة", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_plan_assigned", label: "خطة علاج طبيعي معتمدة أُسندت إليه", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -46,7 +50,7 @@ export function staffEventDef(key: string): StaffEventDef | undefined {
 // ══ **مَن يحقّ له النوع — بالدور** (قرارُ المالك ٢٠٢٦-١٠-٠٤) ══════════════════════════════════════════════
 // «هند موظّفةُ استقبال يظهر لها مربّعُ المعاينات — وهذا غير صحيح». فكلُّ موظّفٍ يُعرض له ما يخصّ دورَه وحده، والمسؤولُ
 // يختار منه. **والخادمُ يرفض غيرَه، والمُرسِلُ يتخطّاه** — فتغيّرُ دور موظّفٍ يوقف ما لم يعد له بلا تنظيف.
-import { hasRole } from "./user_roles";
+import { hasAnyRole, hasRole, PHYSIO_ROLES } from "./user_roles";
 
 export interface StaffEligibilityUser {
   role: string;
@@ -55,6 +59,8 @@ export interface StaffEligibilityUser {
   roles?: readonly string[] | null;
   canWriteMedicalExam?: boolean | null;
   canWorkAsExpert?: boolean | null;
+  /** «مشرف عام العلاج الطبيعي» (§4.cg) — يعتمد الخطط. */
+  canSupervisePhysio?: boolean | null;
 }
 
 const DOCTOR_EVENTS = ["exam_request"];
@@ -62,6 +68,9 @@ const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"
 const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
 const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "ai_suggestion"];
+const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
+const PHYSIO_WRITER_EVENTS = ["physio_plan_decided"];
+const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   const out = new Set<string>();
@@ -73,6 +82,10 @@ export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   //  والمديرُ بلا «طلب معاينة» — «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤)؛ ومَن مُنح كتابةَ المعاينة يصله بالسطر أعلاه.
   if (role("branch_manager")) [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));
   if (role("reception") || role("accountant")) FRONT_DESK_EVENTS.forEach((k) => out.add(k));
+  //  خطّةُ العلاج الطبيعي (§4.cm): المشرفُ العام يعتمد ويكتب؛ والأخصائيُّ يكتب وقد ينفّذ؛ وأدوارُ القسم تنفّذ.
+  if (u.canSupervisePhysio) [...PHYSIO_APPROVER_EVENTS, ...PHYSIO_WRITER_EVENTS].forEach((k) => out.add(k));
+  if (role("physio_specialist")) [...PHYSIO_WRITER_EVENTS, ...PHYSIO_EXECUTOR_EVENTS].forEach((k) => out.add(k));
+  if (hasAnyRole(u, PHYSIO_ROLES)) PHYSIO_EXECUTOR_EVENTS.forEach((k) => out.add(k));
   void ADMIN_ONLY_EVENTS;
   return STAFF_EVENT_KEYS.filter((k) => out.has(k));
 }

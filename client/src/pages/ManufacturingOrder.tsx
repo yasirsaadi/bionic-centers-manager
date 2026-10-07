@@ -26,7 +26,7 @@ import {
   REWORK_TYPE_LABELS, REASON_CODE_LABELS,
   FINAL_RESULTS, FINAL_RESULT_LABELS, stagesForOrder, DELIVERED_STAGE,
   isAtOrBeyondMoldStage, defaultNextStage, nextStages, reworkReturnStages,
-  HOLD_STATUSES, HOLD_REASONS, isHoldStatus, toPatientStageView,
+  HOLD_STATUSES, HOLD_REASONS, isHoldStatus, toPatientStageView, baghdadDay,
 } from "@shared/manufacturing";
 import { hasRole } from "@shared/user_roles";
 
@@ -599,8 +599,7 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
 // الخادمُ يحكم الحدود (لا مستقبل، ولا قبل تسجيل المريض، ولا بعد أوّل حدثٍ للأمر)، وهذه تعرض خطأه كما هو.
 function AssignmentDateDialog({ open, onOpenChange, order, onDone }: any) {
   const today = baghdadTodayYmd();
-  const current = order.createdAt
-    ? new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }) : "";
+  const current = order.createdAt ? baghdadDay(order.createdAt) : "";
   const [date, setDate] = useState(current);
   const [reason, setReason] = useState("");
   useEffect(() => { if (open) { setDate(current); setReason(""); } }, [open, current]);

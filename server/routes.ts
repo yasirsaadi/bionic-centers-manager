@@ -50,6 +50,7 @@ import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
 import { registerPhysioProtocolRoutes } from "./physio_protocols/routes";
+import { registerPhysioPlanRoutes } from "./physio_plans/routes";
 import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
@@ -8849,6 +8850,7 @@ export async function registerRoutes(
   registerCashBookRoutes(app, isAuthenticated);
   registerMoneyCorrectionRoutes(app, isAuthenticated);
   registerPhysioProtocolRoutes(app, isAuthenticated);
+  registerPhysioPlanRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerPaymentCorrectionRoutes(app, isAuthenticated);
   //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —
