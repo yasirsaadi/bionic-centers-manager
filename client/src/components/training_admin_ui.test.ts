@@ -89,7 +89,8 @@ console.log("\n── القسمُ ٨ — «تقدّمُ فريقي» لمدير
     "ز.٢ ونصُّ «تقدّمُ فريقي» ظاهرٌ حرفياً");
 
   //  البوّابةُ نفسُها التي يفرضها الخادم — عرضٌ لا حراسة، لكن يجب أن تطابق.
-  check(/isBranchManager\s*=\s*session\?\.role\s*===\s*["']branch_manager["']/.test(chatDrawerSrc),
+  //  منذ §4.ch بـ`hasRole` (الأدوارُ كلُّها) — كحارس الخادم في `server/training/store.ts` بالضبط.
+  check(/isBranchManager\s*=\s*hasRole\(session,\s*["']branch_manager["']\)/.test(chatDrawerSrc),
     "ح.١ الشرطُ مقصورٌ حرفياً على `role === \"branch_manager\"` — نفسُ حارس الخادم في `server/training/routes.ts`");
   check(/enabled:\s*open\s*&&\s*trainingOpen\s*&&\s*teamProgressOpen\s*&&\s*isBranchManager/.test(chatDrawerSrc),
     "ح.٢ والاستعلامُ الفعليّ محروسٌ بنفس الشرط — لا زرَّ عرضٍ بلا نداءٍ محروس");

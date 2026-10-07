@@ -988,10 +988,13 @@ async function main() {
       "ك٦. **وبندُ القائمة بالعنوان نفسِه**", sidebarLine.trim());
     check(!sidebarLine.includes('"doctor"'),
       "ك٧. **وخرج من أدوار الطبيب في القائمة**", sidebarLine.trim());
-    check(sidebarLine.includes('"reception"') && sidebarLine.includes('"branch_manager"'),
-      "ك٨. وصار للاستقبال ومدير الفرع", sidebarLine.trim());
-    check(/noExamReviewBypass = item\.href === "\/no-exam-review"\s*&&\s*permissions\.canAddPatients/
-      .test(strip(SIDEBAR)),
+    //  منذ §4.ch لا قوائمَ أدوار في الشريط: البندُ بقاعدة الخادم نفسِها `canOperateNoExam` — وهي المسؤولُ أو «إضافة مرضى»
+    //  (ما يعنيه «استقبال»، ومديرُ الفرع يحمله)، لا `canWriteMedicalExam`.
+    check(sidebarLine.includes("eligible: returnedEligible")
+      && /const returnedEligible = canOperateNoExam\(branchSession as any\);/.test(strip(SIDEBAR)),
+      "ك٨. وصار لمن يُشغّل «بلا معاينة» — بقاعدة الخادم", sidebarLine.trim());
+    check(/export function canOperateNoExam[\s\S]{0,700}?return s\?\.permissions\?\.canAddPatients === true;/.test(readFileSync(join(process.cwd(), "shared/pending_charge.ts"), "utf8"))
+      && !/canWriteMedicalExam/.test(sidebarLine),
     "ك٩. **ومخرجُه `canAddPatients` لا `canWriteMedicalExam`**");
 
     // ══════════════════════════════════════════════════════════════════

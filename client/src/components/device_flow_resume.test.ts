@@ -270,7 +270,8 @@ function main() {
   ] as [string, string][]) {
     check(/<AdministrativeReversalDialog/.test(src), `٢٦. و«${name}» تفتح النافذةَ نفسَها`);
     check(/تصحيح \/ إلغاء العملية/.test(src), `   وبالنصّ نفسِه — «${name}»`);
-    check(/session\?\.isAdmin\) \|\| session\?\.role === "branch_manager"/.test(code(src)),
+    //  منذ §4.ch يُقرأ الدورُ بـ`hasRole` (الأدوارُ كلُّها) — والقاعدةُ هي هي: المسؤولُ أو مديرُ الفرع.
+    check(/session\?\.isAdmin\) \|\| hasRole\(session, "branch_manager"\)/.test(code(src)),
       `   وللمسؤول ومديرِ الفرع وحدهما — «${name}»`);
   }
   //  **ولا نقطةَ تصحيحٍ ثانية**: الثلاثةُ تنادي نقطتين اثنتين لا غير،
