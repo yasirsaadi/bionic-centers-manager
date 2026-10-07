@@ -4,3 +4,5 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+# مستنداتُ المرضى في القاعدة منذ §4.cf (document_files) — لا يُتتبَّع ملفُّ مريضٍ في المستودع (§4.ci).
+uploads/

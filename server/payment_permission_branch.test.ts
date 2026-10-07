@@ -991,9 +991,11 @@ async function main() {
       // ١. الملفُّ موجودٌ ويُقرأ فعلاً — readFileSync أعلاه كانت سترمي لو غاب.
       check(pageSrc.length > 0, "خ١. PaymentCorrections.tsx موجودٌ ويُقرأ");
 
-      // ٢. تجلب نقطة القائمة المعلَّقة الحقيقية بعينها.
-      check(/\/api\/admin\/payment-corrections\?status=pending/.test(pageSrc),
-        "خ٢. **تجلب `GET /api/admin/payment-corrections?status=pending` بعينها**");
+      // ٢. تجلب نقطة القائمة الحقيقية بعينها — والمعلَّقُ ما تفتح عليه، ومعه تاريخُ المعتمَد والمرفوض (§4.ci).
+      check(/\/api\/admin\/payment-corrections\?status=\$\{status\}/.test(pageSrc)
+        && /useState<CorrectionStatus>\("pending"\)/.test(pageSrc)
+        && /key: "approved"/.test(pageSrc) && /key: "rejected"/.test(pageSrc),
+        "خ٢. **تجلب `GET /api/admin/payment-corrections?status=…` بعينها — تفتح على المعلَّق، ومعه المعتمَد والمرفوض**");
 
       // ٣. تعرض الحقول المُثراة السبعة المطلوبة صراحةً.
       check(/patientName/.test(pageSrc), "خ٣. تعرض patientName");
@@ -1178,7 +1180,7 @@ async function main() {
       check(/\/api\/admin\/payment-corrections\/pending-count/.test(sidebarSrc),
         "ذ٣٣. **Sidebar.tsx يجلب `GET /api/admin/payment-corrections/pending-count` بعينها**");
 
-      // ١٤. عنصرُ الشريط الجانبيّ — للمسؤول العام حصراً، يختفي عند الصفر،
+      // ١٤. عنصرُ الشريط الجانبيّ — للمسؤول العام حصراً، يبقى ظاهراً عند الصفر (§4.ci)،
       // ورابطُه لم يتغيّر.
       const sidebarItemLine = sidebarSrc.split("\n")
         .find((l) => l.includes('"طلبات تصحيح الدفعات"'));
@@ -1189,8 +1191,9 @@ async function main() {
         String(sidebarItemLine));
       check(!!sidebarItemLine && /href:\s*["']\/payment-corrections["']/.test(sidebarItemLine),
         "ذ٣٦. **ورابطُه `/payment-corrections` — المسارُ لم يتغيّر**", String(sidebarItemLine));
-      check(!!sidebarItemLine && /hideWhenZero:\s*true/.test(sidebarItemLine),
-        "ذ٣٧. **و`hideWhenZero: true` — يختفي الصفُّ كلُّه حين العدّادُ صفر**", String(sidebarItemLine));
+      //  قرارُ المالك ٢٠٢٦-١٠-٠٧ (§4.ci): يبقى ظاهراً ولو فرغ المعلَّق — ففيه تاريخُ ما حدث.
+      check(!!sidebarItemLine && !/hideWhenZero/.test(sidebarItemLine),
+        "ذ٣٧. **ولا `hideWhenZero` — يبقى ظاهراً ولو صفرَ العدّاد، ففيه تاريخُ ما حدث**", String(sidebarItemLine));
       check(!!sidebarItemLine && /badge:\s*paymentCorrectionsCount/.test(sidebarItemLine),
         "ذ٣٨. **وشارتُه من عدّاد المعلَّق الحيّ (`paymentCorrectionsCount`) — نفسُ نمط الشارات الأخرى**",
         String(sidebarItemLine));

@@ -301,7 +301,9 @@ export function Sidebar() {
     //  لا قائمةَ أدوارٍ يدوية، و`hideWhenZero` يُسقط العنصرَ كلَّه حين يفرغ
     //  الطابورُ الموروث — نفسُ نمط «بانتظار الحسم» و«مبالغ سابقة بانتظار
     //  الإكمال» معاً.
-    { label: DISCOUNT_HISTORY_TITLE, icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, eligible: discountHistoryEligible, badge: discountHistoryCount, hideWhenZero: true },
+    //  **يبقى ظاهراً ولو فرغ المعلَّق** (قرارُ المالك ٢٠٢٦-١٠-٠٧: «يبقوا وبها تاريخُ ما حدث كي أفحص إن احتجت»):
+    //  الصفحةُ تعرض المكتمل والمرفوض والملغى، والشارةُ وحدها تعدّ المعلَّق.
+    { label: DISCOUNT_HISTORY_TITLE, icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, eligible: discountHistoryEligible, badge: discountHistoryCount },
     //  ══ **شارةُ العدد** (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31) ═══════
     //  طابورُ عمل — لا تُخفيها المشاهدة، وحدها القائمةُ تفرغ.
     //  «معايناتي» لمن يكتب المعاينة وحده — ولا للمسؤول بسلطته: لا قائمةَ عملٍ له بلا العلَم (§4.ch).
@@ -334,7 +336,8 @@ export function Sidebar() {
     //  نفسِه (`server/payments/correction_routes.ts: isGlobalAdmin`).
     //  و`hideWhenZero` تُخفي الصفَّ كلَّه حين لا يوجد طلبٌ معلَّق — نفسُ نمط
     //  «خصومات سابقة» و«الطابور الموروث» أعلاه بالضبط.
-    { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount, hideWhenZero: true },
+    //  **ويبقى ظاهراً ولو فرغ المعلَّق** (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والصفحةُ صارت تعرض المعتمَد والمرفوض بقرارهما.
+    { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount },
     //  سردٌ إشرافيٌّ للقراءة فقط — بلا شارةٍ (ليست طابورَ انتظار).
     { label: "المراجعة اليومية", icon: Eye, href: "/daily-review", adminOnly: true, settingKey: null, permission: null },
     //  لوحةُ التصنيع: المسؤولُ والمديرُ (اللوحة) والخبيرُ بدوره أو بقدرته (أوامرُه) — كبوّابتَي الخادم.

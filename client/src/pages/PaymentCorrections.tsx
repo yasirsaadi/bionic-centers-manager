@@ -230,8 +230,24 @@ function CorrectionCard({
           </div>
         )}
 
-        <CurrentPaymentSummary r={r} />
+        {r.status === "pending" && <CurrentPaymentSummary r={r} />}
 
+        {r.status !== "pending" ? (
+          <div className={`rounded-md border px-3 py-2 text-sm space-y-0.5 ${r.status === "approved" ? "border-emerald-300 bg-emerald-50/60" : "border-red-300 bg-red-50/60"}`}
+            data-testid={`correction-${r.id}-decision`}>
+            <p className="font-medium">
+              {r.status === "approved" ? "اعتُمد وطُبِّق على الدفعة" : "رُفض — لم تتغيّر الدفعة"}
+            </p>
+            <p className="text-muted-foreground">
+              بقرار <b className="text-foreground">{r.decidedByName ?? "—"}</b> · {fmt(r.decidedAt)}
+            </p>
+            {r.decisionNote && (
+              <p dir="auto" style={{ unicodeBidi: "plaintext" }}>
+                <span className="text-muted-foreground">الملاحظة: </span>{r.decisionNote}
+              </p>
+            )}
+          </div>
+        ) : (
         <div className="flex items-center gap-2 pt-1">
           <Button
             size="sm"
@@ -253,10 +269,20 @@ function CorrectionCard({
             <X className="w-4 h-4" /> رفض
           </Button>
         </div>
+        )}
       </CardContent>
     </Card>
   );
 }
+
+//  ══ **تاريخُ ما حدث** (قرارُ المالك ٢٠٢٦-١٠-٠٧، §4.ci) ══ الصفحةُ كانت المعلَّقَ وحده — والخادمُ يقبل الثلاثة منذ البداية.
+//  فصار المعتمَدُ والمرفوضُ يُقرآن بقرارهما (مَن ومتى ولماذا)، بلا أزرار.
+type CorrectionStatus = "pending" | "approved" | "rejected";
+const STATUS_FILTERS: Array<{ key: CorrectionStatus; label: string }> = [
+  { key: "pending", label: "بانتظار قرارك" },
+  { key: "approved", label: "معتمَدة" },
+  { key: "rejected", label: "مرفوضة" },
+];
 
 /** أيّ قرارٍ يُطلَب تأكيدُه الآن — الصفُّ ونوعُ القرار معاً. */
 type PendingDecision = { row: CorrectionRow; kind: "approve" | "reject" };
@@ -268,13 +294,14 @@ export default function PaymentCorrections() {
   const qc = useQueryClient();
 
   const [confirm, setConfirm] = useState<PendingDecision | null>(null);
+  const [status, setStatus] = useState<CorrectionStatus>("pending");
   const [note, setNote] = useState("");
 
   const { data, isLoading, isError, error } = useQuery<CorrectionRow[]>({
-    queryKey: ["/api/admin/payment-corrections", "pending"],
+    queryKey: ["/api/admin/payment-corrections", status],
     enabled: isAdmin,
     queryFn: async () => {
-      const res = await fetch("/api/admin/payment-corrections?status=pending", { credentials: "include" });
+      const res = await fetch(`/api/admin/payment-corrections?status=${status}`, { credentials: "include" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as any));
         throw new Error(body?.message || "تعذّر جلب طلبات تصحيح الدفعات");
@@ -307,6 +334,8 @@ export default function PaymentCorrections() {
     onSuccess: (_data, v) => {
       qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending"] });
       qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", "pending-count"] });
+      //  والقرارُ يدخل التاريخ — فيُحدَّث تبويبه.
+      qc.invalidateQueries({ queryKey: ["/api/admin/payment-corrections", v.kind === "approve" ? "approved" : "rejected"] });
       //  ══ **الاعتمادُ يُطبِّق التصحيحَ فعلاً على الدفعة — الرفضُ لا يمسّها**
       //  (تحكّمُ الذاكرة، 2026-08-30) ═══════════════════════════════════════
       //  الرفضُ لا يُدَّعى أنه غيّر مالاً: لا إبطالَ لصفحة المريض أو السجلّ
@@ -356,7 +385,7 @@ export default function PaymentCorrections() {
       <div className="flex items-center gap-2">
         <Banknote className="w-6 h-6 text-primary" />
         <h1 className="text-xl font-bold text-primary">طلباتُ تصحيح الدفعات</h1>
-        {rows.length > 0 && (
+        {status === "pending" && rows.length > 0 && (
           <Badge className="bg-primary/10 text-primary hover:bg-primary/10" data-testid="corrections-count">
             {rows.length}
           </Badge>
@@ -368,6 +397,15 @@ export default function PaymentCorrections() {
         قرارك. الاعتمادُ يُطبِّق التغييرَ فوراً على الدفعة ويُقيِّد أثرَه
         المحاسبيّ؛ والرفضُ يُغلق الطلبَ بلا أثرٍ مالي.
       </p>
+
+      <div className="flex flex-wrap gap-2">
+        {STATUS_FILTERS.map((f) => (
+          <Button key={f.key} size="sm" variant={status === f.key ? "default" : "outline"}
+            onClick={() => setStatus(f.key)} data-testid={`corrections-filter-${f.key}`}>
+            {f.label}
+          </Button>
+        ))}
+      </div>
 
       {isLoading ? (
         <Card><CardContent className="flex justify-center py-10">
@@ -383,7 +421,7 @@ export default function PaymentCorrections() {
       ) : rows.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-sm text-muted-foreground"
           data-testid="text-corrections-empty">
-          لا توجد طلباتُ تصحيحٍ معلَّقة حالياً.
+          {status === "pending" ? "لا توجد طلباتُ تصحيحٍ معلَّقة حالياً." : "لا توجد طلباتٌ بهذه الحالة."}
         </CardContent></Card>
       ) : (
         <div className="space-y-3">
