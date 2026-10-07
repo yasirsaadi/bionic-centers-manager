@@ -99,6 +99,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch, TreatmentPlan } from "@shared/schema";
+import { PhysioPlansSection } from "@/components/physio/PhysioPlansSection";
+
+/** الخططُ القديمة (`treatment_plans`) للقراءة منذ خطط العلاج الطبيعي الجديدة (§4.cm — قرارُ المالك ٢٠٢٦-١٠-٠٧). */
+const LEGACY_PLANS_EDITABLE = false;
 import { hasRole } from "@shared/user_roles";
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -1746,7 +1750,12 @@ export default function PatientDetails() {
 
             {patient.isPhysiotherapy && (
               <TabsContent value="treatment-plans" className="space-y-4">
-                {permissions.canManageTreatmentPlans && (
+                {/*  **خططُ العلاج الطبيعي الجديدة** (§4.cm) — من البروتوكول، وتُعتمَد. والقديمةُ تحتها للقراءة بقرار المالك. */}
+                <PhysioPlansSection patientId={Number(id)} />
+                {treatmentPlans.length > 0 && (
+                  <h3 className="font-bold text-sm text-muted-foreground pt-2" data-testid="legacy-plans-title">خطط سابقة (للقراءة)</h3>
+                )}
+                {LEGACY_PLANS_EDITABLE && permissions.canManageTreatmentPlans && (
                   <div className="flex justify-end mb-4">
                     <Button
                       onClick={() => {
@@ -1767,11 +1776,7 @@ export default function PatientDetails() {
                     <Skeleton className="h-32 w-full" />
                     <Skeleton className="h-32 w-full" />
                   </div>
-                ) : treatmentPlans.length === 0 ? (
-                  <Card className="p-8 text-center text-muted-foreground">
-                    {t.patientDetails.noTreatmentPlans}
-                  </Card>
-                ) : (
+                ) : treatmentPlans.length === 0 ? null : (
                   <div className="space-y-4">
                     {treatmentPlans.map((plan) => (
                       <Card key={plan.id} className="p-4 space-y-3" data-testid={`card-treatment-plan-${plan.id}`}>
@@ -1793,7 +1798,7 @@ export default function PatientDetails() {
                               </Badge>
                             )}
                           </div>
-                          {permissions.canManageTreatmentPlans && (
+                          {LEGACY_PLANS_EDITABLE && permissions.canManageTreatmentPlans && (
                             <div className="flex items-center gap-1" style={{ visibility: "visible" }}>
                               <Button
                                 variant="ghost"

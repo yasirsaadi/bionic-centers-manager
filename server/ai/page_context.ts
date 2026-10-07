@@ -81,6 +81,8 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/dr-box": "قاصة الدكتور",
   "/physio/protocols": "بروتوكولات العلاج الطبيعي",
   "/physio/protocols/:id": "بروتوكول علاج طبيعي",
+  "/physio/plans": "خطط العلاج الطبيعي — الاعتمادات والمسندة إليّ",
+  "/physio/plans/:id": "خطة علاج طبيعي لمريض",
   "/surveys": "الاستطلاعات",
   "/session-tracking/entry": "إدخال الجلسات",
   "/session-tracking/targets": "أهداف الجلسات",

@@ -59,27 +59,8 @@ const errText = (e: any): string => {
   try { return JSON.parse(raw)?.error ?? raw; } catch { return raw; }
 };
 
-// ══ اللغة — يختارها القارئ، وتُحفظ في متصفّحه وحده (تفضيلٌ شخصيّ لا حالةٌ مشتركة) ═════════════════
-const LANG_KEY = "physioProtocolLang";
-function useProtocolLang(): [ProtocolLang, (l: ProtocolLang) => void] {
-  const [lang, setLang] = useState<ProtocolLang>(() => {
-    try { const v = localStorage.getItem(LANG_KEY); return isProtocolLang(v) ? v : "ar"; } catch { return "ar"; }
-  });
-  const set = (l: ProtocolLang) => { setLang(l); try { localStorage.setItem(LANG_KEY, l); } catch { /* تفضيلٌ لا يُحفظ — لا ضرر */ } };
-  return [lang, set];
-}
-function LangToggle({ lang, onChange }: { lang: ProtocolLang; onChange: (l: ProtocolLang) => void }) {
-  return (
-    <div className="inline-flex rounded-md border overflow-hidden text-sm" role="group" aria-label="Language" data-testid="protocol-lang">
-      {(["ar", "en"] as const).map((l) => (
-        <button key={l} type="button" onClick={() => onChange(l)} aria-pressed={lang === l} data-testid={`protocol-lang-${l}`}
-          className={`px-3 py-1 ${lang === l ? "bg-primary text-primary-foreground" : "bg-white hover:bg-muted"}`}>
-          {l === "ar" ? "العربية" : "English"}
-        </button>
-      ))}
-    </div>
-  );
-}
+import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
+
 const T = {
   ar: {
     library: "المكتبة", overview: "نظرة عامة", goals: "الأهداف", assessment: "التقييم والقياسات", devices: "الأجهزة ودرجةُ الدليل",

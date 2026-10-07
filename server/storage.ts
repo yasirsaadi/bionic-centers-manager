@@ -8,7 +8,7 @@ import {
   prostheticWorkOrders, prostheticWorkHistory, prostheticReworkEvents,
   patientCases,
   patientDeviceEpisodes, type PatientCase,
-  systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans,
+  systemSettings, branchPasswords, branchSettings, systemUsers, treatmentPlans, physioPlans,
   surveyTemplates, surveyQuestions, surveyResponses, surveyAnswers,
   type Patient, type InsertPatient,
   type Payment, type InsertPayment,
@@ -2629,6 +2629,8 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(patientBranchAccess).where(eq(patientBranchAccess.patientId, id));
       await tx.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
       await tx.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
+      //  خططُ العلاج الطبيعي الجديدة (ترحيل ١٠٩، §4.cm) — أجهزتُها ومنفّذوها يتبعونها بـ`ON DELETE CASCADE`.
+      await tx.delete(physioPlans).where(eq(physioPlans.patientId, id));
       const respRows = await tx.select({ id: surveyResponses.id })
         .from(surveyResponses)
         .where(eq(surveyResponses.patientId, id));
@@ -3459,6 +3461,7 @@ export class DatabaseStorage implements IStorage {
       await repoint("followUpCalls", followUpCalls, followUpCalls.patientId);
       await repoint("workOrders", prostheticWorkOrders, prostheticWorkOrders.patientId);
       await repoint("treatmentPlans", treatmentPlans, treatmentPlans.patientId);
+      await repoint("physioPlans", physioPlans, physioPlans.patientId);
       await repoint("surveyResponses", surveyResponses, surveyResponses.patientId);
       await repoint("journalLines", journalLines, journalLines.patientId);
       // Ledger entries follow their patient: dated history is preserved, and
