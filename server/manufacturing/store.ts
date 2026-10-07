@@ -197,6 +197,7 @@ import {
   deliveryDateSetNote, deliveryDateChangeNote, latenessOf,
   isHoldStatus, writtenHoldExcuse,
   type StageHistoryRow,
+  ASSIGNMENT_DATE_ACTION, assignmentDateError, assignmentDateNote, baghdadDay,
 } from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
@@ -2274,4 +2275,58 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
 // Guard used by routes: is `stage` valid for the order's service type?
 export function stageValidFor(serviceType: string, stage: string, purpose?: string | null): boolean {
   return stagesForOrder(serviceType, purpose).includes(stage);
+}
+
+// ══ تعديلُ تاريخ إسناد الأمر — للمسؤول وحده (§4.ck) ═════════════════════════════
+export class AssignmentDateError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+
+const STAGE_EVENT_LABEL: Record<string, string> = {
+  stage_change: "انتقال مرحلة", status_change: "تغيير حالة", reassigned: "تحويل خبير", rework: "إعادة عمل",
+  delivered: "تسليم", date_change: "تحديد موعد التسليم", hold_reason: "كتابة سبب التوقّف",
+};
+
+/**
+ * ينقل `created_at` للأمر وسطرِ «إنشاء الأمر» في سجلّه إلى اليوم الجديد **بساعة الإنشاء نفسِها بتوقيت بغداد**، ويكتب سطرَ سجلٍّ
+ * بالتاريخين والسبب. تحت قفل الصفّ، وبالقواعد نفسِها (`assignmentDateError`) مقروءةً من القاعدة لا من الطلب.
+ */
+export async function changeAssignmentDate(p: { orderId: number; newDay: string; reason: string; performedBy: number | null }) {
+  return db.transaction(async (tx) => {
+    const [o] = await tx.select().from(WO).where(eq(WO.id, p.orderId)).for("update");
+    if (!o) throw new AssignmentDateError(404, "الأمر غير موجود");
+    const [pt] = await tx.select({ createdAt: patients.createdAt }).from(patients).where(eq(patients.id, o.patientId));
+    const hist = await tx.select({ actionType: WH.actionType, createdAt: WH.createdAt }).from(WH)
+      .where(eq(WH.workOrderId, o.id)).orderBy(asc(WH.createdAt));
+    //  أوّلُ حدثٍ حقيقيّ بعد الإنشاء — لا سطرُ الإنشاء نفسُه، ولا تعديلُ تاريخٍ سابق.
+    const later = hist.filter((h) => h.actionType !== "created" && h.actionType !== ASSIGNMENT_DATE_ACTION);
+    const candidates: { day: string; label: string; at: number }[] = later.map((h) => ({
+      day: baghdadDay(h.createdAt), label: STAGE_EVENT_LABEL[h.actionType] ?? h.actionType, at: new Date(h.createdAt).getTime(),
+    }));
+    if (o.startedAt) candidates.push({ day: baghdadDay(o.startedAt), label: "بدء العمل", at: new Date(o.startedAt).getTime() });
+    candidates.sort((a, b) => a.at - b.at);
+    const currentDay = baghdadDay(o.createdAt);
+    const err = assignmentDateError({
+      newDay: p.newDay, currentDay, today: baghdadTodayYmd(),
+      patientRegisteredDay: pt?.createdAt ? baghdadDay(pt.createdAt) : null,
+      status: o.status, firstLaterEvent: candidates[0] ? { day: candidates[0].day, label: candidates[0].label } : null,
+    });
+    if (err) throw new AssignmentDateError(err.startsWith("هذا هو") ? 409 : 400, err);
+
+    //  ساعةُ الإنشاء نفسُها بتوقيت بغداد (UTC+3 بلا توقيتٍ صيفيّ) — فاليومُ يتغيّر والترتيبُ داخل اليوم يبقى.
+    const timeOfDay = new Date(o.createdAt).toLocaleTimeString("en-GB", { timeZone: "Asia/Baghdad", hour12: false });
+    let newAt = new Date(`${p.newDay}T${timeOfDay}+03:00`);
+    //  ولا تتجاوز اللحظةُ الجديدة الآنَ ولا أوّلَ حدثٍ لاحق (يومٌ واحد بساعتين مختلفتين).
+    const ceiling = Math.min(Date.now(), candidates[0]?.at ?? Infinity);
+    if (newAt.getTime() > ceiling) newAt = new Date(ceiling - 1000);
+
+    await tx.update(WO).set({ createdAt: newAt, updatedAt: new Date() }).where(eq(WO.id, o.id));
+    await tx.update(WH).set({ createdAt: newAt })
+      .where(and(eq(WH.workOrderId, o.id), eq(WH.actionType, "created")));
+    await tx.insert(WH).values({
+      workOrderId: o.id, actionType: ASSIGNMENT_DATE_ACTION, fromStage: null, toStage: null,
+      notes: assignmentDateNote(currentDay, p.newDay, p.reason), performedBy: p.performedBy,
+    });
+    return { orderId: o.id, branchId: o.branchId, fromDay: currentDay, toDay: p.newDay, from: o.createdAt, to: newAt };
+  });
 }

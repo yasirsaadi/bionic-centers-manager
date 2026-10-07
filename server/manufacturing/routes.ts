@@ -915,6 +915,28 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
+  // ---- ADMIN: correct the order's assignment date (§4.ck) --------------------
+  // الموظّفُ أسند الأمرَ يومَ الدفع والقالبُ أُخذ بعده: المسؤولُ وحده يصحّح تاريخَ الإسناد ما دام الأمرُ قيد العمل،
+  // بسببٍ مكتوب، ويُدقَّق — والدفعةُ لا تُمسّ.
+  app.patch("/api/manufacturing/orders/:id/assignment-date", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!s.isAdmin) return res.status(403).json({ error: "تعديل تاريخ الإسناد للمسؤول وحده" });
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "رقم الأمر غير صالح" });
+    const date = strOrU(req.body?.date) ?? "";
+    const reason = (strOrU(req.body?.reason) ?? "").trim();
+    if (!reason) return res.status(400).json({ error: "سبب التعديل إلزامي" });
+    try {
+      const r = await store.changeAssignmentDate({ orderId: id, newDay: date, reason, performedBy: s.userId ?? null });
+      await audit(req, "prosthetic_work_order", r.orderId, "assignment_date_change", r.branchId,
+        `تعديل تاريخ إسناد الأمر من ${r.fromDay} إلى ${r.toDay} — السبب: ${reason}`);
+      res.json(r);
+    } catch (e) {
+      if (e instanceof store.AssignmentDateError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  });
+
   // ---- hold: stop the work WITHOUT moving the stage --------------------------
   app.post("/api/manufacturing/orders/:id/hold", isAuthenticated, async (req: Req, res) => {
     const w = await loadWritable(req, res);

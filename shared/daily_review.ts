@@ -136,6 +136,8 @@ export function workHistoryMovementLabel(actionType: string, notes: string | nul
     case "reassigned": return "تحويل الخبير";
     // سببُ توقّفٍ قائم كُتب بلا توقّفٍ جديد ولا رجوعٍ بمرحلة (مراجعة Codex على ٤٠٤).
     case "hold_reason": return "كتابة سبب التوقّف";
+    // تصحيحُ المسؤول لتاريخ إسناد الأمر (§4.ck).
+    case "assignment_date_change": return "تعديل تاريخ الإسناد";
     case "status_change": {
       const n = (notes ?? "").trim();
       const hit = STATUS_CHANGE_PREFIXES.find((x) => n.startsWith(x.prefix));
