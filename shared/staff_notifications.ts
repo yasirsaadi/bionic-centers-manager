@@ -35,6 +35,7 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "physio_plan_pending", label: "خطة علاج طبيعي تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
   { key: "physio_plan_decided", label: "خطته اعتُمدت أو أُعيدت بملاحظة", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_plan_assigned", label: "خطة علاج طبيعي معتمدة أُسندت إليه", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_session_note", label: "ملاحظةٌ من المعالج على جلسةٍ من خطّته", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -69,7 +70,7 @@ const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_f
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
 const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "ai_suggestion"];
 const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
-const PHYSIO_WRITER_EVENTS = ["physio_plan_decided"];
+const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {

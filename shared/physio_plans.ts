@@ -67,3 +67,62 @@ export const isPlanAssigneeRole = (u: { role?: string | null; extraRoles?: unkno
 
 export const PLAN_NOT_FOUND = "الخطّة غير موجودة";
 export const UNAPPROVED_PROTOCOL_BADGE = "بروتوكول غير معتمد بعد";
+
+// ══ التنفيذ — المرحلةُ الرابعة (ترحيل ١١١، §4.cn — قراراتُ المالك ٢٠٢٦-١٠-٠٧) ═════════════════════════════
+//   ١. **ينفّذ أيُّ منفّذٍ من القسم في فرع الخطّة**، والمسنَدُ هو الافتراضيّ في «جلسات اليوم» — فغيابُ المعالج لا يُرجع المريض.
+//   ٢. **«إنهاء الجلسة» يكتب زيارةَ جلسة العلاج الطبيعي** (فتُخصم من جلساته المدفوعة) — فلا تُسجَّل الجلسةُ مرّتين.
+//   ٣. **العدّاداتُ من التنفيذ لكلّ فرعٍ من يومٍ يختاره المسؤول** (`branches.physio_counts_from`) ويُقفَل الإدخالُ اليدويّ من يومها؛
+//      وقبله يعملان معاً فيُقارَن الرقمان. واليومُ يُختار من الغد فصاعداً — فلا يُجمع يدويٌّ وتنفيذٌ في يومٍ واحد.
+//   ٤. **بندُ الإبر الجافة لا يُعلَّم «نُفّذ» إلّا بيد حامل «يطبّق الإبر الجافة»**.
+//   ٥. **«ملاحظة للأخصائيّ» تنبيهٌ لكاتب الخطّة**، وصفحةٌ تجمع الجلسات التي اختلفت عن الخطّة.
+//   والمنفّذُ لا يضيف جهازاً ولا يحذف بنداً — يسجّل ما حدث، والتعديلُ للأخصائيّ.
+
+/** **ينفّذ**: أدوارُ القسم الأربعة، والمسؤولُ والمشرفُ العام. والفرعُ يُفحَص في الخادم. */
+export const canExecutePlans = (s: ProtocolSessionLike | null | undefined): boolean =>
+  hasAnyRole(s, PHYSIO_ROLES) || canApprovePlans(s);
+
+/** يُلغي جلسةً نُفّذت خطأً (يُرجع الزيارةَ والعدّاد): المسؤولُ والمشرفُ العام. */
+export const canCancelSessions = (s: ProtocolSessionLike | null | undefined): boolean => canApprovePlans(s);
+
+export interface ExecutionItemInput { deviceId: number; done: boolean; minutes: number | null; note: string | null }
+
+/**
+ * **البنودُ هي بنودُ الخطّة بأعيانها** — لا جهازَ زائد ولا بندَ ناقص ولا مكرَّر؛ وبندٌ واحدٌ نُفّذ على الأقلّ (جلسةٌ بلا شيءٍ نُفّذ لا تُخصم)؛
+ * وما لم يُنفَّذ يقول لماذا؛ والإبرُ الجافة لحاملها وحده. يُرجع رسالةَ الخطأ أو `null`.
+ */
+export function executionItemsError(p: {
+  planDeviceIds: number[]; items: ExecutionItemInput[]; needleDeviceId: number | null; canDryNeedle: boolean;
+}): string | null {
+  const ids = p.items.map((i) => i.deviceId);
+  if (new Set(ids).size !== ids.length) return "بندٌ مكرّر";
+  const plan = new Set(p.planDeviceIds);
+  if (ids.length !== plan.size || ids.some((d) => !plan.has(d))) return "البنودُ بنودُ الخطّة بأعيانها — لا يُضاف جهازٌ ولا يُحذف بند";
+  if (!p.items.some((i) => i.done)) return "لم يُعلَّم أيُّ بندٍ «نُفّذ» — لا جلسةَ تُسجَّل";
+  if (p.items.some((i) => !i.done && !(i.note ?? "").trim())) return "اكتب سببَ كلّ بندٍ لم يُنفَّذ";
+  if (p.needleDeviceId != null && !p.canDryNeedle && p.items.some((i) => i.deviceId === p.needleDeviceId && i.done)) {
+    return "بندُ الإبر الجافة يُعلَّم «نُفّذ» بيد حامل «يطبّق الإبر الجافة» وحده";
+  }
+  return null;
+}
+
+/** **نوعُ العلاج في زيارة الجلسة** — من البنود المنفّذة، بقائمة «تسجيل زيارة جلسة علاج طبيعي» نفسِها. */
+export function sessionTreatmentType(doneCodes: readonly string[]): string {
+  if (doneCodes.includes("robotik")) return "روبوت";
+  if (doneCodes.some((c) => c !== "exercise" && c !== "needle")) return "أجهزة علاج طبيعي";
+  if (doneCodes.includes("needle")) return "أبر صينية";
+  return "تمارين تأهيلية";
+}
+
+/** هل تُكتب جلسةُ هذا اليوم في عدّادات الأجهزة؟ من يوم القفل فصاعداً وحده. */
+export const countsFromExecution = (countsFrom: string | null | undefined, sessionDate: string): boolean =>
+  Boolean(countsFrom) && sessionDate >= String(countsFrom);
+
+/** يومُ القفل من الغد فصاعداً — فلا يجتمع في يومٍ واحد يدويٌّ وتنفيذ. `null` يرفع القفل. */
+export function countsFromError(date: string | null, today: string): string | null {
+  if (date === null) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "اختر تاريخاً صحيحاً";
+  if (date <= today) return "يُختار يومُ القفل من الغد فصاعداً — اليومُ وما قبله بقيا يدويّين";
+  return null;
+}
+
+export const MANUAL_COUNTS_LOCKED_ERROR = "عدّاداتُ هذا الفرع تُحسب من تنفيذ خطط العلاج الطبيعي من هذا اليوم — الإدخالُ اليدويّ مقفل";
