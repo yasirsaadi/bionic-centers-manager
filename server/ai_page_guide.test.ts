@@ -1456,11 +1456,11 @@ async function main() {
   check(/GET وPOST \/api\/expenses لا يستخدمان تعريف\s+fullAccounting/.test(acg)
     && /مسؤول عام.*canManageAccounting.*canAddExpenses/s.test(acg)
     && /branch_manager بلا أي\s+من هاتين الصلاحيتين.*403/s.test(acg)
-    && /PUT وDELETE\s+يحتاجان المسؤول أو canManageAccounting/.test(acg)
-    && /PUT \/api\/expenses\/:id.*المصروف\s+الحالي.*فرع الجلسة/s.test(acg)
-    && /storage\.updateExpense/.test(acg)
-    && /نقل مصروف من فرعه إلى branchId آخر صالح/.test(acg)
-    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف وفجوة نقل الفرع");
+    //  قرارُ المالك ٢٠٢٦-١٠-٠٧ (§4.ce): PUT وDELETE للمسؤول وحده، وغيرُه «طلب تصحيح» يعتمده — فسقطت «فجوةُ نقل الفرع» مع سقوط تعديل غير المسؤول.
+    && /\*\*PUT وDELETE\s+للمسؤول العام وحده\*\*/.test(acg)
+    && /«طلب تصحيح» على المصروف.*ويعتمده المسؤولُ/s.test(acg)
+    && !/نقل مصروف من فرعه إلى branchId آخر صالح/.test(acg)
+    && /section واحداً من\s+prosthetic أو physio أو shared/.test(acg), "ض.٦ حراس المصروف: التعديلُ والحذفُ للمسؤول وحده، وغيرُه بطلب تصحيح");
   check(/category=other/.test(acg) && /التصنيف الفرعي مطلوب/.test(acg)
     && /بأفضل جهد/.test(acg) && /لا يُفشل حفظ المصروف نفسه/.test(acg)
     && /تحقق من دفتر الأستاذ/.test(acg), "ض.٧ إكمال المصروف وحدود القيد التلقائي");
