@@ -442,7 +442,8 @@ async function main() {
         "٢٨. **وحقلُ الكلفة محروسٌ بها**", "");
       check(/req\.body\?\.proposedExpertUserId === undefined \|\| isNormalDoctorAuthor/.test(routes),
         "٢٩. **وحقلُ الخبير المقترَح محروسٌ بها كذلك**", "");
-      check(/isResponsibleManager = session\.isAdmin \|\| session\.role === "branch_manager"/
+      //  منذ §4.ch بـ`hasRole` (الأدوارُ كلُّها) — من صلاحية الجلسة نفسِها كما كانت.
+      check(/isResponsibleManager = session\.isAdmin \|\| hasRole\(session, "branch_manager"\)/
         .test(routes),
       "٣٠. **والآليّةُ من صلاحية الجلسة القائمة نفسِها** — `session.isAdmin`/`session.role`", "");
       //  ولا هويّةٌ مُقحَمة في أيّ مكانٍ من الملفّ: لا اسمَ مالكٍ، ولا بريدَه،

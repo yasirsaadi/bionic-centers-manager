@@ -12,6 +12,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { Wrench, Loader2 } from "lucide-react";
 import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS } from "@shared/manufacturing";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { onlyRoles } from "@shared/user_roles";
 
 /** أمرٌ كما تُعيده `/api/manufacturing/patient/:id/orders` — الحقولُ التي تحتاجها البطاقة وحدها. */
 interface OpenOrder {
@@ -55,7 +56,7 @@ export function ManufacturingEditCard({ patient }: {
   patient: { id: number; branchId: number; isAmputee?: boolean | null; isMedicalSupport?: boolean | null };
 }) {
   const session = useBranchSession();
-  const isExpertRole = session?.role === "prosthetics_expert";
+  const isExpertRole = onlyRoles(session, ["prosthetics_expert"]); // حصر (§4.ch)
 
   const { data: orders = [] } = useQuery<OpenOrder[]>({
     queryKey: [`/api/manufacturing/patient/${patient.id}/orders`],

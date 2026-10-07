@@ -336,7 +336,8 @@ async function main() {
         "٣١. ويفتح **النافذةَ القائمة** بحالتها القائمة");
       check(src.includes("target={{ followupId: reversalFor }}"),
         "٣٢. والنافذةُ ما زالت مركَّبةً بهويّة المتابعة كما كانت");
-      check(src.includes('const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";'),
+      //  منذ §4.ch بـ`hasRole` (الأدوارُ كلُّها) — والقاعدةُ هي هي.
+      check(src.includes('const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");'),
         "٣٣. **و`mayReverse` في الشاشة لم تُمَسّ بحرف**");
       check(!src.includes("/api/admin/operation-reversal"),
         "٣٤. **ولا تنادي الشاشةُ نقطةَ التصحيح بنفسها** — النافذةُ وحدها تناديها");

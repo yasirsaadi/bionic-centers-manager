@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Hammer, Loader2 } from "lucide-react";
+import { onlyRoles } from "@shared/user_roles";
 
 // "Start manufacturing" for a prosthetic/medical-support patient who was
 // registered as examination-only (no cost → no expert → no work order) and
@@ -28,7 +29,7 @@ export function StartManufacturingDialog({ patient }: {
   const session = useBranchSession();
   const permissions = usePermissions();
 
-  const isExpertRole = session?.role === "prosthetics_expert";
+  const isExpertRole = onlyRoles(session, ["prosthetics_expert"]); // حصر (§4.ch)
   //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.
   const mayStart = !isExpertRole && (session?.isAdmin || permissions.canAddPatients);
 

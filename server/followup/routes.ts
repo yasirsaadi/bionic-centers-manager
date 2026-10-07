@@ -77,6 +77,7 @@ import { actorRoleSnapshotOf, isDecisionQueueState } from "@shared/decision_queu
 import * as returnToPurchase from "./return_to_purchase_store";
 import { canCreateReview } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
+import { rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -86,6 +87,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -124,7 +126,7 @@ const actorOf = (req: Req) => {
 const ownerSessionOf = (req: Req) => {
   const s = getSession(req);
   return {
-    userId: s.userId, role: s.role, isAdmin: s.isAdmin, permissions: s.permissions,
+    userId: s.userId, role: s.role, roles: s.roles, isAdmin: s.isAdmin, permissions: s.permissions,
   };
 };
 

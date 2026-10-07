@@ -23,7 +23,7 @@ import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notification
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
-import { isUserRole, isPhysioRole } from "@shared/user_roles";
+import { hasRole, onlyRoles, rolesOf, hasPhysioRole, normalizeRoles, isUserRole } from "@shared/user_roles";
 import { accessibleBranchesOf, applyFreshUser } from "./auth/session_refresh";
 import { closedBranchIds, invalidateClosedBranches, BRANCH_CLOSED_MESSAGE } from "./branches/closure";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
@@ -274,7 +274,8 @@ async function patientOwnsCase(
  * `AdminSettings.tsx`) — لا عند كل قراءةٍ لاحقة، تماماً كما طلب المالك.
  */
 function buildStoredPermissions(systemUser: SystemUser) {
-  const grantAll = systemUser.role === "branch_manager";
+  //  الأدوارُ كلُّها لا الأعلى وحده (ترحيل ١٠٥، §4.ch): مديرُ فرعٍ إضافيّ يملك ما يملكه المدير.
+  const grantAll = hasRole(systemUser, "branch_manager");
   const isAdminRow = systemUser.role === "admin";
   return {
     // ══ محاذاةٌ بالمخزَّن وحده — لا منحَ من الدور بعد اليوم ══════════════
@@ -312,8 +313,8 @@ function buildStoredPermissions(systemUser: SystemUser) {
     //  `AdminSettings.tsx` وحده (٢٠٢٦-٠٩-١٨).
     canManageSettings: grantAll || Boolean(systemUser.canManageSettings),
     canManageUsers: grantAll || Boolean(systemUser.canManageUsers),
-    canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
-    canWriteMedicalExam: systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
+    canWorkAsExpert: hasRole(systemUser, "prosthetics_expert") || Boolean(systemUser.canWorkAsExpert),
+    canWriteMedicalExam: hasRole(systemUser, "doctor") || Boolean(systemUser.canWriteMedicalExam),
     canApproveDiscount: Boolean(systemUser.canApproveDiscount),
     // ══ العلاجُ الطبيعي (ترحيل ١٠٤، §4.cg) — عَلَمان مخزَّنان لا يمنحهما دور ══
     //  «المشرف العام» يحمله سليم وهو مدير فرع، فلا يُشتقّ من الدور؛ والمسؤولُ يملكه بسلطته.
@@ -483,6 +484,7 @@ export async function registerRoutes(
     return {
       userId: branchSession?.userId,
       role: branchSession?.role || (branchSession?.isAdmin ? 'admin' : 'staff'),
+      roles: rolesOf(branchSession),
       branchId: branchSession?.branchId,
       isAdmin: Boolean(branchSession?.isAdmin),
     };
@@ -525,7 +527,7 @@ export async function registerRoutes(
   // Branch isolation is checked separately at each call site.
   const isAdminOrManager = (req: any): boolean => {
     const branchSession = (req.session as any).branchSession;
-    return Boolean(branchSession?.isAdmin) || branchSession?.role === "branch_manager";
+    return Boolean(branchSession?.isAdmin) || hasRole(branchSession, "branch_manager");
   };
 
   // Branches the requester can act on. Admin returns null (=
@@ -715,7 +717,7 @@ export async function registerRoutes(
             branchName = branch?.name || "فرع غير معروف";
           }
 
-          const userShift = (systemUser.role === "reception" || isPhysioRole(systemUser.role)) ? (shift || "auto") : "auto";
+          const userShift = (hasRole(systemUser, "reception") || hasPhysioRole(systemUser)) ? (shift || "auto") : "auto";
 
           // ══ الصلاحياتُ المخزَّنة سلطةٌ حيّة — لا مِنحةَ دورٍ عامّة بعد
           // اليوم (إصلاحٌ 2026-09-01) ══════════════════════════════════════
@@ -736,6 +738,7 @@ export async function registerRoutes(
             isAdmin: isAdmin,
             userId: systemUser.id,
             role: systemUser.role,
+            roles: rolesOf(systemUser),
             displayName: systemUser.displayName,
             shift: userShift,
             language: systemUser.language || "ar",
@@ -768,6 +771,7 @@ export async function registerRoutes(
             userId: systemUser.id,
             displayName: systemUser.displayName,
             role: systemUser.role,
+            roles: rolesOf(systemUser),
             shift: userShift,
             language: systemUser.language || "ar",
             permissions,
@@ -1393,8 +1397,15 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!isUserRole(userData.role)) {
-        return res.status(400).json({ message: "الدور غير صالح" });
+      //  ══ أكثرُ من دور (ترحيل ١٠٥، §4.ch) ══ `roles` مصفوفةُ النافذة؛ و`role` وحده للقارئ القديم.
+      //  الأعلى يصير `role` والبقيّةُ `extraRoles` — ولا تُقبل `extraRoles` من الطلب مباشرةً.
+      {
+        const picked = normalizeRoles(Array.isArray(userData.roles) ? userData.roles : [userData.role]);
+        delete userData.roles;
+        delete userData.extraRoles;
+        if (!picked) return res.status(400).json({ message: "الدور غير صالح" });
+        userData.role = picked.role;
+        userData.extraRoles = picked.extraRoles;
       }
       
       // Normalise branchIds: accept either a JSON array or an
@@ -1536,8 +1547,22 @@ export async function registerRoutes(
       }
 
       // Validate role if provided
-      if (userData.role && !isUserRole(userData.role)) {
-        return res.status(400).json({ message: "الدور غير صالح" });
+      //  ══ أكثرُ من دور (ترحيل ١٠٥، §4.ch) ══ `roles` يستبدل الأدوارَ كلَّها؛ و`role` وحده (القارئ القديم) يغيّر الأعلى
+      //  ويُبقي الإضافيةَ بعد التطبيع. ولا تُقبل `extraRoles` من الطلب مباشرةً.
+      delete userData.extraRoles;
+      if (Array.isArray(userData.roles) || userData.role !== undefined) {
+        let input: unknown[];
+        if (Array.isArray(userData.roles)) input = userData.roles;
+        else {
+          if (!isUserRole(userData.role)) return res.status(400).json({ message: "الدور غير صالح" });
+          const current = await storage.getSystemUser(id);
+          input = [userData.role, ...(Array.isArray(current?.extraRoles) ? current!.extraRoles : [])];
+        }
+        delete userData.roles;
+        const picked = normalizeRoles(input);
+        if (!picked) return res.status(400).json({ message: "الدور غير صالح" });
+        userData.role = picked.role;
+        userData.extraRoles = picked.extraRoles;
       }
 
       // Multi-branch normalisation, same shape as the create handler.
@@ -2416,7 +2441,7 @@ export async function registerRoutes(
     // Per-case financials (cost/paid/remaining): a PURE prosthetics expert is
     // financially locked out (same rule as the manufacturing module), and
     // everyone else needs view rights + the patient inside their branches.
-    if (branchSession?.role === "prosthetics_expert") {
+    if (onlyRoles(branchSession, ["prosthetics_expert"])) { // حصر: خبيرٌ لا دورَ له غيره (§4.ch)
       return res.status(403).json({ message: "غير مصرح" });
     }
     //  `canViewPatients` وحدها — لا منحَ دورٍ إضافي (إصلاحٌ 2026-09-01).
@@ -2439,7 +2464,7 @@ export async function registerRoutes(
     // cases are returned with the money stripped out at the source, rather than
     // 403'ing the endpoint (which would blank their clinical view) or trusting
     // the UI to hide fields the payload still carries.
-    const financiallyBlind = branchSession?.role === "doctor";
+    const financiallyBlind = onlyRoles(branchSession, ["doctor"]); // حصر: طبيبٌ لا دورَ له غيره (§4.ch)
     //  ══ `canViewPayments` — لا `paid`/`remaining` لمن لا يملكها (إصلاحٌ
     //  2026-09-03) ═══════════════════════════════════════════════════════
     //  قاعدةٌ مستقلّة عن حجب الطبيب أعلاه: الكلفةُ (`cost`) ليست دفعةً فتبقى
@@ -2775,8 +2800,8 @@ export async function registerRoutes(
       // for reception, and this makes the hiding real rather than cosmetic.
       const mayWriteClinical =
         branchSession?.isAdmin ||
-        branchSession?.role === "branch_manager" ||
-        branchSession?.role === "doctor" ||
+        hasRole(branchSession, "branch_manager") ||
+        hasRole(branchSession, "doctor") ||
         Boolean(branchSession?.permissions?.canWriteMedicalExam);
       const creationBody: any = { ...req.body };
       if (!mayWriteClinical) {

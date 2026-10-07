@@ -96,7 +96,7 @@ export default function StaffNotificationsTab() {
           <CardHeader className="pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">
-                {u.displayName} <span className="text-xs font-normal text-muted-foreground">— {ROLE_LABELS[u.role] ?? u.role}</span>
+                {u.displayName} <span className="text-xs font-normal text-muted-foreground">— {((u as any).roles ?? [u.role]).map((r: string) => ROLE_LABELS[r] ?? r).join(" + ")}</span>
                 <span className="block text-xs font-normal text-muted-foreground" data-testid={`staff-branches-${u.id}`}>
                   {u.branches.join("، ")}
                 </span>

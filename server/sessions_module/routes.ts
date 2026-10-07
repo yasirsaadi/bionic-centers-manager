@@ -23,6 +23,7 @@ import {
   resolveBranchId,
   requireBranchWriteAccess,
 } from "./permissions";
+import { onlyRoles } from "@shared/user_roles";
 
 /**
  * Session Tracking Routes
@@ -213,7 +214,8 @@ export function registerSessionTrackingRoutes(
 
       const ctx = getUserContext(req);
       const today = getTodayIraq();
-      const isReception = ctx.role === "reception";
+      //  حصر (§4.ch): استقبالٌ لا دورَ له غيره — ومحاسبٌ هو استقبالٌ أيضاً لا يُقيَّد بيوم اليوم.
+      const isReception = onlyRoles(ctx, ["reception"]);
 
       // Reception can only enter today's data, never past or future.
       if (isReception && sessionDate !== today) {

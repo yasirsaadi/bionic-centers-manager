@@ -1858,6 +1858,8 @@ export const systemUsers = pgTable("system_users", {
   // back to `branchId`.
   branchIds: jsonb("branch_ids").$type<number[]>().default([]),
   role: text("role").notNull().default("reception"), // القائمةُ المسموحة: USER_ROLES في shared/user_roles.ts
+  /** الأدوارُ الإضافية (ترحيل ١٠٥، §4.ch) — `role` الأعلى، وهذه البقيّة. اقرأها بـ`rolesOf`/`hasRole` لا مباشرة. */
+  extraRoles: jsonb("extra_roles").$type<string[]>().notNull().default([]),
   isActive: boolean("is_active").default(true),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),

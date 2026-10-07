@@ -81,7 +81,7 @@ import {
 import { Pencil, Download } from "lucide-react";
 import { userEditPatch } from "./user_edit_patch";
 import StaffNotificationsTab from "@/components/admin/StaffNotificationsTab";
-import type { UserRoleValue } from "@shared/user_roles";
+import { coveredBy, normalizeRoles, rolesOf, type UserRoleValue } from "@shared/user_roles";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -2680,6 +2680,8 @@ export default function AdminSettings() {
     displayName: "",
     password: "",
     role: "reception" as UserRole,
+    //  الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — `role` الأعلى منها.
+    roles: ["reception"] as UserRole[],
     branchId: null as number | null,
     // Multi-branch — only relevant for branch_manager role. When set,
     // the user can switch between any of these branches in the UI.
@@ -2720,7 +2722,7 @@ export default function AdminSettings() {
 
   // A user whose PRIMARY role is doctor carries the exam capability implicitly,
   // so the switch is locked on and the specialty becomes mandatory.
-  const isDoctorRole = userFormData.role === "doctor";
+  const isDoctorRole = userFormData.roles.includes("doctor");
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -2912,6 +2914,7 @@ export default function AdminSettings() {
       displayName: "",
       password: "",
       role: "reception",
+      roles: ["reception"] as UserRole[],
       branchId: null,
       branchIds: [],
       isActive: true,
@@ -2943,13 +2946,20 @@ export default function AdminSettings() {
     });
   };
 
-  const handleRoleChange = (role: UserRole) => {
-    const perms = defaultPermissions[role];
-    setUserFormData(prev => ({
-      ...prev,
-      role,
-      ...perms,
-    }));
+  //  ══ **أكثرُ من دور** (ترحيل ١٠٥، §4.ch) ══ اختيارُ دورٍ أو إلغاؤه يعيد الصلاحياتِ إلى **اتّحاد** قوالب الأدوار
+  //  المختارة (كما كان اختيارُ الدور الواحد يضع قالبَه) — والمسؤولُ يعدّلها بعدُ كما يشاء. والأعلى يصير `role`.
+  const handleRoleToggle = (role: UserRole, checked: boolean) => {
+    setUserFormData(prev => {
+      const next = checked ? [...prev.roles, role] : prev.roles.filter((r) => r !== role);
+      const picked = normalizeRoles(next);
+      if (!picked) return prev; // لا يُترك الحسابُ بلا دور
+      const roles = [picked.role, ...picked.extraRoles] as UserRole[];
+      const perms = { ...defaultPermissions[roles[0]] } as Record<string, boolean>;
+      for (const r of roles.slice(1)) {
+        for (const [k, v] of Object.entries(defaultPermissions[r])) perms[k] = perms[k] || v;
+      }
+      return { ...prev, role: picked.role as UserRole, roles, ...(perms as PermissionSet) };
+    });
   };
 
   const openEditUserDialog = (user: SystemUser) => {
@@ -2959,6 +2969,7 @@ export default function AdminSettings() {
       displayName: user.displayName || "",
       password: "",
       role: user.role as UserRole,
+      roles: rolesOf(user as any) as UserRole[],
       branchId: user.branchId,
       branchIds: Array.isArray((user as any).branchIds) ? ((user as any).branchIds as number[]) : [],
       isActive: user.isActive ?? true,
@@ -3450,7 +3461,7 @@ export default function AdminSettings() {
                           </td>
                           <td className="py-3 px-4">
                             <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                              {roleLabels[user.role as UserRole] || user.role}
+                              {rolesOf(user as any).map((r) => roleLabels[r as UserRole] || r).join(" + ")}
                             </Badge>
                           </td>
                           <td className="py-3 px-4">
@@ -4089,26 +4100,35 @@ export default function AdminSettings() {
                   </button>
                 </div>
               </div>
-              <div>
-                <Label>{t.adminSettings.roleLabel}</Label>
-                <Select
-                  value={userFormData.role}
-                  onValueChange={(value) => handleRoleChange(value as UserRole)}
-                >
-                  <SelectTrigger className="mt-1" data-testid="select-user-role">
-                    <SelectValue placeholder={t.adminSettings.selectRole} />
-                  </SelectTrigger>
-                  {/* Derived from ROLE_PICKER_ORDER, never hand-listed: this was
-                      previously seven literal <SelectItem>s, so adding the
-                      `doctor` role everywhere else still left it unpickable.
-                      Now a new role in the union is a compile error until it is
-                      given a position and a label. */}
-                  <SelectContent>
-                    {ROLE_PICKER_ORDER.map((role) => (
-                      <SelectItem key={role} value={role}>{roleLabels[role]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* ══ **أكثرُ من دور** (ترحيل ١٠٥، §4.ch) ══ مربّعاتُ اختيارٍ بدل قائمةٍ واحدة: «فاضل محاسبٌ وأحياناً
+                  استعلامات». المسؤولُ حصريّ، والأعلى يشمل بعضَ الأدنى فيظهر المشمولُ مؤشَّراً مُعطَّلاً. والأعلى يصير
+                  الدورَ الأساسيّ. القائمةُ من ROLE_PICKER_ORDER لا يدوية — دورٌ جديد بلا موضعٍ هنا خطأُ ترجمة. */}
+              <div className="col-span-2" data-testid="roles-picker">
+                <Label>{t.adminSettings.roleLabel} <span className="text-xs font-normal text-muted-foreground">(يمكن اختيار أكثر من دور)</span></Label>
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 border rounded-md p-3">
+                  {ROLE_PICKER_ORDER.map((role) => {
+                    const cover = coveredBy(userFormData.roles, role);
+                    const checked = userFormData.roles.includes(role) || cover !== null;
+                    return (
+                      <label key={role} className={`flex items-start gap-2 text-sm ${cover ? "opacity-60" : "cursor-pointer"}`}>
+                        <Checkbox
+                          checked={checked}
+                          disabled={cover !== null}
+                          onCheckedChange={(v) => handleRoleToggle(role, v === true)}
+                          data-testid={`role-${role}`}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          {roleLabels[role]}
+                          {userFormData.role === role && userFormData.roles.length > 1 && (
+                            <span className="block text-[11px] text-primary">الأساسيّ</span>
+                          )}
+                          {cover && <span className="block text-[11px] text-muted-foreground">يشمله «{roleLabels[cover]}»</span>}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               <div>
                 <Label>{t.adminSettings.languageLabel}</Label>
@@ -4127,7 +4147,7 @@ export default function AdminSettings() {
               </div>
             </div>
 
-            {userFormData.role !== "admin" && userFormData.role !== "branch_manager" && userFormData.role !== "prosthetics_expert" && (
+            {!userFormData.roles.some((r) => r === "admin" || r === "branch_manager" || r === "prosthetics_expert") && (
               <div>
                 <Label>{t.adminSettings.branchLabel}</Label>
                 <Select
@@ -4152,10 +4172,10 @@ export default function AdminSettings() {
                 The list of selected branches doubles as accessibleBranches
                 at runtime — they'll switch between them with a dropdown
                 in the header. */}
-            {(userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (
+            {userFormData.role !== "admin" && userFormData.roles.some((r) => r === "branch_manager" || r === "prosthetics_expert") && (
               <div>
                 <Label className="flex items-center gap-2">
-                  {userFormData.role === "prosthetics_expert" ? "الفروع المسموح له بها" : "الفروع التي يديرها"}
+                  {userFormData.roles.includes("branch_manager") ? "الفروع التي يديرها" : "الفروع المسموح له بها"}
                   <span className="text-xs font-normal text-muted-foreground">
                     (يمكن اختيار أكثر من فرع — سيستطيع التبديل بينها)
                   </span>
@@ -4430,15 +4450,15 @@ export default function AdminSettings() {
                       checked={userFormData.canWorkAsExpert}
                       onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canWorkAsExpert: checked }))}
                       data-testid="switch-canWorkAsExpert"
-                      disabled={userFormData.role === "prosthetics_expert"}
+                      disabled={userFormData.roles.includes("prosthetics_expert")}
                     />
                     <Label htmlFor="canWorkAsExpert" className="text-sm font-semibold">
                       يعمل أيضاً كخبير أطراف
                     </Label>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {userFormData.role === "prosthetics_expert"
-                      ? "هذا المستخدم خبير أطراف أصلاً (دوره الأساسي)."
+                    {userFormData.roles.includes("prosthetics_expert")
+                      ? "هذا المستخدم خبير أطراف أصلاً (أحد أدواره)."
                       : "يظهر في قائمة الخبراء ويُسنَد له أوامر تصنيع ويفتح لوحة التصنيع — مع احتفاظه بكامل صلاحيات دوره الأساسي (مثل محاسب خبير، أو مدير فرع خبير)."}
                   </p>
                 </div>
@@ -4591,11 +4611,9 @@ export default function AdminSettings() {
                 createUserMutation.isPending || updateUserMutation.isPending ||
                 !userFormData.username ||
                 (!editingUser && !userFormData.password) ||
-                (userFormData.role !== "admin" &&
-                  userFormData.role !== "branch_manager" &&
-                  userFormData.role !== "prosthetics_expert" &&
+                (!userFormData.roles.some((r) => r === "admin" || r === "branch_manager" || r === "prosthetics_expert") &&
                   !userFormData.branchId) ||
-                ((userFormData.role === "branch_manager" || userFormData.role === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0) 
+                (userFormData.role !== "admin" && userFormData.roles.some((r) => r === "branch_manager" || r === "prosthetics_expert") && (userFormData.branchIds ?? []).length === 0) 
               }
               data-testid="button-save-user"
             >

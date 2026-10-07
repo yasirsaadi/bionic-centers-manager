@@ -9,6 +9,7 @@
 // تصل الموظّفَ العاديّ.
 
 import { TERMINAL_STATUSES, type FollowupStatus } from "./followup";
+import { rolesOf } from "./user_roles";
 
 // ── بانتظارٌ / حُسم — من الحالة الحالية وحدها ─────────────────────────────
 
@@ -99,10 +100,12 @@ export function actorRoleLabel(v: unknown): string {
  * مكانٍ آخر** — ولا هويّةٌ مكتوبةٌ في الكود.
  */
 export function actorRoleSnapshotOf(
-  session: { role?: string | null; isAdmin?: boolean | null } | null | undefined,
+  session: { role?: string | null; roles?: readonly string[] | null; isAdmin?: boolean | null } | null | undefined,
 ): ActorRoleSnapshot | null {
   if (session?.isAdmin === true) return "global_admin";
-  return isActorRoleSnapshot(session?.role) ? (session!.role as ActorRoleSnapshot) : null;
+  //  أكثرُ من دور (ترحيل ١٠٥، §4.ch): الأعلى من أدواره الذي له لقطة — فمحاسبٌ هو استقبالٌ أيضاً يُختَم «محاسب».
+  const hit = rolesOf(session).find((r) => isActorRoleSnapshot(r));
+  return hit ? (hit as ActorRoleSnapshot) : null;
 }
 
 // ── نصوصُ الصفحة — بلا مصطلحاتٍ تقنية ────────────────────────────────────

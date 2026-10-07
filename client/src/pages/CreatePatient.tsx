@@ -42,6 +42,7 @@ import { useEffect, useState } from "react";
 import { useBranchSession } from "@/components/BranchGate";
 import { markReceptionRoutingPending } from "@/components/reception_routing";
 import { sessionResumeStore } from "@/components/device_flow_resume";
+import { hasRole, onlyRoles } from "@shared/user_roles";
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -143,16 +144,16 @@ export default function CreatePatient() {
   // doctor's worklist. Enforced again server-side on create.
   const canEditClinicalDetails =
     isAdmin ||
-    branchSession?.role === "branch_manager" ||
-    branchSession?.role === "doctor" ||
+    hasRole(branchSession, "branch_manager") ||
+    hasRole(branchSession, "doctor") ||
     Boolean((branchSession as any)?.permissions?.canWriteMedicalExam);
   // The amputation builder is the EXCEPTION (owner, 2026-07-31): reception sees
   // the limb in front of them, so recording it here saves the doctor retyping
   // it. The exam opens carrying whatever reception entered, and the doctor
   // remains free to change it — the exam is still what signs the record.
   const canEditAmputationBuilder = true;
-  const userRole = branchSession?.role;
-  const canBackdateRegistration = userRole !== "reception"; // موظفو الاستقبال لا يمكنهم التسجيل بتاريخ قديم
+  //  حصر (§4.ch): موظّفُ استقبالٍ لا دورَ له غيره لا يسجّل بتاريخٍ قديم — ومحاسبٌ هو استقبالٌ أيضاً يسجّل.
+  const canBackdateRegistration = !onlyRoles(branchSession, ["reception"]);
   
   // Non-admin users always use their branch, admin can select
   const defaultBranchId = !isAdmin && userBranchId ? userBranchId : (Number(searchParams.get("branch")) || 1);

@@ -10,6 +10,7 @@ import { STAGE_LABELS, STATUS_LABELS, SERVICE_TYPE_LABELS, FINAL_RESULT_LABELS }
 import { deviceOrdinalLabel } from "@shared/device_label";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { formatDateTimeIraq } from "@/lib/utils";
+import { hasRole, onlyRoles } from "@shared/user_roles";
 
 interface OrderRow {
   id: number;
@@ -50,12 +51,12 @@ const iqd = (n: number) => `${n.toLocaleString("en-US")} د.ع`;
 // the order page — and the server blocks this endpoint for them.
 export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
   const session = useBranchSession();
-  const isExpert = session?.role === "prosthetics_expert";
+  const isExpert = onlyRoles(session, ["prosthetics_expert"]); // حصر: خبيرٌ لا دورَ له غيره (§4.ch)
   //  ══ **مخرجُ الخطأ حيث يُرى الخطأ** (ترحيل ٠٦٤) ═══════════════════════
   //  «بدأتُ التصنيع بالخطأ» يقولها الموظّفُ لمديره، والمديرُ يقرأ الأمرَ
   //  هنا — فالزرُّ هنا، بهويّةِ الأمر بعينه لا بتخمينِ «آخر عملية».
   //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
-  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");
   const [reverseOrderId, setReverseOrderId] = useState<number | null>(null);
 
   const { data: orders } = useQuery<OrderRow[]>({

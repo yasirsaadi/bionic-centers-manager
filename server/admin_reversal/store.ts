@@ -45,6 +45,7 @@ import {
   type CorrectionIntent, type ReversalMode, type ReversalPreview,
   type ReversalImpactLine,
 } from "@shared/administrative_reversal";
+import { hasRole } from "@shared/user_roles";
 
 export class ReversalError extends Error {
   status: number;
@@ -650,6 +651,8 @@ export interface ReversalOutcome {
 export interface ReversalAuthz {
   isAdmin: boolean;
   role: string;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch). */
+  roles?: readonly string[] | null;
   /** الفروعُ التي تخوّلها الجلسةُ فعلاً. */
   scope: number[];
 }
@@ -713,7 +716,7 @@ export async function executeReversal(params: {
     //  **وحُذف الملفُّ بين المعاينة والتنفيذ** ⟶ لا كتابةَ ولا نصفُ تصحيح.
     if ((br.rows ?? [])[0]?.deleted_at) throw new ReversalError(PATIENT_IN_TRASH_ERROR, 409);
     if (!params.authz.isAdmin) {
-      if (params.authz.role !== "branch_manager") {
+      if (!hasRole(params.authz, "branch_manager")) {
         throw new ReversalError(
           "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط", 403);
       }

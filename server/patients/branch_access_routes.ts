@@ -202,7 +202,7 @@ export function registerPatientBranchAccessRoutes(app: Express, isAuthenticated:
       const r = await db.execute(sql`
         SELECT id, display_name FROM system_users
          WHERE is_active = true
-           AND (role = 'prosthetics_expert' OR can_work_as_expert = true)
+           AND (role = 'prosthetics_expert' OR extra_roles @> '["prosthetics_expert"]'::jsonb OR can_work_as_expert = true)
            AND (branch_id = ${branchId}
                 OR branch_ids @> ${JSON.stringify([branchId])}::jsonb)
          ORDER BY display_name

@@ -41,6 +41,7 @@ import {
   scopeReachesPatient, patientBranchIdsOf, resolveActingBranchId,
   adminMustChooseBranch, ADMIN_BRANCH_CHOICE_ERROR,
 } from "../patients/branch_access";
+import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -58,6 +59,7 @@ function getSession(req: Req) {
   return {
     userId: s?.userId as number | undefined,
     role: s?.role as string | undefined,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: s?.branchId as number | undefined,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -81,13 +83,14 @@ function bypassMessage(status: string | null): string {
 export function registerManufacturingRoutes(app: Express, isAuthenticated: any) {
   // A PURE expert: their primary job is expert. Drives the restrictions
   // (financial lock-out, "experts use the order page", hidden dashboard).
-  const isExpert = (s: ReturnType<typeof getSession>) => s.role === store.EXPERT_ROLE;
+  //  حصر (§4.ch): «الخبير» هنا مَن لا دورَ له غيره — قيودُه (طلباتُه وحدها، لا مالَ، لا إسناد) لا تضيّق على مديرٍ هو خبيرٌ أيضاً.
+  const isExpert = (s: ReturnType<typeof getSession>) => onlyRoles(s, [store.EXPERT_ROLE]);
   // Anyone who may OPERATE the manufacturing board: a pure expert OR a user
   // carrying the expert capability flag (accountant/manager who also does mold
   // work). This is additive to their base role — it never removes access.
   const worksAsExpert = (s: ReturnType<typeof getSession>) =>
-    s.role === store.EXPERT_ROLE || Boolean(s.permissions?.canWorkAsExpert);
-  const isManager = (s: ReturnType<typeof getSession>) => s.role === "branch_manager";
+    hasRole(s, store.EXPERT_ROLE) || Boolean(s.permissions?.canWorkAsExpert);
+  const isManager = (s: ReturnType<typeof getSession>) => hasRole(s, "branch_manager");
 
   // Can this manager/admin session act on `branchId`?
   const branchInScope = (s: ReturnType<typeof getSession>, branchId: number) =>
@@ -558,7 +561,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     // source — its UI shows a read-only summary and sends none, and this makes
     // that real for a hand-crafted request too.
     const mayWriteClinical = s.isAdmin || isManager(s)
-      || s.role === "doctor" || Boolean(s.permissions?.canWriteMedicalExam);
+      || hasRole(s, "doctor") || Boolean(s.permissions?.canWriteMedicalExam);
     const fields: any = {};
     // Legacy patients have no doctor decision to protect: reception completes
     // the specs directly, exactly as the pre-exam workflow always worked —

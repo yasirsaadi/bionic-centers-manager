@@ -6,7 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
-import { BranchGate, getBranchSession, setBranchSession } from "@/components/BranchGate";
+import { BranchGate, getBranchSession, setBranchSession, useBranchSession } from "@/components/BranchGate";
+import { landingPathOf } from "@shared/user_roles";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { AiChatDrawer } from "@/components/AiChatDrawer";
 import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
@@ -56,39 +57,12 @@ const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 
 function DashboardRoute() {
-  const [session, setSession] = useState<{ role?: string } | null>(null);
-  
-  useEffect(() => {
-    const stored = localStorage.getItem("branch_session");
-    if (stored) {
-      try {
-        setSession(JSON.parse(stored));
-      } catch {
-        setSession(null);
-      }
-    }
-  }, []);
-  
-  if (session?.role === "reception") {
-    return <Redirect to="/patients" />;
-  }
-
-  if (session?.role === "surveyor") {
-    return <Redirect to="/surveys" />;
-  }
-
-  // Prosthetics experts land straight in the manufacturing module.
-  if (session?.role === "prosthetics_expert") {
-    return <Redirect to="/manufacturing" />;
-  }
-
-  // Doctors land on their worklist, not the dashboard: clinical systems put the
-  // clinician in front of the queue waiting on them rather than a directory
-  // they would have to search.
-  if (session?.role === "doctor") {
-    return <Redirect to="/my-exams" />;
-  }
-
+  //  **الجلسةُ الحيّة لا لقطةُ التحميل** (§4.ch): كانت تُقرأ من التخزين مرّةً واحدة، فتغييرُ الدور لا يسري حتى يُعاد التحميل.
+  //  ومن يبدأ بعيداً عن اللوحة يُحسم بالقاعدة نفسِها التي تُخفيها من الشريط (`landingPathOf`) — بالأدوار كلّها:
+  //  الاستقبال ⟵ سجلّ المرضى، والاستبيانات ⟵ الاستبيانات، والخبير ⟵ التصنيع، والطبيب ⟵ معايناته.
+  const session = useBranchSession();
+  const landing = landingPathOf(session);
+  if (landing) return <Redirect to={landing} />;
   return <Dashboard />;
 }
 
@@ -184,6 +158,8 @@ function Router() {
       isAdmin: Boolean(raw.isAdmin),
       userId: raw.id ?? current?.userId,
       role: raw.role ?? current?.role,
+      //  الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch).
+      roles: raw.roles ?? current?.roles,
       displayName: raw.displayName ?? current?.displayName,
       permissions: raw.permissions ?? current?.permissions,
       shift: raw.shift ?? current?.shift,

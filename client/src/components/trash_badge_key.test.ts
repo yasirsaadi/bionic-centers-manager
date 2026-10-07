@@ -51,8 +51,11 @@ console.log("\n── عقدُ الاستعمال في Sidebar.tsx وPatientTras
     (sidebarSrc.match(/.*TRASH_BADGE_LAST_SEEN_KEY.*/g) ?? []).join("\n"));
   check("٩. **وطلبُ العدّاد يبني المفتاحَ بـ`branchSession?.userId`**",
     /localStorage\.getItem\(trashBadgeSeenKey\(branchSession\?\.userId\)\)/.test(sidebarSrc));
-  check("١٠. **والنوعُ المحليّ `BranchSession` صار يحمل `userId`** — كان غائباً",
-    /interface BranchSession \{[^}]*userId\?:\s*number/.test(sidebarSrc));
+  //  ومنذ §4.ch لا نوعَ محليّاً: الشريطُ يقرأ الجلسةَ الحيّة (`useBranchSession`)، ونوعُها في `BranchGate.tsx` يحمل `userId`.
+  const gateSrc = readFileSync(join(import.meta.dirname, "../components/BranchGate.tsx"), "utf8");
+  check("١٠. **والجلسةُ التي يقرؤها الشريطُ تحمل `userId`** — من `useBranchSession()` ونوعِه في BranchGate",
+    /const branchSession = useBranchSession\(\);/.test(sidebarSrc)
+      && /interface BranchSession \{[^}]*userId\?:\s*number/.test(gateSrc));
 }
 {
   const trashPageSrc = readFileSync(join(import.meta.dirname, "../pages/PatientTrash.tsx"), "utf8");

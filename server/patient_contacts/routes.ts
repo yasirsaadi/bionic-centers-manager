@@ -35,6 +35,7 @@ import {
   listActiveContacts, listPendingTokens, getLinkToken, getContact,
   isContactChannel, isContactRelation,
 } from "./store";
+import { hasRole, rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -56,6 +57,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -96,8 +98,8 @@ const RECEPTION_ROLE = "reception";
 function mayManageCommunication(req: Req): boolean {
   const s = getSession(req);
   if (s.isAdmin) return true;
-  if (s.role === MANAGER_ROLE) return true;
-  if (s.role === RECEPTION_ROLE) return Boolean(s.permissions?.canViewPatients);
+  if (hasRole(s, MANAGER_ROLE)) return true;
+  if (hasRole(s, RECEPTION_ROLE)) return Boolean(s.permissions?.canViewPatients);
   return false;
 }
 

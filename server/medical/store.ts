@@ -43,6 +43,7 @@ import {
   closeRequestsAwaitingExam, specialtyLevelRequestSql,
   retagReviewRequestsForRetypedEpisode, type ClosedReviewRequest,
 } from "../medical_review/store";
+import { hasRole } from "@shared/user_roles";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -780,7 +781,7 @@ export async function isExpertInBranch(userId: number, branchId: number | null):
       and(
         eq(systemUsers.id, userId),
         eq(systemUsers.isActive, true),
-        sql`(${systemUsers.role} = 'prosthetics_expert' OR ${systemUsers.canWorkAsExpert} = true)`,
+        sql`(${systemUsers.role} = 'prosthetics_expert' OR ${systemUsers.extraRoles} @> '["prosthetics_expert"]'::jsonb OR ${systemUsers.canWorkAsExpert} = true)`,
         sql`(${systemUsers.branchIds} @> ${JSON.stringify([branchId])}::jsonb OR ${systemUsers.branchId} = ${branchId})`,
       ),
     );
@@ -2178,6 +2179,7 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
   const [user] = await db
     .select({
       role: systemUsers.role,
+      extraRoles: systemUsers.extraRoles,
       canWrite: systemUsers.canWriteMedicalExam,
       specialties: systemUsers.medicalSpecialties,
       isActive: systemUsers.isActive,
@@ -2189,7 +2191,7 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
   // A user whose PRIMARY role is doctor carries the capability implicitly;
   // anyone else needs the explicit flag. Mirrors how a pure prosthetics_expert
   // works as an expert without needing can_work_as_expert set.
-  const isDoctor = user.role === DOCTOR_ROLE || Boolean(user.canWrite);
+  const isDoctor = hasRole(user, DOCTOR_ROLE) || Boolean(user.canWrite);
   if (!isDoctor) return [];
   const raw = Array.isArray(user.specialties) ? user.specialties : [];
   const chosen = raw.filter(isMedicalSpecialty);

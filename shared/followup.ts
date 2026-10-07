@@ -7,6 +7,8 @@
 // **والحراسة في الخادم لا هنا**: ما في هذا الملفّ يُستعمل للعرض وللقرار
 // معاً، لكن الفاعل يُقرأ من الجلسة الموقَّعة في الخادم دائماً.
 
+import { hasRole } from "./user_roles";
+
 export const FOLLOWUP_STATUSES = [
   "awaiting_patient_decision",
   "follow_up",
@@ -263,6 +265,8 @@ export function computeCommercialPrice(params: {
 export interface FollowupSessionLike {
   userId?: number | null;
   role?: string | null;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — `hasRole` يقرأ `role` معها. */
+  roles?: readonly string[] | null;
   isAdmin?: boolean | null;
   branchId?: number | null;
   permissions?: Record<string, any> | null;
@@ -290,9 +294,9 @@ export interface FollowupSessionLike {
  */
 export function canViewFollowup(s: FollowupSessionLike | null | undefined): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager" || s?.role === "reception") return true;
-  if (s?.role === "accountant") return true;
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  if (hasRole(s, "branch_manager") || hasRole(s, "reception")) return true;
+  if (hasRole(s, "accountant")) return true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**
@@ -321,10 +325,10 @@ export function canActCommercially(s: FollowupSessionLike | null | undefined): b
   //  **سلطةُ المسؤول تُفحَص أوّلاً دائماً** — قبل أي قيدِ دور. فحسابٌ دورُه
   //  «طبيب» و`isAdmin` صحيحٌ يمرّ من هنا بسلطته لا بدوره.
   if (s?.isAdmin === true) return true;
-  if (s?.role === "reception" || s?.role === "branch_manager") return true;
+  if (hasRole(s, "reception") || hasRole(s, "branch_manager")) return true;
   //  والطبيبُ المخوَّل **يستطيع ولا يُطلَب منه**: يسدّ فراغاً حين يقف
   //  المريضُ أمامه والاستعلامات مشغول — ولا ينتظره أحد.
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**
@@ -373,14 +377,14 @@ export function canCancelDecision(
   s: FollowupSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  return s?.role === "branch_manager";
+  return hasRole(s, "branch_manager");
 }
 
 export function canSetCommercialPrice(
   s: FollowupSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  return s?.role === "branch_manager";
+  return hasRole(s, "branch_manager");
 }
 
 /**
@@ -403,8 +407,8 @@ export function canSignalPurchaseInterest(
   s: FollowupSessionLike | null | undefined,
 ): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "reception" || s?.role === "branch_manager") return true;
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  if (hasRole(s, "reception") || hasRole(s, "branch_manager")) return true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**
@@ -424,7 +428,7 @@ export function canDecideLegacyPriceRequest(
 ): boolean {
   if (s?.isAdmin === true) return true;
   //  المقارنة صريحة: صلاحيةٌ غامضة القيمة تُقرأ «لا».
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**
@@ -459,9 +463,9 @@ export const canApprove = canDecideLegacyPriceRequest;
  */
 export function canConfirmPurchase(s: FollowupSessionLike | null | undefined): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "reception" || s?.role === "branch_manager") return true;
-  if (s?.role === "accountant") return true;
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  if (hasRole(s, "reception") || hasRole(s, "branch_manager")) return true;
+  if (hasRole(s, "accountant")) return true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**

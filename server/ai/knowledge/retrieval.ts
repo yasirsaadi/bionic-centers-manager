@@ -11,6 +11,7 @@ import { listActiveArticlesInScope } from "./store";
 import { selectTopArticles, type KnowledgeMatch } from "@shared/ai_knowledge_retrieval";
 import { capabilitiesFor } from "@shared/ai_capabilities";
 import type { AiAccessContext } from "../access";
+import { hasRole } from "@shared/user_roles";
 
 export const MAX_KNOWLEDGE_RESULTS = 3;
 
@@ -35,7 +36,7 @@ export async function retrieveKnowledge(
     allowFinance: access.mode === "financial" || access.permissions?.canManageAccounting === true,
     //  «سلطةٌ إدارية» هنا = نفسُ مَن يملك التصحيح الإداريّ فعلياً في
     //  التطبيق: المسؤولُ العام، أو مديرُ الفرع ضمن فرعه.
-    allowAdministration: access.isAdmin || access.role === "branch_manager",
+    allowAdministration: access.isAdmin || hasRole(access, "branch_manager"),
     capabilities: Array.from(capabilitiesFor(access)),
   });
   return selectTopArticles(queryText, candidates, MAX_KNOWLEDGE_RESULTS);

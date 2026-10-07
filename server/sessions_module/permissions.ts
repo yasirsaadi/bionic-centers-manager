@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { rolesOf } from "@shared/user_roles";
 
 export type BranchSession = {
   branchId?: number | null;
@@ -23,6 +24,7 @@ export function getUserContext(req: Request) {
     branchId: s?.branchId ?? null,
     isAdmin: Boolean(s?.isAdmin),
     role: s?.role ?? "",
+    roles: rolesOf(s),
     ipAddress: req.ip ?? null,
     userAgent: req.get("user-agent") ?? null,
   };

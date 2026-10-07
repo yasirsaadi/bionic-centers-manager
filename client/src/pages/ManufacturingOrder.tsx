@@ -28,6 +28,7 @@ import {
   isAtOrBeyondMoldStage, defaultNextStage, nextStages, reworkReturnStages,
   HOLD_STATUSES, HOLD_REASONS, isHoldStatus, toPatientStageView,
 } from "@shared/manufacturing";
+import { hasRole } from "@shared/user_roles";
 
 function fmt(iso: string | null): string {
   if (!iso) return "—";
@@ -44,7 +45,7 @@ export default function ManufacturingOrder() {
   const queryClient = useQueryClient();
   const session = useBranchSession();
   const isAdmin = !!session?.isAdmin;
-  const isManager = session?.role === "branch_manager";
+  const isManager = hasRole(session, "branch_manager");
   const canReassign = isAdmin || isManager;
 
   const orderKey = [`/api/manufacturing/orders/${id}`];

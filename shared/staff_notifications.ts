@@ -46,8 +46,13 @@ export function staffEventDef(key: string): StaffEventDef | undefined {
 // ══ **مَن يحقّ له النوع — بالدور** (قرارُ المالك ٢٠٢٦-١٠-٠٤) ══════════════════════════════════════════════
 // «هند موظّفةُ استقبال يظهر لها مربّعُ المعاينات — وهذا غير صحيح». فكلُّ موظّفٍ يُعرض له ما يخصّ دورَه وحده، والمسؤولُ
 // يختار منه. **والخادمُ يرفض غيرَه، والمُرسِلُ يتخطّاه** — فتغيّرُ دور موظّفٍ يوقف ما لم يعد له بلا تنظيف.
+import { hasRole } from "./user_roles";
+
 export interface StaffEligibilityUser {
   role: string;
+  /** الأدوارُ الإضافية (ترحيل ١٠٥، §4.ch) — من `extra_roles`. */
+  extraRoles?: unknown;
+  roles?: readonly string[] | null;
   canWriteMedicalExam?: boolean | null;
   canWorkAsExpert?: boolean | null;
 }
@@ -60,22 +65,23 @@ const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "ai
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   const out = new Set<string>();
-  const role = String(u.role ?? "");
-  if (role === "admin") return STAFF_EVENT_KEYS.slice();
-  if (role === "doctor" || u.canWriteMedicalExam) DOCTOR_EVENTS.forEach((k) => out.add(k));
-  if (role === "prosthetics_expert" || u.canWorkAsExpert) EXPERT_EVENTS.forEach((k) => out.add(k));
+  //  الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — والأنواعُ اتّحادُ ما يصل كلَّ دور.
+  const role = (r: string) => hasRole(u, r);
+  if (role("admin")) return STAFF_EVENT_KEYS.slice();
+  if (role("doctor") || u.canWriteMedicalExam) DOCTOR_EVENTS.forEach((k) => out.add(k));
+  if (role("prosthetics_expert") || u.canWorkAsExpert) EXPERT_EVENTS.forEach((k) => out.add(k));
   //  والمديرُ بلا «طلب معاينة» — «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤)؛ ومَن مُنح كتابةَ المعاينة يصله بالسطر أعلاه.
-  if (role === "branch_manager") [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));
-  if (role === "reception" || role === "accountant") FRONT_DESK_EVENTS.forEach((k) => out.add(k));
+  if (role("branch_manager")) [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));
+  if (role("reception") || role("accountant")) FRONT_DESK_EVENTS.forEach((k) => out.add(k));
   void ADMIN_ONLY_EVENTS;
   return STAFF_EVENT_KEYS.filter((k) => out.has(k));
 }
 
 /** ترتيبُ اللوحة: المسؤول ⟵ المدراء ⟵ الخبراء ⟵ الأطبّاء ⟵ بقيّة الموظّفين. */
 export function staffRoleRank(u: StaffEligibilityUser): number {
-  if (u.role === "admin") return 0;
-  if (u.role === "branch_manager") return 1;
-  if (u.role === "prosthetics_expert" || u.canWorkAsExpert) return 2;
-  if (u.role === "doctor" || u.canWriteMedicalExam) return 3;
+  if (hasRole(u, "admin")) return 0;
+  if (hasRole(u, "branch_manager")) return 1;
+  if (hasRole(u, "prosthetics_expert") || u.canWorkAsExpert) return 2;
+  if (hasRole(u, "doctor") || u.canWriteMedicalExam) return 3;
   return 4;
 }

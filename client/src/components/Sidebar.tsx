@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import { clearBranchSession } from "@/components/BranchGate";
+import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
 import { BranchSwitcher, branchSwitcherVisible } from "@/components/BranchSwitcher";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -16,7 +16,7 @@ import { DECISION_QUEUE_SIDEBAR_LABEL } from "@shared/decision_queue";
 //  متطابقٌ اليوم، لكنّه ينحرف صامتاً إن تغيّرت القاعدةُ القانونية في
 //  `shared/commercial.ts` ولم يتذكّر أحدٌ هذا الملفّ.
 import { canCompleteReceptionSale } from "@shared/commercial";
-import { canCreateReview, canDecideReview, RETURNED_FROM_DOCTOR_TITLE } from "@shared/medical_review";
+import { canCreateReview, canDecideReview, canSuperviseReview, RETURNED_FROM_DOCTOR_TITLE } from "@shared/medical_review";
 //  ══ **«خصومات سابقة»** (تصحيحٌ تشغيليّ ٢٠٢٦-٠٨-٢٨) ═══════════════════
 //  نفسُ المبدأ أعلاه بالضبط: `canApproveServiceDiscount` هي الدالّةُ
 //  القانونية التي تحرس `/api/discounts/:id/decide` فعلياً
@@ -28,21 +28,10 @@ import logoImage from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useLanguage } from "@/i18n/LanguageContext";
-import { isPhysioRole } from "@shared/user_roles";
+import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_roles";
+import { canWriteCashBook } from "@shared/cash_book";
+import { canOperateNoExam } from "@shared/pending_charge";
 
-interface BranchSession {
-  branchId: number;
-  branchName: string;
-  isAdmin: boolean;
-  //  **موجودةٌ في الكائن المخزَّن أصلاً** (`BranchGate.tsx` يكتبها عند
-  //  الدخول) — غابت عن هذا النوع المحليّ فقط. أُضيفت لبناء مفتاح شارة
-  //  المحذوفات لكلّ مستخدم (تصحيحٌ لاحق، 2026-08-31)؛ لا قراءةَ فعلية
-  //  جديدة، `JSON.parse` كان يحملها ضمنياً دون أن يراها النوع.
-  userId?: number;
-  role?: string;
-  displayName?: string;
-  accessibleBranches?: number[];
-}
 
 interface BranchSettings {
   branchId: number;
@@ -59,20 +48,12 @@ export function Sidebar() {
   const permissions = usePermissions();
   const { t, language } = useTranslation();
   const { setLanguage } = useLanguage();
-  const [branchSession, setBranchSession] = useState<BranchSession | null>(null);
+  //  ══ **الجلسةُ الحيّة** (§4.ch) ══ كانت نسخةً تُقرأ من التخزين مرّةً عند التركيب ولا تتحدّث — فما يغيّره المسؤولُ
+  //  في حساب موظّفٍ (دورٌ أو صلاحية) لا يبلغ شريطَه حتى يُعيد التحميل، وقد تُقرأ عند التحميل لقطةٌ أقدم. فصار الشريطُ
+  //  يقرأ المخزنَ المشترك الذي يحدّثه `/api/auth/user` (`App.tsx`) — نفسَ ما يقرؤه `usePermissions`.
+  const branchSession = useBranchSession();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("branch_session");
-    if (stored) {
-      try {
-        setBranchSession(JSON.parse(stored));
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
 
   // Fetch branch settings
   //  ══ تصل بلا خروجٍ وعودة (٢٠٢٦-٠٩-١٩) ═══════════════════════════════
@@ -90,10 +71,12 @@ export function Sidebar() {
 
   // Delivery-alert count for the التنبيهات badge. Light polling keeps the
   // badge honest without hammering the server.
+  //  **قاعدةُ الخادم نفسُها** (`/api/manufacturing/notifications`): الخبيرُ والمديرُ والمسؤول، وإلّا فموظّفُ فرعٍ يرى
+  //  المرضى أو المحاسبة — لا قائمةُ أدوارٍ كانت تُظهر الصفحةَ لاستقبالٍ بلا صلاحيةٍ فيصله ٤٠٣.
   const alertEligible = !!branchSession && (
     branchSession.isAdmin ||
-    permissions.canWorkAsExpert ||
-    ["prosthetics_expert", "branch_manager", "reception", "accountant"].includes(branchSession.role ?? "")
+    hasAnyRole(branchSession, ["prosthetics_expert", "branch_manager"]) ||
+    (Boolean(branchSession.branchId) && (permissions.canViewPatients || permissions.canManageAccounting))
   );
   const { data: alertData } = useQuery<{ alertCount: number }>({
     queryKey: ["/api/manufacturing/notifications"],
@@ -111,11 +94,8 @@ export function Sidebar() {
   //  رسالةٌ تمرّ فتضيع، وطابورٌ بلا عددٍ ظاهر لا يُفتَح. فالعددُ على القائمة
   //  نفسِها: **عددُ الفرع** هو الحاكم (المهمّةُ للفرع لا للموظّف)، ومَن
   //  أنشأها يراها مُبرَزةً داخل الصفحة.
-  const returnedEligible = !!branchSession && (
-    branchSession.isAdmin
-    || branchSession.role === "branch_manager"
-    || permissions.canAddPatients
-  );
+  //  البوّابةُ في الخادم `canOperateNoExam` (المسؤول أو «إضافة مرضى») — لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠).
+  const returnedEligible = canOperateNoExam(branchSession as any);
   const { data: returnedData } = useQuery<{ branch: number; mine: number }>({
     queryKey: ["/api/no-exam/returned/count"],
     enabled: returnedEligible,
@@ -272,7 +252,7 @@ export function Sidebar() {
 
   //  ══ **شارةُ «القالب الاختباري»** (§4.bz) — مرضى يُطلَب الاتصالُ بهم اليوم بشأن قالبهم النهائي ════════
   //  للاستعلامات والإدارة لا للخبير. **بلا `refetchInterval`** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): تتحدّث عند الكتابة والعودة.
-  const trialEligible = Boolean(branchSession) && branchSession?.role !== "prosthetics_expert"
+  const trialEligible = Boolean(branchSession) && !onlyRoles(branchSession, ["prosthetics_expert"])
     && Boolean(branchSession?.isAdmin || permissions.canViewPatients);
   const { data: trialRows } = useQuery<{ callState: string | null }[]>({
     queryKey: ["/api/manufacturing/trial-awaiting"],
@@ -294,12 +274,14 @@ export function Sidebar() {
     { label: language === "ar" ? "التقرير اليومي للمرضى" : "Daily Patient Report", icon: CalendarDays, href: "/reports/daily-patients", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
     //  دفترُ القاصة اليوميّ (§4.ca) — للمحاسب ومدير الفرع والمسؤول وحدهم، كبوّابة الخادم.
-    { label: "دفتر القاصة", icon: BookOpen, href: "/cash-book", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager", "accountant"] as const },
+    { label: "دفتر القاصة", icon: BookOpen, href: "/cash-book", adminOnly: false, settingKey: null, permission: null, eligible: canWriteCashBook(branchSession) },
     //  قاصةُ الدكتور (§4.cb) — للمسؤول وحده بقرار المالك.
     { label: "قاصة الدكتور", icon: Wallet, href: "/dr-box", adminOnly: true, settingKey: null, permission: null },
     { label: t.sidebar.branches, icon: Building2, href: "/branches", adminOnly: true, settingKey: null, permission: null },
-    { label: t.sidebar.statistics, icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: "canViewReports" as const },
-    { label: t.sidebar.surveys, icon: ClipboardCheck, href: "/surveys", adminOnly: false, settingKey: null, permission: "canManageSurveys" as const },
+    //  الإحصائياتُ تقرأ `/api/patients` (تحتاج «عرض المرضى») مع تقاريرها — فبلا الاثنين تُفتح فارغة (§4.ch).
+    { label: t.sidebar.statistics, icon: BarChart3, href: "/statistics", adminOnly: false, settingKey: "showStatistics" as const, permission: null, eligible: Boolean(branchSession?.isAdmin) || (permissions.canViewReports && permissions.canViewPatients) },
+    //  والاستبيانُ يُختار له مريضٌ من السجلّ — فبلا «عرض المرضى» لا يُملأ.
+    { label: t.sidebar.surveys, icon: ClipboardCheck, href: "/surveys", adminOnly: false, settingKey: null, permission: null, eligible: Boolean(branchSession?.isAdmin) || (permissions.canManageSurveys && permissions.canViewPatients) },
     { label: t.sidebar.sessionEntry, icon: Activity, href: "/session-tracking/entry", adminOnly: false, settingKey: null, permission: "canEnterSessions" as const },
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
@@ -322,8 +304,10 @@ export function Sidebar() {
     { label: DISCOUNT_HISTORY_TITLE, icon: BadgePercent, href: "/discount-approvals", adminOnly: false, settingKey: null, permission: null, eligible: discountHistoryEligible, badge: discountHistoryCount, hideWhenZero: true },
     //  ══ **شارةُ العدد** (تحكّمُ شاراتِ الشريط الجانبي، 2026-08-31) ═══════
     //  طابورُ عمل — لا تُخفيها المشاهدة، وحدها القائمةُ تفرغ.
-    { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const, badge: worklistCount },
-    { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const },
+    //  «معايناتي» لمن يكتب المعاينة وحده — ولا للمسؤول بسلطته: لا قائمةَ عملٍ له بلا العلَم (§4.ch).
+    { label: "معايناتي", icon: Stethoscope, href: "/my-exams", adminOnly: false, settingKey: null, permission: "canWriteMedicalExam" as const, noAdminBypass: true, badge: worklistCount },
+    //  «مراجعة الطبيب» بقاعدة الخادم `canSuperviseReview`: المسؤولُ ومديرُ الفرع يشرفان، والطبيبُ يقرّر (§4.ch).
+    { label: "مراجعة الطبيب", icon: ClipboardCheck, href: "/medical-review", adminOnly: false, settingKey: null, permission: null, eligible: canSuperviseReview(branchSession as any) },
     { label: RETURNED_FROM_DOCTOR_TITLE, icon: Undo2, href: "/returned-from-doctor", adminOnly: false, settingKey: null, permission: null, eligible: returnedFromDoctorEligible, badge: returnedFromDoctorCount },
     //  **المراجعةُ المالية لعمليات «بلا معاينة»** — طابورٌ مستقلٌّ عن
     //  «معايناتي» و«مراجعة الطبيب»: سؤالٌ واحد له شاشتُه.
@@ -341,8 +325,8 @@ export function Sidebar() {
     //  ══ **شارةٌ بلا صفّ عند الصفر** (المرحلة الخامسة) ══════════════════
     //  طابورٌ فارغٌ لا يستحقّ سطراً في الشريط الجانبيّ — `hideWhenZero`
     //  تُخفي الصفَّ كلَّه لا الشارةَ وحدها (كانت الشارةُ تختفي والصفُّ يبقى).
-    { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: legacyReviewCount, hideWhenZero: true },
-    { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, roles: ["reception", "branch_manager"] as const, badge: returnedCount, hideWhenZero: true },
+    { label: LEGACY_QUEUE_TITLE, icon: Wallet, href: "/no-exam-review", adminOnly: false, settingKey: null, permission: null, eligible: returnedEligible, badge: legacyReviewCount, hideWhenZero: true },
+    { label: "مُعادة للتصحيح", icon: Undo2, href: "/returned-charges", adminOnly: false, settingKey: null, permission: null, eligible: returnedEligible, badge: returnedCount, hideWhenZero: true },
     //  ══ **«طلبات تصحيح الدفعات»** (إكمالُ واجهة تحكّم تصحيح الدفعات،
     //  2026-08-30) ══════════════════════════════════════════════════════
     //  `adminOnly: true` وحدها تحجب مديرَ الفرع وكلَّ دورٍ آخر — لا قائمةَ
@@ -353,11 +337,14 @@ export function Sidebar() {
     { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount, hideWhenZero: true },
     //  سردٌ إشرافيٌّ للقراءة فقط — بلا شارةٍ (ليست طابورَ انتظار).
     { label: "المراجعة اليومية", icon: Eye, href: "/daily-review", adminOnly: true, settingKey: null, permission: null },
-    { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager"] as const },
-    { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, roles: ["prosthetics_expert", "branch_manager", "reception", "accountant"] as const, badge: alertCount },
+    //  لوحةُ التصنيع: المسؤولُ والمديرُ (اللوحة) والخبيرُ بدوره أو بقدرته (أوامرُه) — كبوّابتَي الخادم.
+    { label: "تصنيع الأطراف والمساند", icon: Wrench, href: "/manufacturing", adminOnly: false, settingKey: null, permission: null, eligible: Boolean(branchSession?.isAdmin) || hasAnyRole(branchSession, ["prosthetics_expert", "branch_manager"]) || permissions.canWorkAsExpert },
+    { label: "التنبيهات", icon: Bell, href: "/notifications", adminOnly: false, settingKey: null, permission: null, eligible: alertEligible, badge: alertCount },
     //  **والمحذوفاتُ لمن يحذف ويستعيد** — مسؤولٌ أو مديرُ فرعٍ أو طبيب.
-    { label: TRASH_TITLE, icon: Trash2, href: "/patient-trash", adminOnly: false, settingKey: null, permission: null, roles: ["branch_manager", "doctor"] as const, badge: trashCount },
-    { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: "canManageSettings" as const },
+    //  بقاعدة الخادم `canTrashPatients` (المسؤول أو «حذف المرضى») — كانت قائمةَ أدوارٍ تُظهرها لكلّ طبيبٍ فيصله «غير مصرّح» (§4.ch).
+    { label: TRASH_TITLE, icon: Trash2, href: "/patient-trash", adminOnly: false, settingKey: null, permission: null, eligible: trashEligible, badge: trashCount },
+    //  للمسؤول بسلطته وحدها كالخادم — كان يُشترط معه علَمُ `canManageSettings` المخزَّن فيختفي عن مسؤولٍ أُنشئ بعد إزالته من النافذة.
+    { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: null },
   ];
 
   // Filter menu items based on admin status, branch settings, and permissions
@@ -367,35 +354,13 @@ export function Sidebar() {
       return false;
     }
     
-    // Hide dashboard for reception, therapist, surveyor, prosthetics-expert and
-    // doctor users — each of them lands on their own working screen instead.
-    if (item.href === "/" && (branchSession?.role === "reception" || isPhysioRole(branchSession?.role) || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert" || branchSession?.role === "doctor")) {
+    //  لوحةُ التحكّم تُخفى عمّن **أدوارُه كلُّها** لها شاشةُ عملٍ أخرى (§4.ch) — القاعدةُ نفسُها التي تحوّله عنها (`App.tsx`).
+    if (item.href === "/" && hidesDashboard(branchSession)) {
       return false;
     }
 
-    // Role-restricted items: an allow-list of roles. Admins always pass
-    // (they have isAdmin, not a `role`); a non-admin must match the list.
-    // The expert CAPABILITY flag also grants any expert-gated item, so an
-    // accountant/manager who also works as an expert sees the manufacturing
-    // board even though their primary role isn't prosthetics_expert.
-    const itemRoles = (item as any).roles as string[] | undefined;
-    if (itemRoles && !branchSession?.isAdmin) {
-      const matchesRole = itemRoles.includes(branchSession?.role ?? "");
-      const expertBypass = itemRoles.includes("prosthetics_expert") && permissions.canWorkAsExpert;
-      //  **والمُعادات كذلك**: البوّابةُ في الخادم `canAddPatients` — وهي
-      //  ما يعنيه «استقبال» — فمَن يحملها يرى طابورَه ولو كان دورُه شيئاً
-      //  آخر. ولا تُفتَح لمن لا يملكها.
-      const returnedBypass = item.href === "/returned-charges"
-        && permissions.canAddPatients;
-      //  **والطابورُ الموروث كذلك**: بوّابتُه في الخادم `canAddPatients` —
-      //  وهي ما يعنيه «استقبال» — فمَن يحملها يراه ولو كان دورُه شيئاً آخر.
-      //  **ولا يُفتَح بـ`canWriteMedicalExam` بعد اليوم**: تلك صلاحيةُ كتابةِ
-      //  سجلٍّ سريريّ، ولا تمنح سلطةً ماليّة.
-      const noExamReviewBypass = item.href === "/no-exam-review"
-        && permissions.canAddPatients;
-      if (!matchesRole && !expertBypass && !returnedBypass
-        && !noExamReviewBypass) return false;
-    }
+    //  **لا قوائمَ أدوارٍ في الشريط بعد اليوم** (§4.ch): كلُّ عنصرٍ يُحسم بالدالّة التي تحرس صفحتَه في الخادم (`eligible`)
+    //  أو بعلَم صلاحيته — فلا يظهر عنصرٌ يفتح صفحةً تقول «غير مصرّح»، ولا يختفي عمّن يفتحها الخادمُ له.
 
     //  ══ **أهليّةٌ من دالّةٍ قانونية — لا قائمةَ أدوار** (تصحيحٌ لاحق) ═════
     //  عكسُ `roles` أعلاه تماماً: هذا العنصرُ (الآن «بانتظار الحسم» وحدها)
@@ -413,8 +378,9 @@ export function Sidebar() {
       }
     }
     
-    // Check permissions
-    if (item.permission && !permissions[item.permission]) {
+    // Check permissions — والمسؤولُ يمرّ بسلطته كالخادم (`isAdmin || العلَم`) إلّا ما لا معنى له بلا العلَم.
+    if (item.permission && !permissions[item.permission]
+      && !(branchSession?.isAdmin && !(item as any).noAdminBypass)) {
       // The accounting section is also reachable with the narrow
       // "add expenses" grant (expenses tab only) — not just full management.
       if (!(item.href === "/accounting" && permissions.canAddExpenses)) {
@@ -496,8 +462,9 @@ export function Sidebar() {
                 : <User className="w-4 h-4 text-primary shrink-0" />}
               <div className="min-w-0 leading-tight">
                 <div className="font-medium text-slate-700 truncate">{branchSession.displayName}</div>
-                <div className="text-[10px] text-muted-foreground truncate">
-                  {branchSession.role ? (t.roles[branchSession.role as keyof typeof t.roles] || branchSession.role) : ""}
+                <div className="text-[10px] text-muted-foreground truncate"
+                  title={rolesOf(branchSession).map((r) => t.roles[r as keyof typeof t.roles] || r).join(" + ")}>
+                  {rolesOf(branchSession).map((r) => t.roles[r as keyof typeof t.roles] || r).join(" + ")}
                   {/*  اسمُ الفرع هنا لمن لا مبدِّلَ له وحده — فلا يتكرّر. */}
                   {!branchSwitcherVisible(branchSession) && branchSession.branchName
                     ? ` · ${t.branches[branchSession.branchName as keyof typeof t.branches] || branchSession.branchName}` : ""}

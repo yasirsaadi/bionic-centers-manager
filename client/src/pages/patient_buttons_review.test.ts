@@ -57,9 +57,10 @@ check(/إتمام البيع/.test(msg) && /لم يشترِ/.test(msg) && !/طل
   "٣. رفضُ تعديل كلفة جهازٍ تحت متابعة يدلّ على «إتمام البيع» أو «لم يشترِ»", msg);
 
 console.log("\n── ٤. حذفُ المستند ──");
-check(/const mayDeleteDocuments = isAdmin \|\| branchSession\?\.role === "branch_manager";/.test(details),
+//  منذ §4.ch بـ`hasRole` (الأدوارُ كلُّها) — والقاعدةُ هي هي في الطرفين.
+check(/const mayDeleteDocuments = isAdmin \|\| hasRole\(branchSession, "branch_manager"\);/.test(details),
   "٤أ. مَن يحذف = المسؤول أو مدير الفرع — كـ`isAdminOrManager` في الخادم");
-check(/isAdminOrManager = [\s\S]{0,200}branchSession\?\.isAdmin\) \|\| branchSession\?\.role === "branch_manager"/.test(routes),
+check(/isAdminOrManager = [\s\S]{0,200}branchSession\?\.isAdmin\) \|\| hasRole\(branchSession, "branch_manager"\)/.test(routes),
   "   والخادمُ ما زال يحكم بالقاعدة نفسها");
 const delIdx = details.indexOf("button-delete-doc-");
 const before = details.slice(Math.max(0, delIdx - 600), delIdx);
