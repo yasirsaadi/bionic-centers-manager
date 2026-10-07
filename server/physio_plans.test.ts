@@ -50,7 +50,7 @@ async function cleanup() {
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
-  await q(`DELETE FROM physio_protocols WHERE code = $1`, [PCODE]);
+  await q(`DELETE FROM physio_protocols WHERE code = ANY($1::text[])`, [[PCODE, PCODE + "-2"]]);
   await q(`DELETE FROM physio_device_branches WHERE branch_id = ANY($1::int[])`, [[B1, B2]]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
@@ -233,6 +233,29 @@ async function main() {
     same("ي.٦ وما حُذف كاملاً في سطر التدقيق (الأجهزةُ والمنفّذون)", [delAudit.length, delAudit[0]?.old_values?.devices?.length, delAudit[0]?.old_values?.assignees], [1, 1, [TECH]]);
     const del2 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "للحذف" })).json.id as number;
     same("ي.٧ والمسؤولُ يحذف", (await call("DELETE", `/api/physio/plans/${del2}`, S.admin)).status, 200);
+
+    console.log("\n── م. تغييرُ نوع الخطّة — للمسؤول والمشرف العام حصراً ──");
+    const P2 = (await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, goals, sessions_per_week, duration_weeks, status)
+                         VALUES ($1, 'ألم أسفل الظهر', 'Low back pain', 'spine', 'adult', 'تقليل الألم', 2, 6, 'approved') RETURNING id`, [PCODE + "-2"])).rows[0].id;
+    await q(`INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, minutes, display_order) VALUES ($1,$2,'recommended',25,0)`, [P2, D4]);
+    await q(`INSERT INTO physio_device_branches (device_id, branch_id, available) VALUES ($1,$2,true) ON CONFLICT (device_id, branch_id) DO UPDATE SET available = true`, [D4, B1]);
+    const ct = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P })).json.id as number;
+    await call("PUT", `/api/physio/plans/${ct}`, S.spec, { titleAr: "شلل دماغي", notes: "ملاحظةُ الأخصائيّ لهذا المريض", devices: [{ deviceId: D1, minutes: 15 }] });
+    await call("PUT", `/api/physio/plans/${ct}/assignees`, S.spec, { userIds: [TECH] });
+    await call("POST", `/api/physio/plans/${ct}/approve`, S.sup);
+    same("م.١ الأخصائيُّ لا يغيّر النوع", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.spec, { protocolId: P2 })).status, 403);
+    same("م.٢ والنوعُ نفسُه ⟵ ٤٠٩", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.sup, { protocolId: P })).status, 409);
+    const assignedBefore = (await outbox("physio_plan_assigned", ct)).length;
+    same("م.٣ المشرفُ يغيّر النوع", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.sup, { protocolId: P2 })).status, 200);
+    const cp = (await call("GET", `/api/physio/plans/${ct}`, S.sup)).json;
+    same("م.٤ الخطّةُ تمتلئ من البروتوكول الجديد: العنوانُ والأهدافُ والجرعةُ والأجهزة",
+      [cp.protocol?.id, cp.titleAr, cp.goals, cp.sessionsPerWeek, cp.devices.map((d: any) => [d.deviceId, d.minutes])],
+      [P2, "ألم أسفل الظهر", "تقليل الألم", 2, [[D4, 25]]]);
+    same("م.٥ ويبقى المنفّذون وملاحظةُ الأخصائيّ والحالة", [cp.assignees.map((a: any) => a.userId), cp.notes, cp.status], [[TECH], "ملاحظةُ الأخصائيّ لهذا المريض", "approved"]);
+    same("م.٦ ويُنبَّه المنفّذ", (await outbox("physio_plan_assigned", ct)).length, assignedBefore + 1);
+    same("م.٧ وسطرُ تدقيق", await auditCount(ct, "change_protocol"), 1);
+    await call("POST", `/api/physio/plans/${ct}/stop`, S.spec, { reason: "x" });
+    same("م.٨ والموقوفةُ لا يتغيّر نوعُها", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.admin, { protocolId: P })).status, 409);
 
     console.log("\n── ك. الخططُ القديمة: المشرفُ العام يعدّل ويحذف ──");
     const legacy = (await q(`INSERT INTO treatment_plans (patient_id, branch_id, diagnosis) VALUES ($1, $2, 'تشخيص قديم') RETURNING id`, [pt, B1])).rows[0].id;
