@@ -1,4 +1,5 @@
 import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
+import { compressImageForUpload } from "@/lib/compress_image";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
@@ -750,10 +751,11 @@ export default function PatientDetails() {
   const remaining = (patient.totalCost || 0) - totalPaid;
   const progress = patient.totalCost ? Math.min((totalPaid / patient.totalCost) * 100, 100) : 0;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const formData = new FormData();
-      formData.append("file", e.target.files[0]);
+      //  الصورةُ تُضغط قبل الرفع — المستندُ يُحفظ في قاعدة البيانات (§4.cf).
+      formData.append("file", await compressImageForUpload(e.target.files[0]));
       // You might want to add documentType select in a proper dialog, 
       // but for simplicity we default to 'report' or infer from backend logic
       formData.append("documentType", "report"); 
@@ -1665,7 +1667,7 @@ export default function PatientDetails() {
                   ref={fileInputRef} 
                   className="hidden" 
                   onChange={handleFileUpload} 
-                  accept=".pdf,.jpg,.jpeg,.png"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
                 />
               </div>
 
@@ -1686,13 +1688,18 @@ export default function PatientDetails() {
                         <p className="text-xs text-muted-foreground">
                           {formatDateTimeIraq(doc.uploadedAt)}
                         </p>
+                        {doc.fileUrl.startsWith("/uploads/") && (
+                          <p className="text-xs text-amber-700" data-testid={`doc-missing-${doc.id}`}>الملفّ غير متوفّر — أعد رفعه</p>
+                        )}
                       </div>
                       <Button 
                         variant="ghost" 
                         size="icon" 
                         className="text-slate-400 hover:text-primary"
-                        onClick={() => window.open(doc.fileUrl, '_blank')}
+                        onClick={() => window.open(`/api/documents/${doc.id}/file`, '_blank')}
                         data-testid={`button-download-doc-${doc.id}`}
+                        disabled={doc.fileUrl.startsWith("/uploads/")}
+                        title={doc.fileUrl.startsWith("/uploads/") ? "الملفّ ضاع من قرص الخادم قبل نقل المستندات إلى قاعدة البيانات — أعد رفعه" : undefined}
                       >
                         <Download className="w-5 h-5" />
                       </Button>

@@ -48,6 +48,7 @@ import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
+import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
@@ -165,20 +166,10 @@ const usernameToBranch: Record<string, { branchId: number | "admin"; branchName:
   "kirkuk": { branchId: 5, branchName: "بايونك كركوك" },
 };
 
+//  **الملفُّ في الذاكرة ثمّ في قاعدة البيانات** (§4.cf) — كان يُكتب على قرص خادم Render فيضيع مع كلّ نشر.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = "uploads";
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir);
-      }
-      cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
-  })
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 },
 });
 
 
@@ -469,13 +460,7 @@ export async function registerRoutes(
 
   registerAuthRoutes(app);
 
-  app.use('/uploads', (req, res, next) => {
-    if (req.path.includes('..')) {
-      res.status(403).send('Forbidden');
-      return;
-    }
-    next();
-  }, (await import('express')).static('uploads'));
+  //  مجلّدُ `/uploads` المفتوح بلا دخول أُزيل (§4.cf): المستنداتُ تُقرأ من `/api/documents/:id/file` بجلسةٍ تصل المريض.
 
   // Helper to get user branch
   //
@@ -4940,35 +4925,62 @@ export async function registerRoutes(
   });
 
   // Documents
-  app.post(api.documents.create.path, isAuthenticated, upload.single('file'), async (req, res) => {
+  app.post(api.documents.create.path, isAuthenticated, (req, res, next) => {
+    upload.single('file')(req, res, (err: any) => {
+      if (err?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ message: "الملف أكبر من ١٠ ميغابايت" });
+      if (err) return res.status(400).json({ message: "تعذّر قراءة الملف" });
+      next();
+    });
+  }, async (req, res) => {
     try {
       const file = req.file;
       if (!file) {
         return res.status(400).json({ message: "لم يتم اختيار ملف" });
       }
-      
+      if (!(DOCUMENT_MIME as readonly string[]).includes(file.mimetype)) {
+        return res.status(400).json({ message: "نوع الملف غير مقبول — صورة أو PDF فقط" });
+      }
+
       const patientId = Number(req.body.patientId);
       const documentType = req.body.documentType || "report";
-      
+
       const patient = await storage.getPatient(patientId);
       //  ومريضُ فرعٍ لا يصله المستخدمُ لا يُرفَع إلى ملفّه (§4.bo) — كان يُقبل أيُّ معرّف.
       if (!patient || !(await reachesPatient(req, patient))) {
-        fs.promises.unlink(file.path).catch(() => {});
         return res.status(404).json({ message: "المريض غير موجود" });
       }
-      
-      const document = await storage.createDocument({
-        patientId,
-        fileName: file.originalname,
-        fileUrl: `/uploads/${file.filename}`,
-        documentType,
+
+      //  اسمُ الملفّ كما أرسله المتصفّح يصل بترميز latin1 (فيظهر «Ù…Ø±ÙŠØ¶») — يُعاد UTF-8.
+      const fileName = Buffer.from(file.originalname, "latin1").toString("utf8");
+      const document = await createDocumentWithFile({
+        patientId, documentType, fileName, mimeType: file.mimetype, content: file.buffer,
       });
-      
+
       res.status(201).json(document);
     } catch (err) {
       console.error("Error uploading document:", err);
       res.status(500).json({ message: "حدث خطأ أثناء رفع المستند" });
     }
+  });
+
+  //  **محتوى المستند** — بجلسةٍ تصل مريضَه وحدها (§4.cf). والمستندُ القديم الذي ضاع ملفُّه من قرص الخادم يقول ذلك صراحةً.
+  app.get("/api/documents/:id/file", isAuthenticated, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "مستند غير صالح" });
+    const doc = await getDocument(id);
+    const patient = doc ? await storage.getPatient(doc.patientId) : null;
+    if (!doc || !patient || !(await reachesPatient(req, patient))) return res.status(404).json({ message: "المستند غير موجود" });
+    const f = await getDocumentFile(id);
+    if (!f) {
+      return res.status(410).type("html").send(`<!doctype html><meta charset="utf-8"><body dir="rtl" style="font-family:sans-serif;padding:40px;text-align:center">
+        <h2>الملفّ غير متوفّر</h2><p>رُفع قبل نقل المستندات إلى قاعدة البيانات وضاع من قرص الخادم — أعد رفعه من ملفّ المريض.</p></body>`);
+    }
+    const safeName = encodeURIComponent(doc.fileName);
+    res.setHeader("Content-Type", f.mimeType);
+    res.setHeader("Content-Length", String(f.sizeBytes));
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${safeName}`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(f.content);
   });
 
   // Delete document — admin or branch_manager (within branch)
