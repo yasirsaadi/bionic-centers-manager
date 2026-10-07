@@ -254,7 +254,8 @@
     "test:review-card-ui": "tsx client/src/pages/medical_review_card.test.ts",
     "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts",
     "test:physio-roles": "tsx server/physio_roles.test.ts",
-    "test:multi-roles": "tsx server/multi_roles.test.ts"
+    "test:multi-roles": "tsx server/multi_roles.test.ts",
+    "test:physio-protocols": "tsx server/physio_protocols.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

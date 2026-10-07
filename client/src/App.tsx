@@ -55,6 +55,8 @@ const DailyReview = lazy(() => import("@/pages/DailyReview"));
 const PatientTrash = lazy(() => import("@/pages/PatientTrash"));
 const ManufacturingOrder = lazy(() => import("@/pages/ManufacturingOrder"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
+const PhysioProtocols = lazy(() => import("@/pages/PhysioProtocols"));
+const PhysioProtocolDetail = lazy(() => import("@/pages/PhysioProtocols").then((m) => ({ default: m.PhysioProtocolDetail })));
 
 function DashboardRoute() {
   //  **الجلسةُ الحيّة لا لقطةُ التحميل** (§4.ch): كانت تُقرأ من التخزين مرّةً واحدة، فتغييرُ الدور لا يسري حتى يُعاد التحميل.
@@ -281,6 +283,8 @@ function Router() {
             <Route path="/cash-book" component={CashBook} />
             <Route path="/cash-book/print" component={CashBookPrint} />
             <Route path="/dr-box" component={DrBox} />
+            <Route path="/physio/protocols" component={PhysioProtocols} />
+            <Route path="/physio/protocols/:id" component={PhysioProtocolDetail} />
             <Route path="/surveys" component={Surveys} />
             <Route path="/session-tracking/entry" component={SessionEntry} />
             <Route path="/session-tracking/targets" component={SessionTargets} />

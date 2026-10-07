@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -30,6 +30,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_roles";
 import { canWriteCashBook } from "@shared/cash_book";
+import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 
 
@@ -286,6 +287,8 @@ export function Sidebar() {
     { label: t.sidebar.sessionTargets, icon: Target, href: "/session-tracking/targets", adminOnly: false, settingKey: null, permission: "canManageSessionTargets" as const },
     { label: t.sidebar.sessionsList, icon: ClipboardList, href: "/session-tracking/list", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
     { label: t.sidebar.sessionAnalytics, icon: TrendingUp, href: "/session-tracking/analytics", adminOnly: false, settingKey: null, permission: "canViewSessionsReport" as const },
+    //  مكتبةُ بروتوكولات العلاج الطبيعي (§4.cj) — بالقاعدة نفسِها التي تحرس قراءتَها في الخادم.
+    { label: "بروتوكولات العلاج الطبيعي", icon: Dumbbell, href: "/physio/protocols", adminOnly: false, settingKey: null, permission: null, eligible: canReadProtocols(branchSession ? { ...branchSession, permissions } : null) },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
     //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل
