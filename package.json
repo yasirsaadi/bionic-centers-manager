@@ -255,7 +255,8 @@
     "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts",
     "test:physio-roles": "tsx server/physio_roles.test.ts",
     "test:multi-roles": "tsx server/multi_roles.test.ts",
-    "test:physio-protocols": "tsx server/physio_protocols.test.ts"
+    "test:physio-protocols": "tsx server/physio_protocols.test.ts",
+    "test:physio-protocol-seed": "tsx server/physio_protocol_seed.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
