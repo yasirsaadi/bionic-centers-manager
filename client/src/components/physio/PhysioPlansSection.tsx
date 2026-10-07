@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
   const [, setLocation] = useLocation();
   const [pickOpen, setPickOpen] = useState(false);
   const [deleting, setDeleting] = useState<PlanRow | null>(null);
+  const [changingType, setChangingType] = useState<PlanRow | null>(null);
   const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean; canDelete: boolean }>({
     queryKey: [`/api/patients/${patientId}/physio-plans`],
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/physio-plans`)).json(),
@@ -80,12 +81,12 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 {p.assignees.length ? ` · المنفّذون: ${p.assignees.join("، ")}` : ""}
               </div>
             </button>
-            {/*  التعديلُ والحذفُ من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرس الحذف. */}
+            {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرسهما. */}
             {q.data?.canDelete && (
               <div className="flex flex-col justify-center gap-1">
                 {p.status !== "stopped" && (
-                  <Button variant="ghost" size="icon" title="تعديل" onClick={() => setLocation(`/physio/plans/${p.id}?edit=1`)}
-                    data-testid={`button-edit-physio-plan-${p.id}`}><Pencil className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" title="تغيير نوع الخطّة" onClick={() => setChangingType(p)}
+                    data-testid={`button-change-type-physio-plan-${p.id}`}><RefreshCcw className="w-4 h-4" /></Button>
                 )}
                 <Button variant="ghost" size="icon" title="حذف" onClick={() => setDeleting(p)}
                   data-testid={`button-delete-physio-plan-${p.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
@@ -95,6 +96,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
           ))}
         </div>
       )}
+      <ChangePlanTypeDialog plan={changingType} onClose={() => setChangingType(null)} patientId={patientId} />
       <DeletePlanDialog plan={deleting} onClose={() => setDeleting(null)} patientId={patientId} />
       <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId}
         onCreated={(id) => setLocation(`/physio/plans/${id}?edit=1`)} />
@@ -106,17 +108,7 @@ function NewPlanDialog({ open, onOpenChange, patientId, onCreated }: {
   open: boolean; onOpenChange: (v: boolean) => void; patientId: number; onCreated: (id: number) => void;
 }) {
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
   const [blankTitle, setBlankTitle] = useState("");
-  const list = useQuery<ProtocolRow[]>({
-    queryKey: ["/api/physio/protocols", "plan-picker"],
-    queryFn: async () => (await apiRequest("GET", "/api/physio/protocols")).json(),
-    enabled: open,
-  });
-  const rows = useMemo(() => {
-    const t = search.trim().toLowerCase();
-    return (list.data ?? []).filter((p) => !t || p.titleAr.includes(search.trim()) || p.titleEn.toLowerCase().includes(t));
-  }, [list.data, search]);
   const m = useMutation({
     mutationFn: async (body: { protocolId?: number; titleAr?: string }) =>
       (await apiRequest("POST", `/api/patients/${patientId}/physio-plans`, body)).json(),
@@ -131,25 +123,7 @@ function NewPlanDialog({ open, onOpenChange, patientId, onCreated }: {
           اختر بروتوكول الحالة فتمتلئ الخطّة منه — الأهداف والتمارين والاحتياطات والجرعة، والأجهزةُ الموصى بها والاختيارية المتوفّرة في فرعك.
           ثمّ عدّلها لهذا المريض. وتبقى مسوّدةً لا تُنفَّذ حتى تُعتمَد.
         </p>
-        <div className="relative">
-          <Search className="w-4 h-4 absolute right-2 top-2.5 text-muted-foreground" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث باسم الحالة بالعربية أو الإنكليزية"
-            className="pr-8" data-testid="input-plan-protocol-search" />
-        </div>
-        <div className="max-h-[45vh] overflow-y-auto space-y-1.5">
-          {list.isLoading && <div className="text-sm text-muted-foreground">جارٍ التحميل…</div>}
-          {rows.map((p) => (
-            <button key={p.id} type="button" disabled={m.isPending} onClick={() => m.mutate({ protocolId: p.id })}
-              className="w-full text-right rounded-md border px-3 py-2 hover:bg-slate-50 hover:border-primary/40"
-              data-testid={`plan-protocol-${p.id}`}>
-              <div className="text-sm font-medium">{p.titleAr} <span className="text-xs text-muted-foreground" dir="ltr">{p.titleEn}</span></div>
-              <div className="text-[11px] text-muted-foreground flex gap-2">
-                <span>{AGE_GROUP_LABELS[p.ageGroup]}</span>
-                {p.status !== "approved" && <span className="text-yellow-700">{UNAPPROVED_PROTOCOL_BADGE}</span>}
-              </div>
-            </button>
-          ))}
-        </div>
+        <ProtocolPicker enabled={open} disabled={m.isPending} onPick={(id) => m.mutate({ protocolId: id })} />
         <div className="border-t pt-3 space-y-2">
           <div className="text-xs font-medium">أو خطّةٌ بلا بروتوكول</div>
           <div className="flex gap-2">
@@ -188,6 +162,79 @@ export function DeletePlanDialog({ plan, onClose, patientId, onDeleted }: {
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
           <Button variant="destructive" disabled={m.isPending || !plan} onClick={() => plan && m.mutate(plan.id)} data-testid="button-confirm-delete-physio-plan">حذف</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** قائمةُ البروتوكولات للاختيار — بحثٌ بالعربية والإنكليزية، وشارةُ «غير معتمد بعد». */
+function ProtocolPicker({ enabled, disabled, onPick, excludeId }: {
+  enabled: boolean; disabled: boolean; onPick: (protocolId: number) => void; excludeId?: number | null;
+}) {
+  const [search, setSearch] = useState("");
+  const list = useQuery<ProtocolRow[]>({
+    queryKey: ["/api/physio/protocols", "plan-picker"],
+    queryFn: async () => (await apiRequest("GET", "/api/physio/protocols")).json(),
+    enabled,
+  });
+  const rows = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    return (list.data ?? []).filter((p) => p.id !== excludeId && (!t || p.titleAr.includes(search.trim()) || p.titleEn.toLowerCase().includes(t)));
+  }, [list.data, search, excludeId]);
+  return (
+    <>
+      <div className="relative">
+        <Search className="w-4 h-4 absolute right-2 top-2.5 text-muted-foreground" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث باسم الحالة بالعربية أو الإنكليزية"
+          className="pr-8" data-testid="input-plan-protocol-search" />
+      </div>
+      <div className="max-h-[45vh] overflow-y-auto space-y-1.5">
+        {list.isLoading && <div className="text-sm text-muted-foreground">جارٍ التحميل…</div>}
+        {rows.map((p) => (
+          <button key={p.id} type="button" disabled={disabled} onClick={() => onPick(p.id)}
+            className="w-full text-right rounded-md border px-3 py-2 hover:bg-slate-50 hover:border-primary/40"
+            data-testid={`plan-protocol-${p.id}`}>
+            <div className="text-sm font-medium">{p.titleAr} <span className="text-xs text-muted-foreground" dir="ltr">{p.titleEn}</span></div>
+            <div className="text-[11px] text-muted-foreground flex gap-2">
+              <span>{AGE_GROUP_LABELS[p.ageGroup]}</span>
+              {p.status !== "approved" && <span className="text-yellow-700">{UNAPPROVED_PROTOCOL_BADGE}</span>}
+            </div>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * **تغييرُ نوع الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — للمسؤول والمشرف العام: بروتوكولٌ آخر يملأ الخطّةَ نفسَها،
+ * لا تعديلُ مواصفاتها. ويبقى المنفّذون وملاحظاتُ الأخصائيّ والحالة.
+ */
+export function ChangePlanTypeDialog({ plan, onClose, patientId, onChanged }: {
+  plan: { id: number; titleAr: string; protocolId: number | null } | null; onClose: () => void; patientId: number; onChanged?: () => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const m = useMutation({
+    mutationFn: async (protocolId: number) => (await apiRequest("POST", `/api/physio/plans/${plan!.id}/change-protocol`, { protocolId })).json(),
+    onSuccess: () => {
+      toast({ title: "تغيّر نوعُ الخطّة" });
+      qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}/physio-plans`] });
+      qc.invalidateQueries({ queryKey: [`/api/physio/plans/${plan!.id}`] });
+      qc.invalidateQueries({ queryKey: ["/api/physio/plans"] });
+      onClose(); onChanged?.();
+    },
+    onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+  });
+  return (
+    <Dialog open={plan !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-lg">
+        <DialogHeader><DialogTitle>تغيير نوع الخطّة</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground" data-testid="hint-change-plan-type">
+          النوعُ الحاليّ: <b>{plan?.titleAr}</b>. اختر البروتوكولَ الصحيح فتمتلئ الخطّةُ منه — العنوانُ والأهدافُ والتمارينُ والموانعُ والجرعةُ والأجهزة.
+          ويبقى المنفّذون وملاحظاتُ الأخصائيّ وحالةُ الخطّة، ويُكتب التغييرُ في سجلّ التدقيق.
+        </p>
+        <ProtocolPicker enabled={plan !== null} disabled={m.isPending} excludeId={plan?.protocolId ?? null} onPick={(id) => m.mutate(id)} />
       </DialogContent>
     </Dialog>
   );

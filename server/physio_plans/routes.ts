@@ -7,6 +7,7 @@
 //   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد
 //   POST /api/physio/plans/:id/submit|approve|return|stop
 //   DELETE /api/physio/plans/:id              — للمسؤول والمشرف العام حصراً
+//   POST /api/physio/plans/:id/change-protocol — تغييرُ نوع الخطّة (بروتوكولٌ آخر)، لهما حصراً
 //   GET  /api/physio/plans/:id/assignee-candidates · PUT /api/physio/plans/:id/assignees
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -190,6 +191,22 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const r = await store.stopPlan(l.row.id, reason, actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "stop", branchId: l.row.branchId,
         oldValues: { status: r.before.status }, newValues: { status: "stopped", stopReason: reason } });
+      res.json(r.after);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **تغييرُ نوع الخطّة — للمسؤول والمشرف العام حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧): بروتوكولٌ آخر يملؤها، لا تعديلُ مواصفاتها.
+  app.post("/api/physio/plans/:id/change-protocol", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يغيّر نوعَ الخطّة المسؤولُ أو المشرفُ العام حصراً" });
+      const protocolId = idOf(req.body?.protocolId);
+      if (!protocolId) return res.status(400).json({ error: "اختر البروتوكول" });
+      const r = await store.changePlanProtocol(l.row.id, protocolId, actor(l.s));
+      await audit(req, l.s, { entityId: l.row.id, action: "change_protocol", branchId: l.row.branchId,
+        oldValues: { protocolId: r.before.protocolId, titleAr: r.before.titleAr }, newValues: { protocolId: r.after.protocolId, titleAr: r.after.titleAr },
+        notes: `تغيير نوع الخطة من «${r.before.titleAr}» إلى «${r.after.titleAr}»` });
       res.json(r.after);
     } catch (e) { fail(res, e); }
   });

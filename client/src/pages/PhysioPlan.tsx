@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, ClipboardList, Pencil, Plus, Printer, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardList, Pencil, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,7 +19,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
-import { DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
+import { ChangePlanTypeDialog, DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
   PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom,
@@ -107,6 +107,7 @@ export default function PhysioPlanPage() {
   const [ask, setAsk] = useState<null | "return" | "stop">(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [typeOpen, setTypeOpen] = useState(false);
   const [, navigate] = useLocation();
 
   const refresh = () => {
@@ -203,6 +204,9 @@ export default function PhysioPlanPage() {
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
           {/*  الحذفُ للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧). */}
+          {plan.canDelete && plan.status !== "stopped" && (
+            <Button size="sm" variant="outline" className="gap-1" onClick={() => setTypeOpen(true)} data-testid="button-change-plan-type"><RefreshCcw className="w-4 h-4" /> تغيير نوع الخطّة</Button>
+          )}
           {plan.canDelete && (
             <Button size="sm" variant="ghost" className="gap-1 text-destructive" onClick={() => setDeleteOpen(true)} data-testid="button-delete-plan"><Trash2 className="w-4 h-4" /> حذف</Button>
           )}
@@ -263,6 +267,8 @@ export default function PhysioPlanPage() {
 
       <AskDialog kind={ask} pending={act.isPending} onClose={() => setAsk(null)}
         onSubmit={(text) => act.mutate(ask === "return" ? { path: "return", body: { note: text } } : { path: "stop", body: { reason: text } })} />
+      <ChangePlanTypeDialog plan={typeOpen ? { id: plan.id, titleAr: plan.titleAr, protocolId: plan.protocol?.id ?? null } : null}
+        onClose={() => setTypeOpen(false)} patientId={plan.patientId} onChanged={refresh} />
       <DeletePlanDialog plan={deleteOpen ? plan : null} onClose={() => setDeleteOpen(false)} patientId={plan.patientId}
         onDeleted={() => navigate(`/patients/${plan.patientId}`)} />
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}

@@ -114,27 +114,29 @@ export async function getPlan(id: number) {
  * **خطّةٌ جديدة** — مسوّدة. من بروتوكولٍ ⟵ تمتلئ منه بنصوصه باللغتين وجرعته، **وأجهزتُه الموصى بها والاختيارية المتوفّرةُ في الفرع وحدها**
  * (غيرُ الموصى به لا يُنقل). وبلا بروتوكول ⟵ خطّةٌ فارغة بعنوانها.
  */
+/** **ما تمتلئ به الخطّةُ من بروتوكول** — نصوصُه باللغتين وجرعتُه، والموانعُ والاحتياطاتُ معاً، وأجهزتُه الموصى بها والاختيارية المتوفّرةُ في الفرع وحدها. */
+async function protocolFill(tx: any, protocolId: number, branchId: number) {
+  const [pr] = await tx.select().from(physioProtocols).where(eq(physioProtocols.id, protocolId));
+  if (!pr || pr.isArchived) throw new PlanError(404, "البروتوكول غير موجود");
+  const base = {
+    protocolId: pr.id, titleAr: pr.titleAr, titleEn: pr.titleEn,
+    goals: pr.goals, goalsEn: pr.goalsEn, exercises: pr.exercises, exercisesEn: pr.exercisesEn,
+    precautions: [pr.contraindications, pr.precautions].filter(Boolean).join("\n\n") || null,
+    precautionsEn: [pr.contraindicationsEn, pr.precautionsEn].filter(Boolean).join("\n\n") || null,
+    sessionsPerWeek: pr.sessionsPerWeek, durationWeeks: pr.durationWeeks, sessionMinutes: pr.sessionMinutes,
+  };
+  const avail = await availableDeviceIds(tx, branchId);
+  const lines = (await tx.select().from(physioProtocolDevices).where(eq(physioProtocolDevices.protocolId, pr.id))
+    .orderBy(asc(physioProtocolDevices.displayOrder)))
+    .filter((l: any) => l.evidence !== "not_recommended" && avail.has(Number(l.deviceId)));
+  return { base, lines };
+}
+
 export async function createPlan(p: {
   patientId: number; branchId: number; protocolId: number | null; titleAr: string | null; actor: Actor;
 }): Promise<PhysioPlan> {
   return db.transaction(async (tx) => {
-    let base: any = {};
-    let lines: any[] = [];
-    if (p.protocolId) {
-      const [pr] = await tx.select().from(physioProtocols).where(eq(physioProtocols.id, p.protocolId));
-      if (!pr || pr.isArchived) throw new PlanError(404, "البروتوكول غير موجود");
-      base = {
-        protocolId: pr.id, titleAr: pr.titleAr, titleEn: pr.titleEn,
-        goals: pr.goals, goalsEn: pr.goalsEn, exercises: pr.exercises, exercisesEn: pr.exercisesEn,
-        precautions: [pr.contraindications, pr.precautions].filter(Boolean).join("\n\n") || null,
-        precautionsEn: [pr.contraindicationsEn, pr.precautionsEn].filter(Boolean).join("\n\n") || null,
-        sessionsPerWeek: pr.sessionsPerWeek, durationWeeks: pr.durationWeeks, sessionMinutes: pr.sessionMinutes,
-      };
-      const avail = await availableDeviceIds(tx, p.branchId);
-      lines = (await tx.select().from(physioProtocolDevices).where(eq(physioProtocolDevices.protocolId, pr.id))
-        .orderBy(asc(physioProtocolDevices.displayOrder)))
-        .filter((l) => l.evidence !== "not_recommended" && avail.has(Number(l.deviceId)));
-    }
+    const { base, lines } = p.protocolId ? await protocolFill(tx, p.protocolId, p.branchId) : { base: {} as any, lines: [] as any[] };
     const titleAr = (p.titleAr ?? base.titleAr ?? "").trim();
     if (!titleAr) throw new PlanError(400, "اختر بروتوكولاً أو اكتب عنوانَ الخطّة");
     const [row] = await tx.insert(physioPlans).values({
@@ -142,7 +144,7 @@ export async function createPlan(p: {
       createdBy: p.actor.userId, createdByName: p.actor.name, updatedBy: p.actor.userId, updatedByName: p.actor.name,
     }).returning();
     if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l, i) => ({
+      await tx.insert(physioPlanDevices).values(lines.map((l: any, i: number) => ({
         planId: row.id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
         note: l.note, noteEn: l.noteEn, displayOrder: i,
       })));
@@ -299,5 +301,40 @@ export async function deletePlan(id: number) {
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
     await tx.delete(physioPlans).where(eq(physioPlans.id, id));
     return { ...plan, devices: lines, assignees };
+  });
+}
+
+/**
+ * **تغييرُ نوع الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — للمسؤول والمشرف العام حصراً: الخطّةُ نفسُها تمتلئ من بروتوكولٍ آخر
+ * (العنوانُ والأهدافُ والتمارينُ والموانعُ والجرعةُ والأجهزة) — لا تعديلُ مواصفاتها. ويبقى المريضُ والفرعُ والمنفّذون
+ * و«ملاحظات الأخصائيّ لهذا المريض» والحالة؛ والمنفّذون يُنبَّهون إن كانت معتمَدة.
+ */
+export async function changePlanProtocol(id: number, protocolId: number, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const before = await lockPlan(tx, id);
+    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ موقوفة — لا يتغيّر نوعُها");
+    if (before.protocolId === protocolId) throw new PlanError(409, "هذا هو نوعُ الخطّة الحاليّ");
+    const { base, lines } = await protocolFill(tx, protocolId, before.branchId);
+    const [after] = await tx.update(physioPlans).set({ ...base, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() })
+      .where(eq(physioPlans.id, id)).returning();
+    await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
+    if (lines.length) {
+      await tx.insert(physioPlanDevices).values(lines.map((l: any, i: number) => ({
+        planId: id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
+        note: l.note, noteEn: l.noteEn, displayOrder: i,
+      })));
+    }
+    if (after.status === "approved") {
+      const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
+        .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
+      if (ids.length) {
+        await enqueueStaffEvent(tx, {
+          event: "physio_plan_assigned", targetUserIds: ids, excludeUserId: actor.userId,
+          text: `🔄 تغيّر نوعُ خطّةٍ مسندة إليك: ${await patientLabel(tx, after.patientId, after.branchId)}\n${before.titleAr} ⟵ ${after.titleAr}`,
+          linkPath: `/physio/plans/${id}`,
+        });
+      }
+    }
+    return { before, after };
   });
 }
