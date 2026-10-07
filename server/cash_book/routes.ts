@@ -16,6 +16,7 @@ import * as store from "./store";
 import { drBoxLinesForDay } from "./dr_box";
 import { sheetFingerprint, lastPrint, recordPrint } from "./prints";
 import { registerDrBoxRoutes } from "./dr_box_routes";
+import { pendingTargets } from "../money_corrections/store";
 
 type Req = any;
 
@@ -93,6 +94,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         isAdmin: Boolean(g.s.isAdmin), userId: g.s.userId ?? null,
         canManageExpenses: Boolean(g.s.isAdmin || g.s.permissions?.canManageAccounting),
         drBoxLines,
+        //  سطورٌ عليها «طلب تصحيح» معلَّق (§4.ce) — «expense:12» و«cash_book_entry:7».
+        pendingCorrections: await pendingTargets(g.branchId),
         lastPrint: printed ? { at: printed.printedAt.toISOString(), by: printed.printedByName ?? null } : null,
         changedAfterPrint: printed ? printed.fingerprint !== sheetFingerprint(sheet, drBoxLines) : false,
       });

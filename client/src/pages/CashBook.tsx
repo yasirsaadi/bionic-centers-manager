@@ -12,11 +12,12 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
 import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_text";
-import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer } from "lucide-react";
+import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
+import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
 
 interface Row {
   source: "payment" | "entry" | "expense" | "auto"; id: number; column: "income" | "expense" | "transfer";
@@ -34,6 +35,8 @@ interface Sheet {
     hospitalRatio: { pct: number; amount: number; recorded: number | null } | null;
   };
   canWrite: boolean; isAdmin: boolean; userId: number | null; canManageExpenses: boolean;
+  /** سطورٌ عليها «طلب تصحيح» معلَّق — «expense:12» و«cash_book_entry:7» (§4.ce). */
+  pendingCorrections?: string[];
   /** ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم — البابُ وحده بلا مبلغ (§4.cb). */
   drBoxLines?: { id: number; category: string }[];
   /** آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما فيها بعدها (§4.ca تكملة). */
@@ -169,6 +172,7 @@ export default function CashBook() {
 
         {!sheet && !q.isError && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
+        {session && <CorrectionRequestsPanel isAdmin={isAdmin} />}
         <div className={q.isPlaceholderData ? "opacity-50 pointer-events-none transition-opacity" : "transition-opacity"}
           aria-busy={q.isPlaceholderData} data-testid="cash-sheet-wrap">
         {sheet && !sheet.opening && (sheet.isAdmin
@@ -242,6 +246,13 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   //  تصحيحُ سطرٍ مكتوب للمسؤول وحده (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والموظّفُ يطلبه منه قبل الطباعة.
   const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto";
   const noteOf = (r: Row) => cashRowNote(r);
+  //  وغيرُ المسؤول يطلب التصحيحَ فيعتمده (§4.ce) — على المصروف (غير النسب) و«وارد آخر» والتحويل إلى قاصة الدكتور.
+  const [requesting, setRequesting] = useState<CorrectionTarget | null>(null);
+  const correctable = (r: Row) => !sheet.isAdmin && (
+    (r.source === "expense" && r.kind !== "hospital_ratio" && r.kind !== "atabah_ratio")
+    || (r.source === "entry" && (r.kind === "income_other" || r.kind === "dr_transfer")));
+  const pendingKey = (r: Row) => `${r.source === "entry" ? "cash_book_entry" : "expense"}:${r.id}`;
+  const isPending = (r: Row) => (sheet.pendingCorrections ?? []).includes(pendingKey(r));
   const stale = (x: { amount: number; recorded: number | null } | null) => x && x.recorded !== null && x.recorded !== x.amount;
 
   return (
@@ -285,6 +296,14 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
                   {r.unsectioned && <Badge variant="outline" className="ms-2 text-[10px] text-amber-700 border-amber-400">بلا قسم</Badge>}
                 </td>
                 <td className="border px-1 py-1 text-center whitespace-nowrap">
+                  {correctable(r) && (isPending(r)
+                    ? <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400" data-testid={`cash-pending-${r.source}-${r.id}`}>طلب تصحيح معلّق</Badge>
+                    : <button className="p-1 text-amber-700 hover:text-amber-900" aria-label="طلب تصحيح" title="طلب تصحيح يعتمده المسؤول"
+                        data-testid={`cash-request-${r.source}-${r.id}`}
+                        onClick={() => setRequesting({ type: r.source === "entry" ? "cash_book_entry" : "expense", id: r.id, amount: r.amount,
+                          label: noteOf(r), note: r.note || null, category: r.category })}>
+                        <MessageSquareWarning className="w-3.5 h-3.5" />
+                      </button>)}
                   {editable(r) && (
                     <>
                       <button className="p-1 text-slate-500 hover:text-slate-900" onClick={() => setEditing(r)} aria-label="تعديل"><Pencil className="w-3.5 h-3.5" /></button>
@@ -320,7 +339,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       {sheet.canWrite && <AddRow sheet={sheet} branchId={branchId} book={book} day={day} write={write} />}
       {sheet.canWrite && !sheet.isAdmin && (
         <p className="text-xs text-muted-foreground" data-testid="cash-fix-hint">
-          كتبتَ رقماً غلطاً؟ تصحيحُ السطر أو حذفُه للمسؤول وحده — اطلبه منه قبل الطباعة.
+          كتبتَ رقماً غلطاً؟ اضغط «طلب تصحيح» على السطر واكتب الصحيحَ وسببه — يعتمده المسؤولُ قبل الطباعة.
         </p>
       )}
 
@@ -361,6 +380,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       </div>
 
       <EditRowDialog row={editing} onClose={() => setEditing(null)} write={write} />
+      <RequestCorrectionDialog target={requesting} onClose={() => setRequesting(null)} />
     </div>
   );
 }
