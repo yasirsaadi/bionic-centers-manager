@@ -20,6 +20,16 @@ type Shift = "morning" | "evening";
 type DailyResponse = {
   session: { id: number; branchId: number; sessionDate: string; shift: Shift } | null;
   counts: { deviceId: number; count: number }[];
+  //  §4.cn — ما سجّله «إنهاء الجلسة» في خطط العلاج الطبيعي لهذا اليوم والوردية، ويومُ القفل: منه فصاعداً العدّاداتُ من التنفيذ وحده.
+  executionCounts?: { deviceId: number; count: number }[];
+  countsFrom?: string | null;
+  locked?: boolean;
+};
+
+const nextDay = (ymd: string): string => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 };
 
 type MonthlyDevice = {
@@ -117,6 +127,25 @@ export default function SessionEntry() {
 
   const qc = useQueryClient();
   const { toast } = useToast();
+  const locked = dailyQ.data?.locked === true;
+  const countsFrom = dailyQ.data?.countsFrom ?? null;
+  const execByDevice = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const c of dailyQ.data?.executionCounts ?? []) m.set(c.deviceId, c.count);
+    return m;
+  }, [dailyQ.data]);
+  const execTotal = Array.from(execByDevice.values()).reduce((a, b) => a + b, 0);
+  const [lockDate, setLockDate] = useState("");
+  useEffect(() => { setLockDate(countsFrom ?? ""); }, [countsFrom, branchId]);
+  const lockMut = useMutation({
+    mutationFn: async (d: string | null) =>
+      (await apiRequest("PUT", `/api/session-tracking/branches/${branchId}/counts-from`, { date: d })).json(),
+    onSuccess: (r: { countsFrom: string | null }) => {
+      toast({ title: "تم", description: r.countsFrom ? `العدّاداتُ من تنفيذ الخطط ابتداءً من ${r.countsFrom}` : "رُفع القفل — الإدخالُ اليدويّ مفتوح" });
+      qc.invalidateQueries({ queryKey: ["/api/session-tracking/daily"] });
+    },
+    onError: (err: Error) => toast({ title: "تعذّر الحفظ", description: err.message, variant: "destructive" }),
+  });
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -205,6 +234,16 @@ export default function SessionEntry() {
         </div>
       </Card>
 
+      {/*  §4.cn — قبل يوم القفل: اليدويُّ هو العدّاد، وما سجّله التنفيذُ يظهر بجانبه للمقارنة. ومن يوم القفل: التنفيذُ وحده. */}
+      {locked ? (
+        <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm" data-testid="session-entry-locked">
+          عدّاداتُ هذا اليوم تُحسب من <b>«إنهاء الجلسة» في خطط العلاج الطبيعي</b> منذ {countsFrom} — الإدخالُ اليدويّ مقفل.
+        </div>
+      ) : execTotal > 0 ? (
+        <div className="rounded-md border border-sky-300 bg-sky-50 p-3 text-sm" data-testid="session-entry-compare">
+          سجّل المعالجون من الخطط لهذا اليوم والوردية <b>{execTotal}</b> بنداً — يظهر رقمُ كلّ جهاز تحت خانته للمقارنة. العدّادُ ما زال اليدويّ{countsFrom ? ` حتى ${countsFrom}` : ""}.
+        </div>
+      ) : null}
       <Card className="p-4">
         {dailyQ.isLoading || monthlyQ.isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -241,10 +280,16 @@ export default function SessionEntry() {
                     min={0}
                     inputMode="numeric"
                     value={counts[d.id] ?? 0}
+                    disabled={locked}
                     onChange={(e) =>
                       setCounts({ ...counts, [d.id]: Math.max(0, Number(e.target.value || 0)) })
                     }
                   />
+                  {!locked && execTotal > 0 && (
+                    <div className="text-[11px] text-sky-800" data-testid={`session-exec-count-${d.id}`}>
+                      من تنفيذ الخطط: {execByDevice.get(d.id) ?? 0}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -253,7 +298,7 @@ export default function SessionEntry() {
         <div className="flex justify-end mt-4">
           <Button
             onClick={() => saveMut.mutate()}
-            disabled={saveMut.isPending || branchId === null}
+            disabled={saveMut.isPending || branchId === null || locked}
           >
             {saveMut.isPending
               ? lang === "ar" ? "جاري الحفظ..." : "Saving..."
@@ -261,6 +306,29 @@ export default function SessionEntry() {
           </Button>
         </div>
       </Card>
+
+      {/*  يومُ القفل لكلّ فرع — للمسؤول وحده، ومن الغد فصاعداً (فلا يومَ يختلط فيه اليدويُّ بالتنفيذ). */}
+      {isAdmin && branchId !== null && (
+        <Card className="p-4 space-y-2" data-testid="counts-from-admin">
+          <div className="font-medium text-sm">عدّاداتُ هذا الفرع من تنفيذ الخطط</div>
+          <p className="text-xs text-muted-foreground">
+            {countsFrom
+              ? `مفعّلٌ ابتداءً من ${countsFrom}: من ذلك اليوم يكتب «إنهاء الجلسة» العدّادَ ويُقفل الإدخالُ اليدويّ.`
+              : "غيرُ مفعّل: الإدخالُ اليدويُّ هو العدّاد، والتنفيذُ يظهر بجانبه للمقارنة. اختر يوماً (من الغد فصاعداً) بعد أن تتطابق الأرقام."}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Input type="date" className="w-44" value={lockDate} min={nextDay(today)} onChange={(e) => setLockDate(e.target.value)} data-testid="input-counts-from" />
+            <Button size="sm" disabled={lockMut.isPending || !lockDate || lockDate === countsFrom} onClick={() => lockMut.mutate(lockDate)} data-testid="button-save-counts-from">
+              حفظ يوم القفل
+            </Button>
+            {countsFrom && (
+              <Button size="sm" variant="ghost" className="text-destructive" disabled={lockMut.isPending} onClick={() => lockMut.mutate(null)} data-testid="button-clear-counts-from">
+                رفع القفل
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

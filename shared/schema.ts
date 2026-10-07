@@ -13,6 +13,8 @@ export const branches = pgTable("branches", {
   temporarilyClosed: boolean("temporarily_closed").notNull().default(false),
   closedAt: timestamp("closed_at", { withTimezone: true }),
   closedBy: integer("closed_by"),
+  //  **من أيّ يومٍ تُحسب عدّاداتُ أجهزة الفرع من تنفيذ الخطط ويُقفَل الإدخالُ اليدويّ** (ترحيل ١١١، §4.cn). فارغٌ = اليدويّ.
+  physioCountsFrom: date("physio_counts_from"),
 });
 
 // Update users to associate with a branch
@@ -2968,6 +2970,40 @@ export const physioPlanDevices = pgTable("physio_plan_devices", {
   note: text("note"), noteEn: text("note_en"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
+
+// ══ تنفيذُ الخطّة (ترحيل ١١١، §4.cn) ══════════════════════════════════════
+export const physioPlanSessions = pgTable("physio_plan_sessions", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  sessionDate: date("session_date").notNull(),
+  shift: text("shift").notNull(),
+  executedBy: integer("executed_by").references(() => systemUsers.id),
+  executedByName: text("executed_by_name"),
+  visitId: integer("visit_id").references(() => visits.id),
+  noteToSpecialist: text("note_to_specialist"),
+  countsWritten: boolean("counts_written").notNull().default(false),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelledBy: integer("cancelled_by").references(() => systemUsers.id),
+  cancelledByName: text("cancelled_by_name"),
+  cancelReason: text("cancel_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  byPlan: index("idx_physio_plan_sessions_plan").on(t.planId),
+  byBranchDate: index("idx_physio_plan_sessions_branch_date").on(t.branchId, t.sessionDate),
+}));
+export type PhysioPlanSession = typeof physioPlanSessions.$inferSelect;
+
+export const physioPlanSessionItems = pgTable("physio_plan_session_items", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => physioPlanSessions.id, { onDelete: "cascade" }),
+  deviceId: integer("device_id").notNull().references(() => devices.id),
+  plannedMinutes: integer("planned_minutes"),
+  done: boolean("done").notNull(),
+  minutes: integer("minutes"),
+  note: text("note"),
+}, (t) => ({ uqSessionDevice: unique("physio_plan_session_items_session_id_device_id_key").on(t.sessionId, t.deviceId) }));
 
 export const physioPlanAssignees = pgTable("physio_plan_assignees", {
   planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),

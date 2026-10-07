@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -30,7 +30,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_roles";
 import { canWriteCashBook } from "@shared/cash_book";
-import { canReadPlans } from "@shared/physio_plans";
+import { canExecutePlans, canReadPlans } from "@shared/physio_plans";
 import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 
@@ -292,6 +292,8 @@ export function Sidebar() {
     { label: "بروتوكولات العلاج الطبيعي", icon: Dumbbell, href: "/physio/protocols", adminOnly: false, settingKey: null, permission: null, eligible: canReadProtocols(branchSession ? { ...branchSession, permissions } : null) },
     //  خططُ العلاج الطبيعي (§4.cm) — الاعتماداتُ والمسندةُ إليّ، لمن يقرأ الخطط كبوّابة الخادم.
     { label: "خطط العلاج الطبيعي", icon: ClipboardList, href: "/physio/plans", adminOnly: false, settingKey: null, permission: null, eligible: canReadPlans(branchSession ? { ...branchSession, permissions } : null) },
+    //  جلساتُ اليوم (§4.cn) — لمنفّذي القسم، بالقاعدة نفسِها التي تحرس التنفيذَ في الخادم.
+    { label: "جلسات اليوم", icon: CalendarCheck, href: "/physio/today", adminOnly: false, settingKey: null, permission: null, eligible: canExecutePlans(branchSession ? { ...branchSession, permissions } : null) },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
     //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل

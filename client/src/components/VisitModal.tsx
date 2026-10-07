@@ -109,6 +109,17 @@ export function VisitModal({
   const { mutate, isPending } = useAddVisit();
   const { t } = useTranslation();
   const dir = t.dir;
+  //  **للمريض خطّةُ علاجٍ طبيعيّ معتمَدة؟** (§4.cn) — فجلستُه تُسجَّل من «إنهاء الجلسة» في الخطّة، وهي تكتب زيارتَها؛
+  //  وتسجيلُها هنا أيضاً يخصمها من المدفوعة مرّتين. تنبيهٌ لا منع: جلسةٌ خارج الخطّة (استشارة مثلاً) تبقى ممكنة.
+  const { data: planFlag } = useQuery<{ hasApprovedPlan: boolean; canExecute: boolean }>({
+    queryKey: [`/api/patients/${patientId}/physio-plan-flag`],
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patientId}/physio-plan-flag`, { credentials: "include" });
+      if (!res.ok) return { hasApprovedPlan: false, canExecute: false };
+      return res.json();
+    },
+    enabled: open,
+  });
 
   /** الجهاز المقصود بالزيارة — فارغٌ حتى يختار الموظّف. */
   const [visitDevice, setVisitDevice] = useState<string>("");
@@ -217,6 +228,12 @@ export function VisitModal({
             {/*  **ولا «غرض الزيارة» بعد اليوم**: هذه النافذة للمراجعة
                 والمتابعة وحدها، والصيانةُ بابُها «ما سبب حضور المريض
                 اليوم؟» — فلا يُسأل الموظّفُ سؤالاً جوابُه واحد. */}
+            {planFlag?.hasApprovedPlan && (
+              <p className="text-xs rounded-md bg-amber-50 border border-amber-300 text-amber-900 px-3 py-2" data-testid="visit-physio-plan-warning">
+                لهذا المريض <b>خطّةُ علاجٍ طبيعيّ معتمَدة</b>. جلستُه يسجّلها المعالجُ من «تنفيذ جلسة» في الخطّة، وهي تكتب الزيارةَ وحدها —
+                فلا تسجّلها هنا كي لا تُحتسب مرّتين. هذه النافذةُ لما هو خارج الخطّة.
+              </p>
+            )}
             {(isAmputee || isMedicalSupport) && (
               <p className="text-[11px] text-muted-foreground rounded-md bg-slate-50 border px-3 py-2"
                 data-testid="visit-maintenance-hint">

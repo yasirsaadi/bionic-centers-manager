@@ -18,6 +18,9 @@ import {
   canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
 } from "@shared/physio_plans";
 import * as store from "./store";
+import * as exec from "./execution";
+import { canCancelSessions, canExecutePlans, canWritePlans as canWrite } from "@shared/physio_plans";
+import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 
 function fail(res: any, e: unknown) {
   if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message });
@@ -92,7 +95,10 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       const patient = await storage.getPatient(patientId);
       if (!patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "المريض غير موجود" });
-      const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status));
+      const scope = scopeOf(req, s);
+      //  «تنفيذ جلسة» لكلّ خطّةٍ معتمَدة في فرعٍ يعمل فيه السائل (§4.cn) — والخادمُ يحرس التنفيذَ نفسَه ثانيةً.
+      const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status))
+        .map((p) => ({ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }));
       res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s), canDelete: canDeletePlans(s) });
     } catch (e) { fail(res, e); }
   });
@@ -135,7 +141,9 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
       const plan = await store.getPlan(l.row.id);
-      res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s) });
+      const scope = scopeOf(req, l.s);
+      res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s),
+        canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s) });
     } catch (e) { fail(res, e); }
   });
 
@@ -217,10 +225,112 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
       if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يحذف الخطّةَ المسؤولُ أو المشرفُ العام حصراً" });
+      //  **خطّةٌ لها جلساتٌ منفّذة لا تُحذف** (§4.cn) — زياراتُها وعدّاداتُها قائمة؛ تُوقَف فتبقى تاريخاً.
+      if (await exec.planHasSessions(l.row.id)) return res.status(409).json({ error: "للخطّة جلساتٌ منفّذة — أوقفها بدل الحذف" });
       const removed = await store.deletePlan(l.row.id);
       await audit(req, l.s, { entityId: l.row.id, action: "delete", branchId: l.row.branchId, oldValues: removed,
         notes: `حذف خطة العلاج الطبيعي «${l.row.titleAr}» للمريض #${l.row.patientId}` });
       res.json({ ok: true });
+    } catch (e) { fail(res, e); }
+  });
+
+  // ══ التنفيذ — المرحلةُ الرابعة (ترحيل ١١١، §4.cn) ═══════════════════════════════════════════════
+  const shiftOf = (s: any): "morning" | "evening" => {
+    if (s?.shift === "morning" || s?.shift === "evening") return s.shift;
+    const h = new Date(Date.now() + 3 * 3600 * 1000).getUTCHours();
+    return h >= 16 && h <= 21 ? "evening" : "morning";
+  };
+  const dateOf = (v: unknown, today: string): string => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : today);
+
+  //  **جلساتُ اليوم** — الخططُ المعتمَدة في فروع السائل (أو الفرع المختار منها)، والمسنَدُ إليه أوّلاً.
+  app.get("/api/physio/today", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canExecutePlans(s)) return res.status(403).json({ error: "جلساتُ اليوم لقسم العلاج الطبيعي" });
+    try {
+      const scope = scopeOf(req, s);
+      const want = idOf(req.query.branchId);
+      const branchIds = want ? (scope === null || scope.includes(want) ? [want] : []) : scope;
+      res.json({ today: baghdadTodayYmd(), plans: await exec.todayList({ branchIds, userId: s.userId ?? null, today: baghdadTodayYmd() }) });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **«إنهاء الجلسة»** — أيُّ منفّذٍ من القسم في فرع الخطّة (قرارُ المالك: المسنَدُ افتراضيٌّ لا حصر).
+  app.post("/api/physio/plans/:id/sessions", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canExecutePlans(l.s)) return res.status(403).json({ error: "تُنفَّذ الخطّةُ بيد قسم العلاج الطبيعي" });
+      const scope = scopeOf(req, l.s);
+      if (scope !== null && !scope.includes(l.row.branchId)) return res.status(403).json({ error: "تُنفَّذ الخطّةُ في فرعها — بيد مَن يعمل فيه" });
+      const today = baghdadTodayYmd();
+      const sessionDate = dateOf(req.body?.date, today);
+      const v = checkVisitDate(sessionDate, Boolean(l.s.isAdmin));
+      if (!v.ok) return res.status(v.status).json({ error: v.message });
+      if (!Array.isArray(req.body?.items) || req.body.items.length > 40) return res.status(400).json({ error: "البنودُ غير صالحة" });
+      const items = req.body.items.map((i: any) => ({
+        deviceId: Number(i?.deviceId), done: i?.done === true,
+        minutes: i?.minutes === "" || i?.minutes == null ? null : Number(i.minutes),
+        note: typeof i?.note === "string" && i.note.trim() ? i.note.trim().slice(0, 500) : null,
+      }));
+      if (items.some((i: any) => !Number.isInteger(i.deviceId) || (i.minutes !== null && (!Number.isInteger(i.minutes) || i.minutes < 0 || i.minutes > 240)))) {
+        return res.status(400).json({ error: "دقائقُ البند ٠–٢٤٠" });
+      }
+      const note = typeof req.body?.noteToSpecialist === "string" && req.body.noteToSpecialist.trim() ? req.body.noteToSpecialist.trim().slice(0, 2000) : null;
+      const r = await exec.executeSession({
+        planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s),
+        canDryNeedle: l.s.permissions?.canDryNeedle === true, visitCustomDate: sessionDate === today ? null : sessionDate,
+      });
+      await logAudit({ entityType: "visit", entityId: r.visit.id, action: "create", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
+        branchId: r.visit.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null, notes: `جلسة من خطة العلاج الطبيعي #${l.row.id}` });
+      await audit(req, l.s, { entityId: l.row.id, action: "execute", branchId: l.row.branchId,
+        newValues: { sessionId: r.session.id, sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note } });
+      res.json({ ...r.session, visitId: r.visit.id });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.get("/api/physio/plans/:id/sessions", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      res.json({ sessions: await exec.planSessions(l.row.id), canExecute: canExecutePlans(l.s), canCancel: canCancelSessions(l.s) });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **إلغاءُ جلسةٍ نُفّذت خطأً** — للمسؤول والمشرف العام، بسببٍ إلزاميّ.
+  app.post("/api/physio/sessions/:id/cancel", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canCancelSessions(s)) return res.status(403).json({ error: "يلغي الجلسةَ المسؤولُ أو المشرفُ العام" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    const reason = text(req.body?.reason, 1000);
+    if (!reason) return res.status(400).json({ error: "اكتب سببَ الإلغاء" });
+    try {
+      const r = await exec.cancelSession(id, reason, actor(s));
+      await audit(req, s, { entityId: r.before.planId, action: "cancel_session", branchId: r.before.branchId,
+        oldValues: { sessionId: id, visitId: r.before.visitId, countsWritten: r.before.countsWritten }, newValues: { cancelReason: reason } });
+      res.json(r.after);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **ما اختلف عن الخطّة** — لكاتبي الخطط: آخر ثلاثين يوماً في نطاقهم.
+  app.get("/api/physio/deviations", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canWrite(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });
+    try {
+      const since = new Date(Date.now() + 3 * 3600 * 1000 - 30 * 86400000).toISOString().slice(0, 10);
+      res.json({ sessions: await exec.deviations({ branchIds: scopeOf(req, s), sinceDate: since }) });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **للاستقبال** — هل لهذا الملفّ خطّةٌ معتمَدة؟ فيُنبَّه في «تسجيل زيارة جلسة علاج طبيعي» كي لا تُحتسب الجلسةُ مرّتين.
+  app.get("/api/patients/:patientId/physio-plan-flag", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    const patientId = idOf(req.params.patientId);
+    if (!patientId) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const patient = await storage.getPatient(patientId);
+      if (!patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "المريض غير موجود" });
+      res.json({ hasApprovedPlan: await exec.hasApprovedPlan(patientId), canExecute: canExecutePlans(s) });
     } catch (e) { fail(res, e); }
   });
 

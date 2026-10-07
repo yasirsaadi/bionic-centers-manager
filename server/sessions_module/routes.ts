@@ -24,6 +24,8 @@ import {
   requireBranchWriteAccess,
 } from "./permissions";
 import { onlyRoles } from "@shared/user_roles";
+import { countsFromError, countsFromExecution, MANUAL_COUNTS_LOCKED_ERROR } from "@shared/physio_plans";
+import { executionCounts } from "../physio_plans/execution";
 
 /**
  * Session Tracking Routes
@@ -190,7 +192,15 @@ export function registerSessionTrackingRoutes(
           counts = allDevices.map((d) => ({ deviceId: d.id, count: map.get(d.id) ?? 0 }));
         }
 
-        res.json({ session: session ?? null, counts });
+        //  **عدّاتُ التنفيذ بجانب اليدويّ** (§4.cn) — أيّامَ العمل معاً يُقارَن الرقمان؛ ومن يوم القفل يصير اليدويُّ هو التنفيذ.
+        const [br] = await db.select({ countsFrom: branches.physioCountsFrom }).from(branches).where(eq(branches.id, branchId));
+        const exec = await executionCounts(branchId, sessionDate, shift);
+        const countsFrom = (br?.countsFrom as string | null) ?? null;
+        res.json({
+          session: session ?? null, counts,
+          executionCounts: allDevices.map((d) => ({ deviceId: d.id, count: exec.get(d.id) ?? 0 })),
+          countsFrom, locked: countsFromExecution(countsFrom, sessionDate),
+        });
       } catch (err) {
         console.error("[session-tracking] /daily error", err);
         res.status(500).json({ message: "تعذّر جلب جلسة اليوم" });
@@ -214,6 +224,13 @@ export function registerSessionTrackingRoutes(
 
       const ctx = getUserContext(req);
       const today = getTodayIraq();
+      //  **الإدخالُ اليدويّ مقفلٌ من يوم القفل** (§4.cn) — العدّاداتُ من تنفيذ خطط العلاج الطبيعي، ولا يكتب فوقها أحد.
+      {
+        const [br] = await db.select({ countsFrom: branches.physioCountsFrom }).from(branches).where(eq(branches.id, branchId));
+        if (countsFromExecution((br?.countsFrom as string | null) ?? null, sessionDate)) {
+          return res.status(403).json({ message: MANUAL_COUNTS_LOCKED_ERROR });
+        }
+      }
       //  حصر (§4.ch): استقبالٌ لا دورَ له غيره — ومحاسبٌ هو استقبالٌ أيضاً لا يُقيَّد بيوم اليوم.
       const isReception = onlyRoles(ctx, ["reception"]);
 
@@ -318,6 +335,39 @@ export function registerSessionTrackingRoutes(
         }
         console.error("[session-tracking] /daily/upsert error", err);
         res.status(500).json({ message: "تعذّر حفظ الجلسة" });
+      }
+    },
+  );
+
+  // ==================== يومُ القفل (§4.cn) ====================
+  //  **من أيّ يومٍ تُحسب عدّاداتُ الفرع من التنفيذ** — المسؤولُ وحده، ومن الغد فصاعداً؛ و`null` يرفع القفل.
+  app.put(
+    "/api/session-tracking/branches/:id/counts-from",
+    isAuthenticated,
+    async (req: Request, res: Response) => {
+      const s = getSession(req);
+      if (!s?.isAdmin) return res.status(403).json({ message: "يومُ القفل للمسؤول وحده" });
+      const branchId = Number(req.params.id);
+      if (!Number.isInteger(branchId) || branchId <= 0) return res.status(400).json({ message: "فرعٌ غير صالح" });
+      const raw = req.body?.date;
+      const date = raw === null || raw === "" || raw === undefined ? null : String(raw);
+      const err = countsFromError(date, getTodayIraq());
+      if (err) return res.status(400).json({ message: err });
+      try {
+        const [before] = await db.select({ countsFrom: branches.physioCountsFrom }).from(branches).where(eq(branches.id, branchId));
+        if (!before) return res.status(404).json({ message: "الفرع غير موجود" });
+        await db.update(branches).set({ physioCountsFrom: date }).where(eq(branches.id, branchId));
+        const ctx = getUserContext(req);
+        await logAudit({
+          entityType: "branch", entityId: branchId, action: "update", userId: ctx.userId, userName: ctx.userName, branchId,
+          oldValues: { physioCountsFrom: before.countsFrom }, newValues: { physioCountsFrom: date },
+          ipAddress: ctx.ipAddress, userAgent: ctx.userAgent,
+          notes: date ? `عدّاداتُ الأجهزة من تنفيذ الخطط ابتداءً من ${date}` : "رُفع قفلُ الإدخال اليدويّ لعدّادات الأجهزة",
+        });
+        res.json({ branchId, countsFrom: date });
+      } catch (err2) {
+        console.error("[session-tracking] counts-from error", err2);
+        res.status(500).json({ message: "تعذّر الحفظ" });
       }
     },
   );

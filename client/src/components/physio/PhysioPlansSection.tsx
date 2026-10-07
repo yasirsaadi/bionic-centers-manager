@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Play, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,12 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
 import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, type PlanStatus } from "@shared/physio_plans";
+import { ExecuteSessionDialog } from "@/components/physio/ExecuteSession";
 
 interface PlanRow {
   id: number; titleAr: string; status: PlanStatus; createdByName: string | null; createdAt: string;
   decidedByName: string | null; protocolStatus: string | null; protocolId: number | null; deviceCount: number; assignees: string[];
+  canExecute?: boolean;
 }
 interface ProtocolRow { id: number; titleAr: string; titleEn: string; ageGroup: AgeGroup; status: "draft" | "approved" }
 
@@ -39,6 +41,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
   const [pickOpen, setPickOpen] = useState(false);
   const [deleting, setDeleting] = useState<PlanRow | null>(null);
   const [changingType, setChangingType] = useState<PlanRow | null>(null);
+  const [executing, setExecuting] = useState<number | null>(null);
   const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean; canDelete: boolean }>({
     queryKey: [`/api/patients/${patientId}/physio-plans`],
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/physio-plans`)).json(),
@@ -81,6 +84,13 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 {p.assignees.length ? ` · المنفّذون: ${p.assignees.join("، ")}` : ""}
               </div>
             </button>
+            {/*  «تنفيذ جلسة» — لمنفّذي القسم في فرع الخطّة المعتمَدة (§4.cn). */}
+            {p.canExecute && (
+              <div className="flex flex-col justify-center">
+                <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => setExecuting(p.id)}
+                  data-testid={`button-execute-physio-plan-${p.id}`}><Play className="w-4 h-4" /> تنفيذ جلسة</Button>
+              </div>
+            )}
             {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرسهما. */}
             {q.data?.canDelete && (
               <div className="flex flex-col justify-center gap-1">
@@ -98,6 +108,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
       )}
       <ChangePlanTypeDialog plan={changingType} onClose={() => setChangingType(null)} patientId={patientId} />
       <DeletePlanDialog plan={deleting} onClose={() => setDeleting(null)} patientId={patientId} />
+      <ExecuteSessionDialog planId={executing} onClose={() => setExecuting(null)} />
       <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId}
         onCreated={(id) => setLocation(`/physio/plans/${id}?edit=1`)} />
     </div>

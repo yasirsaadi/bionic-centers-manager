@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, ClipboardList, Pencil, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardList, Pencil, Play, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,9 +20,10 @@ import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ChangePlanTypeDialog, DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
+import { DeviationsList, ExecuteSessionDialog, PlanSessionsHistory } from "@/components/physio/ExecuteSession";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
-  PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom,
+  PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom, canWritePlans,
   type PlanStatus,
 } from "@shared/physio_plans";
 
@@ -41,7 +42,7 @@ interface Plan {
   patient: { id: number; name: string; code: string | null; age: string | null } | null;
   protocol: { id: number; titleAr: string; titleEn: string; status: string; code: string } | null;
   devices: PlanDevice[]; assignees: { userId: number; name: string; role: string }[];
-  canWrite: boolean; canApprove: boolean; canDelete: boolean;
+  canWrite: boolean; canApprove: boolean; canDelete: boolean; canExecute?: boolean; canCancelSessions?: boolean;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -59,7 +60,7 @@ const T = {
     precautions: "الموانع والاحتياطات", notes: "ملاحظات الأخصائي لهذا المريض", assignees: "المنفّذون", noAssignees: "لم يُسنَد إلى أحد بعد.",
     noDevices: "لا أجهزة في الخطّة.", notAvail: "غير متوفّر في فرع الخطّة", perWeek: "جلسات/أسبوع", weeks: "أسابيع", perSession: "دقيقة/جلسة",
     wroteBy: "كتبها", approvedBy: "اعتمدها", returned: "أُعيدت بملاحظة", stopped: "أُوقفت", fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية",
-    signature: "توقيع الأخصائي", approval: "الاعتماد",
+    signature: "توقيع الأخصائي", approval: "الاعتماد", sessions: "الجلسات المنفّذة",
   },
   en: {
     back: "Patient file", patient: "Patient", branch: "Branch", protocol: "Protocol", dose: "Dose", goals: "Goals", devices: "Devices",
@@ -67,7 +68,7 @@ const T = {
     precautions: "Contraindications & precautions", notes: "Specialist notes for this patient", assignees: "Executed by", noAssignees: "Not assigned yet.",
     noDevices: "No devices in this plan.", notAvail: "Not available in the plan's branch", perWeek: "sessions/week", weeks: "weeks", perSession: "min/session",
     wroteBy: "Written by", approvedBy: "Approved by", returned: "Returned with a note", stopped: "Stopped", fallback: "English not written yet — Arabic shown",
-    signature: "Specialist signature", approval: "Approval",
+    signature: "Specialist signature", approval: "Approval", sessions: "Executed sessions",
   },
 } as const;
 
@@ -108,6 +109,7 @@ export default function PhysioPlanPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
+  const [execOpen, setExecOpen] = useState(false);
   const [, navigate] = useLocation();
 
   const refresh = () => {
@@ -178,6 +180,12 @@ export default function PhysioPlanPage() {
       {/*  الأزرارُ بحسب صلاحية السائل (من الخادم) وحالة الخطّة. */}
       {!editing && (
         <div className="flex flex-wrap gap-2 print:hidden" data-testid="plan-actions">
+          {/*  «تنفيذ جلسة» — أيُّ منفّذٍ من القسم في فرع الخطّة المعتمَدة (قرارُ المالك: المسنَدُ افتراضيٌّ لا حصر — §4.cn). */}
+          {plan.canExecute && plan.status === "approved" && (
+            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => setExecOpen(true)} data-testid="button-execute-plan">
+              <Play className="w-4 h-4" /> تنفيذ جلسة
+            </Button>
+          )}
           {plan.canWrite && plan.status !== "stopped" && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
           )}
@@ -258,6 +266,7 @@ export default function PhysioPlanPage() {
             {plan.assignees.length === 0 ? <p className="text-sm text-muted-foreground">{t.noAssignees}</p>
               : <p className="text-sm">{plan.assignees.map((a) => a.name).join("، ")}</p>}
           </Section>
+          <div className="print:hidden"><Section title={t.sessions}><PlanSessionsHistory planId={plan.id} /></Section></div>
           <div className="hidden print:flex justify-between pt-8 text-sm">
             <div>{t.signature}: ____________</div>
             <div>{t.approval}: {plan.status === "approved" ? plan.decidedByName : "____________"}</div>
@@ -271,6 +280,7 @@ export default function PhysioPlanPage() {
         onClose={() => setTypeOpen(false)} patientId={plan.patientId} onChanged={refresh} />
       <DeletePlanDialog plan={deleteOpen ? plan : null} onClose={() => setDeleteOpen(false)} patientId={plan.patientId}
         onDeleted={() => navigate(`/patients/${plan.patientId}`)} />
+      <ExecuteSessionDialog planId={execOpen ? plan.id : null} onClose={() => setExecOpen(false)} />
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
     </div>
   );
@@ -442,11 +452,12 @@ interface ListRow { id: number; titleAr: string; status: PlanStatus; branchName:
 export function PhysioPlansPage() {
   const session = useBranchSession();
   const permissions = usePermissions();
-  return <PhysioPlansList canApprove={canApprovePlans(session ? { ...session, permissions } as any : null)} />;
+  const s = session ? { ...session, permissions } as any : null;
+  return <PhysioPlansList canApprove={canApprovePlans(s)} canWrite={canWritePlans(s)} />;
 }
 
-export function PhysioPlansList({ canApprove }: { canApprove: boolean }) {
-  const [tab, setTab] = useState<"pending" | "assigned">(canApprove ? "pending" : "assigned");
+export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: boolean; canWrite?: boolean }) {
+  const [tab, setTab] = useState<"pending" | "assigned" | "deviations">(canApprove ? "pending" : "assigned");
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ClipboardList className="w-5 h-5 text-green-700" /> خطط العلاج الطبيعي</h1>
@@ -454,9 +465,11 @@ export function PhysioPlansList({ canApprove }: { canApprove: boolean }) {
         <TabsList>
           {canApprove && <TabsTrigger value="pending" data-testid="tab-plans-pending">بانتظار الاعتماد</TabsTrigger>}
           <TabsTrigger value="assigned" data-testid="tab-plans-assigned">المسندة إليّ</TabsTrigger>
+          {canWrite && <TabsTrigger value="deviations" data-testid="tab-plans-deviations">اختلافات التنفيذ</TabsTrigger>}
         </TabsList>
         {canApprove && <TabsContent value="pending"><PlansTable view="pending" /></TabsContent>}
         <TabsContent value="assigned"><PlansTable view="assigned" /></TabsContent>
+        {canWrite && <TabsContent value="deviations"><DeviationsList /></TabsContent>}
       </Tabs>
     </div>
   );
