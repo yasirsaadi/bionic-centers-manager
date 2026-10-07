@@ -79,6 +79,8 @@ import {
   Legend
 } from "recharts";
 import { bigSliceLabel, groupSmallSlices, colorForName } from "@/lib/pie_labels";
+import { cashCategoryLabel } from "@/lib/cash_book_text";
+import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
 
 // Labels match the categories returned by the AI categorize endpoint exactly,
 // so the AI suggestion can be matched on either `label` or `value`.
@@ -1263,6 +1265,8 @@ export default function Accounting() {
   })();
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  //  تعديلُ المصروف وحذفُه للمسؤول وحده، وغيرُه يطلب تصحيحاً يعتمده (قرارُ المالك ٢٠٢٦-١٠-٠٧، §4.ce).
+  const [requestingExpense, setRequestingExpense] = useState<CorrectionTarget | null>(null);
   const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   // «تسجيل قبض» على فاتورة — المال يدخل جدول الدفعات (فيظهر في الوارد)
@@ -3638,6 +3642,8 @@ export default function Accounting() {
 
           {/* Expenses Tab */}
           <TabsContent value="expenses" className="space-y-6">
+            <CorrectionRequestsPanel isAdmin={isAdmin} />
+            <RequestCorrectionDialog target={requestingExpense} onClose={() => setRequestingExpense(null)} />
             <div className="flex justify-between items-center gap-2 flex-wrap">
               <h2 className="text-xl font-semibold">{t.accounting.expenseManagement}</h2>
               <div className="flex gap-2">
@@ -3745,9 +3751,16 @@ export default function Accounting() {
                             {formatDateIraq(expense.expenseDate)}
                           </TableCell>
                           <TableCell>
-                            {/* Edit/delete are full-accounting only. An
-                                add-expenses-only user can add & view, not modify. */}
-                            {fullAccounting ? (
+                            {/* تعديلُ المصروف وحذفُه للمسؤول وحده؛ وغيرُه — مَن يكتب المصاريف — يطلب تصحيحاً يعتمده (§4.ce). */}
+                            {!isAdmin && canAddExpenses ? (
+                              <Button variant="ghost" size="sm" className="text-amber-700"
+                                onClick={() => setRequestingExpense({ type: "expense", id: expense.id, amount: expense.amount,
+                                  label: `${cashCategoryLabel(expense.category)}${expense.description ? ` — ${expense.description}` : ""}`,
+                                  note: expense.description ?? null, category: expense.category })}
+                                data-testid={`button-request-expense-${expense.id}`}>
+                                طلب تصحيح
+                              </Button>
+                            ) : isAdmin ? (
                             <div className="flex items-center gap-2">
                               <Button
                                 variant="ghost"

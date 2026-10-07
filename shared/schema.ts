@@ -1011,6 +1011,29 @@ export const cashBookPrints = pgTable("cash_book_prints", {
   index("ix_cash_book_prints_day").on(t.branchId, t.book, t.day, t.printedAt),
 ]);
 
+/** طلبُ تصحيح مصروفٍ أو سطرِ دفترٍ يعتمده المسؤول (ترحيل ١٠٢، §4.ce). */
+export const moneyCorrectionRequests = pgTable("money_correction_requests", {
+  id: serial("id").primaryKey(),
+  targetType: text("target_type").notNull(), // expense | cash_book_entry
+  targetId: integer("target_id").notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  action: text("action").notNull(), // update | delete
+  beforeSnapshot: jsonb("before_snapshot").notNull(),
+  requestedPatch: jsonb("requested_patch"),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"),
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+}, (t) => [
+  uniqueIndex("uq_mcr_one_pending_per_target").on(t.targetType, t.targetId).where(sql`status = 'pending'`),
+  index("ix_mcr_status").on(t.status, t.branchId),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and

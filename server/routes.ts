@@ -47,6 +47,7 @@ import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
+import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
@@ -6197,12 +6198,12 @@ export async function registerRoutes(
       // their own row — branch_manager included; no role grants this
       // implicitly since the 2026-09-01 fix, so branch managers need the
       // flag set explicitly like everyone else.
-      const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
       const userId = branchSession?.userId ?? null;
       const userName = branchSession?.displayName ?? null;
 
-      if (!canManage) {
-        return res.status(403).json({ error: "غير مصرح لك بتعديل المصروفات" });
+      //  **تعديلُ المصروف للمسؤول وحده، أو بطلب تصحيحٍ يعتمده** (قرارُ المالك ٢٠٢٦-١٠-٠٧، §4.ce) — كان لصاحب «إدارة المحاسبة».
+      if (!isAdmin) {
+        return res.status(403).json({ error: "تعديلُ المصروف للمسؤول وحده — قدّم «طلب تصحيح» يعتمده" });
       }
 
       const id = parseInt(req.params.id);
@@ -6262,12 +6263,12 @@ export async function registerRoutes(
   app.delete("/api/expenses/:id", isAuthenticated, async (req: any, res) => {
     const branchSession = (req.session as any).branchSession;
     const isAdmin = branchSession?.isAdmin;
-    const canManage = isAdmin || branchSession?.permissions?.canManageAccounting;
     const userId = branchSession?.userId ?? null;
     const userName = branchSession?.displayName ?? null;
 
-    if (!canManage) {
-      return res.status(403).json({ error: "غير مصرح لك بحذف المصروفات" });
+    //  **حذفُ المصروف للمسؤول وحده، أو بطلب تصحيحٍ يعتمده** (§4.ce).
+    if (!isAdmin) {
+      return res.status(403).json({ error: "حذفُ المصروف للمسؤول وحده — قدّم «طلب تصحيح» يعتمده" });
     }
 
     const id = parseInt(req.params.id);
@@ -8794,6 +8795,7 @@ export async function registerRoutes(
   registerPendingChargeRoutes(app, isAuthenticated);
   //  دفترُ القاصة اليوميّ (§4.ca).
   registerCashBookRoutes(app, isAuthenticated);
+  registerMoneyCorrectionRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerPaymentCorrectionRoutes(app, isAuthenticated);
   //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —
