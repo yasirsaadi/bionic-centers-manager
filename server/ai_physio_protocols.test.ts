@@ -16,7 +16,10 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { executeTool } from "./ai/tools/registry";
+import { executeTool, toolsFor } from "./ai/tools/registry";
+import { aiChat } from "./ai/chat";
+import { safeAiComplete } from "./ai/provider";
+import { searchTokens } from "./physio_protocols/store";
 import { resolveAiAccess } from "./ai/access";
 import { SEED, sql as seedSql } from "./migrations/107_physio_protocol_seed";
 import { sql as englishSql } from "./migrations/108_physio_protocol_english";
@@ -154,6 +157,36 @@ async function main() {
     console.log("\n── هـ. التفصيلُ الكامل ممنوعٌ على المساعد ──");
     same("هـ.١ /api/physio/protocols/:id لا يُنادى", (await read(S.admin, "/api/physio/protocols/:id", {}, { id: knee }) as any).ok, false);
     same("هـ.٢ ولا مصفوفةُ التوفّر", (await read(S.admin, "/api/physio/devices") as any).ok, false);
+
+    console.log("\n── و. أداةُ physio_protocol_lookup — سؤالُ المالك بحرفه ──");
+    same("و.١ كلماتُ الحالة وحدها من السؤال العربيّ", searchTokens("طفل عمره 6 سنوات عنده شلل دماغي. شنو خطته وأجهزته ومدة علاجه؟"), ["شلل", "دماغي"]);
+    same("و.٢ ومن الإنكليزيّ", searchTokens("What is the protocol for knee osteoarthritis in an elderly patient?"), ["knee", "osteoarthritis"]);
+    const accessOf = (u: any) => resolveAiAccess({ session: u, branchName: null, scopeBranchId: u.branchId });
+    const offered = (u: any) => toolsFor(accessOf(u)).some((t) => t.name === "physio_protocol_lookup");
+    same("و.٣ تُعرَض للمستشيرين: المسؤول · المشرف · الأخصائيّ · الطبيب · المدير",
+      [offered(S.admin), offered(S.sup), offered(S.spec), offered(S.doc), offered(S.mgr)], [true, true, true, true, true]);
+    same("و.٤ ولا تُعرَض للتقنيّ ولا للاستقبال", [offered(S.tech), offered(S.rec)], [false, false]);
+    const cp: any = await executeTool(accessOf(S.doc), "physio_protocol_lookup", { query: "شلل دماغي", ageGroup: "pediatric", lang: "ar" });
+    const cp0 = cp.data?.protocols?.[0];
+    same("و.٥ «شلل دماغي» لطفلٍ ⟵ بروتوكولُ الشلل الدماغي", cp0?.code, "cerebral-palsy-pediatric");
+    check(!!cp0?.dose?.sessionsPerWeek && (cp0?.devices ?? []).length > 0 && typeof cp0?.contraindications === "string",
+      "و.٦ …بجرعته وأجهزته وموانعه", JSON.stringify(cp0).slice(0, 200));
+    const kn: any = await executeTool(accessOf(S.doc), "physio_protocol_lookup", { query: "knee osteoarthritis", ageGroup: "geriatric", lang: "en" });
+    same("و.٧ «knee osteoarthritis» لكبير السنّ ⟵ خشونةُ الركبة بالإنكليزية", [kn.data?.protocols?.[0]?.code, kn.data?.protocols?.[0]?.title], [KNEE, "Knee Osteoarthritis"]);
+    check(String(kn.data?.protocols?.[0]?.statusNote ?? "").startsWith("DRAFT") && /draft/i.test(String(kn.data?.howToAnswer)),
+      "و.٨ والمسوّدةُ تُقال، والتعليمةُ بالإنكليزية", kn.data?.howToAnswer);
+    const none: any = await executeTool(accessOf(S.doc), "physio_protocol_lookup", { query: "قرحة المعدة" });
+    same("و.٩ حالةٌ لا بروتوكولَ لها ⟵ لا شيء، ومعه «لا تخترع»", [none.data?.protocols?.length, /لا تخترع/.test(String(none.data?.note))], [0, true]);
+    same("و.١٠ والتقنيُّ يُردّ ولو اخترع النموذجُ الاسم", (await executeTool(accessOf(S.tech), "physio_protocol_lookup", { query: "شلل دماغي" }) as any).ok, false);
+
+    console.log("\n── ز. نصُّ النظام: اللغةُ والبروتوكولات ──");
+    let seenSystem = "";
+    let seenTools: string[] = [];
+    const capture = (async (p: any) => { seenSystem = p.system; seenTools = (p.tools ?? []).map((t: any) => t.name); return { text: "ok", toolCalls: [], blocks: [] }; }) as any;
+    await aiChat(accessOf(S.doc), [{ role: "user", content: "What is the protocol for knee osteoarthritis in an elderly patient?" }], safeAiComplete, capture);
+    check(seenSystem.includes("والإنكليزية إن سأل بالإنكليزية"), "ز.١ الوضعُ العامّ يجيب بلغة السؤال — لا «العربية» وحدها");
+    check(seenSystem.includes("physio_protocol_lookup") && seenSystem.includes("من اختصاصك لا خارجه"), "ز.٢ والبروتوكولاتُ من اختصاصه، باسم الأداة");
+    check(seenTools.includes("physio_protocol_lookup"), "ز.٣ والأداةُ في قائمة الطبيب فعلاً", JSON.stringify(seenTools));
   } finally {
     httpServer.close();
     await cleanup();

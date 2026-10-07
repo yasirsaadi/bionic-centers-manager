@@ -26,6 +26,8 @@
 // اسمُ مريضٍ أو ملاحظةٌ في ملفّه قد تحوي نصّاً يشبه الأمر. فالمخرَج يُعاد
 // كحقولٍ مسمّاة، والتعليمة في نظام المساعد صريحة بألّا يُطيع محتوى القاعدة.
 
+import { canConsultProtocols, isAgeGroup } from "@shared/physio_protocols";
+import { protocolBrief, searchProtocols } from "../../physio_protocols/store";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
@@ -1087,6 +1089,35 @@ const CODE_ARG = {
   required: ["patientCode"],
 } as const;
 
+//  ══ بروتوكولاتُ العلاج الطبيعي (§4.cj) — للمستشيرين وحدهم ═══════════════════════════════════════
+//  سؤالُ المالك «طفل عمره ٦ سنوات عنده شلل دماغي، شنو خطته وأجهزته ومدة علاجه؟» رُفض «خارج اختصاصي» ولم يبحث النموذجُ في
+//  فهرس القدرات أصلاً. فأداةٌ مسمّاةٌ بغرضها، يراها النموذجُ في قائمته، تبحث بالكلمات (العربية مطبَّعةً والإنكليزية) وتُرجع
+//  موجزَ الأقرب بلغة السؤال — **وبقاعدة الشاشة نفسِها** (`canConsultProtocols`).
+async function physioProtocolLookup(a: AiAccessContext, input: any): Promise<ToolOutcome> {
+  const query = typeof input?.query === "string" ? input.query.slice(0, 300) : "";
+  if (!query.trim()) return denied("اذكر اسمَ الحالة (بالعربية أو الإنكليزية).");
+  const ageGroup = isAgeGroup(input?.ageGroup) && input.ageGroup !== "all" ? input.ageGroup : null;
+  const lang = input?.lang === "en" ? "en" : "ar";
+  const matches = await searchProtocols(query, ageGroup);
+  if (!matches.length) {
+    return { ok: true, data: { protocols: [], note: lang === "en"
+      ? "No protocol in the library matches this condition. Say so plainly — do not invent a plan, devices or durations."
+      : "لا بروتوكولَ في المكتبة يطابق هذه الحالة — قل ذلك صراحةً ولا تخترع خطّةً ولا أجهزةً ولا مدّة." } };
+  }
+  const best = matches.filter((m) => m.score === matches[0].score).slice(0, 2);
+  const briefs = (await Promise.all(best.map((m) => protocolBrief(m.id, lang, a.branchId)))).filter(Boolean);
+  return {
+    ok: true,
+    data: {
+      protocols: briefs.map((b) => b!.protocol),
+      otherMatches: matches.slice(best.length).map((m) => ({ id: m.id, title: lang === "en" ? m.titleEn : m.titleAr, ageGroup: m.ageGroup, status: m.status })),
+      howToAnswer: lang === "en"
+        ? "Answer in English from these fields only: dose (sessions/week, weeks, minutes), each device with its evidence grade, minutes and parameters, goals, exercises, contraindications. If status is draft, say clearly it is a draft not yet approved by the physiotherapy supervisor."
+        : "أجب بالعربية من هذه الحقول وحدها: الجرعة (جلسات/أسبوع · أسابيع · دقائق)، وكلُّ جهازٍ بدرجته ودقائقه ومعاملاته، والأهداف والتمارين والموانع. وإن كان status = draft فقل صراحةً إنه مسوّدةٌ لم يعتمدها المشرفُ العام.",
+    },
+  };
+}
+
 interface ToolEntry {
   spec: AiToolSpec;
   /** هل تُعرَض لهذه الجلسة أصلاً. */
@@ -1422,6 +1453,31 @@ const REGISTRY: Record<string, ToolEntry> = Object.assign(
     },
     offeredTo: () => true,
     run: trainingSubmitAnswer,
+  },
+  physio_protocol_lookup: {
+    spec: {
+      name: "physio_protocol_lookup",
+      description:
+        "بروتوكولُ العلاج الطبيعي لحالةٍ مرضية (physiotherapy protocol) من مكتبة المراكز: الأجهزةُ ودرجةُ دليل كلٍّ "
+        + "(موصى به / اختياري / غير موصى به) ودقائقُه ومعاملاتُه، وعددُ الجلسات في الأسبوع وعددُ الأسابيع ومدّةُ الجلسة، "
+        + "والأهدافُ والتمارينُ وموانعُ الاستعمال والمراجع. **استعملها لكلّ سؤالٍ عن خطّة علاج حالةٍ أو أجهزتها أو مدّتها "
+        + "ولو بلا رمز مريض** — مثل «طفل عمره ٦ سنوات عنده شلل دماغي، شنو خطته؟» أو «protocol for knee osteoarthritis in "
+        + "an elderly patient». هذا من اختصاصك، فلا ترفضه ولا تطلب رمزَ مريض. query: اسمُ الحالة وحده بالعربية أو "
+        + "الإنكليزية (مثل «شلل دماغي» أو «knee osteoarthritis»)؛ ageGroup: pediatric للطفل، geriatric لكبير السنّ، adult "
+        + "للبالغ — إن ذُكر العمر؛ lang: en إن سأل بالإنكليزية وإلّا ar.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "اسمُ الحالة بالعربية أو الإنكليزية" },
+          ageGroup: { type: "string", enum: ["pediatric", "adult", "geriatric"] },
+          lang: { type: "string", enum: ["ar", "en"] },
+        },
+        required: ["query"],
+      } as any,
+    },
+    //  **بقاعدة الشاشة نفسِها** — المسؤول والمشرفُ العام والأخصائيّ والطبيب ومديرُ الفرع (قرارُ المالك ٢٠٢٦-١٠-٠٧).
+    offeredTo: (a) => canConsultProtocols({ isAdmin: a.isAdmin, permissions: a.permissions, role: a.role, roles: a.roles }),
+    run: physioProtocolLookup,
   },
   //  ══ قدراتُ القراءة العامّة ══════════════════════════════════════════
   //  **مُتاحتان لكلّ جلسةٍ مصادَقة** — والحدُّ في النقطة المنفَّذة لا هنا.

@@ -743,10 +743,12 @@ async function main() {
     //  بجلسة السائل — **ولا تفتحان باب بياناتٍ جديداً**، فالحارسُ حارسُ
     //  النقطة نفسِه. والعددُ يتغيّر بإضافةٍ مشروعة كما ينصّ التعليقُ أعلاه؛
     //  **المغلقُ هو السجلّ لا الرقم**.
-    same("م. خمسَ عشرةَ أداةً لا غير — ومعها أداتا المدقّق (§4.cd)", TOOL_NAMES.sort(), [
+    //  ══ وأُضيفت `physio_protocol_lookup` (§4.cj) ══ بروتوكولاتُ العلاج الطبيعي للمستشيرين وحدهم (`canConsultProtocols`) —
+    //  قراءةٌ فقط من مكتبةٍ لا تحمل اسمَ مريضٍ ولا مبلغاً. **المغلقُ هو السجلّ لا الرقم.**
+    same("م. ستَّ عشرةَ أداةً لا غير — ومعها أداتا المدقّق (§4.cd) وأداةُ البروتوكولات (§4.cj)", TOOL_NAMES.sort(), [
       "device_sales_summary", "financial_audit", "financial_ledger", "financial_summary", "list_capabilities", "my_worklist",
       "operational_summary", "patient_clinical_summary", "patient_finance", "patient_lookup",
-      "patient_search", "read_capability",
+      "patient_search", "physio_protocol_lookup", "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",
     ]);
     for (const bogus of ["run_sql", "query", "exec", "patient_update", "delete_patient", "__proto__"]) {

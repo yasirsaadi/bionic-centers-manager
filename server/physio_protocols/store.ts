@@ -263,3 +263,51 @@ export async function protocolBrief(id: number, lang: ProtocolLang, activeBranch
     },
   };
 }
+
+// ── البحثُ بالكلمات للمساعد (§4.cj) ─────────────────────────────────────────────
+// `ilike` على العبارة كاملةً لا يجد «الشلل الدماغي» من «شلل دماغي»، ولا «knee osteoarthritis» من سؤالٍ طويل.
+// فيُطبَّع النصُّ (التشكيل · الهمزات · التاء المربوطة · «ال») ويُعَدّ ما يطابق من كلمات السؤال المعتبَرة — والمكتبةُ بضع عشرات صفّاً.
+const STOP = new Set([
+  // عربية: كلماتُ السؤال لا الحالة
+  "شنو", "شو", "ما", "ماذا", "هي", "هو", "عن", "في", "من", "على", "الى", "او", "مع", "عند", "عنده", "عندها", "لديه", "لديها", "يعاني",
+  "تعاني", "طفل", "طفله", "عمره", "عمرها", "سنه", "سنوات", "سنين", "مريض", "مريضه", "خطه", "خطته", "خطتها", "اجهزه", "اجهزته", "مده",
+  "علاج", "علاجه", "بروتوكول", "بروتوكولات", "انطيني", "اعطني", "اريد", "كم", "كيف", "هل", "حاله", "طبيعي", "جلسه", "جلسات",
+  // إنكليزية
+  "what", "is", "the", "for", "a", "an", "in", "of", "with", "and", "or", "to", "patient", "protocol", "protocols", "plan", "treatment",
+  "physiotherapy", "physical", "therapy", "child", "old", "year", "years", "elderly", "adult", "give", "me", "please", "how", "long",
+]);
+export function normalizeSearchText(s: string): string {
+  return String(s ?? "").toLowerCase()
+    .replace(/[ً-ْـ]/g, "")
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي")
+    .replace(/[^0-9a-z\u0621-\u064A]+/g, " ").trim();
+}
+const stem = (w: string) => {
+  //  واوُ العطف: «والركبة» ⟵ «ركبه»، و«وأجهزته» ⟵ كلمةُ سؤالٍ تُسقَط.
+  if (w.length > 5 && w.startsWith("وال")) return w.slice(3);
+  if (w.length > 3 && w.startsWith("و") && STOP.has(w.slice(1))) return w.slice(1);
+  return w.length > 4 && w.startsWith("ال") ? w.slice(2) : w;
+};
+export function searchTokens(query: string): string[] {
+  return Array.from(new Set(normalizeSearchText(query).split(" ").map(stem).filter((w) => w.length >= 3 && !STOP.has(w))));
+}
+
+export async function searchProtocols(query: string, ageGroup?: string | null) {
+  const tokens = searchTokens(query);
+  if (!tokens.length) return [];
+  const rows = await db.select({
+    id: physioProtocols.id, code: physioProtocols.code, titleAr: physioProtocols.titleAr, titleEn: physioProtocols.titleEn,
+    category: physioProtocols.category, ageGroup: physioProtocols.ageGroup, status: physioProtocols.status,
+  }).from(physioProtocols).where(eq(physioProtocols.isArchived, false));
+  return rows
+    .map((r) => {
+      const hay = normalizeSearchText(`${r.titleAr} ${r.titleEn} ${r.code.replace(/-/g, " ")}`).split(" ").map(stem);
+      const hits = tokens.filter((t) => hay.some((h) => h === t || (t.length >= 4 && (h.startsWith(t) || t.startsWith(h) && h.length >= 4))));
+      const ageFit = !ageGroup || r.ageGroup === ageGroup || r.ageGroup === "all";
+      return { ...r, score: hits.length + (ageGroup && r.ageGroup === ageGroup ? 0.5 : 0), ageFit };
+    })
+    .filter((r) => r.score >= 1 && r.ageFit)
+    .sort((a, b) => b.score - a.score || a.titleAr.localeCompare(b.titleAr))
+    .slice(0, 6)
+    .map(({ ageFit: _a, ...r }) => r);
+}
