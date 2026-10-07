@@ -16,7 +16,8 @@ import multer from "multer";
 import { logAudit } from "../accounting/ledger";
 import { getSession } from "../sessions_module/permissions";
 import {
-  canApproveProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel,
+  canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel,
+  isProtocolLang,
   isProtocolCategory, normalizeReferences, statusAfterEdit, type ProtocolStatus,
 } from "@shared/physio_protocols";
 import * as store from "./store";
@@ -72,6 +73,11 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
   };
 }
 
+//  **المساعدُ يسأل بجلسة السائل** (`server/ai/capabilities/invoke.ts` يَسِم طلبَه بـ`x-internal-capability`). وقرارُ المالك أن جوابَ
+//  البروتوكولات للمستشيرين وحدهم (`canConsultProtocols`) لا للمنفّذين — فالوسمُ يُضيّق ولا يوسّع: مَن يزوّره من متصفّحه يحرم نفسَه فقط.
+const viaAssistant = (req: any) => req.get?.("x-internal-capability") === "1";
+const ASSISTANT_SCOPE = "يجيب المساعدُ عن البروتوكولات للأخصائيّ والمشرف العام والطبيب ومدير الفرع والمسؤول — والصفحةُ نفسُها مفتوحةٌ لك من الشريط.";
+
 export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any) {
   const sess = (req: any) => getSession(req) ?? ({} as any);
   const actor = (s: any): store.Actor => ({ userId: s.userId ?? null, name: s.displayName ?? null });
@@ -83,6 +89,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
   app.get("/api/physio/protocols", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
     if (!canReadProtocols(s)) return res.status(403).json({ error: "مكتبةُ البروتوكولات لقسم العلاج الطبيعي" });
+    if (viaAssistant(req) && !canConsultProtocols(s)) return res.status(403).json({ error: ASSISTANT_SCOPE });
     try {
       const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
       const archived = req.query.archived === "1" && canEditProtocols(s);
@@ -105,6 +112,20 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       const p = await store.getProtocol(id);
       if (!p || (p.isArchived && !canEditProtocols(s))) return res.status(404).json({ error: "البروتوكول غير موجود" });
       res.json({ ...p, canEdit: canEditProtocols(s), canApprove: canApproveProtocols(s) });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  موجزُ البروتوكول للمساعد — كائنٌ متداخل باللغة المطلوبة (`lang=ar|en`)، للمستشيرين وحدهم من أيّ طريق.
+  app.get("/api/physio/protocols/:id/brief", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canConsultProtocols(s)) return res.status(403).json({ error: ASSISTANT_SCOPE });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    const lang = isProtocolLang(req.query.lang) ? req.query.lang : "ar";
+    try {
+      const b = await store.protocolBrief(id, lang, Number(s.branchId) || null);
+      if (!b) return res.status(404).json({ error: "البروتوكول غير موجود" });
+      res.json(b);
     } catch (e) { fail(res, e); }
   });
 

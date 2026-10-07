@@ -5,7 +5,11 @@ import {
   branches, devices, physioDeviceBranches, physioProtocolDevices, physioProtocolImages, physioProtocols,
   type PhysioProtocol,
 } from "@shared/schema";
-import type { EvidenceLevel, ProtocolReference, ProtocolStatus } from "@shared/physio_protocols";
+import {
+  AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN,
+  PROTOCOL_TEXT_FIELDS, localizedText,
+  type AgeGroup, type EvidenceLevel, type ProtocolCategory, type ProtocolLang, type ProtocolReference, type ProtocolStatus,
+} from "@shared/physio_protocols";
 
 export class ProtocolError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -213,3 +217,49 @@ export async function setAvailability(deviceId: number, branchId: number, availa
   return { before: before ? before.available : false, after: available };
 }
 
+
+// ── موجزُ البروتوكول للمساعد الذكي (§4.cj) ─────────────────────────────────────
+// **كائنٌ واحدٌ متداخل لا مصفوفاتٌ في مستواه الأوّل**: طبقةُ القدرات (`server/ai/capabilities/shape.ts`) تأخذ أطولَ مصفوفةٍ في المستوى
+// الأوّل وتُسقط ما سواها — فتفصيلُ البروتوكول العاديّ كان يصل النموذجَ أجهزةً بلا أهدافٍ ولا تمارين ولا موانع ولا جرعة. **وباللغة
+// المطلوبة**، والغائبةُ تقع على الأخرى ويُقال ذلك.
+export async function protocolBrief(id: number, lang: ProtocolLang, activeBranchId: number | null) {
+  const p = await getProtocol(id);
+  if (!p || p.isArchived) return null;
+  const branchRows = await db.select({ id: branches.id, name: branches.name }).from(branches);
+  const nameOf = new Map(branchRows.map((b) => [b.id, b.name]));
+  const en = lang === "en";
+  const fellBack: string[] = [];
+  const pick = (row: Record<string, any>, field: string, label: string) => {
+    const v = localizedText(row, field, lang);
+    if (v.fallback) fellBack.push(label);
+    return v.text;
+  };
+  const text: Record<string, string | null> = {};
+  for (const f of PROTOCOL_TEXT_FIELDS) text[f] = pick(p, f, f);
+  return {
+    protocol: {
+      id: p.id, code: p.code, language: lang,
+      title: en ? p.titleEn : p.titleAr, titleOtherLanguage: en ? p.titleAr : p.titleEn,
+      category: (en ? PROTOCOL_CATEGORY_LABELS_EN : PROTOCOL_CATEGORY_LABELS)[p.category as ProtocolCategory] ?? p.category,
+      ageGroup: (en ? AGE_GROUP_LABELS_EN : AGE_GROUP_LABELS)[p.ageGroup as AgeGroup] ?? p.ageGroup,
+      status: p.status,
+      statusNote: p.status === "approved"
+        ? (en ? `Approved by ${p.approvedByName ?? "the supervisor"}.` : `معتمَدٌ — اعتمده ${p.approvedByName ?? "المشرف"}.`)
+        : (en ? "DRAFT — not yet approved by the physiotherapy supervisor. Say so explicitly: it is reference, not an instruction."
+              : "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — قل ذلك للسائل صراحةً: مرجعٌ لا تعليمات."),
+      dose: { sessionsPerWeek: p.sessionsPerWeek, durationWeeks: p.durationWeeks, minutesPerSession: p.sessionMinutes },
+      ...text,
+      devices: p.devices.map((d) => ({
+        device: en ? d.nameEn : d.nameAr, deviceOtherLanguage: en ? d.nameAr : d.nameEn, code: d.code,
+        evidence: (en ? EVIDENCE_LABELS_EN : EVIDENCE_LABELS)[d.evidence as EvidenceLevel] ?? d.evidence,
+        minutes: d.minutes,
+        parameters: pick(d, "parameters", `${d.code}.parameters`),
+        note: pick(d, "note", `${d.code}.note`),
+        availableInBranches: d.availableBranchIds.map((b) => nameOf.get(b) ?? `#${b}`),
+        ...(activeBranchId ? { availableInAskersBranch: d.availableBranchIds.includes(activeBranchId) } : {}),
+      })),
+      references: (p.references as ProtocolReference[] | null) ?? [],
+      ...(fellBack.length ? { untranslated: { fields: fellBack, note: en ? "These fields exist only in Arabic so far." : "هذه الحقولُ بالإنكليزية وحدها حتى الآن." } } : {}),
+    },
+  };
+}

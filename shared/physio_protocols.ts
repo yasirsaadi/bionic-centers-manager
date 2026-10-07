@@ -69,10 +69,20 @@ export function canApproveProtocols(s: ProtocolSessionLike | null | undefined): 
   return s.isAdmin === true || s.permissions?.canSupervisePhysio === true;
 }
 
-/** **يقرأ** المكتبة: مَن يعدّلها، وأدوارُ القسم كلُّها، ومَن يكتب المعاينة (الطبيب). */
+/**
+ * **يستشير** المكتبة — ويسأل المساعدَ عنها: المسؤول، والمشرفُ العام، والأخصائيّ، والطبيب (أو كاتبُ المعاينة)، ومديرُ الفرع.
+ * قرارُ المالك (٢٠٢٦-١٠-٠٧): «هذا الجوابُ يصير فقط للمختصّين والمدراء والمسؤولين والأطباء» — فالمنفّذون (معالجٌ وتقنيّ ومدرّب)
+ * يقرؤون الصفحةَ ولا يسألون المساعدَ «أنطني خطّته وأجهزته».
+ */
+export function canConsultProtocols(s: ProtocolSessionLike | null | undefined): boolean {
+  if (!s) return false;
+  return canEditProtocols(s) || hasRole(s, "doctor") || s.permissions?.canWriteMedicalExam === true || hasRole(s, "branch_manager");
+}
+
+/** **يقرأ** صفحةَ المكتبة: مَن يستشيرها، ومعهم أدوارُ القسم كلُّها. */
 export function canReadProtocols(s: ProtocolSessionLike | null | undefined): boolean {
   if (!s) return false;
-  return canEditProtocols(s) || hasPhysioRole(s) || hasRole(s, "doctor") || s.permissions?.canWriteMedicalExam === true;
+  return canConsultProtocols(s) || hasPhysioRole(s);
 }
 
 /** **يضبط توفّرَ الأجهزة بالفروع**: المسؤولُ والمشرفُ العام. */
