@@ -27,6 +27,7 @@ import { trainingTracks, trainingModules } from "@shared/schema";
 import { asc, eq } from "drizzle-orm";
 import { isCapability, type Capability } from "@shared/ai_capabilities";
 import { isQuizSpec, type QuizSpec } from "@shared/ai_training";
+import { rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -229,6 +230,7 @@ export function registerTrainingRoutes(app: Express, isAuthenticated: any) {
     const result = await getManagementTrainingProgress({
       isAdmin: Boolean(branchSession?.isAdmin),
       role: branchSession?.role ?? null,
+      roles: rolesOf(branchSession),
       operationalBranches: operationalBranchesOf(branchSession),
     });
     if (!result.ok) return res.status(403).json({ error: result.error });

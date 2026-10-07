@@ -99,6 +99,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch, TreatmentPlan } from "@shared/schema";
+import { hasRole } from "@shared/user_roles";
 
 const TREATMENT_TYPE_OPTIONS = [
   { value: "استشارة طبية", label: "استشارة طبية" },
@@ -169,7 +170,7 @@ export default function PatientDetails() {
   //  فلا يظهر شيء. ولا حوارَ ثانٍ يُبنى لأجل ذلك.
   const [tab, setTab] = useState("visits");
   const isAdmin = branchSession?.isAdmin || false;
-  const mayDeleteDocuments = isAdmin || branchSession?.role === "branch_manager";
+  const mayDeleteDocuments = isAdmin || hasRole(branchSession, "branch_manager");
   // Branch managers should be able to perform "admin-style" actions
   // within their own branch (delete visit, edit visit, etc.). The
   // server already enforces branch isolation; the UI just needs to

@@ -16,6 +16,8 @@ export function registerAuthRoutes(app: Express): void {
       lastName: null,
       profileImageUrl: null,
       role: branchSession.role || (branchSession.isAdmin ? "admin" : "branch_staff"),
+      //  الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — جلسةٌ قديمة بلا `roles` تُقرأ من `role` وحده.
+      roles: Array.isArray(branchSession.roles) ? branchSession.roles : (branchSession.role ? [branchSession.role] : []),
       branchId: branchSession.branchId,
       isAdmin: !!branchSession.isAdmin,
       permissions: branchSession.permissions || null,

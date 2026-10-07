@@ -20,7 +20,7 @@
  * تدريب) والتحكّم بعرض الأدوات معاً. `general` وحدها ضمنيّةٌ دائماً — أيّ
  * جلسةٍ مصادَقة تملكها بلا شرط.
  */
-import { isPhysioRole } from "./user_roles";
+import { hasPhysioRole, hasRole } from "./user_roles";
 
 export const CAPABILITIES = [
   "general", "reception", "patients", "medical", "expert",
@@ -37,6 +37,9 @@ export function isCapability(v: unknown): v is Capability {
 export interface CapabilitySource {
   isAdmin: boolean;
   role: string | null | undefined;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — غائبةٌ في المصادر القديمة فيُقرأ `role` وحده. */
+  roles?: readonly string[] | null;
+  extraRoles?: unknown;
   permissions: Record<string, unknown> | null | undefined;
 }
 
@@ -67,13 +70,14 @@ export function capabilitiesFor(access: CapabilitySource): Set<Capability> {
 
   const caps = new Set<Capability>(["general"]);
   const p = access.permissions ?? {};
-  const role = access.role ?? "";
+  //  الأدوارُ كلُّها لا الأعلى وحده (ترحيل ١٠٥، §4.ch) — القدراتُ إضافيّةٌ أصلاً، فكلُّ دورٍ يضيف ما يخصّه.
+  const role = (r: string) => hasRole(access, r);
 
-  if (role === "branch_manager") caps.add("manager");
+  if (role("branch_manager")) caps.add("manager");
   if (p.canAddPatients === true) caps.add("reception");
   if (p.canViewPatients === true) caps.add("patients");
-  if (p.canWriteMedicalExam === true || role === "doctor") caps.add("medical");
-  if (p.canWorkAsExpert === true || role === "prosthetics_expert") caps.add("expert");
+  if (p.canWriteMedicalExam === true || role("doctor")) caps.add("medical");
+  if (p.canWorkAsExpert === true || role("prosthetics_expert")) caps.add("expert");
   //  ══ مراجعةٌ حيّة ٢٠٢٦-٠٩-١١ (تصحيحٌ ثالث) — دورُ `therapist` وحده يكفي ══
   //  كانت `physio` تُشترَط بـ`canEnterSessions` فقط — وهو علمٌ يفتح تتبّعَ
   //  الجلسات اليومية (`server/sessions_module/`)، لا هويّةَ المعالج نفسِها.
@@ -85,7 +89,7 @@ export function capabilitiesFor(access: CapabilitySource): Set<Capability> {
   //  ولا أيّ صلاحيةٍ تطبيقية أخرى؛ تتبّعُ الجلسات يبقى محروساً بعلمه وحده
   //  في مكانه القائم (`server/sessions_module/routes.ts`) بلا مسّ.
   //  ومنذ §4.cg (٢٠٢٦-١٠-٠٧) أدوارُ القسم الأربعة كلُّها، لا `therapist` وحده.
-  if (p.canEnterSessions === true || isPhysioRole(role)) caps.add("physio");
+  if (p.canEnterSessions === true || hasPhysioRole(access)) caps.add("physio");
   if (p.canManageAccounting === true) caps.add("finance");
   if (p.canViewReports === true) caps.add("reports");
 

@@ -45,6 +45,7 @@ import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { Stethoscope } from "lucide-react";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation, useLanguage } from "@/i18n/LanguageContext";
+import { onlyRoles } from "@shared/user_roles";
 
 function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
@@ -146,7 +147,7 @@ export default function PatientsList() {
   // "تحديد خبير" — reception / branch manager / admin may assign a manufacturing
   // expert to any أطراف/مساند patient from the registry. A pure expert does not
   // assign experts. This replaces assigning the expert at patient creation.
-  const isExpert = branchSession?.role === "prosthetics_expert";
+  const isExpert = onlyRoles(branchSession, ["prosthetics_expert"]); // حصر (§4.ch)
   // Mirrors the server gate: assigning creates a work order (a WRITE), so it
   // needs canAddPatients — view-only users don't get the button.
   //  المفتاحُ يحكم لا الدور (قرارُ المالك ٢٠٢٦-٠٩-٣٠) — كالخادم.

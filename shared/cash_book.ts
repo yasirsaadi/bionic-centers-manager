@@ -9,6 +9,8 @@
 // • يكتب في الدفتر المحاسبُ ومديرُ الفرع والمسؤولُ وحدهم، وفي اليوم نفسِه وحدَه — والأيامُ الماضية للمسؤول.
 // • ولا مجموعَ للتحويلات في أيّ مكان: الصادرُ رقمٌ واحد كما في الورقة.
 
+import { hasRole } from "./user_roles";
+
 export type CashBook = "devices" | "physio";
 export const CASH_BOOKS: readonly CashBook[] = ["devices", "physio"];
 export const CASH_BOOK_LABELS: Record<CashBook, string> = {
@@ -69,9 +71,9 @@ export function ratioAmount(income: number, pct: number | null): number {
 }
 
 /** مَن يكتب في الدفتر: المحاسبُ ومديرُ الفرع والمسؤولُ — لا غيرُهم. */
-export function canWriteCashBook(s: { isAdmin?: boolean | null; role?: string | null } | null | undefined): boolean {
+export function canWriteCashBook(s: { isAdmin?: boolean | null; role?: string | null; roles?: readonly string[] | null } | null | undefined): boolean {
   if (!s) return false;
-  return Boolean(s.isAdmin) || s.role === "branch_manager" || s.role === "accountant";
+  return Boolean(s.isAdmin) || hasRole(s, "branch_manager") || hasRole(s, "accountant");
 }
 
 /** يومٌ مفتوحٌ للكتابة: اليومُ نفسُه للموظّف، وأيُّ يومٍ للمسؤول — ولا يومَ قبل الرصيد الافتتاحيّ. */

@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { hasRole } from "@shared/user_roles";
 //  مُولِّدُ المعرّفات القائم — لا ثانيَ له في المستودع (راجع `conversationId`).
 import { mintSubmissionToken, nextSubmissionToken } from "@/components/patient_service_launcher_logic";
 import {
@@ -638,7 +639,7 @@ export function AiChatDrawer() {
   });
   //  «تقدّمُ فريقي» — مديرُ الفرع وحده؛ الخادمُ هو الحارسُ الحقيقيّ (يردّ ٤٠٣
   //  لغيره)، وهذا الشرطُ هنا عرضٌ لا حراسة — نفسُ مبدأ الملفّ كلّه.
-  const isBranchManager = session?.role === "branch_manager";
+  const isBranchManager = hasRole(session, "branch_manager");
   const teamProgressQuery = useQuery<{ rows: ManagementEmployeeRow[] }>({
     queryKey: ["/api/training/management/progress"],
     enabled: open && trainingOpen && teamProgressOpen && isBranchManager,

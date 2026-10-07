@@ -31,6 +31,7 @@ import {
 import { logAudit } from "../accounting/ledger";
 import type { AiAccessContext } from "../ai/access";
 import type { Actor } from "../ai/knowledge/store";
+import { hasRole } from "@shared/user_roles";
 
 // ═══════════════════════════════════════════════════════════════════════
 // ══ ١. حلّ المعرفة — السلسلةُ الفعّالة حيّاً، لا الرقمُ المخزَّن حرفياً ═══
@@ -104,7 +105,7 @@ async function resolveActiveArticle(
   //  **وصاحبُ «إدارة المحاسبة» باقٍ هنا** بعد أن خرج من مال المساعد (§4.cd): قرارُ المالك يخصّ أرقامَ المساعد الحيّة،
   //  وهذا متنُ تدريبٍ مكتوبٌ بلا رقم يستحقّه المحاسبُ بحكم عمله. فالبابُ = قدرةُ المساعد الماليّة ∨ صلاحيةُ المحاسبة.
   const allowFinance = access.canUseFinance || access.permissions?.canManageAccounting === true;
-  const allowAdministration = access.isAdmin || access.role === "branch_manager";
+  const allowAdministration = access.isAdmin || hasRole(access, "branch_manager");
   if (row.scope === "finance" && !allowFinance) return null;
   if (row.scope === "administration" && !allowAdministration) return null;
   const rowAudience = Array.isArray(row.audience) ? (row.audience as string[]) : null;
@@ -473,6 +474,8 @@ export interface ManagementEmployeeRow {
 export interface ManagementScope {
   isAdmin: boolean;
   role: string | null | undefined;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch). */
+  roles?: readonly string[] | null;
   /** نفسُ `operationalBranches` — `null` = كلّ الفروع، مصفوفةٌ = محصورةٌ بها. */
   operationalBranches: number[] | null;
 }
@@ -480,7 +483,7 @@ export interface ManagementScope {
 export async function getManagementTrainingProgress(
   scope: ManagementScope,
 ): Promise<{ ok: true; rows: ManagementEmployeeRow[] } | { ok: false; error: string }> {
-  const isBranchManager = scope.role === "branch_manager";
+  const isBranchManager = hasRole(scope, "branch_manager");
   if (!scope.isAdmin && !isBranchManager) {
     return { ok: false, error: "عرضُ تقدّم تدريب الموظّفين متاحٌ للمسؤول العام أو مديرِ الفرع ضمن فرعه فقط" };
   }
@@ -520,7 +523,7 @@ export async function getManagementTrainingProgress(
   for (const p of progressRows) progressByUserModule.set(`${p.userId}:${p.moduleId}`, p);
 
   const rows: ManagementEmployeeRow[] = employees.map((emp) => {
-    const caps = capabilitiesFor({ isAdmin: emp.role === "admin", role: emp.role, permissions: emp as unknown as Record<string, unknown> });
+    const caps = capabilitiesFor({ isAdmin: emp.role === "admin", role: emp.role, extraRoles: emp.extraRoles, permissions: emp as unknown as Record<string, unknown> });
     const empTracks = allTracks.filter((t) =>
       audienceMatches(Array.isArray(t.audience) ? (t.audience as string[]) : null, caps));
 

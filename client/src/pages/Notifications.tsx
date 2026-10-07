@@ -10,6 +10,7 @@ import { SERVICE_TYPE_LABELS, STAGE_LABELS } from "@shared/manufacturing";
 import {
   NOTIFICATION_SECTIONS, sectionOf, isLateSection, type AlertKind, type SectionKey,
 } from "./notifications_sections";
+import { hasRole } from "@shared/user_roles";
 
 interface AlertItem {
   orderId: number;
@@ -58,7 +59,7 @@ function fmtDate(d: string): string {
 // and switch to a green "completed" entry once the expert marks delivery.
 export default function Notifications() {
   const session = useBranchSession();
-  const canOpenOrder = session?.isAdmin || session?.role === "branch_manager" || session?.role === "prosthetics_expert";
+  const canOpenOrder = session?.isAdmin || hasRole(session, "branch_manager") || hasRole(session, "prosthetics_expert");
 
   const { data, isLoading } = useQuery<{ alertCount: number; items: AlertItem[] }>({
     queryKey: ["/api/manufacturing/notifications"],

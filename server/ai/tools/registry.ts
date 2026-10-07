@@ -48,6 +48,7 @@ import {
   listCapabilities, readCapability, LIST_SPEC, READ_SPEC,
   type CapabilityContext,
 } from "../capabilities/tools";
+import { hasRole, onlyRoles } from "@shared/user_roles";
 export type { CapabilityContext };
 import {
   getDeviceSalesSummary, MAX_SALES_DAYS, rangeForDays, resolveBranchByName, resolveDays,
@@ -91,10 +92,11 @@ function strArg(input: any, key: string): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-const isPureExpert = (a: AiAccessContext) => a.role === "prosthetics_expert";
+//  حصر (§4.ch): خبيرٌ لا دورَ له غيره — فمحاسبٌ هو خبيرٌ أيضاً لا يضيق عليه.
+const isPureExpert = (a: AiAccessContext) => onlyRoles(a, ["prosthetics_expert"]);
 const worksAsExpert = (a: AiAccessContext) =>
-  a.role === "prosthetics_expert" || a.permissions?.canWorkAsExpert === true;
-const isManager = (a: AiAccessContext) => a.role === "branch_manager";
+  hasRole(a, "prosthetics_expert") || a.permissions?.canWorkAsExpert === true;
+const isManager = (a: AiAccessContext) => hasRole(a, "branch_manager");
 
 /** الفروع التي يُقرأ فيها فعلاً — مصفوفةٌ فارغة تعني «لا شيء». */
 function scopedBranchIds(a: AiAccessContext): number[] | null {

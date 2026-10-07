@@ -34,6 +34,7 @@ import {
   isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
 import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
+import { hasRole } from "@shared/user_roles";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -230,7 +231,8 @@ export async function getExpertsForBranch(branchId: number): Promise<ExpertOptio
       and(
         // A pure expert OR anyone carrying the expert capability flag
         // (e.g. an accountant / branch-manager who also does mold work).
-        or(eq(systemUsers.role, EXPERT_ROLE), eq(systemUsers.canWorkAsExpert, true)),
+        //  ومَن «خبير» دورٌ إضافيّ له (ترحيل ١٠٥، §4.ch).
+        or(eq(systemUsers.role, EXPERT_ROLE), sql`${systemUsers.extraRoles} @> ${JSON.stringify([EXPERT_ROLE])}::jsonb`, eq(systemUsers.canWorkAsExpert, true)),
         eq(systemUsers.isActive, true),
         or(
           sql`${systemUsers.branchIds} @> ${JSON.stringify([branchId])}::jsonb`,
@@ -270,7 +272,7 @@ export async function validateExpertForBranchTx(
   if (!u) return { ok: false, reason: "الخبير غير موجود" };
   if (!u.isActive) return { ok: false, reason: "حساب الخبير غير فعّال" };
   // Pure expert OR a user carrying the expert capability flag.
-  if (u.role !== EXPERT_ROLE && !u.canWorkAsExpert) return { ok: false, reason: "المستخدم ليس خبير أطراف" };
+  if (!hasRole(u, EXPERT_ROLE) && !u.canWorkAsExpert) return { ok: false, reason: "المستخدم ليس خبير أطراف" };
   const branchIds = Array.isArray(u.branchIds) ? (u.branchIds as number[]) : [];
   const allowed = branchIds.includes(branchId) || u.branchId === branchId;
   if (!allowed) return { ok: false, reason: "الخبير غير مسموح له بالعمل في هذا الفرع" };

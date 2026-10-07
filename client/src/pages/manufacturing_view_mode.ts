@@ -28,11 +28,15 @@
 //
 //  **ولا سلطةَ هنا**: الخادمُ يحرس كلَّ نقطةٍ من مصدره، وهذا اختيارُ
 //  **نقطةٍ وعرضٍ** لا منحُ وصول.
+import { hasRole } from "@shared/user_roles";
+
 
 /** ما تقرؤه الصفحةُ من الجلسة و`usePermissions` — لا أكثر. */
 export interface ManufacturingViewerLike {
   isAdmin?: boolean | null;
   role?: string | null;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch). */
+  roles?: readonly string[] | null;
   canWorkAsExpert?: boolean | null;
 }
 
@@ -60,8 +64,8 @@ export function resolveManufacturingView(
   viewer: ManufacturingViewerLike | null | undefined,
 ): ManufacturingView {
   const isAdmin = viewer?.isAdmin === true;
-  const isManager = viewer?.role === "branch_manager";
-  const isExpertRole = viewer?.role === "prosthetics_expert";
+  const isManager = hasRole(viewer, "branch_manager");
+  const isExpertRole = hasRole(viewer, "prosthetics_expert");
   //  الدورُ **أو** القدرة — نفسُ ما يقبله `my-orders` في الخادم.
   const worksAsExpert = isExpertRole || viewer?.canWorkAsExpert === true;
   //  والصفةُ الإدارية تسبق القدرة: مديرُ فرعٍ خبيرٌ يبقى مديراً.

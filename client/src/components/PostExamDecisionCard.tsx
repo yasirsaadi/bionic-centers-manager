@@ -64,6 +64,7 @@ import {
   FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
+import { hasRole } from "@shared/user_roles";
 
 interface Followup {
   id: number;
@@ -255,7 +256,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
   //  المسؤولُ لا يجوز أن يبحث في وحدة التصنيع عن بابٍ يصحّح به ضغطةً
   //  خاطئة. فالزرُّ هنا، على البطاقة التي يقرأ فيها الخطأ.
   //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
-  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");
   const [reversalOpen, setReversalOpen] = useState(false);
 
   const reset = () => {

@@ -28,6 +28,7 @@ import { NewExamDialog } from "./NewExamDialog";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { buildAmputationSite, specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
+import { hasRole } from "@shared/user_roles";
 
 // Render the signed decision as label/value lines, using the very same field
 // definitions the form wrote it with, so nothing can drift out of sync.
@@ -179,7 +180,7 @@ export function PatientMedicalExams({
   //  آخر» — فلا يُطلَب منه أن يبحث عن الشاشة التي فيها الزرّ.
   //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
   const session = useBranchSession();
-  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");
   const [reversalFor, setReversalFor] = useState<number | null>(null);
 
   const queryKey = [`/api/medical/patients/${patientId}/exams`];

@@ -11,6 +11,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { apiRequest } from "@/lib/queryClient";
 import { getTodayIraq } from "@/lib/utils";
+import { onlyRoles } from "@shared/user_roles";
 
 type Branch = { id: number; name: string };
 type Device = { id: number; code: string; nameAr: string; nameEn: string; displayOrder: number };
@@ -41,7 +42,7 @@ export default function SessionEntry() {
   const { t } = useTranslation();
   const lang = t.dir === "rtl" ? "ar" : "en";
   const session = useBranchSession();
-  const isReception = session?.role === "reception";
+  const isReception = onlyRoles(session, ["reception"]); // حصر: استقبالٌ لا دورَ له غيره (§4.ch)
   const isAdmin = Boolean(session?.isAdmin);
   const today = getTodayIraq();
 

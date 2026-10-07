@@ -9,10 +9,14 @@
 // كان الزرّ العائم مخفيّاً عن كلّ من لا يملك المحاسبة، لأن المساعد كان
 // مالياً بالكامل. وبعد فصل الوضعين صار المساعد نافعاً لكلّ موظّف — يشرح
 // المسارات والشاشات — فبقاء الإخفاء يحرم أكثر المستعملين من أنفع ما فيه.
+import { hasRole, onlyRoles } from "@shared/user_roles";
+
 
 export interface AiSessionLike {
   isAdmin?: boolean | null;
   role?: string | null;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch). */
+  roles?: readonly string[] | null;
   permissions?: Record<string, any> | null;
 }
 
@@ -43,18 +47,19 @@ export const PHYSIO_SUGGESTIONS = ["من مرضى العلاج الطبيعي ا
 
 /** نفس أعلام النظام الحيّة — لا أدوارٌ مخترَعة. */
 const isDoctor = (s?: AiSessionLike | null) =>
-  s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 const worksAsExpert = (s?: AiSessionLike | null) =>
-  s?.role === "prosthetics_expert" || s?.permissions?.canWorkAsExpert === true;
-const isPureExpert = (s?: AiSessionLike | null) => s?.role === "prosthetics_expert";
+  hasRole(s, "prosthetics_expert") || s?.permissions?.canWorkAsExpert === true;
+//  حصر (§4.ch): خبيرٌ لا دورَ له غيره.
+const isPureExpert = (s?: AiSessionLike | null) => onlyRoles(s, ["prosthetics_expert"]);
 const isReceptionish = (s?: AiSessionLike | null) =>
-  s?.isAdmin === true || s?.role === "branch_manager" || s?.role === "reception"
+  s?.isAdmin === true || hasRole(s, "branch_manager") || hasRole(s, "reception")
   || s?.permissions?.canAddPatients === true;
 //  **الصلاحية الحقيقية لا دورٌ مخترَع**: النظام ليس فيه «موظّف علاج طبيعي»،
 //  وإنّما `canEnterSessions` — مَن يُدخل الجلسات. وهي نفس شرط الطابور في
 //  الخادم، فلا يُعرَض اقتراحٌ يُردّ.
 const entersSessions = (s?: AiSessionLike | null) =>
-  s?.isAdmin === true || s?.role === "branch_manager"
+  s?.isAdmin === true || hasRole(s, "branch_manager")
   || s?.permissions?.canEnterSessions === true;
 
 /** أمثلةٌ مالية — لا تُعرض إلّا لمن يستطيع الجواب عنها فعلاً. */

@@ -44,6 +44,7 @@ import {
   isReviewDecision, requestBranchInScope, type ReviewDecision,
 } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
+import { hasRole, rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -53,6 +54,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -77,24 +79,24 @@ async function liveCanDecide(userId: number | null): Promise<boolean> {
   if (!userId) return false;
   const u = await liveUser(userId);
   if (!u) return false;
-  return canDecideReview({ role: u.role, permissions: { canWriteMedicalExam: u.can } });
+  return canDecideReview({ role: u.role, roles: u.roles, permissions: { canWriteMedicalExam: u.can } });
 }
 
 /** صفُّ المستخدم الحيّ — أو `null` لمعطَّلٍ أو غير موجود. */
 async function liveUser(userId: number | null): Promise<
-  { role: string; isAdmin: boolean; can: boolean } | null
+  { role: string; roles: string[]; isAdmin: boolean; can: boolean } | null
 > {
   if (!userId) return null;
   const r = await db.execute<{
-    role: string; can: boolean | null; active: boolean | null; admin: boolean | null;
+    role: string; extra_roles: unknown; can: boolean | null; active: boolean | null; admin: boolean | null;
   }>(sql`
-    SELECT role, can_write_medical_exam AS can, is_active AS active,
+    SELECT role, extra_roles, can_write_medical_exam AS can, is_active AS active,
            (role = 'admin') AS admin
       FROM system_users WHERE id = ${userId}
   `);
   const u = (r.rows ?? [])[0];
   if (!u || u.active === false) return null;
-  return { role: String(u.role), isAdmin: Boolean(u.admin), can: Boolean(u.can) };
+  return { role: String(u.role), roles: rolesOf({ role: u.role, extraRoles: u.extra_roles }), isAdmin: Boolean(u.admin), can: Boolean(u.can) };
 }
 
 /**
@@ -107,7 +109,7 @@ async function liveCanSupervise(userId: number | null): Promise<boolean> {
   const u = await liveUser(userId);
   if (!u) return false;
   return canSuperviseReview({
-    role: u.role, isAdmin: u.isAdmin, permissions: { canWriteMedicalExam: u.can },
+    role: u.role, roles: u.roles, isAdmin: u.isAdmin, permissions: { canWriteMedicalExam: u.can },
   });
 }
 
@@ -132,7 +134,7 @@ async function specialtyAllowed(
 ): Promise<boolean> {
   const u = await liveUser(userId);
   if (!u) return false;
-  if (u.isAdmin || u.role === "branch_manager") return true;
+  if (u.isAdmin || hasRole(u, "branch_manager")) return true;
   const mine = await medical.doctorSpecialties(userId);
   return mine.includes(serviceType as any);
 }
@@ -170,7 +172,7 @@ async function reviewSpecialtiesFor(userId: number | null): Promise<readonly str
   //
   //  (والفرعُ يبقى حاجزاً في `branchScope`، و`specialtyAllowed` تحرس
   //  الفعلَ نفسه — هذه للعرض لا للإذن.)
-  if (u.isAdmin || u.role === "branch_manager") return REVIEW_SERVICE_TYPES;
+  if (u.isAdmin || hasRole(u, "branch_manager")) return REVIEW_SERVICE_TYPES;
   const mine = await medical.doctorSpecialties(userId);
   return mine.filter((s) => (REVIEW_SERVICE_TYPES as readonly string[]).includes(s));
 }

@@ -17,6 +17,7 @@ import {
   ServiceDiscountFields, EMPTY_DISCOUNT, hasDiscount, discountPayload,
   discountBlocked, type DiscountDraft,
 } from "@/components/ServiceDiscountFields";
+import { hasRole } from "@shared/user_roles";
 
 // Post-exam "تخصيص الطرف/المسند": the doctor decided the device specs and the
 // patient agreed to buy, so reception records the specs + the agreed price and
@@ -50,8 +51,8 @@ export function AssignExpertDialog({ patient, open, onOpenChange }: {
   // doctor's decision plus the two things that are theirs: price and expert.
   const canEditClinicalDetails =
     Boolean(session?.isAdmin) ||
-    session?.role === "branch_manager" ||
-    session?.role === "doctor" ||
+    hasRole(session, "branch_manager") ||
+    hasRole(session, "doctor") ||
     permissions.canWriteMedicalExam;
   const [expertUserId, setExpertUserId] = useState<number | null>(null);
   const [cost, setCost] = useState<number>(0);

@@ -16,6 +16,8 @@
 // `CHECK` في القاعدة يرفض الثالث. فمسارُه — تسجيلاً وتسعيراً وجلساتٍ
 // ومعاينةً اختيارية — لا يمرّ من هنا ولا يتأثّر بحرف.
 
+import { hasRole } from "./user_roles";
+
 /** الاختصاصان اللذان تحكمهما هذه المراجعة. العلاج الطبيعي ليس منهما. */
 export const REVIEW_SERVICE_TYPES = ["prosthetic", "medical_support"] as const;
 export type ReviewServiceType = (typeof REVIEW_SERVICE_TYPES)[number];
@@ -196,6 +198,8 @@ export const isInQuickQueue = (status: string, path: string): boolean =>
 export interface ReviewSessionLike {
   userId?: number | null;
   role?: string | null;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — `hasRole` يقرأ `role` معها. */
+  roles?: readonly string[] | null;
   isAdmin?: boolean | null;
   branchId?: number | null;
   permissions?: Record<string, any> | null;
@@ -229,7 +233,7 @@ export function canCreateReview(s: ReviewSessionLike | null | undefined): boolea
  * وهذا أضيق من `canCreateReview` عمداً: مَن يصنّف لا يوافق على تصنيفه.
  */
 export function canDecideReview(s: ReviewSessionLike | null | undefined): boolean {
-  return s?.role === "doctor" || s?.permissions?.canWriteMedicalExam === true;
+  return hasRole(s, "doctor") || s?.permissions?.canWriteMedicalExam === true;
 }
 
 /**
@@ -250,7 +254,7 @@ export function canDecideReview(s: ReviewSessionLike | null | undefined): boolea
  */
 export function canSuperviseReview(s: ReviewSessionLike | null | undefined): boolean {
   if (s?.isAdmin === true) return true;
-  if (s?.role === "branch_manager") return true;
+  if (hasRole(s, "branch_manager")) return true;
   return canDecideReview(s);
 }
 

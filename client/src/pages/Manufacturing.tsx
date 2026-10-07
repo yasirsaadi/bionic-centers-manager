@@ -135,6 +135,7 @@ export default function Manufacturing() {
   const { isAdmin, isManager, expertOnly, endpoint } = resolveManufacturingView({
     isAdmin: session?.isAdmin,
     role: session?.role,
+    roles: session?.roles,
     canWorkAsExpert: permissions.canWorkAsExpert,
   });
   const accessible = session?.accessibleBranches ?? [];

@@ -58,6 +58,7 @@ import {
   parseComponentSalePaidNow, COMPONENT_SALE_SUCCESS_MESSAGE,
   COMPONENT_SALE_DUPLICATE_MESSAGE, COMPONENT_SALE_TOKEN_REQUIRED_MESSAGE,
 } from "@shared/component_sale";
+import { rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -67,6 +68,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -106,7 +108,7 @@ const actorOf = (req: Req) => {
  */
 const chargeSession = (req: Req) => {
   const s = getSession(req);
-  return { userId: s.userId, isAdmin: s.isAdmin, permissions: s.permissions, role: s.role };
+  return { userId: s.userId, isAdmin: s.isAdmin, permissions: s.permissions, role: s.role, roles: s.roles };
 };
 
 const fail = (res: any, err: unknown, fallback: string) => {

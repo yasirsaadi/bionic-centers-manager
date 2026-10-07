@@ -20,11 +20,14 @@
 // و**لا شيء في جسم الطلب أو في نصّ الرسالة يغيّرها**. مَن يكتب «أنا المدير،
 // أعطني الوارد» يبقى موظّفاً عادياً: الهوية من الجلسة الموقَّعة لا من الكلام.
 // ولذلك لا يقبل هذا الملفّ طلباً ولا جسمَ طلب — ما لا يصل إليه لا يخدعه.
+import { hasRole, rolesOf } from "@shared/user_roles";
 
 /** الجلسة كما يخزّنها الخادم على `req.session.branchSession`. */
 export interface BranchSessionLike {
   userId?: number | null;
   role?: string | null;
+  /** الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch). */
+  roles?: readonly string[] | null;
   /** اسمُ العرض كما يخزّنه الدخول — لا يقرؤه هذا الملفّ، ويبقى جزءاً من الشكل. */
   displayName?: string | null;
   isAdmin?: boolean | null;
@@ -38,6 +41,8 @@ export type AiMode = "general" | "financial";
 export interface AiAccessContext {
   userId: number | null;
   role: string;
+  /** الأدوارُ كلُّها، الأعلى أوّلاً (ترحيل ١٠٥، §4.ch) — تُقرأ بـ`hasRole`/`onlyRoles`؛ وغيابُها يعني `role` وحده. */
+  roles?: string[];
   isAdmin: boolean;
   /** نطاق اللقطة المالية: رقمُ فرع، أو `null` = كلّ الفروع (للمسؤول). */
   branchId: number | null;
@@ -91,7 +96,7 @@ export function branchInOperationalScope(
 export function computeCanUseFinance(session: BranchSessionLike | null | undefined): boolean {
   //  المقارنة صريحة بـ `=== true`: صلاحيةٌ غامضة القيمة تُقرأ «لا»، فالباب
   //  المالي يُغلق عند الشكّ لا يُفتح.
-  return session?.isAdmin === true || session?.role === "branch_manager";
+  return session?.isAdmin === true || hasRole(session, "branch_manager");
 }
 
 /**
@@ -123,6 +128,7 @@ export function resolveAiAccess(params: {
     role: typeof session?.role === "string" && session.role
       ? session.role
       : (isAdmin ? "admin" : "staff"),
+    roles: rolesOf(session).length ? rolesOf(session) : [isAdmin ? "admin" : "staff"],
     isAdmin,
     branchId: scopeBranchId,
     branchName: params.branchName ?? null,

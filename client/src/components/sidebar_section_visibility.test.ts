@@ -53,12 +53,15 @@ check(
 );
 
 console.log("\n── ج. بوّابةُ صلاحية الموظّف لم تُحذَف ولم تصر منحاً ──");
+//  ومنذ §4.ch يمرّ المسؤولُ بسلطته كالخادم (`isAdmin || العلَم`) — فالبوّابةُ تُقاس بشكلها الجديد: العلَمُ الغائب يمنع
+//  **ما لم يكن مسؤولاً**، ولا شيءَ غيرُ `branchSession?.isAdmin` يفتحها.
+const PERM_GATE = /if \(item\.permission && !permissions\[item\.permission\]\s*&& !\(branchSession\?\.isAdmin && !\(item as any\)\.noAdminBypass\)\)/;
 check(
-  /if \(item\.permission && !permissions\[item\.permission\]\)/.test(src),
-  "ج.١ **بوّابةُ الصلاحية قائمة**",
+  PERM_GATE.test(src),
+  "ج.١ **بوّابةُ الصلاحية قائمة** — والاستثناءُ للمسؤول وحده",
 );
 check(
-  /if \(item\.permission && !permissions\[item\.permission\]\) \{[\s\S]{0,300}?return false;[\s\S]{0,20}?\}/.test(src),
+  new RegExp(PERM_GATE.source + "\\s*\\{[\\s\\S]{0,300}?return false;[\\s\\S]{0,20}?\\}").test(src),
   "ج.٢ **وتردّ `false`** — مانعةٌ لا مانحة",
 );
 check(

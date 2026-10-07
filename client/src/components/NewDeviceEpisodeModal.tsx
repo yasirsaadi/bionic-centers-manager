@@ -20,6 +20,7 @@ import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
 import { AdministrativeReversalDialog } from "./AdministrativeReversalDialog";
 import { activeOperationFocus } from "./device_flow_resume";
 import { useBranchSession } from "@/components/BranchGate";
+import { hasRole } from "@shared/user_roles";
 
 // «جهاز جديد» — تأكيدٌ واحد، بلا مال ولا خبير ولا موعد.
 //
@@ -109,7 +110,7 @@ export function NewDeviceEpisodeModal({
     { episodeId: number | null; workOrderId: number | null } | null>(null);
   const [reversalOpen, setReversalOpen] = useState(false);
   const session = useBranchSession();
-  const mayReverse = Boolean(session?.isAdmin) || session?.role === "branch_manager";
+  const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");
   useEffect(() => {
     if (open) { setBlockNote(""); setMissing([]); setNeedsData(false); setConflict(null); }
   }, [open]);

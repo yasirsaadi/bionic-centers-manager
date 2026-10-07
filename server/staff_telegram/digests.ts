@@ -17,13 +17,13 @@ interface Holder { userId: number; isAdmin: boolean; branches: number[] }
 /** مَن اختاره المسؤولُ لهذا النوع، نشطٌ ومربوط. */
 async function holdersOf(event: string): Promise<Holder[]> {
   const r = await db.execute(sql`
-    SELECT u.id, u.role, u.branch_id, u.branch_ids, u.can_write_medical_exam, u.can_work_as_expert
+    SELECT u.id, u.role, u.extra_roles, u.branch_id, u.branch_ids, u.can_write_medical_exam, u.can_work_as_expert
       FROM staff_notification_prefs p
       JOIN system_users u ON u.id = p.user_id
       JOIN staff_telegram_links l ON l.user_id = u.id
      WHERE p.event_type = ${event} AND COALESCE(u.is_active, true) = true`);
   return (r.rows as any[]).filter((u) => eligibleStaffEvents({
-    role: String(u.role), canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert,
+    role: String(u.role), extraRoles: u.extra_roles, canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert,
   }).includes(event)).map((u) => ({
     userId: Number(u.id), isAdmin: u.role === "admin",
     branches: accessibleBranchesOf({ branchId: u.branch_id, branchIds: u.branch_ids }),

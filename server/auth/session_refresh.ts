@@ -18,8 +18,10 @@
 //   · ترقيةٌ إلى مسؤول ⟵ `0` (نطاقُ المسؤول، كالدخول)، وتخفيضٌ منه ⟵ أوّلُ فرعٍ له.
 // ودخولُ الطوارئ القديم (بلا `userId`) لا يُمَسّ — ينتظر قرارَ المالك (§4.ap).
 
+import { rolesOf } from "@shared/user_roles";
+
 export type FreshUser = {
-  role: string; branchId: number | null; branchIds: unknown;
+  role: string; extraRoles?: unknown; branchId: number | null; branchIds: unknown;
   displayName: string | null; language?: string | null;
 };
 
@@ -52,6 +54,8 @@ export function applyFreshUser(
   }
   bs.isAdmin = isAdmin;
   bs.role = fresh.role;
+  //  **والأدوارُ كلُّها** (ترحيل ١٠٥، §4.ch) — تُقرأ بـ`hasRole`/`onlyRoles` من `shared/user_roles.ts`.
+  bs.roles = rolesOf(fresh);
   bs.displayName = fresh.displayName ?? bs.displayName;
   //  **لا يُكتب الفرعُ إلّا إن تغيّر** — `null` في جلسةٍ لا يصير `0` بلا سبب (سطرُ تدقيقٍ بفرعٍ `0` يكسر مفتاحَه الأجنبيّ).
   if (branchId !== before) bs.branchId = branchId;

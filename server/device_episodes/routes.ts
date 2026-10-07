@@ -26,6 +26,7 @@ import {
 import { checkRequiredPatientData } from "@shared/patient_required";
 import { isServicePath, type ServicePath } from "@shared/service_path";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
+import { rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -35,6 +36,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],

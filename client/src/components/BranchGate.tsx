@@ -39,6 +39,8 @@ interface BranchSession {
   isAdmin: boolean;
   userId?: number;
   role?: string;
+  /** الأدوارُ كلُّها، الأعلى أوّلاً (ترحيل ١٠٥، §4.ch) — اقرأها بـ`hasRole`/`onlyRoles` من `@shared/user_roles`. */
+  roles?: string[];
   displayName?: string;
   permissions?: UserPermissions;
   shift?: string;
@@ -196,6 +198,7 @@ export function BranchGate({ children }: BranchGateProps) {
           isAdmin: data.isAdmin,
           userId: data.userId,
           role: data.role,
+          roles: Array.isArray(data.roles) ? data.roles : undefined,
           displayName: data.displayName,
           permissions: data.permissions,
           shift: data.shift,

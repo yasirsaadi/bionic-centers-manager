@@ -38,6 +38,7 @@ import {
   type ReversalPreview, type ReversalImpactLine,
 } from "@shared/administrative_reversal";
 import { ReversalError, type ReversalAuthz, type ReversalOutcome } from "./store";
+import { hasRole } from "@shared/user_roles";
 
 const DRIFT =
   "تغيّرت حالة هذه العملية منذ فتح نافذة التصحيح — أعد فتحها لمراجعة الأثر الجديد";
@@ -342,7 +343,7 @@ export async function executeNoExamReversal(params: {
     if (pRow?.deleted_at) throw new ReversalError(PATIENT_IN_TRASH_ERROR, 409);
     const liveBranch = num(pRow?.branch_id);
     if (!params.authz.isAdmin) {
-      if (params.authz.role !== "branch_manager") {
+      if (!hasRole(params.authz, "branch_manager")) {
         throw new ReversalError("تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط", 403);
       }
       if (liveBranch !== null && !params.authz.scope.includes(liveBranch)) {

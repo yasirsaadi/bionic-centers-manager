@@ -53,6 +53,7 @@ import { isMedicalSpecialty, specialtyLabel, type MedicalSpecialty } from "@shar
 import {
   LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
 } from "@shared/lock_conflict";
+import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -66,16 +67,16 @@ async function liveCanSuperviseWorklist(userId: number | null): Promise<boolean>
   const { db } = await import("../db");
   const { sql } = await import("drizzle-orm");
   const r = await db.execute<{
-    role: string; can: boolean | null; active: boolean | null; admin: boolean | null;
+    role: string; extra_roles: unknown; can: boolean | null; active: boolean | null; admin: boolean | null;
   }>(sql`
-    SELECT role, can_write_medical_exam AS can, is_active AS active,
+    SELECT role, extra_roles, can_write_medical_exam AS can, is_active AS active,
            (role = 'admin') AS admin
       FROM system_users WHERE id = ${userId}
   `);
   const u = (r.rows ?? [])[0];
   if (!u || u.active === false) return false;
   return canSuperviseReview({
-    role: String(u.role), isAdmin: Boolean(u.admin),
+    role: String(u.role), roles: rolesOf({ role: u.role, extraRoles: u.extra_roles }), isAdmin: Boolean(u.admin),
     permissions: { canWriteMedicalExam: Boolean(u.can) },
   });
 }
@@ -86,6 +87,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -408,7 +410,7 @@ function mayCancelExam(
   exam: { doctorId: number | null; caseType: string | null },
   specialties: readonly MedicalSpecialty[],
 ): boolean {
-  if (session.isAdmin || session.role === "branch_manager") return true;
+  if (session.isAdmin || hasRole(session, "branch_manager")) return true;
   if (exam.doctorId === null || exam.doctorId !== session.userId) return false;
   //  قائمةٌ فارغة = لم يعد طبيباً أصلاً (أو عُطّل حسابُه) ⇒ لا يلغي شيئاً.
   if (specialties.length === 0) return false;
@@ -470,7 +472,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // A PURE prosthetics expert is financially locked out everywhere else in
       // the app; the exam carries a device price now, so strip it for them
       // rather than let the clinical record become a side channel to it.
-      const hideMoney = session.role === "prosthetics_expert";
+      const hideMoney = onlyRoles(session, ["prosthetics_expert"]); // حصر (§4.ch)
       const scrub = <T extends { deviceCost?: number | null }>(row: T): T =>
         hideMoney ? { ...row, deviceCost: null } : row;
 
@@ -521,7 +523,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         // Who may press "تعديل" — the author, or the responsible manager. Sent
         // from the server so the UI can never offer an action the server would
         // then refuse.
-        canManageExams: session.isAdmin || session.role === "branch_manager",
+        canManageExams: session.isAdmin || hasRole(session, "branch_manager"),
         userId: session.userId,
         // Registered before the exam system went live ⇒ exempt from the exam
         // requirement (تخصيص unlocks, reception enters the cost directly).
@@ -893,7 +895,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // A different doctor — even one holding the same specialty — may not
       // rewrite a colleague's signature; they file an addendum instead.
       const isAuthor = exam.doctorId !== null && exam.doctorId === session.userId;
-      const isResponsibleManager = session.isAdmin || session.role === "branch_manager";
+      const isResponsibleManager = session.isAdmin || hasRole(session, "branch_manager");
       //  ══ **الطبيبُ العاديّ — سلطةٌ سريريةٌ كاملة، وتجاريةٌ صفر** ═══════════
       //  نفسُ شرط فحص الاختصاص أدناه، مرفوعٌ هنا لاستعماله في حجب الحقول
       //  التجارية أيضاً: صاحبُ التوقيع الذي لا يحمل صفةً إدارية (لا مسؤولٌ
@@ -1193,7 +1195,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  **والمنحُ السريريّ يُقرأ من القاعدة لا من الجلسة**: سحبُ الاختصاص
       //  يسري فوراً لا عند الدخول التالي — نفسُ قاعدة الكتابة حرفياً.
       //  والمديرُ المسؤول لا يُستعلَم عن اختصاصه: إذنُه إداريٌّ لا سريريّ.
-      const isManager = session.isAdmin || session.role === "branch_manager";
+      const isManager = session.isAdmin || hasRole(session, "branch_manager");
       const specialties = isManager ? [] : await store.doctorSpecialties(session.userId);
       if (!mayCancelExam(session, exam, specialties)) {
         //  ورسالةٌ تقول أيُّ بابٍ أُغلق: صاحبُ المعاينة الذي سُحب منه

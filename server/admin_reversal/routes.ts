@@ -21,6 +21,7 @@ import {
   CORRECTION_INTENT_MODE, CORRECTION_INTENT_REASON,
   isCorrectionIntent, isReversalMode, isReversalReasonCode,
 } from "@shared/administrative_reversal";
+import { hasRole, rolesOf } from "@shared/user_roles";
 
 type Req = any;
 
@@ -30,6 +31,7 @@ function getSession(req: Req) {
     userId: (s?.userId ?? null) as number | null,
     userName: (s?.displayName ?? null) as string | null,
     role: (s?.role ?? "") as string,
+    roles: rolesOf(s),
     isAdmin: Boolean(s?.isAdmin),
     branchId: (s?.branchId ?? null) as number | null,
     accessible: Array.isArray(s?.accessibleBranches) ? (s.accessibleBranches as number[]) : [],
@@ -45,7 +47,7 @@ function getSession(req: Req) {
 function mayReverse(req: Req, branchId: number | null): { ok: boolean; error?: string } {
   const s = getSession(req);
   if (s.isAdmin) return { ok: true };
-  if (s.role !== "branch_manager") {
+  if (!hasRole(s, "branch_manager")) {
     return {
       ok: false,
       error: "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط",
@@ -144,7 +146,7 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       //  بفرع المريض **تحت القفل**. والفحصُ الأوّليّ هنا يبقى ردّاً مبكّراً
       //  للاستقبال والمحاسب — لا هو الحارسُ الأخير.
       const s = getSession(req);
-      if (!s.isAdmin && s.role !== "branch_manager") {
+      if (!s.isAdmin && !hasRole(s, "branch_manager")) {
         return res.status(403).json({
           error: "تصحيح العمليات صلاحية إدارية — للمسؤول العام أو مدير الفرع فقط",
         });
@@ -159,7 +161,7 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
           orderId: target.workOrderId, reasonCode, reasonNote,
           expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : "",
           authz: {
-            isAdmin: s.isAdmin, role: s.role,
+            isAdmin: s.isAdmin, role: s.role, roles: s.roles,
             scope: s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []),
           },
           actor: { userId: s.userId, userName: s.userName },
@@ -173,7 +175,7 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         target, mode, reasonCode, reasonNote,
         expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : "",
         authz: {
-          isAdmin: s.isAdmin, role: s.role,
+          isAdmin: s.isAdmin, role: s.role, roles: s.roles,
           scope: s.accessible.length > 0 ? s.accessible : (s.branchId ? [s.branchId] : []),
         },
         actor: { userId: s.userId, userName: s.userName },
