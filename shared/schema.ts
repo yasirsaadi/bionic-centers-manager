@@ -2848,3 +2848,69 @@ export const staffNotificationOutbox = pgTable("staff_notification_outbox", {
   sentAt: timestamp("sent_at", { withTimezone: true }),
 }, (t) => [index("idx_staff_outbox_pending").on(t.id).where(sql`status = 'pending'`)]);
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// **مكتبةُ بروتوكولات العلاج الطبيعي** (ترحيل ١٠٦، §4.cj) — القواعدُ في `shared/physio_protocols.ts`.
+// ════════════════════════════════════════════════════════════════════════════
+export const physioProtocols = pgTable("physio_protocols", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  titleAr: text("title_ar").notNull(),
+  titleEn: text("title_en").notNull(),
+  category: text("category").notNull(),
+  ageGroup: text("age_group").notNull(),
+  summary: text("summary"),
+  goals: text("goals"),
+  assessment: text("assessment"),
+  exercises: text("exercises"),
+  contraindications: text("contraindications"),
+  precautions: text("precautions"),
+  sessionsPerWeek: integer("sessions_per_week"),
+  durationWeeks: integer("duration_weeks"),
+  sessionMinutes: integer("session_minutes"),
+  references: jsonb("references").$type<{ title: string; org?: string | null; year?: number | null; url?: string | null }[]>().notNull().default([]),
+  status: text("status").notNull().default("draft"),
+  approvedBy: integer("approved_by").references(() => systemUsers.id),
+  approvedByName: text("approved_by_name"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  isArchived: boolean("is_archived").notNull().default(false),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name"),
+  updatedBy: integer("updated_by").references(() => systemUsers.id),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type PhysioProtocol = typeof physioProtocols.$inferSelect;
+
+export const physioProtocolDevices = pgTable("physio_protocol_devices", {
+  id: serial("id").primaryKey(),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),
+  deviceId: integer("device_id").notNull().references(() => devices.id),
+  evidence: text("evidence").notNull(),
+  parameters: text("parameters"),
+  minutes: integer("minutes"),
+  note: text("note"),
+  displayOrder: integer("display_order").notNull().default(0),
+}, (t) => ({ uqProtocolDevice: unique("physio_protocol_devices_protocol_id_device_id_key").on(t.protocolId, t.deviceId) }));
+
+export const physioProtocolImages = pgTable("physio_protocol_images", {
+  id: serial("id").primaryKey(),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),
+  content: bytea("content").notNull(),
+  mimeType: text("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  caption: text("caption"),
+  sourceUrl: text("source_url"),
+  credit: text("credit"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ byProtocol: index("idx_physio_protocol_images_protocol").on(t.protocolId) }));
+
+export const physioDeviceBranches = pgTable("physio_device_branches", {
+  deviceId: integer("device_id").notNull().references(() => devices.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  available: boolean("available").notNull().default(true),
+  updatedBy: integer("updated_by").references(() => systemUsers.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ pk: primaryKey({ columns: [t.deviceId, t.branchId] }) }));
