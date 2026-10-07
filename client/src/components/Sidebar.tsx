@@ -28,6 +28,7 @@ import logoImage from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { isPhysioRole } from "@shared/user_roles";
 
 interface BranchSession {
   branchId: number;
@@ -368,7 +369,7 @@ export function Sidebar() {
     
     // Hide dashboard for reception, therapist, surveyor, prosthetics-expert and
     // doctor users — each of them lands on their own working screen instead.
-    if (item.href === "/" && (branchSession?.role === "reception" || branchSession?.role === "therapist" || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert" || branchSession?.role === "doctor")) {
+    if (item.href === "/" && (branchSession?.role === "reception" || isPhysioRole(branchSession?.role) || branchSession?.role === "surveyor" || branchSession?.role === "prosthetics_expert" || branchSession?.role === "doctor")) {
       return false;
     }
 

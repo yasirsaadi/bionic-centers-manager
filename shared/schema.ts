@@ -1857,7 +1857,7 @@ export const systemUsers = pgTable("system_users", {
   // For single-branch users this stays empty and the system falls
   // back to `branchId`.
   branchIds: jsonb("branch_ids").$type<number[]>().default([]),
-  role: text("role").notNull().default("reception"), // admin, branch_manager, accountant, reception, therapist, surveyor
+  role: text("role").notNull().default("reception"), // القائمةُ المسموحة: USER_ROLES في shared/user_roles.ts
   isActive: boolean("is_active").default(true),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
@@ -1910,6 +1910,10 @@ export const systemUsers = pgTable("system_users", {
    * ومديرُ الفرع يحملانه ضمناً بسلطتيهما.
    */
   canApproveDiscount: boolean("can_approve_discount").default(false),
+  /** «مشرف عام العلاج الطبيعي» على كلّ الفروع (ترحيل ١٠٤، §4.cg) — عَلَمٌ مخزَّن لا يمنحه دور. */
+  canSupervisePhysio: boolean("can_supervise_physio").notNull().default(false),
+  /** «الإبر الجافة» — لا يطبّقها إلّا حاملُه (ترحيل ١٠٤، §4.cg). */
+  canDryNeedle: boolean("can_dry_needle").notNull().default(false),
   // Which specialties this doctor may sign for: a subset of
   // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
   // so granting the flag without a specialty is a no-op by design.

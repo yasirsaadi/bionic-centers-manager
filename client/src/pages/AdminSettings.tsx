@@ -81,6 +81,7 @@ import {
 import { Pencil, Download } from "lucide-react";
 import { userEditPatch } from "./user_edit_patch";
 import StaffNotificationsTab from "@/components/admin/StaffNotificationsTab";
+import type { UserRoleValue } from "@shared/user_roles";
 
 interface BranchWithDetails extends Branch {
   patientCount: number;
@@ -95,7 +96,7 @@ interface BranchWithDetails extends Branch {
   };
 }
 
-type UserRole = "admin" | "branch_manager" | "accountant" | "reception" | "therapist" | "surveyor" | "prosthetics_expert" | "doctor";
+type UserRole = UserRoleValue;
 
 // Display order of the role PICKER. Typed as the full union, so TypeScript
 // refuses to compile if a role is added to UserRole and forgotten here.
@@ -107,7 +108,10 @@ const ROLE_PICKER_ORDER: readonly UserRole[] = [
   "accountant",
   "reception",
   "doctor",
+  "physio_specialist",
   "therapist",
+  "physio_technician",
+  "physio_trainer",
   "surveyor",
   "prosthetics_expert",
 ];
@@ -119,6 +123,9 @@ function getRoleLabels(t: ReturnType<typeof useTranslation>["t"]): Record<UserRo
     accountant: t.roles.accountant,
     reception: t.roles.reception,
     therapist: t.roles.therapist,
+    physio_specialist: t.roles.physio_specialist,
+    physio_technician: t.roles.physio_technician,
+    physio_trainer: t.roles.physio_trainer,
     surveyor: t.roles.surveyor,
     prosthetics_expert: t.roles.prosthetics_expert,
     doctor: t.roles.doctor,
@@ -260,7 +267,77 @@ const defaultPermissions: Record<UserRole, PermissionSet> = {
     canViewReports: false,
     canManageAccounting: false,
     canAddExpenses: false,
+    // منذ §4.cg (٢٠٢٦-١٠-٠٧) المعالجُ يُنفّذ الخطّةَ ولا يعدّلها — كتابتُها للأخصائيّ والمشرف والمسؤول.
+    canManageTreatmentPlans: false,
+    canManageSurveys: false,
+    // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
+    // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
+    canEditVisits: true,
+    canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
+  },
+  physio_specialist: {
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canAddExpenses: false,
+    // الأخصائيّ يكتب الخطّةَ ويعتمدها (§4.cg).
     canManageTreatmentPlans: true,
+    canManageSurveys: false,
+    // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
+    // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
+    canEditVisits: true,
+    canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
+  },
+  physio_technician: {
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canAddExpenses: false,
+    // التقنيّ يُنفّذ ولا يعدّل (§4.cg).
+    canManageTreatmentPlans: false,
+    canManageSurveys: false,
+    // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
+    // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
+    canEditVisits: true,
+    canDeleteVisits: false,
+    canEnterSessions: false,
+    canManageSessionTargets: false,
+    canViewSessionsReport: false,
+  },
+  physio_trainer: {
+    canViewPatients: true,
+    canAddPatients: false,
+    canEditPatients: false,
+    canDeletePatients: false,
+    canViewPayments: false,
+    canAddPayments: false,
+    canEditPayments: false,
+    canDeletePayments: false,
+    canViewReports: false,
+    canManageAccounting: false,
+    canAddExpenses: false,
+    // المدرّب يُنفّذ ولا يعدّل (§4.cg).
+    canManageTreatmentPlans: false,
     canManageSurveys: false,
     // المعالج الطبيعي قد يحتاج تعديل تفاصيل الزيارة التي قام بها
     // (الجلسات، الملاحظات السريريّة). الحذف يبقى افتراضياً مغلقاً.
@@ -633,7 +710,10 @@ const ROLE_LABELS: Record<string, string> = {
   branch_manager: "مدير فرع",
   accountant: "محاسب",
   reception: "استقبال",
-  therapist: "أخصّائي علاج",
+  therapist: "معالج علاج طبيعي",
+  physio_specialist: "أخصائي علاج طبيعي",
+  physio_technician: "تقني علاج طبيعي",
+  physio_trainer: "مدرب علاج طبيعي",
   surveyor: "مسؤول استبيانات",
   prosthetics_expert: "خبير أطراف",
 };
@@ -665,7 +745,7 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString("ar-IQ");
 }
 
-const ROLE_ORDER = ["reception", "doctor", "branch_manager", "accountant", "therapist", "surveyor", "prosthetics_expert", "admin"];
+const ROLE_ORDER = ["reception", "doctor", "branch_manager", "accountant", "physio_specialist", "therapist", "physio_technician", "physio_trainer", "surveyor", "prosthetics_expert", "admin"];
 
 function currentBaghdadMonth(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }).slice(0, 7);
@@ -2632,6 +2712,8 @@ export default function AdminSettings() {
     // grants or revokes the right to sign clinical records.
     canWriteMedicalExam: false,
     canApproveDiscount: false,
+    canSupervisePhysio: false,
+    canDryNeedle: false,
     medicalSpecialties: [] as string[],
     language: "ar",
   });
@@ -2854,6 +2936,8 @@ export default function AdminSettings() {
       canWorkAsExpert: false,
       canWriteMedicalExam: false,
       canApproveDiscount: false,
+      canSupervisePhysio: false,
+      canDryNeedle: false,
       medicalSpecialties: [] as string[],
       language: "ar",
     });
@@ -2899,6 +2983,8 @@ export default function AdminSettings() {
       canWorkAsExpert: (user as any).canWorkAsExpert ?? false,
       canWriteMedicalExam: (user as any).canWriteMedicalExam ?? false,
       canApproveDiscount: (user as any).canApproveDiscount ?? false,
+      canSupervisePhysio: (user as any).canSupervisePhysio ?? false,
+      canDryNeedle: (user as any).canDryNeedle ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
         ? ((user as any).medicalSpecialties as string[])
         : [],
@@ -4450,6 +4536,49 @@ export default function AdminSettings() {
                     لتخويل موظّف بعينه دورُه شيء آخر. ومَن يحمله يعتمد خصمَ فرعه
                     فقط.
                   </p>
+                </div>
+
+                {/* العلاجُ الطبيعي (ترحيل ١٠٤، §4.cg) — عَلَمان مخزَّنان لا يمنحهما دور:
+                    «المشرف العام» يحمله مديرُ فرعٍ بعينه على الفروع كلّها، و«الإبر الجافة»
+                    لأشخاصٍ بأعيانهم بقرار المالك. */}
+                <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50/60 p-3 space-y-3" data-testid="physio-flags">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canSupervisePhysio"
+                        checked={userFormData.canSupervisePhysio}
+                        onCheckedChange={(checked) =>
+                          setUserFormData(prev => ({ ...prev, canSupervisePhysio: checked }))
+                        }
+                        data-testid="switch-canSupervisePhysio"
+                      />
+                      <Label htmlFor="canSupervisePhysio" className="text-sm font-semibold">
+                        مشرف عام العلاج الطبيعي
+                      </Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      على <b>كل الفروع</b> مهما كان دوره: يعدّل خطط العلاج والبروتوكولات ويعتمدها،
+                      ويصله إشعار كل خطة تُعتمد. المسؤول العام يحملها بسلطته.
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="canDryNeedle"
+                        checked={userFormData.canDryNeedle}
+                        onCheckedChange={(checked) =>
+                          setUserFormData(prev => ({ ...prev, canDryNeedle: checked }))
+                        }
+                        data-testid="switch-canDryNeedle"
+                      />
+                      <Label htmlFor="canDryNeedle" className="text-sm font-semibold">
+                        يطبّق الإبر الجافة
+                      </Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      لا يُسنَد بند <span dir="ltr">Dry Needling</span> في الخطة إلا لمن يحمل هذا المفتاح.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

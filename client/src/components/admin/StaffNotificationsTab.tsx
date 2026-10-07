@@ -20,7 +20,7 @@ interface Payload { botReady: boolean; events: StaffEventDef[]; users: StaffRow[
 const KEY = ["/api/admin/staff-notifications"];
 const ROLE_LABELS: Record<string, string> = {
   admin: "المسؤول", branch_manager: "مدير فرع", reception: "استعلامات", accountant: "محاسب",
-  doctor: "طبيب", prosthetics_expert: "خبير أطراف", therapist: "معالج", surveyor: "استبيانات",
+  doctor: "طبيب", prosthetics_expert: "خبير أطراف", therapist: "معالج", physio_specialist: "أخصائي علاج طبيعي", physio_technician: "تقني علاج طبيعي", physio_trainer: "مدرب علاج طبيعي", surveyor: "استبيانات",
 };
 
 async function errText(e: unknown): Promise<string> {

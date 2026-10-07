@@ -33,6 +33,10 @@ interface UserPermissions {
    * بهذا العَلَم كغيره** (قرارُ المالك ٢٠٢٦-٠٩-٣٠ — المفتاحُ يحكم لا الدور).
    */
   canApproveDiscount: boolean;
+  /** «مشرف عام العلاج الطبيعي» (ترحيل ١٠٤، §4.cg) — المسؤولُ يحمله بسلطته. */
+  canSupervisePhysio: boolean;
+  /** «الإبر الجافة» لأشخاصٍ بأعيانهم (§4.cg). */
+  canDryNeedle: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -59,6 +63,8 @@ const defaultAdminPermissions: UserPermissions = {
   canWorkAsExpert: false,
   canWriteMedicalExam: false,
   canApproveDiscount: false,
+  canSupervisePhysio: true,
+  canDryNeedle: false,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -85,6 +91,8 @@ const defaultBranchPermissions: UserPermissions = {
   canWorkAsExpert: false,
   canWriteMedicalExam: false,
   canApproveDiscount: false,
+  canSupervisePhysio: false,
+  canDryNeedle: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -115,6 +123,8 @@ export function usePermissions(): UserPermissions {
       canWorkAsExpert: false,
       canWriteMedicalExam: false,
       canApproveDiscount: false,
+      canSupervisePhysio: false,
+      canDryNeedle: false,
     };
   }
 
@@ -144,6 +154,8 @@ export function usePermissions(): UserPermissions {
       canWorkAsExpert: perms.canWorkAsExpert ?? false,
       canWriteMedicalExam: perms.canWriteMedicalExam ?? false,
       canApproveDiscount: perms.canApproveDiscount ?? false,
+      canSupervisePhysio: perms.canSupervisePhysio ?? false,
+      canDryNeedle: perms.canDryNeedle ?? false,
     };
   }
   

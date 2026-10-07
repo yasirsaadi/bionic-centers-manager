@@ -23,6 +23,7 @@ import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notification
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
+import { isUserRole, isPhysioRole } from "@shared/user_roles";
 import { accessibleBranchesOf, applyFreshUser } from "./auth/session_refresh";
 import { closedBranchIds, invalidateClosedBranches, BRANCH_CLOSED_MESSAGE } from "./branches/closure";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
@@ -314,6 +315,11 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canWorkAsExpert: systemUser.role === "prosthetics_expert" || Boolean(systemUser.canWorkAsExpert),
     canWriteMedicalExam: systemUser.role === "doctor" || Boolean(systemUser.canWriteMedicalExam),
     canApproveDiscount: Boolean(systemUser.canApproveDiscount),
+    // ══ العلاجُ الطبيعي (ترحيل ١٠٤، §4.cg) — عَلَمان مخزَّنان لا يمنحهما دور ══
+    //  «المشرف العام» يحمله سليم وهو مدير فرع، فلا يُشتقّ من الدور؛ والمسؤولُ يملكه بسلطته.
+    //  و«الإبر الجافة» لأشخاصٍ بأعيانهم بقرار المالك — ولا للمسؤول ضمناً: ليس قراراً إدارياً.
+    canSupervisePhysio: isAdminRow || Boolean(systemUser.canSupervisePhysio),
+    canDryNeedle: Boolean(systemUser.canDryNeedle),
   };
 }
 
@@ -709,7 +715,7 @@ export async function registerRoutes(
             branchName = branch?.name || "فرع غير معروف";
           }
 
-          const userShift = (systemUser.role === "reception" || systemUser.role === "therapist") ? (shift || "auto") : "auto";
+          const userShift = (systemUser.role === "reception" || isPhysioRole(systemUser.role)) ? (shift || "auto") : "auto";
 
           // ══ الصلاحياتُ المخزَّنة سلطةٌ حيّة — لا مِنحةَ دورٍ عامّة بعد
           // اليوم (إصلاحٌ 2026-09-01) ══════════════════════════════════════
@@ -1370,6 +1376,10 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle"] as const) {
+        if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
+      }
       if (userData.medicalSpecialties !== undefined) {
         const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
         userData.medicalSpecialties = raw.filter(isMedicalSpecialty);
@@ -1383,7 +1393,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "كلمة المرور يجب أن تكون 4 أحرف على الأقل" });
       }
       
-      if (!userData.role || !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
+      if (!isUserRole(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
       
@@ -1516,13 +1526,17 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle"] as const) {
+        if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
+      }
       if (userData.medicalSpecialties !== undefined) {
         const raw = Array.isArray(userData.medicalSpecialties) ? userData.medicalSpecialties : [];
         userData.medicalSpecialties = raw.filter(isMedicalSpecialty);
       }
 
       // Validate role if provided
-      if (userData.role && !["admin", "branch_manager", "accountant", "reception", "therapist", "surveyor", "prosthetics_expert", "doctor"].includes(userData.role)) {
+      if (userData.role && !isUserRole(userData.role)) {
         return res.status(400).json({ message: "الدور غير صالح" });
       }
 
