@@ -250,16 +250,18 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
             <div className="box">
               <h3>القاصة</h3>
               <div className="sum">
-                <div>مجموع اليوم<span className="colhint">(الوارد − الصادر)</span></div><div>{sheet ? fmt(sheet.totals.dayNet) : " "}</div>
+                <div>مجموع اليوم<span className="colhint">(الوارد − الصادر)</span></div>
+                <div>{sheet ? fmt(sheet.totals.dayNet) : " "}{sheet && <span className="valhint">{fmt(sheet.totals.income)} − {fmt(sheet.totals.outflow)}</span>}</div>
                 <div>الباقي من أمس</div><div>{sheet ? fmt(sheet.totals.prevRemaining) : " "}</div>
                 <div className="eq">المتبقي في القاصة<span className="colhint">(مجموع اليوم + الباقي من أمس)</span></div><div>{sheet ? fmt(sheet.totals.remaining) : " "}</div>
               </div>
             </div>
             {(blank || sheet?.branch.config.drRatioPct) && (
               <div className="box ratio">
-                <h3>نسبة العزل</h3>
+                <h3>نسبة العزل للدكتور</h3>
                 <div className="sum">
-                  <div>نسبة اليوم</div><div>{sheet ? fmt(sheet.ratio.today) : " "}</div>
+                  <div>نسبة اليوم{sheet?.branch.config.drRatioPct ? <span className="colhint">({sheet.branch.config.drRatioPct}٪ من الوارد)</span> : null}</div>
+                  <div>{sheet ? fmt(sheet.ratio.today) : " "}{sheet?.branch.config.drRatioPct ? <span className="valhint">{fmt(sheet.totals.income)} × {sheet.branch.config.drRatioPct}%</span> : null}</div>
                   <div>المتبقي من نسبة أمس</div><div>{sheet ? fmt(sheet.ratio.prev) : " "}</div>
                   {sheet && sheet.ratio.received > 0 && (<><div>استلمه المالك اليوم</div><div>{fmt(sheet.ratio.received)}</div></>)}
                   <div className="eq">المتبقي في النسبة<span className="colhint">(نسبة اليوم + المتبقي من نسبة أمس)</span></div><div>{sheet ? fmt(sheet.ratio.remaining) : " "}</div>
@@ -320,6 +322,7 @@ const PRINT_CSS = `
 .cb-print .sum { display:grid; grid-template-columns:1fr auto; gap:4px 16px; font-variant-numeric:tabular-nums; }
 .cb-print .sum div:nth-child(even) { text-align:left; direction:ltr; min-width:9em; border-bottom:1px dotted var(--rule-strong); align-self:start; }
 .cb-print .colhint { display:block; font-weight:400; font-size:0.72rem; color:var(--muted); line-height:1.3; }
+.cb-print .valhint { display:block; font-weight:400; font-size:0.7rem; color:var(--muted); line-height:1.3; direction:ltr; }
 .cb-print .sum .eq { font-weight:700; margin-top:2mm; }
 .cb-print .sum .eq + div { font-weight:700; border-bottom:2px solid var(--rule-strong); margin-top:2mm; }
 .cb-print .grow { flex:1; }

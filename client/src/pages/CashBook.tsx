@@ -381,13 +381,19 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       <div className="grid md:grid-cols-2 gap-4 pt-2">
         <div className="border-2 border-slate-600 rounded-sm p-3 space-y-2 text-sm" data-testid="cash-box">
           <h3 className="font-bold text-base">القاصة</h3>
-          <BoxLine label="مجموع اليوم" hint="(الوارد − الصادر)" value={sheet.totals.dayNet} />
+          {/*  **ومن أين جاء الرقم** (طلبُ المالك ٢٠٢٦-١٠-٠٧، §4.ca تكملة ٨): تحت الرقم وارده وصادره كما في الجدول. */}
+          <BoxLine label="مجموع اليوم" hint="(الوارد − الصادر)" value={sheet.totals.dayNet}
+            valueHint={`${fmt(sheet.totals.income)} − ${fmt(sheet.totals.outflow)}`} testid="cash-day-net" />
           <BoxLine label="الباقي من أمس" value={sheet.totals.prevRemaining} />
           <BoxLine label="المتبقي في القاصة" hint="(مجموع اليوم + الباقي من أمس)" value={sheet.totals.remaining} strong testid="cash-remaining" />
         </div>
         <div className="border-4 border-double border-emerald-700 rounded-sm p-3 space-y-2 text-sm" data-testid="ratio-box">
-          <h3 className="font-bold text-base text-emerald-800">نسبة العزل</h3>
-          <BoxLine label="نسبة اليوم" value={sheet.ratio.today} />
+          <h3 className="font-bold text-base text-emerald-800">نسبة العزل للدكتور</h3>
+          {/*  النسبةُ من وارد اليوم بنسبة الفرع — كما يحسبها الخادم (`ratioAmount`)، فتُقرأ تحت الرقم. */}
+          <BoxLine label="نسبة اليوم" value={sheet.ratio.today}
+            hint={sheet.branch.config.drRatioPct ? `(${sheet.branch.config.drRatioPct}٪ من الوارد)` : undefined}
+            valueHint={sheet.branch.config.drRatioPct ? `${fmt(sheet.totals.income)} × ${sheet.branch.config.drRatioPct}%` : undefined}
+            testid="ratio-today" />
           <BoxLine label="المتبقي من نسبة أمس" value={sheet.ratio.prev} />
           {sheet.ratio.received > 0 && <BoxLine label="استُلم اليوم" value={-sheet.ratio.received} />}
           <BoxLine label="المتبقي في النسبة" hint="(نسبة اليوم + المتبقي من نسبة أمس)" value={sheet.ratio.remaining} strong testid="ratio-remaining" />
@@ -401,12 +407,17 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   );
 }
 
-function BoxLine({ label, hint, value, strong, testid }: { label: string; hint?: string; value: number; strong?: boolean; testid?: string }) {
+function BoxLine({ label, hint, value, valueHint, strong, testid }: {
+  label: string; hint?: string; value: number; valueHint?: string; strong?: boolean; testid?: string;
+}) {
   return (
     <div className={`grid grid-cols-[1fr_auto] gap-3 items-start ${strong ? "pt-2" : ""}`}>
       <div className={strong ? "font-bold" : ""}>{label}{hint && <span className="block text-[11px] font-normal text-muted-foreground">{hint}</span>}</div>
-      <div className={`min-w-32 text-left border-b ${strong ? "border-slate-700 border-b-2 font-bold" : "border-dotted border-slate-500"}`} dir="ltr" data-testid={testid}>
-        {fmt(value)}
+      <div className="min-w-32 text-left" dir="ltr">
+        <div className={`border-b ${strong ? "border-slate-700 border-b-2 font-bold" : "border-dotted border-slate-500"}`} data-testid={testid}>
+          {fmt(value)}
+        </div>
+        {valueHint && <div className="text-[11px] text-muted-foreground mt-0.5" data-testid={testid ? `${testid}-hint` : undefined}>{valueHint}</div>}
       </div>
     </div>
   );
