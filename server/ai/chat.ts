@@ -590,6 +590,18 @@ export function isDanglingPromise(text: string | null | undefined): boolean {
   return endsOpen && promisesAction;
 }
 
+/**
+ *  **الجوابُ الفارغ بعد نتائج الأدوات** (المالك ٢٠٢٦-١٠-٠٧: «طفلٌ عنده شلل دماغي…» و«knee osteoarthritis…» ⟵ فقاعتان فارغتان
+ *  تحتهما «اعتمدتُ على بيانات حيّة»). النموذجُ قد يُنهي دورَه بلا نصٍّ بعد `tool_result` مباشرةً — سلوكٌ موثَّق
+ *  (platform.claude.com «Handling stop reasons» ⟵ «Empty responses with end_turn»)، **وعلاجُه الموثَّق رسالةُ مستخدمٍ جديدة
+ *  تطلب الإكمال** ثمّ نداءٌ ثانٍ. وكانت الحلقةُ تسلّم الفراغَ للموظّف جواباً. فيُحَثّ مرّةً واحدة، وإن عاد فارغاً فجملةٌ صريحة —
+ *  **ولا فقاعةَ فارغةً بعد اليوم**.
+ */
+export const EMPTY_REPLY_NUDGE =
+  "لم يصل جوابُك. اكتب الآن للمستخدم جوابَك النهائيّ ممّا جمعتَه من الأدوات، بلغة سؤاله.";
+export const EMPTY_REPLY_FALLBACK =
+  "قرأتُ البيانات لكن تعذّرت صياغةُ الجواب هذه المرّة — أعد السؤال من فضلك، ويُستحسن بصيغةٍ أقصر.";
+
 /** ما يُقال للنموذج حين يعد ولا يفعل — جولةٌ واحدة إضافيّة لا أكثر. */
 const DANGLING_NUDGE =
   "أعلنتَ خطوةً ولم تنفّذها. نفّذها الآن بالأدوات، أو أجب نهائياً بما لديك — ولا تُعلن خطوةً لن تنفّذها.";
@@ -808,6 +820,7 @@ async function runWithTools(params: {
   const stepMaxTokens = params.access.mode === "financial" ? 3000 : 900;
   try {
     let nudged = false;
+    let emptyNudged = false;
     //  **وتنبيهُ الإكمال لا يأكل جولةَ أداة** (مراجعة Codex على #427): الجولاتُ الثلاث للأدوات، والتنبيهُ مرّةٌ واحدة فوقها.
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const step = await stepFn({ system, messages, tools, model: stepModel, maxTokens: stepMaxTokens });
@@ -824,6 +837,16 @@ async function runWithTools(params: {
         //  وُجدت) لم تُترَك بلا فتح. فرضٌ ⟹ أعد الجولة فيرى النموذجُ النتيجة
         //  الحقيقية ويشرحها، بدل أن يُقبل نصٌّ لم يفتح شيئاً.
         if (await forceRequiredLessonOpen()) continue;
+        //  **ردٌّ فارغ** ⟵ رسالةُ مستخدمٍ جديدة تطلب الإكمال، مرّةً واحدة ولا تأكل جولةَ أداة؛ وفراغٌ ثانٍ ⟵ جملةٌ صريحة.
+        if (!step.text.trim()) {
+          if (!emptyNudged) {
+            emptyNudged = true;
+            messages.push({ role: "user", content: EMPTY_REPLY_NUDGE });
+            round--;
+            continue;
+          }
+          return { ok: true, value: { reply: EMPTY_REPLY_FALLBACK, tools: { names: used, count: used.length } } };
+        }
         return { ok: true, value: { reply: step.text, tools: { names: used, count: used.length } } };
       }
 
@@ -862,6 +885,10 @@ async function runWithTools(params: {
       messages, tools: [], model: stepModel, maxTokens: stepMaxTokens,
     });
     //  **والوعدُ في الجواب الختاميّ لا يُسلَّم مقطوعاً**: لا جولةَ بعده، فيُقال للمستخدم صراحةً إن البحثَ لم يكتمل.
+    //  **والختاميُّ الفارغ لا يُسلَّم فارغاً** — لا جولةَ بعده، فالجملةُ الصريحة.
+    if (!closing.text.trim()) {
+      return { ok: true, value: { reply: EMPTY_REPLY_FALLBACK, tools: { names: used, count: used.length } } };
+    }
     const reply = isDanglingPromise(closing.text)
       ? `${closing.text.trim().replace(/(?:[:：…]|\.\.\.)$/, ".")}\n\nلم يكتمل البحثُ ضمن الخطوات المتاحة لي في هذا السؤال — أعد السؤال بصيغةٍ أدقّ.`
       : closing.text;
