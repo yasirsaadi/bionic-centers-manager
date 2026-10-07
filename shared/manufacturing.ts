@@ -578,3 +578,39 @@ export function assignmentDateError(p: {
 export function assignmentDateNote(fromDay: string, toDay: string, reason: string): string {
   return `تعديل تاريخ إسناد الأمر من ${fromDay} إلى ${toDay} — السبب: ${reason}`;
 }
+
+// ══ «عاد لأخذ القالب» (§4.cl — ٢٠٢٦-١٠-٠٧) ═══════════════════════════════════
+//  مريضٌ اشترى ودفع ولم يُؤخذ قالبُه يومها (مشدٌّ فترةً، أو تأهيلٌ وعلاجٌ طبيعيّ) — يعود لأمره القائم.
+//  خيارٌ في «سبب الحضور» لا يظهر إلّا لأمرٍ لم يبلغ القالب بعد: بلا مالٍ ولا أمرٍ جديد ولا طبيب، والمرحلةُ يحرّكها الخبير.
+
+export const MOLD_RETURN_ACTION = "mold_return";
+export const MOLD_RETURN_LABEL = "عاد لأخذ القالب";
+export const MOLD_RETURN_HINT =
+  "اشترى سابقاً ولم يُؤخذ قالبه يومها (مشدّ، تأهيل، علاج طبيعي) ويعود اليوم لأخذه — لا مال ولا أمر جديد، ويصل خبيرَ أمره القائم";
+/** المراحلُ التي تسبق القالب — بعدها لا «عودةَ لأخذ القالب». */
+export const MOLD_RETURN_STAGES: ReadonlySet<string> = new Set(["order_received", "measurements"]);
+export const MOLD_RETURN_NOT_ELIGIBLE_ERROR =
+  "هذا الأمر ليس بانتظار أخذ القالب — منتهٍ أو تجاوز مرحلة القالب أو ليس تصنيعَ جهاز";
+
+/** هل يُسجَّل على هذا الأمر «عاد لأخذ القالب»؟ تصنيعُ جهازٍ أوّل، قيد العمل، قبل القالب، غيرُ مُبطَل ولا بانتظار قالبٍ نهائيّ. */
+export function isMoldReturnEligible(o: {
+  purpose: string | null | undefined; status: string | null | undefined; currentStage: string | null | undefined;
+  holdReasonCode?: string | null; adminVoidReversalId?: number | null;
+}): boolean {
+  if (o.purpose !== "initial_build") return false;
+  if (o.status === "completed" || o.status === "cancelled") return false;
+  if (o.adminVoidReversalId != null) return false;
+  if (o.status === "waiting_patient" && o.holdReasonCode === "trial_socket") return false;
+  return MOLD_RETURN_STAGES.has(String(o.currentStage ?? ""));
+}
+
+/** أوامرُ المريض المؤهَّلة في قسمٍ — من قائمة أوامره نفسِها، بلا طلبٍ ثانٍ. */
+export function moldReturnOrders<T extends Parameters<typeof isMoldReturnEligible>[0] & { serviceType?: string | null }>(
+  orders: readonly T[] | null | undefined, serviceType?: string,
+): T[] {
+  return (orders ?? []).filter((o) => isMoldReturnEligible(o) && (!serviceType || o.serviceType === serviceType));
+}
+
+export function moldReturnNote(day: string, note: string | null): string {
+  return `حضر المريض لأخذ القالب يوم ${day}${note ? ` — ${note}` : ""}`;
+}

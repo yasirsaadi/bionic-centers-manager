@@ -138,6 +138,8 @@ export function workHistoryMovementLabel(actionType: string, notes: string | nul
     case "hold_reason": return "كتابة سبب التوقّف";
     // تصحيحُ المسؤول لتاريخ إسناد الأمر (§4.ck).
     case "assignment_date_change": return "تعديل تاريخ الإسناد";
+    // الاستعلاماتُ سجّلت عودةَ المريض لأخذ القالب على أمره القائم (§4.cl).
+    case "mold_return": return "حضر لأخذ القالب";
     case "status_change": {
       const n = (notes ?? "").trim();
       const hit = STATUS_CHANGE_PREFIXES.find((x) => n.startsWith(x.prefix));

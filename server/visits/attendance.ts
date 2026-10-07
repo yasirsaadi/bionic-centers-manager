@@ -24,6 +24,8 @@ export async function recordAttendanceVisitTx(tx: Tx, p: {
   reason: string;
   notes?: string | null;
   createdBy: number | null;
+  /** لحظةُ الحضور حين يُسجَّل بتاريخٍ سابق (`baghdadMomentOn`) — وإلّا الآن. */
+  at?: Date | null;
 }): Promise<void> {
   let caseId = p.caseId ?? null;
   if (caseId === null && p.serviceType) {
@@ -42,8 +44,9 @@ export async function recordAttendanceVisitTx(tx: Tx, p: {
   }
   if (branchId === null) return;
   await tx.execute(sql`
-    INSERT INTO visits (patient_id, branch_id, case_id, device_episode_id, details, notes, shift, created_by)
+    INSERT INTO visits (patient_id, branch_id, case_id, device_episode_id, details, notes, shift, created_by, visit_date)
     VALUES (${p.patientId}, ${branchId}, ${caseId}, ${p.deviceEpisodeId ?? null}, ${p.reason},
-            ${p.notes?.trim() || null}, ${baghdadShift()}, ${p.createdBy})
+            ${p.notes?.trim() || null}, ${baghdadShift(p.at ?? new Date())}, ${p.createdBy},
+            COALESCE(${p.at ? p.at.toISOString() : null}::timestamp, now()))
   `);
 }
