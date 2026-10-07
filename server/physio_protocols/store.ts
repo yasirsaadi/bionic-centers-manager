@@ -11,11 +11,16 @@ export class ProtocolError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export interface DeviceLineInput { deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null }
+export interface DeviceLineInput {
+  deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null;
+  parametersEn: string | null; noteEn: string | null;
+}
 export interface ProtocolInput {
   code: string; titleAr: string; titleEn: string; category: string; ageGroup: string;
   summary: string | null; goals: string | null; assessment: string | null; exercises: string | null;
   contraindications: string | null; precautions: string | null;
+  summaryEn: string | null; goalsEn: string | null; assessmentEn: string | null; exercisesEn: string | null;
+  contraindicationsEn: string | null; precautionsEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
   references: ProtocolReference[]; devices: DeviceLineInput[];
 }
@@ -48,6 +53,7 @@ export async function getProtocol(id: number) {
   const lines = await db.select({
     id: physioProtocolDevices.id, deviceId: physioProtocolDevices.deviceId, evidence: physioProtocolDevices.evidence,
     parameters: physioProtocolDevices.parameters, minutes: physioProtocolDevices.minutes, note: physioProtocolDevices.note,
+    parametersEn: physioProtocolDevices.parametersEn, noteEn: physioProtocolDevices.noteEn,
     displayOrder: physioProtocolDevices.displayOrder,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
@@ -75,6 +81,8 @@ function rowValues(input: ProtocolInput) {
     code: input.code, titleAr: input.titleAr, titleEn: input.titleEn, category: input.category, ageGroup: input.ageGroup,
     summary: input.summary, goals: input.goals, assessment: input.assessment, exercises: input.exercises,
     contraindications: input.contraindications, precautions: input.precautions,
+    summaryEn: input.summaryEn, goalsEn: input.goalsEn, assessmentEn: input.assessmentEn, exercisesEn: input.exercisesEn,
+    contraindicationsEn: input.contraindicationsEn, precautionsEn: input.precautionsEn,
     sessionsPerWeek: input.sessionsPerWeek, durationWeeks: input.durationWeeks, sessionMinutes: input.sessionMinutes,
     references: input.references,
   };
@@ -84,7 +92,8 @@ async function writeDevices(tx: any, protocolId: number, lines: DeviceLineInput[
   await tx.delete(physioProtocolDevices).where(eq(physioProtocolDevices.protocolId, protocolId));
   if (!lines.length) return;
   await tx.insert(physioProtocolDevices).values(lines.map((l, i) => ({
-    protocolId, deviceId: l.deviceId, evidence: l.evidence, parameters: l.parameters, minutes: l.minutes, note: l.note, displayOrder: i,
+    protocolId, deviceId: l.deviceId, evidence: l.evidence, parameters: l.parameters, minutes: l.minutes, note: l.note,
+    parametersEn: l.parametersEn, noteEn: l.noteEn, displayOrder: i,
   })));
 }
 

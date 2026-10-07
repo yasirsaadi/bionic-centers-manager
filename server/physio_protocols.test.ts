@@ -221,9 +221,22 @@ async function main() {
     same("ز.٧ والمسؤولُ يطفئه", (await call("PUT", `/api/physio/devices/${D1}/branches/${B1}`, S.admin, { available: false })).json, { before: true, after: false });
     void dev;
 
+    console.log("\n── ط. النسخةُ الإنكليزية تُحفظ وتُقرأ ──");
+    const bilingual = await call("PUT", `/api/physio/protocols/${P}`, S.sup, body(CODE_PREFIX + "lbp", {
+      summaryEn: "  Chronic LBP overview  ", goalsEn: "Reduce pain", precautionsEn: "",
+      devices: [{ deviceId: D1, evidence: "recommended", parameters: "١٠ دقائق", parametersEn: "10 minutes", noteEn: "Supervised" }],
+    }));
+    same("ط.١ الحفظُ بالنسختين ينجح", bilingual.status, 200);
+    const en = (await call("GET", `/api/physio/protocols/${P}`, S.doc)).json;
+    same("ط.٢ النصوصُ الإنكليزية تعود مقصوصةً، والفارغُ NULL", [en?.summaryEn, en?.goalsEn, en?.precautionsEn], ["Chronic LBP overview", "Reduce pain", null]);
+    same("ط.٣ والعربيةُ باقيةٌ بجانبها", en?.summary, "ملخّص");
+    same("ط.٤ وسطرُ الجهاز بنسختيه", (en?.devices ?? []).map((d: any) => [d.parameters, d.parametersEn, d.note, d.noteEn]), [["١٠ دقائق", "10 minutes", null, "Supervised"]]);
+    const cleared = await call("PUT", `/api/physio/protocols/${P}`, S.sup, body(CODE_PREFIX + "lbp"));
+    same("ط.٥ وحفظٌ بلا إنكليزية يمحوها — الجسمُ كاملٌ لا رقعة", [cleared.status, (await call("GET", `/api/physio/protocols/${P}`, S.doc)).json?.summaryEn], [200, null]);
+
     console.log("\n── ح. التدقيق ──");
     same("ح.١ الإنشاء", await auditCount("physio_protocol", P, "create"), 1);
-    same("ح.٢ التعديلان", await auditCount("physio_protocol", P, "update"), 2);
+    same("ح.٢ التعديلاتُ الأربعة", await auditCount("physio_protocol", P, "update"), 4);
     same("ح.٣ الاعتمادان", await auditCount("physio_protocol", P, "approve"), 2);
     same("ح.٤ الأرشفةُ والاستعادة", [await auditCount("physio_protocol", P, "archive"), await auditCount("physio_protocol", P, "restore")], [1, 1]);
     same("ح.٥ الصورة: رفعٌ وحذف", [await auditCount("physio_protocol_image", imgId, "create"), await auditCount("physio_protocol_image", imgId, "delete")], [1, 1]);

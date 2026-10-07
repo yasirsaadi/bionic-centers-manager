@@ -2865,6 +2865,13 @@ export const physioProtocols = pgTable("physio_protocols", {
   exercises: text("exercises"),
   contraindications: text("contraindications"),
   precautions: text("precautions"),
+  //  النسخةُ الإنكليزية (ترحيل ١٠٨) — تُعرض حين يختار القارئُ English، والفارغُ يقع على العربية.
+  summaryEn: text("summary_en"),
+  goalsEn: text("goals_en"),
+  assessmentEn: text("assessment_en"),
+  exercisesEn: text("exercises_en"),
+  contraindicationsEn: text("contraindications_en"),
+  precautionsEn: text("precautions_en"),
   sessionsPerWeek: integer("sessions_per_week"),
   durationWeeks: integer("duration_weeks"),
   sessionMinutes: integer("session_minutes"),
@@ -2891,6 +2898,8 @@ export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   parameters: text("parameters"),
   minutes: integer("minutes"),
   note: text("note"),
+  parametersEn: text("parameters_en"),
+  noteEn: text("note_en"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqProtocolDevice: unique("physio_protocol_devices_protocol_id_device_id_key").on(t.protocolId, t.deviceId) }));
 

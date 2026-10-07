@@ -20,9 +20,10 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
-  AGE_GROUPS, AGE_GROUP_LABELS, DRY_NEEDLING_DEVICE_CODE, EVIDENCE_LABELS, EVIDENCE_LEVELS, PROTOCOL_CATEGORIES,
-  PROTOCOL_CATEGORY_LABELS, PROTOCOL_STATUS_LABELS, canEditProtocols, canReadProtocols,
-  type AgeGroup, type EvidenceLevel, type ProtocolCategory, type ProtocolReference,
+  AGE_GROUPS, AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, DRY_NEEDLING_DEVICE_CODE, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, EVIDENCE_LEVELS,
+  PROTOCOL_CATEGORIES, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN, PROTOCOL_STATUS_LABELS, PROTOCOL_STATUS_LABELS_EN,
+  canEditProtocols, canReadProtocols, isProtocolLang, localizedText,
+  type AgeGroup, type EvidenceLevel, type ProtocolCategory, type ProtocolLang, type ProtocolReference,
 } from "@shared/physio_protocols";
 
 interface ListRow {
@@ -31,12 +32,15 @@ interface ListRow {
 }
 interface DeviceLine {
   id?: number; deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null;
+  parametersEn: string | null; noteEn: string | null;
   code?: string; nameAr?: string; nameEn?: string; availableBranchIds?: number[];
 }
 interface Protocol {
   id: number; code: string; titleAr: string; titleEn: string; category: ProtocolCategory; ageGroup: AgeGroup;
   summary: string | null; goals: string | null; assessment: string | null; exercises: string | null;
   contraindications: string | null; precautions: string | null;
+  summaryEn: string | null; goalsEn: string | null; assessmentEn: string | null; exercisesEn: string | null;
+  contraindicationsEn: string | null; precautionsEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
   references: ProtocolReference[]; status: "draft" | "approved"; isArchived: boolean;
   approvedByName: string | null; approvedAt: string | null; updatedByName: string | null; updatedAt: string;
@@ -55,6 +59,53 @@ const errText = (e: any): string => {
   try { return JSON.parse(raw)?.error ?? raw; } catch { return raw; }
 };
 
+// ══ اللغة — يختارها القارئ، وتُحفظ في متصفّحه وحده (تفضيلٌ شخصيّ لا حالةٌ مشتركة) ═════════════════
+const LANG_KEY = "physioProtocolLang";
+function useProtocolLang(): [ProtocolLang, (l: ProtocolLang) => void] {
+  const [lang, setLang] = useState<ProtocolLang>(() => {
+    try { const v = localStorage.getItem(LANG_KEY); return isProtocolLang(v) ? v : "ar"; } catch { return "ar"; }
+  });
+  const set = (l: ProtocolLang) => { setLang(l); try { localStorage.setItem(LANG_KEY, l); } catch { /* تفضيلٌ لا يُحفظ — لا ضرر */ } };
+  return [lang, set];
+}
+function LangToggle({ lang, onChange }: { lang: ProtocolLang; onChange: (l: ProtocolLang) => void }) {
+  return (
+    <div className="inline-flex rounded-md border overflow-hidden text-sm" role="group" aria-label="Language" data-testid="protocol-lang">
+      {(["ar", "en"] as const).map((l) => (
+        <button key={l} type="button" onClick={() => onChange(l)} aria-pressed={lang === l} data-testid={`protocol-lang-${l}`}
+          className={`px-3 py-1 ${lang === l ? "bg-primary text-primary-foreground" : "bg-white hover:bg-muted"}`}>
+          {l === "ar" ? "العربية" : "English"}
+        </button>
+      ))}
+    </div>
+  );
+}
+const T = {
+  ar: {
+    library: "المكتبة", overview: "نظرة عامة", goals: "الأهداف", assessment: "التقييم والقياسات", devices: "الأجهزة ودرجةُ الدليل",
+    device: "الجهاز", grade: "الدرجة", params: "المعاملات", minutes: "الدقائق", availableIn: "متوفّر في", noDevices: "لا أجهزة في هذا البروتوكول.",
+    nowhere: "غير متوفّر في أيّ فرع", notHere: "غير متوفّر في فرعك", needle: "يطبّقها حاملُ «الإبر الجافة» وحده",
+    exercises: "التمارين والبرنامج المنزلي", contra: "موانع الاستعمال", precautions: "احتياطات", images: "صورٌ توضيحية", source: "المصدر",
+    link: "الرابط", refs: "المراجع", noRefs: "لا مراجع بعد — البروتوكولُ بلا مرجعٍ عالميّ لا يُعتمَد.", lastEdit: "آخرُ تعديل",
+    draft: "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — تُقرأ مرجعاً لا تعليمات.", approvedBy: "اعتمده", archived: "مؤرشف",
+    perWeek: (n: number) => <><b>{n}</b> جلسات/أسبوع</>, weeks: (n: number) => <>لمدة <b>{n}</b> أسابيع</>, session: (n: number) => <>الجلسة <b>{n}</b> دقيقة</>,
+    fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية", deviceCount: (n: number, r: number) => `${n} جهاز · ${r} موصى به`,
+  },
+  en: {
+    library: "Library", overview: "Overview", goals: "Goals", assessment: "Assessment & outcome measures", devices: "Devices & evidence grade",
+    device: "Device", grade: "Grade", params: "Parameters", minutes: "Minutes", availableIn: "Available in", noDevices: "No devices in this protocol.",
+    nowhere: "Not available in any branch", notHere: "Not available in your branch", needle: "Dry-needling certified staff only",
+    exercises: "Exercises & home programme", contra: "Contraindications", precautions: "Precautions", images: "Illustrations", source: "Source",
+    link: "Link", refs: "References", noRefs: "No references yet — a protocol without a global reference is not approved.", lastEdit: "Last edited",
+    draft: "Draft not yet approved by the physiotherapy supervisor — read it as reference, not as instructions.", approvedBy: "Approved by", archived: "Archived",
+    perWeek: (n: number) => <><b>{n}</b> sessions/week</>, weeks: (n: number) => <>for <b>{n}</b> weeks</>, session: (n: number) => <><b>{n}</b> min/session</>,
+    fallback: "English not written yet — Arabic shown", deviceCount: (n: number, r: number) => `${n} devices · ${r} recommended`,
+  },
+} as const;
+const labelsOf = (lang: ProtocolLang) => lang === "en"
+  ? { evidence: EVIDENCE_LABELS_EN, age: AGE_GROUP_LABELS_EN, category: PROTOCOL_CATEGORY_LABELS_EN, status: PROTOCOL_STATUS_LABELS_EN }
+  : { evidence: EVIDENCE_LABELS, age: AGE_GROUP_LABELS, category: PROTOCOL_CATEGORY_LABELS, status: PROTOCOL_STATUS_LABELS };
+
 function useSessionLike() {
   const session = useBranchSession();
   const permissions = usePermissions();
@@ -64,28 +115,31 @@ function useSessionLike() {
 // ══ المكتبة ═══════════════════════════════════════════════════════════════════
 export default function PhysioProtocols() {
   const s = useSessionLike();
+  const [lang, setLang] = useProtocolLang();
   if (!canReadProtocols(s)) {
     return <div className="p-6 text-center text-muted-foreground" dir="rtl">مكتبةُ البروتوكولات لقسم العلاج الطبيعي.</div>;
   }
   return (
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <BookMarked className="w-6 h-6 text-primary" />
         <h1 className="text-xl font-bold text-primary">بروتوكولات العلاج الطبيعي</h1>
+        <div className="mr-auto"><LangToggle lang={lang} onChange={setLang} /></div>
       </div>
       <Tabs defaultValue="library" dir="rtl">
         <TabsList>
           <TabsTrigger value="library" data-testid="tab-protocols">المكتبة</TabsTrigger>
           <TabsTrigger value="devices" data-testid="tab-devices">توفّر الأجهزة بالفروع</TabsTrigger>
         </TabsList>
-        <TabsContent value="library"><Library canEdit={canEditProtocols(s)} /></TabsContent>
+        <TabsContent value="library"><Library canEdit={canEditProtocols(s)} lang={lang} /></TabsContent>
         <TabsContent value="devices"><DeviceAvailability /></TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function Library({ canEdit }: { canEdit: boolean }) {
+function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
+  const L = labelsOf(lang);
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<string>("all");
   const [age, setAge] = useState<string>("all");
@@ -148,16 +202,16 @@ function Library({ canEdit }: { canEdit: boolean }) {
           <div className="grid gap-2 md:grid-cols-2">
             {rows.map((r) => (
               <Link key={r.id} href={`/physio/protocols/${r.id}`}>
-                <a className="block rounded-lg border bg-white hover:border-primary p-3 space-y-1" data-testid={`protocol-row-${r.id}`}>
+                <a className="block rounded-lg border bg-white hover:border-primary p-3 space-y-1" data-testid={`protocol-row-${r.id}`} dir={lang === "en" ? "ltr" : "rtl"}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">{r.titleAr}</span>
-                    <span className="text-xs text-muted-foreground" dir="ltr">{r.titleEn}</span>
+                    <span className="font-semibold">{lang === "en" ? r.titleEn : r.titleAr}</span>
+                    <span className="text-xs text-muted-foreground" dir={lang === "en" ? "rtl" : "ltr"}>{lang === "en" ? r.titleAr : r.titleEn}</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 text-xs">
-                    <Badge variant="secondary">{PROTOCOL_CATEGORY_LABELS[r.category]}</Badge>
-                    <Badge variant="outline">{AGE_GROUP_LABELS[r.ageGroup]}</Badge>
-                    <Badge className={r.status === "approved" ? "bg-emerald-600" : "bg-amber-500"}>{r.status === "approved" ? "معتمَد" : "مسوّدة"}</Badge>
-                    <span className="text-muted-foreground">{r.deviceCount} جهاز · {r.recommendedCount} موصى به</span>
+                    <Badge variant="secondary">{L.category[r.category]}</Badge>
+                    <Badge variant="outline">{L.age[r.ageGroup]}</Badge>
+                    <Badge className={r.status === "approved" ? "bg-emerald-600" : "bg-amber-500"}>{lang === "en" ? (r.status === "approved" ? "Approved" : "Draft") : (r.status === "approved" ? "معتمَد" : "مسوّدة")}</Badge>
+                    <span className="text-muted-foreground">{T[lang].deviceCount(r.deviceCount, r.recommendedCount)}</span>
                   </div>
                 </a>
               </Link>
@@ -176,6 +230,7 @@ export function PhysioProtocolDetail() {
   const s = useSessionLike();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [lang, setLang] = useProtocolLang();
   const [editing, setEditing] = useState(false);
   const [addingImage, setAddingImage] = useState(false);
   const q = useQuery<Protocol>({ queryKey: ["/api/physio/protocols", id], enabled: Number.isInteger(id) && id > 0,
@@ -193,25 +248,39 @@ export function PhysioProtocolDetail() {
   if (!q.data) return <div className="p-6" dir="rtl">البروتوكول غير موجود.</div>;
   const p = q.data;
   const activeBranch = Number(s.branchId) || null;
+  const t = T[lang];
+  const L = labelsOf(lang);
+  const dir = lang === "en" ? "ltr" : "rtl";
+  const start = lang === "en" ? "text-left" : "text-right";
+  //  نصٌّ باللغة المختارة، وإلّا الأخرى باتّجاهها — مع تنبيهٍ صغير أنه لم يُترجَم بعد.
+  const txt = (row: Record<string, any>, field: string) => localizedText(row, field, lang);
+  const section = (field: string, title: string, tone?: "danger" | "warn") => {
+    const v = txt(p, field);
+    if (!v.text) return null;
+    return <Section title={title} tone={tone} fallback={v.fallback ? t.fallback : null} textDir={v.fallback ? (lang === "en" ? "rtl" : "ltr") : dir}>{v.text}</Section>;
+  };
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-5xl" dir="rtl" data-testid="protocol-detail">
-      <Link href="/physio/protocols"><a className="inline-flex items-center gap-1 text-sm text-primary"><ArrowRight className="w-4 h-4" /> المكتبة</a></Link>
+    <div className="p-4 md:p-6 space-y-4 max-w-5xl" dir={dir} data-testid="protocol-detail">
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        <Link href="/physio/protocols"><a className="inline-flex items-center gap-1 text-sm text-primary">{lang === "en" ? <ArrowRight className="w-4 h-4 rotate-180" /> : <ArrowRight className="w-4 h-4" />} {t.library}</a></Link>
+        <LangToggle lang={lang} onChange={setLang} />
+      </div>
       <div className="flex flex-wrap items-start gap-3 justify-between">
         <div>
-          <h1 className="text-xl font-bold">{p.titleAr}</h1>
-          <p className="text-muted-foreground" dir="ltr">{p.titleEn}</p>
+          <h1 className="text-xl font-bold">{lang === "en" ? p.titleEn : p.titleAr}</h1>
+          <p className={`text-muted-foreground ${start}`} dir={lang === "en" ? "rtl" : "ltr"}>{lang === "en" ? p.titleAr : p.titleEn}</p>
           <div className="flex flex-wrap gap-1.5 mt-2 text-xs">
-            <Badge variant="secondary">{PROTOCOL_CATEGORY_LABELS[p.category]}</Badge>
-            <Badge variant="outline">{AGE_GROUP_LABELS[p.ageGroup]}</Badge>
-            <Badge className={p.status === "approved" ? "bg-emerald-600" : "bg-amber-500"} data-testid="protocol-status">{PROTOCOL_STATUS_LABELS[p.status]}</Badge>
-            {p.isArchived && <Badge variant="destructive">مؤرشف</Badge>}
+            <Badge variant="secondary">{L.category[p.category]}</Badge>
+            <Badge variant="outline">{L.age[p.ageGroup]}</Badge>
+            <Badge className={p.status === "approved" ? "bg-emerald-600" : "bg-amber-500"} data-testid="protocol-status">{L.status[p.status]}</Badge>
+            {p.isArchived && <Badge variant="destructive">{t.archived}</Badge>}
           </div>
           {p.status === "approved" && p.approvedByName && (
-            <p className="text-xs text-muted-foreground mt-1">اعتمده {p.approvedByName}{p.approvedAt ? ` · ${new Date(p.approvedAt).toLocaleDateString("en-GB")}` : ""}</p>
+            <p className="text-xs text-muted-foreground mt-1">{t.approvedBy} {p.approvedByName}{p.approvedAt ? ` · ${new Date(p.approvedAt).toLocaleDateString("en-GB")}` : ""}</p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" dir="rtl">
           {p.canApprove && p.status === "draft" && !p.isArchived && (
             <Button className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending} onClick={() => act.mutate(`/api/physio/protocols/${p.id}/approve`)} data-testid="protocol-approve">
               <CheckCircle2 className="w-4 h-4" /> اعتماد
@@ -226,44 +295,50 @@ export function PhysioProtocolDetail() {
       </div>
 
       {p.status === "draft" && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm flex gap-2">
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm flex gap-2" data-testid="protocol-draft-note">
           <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
-          <span>مسوّدةٌ لم يعتمدها المشرفُ العام بعد — تُقرأ مرجعاً لا تعليمات.</span>
+          <span>{t.draft}</span>
         </div>
       )}
 
-      {p.summary && <Section title="نظرة عامة">{p.summary}</Section>}
+      {section("summary", t.overview)}
       <div className="flex flex-wrap gap-4 text-sm">
-        {p.sessionsPerWeek && <span><b>{p.sessionsPerWeek}</b> جلسات/أسبوع</span>}
-        {p.durationWeeks && <span>لمدة <b>{p.durationWeeks}</b> أسابيع</span>}
-        {p.sessionMinutes && <span>الجلسة <b>{p.sessionMinutes}</b> دقيقة</span>}
+        {p.sessionsPerWeek && <span>{t.perWeek(p.sessionsPerWeek)}</span>}
+        {p.durationWeeks && <span>{t.weeks(p.durationWeeks)}</span>}
+        {p.sessionMinutes && <span>{t.session(p.sessionMinutes)}</span>}
       </div>
-      {p.goals && <Section title="الأهداف">{p.goals}</Section>}
-      {p.assessment && <Section title="التقييم والقياسات">{p.assessment}</Section>}
+      {section("goals", t.goals)}
+      {section("assessment", t.assessment)}
 
       <div className="space-y-2">
-        <h2 className="font-semibold">الأجهزة ودرجةُ الدليل</h2>
-        {p.devices.length === 0 ? <p className="text-sm text-muted-foreground">لا أجهزة في هذا البروتوكول.</p> : (
+        <h2 className="font-semibold">{t.devices}</h2>
+        {p.devices.length === 0 ? <p className="text-sm text-muted-foreground">{t.noDevices}</p> : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50"><tr>
-                <th className="text-right p-2">الجهاز</th><th className="text-right p-2">الدرجة</th><th className="text-right p-2">المعاملات</th>
-                <th className="text-right p-2">الدقائق</th><th className="text-right p-2">متوفّر في</th>
+                <th className={`${start} p-2`}>{t.device}</th><th className={`${start} p-2`}>{t.grade}</th><th className={`${start} p-2`}>{t.params}</th>
+                <th className={`${start} p-2`}>{t.minutes}</th><th className={`${start} p-2`}>{t.availableIn}</th>
               </tr></thead>
               <tbody>
                 {p.devices.map((d) => {
                   const here = activeBranch ? (d.availableBranchIds ?? []).includes(activeBranch) : true;
+                  const params = txt(d, "parameters");
+                  const note = txt(d, "note");
                   return (
                     <tr key={d.deviceId} className="border-t align-top" data-testid={`protocol-device-${d.code}`}>
-                      <td className="p-2"><div className="font-medium">{d.nameAr}</div><div className="text-xs text-muted-foreground" dir="ltr">{d.nameEn}</div>
-                        {d.code === DRY_NEEDLING_DEVICE_CODE && <div className="text-[11px] text-red-700 mt-0.5">يطبّقها حاملُ «الإبر الجافة» وحده</div>}</td>
-                      <td className="p-2"><span className={`inline-block rounded border px-2 py-0.5 text-xs ${EVIDENCE_TONE[d.evidence]}`}>{EVIDENCE_LABELS[d.evidence]}</span></td>
-                      <td className="p-2 whitespace-pre-wrap">{d.parameters ?? "—"}{d.note && <div className="text-xs text-muted-foreground mt-1">{d.note}</div>}</td>
+                      <td className="p-2"><div className="font-medium">{lang === "en" ? d.nameEn : d.nameAr}</div>
+                        <div className={`text-xs text-muted-foreground ${start}`} dir={lang === "en" ? "rtl" : "ltr"}>{lang === "en" ? d.nameAr : d.nameEn}</div>
+                        {d.code === DRY_NEEDLING_DEVICE_CODE && <div className="text-[11px] text-red-700 mt-0.5">{t.needle}</div>}</td>
+                      <td className="p-2"><span className={`inline-block rounded border px-2 py-0.5 text-xs ${EVIDENCE_TONE[d.evidence]}`}>{L.evidence[d.evidence]}</span></td>
+                      <td className="p-2 whitespace-pre-wrap">
+                        <span dir={params.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{params.text ?? "—"}</span>
+                        {note.text && <div className="text-xs text-muted-foreground mt-1" dir={note.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{note.text}</div>}
+                      </td>
                       <td className="p-2">{d.minutes ?? "—"}</td>
                       <td className="p-2 text-xs">
-                        {(d.availableBranchIds ?? []).length === 0 ? <span className="text-red-700">غير متوفّر في أيّ فرع</span>
+                        {(d.availableBranchIds ?? []).length === 0 ? <span className="text-red-700">{t.nowhere}</span>
                           : (d.availableBranchIds ?? []).map(branchName).join("، ")}
-                        {!here && <div className="text-red-700">غير متوفّر في فرعك</div>}
+                        {!here && <div className="text-red-700">{t.notHere}</div>}
                       </td>
                     </tr>
                   );
@@ -274,22 +349,22 @@ export function PhysioProtocolDetail() {
         )}
       </div>
 
-      {p.exercises && <Section title="التمارين والبرنامج المنزلي">{p.exercises}</Section>}
-      {p.contraindications && <Section title="موانع الاستعمال" tone="danger">{p.contraindications}</Section>}
-      {p.precautions && <Section title="احتياطات" tone="warn">{p.precautions}</Section>}
+      {section("exercises", t.exercises)}
+      {section("contraindications", t.contra, "danger")}
+      {section("precautions", t.precautions, "warn")}
 
       {p.images.length > 0 && (
         <div className="space-y-2">
-          <h2 className="font-semibold">صورٌ توضيحية</h2>
+          <h2 className="font-semibold">{t.images}</h2>
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
             {p.images.map((img) => (
               <figure key={img.id} className="rounded-md border p-2 space-y-1">
                 <img src={`/api/physio/protocol-images/${img.id}`} alt={img.caption ?? ""} className="w-full max-h-56 object-contain bg-muted/30" />
                 {img.caption && <figcaption className="text-sm">{img.caption}</figcaption>}
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  {img.credit && <span>المصدر: {img.credit}</span>}
-                  {img.sourceUrl && <a href={img.sourceUrl} target="_blank" rel="noreferrer" className="text-primary inline-flex items-center gap-0.5"><ExternalLink className="w-3 h-3" /> الرابط</a>}
-                  {p.canEdit && <button className="mr-auto text-red-700" onClick={() => act.mutate(`DELETE /api/physio/protocols/${p.id}/images/${img.id}`)} aria-label="حذف الصورة"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  {img.credit && <span>{t.source}: {img.credit}</span>}
+                  {img.sourceUrl && <a href={img.sourceUrl} target="_blank" rel="noreferrer" className="text-primary inline-flex items-center gap-0.5"><ExternalLink className="w-3 h-3" /> {t.link}</a>}
+                  {p.canEdit && <button className="ms-auto text-red-700" onClick={() => act.mutate(`DELETE /api/physio/protocols/${p.id}/images/${img.id}`)} aria-label="حذف الصورة"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               </figure>
             ))}
@@ -298,9 +373,9 @@ export function PhysioProtocolDetail() {
       )}
 
       <div className="space-y-1">
-        <h2 className="font-semibold">المراجع</h2>
-        {p.references.length === 0 ? <p className="text-sm text-amber-800">لا مراجع بعد — البروتوكولُ بلا مرجعٍ عالميّ لا يُعتمَد.</p> : (
-          <ol className="list-decimal pr-5 text-sm space-y-1" dir="ltr" style={{ textAlign: "left" }}>
+        <h2 className="font-semibold">{t.refs}</h2>
+        {p.references.length === 0 ? <p className="text-sm text-amber-800">{t.noRefs}</p> : (
+          <ol className="list-decimal pl-5 text-sm space-y-1" dir="ltr" style={{ textAlign: "left" }}>
             {p.references.map((r, i) => (
               <li key={i}>{r.title}{r.org ? ` — ${r.org}` : ""}{r.year ? ` (${r.year})` : ""}
                 {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-primary mx-1 inline-flex items-center"><ExternalLink className="w-3 h-3" /></a>}</li>
@@ -308,7 +383,7 @@ export function PhysioProtocolDetail() {
           </ol>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">آخرُ تعديل: {p.updatedByName ?? "—"} · {new Date(p.updatedAt).toLocaleString("en-GB")}</p>
+      <p className="text-xs text-muted-foreground">{t.lastEdit}: {p.updatedByName ?? "—"} · {new Date(p.updatedAt).toLocaleString("en-GB")}</p>
 
       {editing && <ProtocolEditor initial={p} onClose={() => setEditing(false)} />}
       {addingImage && <ImageDialog protocolId={p.id} onClose={() => setAddingImage(false)} />}
@@ -316,12 +391,14 @@ export function PhysioProtocolDetail() {
   );
 }
 
-function Section({ title, children, tone }: { title: string; children: React.ReactNode; tone?: "danger" | "warn" }) {
+function Section({ title, children, tone, fallback, textDir }: {
+  title: string; children: React.ReactNode; tone?: "danger" | "warn"; fallback?: string | null; textDir?: "rtl" | "ltr";
+}) {
   const cls = tone === "danger" ? "border-red-300 bg-red-50" : tone === "warn" ? "border-amber-300 bg-amber-50" : "bg-white";
   return (
     <div className={`rounded-md border p-3 ${cls}`}>
-      <h2 className="font-semibold mb-1">{title}</h2>
-      <div className="text-sm whitespace-pre-wrap leading-7">{children}</div>
+      <h2 className="font-semibold mb-1">{title}{fallback && <span className="ms-2 text-[11px] font-normal text-muted-foreground" data-testid="protocol-fallback">({fallback})</span>}</h2>
+      <div className="text-sm whitespace-pre-wrap leading-7" dir={textDir}>{children}</div>
     </div>
   );
 }
@@ -337,15 +414,26 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
     category: (initial?.category ?? "spine") as ProtocolCategory, ageGroup: (initial?.ageGroup ?? "adult") as AgeGroup,
     summary: initial?.summary ?? "", goals: initial?.goals ?? "", assessment: initial?.assessment ?? "", exercises: initial?.exercises ?? "",
     contraindications: initial?.contraindications ?? "", precautions: initial?.precautions ?? "",
+    summaryEn: initial?.summaryEn ?? "", goalsEn: initial?.goalsEn ?? "", assessmentEn: initial?.assessmentEn ?? "",
+    exercisesEn: initial?.exercisesEn ?? "", contraindicationsEn: initial?.contraindicationsEn ?? "", precautionsEn: initial?.precautionsEn ?? "",
     sessionsPerWeek: initial?.sessionsPerWeek ? String(initial.sessionsPerWeek) : "", durationWeeks: initial?.durationWeeks ? String(initial.durationWeeks) : "",
     sessionMinutes: initial?.sessionMinutes ? String(initial.sessionMinutes) : "",
   }));
   const [lines, setLines] = useState<DeviceLine[]>(() => (initial?.devices ?? []).map((d) => ({
-    deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note })));
+    deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
+    parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null })));
   const [refs, setRefs] = useState<ProtocolReference[]>(() => initial?.references ?? []);
   const set = (k: keyof typeof f) => (e: any) => setF((p) => ({ ...p, [k]: typeof e === "string" ? e : e.target.value }));
   const unused = useMemo(() => (matrix.data?.devices ?? []).filter((d) => !lines.some((l) => l.deviceId === d.id)), [matrix.data, lines]);
   const nameOf = (id: number) => matrix.data?.devices.find((d) => d.id === id);
+  //  كلُّ نصٍّ بنسختيه جنباً إلى جنب — العربيةُ بمصطلحها الإنكليزيّ، والإنكليزيةُ للطبيب (قرارُ المالك).
+  const bi = (k: "summary" | "goals" | "assessment" | "exercises" | "contraindications" | "precautions", label: string, labelEn: string, rows: number) => (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <label className="grid gap-1">{label}<Textarea rows={rows} value={f[k]} onChange={set(k)} data-testid={`pf-${k}`} /></label>
+      <label className="grid gap-1" dir="ltr">{labelEn}<Textarea rows={rows} dir="ltr" value={f[`${k}En`]} onChange={set(`${k}En`)} data-testid={`pf-${k}En`} /></label>
+    </div>
+  );
+  const setLine = (i: number, patch: Partial<DeviceLine>) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   const save = useMutation({
     mutationFn: async () => {
@@ -364,7 +452,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent dir="rtl" className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent dir="rtl" className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{initial ? "تعديل البروتوكول" : "بروتوكول جديد"}</DialogTitle></DialogHeader>
         <div className="grid gap-3 text-sm">
           <div className="grid sm:grid-cols-2 gap-3">
@@ -382,24 +470,26 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
               </label>
             </div>
           </div>
-          <label className="grid gap-1">نظرة عامة<Textarea rows={2} value={f.summary} onChange={set("summary")} /></label>
+          {bi("summary", "نظرة عامة", "Overview", 2)}
           <div className="grid grid-cols-3 gap-2">
             <label className="grid gap-1">جلسات/أسبوع<Input inputMode="numeric" value={f.sessionsPerWeek} onChange={set("sessionsPerWeek")} /></label>
             <label className="grid gap-1">عدد الأسابيع<Input inputMode="numeric" value={f.durationWeeks} onChange={set("durationWeeks")} /></label>
             <label className="grid gap-1">دقائق الجلسة<Input inputMode="numeric" value={f.sessionMinutes} onChange={set("sessionMinutes")} /></label>
           </div>
-          <label className="grid gap-1">الأهداف<Textarea rows={3} value={f.goals} onChange={set("goals")} /></label>
-          <label className="grid gap-1">التقييم والقياسات<Textarea rows={3} value={f.assessment} onChange={set("assessment")} /></label>
+          {bi("goals", "الأهداف", "Goals", 3)}
+          {bi("assessment", "التقييم والقياسات", "Assessment & outcome measures", 3)}
 
           <div className="space-y-2 rounded-md border p-2">
             <p className="font-semibold">الأجهزة ودرجةُ الدليل</p>
             {lines.map((l, i) => (
               <div key={l.deviceId} className="grid gap-2 sm:grid-cols-[1fr_9rem_5rem_auto] items-start border-b pb-2" data-testid={`pf-device-${i}`}>
-                <div><div className="font-medium">{nameOf(l.deviceId)?.nameAr}</div>
-                  <Input className="mt-1" placeholder="المعاملات (الشدّة، التردّد، الموضع…)" value={l.parameters ?? ""}
-                    onChange={(e) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, parameters: e.target.value || null } : x)))} />
-                  <Input className="mt-1" placeholder="ملاحظة" value={l.note ?? ""}
-                    onChange={(e) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, note: e.target.value || null } : x)))} /></div>
+                <div><div className="font-medium">{nameOf(l.deviceId)?.nameAr} <span className="text-xs text-muted-foreground" dir="ltr">{nameOf(l.deviceId)?.nameEn}</span></div>
+                  <div className="grid gap-1 sm:grid-cols-2 mt-1">
+                    <Input placeholder="المعاملات (الشدّة، التردّد، الموضع…)" value={l.parameters ?? ""} onChange={(e) => setLine(i, { parameters: e.target.value || null })} />
+                    <Input dir="ltr" placeholder="Parameters (intensity, frequency, site…)" value={l.parametersEn ?? ""} onChange={(e) => setLine(i, { parametersEn: e.target.value || null })} data-testid={`pf-device-${i}-paramsEn`} />
+                    <Input placeholder="ملاحظة" value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value || null })} />
+                    <Input dir="ltr" placeholder="Note" value={l.noteEn ?? ""} onChange={(e) => setLine(i, { noteEn: e.target.value || null })} />
+                  </div></div>
                 <Select value={l.evidence} onValueChange={(v) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, evidence: v as EvidenceLevel } : x)))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{EVIDENCE_LEVELS.map((e) => <SelectItem key={e} value={e}>{EVIDENCE_LABELS[e]}</SelectItem>)}</SelectContent>
@@ -410,16 +500,16 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
               </div>
             ))}
             {unused.length > 0 && (
-              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", parameters: null, minutes: null, note: null }])}>
+              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null }])}>
                 <SelectTrigger className="w-60" data-testid="pf-add-device"><SelectValue placeholder="+ أضف جهازاً" /></SelectTrigger>
                 <SelectContent>{unused.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.nameAr} — {d.nameEn}</SelectItem>)}</SelectContent>
               </Select>
             )}
           </div>
 
-          <label className="grid gap-1">التمارين والبرنامج المنزلي<Textarea rows={4} value={f.exercises} onChange={set("exercises")} /></label>
-          <label className="grid gap-1">موانع الاستعمال<Textarea rows={3} value={f.contraindications} onChange={set("contraindications")} /></label>
-          <label className="grid gap-1">احتياطات<Textarea rows={2} value={f.precautions} onChange={set("precautions")} /></label>
+          {bi("exercises", "التمارين والبرنامج المنزلي", "Exercises & home programme", 4)}
+          {bi("contraindications", "موانع الاستعمال", "Contraindications", 3)}
+          {bi("precautions", "احتياطات", "Precautions", 2)}
 
           <div className="space-y-2 rounded-md border p-2">
             <p className="font-semibold">المراجع العالمية</p>

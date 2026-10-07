@@ -108,3 +108,52 @@ export function normalizeReferences(input: unknown): ProtocolReference[] | null 
   }
   return out;
 }
+
+// ── اللغة (ترحيل ١٠٨، §4.cj) ─────────────────────────────────────────────────
+// قرارُ المالك: الطبيبُ يقرأ بالإنكليزية والمعالجُ بالعربية — فلكلّ نصٍّ نسختان، والقارئُ يختار. **والعربيةُ تحفظ المصطلحَ الإنكليزيّ
+// بين قوسين.** والنسخةُ الغائبة تقع على الأخرى (لا حقلَ فارغٌ لأن أحداً لم يترجمه بعد) — ويُقال ذلك للقارئ.
+export const PROTOCOL_LANGS = ["ar", "en"] as const;
+export type ProtocolLang = (typeof PROTOCOL_LANGS)[number];
+export const isProtocolLang = (v: unknown): v is ProtocolLang => v === "ar" || v === "en";
+
+/** النصوصُ ذاتُ النسختين — والإنكليزيةُ في `<field>En`. */
+export const PROTOCOL_TEXT_FIELDS = ["summary", "goals", "assessment", "exercises", "contraindications", "precautions"] as const;
+export type ProtocolTextField = (typeof PROTOCOL_TEXT_FIELDS)[number];
+
+const blank = (v: unknown) => typeof v !== "string" || !v.trim();
+
+/**
+ * النصُّ باللغة المختارة، وإلّا الأخرى. `fallback` صادقٌ حين عُرضت الأخرى — فتقول الشاشةُ «لم تُكتب الإنكليزية بعد».
+ * يعمل للبروتوكول (`summary`/`summaryEn` …) ولسطر الجهاز (`parameters`/`parametersEn` · `note`/`noteEn`).
+ */
+export function localizedText(row: Record<string, any> | null | undefined, field: string, lang: ProtocolLang): { text: string | null; fallback: boolean } {
+  const ar = row?.[field];
+  const en = row?.[`${field}En`];
+  const [want, other] = lang === "en" ? [en, ar] : [ar, en];
+  if (!blank(want)) return { text: want, fallback: false };
+  if (!blank(other)) return { text: other, fallback: true };
+  return { text: null, fallback: false };
+}
+
+export const EVIDENCE_LABELS_EN: Record<EvidenceLevel, string> = {
+  recommended: "Recommended",
+  optional: "Optional",
+  not_recommended: "Not recommended",
+};
+export const AGE_GROUP_LABELS_EN: Record<AgeGroup, string> = {
+  pediatric: "Pediatric",
+  adult: "Adult",
+  geriatric: "Geriatric",
+  all: "All ages",
+};
+export const PROTOCOL_CATEGORY_LABELS_EN: Record<ProtocolCategory, string> = {
+  spine: "Spine",
+  upper_limb: "Upper limb",
+  lower_limb: "Lower limb",
+  neurological: "Neurological",
+  post_surgical: "Post-surgical",
+  amputation: "Amputation & prosthetics",
+  rheumatologic: "Rheumatologic & chronic",
+  other: "Other",
+};
+export const PROTOCOL_STATUS_LABELS_EN: Record<ProtocolStatus, string> = { draft: "Draft — pending review", approved: "Approved" };
