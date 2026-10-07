@@ -79,6 +79,8 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/cash-book": "دفتر القاصة",
   "/cash-book/print": "طباعة ورقة دفتر القاصة",
   "/dr-box": "قاصة الدكتور",
+  "/physio/protocols": "بروتوكولات العلاج الطبيعي",
+  "/physio/protocols/:id": "بروتوكول علاج طبيعي",
   "/surveys": "الاستطلاعات",
   "/session-tracking/entry": "إدخال الجلسات",
   "/session-tracking/targets": "أهداف الجلسات",
