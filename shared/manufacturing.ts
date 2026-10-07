@@ -545,3 +545,36 @@ export function parseDeliveryDateNote(note: string | null | undefined): Delivery
   if (dates.length === 1) return { previousDate: null, newDate: dates[0] ?? null, reason };
   return { previousDate: null, newDate: null, reason };
 }
+
+// ══ تعديلُ تاريخ إسناد الأمر — للمسؤول وحده (§4.ck) ══════════════════════════════
+// واقعةُ حميد لفته خشان (WB-02652، أمر #459): دفع يوم ٢٠-٩ ولم يُؤخذ قالبُه، وأسند الموظّفُ الأمرَ للخبير يومها خطأً؛ والإسنادُ
+// الحقيقيّ يوم ٥-١٠. فيُعدَّل **تاريخُ إسناد الأمر وحدَه** — والدفعةُ تبقى بتاريخها الحقيقيّ. ونوعُ سطر السجلّ مستقلّ:
+// `date_change` محجوزٌ لموعد التسليم ويُقرأ منه سجلُّه، فلا يختلطان.
+export const ASSIGNMENT_DATE_ACTION = "assignment_date_change";
+
+/** يومُ بغداد (YYYY-MM-DD) للحظة. */
+export const baghdadDay = (d: Date | string): string =>
+  new Date(d).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+
+/**
+ * هل يُقبل اليومُ الجديد؟ — `null` إن قُبل، وإلّا رسالةُ الرفض. **لا مستقبل، ولا قبل تسجيل المريض، ولا بعد أوّل حدثٍ مسجَّل على الأمر**
+ * (انتقالُ مرحلةٍ أو توقّفٌ أو تحويلٌ أو بدءُ عمل): مرحلةٌ لا تسبق بدايةَ أمرها.
+ */
+export function assignmentDateError(p: {
+  newDay: string; currentDay: string; today: string; patientRegisteredDay: string | null;
+  status: string; firstLaterEvent: { day: string; label: string } | null;
+}): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.newDay)) return "اختر تاريخاً صحيحاً";
+  if (p.status === "completed" || p.status === "cancelled") return "يُعدَّل تاريخُ الإسناد ما دام الأمرُ قيد العمل — هذا الأمرُ منتهٍ";
+  if (p.newDay === p.currentDay) return "هذا هو تاريخُ الإسناد الحاليّ";
+  if (p.newDay > p.today) return "لا يُختار تاريخٌ في المستقبل";
+  if (p.patientRegisteredDay && p.newDay < p.patientRegisteredDay) return `لا يسبق تاريخَ تسجيل المريض (${p.patientRegisteredDay})`;
+  if (p.firstLaterEvent && p.newDay > p.firstLaterEvent.day) {
+    return `لا يأتي بعد «${p.firstLaterEvent.label}» المسجَّل يوم ${p.firstLaterEvent.day} — المرحلةُ لا تسبق بدايةَ أمرها`;
+  }
+  return null;
+}
+
+export function assignmentDateNote(fromDay: string, toDay: string, reason: string): string {
+  return `تعديل تاريخ إسناد الأمر من ${fromDay} إلى ${toDay} — السبب: ${reason}`;
+}

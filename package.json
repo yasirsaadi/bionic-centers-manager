@@ -13,6 +13,7 @@
     "test:db-safety": "tsx server/db_safety.test.ts",
     "test:invoice-cash": "tsx server/invoice_cash.test.ts",
     "test:manufacturing": "tsx server/manufacturing/isolation.test.ts",
+    "test:assignment-date": "tsx server/manufacturing/assignment_date.test.ts",
     "test:manufacturing-view": "tsx client/src/pages/manufacturing_view_mode.test.ts",
     "test:manufacturing-buckets": "tsx client/src/pages/manufacturing_buckets.test.ts",
     "test:manufacturing-purpose": "tsx server/manufacturing_purpose_filter.test.ts",

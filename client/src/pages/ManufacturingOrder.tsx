@@ -68,6 +68,7 @@ export default function ManufacturingOrder() {
   const [reassignOpen, setReassignOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState(false);
+  const [assignDateOpen, setAssignDateOpen] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: orderKey });
@@ -341,6 +342,12 @@ export default function ManufacturingOrder() {
               <Settings2 className="w-4 h-4" /> تعديل إداري للمرحلة
             </Button>
           )}
+          {/* تصحيحُ تاريخ الإسناد — للمسؤول وحده، ما دام الأمرُ قيد العمل (§4.ck). */}
+          {isAdmin && (
+            <Button size="sm" variant="ghost" onClick={() => setAssignDateOpen(true)} className="gap-1 text-muted-foreground" data-testid="button-assignment-date">
+              <CalendarDays className="w-4 h-4" /> تعديل تاريخ الإسناد
+            </Button>
+          )}
         </div>
       )}
 
@@ -395,6 +402,7 @@ export default function ManufacturingOrder() {
                     : h.actionType === "hold_reason" ? "كتابة سبب التوقّف"
                     : h.actionType === "delivered" ? "تسليم"
                     : h.actionType === "created" ? "إنشاء الأمر"
+                    : h.actionType === "assignment_date_change" ? "تعديل تاريخ الإسناد"
                     : `${STAGE_LABELS[h.fromStage] ?? h.fromStage ?? ""} ← ${STAGE_LABELS[h.toStage] ?? h.toStage ?? ""}`}
                 </div>
                 {h.notes && <div className="text-xs text-muted-foreground">{h.notes}</div>}
@@ -430,6 +438,7 @@ export default function ManufacturingOrder() {
       <HoldReasonDialog status={reasonFor} onClose={() => setReasonFor(null)} order={order} onDone={invalidate} />
       <TrialSocketDialog open={trialOpen} onOpenChange={setTrialOpen} order={order} onDone={invalidate} />
       {canReassign && <AdminStageDialog open={adminStageOpen} onOpenChange={setAdminStageOpen} order={order} stages={stages} onDone={invalidate} />}
+      {isAdmin && <AssignmentDateDialog open={assignDateOpen} onOpenChange={setAssignDateOpen} order={order} onDone={invalidate} />}
       <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
     </div>
@@ -577,6 +586,53 @@ function DeliveryDateDialog({ open, onOpenChange, orderId, current, onDone }: an
             })}
             data-testid="button-save-delivery-date"
           >
+            {m.isPending ? "جارٍ الحفظ…" : "حفظ"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// **تعديل تاريخ الإسناد** (§4.ck) — للمسؤول وحده: أمرٌ أُسند يومَ الدفع خطأً والقالبُ أُخذ بعده.
+// الخادمُ يحكم الحدود (لا مستقبل، ولا قبل تسجيل المريض، ولا بعد أوّل حدثٍ للأمر)، وهذه تعرض خطأه كما هو.
+function AssignmentDateDialog({ open, onOpenChange, order, onDone }: any) {
+  const today = baghdadTodayYmd();
+  const current = order.createdAt
+    ? new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" }) : "";
+  const [date, setDate] = useState(current);
+  const [reason, setReason] = useState("");
+  useEffect(() => { if (open) { setDate(current); setReason(""); } }, [open, current]);
+  const m = useAction(`/api/manufacturing/orders/${order.id}/assignment-date`, "PATCH",
+    () => { onOpenChange(false); onDone(); }, onDone);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>تعديل تاريخ الإسناد</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="text-sm">
+            <span className="text-muted-foreground">تاريخ الإسناد الحالي: </span>
+            <span className="font-semibold">{fmtD(order.createdAt)}</span>
+          </div>
+          <div>
+            <label className="text-sm font-medium">التاريخ الصحيح <span className="text-red-500">*</span></label>
+            <Input type="date" max={today} value={date} onChange={(e) => setDate(e.target.value)}
+              className="mt-1 bg-white" data-testid="input-assignment-date" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold">السبب <span className="text-red-500">*</span></label>
+            <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 bg-white"
+              placeholder="مثال: أُسند يومَ دفع العربون خطأً — القالبُ أُخذ في هذا التاريخ" data-testid="input-assignment-date-reason" />
+          </div>
+          <p className="text-xs text-muted-foreground" data-testid="hint-assignment-date">
+            ينتقل الأمرُ إلى هذا التاريخ في سجلّه وفي عدّ المبيعات والتقارير والمراجعة اليومية. والدفعاتُ تبقى بتواريخها، والتعديلُ وسببُه يُكتبان في الخطّ الزمني وسجلّ التدقيق.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>إلغاء</Button>
+          <Button data-testid="button-save-assignment-date"
+            disabled={!date || date === current || date > today || !reason.trim() || m.isPending}
+            onClick={() => m.mutate({ date, reason: reason.trim() })}>
             {m.isPending ? "جارٍ الحفظ…" : "حفظ"}
           </Button>
         </DialogFooter>
