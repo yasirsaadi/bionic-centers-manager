@@ -192,27 +192,43 @@ function OpeningCard({ sheet, branchId, book, onSave }: { sheet: Sheet; branchId
   return (
     <div className="border-2 border-dashed border-[#1d2b55]/40 rounded-md p-4 space-y-3" data-testid="cash-opening">
       <p className="font-semibold">ابدأ دفتر «{CASH_BOOK_LABELS[book]}» لهذا الفرع</p>
-      <p className="text-sm text-muted-foreground">اكتب النقد الموجود فعلاً في القاصة في بداية يوم البدء، والمتبقي في النسبة إن وُجد. من هذا اليوم يبدأ حساب «الباقي من أمس». وتستطيع تعديله لاحقاً.</p>
+      <p className="text-sm text-muted-foreground">اختر <b>آخرَ يومٍ أُغلق في الدفتر الورقيّ</b>، واكتب «المتبقي في القاصة» و«المتبقي في النسبة» في <b>نهايته</b> كما في الورقة. يبدأ الدفترُ هنا من اليوم الذي بعده. وتستطيع تعديله لاحقاً.</p>
       <OpeningFields today={sheet.today} initial={null} label="ابدأ الدفتر"
         onSave={(v) => onSave({ branchId, book, ...v })} />
     </div>
   );
 }
 
-/** حقولُ البداية — للبدء أوّلَ مرّة وللتعديل معاً. */
+/** يومٌ بعد/قبل يومٍ بصيغة YYYY-MM-DD — حسابُ تقويمٍ خالص بلا منطقةٍ زمنية. */
+const shiftYmd = (ymd: string, days: number) => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * حقولُ البداية — للبدء أوّلَ مرّة وللتعديل معاً.
+ *
+ * **تُسأل كما تُقرأ الورقة** (المالك ٢٠٢٦-١٠-٠٧، §4.ca تكملة ٧): «المتبقي في القاصة لنهاية يوم ٦-١٠ هو ٥,٩١٧,١٥٠». فالنافذةُ تطلب
+ * **آخرَ يومٍ أُغلق ورقياً** ورصيدَه **في نهايته**، وتحفظ اليومَ الذي بعده يومَ بدءٍ (`openingDate`) — والخادمُ بلا تغيير: رصيدُ
+ * البداية عنده «الباقي من أمس» ليوم البدء. كانت تسأل «يوم البدء» فيُكتب فيه رصيدُ نهايته، فتُحسب حركتُه مرّتين.
+ */
 function OpeningFields({ today, initial, label, onSave }: {
   today: string; initial: { date: string; cash: number; ratio: number } | null; label: string;
   onSave: (v: { openingDate: string; cash: number; ratio: number }) => void;
 }) {
   const [cash, setCash] = useState(initial ? String(initial.cash) : "");
   const [ratio, setRatio] = useState(initial ? String(initial.ratio) : "");
-  const [date, setDate] = useState(initial?.date ?? today);
+  //  آخرُ يومٍ مُغلَق = يومُ البدء ناقصَ يوم. وأقصاه أمس: اليومُ لم يُغلَق بعد.
+  const [closedDay, setClosedDay] = useState(initial ? shiftYmd(initial.date, -1) : shiftYmd(today, -1));
+  const lastClosable = shiftYmd(today, -1);
   return (
     <div className="flex flex-wrap gap-4 items-end">
-      <label className="grid gap-1 text-sm">يوم البدء<Input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} className="w-40" /></label>
-      <label className="grid gap-1 text-sm">النقد في القاصة<AmountInput id="open-cash" value={cash} onChange={setCash} /></label>
-      <label className="grid gap-1 text-sm">المتبقي في النسبة<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>
-      <Button disabled={!date} onClick={() => onSave({ openingDate: date, cash: Number(cash || 0), ratio: Number(ratio || 0) })} data-testid="cash-opening-save">
+      <label className="grid gap-1 text-sm">آخر يومٍ في الدفتر الورقي<Input type="date" value={closedDay} max={lastClosable} onChange={(e) => setClosedDay(e.target.value)} className="w-40" data-testid="cash-opening-closed-day" /></label>
+      <label className="grid gap-1 text-sm">المتبقي في القاصة في نهايته<AmountInput id="open-cash" value={cash} onChange={setCash} /></label>
+      <label className="grid gap-1 text-sm">المتبقي في النسبة في نهايته<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>
+      <Button disabled={!closedDay || closedDay > lastClosable}
+        onClick={() => onSave({ openingDate: shiftYmd(closedDay, 1), cash: Number(cash || 0), ratio: Number(ratio || 0) })} data-testid="cash-opening-save">
         {label}
       </Button>
     </div>
@@ -227,7 +243,7 @@ function EditOpeningDialog({ sheet, branchId, book, write, open, onClose }: {
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent dir="rtl" className="max-w-xl">
         <DialogHeader><DialogTitle>تعديل بداية دفتر «{CASH_BOOK_LABELS[book]}»</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">منه يُحسب «الباقي من أمس» و«المتبقي في النسبة» من يوم البدء فما بعده. والأيامُ قبل يوم البدء لا تدخل الحساب.</p>
+        <p className="text-sm text-muted-foreground">اكتب رصيدَ <b>نهاية</b> آخرِ يومٍ أُغلق في الدفتر الورقيّ كما في الورقة. يصير «الباقي من أمس» لليوم الذي بعده، ومنه يُحسب ما بعده. والأيامُ حتى ذلك اليوم لا تدخل الحساب.</p>
         {open && sheet.opening && (
           <OpeningFields today={sheet.today} initial={sheet.opening} label="حفظ"
             onSave={(v) => write.mutate({ method: "POST", url: "/api/cash-book/opening", body: { branchId, book, ...v } }, { onSuccess: onClose })} />
@@ -260,7 +276,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       <PrintBar sheet={sheet} branchId={branchId} book={book} day={day} />
       {sheet.isAdmin && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="cash-opening-line">
-          <span>بداية الدفتر: {sheet.opening!.date.split("-").reverse().join("/")} · النقد {fmt(sheet.opening!.cash)} · النسبة {fmt(sheet.opening!.ratio)}</span>
+          <span>بداية الدفتر: رصيدُ نهاية {shiftYmd(sheet.opening!.date, -1).split("-").reverse().join("/")} — النقد {fmt(sheet.opening!.cash)} · النسبة {fmt(sheet.opening!.ratio)} · والحسابُ من {sheet.opening!.date.split("-").reverse().join("/")}</span>
           <Button size="sm" variant="outline" className="h-7" onClick={() => setEditOpening(true)} data-testid="cash-opening-edit">تعديل بداية الدفتر</Button>
           <EditOpeningDialog sheet={sheet} branchId={branchId} book={book} write={write} open={editOpening} onClose={() => setEditOpening(false)} />
         </div>
