@@ -20,6 +20,8 @@
  * تدريب) والتحكّم بعرض الأدوات معاً. `general` وحدها ضمنيّةٌ دائماً — أيّ
  * جلسةٍ مصادَقة تملكها بلا شرط.
  */
+import { isPhysioRole } from "./user_roles";
+
 export const CAPABILITIES = [
   "general", "reception", "patients", "medical", "expert",
   "physio", "finance", "reports", "manager", "admin",
@@ -44,7 +46,7 @@ export interface CapabilitySource {
  * نصَّ رسالة. مطابقةٌ حرفياً لِما تفحصه بقيّةُ النظام فعلاً عند كلّ نقطة
  * (`canManageAccounting` للمحاسبة، `canViewReports` للتقارير، `canWriteMedicalExam`
  * أو دور `doctor` للطبيب، `canWorkAsExpert` أو دور `prosthetics_expert`
- * للخبير، `canEnterSessions` أو دور `therapist` للعلاج الطبيعي، `canAddPatients` للاستقبال،
+ * للخبير، `canEnterSessions` أو أدوار القسم الأربعة للعلاج الطبيعي، `canAddPatients` للاستقبال،
  * `canViewPatients` لسجلّ المرضى) — **لا قاعدةَ صلاحيةٍ جديدة تُخترَع هنا**،
  * فقط تجميعٌ لِما هو قائمٌ فعلاً في التطبيق الحيّ.
  *
@@ -82,7 +84,8 @@ export function capabilitiesFor(access: CapabilitySource): Set<Capability> {
   //  وحيد. **وهذا يمنح قدرةَ التدريب/المعرفة فقط** — لا يفتح `canEnterSessions`
   //  ولا أيّ صلاحيةٍ تطبيقية أخرى؛ تتبّعُ الجلسات يبقى محروساً بعلمه وحده
   //  في مكانه القائم (`server/sessions_module/routes.ts`) بلا مسّ.
-  if (p.canEnterSessions === true || role === "therapist") caps.add("physio");
+  //  ومنذ §4.cg (٢٠٢٦-١٠-٠٧) أدوارُ القسم الأربعة كلُّها، لا `therapist` وحده.
+  if (p.canEnterSessions === true || isPhysioRole(role)) caps.add("physio");
   if (p.canManageAccounting === true) caps.add("finance");
   if (p.canViewReports === true) caps.add("reports");
 

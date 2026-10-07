@@ -35,6 +35,9 @@ export const DEFAULT_TARGETS: PerformanceTargets = {
   branch_manager: { entriesTarget: 150, activeDaysTarget: 24, followUpsTarget: 0 },
   accountant:     { entriesTarget: 80,  activeDaysTarget: 24, followUpsTarget: 0 },
   therapist:      { entriesTarget: 60,  activeDaysTarget: 24, followUpsTarget: 0 },
+  physio_specialist: { entriesTarget: 60, activeDaysTarget: 24, followUpsTarget: 0 },
+  physio_technician: { entriesTarget: 60, activeDaysTarget: 24, followUpsTarget: 0 },
+  physio_trainer:    { entriesTarget: 60, activeDaysTarget: 24, followUpsTarget: 0 },
   surveyor:       { entriesTarget: 40,  activeDaysTarget: 20, followUpsTarget: 0 },
   admin:          { entriesTarget: 0,   activeDaysTarget: 0,  followUpsTarget: 0 },
 };

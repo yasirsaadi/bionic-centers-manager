@@ -252,7 +252,8 @@
     "test:review-share": "tsx server/medical_review/branch_share_visibility.test.ts",
     "test:review-card-actions": "tsx server/medical_review/review_card_actions.test.ts",
     "test:review-card-ui": "tsx client/src/pages/medical_review_card.test.ts",
-    "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts"
+    "test:ai-capabilities-pure": "tsx server/ai/capabilities_pure.test.ts",
+    "test:physio-roles": "tsx server/physio_roles.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
