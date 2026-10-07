@@ -101,8 +101,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { Branch, TreatmentPlan } from "@shared/schema";
 import { PhysioPlansSection } from "@/components/physio/PhysioPlansSection";
 
-/** الخططُ القديمة (`treatment_plans`) للقراءة منذ خطط العلاج الطبيعي الجديدة (§4.cm — قرارُ المالك ٢٠٢٦-١٠-٠٧). */
-const LEGACY_PLANS_EDITABLE = false;
+/** الخططُ القديمة (`treatment_plans`) لا تُضاف منذ خطط العلاج الطبيعي الجديدة (§4.cm — قرارُ المالك ٢٠٢٦-١٠-٠٧)؛
+ *  وتعديلُها وحذفُها للمسؤول والمشرف العام حصراً (طلبُه اللاحق في اليوم نفسِه). */
+const LEGACY_PLANS_ADDABLE = false;
 import { hasRole } from "@shared/user_roles";
 
 const TREATMENT_TYPE_OPTIONS = [
@@ -1755,7 +1756,7 @@ export default function PatientDetails() {
                 {treatmentPlans.length > 0 && (
                   <h3 className="font-bold text-sm text-muted-foreground pt-2" data-testid="legacy-plans-title">خطط سابقة (للقراءة)</h3>
                 )}
-                {LEGACY_PLANS_EDITABLE && permissions.canManageTreatmentPlans && (
+                {LEGACY_PLANS_ADDABLE && permissions.canManageTreatmentPlans && (
                   <div className="flex justify-end mb-4">
                     <Button
                       onClick={() => {
@@ -1798,7 +1799,7 @@ export default function PatientDetails() {
                               </Badge>
                             )}
                           </div>
-                          {LEGACY_PLANS_EDITABLE && permissions.canManageTreatmentPlans && (
+                          {(isAdmin || permissions.canSupervisePhysio) && (
                             <div className="flex items-center gap-1" style={{ visibility: "visible" }}>
                               <Button
                                 variant="ghost"

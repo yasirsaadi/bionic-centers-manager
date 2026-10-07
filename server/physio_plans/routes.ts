@@ -6,6 +6,7 @@
 //   GET  /api/physio/plans/:id                   — الخطّةُ كاملة
 //   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد
 //   POST /api/physio/plans/:id/submit|approve|return|stop
+//   DELETE /api/physio/plans/:id              — للمسؤول والمشرف العام حصراً
 //   GET  /api/physio/plans/:id/assignee-candidates · PUT /api/physio/plans/:id/assignees
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -13,7 +14,7 @@ import { getSession, accessibleBranchesFor } from "../sessions_module/permission
 import { scopeReachesPatient } from "../patients/branch_access";
 import { storage } from "../storage";
 import {
-  canApprovePlans, canReadPlans, canWritePlans, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
+  canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
 } from "@shared/physio_plans";
 import * as store from "./store";
 
@@ -91,7 +92,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const patient = await storage.getPatient(patientId);
       if (!patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "المريض غير موجود" });
       const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status));
-      res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s) });
+      res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s), canDelete: canDeletePlans(s) });
     } catch (e) { fail(res, e); }
   });
 
@@ -133,7 +134,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
       const plan = await store.getPlan(l.row.id);
-      res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s) });
+      res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s) });
     } catch (e) { fail(res, e); }
   });
 
@@ -190,6 +191,19 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       await audit(req, l.s, { entityId: l.row.id, action: "stop", branchId: l.row.branchId,
         oldValues: { status: r.before.status }, newValues: { status: "stopped", stopReason: reason } });
       res.json(r.after);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **الحذف — للمسؤول والمشرف العام حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧). والأخصائيُّ يوقف ولا يحذف.
+  app.delete("/api/physio/plans/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يحذف الخطّةَ المسؤولُ أو المشرفُ العام حصراً" });
+      const removed = await store.deletePlan(l.row.id);
+      await audit(req, l.s, { entityId: l.row.id, action: "delete", branchId: l.row.branchId, oldValues: removed,
+        notes: `حذف خطة العلاج الطبيعي «${l.row.titleAr}» للمريض #${l.row.patientId}` });
+      res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
 

@@ -33,6 +33,8 @@ export const PLAN_TEXT_FIELDS = ["goals", "exercises", "precautions", "notes"] a
 export const canWritePlans = (s: ProtocolSessionLike | null | undefined): boolean => canEditProtocols(s);
 /** **يعتمد ويعيد**: المسؤولُ والمشرفُ العام. */
 export const canApprovePlans = (s: ProtocolSessionLike | null | undefined): boolean => canApproveProtocols(s);
+/** **يحذف** الخطّة: المسؤولُ والمشرفُ العام **حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — والأخصائيُّ يوقفها ولا يحذفها. */
+export const canDeletePlans = (s: ProtocolSessionLike | null | undefined): boolean => canApproveProtocols(s);
 /** **يقرأ** الخطط: مَن يقرأ المكتبة. */
 export const canReadPlans = (s: ProtocolSessionLike | null | undefined): boolean => canReadProtocols(s);
 

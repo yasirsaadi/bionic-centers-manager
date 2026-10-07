@@ -288,3 +288,16 @@ export async function setAssignees(id: number, userIds: number[], actor: Actor) 
     return { before, after: userIds };
   });
 }
+
+/** **حذفُ الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — للمسؤول والمشرف العام حصراً، وبأيّ حالة. أجهزتُها ومنفّذوها يتبعونها،
+ *  والصورةُ الكاملة تُعاد لسطر التدقيق فلا يضيع ما حُذف. */
+export async function deletePlan(id: number) {
+  return db.transaction(async (tx) => {
+    const plan = await lockPlan(tx, id);
+    const lines = await tx.select().from(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
+    const assignees = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
+      .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
+    await tx.delete(physioPlans).where(eq(physioPlans.id, id));
+    return { ...plan, devices: lines, assignees };
+  });
+}

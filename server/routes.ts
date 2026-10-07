@@ -8519,7 +8519,8 @@ export async function registerRoutes(
   app.put("/api/treatment-plans/:id", isAuthenticated, async (req, res) => {
     try {
       const permissions = getPermissions(req);
-      if (!permissions.canManageTreatmentPlans) {
+      //  والمشرفُ العام يعدّل الخطّةَ القديمة ويحذفها (طلبُ المالك ٢٠٢٦-١٠-٠٧، §4.cm).
+      if (!(permissions.canManageTreatmentPlans || (permissions as any).canSupervisePhysio)) {
         return res.status(403).json({ message: "غير مصرح لك بإدارة الخطط العلاجية" });
       }
 
@@ -8554,7 +8555,8 @@ export async function registerRoutes(
   app.delete("/api/treatment-plans/:id", isAuthenticated, async (req, res) => {
     try {
       const permissions = getPermissions(req);
-      if (!permissions.canManageTreatmentPlans) {
+      //  والمشرفُ العام يعدّل الخطّةَ القديمة ويحذفها (طلبُ المالك ٢٠٢٦-١٠-٠٧، §4.cm).
+      if (!(permissions.canManageTreatmentPlans || (permissions as any).canSupervisePhysio)) {
         return res.status(403).json({ message: "غير مصرح لك بإدارة الخطط العلاجية" });
       }
 
