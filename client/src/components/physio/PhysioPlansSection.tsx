@@ -2,13 +2,13 @@
 // «خطّة جديدة» تختار بروتوكولاً من المكتبة (أو بلا بروتوكول) فتُنشأ مسوّدةً ممتلئةً منه، وتُفتح صفحتُها للتعديل.
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { ClipboardList, Plus, Search } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ClipboardList, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
@@ -37,7 +37,8 @@ const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("ar-
 export function PhysioPlansSection({ patientId }: { patientId: number }) {
   const [, setLocation] = useLocation();
   const [pickOpen, setPickOpen] = useState(false);
-  const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean }>({
+  const [deleting, setDeleting] = useState<PlanRow | null>(null);
+  const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean; canDelete: boolean }>({
     queryKey: [`/api/patients/${patientId}/physio-plans`],
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/physio-plans`)).json(),
     retry: false,
@@ -62,8 +63,9 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
       ) : (
         <div className="space-y-2">
           {plans.map((p) => (
-            <button key={p.id} type="button" onClick={() => setLocation(`/physio/plans/${p.id}`)}
-              className="w-full text-right rounded-lg border bg-white px-3 py-2.5 hover:border-primary/40 hover:bg-slate-50"
+            <div key={p.id} className="flex items-stretch gap-1">
+            <button type="button" onClick={() => setLocation(`/physio/plans/${p.id}`)}
+              className="flex-1 text-right rounded-lg border bg-white px-3 py-2.5 hover:border-primary/40 hover:bg-slate-50"
               data-testid={`physio-plan-row-${p.id}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-sm">{p.titleAr}</span>
@@ -78,9 +80,22 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 {p.assignees.length ? ` · المنفّذون: ${p.assignees.join("، ")}` : ""}
               </div>
             </button>
+            {/*  التعديلُ والحذفُ من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرس الحذف. */}
+            {q.data?.canDelete && (
+              <div className="flex flex-col justify-center gap-1">
+                {p.status !== "stopped" && (
+                  <Button variant="ghost" size="icon" title="تعديل" onClick={() => setLocation(`/physio/plans/${p.id}?edit=1`)}
+                    data-testid={`button-edit-physio-plan-${p.id}`}><Pencil className="w-4 h-4" /></Button>
+                )}
+                <Button variant="ghost" size="icon" title="حذف" onClick={() => setDeleting(p)}
+                  data-testid={`button-delete-physio-plan-${p.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+              </div>
+            )}
+            </div>
           ))}
         </div>
       )}
+      <DeletePlanDialog plan={deleting} onClose={() => setDeleting(null)} patientId={patientId} />
       <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId}
         onCreated={(id) => setLocation(`/physio/plans/${id}?edit=1`)} />
     </div>
@@ -143,6 +158,36 @@ function NewPlanDialog({ open, onOpenChange, patientId, onCreated }: {
               data-testid="button-plan-blank">إنشاء</Button>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** **حذفُ الخطّة** — تأكيدٌ صريح، ويُكتب ما حُذف كاملاً في سجلّ التدقيق. */
+export function DeletePlanDialog({ plan, onClose, patientId, onDeleted }: {
+  plan: { id: number; titleAr: string } | null; onClose: () => void; patientId: number; onDeleted?: () => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const m = useMutation({
+    mutationFn: async (id: number) => (await apiRequest("DELETE", `/api/physio/plans/${id}`)).json(),
+    onSuccess: () => {
+      toast({ title: "حُذفت الخطّة" });
+      qc.invalidateQueries({ queryKey: [`/api/patients/${patientId}/physio-plans`] });
+      qc.invalidateQueries({ queryKey: ["/api/physio/plans"] });
+      onClose(); onDeleted?.();
+    },
+    onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+  });
+  return (
+    <Dialog open={plan !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>حذف الخطّة</DialogTitle></DialogHeader>
+        <p className="text-sm">تُحذف خطّة «{plan?.titleAr}» بأجهزتها وإسنادها من ملفّ المريض، ويُحفظ ما حُذف في سجلّ التدقيق. لإنهاء خطّةٍ نُفّذت استعمل «إيقاف الخطّة» بدل الحذف.</p>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          <Button variant="destructive" disabled={m.isPending || !plan} onClick={() => plan && m.mutate(plan.id)} data-testid="button-confirm-delete-physio-plan">حذف</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

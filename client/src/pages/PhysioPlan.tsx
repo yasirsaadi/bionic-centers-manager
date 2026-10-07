@@ -19,7 +19,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
-import { PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
+import { DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
   PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom,
@@ -41,7 +41,7 @@ interface Plan {
   patient: { id: number; name: string; code: string | null; age: string | null } | null;
   protocol: { id: number; titleAr: string; titleEn: string; status: string; code: string } | null;
   devices: PlanDevice[]; assignees: { userId: number; name: string; role: string }[];
-  canWrite: boolean; canApprove: boolean;
+  canWrite: boolean; canApprove: boolean; canDelete: boolean;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -106,6 +106,8 @@ export default function PhysioPlanPage() {
   }, [q.data?.id, location]);
   const [ask, setAsk] = useState<null | "return" | "stop">(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [, navigate] = useLocation();
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: key });
@@ -200,6 +202,10 @@ export default function PhysioPlanPage() {
           {plan.canWrite && plan.status !== "stopped" && (
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
+          {/*  الحذفُ للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧). */}
+          {plan.canDelete && (
+            <Button size="sm" variant="ghost" className="gap-1 text-destructive" onClick={() => setDeleteOpen(true)} data-testid="button-delete-plan"><Trash2 className="w-4 h-4" /> حذف</Button>
+          )}
         </div>
       )}
       {!editing && plan.status === "approved" && plan.canWrite && !plan.canApprove && (
@@ -257,6 +263,8 @@ export default function PhysioPlanPage() {
 
       <AskDialog kind={ask} pending={act.isPending} onClose={() => setAsk(null)}
         onSubmit={(text) => act.mutate(ask === "return" ? { path: "return", body: { note: text } } : { path: "stop", body: { reason: text } })} />
+      <DeletePlanDialog plan={deleteOpen ? plan : null} onClose={() => setDeleteOpen(false)} patientId={plan.patientId}
+        onDeleted={() => navigate(`/patients/${plan.patientId}`)} />
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
     </div>
   );
