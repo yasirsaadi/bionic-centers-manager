@@ -14,6 +14,7 @@ import { ReturnToPurchaseDialog } from "./ReturnToPurchaseDialog";
 import { DeviceFollowupVisitDialog } from "./DeviceFollowupVisitDialog";
 import { ReturnToPurchaseRoutingChoice } from "./ReturnToPurchaseRoutingChoice";
 import { TrialReturnDialog, TrialReturnRoutingChoice, useTrialAwaiting, type TrialOrder } from "./trial/TrialSocketPieces";
+import { MoldReturnDialog, MoldReturnRoutingChoice, useMoldReturnOrders, type MoldOrder } from "./mold/MoldReturnPieces";
 import {
   launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes, GROUP_LABELS,
   type LauncherGroup, type LauncherOption, type PatientEpisodeSummary,
@@ -149,6 +150,9 @@ export function PatientServiceLauncher({
   //  **قالبٌ اختباريٌّ ينتظر النهائي** (§4.bz) — أوّلُ خيارٍ في قسمه؛ والمفتاحُ مفتاحُ بطاقة التصنيع، فلا طلبَ ثانٍ.
   const trialOrders = useTrialAwaiting(patient.id, routingOpen);
   const [trialReturnFor, setTrialReturnFor] = useState<TrialOrder | null>(null);
+  //  **«عاد لأخذ القالب»** (§4.cl) — أمرٌ قائمٌ لم يبلغ القالب؛ من قائمة الأوامر نفسِها.
+  const moldOrders = useMoldReturnOrders(patient.id, routingOpen);
+  const [moldReturnFor, setMoldReturnFor] = useState<MoldOrder | null>(null);
 
   const options = launcherOptions(patient);
 
@@ -272,6 +276,10 @@ export function PatientServiceLauncher({
                     <TrialReturnRoutingChoice key={o.id} order={o}
                       onChoose={() => { setRoutingOpen(false); setTrialReturnFor(o); }} />
                   ))}
+                  {moldOrders.filter((o) => o.serviceType === section.serviceType).map((o) => (
+                    <MoldReturnRoutingChoice key={`mold-${o.id}`} order={o}
+                      onChoose={() => { setRoutingOpen(false); setMoldReturnFor(o); }} />
+                  ))}
                   {returnToPurchaseVisible(returnQ, section.serviceType) && (
                     <ReturnToPurchaseRoutingChoice
                       serviceType={section.serviceType}
@@ -303,6 +311,7 @@ export function PatientServiceLauncher({
       )}
 
       <TrialReturnDialog order={trialReturnFor} patientId={patient.id} onClose={() => setTrialReturnFor(null)} />
+      <MoldReturnDialog order={moldReturnFor} patientId={patient.id} onClose={() => setMoldReturnFor(null)} />
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogTrigger asChild>

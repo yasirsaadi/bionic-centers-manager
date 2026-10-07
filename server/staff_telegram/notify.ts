@@ -85,6 +85,21 @@ export function notifyTrialReturn(ex: Executor | null | undefined, p: {
   });
 }
 
+/** **عاد المريضُ لأخذ القالب** (§4.cl) — لخبير أمره القائم: المريضُ في المركز الآن. */
+export function notifyMoldReturn(ex: Executor | null | undefined, p: {
+  orderId: number; patientId: number; branchId: number | null; expertUserId: number; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    if (p.actorUserId && p.actorUserId === p.expertUserId) return;
+    const c = await ctx(ex, p.patientId, p.branchId);
+    await enqueueStaffEvent(ex, {
+      event: "order_assigned", targetUserIds: [p.expertUserId],
+      text: `🦿 حضر المريض لأخذ القالب (أمر رقم ${p.orderId}): ${c.who}${c.branch}`,
+      linkPath: `/manufacturing/orders/${p.orderId}`,
+    });
+  });
+}
+
 export function notifyOrderReassigned(ex: Executor | null | undefined, p: {
   orderId: number; patientId: number; branchId: number | null; oldExpertUserId: number | null; newExpertUserId: number;
   reason?: string | null; actorUserId?: number | null;

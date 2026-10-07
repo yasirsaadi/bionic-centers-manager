@@ -403,6 +403,7 @@ export default function ManufacturingOrder() {
                     : h.actionType === "delivered" ? "تسليم"
                     : h.actionType === "created" ? "إنشاء الأمر"
                     : h.actionType === "assignment_date_change" ? "تعديل تاريخ الإسناد"
+                    : h.actionType === "mold_return" ? "حضر لأخذ القالب"
                     : `${STAGE_LABELS[h.fromStage] ?? h.fromStage ?? ""} ← ${STAGE_LABELS[h.toStage] ?? h.toStage ?? ""}`}
                 </div>
                 {h.notes && <div className="text-xs text-muted-foreground">{h.notes}</div>}

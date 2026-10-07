@@ -16,7 +16,7 @@ import {
   TRIAL_ALREADY_AWAITING_ERROR, TRIAL_NOT_ELIGIBLE_ERROR, TRIAL_DATE_ERROR, TRIAL_NOT_AWAITING_ERROR, TRIAL_CALL_NOTE_ERROR,
   canDeliverTrialSocket, isTrialAwaiting, isValidTrialDate,
 } from "@shared/trial_socket";
-import { baghdadTodayYmd } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
 import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
@@ -29,6 +29,7 @@ import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
   MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS, writtenHoldExcuse,
+  MOLD_RETURN_NOT_ELIGIBLE_ERROR, moldReturnNote,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
 import { NO_EXAM_PENDING_BOUNDARY } from "@shared/service_path";
@@ -1105,6 +1106,36 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
       if (e instanceof store.TrialNotAwaitingError) return res.status(409).json({ error: TRIAL_NOT_AWAITING_ERROR });
       console.error("[manufacturing] trial-return failed:", e);
       res.status(500).json({ error: "تعذّر تسجيل العودة — لم يتغيّر شيء. أعد المحاولة." });
+    }
+  });
+
+  // ---- mold-return: عاد المريضُ لأخذ القالب (§4.cl) — على أمره القائم، بلا مالٍ ولا أمرٍ جديد ----
+  //  مَن يسجّله مَن يسجّل العودةَ للقالب النهائي: الاستعلاماتُ والإدارة، لا الخبير. والتاريخُ بقاعدة الزيارات (`checkVisitDate`).
+  app.post("/api/manufacturing/orders/:id/mold-return", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (isExpert(s)) return res.status(403).json({ error: "تسجيل حضور المريض للاستعلامات" });
+    if (!(s.isAdmin || isManager(s) || s.permissions?.canAddPatients)) return res.status(403).json({ error: "غير مصرح" });
+    const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "معرّف غير صالح" });
+    const raw = await store.getRawOrder(id);
+    if (!raw) return res.status(404).json({ error: "الأمر غير موجود" });
+    if (!(await reachesOrderPatient(s, raw))) return res.status(403).json({ error: "غير مصرح" });
+    const today = baghdadTodayYmd();
+    const day = strOrU(req.body?.date) ?? today;
+    const v = checkVisitDate(day, s.isAdmin);
+    if (!v.ok) return res.status(v.status).json({ error: v.message });
+    const note = (strOrU(req.body?.note) ?? "").trim() || null;
+    try {
+      const updated = await store.recordMoldReturn({
+        orderId: raw.id, day, note,
+        actingBranchId: s.branchId && s.branchId > 0 ? s.branchId : null, performedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "mold_return", raw.branchId, moldReturnNote(day, note));
+      res.json(updated);
+    } catch (e) {
+      if (e instanceof store.MoldReturnNotEligibleError) return res.status(409).json({ error: MOLD_RETURN_NOT_ELIGIBLE_ERROR });
+      console.error("[manufacturing] mold-return failed:", e);
+      res.status(500).json({ error: "تعذّر تسجيل الحضور — لم يتغيّر شيء. أعد المحاولة." });
     }
   });
 

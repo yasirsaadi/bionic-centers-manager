@@ -5,9 +5,9 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
-import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn } from "../staff_telegram/notify";
+import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn } from "../staff_telegram/notify";
 import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
-import { baghdadTodayYmd } from "@shared/visit_date";
+import { baghdadTodayYmd, baghdadMomentOn } from "@shared/visit_date";
 import { recordAttendanceVisitTx } from "../visits/attendance";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { db } from "../db";
@@ -198,6 +198,7 @@ import {
   isHoldStatus, writtenHoldExcuse,
   type StageHistoryRow,
   ASSIGNMENT_DATE_ACTION, assignmentDateError, assignmentDateNote, baghdadDay,
+  MOLD_RETURN_ACTION, isMoldReturnEligible, moldReturnNote,
 } from "@shared/manufacturing";
 
 export const EXPERT_ROLE = "prosthetics_expert";
@@ -2284,7 +2285,7 @@ export class AssignmentDateError extends Error {
 
 const STAGE_EVENT_LABEL: Record<string, string> = {
   stage_change: "انتقال مرحلة", status_change: "تغيير حالة", reassigned: "تحويل خبير", rework: "إعادة عمل",
-  delivered: "تسليم", date_change: "تحديد موعد التسليم", hold_reason: "كتابة سبب التوقّف",
+  delivered: "تسليم", date_change: "تحديد موعد التسليم", hold_reason: "كتابة سبب التوقّف", mold_return: "حضور لأخذ القالب", trial_socket: "تسليم قالب اختباري", trial_return: "عودة للقالب النهائي",
 };
 
 /**
@@ -2328,5 +2329,45 @@ export async function changeAssignmentDate(p: { orderId: number; newDay: string;
       notes: assignmentDateNote(currentDay, p.newDay, p.reason), performedBy: p.performedBy,
     });
     return { orderId: o.id, branchId: o.branchId, fromDay: currentDay, toDay: p.newDay, from: o.createdAt, to: newAt };
+  });
+}
+
+
+// ══ «عاد لأخذ القالب» (§4.cl) ══════════════════════════════════════════════
+export class MoldReturnNotEligibleError extends Error {
+  constructor() { super("work order is not awaiting the mold"); this.name = "MoldReturnNotEligibleError"; }
+}
+
+/**
+ * **حضر المريضُ لأخذ القالب** — من الاستعلامات، على أمره القائم: زيارةُ حضورٍ بتاريخها، وسطرٌ في الخطّ الزمنيّ، وتنبيهُ الخبير.
+ * المرحلةُ لا تتحرّك (يحرّكها الخبيرُ ويلتزم بموعد التسليم عندها)، ولا مال. وأمرٌ «بانتظار المريض» يعود نشطاً — زال سببُ توقّفه.
+ */
+export async function recordMoldReturn(params: {
+  orderId: number; day: string; note: string | null; actingBranchId: number | null; performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const [o] = await tx.select().from(WO).where(eq(WO.id, params.orderId)).for("update");
+    if (!o || !isMoldReturnEligible(o)) throw new MoldReturnNotEligibleError();
+    const resume = o.status === "waiting_patient";
+    const [updated] = resume
+      ? await tx.update(WO).set({ status: "active", updatedAt: new Date() }).where(eq(WO.id, o.id)).returning()
+      : [o];
+    await tx.insert(WH).values({
+      workOrderId: o.id, actionType: MOLD_RETURN_ACTION,
+      fromStage: o.currentStage, toStage: o.currentStage,
+      notes: moldReturnNote(params.day, params.note) + (resume ? " — وعاد الأمر نشطاً" : ""),
+      performedBy: params.performedBy,
+    });
+    const today = baghdadTodayYmd();
+    await recordAttendanceVisitTx(tx, {
+      patientId: o.patientId, serviceType: o.serviceType, branchId: params.actingBranchId ?? o.branchId,
+      deviceEpisodeId: o.deviceEpisodeId, reason: ATTENDANCE_REASONS.moldReturn, notes: params.note,
+      createdBy: params.performedBy, at: params.day === today ? null : baghdadMomentOn(params.day).at,
+    });
+    await notifyMoldReturn(tx, {
+      orderId: o.id, patientId: o.patientId, branchId: params.actingBranchId ?? o.branchId,
+      expertUserId: o.expertUserId, actorUserId: params.performedBy,
+    });
+    return updated;
   });
 }
