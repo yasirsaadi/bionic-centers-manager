@@ -200,10 +200,11 @@ async function main() {
         "training_catalog", "training_lesson", "training_submit_answer"]);
     runScript([{ text: "تمام." }]);
     await chat(access(S.acc), ask("مرحباً"));
-    same("   ومديرُ الفرع (بلا canViewReports أيضاً): ثلاثَ عشرةَ (financial_summary وأداتا المدقّق، لا operational_summary)", seen[0].tools.sort(), [
+    //  ومديرُ الفرع مستشيرٌ للبروتوكولات بقرار المالك (§4.cj) فتصله physio_protocol_lookup.
+    same("   ومديرُ الفرع (بلا canViewReports أيضاً): أربعَ عشرةَ (financial_summary وأداتا المدقّق والبروتوكولات، لا operational_summary)", seen[0].tools.sort(), [
       "financial_audit", "financial_ledger", "financial_summary", "list_capabilities", "my_worklist",
       "patient_clinical_summary", "patient_finance", "patient_lookup", "patient_search",
-      "read_capability",
+      "physio_protocol_lookup", "read_capability",
       "training_catalog", "training_lesson", "training_submit_answer",
     ]);
 
