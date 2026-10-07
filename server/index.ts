@@ -103,6 +103,12 @@ app.use((req, res, next) => {
   // Run database migrations before registering routes.
   // Safe: idempotent, additive-only, tracks applied migrations.
   await runMigrations();
+  //  مستنداتٌ ما زالت ملفّاتُها على القرص تُنقل إلى القاعدة (§4.cf) — لا يحجب الإقلاع إن تعثّر.
+  try {
+    const { importLegacyUploads } = await import("./documents/files");
+    const r = await importLegacyUploads();
+    if (r.imported || r.missing) console.log(`[documents] نُقل إلى القاعدة ${r.imported}، وبلا ملفّ ${r.missing}`);
+  } catch (e) { console.error("[documents] legacy import failed:", e); }
 
   //  هل امتداد pg_trgm موجود — يُسأل مرّةً هنا فيعرفه كلُّ مسار بحثٍ بعدها
   //  بلا استعلامٍ إضافي (ترحيل ٠٥٤ قد يفشل في إنشائه ويمضي عمداً).

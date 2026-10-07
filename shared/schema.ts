@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -837,6 +837,20 @@ export const documents = pgTable("documents", {
   fileName: text("file_name").notNull(),
   fileUrl: text("file_url").notNull(),
   uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
+/** محتوى الملفّ بايتاتٍ — `bytea` في Postgres. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+/**
+ * **محتوى مستند المريض** (ترحيل ١٠٣، §4.cf) — صفٌّ واحد لكلّ مستند، يُحذف معه بقيده. وكان الملفُّ على قرص الخادم فيضيع مع كلّ نشر.
+ */
+export const documentFiles = pgTable("document_files", {
+  documentId: integer("document_id").primaryKey().references(() => documents.id, { onDelete: "cascade" }),
+  content: bytea("content").notNull(),
+  mimeType: text("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Dated cost ledger (migration 033). `patients.total_cost` is a single

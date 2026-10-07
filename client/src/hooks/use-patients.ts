@@ -167,7 +167,10 @@ export function useUploadDocument() {
         credentials: "include",
       });
 
-      if (!res.ok) throw new Error("فشل في رفع المستند");
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.message || "فشل في رفع المستند");
+      }
       return api.documents.create.responses[201].parse(await res.json());
     },
     onSuccess: (_, variables) => {
@@ -176,6 +179,9 @@ export function useUploadDocument() {
         title: "تم رفع المستند",
         description: "تمت إضافة الملف إلى سجل المريض",
       });
+    },
+    onError: (e: any) => {
+      toast({ title: "تعذّر رفع المستند", description: String(e?.message ?? ""), variant: "destructive" });
     },
   });
 }
