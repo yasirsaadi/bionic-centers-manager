@@ -59,12 +59,15 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
     if (!isEvidenceLevel(d?.evidence)) return "اختر لكلّ جهازٍ درجتَه: موصى به · اختياري · غير موصى به";
     const minutes = intIn(d?.minutes, 1, 120);
     if (minutes === "bad") return "دقائقُ الجهاز ١–١٢٠";
-    devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000) });
+    devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000),
+      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000) });
   }
   return {
     code, titleAr, titleEn, category: b.category, ageGroup: b.ageGroup,
     summary: text(b?.summary), goals: text(b?.goals), assessment: text(b?.assessment), exercises: text(b?.exercises),
     contraindications: text(b?.contraindications), precautions: text(b?.precautions),
+    summaryEn: text(b?.summaryEn), goalsEn: text(b?.goalsEn), assessmentEn: text(b?.assessmentEn), exercisesEn: text(b?.exercisesEn),
+    contraindicationsEn: text(b?.contraindicationsEn), precautionsEn: text(b?.precautionsEn),
     sessionsPerWeek, durationWeeks, sessionMinutes, references, devices: devicesIn,
   };
 }
