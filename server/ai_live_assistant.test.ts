@@ -16,7 +16,7 @@
 import { pool } from "./db";
 import { storage } from "./storage";
 import type * as provider from "./ai/provider";
-import { aiChat, MAX_TOOL_ROUNDS } from "./ai/chat";
+import { aiChat, EMPTY_REPLY_FALLBACK, EMPTY_REPLY_NUDGE, MAX_TOOL_ROUNDS } from "./ai/chat";
 import { safeAiComplete } from "./ai/provider";
 import { resolveAiAccess } from "./ai/access";
 import { createArticle, setArticleActive } from "./ai/knowledge/store";
@@ -74,14 +74,15 @@ const resetFin = () => { finCalls.length = 0; };
 interface Scripted { toolCalls?: { name: string; input: any }[]; text?: string }
 let script: Scripted[] = [];
 let scriptIndex = 0;
-const seen: { system: string; tools: string[]; results: any[] }[] = [];
+const seen: { system: string; tools: string[]; results: any[]; lastText: string | null }[] = [];
 const fakeStep = (async (p: any) => {
   const lastTurn = p.messages[p.messages.length - 1];
   const results = Array.isArray(lastTurn?.content)
     ? lastTurn.content.filter((b: any) => b.type === "tool_result")
       .map((b: any) => JSON.parse(b.content))
     : [];
-  seen.push({ system: p.system, tools: (p.tools ?? []).map((t: any) => t.name), results });
+  seen.push({ system: p.system, tools: (p.tools ?? []).map((t: any) => t.name), results,
+    lastText: typeof lastTurn?.content === "string" ? lastTurn.content : null });
 
   const step = script[scriptIndex] ?? { text: "انتهيت." };
   scriptIndex++;
@@ -714,6 +715,34 @@ async function main() {
     const deniedResult = lastResults()[0];
     check(deniedResult?.error !== undefined,
       "ط.١٠ب **والنتيجةُ رفضٌ صريح** — لا بياناتٍ تشغيلية وصلت النموذج", JSON.stringify(deniedResult));
+
+    //  ══ ي. الجوابُ الفارغ بعد الأدوات لا يصل الموظّفَ فقاعةً فارغة (المالك ٢٠٢٦-١٠-٠٧، §4.cj) ══════════
+    console.log("\n── الجوابُ الفارغ ──");
+    runScript([
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "" },
+      { text: `حالة ${p1.patient_code}: قيد المتابعة.` },
+    ]);
+    const empty1: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
+    same("ي.١ الفراغُ بعد الأداة يُحَثّ فيُكتب الجواب", empty1.value?.reply, `حالة ${p1.patient_code}: قيد المتابعة.`);
+    same("ي.٢ …برسالةِ مستخدمٍ جديدة تطلب الإكمال", seen[2]?.lastText, EMPTY_REPLY_NUDGE);
+    same("ي.٣ …والأداةُ مسجّلةٌ مرّةً واحدة", empty1.value?.tools, { names: ["patient_lookup"], count: 1 });
+    runScript([
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "" },
+      { text: "   " },
+    ]);
+    const empty2: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
+    same("ي.٤ وفراغٌ ثانٍ ⟵ جملةٌ صريحة لا فقاعةٌ فارغة", empty2.value?.reply, EMPTY_REPLY_FALLBACK);
+    same("ي.٥ والحثُّ مرّةٌ واحدة — ثلاثُ جولاتٍ لا أكثر", seen.length, 3);
+    runScript([
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { toolCalls: [{ name: "patient_lookup", input: { patientCode: p1.patient_code } }] },
+      { text: "" },
+    ]);
+    const empty3: any = await chat(access(S.recv), ask(`ما حالة ${p1.patient_code}؟`));
+    same("ي.٦ والختاميُّ الفارغ بعد استنفاد الجولات ⟵ الجملةُ الصريحة", empty3.value?.reply, EMPTY_REPLY_FALLBACK);
   } finally {
     await cleanup();
     await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [[ADMIN, RECV, ACC, EXPERT]]);
