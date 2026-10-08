@@ -10,6 +10,7 @@
 //   ٥. التقاريرُ للمسؤول والمشرف العام لكلّ الفروع، ولمدير الفرع لفرعه، وللأخصائيّ لمرضاه (المرحلةُ ٦ب).
 import { canApprovePlans, canWritePlans } from "./physio_plans";
 import type { ProtocolSessionLike } from "./physio_protocols";
+import { hasRole } from "./user_roles";
 
 export const canAssessPlans = (s: ProtocolSessionLike | null | undefined): boolean => canWritePlans(s);
 export const canEditMeasures = (s: ProtocolSessionLike | null | undefined): boolean => canWritePlans(s);
@@ -329,3 +330,64 @@ export function compareAssessments(first: AssessmentLike, last: AssessmentLike):
 }
 export const VERDICT_LABELS: Record<Verdict, string> = { improved: "تحسّن", worse: "ساء", same: "بلا تغيّر", insufficient: "لا مقارنةَ بعد" };
 export const VERDICT_LABELS_EN: Record<Verdict, string> = { improved: "Improved", worse: "Worse", same: "No change", insufficient: "Not comparable yet" };
+
+// ══ تقاريرُ النتائج (المرحلةُ ٦ب — القرار ٥) ══════════════════════════════════════════════════════════════════
+/** **يرى صفحةَ النتائج**: كاتبو الخطط ومديرُ الفرع. والنطاقُ: المسؤولُ والمشرفُ العام كلُّ الفروع، والمديرُ فرعُه، والأخصائيُّ مرضاه (`outcomesScope`). */
+export const canViewOutcomes = (s: ProtocolSessionLike | null | undefined): boolean =>
+  canWritePlans(s) || hasRole(s as any, "branch_manager");
+export type OutcomesScope = "all" | "branches" | "own";
+export function outcomesScope(s: ProtocolSessionLike | null | undefined): OutcomesScope | null {
+  if (!canViewOutcomes(s)) return null;
+  if (canApprovePlans(s)) return "all";
+  if (hasRole(s as any, "branch_manager")) return "branches";
+  return "own";
+}
+
+/**
+ * **الالتزامُ بعدد الجلسات** — المنفَّذُ من المتوقَّع حتى اليوم (أو حتى انتهاء الخطّة): الجلساتُ في الأسبوع × الأسابيعُ المنقضية منذ الاعتماد، لا أكثرَ من مدّة الخطّة.
+ * `null` حين لا جرعةَ مكتوبةً أو لم يمضِ يومٌ بعد.
+ */
+export function adherence(p: { approvedOn: string | null; endOn: string | null; today: string; sessionsPerWeek: number | null; durationWeeks: number | null; executed: number }): number | null {
+  if (!p.approvedOn || !p.sessionsPerWeek) return null;
+  const until = p.endOn && p.endOn < p.today ? p.endOn : p.today;
+  let weeks = Math.max(0, daysBetween(p.approvedOn, until)) / 7;
+  if (p.durationWeeks) weeks = Math.min(weeks, p.durationWeeks);
+  const expected = Math.floor(weeks * p.sessionsPerWeek);
+  if (expected <= 0) return null;
+  return Math.min(100, Math.round((p.executed / expected) * 100));
+}
+
+export interface PlanOutcome {
+  planId: number; status: string; verdict: Verdict; adherence: number | null; overdue: boolean;
+  protocolKey: string; protocolTitle: string; branchKey: string; branchName: string;
+  specialistKey: string; specialistName: string; executorKey: string; executorName: string;
+}
+export interface OutcomeGroup {
+  key: string; name: string; plans: number; compared: number; improved: number; worse: number; same: number;
+  improvedPct: number | null; graduated: number; stopped: number; active: number; adherence: number | null; overdue: number;
+}
+
+/** **تجميعُ النتائج** — لكلّ مجموعة: الخطط، وما قورن منها (تقييمان على الأقلّ)، وكم تحسّن وساء ونسبةُ التحسّن من المقارَن، والحالات، ومتوسّطُ الالتزام، والمتأخّرون. */
+export function summarizeOutcomes(rows: PlanOutcome[], keyOf: (r: PlanOutcome) => [string, string]): OutcomeGroup[] {
+  const m = new Map<string, { name: string; list: PlanOutcome[] }>();
+  for (const r of rows) {
+    const [k, name] = keyOf(r);
+    if (!m.has(k)) m.set(k, { name, list: [] });
+    m.get(k)!.list.push(r);
+  }
+  return Array.from(m.entries()).map(([key, { name, list }]) => groupOf(key, name, list)).sort((a, b) => b.plans - a.plans || a.name.localeCompare(b.name, "ar"));
+}
+export function groupOf(key: string, name: string, list: PlanOutcome[]): OutcomeGroup {
+  const compared = list.filter((r) => r.verdict !== "insufficient");
+  const improved = compared.filter((r) => r.verdict === "improved").length;
+  const adh = list.map((r) => r.adherence).filter((x): x is number => x != null);
+  return {
+    key, name, plans: list.length, compared: compared.length, improved,
+    worse: compared.filter((r) => r.verdict === "worse").length, same: compared.filter((r) => r.verdict === "same").length,
+    improvedPct: compared.length ? Math.round((improved / compared.length) * 100) : null,
+    graduated: list.filter((r) => r.status === "graduated").length, stopped: list.filter((r) => r.status === "stopped").length,
+    active: list.filter((r) => r.status === "approved").length,
+    adherence: adh.length ? Math.round(adh.reduce((a, b) => a + b, 0) / adh.length) : null,
+    overdue: list.filter((r) => r.overdue).length,
+  };
+}

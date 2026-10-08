@@ -21,7 +21,8 @@ import * as store from "./store";
 import * as exec from "./execution";
 import * as suggest from "./suggest";
 import * as assess from "./assessments";
-import { canAssessPlans } from "@shared/physio_assessments";
+import * as outcomes from "./outcomes";
+import { canAssessPlans, outcomesScope } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 
@@ -399,6 +400,30 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       res.json({ plans: await assess.dueList({ branchIds: scopeOf(req, s), createdBy: canApprovePlans(s) ? null : Number(s.userId) || -1,
         today: baghdadTodayYmd() }) });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **نتائجُ العلاج الطبيعي** (§4.cp — ٦ب، القرار ٥): المسؤولُ والمشرفُ العام كلُّ الفروع (ولهما اختيارُ فرع)، ومديرُ الفرع فرعُه، والأخصائيُّ خططُه.
+  //  والفترةُ بيوم اعتماد الخطّة — آخرُ ١٨٠ يوماً افتراضاً.
+  app.get("/api/physio/outcomes", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    const scope = outcomesScope(s);
+    if (!scope) return res.status(403).json({ error: "للأخصائيّ ومدير الفرع والمشرف العام والمسؤول" });
+    const today = baghdadTodayYmd();
+    const ymd = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const to = ymd(req.query.to) ?? today;
+    const from = ymd(req.query.from) ?? new Date(Date.parse(`${today}T00:00:00Z`) - 180 * 86400000).toISOString().slice(0, 10);
+    if (from > to) return res.status(400).json({ error: "بدايةُ الفترة بعد نهايتها" });
+    const want = idOf(req.query.branchId);
+    try {
+      let branchIds: number[] | null = null;
+      if (scope === "all") branchIds = want ? [want] : null;
+      else if (scope === "branches") {
+        const mine = scopeOf(req, s) ?? [];
+        branchIds = want ? (mine.includes(want) ? [want] : []) : mine;
+      }
+      const report = await outcomes.outcomesReport({ branchIds, createdBy: scope === "own" ? Number(s.userId) || -1 : null, from, to, today });
+      res.json({ scope, ...report, branches: scope === "all" ? await outcomes.branchList() : [] });
     } catch (e) { fail(res, e); }
   });
 
