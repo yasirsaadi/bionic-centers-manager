@@ -1314,6 +1314,14 @@ export default function PatientDetails() {
             </TabsList>
 
             <TabsContent value="visits" className="space-y-4">
+              {/*  **«طباعة سجلّ الزيارات» حيث يُبحث عنه** (المالك ٢٠٢٦-١٠-٠٨: «لم أجد زرّ طباعة الزيارات») — الورقةُ نفسُها التي يفتحها
+                  «طباعة السجلّ الكامل» أعلى الصفحة (§4.cv)، ولكلّ مَن يرى الصفحة. */}
+              <div className="flex justify-start print:hidden">
+                <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => openPatientRecordPrint(patient.id)}
+                  data-testid="button-print-visits">
+                  <Printer className="w-4 h-4" /> طباعة سجلّ الزيارات
+                </Button>
+              </div>
               {/* زرّان لا ثلاثة: الزيارة كما كانت، وباب واحد لكل ما عداها.
                   «إضافة نوع حالة» لم يعد زرّاً مستقلّاً — صار خياراً داخل
                   الموزِّع باسمه الذي يعرفه الموظّف («أطراف صناعية»…) بدل
