@@ -602,7 +602,7 @@ export function Sidebar() {
       )}
 
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
+      <aside className="app-sidebar-desktop hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">
         {sidebarContent}
       </aside>
 

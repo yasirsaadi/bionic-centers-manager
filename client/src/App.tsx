@@ -87,7 +87,8 @@ function Layout({ children }: { children: React.ReactNode }) {
         //  `overflow-y-auto` يجعل `overflow-x` «auto» أيضاً — فعنصرٌ أعرضُ من الشاشة يجعل الصفحةَ كلَّها تنزلق أفقياً على الهاتف
         //  (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨، وكان سببُها صفَّ أزرار المعاينة للمسؤول). **فالعلاجُ في العنصر نفسِه لا قفلُ المحور هنا**:
         //  قفلُه يقصّ ما يتجاوز فيختفي بصمت. ويبقى منعُ الارتداد عند الحافّة.
-        className="flex-1 min-w-0 p-4 pt-[calc(env(safe-area-inset-top)+5rem)] md:pt-6 md:p-8 overflow-y-auto overscroll-x-none h-screen"
+        //  **والشاشةُ العريضة (الآيباد) تبدأ تحت شريط الحالة** — `app-main` في `index.css` (§4.cw).
+        className="app-main flex-1 min-w-0 p-4 pt-[calc(env(safe-area-inset-top)+5rem)] md:pt-6 md:p-8 overflow-y-auto overscroll-x-none h-screen"
       >
         <div className="max-w-7xl mx-auto">
           {children}

@@ -14,7 +14,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages } from "@shared/cash_book";
+import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages, distinctNoteParts } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -387,6 +387,14 @@ async function main() {
     await http("POST", "/api/cash-book/opening", S.admin, { branchId: BGD, book: "devices", openingDate: op.date, cash: op.cash, ratio: op.ratio });
     same("ك٦. **وإعادتُها كما كانت تُعيد الورقةَ مطابقةً لما طُبع**", (await sheet(S.admin, "devices", YDAY, BGD)).body.changedAfterPrint, false);
 
+    console.log("\n── م. المصروفُ لا يُكتب وصفُه مرّتين (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) ──");
+    //  «أخرى» يُحفظ وصفُه في خانتين (`subcategory` و`description`) — فكان السطرُ «قرطاسية — قرطاسية». في آخر الحزمة: لا يمسّ مجاميعَ ما قبله.
+    const other = await row(S.acc, { kind: "expense", amount: 2_000, category: "other", note: "قرطاسية" });
+    const [stored] = await q(`SELECT subcategory, description FROM expenses WHERE id=$1`, [other.body?.id]);
+    const otherRow = ((await sheet(S.acc)).body?.rows ?? []).find((r: any) => r.source === "expense" && r.id === other.body?.id);
+    same("م١. **«أخرى» بوصفه مرّةً واحدة في الدفتر** — والخانتان كما هما لتقارير المحاسبة",
+      [other.status, stored?.subcategory, stored?.description, otherRow?.note], [200, "قرطاسية", "قرطاسية", "قرطاسية"]);
+
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);
     check(aud.length >= 10 && aud.some((a) => a.entity_type === "cash_book_opening") && aud.some((a) => a.action === "delete"),
@@ -404,6 +412,10 @@ async function main() {
       [packSheetPages(thirty(18), 600, 540), packSheetPages(thirty(0), 600, 540), packSheetPages(thirty(5), 600, 540)], [[18], [0], [5]]);
     same("ط٦. وما يزيد يكمل في صفحةٍ تالية، والأخيرةُ لا تخلو من سطرٍ مع المجموع",
       [packSheetPages(thirty(19), 600, 540), packSheetPages(thirty(45), 600, 540), packSheetPages([700, 30], 600, 540)], [[18, 1], [20, 20, 5], [1, 1]]);
+    same("ط٧. **أجزاءُ الوصف مميَّزة** — المكرَّرُ يسقط ولو بمسافاتٍ أخرى، واسمُ الباب لا يُعاد، والفارغُ لا يُكتب",
+      [distinctNoteParts(["قرطاسية", " قرطاسية ", null, ""]), distinctNoteParts(["رواتب", "رواتب", "شهر أيلول"]),
+        distinctNoteParts(["رواتب"], ["رواتب"]), distinctNoteParts(["أ", "ب", "أ"])],
+      [["قرطاسية"], ["رواتب", "شهر أيلول"], [], ["أ", "ب"]]);
     same("ط٢. النسبةُ بالدينار الصحيح", [ratioAmount(1_250_000, 20), ratioAmount(15, 10), ratioAmount(0, 10), ratioAmount(100, null)], [250_000, 2, 0, 0]);
     same("ط٣. اسمُ اليوم من التاريخ وحده", [dayNameOf("2026-10-04"), dayNameOf("2026-10-03")], ["الأحد", "السبت"]);
     same("ط٤. اليومُ المفتوح", [canWriteDay({}, "2026-10-05", "2026-10-05", "2026-10-01"), canWriteDay({}, "2026-10-04", "2026-10-05", "2026-10-01"),
