@@ -227,6 +227,7 @@
     "test:system-user-audit": "tsx server/system_user_audit.test.ts",
     "test:user-edit-patch": "tsx client/src/pages/user_edit_patch.test.ts",
     "test:sidebar-section-visibility": "tsx client/src/components/sidebar_section_visibility.test.ts",
+    "test:sidebar-tones": "tsx client/src/components/sidebar_tones.test.ts",
     "test:session-store-pool": "tsx server/session_store_pool.test.ts",
     "test:my-exams-phone": "tsx client/src/pages/my_exams_phone_ui.test.ts",
     "test:device-sale-category": "tsx shared/device_sale_category.test.ts",
