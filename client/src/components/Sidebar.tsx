@@ -34,6 +34,7 @@ import { canExecutePlans, canReadPlans } from "@shared/physio_plans";
 import { canViewOutcomes } from "@shared/physio_assessments";
 import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
+import { sidebarToneOf } from "@/components/sidebar_tones";
 
 
 interface BranchSettings {
@@ -444,15 +445,21 @@ export function Sidebar() {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href} className={cn(
-              "flex items-center gap-3 px-3 md:px-4 py-3 md:py-3.5 rounded-xl transition-all duration-200 font-medium text-sm md:text-base group",
+              "flex items-center gap-3 px-2.5 md:px-3 py-2 md:py-2.5 rounded-xl transition-all duration-200 font-medium text-sm md:text-base group",
               isActive 
-                ? "bg-primary/10 text-primary shadow-sm" 
+                ? cn("shadow-sm", sidebarToneOf(item.href).row)
                 : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             )}>
-              <item.icon className={cn(
-                "w-5 h-5 transition-colors",
-                isActive ? "text-primary" : "text-slate-400 group-hover:text-slate-600"
-              )} />
+              {/*  **أيقونةٌ ملوّنة في مربّعها** — لونُ مجالها (`sidebar_tones.ts`)، وممتلئةٌ للفقرة المفتوحة. */}
+              <span className={cn(
+                "flex h-7 w-7 md:h-8 md:w-8 shrink-0 items-center justify-center rounded-lg ring-1 transition-colors",
+                isActive ? sidebarToneOf(item.href).active : sidebarToneOf(item.href).tile
+              )} data-testid={`sidebar-icon-${item.href}`}>
+                <item.icon className={cn(
+                  "w-4 h-4 md:w-[18px] md:h-[18px] transition-transform group-hover:scale-110",
+                  isActive ? "text-white" : sidebarToneOf(item.href).icon
+                )} />
+              </span>
               {item.label}
               {((item as any).badge ?? 0) > 0 && (
                 <span className="mr-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold">
@@ -576,21 +583,23 @@ export function Sidebar() {
         />
       )}
 
-      {/* Mobile Sidebar */}
-      <aside
-        className={cn(
-          "md:hidden fixed top-0 right-0 h-full w-72 bg-white z-50 transform transition-transform duration-300 shadow-xl",
-          mobileOpen ? "translate-x-0" : "translate-x-full"
-        )}
-        style={{
-          paddingTop: "env(safe-area-inset-top)",
-          paddingBottom: "env(safe-area-inset-bottom)",
-        }}
-      >
-        <div className="flex flex-col h-full">
-          {sidebarContent}
-        </div>
-      </aside>
+      {/* Mobile Sidebar — **يُرسم حين يُفتح وحده** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «صفحةُ المريض على الهاتف تتحرّك يميناً ويساراً»).
+          كان مرسوماً دائماً ومُزاحاً خارج حافّة الشاشة (`translate-x-full`) — عنصرٌ ثابتٌ بعرض ٢٨٨ نقطة وراء الحافّة اليمنى،
+          ومتصفّحُ آيفون يجعل الصفحةَ كلَّها تنزلق إليه. فلا شيءَ خارج الشاشة وهو مغلق، ويدخل منزلقاً من اليمين حين يُفتح. */}
+      {mobileOpen && (
+        <aside
+          className="md:hidden fixed top-0 right-0 h-full w-72 max-w-[85vw] bg-white z-50 shadow-xl animate-in slide-in-from-right duration-300"
+          style={{
+            paddingTop: "env(safe-area-inset-top)",
+            paddingBottom: "env(safe-area-inset-bottom)",
+          }}
+          data-testid="mobile-sidebar"
+        >
+          <div className="flex flex-col h-full">
+            {sidebarContent}
+          </div>
+        </aside>
+      )}
 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-72 bg-white border-l border-border h-screen sticky top-0 shadow-lg z-20">

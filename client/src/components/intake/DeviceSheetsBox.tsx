@@ -6,7 +6,8 @@
 // ومنها «طباعة». والمصدرُ بابُ الخادم الواحد — الطبيبُ أوّلاً وما ملأه الاستعلاماتُ يسدّ الفراغ — فلا يختلف المستطيلُ عن الورقة.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, Printer } from "lucide-react";
+import { navigate } from "wouter/use-browser-location";
+import { ArrowRight, FileText, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
@@ -19,9 +20,17 @@ export function useIntakeSheets(patientId: number, enabled = true) {
   return useQuery<IntakeSheetsResponse>({ queryKey: intakeSheetsKey(patientId), enabled });
 }
 
-/** صفحةُ الطباعة في تبويبٍ جديد — الورقةُ وحدها بلا إطار التطبيق. */
+/**
+ * **صفحةُ الطباعة** — الورقةُ وحدها بلا إطار التطبيق.
+ * على الحاسوب في تبويبٍ جديد (ملفُّ المريض باقٍ خلفه). **وعلى الهاتف أو التطبيق المثبَّت في النافذة نفسِها**: التبويبُ الجديد هناك
+ * يُفتح داخل التطبيق بلا شريط متصفّحٍ ولا رجوع (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — فتُفتح في مكانها و«رجوع» فيها يعيد إلى الملفّ.
+ */
 export function openIntakeSheetPrint(patientId: number, episodeId: number) {
-  window.open(`/intake-sheet/print?patient=${patientId}&episode=${episodeId}`, "_blank");
+  const url = `/intake-sheet/print?patient=${patientId}&episode=${episodeId}`;
+  const mq = (q: string) => typeof window.matchMedia === "function" && window.matchMedia(q).matches;
+  const inPlace = mq("(display-mode: standalone)") || (navigator as any).standalone === true || mq("(pointer: coarse)") || mq("(max-width: 767px)");
+  if (inPlace) navigate(url);
+  else window.open(url, "_blank");
 }
 
 export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; caseType: string }) {
@@ -61,20 +70,24 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
         </div>
       ))}
 
+      {/*  **على الهاتف تملأ الشاشة، ورأسُها ثابتٌ تحت الجزيرة بزرّين ظاهرين: «رجوع» و«طباعة»** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «لا يوجد
+          زرّ عودة، والإغلاقُ في الأعلى في حافّة الهاتف») — بدل «X» صغيرةٍ في الزاوية. وعلى الحاسوب الرأسُ نفسُه أعلى النافذة. */}
       <Dialog open={open !== null} onOpenChange={(o) => { if (!o) setOpen(null); }}>
-        <DialogContent className="sm:max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden" dir="rtl">
-          <DialogHeader>
-            <DialogTitle>استمارة المراجع</DialogTitle>
+        <DialogContent mobileFullScreen hideClose className="grid-cols-1 sm:max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden gap-0 p-0 sm:p-0" dir="rtl"
+          data-testid="dialog-intake-sheet">
+          <DialogHeader className="sticky top-0 z-10 flex-row items-center justify-between gap-2 space-y-0 border-b bg-white px-3 pb-2 pt-[calc(env(safe-area-inset-top)+0.5rem)] sm:px-5 sm:pt-3">
+            <Button type="button" variant="outline" size="sm" className="h-9 gap-1" onClick={() => setOpen(null)} data-testid="button-sheet-back">
+              <ArrowRight className="w-4 h-4" /> رجوع
+            </Button>
+            <DialogTitle className="text-base">استمارة المراجع</DialogTitle>
+            <Button type="button" size="sm" className="h-9 gap-1" disabled={!open}
+              onClick={() => { if (open) openIntakeSheetPrint(patientId, open.episodeId); }} data-testid="button-print-sheet">
+              <Printer className="w-4 h-4" /> طباعة
+            </Button>
           </DialogHeader>
-          {open && (
-            <div className="flex justify-end">
-              <Button type="button" size="sm" className="gap-1" onClick={() => openIntakeSheetPrint(patientId, open.episodeId)}
-                data-testid="button-print-sheet">
-                <Printer className="w-4 h-4" /> طباعة
-              </Button>
-            </div>
-          )}
-          {open && data && <IntakeSheetView patient={data.patient} sheet={open} />}
+          <div className="p-3 sm:p-5">
+            {open && data && <IntakeSheetView patient={data.patient} sheet={open} />}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
