@@ -91,6 +91,8 @@ interface Followup {
   requestedItem: string | null;
   /** **بيعٌ جاهزٌ بلا أمر تصنيع** (§4.cu) — سُلِّم يومَ بيعه. */
   soldReadyAt?: string | null;
+  /** **أيحتاج هذا الطلبُ خبيراً؟** (§4.cu) — الأجزاءُ الجاهزة لا خبيرَ لها، فلا يُقال «لم يُختَر بعد». */
+  needsExpert?: boolean;
   extraComponents?: string[];
   // ══ المسارُ المبسّط ومالكيةُ الحقول (المرحلة ٢) — **كلُّها من الخادم** ══
   //  الشاشةُ لا تحسب قفلاً ولا فعلاً: تعرض ما قاله الخادمُ بالدوالّ التي
@@ -488,8 +490,9 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <Field label="تاريخ المعاينة" value={fmt(active.examSignedAt)} />
           <Field label="الخبير"
             value={active.selectedExpertName
-              ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "لم يُختَر بعد")}
-            hint={active.selectedExpertName ? undefined : "يختاره الاستعلامات"} />
+              ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}`
+                : active.needsExpert === false ? "لا خبير — جاهز" : "لم يُختَر بعد")}
+            hint={active.selectedExpertName || active.needsExpert === false ? undefined : "يختاره الاستعلامات"} />
           {/*  والنصُّ من `shared/followup` وحدها — لا استنتاجَ في الشاشة. */}
           <Field label="السعر المعتمد"
             value={`${active.approvedPrice.toLocaleString()} د.ع`}

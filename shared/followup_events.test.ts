@@ -401,11 +401,12 @@ same("٦٨. **والبيعُ بأمرٍ كما كان** — وحالةٌ غير�
 {
   const card = readFileSync(join(import.meta.dirname, "../client/src/components/PostExamDecisionCard.tsx"), "utf8");
   const queue = readFileSync(join(import.meta.dirname, "../client/src/pages/PostExamFollowups.tsx"), "utf8");
-  same("٦٩. **وبطاقةُ القرار و«تم الحسم» تقرآن البيعَ الجاهز** — شارةُ الحالة وسطرُ الشراء، و«لا خبير — جاهز» مكان الخبير",
+  same("٦٩. **وبطاقةُ القرار و«تم الحسم» تقرآن البيعَ الجاهز** — شارةُ الحالة وسطرُ الشراء، و«لا خبير — جاهز» مكان الخبير لا «لم يُختَر بعد»",
     [/followupStatusLabel\(active\.status, \{ soldReady: Boolean\(active\.soldReadyAt\) \}\)/.test(card),
       /purchaseStateText\(purchaseState, \{ soldReady: Boolean\(active\.soldReadyAt\) \}\)/.test(card),
-      /FOLLOWUP_STATUS_LABELS\[active\.status\]/.test(card), /row\.soldReady \? "لا خبير — جاهز"/.test(queue)],
-    [true, true, false, true]);
+      /FOLLOWUP_STATUS_LABELS\[active\.status\]/.test(card), /row\.soldReady \? "لا خبير — جاهز"/.test(queue),
+      /active\.needsExpert === false \? "لا خبير — جاهز" : "لم يُختَر بعد"/.test(card)],
+    [true, true, false, true, true]);
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
