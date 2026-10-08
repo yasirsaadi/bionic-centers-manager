@@ -49,7 +49,41 @@ export interface AiCompleteParams {
   // structured output: setting `prefillAssistant: "{"` makes the model
   // emit JSON directly without preamble. The prefilled prefix is
   // automatically prepended to the returned text.
+  // **Only Haiku 4.5 accepts it** — Sonnet 4.6 and every newer model answer a
+  // trailing assistant turn with a 400 (§4.co: «اقترح خطّة» failed on production
+  // with exactly that). aiComplete drops it for any other model; see prefillSupported.
   prefillAssistant?: string;
+}
+
+/** The exact model ID behind an alias. */
+export function modelIdOf(model: AiModel | undefined): string {
+  return model === "sonnet" ? MODEL_SONNET : MODEL_HAIKU;
+}
+
+/**
+ * Does this model accept an assistant-turn prefill? Keyed by the exact ID, not
+ * the alias: moving MODEL_HAIKU to a newer Haiku turns the prefill off by itself
+ * instead of turning every call into a 400.
+ */
+export function prefillSupported(model: AiModel | undefined): boolean {
+  return modelIdOf(model) === "claude-haiku-4-5";
+}
+
+/** The prefill aiComplete actually sends — none for a model that rejects it. */
+export function effectivePrefill(params: Pick<AiCompleteParams, "model" | "prefillAssistant">): string | undefined {
+  return params.prefillAssistant && prefillSupported(params.model) ? params.prefillAssistant : undefined;
+}
+
+/** The messages array aiComplete sends: a trailing assistant turn only where the model accepts it. */
+export function requestMessages(params: Pick<AiCompleteParams, "user" | "model" | "prefillAssistant">): { role: "user" | "assistant"; content: string }[] {
+  const messages: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: params.user },
+  ];
+  const prefill = effectivePrefill(params);
+  if (prefill) {
+    messages.push({ role: "assistant", content: prefill });
+  }
+  return messages;
 }
 
 /**
@@ -68,22 +102,18 @@ export async function aiComplete(params: AiCompleteParams): Promise<string> {
     throw new AiUnavailableError("ANTHROPIC_API_KEY is not configured");
   }
 
-  const modelId = params.model === "sonnet" ? MODEL_SONNET : MODEL_HAIKU;
+  const modelId = modelIdOf(params.model);
+  const prefill = effectivePrefill(params);
 
   // System prompt sent as a structured block with cache_control. Once the
   // prompt grows past the model's cache minimum (4096 tokens for Haiku 4.5)
   // subsequent calls with the same system text become ~10x cheaper. Below
   // the minimum the marker is silently a no-op — no error, just no cache hit.
-  // If prefillAssistant is set, we add an assistant turn with the prefix —
+  // If prefillAssistant is set (and the model accepts it), we add an assistant turn with the prefix —
   // the model continues from that prefix verbatim (Anthropic docs:
   // "Prefilling Claude's response"). On output we re-attach the prefix so
   // the caller sees the full string.
-  const messages: { role: "user" | "assistant"; content: string }[] = [
-    { role: "user", content: params.user },
-  ];
-  if (params.prefillAssistant) {
-    messages.push({ role: "assistant", content: params.prefillAssistant });
-  }
+  const messages = requestMessages(params);
 
   const response = await client.messages.create({
     model: modelId,
@@ -104,8 +134,8 @@ export async function aiComplete(params: AiCompleteParams): Promise<string> {
   // Re-attach the prefilled prefix so the caller works with the full text
   // it expected to see. We only add it back if the model didn't already
   // include it (it usually doesn't in an assistant prefill, but be safe).
-  if (params.prefillAssistant && !reply.startsWith(params.prefillAssistant.trim())) {
-    return params.prefillAssistant + reply;
+  if (prefill && !reply.startsWith(prefill.trim())) {
+    return prefill + reply;
   }
   return reply;
 }

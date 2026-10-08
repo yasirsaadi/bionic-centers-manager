@@ -19,6 +19,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { setSuggestCompleterForTests } from "./physio_plans/suggest";
+import { prefillSupported, requestMessages, type AiCompleteParams } from "./ai/provider";
 import { parseModelJson, validateAdjustments, validateChoices } from "@shared/physio_plans";
 
 let failures = 0;
@@ -147,11 +148,11 @@ async function main() {
   await q(`INSERT INTO medical_exam_cancellations (exam_id, patient_id, branch_id, reason) VALUES ($1, $2, $3, 'سُجّلت خطأً')`, [ex3, pt3, B1]);
 
   //  المساعدُ المزيّف: يسجّل ما وصله، ويعيد ما يُطلب منه لكلّ خطوة.
-  const calls: { step: string; system: string; user: string }[] = [];
+  const calls: { step: string; system: string; user: string; params: AiCompleteParams }[] = [];
   let reply: Record<string, any> = {};
   setSuggestCompleterForTests(async (p) => {
     const step = JSON.parse(p.user).step;
-    calls.push({ step, system: p.system, user: p.user });
+    calls.push({ step, system: p.system, user: p.user, params: p });
     return JSON.stringify(reply[step] ?? {});
   });
   const suggestFor = (s: string, patientId: number, body: any = {}) => call("POST", `/api/patients/${patientId}/physio-plans/suggest`, s, body);
@@ -174,7 +175,7 @@ async function main() {
     same("أ.٤ والمساعدُ غيرُ مفعّل ⟵ ٥٠٣ — قبل أيّ سؤالٍ عن المعاينة", (await suggestFor(S.spec, pt2)).status, 503);
     setSuggestCompleterForTests(async (p) => {
       const step = JSON.parse(p.user).step;
-      calls.push({ step, system: p.system, user: p.user });
+      calls.push({ step, system: p.system, user: p.user, params: p });
       return JSON.stringify(reply[step] ?? {});
     });
     const list = (await call("GET", `/api/patients/${pt.id}/physio-plans`, S.spec)).json;
@@ -193,6 +194,13 @@ async function main() {
     reply = { choose: { choices: [{ protocolId: 999999 }, { protocolId: P1, reasonAr: "طفلٌ بشللٍ دماغيّ", reasonEn: "Child with CP" }, { protocolId: P1 }, { protocolId: P2, reasonAr: "بديل" }] }, adjust: ADJUST };
     const r1 = await suggestFor(S.spec, pt.id, { note: "يمشي بمساعدة" });
     same("ب.٤ اقتراحٌ للطفل ⟵ ٢٠٠ بخطوتين", [r1.status, calls.map((c) => c.step)], [200, ["choose", "adjust"]]);
+    //  **واقعةُ الإنتاج ٢٠٢٦-١٠-٠٨** (§4.co): «تعذّر الاقتراح — خطأ في خدمة الذكاء الاصطناعي» — بادئةُ ردٍّ «{» على Sonnet 4.6 يردّها بـ400.
+    //  والمساعدُ المزيّف كان يقبلها، فيُفحص الطلبُ الذي يُبنى فعلاً.
+    same("ب.٤ب **ولا يطلب الاقتراحُ بادئةَ ردّ** في أيٍّ من خطوتيه", calls.map((c) => c.params.prefillAssistant ?? null), [null, null]);
+    same("ب.٤ج والطلبُ المبنيّ لكلّ خطوةٍ ينتهي برسالة المستخدم — لا دورَ للمساعد في آخره",
+      calls.map((c) => requestMessages(c.params).at(-1)?.role), ["user", "user"]);
+    same("ب.٤د **والمزوّدُ يُسقط البادئةَ لنموذجٍ يرفضها** — Sonnet ينتهي برسالة المستخدم ولو طُلبت",
+      [prefillSupported("sonnet"), requestMessages({ user: "u", model: "sonnet", prefillAssistant: "{" }).map((m) => m.role)], [false, ["user"]]);
     const sent = calls.map((c) => c.user).join("\n");
     same("ب.٥ وصله العمرُ والتشخيصُ والسطر", [sent.includes("\"age\":\"6\""), sent.includes("شلل دماغي تشنّجي"), sent.includes("يمشي بمساعدة")], [true, true, true]);
     same("ب.٦ **ولا اسمَ ولا هاتفَ ولا رمز**", [sent.includes("الاسم-السرّيّ"), sent.includes("07709998887"), sent.includes(String(pt.patient_code))], [false, false, false]);

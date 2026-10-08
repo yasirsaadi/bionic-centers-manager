@@ -111,7 +111,7 @@ export async function suggestPlan(p: SuggestInput) {
     choices = [picked, ...prev.filter((c) => c.protocolId !== p.protocolId && libIds.has(c.protocolId))].slice(0, 3);
   } else {
     const raw = await complete({
-      system: SYSTEM_CHOOSE, model: "sonnet", maxTokens: 900, prefillAssistant: "{",
+      system: SYSTEM_CHOOSE, model: "sonnet", maxTokens: 1500,
       user: JSON.stringify({ step: "choose", patient, library: lib.map((r) => ({
         id: r.id, titleEn: r.titleEn, titleAr: r.titleAr, ageGroup: r.ageGroup, category: r.category, summary: clip(r.summaryEn ?? r.summary, 240) })) }),
     });
@@ -127,7 +127,7 @@ export async function suggestPlan(p: SuggestInput) {
   const allowed: AllowedLine[] = allowedRows.map((d) => ({ deviceId: Number(d.deviceId), minutes: d.minutes, nameAr: d.nameAr, nameEn: d.nameEn }));
   const dose = { sessionsPerWeek: chosen.sessionsPerWeek, durationWeeks: chosen.durationWeeks, sessionMinutes: chosen.sessionMinutes };
   const rawAdj = await complete({
-    system: SYSTEM_ADJUST, model: "sonnet", maxTokens: 1800, prefillAssistant: "{",
+    system: SYSTEM_ADJUST, model: "sonnet", maxTokens: 3000,
     user: JSON.stringify({ step: "adjust", patient, protocol: {
       id: chosen.id, titleEn: chosen.titleEn, titleAr: chosen.titleAr, ageGroup: chosen.ageGroup, dose,
       goals: clip(chosen.goalsEn ?? chosen.goals, 1500), contraindications: clip(chosen.contraindicationsEn ?? chosen.contraindications, 2000),
