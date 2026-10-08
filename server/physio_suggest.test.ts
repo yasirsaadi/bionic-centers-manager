@@ -14,6 +14,7 @@ process.env.SESSION_SECRET ||= "physio-suggest-test-secret";
 delete process.env.ANTHROPIC_API_KEY;
 
 import express from "express";
+import Anthropic from "@anthropic-ai/sdk";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
@@ -201,6 +202,23 @@ async function main() {
       calls.map((c) => requestMessages(c.params).at(-1)?.role), ["user", "user"]);
     same("ب.٤د **والمزوّدُ يُسقط البادئةَ لنموذجٍ يرفضها** — Sonnet ينتهي برسالة المستخدم ولو طُلبت",
       [prefillSupported("sonnet"), requestMessages({ user: "u", model: "sonnet", prefillAssistant: "{" }).map((m) => m.role)], [false, ["user"]]);
+    //  **وسببُ فشل الواجهة يصل الشاشة** — «خطأ في خدمة الذكاء الاصطناعي» وحدها لم تكفِ لتشخيص الواقعة.
+    const failWith = async (err: Error) => {
+      setSuggestCompleterForTests(async () => { throw err; });
+      const r = await suggestFor(S.spec, pt.id, { note: "x" });
+      setSuggestCompleterForTests(async (p) => {
+        const step = JSON.parse(p.user).step;
+        calls.push({ step, system: p.system, user: p.user, params: p });
+        return JSON.stringify(reply[step] ?? {});
+      });
+      return [r.status, String(r.json?.error ?? "")] as const;
+    };
+    const bad = await failWith(new Anthropic.BadRequestError(400,
+      { type: "error", error: { type: "invalid_request_error", message: "This model does not support assistant message prefill." } }, undefined, new Headers()));
+    same("ب.٤هـ رفضُ الواجهة ⟵ ٥٠٢ ونصُّه يحمل الحالةَ والنوعَ ورسالتَها",
+      [bad[0], bad[1].startsWith("خطأ في خدمة الذكاء الاصطناعي"), bad[1].includes("400 · invalid_request_error · This model does not support assistant message prefill.")], [502, true, true]);
+    const net = await failWith(new Anthropic.APIConnectionError({ message: "Connection error." }));
+    same("ب.٤و وانقطاعُ الشبكة يقول ذلك", [net[0], net[1].includes("network · Connection error.")], [502, true]);
     const sent = calls.map((c) => c.user).join("\n");
     same("ب.٥ وصله العمرُ والتشخيصُ والسطر", [sent.includes("\"age\":\"6\""), sent.includes("شلل دماغي تشنّجي"), sent.includes("يمشي بمساعدة")], [true, true, true]);
     same("ب.٦ **ولا اسمَ ولا هاتفَ ولا رمز**", [sent.includes("الاسم-السرّيّ"), sent.includes("07709998887"), sent.includes(String(pt.patient_code))], [false, false, false]);

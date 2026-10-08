@@ -10,7 +10,7 @@ import { medicalExams, patients, physioPlanSuggestions, physioProtocols, type Ph
 import {
   parseModelJson, validateAdjustments, validateChoices, type AllowedLine, type SuggestionChoice, type SuggestionResult,
 } from "@shared/physio_plans";
-import { aiComplete, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
+import { aiComplete, aiErrorDetail, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
 import { getProtocol } from "../physio_protocols/store";
 import { PlanError, type Actor } from "./store";
 
@@ -26,7 +26,12 @@ async function complete(p: AiCompleteParams): Promise<Record<string, any>> {
     text = testCompleter ? await testCompleter(p) : await aiComplete(p);
   } catch (e) {
     const r = classifyAiError(e);
-    if (!r.ok) throw new PlanError(r.reason === "disabled" ? 503 : r.reason === "rate_limit" ? 429 : 502, r.message);
+    //  **والسببُ يظهر للأخصائيّ** (واقعةُ ٢٠٢٦-١٠-٠٨، §4.co): «خطأ في خدمة الذكاء الاصطناعي» وحدها لا تقول شيئاً —
+    //  الحالةُ ونوعُ الخطأ ورسالةُ الواجهة تُلحق بها، فتكفي صورةُ الشاشة للتشخيص بلا سجلّات Render.
+    if (!r.ok) {
+      const detail = r.reason === "api_error" ? aiErrorDetail(e) : null;
+      throw new PlanError(r.reason === "disabled" ? 503 : r.reason === "rate_limit" ? 429 : 502, detail ? `${r.message} — ${detail}` : r.message);
+    }
     throw e;
   }
   const v = parseModelJson(text);
