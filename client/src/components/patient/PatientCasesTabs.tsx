@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { soldDevicesTotal, needsBelowSoldConfirm, type EpisodeLike } from "./case_cost_guard";
-import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { COMPONENT_LABELS, FULL_DEVICE_LABELS } from "@shared/prosthetic_parts";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
@@ -57,7 +57,7 @@ const DETAIL_LABELS: Record<string, string> = {
   amputationSite: "موقع البتر", prostheticType: "نوع الطرف",
   siliconType: "نوع السيليكون", siliconSize: "قياس السيليكون",
   suspensionSystem: "نظام التعليق", footType: "نوع القدم",
-  footSize: "قياس الحذاء", kneeJointType: "نوع مفصل الركبة",
+  footSize: "قياس الحذاء", kneeJointType: "نوع مفصل الركبة", socketType: "نوع السوكيت",
   injurySide: "الجهة", injuryCause: "سبب الإصابة", injuryDate: "تاريخ الإصابة",
   injuryType: "نوع الإصابة", diseaseType: "التشخيص", injuryArea: "منطقة الإصابة",
   treatmentType: "نوع العلاج", supportType: "نوع المسند",
@@ -65,7 +65,7 @@ const DETAIL_LABELS: Record<string, string> = {
 
 /** مفاتيحُ مواصفات الجهاز — تخصّ جهازاً بعينه لا المريضَ كلَّه (`deviceSpecsFromPrescription` في الخادم). */
 const DEVICE_SPEC_KEYS = new Set<string>([
-  ...PROSTHETIC_SPECS.map((f) => f.key), ...SUPPORT_SPECS.map((f) => f.key), "injurySide", "amputationSite",
+  ...PROSTHETIC_DEVICE_SPECS.map((f) => f.key), ...SUPPORT_SPECS.map((f) => f.key), "injurySide", "amputationSite",
 ]);
 const DEVICE_STATUS_LABELS: Record<string, string> = { in_manufacturing: "قيد التصنيع", delivered: "مُسلَّم" };
 const deviceItemLabel = (caseType: string, item: string) =>

@@ -15,6 +15,13 @@ import { Pool } from "pg";
 import crypto from "node:crypto";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6949;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-وصفة-الجهاز";
@@ -106,7 +113,7 @@ async function sell(episodeId: number, price = 1_000_000) {
   const f = await q<{ id: number }>(
     `SELECT id FROM post_exam_followups WHERE device_episode_id=$1 ORDER BY id DESC LIMIT 1`, [episodeId]);
   const r = await http("POST", `/api/followups/${f[0].id}/complete-sale`, S.recv,
-    { originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
+    { deviceSpecs: SALE_SPECS_TEST, originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
   if (r.status >= 300) throw new Error(`فشل البيع: ${r.status} ${JSON.stringify(r.body)}`);
   const wo = await q<{ id: number }>(
     `SELECT id FROM prosthetic_work_orders WHERE device_episode_id=$1 ORDER BY id DESC LIMIT 1`, [episodeId]);
@@ -202,8 +209,10 @@ async function main() {
   httpServer.listen(PORT);
   await new Promise<void>((resolve) => httpServer.once("listening", resolve));
 
-  const expectA = { source: "exam", ...A_RX, amputationSite: A_SITE } as Record<string, unknown>;
-  const expectB = { source: "exam", ...B_RX, amputationSite: B_SITE } as Record<string, unknown>;
+  //  **وما تركه الطبيبُ من خانات «اشترى» يملؤه الاستعلاماتُ عند البيع** (§4.cq) — من بيع **هذا الجهاز** وحده:
+  //  A ينقصه السوكيت، وB السوكيتُ والسيليكون (ولا يُستعار سيليكونُ A — «لا ينطبق» من بيع B نفسِه).
+  const expectA = { source: "exam", ...A_RX, amputationSite: A_SITE, socketType: SALE_SPECS_TEST.socketType } as Record<string, unknown>;
+  const expectB = { source: "exam", ...B_RX, amputationSite: B_SITE, socketType: SALE_SPECS_TEST.socketType, siliconType: SALE_SPECS_TEST.siliconType } as Record<string, unknown>;
   for (const k of ["amputationType", "singleLimb", "singleSide", "singleDetail"]) { delete expectA[k]; delete expectB[k]; }
   const stripExam = (s: any) => { const { examId: _e, ...rest } = s; return rest; };
 
@@ -359,6 +368,8 @@ async function main() {
       const A = await openEpisode(p, "prosthetic");
       await signExam(p, S.doc, "prosthetic", A, { notes: "تشخيصٌ نصّيّ بلا مواصفات" } as any);
       const woA = await sell(A);
+      //  **جهازٌ بِيع قبل ترحيل ١١٥** (§4.cq): البيعُ اليوم يحفظ خاناتِه، وما بِيع قبله بلا خاناتٍ محفوظة — وهو ما يحرسه هذا القسم.
+      await q(`UPDATE patient_device_episodes SET device_specs = '{}'::jsonb WHERE id = $1`, [A]);
       const d = await detail(woA);
       same("٣٣. **المصدرُ «ملف المريض» بصدق** — لا بطاقةٌ فارغة ولا أعمدةٌ مخفيّة",
         [d.status, d.body?.deviceSpecs?.source], [200, "patient_file"]);
@@ -382,6 +393,8 @@ async function main() {
       const A = await openEpisode(p, "prosthetic");
       await signExam(p, S.doc, "prosthetic", A, { prostheticType: "نوع-A" } as any);
       const woA = await sell(A);
+      //  **وبِيع قبل ترحيل ١١٥** — بلا خاناتٍ محفوظة من البيع (القسمُ ح أعلاه).
+      await q(`UPDATE patient_device_episodes SET device_specs = '{}'::jsonb WHERE id = $1`, [A]);
       const d = await detail(woA);
       const s = specsOf(d);
       same("٣٦. المصدرُ المعاينة، والنوعُ منها",

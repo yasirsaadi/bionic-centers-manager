@@ -27,6 +27,13 @@ import { readFileSync } from "fs";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6271 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-بيع-الفرع-المتاح";
@@ -237,7 +244,7 @@ async function main() {
     eq(Number(f0?.branch_id), BAGHDAD, "ب٢. وقرارُ ما بعد المعاينة في بغداد — فرعِ الجهاز");
 
     const sale = await http("POST", `/api/followups/${f0.id}/complete-sale`, S.bg,
-      { originalPrice: 1500000, discountAmount: 0, expertUserId: AYOUB, paidNow: 400000 });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1500000, discountAmount: 0, expertUserId: AYOUB, paidNow: 400000 });
     eq(sale.status, 200, "ب٣. **البيعُ يمضي** — كان لا يعود ردُّه إطلاقاً", msg(sale));
     const [wo] = await q(`SELECT branch_id, expert_user_id FROM prosthetic_work_orders WHERE patient_id=$1`,
       [shared.id]);
@@ -268,7 +275,7 @@ async function main() {
         prescription: {}, deviceEpisodeId: devH.body?.id });
     const [fh] = await q(`SELECT id FROM post_exam_followups WHERE patient_id=$1`, [home.id]);
     const saleH = await http("POST", `/api/followups/${fh.id}/complete-sale`, S.dq,
-      { originalPrice: 1200000, discountAmount: 0, expertUserId: DQ_EXPERT });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1200000, discountAmount: 0, expertUserId: DQ_EXPERT });
     eq(saleH.status, 200, "ب١٠. جهازُ فرع التسجيل يُباع كما كان");
     eq((await q(`SELECT branch_id FROM prosthetic_work_orders WHERE patient_id=$1`, [home.id]))
       .map((r: any) => Number(r.branch_id)), [DHIQAR], "ب١١. وأمرُه في ذي قار بحرفه");
@@ -290,7 +297,7 @@ async function main() {
     eq(Number(fo.branch_id), DHIQAR, "ج٠. القرارُ في ذي قار");
     const w0 = await writes(own.id);
     const saleO = await http("POST", `/api/followups/${fo.id}/complete-sale`, S.bg,
-      { originalPrice: 1000000, discountAmount: 0, expertUserId: AYOUB });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1000000, discountAmount: 0, expertUserId: AYOUB });
     eq([saleO.status, msg(saleO)], [403, "غير مصرح لك بهذا الفرع"],
       "ج١. **بغدادُ لا تحسم قرارَ ذي قار** — كما كان قبل ٤٠٩");
     eq(await writes(own.id), w0, "ج٢. وبلا كتابة");
@@ -304,7 +311,7 @@ async function main() {
     eq((listDq.body ?? []).map((e: any) => Number(e.id)).filter((i: number) => [AYOUB, DQ_EXPERT].includes(i)),
       [DQ_EXPERT], "ج٥. والمسؤولُ يرى خبراءَ فرع القرار — أيوب ليس منهم ما لم يُلحَق حسابُه بذي قار");
     const saleA = await http("POST", `/api/followups/${fo.id}/complete-sale`, S.admin,
-      { originalPrice: 1000000, discountAmount: 0, expertUserId: AYOUB });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1000000, discountAmount: 0, expertUserId: AYOUB });
     eq(saleA.status, 400, "ج٦. **وخبيرٌ لا يعمل في فرع القرار يُردّ** — ولو اختاره المسؤول", msg(saleA));
     eq(await writes(own.id), w0, "ج٧. وبلا كتابة");
 
@@ -329,7 +336,7 @@ async function main() {
         prescription: {}, deviceEpisodeId: devD.body?.id });
     const [fd] = await q(`SELECT id FROM post_exam_followups WHERE patient_id=$1`, [ex1.id]);
     const buy1 = await http("POST", `/api/followups/${fd.id}/complete-sale`, S.dq,
-      { originalPrice: 1500000, discountAmount: 0, expertUserId: DQ_EXPERT, paidNow: 500000 });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1500000, discountAmount: 0, expertUserId: DQ_EXPERT, paidNow: 500000 });
     eq(buy1.status, 200, "د٠. اشترى طرفاً كاملاً في ذي قار ودفع فيها", msg(buy1));
     const snap = async () => ({
       payments: (await q(`SELECT id, branch_id, amount, case_id FROM payments

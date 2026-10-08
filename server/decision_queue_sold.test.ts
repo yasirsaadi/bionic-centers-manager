@@ -24,6 +24,13 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -318,7 +325,7 @@ async function main() {
       const secondFid = Number(f2.id);
 
       const sale = await http("POST", `/api/followups/${secondFid}/complete-sale`, S.recv,
-        { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT });
       same("١٣. وتُباع **الثانيةُ** من بابها القانونيّ", sale.status, 200);
 
       const [epA] = await q(`SELECT status FROM patient_device_episodes WHERE id=$1`,
@@ -334,7 +341,7 @@ async function main() {
     {
       const { pid, fid, episodeId } = await readySale("تراجعٌ-عن-الشراء");
       const sale = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 750_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 750_000, discountAmount: 0, expertUserId: EXPERT });
       same("١٥. البيعُ يقع", sale.status, 200);
       same("    ويخرج الصفُّ من الطابور (`converted` طرفيّة)",
         (await seen(fid)).listed, false);

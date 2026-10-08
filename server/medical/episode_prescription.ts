@@ -22,8 +22,9 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { activeExamSql } from "./active_exam";
 import {
-  PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, type AmputationParts,
+  PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, buildAmputationSite, type AmputationParts,
 } from "@shared/case_fields";
+import { mergeDeviceSpecs } from "@shared/device_specs";
 
 export type DeviceServiceType = "prosthetic" | "medical_support";
 
@@ -90,7 +91,8 @@ export function deviceSpecsFromPrescription(
   const put = (key: string, value: unknown) => {
     if (typeof value === "string" && value.trim()) out[key] = value.trim();
   };
-  const fields = serviceType === "prosthetic" ? PROSTHETIC_SPECS : SUPPORT_SPECS;
+  //  **مواصفاتُ الجهاز** — ومعها نوعُ السوكيت (§4.cq)، وهو في الوصفة لا على صفّ المريض.
+  const fields = serviceType === "prosthetic" ? PROSTHETIC_DEVICE_SPECS : SUPPORT_SPECS;
   for (const f of fields) put(f.key, rx[f.key]);
   put("injurySide", rx.injurySide);
   if (serviceType === "prosthetic") {
@@ -115,9 +117,18 @@ export function hasAnySpec(specs: DeviceSpecs): boolean {
   return Object.keys(specs).length > 0;
 }
 
+/** خاناتُ الجهاز المحفوظةُ على الحلقة عند «اشترى» (ترحيل ١١٥) — `{}` حين لا شيء. */
+export async function storedEpisodeSpecs(episodeId: number, executor: Executor = db): Promise<Record<string, unknown>> {
+  const r = await executor.execute(sql`SELECT device_specs FROM patient_device_episodes WHERE id = ${episodeId}`);
+  const v = (r.rows ?? [])[0]?.device_specs;
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
 /** ما يُعرَض على أمر التصنيع — مصدرُه مُعلَنٌ دائماً. */
 export type OrderDeviceSpecs =
-  | { source: "exam"; examId: number; signedAt: string | null; doctorName: string | null; specs: DeviceSpecs }
+  | { source: "exam"; examId: number; signedAt: string | null; doctorName: string | null; specs: DeviceSpecs;
+      /** خاناتٌ تركها الطبيبُ فملأها الاستعلاماتُ عند «اشترى» (§4.cq) — تُعرَض بمصدرها. */
+      filledAtSale: string[] }
   | { source: "patient_file" };
 
 /**
@@ -133,14 +144,18 @@ export async function orderDeviceSpecs(
   if (deviceEpisodeId === null) return { source: "patient_file" };
   const exam = await effectiveExamForEpisode(deviceEpisodeId, executor, serviceType);
   if (!exam) return { source: "patient_file" };
-  const specs = deviceSpecsFromPrescription(serviceType, exam.prescription);
+  //  **وما ملأه الاستعلاماتُ عند «اشترى» يسدّ ما تركه الطبيب** (§4.cq) — والوصفةُ تغلب، ويُقال أيُّها من البيع.
+  const fromExam = deviceSpecsFromPrescription(serviceType, exam.prescription);
+  const specs = mergeDeviceSpecs(fromExam, await storedEpisodeSpecs(deviceEpisodeId, executor));
   if (!hasAnySpec(specs)) return { source: "patient_file" };
+  const filledAtSale = Object.keys(specs).filter((k) => !(k in fromExam));
   return {
     source: "exam",
     examId: exam.examId,
     signedAt: exam.signedAt,
     doctorName: exam.doctorName,
     specs,
+    filledAtSale,
   };
 }
 
@@ -166,7 +181,7 @@ export async function caseDeviceSpecs(
   const out = new Map<number, CaseDeviceSpecsRow[]>();
   if (!caseIds.length) return out;
   const r = await executor.execute(sql`
-    SELECT e.id, e.case_id, e.sequence_number, e.status, e.requested_item, pc.case_type, ex.prescription
+    SELECT e.id, e.case_id, e.sequence_number, e.status, e.requested_item, e.device_specs, pc.case_type, ex.prescription
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
       LEFT JOIN LATERAL (
@@ -181,7 +196,8 @@ export async function caseDeviceSpecs(
   for (const row of (r.rows ?? []) as any[]) {
     const rx = row.prescription && typeof row.prescription === "object" && !Array.isArray(row.prescription)
       ? row.prescription as Record<string, unknown> : null;
-    const specs = rx ? deviceSpecsFromPrescription(row.case_type as DeviceServiceType, rx) : null;
+    //  الوصفةُ أوّلاً، وما ملأه الاستعلاماتُ عند «اشترى» يسدّ فراغَها (§4.cq).
+    const specs = rx ? mergeDeviceSpecs(deviceSpecsFromPrescription(row.case_type as DeviceServiceType, rx), row.device_specs) : null;
     const list = out.get(Number(row.case_id)) ?? [];
     list.push({
       episodeId: Number(row.id), sequenceNumber: Number(row.sequence_number), status: String(row.status),

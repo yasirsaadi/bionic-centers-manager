@@ -34,6 +34,13 @@ import {
   REFUND_ANSWER_REQUIRED_ERROR, REFUND_NOT_DONE_ERROR, reversalRefundPaymentNote,
 } from "@shared/administrative_reversal";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6971;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-عقد-إرجاع-المبلغ";
@@ -101,7 +108,7 @@ async function soldOperation(label: string, price = 1_000_000, branch = 1) {
   const [fu] = await q<{ id: number }>(
     `SELECT id FROM post_exam_followups WHERE medical_exam_id=$1`, [Number(exRes.body.id)]);
   const sale = await http("POST", `/api/followups/${fu.id}/complete-sale`, staff,
-    { originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
+    { deviceSpecs: SALE_SPECS_TEST, originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
   if (sale.status >= 300) throw new Error(`فشل البيع: ${JSON.stringify(sale.body)}`);
   return { patientId: p.id, caseId: c.id, episodeId, followupId: Number(fu.id),
     examId: Number(exRes.body.id) };

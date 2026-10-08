@@ -18,6 +18,13 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -499,7 +506,7 @@ async function main() {
         const exB = await signExam(p, S.doc, svc, { deviceEpisodeId: B.episodeId });
         const fB = (await followupsOfEpisode(B.episodeId))[0];
         const sale = await http("POST", `/api/followups/${fB.id}/complete-sale`, S.recv,
-          { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
         check(sale.status === 200, "٥٠. B تُباع وتدخل التصنيع", JSON.stringify(sale.body));
         same("   وحالتُها in_manufacturing", await episodeStatus(B.episodeId), "in_manufacturing");
         const ordersBefore = Number((await q(`SELECT count(*)::int n FROM prosthetic_work_orders WHERE patient_id=$1`, [p]))[0].n);
@@ -1124,7 +1131,7 @@ async function main() {
         prostheticCaseId);
 
       //  **والبرهانُ الحيّ**: البيعُ بدفعةٍ فورية يمضي — وهو ما كان يُردّ ٤٠٩.
-      const saleT = await http("POST", `/api/followups/${fRow?.id}/complete-sale`, S.recv, {
+      const saleT = await http("POST", `/api/followups/${fRow?.id}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 200_000,
       });
       check(saleT.status < 300, "١٠٤.و **وإتمامُ البيع مع دفعةٍ فورية ينجح**",

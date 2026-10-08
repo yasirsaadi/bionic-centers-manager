@@ -25,6 +25,13 @@ import * as episodes from "./device_episodes/store";
 import * as mfg from "./manufacturing/store";
 import { resolveDeviceTargetTx } from "./device_episodes/store";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 
 //  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
 //  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
@@ -294,7 +301,7 @@ async function main() {
     //  `test:reception-sale`): حفظٌ واحد يختار الخبيرَ ويعتمد السعرَ
     //  الأصليّ (بلا خصم هنا) ويبدأ التصنيعَ معاً ذرّياً.
     const assign = await http("POST", `/api/followups/${fu.id}/complete-sale`, S.reception,
-      { originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT });
     same("   وتأكيدُ الشراء بدأ التصنيع", assign.status, 200);
     same("   والحلقة «قيد التصنيع» بسعرها",
       [(await epRow(dev2))?.status, (await epRow(dev2))?.agreed_cost],

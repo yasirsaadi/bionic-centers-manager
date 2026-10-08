@@ -32,6 +32,13 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -482,7 +489,7 @@ async function main() {
     console.log("\n── ط. إتمامُ البيع القائم يعمل بعد ذلك كالمعتاد ──");
     // ══════════════════════════════════════════════════════════════════
     {
-      const sale = await http("POST", `/api/followups/${secondFollowupId!}/complete-sale`, S.recv, {
+      const sale = await http("POST", `/api/followups/${secondFollowupId!}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 1_200_000, discountAmount: 0, expertUserId: EXPERT,
       });
       check(sale.status === 200, "٥٤. **إتمامُ البيع الحقيقيّ ينجح بعد «عاد للشراء»**",

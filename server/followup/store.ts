@@ -2526,6 +2526,8 @@ export async function completeReceptionSale(params: {
     expertUserId: number, branchId: number | null,
   ) => Promise<{ ok: boolean; reason?: string }>;
   expertLabel?: (expertUserId: number) => Promise<string | null>;
+  /** خاناتُ الجهاز التي تركها الطبيبُ فارغة — يملؤها الاستعلاماتُ في نافذة البيع (§4.cq). */
+  deviceSpecs?: unknown;
   tx?: any;
 }): Promise<CommercialResult & { payment: Payment | null }> {
   await assertExamPathFollowup(params.followupId);
@@ -2561,6 +2563,33 @@ export async function completeReceptionSale(params: {
     `);
     const beforeStatus = (peek.rows ?? [])[0]?.status ?? null;
 
+    let specsWrite: { epId: number; specs: Record<string, unknown> } | null = null;
+    //  ══ **لا «اشترى» قبل أن تمتلئ خاناتُ الجهاز** (قرارُ المالك ٢٠٢٦-١٠-٠٨، §4.cq) ══
+    //  الطبيبُ يملؤها في وصفته أو الاستعلاماتُ هنا؛ وما لا يخصّ الجهاز «لا ينطبق». **وقبل أيّ كتابة** — فالرفضُ لا يترك أثراً،
+    //  وما يُملأ هنا يُحفظ على الحلقة في المعاملة نفسِها فيسقط معها إن سقط البيع. وكلمةُ الطبيب تغلب (`mergeDeviceSpecs`).
+    {
+      const fr = await tx.execute(sql`SELECT device_episode_id, service_type FROM post_exam_followups WHERE id = ${params.followupId}`);
+      const epRaw = (fr.rows ?? [])[0]?.device_episode_id;
+      const kind = (fr.rows ?? [])[0]?.service_type;
+      const ds = await import("@shared/device_specs");
+      if (epRaw !== null && epRaw !== undefined && ds.isDeviceKind(kind)) {
+        const epId = Number(epRaw);
+        const rxm = await import("../medical/episode_prescription");
+        const stored = await rxm.storedEpisodeSpecs(epId, tx);
+        const exam = await rxm.effectiveExamForEpisode(epId, tx, kind);
+        const fromExam = exam ? rxm.deviceSpecsFromPrescription(kind, exam.prescription) : {};
+        //  **وما كتبه الطبيبُ لا يُكتب فوقه ولا تُحفظ له نسخةٌ ثانية** — النافذةُ تملأ الفراغَ وحده.
+        const incoming = Object.fromEntries(Object.entries(ds.cleanSaleSpecsInput(params.deviceSpecs, kind)).filter(([k]) => !fromExam[k]));
+        const nextStored = { ...stored, ...incoming };
+        const merged = ds.mergeDeviceSpecs(fromExam, nextStored);
+        const missing = ds.missingSaleSpecs(kind, merged);
+        if (missing.length) throw new FollowupError(ds.saleSpecsMessage(kind, missing), 400);
+        //  **والكتابةُ بعد البيع لا قبله** — قراءةٌ هنا بلا قفل، والحلقةُ تُقفَل في ترتيبها القائم داخل البيع نفسِه
+        //  (`assignManufacturing`)، فلا يتغيّر ترتيبُ الأقفال الذي يحرسه `test:lock-conflict-race`.
+        if (Object.keys(incoming).length) specsWrite = { epId, specs: nextStored };
+      }
+    }
+
     const result = await setCommercialFields({
       followupId: params.followupId,
       patch: {
@@ -2590,6 +2619,11 @@ export async function completeReceptionSale(params: {
           : ""),
         409,
       );
+    }
+
+    if (specsWrite) {
+      const { setEpisodeDeviceSpecsTx } = await import("../device_episodes/store");
+      await setEpisodeDeviceSpecsTx(tx, { episodeId: specsWrite.epId, specs: specsWrite.specs });
     }
 
     await cancelPendingPriceRequestsTx(tx, {

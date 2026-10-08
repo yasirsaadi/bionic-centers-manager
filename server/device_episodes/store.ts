@@ -1548,6 +1548,24 @@ export async function setEpisodeComponentSaleTermsTx(
 }
 
 /**
+ * **خاناتُ الجهاز التي ملأها الاستعلاماتُ في «إتمام البيع»** (ترحيل ١١٥، §4.cq).
+ *
+ * ما كتبه الطبيبُ في وصفته لا يُكتب هنا — الوصفةُ مصدرُه، وهذه تسدّ فراغَها وحده
+ * (`mergeDeviceSpecs` عند القراءة). وتُنادى **داخل معاملة البيع نفسِها وبعد
+ * التحويل**، فتسقط معه إن سقط، ولا تغيّر ترتيبَ الأقفال القائم.
+ */
+export async function setEpisodeDeviceSpecsTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; specs: Record<string, unknown> },
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET device_specs = ${JSON.stringify(params.specs)}::jsonb, updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+}
+
+/**
  * **حلقةُ الجهاز الأول تُماديَ عند البيع — لا تُترك للتاريخ.**
  *
  * ══ الثغرةُ التي تُغلقها (المريض WB-02243، بعد ٢٣٩) ═══════════════════

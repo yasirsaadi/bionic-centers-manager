@@ -27,7 +27,7 @@ import {
 import { NewExamDialog } from "./NewExamDialog";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
-import { buildAmputationSite, specsForSpecialty, type InjuryEntry } from "@shared/case_fields";
+import { buildAmputationSite, deviceSpecsForSpecialty, type InjuryEntry } from "@shared/case_fields";
 import { hasRole } from "@shared/user_roles";
 
 // Render the signed decision as label/value lines, using the very same field
@@ -44,7 +44,7 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
     const site = buildAmputationSite(rx);
     if (site) out.push({ label: "موقع البتر", value: site });
   }
-  for (const f of specsForSpecialty(exam.caseType)) {
+  for (const f of deviceSpecsForSpecialty(exam.caseType)) {
     if (typeof rx[f.key] === "string" && rx[f.key].trim()) out.push({ label: f.label, value: rx[f.key] });
   }
   if (typeof rx.injurySide === "string" && rx.injurySide.trim()) {

@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
-import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { TRIAL_SOCKET_LABEL, canDeliverTrialSocket, isTrialAwaiting } from "@shared/trial_socket";
 import { baghdadTodayYmd } from "@shared/visit_date";
@@ -154,7 +154,10 @@ export default function ManufacturingOrder() {
         <Card className="mb-4 border-primary/30" data-testid="card-device-specs">
           <CardContent className="p-4 text-sm">
             <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-              <span className="font-semibold">مواصفات هذا الجهاز — من معاينته</span>
+              <span className="font-semibold">
+                مواصفات هذا الجهاز — من معاينته
+                {(deviceSpecs.filledAtSale ?? []).length > 0 && <span className="font-normal text-xs text-muted-foreground"> (و* ما ملأه الاستعلاماتُ عند البيع)</span>}
+              </span>
               <span className="text-xs text-muted-foreground">
                 {order.sequenceNumber != null && <>جهاز #{order.sequenceNumber} · </>}
                 {requestedItemLabel(order.requestedItem ?? null, order.serviceType)}
@@ -166,8 +169,8 @@ export default function ManufacturingOrder() {
               {order.serviceType === "prosthetic" && (
                 <Info label="موقع البتر" value={deviceSpecs.specs.amputationSite} />
               )}
-              {(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_SPECS).map((f) => (
-                <Info key={f.key} label={f.label} value={deviceSpecs.specs[f.key]} />
+              {(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_DEVICE_SPECS).map((f) => (
+                <Info key={f.key} label={(deviceSpecs.filledAtSale ?? []).includes(f.key) ? `${f.label} *` : f.label} value={deviceSpecs.specs[f.key]} />
               ))}
               <Info label="جهة الإصابة" value={deviceSpecs.specs.injurySide} />
             </div>

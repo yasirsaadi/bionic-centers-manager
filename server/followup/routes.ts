@@ -238,6 +238,22 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   }
 
   // ── قراءة: متابعات مريض + تاريخها ────────────────────────────────────
+  /** خاناتُ الجهاز الإلزامية لـ«اشترى»: قيمُها (الوصفةُ أوّلاً ثمّ ما حُفظ على الحلقة) وما ينقص منها — أو `null` بلا حلقة. */
+  async function saleSpecsOf(f: { deviceEpisodeId: number | null; serviceType: string }) {
+    const ds = await import("@shared/device_specs");
+    if (f.deviceEpisodeId === null || !ds.isDeviceKind(f.serviceType)) return null;
+    const rxm = await import("../medical/episode_prescription");
+    const exam = await rxm.effectiveExamForEpisode(f.deviceEpisodeId, undefined, f.serviceType);
+    const fromExam = exam ? rxm.deviceSpecsFromPrescription(f.serviceType, exam.prescription) : {};
+    const merged = ds.mergeDeviceSpecs(fromExam, await rxm.storedEpisodeSpecs(f.deviceEpisodeId));
+    return {
+      fields: ds.saleSpecFields(f.serviceType).map((x) => ({
+        key: x.key, label: x.label, value: merged[x.key] ?? null, fromDoctor: Boolean(fromExam[x.key]),
+      })),
+      missing: ds.missingSaleSpecs(f.serviceType, merged),
+    };
+  }
+
   app.get("/api/followups/patient/:patientId", isAuthenticated, async (req: Req, res) => {
     //  ملفُّ المتابعة يحمل السعر المعتمد وهاتفَ المريض وسببَ تردّده — فقراءتُه
     //  لمسؤولي المتابعة وحدهم. وخبيرُ الأطراف والمحاسب خارجها.
@@ -333,6 +349,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         },
         events: await store.getEvents(f.id),
         priceRequests: await store.getPriceRequests(f.id),
+        //  **خاناتُ الجهاز لنافذة «إتمام البيع»** (§4.cq): ما كتبه الطبيبُ يُعرَض، وما ينقص يُملأ هناك قبل «اشترى».
+        deviceSpecs: await saleSpecsOf(f),
       };
     }));
     res.json(withDetail);
@@ -893,6 +911,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  السعر ولا الخصم، وغيابُه لا يعني شيئاً غير «لم يُقبَض الآن».
         paidNow: req.body?.paidNow,
         note: str(req.body?.note),
+        //  خاناتُ الجهاز الناقصة من نافذة البيع (§4.cq) — والمخزنُ يردّ «اشترى» ما دام فيها فراغ.
+        deviceSpecs: req.body?.deviceSpecs,
         actor: actorOf(req),
         session: ownerSessionOf(req),
         validateExpert,

@@ -26,6 +26,13 @@ import fs from "node:fs";
 import { registerRoutes } from "./routes";
 import { EXAM_CANCEL_OPERATION_EXISTS } from "@shared/medical";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6957;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-تسليم-الإلغاء";
@@ -108,7 +115,7 @@ async function followupOfExam(examId: number) {
 }
 async function sell(followupId: number, price = 1_000_000) {
   const r = await http("POST", `/api/followups/${followupId}/complete-sale`, S.recv,
-    { originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
+    { deviceSpecs: SALE_SPECS_TEST, originalPrice: price, discountAmount: 0, expertUserId: EXPERT });
   if (r.status >= 300) throw new Error(`فشل البيع: ${r.status} ${JSON.stringify(r.body)}`);
 }
 async function cancel(examId: number, session: any, reason = "إلغاءٌ تجريبي") {

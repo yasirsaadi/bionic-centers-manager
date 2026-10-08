@@ -322,3 +322,20 @@ export function specsForSpecialty(caseType: string): SpecField[] {
   if (caseType === "medical_support") return SUPPORT_SPECS;
   return [];
 }
+
+/**
+ * **نوعُ السوكيت** (§4.cq، قرارُ المالك ٢٠٢٦-١٠-٠٨: «يضاف مع نوع الطرف مثل الموجود بالاستمارة») — **مواصفةُ جهازٍ لا عمودُ ملفّ**:
+ * يعيش في وصفة المعاينة (`medical_exams.prescription`) ومواصفات الحلقة (`patient_device_episodes.device_specs`)، ولا يُكتب على
+ * صفّ المريض — فـ`PROSTHETIC_SPECS` (أعمدةُ الملفّ القديمة التي تنسخها `applyPrescription`) لا تتغيّر.
+ */
+export const SOCKET_SPEC: SpecField = { key: "socketType", label: "نوع السوكيت", placeholder: "اكتب نوع السوكيت" };
+
+/** مواصفاتُ **الجهاز** للأطراف: نوعُ الطرف ثمّ السوكيت ثمّ البقيّة — بترتيب الورقة. */
+export const PROSTHETIC_DEVICE_SPECS: SpecField[] = [PROSTHETIC_SPECS[0], SOCKET_SPEC, ...PROSTHETIC_SPECS.slice(1)];
+
+/** حقولُ **وصفة الجهاز** لاختصاص — ما يكتبه الطبيبُ ويُعرَض في المعاينة وأمرِ التصنيع. */
+export function deviceSpecsForSpecialty(caseType: string): SpecField[] {
+  if (caseType === "prosthetic") return PROSTHETIC_DEVICE_SPECS;
+  if (caseType === "medical_support") return SUPPORT_SPECS;
+  return [];
+}

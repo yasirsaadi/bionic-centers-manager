@@ -13,6 +13,13 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { expertLabelFor, isPerformedByRedundant } from "@shared/daily_review";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 
 //  ══ **تذكرةُ إرسالٍ فريدةٌ لكلّ نداء** (٢٠٢٦-٠٩-١٨) ═══════════════════════
 //  `/api/no-exam/maintenance` صارت **تشترط** `submissionToken` غيرَ فارغ:
@@ -397,21 +404,21 @@ async function main() {
     {
       // بخصم.
       const s1 = await readySale("حسم-خصم");
-      const c1 = await http("POST", `/api/followups/${s1.fid}/complete-sale`, S.recv, {
+      const c1 = await http("POST", `/api/followups/${s1.fid}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 1_000_000, discountAmount: 200_000, expertUserId: EXPERT,
       });
       check(c1.status === 200, "٢٧. إتمامُ البيع بخصمٍ ينجح", JSON.stringify(c1.body));
 
       // مجّانيّ.
       const s2 = await readySale("حسم-مجاني");
-      const c2 = await http("POST", `/api/followups/${s2.fid}/complete-sale`, S.recv, {
+      const c2 = await http("POST", `/api/followups/${s2.fid}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 500_000, discountAmount: 500_000, expertUserId: EXPERT,
       });
       check(c2.status === 200, "٢٨. إتمامُ البيع مجّاناً ينجح", JSON.stringify(c2.body));
 
       // سعرٌ كاملٌ بلا خصم.
       const s3 = await readySale("حسم-كامل");
-      const c3 = await http("POST", `/api/followups/${s3.fid}/complete-sale`, S.recv, {
+      const c3 = await http("POST", `/api/followups/${s3.fid}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 300_000, discountAmount: 0, expertUserId: EXPERT,
       });
       check(c3.status === 200, "٢٩. إتمامُ البيع بالسعر الكامل ينجح", JSON.stringify(c3.body));
@@ -732,7 +739,7 @@ async function main() {
     // ══════════════════════════════════════════════════════════════════
     {
       const sReason = await readySale("سبب-الحسم");
-      const c = await http("POST", `/api/followups/${sReason.fid}/complete-sale`, S.recv, {
+      const c = await http("POST", `/api/followups/${sReason.fid}/complete-sale`, S.recv, { deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 200000, discountAmount: 0, expertUserId: EXPERT,
       });
       check(c.status === 200, "٩٦. إتمامُ البيع للتحقّق من سبب الحضور ينجح", JSON.stringify(c.body));

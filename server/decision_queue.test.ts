@@ -24,6 +24,13 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { examPathActions, examPathBlockedMessage, canCompleteReceptionSale } from "@shared/commercial";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -398,7 +405,7 @@ async function main() {
       check(idsOf(r.body).includes(fid),
         "٥. **وحالة `price_approval_pending` الوسيطة تظهر أيضاً** (إصلاحُ `CONFIRMABLE`)");
       const cs = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
       same("   **ويمكن حسمُها فعلاً عبر `/complete-sale`** — لا تبقى محبوسة",
         [cs.status, cs.body?.converted], [200, true]);
     }
@@ -455,7 +462,7 @@ async function main() {
     {
       const { fid: boughtFid } = await readySale("تم-الشراء");
       const csR = await http("POST", `/api/followups/${boughtFid}/complete-sale`, S.recv,
-        { originalPrice: 900_000, discountAmount: 100_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 100_000, expertUserId: EXPERT });
       same("١٣. الإعدادُ: تمّ البيع", csR.status, 200);
 
       const { fid: notBoughtFid } = await readySale("لم-يشترِ");
@@ -492,14 +499,14 @@ async function main() {
     {
       const { fid: recvFid } = await readySale("حاسمٌ-استقبال");
       await http("POST", `/api/followups/${recvFid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
 
       const { fid: acctFid } = await readySale("حاسمٌ-محاسب");
       await http("POST", `/api/followups/${acctFid}/not-bought`, S.acct, { reason: "سبب" });
 
       const { fid: adminFid } = await readySale("حاسمٌ-مسؤول");
       await http("POST", `/api/followups/${adminFid}/complete-sale`, S.admin,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
 
       const rows = (await resolved(S.admin)).body?.rows ?? [];
       const recvRow = rows.find((x: any) => x.followupId === recvFid);
@@ -586,9 +593,9 @@ async function main() {
       const { fid } = await readySale("ضغطتان-متزامنتان");
       const [r1, r2] = await Promise.all([
         http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-          { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT }),
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT }),
         http("POST", `/api/followups/${fid}/complete-sale`, S.acct,
-          { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT }),
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT }),
       ]);
       const statuses = [r1.status, r2.status].sort();
       same("٣٢. **إحداهما ٢٠٠ والأخرى ٤٠٩ — لا نجاحان معاً**", statuses, [200, 409]);
@@ -689,7 +696,7 @@ async function main() {
         [before?.status], ["pending"]);
 
       const cs = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT });
       same("٣٨. **والبيعُ المباشر ينجح على الحالة الوسيطة** — إصلاحُ `CONFIRMABLE`",
         [cs.status, cs.body?.converted, typeof cs.body?.workOrderId], [200, true, "number"]);
 
@@ -724,7 +731,7 @@ async function main() {
       const reqId = await mkPendingPriceRequest(fid, pid, 1);
 
       const failedSale = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT_B2 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT_B2 });
       check(failedSale.status >= 400,
         "٤٦. الإعدادُ: إتمامٌ بخبيرٍ من فرعٍ آخر يفشل كما هو متوقَّع",
         JSON.stringify(failedSale.body));
@@ -763,7 +770,7 @@ async function main() {
         [...(rowOf(wAdminA.body, fidA)?.actions ?? [])].sort(),
         ["complete_sale", "not_bought"].sort());
       const csA = await http("POST", `/api/followups/${fidA}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
       same("   **والبابُ الحقيقيّ يردّ الاستقبالَ فعلاً — لا زرٌّ كاذب**", csA.status, 403);
       const nbA = await http("POST", `/api/followups/${fidA}/not-bought`, S.recv, { reason: "جرّب مركزاً آخر" });
       same("   **و«لم يشترِ» يعمل رغم قفل السعر — يطابق `actions` تماماً**", nbA.status, 200);
@@ -775,7 +782,7 @@ async function main() {
       same("٥٣. **ب. خبيرٌ مملوكٌ للطبيب ⟶ نفسُ نمط أ**",
         rowOf(wRecvB.body, fidB)?.actions, ["not_bought"]);
       const csB = await http("POST", `/api/followups/${fidB}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
       same("   والبابُ يردّه أيضاً — يطابق غيابَ `complete_sale`", csB.status, 403);
     }
     {
@@ -795,7 +802,7 @@ async function main() {
         [...(rowOf(wAdminC.body, fidC)?.actions ?? [])].sort(),
         ["complete_sale", "not_bought"].sort());
       const csC = await http("POST", `/api/followups/${fidC}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
       same("   **والبابان معاً يردّان الاستقبالَ**", csC.status, 403);
       const nbC = await http("POST", `/api/followups/${fidC}/not-bought`, S.recv, { reason: "أ" });
       same("   ", nbC.status, 403);
@@ -910,7 +917,7 @@ async function main() {
       }
 
       const csOrphan = await http("POST", `/api/followups/${orphanFid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
       same("٧٢. **والبابُ الحديث يردّها ٤٠٩ فعلاً — `examPath=false` يطابق"
         + " الواقعَ لا افتراضاً**", csOrphan.status, 409);
 
