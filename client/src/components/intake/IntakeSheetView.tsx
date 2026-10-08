@@ -9,7 +9,7 @@ import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTab
 import { EXAM_SHEET_TEXT_LABEL } from "@shared/exam_sheet";
 import { INTAKE_DEPARTMENT_LABELS, injuryDateDisplay } from "@shared/intake_sheet";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
-import { sheetMoneyLine, sheetSpecRows, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
+import { sheetMoneyLine, sheetSpecRows, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
 import { formatDateIraq } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -111,6 +111,12 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
               <div className={cn("px-2 py-1.5 min-w-0 [overflow-wrap:anywhere]", i < sheet.visits.length - 1 && "border-b border-slate-700")} dir="auto" style={{ unicodeBidi: "plaintext" }}>
                 {v.details || v.notes || "—"}
                 {v.details && v.notes && <div className="text-xs text-slate-500">{v.notes}</div>}
+                {/*  **ما دُفع في يوم المراجعة** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — «حين اشترى دفع هذا المبلغ». */}
+                {sheetVisitPaidLine(v) && (
+                  <div className={cn("text-xs font-semibold", (v.paid ?? 0) < 0 ? "text-red-700" : "text-emerald-700")} data-testid={`sheet-visit-paid-${v.id}`}>
+                    {sheetVisitPaidLine(v)}
+                  </div>
+                )}
               </div>
             </div>
           ))}

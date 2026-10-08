@@ -30,7 +30,34 @@ export interface IntakeSheetMoney {
   remaining: number | null;
 }
 
-export interface IntakeSheetVisit { id: number; date: string | null; details: string | null; notes: string | null }
+/**
+ * **سطرُ «المراجعات»** — زيارةٌ من سجلّ الزيارات، و`paid` ما دُفع لهذا الجهاز **في يومها** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «زيارةُ
+ * شراء طرف صناعي دفع ٢,٠٠٠,٠٠٠ — يبيّن بالملاحظات أنه حين اشترى دفع هذا المبلغ»). ودفعةٌ في يومٍ بلا زيارةٍ للجهاز سطرٌ مستقلّ
+ * (`kind: "payment"`)، فمجموعُ `paid` في السطور = «المدفوع» في خانة المبلغ. و`paid` فارغٌ لمن لا يرى الدفعات، ولا سطرَ دفعةٍ له.
+ */
+export interface IntakeSheetVisit {
+  /** رقمُ الزيارة؛ وسطرُ الدفعة سالبُ رقمِ أوّل دفعةٍ في يومه — مفتاحٌ لا يتصادم. */
+  id: number;
+  kind: "visit" | "payment";
+  date: string | null;
+  details: string | null;
+  notes: string | null;
+  /** صافي ما دُفع لهذا الجهاز في يوم السطر (والمردودُ سالب) — `null` بلا دفعٍ أو لمن لا يرى المال. */
+  paid: number | null;
+}
+
+/** يومُ بغداد لتاريخٍ قياسيّ (`YYYY-MM-DD`) — التعريفُ نفسُه في التقارير (§4.bd). */
+export function baghdadDayOf(isoDate: string | null): string | null {
+  if (!isoDate) return null;
+  const d = new Date(isoDate);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+}
+
+/** سطرُ المبلغ تحت المراجعة: «دُفع …» أو «رُدّ …» — ولا شيءَ بلا مبلغ. */
+export function sheetVisitPaidLine(v: Pick<IntakeSheetVisit, "paid">): string | null {
+  if (v.paid === null || v.paid === 0) return null;
+  return v.paid > 0 ? `دُفع ${v.paid.toLocaleString("en-US")} د.ع` : `رُدّ ${Math.abs(v.paid).toLocaleString("en-US")} د.ع`;
+}
 
 export interface IntakeSheet {
   episodeId: number;

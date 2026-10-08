@@ -19,7 +19,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { softDeletePatient } from "./patients/trash_store";
-import { freeDeviceRows, sheetMoneyLine, sheetSpecRows, specKeysCoveredBySheets, type IntakeSheet } from "@shared/intake_sheet_view";
+import { baghdadDayOf, freeDeviceRows, sheetMoneyLine, sheetSpecRows, sheetVisitPaidLine, specKeysCoveredBySheets, type IntakeSheet } from "@shared/intake_sheet_view";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -85,6 +85,12 @@ async function main() {
   same("ق.٨ وجهازان ⟵ كلُّها (لقطةُ آخر بيعٍ لا تُنسَب)، وقسمٌ آخر أو بلا أجهزة ⟵ لا شيء",
     [specKeysCoveredBySheets([legacy, legacy], "prosthetic", KEYS).size, specKeysCoveredBySheets([legacy], "medical_support", KEYS).size,
       specKeysCoveredBySheets([], "prosthetic", KEYS).size], [KEYS.length, 0, 0]);
+
+  same("ق.٩ **سطرُ المبلغ تحت المراجعة**: «دُفع» و«رُدّ»، ولا سطرَ بلا مبلغ",
+    [sheetVisitPaidLine({ paid: 2_000_000 }), sheetVisitPaidLine({ paid: -100_000 }), sheetVisitPaidLine({ paid: 0 }), sheetVisitPaidLine({ paid: null })],
+    ["دُفع 2,000,000 د.ع", "رُدّ 100,000 د.ع", null, null]);
+  same("ق.١٠ **ويومُ المراجعة يومُ بغداد** — التاسعةُ والنصفُ مساءً بتوقيت غرينتش يومٌ تالٍ في بغداد",
+    [baghdadDayOf("2026-10-08T21:30:00.000Z"), baghdadDayOf("2026-10-08T20:59:00.000Z"), baghdadDayOf(null)], ["2026-10-09", "2026-10-08", null]);
 
   await cleanup();
   await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع عرض الاستمارة'), ($2, 'فرع آخر للاستمارة')`, [B1, B2]);
@@ -236,6 +242,18 @@ async function main() {
     const [r1, r2] = ((await sheets(c, S.recv)).json?.sheets ?? []) as IntakeSheet[];
     same("ج.٤ **المدفوعُ من دفعات هذا الجهاز وحده** — والمردودُ صفٌّ سالب، ولا تُحسب دفعةُ جهازٍ آخر ولا دفعةٌ بلا جهاز",
       [r1?.money?.paid, r1?.money?.remaining, r2?.money?.paid], [400_000, 1_600_000, 0]);
+    const buy = r1?.visits?.find((v) => v.details === "شراء طرف صناعي");
+    same("ج.٥ **زيارةُ الشراء تقول ما دُفع يومها** — صافي دفعة البيع والمردود، لا دفعةُ جهازٍ آخر ولا دفعةٌ بلا جهاز",
+      [buy?.kind, buy?.paid, sheetVisitPaidLine(buy!)], ["visit", 400_000, "دُفع 400,000 د.ع"]);
+    //  عربونٌ قبل الشراء بثلاثة أيام، في يومٍ بلا زيارةٍ للجهاز ⟵ سطرُ «دفعة» بتاريخه وملاحظته، أوّلَ الجدول.
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, device_episode_id, notes, date) VALUES ($1, $2, 300000, $3, 'قسط ثانٍ', now() - interval '3 days')`, [c, B1, c1]);
+    const r1b = ((await sheets(c, S.recv)).json?.sheets ?? [])[0] as IntakeSheet;
+    const payRow = r1b?.visits?.find((v) => v.kind === "payment");
+    const rowsSum = (r1b?.visits ?? []).reduce((t, v) => t + (v.paid ?? 0), 0);
+    same("ج.٦ **ويومٌ بلا زيارة سطرُ «دفعة» مستقلّ** — في موضعه بالتاريخ (قبل زيارة الشراء)، ومجموعُ السطور = «المدفوع»",
+      [payRow?.details, payRow?.notes, payRow?.paid, r1b?.visits?.[0]?.kind, rowsSum, r1b?.money?.paid],
+      ["دفعة", "قسط ثانٍ", 300_000, "payment", 700_000, 700_000]);
+    await q(`DELETE FROM payments WHERE device_episode_id = $1 AND notes = 'قسط ثانٍ'`, [c1]);
 
     console.log("\n── د. «لم يشترِ» والإلغاء ──");
     const d = await sheetPatient("prosthetic", "حسين");
@@ -266,6 +284,10 @@ async function main() {
       [200, false, null, "د. سامر", 0]);
     const ex = await sheets(c, S.expert);
     same("و.٢ **والخبيرُ وحده لا يرى المال ولو حمل علَمَ الدفعات**", [ex.status, ex.json?.canViewMoney, ex.json?.sheets?.[0]?.money], [200, false, null]);
+    const exVisits = (ex.json?.sheets?.[0]?.visits ?? []) as IntakeSheet["visits"];
+    same("و.٢ب **ولا مبلغَ في مراجعاته ولا سطرَ دفعة** — يرى زيارةَ الشراء بلا ما دُفع فيها",
+      [exVisits.some((v) => v.details === "شراء طرف صناعي"), exVisits.every((v) => v.paid === null), exVisits.some((v) => v.kind === "payment")],
+      [true, true, false]);
     const np = await sheets(c, S.recvNoPay);
     same("و.٣ ومَن لا يملك «عرض الدفعات» كذلك", [np.status, np.json?.sheets?.[0]?.money], [200, null]);
     const ad = await sheets(c, S.admin);
