@@ -59,6 +59,7 @@ const PhysioProtocols = lazy(() => import("@/pages/PhysioProtocols"));
 const PhysioPlan = lazy(() => import("@/pages/PhysioPlan"));
 const PhysioPlansPage = lazy(() => import("@/pages/PhysioPlan").then((m) => ({ default: m.PhysioPlansPage })));
 const PhysioToday = lazy(() => import("@/pages/PhysioToday"));
+const PhysioOutcomes = lazy(() => import("@/pages/PhysioOutcomes"));
 const PhysioProtocolDetail = lazy(() => import("@/pages/PhysioProtocols").then((m) => ({ default: m.PhysioProtocolDetail })));
 
 function DashboardRoute() {
@@ -291,6 +292,7 @@ function Router() {
             <Route path="/physio/plans" component={PhysioPlansPage} />
             <Route path="/physio/plans/:id" component={PhysioPlan} />
             <Route path="/physio/today" component={PhysioToday} />
+            <Route path="/physio/outcomes" component={PhysioOutcomes} />
             <Route path="/surveys" component={Surveys} />
             <Route path="/session-tracking/entry" component={SessionEntry} />
             <Route path="/session-tracking/targets" component={SessionTargets} />

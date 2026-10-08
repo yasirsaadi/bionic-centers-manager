@@ -31,6 +31,7 @@ import { useLanguage } from "@/i18n/LanguageContext";
 import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_roles";
 import { canWriteCashBook } from "@shared/cash_book";
 import { canExecutePlans, canReadPlans } from "@shared/physio_plans";
+import { canViewOutcomes } from "@shared/physio_assessments";
 import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 
@@ -294,6 +295,8 @@ export function Sidebar() {
     { label: "خطط العلاج الطبيعي", icon: ClipboardList, href: "/physio/plans", adminOnly: false, settingKey: null, permission: null, eligible: canReadPlans(branchSession ? { ...branchSession, permissions } : null) },
     //  جلساتُ اليوم (§4.cn) — لمنفّذي القسم، بالقاعدة نفسِها التي تحرس التنفيذَ في الخادم.
     { label: "جلسات اليوم", icon: CalendarCheck, href: "/physio/today", adminOnly: false, settingKey: null, permission: null, eligible: canExecutePlans(branchSession ? { ...branchSession, permissions } : null) },
+    //  نتائجُ العلاج الطبيعي (§4.cp) — للأخصائيّ ومدير الفرع والمشرف والمسؤول، بقاعدة الخادم نفسِها.
+    { label: "نتائج العلاج الطبيعي", icon: TrendingUp, href: "/physio/outcomes", adminOnly: false, settingKey: null, permission: null, eligible: canViewOutcomes(branchSession ? { ...branchSession, permissions } : null) },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
     //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل
