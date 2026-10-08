@@ -1,6 +1,6 @@
 // نصُّ عمود «الملاحظات» لسطر الدفتر — واحدٌ للشاشة (`CashBook.tsx`) وللورقة المطبوعة (`CashBookPrint.tsx`)، فلا تختلفان.
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
-import { OUTFLOW_LABELS, INCOME_OTHER_LABEL } from "@shared/cash_book";
+import { OUTFLOW_LABELS, INCOME_OTHER_LABEL, distinctNoteParts } from "@shared/cash_book";
 
 export const cashCategoryLabel = (c: string | null) => (c ? EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c : "");
 
@@ -12,7 +12,8 @@ export function cashRowNote(r: { kind: string; source: string; note: string; cat
   if (r.kind === "hospital_ratio" || r.kind === "atabah_ratio") {
     return `${OUTFLOW_LABELS[r.kind as "dr_ratio"]}${r.note && r.kind === "atabah_ratio" ? ` — ${r.note}` : ""}`;
   }
-  if (r.source === "expense") return `${cashCategoryLabel(r.category)}${r.note ? ` — ${r.note}` : ""}`;
+  //  **والبابُ لا يتكرّر في وصفه** — «رواتب — رواتب» حين كُتب اسمُ الباب ملاحظةً (`distinctNoteParts`).
+  if (r.source === "expense") return distinctNoteParts([cashCategoryLabel(r.category), ...(r.note ? r.note.split(" — ") : [])]).join(" — ");
   return r.note;
 }
 

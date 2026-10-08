@@ -17,7 +17,7 @@ import { baghdadDayBounds } from "../storage";
 import { createJournalForExpense, reverseJournalForSource } from "../accounting/auto_journal";
 import {
   type CashBook, type CashEntryKind, type OutflowKind, BOOK_EXPENSE_SECTION, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY,
-  branchCashConfig, ratioAmount, dayTotals, ratioBox, type BranchCashConfig,
+  branchCashConfig, ratioAmount, dayTotals, ratioBox, distinctNoteParts, type BranchCashConfig,
 } from "@shared/cash_book";
 
 export class CashBookError extends Error {
@@ -195,7 +195,8 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
     const kind = expenseKind(x.category);
     outflow.push({
       source: "expense", id: x.id, column: "expense", kind, amount: x.amount,
-      note: [x.subcategory?.trim(), x.description?.trim(), x.notes?.trim()].filter(Boolean).join(" — "),
+      //  **بلا تكرار** — «أخرى» يُحفظ وصفُه في خانتين (`distinctNoteParts`).
+      note: distinctNoteParts([x.subcategory, x.description, x.notes]).join(" — "),
       category: x.category, unsectioned: twoBooks && book === "devices" && x.section !== "prosthetic",
       createdBy: x.createdBy && /^\d+$/.test(x.createdBy) ? Number(x.createdBy) : null,
       at: x.createdAt ? new Date(x.createdAt).toISOString() : null,

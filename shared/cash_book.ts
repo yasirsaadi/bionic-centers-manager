@@ -142,6 +142,25 @@ export function drBoxAccountLabel(branchName: string | null | undefined): string
  * بعد المجموع والمربّعين. **فما يتّسع في صفحةٍ واحدة يبقى فيها**، والأخيرةُ لا تخلو من سطرٍ مع المجموع.
  * يُرجع عددَ السطور في كلّ صفحة.
  */
+/**
+ * **نصُّ ملاحظة المصروف بلا تكرار** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «المصاريف في دفتر القاصة تُكتب مرّتين بلا داعٍ»): المصروفُ من باب «أخرى»
+ * يُحفظ وصفُه في خانتين (`subcategory` لتقارير المحاسبة و`description`) فكان السطرُ يقول «أخرى — قرطاسية — قرطاسية». فالأجزاءُ تُجمع
+ * **مميَّزةً** — ما يساوي جزءاً قبله (بعد تهذيب المسافات) لا يُكتب ثانيةً، ولا ما يساوي اسمَ الباب. قراءةٌ لا كتابة، فالقديمُ يُصلَح معه.
+ */
+export function distinctNoteParts(parts: readonly (string | null | undefined)[], exclude: readonly (string | null | undefined)[] = []): string[] {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  const seen = new Set(exclude.filter((x): x is string => typeof x === "string" && x.trim() !== "").map(norm));
+  const out: string[] = [];
+  for (const p of parts) {
+    if (typeof p !== "string") continue;
+    const t = norm(p);
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
 export function packSheetPages(heights: number[], full: number, last: number): number[] {
   const counts: number[] = [];
   let i = 0;

@@ -131,6 +131,28 @@
 .recharts-legend-wrapper .recharts-legend-item { margin-inline: 6px !important; }
 .recharts-legend-wrapper .recharts-legend-item svg { margin: 0 4px !important; }
 
+/* ══ **الشاشةُ العريضة تحت شريط الحالة — الآيباد** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «على الآيباد الحدودُ العليا لأيّ صفحةٍ مختفٍ نصفُها،
+   فاجعله ثابتاً يمكّن كلَّ صفحات التطبيق من التكيّف مع أيّ حجم شاشة»، §4.cw) ══
+   التطبيقُ المثبَّت بشريط حالةٍ شفّاف (`black-translucent`) يمتدّ تحت شريط الحالة. الهاتفُ كان يحسبه (رأسُه الثابت وحشوةُ الصفحة)،
+   والشاشةُ العريضة — وهي الآيباد — لا. فهنا **قاعدةٌ واحدة لكلّ الصفحات**: منطقةُ التمرير تبدأ تحت شريط الحالة وتنتهي عند حافّة
+   الشاشة، والشريطُ الجانبيّ كذلك — فلا يقع رأسُ صفحةٍ ولا عنصرٌ ثابتٌ أعلاها تحته. وفي المتصفّح المسافةُ صفرٌ فلا يتغيّر شيء. */
+@media (min-width: 768px) {
+  .app-main {
+    margin-top: env(safe-area-inset-top);
+    height: calc(100vh - env(safe-area-inset-top));
+  }
+  .app-sidebar-desktop {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+/* والنوافذُ على الشاشة العريضة في التطبيق المثبَّت بين المنطقتين الآمنتين كما على الهاتف — والمتصفّحُ العاديّ كما هو. */
+@media (min-width: 640px) and (display-mode: standalone) {
+  [data-app-dialog] {
+    top: calc(50% + (env(safe-area-inset-top) - env(safe-area-inset-bottom)) / 2);
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 2rem);
+  }
+}
+
 /* ══ **النوافذُ على الهاتف** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «زرّ الإغلاق في الأعلى في حافّة الهاتف» و«تحت جزيرة الهاتف») ══
    التطبيقُ يُثبَّت على الشاشة الرئيسية بشريط حالةٍ شفّاف (`black-translucent` و`viewport-fit=cover`)، فالصفحةُ تمتدّ تحت الجزيرة
    وشريطِ الإشارة. فالنافذةُ تُوسَّط **بين المنطقتين الآمنتين** لا في الشاشة كلّها، وارتفاعُها لا يتجاوز ما بينهما — فلا يقع رأسُها

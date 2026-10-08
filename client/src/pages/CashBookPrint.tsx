@@ -9,6 +9,7 @@
 // • وفي أسفل كلّ صفحة: متى طُبعت ومَن طبعها، ورقمُ الصفحة.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { usePrintAction } from "@/hooks/use-print-action";
 import { useBranchSession } from "@/components/BranchGate";
 import { cashRowNote, drBoxLineText } from "@/lib/cash_book_text";
 import { type CashBook as Book, CASH_BOOK_LABELS, dayNameOf, isYmd, isCashBook, packSheetPages } from "@shared/cash_book";
@@ -27,8 +28,9 @@ type Line = { income?: number; expense?: number; transfer?: number; note: string
 
 /** سطورُ الورقة الفارغة (للطوارئ) — تتّسع لها صفحةٌ واحدة مع المربّعين. */
 const BLANK_ROWS = 19;
-/** هامشُ أمانٍ تحت الحساب (مم) — فرقُ تقريب المتصفّح والطابعة لا يدفع سطراً إلى ورقةٍ جديدة. */
-const SAFETY_MM = 4;
+/** هامشُ أمانٍ تحت الحساب (مم) — فرقُ تقريب المتصفّح والطابعة، **وهامشُ سفاري والطابعة إن كان أكبر من هوامش الورقة**، لا يدفع سطراً
+ *  إلى ورقةٍ جديدة (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «حين الطباعة يأخذ الأمرُ ورقةً ثانيةً فارغة يطبعها»، §4.cw). */
+const SAFETY_MM = 10;
 const MAX_DAYS = 31;
 
 const fmt = (n: number | undefined) => (n === undefined ? "" : n.toLocaleString("en-US"));
@@ -91,19 +93,26 @@ export default function CashBookPrint() {
     })().catch((e) => setError(e?.message ?? "تعذّر التحميل"));
   }, []);
 
-  //  نافذةُ الطباعة بعد أن يكتمل الرسمُ والشعار — ومنها «حفظ كملف PDF».
+  //  **اكتملت الأوراق** حين تُقطَّع كلُّ ورقةٍ بقياسها — لا تُفتح نافذةُ الطباعة ولا يُصنع الملفُّ وورقةٌ ما زالت تُقاس.
+  const [paged, setPaged] = useState(false);
   useEffect(() => {
     if (!sheets) return;
-    //  وبعد أن تُقطَّع كلُّ ورقةٍ بقياسها — لا تُفتح النافذةُ وورقةٌ ما زالت تُقاس.
     let tries = 0;
     let t: ReturnType<typeof setTimeout>;
     const go = () => {
       if (document.querySelector(".cb-measure") && tries++ < 50) { t = setTimeout(go, 100); return; }
-      window.print();
+      setPaged(true);
     };
     t = setTimeout(go, 600);
     return () => clearTimeout(t);
   }, [sheets]);
+  //  نافذةُ الطباعة وحدَها حين تكتمل — ومنها «حفظ كملف PDF»؛ وفي تطبيق الشاشة الرئيسية بآيفون وآيباد ملفٌّ ولوحُ مشاركة (§4.cw).
+  const printer = usePrintAction({
+    ready: paged,
+    collect: () => Array.from(document.querySelectorAll<HTMLElement>('.cb-print [data-testid="cb-print-page"]')),
+    fileName: `cash-book-${branchId}-${book}-${from || "blank"}${to && to !== from ? `-${to}` : ""}.pdf`,
+    autoPrint: true,
+  });
 
   const by = session?.displayName ?? "";
   const stamp = `طُبعت يوم ${baghdadStamp(printedAt).replace(",", " — الساعة")} بواسطة ${by}`;
@@ -116,7 +125,9 @@ export default function CashBookPrint() {
     <div className="cb-print" dir="rtl" lang="ar">
       <style>{PRINT_CSS}</style>
       <div className="cb-toolbar">
-        <button type="button" onClick={() => window.print()}>طباعة / حفظ كملف PDF</button>
+        <button type="button" onClick={printer.run} disabled={printer.disabled} data-testid="cb-print-now">
+          {printer.pdfMode ? printer.label : "طباعة / حفظ كملف PDF"}
+        </button>
         <span>{blank ? "ورقة فارغة — لانقطاع الإنترنت فقط" : `${sheets.length} ${sheets.length === 1 ? "ورقة" : "أوراق"}`}</span>
       </div>
       {blank
@@ -281,10 +292,10 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
 
 //  مقاساتُ الورقة المعتمدة نفسُها (A4، ٢١٠×٢٩٧ مم) — من تصميم الورقة الذي وافق عليه المالك.
 const PRINT_CSS = `
-@page { size: A4 portrait; margin: 0; }
+@page { size: A4 portrait; margin: 7mm 10mm 6mm; }
 .cb-print { --ink:#1f2a2e; --muted:#5b6669; --rule:#b9c4c6; --rule-strong:#4c5b5f; --in:#1e6b52; --out:#8a3b2a; --dr:#2d4f8a;
   --navy:#1d2b55; --copper:#b07040; --tint-dr:#e8eef8; --tint-out:#f7ece8; --tint-in:#e7f2ec;
-  background:#e9ecef; min-height:100vh; padding:12px 0 40px; color:var(--ink); font-size:14px; }
+  background:#e9ecef; min-height:100vh; padding:calc(env(safe-area-inset-top) + 12px) 0 40px; color:var(--ink); font-size:14px; }
 .cb-toolbar { display:flex; gap:12px; align-items:center; justify-content:center; margin-bottom:12px; font-size:14px; }
 .cb-toolbar button { background:var(--navy); color:#fff; border:0; border-radius:6px; padding:8px 18px; font-weight:700; cursor:pointer; }
 .cb-print .a4 { width:210mm; height:297mm; box-sizing:border-box; padding:7mm 10mm 6mm; margin:0 auto 12px; background:#fff;
@@ -336,7 +347,10 @@ const PRINT_CSS = `
   html, body, #root { margin:0 !important; padding:0 !important; height:auto !important; min-height:0 !important; }
   .cb-print { min-height:0; }
   .cb-measure { display:none; }
-  .cb-print .a4 { box-shadow:none; margin:0; break-after:page; break-inside:avoid; }
+  /*  **بارتفاع محتواها لا بطول الورقة** — ورقةٌ بطول A4 تماماً تفيض ملّيمتراتٍ حين تضيف الطابعةُ أو سفاري هامشاً، فتخرج ورقةٌ ثانيةٌ
+      فارغة. والهوامشُ في @page (هي حشوةُ الورقة على الشاشة نفسُها)، والفاصلُ المرن لا مكانَ له. */
+  .cb-print .a4 { box-shadow:none; margin:0; padding:0; height:auto; overflow:visible; break-after:page; break-inside:avoid; }
+  .cb-print .grow { display:none; }
   .cb-print .a4:last-of-type { break-after:auto; }
 }
 `;

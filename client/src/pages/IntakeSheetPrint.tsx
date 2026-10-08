@@ -3,12 +3,13 @@
 // «حين أضغط طباعة بعد الحسم يجب أن تظهر الورقةُ تماماً بعد أن اكتملت معلوماتُها، وحين أطبعها تكون نفسَ ورقة المريض … ليحفظها موظّفُ
 // الاستعلامات في سجلّ المريض — لأننا سنترك الورق». فالصفحةُ ورقةُ A4 وحدها بلا إطار التطبيق (كورقة الدفتر، §4.ca)، بالمكوّن نفسِه
 // الذي يعرضها في صفحة المريض (`IntakeSheetView`)، وفي أسفلها متى طُبعت ومَن طبعها. وتفتح نافذةَ الطباعة وحدَها حين تكتمل.
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Loader2, Printer } from "lucide-react";
 import { navigate } from "wouter/use-browser-location";
 import { Button } from "@/components/ui/button";
 import { useBranchSession } from "@/components/BranchGate";
+import { usePrintAction } from "@/hooks/use-print-action";
 import { IntakeSheetView } from "@/components/intake/IntakeSheetView";
 import type { IntakeSheetsResponse } from "@shared/intake_sheet_view";
 
@@ -23,8 +24,15 @@ export default function IntakeSheetPrint() {
     queryKey: [`/api/patients/${patientId}/intake-sheets`], enabled: patientId > 0,
   });
   const sheet = data?.sheets.find((s) => s.episodeId === episodeId) ?? null;
-  const printed = useRef(false);
   const printedAt = useMemo(() => stamp(new Date()), [data]);
+  //  **وفي تطبيق الشاشة الرئيسية بآيفون وآيباد ملفُّ PDF ولوحُ المشاركة** — الطباعةُ هناك لا تعمل (§4.cw).
+  const printer = usePrintAction({
+    ready: Boolean(sheet),
+    collect: () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sheet-print-page"]')),
+    fileName: `${data?.patient.patientCode ?? patientId}-sheet-${sheet?.sequenceNumber ?? episodeId}.pdf`,
+    autoPrint: true,
+    fitOnePage: true,
+  });
 
   /** فُتحت بتبويبٍ من الملفّ ⟵ يُغلق؛ وفي مكانها (الهاتف) ⟵ رجوعٌ في السجلّ؛ ولا سجلّ (رابطٌ مباشر) ⟵ ملفُّ المريض. */
   const goBack = () => {
@@ -33,14 +41,6 @@ export default function IntakeSheetPrint() {
     navigate(patientId > 0 ? `/patients/${patientId}` : "/");
   };
 
-  useEffect(() => {
-    if (!sheet || printed.current) return;
-    printed.current = true;
-    //  تُنتظَر الصورُ (الشعار) قبل نافذة الطباعة — وإلّا خرجت الورقةُ بلا شعار.
-    const imgs = Array.from(document.images);
-    Promise.all(imgs.map((im) => (im.complete ? Promise.resolve() : new Promise((r) => { im.onload = im.onerror = () => r(null); }))))
-      .then(() => setTimeout(() => window.print(), 300));
-  }, [sheet]);
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-100 print:bg-white">
@@ -60,8 +60,8 @@ export default function IntakeSheetPrint() {
         <Button size="sm" variant="outline" className="h-9 gap-1" onClick={goBack} data-testid="button-print-back">
           <ArrowRight className="w-4 h-4" /> رجوع
         </Button>
-        <Button size="sm" className="h-9 gap-1" onClick={() => window.print()} disabled={!sheet} data-testid="button-print-now">
-          <Printer className="w-4 h-4" /> طباعة
+        <Button size="sm" className="h-9 gap-1" onClick={printer.run} disabled={printer.disabled} data-testid="button-print-now">
+          {printer.preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} {printer.label}
         </Button>
       </div>
       {isLoading && <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}
