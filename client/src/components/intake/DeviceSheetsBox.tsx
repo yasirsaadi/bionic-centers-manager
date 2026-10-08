@@ -29,22 +29,33 @@ export function useIntakeSheets(patientId: number, enabled = true) {
  * على الحاسوب في تبويبٍ جديد (ملفُّ المريض باقٍ خلفه). **وعلى الهاتف أو التطبيق المثبَّت في النافذة نفسِها**: التبويبُ الجديد هناك
  * يُفتح داخل التطبيق بلا شريط متصفّحٍ ولا رجوع (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — فتُفتح في مكانها و«رجوع» فيها يعيد إلى الملفّ.
  */
-export function openIntakeSheetPrint(patientId: number, episodeId: number) {
-  const url = `/intake-sheet/print?patient=${patientId}&episode=${episodeId}`;
+function openPrintPage(url: string) {
   const mq = (q: string) => typeof window.matchMedia === "function" && window.matchMedia(q).matches;
   const inPlace = mq("(display-mode: standalone)") || (navigator as any).standalone === true || mq("(pointer: coarse)") || mq("(max-width: 767px)");
   if (inPlace) navigate(url);
   else window.open(url, "_blank");
 }
 
+export function openIntakeSheetPrint(patientId: number, episodeId: number) {
+  openPrintPage(`/intake-sheet/print?patient=${patientId}&episode=${episodeId}`);
+}
+
+/** **«طباعة السجلّ الكامل»** (§4.cv) — بالقاعدة نفسِها. */
+export function openPatientRecordPrint(patientId: number) {
+  openPrintPage(`/patient-record/print?patient=${patientId}`);
+}
+
 export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; caseType: string }) {
   const { data } = useIntakeSheets(patientId);
-  const [open, setOpen] = useState<IntakeSheet | null>(null);
+  //  **الورقةُ المفتوحة برقم جهازها لا بصورتها** (§4.cv) — فإن تحرّكت بياناتُها وهي مفتوحة (دفعةٌ أو زيارةٌ أو تصحيح) قُرئت من الاستعلام
+  //  المحدَّث، لا من لقطةٍ أُخذت لحظةَ الضغط.
+  const [openId, setOpenId] = useState<number | null>(null);
   //  ══ **بيعُ الأجزاء الجاهزة «بلا معاينة» يُصحَّح من هنا** (§4.cu) — لا أمرَ تصنيعٍ يحمل زرَّه. والحجبُ عرضٌ لا إذن: الخادمُ يفحص. ══
   const session = useBranchSession();
   const mayReverse = Boolean((session as any)?.isAdmin) || hasRole(session as any, "branch_manager");
   const [reverseEpisodeId, setReverseEpisodeId] = useState<number | null>(null);
   const sheets = (data?.sheets ?? []).filter((s) => s.serviceType === caseType);
+  const open: IntakeSheet | null = sheets.find((s) => s.episodeId === openId) ?? null;
   if (!data || sheets.length === 0) return null;
 
   return (
@@ -66,7 +77,7 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
                   تصحيح / إلغاء العملية
                 </Button>
               )}
-              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpen(s)}
+              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpenId(s.episodeId)}
                 data-testid={`button-view-sheet-${s.episodeId}`}>
                 <FileText className="w-3.5 h-3.5" /> عرض الاستمارة
               </Button>
@@ -97,11 +108,11 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
 
       {/*  **على الهاتف تملأ الشاشة، ورأسُها ثابتٌ تحت الجزيرة بزرّين ظاهرين: «رجوع» و«طباعة»** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «لا يوجد
           زرّ عودة، والإغلاقُ في الأعلى في حافّة الهاتف») — بدل «X» صغيرةٍ في الزاوية. وعلى الحاسوب الرأسُ نفسُه أعلى النافذة. */}
-      <Dialog open={open !== null} onOpenChange={(o) => { if (!o) setOpen(null); }}>
+      <Dialog open={open !== null} onOpenChange={(o) => { if (!o) setOpenId(null); }}>
         <DialogContent mobileFullScreen hideClose className="grid-cols-1 sm:max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden gap-0 p-0 sm:p-0" dir="rtl"
           data-testid="dialog-intake-sheet">
           <DialogHeader className="sticky top-0 z-10 flex-row items-center justify-between gap-2 space-y-0 border-b bg-white px-3 pb-2 pt-[calc(env(safe-area-inset-top)+0.5rem)] sm:px-5 sm:pt-3">
-            <Button type="button" variant="outline" size="sm" className="h-9 gap-1" onClick={() => setOpen(null)} data-testid="button-sheet-back">
+            <Button type="button" variant="outline" size="sm" className="h-9 gap-1" onClick={() => setOpenId(null)} data-testid="button-sheet-back">
               <ArrowRight className="w-4 h-4" /> رجوع
             </Button>
             <DialogTitle className="text-base">استمارة المراجع</DialogTitle>

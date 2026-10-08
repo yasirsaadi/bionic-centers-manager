@@ -3,7 +3,8 @@
 // تجمع لكلّ جهازٍ (حلقةٍ غير ملغاة) ما في ورقته: حقولَ الاستعلامات من ملفّ المريض، و«المعاينة الطبية» من معاينة **ذلك الجهاز**
 // (لا آخرِ معاينةٍ للمريض)، وخاناتِ الجهاز مدموجةً (`mergeDeviceSpecs`: الطبيبُ أوّلاً وما ملأه الاستعلاماتُ يسدّ الفراغ)، والمبلغَ من
 // قرار الحسم (النهائيّ `agreed_cost`، والأصليّ ونوعُه من المتابعة أو من شروط بيع الجزء)، والمدفوعَ صافياً من دفعات الجهاز
-// (والمردودُ صفٌّ سالب فيها — `recordRefundPaymentTx`)، والمراجعاتِ من سجلّ الزيارات نفسِه (`visits.device_episode_id`).
+// (والمردودُ صفٌّ سالب فيها — `recordRefundPaymentTx`)، والمراجعاتِ من سجلّ الزيارات نفسِه (`visits.device_episode_id`) — ومعها
+// زيارتا «طلب معاينة طبية» و«عاد للشراء» بلحظة كتابتهما (§4.cv).
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { activeExamSql } from "../medical/active_exam";
@@ -13,6 +14,8 @@ import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { storedSaleLines } from "@shared/part_sale";
 import { buildAmputationSite } from "@shared/case_fields";
 import { examSheetTextOf } from "@shared/exam_sheet";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
+import { attachPaymentsToVisits } from "@shared/visit_payments";
 import { baghdadDayOf, type IntakeSheet, type IntakeSheetPatient, type IntakeSheetsResponse, type IntakeSheetVisit, type SheetServiceType } from "@shared/intake_sheet_view";
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -39,6 +42,7 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
     hadPriorCenterHistory: typeof p.had_prior_center_history === "boolean" ? p.had_prior_center_history : null,
     age: str(p.age), weight: str(p.weight), height: str(p.height), injuryCause: str(p.injury_cause),
     injuryDate: str(p.injury_date), injuryDateStatus: str(p.injury_date_status), generalNotes: str(p.general_notes),
+    branchName: str(p.branch_name),
   };
 
   const er = await db.execute(sql`
@@ -73,44 +77,69 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
   const ids = rows.map((r) => Number(r.id));
   const visitsBy = new Map<number, IntakeSheet["visits"]>();
   if (ids.length) {
+    const idsArr = `{${ids.join(",")}}`;
+    //  ══ **زياراتُ الجهاز — ومنها اثنتان لا تحملان رقمَه** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨، §4.cv) ══
+    //  «طلب معاينة طبية» و«عاد للشراء» تُكتبان بلا ربطٍ بالحلقة **عمداً**: حلقةٌ تشير إليها زيارةٌ تصير تاريخاً لا يُسحَب
+    //  (`classifyCaseDisposal`)، فيبقى الطلبُ الخاطئ قابلاً للسحب. لكنّ كلتيهما تُكتب **في معاملة الحلقة نفسِها**، و`now()` في
+    //  المعاملة لحظةٌ واحدة — فزيارةُ الطلب لحظتُها `created_at` الحلقة، وزيارةُ «عاد للشراء» لحظتُها `created_at` طلب المراجعة
+    //  الذي فتحته على الحلقة. فالمطابقةُ تامّةٌ بلا تخمين، ولا صفَّ يُكتب ولا ترحيل — والقديمُ يظهر كالجديد.
     const vr = await db.execute(sql`
-      SELECT id, device_episode_id, visit_date, details, notes FROM visits
-       WHERE device_episode_id = ANY(${`{${ids.join(",")}}`}::int[]) AND deleted_at IS NULL
-       ORDER BY visit_date, id
+      SELECT v.id, x.episode_id AS device_episode_id, v.visit_date, v.details, v.notes, v.case_id
+        FROM visits v
+        JOIN LATERAL (
+          SELECT v.device_episode_id AS episode_id WHERE v.device_episode_id = ANY(${idsArr}::int[])
+          UNION ALL
+          SELECT e.id FROM patient_device_episodes e
+           WHERE v.device_episode_id IS NULL AND v.details = ${ATTENDANCE_REASONS.examRequest}
+             AND e.id = ANY(${idsArr}::int[]) AND e.patient_id = v.patient_id AND e.created_at::timestamp = v.visit_date
+          UNION ALL
+          SELECT r.device_episode_id FROM medical_review_requests r
+           WHERE v.device_episode_id IS NULL AND v.details = ${ATTENDANCE_REASONS.returnToPurchase}
+             AND r.review_kind = 'return_to_purchase' AND r.patient_id = v.patient_id
+             AND r.device_episode_id = ANY(${idsArr}::int[]) AND r.created_at::timestamp = v.visit_date
+        ) x ON TRUE
+       WHERE v.patient_id = ${patientId} AND v.deleted_at IS NULL
+       ORDER BY v.visit_date, v.id
     `);
     for (const v of (vr.rows ?? []) as Record<string, any>[]) {
       const list = visitsBy.get(Number(v.device_episode_id)) ?? [];
       list.push({ id: Number(v.id), kind: "visit", date: iso(v.visit_date), details: str(v.details), notes: str(v.notes), paid: null });
       visitsBy.set(Number(v.device_episode_id), list);
     }
-    //  ══ **ما دُفع في يوم كلّ مراجعة** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — لمن يرى المال وحده ══
+    //  ══ **ما دُفع في كلّ مراجعة** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — لمن يرى المال وحده ══
     //  دفعةُ «إتمام البيع» لا تحمل رقمَ زيارتها (`payments.visit_id` فارغ) لكنها وزيارةُ الشراء تُكتبان في اللحظة نفسها على الجهاز
-    //  نفسِه — فالربطُ **بالجهاز ويوم بغداد**: صافي دفعات اليوم على أوّل زيارةٍ فيه، ويومٌ بلا زيارةٍ سطرُ «دفعة» مستقلّ.
+    //  نفسِه — فالربطُ بالقاعدة الواحدة (`attachPaymentsToVisits`): رقمُ الزيارة إن حُمل، وإلّا الأقربُ وقتاً من زيارات الجهاز في
+    //  يوم بغداد نفسِه؛ ويومٌ بلا زيارةٍ سطرُ «دفعة» مستقلّ.
     if (opts.withMoney) {
       const pr2 = await db.execute(sql`
-        SELECT id, device_episode_id, amount, date, notes FROM payments
-         WHERE device_episode_id = ANY(${`{${ids.join(",")}}`}::int[])
+        SELECT id, device_episode_id, visit_id, amount, date, notes FROM payments
+         WHERE device_episode_id = ANY(${idsArr}::int[])
          ORDER BY date, id
       `);
-      const byDay = new Map<number, Map<string, { sum: number; firstId: number; at: string | null; notes: string[] }>>();
+      const paysBy = new Map<number, { id: number; amount: number; date: string | null; visitId: number | null; deviceEpisodeId: number; notes: string | null }[]>();
       for (const p0 of (pr2.rows ?? []) as Record<string, any>[]) {
         const ep = Number(p0.device_episode_id);
-        const at = iso(p0.date);
-        const day = baghdadDayOf(at) ?? "—";
-        const days = byDay.get(ep) ?? new Map();
-        const cur = days.get(day) ?? { sum: 0, firstId: Number(p0.id), at, notes: [] };
-        cur.sum += Number(p0.amount ?? 0);
-        const note = str(p0.notes);
-        if (note && !cur.notes.includes(note)) cur.notes.push(note);
-        days.set(day, cur);
-        byDay.set(ep, days);
+        const list = paysBy.get(ep) ?? [];
+        list.push({
+          id: Number(p0.id), amount: Number(p0.amount ?? 0), date: iso(p0.date), deviceEpisodeId: ep,
+          visitId: p0.visit_id === null || p0.visit_id === undefined ? null : Number(p0.visit_id), notes: str(p0.notes),
+        });
+        paysBy.set(ep, list);
       }
-      for (const [ep, days] of Array.from(byDay.entries())) {
+      for (const [ep, pays] of Array.from(paysBy.entries())) {
         const list: IntakeSheetVisit[] = visitsBy.get(ep) ?? [];
+        const { byVisit, unattached } = attachPaymentsToVisits(list.map((v) => ({ id: v.id, date: v.date, deviceEpisodeId: ep })), pays);
         for (const v of list) {
-          const day = baghdadDayOf(v.date);
-          const hit = day ? days.get(day) : undefined;
-          if (hit) { v.paid = hit.sum; days.delete(day!); }
+          const hit = byVisit.get(v.id);
+          if (hit) v.paid = hit.sum;
+        }
+        const days = new Map<string, { sum: number; firstId: number; at: string | null; notes: string[] }>();
+        for (const p0 of unattached) {
+          const day = baghdadDayOf(p0.date) ?? "—";
+          const cur = days.get(day) ?? { sum: 0, firstId: p0.id, at: p0.date, notes: [] };
+          cur.sum += p0.amount;
+          if (p0.notes && !cur.notes.includes(p0.notes)) cur.notes.push(p0.notes);
+          days.set(day, cur);
         }
         for (const d of Array.from(days.values())) {
           list.push({ id: -d.firstId, kind: "payment", date: d.at, details: "دفعة", notes: d.notes.join(" · ") || null, paid: d.sum });

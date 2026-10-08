@@ -1,7 +1,8 @@
 import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
 import { injuryDateDisplay } from "@shared/intake_sheet";
-import { freeDeviceRows } from "@shared/intake_sheet_view";
-import { useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
+import { freeDeviceRows, sheetVisitPaidLine } from "@shared/intake_sheet_view";
+import { attachPaymentsToVisits, visitDevicesFromSheets } from "@shared/visit_payments";
+import { openPatientRecordPrint, useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
 import { compressImageForUpload } from "@/lib/compress_image";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -70,6 +71,7 @@ import {
   Download,
   Calendar,
   FileDown,
+  Printer,
   ClipboardList,
   Pencil,
   Trash2,
@@ -725,6 +727,22 @@ export default function PatientDetails() {
   const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
   const freeRows = freeDeviceRows(sheetsForPayments?.sheets ?? [])
     .filter((r) => showAll || patientCasesList.find((c) => c.id === selectedCaseId)?.caseType === r.serviceType);
+  //  ══ **ما دُفع في كلّ زيارة — سطرٌ خفيفٌ تحتها** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨، §4.cv): «عاد واشترى القالب، وتحتها خفيفاً أنه دفع
+  //  مليوناً». بالقاعدة الواحدة التي تقرؤها ورقةُ الجهاز والطباعة (`attachPaymentsToVisits`)، ولمن تصله الدفعاتُ وحده. والدفعةُ في
+  //  يومٍ بلا زيارة تبقى في «الدفعات» كما هي — هذا سجلُّ زيارات. ══
+  const visitDeviceOf = visitDevicesFromSheets(sheetsForPayments?.sheets ?? []);
+  const visitPaid = patient.payments
+    ? attachPaymentsToVisits(
+        caseVisits.map((v: any) => ({
+          id: v.id, date: v.visitDate ? String(v.visitDate) : null,
+          deviceEpisodeId: v.deviceEpisodeId ?? visitDeviceOf.get(v.id) ?? null, caseId: v.caseId ?? null,
+        })),
+        casePayments.map((p: any) => ({
+          id: p.id, amount: Number(p.amount ?? 0), date: p.date ? String(p.date) : null,
+          visitId: p.visitId ?? null, deviceEpisodeId: p.deviceEpisodeId ?? null, caseId: p.caseId ?? null,
+        })),
+      ).byVisit
+    : new Map<number, { sum: number }>();
   //  ══ **عدّادُ الجلسات مصدرٌ واحد في الصفحة كلِّها** ══════════════════
   //  `patient.payments` تغيب عمّن لا يملك `canViewPayments`، فكلُّ حسابٍ
   //  محلّيٍّ من صفوفها يقرأ **صفراً** لذلك المستخدم: لا رايةَ مجّانيّةٍ ولا
@@ -884,6 +902,11 @@ export default function PatientDetails() {
           </Dialog>
         )}
         
+        {/*  **«طباعة السجلّ الكامل»** (§4.cv): بياناتُه وأجهزتُه وكلُّ زياراته وما دُفع فيها — ورقةٌ يأخذها المريضُ مرجعاً. */}
+        <Button variant="outline" className="gap-2" onClick={() => openPatientRecordPrint(patient.id)} data-testid="button-print-full-record">
+          <Printer className="w-4 h-4" />
+          طباعة السجلّ الكامل
+        </Button>
         <Button 
           variant="outline" 
           className="gap-2" 
@@ -1443,6 +1466,12 @@ export default function PatientDetails() {
                             {visit.details || visit.notes || "-"}
                             {visit.details && visit.notes && (
                               <div className="text-xs text-slate-400 mt-1" dir="auto" style={{ unicodeBidi: "plaintext" }}>{visit.notes}</div>
+                            )}
+                            {sheetVisitPaidLine({ paid: visitPaid.get(visit.id)?.sum ?? null }) && (
+                              <div className={`text-xs mt-0.5 ${(visitPaid.get(visit.id)?.sum ?? 0) < 0 ? "text-red-600/80" : "text-emerald-700/80"}`}
+                                data-testid={`visit-paid-${visit.id}`}>
+                                {sheetVisitPaidLine({ paid: visitPaid.get(visit.id)?.sum ?? null })}
+                              </div>
                             )}
                             {patientCasesList.length > 1 && (
                               (permissions.canEditVisits || isAdmin) ? (

@@ -35,6 +35,7 @@ const CashBook = lazy(() => import("@/pages/CashBook"));
 const DrBox = lazy(() => import("@/pages/DrBox"));
 const CashBookPrint = lazy(() => import("@/pages/CashBookPrint"));
 const IntakeSheetPrint = lazy(() => import("@/pages/IntakeSheetPrint"));
+const PatientRecordPrint = lazy(() => import("@/pages/PatientRecordPrint"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
@@ -244,6 +245,17 @@ function Router() {
       <BranchGate>
         <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
           <IntakeSheetPrint />
+        </Suspense>
+      </BranchGate>
+    );
+  }
+
+  //  و«السجلُّ الكامل للمريض» للطباعة (§4.cv) — الورقةُ وحدها كذلك.
+  if (location.startsWith("/patient-record/print")) {
+    return (
+      <BranchGate>
+        <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+          <PatientRecordPrint />
         </Suspense>
       </BranchGate>
     );
