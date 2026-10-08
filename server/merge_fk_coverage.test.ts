@@ -51,6 +51,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "physio_plans.patient_id": "repoint إلى الملف الهدف — خططُ العلاج الطبيعي (§4.cm) وأجهزتُها ومنفّذوها تتبعها",
   "physio_plan_sessions.patient_id": "repoint إلى الملف الهدف — جلساتُ تنفيذ الخطّة (§4.cn) تتبع خطّتَها وصاحبَها، وبنودُها تتبع الجلسة",
   "physio_plan_suggestions.patient_id": "repoint إلى الملف الهدف — اقتراحاتُ «اقترح خطّة» (§4.co) تتبع صاحبَها وخطّتَها",
+  "physio_assessments.patient_id": "repoint إلى الملف الهدف — تقييماتُ الخطط (§4.cp) تتبع صاحبَها وخطّتَها",
   "survey_responses.patient_id": "repoint إلى الملف الهدف",
   "journal_lines.patient_id": "repoint إلى الملف الهدف (تاريخ محاسبي)",
   "cost_entries.patient_id": "repoint — دفتر الكلف المؤرَّخ يتبع المريض",

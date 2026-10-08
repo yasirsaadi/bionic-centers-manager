@@ -21,6 +21,7 @@ import {
   isProtocolCategory, normalizeReferences, statusAfterEdit, type ProtocolStatus,
 } from "@shared/physio_protocols";
 import * as store from "./store";
+import { canApproveMeasures, canEditMeasures, parseMeasures } from "@shared/physio_assessments";
 
 const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: store.IMAGE_MAX_BYTES, files: 1 } });
 
@@ -111,7 +112,8 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
     try {
       const p = await store.getProtocol(id);
       if (!p || (p.isArchived && !canEditProtocols(s))) return res.status(404).json({ error: "البروتوكول غير موجود" });
-      res.json({ ...p, canEdit: canEditProtocols(s), canApprove: canApproveProtocols(s) });
+      res.json({ ...p, canEdit: canEditProtocols(s), canApprove: canApproveProtocols(s),
+        canEditMeasures: canEditMeasures(s), canApproveMeasures: canApproveMeasures(s) });
     } catch (e) { fail(res, e); }
   });
 
@@ -170,6 +172,36 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       const row = await store.approveProtocol(id, actor(s));
       await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "approve", newValues: { status: "approved", approvedByName: row.approvedByName } });
       res.json(row);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  ══ مقاييسُ البروتوكول (§4.cp) — يعدّلها كاتبو البروتوكولات، ويعتمدها المسؤولُ والمشرفُ العام **مستقلّةً عن البروتوكول** ══════════
+  app.put("/api/physio/protocols/:id/measures", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canEditMeasures(s)) return res.status(403).json({ error: "يعدّل المقاييسَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    const list = parseMeasures(req.body?.measures);
+    if (typeof list === "string") return res.status(400).json({ error: list });
+    try {
+      const r = await store.setMeasures(id, list, canApproveMeasures(s), actor(s));
+      await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "update_measures",
+        oldValues: r.before, newValues: { measuresStatus: r.after.measuresStatus, measures: list },
+        notes: r.demoted ? "عُدّلت مقاييسُ معتمَدة فعادت مسوّدةً بانتظار الاعتماد" : undefined });
+      res.json({ measuresStatus: r.after.measuresStatus, measures: list, demoted: r.demoted });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/physio/protocols/:id/measures/approve", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canApproveMeasures(s)) return res.status(403).json({ error: "يعتمد المقاييسَ المشرفُ العام أو المسؤول" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const row = await store.approveMeasures(id, actor(s));
+      await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "approve_measures",
+        newValues: { measuresStatus: "approved", measuresApprovedByName: row.measuresApprovedByName } });
+      res.json({ measuresStatus: row.measuresStatus, measuresApprovedByName: row.measuresApprovedByName });
     } catch (e) { fail(res, e); }
   });
 

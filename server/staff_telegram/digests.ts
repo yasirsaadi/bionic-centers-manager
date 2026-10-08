@@ -10,6 +10,8 @@ import { eligibleStaffEvents } from "@shared/staff_notifications";
 import { activeExamSql } from "../medical/active_exam";
 import { computeActiveReminders } from "../followups/service";
 import { enqueueStaffEvent } from "./outbox";
+import { dueList } from "../physio_plans/assessments";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { staffBotConfig } from "./config";
 
 interface Holder { userId: number; isAdmin: boolean; branches: number[] }
@@ -148,6 +150,25 @@ export async function buildEveningSummaries(): Promise<number> {
   return n;
 }
 
+/**
+ * **خططُ العلاج الطبيعي المستحقّة التقييم** (§4.cp) — لكلّ كاتب خططٍ اختار هذا النوعَ خططُه هو: أوّليٌّ لم يُجرَ، أو حلّ موعدُ الدوريّ أو الختاميّ.
+ * تنبيهٌ لا قيد — الجلساتُ لا تتوقّف.
+ */
+export async function buildPhysioAssessmentDigests(): Promise<number> {
+  let n = 0;
+  const today = baghdadTodayYmd();
+  for (const h of await holdersOf("physio_assessment_due")) {
+    const rows = await dueList({ branchIds: null, createdBy: h.userId, today });
+    if (!rows.length) continue;
+    const kindOf = (r: (typeof rows)[number]) => (r.due.state === "baseline" ? "تقييمٌ أوّليّ" : r.due.kind === "final" ? "تقييمٌ ختاميّ" : "تقييمٌ دوريّ");
+    const lines = rows.slice(0, 30).map((r) => `• ${who(r.patientName, r.patientCode)} — ${r.titleAr}: ${kindOf(r)}${r.due.overdueDays ? ` (متأخّرٌ ${r.due.overdueDays} يوماً)` : ""}`);
+    const text = `🩺 صباح الخير — خططٌ مستحقّة التقييم (${rows.length}):\n${lines.join("\n")}${rows.length > 30 ? `\n… و${rows.length - 30} غيرها` : ""}`;
+    await enqueueStaffEvent(null, { event: "physio_assessment_due", targetUserIds: [h.userId], text, linkPath: "/physio/plans?tab=due" });
+    n++;
+  }
+  return n;
+}
+
 /** حجزٌ يوميٌّ ذرّيّ — نسخةُ `claimDailyJob` في `backup.ts` بحرفها. */
 async function claimToday(key: string): Promise<boolean> {
   const r = await db.execute(sql`
@@ -175,6 +196,7 @@ export function initStaffDigests(): void {
   cron.schedule("0 8 * * *", () => {
     void runOnce("staff_digest_expert_due", buildExpertDueDigests);
     void runOnce("staff_digest_followups", buildFollowupDigests);
+    void runOnce("staff_digest_physio_assessment", buildPhysioAssessmentDigests);
   }, { timezone: "Asia/Baghdad" });
   cron.schedule("0 21 * * *", () => { void runOnce("staff_digest_evening", buildEveningSummaries); }, { timezone: "Asia/Baghdad" });
 }

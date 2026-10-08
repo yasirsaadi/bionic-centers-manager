@@ -21,10 +21,12 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ChangePlanTypeDialog, DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
 import { DeviationsList, ExecuteSessionDialog, PlanSessionsHistory } from "@/components/physio/ExecuteSession";
+import { DueAssessmentsList } from "@/components/physio/PlanProgress";
 import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSuggestion";
+import { PlanProgress } from "@/components/physio/PlanProgress";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
-  PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom, canWritePlans,
+  PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom, canWritePlans, isPlanClosed,
   type PlanStatus,
 } from "@shared/physio_plans";
 
@@ -45,6 +47,7 @@ interface Plan {
   devices: PlanDevice[]; assignees: { userId: number; name: string; role: string }[];
   canWrite: boolean; canApprove: boolean; canDelete: boolean; canExecute?: boolean; canCancelSessions?: boolean;
   aiSuggestion?: Suggestion | null;
+  graduatedAt?: string | null; graduatedByName?: string | null;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -105,13 +108,21 @@ export default function PhysioPlanPage() {
   const [editing, setEditing] = useState(false);
   useEffect(() => {
     if (q.data && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("edit") === "1"
-      && q.data.canWrite && q.data.status !== "stopped") setEditing(true);
+      && q.data.canWrite && !isPlanClosed(q.data.status)) setEditing(true);
   }, [q.data?.id, location]);
   const [ask, setAsk] = useState<null | "return" | "stop">(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  //  «طباعة التقدّم» (§4.cp): تُخفى أقسامُ الخطّة في الطباعة ويظهر رأسُها وقسمُ التقدّم وحده، ثمّ تعود.
+  const [printMode, setPrintMode] = useState<"plan" | "progress">("plan");
+  useEffect(() => {
+    const back = () => setPrintMode("plan");
+    window.addEventListener("afterprint", back);
+    return () => window.removeEventListener("afterprint", back);
+  }, []);
+  const printProgress = () => { setPrintMode("progress"); setTimeout(() => window.print(), 50); };
   const [, navigate] = useLocation();
 
   const refresh = () => {
@@ -141,6 +152,9 @@ export default function PhysioPlanPage() {
           <LangToggle lang={lang} onChange={setLang} />
           <Button variant="outline" size="sm" className="gap-1" onClick={() => window.print()} data-testid="button-print-plan">
             <Printer className="w-4 h-4" /> {lang === "en" ? "Print" : "طباعة"}
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1" onClick={printProgress} data-testid="button-print-progress">
+            <Printer className="w-4 h-4" /> {lang === "en" ? "Progress report" : "تقرير التقدّم"}
           </Button>
         </div>
       </div>
@@ -177,6 +191,11 @@ export default function PhysioPlanPage() {
             <b>{t.returned}</b> — {plan.decidedByName ?? ""}: {plan.returnNote}
           </div>
         )}
+        {plan.status === "graduated" && (
+          <div className="rounded-md border border-sky-300 bg-sky-50 p-2 text-sm" data-testid="plan-graduated">
+            <b>{lang === "en" ? "Graduated" : "تخرّج"}</b> — {plan.graduatedByName ?? ""}{plan.graduatedAt ? ` · ${fmt(plan.graduatedAt, lang)}` : ""}
+          </div>
+        )}
         {plan.status === "stopped" && plan.stopReason && (
           <div className="rounded-md border bg-zinc-50 p-2 text-sm" data-testid="plan-stop-reason"><b>{t.stopped}</b>: {plan.stopReason}</div>
         )}
@@ -191,7 +210,7 @@ export default function PhysioPlanPage() {
               <Play className="w-4 h-4" /> تنفيذ جلسة
             </Button>
           )}
-          {plan.canWrite && plan.status !== "stopped" && (
+          {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
           )}
           {plan.canWrite && canSubmitFrom(plan.status) && (
@@ -210,14 +229,14 @@ export default function PhysioPlanPage() {
               <Undo2 className="w-4 h-4" /> إعادة بملاحظة
             </Button>
           )}
-          {plan.canWrite && plan.status !== "stopped" && (
+          {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setAssignOpen(true)} data-testid="button-assign-plan"><UserPlus className="w-4 h-4" /> الإسناد</Button>
           )}
-          {plan.canWrite && plan.status !== "stopped" && (
+          {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
           {/*  الحذفُ للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧). */}
-          {plan.canDelete && plan.status !== "stopped" && (
+          {plan.canDelete && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setTypeOpen(true)} data-testid="button-change-plan-type"><RefreshCcw className="w-4 h-4" /> تغيير نوع الخطّة</Button>
           )}
           {plan.canDelete && (
@@ -234,6 +253,10 @@ export default function PhysioPlanPage() {
         <PlanEditor plan={plan} lang={lang} onDone={() => { setEditing(false); refresh(); }} onCancel={() => setEditing(false)} />
       ) : (
         <>
+          <div className={printMode === "progress" ? "" : "print:hidden"}>
+            <PlanProgress planId={plan.id} planStatus={plan.status} lang={lang} onModify={() => setEditing(true)} />
+          </div>
+          <div className={`space-y-3 ${printMode === "progress" ? "print:hidden" : ""}`}>
           <Section title={t.dose}>
             <div className="text-sm flex flex-wrap gap-4">
               <span><b>{plan.sessionsPerWeek ?? "—"}</b> {t.perWeek}</span>
@@ -276,6 +299,7 @@ export default function PhysioPlanPage() {
           <div className="hidden print:flex justify-between pt-8 text-sm">
             <div>{t.signature}: ____________</div>
             <div>{t.approval}: {plan.status === "approved" ? plan.decidedByName : "____________"}</div>
+          </div>
           </div>
         </>
       )}
@@ -463,7 +487,9 @@ export function PhysioPlansPage() {
 }
 
 export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: boolean; canWrite?: boolean }) {
-  const [tab, setTab] = useState<"pending" | "assigned" | "deviations">(canApprove ? "pending" : "assigned");
+  //  `?tab=due` — رابطُ التنبيه الصباحيّ «مستحقّ التقييم» (§4.cp).
+  const wantDue = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "due";
+  const [tab, setTab] = useState<"pending" | "assigned" | "deviations" | "due">(wantDue && canWrite ? "due" : canApprove ? "pending" : "assigned");
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ClipboardList className="w-5 h-5 text-green-700" /> خطط العلاج الطبيعي</h1>
@@ -471,10 +497,12 @@ export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: 
         <TabsList>
           {canApprove && <TabsTrigger value="pending" data-testid="tab-plans-pending">بانتظار الاعتماد</TabsTrigger>}
           <TabsTrigger value="assigned" data-testid="tab-plans-assigned">المسندة إليّ</TabsTrigger>
+          {canWrite && <TabsTrigger value="due" data-testid="tab-plans-due">مستحقّ التقييم</TabsTrigger>}
           {canWrite && <TabsTrigger value="deviations" data-testid="tab-plans-deviations">اختلافات التنفيذ</TabsTrigger>}
         </TabsList>
         {canApprove && <TabsContent value="pending"><PlansTable view="pending" /></TabsContent>}
         <TabsContent value="assigned"><PlansTable view="assigned" /></TabsContent>
+        {canWrite && <TabsContent value="due"><DueAssessmentsList /></TabsContent>}
         {canWrite && <TabsContent value="deviations"><DeviationsList /></TabsContent>}
       </Tabs>
     </div>

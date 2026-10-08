@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
-import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, type PlanStatus } from "@shared/physio_plans";
+import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, isPlanClosed, type PlanStatus } from "@shared/physio_plans";
 import { ExecuteSessionDialog } from "@/components/physio/ExecuteSession";
 import { SuggestBox, type SuggestInfo } from "@/components/physio/PlanSuggestion";
 
@@ -29,6 +29,7 @@ export const PLAN_STATUS_TONE: Record<PlanStatus, string> = {
   approved: "bg-emerald-100 text-emerald-800 border-emerald-300",
   returned: "bg-orange-100 text-orange-800 border-orange-300",
   stopped: "bg-zinc-200 text-zinc-700 border-zinc-300",
+  graduated: "bg-sky-100 text-sky-800 border-sky-300",
 };
 
 const errText = (e: any): string => {
@@ -95,7 +96,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
             {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرسهما. */}
             {q.data?.canDelete && (
               <div className="flex flex-col justify-center gap-1">
-                {p.status !== "stopped" && (
+                {!isPlanClosed(p.status) && (
                   <Button variant="ghost" size="icon" title="تغيير نوع الخطّة" onClick={() => setChangingType(p)}
                     data-testid={`button-change-type-physio-plan-${p.id}`}><RefreshCcw className="w-4 h-4" /></Button>
                 )}

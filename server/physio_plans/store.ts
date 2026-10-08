@@ -205,7 +205,7 @@ async function lockPlan(tx: any, id: number): Promise<PhysioPlan> {
 export async function updatePlan(id: number, input: PlanInput, nextStatus: (current: PlanStatus) => PlanStatus, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
-    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ موقوفة — لا تُعدَّل");
+    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا تُعدَّل");
     const avail = await availableDeviceIds(tx, before.branchId);
     const had = new Set((await tx.select({ d: physioPlanDevices.deviceId }).from(physioPlanDevices)
       .where(eq(physioPlanDevices.planId, id))).map((r) => Number(r.d)));
@@ -293,6 +293,7 @@ export async function stopPlan(id: number, reason: string, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
     if (before.status === "stopped") throw new PlanError(409, "الخطّةُ موقوفة من قبل");
+    if (before.status === "graduated") throw new PlanError(409, "الخطّةُ منتهيةٌ بتخرّج المريض");
     const [after] = await tx.update(physioPlans).set({ status: "stopped", stopReason: reason, stoppedAt: new Date(),
       updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() }).where(eq(physioPlans.id, id)).returning();
     return { before, after };
@@ -319,7 +320,7 @@ function worksIn(u: { branchId: number | null; branchIds: unknown }, branchId: n
 export async function setAssignees(id: number, userIds: number[], actor: Actor) {
   return db.transaction(async (tx) => {
     const plan = await lockPlan(tx, id);
-    if (plan.status === "stopped") throw new PlanError(409, "الخطّةُ موقوفة");
+    if (!isPlanEditable(plan.status)) throw new PlanError(409, "الخطّةُ منتهية — موقوفةٌ أو متخرّجة");
     const allowed = new Set((await assigneeCandidates(plan.branchId)).map((u) => u.id));
     if (userIds.some((u) => !allowed.has(u))) throw new PlanError(400, "يُسنَد إلى أدوار العلاج الطبيعي العاملة في فرع الخطّة وحدها");
     const before = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
@@ -354,7 +355,7 @@ export async function deletePlan(id: number) {
 export async function changePlanProtocol(id: number, protocolId: number, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
-    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ موقوفة — لا يتغيّر نوعُها");
+    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا يتغيّر نوعُها");
     if (before.protocolId === protocolId) throw new PlanError(409, "هذا هو نوعُ الخطّة الحاليّ");
     const { base, lines } = await protocolFill(tx, protocolId, before.branchId);
     const [after] = await tx.update(physioPlans).set({ ...base, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() })

@@ -133,8 +133,8 @@ async function main() {
     console.log("\n── أ. لوحة المسؤول ──");
     same("أ١. لغير المسؤول ⟵ ٤٠٣", (await http("GET", "/api/admin/staff-notifications", S.recv1)).status, 403);
     const g = await http("GET", "/api/admin/staff-notifications", S.admin);
-    same("أ٢. البوتُ جاهز والأنواعُ ثمانيةَ عشر (ومنها أربعةُ خطط العلاج الطبيعي — §4.cn: «ملاحظة للأخصائيّ»)، والموظّفُ غيرُ النشط لا يظهر",
-      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 18, false]);
+    same("أ٢. البوتُ جاهز والأنواعُ تسعةَ عشر (ومنها خمسةُ خطط العلاج الطبيعي — §4.cp: «مستحقّ التقييم» الصباحيّ)، والموظّفُ غيرُ النشط لا يظهر",
+      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 19, false]);
     same("أ٣. الأنواعُ الثلاثة التي لا تقع اليوم ليست فيها",
       ["charge_returned", "discount_pending", "discount_decided"].some((k) => g.body?.events?.some((e: any) => e.key === k)), false);
     same("أ٤. نوعٌ مجهول ⟵ ٤٠٠", (await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["nope"] })).status, 400);
@@ -155,10 +155,10 @@ async function main() {
     const el = (id: number) => g2.users.find((u: any) => u.id === id)?.eligible;
     same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول)",
       el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"]);
-    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ الثمانيةَ عشر",
+    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه · والمسؤولُ التسعةَ عشر",
       [el(DOC_P), el(EXP1), el(MGR1), el(ADMIN)?.length],
       [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"],
-       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "order_hold_rework", "evening_summary"], 18]);
+       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "order_hold_rework", "evening_summary"], 19]);
     //  «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤) — و«كلُّ مبلغٍ يدخل» للمسؤول وحده.
     const mgrBad = await Promise.all(["exam_request", "payment_received"].map(async (k) =>
       (await http("PUT", `/api/admin/staff-notifications/${MGR1}`, S.admin, { events: [k] })).status));
