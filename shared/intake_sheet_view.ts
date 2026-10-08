@@ -17,6 +17,8 @@ export interface IntakeSheetPatient {
   referralSource: string | null; referralSubSource: string | null; hadPriorCenterHistory: boolean | null;
   age: string | null; weight: string | null; height: string | null;
   injuryCause: string | null; injuryDate: string | null; injuryDateStatus: string | null; generalNotes: string | null;
+  /** فرعُ تسجيل المريض — ترويسةُ «السجلّ الكامل» المطبوع (§4.cv). */
+  branchName?: string | null;
 }
 
 export interface IntakeSheetMoney {

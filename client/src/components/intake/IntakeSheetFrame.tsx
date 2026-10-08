@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import bionicLogo from "@/assets/intake/bionic.jpg";
 import warithLogo from "@/assets/intake/warith.jpg";
 
-export function IntakeSheetHeader({ branchName }: { branchName: string | null | undefined }) {
+export function IntakeSheetHeader({ branchName, title = "استمارة مراجع" }: { branchName: string | null | undefined; title?: string }) {
   const h = intakeHeader(branchName);
   return (
     <div data-testid="intake-header" data-brand={h.brand}>
@@ -20,7 +20,7 @@ export function IntakeSheetHeader({ branchName }: { branchName: string | null | 
         <img src={h.brand === "warith" ? warithLogo : bionicLogo} alt={h.brand === "warith" ? "شعار الوارث" : "شعار بايونك"}
           className="h-20 w-20 md:h-28 md:w-28 print:!h-20 print:!w-20 object-contain shrink-0" data-testid="intake-logo" />
       </div>
-      <h1 className="text-center text-xl md:text-2xl font-bold text-red-600 my-3 md:my-5 print:!my-1.5">استمارة مراجع</h1>
+      <h1 className="text-center text-xl md:text-2xl font-bold text-red-600 my-3 md:my-5 print:!my-1.5">{title}</h1>
     </div>
   );
 }
