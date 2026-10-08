@@ -164,7 +164,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
 
   const isProsthetic = f.department === "prosthetic";
   return (
-    <div className="max-w-4xl mx-auto py-2 md:py-6 space-y-3" dir="rtl">
+    <div className="max-w-4xl mx-auto py-2 md:py-6 space-y-3 overflow-x-clip" dir="rtl">
       <div className="flex items-center gap-2">
         <Button variant="ghost" onClick={onBack} className="p-2" aria-label="رجوع"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
         <div className="text-sm text-muted-foreground">إضافة مريض — أطراف صناعية ومساند</div>

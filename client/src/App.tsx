@@ -34,6 +34,7 @@ const Accounting = lazy(() => import("@/pages/Accounting"));
 const CashBook = lazy(() => import("@/pages/CashBook"));
 const DrBox = lazy(() => import("@/pages/DrBox"));
 const CashBookPrint = lazy(() => import("@/pages/CashBookPrint"));
+const IntakeSheetPrint = lazy(() => import("@/pages/IntakeSheetPrint"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
@@ -234,6 +235,17 @@ function Router() {
   }
 
   //  ورقةُ الدفتر للطباعة (§4.ca تكملة): صفحةٌ بلا شريطٍ جانبيّ ولا إطار — ما يُطبع هو الورقةُ وحدها.
+  //  وورقةُ «استمارة المراجع» للطباعة (§4.cq) — الورقةُ وحدها كذلك.
+  if (location.startsWith("/intake-sheet/print")) {
+    return (
+      <BranchGate>
+        <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+          <IntakeSheetPrint />
+        </Suspense>
+      </BranchGate>
+    );
+  }
+
   if (location.startsWith("/cash-book/print")) {
     return (
       <BranchGate>

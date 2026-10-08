@@ -15,7 +15,8 @@ import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { soldDevicesTotal, needsBelowSoldConfirm, type EpisodeLike } from "./case_cost_guard";
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
-import { COMPONENT_LABELS, FULL_DEVICE_LABELS } from "@shared/prosthetic_parts";
+import { DeviceSheetsBox, useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
+import { specKeysCoveredBySheets } from "@shared/intake_sheet_view";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -67,11 +68,6 @@ const DETAIL_LABELS: Record<string, string> = {
 const DEVICE_SPEC_KEYS = new Set<string>([
   ...PROSTHETIC_DEVICE_SPECS.map((f) => f.key), ...SUPPORT_SPECS.map((f) => f.key), "injurySide", "amputationSite",
 ]);
-const DEVICE_STATUS_LABELS: Record<string, string> = { in_manufacturing: "قيد التصنيع", delivered: "مُسلَّم" };
-const deviceItemLabel = (caseType: string, item: string) =>
-  item === "full_device"
-    ? (FULL_DEVICE_LABELS as Record<string, string>)[caseType] ?? "جهاز كامل"
-    : `جزء: ${(COMPONENT_LABELS as Record<string, string>)[item] ?? item}`;
 
 const fmtIQD = (n: number | undefined) => `${(n || 0).toLocaleString("en-US")} د.ع`;
 
@@ -129,9 +125,13 @@ export function PatientCaseChips({ cases, selectedId, onSelect }: {
 // so they are NOT duplicated here.
 export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; patientId: number }) {
   const details = caseRow.details || {};
-  const devices = caseRow.devices && caseRow.devices.length >= 2 ? caseRow.devices : null;
-  //  بأجهزةٍ متعدّدة: «التفاصيل» وقائعُ المريض وحدها، ومواصفاتُ كلّ جهازٍ في سطره — لا لقطةُ آخر بيعٍ على الخيط كلّه.
-  const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k] && !(devices && DEVICE_SPEC_KEYS.has(k)));
+  //  ══ **مستطيلُ الأجهزة ومواصفاتها** (ملاحظاتُ المالك ٢٠٢٦-١٠-٠٨، §4.cq) — لكلّ جهازٍ سطرُه وخاناتُ ورقته و«عرض الاستمارة»،
+  //  من باب الاستمارة نفسِه (الطبيبُ أوّلاً وما ملأه الاستعلاماتُ يسدّ الفراغ). فمتى ظهر المستطيلُ لا تُكرَّر مواصفاتُ الجهاز في
+  //  «التفاصيل» (`specKeysCoveredBySheets`) — وما خلا منه سطرُ جهازٍ وحيد يبقى فيها، فلا يضيع. وقسمٌ بلا أجهزةٍ مسجّلة يبقى كما كان.
+  const isDeviceCaseType = caseRow.caseType === "prosthetic" || caseRow.caseType === "medical_support";
+  const { data: sheetsData } = useIntakeSheets(patientId, isDeviceCaseType);
+  const covered = specKeysCoveredBySheets(sheetsData?.sheets ?? [], caseRow.caseType, DEVICE_SPEC_KEYS);
+  const detailKeys = Object.keys(DETAIL_LABELS).filter((k) => details[k] && !covered.has(k));
   const m = meta(caseRow.caseType);
   const Icon = m.icon;
 
@@ -559,33 +559,7 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
         </div>
       )}
 
-      {devices && (
-        <div className="rounded-xl border p-3 space-y-3" data-testid={`case-devices-${caseRow.id}`}>
-          <p className="text-sm font-semibold text-primary">مواصفات كلّ جهاز — من معاينته</p>
-          {devices.map((d) => {
-            const keys = d.specs ? Object.keys(DETAIL_LABELS).filter((k) => d.specs![k]) : [];
-            return (
-              <div key={d.episodeId} className="rounded-lg bg-muted/40 p-2" data-testid={`case-device-${d.episodeId}`}>
-                <p className="text-sm font-medium mb-1">
-                  الجهاز #{d.sequenceNumber} — {deviceItemLabel(caseRow.caseType, d.requestedItem)} · {DEVICE_STATUS_LABELS[d.status] ?? d.status}
-                </p>
-                {keys.length > 0 ? (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                    {keys.map((k) => (
-                      <div key={k}>
-                        <div className="text-xs text-muted-foreground">{DETAIL_LABELS[k]}</div>
-                        <div className="font-medium">{String(d.specs![k])}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">لا معاينةَ تحدّد مواصفات هذا الجهاز وحده</p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {isDeviceCaseType && <DeviceSheetsBox patientId={patientId} caseType={caseRow.caseType} />}
     </Card>
   );
 }

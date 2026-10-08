@@ -587,7 +587,7 @@ export function NewExamDialog({
       </AlertDialogContent>
     </AlertDialog>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${sheetMode ? "sm:max-w-4xl" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
+      <DialogContent className={`${sheetMode ? "sm:max-w-4xl overflow-x-hidden" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
             <Stethoscope className="w-5 h-5" />

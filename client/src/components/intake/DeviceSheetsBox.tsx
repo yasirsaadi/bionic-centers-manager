@@ -1,0 +1,82 @@
+// **مستطيلُ أجهزة القسم ومواصفاتها، و«عرض الاستمارة»** (§4.cq، ملاحظاتُ المالك ٢٠٢٦-١٠-٠٨).
+//
+// «معلوماتُ الطرف — نوعُه والسوكيت والقدم وغيرها — التي أدخلتُها أو أدخلها الاستعلاماتُ قبل الحسم لا تظهر في صفحة المريض؛ خصّص لها مستطيلاً
+// واضحاً بمساحةٍ ليست كبيرة لمراجعة أنواع أطراف ومساند المرضى بسهولة». و«لا يوجد زرّ معاينة الاستمارة ليشاهدها الموظّفُ والطبيبُ ومديرُ الفرع».
+// فلكلّ جهازٍ سطرٌ مضغوط: رقمُه والمطلوبُ وحالُه، ثمّ خاناتُه الخمس (أو نوعُ المسند) كما في ورقته، وزرُّ «عرض الاستمارة» يفتح الورقةَ مكتملةً
+// ومنها «طباعة». والمصدرُ بابُ الخادم الواحد — الطبيبُ أوّلاً وما ملأه الاستعلاماتُ يسدّ الفراغ — فلا يختلف المستطيلُ عن الورقة.
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { FileText, Printer } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { SHEET_STATUS_LABELS, sheetSpecRows, type IntakeSheet, type IntakeSheetsResponse } from "@shared/intake_sheet_view";
+import { IntakeSheetView } from "./IntakeSheetView";
+
+export const intakeSheetsKey = (patientId: number) => [`/api/patients/${patientId}/intake-sheets`];
+
+export function useIntakeSheets(patientId: number, enabled = true) {
+  return useQuery<IntakeSheetsResponse>({ queryKey: intakeSheetsKey(patientId), enabled });
+}
+
+/** صفحةُ الطباعة في تبويبٍ جديد — الورقةُ وحدها بلا إطار التطبيق. */
+export function openIntakeSheetPrint(patientId: number, episodeId: number) {
+  window.open(`/intake-sheet/print?patient=${patientId}&episode=${episodeId}`, "_blank");
+}
+
+export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; caseType: string }) {
+  const { data } = useIntakeSheets(patientId);
+  const [open, setOpen] = useState<IntakeSheet | null>(null);
+  const sheets = (data?.sheets ?? []).filter((s) => s.serviceType === caseType);
+  if (!data || sheets.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-primary/25 bg-primary/[0.03] p-2.5 space-y-2" data-testid={`device-sheets-${caseType}`}>
+      <p className="text-sm font-semibold text-primary">{caseType === "prosthetic" ? "الأطراف ومواصفاتها" : "المساند ومواصفاتها"}</p>
+      {sheets.map((s) => (
+        <div key={s.episodeId} className="rounded-lg bg-white border p-2" data-testid={`device-sheet-row-${s.episodeId}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium">
+              الجهاز #{s.sequenceNumber} — {requestedItemLabel(s.requestedItem, s.serviceType)}
+              <span className="text-xs text-muted-foreground font-normal"> · {SHEET_STATUS_LABELS[s.status] ?? s.status}</span>
+            </p>
+            <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpen(s)}
+              data-testid={`button-view-sheet-${s.episodeId}`}>
+              <FileText className="w-3.5 h-3.5" /> عرض الاستمارة
+            </Button>
+          </div>
+          {(s.amputationSite || s.injurySide) && (
+            <p className="text-xs text-muted-foreground mt-0.5" data-testid={`device-site-${s.episodeId}`}>
+              {s.amputationSite ? `موقع البتر: ${s.amputationSite}` : `الجهة: ${s.injurySide}`}
+            </p>
+          )}
+          <div className={`mt-1.5 grid gap-x-3 gap-y-1 text-xs ${s.serviceType === "prosthetic" ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-1"}`}>
+            {sheetSpecRows(s).map((r) => (
+              <div key={r.key} className="min-w-0" data-testid={`device-spec-${s.episodeId}-${r.key}`}>
+                <span className="text-muted-foreground">{r.label}: </span>
+                <span className={r.value ? "font-medium" : "text-slate-400"} dir="auto">{r.value ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <Dialog open={open !== null} onOpenChange={(o) => { if (!o) setOpen(null); }}>
+        <DialogContent className="sm:max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>استمارة المراجع</DialogTitle>
+          </DialogHeader>
+          {open && (
+            <div className="flex justify-end">
+              <Button type="button" size="sm" className="gap-1" onClick={() => openIntakeSheetPrint(patientId, open.episodeId)}
+                data-testid="button-print-sheet">
+                <Printer className="w-4 h-4" /> طباعة
+              </Button>
+            </div>
+          )}
+          {open && data && <IntakeSheetView patient={data.patient} sheet={open} />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

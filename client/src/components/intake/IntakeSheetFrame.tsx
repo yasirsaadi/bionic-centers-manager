@@ -18,9 +18,9 @@ export function IntakeSheetHeader({ branchName }: { branchName: string | null | 
           {h.city && <div className="text-sm md:text-base mt-1" data-testid="intake-city">{h.city}</div>}
         </div>
         <img src={h.brand === "warith" ? warithLogo : bionicLogo} alt={h.brand === "warith" ? "شعار الوارث" : "شعار بايونك"}
-          className="h-20 w-20 md:h-28 md:w-28 object-contain shrink-0" data-testid="intake-logo" />
+          className="h-20 w-20 md:h-28 md:w-28 print:!h-20 print:!w-20 object-contain shrink-0" data-testid="intake-logo" />
       </div>
-      <h1 className="text-center text-xl md:text-2xl font-bold text-red-600 my-3 md:my-5">استمارة مراجع</h1>
+      <h1 className="text-center text-xl md:text-2xl font-bold text-red-600 my-3 md:my-5 print:!my-1.5">استمارة مراجع</h1>
     </div>
   );
 }
@@ -30,18 +30,18 @@ export function SheetRow({ label, children, missing, className, testId }: {
   label: ReactNode; children: ReactNode; missing?: boolean; className?: string; testId?: string;
 }) {
   return (
-    <div className={cn("grid grid-cols-1 sm:grid-cols-[9.5rem_1fr] border-b border-slate-700 last:border-b-0", missing && "bg-red-50", className)}
+    <div className={cn("grid grid-cols-1 sm:grid-cols-[9.5rem_1fr] print:grid-cols-[9.5rem_1fr] print:break-inside-avoid border-b border-slate-700 last:border-b-0", missing && "bg-red-50", className)}
       data-testid={testId} data-missing={missing ? "1" : undefined}>
-      <div className={cn("px-2 py-1.5 sm:py-2 text-sm font-semibold text-slate-800 sm:border-l border-slate-700 bg-slate-50/60 sm:bg-transparent flex items-center",
+      <div className={cn("px-2 py-1.5 sm:py-2 print:!py-0.5 text-sm font-semibold text-slate-800 sm:border-l print:border-l border-slate-700 bg-slate-50/60 sm:bg-transparent print:bg-transparent flex items-center",
         missing && "text-red-700")}>{label}</div>
-      <div className="px-1.5 py-1 min-w-0">{children}</div>
+      <div className="px-1.5 py-1 print:py-0 min-w-0">{children}</div>
     </div>
   );
 }
 
 /** صفّان في سطرٍ واحد على الشاشة العريضة (الاسم والتاريخ، الهاتف والمحافظة…). */
 export function SheetPair({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-1 md:grid-cols-2 border-b border-slate-700 [&>*]:border-b-0 md:[&>*:first-child]:border-l md:[&>*:first-child]:border-slate-700">{children}</div>;
+  return <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 border-b border-slate-700 [&>*]:border-b-0 md:[&>*:first-child]:border-l md:[&>*:first-child]:border-slate-700 print:[&>*:first-child]:border-l print:[&>*:first-child]:border-slate-700">{children}</div>;
 }
 
 /** خانةٌ مقفولةٌ على الاستعلامات — تقول لمَن هي. */
