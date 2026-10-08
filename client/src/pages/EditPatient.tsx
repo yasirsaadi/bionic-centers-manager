@@ -37,7 +37,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { ManufacturingEditCard } from "@/components/manufacturing/ManufacturingEditCard";
 import { Textarea } from "@/components/ui/textarea";
-import { DatePickerIraq } from "@/components/DatePickerIraq";
+import { GovernorateSelect, InjuryDateField } from "@/components/intake/IntakeFields";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
@@ -158,6 +158,8 @@ export default function EditPatient() {
       name: "",
       phone: "",
       address: "",
+      governorate: "",
+      injuryDateStatus: null,
       age: "",
       weight: "",
       height: "",
@@ -203,6 +205,8 @@ export default function EditPatient() {
         //  حتى يؤشّرها الموظّف بنفسه — ولا يُرفع بمجرّد فتح النموذج.
         whatsappNotificationsEnabled: (patient as any).whatsappNotificationsEnabled === true,
         address: patient.address || "",
+        governorate: (patient as any).governorate || "",
+        injuryDateStatus: (patient as any).injuryDateStatus ?? null,
         age: patient.age,
         weight: patient.weight || "",
         height: patient.height || "",
@@ -531,6 +535,12 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+
+              {/* المحافظةُ خانةٌ مستقلّة (ترحيل ١١٤، §4.cq) — إلزاميةٌ في «استمارة المراجع» وحدها، واختياريةٌ هنا للملفّات القديمة. */}
+              <FormItem>
+                <FormLabel>المحافظة</FormLabel>
+                <GovernorateSelect value={form.watch("governorate") as any} onChange={(v) => form.setValue("governorate", v)} className="bg-slate-50" testId="edit-governorate" />
+              </FormItem>
 
               <FormField
                 control={form.control}
@@ -888,9 +898,12 @@ export default function EditPatient() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.injuryDateOptional}</FormLabel>
-                    <DatePickerIraq 
-                      value={field.value || ""}
-                      onChange={field.onChange}
+                    {/* تاريخٌ أو «منذ الولادة» أو «غير معروف» (ترحيل ١١٤) — والخادمُ يُسقط أحدهما بالآخر. */}
+                    <InjuryDateField
+                      date={field.value || ""}
+                      status={form.watch("injuryDateStatus") as any}
+                      onChange={(n) => { field.onChange(n.injuryDate); form.setValue("injuryDateStatus", n.injuryDateStatus); }}
+                      testIdPrefix="edit-injury-date"
                     />
                     <FormMessage />
                   </FormItem>

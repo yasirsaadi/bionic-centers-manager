@@ -90,6 +90,7 @@ import { baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
 import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
+import { checkIntakeSheet, isGovernorate, mergeInjuryDate, normalizeInjuryDate } from "@shared/intake_sheet";
 import { aliasCodesByPatient } from "./patient_code/store";
 import {
   listPayableEpisodes, verifyEpisodeBelongs, listDeliveredEpisodes,
@@ -2796,6 +2797,26 @@ export async function registerRoutes(
       //  وتُقرأ صرامةً — أيُّ قيمةٍ غير `true` تعني «لا».
       req.body.hadPriorCenterHistory = req.body?.hadPriorCenterHistory === true;
 
+      //  ══ **استمارةُ المراجع** (ترحيل ١١٤، §4.cq) — للأطراف والمساند ══
+      //  تُرسل `intakeSheet: true` ومعها القسمُ و«المطلوب»؛ والقسمُ يقرّر الأعلامَ **هنا** لا في العميل، وحقولُها كلُّها
+      //  إلزامية إلّا الملاحظات (`checkIntakeSheet` — القاعدةُ نفسُها التي تفحص بها الشاشة). وصفحةُ العلاج الطبيعي
+      //  لا ترسلها، فلا يتغيّر عليها شيء.
+      const intakeSheet = req.body?.intakeSheet === true;
+      const intakeDepartment = req.body?.department;
+      if (intakeSheet) {
+        if (intakeDepartment === "prosthetic") {
+          Object.assign(req.body, { medicalCondition: "amputee", isAmputee: true, isMedicalSupport: false, isPhysiotherapy: false, supportType: "" });
+        } else if (intakeDepartment === "medical_support") {
+          Object.assign(req.body, { medicalCondition: "medical_support", isAmputee: false, isMedicalSupport: true, isPhysiotherapy: false, amputationSite: "" });
+        }
+      }
+      //  **والمحافظةُ من القائمة أو لا شيء**، **وتاريخُ الإصابة تاريخٌ أو حالة — لا الاثنان** (قيدُ الترحيل ١١٤).
+      if (req.body?.governorate === "" || req.body?.governorate === undefined) req.body.governorate = null;
+      else if (!isGovernorate(req.body.governorate)) {
+        return res.status(400).json({ message: "اختر المحافظة من القائمة", missing: ["governorate"] });
+      }
+      Object.assign(req.body, normalizeInjuryDate(req.body?.injuryDate, req.body?.injuryDateStatus));
+
       // The amputation/device details are the doctor's decision. Only
       // management and doctors may pre-record them at registration; any other
       // session's values are dropped at the source — the UI hides the builder
@@ -2828,6 +2849,11 @@ export async function registerRoutes(
         ...creationBody,
         branchId
       });
+
+      if (intakeSheet) {
+        const chk = checkIntakeSheet({ ...input, department: intakeDepartment, requestedItem: req.body?.requestedItem });
+        if (!chk.ok) return res.status(400).json({ message: chk.message, missing: chk.missing });
+      }
 
       // ══ **بياناتٌ لا يُصنَع جهازٌ بدونها** ═════════════════════════════
       //  العمرُ والطولُ والوزن ليست حقولاً إدارية: الطرفُ يُصنَع عليها.
@@ -3197,6 +3223,20 @@ export async function registerRoutes(
       if (patch.hadPriorCenterHistory !== undefined
         && typeof patch.hadPriorCenterHistory !== "boolean") {
         delete patch.hadPriorCenterHistory;
+      }
+
+      //  ══ المحافظةُ وتاريخُ الإصابة (ترحيل ١١٤، §4.cq) ══ المحافظةُ من القائمة أو فراغ. **وما اختاره الموظّفُ الآن يغلب**:
+      //  تاريخٌ يُكتب يُسقط «منذ الولادة / غير معروف»، وحالةٌ تُختار تُسقط التاريخ — فالقيدُ في القاعدة لا يُكسَر بتعديل.
+      if (patch.governorate !== undefined) {
+        if (patch.governorate === null || patch.governorate === "") patch.governorate = null;
+        else if (!isGovernorate(patch.governorate)) {
+          return res.status(400).json({ message: "اختر المحافظة من القائمة", field: "governorate" });
+        }
+      }
+      if (patch.injuryDate !== undefined || patch.injuryDateStatus !== undefined) {
+        Object.assign(patch, mergeInjuryDate(
+          patch.injuryDate, patch.injuryDateStatus, (existingPatient as any).injuryDate, (existingPatient as any).injuryDateStatus,
+        ));
       }
 
       // ══ تصنيفُ المريض على التعديل — نفسُ منطق رقم الاتصال أعلاه ═══════

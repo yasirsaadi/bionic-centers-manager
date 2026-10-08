@@ -263,6 +263,7 @@
     "test:physio-suggest": "tsx server/physio_suggest.test.ts",
     "test:physio-assessments": "tsx server/physio_assessments.test.ts",
     "test:physio-outcomes": "tsx server/physio_outcomes.test.ts",
+    "test:intake-sheet": "tsx server/intake_sheet.test.ts",
     "test:numeric-input": "tsx client/src/lib/numeric_input.test.ts",
     "test:physio-protocol-seed": "tsx server/physio_protocol_seed.test.ts",
     "test:physio-protocol-english": "tsx server/physio_protocol_english.test.ts",
