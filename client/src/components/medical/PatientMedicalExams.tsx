@@ -493,7 +493,9 @@ ${addenda}
                         </button>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
+                    {/*  **ينكسر سطراً على الهاتف** — أزرارُ المسؤول الأربعة كانت سطراً واحداً بعرض ٤١٤ نقطة على شاشةٍ عرضُها ٣٩٠،
+                        فتنزلق صفحةُ المريض كلُّها يميناً ويساراً (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨). */}
+                    <div className="flex flex-wrap items-center gap-1 min-w-0">
                       {canAppend && (
                         <Button
                           size="sm"

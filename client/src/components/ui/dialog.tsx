@@ -31,12 +31,20 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /** **على الهاتف تملأ الشاشة** — للنوافذ الطويلة كالاستمارة؛ وتحمل زرَّ رجوعها في رأسها. */
+    mobileFullScreen?: boolean
+    /** لا زرّ «X» — حين تحمل النافذةُ زرَّ رجوعٍ أو إغلاقٍ ظاهراً خاصّاً بها. */
+    hideClose?: boolean
+  }
+>(({ className, children, mobileFullScreen, hideClose, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      //  **على الهاتف لا تدخل النافذةُ تحت جزيرته ولا شريطِ الإشارة** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — القاعدةُ في `index.css`.
+      data-app-dialog=""
+      data-mobile-full={mobileFullScreen ? "" : undefined}
       className={cn(
         // max-h + overflow so a tall dialog never pushes its footer (حفظ/تم)
         // off-screen: the whole dialog caps at 90% of the viewport height and
@@ -48,10 +56,13 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
+      {!hideClose && (
+        //  على الهاتف هدفُ لمسٍ حقيقيّ (٣٦ نقطة بخلفية) لا أيقونةٌ صغيرة في الزاوية.
+        <DialogPrimitive.Close className="absolute right-4 top-4 max-sm:right-2.5 max-sm:top-2.5 max-sm:flex max-sm:h-9 max-sm:w-9 max-sm:items-center max-sm:justify-center max-sm:rounded-full max-sm:bg-slate-100 max-sm:opacity-100 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground" data-testid="dialog-close-x">
+          <X className="h-4 w-4 max-sm:h-5 max-sm:w-5" />
+          <span className="sr-only">إغلاق</span>
+        </DialogPrimitive.Close>
+      )}
     </DialogPrimitive.Content>
   </DialogPortal>
 ))

@@ -130,3 +130,31 @@
 .recharts-surface { direction: ltr; }
 .recharts-legend-wrapper .recharts-legend-item { margin-inline: 6px !important; }
 .recharts-legend-wrapper .recharts-legend-item svg { margin: 0 4px !important; }
+
+/* ══ **النوافذُ على الهاتف** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «زرّ الإغلاق في الأعلى في حافّة الهاتف» و«تحت جزيرة الهاتف») ══
+   التطبيقُ يُثبَّت على الشاشة الرئيسية بشريط حالةٍ شفّاف (`black-translucent` و`viewport-fit=cover`)، فالصفحةُ تمتدّ تحت الجزيرة
+   وشريطِ الإشارة. فالنافذةُ تُوسَّط **بين المنطقتين الآمنتين** لا في الشاشة كلّها، وارتفاعُها لا يتجاوز ما بينهما — فلا يقع رأسُها
+   ولا زرُّ إغلاقها تحت الجزيرة. وفي المتصفّح العاديّ المنطقتان صفرٌ فلا يتغيّر شيء. وخارج الطبقات عمداً: يغلب أصنافَ الارتفاع في النوافذ. */
+@media (max-width: 639.98px) {
+  [data-app-dialog]:not([data-mobile-full]) {
+    top: calc(50% + (env(safe-area-inset-top) - env(safe-area-inset-bottom)) / 2);
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1.5rem);
+  }
+  /* نافذةٌ تملأ الشاشة (الاستمارة): من الحافّة إلى الحافّة، ورأسُها يحمل المسافةَ الآمنة بنفسه. */
+  [data-app-dialog][data-mobile-full] {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0 0 env(safe-area-inset-bottom);
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+  }
+}

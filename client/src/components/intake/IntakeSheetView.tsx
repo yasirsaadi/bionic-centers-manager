@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 function V({ children, testId, multiline }: { children: ReactNode; testId?: string; multiline?: boolean }) {
   const empty = children === null || children === undefined || children === "";
   return (
-    <div className={cn("min-h-[2.25rem] print:min-h-[1.65rem] flex items-center px-1.5 text-sm break-words", multiline && "items-start py-1.5 print:py-1 whitespace-pre-wrap leading-relaxed", empty && "text-slate-400")}
+    <div className={cn("min-h-[2.25rem] print:min-h-[1.65rem] flex items-center px-1.5 text-sm min-w-0 [overflow-wrap:anywhere]", multiline && "items-start py-1.5 print:py-1 whitespace-pre-wrap leading-relaxed", empty && "text-slate-400")}
       dir="auto" style={{ unicodeBidi: "plaintext" }} data-testid={testId}>
       {empty ? "—" : children}
     </div>
@@ -108,7 +108,7 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
               <div className={cn("border-l border-slate-700 px-2 py-1.5 text-center", i < sheet.visits.length - 1 && "border-b")} dir="ltr">
                 {v.date ? formatDateIraq(v.date) : "—"}
               </div>
-              <div className={cn("px-2 py-1.5", i < sheet.visits.length - 1 && "border-b border-slate-700")} dir="auto" style={{ unicodeBidi: "plaintext" }}>
+              <div className={cn("px-2 py-1.5 min-w-0 [overflow-wrap:anywhere]", i < sheet.visits.length - 1 && "border-b border-slate-700")} dir="auto" style={{ unicodeBidi: "plaintext" }}>
                 {v.details || v.notes || "—"}
                 {v.details && v.notes && <div className="text-xs text-slate-500">{v.notes}</div>}
               </div>
