@@ -324,6 +324,8 @@ export interface DecisionQueueResolvedRow {
   requestedItem: string | null;
   /** الأجزاءُ الإضافيّة في الطلب نفسِه (§4.ct). */
   extraComponents: string[];
+  /** **بيعٌ جاهزٌ بلا أمر تصنيع** (§4.cu) — لا خبيرَ يُنتظَر له. */
+  soldReady: boolean;
 }
 
 const RESOLVED_FROM = sql`
@@ -375,6 +377,7 @@ const toResolvedRow = (x: any): DecisionQueueResolvedRow => ({
   notBoughtReasonText: x.not_bought_reason_text ?? null,
   requestedItem: x.requested_item ?? null,
     extraComponents: normalizeExtraComponents(x.requested_item, x.extra_components),
+  soldReady: x.sold_ready_at !== null && x.sold_ready_at !== undefined,
 });
 
 /**
@@ -399,7 +402,7 @@ export async function listDecisionQueueResolved(
            p.patient_code, p.name AS patient_name, b.name AS branch_name,
            f.original_price, f.approved_price, f.price_kind,
            f.selected_expert_user_id, u.display_name AS expert_name,
-           f.not_bought_reason_text, de.requested_item, de.extra_components,
+           f.not_bought_reason_text, de.requested_item, de.extra_components, de.sold_ready_at,
            ev.actor_name AS resolved_by_name, ev.payload AS resolved_payload,
            COALESCE(ev.created_at, f.converted_at, f.closed_at) AS resolved_at
     ${RESOLVED_FROM}

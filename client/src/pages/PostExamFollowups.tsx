@@ -104,6 +104,8 @@ interface ResolvedRow {
   selectedExpertUserId: number | null;
   selectedExpertName: string | null;
   notBoughtReasonText: string | null;
+  /** بيعٌ جاهزٌ بلا أمر تصنيع (§4.cu). */
+  soldReady?: boolean;
 }
 
 const fmtDateTime = (v: string | null) =>
@@ -278,7 +280,7 @@ function ResolvedCard({ row }: { row: ResolvedRow }) {
               <span className="block text-muted-foreground">الخبير</span>
               <span className="font-medium">
                 {row.selectedExpertName
-                  ?? (row.selectedExpertUserId ? `#${row.selectedExpertUserId}` : "—")}
+                  ?? (row.selectedExpertUserId ? `#${row.selectedExpertUserId}` : row.soldReady ? "لا خبير — جاهز" : "—")}
               </span>
             </div>
           </div>

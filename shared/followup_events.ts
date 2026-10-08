@@ -25,7 +25,7 @@
 // كُتب نصّاً. فيخرج مفكَّكاً (`transition`) لترسمه الشاشةُ بوحدةٍ معزولة
 // (`PriceTransition`) — نفسُ علاج شاشات الخصم.
 
-import { FOLLOWUP_REASON_LABELS, type FollowupReason } from "./followup";
+import { CONVERTED_READY_LABEL, FOLLOWUP_REASON_LABELS, type FollowupReason } from "./followup";
 import { requestedItemLabel } from "./prosthetic_parts";
 
 /** ما تحتاجه الترجمةُ من صفّ الحدث — لا أكثر. */
@@ -310,6 +310,8 @@ export function followupEventView(
       break;
     }
     case "converted": {
+      //  **البيعُ الجاهز** (§4.cu): حدثُه يحمل `ready` — فلا «بدأ التصنيع» على أجزاءٍ سُلِّمت يومَ بيعها.
+      if (p.ready === true) out.title = CONVERTED_READY_LABEL;
       const wo = pos(p.workOrderId);
       if (wo !== null) out.facts.push(`أمر التصنيع: #${wo}`);
       const price = pos(p.approvedPrice);
@@ -464,6 +466,12 @@ export const PURCHASE_STATE_TEXT: Record<PurchasePresentation, string> = {
  * يحمل أمرَ تصنيعٍ وحالتُه لم تُحدَّث، ووجودُ الأمر واقعةٌ لا تحتمل الشكّ.
  * فمتى وُجد أحدُهما فالبيعُ تمّ — ولا يُقال «ينتظر إتمام البيع» بعده أبداً.
  */
+/** سطرُ الشراء كما يُقال — و«تمّ» لبيعٍ جاهز نصُّه الخاصّ (`CONVERTED_READY_LABEL`). */
+export function purchaseStateText(state: PurchasePresentation, opts?: { soldReady?: boolean }): string {
+  if (state === "converted" && opts?.soldReady === true) return CONVERTED_READY_LABEL;
+  return PURCHASE_STATE_TEXT[state];
+}
+
 export function purchasePresentation(f: {
   status?: string | null;
   convertedWorkOrderId?: number | null;

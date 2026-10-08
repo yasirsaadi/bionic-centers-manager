@@ -54,14 +54,14 @@ import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import { PriceTransition } from "@/components/PriceTransition";
 import {
-  followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
+  followupEventView, purchasePresentation, purchaseStateText, replacementEpisodeIdOf,
 } from "@shared/followup_events";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 import { canCompleteReceptionSale } from "@shared/commercial";
 import {
   allowedActions, canSelectExpert, computeCommercialPrice, priceSourceShort, isTerminal,
-  FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, FOLLOWUP_STATUS_LABELS,
+  FOLLOWUP_REASONS, FOLLOWUP_REASON_LABELS, followupStatusLabel, CONVERTED_READY_LABEL,
   type FollowupReason, type FollowupStatus,
 } from "@shared/followup";
 import { hasRole } from "@shared/user_roles";
@@ -461,7 +461,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           قرار المريض بعد المعاينة
           <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_TONE[active.status] ?? ""}`}
             data-testid="text-followup-status">
-            {FOLLOWUP_STATUS_LABELS[active.status] ?? active.status}
+            {followupStatusLabel(active.status, { soldReady: Boolean(active.soldReadyAt) })}
           </span>
           {mayReverse && (
             <button
@@ -559,7 +559,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             data-testid="text-purchase-interest">
             {purchaseState === "converted" ? "✅ " : purchaseState === "discount_pending"
               ? "🟡 " : "🟢 "}
-            {PURCHASE_STATE_TEXT[purchaseState]}
+            {purchaseStateText(purchaseState, { soldReady: Boolean(active.soldReadyAt) })}
             {active.purchaseInterestByName && ` — سجّلها ${active.purchaseInterestByName}`}
             {` (${fmt(active.purchaseInterestAt)})`}
           </p>
@@ -575,7 +575,7 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             data-testid="text-purchase-done">
             <div>
               {/*  **والجاهزُ لا تصنيعَ فيه** (§4.cu) — سُلِّم يومَ بيعه. */}
-              {active.soldReadyAt ? "✅ تم الشراء — سُلِّمت الأجزاء الجاهزة بلا أمر تصنيع" : "✅ تم الشراء — بدأ التصنيع"}
+              {active.soldReadyAt ? `✅ ${CONVERTED_READY_LABEL}` : "✅ تم الشراء — بدأ التصنيع"}
               {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
             </div>
             {/*  ══ **تفاصيلُ البيع بعد الإتمام** (المرحلة الثانية) ══════════

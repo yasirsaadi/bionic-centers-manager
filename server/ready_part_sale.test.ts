@@ -23,6 +23,8 @@ import { startDeviceEpisodeTx } from "./device_episodes/store";
 import { getDeviceSalesSummary } from "./ai/tools/device_sales";
 import { getDailyReviewEvents } from "./daily_review/store";
 import { needsExpertOrder, parseSaleLines, saleTotalsOf } from "@shared/part_sale";
+import { CONVERTED_READY_LABEL, FOLLOWUP_STATUS_LABELS, followupStatusLabel } from "@shared/followup";
+import { followupEventView, purchasePresentation, purchaseStateText } from "@shared/followup_events";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -284,6 +286,21 @@ async function main() {
     same("د.٤ **وقالبٌ وسليكونٌ بعد المعاينة يحتاجان الخبير** — بلا خبيرٍ يُردّ، وبه أمرٌ واحد",
       [noExpert.status, withExpert.status, (await ep(cEp))?.status, await orders(cEp), (await ep(cEp))?.ready], [400, 200, "in_manufacturing", 1, false]);
 
+    //  ══ **الشارةُ العامّة للبيع الجاهز** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨): «تم الشراء — بدأ التصنيع» كانت تُقال لأجزاءٍ سُلِّمت يومَ بيعها. ══
+    const shown = async (pid: number, followupId: number) => {
+      const f = ((await call("GET", `/api/followups/patient/${pid}`, S.recv)).json ?? []).find((x: any) => x.id === followupId);
+      const conv = (f?.events ?? []).find((e: any) => e.eventType === "converted");
+      const soldReady = Boolean(f?.soldReadyAt);
+      return [followupStatusLabel(f?.status, { soldReady }), purchaseStateText(purchasePresentation(f), { soldReady }), followupEventView(conv).title];
+    };
+    const resolved = ((await call("GET", "/api/followups/decision-queue?state=resolved", S.recv)).json?.rows ?? []) as any[];
+    same("د.٥ **البيعُ الجاهز يقول «سُلِّمت الأجزاء الجاهزة بلا أمر تصنيع»** — في شارة الحالة وسطر الشراء وحدث التحويل، و«تم الحسم» يعرفه",
+      [await shown(b, fid), resolved.find((r) => r.followupId === fid)?.soldReady],
+      [[CONVERTED_READY_LABEL, CONVERTED_READY_LABEL, CONVERTED_READY_LABEL], true]);
+    same("د.٦ **والبيعُ بأمر تصنيعٍ كما كان** — «تم الشراء — بدأ التصنيع»",
+      [await shown(c, cf), resolved.find((r) => r.followupId === cf)?.soldReady],
+      [[FOLLOWUP_STATUS_LABELS.converted, FOLLOWUP_STATUS_LABELS.converted, FOLLOWUP_STATUS_LABELS.converted], false]);
+
     console.log("\n── هـ. «تصحيح / إلغاء العملية» ──");
     const before = await soldCounts();
     const pv = await call("POST", "/api/admin/operation-reversal/preview", S.manager, { episodeId: aEp });
@@ -309,8 +326,8 @@ async function main() {
       [1, 1, 409, false, true]);
 
     const pvB = await call("POST", "/api/admin/operation-reversal/preview", S.manager, { followupId: fid });
-    same("هـ.٤ **وبيعٌ جاهزٌ بعد المعاينة يقبل «تراجع عن الشراء»** — الشراءُ وحده لا العملية",
-      [pvB.status, (pvB.json?.availableIntents ?? []).includes("purchase_mistake")], [200, true]);
+    same("هـ.٤ **وبيعٌ جاهزٌ بعد المعاينة يقبل «تراجع عن الشراء»** — الشراءُ وحده لا العملية، ونافذتُه تقول حالَه الصحيح",
+      [pvB.status, (pvB.json?.availableIntents ?? []).includes("purchase_mistake"), pvB.json?.currentStatusText], [200, true, CONVERTED_READY_LABEL]);
     const undo = await call("POST", "/api/admin/operation-reversal/execute", S.manager, {
       followupId: fid, intent: "purchase_mistake", reasonNote: "اختار سعراً خطأ", stateStamp: pvB.json?.stateStamp, refundAnswer: "yes",
     });
