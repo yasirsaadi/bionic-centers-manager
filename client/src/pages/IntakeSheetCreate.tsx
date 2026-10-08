@@ -16,7 +16,8 @@ import {
   checkIntakeSheet, INTAKE_DEPARTMENT_LABELS, REFERRAL_OTHER_PERSON, REFERRAL_SOURCES, REFERRAL_SUB_OTHER, REFERRAL_SUB_SOURCES,
   type IntakeDepartment, type InjuryDateStatus,
 } from "@shared/intake_sheet";
-import { COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
+import { FULL_DEVICE } from "@shared/prosthetic_parts";
+import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { INJURY_SIDE_OPTIONS } from "@shared/case_fields";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
@@ -55,7 +56,7 @@ const errBody = (e: any): { message: string; missing: string[] } => {
 interface SheetState {
   branchId: number; registrationDate: string; name: string; phone: string; hadPriorCenterHistory: boolean;
   governorate: string; address: string; referralSource: string; referralSubSource: string; referralSubSourceOther: string;
-  department: IntakeDepartment | ""; amp: AmputationParts; requestedItem: string; supportType: string; injurySide: string;
+  department: IntakeDepartment | ""; amp: AmputationParts; requestedItems: string[]; supportType: string; injurySide: string;
   age: string; weight: string; height: string; injuryCause: string; injuryDate: string; injuryDateStatus: InjuryDateStatus | null;
   generalNotes: string;
 }
@@ -74,12 +75,13 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
     branchId: !isAdmin && session?.branchId ? session.branchId : (Number(search.get("branch")) || session?.branchId || 0),
     registrationDate: baghdadToday(), name: "", phone: "", hadPriorCenterHistory: false,
     governorate: "", address: "", referralSource: "", referralSubSource: "", referralSubSourceOther: "",
-    department: "", amp: {}, requestedItem: "", supportType: "", injurySide: "",
+    department: "", amp: {}, requestedItems: [], supportType: "", injurySide: "",
     age: "", weight: "", height: "", injuryCause: "", injuryDate: "", injuryDateStatus: null, generalNotes: "",
   }));
   const set = <K extends keyof SheetState>(k: K, v: SheetState[K]) => {
     setF((p) => ({ ...p, [k]: v }));
-    setMissing((m) => m.filter((x) => x !== k && !(k === "amp" && x === "amputationSite") && !(k === "injuryDateStatus" && x === "injuryDate")));
+    setMissing((m) => m.filter((x) => x !== k && !(k === "amp" && x === "amputationSite") && !(k === "injuryDateStatus" && x === "injuryDate")
+      && !(k === "requestedItems" && x === "requestedItem")));
   };
   const [missing, setMissing] = useState<string[]>([]);
   const miss = (k: string) => missing.includes(k);
@@ -97,14 +99,15 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
     referralSource: f.referralSource, referralSubSource, age: f.age.trim(), weight: f.weight.trim(), height: f.height.trim(),
     injuryCause: f.injuryCause.trim(), injuryDate: f.injuryDateStatus ? "" : f.injuryDate, injuryDateStatus: f.injuryDateStatus,
     department: f.department, amputationSite, supportType: f.supportType.trim(), injurySide: f.injurySide.trim(),
-    requestedItem: f.department === "prosthetic" ? f.requestedItem : FULL_DEVICE,
+    //  **«المطلوب» مربّعاتُ اختيار** (§4.ct): الكاملُ وحده أو جزءٌ فأكثر.
+    requestedItems: f.department === "prosthetic" ? f.requestedItems : [FULL_DEVICE],
   }), [f, referralSubSource, amputationSite]);
 
   const save = useMutation({
     mutationFn: async () => {
       const dep = f.department as IntakeDepartment;
       const created = await (await apiRequest("POST", "/api/patients", {
-        intakeSheet: true, department: dep, requestedItem: values.requestedItem,
+        intakeSheet: true, department: dep, requestedItems: values.requestedItems,
         branchId: f.branchId, registrationDate: canBackdate ? f.registrationDate : undefined,
         name: values.name, phone: values.phone, hadPriorCenterHistory: f.hadPriorCenterHistory,
         governorate: values.governorate, address: values.address,
@@ -118,7 +121,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
       //  **وطلبُ المعاينة في الحفظ نفسِه** — كما يفتحه «يحتاج معاينة طبية». فشلُه لا يُلغي ملفّاً حُفظ: يُقال ويُكمَل من الملفّ.
       try {
         await apiRequest("POST", `/api/patients/${created.id}/device-episodes`, {
-          serviceType: dep, requestedItem: values.requestedItem, servicePath: "exam",
+          serviceType: dep, requestedItems: values.requestedItems, servicePath: "exam",
         });
         return { id: created.id as number, routed: true as const, routeError: null };
       } catch (e) {
@@ -269,13 +272,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
           </SheetRow>
           {isProsthetic && (
             <SheetRow label="المطلوب" missing={miss("requestedItem")} testId="row-requested">
-              <Select value={f.requestedItem} onValueChange={(v) => set("requestedItem", v)}>
-                <SelectTrigger className={cellInput} data-testid="intake-requested"><SelectValue placeholder="طرف كامل أم جزء؟" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={FULL_DEVICE}>{FULL_DEVICE_LABELS.prosthetic}</SelectItem>
-                  {PROSTHETIC_COMPONENTS.map((c) => <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <RequestedPartsPicker className="px-1.5" value={f.requestedItems} onChange={(v) => set("requestedItems", v)} testId="intake-requested" />
             </SheetRow>
           )}
 

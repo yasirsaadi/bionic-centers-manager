@@ -49,6 +49,8 @@ interface WorklistRow {
    */
   episodeId?: number | null;
   requestedItem?: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: string[] | null;
   sequenceNumber?: number | null;
 }
 
@@ -475,7 +477,7 @@ export default function MyExams() {
                                       يوقّع، ويحمل الصفُّ هويّتَه إلى التوقيع. */}
                                   {r.episodeId != null && (
                                     <span data-testid={`device-label-${key}`}>
-                                      جهاز #{r.sequenceNumber ?? "?"} · {requestedItemLabel(r.requestedItem, r.caseType)}
+                                      جهاز #{r.sequenceNumber ?? "?"} · {requestedItemLabel(r.requestedItem, r.caseType, r.extraComponents)}
                                     </span>
                                   )}
                                   {r.phone && <span dir="ltr">{r.phone}</span>}
@@ -586,7 +588,7 @@ export default function MyExams() {
           //  **الجهازُ بعينه** — من الصفّ إلى التوقيع، لا يُخمَّن في الطريق.
           deviceEpisodeId={target.episodeId ?? null}
           deviceLabel={target.episodeId != null
-            ? `جهاز #${target.sequenceNumber ?? "?"} · ${requestedItemLabel(target.requestedItem, target.caseType)}`
+            ? `جهاز #${target.sequenceNumber ?? "?"} · ${requestedItemLabel(target.requestedItem, target.caseType, target.extraComponents)}`
             : null}
           open={!!target}
           onOpenChange={(o) => !o && setTarget(null)}
@@ -640,7 +642,7 @@ export default function MyExams() {
             <DialogDescription className="text-xs">
               {cancelling?.patientName} — {cancelling ? specialtyLabel(cancelling.caseType) : ""}
               {cancelling?.episodeId != null
-                && ` · جهاز #${cancelling.sequenceNumber ?? "?"} · ${requestedItemLabel(cancelling.requestedItem, cancelling.caseType)}`}.
+                && ` · جهاز #${cancelling.sequenceNumber ?? "?"} · ${requestedItemLabel(cancelling.requestedItem, cancelling.caseType, cancelling.extraComponents)}`}.
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-md border bg-muted/40 p-2.5 text-[11px] leading-5 space-y-0.5">

@@ -26,6 +26,7 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
+import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
@@ -1829,6 +1830,8 @@ export interface WorklistRow {
   episodeId: number | null;
   /** ما طُلب على تلك الحلقة (`full_device` أو جزء) — للعرض. */
   requestedItem: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct) — للعرض. */
+  extraComponents: string[];
   /** ترتيبُ الجهاز في خيطه (#١، #٢…) — للعرض. */
   sequenceNumber: number | null;
 }
@@ -1888,6 +1891,7 @@ export async function getWorklist(
     waiting_since: string | null;
     episode_id: number | null;
     requested_item: string | null;
+    extra_components: string[] | null;
     sequence_number: number | null;
   }>(sql`
     SELECT pc.patient_id, p.name AS patient_name, p.phone, p.patient_code,
@@ -1904,6 +1908,7 @@ export async function getWorklist(
            COALESCE(ep.awaiting_since, ep.created_at, pc.created_at) AS waiting_since,
            ep.id AS episode_id,
            ep.requested_item,
+           ep.extra_components,
            ep.sequence_number
     FROM patient_cases pc
     JOIN patients p ON p.id = pc.patient_id
@@ -1994,6 +1999,8 @@ export async function getWorklist(
     waitingSince: r.waiting_since ? String(r.waiting_since) : null,
     episodeId: r.episode_id === null || r.episode_id === undefined ? null : Number(r.episode_id),
     requestedItem: r.requested_item ?? null,
+    //  **وأجزاءُ الطلب الإضافيّة** (§4.ct) — الطبيبُ يعرف أنه يعاين لقالبٍ وسليكونٍ معاً.
+    extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
     sequenceNumber: r.sequence_number === null || r.sequence_number === undefined
       ? null : Number(r.sequence_number),
   }));
@@ -2009,11 +2016,11 @@ export async function getWorklist(
  * الزيارة من الطلب المعلَّق المرساة إليها إن وُجد.
  */
 export async function awaitingEpisodesForPatient(patientId: number): Promise<{
-  id: number; caseType: string; sequenceNumber: number; requestedItem: string;
+  id: number; caseType: string; sequenceNumber: number; requestedItem: string; extraComponents: string[];
   awaitingSince: string | null; reviewKind: string | null;
 }[]> {
   const rows = await db.execute<Record<string, any>>(sql`
-    SELECT ep.id, pc.case_type, ep.sequence_number, ep.requested_item,
+    SELECT ep.id, pc.case_type, ep.sequence_number, ep.requested_item, ep.extra_components,
            COALESCE(ep.awaiting_since, ep.created_at) AS awaiting_since,
            (SELECT r.review_kind FROM medical_review_requests r
              WHERE r.device_episode_id = ep.id
@@ -2033,6 +2040,7 @@ export async function awaitingEpisodesForPatient(patientId: number): Promise<{
     caseType: String(r.case_type),
     sequenceNumber: Number(r.sequence_number),
     requestedItem: String(r.requested_item ?? "full_device"),
+    extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
     awaitingSince: r.awaiting_since ? new Date(r.awaiting_since).toISOString() : null,
     reviewKind: r.review_kind ? String(r.review_kind) : null,
   }));

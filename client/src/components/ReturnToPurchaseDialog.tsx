@@ -18,6 +18,8 @@ interface EligibleDevice {
   episodeId: number | null;
   serviceType: "prosthetic" | "medical_support";
   requestedItem: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: string[] | null;
   followupId: number;
   closedAt: string | null;
   closedReason: string | null;
@@ -201,7 +203,7 @@ function DeviceCard({ device, compact = false }: { device: EligibleDevice; compa
   return (
     <div className={compact ? "flex-1 text-sm" : "rounded-lg border p-3 text-sm space-y-1"}>
       <div className="font-medium">
-        {specialtyLabel(device.serviceType)} — {requestedItemLabel(device.requestedItem, device.serviceType)}
+        {specialtyLabel(device.serviceType)} — {requestedItemLabel(device.requestedItem, device.serviceType, device.extraComponents)}
       </div>
       <div className="text-xs text-muted-foreground space-y-0.5">
         {device.examAt && (

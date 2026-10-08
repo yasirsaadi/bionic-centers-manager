@@ -27,6 +27,8 @@ interface OpenOrder {
   active: boolean;
   adminVoidReversalId?: number | null;
   requestedItem?: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: string[] | null;
   maintenanceComponent?: string | null;
   deviceSequence?: number | null;
 }
@@ -38,7 +40,7 @@ function orderLabel(o: OpenOrder): string {
     return o.maintenanceComponent
       ? `${word} ${requestedItemLabel(o.maintenanceComponent, o.serviceType as any)}` : word;
   }
-  if (o.requestedItem) return requestedItemLabel(o.requestedItem, o.serviceType as any);
+  if (o.requestedItem) return requestedItemLabel(o.requestedItem, o.serviceType as any, o.extraComponents);
   return SERVICE_TYPE_LABELS[o.serviceType as keyof typeof SERVICE_TYPE_LABELS] ?? o.serviceType;
 }
 

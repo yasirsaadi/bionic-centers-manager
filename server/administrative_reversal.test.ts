@@ -1463,9 +1463,10 @@ async function main() {
       //  حيّاً في `npm run test:device-flow-resume`.
       //  **والمسارُ لم يعد بين ما يُسلَّم**: النافذةُ لا تُفتَح إلّا من
       //  «يحتاج معاينة طبية»، فمسارُها `"exam"` ثابتٌ لا يُختار ولا يُحفَظ.
-      check(modal.includes("onEditPatient(item)"),
+      //  و«المطلوب» قائمةٌ منذ §4.ct — تُسلَّم كلُّها نصّاً واحداً لا أوّلُها.
+      check(modal.includes('onEditPatient(items.join(","))'),
         "٨٤. **وتسلّم اختيارَ الموظّف إلى مَن يبقى بعد تغيّر المسار**"
-        + " — القطعةَ المطلوبة", "");
+        + " — الأجزاءَ المطلوبة كلَّها", "");
       check(modal.includes("initialRequestedItem"),
         "٨٤-ب. **وتُملأ منه عند العودة**", "");
       const launcher = strip(readFileSync("client/src/components/PatientServiceLauncher.tsx", "utf8"));

@@ -5,6 +5,7 @@
 // (`IntakeSheetFrame.tsx`) — **مفتوحةً للطبيب كلُّها**: حقولُ الاستعلامات يعدّلها (وتُدقَّق في الخادم باسمه)، و«المعاينة الطبية»
 // خانةٌ واحدة بدل الخمس، وخاناتُ الجهاز الخمس بترتيب الورقة ومعها «لا ينطبق». والمبلغُ وجدولُ المراجعات مقفولان كما عند الاستعلامات.
 // والحالةُ كلُّها يملكها `NewExamDialog` (التوقيعُ، والجهاز، والمفتاحُ، والإرسال) — هذه شاشةٌ لا منطقَ حفظٍ فيها.
+import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { AmputationBuilder, type AmputationParts } from "@/components/AmputationBuilder";
 import { GovernorateSelect, InjuryDateField } from "@/components/intake/IntakeFields";
 import {
@@ -61,7 +62,7 @@ const dmy = (iso: string) => (iso ? iso.slice(0, 10).split("-").reverse().join("
 
 export function ExamSheetForm({
   specialty, onSpecialty, deviceSpecialties, branchName, registeredAt,
-  sheet, onSheet, rx, onRx, text, onText, requestedItem, onRequestedItem, missing,
+  sheet, onSheet, rx, onRx, text, onText, requestedItems, onRequestedItems, missing,
 }: {
   specialty: IntakeDepartment;
   onSpecialty: (s: IntakeDepartment) => void;
@@ -75,9 +76,9 @@ export function ExamSheetForm({
   onRx: (next: PrescriptionValue) => void;
   text: string;
   onText: (v: string) => void;
-  /** «المطلوب» — `null` حين لا جهازَ بعينه (فلا يُعرَض للتعديل). */
-  requestedItem: string | null;
-  onRequestedItem: (v: string) => void;
+  /** «المطلوب» مربّعاتُ اختيار (§4.ct) — `null` حين لا جهازَ بعينه (فلا يُعرَض للتعديل). */
+  requestedItems: string[] | null;
+  onRequestedItems: (v: string[]) => void;
   missing: string[];
 }) {
   const miss = (k: string) => missing.includes(k);
@@ -175,15 +176,9 @@ export function ExamSheetForm({
             )}
           </div>
         </SheetRow>
-        {isProsthetic && requestedItem !== null && (
+        {isProsthetic && requestedItems !== null && (
           <SheetRow label="المطلوب" testId="exam-row-requested">
-            <Select value={requestedItem} onValueChange={onRequestedItem}>
-              <SelectTrigger className={cellInput} data-testid="exam-sheet-requested"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={FULL_DEVICE}>{FULL_DEVICE_LABELS.prosthetic}</SelectItem>
-                {PROSTHETIC_COMPONENTS.map((c) => <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <RequestedPartsPicker className="px-1.5" value={requestedItems} onChange={onRequestedItems} testId="exam-sheet-requested" />
           </SheetRow>
         )}
 

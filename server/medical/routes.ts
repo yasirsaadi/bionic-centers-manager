@@ -514,6 +514,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  نافذتَه — و`null` تعني «لا عمليةَ هنا» فلا يظهر الزرّ.
           reversalFollowupId: followupOfExam[e.id] ?? null,
           deviceRequestedItem: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.requestedItem ?? null : null,
+          deviceExtraComponents: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.extraComponents ?? [] : [],
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         //  **الأجهزةُ المنتظرةُ بهويّتها** (تدقيق ٢٠٢٦-٠٩-١٢): تعرضها نافذةُ

@@ -623,15 +623,17 @@ async function main() {
       //  و`servicePath` (ترحيل ٠٦٥) حقلُ **توجيهٍ** لا سريريٌّ ولا ماليّ:
       //  يقول أتحتاج هذه العمليةُ معاينةً أم لا، ولا يحمل تشخيصاً ولا سعراً.
       //  و`awaitingSince` (ترحيل ٠٧٧، #291) **ساعةُ انتظار** الطلب — توقيتٌ لا سريريٌّ ولا ماليّ.
+      //  و`extraComponents` (ترحيل ١١٦، §4.ct) بقيّةُ «ما طُلب» حين يُطلب أكثرُ من جزء — تجاريٌّ كـ`requestedItem`.
       ["agreedCost", "awaitingSince", "branchId", "cancelReason", "cancelledAt", "caseId", "component",
-       "createdAt", "deliveredAt", "id", "requestedItem", "sequenceNumber",
+       "createdAt", "deliveredAt", "extraComponents", "id", "requestedItem", "sequenceNumber",
        "servicePath", "serviceType", "status"]);
     same("   ومسارُ العملية محفوظٌ كما اختاره الموظّف",
       list.body?.episodes?.[0]?.servicePath, "exam");
     //  **والمساندُ الطبية لا أجزاءَ لها** — تبقى على الطرف الكامل حتماً.
     same("   والمسند طلبٌ كاملٌ بلا جزء",
-      [list.body?.episodes?.[0]?.requestedItem, list.body?.episodes?.[0]?.component],
-      ["full_device", null]);
+      [list.body?.episodes?.[0]?.requestedItem, list.body?.episodes?.[0]?.component,
+       list.body?.episodes?.[0]?.extraComponents],
+      ["full_device", null, []]);
     same("ولا يقرأها موظّف فرعٍ آخر",
       (await http("GET", `/api/patients/${pX}/device-episodes`, S.otherBranch)).status, 403);
 

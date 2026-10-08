@@ -25,7 +25,7 @@
 // لا يجوز أن يفشل لأنّ مسوّدةً لم تُحفَظ: كلُّ لمسةٍ محروسة، والفشلُ يعني
 // «بلا استئناف» لا «تعطّل».
 
-import { isDeviceServiceKind, isRequestedItem, type DeviceServiceKind } from "@shared/prosthetic_parts";
+import { isDeviceServiceKind, requestedItemsCsv, type DeviceServiceKind } from "@shared/prosthetic_parts";
 
 /**
  * ما يلزم لاستئناف نافذة «جهاز جديد» تماماً حيث تُركت.
@@ -73,7 +73,8 @@ export function saveDeviceFlowResume(store: ResumeStore | null, r: DeviceFlowRes
       serviceType: r.serviceType,
       //  الجزءُ المخزَّن قيمةٌ من القائمة أو لا شيء — ولا نصَّ حرّ يعود
       //  فيُضبَط به `Select` على قيمةٍ لا يعرفها.
-      requestedItem: isRequestedItem(r.requestedItem) ? r.requestedItem : "",
+      //  **وقائمةُ أجزاءٍ نصّاً واحداً** («socket,silicone» — §4.ct) تُحفَظ كما هي.
+      requestedItem: requestedItemsCsv(r.requestedItem),
     } satisfies DeviceFlowResume));
   } catch {
     /* بلا استئناف — ولا تعطُّل. */
@@ -110,7 +111,7 @@ export function takeDeviceFlowResume(
   return {
     patientId: Number(patientId),
     serviceType: parsed.serviceType,
-    requestedItem: isRequestedItem(parsed.requestedItem) ? parsed.requestedItem : "",
+    requestedItem: requestedItemsCsv(parsed.requestedItem),
   };
 }
 

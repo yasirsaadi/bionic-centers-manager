@@ -33,7 +33,7 @@ import {
   syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
   isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
-import { parseComponent, componentLabel } from "@shared/prosthetic_parts";
+import { parseComponent, componentLabel, normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { hasRole } from "@shared/user_roles";
 
 // Thrown when a maintenance order can't be opened because the patient still has
@@ -997,6 +997,8 @@ export async function getOrderDetail(id: number) {
       //  مواصفاتُه من معاينة تلك الحلقة لا من أعمدة المريض المشتركة.
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
+      //  **وأجزاءُ الطلب الإضافيّة** (§4.ct) — الخبيرُ يصنع القالبَ والسليكونَ والقدمَ معاً.
+      extraComponents: PDE.extraComponents,
       deviceSequence: PDE.sequenceNumber,
       //  **ولا مالَ هنا** — صفحةُ الأمر يفتحها الخبيرُ المسنَد بلا صلاحية مال، ولا شاشةَ تقرأ منها
       //  سعراً. مالُ العملية بابُه `getAllOrdersForPatient` خلف `includeMoney` (§4.al).
@@ -2046,6 +2048,8 @@ export async function getAllOrdersForPatient(
       trialSocketCount: WO.trialSocketCount, trialFinalDate: WO.trialFinalDate,
       deviceEpisodeId: WO.deviceEpisodeId,
       requestedItem: PDE.requestedItem,
+      //  **وأجزاءُ الطلب الإضافيّة** (§4.ct) — الخبيرُ يصنع القالبَ والسليكونَ والقدمَ معاً.
+      extraComponents: PDE.extraComponents,
       deviceSequence: PDE.sequenceNumber,
       agreedCost: PDE.agreedCost,
       maintenanceFinalPrice: WO.maintenanceFinalPrice,
@@ -2129,6 +2133,7 @@ export async function getAllOrdersForPatient(
     deviceEpisodeId: r.deviceEpisodeId ?? null,
     deviceSequence: r.deviceSequence ?? null,
     requestedItem: r.requestedItem ?? null,
+    extraComponents: normalizeExtraComponents(r.requestedItem, r.extraComponents),
     isFollowup: r.isFollowup === true,
     //  **القالبُ الاختباري** (§4.bz): بانتظار النهائي أم لا، وموعدُه، وكم مرّة — للشريط وخيار «سبب الحضور».
     trialAwaiting: isTrialAwaiting({ status: r.status, holdReasonCode: r.holdReasonCode }),

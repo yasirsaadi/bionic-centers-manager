@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseAmputationSite, parseInjuries } from "@shared/case_fields";
-import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { requestedItemLabel, requestedItemsOf } from "@shared/prosthetic_parts";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,6 +62,8 @@ export interface ExamToEdit {
   deviceEpisodeId?: number | null;
   /** «المطلوب» لذلك الجهاز — تفتح عليه الاستمارةُ عند التنقيح (§4.cq، ٢ب). */
   deviceRequestedItem?: string | null;
+  /** أجزاءُ الطلب الإضافيّة لذلك الجهاز (§4.ct). */
+  deviceExtraComponents?: string[] | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -106,7 +108,7 @@ const EMPTY_FORM: Record<ExamFieldKey, string> = {
 /** جهازٌ منتظرٌ المعاينةَ كما تُرجعه `GET /api/medical/patients/:id/exams`. */
 
 export function describeAwaitingEpisode(e: AwaitingEpisodeOption): string {
-  const base = `جهاز #${e.sequenceNumber} · ${requestedItemLabel(e.requestedItem, e.caseType)}`;
+  const base = `جهاز #${e.sequenceNumber} · ${requestedItemLabel(e.requestedItem, e.caseType, e.extraComponents)}`;
   return e.reviewKind === "return_to_purchase" ? `${base} · عاد للشراء` : base;
 }
 
@@ -306,7 +308,7 @@ export function NewExamDialog({
   const [sheetVals, setSheetVals] = useState<ExamSheetValues | null>(null);
   const [sheetMissing, setSheetMissing] = useState<string[]>([]);
   //  «المطلوب» الذي اختاره الطبيبُ — `null` = كما أرسله الاستعلامات.
-  const [requestedOverride, setRequestedOverride] = useState<string | null>(null);
+  const [requestedOverride, setRequestedOverride] = useState<string[] | null>(null);
   useEffect(() => {
     if (!open) return;
     setSheetVals(null);
@@ -326,11 +328,13 @@ export function NewExamDialog({
   useEffect(() => {
     if (open && sheetSource && sheetVals === null) setSheetVals(sheetValuesFrom(sheetSource));
   }, [open, sheetSource, sheetVals]);
-  const baseRequestedItem: string | null = isEdit
-    ? (exam?.deviceRequestedItem ?? null)
-    : (resolvedEpisode !== null ? (awaiting.find((e) => e.id === resolvedEpisode)?.requestedItem ?? null) : null);
+  //  **«المطلوب» قائمةً** (§4.ct): الكاملُ وحده أو الأجزاءُ كلُّها — من عمودَي الحلقة.
+  const awaitingPick = !isEdit && resolvedEpisode !== null ? awaiting.find((e) => e.id === resolvedEpisode) : undefined;
+  const baseRequestedItems: string[] | null = isEdit
+    ? (exam?.deviceRequestedItem ? requestedItemsOf(exam.deviceRequestedItem, exam.deviceExtraComponents) : null)
+    : (awaitingPick ? requestedItemsOf(awaitingPick.requestedItem, awaitingPick.extraComponents) : null);
   useEffect(() => { setRequestedOverride(null); }, [resolvedEpisode]);
-  const requestedItem = requestedOverride ?? baseRequestedItem;
+  const requestedItems = requestedOverride ?? baseRequestedItems;
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
@@ -453,8 +457,9 @@ export function NewExamDialog({
             //  **وما عدّله من حقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — إداريٌّ لا تجاريّ: الخادمُ يقارنه بالملفّ
             //  فيكتب ما تغيّر وحده ويدقّقه باسم الطبيب، و«المطلوب» قبل المال والتصنيع وحدهما.
             ...(sheetMode && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
-            ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride !== baseRequestedItem
-              ? { requestedItem: requestedOverride } : {}),
+            ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride.length > 0
+              && requestedOverride.join(",") !== (baseRequestedItems ?? []).join(",")
+              ? { requestedItems: requestedOverride } : {}),
             //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
             //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
             ...(retypeRequested ? { retypeDeviceEpisode: true } : {}),
@@ -704,8 +709,8 @@ export function NewExamDialog({
                 onRx={setRx}
                 text={form[EXAM_SHEET_TEXT_KEY]}
                 onText={(v) => setForm((p) => ({ ...p, [EXAM_SHEET_TEXT_KEY]: v }))}
-                requestedItem={requestedItem}
-                onRequestedItem={setRequestedOverride}
+                requestedItems={requestedItems}
+                onRequestedItems={setRequestedOverride}
                 missing={sheetMissing}
               />
             )

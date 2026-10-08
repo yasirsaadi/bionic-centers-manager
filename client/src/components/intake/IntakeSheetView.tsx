@@ -39,7 +39,7 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
       <IntakeSheetHeader branchName={sheet.branchName} />
       <div className="flex flex-wrap justify-between gap-2 text-xs text-slate-600 mb-2 px-0.5" data-testid="sheet-file-line">
         <span>رقم الملف: <b dir="ltr">{patient.patientCode ?? "—"}</b></span>
-        <span>الجهاز #{sheet.sequenceNumber} — {requestedItemLabel(sheet.requestedItem, sheet.serviceType)}</span>
+        <span>الجهاز #{sheet.sequenceNumber} — {requestedItemLabel(sheet.requestedItem, sheet.serviceType, sheet.extraComponents)}</span>
       </div>
       <SheetTable>
         <SheetPair>
@@ -55,7 +55,7 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
         <SheetRow label="سبق التعامل مع المركز"><V>{yesNo(patient.hadPriorCenterHistory)}</V></SheetRow>
         <SheetRow label="نوع الإصابة"><V testId="sheet-v-injury-type">{injuryType}</V></SheetRow>
         {isProsthetic && (
-          <SheetRow label="المطلوب"><V testId="sheet-v-requested">{requestedItemLabel(sheet.requestedItem, sheet.serviceType)}</V></SheetRow>
+          <SheetRow label="المطلوب"><V testId="sheet-v-requested">{requestedItemLabel(sheet.requestedItem, sheet.serviceType, sheet.extraComponents)}</V></SheetRow>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_15rem] print:grid-cols-[1fr_15rem] print:break-inside-avoid border-b border-slate-700">
           <div className="sm:border-l print:border-l border-slate-700">

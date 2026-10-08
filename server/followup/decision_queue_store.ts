@@ -39,6 +39,7 @@
 // عن العدّاد لمجرّد أنه تجاوز صفحةً.
 
 import { sql } from "drizzle-orm";
+import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { db } from "../db";
 import { TERMINAL_STATUSES } from "@shared/followup";
 import { parseFieldOwner, type FieldOwner } from "@shared/commercial";
@@ -321,6 +322,8 @@ export interface DecisionQueueResolvedRow {
    * `JOIN` جديد ولا مسّ لمنطق الحسم.
    */
   requestedItem: string | null;
+  /** الأجزاءُ الإضافيّة في الطلب نفسِه (§4.ct). */
+  extraComponents: string[];
 }
 
 const RESOLVED_FROM = sql`
@@ -371,6 +374,7 @@ const toResolvedRow = (x: any): DecisionQueueResolvedRow => ({
   selectedExpertName: x.expert_name ?? null,
   notBoughtReasonText: x.not_bought_reason_text ?? null,
   requestedItem: x.requested_item ?? null,
+    extraComponents: normalizeExtraComponents(x.requested_item, x.extra_components),
 });
 
 /**
@@ -395,7 +399,7 @@ export async function listDecisionQueueResolved(
            p.patient_code, p.name AS patient_name, b.name AS branch_name,
            f.original_price, f.approved_price, f.price_kind,
            f.selected_expert_user_id, u.display_name AS expert_name,
-           f.not_bought_reason_text, de.requested_item,
+           f.not_bought_reason_text, de.requested_item, de.extra_components,
            ev.actor_name AS resolved_by_name, ev.payload AS resolved_payload,
            COALESCE(ev.created_at, f.converted_at, f.closed_at) AS resolved_at
     ${RESOLVED_FROM}

@@ -32,6 +32,8 @@ interface OrderRow {
   deviceEpisodeId?: number | null;
   deviceSequence?: number | null;
   requestedItem?: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: string[] | null;
   //  والمالُ — **يصل فقط لمن يملك عرضَ الدفعات**، والخادمُ يحذف الحقول
   //  حذفاً لا يصفّرها. فـ`undefined` هنا تعني «محجوب»، لا «صفر».
   agreedCost?: number | null;
@@ -122,7 +124,7 @@ export function PatientWorkOrderCard({ patientId }: { patientId: number }) {
                     data-testid={`badge-order-device-${o.id}`}>
                     {deviceOrdinalLabel(o.deviceSequence)}
                     {o.requestedItem
-                      ? ` · ${requestedItemLabel(o.requestedItem, o.serviceType as any)}` : ""}
+                      ? ` · ${requestedItemLabel(o.requestedItem, o.serviceType as any, o.extraComponents)}` : ""}
                   </Badge>
                 )}
                 <span className="text-xs font-mono text-muted-foreground"

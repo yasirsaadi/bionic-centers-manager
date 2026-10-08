@@ -33,8 +33,9 @@ check("٣. والقوائمُ القانونية نفسُها لا قائمةٌ 
   && page.includes('(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_DEVICE_SPECS).map((f) =>'));
 check("٤. وموقعُ البتر وجهةُ الإصابة من الجهاز نفسِه",
   page.includes("value={deviceSpecs.specs.amputationSite}") && page.includes("value={deviceSpecs.specs.injurySide}"));
-check("٥. ويسمّي الجهازَ برقمه وما طُلب ومَن عاينه",
-  page.includes("جهاز #{order.sequenceNumber}") && page.includes("requestedItemLabel(order.requestedItem ?? null, order.serviceType)")
+//  وما طُلب **بأجزائه كلّها** منذ §4.ct — الخبيرُ يصنع «القالب + السليكون» لا القالبَ وحده.
+check("٥. ويسمّي الجهازَ برقمه وما طُلب بأجزائه كلّها ومَن عاينه",
+  page.includes("جهاز #{order.sequenceNumber}") && page.includes("requestedItemLabel(order.requestedItem ?? null, order.serviceType, order.extraComponents)")
   && page.includes("deviceSpecs.doctorName"));
 check("٦. **والأمرُ الموروث يُقال عنه صراحةً** ويبقى على ملفّ المريض",
   page.includes('data-testid="note-device-specs-patient-file"')
