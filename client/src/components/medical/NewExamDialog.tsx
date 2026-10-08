@@ -304,7 +304,6 @@ export function NewExamDialog({
   });
   const sheetSource = (isEdit ? editSheetData?.sheet : examsData?.sheet) ?? null;
   const [sheetVals, setSheetVals] = useState<ExamSheetValues | null>(null);
-  const [examText, setExamText] = useState("");
   const [sheetMissing, setSheetMissing] = useState<string[]>([]);
   //  «المطلوب» الذي اختاره الطبيبُ — `null` = كما أرسله الاستعلامات.
   const [requestedOverride, setRequestedOverride] = useState<string | null>(null);
@@ -313,8 +312,17 @@ export function NewExamDialog({
     setSheetVals(null);
     setSheetMissing([]);
     setRequestedOverride(null);
-    setExamText(exam ? examSheetTextOf(exam.caseType, exam) : "");
   }, [open, exam?.id]);
+  //  **«المعاينة الطبية» هي `form.diagnosis`** — وعلى الاستمارة تُجمَع فيها الخاناتُ الأخرى بعناوينها (معاينةٌ قديمة تُنقَّح، أو
+  //  نصٌّ كُتب قبل التبديل إلى طرفٍ أو مسند) وتُفرَّغ هي — فالجسمُ المرسَل واحدٌ لا يتغيّر شكلُه، ولا يضيع حرف.
+  useEffect(() => {
+    if (!open || !sheetMode) return;
+    setForm((f) => {
+      const text = examSheetTextOf(specialty, f);
+      return text === f.diagnosis && !f.chiefComplaint && !f.clinicalFindings && !f.plan && !f.notes
+        ? f : { ...EMPTY_FORM, [EXAM_SHEET_TEXT_KEY]: text };
+    });
+  }, [open, sheetMode, form.chiefComplaint, form.clinicalFindings, form.plan, form.notes]);
   useEffect(() => {
     if (open && sheetSource && sheetVals === null) setSheetVals(sheetValuesFrom(sheetSource));
   }, [open, sheetSource, sheetVals]);
@@ -436,19 +444,17 @@ export function NewExamDialog({
           //  فهذا ليس اعتماداً على حسن نية الشاشة وحدها.
           body: JSON.stringify({
             caseType: specialty,
-            //  **على الاستمارة: خانةٌ واحدة «المعاينة الطبية»** — والخاناتُ الأربع الباقية تُفرَّغ (نصُّ القديمة جُمع فيها).
-            ...(sheetMode
-              ? { chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", [EXAM_SHEET_TEXT_KEY]: examText }
-              : form),
+            ...form,
             prescription: rx,
-            //  **وما عدّله من حقول الاستعلامات** — الخادمُ يقارنه بالملفّ فيكتب ما تغيّر وحده ويدقّقه.
-            ...(sheetMode && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
-            ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride !== baseRequestedItem
-              ? { requestedItem: requestedOverride } : {}),
             // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
             //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
             ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
+            //  **وما عدّله من حقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — إداريٌّ لا تجاريّ: الخادمُ يقارنه بالملفّ
+            //  فيكتب ما تغيّر وحده ويدقّقه باسم الطبيب، و«المطلوب» قبل المال والتصنيع وحدهما.
+            ...(sheetMode && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
+            ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride !== baseRequestedItem
+              ? { requestedItem: requestedOverride } : {}),
             //  **ونيّةُ تصحيح النوع صريحة** (٤.y): بلا هذه الراية يبقى معرّفُ
             //  خيطٍ آخر بائتاً ٤٠٩ كما كان — فلا تتغيّر دلالةُ أيّ طلبٍ آخر.
             ...(retypeRequested ? { retypeDeviceEpisode: true } : {}),
@@ -529,9 +535,7 @@ export function NewExamDialog({
 
   // A prescription alone is a real clinical decision, so it counts as content
   // just as the narrative does — the server applies the same rule.
-  const hasNarrative = sheetMode
-    ? examText.trim().length > 0
-    : Object.values(form).some((v) => v.trim().length > 0);
+  const hasNarrative = Object.values(form).some((v) => v.trim().length > 0);
   const hasPrescription = Object.entries(rx).some(([, v]) =>
     Array.isArray(v)
       ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
@@ -698,8 +702,8 @@ export function NewExamDialog({
                 onSheet={(v) => { setSheetVals(v); setSheetMissing([]); }}
                 rx={rx}
                 onRx={setRx}
-                text={examText}
-                onText={setExamText}
+                text={form[EXAM_SHEET_TEXT_KEY]}
+                onText={(v) => setForm((p) => ({ ...p, [EXAM_SHEET_TEXT_KEY]: v }))}
                 requestedItem={requestedItem}
                 onRequestedItem={setRequestedOverride}
                 missing={sheetMissing}
