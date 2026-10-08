@@ -266,6 +266,7 @@
     "test:intake-sheet": "tsx server/intake_sheet.test.ts",
     "test:device-sale-specs": "tsx server/device_sale_specs.test.ts",
     "test:exam-sheet": "tsx server/exam_sheet.test.ts",
+    "test:intake-sheets": "tsx server/intake_sheets.test.ts",
     "test:numeric-input": "tsx client/src/lib/numeric_input.test.ts",
     "test:physio-protocol-seed": "tsx server/physio_protocol_seed.test.ts",
     "test:physio-protocol-english": "tsx server/physio_protocol_english.test.ts",

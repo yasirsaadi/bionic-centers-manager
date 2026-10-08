@@ -69,6 +69,14 @@
     padding-right: env(safe-area-inset-right);
   }
 
+  /* **لا تتحرّك الصفحةُ يميناً ويساراً على الهاتف** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨، §4.cq): القائمةُ الجانبيةُ المخفيّة
+     خارج حافّة الشاشة تُفسح لمتصفّح «آيفون» سحباً أفقياً. `clip` يقصّ بلا أن يصنع حاويةَ تمرير — فلا يكسر
+     العناصرَ الثابتة واللاصقة ولا `window.scrollY` — و`overscroll-behavior-x` يمنع ارتدادَ الحافّة. */
+  html, body {
+    overflow-x: clip;
+    overscroll-behavior-x: none;
+  }
+
   /* In standalone mode we want the body to fill the viewport since
      OS chrome (URL bar) is gone. */
   @media (display-mode: standalone) {

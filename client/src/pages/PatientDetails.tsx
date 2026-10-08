@@ -1,5 +1,7 @@
 import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
 import { injuryDateDisplay } from "@shared/intake_sheet";
+import { freeDeviceRows } from "@shared/intake_sheet_view";
+import { useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
 import { compressImageForUpload } from "@/lib/compress_image";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -187,6 +189,9 @@ export default function PatientDetails() {
   //  **عمودُ «الجهاز» في جدول الدفعات يظهر لمريض الأجهزة وحده** — مريضُ
   //  العلاج الطبيعي لا حلقاتِ أجهزةٍ له، فعمودٌ كلُّه شرطاتٌ ضجيجٌ لا خبر.
   const hasDeviceService = Boolean(patient?.isAmputee || patient?.isMedicalSupport);
+  //  ══ **الجهازُ المُهدى في سجلّ المدفوعات** (سؤالُ المالك ٢٠٢٦-١٠-٠٨ والتوصيةُ، §4.cq) — صفٌّ مقروء «مجاني» بسعره الأصليّ،
+  //  من باب الاستمارة نفسِه. **لا دفعةَ تُخترَع ولا دينارَ يدخل مجموعاً**: المالُ لم يتحرّك، والسجلُّ يقول ذلك صراحةً.
+  const { data: sheetsForPayments } = useIntakeSheets(Number(id), Boolean(patient && hasDeviceService && permissions.canViewPayments));
   const { mutate: uploadFile, isPending: isUploading } = useUploadDocument();
   const { mutate: deleteDocument } = useDeleteDocument();
   const { mutate: deleteVisit, isPending: isDeletingVisit } = useDeleteVisit();
@@ -718,6 +723,8 @@ export default function PatientDetails() {
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
   const caseVisits = showAll ? allVisits : allVisits.filter((v: any) => v.caseId === selectedCaseId || v.caseId == null);
   const casePayments = showAll ? allPayments : allPayments.filter((p: any) => p.caseId === selectedCaseId || p.caseId == null);
+  const freeRows = freeDeviceRows(sheetsForPayments?.sheets ?? [])
+    .filter((r) => showAll || patientCasesList.find((c) => c.id === selectedCaseId)?.caseType === r.serviceType);
   //  ══ **عدّادُ الجلسات مصدرٌ واحد في الصفحة كلِّها** ══════════════════
   //  `patient.payments` تغيب عمّن لا يملك `canViewPayments`، فكلُّ حسابٍ
   //  محلّيٍّ من صفوفها يقرأ **صفراً** لذلك المستخدم: لا رايةَ مجّانيّةٍ ولا
@@ -1583,7 +1590,29 @@ export default function PatientDetails() {
                     </tr>
                   </thead>
                   <tbody>
-                    {casePayments?.length === 0 ? (
+                    {freeRows.map((r) => (
+                      <tr key={`free-${r.episodeId}`} className="bg-emerald-50/40" data-testid={`row-free-device-${r.episodeId}`}>
+                        <td className="border border-slate-300 px-3 py-2 text-center">
+                          <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-800">مجاني</Badge>
+                          {r.originalPrice ? (
+                            <div className="text-xs text-slate-500 mt-0.5">السعر الأصلي {r.originalPrice.toLocaleString("en-US")} {t.patientDetails.currency}</div>
+                          ) : null}
+                        </td>
+                        <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
+                          <div>{formatDateTimeIraq(r.date)}</div>
+                        </td>
+                        {hasDeviceService && (
+                          <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">{deviceOrdinalLabel(r.sequenceNumber) ?? "—"}</td>
+                        )}
+                        {patient.isPhysiotherapy && <td className="border border-slate-300 px-3 py-2 text-center text-slate-400">-</td>}
+                        {patient.isPhysiotherapy && <td className="border border-slate-300 px-3 py-2 text-center text-slate-400">-</td>}
+                        <td className="border border-slate-300 px-3 py-2 text-center text-slate-600">
+                          {r.serviceType === "prosthetic" ? "طرف صناعي" : "مسند"} مُهدى — لم يُقبض مبلغ
+                        </td>
+                        {(permissions.canEditPayments || permissions.canDeletePayments) && <td className="border border-slate-300 px-3 py-2" />}
+                      </tr>
+                    ))}
+                    {casePayments?.length === 0 && freeRows.length > 0 ? null : casePayments?.length === 0 ? (
                       <tr><td colSpan={(isAdmin ? (patient.isPhysiotherapy ? 6 : 4) : (patient.isPhysiotherapy ? 5 : 3))
                         + (hasDeviceService ? 1 : 0)} className="border border-slate-300 p-8 text-center text-muted-foreground">{t.patientDetails.noPayments}</td></tr>
                     ) : (

@@ -24,7 +24,8 @@ import {
   type MedicalSpecialty,
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
-import { examNarrativeRows } from "@shared/exam_sheet";
+import { examNarrativeRows, isSheetExamType } from "@shared/exam_sheet";
+import { openIntakeSheetPrint } from "@/components/intake/DeviceSheetsBox";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { buildAmputationSite, deviceSpecsForSpecialty, type InjuryEntry } from "@shared/case_fields";
@@ -311,6 +312,13 @@ export function PatientMedicalExams({
   // Official print sheet. Opened in its own window so the app's layout, sidebar
   // and colours never leak into a document that goes into a patient file.
   const printExam = (exam: Exam) => {
+    //  **معاينةُ جهازٍ تُطبع استمارتَه مكتملة** (ملاحظاتُ المالك ٢٠٢٦-١٠-٠٨، §4.cq): «حين أضغط طباعة بعد الحسم تظهر الورقةُ تماماً
+    //  بعد أن اكتملت معلوماتُها» — ورقةُ الاستعلامات والطبيب والمواصفات والمبلغ والمراجعات معاً. وما ليس جهازاً بعينه يُطبع كما كان.
+    const episodeOfExam = (exam as any).deviceEpisodeId as number | null | undefined;
+    if (isSheetExamType(exam.caseType) && episodeOfExam) {
+      openIntakeSheetPrint(patientId, episodeOfExam);
+      return;
+    }
     //  **«المعاينة الطبية» باسمها** لمعاينة الأطراف والمساند على الاستمارة (§4.cq، ٢ب) — والقديمةُ بخاناتها كما كُتبت.
     const rows = examNarrativeRows(exam.caseType, exam as any)
       .map((f) => `<tr><th>${f.label}</th><td>${f.value.replace(/\n/g, "<br/>")}</td></tr>`)
