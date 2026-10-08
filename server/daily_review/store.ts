@@ -364,6 +364,24 @@ async function fetchComponentSaleOpenedRows(f: DailyReviewFilters): Promise<Dail
        AND ${branchClause(sql`de.branch_id`, f.branchId)}
        AND ${serviceClause(sql`wo.service_type`, f.serviceType)}
        AND ${baghdadDayEqTz(sql`wh.created_at`, f.date)}
+    -- ══ **والجاهزُ بلا أمر تصنيع** (ترحيل ١١٧، §4.cu): لا أمرَ ولا سجلَّ تصنيعٍ يُقرأ منه — فلحظتُه sold_ready_at
+    -- على جهازه، ومَن سجّله فاتحُ الطلب في الحفظة نفسِها، ولا خبير. ══
+    UNION ALL
+    SELECT de.id AS episode_id, de.patient_id, de.branch_id, de.requested_item,
+           de.component_sale_original_price, de.component_sale_price_kind, de.agreed_cost,
+           NULL::int AS order_id, 'prosthetic' AS service_type, NULL::int AS expert_user_id, NULL AS expert_name,
+           p.name, p.patient_code, b.name AS branch_name,
+           de.sold_ready_at AS opened_at, cu.display_name AS performed_by_name
+      FROM patient_device_episodes de
+      JOIN patients p ON p.id = de.patient_id AND p.deleted_at IS NULL
+      LEFT JOIN branches b ON b.id = de.branch_id
+      LEFT JOIN system_users cu ON cu.id = de.created_by
+     WHERE de.service_path = 'no_exam'
+       AND de.sold_ready_at IS NOT NULL
+       AND de.component IS NOT NULL
+       AND ${branchClause(sql`de.branch_id`, f.branchId)}
+       AND ${serviceClause(sql`'prosthetic'`, f.serviceType)}
+       AND ${baghdadDayEqTz(sql`de.sold_ready_at`, f.date)}
   `);
 
   return (r.rows ?? []).map((row) => ({
@@ -378,7 +396,8 @@ async function fetchComponentSaleOpenedRows(f: DailyReviewFilters): Promise<Dail
     serviceType: row.service_type as DailyReviewServiceType,
     ...NOT_DUAL,
     whyTheyCame: row.requested_item ?? null,
-    whatHappened: "بيع جزء بلا معاينة",
+    whatHappened: row.order_id === null || row.order_id === undefined
+      ? "بيع جزء جاهز بلا معاينة — سُلِّم بلا أمر تصنيع" : "بيع جزء بلا معاينة",
     registeredByName: null,
     registeredByUnknownLegacy: false,
     performedByName: row.performed_by_name ?? null,

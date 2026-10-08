@@ -222,14 +222,17 @@ async function main() {
     const fid = Number((await q(`SELECT id FROM post_exam_followups WHERE device_episode_id = $1 ORDER BY id DESC LIMIT 1`, [bEp])).rows[0]?.id);
     const fl = (await call("GET", `/api/followups/patient/${b}`, S.recv)).json;
     same("د.١ **نافذةُ البيع تعرف الأجزاءَ كلّها**", (fl ?? []).find((f: any) => f.id === fid)?.extraComponents, ["silicone", "foot"]);
+    //  **سعرٌ لكلّ جزء** (§4.cu) ومجموعُها البيعُ الواحد.
     const sale = await call("POST", `/api/followups/${fid}/complete-sale`, S.recv, {
-      originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT,
+      lines: [{ item: "socket", originalPrice: 500_000, discountAmount: 0 }, { item: "silicone", originalPrice: 250_000, discountAmount: 0 },
+        { item: "foot", originalPrice: 150_000, discountAmount: 0 }],
+      expertUserId: EXPERT,
       deviceSpecs: { socketType: "سوكيت سليكون", kneeJointType: "لا ينطبق", footType: "قدم كربون", siliconType: "سليكون طبي" },
     });
     const orders = (await q(`SELECT id FROM prosthetic_work_orders WHERE device_episode_id = $1`, [bEp])).rows;
     const orderRes = await call("GET", `/api/manufacturing/orders/${orders[0]?.id}`, S.expert);
     const order = orderRes.json?.order;
-    same("د.٢ **بيعٌ واحد بسعرٍ واحد وأمرُ تصنيعٍ واحد** يقرأ الخبيرُ فيه الأجزاءَ الثلاثة",
+    same("د.٢ **بيعٌ واحد — مجموعُ أسطر أجزائه — وأمرُ تصنيعٍ واحد** يقرأ الخبيرُ فيه الأجزاءَ الثلاثة",
       [sale.status, Number((await q(`SELECT agreed_cost FROM patient_device_episodes WHERE id = $1`, [bEp])).rows[0].agreed_cost), orders.length,
         orderRes.status, order?.requestedItem, order?.extraComponents],
       [200, 900_000, 1, 200, "socket", ["silicone", "foot"]]);

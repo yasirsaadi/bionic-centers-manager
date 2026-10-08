@@ -63,9 +63,10 @@ import {
   lockCaseAndReadOpenEpisode, lockCaseAndReadExactEpisode,
   markEpisodeInManufacturing,
   startEpisodeManufacturingTx, setEpisodeAgreedCostTx,
-  resolveDeviceTargetTx,
+  resolveDeviceTargetTx, markEpisodeSoldReadyTx,
   DeviceEpisodeError, type LockedEpisode,
 } from "./device_episodes/store";
+import { needsExpertOrder } from "@shared/part_sale";
 import {
   classifyCaseDisposal, disposeCaseScaffolding,
   CaseDisposalBlockedError, type CaseScaffolding,
@@ -410,6 +411,79 @@ export interface DeviceSaleOperation {
   priorEpisodeAgreedCost: number;
   /** صفُّ المريض بعد الكتابة التشغيلية (المواصفات والراية). */
   patient: Patient;
+}
+
+/** **ما يحتاجه النصفُ الماليُّ وحده** — فيُنادى من بيعٍ بأمر تصنيع (`DeviceSaleOperation`) ومن بيعٍ جاهزٍ بلا أمر (§4.cu). */
+export type DeviceSaleFinancialBasis = Pick<DeviceSaleOperation,
+  "patientId" | "serviceType" | "branchId" | "episodeId" | "caseId"
+  | "priorCaseCost" | "priorCaseSource" | "priorTotalCost" | "priorEpisodeAgreedCost">;
+
+/**
+ * ══ **بيعُ أجزاءٍ جاهزة — بلا خبيرٍ ولا أمر تصنيع** (ترحيل ١١٧، §4.cu، قرارُ المالك ٢٠٢٦-١٠-٠٨) ══════════════════
+ *
+ * «لا أمرَ تصنيعٍ للسليكون أو القدم أو البقيّة — الأمرُ للقالب وللطرف الكامل وللمسند»، والغلافُ الإسفنجيّ للخبير كذلك.
+ * فهذا نظيرُ `startDeviceSaleOperationallyTx` للجاهز: قفلُ الخيط ثمّ الحلقة بعينها · مسارُها كما يتوقّعه البابُ · حالتُها
+ * التي يُباع منها (`awaiting_exam` على «بلا معاينة»، و`examined` بعد المعاينة) · **أجزاءٌ لا يصنعها خبير** (`needsExpertOrder`
+ * تحت القفل لا من الطلب) · فرعُ العملية فرعُ الحلقة — ثمّ **تُسلَّم الحلقةُ يومَها** (`markEpisodeSoldReadyTx`). وتُرجع لقطةَ
+ * ما قبل البيع ليقيّد `applyDeviceSaleFinancialsTx` القائمُ المبلغَ بحرفه — **لا محاسبةَ ثانية**.
+ */
+export async function startReadyPartSaleTx(tx: any, params: {
+  patientId: number;
+  deviceEpisodeId: number;
+  expectServicePath: "exam" | "no_exam";
+  actingBranchId?: number | null;
+}): Promise<DeviceSaleFinancialBasis & { requestedItem: string; extraComponents: string[] }> {
+  const [existing] = await tx.select().from(patients).where(eq(patients.id, params.patientId));
+  if (!existing) throw new Error("المريض غير موجود");
+  if (existing.deletedAt) throw new Error(PATIENT_IN_TRASH_ERROR);
+
+  const locked = await lockCaseAndReadExactEpisode(tx, {
+    patientId: params.patientId, serviceType: "prosthetic", episodeId: params.deviceEpisodeId,
+  });
+  const ep = locked.episode;
+  if (!ep || locked.caseId === null) {
+    throw new DeviceEpisodeError("تغيّرت حالة طلب الجهاز — أعد فتح الصفحة", 409);
+  }
+  //  **وحلقةٌ بلا مسار** (قبل ٠٦٥) مسارُها المعاينة — فُحصت عند طبيبٍ كما يُفحص كلُّ طلبٍ قديم.
+  const epPath = ep.servicePath ?? "exam";
+  if (epPath !== params.expectServicePath) {
+    throw new DeviceEpisodeError(params.expectServicePath === "no_exam"
+      ? "هذا الطلب على مسار المعاينة — يمرّ بالطبيب ثم «إتمام البيع»"
+      : "هذا الطلب على مسار «بلا معاينة» — يُسجَّل من «شراء جزء»", 409);
+  }
+  if (ep.adminVoidReversalId !== null && ep.adminVoidReversalId !== undefined) {
+    throw new DeviceEpisodeError("هذا الطلب ملغى إدارياً", 409);
+  }
+  const fromStatus = epPath === "no_exam" ? "awaiting_exam" as const : "examined" as const;
+  if (ep.status !== fromStatus) {
+    throw new DeviceEpisodeError(fromStatus === "examined" && ep.status === "awaiting_exam"
+      ? "لا يمكن البيع قبل معاينة الطبيب لهذا الطلب بالذات"
+      : "تغيّرت حالة هذا الطلب — حدّث الصفحة", 409);
+  }
+  //  **والقاعدةُ تُقرأ تحت القفل**: قالبٌ أو غلافٌ إسفنجيّ أو جهازٌ كامل ⟵ أمرُ تصنيعٍ عند الخبير، لا بيعٌ جاهز.
+  if (needsExpertOrder("prosthetic", ep.requestedItem, ep.extraComponents)) {
+    throw new DeviceEpisodeError(
+      "في هذا الطلب قالبٌ أو غلافٌ إسفنجيّ أو جهازٌ كامل — يُصنع عند الخبير بأمر تصنيع، فاختر الخبير", 409);
+  }
+  //  **فرعُ العملية فرعُ الحلقة** — كما يحرسه البيعُ بأمر (`startDeviceSaleOperationallyTx`): لا مالَ في فرعٍ وحلقتُه في آخر.
+  const opBranchId = params.actingBranchId ?? existing.branchId ?? null;
+  if (locked.branchId !== null && opBranchId !== null && Number(locked.branchId) !== Number(opBranchId)) {
+    throw new DeviceEpisodeError(
+      "طلب الجهاز مفتوحٌ على فرعٍ آخر غير فرع العملية — صحّح العملية إدارياً قبل البيع.", 409);
+  }
+
+  const [kase] = await tx.select().from(patientCases).where(eq(patientCases.id, locked.caseId));
+  const basis: DeviceSaleFinancialBasis = {
+    patientId: params.patientId, serviceType: "prosthetic",
+    branchId: locked.branchId ?? opBranchId, episodeId: ep.id, caseId: locked.caseId,
+    priorCaseCost: kase?.cost || 0, priorCaseSource: kase?.costSource ?? null,
+    priorTotalCost: existing.totalCost || 0, priorEpisodeAgreedCost: ep.agreedCost,
+  };
+
+  await tx.update(patients).set({ isAmputee: true }).where(eq(patients.id, params.patientId));
+  const sold = await markEpisodeSoldReadyTx(tx, { episodeId: ep.id, fromStatus });
+  if (!sold) throw new DeviceEpisodeError("تغيّرت حالة هذا الطلب — حدّث الصفحة", 409);
+  return { ...basis, requestedItem: String(ep.requestedItem), extraComponents: ep.extraComponents ?? [] };
 }
 
 /**
@@ -864,7 +938,7 @@ export async function loadDeviceSaleOperationTx(tx: any, params: {
  * واعتمادُ الطبيب على مسار «بلا معاينة» — **بالحساب نفسِه حرفاً**.
  */
 export async function applyDeviceSaleFinancialsTx(tx: any, params: {
-  operation: DeviceSaleOperation;
+  operation: DeviceSaleFinancialBasis;
   cost: number;
   /**
    * **نصُّ القيد — اختياريٌّ، والنصُّ القديم افتراضُه لكلّ نداءٍ آخر.**

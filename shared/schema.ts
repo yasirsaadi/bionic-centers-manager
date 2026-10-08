@@ -349,6 +349,13 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    */
   extraComponents: text("extra_components").array().notNull().default(sql`'{}'::text[]`),
   /**
+   * **لحظةُ بيع أجزاءٍ جاهزة بلا أمر تصنيع** (ترحيل ١١٧، §4.cu): السليكونُ والقدمُ وأخواتُهما تُسلَّم يومَ البيع، فالجهازُ `delivered`
+   * بلا أمر. وبه يُعدّ البيعُ ويُلغى. (القالبُ والغلافُ الإسفنجيّ والجهازُ الكامل أمرُ تصنيعٍ كما كان، وهذا `NULL` لها.)
+   */
+  soldReadyAt: timestamp("sold_ready_at", { withTimezone: true }),
+  /** **أسطرُ السعر لكلّ جزء** (ترحيل ١١٧): `[{item, originalPrice, discountAmount, finalPrice}]`، ومجموعُها `agreedCost`. */
+  saleLines: jsonb("sale_lines"),
+  /**
    * **مسارُ هذه العملية بعينها** (ترحيل ٠٦٥): `exam` أو `no_exam`.
    *
    * سؤالٌ عن **الطلب** لا عن صاحبه: «هل يحتاج هذا الجهازُ تقييمَ طبيب قبل

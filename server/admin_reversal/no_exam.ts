@@ -44,11 +44,12 @@ const DRIFT =
   "تغيّرت حالة هذه العملية منذ فتح نافذة التصحيح — أعد فتحها لمراجعة الأثر الجديد";
 const money = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 
-type Kind = "maintenance" | "component_sale" | "device_build";
+type Kind = "maintenance" | "component_sale" | "device_build" | "ready_sale";
 
 interface NoExamOrder {
   kind: Kind;
-  orderId: number;
+  /** `null` لبيعٍ جاهزٍ بلا أمر تصنيع (§4.cu) — هويّتُه حلقتُه (`ownEpisodeId`). */
+  orderId: number | null;
   patientId: number;
   patientName: string | null;
   branchId: number | null;
@@ -178,6 +179,44 @@ export async function resolveNoExamOrder(h: any, orderId: number, lock = false):
   };
 }
 
+/**
+ * **بيعُ أجزاءٍ جاهزة «بلا معاينة» — بلا أمر تصنيع** (ترحيل ١١٧، §4.cu). لا أمرَ يُفتح عليه زرُّ التصحيح، فهويّتُه حلقتُه:
+ * مُسلَّمةٌ بـ`sold_ready_at` ولا متابعةَ لها (ذاتُ المتابعة بابُها التصحيحُ القائم `store.ts`). ومالُه مجموعُ ما على حلقته — كبيع الجزء.
+ */
+export async function resolveReadySale(h: any, episodeId: number, lock = false): Promise<NoExamOrder | null> {
+  const r = await h.execute(sql`
+    SELECT e.id, e.patient_id, e.branch_id, e.status, e.requested_item, e.extra_components, e.case_id,
+           e.admin_void_reversal_id, e.delivered_at, p.name AS patient_name, pc.case_type
+      FROM patient_device_episodes e
+      JOIN patients p ON p.id = e.patient_id AND p.deleted_at IS NULL
+      JOIN patient_cases pc ON pc.id = e.case_id
+     WHERE e.id = ${episodeId} AND e.sold_ready_at IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM post_exam_followups f WHERE f.device_episode_id = e.id)
+     ${lock ? sql`FOR UPDATE OF e` : sql``}
+  `);
+  const row = (r.rows ?? [])[0] as any;
+  if (!row) return null;
+  const patientId = Number(row.patient_id);
+  const m = await h.execute(sql`
+    SELECT
+      (SELECT COALESCE(SUM(amount), 0)::int FROM cost_entries
+        WHERE patient_id = ${patientId} AND device_episode_id = ${episodeId}) AS cost,
+      (SELECT COALESCE(SUM(amount), 0)::int FROM payments
+        WHERE patient_id = ${patientId} AND device_episode_id = ${episodeId}) AS paid
+  `);
+  const mm = (m.rows ?? [])[0] as any;
+  return {
+    kind: "ready_sale", orderId: null, patientId, patientName: row.patient_name ?? null,
+    branchId: num(row.branch_id), serviceType: String(row.case_type), orderStatus: String(row.status),
+    orderStage: null, orderStartedAt: null,
+    existingReversalId: num(row.admin_void_reversal_id), caseId: num(row.case_id),
+    ownEpisodeId: episodeId,
+    itemLabel: requestedItemLabel(row.requested_item, row.case_type, row.extra_components),
+    cost: Math.max(0, Number(mm?.cost ?? 0)), costUnknown: false,
+    paid: Math.max(0, Number(mm?.paid ?? 0)), payment: null,
+  };
+}
+
 /** **أمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢) — مالُه من حلقته، أو من قيود معاملته إن لم تكن له حلقة. */
 async function resolveDeviceBuild(
   h: any, base: Omit<NoExamOrder, "kind" | "ownEpisodeId" | "itemLabel" | "cost" | "costUnknown" | "paid" | "payment">,
@@ -245,23 +284,35 @@ async function resolveDeviceBuild(
 
 const KIND_LABEL: Record<Kind, string> = {
   maintenance: "أمر الصيانة", component_sale: "بيع الجزء", device_build: "أمر التصنيع",
+  ready_sale: "بيع الأجزاء الجاهزة",
 };
 
 function stampOf(op: NoExamOrder): string {
-  return ["no_exam", op.orderId, op.orderStatus, op.existingReversalId ?? "-", op.cost, op.paid].join("|");
+  return ["no_exam", op.orderId ?? `ep${op.ownEpisodeId}`, op.orderStatus, op.existingReversalId ?? "-", op.cost, op.paid].join("|");
 }
 
 export async function previewNoExamReversal(orderId: number): Promise<ReversalPreview | null> {
   const op = await resolveNoExamOrder(db, orderId);
-  if (!op) return null;
+  return op ? previewOf(op) : null;
+}
+
+/** **بيعٌ جاهزٌ «بلا معاينة»** (§4.cu) — بمعرّف جهازه، إذ لا أمر. */
+export async function previewReadySaleReversal(episodeId: number): Promise<ReversalPreview | null> {
+  const op = await resolveReadySale(db, episodeId);
+  return op ? previewOf(op) : null;
+}
+
+function previewOf(op: NoExamOrder): ReversalPreview {
   const alreadyReversed = op.existingReversalId !== null;
-  const delivered = op.orderStatus === "completed";
+  const ready = op.kind === "ready_sale";
+  const delivered = ready || op.orderStatus === "completed";
   const started = op.orderStartedAt !== null && op.orderStatus !== "cancelled";
   const what = KIND_LABEL[op.kind];
 
   const lines: ReversalImpactLine[] = [
-    { kind: "check", text: `إلغاء ${what} #${op.orderId} إدارياً` },
-    ...(delivered ? [{ kind: "warn" as const, text: "الأمر مكتمل؛ يبقى سجل التنفيذ والتسليم كما هو." }]
+    { kind: "check", text: ready ? `إلغاء ${what} (${op.itemLabel}) إدارياً` : `إلغاء ${what} #${op.orderId} إدارياً` },
+    ...(ready ? [{ kind: "warn" as const, text: "سُلِّمت الأجزاء للمريض يومَ البيع؛ يبقى سجلُّ البيع والتسليم كما هو." }]
+      : delivered ? [{ kind: "warn" as const, text: "الأمر مكتمل؛ يبقى سجل التنفيذ والتسليم كما هو." }]
       : started ? [{ kind: "warn" as const, text: "بدأ العمل على هذا الأمر؛ يُلغى مع بقاء سجل التنفيذ." }] : []),
     ...(op.cost > 0 ? [{ kind: "check" as const, text: `عكس كلفة ${money(op.cost)} د.ع بقيد معاكس` }]
       : op.costUnknown
@@ -276,7 +327,7 @@ export async function previewNoExamReversal(orderId: number): Promise<ReversalPr
     ...(op.paidUntracked
       ? [{ kind: "warn" as const, text: "ما دفعه المريض لهذا الأمر لا يرتبط به في هذا المسار القديم — يبقى في حسابه، ويُردّ يدوياً إن لزم." }]
       : []),
-    ...(op.kind === "component_sale" ? [{ kind: "check" as const, text: "إلغاء طلب الجزء" }]
+    ...(op.kind === "component_sale" || ready ? [{ kind: "check" as const, text: "إلغاء طلب الجزء" }]
       : op.kind === "device_build" && op.ownEpisodeId !== null
         ? [{ kind: "check" as const, text: "إلغاء طلب الجهاز" }] : []),
     { kind: "check", text: "الاحتفاظ بجميع السجلات في التاريخ" },
@@ -305,7 +356,8 @@ export async function previewNoExamReversal(orderId: number): Promise<ReversalPr
     replacementImpact: [],
     currentStatusText: alreadyReversed ? "ملغاة إدارياً"
       : op.kind === "maintenance" ? "صيانة مسجَّلة"
-        : op.kind === "component_sale" ? "بيع جزء مسجَّل" : "أمر تصنيع مسجَّل",
+        : op.kind === "component_sale" ? "بيع جزء مسجَّل"
+          : ready ? "أجزاء جاهزة سُلِّمت بلا أمر تصنيع" : "أمر تصنيع مسجَّل",
     manufacturingStarted: started, delivered, alreadyReversed,
     stateStamp: stampOf(op),
   } as ReversalPreview;
@@ -316,8 +368,15 @@ export async function isNoExamOrder(orderId: number): Promise<boolean> {
   return (await resolveNoExamOrder(db, orderId)) !== null;
 }
 
+/** وهل هذا الجهازُ بيعٌ جاهزٌ بلا متابعة — بابُه هنا (§4.cu)؟ */
+export async function isReadySaleWithoutFollowup(episodeId: number): Promise<boolean> {
+  return (await resolveReadySale(db, episodeId)) !== null;
+}
+
 export async function executeNoExamReversal(params: {
-  orderId: number;
+  /** أمرُ العمل — أو `episodeId` لبيعٍ جاهزٍ بلا أمر (§4.cu). واحدٌ منهما. */
+  orderId?: number | null;
+  episodeId?: number | null;
   reasonCode: string;
   reasonNote: string;
   expectedStamp: string;
@@ -333,8 +392,10 @@ export async function executeNoExamReversal(params: {
   }
 
   return await db.transaction(async (tx) => {
-    // ① الأمرُ مقفولاً، ثمّ المريضُ مقفولاً — والإذنُ يُفحَص على صفّه الحيّ.
-    const op = await resolveNoExamOrder(tx, params.orderId, true);
+    // ① الأمرُ (أو حلقةُ البيع الجاهز) مقفولاً، ثمّ المريضُ مقفولاً — والإذنُ يُفحَص على صفّه الحيّ.
+    const op = typeof params.orderId === "number"
+      ? await resolveNoExamOrder(tx, params.orderId, true)
+      : typeof params.episodeId === "number" ? await resolveReadySale(tx, params.episodeId, true) : null;
     if (!op) throw new ReversalError("العملية غير موجودة", 404);
     const br = await tx.execute(sql`
       SELECT branch_id, deleted_at FROM patients WHERE id = ${op.patientId} FOR UPDATE
@@ -387,10 +448,12 @@ export async function executeNoExamReversal(params: {
       throw e;
     }
 
-    // ④ إبطالُ الأمر — بلا مسّ تاريخه.
-    await voidOrderAdministratively(tx, {
-      orderId: op.orderId, reversalId, reason: reasonNote, performedBy: params.actor.userId,
-    });
+    // ④ إبطالُ الأمر — بلا مسّ تاريخه. (والبيعُ الجاهزُ بلا أمرٍ يُبطَل.)
+    if (op.orderId !== null) {
+      await voidOrderAdministratively(tx, {
+        orderId: op.orderId, reversalId, reason: reasonNote, performedBy: params.actor.userId,
+      });
+    }
 
     // ⑤ عكسُ الكلفة — قيدٌ معاكسٌ يُضاف، والأصلُ لا يُمَسّ.
     if (op.cost > 0) {
@@ -452,7 +515,9 @@ export async function executeNoExamReversal(params: {
       ipAddress: params.audit?.ipAddress ?? null,
       userAgent: params.audit?.userAgent ?? null,
       notes: `${REVERSAL_EVENT_TITLES.full_operation} #${reversalId}`
-        + ` — ${op.kind === "maintenance" ? "صيانة" : op.kind === "component_sale" ? "بيع جزء" : "تصنيع جهاز"} (أمر #${op.orderId}) لمريض #${op.patientId}`
+        + ` — ${op.kind === "maintenance" ? "صيانة" : op.kind === "component_sale" ? "بيع جزء"
+          : op.kind === "ready_sale" ? `بيع أجزاء جاهزة: ${op.itemLabel} (جهاز #${op.ownEpisodeId})` : "تصنيع جهاز"}`
+        + (op.orderId !== null ? ` (أمر #${op.orderId})` : "") + ` لمريض #${op.patientId}`
         + ` — ${reversalReasonLabel(params.reasonCode as any)}: ${reasonNote}`
         + (op.cost > 0 ? ` · عُكست كلفة ${money(op.cost)} د.ع` : "")
         + (refundAmount > 0

@@ -83,6 +83,8 @@ export interface ResolvedOperation {
    *   مسارٌ آخر: استبدالُ **ما طُلب** لا يغيّر أيحتاج الطلبُ معاينةً أم لا. */
   episodeServicePath: string | null;
   episodeVoided: boolean;
+  /** **بيعٌ جاهزٌ بلا أمر** (ترحيل ١١٧، §4.cu) — سُلِّم يومَ بيعه، فالتراجعُ عن شرائه ممكنٌ بلا أمرٍ يُبطَل. */
+  episodeSoldReady: boolean;
   orderStatus: string | null;
   orderStage: string | null;
   orderStartedAt: string | null;
@@ -111,7 +113,7 @@ export async function resolveOperation(
            f.device_episode_id, f.converted_work_order_id,
            p.name AS patient_name,
            e.status AS episode_status, e.agreed_cost, e.requested_item, e.service_path,
-           e.admin_void_reversal_id AS episode_void,
+           e.admin_void_reversal_id AS episode_void, e.sold_ready_at,
            wo.status AS order_status, wo.current_stage, wo.started_at, wo.completed_at,
            wo.admin_void_reversal_id AS order_void
       FROM post_exam_followups f
@@ -197,6 +199,7 @@ export async function resolveOperation(
     episodeServicePath: row.service_path === null || row.service_path === undefined
       ? null : String(row.service_path),
     episodeVoided: row.episode_void !== null && row.episode_void !== undefined,
+    episodeSoldReady: row.sold_ready_at !== null && row.sold_ready_at !== undefined,
     orderStatus: row.order_status === null || row.order_status === undefined
       ? null : String(row.order_status),
     orderStage: row.current_stage === null || row.current_stage === undefined
@@ -369,6 +372,12 @@ async function standingCostOf(
  * الذي يُمنَع وضعٌ يستحيل معناه، لا حقُّ المسؤول في التصحيح.
  */
 function purchaseOnlyPossible(op: ResolvedOperation): boolean {
+  //  **والبيعُ الجاهزُ بلا أمر** (§4.cu): أجزاءٌ سُلِّمت يومَ بيعها ولا تصنيعَ يُنكَر — فالتراجعُ عن الشراء يعيده معايَناً
+  //  (`revertEpisodeToExamined` تقبله وحده بين المُسلَّم) ويُعاد بيعُه بشكلٍ صحيح.
+  if (op.deviceEpisodeId !== null && op.episodeSoldReady && op.episodeStatus === "delivered"
+    && op.workOrderId === null && !op.episodeVoided && op.followupStatus === "converted") {
+    return true;
+  }
   return op.deviceEpisodeId !== null
     && op.episodeStatus === "in_manufacturing"
     && op.workOrderId !== null

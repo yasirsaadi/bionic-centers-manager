@@ -642,12 +642,13 @@ async function main() {
       [mA2.total, mA2.ledger_rows, mA2.orders],
       [300_000, 1, 1]);
 
+    //  **وبيوعُها قالب** (§4.cu): هذا المشهدُ يحرس عدَّ الأوامر والقيود — والركبةُ صارت جاهزةً بلا أمر.
     //  (هـ٣) **ضغطتان متزامنتان على بيعٍ جديد — بتذكرة الإرسال نفسِها** (§4.bx): واحدةٌ تكتب، والأخرى «مسجَّل
     //  سابقاً» بصفر كتابة. كان فهرسُ ٠٧٣ يمنعها عَرَضاً، فلمّا رُفع صارتا تُقيَّدان كلتاهما — والتذكرةُ هي المنعُ الآن.
     const pE = await mkPatient("تزامن البيع");
     await mkCase(pE);
     const bodyE = {
-      patientId: pE, component: "knee", expertUserId: EXPERT, originalPrice: 120_000,
+      patientId: pE, component: "socket", expertUserId: EXPERT, originalPrice: 120_000,
       discountAmount: 0, paidNow: 50_000, submissionToken: randomUUID(),
     };
     const raceE = await Promise.all([sale(bodyE), sale(bodyE)]);
@@ -662,7 +663,7 @@ async function main() {
     const pE2 = await mkPatient("بيع بلا تذكرة");
     await mkCase(pE2);
     const noTok = await http("POST", "/api/no-exam/device-sale", S.recv, {
-      patientId: pE2, component: "knee", expertUserId: EXPERT, originalPrice: 120_000,
+      patientId: pE2, component: "socket", expertUserId: EXPERT, originalPrice: 120_000,
       discountAmount: 0, paidNow: 0,
     });
     const mE2 = await moneyOf(pE2);

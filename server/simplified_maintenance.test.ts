@@ -779,7 +779,9 @@ async function main() {
     // ⚠ الرجعة (PR #269, main قبل هذا الفرع): صار للعنوان طرفٌ ثالثٌ
     // `attaching ? COMPONENT_ATTACH_SUCCESS_MESSAGE :` قبل ثنائيّ الصيانة/بيع
     // الجزء القديم — التحقّقُ الدقيق تحديثاً لا تخفيفاً.
-    check(/title:\s*attaching\s*\?\s*COMPONENT_ATTACH_SUCCESS_MESSAGE\s*:\s*kind === "maintenance" \? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE/
+    //  ⚠ ومنذ §4.cu صار لبيع الجزء طرفان: جاهزٌ بلا أمر (`data?.ready` من ردّ الخادم) أو بأمر — تحديثاً لا تخفيفاً:
+    //  الصيانةُ ما زالت رسالتَها الواحدة ولا تقرأ `reviewRouted`.
+    check(/title:\s*attaching\s*\?\s*COMPONENT_ATTACH_SUCCESS_MESSAGE\s*:\s*kind === "maintenance" \? MAINTENANCE_SUCCESS_MESSAGE\s*:\s*data\?\.ready \? READY_SALE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE/
       .test(DIALOG_SRC),
       "م٩. نجاحُ الصيانة لا يقرأ `reviewRouted` — رسالةٌ واحدة دائماً (مشتركةٌ مع بيع الجزء الآن وإلحاقه)");
 

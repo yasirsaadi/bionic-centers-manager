@@ -17,10 +17,13 @@
 // عن الأول لاحقاً.
 
 import { notifyAwaitingDecision } from "../staff_telegram/notify";
-import { normalizeExtraComponents } from "@shared/prosthetic_parts";
+import { normalizeExtraComponents, requestedItemLabel, requestedItemsOf } from "@shared/prosthetic_parts";
+import { needsExpertOrder, parseSaleLines, storedSaleLines, type SaleLine } from "@shared/part_sale";
+import { partPurchaseReason } from "@shared/attendance";
+import { recordAttendanceVisitTx } from "../visits/attendance";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
-import { storage } from "../storage";
+import { storage, startReadyPartSaleTx, applyDeviceSaleFinancialsTx } from "../storage";
 import { deviceDiscountRefs } from "@shared/discount";
 import {
   computeCommercialPrice, isFollowupReason, isTerminal, TERMINAL_STATUS_SQL_LIST,
@@ -415,6 +418,12 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     /** الأجزاءُ الإضافيّة في الطلب نفسِه (§4.ct). */
     extraComponents: string[];
     episodeServicePath: string | null;
+    /** **أيُصنع شيءٌ عند الخبير؟** (§4.cu) — وإلّا فالبيعُ جاهزٌ بلا خبيرٍ ولا أمر. */
+    needsExpert: boolean;
+    /** لحظةُ بيعٍ جاهزٍ سُلِّم بلا أمر (ترحيل ١١٧). */
+    soldReadyAt: string | null;
+    /** أسطرُ السعر لكلّ جزء كما بِيع (ترحيل ١١٧). */
+    saleLines: SaleLine[];
   })[]
 > {
   const r = await db.execute(sql`
@@ -433,6 +442,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            e.notes AS exam_notes,
            u.display_name AS selected_expert_name,
            de.requested_item, de.extra_components, de.service_path AS episode_service_path,
+           de.sold_ready_at, de.sale_lines,
            cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
            cl.note AS closed_note
       FROM post_exam_followups f
@@ -475,7 +485,29 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     //  **مسارُ العملية** (ترحيل ٠٦٥) — هو ما يفرّق العمليةَ المبسّطة عن
     //  الموروثة، فتُقرأ الأفعالُ والأقفال منه لا من الحالة وحدها.
     episodeServicePath: x.episode_service_path ?? null,
+    //  **بلا حلقة** (مسارٌ موروث لجهازٍ كامل) ⟵ خبيرٌ كما كان.
+    needsExpert: x.device_episode_id === null || x.device_episode_id === undefined
+      ? true : needsExpertOrder(x.service_type, x.requested_item, x.extra_components),
+    soldReadyAt: x.sold_ready_at ? new Date(x.sold_ready_at).toISOString() : null,
+    saleLines: storedSaleLines(x.sale_lines),
   }));
+}
+
+/**
+ * **أيحتاج بيعُ هذه المتابعة خبيراً وأمرَ تصنيع؟** (§4.cu) — من حلقتها: قالبٌ أو غلافٌ إسفنجيّ أو جهازٌ كامل ⟵ نعم، وأجزاءٌ
+ * جاهزةٌ كلُّها ⟵ لا. **وبلا حلقة** (مسارٌ موروث يفتح عند البيع جهازاً كاملاً) ⟵ نعم.
+ */
+async function followupNeedsExpert(
+  h: { execute: (q: any) => Promise<any> },
+  f: { deviceEpisodeId: number | null; serviceType: string },
+): Promise<boolean> {
+  if (f.deviceEpisodeId === null || f.deviceEpisodeId === undefined) return true;
+  const r = await h.execute(sql`
+    SELECT requested_item, extra_components FROM patient_device_episodes WHERE id = ${f.deviceEpisodeId}
+  `);
+  const row = (r.rows ?? [])[0] as any;
+  if (!row) return true;
+  return needsExpertOrder(f.serviceType, row.requested_item, row.extra_components);
 }
 
 export async function getEvents(followupId: number): Promise<any[]> {
@@ -1969,9 +2001,11 @@ export async function confirmPurchase(params: {
    * تبقى لحظةٌ يكون فيها الطلبُ «معتمَداً» والبيعُ لم يقع.
    */
   tx?: any;
-}): Promise<{ followup: FollowupRow; workOrderId: number }> {
+}): Promise<{ followup: FollowupRow; workOrderId: number | null }> {
   const body = async (tx: any) => {
     const cur = await lockFollowup(tx, params.followupId, CONFIRMABLE);
+    //  ══ **أجزاءٌ جاهزة ⟵ بلا خبيرٍ ولا أمر** (§4.cu) — من حلقة المتابعة لا من الطلب. ══
+    const ready = !(await followupNeedsExpert(tx, cur));
     if (cur.approvedPrice <= 0 && params.allowFreeDonation !== true) {
       throw new FollowupError(
         "لا يوجد سعر معتمد لهذا الجهاز — يحدّده الطبيب في المعاينة، أو يُدخله الاستعلامات عند تأكيد الشراء", 409);
@@ -1985,8 +2019,8 @@ export async function confirmPurchase(params: {
     // اختيارُ الخبير عملُ الاستعلامات، والمعتمِد يعتمد ما اختاروه لا ما
     // يرسله متصفّحه. فلو قُبل رقمٌ من الجسم لصار الاعتماد باباً خلفياً
     // يسند الجهاز لخبيرٍ لم يقرّره أحد — وهذا ما يمنعه هذا السطر.
-    const expertUserId = cur.selectedExpertUserId;
-    if (expertUserId === null) {
+    const expertUserId = ready ? null : cur.selectedExpertUserId;
+    if (!ready && expertUserId === null) {
       throw new FollowupError(
         "لم يُختَر خبير لهذا الجهاز — يختاره الاستعلامات قبل اعتماد الشراء", 409);
     }
@@ -2004,7 +2038,7 @@ export async function confirmPurchase(params: {
       toStatus: "converted", note: params.note ?? null,
       payload: {
         approvedPrice: cur.approvedPrice, priceSource: cur.priceSource,
-        expertUserId,
+        expertUserId, ready,
       },
       actor: params.actor,
     });
@@ -2070,19 +2104,37 @@ export async function confirmPurchase(params: {
       operationBranchId = b === null || b === undefined ? null : Number(b);
     }
 
-    //  **المسار الرسمي القائم بحرفه** — لا نسخةَ منه هنا.
-    const { workOrderId } = await storage.assignManufacturing({
-      patientId: cur.patientId,
-      serviceType: cur.serviceType,
-      fields: {},
-      cost: cur.approvedPrice,
-      expertUserId,
-      assignedBy: params.actor.userId,
-      deviceEpisodeId: episodeId,
-      actingBranchId: operationBranchId,
-      tx,
-      recordAttendance: true,
-    });
+    let workOrderId: number | null = null;
+    if (ready && episodeId !== null) {
+      //  ══ **بيعٌ جاهز: يُسلَّم اليوم بلا أمر** (§4.cu) — النصفُ الماليُّ نفسُه، وزيارةُ «شراء جزء» بأجزائه. ══
+      const basis = await startReadyPartSaleTx(tx, {
+        patientId: cur.patientId, deviceEpisodeId: episodeId, expectServicePath: "exam",
+        actingBranchId: operationBranchId,
+      });
+      const label = requestedItemLabel(basis.requestedItem, cur.serviceType, basis.extraComponents);
+      await applyDeviceSaleFinancialsTx(tx, {
+        operation: basis, cost: cur.approvedPrice, notes: `بيع ${label} — جاهز بلا أمر تصنيع`,
+      });
+      await recordAttendanceVisitTx(tx, {
+        patientId: cur.patientId, caseId: basis.caseId, branchId: basis.branchId,
+        deviceEpisodeId: episodeId, reason: partPurchaseReason(label),
+        notes: "جاهز — سُلِّم اليوم بلا أمر تصنيع", createdBy: params.actor.userId,
+      });
+    } else {
+      //  **المسار الرسمي القائم بحرفه** — لا نسخةَ منه هنا.
+      ({ workOrderId } = await storage.assignManufacturing({
+        patientId: cur.patientId,
+        serviceType: cur.serviceType,
+        fields: {},
+        cost: cur.approvedPrice,
+        expertUserId: expertUserId as number,
+        assignedBy: params.actor.userId,
+        deviceEpisodeId: episodeId,
+        actingBranchId: operationBranchId,
+        tx,
+        recordAttendance: true,
+      }));
+    }
 
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
@@ -2100,7 +2152,7 @@ export async function confirmPurchase(params: {
       eventType: "converted", fromStatus: cur.status,
       toStatus: "converted",
       payload: {
-        workOrderId, approvedPrice: cur.approvedPrice,
+        workOrderId, approvedPrice: cur.approvedPrice, ready,
         actorRole: params.actor.role ?? null,
       },
       actor: params.actor,
@@ -2370,6 +2422,7 @@ export async function setCommercialFields(params: {
     // ── ⑥ اكتمل ⟶ **يُتمّ البيعَ بالدالّة القانونية نفسِها** ─────────────
     const state = saleState({
       priceKind: next.priceKind, expertUserId: next.selectedExpertUserId,
+      expertRequired: await followupNeedsExpert(tx, next),
     });
     if (next.purchaseDecision === "bought" && state.ready) {
       const out = await confirmPurchase({
@@ -2520,6 +2573,11 @@ export async function completeReceptionSale(params: {
   followupId: number;
   originalPrice: unknown;
   discountAmount: unknown;
+  /**
+   * **سعرٌ لكلّ جزء** (§4.cu): `[{item, originalPrice, discountAmount}]` سطرٌ لكلّ بندٍ مطلوب — ومجموعُها هو البيع.
+   * إلزاميٌّ حين يتعدّد ما طُلب؛ وبندٌ واحد يقبل الأصلَ والخصمَ وحدهما كما كان.
+   */
+  lines?: unknown;
   expertUserId: unknown;
   /** اختياريّ محضٌ — راجع `parsePaidNow`. */
   paidNow?: unknown;
@@ -2536,18 +2594,49 @@ export async function completeReceptionSale(params: {
 }): Promise<CommercialResult & { payment: Payment | null }> {
   await assertExamPathFollowup(params.followupId);
 
-  const offer = deriveOfferFromDiscount({
-    originalPrice: params.originalPrice, discountAmount: params.discountAmount,
-  });
-  if (!offer.ok) throw new FollowupError(offer.error ?? "سعر غير صالح", 400);
+  //  ══ **ما طُلب، ومَن يصنعه** (§4.cu) — من حلقة المتابعة: أسطرُ السعر سطرٌ لكلّ بند، والخبيرُ للقالب والغلاف الإسفنجيّ
+  //  والجهاز الكامل وحدها. قراءةٌ بلا قفل للتحقّق المبكّر؛ والبيعُ نفسُه يعيد القراءةَ تحت القفل (`confirmPurchase`). ══
+  const epr = await db.execute(sql`
+    SELECT f.service_type, f.device_episode_id, e.requested_item, e.extra_components
+      FROM post_exam_followups f LEFT JOIN patient_device_episodes e ON e.id = f.device_episode_id
+     WHERE f.id = ${params.followupId}
+  `);
+  const ep0 = (epr.rows ?? [])[0] as any;
+  const saleEpisodeId: number | null = ep0?.device_episode_id === null || ep0?.device_episode_id === undefined
+    ? null : Number(ep0.device_episode_id);
+  const saleItems = saleEpisodeId === null ? [] : requestedItemsOf(ep0.requested_item, ep0.extra_components);
+  const expertNeeded = saleEpisodeId === null
+    ? true : needsExpertOrder(ep0?.service_type, ep0?.requested_item, ep0?.extra_components);
+
+  let lines: SaleLine[] | null = null;
+  let offer: { ok: boolean; error?: string; kind: PriceKind | null; originalPrice: number | null; finalPrice: number | null };
+  if (Array.isArray(params.lines)) {
+    const parsed = parseSaleLines(params.lines, saleItems, ep0?.service_type);
+    if (!parsed.ok) throw new FollowupError(parsed.error, 400);
+    lines = parsed.lines;
+    offer = { ok: true, kind: parsed.totals.kind, originalPrice: parsed.totals.originalPrice, finalPrice: parsed.totals.finalPrice };
+  } else {
+    if (saleItems.length > 1) {
+      throw new FollowupError("أدخل سعر كلّ جزء — حدّث الصفحة إن لم تظهر خاناتُه", 400);
+    }
+    const one = deriveOfferFromDiscount({
+      originalPrice: params.originalPrice, discountAmount: params.discountAmount,
+    });
+    if (!one.ok) throw new FollowupError(one.error ?? "سعر غير صالح", 400);
+    offer = one;
+    if (saleItems.length === 1) {
+      lines = [{ item: saleItems[0], originalPrice: one.originalPrice!, discountAmount: one.discountAmount!, finalPrice: one.finalPrice! }];
+    }
+  }
 
   //  **بعد** اشتقاق العرض التجاريّ — سقفُه `offer.finalPrice` بعينه. رفضٌ
   //  هنا يسقط الطلبَ **قبل** أن تُفتح أيّ معاملة — صفرُ كتابةٍ على قيمةٍ
   //  غير صالحة.
   const paidNow = parsePaidNow(params.paidNow, offer.finalPrice ?? 0);
 
+  //  **والخبيرُ لما يُصنع وحده** — أجزاءٌ جاهزة لا يُسأل لها خبير، ولا يُكتب ما وصل منه.
   const expertId = Number(params.expertUserId);
-  if (!Number.isInteger(expertId) || expertId <= 0) {
+  if (expertNeeded && (!Number.isInteger(expertId) || expertId <= 0)) {
     throw new FollowupError("الخبير مطلوب لإتمام البيع", 400);
   }
 
@@ -2598,7 +2687,7 @@ export async function completeReceptionSale(params: {
       followupId: params.followupId,
       patch: {
         price: { kind: offer.kind, originalPrice: offer.originalPrice, finalPrice: offer.finalPrice },
-        expertUserId: expertId,
+        ...(expertNeeded ? { expertUserId: expertId } : {}),
         decision: "bought",
         note: params.note ?? null,
       },
@@ -2628,6 +2717,11 @@ export async function completeReceptionSale(params: {
     if (specsWrite) {
       const { setEpisodeDeviceSpecsTx } = await import("../device_episodes/store");
       await setEpisodeDeviceSpecsTx(tx, { episodeId: specsWrite.epId, specs: specsWrite.specs });
+    }
+    //  ══ **وسعرُ كلّ جزء على الجهاز** (ترحيل ١١٧) — في معاملة البيع، ومجموعُها ما قُيِّد. ══
+    if (lines && result.followup.deviceEpisodeId !== null) {
+      const { setEpisodeSaleLinesTx } = await import("../device_episodes/store");
+      await setEpisodeSaleLinesTx(tx, { episodeId: result.followup.deviceEpisodeId, lines });
     }
 
     await cancelPendingPriceRequestsTx(tx, {

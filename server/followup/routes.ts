@@ -285,6 +285,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       const examPath = f.episodeServicePath === "exam";
       const st = saleState({
         priceKind: f.priceKind, expertUserId: f.selectedExpertUserId,
+        expertRequired: f.needsExpert,
       });
       //  **صلاحيةُ المسار الجديد لا القديمة**: البيعُ على مسار المعاينة
       //  بابان فقط (`/complete-sale`, `/not-bought`)، ومَن يفتحهما
@@ -858,10 +859,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       }
       if (out.converted) {
         await logAudit({
-          entityType: "prosthetic_work_order", entityId: out.workOrderId ?? 0,
+          //  **وبيعٌ جاهزٌ بلا أمر** (§4.cu) كيانُه الجهاز — لا أمرَ رقمُه صفر.
+          entityType: out.workOrderId !== null ? "prosthetic_work_order" : "ready_part_sale",
+          entityId: out.workOrderId ?? out.followup.deviceEpisodeId ?? 0,
           action: "create", userId: s.userId, userName: s.userName, branchId: f.branchId,
           ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-          notes: `تم الشراء وبدأ التصنيع — متابعة #${f.id}`
+          notes: (out.workOrderId !== null ? `تم الشراء وبدأ التصنيع — متابعة #${f.id}`
+            : `تم الشراء وسُلِّمت الأجزاء الجاهزة بلا أمر تصنيع — متابعة #${f.id}`)
             + ` بسعر ${out.followup.approvedPrice.toLocaleString()} د.ع`
             + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
         });
@@ -906,6 +910,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         followupId: f.id,
         originalPrice: req.body?.originalPrice,
         discountAmount: req.body?.discountAmount,
+        //  سعرٌ لكلّ جزء (§4.cu) — والمخزنُ يتحقّق ويشتقّ المجموع.
+        lines: req.body?.lines,
         expertUserId: req.body?.expertUserId,
         //  اختياريّ محضٌ — راجع `parsePaidNow` في المخزن. لا يُشتقّ من
         //  السعر ولا الخصم، وغيابُه لا يعني شيئاً غير «لم يُقبَض الآن».
@@ -942,10 +948,12 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
       });
       await logAudit({
-        entityType: "prosthetic_work_order", entityId: out.workOrderId ?? 0,
+        entityType: out.workOrderId !== null ? "prosthetic_work_order" : "ready_part_sale",
+        entityId: out.workOrderId ?? out.followup.deviceEpisodeId ?? 0,
         action: "create", userId: s.userId, userName: s.userName, branchId: f.branchId,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `تم الشراء وبدأ التصنيع — متابعة #${f.id} بسعر`
+        notes: (out.workOrderId !== null ? `تم الشراء وبدأ التصنيع — متابعة #${f.id} بسعر`
+          : `تم الشراء وسُلِّمت الأجزاء الجاهزة بلا أمر تصنيع — متابعة #${f.id} بسعر`)
           + ` ${out.followup.approvedPrice.toLocaleString()} د.ع`
           + (out.followup.priceKind === "free" ? " (مجاني)" : ""),
       });
@@ -1360,7 +1368,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
           approvedPrice: workingFollowup.approvedPrice,
         },
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `تأكيد الشراء لمتابعة #${f.id} بسعر ${workingFollowup.approvedPrice.toLocaleString()} د.ع — أمر تصنيع #${out.workOrderId}`,
+        notes: `تأكيد الشراء لمتابعة #${f.id} بسعر ${workingFollowup.approvedPrice.toLocaleString()} د.ع — `
+          + (out.workOrderId !== null ? `أمر تصنيع #${out.workOrderId}` : "أجزاء جاهزة سُلِّمت بلا أمر تصنيع"),
       });
       res.json(out);
     } catch (e) {

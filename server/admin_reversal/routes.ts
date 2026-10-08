@@ -86,7 +86,10 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
       //  **وأمرُ الصيانة وبيعُ الجزء «بلا معاينة» بابُهما `no_exam.ts`** (واقعةُ دموع جاسم عطية، ٢٠٢٦-٠٩-٣٠):
       //  لا متابعةَ لهما، فكان التصحيحُ القائم يجيب «العملية غير موجودة».
       const preview = await reversal.previewReversal(target)
-        ?? (target.workOrderId !== null ? await noExam.previewNoExamReversal(target.workOrderId) : null);
+        ?? (target.workOrderId !== null ? await noExam.previewNoExamReversal(target.workOrderId) : null)
+        //  **وبيعُ الأجزاء الجاهزة «بلا معاينة»** (§4.cu): لا أمرَ ولا متابعة — هويّتُه جهازُه.
+        ?? (target.episodeId !== null && target.workOrderId === null && target.followupId === null
+          ? await noExam.previewReadySaleReversal(target.episodeId) : null);
       if (!preview) return res.status(404).json({ error: "العملية غير موجودة" });
 
       const perm = mayReverse(req, await branchOf(preview.patientId));
@@ -152,13 +155,16 @@ export function registerAdminReversalRoutes(app: Express, isAuthenticated: any) 
         });
       }
 
-      if (target.workOrderId !== null && target.followupId === null
-        && await noExam.isNoExamOrder(target.workOrderId)) {
+      const readyNoFollowup = target.episodeId !== null && target.workOrderId === null && target.followupId === null
+        && await noExam.isReadySaleWithoutFollowup(target.episodeId);
+      if (readyNoFollowup || (target.workOrderId !== null && target.followupId === null
+        && await noExam.isNoExamOrder(target.workOrderId))) {
         if (mode !== "full_operation") {
           return res.status(400).json({ error: "هذه العملية تُلغى بالكامل فقط" });
         }
         const out = await noExam.executeNoExamReversal({
-          orderId: target.workOrderId, reasonCode, reasonNote,
+          ...(readyNoFollowup ? { episodeId: target.episodeId } : { orderId: target.workOrderId }),
+          reasonCode, reasonNote,
           expectedStamp: typeof req.body?.stateStamp === "string" ? req.body.stateStamp : "",
           authz: {
             isAdmin: s.isAdmin, role: s.role, roles: s.roles,

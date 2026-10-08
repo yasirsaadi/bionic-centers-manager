@@ -89,6 +89,9 @@ interface Followup {
   closedReason: string | null;
   convertedWorkOrderId: number | null;
   requestedItem: string | null;
+  /** **بيعٌ جاهزٌ بلا أمر تصنيع** (§4.cu) — سُلِّم يومَ بيعه. */
+  soldReadyAt?: string | null;
+  extraComponents?: string[];
   // ══ المسارُ المبسّط ومالكيةُ الحقول (المرحلة ٢) — **كلُّها من الخادم** ══
   //  الشاشةُ لا تحسب قفلاً ولا فعلاً: تعرض ما قاله الخادمُ بالدوالّ التي
   //  يحرس بها نقاطَه. فلا يظهر زرٌّ يُردّ ولا يُخفى زرٌّ يُقبَل.
@@ -571,7 +574,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
           <div className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900 space-y-2"
             data-testid="text-purchase-done">
             <div>
-              ✅ تم الشراء — بدأ التصنيع
+              {/*  **والجاهزُ لا تصنيعَ فيه** (§4.cu) — سُلِّم يومَ بيعه. */}
+              {active.soldReadyAt ? "✅ تم الشراء — سُلِّمت الأجزاء الجاهزة بلا أمر تصنيع" : "✅ تم الشراء — بدأ التصنيع"}
               {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
             </div>
             {/*  ══ **تفاصيلُ البيع بعد الإتمام** (المرحلة الثانية) ══════════
@@ -592,7 +596,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                     ? "مجاني (٠ د.ع)" : `${active.approvedPrice.toLocaleString()} د.ع`}
                   testId="text-sale-final" />
                 <SaleField label="الخبير"
-                  value={active.selectedExpertName
+                  value={active.soldReadyAt ? "لا خبير — جاهز"
+                    : active.selectedExpertName
                     ?? (active.selectedExpertUserId ? `#${active.selectedExpertUserId}` : "—")}
                   testId="text-sale-expert" />
               </div>

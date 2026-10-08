@@ -47,6 +47,8 @@ export function invalidatePatientData(
     client.invalidateQueries({ queryKey: ["/api/patients", patientId] });
     client.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/summary`] });
     client.invalidateQueries({ queryKey: [`/api/manufacturing/patient/${patientId}/orders`] });
+    // «استمارة المراجع» لكلّ جهاز ومستطيلُ الأجهزة (§4.cq) — المبلغُ والمدفوعُ والحالُ تتحرّك مع كلّ بيعٍ أو دفعةٍ أو تصحيح.
+    client.invalidateQueries({ queryKey: [`/api/patients/${patientId}/intake-sheets`] });
   }
   // Lists: the old aggregate list AND the paginated registry the patients page
   // actually renders — a different key family that used to be missed entirely.

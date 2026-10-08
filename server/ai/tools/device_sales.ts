@@ -285,6 +285,18 @@ export async function getDeviceSalesSummary(params: {
          AND ep.admin_void_reversal_id IS NULL
          AND ${branchScopeSql("wo.branch_id", scope)}
          AND wo.created_at >= ${startTs} AND wo.created_at < ${endExclusiveTs}
+      --  **والأجزاءُ الجاهزةُ المبيعةُ بلا أمر تصنيع** (ترحيل ١١٧، §4.cu): لا أمرَ يُعدّ عنها، فلحظةُ بيعها
+      --  sold_ready_at على جهازها — وحارسا «بِيع» نفساهما: غيرُ مُبطَلٍ إدارياً، وفي النطاق والمدى.
+      UNION ALL
+      SELECT 'prosthetic' AS service_type,
+             ep.requested_item AS requested_item,
+             ep.extra_components AS extra_components,
+             NULL AS prescription
+        FROM patient_device_episodes ep
+       WHERE ep.sold_ready_at IS NOT NULL
+         AND ep.admin_void_reversal_id IS NULL
+         AND ${branchScopeSql("ep.branch_id", scope)}
+         AND ep.sold_ready_at >= ${startTs} AND ep.sold_ready_at < ${endExclusiveTs}
     `),
   ]);
 

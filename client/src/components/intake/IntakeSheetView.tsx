@@ -9,7 +9,7 @@ import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTab
 import { EXAM_SHEET_TEXT_LABEL } from "@shared/exam_sheet";
 import { INTAKE_DEPARTMENT_LABELS, injuryDateDisplay } from "@shared/intake_sheet";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
-import { sheetMoneyLine, sheetSpecRows, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
+import { sheetLinesText, sheetMoneyLine, sheetSpecRows, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
 import { formatDateIraq } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -95,7 +95,14 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
         <SheetRow label={isProsthetic ? "المبلغ الكلي للطرف" : "المبلغ الكلي للمسند"} testId="sheet-row-money">
           {moneyLocked
             ? <LockedCell text="يطّلع عليه الاستعلاماتُ ومَن يرى الدفعات" />
-            : <V testId="sheet-v-money">{sheetMoneyLine(sheet)}</V>}
+            : <V testId="sheet-v-money">
+                <div className="flex flex-col py-0.5">
+                  <span>{sheetMoneyLine(sheet)}</span>
+                  {/*  **سعرُ كلّ جزء** (§4.cu) — حين يتعدّد ما بِيع. */}
+                  {sheetLinesText(sheet) && <span className="text-xs text-slate-600" data-testid="sheet-v-money-lines">{sheetLinesText(sheet)}</span>}
+                  {sheet.soldReady && <span className="text-xs text-slate-600" data-testid="sheet-v-sold-ready">جاهز — سُلِّم يومَ البيع بلا أمر تصنيع</span>}
+                </div>
+              </V>}
         </SheetRow>
         <SheetBand>المراجعات</SheetBand>
         <div className="grid grid-cols-[6.5rem_1fr] sm:grid-cols-[9.5rem_1fr] print:grid-cols-[9.5rem_1fr] text-sm" data-testid="sheet-visits">

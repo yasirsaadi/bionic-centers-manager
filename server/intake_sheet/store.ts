@@ -10,6 +10,7 @@ import { activeExamSql } from "../medical/active_exam";
 import { deviceSpecsFromPrescription } from "../medical/episode_prescription";
 import { mergeDeviceSpecs } from "@shared/device_specs";
 import { normalizeExtraComponents } from "@shared/prosthetic_parts";
+import { storedSaleLines } from "@shared/part_sale";
 import { buildAmputationSite } from "@shared/case_fields";
 import { examSheetTextOf } from "@shared/exam_sheet";
 import { baghdadDayOf, type IntakeSheet, type IntakeSheetPatient, type IntakeSheetsResponse, type IntakeSheetVisit, type SheetServiceType } from "@shared/intake_sheet_view";
@@ -42,6 +43,8 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
 
   const er = await db.execute(sql`
     SELECT e.id, e.sequence_number, e.status, e.requested_item, e.extra_components, e.agreed_cost, e.created_at, e.device_specs,
+           e.sold_ready_at, e.sale_lines, e.admin_void_reversal_id,
+           EXISTS (SELECT 1 FROM post_exam_followups fx WHERE fx.device_episode_id = e.id) AS has_followup,
            e.component_sale_original_price, e.component_sale_price_kind, pc.case_type, b.name AS branch_name,
            ex.chief_complaint, ex.clinical_findings, ex.diagnosis, ex.plan, ex.notes, ex.doctor_name, ex.signed_at, ex.prescription,
            f.status AS f_status, f.price_kind AS f_price_kind, f.original_price AS f_original_price,
@@ -143,6 +146,10 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
     return {
       episodeId: Number(r.id), sequenceNumber: Number(r.sequence_number), serviceType: kind,
       requestedItem: str(r.requested_item) ?? "full_device", status: String(r.status),
+      soldReady: r.sold_ready_at !== null && r.sold_ready_at !== undefined,
+      adminVoided: r.admin_void_reversal_id !== null && r.admin_void_reversal_id !== undefined,
+      readyReversible: r.sold_ready_at !== null && r.sold_ready_at !== undefined
+        && (r.admin_void_reversal_id === null || r.admin_void_reversal_id === undefined) && r.has_followup !== true,
       extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
       openedAt: iso(r.created_at), branchName: str(r.branch_name) ?? str(p.branch_name),
       amputationSite: kind === "prosthetic" ? ((rx && buildAmputationSite(rx as any)) || str(p.amputation_site)) : null,
@@ -158,6 +165,8 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
       money: opts.withMoney ? {
         total, originalPrice: originalPrice === null || originalPrice === undefined ? null : Number(originalPrice),
         priceKind, paid, remaining: total === null ? null : total - paid,
+        //  **أسطرُ السعر حين يتعدّد ما بِيع** — بندٌ واحد يقوله سطرُ المبلغ نفسُه.
+        ...(storedSaleLines(r.sale_lines).length > 1 ? { lines: storedSaleLines(r.sale_lines) } : {}),
       } : null,
       visits: visitsBy.get(Number(r.id)) ?? [],
     };

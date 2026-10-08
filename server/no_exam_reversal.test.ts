@@ -235,8 +235,10 @@ async function main() {
 
     console.log("\n── د. بيعُ جزءٍ مستقلّ ──");
     const pD = await mkPatient("د");
+    //  **قالبٌ لا ركبة** (§4.cu): الركبةُ جاهزةٌ تُسلَّم بلا أمر — وهذا المشهدُ يحرس إلغاءَ بيع جزءٍ **بأمر تصنيع**، فجزؤه ما يصنعه
+    //  الخبير. (وإلغاءُ البيع الجاهز بلا أمرٍ يحرسه `test:ready-part-sale`.)
     const sD = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(), 
-      patientId: pD, component: "knee", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 100000,
+      patientId: pD, component: "socket", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 100000,
     });
     check(sD.status === 201, "د١. (الإعداد) بيعُ الجزء سُجّل", JSON.stringify(sD.body));
     const woD = Number(sD.body?.workOrderId);

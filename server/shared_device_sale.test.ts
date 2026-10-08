@@ -363,9 +363,9 @@ async function main() {
         originalPrice: 300000, discountAmount: 0, paidNow: 200000 });
     eq(sock.status, 201, "د٣. بغدادُ تبدّل القالبَ بأيوب وتقبض", msg(sock));
     const foot = await http("POST", "/api/no-exam/device-sale", S.dq,
-      { submissionToken: randomUUID(),  patientId: ex1.id, component: "foot", expertUserId: DQ_EXPERT,
+      { submissionToken: randomUUID(),  patientId: ex1.id, component: "foam_cover", expertUserId: DQ_EXPERT,
         originalPrice: 400000, discountAmount: 0, paidNow: 100000 });
-    eq(foot.status, 201, "د٤. ثمّ عاد لذي قار فاشترى قدماً", msg(foot));
+    eq(foot.status, 201, "د٤. ثمّ عاد لذي قار فاشترى غلافاً إسفنجياً (يصنعه الخبير — §4.cu)", msg(foot));
 
     const after = await snap();
     //  **الصفوفُ القديمة بحرفها** — نفسُ المعرّف والفرع والمبلغ والحالة.
@@ -377,11 +377,11 @@ async function main() {
       "د٧. وأمرُ الطرف في ذي قار بخبيره كما كان");
     //  **وكلُّ حركةٍ جديدة في فرعها**.
     eq(after.payments.slice(before.payments.length).map(([, b, a]) => [b, a]),
-      [[BAGHDAD, 200000], [DHIQAR, 100000]], "د٨. **دفعةُ القالب في بغداد ودفعةُ القدم في ذي قار**");
+      [[BAGHDAD, 200000], [DHIQAR, 100000]], "د٨. **دفعةُ القالب في بغداد ودفعةُ الغلاف في ذي قار**");
     eq(after.costs.slice(before.costs.length).map(([, b, a]) => [b, a]),
       [[BAGHDAD, 300000], [DHIQAR, 400000]], "د٩. والكلفتان كذلك — كلٌّ في فرعه");
     eq(after.orders.slice(before.orders.length).map(([, b, e]) => [b, e]),
-      [[BAGHDAD, AYOUB], [DHIQAR, DQ_EXPERT]], "د١٠. وأمرُ القالب في بغداد بأيوب، وأمرُ القدم في ذي قار");
+      [[BAGHDAD, AYOUB], [DHIQAR, DQ_EXPERT]], "د١٠. وأمرُ القالب في بغداد بأيوب، وأمرُ الغلاف في ذي قار");
     //  **وقاصةُ كلّ فرعٍ تساوي ما قبضه فعلاً.**
     const box = await q(`SELECT branch_id, sum(amount)::bigint s FROM payments
                          WHERE patient_id=$1 GROUP BY branch_id ORDER BY branch_id`, [ex1.id]);

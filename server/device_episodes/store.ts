@@ -1302,6 +1302,8 @@ export interface LockedEpisode {
    * الكاملُ قرارٌ سريريٌّ من أوّله فيُردّ إلى مسار المعاينة.
    */
   requestedItem: string | null;
+  /** **وبقيّةُ الأجزاء** (ترحيل ١١٦) — يملؤها التحميلُ الدقيق وحده؛ بها يُعرف أيحتاج البيعُ خبيراً (§4.cu). */
+  extraComponents?: ProstheticComponent[];
   /**
    * **وسمُ البطلان الإداريّ** (ترحيل ٠٦٤) — يملؤه التحميلُ الدقيق وحده.
    *
@@ -1351,7 +1353,7 @@ export async function lockCaseAndReadExactEpisode(
   //  ② ثمّ الحلقةُ بمعرّفها — **مهما كانت حالتُها**، فالمسلَّمُ يُعتمَد مالُه.
   const r = await tx.execute(sql`
     SELECT id, case_id, patient_id, branch_id, status, agreed_cost, service_path,
-           requested_item, admin_void_reversal_id
+           requested_item, extra_components, admin_void_reversal_id
       FROM patient_device_episodes
      WHERE id = ${params.episodeId}
      FOR UPDATE
@@ -1376,6 +1378,7 @@ export async function lockCaseAndReadExactEpisode(
       agreedCost: Number(row.agreed_cost ?? 0),
       servicePath: parseServicePath(row.service_path),
       requestedItem: row.requested_item ?? null,
+      extraComponents: normalizeExtraComponents(row.requested_item, row.extra_components),
       adminVoidReversalId: row.admin_void_reversal_id === null
         || row.admin_void_reversal_id === undefined
         ? null : Number(row.admin_void_reversal_id),
@@ -1559,6 +1562,38 @@ export async function setEpisodeComponentSaleTermsTx(
        SET component_sale_original_price = ${params.originalPrice},
            component_sale_price_kind = ${params.kind},
            updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+}
+
+/**
+ * **بيعُ أجزاءٍ جاهزة: الجهازُ يُسلَّم يومَ البيع بلا أمر تصنيع** (ترحيل ١١٧، §4.cu).
+ *
+ * من حالةٍ يُباع منها بعينها (`awaiting_exam` على «بلا معاينة»، و`examined` بعد المعاينة) إلى `delivered`، ومعها لحظةُ البيع —
+ * والشرطُ في `WHERE` فلا تقع على حلقةٍ تغيّرت. والمُستدعي قفلَ الحلقة وتحقّق أنها أجزاءٌ جاهزة (`needsExpertOrder` = لا).
+ */
+export async function markEpisodeSoldReadyTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; fromStatus: "awaiting_exam" | "examined" },
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'delivered', delivered_at = NOW(), sold_ready_at = NOW(), updated_at = NOW()
+     WHERE id = ${params.episodeId} AND status = ${params.fromStatus}
+       AND requested_item <> 'full_device' AND admin_void_reversal_id IS NULL
+    RETURNING id
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
+/** **أسطرُ السعر لكلّ جزء** (ترحيل ١١٧) — تُكتب مع البيع في معاملته، ومجموعُها `agreed_cost` الذي يكتبه النصفُ الماليّ. */
+export async function setEpisodeSaleLinesTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; lines: readonly { item: string; originalPrice: number; discountAmount: number; finalPrice: number }[] | null },
+): Promise<void> {
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET sale_lines = ${params.lines === null ? null : JSON.stringify(params.lines)}::jsonb, updated_at = NOW()
      WHERE id = ${params.episodeId}
   `);
 }
@@ -1975,10 +2010,16 @@ export async function revertEpisodeToExamined(
   tx: { execute: (q: any) => Promise<any> },
   episodeId: number,
 ): Promise<boolean> {
+  //  **والبيعُ الجاهزُ بلا أمر** (§4.cu) يعود كذلك: سُلِّم يومَ البيع بلا تصنيع، فالتراجعُ عن شرائه يُرجعه معايَناً
+  //  ويمحو لحظةَ البيع وأسطرَ سعره — والمُسلَّمُ عبر أمر تصنيعٍ لا يُمَسّ (`sold_ready_at IS NULL`).
   const r = await tx.execute(sql`
     UPDATE patient_device_episodes
-       SET status = 'examined', agreed_cost = 0, updated_at = NOW()
-     WHERE id = ${episodeId} AND status = 'in_manufacturing'
+       SET status = 'examined', agreed_cost = 0,
+           delivered_at = CASE WHEN sold_ready_at IS NOT NULL THEN NULL ELSE delivered_at END,
+           sale_lines = CASE WHEN sold_ready_at IS NOT NULL THEN NULL ELSE sale_lines END,
+           sold_ready_at = NULL, updated_at = NOW()
+     WHERE id = ${episodeId}
+       AND (status = 'in_manufacturing' OR (status = 'delivered' AND sold_ready_at IS NOT NULL))
     RETURNING id
   `);
   return (r.rows ?? []).length > 0;
