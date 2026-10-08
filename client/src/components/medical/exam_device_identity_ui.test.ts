@@ -190,8 +190,9 @@ check("١٥. **والنافذةُ تُعاد تركيبُها لكلّ صفّ** 
   page.includes("key={rowKey(target)}"));
 check("١٦. ويصلها معرّفُ الجهاز من الصفّ",
   page.includes("deviceEpisodeId={target.episodeId ?? null}"));
-check("١٧. والصفُّ يسمّي جهازَه (رقمُه وما طُلب) لا الاختصاصَ وحده",
-  page.includes("جهاز #{r.sequenceNumber ?? \"?\"} · {requestedItemLabel(r.requestedItem, r.caseType)}"));
+//  وما طُلب **بأجزائه كلّها** منذ §4.ct — «القالب + السليكون» لا القالبُ وحده.
+check("١٧. والصفُّ يسمّي جهازَه (رقمُه وما طُلب بأجزائه كلّها) لا الاختصاصَ وحده",
+  page.includes("جهاز #{r.sequenceNumber ?? \"?\"} · {requestedItemLabel(r.requestedItem, r.caseType, r.extraComponents)}"));
 
 console.log(failures === 0 ? "\n✅ كل الاختبارات نجحت" : `\n❌ ${failures} فشل`);
 process.exit(failures === 0 ? 0 : 1);

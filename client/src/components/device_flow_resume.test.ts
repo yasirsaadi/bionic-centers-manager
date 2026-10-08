@@ -216,8 +216,9 @@ function main() {
   const edit = read("..", "pages", "EditPatient.tsx");
   check(/setLocation\(`\/patients\/\$\{patientId\}\$\{branchParam\}`\)/.test(code(edit)),
     "وحفظُ التعديل يعيد إلى صفحة المريض تلقائياً — بلا خطوةٍ على الموظّف");
-  check(/onEditPatient\(item\)/.test(modal),
-    "١٩. والنافذةُ تسلّم **ما اختاره الموظّف بعينه** — القطعةَ المطلوبة");
+  //  و«المطلوب» قائمةٌ منذ §4.ct — تُسلَّم كلُّها نصّاً واحداً لا أوّلُها.
+  check(/onEditPatient\(items\.join\(","\)\)/.test(modal),
+    "١٩. والنافذةُ تسلّم **ما اختاره الموظّف بعينه** — الأجزاءَ المطلوبة كلَّها");
   check(/onComplete=\{\(\) => \{[\s\S]{0,400}?onEditPatient/.test(MODAL),
     "وتسليمُه من زرّ «إكمال البيانات الآن» نفسِه");
   check(/إكمال البيانات الآن/.test(REQUIRED),
