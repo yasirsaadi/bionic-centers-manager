@@ -71,6 +71,10 @@ import {
   ATTACH_TO_IN_MANUFACTURING_QUESTION,
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
+import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
+import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
+import { partsNeedExpert, READY_PARTS_HINT, READY_SALE_SUCCESS_MESSAGE } from "@shared/part_sale";
+import type { RequestedItem } from "@shared/prosthetic_parts";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useBranchSession } from "@/components/BranchGate";
 import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
@@ -164,7 +168,10 @@ export function NoExamOperationDialog({
   //  البيعُ للأطراف وحدها الآن، فلا قيمةَ ابتدائية «كاملة» تُحشى للمساند.
   //  **والاسمُ محليٌّ يخصّ الجزءَ المراد بيعه** — لا يصطدم بحالة الصيانة
   //  `component` أدناه (حقلٌ مختلفٌ تماماً: الجزء المراد صيانته).
-  const [requestedItem, setRequestedItem] = useState<string>("");
+  //  **أجزاءٌ عدّة في بيعٍ واحد، وسعرٌ لكلٍّ منها** (§4.cu) — والأوّلُ هو «ما طُلب» كما كان.
+  const [saleParts, setSaleParts] = useState<string[]>([]);
+  const [lineInputs, setLineInputs] = useState<SaleLineInputs>({});
+  const requestedItem = saleParts[0] ?? "";
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
   const [note, setNote] = useState("");
@@ -335,9 +342,21 @@ export function NoExamOperationDialog({
   //  محفوظ، ونهائيٌّ صفر، وبلا خصم. وبلا ضمانٍ يبقى الاشتقاقُ المشترك كما
   //  كان بحرفه (بيعُ الجزء لا يعرف الضمانَ أصلاً).
   //  **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): لا سعرَ أصليّاً يُسأل عنه ولا يُرسَل.
+  //  ══ **بيعُ أجزاءٍ جديد: سطرُ سعرٍ لكلّ جزء، والمجموعُ هو العرض** (§4.cu) — والاستئنافُ (طلبٌ موروثٌ بجزءٍ واحد) يبقى بسعره الواحد. ══
+  const saleByLines = kind === "device_sale" && !resuming;
+  const linesTotals = saleByLines ? saleLinesPreview(saleParts, lineInputs) : null;
+  //  **جاهزٌ بلا خبير**: لا قالبَ ولا غلافَ إسفنجيّ بين الأجزاء — والإلحاقُ بطرفٍ قيد التصنيع يبقى عند خبيره.
+  const saleReadyMade = saleByLines && !attaching && saleParts.length > 0 && !partsNeedExpert(saleParts);
+  const expertShown = !attaching && !saleReadyMade;
   const offer = warrantyOn || followupOn
     ? deriveMaintenanceTerms({ originalPrice: null, discountAmount: 0, underWarranty: true })
-    : deriveOfferFromDiscount({ originalPrice, discountAmount });
+    : saleByLines
+      ? (linesTotals
+        ? { ok: true, kind: linesTotals.kind, originalPrice: linesTotals.originalPrice,
+            finalPrice: linesTotals.finalPrice, discountAmount: linesTotals.discountAmount, error: undefined as string | undefined }
+        : { ok: false, kind: null, originalPrice: null, finalPrice: null, discountAmount: null,
+            error: saleParts.length === 0 ? "اختر الجزء أوّلاً" : "أدخل سعر كلّ جزء" })
+      : deriveOfferFromDiscount({ originalPrice, discountAmount });
 
   //  ══ **جهوزيّةُ «المبلغ المدفوع الآن»** — نفسُ الحدّ الذي سيُطبَّق خادميّاً
   //  حرفاً بحرف؛ لا يُحسَب هنا بمعزلٍ عنه. `!offer.ok` تعني «لا سعرَ بعد»
@@ -396,10 +415,14 @@ export function NoExamOperationDialog({
         patientId,
         ...(existingEpisodeId
           ? { existingEpisodeId, expertUserId: Number(expertId) }
-          : attaching
-            ? { component: requestedItem, attachToDeviceEpisodeId: resolvedAttachEpisodeId }
-            : { component: requestedItem, expertUserId: Number(expertId) }),
-        originalPrice, discountAmount,
+          //  **الأجزاءُ وأسطرُ سعرها** (§4.cu) — والخبيرُ لما يُصنع وحده: الجاهزُ بلا خبير، والإلحاقُ بخبير أمره.
+          : {
+            components: saleParts, lines: saleLinesPayload(saleParts, lineInputs),
+            ...(attaching ? { attachToDeviceEpisodeId: resolvedAttachEpisodeId }
+              : saleReadyMade ? {} : { expertUserId: Number(expertId) }),
+          }),
+        //  **والاستئنافُ بسعره الواحد كما كان** — طلبٌ موروثٌ بجزءٍ واحد.
+        ...(existingEpisodeId ? { originalPrice, discountAmount } : {}),
         //  **المُتحقَّقُ لا الخام** — يشمل الإلحاقَ أيضاً؛ نفسُ الحدّ الأعلى
         //  الذي سيُطبَّق خادميّاً حرفاً بحرف.
         paidNow: paidNowCheck.amount,
@@ -425,7 +448,8 @@ export function NoExamOperationDialog({
       toast({
         title: attaching
           ? COMPONENT_ATTACH_SUCCESS_MESSAGE
-          : kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
+          : kind === "maintenance" ? MAINTENANCE_SUCCESS_MESSAGE
+            : data?.ready ? READY_SALE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
         //  **ومبلغٌ دُفع يومَ صيانةٍ سابقة** دخل صندوقَ ذلك اليوم — فيُحدَّث سجلُّه الورقيّ.
         ...(askPaidOn && paidOn === "visit_day"
           ? { description: `المبلغ سُجّل بتاريخ ${maintDate} — حدّث السجل الورقي لذلك اليوم.` } : {}),
@@ -499,7 +523,7 @@ export function NoExamOperationDialog({
   //  المُرشَّحون** (`attachUnpicked`) — لا يُختار أحدُهم صامتاً. **والمبلغُ
   //  المدفوعُ الآن لازمٌ كذلك** — فراغُه على سعرٍ موجب يمنع الحفظ تماماً
   //  كسعرٍ ناقص.
-  const ready = (attaching || Boolean(expertId)) && !missingItem && !missingComponent
+  const ready = (attaching || saleReadyMade || Boolean(expertId)) && !missingItem && !missingComponent
     && !maintenanceDeviceUnready && !submissionTokenUnready
     && !attachUnanswered && !attachUnpicked && !resumeUnpicked
     && Boolean(offer.ok) && paidNowCheck.ok
@@ -530,6 +554,13 @@ export function NoExamOperationDialog({
               <b>حفظةٌ واحدة</b> — يُضاف هذا الجزءُ إلى أمر التصنيع القائم بخبيره
               {" "}الحاليّ نفسِه، ويُقيَّد سعرُه على حساب المريض معه، <b>بلا مراجعةٍ
               {" "}لاحقة</b>.
+            </p>
+          ) : saleReadyMade ? (
+            //  ══ **جاهزٌ: لا أمرَ ولا خبير** (§4.cu) — الصياغةُ تقول الفعلَ الحقيقيّ. ══
+            <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
+              data-testid="no-exam-op-rule">
+              <b>حفظةٌ واحدة</b> — تُسلَّم الأجزاءُ اليوم <b>بلا أمر تصنيع</b>، ويُقيَّد
+              {" "}المبلغُ النهائيّ على حساب المريض معها.
             </p>
           ) : (
             <p className="text-sm bg-sky-50 border border-sky-200 rounded-md px-3 py-2"
@@ -621,19 +652,17 @@ export function NoExamOperationDialog({
                   الأجزاء وحدها من هنا — <b>الطرف الصناعي الكامل يحتاج معاينة
                   الطبيب</b> ويُفتَح من «يحتاج معاينة طبية».
                 </p>
-                {/*  **والقائمةُ أجزاءُ الأطراف وحدها.** لا «جهاز كامل» فيها
-                    لأيّ قسم: هو قرارٌ سريريٌّ من أوّله. ولا أجزاءَ للمساند
-                    تُخترَع — ولذلك لا يبلغ المسندُ هذا الحقلَ إطلاقاً. */}
-                <Select value={requestedItem} onValueChange={setRequestedItem}>
-                  <SelectTrigger data-testid="no-exam-op-item">
-                    <SelectValue placeholder="اختر الجزء" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PROSTHETIC_COMPONENTS.map((c) => (
-                      <SelectItem key={c} value={c}>{COMPONENT_LABELS[c]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/*  **والقائمةُ أجزاءُ الأطراف وحدها** — مربّعاتٌ يُختار منها أكثرُ من جزء (§4.cu). لا «جهاز كامل» فيها
+                    لأيّ قسم: هو قرارٌ سريريٌّ من أوّله. ولا أجزاءَ للمساند تُخترَع — ولذلك لا يبلغ المسندُ هذا الحقلَ إطلاقاً. */}
+                <RequestedPartsPicker partsOnly value={saleParts} testId="no-exam-op-item"
+                  onChange={(next: RequestedItem[]) => setSaleParts(next as string[])} />
+                <p className="text-xs text-muted-foreground" data-testid="no-exam-op-ready-hint">{READY_PARTS_HINT}</p>
+                {saleParts.length > 0 && !attaching && (
+                  <p className={`text-xs font-medium ${saleReadyMade ? "text-emerald-700" : "text-amber-700"}`}
+                    data-testid="no-exam-op-route">
+                    {saleReadyMade ? "جاهز — يُسلَّم اليوم بلا خبيرٍ ولا أمر تصنيع" : "يُصنع عند الخبير — أمرُ تصنيعٍ واحد للأجزاء كلّها"}
+                  </p>
+                )}
               </div>
             )
           )}
@@ -793,7 +822,7 @@ export function NoExamOperationDialog({
               كلَّها بصوتٍ واحد: حقلٌ لا يفتح ولا يشرح.
               **ولا يُعرَض هذا الحقلُ إطلاقاً عند الإلحاق** — سؤالُ الموظّف عن
               خبيرٍ ثمّ تجاهلُ اختياره كان الخطأ؛ فلا يُسأل أصلاً. */}
-          {!attaching && (
+          {expertShown && (
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">الخبير المسؤول</Label>
               {expertsLoading ? (
@@ -829,7 +858,13 @@ export function NoExamOperationDialog({
               <b>{MAINTENANCE_FOLLOWUP_LABEL}</b> — بلا أجور: لا سعر ولا مبلغ يُقيَّد ولا دَين ولا دفعة. تصل الخبيرَ المختار.
             </p>
           ) : (<>
-          {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين ── */}
+          {/* ── بيعُ الأجزاء: سطرٌ لكلّ جزء ثمّ المجموع (§4.cu) ── */}
+          {saleByLines && saleParts.length > 0 && (
+            <SaleLinesEditor items={saleParts as RequestedItem[]} serviceType="prosthetic"
+              value={lineInputs} onChange={setLineInputs} testId="no-exam-op-lines" />
+          )}
+          {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين (وبيعُ الأجزاء الجديد بأسطره أعلاه) ── */}
+          {!saleByLines && (<>
           {!warrantyOn && (
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">السعر الأصلي (د.ع)</Label>
@@ -849,7 +884,8 @@ export function NoExamOperationDialog({
               </p>
             </div>
           )}
-          <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
+          </>)}
+          {!(saleByLines && saleParts.length > 1) && <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm"
             data-testid="no-exam-op-final-price">
             {offer.ok ? (
               warrantyOn ? (
@@ -863,8 +899,8 @@ export function NoExamOperationDialog({
                   السعر النهائي: <b>{offer.finalPrice!.toLocaleString("en-US")} د.ع</b>
                   {offer.kind === "discount" && (
                     <span className="text-muted-foreground">
-                      {" "}(بعد خصم {discountAmount.toLocaleString("en-US")} من{" "}
-                      {originalPrice.toLocaleString("en-US")})
+                      {" "}(بعد خصم {(offer.discountAmount ?? 0).toLocaleString("en-US")} من{" "}
+                      {(offer.originalPrice ?? 0).toLocaleString("en-US")})
                     </span>
                   )}
                 </span>
@@ -874,7 +910,7 @@ export function NoExamOperationDialog({
                 {offer.error ?? "أدخل السعر الأصلي ومقدار الخصم"}
               </span>
             )}
-          </div>
+          </div>}
 
           {/* ── المبلغ المدفوع الآن — إلزاميّ على سعرٍ موجب، معطَّلٌ على
               المجّانيّ. مشتركٌ بين البابين كنظيره السعر أعلاه. ── */}
@@ -904,6 +940,12 @@ export function NoExamOperationDialog({
                 {offer.ok && paidNow !== null && !paidNowCheck.ok && paidNowCheck.error && (
                   <p className="text-xs text-destructive" data-testid="no-exam-op-paid-now-error">
                     {paidNowCheck.error}
+                  </p>
+                )}
+                {/*  **والمتبقّي على المجموع** (§4.cu) — يقوله الموظّفُ للمريض قبل الحفظ. */}
+                {offer.ok && paidNowCheck.ok && (offer.finalPrice ?? 0) > 0 && (
+                  <p className="text-xs text-muted-foreground" data-testid="no-exam-op-remaining">
+                    المتبقّي: <b>{((offer.finalPrice ?? 0) - paidNowCheck.amount).toLocaleString("en-US")} د.ع</b>
                   </p>
                 )}
               </>
@@ -1002,7 +1044,8 @@ export function NoExamOperationDialog({
                 ? <Loader2 className="h-4 w-4 animate-spin" />
                 : attaching
                   ? "حفظ البيع وإضافته للطرف الجاري تصنيعه"
-                  : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع" : "حفظ البيع وبدء التصنيع"}
+                  : kind === "maintenance" ? "حفظ الصيانة وبدء التصنيع"
+                    : saleReadyMade ? "حفظ البيع وتسليم الأجزاء" : "حفظ البيع وبدء التصنيع"}
             </Button>
           )}
         </DialogFooter>

@@ -7,6 +7,7 @@
 
 import { SHEET_DEVICE_ROWS } from "./exam_sheet";
 import { PROSTHETIC_DEVICE_SPECS } from "./case_fields";
+import { saleLinesText, type SaleLine } from "./part_sale";
 
 export type SheetServiceType = "prosthetic" | "medical_support";
 
@@ -28,6 +29,8 @@ export interface IntakeSheetMoney {
   /** صافي ما قُبض على هذا الجهاز (والمردودُ سالبٌ فيه). */
   paid: number;
   remaining: number | null;
+  /** **سعرُ كلّ جزء** كما بِيع (ترحيل ١١٧، §4.cu) — فارغٌ لبيعٍ قديم أو لبندٍ واحد بلا أسطر. */
+  lines?: { item: string; originalPrice: number; discountAmount: number; finalPrice: number }[];
 }
 
 /**
@@ -67,6 +70,12 @@ export interface IntakeSheet {
   /** أجزاءُ الطلب الإضافيّة (§4.ct) — «المطلوب: القالب + السليكون + القدم». */
   extraComponents: string[];
   status: string;
+  /** **بيعٌ جاهزٌ بلا أمر تصنيع** (ترحيل ١١٧، §4.cu) — سُلِّم يومَ بيعه. */
+  soldReady?: boolean;
+  /** **بيعٌ جاهزٌ «بلا معاينة» قابلٌ للتصحيح**: لا أمرَ يُفتح عليه زرُّ التصحيح ولا متابعة — فزرُّه هنا (بهويّة الجهاز). */
+  readyReversible?: boolean;
+  /** ملغى إدارياً (تصحيحٌ سابق). */
+  adminVoided?: boolean;
   /** تاريخُ فتح طلب هذا الجهاز — «تاريخ المراجعة» في ورقته. */
   openedAt: string | null;
   /** فرعُ العملية — منه الترويسة (كربلاء «الوارث»). */
@@ -118,6 +127,16 @@ export function sheetMoneyLine(s: Pick<IntakeSheet, "decision" | "money">): stri
   const parts = [`الكلي ${n(total)} د.ع`, `المدفوع ${n(m.paid)} د.ع`, `المتبقي ${n(m.remaining ?? total - m.paid)} د.ع`];
   if (m.priceKind === "discount" && m.originalPrice && m.originalPrice > total) parts.push(`(بعد خصمٍ من ${n(m.originalPrice)})`);
   return parts.join(" · ");
+}
+
+/**
+ * **سعرُ كلّ جزء سطراً** (§4.cu) — «القالب ٦٠٠,٠٠٠ · السليكون ٣٥٠,٠٠٠ (خصم ٥٠,٠٠٠ من ٤٠٠,٠٠٠)» — تحت سطر المبلغ حين يتعدّد ما بِيع.
+ * و`null` لبندٍ واحد (سطرُ المبلغ يقوله) أو بلا أسطر.
+ */
+export function sheetLinesText(s: Pick<IntakeSheet, "serviceType" | "money">): string | null {
+  const lines = s.money?.lines ?? [];
+  if (lines.length < 2) return null;
+  return saleLinesText(lines as SaleLine[], s.serviceType);
 }
 
 /**

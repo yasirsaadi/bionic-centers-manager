@@ -150,6 +150,8 @@ export function AdministrativeReversalDialog({
       for (const k of [
         [`/api/patients/${patientId}`], ["/api/patients"], ["/api/patients/registry"],
         [`/api/patients/${patientId}/device-episodes`],
+        //  والاستمارةُ ومستطيلُ الأجهزة (§4.cu: بيعٌ جاهزٌ يُلغى من هناك).
+        [`/api/patients/${patientId}/intake-sheets`],
         [`/api/followups/patient/${patientId}`],
         [`/api/medical/patients/${patientId}/exams`],
         ["/api/medical/pending"], ["/api/medical/worklist"],

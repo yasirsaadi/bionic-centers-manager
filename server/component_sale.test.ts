@@ -2,6 +2,10 @@
 // على Postgres وعلى النقطة الحقيقية `/api/no-exam/device-sale`.
 // قاعدة محلّية: `npm run test:component-sale`.
 //
+// **وأجزاؤه ما يصنعه الخبير** (§4.cu، ٢٠٢٦-١٠-٠٨): هذه الحزمةُ تحرس البيعَ **بأمر تصنيع** — فبيوعُها قالبٌ أو غلافٌ إسفنجيّ
+// (كانت ركبةً وقدماً وأدابتر قبل أن تصير تلك جاهزةً تُسلَّم بلا أمر). والإلحاقُ بطرفٍ قيد التصنيع يبقى بالأدابتر: أمرُه أمرُ الطرف.
+// والبيعُ الجاهزُ بلا أمر تحرسه `test:ready-part-sale`.
+//
 // ══ الثابتُ الذي يحرسه ═══════════════════════════════════════════════════
 // جزءٌ ⟵ خبيرٌ ⟵ سعرٌ أصليّ وخصمٌ ⟵ سعرٌ نهائيّ يشتقّه الخادم ⟵ **حفظٌ واحد**
 // يفتح الحلقةَ وأمرَ العمل ويقيّد المبلغ معاً — بلا طبيبٍ، بلا مراجعةٍ
@@ -355,7 +359,7 @@ async function main() {
       const pid = await mkPatient(`تكافؤ-${label}`);
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       }, session);
       check(r.status === 201, `أ. ${label} يُتمّ بيعَ الجزء بنجاح`, JSON.stringify(r.body));
@@ -365,7 +369,7 @@ async function main() {
       const pid = await mkPatient("رفض-الطبيب");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       }, S.doc);
       check(r.status === 403, "أ. الطبيبُ بلا «إضافة مدفوعات» يُرفَض ٤٠٣ ولو حمل canAddPatients", String(r.status));
@@ -375,7 +379,7 @@ async function main() {
       const pid = await mkPatient("رفض-الخبير");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       }, S.expert);
       check(r.status === 403, "أ. الخبيرُ بلا «إضافة مدفوعات» يُرفَض ٤٠٣", String(r.status));
@@ -419,7 +423,7 @@ async function main() {
       await mkCase(pid, "medical_support");
       //  المسندُ لا يملك قائمة أجزاء أصلاً — إرسالُ أيّ جزءٍ يُردّ.
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 100_000, discountAmount: 0,
       });
       check(r.status !== 201, "ب. المسندُ الطبيّ لا يُباع منه جزءٌ إطلاقاً", String(r.status));
@@ -433,7 +437,7 @@ async function main() {
       const pid = await mkPatient("ج-عادي");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 1_500_000, discountAmount: 0,
       });
       same("ج١. عاديّ — النهائيّ = الأصليّ",
@@ -444,7 +448,7 @@ async function main() {
       const pid = await mkPatient("ج-خصم");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 1_500_000, discountAmount: 300_000,
       });
       same("ج٢. بخصم — 1,500,000 − 300,000 = 1,200,000",
@@ -456,7 +460,7 @@ async function main() {
       await mkCase(pid, "prosthetic");
       const before = await moneyOf(pid);
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 1_500_000, discountAmount: 1_500_000,
       });
       same("ج٣. مجّانيّ — النهائيّ صفر والأصليّ محفوظ",
@@ -477,7 +481,7 @@ async function main() {
     ] as const) {
       const pid = await mkPatient(`ج-رفض-${label}`);
       await mkCase(pid, "prosthetic");
-      const r = await sale({ patientId: pid, component: "knee", expertUserId: EXPERT, ...body });
+      const r = await sale({ patientId: pid, component: "socket", expertUserId: EXPERT, ...body });
       check(r.status === 400, `ج٤. ${label} ⟶ ٤٠٠`, JSON.stringify(r.body));
       same("    وصفرُ كتابة", await moneyOf(pid), ZERO);
     }
@@ -486,7 +490,7 @@ async function main() {
       const pid = await mkPatient("ج-تلفيق");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 1_000_000, discountAmount: 0,
         //  ادّعاءٌ بمجّانيّةٍ ونهائيّ زائف — يجب أن يُتجاهَل بالكامل.
         finalPrice: 1, priceKind: "free", price: 1,
@@ -504,9 +508,9 @@ async function main() {
     {
       const pid = await mkPatient("د-عقد-قديم");
       await mkCase(pid, "prosthetic");
-      const r1 = await sale({ patientId: pid, component: "knee", expertUserId: EXPERT, charged: true, amount: 50_000 });
+      const r1 = await sale({ patientId: pid, component: "socket", expertUserId: EXPERT, charged: true, amount: 50_000 });
       check(r1.status === 400, "د١. charged/amount مرفوضان ٤٠٠", JSON.stringify(r1.body));
-      const r2 = await sale({ patientId: pid, component: "knee", expertUserId: EXPERT, charged: false });
+      const r2 = await sale({ patientId: pid, component: "socket", expertUserId: EXPERT, charged: false });
       check(r2.status === 400, "د٢. charged وحدها كافيةٌ للرفض", JSON.stringify(r2.body));
       same("د٣. صفرُ كتابة في الحالتين", await moneyOf(pid), ZERO);
     }
@@ -575,13 +579,13 @@ async function main() {
       const pid = await mkPatient("ز-هوية");
       const caseId = await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "adapter", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 250_000, discountAmount: 0,
       });
       check(r.status === 201, "ز١. البيعُ ينجح", JSON.stringify(r.body));
       const ep = await episodeOf(r.body.deviceEpisodeId);
-      same("ز٢. الحلقةُ: caseId صحيح · in_manufacturing · requested_item/component=adapter · service_path=no_exam",
-        [ep.c, ep.status, ep.ri, ep.cmp, ep.sp], [caseId, "in_manufacturing", "adapter", "adapter", "no_exam"]);
+      same("ز٢. الحلقةُ: caseId صحيح · in_manufacturing · requested_item/component=foam_cover · service_path=no_exam",
+        [ep.c, ep.status, ep.ri, ep.cmp, ep.sp], [caseId, "in_manufacturing", "foam_cover", "foam_cover", "no_exam"]);
       const order = await orderOf(r.body.workOrderId);
       same("ز٣. الأمرُ يشير إلى هذه الحلقة بعينها وبالخبير الصحيح",
         [order.de, order.ex, order.purpose, order.status], [ep.id, EXPERT, "initial_build", "active"]);
@@ -596,7 +600,7 @@ async function main() {
       const pid = await mkPatient("ح-خبير-فرع-آخر-فحص-مبكر");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT_OTHER_BRANCH,
+        patientId: pid, component: "socket", expertUserId: EXPERT_OTHER_BRANCH,
         originalPrice: 100_000, discountAmount: 0,
       });
       check(r.status === 400, "ح١. خبيرُ فرعٍ آخر يُرفَض من الفحص المبكّر", JSON.stringify(r.body));
@@ -614,7 +618,7 @@ async function main() {
           expertUserId: EXPERT_OTHER_BRANCH,
           originalPrice: 200_000, priceKind: "normal", finalPrice: 200_000,
           note: null, actor: { userId: RECV, userName: "ريام" },
-          component: "knee" as any, existingEpisodeId: null,
+          component: "socket" as any, existingEpisodeId: null,
         });
       } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
       check(threw, "ح٢. الخبيرُ غيرُ الصالح لفرع العملية يُرفَض من داخل المعاملة نفسِها", msg);
@@ -630,7 +634,7 @@ async function main() {
           patientId: pid, branchId: 1, expertUserId: 88_888_888,
           originalPrice: 100_000, priceKind: "normal", finalPrice: 100_000,
           note: null, actor: { userId: RECV, userName: "ريام" },
-          component: "knee" as any, existingEpisodeId: null,
+          component: "socket" as any, existingEpisodeId: null,
         });
       } catch { threw = true; }
       check(threw, "ح٣. خبيرٌ غيرُ موجودٍ يُرفَض من داخل المعاملة");
@@ -659,7 +663,7 @@ async function main() {
           expertUserId: EXPERT_OTHER_BRANCH, // خبيرُ فرع ٢ — سيُقبَل لو صدّقنا الفرعَ الخاطئ
           originalPrice: 200_000, priceKind: "normal", finalPrice: 200_000,
           note: null, actor: { userId: RECV, userName: "ريام" },
-          component: "knee" as any, existingEpisodeId: null,
+          component: "socket" as any, existingEpisodeId: null,
         });
       } catch (e: any) { threw = true; msg = String(e?.message ?? ""); }
       check(threw, "ف١. branchId=٢ مُرسَلٌ مباشرةً لعمليةٍ حقيقتُها فرعٌ ١ ⟶ يُرفَض", msg);
@@ -699,7 +703,7 @@ async function main() {
         expertUserId: EXPERT,
         originalPrice: 300_000, priceKind: "normal", finalPrice: 300_000,
         note: null, actor: { userId: RECV, userName: "ريام" },
-        component: "knee" as any, existingEpisodeId: null,
+        component: "socket" as any, existingEpisodeId: null,
       });
       check(!("duplicate" in out) && Boolean(out.workOrderId) && Boolean(out.deviceEpisodeId),
         "ف٣. فرعٌ صحيحٌ مطابق ⟶ العمليةُ تمضي بنجاح", JSON.stringify(out));
@@ -715,7 +719,7 @@ async function main() {
       const pid = await mkPatient("ف-مسؤول-فرع٢-حقيقي", { branch: 2 });
       await mkCase(pid, "prosthetic", 2);
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT_OTHER_BRANCH,
+        patientId: pid, component: "socket", expertUserId: EXPERT_OTHER_BRANCH,
         originalPrice: 400_000, discountAmount: 0,
       }, S.admin);
       check(r.status === 201, "ف٤. المسؤولُ يُتمّ بيعاً حقيقياً في فرع ٢ عبر النقطة الحقيقية", JSON.stringify(r.body));
@@ -728,7 +732,7 @@ async function main() {
       const pid = await mkPatient("ف-فرع-٢-باستقبالين", { branch: 2 });
       await mkCase(pid, "prosthetic", 2);
       const r1 = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT_OTHER_BRANCH,
+        patientId: pid, component: "socket", expertUserId: EXPERT_OTHER_BRANCH,
         originalPrice: 100_000, discountAmount: 0,
       }, S.recv); // استقبالُ فرع ١
       check(r1.status === 403, "ف٥. استقبالُ فرع ١ يُردّ ٤٠٣ على مريض فرع ٢ — كما كان قبل هذا التصحيح", String(r1.status));
@@ -773,7 +777,7 @@ async function main() {
       const pid = await mkPatient("ط-بلا-خيط");
       //  **بلا `mkCase` إطلاقاً** — لا حالة أطرافٍ على هذا الملفّ.
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 100_000, discountAmount: 0,
       });
       check(r.status === 400, "ط١. لا حالة أطرافٍ على الملفّ ⟶ ٤٠٠", JSON.stringify(r.body));
@@ -783,7 +787,7 @@ async function main() {
       const pid = await mkPatient("ط-فيزيو-فقط");
       const physioCase = await mkCase(pid, "physiotherapy");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 100_000, discountAmount: 0,
       });
       check(r.status === 400, "ط٢. حالةُ فيزيو وحدها لا تكفي لبيع جزءٍ من طرف صناعي", JSON.stringify(r.body));
@@ -800,7 +804,7 @@ async function main() {
       const caseId = await mkCase(pid, "prosthetic");
       const before = await moneyOf(pid);
       const r = await sale({
-        patientId: pid, component: "foot", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 900_000, discountAmount: 100_000,
       });
       check(r.status === 201, "ي١. البيعُ ينجح", JSON.stringify(r.body));
@@ -821,7 +825,7 @@ async function main() {
       const caseId = await mkCase(pid, "prosthetic");
       const before = await moneyOf(pid);
       const r = await sale({
-        patientId: pid, component: "foot", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 500_000, discountAmount: 500_000,
       });
       const after = await moneyOf(pid);
@@ -840,7 +844,7 @@ async function main() {
       const pid = await mkPatient("ك-مهيكل-عادي");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 700_000, discountAmount: 0,
       });
       const ep = await episodeOf(r.body.deviceEpisodeId);
@@ -851,7 +855,7 @@ async function main() {
       const pid = await mkPatient("ك-مهيكل-خصم");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 900_000, discountAmount: 150_000,
       });
       const ep = await episodeOf(r.body.deviceEpisodeId);
@@ -862,7 +866,7 @@ async function main() {
       const pid = await mkPatient("ك-مهيكل-مجاني");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 400_000, discountAmount: 400_000,
       });
       const ep = await episodeOf(r.body.deviceEpisodeId);
@@ -874,7 +878,7 @@ async function main() {
       //  (نفسُ الشكل الذي كانت تنتجه أيّ حلقةٍ قبل هذا الترحيل).
       const pid = await mkPatient("ك-تاريخي-NULL");
       const caseId = await mkCase(pid, "prosthetic");
-      const epId = await mkLegacyNoExamEpisode(pid, caseId, "knee");
+      const epId = await mkLegacyNoExamEpisode(pid, caseId, "socket");
       const ep = await episodeOf(epId);
       same("ك٤. صفٌّ لم يمرّ بالمرحلة الرابعة ⟶ الحقلان المُهيكَلان NULL",
         [ep.csop, ep.cspk], [null, null]);
@@ -919,7 +923,7 @@ async function main() {
       //  معرّفٌ لا يخصّ هذا المريض.
       const pidA = await mkPatient("ل-هوية-أ");
       const caseA = await mkCase(pidA, "prosthetic");
-      const epA = await mkLegacyNoExamEpisode(pidA, caseA, "knee");
+      const epA = await mkLegacyNoExamEpisode(pidA, caseA, "socket");
       const pidB = await mkPatient("ل-هوية-ب");
       await mkCase(pidB, "prosthetic");
       const r = await sale({ patientId: pidB, existingEpisodeId: epA, expertUserId: EXPERT,
@@ -973,7 +977,7 @@ async function main() {
         `INSERT INTO medical_review_requests (patient_id, service_type, requested_path, review_kind, status)
          VALUES ($1,'prosthetic','quick','other','pending') RETURNING id`, [pid]);
       //  بيعُ جزءٍ جديد على المريض نفسه — من المرحلة الرابعة.
-      await sale({ patientId: pid, component: "knee", expertUserId: EXPERT,
+      await sale({ patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 150_000, discountAmount: 0 });
       const [still] = await q(`SELECT status FROM medical_review_requests WHERE id=$1`, [row.id]);
       check(still?.status === "pending", "م٤. السجلُّ التاريخيُّ باقٍ بحالته بلا مساس من بيع الجزء الجديد");
@@ -990,7 +994,7 @@ async function main() {
       const pid = await mkPatient("ن-بيعان-جديدان-متزامنان");
       await mkCase(pid, "prosthetic");
       const [r1, r2] = await Promise.all([
-        sale({ patientId: pid, component: "knee", expertUserId: EXPERT, originalPrice: 300_000, discountAmount: 0 }),
+        sale({ patientId: pid, component: "socket", expertUserId: EXPERT, originalPrice: 300_000, discountAmount: 0 }),
         sale({ patientId: pid, component: "socket", expertUserId: EXPERT2, originalPrice: 300_000, discountAmount: 0 }),
       ]);
       const statuses = [r1.status, r2.status];
@@ -1006,7 +1010,7 @@ async function main() {
     {
       const pid = await mkPatient("ن-إكمالان-متزامنان");
       const caseId = await mkCase(pid, "prosthetic");
-      const epId = await mkLegacyNoExamEpisode(pid, caseId, "tube");
+      const epId = await mkLegacyNoExamEpisode(pid, caseId, "foam_cover");
       const [r1, r2] = await Promise.all([
         sale({ patientId: pid, existingEpisodeId: epId, expertUserId: EXPERT, originalPrice: 200_000, discountAmount: 0 }),
         sale({ patientId: pid, existingEpisodeId: epId, expertUserId: EXPERT2, originalPrice: 200_000, discountAmount: 0 }),
@@ -1248,16 +1252,16 @@ async function main() {
          VALUES ($1,1,'prosthetic',$2,'active','mold','initial_build',$3,$4) RETURNING id`,
         [pid, EXPERT, ep.id, RECV]);
 
-      const r = await sale({ patientId: pid, component: "adapter", expertUserId: EXPERT,
+      const r = await sale({ patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 50_000, discountAmount: 0 });
       check(r.status === 201, "ص٢١. **بلا `attachToDeviceEpisodeId` ⟶ ٢٠١، عمليةٌ مستقلّة جديدة** —"
         + " لا رفضَ لمجرّد وجود حلقةٍ أخرى مفتوحة، ولا إلحاقَ صامتاً بها", JSON.stringify(r.body));
       check(r.body.deviceEpisodeId !== ep.id,
         "     وحلقةٌ **جديدة** بمعرّفٍ مختلف — لا الحلقةُ القديمة نفسُها", String(r.body.deviceEpisodeId));
       const newEp = await episodeOf(r.body.deviceEpisodeId);
-      same("     والحلقةُ الجديدة: نفسُ الخيط · in_manufacturing · adapter · no_exam",
+      same("     والحلقةُ الجديدة: نفسُ الخيط · in_manufacturing · foam_cover · no_exam",
         [newEp.c, newEp.status, newEp.ri, newEp.cmp, newEp.sp],
-        [caseId, "in_manufacturing", "adapter", "adapter", "no_exam"]);
+        [caseId, "in_manufacturing", "foam_cover", "foam_cover", "no_exam"]);
       const newOrder = await orderOf(r.body.workOrderId);
       check(newOrder.id !== wo.id,
         "     وأمرُ عملٍ **جديد** — لا الأمرُ القديم نفسُه", String(newOrder.id));
@@ -1370,7 +1374,7 @@ async function main() {
       const pid = await mkPatient("ص-عاديّ-بلا-مُرشَّح");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "adapter", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 300_000, discountAmount: 0,
       });
       check(r.status === 201, "ص٢٨. بيعُ جزءٍ عاديّ بلا مُرشَّحٍ للإلحاق ينجح كما كان", JSON.stringify(r.body));
@@ -1457,7 +1461,7 @@ async function main() {
       const pid = await mkPatient("ق-دفعٌ-جزئيّ");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "knee", expertUserId: EXPERT,
+        patientId: pid, component: "socket", expertUserId: EXPERT,
         originalPrice: 500_000, discountAmount: 100_000, paidNow: 150_000,
       });
       check(r.status === 201, "ق٢. دفعٌ جزئيّ ⟶ ينجح", JSON.stringify(r.body));
@@ -1541,7 +1545,7 @@ async function main() {
       const pid = await mkPatient("ق-مجّانيّ");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "foot", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 250_000, discountAmount: 250_000,
         //  **مُلفَّقٌ عمداً**: عميلٌ بائتٌ يرسل مبلغاً على عمليةٍ سيَشتقّها
         //  الخادمُ مجّانيّة — يجب أن يُتجاهَل تماماً لا أن يُنشئ دفعة.
@@ -1564,7 +1568,7 @@ async function main() {
       const pid = await mkPatient("ق-مبلغٌ-يفوق-النهائيّ");
       await mkCase(pid, "prosthetic");
       const r = await sale({
-        patientId: pid, component: "adapter", expertUserId: EXPERT,
+        patientId: pid, component: "foam_cover", expertUserId: EXPERT,
         originalPrice: 100_000, discountAmount: 0, paidNow: 100_001,
       });
       check(r.status === 400, "ق٥. مبلغٌ يفوق السعرَ النهائيّ ⟶ ٤٠٠", JSON.stringify(r.body));
@@ -1599,7 +1603,7 @@ async function main() {
       const [r1, r2] = await Promise.all([
         sale({ patientId: pid, component: "socket", expertUserId: EXPERT,
           originalPrice: 90_000, discountAmount: 0, paidNow: 90_000 }),
-        sale({ patientId: pid, component: "knee", expertUserId: EXPERT,
+        sale({ patientId: pid, component: "socket", expertUserId: EXPERT,
           originalPrice: 90_000, discountAmount: 0, paidNow: 90_000 }),
       ]);
       const statuses = [r1.status, r2.status].sort();

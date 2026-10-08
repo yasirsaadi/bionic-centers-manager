@@ -13,6 +13,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { SHEET_STATUS_LABELS, sheetSpecRows, type IntakeSheet, type IntakeSheetsResponse } from "@shared/intake_sheet_view";
 import { IntakeSheetView } from "./IntakeSheetView";
+import { useBranchSession } from "@/components/BranchGate";
+import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
+import { hasRole } from "@shared/user_roles";
+import { ADMIN_VOID_BADGE } from "@shared/administrative_reversal";
 
 export const intakeSheetsKey = (patientId: number) => [`/api/patients/${patientId}/intake-sheets`];
 
@@ -36,6 +40,10 @@ export function openIntakeSheetPrint(patientId: number, episodeId: number) {
 export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; caseType: string }) {
   const { data } = useIntakeSheets(patientId);
   const [open, setOpen] = useState<IntakeSheet | null>(null);
+  //  ══ **بيعُ الأجزاء الجاهزة «بلا معاينة» يُصحَّح من هنا** (§4.cu) — لا أمرَ تصنيعٍ يحمل زرَّه. والحجبُ عرضٌ لا إذن: الخادمُ يفحص. ══
+  const session = useBranchSession();
+  const mayReverse = Boolean((session as any)?.isAdmin) || hasRole(session as any, "branch_manager");
+  const [reverseEpisodeId, setReverseEpisodeId] = useState<number | null>(null);
   const sheets = (data?.sheets ?? []).filter((s) => s.serviceType === caseType);
   if (!data || sheets.length === 0) return null;
 
@@ -48,11 +56,21 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
             <p className="text-sm font-medium">
               الجهاز #{s.sequenceNumber} — {requestedItemLabel(s.requestedItem, s.serviceType, s.extraComponents)}
               <span className="text-xs text-muted-foreground font-normal"> · {SHEET_STATUS_LABELS[s.status] ?? s.status}</span>
+              {s.soldReady && <span className="text-xs text-emerald-700 font-normal" data-testid={`device-sold-ready-${s.episodeId}`}> · جاهز بلا أمر تصنيع</span>}
+              {s.adminVoided && <span className="text-xs text-red-700 font-normal"> · {ADMIN_VOID_BADGE}</span>}
             </p>
-            <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpen(s)}
-              data-testid={`button-view-sheet-${s.episodeId}`}>
-              <FileText className="w-3.5 h-3.5" /> عرض الاستمارة
-            </Button>
+            <div className="flex flex-wrap gap-1.5">
+              {mayReverse && s.readyReversible && (
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs border-amber-300 text-amber-800"
+                  onClick={() => setReverseEpisodeId(s.episodeId)} data-testid={`button-reverse-ready-${s.episodeId}`}>
+                  تصحيح / إلغاء العملية
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpen(s)}
+                data-testid={`button-view-sheet-${s.episodeId}`}>
+                <FileText className="w-3.5 h-3.5" /> عرض الاستمارة
+              </Button>
+            </div>
           </div>
           {(s.amputationSite || s.injurySide) && (
             <p className="text-xs text-muted-foreground mt-0.5" data-testid={`device-site-${s.episodeId}`}>
@@ -69,6 +87,13 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
           </div>
         </div>
       ))}
+
+      <AdministrativeReversalDialog
+        open={reverseEpisodeId !== null}
+        onOpenChange={(v) => { if (!v) setReverseEpisodeId(null); }}
+        patientId={patientId}
+        target={{ episodeId: reverseEpisodeId }}
+      />
 
       {/*  **على الهاتف تملأ الشاشة، ورأسُها ثابتٌ تحت الجزيرة بزرّين ظاهرين: «رجوع» و«طباعة»** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨: «لا يوجد
           زرّ عودة، والإغلاقُ في الأعلى في حافّة الهاتف») — بدل «X» صغيرةٍ في الزاوية. وعلى الحاسوب الرأسُ نفسُه أعلى النافذة. */}

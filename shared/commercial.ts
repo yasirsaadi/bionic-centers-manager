@@ -367,13 +367,18 @@ export interface SaleState {
  */
 export function saleState(params: {
   priceKind: unknown; expertUserId: unknown;
+  /**
+   * **أيحتاج هذا البيعُ خبيراً؟** (§4.cu) — أجزاءٌ جاهزةٌ كلُّها (لا قالبَ ولا غلافَ إسفنجيّ) تُسلَّم يومَها بلا أمر تصنيع،
+   * فلا يُنتظر لها خبير. والغيابُ «نعم» كما كان دائماً.
+   */
+  expertRequired?: boolean;
 }): SaleState {
   const missing: CommercialField[] = [];
   //  **النوعُ هو الدليل لا الرقم**: مجّانيٌّ صريحٌ نهائيُّه صفرٌ ومكتمل،
   //  وملفٌّ لم يُسعَّر نهائيُّه صفرٌ وناقص. والرقمُ وحده لا يفرّق بينهما.
   if (parsePriceKind(params.priceKind) === null) missing.push("price");
   const expert = Number(params.expertUserId);
-  if (!Number.isFinite(expert) || expert <= 0) missing.push("expert");
+  if (params.expertRequired !== false && (!Number.isFinite(expert) || expert <= 0)) missing.push("expert");
   return { missing, ready: missing.length === 0 };
 }
 

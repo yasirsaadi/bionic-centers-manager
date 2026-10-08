@@ -45,8 +45,12 @@ import {
   canCorrectReturned, canFinalizeLegacyCharge,
 } from "@shared/pending_charge";
 import {
-  parseComponent, componentLabel,
+  parseComponent, componentLabel, parseRequestedItems, requestedItemLabel, FULL_DEVICE,
+  type ProstheticComponent, type RequestedItem,
 } from "@shared/prosthetic_parts";
+import {
+  parseSaleLines, partsNeedExpert, saleLinesText, READY_SALE_SUCCESS_MESSAGE, type SaleLine,
+} from "@shared/part_sale";
 import {
   canCompleteMaintenance, parseMaintenanceDeviceTarget, deriveMaintenanceTerms,
   parseMaintenancePaidNow, MAINTENANCE_SUCCESS_MESSAGE, MAINTENANCE_DUPLICATE_MESSAGE,
@@ -362,6 +366,20 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       let existingEpisodeId: number | null = null;
       let attachToDeviceEpisodeId: number | null = null;
       let component: ReturnType<typeof parseComponentSaleComponent>["value"] = null;
+      let extraComponents: ProstheticComponent[] = [];
+      //  ══ **أجزاءٌ عدّة في بيعٍ واحد** (§4.cu): `components` قائمةٌ، أو `component` واحدٌ (عميلٌ قديم). أجزاءٌ وحدها —
+      //  الجهازُ الكاملُ يمرّ بالمعاينة — وبترتيب الورقة: الأوّلُ `component` والباقي `extraComponents`. ══
+      const parseParts = (): string | null => {
+        const raw = Array.isArray(req.body?.components) ? req.body.components : req.body?.component;
+        const parsed = parseRequestedItems(raw, "prosthetic");
+        if (!parsed.ok) return parsed.error ?? "حدّد الجزء المراد بيعه — اختر من القائمة";
+        if (parsed.requestedItem === FULL_DEVICE) return "الطرف الكامل يحتاج معاينة الطبيب — لا يُباع من «شراء جزء»";
+        const comp = parseComponentSaleComponent(parsed.requestedItem);
+        if (!comp.ok) return comp.error ?? "حدّد الجزء المراد بيعه — اختر من القائمة";
+        component = comp.value;
+        extraComponents = parsed.extraComponents;
+        return null;
+      };
       if (hasExisting) {
         const id = Number(rawExisting);
         if (!Number.isInteger(id) || id <= 0) {
@@ -374,41 +392,57 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           return res.status(400).json({ error: "معرّف الجهاز قيد التصنيع غير صالح" });
         }
         attachToDeviceEpisodeId = id;
-        const comp = parseComponentSaleComponent(req.body?.component);
-        if (!comp.ok) return res.status(400).json({ error: comp.error });
-        component = comp.value;
+        const err = parseParts();
+        if (err) return res.status(400).json({ error: err });
       } else {
-        const comp = parseComponentSaleComponent(req.body?.component);
-        if (!comp.ok) return res.status(400).json({ error: comp.error });
-        component = comp.value;
+        const err = parseParts();
+        if (err) return res.status(400).json({ error: err });
       }
+      const parts: ProstheticComponent[] = component ? [component, ...extraComponents] : [];
 
-      //  ══ **الخبيرُ — إلّا عند الإلحاق** ═══════════════════════════════════
+      //  ══ **الخبيرُ — حين يُصنع شيءٌ عنده وحده** (§4.cu) ══════════════════════
       //  الإلحاقُ لا يُسنِد خبيراً جديداً؛ يشتقّه من أمر العمل القائم
-      //  (`storage.ts: loadInManufacturingDeviceOperationTx`). فسؤالُ
-      //  الموظّف عن خبيرٍ هنا ثمّ تجاهلُ اختياره كان الخطأ — فلا يُسأل
-      //  أصلاً، ولا يُتحقَّق من قيمةٍ لن تُستعمَل.
-      let expertUserId = Number(req.body?.expertUserId);
-      if (hasAttach) {
-        expertUserId = NaN;   // لا يُقرأ في مسار الإلحاق إطلاقاً — انظر أدناه.
+      //  (`storage.ts: loadInManufacturingDeviceOperationTx`). **وأجزاءٌ جاهزةٌ كلُّها** (لا قالبَ ولا غلافَ إسفنجيّ) تُسلَّم
+      //  اليوم بلا أمر — فلا يُسأل عن خبير ولا يُقرأ ما وصل. والاستئنافُ يُحسم في المخزن تحت القفل (أجزاؤه من الحلقة).
+      let expertUserId: number | null = Number(req.body?.expertUserId);
+      const expertNeeded = hasExisting ? null : partsNeedExpert(parts);
+      if (hasAttach || expertNeeded === false) {
+        expertUserId = null;
+      } else if (expertNeeded === null && !(Number.isInteger(expertUserId) && expertUserId > 0)) {
+        expertUserId = null;   // استئنافٌ بلا خبير — المخزنُ يطلبه إن كانت الحلقةُ تحتاجه.
       } else {
         //  **فحصٌ مبكّرٌ سريع للردّ الفوري**؛ الكتابةُ الفعليةُ تراجعه تحت
         //  قفل المعاملة لا تثق بهذا وحده.
-        if (!Number.isInteger(expertUserId) || expertUserId <= 0) {
+        if (!Number.isInteger(expertUserId) || (expertUserId as number) <= 0) {
           return res.status(400).json({ error: "اختر الخبير المسؤول عن التنفيذ" });
         }
-        const v = await mfg.validateExpertForBranch(expertUserId, opBranchId as number);
+        const v = await mfg.validateExpertForBranch(expertUserId as number, opBranchId as number);
         if (!v.ok) return res.status(400).json({ error: v.reason });
       }
 
-      //  ══ **السعرُ — يُشتقّ في الخادم من مُدخَلين فقط** ═══════════════════
-      //  والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً — وإن أرسلهما
-      //  عميلٌ بائتٌ أو خبيث، **يُتجاهَلان تماماً**: لا يُقرآن هنا ولا في
-      //  المخزن، فلا سبيلَ لهما إلى ما يُكتب.
-      const offer = deriveComponentSaleOffer({
-        originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
-      });
-      if (!offer.ok) return res.status(400).json({ error: offer.error });
+      //  ══ **السعرُ — يُشتقّ في الخادم، لكلّ جزءٍ سطرُه** (§4.cu) ══════════════
+      //  `lines` سطرٌ لكلّ جزء (أصليٌّ وخصم)، ومجموعُها هو البيع. وعميلٌ قديم بلا `lines` يرسل أصلاً وخصماً واحداً —
+      //  يُقبل لجزءٍ واحد كما كان. والعميلُ لا يُرسل سعراً نهائياً ولا نوعَ سعرٍ أبداً — وإن أرسلهما **يُتجاهَلان تماماً**.
+      let lines: SaleLine[] | null = null;
+      let offer: { ok: boolean; error?: string; originalPrice: number | null; discountAmount: number | null; finalPrice: number | null; kind: "normal" | "discount" | "free" | null };
+      if (Array.isArray(req.body?.lines) && !hasExisting) {
+        const parsedLines = parseSaleLines(req.body.lines, parts as RequestedItem[], "prosthetic");
+        if (!parsedLines.ok) return res.status(400).json({ error: parsedLines.error });
+        lines = parsedLines.lines;
+        const t = parsedLines.totals;
+        offer = { ok: true, originalPrice: t.originalPrice, discountAmount: t.discountAmount, finalPrice: t.finalPrice, kind: t.kind };
+      } else {
+        if (parts.length > 1) {
+          return res.status(400).json({ error: "أدخل سعر كلّ جزء — حدّث الصفحة إن لم تظهر خاناتُه" });
+        }
+        offer = deriveComponentSaleOffer({
+          originalPrice: req.body?.originalPrice, discountAmount: req.body?.discountAmount,
+        }) as typeof offer;
+        if (!offer.ok) return res.status(400).json({ error: offer.error });
+        if (component) {
+          lines = [{ item: component, originalPrice: offer.originalPrice!, discountAmount: offer.discountAmount!, finalPrice: offer.finalPrice! }];
+        }
+      }
 
       //  ══ **«المبلغ المدفوع الآن» — إلزاميٌّ صراحةً، لا يُخمَّن من السعر**
       //  ═══════════════════════════════════════════════════════════════════
@@ -424,7 +458,8 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         patientId, branchId: opBranchId, expertUserId,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
         finalPrice: offer.finalPrice!, paidNow: paidNowResult.amount,
-        note, actor: actorOf(req), component, existingEpisodeId, attachToDeviceEpisodeId,
+        note, actor: actorOf(req), component, extraComponents, lines,
+        existingEpisodeId, attachToDeviceEpisodeId,
         submissionToken,
       });
 
@@ -433,9 +468,12 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         return res.json({ ok: true, duplicate: true, message: COMPONENT_SALE_DUPLICATE_MESSAGE });
       }
 
+      const soldLabel = requestedItemLabel(out.component, "prosthetic", out.extraComponents);
       await logAudit({
-        entityType: "no_exam_operation",
-        entityId: out.workOrderId, action: "create",
+        //  **والبيعُ الجاهزُ بلا أمرٍ له كيانُه** (§4.cu): `no_exam_operation` معرّفُه رقمُ الأمر (ومنه تقرأ الصيانةُ دفعتَها)، فلا
+        //  يُكتب فيه رقمُ جهاز يصادف رقمَ أمرٍ آخر.
+        entityType: out.ready ? "ready_part_sale" : "no_exam_operation",
+        entityId: out.ready ? out.deviceEpisodeId : out.workOrderId!, action: "create",
         userId: getSession(req).userId, userName: getSession(req).userName ?? null,
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
         //  **حقيقةٌ مُهيكَلة كاملة** — لا نصَّ تدقيقٍ وحده: الجزءُ والخبيرُ
@@ -445,8 +483,9 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         //  لم تُقرَأ أصلاً.
         newValues: {
           patientId, workOrderId: out.workOrderId, serviceType: "prosthetic",
-          operationKind: "device_sale",
-          component: out.component, deviceEpisodeId: out.deviceEpisodeId,
+          operationKind: out.ready ? "ready_part_sale" : "device_sale",
+          component: out.component, extraComponents: out.extraComponents, ready: out.ready,
+          lines, deviceEpisodeId: out.deviceEpisodeId,
           existingEpisodeId, attachToDeviceEpisodeId, expertUserId: out.expertUserId,
           originalPrice: offer.originalPrice, discountAmount: offer.discountAmount,
           finalPrice: offer.finalPrice, priceKind: offer.kind,
@@ -457,14 +496,16 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
           note,
         },
         notes: (offer.kind === "free"
-          ? `بيع جزء (${componentLabel(out.component) ?? out.component}) — مجّاني`
+          ? `بيع جزء (${soldLabel}) — مجّاني`
             + ` (أصلُه ${offer.originalPrice!.toLocaleString("en-US")} د.ع)`
-          : `بيع جزء (${componentLabel(out.component) ?? out.component}) —`
+          : `بيع جزء (${soldLabel}) —`
             + ` ${offer.finalPrice!.toLocaleString("en-US")} د.ع`
             + (offer.kind === "discount"
               ? ` (بعد خصم ${offer.discountAmount!.toLocaleString("en-US")}`
                 + ` من ${offer.originalPrice!.toLocaleString("en-US")})`
               : ""))
+          + (lines && lines.length > 1 ? ` [${saleLinesText(lines, "prosthetic")}]` : "")
+          + (out.ready ? " — جاهز، سُلِّم بلا أمر تصنيع" : "")
           //  **وسطرُ القبض** — دَينٌ أو دفعٌ جزئيّ أو كامل، بصياغةٍ يقرؤها
           //  الموظّف بلا فتح صفّ الدفعة.
           + (offer.kind === "free" ? ""
@@ -502,7 +543,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       //  إطلاقاً، لا حيّاً ولا استرجاعياً.
       return res.status(201).json({
         ok: true, workOrderId: out.workOrderId, deviceEpisodeId: out.deviceEpisodeId,
-        component: out.component,
+        component: out.component, extraComponents: out.extraComponents, ready: out.ready, lines,
         //  **خبيرُ العملية الفعليّ** — للإلحاق هو خبيرُ أمر العمل القائم،
         //  لا مُدخَلاً من هذا الطلب.
         expertUserId: out.expertUserId,
@@ -510,7 +551,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         finalPrice: offer.finalPrice, priceKind: offer.kind,
         paidNow: out.paidNow, paymentId: out.paymentId,
         remainingUnpaid: offer.finalPrice! - out.paidNow,
-        message: COMPONENT_SALE_SUCCESS_MESSAGE,
+        message: out.ready ? READY_SALE_SUCCESS_MESSAGE : COMPONENT_SALE_SUCCESS_MESSAGE,
       });
     } catch (err) {
       fail(res, err, "تعذّر تسجيل بيع الجزء");

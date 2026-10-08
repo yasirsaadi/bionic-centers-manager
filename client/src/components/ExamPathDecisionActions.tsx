@@ -32,6 +32,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
 import { NOT_APPLICABLE } from "@shared/device_specs";
+import { requestedItemsOf, type RequestedItem } from "@shared/prosthetic_parts";
+import { READY_PARTS_HINT } from "@shared/part_sale";
+import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
 
 export interface ExamPathDecisionActionsPrefill {
   originalPrice?: number | null;
@@ -108,8 +111,15 @@ export function ExamPathDecisionActions({
     queryKey: [`/api/followups/patient/${patientId}`],
     enabled: dialog === "complete_sale",
   });
+  const saleRow: any = (patientFollowups ?? []).find((f: any) => f.id === followupId) ?? null;
   const saleSpecs: { fields: { key: string; label: string; value: string | null; fromDoctor: boolean }[]; missing: string[] } | null =
-    (patientFollowups ?? []).find((f: any) => f.id === followupId)?.deviceSpecs ?? null;
+    saleRow?.deviceSpecs ?? null;
+  //  ══ **ما طُلب ومَن يصنعه** (§4.cu) — من صفّ المتابعة نفسِه: أجزاءٌ عدّة ⟵ سعرٌ لكلّ جزء، وجاهزٌ ⟵ بلا خبير. ══
+  const saleItems: RequestedItem[] = saleRow?.deviceEpisodeId
+    ? requestedItemsOf(saleRow.requestedItem, saleRow.extraComponents) : [];
+  const byLines = saleItems.length > 1;
+  const expertNeeded = saleRow ? saleRow.needsExpert !== false : true;
+  const [cLines, setCLines] = useState<SaleLineInputs>({});
   useEffect(() => {
     if (dialog !== "complete_sale" || !saleSpecs) return;
     setCSpecs((prev) => {
@@ -124,7 +134,7 @@ export function ExamPathDecisionActions({
   const reset = () => {
     setDialog(null); setCOriginal(""); setCDiscount(""); setCFree(false);
     setCExpert(""); setCPaidNow(""); setCReason(""); setCCancelReason("");
-    setNote(""); setCSpecs({});
+    setNote(""); setCSpecs({}); setCLines({});
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -211,10 +221,16 @@ export function ExamPathDecisionActions({
   //  ولا سعراً نهائياً أبداً (القسم 4.i) — الخادمُ يشتقّهما من
   //  `originalPrice`/`discountAmount` وحدهما ويعتمدهما وحده.
   const csEffectiveDiscount = cFree ? cOriginal : cDiscount;
-  const csOffer = deriveOfferFromDiscount({
-    originalPrice: cOriginal === "" ? null : Number(cOriginal),
-    discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
-  });
+  //  **وأجزاءٌ عدّة: المجموعُ من أسطرها** (§4.cu) — نفسُ ما يشتقّه الخادمُ ويعتمده.
+  const linesTotals = byLines ? saleLinesPreview(saleItems, cLines) : null;
+  const csOffer = byLines
+    ? (linesTotals
+      ? { ok: true, kind: linesTotals.kind, finalPrice: linesTotals.finalPrice, error: undefined as string | undefined }
+      : { ok: false, kind: null, finalPrice: null, error: "أدخل سعر كلّ جزء" })
+    : deriveOfferFromDiscount({
+      originalPrice: cOriginal === "" ? null : Number(cOriginal),
+      discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
+    });
   //  **قراءةٌ فقط من حقل القبض نفسِه** — ليست جزءاً من اشتقاق العرض
   //  التجاريّ، فالحارسُ الحقيقيّ في الخادم لا هنا (راجع `parsePaidNow`).
   const paidNowValue = cPaidNow === "" ? 0 : Number(cPaidNow);
@@ -332,7 +348,13 @@ export function ExamPathDecisionActions({
         <DialogContent dir="rtl" className="max-w-md max-h-[92vh] overflow-y-auto">
           <DialogHeader><DialogTitle>إتمام البيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div className="space-y-1">
+            {!expertNeeded && (
+              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-900"
+                data-testid="text-complete-sale-ready">
+                <b>جاهز — يُسلَّم اليوم بلا خبيرٍ ولا أمر تصنيع.</b> {READY_PARTS_HINT}
+              </p>
+            )}
+            {expertNeeded && <div className="space-y-1">
               <Label htmlFor="cs-expert" className="text-xs">الخبير</Label>
               <Select value={cExpert} onValueChange={setCExpert}>
                 <SelectTrigger id="cs-expert" className="bg-white"
@@ -346,7 +368,13 @@ export function ExamPathDecisionActions({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </div>}
+            {/*  **أجزاءٌ عدّة: سطرٌ لكلّ جزء ثمّ المجموع** (§4.cu) — بدل السعر الواحد والخصم و«مجاني». */}
+            {byLines && (
+              <SaleLinesEditor items={saleItems} serviceType={saleRow?.serviceType ?? "prosthetic"}
+                value={cLines} onChange={setCLines} testId="complete-sale-lines" />
+            )}
+            {!byLines && <>
             <div className="space-y-1">
               <Label htmlFor="cs-original" className="text-xs">السعر الأصلي (د.ع)</Label>
               <MoneyInput id="cs-original" allowEmpty value={cOriginal}
@@ -396,6 +424,7 @@ export function ExamPathDecisionActions({
                 {csOffer.error}
               </p>
             )}
+            </>}
             {/*  ══ **المبلغُ المدفوعُ الآن — حقلٌ اختياريّ محض** ══════════════
                 فارغٌ افتراضاً **دائماً**، ولا تعبئةَ تلقائية من أيّ قيمةٍ
                 أخرى في هذه النافذة — لا السعر الأصلي ولا النهائي ولا
@@ -456,17 +485,19 @@ export function ExamPathDecisionActions({
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !cExpert || !csOffer.ok || paidNowExceeds || specsIncomplete}
+            <Button disabled={busy || (expertNeeded && !cExpert) || !csOffer.ok || paidNowExceeds || specsIncomplete}
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
-                originalPrice: Number(cOriginal),
-                discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
-                expertUserId: Number(cExpert),
+                ...(byLines ? { lines: saleLinesPayload(saleItems, cLines) } : {
+                  originalPrice: Number(cOriginal),
+                  discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
+                }),
+                ...(expertNeeded ? { expertUserId: Number(cExpert) } : {}),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
                 deviceSpecs: Object.fromEntries(specsToFill.map((f) => [f.key, (cSpecs[f.key] ?? "").trim()])),
               }, "complete_sale")}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : expertNeeded ? "حفظ البيع وبدء التصنيع" : "حفظ البيع وتسليم الأجزاء"}
             </Button>
           </DialogFooter>
         </DialogContent>

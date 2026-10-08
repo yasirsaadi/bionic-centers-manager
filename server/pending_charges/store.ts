@@ -60,6 +60,7 @@ import {
 } from "@shared/prosthetic_parts";
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
 import { formatDevicePaymentNote } from "@shared/payment_description";
+import { needsExpertOrder, saleLinesText, type SaleLine } from "@shared/part_sale";
 import type { Payment } from "@shared/schema";
 import type { SimilarMaintenanceOrder } from "@shared/maintenance";
 
@@ -399,7 +400,15 @@ interface CreateBase {
 export async function createComponentSaleOperation(params: {
   patientId: number;
   branchId: number | null;
-  expertUserId: number;
+  /**
+   * **الخبيرُ — حين يُصنع شيءٌ وحده** (§4.cu): قالبٌ أو غلافٌ إسفنجيّ في الطلب ⟵ أمرُ تصنيعٍ عنده. وأجزاءٌ جاهزة كلُّها ⟵ `null`
+   * ولا يُقرأ: تُسلَّم يومَها بلا أمر. والقاعدةُ تُقرأ هنا تحت القفل (`needsExpertOrder`) لا من وجود هذا الحقل.
+   */
+  expertUserId: number | null;
+  /** **بقيّةُ الأجزاء** بعد `component` (ترحيل ١١٦، §4.ct) — بترتيب الورقة. وغيابُها جزءٌ واحد كما كان. */
+  extraComponents?: ProstheticComponent[] | null;
+  /** **سعرٌ لكلّ جزء** (§4.cu) — مُتحقَّقٌ سلفاً بـ`parseSaleLines`، ومجموعُها `originalPrice`/`finalPrice` أدناه. */
+  lines?: SaleLine[] | null;
   /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveComponentSaleOffer` — لا حسابَ هنا. */
   originalPrice: number;
   priceKind: "normal" | "discount" | "free";
@@ -432,15 +441,20 @@ export async function createComponentSaleOperation(params: {
    */
   submissionToken?: string | null;
 }): Promise<{ duplicate: true } | {
-  workOrderId: number; deviceEpisodeId: number; component: string | null;
+  /** `null` لبيعٍ جاهزٍ بلا أمر تصنيع (§4.cu). */
+  workOrderId: number | null; deviceEpisodeId: number; component: string | null;
+  /** بقيّةُ الأجزاء كما بِيعت فعلاً — للتدقيق والردّ. */
+  extraComponents: string[];
+  /** **بيعٌ جاهز**: سُلِّم يومَه بلا خبيرٍ ولا أمر. */
+  ready: boolean;
   finalPrice: number;
   /**
    * **الخبيرُ الفعليّ الذي وقعت باسمه العملية** — لا `params.expertUserId`
    * دائماً: للإلحاق هو خبيرُ أمر العمل القائم المُشتقّ خادميّاً، لا ما
    * أرسله الطلب (والذي لا يُقرأ في تلك الحالة إطلاقاً). يعتمد عليه سجلُّ
-   * التدقيق ليقول الحقيقة لا ما طُلب.
+   * التدقيق ليقول الحقيقة لا ما طُلب. و`null` لبيعٍ جاهز.
    */
-  expertUserId: number;
+  expertUserId: number | null;
   /** = `params.paidNow` — يُعاد ليقوله الردُّ وسجلُّ التدقيق بلا حسابٍ ثانٍ. */
   paidNow: number;
   /** `null` حين `paidNow === 0` — لا دفعةَ إطلاقاً، لا صفراً ملفَّقاً. */
@@ -471,6 +485,8 @@ export async function createComponentSaleOperation(params: {
     }
     let episodeId: number;
     let component: string | null;
+    //  **بقيّةُ الأجزاء** — من الحلقة المقفولة عند الاستئناف، ومن الطلب عند الفتح.
+    let extras: string[] = [];
     //  ══ **الفرعُ الفعليّ — من الحلقة المقفولة، لا من `params.branchId`** ══
     //  انظر الشرحَ الكامل في تعليق الدالّة أعلاه. يُشتقّ هنا فور معرفة
     //  الحلقة (جديدةً أو مستأنَفة)، ويُحسَم قبل أيّ كتابةٍ تاليةٍ إطلاقاً.
@@ -502,6 +518,7 @@ export async function createComponentSaleOperation(params: {
       episodeId = ep.id;
       //  **والجزءُ من الحلقة المقفولة لا من الطلب** — مصدرُ حقيقةِ ما طُلب.
       component = ep.requestedItem;
+      extras = ep.extraComponents ?? [];
       //  **وفرعُها كذلك من صفّها المقفول** — لا من جسم الطلب.
       actualOperationBranchId = locked.branchId;
     } else if (typeof params.attachToDeviceEpisodeId === "number") {
@@ -570,9 +587,11 @@ export async function createComponentSaleOperation(params: {
         createdBy: params.actor.userId,
         requestedItem: params.component, servicePath: "no_exam",
         actingBranchId: openBranchId,
+        extraComponents: params.extraComponents ?? [],
       });
       episodeId = episode.id;
       component = episode.requestedItem;
+      extras = episode.extraComponents ?? [];
       //  **وفرعُها ما كتبته `startDeviceEpisodeTx` فعلاً** — مُشتقٌّ هناك
       //  تحت القفل من فرع الخيط أو فرع المريض، لا مُدخَلاً من هذا الطلب.
       actualOperationBranchId = episode.branchId;
@@ -594,56 +613,85 @@ export async function createComponentSaleOperation(params: {
       );
     }
 
-    //  ══ **الخبيرُ يُعاد التحقّق منه تحت القفل — بفرع العملية الفعليّ** —
-    //  لا لقطةَ فحصِ النقطة ولا `params.branchId`. ══════════════════════════
-    const expertCheck = await mfg.validateExpertForBranchTx(
-      tx, params.expertUserId, actualOperationBranchId,
-    );
-    if (!expertCheck.ok) {
-      throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
-    }
+    const label = requestedItemLabel(component, "prosthetic", extras);
+    //  ══ **أيُصنع شيءٌ عند الخبير؟** (§4.cu) — من الحلقة نفسِها لا من الطلب: قالبٌ أو غلافٌ إسفنجيّ ⟵ أمرٌ عنده؛ وإلّا جاهز. ══
+    const ready = !needsExpertOrder("prosthetic", component, extras);
+    let workOrderId: number | null = null;
+    let basis: Awaited<ReturnType<typeof store.startReadyPartSaleTx>> | Awaited<ReturnType<typeof store.startDeviceSaleOperationallyTx>>;
+    if (ready) {
+      //  ══ **جاهزٌ: يُسلَّم اليوم بلا خبيرٍ ولا أمر** — والخبيرُ المُرسَل (من عميلٍ بائت) لا يُقرأ. ══
+      basis = await store.startReadyPartSaleTx(tx, {
+        patientId: params.patientId, deviceEpisodeId: episodeId, expectServicePath: "no_exam",
+        actingBranchId: actualOperationBranchId,
+      });
+    } else {
+      if (params.expertUserId === null || !Number.isInteger(params.expertUserId) || params.expertUserId <= 0) {
+        throw new ChargeError("اختر الخبير — في الطلب قالبٌ أو غلافٌ إسفنجيّ يُصنع عنده", 400);
+      }
+      //  ══ **الخبيرُ يُعاد التحقّق منه تحت القفل — بفرع العملية الفعليّ** —
+      //  لا لقطةَ فحصِ النقطة ولا `params.branchId`. ══════════════════════════
+      const expertCheck = await mfg.validateExpertForBranchTx(
+        tx, params.expertUserId, actualOperationBranchId,
+      );
+      if (!expertCheck.ok) {
+        throw new ChargeError(`${expertCheck.reason} — تحقّق من الخبير وأعد المحاولة`, 409);
+      }
 
-    //  ══ **البيعُ نصفان قانونيّان، بلا نسخةٍ ثانية** ═══════════════════════
-    const op = await store.startDeviceSaleOperationallyTx(tx, {
-      patientId: params.patientId, serviceType: "prosthetic", fields: {},
-      expertUserId: params.expertUserId, assignedBy: params.actor.userId,
-      deviceEpisodeId: episodeId, expectServicePath: "no_exam",
-      //  وأمرُ العمل في فرع العملية الفعليّ — المقروءِ تحت القفل.
-      actingBranchId: actualOperationBranchId,
-      //  **الواقعةُ الصريحة** — لا يُستدَلّ عليها بغياب صفّ لاحقاً.
-      noExamNoCharge: params.priceKind === "free",
+      //  ══ **البيعُ نصفان قانونيّان، بلا نسخةٍ ثانية** ═══════════════════════
+      const op = await store.startDeviceSaleOperationallyTx(tx, {
+        patientId: params.patientId, serviceType: "prosthetic", fields: {},
+        expertUserId: params.expertUserId, assignedBy: params.actor.userId,
+        deviceEpisodeId: episodeId, expectServicePath: "no_exam",
+        //  وأمرُ العمل في فرع العملية الفعليّ — المقروءِ تحت القفل.
+        actingBranchId: actualOperationBranchId,
+        //  **الواقعةُ الصريحة** — لا يُستدَلّ عليها بغياب صفّ لاحقاً.
+        noExamNoCharge: params.priceKind === "free",
+      });
+      basis = op;
+      workOrderId = op.workOrderId;
+    }
+    await store.applyDeviceSaleFinancialsTx(tx, {
+      operation: basis, cost: params.finalPrice,
+      ...(ready ? { notes: `بيع ${label} — جاهز بلا أمر تصنيع` } : {}),
     });
-    await store.applyDeviceSaleFinancialsTx(tx, { operation: op, cost: params.finalPrice });
 
     //  ══ **والحقيقةُ التجارية المُهيكَلة** (ترحيل ٠٧٠) — في المعاملة نفسِها. ══
     await episodes.setEpisodeComponentSaleTermsTx(tx, {
       episodeId, originalPrice: params.originalPrice, kind: params.priceKind,
     });
+    //  ══ **وسعرُ كلّ جزء** (ترحيل ١١٧) — ومجموعُها هو ما قُيِّد أعلاه. ══
+    if (params.lines && params.lines.length > 0) {
+      await episodes.setEpisodeSaleLinesTx(tx, { episodeId, lines: params.lines });
+    }
 
     //  ══ **القبضُ الفوريّ — بعد أن يثبت البيعُ فعلاً، في المعاملة نفسِها**
     //  (المرحلة الخامسة) ══════════════════════════════════════════════════
     const payment = await createPaidNowPaymentTx(tx, {
       patientId: params.patientId, branchId: actualOperationBranchId,
-      caseId: op.caseId, deviceEpisodeId: episodeId, visitId: null,
+      caseId: basis.caseId, deviceEpisodeId: episodeId, visitId: null,
       serviceType: "prosthetic", paidNow: params.paidNow,
       //  ══ نصٌّ غنيّ لحظةَ الكتابة — لا اشتقاقَ لاحقاً يحتاجه (المرحلة
       //  السابعة) ══════════════════════════════════════════════════════════
       notes: formatDevicePaymentNote({
-        kind: "sale", itemLabel: requestedItemLabel(component, "prosthetic"),
+        kind: "sale", itemLabel: label,
         operationFinalPrice: params.finalPrice, paidNow: params.paidNow,
       }),
     });
 
     //  ══ **وزيارةُ الحضور في الحفظة نفسِها** (§4.aw) — «شراء جزء: …» في سجلّ الزيارات. ══
+    //  ومع أسطر السعر حين تتعدّد الأجزاء — فيقول السجلُّ بكم بيع كلُّ جزء.
+    const linesNote = params.lines && params.lines.length > 1 ? saleLinesText(params.lines, "prosthetic") : null;
     await recordAttendanceVisitTx(tx, {
-      patientId: params.patientId, caseId: op.caseId, branchId: actualOperationBranchId,
-      deviceEpisodeId: episodeId, reason: partPurchaseReason(requestedItemLabel(component, "prosthetic")),
-      notes: params.note, createdBy: params.actor.userId,
+      patientId: params.patientId, caseId: basis.caseId, branchId: actualOperationBranchId,
+      deviceEpisodeId: episodeId, reason: partPurchaseReason(label),
+      notes: [linesNote, ready ? "جاهز — سُلِّم اليوم بلا أمر تصنيع" : null, params.note].filter(Boolean).join(" — ") || null,
+      createdBy: params.actor.userId,
     });
 
     return {
-      workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
-      component, finalPrice: params.finalPrice, expertUserId: params.expertUserId,
+      workOrderId, deviceEpisodeId: episodeId,
+      component, extraComponents: extras, ready, finalPrice: params.finalPrice,
+      expertUserId: ready ? null : params.expertUserId,
       paidNow: params.paidNow, paymentId: payment?.id ?? null, payment,
     };
   });
@@ -699,6 +747,7 @@ async function attachComponentToDeviceInManufacturing(
   },
 ): Promise<{
   workOrderId: number; deviceEpisodeId: number; component: string | null;
+  extraComponents: string[]; ready: false;
   finalPrice: number; expertUserId: number;
   paidNow: number; paymentId: number | null;
   /** الصفُّ كاملاً — نفسُ سبب `createComponentSaleOperation` أعلاه بحرفه. */
@@ -718,7 +767,9 @@ async function attachComponentToDeviceInManufacturing(
 
   //  ══ **السعرُ دلتا لا كتابةٌ مطلقة** — المجموعُ الجديد لا سعرُ الجزء وحده
   //  (الشرحُ الكامل في تعليق `loadInManufacturingDeviceOperationTx`). ═══════
-  const label = requestedItemLabel(params.component, "prosthetic");
+  //  **وأجزاءٌ عدّة تُلحَق معاً** (§4.cu) — تُسمّى كلُّها، وسعرُ كلٍّ في السجلّ التشغيليّ.
+  const extras = params.extraComponents ?? [];
+  const label = requestedItemLabel(params.component, "prosthetic", extras);
   const newAgreedCost = op.priorEpisodeAgreedCost + params.finalPrice;
   await store.applyDeviceSaleFinancialsTx(tx, {
     operation: op, cost: newAgreedCost,
@@ -740,6 +791,7 @@ async function attachComponentToDeviceInManufacturing(
       (work_order_id, action_type, from_stage, to_stage, notes, performed_by)
     VALUES (${op.workOrderId}, 'component_added', ${op.currentStage}, ${op.currentStage},
             ${`إلحاقُ جزءٍ بالجهاز قيد التصنيع: ${label} — ${priceNote}`
+              + (params.lines && params.lines.length > 1 ? ` — ${saleLinesText(params.lines, "prosthetic")}` : "")
               + (params.note ? ` — ملاحظة: ${params.note}` : "")},
             ${params.actor.userId})
   `);
@@ -753,7 +805,7 @@ async function attachComponentToDeviceInManufacturing(
     //  ══ نصٌّ غنيّ لحظةَ الكتابة — بسعر الإلحاق **بعينه** لا كلفة الجهاز
     //  التراكمية (المرحلة السابعة) ═══════════════════════════════════════
     notes: formatDevicePaymentNote({
-      kind: "sale", itemLabel: requestedItemLabel(params.component, "prosthetic"),
+      kind: "sale", itemLabel: label,
       operationFinalPrice: params.finalPrice, paidNow: params.paidNow,
     }),
   });
@@ -767,7 +819,7 @@ async function attachComponentToDeviceInManufacturing(
 
   return {
     workOrderId: op.workOrderId, deviceEpisodeId: episodeId,
-    component: params.component, finalPrice: params.finalPrice,
+    component: params.component, extraComponents: extras, ready: false, finalPrice: params.finalPrice,
     //  **خبيرُ أمر العمل الفعليّ** — لا `params.expertUserId` — كي يقول
     //  سجلُّ التدقيق مَن نُسِبت إليه العمليةُ فعلاً.
     expertUserId: op.expertUserId,

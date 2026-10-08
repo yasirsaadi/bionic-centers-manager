@@ -716,9 +716,11 @@ async function main() {
                 WHERE id=$1`, [d.episodeId]);
       await q(`UPDATE prosthetic_work_orders SET status='completed', completed_at=NOW()
                 WHERE id=$1`, [d.workOrderId]);
+      //  **قالبٌ لا ركبة** (§4.cu): الركبةُ صارت جزءاً جاهزاً يُسلَّم بلا أمر — وهذا المشهدُ يحرس عزلَ تصحيح **بيعٍ بأمر تصنيع**،
+      //  فجزؤه ما يصنعه الخبير. (والبيعُ الجاهزُ وتصحيحُه يحرسهما `test:ready-part-sale`.)
       const ep2 = await episodes.startDeviceEpisode({
         patientId: d.patientId, serviceType: "prosthetic", createdBy: MGR,
-        requestedItem: "knee" as any,
+        requestedItem: "socket" as any,
       });
       const ep2Id = Number((ep2 as any).id ?? ep2);
       await signExam(d.patientId, 400_000);
@@ -735,7 +737,7 @@ async function main() {
       same("٥٠. **تصحيحُ الثاني ينفَّذ**",
         (await execute({
           followupId: Number(f2.id), mode: "full_operation",
-          reasonCode: "wrong_service_or_device", reasonNote: "ركبةٌ خاطئة",
+          reasonCode: "wrong_service_or_device", reasonNote: "قالبٌ خاطئ",
         })).status, 200);
       const s = await shape(d.patientId);
       const first = s.eps.find((e: any) => Number(e.id) === d.episodeId);

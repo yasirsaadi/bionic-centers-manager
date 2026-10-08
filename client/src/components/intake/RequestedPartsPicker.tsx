@@ -6,11 +6,13 @@ import {
   COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS, toggleRequestedItem, type RequestedItem,
 } from "@shared/prosthetic_parts";
 
-export function RequestedPartsPicker({ value, onChange, testId = "requested-parts", className }: {
+export function RequestedPartsPicker({ value, onChange, testId = "requested-parts", className, partsOnly = false }: {
   value: readonly string[];
   onChange: (next: RequestedItem[]) => void;
   testId?: string;
   className?: string;
+  /** **الأجزاءُ وحدها** — «شراء جزء» بلا معاينة (§4.cu): الطرفُ الكامل يمرّ بالطبيب فلا يُعرض. */
+  partsOnly?: boolean;
 }) {
   const chip = (item: RequestedItem, label: string) => {
     const on = value.includes(item);
@@ -26,8 +28,8 @@ export function RequestedPartsPicker({ value, onChange, testId = "requested-part
   };
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5 py-1", className)} data-testid={testId}>
-      {chip(FULL_DEVICE, FULL_DEVICE_LABELS.prosthetic)}
-      <span className="mx-1 text-xs text-slate-400">أو الأجزاء:</span>
+      {!partsOnly && chip(FULL_DEVICE, FULL_DEVICE_LABELS.prosthetic)}
+      {!partsOnly && <span className="mx-1 text-xs text-slate-400">أو الأجزاء:</span>}
       {PROSTHETIC_COMPONENTS.map((c) => chip(c, COMPONENT_LABELS[c]))}
     </div>
   );
