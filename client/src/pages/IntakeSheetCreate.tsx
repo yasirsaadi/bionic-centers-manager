@@ -19,6 +19,7 @@ import {
 import { COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 import { INJURY_SIDE_OPTIONS } from "@shared/case_fields";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
+import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
 import { onlyRoles } from "@shared/user_roles";
 import { AmputationBuilder, amputationSiteOf, type AmputationParts } from "@/components/AmputationBuilder";
 import { useBranchSession } from "@/components/BranchGate";
@@ -307,10 +308,10 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
             </SheetRow>
           </SheetPair>
 
-          <SheetRow label="نتيجة المعاينة"><LockedCell tall text="يُملأ من قبل الطبيب عند المعاينة" testId="locked-exam" /></SheetRow>
+          <SheetRow label={EXAM_SHEET_TEXT_LABEL}><LockedCell tall text="يُملأ من قبل الطبيب عند المعاينة" testId="locked-exam" /></SheetRow>
           {(isProsthetic || f.department === "") ? (
-            ["نوع الطرف الصناعي", "نوع الركبة", "نوع القدم", "نوع السوكيت", "نوع السيليكون"].map((l) => (
-              <SheetRow key={l} label={l}><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
+            SHEET_DEVICE_ROWS.map((r) => (
+              <SheetRow key={r.key} label={r.label}><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
             ))
           ) : (
             <SheetRow label="مواصفات المسند"><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>

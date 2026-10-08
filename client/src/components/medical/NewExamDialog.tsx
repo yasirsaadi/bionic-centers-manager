@@ -40,6 +40,8 @@ import {
   isDeviceSpecialty,
   type AwaitingEpisodeOption,
 } from "./exam_episode_choice";
+import { ExamSheetForm, sheetValuesFrom, type ExamSheetValues } from "./ExamSheetForm";
+import { EXAM_SHEET_TEXT_KEY, examSheetTextOf, isSheetExamType, prepareSheetEdit } from "@shared/exam_sheet";
 
 /** ما سجّله الاستقبالُ سريرياً عند التسجيل — يصل من باب المعاينة نفسِها. */
 interface RegistrationClinical {
@@ -58,6 +60,8 @@ export interface ExamToEdit {
   prescription?: Record<string, any> | null;
   /** الجهازُ الذي فُحص — به تُطابَق المتابعةُ حين يحمل المريضُ أكثر من جهاز. */
   deviceEpisodeId?: number | null;
+  /** «المطلوب» لذلك الجهاز — تفتح عليه الاستمارةُ عند التنقيح (§4.cq، ٢ب). */
+  deviceRequestedItem?: string | null;
   chiefComplaint: string | null;
   clinicalFindings: string | null;
   diagnosis: string | null;
@@ -204,6 +208,7 @@ export function NewExamDialog({
   const { data: examsData, isLoading: examsLoading } = useQuery<{
     awaitingEpisodes?: AwaitingEpisodeOption[];
     registration?: RegistrationClinical | null;
+    sheet?: Record<string, unknown> | null;
   }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
     //  **تُجلَب لكلّ معاينةٍ جديدة** — ولو وصل الجهازُ جاهزاً من «معايناتي»:
@@ -287,6 +292,37 @@ export function NewExamDialog({
   //  المسند وجهة الإصابة (شكوى المالك، مُعادٌ حيّاً). وباب المعاينة يصله كلُّ
   //  مَن تصله قائمةُ الطبيب — بنطاقها نفسِه.
   const patientRow = examsData?.registration ?? null;
+
+  // ══ **الأطرافُ والمساند تُعايَن على «استمارة المراجع» نفسِها** (§4.cq — المرحلةُ الثانية ب) ══════════════
+  //  قرارُ المالك: «نفسُ الورقة تماماً التي ملأها الاستعلامات، وحقلٌ واحد اسمُه المعاينة الطبية». فالنصُّ خانةٌ واحدة
+  //  (`diagnosis`)، وحقولُ الاستعلامات يعدّلها الطبيبُ ويُدقَّق التعديلُ في الخادم باسمه، و«المطلوب» يُصحَّح قبل البيع.
+  //  والعلاجُ الطبيعيُّ كما كان. **والتنقيحُ يقرأ الاستمارةَ من البابِ نفسِه** — بقراءةٍ مستقلّة بالمفتاح نفسِه.
+  const sheetMode = isSheetExamType(specialty);
+  const { data: editSheetData } = useQuery<{ sheet?: Record<string, unknown> | null }>({
+    queryKey: [`/api/medical/patients/${patientId}/exams`],
+    enabled: open && isEdit && sheetMode,
+  });
+  const sheetSource = (isEdit ? editSheetData?.sheet : examsData?.sheet) ?? null;
+  const [sheetVals, setSheetVals] = useState<ExamSheetValues | null>(null);
+  const [examText, setExamText] = useState("");
+  const [sheetMissing, setSheetMissing] = useState<string[]>([]);
+  //  «المطلوب» الذي اختاره الطبيبُ — `null` = كما أرسله الاستعلامات.
+  const [requestedOverride, setRequestedOverride] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    setSheetVals(null);
+    setSheetMissing([]);
+    setRequestedOverride(null);
+    setExamText(exam ? examSheetTextOf(exam.caseType, exam) : "");
+  }, [open, exam?.id]);
+  useEffect(() => {
+    if (open && sheetSource && sheetVals === null) setSheetVals(sheetValuesFrom(sheetSource));
+  }, [open, sheetSource, sheetVals]);
+  const baseRequestedItem: string | null = isEdit
+    ? (exam?.deviceRequestedItem ?? null)
+    : (resolvedEpisode !== null ? (awaiting.find((e) => e.id === resolvedEpisode)?.requestedItem ?? null) : null);
+  useEffect(() => { setRequestedOverride(null); }, [resolvedEpisode]);
+  const requestedItem = requestedOverride ?? baseRequestedItem;
 
   // Reset on every open so a dismissed draft never leaks into the next patient —
   // these records are permanent once signed, so a stale field is a real hazard.
@@ -400,8 +436,15 @@ export function NewExamDialog({
           //  فهذا ليس اعتماداً على حسن نية الشاشة وحدها.
           body: JSON.stringify({
             caseType: specialty,
-            ...form,
+            //  **على الاستمارة: خانةٌ واحدة «المعاينة الطبية»** — والخاناتُ الأربع الباقية تُفرَّغ (نصُّ القديمة جُمع فيها).
+            ...(sheetMode
+              ? { chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", [EXAM_SHEET_TEXT_KEY]: examText }
+              : form),
             prescription: rx,
+            //  **وما عدّله من حقول الاستعلامات** — الخادمُ يقارنه بالملفّ فيكتب ما تغيّر وحده ويدقّقه.
+            ...(sheetMode && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
+            ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride !== baseRequestedItem
+              ? { requestedItem: requestedOverride } : {}),
             // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
             //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
@@ -421,6 +464,7 @@ export function NewExamDialog({
         err.code = body?.code ?? null;
         err.dropLabel = body?.dropLabel ?? null;
         err.episodeIds = Array.isArray(body?.episodeIds) ? body.episodeIds : [];
+        err.missing = Array.isArray(body?.missing) ? body.missing : [];
         throw err;
       }
       return res.json();
@@ -451,7 +495,7 @@ export function NewExamDialog({
         title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
         // The server could not retire the superseded case (it already carries a
         // work order or tagged payments) — the doctor has to know both are open.
-        description: saved?.switchNote || undefined,
+        description: [saved?.switchNote, saved?.sheetNote].filter(Boolean).join(" — ") || undefined,
       });
       onDone?.();
     },
@@ -471,6 +515,7 @@ export function NewExamDialog({
         queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
         queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
       }
+      if (Array.isArray(err?.missing) && err.missing.length) setSheetMissing(err.missing);
       toast({ title: "خطأ", description: err.message, variant: "destructive" });
       //  جهازٌ مُمرَّرٌ من صفّ القائمة لم يعد ينتظر: النافذةُ لا تملك بديلاً —
       //  تُغلَق ليعيد الطبيبُ الفتحَ من القائمة المحدَّثة، لا زرُّ حفظٍ يفشل ثانيةً.
@@ -484,13 +529,29 @@ export function NewExamDialog({
 
   // A prescription alone is a real clinical decision, so it counts as content
   // just as the narrative does — the server applies the same rule.
-  const hasNarrative = Object.values(form).some((v) => v.trim().length > 0);
+  const hasNarrative = sheetMode
+    ? examText.trim().length > 0
+    : Object.values(form).some((v) => v.trim().length > 0);
   const hasPrescription = Object.entries(rx).some(([, v]) =>
     Array.isArray(v)
       ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
       : typeof v === "string" && v.trim().length > 0,
   );
   const hasContent = hasNarrative || hasPrescription;
+
+  //  **الاستمارةُ تُفحَص قبل الإرسال بقاعدة الخادم نفسِها** — فلا يُفرَّغ إلزاميٌّ ولا تُكتب قيمةٌ غير صالحة.
+  const submit = () => {
+    if (sheetMode && sheetVals && sheetSource) {
+      const chk = prepareSheetEdit(sheetSource, sheetVals);
+      if (chk.missing.length) {
+        setSheetMissing(chk.missing);
+        toast({ title: "تحقّق من الاستمارة", description: chk.message ?? undefined, variant: "destructive" });
+        return;
+      }
+    }
+    setSheetMissing([]);
+    save.mutate();
+  };
 
   const answerCross = (decision: "retire" | "keep") => {
     crossDecisionRef.current = decision;
@@ -522,7 +583,7 @@ export function NewExamDialog({
       </AlertDialogContent>
     </AlertDialog>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto" dir="rtl">
+      <DialogContent className={`${sheetMode ? "sm:max-w-4xl" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
             <Stethoscope className="w-5 h-5" />
@@ -543,6 +604,8 @@ export function NewExamDialog({
             </span>
           </div>
 
+          {/*  على الاستمارة يُختار القسمُ من سطر «نوع الإصابة» — والمنتقي يبقى لمَن يحمل العلاجَ الطبيعيَّ أيضاً. */}
+          {(!sheetMode || specialties.some((sp) => !isSheetExamType(sp))) && (
           <div className="space-y-2">
             <Label>الاختصاص</Label>
             {/*  **مفتوحٌ دائماً** — ولو وصل جهازٌ بعينه: مَن يفحص المريض هو مَن
@@ -561,6 +624,7 @@ export function NewExamDialog({
               </SelectContent>
             </Select>
           </div>
+          )}
 
           {/* ══ أيُّ جهازٍ تُعاين؟ — بهويّته، لا بالتخمين ═══════════════════ */}
           {!isEdit && activeFixedEpisode !== null && deviceLabel && (
@@ -622,7 +686,27 @@ export function NewExamDialog({
             </div>
           )}
 
-          {specialty && (
+          {sheetMode && (sheetVals || (!isEdit && !examsLoading) || (isEdit && editSheetData)
+            ? (
+              <ExamSheetForm
+                specialty={specialty as "prosthetic" | "medical_support"}
+                onSpecialty={setSpecialty}
+                deviceSpecialties={specialties.filter(isSheetExamType)}
+                branchName={(sheetSource?.branchName as string | null) ?? null}
+                registeredAt={sheetSource?.registeredAt ? String(sheetSource.registeredAt) : null}
+                sheet={sheetVals ?? sheetValuesFrom(null)}
+                onSheet={(v) => { setSheetVals(v); setSheetMissing([]); }}
+                rx={rx}
+                onRx={setRx}
+                text={examText}
+                onText={setExamText}
+                requestedItem={requestedItem}
+                onRequestedItem={setRequestedOverride}
+                missing={sheetMissing}
+              />
+            )
+            : <p className="text-sm text-muted-foreground" data-testid="exam-sheet-loading">جارٍ تحميل الاستمارة…</p>)}
+          {specialty && !sheetMode && (
             <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
           )}
 
@@ -632,7 +716,7 @@ export function NewExamDialog({
             </p>
           )}
 
-          {EXAM_FIELDS.map((f) => (
+          {!sheetMode && EXAM_FIELDS.map((f) => (
             <div key={f.key} className="space-y-2">
               <Label htmlFor={`exam-${f.key}`}>{f.label}</Label>
               <Textarea
@@ -652,7 +736,7 @@ export function NewExamDialog({
             إلغاء
           </Button>
           <Button
-            onClick={() => save.mutate()}
+            onClick={submit}
             disabled={!specialty || !hasContent || save.isPending || needsEpisodeChoice || candidatesLoading}
             data-testid="button-save-medical-exam"
           >
