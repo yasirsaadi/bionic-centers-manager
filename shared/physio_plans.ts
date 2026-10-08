@@ -9,7 +9,7 @@
 import { canApproveProtocols, canConsultProtocols, canEditProtocols, canReadProtocols, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
 
-export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped"] as const;
+export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
 export type PlanStatus = (typeof PLAN_STATUSES)[number];
 export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   draft: "مسوّدة",
@@ -17,6 +17,8 @@ export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   approved: "معتمَدة",
   returned: "أُعيدت بملاحظة",
   stopped: "موقوفة",
+  //  §4.cp — القرارُ ٤: أنهى علاجَه بتحقّق أهدافه، منفصلةٌ عن «موقوفة» (انقطع).
+  graduated: "تخرّج",
 };
 export const PLAN_STATUS_LABELS_EN: Record<PlanStatus, string> = {
   draft: "Draft",
@@ -24,6 +26,7 @@ export const PLAN_STATUS_LABELS_EN: Record<PlanStatus, string> = {
   approved: "Approved",
   returned: "Returned with a note",
   stopped: "Stopped",
+  graduated: "Graduated",
 };
 
 /** النصوصُ ذاتُ النسختين — والإنكليزيةُ في `<field>En`. */
@@ -41,11 +44,13 @@ export const canReadPlans = (s: ProtocolSessionLike | null | undefined): boolean
 /** **المنفّذُ يرى المعتمَدة والموقوفة وحدهما** — المسوّدةُ لم تُقرَّر بعد فلا تُنفَّذ. والمستشيرُ (الطبيبُ ومديرُ الفرع) يرى كلَّ شيء. */
 export function planVisibleTo(s: ProtocolSessionLike | null | undefined, status: string): boolean {
   if (!canReadPlans(s)) return false;
-  return canConsultProtocols(s) || status === "approved" || status === "stopped";
+  return canConsultProtocols(s) || status === "approved" || status === "stopped" || status === "graduated";
 }
 
 /** يُعدَّل ما لم يُوقَف. */
-export const isPlanEditable = (status: string): boolean => status !== "stopped";
+/** **خطّةٌ منتهية** — موقوفةٌ أو متخرّجة: لا تُعدَّل ولا تُسنَد ولا يُغيَّر نوعُها ولا تُقيَّم. */
+export const isPlanClosed = (status: string): boolean => status === "stopped" || status === "graduated";
+export const isPlanEditable = (status: string): boolean => !isPlanClosed(status);
 
 /**
  * **الحالةُ بعد التعديل**: المعتمَدةُ تعود «بانتظار الاعتماد» ما لم يكن المعدِّلُ ممّن يعتمد؛ والمُعادةُ والمسوّدةُ تبقيان حتى «إرسال للاعتماد»؛

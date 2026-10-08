@@ -15,11 +15,13 @@ import { getSession, accessibleBranchesFor } from "../sessions_module/permission
 import { scopeReachesPatient } from "../patients/branch_access";
 import { storage } from "../storage";
 import {
-  canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
+  canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, isPlanClosed, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
 } from "@shared/physio_plans";
 import * as store from "./store";
 import * as exec from "./execution";
 import * as suggest from "./suggest";
+import * as assess from "./assessments";
+import { canAssessPlans } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 
@@ -271,6 +273,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يحذف الخطّةَ المسؤولُ أو المشرفُ العام حصراً" });
       //  **خطّةٌ لها جلساتٌ منفّذة لا تُحذف** (§4.cn) — زياراتُها وعدّاداتُها قائمة؛ تُوقَف فتبقى تاريخاً.
       if (await exec.planHasSessions(l.row.id)) return res.status(409).json({ error: "للخطّة جلساتٌ منفّذة — أوقفها بدل الحذف" });
+      //  وكذا خطّةٌ لها تقييمات (§4.cp) — قياساتُ المريض تاريخٌ لا يُمحى.
+      if (await assess.planHasAssessments(l.row.id)) return res.status(409).json({ error: "للخطّة تقييماتٌ مسجّلة — أوقفها بدل الحذف" });
       const removed = await store.deletePlan(l.row.id);
       await audit(req, l.s, { entityId: l.row.id, action: "delete", branchId: l.row.branchId, oldValues: removed,
         notes: `حذف خطة العلاج الطبيعي «${l.row.titleAr}» للمريض #${l.row.patientId}` });
@@ -357,6 +361,47 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   });
 
   //  **ما اختلف عن الخطّة** — لكاتبي الخطط: آخر ثلاثين يوماً في نطاقهم.
+  //  ══ إعادةُ التقييم (§4.cp — المرحلةُ السادسة) ══════════════════════════════════════════════════════════════
+  //  التقييماتُ لمن يقرأ الخطّة (والمنفّذُ يرى ولا يكتب)، والكتابةُ لكاتبي الخطط وحدهم على خطّةٍ غيرِ منتهية.
+  app.get("/api/physio/plans/:id/assessments", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      const v = await assess.planAssessmentView(l.row, baghdadTodayYmd());
+      res.json({ ...v, canAssess: canAssessPlans(l.s) && !isPlanClosed(l.row.status) });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post("/api/physio/plans/:id/assessments", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canAssessPlans(l.s)) return res.status(403).json({ error: "يقيّم الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+      const day = typeof req.body?.assessedOn === "string" && req.body.assessedOn ? req.body.assessedOn : baghdadTodayYmd();
+      const v = checkVisitDate(day, Boolean(l.s.isAdmin));
+      if (!v.ok) return res.status(v.status).json({ error: v.message });
+      const r = await assess.recordAssessment(l.row.id, { ...req.body, assessedOn: day }, actor(l.s));
+      await audit(req, l.s, { entityId: l.row.id, action: "assess", branchId: l.row.branchId,
+        newValues: { assessmentId: r.row.id, kind: r.row.kind, assessedOn: r.row.assessedOn, pain: r.row.pain, scores: r.row.scores,
+          goals: r.row.goals, decision: r.row.decision, notes: r.row.notes } });
+      if (r.after.status !== r.before.status) {
+        await audit(req, l.s, { entityId: l.row.id, action: r.after.status === "graduated" ? "graduate" : "stop", branchId: l.row.branchId,
+          oldValues: { status: r.before.status }, newValues: { status: r.after.status, stopReason: r.after.stopReason ?? null, assessmentId: r.row.id } });
+      }
+      res.json({ ...r.row, planStatus: r.after.status });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **مستحقّ التقييم** — المسؤولُ والمشرفُ العام كلَّ ما في نطاقهما، والأخصائيُّ خططَه هو.
+  app.get("/api/physio/assessments/due", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canAssessPlans(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });
+    try {
+      res.json({ plans: await assess.dueList({ branchIds: scopeOf(req, s), createdBy: canApprovePlans(s) ? null : Number(s.userId) || -1,
+        today: baghdadTodayYmd() }) });
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/physio/deviations", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
     if (!canWrite(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });

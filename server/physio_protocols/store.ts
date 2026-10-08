@@ -2,9 +2,10 @@
 import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, physioDeviceBranches, physioProtocolDevices, physioProtocolImages, physioProtocols,
+  branches, devices, physioDeviceBranches, physioProtocolDevices, physioProtocolImages, physioProtocolMeasures, physioProtocols,
   type PhysioProtocol,
 } from "@shared/schema";
+import type { MeasureDef } from "@shared/physio_assessments";
 import {
   AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN,
   PROTOCOL_TEXT_FIELDS, localizedText,
@@ -68,10 +69,15 @@ export async function getProtocol(id: number) {
     id: physioProtocolImages.id, caption: physioProtocolImages.caption, sourceUrl: physioProtocolImages.sourceUrl,
     credit: physioProtocolImages.credit, mimeType: physioProtocolImages.mimeType, sizeBytes: physioProtocolImages.sizeBytes,
   }).from(physioProtocolImages).where(eq(physioProtocolImages.protocolId, id)).orderBy(asc(physioProtocolImages.id));
+  const measures = (await db.select().from(physioProtocolMeasures).where(eq(physioProtocolMeasures.protocolId, id))
+    .orderBy(asc(physioProtocolMeasures.displayOrder), asc(physioProtocolMeasures.id)))
+    .map((m) => ({ code: m.code, nameAr: m.nameAr, nameEn: m.nameEn, unitAr: m.unitAr, unitEn: m.unitEn,
+      min: Number(m.minValue), max: Number(m.maxValue), higherIsBetter: m.higherIsBetter }));
   return {
     ...p,
     devices: lines.map((l) => ({ ...l, availableBranchIds: avail.filter((a) => a.deviceId === l.deviceId && a.available).map((a) => a.branchId) })),
     images,
+    measures,
   };
 }
 
@@ -155,6 +161,40 @@ export async function approveProtocol(id: number, actor: Actor) {
     status: "approved", approvedBy: actor.userId, approvedByName: actor.name, approvedAt: new Date(),
   }).where(and(eq(physioProtocols.id, id), eq(physioProtocols.status, "draft"), eq(physioProtocols.isArchived, false))).returning();
   if (!row) throw new ProtocolError(409, "ليس مسوّدةً قائمة — أعد فتح الصفحة");
+  return row;
+}
+
+// ── مقاييسُ البروتوكول (§4.cp) ────────────────────────────────────────────────────────────────────────────
+/**
+ * **المقاييسُ تُستبدل كاملة**. واعتمادُها مستقلٌّ عن البروتوكول: تعديلُ غيرِ المعتمِد يعيدها مسوّدة، وتعديلُ المعتمِد يُبقي حالَها.
+ * والتقييماتُ القديمة لا تتغيّر — قياساتُها لقطةٌ بتعريفها يومَها.
+ */
+export async function setMeasures(id: number, list: MeasureDef[], keepStatus: boolean, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(physioProtocols).where(eq(physioProtocols.id, id)).for("update");
+    if (!before) throw new ProtocolError(404, "البروتوكول غير موجود");
+    if (before.isArchived) throw new ProtocolError(409, "البروتوكولُ مؤرشف — استعِده أوّلاً");
+    const old = await tx.select().from(physioProtocolMeasures).where(eq(physioProtocolMeasures.protocolId, id));
+    await tx.delete(physioProtocolMeasures).where(eq(physioProtocolMeasures.protocolId, id));
+    if (list.length) {
+      await tx.insert(physioProtocolMeasures).values(list.map((m, i) => ({
+        protocolId: id, code: m.code, nameAr: m.nameAr, nameEn: m.nameEn, unitAr: m.unitAr, unitEn: m.unitEn,
+        minValue: String(m.min), maxValue: String(m.max), higherIsBetter: m.higherIsBetter, displayOrder: i,
+      })));
+    }
+    const status = keepStatus ? before.measuresStatus : "draft";
+    const [after] = await tx.update(physioProtocols).set(status === "draft"
+      ? { measuresStatus: "draft", measuresApprovedBy: null, measuresApprovedByName: null, measuresApprovedAt: null }
+      : { measuresStatus: status }).where(eq(physioProtocols.id, id)).returning();
+    return { before: { measuresStatus: before.measuresStatus, measures: old }, after, demoted: before.measuresStatus === "approved" && status === "draft" };
+  });
+}
+
+export async function approveMeasures(id: number, actor: Actor) {
+  const [row] = await db.update(physioProtocols).set({
+    measuresStatus: "approved", measuresApprovedBy: actor.userId, measuresApprovedByName: actor.name, measuresApprovedAt: new Date(),
+  }).where(and(eq(physioProtocols.id, id), eq(physioProtocols.measuresStatus, "draft"), eq(physioProtocols.isArchived, false))).returning();
+  if (!row) throw new ProtocolError(409, "المقاييسُ ليست مسوّدةً قائمة — أعد فتح الصفحة");
   return row;
 }
 

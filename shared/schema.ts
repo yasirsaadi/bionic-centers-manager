@@ -1,5 +1,5 @@
 export * from "./models/auth";
-import { pgTable, text, serial, integer, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, smallint, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -2883,6 +2883,11 @@ export const physioProtocols = pgTable("physio_protocols", {
   approvedByName: text("approved_by_name"),
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   isArchived: boolean("is_archived").notNull().default(false),
+  //  §4.cp — **اعتمادُ المقاييس مستقلٌّ عن اعتماد البروتوكول** (ترحيل ١١٣).
+  measuresStatus: text("measures_status").notNull().default("draft"),
+  measuresApprovedBy: integer("measures_approved_by").references(() => systemUsers.id),
+  measuresApprovedByName: text("measures_approved_by_name"),
+  measuresApprovedAt: timestamp("measures_approved_at", { withTimezone: true }),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -2891,6 +2896,21 @@ export const physioProtocols = pgTable("physio_protocols", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type PhysioProtocol = typeof physioProtocols.$inferSelect;
+
+/** **مقاييسُ البروتوكول الرقمية** (ترحيل ١١٣، §4.cp) — ما يُقاس في كلّ تقييمٍ لخطّةٍ مبنيّةٍ عليه. */
+export const physioProtocolMeasures = pgTable("physio_protocol_measures", {
+  id: serial("id").primaryKey(),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  unitAr: text("unit_ar"),
+  unitEn: text("unit_en"),
+  minValue: numeric("min_value").notNull(),
+  maxValue: numeric("max_value").notNull(),
+  higherIsBetter: boolean("higher_is_better").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
+}, (t) => ({ uqProtocolMeasure: unique("physio_protocol_measures_protocol_id_code_key").on(t.protocolId, t.code) }));
 
 export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   id: serial("id").primaryKey(),
@@ -2949,6 +2969,10 @@ export const physioPlans = pgTable("physio_plans", {
   returnNote: text("return_note"),
   stopReason: text("stop_reason"),
   stoppedAt: timestamp("stopped_at", { withTimezone: true }),
+  //  §4.cp — «تخرّج»: أنهى علاجَه بتحقّق أهدافه (من قرار التقييم).
+  graduatedAt: timestamp("graduated_at", { withTimezone: true }),
+  graduatedBy: integer("graduated_by").references(() => systemUsers.id),
+  graduatedByName: text("graduated_by_name"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -3004,6 +3028,27 @@ export const physioPlanSessionItems = pgTable("physio_plan_session_items", {
   minutes: integer("minutes"),
   note: text("note"),
 }, (t) => ({ uqSessionDevice: unique("physio_plan_session_items_session_id_device_id_key").on(t.sessionId, t.deviceId) }));
+
+/**
+ * **إعادةُ التقييم** (ترحيل ١١٣، §4.cp) — أوّليٌّ أو دوريٌّ أو ختاميّ؛ والقياساتُ لقطةٌ بتعريفها يومَها، وأهدافُ الخطّة وحالُها، والقرار.
+ */
+export const physioAssessments = pgTable("physio_assessments", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  kind: text("kind").notNull(),
+  assessedOn: date("assessed_on").notNull(),
+  pain: smallint("pain"),
+  scores: jsonb("scores").$type<any[]>().notNull().default([]),
+  goals: jsonb("goals").$type<any[]>().notNull().default([]),
+  notes: text("notes"),
+  decision: text("decision").notNull(),
+  assessedBy: integer("assessed_by").references(() => systemUsers.id),
+  assessedByName: text("assessed_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ byPlan: index("idx_physio_assessments_plan").on(t.planId, t.assessedOn), byPatient: index("idx_physio_assessments_patient").on(t.patientId) }));
+export type PhysioAssessment = typeof physioAssessments.$inferSelect;
 
 /**
  * **«اقترح خطّة» بالمساعد** (ترحيل ١١٢، §4.co) — ما رآه المساعدُ وما اختاره وما اقترحه بعد تحقّق الخادم، والخطّةُ التي فُتحت منه إن قُبل.

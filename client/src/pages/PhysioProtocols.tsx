@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { ProtocolMeasuresSection } from "@/components/physio/ProtocolMeasures";
+import type { MeasureDef } from "@shared/physio_assessments";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
@@ -46,6 +48,9 @@ interface Protocol {
   approvedByName: string | null; approvedAt: string | null; updatedByName: string | null; updatedAt: string;
   devices: DeviceLine[]; images: { id: number; caption: string | null; sourceUrl: string | null; credit: string | null }[];
   canEdit: boolean; canApprove: boolean;
+  //  §4.cp — مقاييسُ التقييم واعتمادُها المستقلّ.
+  measures?: MeasureDef[]; measuresStatus?: "draft" | "approved"; measuresApprovedByName?: string | null;
+  canEditMeasures?: boolean; canApproveMeasures?: boolean;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; branches: { id: number; name: string }[]; available: string[]; canManage: boolean }
 
@@ -329,6 +334,10 @@ export function PhysioProtocolDetail() {
           </div>
         )}
       </div>
+
+      <ProtocolMeasuresSection protocolId={p.id} measures={p.measures ?? []} status={p.measuresStatus ?? "draft"}
+        approvedByName={p.measuresApprovedByName ?? null} canEdit={Boolean(p.canEditMeasures)} canApprove={Boolean(p.canApproveMeasures)}
+        isArchived={p.isArchived} lang={lang} />
 
       {section("exercises", t.exercises)}
       {section("contraindications", t.contra, "danger")}
