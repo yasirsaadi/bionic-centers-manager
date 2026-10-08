@@ -258,9 +258,11 @@ async function main() {
     console.log("\n── و. الشاشات ──");
     const src = (f: string) => readFileSync(new URL(`../client/src/${f}`, import.meta.url), "utf8");
     const app0 = src("App.tsx"), details = src("pages/PatientDetails.tsx"), box = src("components/intake/DeviceSheetsBox.tsx");
-    same("و.١ **صفحةُ «السجلّ الكامل» مسجَّلةٌ بلا إطار، وزرُّها في صفحة المريض**",
-      [/location\.startsWith\("\/patient-record\/print"\)/.test(app0), /data-testid="button-print-full-record"/.test(details), /openPatientRecordPrint\(patient\.id\)/.test(details)],
-      [true, true, true]);
+    same("و.١ **صفحةُ «السجلّ الكامل» مسجَّلةٌ بلا إطار، وزرُّها في رأس صفحة المريض وأوّلَ تبويب الزيارات**",
+      [/location\.startsWith\("\/patient-record\/print"\)/.test(app0), /data-testid="button-print-full-record"/.test(details),
+        (details.match(/openPatientRecordPrint\(patient\.id\)/g) ?? []).length,
+        /<TabsContent value="visits"[^>]*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div[^>]*>\s*<Button[^>]*onClick=\{\(\) => openPatientRecordPrint\(patient\.id\)\}\s*data-testid="button-print-visits"/.test(details)],
+      [true, true, 2, true]);
     same("و.٢ **سجلُّ الزيارات يقول ما دُفع تحت كلّ زيارة بالقاعدة الواحدة**",
       [/attachPaymentsToVisits\(/.test(details), /data-testid=\{`visit-paid-\$\{visit\.id\}`\}/.test(details)], [true, true]);
     same("و.٢ب **والورقةُ المطبوعة تأخذ مالَها بقاعدة الاستمارة**",
