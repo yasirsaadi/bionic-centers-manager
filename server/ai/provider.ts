@@ -264,6 +264,19 @@ export async function aiToolStep(params: {
 }
 
 /** نفس تصنيف الأخطاء الذي يستعمله `safeAiComplete` — بلا تكرار للمنطق. */
+/**
+ * A short, staff-readable cause for an API failure: status, the API's error type and its own message
+ * (e.g. «400 · invalid_request_error · …»). Null for anything that is not an API error.
+ * classifyAiError's message stays generic; a screen that wants the cause shown appends this.
+ */
+export function aiErrorDetail(err: unknown): string | null {
+  if (!(err instanceof Anthropic.APIError)) return null;
+  const body = (err.error as { error?: { type?: unknown; message?: unknown } } | undefined)?.error;
+  const type = typeof body?.type === "string" ? body.type : err.type;
+  const message = typeof body?.message === "string" ? body.message : err.message;
+  return [err.status ?? "network", type, message].filter(Boolean).join(" · ").slice(0, 300);
+}
+
 export function classifyAiError(err: unknown): AiResult<never> {
   if (err instanceof AiUnavailableError) {
     return { ok: false, reason: "disabled", message: "خدمة الذكاء الاصطناعي غير مفعّلة" };
