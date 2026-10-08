@@ -17,6 +17,13 @@ import { Pool } from "pg";
 import crypto from "node:crypto";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6948;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-إلغاء-آمن";
@@ -247,7 +254,7 @@ async function main() {
         check(Array.isArray(card?.actions) && card.actions.includes("complete_sale"),
           "١٣. والاستعلاماتُ ما زالت ترى «إتمام البيع» على المتابعة الحيّة", JSON.stringify(card));
         const sale = await http("POST", `/api/followups/${f2.id}/complete-sale`, S.recv,
-          { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
         same("١٤. **وإتمامُ البيع يمضي فعلاً** — العمليةُ الحيّة لم تُكسَر",
           [sale.status < 300, (await followupOfExam(ex2)).status], [true, "converted"]);
       }
@@ -342,7 +349,7 @@ async function main() {
         const ex2 = await signExam(p, S.doc2, svc, A);
         const f2 = await followupOfExam(ex2);
         const sale = await http("POST", `/api/followups/${f2.id}/complete-sale`, S.recv,
-          { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT });
         check(sale.status < 300, "٣٠. بيعُ الأحدث", JSON.stringify(sale.body));
         same("٣١. إلغاءُ القديمة بعد بيع الأحدث ⟵ ٤٠٩ (الحلقةُ قيد التصنيع)", (await cancel(ex1, S.doc)).status, 409);
         same("٣٢. وإلغاءُ الأحدث المباعة ⟵ ٤٠٩", (await cancel(ex2, S.doc2)).status, 409);

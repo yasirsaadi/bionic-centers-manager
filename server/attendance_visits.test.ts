@@ -9,6 +9,13 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { randomUUID } from "crypto";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -190,7 +197,7 @@ async function main() {
     check(ex.status < 300, "ب٣. (الإعداد) معاينةٌ موقّعة", JSON.stringify(ex.body));
     const [f] = await q(`SELECT id FROM post_exam_followups WHERE patient_id=$1 ORDER BY id DESC LIMIT 1`, [pB]);
     const sale = await http("POST", `/api/followups/${f.id}/complete-sale`, S.recv,
-      { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
     check(sale.status === 200, "ب٤. (الإعداد) «تم الشراء»", JSON.stringify(sale.body));
     const epB = Number(ep.body?.id ?? ep.body?.episode?.id);
     same("ب٥. **«تم الشراء» تكتب «شراء طرف صناعي» على الجهاز**",

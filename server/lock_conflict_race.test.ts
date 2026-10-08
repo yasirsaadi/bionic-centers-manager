@@ -31,6 +31,13 @@ import {
   isLockConflictError,
 } from "@shared/lock_conflict";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const PORT = 6995;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-سباق-تعارض-الاقفال";
@@ -131,7 +138,7 @@ async function race(op: { examId: number; followupId: number }, cancelLagMs: num
         { reason: "سباق" });
     })(),
     http("POST", `/api/followups/${op.followupId}/complete-sale`, S.recv,
-      { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT }),
+      { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT }),
   ]);
 }
 

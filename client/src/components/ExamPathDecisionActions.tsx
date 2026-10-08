@@ -13,7 +13,7 @@
 // البابين القانونيَّين القائمين حرفياً كما كانت البطاقةُ تنادِيهما.
 
 import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { XCircle, Loader2, HandCoins, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
+import { NOT_APPLICABLE } from "@shared/device_specs";
 
 export interface ExamPathDecisionActionsPrefill {
   originalPrice?: number | null;
@@ -99,10 +100,31 @@ export function ExamPathDecisionActions({
   const [cReason, setCReason] = useState("");
   const [note, setNote] = useState("");
 
+  //  ══ **خاناتُ الجهاز قبل «اشترى»** (قرارُ المالك ٢٠٢٦-١٠-٠٨، §4.cq) ══
+  //  ما كتبه الطبيبُ في وصفته يُعرَض ولا يُمَسّ، وما تركه فارغاً يُملأ هنا أو يُكتب فيه «لا ينطبق» — والخادمُ يردّ البيعَ ما دام فيها فراغ.
+  //  تُقرأ من ملفّ متابعات المريض نفسِه (المفتاحُ الذي تقرؤه بطاقةُ المريض) حين تُفتح النافذة.
+  const [cSpecs, setCSpecs] = useState<Record<string, string>>({});
+  const { data: patientFollowups } = useQuery<any[]>({
+    queryKey: [`/api/followups/patient/${patientId}`],
+    enabled: dialog === "complete_sale",
+  });
+  const saleSpecs: { fields: { key: string; label: string; value: string | null; fromDoctor: boolean }[]; missing: string[] } | null =
+    (patientFollowups ?? []).find((f: any) => f.id === followupId)?.deviceSpecs ?? null;
+  useEffect(() => {
+    if (dialog !== "complete_sale" || !saleSpecs) return;
+    setCSpecs((prev) => {
+      const next = { ...prev };
+      for (const f of saleSpecs.fields) if (!f.fromDoctor && next[f.key] === undefined) next[f.key] = f.value ?? "";
+      return next;
+    });
+  }, [dialog, saleSpecs]);
+  const specsToFill = (saleSpecs?.fields ?? []).filter((f) => !f.fromDoctor);
+  const specsIncomplete = specsToFill.some((f) => !(cSpecs[f.key] ?? "").trim());
+
   const reset = () => {
     setDialog(null); setCOriginal(""); setCDiscount(""); setCFree(false);
     setCExpert(""); setCPaidNow(""); setCReason(""); setCCancelReason("");
-    setNote("");
+    setNote(""); setCSpecs({});
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -307,7 +329,7 @@ export function ExamPathDecisionActions({
           ولا سعرَ نهائيّاً يُكتب** — النهائيُّ معاينةٌ حيّة تحت الحقول
           (`csOffer`)، ولا يُرسَل في الطلب: الخادمُ يشتقّه ويعتمده وحده. */}
       <Dialog open={dialog === "complete_sale"} onOpenChange={(o) => !o && reset()}>
-        <DialogContent dir="rtl" className="max-w-md">
+        <DialogContent dir="rtl" className="max-w-md max-h-[92vh] overflow-y-auto">
           <DialogHeader><DialogTitle>إتمام البيع</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
@@ -404,6 +426,29 @@ export function ExamPathDecisionActions({
                 )
               )}
             </div>
+            {saleSpecs && saleSpecs.fields.length > 0 && (
+              <div className="space-y-2 rounded-md border bg-slate-50/60 p-2" data-testid="complete-sale-specs">
+                <div className="text-xs font-semibold">مواصفات الجهاز — لا يُقبَل «اشترى» قبل أن تمتلئ</div>
+                {saleSpecs.fields.map((f) => f.fromDoctor ? (
+                  <div key={f.key} className="flex flex-wrap items-baseline gap-1 text-xs" data-testid={`spec-doctor-${f.key}`}>
+                    <span className="text-muted-foreground">{f.label}:</span> <b>{f.value}</b>
+                    <span className="text-[10px] text-muted-foreground">(من الطبيب)</span>
+                  </div>
+                ) : (
+                  <div key={f.key} className="space-y-1">
+                    <Label className={"text-xs" + ((cSpecs[f.key] ?? "").trim() ? "" : " text-red-700")}>{f.label}</Label>
+                    <div className="flex gap-1.5">
+                      <Input value={cSpecs[f.key] ?? ""} onChange={(e) => setCSpecs((p) => ({ ...p, [f.key]: e.target.value }))}
+                        className="bg-white h-9" data-testid={`input-sale-spec-${f.key}`} />
+                      <Button type="button" size="sm" variant={cSpecs[f.key] === NOT_APPLICABLE ? "default" : "outline"} className="h-9 shrink-0 text-xs"
+                        onClick={() => setCSpecs((p) => ({ ...p, [f.key]: NOT_APPLICABLE }))} data-testid={`button-sale-spec-na-${f.key}`}>
+                        {NOT_APPLICABLE}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="space-y-1">
               <Label htmlFor="cs-note" className="text-xs">ملاحظة (اختياري)</Label>
               <Input id="cs-note" value={note} onChange={(e) => setNote(e.target.value)}
@@ -411,7 +456,7 @@ export function ExamPathDecisionActions({
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !cExpert || !csOffer.ok || paidNowExceeds}
+            <Button disabled={busy || !cExpert || !csOffer.ok || paidNowExceeds || specsIncomplete}
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
                 originalPrice: Number(cOriginal),
@@ -419,6 +464,7 @@ export function ExamPathDecisionActions({
                 expertUserId: Number(cExpert),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
+                deviceSpecs: Object.fromEntries(specsToFill.map((f) => [f.key, (cSpecs[f.key] ?? "").trim()])),
               }, "complete_sale")}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ البيع وبدء التصنيع"}
             </Button>

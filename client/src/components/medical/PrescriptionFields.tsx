@@ -22,11 +22,14 @@ import {
   SILICONE_PARTS,
   UPPER_AMPUTATION_DETAILS,
   buildAmputationSite,
-  specsForSpecialty,
+  deviceSpecsForSpecialty,
   type AmputationParts,
   type InjuryEntry,
 } from "@shared/case_fields";
 import { PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
+import { NOT_APPLICABLE, SALE_REQUIRED_SPECS } from "@shared/device_specs";
+
+const SALE_SPEC_KEYS = new Set<string>([...SALE_REQUIRED_SPECS.prosthetic, ...SALE_REQUIRED_SPECS.medical_support]);
 
 export interface PrescriptionValue {
   /** Device specs, keyed exactly as the patient columns are. */
@@ -56,7 +59,8 @@ export function PrescriptionFields({
   value: PrescriptionValue;
   onChange: (next: PrescriptionValue) => void;
 }) {
-  const specs = specsForSpecialty(caseType);
+  //  **مواصفاتُ الجهاز** — ومعها نوعُ السوكيت (§4.cq).
+  const specs = deviceSpecsForSpecialty(caseType);
   const set = (key: string, v: any) => onChange({ ...value, [key]: v });
 
   const injuries: InjuryEntry[] = value.injuries?.length
@@ -341,15 +345,24 @@ export function PrescriptionFields({
           {specs.map((f) => (
             <div key={f.key} className="space-y-1.5">
               <Label htmlFor={`rx-${f.key}`} className="text-xs">{f.label}{f.key === "supportType" && <PatientVisibleBadge className="ms-2" />}</Label>
-              <Input
-                id={`rx-${f.key}`}
-                inputMode={f.numeric ? "numeric" : undefined}
-                placeholder={f.placeholder}
-                value={value[f.key] ?? ""}
-                onChange={(e) => set(f.key, e.target.value)}
-                className="bg-white"
-                data-testid={`input-rx-${f.key}`}
-              />
+              <div className="flex gap-1.5">
+                <Input
+                  id={`rx-${f.key}`}
+                  inputMode={f.numeric ? "numeric" : undefined}
+                  placeholder={f.placeholder}
+                  value={value[f.key] ?? ""}
+                  onChange={(e) => set(f.key, e.target.value)}
+                  className="bg-white"
+                  data-testid={`input-rx-${f.key}`}
+                />
+                {/* «لا ينطبق» لخانةٍ لا تخصّ الجهاز (§4.cq) — خاناتُ «اشترى» الإلزامية وحدها. */}
+                {SALE_SPEC_KEYS.has(f.key) && (
+                  <Button type="button" size="sm" variant={value[f.key] === NOT_APPLICABLE ? "default" : "outline"}
+                    className="shrink-0 text-xs px-2" onClick={() => set(f.key, NOT_APPLICABLE)} data-testid={`button-rx-na-${f.key}`}>
+                    {NOT_APPLICABLE}
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
           <div className="space-y-1.5">

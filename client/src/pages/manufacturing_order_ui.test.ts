@@ -27,9 +27,10 @@ check("١. الصفحةُ تقرأ `deviceSpecs` من استجابة الأمر"
   page.includes("const { order, patient, deviceSpecs, timeline, rework, dateChanges = [] } = data;"));
 check("٢. **بطاقةٌ لمواصفات هذا الجهاز** حين يكون المصدرُ معاينته",
   page.includes('deviceSpecs?.source === "exam"') && page.includes('data-testid="card-device-specs"'));
+//  وقائمةُ الأطراف هي قائمةُ الجهاز القانونية بالسوكيت (`PROSTHETIC_DEVICE_SPECS`، ترحيل ١١٥ — §4.cq)، من الملفّ المشترك نفسِه.
 check("٣. والقوائمُ القانونية نفسُها لا قائمةٌ ثانية",
-  page.includes('import { PROSTHETIC_SPECS, SUPPORT_SPECS } from "@shared/case_fields";')
-  && page.includes('(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_SPECS).map((f) =>'));
+  page.includes('import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";')
+  && page.includes('(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_DEVICE_SPECS).map((f) =>'));
 check("٤. وموقعُ البتر وجهةُ الإصابة من الجهاز نفسِه",
   page.includes("value={deviceSpecs.specs.amputationSite}") && page.includes("value={deviceSpecs.specs.injurySide}"));
 check("٥. ويسمّي الجهازَ برقمه وما طُلب ومَن عاينه",

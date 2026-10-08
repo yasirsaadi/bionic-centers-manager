@@ -82,6 +82,13 @@ import {
   NOT_BOUGHT_LEGACY_REASON,
 } from "@shared/commercial";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -651,7 +658,7 @@ async function main() {
           `${PENDING_SALE_DATA_LABEL} — الخبير`, ["expert"], ["complete_sale", "not_bought"]]);
       //  والبابُ الجديدُ وحده يُكملها — لا البابُ القديمُ المتقاعد.
       const done2 = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_100_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_100_000, discountAmount: 0, expertUserId: EXPERT });
       same("    **والبابُ الجديد يُكملها ذرّياً**", [done2.status, done2.body?.converted], [200, true]);
     }
 
@@ -778,7 +785,7 @@ async function main() {
       await signExam(p, "medical_support");
       const fid = await followupOf(p);
       const set = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 400_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 400_000, discountAmount: 0, expertUserId: EXPERT });
       same("   ويُتمّ بيعَه كالأطراف — عبر البابِ الجديد", set.body?.converted, true);
     }
     {
@@ -892,7 +899,7 @@ async function main() {
       //  إتمامُ البيع عبر البابِ الجديد — المسارُ الوحيدُ الحيّ على هذا
       //  الصفّ اليوم؛ والغرضُ هنا سلامةُ الكاسكيد لا آليّةَ البيع.
       await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 900_000, discountAmount: 200_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 200_000, expertUserId: EXPERT });
       //  **الحذفُ العاديُّ صار سلّةً** (ترحيل ٠٦٨): والكاسكيدُ الهادمُ
       //  بابُه الوحيد «حذف نهائي» من داخل السلّة. فتُنفَّذ الخطوتان معاً
       //  كي تبقى **تغطيةُ الكاسكيد كما كانت** بحرفها.
@@ -1058,7 +1065,7 @@ async function main() {
         [409, 409, 409]);
       same("٦٩. **والاستقبالُ يُتمّ البيعَ من بابه الوحيد `/complete-sale`**",
         (await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-          { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT })).body?.converted,
+          { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT })).body?.converted,
         true);
     }
 

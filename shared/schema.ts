@@ -320,6 +320,8 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    * يبقى صفراً حتى تُبنى نقطة اعتماده («تخصيص») في مرحلة لاحقة.
    */
   agreedCost: integer("agreed_cost").notNull().default(0),
+  /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركها الطبيب (ترحيل ١١٥، §4.cq) — وكلمةُ الطبيب تغلب عند القراءة. */
+  deviceSpecs: jsonb("device_specs").$type<Record<string, string>>().notNull().default({}),
   /**
    * **ما طُلب شراؤه** (ترحيل ٠٦٠): جهازٌ كامل أو أحدُ أجزاء الطرف الثمانية.
    *

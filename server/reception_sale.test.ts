@@ -34,6 +34,13 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 
+/** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
+const SALE_SPECS_TEST = {
+  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
+  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+};
+
+
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
   console.error("Refusing to run: point DATABASE_URL at a LOCAL TEST database.");
@@ -302,7 +309,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("استقبالٌ يبيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("١. **الاستقبالُ يُتمّ بيعاً على المسار الجديد**",
         [r.status, r.body?.converted, typeof r.body?.workOrderId], [200, true, "number"]);
       same("   بأمرِ تصنيعٍ واحد", (await moneyOf(pid)).orders, 1);
@@ -312,7 +319,7 @@ async function main() {
       //  انقلبت صراحةً: المحاسبُ كالاستقبال تماماً هنا، لا استثناءً جزئياً.
       const { pid, fid } = await readySale("محاسبٌ يبيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.acct,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("٢. **والمحاسبُ يُتمّ بيعاً بالضبط كالاستقبال — عبر البابِ نفسِه**",
         [r.status, r.body?.converted, typeof r.body?.workOrderId], [200, true, "number"]);
       const row = await fRow(fid);
@@ -322,19 +329,19 @@ async function main() {
     {
       const { fid } = await readySale("مديرُ فرعٍ يبيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.manager,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("٣. **ومديرُ الفرع في فرعه**", [r.status, r.body?.converted], [200, true]);
     }
     {
       const { fid } = await readySale("مسؤولٌ يبيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.admin,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("٤. **والمسؤولُ العام**", [r.status, r.body?.converted], [200, true]);
     }
     {
       const { pid, fid } = await readySale("طبيبٌ يُردّ عن البيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.doc,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("٥. **والطبيبُ العاديُّ لا يُتمّ بيعاً جديداً — لا سلطةَ تجاريةً له إطلاقاً**",
         r.status, 403);
       same("   ولا شيءَ كُتب", await moneyOf(pid), ZERO_MONEY);
@@ -368,7 +375,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("عاديّ");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT });
       const row = await fRow(fid);
       same("٢٣أ. **عاديّ: discountAmount=0 ⟶ أصليّ=نهائيّ=1,500,000**",
         [r.status, row.op, row.p, row.pk], [200, 1_500_000, 1_500_000, "normal"]);
@@ -377,7 +384,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("بخصم");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 300_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 300_000, expertUserId: EXPERT });
       const row = await fRow(fid);
       same("٢٣ب. **بخصم: نهائيّ=1,200,000 ونوعُه discount**",
         [r.status, row.op, row.p, row.pk], [200, 1_500_000, 1_200_000, "discount"]);
@@ -387,7 +394,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("مجّانيّ");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 1_500_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 1_500_000, expertUserId: EXPERT });
       const row = await fRow(fid);
       same("٢٣ج. **مجّانيّ: discountAmount=originalPrice ⟶ نهائيّ=صفر والأصلُ محفوظ**",
         [r.status, row.op, row.p, row.pk], [200, 1_500_000, 0, "free"]);
@@ -403,7 +410,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("خصمٌ يتجاوز الأصل");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 1_200_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 1_200_000, expertUserId: EXPERT });
       same("٢٣د. **discountAmount > originalPrice ⟶ ٤٠٠ ولا كتابة**", r.status, 400);
       same("     ولا شيءَ كُتب", await moneyOf(pid), ZERO_MONEY);
       same("     والصفُّ كما بدأ", (await fRow(fid)).status, "awaiting_patient_decision");
@@ -411,27 +418,27 @@ async function main() {
     {
       const { pid, fid } = await readySale("خصمٌ سالب");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: -1, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: -1, expertUserId: EXPERT });
       same("     **خصمٌ سالب ⟶ ٤٠٠**", r.status, 400);
       same("     ولا شيءَ كُتب", (await moneyOf(pid)).orders, 0);
     }
     {
       const { pid, fid } = await readySale("سعرٌ غير موجب");
       const r1 = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 0, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 0, discountAmount: 0, expertUserId: EXPERT });
       same("     **originalPrice=0 ⟶ ٤٠٠**", r1.status, 400);
       const r2 = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: -500_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: -500_000, discountAmount: 0, expertUserId: EXPERT });
       same("     **وسالبٌ كذلك ⟶ ٤٠٠**", r2.status, 400);
       same("     ولا شيءَ كُتب بأيٍّ منهما", (await moneyOf(pid)).orders, 0);
     }
     {
       const { pid, fid } = await readySale("خبيرٌ غير صالح");
       const rMissing = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: 999999 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: 999999 });
       same("٢٣هـ. **خبيرٌ غير موجود ⟶ ٤٠٠**", rMissing.status, 400);
       const rWrongBranch = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT_B2 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT_B2 });
       same("     **وخبيرٌ فعّالٌ في فرعٍ آخر ⟶ ٤٠٠**", rWrongBranch.status, 400);
       same("     ولا شيءَ كُتب بأيٍّ منهما", (await moneyOf(pid)).orders, 0);
       same("     والصفُّ كما بدأ", (await fRow(fid)).status, "awaiting_patient_decision");
@@ -439,7 +446,7 @@ async function main() {
     {
       const { fid } = await readySale("سعرٌ نهائيّ مزوَّر");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 300_000, expertUserId: EXPERT,
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 300_000, expertUserId: EXPERT,
           finalPrice: 1 });
       const row = await fRow(fid);
       same("٢٣و. **`finalPrice` المزوَّر يُتجاهَل — المشتقُّ من الخصم فقط يُحفَظ**",
@@ -448,7 +455,7 @@ async function main() {
     {
       const { fid } = await readySale("نوعُ سعرٍ مزوَّر");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT,
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 0, expertUserId: EXPERT,
           priceKind: "free" });
       const row = await fRow(fid);
       same("     **`priceKind` المزوَّر يُتجاهَل — المشتقُّ من الخصم (صفر) فقط يُحفَظ**",
@@ -462,7 +469,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("خصمٌ بلا طلبِ اعتماد");
       await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 500_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 500_000, expertUserId: EXPERT });
       same("   **ولا صفَّ `service_discount_requests` واحد**", (await moneyOf(pid)).discounts, 0);
     }
 
@@ -473,7 +480,7 @@ async function main() {
     {
       const { fid } = await readySale("حفظٌ واحد");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       const row = await fRow(fid);
       same("   **الحفظُ نفسُه سجّل «اشترى» وحوّل الملفَّ — بلا سؤالٍ ثانٍ**",
         [r.status, row.pd, row.status], [200, "bought", "converted"]);
@@ -485,7 +492,7 @@ async function main() {
     console.log("\n── ز. التزامن ──");
     {
       const { pid, fid } = await readySale("ضغطتان متزامنتان");
-      const body = { originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT };
+      const body = { deviceSpecs: SALE_SPECS_TEST, originalPrice: 900_000, discountAmount: 0, expertUserId: EXPERT };
       const [a, b] = await Promise.all([
         http("POST", `/api/followups/${fid}/complete-sale`, S.recv, body),
         http("POST", `/api/followups/${fid}/complete-sale`, S.manager, body),
@@ -500,7 +507,7 @@ async function main() {
       //  والتزامنُ نفسُه على «إتمام البيع» بين استقبالٍ ومحاسبٍ معاً — ليس
       //  الاستقبالُ وحده مَن يُختبَر تحت الضغط.
       const { pid, fid } = await readySale("ضغطتان: استقبالٌ ومحاسب");
-      const body = { originalPrice: 700_000, discountAmount: 0, expertUserId: EXPERT };
+      const body = { deviceSpecs: SALE_SPECS_TEST, originalPrice: 700_000, discountAmount: 0, expertUserId: EXPERT };
       const [a, b] = await Promise.all([
         http("POST", `/api/followups/${fid}/complete-sale`, S.recv, body),
         http("POST", `/api/followups/${fid}/complete-sale`, S.acct, body),
@@ -620,7 +627,7 @@ async function main() {
       const { pid, fid } = await readySale("السعرُ الصريحُ يسود على الملاحظة",
         { notes: "المريضُ ناقش سعر ١,٥٠٠,٠٠٠ نقداً على دفعتين" });
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_500_000, discountAmount: 200_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_500_000, discountAmount: 200_000, expertUserId: EXPERT });
       const row = await fRow(fid);
       same("١٤. **السعرُ الصريحُ (١,٣٠٠,٠٠٠) هو الحقيقةُ المالية — لا رقمُ الملاحظة**",
         [r.status, row.p], [200, 1_300_000]);
@@ -715,7 +722,7 @@ async function main() {
     {
       const { pid, fid } = await legacyFollowup("موروثٌ يُردّ عن إتمام البيع");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("٢٠. **`/complete-sale` يرفض صفّاً موروثاً بلا مسارٍ — صفرُ كتابة**", r.status, 409);
       same("    ولا شيءَ كُتب", await moneyOf(pid), ZERO_MONEY);
       same("    والصفُّ كما بدأ (بابُه القديم لا يزال يعمل — القسم ك)",
@@ -734,7 +741,7 @@ async function main() {
       //  عليه لأنه ببساطة ليس البابَ الصحيح لهذا الصفّ.
       const { pid, fid } = await legacyFollowup("موروثٌ — المسؤولُ يُردّ عن /complete-sale");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.admin,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("    **وحتى المسؤولُ العام يُردّ عن `/complete-sale` لصفٍّ موروث — بابُه غيرُ هذا**",
         r.status, 409);
       same("    ولا شيءَ كُتب", await moneyOf(pid), ZERO_MONEY);
@@ -748,7 +755,7 @@ async function main() {
       const { pid, fid } = await readySale("سجلٌّ تاريخيّ");
       const before = await fRow(fid);
       await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 800_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 800_000, discountAmount: 0, expertUserId: EXPERT });
       const after = await fRow(fid);
       same("   **الصفُّ نفسُه يُحدَّث لا يُستبدَل** — نفسُ المعرّف ونفسُ لحظة الإنشاء",
         [fid, new Date(after.ca).getTime()], [fid, new Date(before.ca).getTime()]);
@@ -767,7 +774,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("محوَّلةٌ وتحمل رايةً قديمة");
       await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_100_000, discountAmount: 100_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_100_000, discountAmount: 100_000, expertUserId: EXPERT });
       //  محاكاةُ رايةٍ قديمة (`purchase_interest_at`) على صفٍّ تحوّل فعلاً —
       //  تُكتب مباشرةً بالـSQL لأن البابَ الحيّ الذي كان يكتبها
       //  (`/purchase-interest`) تقاعد على هذا المسار (القسم ي أعلاه)، وهذا
@@ -956,7 +963,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ محذوف");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       same("A. `paidNow` محذوفةٌ تماماً ⟶ البيعُ ينجح كالمعتاد",
         [r.status, r.body?.converted], [200, true]);
       same("   والكلفةُ تُقيَّد بالكامل كما كانت دائماً", (await moneyOf(pid)).total, 1_000_000);
@@ -966,7 +973,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ صفرٌ صريح");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 0 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 0 });
       same("B. `paidNow: 0` صريحةٌ ⟶ نفسُ سلوك الحذف بالضبط",
         [r.status, r.body?.converted], [200, true]);
       same("   ولا دفعةَ هنا كذلك", (await paymentsOf(pid)).length, 0);
@@ -974,7 +981,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ جزئيّ");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 300_000 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 300_000 });
       same("C. قبضٌ جزئيّ (٣٠٠,٠٠٠ من ١,٠٠٠,٠٠٠) ⟶ البيعُ ينجح",
         [r.status, r.body?.converted], [200, true]);
       const money = await moneyOf(pid);
@@ -995,7 +1002,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ كامل");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 500_000 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 500_000 });
       same("D. قبضٌ يساوي السعرَ النهائيّ بالضبط ⟶ البيعُ ينجح",
         [r.status, r.body?.converted], [200, true]);
       const pays = await paymentsOf(pid);
@@ -1006,7 +1013,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ يتجاوز السعر");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 600_001 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 600_001 });
       same("E. مبلغٌ مدفوعٌ يتجاوز السعرَ النهائيّ ⟶ ٤٠٠", r.status, 400);
       same("   **ولا تحويلَ ولا أمرَ تصنيعٍ ولا قيدَ كلفة**", await moneyOf(pid), ZERO_MONEY);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1015,7 +1022,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ سالب");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: -1 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: -1 });
       same("F. مبلغٌ سالبٌ ⟶ ٤٠٠", r.status, 400);
       same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1023,7 +1030,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ نصّيٌّ مشوَّه");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: "abc" });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: "abc" });
       same("   ومبلغٌ غيرُ رقميّ (\"abc\") ⟶ ٤٠٠ كذلك", r.status, 400);
       same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1031,7 +1038,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("قبضٌ كسريّ");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 100.5 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 500_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 100.5 });
       same("   ومبلغٌ كسريّ (١٠٠٫٥) ⟶ ٤٠٠ — الدينارُ لا يتجزّأ", r.status, 400);
       same("   وصفرُ كتابةٍ كامل", await moneyOf(pid), ZERO_MONEY);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1039,7 +1046,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("مجّانيّ — بلا قبض");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT });
       same("G. بيعٌ مجّانيّ بلا قبضٍ ⟶ ينجح، مجّانيّاً صراحةً",
         [r.status, r.body?.converted, (await fRow(fid)).pk], [200, true, "free"]);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1047,7 +1054,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("مجّانيّ — صفرٌ صريح");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 0 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 0 });
       same("   وصفرٌ صريحٌ للقبض على المجّانيّ ⟶ ينجح كذلك", [r.status, r.body?.converted],
         [200, true]);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1055,7 +1062,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("مجّانيّ — قبضٌ موجب مرفوض");
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 1 });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 800_000, discountAmount: 800_000, expertUserId: EXPERT, paidNow: 1 });
       same("   وقبضٌ موجبٌ على المجّانيّ ⟶ ٤٠٠ — حتى دينارٌ واحد", r.status, 400);
       same("   **وصفرُ كتابةٍ كامل — لا تحويل ولا دفعة**", await moneyOf(pid), ZERO_MONEY);
       same("   ولا دفعة", (await paymentsOf(pid)).length, 0);
@@ -1063,6 +1070,7 @@ async function main() {
     {
       const { pid, fid } = await readySale("ضغطةٌ ثانيةٌ بعد قبض");
       const body = {
+        deviceSpecs: SALE_SPECS_TEST,
         originalPrice: 400_000, discountAmount: 0, expertUserId: EXPERT, paidNow: 150_000,
       };
       const first = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv, body);
@@ -1115,7 +1123,7 @@ async function main() {
       const [c] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pid]);
       await q(`UPDATE patient_cases SET status='closed' WHERE id=$1`, [c.id]);
       const r = await http("POST", `/api/followups/${fid}/complete-sale`, S.recv,
-        { originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
+        { deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 0, expertUserId: EXPERT });
       const [after] = await q(`SELECT status, cost::int cost FROM patient_cases WHERE id=$1`, [c.id]);
       const reopenRows = await q(`SELECT user_id FROM audit_log WHERE entity_type='patient_case' AND entity_id=$1
                                      AND notes LIKE 'إعادة فتح%'`, [c.id]);
