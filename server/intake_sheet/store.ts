@@ -11,7 +11,7 @@ import { deviceSpecsFromPrescription } from "../medical/episode_prescription";
 import { mergeDeviceSpecs } from "@shared/device_specs";
 import { buildAmputationSite } from "@shared/case_fields";
 import { examSheetTextOf } from "@shared/exam_sheet";
-import type { IntakeSheet, IntakeSheetPatient, IntakeSheetsResponse, SheetServiceType } from "@shared/intake_sheet_view";
+import { baghdadDayOf, type IntakeSheet, type IntakeSheetPatient, type IntakeSheetsResponse, type IntakeSheetVisit, type SheetServiceType } from "@shared/intake_sheet_view";
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 //  **تاريخٌ بصيغةٍ قياسية** (`…T…Z`) كبقيّة الأبواب — النصُّ الخامُ من القاعدة («2026-10-08 11:40:34+00») لا يقرؤه متصفّحُ آيفون فيخرج التاريخُ فارغاً.
@@ -76,8 +76,44 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
     `);
     for (const v of (vr.rows ?? []) as Record<string, any>[]) {
       const list = visitsBy.get(Number(v.device_episode_id)) ?? [];
-      list.push({ id: Number(v.id), date: iso(v.visit_date), details: str(v.details), notes: str(v.notes) });
+      list.push({ id: Number(v.id), kind: "visit", date: iso(v.visit_date), details: str(v.details), notes: str(v.notes), paid: null });
       visitsBy.set(Number(v.device_episode_id), list);
+    }
+    //  ══ **ما دُفع في يوم كلّ مراجعة** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) — لمن يرى المال وحده ══
+    //  دفعةُ «إتمام البيع» لا تحمل رقمَ زيارتها (`payments.visit_id` فارغ) لكنها وزيارةُ الشراء تُكتبان في اللحظة نفسها على الجهاز
+    //  نفسِه — فالربطُ **بالجهاز ويوم بغداد**: صافي دفعات اليوم على أوّل زيارةٍ فيه، ويومٌ بلا زيارةٍ سطرُ «دفعة» مستقلّ.
+    if (opts.withMoney) {
+      const pr2 = await db.execute(sql`
+        SELECT id, device_episode_id, amount, date, notes FROM payments
+         WHERE device_episode_id = ANY(${`{${ids.join(",")}}`}::int[])
+         ORDER BY date, id
+      `);
+      const byDay = new Map<number, Map<string, { sum: number; firstId: number; at: string | null; notes: string[] }>>();
+      for (const p0 of (pr2.rows ?? []) as Record<string, any>[]) {
+        const ep = Number(p0.device_episode_id);
+        const at = iso(p0.date);
+        const day = baghdadDayOf(at) ?? "—";
+        const days = byDay.get(ep) ?? new Map();
+        const cur = days.get(day) ?? { sum: 0, firstId: Number(p0.id), at, notes: [] };
+        cur.sum += Number(p0.amount ?? 0);
+        const note = str(p0.notes);
+        if (note && !cur.notes.includes(note)) cur.notes.push(note);
+        days.set(day, cur);
+        byDay.set(ep, days);
+      }
+      for (const [ep, days] of Array.from(byDay.entries())) {
+        const list: IntakeSheetVisit[] = visitsBy.get(ep) ?? [];
+        for (const v of list) {
+          const day = baghdadDayOf(v.date);
+          const hit = day ? days.get(day) : undefined;
+          if (hit) { v.paid = hit.sum; days.delete(day!); }
+        }
+        for (const d of Array.from(days.values())) {
+          list.push({ id: -d.firstId, kind: "payment", date: d.at, details: "دفعة", notes: d.notes.join(" · ") || null, paid: d.sum });
+        }
+        list.sort((x, y) => String(x.date ?? "").localeCompare(String(y.date ?? "")) || x.id - y.id);
+        visitsBy.set(ep, list);
+      }
     }
   }
 
