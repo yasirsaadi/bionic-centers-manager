@@ -14,6 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
 import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, type PlanStatus } from "@shared/physio_plans";
 import { ExecuteSessionDialog } from "@/components/physio/ExecuteSession";
+import { SuggestBox, type SuggestInfo } from "@/components/physio/PlanSuggestion";
 
 interface PlanRow {
   id: number; titleAr: string; status: PlanStatus; createdByName: string | null; createdAt: string;
@@ -42,7 +43,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
   const [deleting, setDeleting] = useState<PlanRow | null>(null);
   const [changingType, setChangingType] = useState<PlanRow | null>(null);
   const [executing, setExecuting] = useState<number | null>(null);
-  const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean; canDelete: boolean }>({
+  const q = useQuery<{ plans: PlanRow[]; canWrite: boolean; canApprove: boolean; canDelete: boolean; suggest: SuggestInfo | null }>({
     queryKey: [`/api/patients/${patientId}/physio-plans`],
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/physio-plans`)).json(),
     retry: false,
@@ -109,14 +110,14 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
       <ChangePlanTypeDialog plan={changingType} onClose={() => setChangingType(null)} patientId={patientId} />
       <DeletePlanDialog plan={deleting} onClose={() => setDeleting(null)} patientId={patientId} />
       <ExecuteSessionDialog planId={executing} onClose={() => setExecuting(null)} />
-      <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId}
+      <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId} suggest={q.data?.suggest ?? null}
         onCreated={(id) => setLocation(`/physio/plans/${id}?edit=1`)} />
     </div>
   );
 }
 
-function NewPlanDialog({ open, onOpenChange, patientId, onCreated }: {
-  open: boolean; onOpenChange: (v: boolean) => void; patientId: number; onCreated: (id: number) => void;
+function NewPlanDialog({ open, onOpenChange, patientId, suggest, onCreated }: {
+  open: boolean; onOpenChange: (v: boolean) => void; patientId: number; suggest: SuggestInfo | null; onCreated: (id: number) => void;
 }) {
   const { toast } = useToast();
   const [blankTitle, setBlankTitle] = useState("");
@@ -128,8 +129,10 @@ function NewPlanDialog({ open, onOpenChange, patientId, onCreated }: {
   });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent dir="rtl" className="max-w-lg">
+      <DialogContent dir="rtl" className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle>خطة علاج طبيعي جديدة</DialogTitle></DialogHeader>
+        {/*  «اقترح خطّة» (§4.co) — لكاتبي الخطط، والخادمُ يقرّر مَن يراه (`suggest` غائبٌ لغيرهم). */}
+        {open && suggest && <SuggestBox patientId={patientId} info={suggest} onCreated={(id) => { onOpenChange(false); onCreated(id); }} />}
         <p className="text-xs text-muted-foreground">
           اختر بروتوكول الحالة فتمتلئ الخطّة منه — الأهداف والتمارين والاحتياطات والجرعة، والأجهزةُ الموصى بها والاختيارية المتوفّرة في فرعك.
           ثمّ عدّلها لهذا المريض. وتبقى مسوّدةً لا تُنفَّذ حتى تُعتمَد.

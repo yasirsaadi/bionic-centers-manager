@@ -3005,6 +3005,26 @@ export const physioPlanSessionItems = pgTable("physio_plan_session_items", {
   note: text("note"),
 }, (t) => ({ uqSessionDevice: unique("physio_plan_session_items_session_id_device_id_key").on(t.sessionId, t.deviceId) }));
 
+/**
+ * **«اقترح خطّة» بالمساعد** (ترحيل ١١٢، §4.co) — ما رآه المساعدُ وما اختاره وما اقترحه بعد تحقّق الخادم، والخطّةُ التي فُتحت منه إن قُبل.
+ * `input` بلا اسمٍ ولا هاتفٍ ولا رمز — العمرُ ونصُّ المعاينة وسطرُ الأخصائيّ وحدها.
+ */
+export const physioPlanSuggestions = pgTable("physio_plan_suggestions", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id),
+  planId: integer("plan_id").references(() => physioPlans.id, { onDelete: "set null" }),
+  input: jsonb("input").$type<Record<string, any>>().notNull(),
+  choices: jsonb("choices").$type<any[]>().notNull(),
+  result: jsonb("result").$type<Record<string, any>>().notNull(),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+});
+export type PhysioPlanSuggestion = typeof physioPlanSuggestions.$inferSelect;
+
 export const physioPlanAssignees = pgTable("physio_plan_assignees", {
   planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
   userId: integer("user_id").notNull().references(() => systemUsers.id),

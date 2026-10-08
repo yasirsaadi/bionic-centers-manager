@@ -21,6 +21,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ChangePlanTypeDialog, DeletePlanDialog, PLAN_STATUS_TONE } from "@/components/physio/PhysioPlansSection";
 import { DeviationsList, ExecuteSessionDialog, PlanSessionsHistory } from "@/components/physio/ExecuteSession";
+import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSuggestion";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
   PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom, canWritePlans,
@@ -43,6 +44,7 @@ interface Plan {
   protocol: { id: number; titleAr: string; titleEn: string; status: string; code: string } | null;
   devices: PlanDevice[]; assignees: { userId: number; name: string; role: string }[];
   canWrite: boolean; canApprove: boolean; canDelete: boolean; canExecute?: boolean; canCancelSessions?: boolean;
+  aiSuggestion?: Suggestion | null;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -148,6 +150,9 @@ export default function PhysioPlanPage() {
           <ClipboardList className="w-5 h-5 text-green-700 print:hidden" />
           <h1 className="text-lg font-bold" data-testid="plan-title">{title}</h1>
           <Badge variant="outline" className={`${PLAN_STATUS_TONE[plan.status]} print:hidden`} data-testid="plan-status">{statusLabel}</Badge>
+          {plan.aiSuggestion && (
+            <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300 print:hidden" data-testid="plan-ai-badge">{lang === "en" ? "Suggested by the assistant" : "مقترحة بالمساعد"}</Badge>
+          )}
           {plan.protocol && plan.protocol.status !== "approved" && (
             <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300" data-testid="plan-unapproved-protocol">{lang === "en" ? "Protocol not yet approved" : UNAPPROVED_PROTOCOL_BADGE}</Badge>
           )}
@@ -220,6 +225,7 @@ export default function PhysioPlanPage() {
           )}
         </div>
       )}
+      {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}
       {!editing && plan.status === "approved" && plan.canWrite && !plan.canApprove && (
         <p className="text-[11px] text-muted-foreground print:hidden">تعديلُ الخطّة المعتمَدة يعيدها إلى الاعتماد.</p>
       )}

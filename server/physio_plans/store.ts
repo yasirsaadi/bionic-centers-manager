@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   branches, devices, patients, physioDeviceBranches, physioPlanAssignees, physioPlanDevices, physioPlans,
-  physioProtocolDevices, physioProtocols, systemUsers, type PhysioPlan,
+  physioPlanSuggestions, physioProtocolDevices, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
   canApproveFrom, canReturnFrom, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND, type PlanStatus,
@@ -149,6 +149,48 @@ export async function createPlan(p: {
         note: l.note, noteEn: l.noteEn, displayOrder: i,
       })));
     }
+    return row;
+  });
+}
+
+/**
+ * **قبولُ اقتراح المساعد** (§4.co) — يفتح مسوّدةً من البروتوكول المختار كما يفعل «خطة جديدة»، ثمّ يطبّق ما قبله الخادمُ من الاقتراح:
+ * الأجهزةُ الباقيةُ ودقائقُها، والجرعة، وملاحظاتُ المريض. **وتقاطعٌ مع البروتوكول الآن** — جهازٌ أُزيل من البروتوكول أو من فرعه بعد الاقتراح لا يعود،
+ * ودقائقُ أكثرُ من البروتوكول الآن تُنزَل إليه. ومرّةً واحدة لكلّ اقتراح.
+ */
+export async function createPlanFromSuggestion(suggestionId: number, actor: Actor): Promise<PhysioPlan> {
+  return db.transaction(async (tx) => {
+    const [sg] = await tx.select().from(physioPlanSuggestions).where(eq(physioPlanSuggestions.id, suggestionId)).for("update");
+    if (!sg) throw new PlanError(404, "الاقتراح غير موجود");
+    if (sg.planId || sg.acceptedAt) throw new PlanError(409, "فُتحت خطّةٌ من هذا الاقتراح من قبل");
+    const { base, lines } = await protocolFill(tx, sg.protocolId, sg.branchId);
+    const r = sg.result as any;
+    const want = new Map<number, number | null>((Array.isArray(r?.devices) ? r.devices : []).map((d: any) => [Number(d.deviceId), d.minutes == null ? null : Number(d.minutes)]));
+    const kept = lines.filter((l: any) => want.has(Number(l.deviceId))).map((l: any) => {
+      const m = want.get(Number(l.deviceId));
+      return { ...l, minutes: m == null ? l.minutes : l.minutes == null ? m : Math.min(m, l.minutes) };
+    });
+    const capDose = (v: unknown, cap: number | null) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1) return cap;
+      return cap == null ? n : Math.min(n, cap);
+    };
+    const [row] = await tx.insert(physioPlans).values({
+      ...base, patientId: sg.patientId, branchId: sg.branchId, status: "draft",
+      sessionsPerWeek: capDose(r?.dose?.sessionsPerWeek, base.sessionsPerWeek),
+      durationWeeks: capDose(r?.dose?.durationWeeks, base.durationWeeks),
+      sessionMinutes: capDose(r?.dose?.sessionMinutes, base.sessionMinutes),
+      notes: typeof r?.notesAr === "string" && r.notesAr.trim() ? r.notesAr.trim() : null,
+      notesEn: typeof r?.notesEn === "string" && r.notesEn.trim() ? r.notesEn.trim() : null,
+      createdBy: actor.userId, createdByName: actor.name, updatedBy: actor.userId, updatedByName: actor.name,
+    }).returning();
+    if (kept.length) {
+      await tx.insert(physioPlanDevices).values(kept.map((l: any, i: number) => ({
+        planId: row.id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
+        note: l.note, noteEn: l.noteEn, displayOrder: i,
+      })));
+    }
+    await tx.update(physioPlanSuggestions).set({ planId: row.id, acceptedAt: new Date() }).where(eq(physioPlanSuggestions.id, sg.id));
     return row;
   });
 }
