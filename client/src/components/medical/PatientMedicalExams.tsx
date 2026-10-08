@@ -18,13 +18,13 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
   EXAM_CANCEL_OPERATION_EXISTS,
-  EXAM_FIELDS,
   SPECIALTY_COLORS,
   isMedicalSpecialty,
   specialtyLabel,
   type MedicalSpecialty,
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
+import { examNarrativeRows } from "@shared/exam_sheet";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { buildAmputationSite, deviceSpecsForSpecialty, type InjuryEntry } from "@shared/case_fields";
@@ -311,11 +311,9 @@ export function PatientMedicalExams({
   // Official print sheet. Opened in its own window so the app's layout, sidebar
   // and colours never leak into a document that goes into a patient file.
   const printExam = (exam: Exam) => {
-    const rows = EXAM_FIELDS.filter((f) => (exam as any)[f.key])
-      .map(
-        (f) =>
-          `<tr><th>${f.label}</th><td>${String((exam as any)[f.key]).replace(/\n/g, "<br/>")}</td></tr>`,
-      )
+    //  **«المعاينة الطبية» باسمها** لمعاينة الأطراف والمساند على الاستمارة (§4.cq، ٢ب) — والقديمةُ بخاناتها كما كُتبت.
+    const rows = examNarrativeRows(exam.caseType, exam as any)
+      .map((f) => `<tr><th>${f.label}</th><td>${f.value.replace(/\n/g, "<br/>")}</td></tr>`)
       .join("");
     const addenda = exam.addenda
       .map(
@@ -570,11 +568,9 @@ ${addenda}
                   )}
 
                   <div className="space-y-1.5">
-                    {EXAM_FIELDS.map((f) => {
-                      const value = (exam as any)[f.key] as string | null;
-                      if (!value) return null;
+                    {examNarrativeRows(exam.caseType, exam as any).map(({ value, ...f }) => {
                       return (
-                        <div key={f.key} className="text-sm flex gap-2">
+                        <div key={f.key} className="text-sm flex gap-2" data-testid={`exam-text-${exam.id}-${f.key}`}>
                           <span className="text-muted-foreground shrink-0 min-w-[92px]">
                             {f.label}:
                           </span>
@@ -676,9 +672,7 @@ ${addenda}
                       {rev.editedByName && <span>بواسطة {rev.editedByName}</span>}
                     </div>
                     <div className="space-y-1">
-                      {EXAM_FIELDS.map((f) => {
-                        const value = (rev as any)[f.key] as string | null;
-                        if (!value) return null;
+                      {examNarrativeRows((rev as any).caseType ?? historyOf?.caseType, rev as any).map(({ value, ...f }) => {
                         return (
                           <div key={f.key} className="flex gap-2">
                             <span className="text-muted-foreground shrink-0 min-w-[92px]">

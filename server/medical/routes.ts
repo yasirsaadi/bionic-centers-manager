@@ -42,7 +42,7 @@ import type { Express, Response } from "express";
 import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
-import { DeviceEpisodeError, isDeviceServiceType } from "../device_episodes/store";
+import { DeviceEpisodeError, isDeviceServiceType, getEpisodeDisplayFieldsByIds } from "../device_episodes/store";
 import type * as FollowupStore from "../followup/store";
 import * as reviewStore from "../medical_review/store";
 import { canSuperviseReview } from "@shared/medical_review";
@@ -54,6 +54,7 @@ import {
   LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
 } from "@shared/lock_conflict";
 import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
+import { prepareExamSheet, applyExamSheet } from "./exam_sheet_edit";
 
 type Req = any;
 
@@ -486,6 +487,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  بطاقةُ المعاينة أحدُ أبواب التصحيح الإداريّ الثلاثة، ومعاينةٌ
       //  سريريةٌ بلا متابعة (علاجٌ طبيعي مثلاً) ليست عمليةً تُصحَّح.
       const followupOfExam = await store.followupIdsForExams(exams.map((e) => e.id));
+      //  **«المطلوب» لجهاز كلّ معاينة** — تفتح عليه الاستمارةُ عند التنقيح (§4.cq، ٢ب).
+      const episodeFields = await getEpisodeDisplayFieldsByIds(
+        exams.map((e) => e.deviceEpisodeId).filter((n): n is number => typeof n === "number"));
 
       res.json({
         exams: exams.map((e) => ({
@@ -509,6 +513,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  هويّةُ العملية التي يفتح بها زرُّ «تصحيح / إلغاء العملية»
           //  نافذتَه — و`null` تعني «لا عمليةَ هنا» فلا يظهر الزرّ.
           reversalFollowupId: followupOfExam[e.id] ?? null,
+          deviceRequestedItem: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.requestedItem ?? null : null,
         })),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         //  **الأجهزةُ المنتظرةُ بهويّتها** (تدقيق ٢٠٢٦-٠٩-١٢): تعرضها نافذةُ
@@ -518,6 +523,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         //  التشخيصُ والإصابات) — تفتح عليه نافذةُ المعاينة بهذا الباب لا ببابِ
         //  ملفّ المريض، فلا تفتح فارغةً لطبيبٍ يصل المعاينةَ ولا يصل الملفّ.
         registration,
+        //  **وحقولُ الاستعلامات في الاستمارة** (§4.cq، ٢ب) — لمَن يكتب المعاينة أو ينقّحها وحده: عليها يفتح الطبيبُ الورقةَ ويعدّلها.
+        sheet: specialties.length > 0 || session.isAdmin || hasRole(session, "branch_manager")
+          ? await store.intakeSheetOf(patientId) : null,
         canWriteMedicalExam: specialties.length > 0,
         specialties,
         // Who may press "تعديل" — the author, or the responsible manager. Sent
@@ -646,6 +654,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (!hasNarrative && !hasPrescription) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
+
+      //  ══ **تعديلُ الطبيب لحقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — يُفحَص هنا قبل أيّ كتابة، ويُكتب بعد التوقيع ══
+      const sheetPrep = await prepareExamSheet(patientId, caseType, req.body);
+      if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
 
       // ══ مفتاحُ تطابقِ الإنشاء (migration 074) — إلزاميّ ═══════════════════
       //  حادثةُ سبع معاينات لطلبٍ واحد (٢٠٢٦-٠٩) لم يكن لها حارسٌ من أيّ نوع:
@@ -854,6 +866,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         //  إغلاقُ طلبات المراجعة صار **داخل** معاملة التوقيع (`store.createExam`)
         //  — معاً أو لا شيء؛ لا نداءَ بعد الالتزام يُبتلَع فشلُه.
       }
+      //  **وما عدّله الطبيبُ من الاستمارة — بعد توقيعٍ التزم، ومرّةً واحدة** (إعادةُ الإرسال لا تعيده).
+      const sheetNote = created
+        ? await applyExamSheet(sheetPrep.prepared, {
+          examId: exam.id, episodeId: exam.deviceEpisodeId ?? null, userId: session.userId, userName: doctorName,
+          ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        })
+        : null;
 
       // ══ **ولا بابَ تجارياً ثانياً يُفتَح هنا** ═══════════════════════════
       //  المعاينةُ ثبتت سريرياً تماماً. المتابعةُ التي فتحها التوقيعُ (إن
@@ -867,7 +886,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // not be retired (it already carries a work order or tagged payments) the
       // doctor must know both cases are still open. Only meaningful when THIS
       // call actually ran the decision — a raced-away loser never did.
-      res.json({ ...exam, switchNote: created ? (applied.switchNote ?? null) : null, created });
+      res.json({ ...exam, switchNote: created ? (applied.switchNote ?? null) : null, sheetNote, created });
     } catch (err: any) {
       console.error("[medical] POST exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر حفظ المعاينة" });
@@ -1048,6 +1067,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (!hasNarrative && !hasPrescription) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
+      //  **وتعديلُ الاستمارة يُفحَص قبل أيّ كتابة** — كالتوقيع (§4.cq، ٢ب). وصاحبُ التنقيح هو مَن يصحّح: الطبيبُ أو المديرُ أو المسؤول.
+      const sheetPrep = await prepareExamSheet(exam.patientId, caseType, req.body);
+      if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
 
       //  ══ **والتنقيحُ يسأل كالإنشاء** (البند ١) — قبل أيّ كتابة ══
       const crossRetire = parseCrossRetire(req.body);
@@ -1154,8 +1176,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         console.error("[medical] retiring case across physiotherapy after revision failed:", err);
       }
 
+      const sheetNote = await applyExamSheet(sheetPrep.prepared, {
+        examId, episodeId: exam.deviceEpisodeId ?? null, userId: session.userId, userName: editorName,
+        ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      });
+
       res.json({
-        ...updated, switchNote,
+        ...updated, switchNote, sheetNote,
         priceNote: priceSyncNote,
       });
     } catch (err: any) {

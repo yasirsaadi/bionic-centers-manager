@@ -1548,6 +1548,39 @@ export async function setEpisodeComponentSaleTermsTx(
 }
 
 /**
+ * **«المطلوب» يصحّحه الطبيبُ على الاستمارة** (§4.cq — المرحلةُ الثانية ب): طرفٌ كامل أو جزءٌ من الثمانية، لطلب أطرافٍ بعينه.
+ *
+ * **قبل المال والتصنيع وحدهما**: الحلقةُ منتظرةُ المعاينة أو معايَنة (أمرُ التصنيع ينقلها إلى `in_manufacturing`) وبلا سعرٍ
+ * معتمَد — فلا شروطَ بيعٍ قائمة تُبنى على «المطلوب» القديم. و`component` يتبعه في الكتابة نفسِها (قيدُ ترحيل ٠٦٠: `full_device` ⟺ `component IS NULL`).
+ * يُعيد `same` حين لا تغيير، و`changed` حين كُتب، و`locked` حين فات أوانُه — فيُقال للطبيب ولا يُكتب؛ ومعه «المطلوب» السابق للتدقيق.
+ */
+export async function setEpisodeRequestedItemTx(
+  tx: { execute: (q: any) => Promise<any> },
+  params: { episodeId: number; patientId: number; requestedItem: RequestedItem },
+): Promise<{ result: "same" | "changed" | "locked"; from: string | null }> {
+  const cur = await tx.execute(sql`
+    SELECT e.requested_item, e.status, e.agreed_cost, c.case_type
+      FROM patient_device_episodes e JOIN patient_cases c ON c.id = e.case_id
+     WHERE e.id = ${params.episodeId} AND e.patient_id = ${params.patientId}
+     FOR UPDATE OF e
+  `);
+  const row = (cur.rows ?? [])[0];
+  if (!row) return { result: "locked", from: null };
+  const from = (row.requested_item as string | null) ?? null;
+  if (from === params.requestedItem) return { result: "same", from };
+  if (row.case_type !== "prosthetic" || !["awaiting_exam", "examined"].includes(row.status)
+    || Number(row.agreed_cost) > 0) return { result: "locked", from };
+  await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET requested_item = ${params.requestedItem},
+           component = ${params.requestedItem === FULL_DEVICE ? null : params.requestedItem},
+           updated_at = NOW()
+     WHERE id = ${params.episodeId}
+  `);
+  return { result: "changed", from };
+}
+
+/**
  * **خاناتُ الجهاز التي ملأها الاستعلاماتُ في «إتمام البيع»** (ترحيل ١١٥، §4.cq).
  *
  * ما كتبه الطبيبُ في وصفته لا يُكتب هنا — الوصفةُ مصدرُه، وهذه تسدّ فراغَها وحده

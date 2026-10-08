@@ -2236,6 +2236,24 @@ export async function registrationClinicalOf(patientId: number): Promise<{
   return (row as any) ?? null;
 }
 
+/**
+ * **حقولُ الاستعلامات في «استمارة المراجع»** — تفتح عليها معاينةُ الطبيب للأطراف والمساند فيعدّلها (§4.cq، ٢ب).
+ * من باب المعاينة نفسِه وبنطاقه، كـ`registrationClinicalOf` — فالطبيبُ بلا «عرض المرضى» يراها في معاينته. ومعها رمزُ دولة الهاتف
+ * (يُفحَص به الرقمُ المعدَّل) وتاريخُ التسجيل واسمُ الفرع للترويسة.
+ */
+export async function intakeSheetOf(patientId: number): Promise<Record<string, unknown> | null> {
+  const r = await db.execute(sql`
+    SELECT p.name, p.phone, p.phone_country AS "phoneCountry", p.governorate, p.address,
+           p.referral_source AS "referralSource", p.referral_sub_source AS "referralSubSource",
+           p.had_prior_center_history AS "hadPriorCenterHistory", p.age, p.weight, p.height,
+           p.injury_cause AS "injuryCause", p.injury_date::text AS "injuryDate", p.injury_date_status AS "injuryDateStatus",
+           p.general_notes AS "generalNotes", p.created_at AS "registeredAt", b.name AS "branchName"
+      FROM patients p LEFT JOIN branches b ON b.id = p.branch_id
+     WHERE p.id = ${patientId} AND p.deleted_at IS NULL
+  `);
+  return ((r.rows ?? [])[0] as Record<string, unknown> | undefined) ?? null;
+}
+
 /** Patient identity + branch, for authorization and for stamping the exam. */
 export async function getPatientScope(
   patientId: number,
