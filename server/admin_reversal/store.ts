@@ -46,6 +46,7 @@ import {
   type ReversalImpactLine,
 } from "@shared/administrative_reversal";
 import { hasRole } from "@shared/user_roles";
+import { CONVERTED_READY_LABEL } from "@shared/followup";
 
 export class ReversalError extends Error {
   status: number;
@@ -594,7 +595,8 @@ export async function previewReversal(target: {
       { kind: "check", text: "عدم نسخ الدفعة أو الخصم أو الخبير أو المعاينة القديمة" },
     ],
     currentStatusText: alreadyReversed ? "ملغاة إدارياً"
-      : sold ? "تم الشراء — بدأ التصنيع" : "طلب قائم لم يُشترَ بعد",
+      //  **والجاهزُ لا تصنيعَ فيه** (§4.cu) — سُلِّم يومَ بيعه بلا أمر.
+      : sold ? (op.episodeSoldReady ? CONVERTED_READY_LABEL : "تم الشراء — بدأ التصنيع") : "طلب قائم لم يُشترَ بعد",
     manufacturingStarted: started,
     delivered,
     alreadyReversed,

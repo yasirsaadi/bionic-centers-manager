@@ -14,10 +14,10 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  followupEventView, followupEventTitle, purchasePresentation,
+  followupEventView, followupEventTitle, purchasePresentation, purchaseStateText,
   FOLLOWUP_EVENT_TITLES, PURCHASE_STATE_TEXT, UNKNOWN_EVENT_TITLE,
 } from "./followup_events";
-import { FOLLOWUP_STATUS_LABELS } from "./followup";
+import { CONVERTED_READY_LABEL, FOLLOWUP_STATUS_LABELS, followupStatusLabel } from "./followup";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: string) {
@@ -384,6 +384,29 @@ console.log("\n── انتقالُ العملية إلى فرع الخبير �
   same("٦٦. وبلا لقطة الاسم ⟶ رقمُ الفرع لا اسمٌ مخترَع",
     view({ eventType: "sale_branch_moved", payload: { fromBranchId: 5, toBranchId: 2 } }).facts,
     ["من فرع: #5", "إلى فرع: #2"]);
+}
+
+// ══ ح. **البيعُ الجاهز لا تصنيعَ فيه** (§4.cu، ملاحظةُ المالك ٢٠٢٦-١٠-٠٨) ══════════════════════════════
+console.log("\n── البيعُ الجاهز ──");
+same("٦٧. **شارةُ الحالة وسطرُ الشراء وحدثُ التحويل يقولون «سُلِّمت الأجزاء الجاهزة بلا أمر تصنيع»** — لا «بدأ التصنيع»",
+  [followupStatusLabel("converted", { soldReady: true }), purchaseStateText("converted", { soldReady: true }),
+    followupEventView({ eventType: "converted", payload: { workOrderId: null, approvedPrice: 900_000, ready: true } }).title],
+  [CONVERTED_READY_LABEL, CONVERTED_READY_LABEL, CONVERTED_READY_LABEL]);
+same("٦٨. **والبيعُ بأمرٍ كما كان** — وحالةٌ غيرُ محوَّلة لا يغيّرها «جاهز»",
+  [followupStatusLabel("converted"), purchaseStateText("converted", { soldReady: false }),
+    followupEventView({ eventType: "converted", payload: { workOrderId: 12 } }).title,
+    followupStatusLabel("closed_without_purchase", { soldReady: true }), purchaseStateText("awaiting", { soldReady: true })],
+  ["تم الشراء — بدأ التصنيع", "تم الشراء — بدأ التصنيع", "تم الشراء — بدأ التصنيع",
+    FOLLOWUP_STATUS_LABELS.closed_without_purchase, PURCHASE_STATE_TEXT.awaiting]);
+{
+  const card = readFileSync(join(import.meta.dirname, "../client/src/components/PostExamDecisionCard.tsx"), "utf8");
+  const queue = readFileSync(join(import.meta.dirname, "../client/src/pages/PostExamFollowups.tsx"), "utf8");
+  same("٦٩. **وبطاقةُ القرار و«تم الحسم» تقرآن البيعَ الجاهز** — شارةُ الحالة وسطرُ الشراء، و«لا خبير — جاهز» مكان الخبير لا «لم يُختَر بعد»",
+    [/followupStatusLabel\(active\.status, \{ soldReady: Boolean\(active\.soldReadyAt\) \}\)/.test(card),
+      /purchaseStateText\(purchaseState, \{ soldReady: Boolean\(active\.soldReadyAt\) \}\)/.test(card),
+      /FOLLOWUP_STATUS_LABELS\[active\.status\]/.test(card), /row\.soldReady \? "لا خبير — جاهز"/.test(queue),
+      /active\.needsExpert === false \? "لا خبير — جاهز" : "لم يُختَر بعد"/.test(card)],
+    [true, true, false, true, true]);
 }
 
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);

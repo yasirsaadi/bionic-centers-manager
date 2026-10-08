@@ -74,6 +74,18 @@ export const FOLLOWUP_STATUS_LABELS: Record<FollowupStatus, string> = {
 };
 
 /**
+ * **البيعُ الجاهز لا تصنيعَ فيه** (§4.cu، ملاحظةُ المالك ٢٠٢٦-١٠-٠٨): أجزاءٌ جاهزة سُلِّمت يومَ بيعها بلا خبيرٍ ولا أمر — فـ«بدأ
+ * التصنيع» تكذب عليها. نصٌّ واحد تقرؤه شارةُ الحالة وسطرُ الشراء وسجلُّ الأحداث ونافذةُ التصحيح. والحالةُ المخزَّنة `converted` كما هي.
+ */
+export const CONVERTED_READY_LABEL = "تم الشراء — سُلِّمت الأجزاء الجاهزة بلا أمر تصنيع";
+
+/** شارةُ الحالة كما تُقال — و`converted` لبيعٍ جاهز (`sold_ready_at`) نصُّه الخاصّ. */
+export function followupStatusLabel(status: string, opts?: { soldReady?: boolean }): string {
+  if (status === "converted" && opts?.soldReady === true) return CONVERTED_READY_LABEL;
+  return FOLLOWUP_STATUS_LABELS[status as FollowupStatus] ?? status;
+}
+
+/**
  * الحالاتُ التي لم يعد يدخلها ملفٌّ جديد — **قراءةٌ وحسمٌ لا إنشاء**.
  *
  * تُستعمل للعرض («محتجز قبل التبسيط») وللاختبار الذي يمنع عودتها. ولا
