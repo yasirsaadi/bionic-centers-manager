@@ -21,7 +21,7 @@ import { routeServiceToDoctorReview } from "../medical_review/routing";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 import {
-  parseRequestedItem, requestedItemLabel, requestedItemLine, noExamSaleRefusal,
+  parseRequestedItem, parseRequestedItems, requestedItemLabel, requestedItemLine, noExamSaleRefusal,
 } from "@shared/prosthetic_parts";
 import { checkRequiredPatientData } from "@shared/patient_required";
 import { isServicePath, type ServicePath } from "@shared/service_path";
@@ -158,8 +158,11 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       //  والغيابُ مقبولٌ ويُقرأ «كامل»: نافذةٌ قديمة مفتوحة لا ترسله.
       //  **والمساندُ الطبية بلا أجزاء** — يفرضه المحلّلُ نفسه بنوع الخدمة،
       //  ويعيده المخزنُ داخل معاملته المقفلة.
-      const parsedItem = parseRequestedItem(req.body?.requestedItem, serviceType);
-      if (!parsedItem.ok) return res.status(400).json({ error: parsedItem.error });
+      //  **وأكثرُ من جزءٍ في طلبٍ واحد** (§4.ct): `requestedItems` قائمةٌ — والنافذةُ القديمة ترسل `requestedItem` وحده.
+      const parsedItems = parseRequestedItems(req.body?.requestedItems ?? req.body?.requestedItem, serviceType);
+      if (!parsedItems.ok) return res.status(400).json({ error: parsedItems.error });
+      const parsedItem = { value: parsedItems.requestedItem };
+      const extraComponents = parsedItems.extraComponents;
 
       // ── **هل تحتاج هذه العملية معاينة طبية؟** (ترحيل ٠٦٥) ────────────
       //  سؤالٌ عن **الطلب** لا عن صاحبه. وكان الجوابُ يُستنتَج من تصنيف
@@ -189,6 +192,10 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       //  أشدُّ ما يحتاج الطبيبَ فيها. والقاعدةُ في `shared` لا هنا.
       const saleRefusal = servicePath === "no_exam"
         ? noExamSaleRefusal(serviceType, parsedItem.value) : null;
+      //  **والأجزاءُ العدّة على مسار المعاينة وحده** — بابُ «بيع جزء بلا معاينة» يبيع جزءاً واحداً بسعره (§4.k).
+      if (servicePath === "no_exam" && extraComponents.length > 0) {
+        return res.status(400).json({ error: "أكثرُ من جزءٍ في طلبٍ واحد على مسار المعاينة وحده — اختر «يحتاج معاينة»" });
+      }
       if (saleRefusal) return res.status(400).json({ error: saleRefusal });
 
       // ── **بيعُ جزءٍ جديد بلا معاينة صار من بابٍ واحد** (المرحلة الرابعة) ─
@@ -259,12 +266,12 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       const episode = await db.transaction(async (tx) => {
         const ep = await episodes.startDeviceEpisodeTx(tx, {
           patientId, serviceType, createdBy: session.userId,
-          requestedItem: parsedItem.value, servicePath, actingBranchId,
+          requestedItem: parsedItem.value, extraComponents, servicePath, actingBranchId,
         });
         await recordAttendanceVisitTx(tx, {
           patientId, caseId: ep.caseId, branchId: ep.branchId,
           reason: ATTENDANCE_REASONS.examRequest,
-          notes: parsedItem.value ? requestedItemLabel(parsedItem.value, serviceType) : null,
+          notes: parsedItem.value ? requestedItemLabel(parsedItem.value, serviceType, extraComponents) : null,
           createdBy: session.userId ?? null,
         });
         return ep;
@@ -287,7 +294,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
           reviewKind: "new_device", requestedPath: "full",
           //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
           //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
-          receptionNote: [requestedItemLine(episode.requestedItem, serviceType),
+          receptionNote: [requestedItemLine(episode.requestedItem, serviceType, episode.extraComponents),
             typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
             .filter(Boolean).join(" — "),
           deviceEpisodeId: episode.id,
@@ -304,7 +311,7 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
         newValues: episode,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
-        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType)})`
+        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType, episode.extraComponents)})`
           + ` للمريض ${patient.name ?? patientId}`
           + (servicePath === "exam" ? " — المسار: يحتاج معاينة" : " — المسار: بلا معاينة")
           + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),

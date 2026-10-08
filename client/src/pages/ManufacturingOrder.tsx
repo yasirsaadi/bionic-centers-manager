@@ -160,7 +160,7 @@ export default function ManufacturingOrder() {
               </span>
               <span className="text-xs text-muted-foreground">
                 {order.sequenceNumber != null && <>جهاز #{order.sequenceNumber} · </>}
-                {requestedItemLabel(order.requestedItem ?? null, order.serviceType)}
+                {requestedItemLabel(order.requestedItem ?? null, order.serviceType, order.extraComponents)}
                 {deviceSpecs.doctorName && <> · {deviceSpecs.doctorName}</>}
                 {deviceSpecs.signedAt && <> · {fmtD(deviceSpecs.signedAt)}</>}
               </span>

@@ -46,7 +46,7 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
         <div key={s.episodeId} className="rounded-lg bg-white border p-2" data-testid={`device-sheet-row-${s.episodeId}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium">
-              الجهاز #{s.sequenceNumber} — {requestedItemLabel(s.requestedItem, s.serviceType)}
+              الجهاز #{s.sequenceNumber} — {requestedItemLabel(s.requestedItem, s.serviceType, s.extraComponents)}
               <span className="text-xs text-muted-foreground font-normal"> · {SHEET_STATUS_LABELS[s.status] ?? s.status}</span>
             </p>
             <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpen(s)}

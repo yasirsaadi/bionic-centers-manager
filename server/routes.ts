@@ -2852,7 +2852,7 @@ export async function registerRoutes(
       });
 
       if (intakeSheet) {
-        const chk = checkIntakeSheet({ ...input, department: intakeDepartment, requestedItem: req.body?.requestedItem });
+        const chk = checkIntakeSheet({ ...input, department: intakeDepartment, requestedItem: req.body?.requestedItem, requestedItems: req.body?.requestedItems });
         if (!chk.ok) return res.status(400).json({ message: chk.message, missing: chk.missing });
       }
 

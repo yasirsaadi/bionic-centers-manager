@@ -149,11 +149,92 @@ export const noExamSaleServiceTypes: DeviceServiceKind[] =
  *
  * @param serviceType نوعُ الخدمة إن عُرف — فيُسمّى الكاملُ باسمه الصحيح.
  */
-export function requestedItemLabel(v: unknown, serviceType?: unknown): string {
-  if (isProstheticComponent(v)) return COMPONENT_LABELS[v];
+export function requestedItemLabel(v: unknown, serviceType?: unknown, extraComponents?: unknown): string {
+  //  **وطلبُ أجزاءٍ عدّة يُقال بها كلّها** (§4.ct): «القالب + السليكون + القدم».
+  if (isProstheticComponent(v)) return requestedParts(v, extraComponents).map((c) => COMPONENT_LABELS[c]).join(" + ");
   return isDeviceServiceKind(serviceType)
     ? FULL_DEVICE_LABELS[serviceType]
     : FULL_DEVICE_NEUTRAL_LABEL;
+}
+
+/** ترتيبُ الأجزاء كما في الورقة — فطلبٌ واحد يُكتب ويُقرأ بترتيبٍ واحد أيّاً كان ترتيبُ النقر. */
+const partOrder = (c: ProstheticComponent) => (PROSTHETIC_COMPONENTS as readonly string[]).indexOf(c);
+
+/**
+ * **الأجزاءُ الإضافيّة مطبَّعةً** (ترحيل ١١٦، §4.ct): من الثمانية وحدها، بلا تكرار، بلا الجزء الأوّل، بترتيب الورقة —
+ * **ولا شيءَ لجهازٍ كامل** (القيدُ في القاعدة يردّه). ما يصل من العميل أو من القاعدة يمرّ بها قبل أن يُكتب أو يُعرض.
+ */
+export function normalizeExtraComponents(primary: unknown, extras: unknown): ProstheticComponent[] {
+  if (!isProstheticComponent(primary) || !Array.isArray(extras)) return [];
+  const seen = new Set<ProstheticComponent>();
+  for (const x of extras) if (isProstheticComponent(x) && x !== primary) seen.add(x);
+  return Array.from(seen).sort((a, b) => partOrder(a) - partOrder(b));
+}
+
+/** **الأجزاءُ المطلوبة كلُّها** — الأوّلُ ثمّ الإضافيّة — أو قائمةٌ فارغة لجهازٍ كامل. */
+export function requestedParts(requestedItem: unknown, extraComponents?: unknown): ProstheticComponent[] {
+  if (!isProstheticComponent(requestedItem)) return [];
+  return [requestedItem, ...normalizeExtraComponents(requestedItem, extraComponents)];
+}
+
+/**
+ * **نقرةٌ على مربّعٍ في «المطلوب»** (§4.ct) — قاعدةُ الشاشات الثلاث (الاستمارة، معاينة الطبيب، الطلب الجديد):
+ * «الكامل» يُفرد نفسه ويمحو الأجزاء، والجزءُ يُضاف أو يُرفع ويمحو «الكامل»، وبترتيب الورقة دائماً.
+ */
+export function toggleRequestedItem(current: readonly string[], item: RequestedItem): RequestedItem[] {
+  if (item === FULL_DEVICE) return current.includes(FULL_DEVICE) ? [] : [FULL_DEVICE];
+  const parts = current.filter((x): x is ProstheticComponent => isProstheticComponent(x));
+  const next = parts.includes(item as ProstheticComponent)
+    ? parts.filter((x) => x !== item) : [...parts, item as ProstheticComponent];
+  return next.sort((a, b) => partOrder(a) - partOrder(b));
+}
+
+/**
+ * **«المطلوب» نصّاً واحداً** («socket,silicone») — لما يُخزَّن كقيمةٍ واحدة (استئنافُ النافذة بعد إكمال الملفّ).
+ * يُقبل حين تكون كلُّ قطعةٍ منه من القائمة وتصحّ معاً، وإلّا فـ«» — لا نصَّ حرّ يعود فيُضبَط به اختيار.
+ */
+export function requestedItemsCsv(v: unknown): string {
+  if (typeof v !== "string" || !v) return "";
+  const parsed = parseRequestedItems(v.split(","), "prosthetic");
+  if (!parsed.ok || !parsed.requestedItem) {
+    //  مسندٌ كاملٌ (لا أجزاء): يُقبل «full_device» وحده كما كان.
+    return v === FULL_DEVICE ? v : "";
+  }
+  return [parsed.requestedItem, ...parsed.extraComponents].join(",");
+}
+
+/** «المطلوب» قائمةً من عمودَي الحلقة — لتُملأ بها المربّعات. */
+export function requestedItemsOf(requestedItem: unknown, extraComponents?: unknown): RequestedItem[] {
+  if (isProstheticComponent(requestedItem)) return requestedParts(requestedItem, extraComponents);
+  return isRequestedItem(requestedItem) ? [requestedItem] : [];
+}
+
+/**
+ * **«المطلوب» مربّعاتُ اختيار** (§4.ct) — ما يصل من العميل: قائمةٌ (`requestedItems`) أو قيمةٌ واحدة (نافذةٌ قديمة).
+ * الطرفُ الكامل وحده، **أو** جزءٌ فأكثر — ولا يُجمعان. والأجزاءُ بترتيب الورقة: أوّلُها `requestedItem`، وما بعده `extraComponents`.
+ * والغيابُ `null` (لم يُرسَل) لا خطأ — كما في `parseRequestedItem`.
+ */
+export function parseRequestedItems(v: unknown, serviceType?: unknown): {
+  ok: boolean; requestedItem: RequestedItem | null; extraComponents: ProstheticComponent[]; error?: string;
+} {
+  const list = Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
+  if (list.length === 0) return { ok: true, requestedItem: null, extraComponents: [] };
+  const items: RequestedItem[] = [];
+  for (const x of list) {
+    const one = parseRequestedItem(x, serviceType);
+    if (!one.ok) return { ok: false, requestedItem: null, extraComponents: [], error: one.error };
+    if (one.value && !items.includes(one.value)) items.push(one.value);
+  }
+  if (items.length === 0) return { ok: true, requestedItem: null, extraComponents: [] };
+  if (items.includes(FULL_DEVICE)) {
+    if (items.length > 1) {
+      return { ok: false, requestedItem: null, extraComponents: [],
+        error: "الجهاز الكامل لا يُجمع مع أجزاء — اختر الكامل وحده أو الأجزاء المطلوبة" };
+    }
+    return { ok: true, requestedItem: FULL_DEVICE, extraComponents: [] };
+  }
+  const parts = (items as ProstheticComponent[]).sort((a, b) => partOrder(a) - partOrder(b));
+  return { ok: true, requestedItem: parts[0], extraComponents: parts.slice(1) };
 }
 
 /** عنوانُ جزءٍ يُصان — و**لا يُقبل «الجهاز كلُّه»** هنا. */
@@ -213,8 +294,8 @@ export function parseComponent(v: unknown): {
 }
 
 /** «المطلوب: ركبة» — السطرُ الذي يقرؤه الطبيبُ والخبير، بصيغةٍ واحدة. */
-export function requestedItemLine(v: unknown, serviceType?: unknown): string {
-  return `المطلوب: ${requestedItemLabel(v, serviceType)}`;
+export function requestedItemLine(v: unknown, serviceType?: unknown, extraComponents?: unknown): string {
+  return `المطلوب: ${requestedItemLabel(v, serviceType, extraComponents)}`;
 }
 
 /** خياراتُ «ما المطلوب؟» لنوع خدمةٍ بعينه — القائمةُ نفسها في كل شاشة. */

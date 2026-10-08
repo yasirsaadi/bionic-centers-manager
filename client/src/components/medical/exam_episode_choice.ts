@@ -14,6 +14,8 @@ export interface AwaitingEpisodeOption {
   caseType: string;
   sequenceNumber: number;
   requestedItem: string;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: string[] | null;
   awaitingSince: string | null;
   reviewKind: string | null;
 }

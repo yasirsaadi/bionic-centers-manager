@@ -69,6 +69,8 @@ export function formatDevicePaymentNote(p: {
 /** الحقولُ المُهيكَلة التي تحتاجها إعادةُ الاشتقاق — لا صفَّ الحلقة كاملاً. */
 export interface EpisodeDisplayFields {
   requestedItem: string | null;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents?: readonly string[] | null;
   /** النهائيُّ الفعليّ لهذه الحلقة — ما كتبه `applyDeviceSaleFinancialsTx`. */
   agreedCost: number;
   /** دليلُ الأهليّة الحاسم — راجع الشرح أعلى الملفّ. */
@@ -104,7 +106,7 @@ export function deriveDevicePaymentDisplay(
 ): string | null {
   if (payment.visitId != null) return null;
   if (!episode || episode.componentSaleOriginalPrice === null) return null;
-  const itemLabel = requestedItemLabel(episode.requestedItem, "prosthetic");
+  const itemLabel = requestedItemLabel(episode.requestedItem, "prosthetic", episode.extraComponents);
   if (context.linkedPaymentsCount !== 1) {
     return `دفعة مقابل ${itemLabel} — ${fmt(payment.amount)} د.ع`;
   }

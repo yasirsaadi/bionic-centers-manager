@@ -9,7 +9,7 @@
 // وصلاحيةُ «تعديل المرضى» لا تُطلَب هنا: هذا بابُ المعاينة، ومَن يصله هو مَن يملك كتابتَها.
 import { prepareSheetEdit, isSheetExamType } from "@shared/exam_sheet";
 import { isIntakeRequestedItem } from "@shared/intake_sheet";
-import { requestedItemLabel, type RequestedItem } from "@shared/prosthetic_parts";
+import { parseRequestedItems, requestedItemLabel, type ProstheticComponent, type RequestedItem } from "@shared/prosthetic_parts";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
@@ -22,6 +22,8 @@ export interface PreparedExamSheet {
   patientId: number;
   patch: Record<string, unknown>;
   requestedItem: RequestedItem | null;
+  /** الأجزاءُ الإضافيّة مع «المطلوب» (§4.ct) — فارغةٌ لجهازٍ كامل ولجزءٍ واحد. */
+  extraComponents: ProstheticComponent[];
 }
 
 export type PrepareResult =
@@ -32,8 +34,10 @@ export type PrepareResult =
 export async function prepareExamSheet(patientId: number, caseType: unknown, body: any): Promise<PrepareResult> {
   if (!isSheetExamType(caseType)) return { ok: true, prepared: null };
   const hasSheet = body?.sheet !== undefined && body?.sheet !== null;
-  const rawItem = body?.requestedItem;
-  const hasItem = caseType === "prosthetic" && rawItem !== undefined && rawItem !== null && rawItem !== "";
+  //  **«المطلوب» قائمةٌ** (§4.ct): `requestedItems` — والنافذةُ القديمة ترسل `requestedItem` وحده.
+  const rawItem = body?.requestedItems ?? body?.requestedItem;
+  const hasItem = caseType === "prosthetic" && rawItem !== undefined && rawItem !== null && rawItem !== ""
+    && !(Array.isArray(rawItem) && rawItem.length === 0);
   if (!hasSheet && !hasItem) return { ok: true, prepared: null };
 
   let patch: Record<string, unknown> = {};
@@ -45,10 +49,13 @@ export async function prepareExamSheet(patientId: number, caseType: unknown, bod
       patch = edit.patch;
     }
   }
-  if (hasItem && !isIntakeRequestedItem(rawItem)) {
-    return { ok: false, error: "«المطلوب» غير صالح — اختر طرفاً كاملاً أو أحد الأجزاء", missing: ["requestedItem"] };
+  const items = hasItem ? parseRequestedItems(rawItem, "prosthetic") : null;
+  if (items && (!items.ok || !items.requestedItem)) {
+    return { ok: false, error: items.error ?? "«المطلوب» غير صالح — اختر طرفاً كاملاً أو أحد الأجزاء", missing: ["requestedItem"] };
   }
-  return { ok: true, prepared: { patientId, patch, requestedItem: hasItem ? (rawItem as RequestedItem) : null } };
+  return { ok: true, prepared: {
+    patientId, patch, requestedItem: items?.requestedItem ?? null, extraComponents: items?.extraComponents ?? [],
+  } };
 }
 
 /**
@@ -89,14 +96,16 @@ export async function applyExamSheet(
   if (prepared.requestedItem && ctx.episodeId !== null) {
     const r = await db.transaction((tx) => setEpisodeRequestedItemTx(tx, {
       episodeId: ctx.episodeId!, patientId: prepared.patientId, requestedItem: prepared.requestedItem!,
+      extraComponents: prepared.extraComponents,
     }));
     if (r.result === "changed") {
       await logAudit({
         entityType: "patient_device_episode", entityId: ctx.episodeId, action: "update",
         userId: ctx.userId, userName: ctx.userName,
-        oldValues: { requestedItem: r.from }, newValues: { requestedItem: prepared.requestedItem },
+        oldValues: { requestedItem: r.from, extraComponents: r.fromExtras },
+        newValues: { requestedItem: prepared.requestedItem, extraComponents: prepared.extraComponents },
         ipAddress: ctx.ip, userAgent: ctx.userAgent,
-        notes: `«المطلوب»: ${requestedItemLabel(r.from, "prosthetic")} ⟶ ${requestedItemLabel(prepared.requestedItem, "prosthetic")}`
+        notes: `«المطلوب»: ${requestedItemLabel(r.from, "prosthetic", r.fromExtras)} ⟶ ${requestedItemLabel(prepared.requestedItem, "prosthetic", prepared.extraComponents)}`
           + ` — من استمارة المعاينة #${ctx.examId} بيد ${ctx.userName}`,
       });
     } else if (r.result === "locked") {

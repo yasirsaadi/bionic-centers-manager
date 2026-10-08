@@ -22,6 +22,7 @@
 
 import { recordAttendanceVisitTx } from "../visits/attendance";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
+import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { FollowupError } from "./store";
@@ -73,7 +74,7 @@ export async function listEligibleReturnToPurchase(params: {
       : sql`de.branch_id IN (${sql.join(params.branchIds.map((b) => sql`${b}`), sql`, `)})`;
 
   const r = await db.execute<Record<string, any>>(sql`
-    SELECT de.id AS episode_id, de.requested_item, pc.case_type AS service_type,
+    SELECT de.id AS episode_id, de.requested_item, de.extra_components, pc.case_type AS service_type,
            f.id AS followup_id, f.closed_at, f.closed_reason, f.not_bought_reason_text,
            me.doctor_name AS exam_doctor_name, me.created_at AS exam_at
       FROM patient_device_episodes de
@@ -106,6 +107,7 @@ export async function listEligibleReturnToPurchase(params: {
     episodeId: Number(row.episode_id) as number | null,
     serviceType: String(row.service_type) as "prosthetic" | "medical_support",
     requestedItem: row.requested_item ?? null,
+    extraComponents: normalizeExtraComponents(row.requested_item, row.extra_components),
     followupId: Number(row.followup_id),
     closedAt: row.closed_at ? new Date(row.closed_at).toISOString() : null,
     closedReason: row.closed_reason ?? null,

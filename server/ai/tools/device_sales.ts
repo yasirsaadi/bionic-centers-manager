@@ -42,7 +42,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
 import { normalizeSearchText } from "@shared/patient_search";
-import { FULL_DEVICE } from "@shared/prosthetic_parts";
+import { FULL_DEVICE, isRequestedItem, requestedItemsOf } from "@shared/prosthetic_parts";
 import {
   tallyDeviceSales, type DeviceSaleCategoryCount,
 } from "@shared/device_sale_category";
@@ -269,6 +269,7 @@ export async function getDeviceSalesSummary(params: {
     db.execute(sql`
       SELECT wo.service_type AS service_type,
              ep.requested_item AS requested_item,
+             ep.extra_components AS extra_components,
              (SELECT me.prescription
                 FROM medical_exams me
                WHERE me.device_episode_id = ep.id
@@ -289,11 +290,14 @@ export async function getDeviceSalesSummary(params: {
 
   //  **التصنيفُ في الدالّة الخالصة** — والصفُّ بلا معاينةٍ فعّالة يصل
   //  `prescription = null` فيُصنَّف «نوعٌ غير مسجَّل» صراحةً، لا يُسقَط.
-  const byCategory = tallyDeviceSales(((categoryR.rows ?? []) as any[]).map((r) => ({
-    serviceType: r.service_type,
-    requestedItem: r.requested_item,
-    prescription: r.prescription ?? null,
-  })));
+  //  **وطلبُ أجزاءٍ عدّة يُعدّ كلُّ جزءٍ في صنفه** (§4.ct): قالبٌ وسليكونٌ في أمرٍ واحد = قالبٌ مبيع وسليكونٌ مبيع.
+  const byCategory = tallyDeviceSales(((categoryR.rows ?? []) as any[]).flatMap((r) =>
+    requestedItemsOf(r.requested_item, r.extra_components).concat(isRequestedItem(r.requested_item) ? [] : [r.requested_item])
+      .map((item) => ({
+        serviceType: r.service_type,
+        requestedItem: item,
+        prescription: r.prescription ?? null,
+      }))));
   const sumWhere = (f: (c: DeviceSaleCategoryCount) => boolean) =>
     byCategory.filter(f).reduce((n, c) => n + c.sold, 0);
 

@@ -9,7 +9,7 @@
 //   • والترويسةُ باسم فرعها: **كلُّ الفروع «بايونك» إلّا كربلاء «الوارث»**، ولكلٍّ شعارُه.
 // والقاعدةُ هنا **مشتركة**: الشاشةُ تفحص بها قبل الإرسال، والخادمُ يردّ بها ما ينقص — فلا تنحرف إحداهما عن الأخرى.
 import { checkAmputationSite } from "./patient_required";
-import { isRequestedItem, type RequestedItem } from "./prosthetic_parts";
+import { isRequestedItem, parseRequestedItems, type RequestedItem } from "./prosthetic_parts";
 
 /** محافظاتُ العراق التسع عشرة، و«خارج العراق» لمراجعٍ من بلدٍ آخر. */
 export const IRAQ_GOVERNORATES = [
@@ -96,6 +96,8 @@ export interface IntakeInput {
   injuryCause?: unknown; injuryDate?: unknown; injuryDateStatus?: unknown;
   department?: unknown; amputationSite?: unknown; supportType?: unknown; injurySide?: unknown;
   requestedItem?: unknown;
+  /** «المطلوب» مربّعاتُ اختيار (§4.ct) — قائمةٌ تغلب `requestedItem` حين تُرسَل. */
+  requestedItems?: unknown;
 }
 
 /** عناوينُ ما ينقص — بألفاظ الورقة. */
@@ -129,7 +131,9 @@ export function checkIntakeSheet(v: IntakeInput): { ok: boolean; missing: string
   if (!filled(v.injuryDate) && !isInjuryDateStatus(v.injuryDateStatus)) missing.push("injuryDate");
   if (v.department === "prosthetic") {
     if (!filled(v.amputationSite) || !checkAmputationSite(String(v.amputationSite)).ok) missing.push("amputationSite");
-    if (!isIntakeRequestedItem(v.requestedItem)) missing.push("requestedItem");
+    //  **«المطلوب» قائمةٌ** (§4.ct): طرفٌ كاملٌ وحده أو جزءٌ فأكثر — `requestedItems`، والقديمُ `requestedItem` وحده.
+    const items = parseRequestedItems(v.requestedItems ?? v.requestedItem, "prosthetic");
+    if (!items.ok || !items.requestedItem) missing.push("requestedItem");
   } else if (v.department === "medical_support") {
     if (!filled(v.supportType)) missing.push("supportType");
     if (!filled(v.injurySide)) missing.push("injurySide");

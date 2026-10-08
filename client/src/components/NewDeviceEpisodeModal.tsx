@@ -1,3 +1,4 @@
+import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { useEffect, useState } from "react";
 import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useLocation } from "wouter";
@@ -13,7 +14,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  requestedItemOptions, requestedItemLabel, isRequestedItem, FULL_DEVICE,
+  requestedItemLabel, requestedItemsCsv, FULL_DEVICE,
   type RequestedItem,
 } from "@shared/prosthetic_parts";
 import { RequiredPatientDataDialog } from "./RequiredPatientDataDialog";
@@ -67,7 +68,8 @@ interface NewDeviceEpisodeModalProps {
    * وبلا هذا كان الموظّفُ يُردّ برمزٍ إنجليزيّ، ثمّ يبحث عن الشاشة، ثمّ
    * يعود ليبدأ الطلبَ من أوّله.
    */
-  onEditPatient?: (requestedItem: RequestedItem | "") => void;
+  /** «المطلوب» نصّاً واحداً — «socket,silicone» لأجزاءٍ عدّة (§4.ct). */
+  onEditPatient?: (requestedItem: string) => void;
 }
 
 //  ══ «طرف صناعي جديد **أو جزء جديد**» ═══════════════════════════════════
@@ -92,12 +94,12 @@ export function NewDeviceEpisodeModal({
   //  والاستئنافُ وحده يملأه: `initialRequestedItem` يأتي من مالكِ الحالة
   //  الذي **لا يُفكَّك** عند تغيّر المسار، فيعود الموظّفُ إلى «قالب» كما
   //  تركه لا إلى قائمةٍ فارغة.
-  const resumed = (isRequestedItem(initialRequestedItem)
-    ? initialRequestedItem : "") as RequestedItem | "";
-  const [item, setItem] = useState<RequestedItem | "">(resumed);
+  //  **«المطلوب» مربّعاتُ اختيار** (§4.ct): قالبٌ وسليكونٌ وقدمٌ في طلبٍ واحد — والاستئنافُ يحملها نصّاً واحداً («socket,silicone»).
+  const resumed = requestedItemsCsv(initialRequestedItem);
+  const [items, setItems] = useState<string[]>(resumed ? resumed.split(",") : []);
   useEffect(() => {
     if (!open) return;
-    setItem(resumed);
+    setItems(resumed ? resumed.split(",") : []);
   }, [open, resumed]);
   //  **ورسالةُ الخادم تبقى معروضة** حين يكون النقصُ في الملفّ: التوست
   //  يختفي بعد ثوانٍ، وما يجب أن يفعله الموظّف الآن يجب أن يبقى أمامه.
@@ -117,22 +119,21 @@ export function NewDeviceEpisodeModal({
   //  والمساندُ الطبية لا أجزاءَ لها في هذه القائمة — قائمةُ أجزاءِ طرفٍ
   //  صناعي بعينها. فتبقى كما كانت: تأكيدٌ واحد.
   const asksItem = serviceType === "prosthetic";
-  const options = requestedItemOptions(serviceType);
-  const chosen: RequestedItem = asksItem && item ? item : FULL_DEVICE;
+  const chosen: string[] = asksItem && items.length > 0 ? items : [FULL_DEVICE];
 
   const mutation = useMutation({
     mutationFn: async () => {
       //  **`"exam"` ثابتةٌ لا حالة**: هذه النافذةُ بابُ مسار المعاينة وحده،
       //  فلا قيمةَ تأتي من الشاشة ولا من استئنافٍ محفوظ.
       const res = await apiRequest("POST", `/api/patients/${patientId}/device-episodes`, {
-        serviceType, requestedItem: chosen, servicePath: "exam",
+        serviceType, requestedItems: chosen, servicePath: "exam",
       });
       return await res.json();
     },
     onSuccess: (episode: any) => {
       toast({
         title: "تم فتح طلب الجهاز",
-        description: `${requestedItemLabel(episode?.requestedItem ?? chosen, serviceType)}`
+        description: `${requestedItemLabel(episode?.requestedItem ?? chosen[0], serviceType, episode?.extraComponents ?? chosen.slice(1))}`
           + " — بانتظار معاينة الطبيب",
       });
       // الحلقات نفسها، وقوائم انتظار الطبيب، وصفحة المريض: الطلب الجديد
@@ -190,7 +191,7 @@ export function NewDeviceEpisodeModal({
         //  **الاختيارُ يُسلَّم إلى مَن يبقى** — ثمّ تُفتح شاشةُ التعديل.
         //  ولا `onOpenChange(false)` هنا: مالكُ الحالة هو مَن يغلق المسار،
         //  فلا يقع الإغلاقُ مرّتين ولا يسبق التسليمَ.
-        if (onEditPatient) onEditPatient(item);
+        if (onEditPatient) onEditPatient(items.join(","));
         else onOpenChange(false);
       }}
     />
@@ -231,16 +232,7 @@ export function NewDeviceEpisodeModal({
             <Label className="font-semibold">
               ما المطلوب؟ <span className="text-destructive">*</span> <PatientVisibleBadge className="ms-2" />
             </Label>
-            <Select value={item} onValueChange={(v) => setItem(v as RequestedItem)}>
-              <SelectTrigger data-testid="select-requested-item">
-                <SelectValue placeholder="اختر الطرف الكامل أو الجزء المطلوب" />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <RequestedPartsPicker value={items} onChange={setItems} testId="select-requested-item" />
             <p className="text-xs text-muted-foreground">
               شراءُ قطعةٍ جديدة <b>بيعٌ لا صيانة</b>: يمرّ بالمعاينة والسعر
               والاعتماد كأيّ بيع. أمّا إصلاحُ قطعةٍ قائمة فمن «صيانة طرف صناعي».
@@ -331,7 +323,7 @@ export function NewDeviceEpisodeModal({
           <AlertDialogCancel disabled={mutation.isPending}>إلغاء</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => { e.preventDefault(); mutation.mutate(); }}
-            disabled={mutation.isPending || (asksItem && !item)}
+            disabled={mutation.isPending || (asksItem && items.length === 0)}
             data-testid="confirm-new-device"
           >
             {mutation.isPending ? "جارٍ الفتح…" : "فتح الطلب"}

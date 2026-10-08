@@ -17,6 +17,7 @@
 // عن الأول لاحقاً.
 
 import { notifyAwaitingDecision } from "../staff_telegram/notify";
+import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage";
@@ -411,6 +412,8 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     examNotes: string | null;
     selectedExpertName: string | null;
     requestedItem: string | null;
+    /** الأجزاءُ الإضافيّة في الطلب نفسِه (§4.ct). */
+    extraComponents: string[];
     episodeServicePath: string | null;
   })[]
 > {
@@ -429,7 +432,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
            e.doctor_name AS exam_doctor_name, e.signed_at AS exam_signed_at,
            e.notes AS exam_notes,
            u.display_name AS selected_expert_name,
-           de.requested_item, de.service_path AS episode_service_path,
+           de.requested_item, de.extra_components, de.service_path AS episode_service_path,
            cl.actor_name AS closed_by_name, cl.created_at AS closed_event_at,
            cl.note AS closed_note
       FROM post_exam_followups f
@@ -468,6 +471,7 @@ export async function getFollowupsForPatient(patientId: number): Promise<
     //  حسابٌ حُذف يترك رقماً بلا اسم — فيظهر الرقم ويختار الموظّف من جديد.
     selectedExpertName: x.selected_expert_name ?? null,
     requestedItem: x.requested_item ?? null,
+    extraComponents: normalizeExtraComponents(x.requested_item, x.extra_components),
     //  **مسارُ العملية** (ترحيل ٠٦٥) — هو ما يفرّق العمليةَ المبسّطة عن
     //  الموروثة، فتُقرأ الأفعالُ والأقفال منه لا من الحالة وحدها.
     episodeServicePath: x.episode_service_path ?? null,

@@ -344,6 +344,11 @@ export const patientDeviceEpisodes = pgTable("patient_device_episodes", {
    */
   component: text("component"),
   /**
+   * **الأجزاءُ الإضافيّة في الطلب نفسِه** (ترحيل ١١٦، §4.ct): قالبٌ وسليكونٌ وقدمٌ في استمارةٍ واحدة. الأوّلُ في `requestedItem`/`component`
+   * كما كان، وما بعده هنا بترتيب الورقة — فارغٌ لجهازٍ كامل ولطلبِ جزءٍ واحد. والكلُّ يُقرأ بـ`requestedParts` لا بعمودٍ وحده.
+   */
+  extraComponents: text("extra_components").array().notNull().default(sql`'{}'::text[]`),
+  /**
    * **مسارُ هذه العملية بعينها** (ترحيل ٠٦٥): `exam` أو `no_exam`.
    *
    * سؤالٌ عن **الطلب** لا عن صاحبه: «هل يحتاج هذا الجهازُ تقييمَ طبيب قبل

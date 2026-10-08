@@ -9,6 +9,7 @@ import { db } from "../db";
 import { activeExamSql } from "../medical/active_exam";
 import { deviceSpecsFromPrescription } from "../medical/episode_prescription";
 import { mergeDeviceSpecs } from "@shared/device_specs";
+import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { buildAmputationSite } from "@shared/case_fields";
 import { examSheetTextOf } from "@shared/exam_sheet";
 import { baghdadDayOf, type IntakeSheet, type IntakeSheetPatient, type IntakeSheetsResponse, type IntakeSheetVisit, type SheetServiceType } from "@shared/intake_sheet_view";
@@ -40,7 +41,7 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
   };
 
   const er = await db.execute(sql`
-    SELECT e.id, e.sequence_number, e.status, e.requested_item, e.agreed_cost, e.created_at, e.device_specs,
+    SELECT e.id, e.sequence_number, e.status, e.requested_item, e.extra_components, e.agreed_cost, e.created_at, e.device_specs,
            e.component_sale_original_price, e.component_sale_price_kind, pc.case_type, b.name AS branch_name,
            ex.chief_complaint, ex.clinical_findings, ex.diagnosis, ex.plan, ex.notes, ex.doctor_name, ex.signed_at, ex.prescription,
            f.status AS f_status, f.price_kind AS f_price_kind, f.original_price AS f_original_price,
@@ -142,6 +143,7 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
     return {
       episodeId: Number(r.id), sequenceNumber: Number(r.sequence_number), serviceType: kind,
       requestedItem: str(r.requested_item) ?? "full_device", status: String(r.status),
+      extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
       openedAt: iso(r.created_at), branchName: str(r.branch_name) ?? str(p.branch_name),
       amputationSite: kind === "prosthetic" ? ((rx && buildAmputationSite(rx as any)) || str(p.amputation_site)) : null,
       supportType: kind === "medical_support" ? (str(rx?.supportType) ?? str(p.support_type)) : null,

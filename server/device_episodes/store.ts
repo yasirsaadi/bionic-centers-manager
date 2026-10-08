@@ -26,7 +26,7 @@ import {
   type PatientDeviceEpisodeStatus,
 } from "@shared/schema";
 import {
-  isRequestedItem, isProstheticComponent, componentOfRequest, parseRequestedItem,
+  isRequestedItem, isProstheticComponent, componentOfRequest, parseRequestedItem, normalizeExtraComponents,
   FULL_DEVICE, type RequestedItem, type ProstheticComponent,
 } from "@shared/prosthetic_parts";
 import { parseServicePath, type ServicePath } from "@shared/service_path";
@@ -145,6 +145,8 @@ export interface DeviceEpisodeView {
   requestedItem: RequestedItem;
   /** الجزءُ وحده — `null` للجهاز الكامل. مشتقٌّ ومحروسٌ بقيدٍ يلازم الأوّل. */
   component: ProstheticComponent | null;
+  /** **الأجزاءُ الإضافيّة في الطلب نفسِه** (ترحيل ١١٦، §4.ct) — بعد `component`، وفارغةٌ لجهازٍ كامل ولجزءٍ واحد. */
+  extraComponents: ProstheticComponent[];
   /**
    * **مسارُ هذه العملية** (ترحيل ٠٦٥): `exam` · `no_exam` · أو `null`.
    *
@@ -179,6 +181,8 @@ function toView(r: Record<string, any>): DeviceEpisodeView {
     //  فعلاً — أطرافاً كانت أو مساند.
     requestedItem: isRequestedItem(r.requested_item) ? r.requested_item : FULL_DEVICE,
     component: isProstheticComponent(r.component) ? r.component : null,
+    //  **والأجزاءُ الإضافيّة في الطلب نفسِه** (ترحيل ١١٦، §4.ct) — مطبَّعةً، وفارغةٌ لجهازٍ كامل.
+    extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
     //  ولا تُخترَع قيمةٌ حين يسكت العمود: الحلقةُ التي لم تُسأل تبقى `null`،
     //  فيقرؤها القارئُ بالقاعدة القديمة بدل أن يظنّها أُجيبت.
     servicePath: parseServicePath(r.service_path),
@@ -203,7 +207,7 @@ export async function getOpenDeviceEpisode(
 ): Promise<DeviceEpisodeView | null> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
            e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
@@ -256,7 +260,7 @@ export async function resolveIntendedOpenEpisode(params: {
     }
     const r = await db.execute<Record<string, any>>(sql`
       SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-             e.agreed_cost, e.requested_item, e.component, e.service_path,
+             e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
              e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
         FROM patient_device_episodes e
         JOIN patient_cases pc ON pc.id = e.case_id
@@ -275,7 +279,7 @@ export async function resolveIntendedOpenEpisode(params: {
 
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
            e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id
@@ -304,7 +308,7 @@ export async function listDeliveredEpisodes(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
            e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
@@ -329,7 +333,7 @@ export async function listPayableEpisodes(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
            e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id AND pc.patient_id = e.patient_id
@@ -474,7 +478,7 @@ export async function getDeviceEpisodesForPatient(
 ): Promise<DeviceEpisodeView[]> {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.case_id, pc.case_type AS service_type, e.sequence_number, e.status,
-           e.agreed_cost, e.requested_item, e.component, e.service_path,
+           e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path,
            e.branch_id, e.created_at, e.awaiting_since, e.delivered_at, e.cancelled_at,
            e.cancel_reason
       FROM patient_device_episodes e
@@ -500,6 +504,8 @@ export async function getEpisodeDisplayFieldsByIds(
   episodeIds: number[],
 ): Promise<Map<number, {
   requestedItem: string | null; agreedCost: number;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct). */
+  extraComponents: ProstheticComponent[];
   componentSaleOriginalPrice: number | null;
   //  **ترتيبُ الجهاز على خيط المريض** — «الأول» و«الثاني». أُضيف كي يقول
   //  صفُّ الدفعة في ملفّ المريض **لأيّ جهازٍ هو**: مريضٌ بجهازين كان يرى
@@ -508,6 +514,7 @@ export async function getEpisodeDisplayFieldsByIds(
 }>> {
   const map = new Map<number, {
     requestedItem: string | null; agreedCost: number;
+    extraComponents: ProstheticComponent[];
     componentSaleOriginalPrice: number | null;
     sequenceNumber: number;
   }>();
@@ -520,15 +527,16 @@ export async function getEpisodeDisplayFieldsByIds(
   const idArray = `{${Array.from(new Set(episodeIds.map((n) => Number(n))))
     .filter((n) => Number.isFinite(n)).join(",")}}`;
   const r = await db.execute<{
-    id: number; requested_item: string | null; agreed_cost: number;
+    id: number; requested_item: string | null; agreed_cost: number; extra_components: string[] | null;
     component_sale_original_price: number | null; sequence_number: number;
   }>(sql`
-    SELECT id, requested_item, agreed_cost, component_sale_original_price, sequence_number
+    SELECT id, requested_item, extra_components, agreed_cost, component_sale_original_price, sequence_number
       FROM patient_device_episodes WHERE id = ANY(${idArray}::int[])
   `);
   for (const row of r.rows ?? []) {
     map.set(row.id, {
       requestedItem: row.requested_item, agreedCost: Number(row.agreed_cost),
+      extraComponents: normalizeExtraComponents(row.requested_item, row.extra_components),
       componentSaleOriginalPrice: row.component_sale_original_price === null
         ? null : Number(row.component_sale_original_price),
       sequenceNumber: Number(row.sequence_number),
@@ -581,6 +589,11 @@ export async function startDeviceEpisodeTx(
      */
     requestedItem?: RequestedItem | null;
     /**
+     * **الأجزاءُ الإضافيّة في الطلب نفسِه** (ترحيل ١١٦، §4.ct) — قالبٌ وسليكونٌ وقدمٌ معاً. تُطبَّع هنا (`normalizeExtraComponents`):
+     * لا شيءَ لجهازٍ كامل، ومن الثمانية وحدها، بلا تكرار، بلا الجزء الأوّل.
+     */
+    extraComponents?: readonly string[] | null;
+    /**
      * **مسارُ هذه العملية** (ترحيل ٠٦٥): «أتحتاج معاينةَ طبيب؟».
      *
      * والغيابُ يُكتب `null` — **ولا يُخمَّن**: نافذةٌ قديمة لا ترسله، فيبقى
@@ -604,6 +617,7 @@ export async function startDeviceEpisodeTx(
   //  **والجزءُ مشتقٌّ لا مُدخَل**: القيدُ في القاعدة يلازم بينهما، واشتقاقُه
   //  هنا يمنع أن يُكتب العمودان بيدين فينحرفا.
   const component = componentOfRequest(requestedItem);
+  const extraComponents = normalizeExtraComponents(requestedItem, params.extraComponents ?? []);
 
   //  ══ **صفُّ المريض قبل صفّ الحالة — ترتيبُ الأقفال** (٢٠٢٦-١٠-٠٥) ══════════════════════════════════════
   //  كان الطلبُ يقفل الحالةَ (`ensureCaseTx` — `FOR UPDATE`) ثمّ يحتاج صفَّ المريض بمفتاح الإدراج (`KEY SHARE`)، بينما
@@ -655,12 +669,13 @@ export async function startDeviceEpisodeTx(
   const ins = await tx.execute(sql`
     INSERT INTO patient_device_episodes
       (patient_id, case_id, branch_id, sequence_number, status, agreed_cost,
-       requested_item, component, service_path, created_by, created_at, updated_at)
+       requested_item, component, extra_components, service_path, created_by, created_at, updated_at)
     VALUES (${patientId}, ${caseRow.id},
             ${params.actingBranchId ?? caseRow.branch_id ?? patient.branch_id ?? null},
-            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component}, ${servicePath},
+            ${nextSeq}, 'awaiting_exam', 0, ${requestedItem}, ${component},
+            ${`{${extraComponents.join(",")}}`}::text[], ${servicePath},
             ${createdBy}, NOW(), NOW())
-    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
+    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, extra_components, service_path, branch_id,
               created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
   `);
   const row = (ins.rows ?? [])[0];
@@ -685,6 +700,7 @@ export async function startDeviceEpisode(params: {
   serviceType: DeviceServiceType;
   createdBy: number | null;
   requestedItem?: RequestedItem | null;
+  extraComponents?: readonly string[] | null;
   servicePath?: ServicePath | null;
   /** فرعُ الحركة (ترحيل ٠٨٠) — غيابُه = فرعُ الخيط ثمّ فرعُ التسجيل. */
   actingBranchId?: number | null;
@@ -798,7 +814,7 @@ export async function cancelPreManufacturingDeviceEpisodeTx(
        SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = ${reason},
            updated_at = NOW()
      WHERE id = ${episodeId}
-    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, service_path, branch_id,
+    RETURNING id, case_id, sequence_number, status, agreed_cost, requested_item, component, extra_components, service_path, branch_id,
               created_at, awaiting_since, delivered_at, cancelled_at, cancel_reason
   `);
   const row = (upd.rows ?? [])[0];
@@ -1556,28 +1572,32 @@ export async function setEpisodeComponentSaleTermsTx(
  */
 export async function setEpisodeRequestedItemTx(
   tx: { execute: (q: any) => Promise<any> },
-  params: { episodeId: number; patientId: number; requestedItem: RequestedItem },
-): Promise<{ result: "same" | "changed" | "locked"; from: string | null }> {
+  params: { episodeId: number; patientId: number; requestedItem: RequestedItem; extraComponents?: readonly string[] | null },
+): Promise<{ result: "same" | "changed" | "locked"; from: string | null; fromExtras: ProstheticComponent[] }> {
   const cur = await tx.execute(sql`
-    SELECT e.requested_item, e.status, e.agreed_cost, c.case_type
+    SELECT e.requested_item, e.extra_components, e.status, e.agreed_cost, c.case_type
       FROM patient_device_episodes e JOIN patient_cases c ON c.id = e.case_id
      WHERE e.id = ${params.episodeId} AND e.patient_id = ${params.patientId}
      FOR UPDATE OF e
   `);
   const row = (cur.rows ?? [])[0];
-  if (!row) return { result: "locked", from: null };
+  if (!row) return { result: "locked", from: null, fromExtras: [] };
   const from = (row.requested_item as string | null) ?? null;
-  if (from === params.requestedItem) return { result: "same", from };
+  const fromExtras = normalizeExtraComponents(from, row.extra_components);
+  //  **والأجزاءُ الإضافيّة جزءٌ من «المطلوب»** (ترحيل ١١٦، §4.ct): قالبٌ وحده ≠ قالبٌ وسليكون.
+  const toExtras = normalizeExtraComponents(params.requestedItem, params.extraComponents ?? []);
+  if (from === params.requestedItem && fromExtras.join(",") === toExtras.join(",")) return { result: "same", from, fromExtras };
   if (row.case_type !== "prosthetic" || !["awaiting_exam", "examined"].includes(row.status)
-    || Number(row.agreed_cost) > 0) return { result: "locked", from };
+    || Number(row.agreed_cost) > 0) return { result: "locked", from, fromExtras };
   await tx.execute(sql`
     UPDATE patient_device_episodes
        SET requested_item = ${params.requestedItem},
            component = ${params.requestedItem === FULL_DEVICE ? null : params.requestedItem},
+           extra_components = ${`{${toExtras.join(",")}}`}::text[],
            updated_at = NOW()
      WHERE id = ${params.episodeId}
   `);
-  return { result: "changed", from };
+  return { result: "changed", from, fromExtras };
 }
 
 /**
@@ -2098,7 +2118,7 @@ export async function getDeviceEpisode(episodeId: number): Promise<
 > {
   const r = await db.execute<Record<string, any>>(sql`
     SELECT e.id, e.patient_id, e.case_id, pc.case_type AS service_type, e.sequence_number,
-           e.status, e.agreed_cost, e.requested_item, e.component, e.service_path, e.branch_id, e.created_at,
+           e.status, e.agreed_cost, e.requested_item, e.component, e.extra_components, e.service_path, e.branch_id, e.created_at,
            e.awaiting_since, e.delivered_at, e.cancelled_at, e.cancel_reason
       FROM patient_device_episodes e
       JOIN patient_cases pc ON pc.id = e.case_id

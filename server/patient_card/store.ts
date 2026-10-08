@@ -39,13 +39,13 @@ export async function buildPatientCard(patientId: number): Promise<PatientCard |
 
   //  آخرُ جهازٍ حيٍّ لكلّ قسم — «المطلوب» (طرفٌ كامل أو جزء).
   const eps = await rows(sql`
-    SELECT DISTINCT ON (pc.case_type) pc.case_type, pc.id AS case_id, e.requested_item, e.status
+    SELECT DISTINCT ON (pc.case_type) pc.case_type, pc.id AS case_id, e.requested_item, e.extra_components, e.status
       FROM patient_device_episodes e JOIN patient_cases pc ON pc.id = e.case_id
      WHERE e.patient_id = ${patientId} AND e.status <> 'cancelled'
      ORDER BY pc.case_type, e.sequence_number DESC`);
   const itemOf = (t: string) => {
     const e = eps.find((x) => x.case_type === t);
-    return e ? requestedItemLabel(e.requested_item, t) : null;
+    return e ? requestedItemLabel(e.requested_item, t, e.extra_components) : null;
   };
   const notBought = await caseNotBoughtByCase(patientId);
   const statusOf = (t: string) => {

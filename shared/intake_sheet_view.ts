@@ -64,6 +64,8 @@ export interface IntakeSheet {
   sequenceNumber: number;
   serviceType: SheetServiceType;
   requestedItem: string;
+  /** أجزاءُ الطلب الإضافيّة (§4.ct) — «المطلوب: القالب + السليكون + القدم». */
+  extraComponents: string[];
   status: string;
   /** تاريخُ فتح طلب هذا الجهاز — «تاريخ المراجعة» في ورقته. */
   openedAt: string | null;
