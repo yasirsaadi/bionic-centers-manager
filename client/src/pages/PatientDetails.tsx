@@ -1,4 +1,5 @@
 import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
+import { injuryDateDisplay } from "@shared/intake_sheet";
 import { compressImageForUpload } from "@/lib/compress_image";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -949,9 +950,9 @@ export default function PatientDetails() {
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
               <span className="hidden md:inline">{t.patientDetails.fileDate}: {formatDateIraq(patient.createdAt)} - {formatTimeIraq(patient.createdAt)}</span>
             </div>
-            {patient.address && (
+            {(patient.address || (patient as any).governorate) && (
               <div className="flex items-center gap-1 mt-1 text-xs md:text-sm text-muted-foreground">
-                <MapPin className="w-3 h-3 md:w-4 md:h-4" /> {patient.address}
+                <MapPin className="w-3 h-3 md:w-4 md:h-4" /> {[(patient as any).governorate, patient.address].filter(Boolean).join(" — ")}
               </div>
             )}
             {patient.referralSource && (
@@ -1079,14 +1080,15 @@ export default function PatientDetails() {
                   <p className="font-semibold text-lg">{patient.height || "--"} {t.patientDetails.heightUnit}</p>
                 </div>
               </div>
-              {(patient.injuryDate || patient.injuryCause) && (
+              {(patient.injuryDate || (patient as any).injuryDateStatus || patient.injuryCause) && (
                 <div className="grid grid-cols-2 gap-4 pb-4 border-b border-dashed">
-                  {patient.injuryDate && (
+                  {(patient.injuryDate || (patient as any).injuryDateStatus) && (
                     <div>
                       <p className="text-muted-foreground mb-1">{t.patientDetails.injuryDate}</p>
                       <p className="font-semibold text-base flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
-                        {formatDateIraq(patient.injuryDate)}
+                        {/* أو «منذ الولادة» / «غير معروف» (ترحيل ١١٤) */}
+                        {patient.injuryDate ? formatDateIraq(patient.injuryDate) : injuryDateDisplay(null, (patient as any).injuryDateStatus)}
                       </p>
                     </div>
                   )}

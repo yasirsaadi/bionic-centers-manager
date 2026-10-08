@@ -70,6 +70,8 @@ export const patients = pgTable("patients", {
   phoneDigits: text("phone_digits").generatedAlwaysAs(sql`patient_digits_only(phone)`),
   codeDigits: text("code_digits").generatedAlwaysAs(sql`patient_digits_only(patient_code)`),
   address: text("address"),
+  /** المحافظة (ترحيل ١١٤، §4.cq) — من `GOVERNORATE_OPTIONS` في `shared/intake_sheet.ts`؛ إلزاميةٌ في «استمارة المراجع» وحدها. */
+  governorate: text("governorate"),
   referralSource: text("referral_source").notNull(), // الجهة المحول منها
   // كيف عرف «الشخص الآخر» بالمركز — يُملأ فقط حين تكون الجهة «من شخص آخر».
   // عمود مستقل لا جزء من referral_source، لأن الإحصاءات تجمّع بذلك العمود.
@@ -81,6 +83,8 @@ export const patients = pgTable("patients", {
   medicalCondition: text("medical_condition").notNull(),
   injuryCause: text("injury_cause"),
   injuryDate: date("injury_date"),
+  /** تاريخُ الإصابة حين لا تاريخ (ترحيل ١١٤): `congenital` «منذ الولادة» · `unknown` «غير معروف» — ولا يجتمع مع `injury_date`. */
+  injuryDateStatus: text("injury_date_status"),
   /**
    * **بُعدُ تقريرٍ تاريخيّ** («جديد» / «قديم») — يبقى مقروءاً كما هو.
    *

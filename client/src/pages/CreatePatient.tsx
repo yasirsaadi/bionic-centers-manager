@@ -43,6 +43,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { markReceptionRoutingPending } from "@/components/reception_routing";
 import { sessionResumeStore } from "@/components/device_flow_resume";
 import { hasRole, onlyRoles } from "@shared/user_roles";
+import IntakeSheetCreate from "./IntakeSheetCreate";
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -131,7 +132,44 @@ interface TreatmentEntry {
   isFree?: boolean;
 }
 
+// ══ **«إضافة مريض» تبدأ بخيارين** (قرارُ المالك ٢٠٢٦-١٠-٠٨، §4.cq) ══
+//  «أطراف صناعية ومساند» ⟵ «استمارة مراجع» بهيئة الورقة (`IntakeSheetCreate`)، و«علاج طبيعي» ⟵ **هذه الصفحةُ كما هي**
+//  ونوعُ الحالة فيها مثبَّتٌ على العلاج الطبيعي. والاختيارُ في الرابط (`?kind=`) فيعمل «رجوع» المتصفّح.
 export default function CreatePatient() {
+  const [location, setLocation] = useLocation();
+  const params = new URLSearchParams(useSearch());
+  const kind = params.get("kind");
+  const go = (k: string | null) => {
+    const next = new URLSearchParams(params);
+    if (k) next.set("kind", k); else next.delete("kind");
+    const q = next.toString();
+    setLocation(`${location}${q ? `?${q}` : ""}`);
+  };
+  if (kind === "devices") return <IntakeSheetCreate onBack={() => go(null)} />;
+  if (kind === "physio") return <PatientRegistrationForm physioOnly onBack={() => go(null)} />;
+  return (
+    <div className="max-w-3xl mx-auto py-4 md:py-10 space-y-4" dir="rtl">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2 shrink-0"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
+        <h2 className="text-xl md:text-2xl font-display font-bold text-slate-800">إضافة مريض — اختر القسم</h2>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <button type="button" onClick={() => go("devices")} data-testid="choose-devices"
+          className="rounded-2xl border-2 bg-white p-6 md:p-8 text-right hover:border-primary hover:bg-primary/5 transition-colors">
+          <div className="text-lg md:text-xl font-bold text-slate-800">أطراف صناعية ومساند</div>
+          <div className="text-sm text-muted-foreground mt-2">استمارةُ المراجع — ثمّ إلى الطبيب للمعاينة</div>
+        </button>
+        <button type="button" onClick={() => go("physio")} data-testid="choose-physio"
+          className="rounded-2xl border-2 bg-white p-6 md:p-8 text-right hover:border-primary hover:bg-primary/5 transition-colors">
+          <div className="text-lg md:text-xl font-bold text-slate-800">علاج طبيعي</div>
+          <div className="text-sm text-muted-foreground mt-2">صفحةُ التسجيل المعتادة</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PatientRegistrationForm({ physioOnly = false, onBack }: { physioOnly?: boolean; onBack?: () => void }) {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const searchParams = new URLSearchParams(searchString);
@@ -159,7 +197,8 @@ export default function CreatePatient() {
   const defaultBranchId = !isAdmin && userBranchId ? userBranchId : (Number(searchParams.get("branch")) || 1);
   
   // بغداد (branch 1) وذي قار (branch 3) defaults to physiotherapy since most of their patients are physiotherapy
-  const isDhiQarBranch = defaultBranchId === 3 || defaultBranchId === 1;
+  //  وصفحةٌ فُتحت من «علاج طبيعي» مثبَّتةٌ عليه.
+  const isDhiQarBranch = physioOnly || defaultBranchId === 3 || defaultBranchId === 1;
   
   const { mutate, isPending } = useCreatePatient();
   const { toast } = useToast();
@@ -537,7 +576,7 @@ export default function CreatePatient() {
   return (
     <div className="max-w-3xl mx-auto space-y-4 md:space-y-6 page-transition py-2 md:py-6">
       <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
-        <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2 shrink-0">
+        <Button variant="ghost" onClick={() => (onBack ? onBack() : setLocation("/patients"))} className="p-2 shrink-0">
           <BackArrow className="w-5 h-5 text-slate-500" />
         </Button>
         <div>
@@ -877,7 +916,7 @@ export default function CreatePatient() {
           <Card className="p-6 rounded-2xl shadow-sm border-border/60">
             <h3 className="text-lg font-bold text-primary mb-4 border-b pb-2">{t.patientForm.medicalDetails}</h3>
             <div className="space-y-6">
-              <FormField
+              {!physioOnly && <FormField
                 control={form.control}
                 name="medicalCondition"
                 render={({ field }) => (
@@ -918,7 +957,7 @@ export default function CreatePatient() {
                     <FormMessage />
                   </FormItem>
                 )}
-              />
+              />}
 
               <FormField
                 control={form.control}
