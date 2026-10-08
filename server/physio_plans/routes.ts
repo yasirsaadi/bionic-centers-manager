@@ -19,7 +19,8 @@ import {
 } from "@shared/physio_plans";
 import * as store from "./store";
 import * as exec from "./execution";
-import { canCancelSessions, canExecutePlans, canWritePlans as canWrite } from "@shared/physio_plans";
+import * as suggest from "./suggest";
+import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 
 function fail(res: any, e: unknown) {
@@ -99,7 +100,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       //  «تنفيذ جلسة» لكلّ خطّةٍ معتمَدة في فرعٍ يعمل فيه السائل (§4.cn) — والخادمُ يحرس التنفيذَ نفسَه ثانيةً.
       const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status))
         .map((p) => ({ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }));
-      res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s), canDelete: canDeletePlans(s) });
+      //  «اقترح خطّة» (§4.co) — لكاتبي الخطط، ومعه ما سيقرؤه المساعدُ من المعاينة كي يرى الأخصائيُّ مصدرَه قبل الضغط.
+      let suggestInfo: { enabled: boolean; exam: { date: string; diagnosis: string | null } | null } | null = null;
+      if (canSuggestPlans(s)) {
+        const ctx = await suggest.patientContext(patientId);
+        suggestInfo = { enabled: suggest.suggestEnabled(), exam: ctx.exam ? { date: ctx.exam.date, diagnosis: ctx.exam.diagnosis ?? ctx.exam.chiefComplaint } : null };
+      }
+      res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s), canDelete: canDeletePlans(s), suggest: suggestInfo });
     } catch (e) { fail(res, e); }
   });
 
@@ -119,6 +126,42 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const branchId = active && await scopeReachesPatient([active], patient as any) ? active : Number(patient.branchId);
       const row = await store.createPlan({ patientId, branchId, protocolId, titleAr: text(req.body?.titleAr, 300), actor: actor(s) });
       await audit(req, s, { entityId: row.id, action: "create", branchId, newValues: row });
+      res.json(row);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **«اقترح خطّة» بالمساعد** (§4.co) — لكاتبي الخطط. يُحفَظ الاقتراحُ ولا تُنشأ خطّة؛ والفرعُ قاعدةُ «خطة جديدة» نفسُها.
+  app.post("/api/patients/:patientId/physio-plans/suggest", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canSuggestPlans(s)) return res.status(403).json({ error: "يطلب الاقتراحَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    const patientId = idOf(req.params.patientId);
+    if (!patientId) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    if (!suggest.suggestEnabled()) return res.status(503).json({ error: "المساعدُ الذكيّ غير مفعّل" });
+    const protocolId = req.body?.protocolId == null || req.body.protocolId === "" ? null : idOf(req.body.protocolId);
+    if (req.body?.protocolId != null && req.body.protocolId !== "" && !protocolId) return res.status(400).json({ error: "بروتوكولٌ غير صالح" });
+    try {
+      const patient = await storage.getPatient(patientId);
+      if (!patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "المريض غير موجود" });
+      const active = Number(s.branchId) || null;
+      const branchId = active && await scopeReachesPatient([active], patient as any) ? active : Number(patient.branchId);
+      res.json(await suggest.suggestPlan({
+        patientId, branchId, note: text(req.body?.note, 1000), protocolId, fromSuggestionId: idOf(req.body?.fromSuggestionId), actor: actor(s),
+      }));
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **قبولُ الاقتراح** — يفتح مسوّدةً يعدّلها الأخصائيُّ ويرسلها للاعتماد كالعادة. مرّةً واحدة.
+  app.post("/api/physio/suggestions/:id/accept", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canSuggestPlans(s)) return res.status(403).json({ error: "يقبل الاقتراحَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const sg = await suggest.getSuggestion(id);
+      const patient = sg ? await storage.getPatient(sg.patientId) : null;
+      if (!sg || !patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "الاقتراح غير موجود" });
+      const row = await store.createPlanFromSuggestion(id, actor(s));
+      await audit(req, s, { entityId: row.id, action: "create", branchId: row.branchId, newValues: { ...row, suggestionId: id } });
       res.json(row);
     } catch (e) { fail(res, e); }
   });
@@ -143,7 +186,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const plan = await store.getPlan(l.row.id);
       const scope = scopeOf(req, l.s);
       res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s),
-        canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s) });
+        canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s),
+        aiSuggestion: await suggest.suggestionOfPlan(l.row.id) });
     } catch (e) { fail(res, e); }
   });
 
