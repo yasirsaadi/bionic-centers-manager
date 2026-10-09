@@ -3,9 +3,24 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+//  **رقمُ النسخة** (§4.cy): الواجهةُ تحمله (`__APP_BUILD__`) والبناءُ يكتبه في `build-id.txt` فيقرؤه الخادم — فإذا عاد الخادمُ بعد نشرٍ
+//  برقمٍ غير رقم الصفحة المفتوحة عرفت أن نسخةً أحدث وصلت. وفي التطوير «dev»: لا رقمَ يُقارَن.
+const isBuild = process.argv.includes("build") || process.env.NODE_ENV === "production" || process.env.npm_lifecycle_event === "build";
+const APP_BUILD = isBuild
+  ? `${(process.env.RENDER_GIT_COMMIT ?? "local").slice(0, 12)}-${Date.now().toString(36)}`
+  : "dev";
+
 export default defineConfig({
+  define: { __APP_BUILD__: JSON.stringify(APP_BUILD) },
   plugins: [
     react(),
+    {
+      name: "bcm-build-id",
+      apply: "build",
+      generateBundle() {
+        this.emitFile({ type: "asset", fileName: "build-id.txt", source: APP_BUILD });
+      },
+    },
     runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined

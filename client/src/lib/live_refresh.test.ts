@@ -25,12 +25,13 @@ function same(msg: string, got: unknown, expected: unknown) {
 // ══ `fetch` مزيَّف يُركَّب **قبل** استيراد الوحدة ═══════════════════════════
 //  الغلافُ يلتقط `fetch` لحظةَ تركيبه، فلو استُورد أوّلاً لالتقط الأصليَّ
 //  وذهبت نداءاتُ الاختبار إلى الشبكة. فالاستيرادُ ديناميٌّ بعد التزييف.
-type Call = { url: string; method: string };
+type Call = { url: string; method: string; origin: string | null; contentType: string | null };
 const calls: Call[] = [];
 let nextOk = true;
 (globalThis as any).fetch = async (input: any, init?: any) => {
   const url = typeof input === "string" ? input : String(input?.url ?? input);
-  calls.push({ url, method: String(init?.method ?? "GET") });
+  const h = new Headers(init?.headers);
+  calls.push({ url, method: String(init?.method ?? "GET"), origin: h.get("x-live-origin"), contentType: h.get("content-type") });
   return {
     ok: nextOk, status: nextOk ? 200 : 400, statusText: "",
     json: async () => ({}), text: async () => "",
@@ -93,6 +94,22 @@ async function main() {
     await settle();
     same("ب٤. **ثمّ تُحدَّث الثلاثُ معاً — بلا قائمةٍ كتبها أحد**",
       allInvalidated(), [true, true, true]);
+  }
+
+  // ══ (ب‑هـ) **وكلُّ كتابةٍ تحمل هويّةَ تبويبها** (§4.cy) ═══════════════════
+  //  الخادمُ يُرسل إشارةَ «تغيّر شيء» لكلّ الصفحات ومعها مَن كتب — فتُهمل الصفحةُ صداها (حدّثتها كتابتُها هنا في الحال).
+  {
+    const { LIVE_TAB_ID } = await import("./live_updates");
+    calls.length = 0;
+    await apiRequest("POST", "/api/patients", { name: "س" });
+    await fetch("/api/visits/5", { method: "DELETE", headers: { "x-live-origin": "already-set" } });
+    await fetch("/api/patients/5");
+    await fetch("https://api.telegram.org/bot/x", { method: "POST" });
+    same("ب٥. **الكتابةُ تحمل هويّةَ التبويب، وترويستُها الأصلية باقية** — والمكتوبةُ سلفاً لا تُستبدل، والقراءةُ ونداءُ الطرف الثالث بلا هويّة",
+      calls.map((c) => [c.method, c.origin === LIVE_TAB_ID ? "TAB" : c.origin, c.contentType]),
+      [["POST", "TAB", "application/json"], ["DELETE", "already-set", null], ["GET", null, null], ["POST", null, null]]);
+    check("ب٦. (وهويّةُ التبويب ليست فارغة)", typeof LIVE_TAB_ID === "string" && LIVE_TAB_ID.length >= 8, String(LIVE_TAB_ID));
+    await settle();
   }
 
   // ══ (ج) والقراءةُ لا تُحدِّث، والفاشلةُ لا تُحدِّث ═══════════════════════

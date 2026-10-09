@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { LIVE_ORIGIN_HEADER, LIVE_TAB_ID } from "./live_updates";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -289,13 +290,25 @@ export function installLiveRefresh(client: QueryClient): void {
   if (typeof native !== "function") return;
   g[LIVE_REFRESH_INSTALLED] = true;
   g.fetch = async (input: any, init?: any) => {
-    const res = await native(input, init);
+    let write = false;
+    let sendInit = init;
     try {
       const url = typeof input === "string" ? input
         : input instanceof URL ? input.href
           : String(input?.url ?? "");
       const method = String(init?.method ?? input?.method ?? "GET");
-      if (res?.ok && isLiveRefreshWrite(method, url)) scheduleLiveRefresh(client);
+      write = isLiveRefreshWrite(method, url);
+      //  **ومعها هويّةُ التبويب** (§4.cy): الخادمُ يُرسل إشارةَ «تغيّر شيء» لكلّ الصفحات ومعها مَن كتب، فتُهمل هذه الصفحةُ صداها —
+      //  كتابتُها حدّثتها هنا في الحال. (`Request` جاهزٌ لا يُمَسّ — الواجهةُ تكتب بنصٍّ أو `URL`.)
+      if (write && (typeof input === "string" || input instanceof URL)) {
+        const headers = new Headers(init?.headers);
+        if (!headers.has(LIVE_ORIGIN_HEADER)) headers.set(LIVE_ORIGIN_HEADER, LIVE_TAB_ID);
+        sendInit = { ...(init ?? {}), headers };
+      }
+    } catch { /* التحديثُ زينةٌ لا شرطُ نجاحٍ — لا يُفشل نداءً */ }
+    const res = await native(input, sendInit);
+    try {
+      if (res?.ok && write) scheduleLiveRefresh(client);
     } catch { /* التحديثُ زينةٌ لا شرطُ نجاحٍ — لا يُفشل نداءً نجح */ }
     return res;
   };
@@ -334,9 +347,11 @@ export const queryClient = new QueryClient({
       //  يقع بعد انقضائها وأنت واقفٌ أمام الشاشة. فالوعدُ كان يسقط في أشيع
       //  حالاته. (أمسكها Codex على ٣٨٧.)
       //
-      //  **والكلفةُ محدودةٌ بفعل إنسان**: حدثُ تركيزٍ عند العودة إلى التبويب،
-      //  لا مؤقّتٌ يدقّ من تلقائه — و`refetchInterval` يبقى `false` بقرار
-      //  المالك ٢٠٢٦-٠٩-٢٣.
+      //  **ولا مؤقّتَ يدقّ من تلقائه** (`refetchInterval: false`): كتابةُ زميلك
+      //  تصلك وأنت أمام الشاشة بإشارةٍ من الخادم لا باستطلاع (`live_updates.ts`،
+      //  §4.cy) — طلبُ المالك ٢٠٢٦-١٠-٠٩: «كلُّ ما في التطبيق يتحدّث بدون
+      //  ريفريش ولكلّ مستخدم». (وكان قولُه ٢٠٢٦-٠٩-٢٣ شرطاً لا منعاً: «إن
+      //  كان يُثقل النظامَ فلا» — والإشارةُ لا تُثقله: تقع عند الكتابة وحدها.)
       refetchOnWindowFocus: "always",
       // Was Infinity which made every query a one-shot for the session.
       // 60s gives a good balance: same query within a minute uses cache
