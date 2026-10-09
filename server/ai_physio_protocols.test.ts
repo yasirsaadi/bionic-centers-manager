@@ -128,14 +128,15 @@ async function main() {
     check(typeof pe?.goals === "string" && pe.goals.startsWith("Reduce pain") && typeof pe?.contraindications === "string",
       "ب.٣ والأهدافُ والموانعُ معه", JSON.stringify([pe?.goals, pe?.contraindications]));
     const ex = (pe?.devices ?? []).find((d: any) => d.code === "exercise");
-    same("ب.٤ والأجهزةُ بدرجتها ودقائقها ومعاملاتها", [ex?.device, ex?.evidence, ex?.minutes, ex?.parameters], ["Exercise", "Recommended", 35, "Strengthening + aerobic + balance"]);
+    //  ألفاظُ درجة الدليل بقرار المالك (ترحيل ١٢٢، §4.cx): تقول الدليلَ لا القرار — و«استعمالُ المركز» بجانبها.
+    same("ب.٤ والأجهزةُ بدرجتها ودقائقها ومعاملاتها", [ex?.device, ex?.evidence, ex?.minutes, ex?.parameters], ["Exercise", "Strong evidence", 35, "Strengthening + aerobic + balance"]);
     same("ب.٥ وتوفّرُها في فرع السائل", ex?.availableInAskersBranch, true);
     same("ب.٦ وجهازٌ غيرُ مفعَّل في فرعه يُقال", (pe?.devices ?? []).find((d: any) => d.code === "electro")?.availableInAskersBranch, false);
 
     console.log("\n── ج. اللغةُ والمسوّدة ──");
     check(String(pe?.statusNote ?? "").startsWith("DRAFT"), "ج.١ المسوّدةُ تُقال بالإنكليزية", pe?.statusNote);
     const ar = (await read(S.doc, "/api/physio/protocols/:id/brief", { lang: "ar" }, { id: knee }) as any).data?.value?.protocol;
-    same("ج.٢ وبالعربية عنوانُها ودرجتُها", [ar?.title, (ar?.devices ?? []).find((d: any) => d.code === "exercise")?.evidence], ["خشونة الركبة", "موصى به"]);
+    same("ج.٢ وبالعربية عنوانُها ودرجتُها", [ar?.title, (ar?.devices ?? []).find((d: any) => d.code === "exercise")?.evidence], ["خشونة الركبة", "دليلٌ قويّ"]);
     check(String(ar?.statusNote ?? "").includes("مسوّدة"), "ج.٣ والمسوّدةُ تُقال بالعربية", ar?.statusNote);
     await q(`UPDATE physio_protocols SET exercises_en = NULL WHERE id = $1`, [knee]);
     const fb = (await read(S.doc, "/api/physio/protocols/:id/brief", { lang: "en" }, { id: knee }) as any).data?.value?.protocol;

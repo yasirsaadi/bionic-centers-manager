@@ -12,11 +12,15 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useBranchSession } from "@/components/BranchGate";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
-import { DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
+import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 
-interface PlanDevice { deviceId: number; minutes: number | null; code?: string; nameAr?: string; parameters?: string | null }
-interface PlanLite { id: number; patientId: number; titleAr: string; devices: PlanDevice[]; patient?: { name: string; code: string | null } | null }
+interface PlanDevice { deviceId: number; minutes: number | null; code?: string; nameAr?: string; parameters?: string | null; centreUse?: "core" | "adjunct" }
+interface PlanLite {
+  id: number; patientId: number; titleAr: string; devices: PlanDevice[]; patient?: { name: string; code: string | null } | null;
+  /** دورُ المساعد في هذه الجلسة (ترحيل ١٢٢) — يحسبه الخادمُ بالقاعدة نفسِها التي يحكم بها الحفظ. */
+  rotation?: { sessionsSoFar: number; turnDeviceId: number | null };
+}
 interface Line { deviceId: number; done: boolean; minutes: string; note: string }
 
 const errText = (e: any): string => {
@@ -40,7 +44,13 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   const [date, setDate] = useState(baghdadTodayYmd());
   useEffect(() => {
     if (!q.data) return;
-    setLines(q.data.devices.map((d) => ({ deviceId: d.deviceId, done: d.code !== DRY_NEEDLING_DEVICE_CODE || canNeedle, minutes: d.minutes == null ? "" : String(d.minutes), note: "" })));
+    //  **المساعدُ يتناوب** (ترحيل ١٢٢، §4.cx): الأساسيُّ مُعلَّمٌ «نُفّذ»، والمساعدُ الذي دورُه هذه الجلسة كذلك، والباقي «ليس دورَه» بلا سببٍ يُطلب.
+    const turn = q.data.rotation?.turnDeviceId ?? null;
+    setLines(q.data.devices.map((d) => {
+      const offTurn = d.centreUse === "adjunct" && d.deviceId !== turn;
+      return { deviceId: d.deviceId, done: !offTurn && (d.code !== DRY_NEEDLING_DEVICE_CODE || canNeedle),
+        minutes: d.minutes == null ? "" : String(d.minutes), note: "" };
+    }));
     setNote(""); setDate(baghdadTodayYmd());
   }, [q.data?.id, planId]);
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -63,7 +73,9 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
   });
   const dateVerdict = checkVisitDate(date, isAdmin);
-  const missingReason = lines.some((l) => !l.done && !l.note.trim());
+  const turnId = q.data?.rotation?.turnDeviceId ?? null;
+  const isOffTurn = (deviceId: number) => q.data?.devices.find((d) => d.deviceId === deviceId)?.centreUse === "adjunct" && deviceId !== turnId;
+  const missingReason = lines.some((l) => !l.done && !isOffTurn(l.deviceId) && !l.note.trim());
   const noneDone = !lines.some((l) => l.done);
   return (
     <Dialog open={planId !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -83,11 +95,16 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
                     <Checkbox checked={l.done} disabled={needleLocked} onCheckedChange={(v) => set(i, { done: v === true })} data-testid={`exec-done-${d.deviceId}`} />
                     {d.nameAr} <span className="text-xs text-muted-foreground">({d.minutes ?? "—"} د في الخطّة)</span>
                   </label>
+                  {d.centreUse === "adjunct" && (
+                    <p className={`text-[11px] ${d.deviceId === turnId ? "text-violet-800 font-medium" : "text-muted-foreground"}`} data-testid={`exec-turn-${d.deviceId}`}>
+                      {d.deviceId === turnId ? "مساعد — دورُه هذه الجلسة" : `${ADJUNCT_OFF_TURN_NOTE} (يُنفَّذ إن أردت)`}
+                    </p>
+                  )}
                   {needleLocked && <p className="text-[11px] text-amber-700">الإبرُ الجافة يعلّمها حاملُ «يطبّق الإبر الجافة» وحده.</p>}
                   <div className="grid grid-cols-3 gap-2">
                     <Input type="number" min={0} placeholder="الدقائق" value={l.minutes} disabled={!l.done}
                       onChange={(e) => set(i, { minutes: e.target.value })} data-testid={`exec-minutes-${d.deviceId}`} />
-                    <Input className="col-span-2" placeholder={l.done ? "ملاحظة (اختياري)" : "سببُ عدم التنفيذ *"} value={l.note}
+                    <Input className="col-span-2" placeholder={l.done || isOffTurn(d.deviceId) ? "ملاحظة (اختياري)" : "سببُ عدم التنفيذ *"} value={l.note}
                       onChange={(e) => set(i, { note: e.target.value })} data-testid={`exec-note-${d.deviceId}`} />
                   </div>
                 </div>
@@ -117,7 +134,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
 }
 
 // ══ سجلُّ جلسات الخطّة — ما نُفّذ وما لم يُنفَّذ، والإلغاءُ للمسؤول والمشرف العام ═══════════════════════════════
-interface SessionItem { deviceId: number; plannedMinutes: number | null; done: boolean; minutes: number | null; note: string | null; nameAr: string }
+interface SessionItem { deviceId: number; plannedMinutes: number | null; done: boolean; minutes: number | null; note: string | null; nameAr: string; offTurn?: boolean }
 interface SessionRow {
   id: number; sessionDate: string; shift: string; executedByName: string | null; visitId: number | null; noteToSpecialist: string | null;
   cancelledAt: string | null; cancelledByName: string | null; cancelReason: string | null; items: SessionItem[];
@@ -159,8 +176,8 @@ export function PlanSessionsHistory({ planId }: { planId: number }) {
           </div>
           <ul className="mt-1 space-y-0.5">
             {s.items.map((i) => (
-              <li key={i.deviceId} className={i.done ? "" : "text-red-700"}>
-                {i.done ? "✓" : "✗"} {i.nameAr}
+              <li key={i.deviceId} className={i.done ? "" : i.offTurn ? "text-muted-foreground" : "text-red-700"} data-testid={`session-item-${s.id}-${i.deviceId}`}>
+                {i.done ? "✓" : i.offTurn ? "↻" : "✗"} {i.nameAr}
                 {i.done && i.minutes != null ? ` — ${i.minutes} د` : ""}
                 {i.done && i.plannedMinutes != null && i.minutes != null && i.minutes !== i.plannedMinutes ? ` (الخطّة ${i.plannedMinutes})` : ""}
                 {i.note ? ` — ${i.note}` : ""}

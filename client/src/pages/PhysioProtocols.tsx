@@ -26,6 +26,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
   AGE_GROUPS, AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, DRY_NEEDLING_DEVICE_CODE, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, EVIDENCE_LEVELS,
+  CENTRE_USES, CENTRE_USE_LABELS, CENTRE_USE_LABELS_EN, CENTRE_USE_HINTS, CENTRE_USE_HINTS_EN, type CentreUse,
   PROTOCOL_CATEGORIES, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN, PROTOCOL_STATUS_LABELS, PROTOCOL_STATUS_LABELS_EN,
   canEditProtocols, canReadProtocols, isProtocolLang, localizedText,
   type AgeGroup, type EvidenceLevel, type ProtocolCategory, type ProtocolLang, type ProtocolReference,
@@ -40,6 +41,8 @@ interface DeviceLine {
   parametersEn: string | null; noteEn: string | null;
   //  §4.cx — خاناتُ الجهاز بقيمٍ بلا لغة.
   params?: Record<string, string>;
+  //  ترحيل ١٢٢ — «استعمالُ المركز» فعّالاً (المكتوبُ أو المشتقّ)، وهل كُتب.
+  centreUse?: CentreUse; centreUseSet?: boolean;
   code?: string; nameAr?: string; nameEn?: string; availableBranchIds?: number[];
 }
 interface Protocol {
@@ -61,6 +64,11 @@ interface Protocol {
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; branches: { id: number; name: string }[]; available: string[]; canManage: boolean }
 
+const USE_TONE: Record<CentreUse, string> = {
+  core: "bg-sky-100 text-sky-900 border-sky-300",
+  adjunct: "bg-violet-100 text-violet-900 border-violet-300",
+  not_used: "bg-slate-100 text-slate-600 border-slate-300",
+};
 const EVIDENCE_TONE: Record<EvidenceLevel, string> = {
   recommended: "bg-emerald-100 text-emerald-800 border-emerald-300",
   optional: "bg-amber-100 text-amber-800 border-amber-300",
@@ -75,24 +83,24 @@ import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
 
 const T = {
   ar: {
-    library: "المكتبة", overview: "نظرة عامة", goals: "الأهداف", assessment: "التقييم والقياسات", devices: "الأجهزة ودرجةُ الدليل",
-    device: "الجهاز", grade: "الدرجة", params: "المعاملات", minutes: "الدقائق", availableIn: "متوفّر في", noDevices: "لا أجهزة في هذا البروتوكول.",
+    library: "المكتبة", overview: "نظرة عامة", goals: "الأهداف", assessment: "التقييم والقياسات", devices: "الأجهزة: استعمالُ المركز ودرجةُ الدليل",
+    device: "الجهاز", grade: "استعمالُ المركز · الدليل", params: "المعاملات", minutes: "الدقائق", availableIn: "متوفّر في", noDevices: "لا أجهزة في هذا البروتوكول.",
     nowhere: "غير متوفّر في أيّ فرع", notHere: "غير متوفّر في فرعك", needle: "يطبّقها حاملُ «الإبر الجافة» وحده",
     exercises: "التمارين والبرنامج المنزلي", exercisesSummary: "ملخّصُ البرنامج", contra: "موانع الاستعمال", precautions: "احتياطات", images: "صورٌ توضيحية", source: "المصدر",
     link: "الرابط", refs: "المراجع", noRefs: "لا مراجع بعد — البروتوكولُ بلا مرجعٍ عالميّ لا يُعتمَد.", lastEdit: "آخرُ تعديل",
     draft: "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — تُقرأ مرجعاً لا تعليمات.", approvedBy: "اعتمده", archived: "مؤرشف",
     perWeek: (n: number) => <><b>{n}</b> جلسات/أسبوع</>, weeks: (n: number) => <>لمدة <b>{n}</b> أسابيع</>, session: (n: number) => <>الجلسة <b>{n}</b> دقيقة</>,
-    fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية", deviceCount: (n: number, r: number) => `${n} جهاز · ${r} موصى به`,
+    fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية", deviceCount: (n: number, r: number) => `${n} جهاز · ${r} بدليلٍ قويّ`,
   },
   en: {
-    library: "Library", overview: "Overview", goals: "Goals", assessment: "Assessment & outcome measures", devices: "Devices & evidence grade",
-    device: "Device", grade: "Grade", params: "Parameters", minutes: "Minutes", availableIn: "Available in", noDevices: "No devices in this protocol.",
+    library: "Library", overview: "Overview", goals: "Goals", assessment: "Assessment & outcome measures", devices: "Devices: centre use & evidence grade",
+    device: "Device", grade: "Centre use · evidence", params: "Parameters", minutes: "Minutes", availableIn: "Available in", noDevices: "No devices in this protocol.",
     nowhere: "Not available in any branch", notHere: "Not available in your branch", needle: "Dry-needling certified staff only",
     exercises: "Exercises & home programme", exercisesSummary: "Programme summary", contra: "Contraindications", precautions: "Precautions", images: "Illustrations", source: "Source",
     link: "Link", refs: "References", noRefs: "No references yet — a protocol without a global reference is not approved.", lastEdit: "Last edited",
     draft: "Draft not yet approved by the physiotherapy supervisor — read it as reference, not as instructions.", approvedBy: "Approved by", archived: "Archived",
     perWeek: (n: number) => <><b>{n}</b> sessions/week</>, weeks: (n: number) => <>for <b>{n}</b> weeks</>, session: (n: number) => <><b>{n}</b> min/session</>,
-    fallback: "English not written yet — Arabic shown", deviceCount: (n: number, r: number) => `${n} devices · ${r} recommended`,
+    fallback: "English not written yet — Arabic shown", deviceCount: (n: number, r: number) => `${n} devices · ${r} strong evidence`,
   },
 } as const;
 const labelsOf = (lang: ProtocolLang) => lang === "en"
@@ -328,7 +336,18 @@ export function PhysioProtocolDetail() {
                       <td className="p-2"><div className="font-medium">{lang === "en" ? d.nameEn : d.nameAr}</div>
                         <div className={`text-xs text-muted-foreground ${start}`} dir={lang === "en" ? "rtl" : "ltr"}>{lang === "en" ? d.nameAr : d.nameEn}</div>
                         {d.code === DRY_NEEDLING_DEVICE_CODE && <div className="text-[11px] text-red-700 mt-0.5">{t.needle}</div>}</td>
-                      <td className="p-2"><span className={`inline-block rounded border px-2 py-0.5 text-xs ${EVIDENCE_TONE[d.evidence]}`}>{L.evidence[d.evidence]}</span></td>
+                      <td className="p-2 space-y-1">
+                        {d.centreUse && (
+                          <div>
+                            <span className={`inline-block rounded border px-2 py-0.5 text-xs font-semibold ${USE_TONE[d.centreUse]}`} data-testid={`protocol-device-use-${d.code}`}
+                              title={(lang === "en" ? CENTRE_USE_HINTS_EN : CENTRE_USE_HINTS)[d.centreUse]}>
+                              {(lang === "en" ? CENTRE_USE_LABELS_EN : CENTRE_USE_LABELS)[d.centreUse]}
+                            </span>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">{(lang === "en" ? CENTRE_USE_HINTS_EN : CENTRE_USE_HINTS)[d.centreUse]}</div>
+                          </div>
+                        )}
+                        <span className={`inline-block rounded border px-2 py-0.5 text-[11px] ${EVIDENCE_TONE[d.evidence]}`} data-testid={`protocol-device-evidence-${d.code}`}>{L.evidence[d.evidence]}</span>
+                      </td>
                       <td className="p-2 whitespace-pre-wrap">
                         {d.code && deviceParamsLine(d.code, d.params, lang) && (
                           <div className="font-medium text-xs mb-1" dir={lang === "en" ? "ltr" : "rtl"} data-testid={`protocol-device-params-${d.code}`}>{deviceParamsLine(d.code, d.params, lang)}</div>
@@ -427,7 +446,9 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
   }));
   const [lines, setLines] = useState<DeviceLine[]>(() => (initial?.devices ?? []).map((d) => ({
     deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
-    parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null, params: d.params ?? {} })));
+    parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null, params: d.params ?? {},
+    //  الفعّالُ يُحفَظ مكتوباً: ما يراه سليم في الصفحة هو ما يُكتب.
+    centreUse: d.centreUse })));
   const [refs, setRefs] = useState<ProtocolReference[]>(() => initial?.references ?? []);
   const set = (k: keyof typeof f) => (e: any) => setF((p) => ({ ...p, [k]: typeof e === "string" ? e : e.target.value }));
   const unused = useMemo(() => (matrix.data?.devices ?? []).filter((d) => !lines.some((l) => l.deviceId === d.id)), [matrix.data, lines]);
@@ -486,9 +507,10 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
           {bi("assessment", "التقييم والقياسات", "Assessment & outcome measures", 3)}
 
           <div className="space-y-2 rounded-md border p-2">
-            <p className="font-semibold">الأجهزة ودرجةُ الدليل</p>
+            <p className="font-semibold">الأجهزة: استعمالُ المركز ودرجةُ الدليل</p>
+            <p className="text-[11px] text-muted-foreground">«استعمالُ المركز» وحده يحكم خطّةَ المريض: الأساسيُّ في كلّ جلسة، والمساعدُ يتناوب (جهازٌ مساعدٌ واحد في كلّ جلسة)، و«لا يُستخدم» لا يدخل الخطّة. ودرجةُ الدليل للمعرفة ولا تمنع شيئاً.</p>
             {lines.map((l, i) => (
-              <div key={l.deviceId} className="grid gap-2 sm:grid-cols-[1fr_9rem_5rem_auto] items-start border-b pb-2" data-testid={`pf-device-${i}`}>
+              <div key={l.deviceId} className="grid gap-2 sm:grid-cols-[1fr_9rem_9rem_5rem_auto] items-start border-b pb-2" data-testid={`pf-device-${i}`}>
                 <div><div className="font-medium">{nameOf(l.deviceId)?.nameAr} <span className="text-xs text-muted-foreground" dir="ltr">{nameOf(l.deviceId)?.nameEn}</span></div>
                   <div className="grid gap-1 sm:grid-cols-2 mt-1">
                     <Input placeholder="المعاملات (الشدّة، التردّد، الموضع…)" value={l.parameters ?? ""} onChange={(e) => setLine(i, { parameters: e.target.value || null })} />
@@ -505,8 +527,12 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
                       ))}
                     </div>
                   )}</div>
+                <Select value={l.centreUse ?? "core"} onValueChange={(v) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, centreUse: v as CentreUse } : x)))}>
+                  <SelectTrigger data-testid={`pf-device-${i}-use`}><SelectValue /></SelectTrigger>
+                  <SelectContent>{CENTRE_USES.map((u) => <SelectItem key={u} value={u}>{CENTRE_USE_LABELS[u]} — {CENTRE_USE_HINTS[u]}</SelectItem>)}</SelectContent>
+                </Select>
                 <Select value={l.evidence} onValueChange={(v) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, evidence: v as EvidenceLevel } : x)))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger data-testid={`pf-device-${i}-evidence`}><SelectValue /></SelectTrigger>
                   <SelectContent>{EVIDENCE_LEVELS.map((e) => <SelectItem key={e} value={e}>{EVIDENCE_LABELS[e]}</SelectItem>)}</SelectContent>
                 </Select>
                 <Input inputMode="numeric" placeholder="دقائق" value={l.minutes ?? ""}
@@ -515,7 +541,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
               </div>
             ))}
             {unused.length > 0 && (
-              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null, params: {} }])}>
+              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", centreUse: "core", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null, params: {} }])}>
                 <SelectTrigger className="w-60" data-testid="pf-add-device"><SelectValue placeholder="+ أضف جهازاً" /></SelectTrigger>
                 <SelectContent>{unused.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.nameAr} — {d.nameEn}</SelectItem>)}</SelectContent>
               </Select>

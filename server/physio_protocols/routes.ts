@@ -16,7 +16,7 @@ import multer from "multer";
 import { logAudit } from "../accounting/ledger";
 import { getSession } from "../sessions_module/permissions";
 import {
-  canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel,
+  canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel, isCentreUse,
   isProtocolLang,
   isProtocolCategory, normalizeReferences, statusAfterEdit, type ProtocolStatus,
 } from "@shared/physio_protocols";
@@ -59,14 +59,16 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
   for (const d of b.devices) {
     const deviceId = Number(d?.deviceId);
     if (!Number.isInteger(deviceId) || deviceId <= 0) return "جهازٌ غير صالح";
-    if (!isEvidenceLevel(d?.evidence)) return "اختر لكلّ جهازٍ درجتَه: موصى به · اختياري · غير موصى به";
+    if (!isEvidenceLevel(d?.evidence)) return "اختر لكلّ جهازٍ درجةَ دليله: قويّ · محدود أو متضارب · الإرشاداتُ ضدّه روتينياً";
+    //  «استعمالُ المركز» (ترحيل ١٢٢): أساسيّ · مساعد · لا يُستخدم — والغائبُ (شاشةٌ أقدم) يُشتقّ من درجة الدليل كما كان.
+    if (d?.centreUse !== undefined && d.centreUse !== null && !isCentreUse(d.centreUse)) return "استعمالُ المركز: أساسيّ · مساعد · لا يُستخدم";
     const minutes = intIn(d?.minutes, 1, 120);
     if (minutes === "bad") return "دقائقُ الجهاز ١–١٢٠";
     //  خاناتُ الجهاز (§4.cx) — كائنٌ بقيمٍ قصيرة؛ ومطابقتُها لرمز الجهاز في `assertDevices`.
     const params = d?.params ?? {};
     if (typeof params !== "object" || Array.isArray(params)) return "معاملاتُ الجهاز غير صالحة";
     devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000),
-      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params });
+      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params, centreUse: isCentreUse(d?.centreUse) ? d.centreUse : null });
   }
   return {
     code, titleAr, titleEn, category: b.category, ageGroup: b.ageGroup,

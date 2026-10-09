@@ -5,6 +5,7 @@
 //   ٢. **التعديل**: حالةُ المريض + البروتوكولُ المختار بأجهزته الجائزة في فرع الخطّة وموانعه ⟵ حذفٌ ودقائقُ وجرعةٌ وملاحظات.
 // **وحالةُ المريض بلا اسمٍ ولا هاتفٍ ولا رمز**: العمرُ وحالتُه المسجّلة ونصُّ آخر معاينة علاجٍ طبيعيّ غيرِ ملغاة وسطرُ الأخصائيّ —
 // **ومعها التقييمُ الأوّليّ كاملاً** (§4.da المرحلة ٤: «على أساس هذه التقييمات تُختار الخطّة») و«سبب المراجعة» بكلمات المراجع.
+import { centreUseOf } from "@shared/physio_protocols";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { medicalExams, patients, physioPlanSuggestions, physioProtocols, type PhysioPlanSuggestion } from "@shared/schema";
@@ -86,6 +87,8 @@ If nothing in the library fits, return {"choices":[],"noMatchReasonAr":"<why, in
 
 const SYSTEM_ADJUST = `${SYSTEM_COMMON}
 TASK: adapt the chosen protocol to THIS patient. The plan starts with exactly the protocol devices listed (minutes as listed) and the protocol dose.
+Each device has the centre's own use: "core" runs every session; "adjunct" devices ROTATE — one adjunct per session (sessions are 50 minutes),
+so do not remove an adjunct just to save time. "evidence" is the guideline grade only; the centre's use decides what is in the plan.
 You may ONLY:
   • remove a listed device that does not suit this patient (e.g. the exam mentions one of its contraindications) — with a reason;
   • LOWER a device's minutes (never above the listed minutes; 1–60 when none is listed) — with a reason;
@@ -142,7 +145,8 @@ export async function suggestPlan(p: SuggestInput) {
 
   const chosen = await getProtocol(choices[0].protocolId);
   if (!chosen || chosen.isArchived) throw new PlanError(404, "البروتوكول غير موجود");
-  const allowedRows = chosen.devices.filter((d) => d.evidence !== "not_recommended" && d.availableBranchIds.includes(p.branchId));
+  //  «استعمالُ المركز» يحكم (ترحيل ١٢٢): «لا يُستخدم» لا يراه المساعد — والأساسيُّ والمساعدُ بدورهما.
+  const allowedRows = chosen.devices.filter((d) => centreUseOf(d) !== "not_used" && d.availableBranchIds.includes(p.branchId));
   const allowed: AllowedLine[] = allowedRows.map((d) => ({ deviceId: Number(d.deviceId), minutes: d.minutes, nameAr: d.nameAr, nameEn: d.nameEn }));
   const dose = { sessionsPerWeek: chosen.sessionsPerWeek, durationWeeks: chosen.durationWeeks, sessionMinutes: chosen.sessionMinutes };
   const rawAdj = await complete({
@@ -151,7 +155,8 @@ export async function suggestPlan(p: SuggestInput) {
       id: chosen.id, titleEn: chosen.titleEn, titleAr: chosen.titleAr, ageGroup: chosen.ageGroup, dose,
       goals: clip(chosen.goalsEn ?? chosen.goals, 1500), contraindications: clip(chosen.contraindicationsEn ?? chosen.contraindications, 2000),
       precautions: clip(chosen.precautionsEn ?? chosen.precautions, 2000),
-      devices: allowedRows.map((d) => ({ deviceId: Number(d.deviceId), nameEn: d.nameEn, nameAr: d.nameAr, evidence: d.evidence, minutes: d.minutes,
+      devices: allowedRows.map((d) => ({ deviceId: Number(d.deviceId), nameEn: d.nameEn, nameAr: d.nameAr, evidence: d.evidence,
+        centreUse: centreUseOf(d), minutes: d.minutes,
         parameters: clip(d.parametersEn ?? d.parameters, 300), note: clip(d.noteEn ?? d.note, 300) })),
     } }),
   });
