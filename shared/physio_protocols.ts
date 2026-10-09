@@ -1,7 +1,7 @@
 // **مكتبةُ بروتوكولات العلاج الطبيعي** (ترحيل ١٠٦، §4.cj — المرحلةُ الثانية من خطّة العلاج الطبيعي، ٢٠٢٦-١٠-٠٧).
 //
 // قراراتُ المالك:
-//   • البروتوكولاتُ من مصادر عالمية موثوقة، **ولكلّ جهازٍ في البروتوكول درجةُ دليل**: موصى به · اختياري · غير موصى به.
+//   • البروتوكولاتُ من مصادر عالمية موثوقة، **ولكلّ جهازٍ في البروتوكول درجةُ دليل** — ومنذ ترحيل ١٢٢ «استعمالُ المركز» بجانبها (أدناه).
 //   • **يعدّلها ويضيفها ويحذفها** المشرفُ العام (سليم) وأخصائيُّ العلاج الطبيعي والطبيبُ المسؤول (المالك).
 //   • **والمسوّداتُ تُراجَع**: لا تصير «معتمَدة» إلّا بالمشرف العام أو المسؤول — وتعديلُ المعتمَد بيد غيرهما يعيده مسوّدة.
 //   • **توفّرُ الأجهزة بالفرع**: بغداد وذي قار فيهما علاجٌ طبيعي اليوم، وكربلاء والموصل يُفعَّلان لاحقاً — ويُرى ذلك في البروتوكول.
@@ -10,13 +10,57 @@ import { hasPhysioRole, hasRole, type RoleHolder } from "./user_roles";
 
 export const EVIDENCE_LEVELS = ["recommended", "optional", "not_recommended"] as const;
 export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
+//  **«درجةُ الدليل»** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.cx): صادقةٌ بمصدرها **ولا تمنع شيئاً** — والذي يحكم الخطّة «استعمالُ المركز» أدناه.
+//  (الرموزُ المخزَّنة كما كانت؛ الألفاظُ وحدها صارت تقول الدليلَ لا القرار.)
 export const EVIDENCE_LABELS: Record<EvidenceLevel, string> = {
-  recommended: "موصى به",
-  optional: "اختياري",
-  not_recommended: "غير موصى به",
+  recommended: "دليلٌ قويّ",
+  optional: "دليلٌ محدود أو متضارب",
+  not_recommended: "الإرشاداتُ ضدّه روتينياً",
 };
 export const isEvidenceLevel = (v: unknown): v is EvidenceLevel =>
   typeof v === "string" && (EVIDENCE_LEVELS as readonly string[]).includes(v);
+
+/**
+ * **«استعمالُ المركز»** (ترحيل ١٢٢، §4.cx — قرارُ المالك ٢٠٢٦-١٠-٠٩): يقرّره سليم، وهو وحده ما يحكم الخطّة.
+ * أساسيٌّ ⟵ في كلّ جلسة · مساعدٌ ⟵ يتناوب: جهازٌ مساعدٌ واحدٌ في كلّ جلسة («جلساتُنا ٥٠ دقيقة فقط») · لا يُستخدم ⟵ لا يدخل الخطّة.
+ */
+export const CENTRE_USES = ["core", "adjunct", "not_used"] as const;
+export type CentreUse = (typeof CENTRE_USES)[number];
+export const CENTRE_USE_LABELS: Record<CentreUse, string> = { core: "أساسيّ", adjunct: "مساعد", not_used: "لا يُستخدم" };
+export const CENTRE_USE_LABELS_EN: Record<CentreUse, string> = { core: "Core", adjunct: "Adjunct", not_used: "Not used" };
+export const CENTRE_USE_HINTS: Record<CentreUse, string> = {
+  core: "في كلّ جلسة", adjunct: "يتناوب — جهازٌ مساعدٌ واحد في كلّ جلسة", not_used: "لا يدخل خطّةَ المريض",
+};
+export const CENTRE_USE_HINTS_EN: Record<CentreUse, string> = {
+  core: "Every session", adjunct: "Rotates — one adjunct device per session", not_used: "Not added to patient plans",
+};
+export const isCentreUse = (v: unknown): v is CentreUse => typeof v === "string" && (CENTRE_USES as readonly string[]).includes(v);
+
+/**
+ * استعمالُ المركز لجهاز بروتوكول — المكتوبُ، **وإلّا يُشتقّ من درجة الدليل كما كانت تحكم الخطّة قبل ترحيل ١٢٢**: موصى به ⟵ أساسيّ ·
+ * اختياري ⟵ مساعد · غير موصى به ⟵ لا يُستخدم. فالبروتوكولاتُ التي لم يقرّر فيها سليم بعد لا يتغيّر ما يدخل خطّتَها.
+ */
+export function centreUseOf(row: { centreUse?: unknown; evidence?: unknown }): CentreUse {
+  if (isCentreUse(row.centreUse)) return row.centreUse;
+  return row.evidence === "recommended" ? "core" : row.evidence === "optional" ? "adjunct" : "not_used";
+}
+
+/** بندُ خطّة: مساعدٌ أو أساسيّ — و`NULL` (خططٌ قبل ترحيل ١٢٢) أساسيٌّ كما كان يُنفَّذ في كلّ جلسة. */
+export const planLineUse = (v: unknown): "core" | "adjunct" => (v === "adjunct" ? "adjunct" : "core");
+
+/**
+ * **دورُ الجهاز المساعد في الجلسة القادمة**: المساعدون بترتيبهم في الخطّة، والجلسةُ رقم (ما سُجّل قبلها + ١) — الأوّلُ في الجلسة الأولى،
+ * والثاني في الثانية، ثمّ يعود الدور. `null` بلا مساعد.
+ */
+export function adjunctTurn(adjunctDeviceIds: readonly number[], sessionsSoFar: number): number | null {
+  if (!adjunctDeviceIds.length) return null;
+  const n = adjunctDeviceIds.length;
+  const k = Math.max(0, Math.trunc(sessionsSoFar));
+  return adjunctDeviceIds[k % n];
+}
+
+/** ملاحظةُ البند المساعد الذي ليس دورَه — تُكتب مع الجلسة بدل «سبب عدم التنفيذ». */
+export const ADJUNCT_OFF_TURN_NOTE = "مساعدٌ بالتناوب — ليس دورَه هذه الجلسة";
 
 export const AGE_GROUPS = ["pediatric", "adult", "geriatric", "all"] as const;
 export type AgeGroup = (typeof AGE_GROUPS)[number];
@@ -146,9 +190,9 @@ export function localizedText(row: Record<string, any> | null | undefined, field
 }
 
 export const EVIDENCE_LABELS_EN: Record<EvidenceLevel, string> = {
-  recommended: "Recommended",
-  optional: "Optional",
-  not_recommended: "Not recommended",
+  recommended: "Strong evidence",
+  optional: "Limited or conflicting evidence",
+  not_recommended: "Guidelines advise against routine use",
 };
 export const AGE_GROUP_LABELS_EN: Record<AgeGroup, string> = {
   pediatric: "Pediatric",

@@ -34,6 +34,8 @@ import {
 interface PlanDevice {
   deviceId: number; minutes: number | null; parameters: string | null; parametersEn: string | null; note: string | null; noteEn: string | null;
   code?: string; nameAr?: string; nameEn?: string; availableInBranch?: boolean;
+  //  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب.
+  centreUse?: "core" | "adjunct";
 }
 interface Plan {
   id: number; patientId: number; branchId: number; branchName: string | null; status: PlanStatus;
@@ -46,6 +48,8 @@ interface Plan {
   patient: { id: number; name: string; code: string | null; age: string | null } | null;
   protocol: { id: number; titleAr: string; titleEn: string; status: string; code: string } | null;
   devices: PlanDevice[]; assignees: { userId: number; name: string; role: string }[];
+  /** دورُ المساعد في الجلسة القادمة (ترحيل ١٢٢). */
+  rotation?: { sessionsSoFar: number; turnDeviceId: number | null };
   canWrite: boolean; canApprove: boolean; canDelete: boolean; canExecute?: boolean; canCancelSessions?: boolean;
   aiSuggestion?: Suggestion | null;
   graduatedAt?: string | null; graduatedByName?: string | null;
@@ -324,8 +328,15 @@ export default function PhysioPlanPage() {
                   </tr></thead>
                   <tbody>
                     {plan.devices.map((d) => (
-                      <tr key={d.deviceId} className="border-b last:border-0 align-top">
+                      <tr key={d.deviceId} className="border-b last:border-0 align-top" data-testid={`plan-device-${d.deviceId}`}>
                         <td className="py-1.5">{lang === "en" ? d.nameEn : d.nameAr}
+                          {/*  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة، أو مساعدٌ بالتناوب ومعه «دوره في الجلسة القادمة». */}
+                          <div className="text-[11px] mt-0.5" data-testid={`plan-device-use-${d.deviceId}`}>
+                            {d.centreUse === "adjunct"
+                              ? <span className="text-violet-800">{lang === "en" ? "Adjunct — rotates" : "مساعد — بالتناوب"}
+                                  {plan.rotation?.turnDeviceId === d.deviceId && <b> · {lang === "en" ? "next session" : "دورُه الجلسة القادمة"}</b>}</span>
+                              : <span className="text-sky-800">{lang === "en" ? "Core — every session" : "أساسيّ — كلَّ جلسة"}</span>}
+                          </div>
                           {d.availableInBranch === false && <div className="text-[11px] text-red-700">{t.notAvail}</div>}</td>
                         <td className="py-1.5">{d.minutes ?? "—"}</td>
                         <td className="py-1.5 whitespace-pre-wrap">{localizedText(d, "parameters", lang).text ?? "—"}</td>
@@ -446,7 +457,8 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
       titleAr: f.titleAr, titleEn: f.titleEn, goals: f.goals, goalsEn: f.goalsEn, exercises: f.exercises, exercisesEn: f.exercisesEn,
       precautions: f.precautions, precautionsEn: f.precautionsEn, notes: f.notes, notesEn: f.notesEn,
       sessionsPerWeek: f.sessionsPerWeek, durationWeeks: f.durationWeeks, sessionMinutes: f.sessionMinutes,
-      devices: lines.map((l) => ({ deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn, note: l.note, noteEn: l.noteEn })),
+      devices: lines.map((l) => ({ deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn, note: l.note, noteEn: l.noteEn,
+        centreUse: l.centreUse ?? "core" })),
     })).json(),
     onSuccess: (r: any) => {
       toast({ title: "حُفظت الخطّة", description: r?.demoted ? "عادت الخطّةُ إلى الاعتماد ووصل التنبيه." : undefined });
@@ -487,7 +499,15 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
             <div key={l.deviceId} className="rounded-md border p-2 space-y-2 bg-white" data-testid={`plan-line-${l.deviceId}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium">{en ? l.nameEn : l.nameAr}</span>
-                <Button variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                <div className="flex items-center gap-1">
+                  {/*  ترحيل ١٢٢ — الأساسيُّ في كلّ جلسة، والمساعدُ يتناوب: جهازٌ مساعدٌ واحد في كلّ جلسة. */}
+                  <select className="rounded-md border px-2 py-1 text-xs bg-white" value={l.centreUse ?? "core"} data-testid={`select-plan-use-${l.deviceId}`}
+                    onChange={(e) => setLines((p) => p.map((x, j) => (j === i ? { ...x, centreUse: e.target.value as "core" | "adjunct" } : x)))}>
+                    <option value="core">أساسيّ — كلَّ جلسة</option>
+                    <option value="adjunct">مساعد — بالتناوب</option>
+                  </select>
+                  <Button variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                </div>
               </div>
               <div className="grid sm:grid-cols-3 gap-2">
                 <Input type="number" placeholder="الدقائق" value={l.minutes ?? ""}
@@ -503,7 +523,7 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
             <select className="w-full rounded-md border px-2 py-2 text-sm bg-white" value="" data-testid="select-plan-add-device"
               onChange={(e) => {
                 const d = addable.find((x) => x.id === Number(e.target.value));
-                if (d) setLines((p) => [...p, { deviceId: d.id, nameAr: d.nameAr, nameEn: d.nameEn, minutes: null, parameters: null, parametersEn: null, note: null, noteEn: null }]);
+                if (d) setLines((p) => [...p, { deviceId: d.id, nameAr: d.nameAr, nameEn: d.nameEn, minutes: null, parameters: null, parametersEn: null, note: null, noteEn: null, centreUse: "core" }]);
               }}>
               <option value="">+ إضافة جهاز…</option>
               {addable.map((d) => <option key={d.id} value={d.id}>{en ? d.nameEn : d.nameAr}</option>)}

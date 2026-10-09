@@ -58,8 +58,10 @@ export function parsePlanBody(b: any): store.PlanInput | string {
     seen.add(deviceId);
     const minutes = intIn(d?.minutes, 1, 120);
     if (minutes === "bad") return "دقائقُ الجهاز ١–١٢٠";
+    //  ترحيل ١٢٢ — أساسيٌّ أو مساعدٌ بالتناوب؛ والغائبُ (شاشةٌ أقدم) أساسيٌّ كما كانت الخطّةُ تُنفَّذ.
+    if (d?.centreUse !== undefined && d.centreUse !== null && d.centreUse !== "core" && d.centreUse !== "adjunct") return "استعمالُ الجهاز في الخطّة: أساسيّ أو مساعد";
     devices.push({ deviceId, minutes, parameters: text(d?.parameters, 1000), parametersEn: text(d?.parametersEn, 1000),
-      note: text(d?.note, 1000), noteEn: text(d?.noteEn, 1000) });
+      note: text(d?.note, 1000), noteEn: text(d?.noteEn, 1000), centreUse: d?.centreUse === "adjunct" ? "adjunct" : "core" });
   }
   return {
     titleAr, titleEn: text(b?.titleEn, 300),

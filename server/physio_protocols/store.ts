@@ -9,7 +9,8 @@ import type { MeasureDef } from "@shared/physio_assessments";
 import { deviceParamsLine, doseLine, mergeDose, normalizeDeviceParams } from "@shared/physio_exercises";
 import { getPhases } from "./exercises_store";
 import {
-  AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN,
+  AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, CENTRE_USE_HINTS, CENTRE_USE_HINTS_EN, CENTRE_USE_LABELS, CENTRE_USE_LABELS_EN, centreUseOf,
+  EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN, type CentreUse,
   PROTOCOL_TEXT_FIELDS, localizedText,
   type AgeGroup, type EvidenceLevel, type ProtocolCategory, type ProtocolLang, type ProtocolReference, type ProtocolStatus,
 } from "@shared/physio_protocols";
@@ -23,6 +24,8 @@ export interface DeviceLineInput {
   parametersEn: string | null; noteEn: string | null;
   /** §4.cx — خاناتُ الجهاز (`DEVICE_PARAM_FIELDS`)، تُتحقَّق برمز الجهاز في `assertDevices`. */
   params: Record<string, string>;
+  /** ترحيل ١٢٢ — «استعمالُ المركز»؛ `null` يُشتقّ من درجة الدليل (`centreUseOf`). */
+  centreUse?: CentreUse | null;
 }
 export interface ProtocolInput {
   code: string; titleAr: string; titleEn: string; category: string; ageGroup: string;
@@ -63,7 +66,7 @@ export async function getProtocol(id: number) {
     id: physioProtocolDevices.id, deviceId: physioProtocolDevices.deviceId, evidence: physioProtocolDevices.evidence,
     parameters: physioProtocolDevices.parameters, minutes: physioProtocolDevices.minutes, note: physioProtocolDevices.note,
     parametersEn: physioProtocolDevices.parametersEn, noteEn: physioProtocolDevices.noteEn,
-    params: physioProtocolDevices.params,
+    params: physioProtocolDevices.params, centreUse: physioProtocolDevices.centreUse,
     displayOrder: physioProtocolDevices.displayOrder,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
@@ -80,7 +83,9 @@ export async function getProtocol(id: number) {
       min: Number(m.minValue), max: Number(m.maxValue), higherIsBetter: m.higherIsBetter }));
   return {
     ...p,
-    devices: lines.map((l) => ({ ...l, availableBranchIds: avail.filter((a) => a.deviceId === l.deviceId && a.available).map((a) => a.branchId) })),
+    //  «استعمالُ المركز» فعّالاً — المكتوبُ أو المشتقُّ من درجة الدليل (`centreUse`)، ومعه هل كُتب (`centreUseSet`).
+    devices: lines.map((l) => ({ ...l, centreUse: centreUseOf(l), centreUseSet: l.centreUse !== null && l.centreUse !== undefined,
+      availableBranchIds: avail.filter((a) => a.deviceId === l.deviceId && a.available).map((a) => a.branchId) })),
     images,
     measures,
     //  §4.cx — مراحلُ البرنامج بتمارينها وبطاقاتها كاملة.
@@ -110,7 +115,7 @@ async function writeDevices(tx: any, protocolId: number, lines: DeviceLineInput[
   if (!lines.length) return;
   await tx.insert(physioProtocolDevices).values(lines.map((l, i) => ({
     protocolId, deviceId: l.deviceId, evidence: l.evidence, parameters: l.parameters, minutes: l.minutes, note: l.note,
-    parametersEn: l.parametersEn, noteEn: l.noteEn, params: l.params ?? {}, displayOrder: i,
+    parametersEn: l.parametersEn, noteEn: l.noteEn, params: l.params ?? {}, centreUse: l.centreUse ?? null, displayOrder: i,
   })));
 }
 
@@ -306,6 +311,8 @@ export async function protocolBrief(id: number, lang: ProtocolLang, activeBranch
       devices: p.devices.map((d) => ({
         device: en ? d.nameEn : d.nameAr, deviceOtherLanguage: en ? d.nameAr : d.nameEn, code: d.code,
         evidence: (en ? EVIDENCE_LABELS_EN : EVIDENCE_LABELS)[d.evidence as EvidenceLevel] ?? d.evidence,
+        //  ترحيل ١٢٢ — ما يحكم الخطّة في المركز، منفصلاً عن درجة الدليل.
+        centreUse: `${(en ? CENTRE_USE_LABELS_EN : CENTRE_USE_LABELS)[d.centreUse as CentreUse]} — ${(en ? CENTRE_USE_HINTS_EN : CENTRE_USE_HINTS)[d.centreUse as CentreUse]}`,
         minutes: d.minutes,
         parameters: pick(d, "parameters", `${d.code}.parameters`),
         settings: deviceParamsLine(d.code, d.params as Record<string, string>, lang) || null,

@@ -8,7 +8,7 @@
 //   • **بروتوكولٌ غيرُ معتمَد يُبنى عليه** بشارةٍ ظاهرة «بروتوكول غير معتمد بعد».
 //   • **تعديلُ المعتمَدة بيد الأخصائيّ يعيدها إلى الاعتماد**. والمنفّذُ (معالج · تقنيّ · مدرّب) يرى ولا يعدّل.
 //   • **الخططُ القديمة** (`treatment_plans`) تبقى للقراءة في التبويب نفسِه.
-import { canApproveProtocols, canConsultProtocols, canEditProtocols, canReadProtocols, type ProtocolSessionLike } from "./physio_protocols";
+import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canEditProtocols, canReadProtocols, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
 
 export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
@@ -118,13 +118,16 @@ export interface ExecutionItemInput { deviceId: number; done: boolean; minutes: 
  */
 export function executionItemsError(p: {
   planDeviceIds: number[]; items: ExecutionItemInput[]; needleDeviceId: number | null; canDryNeedle: boolean;
+  /** **المساعدون الذين ليس دورَهم هذه الجلسة** (ترحيل ١٢٢، §4.cx) — تركُهم ليس «لم يُنفَّذ» فلا يُطلب له سبب. */
+  offTurnDeviceIds?: readonly number[];
 }): string | null {
   const ids = p.items.map((i) => i.deviceId);
   if (new Set(ids).size !== ids.length) return "بندٌ مكرّر";
   const plan = new Set(p.planDeviceIds);
   if (ids.length !== plan.size || ids.some((d) => !plan.has(d))) return "البنودُ بنودُ الخطّة بأعيانها — لا يُضاف جهازٌ ولا يُحذف بند";
   if (!p.items.some((i) => i.done)) return "لم يُعلَّم أيُّ بندٍ «نُفّذ» — لا جلسةَ تُسجَّل";
-  if (p.items.some((i) => !i.done && !(i.note ?? "").trim())) return "اكتب سببَ كلّ بندٍ لم يُنفَّذ";
+  const offTurn = new Set(p.offTurnDeviceIds ?? []);
+  if (p.items.some((i) => !i.done && !offTurn.has(i.deviceId) && !(i.note ?? "").trim())) return "اكتب سببَ كلّ بندٍ لم يُنفَّذ";
   if (p.needleDeviceId != null && !p.canDryNeedle && p.items.some((i) => i.deviceId === p.needleDeviceId && i.done)) {
     return "بندُ الإبر الجافة يُعلَّم «نُفّذ» بيد حامل «يطبّق الإبر الجافة» وحده";
   }
@@ -281,4 +284,17 @@ export function parseModelJson(text: string): Record<string, any> | null {
     const v = JSON.parse(s.slice(a, b + 1));
     return v && typeof v === "object" && !Array.isArray(v) ? v : null;
   } catch { return null; }
+}
+
+/**
+ * **المساعدُ في الجلسة القادمة** (ترحيل ١٢٢، §4.cx — قرارُ المالك: «يتناوب لأنّ جلساتنا ٥٠ دقيقة فقط»): المساعدون بترتيبهم في الخطّة،
+ * ودورُ أحدهم بعدد الجلسات المسجَّلة قبلها (`adjunctTurn`)؛ والباقون «ليس دورَهم» — تركُهم ليس انحرافاً. والأساسيُّ في كلّ جلسة.
+ */
+export function sessionAdjuncts(
+  lines: readonly { deviceId: number; centreUse?: unknown; displayOrder?: number | null }[], sessionsSoFar: number,
+): { turnDeviceId: number | null; offTurnDeviceIds: number[] } {
+  const adj = lines.filter((l) => planLineUse(l.centreUse) === "adjunct")
+    .slice().sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((l) => Number(l.deviceId));
+  const turnDeviceId = adjunctTurn(adj, sessionsSoFar);
+  return { turnDeviceId, offTurnDeviceIds: adj.filter((d) => d !== turnDeviceId) };
 }

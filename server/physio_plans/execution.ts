@@ -10,9 +10,9 @@ import {
   physioPlanSessions, physioPlans, sessionCounts, visits,
 } from "@shared/schema";
 import {
-  countsFromExecution, executionItemsError, sessionTreatmentType, type ExecutionItemInput,
+  countsFromExecution, executionItemsError, sessionAdjuncts, sessionTreatmentType, type ExecutionItemInput,
 } from "@shared/physio_plans";
-import { DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
+import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { storage } from "../storage";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import { PlanError, type Actor } from "./store";
@@ -46,7 +46,7 @@ export async function planSessions(planId: number) {
   const items = await db.select({
     sessionId: physioPlanSessionItems.sessionId, deviceId: physioPlanSessionItems.deviceId, plannedMinutes: physioPlanSessionItems.plannedMinutes,
     done: physioPlanSessionItems.done, minutes: physioPlanSessionItems.minutes, note: physioPlanSessionItems.note,
-    nameAr: devices.nameAr, nameEn: devices.nameEn,
+    offTurn: physioPlanSessionItems.offTurn, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioPlanSessionItems).innerJoin(devices, eq(devices.id, physioPlanSessionItems.deviceId))
     .where(inArray(physioPlanSessionItems.sessionId, ss.map((s) => s.id))).orderBy(asc(devices.displayOrder));
   return ss.map((s) => ({ ...s, items: items.filter((i) => i.sessionId === s.id) }));
@@ -68,21 +68,28 @@ export async function executeSession(p: {
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, p.planId)).for("update");
     if (!plan) throw new PlanError(404, "الخطّة غير موجودة");
     if (plan.status !== "approved") throw new PlanError(409, "تُنفَّذ الخطّةُ المعتمَدة وحدها");
-    const planLines = await tx.select({ deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes, code: devices.code })
+    const planLines = await tx.select({ deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes, code: devices.code,
+      centreUse: physioPlanDevices.centreUse, displayOrder: physioPlanDevices.displayOrder })
       .from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
       .where(eq(physioPlanDevices.planId, plan.id));
     const needle = planLines.find((l) => l.code === DRY_NEEDLING_DEVICE_CODE);
+    //  **المساعدُ يتناوب** (ترحيل ١٢٢، §4.cx): دورُه بعدد جلسات الخطّة قبل هذه — تحت قفل الخطّة، فجلستان متزامنتان لا تأخذان الدورَ نفسَه.
+    const [{ n: sessionsSoFar }] = await tx.select({ n: sql<number>`count(*)::int` }).from(physioPlanSessions)
+      .where(and(eq(physioPlanSessions.planId, plan.id), isNull(physioPlanSessions.cancelledAt)));
+    const { offTurnDeviceIds } = sessionAdjuncts(planLines.map((l) => ({ ...l, deviceId: Number(l.deviceId) })), Number(sessionsSoFar));
+    const offTurn = new Set(offTurnDeviceIds);
     const err = executionItemsError({
       planDeviceIds: planLines.map((l) => Number(l.deviceId)), items: p.items,
-      needleDeviceId: needle ? Number(needle.deviceId) : null, canDryNeedle: p.canDryNeedle,
+      needleDeviceId: needle ? Number(needle.deviceId) : null, canDryNeedle: p.canDryNeedle, offTurnDeviceIds,
     });
     if (err) throw new PlanError(400, err);
+    const isOffTurn = (i: ExecutionItemInput) => !i.done && offTurn.has(i.deviceId);
 
     const doneCodes = p.items.filter((i) => i.done).map((i) => planLines.find((l) => Number(l.deviceId) === i.deviceId)!.code);
     const devNames = await tx.select({ id: devices.id, nameAr: devices.nameAr }).from(devices);
     const nameOf = (id: number) => devNames.find((d) => d.id === id)?.nameAr ?? `#${id}`;
     const doneText = p.items.filter((i) => i.done).map((i) => `${nameOf(i.deviceId)}${i.minutes ? ` ${i.minutes} د` : ""}`).join("، ");
-    const skipped = p.items.filter((i) => !i.done).map((i) => `${nameOf(i.deviceId)} (${i.note})`).join("، ");
+    const skipped = p.items.filter((i) => !i.done && !isOffTurn(i)).map((i) => `${nameOf(i.deviceId)} (${i.note})`).join("، ");
 
     //  **زيارةُ جلسة العلاج الطبيعي** — كما يكتبها «تسجيل زيارة جلسة علاج طبيعي»: على قسم العلاج الطبيعي، وبنوع علاجٍ من قائمته.
     const [physioCase] = await tx.select({ id: patientCases.id }).from(patientCases)
@@ -103,7 +110,8 @@ export async function executeSession(p: {
       noteToSpecialist: p.noteToSpecialist, countsWritten: writeCounts,
     }).returning();
     await tx.insert(physioPlanSessionItems).values(p.items.map((i) => ({
-      sessionId: session.id, deviceId: i.deviceId, done: i.done, minutes: i.minutes, note: i.note,
+      sessionId: session.id, deviceId: i.deviceId, done: i.done, minutes: i.minutes,
+      note: isOffTurn(i) ? ((i.note ?? "").trim() || ADJUNCT_OFF_TURN_NOTE) : i.note, offTurn: isOffTurn(i),
       plannedMinutes: planLines.find((l) => Number(l.deviceId) === i.deviceId)?.minutes ?? null,
     })));
 
@@ -176,7 +184,7 @@ export async function cancelSession(id: number, reason: string, actor: Actor) {
 export async function deviations(p: { branchIds: number[] | null; sinceDate: string }) {
   const conds: any[] = [isNull(physioPlanSessions.cancelledAt), gte(physioPlanSessions.sessionDate, p.sinceDate), isNull(patients.deletedAt),
     sql`(${physioPlanSessions.noteToSpecialist} IS NOT NULL OR EXISTS (SELECT 1 FROM physio_plan_session_items i WHERE i.session_id = ${physioPlanSessions.id}
-         AND (NOT i.done OR (i.planned_minutes IS NOT NULL AND i.minutes IS NOT NULL AND i.minutes <> i.planned_minutes))))`];
+         AND ((NOT i.done AND NOT i.off_turn) OR (i.planned_minutes IS NOT NULL AND i.minutes IS NOT NULL AND i.minutes <> i.planned_minutes))))`];
   if (p.branchIds) conds.push(p.branchIds.length ? inArray(physioPlanSessions.branchId, p.branchIds) : sql`false`);
   const ss = await db.select({
     id: physioPlanSessions.id, planId: physioPlanSessions.planId, sessionDate: physioPlanSessions.sessionDate,
@@ -190,13 +198,14 @@ export async function deviations(p: { branchIds: number[] | null; sinceDate: str
   if (!ss.length) return [];
   const items = await db.select({
     sessionId: physioPlanSessionItems.sessionId, done: physioPlanSessionItems.done, minutes: physioPlanSessionItems.minutes,
-    plannedMinutes: physioPlanSessionItems.plannedMinutes, note: physioPlanSessionItems.note, nameAr: devices.nameAr,
+    plannedMinutes: physioPlanSessionItems.plannedMinutes, note: physioPlanSessionItems.note, offTurn: physioPlanSessionItems.offTurn,
+    nameAr: devices.nameAr,
   }).from(physioPlanSessionItems).innerJoin(devices, eq(devices.id, physioPlanSessionItems.deviceId))
     .where(inArray(physioPlanSessionItems.sessionId, ss.map((s) => s.id)));
   return ss.map((s) => ({
     ...s,
     differences: items.filter((i) => i.sessionId === s.id
-      && (!i.done || (i.plannedMinutes != null && i.minutes != null && i.minutes !== i.plannedMinutes))),
+      && ((!i.done && !i.offTurn) || (i.plannedMinutes != null && i.minutes != null && i.minutes !== i.plannedMinutes))),
   }));
 }
 

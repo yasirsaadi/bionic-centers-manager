@@ -1,15 +1,17 @@
 // **خطّةُ العلاج الطبيعي للمريض** (ترحيل ١٠٩، §4.cm) — طبقةُ البيانات. القواعدُ في `shared/physio_plans.ts`.
 // كلُّ انتقالٍ في معاملةٍ بقفل الصفّ، وتنبيهُه في المعاملة نفسِها (`enqueueStaffEvent`) — ارتدّت ⟵ لا تنبيه.
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, patients, physioDeviceBranches, physioPlanAssignees, physioPlanDevices, physioPlans,
+  branches, devices, patients, physioDeviceBranches, physioPlanAssignees, physioPlanDevices, physioPlanSessions, physioPlans,
   physioPlanSuggestions, physioProtocolDevices, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
   canApproveFrom, canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND,
-  SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, type PlanStatus,
+  SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, sessionAdjuncts, type PlanStatus,
 } from "@shared/physio_plans";
+import { centreUseOf, planLineUse } from "@shared/physio_protocols";
+import { deviceParamsLine } from "@shared/physio_exercises";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
 export class PlanError extends Error {
@@ -21,6 +23,8 @@ export interface Actor { userId: number | null; name: string | null; isApprover?
 export interface PlanDeviceInput {
   deviceId: number; minutes: number | null;
   parameters: string | null; parametersEn: string | null; note: string | null; noteEn: string | null;
+  /** ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب. */
+  centreUse: "core" | "adjunct";
 }
 export interface PlanInput {
   titleAr: string; titleEn: string | null;
@@ -106,9 +110,14 @@ export async function getPlan(id: number) {
     id: physioPlanDevices.id, deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes,
     parameters: physioPlanDevices.parameters, parametersEn: physioPlanDevices.parametersEn,
     note: physioPlanDevices.note, noteEn: physioPlanDevices.noteEn, displayOrder: physioPlanDevices.displayOrder,
+    centreUse: physioPlanDevices.centreUse,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
     .where(eq(physioPlanDevices.planId, id)).orderBy(asc(physioPlanDevices.displayOrder), asc(devices.displayOrder));
+  //  **دورُ المساعد في الجلسة القادمة** (ترحيل ١٢٢) — بالقاعدة نفسِها التي يحكم بها «إنهاء الجلسة».
+  const [{ n: sessionsSoFar }] = await db.select({ n: sql<number>`count(*)::int` }).from(physioPlanSessions)
+    .where(and(eq(physioPlanSessions.planId, id), isNull(physioPlanSessions.cancelledAt)));
+  const rotation = sessionAdjuncts(lines.map((l) => ({ ...l, deviceId: Number(l.deviceId) })), Number(sessionsSoFar));
   const assignees = await db.select({ userId: physioPlanAssignees.userId, name: systemUsers.displayName, role: systemUsers.role })
     .from(physioPlanAssignees).innerJoin(systemUsers, eq(systemUsers.id, physioPlanAssignees.userId))
     .where(eq(physioPlanAssignees.planId, id)).orderBy(asc(systemUsers.displayName));
@@ -121,7 +130,8 @@ export async function getPlan(id: number) {
   const [branch] = await db.select({ name: branches.name }).from(branches).where(eq(branches.id, plan.branchId));
   return {
     ...plan, branchName: branch?.name ?? null, patient: patient ?? null, protocol: protocol ?? null,
-    devices: lines.map((l) => ({ ...l, availableInBranch: avail.has(Number(l.deviceId)) })),
+    devices: lines.map((l) => ({ ...l, centreUse: planLineUse(l.centreUse), availableInBranch: avail.has(Number(l.deviceId)) })),
+    rotation: { sessionsSoFar: Number(sessionsSoFar), turnDeviceId: rotation.turnDeviceId },
     assignees,
   };
 }
@@ -142,11 +152,32 @@ async function protocolFill(tx: any, protocolId: number, branchId: number) {
     sessionsPerWeek: pr.sessionsPerWeek, durationWeeks: pr.durationWeeks, sessionMinutes: pr.sessionMinutes,
   };
   const avail = await availableDeviceIds(tx, branchId);
-  const lines = (await tx.select().from(physioProtocolDevices).where(eq(physioProtocolDevices.protocolId, pr.id))
-    .orderBy(asc(physioProtocolDevices.displayOrder)))
-    .filter((l: any) => l.evidence !== "not_recommended" && avail.has(Number(l.deviceId)));
+  //  **«استعمالُ المركز» يحكم لا درجةُ الدليل** (ترحيل ١٢٢، §4.cx): «لا يُستخدم» لا يدخل، والأساسيُّ والمساعدُ يدخلان بدورهما —
+  //  **وإعداداتُ الجهاز** (`params`) تُكتب سطراً أوّلَ في «المعاملات» فيراها الأخصائيُّ ويعدّلها لهذا المريض.
+  const rows = await tx.select({ line: physioProtocolDevices, code: devices.code }).from(physioProtocolDevices)
+    .innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+    .where(eq(physioProtocolDevices.protocolId, pr.id)).orderBy(asc(physioProtocolDevices.displayOrder));
+  const lines: PlanDeviceInput[] = rows
+    .filter((r: any) => centreUseOf(r.line) !== "not_used" && avail.has(Number(r.line.deviceId)))
+    .map((r: any) => planLineFromProtocol(r.line, r.code));
   return { base, lines };
 }
+
+/** بندُ خطّةٍ من جهاز بروتوكول: استعمالُه، ودقائقُه، ونصوصُه باللغتين وأوّلُها سطرُ إعداداته. */
+function planLineFromProtocol(l: any, code: string): PlanDeviceInput {
+  const withSettings = (settings: string, text: string | null) => [settings, text].filter((x) => x && x.trim()).join("\n") || null;
+  return {
+    deviceId: Number(l.deviceId), minutes: l.minutes,
+    parameters: withSettings(deviceParamsLine(code, l.params, "ar"), l.parameters),
+    parametersEn: withSettings(deviceParamsLine(code, l.params, "en"), l.parametersEn),
+    note: l.note, noteEn: l.noteEn, centreUse: centreUseOf(l) === "adjunct" ? "adjunct" : "core",
+  };
+}
+
+const planDeviceRow = (planId: number, l: PlanDeviceInput, i: number) => ({
+  planId, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
+  note: l.note, noteEn: l.noteEn, centreUse: l.centreUse, displayOrder: i,
+});
 
 export async function createPlan(p: {
   patientId: number; branchId: number; protocolId: number | null; titleAr: string | null; actor: Actor;
@@ -160,10 +191,7 @@ export async function createPlan(p: {
       createdBy: p.actor.userId, createdByName: p.actor.name, updatedBy: p.actor.userId, updatedByName: p.actor.name,
     }).returning();
     if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l: any, i: number) => ({
-        planId: row.id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
-        note: l.note, noteEn: l.noteEn, displayOrder: i,
-      })));
+      await tx.insert(physioPlanDevices).values(lines.map((l: PlanDeviceInput, i: number) => planDeviceRow(row.id, l, i)));
     }
     return row;
   });
@@ -182,7 +210,7 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     const { base, lines } = await protocolFill(tx, sg.protocolId, sg.branchId);
     const r = sg.result as any;
     const want = new Map<number, number | null>((Array.isArray(r?.devices) ? r.devices : []).map((d: any) => [Number(d.deviceId), d.minutes == null ? null : Number(d.minutes)]));
-    const kept = lines.filter((l: any) => want.has(Number(l.deviceId))).map((l: any) => {
+    const kept = lines.filter((l: PlanDeviceInput) => want.has(Number(l.deviceId))).map((l: PlanDeviceInput) => {
       const m = want.get(Number(l.deviceId));
       return { ...l, minutes: m == null ? l.minutes : l.minutes == null ? m : Math.min(m, l.minutes) };
     });
@@ -201,10 +229,7 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
       createdBy: actor.userId, createdByName: actor.name, updatedBy: actor.userId, updatedByName: actor.name,
     }).returning();
     if (kept.length) {
-      await tx.insert(physioPlanDevices).values(kept.map((l: any, i: number) => ({
-        planId: row.id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
-        note: l.note, noteEn: l.noteEn, displayOrder: i,
-      })));
+      await tx.insert(physioPlanDevices).values(kept.map((l: PlanDeviceInput, i: number) => planDeviceRow(row.id, l, i)));
     }
     await tx.update(physioPlanSuggestions).set({ planId: row.id, acceptedAt: new Date() }).where(eq(physioPlanSuggestions.id, sg.id));
     return row;
@@ -270,7 +295,7 @@ export async function updatePlan(id: number, input: PlanInput, nextStatus: (curr
     }).where(eq(physioPlans.id, id)).returning();
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l, i) => ({ planId: id, ...l, displayOrder: i })));
+      await tx.insert(physioPlanDevices).values(lines.map((l, i) => planDeviceRow(id, l, i)));
     }
     if (demoted) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد");
     if (backToReview) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ بدأت وتُنفَّذ — للمراجعة", "✏️");
@@ -457,10 +482,7 @@ export async function changePlanProtocol(id: number, protocolId: number, actor: 
       .where(eq(physioPlans.id, id)).returning();
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l: any, i: number) => ({
-        planId: id, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
-        note: l.note, noteEn: l.noteEn, displayOrder: i,
-      })));
+      await tx.insert(physioPlanDevices).values(lines.map((l: PlanDeviceInput, i: number) => planDeviceRow(id, l, i)));
     }
     if (after.status === "approved") {
       const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)

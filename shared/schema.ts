@@ -2949,6 +2949,8 @@ export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   noteEn: text("note_en"),
   //  §4.cx — خاناتُ الجهاز (`DEVICE_PARAM_FIELDS`): قيمٌ بلا لغة، والوصفُ يبقى في `parameters`/`parametersEn`.
   params: jsonb("params").$type<Record<string, string>>().notNull().default({}),
+  //  §4.cx (ترحيل ١٢٢) — «استعمالُ المركز»: core · adjunct · not_used؛ و`NULL` يُشتقّ من درجة الدليل (`centreUseOf`).
+  centreUse: text("centre_use"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqProtocolDevice: unique("physio_protocol_devices_protocol_id_device_id_key").on(t.protocolId, t.deviceId) }));
 
@@ -3088,6 +3090,8 @@ export const physioPlanDevices = pgTable("physio_plan_devices", {
   minutes: integer("minutes"),
   parameters: text("parameters"), parametersEn: text("parameters_en"),
   note: text("note"), noteEn: text("note_en"),
+  //  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب؛ `NULL` (خططٌ قبله) = أساسيّ.
+  centreUse: text("centre_use"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
 
@@ -3123,6 +3127,8 @@ export const physioPlanSessionItems = pgTable("physio_plan_session_items", {
   done: boolean("done").notNull(),
   minutes: integer("minutes"),
   note: text("note"),
+  //  ترحيل ١٢٢ — مساعدٌ لم يكن دورَه في الجلسة: ليس «لم يُنفَّذ» ولا انحرافاً.
+  offTurn: boolean("off_turn").notNull().default(false),
 }, (t) => ({ uqSessionDevice: unique("physio_plan_session_items_session_id_device_id_key").on(t.sessionId, t.deviceId) }));
 
 /**
