@@ -259,6 +259,7 @@
     "test:physio-roles": "tsx server/physio_roles.test.ts",
     "test:multi-roles": "tsx server/multi_roles.test.ts",
     "test:physio-protocols": "tsx server/physio_protocols.test.ts",
+    "test:physio-exercises": "tsx server/physio_exercises.test.ts",
     "test:physio-plans": "tsx server/physio_plans.test.ts",
     "test:physio-execution": "tsx server/physio_execution.test.ts",
     "test:physio-suggest": "tsx server/physio_suggest.test.ts",

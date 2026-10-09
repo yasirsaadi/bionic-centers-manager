@@ -6,6 +6,8 @@ import {
   type PhysioProtocol,
 } from "@shared/schema";
 import type { MeasureDef } from "@shared/physio_assessments";
+import { deviceParamsLine, doseLine, mergeDose, normalizeDeviceParams } from "@shared/physio_exercises";
+import { getPhases } from "./exercises_store";
 import {
   AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN,
   PROTOCOL_TEXT_FIELDS, localizedText,
@@ -19,6 +21,8 @@ export class ProtocolError extends Error {
 export interface DeviceLineInput {
   deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null;
   parametersEn: string | null; noteEn: string | null;
+  /** §4.cx — خاناتُ الجهاز (`DEVICE_PARAM_FIELDS`)، تُتحقَّق برمز الجهاز في `assertDevices`. */
+  params: Record<string, string>;
 }
 export interface ProtocolInput {
   code: string; titleAr: string; titleEn: string; category: string; ageGroup: string;
@@ -59,6 +63,7 @@ export async function getProtocol(id: number) {
     id: physioProtocolDevices.id, deviceId: physioProtocolDevices.deviceId, evidence: physioProtocolDevices.evidence,
     parameters: physioProtocolDevices.parameters, minutes: physioProtocolDevices.minutes, note: physioProtocolDevices.note,
     parametersEn: physioProtocolDevices.parametersEn, noteEn: physioProtocolDevices.noteEn,
+    params: physioProtocolDevices.params,
     displayOrder: physioProtocolDevices.displayOrder,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
@@ -78,6 +83,8 @@ export async function getProtocol(id: number) {
     devices: lines.map((l) => ({ ...l, availableBranchIds: avail.filter((a) => a.deviceId === l.deviceId && a.available).map((a) => a.branchId) })),
     images,
     measures,
+    //  §4.cx — مراحلُ البرنامج بتمارينها وبطاقاتها كاملة.
+    phases: await getPhases(id),
   };
 }
 
@@ -103,7 +110,7 @@ async function writeDevices(tx: any, protocolId: number, lines: DeviceLineInput[
   if (!lines.length) return;
   await tx.insert(physioProtocolDevices).values(lines.map((l, i) => ({
     protocolId, deviceId: l.deviceId, evidence: l.evidence, parameters: l.parameters, minutes: l.minutes, note: l.note,
-    parametersEn: l.parametersEn, noteEn: l.noteEn, displayOrder: i,
+    parametersEn: l.parametersEn, noteEn: l.noteEn, params: l.params ?? {}, displayOrder: i,
   })));
 }
 
@@ -112,8 +119,15 @@ export async function assertDevices(lines: DeviceLineInput[]) {
   const ids = lines.map((l) => l.deviceId);
   if (new Set(ids).size !== ids.length) throw new ProtocolError(400, "جهازٌ مكرّر في البروتوكول");
   if (!ids.length) return;
-  const found = await db.select({ id: devices.id }).from(devices).where(and(inArray(devices.id, ids), eq(devices.isActive, true)));
+  const found = await db.select({ id: devices.id, code: devices.code }).from(devices).where(and(inArray(devices.id, ids), eq(devices.isActive, true)));
   if (found.length !== ids.length) throw new ProtocolError(400, "جهازٌ غير معروف");
+  //  خاناتُ المعاملات لكلّ جهازٍ ما يخصّه وحده — «التردّد» لا يُكتب لكمادةٍ حارّة.
+  for (const l of lines) {
+    const code = found.find((f) => f.id === l.deviceId)?.code;
+    const params = normalizeDeviceParams(code, l.params);
+    if (typeof params === "string") throw new ProtocolError(400, params);
+    l.params = params;
+  }
 }
 
 export async function createProtocol(input: ProtocolInput, actor: Actor) {
@@ -294,9 +308,22 @@ export async function protocolBrief(id: number, lang: ProtocolLang, activeBranch
         evidence: (en ? EVIDENCE_LABELS_EN : EVIDENCE_LABELS)[d.evidence as EvidenceLevel] ?? d.evidence,
         minutes: d.minutes,
         parameters: pick(d, "parameters", `${d.code}.parameters`),
+        settings: deviceParamsLine(d.code, d.params as Record<string, string>, lang) || null,
         note: pick(d, "note", `${d.code}.note`),
         availableInBranches: d.availableBranchIds.map((b) => nameOf.get(b) ?? `#${b}`),
         ...(activeBranchId ? { availableInAskersBranch: d.availableBranchIds.includes(activeBranchId) } : {}),
+      })),
+      //  §4.cx — البرنامجُ على مراحل: لكلّ مرحلةٍ أهدافُها ومعيارُ الانتقال وتمارينُها بجرعتها. والبطاقةُ الكاملة في صفحة البروتوكول.
+      phases: p.phases.map((ph) => ({
+        phase: ph.position, name: en ? ph.nameEn : ph.nameAr,
+        timeframe: pick(ph, "timeframe", `phase${ph.position}.timeframe`),
+        goals: pick(ph, "goals", `phase${ph.position}.goals`),
+        progressCriteria: pick(ph, "progressCriteria", `phase${ph.position}.progressCriteria`),
+        exercises: ph.exercises.map((x) => ({
+          exercise: en ? x.exercise.nameEn : x.exercise.nameAr,
+          dose: doseLine(mergeDose(x.exercise as any, x as any), x.exercise.perSide, lang),
+          approved: x.exercise.status === "approved",
+        })),
       })),
       references: (p.references as ProtocolReference[] | null) ?? [],
       ...(fellBack.length ? { untranslated: { fields: fellBack, note: en ? "These fields exist only in Arabic so far." : "هذه الحقولُ بالإنكليزية وحدها حتى الآن." } } : {}),

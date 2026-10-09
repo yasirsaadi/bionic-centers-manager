@@ -18,6 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { ProtocolMeasuresSection } from "@/components/physio/ProtocolMeasures";
+import { ExerciseLibraryTab, MissingImagesTab } from "@/components/physio/ExerciseLibrary";
+import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
+import { DEVICE_PARAM_FIELDS, DEVICE_PARAM_LABELS, deviceParamsLine } from "@shared/physio_exercises";
 import type { MeasureDef } from "@shared/physio_assessments";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -35,6 +38,8 @@ interface ListRow {
 interface DeviceLine {
   id?: number; deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null;
   parametersEn: string | null; noteEn: string | null;
+  //  §4.cx — خاناتُ الجهاز بقيمٍ بلا لغة.
+  params?: Record<string, string>;
   code?: string; nameAr?: string; nameEn?: string; availableBranchIds?: number[];
 }
 interface Protocol {
@@ -51,6 +56,8 @@ interface Protocol {
   //  §4.cp — مقاييسُ التقييم واعتمادُها المستقلّ.
   measures?: MeasureDef[]; measuresStatus?: "draft" | "approved"; measuresApprovedByName?: string | null;
   canEditMeasures?: boolean; canApproveMeasures?: boolean;
+  //  §4.cx — البرنامجُ على مراحل بتمارينه وبطاقاتها.
+  phases?: Phase[];
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; branches: { id: number; name: string }[]; available: string[]; canManage: boolean }
 
@@ -71,7 +78,7 @@ const T = {
     library: "المكتبة", overview: "نظرة عامة", goals: "الأهداف", assessment: "التقييم والقياسات", devices: "الأجهزة ودرجةُ الدليل",
     device: "الجهاز", grade: "الدرجة", params: "المعاملات", minutes: "الدقائق", availableIn: "متوفّر في", noDevices: "لا أجهزة في هذا البروتوكول.",
     nowhere: "غير متوفّر في أيّ فرع", notHere: "غير متوفّر في فرعك", needle: "يطبّقها حاملُ «الإبر الجافة» وحده",
-    exercises: "التمارين والبرنامج المنزلي", contra: "موانع الاستعمال", precautions: "احتياطات", images: "صورٌ توضيحية", source: "المصدر",
+    exercises: "التمارين والبرنامج المنزلي", exercisesSummary: "ملخّصُ البرنامج", contra: "موانع الاستعمال", precautions: "احتياطات", images: "صورٌ توضيحية", source: "المصدر",
     link: "الرابط", refs: "المراجع", noRefs: "لا مراجع بعد — البروتوكولُ بلا مرجعٍ عالميّ لا يُعتمَد.", lastEdit: "آخرُ تعديل",
     draft: "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — تُقرأ مرجعاً لا تعليمات.", approvedBy: "اعتمده", archived: "مؤرشف",
     perWeek: (n: number) => <><b>{n}</b> جلسات/أسبوع</>, weeks: (n: number) => <>لمدة <b>{n}</b> أسابيع</>, session: (n: number) => <>الجلسة <b>{n}</b> دقيقة</>,
@@ -81,7 +88,7 @@ const T = {
     library: "Library", overview: "Overview", goals: "Goals", assessment: "Assessment & outcome measures", devices: "Devices & evidence grade",
     device: "Device", grade: "Grade", params: "Parameters", minutes: "Minutes", availableIn: "Available in", noDevices: "No devices in this protocol.",
     nowhere: "Not available in any branch", notHere: "Not available in your branch", needle: "Dry-needling certified staff only",
-    exercises: "Exercises & home programme", contra: "Contraindications", precautions: "Precautions", images: "Illustrations", source: "Source",
+    exercises: "Exercises & home programme", exercisesSummary: "Programme summary", contra: "Contraindications", precautions: "Precautions", images: "Illustrations", source: "Source",
     link: "Link", refs: "References", noRefs: "No references yet — a protocol without a global reference is not approved.", lastEdit: "Last edited",
     draft: "Draft not yet approved by the physiotherapy supervisor — read it as reference, not as instructions.", approvedBy: "Approved by", archived: "Archived",
     perWeek: (n: number) => <><b>{n}</b> sessions/week</>, weeks: (n: number) => <>for <b>{n}</b> weeks</>, session: (n: number) => <><b>{n}</b> min/session</>,
@@ -113,12 +120,16 @@ export default function PhysioProtocols() {
         <div className="mr-auto"><LangToggle lang={lang} onChange={setLang} /></div>
       </div>
       <Tabs defaultValue="library" dir="rtl">
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="library" data-testid="tab-protocols">المكتبة</TabsTrigger>
+          <TabsTrigger value="exercises" data-testid="tab-exercises">مكتبة التمارين</TabsTrigger>
           <TabsTrigger value="devices" data-testid="tab-devices">توفّر الأجهزة بالفروع</TabsTrigger>
+          {canEditProtocols(s) && <TabsTrigger value="images" data-testid="tab-missing-images">الصور المطلوبة</TabsTrigger>}
         </TabsList>
         <TabsContent value="library"><Library canEdit={canEditProtocols(s)} lang={lang} /></TabsContent>
+        <TabsContent value="exercises"><ExerciseLibraryTab canEdit={canEditProtocols(s)} lang={lang} /></TabsContent>
         <TabsContent value="devices"><DeviceAvailability /></TabsContent>
+        {canEditProtocols(s) && <TabsContent value="images"><MissingImagesTab /></TabsContent>}
       </Tabs>
     </div>
   );
@@ -296,6 +307,8 @@ export function PhysioProtocolDetail() {
       {section("goals", t.goals)}
       {section("assessment", t.assessment)}
 
+      <ProtocolPhasesSection protocolId={p.id} phases={p.phases ?? []} canEdit={p.canEdit} isArchived={p.isArchived} lang={lang} />
+
       <div className="space-y-2">
         <h2 className="font-semibold">{t.devices}</h2>
         {p.devices.length === 0 ? <p className="text-sm text-muted-foreground">{t.noDevices}</p> : (
@@ -317,7 +330,10 @@ export function PhysioProtocolDetail() {
                         {d.code === DRY_NEEDLING_DEVICE_CODE && <div className="text-[11px] text-red-700 mt-0.5">{t.needle}</div>}</td>
                       <td className="p-2"><span className={`inline-block rounded border px-2 py-0.5 text-xs ${EVIDENCE_TONE[d.evidence]}`}>{L.evidence[d.evidence]}</span></td>
                       <td className="p-2 whitespace-pre-wrap">
-                        <span dir={params.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{params.text ?? "—"}</span>
+                        {d.code && deviceParamsLine(d.code, d.params, lang) && (
+                          <div className="font-medium text-xs mb-1" dir={lang === "en" ? "ltr" : "rtl"} data-testid={`protocol-device-params-${d.code}`}>{deviceParamsLine(d.code, d.params, lang)}</div>
+                        )}
+                        <span dir={params.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{params.text ?? (d.code && deviceParamsLine(d.code, d.params, lang) ? "" : "—")}</span>
                         {note.text && <div className="text-xs text-muted-foreground mt-1" dir={note.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{note.text}</div>}
                       </td>
                       <td className="p-2">{d.minutes ?? "—"}</td>
@@ -339,7 +355,7 @@ export function PhysioProtocolDetail() {
         approvedByName={p.measuresApprovedByName ?? null} canEdit={Boolean(p.canEditMeasures)} canApprove={Boolean(p.canApproveMeasures)}
         isArchived={p.isArchived} lang={lang} />
 
-      {section("exercises", t.exercises)}
+      {section("exercises", (p.phases ?? []).length ? t.exercisesSummary : t.exercises)}
       {section("contraindications", t.contra, "danger")}
       {section("precautions", t.precautions, "warn")}
 
@@ -411,7 +427,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
   }));
   const [lines, setLines] = useState<DeviceLine[]>(() => (initial?.devices ?? []).map((d) => ({
     deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
-    parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null })));
+    parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null, params: d.params ?? {} })));
   const [refs, setRefs] = useState<ProtocolReference[]>(() => initial?.references ?? []);
   const set = (k: keyof typeof f) => (e: any) => setF((p) => ({ ...p, [k]: typeof e === "string" ? e : e.target.value }));
   const unused = useMemo(() => (matrix.data?.devices ?? []).filter((d) => !lines.some((l) => l.deviceId === d.id)), [matrix.data, lines]);
@@ -479,7 +495,16 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
                     <Input dir="ltr" placeholder="Parameters (intensity, frequency, site…)" value={l.parametersEn ?? ""} onChange={(e) => setLine(i, { parametersEn: e.target.value || null })} data-testid={`pf-device-${i}-paramsEn`} />
                     <Input placeholder="ملاحظة" value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value || null })} />
                     <Input dir="ltr" placeholder="Note" value={l.noteEn ?? ""} onChange={(e) => setLine(i, { noteEn: e.target.value || null })} />
-                  </div></div>
+                  </div>
+                  {(DEVICE_PARAM_FIELDS[nameOf(l.deviceId)?.code ?? ""] ?? []).length > 0 && (
+                    <div className="grid gap-1 grid-cols-2 sm:grid-cols-3 mt-1" data-testid={`pf-device-${i}-params`}>
+                      {(DEVICE_PARAM_FIELDS[nameOf(l.deviceId)?.code ?? ""] ?? []).map((k) => (
+                        <label key={k} className="grid gap-0.5 text-xs">{DEVICE_PARAM_LABELS[k].ar}{DEVICE_PARAM_LABELS[k].unit ? ` (${DEVICE_PARAM_LABELS[k].unit})` : ""}
+                          <Input dir="ltr" value={l.params?.[k] ?? ""} onChange={(e) => setLine(i, { params: { ...(l.params ?? {}), [k]: e.target.value } })} />
+                        </label>
+                      ))}
+                    </div>
+                  )}</div>
                 <Select value={l.evidence} onValueChange={(v) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, evidence: v as EvidenceLevel } : x)))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{EVIDENCE_LEVELS.map((e) => <SelectItem key={e} value={e}>{EVIDENCE_LABELS[e]}</SelectItem>)}</SelectContent>
@@ -490,7 +515,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
               </div>
             ))}
             {unused.length > 0 && (
-              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null }])}>
+              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null, params: {} }])}>
                 <SelectTrigger className="w-60" data-testid="pf-add-device"><SelectValue placeholder="+ أضف جهازاً" /></SelectTrigger>
                 <SelectContent>{unused.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.nameAr} — {d.nameEn}</SelectItem>)}</SelectContent>
               </Select>
