@@ -7,10 +7,13 @@
 //   ج — المراحل: تُحفظ كاملة، وتعيد البروتوكولَ المعتمَد مسوّدةً بيد الأخصائيّ، والتمرينُ المجهول والمؤرشف والمكرّر يُردّ.
 //   د — الأرشفة: التمرينُ في مرحلةٍ لا يُؤرشَف، وغيرُه يُؤرشَف ويختفي ويُستعاد.
 //   هـ — خاناتُ الجهاز: خانةٌ لا تخصّ الجهاز تُردّ، والصحيحةُ تُحفظ وتُقرأ وتصل الموجز.
-//   و — الصور: ما لم يصل «منتظرة» في قائمة المحرّرين، وما سُجّل ملفُّه يُعرض برابطه ويخرج من القائمة.
+//   و — الصور: ما لم يصل «منتظرة» في قائمة المحرّرين، وما سُجّل ملفُّه يُعرض برابطه ويخرج من القائمة؛ والملفّاتُ WebP صالحةٌ مضغوطة بلا يتيم،
+//       وصورُ البروتوكول الأوّل السبعُ والعشرون كلُّها وصلت.
 //   ز — الترحيلُ ١١٩: المحتوى كاملٌ وصالحٌ بقواعد الشاشة نفسِها، ولا يتكرّر، ولا يكتب فوق تعديل إنسان.
 //   ح — سطورُ التدقيق.
 import express from "express";
+import fs from "fs";
+import path from "path";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
@@ -219,7 +222,9 @@ async function main() {
     console.log("\n── و. الصور ──");
     const missingKeys = async (s: string) => { const r = await call("GET", "/api/physio/exercises/missing-images", s); return { status: r.status, keys: (Array.isArray(r.json) ? r.json : []).map((m: any) => m.key) }; };
     const m1 = await missingKeys(S.spec);
-    same("و.١ المحرّرُ يرى الصورَ المطلوبة، والتقنيُّ لا (٤٠٣)", [m1.status, m1.keys.includes(PREFIX + "a-1"), m1.keys.includes("bird-dog-1"), (await missingKeys(S.tech)).status], [200, true, true, 403]);
+    //  و«bird-dog-1» من البروتوكول الأوّل: وصلت صورتُه (الدفعةُ الأولى ٢٠٢٦-١٠-٠٩) فلم تعد مطلوبة — شاهدٌ حقيقيّ على الخروج من القائمة.
+    same("و.١ المحرّرُ يرى الصورَ المطلوبة (وما وصل ملفُّه ليس منها)، والتقنيُّ لا (٤٠٣)",
+      [m1.status, m1.keys.includes(PREFIX + "a-1"), m1.keys.includes("bird-dog-1"), (await missingKeys(S.tech)).status], [200, true, false, 403]);
     EXERCISE_IMAGE_FILES[PREFIX + "a-1"] = { file: PREFIX + "a-1.webp", credit: "مصدرُ اختبار", sourceUrl: "https://example.org/x" };
     try {
       const withUrl = await call("GET", `/api/physio/exercises/${exId}`, S.tech);
@@ -227,6 +232,23 @@ async function main() {
         [withUrl.json?.images?.[0]?.url, withUrl.json?.images?.[0]?.credit, (await missingKeys(S.spec)).keys.includes(PREFIX + "a-1")],
         [`/physio-exercises/${PREFIX}a-1.webp`, "مصدرُ اختبار", false]);
     } finally { delete EXERCISE_IMAGE_FILES[PREFIX + "a-1"]; }
+    //  **والملفّاتُ نفسُها** (`client/public/physio-exercises/`): كلُّ سطرٍ في السجلّ له ملفُّ WebP صالحٌ باسم رمزه وبحجمٍ مضغوط، ولا ملفَّ بلا سطر —
+    //  فلا رابطَ مكسور في بطاقة، ولا صورةَ ثقيلة تُحمَّل على هاتف، ولا ملفَّ منسيّ.
+    const mediaDir = path.resolve(process.cwd(), "client/public/physio-exercises");
+    const onDisk = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir).sort() : [];
+    const bad = Object.entries(EXERCISE_IMAGE_FILES).map(([key, f]) => {
+      if (f.file !== `${key}.webp`) return `${key}: الاسم ${f.file}`;
+      const p = path.join(mediaDir, f.file);
+      if (!fs.existsSync(p)) return `${key}: لا ملفّ`;
+      const b = fs.readFileSync(p);
+      if (b.subarray(0, 4).toString("ascii") !== "RIFF" || b.subarray(8, 12).toString("ascii") !== "WEBP") return `${key}: ليس WebP`;
+      if (b.length > 100 * 1024) return `${key}: ${Math.round(b.length / 1024)} ك.ب`;
+      return null;
+    }).filter(Boolean);
+    same("و.٣ كلُّ صورةٍ مسجّلة ملفُّ WebP صالح باسم رمزها، دون ١٠٠ ك.ب", bad, []);
+    same("و.٤ ولا ملفَّ في المجلّد بلا سطرٍ في السجلّ", onDisk.filter((f) => !Object.values(EXERCISE_IMAGE_FILES).some((x) => x.file === f)), []);
+    const lbpKeys = EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("و.٥ والبروتوكولُ الأوّل اكتملت صورُه: ٢٧ رمزاً كلُّها مسجّلة", [lbpKeys.length, lbpKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])], [27, []]);
 
     // ══ ز — الترحيلُ ١١٩ ═════════════════════════════════════════════════════════════════
     console.log("\n── ز. الترحيلُ ١١٩ — البروتوكولُ الأوّل مفصَّلاً ──");
