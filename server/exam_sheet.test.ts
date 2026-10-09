@@ -259,8 +259,10 @@ async function main() {
     const rp = await call("POST", `/api/medical/patients/${ph1.pid}/exams`, S.doc, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", diagnosis: "انزلاق غضروفي", sheet: { address: "الأعظمية" },
     });
-    same("ج.٢ **والعلاجُ الطبيعيُّ لا يمسّه شيء** — الاستمارةُ تُتجاهَل", [rp.status, (await patientRow(ph1.pid)).address, (await auditRows("patient", ph1.pid)).length],
-      [200, "الكرادة", 0]);
+    //  **تغيّر بقرار المالك (٢٠٢٦-١٠-٠٩، §4.da)**: كان العلاجُ الطبيعيُّ لا يُعايَن على استمارة فتُتجاهَل حقولُها؛ وصار على استمارته
+    //  هو — فتعديلُ الفاحص لحقول الاستعلامات يُكتب ويُدقَّق باسمه كالأجهزة بالقاعدة نفسِها. (حرّاسُه في `test:physio-exam-sheet`.)
+    same("ج.٢ **والعلاجُ الطبيعيُّ على استمارته** — تعديلُ الفاحص يُكتب ويُدقَّق كالأجهزة (§4.da)", [rp.status, (await patientRow(ph1.pid)).address, (await auditRows("patient", ph1.pid)).length],
+      [200, "الأعظمية", 1]);
   } finally {
     httpServer.close();
     await cleanup();
