@@ -12,7 +12,7 @@ import { intakeSheetsFor } from "./store";
 
 type Req = any;
 
-function branchScope(s: any): number[] | null {
+export function branchScope(s: any): number[] | null {
   if (s?.isAdmin) return null;
   if (Array.isArray(s?.accessibleBranches) && s.accessibleBranches.length > 0) return s.accessibleBranches as number[];
   return s?.branchId ? [Number(s.branchId)] : [];

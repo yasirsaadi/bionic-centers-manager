@@ -270,6 +270,7 @@
     "test:device-sale-specs": "tsx server/device_sale_specs.test.ts",
     "test:exam-sheet": "tsx server/exam_sheet.test.ts",
     "test:physio-exam-sheet": "tsx server/physio_exam_sheet.test.ts",
+    "test:physio-sheet-view": "tsx server/physio_sheet_view.test.ts",
     "test:intake-sheets": "tsx server/intake_sheets.test.ts",
     "test:patient-record": "tsx server/patient_record.test.ts",
     "test:multi-part-request": "tsx server/multi_part_request.test.ts",
