@@ -209,9 +209,12 @@ async function main() {
       `INSERT INTO visits (patient_id, branch_id, visit_date, details, notes, device_episode_id, deleted_at)
        VALUES ($1, $2, $3::timestamp, $4, NULL, $5, ${deleted ? "now()" : "NULL"}) RETURNING id`, [a, B1, date, details, ep]);
     const before = (s1?.visits ?? []).length;
-    await vIns(aEp, "قياس القالب", "2026-10-09 10:00");
-    await vIns(aEp, "زيارةٌ محذوفة", "2026-10-10 10:00", true);
-    await vIns(null, "علاجٌ بلا جهاز", "2026-10-11 10:00");
+    //  **تواريخُ بعد «الآن» لا تواريخُ ثابتة**: زيارةُ البيع أعلاه تُكتب بوقت التشغيل، و«قياس القالب» يجب أن يكون أحدثَ منها. وكانت ثابتةً
+    //  («2026-10-09 10:00») فصارت ماضياً — سقط ب.١ يومَ ٢٠٢٦-١٠-٠٩ بعد العاشرة، على `main` نفسِه.
+    const daysAhead = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 16).replace("T", " ");
+    await vIns(aEp, "قياس القالب", daysAhead(1));
+    await vIns(aEp, "زيارةٌ محذوفة", daysAhead(2), true);
+    await vIns(null, "علاجٌ بلا جهاز", daysAhead(3));
     const vs = ((await sheets(a, S.recv)).json?.sheets?.[0]?.visits ?? []) as IntakeSheet["visits"];
     same("ب.١ **زياراتُ هذا الجهاز وحده** — لا المحذوفة ولا ما لا جهازَ له، وبترتيب التاريخ",
       [vs.length - before, vs[vs.length - 1]?.details, vs.some((v) => v.details === "زيارةٌ محذوفة"), vs.some((v) => v.details === "علاجٌ بلا جهاز")],
