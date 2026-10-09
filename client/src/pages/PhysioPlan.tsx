@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, ClipboardList, Pencil, Play, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardList, Eye, Pencil, Play, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,8 +26,8 @@ import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSugg
 import { PlanProgress } from "@/components/physio/PlanProgress";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
-  PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans, canReturnFrom, canSubmitFrom, canWritePlans, isPlanClosed,
-  type PlanStatus,
+  PLAN_REVIEW_LABELS, PLAN_REVIEW_LABELS_EN, PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans,
+  canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, canWritePlans, isPlanClosed, type PlanStatus,
 } from "@shared/physio_plans";
 
 interface PlanDevice {
@@ -48,6 +48,7 @@ interface Plan {
   canWrite: boolean; canApprove: boolean; canDelete: boolean; canExecute?: boolean; canCancelSessions?: boolean;
   aiSuggestion?: Suggestion | null;
   graduatedAt?: string | null; graduatedByName?: string | null;
+  reviewStatus?: "awaiting" | "reviewed" | null; reviewedByName?: string | null; reviewedAt?: string | null;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -132,7 +133,12 @@ export default function PhysioPlanPage() {
   };
   const act = useMutation({
     mutationFn: async (p: { path: string; body?: any }) => (await apiRequest("POST", `/api/physio/plans/${id}/${p.path}`, p.body ?? {})).json(),
-    onSuccess: () => { toast({ title: "تم" }); setAsk(null); refresh(); },
+    onSuccess: (_d, p) => {
+      toast(p.path === "activate"
+        ? { title: "بدأت الخطّة", description: "نزلت في ملفّ المريض وتُنفَّذ الآن، ونُبّه المشرفُ ليراجعها." }
+        : { title: "تم" });
+      setAsk(null); refresh();
+    },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
   });
 
@@ -141,6 +147,9 @@ export default function PhysioPlanPage() {
   const plan = q.data;
   const title = lang === "en" && plan.titleEn ? plan.titleEn : plan.titleAr;
   const statusLabel = (lang === "en" ? PLAN_STATUS_LABELS_EN : PLAN_STATUS_LABELS)[plan.status];
+  //  §4.cz — بروتوكولٌ اعتمده المشرف: كاتبُ الخطّة يبدؤها بنفسه، وتعديلُه لا يوقفها.
+  const protocolApproved = plan.protocol?.status === "approved";
+  const selfStart = plan.canWrite && !plan.canApprove && canSelfActivate(plan.status, plan.protocol?.status);
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3 print:p-0" dir={lang === "en" ? "ltr" : "rtl"}>
@@ -186,6 +195,18 @@ export default function PhysioPlanPage() {
             {plan.status === "approved" && plan.decidedByName ? ` · ${t.approvedBy} ${plan.decidedByName} · ${fmt(plan.decidedAt, lang)}` : ""}
           </div>
         </div>
+        {plan.status === "approved" && plan.reviewStatus === "awaiting" && (
+          <div className="rounded-md border border-sky-300 bg-sky-50 p-2 text-sm print:hidden" data-testid="plan-awaiting-review">
+            <b>{(lang === "en" ? PLAN_REVIEW_LABELS_EN : PLAN_REVIEW_LABELS).awaiting}</b> — {lang === "en"
+              ? "started by its author on an approved protocol; it is being executed."
+              : "بدأها كاتبُها على بروتوكولٍ معتمَد، وهي تُنفَّذ."}
+          </div>
+        )}
+        {plan.status === "approved" && plan.reviewStatus === "reviewed" && plan.reviewedByName && (
+          <div className="text-xs text-emerald-800 print:hidden" data-testid="plan-reviewed">
+            {(lang === "en" ? PLAN_REVIEW_LABELS_EN : PLAN_REVIEW_LABELS).reviewed}: {plan.reviewedByName}{plan.reviewedAt ? ` · ${fmt(plan.reviewedAt, lang)}` : ""}
+          </div>
+        )}
         {plan.status === "returned" && plan.returnNote && (
           <div className="rounded-md border border-orange-300 bg-orange-50 p-2 text-sm print:hidden" data-testid="plan-return-note">
             <b>{t.returned}</b> — {plan.decidedByName ?? ""}: {plan.returnNote}
@@ -213,9 +234,22 @@ export default function PhysioPlanPage() {
           {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
           )}
-          {plan.canWrite && canSubmitFrom(plan.status) && (
+          {/*  §4.cz — على بروتوكولٍ اعتمده المشرف يبدؤها كاتبُها بنفسه، وإلّا تُرسَل للاعتماد. */}
+          {selfStart && (
+            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending}
+              onClick={() => act.mutate({ path: "activate" })} data-testid="button-activate-plan">
+              <CheckCircle2 className="w-4 h-4" /> اعتماد وبدء العلاج
+            </Button>
+          )}
+          {plan.canWrite && canSubmitFrom(plan.status) && !selfStart && (
             <Button size="sm" className="gap-1" disabled={act.isPending} onClick={() => act.mutate({ path: "submit" })} data-testid="button-submit-plan">
               <Send className="w-4 h-4" /> إرسال للاعتماد
+            </Button>
+          )}
+          {plan.canApprove && canReviewFrom(plan.status, plan.reviewStatus) && (
+            <Button size="sm" className="gap-1 bg-sky-600 hover:bg-sky-700" disabled={act.isPending}
+              onClick={() => act.mutate({ path: "review" })} data-testid="button-review-plan">
+              <Eye className="w-4 h-4" /> موافقة المشرف
             </Button>
           )}
           {plan.canApprove && canApproveFrom(plan.status) && (
@@ -245,8 +279,20 @@ export default function PhysioPlanPage() {
         </div>
       )}
       {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}
+      {!editing && plan.canWrite && !plan.canApprove && canSubmitFrom(plan.status) && !protocolApproved && (
+        <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-needs-approval-hint">
+          {plan.protocol ? "بروتوكولُ هذه الخطّة لم يعتمده المشرفُ بعد — تبدأ بعد موافقته." : "خطّةٌ بلا بروتوكول — تبدأ بعد موافقة المشرف."}
+        </p>
+      )}
       {!editing && plan.status === "approved" && plan.canWrite && !plan.canApprove && (
-        <p className="text-[11px] text-muted-foreground print:hidden">تعديلُ الخطّة المعتمَدة يعيدها إلى الاعتماد.</p>
+        <p className="text-[11px] text-muted-foreground print:hidden">
+          {protocolApproved ? "تعديلُك يُبقيها تُنفَّذ ويعيدها لمراجعة المشرف." : "تعديلُ الخطّة المعتمَدة يعيدها إلى الاعتماد."}
+        </p>
+      )}
+      {!editing && plan.canApprove && canReviewFrom(plan.status, plan.reviewStatus) && (
+        <p className="text-[11px] text-muted-foreground print:hidden">
+          «موافقة المشرف» أو عدّلها أو أوقفها أو غيّر نوعَها — وكاتبُها يُنبَّه بما تفعل.
+        </p>
       )}
 
       {editing ? (
@@ -475,8 +521,8 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
   );
 }
 
-// ══ قائمة الخطط: الاعتماداتُ والمسندةُ إليّ ═══════════════════════════════════════════════════════════
-interface ListRow { id: number; titleAr: string; status: PlanStatus; branchName: string | null; patientId: number; patientName: string; patientCode: string | null; createdByName: string | null; submittedAt: string | null; updatedAt: string; protocolStatus: string | null }
+// ══ قائمة الخطط: الاعتماداتُ و«للمراجعة» والمسندةُ إليّ ═══════════════════════════════════════════════════════════
+interface ListRow { id: number; titleAr: string; status: PlanStatus; branchName: string | null; patientId: number; patientName: string; patientCode: string | null; createdByName: string | null; submittedAt: string | null; updatedAt: string; protocolStatus: string | null; decidedByName?: string | null; decidedAt?: string | null; reviewStatus?: string | null }
 
 /** صفحةُ `/physio/plans` — تبويبُ الاعتمادات للمسؤول والمشرف العام وحدهما (والخادمُ يحرسه). */
 export function PhysioPlansPage() {
@@ -489,18 +535,20 @@ export function PhysioPlansPage() {
 export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: boolean; canWrite?: boolean }) {
   //  `?tab=due` — رابطُ التنبيه الصباحيّ «مستحقّ التقييم» (§4.cp).
   const wantDue = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "due";
-  const [tab, setTab] = useState<"pending" | "assigned" | "deviations" | "due">(wantDue && canWrite ? "due" : canApprove ? "pending" : "assigned");
+  const [tab, setTab] = useState<"pending" | "review" | "assigned" | "deviations" | "due">(wantDue && canWrite ? "due" : canApprove ? "pending" : "assigned");
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ClipboardList className="w-5 h-5 text-green-700" /> خطط العلاج الطبيعي</h1>
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
           {canApprove && <TabsTrigger value="pending" data-testid="tab-plans-pending">بانتظار الاعتماد</TabsTrigger>}
+          {canApprove && <TabsTrigger value="review" data-testid="tab-plans-review">للمراجعة</TabsTrigger>}
           <TabsTrigger value="assigned" data-testid="tab-plans-assigned">المسندة إليّ</TabsTrigger>
           {canWrite && <TabsTrigger value="due" data-testid="tab-plans-due">مستحقّ التقييم</TabsTrigger>}
           {canWrite && <TabsTrigger value="deviations" data-testid="tab-plans-deviations">اختلافات التنفيذ</TabsTrigger>}
         </TabsList>
         {canApprove && <TabsContent value="pending"><PlansTable view="pending" /></TabsContent>}
+        {canApprove && <TabsContent value="review"><PlansTable view="review" /></TabsContent>}
         <TabsContent value="assigned"><PlansTable view="assigned" /></TabsContent>
         {canWrite && <TabsContent value="due"><DueAssessmentsList /></TabsContent>}
         {canWrite && <TabsContent value="deviations"><DeviationsList /></TabsContent>}
@@ -509,14 +557,14 @@ export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: 
   );
 }
 
-function PlansTable({ view }: { view: "pending" | "assigned" }) {
+function PlansTable({ view }: { view: "pending" | "review" | "assigned" }) {
   const q = useQuery<{ plans: ListRow[] }>({
     queryKey: ["/api/physio/plans", view],
     queryFn: async () => (await apiRequest("GET", `/api/physio/plans?view=${view}`)).json(),
   });
   if (q.isLoading) return <div className="text-sm text-muted-foreground p-3">جارٍ التحميل…</div>;
   const rows = q.data?.plans ?? [];
-  if (!rows.length) return <Card className="p-4 text-sm text-muted-foreground mt-2">{view === "pending" ? "لا خطة تنتظر الاعتماد." : "لم تُسنَد إليك خطة بعد."}</Card>;
+  if (!rows.length) return <Card className="p-4 text-sm text-muted-foreground mt-2">{view === "pending" ? "لا خطة تنتظر الاعتماد." : view === "review" ? "لا خطة جديدة تنتظر مراجعتك." : "لم تُسنَد إليك خطة بعد."}</Card>;
   return (
     <div className="space-y-2 mt-2">
       {rows.map((r) => (
@@ -529,7 +577,8 @@ function PlansTable({ view }: { view: "pending" | "assigned" }) {
                 <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">{UNAPPROVED_PROTOCOL_BADGE}</Badge>
               )}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-1">{r.branchName ?? "—"} · كتبها {r.createdByName ?? "—"}</div>
+            <div className="text-[11px] text-muted-foreground mt-1">{r.branchName ?? "—"} · كتبها {r.createdByName ?? "—"}
+              {view === "review" && r.decidedByName ? ` · بدأها ${r.decidedByName}${r.decidedAt ? ` في ${new Date(r.decidedAt).toLocaleDateString("ar-IQ", { month: "short", day: "numeric" })}` : ""}` : ""}</div>
         </Link>
       ))}
     </div>

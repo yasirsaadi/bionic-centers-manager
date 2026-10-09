@@ -32,8 +32,8 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
   { key: "evening_summary", label: "ملخّص يومي مسائي لكلّ فرع", group: "المسؤول", scope: "branch", digest: true },
   //  خطّةُ العلاج الطبيعي (§4.cm) — للمسؤول والمشرف العام، ولكاتبها، ولمنفّذيها.
-  { key: "physio_plan_pending", label: "خطة علاج طبيعي تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
-  { key: "physio_plan_decided", label: "خطته اعتُمدت أو أُعيدت بملاحظة", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_plan_pending", label: "خطة علاج طبيعي تنتظر الاعتماد أو المراجعة", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_plan_decided", label: "خطته اعتُمدت أو أُعيدت أو راجعها المشرف", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_plan_assigned", label: "خطة علاج طبيعي معتمدة أُسندت إليه", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_session_note", label: "ملاحظةٌ من المعالج على جلسةٍ من خطّته", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_assessment_due", label: "تذكير صباحي بخططه المستحقّة التقييم", group: "العلاج الطبيعي", scope: "targeted", digest: true },

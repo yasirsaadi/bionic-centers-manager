@@ -3,6 +3,8 @@
 // قراراتُ المالك:
 //   • الأخصائيُّ يكتب الخطّةَ من بروتوكول المكتبة (تمتلئ منه) ويعدّلها لهذا المريض — **والأجهزةُ المتوفّرة في فرعه وحدها**.
 //   • **مسوّدةٌ لا يُنفّذها أحد** حتى تُعتمَد. والاعتمادُ **بالمالك (المسؤول) أو سليم (المشرف العام)** — يكفي أحدُهما، ويصلهما التنبيه.
+//     **إلّا على بروتوكولٍ اعتمده المشرف** (§4.cz — اقتراحُ سليم وقرارُ المالك ٢٠٢٦-١٠-٠٩): يعتمدها الأخصائيُّ بنفسه فتبدأ في الحال،
+//     والمشرفُ يراجعها بعدها — «موافقةُ سليم مرّةً ثانية على بروتوكولٍ معتمَد لا فائدة منها سوى التأخير».
 //   • **بروتوكولٌ غيرُ معتمَد يُبنى عليه** بشارةٍ ظاهرة «بروتوكول غير معتمد بعد».
 //   • **تعديلُ المعتمَدة بيد الأخصائيّ يعيدها إلى الاعتماد**. والمنفّذُ (معالج · تقنيّ · مدرّب) يرى ولا يعدّل.
 //   • **الخططُ القديمة** (`treatment_plans`) تبقى للقراءة في التبويب نفسِه.
@@ -53,13 +55,32 @@ export const isPlanClosed = (status: string): boolean => status === "stopped" ||
 export const isPlanEditable = (status: string): boolean => !isPlanClosed(status);
 
 /**
- * **الحالةُ بعد التعديل**: المعتمَدةُ تعود «بانتظار الاعتماد» ما لم يكن المعدِّلُ ممّن يعتمد؛ والمُعادةُ والمسوّدةُ تبقيان حتى «إرسال للاعتماد»؛
- * والمنتظِرةُ تبقى منتظِرة.
+ * **الحالةُ بعد التعديل**: المعتمَدةُ تبقى معتمَدةً بيد مَن يعتمد، **وبيد الأخصائيّ إن كان بروتوكولُها معتمَداً** (تبقى تُنفَّذ وتعود للمراجعة —
+ * §4.cz)، وإلّا تعود «بانتظار الاعتماد»؛ والمُعادةُ والمسوّدةُ تبقيان حتى يُبدأ بها أو تُرسَل؛ والمنتظِرةُ تبقى منتظِرة.
  */
-export function planStatusAfterEdit(current: PlanStatus, editor: ProtocolSessionLike | null | undefined): PlanStatus {
-  if (current === "approved") return canApprovePlans(editor) ? "approved" : "pending";
+export function planStatusAfterEdit(current: PlanStatus, editor: ProtocolSessionLike | null | undefined, protocolStatus?: string | null): PlanStatus {
+  if (current === "approved") return canApprovePlans(editor) || protocolStatus === "approved" ? "approved" : "pending";
   return current;
 }
+
+// ══ الأخصائيُّ يبدأ خطّته بنفسه على بروتوكولٍ معتمَد، والمشرفُ يراجعها بعدها (ترحيل ١٢٠، §4.cz) ═════════════════════════════
+//   • **«اعتماد وبدء العلاج»** لكاتب الخطّة من المسوّدة أو المُعادة **إذا كان بروتوكولُها معتمَداً من المشرف** — فتنزل في ملفّ المريض وتُنفَّذ
+//     في الحال. وبروتوكولٌ غيرُ معتمَد أو خطّةٌ بلا بروتوكول ⟵ «إرسال للاعتماد» كما كانت (قرارُ المالك: «الأفضل أن يعتمدها سليم ثمّ تبدأ»).
+//   • **ويُنبَّه المشرفُ والمسؤول** «خطّةٌ جديدة بدأت — للمراجعة»، فيراجع: يوافق، أو يعدّل، أو يوقف، أو يستبدل نوعَها، أو يحذف.
+//   • **ويُنبَّه كاتبُ الخطّة بكلّ ما فعله المشرفُ بها** — موافقةً وتعديلاً وإيقافاً واستبدالاً وحذفاً.
+//   • **وتعديلُ الأخصائيّ خطّتَه المعتمَدة** على بروتوكولٍ معتمَد لا يوقف العلاج: تبقى معتمَدةً وتعود «بانتظار مراجعة المشرف».
+export const PLAN_REVIEW_STATES = ["awaiting", "reviewed"] as const;
+export type PlanReviewState = (typeof PLAN_REVIEW_STATES)[number];
+export const PLAN_REVIEW_LABELS: Record<PlanReviewState, string> = { awaiting: "بانتظار مراجعة المشرف", reviewed: "راجعها المشرف" };
+export const PLAN_REVIEW_LABELS_EN: Record<PlanReviewState, string> = { awaiting: "Awaiting supervisor review", reviewed: "Reviewed by the supervisor" };
+
+/** **يبدأها كاتبُها بنفسه**: من المسوّدة أو المُعادة، وبروتوكولُها معتمَدٌ من المشرف. */
+export const canSelfActivate = (status: string, protocolStatus: string | null | undefined): boolean =>
+  (status === "draft" || status === "returned") && protocolStatus === "approved";
+/** **يراجعها المشرف**: معتمَدةٌ بدأها كاتبُها وتنتظر نظرتَه. */
+export const canReviewFrom = (status: string, reviewStatus: string | null | undefined): boolean =>
+  status === "approved" && reviewStatus === "awaiting";
+export const SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL = "بروتوكولُ الخطّة لم يعتمده المشرفُ بعد — أرسلها للاعتماد";
 
 export const canSubmitFrom = (status: string): boolean => status === "draft" || status === "returned";
 /** يعتمد المعتمِدُ ما لم يُعتمَد بعد — مسوّدةً أو منتظِرةً أو مُعادة. */

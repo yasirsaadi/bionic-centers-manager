@@ -7,14 +7,16 @@ import {
   physioPlanSuggestions, physioProtocolDevices, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
-  canApproveFrom, canReturnFrom, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND, type PlanStatus,
+  canApproveFrom, canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND,
+  SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, type PlanStatus,
 } from "@shared/physio_plans";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
 export class PlanError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-export interface Actor { userId: number | null; name: string | null }
+/** `isApprover`: مسؤولٌ أو مشرفٌ عام (`canApprovePlans`) — به يُعرف أنّ التعديلَ والإيقافَ والاستبدالَ قرارُ مشرفٍ يُنبَّه به كاتبُ الخطّة (§4.cz). */
+export interface Actor { userId: number | null; name: string | null; isApprover?: boolean }
 
 export interface PlanDeviceInput {
   deviceId: number; minutes: number | null;
@@ -47,6 +49,7 @@ export async function listPatientPlans(patientId: number) {
     id: physioPlans.id, titleAr: physioPlans.titleAr, titleEn: physioPlans.titleEn, status: physioPlans.status,
     branchId: physioPlans.branchId, createdByName: physioPlans.createdByName, createdAt: physioPlans.createdAt,
     updatedAt: physioPlans.updatedAt, decidedByName: physioPlans.decidedByName, decidedAt: physioPlans.decidedAt,
+    reviewStatus: physioPlans.reviewStatus, reviewedByName: physioPlans.reviewedByName,
     protocolId: physioPlans.protocolId, protocolStatus: physioProtocols.status, protocolTitleAr: physioProtocols.titleAr,
     deviceCount: sql<number>`(SELECT count(*)::int FROM physio_plan_devices d WHERE d.plan_id = "physio_plans"."id")`,
     assignees: sql<string[]>`COALESCE((SELECT array_agg(u.display_name ORDER BY u.display_name) FROM physio_plan_assignees a
@@ -55,10 +58,12 @@ export async function listPatientPlans(patientId: number) {
     .where(eq(physioPlans.patientId, patientId)).orderBy(desc(physioPlans.createdAt));
 }
 
-/** **صفحةُ الاعتمادات والمسندة إليّ** — قائمةٌ عبر الفروع (`branchIds` = null للمسؤول). */
-export async function listPlans(p: { status?: PlanStatus; assigneeUserId?: number; branchIds: number[] | null }) {
+/** **صفحةُ الاعتمادات والمراجعة والمسندة إليّ** — قائمةٌ عبر الفروع (`branchIds` = null للمسؤول). */
+export async function listPlans(p: { status?: PlanStatus; reviewAwaiting?: boolean; assigneeUserId?: number; branchIds: number[] | null }) {
   const conds: any[] = [];
   if (p.status) conds.push(eq(physioPlans.status, p.status));
+  //  «للمراجعة» (§4.cz): بدأها كاتبُها على بروتوكولٍ معتمَد وتنتظر نظرةَ المشرف — وهي تُنفَّذ.
+  if (p.reviewAwaiting) conds.push(and(eq(physioPlans.status, "approved"), eq(physioPlans.reviewStatus, "awaiting")));
   if (p.branchIds) conds.push(p.branchIds.length ? inArray(physioPlans.branchId, p.branchIds) : sql`false`);
   if (p.assigneeUserId) {
     conds.push(sql`EXISTS (SELECT 1 FROM physio_plan_assignees a WHERE a.plan_id = "physio_plans"."id" AND a.user_id = ${p.assigneeUserId})`);
@@ -67,6 +72,7 @@ export async function listPlans(p: { status?: PlanStatus; assigneeUserId?: numbe
     id: physioPlans.id, titleAr: physioPlans.titleAr, status: physioPlans.status, branchId: physioPlans.branchId,
     branchName: branches.name, patientId: physioPlans.patientId, patientName: patients.name, patientCode: patients.patientCode,
     createdByName: physioPlans.createdByName, submittedAt: physioPlans.submittedAt, updatedAt: physioPlans.updatedAt,
+    decidedByName: physioPlans.decidedByName, decidedAt: physioPlans.decidedAt, reviewStatus: physioPlans.reviewStatus,
     protocolStatus: physioProtocols.status,
   }).from(physioPlans)
     .innerJoin(patients, eq(patients.id, physioPlans.patientId))
@@ -201,8 +207,36 @@ async function lockPlan(tx: any, id: number): Promise<PhysioPlan> {
   return row;
 }
 
-/** **تعديلٌ كامل** — والأجهزةُ تُستبدل. جهازٌ غيرُ متوفّرٍ في فرع الخطّة يُردّ إلّا إن كان فيها من قبل. */
-export async function updatePlan(id: number, input: PlanInput, nextStatus: (current: PlanStatus) => PlanStatus, actor: Actor) {
+/** حالةُ بروتوكول الخطّة الآن — `null` لخطّةٍ بلا بروتوكول. */
+async function protocolStatusOf(ex: any, protocolId: number | null): Promise<string | null> {
+  if (!protocolId) return null;
+  const [r] = await ex.select({ status: physioProtocols.status }).from(physioProtocols).where(eq(physioProtocols.id, protocolId));
+  return r?.status ?? null;
+}
+
+/** **مشرفٌ يعمل في خطّة غيره** — فيُنبَّه كاتبُها (§4.cz). */
+const supervisorActsOnOthers = (plan: PhysioPlan, actor: Actor): boolean =>
+  Boolean(actor.isApprover) && plan.createdBy != null && plan.createdBy !== actor.userId;
+
+/** **تنبيهُ كاتب الخطّة بما فعله المشرف** — موافقةً وتعديلاً وإيقافاً واستبدالاً وحذفاً (§4.cz). */
+async function notifyAuthor(tx: any, plan: PhysioPlan, actor: Actor, line: string, linkPath = `/physio/plans/${plan.id}`) {
+  if (!plan.createdBy) return;
+  await enqueueStaffEvent(tx, {
+    event: "physio_plan_decided", targetUserIds: [plan.createdBy], excludeUserId: actor.userId,
+    text: `${line}: ${await patientLabel(tx, plan.patientId, plan.branchId)}\n${plan.titleAr}${actor.name ? ` — ${actor.name}` : ""}`,
+    linkPath,
+  });
+}
+
+/** مراجعةُ المشرف مكتوبةً على الصفّ: نظر فيها مَن ومتى. */
+const reviewedBy = (actor: Actor) => ({ reviewStatus: "reviewed", reviewedBy: actor.userId, reviewedByName: actor.name, reviewedAt: new Date() });
+
+/**
+ * **تعديلٌ كامل** — والأجهزةُ تُستبدل. جهازٌ غيرُ متوفّرٍ في فرع الخطّة يُردّ إلّا إن كان فيها من قبل.
+ * **والخطّةُ المعتمَدة** (§4.cz): بيد المشرف في خطّة غيره ⟵ تبقى، «راجعها المشرف»، ويُنبَّه كاتبُها؛ وبيد الأخصائيّ على بروتوكولٍ معتمَد ⟵
+ * تبقى تُنفَّذ وتعود «بانتظار مراجعة المشرف» ويُنبَّه المشرف؛ وعلى بروتوكولٍ غير معتمَد ⟵ تعود «بانتظار الاعتماد» كما كانت.
+ */
+export async function updatePlan(id: number, input: PlanInput, nextStatus: (current: PlanStatus, protocolStatus: string | null) => PlanStatus, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
     if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا تُعدَّل");
@@ -211,28 +245,72 @@ export async function updatePlan(id: number, input: PlanInput, nextStatus: (curr
       .where(eq(physioPlanDevices.planId, id))).map((r) => Number(r.d)));
     const bad = input.devices.find((d) => !avail.has(d.deviceId) && !had.has(d.deviceId));
     if (bad) throw new PlanError(400, "جهازٌ غيرُ متوفّرٍ في فرع الخطّة");
-    const status = nextStatus(before.status as PlanStatus);
+    const status = nextStatus(before.status as PlanStatus, await protocolStatusOf(tx, before.protocolId));
     const demoted = before.status === "approved" && status === "pending";
+    const keptActive = before.status === "approved" && status === "approved";
+    const bySupervisor = keptActive && supervisorActsOnOthers(before, actor);
+    const backToReview = keptActive && !actor.isApprover;
     const { devices: lines, ...fields } = input;
     const [after] = await tx.update(physioPlans).set({
       ...fields, status, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
-      ...(demoted ? { submittedAt: new Date(), decidedBy: null, decidedByName: null, decidedAt: null } : {}),
+      ...(demoted ? { submittedAt: new Date(), decidedBy: null, decidedByName: null, decidedAt: null,
+        reviewStatus: null, reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
+      ...(bySupervisor ? reviewedBy(actor) : {}),
+      ...(backToReview ? { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
     }).where(eq(physioPlans.id, id)).returning();
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     if (lines.length) {
       await tx.insert(physioPlanDevices).values(lines.map((l, i) => ({ planId: id, ...l, displayOrder: i })));
     }
     if (demoted) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد");
-    return { before, after, demoted };
+    if (backToReview) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ بدأت وتُنفَّذ — للمراجعة", "✏️");
+    if (bySupervisor) await notifyAuthor(tx, after, actor, "✏️ عدّل المشرفُ خطّتك");
+    return { before, after, demoted, backToReview };
   });
 }
 
-async function notifyPending(tx: any, plan: PhysioPlan, actor: Actor, prefix = "خطّة علاج طبيعي تنتظر الاعتماد") {
+async function notifyPending(tx: any, plan: PhysioPlan, actor: Actor, prefix = "خطّة علاج طبيعي تنتظر الاعتماد", icon = "📋") {
   const who = await patientLabel(tx, plan.patientId, plan.branchId);
   await enqueueStaffEvent(tx, {
     event: "physio_plan_pending", excludeUserId: actor.userId,
-    text: `📋 ${prefix}: ${who}\n${plan.titleAr}${plan.createdByName ? ` — كتبها ${plan.createdByName}` : ""}`,
+    text: `${icon} ${prefix}: ${who}\n${plan.titleAr}${plan.createdByName ? ` — كتبها ${plan.createdByName}` : ""}`,
     linkPath: `/physio/plans/${plan.id}`,
+  });
+}
+
+/**
+ * **«اعتماد وبدء العلاج»** (§4.cz) — كاتبُ الخطّة يبدؤها بنفسه من المسوّدة أو المُعادة **إذا كان بروتوكولُها معتمَداً من المشرف** (يُقرأ في
+ * المعاملة نفسِها). فتصير معتمَدةً تُنفَّذ في الحال، و«بانتظار مراجعة المشرف»؛ ويُنبَّه المشرفُ والمسؤول للمراجعة، والمنفّذون المسنَدون.
+ * وإن بدأها مشرفٌ فهي مراجَعةٌ أصلاً.
+ */
+export async function activatePlan(id: number, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const before = await lockPlan(tx, id);
+    if (!canSubmitFrom(before.status)) throw new PlanError(409, "الخطّةُ بدأت من قبل أو أُرسلت للاعتماد");
+    if (!canSelfActivate(before.status, await protocolStatusOf(tx, before.protocolId))) throw new PlanError(409, SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL);
+    const now = new Date();
+    const [after] = await tx.update(physioPlans).set({
+      status: "approved", submittedAt: now, decidedBy: actor.userId, decidedByName: actor.name, decidedAt: now, returnNote: null,
+      ...(actor.isApprover ? reviewedBy(actor) : { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null }),
+      updatedBy: actor.userId, updatedByName: actor.name, updatedAt: now,
+    }).where(eq(physioPlans.id, id)).returning();
+    if (!actor.isApprover) await notifyPending(tx, after, actor, "خطّةٌ جديدة بدأت باعتماد الأخصائيّ — للمراجعة", "🆕");
+    const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
+      .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
+    await notifyAssigned(tx, after, ids, actor);
+    return { before, after };
+  });
+}
+
+/** **«موافقة المشرف»** (§4.cz) — على خطّةٍ بدأها كاتبُها وتنتظر المراجعة؛ ويُنبَّه الكاتب. */
+export async function reviewPlan(id: number, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const before = await lockPlan(tx, id);
+    if (!canReviewFrom(before.status, before.reviewStatus)) throw new PlanError(409, "لا مراجعةَ معلَّقة على هذه الخطّة");
+    const [after] = await tx.update(physioPlans).set({ ...reviewedBy(actor), updatedAt: new Date() })
+      .where(eq(physioPlans.id, id)).returning();
+    await notifyAuthor(tx, after, actor, "✅ وافق المشرفُ على خطّتك");
+    return { before, after };
   });
 }
 
@@ -259,6 +337,8 @@ export async function decidePlan(id: number, decision: "approve" | "return", not
       status: decision === "approve" ? "approved" : "returned",
       decidedBy: actor.userId, decidedByName: actor.name, decidedAt: new Date(),
       returnNote: decision === "return" ? note : null, updatedAt: new Date(),
+      //  اعتمادُ المشرف قبل البدء مراجعةٌ بنفسه (§4.cz).
+      ...(decision === "approve" ? reviewedBy(actor) : {}),
     }).where(eq(physioPlans.id, id)).returning();
     const who = await patientLabel(tx, after.patientId, after.branchId);
     if (after.createdBy) {
@@ -296,6 +376,7 @@ export async function stopPlan(id: number, reason: string, actor: Actor) {
     if (before.status === "graduated") throw new PlanError(409, "الخطّةُ منتهيةٌ بتخرّج المريض");
     const [after] = await tx.update(physioPlans).set({ status: "stopped", stopReason: reason, stoppedAt: new Date(),
       updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() }).where(eq(physioPlans.id, id)).returning();
+    if (supervisorActsOnOthers(before, actor)) await notifyAuthor(tx, after, actor, `⛔ أوقف المشرفُ خطّتك (${reason})`);
     return { before, after };
   });
 }
@@ -336,13 +417,15 @@ export async function setAssignees(id: number, userIds: number[], actor: Actor) 
 
 /** **حذفُ الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — للمسؤول والمشرف العام حصراً، وبأيّ حالة. أجهزتُها ومنفّذوها يتبعونها،
  *  والصورةُ الكاملة تُعاد لسطر التدقيق فلا يضيع ما حُذف. */
-export async function deletePlan(id: number) {
+export async function deletePlan(id: number, actor: Actor) {
   return db.transaction(async (tx) => {
     const plan = await lockPlan(tx, id);
     const lines = await tx.select().from(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     const assignees = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
     await tx.delete(physioPlans).where(eq(physioPlans.id, id));
+    //  الخطّةُ لم تعد — فالرابطُ ملفُّ المريض (§4.cz).
+    if (supervisorActsOnOthers(plan, actor)) await notifyAuthor(tx, plan, actor, "🗑️ حذف المشرفُ خطّتك", `/patients/${plan.patientId}`);
     return { ...plan, devices: lines, assignees };
   });
 }
@@ -358,7 +441,9 @@ export async function changePlanProtocol(id: number, protocolId: number, actor: 
     if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا يتغيّر نوعُها");
     if (before.protocolId === protocolId) throw new PlanError(409, "هذا هو نوعُ الخطّة الحاليّ");
     const { base, lines } = await protocolFill(tx, protocolId, before.branchId);
-    const [after] = await tx.update(physioPlans).set({ ...base, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() })
+    const [after] = await tx.update(physioPlans).set({ ...base, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
+      //  استبدالُ المشرف نوعَ خطّةٍ تُنفَّذ قرارُه — فهي مراجَعة (§4.cz).
+      ...(before.status === "approved" && actor.isApprover ? reviewedBy(actor) : {}) })
       .where(eq(physioPlans.id, id)).returning();
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     if (lines.length) {
@@ -378,6 +463,7 @@ export async function changePlanProtocol(id: number, protocolId: number, actor: 
         });
       }
     }
+    if (supervisorActsOnOthers(before, actor)) await notifyAuthor(tx, after, actor, `🔄 استبدل المشرفُ نوعَ خطّتك (كانت «${before.titleAr}»)`);
     return { before, after };
   });
 }

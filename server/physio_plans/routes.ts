@@ -2,10 +2,12 @@
 //
 //   GET  /api/patients/:patientId/physio-plans   — خططُ المريض (قراءة؛ والمنفّذُ يرى المعتمَدة والموقوفة وحدهما)
 //   POST /api/patients/:patientId/physio-plans   — خطّةٌ جديدة مسوّدةً، من بروتوكولٍ أو بلا (`canWritePlans`)
-//   GET  /api/physio/plans?view=pending|assigned — الاعتماداتُ (للمعتمِد) · المسندةُ إليّ
+//   GET  /api/physio/plans?view=pending|review|assigned — الاعتماداتُ · «للمراجعة» (للمعتمِد، §4.cz) · المسندةُ إليّ
 //   GET  /api/physio/plans/:id                   — الخطّةُ كاملة
-//   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد
+//   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد — إلّا على بروتوكولٍ معتمَد (تبقى وتعود للمراجعة)
 //   POST /api/physio/plans/:id/submit|approve|return|stop
+//   POST /api/physio/plans/:id/activate          — «اعتماد وبدء العلاج» بيد كاتبها على بروتوكولٍ معتمَد (§4.cz)
+//   POST /api/physio/plans/:id/review            — «موافقة المشرف» على خطّةٍ بدأها كاتبُها (§4.cz)
 //   DELETE /api/physio/plans/:id              — للمسؤول والمشرف العام حصراً
 //   POST /api/physio/plans/:id/change-protocol — تغييرُ نوع الخطّة (بروتوكولٌ آخر)، لهما حصراً
 //   GET  /api/physio/plans/:id/assignee-candidates · PUT /api/physio/plans/:id/assignees
@@ -69,7 +71,7 @@ export function parsePlanBody(b: any): store.PlanInput | string {
 
 export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   const sess = (req: any) => getSession(req) ?? ({} as any);
-  const actor = (s: any): store.Actor => ({ userId: s.userId ?? null, name: s.displayName ?? null });
+  const actor = (s: any): store.Actor => ({ userId: s.userId ?? null, name: s.displayName ?? null, isApprover: canApprovePlans(s) });
   const audit = (req: any, s: any, p: { entityId: number; action: string; branchId: number | null; oldValues?: any; newValues?: any; notes?: string }) =>
     logAudit({ entityType: "physio_plan", ...p, userId: s.userId ?? null, userName: s.displayName ?? null,
       ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
@@ -172,12 +174,14 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   app.get("/api/physio/plans", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
     if (!canReadPlans(s)) return res.status(403).json({ error: "خططُ العلاج الطبيعي لقسمه والمستشيرين" });
-    const view = req.query.view === "assigned" ? "assigned" : "pending";
-    if (view === "pending" && !canApprovePlans(s)) return res.status(403).json({ error: "الاعتماداتُ للمسؤول والمشرف العام" });
+    const view = req.query.view === "assigned" ? "assigned" : req.query.view === "review" ? "review" : "pending";
+    if (view !== "assigned" && !canApprovePlans(s)) return res.status(403).json({ error: "الاعتماداتُ والمراجعةُ للمسؤول والمشرف العام" });
     try {
       const rows = await store.listPlans(view === "pending"
         ? { status: "pending", branchIds: scopeOf(req, s) }
-        : { assigneeUserId: Number(s.userId), branchIds: scopeOf(req, s) });
+        : view === "review"
+          ? { reviewAwaiting: true, branchIds: scopeOf(req, s) }
+          : { assigneeUserId: Number(s.userId), branchIds: scopeOf(req, s) });
       res.json({ view, plans: rows.filter((p) => planVisibleTo(s, p.status)) });
     } catch (e) { fail(res, e); }
   });
@@ -201,10 +205,11 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!canWritePlans(l.s)) return res.status(403).json({ error: "يعدّل الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
       const input = parsePlanBody(req.body);
       if (typeof input === "string") return res.status(400).json({ error: input });
-      const r = await store.updatePlan(l.row.id, input, (cur) => planStatusAfterEdit(cur, l.s), actor(l.s));
+      const r = await store.updatePlan(l.row.id, input, (cur, protocolStatus) => planStatusAfterEdit(cur, l.s, protocolStatus), actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "update", branchId: l.row.branchId, oldValues: r.before,
         newValues: { ...r.after, devices: input.devices },
-        notes: r.demoted ? "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد" : undefined });
+        notes: r.demoted ? "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد"
+          : r.backToReview ? "عُدّلت خطّةٌ بدأت على بروتوكولٍ معتمَد — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
       res.json({ ...r.after, demoted: r.demoted });
     } catch (e) { fail(res, e); }
   });
@@ -217,6 +222,33 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const row = await store.submitPlan(l.row.id, actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "submit", branchId: l.row.branchId, newValues: { status: row.status } });
       res.json(row);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **«اعتماد وبدء العلاج»** (§4.cz) — كاتبُ الخطّة يبدؤها بنفسه على بروتوكولٍ اعتمده المشرف؛ والمشرفُ يراجعها بعدها.
+  app.post("/api/physio/plans/:id/activate", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canWritePlans(l.s)) return res.status(403).json({ error: "يبدأ الخطّةَ كاتبُها — الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+      const r = await store.activatePlan(l.row.id, actor(l.s));
+      await audit(req, l.s, { entityId: l.row.id, action: "activate", branchId: l.row.branchId,
+        oldValues: { status: r.before.status }, newValues: { status: r.after.status, reviewStatus: r.after.reviewStatus },
+        notes: "اعتمدها كاتبُها وبدأ العلاج — بروتوكولُها معتمَد" });
+      res.json(r.after);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **«موافقة المشرف»** (§4.cz) — على خطّةٍ بدأها كاتبُها؛ والتعديلُ والإيقافُ والاستبدالُ والحذفُ من أبوابها القائمة.
+  app.post("/api/physio/plans/:id/review", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canApprovePlans(l.s)) return res.status(403).json({ error: "يراجع الخطّةَ المسؤولُ أو المشرفُ العام" });
+      const r = await store.reviewPlan(l.row.id, actor(l.s));
+      await audit(req, l.s, { entityId: l.row.id, action: "review", branchId: l.row.branchId,
+        oldValues: { reviewStatus: r.before.reviewStatus }, newValues: { reviewStatus: r.after.reviewStatus } });
+      res.json(r.after);
     } catch (e) { fail(res, e); }
   });
 
@@ -276,7 +308,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (await exec.planHasSessions(l.row.id)) return res.status(409).json({ error: "للخطّة جلساتٌ منفّذة — أوقفها بدل الحذف" });
       //  وكذا خطّةٌ لها تقييمات (§4.cp) — قياساتُ المريض تاريخٌ لا يُمحى.
       if (await assess.planHasAssessments(l.row.id)) return res.status(409).json({ error: "للخطّة تقييماتٌ مسجّلة — أوقفها بدل الحذف" });
-      const removed = await store.deletePlan(l.row.id);
+      const removed = await store.deletePlan(l.row.id, actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "delete", branchId: l.row.branchId, oldValues: removed,
         notes: `حذف خطة العلاج الطبيعي «${l.row.titleAr}» للمريض #${l.row.patientId}` });
       res.json({ ok: true });
