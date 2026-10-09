@@ -15,6 +15,7 @@ import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
 import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, isPlanClosed, type PlanStatus, PLAN_REVIEW_LABELS } from "@shared/physio_plans";
 import { ExecuteSessionDialog } from "@/components/physio/ExecuteSession";
 import { SuggestBox, type SuggestInfo } from "@/components/physio/PlanSuggestion";
+import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
 
 interface PlanRow {
   id: number; titleAr: string; status: PlanStatus; createdByName: string | null; createdAt: string;
@@ -139,6 +140,8 @@ function NewPlanDialog({ open, onOpenChange, patientId, suggest, onCreated }: {
         <DialogHeader><DialogTitle>خطة علاج طبيعي جديدة</DialogTitle></DialogHeader>
         {/*  «اقترح خطّة» (§4.co) — لكاتبي الخطط، والخادمُ يقرّر مَن يراه (`suggest` غائبٌ لغيرهم). */}
         {open && suggest && <SuggestBox patientId={patientId} info={suggest} onCreated={(id) => { onOpenChange(false); onCreated(id); }} />}
+        {/*  **التقييمُ الأوّليّ بجانب اختيار البروتوكول** (§4.da المرحلة ٤): «على أساس هذه التقييمات تُختار الخطّة». */}
+        {open && <LatestAssessmentBox patientId={patientId} compact />}
         <p className="text-xs text-muted-foreground">
           اختر بروتوكول الحالة فتمتلئ الخطّة منه — الأهداف والتمارين والاحتياطات والجرعة، والأجهزةُ الموصى بها والاختيارية المتوفّرة في فرعك.
           ثمّ عدّلها لهذا المريض. وتبقى مسوّدةً لا تُنفَّذ حتى تُعتمَد.

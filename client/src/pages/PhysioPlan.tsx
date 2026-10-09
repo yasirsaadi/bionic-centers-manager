@@ -24,6 +24,7 @@ import { DeviationsList, ExecuteSessionDialog, PlanSessionsHistory } from "@/com
 import { DueAssessmentsList } from "@/components/physio/PlanProgress";
 import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSuggestion";
 import { PlanProgress } from "@/components/physio/PlanProgress";
+import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
   PLAN_REVIEW_LABELS, PLAN_REVIEW_LABELS_EN, PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans,
@@ -299,8 +300,10 @@ export default function PhysioPlanPage() {
         <PlanEditor plan={plan} lang={lang} onDone={() => { setEditing(false); refresh(); }} onCancel={() => setEditing(false)} />
       ) : (
         <>
+          {/*  **ما بُنيت عليه الخطّة** (§4.da المرحلة ٤): التقييمُ الأوّليّ في آخر معاينة — سطرُه وبنودُ «خطة العلاج» التي أشّرها الفاحص. */}
+          <div className="print:hidden"><LatestAssessmentBox patientId={plan.patientId} lang={lang} /></div>
           <div className={printMode === "progress" ? "" : "print:hidden"}>
-            <PlanProgress planId={plan.id} planStatus={plan.status} lang={lang} onModify={() => setEditing(true)} />
+            <PlanProgress planId={plan.id} planStatus={plan.status} lang={lang} onModify={() => setEditing(true)} patientId={plan.patientId} />
           </div>
           <div className={`space-y-3 ${printMode === "progress" ? "print:hidden" : ""}`}>
           <Section title={t.dose}>
