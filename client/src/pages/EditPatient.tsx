@@ -42,7 +42,8 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Loader2, ArrowRight, ArrowLeft, Plus, X } from "lucide-react";
+import { Loader2, ArrowRight, ArrowLeft, Plus, X, Lock } from "lucide-react";
+import { REFERRAL_OTHER_PERSON, REFERRAL_SUB_SOURCES } from "@shared/intake_sheet";
 import { z } from "zod";
 import { useEffect, useState } from "react";
 
@@ -61,6 +62,29 @@ const injuryAreaOptions = [
   "الرسغ", "اليد", "الاصابع", "الحوض", "الورك", "الفخذ",
   "الركبة", "الساق", "الكاحل", "القدم", "اصابع القدم",
 ];
+
+/**
+ * **خانةٌ مقفولة بعد المعاينة** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.db) — تُعرَض بقيمتها ولا تُلمَس، وتحتها لماذا ومَن يعدّلها.
+ * `fieldset disabled` يعطّل كلَّ ما بداخله (الحقول والمنتقيات والأزرار)، و`pointer-events-none` يمنع فتحَ المنتقيات بالضغط.
+ * والخادمُ هو الحَكَم: المقفولُ إن وصل متغيّراً يُردّ (`PUT /api/patients/:id`).
+ */
+function LockGroup({ reason, field, className, children }: { reason: string | null; field: string; className?: string; children: React.ReactNode }) {
+  if (!reason) return <>{children}</>;
+  return (
+    <fieldset disabled className={`m-0 min-w-0 border-0 p-0 ${className ?? ""}`} data-testid={`locked-${field}`}>
+      <div className="pointer-events-none opacity-70">{children}</div>
+      <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-700"><Lock className="h-3 w-3 shrink-0" /> {reason}</p>
+    </fieldset>
+  );
+}
+
+interface EditScope {
+  privileged: boolean;
+  examinedAny: boolean;
+  examinedTypes: string[];
+  locked: string[];
+  reasons: Record<string, string>;
+}
 
 const formSchema = insertPatientSchema.extend({
   //  ══ **العمرُ ليس إلزامياً في مخطّط النموذج** ═══════════════════════════
@@ -126,6 +150,10 @@ export default function EditPatient() {
   };
   const missingSomeType = !!patient && Object.values(hasType).some((v) => !v);
   const { mutate, isPending } = useUpdatePatient();
+  //  **ما يُقفَل على هذا الموظّف الآن** (§4.db): بعد المعاينة بياناتُ الاستعلامات للمسؤول ومدير الفرع، وما يكتبه الفاحصُ ليس للاستعلامات.
+  const { data: editScope } = useQuery<EditScope>({ queryKey: [`/api/patients/${patientId}/edit-scope`], enabled: Number.isFinite(patientId) });
+  const lockOf = (field: string): string | null => editScope?.reasons?.[field] || null;
+  const intakeLockedAfterExam = !!editScope && !editScope.privileged && editScope.examinedAny;
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
     queryFn: async () => {
@@ -185,6 +213,8 @@ export default function EditPatient() {
       supportType: "",
       injurySide: "",
       injuries: "",
+      referralSubSource: "",
+      presentingComplaint: "",
       branchId: 1,
     },
   });
@@ -236,6 +266,9 @@ export default function EditPatient() {
         injuries: patient.injuries || "",
         branchId: patient.branchId,
         referralSource: patient.referralSource || "",
+        //  «كيف عرف الشخص الآخر بالمركز» و«سبب المراجعة» — من الاستمارة، ولم يكن لهما بابُ تصحيح (§4.db).
+        referralSubSource: (patient as any).referralSubSource || "",
+        presentingComplaint: (patient as any).presentingComplaint || "",
         referralNotes: patient.referralNotes || "",
       });
       // The form now holds the patient's real values instead of the
@@ -365,6 +398,10 @@ export default function EditPatient() {
     //  بالسؤال يترك الفراغَ فراغاً. (والخادمُ يُسقط ما ليس بولياناً كذلك.)
     const data: any = { ...values };
     if (priorTouched) data.hadPriorCenterHistory = priorHistory === true;
+    //  الخانتان الجديدتان (§4.db) فارغتين على ملفٍّ لم يحملهما — لا تُرسَلان، فلا يصير `NULL` نصّاً فارغاً.
+    for (const k of ["referralSubSource", "presentingComplaint"] as const) {
+      if (!String(data[k] ?? "").trim() && !(patient as any)?.[k]) delete data[k];
+    }
     mutate({ id: patientId, data }, {
       //  ══ **ملاحظةُ الكلفة من الخادم — كانت تُقرأ ولا تُعرَض** (تصحيحٌ
       //  لاحقٌ على PR #267، 2026-08-31) ═══════════════════════════════════
@@ -422,12 +459,20 @@ export default function EditPatient() {
           missing (e.g. after certain merges/imports). */}
       <ManufacturingEditCard patient={patient} />
 
+      {intakeLockedAfterExam && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="banner-locked-after-exam">
+          <p className="font-medium flex items-center gap-1.5"><Lock className="h-4 w-4 shrink-0" /> عُوين المريض — بياناتُ الاستمارة يعدّلها المسؤول أو مدير الفرع.</p>
+          <p className="text-xs mt-0.5">يبقى لك: الهاتف، والمحافظة، والعنوان، وإشعارات واتساب.</p>
+        </div>
+      )}
+
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           
           <Card className="p-4 md:p-6 rounded-xl md:rounded-2xl shadow-sm border-border/60">
             <h3 className="text-base md:text-lg font-bold text-primary mb-3 md:mb-4 border-b pb-2">{t.patientForm.personalData}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+              <LockGroup reason={lockOf("name")} field="name">
               <FormField
                 control={form.control}
                 name="name"
@@ -441,6 +486,7 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
 
               <FormField
                 control={form.control}
@@ -485,6 +531,7 @@ export default function EditPatient() {
                         المربّعُ نفسُه الذي في التسجيل — وهنا بابُ تصحيحه.
                         **ولا يفعل شيئاً غير ما يقول**: لا يعفي من معاينة،
                         ولا يُنشئ جهازاً ولا شراءً ولا حلقة. */}
+                    <LockGroup reason={lockOf("hadPriorCenterHistory")} field="hadPriorCenterHistory">
                     <label
                       className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/30 p-2 cursor-pointer"
                       data-testid="label-prior-center-history"
@@ -518,6 +565,7 @@ export default function EditPatient() {
                         </span>
                       </span>
                     </label>
+                    </LockGroup>
                   </FormItem>
                 )}
               />
@@ -542,13 +590,18 @@ export default function EditPatient() {
                 <GovernorateSelect value={form.watch("governorate") as any} onChange={(v) => form.setValue("governorate", v)} className="bg-slate-50" testId="edit-governorate" />
               </FormItem>
 
+              <LockGroup reason={lockOf("referralSource")} field="referralSource">
               <FormField
                 control={form.control}
                 name="referralSource"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t.patientForm.referralSource}</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || ""}>
+                    <Select onValueChange={(v) => {
+                      field.onChange(v);
+                      //  «كيف عرف» لا معنى لها لغير «من شخص آخر» — تُفرَّغ مع تغيير الجهة.
+                      if (v !== REFERRAL_OTHER_PERSON) form.setValue("referralSubSource" as any, "");
+                    }} value={field.value || ""}>
                       <FormControl>
                         <SelectTrigger className="bg-slate-50" data-testid="select-referral-source">
                           <SelectValue placeholder={t.patientForm.selectReferralSource} />
@@ -558,12 +611,14 @@ export default function EditPatient() {
                         <SelectItem value="طبيبنا">{t.patientForm.refOurDoctor}</SelectItem>
                         <SelectItem value="طبيب خارجي">{t.patientForm.refExternalDoctor}</SelectItem>
                         <SelectItem value="مستشفى">{t.patientForm.refHospital}</SelectItem>
+                        <SelectItem value="أطباء مستشفى العين">أطباء مستشفى العين</SelectItem>
                         <SelectItem value="جهة حكومية">{t.patientForm.refGovernment}</SelectItem>
                         <SelectItem value="منظمة انسانية">{t.patientForm.refNGO}</SelectItem>
                         <SelectItem value="فيسبوك">{t.patientForm.refFacebook}</SelectItem>
                         <SelectItem value="انستاغرام">{t.patientForm.refInstagram}</SelectItem>
                         <SelectItem value="تيك توك">{t.patientForm.refTikTok}</SelectItem>
                         <SelectItem value="كوكل">{t.patientForm.refGoogle}</SelectItem>
+                        <SelectItem value="شاشة إعلان خارجية">شاشة إعلان خارجية</SelectItem>
                         <SelectItem value="من شخص آخر">{t.patientForm.refOtherPerson}</SelectItem>
                         <SelectItem value="دكتور بيرم">{t.patientForm.refDrBiram}</SelectItem>
                       </SelectContent>
@@ -572,8 +627,26 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
+
+              {form.watch("referralSource") === REFERRAL_OTHER_PERSON && (
+                <LockGroup reason={lockOf("referralSubSource")} field="referralSubSource">
+                  <FormItem>
+                    <FormLabel>كيف عرف الشخص الآخر بالمركز</FormLabel>
+                    <Select value={(form.watch("referralSubSource" as any) as string) || ""} onValueChange={(v) => form.setValue("referralSubSource" as any, v)}>
+                      <SelectTrigger className="bg-slate-50" data-testid="select-referral-sub-source">
+                        <SelectValue placeholder="اختر" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REFERRAL_SUB_SOURCES.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                </LockGroup>
+              )}
 
               {form.watch("referralSource") && (
+                <LockGroup reason={lockOf("referralNotes")} field="referralNotes">
                 <FormField
                   control={form.control}
                   name="referralNotes"
@@ -587,8 +660,10 @@ export default function EditPatient() {
                     </FormItem>
                   )}
                 />
+                </LockGroup>
               )}
 
+              <LockGroup reason={lockOf("age")} field="age">
               <FormField
                 control={form.control}
                 name="age"
@@ -602,7 +677,9 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
 
+              <LockGroup reason={lockOf("weight")} field="weight">
               <FormField
                 control={form.control}
                 name="weight"
@@ -616,7 +693,9 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
 
+              <LockGroup reason={lockOf("height")} field="height">
               <FormField
                 control={form.control}
                 name="height"
@@ -630,6 +709,7 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
 
               <FormField
                 control={form.control}
@@ -720,6 +800,7 @@ export default function EditPatient() {
                       كان هنا بانٍ كامل بافتراضاته ومحلّلٍ ناقصٍ لا يقرأ
                       تفاصيلَ الثنائيّ. والآن `AmputationBuilder` نفسُه
                       المستعمَل في التسجيل وفي «إضافة نوع حالة». */}
+                  <LockGroup reason={lockOf("amputationSite")} field="amputationSite">
                   <div className="space-y-4">
                     <FormLabel className="text-base">{t.patientForm.amputationType} <PatientVisibleBadge className="ms-2" /></FormLabel>
                     <AmputationBuilder
@@ -739,10 +820,11 @@ export default function EditPatient() {
                       </p>
                     )}
                   </div>
+                  </LockGroup>
 
                   {/* Show prosthetic details only for single/double amputation */}
                   {(amp.amputationType === "single" || amp.amputationType === "double") && (
-                    <>
+                    <LockGroup reason={lockOf("prostheticType")} field="prostheticType" className="space-y-6">
                   <FormField
                     control={form.control}
                     name="prostheticType"
@@ -838,13 +920,23 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
-                    </>
+                    </LockGroup>
                   )}
                 </>
               )}
 
               {conditionType === "physiotherapy" && (
                 <>
+                  {/*  **«سبب المراجعة»** — الشكوى بكلمات المراجع، تكتبها الاستعلاماتُ في الاستمارة (§4.da) وتُصحَّح هنا قبل المعاينة (§4.db). */}
+                  <LockGroup reason={lockOf("presentingComplaint")} field="presentingComplaint">
+                    <FormItem>
+                      <FormLabel>سبب المراجعة</FormLabel>
+                      <Textarea value={(form.watch("presentingComplaint" as any) as string) || ""}
+                        onChange={(e) => form.setValue("presentingComplaint" as any, e.target.value)}
+                        className="bg-slate-50 min-h-[70px]" placeholder="الشكوى بكلمات المراجع" data-testid="input-presenting-complaint" />
+                    </FormItem>
+                  </LockGroup>
+                  <LockGroup reason={lockOf("diseaseType")} field="diseaseType">
                   <FormField
                     control={form.control}
                     name="diseaseType"
@@ -858,11 +950,12 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
+                  </LockGroup>
                 </>
               )}
 
               {conditionType === "medical_support" && (
-                <>
+                <LockGroup reason={lockOf("supportType")} field="supportType" className="space-y-6">
                   <FormField
                     control={form.control}
                     name="supportType"
@@ -889,9 +982,10 @@ export default function EditPatient() {
                       </FormItem>
                     )}
                   />
-                </>
+                </LockGroup>
               )}
 
+              <LockGroup reason={lockOf("injuryDate")} field="injuryDate">
               <FormField
                 control={form.control}
                 name="injuryDate"
@@ -909,6 +1003,7 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
 
               {conditionType === "physiotherapy" && (
                 <div className="space-y-4">
@@ -916,6 +1011,7 @@ export default function EditPatient() {
                   <FormField control={form.control} name="injuryArea" render={({ field }) => (<input type="hidden" {...field} value={field.value || ""} />)} />
                   <FormField control={form.control} name="injuries" render={({ field }) => (<input type="hidden" {...field} value={field.value || ""} />)} />
 
+                  <LockGroup reason={lockOf("injuries")} field="injuries">
                   <div className="space-y-3">
                     <FormLabel className="text-base">{t.patientForm.injuries}</FormLabel>
                     {injuryEntries.map((entry, index) => (
@@ -1005,9 +1101,11 @@ export default function EditPatient() {
                       {t.patientForm.addAnotherInjury}
                     </Button>
                   </div>
+                  </LockGroup>
                 </div>
               )}
 
+              <LockGroup reason={lockOf("injuryCause")} field="injuryCause">
               <FormField
                 control={form.control}
                 name="injuryCause"
@@ -1021,6 +1119,7 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
             </div>
           </Card>
 
@@ -1043,6 +1142,7 @@ export default function EditPatient() {
                 />
               )}
 
+              <LockGroup reason={lockOf("generalNotes")} field="generalNotes">
               <FormField
                 control={form.control}
                 name="generalNotes"
@@ -1056,6 +1156,7 @@ export default function EditPatient() {
                   </FormItem>
                 )}
               />
+              </LockGroup>
             </div>
           </Card>
 
