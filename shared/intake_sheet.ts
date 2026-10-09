@@ -98,6 +98,8 @@ export interface IntakeInput {
   requestedItem?: unknown;
   /** «المطلوب» مربّعاتُ اختيار (§4.ct) — قائمةٌ تغلب `requestedItem` حين تُرسَل. */
   requestedItems?: unknown;
+  /** «سبب المراجعة» — في استمارة العلاج الطبيعي (§4.da). */
+  presentingComplaint?: unknown;
 }
 
 /** عناوينُ ما ينقص — بألفاظ الورقة. */
@@ -138,6 +140,10 @@ export function checkIntakeSheet(v: IntakeInput): { ok: boolean; missing: string
   } else if (v.department === "medical_support") {
     if (!filled(v.supportType)) missing.push("supportType");
     if (!filled(v.injurySide)) missing.push("injurySide");
+  } else if (v.department === "physiotherapy") {
+    //  **استمارةُ العلاج الطبيعي** (§4.da، قرارُ المالك ٢٠٢٦-١٠-٠٩): الحقولُ نفسُها، ومعها **«سبب المراجعة»** — الشكوى بكلمات المراجع.
+    //  والإصاباتُ اختيارية (يكملها الفاحص)، و«التشخيص» للفاحص وحده.
+    if (!filled(v.presentingComplaint)) missing.push("presentingComplaint");
   } else {
     missing.push("department");
   }

@@ -37,6 +37,16 @@ async function availableDeviceIds(ex: any, branchId: number): Promise<Set<number
   return new Set(rows.map((r: any) => Number(r.deviceId)));
 }
 
+/**
+ * **الفروعُ التي فيها علاجٌ طبيعيّ** (§4.da، قرارُ المالك: «العلاج الطبيعي فقط في بغداد وذي قار») — مَن فيه جهازٌ متوفّرٌ واحدٌ على الأقلّ.
+ * مصدرُه توفّرُ الأجهزة بالفرع (ترحيل ١٠٦) لا اسمُ الفرع: فإن فُتح القسمُ يوماً في فرعٍ ثالث يكفي تفعيلُ أجهزته.
+ */
+export async function physioOfferingBranchIds(): Promise<Set<number>> {
+  const rows = await db.selectDistinct({ branchId: physioDeviceBranches.branchId }).from(physioDeviceBranches)
+    .where(eq(physioDeviceBranches.available, true));
+  return new Set(rows.map((r) => Number(r.branchId)));
+}
+
 async function patientLabel(ex: any, patientId: number, branchId: number): Promise<string> {
   const [p] = await ex.select({ name: patients.name, code: patients.patientCode }).from(patients).where(eq(patients.id, patientId));
   const [b] = await ex.select({ name: branches.name }).from(branches).where(eq(branches.id, branchId));

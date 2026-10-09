@@ -53,6 +53,7 @@ import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
 import { registerPhysioProtocolRoutes } from "./physio_protocols/routes";
 import { liveBroadcastMiddleware, registerLiveStream } from "./live/updates";
 import { registerPhysioPlanRoutes } from "./physio_plans/routes";
+import { physioOfferingBranchIds } from "./physio_plans/store";
 import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
@@ -1915,7 +1916,9 @@ export async function registerRoutes(
   // Branches
   app.get(api.branches.list.path, isAuthenticated, async (req, res) => {
     const branches = await storage.getBranches();
-    res.json(branches);
+    //  **`offersPhysio`** (§4.da): في الفرع علاجٌ طبيعيّ — به يظهر خيارُ «علاج طبيعي» في «إضافة مريض» (بغداد وذي قار اليوم).
+    const physio = await physioOfferingBranchIds();
+    res.json(branches.map((b) => ({ ...b, offersPhysio: physio.has(b.id) })));
   });
 
   // Patients
@@ -2806,10 +2809,10 @@ export async function registerRoutes(
       //  وتُقرأ صرامةً — أيُّ قيمةٍ غير `true` تعني «لا».
       req.body.hadPriorCenterHistory = req.body?.hadPriorCenterHistory === true;
 
-      //  ══ **استمارةُ المراجع** (ترحيل ١١٤، §4.cq) — للأطراف والمساند ══
+      //  ══ **استمارةُ المراجع** (ترحيل ١١٤، §4.cq) — للأطراف والمساند، **وللعلاج الطبيعي** (§4.da) ══
       //  تُرسل `intakeSheet: true` ومعها القسمُ و«المطلوب»؛ والقسمُ يقرّر الأعلامَ **هنا** لا في العميل، وحقولُها كلُّها
-      //  إلزامية إلّا الملاحظات (`checkIntakeSheet` — القاعدةُ نفسُها التي تفحص بها الشاشة). وصفحةُ العلاج الطبيعي
-      //  لا ترسلها، فلا يتغيّر عليها شيء.
+      //  إلزامية إلّا الملاحظات (`checkIntakeSheet` — القاعدةُ نفسُها التي تفحص بها الشاشة). واستمارةُ العلاج الطبيعي
+      //  بلا «المطلوب» ومعها «سبب المراجعة»، وفي فروعه وحدها. وطلبٌ بلا `intakeSheet` (عميلٌ قديم) يمرّ كما كان.
       const intakeSheet = req.body?.intakeSheet === true;
       const intakeDepartment = req.body?.department;
       if (intakeSheet) {
@@ -2817,6 +2820,10 @@ export async function registerRoutes(
           Object.assign(req.body, { medicalCondition: "amputee", isAmputee: true, isMedicalSupport: false, isPhysiotherapy: false, supportType: "" });
         } else if (intakeDepartment === "medical_support") {
           Object.assign(req.body, { medicalCondition: "medical_support", isAmputee: false, isMedicalSupport: true, isPhysiotherapy: false, amputationSite: "" });
+        } else if (intakeDepartment === "physiotherapy") {
+          //  **استمارةُ العلاج الطبيعي** (§4.da): «التشخيص» للفاحص وحده — لا يُقرأ هنا، و«سبب المراجعة» مكانُه.
+          Object.assign(req.body, { medicalCondition: "physiotherapy", isAmputee: false, isMedicalSupport: false, isPhysiotherapy: true,
+            amputationSite: "", supportType: "", diseaseType: "" });
         }
       }
       //  **والمحافظةُ من القائمة أو لا شيء**، **وتاريخُ الإصابة تاريخٌ أو حالة — لا الاثنان** (قيدُ الترحيل ١١٤).
@@ -2862,6 +2869,10 @@ export async function registerRoutes(
       if (intakeSheet) {
         const chk = checkIntakeSheet({ ...input, department: intakeDepartment, requestedItem: req.body?.requestedItem, requestedItems: req.body?.requestedItems });
         if (!chk.ok) return res.status(400).json({ message: chk.message, missing: chk.missing });
+        //  **والعلاجُ الطبيعيُّ في فروعه وحدها** (قرارُ المالك: «بغداد وذي قار») — من توفّر أجهزته في الفرع.
+        if (intakeDepartment === "physiotherapy" && !(await physioOfferingBranchIds()).has(Number(input.branchId))) {
+          return res.status(400).json({ message: "العلاج الطبيعي غير متوفّر في هذا الفرع", missing: ["branchId"] });
+        }
       }
 
       // ══ **بياناتٌ لا يُصنَع جهازٌ بدونها** ═════════════════════════════

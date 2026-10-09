@@ -4,7 +4,8 @@
 // يحرس قراراتِ المالك: (١) «هذه الاستمارةُ العلاجية لدور الأخصائيّ أو الطبيب أو المسؤول» — للعلاج الطبيعي وحده؛ (٢) الاستمارةُ
 // الورقية «بدون أيّ نقص» تُحفَظ مع المعاينة بتاريخها ووقتها ويطّلع عليها مَن يرى المريض؛ (٣) قوةُ العضلات ٠–٥ كالورقة، ومستوى المساعدة
 // نصٌّ حرّ؛ (٤) الإلزام: القسمُ الأوّل أو «لا ينطبق»، والألم، والإحساس، وبندٌ من خطّة العلاج، والتشخيص. ومعها: «سبب المراجعة» خانةٌ
-// مستقلّة لا يُفرَّغ مكتوبُها، والتنقيحُ لا يمحو، ولا قيدَ جديد على معاينةٍ قديمة.
+// مستقلّة لا يُفرَّغ مكتوبُها، والتنقيحُ لا يمحو، ولا قيدَ جديد على معاينةٍ قديمة. **والمرحلةُ الثانية** (ت.): التسجيلُ بالاستمارة —
+// «سبب المراجعة» إلزاميّ، و«التشخيص» للفاحص وحده، وفي فروع العلاج الطبيعي وحدها («بغداد وذي قار» — من توفّر أجهزته).
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -39,6 +40,9 @@ const PORT = 6999;
 const BASE = `http://127.0.0.1:${PORT}`;
 const MARK = "اختبار-تقييم-علاج-طبيعي";
 const B1 = 9861;
+/** فرعٌ بلا علاجٍ طبيعيّ — كالموصل وكركوك (§4.da، المرحلةُ الثانية). */
+const B2 = 9862;
+const DEV_CODE = "pes-test-device";
 const RECV = 9871, SPEC = 9872, SUP = 9873, ADMIN = 9874, DOCP = 9875, THER = 9876;
 const IDS = [RECV, SPEC, SUP, ADMIN, DOCP, THER];
 
@@ -64,7 +68,9 @@ async function cleanup() {
   for (const id of pts) await storage.deletePatient(id);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [IDS]);
-  await q(`DELETE FROM branches WHERE id = $1`, [B1]);
+  await q(`DELETE FROM physio_device_branches WHERE branch_id = ANY($1::int[])`, [[B1, B2]]);
+  await q(`DELETE FROM devices WHERE code = $1`, [DEV_CODE]);
+  await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
 }
 
 async function main() {
@@ -112,7 +118,10 @@ async function main() {
     [["presentingComplaint"], { presentingComplaint: "ألم الرقبة" }]);
 
   await cleanup();
-  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع تقييم العلاج الطبيعي')`, [B1]);
+  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع تقييم العلاج الطبيعي'), ($2, 'فرع بلا علاج طبيعي')`, [B1, B2]);
+  //  **فرعُ العلاج الطبيعي مَن فيه جهازٌ متوفّر** (ترحيل ١٠٦) — B1 كبغداد وذي قار، وB2 جهازُه «غير متوفّر».
+  const dev = (await q(`INSERT INTO devices (code, name_ar, name_en) VALUES ($1, 'جهاز اختبار', 'Test device') RETURNING id`, [DEV_CODE])).rows[0].id;
+  await q(`INSERT INTO physio_device_branches (device_id, branch_id, available) VALUES ($1, $2, true), ($1, $3, false)`, [dev, B1, B2]);
   const users: [number, string, Record<string, unknown>][] = [
     [RECV, "reception", { can_add_patients: true, can_view_patients: true }],
     [SPEC, "physio_specialist", { can_view_patients: true }],
@@ -302,6 +311,66 @@ async function main() {
     const pp = await call("POST", `/api/medical/patients/${p4}/exams`, S.docp, examBody({ caseType: "prosthetic", prescription: { prostheticType: "طرف" } }));
     const ppRow = pp.json?.id ? (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [pp.json.id])).rows[0] : null;
     same("د.١ **معاينةٌ غيرُ العلاج الطبيعي لا يُختَم فيها تقييم** ولو أُرسل", [pp.status, ppRow?.assessment ?? null], [200, null]);
+
+    // ══ المرحلةُ الثانية: التسجيلُ بالاستمارة، وفي فروع العلاج الطبيعي وحدها ══
+    console.log("\n── ت. التسجيلُ بـ«استمارة مراجع — علاج طبيعي» ──");
+    const br = (await call("GET", "/api/branches", S.recv)).json ?? [];
+    same("ت.١ **`offersPhysio` من توفّر أجهزة العلاج الطبيعي في الفرع** — لا من اسمه، والجهازُ «غير المتوفّر» لا يكفي",
+      [br.find((b: any) => b.id === B1)?.offersPhysio, br.find((b: any) => b.id === B2)?.offersPhysio], [true, false]);
+
+    const sheetBody = (over: Record<string, unknown> = {}) => ({
+      intakeSheet: true, department: "physiotherapy", branchId: B1,
+      name: `زينب ${MARK}`, phone: "07719876543", hadPriorCenterHistory: false,
+      governorate: "ذي قار", address: "الناصرية — حي الشهداء",
+      referralSource: "من شخص آخر", referralSubSource: MARK, referralNotes: "د. حسن — مستشفى الحسين",
+      presentingComplaint: "ألمٌ في الرقبة ينزل إلى الذراع اليمنى منذ شهر",
+      injuries: JSON.stringify([{ type: "انزلاق غضروفي", area: "الرقبة", side: "يمين" }]), injuryType: "انزلاق غضروفي", injuryArea: "الرقبة",
+      age: "38", weight: "64", height: "160", injuryCause: "غير معروف", injuryDate: null, injuryDateStatus: "unknown",
+      generalNotes: "", totalCost: 0, whatsappNotificationsEnabled: false,
+      ...over,
+    });
+    const created = await call("POST", "/api/patients", S.recv, sheetBody({ diseaseType: "تشخيصٌ من الاستقبال" }));
+    const np = created.json?.id ? (await q(`SELECT is_physiotherapy, is_amputee, is_medical_support, medical_condition, presenting_complaint,
+        disease_type, referral_notes, governorate, injury_date, injury_date_status, injuries FROM patients WHERE id = $1`, [created.json.id])).rows[0] : null;
+    same("ت.٢ **الاستقبالُ يسجّل بالاستمارة**: قسمُ العلاج الطبيعي، و«سبب المراجعة» و«ملاحظة الجهة» والإصاباتُ محفوظة",
+      [created.status, np?.is_physiotherapy, np?.is_amputee, np?.is_medical_support, np?.medical_condition, np?.presenting_complaint,
+        np?.referral_notes, np?.governorate, np?.injury_date, np?.injury_date_status, (JSON.parse(np?.injuries ?? "[]") as any[])[0]?.area],
+      [201, true, false, false, "physiotherapy", "ألمٌ في الرقبة ينزل إلى الذراع اليمنى منذ شهر",
+        "د. حسن — مستشفى الحسين", "ذي قار", null, "unknown", "الرقبة"]);
+    same("ت.٣ **و«التشخيص» للفاحص وحده** — ما أرسله العميلُ لا يُكتب", np?.disease_type ?? "", "");
+    const npId = Number(created.json?.id);
+    const cases = (await q(`SELECT case_type, cost FROM patient_cases WHERE patient_id = $1`, [npId])).rows;
+    const eps = Number((await q(`SELECT count(*) FROM patient_device_episodes WHERE patient_id = $1`, [npId])).rows[0].count);
+    same("ت.٤ قسمُ العلاج الطبيعي بكلفة صفر، **ولا طلبَ جهاز**",
+      [cases.map((c) => [c.case_type, Number(c.cost)]), eps], [[["physiotherapy", 0]], 0]);
+    const wl2 = await call("GET", "/api/medical/worklist", S.spec);
+    same("ت.٥ **والمراجعُ في «معايناتي» الأخصائيّ** حين يُحفظ — انتظارٌ مشتقٌّ بلا طلب",
+      (wl2.json?.rows ?? wl2.json?.items ?? wl2.json ?? []).some?.((r: any) => Number(r.patientId ?? r.patient_id ?? r.id) === npId), true);
+
+    const before = Number((await q(`SELECT count(*) FROM patients WHERE referral_sub_source = $1`, [MARK])).rows[0].count);
+    const noComplaint = await call("POST", "/api/patients", S.recv, sheetBody({ name: `حسين ${MARK}`, phone: "07719876544", presentingComplaint: "  " }));
+    same("ت.٦ **«سبب المراجعة» إلزاميّ** — ٤٠٠ يسمّيه، ولا ملفّ",
+      [noComplaint.status, noComplaint.json?.missing, Number((await q(`SELECT count(*) FROM patients WHERE referral_sub_source = $1`, [MARK])).rows[0].count)],
+      [400, ["presentingComplaint"], before]);
+    const bare = await call("POST", "/api/patients", S.recv, {
+      //  ما ترسله الشاشةُ فارغةً — نصوصٌ فارغة لا مفاتيحُ غائبة.
+      intakeSheet: true, department: "physiotherapy", branchId: B1, name: `فارغ ${MARK}`, phone: "07719876545",
+      governorate: "", address: "", referralSource: "", referralSubSource: MARK, presentingComplaint: "",
+      age: "30", weight: "60", height: "160", injuryCause: "", injuryDate: null, injuryDateStatus: null,
+      totalCost: 0, whatsappNotificationsEnabled: false,
+    });
+    same("ت.٧ **والإلزامُ كالأطراف** — كلُّها إلّا الملاحظاتِ والإصابات، بترتيب الورقة",
+      [bare.status, bare.json?.missing], [400, ["governorate", "address", "referralSource", "injuryCause", "injuryDate", "presentingComplaint"]]);
+    const elsewhere = await call("POST", "/api/patients", S.admin, sheetBody({ name: `مصطفى ${MARK}`, phone: "07719876546", branchId: B2 }));
+    same("ت.٨ **وفي فرعٍ بلا علاجٍ طبيعيّ يُردّ** — ٤٠٠ على «الفرع»، ولا ملفّ",
+      [elsewhere.status, elsewhere.json?.missing, elsewhere.json?.message,
+        Number((await q(`SELECT count(*) FROM patients WHERE referral_sub_source = $1`, [MARK])).rows[0].count)],
+      [400, ["branchId"], "العلاج الطبيعي غير متوفّر في هذا الفرع", before]);
+    const devicesThere = await call("POST", "/api/patients", S.admin, {
+      ...sheetBody({ name: `مسند ${MARK}`, phone: "07719876547", branchId: B2 }), department: "medical_support",
+      presentingComplaint: undefined, supportType: "مشدّ ظهر", injurySide: "لا ينطبق", requestedItems: ["full_device"],
+    });
+    same("ت.٩ والأطرافُ والمساندُ في ذلك الفرع كما كانت", devicesThere.status, 201);
   } finally {
     httpServer.close();
     await cleanup();
