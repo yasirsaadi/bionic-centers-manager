@@ -2940,6 +2940,8 @@ export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   note: text("note"),
   parametersEn: text("parameters_en"),
   noteEn: text("note_en"),
+  //  §4.cx — خاناتُ الجهاز (`DEVICE_PARAM_FIELDS`): قيمٌ بلا لغة، والوصفُ يبقى في `parameters`/`parametersEn`.
+  params: jsonb("params").$type<Record<string, string>>().notNull().default({}),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqProtocolDevice: unique("physio_protocol_devices_protocol_id_device_id_key").on(t.protocolId, t.deviceId) }));
 
@@ -2963,6 +2965,70 @@ export const physioDeviceBranches = pgTable("physio_device_branches", {
   updatedBy: integer("updated_by").references(() => systemUsers.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ pk: primaryKey({ columns: [t.deviceId, t.branchId] }) }));
+
+// ══ مكتبةُ التمارين ومراحلُ البروتوكول (ترحيل ١١٨، §4.cx) — القواعدُ في `shared/physio_exercises.ts` ══════════
+export const physioExercises = pgTable("physio_exercises", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  kind: text("kind").notNull(),
+  region: text("region").notNull(),
+  purpose: text("purpose"), purposeEn: text("purpose_en"),
+  startPosition: text("start_position"), startPositionEn: text("start_position_en"),
+  steps: text("steps"), stepsEn: text("steps_en"),
+  cues: text("cues"), cuesEn: text("cues_en"),
+  easier: text("easier"), easierEn: text("easier_en"),
+  harder: text("harder"), harderEn: text("harder_en"),
+  stopIf: text("stop_if"), stopIfEn: text("stop_if_en"),
+  equipment: text("equipment"), equipmentEn: text("equipment_en"),
+  doseNote: text("dose_note"), doseNoteEn: text("dose_note_en"),
+  sets: integer("sets"),
+  reps: integer("reps"),
+  holdSeconds: integer("hold_seconds"),
+  restSeconds: integer("rest_seconds"),
+  perSide: boolean("per_side").notNull().default(false),
+  homeSuitable: boolean("home_suitable").notNull().default(true),
+  images: jsonb("images").$type<{ key: string; captionAr: string; captionEn: string; search: string }[]>().notNull().default([]),
+  status: text("status").notNull().default("draft"),
+  approvedBy: integer("approved_by").references(() => systemUsers.id),
+  approvedByName: text("approved_by_name"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  isArchived: boolean("is_archived").notNull().default(false),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name"),
+  updatedBy: integer("updated_by").references(() => systemUsers.id),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type PhysioExercise = typeof physioExercises.$inferSelect;
+
+export const physioProtocolPhases = pgTable("physio_protocol_phases", {
+  id: serial("id").primaryKey(),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  timeframe: text("timeframe"), timeframeEn: text("timeframe_en"),
+  goals: text("goals"), goalsEn: text("goals_en"),
+  education: text("education"), educationEn: text("education_en"),
+  progressCriteria: text("progress_criteria"), progressCriteriaEn: text("progress_criteria_en"),
+  notes: text("notes"), notesEn: text("notes_en"),
+}, (t) => ({ uqPhase: unique("physio_protocol_phases_protocol_id_position_key").on(t.protocolId, t.position) }));
+
+export const physioProtocolPhaseExercises = pgTable("physio_protocol_phase_exercises", {
+  id: serial("id").primaryKey(),
+  phaseId: integer("phase_id").notNull().references(() => physioProtocolPhases.id, { onDelete: "cascade" }),
+  exerciseId: integer("exercise_id").notNull().references(() => physioExercises.id),
+  position: integer("position").notNull().default(0),
+  sets: integer("sets"),
+  reps: integer("reps"),
+  holdSeconds: integer("hold_seconds"),
+  restSeconds: integer("rest_seconds"),
+  doseNote: text("dose_note"), doseNoteEn: text("dose_note_en"),
+  note: text("note"), noteEn: text("note_en"),
+}, (t) => ({ uqPhaseExercise: unique("physio_protocol_phase_exercises_phase_id_exercise_id_key").on(t.phaseId, t.exerciseId) }));
 
 // ══ خطّةُ العلاج الطبيعي للمريض (ترحيل ١٠٩، §4.cm) ══════════════════════════
 export const physioPlans = pgTable("physio_plans", {

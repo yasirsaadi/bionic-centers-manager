@@ -22,6 +22,7 @@ import {
 } from "@shared/physio_protocols";
 import * as store from "./store";
 import { canApproveMeasures, canEditMeasures, parseMeasures } from "@shared/physio_assessments";
+import { registerPhysioExerciseRoutes } from "./exercise_routes";
 
 const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: store.IMAGE_MAX_BYTES, files: 1 } });
 
@@ -61,8 +62,11 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
     if (!isEvidenceLevel(d?.evidence)) return "اختر لكلّ جهازٍ درجتَه: موصى به · اختياري · غير موصى به";
     const minutes = intIn(d?.minutes, 1, 120);
     if (minutes === "bad") return "دقائقُ الجهاز ١–١٢٠";
+    //  خاناتُ الجهاز (§4.cx) — كائنٌ بقيمٍ قصيرة؛ ومطابقتُها لرمز الجهاز في `assertDevices`.
+    const params = d?.params ?? {};
+    if (typeof params !== "object" || Array.isArray(params)) return "معاملاتُ الجهاز غير صالحة";
     devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000),
-      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000) });
+      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params });
   }
   return {
     code, titleAr, titleEn, category: b.category, ageGroup: b.ageGroup,
@@ -80,6 +84,7 @@ const viaAssistant = (req: any) => req.get?.("x-internal-capability") === "1";
 const ASSISTANT_SCOPE = "يجيب المساعدُ عن البروتوكولات للأخصائيّ والمشرف العام والطبيب ومدير الفرع والمسؤول — والصفحةُ نفسُها مفتوحةٌ لك من الشريط.";
 
 export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any) {
+  registerPhysioExerciseRoutes(app, isAuthenticated);
   const sess = (req: any) => getSession(req) ?? ({} as any);
   const actor = (s: any): store.Actor => ({ userId: s.userId ?? null, name: s.displayName ?? null });
   const audit = (req: any, s: any, p: { entityType: string; entityId: number; action: string; oldValues?: any; newValues?: any; notes?: string }) =>
