@@ -10,6 +10,7 @@ export const PATIENT_FIELD_LABELS: Record<string, string> = {
   amputationSite: "موقع البتر", injuryDate: "تاريخ الإصابة", injuryCause: "سبب الإصابة",
   whatsappNotificationsEnabled: "إشعارات واتساب", notes: "الملاحظات",
   governorate: "المحافظة", injuryDateStatus: "تاريخ الإصابة (منذ الولادة / غير معروف)",
+  presentingComplaint: "سبب المراجعة",
 };
 
 /** لا تُعدّ تغييراً: أختامٌ يكتبها الخادم. */

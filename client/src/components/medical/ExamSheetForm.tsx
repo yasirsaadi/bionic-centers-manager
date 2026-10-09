@@ -33,6 +33,8 @@ export interface ExamSheetValues {
   referralSource: string; referralSubSource: string; hadPriorCenterHistory: boolean | null;
   age: string; weight: string; height: string; injuryCause: string;
   injuryDate: string; injuryDateStatus: InjuryDateStatus | null; generalNotes: string;
+  /** «سبب المراجعة» — في استمارة العلاج الطبيعي وحدها (§4.da)؛ ورقةُ الأجهزة تحمله كما وصل ولا تعرضه. */
+  presentingComplaint: string;
 }
 
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -44,8 +46,32 @@ export function sheetValuesFrom(row: Record<string, unknown> | null | undefined)
     hadPriorCenterHistory: typeof r.hadPriorCenterHistory === "boolean" ? r.hadPriorCenterHistory : null,
     age: s(r.age), weight: s(r.weight), height: s(r.height), injuryCause: s(r.injuryCause),
     injuryDate: s(r.injuryDate), injuryDateStatus: (r.injuryDateStatus as InjuryDateStatus | null) ?? null,
-    generalNotes: s(r.generalNotes),
+    generalNotes: s(r.generalNotes), presentingComplaint: s(r.presentingComplaint),
   };
+}
+
+/** **خليةُ «الجهة المحوِّل منها»** — مشتركةٌ بين ورقة الأجهزة واستمارة العلاج الطبيعي، فلا تنحرف القائمتان. */
+export function ReferralCell({ sheet, onSheet, testIdPrefix }: { sheet: ExamSheetValues; onSheet: (v: ExamSheetValues) => void; testIdPrefix: string }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <Select value={sheet.referralSource} onValueChange={(v) => onSheet({ ...sheet, referralSource: v, referralSubSource: v === REFERRAL_OTHER_PERSON ? sheet.referralSubSource : "" })}>
+        <SelectTrigger className={cn(cellInput, "min-w-[11rem] flex-1")} data-testid={`${testIdPrefix}-referral`}><SelectValue placeholder="اختر الجهة" /></SelectTrigger>
+        <SelectContent>
+          {[...REFERRAL_SOURCES, ...(sheet.referralSource && !(REFERRAL_SOURCES as readonly string[]).includes(sheet.referralSource) ? [sheet.referralSource] : [])]
+            .map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {sheet.referralSource === REFERRAL_OTHER_PERSON && (
+        <Select value={sheet.referralSubSource} onValueChange={(v) => onSheet({ ...sheet, referralSubSource: v })}>
+          <SelectTrigger className={cn(cellInput, "min-w-[11rem] flex-1")} data-testid={`${testIdPrefix}-referral-sub`}><SelectValue placeholder="كيف عرف الشخص الآخر بالمركز؟" /></SelectTrigger>
+          <SelectContent>
+            {[...REFERRAL_SUB_SOURCES, ...(sheet.referralSubSource && !(REFERRAL_SUB_SOURCES as readonly string[]).includes(sheet.referralSubSource) ? [sheet.referralSubSource] : [])]
+              .map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
 }
 
 const AMP_KEYS = [
@@ -116,24 +142,7 @@ export function ExamSheetForm({
           <Input className={cellInput} value={sheet.address} onChange={(e) => set("address", e.target.value)} data-testid="exam-sheet-address" />
         </SheetRow>
         <SheetRow label="الجهة المحوِّل منها" missing={miss("referralSource") || miss("referralSubSource")} testId="exam-row-referral">
-          <div className="flex flex-wrap gap-1.5">
-            <Select value={sheet.referralSource} onValueChange={(v) => onSheet({ ...sheet, referralSource: v, referralSubSource: v === REFERRAL_OTHER_PERSON ? sheet.referralSubSource : "" })}>
-              <SelectTrigger className={cn(cellInput, "min-w-[11rem] flex-1")} data-testid="exam-sheet-referral"><SelectValue placeholder="اختر الجهة" /></SelectTrigger>
-              <SelectContent>
-                {[...REFERRAL_SOURCES, ...(sheet.referralSource && !(REFERRAL_SOURCES as readonly string[]).includes(sheet.referralSource) ? [sheet.referralSource] : [])]
-                  .map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {sheet.referralSource === REFERRAL_OTHER_PERSON && (
-              <Select value={sheet.referralSubSource} onValueChange={(v) => set("referralSubSource", v)}>
-                <SelectTrigger className={cn(cellInput, "min-w-[11rem] flex-1")} data-testid="exam-sheet-referral-sub"><SelectValue placeholder="كيف عرف الشخص الآخر بالمركز؟" /></SelectTrigger>
-                <SelectContent>
-                  {[...REFERRAL_SUB_SOURCES, ...(sheet.referralSubSource && !(REFERRAL_SUB_SOURCES as readonly string[]).includes(sheet.referralSubSource) ? [sheet.referralSubSource] : [])]
-                    .map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
+          <ReferralCell sheet={sheet} onSheet={onSheet} testIdPrefix="exam-sheet" />
         </SheetRow>
         <SheetRow label="سبق التعامل مع المركز">
           <label className="flex items-center gap-2 text-xs py-1.5 px-1 cursor-pointer">

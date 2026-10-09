@@ -44,7 +44,7 @@ import {
   closeRequestsAwaitingExam, specialtyLevelRequestSql,
   retagReviewRequestsForRetypedEpisode, type ClosedReviewRequest,
 } from "../medical_review/store";
-import { hasRole } from "@shared/user_roles";
+import { hasRole, writesPhysioExamByRole } from "@shared/user_roles";
 
 export type ExamWithAddenda = MedicalExam & { addenda: MedicalExamAddendum[] };
 
@@ -109,6 +109,8 @@ function examContentFingerprint(v: {
   plan: string | null;
   notes: string | null;
   prescription: Record<string, any> | null | undefined;
+  /** التقييمُ الأوّليّ للعلاج الطبيعي (ترحيل ١٢١) — جزءٌ من المحتوى: المفتاحُ نفسُه بتقييمٍ آخر تعارضٌ لا إعادة. */
+  assessment?: Record<string, any> | null;
 }): string {
   const stable = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stable);
@@ -129,6 +131,7 @@ function examContentFingerprint(v: {
     plan: v.plan,
     notes: v.notes,
     prescription: v.prescription ?? {},
+    assessment: v.assessment ?? null,
   }));
 }
 
@@ -146,6 +149,7 @@ type ExamContent = {
   plan: string | null;
   notes: string | null;
   prescription: Record<string, any> | null | undefined;
+  assessment?: Record<string, any> | null;
 };
 
 /**
@@ -349,6 +353,8 @@ export async function createExam(values: {
   diagnosis: string | null;
   plan: string | null;
   notes: string | null;
+  /** **التقييمُ الأوّليّ للعلاج الطبيعي** (ترحيل ١٢١، §4.da) — مطبَّعاً في النقطة (`parseInitialAssessment`)، ويُختَم مع المعاينة. */
+  assessment?: Record<string, any> | null;
   idempotencyKey: string;
   /**
    * **الجهازُ الذي تُعاينه هذه المعاينةُ بعينه** (تدقيق ٢٠٢٦-٠٩-١٢، INT-02).
@@ -1200,6 +1206,8 @@ export async function reviseExam(
     diagnosis: string | null;
     plan: string | null;
     notes: string | null;
+    /** `undefined` = لم يُرسَل فيبقى المخزَّن كما هو؛ قيمةٌ = يحلّ محلَّه (والسابقُ في النسخة المؤرشفة). */
+    assessment?: Record<string, any> | null;
   },
   editor: { userId: number | null; userName: string },
   /**
@@ -1253,6 +1261,7 @@ export async function reviseExam(
       plan: current.plan,
       notes: current.notes,
       prescription: current.prescription,
+      assessment: current.assessment ?? null,
       deviceCost: current.deviceCost,
       proposedExpertUserId: current.proposedExpertUserId,
       signedAt: current.signedAt,
@@ -1278,6 +1287,7 @@ export async function reviseExam(
         caseType: values.caseType,
         caseId: caseRow?.id ?? current.caseId,
         prescription: values.prescription,
+        ...(values.assessment !== undefined ? { assessment: values.assessment } : {}),
         deviceCost: values.deviceCost,
         proposedExpertUserId: values.proposedExpertUserId,
         chiefComplaint: values.chiefComplaint,
@@ -2191,23 +2201,28 @@ export async function doctorSpecialties(userId: number | null): Promise<MedicalS
       canWrite: systemUsers.canWriteMedicalExam,
       specialties: systemUsers.medicalSpecialties,
       isActive: systemUsers.isActive,
+      canSupervisePhysio: systemUsers.canSupervisePhysio,
     })
     .from(systemUsers)
     .where(eq(systemUsers.id, userId));
 
   if (!user || user.isActive === false) return [];
+  //  **العلاجُ الطبيعيُّ للأخصائيّ والمشرف العامّ والمسؤول أيضاً** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.da) — بلا علَمٍ ولا دورِ طبيب،
+  //  وللعلاج الطبيعي وحده. والقائمةُ هي مصدرُ كلّ بابٍ للمعاينة (التوقيع، التنقيح، «معايناتي»، الإلغاء) — فلا بابَ يُنسى.
+  const physioByRole = writesPhysioExamByRole(user);
   // A user whose PRIMARY role is doctor carries the capability implicitly;
   // anyone else needs the explicit flag. Mirrors how a pure prosthetics_expert
   // works as an expert without needing can_work_as_expert set.
   const isDoctor = hasRole(user, DOCTOR_ROLE) || Boolean(user.canWrite);
-  if (!isDoctor) return [];
+  if (!isDoctor) return physioByRole ? ["physiotherapy"] : [];
   const raw = Array.isArray(user.specialties) ? user.specialties : [];
   const chosen = raw.filter(isMedicalSpecialty);
   // An empty list means "no restriction", not "nothing". Most centres have one
   // doctor who covers everything, and forcing them to tick three boxes to
   // achieve the default was pure friction. Narrowing stays available for
   // centres that run separate departments.
-  return chosen.length > 0 ? chosen : [...MEDICAL_SPECIALTIES];
+  const list: MedicalSpecialty[] = chosen.length > 0 ? chosen : [...MEDICAL_SPECIALTIES];
+  return physioByRole && !list.includes("physiotherapy") ? [...list, "physiotherapy"] : list;
 }
 
 /**
@@ -2255,7 +2270,8 @@ export async function intakeSheetOf(patientId: number): Promise<Record<string, u
            p.referral_source AS "referralSource", p.referral_sub_source AS "referralSubSource",
            p.had_prior_center_history AS "hadPriorCenterHistory", p.age, p.weight, p.height,
            p.injury_cause AS "injuryCause", p.injury_date::text AS "injuryDate", p.injury_date_status AS "injuryDateStatus",
-           p.general_notes AS "generalNotes", p.created_at AS "registeredAt", b.name AS "branchName"
+           p.general_notes AS "generalNotes", p.presenting_complaint AS "presentingComplaint",
+           p.created_at AS "registeredAt", b.name AS "branchName"
       FROM patients p LEFT JOIN branches b ON b.id = p.branch_id
      WHERE p.id = ${patientId} AND p.deleted_at IS NULL
   `);

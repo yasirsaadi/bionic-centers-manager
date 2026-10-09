@@ -85,6 +85,8 @@ export const patients = pgTable("patients", {
   injuryDate: date("injury_date"),
   /** تاريخُ الإصابة حين لا تاريخ (ترحيل ١١٤): `congenital` «منذ الولادة» · `unknown` «غير معروف» — ولا يجتمع مع `injury_date`. */
   injuryDateStatus: text("injury_date_status"),
+  /** **«سبب المراجعة»** (ترحيل ١٢١، §4.da) — شكوى المراجع بكلماته يكتبها الاستقبالُ في استمارة العلاج الطبيعي، منفصلةً عن «التشخيص» الذي يكتبه الفاحص. */
+  presentingComplaint: text("presenting_complaint"),
   /**
    * **بُعدُ تقريرٍ تاريخيّ** («جديد» / «قديم») — يبقى مقروءاً كما هو.
    *
@@ -2022,6 +2024,9 @@ export const medicalExams = pgTable("medical_exams", {
   // then copies it onto the patient's case so the rest of the app reads it
   // exactly as before. Shape is per specialty; see shared/case_fields.ts.
   prescription: jsonb("prescription").$type<Record<string, any>>().default({}),
+  // **التقييمُ الأوّليّ للعلاج الطبيعي** (ترحيل ١٢١، §4.da) — استمارةُ المالك الورقية كاملةً، مختومةً مع المعاينة.
+  // الشكلُ في `shared/physio_initial_assessment.ts` (رموزٌ لا ألفاظ، ومعها رمزُ الاستمارة وإصدارُها). `NULL` لكلّ معاينةٍ قبلها ولغير العلاج الطبيعي.
+  assessment: jsonb("assessment").$type<Record<string, any> | null>(),
   // What the device costs (migration 030). أطراف/مساند ONLY — the doctor
   // specifies the device, so the doctor knows its price, and it lands on the
   // case as a MANUAL cost. Physiotherapy is deliberately excluded: its price is
@@ -2086,6 +2091,8 @@ export const medicalExamRevisions = pgTable("medical_exam_revisions", {
   plan: text("plan"),
   notes: text("notes"),
   prescription: jsonb("prescription").$type<Record<string, any>>(),
+  // والنسخةُ السابقة تحمل تقييمَها (ترحيل ١٢١) — التنقيحُ لا يمحو.
+  assessment: jsonb("assessment").$type<Record<string, any> | null>(),
   deviceCost: integer("device_cost"),
   proposedExpertUserId: integer("proposed_expert_user_id"),
   signedAt: timestamp("signed_at", { withTimezone: true }),

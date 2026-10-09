@@ -23,7 +23,7 @@ import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notification
 import { z } from "zod";
 import { patients, branches, visits, payments, documents, patientCases, expenseCategories, EXPENSE_SECTIONS, insertCustomStatSchema, insertExpenseSchema, insertInstallmentPlanSchema, insertInvoiceSchema, insertInvoiceItemSchema, insertTreatmentPlanSchema, insertVendorSchema, insertPurchaseSchema, insertAiMemoryNoteSchema } from "@shared/schema";
 import type { Patient, Payment, SystemUser } from "@shared/schema";
-import { hasRole, onlyRoles, rolesOf, hasPhysioRole, normalizeRoles, isUserRole } from "@shared/user_roles";
+import { hasRole, onlyRoles, rolesOf, hasPhysioRole, normalizeRoles, isUserRole, writesPhysioExamByRole } from "@shared/user_roles";
 import { accessibleBranchesOf, applyFreshUser } from "./auth/session_refresh";
 import { closedBranchIds, invalidateClosedBranches, BRANCH_CLOSED_MESSAGE } from "./branches/closure";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
@@ -319,7 +319,9 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canManageSettings: grantAll || Boolean(systemUser.canManageSettings),
     canManageUsers: grantAll || Boolean(systemUser.canManageUsers),
     canWorkAsExpert: hasRole(systemUser, "prosthetics_expert") || Boolean(systemUser.canWorkAsExpert),
-    canWriteMedicalExam: hasRole(systemUser, "doctor") || Boolean(systemUser.canWriteMedicalExam),
+    //  ومعاينةُ العلاج الطبيعي للأخصائيّ والمشرف العامّ والمسؤول أيضاً (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.da) — والاختصاصُ يحسمه
+    //  `doctorSpecialties` في كلّ باب (العلاجُ الطبيعيُّ وحده لهؤلاء)؛ وهذا ما يُظهر لهم «معايناتي».
+    canWriteMedicalExam: hasRole(systemUser, "doctor") || Boolean(systemUser.canWriteMedicalExam) || writesPhysioExamByRole(systemUser),
     canApproveDiscount: Boolean(systemUser.canApproveDiscount),
     // ══ العلاجُ الطبيعي (ترحيل ١٠٤، §4.cg) — عَلَمان مخزَّنان لا يمنحهما دور ══
     //  «المشرف العام» يحمله سليم وهو مدير فرع، فلا يُشتقّ من الدور؛ والمسؤولُ يملكه بسلطته.

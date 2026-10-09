@@ -54,7 +54,8 @@ import {
   LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
 } from "@shared/lock_conflict";
 import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
-import { prepareExamSheet, applyExamSheet } from "./exam_sheet_edit";
+import { prepareExamSheet, applyExamSheet, physioOnsetAtSigning } from "./exam_sheet_edit";
+import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio_assessment_input";
 
 type Req = any;
 
@@ -659,6 +660,13 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  ══ **تعديلُ الطبيب لحقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — يُفحَص هنا قبل أيّ كتابة، ويُكتب بعد التوقيع ══
       const sheetPrep = await prepareExamSheet(patientId, caseType, req.body);
       if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
+      //  ══ **والتقييمُ الأوّليّ للعلاج الطبيعي** (§4.da) — يُفحَص هنا قبل أيّ كتابة، ويُختَم مع المعاينة نفسِها ══
+      const assessPrep = prepareAssessmentForCreate(caseType, req.body);
+      if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });
+      //  «تاريخ بداية الإصابة» هو «تاريخ الإصابة» نفسُه — يُختَم نصُّه يومَ الحفظ (بعد تعديل الفاحص له إن عدّله).
+      const assessment = assessPrep.value
+        ? { ...assessPrep.value, onsetAtSigning: await physioOnsetAtSigning(patientId, sheetPrep.prepared) }
+        : null;
 
       // ══ مفتاحُ تطابقِ الإنشاء (migration 074) — إلزاميّ ═══════════════════
       //  حادثةُ سبع معاينات لطلبٍ واحد (٢٠٢٦-٠٩) لم يكن لها حارسٌ من أيّ نوع:
@@ -709,6 +717,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         deviceEpisodeId,
         ...body,
         prescription,
+        assessment,
       };
       try {
         const replay = await store.findReplayableExam(idempotencyKey, replayContent);
@@ -816,6 +825,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           doctorId: session.userId,
           doctorName,
           prescription,
+          assessment,
           deviceCost: null,
           proposedExpertUserId: null,
           idempotencyKey,
@@ -1071,6 +1081,12 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  **وتعديلُ الاستمارة يُفحَص قبل أيّ كتابة** — كالتوقيع (§4.cq، ٢ب). وصاحبُ التنقيح هو مَن يصحّح: الطبيبُ أو المديرُ أو المسؤول.
       const sheetPrep = await prepareExamSheet(exam.patientId, caseType, req.body);
       if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
+      //  **والتقييمُ الأوّليّ** (§4.da) — قبل أيّ كتابة كالتوقيع. الغيابُ يُبقي المخزَّن.
+      const assessPrep = prepareAssessmentForRevise(caseType, req.body, exam.assessment ?? null);
+      if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });
+      const assessment = assessPrep.value
+        ? { ...assessPrep.value, onsetAtSigning: await physioOnsetAtSigning(exam.patientId, sheetPrep.prepared) }
+        : assessPrep.value;
 
       //  ══ **والتنقيحُ يسأل كالإنشاء** (البند ١) — قبل أيّ كتابة ══
       const crossRetire = parseCrossRetire(req.body);
@@ -1084,6 +1100,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
 
       const revisionValues = {
         caseType, prescription, deviceCost, proposedExpertUserId, ...body,
+        ...(assessment !== undefined ? { assessment } : {}),
       };
       const editor = { userId: session.userId, userName: editorName };
       const auditNote = (version: number) =>

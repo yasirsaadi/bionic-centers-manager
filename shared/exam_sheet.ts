@@ -30,15 +30,22 @@ export const SHEET_DEVICE_ROWS = [
 export const isSheetExamType = (t: unknown): t is "prosthetic" | "medical_support" =>
   t === "prosthetic" || t === "medical_support";
 
+/**
+ * **والعلاجُ الطبيعيُّ على استمارته هو** (§4.da، قرارُ المالك ٢٠٢٦-١٠-٠٩): حقولُ الاستعلامات نفسُها ومعها «سبب المراجعة»، ثمّ التقييمُ
+ * الأوّليّ كاملاً، ثمّ «قرار الفاحص». شكلٌ آخر غيرُ ورقة الأجهزة — فدالّةٌ منفصلة لا توسيعٌ لتلك (يقرؤها كلُّ ما يخصّ الأجهزة).
+ */
+export const isPhysioSheetExamType = (t: unknown): t is "physiotherapy" => t === "physiotherapy";
+
 /** حقولُ الاستعلامات في الورقة — بأسماء أعمدة `patients` — وهي ما يعدّله الطبيبُ منها. */
 export const SHEET_PATIENT_KEYS = [
   "name", "phone", "governorate", "address", "referralSource", "referralSubSource", "hadPriorCenterHistory",
+  "presentingComplaint",
   "age", "weight", "height", "injuryCause", "injuryDate", "injuryDateStatus", "generalNotes",
 ] as const;
 export type SheetPatientKey = (typeof SHEET_PATIENT_KEYS)[number];
 
-/** ما لا يُفرَّغ إن كان مكتوباً — حقولُ الاستمارة الإلزامية. */
-const REQUIRED: ReadonlySet<string> = new Set(["name", "phone", "governorate", "address", "referralSource", "age", "weight", "height", "injuryCause"]);
+/** ما لا يُفرَّغ إن كان مكتوباً — حقولُ الاستمارة الإلزامية. («سبب المراجعة» في استمارة العلاج الطبيعي وحدها — ورقةُ الأجهزة لا ترسله.) */
+const REQUIRED: ReadonlySet<string> = new Set(["name", "phone", "governorate", "address", "referralSource", "presentingComplaint", "age", "weight", "height", "injuryCause"]);
 const NUMERIC: ReadonlySet<string> = new Set(["age", "weight", "height"]);
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v === "number" && Number.isFinite(v) ? String(v) : "");
@@ -131,12 +138,29 @@ export interface ExamNarrativeRow { key: ExamFieldKey; label: string; value: str
  * **ما يُعرَض من نصّ المعاينة** — في ملفّ المريض وطباعتها ونسخها السابقة.
  * معاينةُ جهازٍ نصُّها خانتُها الواحدة وحدها ⟵ «المعاينة الطبية». والقديمةُ بخاناتها الخمس تبقى بعناوينها كما كُتبت.
  */
-export function examNarrativeRows(caseType: unknown, e: Partial<Record<ExamFieldKey, string | null>>): ExamNarrativeRow[] {
+/** **«ملاحظات الفاحص»** على استمارة العلاج الطبيعي — عمودُ `notes` القائم؛ و«التشخيص» عمودُ `diagnosis` باسمه. */
+export const PHYSIO_SHEET_NOTES_LABEL = "ملاحظات الفاحص";
+
+export function examNarrativeRows(caseType: unknown, e: Partial<Record<ExamFieldKey, string | null>> & { assessment?: unknown }): ExamNarrativeRow[] {
   const filled = EXAM_FIELDS.filter((f) => str(e[f.key]).length > 0);
+  //  **معاينةُ العلاج الطبيعي على استمارتها** (§4.da): «التشخيص» باسمه، و`notes` هي «ملاحظات الفاحص».
+  if (isPhysioSheetExamType(caseType) && e.assessment && typeof e.assessment === "object") {
+    return filled.map((f) => ({ key: f.key, label: f.key === "notes" ? PHYSIO_SHEET_NOTES_LABEL : f.label, value: String(e[f.key]) }));
+  }
   if (isSheetExamType(caseType) && filled.length === 1 && filled[0].key === EXAM_SHEET_TEXT_KEY) {
     return [{ key: EXAM_SHEET_TEXT_KEY, label: EXAM_SHEET_TEXT_LABEL, value: String(e[EXAM_SHEET_TEXT_KEY]) }];
   }
   return filled.map((f) => ({ key: f.key, label: f.label, value: String(e[f.key]) }));
+}
+
+/**
+ * **تنقيحُ معاينة علاجٍ طبيعيّ قديمة على الاستمارة** (§4.da): «التشخيص» يبقى في خانته، والشكوى والفحصُ السريريّ والخطّةُ والملاحظاتُ
+ * تُجمَع في «ملاحظات الفاحص» بعناوينها — لا يضيع منها حرف، والنسخةُ القديمة محفوظةٌ في السجلّ كالعادة.
+ */
+export function physioSheetNotesOf(e: Partial<Record<ExamFieldKey, string | null>>): string {
+  const others = EXAM_FIELDS.filter((f) => f.key !== "diagnosis" && str(e[f.key]).length > 0);
+  if (others.length === 1 && others[0].key === "notes") return str(e.notes);
+  return others.map((f) => `${f.label}: ${str(e[f.key])}`).join("\n");
 }
 
 /** **تعديلُ معاينةٍ قديمة على الاستمارة**: خاناتُها الخمس تُجمَع في الخانة الواحدة بعناوينها — لا يضيع منها حرف. */
