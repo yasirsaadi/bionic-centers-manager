@@ -43,7 +43,9 @@ import { useBranchSession } from "@/components/BranchGate";
 import { markReceptionRoutingPending } from "@/components/reception_routing";
 import { sessionResumeStore } from "@/components/device_flow_resume";
 import { hasRole, onlyRoles } from "@shared/user_roles";
+import { cn } from "@/lib/utils";
 import IntakeSheetCreate from "./IntakeSheetCreate";
+import PhysioSheetCreate, { type BranchWithPhysio } from "./PhysioSheetCreate";
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -133,12 +135,19 @@ interface TreatmentEntry {
 }
 
 // ══ **«إضافة مريض» تبدأ بخيارين** (قرارُ المالك ٢٠٢٦-١٠-٠٨، §4.cq) ══
-//  «أطراف صناعية ومساند» ⟵ «استمارة مراجع» بهيئة الورقة (`IntakeSheetCreate`)، و«علاج طبيعي» ⟵ **هذه الصفحةُ كما هي**
-//  ونوعُ الحالة فيها مثبَّتٌ على العلاج الطبيعي. والاختيارُ في الرابط (`?kind=`) فيعمل «رجوع» المتصفّح.
+//  «أطراف صناعية ومساند» ⟵ «استمارة مراجع» بهيئة الورقة (`IntakeSheetCreate`)، و«علاج طبيعي» ⟵ **«استمارة مراجع — علاج طبيعي»**
+//  (`PhysioSheetCreate`، §4.da — المرحلةُ الثانية). والاختيارُ في الرابط (`?kind=`) فيعمل «رجوع» المتصفّح.
+//  **و«علاج طبيعي» لفروعه وحدها** (قرارُ المالك: «بغداد وذي قار») — من `offersPhysio`: فرعُ الموظّف النشط، وأيُّ فرعٍ للمسؤول.
+//  (`PatientRegistrationForm` أدناه لم يعد يُفتح من هنا — صفحةُ التسجيل القديمة، باقيةٌ ريثما تُنقل عقودُ اختباراتها إلى الاستمارتين.)
 export default function CreatePatient() {
   const [location, setLocation] = useLocation();
   const params = new URLSearchParams(useSearch());
   const kind = params.get("kind");
+  const session = useBranchSession();
+  const { data: branches = [] } = useQuery<BranchWithPhysio[]>({ queryKey: ["/api/branches"] });
+  const physioOffered = session?.isAdmin
+    ? branches.some((b) => b.offersPhysio && !b.temporarilyClosed)
+    : Boolean(branches.find((b) => b.id === session?.branchId)?.offersPhysio);
   const go = (k: string | null) => {
     const next = new URLSearchParams(params);
     if (k) next.set("kind", k); else next.delete("kind");
@@ -146,24 +155,26 @@ export default function CreatePatient() {
     setLocation(`${location}${q ? `?${q}` : ""}`);
   };
   if (kind === "devices") return <IntakeSheetCreate onBack={() => go(null)} />;
-  if (kind === "physio") return <PatientRegistrationForm physioOnly onBack={() => go(null)} />;
+  if (kind === "physio") return <PhysioSheetCreate onBack={() => go(null)} />;
   return (
     <div className="max-w-3xl mx-auto py-4 md:py-10 space-y-4" dir="rtl">
       <div className="flex items-center gap-3">
         <Button variant="ghost" onClick={() => setLocation("/patients")} className="p-2 shrink-0"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
         <h2 className="text-xl md:text-2xl font-display font-bold text-slate-800">إضافة مريض — اختر القسم</h2>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className={cn("grid gap-4", physioOffered && "sm:grid-cols-2")}>
         <button type="button" onClick={() => go("devices")} data-testid="choose-devices"
           className="rounded-2xl border-2 bg-white p-6 md:p-8 text-right hover:border-primary hover:bg-primary/5 transition-colors">
           <div className="text-lg md:text-xl font-bold text-slate-800">أطراف صناعية ومساند</div>
           <div className="text-sm text-muted-foreground mt-2">استمارةُ المراجع — ثمّ إلى الطبيب للمعاينة</div>
         </button>
-        <button type="button" onClick={() => go("physio")} data-testid="choose-physio"
-          className="rounded-2xl border-2 bg-white p-6 md:p-8 text-right hover:border-primary hover:bg-primary/5 transition-colors">
-          <div className="text-lg md:text-xl font-bold text-slate-800">علاج طبيعي</div>
-          <div className="text-sm text-muted-foreground mt-2">صفحةُ التسجيل المعتادة</div>
-        </button>
+        {physioOffered && (
+          <button type="button" onClick={() => go("physio")} data-testid="choose-physio"
+            className="rounded-2xl border-2 bg-white p-6 md:p-8 text-right hover:border-primary hover:bg-primary/5 transition-colors">
+            <div className="text-lg md:text-xl font-bold text-slate-800">علاج طبيعي</div>
+            <div className="text-sm text-muted-foreground mt-2">استمارةُ المراجع — ثمّ إلى الأخصائي للمعاينة</div>
+          </button>
+        )}
       </div>
     </div>
   );
