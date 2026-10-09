@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react";
 import { BranchGate, getBranchSession, setBranchSession, useBranchSession } from "@/components/BranchGate";
 import { landingPathOf } from "@shared/user_roles";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
+import { LiveUpdates } from "@/components/LiveUpdates";
 import { AiChatDrawer } from "@/components/AiChatDrawer";
 import { LanguageProvider, useLanguage } from "@/i18n/LanguageContext";
 import NotFound from "@/pages/not-found";
@@ -353,6 +354,8 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <PWAInstallPrompt />
+          {/* التحديثُ الحيّ لكلّ مستخدم (§4.cy) — اتصالٌ دائم ما دام داخلاً، في كلّ الصفحات وصفحاتِ الطباعة. */}
+          <LiveUpdates />
           <Router />
         </TooltipProvider>
       </LanguageProvider>

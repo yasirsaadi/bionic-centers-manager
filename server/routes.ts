@@ -51,6 +51,7 @@ import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
 import { registerPhysioProtocolRoutes } from "./physio_protocols/routes";
+import { liveBroadcastMiddleware, registerLiveStream } from "./live/updates";
 import { registerPhysioPlanRoutes } from "./physio_plans/routes";
 import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
@@ -385,6 +386,9 @@ export async function registerRoutes(
   //  آخر يمرّ بلا أثر. يُزال مع بقيّة الاستدعاءات المذكورة أعلاه.
   app.use(diagRawArrivalMiddleware);
   await setupAuth(app);
+  //  ══ التحديثُ الحيّ لكلّ مستخدم (§4.cy) — إشارةٌ بلا بيانات بعد كلّ كتابةٍ تنجح ══════════════════════════════════════
+  //  الوسيطُ قبل النقاط كلِّها فيرى كلَّ كتابة. (واتصالُ الصفحة الدائم بعد قراءة الحساب حيّاً أدناه.)
+  app.use(liveBroadcastMiddleware);
   //  «انتهاءُ وسيط الجلسة» — بلا لمسٍ لـ`setupAuth` أو إعداد الجلسة نفسِها.
   app.use(diagSessionCompletedMiddleware);
 
@@ -470,6 +474,8 @@ export async function registerRoutes(
   });
 
   registerAuthRoutes(app);
+  //  اتصالُ الصفحة الدائم (§4.cy) — **بعد** قراءة الحساب حيّاً أعلاه: حسابٌ عُطِّل أو حُذف لا يفتحه.
+  registerLiveStream(app, isAuthenticated);
 
   //  مجلّدُ `/uploads` المفتوح بلا دخول أُزيل (§4.cf): المستنداتُ تُقرأ من `/api/documents/:id/file` بجلسةٍ تصل المريض.
 
