@@ -4,7 +4,9 @@
 // يحرس: (أ) مَن يقرأ ومَن يكتب؛ (ب) الخطّةُ من البروتوكول: نصوصُه وجرعتُه، وأجهزتُه الموصى بها والاختيارية المتوفّرةُ في الفرع وحدها؛
 // (ج) المسوّدةُ لا يراها المنفّذ؛ (د) الإرسالُ ينبّه المعتمِدين، والاعتمادُ للمسؤول والمشرف العام وحدهما وينبّه الكاتبَ والمنفّذين؛
 // (هـ) تعديلُ المعتمَدة بيد الأخصائيّ يعيدها إلى الاعتماد، وبيد المعتمِد لا؛ (و) الإعادةُ بملاحظة والإيقافُ بسبب؛
-// (ز) الإسنادُ لأدوار القسم في فرع الخطّة وحدها؛ (ح) حذفُ المريض يمرّ بخططه (القاعدة الملزمة §8)؛ (ط) كلُّ كتابةٍ بسطر تدقيق.
+// (ز) الإسنادُ لأدوار القسم في فرع الخطّة وحدها؛ (ح) حذفُ المريض يمرّ بخططه (القاعدة الملزمة §8)؛ (ط) كلُّ كتابةٍ بسطر تدقيق؛
+// (ن) §4.cz — على بروتوكولٍ اعتمده المشرف يبدأ الأخصائيُّ خطّتَه بنفسه فتُنفَّذ في الحال، والمشرفُ يراجعها بعدها ويُنبَّه الكاتبُ بما فعل،
+//     وعلى بروتوكولٍ غير معتمَد أو بلا بروتوكول تنتظر الاعتمادَ كما كانت.
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -18,7 +20,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
-import { planStatusAfterEdit, planVisibleTo } from "@shared/physio_plans";
+import { canReviewFrom, canSelfActivate, planStatusAfterEdit, planVisibleTo, SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL } from "@shared/physio_plans";
 import { eligibleStaffEvents } from "@shared/staff_notifications";
 import { sql as migration110Sql } from "./migrations/110_physio_plan_notify_prefs";
 
@@ -45,7 +47,7 @@ const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toStr
 
 async function cleanup() {
   const pts = (await q(`SELECT id FROM patients WHERE referral_source = $1`, [MARK])).rows.map((r) => r.id);
-  await q(`DELETE FROM staff_notification_outbox WHERE link_path LIKE '/physio/plans/%' AND text LIKE '%${MARK}%'`);
+  await q(`DELETE FROM staff_notification_outbox WHERE (link_path LIKE '/physio/plans/%' OR link_path LIKE '/patients/%') AND text LIKE '%${MARK}%'`);
   await q(`DELETE FROM physio_plans WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
@@ -279,6 +281,86 @@ async function main() {
       prefs, [[ADMIN, ["physio_plan_pending"]], [SUP, ["physio_plan_decided", "physio_plan_pending"]],
         [SPEC, ["physio_plan_assigned", "physio_plan_decided"]], [TECH, ["physio_plan_assigned"]], [DOC, ["physio_plan_assigned"]], [TECH2, ["physio_plan_assigned"]]]);
     await q(`DELETE FROM staff_notification_prefs WHERE user_id = ANY($1::int[])`, [IDS]);
+
+    console.log("\n── ن. الأخصائيُّ يبدأ خطّتَه على بروتوكولٍ معتمَد، والمشرفُ يراجعها بعدها (§4.cz) ──");
+    same("ن.١ القواعد: يبدأها كاتبُها من المسوّدة أو المُعادة على بروتوكولٍ معتمَد وحده؛ ويراجعها المشرفُ معتمَدةً تنتظره؛ وتعديلُ الأخصائيّ على معتمَدٍ يُبقيها",
+      [canSelfActivate("draft", "approved"), canSelfActivate("returned", "approved"), canSelfActivate("draft", "draft"), canSelfActivate("draft", null),
+        canSelfActivate("pending", "approved"), canReviewFrom("approved", "awaiting"), canReviewFrom("approved", "reviewed"), canReviewFrom("stopped", "awaiting"),
+        planStatusAfterEdit("approved", spec, "approved"), planStatusAfterEdit("approved", spec, "draft"), planStatusAfterEdit("approved", spec, null)],
+      [true, true, false, false, false, true, false, false, "approved", "pending", "pending"]);
+    const outText = async (event: string, planId: number) => (await q(
+      `SELECT target_user_ids, exclude_user_id, text FROM staff_notification_outbox WHERE event_type = $1 AND link_path = $2 ORDER BY id`,
+      [event, `/physio/plans/${planId}`])).rows;
+    const draftProto = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P })).json.id as number;
+    const noProto = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "خطّةٌ بلا بروتوكول" })).json.id as number;
+    const na = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P2 })).json.id as number;
+    await call("PUT", `/api/physio/plans/${na}/assignees`, S.spec, { userIds: [TECH] });
+    const dp = await call("POST", `/api/physio/plans/${draftProto}/activate`, S.spec);
+    same("ن.٢ على بروتوكولٍ غير معتمَد ⟵ ٤٠٩ «أرسلها للاعتماد»، وبلا بروتوكول ⟵ ٤٠٩",
+      [dp.status, dp.json?.error, (await call("POST", `/api/physio/plans/${noProto}/activate`, S.spec)).status], [409, SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, 409]);
+    same("ن.٣ وهما باقيتان مسوّدتين", [(await call("GET", `/api/physio/plans/${draftProto}`, S.spec)).json?.status, (await call("GET", `/api/physio/plans/${noProto}`, S.spec)).json?.status], ["draft", "draft"]);
+    same("ن.٤ التقنيُّ لا يبدأ خطّة", (await call("POST", `/api/physio/plans/${na}/activate`, S.tech)).status, 404);
+    same("ن.٥ والطبيبُ لا يبدأ خطّة", (await call("POST", `/api/physio/plans/${na}/activate`, S.doc)).status, 403);
+    const act = await call("POST", `/api/physio/plans/${na}/activate`, S.spec);
+    same("ن.٦ **الأخصائيُّ يبدؤها على بروتوكولٍ معتمَد** — معتمَدةٌ باسمه، «بانتظار مراجعة المشرف»",
+      [act.status, act.json?.status, act.json?.decidedByName, act.json?.reviewStatus], [200, "approved", "مصطفى", "awaiting"]);
+    const pend = await outText("physio_plan_pending", na);
+    same("ن.٧ **ويُنبَّه المشرفُ والمسؤول للمراجعة** (عامّ، بلا الكاتب)", pend.map((r) => [r.target_user_ids, r.exclude_user_id, /للمراجعة/.test(r.text)]), [[null, SPEC, true]]);
+    same("ن.٨ والمنفّذُ المسنَد", (await outbox("physio_plan_assigned", na)).map((r) => r.target_user_ids), [[TECH]]);
+    same("ن.٩ **والتقنيُّ يراها ويُنفّذها في الحال** — لا انتظارَ للمشرف",
+      [(await call("GET", `/api/physio/plans/${na}`, S.tech)).status,
+        ((await call("GET", `/api/patients/${pt}/physio-plans`, S.tech)).json?.plans ?? []).find((x: any) => x.id === na)?.canExecute], [200, true]);
+    const twice = await call("POST", `/api/physio/plans/${na}/activate`, S.spec);
+    same("ن.١٠ والبدءُ مرّتين ⟵ ٤٠٩ بسببه", [twice.status, twice.json?.error], [409, "الخطّةُ بدأت من قبل أو أُرسلت للاعتماد"]);
+    const inList = async (view: string, sess: string) => ((await call("GET", `/api/physio/plans?view=${view}`, sess)).json?.plans ?? []).some((x: any) => x.id === na);
+    same("ن.١١ «للمراجعة» عند المشرف فيها الخطّة، و«بانتظار الاعتماد» لا، وللأخصائيّ ممنوعة",
+      [await inList("review", S.sup), await inList("pending", S.sup), (await call("GET", "/api/physio/plans?view=review", S.spec)).status], [true, false, 403]);
+    same("ن.١٢ وفي ملفّ المريض حالتُها «بانتظار مراجعة المشرف»",
+      ((await call("GET", `/api/patients/${pt}/physio-plans`, S.spec)).json?.plans ?? []).find((x: any) => x.id === na)?.reviewStatus, "awaiting");
+    const body2 = { titleAr: "ألم أسفل الظهر — خطة طفل", goals: "تقليل الألم", sessionsPerWeek: 2, durationWeeks: 6, sessionMinutes: 40, devices: [{ deviceId: D4, minutes: 20 }] };
+    const pendBefore = (await outText("physio_plan_pending", na)).length;
+    const ne1 = await call("PUT", `/api/physio/plans/${na}`, S.spec, body2);
+    same("ن.١٣ **تعديلُ الأخصائيّ لا يوقفها**: تبقى معتمَدةً وتُنفَّذ، وتنتظر المراجعة، ويُنبَّه المشرفُ ثانيةً",
+      [ne1.json?.status, ne1.json?.demoted, ne1.json?.reviewStatus, (await outText("physio_plan_pending", na)).length - pendBefore,
+        (await call("GET", `/api/physio/plans/${na}`, S.tech)).status], ["approved", false, "awaiting", 1, 200]);
+    same("ن.١٤ الأخصائيُّ لا يراجع، ولا الطبيب", [(await call("POST", `/api/physio/plans/${na}/review`, S.spec)).status, (await call("POST", `/api/physio/plans/${na}/review`, S.doc)).status], [403, 403]);
+    const rv = await call("POST", `/api/physio/plans/${na}/review`, S.sup);
+    same("ن.١٥ **المشرفُ يوافق** — «راجعها المشرف» باسمه", [rv.status, rv.json?.reviewStatus, rv.json?.reviewedByName], [200, "reviewed", "سليم"]);
+    const dec1 = await outText("physio_plan_decided", na);
+    same("ن.١٦ **ويُنبَّه الأخصائيُّ بموافقته**", dec1.map((r) => [r.target_user_ids, /وافق المشرفُ/.test(r.text)]), [[[SPEC], true]]);
+    same("ن.١٧ والمراجعةُ مرّتين ⟵ ٤٠٩، وخرجت من «للمراجعة»", [(await call("POST", `/api/physio/plans/${na}/review`, S.sup)).status, await inList("review", S.sup)], [409, false]);
+    await call("PUT", `/api/physio/plans/${na}`, S.spec, { ...body2, notes: "زاد الألم" });
+    same("ن.١٨ وتعديلٌ جديد من الأخصائيّ يعيدها للمراجعة", (await call("GET", `/api/physio/plans/${na}`, S.sup)).json?.reviewStatus, "awaiting");
+    const e2 = await call("PUT", `/api/physio/plans/${na}`, S.sup, { ...body2, notes: "عدّلها سليم" });
+    const dec2 = await outText("physio_plan_decided", na);
+    same("ن.١٩ **المشرفُ يعدّل**: تبقى معتمَدة، «راجعها المشرف»، **ويُنبَّه الأخصائيُّ بتعديله**",
+      [e2.json?.status, e2.json?.reviewStatus, e2.json?.reviewedByName, dec2.length, /عدّل المشرفُ/.test(dec2[dec2.length - 1]?.text ?? "")], ["approved", "reviewed", "سليم", 2, true]);
+    const st = await call("POST", `/api/physio/plans/${na}/stop`, S.sup, { reason: "يحتاج تقييماً جديداً" });
+    const dec3 = await outText("physio_plan_decided", na);
+    same("ن.٢٠ **المشرفُ يوقف**: ويُنبَّه الأخصائيُّ بالسبب", [st.json?.status, dec3.length, /أوقف المشرفُ.*يحتاج تقييماً جديداً/.test(dec3[dec3.length - 1]?.text ?? "")], ["stopped", 3, true]);
+    same("ن.٢١ وسطرا تدقيق: البدءُ والمراجعة", [await auditCount(na, "activate"), await auditCount(na, "review")], [1, 1]);
+    //  الاستبدالُ والحذفُ بيد المشرف ينبّهان الكاتب كذلك.
+    const nb = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P2 })).json.id as number;
+    await call("POST", `/api/physio/plans/${nb}/activate`, S.spec);
+    await call("POST", `/api/physio/plans/${nb}/change-protocol`, S.sup, { protocolId: P });
+    const nbPlan = (await call("GET", `/api/physio/plans/${nb}`, S.sup)).json;
+    same("ن.٢٢ **المشرفُ يستبدل نوعَها**: «راجعها المشرف»، ويُنبَّه الأخصائيّ",
+      [nbPlan.reviewStatus, (await outText("physio_plan_decided", nb)).map((r) => [r.target_user_ids, /استبدل المشرفُ/.test(r.text)])], ["reviewed", [[[SPEC], true]]]);
+    const nc = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P2 })).json.id as number;
+    await call("POST", `/api/physio/plans/${nc}/activate`, S.spec);
+    const delRows = async () => (await q(`SELECT target_user_ids FROM staff_notification_outbox WHERE event_type = 'physio_plan_decided' AND link_path = $1
+      AND text LIKE '%حذف المشرفُ%' ORDER BY id`, [`/patients/${pt}`])).rows.map((r) => r.target_user_ids);
+    const delBefore = (await delRows()).length;
+    same("ن.٢٣ **المشرفُ يحذف**: ويُنبَّه الأخصائيُّ برابط ملفّ المريض", [(await call("DELETE", `/api/physio/plans/${nc}`, S.sup)).status,
+      (await delRows()).slice(delBefore)], [200, [[SPEC]]]);
+    //  والمسارُ القديم باقٍ: المعتمِدُ يعتمد المنتظِرة فتُعدّ مراجَعة، والمشرفُ يبدأ خطّتَه بنفسه بلا مراجعةٍ معلَّقة ولا تنبيهِ مراجعة.
+    await call("POST", `/api/physio/plans/${draftProto}/submit`, S.spec);
+    const old = await call("POST", `/api/physio/plans/${draftProto}/approve`, S.sup);
+    same("ن.٢٤ وعلى البروتوكول غير المعتمَد: إرسالٌ فاعتمادٌ كما كان، والاعتمادُ مراجعةٌ بنفسه", [old.json?.status, old.json?.reviewStatus], ["approved", "reviewed"]);
+    const own = (await call("POST", `/api/patients/${pt}/physio-plans`, S.sup, { protocolId: P2 })).json.id as number;
+    const ownAct = await call("POST", `/api/physio/plans/${own}/activate`, S.sup);
+    same("ن.٢٥ والمشرفُ يبدأ خطّتَه بنفسه: مراجَعةٌ أصلاً، ولا تنبيهَ مراجعة", [ownAct.json?.status, ownAct.json?.reviewStatus, (await outText("physio_plan_pending", own)).length], ["approved", "reviewed", 0]);
+    same("ن.٢٦ والتعديلُ على المعتمَدة على البروتوكول غير المعتمَد ما زال يعيدها للاعتماد", (await call("PUT", `/api/physio/plans/${draftProto}`, S.spec, editBody())).json?.status, "pending");
 
     console.log("\n── ح. حذفُ المريض يمرّ بخططه ──");
     const c2 = await call("POST", `/api/patients/${pt}/physio-plans`, S.sup, { titleAr: "خطّةٌ بلا بروتوكول" });

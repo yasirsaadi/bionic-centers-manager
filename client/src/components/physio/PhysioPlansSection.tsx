@@ -12,13 +12,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { AGE_GROUP_LABELS, type AgeGroup } from "@shared/physio_protocols";
-import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, isPlanClosed, type PlanStatus } from "@shared/physio_plans";
+import { PLAN_STATUS_LABELS, UNAPPROVED_PROTOCOL_BADGE, isPlanClosed, type PlanStatus, PLAN_REVIEW_LABELS } from "@shared/physio_plans";
 import { ExecuteSessionDialog } from "@/components/physio/ExecuteSession";
 import { SuggestBox, type SuggestInfo } from "@/components/physio/PlanSuggestion";
 
 interface PlanRow {
   id: number; titleAr: string; status: PlanStatus; createdByName: string | null; createdAt: string;
   decidedByName: string | null; protocolStatus: string | null; protocolId: number | null; deviceCount: number; assignees: string[];
+  reviewStatus?: "awaiting" | "reviewed" | null;
   canExecute?: boolean;
 }
 interface ProtocolRow { id: number; titleAr: string; titleEn: string; ageGroup: AgeGroup; status: "draft" | "approved" }
@@ -78,6 +79,10 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 <Badge variant="outline" className={PLAN_STATUS_TONE[p.status]}>{PLAN_STATUS_LABELS[p.status]}</Badge>
                 {p.protocolId && p.protocolStatus !== "approved" && (
                   <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">{UNAPPROVED_PROTOCOL_BADGE}</Badge>
+                )}
+                {/*  بدأها كاتبُها على بروتوكولٍ معتمَد — تُنفَّذ وتنتظر نظرةَ المشرف (§4.cz). */}
+                {p.status === "approved" && p.reviewStatus === "awaiting" && (
+                  <Badge variant="outline" className="bg-sky-50 text-sky-800 border-sky-300" data-testid={`physio-plan-awaiting-review-${p.id}`}>{PLAN_REVIEW_LABELS.awaiting}</Badge>
                 )}
               </div>
               <div className="text-[11px] text-muted-foreground mt-1">

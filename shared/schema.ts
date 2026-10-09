@@ -3057,6 +3057,11 @@ export const physioPlans = pgTable("physio_plans", {
   graduatedAt: timestamp("graduated_at", { withTimezone: true }),
   graduatedBy: integer("graduated_by").references(() => systemUsers.id),
   graduatedByName: text("graduated_by_name"),
+  //  §4.cz — مراجعةُ المشرف بعد أن يبدأ الأخصائيُّ الخطّةَ على بروتوكولٍ معتمَد: `awaiting` · `reviewed` · فارغ.
+  reviewStatus: text("review_status"),
+  reviewedBy: integer("reviewed_by").references(() => systemUsers.id),
+  reviewedByName: text("reviewed_by_name"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
