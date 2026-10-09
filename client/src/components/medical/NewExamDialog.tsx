@@ -41,7 +41,13 @@ import {
   type AwaitingEpisodeOption,
 } from "./exam_episode_choice";
 import { ExamSheetForm, sheetValuesFrom, type ExamSheetValues } from "./ExamSheetForm";
-import { EXAM_SHEET_TEXT_KEY, examSheetTextOf, isSheetExamType, prepareSheetEdit } from "@shared/exam_sheet";
+import { PhysioExamSheetForm } from "./PhysioExamSheetForm";
+import {
+  EXAM_SHEET_TEXT_KEY, examSheetTextOf, isPhysioSheetExamType, isSheetExamType, physioSheetNotesOf, prepareSheetEdit,
+} from "@shared/exam_sheet";
+import {
+  emptyInitialAssessment, parseInitialAssessment, readStoredAssessment, type Lang, type PhysioInitialAssessment,
+} from "@shared/physio_initial_assessment";
 
 /** ما سجّله الاستقبالُ سريرياً عند التسجيل — يصل من باب المعاينة نفسِها. */
 interface RegistrationClinical {
@@ -70,6 +76,8 @@ export interface ExamToEdit {
   plan: string | null;
   notes: string | null;
   version?: number;
+  /** التقييمُ الأوّليّ المختوم (§4.da) — تفتح عليه الاستمارةُ عند التنقيح. */
+  assessment?: Record<string, any> | null;
 }
 
 const EMPTY_FORM: Record<ExamFieldKey, string> = {
@@ -300,21 +308,42 @@ export function NewExamDialog({
   //  (`diagnosis`)، وحقولُ الاستعلامات يعدّلها الطبيبُ ويُدقَّق التعديلُ في الخادم باسمه، و«المطلوب» يُصحَّح قبل البيع.
   //  والعلاجُ الطبيعيُّ كما كان. **والتنقيحُ يقرأ الاستمارةَ من البابِ نفسِه** — بقراءةٍ مستقلّة بالمفتاح نفسِه.
   const sheetMode = isSheetExamType(specialty);
+  //  ══ **والعلاجُ الطبيعيُّ على استمارته** (§4.da، قرارُ المالك ٢٠٢٦-١٠-٠٩): حقولُ الاستعلامات و«سبب المراجعة» والإصابات، ثمّ التقييمُ
+  //  الأوّليّ كاملاً بهيئة الورقتين الأصليتين، ثمّ «قرار الفاحص» (التشخيص · العلاج الموصوف · ملاحظات الفاحص). ══
+  const physioMode = isPhysioSheetExamType(specialty);
+  const onSheetForm = sheetMode || physioMode;
   const { data: editSheetData } = useQuery<{ sheet?: Record<string, unknown> | null }>({
     queryKey: [`/api/medical/patients/${patientId}/exams`],
-    enabled: open && isEdit && sheetMode,
+    enabled: open && isEdit && onSheetForm,
   });
   const sheetSource = (isEdit ? editSheetData?.sheet : examsData?.sheet) ?? null;
   const [sheetVals, setSheetVals] = useState<ExamSheetValues | null>(null);
   const [sheetMissing, setSheetMissing] = useState<string[]>([]);
   //  «المطلوب» الذي اختاره الطبيبُ — `null` = كما أرسله الاستعلامات.
   const [requestedOverride, setRequestedOverride] = useState<string[] | null>(null);
+  //  **التقييمُ الأوّليّ** ولغتُه (الإنجليزيةُ أوّلاً كالأصل) والناقصُ منه.
+  const [assessment, setAssessment] = useState<PhysioInitialAssessment>(() => emptyInitialAssessment());
+  const [assessLang, setAssessLang] = useState<Lang>("en");
+  const [assessMissing, setAssessMissing] = useState<string[]>([]);
+  const dxPrefilledRef = useRef(false);
   useEffect(() => {
     if (!open) return;
     setSheetVals(null);
     setSheetMissing([]);
     setRequestedOverride(null);
+    setAssessment(readStoredAssessment(exam?.assessment) ?? emptyInitialAssessment());
+    setAssessMissing([]);
+    dxPrefilledRef.current = false;
   }, [open, exam?.id]);
+  //  **تنقيحُ معاينة علاجٍ طبيعيّ قديمة على الاستمارة**: «التشخيص» في خانته، والشكوى والفحصُ والخطّةُ والملاحظاتُ تُجمَع في «ملاحظات
+  //  الفاحص» بعناوينها — لا يضيع حرف، والنسخةُ القديمة محفوظةٌ في السجلّ.
+  useEffect(() => {
+    if (!open || !physioMode) return;
+    setForm((f) => {
+      if (!f.chiefComplaint && !f.clinicalFindings && !f.plan) return f;
+      return { ...EMPTY_FORM, diagnosis: f.diagnosis, notes: physioSheetNotesOf(f) };
+    });
+  }, [open, physioMode, form.chiefComplaint, form.clinicalFindings, form.plan]);
   //  **«المعاينة الطبية» هي `form.diagnosis`** — وعلى الاستمارة تُجمَع فيها الخاناتُ الأخرى بعناوينها (معاينةٌ قديمة تُنقَّح، أو
   //  نصٌّ كُتب قبل التبديل إلى طرفٍ أو مسند) وتُفرَّغ هي — فالجسمُ المرسَل واحدٌ لا يتغيّر شكلُه، ولا يضيع حرف.
   useEffect(() => {
@@ -434,6 +463,15 @@ export function NewExamDialog({
     setPrefilled(true);
   }, [open, isEdit, specialty, patientRow, prefilled, rx.supportType, rx.injurySide]);
 
+  //  «التشخيص» على الاستمارة يفتح على ما في الملفّ (تسجيلٌ قديمٌ كتبه الاستقبال) — مرّةً واحدة، فلا يعود إن محاه الفاحص.
+  useEffect(() => {
+    if (!open || isEdit || !physioMode || dxPrefilledRef.current) return;
+    const dx = typeof rx.diseaseType === "string" ? rx.diseaseType.trim() : "";
+    if (!dx) return;
+    dxPrefilledRef.current = true;
+    setForm((f) => (f.diagnosis.trim() ? f : { ...f, diagnosis: dx }));
+  }, [open, isEdit, physioMode, rx.diseaseType]);
+
   const save = useMutation({
     mutationFn: async () => {
       const res = await fetch(
@@ -454,9 +492,11 @@ export function NewExamDialog({
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
             //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
             ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
+            //  **التقييمُ الأوّليّ** (§4.da) — سريريٌّ محض، يُفحَص في الخادم ويُختَم مع المعاينة.
+            ...(physioMode ? { assessment } : {}),
             //  **وما عدّله من حقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — إداريٌّ لا تجاريّ: الخادمُ يقارنه بالملفّ
             //  فيكتب ما تغيّر وحده ويدقّقه باسم الطبيب، و«المطلوب» قبل المال والتصنيع وحدهما.
-            ...(sheetMode && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
+            ...(onSheetForm && sheetVals && sheetSource ? { sheet: sheetVals } : {}),
             ...(sheetMode && specialty === "prosthetic" && requestedOverride && requestedOverride.length > 0
               && requestedOverride.join(",") !== (baseRequestedItems ?? []).join(",")
               ? { requestedItems: requestedOverride } : {}),
@@ -526,7 +566,10 @@ export function NewExamDialog({
         queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
         queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
       }
-      if (Array.isArray(err?.missing) && err.missing.length) setSheetMissing(err.missing);
+      if (Array.isArray(err?.missing) && err.missing.length) {
+        if (err.code === "assessment_invalid" && !err.missing.includes("diagnosis")) setAssessMissing(err.missing);
+        else setSheetMissing(err.missing);
+      }
       toast({ title: "خطأ", description: err.message, variant: "destructive" });
       //  جهازٌ مُمرَّرٌ من صفّ القائمة لم يعد ينتظر: النافذةُ لا تملك بديلاً —
       //  تُغلَق ليعيد الطبيبُ الفتحَ من القائمة المحدَّثة، لا زرُّ حفظٍ يفشل ثانيةً.
@@ -550,7 +593,7 @@ export function NewExamDialog({
 
   //  **الاستمارةُ تُفحَص قبل الإرسال بقاعدة الخادم نفسِها** — فلا يُفرَّغ إلزاميٌّ ولا تُكتب قيمةٌ غير صالحة.
   const submit = () => {
-    if (sheetMode && sheetVals && sheetSource) {
+    if (onSheetForm && sheetVals && sheetSource) {
       const chk = prepareSheetEdit(sheetSource, sheetVals);
       if (chk.missing.length) {
         setSheetMissing(chk.missing);
@@ -558,7 +601,24 @@ export function NewExamDialog({
         return;
       }
     }
+    //  **التقييمُ بقاعدة الخادم نفسِها** — ومعاينةٌ قديمة بلا تقييم تُنقَّح بلا تقييم ما دام فارغاً (القاعدةُ في الخادم كذلك).
+    if (physioMode) {
+      const oldWithout = isEdit && !readStoredAssessment(exam?.assessment);
+      const r = parseInitialAssessment(assessment);
+      const empty = JSON.stringify(assessment) === JSON.stringify(emptyInitialAssessment());
+      if (!r.ok && !(oldWithout && empty)) {
+        setAssessMissing(r.missing);
+        toast({ title: "أكمل التقييم الأوّلي", description: r.error, variant: "destructive" });
+        return;
+      }
+      if (!form.diagnosis.trim() && !(oldWithout && empty)) {
+        setSheetMissing(["diagnosis"]);
+        toast({ title: "أكمل قرار الفاحص", description: "اكتب التشخيص", variant: "destructive" });
+        return;
+      }
+    }
     setSheetMissing([]);
+    setAssessMissing([]);
     save.mutate();
   };
 
@@ -592,7 +652,7 @@ export function NewExamDialog({
       </AlertDialogContent>
     </AlertDialog>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${sheetMode ? "sm:max-w-4xl overflow-x-hidden" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
+      <DialogContent className={`${onSheetForm ? "sm:max-w-4xl overflow-x-hidden" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
             <Stethoscope className="w-5 h-5" />
@@ -715,17 +775,44 @@ export function NewExamDialog({
               />
             )
             : <p className="text-sm text-muted-foreground" data-testid="exam-sheet-loading">جارٍ تحميل الاستمارة…</p>)}
-          {specialty && !sheetMode && (
+          {physioMode && (sheetVals || (!isEdit && !examsLoading) || (isEdit && editSheetData)
+            ? (
+              <PhysioExamSheetForm
+                branchName={(sheetSource?.branchName as string | null) ?? null}
+                registeredAt={sheetSource?.registeredAt ? String(sheetSource.registeredAt) : null}
+                sheet={sheetVals ?? sheetValuesFrom(null)}
+                onSheet={(v) => { setSheetVals(v); setSheetMissing([]); }}
+                rx={rx}
+                onRx={setRx}
+                diagnosis={form.diagnosis}
+                onDiagnosis={(v) => {
+                  setForm((p) => ({ ...p, diagnosis: v }));
+                  //  على الاستمارة «التشخيص» هو تشخيصُ الحالة على الملفّ أيضاً (`diseaseType` في الوصفة) — خانةٌ واحدة لا اثنتان.
+                  setRx((r) => ({ ...r, diseaseType: v }));
+                  setSheetMissing((m) => m.filter((k) => k !== "diagnosis"));
+                }}
+                notes={form.notes}
+                onNotes={(v) => setForm((p) => ({ ...p, notes: v }))}
+                assessment={assessment}
+                onAssessment={(v) => { setAssessment(v); setAssessMissing([]); }}
+                lang={assessLang}
+                onLang={setAssessLang}
+                missing={sheetMissing}
+                assessMissing={assessMissing}
+              />
+            )
+            : physioMode && <p className="text-sm text-muted-foreground" data-testid="exam-sheet-loading">جارٍ تحميل الاستمارة…</p>)}
+          {specialty && !sheetMode && !physioMode && (
             <PrescriptionFields caseType={specialty} value={rx} onChange={setRx} />
           )}
 
-          {prefilled && specialty === "physiotherapy" && (
+          {prefilled && specialty === "physiotherapy" && !physioMode && (
             <p className="text-xs text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2" data-testid="note-rx-prefilled">
               التشخيص والإصابات أعلاه مملوءة مما سجّله الاستعلامات — أكمل وعدّل ما يلزم، وما توقّعه هو المعتمد على ملف المريض.
             </p>
           )}
 
-          {!sheetMode && EXAM_FIELDS.map((f) => (
+          {!sheetMode && !physioMode && EXAM_FIELDS.map((f) => (
             <div key={f.key} className="space-y-2">
               <Label htmlFor={`exam-${f.key}`}>{f.label}</Label>
               <Textarea
@@ -746,7 +833,7 @@ export function NewExamDialog({
           </Button>
           <Button
             onClick={submit}
-            disabled={!specialty || !hasContent || save.isPending || needsEpisodeChoice || candidatesLoading}
+            disabled={!specialty || !(hasContent || physioMode) || save.isPending || needsEpisodeChoice || candidatesLoading}
             data-testid="button-save-medical-exam"
           >
             {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}

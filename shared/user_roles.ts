@@ -118,6 +118,16 @@ export const onlyRoles = (x: RoleHolder | null | undefined, list: readonly strin
   return rs.length > 0 && rs.every((r) => list.includes(r));
 };
 
+/**
+ * **مَن يكتب معاينةَ العلاج الطبيعي بلا علَم «يكتب المعاينة الطبية»** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.da): «هذه الاستمارةُ العلاجية
+ * لدور الأخصائيّ أو الطبيب أو المسؤول» — فالأخصائيُّ بدوره، والمشرفُ العامّ بعلَمه (سليم مديرُ فرعٍ وهو الأخصائيُّ الأعلى)، والمسؤولُ
+ * بدوره. **للعلاج الطبيعي وحده**: معاينةُ الأطراف والمساند تبقى للطبيب كما كانت. والطبيبُ بعلَمه أو دوره يبقى كما هو.
+ */
+export function writesPhysioExamByRole(x: (RoleHolder & { canSupervisePhysio?: unknown }) | null | undefined): boolean {
+  if (!x) return false;
+  return hasRole(x, "physio_specialist") || hasRole(x, "admin") || x.canSupervisePhysio === true;
+}
+
 /** هل أحدُ أدواره من العلاج الطبيعي؟ */
 export const hasPhysioRole = (x: RoleHolder | null | undefined): boolean => hasAnyRole(x, PHYSIO_ROLES);
 

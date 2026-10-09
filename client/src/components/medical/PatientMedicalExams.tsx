@@ -25,6 +25,10 @@ import {
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
 import { examNarrativeRows, isSheetExamType } from "@shared/exam_sheet";
+import {
+  assessmentAsEnglishText, assessmentSummaryAr, readStoredAssessment, PT_FORM_CODE, type Lang, type PhysioInitialAssessment,
+} from "@shared/physio_initial_assessment";
+import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
 import { openIntakeSheetPrint } from "@/components/intake/DeviceSheetsBox";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
@@ -94,6 +98,8 @@ interface Revision {
   plan: string | null;
   notes: string | null;
   prescription?: Record<string, any> | null;
+  /** التقييمُ الأوّليّ كما كان في هذه النسخة (ترحيل ١٢١). */
+  assessment?: Record<string, any> | null;
   deviceCost?: number | null;
   editedByName: string | null;
   editedAt: string;
@@ -103,6 +109,8 @@ interface Exam {
   id: number;
   caseType: string;
   prescription?: Record<string, any> | null;
+  /** **التقييمُ الأوّليّ للعلاج الطبيعي** (§4.da) — مختومٌ مع المعاينة. */
+  assessment?: Record<string, any> | null;
   deviceCost?: number | null;
   proposedExpertUserId?: number | null;
   proposedExpertName?: string | null;
@@ -174,6 +182,9 @@ export function PatientMedicalExams({
   const [addendumBody, setAddendumBody] = useState("");
   const [editing, setEditing] = useState<Exam | null>(null);
   const [historyOf, setHistoryOf] = useState<Exam | null>(null);
+  //  **«عرض التقييم الأوّلي»** — لكلّ مَن يرى المريض (المعالج والاستقبال…) بلغة الورقة أو بالعربية.
+  const [assessView, setAssessView] = useState<{ a: PhysioInitialAssessment; title: string } | null>(null);
+  const [assessLang, setAssessLang] = useState<Lang>("en");
   const [cancelling, setCancelling] = useState<Exam | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   //  ══ **بابُ التصحيح الإداريّ الثالث** (ترحيل ٠٦٤) ═════════════════════
@@ -333,6 +344,12 @@ export function PatientMedicalExams({
     const rxRows = prescriptionLines(exam)
       .map((l) => `<tr><th>${l.label}</th><td>${l.value}</td></tr>`)
       .join("");
+    //  **التقييمُ الأوّليّ يُطبع مع معاينته** — لا يضيع منه سطر (§4.da).
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const assessText = assessmentAsEnglishText(readStoredAssessment(exam.assessment));
+    const assessBlock = assessText
+      ? `<h2 style="font-size:15px;margin:22px 0 8px">Physiotherapy Initial Assessment — التقييم الأوّلي</h2><div dir="ltr" style="font-size:13px;white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">${esc(assessText)}</div><div style="font-size:11px;color:#666;margin-top:4px" dir="ltr">${PT_FORM_CODE}</div>`
+      : "";
 
     const win = window.open("", "_blank", "width=900,height=1000");
     if (!win) return;
@@ -360,6 +377,7 @@ export function PatientMedicalExams({
 </div>
 <table>${rows}</table>
 ${rxRows ? `<h2 style="font-size:15px;margin:22px 0 8px">الوصفة</h2><table>${rxRows}</table>` : ""}
+${assessBlock}
 ${addenda}
 <div class="sign"><div>توقيع الطبيب: ${exam.doctorName}</div><div>ختم المركز</div></div>
 </body></html>`);
@@ -565,6 +583,19 @@ ${addenda}
                     </div>
                   </div>
 
+                  {readStoredAssessment(exam.assessment) && (
+                    <div className="mb-2 rounded-lg border border-emerald-300 bg-emerald-50/60 p-2 flex flex-wrap items-center gap-2" data-testid={`exam-assessment-${exam.id}`}>
+                      <div className="text-xs flex-1 min-w-[12rem]">
+                        <span className="font-bold text-emerald-900">التقييم الأوّلي: </span>
+                        <span dir="auto">{assessmentSummaryAr(readStoredAssessment(exam.assessment))}</span>
+                      </div>
+                      <Button size="sm" variant="outline" className="h-7 text-xs"
+                        onClick={() => setAssessView({ a: readStoredAssessment(exam.assessment)!, title: `${exam.doctorName} — ${formatDateIraq(exam.signedAt)} ${formatTimeIraq(exam.signedAt)}` })}
+                        data-testid={`button-view-assessment-${exam.id}`}>
+                        عرض التقييم الأوّلي
+                      </Button>
+                    </div>
+                  )}
                   {prescriptionLines(exam).length > 0 && (
                     <div className="mb-2 rounded-lg border border-teal-200 bg-teal-50/60 p-2 space-y-1">
                       <div className="text-[11px] font-bold text-teal-900">الوصفة</div>
@@ -651,6 +682,34 @@ ${addenda}
         />
       )}
 
+      {/* ── التقييمُ الأوّليّ للقراءة (§4.da) ──────────────────────────────── */}
+      <Dialog open={assessView !== null} onOpenChange={(o) => !o && setAssessView(null)}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden" dir="rtl" data-testid="dialog-view-assessment">
+          <DialogHeader>
+            <DialogTitle className="text-primary flex flex-wrap items-center gap-2">
+              التقييم الأوّلي للعلاج الطبيعي
+              <span className="text-xs font-normal text-muted-foreground">{assessView?.title}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-end">
+            <div className="inline-flex rounded-md border overflow-hidden text-xs" role="group" aria-label="لغة الاستمارة">
+              {(["en", "ar"] as const).map((l) => (
+                <button key={l} type="button" onClick={() => setAssessLang(l)} aria-pressed={assessLang === l}
+                  className={assessLang === l ? "px-2.5 py-1 bg-slate-800 text-white" : "px-2.5 py-1 bg-white"} data-testid={`view-assess-lang-${l}`}>
+                  {l === "en" ? "English" : "عربي"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {assessView && (
+            <div className="border-2 border-slate-700 min-w-0">
+              <InitialAssessmentSheet value={assessView.a} lang={assessLang} onset={assessView.a.onsetAtSigning} testIdPrefix="view-pt" />
+            </div>
+          )}
+          <p className="text-[11px] text-slate-500" dir="ltr">{PT_FORM_CODE}</p>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Version history ────────────────────────────────────────────── */}
       <Dialog open={!!historyOf} onOpenChange={(o) => !o && setHistoryOf(null)}>
         <DialogContent className="sm:max-w-[620px] max-h-[85vh] overflow-y-auto" dir="rtl">
@@ -698,6 +757,15 @@ ${addenda}
                           </div>
                         );
                       })}
+                      {readStoredAssessment(rev.assessment) && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-muted-foreground shrink-0 min-w-[92px]">التقييم الأوّلي:</span>
+                          <span className="text-xs" dir="auto">{assessmentSummaryAr(readStoredAssessment(rev.assessment))}</span>
+                          <Button size="sm" variant="ghost" className="h-6 text-xs px-2"
+                            onClick={() => setAssessView({ a: readStoredAssessment(rev.assessment)!, title: `النسخة ${rev.version} — ${rev.doctorName ?? ""}` })}
+                            data-testid={`button-view-assessment-rev-${rev.id}`}>عرض</Button>
+                        </div>
+                      )}
                       {rev.deviceCost != null && (
                         <div className="flex gap-2">
                           <span className="text-muted-foreground shrink-0 min-w-[92px]">الكلفة:</span>

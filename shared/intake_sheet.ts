@@ -107,6 +107,7 @@ export const INTAKE_FIELD_LABELS: Record<string, string> = {
   age: "العمر", weight: "الوزن", height: "الطول", injuryCause: "سبب الإصابة", injuryDate: "تاريخ الإصابة",
   department: "نوع الحالة (طرف أو مسند)", amputationSite: "تعريف البتر", supportType: "نوع المسند", injurySide: "جهة الإصابة",
   requestedItem: "المطلوب",
+  presentingComplaint: "سبب المراجعة",
 };
 
 const filled = (v: unknown) => typeof v === "string" ? v.trim().length > 0 : typeof v === "number" ? Number.isFinite(v) : false;

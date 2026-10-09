@@ -7,7 +7,7 @@
 //     وفشلُه بعدها (رقمٌ محجوزٌ لمريضٍ آخر) **لا يُسقط معاينةً حُفظت**: يُقال للطبيب في الردّ نفسِه.
 //   • **وكلُّ تغييرٍ سطرُ تدقيق** بالقديم والجديد، باسم الطبيب ورقم المعاينة.
 // وصلاحيةُ «تعديل المرضى» لا تُطلَب هنا: هذا بابُ المعاينة، ومَن يصله هو مَن يملك كتابتَها.
-import { prepareSheetEdit, isSheetExamType } from "@shared/exam_sheet";
+import { prepareSheetEdit, isSheetExamType, isPhysioSheetExamType } from "@shared/exam_sheet";
 import { isIntakeRequestedItem } from "@shared/intake_sheet";
 import { parseRequestedItems, requestedItemLabel, type ProstheticComponent, type RequestedItem } from "@shared/prosthetic_parts";
 import { db } from "../db";
@@ -32,7 +32,8 @@ export type PrepareResult =
 
 /** **يُفحَص قبل أيّ كتابة** — لا شيءَ هنا يكتب. `prepared: null` = لا تعديلَ على الاستمارة في هذا الطلب. */
 export async function prepareExamSheet(patientId: number, caseType: unknown, body: any): Promise<PrepareResult> {
-  if (!isSheetExamType(caseType)) return { ok: true, prepared: null };
+  //  **والعلاجُ الطبيعيُّ على استمارته** (§4.da): حقولُ الاستعلامات نفسُها ومعها «سبب المراجعة» — بلا «المطلوب».
+  if (!isSheetExamType(caseType) && !isPhysioSheetExamType(caseType)) return { ok: true, prepared: null };
   const hasSheet = body?.sheet !== undefined && body?.sheet !== null;
   //  **«المطلوب» قائمةٌ** (§4.ct): `requestedItems` — والنافذةُ القديمة ترسل `requestedItem` وحده.
   const rawItem = body?.requestedItems ?? body?.requestedItem;
@@ -113,4 +114,19 @@ export async function applyExamSheet(
     }
   }
   return notes.length ? notes.join(" — ") : null;
+}
+
+
+/**
+ * **«تاريخ بداية الإصابة» يومَ الحفظ** — يُختَم في التقييم الأوّليّ (§4.da). ليس خانةً ثانية: هو «تاريخ الإصابة» الذي كتبته الاستعلامات،
+ * وبعد تعديل الفاحص له على الاستمارة إن عدّله. تاريخٌ ⟵ `YYYY-MM-DD`، وإلّا حالتُه (`congenital` · `unknown`)، وإلّا `null`.
+ */
+export async function physioOnsetAtSigning(patientId: number, prepared: PreparedExamSheet | null): Promise<string | null> {
+  const ex = (await intakeSheetOf(patientId)) ?? {};
+  const pick = (k: "injuryDate" | "injuryDateStatus") =>
+    prepared && Object.prototype.hasOwnProperty.call(prepared.patch, k) ? prepared.patch[k] : (ex as Record<string, unknown>)[k];
+  const date = pick("injuryDate");
+  if (typeof date === "string" && date.trim()) return date.trim().slice(0, 10);
+  const status = pick("injuryDateStatus");
+  return typeof status === "string" && status.trim() ? status.trim() : null;
 }

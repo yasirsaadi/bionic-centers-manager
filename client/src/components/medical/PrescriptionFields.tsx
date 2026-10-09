@@ -63,18 +63,11 @@ export function PrescriptionFields({
   const specs = deviceSpecsForSpecialty(caseType);
   const set = (key: string, v: any) => onChange({ ...value, [key]: v });
 
-  const injuries: InjuryEntry[] = value.injuries?.length
-    ? value.injuries
-    : [{ type: "", area: "", side: "" }];
+  //  الصفوفُ نفسُها في المحرّرَين المشتركَين أدناه (`PhysioInjuriesEditor` · `PhysioTreatmentsEditor`).
+  const injuries: InjuryEntry[] = value.injuries ?? [];
   const setInjuries = (rows: InjuryEntry[]) => set("injuries", rows);
-  const patchInjury = (i: number, patch: Partial<InjuryEntry>) =>
-    setInjuries(injuries.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-
-  const treatments = value.treatments?.length
-    ? value.treatments
-    : [{ treatmentType: "", sessionCount: 0 }];
-  const setTreatments = (rows: { treatmentType: string; sessionCount: number }[]) =>
-    set("treatments", rows);
+  const treatments: TreatmentRow[] = value.treatments ?? [];
+  const setTreatments = (rows: TreatmentRow[]) => set("treatments", rows);
 
   // Choosing an amputation variant RESETS every builder key first, then seeds
   // that variant's defaults (the registration form's own defaults). Two
@@ -396,61 +389,7 @@ export function PrescriptionFields({
 
           <div className="space-y-2">
             <Label className="text-xs font-semibold">الإصابات</Label>
-            {injuries.map((row, i) => (
-              <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
-                <Select value={row.type} onValueChange={(v) => patchInjury(i, { type: v })}>
-                  <SelectTrigger className="bg-white" data-testid={`select-rx-injury-type-${i}`}>
-                    <SelectValue placeholder="نوع الإصابة" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INJURY_TYPE_OPTIONS.map((o) => (
-                      <SelectItem key={o} value={o}>{o}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={row.area} onValueChange={(v) => patchInjury(i, { area: v })}>
-                  <SelectTrigger className="bg-white" data-testid={`select-rx-injury-area-${i}`}>
-                    <SelectValue placeholder="منطقة الإصابة" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INJURY_AREA_OPTIONS.map((o) => (
-                      <SelectItem key={o} value={o}>{o}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={row.side} onValueChange={(v) => patchInjury(i, { side: v })}>
-                  <SelectTrigger className="bg-white w-28" data-testid={`select-rx-injury-side-${i}`}>
-                    <SelectValue placeholder="اختياري" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INJURY_SIDE_OPTIONS.map((o) => (
-                      <SelectItem key={o} value={o}>{o}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {injuries.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-9 px-2 text-red-600"
-                    onClick={() => setInjuries(injuries.filter((_, idx) => idx !== i))}
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1"
-              onClick={() => setInjuries([...injuries, { type: "", area: "", side: "" }])}
-              data-testid="button-rx-add-injury"
-            >
-              <Plus className="w-3.5 h-3.5" /> إضافة إصابة أخرى
-            </Button>
+            <PhysioInjuriesEditor rows={injuries} onChange={setInjuries} />
           </div>
 
           <div className="space-y-2 border-t border-teal-200 pt-3">
@@ -458,68 +397,151 @@ export function PrescriptionFields({
             <p className="text-xs text-muted-foreground">
               تحدّد أنت العلاج والجلسات — والاستعلامات تفتح «الكلفة والجلسات» مملوءة بها لتسعيرها.
             </p>
-            {treatments.map((row, i) => (
-              <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_auto] gap-2 items-end">
-                <Select
-                  value={row.treatmentType}
-                  onValueChange={(v) =>
-                    setTreatments(treatments.map((r, idx) => (idx === i ? { ...r, treatmentType: v } : r)))
-                  }
-                >
-                  <SelectTrigger className="bg-white" data-testid={`select-rx-treatment-${i}`}>
-                    <SelectValue placeholder="اختر نوع العلاج" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PHYSIO_TREATMENT_TYPES.map((o) => (
-                      <SelectItem key={o} value={o}>{o}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {/* استشارة طبية is a single visit, not a course — same rule the
-                    pricing dialog applies, so the two agree. */}
-                {row.treatmentType && row.treatmentType !== "استشارة طبية" && (
-                  <Input
-                    type="number"
-                    min={0}
-                    placeholder="الجلسات"
-                    value={row.sessionCount || ""}
-                    onChange={(e) =>
-                      setTreatments(
-                        treatments.map((r, idx) =>
-                          idx === i ? { ...r, sessionCount: Number(e.target.value) || 0 } : r,
-                        ),
-                      )
-                    }
-                    className="bg-white"
-                    data-testid={`input-rx-sessions-${i}`}
-                  />
-                )}
-                {treatments.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-9 px-2 text-red-600"
-                    onClick={() => setTreatments(treatments.filter((_, idx) => idx !== i))}
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1"
-              onClick={() => setTreatments([...treatments, { treatmentType: "", sessionCount: 0 }])}
-              data-testid="button-rx-add-treatment"
-            >
-              <Plus className="w-3.5 h-3.5" /> إضافة نوع علاج
-            </Button>
+            <PhysioTreatmentsEditor rows={treatments} onChange={setTreatments} />
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export type TreatmentRow = { treatmentType: string; sessionCount: number };
+
+/**
+ * **صفوفُ الإصابات** (النوع · المنطقة · الجهة) — مشتركةٌ بين الوصفة واستمارة العلاج الطبيعي (§4.da)، فلا تنحرف نسختان.
+ * صفٌّ فارغٌ واحد حين لا شيء — كما كانت.
+ */
+export function PhysioInjuriesEditor({ rows, onChange }: { rows: InjuryEntry[]; onChange: (rows: InjuryEntry[]) => void }) {
+  const injuries: InjuryEntry[] = rows.length ? rows : [{ type: "", area: "", side: "" }];
+  const setInjuries = onChange;
+  const patchInjury = (i: number, patch: Partial<InjuryEntry>) =>
+    setInjuries(injuries.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="space-y-2">
+      {injuries.map((row, i) => (
+        <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+          <Select value={row.type} onValueChange={(v) => patchInjury(i, { type: v })}>
+            <SelectTrigger className="bg-white" data-testid={`select-rx-injury-type-${i}`}>
+              <SelectValue placeholder="نوع الإصابة" />
+            </SelectTrigger>
+            <SelectContent>
+              {INJURY_TYPE_OPTIONS.map((o) => (
+                <SelectItem key={o} value={o}>{o}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={row.area} onValueChange={(v) => patchInjury(i, { area: v })}>
+            <SelectTrigger className="bg-white" data-testid={`select-rx-injury-area-${i}`}>
+              <SelectValue placeholder="منطقة الإصابة" />
+            </SelectTrigger>
+            <SelectContent>
+              {INJURY_AREA_OPTIONS.map((o) => (
+                <SelectItem key={o} value={o}>{o}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={row.side} onValueChange={(v) => patchInjury(i, { side: v })}>
+            <SelectTrigger className="bg-white w-28" data-testid={`select-rx-injury-side-${i}`}>
+              <SelectValue placeholder="اختياري" />
+            </SelectTrigger>
+            <SelectContent>
+              {INJURY_SIDE_OPTIONS.map((o) => (
+                <SelectItem key={o} value={o}>{o}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {injuries.length > 1 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2 text-red-600"
+              onClick={() => setInjuries(injuries.filter((_, idx) => idx !== i))}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 text-xs gap-1"
+        onClick={() => setInjuries([...injuries, { type: "", area: "", side: "" }])}
+        data-testid="button-rx-add-injury"
+      >
+        <Plus className="w-3.5 h-3.5" /> إضافة إصابة أخرى
+      </Button>
+    </div>
+  );
+}
+
+/** **العلاجُ الموصوف وعددُ الجلسات** — مشتركٌ بين الوصفة واستمارة العلاج الطبيعي (§4.da). منه تُملأ «الكلفة والجلسات». */
+export function PhysioTreatmentsEditor({ rows, onChange }: { rows: TreatmentRow[]; onChange: (rows: TreatmentRow[]) => void }) {
+  const treatments: TreatmentRow[] = rows.length ? rows : [{ treatmentType: "", sessionCount: 0 }];
+  const setTreatments = onChange;
+  return (
+    <div className="space-y-2">
+      {treatments.map((row, i) => (
+        <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_auto] gap-2 items-end">
+          <Select
+            value={row.treatmentType}
+            onValueChange={(v) =>
+              setTreatments(treatments.map((r, idx) => (idx === i ? { ...r, treatmentType: v } : r)))
+            }
+          >
+            <SelectTrigger className="bg-white" data-testid={`select-rx-treatment-${i}`}>
+              <SelectValue placeholder="اختر نوع العلاج" />
+            </SelectTrigger>
+            <SelectContent>
+              {PHYSIO_TREATMENT_TYPES.map((o) => (
+                <SelectItem key={o} value={o}>{o}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {/* استشارة طبية is a single visit, not a course — same rule the
+              pricing dialog applies, so the two agree. */}
+          {row.treatmentType && row.treatmentType !== "استشارة طبية" && (
+            <Input
+              type="number"
+              min={0}
+              placeholder="الجلسات"
+              value={row.sessionCount || ""}
+              onChange={(e) =>
+                setTreatments(
+                  treatments.map((r, idx) =>
+                    idx === i ? { ...r, sessionCount: Number(e.target.value) || 0 } : r,
+                  ),
+                )
+              }
+              className="bg-white"
+              data-testid={`input-rx-sessions-${i}`}
+            />
+          )}
+          {treatments.length > 1 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2 text-red-600"
+              onClick={() => setTreatments(treatments.filter((_, idx) => idx !== i))}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 text-xs gap-1"
+        onClick={() => setTreatments([...treatments, { treatmentType: "", sessionCount: 0 }])}
+        data-testid="button-rx-add-treatment"
+      >
+        <Plus className="w-3.5 h-3.5" /> إضافة نوع علاج
+      </Button>
     </div>
   );
 }
