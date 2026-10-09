@@ -21,6 +21,7 @@ import {
   type AssessmentDecision, type AssessmentKind, type DueState, type GoalMark, type MeasureDef, type ScoreSnap,
 } from "@shared/physio_assessments";
 import { MeasureRange, directionLabel } from "@/components/physio/ProtocolMeasures";
+import { useLatestPhysioAssessment } from "@/components/physio/LatestAssessment";
 
 interface Assessment {
   id: number; kind: AssessmentKind; assessedOn: string; pain: number | null; scores: ScoreSnap[]; goals: GoalMark[];
@@ -47,8 +48,12 @@ export function dueText(due: DueState, en = false): string | null {
   return en ? `Next assessment (${kind}): ${due.dueOn}` : `التقييمُ التالي (${kind}): ${due.dueOn}`;
 }
 
-export function PlanProgress({ planId, planStatus, lang, onModify }: { planId: number; planStatus: string; lang: "ar" | "en"; onModify: () => void }) {
+export function PlanProgress({ planId, planStatus, lang, onModify, patientId }: {
+  planId: number; planStatus: string; lang: "ar" | "en"; onModify: () => void; patientId?: number;
+}) {
   const en = lang === "en";
+  //  **أوّلُ تقييمٍ للخطّة يبدأ بألم «At Worst» من التقييم الأوّليّ** (§4.da المرحلة ٤) — يملأ الخانةَ والأخصائيُّ يؤكّده أو يعدّله.
+  const latest = useLatestPhysioAssessment(patientId);
   const q = useQuery<View>({ queryKey: [`/api/physio/plans/${planId}/assessments`],
     queryFn: async () => (await apiRequest("GET", `/api/physio/plans/${planId}/assessments`)).json() });
   const [open, setOpen] = useState(false);
@@ -149,18 +154,21 @@ export function PlanProgress({ planId, planStatus, lang, onModify }: { planId: n
         </>
       )}
       {open && v && <AssessmentDialog planId={planId} planStatus={planStatus} view={v} onClose={() => setOpen(false)}
+        prefillPain={list.length === 0 ? (latest?.assessment.painWorst ?? null) : null}
         onSaved={(d) => { setOpen(false); if (d === "modify") onModify(); }} />}
     </Card>
   );
 }
 
-function AssessmentDialog({ planId, planStatus, view, onClose, onSaved }: {
+function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillPain = null }: {
   planId: number; planStatus: string; view: View; onClose: () => void; onSaved: (d: AssessmentDecision) => void;
+  /** أسوأُ ألمٍ في التقييم الأوّليّ — لأوّل تقييمٍ للخطّة وحده. */
+  prefillPain?: number | null;
 }) {
   const { toast } = useToast();
   const isAdmin = Boolean((useBranchSession() as any)?.isAdmin);
   const [date, setDate] = useState(baghdadTodayYmd());
-  const [pain, setPain] = useState<string>("");
+  const [pain, setPain] = useState<string>(prefillPain === null ? "" : String(prefillPain));
   const [values, setValues] = useState<Record<string, string>>({});
   const [goals, setGoals] = useState<(0 | 1 | 2 | null)[]>(view.goals.map(() => null));
   const [notes, setNotes] = useState("");
@@ -199,6 +207,11 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved }: {
               </select>
             </label>
           </div>
+          {prefillPain !== null && pain === String(prefillPain) && (
+            <p className="text-[11px] text-sky-800" data-testid="assess-pain-prefill">
+              الألمُ من التقييم الأوّليّ في المعاينة (في أسوأ حالاته {prefillPain} من ١٠) — أكّده أو عدّله إن قِسته اليوم.
+            </p>
+          )}
           {!dateOk.ok && <p className="text-[11px] text-red-700">{dateOk.message}</p>}
           {view.measures.length > 0 && (
             <div className="space-y-2">

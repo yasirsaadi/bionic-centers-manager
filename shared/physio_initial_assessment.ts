@@ -408,8 +408,11 @@ export function assessmentAsEnglishText(a: PhysioInitialAssessment | null): stri
   else {
     if (a.investigations.length) lines.push(`Investigations: ${L(PT_INVESTIGATIONS, a.investigations)}`);
     if (a.trend) lines.push(`Condition trend: ${optLabel(PT_TRENDS, a.trend, "en")}`);
+    //  **«تاريخ بداية الإصابة» والحساسية** — كانا يسقطان من النصّ (§4.da المرحلة ٤): «لا تضيع أيُّ معلومة»، و«اقترح خطّة» يقرؤه.
+    if (a.onsetAtSigning) lines.push(`Date of onset / injury: ${a.onsetAtSigning === "congenital" ? "Since birth" : a.onsetAtSigning === "unknown" ? "Unknown" : a.onsetAtSigning}`);
     if (a.surgeryDate) lines.push(`Date of surgery: ${a.surgeryDate}`);
     if (a.pastHistory) lines.push(`Past medical history: ${a.pastHistory}`);
+    if (a.allergy.length) lines.push(`Drug / food allergy: ${L(PT_ALLERGIES, a.allergy)}${a.allergySpecify ? ` (${a.allergySpecify})` : ""}`);
     if (a.previousTherapy) lines.push(`Previous therapy for this condition: ${optLabel(PT_YES_NO, a.previousTherapy, "en")}${a.previousVisits !== null ? ` (${a.previousVisits} visits)` : ""}`);
     if (a.symptoms) lines.push(`Symptoms: ${optLabel(PT_SYMPTOMS, a.symptoms, "en")}`);
     if (a.painBest !== null || a.painWorst !== null) lines.push(`Pain (0–10): at best ${a.painBest ?? "—"}, at worst ${a.painWorst ?? "—"}`);

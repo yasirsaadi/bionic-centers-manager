@@ -22,6 +22,7 @@ import { storage } from "./storage";
 import { setSuggestCompleterForTests } from "./physio_plans/suggest";
 import { prefillSupported, requestMessages, type AiCompleteParams } from "./ai/provider";
 import { parseModelJson, validateAdjustments, validateChoices } from "@shared/physio_plans";
+import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -224,6 +225,37 @@ async function main() {
     same("ب.٦ **ولا اسمَ ولا هاتفَ ولا رمز**", [sent.includes("الاسم-السرّيّ"), sent.includes("07709998887"), sent.includes(String(pt.patient_code))], [false, false, false]);
     const stored = (await q(`SELECT input::text AS t FROM physio_plan_suggestions WHERE id = $1`, [r1.json.id])).rows[0].t;
     same("ب.٧ ولا في الصفّ المحفوظ", [stored.includes("الاسم-السرّيّ"), stored.includes("07709998887")], [false, false]);
+
+    // ══ §4.da المرحلة ٤: «على أساس هذه التقييمات تُختار الخطّة» ══
+    console.log("\n── ت. التقييمُ الأوّليّ يصل المساعدَ ويظهر بجانب الاختيار ──");
+    const pt4 = (await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, presenting_complaint)
+      VALUES ($1, '07705556667', $2, '52', 'physiotherapy', $3, true, 'ألمٌ في الرقبة ينزل إلى الذراع منذ شهر') RETURNING id`,
+      [`تقييم-سرّيّ ${MARK}`, MARK, B1])).rows[0].id;
+    const A4 = { ...emptyInitialAssessment(), onsetAtSigning: "unknown", allergy: ["drug"], allergySpecify: "Diclofenac",
+      symptoms: "constant", painBest: 3, painWorst: 7, location: ["neck"], sensation: "impaired", sensationRegions: "C6 (R)",
+      mmt: { ...emptyInitialAssessment().mmt, shoulder: { r: "4", l: "5" } }, plan: ["therapeutic_exercises", "traction"] };
+    //  معاينةٌ **بتقييمها وحده** (بلا نصٍّ في الخانات الخمس) — تكفي حالةً للمساعد.
+    await q(`INSERT INTO medical_exams (patient_id, case_type, branch_id, doctor_name, assessment) VALUES ($1, 'physiotherapy', $2, 'أخصائيّ اختبار', $3::jsonb)`,
+      [pt4, B1, JSON.stringify(A4)]);
+    //  ما سجّله المساعدُ المزيّف لاقتراح الطفل يُحفظ ويُعاد بعد هذا القسم — فد.١ يقرأ خطوةَ تعديله هو.
+    const savedCalls = calls.splice(0);
+    reply = { choose: { choices: [{ protocolId: P2, reasonAr: "ألم رقبة" }] }, adjust: {} };
+    const r4 = await suggestFor(S.spec, pt4);
+    const sent4 = calls.map((c) => c.user).join("\n");
+    same("ت.١ **معاينةٌ بتقييمها وحده تكفي** — يُقترح بلا سطر", r4.status, 200);
+    same("ت.٢ **والتقييمُ الأوّليّ كاملاً يصل المساعد**: الألمُ والإحساسُ والقوةُ وبنودُ خطّة العلاج والحساسيةُ وتاريخُ البداية",
+      ["Pain (0–10): at best 3, at worst 7", "Sensation: Impaired (C6 (R))", "MMT: Shoulder Flexors / Extensors R 4 / L 5",
+        "Plan of treatment: Therapeutic Exercises, Traction", "Drug / food allergy: Drug (Diclofenac)", "Date of onset / injury: Unknown"]
+        .map((x) => sent4.includes(JSON.stringify(x).slice(1, -1))),
+      [true, true, true, true, true, true]);
+    same("ت.٣ **و«سبب المراجعة» بكلمات المراجع** — ولا اسمَ ولا هاتف",
+      [sent4.includes("ألمٌ في الرقبة ينزل إلى الذراع منذ شهر"), sent4.includes("تقييم-سرّيّ"), sent4.includes("07705556667")], [true, false, false]);
+    const info4 = (await call("GET", `/api/patients/${pt4}/physio-plans`, S.spec)).json?.suggest;
+    same("ت.٤ **وبجانب اختيار البروتوكول سطرُ التقييم وبنودُ خطّة العلاج وأسوأُ الألم**", info4?.assessment,
+      { summary: "الألم 3–7 من ١٠ · الرقبة · مستمرّ · الإحساس ضعيف · بنود خطة العلاج: 2", planItems: ["تمارين علاجية", "الشدّ"], painWorst: 7 });
+    same("ت.٥ ومعاينةٌ بلا تقييم ⟵ لا سطرَ تقييم", (await call("GET", `/api/patients/${pt.id}/physio-plans`, S.spec)).json?.suggest?.assessment, null);
+    calls.length = 0;
+    calls.push(...savedCalls);
 
     console.log("\n── ج. الاختيار (القراران ١ و٢) ──");
     same("ج.١ رقمٌ ليس في المكتبة يُسقَط، والمكرّرُ مرّة، والمختارُ الأوّلُ الصالح", [r1.json.protocol.protocolId, r1.json.alternatives.map((a: any) => a.protocolId)], [P1, [P2]]);

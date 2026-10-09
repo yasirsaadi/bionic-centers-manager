@@ -106,10 +106,17 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status))
         .map((p) => ({ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }));
       //  «اقترح خطّة» (§4.co) — لكاتبي الخطط، ومعه ما سيقرؤه المساعدُ من المعاينة كي يرى الأخصائيُّ مصدرَه قبل الضغط.
-      let suggestInfo: { enabled: boolean; exam: { date: string; diagnosis: string | null } | null } | null = null;
+      //  **ومعه التقييمُ الأوّليّ** (§4.da المرحلة ٤): سطرُه وبنودُ خطّة العلاج التي أشّرها الفاحص — تُعرَض بجانب اختيار البروتوكول.
+      let suggestInfo: {
+        enabled: boolean; exam: { date: string; diagnosis: string | null } | null;
+        assessment: { summary: string | null; planItems: string[]; painWorst: number | null } | null;
+      } | null = null;
       if (canSuggestPlans(s)) {
         const ctx = await suggest.patientContext(patientId);
-        suggestInfo = { enabled: suggest.suggestEnabled(), exam: ctx.exam ? { date: ctx.exam.date, diagnosis: ctx.exam.diagnosis ?? ctx.exam.chiefComplaint } : null };
+        suggestInfo = {
+          enabled: suggest.suggestEnabled(), exam: ctx.exam ? { date: ctx.exam.date, diagnosis: ctx.exam.diagnosis ?? ctx.exam.chiefComplaint } : null,
+          assessment: ctx.assessmentView,
+        };
       }
       res.json({ plans: rows, canWrite: canWritePlans(s), canApprove: canApprovePlans(s), canDelete: canDeletePlans(s), suggest: suggestInfo });
     } catch (e) { fail(res, e); }

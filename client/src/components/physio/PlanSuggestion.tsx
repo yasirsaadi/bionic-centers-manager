@@ -10,7 +10,11 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { UNAPPROVED_PROTOCOL_BADGE, type SuggestionChange } from "@shared/physio_plans";
 
-export interface SuggestInfo { enabled: boolean; exam: { date: string; diagnosis: string | null } | null }
+export interface SuggestInfo {
+  enabled: boolean; exam: { date: string; diagnosis: string | null } | null;
+  /** التقييمُ الأوّليّ في تلك المعاينة (§4.da المرحلة ٤) — يقرؤه المساعدُ كاملاً. */
+  assessment?: { summary: string | null; planItems: string[]; painWorst: number | null } | null;
+}
 interface Choice { protocolId: number; reasonAr: string | null; reasonEn: string | null; titleAr?: string | null; titleEn?: string | null; status?: string | null }
 export interface Suggestion {
   id: number; createdByName: string | null; createdAt: string;
@@ -66,7 +70,7 @@ export function SuggestBox({ patientId, info, onCreated }: { patientId: number; 
         <div className="text-sm font-semibold flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-violet-700" /> اقترح خطّة بالمساعد</div>
         <p className="text-[11px] text-muted-foreground">
           {info.exam
-            ? <>يقرأ المساعدُ معاينةَ العلاج الطبيعي ({info.exam.date}){info.exam.diagnosis ? <>: <b>{info.exam.diagnosis}</b></> : null} والعمر، ويختار من مكتبتكم وحدها ويعدّل البروتوكولَ داخل حدوده. لا يرى اسمَ المريض ولا هاتفه.</>
+            ? <>يقرأ المساعدُ معاينةَ العلاج الطبيعي ({info.exam.date}){info.exam.diagnosis ? <>: <b>{info.exam.diagnosis}</b></> : null}{info.assessment ? <> <b>وتقييمَها الأوّليّ كاملاً</b></> : null} و«سبب المراجعة» والعمر، ويختار من مكتبتكم وحدها ويعدّل البروتوكولَ داخل حدوده. لا يرى اسمَ المريض ولا هاتفه.</>
             : <>لا معاينةَ علاجٍ طبيعيّ في ملفّه — <b>اكتب سطراً عن حالته</b> ليقرأه المساعد مع العمر. لا يرى اسمَ المريض ولا هاتفه.</>}
         </p>
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} className="bg-white"

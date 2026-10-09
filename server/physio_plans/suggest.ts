@@ -3,7 +3,8 @@
 // خطوتان، وكلٌّ منهما نداءٌ واحد للمساعد بردٍّ كائنٍ واحد يتحقّق منه الخادم:
 //   ١. **الاختيار**: حالةُ المريض + فهرسُ المكتبة (العنوانُ والفئةُ العمرية والملخّص) ⟵ ثلاثةُ بروتوكولاتٍ على الأكثر بأسبابها.
 //   ٢. **التعديل**: حالةُ المريض + البروتوكولُ المختار بأجهزته الجائزة في فرع الخطّة وموانعه ⟵ حذفٌ ودقائقُ وجرعةٌ وملاحظات.
-// **وحالةُ المريض بلا اسمٍ ولا هاتفٍ ولا رمز**: العمرُ وحالتُه المسجّلة ونصُّ آخر معاينة علاجٍ طبيعيّ غيرِ ملغاة وسطرُ الأخصائيّ.
+// **وحالةُ المريض بلا اسمٍ ولا هاتفٍ ولا رمز**: العمرُ وحالتُه المسجّلة ونصُّ آخر معاينة علاجٍ طبيعيّ غيرِ ملغاة وسطرُ الأخصائيّ —
+// **ومعها التقييمُ الأوّليّ كاملاً** (§4.da المرحلة ٤: «على أساس هذه التقييمات تُختار الخطّة») و«سبب المراجعة» بكلمات المراجع.
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { medicalExams, patients, physioPlanSuggestions, physioProtocols, type PhysioPlanSuggestion } from "@shared/schema";
@@ -12,6 +13,7 @@ import {
 } from "@shared/physio_plans";
 import { aiComplete, aiErrorDetail, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
 import { getProtocol } from "../physio_protocols/store";
+import { assessmentAsEnglishText, assessmentPlanLabels, assessmentSummaryAr, readStoredAssessment } from "@shared/physio_initial_assessment";
 import { PlanError, type Actor } from "./store";
 
 export type Completer = (p: AiCompleteParams) => Promise<string>;
@@ -43,27 +45,39 @@ const clip = (v: unknown, n: number): string | null => (typeof v === "string" &&
 
 /** **ما يراه المساعدُ عن المريض** — بلا اسمٍ ولا هاتفٍ ولا رمز. */
 export async function patientContext(patientId: number) {
-  const [pt] = await db.select({ age: patients.age, medicalCondition: patients.medicalCondition }).from(patients).where(eq(patients.id, patientId));
+  const [pt] = await db.select({ age: patients.age, medicalCondition: patients.medicalCondition, presentingComplaint: patients.presentingComplaint })
+    .from(patients).where(eq(patients.id, patientId));
   const [ex] = await db.select({
     signedAt: medicalExams.signedAt, chiefComplaint: medicalExams.chiefComplaint, clinicalFindings: medicalExams.clinicalFindings,
-    diagnosis: medicalExams.diagnosis, plan: medicalExams.plan, notes: medicalExams.notes,
+    diagnosis: medicalExams.diagnosis, plan: medicalExams.plan, notes: medicalExams.notes, assessment: medicalExams.assessment,
   }).from(medicalExams)
     .where(and(eq(medicalExams.patientId, patientId), eq(medicalExams.caseType, "physiotherapy"),
       sql`NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = ${medicalExams.id})`))
     .orderBy(desc(medicalExams.signedAt), desc(medicalExams.id)).limit(1);
+  const assessed = ex ? readStoredAssessment(ex.assessment) : null;
   const exam = ex ? {
     date: new Date(new Date(ex.signedAt).getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10),
     chiefComplaint: clip(ex.chiefComplaint, 1500), clinicalFindings: clip(ex.clinicalFindings, 1500),
     diagnosis: clip(ex.diagnosis, 1500), plan: clip(ex.plan, 1500), notes: clip(ex.notes, 1500),
+    //  **التقييمُ الأوّليّ نصّاً بالإنجليزية كالورقة** — الألمُ والقوةُ والتشنّجُ والوظيفةُ وبنودُ خطّة العلاج التي أشّرها الفاحص.
+    initialAssessment: clip(assessmentAsEnglishText(assessed), 4000),
   } : null;
-  const examHasText = Boolean(exam && (exam.chiefComplaint || exam.clinicalFindings || exam.diagnosis || exam.plan || exam.notes));
-  return { age: clip(pt?.age, 40), medicalCondition: clip(pt?.medicalCondition, 300), exam: examHasText ? exam : null };
+  const examHasText = Boolean(exam && (exam.chiefComplaint || exam.clinicalFindings || exam.diagnosis || exam.plan || exam.notes || exam.initialAssessment));
+  return {
+    age: clip(pt?.age, 40), medicalCondition: clip(pt?.medicalCondition, 300), presentingComplaint: clip(pt?.presentingComplaint, 1000),
+    exam: examHasText ? exam : null,
+    //  للشاشة لا للمساعد: سطرُ التقييم بالعربية وبنودُ الخطّة وأسوأُ الألم — تُعرَض بجانب اختيار البروتوكول.
+    assessmentView: examHasText && assessed ? {
+      summary: assessmentSummaryAr(assessed), planItems: assessmentPlanLabels(assessed, "ar"), painWorst: assessed.painWorst,
+    } : null,
+  };
 }
 
 const SYSTEM_COMMON = `You assist a physiotherapy specialist in an Iraqi rehabilitation centre. You never see the patient's name, phone or file code.
 You work ONLY from the centre's own protocol library given to you — never invent a protocol, a device, a dose or a contraindication.
-Answer with ONE JSON object and nothing else. Every reason is short, concrete, and tied to the patient's age, the physiotherapy exam text,
-the specialist's note, or the protocol's own contraindications/precautions. Give each reason in Arabic (reasonAr) and English (reasonEn).`;
+Answer with ONE JSON object and nothing else. Every reason is short, concrete, and tied to the patient's age, the physiotherapy exam text
+(including its structured initial assessment — pain, sensation, muscle strength, spasticity, function and the examiner's plan of treatment),
+the patient's own reason for the visit, the specialist's note, or the protocol's own contraindications/precautions. Give each reason in Arabic (reasonAr) and English (reasonEn).`;
 
 const SYSTEM_CHOOSE = `${SYSTEM_COMMON}
 TASK: choose the protocols from the library that best fit this patient — at most 3, best first. Respect the age group (pediatric / adult / geriatric / all).
@@ -99,7 +113,7 @@ export interface SuggestInput {
 export async function suggestPlan(p: SuggestInput) {
   const ctx = await patientContext(p.patientId);
   if (!ctx.exam && !p.note) throw new PlanError(400, "لا معاينةَ علاجٍ طبيعيّ في ملفّه — اكتب سطراً عن حالته");
-  const patient = { age: ctx.age, registeredCondition: ctx.medicalCondition, physiotherapyExam: ctx.exam, specialistNote: p.note };
+  const patient = { age: ctx.age, registeredCondition: ctx.medicalCondition, reasonForVisit: ctx.presentingComplaint, physiotherapyExam: ctx.exam, specialistNote: p.note };
   const lib = await library();
   const libIds = new Set(lib.map((r) => r.id));
 
