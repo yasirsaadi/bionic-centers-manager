@@ -17,6 +17,7 @@ import { examSheetTextOf } from "@shared/exam_sheet";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 import { attachPaymentsToVisits } from "@shared/visit_payments";
 import { baghdadDayOf, type IntakeSheet, type IntakeSheetPatient, type IntakeSheetsResponse, type IntakeSheetVisit, type SheetServiceType } from "@shared/intake_sheet_view";
+import { requestedItemEditable } from "@shared/patient_edit_rules";
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 //  **تاريخٌ بصيغةٍ قياسية** (`…T…Z`) كبقيّة الأبواب — النصُّ الخامُ من القاعدة («2026-10-08 11:40:34+00») لا يقرؤه متصفّحُ آيفون فيخرج التاريخُ فارغاً.
@@ -26,7 +27,10 @@ const iso = (v: unknown): string | null => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-export async function intakeSheetsFor(patientId: number, opts: { withMoney: boolean }): Promise<IntakeSheetsResponse | null> {
+export async function intakeSheetsFor(
+  patientId: number,
+  opts: { withMoney: boolean; /** مَن يعدّل «المطلوب» (§4.db) — `null` لمن لا يملك «تعديل مرضى». */ editor?: { privileged: boolean } | null },
+): Promise<IntakeSheetsResponse | null> {
   const pr = await db.execute(sql`
     SELECT p.patient_code, p.name, p.phone, p.governorate, p.address, p.referral_source, p.referral_sub_source,
            p.had_prior_center_history, p.age, p.weight, p.height, p.injury_cause, p.injury_date::text AS injury_date,
@@ -180,6 +184,10 @@ export async function intakeSheetsFor(patientId: number, opts: { withMoney: bool
       readyReversible: r.sold_ready_at !== null && r.sold_ready_at !== undefined
         && (r.admin_void_reversal_id === null || r.admin_void_reversal_id === undefined) && r.has_followup !== true,
       extraComponents: normalizeExtraComponents(r.requested_item, r.extra_components),
+      //  **«المطلوب» يُصحَّح من هنا** (§4.db): للاستعلامات قبل معاينة الجهاز، وللمسؤول ومدير الفرع بعدها ما دام بلا سعرٍ ولا تصنيع.
+      requestedItemEditable: Boolean(opts.editor) && requestedItemEditable({
+        privileged: opts.editor?.privileged === true, status: String(r.status), agreedCost: Number(r.agreed_cost ?? 0), caseType: kind,
+      }),
       openedAt: iso(r.created_at), branchName: str(r.branch_name) ?? str(p.branch_name),
       amputationSite: kind === "prosthetic" ? ((rx && buildAmputationSite(rx as any)) || str(p.amputation_site)) : null,
       supportType: kind === "medical_support" ? (str(rx?.supportType) ?? str(p.support_type)) : null,

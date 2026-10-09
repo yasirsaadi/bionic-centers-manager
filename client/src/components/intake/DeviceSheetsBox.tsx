@@ -5,12 +5,15 @@
 // فلكلّ جهازٍ سطرٌ مضغوط: رقمُه والمطلوبُ وحالُه، ثمّ خاناتُه الخمس (أو نوعُ المسند) كما في ورقته، وزرُّ «عرض الاستمارة» يفتح الورقةَ مكتملةً
 // ومنها «طباعة». والمصدرُ بابُ الخادم الواحد — الطبيبُ أوّلاً وما ملأه الاستعلاماتُ يسدّ الفراغ — فلا يختلف المستطيلُ عن الورقة.
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { navigate } from "wouter/use-browser-location";
-import { ArrowRight, FileText, Printer } from "lucide-react";
+import { ArrowRight, FileText, Loader2, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { requestedItemLabel } from "@shared/prosthetic_parts";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { requestedItemLabel, type RequestedItem } from "@shared/prosthetic_parts";
+import { RequestedPartsPicker } from "./RequestedPartsPicker";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { SHEET_STATUS_LABELS, sheetSpecRows, type IntakeSheet, type IntakeSheetsResponse } from "@shared/intake_sheet_view";
 import { IntakeSheetView } from "./IntakeSheetView";
 import { useBranchSession } from "@/components/BranchGate";
@@ -54,6 +57,27 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
   const session = useBranchSession();
   const mayReverse = Boolean((session as any)?.isAdmin) || hasRole(session as any, "branch_manager");
   const [reverseEpisodeId, setReverseEpisodeId] = useState<number | null>(null);
+  //  ══ **«المطلوب» يُصحَّح قبل معاينة الجهاز** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.db) ══ — «كتبت الموظّفةُ طرفاً كاملاً والمريضُ يريد قدماً».
+  //  والزرُّ بإذن الخادم (`requestedItemEditable`): للاستعلامات قبل المعاينة، وللمسؤول ومدير الفرع بعدها ما دام بلا سعرٍ ولا تصنيع.
+  const [itemEdit, setItemEdit] = useState<{ episodeId: number; items: RequestedItem[] } | null>(null);
+  const { toast } = useToast();
+  const saveItem = useMutation({
+    mutationFn: async (v: { episodeId: number; items: RequestedItem[] }) => {
+      const res = await apiRequest("PATCH", `/api/patients/${patientId}/device-episodes/${v.episodeId}/requested-item`, { requestedItems: v.items });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: intakeSheetsKey(patientId) });
+      toast({ title: "حُفظ «المطلوب»" });
+      setItemEdit(null);
+    },
+    onError: (e: any) => {
+      const raw = String(e?.message ?? "").replace(/^\d+:\s*/, "");
+      let description = raw;
+      try { description = JSON.parse(raw).message ?? raw; } catch { /* نصٌّ خام */ }
+      toast({ title: "لم يُحفظ «المطلوب»", description, variant: "destructive" });
+    },
+  });
   const sheets = (data?.sheets ?? []).filter((s) => s.serviceType === caseType);
   const open: IntakeSheet | null = sheets.find((s) => s.episodeId === openId) ?? null;
   if (!data || sheets.length === 0) return null;
@@ -77,6 +101,13 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
                   تصحيح / إلغاء العملية
                 </Button>
               )}
+              {s.requestedItemEditable && (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs"
+                  onClick={() => setItemEdit({ episodeId: s.episodeId, items: [s.requestedItem, ...s.extraComponents] as RequestedItem[] })}
+                  data-testid={`button-edit-requested-${s.episodeId}`}>
+                  <Pencil className="w-3.5 h-3.5" /> تعديل «المطلوب»
+                </Button>
+              )}
               <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setOpenId(s.episodeId)}
                 data-testid={`button-view-sheet-${s.episodeId}`}>
                 <FileText className="w-3.5 h-3.5" /> عرض الاستمارة
@@ -98,6 +129,23 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
           </div>
         </div>
       ))}
+
+      <Dialog open={itemEdit !== null} onOpenChange={(o) => { if (!o && !saveItem.isPending) setItemEdit(null); }}>
+        <DialogContent className="sm:max-w-lg" dir="rtl" data-testid="dialog-edit-requested">
+          <DialogHeader><DialogTitle>تعديل «المطلوب»</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">طرفٌ كامل وحده، أو جزءٌ فأكثر. يُحفظ في سجلّ التدقيق بالقديم والجديد.</p>
+          {itemEdit && (
+            <RequestedPartsPicker value={itemEdit.items} onChange={(items) => setItemEdit({ ...itemEdit, items })} testId="edit-requested" />
+          )}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" disabled={saveItem.isPending} onClick={() => setItemEdit(null)}>إلغاء</Button>
+            <Button type="button" disabled={!itemEdit || itemEdit.items.length === 0 || saveItem.isPending}
+              onClick={() => { if (itemEdit) saveItem.mutate(itemEdit); }} data-testid="button-save-requested">
+              {saveItem.isPending && <Loader2 className="w-4 h-4 animate-spin" />} حفظ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AdministrativeReversalDialog
         open={reverseEpisodeId !== null}

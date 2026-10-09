@@ -9,6 +9,8 @@ import { onlyRoles } from "@shared/user_roles";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { intakeSheetsFor } from "./store";
+import { mayEditPatients } from "../patients/edit_rules";
+import { isPrivilegedPatientEditor } from "@shared/patient_edit_rules";
 
 type Req = any;
 
@@ -39,7 +41,11 @@ export function registerIntakeSheetRoutes(app: Express, isAuthenticated: any) {
       if (!(await scopeReachesPatient(branchScope(s), { id: patientId, branchId: p.branch_id ?? null }))) {
         return res.status(403).json({ error: "لا يمكنك الاطّلاع على مرضى فرع آخر" });
       }
-      const out = await intakeSheetsFor(patientId, { withMoney: sheetMoneyVisible(s) });
+      //  «المطلوب» يُصحَّح من الورقة لمن يملك «تعديل مرضى» في الفرع النشط (§4.db) — والحَكَمُ نقطتُه.
+      const editor = mayEditPatients(s)
+        && (await scopeReachesPatient(s?.isAdmin ? null : s?.branchId ? [Number(s.branchId)] : [], { id: patientId, branchId: p.branch_id ?? null }))
+        ? { privileged: isPrivilegedPatientEditor(s) } : null;
+      const out = await intakeSheetsFor(patientId, { withMoney: sheetMoneyVisible(s), editor });
       if (!out) return res.status(404).json({ error: "المريض غير موجود" });
       res.json(out);
     } catch (err) {

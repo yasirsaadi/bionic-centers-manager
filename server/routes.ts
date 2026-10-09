@@ -47,6 +47,8 @@ import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/r
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
 import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
+import { registerPatientEditRulesRoutes, patientEditStateFor } from "./patients/edit_rules";
+import { applyEditLocks, editLockMessage, lockedPatientFields } from "@shared/patient_edit_rules";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
@@ -3099,6 +3101,19 @@ export async function registerRoutes(
         //  ومفتاحُ بطاقة المريض بابُه نقطتُه وحدها (§4.bv).
         "patientCardEnabled", "patientCardEnabledAt", "patientCardEnabledBy"]) {
         delete patch[k];
+      }
+
+      //  ══ **بعد المعاينة يعدّل المسؤولُ ومديرُ الفرع** (قرارُ المالك ٢٠٢٦-١٠-٠٩، §4.db) ══
+      //  «كلُّ معلومةٍ يدخلها الاستعلاماتُ يعدّلها بعد الحفظ وقبل المعاينة… وبعد المعاينة صلاحيةُ المسؤول ومدير الفرع فقط». والاتّصالُ
+      //  (الهاتفُ والمحافظةُ والعنوان) مفتوحٌ دائماً، وما يكتبه الفاحصُ ليس للاستعلامات في أيّ وقت. **بالقيمة لا بحضور المفتاح**:
+      //  النموذجُ يرسل كائنَه كاملاً، فالمقفولُ الذي لم يتغيّر يُسقَط صامتاً، والذي تغيّر يُردّ الطلبُ كلُّه بأسماء خاناته.
+      {
+        const editState = await patientEditStateFor(id, branchSession);
+        const lockOut = applyEditLocks(patch, existingPatient as any, lockedPatientFields(editState));
+        if (lockOut.changed.length) {
+          return res.status(403).json({ message: editLockMessage(lockOut.changed), code: "PATIENT_FIELDS_LOCKED", locked: lockOut.changed });
+        }
+        for (const k of lockOut.dropped) delete (req.body as any)[k];
       }
 
       // ══ ولا التفاف من هنا أيضاً (ترحيل ٠٥٣) ═══════════════════════════
@@ -8906,6 +8921,7 @@ export async function registerRoutes(
   registerIntakeSheetRoutes(app, isAuthenticated);
   //  «استمارة مراجع — علاج طبيعي» مكتملةً (§4.da — المرحلةُ الثالثة): قراءةٌ محضة للعرض والطباعة.
   registerPhysioSheetRoutes(app, isAuthenticated);
+  registerPatientEditRulesRoutes(app, isAuthenticated);
 
   // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
   // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.

@@ -1,8 +1,11 @@
 // سطرُ تدقيقٍ لكلّ «تعديل مريض» (`PUT /api/patients/:id`) — بالقديم والجديد للحقول التي تغيّرت فعلاً (§4.bs).
 // قرارُ المالك ٢٠٢٦-١٠-٠٣: «لا يمرّ شيءٌ بلا تدقيق». كان التعديلُ — ومنه الكلفةُ الكليّة — لا يخلّف أثراً يقول مَن ومتى.
 
-/** أسماءٌ عربية لِما يُقرأ في السجلّ — والغائبُ يُكتب باسم حقله. */
+import { PATIENT_EDIT_LABELS } from "@shared/patient_edit_rules";
+
+/** أسماءٌ عربية لِما يُقرأ في السجلّ — والغائبُ يُكتب باسم حقله. (وعناوينُ قاعدة القفل §4.db أساسٌ تغلبه هذه.) */
 export const PATIENT_FIELD_LABELS: Record<string, string> = {
+  ...PATIENT_EDIT_LABELS,
   name: "الاسم", phone: "الهاتف", phoneCountry: "رمز الدولة", age: "العمر", height: "الطول", weight: "الوزن",
   address: "العنوان", totalCost: "الكلفة الكلية", branchId: "فرع التسجيل",
   patientClassification: "التصنيف", referralSource: "الجهة المحوِّلة", medicalCondition: "الحالة الطبية",
