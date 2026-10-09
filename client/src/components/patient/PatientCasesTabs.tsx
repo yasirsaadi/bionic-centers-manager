@@ -16,6 +16,7 @@ import { invalidatePatientData } from "@/lib/queryClient";
 import { soldDevicesTotal, needsBelowSoldConfirm, type EpisodeLike } from "./case_cost_guard";
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { DeviceSheetsBox, useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
+import { PhysioSheetBox } from "@/components/physio/PhysioSheetBox";
 import { specKeysCoveredBySheets } from "@shared/intake_sheet_view";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
@@ -560,6 +561,8 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
       )}
 
       {isDeviceCaseType && <DeviceSheetsBox patientId={patientId} caseType={caseRow.caseType} />}
+      {/*  «استمارة مراجع — علاج طبيعي» مكتملةً (§4.da — المرحلةُ الثالثة) — كمستطيل الأجهزة. */}
+      {caseRow.caseType === "physiotherapy" && <PhysioSheetBox patientId={patientId} />}
     </Card>
   );
 }

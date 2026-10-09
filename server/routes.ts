@@ -46,6 +46,7 @@ import { registerMedicalReviewRoutes } from "./medical_review/routes";
 import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/routing";
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
+import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
@@ -8903,6 +8904,8 @@ export async function registerRoutes(
   registerDeviceEpisodeRoutes(app, isAuthenticated);
   //  «استمارة المراجع» مكتملةً لكلّ جهاز — للعرض والطباعة (§4.cq، ملاحظاتُ المالك ٢٠٢٦-١٠-٠٨).
   registerIntakeSheetRoutes(app, isAuthenticated);
+  //  «استمارة مراجع — علاج طبيعي» مكتملةً (§4.da — المرحلةُ الثالثة): قراءةٌ محضة للعرض والطباعة.
+  registerPhysioSheetRoutes(app, isAuthenticated);
 
   // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
   // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.

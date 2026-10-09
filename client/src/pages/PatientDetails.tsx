@@ -27,6 +27,7 @@ import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } f
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolvePurchasedSessions } from "@shared/pricing";
 import { pickPhysioSessions, perVisitSessionMode } from "./physio_sessions_source";
+import { physioSessionRows } from "@shared/physio_sheet_view";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1348,25 +1349,18 @@ export default function PatientDetails() {
                 // their payments, so that stays the fallback. Never both, or a
                 // patient who was priced AND paid would read double.
                 const physioCost = patientCasesList.find((c) => c.caseType === "physiotherapy")?.cost ?? patient.totalCost ?? 0;
-                const sessionsByType = resolveSessionsFor(physioCost, casePaymentSessions()).byType;
-                const visitsByType: Record<string, number> = {};
-                caseVisits?.forEach((v) => {
-                  const isServiceVisit = v.details === "خدمة جديدة" || (v.notes && v.notes.startsWith("خدمة جديدة:"));
-                  const isConsultation = v.treatmentType === "استشارة طبية";
-                  if (isServiceVisit || isConsultation) return;
-                  const type = v.treatmentType || t.patientDetails.unspecified;
-                  visitsByType[type] = (visitsByType[type] || 0) + 1;
-                });
-                const allTypes = new Set([...Object.keys(sessionsByType), ...Object.keys(visitsByType)]);
-                const typesWithData = Array.from(allTypes).filter(t => (sessionsByType[t] || 0) > 0 || (visitsByType[t] || 0) > 0);
+                //  **المشترى ناقصاً المنفّذ لكلّ نوع — قاعدةٌ واحدة** (`physioSessionRows`) تقرؤها «استمارة العلاج الطبيعي» أيضاً (§4.da)،
+                //  فلا يختلف رقمُ الورقة عن رقم هذا التبويب. («خدمة جديدة» و«استشارة طبية» ليستا جلسة.)
+                const sessionRows = physioSessionRows(
+                  resolveSessionsFor(physioCost, casePaymentSessions()).byType,
+                  (caseVisits ?? []).map((v: any) => ({ treatmentType: v.treatmentType, details: v.details, notes: v.notes })),
+                  t.patientDetails.unspecified,
+                );
 
-                if (typesWithData.length > 0) {
+                if (sessionRows.length > 0) {
                   return (
                     <div className="flex flex-wrap gap-3 mb-4" data-testid="sessions-summary">
-                      {typesWithData.map((type) => {
-                        const paid = sessionsByType[type] || 0;
-                        const used = visitsByType[type] || 0;
-                        const rem = paid - used;
+                      {sessionRows.map(({ type, bought: paid, done: used, remaining: rem }) => {
                         return (
                           <div key={type} className={`flex items-center gap-2 px-3 py-2 rounded-md border ${rem <= 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`} data-testid={`summary-${type}`}>
                             <span className="text-sm font-medium text-slate-700">{translateTreatmentType(type)}:</span>
