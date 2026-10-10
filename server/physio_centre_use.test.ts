@@ -104,8 +104,9 @@ async function main() {
     [r1.traction?.[0], r1.tecar?.[0], r1.laser?.[0]], ["core", "adjunct", "not_used"]);
   await q(`UPDATE physio_protocol_devices SET centre_use = 'adjunct' WHERE device_id = (SELECT id FROM devices WHERE code = 'traction')
       AND protocol_id = (SELECT id FROM physio_protocols WHERE code = $1)`, [LBP]);
+  //  وألمُ الظهر الحادّ يكتب استعمالَه ترحيلُه هو (١٢٤ — البروتوكولُ الثاني بالقالب الكامل، §4.dg)؛ والقصدُ هنا أنّ ١٢٢ لا يكتب لغير المزمن.
   const others = (await q(`SELECT count(*)::int AS n FROM physio_protocol_devices pd JOIN physio_protocols p ON p.id = pd.protocol_id
-      WHERE p.code <> $1 AND pd.centre_use IS NOT NULL`, [LBP])).rows[0].n;
+      WHERE p.code <> ALL($1::text[]) AND pd.centre_use IS NOT NULL`, [[LBP, "lbp-acute-adult"]])).rows[0].n;
   same("أ.٤ **والبروتوكولاتُ الباقية لا يُكتب لها استعمال** — تبقى مشتقّةً من درجتها حتى يقرّر سليم", others, 0);
 
   await cleanup();
@@ -190,10 +191,12 @@ async function main() {
       "ب.٢ **وإعداداتُ الجهاز سطرٌ أوّل في «المعاملات» باللغتين** — يراها الأخصائيُّ ويعدّلها لهذا المريض", `${byCode.tecar?.parameters} | ${byCode.tecar?.parametersEn}`);
     same("ب.٣ **ودورُ المساعد في الجلسة الأولى أوّلُهم بترتيب البروتوكول** (التيكار)", [g?.rotation?.sessionsSoFar, g?.rotation?.turnDeviceId], [0, dev.tecar]);
 
-    //  بروتوكولٌ لم يقرّر فيه سليم بعد — يبقى كما كان: «غير موصى به» لا يدخل، و«اختياري» يدخل مساعداً.
+    //  بروتوكولٌ لم يقرّر فيه سليم بعد — يبقى كما كان: «غير موصى به» لا يدخل، و«اختياري» يدخل مساعداً. («لم يُقرَّر» = لا استعمالَ مكتوباً لأيّ جهاز —
+    //  فألمُ الظهر الحادّ بعد ترحيل ١٢٤ ليس منها: استعمالُ أجهزته مكتوب.)
     const other = (await q(`SELECT p.id FROM physio_protocols p WHERE p.code <> $1 AND p.is_archived = false
         AND EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.evidence = 'not_recommended')
-        AND EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.evidence = 'optional') ORDER BY p.id LIMIT 1`, [LBP])).rows[0];
+        AND EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.evidence = 'optional')
+        AND NOT EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.centre_use IS NOT NULL) ORDER BY p.id LIMIT 1`, [LBP])).rows[0];
     if (other) {
       const op = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: Number(other.id) })).json;
       const og = (await call("GET", `/api/physio/plans/${op?.id}`, S.spec)).json;
