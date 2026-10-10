@@ -35,6 +35,8 @@ export interface ProtocolInput {
   summaryEn: string | null; goalsEn: string | null; assessmentEn: string | null; exercisesEn: string | null;
   contraindicationsEn: string | null; precautionsEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
+  /** ترحيل ١٢٣ — عددُ الجلسات، والأسابيعُ مشتقّةٌ منه (`normalizeDose` في `parseProtocolBody`). */
+  totalSessions: number | null;
   references: ProtocolReference[]; devices: DeviceLineInput[];
 }
 export interface Actor { userId: number | null; name: string | null }
@@ -62,6 +64,7 @@ async function listRows(conds: any[]) {
     id: physioProtocols.id, code: physioProtocols.code, titleAr: physioProtocols.titleAr, titleEn: physioProtocols.titleEn,
     category: physioProtocols.category, ageGroup: physioProtocols.ageGroup, status: physioProtocols.status,
     isArchived: physioProtocols.isArchived, updatedAt: physioProtocols.updatedAt,
+    totalSessions: physioProtocols.totalSessions, sessionsPerWeek: physioProtocols.sessionsPerWeek,
     deviceCount: sql<number>`(SELECT count(*)::int FROM physio_protocol_devices d WHERE d.protocol_id = "physio_protocols"."id")`,
     recommendedCount: sql<number>`(SELECT count(*)::int FROM physio_protocol_devices d WHERE d.protocol_id = "physio_protocols"."id" AND d.evidence = 'recommended')`,
   }).from(physioProtocols).where(and(...conds))
@@ -116,6 +119,7 @@ function rowValues(input: ProtocolInput) {
     summaryEn: input.summaryEn, goalsEn: input.goalsEn, assessmentEn: input.assessmentEn, exercisesEn: input.exercisesEn,
     contraindicationsEn: input.contraindicationsEn, precautionsEn: input.precautionsEn,
     sessionsPerWeek: input.sessionsPerWeek, durationWeeks: input.durationWeeks, sessionMinutes: input.sessionMinutes,
+    totalSessions: input.totalSessions,
     references: input.references,
   };
 }
@@ -316,7 +320,7 @@ export async function protocolBrief(id: number, lang: ProtocolLang, activeBranch
         ? (en ? `Approved by ${p.approvedByName ?? "the supervisor"}.` : `معتمَدٌ — اعتمده ${p.approvedByName ?? "المشرف"}.`)
         : (en ? "DRAFT — not yet approved by the physiotherapy supervisor. Say so explicitly: it is reference, not an instruction."
               : "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — قل ذلك للسائل صراحةً: مرجعٌ لا تعليمات."),
-      dose: { sessionsPerWeek: p.sessionsPerWeek, durationWeeks: p.durationWeeks, minutesPerSession: p.sessionMinutes },
+      dose: { totalSessions: p.totalSessions, sessionsPerWeek: p.sessionsPerWeek, durationWeeks: p.durationWeeks, minutesPerSession: p.sessionMinutes },
       ...text,
       devices: p.devices.map((d) => ({
         device: en ? d.nameEn : d.nameAr, deviceOtherLanguage: en ? d.nameAr : d.nameEn, code: d.code,

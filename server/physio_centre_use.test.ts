@@ -168,11 +168,23 @@ async function main() {
     console.log("\n── ب. الخطّة من البروتوكول ──");
     const created = await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: lbpId });
     const plan = Number(created.json?.id);
+    const g0 = (await call("GET", `/api/physio/plans/${plan}`, S.spec)).json;
+    //  §4.dd (سليم: «الأجهزةُ على مريض مريض»، وقرارُ المالك ٢٠٢٦-١٠-١٠): الأساسيُّ وحده يدخل الخطّةَ الجديدة، والمساعدُ يُعرض قائمةً
+    //  بإعداداته الأولى يؤشّر منها الأخصائيُّ لمريضه — و«لا يُستخدم» لا يُعرض أصلاً.
+    const offered = (g0?.protocolAdjuncts ?? []).map((d: any) => d.code);
+    same("ب.١ **الأساسيُّ وحده يدخل الخطّةَ الجديدة، والمساعدُ يُعرض للاختيار** — ولو كانت درجتُه «الإرشاداتُ ضدّه» (الشدّ والتحفيز)، و«لا يُستخدم» لا يُعرض",
+      [created.status, (g0?.devices ?? []).map((d: any) => [d.code, d.centreUse]), offered.includes("traction"), offered.includes("electro"),
+        offered.includes("laser"), offered.includes("ultrasound"), offered.length],
+      [200, [["exercise", "core"]], true, true, false, false, 7]);
+    //  والأخصائيُّ يؤشّرها كلَّها لهذا المريض (ما ترسله «الأجهزةُ المساعدة لهذا المريض» في المحرّر) — فيتناوب السبعة.
+    const ticked = await call("PUT", `/api/physio/plans/${plan}`, S.spec, { titleAr: g0.titleAr,
+      devices: [...g0.devices, ...g0.protocolAdjuncts].map((d: any) => ({ deviceId: d.deviceId, minutes: d.minutes, parameters: d.parameters,
+        parametersEn: d.parametersEn, note: d.note, noteEn: d.noteEn, centreUse: d.centreUse })) });
     const g = (await call("GET", `/api/physio/plans/${plan}`, S.spec)).json;
     const byCode = Object.fromEntries((g?.devices ?? []).map((d: any) => [d.code, d]));
-    same("ب.١ **«لا يُستخدم» لا يدخل الخطّة، والمساعدُ يدخل** — ولو كانت درجتُه «الإرشاداتُ ضدّه» (الشدّ والتحفيز)",
-      [created.status, Boolean(byCode.laser), Boolean(byCode.ultrasound), byCode.traction?.centreUse, byCode.electro?.centreUse, byCode.exercise?.centreUse, (g?.devices ?? []).length],
-      [200, false, false, "adjunct", "adjunct", "core", 8]);
+    same("ب.١ب **والمؤشَّرُ يدخل مساعداً بالتناوب**",
+      [ticked.status, byCode.traction?.centreUse, byCode.electro?.centreUse, byCode.exercise?.centreUse, (g?.devices ?? []).length],
+      [200, "adjunct", "adjunct", "core", 8]);
     check(/^النمط: CAP → RES · القدرة: 20–40 % · المدّة: 10–15 min/.test(byCode.tecar?.parameters ?? "")
       && /^Mode: CAP → RES · Power: 20–40 % · Duration: 10–15 min/.test(byCode.tecar?.parametersEn ?? ""),
       "ب.٢ **وإعداداتُ الجهاز سطرٌ أوّل في «المعاملات» باللغتين** — يراها الأخصائيُّ ويعدّلها لهذا المريض", `${byCode.tecar?.parameters} | ${byCode.tecar?.parametersEn}`);
@@ -187,9 +199,11 @@ async function main() {
       const og = (await call("GET", `/api/physio/plans/${op?.id}`, S.spec)).json;
       const ev = Object.fromEntries((await q(`SELECT device_id, evidence FROM physio_protocol_devices WHERE protocol_id = $1`, [Number(other.id)])).rows
         .map((r) => [Number(r.device_id), r.evidence]));
-      same("ب.٤ **والبروتوكولُ الذي لم يُقرَّر فيه بعدُ على حاله**: «غير موصى به» خارجَ الخطّة، و«اختياري» مساعد، و«موصى به» أساسيّ",
+      same("ب.٤ **والبروتوكولُ الذي لم يُقرَّر فيه بعدُ على حاله**: «غير موصى به» خارجَ الخطّة، و«اختياري» مساعدٌ يُعرض للاختيار، و«موصى به» أساسيٌّ فيها",
         [(og?.devices ?? []).some((d: any) => ev[d.deviceId] === "not_recommended"),
-          (og?.devices ?? []).every((d: any) => d.centreUse === (ev[d.deviceId] === "optional" ? "adjunct" : "core"))], [false, true]);
+          (og?.devices ?? []).every((d: any) => d.centreUse === "core" && ev[d.deviceId] === "recommended"),
+          (og?.protocolAdjuncts ?? []).length > 0 && (og?.protocolAdjuncts ?? []).every((d: any) => ev[d.deviceId] === "optional" && d.centreUse === "adjunct")],
+        [false, true, true]);
       await call("DELETE", `/api/physio/plans/${op?.id}`, S.admin);
     } else check(false, "ب.٤ تهيئة: بروتوكولٌ بدرجتين للاختبار");
 
@@ -271,7 +285,8 @@ async function main() {
     const seenMap = Object.fromEntries(seen);
     same("هـ.١ **المساعدُ يرى «استعمال المركز» لكلّ جهاز، ولا يرى ما لا يُستخدم** — والليزرُ صار مساعداً بقرار سليم أعلاه",
       [sg.status, seenMap.ultrasound ?? null, seenMap.laser, seenMap.tecar, seenMap.exercise], [200, null, "adjunct", "adjunct", "core"]);
-    check(/ROTATE/.test(adjustSystem), "هـ.٢ **ويُقال له إنّ المساعد يتناوب** فلا يحذفه توفيراً للوقت");
+    check(/ROTATE/.test(adjustSystem) && /PER PATIENT/.test(adjustSystem) && /at most the two adjuncts/.test(adjustSystem),
+      "هـ.٢ **ويُقال له إنّ المساعد يتناوب، ويُختار لكلّ مريض — اثنان على الأكثر** (§4.dd)", adjustSystem.slice(0, 400));
   } finally {
     setSuggestCompleterForTests(null);
     await cleanup();

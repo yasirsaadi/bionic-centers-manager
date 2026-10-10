@@ -269,7 +269,19 @@ export interface PhaseExerciseInput {
 }
 export interface PhaseInput {
   nameAr: string; nameEn: string; exercises: PhaseExerciseInput[];
+  /** ترحيل ١٢٣ — نطاقُ جلسات المرحلة (١–٦ …). */
+  sessionFrom?: number | null; sessionTo?: number | null;
   [k: string]: unknown;
+}
+
+/** «الجلسات ١–٦» · «Sessions 1–6» — نطاقُ المرحلة إن كُتب. */
+export function sessionRangeLabel(ph: { sessionFrom?: number | null; sessionTo?: number | null }, lang: ProtocolLang): string | null {
+  const a = ph.sessionFrom ?? null; const b = ph.sessionTo ?? null;
+  if (a == null && b == null) return null;
+  const n = (x: number) => (lang === "en" ? String(x) : arDigits(x));
+  if (a != null && b != null) return lang === "en" ? `Sessions ${n(a)}–${n(b)}` : `الجلسات ${n(a)}–${n(b)}`;
+  if (a != null) return lang === "en" ? `From session ${n(a)}` : `من الجلسة ${n(a)}`;
+  return lang === "en" ? `Up to session ${n(b!)}` : `حتى الجلسة ${n(b!)}`;
 }
 
 /** مراحلُ البروتوكول كاملةً — أو رسالةُ الخطأ. لا تمرينَ مكرّرٌ في المرحلة الواحدة. */
@@ -291,7 +303,12 @@ export function parsePhasesBody(input: unknown): PhaseInput[] | string {
       exercises.push({ exerciseId, ...dose, doseNote: str(e?.doseNote, 300), doseNoteEn: str(e?.doseNoteEn, 300),
         note: str(e?.note, 1000), noteEn: str(e?.noteEn, 1000) });
     }
-    const phase: PhaseInput = { nameAr, nameEn, exercises };
+    //  ترحيل ١٢٣ (§4.dd) — نطاقُ جلسات المرحلة: من ١ إلى ٣٠٠، والبدايةُ لا تتجاوز النهاية.
+    const sessionFrom = intOrNull(p?.sessionFrom, [1, 300]);
+    const sessionTo = intOrNull(p?.sessionTo, [1, 300]);
+    if (sessionFrom === "bad" || sessionTo === "bad") return "نطاقُ جلسات المرحلة من ١ إلى ٣٠٠";
+    if (sessionFrom != null && sessionTo != null && sessionFrom > sessionTo) return `جلساتُ المرحلة «${nameAr}»: البدايةُ بعد النهاية`;
+    const phase: PhaseInput = { nameAr, nameEn, exercises, sessionFrom, sessionTo };
     for (const f of PHASE_TEXT_FIELDS) {
       const max = f === "timeframe" ? 120 : 4000;
       phase[f] = str(p?.[f], max);

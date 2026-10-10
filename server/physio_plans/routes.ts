@@ -4,6 +4,7 @@
 //   POST /api/patients/:patientId/physio-plans   — خطّةٌ جديدة مسوّدةً، من بروتوكولٍ أو بلا (`canWritePlans`)
 //   GET  /api/physio/plans?view=pending|review|assigned — الاعتماداتُ · «للمراجعة» (للمعتمِد، §4.cz) · المسندةُ إليّ
 //   GET  /api/physio/plans/:id                   — الخطّةُ كاملة
+//   PUT  /api/physio/plans/:id/phases            — مراحلُ الخطّة وتمارينُها لهذا المريض (§4.dd) — البروتوكولُ لا يُمَسّ، والحالةُ بقاعدة التعديل
 //   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد — إلّا على بروتوكولٍ معتمَد (تبقى وتعود للمراجعة)
 //   POST /api/physio/plans/:id/submit|approve|return|stop
 //   POST /api/physio/plans/:id/activate          — «اعتماد وبدء العلاج» بيد كاتبها على بروتوكولٍ معتمَد (§4.cz)
@@ -27,6 +28,8 @@ import * as outcomes from "./outcomes";
 import { canAssessPlans, outcomesScope } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
+import { doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
+import { parsePhasesBody } from "@shared/physio_exercises";
 
 function fail(res: any, e: unknown) {
   if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message });
@@ -48,7 +51,12 @@ export function parsePlanBody(b: any): store.PlanInput | string {
   const sessionsPerWeek = intIn(b?.sessionsPerWeek, 1, 14);
   const durationWeeks = intIn(b?.durationWeeks, 1, 104);
   const sessionMinutes = intIn(b?.sessionMinutes, 5, 240);
+  const totalSessions = intIn(b?.totalSessions, 1, TOTAL_SESSIONS_MAX);
   if (sessionsPerWeek === "bad" || durationWeeks === "bad" || sessionMinutes === "bad") return "الجلسات في الأسبوع ١–١٤، والأسابيع ١–١٠٤، والدقائق ٥–٢٤٠";
+  if (totalSessions === "bad") return `عددُ الجلسات ١–${TOTAL_SESSIONS_MAX}`;
+  const dose = normalizeDose({ sessionsPerWeek, durationWeeks, totalSessions });
+  const tooLong = doseError(dose);
+  if (tooLong) return tooLong;
   if (!Array.isArray(b?.devices) || b.devices.length > 40) return "قائمةُ الأجهزة غير صالحة";
   const seen = new Set<number>();
   const devices: store.PlanDeviceInput[] = [];
@@ -67,7 +75,8 @@ export function parsePlanBody(b: any): store.PlanInput | string {
     titleAr, titleEn: text(b?.titleEn, 300),
     goals: text(b?.goals), goalsEn: text(b?.goalsEn), exercises: text(b?.exercises), exercisesEn: text(b?.exercisesEn),
     precautions: text(b?.precautions), precautionsEn: text(b?.precautionsEn), notes: text(b?.notes), notesEn: text(b?.notesEn),
-    sessionsPerWeek, durationWeeks, sessionMinutes, devices,
+    //  ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ تُشتقّ منه.
+    ...dose, sessionMinutes, devices,
   };
 }
 
@@ -220,6 +229,23 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         notes: r.demoted ? "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد"
           : r.backToReview ? "عُدّلت خطّةٌ بدأت على بروتوكولٍ معتمَد — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
       res.json({ ...r.after, demoted: r.demoted });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  **مراحلُ الخطّة وتمارينُها لهذا المريض** (ترحيل ١٢٣، §4.dd) — كاتبو الخطط، وبقاعدة مراحل البروتوكول؛ والبروتوكولُ لا يُمَسّ.
+  app.put("/api/physio/plans/:id/phases", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canWritePlans(l.s)) return res.status(403).json({ error: "يعدّل الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+      const phases = parsePhasesBody(req.body?.phases);
+      if (typeof phases === "string") return res.status(400).json({ error: phases });
+      const r = await store.setPlanPhases(l.row.id, phases, (cur, protocolStatus) => planStatusAfterEdit(cur, l.s, protocolStatus), actor(l.s));
+      await audit(req, l.s, { entityId: l.row.id, action: "update_phases", branchId: l.row.branchId, oldValues: r.before,
+        newValues: { status: r.after.status, phases },
+        notes: r.demoted ? "عُدّلت مراحلُ خطّةٍ معتمَدة فعادت إلى الاعتماد"
+          : r.backToReview ? "عُدّلت مراحلُ خطّةٍ بدأت على بروتوكولٍ معتمَد — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
+      res.json({ status: r.after.status, demoted: r.demoted, backToReview: r.backToReview });
     } catch (e) { fail(res, e); }
   });
 

@@ -170,7 +170,8 @@ export async function setPhases(protocolId: number, phases: PhaseInput[], nextSt
     if (oldPhases.length) await tx.delete(physioProtocolPhases).where(eq(physioProtocolPhases.protocolId, protocolId));
     for (let i = 0; i < phases.length; i++) {
       const p = phases[i];
-      const values: Record<string, unknown> = { protocolId, position: i + 1, nameAr: p.nameAr, nameEn: p.nameEn };
+      const values: Record<string, unknown> = { protocolId, position: i + 1, nameAr: p.nameAr, nameEn: p.nameEn,
+        sessionFrom: p.sessionFrom ?? null, sessionTo: p.sessionTo ?? null };
       for (const f of PHASE_TEXT_FIELDS) { values[f] = p[f] ?? null; values[`${f}En`] = p[`${f}En`] ?? null; }
       const [row] = await tx.insert(physioProtocolPhases).values(values as any).returning({ id: physioProtocolPhases.id });
       if (p.exercises.length) {

@@ -8,7 +8,7 @@
 //   • **بروتوكولٌ غيرُ معتمَد يُبنى عليه** بشارةٍ ظاهرة «بروتوكول غير معتمد بعد».
 //   • **تعديلُ المعتمَدة بيد الأخصائيّ يعيدها إلى الاعتماد**. والمنفّذُ (معالج · تقنيّ · مدرّب) يرى ولا يعدّل.
 //   • **الخططُ القديمة** (`treatment_plans`) تبقى للقراءة في التبويب نفسِه.
-import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canEditProtocols, canReadProtocols, type ProtocolSessionLike } from "./physio_protocols";
+import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canReadProtocols, canWritePatientPlans, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
 
 export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
@@ -34,8 +34,8 @@ export const PLAN_STATUS_LABELS_EN: Record<PlanStatus, string> = {
 /** النصوصُ ذاتُ النسختين — والإنكليزيةُ في `<field>En`. */
 export const PLAN_TEXT_FIELDS = ["goals", "exercises", "precautions", "notes"] as const;
 
-/** **يكتب ويعدّل ويُسند ويوقف**: الأخصائيُّ والمشرفُ العام والمسؤول — قاعدةُ تعديل البروتوكول نفسُها. */
-export const canWritePlans = (s: ProtocolSessionLike | null | undefined): boolean => canEditProtocols(s);
+/** **يكتب ويعدّل ويُسند ويوقف**: الأخصائيُّ والمشرفُ العام والمسؤول — ويعدّل نسخةَ المريض من البروتوكول كلَّها (§4.dd). */
+export const canWritePlans = (s: ProtocolSessionLike | null | undefined): boolean => canWritePatientPlans(s);
 /** **يعتمد ويعيد**: المسؤولُ والمشرفُ العام. */
 export const canApprovePlans = (s: ProtocolSessionLike | null | undefined): boolean => canApproveProtocols(s);
 /** **يحذف** الخطّة: المسؤولُ والمشرفُ العام **حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — والأخصائيُّ يوقفها ولا يحذفها. */

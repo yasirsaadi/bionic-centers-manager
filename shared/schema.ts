@@ -2902,6 +2902,8 @@ export const physioProtocols = pgTable("physio_protocols", {
   sessionsPerWeek: integer("sessions_per_week"),
   durationWeeks: integer("duration_weeks"),
   sessionMinutes: integer("session_minutes"),
+  //  ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ تُشتقّ منه (`normalizeDose`).
+  totalSessions: integer("total_sessions"),
   references: jsonb("references").$type<{ title: string; org?: string | null; year?: number | null; url?: string | null }[]>().notNull().default([]),
   status: text("status").notNull().default("draft"),
   approvedBy: integer("approved_by").references(() => systemUsers.id),
@@ -3019,6 +3021,9 @@ export const physioProtocolPhases = pgTable("physio_protocol_phases", {
   position: integer("position").notNull(),
   nameAr: text("name_ar").notNull(),
   nameEn: text("name_en").notNull(),
+  //  ترحيل ١٢٣ (§4.dd) — نطاقُ جلسات المرحلة (١–٦ …)؛ والانتقالُ بمعياره لا بالعدد وحده.
+  sessionFrom: integer("session_from"),
+  sessionTo: integer("session_to"),
   timeframe: text("timeframe"), timeframeEn: text("timeframe_en"),
   goals: text("goals"), goalsEn: text("goals_en"),
   education: text("education"), educationEn: text("education_en"),
@@ -3054,6 +3059,8 @@ export const physioPlans = pgTable("physio_plans", {
   sessionsPerWeek: integer("sessions_per_week"),
   durationWeeks: integer("duration_weeks"),
   sessionMinutes: integer("session_minutes"),
+  //  ترحيل ١٢٣ (§4.dd) — عددُ جلسات هذا المريض، والأسابيعُ تُشتقّ منه.
+  totalSessions: integer("total_sessions"),
   status: text("status").notNull().default("draft"),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   decidedBy: integer("decided_by").references(() => systemUsers.id),
@@ -3094,6 +3101,39 @@ export const physioPlanDevices = pgTable("physio_plan_devices", {
   centreUse: text("centre_use"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
+
+// ══ نسخةُ المريض من مراحل البروتوكول وتمارينها (ترحيل ١٢٣، §4.dd) ══════════════════════════
+//  يعدّلها الأخصائيُّ لهذا المريض ولا يمسّ البروتوكول. تتبع الخطّةَ في الحذف، والخطّةُ تتبع المريضَ في `deletePatient`.
+export const physioPlanPhases = pgTable("physio_plan_phases", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  sessionFrom: integer("session_from"),
+  sessionTo: integer("session_to"),
+  timeframe: text("timeframe"), timeframeEn: text("timeframe_en"),
+  goals: text("goals"), goalsEn: text("goals_en"),
+  education: text("education"), educationEn: text("education_en"),
+  progressCriteria: text("progress_criteria"), progressCriteriaEn: text("progress_criteria_en"),
+  notes: text("notes"), notesEn: text("notes_en"),
+}, (t) => ({ uqPlanPhase: unique("physio_plan_phases_plan_id_position_key").on(t.planId, t.position) }));
+
+export const physioPlanPhaseExercises = pgTable("physio_plan_phase_exercises", {
+  id: serial("id").primaryKey(),
+  phaseId: integer("phase_id").notNull().references(() => physioPlanPhases.id, { onDelete: "cascade" }),
+  exerciseId: integer("exercise_id").notNull().references(() => physioExercises.id),
+  position: integer("position").notNull().default(0),
+  sets: integer("sets"),
+  reps: integer("reps"),
+  holdSeconds: integer("hold_seconds"),
+  restSeconds: integer("rest_seconds"),
+  doseNote: text("dose_note"), doseNoteEn: text("dose_note_en"),
+  note: text("note"), noteEn: text("note_en"),
+}, (t) => ({
+  uqPlanPhaseExercise: unique("physio_plan_phase_exercises_phase_id_exercise_id_key").on(t.phaseId, t.exerciseId),
+  byExercise: index("idx_physio_plan_phase_exercises_exercise").on(t.exerciseId),
+}));
 
 // ══ تنفيذُ الخطّة (ترحيل ١١١، §4.cn) ══════════════════════════════════════
 export const physioPlanSessions = pgTable("physio_plan_sessions", {

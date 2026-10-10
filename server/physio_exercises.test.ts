@@ -2,9 +2,10 @@
 //
 // حيٌّ على النقاط الحقيقية (منفذ ٦٩٧٤) وعلى قاعدةٍ طُبّق عليها الترحيلان. يحرس:
 //   ق — القواعدُ الصافية: سطرُ الجرعة، جرعةُ المرحلة فوق البطاقة، خاناتُ الجهاز، تطبيعُ البطاقة والمراحل والصور، سطورُ الخطوات.
-//   أ — مَن يقرأ ويكتب: أدوارُ القسم تقرأ، والاستقبالُ لا؛ والأخصائيُّ يكتب، والتقنيُّ لا.
-//   ب — البطاقةُ مسوّدةٌ تُعتمد: الأخصائيُّ لا يعتمد، والمشرفُ يعتمد، وتعديلُ المعتمَد بيد الأخصائيّ يعيده مسوّدة وبيد المشرف يُبقيه.
-//   ج — المراحل: تُحفظ كاملة، وتعيد البروتوكولَ المعتمَد مسوّدةً بيد الأخصائيّ، والتمرينُ المجهول والمؤرشف والمكرّر يُردّ.
+//   أ — مَن يقرأ ويكتب: أدوارُ القسم تقرأ، والاستقبالُ لا؛ والمشرفُ العام والمسؤول يكتبان، والأخصائيُّ والتقنيُّ لا (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.dd:
+//       البطاقةُ والمراحلُ جزءٌ من البروتوكول الأساسيّ — والأخصائيُّ يعدّل جرعةَ التمرين ومراحلَه لمريضه في خطّته).
+//   ب — البطاقةُ مسوّدةٌ تُعتمد: الأخصائيُّ لا يعتمد ولا يعدّل، والمشرفُ يعتمد، وتعديلُ المسؤول والمشرف يُبقيها معتمَدة.
+//   ج — المراحل: تُحفظ كاملة بيد المسؤول والمشرف (والأخصائيُّ ٤٠٣)، والتمرينُ المجهول والمؤرشف والمكرّر يُردّ، والموجزُ يحملها.
 //   د — الأرشفة: التمرينُ في مرحلةٍ لا يُؤرشَف، وغيرُه يُؤرشَف ويختفي ويُستعاد.
 //   هـ — خاناتُ الجهاز: خانةٌ لا تخصّ الجهاز تُردّ، والصحيحةُ تُحفظ وتُقرأ وتصل الموجز.
 //   و — الصور: ما لم يصل «منتظرة» في قائمة المحرّرين، وما سُجّل ملفُّه يُعرض برابطه ويخرج من القائمة؛ والملفّاتُ WebP صالحةٌ مضغوطة بلا يتيم،
@@ -140,10 +141,11 @@ async function main() {
       images: [{ key: PREFIX + code + "-1", captionAr: "البداية", captionEn: "Start", search: "test exercise" }], ...extra,
     });
     const techWrite = await call("POST", "/api/physio/exercises", S.tech, card("a"));
-    const created = await call("POST", "/api/physio/exercises", S.spec, card("a"));
-    same("أ.٢ التقنيُّ لا يكتب بطاقة (٤٠٣)، والأخصائيُّ يكتبها مسوّدة", [techWrite.status, created.status, created.json?.status], [403, 200, "draft"]);
+    const specWrite = await call("POST", "/api/physio/exercises", S.spec, card("a"));
+    const created = await call("POST", "/api/physio/exercises", S.sup, card("a"));
+    same("أ.٢ التقنيُّ والأخصائيُّ لا يكتبان بطاقة (٤٠٣)، والمشرفُ يكتبها مسوّدة", [techWrite.status, specWrite.status, created.status, created.json?.status], [403, 403, 200, "draft"]);
     const exId = created.json.id;
-    same("أ.٣ والرمزُ المكرّر ٤٠٩", (await call("POST", "/api/physio/exercises", S.spec, card("a"))).status, 409);
+    same("أ.٣ والرمزُ المكرّر ٤٠٩", (await call("POST", "/api/physio/exercises", S.admin, card("a"))).status, 409);
 
     // ══ ب — الاعتماد ═════════════════════════════════════════════════════════════════════
     console.log("\n── ب. البطاقةُ مسوّدةٌ تُعتمد ──");
@@ -152,8 +154,11 @@ async function main() {
     same("ب.٢ المشرفُ العام يعتمد، واسمُه على البطاقة", [appr.status, appr.json?.status, appr.json?.approvedByName], [200, "approved", "سليم"]);
     const byAdminKeep = await call("PUT", `/api/physio/exercises/${exId}`, S.admin, card("a", { purpose: "هدفٌ بيد المسؤول" }));
     same("ب.٣ تعديلُ المسؤول يُبقيها معتمَدة", [byAdminKeep.status, byAdminKeep.json?.status, byAdminKeep.json?.demoted], [200, "approved", false]);
-    const bySpec = await call("PUT", `/api/physio/exercises/${exId}`, S.spec, card("a", { purpose: "هدفٌ معدَّل" }));
-    same("ب.٤ وتعديلُ الأخصائيّ يعيدها مسوّدةً ويمحو المعتمِد", [bySpec.json?.status, bySpec.json?.demoted, bySpec.json?.approvedByName], ["draft", true, null]);
+    const bySpec = await call("PUT", `/api/physio/exercises/${exId}`, S.spec, card("a", { purpose: "هدفُ الأخصائيّ" }));
+    same("ب.٤ والأخصائيُّ لا يعدّل البطاقة (٤٠٣) — وتبقى معتمَدةً بهدف المسؤول", [bySpec.status,
+      (await q(`SELECT status, purpose FROM physio_exercises WHERE id = $1`, [exId])).rows[0]], [403, { status: "approved", purpose: "هدفٌ بيد المسؤول" }]);
+    const bySup = await call("PUT", `/api/physio/exercises/${exId}`, S.sup, card("a", { purpose: "هدفٌ معدَّل" }));
+    same("ب.٤ب وتعديلُ المشرف يُبقيها معتمَدة", [bySup.status, bySup.json?.status, bySup.json?.demoted], [200, "approved", false]);
     const got = await call("GET", `/api/physio/exercises/${exId}`, S.tech);
     same("ب.٥ والبطاقةُ تُقرأ كاملةً بلا صلاحية تعديلٍ للتقنيّ", [got.status, got.json?.purpose, got.json?.canEdit, got.json?.canApprove], [200, "هدفٌ معدَّل", false, false]);
 
@@ -161,20 +166,22 @@ async function main() {
     console.log("\n── ج. المراحل ──");
     const devs = (await q(`SELECT id, code FROM devices WHERE is_active ORDER BY display_order`)).rows as { id: number; code: string }[];
     const dev = (code: string) => devs.find((d) => d.code === code)!.id;
-    const proto = await call("POST", "/api/physio/protocols", S.spec, {
+    const proto = await call("POST", "/api/physio/protocols", S.sup, {
       code: PREFIX + "p1", titleAr: "بروتوكول اختبار", titleEn: "Test protocol", category: "spine", ageGroup: "adult",
       references: [{ title: "Ref" }], devices: [{ deviceId: dev("exercise"), evidence: "recommended" }],
     });
     const pid = proto.json.id;
     await call("POST", `/api/physio/protocols/${pid}/approve`, S.sup);
-    const ex2 = (await call("POST", "/api/physio/exercises", S.spec, card("b"))).json.id;
+    const ex2 = (await call("POST", "/api/physio/exercises", S.sup, card("b"))).json.id;
     const phases = [
       { nameAr: "الأولى", nameEn: "First", timeframe: "الأسبوع ١–٢", progressCriteria: "يمشي ١٥ دقيقة", exercises: [{ exerciseId: exId, reps: 6, note: "ببطء" }] },
       { nameAr: "الثانية", nameEn: "Second", exercises: [{ exerciseId: exId }, { exerciseId: ex2, sets: 2 }] },
     ];
     same("ج.١ التقنيُّ لا يعدّل المراحل", (await call("PUT", `/api/physio/protocols/${pid}/phases`, S.tech, { phases })).status, 403);
-    const put = await call("PUT", `/api/physio/protocols/${pid}/phases`, S.spec, { phases });
-    same("ج.٢ الأخصائيُّ يحفظها، والبروتوكولُ المعتمَد يعود مسوّدة", [put.status, put.json?.status, put.json?.demoted], [200, "draft", true]);
+    same("ج.٢ الأخصائيُّ لا يعدّل مراحلَ البروتوكول الأساسيّ (٤٠٣) — يعدّل مراحلَ مريضه في خطّته",
+      (await call("PUT", `/api/physio/protocols/${pid}/phases`, S.spec, { phases })).status, 403);
+    const put = await call("PUT", `/api/physio/protocols/${pid}/phases`, S.admin, { phases });
+    same("ج.٢ب والمسؤولُ يحفظها، والبروتوكولُ المعتمَد يبقى معتمَداً", [put.status, put.json?.status, put.json?.demoted], [200, "approved", false]);
     const det = await call("GET", `/api/physio/protocols/${pid}`, S.tech);
     same("ج.٣ البروتوكولُ يُقرأ بمراحله بترتيبها وتمارينها بجرعتها وبطاقتها",
       [det.json?.phases?.length, det.json?.phases?.[0]?.progressCriteria, det.json?.phases?.[0]?.exercises?.[0]?.reps,
@@ -196,14 +203,15 @@ async function main() {
 
     // ══ د — الأرشفة ══════════════════════════════════════════════════════════════════════
     console.log("\n── د. الأرشفة ──");
-    same("د.١ التمرينُ في مرحلةٍ لا يُؤرشَف (٤٠٩)", (await call("POST", `/api/physio/exercises/${exId}/archive`, S.spec)).status, 409);
-    const arch = await call("POST", `/api/physio/exercises/${ex2}/archive`, S.spec);
+    same("د.١ الأخصائيُّ لا يؤرشف (٤٠٣)، والتمرينُ في مرحلةٍ لا يُؤرشَف (٤٠٩)", [(await call("POST", `/api/physio/exercises/${ex2}/archive`, S.spec)).status,
+      (await call("POST", `/api/physio/exercises/${exId}/archive`, S.sup)).status], [403, 409]);
+    const arch = await call("POST", `/api/physio/exercises/${ex2}/archive`, S.sup);
     const listAfter = (await call("GET", "/api/physio/exercises?q=" + encodeURIComponent(PREFIX), S.spec)).json.map((r: any) => r.id);
     same("د.٢ وغيرُه يُؤرشَف ويختفي من القائمة", [arch.status, listAfter.includes(ex2), listAfter.includes(exId)], [200, false, true]);
     same("د.٣ والمؤرشفُ لا يُضاف إلى مرحلة (٤٠٠)",
       (await call("PUT", `/api/physio/protocols/${pid}/phases`, S.sup, { phases: [{ nameAr: "أ", nameEn: "A", exercises: [{ exerciseId: ex2 }] }] })).status, 400);
     same("د.٤ والتقنيُّ لا يرى المؤرشف (٤٠٤)، والاستعادةُ تعيده", [(await call("GET", `/api/physio/exercises/${ex2}`, S.tech)).status,
-      (await call("POST", `/api/physio/exercises/${ex2}/restore`, S.spec)).status, (await call("GET", `/api/physio/exercises/${ex2}`, S.tech)).status], [404, 200, 200]);
+      (await call("POST", `/api/physio/exercises/${ex2}/restore`, S.sup)).status, (await call("GET", `/api/physio/exercises/${ex2}`, S.tech)).status], [404, 200, 200]);
 
     // ══ هـ — خاناتُ الجهاز ═══════════════════════════════════════════════════════════════
     console.log("\n── هـ. خاناتُ الجهاز ──");
@@ -221,15 +229,16 @@ async function main() {
     // ══ و — الصور ════════════════════════════════════════════════════════════════════════
     console.log("\n── و. الصور ──");
     const missingKeys = async (s: string) => { const r = await call("GET", "/api/physio/exercises/missing-images", s); return { status: r.status, keys: (Array.isArray(r.json) ? r.json : []).map((m: any) => m.key) }; };
-    const m1 = await missingKeys(S.spec);
+    const m1 = await missingKeys(S.sup);
     //  و«bird-dog-1» من البروتوكول الأوّل: وصلت صورتُه (الدفعةُ الأولى ٢٠٢٦-١٠-٠٩) فلم تعد مطلوبة — شاهدٌ حقيقيّ على الخروج من القائمة.
-    same("و.١ المحرّرُ يرى الصورَ المطلوبة (وما وصل ملفُّه ليس منها)، والتقنيُّ لا (٤٠٣)",
-      [m1.status, m1.keys.includes(PREFIX + "a-1"), m1.keys.includes("bird-dog-1"), (await missingKeys(S.tech)).status], [200, true, false, 403]);
+    same("و.١ المحرّرُ يرى الصورَ المطلوبة (وما وصل ملفُّه ليس منها)، والتقنيُّ والأخصائيُّ لا (٤٠٣)",
+      [m1.status, m1.keys.includes(PREFIX + "a-1"), m1.keys.includes("bird-dog-1"), (await missingKeys(S.tech)).status, (await missingKeys(S.spec)).status],
+      [200, true, false, 403, 403]);
     EXERCISE_IMAGE_FILES[PREFIX + "a-1"] = { file: PREFIX + "a-1.webp", credit: "مصدرُ اختبار", sourceUrl: "https://example.org/x" };
     try {
       const withUrl = await call("GET", `/api/physio/exercises/${exId}`, S.tech);
       same("و.٢ ما سُجّل ملفُّه يُعرض برابطه ومصدره، ويخرج من القائمة",
-        [withUrl.json?.images?.[0]?.url, withUrl.json?.images?.[0]?.credit, (await missingKeys(S.spec)).keys.includes(PREFIX + "a-1")],
+        [withUrl.json?.images?.[0]?.url, withUrl.json?.images?.[0]?.credit, (await missingKeys(S.sup)).keys.includes(PREFIX + "a-1")],
         [`/physio-exercises/${PREFIX}a-1.webp`, "مصدرُ اختبار", false]);
     } finally { delete EXERCISE_IMAGE_FILES[PREFIX + "a-1"]; }
     //  **والملفّاتُ نفسُها** (`client/public/physio-exercises/`): كلُّ سطرٍ في السجلّ له ملفُّ WebP صالحٌ باسم رمزه وبحجمٍ مضغوط، ولا ملفَّ بلا سطر —
@@ -277,9 +286,10 @@ async function main() {
         (SELECT params FROM physio_protocol_devices d JOIN devices dv ON dv.id = d.device_id WHERE d.protocol_id = p.id AND dv.code = 'hot_pack') AS hot
       FROM physio_protocols p WHERE p.code = 'lbp-chronic-adult'`)).rows[0];
     const before = await lbp();
-    same("ز.٦ في القاعدة: ثلاثُ مراحل و٢٤ رابطاً وعشرةُ أجهزة وخاناتُ الكمادة، و١٢ أسبوعاً، ومسوّدة",
+    //  والأسابيعُ أربعةٌ لا اثنا عشر: ترحيلُ ١٢٣ (§4.dd) جعل الجرعةَ ٢٤ جلسة × ستّاً في الأسبوع بقرار المالك.
+    same("ز.٦ في القاعدة: ثلاثُ مراحل و٢٤ رابطاً وعشرةُ أجهزة وخاناتُ الكمادة، وأربعةُ أسابيع (ترحيل ١٢٣)، ومسوّدة",
       [before.phases, before.links, before.devices, before.hot, before.duration_weeks, before.status],
-      [3, 24, 10, { layers: "6–8", durationMin: "15–20", temperatureC: "70–75" }, 12, "draft"]);
+      [3, 24, 10, { layers: "6–8", durationMin: "15–20", temperatureC: "70–75" }, 4, "draft"]);
     const exCount = async () => Number((await q(`SELECT count(*) FROM physio_exercises WHERE code = ANY($1::text[])`, [Array.from(codes)])).rows[0].count);
     same("ز.٧ والبطاقاتُ الثماني عشرة مسوّدات", [await exCount(), Number((await q(`SELECT count(*) FROM physio_exercises WHERE code = ANY($1::text[]) AND status = 'draft'`, [Array.from(codes)])).rows[0].count)], [18, 18]);
     await q(sql119);
@@ -301,8 +311,9 @@ async function main() {
       [await audits("physio_exercise", exId, "create"), await audits("physio_exercise", exId, "update"), await audits("physio_exercise", exId, "approve"),
         await audits("physio_protocol", pid, "update_phases") >= 2],
       [1, 2, 1, true]);
-    const demoteNote = (await q(`SELECT notes FROM audit_log WHERE entity_type = 'physio_exercise' AND entity_id = $1 AND action = 'update' ORDER BY id DESC LIMIT 1`, [exId])).rows[0]?.notes;
-    same("ح.٢ وسطرُ التعديل يقول إنّ المعتمَد عاد مسوّدة", demoteNote, "عُدّل تمرينٌ معتمَد فعاد مسوّدةً بانتظار الاعتماد");
+    same("ح.٢ ولا سطرَ تدقيقٍ لتعديل الأخصائيّ المرفوض — التعديلان للمسؤول والمشرف",
+      (await q(`SELECT user_id FROM audit_log WHERE entity_type = 'physio_exercise' AND entity_id = $1 AND action = 'update' ORDER BY id`, [exId])).rows.map((r) => Number(r.user_id)),
+      [ADMIN, SUP]);
   } finally {
     //  الترحيلُ في ز عدّل بروتوكولَ القاعدة نفسها — القاعدةُ نسخةٌ للحزمة، فلا يُعاد شيء.
     await cleanup();

@@ -32,7 +32,7 @@ export function registerPhysioExerciseRoutes(app: Express, isAuthenticated: any)
       ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
   const idOf = (v: unknown) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
   const READ_ONLY = "مكتبةُ التمارين لقسم العلاج الطبيعي";
-  const WRITE_ONLY = "يكتب التمارينَ الأخصائيُّ أو المشرفُ العام أو المسؤول";
+  const WRITE_ONLY = "يكتب بطاقاتِ التمارين المشرفُ العام أو المسؤول — والأخصائيُّ يعدّل جرعةَ التمرين لمريضه في خطّته";
 
   app.get("/api/physio/exercises", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
@@ -124,7 +124,7 @@ export function registerPhysioExerciseRoutes(app: Express, isAuthenticated: any)
 
   app.put("/api/physio/protocols/:id/phases", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditProtocols(s)) return res.status(403).json({ error: "يعدّل مراحلَ البروتوكول الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    if (!canEditProtocols(s)) return res.status(403).json({ error: "يعدّل مراحلَ البروتوكول الأساسيّ المشرفُ العام أو المسؤول — والأخصائيُّ يعدّل مراحلَ مريضه في خطّته" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     const phases = parsePhasesBody(req.body?.phases);

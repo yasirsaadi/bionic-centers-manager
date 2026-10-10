@@ -43,6 +43,8 @@ export interface PhysioSheetPlan {
   sessionsPerWeek: number | null;
   durationWeeks: number | null;
   sessionMinutes: number | null;
+  /** ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة. */
+  totalSessions?: number | null;
   status: string;
   statusLabel: string;
   /** مراجعةُ المشرف بعد أن بدأها الأخصائيّ (§4.cz) — `awaiting` · `reviewed` · `null`. */
@@ -164,6 +166,7 @@ export function physioMoneyLine(m: PhysioSheetMoney): { main: string; extra: str
 /** سطرُ الخطّة: البروتوكول · الجلساتُ في الأسبوع × المدّة · الحال ومَن راجعها. */
 export function physioPlanLine(p: PhysioSheetPlan): { main: string; sub: string } {
   const dose = [
+    p.totalSessions ? `${p.totalSessions} جلسة` : null,
     p.sessionsPerWeek ? `${p.sessionsPerWeek} جلسات في الأسبوع` : null,
     p.durationWeeks ? `لمدّة ${p.durationWeeks} أسابيع` : null,
     p.sessionMinutes ? `${p.sessionMinutes} دقيقة للجلسة` : null,
