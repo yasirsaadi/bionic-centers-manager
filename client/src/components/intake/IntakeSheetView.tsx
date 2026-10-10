@@ -10,7 +10,7 @@ import { EXAM_SHEET_TEXT_LABEL } from "@shared/exam_sheet";
 import { INTAKE_DEPARTMENT_LABELS, injuryDateDisplay } from "@shared/intake_sheet";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { sheetLinesText, sheetMoneyLine, sheetSpecView, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
-import { NOT_APPLICABLE_SPEC, SIDE_LABEL, slotTitle } from "@shared/limb_specs";
+import { NOT_APPLICABLE_SPEC, slotTitle } from "@shared/limb_specs";
 import { formatDateIraq } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -27,33 +27,45 @@ function V({ children, testId, multiline }: { children: ReactNode; testId?: stri
 
 const yesNo = (v: boolean | null) => (v === true ? "نعم" : v === false ? "لا" : null);
 
+/** **أعمدةُ الأطراف** — عمودٌ لكلّ طرفٍ مصنوع؛ والثلاثةُ والأربعة عمودان على الهاتف وبعددها على الشاشة العريضة والورق. */
+export function limbColumnsClass(n: number): string {
+  return n <= 1 ? "grid-cols-1" : n === 2 ? "grid-cols-2" : n === 3 ? "grid-cols-2 sm:grid-cols-3 print:grid-cols-3" : "grid-cols-2 sm:grid-cols-4 print:grid-cols-4";
+}
+
 /**
- * **خاناتُ الطرف بحسب البتر** (§4.de): طرفٌ واحد ⟵ خاناتُه وحدها (تحت الركبة بلا ركبة)؛ وطرفان ⟵ سطرٌ يسمّيهما، ثمّ كلُّ خانةٍ بقيمتها
- * «للطرفين» إن تماثلا، أو بنصفين يمين / يسار — والجهةُ التي لا تخصّها الخانة «لا ينطبق».
+ * **خاناتُ الطرف بحسب البتر** (§4.de): طرفٌ واحد ⟵ خاناتُه وحدها (تحت الركبة بلا ركبة)؛ وأكثرُ من طرف ⟵ سطرٌ يسمّي الأطراف، ثمّ كلُّ خانةٍ
+ * بقيمتها «للأطراف كلّها» إن تماثلت، أو بعمودٍ لكلّ طرف — والطرفُ الذي لا تخصّه الخانة «لا ينطبق». **وما لا يُصنع في هذا الطلب يُذكر**
+ * ولا تُطلب له مواصفات.
  */
 function SheetSpecRows({ sheet }: { sheet: IntakeSheet }) {
   const view = sheetSpecView(sheet);
-  const halves = (cells: ReactNode[]) => (
-    <div className="grid grid-cols-2 min-w-0 divide-x divide-x-reverse divide-slate-300">{cells}</div>
+  const cols = (cells: ReactNode[]) => (
+    <div className={cn("grid min-w-0 divide-x divide-x-reverse divide-slate-300", limbColumnsClass(cells.length))}>{cells}</div>
   );
+  const many = view.allSlots.length > 2 ? "الأطراف" : "الطرفان";
   return (
     <>
       {view.mode !== "single" && (
-        <SheetRow label="الطرفان" testId="sheet-row-limbs">
+        <SheetRow label={many} testId="sheet-row-limbs">
           {view.mode === "identical" ? (
-            <V testId="sheet-v-limbs">{`متماثلان — مواصفاتٌ واحدة للطرفين (${view.slots.map(slotTitle).join(" · ")})`}</V>
-          ) : halves(view.slots.map((sl) => (
-            <div key={sl.side} className="px-1.5 py-1.5 text-sm font-semibold text-center" data-testid={`sheet-v-limb-${sl.side}`}>{slotTitle(sl)}</div>
+            <V testId="sheet-v-limbs">{`متماثلة — مواصفاتٌ واحدة ${view.slots.length > 2 ? "للأطراف كلّها" : "للطرفين"} (${view.slots.map(slotTitle).join(" · ")})`}</V>
+          ) : cols(view.slots.map((sl) => (
+            <div key={sl.key} className="px-1.5 py-1.5 text-sm font-semibold text-center" data-testid={`sheet-v-limb-${sl.key}`}>{slotTitle(sl)}</div>
           )))}
+          {view.notMadeSlots.length > 0 && (
+            <div className="px-1.5 pb-1 text-xs text-slate-500" data-testid="sheet-v-limbs-not-made">
+              لا يُصنع في هذا الطلب: {view.notMadeSlots.map(slotTitle).join(" · ")}
+            </div>
+          )}
         </SheetRow>
       )}
       {view.rows.map((r) => (
         <SheetRow key={r.key} label={r.label}>
-          {r.sides ? halves(r.sides.map((x) => (
+          {r.sides ? cols(r.sides.map((x) => (
             <div key={x.side} className="min-w-0" data-testid={`sheet-v-spec-${r.key}-${x.side}`}>
               {x.applicable
                 ? <V>{x.value}</V>
-                : <div className="min-h-[2.25rem] print:min-h-[1.65rem] flex items-center justify-center px-1.5 text-xs text-slate-400" aria-label={`${SIDE_LABEL[x.side]}: ${NOT_APPLICABLE_SPEC}`}>{NOT_APPLICABLE_SPEC}</div>}
+                : <div className="min-h-[2.25rem] print:min-h-[1.65rem] flex items-center justify-center px-1.5 text-xs text-slate-400" aria-label={`${x.label}: ${NOT_APPLICABLE_SPEC}`}>{NOT_APPLICABLE_SPEC}</div>}
             </div>
           ))) : <V testId={`sheet-v-spec-${r.key}`}>{r.value}</V>}
         </SheetRow>

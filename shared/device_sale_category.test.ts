@@ -36,6 +36,10 @@ same("أ.٢ وعنوانُه عربيٌّ يُقرأ",
   classifyDeviceSale(full({ amputationType: "single" })).label, "طرف صناعي كامل — احادي");
 same("أ.٣ ثنائي", classifyDeviceSale(full({ amputationType: "double" })).key, "prosthetic_full:double");
 same("أ.٤ وعنوانُه", classifyDeviceSale(full({ amputationType: "double" })).label, "طرف صناعي كامل — ثنائي");
+//  «متعدد» (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de): أطرافٌ مختلفة على المريض نفسِه صنفٌ قائم — لا تُنسَب لـ«ثنائي» ولا تسقط «غير مسجَّل».
+const multiSale = classifyDeviceSale(full({ amputationType: "multi", limbs: [{ region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" }] }));
+same("أ.٥ **متعدد صنفٌ بمفتاحه وعنوانه**", [multiSale.key, multiSale.label, multiSale.amputationType],
+  ["prosthetic_full:multi", "طرف صناعي كامل — متعدد (أطراف مختلفة)", "multi"]);
 
 console.log("\n── أ٢. **والسليكونيُّ بجزئه — سؤالُ المالك بعينه** ──");
 const finger = classifyDeviceSale(full({ amputationType: "silicone", siliconePart: "اصبع" }));

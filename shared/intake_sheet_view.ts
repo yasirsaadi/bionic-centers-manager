@@ -176,14 +176,14 @@ export interface SheetSpecRow {
  * ولمبتور الطرفين كلُّ جهةٍ بقيمتها أو قيمةٌ واحدة «للطرفين»)، أو «نوع المسند»؛ والقديمةُ الإضافيةُ حين تُكتب وحدها.
  * و`mode`/`slots` لترويسة الطرفين في الورقة.
  */
-export function sheetSpecView(s: Pick<IntakeSheet, "serviceType" | "specs">): { mode: LimbSpecView["mode"]; slots: LimbSpecView["slots"]; rows: SheetSpecRow[] } {
+export function sheetSpecView(s: Pick<IntakeSheet, "serviceType" | "specs">): Omit<LimbSpecView, "rows"> & { rows: SheetSpecRow[] } {
   const v = (k: string) => (typeof s.specs[k] === "string" && s.specs[k].trim() ? s.specs[k].trim() : null);
   if (s.serviceType !== "prosthetic") {
-    return { mode: "single", slots: [], rows: [{ key: "supportType", label: "نوع المسند", value: v("supportType") }] };
+    return { mode: "single", slots: [], allSlots: [], notMadeSlots: [], rows: [{ key: "supportType", label: "نوع المسند", value: v("supportType") }] };
   }
   const limb = limbSpecView(s.specs);
   return {
-    mode: limb.mode, slots: limb.slots,
+    mode: limb.mode, slots: limb.slots, allSlots: limb.allSlots, notMadeSlots: limb.notMadeSlots,
     rows: [...limb.rows, ...SHEET_EXTRA_SPEC_ROWS.filter((r) => v(r.key)).map((r) => ({ ...r, value: v(r.key) }))],
   };
 }

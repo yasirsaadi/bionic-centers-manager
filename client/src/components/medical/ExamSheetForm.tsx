@@ -23,9 +23,9 @@ import {
 import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
 import { COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 import { INJURY_SIDE_OPTIONS, PROSTHETIC_DEVICE_SPECS } from "@shared/case_fields";
-import { NOT_APPLICABLE, SALE_REQUIRED_SPECS } from "@shared/device_specs";
+import { NOT_APPLICABLE } from "@shared/device_specs";
 import {
-  LIMB_SPEC_KEYS, limbSlots, limbSpecValue, normalizeLimbSpecs, sideSpecKey, slotTitle, slotsCanShare, type LimbSide,
+  LIMB_SPEC_KEYS, hasSideSpecs, limbSlots, limbSpecValue, normalizeLimbSpecs, notMadeOf, sideSpecKey, slotTitle, slotsCanShare,
 } from "@shared/limb_specs";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { cn } from "@/lib/utils";
@@ -80,7 +80,7 @@ export function ReferralCell({ sheet, onSheet, testIdPrefix }: { sheet: ExamShee
 
 const AMP_KEYS = [
   "amputationType", "singleLimb", "singleSide", "singleDetail", "doubleLimbType", "doubleRightDetail", "doubleLeftDetail",
-  "bothRightLimb", "bothLeftLimb", "bothRightDetail", "bothLeftDetail", "siliconePart", "siliconeSide", "siliconeNotes",
+  "bothRightLimb", "bothLeftLimb", "bothRightDetail", "bothLeftDetail", "siliconePart", "siliconeSide", "siliconeNotes", "limbs",
 ] as const;
 
 /** خاناتُ الجهاز بترتيب الورقة وألفاظها (`SHEET_DEVICE_ROWS`) — ومثالُ كلٍّ من تعريفها القائم. */
@@ -99,7 +99,7 @@ function SpecCell({ specKey, rxKey, value, onSet, testSuffix }: {
     <div className="flex items-center gap-1.5 min-w-0">
       <Input className={cn(cellInput, "flex-1 min-w-0")} value={value} onChange={(e) => onSet(rxKey, e.target.value)}
         placeholder={placeholder} data-testid={`exam-sheet-spec-${testSuffix}`} />
-      {(SALE_REQUIRED_SPECS.prosthetic as readonly string[]).includes(specKey) && (
+      {LIMB_SPEC_KEYS.includes(specKey) && (
         <Button type="button" size="sm" variant={value === NOT_APPLICABLE ? "default" : "outline"}
           className="shrink-0 text-xs px-2 h-8" onClick={() => onSet(rxKey, NOT_APPLICABLE)} data-testid={`exam-sheet-na-${testSuffix}`}>
           {NOT_APPLICABLE}
@@ -144,21 +144,29 @@ export function ExamSheetForm({
     onRx(normalizeLimbSpecs({ ...cleared, ...next }));
   };
   const slots = limbSlots(amp);
-  const bilateral = slots.length === 2;
-  const canShare = slotsCanShare(slots);
-  const identical = bilateral && canShare && rx.limbsIdentical === true;
+  const multi = slots.length >= 2;
+  //  **«يُصنع في هذا الطلب»** (§4.de): مبتورُ طرفين يأخذ واحداً الآن — مؤشَّرٌ كلُّه مسبقاً، ولا يُزال آخرُ طرف.
+  const notMade = multi ? notMadeOf(rx).filter((k) => slots.some((sl) => sl.key === k)) : [];
+  const made = slots.filter((sl) => !sl.key || !notMade.includes(sl.key));
+  const canShare = slotsCanShare(made);
+  const identical = multi && canShare && rx.limbsIdentical === true;
   const setIdentical = (on: boolean) => onRx(normalizeLimbSpecs({ ...rx, limbsIdentical: on }));
+  const setMade = (key: string, on: boolean) => {
+    const next = on ? notMade.filter((k) => k !== key) : [...notMade, key];
+    if (next.length >= slots.length) return;
+    onRx(normalizeLimbSpecs({ ...rx, limbsNotMade: next }));
+  };
   const setSpec = (k: string, v: string) => setRx(k, v);
-  //  خاناتُ طرفٍ واحد (أو الطرفين المتماثلين): ما يخصّه بمستواه، وما كُتب في غيره بقيمةٍ حقيقية (لا يُخفى مكتوب).
-  const sharedKeys = LIMB_SPEC_KEYS.filter((k) => slots[0].keys.includes(k) || realSpec(rx[k]));
-  //  وللطرفين المختلفين: خانةٌ تخصّ أحدَهما على الأقلّ.
-  const splitKeys = LIMB_SPEC_KEYS.filter((k) => slots.some((sl) => sl.keys.includes(k) || (sl.side && realSpec(rx[sideSpecKey(k, sl.side)]))));
+  //  خاناتُ طرفٍ واحد (أو الأطراف المتماثلة): ما يخصّه بمستواه، وما كُتب في غيره بقيمةٍ حقيقية (لا يُخفى مكتوب).
+  const sharedKeys = LIMB_SPEC_KEYS.filter((k) => made[0].keys.includes(k) || realSpec(rx[k]));
+  //  وللأطراف المختلفة: خانةٌ تخصّ أحدَ المصنوعة على الأقلّ.
+  const splitKeys = LIMB_SPEC_KEYS.filter((k) => made.some((sl) => sl.keys.includes(k) || (sl.key && realSpec(rx[sideSpecKey(k, sl.key)]))));
   const labelOf = (k: string) => DEVICE_ROWS.find((r) => r.key === k)?.label ?? k;
-  //  **وصفةٌ قديمة بترتيبٍ آخر تُرتَّب مرّةً عند فتحها** — مبتورُ طرفين كُتبت خاناتُه عامّةً قبل §4.de (أو طرفٌ واحد بمفاتيح جهات): تصير
-  //  جهاتٍ ظاهرةً يعدّلها الطبيبُ ويمسحها، لا قيمةً عامّةً تعود كلّما مُسحت جهتُها.
-  const mixed = isProsthetic && (bilateral && !identical
+  //  **وصفةٌ قديمة بترتيبٍ آخر تُرتَّب مرّةً عند فتحها** — مبتورُ طرفين كُتبت خاناتُه عامّةً قبل §4.de (أو طرفٌ واحد بمفاتيح أطراف): تصير
+  //  أطرافاً ظاهرةً يعدّلها الطبيبُ ويمسحها، لا قيمةً عامّةً تعود كلّما مُسح طرفُها.
+  const mixed = isProsthetic && (multi && !identical
     ? LIMB_SPEC_KEYS.some((k) => s(rx[k]))
-    : LIMB_SPEC_KEYS.some((k) => (["right", "left"] as const).some((sd) => rx[sideSpecKey(k, sd)] !== undefined)));
+    : hasSideSpecs(rx));
   useEffect(() => {
     if (mixed) onRx(normalizeLimbSpecs(rx));
   }, [mixed]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -274,31 +282,42 @@ export function ExamSheetForm({
             والعلويُّ بلا ركبةٍ ولا قدم. ولمبتور الطرفين خاناتُ كلّ جهة، ومربّعُ «متماثلان» يكتبها مرّةً للطرفين. */}
         {isProsthetic ? (
           <>
-            {bilateral && (
-              <SheetRow label="الطرفان" testId="exam-row-limbs">
-                <div className="py-1 space-y-1">
-                  {canShare ? (
+            {multi && (
+              <SheetRow label={slots.length > 2 ? "الأطراف" : "الطرفان"} testId="exam-row-limbs">
+                <div className="py-1 space-y-1.5">
+                  {/*  **يُصنع في هذا الطلب** — لكلّ طرف؛ والمواصفاتُ (والسعرُ عند «اشترى») للمؤشَّر وحده. */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {slots.map((sl) => (
+                      <label key={sl.key} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="checkbox" className="h-4 w-4" checked={!notMade.includes(sl.key!)}
+                          disabled={!notMade.includes(sl.key!) && made.length === 1}
+                          onChange={(e) => setMade(sl.key!, e.target.checked)} data-testid={`exam-sheet-limb-made-${sl.key}`} />
+                        {slotTitle(sl)}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-slate-500">المؤشَّرُ يُصنع في هذا الطلب — أزِل التأشير عن طرفٍ يُصنع لاحقاً.</div>
+                  {made.length >= 2 && (canShare ? (
                     <label className="flex items-center gap-2 text-sm cursor-pointer">
                       <input type="checkbox" className="h-4 w-4" checked={identical} onChange={(e) => setIdentical(e.target.checked)}
                         data-testid="exam-sheet-limbs-identical" />
-                      الطرفان متماثلان — أكتب المواصفات مرّةً للطرفين
+                      {made.length > 2 ? "الأطراف متماثلة — أكتب المواصفات مرّةً للأطراف كلّها" : "الطرفان متماثلان — أكتب المواصفات مرّةً للطرفين"}
                     </label>
                   ) : (
-                    <div className="text-xs text-slate-600" data-testid="exam-sheet-limbs-differ">مستويا البتر مختلفان — لكلّ طرفٍ مواصفاتُه</div>
-                  )}
-                  <div className="text-xs text-slate-500">{slots.map(slotTitle).join(" · ")}</div>
+                    <div className="text-xs text-slate-600" data-testid="exam-sheet-limbs-differ">الأطرافُ مختلفة — لكلّ طرفٍ مواصفاتُه</div>
+                  ))}
                 </div>
               </SheetRow>
             )}
-            {(!bilateral || identical) ? sharedKeys.map((k) => (
+            {(!multi || identical) ? sharedKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
                 <SpecCell specKey={k} rxKey={k} value={s(rx[k])} onSet={setSpec} testSuffix={k} />
               </SheetRow>
             )) : splitKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1 py-0.5">
-                  {slots.map((sl) => {
-                    const side = sl.side as LimbSide;
+                  {made.map((sl) => {
+                    const side = sl.key as string;
                     const applies = sl.keys.includes(k) || realSpec(rx[sideSpecKey(k, side)]);
                     return (
                       <div key={side} className="min-w-0" data-testid={`exam-cell-spec-${k}-${side}`}>

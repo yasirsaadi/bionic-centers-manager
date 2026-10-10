@@ -22,6 +22,9 @@ export const SHEET_DEVICE_ROWS = [
   { key: "prostheticType", label: "نوع الطرف الصناعي" },
   { key: "kneeJointType", label: "نوع الركبة" },
   { key: "footType", label: "نوع القدم" },
+  //  **وللطرف العلويّ** (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de): المرفقُ لما فوق المرفق، والكفُّ/اليدُ لكلّ علويّ.
+  { key: "elbowType", label: "نوع المرفق" },
+  { key: "handType", label: "نوع الكف / اليد" },
   { key: "socketType", label: "نوع السوكيت" },
   { key: "siliconType", label: "نوع السيليكون" },
 ] as const;

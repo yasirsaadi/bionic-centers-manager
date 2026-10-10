@@ -17,7 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
 import { sheetSpecView } from "@shared/intake_sheet_view";
-import { NOT_APPLICABLE_SPEC, SIDE_LABEL, slotTitle, splitSpecKey } from "@shared/limb_specs";
+import { NOT_APPLICABLE_SPEC, slotTitle, splitSpecKey } from "@shared/limb_specs";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { TRIAL_SOCKET_LABEL, canDeliverTrialSocket, isTrialAwaiting } from "@shared/trial_socket";
 import { baghdadTodayYmd } from "@shared/visit_date";
@@ -178,15 +178,20 @@ export default function ManufacturingOrder() {
                 return (
                   <>
                     {view.mode !== "single" && (
-                      <Info label="الطرفان" value={view.mode === "identical"
-                        ? `متماثلان — مواصفاتٌ واحدة للطرفين (${view.slots.map(slotTitle).join(" · ")})`
-                        : view.slots.map(slotTitle).join(" · ")} />
+                      <Info label={view.allSlots.length > 2 ? "الأطراف" : "الطرفان"} value={<>
+                        {view.mode === "identical"
+                          ? `متماثلة — مواصفاتٌ واحدة ${view.slots.length > 2 ? "للأطراف كلّها" : "للطرفين"} (${view.slots.map(slotTitle).join(" · ")})`
+                          : view.slots.map(slotTitle).join(" · ")}
+                        {view.notMadeSlots.length > 0 && (
+                          <div className="text-xs text-muted-foreground" data-testid="order-limbs-not-made">لا يُصنع في هذا الطلب: {view.notMadeSlots.map(slotTitle).join(" · ")}</div>
+                        )}
+                      </>} />
                     )}
                     {view.rows.map((r) => (
                       <Info key={r.key} label={atSale(r.key) ? `${r.label} *` : r.label} value={r.sides ? (
                         <div className="space-y-0.5" data-testid={`order-spec-${r.key}`}>
                           {r.sides.map((x) => (
-                            <div key={x.side}><span className="text-muted-foreground">{SIDE_LABEL[x.side]}: </span>
+                            <div key={x.side}><span className="text-muted-foreground">{x.label}: </span>
                               {x.applicable ? (x.value ?? "—") : <span className="text-muted-foreground">{NOT_APPLICABLE_SPEC}</span>}</div>
                           ))}
                         </div>

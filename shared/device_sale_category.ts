@@ -56,10 +56,10 @@ export interface DeviceSaleCategory {
   /** جهازٌ كامل أم جزءٌ منه. */
   scope: "full" | "part" | "unknown";
   /**
-   * نوعُ البتر للأطراف الكاملة: `single` · `double` · `silicone` ·
+   * نوعُ البتر للأطراف الكاملة: `single` · `double` · `silicone` · `multi` (أطرافٌ مختلفة، §4.de) ·
    * `unrecorded` (لا وصفةَ أو لم يُلمَس البانِي). و`null` لغيرها.
    */
-  amputationType: "single" | "double" | "silicone" | "unrecorded" | null;
+  amputationType: "single" | "double" | "silicone" | "multi" | "unrecorded" | null;
   /** جزءُ الطرف السليكونيّ («اصبع» · «اذن» …) — حين يُعرَف وحده. */
   siliconePart: string | null;
 }
@@ -94,7 +94,7 @@ export function classifyDeviceSale(f: DeviceSaleFacts): DeviceSaleCategory {
 
   if (service === "prosthetic" && item === FULL_DEVICE) {
     const raw = rx ? text(rx.amputationType) : null;
-    const known = raw === "single" || raw === "double" || raw === "silicone" ? raw : null;
+    const known = raw === "single" || raw === "double" || raw === "silicone" || raw === "multi" ? raw : null;
 
     if (known === "silicone") {
       const part = rx ? text(rx.siliconePart) : null;

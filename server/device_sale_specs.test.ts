@@ -261,6 +261,53 @@ async function main() {
     same("ح.٣ **ومكتملاً ⟵ ٢٠٠**، والأمرُ يحمل الجهتين وموقعَ البتر",
       [rh2.status, ho.source === "exam" ? [ho.specs["prostheticType:left"], ho.specs["siliconType:left"], ho.specs.amputationSite] : ho],
       [200, ["قدم سليكون كاملة", "سليكون طبي", "اطراف سليكونية تعويضية - قدم - كلا الجانبين"]]);
+
+    //  **«متعدد»** (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de): «يسار تحت الركبة ويحتاج طرفاً تحت الركبة، ويسار خلال الكف ويحتاج كفاً سليكونية» —
+    //  والكفُّ تُصنع لاحقاً («يُصنع في هذا الطلب» عن الساق وحدها).
+    console.log("\n── ط. متعدد: ساقٌ تحت الركبة الآن، وكفٌّ سليكونية لاحقاً ──");
+    const MULTI = { amputationType: "multi", limbs: [
+      { region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" },
+    ], limbsIdentical: false };
+    const MULTI_SITE = "متعدد | يسار (سفلي): تحت الركبة | يسار (علوي، سليكوني): كف";
+    const m = await examined("متعدد", "prosthetic", {
+      ...MULTI, limbsNotMade: ["left-upper"], "prostheticType:left-lower": "طرف تحت الركبة", "footType:left-lower": "قدم كربون",
+      "prostheticType:left-upper": "كف سليكونية",
+    });
+    const ml = (await call("GET", `/api/followups/patient/${m.pid}`, S.recv)).json.find((f: any) => f.id === m.fid)?.deviceSpecs;
+    same("ط.١ **ملفُّ المتابعة: خاناتُ الساق وحدها بعنوانها** — والكفُّ المؤجَّلة لا يُطلب لها شيء",
+      [ml?.fields.map((f: any) => [f.key, f.label, f.fromDoctor]), ml?.missing],
+      [[["prostheticType:left-lower", "نوع الطرف الصناعي — يسار سفلي", true], ["socketType:left-lower", "نوع السوكيت — يسار سفلي", false],
+        ["footType:left-lower", "نوع القدم — يسار سفلي", true], ["siliconType:left-lower", "نوع السليكون — يسار سفلي", false]],
+        ["socketType:left-lower", "siliconType:left-lower"]]);
+    const rm1 = await sale(m.fid, { "socketType:left-lower": "سوكيت كربون" });
+    same("ط.٢ **ناقصٌ ⟵ ٤٠٠ يسمّيه بطرفه**، ولا أمرَ ولا حفظ",
+      [rm1.status, /نوع السليكون — يسار سفلي/.test(rm1.json?.error ?? ""), await stateOf(m.fid, m.epId)],
+      [400, true, { status: "awaiting_patient_decision", device_specs: {}, orders: 0 }]);
+    const rm2 = await sale(m.fid, { "socketType:left-lower": "سوكيت كربون", "siliconType:left-lower": NOT_APPLICABLE, "handType:left-upper": "كف تجميلية" });
+    const stm = await stateOf(m.fid, m.epId);
+    same("ط.٣ **ومكتملاً ⟵ ٢٠٠** وأمرٌ واحد، وما كُتب محفوظٌ بطرفه",
+      [rm2.status, stm.status, sorted(stm.device_specs), stm.orders],
+      [200, "converted", sorted({ "socketType:left-lower": "سوكيت كربون", "siliconType:left-lower": NOT_APPLICABLE, "handType:left-upper": "كف تجميلية" }), 1]);
+    const mo = await orderDeviceSpecs(m.epId, "prosthetic");
+    same("ط.٤ **أمرُ التصنيع يحمل كلَّ طرفٍ وما لا يُصنع الآن** وموقعَ البتر",
+      mo.source === "exam" ? [mo.specs["footType:left-lower"], mo.specs["socketType:left-lower"], mo.specs["prostheticType:left-upper"], mo.specs.limbsNotMade, mo.specs.amputationSite] : mo,
+      ["قدم كربون", "سوكيت كربون", "كف سليكونية", "left-upper", MULTI_SITE]);
+    const mp = (await q(`SELECT amputation_site, prosthetic_type, foot_type FROM patients WHERE id = $1`, [m.pid])).rows[0];
+    same("ط.٥ **وملفُّ المريض**: موقعُ البتر بنصّه، وأعمدتُه تقرأ الأطرافَ كاملةً",
+      [mp.amputation_site, mp.prosthetic_type, mp.foot_type], [MULTI_SITE, "يسار سفلي: طرف تحت الركبة | يسار علوي: كف سليكونية", "يسار سفلي: قدم كربون"]);
+    const mSheet = (await call("GET", `/api/patients/${m.pid}/intake-sheets`, S.recv)).json?.sheets?.find((x: any) => x.episodeId === m.epId);
+    same("ط.٦ والاستمارةُ تقول البترَ وما لا يُصنع", [mSheet?.specs?.amputationSite, mSheet?.specs?.limbsNotMade], [MULTI_SITE, "left-upper"]);
+
+    console.log("\n── ي. متعدد: إصبعٌ سليكونيّ يمين وكفٌّ سليكونية يسار ──");
+    const n = await examined("إصبع وكف", "prosthetic", {
+      amputationType: "multi", limbs: [
+        { region: "upper", side: "right", kind: "silicone", detail: "اصبع" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" },
+      ], limbsIdentical: false, "prostheticType:right-upper": "إصبع سليكوني", "prostheticType:left-upper": "كف سليكونية كاملة", siliconType: "سليكون طبي",
+    });
+    const nl = (await call("GET", `/api/followups/patient/${n.pid}`, S.recv)).json.find((f: any) => f.id === n.fid)?.deviceSpecs;
+    same("ي.١ **لكلّ قطعةٍ نوعُها، والسيليكونُ العامّ يسدّ الاثنتين** — فلا ينقص شيء، و«اشترى» يمرّ",
+      [nl?.fields.map((f: any) => f.key), nl?.missing, (await sale(n.fid)).status],
+      [["prostheticType:right-upper", "siliconType:right-upper", "prostheticType:left-upper", "siliconType:left-upper"], [], 200]);
   } finally {
     httpServer.close();
     await cleanup();

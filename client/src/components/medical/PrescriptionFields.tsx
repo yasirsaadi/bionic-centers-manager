@@ -120,7 +120,8 @@ export function PrescriptionFields({
         <div className="space-y-2 border-b border-teal-200 pb-3">
           <Label className="text-xs font-semibold">نوع البتر <PatientVisibleBadge className="ms-2" /></Label>
           <div className="flex flex-wrap gap-2">
-            {AMPUTATION_TYPE_OPTIONS.map((opt) => (
+            {/*  «متعدد» (§4.de) يُبنى في `AmputationBuilder` على الاستمارة وحدها — والأطرافُ لا تصل هذا النموذجَ أصلاً (`isSheetExamType`). */}
+            {AMPUTATION_TYPE_OPTIONS.filter((opt) => opt.value !== "multi").map((opt) => (
               <Button
                 key={opt.value}
                 type="button"

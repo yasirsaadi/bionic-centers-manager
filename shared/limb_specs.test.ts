@@ -1,14 +1,18 @@
 // **مواصفاتُ الطرف بحسب البتر** (ملاحظاتُ المالك ٢٠٢٦-١٠-١٠، §4.de). `npm run test:limb-specs` — قواعدُ خالصة بلا قاعدة.
 //
-// يحرس: (١) تحت الركبة بلا ركبة، والسليكونيُّ بلا قدمٍ ولا ركبةٍ ولا سوكيت، والعلويُّ بلا ركبةٍ ولا قدم؛ (٢) مبتورُ الطرفين خاناتٌ لكلّ جهة،
-// و«متماثلان» تُكتب مرّةً للطرفين؛ (٣) ولا يُخفى مكتوب؛ (٤) و«اشترى» يشترط ما يخصّ البترَ وحده — بجهاته؛ (٥) وأمرُ التصنيع لا يفقد خانة.
+// يحرس: (١) تحت الركبة بلا ركبة، والسليكونيُّ بلا قدمٍ ولا ركبةٍ ولا سوكيت، والعلويُّ بلا ركبةٍ ولا قدم وله الكفُّ (والمرفقُ فوق المرفق)؛
+// (٢) مبتورُ الطرفين خاناتٌ لكلّ جهة، و«متماثلان» تُكتب مرّةً للطرفين؛ (٣) ولا يُخفى مكتوب؛ (٤) و«اشترى» يشترط ما يخصّ البترَ وحده — بجهاته؛
+// (٥) وأمرُ التصنيع لا يفقد خانة؛ (٦) و«متعدد» طرفاً طرفاً، و«يُصنع في هذا الطلب» يحصر الشرطَ في المصنوع.
 import {
-  KNEE_LEVELS, LIMB_SPEC_KEYS, limbSlots, limbSlotsOfSite, limbSpecFlat, limbSpecKeys, limbSpecValue, limbSpecView, normalizeLimbSpecs,
-  slotsCanShare, splitSpecKey,
+  ELBOW_LEVELS, KNEE_LEVELS, LEGACY_LIMB_SPEC_KEYS, LIMB_SPEC_KEYS, isSlotKey, limbSlots, limbSlotsOfSite, limbSpecFlat, limbSpecKeys, limbSpecValue,
+  limbSpecView, normalizeLimbSpecs, slotKeyLabel, slotTitle, slotsCanShare, splitSpecKey,
 } from "./limb_specs";
 import { cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleSpecFieldsFor, saleSpecsMessage, specResolved, NOT_APPLICABLE } from "./device_specs";
 import { sheetSpecRows, sheetSpecView } from "./intake_sheet_view";
-import { buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, SILICONE_PARTS, type AmputationParts } from "./case_fields";
+import {
+  buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, SILICONE_PARTS, UPPER_AMPUTATION_DETAILS, type AmputationLimb, type AmputationParts,
+} from "./case_fields";
+import { checkAmputationParts } from "./patient_required";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -20,7 +24,12 @@ function same(msg: string, got: unknown, expected: unknown) {
     `expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(got)}`);
 }
 
+//  **الخمسُ القديمة** — لطرفٍ مجهول المستوى أو بلا بتر. و`SEVEN` خاناتُ الورقة كلُّها بعد خانتَي العلويّ (§4.de).
 const ALL = ["prostheticType", "kneeJointType", "footType", "socketType", "siliconType"];
+const SEVEN = ["prostheticType", "kneeJointType", "footType", "elbowType", "handType", "socketType", "siliconType"];
+const UPPER_BE = ["prostheticType", "handType", "socketType", "siliconType"];
+const UPPER_AE = ["prostheticType", "elbowType", "handType", "socketType", "siliconType"];
+const SIL = ["prostheticType", "siliconType"];
 const NO_KNEE = ["prostheticType", "footType", "socketType", "siliconType"];
 const BK: AmputationParts = { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة" };
 const AK: AmputationParts = { amputationType: "single", singleLimb: "lower", singleSide: "left", singleDetail: "فوق الركبة" };
@@ -28,26 +37,33 @@ const DBL = (r: string, l: string): AmputationParts => ({ amputationType: "doubl
 const site = (p: AmputationParts) => buildAmputationSite(p);
 
 console.log("\n── أ. ما يخصّ الطرفَ بمستواه ──");
-same("أ.١ الخمسُ بترتيب الورقة", LIMB_SPEC_KEYS, ALL);
+//  كانت «الخمسُ بترتيب الورقة»؛ وقرارُ المالك ٢٠٢٦-١٠-١٠ («نعم» لخانتَي «نوع الكف / اليد» و«نوع المرفق») جعلها سبعاً — والخمسُ القديمة باقيةٌ للمجهول.
+same("أ.١ السبعُ بترتيب الورقة، والخمسُ القديمة بترتيبها", [LIMB_SPEC_KEYS, LEGACY_LIMB_SPEC_KEYS], [SEVEN, ALL]);
 same("أ.٢ **تحت الركبة بلا ركبة** — وسايمز وجوبارت مثلُه",
   [limbSpecKeys("lower", "تحت الركبة"), limbSpecKeys("lower", "سايمز"), limbSpecKeys("lower", "جوبارت")], [NO_KNEE, NO_KNEE, NO_KNEE]);
 same("أ.٣ وخلالَ الركبة وفوقها وخلالَ الحوض بالركبة", KNEE_LEVELS.map((l) => limbSpecKeys("lower", l)), [ALL, ALL, ALL]);
 check(LOWER_AMPUTATION_DETAILS.every((l) => KNEE_LEVELS.includes(l) || !limbSpecKeys("lower", l).includes("kneeJointType")),
   "أ.٤ كلُّ مستوى سفليٍّ في القائمة محسوم: ركبةٌ لما فوق الساق وحده");
-same("أ.٥ **العلويُّ بلا ركبةٍ ولا قدم**", limbSpecKeys("upper", "تحت المرفق"), ["prostheticType", "socketType", "siliconType"]);
+//  كانت «نوع/سوكيت/سيليكون» وحدها؛ وبقرار المالك (§4.de) صار للعلويّ «نوع الكف / اليد» دائماً و«نوع المرفق» لما فوق المرفق.
+same("أ.٥ **العلويُّ بلا ركبةٍ ولا قدم، وله الكفّ** — تحت المرفق بلا مرفق",
+  [limbSpecKeys("upper", "تحت المرفق"), limbSpecKeys("upper", "اصبع"), limbSpecKeys("upper", "خلال الرسغ")], [UPPER_BE, UPPER_BE, UPPER_BE]);
+same("أ.٥ب **وخلالَ المرفق وفوقه وخلالَ الكتف بالمرفق**، والمستوى المجهول بالمرفق (لا يُخفى تخميناً)",
+  [...ELBOW_LEVELS.map((l) => limbSpecKeys("upper", l)), limbSpecKeys("upper", "")], [UPPER_AE, UPPER_AE, UPPER_AE, UPPER_AE]);
+check(UPPER_AMPUTATION_DETAILS.every((l) => limbSpecKeys("upper", l).includes("elbowType") === ELBOW_LEVELS.includes(l)),
+  "أ.٥ج كلُّ مستوى علويٍّ في القائمة محسوم: مرفقٌ لما فوق الساعد وحده");
 same("أ.٦ **والسليكونيُّ التعويضيّ نوعُه وسيليكونُه** — لا قدمَ ولا ركبةَ ولا سوكيت", limbSpecKeys("silicone", "اصبع"), ["prostheticType", "siliconType"]);
 same("أ.٧ **والمجهولُ لا يُخفي شيئاً** (مستوى لم يُختر، أو نصٌّ قديم، أو بلا بتر)",
   [limbSpecKeys("lower", ""), limbSpecKeys("lower", "نصٌّ حرّ"), limbSpecKeys(null, null)], [ALL, ALL, ALL]);
 
 console.log("\n── ب. الطرفان ──");
 same("ب.١ أحاديٌّ وسليكونيٌّ ومجهول ⟵ طرفٌ واحد بلا جهة",
-  [limbSlots(BK).map((s) => s.side), limbSlots({ amputationType: "silicone", siliconePart: "اذن" }).map((s) => [s.side, s.kind]), limbSlots({}).length],
+  [limbSlots(BK).map((s) => s.key), limbSlots({ amputationType: "silicone", siliconePart: "اذن" }).map((s) => [s.key, s.kind]), limbSlots({}).length],
   [[null], [[null, "silicone"]], 1]);
 same("ب.٢ **ثنائيٌّ سفليّ ⟵ يمين ثمّ يسار، لكلٍّ مستواه وخاناتُه**",
-  limbSlots(DBL("تحت الركبة", "فوق الركبة")).map((s) => [s.side, s.level, s.keys.length]), [["right", "تحت الركبة", 4], ["left", "فوق الركبة", 5]]);
+  limbSlots(DBL("تحت الركبة", "فوق الركبة")).map((s) => [s.key, s.level, s.keys.length]), [["right", "تحت الركبة", 4], ["left", "فوق الركبة", 5]]);
 same("ب.٣ و«علوي وسفلي» لكلّ جهةٍ طرفُها",
   limbSlots({ amputationType: "double", doubleLimbType: "both", bothRightLimb: "upper", bothRightDetail: "تحت المرفق", bothLeftLimb: "lower", bothLeftDetail: "تحت الركبة" })
-    .map((s) => [s.side, s.kind, s.keys]), [["right", "upper", ["prostheticType", "socketType", "siliconType"]], ["left", "lower", NO_KNEE]]);
+    .map((s) => [s.key, s.kind, s.keys]), [["right", "upper", UPPER_BE], ["left", "lower", NO_KNEE]]);
 same("ب.٤ **«متماثلان» حين تتطابق الخانات** — تحت الركبة مع سايمز نعم، ومع فوقها لا، وعلويٌّ مع سفليّ لا",
   [slotsCanShare(limbSlots(DBL("تحت الركبة", "تحت الركبة"))), slotsCanShare(limbSlots(DBL("تحت الركبة", "سايمز"))),
     slotsCanShare(limbSlots(DBL("تحت الركبة", "فوق الركبة"))), slotsCanShare(limbSlots(BK))], [true, true, false, false]);
@@ -62,12 +78,12 @@ same("ب.٧ وعمودُ ملفّ المريض يقرأ الطرفين كامل�
 //  **ثنائيٌّ يحتاج أطرافاً سليكونية** (سؤالُ المالك ٢٠٢٦-١٠-١٠): السليكونيُّ «كلا الجانبين» طرفان، و«قدم» في القائمة.
 const SIL2 = (part: string): AmputationParts => ({ amputationType: "silicone", siliconePart: part, siliconeSide: "both" });
 same("ب.٨ **سليكونيٌّ «كلا الجانبين» ⟵ طرفان سليكونيّان بجهتيهما** — وخاناتُهما متطابقة فـ«متماثلان» متاح",
-  [limbSlots(SIL2("اصبع")).map((s) => [s.side, s.kind, s.level, s.keys]), slotsCanShare(limbSlots(SIL2("اصبع")))],
+  [limbSlots(SIL2("اصبع")).map((s) => [s.key, s.kind, s.level, s.keys]), slotsCanShare(limbSlots(SIL2("اصبع")))],
   [[["right", "silicone", "اصبع", ["prostheticType", "siliconType"]], ["left", "silicone", "اصبع", ["prostheticType", "siliconType"]]], true]);
 same("ب.٩ وبجهةٍ واحدة طرفٌ واحد، **والأنفُ بلا جهة طرفٌ واحد** ولو وصل «كلاهما»",
   [limbSlots({ amputationType: "silicone", siliconePart: "اصبع", siliconeSide: "left" }).length, limbSlots(SIL2("انف")).length], [1, 1]);
 same("ب.١٠ **و«قدم» في قائمة السليكوني** — وتُقرأ من سلسلتها", [SILICONE_PARTS.includes("قدم"),
-  limbSlotsOfSite(site(SIL2("قدم"))).map((s) => [s.side, s.kind, s.level])], [true, [["right", "silicone", "قدم"], ["left", "silicone", "قدم"]]]);
+  limbSlotsOfSite(site(SIL2("قدم"))).map((s) => [s.key, s.kind, s.level])], [true, [["right", "silicone", "قدم"], ["left", "silicone", "قدم"]]]);
 
 console.log("\n── ج. ما يُعرض ──");
 const rowsOf = (specs: Record<string, unknown>) => sheetSpecRows({ serviceType: "prosthetic", specs: specs as Record<string, string> }).map((r) => [r.key, r.value]);
@@ -160,7 +176,8 @@ same("هـ.٥ **ومتماثلان ⟵ خاناتُهما مرّةً «للطر�
   [["نوع الطرف الصناعي — للطرفين", "نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"], ["socketType", "siliconType"]]);
 same("هـ.٦ نافذةُ البيع تقبل خاناتِ الجهات — وتردّ ما ليس خانة",
   cleanSaleSpecsInput({ "footType:left": " مرنة ", "footSize:left": "42", "kneeJointType:middle": "x", socketType: "س" }, "prosthetic"),
-  { socketType: "س", "footType:left": "مرنة" });
+  //  بترتيب الدخل (صار المنظِّفُ يمرّ على الدخل نفسِه ليقبل مفاتيحَ «متعدد» — §4.de)؛ والمقبولُ والمردودُ كما كانا.
+  { "footType:left": "مرنة", socketType: "س" });
 same("هـ.٧ **وكلمةُ الطبيب «للطرفين» لا تكتب فوقها جهةٌ حُفظت عند البيع**",
   [mergeDeviceSpecs({ footType: "كاربون" }, { "footType:left": "خشب", "socketType:left": "س" }), specResolved({ footType: "كاربون" }, "footType:left")],
   [{ footType: "كاربون", "socketType:left": "س" }, "كاربون"]);
@@ -172,6 +189,100 @@ same("هـ.١٠ وتغييرُ «اصبع» يمين إلى «كلا الجان�
   { ...SIL2("اصبع"), "prostheticType:right": "إصبع", "prostheticType:left": "إصبع", limbsIdentical: false });
 check(saleSpecsMessage("prosthetic", ["kneeJointType:left", "socketType"]).includes("نوع مفصل الركبة — يسار، نوع السوكيت"),
   "هـ.٨ والرسالةُ تسمّي الخانةَ بجهتها");
+
+console.log("\n── و. «متعدد» — طرفاً طرفاً، و«يُصنع في هذا الطلب» ──");
+//  حالتا المالك (٢٠٢٦-١٠-١٠، §4.de): «يسار تحت الركبة ويحتاج طرفاً تحت الركبة، ويسار خلال الكف ويحتاج كفاً سليكونية» و«اليمين إصبع واليسار كفّ كاملة».
+const MULTI = (...limbs: AmputationLimb[]): AmputationParts => ({ amputationType: "multi", limbs });
+const L_BK: AmputationLimb = { region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" };
+const L_HAND_SIL: AmputationLimb = { region: "upper", side: "left", kind: "silicone", detail: "كف" };
+const R_FINGER_SIL: AmputationLimb = { region: "upper", side: "right", kind: "silicone", detail: "اصبع" };
+const CASE1 = MULTI(L_BK, L_HAND_SIL);
+const CASE2 = MULTI(R_FINGER_SIL, L_HAND_SIL);
+same("و.١ **يسارٌ تحت الركبة + كفٌّ سليكونية يسار ⟵ طرفان من الجهة نفسِها**، لكلٍّ خاناتُه (لا ركبةَ للأوّل، ولا قدمَ ولا سوكيتَ للثاني)",
+  [limbSlots(CASE1).map((x) => [x.key, x.kind, x.level, x.keys]), slotsCanShare(limbSlots(CASE1))],
+  [[["left-lower", "lower", "تحت الركبة", NO_KNEE], ["left-upper", "silicone", "كف", SIL]], false]);
+same("و.٢ **إصبعٌ سليكونيّ يمين + كفٌّ سليكونية يسار ⟵ طرفان سليكونيّان**، وخاناتُهما متطابقة فـ«متماثلة» متاحةٌ لمن أرادها",
+  [limbSlots(CASE2).map((x) => [x.key, x.kind, x.level, x.keys]), slotsCanShare(limbSlots(CASE2))],
+  [[["right-upper", "silicone", "اصبع", SIL], ["left-upper", "silicone", "كف", SIL]], true]);
+same("و.٣ والبترُ يُقرأ من سلسلته المركّبة نفسِها، وعنوانُ كلّ طرفٍ يقول موضعَه",
+  [limbSlotsOfSite(site(CASE1)).map(slotTitle), limbSlotsOfSite(site(CASE2)).map(slotTitle)],
+  [["يسار سفلي — تحت الركبة", "يسار علوي — كف"], ["يمين علوي — اصبع", "يسار علوي — كف"]]);
+const FACE3 = MULTI({ region: "upper", side: "right", kind: "prosthetic", detail: "فوق المرفق" }, { region: "face", kind: "silicone", detail: "انف" },
+  { region: "face", side: "left", kind: "silicone", detail: "اذن" });
+same("و.٤ **ثلاثةُ أطرافٍ بقطع الوجه** — العلويُّ فوق المرفق بالمرفق والكفّ، والأنفُ بلا جهة، والأذنُ بجهتها",
+  limbSlots(FACE3).map((x) => [x.key, x.label, x.keys]),
+  [["right-upper", "يمين علوي", UPPER_AE], ["mid-nose", "أنف", SIL], ["left-ear", "أذن يسار", SIL]]);
+same("و.٥ **ولا طرفان في موضعٍ واحد** (المكرَّرُ يُطوى)، وطرفٌ لم يكتمل لا يُعدّ، وطرفٌ واحدٌ مكتمل ⟵ خاناتٌ بلا مفتاح طرف",
+  [limbSlots(MULTI(L_BK, { ...L_BK, detail: "فوق الركبة" }, L_HAND_SIL)).map((x) => x.key), limbSlots(MULTI(L_BK, { region: "upper" })).map((x) => [x.key, x.keys])],
+  [["left-lower", "left-upper"], [[null, NO_KNEE]]]);
+same("و.٦ **مفاتيحُ الأطراف**: صالحةٌ تُقبل وعنوانُها عربيّ، والمخترعةُ تُردّ",
+  [["left-lower", "right-upper", "left-ear", "right-orbit", "mid-nose", "right", "left"].map((k) => [isSlotKey(k), slotKeyLabel(k)]),
+    ["left-hand", "mid-ear", "middle", "right-nose", "x"].map(isSlotKey), splitSpecKey("handType:left-upper"), splitSpecKey("x:y")],
+  [[[true, "يسار سفلي"], [true, "يمين علوي"], [true, "أذن يسار"], [true, "محجر عين يمين"], [true, "أنف"], [true, "يمين"], [true, "يسار"]],
+    [false, false, false, false, false], { base: "handType", side: "left-upper" }, { base: "x:y", side: null }]);
+
+const c1 = { amputationSite: site(CASE1) };
+same("و.٧ **«اشترى» للحالة الأولى ⟵ خاناتُ كلّ طرفٍ بعنوانه**، بلا ركبةٍ ولا قدمٍ للكفّ السليكونية",
+  saleSpecFieldsFor("prosthetic", c1).map((f) => [f.key, f.label]),
+  [["prostheticType:left-lower", "نوع الطرف الصناعي — يسار سفلي"], ["socketType:left-lower", "نوع السوكيت — يسار سفلي"],
+    ["footType:left-lower", "نوع القدم — يسار سفلي"], ["siliconType:left-lower", "نوع السليكون — يسار سفلي"],
+    ["prostheticType:left-upper", "نوع الطرف الصناعي — يسار علوي"], ["siliconType:left-upper", "نوع السليكون — يسار علوي"]]);
+same("و.٨ **وعلويٌّ فوق المرفق ⟵ المرفقُ والكفُّ مطلوبان بعنوانهما**",
+  saleSpecFieldsFor("prosthetic", { amputationSite: site(FACE3) }).filter((f) => f.key.endsWith(":right-upper")).map((f) => f.label),
+  ["نوع الطرف الصناعي — يمين علوي", "نوع السوكيت — يمين علوي", "نوع المرفق — يمين علوي", "نوع الكف / اليد — يمين علوي", "نوع السليكون — يمين علوي"]);
+const notMadeHand = { ...c1, limbsNotMade: "left-upper" };
+const nmView = limbSpecView(notMadeHand);
+same("و.٩ **«يُصنع في هذا الطلب»: الكفُّ تُصنع لاحقاً ⟵ لا يُطلب لها شيءٌ الآن**، وتُذكر «لا يُصنع» في العرض",
+  [saleSpecFieldsFor("prosthetic", notMadeHand).map((f) => f.key), nmView.slots.map((x) => x.key), nmView.notMadeSlots.map(slotTitle), nmView.allSlots.length],
+  [["prostheticType:left-lower", "socketType:left-lower", "footType:left-lower", "siliconType:left-lower"], ["left-lower"], ["يسار علوي — كف"], 2]);
+same("و.١٠ وما ينقص بطرفه — والعامُّ يسدّ المصنوع",
+  missingSaleSpecs("prosthetic", { ...notMadeHand, prostheticType: "طرف تحت الركبة", "footType:left-lower": "كاربون" }),
+  ["socketType:left-lower", "siliconType:left-lower"]);
+const nm = N({ ...CASE1, prostheticType: "طرف", siliconType: "س", "prostheticType:left-upper": "كف سليكون", limbsNotMade: ["left-upper", "right-lower"] });
+same("و.١١ **وصفةُ الطبيب**: العامُّ للمصنوع وحده، وما كُتب للمؤجَّل يبقى، ومفتاحٌ لا طرفَ له يسقط من «لا يُصنع»",
+  [nm["prostheticType:left-lower"], nm["siliconType:left-lower"], nm["prostheticType:left-upper"], "siliconType:left-upper" in nm, "prostheticType" in nm, nm.limbsNotMade],
+  ["طرف", "س", "كف سليكون", false, false, ["left-upper"]]);
+same("و.١٢ **ولا يُؤجَّل الكلّ** — «لا يُصنع» للطرفين معاً يسقط فيُصنعان",
+  "limbsNotMade" in N({ ...CASE1, limbsNotMade: ["left-lower", "left-upper"] }), false);
+//  ثلاثةُ أطراف: ساقان تحت الركبة ويدٌ تُصنع لاحقاً — والمتماثلُ بين المصنوعَين وحدهما.
+const THREE = MULTI({ region: "lower", side: "right", kind: "prosthetic", detail: "تحت الركبة" }, L_BK, R_FINGER_SIL);
+const twoMade = N({ ...THREE, limbsIdentical: true, limbsNotMade: ["right-upper"], "footType:left-lower": "كاربون", prostheticType: "طرف" });
+same("و.١٣ **«متماثلة» بين المصنوعة وحدها** — ساقان تحت الركبة متماثلتان والإصبعُ مؤجَّل ⟵ مرّةً للساقين",
+  [twoMade.footType, twoMade.prostheticType, Object.keys(twoMade).some((k) => k.includes(":")), twoMade.limbsIdentical],
+  ["كاربون", "طرف", false, true]);
+const twoMadeSpecs = { amputationSite: site(THREE), limbsNotMade: "right-upper", prostheticType: "طرف", footType: "كاربون" };
+same("و.١٤ وعرضُها «متماثلة» بطرفين، و«اشترى» يقول «— للطرفين»",
+  [limbSpecView(twoMadeSpecs).mode, limbSpecView(twoMadeSpecs).slots.length, saleSpecFieldsFor("prosthetic", twoMadeSpecs).map((f) => f.label)],
+  ["identical", 2, ["نوع الطرف الصناعي — للطرفين", "نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"]]);
+same("و.١٥ **قدمٌ سليكونية مع ساقين تحت الركبة لا تتماثل معهما ⟵ لكلّ طرفٍ خاناتُه**",
+  saleSpecFieldsFor("prosthetic", { amputationSite: site(MULTI(L_BK, { ...L_BK, side: "right" }, { region: "lower", side: "right", kind: "silicone", detail: "قدم" })) })
+    .map((f) => f.key).slice(0, 2), ["prostheticType:left-lower", "socketType:left-lower"]);
+same("و.١٥ب **وثلاثُ قطعٍ سليكونية (إصبعٌ وكفٌّ وقدم) خاناتُها متطابقة ⟵ «— للأطراف كلّها»**",
+  saleSpecFieldsFor("prosthetic", { amputationSite: site(MULTI(R_FINGER_SIL, L_HAND_SIL, { region: "lower", side: "left", kind: "silicone", detail: "قدم" })),
+    prostheticType: "سليكون", siliconType: "طبي" }).map((f) => f.label),
+  ["نوع الطرف الصناعي — للأطراف كلّها", "نوع السليكون — للأطراف كلّها"]);
+const mSplit = sheetSpecView({ serviceType: "prosthetic", specs: { ...c1, "prostheticType:left-lower": "تحت ركبة", "prostheticType:left-upper": "كف سليكون",
+  "footType:left-lower": "كاربون", "siliconType:left-upper": "طبي" } });
+same("و.١٦ **العرضُ لكلّ طرفٍ قيمتُه**، والقدمُ للسفليّ وحده (العلويُّ «لا ينطبق»)",
+  [mSplit.mode, mSplit.rows.map((r) => [r.key, r.value, r.sides?.map((x) => [x.side, x.applicable])])],
+  ["split", [
+    ["prostheticType", "يسار سفلي: تحت ركبة · يسار علوي: كف سليكون", [["left-lower", true], ["left-upper", true]]],
+    ["footType", "يسار سفلي: كاربون", [["left-lower", true], ["left-upper", false]]],
+    ["socketType", null, [["left-lower", true], ["left-upper", false]]],
+    ["siliconType", "يسار سفلي: — · يسار علوي: طبي", [["left-lower", true], ["left-upper", true]]],
+  ]]);
+same("و.١٧ وعمودُ ملفّ المريض وبطاقةُ الأمر يقرآن الأطرافَ كلَّها، ونافذةُ البيع تقبل مفاتيحَها وتردّ المخترَع",
+  [limbSpecFlat({ "footType:left-lower": "كاربون", "handType:left-upper": "x" }, "footType"),
+    cleanSaleSpecsInput({ "handType:left-upper": " يد ", "elbowType:right-upper": "مرفق", "footType:left-hand": "x", "handType": "كف" }, "prosthetic")],
+  ["يسار سفلي: كاربون", { "handType:left-upper": "يد", "elbowType:right-upper": "مرفق", handType: "كف" }]);
+
+console.log("\n── ز. فحصُ «متعدد» عند الحفظ ──");
+const ok = (p: AmputationParts) => checkAmputationParts(p).ok;
+same("ز.١ **الحالتان مكتملتان ⟵ تُقبلان**، وقطعُ الوجه، والأنفُ بلا جهة", [ok(CASE1), ok(CASE2), ok(FACE3)], [true, true, true]);
+same("ز.٢ **ويُردّ**: طرفٌ واحد (له «احادي»)، ومكرَّرُ الموضع، وبلا جهة، وبلا مستوى، ومستوى لا يخصّ نوعَه (سليكونيٌّ «تحت الركبة»)، وبلا نوع",
+  [ok(MULTI(L_BK)), ok(MULTI(L_BK, { ...L_BK, detail: "فوق الركبة" })), ok(MULTI(L_BK, { ...L_HAND_SIL, side: "" })), ok(MULTI(L_BK, { ...L_HAND_SIL, detail: "" })),
+    ok(MULTI(L_BK, { region: "lower", side: "right", kind: "silicone", detail: "تحت الركبة" })), ok(MULTI(L_BK, { region: "upper", side: "right", detail: "تحت المرفق" }))],
+  [false, false, false, false, false, false]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);

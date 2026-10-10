@@ -310,10 +310,14 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
           {/*  **خاناتُ الطرف بحسب البتر المختار** (§4.de): تحت الركبة بلا ركبة، والسليكونيُّ نوعُه وسيليكونُه؛ ولمبتور الطرفين سطرٌ يقول إنها لكلّ طرف. */}
           {(isProsthetic || f.department === "") ? (
             <>
-              {isProsthetic && limbSlots(f.amp).length === 2 && (
-                <SheetRow label="الطرفان"><LockedCell text="لكلّ طرفٍ مواصفاتُه — أو مرّةً للطرفين إن تماثلا — يُملأ عند المعاينة" testId="locked-limbs" /></SheetRow>
+              {isProsthetic && limbSlots(f.amp).length >= 2 && (
+                <SheetRow label={limbSlots(f.amp).length > 2 ? "الأطراف" : "الطرفان"}>
+                  <LockedCell text={limbSlots(f.amp).length > 2
+                    ? "لكلّ طرفٍ مواصفاتُه — أو مرّةً للأطراف إن تماثلت — ويحدّد الطبيبُ ما يُصنع منها في هذا الطلب، عند المعاينة"
+                    : "لكلّ طرفٍ مواصفاتُه — أو مرّةً للطرفين إن تماثلا — يُملأ عند المعاينة"} testId="locked-limbs" />
+                </SheetRow>
               )}
-              {SHEET_DEVICE_ROWS.filter((r) => !isProsthetic || limbSlots(f.amp).some((sl) => sl.keys.includes(r.key))).map((r) => (
+              {SHEET_DEVICE_ROWS.filter((r) => limbSlots(isProsthetic ? f.amp : null).some((sl) => sl.keys.includes(r.key))).map((r) => (
                 <SheetRow key={r.key} label={r.label} testId={`locked-spec-${r.key}`}><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
               ))}
             </>
