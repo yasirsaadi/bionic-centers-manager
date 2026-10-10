@@ -6,7 +6,8 @@
 //       والمراجعُ بعنوانٍ وجهةٍ وسنة وروابطُ آمنة؛ ونصوصُ البروتوكول في حدّ المحرّر؛ **وترحيلُ ١١٩ لم يتغيّر حرفٌ منه** بتوسيع أداة البناء.
 //   أ — الترحيلُ ١٢٤ على القاعدة: الجرعةُ والنطاقاتُ والروابطُ والأجهزةُ واستعمالُها والمراجع، ولا تكرار، وتعديلُ الإنسان باقٍ، والمعتمَدُ بلا مراحل يعود
 //       مسوّدة، والخططُ المفتوحة تأخذ نسختَها والموقوفةُ لا، وألمُ الظهر المزمن لا يُمَسّ.
-//   ب — من الأبواب الحقيقية: صفحةُ البروتوكول وموجزُ المساعد يحملانه، والخطّةُ الجديدة تنسخ مراحلَه وعددَه وتأخذ الأساسيَّ وحده، والصورُ الجديدة مطلوبة.
+//   ب — من الأبواب الحقيقية: صفحةُ البروتوكول وموجزُ المساعد يحملانه، والخطّةُ الجديدة تنسخ مراحلَه وعددَه وتأخذ الأساسيَّ وحده، وكلُّ صورةٍ
+//       في مكانها: ما وصل معروضٌ وما لم يصل في «الصور المطلوبة» (وصورُ الثاني وصلت ٢٠٢٦-١٠-١٠).
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -22,6 +23,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { DEVICE_PARAM_FIELDS, normalizeDeviceParams, parseExerciseBody, parsePhasesBody } from "@shared/physio_exercises";
 import { normalizeDose } from "@shared/physio_protocols";
+import { EXERCISE_IMAGE_FILES } from "@shared/physio_exercise_media";
 import type { ExerciseSeed, ProtocolContentSeed } from "./migrations/physio_content";
 import * as m119 from "./migrations/119_physio_lbp_chronic_detail";
 import * as m124 from "./migrations/124_physio_lbp_acute_detail";
@@ -293,9 +295,12 @@ async function main() {
       [200, 12, 6, P.phases.map((ph) => [ph.sessionFrom, ph.sessionTo, ph.exercises.length]), ["exercise"], P.devices.filter((d) => d.centreUse === "adjunct").length]);
     const missing = await call("GET", "/api/physio/exercises/missing-images", S.sup);
     const keys = (Array.isArray(missing.json) ? missing.json : []).map((m: any) => m.key);
-    const newKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **والصورُ الستّ الجديدة في «الصور المطلوبة»** بكلمات بحثها — منها يبحث المالك",
-      [missing.status, newKeys.filter((k) => !keys.includes(k)), newKeys.length], [200, [], 6]);
+    //  ما وصل ملفُّه (`shared/physio_exercise_media.ts`) يُعرض ويخرج من القائمة، وما لم يصل فيها بكلمات بحثه — منها يبحث المالك.
+    const misplaced = CONTENT.flatMap((c) => c.EXERCISES.flatMap((e) => e.images.map((i) => i.key)))
+      .filter((k) => Boolean(EXERCISE_IMAGE_FILES[k]) === keys.includes(k));
+    const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها**",
+      [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])], [200, [], 6, []]);
   } finally {
     await cleanup();
     httpServer.close();
