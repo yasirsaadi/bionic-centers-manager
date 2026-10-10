@@ -104,9 +104,11 @@ async function main() {
     [r1.traction?.[0], r1.tecar?.[0], r1.laser?.[0]], ["core", "adjunct", "not_used"]);
   await q(`UPDATE physio_protocol_devices SET centre_use = 'adjunct' WHERE device_id = (SELECT id FROM devices WHERE code = 'traction')
       AND protocol_id = (SELECT id FROM physio_protocols WHERE code = $1)`, [LBP]);
-  //  وألمُ الظهر الحادّ يكتب استعمالَه ترحيلُه هو (١٢٤ — البروتوكولُ الثاني بالقالب الكامل، §4.dg)؛ والقصدُ هنا أنّ ١٢٢ لا يكتب لغير المزمن.
+  //  وكلُّ بروتوكولٍ مفصَّل (بمراحل) يكتب استعمالَه ترحيلُه هو — ١٢٤ للحادّ و١٢٥ للرقبة والقادمُ مثلُهما (§4.dg · §4.dh)؛ والقصدُ هنا أنّ ١٢٢ لا يكتب
+  //  لغير المزمن، فالباقيةُ بلا مراحل وحدها تُعدّ.
   const others = (await q(`SELECT count(*)::int AS n FROM physio_protocol_devices pd JOIN physio_protocols p ON p.id = pd.protocol_id
-      WHERE p.code <> ALL($1::text[]) AND pd.centre_use IS NOT NULL`, [[LBP, "lbp-acute-adult"]])).rows[0].n;
+      WHERE p.code <> $1 AND pd.centre_use IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM physio_protocol_phases ph WHERE ph.protocol_id = p.id)`, [LBP])).rows[0].n;
   same("أ.٤ **والبروتوكولاتُ الباقية لا يُكتب لها استعمال** — تبقى مشتقّةً من درجتها حتى يقرّر سليم", others, 0);
 
   await cleanup();

@@ -1,4 +1,4 @@
-// **البروتوكولاتُ المفصَّلة — المحتوى كلُّه بقواعد الشاشة، والقالبُ نفسُه لكلّ بروتوكول** (ترحيلا ١١٩ و١٢٤، §4.cx · §4.dd · §4.dg).
+// **البروتوكولاتُ المفصَّلة — المحتوى كلُّه بقواعد الشاشة، والقالبُ نفسُه لكلّ بروتوكول** (ترحيلات ١١٩ و١٢٤ و١٢٥، §4.cx · §4.dd · §4.dg · §4.dh).
 // `npm run test:physio-protocol-content` — حيٌّ على النقاط الحقيقية (منفذ ٧٠٠٦، فرع ٨٩٥٥، مستخدمون ٨٩٥٦–٨٩٥٩). يحرس:
 //   ق — المحتوى قبل أن يصل القاعدة، **لكلّ ترحيل محتوى في `CONTENT`** (البروتوكولُ القادم يُضاف سطراً هنا فتحرسه القواعدُ نفسُها):
 //       كلُّ بطاقةٍ ومرحلةٍ يحفظها المحرّرُ كما هي بلا قصّ، كاملةً بالنسختين؛ رموزُ الصور فريدةٌ في المكتبة كلّها؛ كلُّ تمرينٍ في المراحل بطاقةٌ موجودة؛
@@ -6,8 +6,10 @@
 //       والمراجعُ بعنوانٍ وجهةٍ وسنة وروابطُ آمنة؛ ونصوصُ البروتوكول في حدّ المحرّر؛ **وترحيلُ ١١٩ لم يتغيّر حرفٌ منه** بتوسيع أداة البناء.
 //   أ — الترحيلُ ١٢٤ على القاعدة: الجرعةُ والنطاقاتُ والروابطُ والأجهزةُ واستعمالُها والمراجع، ولا تكرار، وتعديلُ الإنسان باقٍ، والمعتمَدُ بلا مراحل يعود
 //       مسوّدة، والخططُ المفتوحة تأخذ نسختَها والموقوفةُ لا، وألمُ الظهر المزمن لا يُمَسّ.
+//   ج — **كلُّ بروتوكولٍ بعد الثاني على القاعدة بالقواعد نفسِها** (سطرُه في `CONTENT` يكفي): الجرعةُ والنطاقاتُ والروابطُ والأجهزةُ والمراجع، والبطاقاتُ
+//       مسوّدات، ولا تكرار، والخطّةُ المفتوحة تأخذ نسختَها، وكلُّ بروتوكولٍ مفصَّلٍ غيره لا يُمَسّ.
 //   ب — من الأبواب الحقيقية: صفحةُ البروتوكول وموجزُ المساعد يحملانه، والخطّةُ الجديدة تنسخ مراحلَه وعددَه وتأخذ الأساسيَّ وحده، وكلُّ صورةٍ
-//       في مكانها: ما وصل معروضٌ وما لم يصل في «الصور المطلوبة» (وصورُ الثاني وصلت ٢٠٢٦-١٠-١٠).
+//       في مكانها: ما وصل معروضٌ وما لم يصل في «الصور المطلوبة» (وصورُ الثاني وصلت ٢٠٢٦-١٠-١٠)؛ وكلُّ بروتوكولٍ بعده بصفحته وخطّته (ب.٥).
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -27,6 +29,7 @@ import { EXERCISE_IMAGE_FILES } from "@shared/physio_exercise_media";
 import type { ExerciseSeed, ProtocolContentSeed } from "./migrations/physio_content";
 import * as m119 from "./migrations/119_physio_lbp_chronic_detail";
 import * as m124 from "./migrations/124_physio_lbp_acute_detail";
+import * as m125 from "./migrations/125_physio_neck_pain_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -39,9 +42,10 @@ function same(msg: string, got: unknown, expected: unknown) {
 }
 
 /** **ترحيلاتُ المحتوى بترتيبها** — `template: true` للقالب الكامل بعد ١٢٢ و١٢٣ (العدد والنطاقات والاستعمال). */
-const CONTENT: { name: string; EXERCISES: ExerciseSeed[]; PROTOCOL: ProtocolContentSeed; template: boolean }[] = [
-  { name: m119.name, EXERCISES: m119.EXERCISES, PROTOCOL: m119.PROTOCOL, template: false },
-  { name: m124.name, EXERCISES: m124.EXERCISES, PROTOCOL: m124.PROTOCOL, template: true },
+const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL: ProtocolContentSeed; template: boolean }[] = [
+  { name: m119.name, sql: m119.sql, EXERCISES: m119.EXERCISES, PROTOCOL: m119.PROTOCOL, template: false },
+  { name: m124.name, sql: m124.sql, EXERCISES: m124.EXERCISES, PROTOCOL: m124.PROTOCOL, template: true },
+  { name: m125.name, sql: m125.sql, EXERCISES: m125.EXERCISES, PROTOCOL: m125.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -241,6 +245,40 @@ async function main() {
   await q(m124.sql);
   same("أ.١٠ **وخطّةٌ على بروتوكولٍ آخر لا يمسّها** — نسخُ المراحل لخطط هذا البروتوكول وحده", (await planPhases(otherPlan)).phases, 0);
 
+  // ══ ج. كلُّ بروتوكولٍ بعد الثاني على القاعدة ══
+  //  القواعدُ نفسُها لكلّ بروتوكولٍ قادم — سطرُه في `CONTENT` يكفي، ولا يُكتب له قسمٌ هنا.
+  console.log("\n── ج. كلُّ بروتوكولٍ مفصَّلٍ بعد الثاني على القاعدة ──");
+  for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
+    const tag = c.name.slice(0, 3);
+    const P = c.PROTOCOL;
+    const others = CONTENT.filter((x) => x !== c).map((x) => x.PROTOCOL.code);
+    const othersBefore = await Promise.all(others.map(snapshot));
+    const pid = Number((await proto(P.code)).id);
+    const pt = await mkPatient(`قبل ${tag}`);
+    const open = Number((await q(`INSERT INTO physio_plans (patient_id, branch_id, protocol_id, title_ar, status)
+        VALUES ($1, $2, $3, 'خطّةٌ قبل التفصيل', 'pending') RETURNING id`, [pt, B1, pid])).rows[0].id);
+    await q(c.sql);
+    const r0 = await proto(P.code);
+    const links = P.phases.reduce((n, ph) => n + ph.exercises.length, 0);
+    const ranges = P.phases.map((ph, i) => [i + 1, ph.sessionFrom, ph.sessionTo]);
+    same(`ج.١/${tag} **الجرعةُ كما كُتبت** (${P.totalSessions} × ${P.spw} × ${P.minutes} — ${P.weeks} أسابيع)، والمراحلُ بنطاقاتها، والروابطُ والمراجعُ، ومسوّدة`,
+      [r0.total_sessions, r0.sessions_per_week, r0.duration_weeks, r0.session_minutes, r0.ranges, r0.links, r0.refs, r0.status],
+      [P.totalSessions, P.spw, P.weeks, P.minutes, ranges, links, P.refs.length, "draft"]);
+    same(`ج.٢/${tag} **والأجهزةُ بترتيبها واستعمالها ودليلها** — ولا جهازَ من الزرع القديم يبقى خارجها`,
+      r0.devices, P.devices.map((d) => [d.code, d.centreUse, d.evidence]));
+    const codes = c.EXERCISES.map((e) => e.code);
+    const cardRows = async () => (await q(`SELECT status FROM physio_exercises WHERE code = ANY($1::text[])`, [codes])).rows.map((r) => r.status);
+    same(`ج.٣/${tag} **والبطاقاتُ الجديدة (${codes.length}) مسوّدات**`, await cardRows(), codes.map(() => "draft"));
+    same(`ج.٤/${tag} **والخطّةُ المفتوحة قبله تأخذ نسختَها** من المراحل بنطاقاتها`,
+      await planPhases(open), { phases: P.phases.length, links, ranges: ranges.map(([, a, b]) => [a, b]) });
+    await q(c.sql);
+    const r1 = await proto(P.code);
+    same(`ج.٥/${tag} **والإعادةُ لا تكرّر شيئاً** (المراحلُ والروابطُ والأجهزةُ والبطاقاتُ ونسخةُ الخطّة)`,
+      [r1.ranges, r1.links, r1.devices.length, (await cardRows()).length, (await planPhases(open)).links], [r0.ranges, r0.links, P.devices.length, codes.length, links]);
+    same(`ج.٦/${tag} **وكلُّ بروتوكولٍ مفصَّلٍ غيره لم يُمَسّ** (${others.length})`,
+      (await Promise.all(others.map(snapshot))).map((x, i) => x === othersBefore[i]), others.map(() => true));
+  }
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
@@ -301,6 +339,21 @@ async function main() {
     const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها**",
       [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])], [200, [], 6, []]);
+    for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
+      const tag = c.name.slice(0, 3);
+      const P = c.PROTOCOL;
+      const id = Number((await proto(P.code)).id);
+      const pg = await call("GET", `/api/physio/protocols/${id}`, S.spec);
+      const made = await call("POST", `/api/patients/${await mkPatient(`باب ${tag}`)}/physio-plans`, S.spec, { protocolId: id });
+      const pl = (await call("GET", `/api/physio/plans/${made.json?.id}`, S.spec)).json;
+      const shape = P.phases.map((ph) => [ph.sessionFrom, ph.sessionTo, ph.exercises.length]);
+      same(`ب.٥/${tag} **ومن الأبواب**: صفحتُه بعدده ومراحله، والخطّةُ الجديدة عليه تنسخها وتأخذ الأساسيَّ وحده، والمساعدُ للاختيار`,
+        [pg.status, pg.json?.totalSessions, (pg.json?.phases ?? []).map((x: any) => [x.sessionFrom, x.sessionTo, x.exercises?.length]),
+          made.status, pl?.totalSessions, (pl?.phases ?? []).map((x: any) => [x.sessionFrom, x.sessionTo, x.exercises.length]),
+          (pl?.devices ?? []).map((d: any) => d.code), (pl?.protocolAdjuncts ?? []).length],
+        [200, P.totalSessions, shape, 200, P.totalSessions, shape,
+          P.devices.filter((d) => d.centreUse === "core").map((d) => d.code), P.devices.filter((d) => d.centreUse === "adjunct").length]);
+    }
   } finally {
     await cleanup();
     httpServer.close();
