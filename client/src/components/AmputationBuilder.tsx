@@ -4,9 +4,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  AMPUTATION_TYPE_OPTIONS, LOWER_AMPUTATION_DETAILS, UPPER_AMPUTATION_DETAILS,
-  SILICONE_PARTS, buildAmputationSite, type AmputationParts,
+  AMPUTATION_TYPE_OPTIONS, LIMB_KIND_OPTIONS, LIMB_REGION_OPTIONS, LOWER_AMPUTATION_DETAILS, UPPER_AMPUTATION_DETAILS,
+  SILICONE_PARTS, amputationLimbKey, buildAmputationSite, limbDetailOptions, limbNeedsSide, type AmputationLimb, type AmputationParts,
 } from "@shared/case_fields";
+import { Button } from "@/components/ui/button";
+import { Plus, X } from "lucide-react";
 import { checkAmputationParts } from "@shared/patient_required";
 
 // **بانِي تعريف البتر** — ضوابطٌ تبدأ فارغة، ومصدرٌ واحد لكلّ شاشة.
@@ -79,7 +81,8 @@ export function AmputationBuilder({ value, onChange, testIdPrefix = "amp" }: Pro
         {/*  **بلا قيمةٍ افتراضية**: النائبُ يقول «اختر» ولا يجيب نيابةً. */}
         <Select
           value={value.amputationType ?? ""}
-          onValueChange={(v) => onChange({ amputationType: v })}
+          //  «متعدد» يفتح على طرفين فارغين — يُضاف غيرُهما بزرّ.
+          onValueChange={(v) => onChange(v === "multi" ? { amputationType: v, limbs: [{}, {}] } : { amputationType: v })}
         >
           <SelectTrigger className="bg-white" data-testid={id("type")}>
             <SelectValue placeholder="اختر نوع البتر" />
@@ -233,6 +236,10 @@ export function AmputationBuilder({ value, onChange, testIdPrefix = "amp" }: Pro
         </div>
       )}
 
+      {value.amputationType === "multi" && (
+        <MultiLimbs limbs={Array.isArray(value.limbs) ? value.limbs : []} onLimbs={(limbs) => set({ limbs })} id={id} />
+      )}
+
       {value.amputationType === "silicone" && (
         <div className="space-y-4 p-3 border rounded-xl bg-slate-50/50">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -282,6 +289,75 @@ export function AmputationBuilder({ value, onChange, testIdPrefix = "amp" }: Pro
             />
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * **«متعدد» طرفاً طرفاً** (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de): لكلّ طرفٍ موضعُه (سفلي/علوي/الوجه) وجهتُه ونوعُه (طرف صناعي/سليكوني)
+ * ومستواه أو قطعتُه — فيُكتب علويٌّ وسفليٌّ من الجهة نفسِها، وطرفٌ عاديٌّ مع قطعةٍ سليكونية، وقطعتان سليكونيّتان مختلفتان، وثلاثةُ أطرافٍ
+ * أو أربعة. **ولا طرفان في موضعٍ واحد** (يُقال «مكرَّر» ويردّه الفحص).
+ */
+function MultiLimbs({ limbs, onLimbs, id }: { limbs: AmputationLimb[]; onLimbs: (l: AmputationLimb[]) => void; id: (k: string) => string }) {
+  const put = (i: number, patch: Partial<AmputationLimb>) => onLimbs(limbs.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const keys = limbs.map((l) => amputationLimbKey(l));
+  return (
+    <div className="space-y-2 p-3 border rounded-xl bg-slate-50/50" data-testid={id("multi")}>
+      <p className="text-xs text-muted-foreground">
+        أضف كلَّ طرفٍ مبتور: موضعَه وجهتَه ونوعَه ومستواه — علويٌّ وسفليٌّ من الجهة نفسها، وطرفٌ عاديٌّ مع قطعةٍ سليكونية، وثلاثةُ أطرافٍ أو أربعة.
+      </p>
+      {limbs.map((l, i) => {
+        const dup = keys[i] !== null && keys.indexOf(keys[i]) !== i;
+        return (
+          <div key={i} className={"rounded-lg border bg-white p-2 space-y-2" + (dup ? " border-red-400" : "")} data-testid={id(`multi-limb-${i}`)}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold">الطرف {i + 1}</span>
+              {/*  «متعدد» طرفان فأكثر — وما دونه «احادي» أو «اطراف سليكونية». */}
+              {limbs.length > 2 && (
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1"
+                  onClick={() => onLimbs(limbs.filter((_, j) => j !== i))} data-testid={id(`multi-remove-${i}`)}>
+                  <X className="w-3.5 h-3.5" /> إزالة
+                </Button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <Select value={l.region ?? ""}
+                onValueChange={(v) => put(i, { region: v, kind: v === "face" ? "silicone" : l.region === "face" ? undefined : l.kind, detail: "" })}>
+                <SelectTrigger className="bg-white" data-testid={id(`multi-region-${i}`)}><SelectValue placeholder="الموضع" /></SelectTrigger>
+                <SelectContent>{LIMB_REGION_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+              </Select>
+              {l.region !== "face" && (
+                <Select value={l.kind ?? ""} onValueChange={(v) => put(i, { kind: v, detail: "" })}>
+                  <SelectTrigger className="bg-white" data-testid={id(`multi-kind-${i}`)}><SelectValue placeholder="النوع" /></SelectTrigger>
+                  <SelectContent>{LIMB_KIND_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              )}
+              <Select value={l.detail ?? ""} disabled={!l.region || (l.region !== "face" && !l.kind)}
+                onValueChange={(v) => put(i, { detail: v, ...(l.region === "face" && v === "انف" ? { side: "" } : {}) })}>
+                <SelectTrigger className="bg-white" data-testid={id(`multi-detail-${i}`)}>
+                  <SelectValue placeholder={l.kind === "silicone" || l.region === "face" ? "القطعة" : "المستوى"} />
+                </SelectTrigger>
+                <SelectContent>{limbDetailOptions(l).map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+              </Select>
+              {limbNeedsSide(l) && (
+                <Select value={l.side ?? ""} onValueChange={(v) => put(i, { side: v })}>
+                  <SelectTrigger className="bg-white" data-testid={id(`multi-side-${i}`)}><SelectValue placeholder="الجهة" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="right">يمين</SelectItem>
+                    <SelectItem value="left">يسار</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {dup && <p className="text-xs text-red-700" data-testid={id(`multi-dup-${i}`)}>هذا الطرف مكرَّر — لكلّ موضعٍ وجهةٍ طرفٌ واحد.</p>}
+          </div>
+        );
+      })}
+      {limbs.length < 6 && (
+        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => onLimbs([...limbs, {}])} data-testid={id("multi-add")}>
+          <Plus className="w-4 h-4" /> إضافة طرف
+        </Button>
       )}
     </div>
   );

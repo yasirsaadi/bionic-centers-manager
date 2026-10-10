@@ -12,7 +12,7 @@
 // والبترُ من معاينة الجهاز نفسِه (`amputationSite` في مواصفاته)؛ ومعاينةٌ بلا بترٍ مسجَّل ⟵ الخمسُ كما كانت.
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, type SpecField } from "./case_fields";
 import {
-  LIMB_SIDES, LIMB_SPEC_KEYS, NOT_APPLICABLE_SPEC, SIDE_LABEL, limbSpecValue, limbSpecView, sideSpecKey, splitSpecKey,
+  LIMB_SPEC_KEYS, NOT_APPLICABLE_SPEC, isSlotKey, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel, splitSpecKey,
 } from "./limb_specs";
 
 export const NOT_APPLICABLE = NOT_APPLICABLE_SPEC;
@@ -32,6 +32,10 @@ export function saleSpecFields(kind: DeviceKind): SpecField[] {
   const all = kind === "prosthetic" ? PROSTHETIC_DEVICE_SPECS : SUPPORT_SPECS;
   return SALE_REQUIRED_SPECS[kind].map((k) => all.find((f) => f.key === k)!).filter(Boolean);
 }
+
+/** **ترتيبُ خانات الطرف في نافذة «اشترى»** — الخمسُ بترتيبها القديم، ثمّ خاناتُ العلويّ (§4.de) قبل السيليكون. */
+const PROSTHETIC_SALE_ORDER = ["prostheticType", "socketType", "kneeJointType", "footType", "elbowType", "handType", "siliconType"];
+const prostheticSaleField = (k: string): SpecField | undefined => PROSTHETIC_DEVICE_SPECS.find((f) => f.key === k);
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
@@ -60,11 +64,11 @@ export function mergeDeviceSpecs(fromExam: Record<string, string>, stored: unkno
 /** خانةٌ إلزامية لـ«اشترى» — مفتاحُها (بجهته لمبتور الطرفين) وعنوانُها. */
 export interface SaleSpecField { key: string; label: string }
 
-/** عنوانُ خانةٍ بجهتها — «نوع القدم — يسار». */
+/** عنوانُ خانةٍ بطرفها — «نوع القدم — يسار»، «نوع الكف / اليد — يسار علوي». */
 export function saleSpecLabel(kind: DeviceKind, key: string): string {
   const { base, side } = splitSpecKey(key);
-  const label = saleSpecFields(kind).find((f) => f.key === base)?.label ?? base;
-  return side ? `${label} — ${SIDE_LABEL[side]}` : label;
+  const label = (kind === "prosthetic" ? prostheticSaleField(base)?.label : saleSpecFields(kind).find((f) => f.key === base)?.label) ?? base;
+  return side ? `${label} — ${slotKeyLabel(side)}` : label;
 }
 
 /**
@@ -72,16 +76,18 @@ export function saleSpecLabel(kind: DeviceKind, key: string): string {
  * (`merged.amputationSite`): طرفٌ واحد خاناتُه، وطرفان متماثلان خاناتُهما مرّةً «للطرفين»، ومختلفان خاناتُ اليمين ثمّ اليسار.
  */
 export function saleSpecFieldsFor(kind: DeviceKind, merged: Record<string, unknown>): SaleSpecField[] {
-  const fields = saleSpecFields(kind);
-  if (kind !== "prosthetic") return fields.map((f) => ({ key: f.key, label: f.label }));
+  if (kind !== "prosthetic") return saleSpecFields(kind).map((f) => ({ key: f.key, label: f.label }));
+  const fields = PROSTHETIC_SALE_ORDER.map(prostheticSaleField).filter((f): f is SpecField => Boolean(f));
   const view = limbSpecView(merged);
   if (view.mode !== "split") {
     const keys = view.slots[0].keys;
+    const both = view.slots.length > 2 ? "للأطراف كلّها" : "للطرفين";
     return fields.filter((f) => keys.includes(f.key))
-      .map((f) => ({ key: f.key, label: view.mode === "identical" ? `${f.label} — للطرفين` : f.label }));
+      .map((f) => ({ key: f.key, label: view.mode === "identical" ? `${f.label} — ${both}` : f.label }));
   }
+  //  **والطرفُ الذي لا يُصنع في هذا الطلب لا يُطلب له شيء** (`limbsNotMade` — `view.slots` المصنوعةُ وحدها).
   return view.slots.flatMap((s) => fields.filter((f) => s.keys.includes(f.key))
-    .map((f) => ({ key: sideSpecKey(f.key, s.side!), label: saleSpecLabel(kind, sideSpecKey(f.key, s.side!)) })));
+    .map((f) => ({ key: sideSpecKey(f.key, s.key!), label: saleSpecLabel(kind, sideSpecKey(f.key, s.key!)) })));
 }
 
 /** ما ينقص لـ«اشترى» — مفاتيحُ بترتيب الورقة (وبجهاتها لمبتور الطرفين). */
@@ -93,11 +99,15 @@ export function missingSaleSpecs(kind: DeviceKind, merged: Record<string, string
 export function cleanSaleSpecsInput(input: unknown, kind: DeviceKind): Record<string, string> {
   const out: Record<string, string> = {};
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
-  const allowed = kind === "prosthetic"
-    ? [...SALE_REQUIRED_SPECS[kind], ...LIMB_SPEC_KEYS.flatMap((k) => LIMB_SIDES.map((s) => sideSpecKey(k, s)))]
-    : SALE_REQUIRED_SPECS[kind];
-  for (const k of allowed) {
-    const v = str((input as Record<string, unknown>)[k]).slice(0, 200);
+  //  للأطراف: خاناتُ الطرف كلُّها، وبمفتاح أيّ طرفٍ صالح (`footType:right`، `handType:left-upper`).
+  const allowed = (k: string) => {
+    if (kind !== "prosthetic") return SALE_REQUIRED_SPECS[kind].includes(k);
+    const { base, side } = splitSpecKey(k);
+    return LIMB_SPEC_KEYS.includes(base) && (side === null ? base === k : isSlotKey(side));
+  };
+  for (const [k, raw] of Object.entries(input as Record<string, unknown>)) {
+    if (!allowed(k)) continue;
+    const v = str(raw).slice(0, 200);
     if (v) out[k] = v;
   }
   return out;

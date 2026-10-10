@@ -53,7 +53,12 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
   //  **خاناتُ الطرف بحسب البتر** (§4.de) — ولمبتور الطرفين المختلفين «يمين: … · يسار: …»؛ وما سواها كما كُتب.
   if (exam.caseType === "prosthetic") {
     const view = limbSpecView(rx, buildAmputationSite(rx));
-    if (view.mode === "identical") out.push({ label: "الطرفان", value: "متماثلان — مواصفاتٌ واحدة للطرفين" });
+    if (view.mode === "identical") {
+      out.push(view.slots.length > 2
+        ? { label: "الأطراف", value: "متماثلة — مواصفاتٌ واحدة لها كلّها" }
+        : { label: "الطرفان", value: "متماثلان — مواصفاتٌ واحدة للطرفين" });
+    }
+    if (view.notMadeSlots.length) out.push({ label: "لا يُصنع في هذا الطلب", value: view.notMadeSlots.map((s) => s.title).join("، ") });
     for (const r of view.rows) if (r.value) out.push({ label: r.label, value: r.value });
   }
   for (const f of deviceSpecsForSpecialty(exam.caseType)) {

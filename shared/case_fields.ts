@@ -39,11 +39,12 @@ export const PROSTHETIC_SPECS: SpecField[] = [
 // byte-identical — EditPatient's reverse-parser and the expert order page both
 // read `amputationSite` and must keep understanding doctor-written values.
 
-/** نوع البتر — the three top-level variants, exactly as on the patient form. */
+/** نوع البتر — the three top-level variants, exactly as on the patient form; and «متعدد» (owner, 2026-10-10, §4.de). */
 export const AMPUTATION_TYPE_OPTIONS = [
   { value: "single", label: "احادي" },
   { value: "double", label: "ثنائي" },
   { value: "silicone", label: "اطراف سليكونية تعويضية" },
+  { value: "multi", label: "متعدد (أطراف مختلفة)" },
 ] as const;
 
 /** Lower-limb amputation levels — verbatim, value === label. */
@@ -58,6 +59,57 @@ export const UPPER_AMPUTATION_DETAILS = [
 
 /** أنواع الأطراف السليكونية التعويضية — verbatim, value === label. «قدم» أضافها المالك ٢٠٢٦-١٠-١٠ (§4.de). */
 export const SILICONE_PARTS = ["اذن", "انف", "محجر عين", "اصبع", "كف", "قدم"];
+
+// ── «متعدد» — أطرافٌ مختلفة طرفاً طرفاً (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de) ─────────
+// «لا تترك حالةً تأتي للمركز ويبقى الطبيب أو موظّف الاستعلامات محتاراً»: علويٌّ وسفليٌّ من الجهة نفسِها، وطرفٌ عاديٌّ مع قطعةٍ سليكونية،
+// وقطعتان سليكونيّتان مختلفتان، وثلاثةُ أطرافٍ أو أربعة. لكلّ طرفٍ: الموضعُ والجهةُ والنوعُ والمستوى (أو القطعة).
+export type LimbRegion = "upper" | "lower" | "face";
+export interface AmputationLimb {
+  region?: string;  // "upper" | "lower" | "face"
+  side?: string;    // "right" | "left" | "" (الأنفُ بلا جهة)
+  kind?: string;    // "prosthetic" | "silicone" — والوجهُ سليكونيٌّ دائماً
+  detail?: string;  // المستوى، أو القطعةُ السليكونية
+}
+
+export const LIMB_REGION_OPTIONS = [
+  { value: "lower", label: "سفلي" },
+  { value: "upper", label: "علوي" },
+  { value: "face", label: "الوجه" },
+] as const;
+export const LIMB_KIND_OPTIONS = [
+  { value: "prosthetic", label: "طرف صناعي" },
+  { value: "silicone", label: "سليكوني" },
+] as const;
+/** قطعُ الوجه السليكونية، وقطعُ اليد والقدم — من `SILICONE_PARTS` نفسِها. */
+export const FACE_SILICONE_PARTS = ["اذن", "انف", "محجر عين"];
+export const UPPER_SILICONE_PARTS = ["اصبع", "كف"];
+export const LOWER_SILICONE_PARTS = ["قدم"];
+/** رمزُ قطعة الوجه في مفتاح الطرف (`left-ear`) — مفاتيحُ ثابتة لا تتغيّر بتغيّر اللفظ. */
+export const FACE_PART_CODE: Record<string, string> = { "اذن": "ear", "انف": "nose", "محجر عين": "orbit" };
+
+/** ما يُختار في خانة «المستوى / القطعة» لطرفٍ — بموضعه ونوعه. */
+export function limbDetailOptions(l: AmputationLimb): string[] {
+  if (l.region === "face") return FACE_SILICONE_PARTS;
+  if (l.kind === "silicone") return l.region === "upper" ? UPPER_SILICONE_PARTS : l.region === "lower" ? LOWER_SILICONE_PARTS : [];
+  return l.region === "upper" ? UPPER_AMPUTATION_DETAILS : l.region === "lower" ? LOWER_AMPUTATION_DETAILS : [];
+}
+
+/** هل يحتاج الطرفُ جهة؟ — كلُّها إلّا الأنف. */
+export const limbNeedsSide = (l: AmputationLimb): boolean => !(l.region === "face" && l.detail === "انف");
+
+/**
+ * **مفتاحُ الطرف** — ثابتٌ يُبنى من جهته وموضعه (`left-lower`، `right-upper`) أو من قطعة الوجه (`left-ear`، `mid-nose`)؛ فلا طرفان بمفتاحٍ
+ * واحد (طرفٌ سفليٌّ أيسر واحد)، ومواصفاتُه في الوصفة `footType:left-lower`. و`null` حين لا يكتمل.
+ */
+export function amputationLimbKey(l: AmputationLimb): string | null {
+  const side = limbNeedsSide(l) ? (l.side === "right" || l.side === "left" ? l.side : null) : "mid";
+  if (!side) return null;
+  if (l.region === "face") { const c = FACE_PART_CODE[l.detail ?? ""]; return c ? `${side}-${c}` : null; }
+  return l.region === "upper" || l.region === "lower" ? `${side}-${l.region}` : null;
+}
+
+const LIMB_SIDE_TEXT: Record<string, string> = { right: "يمين", left: "يسار" };
+const LIMB_REGION_TEXT: Record<string, string> = { upper: "علوي", lower: "سفلي", face: "الوجه" };
 
 /**
  * The structured parts the builder collects. All optional strings: an absent
@@ -79,6 +131,7 @@ export interface AmputationParts {
   siliconePart?: string;
   siliconeSide?: string;   // "right" | "left" | "both"
   siliconeNotes?: string;
+  limbs?: AmputationLimb[]; // «متعدد» وحده
 }
 
 /**
@@ -119,6 +172,16 @@ export function buildAmputationSite(p: AmputationParts): string {
     if (p.siliconeNotes) site += ` | ملاحظات: ${p.siliconeNotes}`;
     return site;
   }
+  if (p.amputationType === "multi") {
+    //  «متعدد | يسار (سفلي): تحت الركبة | يسار (علوي، سليكوني): كف | (الوجه، سليكوني): انف»
+    const segs = (Array.isArray(p.limbs) ? p.limbs : []).map((l) => {
+      const side = limbNeedsSide(l) ? (LIMB_SIDE_TEXT[l.side ?? ""] ?? "-") : "";
+      const region = LIMB_REGION_TEXT[l.region ?? ""] ?? "-";
+      const silicone = l.region === "face" || l.kind === "silicone" ? "، سليكوني" : "";
+      return `${side ? `${side} ` : ""}(${region}${silicone}): ${l.detail || "-"}`;
+    });
+    return ["متعدد", ...segs].join(" | ");
+  }
   return "";
 }
 
@@ -156,6 +219,21 @@ export function parseAmputationSite(site: string | null | undefined): Amputation
     }
     if (notes) parts.siliconeNotes = notes;
     return parts;
+  }
+
+  // Multi: "متعدد | يسار (سفلي): تحت الركبة | (الوجه، سليكوني): انف"
+  if (raw.startsWith("متعدد")) {
+    const limbs: AmputationLimb[] = [];
+    for (const chunk of raw.split(" | ").slice(1)) {
+      //  وطرفٌ بلا جهةٍ بعد يُكتب «- (سفلي): -» — يُقرأ كذلك فلا يسقط طرفٌ من الذهاب والإياب.
+      const m = chunk.match(/^(?:(يمين|يسار|-) )?\((علوي|سفلي|الوجه)(، سليكوني)?\): (.*)$/);
+      if (!m) continue;
+      const region = m[2] === "علوي" ? "upper" : m[2] === "سفلي" ? "lower" : "face";
+      const limb: AmputationLimb = { region, side: m[1] === "يمين" ? "right" : m[1] === "يسار" ? "left" : "", kind: m[3] || region === "face" ? "silicone" : "prosthetic" };
+      if (m[4] && m[4] !== "-") limb.detail = m[4];
+      limbs.push(limb);
+    }
+    return { amputationType: "multi", limbs };
   }
 
   // Single: "احادي - {طرف علوي|طرف سفلي} - {يمين|يسار}[ - {detail}]"
@@ -330,8 +408,12 @@ export function specsForSpecialty(caseType: string): SpecField[] {
  */
 export const SOCKET_SPEC: SpecField = { key: "socketType", label: "نوع السوكيت", placeholder: "اكتب نوع السوكيت" };
 
-/** مواصفاتُ **الجهاز** للأطراف: نوعُ الطرف ثمّ السوكيت ثمّ البقيّة — بترتيب الورقة. */
-export const PROSTHETIC_DEVICE_SPECS: SpecField[] = [PROSTHETIC_SPECS[0], SOCKET_SPEC, ...PROSTHETIC_SPECS.slice(1)];
+/** **خاناتُ الطرف العلويّ** (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de) — مواصفاتُ جهازٍ كالسوكيت، لا أعمدةُ ملفّ. */
+export const ELBOW_SPEC: SpecField = { key: "elbowType", label: "نوع المرفق", placeholder: "مثال: مرفق ميكانيكي، مرفق كهربائي…" };
+export const HAND_SPEC: SpecField = { key: "handType", label: "نوع الكف / اليد", placeholder: "مثال: كف تجميلية، يد ميكانيكية، يد كهربائية…" };
+
+/** مواصفاتُ **الجهاز** للأطراف: نوعُ الطرف ثمّ السوكيت ثمّ البقيّة — بترتيب الورقة، ثمّ خاناتُ العلويّ. */
+export const PROSTHETIC_DEVICE_SPECS: SpecField[] = [PROSTHETIC_SPECS[0], SOCKET_SPEC, ...PROSTHETIC_SPECS.slice(1), ELBOW_SPEC, HAND_SPEC];
 
 /** حقولُ **وصفة الجهاز** لاختصاص — ما يكتبه الطبيبُ ويُعرَض في المعاينة وأمرِ التصنيع. */
 export function deviceSpecsForSpecialty(caseType: string): SpecField[] {

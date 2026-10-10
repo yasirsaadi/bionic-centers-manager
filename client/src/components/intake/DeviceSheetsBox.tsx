@@ -120,7 +120,14 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
             </p>
           )}
           {sheetSpecView(s).mode === "identical" && (
-            <p className="text-xs text-muted-foreground" data-testid={`device-limbs-identical-${s.episodeId}`}>الطرفان متماثلان — مواصفاتٌ واحدة للطرفين</p>
+            <p className="text-xs text-muted-foreground" data-testid={`device-limbs-identical-${s.episodeId}`}>
+              {sheetSpecView(s).slots.length > 2 ? "الأطراف متماثلة — مواصفاتٌ واحدة لها كلّها" : "الطرفان متماثلان — مواصفاتٌ واحدة للطرفين"}
+            </p>
+          )}
+          {sheetSpecView(s).notMadeSlots.length > 0 && (
+            <p className="text-xs text-amber-700 dark:text-amber-400" data-testid={`device-limbs-not-made-${s.episodeId}`}>
+              لا يُصنع في هذا الطلب: {sheetSpecView(s).notMadeSlots.map((x) => x.title).join("، ")}
+            </p>
           )}
           {/*  **بحسب البتر** (§4.de): تحت الركبة بلا ركبة، ولمبتور الطرفين المختلفين «يمين: … · يسار: …» في كلّ خانة. */}
           <div className={`mt-1.5 grid gap-x-3 gap-y-1 text-xs ${s.serviceType !== "prosthetic" ? "grid-cols-1"

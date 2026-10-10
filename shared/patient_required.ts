@@ -22,7 +22,7 @@
 // يُسأل. فالضوابطُ تبدأ **فارغة**، والفراغُ يُردّ — فيُسأل الموظّف مرّةً
 // واحدة بدل أن يُكذَب عليه في كلّ ملفّ.
 
-import { parseAmputationSite, type AmputationParts } from "./case_fields";
+import { amputationLimbKey, limbDetailOptions, limbNeedsSide, parseAmputationSite, type AmputationParts } from "./case_fields";
 
 /** الحقولُ الثلاثة المشتركة بين كلّ المرضى. */
 export const CORE_MEASUREMENT_FIELDS = ["age", "height", "weight"] as const;
@@ -154,6 +154,21 @@ export function checkAmputationParts(p: AmputationParts): RequiredCheck {
     } else if (p.doubleLimbType) {
       //  «علويّ» أو «سفليّ»: الجهتان من الطرف نفسه، وكلتاهما تُسأل.
       if (!p.doubleRightDetail || !p.doubleLeftDetail) missing.push("amputationLevel");
+    }
+  } else if (p.amputationType === "multi") {
+    //  **«متعدد»** (§4.de): طرفٌ واحد على الأقلّ، ولكلٍّ موضعُه ونوعُه وجهتُه (إلّا الأنف) ومستواه — **ولا طرفان في موضعٍ واحد**
+    //  (طرفٌ سفليٌّ أيسر مرّتين)، فمفتاحُ كلّ طرفٍ واحدٌ ومواصفاتُه لا تختلط.
+    const limbs = Array.isArray(p.limbs) ? p.limbs : [];
+    //  و«متعدد» طرفان فأكثر — والواحدُ له «احادي» أو «اطراف سليكونية».
+    if (limbs.length < 2) missing.push("amputationType");
+    const seen = new Set<string>();
+    for (const l of limbs) {
+      if (!l.region || (l.region !== "face" && !l.kind)) missing.push("amputationType");
+      if (limbNeedsSide(l) && l.side !== "right" && l.side !== "left") missing.push("amputationSide");
+      if (!l.detail || !limbDetailOptions(l).includes(l.detail)) missing.push("amputationLevel");
+      const key = amputationLimbKey(l);
+      if (key && seen.has(key)) missing.push("amputationSide");
+      if (key) seen.add(key);
     }
   } else if (p.amputationType === "silicone") {
     if (!p.siliconePart) missing.push("amputationType");

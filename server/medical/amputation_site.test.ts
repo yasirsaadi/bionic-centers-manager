@@ -92,7 +92,9 @@ function pin(label: string, ok: boolean) {
   if (!ok) failures++;
   console.log(`${ok ? "✅" : "❌"} ${label}`);
 }
-pin("3 amputation variants", AMPUTATION_TYPE_OPTIONS.length === 3);
+//  «متعدد» رابعٌ أضافه المالك ٢٠٢٦-١٠-١٠ (§4.de) — والثلاثةُ القديمة باقيةٌ بترتيبها.
+pin("4 amputation variants (the three originals in order, then متعدد)",
+  AMPUTATION_TYPE_OPTIONS.length === 4 && AMPUTATION_TYPE_OPTIONS.map((o) => o.value).join("|") === "single|double|silicone|multi");
 pin("lower list = 6 levels ending خلال الحوض",
   LOWER_AMPUTATION_DETAILS.length === 6 && LOWER_AMPUTATION_DETAILS[5] === "خلال الحوض");
 pin("upper list = 7 levels ending خلال الكتف",
@@ -132,6 +134,29 @@ roundTrip("سليكوني انف — بلا جهة", { amputationType: "silicone
 roundTrip("سليكوني محجر عين كلا الجانبين", { amputationType: "silicone", siliconePart: "محجر عين", siliconeSide: "both" });
 roundTrip("سليكوني بلا جزء", { amputationType: "silicone" });
 roundTrip("سليكوني قدم كلا الجانبين", { amputationType: "silicone", siliconePart: "قدم", siliconeSide: "both" });
+//  «متعدد» (§4.de) — حالتا المالك بعينهما، وقطعُ الوجه، وطرفٌ لم يكتمل.
+roundTrip("متعدد: يسار تحت الركبة + كف سليكونية يسار", { amputationType: "multi", limbs: [
+  { region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" }] });
+roundTrip("متعدد: اصبع سليكوني يمين + كف سليكونية يسار", { amputationType: "multi", limbs: [
+  { region: "upper", side: "right", kind: "silicone", detail: "اصبع" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" }] });
+roundTrip("متعدد: فوق المرفق يمين + انف + محجر عين يسار", { amputationType: "multi", limbs: [
+  { region: "upper", side: "right", kind: "prosthetic", detail: "فوق المرفق" }, { region: "face", side: "", kind: "silicone", detail: "انف" },
+  { region: "face", side: "left", kind: "silicone", detail: "محجر عين" }] });
+roundTrip("متعدد: طرفٌ لم يكتمل (بلا جهةٍ ولا مستوى)", { amputationType: "multi", limbs: [{ region: "lower", kind: "prosthetic" }, { region: "upper", side: "right", kind: "prosthetic", detail: "تحت المرفق" }] });
+{
+  const site = buildAmputationSite({ amputationType: "multi", limbs: [
+    { region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" },
+    { region: "face", kind: "silicone", detail: "انف" }] });
+  const ok = site === "متعدد | يسار (سفلي): تحت الركبة | يسار (علوي، سليكوني): كف | (الوجه، سليكوني): انف";
+  if (!ok) failures++;
+  console.log(`${ok ? "✅" : "❌"} متعدد: النصُّ المركّب بعينه${ok ? "" : `\n   got: "${site}"`}`);
+  const back = parseAmputationSite(site);
+  const ok2 = JSON.stringify(back.limbs) === JSON.stringify([
+    { region: "lower", side: "left", kind: "prosthetic", detail: "تحت الركبة" }, { region: "upper", side: "left", kind: "silicone", detail: "كف" },
+    { region: "face", side: "", kind: "silicone", detail: "انف" }]);
+  if (!ok2) failures++;
+  console.log(`${ok2 ? "✅" : "❌"} متعدد: الأطرافُ تُقرأ بحقولها${ok2 ? "" : `\n   got: ${JSON.stringify(back)}`}`);
+}
 
 console.log("\n── ما لا يُفهَم يُترك للطبيب فارغاً ──");
 function empty(label: string, site: string | null | undefined) {
