@@ -10,6 +10,7 @@ import { packRowsIntoPages } from "@shared/print_pages";
 import { printNeedsPdf } from "./print_pdf";
 import { cashRowNote } from "./cash_book_text";
 import { capturableText, firstStrongDir, mergeLineRects } from "./print_text";
+import { cashBookFileBase } from "@shared/cash_book";
 
 let failures = 0;
 function same(msg: string, got: unknown, expected: unknown) {
@@ -102,6 +103,21 @@ same("ز.٥ **اتّجاهُ السطر من أوّل حرفٍ قويّ** — ك
 const printText = src("client/src/lib/print_text.ts");
 same("ز.٦ **والكلمةُ تُرسَم كاملة في نسخة المصوِّر**: التهيئةُ تجمع المستطيلات، والسطورُ بلا `plaintext`",
   [/keepWordsWhole\(win\);/.test(printText), /unicodeBidi\s*=\s*"plaintext"/.test(printText), /row\.dir = "auto"/.test(printText)], [true, false, false]);
+
+console.log("\n── ح. اسمُ ملفّ الدفتر (طلبُ المالك ٢٠٢٦-١٠-١٠: «اجعل اسم الملفّ أطراف ومساند مع تاريخ اليوم والشهر والسنة… وأضف الفرع») ──");
+same("ح.١ **الدفترُ باسمه العربيّ ثمّ الفرعُ ثمّ اليومُ-الشهرُ-السنة** — للدفترين",
+  [cashBookFileBase({ book: "devices", branchName: "بايونك بغداد", from: "2026-10-10", to: "2026-10-10" }),
+    cashBookFileBase({ book: "physio", branchName: "بايونك ذي قار", from: "2026-10-09" })],
+  ["أطراف ومساند - بايونك بغداد - 10-10-2026", "علاج طبيعي - بايونك ذي قار - 09-10-2026"]);
+same("ح.٢ **والشهرُ «من … إلى …»، والفارغةُ «ورقة فارغة»، والفرعُ قبل أن يُحمَّل لا يترك فراغاً**، وما لا يصلح في اسم ملفٍّ يُحذف",
+  [cashBookFileBase({ book: "devices", branchName: "بايونك كربلاء", from: "2026-10-01", to: "2026-10-31" }),
+    cashBookFileBase({ book: "physio", branchName: "بايونك بغداد", blank: true, from: "2026-10-10" }),
+    cashBookFileBase({ book: "devices", branchName: "", from: "2026-10-10" }),
+    cashBookFileBase({ book: "devices", branchName: 'فرع/جديد:"١"', from: "2026-10-10" })],
+  ["أطراف ومساند - بايونك كربلاء - 01-10-2026 إلى 31-10-2026", "علاج طبيعي - بايونك بغداد - ورقة فارغة",
+    "أطراف ومساند - 10-10-2026", "أطراف ومساند - فرع جديد ١ - 10-10-2026"]);
+same("ح.٣ **وصفحةُ الطباعة تسمّي الملفَّ به وتجعله عنوانَها** (فيقترحه «حفظ كملف PDF» في الحاسوب) — ولا «cash-book» بعد اليوم",
+  [/fileName: `\$\{fileBase\}\.pdf`/.test(book), /document\.title = fileBase;/.test(book), /cash-book-\$\{branchId\}/.test(book)], [true, true, false]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);

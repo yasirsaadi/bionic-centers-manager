@@ -12,7 +12,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { usePrintAction } from "@/hooks/use-print-action";
 import { useBranchSession } from "@/components/BranchGate";
 import { cashRowNote, drBoxLineText } from "@/lib/cash_book_text";
-import { type CashBook as Book, CASH_BOOK_LABELS, dayNameOf, isYmd, isCashBook, packSheetPages } from "@shared/cash_book";
+import { type CashBook as Book, CASH_BOOK_LABELS, cashBookFileBase, dayNameOf, isYmd, isCashBook, packSheetPages } from "@shared/cash_book";
 
 interface Row { source: string; id: number; column: "income" | "expense" | "transfer"; kind: string; amount: number; note: string; category: string | null }
 interface Sheet {
@@ -106,11 +106,19 @@ export default function CashBookPrint() {
     t = setTimeout(go, 600);
     return () => clearTimeout(t);
   }, [sheets]);
+  //  **اسمُ الملفّ** (طلبُ المالك ٢٠٢٦-١٠-١٠): «أطراف ومساند - بايونك بغداد - 10-10-2026» — والاسمُ نفسُه عنوانُ الصفحة، فيقترحه
+  //  «حفظ كملف PDF» في الحاسوب كما يحمله الملفُّ في لوح المشاركة بالآيفون. والفرعُ من الورقة نفسِها حين تُحمَّل.
+  const fileBase = cashBookFileBase({ book, branchName: sheets?.[0]?.branch.name ?? branchName, from, to, blank });
+  useEffect(() => {
+    const before = document.title;
+    document.title = fileBase;
+    return () => { document.title = before; };
+  }, [fileBase]);
   //  نافذةُ الطباعة وحدَها حين تكتمل — ومنها «حفظ كملف PDF»؛ وفي تطبيق الشاشة الرئيسية بآيفون وآيباد ملفٌّ ولوحُ مشاركة (§4.cw).
   const printer = usePrintAction({
     ready: paged,
     collect: () => Array.from(document.querySelectorAll<HTMLElement>('.cb-print [data-testid="cb-print-page"]')),
-    fileName: `cash-book-${branchId}-${book}-${from || "blank"}${to && to !== from ? `-${to}` : ""}.pdf`,
+    fileName: `${fileBase}.pdf`,
     autoPrint: true,
   });
 

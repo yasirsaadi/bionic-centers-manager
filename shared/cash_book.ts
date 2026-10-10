@@ -18,6 +18,21 @@ export const CASH_BOOK_LABELS: Record<CashBook, string> = {
   physio: "علاج طبيعي",
 };
 
+/**
+ * **اسمُ ملفّ ورقة الدفتر** (طلبُ المالك ٢٠٢٦-١٠-١٠): «أطراف ومساند - بايونك بغداد - 10-10-2026» — الدفترُ باسمه العربيّ ثمّ الفرعُ ثمّ اليومُ
+ * والشهرُ والسنة، بدل «cash-book-1-devices-2026-10-10» الذي لا يُقرأ. والشهرُ «من … إلى …»، والورقةُ الفارغة «ورقة فارغة».
+ * بلا امتداد — يُضاف «.pdf» للملفّ، ويصير الاسمُ نفسُه عنوانَ الصفحة فيقترحه «حفظ كملف PDF» في الحاسوب.
+ */
+export function cashBookFileBase(p: { book: CashBook; branchName?: string | null; from?: string | null; to?: string | null; blank?: boolean }): string {
+  const dmy = (ymd: string) => `${ymd.slice(8, 10)}-${ymd.slice(5, 7)}-${ymd.slice(0, 4)}`;
+  //  ما لا يصلح في اسم ملفٍّ على أيّ جهاز يُحذف من اسم الفرع.
+  const branch = String(p.branchName ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim();
+  const from = p.from && isYmd(p.from) ? p.from : null;
+  const to = p.to && isYmd(p.to) ? p.to : from;
+  const when = p.blank || !from ? "ورقة فارغة" : to && to !== from ? `${dmy(from)} إلى ${dmy(to)}` : dmy(from);
+  return [CASH_BOOK_LABELS[p.book], branch, when].filter(Boolean).join(" - ");
+}
+
 /** قسمُ المصروف (`expenses.section`) الذي يقابل كلَّ دفتر. */
 export const BOOK_EXPENSE_SECTION: Record<CashBook, "prosthetic" | "physio"> = {
   devices: "prosthetic",
