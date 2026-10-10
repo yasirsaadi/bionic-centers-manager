@@ -1,5 +1,6 @@
 // **خططُ العلاج الطبيعي في ملفّ المريض** (§4.cm) — أعلى تبويب «الخطط العلاجية»؛ والخططُ القديمة تحتها للقراءة.
 // «خطّة جديدة» تختار بروتوكولاً من المكتبة (أو بلا بروتوكول) فتُنشأ مسوّدةً ممتلئةً منه، وتُفتح صفحتُها للتعديل.
+import { titleMatches } from "@shared/protocol_search";
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -201,8 +202,8 @@ function ProtocolPicker({ enabled, disabled, onPick, excludeId }: {
     enabled,
   });
   const rows = useMemo(() => {
-    const t = search.trim().toLowerCase();
-    return (list.data ?? []).filter((p) => p.id !== excludeId && (!t || p.titleAr.includes(search.trim()) || p.titleEn.toLowerCase().includes(t)));
+    //  **بتطبيع البحث نفسِه** (§4.dc): «الم الظهر» تجد «ألم أسفل الظهر» — كلُّ كلمةٍ في الاسم بإحدى اللغتين.
+    return (list.data ?? []).filter((p) => p.id !== excludeId && titleMatches(search, p.titleAr, p.titleEn));
   }, [list.data, search, excludeId]);
   return (
     <>

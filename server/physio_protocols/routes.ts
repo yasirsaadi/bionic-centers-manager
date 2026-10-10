@@ -107,6 +107,8 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
         ageGroup: isAgeGroup(req.query.ageGroup) ? req.query.ageGroup : undefined,
         status: req.query.status === "draft" || req.query.status === "approved" ? req.query.status : undefined,
         archived,
+        //  لغةُ المقتطف في «وُجدت في» (§4.dc) — لغةُ الصفحة؛ وبلا تحديد لغةُ السؤال.
+        lang: req.query.lang === "en" || req.query.lang === "ar" ? req.query.lang : undefined,
       }));
     } catch (e) { fail(res, e); }
   });

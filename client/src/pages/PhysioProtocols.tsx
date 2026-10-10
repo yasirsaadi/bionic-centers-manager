@@ -23,6 +23,8 @@ import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolP
 import { DEVICE_PARAM_FIELDS, DEVICE_PARAM_LABELS, deviceParamsLine } from "@shared/physio_exercises";
 import type { MeasureDef } from "@shared/physio_assessments";
 import { useBranchSession } from "@/components/BranchGate";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
+import type { ProtocolMatch, Range } from "@shared/protocol_search";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
   AGE_GROUPS, AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, DRY_NEEDLING_DEVICE_CODE, EVIDENCE_LABELS, EVIDENCE_LABELS_EN, EVIDENCE_LEVELS,
@@ -35,6 +37,22 @@ import {
 interface ListRow {
   id: number; code: string; titleAr: string; titleEn: string; category: ProtocolCategory; ageGroup: AgeGroup;
   status: "draft" | "approved"; isArchived: boolean; deviceCount: number; recommendedCount: number;
+  /** مع البحث (§4.dc): أين وُجدت الكلمات ومقتطفٌ حولها. */
+  match?: ProtocolMatch;
+}
+
+/** نصٌّ بمواضع مظلَّلة — المواضعُ من الخادم بالمحارف. */
+function Highlighted({ text, ranges }: { text: string; ranges?: Range[] }) {
+  if (!ranges?.length) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let at = 0;
+  ranges.forEach(([a, b], i) => {
+    if (a > at) parts.push(text.slice(at, a));
+    parts.push(<mark key={i} className="rounded bg-amber-200/80 px-0.5 text-inherit">{text.slice(a, b)}</mark>);
+    at = b;
+  });
+  if (at < text.length) parts.push(text.slice(at));
+  return <>{parts}</>;
 }
 interface DeviceLine {
   id?: number; deviceId: number; evidence: EvidenceLevel; parameters: string | null; minutes: number | null; note: string | null;
@@ -151,8 +169,10 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
   const [status, setStatus] = useState<string>("all");
   const [archived, setArchived] = useState(false);
   const [creating, setCreating] = useState(false);
+  //  **البحثُ في كلّ ما داخل البروتوكول بتطبيعٍ عربيّ** (§4.dc): «الم» = «ألم»، و«ركبه» = «ركبة» — والخادمُ يرتّب ويقول أين وُجدت.
+  const term = useDebouncedSearch(q);
   const params = new URLSearchParams();
-  if (q.trim()) params.set("q", q.trim());
+  if (term) { params.set("q", term); params.set("lang", lang); }
   if (category !== "all") params.set("category", category);
   if (age !== "all") params.set("ageGroup", age);
   if (status !== "all") params.set("status", status);
@@ -166,7 +186,8 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
       <div className="flex flex-wrap gap-2 items-center">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالحالة أو المصطلح الإنكليزي" className="pr-8" data-testid="protocol-search" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم الحالة أو بأيّ كلمةٍ فيها — جهاز، تمرين، مقياس، مانع (عربي أو English)"
+            className="pr-8" data-testid="protocol-search" />
         </div>
         <Select value={category} onValueChange={setCategory}>
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
@@ -198,19 +219,28 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
         )}
       </div>
 
+      {term && !list.isLoading && (
+        <p className="text-sm text-muted-foreground" data-testid="protocol-search-count">
+          {rows.length === 0
+            ? (lang === "en" ? `No protocol contains “${term}”.` : `لا بروتوكولَ يحوي «${term}».`)
+            : (lang === "en" ? `${rows.length} protocol(s) contain “${term}” — best match first.` : `${rows.length} بروتوكول يحوي «${term}» — الأدقُّ أوّلاً.`)}
+        </p>
+      )}
       {list.isLoading ? <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>
         : rows.length === 0 ? (
           <Card><CardContent className="py-10 text-center text-sm text-muted-foreground" data-testid="protocols-empty">
-            لا بروتوكولات بهذه الشروط{canEdit ? " — أضف أوّلها من «بروتوكول جديد»." : "."}
+            {term ? (lang === "en" ? "Try another word, or fewer words." : "جرّب كلمةً أخرى أو كلماتٍ أقلّ.")
+              : <>لا بروتوكولات بهذه الشروط{canEdit ? " — أضف أوّلها من «بروتوكول جديد»." : "."}</>}
           </CardContent></Card>
         ) : (
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className={`grid gap-2 ${term ? "" : "md:grid-cols-2"}`}>
             {rows.map((r) => (
               <Link key={r.id} href={`/physio/protocols/${r.id}`}>
                 <a className="block rounded-lg border bg-white hover:border-primary p-3 space-y-1" data-testid={`protocol-row-${r.id}`} dir={lang === "en" ? "ltr" : "rtl"}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">{lang === "en" ? r.titleEn : r.titleAr}</span>
-                    <span className="text-xs text-muted-foreground" dir={lang === "en" ? "rtl" : "ltr"}>{lang === "en" ? r.titleAr : r.titleEn}</span>
+                    <span className="font-semibold"><Highlighted text={lang === "en" ? r.titleEn : r.titleAr} ranges={lang === "en" ? r.match?.titleRanges.en : r.match?.titleRanges.ar} /></span>
+                    <span className="text-xs text-muted-foreground" dir={lang === "en" ? "rtl" : "ltr"}>
+                      <Highlighted text={lang === "en" ? r.titleAr : r.titleEn} ranges={lang === "en" ? r.match?.titleRanges.ar : r.match?.titleRanges.en} /></span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 text-xs">
                     <Badge variant="secondary">{L.category[r.category]}</Badge>
@@ -218,6 +248,19 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
                     <Badge className={r.status === "approved" ? "bg-emerald-600" : "bg-amber-500"}>{lang === "en" ? (r.status === "approved" ? "Approved" : "Draft") : (r.status === "approved" ? "معتمَد" : "مسوّدة")}</Badge>
                     <span className="text-muted-foreground">{T[lang].deviceCount(r.deviceCount, r.recommendedCount)}</span>
                   </div>
+                  {/*  **«وُجدت في»** — مكانُ الكلمة ومقتطفٌ حولها، فيُعرف لماذا ظهر البروتوكول قبل فتحه. */}
+                  {r.match && r.match.hits.length > 0 && (
+                    <div className="mt-1 space-y-1 border-t pt-1.5" data-testid={`protocol-hits-${r.id}`}>
+                      {r.match.inTitle && <p className="text-[11px] text-muted-foreground">{lang === "en" ? "Also in:" : "وأيضاً في:"}</p>}
+                      {r.match.hits.map((h) => (
+                        <div key={h.key} className="text-xs leading-relaxed" data-testid={`protocol-hit-${r.id}-${h.key}`}>
+                          <span className="font-medium text-violet-800">{lang === "en" ? h.labelEn : h.label}</span>
+                          <span className="text-muted-foreground"> — </span>
+                          <span dir="auto" className="text-slate-700"><Highlighted text={h.snippet} ranges={h.ranges} /></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </a>
               </Link>
             ))}

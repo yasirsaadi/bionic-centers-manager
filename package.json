@@ -273,6 +273,7 @@
     "test:physio-sheet-view": "tsx server/physio_sheet_view.test.ts",
     "test:patient-edit-rules": "tsx server/patient_edit_rules.test.ts",
     "test:physio-centre-use": "tsx server/physio_centre_use.test.ts",
+    "test:protocol-search": "tsx server/protocol_search.test.ts",
     "test:intake-sheets": "tsx server/intake_sheets.test.ts",
     "test:patient-record": "tsx server/patient_record.test.ts",
     "test:multi-part-request": "tsx server/multi_part_request.test.ts",

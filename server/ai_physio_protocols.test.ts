@@ -116,7 +116,9 @@ async function main() {
       JSON.stringify(((foundEn as any).data?.capabilities ?? []).map((c: any) => c.name)));
     const listed = await read(S.spec, "/api/physio/protocols", { q: "knee", ageGroup: "geriatric" });
     //  «knee» يطابق خشونةَ الركبة واستبدالَ الركبة (Total Knee Arthroplasty) — وكلاهما لكبار السنّ.
-    same("أ.٢ القائمةُ تجد بروتوكولاتِ الركبة بالمصطلح الإنكليزي والعمر", ((listed as any).data?.rows ?? []).map((r: any) => r.code).sort(), [KNEE, "tka-geriatric"]);
+    //  **والبحثُ صار في المحتوى أيضاً** (§4.dc، طلبُ المالك): ما في اسمه «knee» أوّلاً بترتيب الأدقّ، ثمّ ما يذكرها في محتواه (خشونةُ الورك واليد).
+    const listedCodes: string[] = ((listed as any).data?.rows ?? []).map((r: any) => r.code);
+    same("أ.٢ القائمةُ تجد بروتوكولاتِ الركبة بالمصطلح الإنكليزي والعمر — أوّلاً", listedCodes.slice(0, 2).sort(), [KNEE, "tka-geriatric"]);
     const kids = await read(S.doc, "/api/physio/protocols", { ageGroup: "pediatric" });
     check(((kids as any).data?.rows ?? []).length >= 4, "أ.٣ وبروتوكولاتُ الأطفال تُقرأ بالعمر", JSON.stringify((kids as any).data));
 
