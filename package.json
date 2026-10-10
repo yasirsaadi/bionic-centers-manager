@@ -282,6 +282,7 @@
     "test:ready-part-sale": "tsx server/ready_part_sale.test.ts",
     "test:numeric-input": "tsx client/src/lib/numeric_input.test.ts",
     "test:print-layout": "tsx client/src/lib/print_layout.test.ts",
+    "test:dashboard-privacy": "tsx client/src/pages/dashboard_privacy_ui.test.ts",
     "test:physio-protocol-seed": "tsx server/physio_protocol_seed.test.ts",
     "test:physio-protocol-english": "tsx server/physio_protocol_english.test.ts",
     "test:ai-physio-protocols": "tsx server/ai_physio_protocols.test.ts"

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Banknote, Radio } from "lucide-react";
+import { Banknote, Eye, EyeOff, Radio } from "lucide-react";
+import { PRIVACY_MASK } from "@/lib/privacy_mask";
 import { useEffect, useRef, useState } from "react";
 
 interface BranchRow {
@@ -52,12 +53,17 @@ function useCountUp(target: number, duration = 600) {
   return shown;
 }
 
-function Amount({ value, className }: { value: number; className?: string }) {
+function Amount({ value, className, hidden }: { value: number; className?: string; hidden?: boolean }) {
   const shown = useCountUp(value);
-  return <span className={className}>{shown.toLocaleString("en-US")}</span>;
+  return <span className={className}>{hidden ? PRIVACY_MASK : shown.toLocaleString("en-US")}</span>;
 }
 
-export function LiveRevenueBoard() {
+/**
+ * و**عينُ الخصوصية** بجانب العنوان (طلبُ المالك ٢٠٢٦-١٠-١٠): تُخفي أرقامَ اللوحة كلِّها برموزٍ كما في البنوك — حالُها من لوحة التحكم
+ * (`useDashboardPrivacy`) فتُخفي هذه البطاقاتِ وبقيّةَ اللوحة معاً.
+ */
+export function LiveRevenueBoard({ privacy }: { privacy?: { hidden: boolean; toggle: () => void } }) {
+  const hidden = privacy?.hidden === true;
   // Three seconds: fast enough that a payment lands while the patient is still
   // at the desk, cheap enough that it is one grouped SUM per tick.
   const { data, isError } = useQuery<LiveRevenue>({
@@ -86,6 +92,14 @@ export function LiveRevenueBoard() {
           <Radio className="w-5 h-5 text-emerald-600" />
           الوارد المباشر اليوم
         </h3>
+        {privacy && (
+          <button type="button" onClick={privacy.toggle} aria-pressed={hidden}
+            aria-label={hidden ? "إظهار الأرقام" : "إخفاء الأرقام"} title={hidden ? "إظهار الأرقام" : "إخفاء الأرقام"}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            data-testid="button-privacy-mask">
+            {hidden ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+          </button>
+        )}
         <span className="text-xs text-muted-foreground">
           المبالغ المستلمة فعلياً — تتحدّث لحظياً
         </span>
@@ -100,7 +114,7 @@ export function LiveRevenueBoard() {
           >
             <p className="text-sm text-muted-foreground mb-1 truncate" title={b.name}>{b.name}</p>
             <p className="text-2xl font-bold text-slate-800 tabular-nums">
-              <Amount value={b.today} />
+              <Amount value={b.today} hidden={hidden} />
               <span className="text-sm font-normal text-muted-foreground mr-1">د.ع</span>
             </p>
           </Card>
@@ -124,7 +138,7 @@ export function LiveRevenueBoard() {
             </div>
           </div>
           <p className="text-3xl md:text-4xl font-extrabold text-emerald-800 tabular-nums">
-            <Amount value={data.total} />
+            <Amount value={data.total} hidden={hidden} />
             <span className="text-base font-normal mr-1">د.ع</span>
           </p>
         </div>

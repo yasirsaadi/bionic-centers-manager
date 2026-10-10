@@ -9,7 +9,7 @@ import { join } from "path";
 import { packRowsIntoPages } from "@shared/print_pages";
 import { printNeedsPdf } from "./print_pdf";
 import { cashRowNote } from "./cash_book_text";
-import { capturableText } from "./print_text";
+import { capturableText, firstStrongDir, mergeLineRects } from "./print_text";
 
 let failures = 0;
 function same(msg: string, got: unknown, expected: unknown) {
@@ -89,6 +89,19 @@ same("ز.١ **محارفُ الاتجاه الخفيّة تُحذف في نسخ�
 same("ز.٢ **وسطرُ ويندوز والسطرُ القديم سطرٌ واحد**", capturableText("أ\r\nب\rج\nد"), "أ\nب\nج\nد");
 same("ز.٣ **والنسخةُ المصوَّرة وحدها تُهيَّأ** — في `onclone` بعد تحييد تباعد الحروف، والشاشةُ لا تُمَسّ",
   [/onclone:[\s\S]*prepareTextForCapture\(clone\)/.test(pdfLib), /prepareTextForCapture/.test(record + sheet + book)], [true, false]);
+
+//  **تكملة** (ملاحظةُ المالك ٢٠٢٦-١٠-١٠ مساءً): سليمةٌ من آيفون ١٧، ومفكّكةٌ من آيفون ١٣ في «المعاينة الطبية» وحدها. والمصوِّرُ يرسم الكلمةَ حرفاً
+//  حرفاً حين يعيد المتصفّحُ لها أكثرَ من مستطيل — فتُجمع مستطيلاتُ السطر الواحد مستطيلاً واحداً.
+const rect = (left: number, top: number, width: number, height = 20) => ({ left, top, width, height });
+same("ز.٤ **مستطيلاتُ كلمةٍ في سطرٍ واحد ⟵ مستطيلٌ واحد** (نصفان، أو فارغٌ مع الحقيقيّ)، وكلمةٌ على سطرين تبقى كما هي، ولا شيءَ ⟵ كما هو",
+  [mergeLineRects([rect(150, 100, 50), rect(100, 100, 50)]), mergeLineRects([rect(200, 100, 0), rect(100, 100, 100)]),
+    mergeLineRects([rect(100, 100, 40), rect(300, 130, 40)]), mergeLineRects([rect(10, 10, 0)]), mergeLineRects([rect(100, 102, 50, 18), rect(150, 100, 50, 22)])],
+  [[rect(100, 100, 100)], [rect(100, 100, 100)], null, null, [rect(100, 100, 100, 22)]]);
+same("ز.٥ **اتّجاهُ السطر من أوّل حرفٍ قويّ** — كـ`dir=\"auto\"` بلا `unicode-bidi: plaintext`",
+  ["لم يشتري يفكر", "MRI قبل شهر", "2024 — كاظم", "120 / 80", "Dokum بعد"].map(firstStrongDir), ["rtl", "ltr", "rtl", null, "ltr"]);
+const printText = src("client/src/lib/print_text.ts");
+same("ز.٦ **والكلمةُ تُرسَم كاملة في نسخة المصوِّر**: التهيئةُ تجمع المستطيلات، والسطورُ بلا `plaintext`",
+  [/keepWordsWhole\(win\);/.test(printText), /unicodeBidi\s*=\s*"plaintext"/.test(printText), /row\.dir = "auto"/.test(printText)], [true, false, false]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);
