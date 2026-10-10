@@ -9,6 +9,7 @@ import { join } from "path";
 import { packRowsIntoPages } from "@shared/print_pages";
 import { printNeedsPdf } from "./print_pdf";
 import { cashRowNote } from "./cash_book_text";
+import { capturableText } from "./print_text";
 
 let failures = 0;
 function same(msg: string, got: unknown, expected: unknown) {
@@ -80,6 +81,14 @@ same("و.١ **اسمُ الباب لا يُعاد في وصفه**، والوصف
     cashRowNote({ kind: "expense", source: "expense", note: "رواتب", category: "salaries" }),
     cashRowNote({ kind: "expense", source: "expense", note: "", category: "salaries" })],
   ["رواتب — شهر أيلول", "رواتب", "رواتب"]);
+
+console.log("\n── ز. العربيةُ موصولةً في الملفّ المصوَّر (ملاحظةُ المالك ٢٠٢٦-١٠-١٠: «المعاينة والملاحظات عربيتُها غير صحيحة») ──");
+same("ز.١ **محارفُ الاتجاه الخفيّة تُحذف في نسخة المصوِّر** (LRM · RLM · ALM · التضمين · العزل · BOM) — والحروفُ والأرقامُ والشرطاتُ كما هي",
+  capturableText("\u200Fعدنان مرهون\u200E كاظم\u061C 2024\\12\\1\u202B نص\u202C \u2067عزل\u2069\uFEFF — Dokum"),
+  "عدنان مرهون كاظم 2024\\12\\1 نص عزل — Dokum");
+same("ز.٢ **وسطرُ ويندوز والسطرُ القديم سطرٌ واحد**", capturableText("أ\r\nب\rج\nد"), "أ\nب\nج\nد");
+same("ز.٣ **والنسخةُ المصوَّرة وحدها تُهيَّأ** — في `onclone` بعد تحييد تباعد الحروف، والشاشةُ لا تُمَسّ",
+  [/onclone:[\s\S]*prepareTextForCapture\(clone\)/.test(pdfLib), /prepareTextForCapture/.test(record + sheet + book)], [true, false]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);
