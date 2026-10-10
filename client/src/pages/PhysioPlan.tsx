@@ -25,6 +25,7 @@ import { DueAssessmentsList } from "@/components/physio/PlanProgress";
 import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSuggestion";
 import { PlanProgress } from "@/components/physio/PlanProgress";
 import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
+import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import {
   PLAN_REVIEW_LABELS, PLAN_REVIEW_LABELS_EN, PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans,
@@ -43,6 +44,12 @@ interface Plan {
   goals: string | null; goalsEn: string | null; exercises: string | null; exercisesEn: string | null;
   precautions: string | null; precautionsEn: string | null; notes: string | null; notesEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
+  /** ترحيل ١٢٣ (§4.dd) — عددُ جلسات هذا المريض، والأسابيعُ مشتقّةٌ منه. */
+  totalSessions?: number | null;
+  /** نسخةُ المريض من مراحل البروتوكول وتمارينها — يعدّلها الأخصائيّ ولا يمسّ البروتوكول. */
+  phases?: Phase[];
+  /** الأجهزةُ المساعدة التي يقترحها البروتوكول، بإعداداتها الأولى — يؤشّر منها الأخصائيُّ لمريضه. */
+  protocolAdjuncts?: PlanDevice[];
   returnNote: string | null; stopReason: string | null; decidedByName: string | null; decidedAt: string | null;
   createdByName: string | null; createdAt: string; updatedByName: string | null; updatedAt: string;
   patient: { id: number; name: string; code: string | null; age: string | null } | null;
@@ -70,6 +77,7 @@ const T = {
     device: "الجهاز", minutes: "الدقائق", params: "المعاملات", note: "ملاحظة", exercises: "التمارين والبرنامج المنزلي",
     precautions: "الموانع والاحتياطات", notes: "ملاحظات الأخصائي لهذا المريض", assignees: "المنفّذون", noAssignees: "لم يُسنَد إلى أحد بعد.",
     noDevices: "لا أجهزة في الخطّة.", notAvail: "غير متوفّر في فرع الخطّة", perWeek: "جلسات/أسبوع", weeks: "أسابيع", perSession: "دقيقة/جلسة",
+    total: "جلسة", phases: "البرنامج على مراحل — لهذا المريض",
     wroteBy: "كتبها", approvedBy: "اعتمدها", returned: "أُعيدت بملاحظة", stopped: "أُوقفت", fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية",
     signature: "توقيع الأخصائي", approval: "الاعتماد", sessions: "الجلسات المنفّذة",
   },
@@ -78,6 +86,7 @@ const T = {
     device: "Device", minutes: "Minutes", params: "Parameters", note: "Note", exercises: "Exercises & home programme",
     precautions: "Contraindications & precautions", notes: "Specialist notes for this patient", assignees: "Executed by", noAssignees: "Not assigned yet.",
     noDevices: "No devices in this plan.", notAvail: "Not available in the plan's branch", perWeek: "sessions/week", weeks: "weeks", perSession: "min/session",
+    total: "sessions", phases: "Programme by phase — for this patient",
     wroteBy: "Written by", approvedBy: "Approved by", returned: "Returned with a note", stopped: "Stopped", fallback: "English not written yet — Arabic shown",
     signature: "Specialist signature", approval: "Approval", sessions: "Executed sessions",
   },
@@ -311,7 +320,8 @@ export default function PhysioPlanPage() {
           </div>
           <div className={`space-y-3 ${printMode === "progress" ? "print:hidden" : ""}`}>
           <Section title={t.dose}>
-            <div className="text-sm flex flex-wrap gap-4">
+            <div className="text-sm flex flex-wrap gap-4" data-testid="plan-dose">
+              {plan.totalSessions ? <span><b>{plan.totalSessions}</b> {t.total}</span> : null}
               <span><b>{plan.sessionsPerWeek ?? "—"}</b> {t.perWeek}</span>
               <span><b>{plan.durationWeeks ?? "—"}</b> {t.weeks}</span>
               <span><b>{plan.sessionMinutes ?? "—"}</b> {t.perSession}</span>
@@ -348,6 +358,16 @@ export default function PhysioPlanPage() {
               </div>
             )}
           </Section>
+          {/*  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول: يعدّلها كاتبُ الخطّة بمرونة البروتوكول نفسِها، والبروتوكولُ لا يُمَسّ. */}
+          {((plan.phases ?? []).length > 0 || (plan.canWrite && !isPlanClosed(plan.status))) && (
+            <Card className="print:shadow-none print:border-0"><CardContent className="p-4 print:p-0 print:pb-3">
+              <ProtocolPhasesSection phases={plan.phases ?? []} canEdit={plan.canWrite} isArchived={isPlanClosed(plan.status)} lang={lang}
+                saveUrl={`/api/physio/plans/${plan.id}/phases`} onSaved={refresh} title={t.phases}
+                currentSession={plan.status === "approved" && plan.rotation ? plan.rotation.sessionsSoFar + 1 : null}
+                editNote="تعديلٌ لهذا المريض وحده — البروتوكولُ الأساسيّ لا يتغيّر. وتعديلُ خطّةٍ تُنفَّذ يعيدها لمراجعة المشرف." />
+              <PhaseRangeHint plan={plan} lang={lang} />
+            </CardContent></Card>
+          )}
           <Section title={t.exercises}><TextBlock row={plan} field="exercises" lang={lang} /></Section>
           <Section title={t.precautions}><TextBlock row={plan} field="precautions" lang={lang} /></Section>
           <Section title={t.notes}><TextBlock row={plan} field="notes" lang={lang} /></Section>
@@ -373,6 +393,21 @@ export default function PhysioPlanPage() {
       <ExecuteSessionDialog planId={execOpen ? plan.id : null} onClose={() => setExecOpen(false)} />
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
     </div>
+  );
+}
+
+/** نطاقُ المراحل لا يطابق عددَ الجلسات (عدّل الأخصائيُّ العددَ لمريضه) — تنبيهٌ ليعدّل المراحلَ إن شاء، لا قيد. */
+function PhaseRangeHint({ plan, lang }: { plan: Plan; lang: ProtocolLang }) {
+  const ends = (plan.phases ?? []).map((p) => Number(p.sessionTo)).filter((n) => Number.isFinite(n) && n > 0);
+  if (!plan.totalSessions || !ends.length) return null;
+  const last = Math.max(...ends);
+  if (last === plan.totalSessions) return null;
+  return (
+    <p className="text-xs text-amber-800 mt-2 print:hidden" data-testid="plan-phase-range-hint">
+      {lang === "en"
+        ? `The phases end at session ${last} while the plan has ${plan.totalSessions} sessions — edit the phase ranges if needed.`
+        : `المراحلُ تنتهي عند الجلسة ${last} وعددُ جلسات الخطّة ${plan.totalSessions} — عدّل نطاقاتِ المراحل إن لزم.`}
+    </p>
   );
 }
 
@@ -456,7 +491,7 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
     mutationFn: async () => (await apiRequest("PUT", `/api/physio/plans/${plan.id}`, {
       titleAr: f.titleAr, titleEn: f.titleEn, goals: f.goals, goalsEn: f.goalsEn, exercises: f.exercises, exercisesEn: f.exercisesEn,
       precautions: f.precautions, precautionsEn: f.precautionsEn, notes: f.notes, notesEn: f.notesEn,
-      sessionsPerWeek: f.sessionsPerWeek, durationWeeks: f.durationWeeks, sessionMinutes: f.sessionMinutes,
+      sessionsPerWeek: f.sessionsPerWeek, durationWeeks: f.durationWeeks, sessionMinutes: f.sessionMinutes, totalSessions: f.totalSessions ?? null,
       devices: lines.map((l) => ({ deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn, note: l.note, noteEn: l.noteEn,
         centreUse: l.centreUse ?? "core" })),
     })).json(),
@@ -482,14 +517,21 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
         <div><label className="text-sm font-medium">Title (English)</label>
           <Input value={f.titleEn ?? ""} onChange={(e) => set("titleEn", e.target.value)} dir="ltr" className="mt-1 bg-white" /></div>
       </div>
+      {/*  ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة لهذا المريض، والأسابيعُ تُشتقّ منه (٢٤ ÷ ٦ = ٤، و٢٤ ÷ ٥ ⟵ ٥). */}
       <div className="grid grid-cols-3 gap-3">
-        {([["sessionsPerWeek", "جلسات/أسبوع"], ["durationWeeks", "أسابيع"], ["sessionMinutes", "دقيقة/جلسة"]] as const).map(([field, label]) => (
+        {([["totalSessions", "عدد الجلسات"], ["sessionsPerWeek", "جلسات/أسبوع"], ["sessionMinutes", "دقيقة/جلسة"]] as const).map(([field, label]) => (
           <div key={field}><label className="text-sm font-medium">{label}</label>
             <Input type="number" value={(f as any)[field] ?? ""} onChange={(e) => setF((p: any) => ({ ...p, [field]: num(e.target.value) }))}
               className="mt-1 bg-white" data-testid={`input-plan-${field}`} /></div>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground -mt-2" data-testid="plan-weeks-derived">
+        {f.totalSessions && f.sessionsPerWeek
+          ? `المدّة نحو ${Math.ceil(Number(f.totalSessions) / Number(f.sessionsPerWeek))} أسابيع — من العدد والتواتر.`
+          : f.durationWeeks ? `المدّة ${f.durationWeeks} أسابيع.` : "اكتب عددَ الجلسات وجلساتِ الأسبوع."}
+      </p>
       {area("goals", "الأهداف")}
+      <AdjunctChecklist options={plan.protocolAdjuncts ?? []} lines={lines} setLines={setLines} lang={lang} />
       <div>
         <div className="flex items-center justify-between">
           <label className="text-sm font-medium">الأجهزة (المتوفّرة في فرع الخطّة)</label>
@@ -604,6 +646,53 @@ function PlansTable({ view }: { view: "pending" | "review" | "assigned" }) {
               {view === "review" && r.decidedByName ? ` · بدأها ${r.decidedByName}${r.decidedAt ? ` في ${new Date(r.decidedAt).toLocaleDateString("ar-IQ", { month: "short", day: "numeric" })}` : ""}` : ""}</div>
         </Link>
       ))}
+    </div>
+  );
+}
+
+/**
+ * **الأجهزةُ المساعدة لهذا المريض** (ترحيل ١٢٣، §4.dd — سليم: «الأجهزةُ على مريض مريض»): ما يقترحه البروتوكولُ مساعداً، بإعداداته الأولى،
+ * **لا يُؤشَّر شيءٌ مسبقاً** — يختار الأخصائيُّ ما يناسب هذا المريض فيدخل الخطّةَ مساعداً بالتناوب، والتناوبُ بين المؤشَّر وحده.
+ * جهازٌ أو اثنان أفضل: كلٌّ منهما يصل المريضَ مرّاتٍ تكفي ليؤثّر. ولا قيد — يجوز اختيارُ الكلّ أو لا شيء.
+ */
+function AdjunctChecklist({ options, lines, setLines, lang }: {
+  options: PlanDevice[]; lines: PlanDevice[]; setLines: (fn: (p: PlanDevice[]) => PlanDevice[]) => void; lang: ProtocolLang;
+}) {
+  if (!options.length) return null;
+  const en = lang === "en";
+  const picked = options.filter((o) => lines.some((l) => l.deviceId === o.deviceId));
+  return (
+    <div className="rounded-md border border-violet-200 bg-violet-50/50 p-3 space-y-2" data-testid="plan-adjunct-checklist">
+      <div className="text-sm font-medium">{en ? "Adjunct devices for this patient" : "الأجهزةُ المساعدة لهذا المريض"}</div>
+      <p className="text-xs text-muted-foreground">
+        {en ? "Suggested by the protocol with initial settings. Tick what suits this patient — one adjunct rotates per session among the ticked ones; one or two are best."
+          : "يقترحها البروتوكولُ بإعداداتها الأولى. أشّر ما يناسب هذا المريض — يتناوب المؤشَّرُ وحده، جهازٌ مساعدٌ في كلّ جلسة؛ والأفضلُ جهازٌ أو اثنان."}
+      </p>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        {options.map((o) => {
+          const on = lines.some((l) => l.deviceId === o.deviceId);
+          return (
+            <label key={o.deviceId} className={`flex items-start gap-2 rounded border bg-white p-2 cursor-pointer ${on ? "border-violet-400" : ""}`}
+              data-testid={`plan-adjunct-${o.deviceId}`}>
+              <Checkbox checked={on} className="mt-0.5"
+                onCheckedChange={(v) => setLines((p) => (v ? [...p, { ...o, centreUse: "adjunct" }] : p.filter((l) => l.deviceId !== o.deviceId)))} />
+              <span className="min-w-0">
+                <span className="text-sm font-medium">{en ? o.nameEn : o.nameAr}</span>
+                {o.minutes ? <span className="text-xs text-muted-foreground"> · {o.minutes} {en ? "min" : "د"}</span> : null}
+                {localizedText(o, "parameters", lang).text && (
+                  <div className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-3">{localizedText(o, "parameters", lang).text}</div>
+                )}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {picked.length > 2 && (
+        <p className="text-xs text-amber-800" data-testid="plan-adjunct-many">
+          {en ? `${picked.length} adjuncts rotate — each reaches the patient about once every ${picked.length} sessions.`
+            : `${picked.length} أجهزة مساعدة تتناوب — يصل كلٌّ منها المريضَ نحو مرّةٍ كلَّ ${picked.length} جلسات.`}
+        </p>
+      )}
     </div>
   );
 }

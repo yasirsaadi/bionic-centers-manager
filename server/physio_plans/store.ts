@@ -3,15 +3,17 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, patients, physioDeviceBranches, physioPlanAssignees, physioPlanDevices, physioPlanSessions, physioPlans,
-  physioPlanSuggestions, physioProtocolDevices, physioProtocols, systemUsers, type PhysioPlan,
+  branches, devices, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanPhaseExercises,
+  physioPlanPhases, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolPhaseExercises,
+  physioProtocolPhases, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
   canApproveFrom, canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND,
   SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, sessionAdjuncts, type PlanStatus,
 } from "@shared/physio_plans";
-import { centreUseOf, planLineUse } from "@shared/physio_protocols";
-import { deviceParamsLine } from "@shared/physio_exercises";
+import { centreUseOf, normalizeDose, planLineUse } from "@shared/physio_protocols";
+import { deviceParamsLine, PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
+import { withImageUrls } from "../physio_protocols/exercises_store";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
 export class PlanError extends Error {
@@ -31,6 +33,8 @@ export interface PlanInput {
   goals: string | null; goalsEn: string | null; exercises: string | null; exercisesEn: string | null;
   precautions: string | null; precautionsEn: string | null; notes: string | null; notesEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
+  /** ترحيل ١٢٣ — عددُ جلسات هذا المريض، والأسابيعُ مشتقّةٌ منه (`normalizeDose`). */
+  totalSessions: number | null;
   devices: PlanDeviceInput[];
 }
 
@@ -133,7 +137,89 @@ export async function getPlan(id: number) {
     devices: lines.map((l) => ({ ...l, centreUse: planLineUse(l.centreUse), availableInBranch: avail.has(Number(l.deviceId)) })),
     rotation: { sessionsSoFar: Number(sessionsSoFar), turnDeviceId: rotation.turnDeviceId },
     assignees,
+    //  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول وتمارينها، والأجهزةُ المساعدة التي يقترحها بروتوكولُها (يختار منها الأخصائيّ).
+    phases: await getPlanPhases(id),
+    protocolAdjuncts: plan.protocolId ? await protocolAdjuncts(plan.protocolId, avail) : [],
   };
+}
+
+/**
+ * **الأجهزةُ المساعدة التي يقترحها البروتوكول** (§4.dd — «الأجهزةُ على مريض مريض»، سليم): لا تدخل الخطّةَ تلقائياً — يؤشّر الأخصائيُّ منها ما يناسب
+ * هذا المريض فيدخل بإعداداته الأولى، والتناوبُ بين المؤشَّر وحده. المتوفّرةُ في فرع الخطّة وحدها.
+ */
+async function protocolAdjuncts(protocolId: number, avail: Set<number>) {
+  const rows = await db.select({ line: physioProtocolDevices, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
+    .from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+    .where(eq(physioProtocolDevices.protocolId, protocolId)).orderBy(asc(physioProtocolDevices.displayOrder));
+  return rows.filter((r) => centreUseOf(r.line) === "adjunct" && avail.has(Number(r.line.deviceId)))
+    .map((r) => ({ ...planLineFromProtocol(r.line, r.code), code: r.code, nameAr: r.nameAr, nameEn: r.nameEn }));
+}
+
+/** مراحلُ الخطّة بترتيبها، ولكلٍّ تمارينُها بجرعتها **والبطاقةُ كاملةً بصورها** — بشكل مراحل البروتوكول نفسِه (`getPhases`). */
+export async function getPlanPhases(planId: number, ex: any = db) {
+  const phases = await ex.select().from(physioPlanPhases).where(eq(physioPlanPhases.planId, planId)).orderBy(asc(physioPlanPhases.position));
+  if (!phases.length) return [];
+  const links = await ex.select({ link: physioPlanPhaseExercises, exercise: physioExercises })
+    .from(physioPlanPhaseExercises)
+    .innerJoin(physioExercises, eq(physioExercises.id, physioPlanPhaseExercises.exerciseId))
+    .where(inArray(physioPlanPhaseExercises.phaseId, phases.map((p: any) => p.id)))
+    .orderBy(asc(physioPlanPhaseExercises.position), asc(physioPlanPhaseExercises.id));
+  return phases.map((p: any) => ({
+    ...p,
+    exercises: links.filter((l: any) => l.link.phaseId === p.id).map((l: any) => ({
+      exerciseId: l.exercise.id,
+      sets: l.link.sets, reps: l.link.reps, holdSeconds: l.link.holdSeconds, restSeconds: l.link.restSeconds,
+      doseNote: l.link.doseNote, doseNoteEn: l.link.doseNoteEn, note: l.link.note, noteEn: l.link.noteEn,
+      exercise: { ...l.exercise, images: withImageUrls(l.exercise.images) },
+    })),
+  }));
+}
+
+/**
+ * **نسخُ مراحل البروتوكول وتمارينها إلى الخطّة** (ترحيل ١٢٣، §4.dd) — عند فتحها أو تغيير نوعها. ثمّ هي للمريض: يعدّلها الأخصائيُّ
+ * (التمارين والتكرارات والجرعة ونطاقُ الجلسات) ولا يمسّ البروتوكول، ولا يمسّها تعديلُ البروتوكول بعدها.
+ */
+async function copyProtocolPhases(tx: any, protocolId: number, planId: number) {
+  const phases = await tx.select().from(physioProtocolPhases).where(eq(physioProtocolPhases.protocolId, protocolId))
+    .orderBy(asc(physioProtocolPhases.position));
+  if (!phases.length) return;
+  const links = await tx.select().from(physioProtocolPhaseExercises)
+    .where(inArray(physioProtocolPhaseExercises.phaseId, phases.map((p: any) => p.id)))
+    .orderBy(asc(physioProtocolPhaseExercises.position), asc(physioProtocolPhaseExercises.id));
+  for (const { id: phaseId, protocolId: _p, ...ph } of phases) {
+    const [row] = await tx.insert(physioPlanPhases).values({ ...ph, planId }).returning({ id: physioPlanPhases.id });
+    const mine = links.filter((l: any) => l.phaseId === phaseId);
+    if (mine.length) {
+      await tx.insert(physioPlanPhaseExercises).values(mine.map(({ id: _i, phaseId: _ph, ...l }: any) => ({ ...l, phaseId: row.id })));
+    }
+  }
+}
+
+/** **مراحلُ الخطّة تُستبدل كاملة** — بقاعدة مراحل البروتوكول نفسِها: التمرينُ من المكتبة غيرُ مؤرشفٍ إلّا ما كان فيها من قبل. */
+async function writePlanPhases(tx: any, planId: number, phases: PhaseInput[]) {
+  const old = await tx.select({ id: physioPlanPhases.id }).from(physioPlanPhases).where(eq(physioPlanPhases.planId, planId));
+  const had = new Set<number>(old.length
+    ? (await tx.select({ e: physioPlanPhaseExercises.exerciseId }).from(physioPlanPhaseExercises)
+      .where(inArray(physioPlanPhaseExercises.phaseId, old.map((o: any) => o.id)))).map((r: any) => Number(r.e))
+    : []);
+  const ids = Array.from(new Set(phases.flatMap((p) => p.exercises.map((e) => e.exerciseId))));
+  if (ids.length) {
+    const found = await tx.select({ id: physioExercises.id, isArchived: physioExercises.isArchived }).from(physioExercises)
+      .where(inArray(physioExercises.id, ids));
+    if (found.length !== ids.length) throw new PlanError(400, "تمرينٌ غير موجود في المكتبة");
+    if (found.some((f: any) => f.isArchived && !had.has(Number(f.id)))) throw new PlanError(400, "تمرينٌ مؤرشف لا يُضاف إلى مرحلة");
+  }
+  await tx.delete(physioPlanPhases).where(eq(physioPlanPhases.planId, planId));
+  for (let i = 0; i < phases.length; i++) {
+    const p = phases[i];
+    const values: Record<string, unknown> = { planId, position: i + 1, nameAr: p.nameAr, nameEn: p.nameEn,
+      sessionFrom: p.sessionFrom ?? null, sessionTo: p.sessionTo ?? null };
+    for (const f of PHASE_TEXT_FIELDS) { values[f] = p[f] ?? null; values[`${f}En`] = p[`${f}En`] ?? null; }
+    const [row] = await tx.insert(physioPlanPhases).values(values as any).returning({ id: physioPlanPhases.id });
+    if (p.exercises.length) {
+      await tx.insert(physioPlanPhaseExercises).values(p.exercises.map((e, j) => ({ ...e, phaseId: row.id, position: j })));
+    }
+  }
 }
 
 /**
@@ -150,6 +236,7 @@ async function protocolFill(tx: any, protocolId: number, branchId: number) {
     precautions: [pr.contraindications, pr.precautions].filter(Boolean).join("\n\n") || null,
     precautionsEn: [pr.contraindicationsEn, pr.precautionsEn].filter(Boolean).join("\n\n") || null,
     sessionsPerWeek: pr.sessionsPerWeek, durationWeeks: pr.durationWeeks, sessionMinutes: pr.sessionMinutes,
+    totalSessions: pr.totalSessions,
   };
   const avail = await availableDeviceIds(tx, branchId);
   //  **«استعمالُ المركز» يحكم لا درجةُ الدليل** (ترحيل ١٢٢، §4.cx): «لا يُستخدم» لا يدخل، والأساسيُّ والمساعدُ يدخلان بدورهما —
@@ -190,9 +277,12 @@ export async function createPlan(p: {
       ...base, titleAr, patientId: p.patientId, branchId: p.branchId, status: "draft",
       createdBy: p.actor.userId, createdByName: p.actor.name, updatedBy: p.actor.userId, updatedByName: p.actor.name,
     }).returning();
-    if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l: PlanDeviceInput, i: number) => planDeviceRow(row.id, l, i)));
+    //  **الأساسيُّ وحده يدخل** (§4.dd — «الأجهزةُ على مريض مريض»): المساعدُ يؤشّره الأخصائيُّ لمريضه من «الأجهزة المساعدة» في المحرّر.
+    const core = lines.filter((l: PlanDeviceInput) => l.centreUse === "core");
+    if (core.length) {
+      await tx.insert(physioPlanDevices).values(core.map((l: PlanDeviceInput, i: number) => planDeviceRow(row.id, l, i)));
     }
+    if (p.protocolId) await copyProtocolPhases(tx, p.protocolId, row.id);
     return row;
   });
 }
@@ -219,10 +309,14 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
       if (!Number.isInteger(n) || n < 1) return cap;
       return cap == null ? n : Math.min(n, cap);
     };
+    //  عددُ الجلسات (ترحيل ١٢٣): يبقى عددَ البروتوكول، وإن خفّض المساعدُ جلساتِ الأسبوع أو الأسابيع فلا يتجاوز حاصلَهما.
+    const spw = capDose(r?.dose?.sessionsPerWeek, base.sessionsPerWeek);
+    const weeks = capDose(r?.dose?.durationWeeks, base.durationWeeks);
+    const lowered = spw !== base.sessionsPerWeek || weeks !== base.durationWeeks;
+    const total = lowered && spw && weeks ? Math.min(base.totalSessions ?? Number.POSITIVE_INFINITY, spw * weeks) : base.totalSessions;
     const [row] = await tx.insert(physioPlans).values({
       ...base, patientId: sg.patientId, branchId: sg.branchId, status: "draft",
-      sessionsPerWeek: capDose(r?.dose?.sessionsPerWeek, base.sessionsPerWeek),
-      durationWeeks: capDose(r?.dose?.durationWeeks, base.durationWeeks),
+      ...normalizeDose({ sessionsPerWeek: spw, durationWeeks: weeks, totalSessions: total }),
       sessionMinutes: capDose(r?.dose?.sessionMinutes, base.sessionMinutes),
       notes: typeof r?.notesAr === "string" && r.notesAr.trim() ? r.notesAr.trim() : null,
       notesEn: typeof r?.notesEn === "string" && r.notesEn.trim() ? r.notesEn.trim() : null,
@@ -231,6 +325,7 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     if (kept.length) {
       await tx.insert(physioPlanDevices).values(kept.map((l: PlanDeviceInput, i: number) => planDeviceRow(row.id, l, i)));
     }
+    await copyProtocolPhases(tx, sg.protocolId, row.id);
     await tx.update(physioPlanSuggestions).set({ planId: row.id, acceptedAt: new Date() }).where(eq(physioPlanSuggestions.id, sg.id));
     return row;
   });
@@ -271,7 +366,35 @@ const reviewedBy = (actor: Actor) => ({ reviewStatus: "reviewed", reviewedBy: ac
  * **والخطّةُ المعتمَدة** (§4.cz): بيد المشرف في خطّة غيره ⟵ تبقى، «راجعها المشرف»، ويُنبَّه كاتبُها؛ وبيد الأخصائيّ على بروتوكولٍ معتمَد ⟵
  * تبقى تُنفَّذ وتعود «بانتظار مراجعة المشرف» ويُنبَّه المشرف؛ وعلى بروتوكولٍ غير معتمَد ⟵ تعود «بانتظار الاعتماد» كما كانت.
  */
-export async function updatePlan(id: number, input: PlanInput, nextStatus: (current: PlanStatus, protocolStatus: string | null) => PlanStatus, actor: Actor) {
+type NextStatus = (current: PlanStatus, protocolStatus: string | null) => PlanStatus;
+
+/**
+ * **حالةُ الخطّة بعد أيّ تعديل** — نصوصاً وأجهزةً ومراحلَ وتمارين، قاعدةٌ واحدة (§4.cz): بيد المشرف في خطّة غيره تبقى «راجعها المشرف»؛ وبيد
+ * الأخصائيّ على بروتوكولٍ معتمَد تبقى تُنفَّذ وتعود للمراجعة؛ وعلى غير معتمَد تعود «بانتظار الاعتماد». والتنبيهاتُ بعد كتابة التوابع.
+ */
+async function applyPlanEdit(tx: any, before: PhysioPlan, fields: Record<string, unknown>, nextStatus: NextStatus, actor: Actor) {
+  const status = nextStatus(before.status as PlanStatus, await protocolStatusOf(tx, before.protocolId));
+  const demoted = before.status === "approved" && status === "pending";
+  const keptActive = before.status === "approved" && status === "approved";
+  const bySupervisor = keptActive && supervisorActsOnOthers(before, actor);
+  const backToReview = keptActive && !actor.isApprover;
+  const [after] = await tx.update(physioPlans).set({
+    ...fields, status, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
+    ...(demoted ? { submittedAt: new Date(), decidedBy: null, decidedByName: null, decidedAt: null,
+      reviewStatus: null, reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
+    ...(bySupervisor ? reviewedBy(actor) : {}),
+    ...(backToReview ? { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
+  }).where(eq(physioPlans.id, before.id)).returning();
+  return { after: after as PhysioPlan, demoted, backToReview, bySupervisor };
+}
+
+async function notifyPlanEdit(tx: any, r: { after: PhysioPlan; demoted: boolean; backToReview: boolean; bySupervisor: boolean }, actor: Actor) {
+  if (r.demoted) await notifyPending(tx, r.after, actor, "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد");
+  if (r.backToReview) await notifyPending(tx, r.after, actor, "عُدّلت خطّةٌ بدأت وتُنفَّذ — للمراجعة", "✏️");
+  if (r.bySupervisor) await notifyAuthor(tx, r.after, actor, "✏️ عدّل المشرفُ خطّتك");
+}
+
+export async function updatePlan(id: number, input: PlanInput, nextStatus: NextStatus, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
     if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا تُعدَّل");
@@ -280,27 +403,34 @@ export async function updatePlan(id: number, input: PlanInput, nextStatus: (curr
       .where(eq(physioPlanDevices.planId, id))).map((r) => Number(r.d)));
     const bad = input.devices.find((d) => !avail.has(d.deviceId) && !had.has(d.deviceId));
     if (bad) throw new PlanError(400, "جهازٌ غيرُ متوفّرٍ في فرع الخطّة");
-    const status = nextStatus(before.status as PlanStatus, await protocolStatusOf(tx, before.protocolId));
-    const demoted = before.status === "approved" && status === "pending";
-    const keptActive = before.status === "approved" && status === "approved";
-    const bySupervisor = keptActive && supervisorActsOnOthers(before, actor);
-    const backToReview = keptActive && !actor.isApprover;
     const { devices: lines, ...fields } = input;
-    const [after] = await tx.update(physioPlans).set({
-      ...fields, status, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
-      ...(demoted ? { submittedAt: new Date(), decidedBy: null, decidedByName: null, decidedAt: null,
-        reviewStatus: null, reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
-      ...(bySupervisor ? reviewedBy(actor) : {}),
-      ...(backToReview ? { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
-    }).where(eq(physioPlans.id, id)).returning();
+    const r = await applyPlanEdit(tx, before, fields, nextStatus, actor);
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     if (lines.length) {
       await tx.insert(physioPlanDevices).values(lines.map((l, i) => planDeviceRow(id, l, i)));
     }
-    if (demoted) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد");
-    if (backToReview) await notifyPending(tx, after, actor, "عُدّلت خطّةٌ بدأت وتُنفَّذ — للمراجعة", "✏️");
-    if (bySupervisor) await notifyAuthor(tx, after, actor, "✏️ عدّل المشرفُ خطّتك");
-    return { before, after, demoted, backToReview };
+    await notifyPlanEdit(tx, r, actor);
+    return { before, after: r.after, demoted: r.demoted, backToReview: r.backToReview };
+  });
+}
+
+/**
+ * **تعديلُ مراحل الخطّة وتمارينها لهذا المريض** (ترحيل ١٢٣، §4.dd — قرارُ المالك: «مرونةُ سليم نفسُها لكلّ أخصائيّ… لما اختير للمريض
+ * دون تأثّر الرئيسي») — التمارينُ والتكراراتُ والمجموعاتُ والثباتُ والراحةُ والجرعةُ ونطاقُ الجلسات والنصوص. البروتوكولُ لا يُمَسّ،
+ * وحالةُ الخطّة بقاعدة كلّ تعديل (`applyPlanEdit`).
+ */
+export async function setPlanPhases(id: number, phases: PhaseInput[], nextStatus: NextStatus, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const before = await lockPlan(tx, id);
+    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا تُعدَّل");
+    const oldPhases = await getPlanPhases(id, tx);
+    await writePlanPhases(tx, id, phases);
+    const r = await applyPlanEdit(tx, before, {}, nextStatus, actor);
+    await notifyPlanEdit(tx, r, actor);
+    return {
+      before: { status: before.status, phases: oldPhases.map(({ exercises, ...ph }: any) => ({ ...ph, exercises: exercises.map(({ exercise, ...x }: any) => x) })) },
+      after: r.after, demoted: r.demoted, backToReview: r.backToReview,
+    };
   });
 }
 
@@ -458,10 +588,12 @@ export async function deletePlan(id: number, actor: Actor) {
     const lines = await tx.select().from(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     const assignees = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
+    //  مراحلُها وتمارينُها تتبعها (`ON DELETE CASCADE`) — وصورتُها في سطر التدقيق.
+    const phases = (await getPlanPhases(id, tx)).map(({ exercises, ...ph }: any) => ({ ...ph, exercises: exercises.map(({ exercise, ...x }: any) => x) }));
     await tx.delete(physioPlans).where(eq(physioPlans.id, id));
     //  الخطّةُ لم تعد — فالرابطُ ملفُّ المريض (§4.cz).
     if (supervisorActsOnOthers(plan, actor)) await notifyAuthor(tx, plan, actor, "🗑️ حذف المشرفُ خطّتك", `/patients/${plan.patientId}`);
-    return { ...plan, devices: lines, assignees };
+    return { ...plan, devices: lines, assignees, phases };
   });
 }
 
@@ -481,9 +613,13 @@ export async function changePlanProtocol(id: number, protocolId: number, actor: 
       ...(before.status === "approved" && actor.isApprover ? reviewedBy(actor) : {}) })
       .where(eq(physioPlans.id, id)).returning();
     await tx.delete(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
-    if (lines.length) {
-      await tx.insert(physioPlanDevices).values(lines.map((l: PlanDeviceInput, i: number) => planDeviceRow(id, l, i)));
+    //  كخطّةٍ جديدة (§4.dd): الأساسيُّ وحده، والمساعدُ يؤشّره الأخصائيّ؛ ومراحلُ البروتوكول الجديد بدلَ القديمة.
+    const core = lines.filter((l: PlanDeviceInput) => l.centreUse === "core");
+    if (core.length) {
+      await tx.insert(physioPlanDevices).values(core.map((l: PlanDeviceInput, i: number) => planDeviceRow(id, l, i)));
     }
+    await tx.delete(physioPlanPhases).where(eq(physioPlanPhases.planId, id));
+    await copyProtocolPhases(tx, protocolId, id);
     if (after.status === "approved") {
       const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
         .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));

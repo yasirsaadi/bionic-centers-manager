@@ -2,8 +2,9 @@
 //
 // قراراتُ المالك:
 //   • البروتوكولاتُ من مصادر عالمية موثوقة، **ولكلّ جهازٍ في البروتوكول درجةُ دليل** — ومنذ ترحيل ١٢٢ «استعمالُ المركز» بجانبها (أدناه).
-//   • **يعدّلها ويضيفها ويحذفها** المشرفُ العام (سليم) وأخصائيُّ العلاج الطبيعي والطبيبُ المسؤول (المالك).
-//   • **والمسوّداتُ تُراجَع**: لا تصير «معتمَدة» إلّا بالمشرف العام أو المسؤول — وتعديلُ المعتمَد بيد غيرهما يعيده مسوّدة.
+//   • **يعدّلها ويضيفها ويؤرشفها تعديلاً دائماً** المشرفُ العام (سليم) والطبيبُ المسؤول (المالك) وحدهما — **وأخصائيُّ العلاج الطبيعي يعدّل
+//     نسخةَ مريضه في خطّته** ولا يمسّ البروتوكول (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.dd؛ وكان الأخصائيُّ يعدّل البروتوكولَ فيعود مسوّدةً للجميع).
+//   • **والمسوّداتُ تُراجَع**: لا تصير «معتمَدة» إلّا بالمشرف العام أو المسؤول.
 //   • **توفّرُ الأجهزة بالفرع**: بغداد وذي قار فيهما علاجٌ طبيعي اليوم، وكربلاء والموصل يُفعَّلان لاحقاً — ويُرى ذلك في البروتوكول.
 //   • **والإبرُ الجافة** لا يطبّقها إلّا حاملُ علَمها (§4.cg) — يُعلَّم ذلك عند الجهاز `needle`.
 import { hasPhysioRole, hasRole, type RoleHolder } from "./user_roles";
@@ -43,6 +44,29 @@ export const isCentreUse = (v: unknown): v is CentreUse => typeof v === "string"
 export function centreUseOf(row: { centreUse?: unknown; evidence?: unknown }): CentreUse {
   if (isCentreUse(row.centreUse)) return row.centreUse;
   return row.evidence === "recommended" ? "core" : row.evidence === "optional" ? "adjunct" : "not_used";
+}
+
+/** سقفُ عدد الجلسات في البروتوكول والخطّة (ترحيل ١٢٣). */
+export const TOTAL_SESSIONS_MAX = 300;
+export interface DoseLike { sessionsPerWeek: number | null; durationWeeks: number | null; totalSessions: number | null }
+
+/**
+ * **عددُ الجلسات أساسُ الجرعة** (ترحيل ١٢٣، §4.dd — قرارُ المالك: «٢٤ جلسة يومياً عدا الجمعة… وفي بعض الحالات ٥ في الأسبوع»):
+ * مع جلسات الأسبوع تُشتقّ الأسابيع (٢٤ ÷ ٦ = ٤، و٢٤ ÷ ٥ ⟵ ٥) فلا يتناقض الرقمان؛ وبلا عددٍ يُحسب من الأسبوع × الأسابيع — فالقديمُ بمعناه.
+ */
+export function normalizeDose<T extends DoseLike>(d: T): T {
+  if (d.totalSessions && d.sessionsPerWeek) return { ...d, durationWeeks: Math.ceil(d.totalSessions / d.sessionsPerWeek) };
+  if (!d.totalSessions && d.sessionsPerWeek && d.durationWeeks) {
+    return { ...d, totalSessions: Math.min(d.sessionsPerWeek * d.durationWeeks, TOTAL_SESSIONS_MAX) };
+  }
+  return d;
+}
+
+/** المدّةُ المشتقّة لا تتجاوز ١٠٤ أسابيع (قيدُ العمود) — فعددٌ كبيرٌ بتواترٍ قليل يُردّ برسالةٍ لا بخطأ قاعدة. */
+export const DURATION_WEEKS_MAX = 104;
+export function doseError(d: DoseLike): string | null {
+  return d.durationWeeks != null && d.durationWeeks > DURATION_WEEKS_MAX
+    ? `عددُ الجلسات مع جلسات الأسبوع يعطي أكثرَ من ${DURATION_WEEKS_MAX} أسبوعاً — زِد جلساتِ الأسبوع أو قلّل العدد` : null;
 }
 
 /** بندُ خطّة: مساعدٌ أو أساسيّ — و`NULL` (خططٌ قبل ترحيل ١٢٢) أساسيٌّ كما كان يُنفَّذ في كلّ جلسة. */
@@ -101,10 +125,22 @@ export interface ProtocolSessionLike extends RoleHolder {
   permissions?: { canSupervisePhysio?: boolean | null; canWriteMedicalExam?: boolean | null } | null;
 }
 
-/** **يعدّل ويضيف ويؤرشف**: المسؤول، والمشرفُ العام، وأخصائيُّ العلاج الطبيعي. */
-export function canEditProtocols(s: ProtocolSessionLike | null | undefined): boolean {
+/**
+ * **يكتب خططَ المرضى** — ويعدّل فيها لمريضه كلَّ ما أخذه من البروتوكول (الأجهزة والتمارين وعددَ الجلسات ووقتَها والتكراراتِ وإعداداتِ الأجهزة):
+ * المسؤول، والمشرفُ العام، وأخصائيُّ العلاج الطبيعي.
+ */
+export function canWritePatientPlans(s: ProtocolSessionLike | null | undefined): boolean {
   if (!s) return false;
   return s.isAdmin === true || s.permissions?.canSupervisePhysio === true || hasRole(s, "physio_specialist");
+}
+
+/**
+ * **يعدّل البروتوكولَ الأساسيّ تعديلاً دائماً** (ويضيف ويؤرشف، ومعه بطاقاتُ التمارين والمقاييسُ والصور): المشرفُ العام والمسؤول وحدهما —
+ * قرارُ المالك (٢٠٢٦-١٠-١٠، §4.dd): «التعديلُ إمّا دائميٌّ من قبل سليم فقط، أو لبرنامجٍ اختير لمريضٍ ويخصّه فقط دون تأثّر البروتوكول».
+ * فالأخصائيُّ يعدّل نسخةَ مريضه في خطّته (`canWritePatientPlans`)، والبروتوكولُ لا يعود مسوّدةً للجميع بتعديلٍ لمريضٍ واحد.
+ */
+export function canEditProtocols(s: ProtocolSessionLike | null | undefined): boolean {
+  return canApproveProtocols(s);
 }
 
 /** **يعتمد** المسوّدة: المسؤولُ والمشرفُ العام وحدهما. */
@@ -120,7 +156,7 @@ export function canApproveProtocols(s: ProtocolSessionLike | null | undefined): 
  */
 export function canConsultProtocols(s: ProtocolSessionLike | null | undefined): boolean {
   if (!s) return false;
-  return canEditProtocols(s) || hasRole(s, "doctor") || s.permissions?.canWriteMedicalExam === true || hasRole(s, "branch_manager");
+  return canWritePatientPlans(s) || hasRole(s, "doctor") || s.permissions?.canWriteMedicalExam === true || hasRole(s, "branch_manager");
 }
 
 /** **يقرأ** صفحةَ المكتبة: مَن يستشيرها، ومعهم أدوارُ القسم كلُّها. */

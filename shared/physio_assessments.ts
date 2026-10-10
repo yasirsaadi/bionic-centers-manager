@@ -9,11 +9,12 @@
 //   ٤. **حالةٌ جديدة للخطّة «تخرّج»** — منفصلةٌ عن «موقوفة»، كي تفرّق التقاريرُ بين مَن أنهى علاجَه متحسّناً ومَن انقطع.
 //   ٥. التقاريرُ للمسؤول والمشرف العام لكلّ الفروع، ولمدير الفرع لفرعه، وللأخصائيّ لمرضاه (المرحلةُ ٦ب).
 import { canApprovePlans, canWritePlans } from "./physio_plans";
-import type { ProtocolSessionLike } from "./physio_protocols";
+import { canEditProtocols, type ProtocolSessionLike } from "./physio_protocols";
 import { hasRole } from "./user_roles";
 
 export const canAssessPlans = (s: ProtocolSessionLike | null | undefined): boolean => canWritePlans(s);
-export const canEditMeasures = (s: ProtocolSessionLike | null | undefined): boolean => canWritePlans(s);
+//  مقاييسُ البروتوكول جزءٌ منه — فتعديلُها دائمٌ للمشرف العام والمسؤول وحدهما (§4.dd).
+export const canEditMeasures = (s: ProtocolSessionLike | null | undefined): boolean => canEditProtocols(s);
 export const canApproveMeasures = (s: ProtocolSessionLike | null | undefined): boolean => canApprovePlans(s);
 
 export interface MeasureDef {
@@ -279,21 +280,42 @@ const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00
 
 export interface DueState { state: "none" | "baseline" | "due" | "upcoming"; dueOn: string | null; kind: AssessmentKind | null; overdueDays: number }
 
+/** أسبوعُ سماحٍ بعد نهاية المدّة بالتقويم لخطّةٍ بعدد جلسات — للغياب والتأخّر قبل أن يُطلب الختاميُّ لمن لم يُكمل. */
+export const FINAL_GRACE_DAYS = 7;
+
 /**
  * **متى التقييمُ التالي** — لخطّةٍ معتمَدة وحدها:
  *   • بلا تقييمٍ قطّ ⟵ «أوّليّ» مستحقٌّ منذ يوم الاعتماد.
- *   • وإلّا ⟵ بعد ٢٨ يوماً من آخر تقييم، أو نهايةُ مدّة الخطّة (الاعتمادُ + الأسابيع) إن جاءت قبلها ولم تُقيَّم بعدها ⟵ «ختاميّ».
+ *   • **بعدد جلسات** (ترحيل ١٢٣، §4.dd — قرارُ المالك): «ختاميٌّ» عند الجلسة الأخيرة (يومَ نُفّذت) ما لم يُقيَّم بعدها؛ وقبل اكتمالها
+ *     «دوريٌّ» بعد ٢٨ يوماً من آخر تقييم — **إلّا في أسبوعه الأخير** (الباقي جلساتُ أسبوعٍ أو أقلّ) فيكفيه الختاميّ؛ ومَن انقطع ولم يُكمل
+ *     يُطلب ختاميُّه بعد نهاية المدّة بالتقويم وأسبوعِ سماح.
+ *   • **وبلا عدد** (خططٌ أقدم) ⟵ بعد ٢٨ يوماً من آخر تقييم، أو نهايةُ مدّة الخطّة (الاعتمادُ + الأسابيع) إن جاءت قبلها ولم تُقيَّم بعدها ⟵ «ختاميّ».
  * وما حلّ موعدُه «مستحقّ» بعدد أيام تأخّره — تنبيهٌ لا قيد.
  */
-export function assessmentDue(p: { status: string; approvedOn: string | null; durationWeeks: number | null; lastOn: string | null; count: number; today: string }): DueState {
+export function assessmentDue(p: {
+  status: string; approvedOn: string | null; durationWeeks: number | null; lastOn: string | null; count: number; today: string;
+  totalSessions?: number | null; sessionsPerWeek?: number | null; executed?: number; lastSessionOn?: string | null;
+}): DueState {
   if (p.status !== "approved" || !p.approvedOn) return { state: "none", dueOn: null, kind: null, overdueDays: 0 };
   if (!p.count || !p.lastOn) {
     return { state: "baseline", dueOn: p.approvedOn, kind: "baseline", overdueDays: Math.max(0, daysBetween(p.approvedOn, p.today)) };
   }
   const next = addDays(p.lastOn, REASSESS_EVERY_DAYS);
-  const end = p.durationWeeks ? addDays(p.approvedOn, p.durationWeeks * 7) : null;
   let dueOn = next; let kind: AssessmentKind = "periodic";
-  if (end && end > p.lastOn && end <= next) { dueOn = end; kind = "final"; }
+  if (p.totalSessions) {
+    const executed = Math.max(0, Math.trunc(p.executed ?? 0));
+    if (executed >= p.totalSessions && p.lastSessionOn) {
+      if (p.lastOn < p.lastSessionOn) { dueOn = p.lastSessionOn; kind = "final"; }
+    } else {
+      const weeks = p.sessionsPerWeek ? Math.ceil(p.totalSessions / p.sessionsPerWeek) : p.durationWeeks;
+      const end = weeks ? addDays(p.approvedOn, weeks * 7 + FINAL_GRACE_DAYS) : null;
+      const lastWeek = p.sessionsPerWeek ? p.totalSessions - executed <= p.sessionsPerWeek : false;
+      if (end && end > p.lastOn && (end <= next || lastWeek)) { dueOn = end; kind = "final"; }
+    }
+  } else {
+    const end = p.durationWeeks ? addDays(p.approvedOn, p.durationWeeks * 7) : null;
+    if (end && end > p.lastOn && end <= next) { dueOn = end; kind = "final"; }
+  }
   const overdue = daysBetween(dueOn, p.today);
   return { state: overdue >= 0 ? "due" : "upcoming", dueOn, kind, overdueDays: Math.max(0, overdue) };
 }
@@ -347,12 +369,14 @@ export function outcomesScope(s: ProtocolSessionLike | null | undefined): Outcom
  * **الالتزامُ بعدد الجلسات** — المنفَّذُ من المتوقَّع حتى اليوم (أو حتى انتهاء الخطّة): الجلساتُ في الأسبوع × الأسابيعُ المنقضية منذ الاعتماد، لا أكثرَ من مدّة الخطّة.
  * `null` حين لا جرعةَ مكتوبةً أو لم يمضِ يومٌ بعد.
  */
-export function adherence(p: { approvedOn: string | null; endOn: string | null; today: string; sessionsPerWeek: number | null; durationWeeks: number | null; executed: number }): number | null {
+export function adherence(p: { approvedOn: string | null; endOn: string | null; today: string; sessionsPerWeek: number | null; durationWeeks: number | null; executed: number;
+  totalSessions?: number | null }): number | null {
   if (!p.approvedOn || !p.sessionsPerWeek) return null;
   const until = p.endOn && p.endOn < p.today ? p.endOn : p.today;
   let weeks = Math.max(0, daysBetween(p.approvedOn, until)) / 7;
   if (p.durationWeeks) weeks = Math.min(weeks, p.durationWeeks);
-  const expected = Math.floor(weeks * p.sessionsPerWeek);
+  //  بعدد جلسات (ترحيل ١٢٣): المتوقَّعُ لا يتجاوزه — ستٌّ في الأسبوع × أربعة أسابيع وعددُها ٢٤ ⟵ ٢٤ لا ٢٨.
+  const expected = Math.min(Math.floor(weeks * p.sessionsPerWeek), p.totalSessions ?? Number.POSITIVE_INFINITY);
   if (expected <= 0) return null;
   return Math.min(100, Math.round((p.executed / expected) * 100));
 }

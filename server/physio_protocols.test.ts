@@ -2,7 +2,7 @@
 // `npm run test:physio-protocols` — على النقاط الحقيقية بتطبيق Express الحقيقيّ.
 //
 // يحرس: (أ) مَن يقرأ ومَن يكتب ومَن يعتمد ومَن يضبط التوفّر؛ (ب) الجديدُ مسوّدة، والاعتمادُ للمشرف العام والمسؤول وحدهما؛
-// (ج) تعديلُ المعتمَد بيد الأخصائيّ يعيده مسوّدة، وبيد المشرف يبقى معتمَداً؛ (د) التحقّقُ من الجسم والأجهزة ودرجات الدليل؛
+// (ج) البروتوكولُ الأساسيّ للمشرف والمسؤول وحدهما — والأخصائيُّ يعدّل نسخةَ مريضه في خطّته (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.dd)؛ (د) التحقّقُ من الجسم والأجهزة ودرجات الدليل؛
 // (هـ) الأرشفةُ لا محو، والمؤرشفُ لا يراه إلّا مَن يعدّل؛ (و) الصورُ في القاعدة بنوعها وحدّها؛ (ز) توفّرُ الجهاز بالفرع يظهر
 // في البروتوكول؛ (ح) كلُّ كتابةٍ تكتب سطرَ تدقيق.
 
@@ -17,6 +17,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { statusAfterEdit } from "@shared/physio_protocols";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -130,13 +131,15 @@ async function main() {
     same("أ.٤ التقنيُّ لا يضيف", (await call("POST", "/api/physio/protocols", S.tech, body(CODE_PREFIX + "x"))).status, 403);
     same("أ.٥ الطبيبُ لا يضيف", (await call("POST", "/api/physio/protocols", S.doc, body(CODE_PREFIX + "x"))).status, 403);
     same("أ.٦ الاستقبالُ لا يرى مصفوفةَ الأجهزة", (await call("GET", "/api/physio/devices", S.rec)).status, 403);
+    //  قرارُ المالك (٢٠٢٦-١٠-١٠، §4.dd): «التعديلُ دائميٌّ من قبل سليم فقط، أو لبرنامجٍ اختير لمريضٍ ويخصّه» — والأخصائيُّ يعدّل خطّةَ مريضه.
+    same("أ.٧ الأخصائيُّ لا يضيف بروتوكولاً أساسيّاً ⟵ ٤٠٣", (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "x"))).status, 403);
 
     console.log("\n── ب. الجديدُ مسوّدة، والاعتمادُ للمشرف والمسؤول ──");
-    const created = await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "lbp"));
-    same("ب.١ الأخصائيُّ يضيف", created.status, 200);
+    const created = await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "lbp"));
+    same("ب.١ المشرفُ العام يضيف", created.status, 200);
     const P = created.json?.id as number;
     same("ب.٢ …مسوّدةً", created.json?.status, "draft");
-    same("ب.٣ الرمزُ المكرّر ⟵ ٤٠٩", (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "lbp"))).status, 409);
+    same("ب.٣ الرمزُ المكرّر ⟵ ٤٠٩", (await call("POST", "/api/physio/protocols", S.admin, body(CODE_PREFIX + "lbp"))).status, 409);
     same("ب.٤ الأخصائيُّ لا يعتمد", (await call("POST", `/api/physio/protocols/${P}/approve`, S.spec)).status, 403);
     same("ب.٥ …ولم يتغيّر شيء", (await q(`SELECT status FROM physio_protocols WHERE id = $1`, [P])).rows[0].status, "draft");
     const appr = await call("POST", `/api/physio/protocols/${P}/approve`, S.sup);
@@ -145,7 +148,7 @@ async function main() {
       { status: "approved", approved_by: SUP, approved_by_name: "سليم" });
     same("ب.٨ اعتمادُ المعتمَد ⟵ ٤٠٩", (await call("POST", `/api/physio/protocols/${P}/approve`, S.admin)).status, 409);
     const detSpec = await call("GET", `/api/physio/protocols/${P}`, S.spec);
-    same("ب.٩ الأخصائيُّ يرى أنه يعدّل ولا يعتمد", [detSpec.json?.canEdit, detSpec.json?.canApprove], [true, false]);
+    same("ب.٩ الأخصائيُّ يقرؤه بلا تعديلٍ ولا اعتماد", [detSpec.status, detSpec.json?.canEdit, detSpec.json?.canApprove], [200, false, false]);
     const detTech = await call("GET", `/api/physio/protocols/${P}`, S.tech);
     same("ب.١٠ التقنيُّ يرى بلا تعديل", [detTech.status, detTech.json?.canEdit, detTech.json?.canApprove], [200, false, false]);
 
@@ -153,25 +156,28 @@ async function main() {
     const supEdit = await call("PUT", `/api/physio/protocols/${P}`, S.sup, body(CODE_PREFIX + "lbp", { summary: "ملخّص المشرف" }));
     same("ج.١ تعديلُ المشرف يُبقيه معتمَداً", [supEdit.status, supEdit.json?.status, supEdit.json?.demoted], [200, "approved", false]);
     const specEdit = await call("PUT", `/api/physio/protocols/${P}`, S.spec, body(CODE_PREFIX + "lbp", { summary: "ملخّص الأخصائيّ" }));
-    same("ج.٢ تعديلُ الأخصائيّ يعيده مسوّدة", [specEdit.status, specEdit.json?.status, specEdit.json?.demoted], [200, "draft", true]);
-    same("ج.٣ …ويُمحى اسمُ المعتمِد", (await q(`SELECT approved_by, approved_at FROM physio_protocols WHERE id = $1`, [P])).rows[0],
-      { approved_by: null, approved_at: null });
-    check(Number((await q(`SELECT count(*) FROM audit_log WHERE entity_type = 'physio_protocol' AND entity_id = $1 AND action = 'update' AND notes LIKE '%عاد مسوّدةً%'`, [P])).rows[0].count) === 1,
-      "ج.٤ وسطرُ التدقيق يقول إنه عاد مسوّدة");
-    same("ج.٥ المسؤولُ يعتمده ثانيةً", (await call("POST", `/api/physio/protocols/${P}/approve`, S.admin)).status, 200);
+    same("ج.٢ الأخصائيُّ لا يعدّل البروتوكولَ الأساسيّ ⟵ ٤٠٣ (يعدّل نسخةَ مريضه في خطّته)", specEdit.status, 403);
+    same("ج.٣ …والبروتوكولُ باقٍ معتمَداً بملخّص المشرف واسمِ معتمِده", (await q(`SELECT status, summary, approved_by FROM physio_protocols WHERE id = $1`, [P])).rows[0],
+      { status: "approved", summary: "ملخّص المشرف", approved_by: SUP });
+    same("ج.٤ ولا سطرَ تدقيقٍ للمرفوض", Number((await q(`SELECT count(*) FROM audit_log WHERE entity_type = 'physio_protocol' AND entity_id = $1 AND action = 'update'`, [P])).rows[0].count), 1);
+    const adminEdit = await call("PUT", `/api/physio/protocols/${P}`, S.admin, body(CODE_PREFIX + "lbp", { summary: "ملخّص المسؤول" }));
+    same("ج.٥ والمسؤولُ يعدّله فيبقى معتمَداً", [adminEdit.status, adminEdit.json?.status, adminEdit.json?.demoted], [200, "approved", false]);
+    //  والحارسُ الأعمق باقٍ: لو عدّل غيرُ معتمِدٍ (بابٌ مستقبليّ) لعاد المعتمَدُ مسوّدة.
+    same("ج.٦ قاعدةُ الحالة: غيرُ المعتمِد يعيد المعتمَدَ مسوّدة، والمعتمِدُ يُبقيه",
+      [statusAfterEdit("approved", { role: "physio_specialist", isAdmin: false, permissions: {} } as any), statusAfterEdit("approved", { isAdmin: true } as any)], ["draft", "approved"]);
 
     console.log("\n── د. التحقّق والأجهزة ──");
-    same("د.١ رمزٌ عربيّ ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.spec, body("ألم"))).status, 400);
-    same("د.٢ فئةٌ مجهولة ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "a", { category: "magic" }))).status, 400);
+    same("د.١ رمزٌ عربيّ ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.sup, body("ألم"))).status, 400);
+    same("د.٢ فئةٌ مجهولة ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "a", { category: "magic" }))).status, 400);
     same("د.٣ درجةُ دليلٍ مجهولة ⟵ ٤٠٠",
-      (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "b", { devices: [{ deviceId: D1, evidence: "maybe" }] }))).status, 400);
+      (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "b", { devices: [{ deviceId: D1, evidence: "maybe" }] }))).status, 400);
     same("د.٤ جهازٌ مكرّر ⟵ ٤٠٠",
-      (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "c", { devices: [{ deviceId: D1, evidence: "optional" }, { deviceId: D1, evidence: "optional" }] }))).status, 400);
+      (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "c", { devices: [{ deviceId: D1, evidence: "optional" }, { deviceId: D1, evidence: "optional" }] }))).status, 400);
     same("د.٥ جهازٌ غير موجود ⟵ ٤٠٠",
-      (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "d", { devices: [{ deviceId: 999999, evidence: "optional" }] }))).status, 400);
+      (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "d", { devices: [{ deviceId: 999999, evidence: "optional" }] }))).status, 400);
     same("د.٦ رابطُ مرجعٍ بلا http ⟵ ٤٠٠",
-      (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "e", { references: [{ title: "x", url: "javascript:alert(1)" }] }))).status, 400);
-    same("د.٧ جلساتٌ ٢٠ في الأسبوع ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.spec, body(CODE_PREFIX + "f", { sessionsPerWeek: 20 }))).status, 400);
+      (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "e", { references: [{ title: "x", url: "javascript:alert(1)" }] }))).status, 400);
+    same("د.٧ جلساتٌ ٢٠ في الأسبوع ⟵ ٤٠٠", (await call("POST", "/api/physio/protocols", S.sup, body(CODE_PREFIX + "f", { sessionsPerWeek: 20 }))).status, 400);
     same("د.٨ ولم يُكتب شيءٌ من المرفوض", Number((await q(`SELECT count(*) FROM physio_protocols WHERE code LIKE $1`, [CODE_PREFIX + "%"])).rows[0].count), 1);
     const det = await call("GET", `/api/physio/protocols/${P}`, S.doc);
     same("د.٩ الأجهزةُ بترتيبها ودرجاتها", (det.json?.devices ?? []).map((d: any) => [d.deviceId, d.evidence]),
@@ -182,21 +188,23 @@ async function main() {
 
     console.log("\n── هـ. الأرشفةُ لا محو ──");
     same("هـ.١ التقنيُّ لا يؤرشف", (await call("POST", `/api/physio/protocols/${P}/archive`, S.tech)).status, 403);
-    same("هـ.٢ الأخصائيُّ يؤرشف", (await call("POST", `/api/physio/protocols/${P}/archive`, S.spec)).status, 200);
+    same("هـ.٢ الأخصائيُّ لا يؤرشف ⟵ ٤٠٣", (await call("POST", `/api/physio/protocols/${P}/archive`, S.spec)).status, 403);
+    same("هـ.٢ب والمشرفُ يؤرشف", (await call("POST", `/api/physio/protocols/${P}/archive`, S.sup)).status, 200);
     same("هـ.٣ الصفُّ باقٍ", Number((await q(`SELECT count(*) FROM physio_protocols WHERE id = $1 AND is_archived`, [P])).rows[0].count), 1);
     same("هـ.٤ المؤرشفُ لا يراه الطبيب ⟵ ٤٠٤", (await call("GET", `/api/physio/protocols/${P}`, S.doc)).status, 404);
     same("هـ.٥ ولا يظهر له في قائمة المؤرشف", ((await call("GET", `/api/physio/protocols?archived=1`, S.doc)).json ?? []).some((r: any) => r.id === P), false);
-    same("هـ.٦ ويظهر للأخصائيّ فيها", ((await call("GET", `/api/physio/protocols?archived=1`, S.spec)).json ?? []).some((r: any) => r.id === P), true);
+    same("هـ.٦ ويظهر للمشرف فيها، لا للأخصائيّ", [((await call("GET", `/api/physio/protocols?archived=1`, S.sup)).json ?? []).some((r: any) => r.id === P),
+      ((await call("GET", `/api/physio/protocols?archived=1`, S.spec)).json ?? []).some((r: any) => r.id === P)], [true, false]);
     same("هـ.٧ المؤرشفُ لا يُعدَّل ⟵ ٤٠٩", (await call("PUT", `/api/physio/protocols/${P}`, S.sup, body(CODE_PREFIX + "lbp"))).status, 409);
-    same("هـ.٨ الاستعادةُ تنجح", (await call("POST", `/api/physio/protocols/${P}/restore`, S.spec)).status, 200);
+    same("هـ.٨ الاستعادةُ تنجح", (await call("POST", `/api/physio/protocols/${P}/restore`, S.sup)).status, 200);
 
     console.log("\n── و. الصور ──");
-    same("و.١ التقنيُّ لا يرفع", (await upload(P, S.tech, PNG, "image/png")).status, 403);
-    same("و.٢ نوعٌ غير صورة ⟵ ٤٠٠", (await upload(P, S.spec, Buffer.from("%PDF-1.4"), "application/pdf")).status, 400);
-    same("و.٣ مصدرٌ بلا http ⟵ ٤٠٠", (await upload(P, S.spec, PNG, "image/png", { sourceUrl: "ftp://x" })).status, 400);
-    same("و.٤ أكبرُ من ٥ ميغابايت ⟵ ٤١٣", (await upload(P, S.spec, Buffer.alloc(5 * 1024 * 1024 + 10, 1), "image/png")).status, 413);
-    const up = await upload(P, S.spec, PNG, "image/png", { caption: "وضعية", sourceUrl: "https://www.btlnet.com/", credit: "BTL" });
-    same("و.٥ الأخصائيُّ يرفع صورةً بمصدرها", up.status, 200);
+    same("و.١ التقنيُّ والأخصائيُّ لا يرفعان", [(await upload(P, S.tech, PNG, "image/png")).status, (await upload(P, S.spec, PNG, "image/png")).status], [403, 403]);
+    same("و.٢ نوعٌ غير صورة ⟵ ٤٠٠", (await upload(P, S.sup, Buffer.from("%PDF-1.4"), "application/pdf")).status, 400);
+    same("و.٣ مصدرٌ بلا http ⟵ ٤٠٠", (await upload(P, S.sup, PNG, "image/png", { sourceUrl: "ftp://x" })).status, 400);
+    same("و.٤ أكبرُ من ٥ ميغابايت ⟵ ٤١٣", (await upload(P, S.sup, Buffer.alloc(5 * 1024 * 1024 + 10, 1), "image/png")).status, 413);
+    const up = await upload(P, S.sup, PNG, "image/png", { caption: "وضعية", sourceUrl: "https://www.btlnet.com/", credit: "BTL" });
+    same("و.٥ المشرفُ يرفع صورةً بمصدرها", up.status, 200);
     const imgId = up.json?.id as number;
     const img = await fetch(`${BASE}/api/physio/protocol-images/${imgId}`, { headers: { "x-test-session": S.doc } });
     const imgBuf = Buffer.from(await img.arrayBuffer());
@@ -204,8 +212,9 @@ async function main() {
     same("و.٧ الاستقبالُ لا يقرأها", (await fetch(`${BASE}/api/physio/protocol-images/${imgId}`, { headers: { "x-test-session": S.rec } })).status, 403);
     same("و.٨ وتظهر في البروتوكول بمصدرها", ((await call("GET", `/api/physio/protocols/${P}`, S.doc)).json?.images ?? []).map((i: any) => [i.id, i.credit, i.sourceUrl]),
       [[imgId, "BTL", "https://www.btlnet.com/"]]);
-    same("و.٩ حذفُها من بروتوكولٍ آخر ⟵ ٤٠٤", (await call("DELETE", `/api/physio/protocols/${P + 100000}/images/${imgId}`, S.spec)).status, 404);
-    same("و.١٠ وحذفُها ينجح", (await call("DELETE", `/api/physio/protocols/${P}/images/${imgId}`, S.spec)).status, 200);
+    same("و.٩ حذفُها من بروتوكولٍ آخر ⟵ ٤٠٤", (await call("DELETE", `/api/physio/protocols/${P + 100000}/images/${imgId}`, S.sup)).status, 404);
+    same("و.١٠ الأخصائيُّ لا يحذفها ⟵ ٤٠٣، والمشرفُ يحذفها", [(await call("DELETE", `/api/physio/protocols/${P}/images/${imgId}`, S.spec)).status,
+      (await call("DELETE", `/api/physio/protocols/${P}/images/${imgId}`, S.sup)).status], [403, 200]);
 
     console.log("\n── ز. توفّرُ الجهاز بالفرع ──");
     same("ز.١ الأخصائيُّ لا يضبط التوفّر", (await call("PUT", `/api/physio/devices/${D1}/branches/${B1}`, S.spec, { available: true })).status, 403);
@@ -236,8 +245,8 @@ async function main() {
 
     console.log("\n── ح. التدقيق ──");
     same("ح.١ الإنشاء", await auditCount("physio_protocol", P, "create"), 1);
-    same("ح.٢ التعديلاتُ الأربعة", await auditCount("physio_protocol", P, "update"), 4);
-    same("ح.٣ الاعتمادان", await auditCount("physio_protocol", P, "approve"), 2);
+    same("ح.٢ التعديلاتُ الأربعة (المشرف · المسؤول · الإنكليزية · المحو)", await auditCount("physio_protocol", P, "update"), 4);
+    same("ح.٣ الاعتماد", await auditCount("physio_protocol", P, "approve"), 1);
     same("ح.٤ الأرشفةُ والاستعادة", [await auditCount("physio_protocol", P, "archive"), await auditCount("physio_protocol", P, "restore")], [1, 1]);
     same("ح.٥ الصورة: رفعٌ وحذف", [await auditCount("physio_protocol_image", imgId, "create"), await auditCount("physio_protocol_image", imgId, "delete")], [1, 1]);
     same("ح.٦ التوفّر: تبديلان", await auditCount("physio_device_branch", D1, "update"), 2);

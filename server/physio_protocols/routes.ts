@@ -18,7 +18,7 @@ import { getSession } from "../sessions_module/permissions";
 import {
   canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel, isCentreUse,
   isProtocolLang,
-  isProtocolCategory, normalizeReferences, statusAfterEdit, type ProtocolStatus,
+  isProtocolCategory, doseError, normalizeDose, normalizeReferences, statusAfterEdit, TOTAL_SESSIONS_MAX, type ProtocolStatus,
 } from "@shared/physio_protocols";
 import * as store from "./store";
 import { canApproveMeasures, canEditMeasures, parseMeasures } from "@shared/physio_assessments";
@@ -51,7 +51,13 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
   const sessionsPerWeek = intIn(b?.sessionsPerWeek, 1, 14);
   const durationWeeks = intIn(b?.durationWeeks, 1, 104);
   const sessionMinutes = intIn(b?.sessionMinutes, 5, 240);
+  const totalSessions = intIn(b?.totalSessions, 1, TOTAL_SESSIONS_MAX);
   if (sessionsPerWeek === "bad" || durationWeeks === "bad" || sessionMinutes === "bad") return "الجلسات في الأسبوع ١–١٤، والأسابيع ١–١٠٤، والدقائق ٥–٢٤٠";
+  if (totalSessions === "bad") return `عددُ الجلسات ١–${TOTAL_SESSIONS_MAX}`;
+  //  ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ تُشتقّ منه.
+  const dose = normalizeDose({ sessionsPerWeek, durationWeeks, totalSessions });
+  const tooLong = doseError(dose);
+  if (tooLong) return tooLong;
   const references = normalizeReferences(b?.references ?? []);
   if (!references) return "كلُّ مرجعٍ بعنوانه، ورابطُه إن وُجد يبدأ بـ http";
   if (!Array.isArray(b?.devices) || b.devices.length > 40) return "قائمةُ الأجهزة غير صالحة";
@@ -76,7 +82,7 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
     contraindications: text(b?.contraindications), precautions: text(b?.precautions),
     summaryEn: text(b?.summaryEn), goalsEn: text(b?.goalsEn), assessmentEn: text(b?.assessmentEn), exercisesEn: text(b?.exercisesEn),
     contraindicationsEn: text(b?.contraindicationsEn), precautionsEn: text(b?.precautionsEn),
-    sessionsPerWeek, durationWeeks, sessionMinutes, references, devices: devicesIn,
+    ...dose, sessionMinutes, references, devices: devicesIn,
   };
 }
 
@@ -142,7 +148,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
 
   app.post("/api/physio/protocols", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditProtocols(s)) return res.status(403).json({ error: "يضيف البروتوكولَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    if (!canEditProtocols(s)) return res.status(403).json({ error: "يضيف البروتوكولَ المشرفُ العام أو المسؤول — والأخصائيُّ يعدّل نسخةَ مريضه في خطّته" });
     const input = parseProtocolBody(req.body);
     if (typeof input === "string") return res.status(400).json({ error: input });
     try {
@@ -154,7 +160,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
 
   app.put("/api/physio/protocols/:id", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditProtocols(s)) return res.status(403).json({ error: "يعدّل البروتوكولَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    if (!canEditProtocols(s)) return res.status(403).json({ error: "يعدّل البروتوكولَ الأساسيَّ المشرفُ العام أو المسؤول — والأخصائيُّ يعدّل نسخةَ مريضه في خطّته" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     const input = parseProtocolBody(req.body);
@@ -187,7 +193,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
   //  ══ مقاييسُ البروتوكول (§4.cp) — يعدّلها كاتبو البروتوكولات، ويعتمدها المسؤولُ والمشرفُ العام **مستقلّةً عن البروتوكول** ══════════
   app.put("/api/physio/protocols/:id/measures", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditMeasures(s)) return res.status(403).json({ error: "يعدّل المقاييسَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+    if (!canEditMeasures(s)) return res.status(403).json({ error: "يعدّل مقاييسَ البروتوكول المشرفُ العام أو المسؤول" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     const list = parseMeasures(req.body?.measures);
@@ -217,7 +223,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
   for (const [path, archived] of [["archive", true], ["restore", false]] as const) {
     app.post(`/api/physio/protocols/:id/${path}`, isAuthenticated, async (req: any, res) => {
       const s = sess(req);
-      if (!canEditProtocols(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });
+      if (!canEditProtocols(s)) return res.status(403).json({ error: "للمشرف العام والمسؤول" });
       const id = idOf(req.params.id);
       if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
       try {
@@ -236,7 +242,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
     });
   }, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditProtocols(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });
+    if (!canEditProtocols(s)) return res.status(403).json({ error: "للمشرف العام والمسؤول" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     const f = req.file;
@@ -256,7 +262,7 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
 
   app.delete("/api/physio/protocols/:id/images/:imageId", isAuthenticated, async (req: any, res) => {
     const s = sess(req);
-    if (!canEditProtocols(s)) return res.status(403).json({ error: "للأخصائيّ والمشرف العام والمسؤول" });
+    if (!canEditProtocols(s)) return res.status(403).json({ error: "للمشرف العام والمسؤول" });
     const id = idOf(req.params.id); const imageId = idOf(req.params.imageId);
     if (!id || !imageId) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {

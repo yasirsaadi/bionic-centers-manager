@@ -126,7 +126,8 @@ async function main() {
     const en = await read(S.doc, "/api/physio/protocols/:id/brief", { lang: "en" }, { id: knee });
     const pe = (en as any).data?.value?.protocol;
     check(!!pe, "ب.١ الموجزُ يمضي كائناً واحداً لا صفوفَ أجهزة", JSON.stringify((en as any).data).slice(0, 300));
-    same("ب.٢ العنوانُ والجرعة", [pe?.title, pe?.dose], ["Knee Osteoarthritis", { sessionsPerWeek: 2, durationWeeks: 8, minutesPerSession: 45 }]);
+    //  وعددُ الجلسات معها (ترحيل ١٢٣، §4.dd) — مملوءٌ من القديم بجلسات الأسبوع × الأسابيع.
+    same("ب.٢ العنوانُ والجرعة", [pe?.title, pe?.dose], ["Knee Osteoarthritis", { totalSessions: 16, sessionsPerWeek: 2, durationWeeks: 8, minutesPerSession: 45 }]);
     check(typeof pe?.goals === "string" && pe.goals.startsWith("Reduce pain") && typeof pe?.contraindications === "string",
       "ب.٣ والأهدافُ والموانعُ معه", JSON.stringify([pe?.goals, pe?.contraindications]));
     const ex = (pe?.devices ?? []).find((d: any) => d.code === "exercise");

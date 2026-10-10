@@ -84,7 +84,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
   let progress: PhysioSheetProgress | null = null;
   if (canViewPlan) {
     const plr = await db.execute(sql`
-      SELECT pl.id, pl.title_ar, pl.sessions_per_week, pl.duration_weeks, pl.session_minutes, pl.status, pl.review_status,
+      SELECT pl.id, pl.title_ar, pl.sessions_per_week, pl.duration_weeks, pl.session_minutes, pl.total_sessions, pl.status, pl.review_status,
              pl.reviewed_by_name, pl.decided_by_name, pl.created_by_name, pl.created_at, pr.title_ar AS protocol_title
         FROM physio_plans pl LEFT JOIN physio_protocols pr ON pr.id = pl.protocol_id
        WHERE pl.patient_id = ${patientId}
@@ -97,6 +97,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
       plan = {
         id: Number(row.id), title: String(row.title_ar ?? ""), protocolName: str(row.protocol_title),
         sessionsPerWeek: num(row.sessions_per_week), durationWeeks: num(row.duration_weeks), sessionMinutes: num(row.session_minutes),
+        totalSessions: num(row.total_sessions),
         status, statusLabel: PLAN_STATUS_LABELS[status] ?? status,
         reviewLabel: review ? (PLAN_REVIEW_LABELS[review] ?? review) : null, reviewedByName: str(row.reviewed_by_name),
         decidedByName: str(row.decided_by_name), createdByName: str(row.created_by_name), createdAt: iso(row.created_at),

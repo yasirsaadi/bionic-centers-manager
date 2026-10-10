@@ -25,7 +25,7 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
     id: physioPlans.id, status: physioPlans.status, titleAr: physioPlans.titleAr, branchId: physioPlans.branchId, branchName: branches.name,
     protocolId: physioPlans.protocolId, protocolTitle: physioProtocols.titleAr, createdBy: physioPlans.createdBy, createdByName: physioPlans.createdByName,
     decidedAt: physioPlans.decidedAt, graduatedAt: physioPlans.graduatedAt, stoppedAt: physioPlans.stoppedAt,
-    sessionsPerWeek: physioPlans.sessionsPerWeek, durationWeeks: physioPlans.durationWeeks,
+    sessionsPerWeek: physioPlans.sessionsPerWeek, durationWeeks: physioPlans.durationWeeks, totalSessions: physioPlans.totalSessions,
     patientName: patients.name, patientCode: patients.patientCode,
   }).from(physioPlans)
     .innerJoin(patients, eq(patients.id, physioPlans.patientId))
@@ -37,7 +37,7 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
   const assess = await db.select().from(physioAssessments).where(inArray(physioAssessments.planId, ids))
     .orderBy(asc(physioAssessments.assessedOn), asc(physioAssessments.id));
   const sessions = (await db.execute(sql`
-    SELECT plan_id, executed_by, max(executed_by_name) AS name, count(*)::int AS n
+    SELECT plan_id, executed_by, max(executed_by_name) AS name, count(*)::int AS n, max(session_date)::text AS last_on
       FROM physio_plan_sessions WHERE plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND cancelled_at IS NULL
      GROUP BY plan_id, executed_by`)).rows as any[];
   const byPlan = new Map<number, typeof assess>();
@@ -50,11 +50,13 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
     const top = ses.slice().sort((a, b) => Number(b.n) - Number(a.n))[0];
     const approvedOn = baghdadDayOf(p.decidedAt);
     const endOn = baghdadDayOf(p.status === "graduated" ? p.graduatedAt : p.status === "stopped" ? p.stoppedAt : null);
+    const lastSessionOn = ses.reduce<string | null>((a, s) => (s.last_on && (!a || s.last_on > a) ? String(s.last_on) : a), null);
     const due = assessmentDue({ status: p.status, approvedOn, durationWeeks: p.durationWeeks, lastOn: list.length ? String(list[list.length - 1].assessedOn) : null,
-      count: list.length, today: f.today });
+      count: list.length, today: f.today, totalSessions: p.totalSessions, sessionsPerWeek: p.sessionsPerWeek, executed, lastSessionOn });
     return {
       planId: p.id, status: p.status, verdict,
-      adherence: adherence({ approvedOn, endOn, today: f.today, sessionsPerWeek: p.sessionsPerWeek, durationWeeks: p.durationWeeks, executed }),
+      adherence: adherence({ approvedOn, endOn, today: f.today, sessionsPerWeek: p.sessionsPerWeek, durationWeeks: p.durationWeeks, executed,
+        totalSessions: p.totalSessions }),
       overdue: (due.state === "baseline" || due.state === "due") && due.overdueDays > 7,
       protocolKey: p.protocolId ? `p${p.protocolId}` : "none", protocolTitle: p.protocolTitle ?? "بلا بروتوكول",
       branchKey: `b${p.branchId}`, branchName: p.branchName ?? `#${p.branchId}`,

@@ -70,6 +70,8 @@ interface Protocol {
   summaryEn: string | null; goalsEn: string | null; assessmentEn: string | null; exercisesEn: string | null;
   contraindicationsEn: string | null; precautionsEn: string | null;
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
+  /** ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ مشتقّة. */
+  totalSessions?: number | null;
   references: ProtocolReference[]; status: "draft" | "approved"; isArchived: boolean;
   approvedByName: string | null; approvedAt: string | null; updatedByName: string | null; updatedAt: string;
   devices: DeviceLine[]; images: { id: number; caption: string | null; sourceUrl: string | null; credit: string | null }[];
@@ -108,6 +110,7 @@ const T = {
     link: "الرابط", refs: "المراجع", noRefs: "لا مراجع بعد — البروتوكولُ بلا مرجعٍ عالميّ لا يُعتمَد.", lastEdit: "آخرُ تعديل",
     draft: "مسوّدةٌ لم يعتمدها المشرفُ العام بعد — تُقرأ مرجعاً لا تعليمات.", approvedBy: "اعتمده", archived: "مؤرشف",
     perWeek: (n: number) => <><b>{n}</b> جلسات/أسبوع</>, weeks: (n: number) => <>لمدة <b>{n}</b> أسابيع</>, session: (n: number) => <>الجلسة <b>{n}</b> دقيقة</>,
+    total: (n: number) => <><b>{n}</b> جلسة</>,
     fallback: "لم تُكتب العربيةُ بعد — المعروضُ الإنكليزية", deviceCount: (n: number, r: number) => `${n} جهاز · ${r} بدليلٍ قويّ`,
   },
   en: {
@@ -118,6 +121,7 @@ const T = {
     link: "Link", refs: "References", noRefs: "No references yet — a protocol without a global reference is not approved.", lastEdit: "Last edited",
     draft: "Draft not yet approved by the physiotherapy supervisor — read it as reference, not as instructions.", approvedBy: "Approved by", archived: "Archived",
     perWeek: (n: number) => <><b>{n}</b> sessions/week</>, weeks: (n: number) => <>for <b>{n}</b> weeks</>, session: (n: number) => <><b>{n}</b> min/session</>,
+    total: (n: number) => <><b>{n}</b> sessions</>,
     fallback: "English not written yet — Arabic shown", deviceCount: (n: number, r: number) => `${n} devices · ${r} strong evidence`,
   },
 } as const;
@@ -350,7 +354,8 @@ export function PhysioProtocolDetail() {
       )}
 
       {section("summary", t.overview)}
-      <div className="flex flex-wrap gap-4 text-sm">
+      <div className="flex flex-wrap gap-4 text-sm" data-testid="protocol-dose">
+        {p.totalSessions ? <span>{t.total(p.totalSessions)}</span> : null}
         {p.sessionsPerWeek && <span>{t.perWeek(p.sessionsPerWeek)}</span>}
         {p.durationWeeks && <span>{t.weeks(p.durationWeeks)}</span>}
         {p.sessionMinutes && <span>{t.session(p.sessionMinutes)}</span>}
@@ -486,6 +491,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
     exercisesEn: initial?.exercisesEn ?? "", contraindicationsEn: initial?.contraindicationsEn ?? "", precautionsEn: initial?.precautionsEn ?? "",
     sessionsPerWeek: initial?.sessionsPerWeek ? String(initial.sessionsPerWeek) : "", durationWeeks: initial?.durationWeeks ? String(initial.durationWeeks) : "",
     sessionMinutes: initial?.sessionMinutes ? String(initial.sessionMinutes) : "",
+    totalSessions: initial?.totalSessions ? String(initial.totalSessions) : "",
   }));
   const [lines, setLines] = useState<DeviceLine[]>(() => (initial?.devices ?? []).map((d) => ({
     deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
@@ -541,11 +547,17 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
             </div>
           </div>
           {bi("summary", "نظرة عامة", "Overview", 2)}
+          {/*  ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ تُشتقّ منه في الخادم (`normalizeDose`). */}
           <div className="grid grid-cols-3 gap-2">
+            <label className="grid gap-1">عدد الجلسات<Input inputMode="numeric" value={f.totalSessions} onChange={set("totalSessions")} data-testid="input-protocol-totalSessions" /></label>
             <label className="grid gap-1">جلسات/أسبوع<Input inputMode="numeric" value={f.sessionsPerWeek} onChange={set("sessionsPerWeek")} /></label>
-            <label className="grid gap-1">عدد الأسابيع<Input inputMode="numeric" value={f.durationWeeks} onChange={set("durationWeeks")} /></label>
             <label className="grid gap-1">دقائق الجلسة<Input inputMode="numeric" value={f.sessionMinutes} onChange={set("sessionMinutes")} /></label>
           </div>
+          <p className="text-xs text-muted-foreground -mt-1" data-testid="protocol-weeks-derived">
+            {Number(f.totalSessions) > 0 && Number(f.sessionsPerWeek) > 0
+              ? `المدّة نحو ${Math.ceil(Number(f.totalSessions) / Number(f.sessionsPerWeek))} أسابيع — تُحسب من العدد والتواتر. والأخصائيُّ يعدّلهما لمريضه في خطّته.`
+              : "اكتب عددَ الجلسات وجلساتِ الأسبوع — تُحسب المدّةُ منهما."}
+          </p>
           {bi("goals", "الأهداف", "Goals", 3)}
           {bi("assessment", "التقييم والقياسات", "Assessment & outcome measures", 3)}
 

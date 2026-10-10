@@ -148,14 +148,16 @@ async function main() {
     console.log("\n── أ. مقاييسُ البروتوكول — اعتمادٌ مستقلّ (القرار ١) ──");
     const put = (s: string, measures: any) => call("PUT", `/api/physio/protocols/${P}/measures`, s, { measures });
     same("أ.١ الاستقبالُ والتقنيُّ لا يعدّلانها ⟵ ٤٠٣", [(await put(S.rec, M)).status, (await put(S.tech, M)).status], [403, 403]);
-    const r1 = await put(S.spec, M);
-    same("أ.٢ الأخصائيُّ يكتبها ⟵ مسوّدة", [r1.status, r1.json?.measuresStatus], [200, "draft"]);
+    //  مقاييسُ البروتوكول جزءٌ منه — فتعديلُها الدائم للمشرف العام والمسؤول وحدهما (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.dd).
+    same("أ.٢ الأخصائيُّ لا يكتبها ⟵ ٤٠٣", (await put(S.spec, M)).status, 403);
+    const r1 = await put(S.sup, M);
+    same("أ.٢ب المشرفُ يكتبها ⟵ مسوّدة", [r1.status, r1.json?.measuresStatus], [200, "draft"]);
     same("أ.٣ والأخصائيُّ لا يعتمدها ⟵ ٤٠٣", (await call("POST", `/api/physio/protocols/${P}/measures/approve`, S.spec)).status, 403);
     same("أ.٤ سليمٌ يعتمدها ⟵ معتمَدة، **والبروتوكولُ نفسُه باقٍ مسوّدة**", [(await call("POST", `/api/physio/protocols/${P}/measures/approve`, S.sup)).json?.measuresStatus,
       (await q(`SELECT status FROM physio_protocols WHERE id = $1`, [P])).rows[0].status], ["approved", "draft"]);
     const r2 = await put(S.spec, [M[0], M[1], { ...M[0], code: "berg", nameAr: "بيرغ", nameEn: "Berg", max: 56 }]);
-    same("أ.٥ وتعديلُ الأخصائيّ يعيدها مسوّدة", [r2.json?.measuresStatus, r2.json?.demoted], ["draft", true]);
-    await call("POST", `/api/physio/protocols/${P}/measures/approve`, S.sup);
+    same("أ.٥ والأخصائيُّ لا يعدّل المعتمَدة ⟵ ٤٠٣، وتبقى معتمَدة", [r2.status,
+      (await q(`SELECT measures_status FROM physio_protocols WHERE id = $1`, [P])).rows[0].measures_status], [403, "approved"]);
     const r3 = await put(S.sup, M);
     same("أ.٦ وتعديلُ المعتمِد يُبقيها معتمَدة", [r3.json?.measuresStatus, r3.json?.demoted], ["approved", false]);
     const gp = (await call("GET", `/api/physio/protocols/${P}`, S.tech)).json;

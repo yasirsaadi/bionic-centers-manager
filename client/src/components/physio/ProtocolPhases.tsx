@@ -1,5 +1,6 @@
-// **البرنامجُ على مراحل** في صفحة البروتوكول (ترحيل ١١٨، §4.cx): لكلّ مرحلةٍ مدّتُها وأهدافُها وما يُقال للمريض وتمارينُها بجرعتها
-// ومعيارُ الانتقال وملاحظاتٌ للمعالج — والتمرينُ يُفتح بطاقةً كاملة بصورها. ومحرّرُ المراحل لكاتبي البروتوكولات.
+// **البرنامجُ على مراحل** في صفحة البروتوكول (ترحيل ١١٨، §4.cx): لكلّ مرحلةٍ نطاقُ جلساتها ومدّتُها وأهدافُها وما يُقال للمريض وتمارينُها
+// بجرعتها ومعيارُ الانتقال وملاحظاتٌ للمعالج — والتمرينُ يُفتح بطاقةً كاملة بصورها. ومحرّرُ المراحل للمشرف العام والمسؤول على البروتوكول،
+// **والمكوّنُ نفسُه في صفحة خطّة المريض** (ترحيل ١٢٣، §4.dd): نسخةُ المريض يعدّلها الأخصائيُّ بالمرونة نفسِها ولا يمسّ البروتوكول.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CheckCircle2, GraduationCap, Home, ListOrdered, MessageCircle, Pencil, Plus, Stethoscope, Trash2 } from "lucide-react";
@@ -12,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
-import { arDigits, doseLine, mergeDose } from "@shared/physio_exercises";
+import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
 import { ExerciseDialog, ExerciseImage, type ExerciseCard } from "./ExerciseLibrary";
 
 export interface PhaseExercise {
@@ -20,7 +21,10 @@ export interface PhaseExercise {
   doseNote: string | null; doseNoteEn: string | null; note: string | null; noteEn: string | null; exercise: ExerciseCard;
 }
 export interface Phase {
-  id: number; position: number; nameAr: string; nameEn: string; exercises: PhaseExercise[]; [k: string]: any;
+  id: number; position: number; nameAr: string; nameEn: string; exercises: PhaseExercise[];
+  /** ترحيل ١٢٣ (§4.dd) — نطاقُ جلسات المرحلة. */
+  sessionFrom?: number | null; sessionTo?: number | null;
+  [k: string]: any;
 }
 
 const T = {
@@ -36,8 +40,10 @@ const T = {
   },
 } as const;
 
-export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived, lang }: {
-  protocolId: number; phases: Phase[]; canEdit: boolean; isArchived: boolean; lang: ProtocolLang;
+export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived, lang, saveUrl, onSaved, title, editNote, currentSession }: {
+  protocolId?: number; phases: Phase[]; canEdit: boolean; isArchived: boolean; lang: ProtocolLang;
+  /** نسخةُ المريض (§4.dd): نقطةُ حفظ مراحل الخطّة، وما يُحدَّث بعدها، وعنوانُ القسم، وسطرٌ تحت المحرّر، ورقمُ الجلسة القادمة. */
+  saveUrl?: string; onSaved?: () => void; title?: string; editNote?: string; currentSession?: number | null;
 }) {
   const t = T[lang];
   const [open, setOpen] = useState<PhaseExercise | null>(null);
@@ -57,7 +63,7 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
   return (
     <div className="space-y-3" data-testid="protocol-phases">
       <div className="flex flex-wrap items-center gap-2 justify-between">
-        <h2 className="font-semibold flex items-center gap-1.5"><ListOrdered className="w-4 h-4 text-primary" />{t.title}</h2>
+        <h2 className="font-semibold flex items-center gap-1.5"><ListOrdered className="w-4 h-4 text-primary" />{title ?? t.title}</h2>
         {canEdit && !isArchived && (
           <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="phases-edit">
             <Pencil className="w-4 h-4" /> {phases.length ? t.edit : t.add}
@@ -67,14 +73,24 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
       {!phases.length && <p className="text-sm text-muted-foreground">{t.none}</p>}
       {phases.map((ph) => {
         const tf = localizedText(ph, "timeframe", lang).text;
+        const range = sessionRangeLabel(ph, lang);
+        //  الجلسةُ القادمة في نطاق هذه المرحلة بحسب الجدول — والانتقالُ بمعياره لا بالعدد وحده.
+        const here = currentSession != null && ph.sessionFrom != null && ph.sessionTo != null
+          && currentSession >= ph.sessionFrom && currentSession <= ph.sessionTo;
         return (
-          <section key={ph.id} className="rounded-lg border bg-white overflow-hidden" data-testid={`phase-${ph.position}`}>
+          <section key={ph.id} className={`rounded-lg border bg-white overflow-hidden ${here ? "border-emerald-400 ring-1 ring-emerald-300" : ""}`} data-testid={`phase-${ph.position}`}>
             <header className="bg-primary/5 border-b px-3 py-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="inline-grid place-items-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">
                 {lang === "en" ? ph.position : arDigits(ph.position)}
               </span>
               <span className="font-semibold">{lang === "en" ? ph.nameEn : ph.nameAr}</span>
+              {range && <span className="text-xs font-semibold text-primary" data-testid={`phase-${ph.position}-range`}>{range}</span>}
               {tf && <span className="text-xs text-muted-foreground">{tf}</span>}
+              {here && (
+                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px]" data-testid={`phase-${ph.position}-current`}>
+                  {lang === "en" ? `Next session (${currentSession}) — by the schedule` : `الجلسةُ القادمة (${arDigits(currentSession!)}) هنا بحسب الجدول`}
+                </Badge>
+              )}
             </header>
             <div className="p-3 space-y-3">
               {block(ph, "goals", t.goals, null, "bg-white")}
@@ -112,14 +128,15 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
         );
       })}
       {open && <ExerciseDialog exerciseId={open.exerciseId} lang={lang} phaseDose={open} phaseNote={open} onClose={() => setOpen(null)} />}
-      {editing && <PhasesEditor protocolId={protocolId} initial={phases} onClose={() => setEditing(false)} />}
+      {editing && <PhasesEditor saveUrl={saveUrl ?? `/api/physio/protocols/${protocolId}/phases`} onSaved={onSaved} note={editNote}
+        initial={phases} onClose={() => setEditing(false)} />}
     </div>
   );
 }
 
 // ══ محرّرُ المراحل — المراحلُ كلُّها تُحفظ معاً ═════════════════════════════════════════════════════
 const PHASE_FIELDS: { k: string; ar: string; en: string; rows: number }[] = [
-  { k: "timeframe", ar: "المدّة (مثل: الأسبوع ١–٢)", en: "Timeframe", rows: 1 },
+  { k: "timeframe", ar: "المدّة التقريبية (مثل: نحو الأسبوع الأوّل)", en: "Timeframe", rows: 1 },
   { k: "goals", ar: "الأهداف", en: "Goals", rows: 2 },
   { k: "education", ar: "ما يُقال للمريض", en: "Patient education", rows: 4 },
   { k: "progressCriteria", ar: "معيارُ الانتقال", en: "Progression criteria", rows: 4 },
@@ -130,14 +147,16 @@ type EditPhase = { nameAr: string; nameEn: string; exercises: EditExercise[]; [k
 
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
-function PhasesEditor({ protocolId, initial, onClose }: { protocolId: number; initial: Phase[]; onClose: () => void }) {
+function PhasesEditor({ saveUrl, onSaved, note, initial, onClose }: {
+  saveUrl: string; onSaved?: () => void; note?: string; initial: Phase[]; onClose: () => void;
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const lib = useQuery<{ id: number; nameAr: string; nameEn: string; status: string }[]>({ queryKey: ["/api/physio/exercises"] });
   const nameOf = useMemo(() => new Map((lib.data ?? []).map((e) => [e.id, e.nameAr])), [lib.data]);
   initial.forEach((ph) => ph.exercises.forEach((x) => { if (!nameOf.has(x.exerciseId)) nameOf.set(x.exerciseId, x.exercise.nameAr); }));
   const [phases, setPhases] = useState<EditPhase[]>(() => initial.map((ph) => {
-    const p: EditPhase = { nameAr: ph.nameAr, nameEn: ph.nameEn, exercises: ph.exercises.map((x) => ({
+    const p: EditPhase = { nameAr: ph.nameAr, nameEn: ph.nameEn, sessionFrom: s(ph.sessionFrom), sessionTo: s(ph.sessionTo), exercises: ph.exercises.map((x) => ({
       exerciseId: x.exerciseId, sets: s(x.sets), reps: s(x.reps), holdSeconds: s(x.holdSeconds), restSeconds: s(x.restSeconds),
       doseNote: s(x.doseNote), doseNoteEn: s(x.doseNoteEn), note: s(x.note), noteEn: s(x.noteEn) })) };
     for (const f of PHASE_FIELDS) { p[f.k] = s(ph[f.k]); p[`${f.k}En`] = s(ph[`${f.k}En`]); }
@@ -154,10 +173,12 @@ function PhasesEditor({ protocolId, initial, onClose }: { protocolId: number; in
     setPhase(i, { exercises: xs });
   };
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("PUT", `/api/physio/protocols/${protocolId}/phases`, { phases })).json(),
+    mutationFn: async () => (await apiRequest("PUT", saveUrl, { phases })).json(),
     onSuccess: (r: any) => {
-      qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
-      toast({ title: "حُفظت المراحل", description: r?.demoted ? "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام." : undefined });
+      if (onSaved) onSaved(); else qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
+      toast({ title: "حُفظت المراحل", description: r?.demoted
+        ? (onSaved ? "عادت الخطّةُ إلى الاعتماد ووصل التنبيه." : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام.")
+        : r?.backToReview ? "تبقى تُنفَّذ وعادت لمراجعة المشرف." : undefined });
       onClose();
     },
     onError: (e: any) => {
@@ -180,6 +201,13 @@ function PhasesEditor({ protocolId, initial, onClose }: { protocolId: number; in
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid gap-1">اسم المرحلة<Input value={ph.nameAr} onChange={(e) => setPhase(i, { nameAr: e.target.value })} /></label>
                 <label className="grid gap-1" dir="ltr">Phase name<Input dir="ltr" value={ph.nameEn} onChange={(e) => setPhase(i, { nameEn: e.target.value })} /></label>
+              </div>
+              {/*  ترحيل ١٢٣ (§4.dd) — نطاقُ جلسات المرحلة؛ والانتقالُ بمعياره لا بالعدد وحده. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span>الجلسات من</span>
+                <Input inputMode="numeric" className="w-20" value={ph.sessionFrom} onChange={(e) => setPhase(i, { sessionFrom: e.target.value })} data-testid={`phase-editor-${i + 1}-from`} />
+                <span>إلى</span>
+                <Input inputMode="numeric" className="w-20" value={ph.sessionTo} onChange={(e) => setPhase(i, { sessionTo: e.target.value })} data-testid={`phase-editor-${i + 1}-to`} />
               </div>
               {PHASE_FIELDS.map((f) => (
                 <div key={f.k} className="grid gap-2 sm:grid-cols-2">
@@ -222,10 +250,11 @@ function PhasesEditor({ protocolId, initial, onClose }: { protocolId: number; in
               </div>
             </div>
           ))}
-          <Button variant="outline" className="gap-1" onClick={() => setPhases((xs) => [...xs, { nameAr: "", nameEn: "", exercises: [], ...Object.fromEntries(PHASE_FIELDS.flatMap((f) => [[f.k, ""], [`${f.k}En`, ""]])) }])}>
+          <Button variant="outline" className="gap-1" onClick={() => setPhases((xs) => [...xs, { nameAr: "", nameEn: "", sessionFrom: "", sessionTo: "", exercises: [], ...Object.fromEntries(PHASE_FIELDS.flatMap((f) => [[f.k, ""], [`${f.k}En`, ""]])) }])}>
             <Plus className="w-4 h-4" /> مرحلة
           </Button>
-          <p className="text-xs text-amber-800 flex items-center gap-1"><GraduationCap className="w-4 h-4" />تعديلُ مراحل بروتوكولٍ معتمَد يعيده مسوّدةً ما لم تكن المشرفَ العام أو المسؤول.</p>
+          <p className="text-xs text-amber-800 flex items-center gap-1"><GraduationCap className="w-4 h-4" />
+            {note ?? "تعديلٌ دائمٌ للبروتوكول الأساسيّ — يراه كلُّ أخصائيٍّ في الخطط الجديدة. والخططُ القائمة لا تتغيّر."}</p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>

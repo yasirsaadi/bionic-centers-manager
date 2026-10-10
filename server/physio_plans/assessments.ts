@@ -4,7 +4,7 @@
 // و«إيقاف» يجعلها `stopped` بسببه — في المعاملة نفسِها. و«مستحقّ التقييم» يُحسب من آخر تقييمٍ ويوم الاعتماد ومدّة الخطّة (`assessmentDue`).
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { branches, patients, physioAssessments, physioPlans, physioProtocolMeasures, physioProtocols, type PhysioPlan } from "@shared/schema";
+import { branches, patients, physioAssessments, physioPlanSessions, physioPlans, physioProtocolMeasures, physioProtocols, type PhysioPlan } from "@shared/schema";
 import {
   assessmentDue, parseAssessment, planGoalsList, type AssessmentKind, type MeasureDef, type ScoreSnap,
 } from "@shared/physio_assessments";
@@ -31,9 +31,17 @@ export async function planAssessments(planId: number) {
     .orderBy(asc(physioAssessments.assessedOn), asc(physioAssessments.id));
 }
 
+/** الجلساتُ المنفّذة (غيرُ الملغاة) ويومُ آخرها — لموعد الختاميّ بعدد الجلسات (ترحيل ١٢٣، §4.dd). */
+export async function executedSessions(planId: number): Promise<{ executed: number; lastSessionOn: string | null }> {
+  const [r] = await db.select({ n: sql<number>`count(*)::int`, last: sql<string | null>`max(${physioPlanSessions.sessionDate})::text` })
+    .from(physioPlanSessions).where(and(eq(physioPlanSessions.planId, planId), isNull(physioPlanSessions.cancelledAt)));
+  return { executed: Number(r?.n ?? 0), lastSessionOn: r?.last ?? null };
+}
+
 /** ما تعرضه صفحةُ الخطّة: التقييماتُ، ومقاييسُ بروتوكولها الآن وحالُ اعتمادها، وأهدافُها سطوراً، والموعدُ التالي. */
 export async function planAssessmentView(plan: PhysioPlan, today: string) {
   const list = await planAssessments(plan.id);
+  const ses = await executedSessions(plan.id);
   const measures = await protocolMeasures(plan.protocolId);
   const [pr] = plan.protocolId
     ? await db.select({ s: physioProtocols.measuresStatus }).from(physioProtocols).where(eq(physioProtocols.id, plan.protocolId))
@@ -42,7 +50,9 @@ export async function planAssessmentView(plan: PhysioPlan, today: string) {
   return {
     assessments: list, measures, measuresStatus: pr?.s ?? null, goals: planGoalsList(plan.goals),
     due: assessmentDue({ status: plan.status, approvedOn: baghdadDayOf(plan.decidedAt), durationWeeks: plan.durationWeeks,
-      lastOn: last ? String(last.assessedOn) : null, count: list.length, today }),
+      lastOn: last ? String(last.assessedOn) : null, count: list.length, today,
+      totalSessions: plan.totalSessions, sessionsPerWeek: plan.sessionsPerWeek, ...ses }),
+    sessions: { ...ses, total: plan.totalSessions },
   };
 }
 
@@ -90,6 +100,9 @@ export async function dueList(p: { branchIds: number[] | null; createdBy: number
     planId: physioPlans.id, titleAr: physioPlans.titleAr, branchId: physioPlans.branchId, branchName: branches.name,
     patientId: patients.id, patientName: patients.name, patientCode: patients.patientCode,
     createdBy: physioPlans.createdBy, createdByName: physioPlans.createdByName, decidedAt: physioPlans.decidedAt, durationWeeks: physioPlans.durationWeeks,
+    totalSessions: physioPlans.totalSessions, sessionsPerWeek: physioPlans.sessionsPerWeek,
+    executed: sql<number>`(SELECT count(*)::int FROM physio_plan_sessions s WHERE s.plan_id = "physio_plans"."id" AND s.cancelled_at IS NULL)`,
+    lastSessionOn: sql<string | null>`(SELECT max(s.session_date)::text FROM physio_plan_sessions s WHERE s.plan_id = "physio_plans"."id" AND s.cancelled_at IS NULL)`,
     lastOn: sql<string | null>`(SELECT max(a.assessed_on)::text FROM physio_assessments a WHERE a.plan_id = "physio_plans"."id")`,
     count: sql<number>`(SELECT count(*)::int FROM physio_assessments a WHERE a.plan_id = "physio_plans"."id")`,
   }).from(physioPlans)
@@ -98,7 +111,8 @@ export async function dueList(p: { branchIds: number[] | null; createdBy: number
     .where(and(...conds)).orderBy(desc(physioPlans.id)).limit(1000);
   return rows
     .map((r) => ({ ...r, due: assessmentDue({ status: "approved", approvedOn: baghdadDayOf(r.decidedAt), durationWeeks: r.durationWeeks,
-      lastOn: r.lastOn, count: Number(r.count), today: p.today }) }))
+      lastOn: r.lastOn, count: Number(r.count), today: p.today,
+      totalSessions: r.totalSessions, sessionsPerWeek: r.sessionsPerWeek, executed: Number(r.executed), lastSessionOn: r.lastSessionOn }) }))
     .filter((r) => r.due.state === "baseline" || r.due.state === "due")
     .sort((a, b) => b.due.overdueDays - a.due.overdueDays);
 }

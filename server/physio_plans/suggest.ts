@@ -87,8 +87,10 @@ If nothing in the library fits, return {"choices":[],"noMatchReasonAr":"<why, in
 
 const SYSTEM_ADJUST = `${SYSTEM_COMMON}
 TASK: adapt the chosen protocol to THIS patient. The plan starts with exactly the protocol devices listed (minutes as listed) and the protocol dose.
-Each device has the centre's own use: "core" runs every session; "adjunct" devices ROTATE — one adjunct per session (sessions are 50 minutes),
-so do not remove an adjunct just to save time. "evidence" is the guideline grade only; the centre's use decides what is in the plan.
+Each device has the centre's own use: "core" runs every session; "adjunct" devices ROTATE — one adjunct per session (sessions are 50 minutes).
+Adjuncts are chosen PER PATIENT (the centre's rule): keep at most the two adjuncts that best fit THIS patient's exam findings and remove the
+others, each with a short patient-specific reason — so each kept adjunct reaches the patient often enough to matter.
+"evidence" is the guideline grade only; the centre's use decides what is in the plan.
 You may ONLY:
   • remove a listed device that does not suit this patient (e.g. the exam mentions one of its contraindications) — with a reason;
   • LOWER a device's minutes (never above the listed minutes; 1–60 when none is listed) — with a reason;
