@@ -243,6 +243,24 @@ async function main() {
       [["prostheticType", "siliconType"], ["siliconType"]]);
     const rg = await sale(g.fid, { siliconType: "سليكون طبي" });
     same("ز.٢ و«اشترى» يمرّ بهما", rg.status, 200);
+
+    //  **ثنائيٌّ يحتاج أطرافاً سليكونية** (سؤالُ المالك ٢٠٢٦-١٠-١٠): السليكونيُّ «كلا الجانبين» طرفان، و«قدم» منها.
+    console.log("\n── ح. قدمان سليكونيّتان للجهتين ──");
+    const h = await examined("قدمان سليكون", "prosthetic", {
+      amputationType: "silicone", siliconePart: "قدم", siliconeSide: "both", limbsIdentical: false,
+      "prostheticType:right": "قدم سليكون جزئية", "prostheticType:left": "قدم سليكون كاملة", "siliconType:right": "سليكون طبي",
+    });
+    const hl = (await call("GET", `/api/followups/patient/${h.pid}`, S.recv)).json.find((f: any) => f.id === h.fid)?.deviceSpecs;
+    same("ح.١ **لكلّ جهةٍ النوعُ والسيليكون** — بلا سوكيتٍ ولا قدمٍ ولا ركبة، والناقصُ سيليكونُ اليسار وحده",
+      [hl?.fields.map((f: any) => f.key), hl?.missing],
+      [["prostheticType:right", "siliconType:right", "prostheticType:left", "siliconType:left"], ["siliconType:left"]]);
+    const rh1 = await sale(h.fid);
+    same("ح.٢ بلا سيليكون اليسار ⟵ ٤٠٠ تسمّيه بجهته", [rh1.status, /نوع السليكون — يسار/.test(rh1.json?.error ?? "")], [400, true]);
+    const rh2 = await sale(h.fid, { "siliconType:left": "سليكون طبي" });
+    const ho = await orderDeviceSpecs(h.epId, "prosthetic");
+    same("ح.٣ **ومكتملاً ⟵ ٢٠٠**، والأمرُ يحمل الجهتين وموقعَ البتر",
+      [rh2.status, ho.source === "exam" ? [ho.specs["prostheticType:left"], ho.specs["siliconType:left"], ho.specs.amputationSite] : ho],
+      [200, ["قدم سليكون كاملة", "سليكون طبي", "اطراف سليكونية تعويضية - قدم - كلا الجانبين"]]);
   } finally {
     httpServer.close();
     await cleanup();

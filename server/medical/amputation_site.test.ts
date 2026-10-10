@@ -97,8 +97,10 @@ pin("lower list = 6 levels ending خلال الحوض",
   LOWER_AMPUTATION_DETAILS.length === 6 && LOWER_AMPUTATION_DETAILS[5] === "خلال الحوض");
 pin("upper list = 7 levels ending خلال الكتف",
   UPPER_AMPUTATION_DETAILS.length === 7 && UPPER_AMPUTATION_DETAILS[6] === "خلال الكتف");
-pin("silicone parts = 5 incl. محجر عين",
-  SILICONE_PARTS.length === 5 && SILICONE_PARTS.includes("محجر عين"));
+//  «قدم» أضافها المالك ٢٠٢٦-١٠-١٠ (§4.de) — القائمةُ ستٌّ، والخمسُ القديمة باقيةٌ بترتيبها.
+pin("silicone parts = 6 incl. محجر عين and قدم (the five originals in order)",
+  SILICONE_PARTS.length === 6 && SILICONE_PARTS.includes("محجر عين") && SILICONE_PARTS[5] === "قدم"
+  && SILICONE_PARTS.slice(0, 5).join("|") === ["اذن", "انف", "محجر عين", "اصبع", "كف"].join("|"));
 
 // ── parseAmputationSite: the exact inverse ──────────────────────────────────
 // Reception now records the amputation at registration, and the doctor's exam
@@ -129,6 +131,7 @@ roundTrip("سليكوني اصبع يسار + ملاحظات", { amputationType:
 roundTrip("سليكوني انف — بلا جهة", { amputationType: "silicone", siliconePart: "انف", siliconeNotes: "بعد استئصال" });
 roundTrip("سليكوني محجر عين كلا الجانبين", { amputationType: "silicone", siliconePart: "محجر عين", siliconeSide: "both" });
 roundTrip("سليكوني بلا جزء", { amputationType: "silicone" });
+roundTrip("سليكوني قدم كلا الجانبين", { amputationType: "silicone", siliconePart: "قدم", siliconeSide: "both" });
 
 console.log("\n── ما لا يُفهَم يُترك للطبيب فارغاً ──");
 function empty(label: string, site: string | null | undefined) {

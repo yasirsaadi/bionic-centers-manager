@@ -1395,6 +1395,7 @@ function PatientRegistrationForm({ physioOnly = false, onBack }: { physioOnly?: 
                               <SelectItem value="محجر عين">محجر عين</SelectItem>
                               <SelectItem value="اصبع">اصبع</SelectItem>
                               <SelectItem value="كف">كف</SelectItem>
+                              <SelectItem value="قدم">قدم</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
