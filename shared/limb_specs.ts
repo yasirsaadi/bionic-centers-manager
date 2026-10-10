@@ -7,7 +7,7 @@
 // فقاعدةٌ واحدة يقرؤها كلُّ مَن يكتب الخاناتِ أو يعرضها أو يشترطها — معاينةُ الطبيب، وورقةُ الاستعلامات، والاستمارةُ المطبوعة، ومستطيلُ
 // الأجهزة، وأمرُ التصنيع، ونافذةُ «اشترى»:
 //   • **ما يخصّ الطرفَ بمستواه** (`limbSpecKeys`): السفليُّ تحت الركبة (وسايمز وجوبارت) بلا ركبة، والعلويُّ بلا ركبةٍ ولا قدم،
-//     والسليكونيُّ التعويضيّ (أذن، أنف، محجر عين، إصبع، كف) نوعُه وسيليكونُه وحدهما. والمستوى المجهول يُبقي الخمسَ كما كانت.
+//     والسليكونيُّ التعويضيّ (أذن، أنف، محجر عين، إصبع، كف، قدم) نوعُه وسيليكونُه وحدهما. والمستوى المجهول يُبقي الخمسَ كما كانت.
 //   • **والثنائيُّ طرفان** (`limbSlots`): لكلّ جهةٍ خاناتُها بمفتاحٍ بجهته (`footType:right`)، **والمفتاحُ بلا جهة يعني الطرفين معاً** —
 //     فـ«متماثلان» تُكتب مرّةً في المفتاح العامّ، والمختلفان كلٌّ في مفتاح جهته، والقراءةُ واحدة (`limbSpecValue`): الجهةُ أوّلاً ثمّ العامّ.
 //   • **ولا يُخفى مكتوب**: خانةٌ لا تخصّ المستوى وفيها قيمةٌ حقيقية (لا «لا ينطبق») تُعرض — ملفٌّ قديمٌ لا يفقد حرفاً.
@@ -49,11 +49,17 @@ const kindOf = (v: unknown): LimbKind | null => (v === "upper" || v === "lower" 
 const slot = (side: LimbSide | null, kind: LimbKind | null, level: unknown): LimbSlot =>
   ({ side, kind, level: str(level) || null, keys: limbSpecKeys(kind, str(level)) });
 
-/** **أطرافُ البتر** — واحدٌ للأحاديّ والسليكونيّ والمجهول، واثنان (يمين ثمّ يسار) للثنائيّ بأنماطه الثلاثة. */
+/** **أطرافُ البتر** — واحدٌ للأحاديّ والسليكونيّ بجهةٍ واحدة والمجهول، واثنان (يمين ثمّ يسار) للثنائيّ بأنماطه الثلاثة وللسليكونيّ «كلا الجانبين». */
 export function limbSlots(p: AmputationParts | null | undefined): LimbSlot[] {
   const a = p ?? {};
   if (a.amputationType === "single") return [slot(null, kindOf(a.singleLimb), a.singleDetail)];
-  if (a.amputationType === "silicone") return [slot(null, "silicone", a.siliconePart)];
+  //  **وسليكونيٌّ «كلا الجانبين» طرفان** (طلبُ المالك ٢٠٢٦-١٠-١٠: «ثنائيٌّ يحتاج أطرافاً سليكونية») — لكلّ جهةٍ خاناتُها، وخاناتُهما متطابقة
+  //  فمربّعُ «متماثلان» يظهر دائماً. والأنفُ بلا جهة فطرفٌ واحد.
+  if (a.amputationType === "silicone") {
+    return a.siliconeSide === "both" && a.siliconePart !== "انف"
+      ? [slot("right", "silicone", a.siliconePart), slot("left", "silicone", a.siliconePart)]
+      : [slot(null, "silicone", a.siliconePart)];
+  }
   if (a.amputationType === "double") {
     if (a.doubleLimbType === "upper" || a.doubleLimbType === "lower") {
       return [slot("right", a.doubleLimbType, a.doubleRightDetail), slot("left", a.doubleLimbType, a.doubleLeftDetail)];

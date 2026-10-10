@@ -56,8 +56,8 @@ export const UPPER_AMPUTATION_DETAILS = [
   "اصبع", "خلال الكف", "خلال الرسغ", "تحت المرفق", "خلال المرفق", "فوق المرفق", "خلال الكتف",
 ];
 
-/** أنواع الأطراف السليكونية التعويضية — verbatim, value === label. */
-export const SILICONE_PARTS = ["اذن", "انف", "محجر عين", "اصبع", "كف"];
+/** أنواع الأطراف السليكونية التعويضية — verbatim, value === label. «قدم» أضافها المالك ٢٠٢٦-١٠-١٠ (§4.de). */
+export const SILICONE_PARTS = ["اذن", "انف", "محجر عين", "اصبع", "كف", "قدم"];
 
 /**
  * The structured parts the builder collects. All optional strings: an absent

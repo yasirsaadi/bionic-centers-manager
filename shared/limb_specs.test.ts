@@ -8,7 +8,7 @@ import {
 } from "./limb_specs";
 import { cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleSpecFieldsFor, saleSpecsMessage, specResolved, NOT_APPLICABLE } from "./device_specs";
 import { sheetSpecRows, sheetSpecView } from "./intake_sheet_view";
-import { buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, type AmputationParts } from "./case_fields";
+import { buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, SILICONE_PARTS, type AmputationParts } from "./case_fields";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -59,6 +59,16 @@ same("ب.٦ **قيمةُ الجهة: مفتاحُها ثمّ العامّ**",
 same("ب.٧ وعمودُ ملفّ المريض يقرأ الطرفين كاملين", [limbSpecFlat({ "footType:right": "كاربون", "footType:left": "مرنة" }, "footType"),
   limbSpecFlat({ footType: "كاربون", "footType:left": "x" }, "footType"), limbSpecFlat({}, "footType")], ["يمين: كاربون | يسار: مرنة", "كاربون", ""]);
 
+//  **ثنائيٌّ يحتاج أطرافاً سليكونية** (سؤالُ المالك ٢٠٢٦-١٠-١٠): السليكونيُّ «كلا الجانبين» طرفان، و«قدم» في القائمة.
+const SIL2 = (part: string): AmputationParts => ({ amputationType: "silicone", siliconePart: part, siliconeSide: "both" });
+same("ب.٨ **سليكونيٌّ «كلا الجانبين» ⟵ طرفان سليكونيّان بجهتيهما** — وخاناتُهما متطابقة فـ«متماثلان» متاح",
+  [limbSlots(SIL2("اصبع")).map((s) => [s.side, s.kind, s.level, s.keys]), slotsCanShare(limbSlots(SIL2("اصبع")))],
+  [[["right", "silicone", "اصبع", ["prostheticType", "siliconType"]], ["left", "silicone", "اصبع", ["prostheticType", "siliconType"]]], true]);
+same("ب.٩ وبجهةٍ واحدة طرفٌ واحد، **والأنفُ بلا جهة طرفٌ واحد** ولو وصل «كلاهما»",
+  [limbSlots({ amputationType: "silicone", siliconePart: "اصبع", siliconeSide: "left" }).length, limbSlots(SIL2("انف")).length], [1, 1]);
+same("ب.١٠ **و«قدم» في قائمة السليكوني** — وتُقرأ من سلسلتها", [SILICONE_PARTS.includes("قدم"),
+  limbSlotsOfSite(site(SIL2("قدم"))).map((s) => [s.side, s.kind, s.level])], [true, [["right", "silicone", "قدم"], ["left", "silicone", "قدم"]]]);
+
 console.log("\n── ج. ما يُعرض ──");
 const rowsOf = (specs: Record<string, unknown>) => sheetSpecRows({ serviceType: "prosthetic", specs: specs as Record<string, string> }).map((r) => [r.key, r.value]);
 same("ج.١ **تحت الركبة ⟵ لا سطرَ للركبة** — و«لا ينطبق» القديمةُ فيها لا تُظهره",
@@ -96,6 +106,13 @@ same("ج.٩ والمسندُ نوعُه", sheetSpecRows({ serviceType: "medical_
 
 /** الوصفةُ سجلٌّ مفتوح المفاتيح (مفاتيحُ الجهات) — فتُقرأ نتيجتُها كذلك. */
 const N = (x: Record<string, unknown>): Record<string, unknown> => normalizeLimbSpecs(x);
+const silSame = sheetSpecView({ serviceType: "prosthetic", specs: { amputationSite: site(SIL2("اصبع")), prostheticType: "إصبع سليكوني", siliconType: "سليكون طبي" } });
+same("ج.١٠ **أصابعُ سليكونيةٌ للجهتين متماثلةٌ ⟵ «للطرفين»** بخانتين", [silSame.mode, silSame.rows.map((r) => [r.key, r.value])],
+  ["identical", [["prostheticType", "إصبع سليكوني"], ["siliconType", "سليكون طبي"]]]);
+const silSplit = sheetSpecView({ serviceType: "prosthetic", specs: { amputationSite: site(SIL2("قدم")), "prostheticType:right": "قدم جزئية", "prostheticType:left": "قدم كاملة" } });
+same("ج.١١ وقدمان سليكونيّتان مختلفتان ⟵ لكلّ جهةٍ قيمتُها، بلا سوكيتٍ ولا ركبة",
+  [silSplit.mode, silSplit.rows.map((r) => [r.key, r.value])], ["split", [["prostheticType", "يمين: قدم جزئية · يسار: قدم كاملة"], ["siliconType", null]]]);
+
 console.log("\n── د. وصفةُ الطبيب تتبع البتر ──");
 same("د.١ **من فوق الركبة إلى تحتها ⟵ الركبةُ تُحذف**",
   N({ ...BK, prostheticType: "طرف", kneeJointType: "هيدروليك", footType: "كاربون" }),
@@ -147,6 +164,12 @@ same("هـ.٦ نافذةُ البيع تقبل خاناتِ الجهات — و�
 same("هـ.٧ **وكلمةُ الطبيب «للطرفين» لا تكتب فوقها جهةٌ حُفظت عند البيع**",
   [mergeDeviceSpecs({ footType: "كاربون" }, { "footType:left": "خشب", "socketType:left": "س" }), specResolved({ footType: "كاربون" }, "footType:left")],
   [{ footType: "كاربون", "socketType:left": "س" }, "كاربون"]);
+same("هـ.٩ **سليكونيٌّ للجهتين ⟵ النوعُ والسيليكونُ لكلّ جهة**، أو مرّةً «للطرفين» إن تماثلا",
+  [keysFor({ amputationSite: site(SIL2("كف")) }), saleSpecFieldsFor("prosthetic", { amputationSite: site(SIL2("كف")), prostheticType: "كف", siliconType: "طبي" }).map((f) => f.label)],
+  [["prostheticType:right", "siliconType:right", "prostheticType:left", "siliconType:left"], ["نوع الطرف الصناعي — للطرفين", "نوع السليكون — للطرفين"]]);
+same("هـ.١٠ وتغييرُ «اصبع» يمين إلى «كلا الجانبين» يوزّع ما كُتب على الجهتين ويحذف ما لا يخصّ السليكوني",
+  N({ ...SIL2("اصبع"), prostheticType: "إصبع", socketType: "x" }),
+  { ...SIL2("اصبع"), "prostheticType:right": "إصبع", "prostheticType:left": "إصبع", limbsIdentical: false });
 check(saleSpecsMessage("prosthetic", ["kneeJointType:left", "socketType"]).includes("نوع مفصل الركبة — يسار، نوع السوكيت"),
   "هـ.٨ والرسالةُ تسمّي الخانةَ بجهتها");
 
