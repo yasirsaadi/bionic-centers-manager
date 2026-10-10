@@ -22,6 +22,7 @@ import { deviceSpecsFromPrescription, orderDeviceSpecs, caseDeviceSpecs } from "
 import {
   cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleSpecFields, saleSpecsMessage, NOT_APPLICABLE,
 } from "@shared/device_specs";
+import { sheetLinesText } from "@shared/intake_sheet_view";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -308,6 +309,41 @@ async function main() {
     same("ي.١ **لكلّ قطعةٍ نوعُها، والسيليكونُ العامّ يسدّ الاثنتين** — فلا ينقص شيء، و«اشترى» يمرّ",
       [nl?.fields.map((f: any) => f.key), nl?.missing, (await sale(n.fid)).status],
       [["prostheticType:right-upper", "siliconType:right-upper", "prostheticType:left-upper", "siliconType:left-upper"], [], 200]);
+
+    //  **السعرُ لكلّ طرف** (المرحلةُ (ب)، قرارُ المالك: «سعرٌ واحد إن كانا متماثلين — أعطِ حرّية ولا تقيّد»، والمجموعُ في الاستمارة بتفصيله).
+    console.log("\n── ك. متعدد: سعرٌ لكلّ طرف، والمجموعُ في الاستمارة ──");
+    const FULL_RX = { ...MULTI, "prostheticType:left-lower": "طرف تحت الركبة", "footType:left-lower": "قدم كربون", "socketType:left-lower": "سوكيت كربون",
+      "siliconType:left-lower": "سليكون طبي", "prostheticType:left-upper": "كف سليكونية", "siliconType:left-upper": "سليكون طبي" };
+    const k = await examined("سعر لكل طرف", "prosthetic", FULL_RX);
+    const kl = (await call("GET", `/api/followups/patient/${k.pid}`, S.recv)).json.find((f: any) => f.id === k.fid)?.deviceSpecs;
+    same("ك.١ **ملفُّ المتابعة يسمّي الأطرافَ المصنوعة** لنافذة البيع — مختلفةً، ولا ينقص شيء",
+      [kl?.limbs, kl?.identical, kl?.missing], [[{ key: "left-lower", title: "يسار سفلي — تحت الركبة" }, { key: "left-upper", title: "يسار علوي — كف" }], false, []]);
+    const saleLines = (fid: number, lines: unknown[]) =>
+      call("POST", `/api/followups/${fid}/complete-sale`, S.recv, { lines, expertUserId: EXPERT });
+    const rk1 = await saleLines(k.fid, [{ item: "full_device", limb: "left-lower", originalPrice: 1_000_000, discountAmount: 0 }]);
+    same("ك.٢ **طرفٌ بلا سعر ⟵ ٤٠٠ يسمّيه**، ولا بيع", [rk1.status, rk1.json?.error, (await stateOf(k.fid, k.epId)).status],
+      [400, "أدخل سعر: يسار علوي", "awaiting_patient_decision"]);
+    const rk2 = await saleLines(k.fid, [{ item: "full_device", limb: "right-lower", originalPrice: 1, discountAmount: 0 }]);
+    same("ك.٣ وطرفٌ ليس من هذا الجهاز ⟵ ٤٠٠", [rk2.status, /لطرفٍ لا يُصنع/.test(rk2.json?.error ?? "")], [400, true]);
+    const rk3 = await saleLines(k.fid, [{ item: "full_device", limb: "left-lower", originalPrice: 1_000_000, discountAmount: 0 },
+      { item: "full_device", limb: "left-upper", originalPrice: 500_000, discountAmount: 50_000 }]);
+    const ke = (await q(`SELECT agreed_cost, sale_lines FROM patient_device_episodes WHERE id = $1`, [k.epId])).rows[0];
+    same("ك.٤ **سعرٌ لكلّ طرف ⟵ ٢٠٠، والمقيَّدُ مجموعُهما**، والأسطرُ على الجهاز بطرفها",
+      [rk3.status, rk3.json?.approvedPrice, rk3.json?.originalPrice, Number(ke.agreed_cost), (ke.sale_lines ?? []).map((l: any) => [l.limb, l.finalPrice])],
+      [200, 1_450_000, 1_500_000, 1_450_000, [["left-lower", 1_000_000], ["left-upper", 450_000]]]);
+    const kSheet = async () => (await call("GET", `/api/patients/${k.pid}/intake-sheets`, S.recv)).json?.sheets?.find((x: any) => x.episodeId === k.epId);
+    const ks = await kSheet();
+    same("ك.٥ **والاستمارةُ: المجموعُ الكلّيّ وتحته من أين أتى**",
+      [ks?.money?.total, sheetLinesText(ks)], [1_450_000, "يسار سفلي 1,000,000 · يسار علوي 450,000 (خصم 50,000 من 500,000)"]);
+    //  تصحيحُ السعر بعد البيع (قلمُ الكلفة يكتب `agreed_cost`) ⟵ التفصيلُ القديم لا يُعرض كأنّه مصدرُ المجموع الجديد.
+    await q(`UPDATE patient_device_episodes SET agreed_cost = 1300000 WHERE id = $1`, [k.epId]);
+    const ks2 = await kSheet();
+    same("ك.٦ **سعرٌ صُحِّح بعد البيع ⟵ لا تفصيلَ قديماً تحته**", [ks2?.money?.total, ks2?.money?.lines ?? null], [1_300_000, null]);
+    const k2 = await examined("سعر واحد لطرفين", "prosthetic", FULL_RX);
+    const rk4 = await sale(k2.fid);
+    const k2e = (await q(`SELECT agreed_cost, sale_lines FROM patient_device_episodes WHERE id = $1`, [k2.epId])).rows[0];
+    same("ك.٧ **وسعرٌ واحدٌ للطرفين يبقى مقبولاً** — سطرٌ واحد بلا تفصيل",
+      [rk4.status, Number(k2e.agreed_cost), (k2e.sale_lines ?? []).length, (k2e.sale_lines ?? [])[0]?.limb ?? null], [200, 1_000_000, 1, null]);
   } finally {
     httpServer.close();
     await cleanup();

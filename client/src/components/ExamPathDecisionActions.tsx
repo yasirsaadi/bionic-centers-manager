@@ -34,7 +34,7 @@ import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commerc
 import { NOT_APPLICABLE } from "@shared/device_specs";
 import { requestedItemsOf, type RequestedItem } from "@shared/prosthetic_parts";
 import { READY_PARTS_HINT } from "@shared/part_sale";
-import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
+import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, saleUnitsOf, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
 
 export interface ExamPathDecisionActionsPrefill {
   originalPrice?: number | null;
@@ -112,12 +112,21 @@ export function ExamPathDecisionActions({
     enabled: dialog === "complete_sale",
   });
   const saleRow: any = (patientFollowups ?? []).find((f: any) => f.id === followupId) ?? null;
-  const saleSpecs: { fields: { key: string; label: string; value: string | null; fromDoctor: boolean }[]; missing: string[] } | null =
-    saleRow?.deviceSpecs ?? null;
+  const saleSpecs: {
+    fields: { key: string; label: string; value: string | null; fromDoctor: boolean }[]; missing: string[];
+    limbs?: { key: string; title: string }[]; identical?: boolean;
+  } | null = saleRow?.deviceSpecs ?? null;
   //  ══ **ما طُلب ومَن يصنعه** (§4.cu) — من صفّ المتابعة نفسِه: أجزاءٌ عدّة ⟵ سعرٌ لكلّ جزء، وجاهزٌ ⟵ بلا خبير. ══
   const saleItems: RequestedItem[] = saleRow?.deviceEpisodeId
     ? requestedItemsOf(saleRow.requestedItem, saleRow.extraComponents) : [];
-  const byLines = saleItems.length > 1;
+  //  ══ **سعرٌ لكلّ طرف أو سعرٌ واحد** (قرارُ المالك ٢٠٢٦-١٠-١٠، §4.de (ب) — «أعطِ حرّية ولا تقيّد») — للجهاز الكامل بأكثر من طرفٍ مصنوع.
+  //  يبدأ «لكلّ طرف» حين تختلف مواصفاتُ الأطراف، و«واحداً» حين تتماثل؛ والموظّفُ يبدّله. والمجموعُ هو السعرُ النهائيّ. ══
+  const saleLimbs = saleSpecs?.limbs ?? [];
+  const canSplitLimbs = saleLimbs.length >= 2 && saleItems.includes("full_device");
+  const [perLimbChoice, setPerLimbChoice] = useState<boolean | null>(null);
+  const perLimb = canSplitLimbs && (perLimbChoice ?? saleSpecs?.identical !== true);
+  const saleUnits = saleUnitsOf(saleItems, saleRow?.serviceType ?? "prosthetic", perLimb ? saleLimbs : null);
+  const byLines = saleUnits.length > 1;
   const expertNeeded = saleRow ? saleRow.needsExpert !== false : true;
   const [cLines, setCLines] = useState<SaleLineInputs>({});
   useEffect(() => {
@@ -134,7 +143,7 @@ export function ExamPathDecisionActions({
   const reset = () => {
     setDialog(null); setCOriginal(""); setCDiscount(""); setCFree(false);
     setCExpert(""); setCPaidNow(""); setCReason(""); setCCancelReason("");
-    setNote(""); setCSpecs({}); setCLines({});
+    setNote(""); setCSpecs({}); setCLines({}); setPerLimbChoice(null);
   };
 
   //  نفسُ استعلام الخبراء بنفس المفتاح والفرع الذي تستعمله بطاقة المريض —
@@ -222,11 +231,11 @@ export function ExamPathDecisionActions({
   //  `originalPrice`/`discountAmount` وحدهما ويعتمدهما وحده.
   const csEffectiveDiscount = cFree ? cOriginal : cDiscount;
   //  **وأجزاءٌ عدّة: المجموعُ من أسطرها** (§4.cu) — نفسُ ما يشتقّه الخادمُ ويعتمده.
-  const linesTotals = byLines ? saleLinesPreview(saleItems, cLines) : null;
+  const linesTotals = byLines ? saleLinesPreview(saleUnits, cLines) : null;
   const csOffer = byLines
     ? (linesTotals
       ? { ok: true, kind: linesTotals.kind, finalPrice: linesTotals.finalPrice, error: undefined as string | undefined }
-      : { ok: false, kind: null, finalPrice: null, error: "أدخل سعر كلّ جزء" })
+      : { ok: false, kind: null, finalPrice: null, error: perLimb ? "أدخل سعر كلّ طرف" : "أدخل سعر كلّ جزء" })
     : deriveOfferFromDiscount({
       originalPrice: cOriginal === "" ? null : Number(cOriginal),
       discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
@@ -370,9 +379,24 @@ export function ExamPathDecisionActions({
               </Select>
             </div>}
             {/*  **أجزاءٌ عدّة: سطرٌ لكلّ جزء ثمّ المجموع** (§4.cu) — بدل السعر الواحد والخصم و«مجاني». */}
+            {/*  **أطرافٌ عدّة: سعرٌ لكلّ طرف أو سعرٌ واحد** (§4.de (ب)) — اختيارٌ لا قيد، والمجموعُ هو النهائيّ. */}
+            {canSplitLimbs && (
+              <div className="space-y-1" data-testid="complete-sale-limb-pricing">
+                <Label className="text-xs">سعر الأطراف</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([[false, "سعرٌ واحد للجهاز"], [true, "سعرٌ لكلّ طرف"]] as const).map(([v, label]) => (
+                    <button key={String(v)} type="button" onClick={() => setPerLimbChoice(v)} aria-pressed={perLimb === v}
+                      className={"rounded-md border px-2 py-1.5 text-sm " + (perLimb === v ? "border-primary bg-primary text-primary-foreground" : "bg-white hover:bg-slate-50")}
+                      data-testid={`button-complete-sale-${v ? "per-limb" : "one-price"}`}>{label}</button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {saleLimbs.map((l) => l.title).join(" · ")} — {perLimb ? "والمجموعُ هو السعرُ النهائيّ، ويُفصَّل في الاستمارة." : "سعرٌ واحد للأطراف كلّها."}
+                </p>
+              </div>
+            )}
             {byLines && (
-              <SaleLinesEditor items={saleItems} serviceType={saleRow?.serviceType ?? "prosthetic"}
-                value={cLines} onChange={setCLines} testId="complete-sale-lines" />
+              <SaleLinesEditor units={saleUnits} value={cLines} onChange={setCLines} testId="complete-sale-lines" />
             )}
             {!byLines && <>
             <div className="space-y-1">
@@ -488,7 +512,7 @@ export function ExamPathDecisionActions({
             <Button disabled={busy || (expertNeeded && !cExpert) || !csOffer.ok || paidNowExceeds || specsIncomplete}
               data-testid="button-save-complete-sale"
               onClick={() => submit(`/api/followups/${followupId}/complete-sale`, {
-                ...(byLines ? { lines: saleLinesPayload(saleItems, cLines) } : {
+                ...(byLines ? { lines: saleLinesPayload(saleUnits, cLines) } : {
                   originalPrice: Number(cOriginal),
                   discountAmount: csEffectiveDiscount === "" ? 0 : Number(csEffectiveDiscount),
                 }),

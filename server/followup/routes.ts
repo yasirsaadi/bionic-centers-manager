@@ -252,6 +252,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         key: x.key, label: x.label, value: ds.specResolved(merged, x.key) || null, fromDoctor: Boolean(ds.specResolved(fromExam, x.key)),
       })),
       missing: ds.missingSaleSpecs(f.serviceType, merged),
+      //  **وأطرافُه المصنوعة** (§4.de (ب)) — لسعرٍ لكلّ طرف أو سعرٍ واحد في نافذة البيع.
+      ...ds.saleLimbsFor(f.serviceType, merged),
     };
   }
 

@@ -90,6 +90,17 @@ export function saleSpecFieldsFor(kind: DeviceKind, merged: Record<string, unkno
     .map((f) => ({ key: sideSpecKey(f.key, s.key!), label: saleSpecLabel(kind, sideSpecKey(f.key, s.key!)) })));
 }
 
+/**
+ * **أطرافُ هذا الجهاز المصنوعة في هذا الطلب** (§4.de، المرحلةُ (ب)) — لسعرٍ لكلّ طرف في «اشترى»: مفتاحُ كلٍّ وعنوانُه، و`identical` حين تُكتب
+ * مواصفاتُها مرّةً (فالسعرُ الواحدُ أقربُ). طرفٌ واحد ⟵ قائمةٌ فارغة (لا تقسيم).
+ */
+export function saleLimbsFor(kind: DeviceKind, merged: Record<string, unknown>): { limbs: { key: string; title: string }[]; identical: boolean } {
+  if (kind !== "prosthetic") return { limbs: [], identical: false };
+  const view = limbSpecView(merged);
+  if (view.slots.length < 2) return { limbs: [], identical: false };
+  return { limbs: view.slots.map((s) => ({ key: s.key!, title: s.title })), identical: view.mode === "identical" };
+}
+
 /** ما ينقص لـ«اشترى» — مفاتيحُ بترتيب الورقة (وبجهاتها لمبتور الطرفين). */
 export function missingSaleSpecs(kind: DeviceKind, merged: Record<string, string>): string[] {
   return saleSpecFieldsFor(kind, merged).map((f) => f.key).filter((k) => !specResolved(merged, k));
