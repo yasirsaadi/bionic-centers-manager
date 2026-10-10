@@ -16,7 +16,7 @@ import { PHYSIO_SHEET_NOTES_LABEL } from "@shared/exam_sheet";
 import { sheetVisitPaidLine } from "@shared/intake_sheet_view";
 import { packRowsIntoPages } from "@shared/print_pages";
 import {
-  PT_AGGRAVATING, PT_ALLERGIES, PT_ASHWORTH_LEGEND, PT_ASHWORTH_REGIONS, PT_FORM_CODE, PT_FORM_VERSION, PT_FUNCTIONAL, PT_INVESTIGATIONS,
+  PT_AGGRAVATING, PT_ALLERGIES, PT_ASSIST_LEGEND, PT_ASHWORTH_LEGEND, PT_ASHWORTH_REGIONS, PT_FORM_CODE, PT_FORM_VERSION, PT_FUNCTIONAL, PT_INVESTIGATIONS,
   PT_LABELS, PT_LOCATIONS, PT_MMT_GROUPS, PT_MMT_LEGEND, PT_PLAN_ITEMS, PT_RELIEVING, PT_SENSATION, PT_SYMPTOMS, PT_TRENDS, PT_YES_NO,
   type Opt, type PhysioInitialAssessment,
 } from "@shared/physio_initial_assessment";
@@ -335,6 +335,8 @@ function AssessmentPrint({ a, examiner, signedAt }: { a: PhysioInitialAssessment
       <table className="pa-t"><tbody>
         <tr><th>{L("functional")} — {L("activity")}</th><th>{L("assistance")}</th><th>{L("equipment")}</th></tr>
         {PT_FUNCTIONAL.map((r) => <tr key={r.code}><td>{r.en}</td><td>{f(a.functional[r.code]?.assist)}</td><td>{f(a.functional[r.code]?.notes)}</td></tr>)}
+        {/*  رموزُ المساعدة والأدوات — تحت «الحالة الوظيفية» وفوق «خطة العلاج» كالورقة (طلبُ المالك ٢٠٢٦-١٠-١٠). */}
+        <tr><td colSpan={3} className="pa-legend" data-testid="psp-assist-legend">{PT_ASSIST_LEGEND.en}</td></tr>
       </tbody></table>
       <table className="pa-t"><tbody>
         <tr><th>{L("plan")}</th></tr>

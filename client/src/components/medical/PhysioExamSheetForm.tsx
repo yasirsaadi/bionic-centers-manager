@@ -14,7 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { PHYSIO_SHEET_NOTES_LABEL } from "@shared/exam_sheet";
-import { PT_FORM_CODE, PT_FORM_VERSION, PT_LABELS, type Lang, type PhysioInitialAssessment } from "@shared/physio_initial_assessment";
+import {
+  PT_FORM_CODE, PT_FORM_VERSION, PT_LABELS, assessmentGaps, assessmentGapsText, type Lang, type PhysioInitialAssessment,
+} from "@shared/physio_initial_assessment";
 import type { InjuryEntry } from "@shared/case_fields";
 import { cn } from "@/lib/utils";
 import { ReferralCell, type ExamSheetValues } from "./ExamSheetForm";
@@ -47,6 +49,7 @@ export function PhysioExamSheetForm({
   assessMissing: string[];
 }) {
   const miss = (k: string) => missing.includes(k);
+  const gapsText = assessmentGapsText(assessmentGaps(assessment, diagnosis));
   const set = <K extends keyof ExamSheetValues>(k: K, v: ExamSheetValues[K]) => onSheet({ ...sheet, [k]: v });
   const onset = sheet.injuryDate ? sheet.injuryDate.slice(0, 10) : sheet.injuryDateStatus;
 
@@ -154,6 +157,12 @@ export function PhysioExamSheetForm({
         <SheetBand>المراجعات والجلسات</SheetBand>
         <div className="px-2 py-2 text-xs text-slate-500 text-center">تظهر هنا زياراتُ المريض وجلساتُه من سجلّ الزيارات</div>
       </SheetTable>
+      {/*  **لا خانةَ إلزامية — والناقصُ يُقال** (قرارُ المالك ٢٠٢٦-١٠-١٠): تُحفَظ الاستمارةُ كما هي، ويُكمَل ما نقص بتعديل المعاينة متى شاء. */}
+      {gapsText && (
+        <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="pt-sheet-gaps">
+          تنبيه — {gapsText}. تُحفَظ الاستمارةُ بدونها، ويمكنك إكمالها بتعديل المعاينة متى شئت.
+        </p>
+      )}
       <p className="mt-2 text-[11px] text-slate-500 text-left" dir="ltr">{PT_FORM_CODE} · v{PT_FORM_VERSION}</p>
     </div>
   );

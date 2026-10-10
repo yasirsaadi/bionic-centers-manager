@@ -78,6 +78,17 @@ export const PT_FUNCTIONAL: readonly Opt[] = [
   o("weight_bearing", "Weight Bearing Status", "حالة التحميل على الطرف"),
 ];
 
+/**
+ * **رموزُ «مستوى المساعدة» والأدوات** — تحت «الحالة الوظيفية» وفوق «خطة العلاج» كما في الورقة (طلبُ المالك ٢٠٢٦-١٠-١٠ بصورتها).
+ * الرموزُ نفسُها تُكتب في الخانات باللغتين؛ والعربيةُ تشرح معناها.
+ */
+export const PT_ASSIST_LEGEND: Record<Lang, string> = {
+  en: "Assistance codes: I=Independent, S=Supervised, SBA=Stand-By Assist, Min A=Minimal Assist, Mod A=Moderate Assist, Max A=Maximum Assist, U=Unable. "
+    + "Equipment: Cr=Crutches, SPC=Single Point Cane, HW=Hemi Walker, SW=Standard Walker, WC=Wheelchair.",
+  ar: "رموز المساعدة: I = مستقلّ، S = بإشراف، SBA = مساعدٌ واقفٌ بجانبه، Min A = مساعدة قليلة، Mod A = مساعدة متوسّطة، Max A = مساعدة كبيرة، U = لا يستطيع. "
+    + "الأدوات: Cr = عكّازان، SPC = عصا بنقطة واحدة، HW = مشّاية نصفية، SW = مشّاية عادية، WC = كرسي متحرّك.",
+};
+
 /** **خطّةُ العلاج** — المربّعاتُ الخمسة عشر بترتيب الورقة (صفوفٌ من خمسة). */
 export const PT_PLAN_ITEMS: readonly Opt[] = [
   o("therapeutic_exercises", "Therapeutic Exercises", "تمارين علاجية"), o("rom", "ROM", "مدى الحركة"),
@@ -181,8 +192,9 @@ export function emptyInitialAssessment(): PhysioInitialAssessment {
   };
 }
 
-/** عناوينُ مفاتيح الإلزام — تسمّي الشاشةُ والخادمُ بها الناقصَ بالعربية. */
+/** عناوينُ ما يُنبَّه على نقصه — تسمّي الشاشةُ والملفُّ بها الناقصَ بالعربية (لا إلزامَ منذ ٢٠٢٦-١٠-١٠). */
 export const PT_REQUIRED_LABELS: Record<string, string> = {
+  diagnosis: "التشخيص",
   painBest: "الألم في أفضل حالاته",
   painWorst: "الألم في أسوأ حالاته",
   symptoms: "الأعراض (متقطّع / مستمرّ)",
@@ -204,18 +216,16 @@ const txt = (v: unknown, max = TEXT_MAX): string | null => {
 const codesOf = (list: readonly Opt[]) => new Set(list.map((x) => x.code));
 
 export type ParseResult =
-  | { ok: true; value: PhysioInitialAssessment }
+  /** `gaps`: ما يُنبَّه على نقصه — **لا يمنع الحفظ** (`assessmentGaps`). */
+  | { ok: true; value: PhysioInitialAssessment; gaps: string[] }
   | { ok: false; error: string; missing: string[] };
 
 /**
  * **تطبيعُ الاستمارة وفحصُها** — يقرؤها الخادمُ قبل أيّ كتابة، والشاشةُ قبل الإرسال.
  *
- * رمزٌ غيرُ معروف أو رقمٌ خارج حدّه ⟵ رفضٌ يسمّي الخانة (لا يسقط صامتاً). ثمّ الإلزام:
- *   • **بندٌ واحد على الأقلّ من خطّة العلاج** — دائماً.
- *   • ما لم يُؤشَّر «لا ينطبق» على القسم الأوّل: **الألمُ في أفضل حالاته وأسوئها** (٠–١٠)، و**الإحساس**؛ وحين يكون الألمُ أكثرَ
- *     من صفر: **الأعراضُ وموقعُ الألم**؛ وحين يكون الإحساسُ ضعيفاً أو معدوماً: **المناطقُ المصابة**.
- *   • «علاجٌ سابق: نعم» يحتاج عدد الزيارات (رقمٌ ٠–٩٩٩).
- * والباقي يُملأ عند الحاجة، والفارغُ «لم يُفحص».
+ * رمزٌ غيرُ معروف أو رقمٌ خارج حدّه ⟵ رفضٌ يسمّي الخانة (لا يسقط صامتاً) — **وهذا وحده يمنع الحفظ**.
+ * **ولا خانةَ إلزامية** (قرارُ المالك ٢٠٢٦-١٠-١٠: «اجعل جميع الحقول غير إلزامية، ويمكن أن يحفظها بدون أي حقل، مع تنبيهٍ أنّ التشخيص
+ * مثلاً لم يُكتب، وإمكانية أن يعدّل عليها في أي وقت»): ما كان إلزامياً صار **تنبيهاً** (`gaps` ⟵ `assessmentGaps`).
  */
 export function parseInitialAssessment(raw: unknown, opts: { today?: string } = {}): ParseResult {
   const bad = (field: string, error: string): ParseResult => ({ ok: false, error, missing: [field] });
@@ -326,24 +336,36 @@ export function parseInitialAssessment(raw: unknown, opts: { today?: string } = 
     a.functional[row.code] = { assist: txt(cell.assist), notes: txt(cell.notes) };
   }
 
-  //  ══ الإلزام ══
-  const missing: string[] = [];
+  return { ok: true, value: a, gaps: assessmentGaps(a) };
+}
+
+/**
+ * **ما يُنبَّه على نقصه** — كان إلزاماً حتى ٢٠٢٦-١٠-١٠ وصار تنبيهاً لا يمنع الحفظ: التشخيصُ (حين يُعطى نصُّه)، وبندٌ من خطّة العلاج،
+ * وما لم يُؤشَّر «لا ينطبق» على القسم الأوّل: الألمُ في أفضل حالاته وأسوئها والإحساس؛ وحين يكون الألمُ أكثرَ من صفر: الأعراضُ وموقعُه؛
+ * وحين يكون الإحساسُ ضعيفاً أو معدوماً: المناطقُ المصابة؛ و«علاجٌ سابق: نعم» بلا عدد الزيارات.
+ */
+export function assessmentGaps(a: PhysioInitialAssessment | null, diagnosis?: unknown): string[] {
+  const gaps: string[] = [];
+  if (diagnosis !== undefined && !(typeof diagnosis === "string" && diagnosis.trim())) gaps.push("diagnosis");
+  if (!a) return gaps;
   if (!a.sectionANa) {
-    if (a.painBest === null) missing.push("painBest");
-    if (a.painWorst === null) missing.push("painWorst");
+    if (a.painBest === null) gaps.push("painBest");
+    if (a.painWorst === null) gaps.push("painWorst");
     if ((a.painWorst ?? 0) > 0) {
-      if (!a.symptoms) missing.push("symptoms");
-      if (a.location.length === 0 && !a.locationOther) missing.push("location");
+      if (!a.symptoms) gaps.push("symptoms");
+      if (a.location.length === 0 && !a.locationOther) gaps.push("location");
     }
-    if (!a.sensation) missing.push("sensation");
-    else if ((a.sensation === "impaired" || a.sensation === "absent") && !a.sensationRegions) missing.push("sensationRegions");
+    if (!a.sensation) gaps.push("sensation");
+    else if ((a.sensation === "impaired" || a.sensation === "absent") && !a.sensationRegions) gaps.push("sensationRegions");
   }
-  if (a.previousTherapy === "yes" && a.previousVisits === null) missing.push("previousVisits");
-  if (a.plan.length === 0) missing.push("plan");
-  if (missing.length) {
-    return { ok: false, missing, error: `أكمل التقييم الأوّلي: ${missing.map((k) => PT_REQUIRED_LABELS[k] ?? k).join("، ")}` };
-  }
-  return { ok: true, value: a };
+  if (a.previousTherapy === "yes" && a.previousVisits === null) gaps.push("previousVisits");
+  if (a.plan.length === 0) gaps.push("plan");
+  return gaps;
+}
+
+/** **سطرُ التنبيه** — «لم يُكتب بعد: التشخيص، الإحساس…»، أو `null` حين لا نقص. */
+export function assessmentGapsText(gaps: readonly string[]): string | null {
+  return gaps.length ? `لم يُكتب بعد: ${gaps.map((k) => PT_REQUIRED_LABELS[k] ?? k).join("، ")}` : null;
 }
 
 /** هل في الاستمارة شيءٌ مكتوب أصلاً؟ — تنقيحُ معاينةٍ قديمة بلا تقييم يجوز أن يبقى بلا تقييم. */

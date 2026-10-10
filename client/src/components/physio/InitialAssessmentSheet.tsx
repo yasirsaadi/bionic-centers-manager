@@ -5,7 +5,7 @@
 // والإنجليزيةُ أوّلاً كالأصل، وزرُّ «عربي» يعرض الترجمة (`lang`).
 import type { ReactNode } from "react";
 import {
-  PT_AGGRAVATING, PT_ALLERGIES, PT_ASHWORTH_GRADES, PT_ASHWORTH_LEGEND, PT_ASHWORTH_REGIONS, PT_FORM_CODE, PT_FUNCTIONAL,
+  PT_AGGRAVATING, PT_ALLERGIES, PT_ASSIST_LEGEND, PT_ASHWORTH_GRADES, PT_ASHWORTH_LEGEND, PT_ASHWORTH_REGIONS, PT_FORM_CODE, PT_FUNCTIONAL,
   PT_INVESTIGATIONS, PT_LABELS, PT_LOCATIONS, PT_MMT_GRADES, PT_MMT_GROUPS, PT_MMT_LEGEND, PT_PLAN_ITEMS, PT_RELIEVING,
   PT_SENSATION, PT_SYMPTOMS, PT_TRENDS, PT_YES_NO,
   type Lang, type Opt, type PhysioInitialAssessment,
@@ -232,6 +232,9 @@ export function InitialAssessmentSheet({
           </tbody>
         </table>
       </div>
+      {/*  **رموزُ المساعدة والأدوات** — تحت «الحالة الوظيفية» وفوق «خطة العلاج» كما في الورقة (طلبُ المالك ٢٠٢٦-١٠-١٠). */}
+      <p className="px-2 py-1 text-[11px] leading-relaxed text-slate-700 border-b border-slate-400 print:break-inside-avoid"
+        dir={lang === "en" ? "ltr" : "rtl"} data-testid={tid("assist-legend")}>{PT_ASSIST_LEGEND[lang]}</p>
       <Band>{L("plan")}</Band>
       <div className={cn("grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 text-sm print:break-inside-avoid", miss("plan") && "bg-red-50")} data-testid={tid("plan")} data-missing={miss("plan") ? "1" : undefined}>
         {PT_PLAN_ITEMS.map((o) => {

@@ -26,7 +26,7 @@ import {
 import { NewExamDialog } from "./NewExamDialog";
 import { examNarrativeRows, isSheetExamType } from "@shared/exam_sheet";
 import {
-  assessmentAsEnglishText, assessmentSummaryAr, readStoredAssessment, PT_FORM_CODE, type Lang, type PhysioInitialAssessment,
+  assessmentAsEnglishText, assessmentGaps, assessmentGapsText, assessmentSummaryAr, readStoredAssessment, PT_FORM_CODE, type Lang, type PhysioInitialAssessment,
 } from "@shared/physio_initial_assessment";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
 import { openIntakeSheetPrint } from "@/components/intake/DeviceSheetsBox";
@@ -596,6 +596,12 @@ ${addenda}
                       <div className="text-xs flex-1 min-w-[12rem]">
                         <span className="font-bold text-emerald-900">التقييم الأوّلي: </span>
                         <span dir="auto">{assessmentSummaryAr(readStoredAssessment(exam.assessment))}</span>
+                        {/*  **ما نقص يبقى ظاهراً** (قرارُ المالك ٢٠٢٦-١٠-١٠: لا إلزام، والتنبيهُ باقٍ حتى يُكمَل بالتعديل). */}
+                        {assessmentGapsText(assessmentGaps(readStoredAssessment(exam.assessment), exam.diagnosis ?? "")) && (
+                          <div className="mt-1 text-[11px] text-amber-800" data-testid={`exam-assessment-gaps-${exam.id}`}>
+                            تنبيه — {assessmentGapsText(assessmentGaps(readStoredAssessment(exam.assessment), exam.diagnosis ?? ""))}
+                          </div>
+                        )}
                       </div>
                       <Button size="sm" variant="outline" className="h-7 text-xs"
                         onClick={() => setAssessView({ a: readStoredAssessment(exam.assessment)!, title: `${exam.doctorName} — ${formatDateIraq(exam.signedAt)} ${formatTimeIraq(exam.signedAt)}` })}
