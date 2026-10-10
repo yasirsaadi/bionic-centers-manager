@@ -246,9 +246,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const exam = await rxm.effectiveExamForEpisode(f.deviceEpisodeId, undefined, f.serviceType);
     const fromExam = exam ? rxm.deviceSpecsFromPrescription(f.serviceType, exam.prescription) : {};
     const merged = ds.mergeDeviceSpecs(fromExam, await rxm.storedEpisodeSpecs(f.deviceEpisodeId));
+    //  **الخاناتُ بحسب بتر هذا الجهاز** (§4.de): تحت الركبة بلا ركبة، والسليكونيُّ بلا قدم، ولمبتور الطرفين خاناتُ كلّ جهة.
     return {
-      fields: ds.saleSpecFields(f.serviceType).map((x) => ({
-        key: x.key, label: x.label, value: merged[x.key] ?? null, fromDoctor: Boolean(fromExam[x.key]),
+      fields: ds.saleSpecFieldsFor(f.serviceType, merged).map((x) => ({
+        key: x.key, label: x.label, value: ds.specResolved(merged, x.key) || null, fromDoctor: Boolean(ds.specResolved(fromExam, x.key)),
       })),
       missing: ds.missingSaleSpecs(f.serviceType, merged),
     };

@@ -28,6 +28,7 @@ import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
+import { LIMB_SPEC_KEYS, limbSpecFlat } from "@shared/limb_specs";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
 import { scopeReachesPatient, branchOrPatientAccessSql } from "../patients/branch_access";
@@ -766,8 +767,8 @@ export async function prescribedSpecsForEpisode(
   const fields = caseType === "prosthetic" ? PROSTHETIC_SPECS : SUPPORT_SPECS;
   const out: Record<string, string> = {};
   for (const f of fields) {
-    const v = (rx as Record<string, unknown>)[f.key];
-    if (typeof v === "string" && v.trim()) out[f.key] = v.trim();
+    const v = rxSpecValue(rx as Record<string, unknown>, f.key);
+    if (v) out[f.key] = v;
   }
   return out;
 }
@@ -807,6 +808,16 @@ export async function addAddendum(values: {
 }
 
 /**
+ * **قيمةُ خانةٍ من الوصفة لعمود ملفّ المريض** — مبتورُ الطرفين بمواصفاتٍ مختلفة (`footType:right` و`footType:left`، §4.de) يُكتب
+ * في العمود الواحد «يمين: … | يسار: …» (`limbSpecFlat`) لا فراغاً؛ وغيرُ خانات الطرف كما هي.
+ */
+function rxSpecValue(rx: Record<string, unknown>, key: string): string {
+  if (LIMB_SPEC_KEYS.includes(key)) return limbSpecFlat(rx, key);
+  const v = rx[key];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/**
  * Apply the doctor's signed decision to the patient's record.
  *
  * Writes the SAME legacy `patients` columns reception has always written, then
@@ -835,7 +846,7 @@ export async function applyPrescription(
   };
 
   if (caseType === "prosthetic") {
-    for (const f of PROSTHETIC_SPECS) put(f.key, prescription[f.key]);
+    for (const f of PROSTHETIC_SPECS) put(f.key, rxSpecValue(prescription, f.key));
     put("injurySide", prescription.injurySide);
     // The amputation builder's structured parts live in the prescription; the
     // legacy column stores the COMPOSED string, in the exact format the
@@ -1506,8 +1517,8 @@ export async function prescribedSpecs(
   const fields = caseType === "prosthetic" ? PROSTHETIC_SPECS : SUPPORT_SPECS;
   const out: Record<string, string> = {};
   for (const f of fields) {
-    const v = (rx as Record<string, unknown>)[f.key];
-    if (typeof v === "string" && v.trim()) out[f.key] = v.trim();
+    const v = rxSpecValue(rx as Record<string, unknown>, f.key);
+    if (v) out[f.key] = v;
   }
   return out;
 }

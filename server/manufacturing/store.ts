@@ -35,6 +35,7 @@ import {
 } from "../device_episodes/store";
 import { parseComponent, componentLabel, normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { hasRole } from "@shared/user_roles";
+import { limbSpecFlat } from "@shared/limb_specs";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -876,7 +877,8 @@ function itemTypeOf(r: {
   //  واحدٍ فأكثر يصير الجهازُ هو المصدر: نوعٌ لم تقله وصفتُه يبقى فارغاً **لا
   //  مستعاراً** من عمودٍ كتبه جهازٌ آخر.
   if (!hasAnySpec(specs)) return fromFile;
-  return (r.serviceType === "medical_support" ? specs.supportType : specs.prostheticType) ?? null;
+  //  ومبتورُ الطرفين بنوعين مختلفين يُقرأ «يمين: … | يسار: …» لا فراغاً (§4.de).
+  return (r.serviceType === "medical_support" ? specs.supportType : limbSpecFlat(specs, "prostheticType")) || null;
 }
 
 async function enrichOrders(rows: any[]): Promise<OrderCard[]> {

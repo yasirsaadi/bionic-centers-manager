@@ -5,6 +5,7 @@
 // (`IntakeSheetFrame.tsx`) — **مفتوحةً للطبيب كلُّها**: حقولُ الاستعلامات يعدّلها (وتُدقَّق في الخادم باسمه)، و«المعاينة الطبية»
 // خانةٌ واحدة بدل الخمس، وخاناتُ الجهاز الخمس بترتيب الورقة ومعها «لا ينطبق». والمبلغُ وجدولُ المراجعات مقفولان كما عند الاستعلامات.
 // والحالةُ كلُّها يملكها `NewExamDialog` (التوقيعُ، والجهاز، والمفتاحُ، والإرسال) — هذه شاشةٌ لا منطقَ حفظٍ فيها.
+import { useEffect } from "react";
 import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { AmputationBuilder, type AmputationParts } from "@/components/AmputationBuilder";
 import { GovernorateSelect, InjuryDateField } from "@/components/intake/IntakeFields";
@@ -23,6 +24,9 @@ import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
 import { COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 import { INJURY_SIDE_OPTIONS, PROSTHETIC_DEVICE_SPECS } from "@shared/case_fields";
 import { NOT_APPLICABLE, SALE_REQUIRED_SPECS } from "@shared/device_specs";
+import {
+  LIMB_SPEC_KEYS, limbSlots, limbSpecValue, normalizeLimbSpecs, sideSpecKey, slotTitle, slotsCanShare, type LimbSide,
+} from "@shared/limb_specs";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { cn } from "@/lib/utils";
 import type { PrescriptionValue } from "./PrescriptionFields";
@@ -86,6 +90,27 @@ const DEVICE_ROWS = SHEET_DEVICE_ROWS.map((r) => ({
 
 const dmy = (iso: string) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
 
+/** خانةُ مواصفةٍ واحدة بزرّ «لا ينطبق» — **مكوّنٌ خارج الورقة** فلا يُعاد تركيبُه مع كلّ حرف (فيبقى المؤشّرُ في الحقل). */
+function SpecCell({ specKey, rxKey, value, onSet, testSuffix }: {
+  specKey: string; rxKey: string; value: string; onSet: (k: string, v: string) => void; testSuffix: string;
+}) {
+  const placeholder = DEVICE_ROWS.find((r) => r.key === specKey)?.placeholder ?? "";
+  return (
+    <div className="flex items-center gap-1.5 min-w-0">
+      <Input className={cn(cellInput, "flex-1 min-w-0")} value={value} onChange={(e) => onSet(rxKey, e.target.value)}
+        placeholder={placeholder} data-testid={`exam-sheet-spec-${testSuffix}`} />
+      {(SALE_REQUIRED_SPECS.prosthetic as readonly string[]).includes(specKey) && (
+        <Button type="button" size="sm" variant={value === NOT_APPLICABLE ? "default" : "outline"}
+          className="shrink-0 text-xs px-2 h-8" onClick={() => onSet(rxKey, NOT_APPLICABLE)} data-testid={`exam-sheet-na-${testSuffix}`}>
+          {NOT_APPLICABLE}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+const realSpec = (v: unknown) => typeof v === "string" && v.trim() !== "" && v.trim() !== NOT_APPLICABLE;
+
 export function ExamSheetForm({
   specialty, onSpecialty, deviceSpecialties, branchName, registeredAt,
   sheet, onSheet, rx, onRx, text, onText, requestedItems, onRequestedItems, missing,
@@ -112,11 +137,31 @@ export function ExamSheetForm({
   const setRx = (k: string, v: unknown) => onRx({ ...rx, [k]: v });
   const isProsthetic = specialty === "prosthetic";
   const amp: AmputationParts = Object.fromEntries(AMP_KEYS.filter((k) => rx[k] !== undefined).map((k) => [k, rx[k]]));
+  //  **وتغييرُ البتر يرتّب خاناتِ الطرف معه** (§4.de — `normalizeLimbSpecs`): ما لا يخصّ المستوى الجديد يُحذف، وطرفان بخاناتٍ لكلّ جهة.
   const setAmp = (next: AmputationParts) => {
     const cleared: PrescriptionValue = { ...rx };
     for (const k of AMP_KEYS) delete cleared[k];
-    onRx({ ...cleared, ...next });
+    onRx(normalizeLimbSpecs({ ...cleared, ...next }));
   };
+  const slots = limbSlots(amp);
+  const bilateral = slots.length === 2;
+  const canShare = slotsCanShare(slots);
+  const identical = bilateral && canShare && rx.limbsIdentical === true;
+  const setIdentical = (on: boolean) => onRx(normalizeLimbSpecs({ ...rx, limbsIdentical: on }));
+  const setSpec = (k: string, v: string) => setRx(k, v);
+  //  خاناتُ طرفٍ واحد (أو الطرفين المتماثلين): ما يخصّه بمستواه، وما كُتب في غيره بقيمةٍ حقيقية (لا يُخفى مكتوب).
+  const sharedKeys = LIMB_SPEC_KEYS.filter((k) => slots[0].keys.includes(k) || realSpec(rx[k]));
+  //  وللطرفين المختلفين: خانةٌ تخصّ أحدَهما على الأقلّ.
+  const splitKeys = LIMB_SPEC_KEYS.filter((k) => slots.some((sl) => sl.keys.includes(k) || (sl.side && realSpec(rx[sideSpecKey(k, sl.side)]))));
+  const labelOf = (k: string) => DEVICE_ROWS.find((r) => r.key === k)?.label ?? k;
+  //  **وصفةٌ قديمة بترتيبٍ آخر تُرتَّب مرّةً عند فتحها** — مبتورُ طرفين كُتبت خاناتُه عامّةً قبل §4.de (أو طرفٌ واحد بمفاتيح جهات): تصير
+  //  جهاتٍ ظاهرةً يعدّلها الطبيبُ ويمسحها، لا قيمةً عامّةً تعود كلّما مُسحت جهتُها.
+  const mixed = isProsthetic && (bilateral && !identical
+    ? LIMB_SPEC_KEYS.some((k) => s(rx[k]))
+    : LIMB_SPEC_KEYS.some((k) => (["right", "left"] as const).some((sd) => rx[sideSpecKey(k, sd)] !== undefined)));
+  useEffect(() => {
+    if (mixed) onRx(normalizeLimbSpecs(rx));
+  }, [mixed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="bg-white rounded-xl border shadow-sm p-2 md:p-5" data-testid="exam-sheet">
@@ -225,20 +270,50 @@ export function ExamSheetForm({
           <Textarea className="min-h-[7rem] border-0 shadow-none focus-visible:ring-1 bg-teal-50/40" value={text}
             onChange={(e) => onText(e.target.value)} placeholder="ما وجدته في المعاينة وقرارك" data-testid="exam-sheet-text" />
         </SheetRow>
-        {isProsthetic ? DEVICE_ROWS.map((f) => (
-          <SheetRow key={f.key} label={f.label} testId={`exam-row-spec-${f.key}`}>
-            <div className="flex items-center gap-1.5">
-              <Input className={cn(cellInput, "flex-1")} value={s(rx[f.key])} onChange={(e) => setRx(f.key, e.target.value)}
-                placeholder={f.placeholder} data-testid={`exam-sheet-spec-${f.key}`} />
-              {(SALE_REQUIRED_SPECS.prosthetic as readonly string[]).includes(f.key) && (
-                <Button type="button" size="sm" variant={rx[f.key] === NOT_APPLICABLE ? "default" : "outline"}
-                  className="shrink-0 text-xs px-2 h-8" onClick={() => setRx(f.key, NOT_APPLICABLE)} data-testid={`exam-sheet-na-${f.key}`}>
-                  {NOT_APPLICABLE}
-                </Button>
-              )}
-            </div>
-          </SheetRow>
-        )) : (
+        {/*  **خاناتُ الطرف بحسب البتر** (§4.de، ملاحظاتُ المالك ٢٠٢٦-١٠-١٠): تحت الركبة بلا ركبة، والسليكونيُّ نوعُه وسيليكونُه،
+            والعلويُّ بلا ركبةٍ ولا قدم. ولمبتور الطرفين خاناتُ كلّ جهة، ومربّعُ «متماثلان» يكتبها مرّةً للطرفين. */}
+        {isProsthetic ? (
+          <>
+            {bilateral && (
+              <SheetRow label="الطرفان" testId="exam-row-limbs">
+                <div className="py-1 space-y-1">
+                  {canShare ? (
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" className="h-4 w-4" checked={identical} onChange={(e) => setIdentical(e.target.checked)}
+                        data-testid="exam-sheet-limbs-identical" />
+                      الطرفان متماثلان — أكتب المواصفات مرّةً للطرفين
+                    </label>
+                  ) : (
+                    <div className="text-xs text-slate-600" data-testid="exam-sheet-limbs-differ">مستويا البتر مختلفان — لكلّ طرفٍ مواصفاتُه</div>
+                  )}
+                  <div className="text-xs text-slate-500">{slots.map(slotTitle).join(" · ")}</div>
+                </div>
+              </SheetRow>
+            )}
+            {(!bilateral || identical) ? sharedKeys.map((k) => (
+              <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
+                <SpecCell specKey={k} rxKey={k} value={s(rx[k])} onSet={setSpec} testSuffix={k} />
+              </SheetRow>
+            )) : splitKeys.map((k) => (
+              <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1 py-0.5">
+                  {slots.map((sl) => {
+                    const side = sl.side as LimbSide;
+                    const applies = sl.keys.includes(k) || realSpec(rx[sideSpecKey(k, side)]);
+                    return (
+                      <div key={side} className="min-w-0" data-testid={`exam-cell-spec-${k}-${side}`}>
+                        <div className="text-[11px] text-slate-500 px-1.5">{slotTitle(sl)}</div>
+                        {applies
+                          ? <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} onSet={setSpec} testSuffix={`${k}-${side}`} />
+                          : <div className="h-9 flex items-center px-1.5 text-xs text-slate-400">{NOT_APPLICABLE}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </SheetRow>
+            ))}
+          </>
+        ) : (
           <SheetRow label="مواصفات المسند">
             <div className="min-h-[2.25rem] flex items-center px-1.5 text-sm text-slate-600" data-testid="exam-sheet-support-spec">
               {s(rx.supportType) || "نوعُ المسند في سطر «نوع الإصابة» أعلاه"}

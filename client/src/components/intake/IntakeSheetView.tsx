@@ -9,7 +9,8 @@ import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTab
 import { EXAM_SHEET_TEXT_LABEL } from "@shared/exam_sheet";
 import { INTAKE_DEPARTMENT_LABELS, injuryDateDisplay } from "@shared/intake_sheet";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
-import { sheetLinesText, sheetMoneyLine, sheetSpecRows, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
+import { sheetLinesText, sheetMoneyLine, sheetSpecView, sheetVisitPaidLine, type IntakeSheet, type IntakeSheetPatient } from "@shared/intake_sheet_view";
+import { NOT_APPLICABLE_SPEC, SIDE_LABEL, slotTitle } from "@shared/limb_specs";
 import { formatDateIraq } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,41 @@ function V({ children, testId, multiline }: { children: ReactNode; testId?: stri
 }
 
 const yesNo = (v: boolean | null) => (v === true ? "نعم" : v === false ? "لا" : null);
+
+/**
+ * **خاناتُ الطرف بحسب البتر** (§4.de): طرفٌ واحد ⟵ خاناتُه وحدها (تحت الركبة بلا ركبة)؛ وطرفان ⟵ سطرٌ يسمّيهما، ثمّ كلُّ خانةٍ بقيمتها
+ * «للطرفين» إن تماثلا، أو بنصفين يمين / يسار — والجهةُ التي لا تخصّها الخانة «لا ينطبق».
+ */
+function SheetSpecRows({ sheet }: { sheet: IntakeSheet }) {
+  const view = sheetSpecView(sheet);
+  const halves = (cells: ReactNode[]) => (
+    <div className="grid grid-cols-2 min-w-0 divide-x divide-x-reverse divide-slate-300">{cells}</div>
+  );
+  return (
+    <>
+      {view.mode !== "single" && (
+        <SheetRow label="الطرفان" testId="sheet-row-limbs">
+          {view.mode === "identical" ? (
+            <V testId="sheet-v-limbs">{`متماثلان — مواصفاتٌ واحدة للطرفين (${view.slots.map(slotTitle).join(" · ")})`}</V>
+          ) : halves(view.slots.map((sl) => (
+            <div key={sl.side} className="px-1.5 py-1.5 text-sm font-semibold text-center" data-testid={`sheet-v-limb-${sl.side}`}>{slotTitle(sl)}</div>
+          )))}
+        </SheetRow>
+      )}
+      {view.rows.map((r) => (
+        <SheetRow key={r.key} label={r.label}>
+          {r.sides ? halves(r.sides.map((x) => (
+            <div key={x.side} className="min-w-0" data-testid={`sheet-v-spec-${r.key}-${x.side}`}>
+              {x.applicable
+                ? <V>{x.value}</V>
+                : <div className="min-h-[2.25rem] print:min-h-[1.65rem] flex items-center justify-center px-1.5 text-xs text-slate-400" aria-label={`${SIDE_LABEL[x.side]}: ${NOT_APPLICABLE_SPEC}`}>{NOT_APPLICABLE_SPEC}</div>}
+            </div>
+          ))) : <V testId={`sheet-v-spec-${r.key}`}>{r.value}</V>}
+        </SheetRow>
+      ))}
+    </>
+  );
+}
 
 export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatient; sheet: IntakeSheet }) {
   const isProsthetic = sheet.serviceType === "prosthetic";
@@ -87,9 +123,7 @@ export function IntakeSheetView({ patient, sheet }: { patient: IntakeSheetPatien
             <LockedCell tall text="لم تُوقَّع معاينةُ هذا الجهاز بعد" />
           )}
         </SheetRow>
-        {isProsthetic ? sheetSpecRows(sheet).map((r) => (
-          <SheetRow key={r.key} label={r.label}><V testId={`sheet-v-spec-${r.key}`}>{r.value}</V></SheetRow>
-        )) : (
+        {isProsthetic ? <SheetSpecRows sheet={sheet} /> : (
           <SheetRow label="مواصفات المسند"><V testId="sheet-v-spec-supportType">{sheet.specs.supportType}</V></SheetRow>
         )}
         <SheetRow label={isProsthetic ? "المبلغ الكلي للطرف" : "المبلغ الكلي للمسند"} testId="sheet-row-money">

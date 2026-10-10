@@ -14,7 +14,7 @@ import { requestedItemLabel, type RequestedItem } from "@shared/prosthetic_parts
 import { RequestedPartsPicker } from "./RequestedPartsPicker";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { SHEET_STATUS_LABELS, sheetSpecRows, type IntakeSheet, type IntakeSheetsResponse } from "@shared/intake_sheet_view";
+import { SHEET_STATUS_LABELS, sheetSpecView, type IntakeSheet, type IntakeSheetsResponse } from "@shared/intake_sheet_view";
 import { IntakeSheetView } from "./IntakeSheetView";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
@@ -119,8 +119,13 @@ export function DeviceSheetsBox({ patientId, caseType }: { patientId: number; ca
               {s.amputationSite ? `موقع البتر: ${s.amputationSite}` : `الجهة: ${s.injurySide}`}
             </p>
           )}
-          <div className={`mt-1.5 grid gap-x-3 gap-y-1 text-xs ${s.serviceType === "prosthetic" ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-1"}`}>
-            {sheetSpecRows(s).map((r) => (
+          {sheetSpecView(s).mode === "identical" && (
+            <p className="text-xs text-muted-foreground" data-testid={`device-limbs-identical-${s.episodeId}`}>الطرفان متماثلان — مواصفاتٌ واحدة للطرفين</p>
+          )}
+          {/*  **بحسب البتر** (§4.de): تحت الركبة بلا ركبة، ولمبتور الطرفين المختلفين «يمين: … · يسار: …» في كلّ خانة. */}
+          <div className={`mt-1.5 grid gap-x-3 gap-y-1 text-xs ${s.serviceType !== "prosthetic" ? "grid-cols-1"
+            : sheetSpecView(s).mode === "split" ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 sm:grid-cols-5"}`}>
+            {sheetSpecView(s).rows.map((r) => (
               <div key={r.key} className="min-w-0" data-testid={`device-spec-${s.episodeId}-${r.key}`}>
                 <span className="text-muted-foreground">{r.label}: </span>
                 <span className={r.value ? "font-medium" : "text-slate-400"} dir="auto">{r.value ?? "—"}</span>

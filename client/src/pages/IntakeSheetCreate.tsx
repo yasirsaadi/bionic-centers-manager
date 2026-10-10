@@ -21,6 +21,7 @@ import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { INJURY_SIDE_OPTIONS } from "@shared/case_fields";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
+import { limbSlots } from "@shared/limb_specs";
 import { onlyRoles } from "@shared/user_roles";
 import { AmputationBuilder, amputationSiteOf, type AmputationParts } from "@/components/AmputationBuilder";
 import { useBranchSession } from "@/components/BranchGate";
@@ -306,10 +307,16 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
           </SheetPair>
 
           <SheetRow label={EXAM_SHEET_TEXT_LABEL}><LockedCell tall text="يُملأ من قبل الطبيب عند المعاينة" testId="locked-exam" /></SheetRow>
+          {/*  **خاناتُ الطرف بحسب البتر المختار** (§4.de): تحت الركبة بلا ركبة، والسليكونيُّ نوعُه وسيليكونُه؛ ولمبتور الطرفين سطرٌ يقول إنها لكلّ طرف. */}
           {(isProsthetic || f.department === "") ? (
-            SHEET_DEVICE_ROWS.map((r) => (
-              <SheetRow key={r.key} label={r.label}><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
-            ))
+            <>
+              {isProsthetic && limbSlots(f.amp).length === 2 && (
+                <SheetRow label="الطرفان"><LockedCell text="لكلّ طرفٍ مواصفاتُه — أو مرّةً للطرفين إن تماثلا — يُملأ عند المعاينة" testId="locked-limbs" /></SheetRow>
+              )}
+              {SHEET_DEVICE_ROWS.filter((r) => !isProsthetic || limbSlots(f.amp).some((sl) => sl.keys.includes(r.key))).map((r) => (
+                <SheetRow key={r.key} label={r.label} testId={`locked-spec-${r.key}`}><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
+              ))}
+            </>
           ) : (
             <SheetRow label="مواصفات المسند"><LockedCell text="يُملأ عند المعاينة أو بعدها" /></SheetRow>
           )}
