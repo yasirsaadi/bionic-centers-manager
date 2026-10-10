@@ -72,7 +72,7 @@ import {
 } from "@shared/component_sale";
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
-import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
+import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, saleUnitsOf, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
 import { partsNeedExpert, READY_PARTS_HINT, READY_SALE_SUCCESS_MESSAGE } from "@shared/part_sale";
 import type { RequestedItem } from "@shared/prosthetic_parts";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -344,7 +344,8 @@ export function NoExamOperationDialog({
   //  **والضمانُ بلا خانات مال** (طلبُ المالك ٢٠٢٦-٠٩-٣٠): لا سعرَ أصليّاً يُسأل عنه ولا يُرسَل.
   //  ══ **بيعُ أجزاءٍ جديد: سطرُ سعرٍ لكلّ جزء، والمجموعُ هو العرض** (§4.cu) — والاستئنافُ (طلبٌ موروثٌ بجزءٍ واحد) يبقى بسعره الواحد. ══
   const saleByLines = kind === "device_sale" && !resuming;
-  const linesTotals = saleByLines ? saleLinesPreview(saleParts, lineInputs) : null;
+  const saleUnits = saleUnitsOf(saleParts as RequestedItem[], "prosthetic");
+  const linesTotals = saleByLines ? saleLinesPreview(saleUnits, lineInputs) : null;
   //  **جاهزٌ بلا خبير**: لا قالبَ ولا غلافَ إسفنجيّ بين الأجزاء — والإلحاقُ بطرفٍ قيد التصنيع يبقى عند خبيره.
   const saleReadyMade = saleByLines && !attaching && saleParts.length > 0 && !partsNeedExpert(saleParts);
   const expertShown = !attaching && !saleReadyMade;
@@ -417,7 +418,7 @@ export function NoExamOperationDialog({
           ? { existingEpisodeId, expertUserId: Number(expertId) }
           //  **الأجزاءُ وأسطرُ سعرها** (§4.cu) — والخبيرُ لما يُصنع وحده: الجاهزُ بلا خبير، والإلحاقُ بخبير أمره.
           : {
-            components: saleParts, lines: saleLinesPayload(saleParts, lineInputs),
+            components: saleParts, lines: saleLinesPayload(saleUnits, lineInputs),
             ...(attaching ? { attachToDeviceEpisodeId: resolvedAttachEpisodeId }
               : saleReadyMade ? {} : { expertUserId: Number(expertId) }),
           }),
@@ -860,8 +861,7 @@ export function NoExamOperationDialog({
           ) : (<>
           {/* ── بيعُ الأجزاء: سطرٌ لكلّ جزء ثمّ المجموع (§4.cu) ── */}
           {saleByLines && saleParts.length > 0 && (
-            <SaleLinesEditor items={saleParts as RequestedItem[]} serviceType="prosthetic"
-              value={lineInputs} onChange={setLineInputs} testId="no-exam-op-lines" />
+            <SaleLinesEditor units={saleUnits} value={lineInputs} onChange={setLineInputs} testId="no-exam-op-lines" />
           )}
           {/* ── السعر: أصليّ وخصمٌ، والنهائيّ يُشتقّ — مشتركٌ بين البابين (وبيعُ الأجزاء الجديد بأسطره أعلاه) ── */}
           {!saleByLines && (<>

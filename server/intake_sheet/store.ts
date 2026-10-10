@@ -11,7 +11,7 @@ import { activeExamSql } from "../medical/active_exam";
 import { deviceSpecsFromPrescription } from "../medical/episode_prescription";
 import { mergeDeviceSpecs } from "@shared/device_specs";
 import { normalizeExtraComponents } from "@shared/prosthetic_parts";
-import { storedSaleLines } from "@shared/part_sale";
+import { saleLinesMatchTotal, storedSaleLines } from "@shared/part_sale";
 import { buildAmputationSite } from "@shared/case_fields";
 import { examSheetTextOf } from "@shared/exam_sheet";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
@@ -202,8 +202,9 @@ export async function intakeSheetsFor(
       money: opts.withMoney ? {
         total, originalPrice: originalPrice === null || originalPrice === undefined ? null : Number(originalPrice),
         priceKind, paid, remaining: total === null ? null : total - paid,
-        //  **أسطرُ السعر حين يتعدّد ما بِيع** — بندٌ واحد يقوله سطرُ المبلغ نفسُه.
-        ...(storedSaleLines(r.sale_lines).length > 1 ? { lines: storedSaleLines(r.sale_lines) } : {}),
+        //  **أسطرُ السعر حين يتعدّد ما بِيع** (جزءٌ أو طرف — §4.cu، §4.de (ب)) — بندٌ واحد يقوله سطرُ المبلغ نفسُه. **ولا تُعرض إلّا ومجموعُها
+        //  هو المبلغُ الكلّيّ**: سعرٌ صُحِّح بعد البيع يجعل تفصيلَه القديمَ كذباً يقول «من أين أتى المجموع» وهو لم يأتِ منه.
+        ...(saleLinesMatchTotal(storedSaleLines(r.sale_lines), total) ? { lines: storedSaleLines(r.sale_lines) } : {}),
       } : null,
       visits: visitsBy.get(Number(r.id)) ?? [],
     };

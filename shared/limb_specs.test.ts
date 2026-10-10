@@ -7,7 +7,10 @@ import {
   ELBOW_LEVELS, KNEE_LEVELS, LEGACY_LIMB_SPEC_KEYS, LIMB_SPEC_KEYS, isSlotKey, limbSlots, limbSlotsOfSite, limbSpecFlat, limbSpecKeys, limbSpecValue,
   limbSpecView, normalizeLimbSpecs, slotKeyLabel, slotTitle, slotsCanShare, splitSpecKey,
 } from "./limb_specs";
-import { cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleSpecFieldsFor, saleSpecsMessage, specResolved, NOT_APPLICABLE } from "./device_specs";
+import {
+  cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleLimbsFor, saleSpecFieldsFor, saleSpecsMessage, specResolved, NOT_APPLICABLE,
+} from "./device_specs";
+import { parseSaleLines, saleLinesMatchTotal, saleLinesText, storedSaleLines } from "./part_sale";
 import { sheetSpecRows, sheetSpecView } from "./intake_sheet_view";
 import {
   buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, SILICONE_PARTS, UPPER_AMPUTATION_DETAILS, type AmputationLimb, type AmputationParts,
@@ -283,6 +286,47 @@ same("ز.٢ **ويُردّ**: طرفٌ واحد (له «احادي»)، ومكر
   [ok(MULTI(L_BK)), ok(MULTI(L_BK, { ...L_BK, detail: "فوق الركبة" })), ok(MULTI(L_BK, { ...L_HAND_SIL, side: "" })), ok(MULTI(L_BK, { ...L_HAND_SIL, detail: "" })),
     ok(MULTI(L_BK, { region: "lower", side: "right", kind: "silicone", detail: "تحت الركبة" })), ok(MULTI(L_BK, { region: "upper", side: "right", detail: "تحت المرفق" }))],
   [false, false, false, false, false, false]);
+
+console.log("\n── ح. السعرُ لكلّ طرف أو سعرٌ واحد (المرحلةُ (ب)) ──");
+//  قرارُ المالك: «سعرٌ واحد إن كانا متماثلين — أعطِ حرّية ولا تقيّد»، و«السعرُ النهائيّ مجموعُهم، وتوضيحٌ صغير من أين أتى».
+same("ح.١ **أطرافُ البيع**: المصنوعةُ وحدها بعناوينها، والمتماثلةُ تقول ذلك، وطرفٌ واحد ⟵ لا تقسيم",
+  [saleLimbsFor("prosthetic", c1), saleLimbsFor("prosthetic", twoMadeSpecs).identical, saleLimbsFor("prosthetic", notMadeHand).limbs, saleLimbsFor("medical_support", c1).limbs],
+  [{ limbs: [{ key: "left-lower", title: "يسار سفلي — تحت الركبة" }, { key: "left-upper", title: "يسار علوي — كف" }], identical: false }, true, [], []]);
+const LIMBS = ["left-lower", "left-upper"];
+const pl = parseSaleLines([{ item: "full_device", limb: "left-upper", originalPrice: 500_000, discountAmount: 50_000 },
+  { item: "full_device", limb: "left-lower", originalPrice: 1_000_000, discountAmount: 0 }], ["full_device"], "prosthetic", LIMBS);
+same("ح.٢ **سطرٌ لكلّ طرف ⟵ المجموعُ سعرُ الجهاز**، والأسطرُ بترتيب الأطراف",
+  pl.ok ? [pl.lines.map((l) => [l.limb, l.finalPrice]), pl.totals.finalPrice, pl.totals.discountAmount] : pl.error,
+  [[["left-lower", 1_000_000], ["left-upper", 450_000]], 1_450_000, 50_000]);
+const one = parseSaleLines([{ item: "full_device", originalPrice: 1_400_000, discountAmount: 0 }], ["full_device"], "prosthetic", LIMBS);
+same("ح.٣ **وسعرٌ واحدٌ للجهاز يبقى مقبولاً** — حرّيةٌ لا قيد", one.ok ? [one.lines.length, one.lines[0].limb, one.totals.finalPrice] : one.error,
+  [1, undefined, 1_400_000]);
+const perr = (raw: unknown[], items: string[] = ["full_device"], limbs: string[] = LIMBS) => {
+  const r = parseSaleLines(raw, items as any, "prosthetic", limbs); return r.ok ? "ok" : r.error;
+};
+same("ح.٤ **ويُردّ**: طرفٌ بلا سعر (يسمّيه)، وطرفٌ لا يُصنع في هذا الطلب، والسطرُ الواحد مع أسطر الأطراف، وطرفٌ مكرَّر، وطرفٌ لجهازٍ بطرفٍ واحد، وطرفٌ على جزء",
+  [perr([{ item: "full_device", limb: "left-lower", originalPrice: 1, discountAmount: 0 }]),
+    perr([{ item: "full_device", limb: "right-lower", originalPrice: 1, discountAmount: 0 }]),
+    perr([{ item: "full_device", originalPrice: 1, discountAmount: 0 }, { item: "full_device", limb: "left-lower", originalPrice: 1, discountAmount: 0 },
+      { item: "full_device", limb: "left-upper", originalPrice: 1, discountAmount: 0 }]),
+    perr([{ item: "full_device", limb: "left-lower", originalPrice: 1, discountAmount: 0 }, { item: "full_device", limb: "left-lower", originalPrice: 2, discountAmount: 0 }]),
+    perr([{ item: "full_device", limb: "left-lower", originalPrice: 1, discountAmount: 0 }], ["full_device"], []),
+    perr([{ item: "socket", limb: "left-lower", originalPrice: 1, discountAmount: 0 }, { item: "full_device", originalPrice: 1, discountAmount: 0 }], ["full_device", "socket"])],
+  ["أدخل سعر: يسار علوي", "سطرُ سعرٍ لطرفٍ لا يُصنع في هذا الطلب — حدّث الصفحة", "سعرُ الجهاز: سطرٌ واحدٌ له أو سطرٌ لكلّ طرف — لا الاثنان",
+    "يسار سفلي: سعرُه مكرّر", "سطرُ سعرٍ لطرفٍ لا يُصنع في هذا الطلب — حدّث الصفحة", "سطرُ سعرٍ لطرفٍ لا يُصنع في هذا الطلب — حدّث الصفحة"]);
+const withSocket = parseSaleLines([{ item: "full_device", limb: "left-lower", originalPrice: 900_000, discountAmount: 0 },
+  { item: "full_device", limb: "left-upper", originalPrice: 300_000, discountAmount: 0 }, { item: "socket", originalPrice: 200_000, discountAmount: 0 }],
+  ["full_device", "socket"], "prosthetic", LIMBS);
+same("ح.٥ **ومعها جزءٌ إضافيّ** (طرفٌ كاملٌ وقالب) ⟵ الأطرافُ ثمّ الجزء، والمجموعُ كلُّها",
+  withSocket.ok ? [withSocket.lines.map((l) => l.limb ?? l.item), withSocket.totals.finalPrice] : withSocket.error, [["left-lower", "left-upper", "socket"], 1_400_000]);
+const stored = storedSaleLines([...(pl.ok ? pl.lines : []), { item: "socket", limb: "left-lower", originalPrice: 1, discountAmount: 0, finalPrice: 1 },
+  { item: "full_device", limb: "x", originalPrice: 1, discountAmount: 0, finalPrice: 1 }]);
+same("ح.٦ **المخزَّنُ يحفظ الطرف** للجهاز الكامل وحده وبمفتاحٍ صالح، والاستمارةُ تقول «يسار سفلي … · يسار علوي … (خصم …)»",
+  [stored.map((l) => l.limb ?? null), saleLinesText(stored.slice(0, 2), "prosthetic")],
+  [["left-lower", "left-upper", null, null], "يسار سفلي 1,000,000 · يسار علوي 450,000 (خصم 50,000 من 500,000)"]);
+same("ح.٧ **والتفصيلُ لا يُعرض إلّا ومجموعُه المبلغُ الكلّيّ** — سعرٌ صُحِّح بعد البيع لا يُفصَّل بأسطرٍ لم يأتِ منها",
+  [saleLinesMatchTotal(stored.slice(0, 2), 1_450_000), saleLinesMatchTotal(stored.slice(0, 2), 1_300_000), saleLinesMatchTotal(stored.slice(0, 1), 1_000_000),
+    saleLinesMatchTotal(stored.slice(0, 2), null)], [true, false, false, false]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);

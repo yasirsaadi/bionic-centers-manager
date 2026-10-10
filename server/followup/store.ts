@@ -2608,10 +2608,22 @@ export async function completeReceptionSale(params: {
   const expertNeeded = saleEpisodeId === null
     ? true : needsExpertOrder(ep0?.service_type, ep0?.requested_item, ep0?.extra_components);
 
+  //  **وأطرافُ الجهاز الكامل المصنوعة في هذا الطلب** (§4.de (ب)) — سعرٌ لكلّ طرف أو سعرٌ واحد. من وصفة المعاينة الفعّالة وما حُفظ على الحلقة
+  //  (القاعدةُ التي تقرؤها نافذةُ البيع نفسُها — `saleLimbsFor`)؛ قراءةٌ بلا قفلٍ للتحقّق كقراءة الطلب أعلاه.
+  let saleLimbs: string[] = [];
+  if (saleEpisodeId !== null && ep0?.service_type === "prosthetic" && saleItems.includes("full_device") && Array.isArray(params.lines)) {
+    const ds = await import("@shared/device_specs");
+    const rxm = await import("../medical/episode_prescription");
+    const exam = await rxm.effectiveExamForEpisode(saleEpisodeId, undefined, "prosthetic");
+    const fromExam = exam ? rxm.deviceSpecsFromPrescription("prosthetic", exam.prescription) : {};
+    const merged = ds.mergeDeviceSpecs(fromExam, await rxm.storedEpisodeSpecs(saleEpisodeId));
+    saleLimbs = ds.saleLimbsFor("prosthetic", merged).limbs.map((l) => l.key);
+  }
+
   let lines: SaleLine[] | null = null;
   let offer: { ok: boolean; error?: string; kind: PriceKind | null; originalPrice: number | null; finalPrice: number | null };
   if (Array.isArray(params.lines)) {
-    const parsed = parseSaleLines(params.lines, saleItems, ep0?.service_type);
+    const parsed = parseSaleLines(params.lines, saleItems, ep0?.service_type, saleLimbs);
     if (!parsed.ok) throw new FollowupError(parsed.error, 400);
     lines = parsed.lines;
     offer = { ok: true, kind: parsed.totals.kind, originalPrice: parsed.totals.originalPrice, finalPrice: parsed.totals.finalPrice };
