@@ -44,6 +44,15 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "sit-to-stand-2": { file: "sit-to-stand-2.webp" },
   "split-squat-1": { file: "split-squat-1.webp" },
   "suitcase-carry-1": { file: "suitcase-carry-1.webp", credit: "Kettlebell Workouts" },
+  //  **الدفعةُ الثانية — صورُ «ألم أسفل الظهر الحادّ» الستّ** (٢٠٢٦-١٠-١٠، §4.dg): المجلّدُ نفسُه. «التدحرج ١» لوحُ النهوض وحده (C) من ثلاثة،
+  //  فالثانيةُ تحمل التسلسلَ كلَّه؛ و«البسط من الوقوف» بوضعيّتَيه (البطاقةُ لها صورةٌ واحدة) بلا شريط العنوان الإنكليزيّ تحتهما؛
+  //  و«الرقم ٤ جالساً» الصورةُ داخل إطارها الزخرفيّ.
+  "figure-4-stretch-1": { file: "figure-4-stretch-1.webp", credit: "Web Exercises" },
+  "figure-4-stretch-2": { file: "figure-4-stretch-2.webp" },
+  "hook-lying-march-1": { file: "hook-lying-march-1.webp" },
+  "log-roll-1": { file: "log-roll-1.webp" },
+  "log-roll-2": { file: "log-roll-2.webp" },
+  "standing-extension-1": { file: "standing-extension-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
