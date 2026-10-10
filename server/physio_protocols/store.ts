@@ -1,5 +1,5 @@
 // **مكتبةُ بروتوكولات العلاج الطبيعي** (ترحيل ١٠٦، §4.cj) — طبقةُ البيانات. القواعدُ في `shared/physio_protocols.ts`.
-import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   branches, devices, physioDeviceBranches, physioProtocolDevices, physioProtocolImages, physioProtocolMeasures, physioProtocols,
@@ -8,6 +8,7 @@ import {
 import type { MeasureDef } from "@shared/physio_assessments";
 import { deviceParamsLine, doseLine, mergeDose, normalizeDeviceParams } from "@shared/physio_exercises";
 import { getPhases } from "./exercises_store";
+import { searchProtocolIds } from "./search";
 import {
   AGE_GROUP_LABELS, AGE_GROUP_LABELS_EN, CENTRE_USE_HINTS, CENTRE_USE_HINTS_EN, CENTRE_USE_LABELS, CENTRE_USE_LABELS_EN, centreUseOf,
   EVIDENCE_LABELS, EVIDENCE_LABELS_EN, PROTOCOL_CATEGORY_LABELS, PROTOCOL_CATEGORY_LABELS_EN, type CentreUse,
@@ -38,16 +39,25 @@ export interface ProtocolInput {
 }
 export interface Actor { userId: number | null; name: string | null }
 
-/** قائمةُ المكتبة — بعددِ أجهزة كلّ بروتوكولٍ وعددِ الموصى به. */
-export async function listProtocols(p: { q?: string; category?: string; ageGroup?: string; status?: string; archived?: boolean }) {
+/**
+ * قائمةُ المكتبة — بعددِ أجهزة كلّ بروتوكولٍ وعددِ ما دليلُه قويّ.
+ * **ومع سؤال** (§4.dc): البحثُ في كلّ ما داخل البروتوكول بتطبيعٍ عربيٍّ واحد (`searchProtocolIds`) — والنتائجُ بترتيب الأدقّ، ولكلٍّ
+ * `match`: أين وُجدت الكلمات ومقتطفٌ حولها. والمرشّحاتُ (الفئة والعمر والحالة والأرشيف) تُطبَّق قبل البحث.
+ */
+export async function listProtocols(p: { q?: string; category?: string; ageGroup?: string; status?: string; archived?: boolean; lang?: "ar" | "en" }) {
   const conds: any[] = [eq(physioProtocols.isArchived, Boolean(p.archived))];
   if (p.category) conds.push(eq(physioProtocols.category, p.category));
   if (p.ageGroup) conds.push(eq(physioProtocols.ageGroup, p.ageGroup));
   if (p.status) conds.push(eq(physioProtocols.status, p.status));
-  if (p.q) {
-    const like = `%${p.q}%`;
-    conds.push(or(ilike(physioProtocols.titleAr, like), ilike(physioProtocols.titleEn, like), ilike(physioProtocols.code, like)));
-  }
+  const rows = await listRows(conds);
+  const q = (p.q ?? "").trim();
+  if (!q) return rows;
+  const matches = await searchProtocolIds(rows.map((r) => r.id), q, p.lang);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return matches.map((m) => ({ ...byId.get(m.id)!, match: m }));
+}
+
+async function listRows(conds: any[]) {
   return db.select({
     id: physioProtocols.id, code: physioProtocols.code, titleAr: physioProtocols.titleAr, titleEn: physioProtocols.titleEn,
     category: physioProtocols.category, ageGroup: physioProtocols.ageGroup, status: physioProtocols.status,
