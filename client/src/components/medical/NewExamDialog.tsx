@@ -46,6 +46,7 @@ import {
   EXAM_SHEET_TEXT_KEY, examSheetTextOf, isPhysioSheetExamType, isSheetExamType, physioSheetNotesOf, prepareSheetEdit,
 } from "@shared/exam_sheet";
 import {
+  assessmentGaps, assessmentGapsText,
   emptyInitialAssessment, parseInitialAssessment, readStoredAssessment, type Lang, type PhysioInitialAssessment,
 } from "@shared/physio_initial_assessment";
 
@@ -283,6 +284,8 @@ export function NewExamDialog({
   const [crossPrompt, setCrossPrompt] =
     useState<{ dropLabel: string; message: string; episodeIds: number[] } | null>(null);
   const crossDecisionRef = useRef<"retire" | "keep" | null>(null);
+  /** **ما ينقص استمارة العلاج الطبيعي** — يُقال بعد الحفظ تنبيهاً لا منعاً (قرارُ المالك ٢٠٢٦-١٠-١٠). */
+  const physioGapsRef = useRef<string | null>(null);
   //  **الطلباتُ التي عُرضت عليه بعينها** — تُعاد مع الجواب، فطلبٌ تبدّل بعد السؤال يُسأل عنه من جديد.
   const crossEpisodeIdsRef = useRef<number[]>([]);
   useEffect(() => {
@@ -546,7 +549,8 @@ export function NewExamDialog({
         title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
         // The server could not retire the superseded case (it already carries a
         // work order or tagged payments) — the doctor has to know both are open.
-        description: [saved?.switchNote, saved?.sheetNote].filter(Boolean).join(" — ") || undefined,
+        description: [saved?.switchNote, saved?.sheetNote, physioGapsRef.current && `تنبيه — ${physioGapsRef.current}، ويمكنك إكمالها بتعديل المعاينة متى شئت`]
+          .filter(Boolean).join(" — ") || undefined,
       });
       onDone?.();
     },
@@ -602,20 +606,18 @@ export function NewExamDialog({
       }
     }
     //  **التقييمُ بقاعدة الخادم نفسِها** — ومعاينةٌ قديمة بلا تقييم تُنقَّح بلا تقييم ما دام فارغاً (القاعدةُ في الخادم كذلك).
+    //  **ولا خانةَ إلزامية** (قرارُ المالك ٢٠٢٦-١٠-١٠): القيمةُ غيرُ الصالحة وحدها تمنع، والناقصُ تنبيهٌ يُقال بعد الحفظ.
+    physioGapsRef.current = null;
     if (physioMode) {
       const oldWithout = isEdit && !readStoredAssessment(exam?.assessment);
       const r = parseInitialAssessment(assessment);
       const empty = JSON.stringify(assessment) === JSON.stringify(emptyInitialAssessment());
       if (!r.ok && !(oldWithout && empty)) {
         setAssessMissing(r.missing);
-        toast({ title: "أكمل التقييم الأوّلي", description: r.error, variant: "destructive" });
+        toast({ title: "تحقّق من التقييم الأوّلي", description: r.error, variant: "destructive" });
         return;
       }
-      if (!form.diagnosis.trim() && !(oldWithout && empty)) {
-        setSheetMissing(["diagnosis"]);
-        toast({ title: "أكمل قرار الفاحص", description: "اكتب التشخيص", variant: "destructive" });
-        return;
-      }
+      physioGapsRef.current = assessmentGapsText(assessmentGaps(r.ok ? r.value : null, form.diagnosis));
     }
     setSheetMissing([]);
     setAssessMissing([]);

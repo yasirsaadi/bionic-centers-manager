@@ -23,7 +23,7 @@ import { storage } from "./storage";
 import { prepareSheetEdit } from "@shared/exam_sheet";
 import { writesPhysioExamByRole } from "@shared/user_roles";
 import {
-  assessmentHasContent, assessmentSummaryAr, emptyInitialAssessment, parseInitialAssessment, PT_FORM_CODE,
+  assessmentGaps, assessmentGapsText, assessmentHasContent, assessmentSummaryAr, emptyInitialAssessment, parseInitialAssessment, PT_FORM_CODE,
 } from "@shared/physio_initial_assessment";
 
 let failures = 0;
@@ -76,19 +76,23 @@ async function cleanup() {
 async function main() {
   // ══ القاعدةُ المشتركة (بلا قاعدة بيانات) ══
   console.log("\n── ق. القواعد ──");
+  //  **لا خانةَ إلزامية منذ ٢٠٢٦-١٠-١٠** (قرارُ المالك: «اجعل جميع الحقول غير إلزامية ويمكن أن يحفظها بدون أي حقل، مع تنبيه»):
+  //  ما كان إلزاماً صار تنبيهاً (`gaps`) بالترتيب نفسِه — والقيمةُ غيرُ الصالحة وحدها تُردّ (ق.٦–ق.١٠).
   const empty = parseInitialAssessment(emptyInitialAssessment());
-  same("ق.١ الاستمارةُ فارغةً ⟵ الإلزامُ بترتيبه: الألمُ والإحساسُ وبندٌ من الخطّة",
-    empty.ok ? null : empty.missing, ["painBest", "painWorst", "sensation", "plan"]);
+  same("ق.١ **الاستمارةُ فارغةً تُقبل**، وتنبيهُها بترتيبه: الألمُ والإحساسُ وبندٌ من الخطّة",
+    [empty.ok, empty.ok ? empty.gaps : null], [true, ["painBest", "painWorst", "sensation", "plan"]]);
   const na = parseInitialAssessment({ ...emptyInitialAssessment(), sectionANa: true });
-  same("ق.٢ «لا ينطبق» على القسم الأوّل ⟵ يبقى بندُ الخطّة وحده", na.ok ? null : na.missing, ["plan"]);
+  same("ق.٢ «لا ينطبق» على القسم الأوّل ⟵ يبقى التنبيهُ ببند الخطّة وحده", na.ok ? na.gaps : null, ["plan"]);
+  same("ق.٢ب والتشخيصُ الفارغ يُنبَّه عليه بنصّه", [assessmentGaps(null, "  "), assessmentGapsText(["diagnosis", "plan"])],
+    [["diagnosis"], "لم يُكتب بعد: التشخيص، بندٌ واحد على الأقلّ من خطة العلاج"]);
   const zero = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 0, painWorst: 0, sensation: "intact", plan: ["rom"] });
-  same("ق.٣ ألمٌ صفر ⟵ لا تُطلَب الأعراضُ ولا الموقع", zero.ok, true);
+  same("ق.٣ ألمٌ صفر ⟵ لا تنبيهَ بالأعراض ولا بالموقع", zero.ok ? zero.gaps : null, []);
   const pain = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 2, painWorst: 6, sensation: "intact", plan: ["rom"] });
-  same("ق.٤ ألمٌ ⟵ الأعراضُ وموقعُه إلزاميّان", pain.ok ? null : pain.missing, ["symptoms", "location"]);
+  same("ق.٤ ألمٌ ⟵ تنبيهٌ بالأعراض وموقعه", pain.ok ? pain.gaps : null, ["symptoms", "location"]);
   same("ق.٤ب و«أخرى» مكتوبةً تكفي موقعاً",
     parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 2, painWorst: 6, symptoms: "constant", locationOther: "Elbow", sensation: "intact", plan: ["rom"] }).ok, true);
   const imp = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 0, painWorst: 0, sensation: "impaired", plan: ["rom"] });
-  same("ق.٥ إحساسٌ ضعيف ⟵ المناطقُ المصابة إلزامية", imp.ok ? null : imp.missing, ["sensationRegions"]);
+  same("ق.٥ إحساسٌ ضعيف ⟵ تنبيهٌ بالمناطق المصابة", imp.ok ? imp.gaps : null, ["sensationRegions"]);
   const badCode = parseInitialAssessment({ ...GOOD(), location: ["back", "elbow"] });
   same("ق.٦ رمزٌ غيرُ معروف يُردّ ويُسمّى — لا يسقط صامتاً", badCode.ok ? null : badCode.missing, ["location"]);
   const plus = parseInitialAssessment({ ...GOOD(), mmt: { ...GOOD().mmt, hip: { r: "4+", l: "4" } } });
@@ -98,8 +102,8 @@ async function main() {
   same("ق.٨ أفضلُ الألم لا يزيد على أسوئه، والألمُ ٠–١٠",
     [parseInitialAssessment({ ...GOOD(), painBest: 8, painWorst: 7 }).ok, parseInitialAssessment({ ...GOOD(), painWorst: 11 }).ok], [false, false]);
   const pv = parseInitialAssessment({ ...GOOD(), previousVisits: null });
-  same("ق.٩ «علاجٌ سابق: نعم» يحتاج عدد الزيارات — و«لا» يمحوه",
-    [pv.ok ? null : pv.missing, (parseInitialAssessment({ ...GOOD(), previousTherapy: "no" }) as any).value?.previousVisits], [["previousVisits"], null]);
+  same("ق.٩ «علاجٌ سابق: نعم» بلا عدد الزيارات ⟵ تنبيه — و«لا» يمحوه",
+    [pv.ok ? pv.gaps : null, (parseInitialAssessment({ ...GOOD(), previousTherapy: "no" }) as any).value?.previousVisits], [["previousVisits"], null]);
   same("ق.١٠ تاريخُ العملية لا يكون في المستقبل",
     parseInitialAssessment({ ...GOOD(), surgeryDate: "2099-01-01" }, { today: "2026-10-09" }).ok, false);
   same("ق.١١ الملخّصُ بالعربية", assessmentSummaryAr((parseInitialAssessment(GOOD()) as any).value),
@@ -217,11 +221,25 @@ async function main() {
     same("أ.٤ والمعالجُ لا يوقّع", [asTher.status, await examCount(p1)], [403, 0]);
 
     console.log("\n── ب. التوقيع: التقييمُ يُفحَص قبل أيّ كتابة، ويُختَم مع المعاينة ──");
-    const noPlan = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: { ...GOOD(), plan: [] } }));
-    same("ب.١ تقييمٌ بلا بندٍ من الخطّة ⟵ ٤٠٠ يسمّيه، ولا معاينة", [noPlan.status, noPlan.json?.code, noPlan.json?.missing, await examCount(p1)],
-      [400, "assessment_invalid", ["plan"], 0]);
-    const noDx = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ diagnosis: "  " }));
-    same("ب.٢ والتشخيصُ إلزاميٌّ مع الاستمارة", [noDx.status, noDx.json?.missing, await examCount(p1)], [400, ["diagnosis"], 0]);
+    //  **لا خانةَ إلزامية** (قرارُ المالك ٢٠٢٦-١٠-١٠) — كانت ب.١ وب.٢ تردّان ٤٠٠ بلا بند خطّة وبلا تشخيص.
+    const pNoPlan = await physioPatient("بلا خطة");
+    const noPlan = await call("POST", `/api/medical/patients/${pNoPlan}/exams`, S.spec, examBody({ assessment: { ...GOOD(), plan: [] } }));
+    same("ب.١ **تقييمٌ بلا بندٍ من الخطّة يُحفَظ** — والتقييمُ مختومٌ بلا بنود", [noPlan.status, await examCount(pNoPlan),
+      (await q(`SELECT assessment FROM medical_exams WHERE patient_id = $1`, [pNoPlan])).rows[0]?.assessment?.plan], [200, 1, []]);
+    const pNoDx = await physioPatient("بلا تشخيص");
+    const noDx = await call("POST", `/api/medical/patients/${pNoDx}/exams`, S.spec, examBody({ diagnosis: "  " }));
+    same("ب.٢ **والتشخيصُ الفارغ لا يمنع الحفظ**", [noDx.status, await examCount(pNoDx)], [200, 1]);
+    const pBare = await physioPatient("فارغة");
+    const bareSheet = await call("POST", `/api/medical/patients/${pBare}/exams`, S.spec, {
+      idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", diagnosis: "", plan: "", notes: "",
+      prescription: {}, assessment: emptyInitialAssessment(),
+    });
+    same("ب.٢ب **والاستمارةُ بلا أيّ حقلٍ تُحفَظ** (قولُ المالك «يمكن أن يحفظها بدون أي حقل»)", [bareSheet.status, await examCount(pBare)], [200, 1]);
+    const bareOld = await call("POST", `/api/medical/patients/${pBare}/exams`, S.spec, {
+      idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", diagnosis: "", plan: "", notes: "", prescription: {},
+    });
+    same("ب.٢ج وبلا الاستمارة (عميلٌ قديم) تبقى المعاينةُ الفارغة مرفوضةً كما كانت", [bareOld.status, bareOld.json?.error, await examCount(pBare)],
+      [400, "لا يمكن حفظ معاينة فارغة", 1]);
     const badGrade = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: { ...GOOD(), mmt: { ...GOOD().mmt, knee: { r: "6", l: "5" } } } }));
     same("ب.٣ ودرجةُ قوةٍ خارج ٠–٥ تُردّ", [badGrade.status, badGrade.json?.missing, await examCount(p1)], [400, ["mmt"], 0]);
     const emptied = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ sheet: { presentingComplaint: "" } }));
@@ -288,8 +306,14 @@ async function main() {
     const badRev = await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
       caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), sensation: null },
     });
-    same("ج.٣ وتقييمٌ ناقص في التنقيح ⟵ ٤٠٠ بلا نسخةٍ جديدة",
-      [badRev.status, badRev.json?.missing, (await q(`SELECT version FROM medical_exams WHERE id = $1`, [examId])).rows[0].version], [400, ["sensation"], 3]);
+    same("ج.٣ **وتقييمٌ ناقص في التنقيح يُحفَظ** (لا إلزام) — نسخةٌ جديدة بلا إحساس",
+      [badRev.status, (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [examId])).rows.map((r) => [r.version, r.assessment?.sensation ?? null])[0]],
+      [200, [4, null]]);
+    const badRevValue = await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
+      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), painWorst: 12 },
+    });
+    same("ج.٣ب وقيمةٌ غيرُ صالحة في التنقيح ⟵ ٤٠٠ بلا نسخةٍ جديدة",
+      [badRevValue.status, badRevValue.json?.missing, (await q(`SELECT version FROM medical_exams WHERE id = $1`, [examId])).rows[0].version], [400, ["painWorst"], 4]);
 
     //  **معاينةٌ قديمة بلا تقييم** (عميلٌ قديم، أو ما قبل اليوم) — تُنقَّح بلا تقييم ما دام فارغاً.
     const p4 = await physioPatient("قديم");
@@ -299,13 +323,14 @@ async function main() {
       caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "الشكوى: ألم", diagnosis: "قديم", prescription: {},
       assessment: emptyInitialAssessment(),
     });
+    const afterEmpty = (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [oldExam.json?.id])).rows[0].assessment ?? null;
     const partial = await call("PATCH", `/api/medical/exams/${oldExam.json?.id}`, S.spec, {
       caseType: "physiotherapy", notes: "x", diagnosis: "قديم", prescription: {}, assessment: { ...emptyInitialAssessment(), plan: ["rom"] },
     });
-    same("ج.٤ **ولا قيدَ جديد على القديم**: يوقَّع بلا تقييم، ويُنقَّح باستمارةٍ فارغة — وما كُتب فيها يُفحَص كاملاً",
-      [oldExam.status, oldRow?.assessment ?? null, reOld.status, (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [oldExam.json?.id])).rows[0].assessment ?? null,
-        partial.status, partial.json?.missing],
-      [200, null, 200, null, 400, ["painBest", "painWorst", "sensation"]]);
+    same("ج.٤ **ولا قيدَ جديد على القديم**: يوقَّع بلا تقييم، ويُنقَّح باستمارةٍ فارغة — وما كُتب فيها يُحفَظ ولو ناقصاً",
+      [oldExam.status, oldRow?.assessment ?? null, reOld.status, afterEmpty,
+        partial.status, (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [oldExam.json?.id])).rows[0].assessment?.plan],
+      [200, null, 200, null, 200, ["rom"]]);
 
     console.log("\n── د. الأطرافُ كما كانت ──");
     const pp = await call("POST", `/api/medical/patients/${p4}/exams`, S.docp, examBody({ caseType: "prosthetic", prescription: { prostheticType: "طرف" } }));

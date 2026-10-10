@@ -653,7 +653,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
           : typeof v === "string" && v.trim().length > 0,
       );
-      if (!hasNarrative && !hasPrescription) {
+      //  **واستمارةُ العلاج الطبيعي تُحفَظ ولو بلا حقلٍ واحد** (قرارُ المالك ٢٠٢٦-١٠-١٠) — الشاشةُ تنبّه على الناقص ولا تمنع، والتعديلُ متاحٌ بعدها.
+      const physioSheetSave = caseType === "physiotherapy" && req.body?.assessment !== null && typeof req.body?.assessment === "object";
+      if (!hasNarrative && !hasPrescription && !physioSheetSave) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
 
@@ -1075,7 +1077,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
           : typeof v === "string" && v.trim().length > 0,
       );
-      if (!hasNarrative && !hasPrescription) {
+      //  **واستمارةُ العلاج الطبيعي تُحفَظ ولو بلا حقلٍ واحد** (قرارُ المالك ٢٠٢٦-١٠-١٠) — الشاشةُ تنبّه على الناقص ولا تمنع، والتعديلُ متاحٌ بعدها.
+      const physioSheetSave = caseType === "physiotherapy" && req.body?.assessment !== null && typeof req.body?.assessment === "object";
+      if (!hasNarrative && !hasPrescription && !physioSheetSave) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
       }
       //  **وتعديلُ الاستمارة يُفحَص قبل أيّ كتابة** — كالتوقيع (§4.cq، ٢ب). وصاحبُ التنقيح هو مَن يصحّح: الطبيبُ أو المديرُ أو المسؤول.
