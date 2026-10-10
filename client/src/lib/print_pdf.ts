@@ -4,6 +4,8 @@
 // ولا خطأ — بينما الصفحةُ نفسُها تُطبع من سفاري. فهناك وحده تُصنع الأوراقُ ملفَّ PDF بصفحات A4 (صورةً لكلّ صفحة كما تُرى) ويُفتح
 // **لوحُ المشاركة** وفيه «طباعة» و«حفظ في الملفات» وإرسالُه. وفي كلّ متصفّحٍ آخر تبقى نافذةُ الطباعة كما هي.
 
+import { prepareTextForCapture } from "./print_text";
+
 /** هل هذا تطبيقُ الشاشة الرئيسية في آيفون أو آيباد؟ — هناك وحده يُصنع الملفّ بدل نافذة الطباعة. */
 export function printNeedsPdf(): boolean {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
@@ -51,6 +53,8 @@ export async function elementsToPdf(elements: HTMLElement[], opts: { fitOnePage?
           clone.style.maxWidth = "none";
           clone.style.margin = "0";
           clone.style.boxShadow = "none";
+          //  النصُّ العربيّ موصولاً في المصوِّر: بلا محارف اتجاهٍ خفيّة، وكلُّ نصٍّ متعدّد الأسطر سطرٌ في كتلة (`print_text.ts`).
+          prepareTextForCapture(clone);
         },
       });
       //  **ورقةٌ واحدة تبقى واحدة** (الاستمارة): على الشاشة أطولُ قليلاً من ورقتها المطبوعة، فتُصغَّر لتتّسع — ما لم تتجاوز صفحةً ونصفاً.
