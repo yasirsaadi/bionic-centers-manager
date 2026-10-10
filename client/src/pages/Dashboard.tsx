@@ -16,6 +16,7 @@ import { formatDateIraq, formatDateTimeIraq, formatTimeIraq } from "@/lib/utils"
 import { useTranslation } from "@/i18n/LanguageContext";
 import { WeeklyReviewBanner } from "@/components/WeeklyReviewBanner";
 import { LiveRevenueBoard } from "@/components/LiveRevenueBoard";
+import { PRIVACY_MASK, masked, useDashboardPrivacy } from "@/lib/privacy_mask";
 
 function translateCondition(condition: string | null | undefined, t: any): string {
   if (!condition) return "";
@@ -41,6 +42,11 @@ function DashboardContent() {
   //  والتقاريرُ بصلاحيتها هي، كالشريط الجانبيّ والخادم (`canViewReports`).
   const { canViewPayments, canViewReports } = usePermissions();
   const { t } = useTranslation();
+  //  **عينُ الخصوصية** (طلبُ المالك ٢٠٢٦-١٠-١٠) — للمسؤول العام وحده: تُخفي كلَّ رقمٍ في اللوحة وأسماءَ آخر المرضى برموزٍ كما في البنوك.
+  const privacy = useDashboardPrivacy(isAdmin ? branchSession?.userId : null);
+  const hide = privacy.hidden;
+  const num = (v: number) => masked(hide, v);
+  const money = (v: number) => masked(hide, v.toLocaleString(), t.dashboard.currencyIQD);
   
   const todayISO = useMemo(() => {
     const now = new Date();
@@ -161,7 +167,7 @@ function DashboardContent() {
       <WeeklyReviewBanner isAdmin={isAdmin} />
       {/* The owner's live takings board — his screen alone (the endpoint
           refuses everyone else, this keeps it off their dashboard). */}
-      {isAdmin && <LiveRevenueBoard />}
+      {isAdmin && <LiveRevenueBoard privacy={privacy} />}
       <div className="flex flex-col gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.dashboard.overview}</h2>
@@ -207,32 +213,32 @@ function DashboardContent() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
           <StatsCard 
             title={t.dashboard.totalPatients} 
-            value={totalPatients} 
+            value={num(totalPatients)} 
             icon={Users} 
             color="primary"
           />
           <StatsCard 
             title={t.dashboard.amputeeCases} 
-            value={amputeesCount} 
+            value={num(amputeesCount)} 
             icon={Activity} 
             color="accent"
           />
           <StatsCard 
             title={t.dashboard.physiotherapy} 
-            value={physioCount} 
+            value={num(physioCount)} 
             icon={Clock} 
             color="green"
           />
           <StatsCard 
             title={t.dashboard.medicalSupport} 
-            value={medicalSupportCount} 
+            value={num(medicalSupportCount)} 
             icon={HeartPulse} 
             color="blue"
           />
           {canViewPayments && (
             <StatsCard 
               title={t.dashboard.revenue} 
-              value={`${(stats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
+              value={money(stats?.paid || 0)} 
               icon={Banknote} 
               color="primary"
               onClick={isAdmin ? () => navigate("/revenues") : undefined}
@@ -287,26 +293,26 @@ function DashboardContent() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
                   title={t.dashboard.newPatients} 
-                  value={dailyStats?.newPatients || 0} 
+                  value={num(dailyStats?.newPatients || 0)} 
                   icon={UserPlus} 
                   color="primary"
                   data-testid="card-new-patients-today"
                 />
                 <StatsCard 
                   title={t.dashboard.newAmputee} 
-                  value={dailyStats?.newAmputees || 0} 
+                  value={num(dailyStats?.newAmputees || 0)} 
                   icon={Activity} 
                   color="accent"
                 />
                 <StatsCard 
                   title={t.dashboard.newPhysiotherapy} 
-                  value={dailyStats?.newPhysiotherapy || 0} 
+                  value={num(dailyStats?.newPhysiotherapy || 0)} 
                   icon={Clock} 
                   color="green"
                 />
                 <StatsCard 
                   title={t.dashboard.newMedicalSupport} 
-                  value={dailyStats?.newMedicalSupport || 0} 
+                  value={num(dailyStats?.newMedicalSupport || 0)} 
                   icon={HeartPulse} 
                   color="blue"
                 />
@@ -320,32 +326,32 @@ function DashboardContent() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                 <StatsCard 
                   title={t.dashboard.visitingPatients} 
-                  value={dailyStats?.visitingPatients || 0} 
+                  value={num(dailyStats?.visitingPatients || 0)} 
                   icon={Users} 
                   color="primary"
                   data-testid="card-visiting-patients-today"
                 />
                 <StatsCard 
                   title={t.dashboard.amputee} 
-                  value={dailyStats?.visitingAmputees || 0} 
+                  value={num(dailyStats?.visitingAmputees || 0)} 
                   icon={Activity} 
                   color="accent"
                 />
                 <StatsCard 
                   title={t.dashboard.physio} 
-                  value={dailyStats?.visitingPhysiotherapy || 0} 
+                  value={num(dailyStats?.visitingPhysiotherapy || 0)} 
                   icon={Clock} 
                   color="green"
                 />
                 <StatsCard 
                   title={t.dashboard.medSupport} 
-                  value={dailyStats?.visitingMedicalSupport || 0} 
+                  value={num(dailyStats?.visitingMedicalSupport || 0)} 
                   icon={HeartPulse} 
                   color="blue"
                 />
                 <StatsCard 
                   title={t.dashboard.totalSessions} 
-                  value={dailyStats?.totalVisits || 0} 
+                  value={num(dailyStats?.totalVisits || 0)} 
                   icon={Stethoscope} 
                   color="green"
                   data-testid="card-total-visits-today"
@@ -361,7 +367,7 @@ function DashboardContent() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
                   <StatsCard 
                     title={t.dashboard.totalRevenue} 
-                    value={`${(dailyStats?.paid || 0).toLocaleString()} ${t.dashboard.currencyIQD}`} 
+                    value={money(dailyStats?.paid || 0)} 
                     icon={Banknote} 
                     color="primary"
                     onClick={isAdmin ? () => navigate("/revenues?daily=true") : undefined}
@@ -371,7 +377,7 @@ function DashboardContent() {
                     <StatsCard 
                       key={br.branchId}
                       title={(t.branches as Record<string, string>)[br.branchName] || br.branchName} 
-                      value={`${br.paid.toLocaleString()} ${t.dashboard.currencyIQD}`} 
+                      value={money(br.paid)} 
                       icon={Building2} 
                       color={br.paid > 0 ? "green" : "blue"}
                       data-testid={`card-branch-revenue-${br.branchId}`}
@@ -393,10 +399,10 @@ function DashboardContent() {
               <div key={patient.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-border/50">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold">
-                    {patient.name.charAt(0)}
+                    {hide ? "•" : patient.name.charAt(0)}
                   </div>
                   <div>
-                    <p className="font-bold text-slate-800">{patient.name}</p>
+                    <p className="font-bold text-slate-800" data-testid={`dashboard-recent-name-${patient.id}`}>{hide ? PRIVACY_MASK : patient.name}</p>
                     <p className="text-xs text-muted-foreground">{translateCondition(patient.medicalCondition, t)}</p>
                   </div>
                 </div>
