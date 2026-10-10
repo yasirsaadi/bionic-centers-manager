@@ -7,6 +7,10 @@
 //   ٣. **يكتب نصوصَه وجرعتَه ومراجعه وأجهزتَه ما دام لم يعدّله إنسان** (`updated_by IS NULL`) — وما عدّله سليمٌ يبقى كما كتبه.
 //   ٤. **يزرع مراحلَه وتمارينَها بجرعتها إن لم تكن له مراحل.**
 // وكلُّ ذلك يتكرّر بلا أثرٍ ثانٍ (الترحيلاتُ idempotent). والنصُّ عربيٌّ بالمصطلح الإنكليزيّ بين قوسين، وبنسخةٍ إنكليزية كاملة.
+//
+// **ومن البروتوكول الثاني (ترحيل ١٢٤ — §4.dg)** القالبُ كاملاً كما استقرّ بعد ترحيلَي ١٢٢ و١٢٣: عددُ الجلسات (`totalSessions`)، ونطاقُ جلسات كلّ
+// مرحلة (`sessionFrom/sessionTo`)، و«استعمالُ المركز» لكلّ جهاز (`centreUse`). **وكلُّها اختيارية**: ما لا يُعطى لا يظهر في الـSQL، فيبقى ما يُنتجه
+// ترحيلُ ١١٩ حرفاً بحرف — وهو يُشغَّل على قاعدةٍ جديدة قبل ١٢٢ و١٢٣ اللذين أضافا تلك الأعمدة.
 
 export type Bi = [ar: string, en: string];
 type Ev = "recommended" | "optional" | "not_recommended";
@@ -24,13 +28,22 @@ export interface ExerciseSeed {
 export interface PhaseExerciseSeed { code: string; sets?: number; reps?: number; hold?: number; rest?: number; doseNote?: Bi; note?: Bi }
 export interface PhaseSeed {
   name: Bi; timeframe: Bi; goals: Bi; education: Bi; criteria: Bi; notes: Bi; exercises: PhaseExerciseSeed[];
+  /** نطاقُ جلسات المرحلة (ترحيل ١٢٣) — اختياريّ. */
+  sessionFrom?: number; sessionTo?: number;
 }
-export interface DeviceSeed { code: string; evidence: Ev; minutes?: number; params?: Record<string, string>; parameters?: Bi; note?: Bi }
+export type CentreUse = "core" | "adjunct" | "not_used";
+export interface DeviceSeed {
+  code: string; evidence: Ev; minutes?: number; params?: Record<string, string>; parameters?: Bi; note?: Bi;
+  /** «استعمالُ المركز» (ترحيل ١٢٢) — اختياريّ؛ وبلا قيمةٍ يُشتقّ من درجة الدليل. */
+  centreUse?: CentreUse;
+}
 export interface RefSeed { title: string; org: string; year: number; url?: string }
 export interface ProtocolContentSeed {
   code: string;
   summary: Bi; goals: Bi; assessment: Bi; exercises: Bi; contraindications: Bi; precautions: Bi;
   spw: number; weeks: number; minutes: number; refs: RefSeed[]; devices: DeviceSeed[]; phases: PhaseSeed[];
+  /** عددُ الجلسات (ترحيل ١٢٣) — اختياريّ؛ والأسابيعُ تُكتب كما تُشتقّ منه (`weeks`). */
+  totalSessions?: number;
 }
 
 export const lit = (v: string | null | undefined) => (v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
@@ -75,28 +88,34 @@ export function protocolContentSql(p: ProtocolContentSeed): string {
   ${text("exercises", p.exercises)},
   ${text("contraindications", p.contraindications)},
   ${text("precautions", p.precautions)},
-  sessions_per_week = ${num(p.spw)}, duration_weeks = ${num(p.weeks)}, session_minutes = ${num(p.minutes)},
+  sessions_per_week = ${num(p.spw)}, duration_weeks = ${num(p.weeks)}, session_minutes = ${num(p.minutes)},${p.totalSessions === undefined ? "" : ` total_sessions = ${num(p.totalSessions)},`}
   "references" = ${lit(JSON.stringify(refs))}::jsonb,
   updated_by_name = ${lit(SEEDED_BY)}, updated_at = now()
  WHERE code = ${code} AND updated_by IS NULL;`;
 
+  //  «استعمالُ المركز» عمودٌ يظهر حين يُعطى لجهازٍ واحدٍ على الأقلّ — وبلا قيمةٍ لجهازٍ يُكتب `NULL` (يُشتقّ من الدليل).
+  const withUse = p.devices.some((d) => d.centreUse !== undefined);
   const deviceRows = p.devices.map((d, i) => `(${[
     lit(d.code), lit(d.evidence), `${lit(d.parameters?.[0])}::text`, `${lit(d.parameters?.[1])}::text`, `${num(d.minutes)}::int`,
     `${lit(d.note?.[0])}::text`, `${lit(d.note?.[1])}::text`, `${lit(JSON.stringify(d.params ?? {}))}::jsonb`, String(i),
+    ...(withUse ? [`${lit(d.centreUse)}::text`] : []),
   ].join(", ")})`).join(",\n    ");
   const devices = `DELETE FROM physio_protocol_devices WHERE protocol_id IN (SELECT id FROM physio_protocols WHERE code = ${code} AND updated_by IS NULL);
-INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, parameters, parameters_en, minutes, note, note_en, params, display_order)
-SELECT p.id, d.id, v.evidence, v.parameters, v.parameters_en, v.minutes, v.note, v.note_en, v.params, v.ord
+INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, parameters, parameters_en, minutes, note, note_en, params, display_order${withUse ? ", centre_use" : ""})
+SELECT p.id, d.id, v.evidence, v.parameters, v.parameters_en, v.minutes, v.note, v.note_en, v.params, v.ord${withUse ? ", v.centre_use" : ""}
 FROM physio_protocols p
 CROSS JOIN (VALUES
     ${deviceRows}
-  ) AS v(code, evidence, parameters, parameters_en, minutes, note, note_en, params, ord)
+  ) AS v(code, evidence, parameters, parameters_en, minutes, note, note_en, params, ord${withUse ? ", centre_use" : ""})
 JOIN devices d ON d.code = v.code
 WHERE p.code = ${code} AND p.updated_by IS NULL;`;
 
+  //  ونطاقُ الجلسات كذلك: عمودان يظهران حين تحملهما مرحلةٌ واحدة على الأقلّ.
+  const withRange = p.phases.some((ph) => ph.sessionFrom !== undefined || ph.sessionTo !== undefined);
   const phaseRows = p.phases.map((ph, i) => `(${[
     String(i + 1), lit(ph.name[0]), lit(ph.name[1]), lit(ph.timeframe[0]), lit(ph.timeframe[1]), lit(ph.goals[0]), lit(ph.goals[1]),
     lit(ph.education[0]), lit(ph.education[1]), lit(ph.criteria[0]), lit(ph.criteria[1]), lit(ph.notes[0]), lit(ph.notes[1]),
+    ...(withRange ? [`${num(ph.sessionFrom)}::int`, `${num(ph.sessionTo)}::int`] : []),
   ].join(", ")})`).join(",\n    ");
   const linkRows = p.phases.flatMap((ph, i) => ph.exercises.map((x, j) => `(${[
     String(i + 1), lit(x.code), String(j), `${num(x.sets)}::int`, `${num(x.reps)}::int`, `${num(x.hold)}::int`, `${num(x.rest)}::int`,
@@ -106,11 +125,11 @@ WHERE p.code = ${code} AND p.updated_by IS NULL;`;
   SELECT id FROM physio_protocols WHERE code = ${code} AND ${noPhases}
 ), ph AS (
   INSERT INTO physio_protocol_phases (protocol_id, position, name_ar, name_en, timeframe, timeframe_en, goals, goals_en,
-    education, education_en, progress_criteria, progress_criteria_en, notes, notes_en)
+    education, education_en, progress_criteria, progress_criteria_en, notes, notes_en${withRange ? ", session_from, session_to" : ""})
   SELECT p.id, v.* FROM p CROSS JOIN (VALUES
     ${phaseRows}
   ) AS v(position, name_ar, name_en, timeframe, timeframe_en, goals, goals_en, education, education_en,
-         progress_criteria, progress_criteria_en, notes, notes_en)
+         progress_criteria, progress_criteria_en, notes, notes_en${withRange ? ", session_from, session_to" : ""})
   RETURNING id, position
 )
 INSERT INTO physio_protocol_phase_exercises (phase_id, exercise_id, position, sets, reps, hold_seconds, rest_seconds,
@@ -123,4 +142,34 @@ JOIN (VALUES
 JOIN physio_exercises e ON e.code = v.code;`;
 
   return [demote, texts, devices, phases].join("\n\n");
+}
+
+/**
+ * **الخططُ المفتوحة على البروتوكول تأخذ نسختَها من مراحله** — بعد أن تُزرع (قاعدةُ ترحيل ١٢٣ نفسُها، لبروتوكولٍ واحد): خطّةٌ فُتحت عليه وهو بلا مراحل
+ * (مسوّدة · منتظرة · مُعادة · معتمَدة) ولا نسخةَ لها؛ والموقوفةُ والمتخرّجة تاريخٌ لا يُمَسّ، والتي لها نسخةٌ لا تتضاعف.
+ */
+export function openPlansPhasesSql(protocolCode: string): string {
+  return `WITH src AS (
+  SELECT pl.id AS plan_id, ph.*
+    FROM physio_plans pl
+    JOIN physio_protocols pr ON pr.id = pl.protocol_id AND pr.code = ${lit(protocolCode)}
+    JOIN physio_protocol_phases ph ON ph.protocol_id = pl.protocol_id
+   WHERE pl.status IN ('draft', 'pending', 'returned', 'approved')
+     AND NOT EXISTS (SELECT 1 FROM physio_plan_phases x WHERE x.plan_id = pl.id)
+), ins AS (
+  INSERT INTO physio_plan_phases (plan_id, position, name_ar, name_en, session_from, session_to, timeframe, timeframe_en,
+    goals, goals_en, education, education_en, progress_criteria, progress_criteria_en, notes, notes_en)
+  SELECT plan_id, position, name_ar, name_en, session_from, session_to, timeframe, timeframe_en,
+    goals, goals_en, education, education_en, progress_criteria, progress_criteria_en, notes, notes_en
+    FROM src
+  RETURNING id, plan_id, position
+)
+INSERT INTO physio_plan_phase_exercises (phase_id, exercise_id, position, sets, reps, hold_seconds, rest_seconds,
+  dose_note, dose_note_en, note, note_en)
+SELECT ins.id, pe.exercise_id, pe.position, pe.sets, pe.reps, pe.hold_seconds, pe.rest_seconds,
+  pe.dose_note, pe.dose_note_en, pe.note, pe.note_en
+  FROM ins
+  JOIN physio_plans pl ON pl.id = ins.plan_id
+  JOIN physio_protocol_phases ph ON ph.protocol_id = pl.protocol_id AND ph.position = ins.position
+  JOIN physio_protocol_phase_exercises pe ON pe.phase_id = ph.id;`;
 }

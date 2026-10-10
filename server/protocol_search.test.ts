@@ -135,8 +135,10 @@ async function main() {
     console.log("\n── ب. البابُ الحقيقيّ ──");
     const a = await search("الم الظهر");
     const lbp = a.json?.[0];
-    same("ب.١ **«الم الظهر» بلا همزة: «ألم أسفل الظهر المزمن» أوّلاً** — والكلمةُ مظلّلةٌ بهمزتها في الاسم",
-      [a.status, lbp?.code, marked(lbp?.titleAr ?? "", lbp?.match?.titleRanges?.ar ?? [])], [200, "lbp-chronic-adult", ["ألم", "الظهر"]]);
+    //  واسما بروتوكولَي الظهر يطابقان الكلمتين معاً، فترتيبُهما بينهما يقرّره المحتوى — وبعد ترحيل ١٢٤ (§4.dg) صار الحادُّ مفصَّلاً كالمزمن؛ فالقصدُ أنهما الأوّلان.
+    same("ب.١ **«الم الظهر» بلا همزة: بروتوكولا «ألم أسفل الظهر» (المزمن والحادّ) أوّلاً** — والكلمةُ مظلّلةٌ بهمزتها في الاسم",
+      [a.status, (a.json ?? []).slice(0, 2).map((r) => r.code).sort(), marked(lbp?.titleAr ?? "", lbp?.match?.titleRanges?.ar ?? [])],
+      [200, ["lbp-acute-adult", "lbp-chronic-adult"], ["ألم", "الظهر"]]);
     same("ب.٢ **و«ألم الظهر» بهمزتها النتائجُ نفسُها بترتيبها**", (await search("ألم الظهر")).json.map((r) => r.id), a.json.map((r) => r.id));
     const k = (await search("ركبه")).json;
     const firstContent = k.findIndex((r) => !r.match?.inTitle);
@@ -144,8 +146,9 @@ async function main() {
       && k.some((r) => r.code === "knee-oa-geriatric" && r.match.inTitle),
       "ب.٣ **«ركبه» تجد كلَّ بروتوكولٍ فيه «ركبة»**: ما في اسمه أوّلاً (خشونةُ الركبة…) ثمّ ما في محتواه", JSON.stringify(k.map((r) => [r.code, r.match?.inTitle])));
     const j = (await search("الجسر")).json;
-    same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولَها ومكانَها «تمارين المرحلة»",
-      [j.map((r) => r.code), j[0]?.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label))], [["lbp-chronic-adult"], true]);
+    //  و«الجسر» في مراحل البروتوكولَين المفصَّلَين كليهما (المزمن، والحادّ بعد ترحيل ١٢٤ — §4.dg).
+    same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولاتِها ومكانَها «تمارين المرحلة»",
+      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["lbp-acute-adult", "lbp-chronic-adult"], true]);
     const t = (await search("تيكار")).json;
     check(t.length > 0 && t.every((r) => r.match.hits.some((h: any) => h.label === "الأجهزة" && marked(h.snippet, h.ranges).includes("تيكار"))),
       "ب.٥ **واسمُ جهاز** («تيكار») يُظهر كلَّ بروتوكولٍ فيه — «الأجهزة: تيكار»", JSON.stringify(t.map((r) => [r.code, r.match.hits.map((h: any) => h.label)])));
