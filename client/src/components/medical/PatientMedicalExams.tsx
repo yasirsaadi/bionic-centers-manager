@@ -33,6 +33,7 @@ import { openIntakeSheetPrint } from "@/components/intake/DeviceSheetsBox";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
 import { buildAmputationSite, deviceSpecsForSpecialty, type InjuryEntry } from "@shared/case_fields";
+import { LIMB_SPEC_KEYS, limbSpecView } from "@shared/limb_specs";
 import { hasRole } from "@shared/user_roles";
 
 // Render the signed decision as label/value lines, using the very same field
@@ -49,7 +50,14 @@ function prescriptionLines(exam: Exam): { label: string; value: string }[] {
     const site = buildAmputationSite(rx);
     if (site) out.push({ label: "موقع البتر", value: site });
   }
+  //  **خاناتُ الطرف بحسب البتر** (§4.de) — ولمبتور الطرفين المختلفين «يمين: … · يسار: …»؛ وما سواها كما كُتب.
+  if (exam.caseType === "prosthetic") {
+    const view = limbSpecView(rx, buildAmputationSite(rx));
+    if (view.mode === "identical") out.push({ label: "الطرفان", value: "متماثلان — مواصفاتٌ واحدة للطرفين" });
+    for (const r of view.rows) if (r.value) out.push({ label: r.label, value: r.value });
+  }
   for (const f of deviceSpecsForSpecialty(exam.caseType)) {
+    if (exam.caseType === "prosthetic" && LIMB_SPEC_KEYS.includes(f.key)) continue;
     if (typeof rx[f.key] === "string" && rx[f.key].trim()) out.push({ label: f.label, value: rx[f.key] });
   }
   if (typeof rx.injurySide === "string" && rx.injurySide.trim()) {

@@ -25,6 +25,7 @@ import {
   PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, buildAmputationSite, type AmputationParts,
 } from "@shared/case_fields";
 import { mergeDeviceSpecs } from "@shared/device_specs";
+import { LIMB_SIDES, LIMB_SPEC_KEYS, sideSpecKey } from "@shared/limb_specs";
 
 export type DeviceServiceType = "prosthetic" | "medical_support";
 
@@ -96,6 +97,8 @@ export function deviceSpecsFromPrescription(
   for (const f of fields) put(f.key, rx[f.key]);
   put("injurySide", rx.injurySide);
   if (serviceType === "prosthetic") {
+    //  **ولمبتور الطرفين مواصفاتُ كلّ جهة** (§4.de) — `footType:right` بجانب العامّ، ويقرؤها `limbSpecView`.
+    for (const k of LIMB_SPEC_KEYS) for (const sd of LIMB_SIDES) put(sideSpecKey(k, sd), rx[sideSpecKey(k, sd)]);
     const site = buildAmputationSite(rx as AmputationParts);
     if (site) out.amputationSite = site;
   }

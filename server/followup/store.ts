@@ -2672,7 +2672,8 @@ export async function completeReceptionSale(params: {
         const exam = await rxm.effectiveExamForEpisode(epId, tx, kind);
         const fromExam = exam ? rxm.deviceSpecsFromPrescription(kind, exam.prescription) : {};
         //  **وما كتبه الطبيبُ لا يُكتب فوقه ولا تُحفظ له نسخةٌ ثانية** — النافذةُ تملأ الفراغَ وحده.
-        const incoming = Object.fromEntries(Object.entries(ds.cleanSaleSpecsInput(params.deviceSpecs, kind)).filter(([k]) => !fromExam[k]));
+        //  **وبالجهة** (§4.de): خانةُ جهةٍ كتبها الطبيبُ لجهتها أو للطرفين معاً لا تُكتب فوقها (`specResolved`).
+        const incoming = Object.fromEntries(Object.entries(ds.cleanSaleSpecsInput(params.deviceSpecs, kind)).filter(([k]) => !ds.specResolved(fromExam, k)));
         const nextStored = { ...stored, ...incoming };
         const merged = ds.mergeDeviceSpecs(fromExam, nextStored);
         const missing = ds.missingSaleSpecs(kind, merged);

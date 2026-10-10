@@ -8,6 +8,7 @@
 import { SHEET_DEVICE_ROWS } from "./exam_sheet";
 import { PROSTHETIC_DEVICE_SPECS } from "./case_fields";
 import { saleLinesText, type SaleLine } from "./part_sale";
+import { limbSpecView, type LimbSpecSide, type LimbSpecView } from "./limb_specs";
 
 export type SheetServiceType = "prosthetic" | "medical_support";
 
@@ -161,14 +162,35 @@ export const SHEET_EXTRA_SPEC_ROWS: readonly { key: string; label: string }[] = 
   .filter((f) => !SHEET_DEVICE_ROWS.some((r) => r.key === f.key))
   .map((f) => ({ key: f.key, label: f.label }));
 
-/** أسطرُ مواصفات الجهاز كما تُعرض: خاناتُ الورقة دائماً (أو «نوع المسند»)، والقديمةُ الإضافيةُ حين تُكتب وحدها. */
-export function sheetSpecRows(s: Pick<IntakeSheet, "serviceType" | "specs">): { key: string; label: string; value: string | null }[] {
+export interface SheetSpecRow {
+  key: string;
+  label: string;
+  /** نصُّ القيمة كاملاً — و`null` حين تخلو. */
+  value: string | null;
+  /** لمبتور الطرفين بمواصفاتٍ مختلفة: قيمةُ كلّ جهة (§4.de). */
+  sides?: LimbSpecSide[];
+}
+
+/**
+ * **أسطرُ مواصفات الجهاز كما تُعرض**: خاناتُ الورقة **بحسب البتر** (§4.de — تحت الركبة بلا ركبة، والسليكونيُّ نوعُه وسيليكونُه،
+ * ولمبتور الطرفين كلُّ جهةٍ بقيمتها أو قيمةٌ واحدة «للطرفين»)، أو «نوع المسند»؛ والقديمةُ الإضافيةُ حين تُكتب وحدها.
+ * و`mode`/`slots` لترويسة الطرفين في الورقة.
+ */
+export function sheetSpecView(s: Pick<IntakeSheet, "serviceType" | "specs">): { mode: LimbSpecView["mode"]; slots: LimbSpecView["slots"]; rows: SheetSpecRow[] } {
   const v = (k: string) => (typeof s.specs[k] === "string" && s.specs[k].trim() ? s.specs[k].trim() : null);
-  if (s.serviceType !== "prosthetic") return [{ key: "supportType", label: "نوع المسند", value: v("supportType") }];
-  return [
-    ...SHEET_DEVICE_ROWS.map((r) => ({ key: r.key as string, label: r.label as string, value: v(r.key) })),
-    ...SHEET_EXTRA_SPEC_ROWS.filter((r) => v(r.key)).map((r) => ({ ...r, value: v(r.key) })),
-  ];
+  if (s.serviceType !== "prosthetic") {
+    return { mode: "single", slots: [], rows: [{ key: "supportType", label: "نوع المسند", value: v("supportType") }] };
+  }
+  const limb = limbSpecView(s.specs);
+  return {
+    mode: limb.mode, slots: limb.slots,
+    rows: [...limb.rows, ...SHEET_EXTRA_SPEC_ROWS.filter((r) => v(r.key)).map((r) => ({ ...r, value: v(r.key) }))],
+  };
+}
+
+/** أسطرُ مواصفات الجهاز وحدها (`sheetSpecView`). */
+export function sheetSpecRows(s: Pick<IntakeSheet, "serviceType" | "specs">): SheetSpecRow[] {
+  return sheetSpecView(s).rows;
 }
 
 /**

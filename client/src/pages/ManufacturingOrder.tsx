@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
-import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
+import { sheetSpecView } from "@shared/intake_sheet_view";
+import { NOT_APPLICABLE_SPEC, SIDE_LABEL, slotTitle, splitSpecKey } from "@shared/limb_specs";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { TRIAL_SOCKET_LABEL, canDeliverTrialSocket, isTrialAwaiting } from "@shared/trial_socket";
 import { baghdadTodayYmd } from "@shared/visit_date";
@@ -169,9 +170,31 @@ export default function ManufacturingOrder() {
               {order.serviceType === "prosthetic" && (
                 <Info label="موقع البتر" value={deviceSpecs.specs.amputationSite} />
               )}
-              {(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_DEVICE_SPECS).map((f) => (
-                <Info key={f.key} label={(deviceSpecs.filledAtSale ?? []).includes(f.key) ? `${f.label} *` : f.label} value={deviceSpecs.specs[f.key]} />
-              ))}
+              {/*  **خاناتُ الاستمارة نفسُها بحسب البتر** (§4.de — `sheetSpecView`): تحت الركبة بلا ركبة، والسليكونيُّ نوعُه وسيليكونُه،
+                  ولمبتور الطرفين سطرٌ يسمّيهما ثمّ كلُّ خانةٍ «للطرفين» أو لكلّ جهةٍ قيمتُها. والقديمُ (حجمُ السليكون…) حين يُكتب. */}
+              {(() => {
+                const view = sheetSpecView({ serviceType: order.serviceType === "medical_support" ? "medical_support" : "prosthetic", specs: deviceSpecs.specs });
+                const atSale = (key: string) => (deviceSpecs.filledAtSale ?? []).some((k: string) => splitSpecKey(k).base === key);
+                return (
+                  <>
+                    {view.mode !== "single" && (
+                      <Info label="الطرفان" value={view.mode === "identical"
+                        ? `متماثلان — مواصفاتٌ واحدة للطرفين (${view.slots.map(slotTitle).join(" · ")})`
+                        : view.slots.map(slotTitle).join(" · ")} />
+                    )}
+                    {view.rows.map((r) => (
+                      <Info key={r.key} label={atSale(r.key) ? `${r.label} *` : r.label} value={r.sides ? (
+                        <div className="space-y-0.5" data-testid={`order-spec-${r.key}`}>
+                          {r.sides.map((x) => (
+                            <div key={x.side}><span className="text-muted-foreground">{SIDE_LABEL[x.side]}: </span>
+                              {x.applicable ? (x.value ?? "—") : <span className="text-muted-foreground">{NOT_APPLICABLE_SPEC}</span>}</div>
+                          ))}
+                        </div>
+                      ) : r.value} />
+                    ))}
+                  </>
+                );
+              })()}
               <Info label="جهة الإصابة" value={deviceSpecs.specs.injurySide} />
             </div>
           </CardContent>

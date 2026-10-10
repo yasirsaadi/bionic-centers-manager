@@ -27,10 +27,14 @@ check("١. الصفحةُ تقرأ `deviceSpecs` من استجابة الأمر"
   page.includes("const { order, patient, deviceSpecs, timeline, rework, dateChanges = [] } = data;"));
 check("٢. **بطاقةٌ لمواصفات هذا الجهاز** حين يكون المصدرُ معاينته",
   page.includes('deviceSpecs?.source === "exam"') && page.includes('data-testid="card-device-specs"'));
-//  وقائمةُ الأطراف هي قائمةُ الجهاز القانونية بالسوكيت (`PROSTHETIC_DEVICE_SPECS`، ترحيل ١١٥ — §4.cq)، من الملفّ المشترك نفسِه.
-check("٣. والقوائمُ القانونية نفسُها لا قائمةٌ ثانية",
-  page.includes('import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";')
-  && page.includes('(order.serviceType === "medical_support" ? SUPPORT_SPECS : PROSTHETIC_DEVICE_SPECS).map((f) =>'));
+//  وقائمةُ الأطراف هي قائمةُ الجهاز القانونية بالسوكيت (ترحيل ١١٥ — §4.cq)، من الملفّ المشترك نفسِه. **ومنذ §4.de هي أسطرُ الاستمارة
+//  نفسُها بحسب البتر** (`sheetSpecView` — مبنيّةٌ على `SHEET_DEVICE_ROWS` و`PROSTHETIC_DEVICE_SPECS`، ويحرس اكتمالَها `test:limb-specs`):
+//  فالخبيرُ يقرأ ما تقوله الورقةُ المطبوعة حرفاً — تحت الركبة بلا ركبة، ولكلّ طرفٍ من الطرفين قيمتُه.
+check("٣. والقوائمُ القانونية نفسُها لا قائمةٌ ثانية — أسطرُ الاستمارة بحسب البتر",
+  page.includes('import { sheetSpecView } from "@shared/intake_sheet_view";')
+  && page.includes('const view = sheetSpecView({ serviceType: order.serviceType === "medical_support" ? "medical_support" : "prosthetic", specs: deviceSpecs.specs });')
+  && page.includes("{view.rows.map((r) => (")
+  && !page.includes("PROSTHETIC_DEVICE_SPECS).map("));
 check("٤. وموقعُ البتر وجهةُ الإصابة من الجهاز نفسِه",
   page.includes("value={deviceSpecs.specs.amputationSite}") && page.includes("value={deviceSpecs.specs.injurySide}"));
 //  وما طُلب **بأجزائه كلّها** منذ §4.ct — الخبيرُ يصنع «القالب + السليكون» لا القالبَ وحده.
