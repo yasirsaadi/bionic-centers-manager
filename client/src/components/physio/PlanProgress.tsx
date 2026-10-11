@@ -180,7 +180,7 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
       goals: view.goals.map((text, i) => ({ text, status: goals[i] })),
     })).json(),
     onSuccess: () => {
-      toast({ title: "حُفظ التقييم", description: decision === "discharge" ? "وتخرّجت الخطّة" : decision === "stop" ? "وأُوقفت الخطّة" : decision === "modify" ? "عدّل الخطّةَ الآن — وتعود للاعتماد" : undefined });
+      toast({ title: "حُفظ التقييم", description: decision === "discharge" ? "وتخرّجت الخطّة" : decision === "stop" ? "وأُوقفت الخطّة" : decision === "modify" ? "عدّل الخطّةَ الآن — تبقى تُنفَّذ، ويُنبَّه المشرفُ ليطّلع" : undefined });
       onSaved(decision);
     },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),

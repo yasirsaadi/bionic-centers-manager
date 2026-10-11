@@ -62,10 +62,15 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
   const qc = useQueryClient();
   const { toast } = useToast();
   const [confirm, setConfirm] = useState<string | null>(null);
+  //  **ما حُفظ آخرَ مرّة** — حتى تصل المراحلُ الجديدة من الخادم تُبنى الضغطةُ التالية عليه لا على المعروض القديم، فلا تُرجع ضغطتان
+  //  متتاليتان الأولى. فإذا تغيّرت `phases` (وصل الجديد) عاد الأساسُ إليها.
+  const [sent, setSent] = useState<{ base: Phase[]; body: PhaseBody[] } | null>(null);
+  const currentBody = (): PhaseBody[] => (sent && sent.base === phases ? sent.body : phasesBody(phases));
   const quickSave = useMutation({
-    mutationFn: async (p: { body: PhaseBody[]; done: string }) =>
+    mutationFn: async (p: { base: Phase[]; body: PhaseBody[]; done: string }) =>
       (await apiRequest("PUT", saveUrl ?? `/api/physio/protocols/${protocolId}/phases`, { phases: p.body })).json(),
     onSuccess: (_r, p) => {
+      setSent({ base: p.base, body: p.body });
       if (onSaved) onSaved(); else qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
       toast({ title: p.done });
       setConfirm(null);
@@ -82,7 +87,7 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
   };
   const exName = (x: PhaseExercise) => (lang === "en" ? x.exercise.nameEn : x.exercise.nameAr);
   const editPhase = (pos: number, fn: (xs: PhaseExerciseBody[]) => PhaseExerciseBody[], done: string) =>
-    quickSave.mutate({ body: phasesBody(phases, pos, fn), done });
+    quickSave.mutate({ base: phases, body: withPhaseExercises(currentBody(), pos, fn), done });
   const choicesFor = (ph: Phase) => (lib.data ?? []).filter((e) => !ph.exercises.some((x) => x.exerciseId === e.id));
   if (!phases.length && !canEdit) return null;
   const block = (ph: Phase, field: string, title: string, icon: React.ReactNode, tone: string) => {
@@ -234,18 +239,21 @@ type PhaseBody = { nameAr: string; nameEn: string; sessionFrom: number | null; s
 const blankExercise = (exerciseId: number): PhaseExerciseBody => ({
   exerciseId, sets: null, reps: null, holdSeconds: null, restSeconds: null, doseNote: null, doseNoteEn: null, note: null, noteEn: null,
 });
-/** المراحلُ كلُّها كما هي، وتمارينُ المرحلة `pos` بعد `fn` — فلا يتغيّر غيرُ ما ضُغط. */
-export function phasesBody(phases: Phase[], pos: number, fn: (xs: PhaseExerciseBody[]) => PhaseExerciseBody[]): PhaseBody[] {
+/** المراحلُ كلُّها كما هي — جسمُ الحفظ بقاعدة «تعديل المراحل». */
+export function phasesBody(phases: Phase[]): PhaseBody[] {
   return phases.map((ph) => {
-    const exercises: PhaseExerciseBody[] = ph.exercises.map((x) => ({
-      exerciseId: x.exerciseId, sets: x.sets, reps: x.reps, holdSeconds: x.holdSeconds, restSeconds: x.restSeconds,
-      doseNote: x.doseNote, doseNoteEn: x.doseNoteEn, note: x.note, noteEn: x.noteEn,
-    }));
     const body: PhaseBody = { nameAr: ph.nameAr, nameEn: ph.nameEn, sessionFrom: ph.sessionFrom ?? null, sessionTo: ph.sessionTo ?? null,
-      exercises: ph.position === pos ? fn(exercises) : exercises };
+      exercises: ph.exercises.map((x) => ({
+        exerciseId: x.exerciseId, sets: x.sets, reps: x.reps, holdSeconds: x.holdSeconds, restSeconds: x.restSeconds,
+        doseNote: x.doseNote, doseNoteEn: x.doseNoteEn, note: x.note, noteEn: x.noteEn,
+      })) };
     for (const f of PHASE_TEXT_FIELDS) { body[f] = ph[f] ?? null; body[`${f}En`] = ph[`${f}En`] ?? null; }
     return body;
   });
+}
+/** تمارينُ المرحلة ذات الموضع `pos` (من ١) بعد `fn` — فلا يتغيّر غيرُ ما ضُغط. */
+export function withPhaseExercises(body: PhaseBody[], pos: number, fn: (xs: PhaseExerciseBody[]) => PhaseExerciseBody[]): PhaseBody[] {
+  return body.map((ph, i) => (i + 1 === pos ? { ...ph, exercises: fn(ph.exercises) } : ph));
 }
 
 // ══ محرّرُ المراحل — المراحلُ كلُّها تُحفظ معاً ═════════════════════════════════════════════════════
