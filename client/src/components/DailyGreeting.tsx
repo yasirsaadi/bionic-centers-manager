@@ -8,6 +8,7 @@ import { Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
+import { useBranchSession } from "@/components/BranchGate";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 type Greeting =
@@ -38,13 +39,17 @@ export function DailyGreeting() {
   const [, navigate] = useLocation();
   const day = useBaghdadDay();
   const qc = useQueryClient();
+  //  **والمفتاحُ للحساب أيضاً** (مراجعةُ Codex): جلسةٌ انتهت ودخل غيرُه من الشاشة نفسِها بلا تحميل — فلا يرث جوابَ زميله ولا اسمَه.
+  const userId = useBranchSession()?.userId ?? null;
+  const key = ["/api/greeting", userId, day] as const;
   //  **الإغلاقُ يُكتب في ذاكرة الاستعلام لا في حالة المكوّن** (مراجعةُ Codex): صفحاتُ الطباعة تُنزل المكوّنَ ثمّ يُركَّب عند الرجوع، فحالةٌ محلّية
   //  تُنسى وتعود التحيّةُ نفسُها والاستعلامُ لا يتقادم. ومفتاحُه يومُ بغداد — فاليومُ التالي يُسأل عنه الخادمُ من جديد.
-  const close = () => qc.setQueryData<Greeting>(["/api/greeting", day], { show: false });
+  const close = () => qc.setQueryData<Greeting>(key, { show: false });
   const q = useQuery<Greeting>({
-    queryKey: ["/api/greeting", day],
+    queryKey: key,
     queryFn: async () => (await apiRequest("GET", "/api/greeting")).json(),
-    staleTime: Number.POSITIVE_INFINITY, retry: false,
+    //  الخطأُ لا يُحفظ جواباً: يُعاد ثلاثاً (١ ثمّ ٢ ثمّ ٤ ثوانٍ)، ثمّ عند العودة إلى التطبيق أو أوّلِ إشارة تحديث.
+    staleTime: Number.POSITIVE_INFINITY, retry: 3,
   });
   //  **تُغلق بعد أن يُسجَّل اليومُ في الخادم لا قبله** (مراجعةُ Codex): إغلاقٌ يسبق التسجيلَ يوهم أنّها رُئيت وهي تعود بعد التحديث أو من جهازٍ آخر.
   //  وإن فشل التسجيلُ تبقى مفتوحةً بسطر خطأٍ و«حاول ثانيةً» — **ومعها «إغلاق»** كي لا يُحبس موظّفٌ خلف نافذةٍ والشبكةُ مقطوعة (فتعود حينها، وهذا صادق).

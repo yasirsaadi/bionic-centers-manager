@@ -187,6 +187,12 @@ async function main() {
       [200, mine, 0, false, 1]);
     same("ب.١٠ **و«حسناً» لا تحرّك شاشاتِ الآخرين** — والكتابةُ الحقيقية تحرّكها",
       [isBroadcastWrite("POST", "/api/greeting/seen"), isBroadcastWrite("PUT", "/api/admin/greeting")], [false, true]);
+    await q(`UPDATE system_users SET last_greeted_on = NULL WHERE id = $1`, [ZAHRAA]);
+    await q(`ALTER TABLE system_settings RENAME TO system_settings_x`);
+    const broken = await call("GET", "/api/greeting", S.zahraa);
+    await q(`ALTER TABLE system_settings_x RENAME TO system_settings`);
+    same("ب.١١ **فشلُ القراءة خطأٌ لا «لا تحيّة»** — فالواجهةُ تُعيد الطلبَ ولا تحفظ «لا شيء» يومَها كلَّه، ثمّ تعود بعد الإصلاح",
+      [broken.status, broken.json?.show, (await call("GET", "/api/greeting", S.zahraa)).status], [500, undefined, 200]);
 
     // ══ ج. تذكيرُ تلغرام ══
     console.log("\n── ج. تذكيرُ تلغرام ──");

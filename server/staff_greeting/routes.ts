@@ -83,8 +83,10 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       return res.json({ show: true, kind: "greeting", period: salutation === "صباح الخير" ? "morning" : "evening",
         text: greetingText(salutation, u.name, phraseFor(c.phrases, Number(s.userId), today)) });
     } catch (e) {
+      //  **فشلُ القراءة خطأٌ لا «لا تحيّة»** (مراجعةُ Codex): الواجهةُ تحفظ الجوابَ يومَها كلَّه، فـ«لا شيء» هنا تُخفي تحيّةَ اليوم ولو عاد الخادم؛
+      //  والخطأُ تُعيد الواجهةُ طلبَه.
       console.error("[greeting]", e);
-      res.json({ show: false });
+      res.status(500).json({ error: "تعذّر التحميل" });
     }
   });
 
