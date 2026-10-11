@@ -168,11 +168,12 @@ function harness(o: { doc?: any; appBuild?: string } = {}) {
   const clock = fakeClock();
   const doc = o.doc ?? fakeDoc();
   const store = new Map<string, string>();
-  const out = { refreshes: 0, reloads: 0, updates: [] as string[] };
+  const out = { refreshes: 0, reloads: 0, updates: [] as string[], greetings: 0 };
   const stop = startLiveUpdates({
     EventSourceCtor: FakeES, doc, win: { addEventListener() {}, removeEventListener() {} },
     now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     refresh: () => { out.refreshes++; }, reload: () => { out.reloads++; }, onUpdateAvailable: (b) => { out.updates.push(b); },
+    onGreeting: () => { out.greetings++; },
     storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
     tabId: "tab-me", appBuild: o.appBuild ?? "build-A",
   });
@@ -295,6 +296,21 @@ async function main() {
     await sleep(LIVE_BATCH_MS + 600);
     same("د.٢ ولا إشارةَ من أيٍّ منها — الخطأُ لم يغيّر شيئاً، والقراءةُ والمستثناةُ لا تكتب", changed(b).length - before, 0);
 
+    // ══ هـ — إشارةُ حسابٍ واحد ══════════════════════════════════════════════════════════════════
+    console.log("\n── هـ. إشارةُ حسابٍ واحد ──");
+    const greetingFrames = (s: Stream) => s.frames.filter((f) => f.event === "greeting").length;
+    const b2 = await openStream(S.rec, "tab-B2");
+    streams.push(b2);
+    await waitFor(() => b2.frames.some((f) => f.event === "hello"));
+    const changedBefore = [changed(a).length, changed(b).length];
+    const ack = await call("POST", "/api/greeting/seen", S.rec, {}, "tab-B");
+    const reached = await waitFor(() => greetingFrames(b) === 1 && greetingFrames(b2) === 1, 2000);
+    await sleep(LIVE_BATCH_MS + 600);
+    same("هـ.١ **«حسناً» على تحيّة اليوم تصل أجهزةَ صاحبها وحدها** — صفحتاه كلتاهما، لا صفحةُ غيره، ولا «changed» لأحد",
+      [ack.status, reached, greetingFrames(b), greetingFrames(b2), greetingFrames(a), changed(a).length - changedBefore[0], changed(b).length - changedBefore[1]],
+      [200, true, 1, 1, 0, 0, 0]);
+    b2.close();
+
     // ══ ب (تكملة) — الإغلاق ═══════════════════════════════════════════════════════════════════
     a.close(); b.close();
     const gone = await waitFor(() => liveClientCountForTest() === 0, 2000);
@@ -395,6 +411,10 @@ async function main() {
     again.clock.advance(60_000);
     same("و.٢١ ولا تُعاد مرّتين لرقمٍ واحد — فلا حلقةَ إن بقي الخادمُ يقول رقماً لا تصله الصفحة", again.out.reloads, 0);
     again.stop();
+    const g = harness({ doc: fakeDoc({ overlay: true }) });
+    g.es().emit("greeting", { at: 1 });
+    same("و.٢٣ **وإشارةُ التحيّة تقع في الحال ولو كانت نافذةٌ مفتوحة** — هي النافذةُ التي تُغلقها، ولا تُحدِّث الشاشةَ كلَّها", [g.out.greetings, g.out.refreshes], [1, 0]);
+    g.stop();
     const hidden = harness({ doc: fakeDoc({ hidden: true }) });
     hidden.es().emit("hello", { build: "build-NEW" });
     same("و.٢٢ والصفحةُ المخفيّةُ بلا نصّ تُعاد في الحال", hidden.out.reloads, 1);

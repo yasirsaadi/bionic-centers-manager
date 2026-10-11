@@ -27,6 +27,7 @@ export function LiveUpdates() {
       setInterval: (fn, ms) => window.setInterval(fn, ms),
       clearInterval: (t) => window.clearInterval(t),
       refresh: () => { void queryClient.invalidateQueries(); },
+      onGreeting: () => { void queryClient.invalidateQueries({ queryKey: ["/api/greeting"] }); },
       reload: () => window.location.reload(),
       onUpdateAvailable: (build) => {
         setNewBuild(build);

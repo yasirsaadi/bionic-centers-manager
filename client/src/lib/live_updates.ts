@@ -134,6 +134,8 @@ export interface LiveDeps {
   refresh: () => void;
   reload: () => void;
   onUpdateAvailable: (build: string) => void;
+  /** «حسناً» على تحيّة اليوم من جهازٍ آخر لصاحب الصفحة (§4.dp) — لا تؤجّله نافذةٌ مفتوحة: هي النافذةُ التي يُغلقها. */
+  onGreeting?: () => void;
   storage?: { getItem(k: string): string | null; setItem(k: string, v: string): void } | null;
   tabId?: string;
   appBuild?: string;
@@ -228,6 +230,7 @@ export function startLiveUpdates(d: LiveDeps): () => void {
     }
     es.addEventListener("hello", onHello);
     es.addEventListener("changed", onChanged);
+    es.addEventListener("greeting", () => { try { d.onGreeting?.(); } catch { /* زينةٌ لا شرط */ } });
     es.onerror = () => {
       //  المتصفّحُ يُعيد الاتصالَ وحده ما دام `CONNECTING`؛ و`CLOSED` (ردٌّ بغير ٢٠٠ — جلسةٌ انتهت مثلاً) لا يعود إلّا بيدنا.
       if (es && es.readyState === 2) { try { es.close(); } catch { /* */ } es = null; scheduleReconnect(); }

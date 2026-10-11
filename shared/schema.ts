@@ -1900,6 +1900,8 @@ export const systemUsers = pgTable("system_users", {
   /** الأدوارُ الإضافية (ترحيل ١٠٥، §4.ch) — `role` الأعلى، وهذه البقيّة. اقرأها بـ`rolesOf`/`hasRole` لا مباشرة. */
   extraRoles: jsonb("extra_roles").$type<string[]>().notNull().default([]),
   isActive: boolean("is_active").default(true),
+  /** ترحيل ١٣٣ (§4.dp) — يومُ بغداد الذي ضغط فيه الموظّفُ «حسناً» على تحيّة اليوم: لا تظهر ثانيةً فيه ولو من جهازٍ آخر. */
+  lastGreetedOn: date("last_greeted_on"),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
   canAddPatients: boolean("can_add_patients").default(true),

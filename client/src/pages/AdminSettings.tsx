@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,7 @@ import {
 import { Pencil, Download } from "lucide-react";
 import { userEditPatch } from "./user_edit_patch";
 import StaffNotificationsTab from "@/components/admin/StaffNotificationsTab";
+import StaffGreetingsCard from "@/components/admin/StaffGreetingsCard";
 import { coveredBy, normalizeRoles, rolesOf, type UserRoleValue } from "@shared/user_roles";
 
 interface BranchWithDetails extends Branch {
@@ -2637,8 +2639,18 @@ function TrainingAdminTab() {
   );
 }
 
+/** تبويباتُ الصفحة — كلُّ `TabsTrigger` أدناه، بالترتيب. */
+const ADMIN_TABS: readonly string[] = ["users", "management", "backup", "ai-memory", "ai-knowledge", "training", "ai-conversations", "accuracy", "staff-notifications"];
+
 export default function AdminSettings() {
   const { t } = useTranslation();
+  //  **التبويبُ هو `?tab=` في العنوان** — مصدرٌ واحد (§4.dp — مراجعةُ Codex): الضغطُ على تبويبٍ يكتبه في العنوان، و«تغييرها الآن» من تذكير عبارات
+  //  الترحيب يكتبه كذلك، فيفتح «تنبيهات الموظفين» أيّاً كان التبويبُ المفتوح وكيفما فُتح.
+  const [, navigateAdmin] = useLocation();
+  //  وقيمةٌ لا تبويبَ لها (رابطٌ قديم أو خطأ في الكتابة) ⟵ «المستخدمون»، لا صفحةٌ فارغة.
+  const requestedTab = new URLSearchParams(useSearch()).get("tab");
+  const adminTab = requestedTab && ADMIN_TABS.includes(requestedTab) ? requestedTab : "users";
+  const setAdminTab = (v: string) => navigateAdmin(`/admin?tab=${encodeURIComponent(v)}`, { replace: true });
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const { toast } = useToast();
@@ -3318,7 +3330,8 @@ export default function AdminSettings() {
         </div>
       </div>
 
-      <Tabs defaultValue="users" className="w-full">
+      {/*  `?tab=` يفتح تبويباً بعينه — رابطُ تذكير عبارات الترحيب (§4.dp) يفتح «تنبيهات الموظفين». */}
+      <Tabs value={adminTab} onValueChange={setAdminTab} className="w-full">
         {/*  ══ شريطُ تبويباتٍ يلتفّ (٢٠٢٦-٠٩-١٩) — شكلٌ لا وظيفة ══════════
             كان `grid-cols-9` على الشاشة المتوسّطة: تسعةُ أعمدةٍ ضيّقة تُقصّ
             عناوينَها، و`grid-cols-4` تحتها. فصار `flex-wrap` بارتفاعٍ حرّ
@@ -3855,6 +3868,7 @@ export default function AdminSettings() {
         </TabsContent>
 
         <TabsContent value="staff-notifications" className="space-y-6">
+          <StaffGreetingsCard />
           <StaffNotificationsTab />
         </TabsContent>
 

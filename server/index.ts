@@ -5,6 +5,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { initBackupScheduler } from "./backup";
 import { initAiConversationCleanup } from "./ai/conversations/cleanup";
+import { initGreetingReminder } from "./staff_greeting/routes";
 import { runMigrations } from "./migrations/runner";
 import { warmTrigramCache } from "./patient_search/sql";
 import { db } from "./db";
@@ -155,6 +156,8 @@ app.use((req, res, next) => {
       //  الليلية لا داخلها**: `server/backup.ts` بلا حرفٍ يتغيّر، والجدولُ
       //  الجديد خارج النسخة البريدية أصلاً (قائمةُ أعمدةٍ مكتوبةٌ يدوياً).
       initAiConversationCleanup();
+      //  تذكيرُ المالك كلَّ شهر بتغيير عبارات تحيّة الموظّفين (§4.dp) — فحصٌ يوميّ، ورسالةٌ واحدة لكلّ دورة.
+      initGreetingReminder();
       // عامل صادر إشعارات المريض. يبدأ بعد الترحيلات والمسارات، ويصمت
       // معلَناً إن لم يكن بوت المريض مُعدّاً.
       startNotificationDispatcher();

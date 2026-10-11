@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
+import { DailyGreeting } from "@/components/DailyGreeting";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { BranchGate, getBranchSession, setBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -345,6 +346,8 @@ function Router() {
         </Suspense>
       </Layout>
       <AiChatDrawer />
+      {/*  تحيّةُ الموظّف اليومية (§4.dp) — مرّةً كلَّ يوم، لا تُغلق إلّا بـ«حسناً». */}
+      <DailyGreeting />
     </BranchGate>
   );
 }

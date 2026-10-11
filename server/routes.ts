@@ -18,6 +18,7 @@ import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import { registerStaffTelegramRoutes } from "./staff_telegram/routes";
+import { registerStaffGreetingRoutes } from "./staff_greeting/routes";
 import { registerPatientCardRoutes } from "./patient_card/routes";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
@@ -8984,6 +8985,8 @@ export async function registerRoutes(
   registerPatientTelegramWebhook(app);
   //  تنبيهاتُ الموظّفين — بوتٌ ثالثٌ منفصل (§4.by): ربطٌ بتذكرةٍ يصدرها المسؤول، ولوحةُ «مَن يستلم ماذا» له وحده.
   registerStaffTelegramRoutes(app, isAuthenticated);
+  //  تحيّةُ الموظّف اليومية (§4.dp) — مرّةً كلَّ يوم، والعباراتُ للمسؤول.
+  registerStaffGreetingRoutes(app, isAuthenticated);
   //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
   registerPatientCardRoutes(app, isAuthenticated);
 
