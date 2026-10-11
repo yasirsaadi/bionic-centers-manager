@@ -10,6 +10,7 @@
 //   • **الخططُ القديمة** (`treatment_plans`) تبقى للقراءة في التبويب نفسِه.
 import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canReadProtocols, canWritePatientPlans, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
+import { isScheduled } from "./physio_device_settings";
 
 export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
 export type PlanStatus = (typeof PLAN_STATUSES)[number];
@@ -289,11 +290,13 @@ export function parseModelJson(text: string): Record<string, any> | null {
 /**
  * **المساعدُ في الجلسة القادمة** (ترحيل ١٢٢، §4.cx — قرارُ المالك: «يتناوب لأنّ جلساتنا ٥٠ دقيقة فقط»): المساعدون بترتيبهم في الخطّة،
  * ودورُ أحدهم بعدد الجلسات المسجَّلة قبلها (`adjunctTurn`)؛ والباقون «ليس دورَهم» — تركُهم ليس انحرافاً. والأساسيُّ في كلّ جلسة.
+ * **والبندُ الدوريّ** (§4.dn) لا يدخل التناوب — يحكمه موعدُه.
  */
 export function sessionAdjuncts(
-  lines: readonly { deviceId: number; centreUse?: unknown; displayOrder?: number | null }[], sessionsSoFar: number,
+  lines: readonly { deviceId: number; centreUse?: unknown; displayOrder?: number | null; everyDays?: number | null }[], sessionsSoFar: number,
 ): { turnDeviceId: number | null; offTurnDeviceIds: number[] } {
-  const adj = lines.filter((l) => planLineUse(l.centreUse) === "adjunct")
+  //  §4.dn — **البندُ الدوريّ خارجَ التناوب**: له موعدُه (`scheduleState`)، فلا يأخذ دوراً ولا يُحسب «ليس دورَه».
+  const adj = lines.filter((l) => planLineUse(l.centreUse) === "adjunct" && !isScheduled(l))
     .slice().sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((l) => Number(l.deviceId));
   const turnDeviceId = adjunctTurn(adj, sessionsSoFar);
   return { turnDeviceId, offTurnDeviceIds: adj.filter((d) => d !== turnDeviceId) };

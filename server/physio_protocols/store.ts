@@ -7,6 +7,9 @@ import {
 } from "@shared/schema";
 import type { MeasureDef } from "@shared/physio_assessments";
 import { deviceParamsLine, doseLine, mergeDose, normalizeDeviceParams } from "@shared/physio_exercises";
+import {
+  missingDeviceSettings, protocolSettingsBlockers, scheduleLabel, settingsBlockedMessage, type SettingsBlocker,
+} from "@shared/physio_device_settings";
 import { getPhases } from "./exercises_store";
 import { searchProtocolIds } from "./search";
 import {
@@ -27,6 +30,9 @@ export interface DeviceLineInput {
   params: Record<string, string>;
   /** ترحيل ١٢٢ — «استعمالُ المركز»؛ `null` يُشتقّ من درجة الدليل (`centreUseOf`). */
   centreUse?: CentreUse | null;
+  /** §4.dn (ترحيل ١٣١) — الموعدُ الدوريّ: كلّ كم يوماً وكم مرّة؛ `null` بلا موعد (في كلّ جلسة أو بالتناوب). */
+  everyDays?: number | null;
+  times?: number | null;
 }
 export interface ProtocolInput {
   code: string; titleAr: string; titleEn: string; category: string; ageGroup: string;
@@ -51,7 +57,7 @@ export async function listProtocols(p: { q?: string; category?: string; ageGroup
   if (p.category) conds.push(eq(physioProtocols.category, p.category));
   if (p.ageGroup) conds.push(eq(physioProtocols.ageGroup, p.ageGroup));
   if (p.status) conds.push(eq(physioProtocols.status, p.status));
-  const rows = await listRows(conds);
+  const rows = await withSettingsMissing(await listRows(conds));
   const q = (p.q ?? "").trim();
   if (!q) return rows;
   const matches = await searchProtocolIds(rows.map((r) => r.id), q, p.lang);
@@ -71,6 +77,18 @@ async function listRows(conds: any[]) {
     .orderBy(asc(physioProtocols.category), asc(physioProtocols.titleAr));
 }
 
+/**
+ * **إعداداتُ جهازٍ ناقصة** (§4.dn) لكلّ بروتوكولٍ في القائمة — شارةٌ في المكتبة تقول للمشرف أين ينتظر جهازُه إعداداتِه قبل الاعتماد.
+ */
+async function withSettingsMissing<T extends { id: number }>(rows: T[]): Promise<(T & { settingsMissing: number })[]> {
+  if (!rows.length) return [];
+  const lines = await db.select({ protocolId: physioProtocolDevices.protocolId, params: physioProtocolDevices.params,
+    centreUse: physioProtocolDevices.centreUse, evidence: physioProtocolDevices.evidence, code: devices.code })
+    .from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+    .where(inArray(physioProtocolDevices.protocolId, rows.map((r) => r.id)));
+  return rows.map((r) => ({ ...r, settingsMissing: protocolSettingsBlockers(lines.filter((l) => l.protocolId === r.id)).length }));
+}
+
 /** البروتوكولُ كاملاً: أجهزتُه بأسمائها وتوفّرِ كلٍّ منها في كلّ فرع، وصورُه بلا محتواها. */
 export async function getProtocol(id: number) {
   const [p] = await db.select().from(physioProtocols).where(eq(physioProtocols.id, id));
@@ -80,6 +98,7 @@ export async function getProtocol(id: number) {
     parameters: physioProtocolDevices.parameters, minutes: physioProtocolDevices.minutes, note: physioProtocolDevices.note,
     parametersEn: physioProtocolDevices.parametersEn, noteEn: physioProtocolDevices.noteEn,
     params: physioProtocolDevices.params, centreUse: physioProtocolDevices.centreUse,
+    everyDays: physioProtocolDevices.everyDays, times: physioProtocolDevices.times,
     displayOrder: physioProtocolDevices.displayOrder,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
@@ -99,6 +118,8 @@ export async function getProtocol(id: number) {
     //  «استعمالُ المركز» فعّالاً — المكتوبُ أو المشتقُّ من درجة الدليل (`centreUse`)، ومعه هل كُتب (`centreUseSet`).
     devices: lines.map((l) => ({ ...l, centreUse: centreUseOf(l), centreUseSet: l.centreUse !== null && l.centreUse !== undefined,
       availableBranchIds: avail.filter((a) => a.deviceId === l.deviceId && a.available).map((a) => a.branchId) })),
+    //  §4.dn — **موانعُ الاعتماد**: كلُّ جهازٍ مستعمَلٍ ناقصِ الإعدادات بخاناته؛ والمشرفُ يراها لافتةً قبل أن يعتمد.
+    settingsBlockers: protocolSettingsBlockers(lines),
     images,
     measures,
     //  §4.cx — مراحلُ البرنامج بتمارينها وبطاقاتها كاملة.
@@ -129,16 +150,18 @@ async function writeDevices(tx: any, protocolId: number, lines: DeviceLineInput[
   if (!lines.length) return;
   await tx.insert(physioProtocolDevices).values(lines.map((l, i) => ({
     protocolId, deviceId: l.deviceId, evidence: l.evidence, parameters: l.parameters, minutes: l.minutes, note: l.note,
-    parametersEn: l.parametersEn, noteEn: l.noteEn, params: l.params ?? {}, centreUse: l.centreUse ?? null, displayOrder: i,
+    parametersEn: l.parametersEn, noteEn: l.noteEn, params: l.params ?? {}, centreUse: l.centreUse ?? null,
+    everyDays: l.everyDays ?? null, times: l.times ?? null, displayOrder: i,
   })));
 }
 
-/** يتأكّد أنّ الأجهزة موجودةٌ وفعّالة وغيرُ مكرّرة. */
-export async function assertDevices(lines: DeviceLineInput[]) {
+/** يتأكّد أنّ الأجهزة موجودةٌ وفعّالة وغيرُ مكرّرة — ويُرجع رمزَ كلٍّ واسمَه (لموانع الاعتماد، §4.dn). */
+export async function assertDevices(lines: DeviceLineInput[]): Promise<{ id: number; code: string; nameAr: string; nameEn: string }[]> {
   const ids = lines.map((l) => l.deviceId);
   if (new Set(ids).size !== ids.length) throw new ProtocolError(400, "جهازٌ مكرّر في البروتوكول");
-  if (!ids.length) return;
-  const found = await db.select({ id: devices.id, code: devices.code }).from(devices).where(and(inArray(devices.id, ids), eq(devices.isActive, true)));
+  if (!ids.length) return [];
+  const found = await db.select({ id: devices.id, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
+    .from(devices).where(and(inArray(devices.id, ids), eq(devices.isActive, true)));
   if (found.length !== ids.length) throw new ProtocolError(400, "جهازٌ غير معروف");
   //  خاناتُ المعاملات لكلّ جهازٍ ما يخصّه وحده — «التردّد» لا يُكتب لكمادةٍ حارّة.
   for (const l of lines) {
@@ -147,6 +170,15 @@ export async function assertDevices(lines: DeviceLineInput[]) {
     if (typeof params === "string") throw new ProtocolError(400, params);
     l.params = params;
   }
+  return found.map((f) => ({ id: Number(f.id), code: f.code, nameAr: f.nameAr, nameEn: f.nameEn ?? f.nameAr }));
+}
+
+/** موانعُ الاعتماد لسطور طلبٍ قبل أن تُكتب — بأسماء الأجهزة من `assertDevices`. */
+function blockersOf(lines: DeviceLineInput[], found: { id: number; code: string; nameAr: string; nameEn: string }[]): SettingsBlocker[] {
+  return protocolSettingsBlockers(lines.map((l) => {
+    const d = found.find((f) => f.id === l.deviceId);
+    return { code: d?.code, nameAr: d?.nameAr, nameEn: d?.nameEn, params: l.params, centreUse: l.centreUse, evidence: l.evidence };
+  }));
 }
 
 export async function createProtocol(input: ProtocolInput, actor: Actor) {
@@ -166,9 +198,14 @@ export async function createProtocol(input: ProtocolInput, actor: Actor) {
   }
 }
 
-/** تعديلٌ كامل — والحالةُ بعده يقرّرها المُنادي (`statusAfterEdit`). يُرجع ما قبلُ وما بعدُ لسطر التدقيق. */
-export async function updateProtocol(id: number, input: ProtocolInput, nextStatus: ProtocolStatus, actor: Actor) {
-  await assertDevices(input.devices);
+/**
+ * تعديلٌ كامل — والحالةُ بعده يقرّرها المُنادي (`statusAfterEdit`). يُرجع ما قبلُ وما بعدُ لسطر التدقيق.
+ * **ولا يبقى معتمَداً وفيه جهازٌ مستعمَلٌ ناقصُ الإعدادات** (§4.dn): يعود مسوّدةً ويقول لماذا (`settingsBlockers`).
+ */
+export async function updateProtocol(id: number, input: ProtocolInput, requestedStatus: ProtocolStatus, actor: Actor) {
+  const found = await assertDevices(input.devices);
+  const settingsBlockers = blockersOf(input.devices, found);
+  const nextStatus: ProtocolStatus = requestedStatus === "approved" && settingsBlockers.length ? "draft" : requestedStatus;
   try {
     return await db.transaction(async (tx) => {
       const [before] = await tx.select().from(physioProtocols).where(eq(physioProtocols.id, id)).for("update");
@@ -181,7 +218,7 @@ export async function updateProtocol(id: number, input: ProtocolInput, nextStatu
         updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
       }).where(eq(physioProtocols.id, id)).returning();
       await writeDevices(tx, id, input.devices);
-      return { before: { ...before, devices: beforeDevices }, after, demoted: demote };
+      return { before: { ...before, devices: beforeDevices }, after, demoted: demote, settingsBlockers };
     });
   } catch (e: any) {
     if (e?.code === "23505") throw new ProtocolError(409, "هذا الرمزُ مستعملٌ لبروتوكولٍ آخر");
@@ -189,12 +226,26 @@ export async function updateProtocol(id: number, input: ProtocolInput, nextStatu
   }
 }
 
+/**
+ * **الاعتماد** — ومنذ §4.dn لا يُعتمد بروتوكولٌ فيه جهازٌ مستعمَلٌ ناقصُ الإعدادات (الموجاتُ الصادمة: النوعُ والشدّةُ والتردّدُ والنبضات
+ * من جهاز المركز): الرفضُ يسمّي الجهازَ وخاناتِه. والفحصُ تحت قفل البروتوكول، فتعديلٌ متزامن لا يمرّ بين الفحص والاعتماد.
+ */
 export async function approveProtocol(id: number, actor: Actor) {
-  const [row] = await db.update(physioProtocols).set({
-    status: "approved", approvedBy: actor.userId, approvedByName: actor.name, approvedAt: new Date(),
-  }).where(and(eq(physioProtocols.id, id), eq(physioProtocols.status, "draft"), eq(physioProtocols.isArchived, false))).returning();
-  if (!row) throw new ProtocolError(409, "ليس مسوّدةً قائمة — أعد فتح الصفحة");
-  return row;
+  return db.transaction(async (tx) => {
+    const [cur] = await tx.select({ id: physioProtocols.id }).from(physioProtocols).where(eq(physioProtocols.id, id)).for("update");
+    if (!cur) throw new ProtocolError(404, "البروتوكول غير موجود");
+    const lines = await tx.select({ params: physioProtocolDevices.params, centreUse: physioProtocolDevices.centreUse,
+      evidence: physioProtocolDevices.evidence, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
+      .from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+      .where(eq(physioProtocolDevices.protocolId, id));
+    const blockers = protocolSettingsBlockers(lines);
+    if (blockers.length) throw new ProtocolError(409, settingsBlockedMessage(blockers));
+    const [row] = await tx.update(physioProtocols).set({
+      status: "approved", approvedBy: actor.userId, approvedByName: actor.name, approvedAt: new Date(),
+    }).where(and(eq(physioProtocols.id, id), eq(physioProtocols.status, "draft"), eq(physioProtocols.isArchived, false))).returning();
+    if (!row) throw new ProtocolError(409, "ليس مسوّدةً قائمة — أعد فتح الصفحة");
+    return row;
+  });
 }
 
 // ── مقاييسُ البروتوكول (§4.cp) ────────────────────────────────────────────────────────────────────────────
@@ -330,6 +381,9 @@ export async function protocolBrief(id: number, lang: ProtocolLang, activeBranch
         minutes: d.minutes,
         parameters: pick(d, "parameters", `${d.code}.parameters`),
         settings: deviceParamsLine(d.code, d.params as Record<string, string>, lang) || null,
+        //  §4.dn — الموعدُ الدوريّ، وإعداداتُ الجهاز الناقصة التي لا يُعتمد البروتوكولُ قبلها (يقولها المساعدُ كما هي).
+        schedule: scheduleLabel(d, lang) || null,
+        settingsMissingBeforeApproval: missingDeviceSettings(d).map((m) => (en ? m.en : m.ar)).join(en ? ", " : "، ") || null,
         note: pick(d, "note", `${d.code}.note`),
         availableInBranches: d.availableBranchIds.map((b) => nameOf.get(b) ?? `#${b}`),
         ...(activeBranchId ? { availableInAskersBranch: d.availableBranchIds.includes(activeBranchId) } : {}),

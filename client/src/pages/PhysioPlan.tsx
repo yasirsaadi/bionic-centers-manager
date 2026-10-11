@@ -27,6 +27,7 @@ import { PlanProgress } from "@/components/physio/PlanProgress";
 import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
+import { isScheduled, scheduleLabel } from "@shared/physio_device_settings";
 import {
   PLAN_REVIEW_LABELS, PLAN_REVIEW_LABELS_EN, PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans,
   canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, canWritePlans, isPlanClosed, type PlanStatus,
@@ -37,6 +38,8 @@ interface PlanDevice {
   code?: string; nameAr?: string; nameEn?: string; availableInBranch?: boolean;
   //  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب.
   centreUse?: "core" | "adjunct";
+  //  §4.dn — الموعدُ الدوريّ (كلّ كم يوماً وكم مرّة): يُخرج البندَ من «كلّ جلسة» ومن التناوب.
+  everyDays?: number | null; times?: number | null;
 }
 interface Plan {
   id: number; patientId: number; branchId: number; branchName: string | null; status: PlanStatus;
@@ -342,7 +345,9 @@ export default function PhysioPlanPage() {
                         <td className="py-1.5">{lang === "en" ? d.nameEn : d.nameAr}
                           {/*  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة، أو مساعدٌ بالتناوب ومعه «دوره في الجلسة القادمة». */}
                           <div className="text-[11px] mt-0.5" data-testid={`plan-device-use-${d.deviceId}`}>
-                            {d.centreUse === "adjunct"
+                            {isScheduled(d)
+                              ? <span className="text-sky-800">{lang === "en" ? "Scheduled — " : "موعدٌ دوريّ — "}{scheduleLabel(d, lang)}</span>
+                              : d.centreUse === "adjunct"
                               ? <span className="text-violet-800">{lang === "en" ? "Adjunct — rotates" : "مساعد — بالتناوب"}
                                   {plan.rotation?.turnDeviceId === d.deviceId && <b> · {lang === "en" ? "next session" : "دورُه الجلسة القادمة"}</b>}</span>
                               : <span className="text-sky-800">{lang === "en" ? "Core — every session" : "أساسيّ — كلَّ جلسة"}</span>}
@@ -493,7 +498,7 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
       precautions: f.precautions, precautionsEn: f.precautionsEn, notes: f.notes, notesEn: f.notesEn,
       sessionsPerWeek: f.sessionsPerWeek, durationWeeks: f.durationWeeks, sessionMinutes: f.sessionMinutes, totalSessions: f.totalSessions ?? null,
       devices: lines.map((l) => ({ deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn, note: l.note, noteEn: l.noteEn,
-        centreUse: l.centreUse ?? "core" })),
+        centreUse: l.centreUse ?? "core", everyDays: l.everyDays ?? null, times: l.times ?? null })),
     })).json(),
     onSuccess: (r: any) => {
       toast({ title: "حُفظت الخطّة", description: r?.demoted ? "عادت الخطّةُ إلى الاعتماد ووصل التنبيه." : undefined });
@@ -551,6 +556,15 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
                   <Button variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                 </div>
               </div>
+              {/*  §4.dn — الموعدُ الدوريّ لهذا المريض: كلّ كم يوماً وكم مرّة (الموجاتُ الصادمة أسبوعياً). */}
+              <div className="flex flex-wrap items-center gap-1 text-xs" data-testid={`plan-line-schedule-${l.deviceId}`}>
+                <span className="text-muted-foreground">{en ? "Scheduled (optional): every" : "موعدٌ دوريّ (اختياري): كلّ"}</span>
+                <Input inputMode="numeric" className="w-14 h-8" value={l.everyDays ?? ""} data-testid={`plan-line-everyDays-${l.deviceId}`}
+                  onChange={(e) => setLines((p) => p.map((x, j) => (j === i ? { ...x, everyDays: num(e.target.value) } : x)))} />
+                <span className="text-muted-foreground">{en ? "days, times" : "يوماً، عددُ المرّات"}</span>
+                <Input inputMode="numeric" className="w-14 h-8" value={l.times ?? ""} data-testid={`plan-line-times-${l.deviceId}`}
+                  onChange={(e) => setLines((p) => p.map((x, j) => (j === i ? { ...x, times: num(e.target.value) } : x)))} />
+              </div>
               <div className="grid sm:grid-cols-3 gap-2">
                 <Input type="number" placeholder="الدقائق" value={l.minutes ?? ""}
                   onChange={(e) => setLines((p) => p.map((x, j) => (j === i ? { ...x, minutes: num(e.target.value) } : x)))} />
@@ -565,7 +579,7 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
             <select className="w-full rounded-md border px-2 py-2 text-sm bg-white" value="" data-testid="select-plan-add-device"
               onChange={(e) => {
                 const d = addable.find((x) => x.id === Number(e.target.value));
-                if (d) setLines((p) => [...p, { deviceId: d.id, nameAr: d.nameAr, nameEn: d.nameEn, minutes: null, parameters: null, parametersEn: null, note: null, noteEn: null, centreUse: "core" }]);
+                if (d) setLines((p) => [...p, { deviceId: d.id, nameAr: d.nameAr, nameEn: d.nameEn, minutes: null, parameters: null, parametersEn: null, note: null, noteEn: null, centreUse: "core", everyDays: null, times: null }]);
               }}>
               <option value="">+ إضافة جهاز…</option>
               {addable.map((d) => <option key={d.id} value={d.id}>{en ? d.nameEn : d.nameAr}</option>)}
@@ -679,6 +693,7 @@ function AdjunctChecklist({ options, lines, setLines, lang }: {
               <span className="min-w-0">
                 <span className="text-sm font-medium">{en ? o.nameEn : o.nameAr}</span>
                 {o.minutes ? <span className="text-xs text-muted-foreground"> · {o.minutes} {en ? "min" : "د"}</span> : null}
+                {isScheduled(o) ? <span className="text-xs text-sky-800"> · {scheduleLabel(o, lang)}</span> : null}
                 {localizedText(o, "parameters", lang).text && (
                   <div className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-3">{localizedText(o, "parameters", lang).text}</div>
                 )}

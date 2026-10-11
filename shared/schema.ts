@@ -2970,6 +2970,9 @@ export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   params: jsonb("params").$type<Record<string, string>>().notNull().default({}),
   //  §4.cx (ترحيل ١٢٢) — «استعمالُ المركز»: core · adjunct · not_used؛ و`NULL` يُشتقّ من درجة الدليل (`centreUseOf`).
   centreUse: text("centre_use"),
+  //  §4.dn (ترحيل ١٣١) — «الموعدُ الدوريّ»: كلّ كم يوماً وكم مرّة (الموجاتُ الصادمة أسبوعياً) — يُخرج الجهازَ من «كلّ جلسة» ومن التناوب.
+  everyDays: integer("every_days"),
+  times: integer("times"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqProtocolDevice: unique("physio_protocol_devices_protocol_id_device_id_key").on(t.protocolId, t.deviceId) }));
 
@@ -3116,6 +3119,9 @@ export const physioPlanDevices = pgTable("physio_plan_devices", {
   note: text("note"), noteEn: text("note_en"),
   //  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب؛ `NULL` (خططٌ قبله) = أساسيّ.
   centreUse: text("centre_use"),
+  //  §4.dn (ترحيل ١٣١) — الموعدُ الدوريّ منسوخاً من البروتوكول، ويعدّله الأخصائيُّ لمريضه.
+  everyDays: integer("every_days"),
+  times: integer("times"),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
 
