@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useSearch } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2641,11 +2641,11 @@ function TrainingAdminTab() {
 
 export default function AdminSettings() {
   const { t } = useTranslation();
-  //  **التبويبُ يتبع `?tab=` في كلّ تغيّر** لا عند التركيب وحده (§4.dp — مراجعةُ Codex): «تغييرها الآن» من تذكير عبارات الترحيب يبدّل العنوانَ
-  //  والصفحةُ مفتوحة، فيفتح «تنبيهات الموظفين» ولو كان المالكُ على تبويبٍ آخر.
-  const urlTab = new URLSearchParams(useSearch()).get("tab");
-  const [adminTab, setAdminTab] = useState(urlTab || "users");
-  useEffect(() => { if (urlTab) setAdminTab(urlTab); }, [urlTab]);
+  //  **التبويبُ هو `?tab=` في العنوان** — مصدرٌ واحد (§4.dp — مراجعةُ Codex): الضغطُ على تبويبٍ يكتبه في العنوان، و«تغييرها الآن» من تذكير عبارات
+  //  الترحيب يكتبه كذلك، فيفتح «تنبيهات الموظفين» أيّاً كان التبويبُ المفتوح وكيفما فُتح.
+  const [, navigateAdmin] = useLocation();
+  const adminTab = new URLSearchParams(useSearch()).get("tab") || "users";
+  const setAdminTab = (v: string) => navigateAdmin(`/admin?tab=${encodeURIComponent(v)}`, { replace: true });
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const { toast } = useToast();

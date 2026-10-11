@@ -23,11 +23,21 @@ export default function StaffGreetingsCard() {
   const qc = useQueryClient();
   const q = useQuery<Config>({ queryKey: ["/api/admin/greeting"], queryFn: async () => (await apiRequest("GET", "/api/admin/greeting")).json() });
   const [rows, setRows] = useState<string[] | null>(null);
-  useEffect(() => { if (q.data && rows === null) setRows([...q.data.phrases]); }, [q.data]);
+  //  **ما حُمّل آخرَ مرّة** — أساسُ «هل عدّلتُ شيئاً؟» (مراجعةُ Codex): إن تغيّرت العباراتُ من جلسةٍ أخرى (التحديثُ الحيّ يعيد جلبَها) والبطاقةُ
+  //  بلا تعديل تُعرض الجديدة في الحال؛ وإن كان فيها تعديلٌ لم يُحفظ لا يُمحى — بل يُقال إنّ نسخةً أحدث وصلت، ويُختار.
+  const [base, setBase] = useState<string[] | null>(null);
+  const same = (a: string[] | null, b: string[] | null) => JSON.stringify(a) === JSON.stringify(b);
+  const dirty = rows !== null && !same(rows, base);
+  useEffect(() => {
+    if (!q.data) return;
+    if (rows === null || !dirty) { setRows([...q.data.phrases]); setBase([...q.data.phrases]); }
+  }, [q.data]);
+  const newerElsewhere = Boolean(q.data && base && dirty && !same(q.data.phrases, base));
   const done = (c: Config, title: string) => {
     qc.setQueryData(["/api/admin/greeting"], c);
     qc.invalidateQueries({ queryKey: ["/api/greeting"] });
     setRows([...c.phrases]);
+    setBase([...c.phrases]);
     toast({ title });
   };
   const save = useMutation({
@@ -57,6 +67,13 @@ export default function StaffGreetingsCard() {
         تتناوب يوماً بعد يوم. وبعد ثلاثين يوماً يصلك تذكيرٌ في تلغرام وعند دخولك لتغييرها.
       </p>
       {q.isLoading && <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>}
+      {newerElsewhere && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs flex items-center gap-2 flex-wrap" data-testid="greetings-newer">
+          عُدّلت العباراتُ من جهازٍ آخر بعد أن بدأتَ التعديل هنا — حفظُك يكتب فوقها.
+          <Button size="sm" variant="outline" className="h-7" onClick={() => { setRows([...q.data!.phrases]); setBase([...q.data!.phrases]); }}
+            data-testid="greetings-load-newer">اعرض الأحدث واترك تعديلي</Button>
+        </div>
+      )}
       <div className="space-y-2">
         {list.map((p, i) => (
           <div key={i} className="flex gap-2 items-start" data-testid={`greeting-row-${i}`}>
