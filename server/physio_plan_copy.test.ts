@@ -276,13 +276,14 @@ async function main() {
     console.log("\n── ج. حالةُ الخطّة ──");
     same("تهيئة: سليم يعتمد الخطّة", (await call("POST", `/api/physio/plans/${plan}/approve`, S.sup)).status, 200);
     const onDraft = await call("PUT", `/api/physio/plans/${plan}/phases`, S.spec, { phases: edited });
-    same("ج.١ **على بروتوكولٍ غير معتمَد**: تعديلُ الأخصائيّ مراحلَ خطّةٍ معتمَدة يعيدها إلى الاعتماد — كتعديل أجهزتها",
-      [onDraft.status, onDraft.json?.status, onDraft.json?.demoted], [200, "pending", true]);
+    //  §4.do — قرارُ المالك ٢٠٢٦-١٠-١١: «لا تحتاج اعتمادَ سليم» — وكانت على بروتوكولٍ غير معتمَد تعود «بانتظار الاعتماد».
+    same("ج.١ **وعلى بروتوكولٍ غير معتمَد**: تعديلُ الأخصائيّ مراحلَ خطّةٍ معتمَدة يُبقيها تُنفَّذ ويعيدها لمراجعة المشرف (§4.do)",
+      [onDraft.status, onDraft.json?.status, onDraft.json?.demoted, onDraft.json?.backToReview], [200, "approved", false, true]);
     //  ومنذ ترحيل ١٣١ (§4.dn) لا يُعتمد ألمُ الظهر المزمن قبل إعدادات الموجات الصادمة من جهاز المركز — يملؤها سليم أوّلاً كما يفعل في الشاشة.
     await q(`UPDATE physio_protocol_devices SET params = '{"mode":"Radial","pressureBar":"2.5","frequencyHz":"5","impulses":"2000"}'::jsonb
               WHERE protocol_id = $1 AND device_id = (SELECT id FROM devices WHERE code = 'shockwaves')`, [l0.id]);
-    same("تهيئة: سليم يعتمد البروتوكولَ ثمّ الخطّة", [(await call("POST", `/api/physio/protocols/${l0.id}/approve`, S.sup)).status,
-      (await call("POST", `/api/physio/plans/${plan}/approve`, S.sup)).status], [200, 200]);
+    same("تهيئة: سليم يعتمد البروتوكولَ ويراجع الخطّة", [(await call("POST", `/api/physio/protocols/${l0.id}/approve`, S.sup)).status,
+      (await call("POST", `/api/physio/plans/${plan}/review`, S.sup)).status], [200, 200]);
     const onApproved = await call("PUT", `/api/physio/plans/${plan}/phases`, S.spec, { phases: edited });
     same("ج.٢ **وعلى بروتوكولٍ معتمَد**: تبقى تُنفَّذ وتعود لمراجعة المشرف",
       [onApproved.status, onApproved.json?.status, onApproved.json?.backToReview, (await q(`SELECT review_status FROM physio_plans WHERE id = $1`, [plan])).rows[0].review_status],

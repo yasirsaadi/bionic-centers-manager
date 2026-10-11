@@ -267,9 +267,11 @@ export async function setMeasures(id: number, list: MeasureDef[], keepStatus: bo
       })));
     }
     const status = keepStatus ? before.measuresStatus : "draft";
+    //  §4.do — تعديلُ المقاييس تعديلٌ للبروتوكول: يُكتب مَن ومتى، فتعرف الخططُ المنسوخةُ قبله أنّ مرجعَها تغيّر.
+    const edited = { updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() };
     const [after] = await tx.update(physioProtocols).set(status === "draft"
-      ? { measuresStatus: "draft", measuresApprovedBy: null, measuresApprovedByName: null, measuresApprovedAt: null }
-      : { measuresStatus: status }).where(eq(physioProtocols.id, id)).returning();
+      ? { ...edited, measuresStatus: "draft", measuresApprovedBy: null, measuresApprovedByName: null, measuresApprovedAt: null }
+      : { ...edited, measuresStatus: status }).where(eq(physioProtocols.id, id)).returning();
     return { before: { measuresStatus: before.measuresStatus, measures: old }, after, demoted: before.measuresStatus === "approved" && status === "draft" };
   });
 }

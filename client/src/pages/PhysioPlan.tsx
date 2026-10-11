@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, ClipboardList, Eye, Pencil, Play, Plus, Printer, RefreshCcw, Send, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Pencil, Play, Printer, RefreshCcw, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { moveItem } from "@/lib/utils";
 import { LangToggle, useProtocolLang } from "@/components/physio/PhysioLang";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -26,11 +27,15 @@ import { SuggestionSummary, type Suggestion } from "@/components/physio/PlanSugg
 import { PlanProgress } from "@/components/physio/PlanProgress";
 import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
+import { DiffBadge, DiffFields, PlanDiffBox, RemovedList, type ProtocolDiffView } from "@/components/physio/PlanDiff";
+import { PlanMeasuresSection } from "@/components/physio/ProtocolMeasures";
+import { diffAt } from "@shared/physio_plan_diff";
+import type { MeasureDef } from "@shared/physio_assessments";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
 import { isScheduled, scheduleLabel } from "@shared/physio_device_settings";
 import {
   PLAN_REVIEW_LABELS, PLAN_REVIEW_LABELS_EN, PLAN_STATUS_LABELS, PLAN_STATUS_LABELS_EN, UNAPPROVED_PROTOCOL_BADGE, canApproveFrom, canApprovePlans,
-  canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, canWritePlans, isPlanClosed, type PlanStatus,
+  canReturnFrom, canReviewFrom, canSelfActivate, canWritePlans, isPlanClosed, type PlanStatus,
 } from "@shared/physio_plans";
 
 interface PlanDevice {
@@ -64,6 +69,8 @@ interface Plan {
   aiSuggestion?: Suggestion | null;
   graduatedAt?: string | null; graduatedByName?: string | null;
   reviewStatus?: "awaiting" | "reviewed" | null; reviewedByName?: string | null; reviewedAt?: string | null;
+  /** §4.do — مقاييسُ هذه الخطّة (لها إن عُدّلت لمريضها)، وما تختلف به عن بروتوكولها كما هو الآن. */
+  measures?: MeasureDef[]; measuresOwn?: boolean; protocolDiff?: ProtocolDiffView | null;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -152,7 +159,7 @@ export default function PhysioPlanPage() {
     mutationFn: async (p: { path: string; body?: any }) => (await apiRequest("POST", `/api/physio/plans/${id}/${p.path}`, p.body ?? {})).json(),
     onSuccess: (_d, p) => {
       toast(p.path === "activate"
-        ? { title: "بدأت الخطّة", description: "نزلت في ملفّ المريض وتُنفَّذ الآن، ونُبّه المشرفُ ليراجعها." }
+        ? { title: "بدأت الخطّة", description: "نزلت في ملفّ المريض وتُنفَّذ الآن، ونُبّه المشرفُ ليطّلع عليها." }
         : { title: "تم" });
       setAsk(null); refresh();
     },
@@ -164,9 +171,12 @@ export default function PhysioPlanPage() {
   const plan = q.data;
   const title = lang === "en" && plan.titleEn ? plan.titleEn : plan.titleAr;
   const statusLabel = (lang === "en" ? PLAN_STATUS_LABELS_EN : PLAN_STATUS_LABELS)[plan.status];
-  //  §4.cz — بروتوكولٌ اعتمده المشرف: كاتبُ الخطّة يبدؤها بنفسه، وتعديلُه لا يوقفها.
-  const protocolApproved = plan.protocol?.status === "approved";
-  const selfStart = plan.canWrite && !plan.canApprove && canSelfActivate(plan.status, plan.protocol?.status);
+  //  §4.do — كاتبُ الخطّة يبدؤها بنفسه على أيّ بروتوكول، وتعديلُه لا يوقفها؛ والمشرفُ يُنبَّه ويراجع بعدها.
+  const selfStart = plan.canWrite && !plan.canApprove && canSelfActivate(plan.status);
+  //  **الفروقُ عن البروتوكول** (§4.do) — لكاتبي الخطط وللمشرف والمسؤول؛ والمنفّذُ ينفّذ المكتوبَ ولا تعنيه.
+  const showDiff = (plan.canWrite || plan.canApprove) && Boolean(plan.protocolDiff);
+  const diff = showDiff ? plan.protocolDiff!.diff : null;
+  const removedDevices = (diff?.items ?? []).filter((i) => i.area === "device" && i.kind === "removed");
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3 print:p-0" dir={lang === "en" ? "ltr" : "rtl"}>
@@ -215,8 +225,8 @@ export default function PhysioPlanPage() {
         {plan.status === "approved" && plan.reviewStatus === "awaiting" && (
           <div className="rounded-md border border-sky-300 bg-sky-50 p-2 text-sm print:hidden" data-testid="plan-awaiting-review">
             <b>{(lang === "en" ? PLAN_REVIEW_LABELS_EN : PLAN_REVIEW_LABELS).awaiting}</b> — {lang === "en"
-              ? "started by its author on an approved protocol; it is being executed."
-              : "بدأها كاتبُها على بروتوكولٍ معتمَد، وهي تُنفَّذ."}
+              ? "started or edited by a specialist; it is being executed."
+              : "بدأها أو عدّلها الأخصائيّ، وهي تُنفَّذ — للاطّلاع والمراجعة."}
           </div>
         )}
         {plan.status === "approved" && plan.reviewStatus === "reviewed" && plan.reviewedByName && (
@@ -251,16 +261,11 @@ export default function PhysioPlanPage() {
           {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
           )}
-          {/*  §4.cz — على بروتوكولٍ اعتمده المشرف يبدؤها كاتبُها بنفسه، وإلّا تُرسَل للاعتماد. */}
+          {/*  §4.do — يبدؤها كاتبُها بنفسه على أيّ بروتوكول؛ والمشرفُ يُنبَّه ويراجعها بعدها. («إرسال للاعتماد» تقاعد من الشاشة.) */}
           {selfStart && (
             <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending}
               onClick={() => act.mutate({ path: "activate" })} data-testid="button-activate-plan">
-              <CheckCircle2 className="w-4 h-4" /> اعتماد وبدء العلاج
-            </Button>
-          )}
-          {plan.canWrite && canSubmitFrom(plan.status) && !selfStart && (
-            <Button size="sm" className="gap-1" disabled={act.isPending} onClick={() => act.mutate({ path: "submit" })} data-testid="button-submit-plan">
-              <Send className="w-4 h-4" /> إرسال للاعتماد
+              <CheckCircle2 className="w-4 h-4" /> بدء العلاج
             </Button>
           )}
           {plan.canApprove && canReviewFrom(plan.status, plan.reviewStatus) && (
@@ -296,16 +301,16 @@ export default function PhysioPlanPage() {
         </div>
       )}
       {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}
-      {!editing && plan.canWrite && !plan.canApprove && canSubmitFrom(plan.status) && !protocolApproved && (
-        <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-needs-approval-hint">
-          {plan.protocol ? "بروتوكولُ هذه الخطّة لم يعتمده المشرفُ بعد — تبدأ بعد موافقته." : "خطّةٌ بلا بروتوكول — تبدأ بعد موافقة المشرف."}
+      {!editing && selfStart && (
+        <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-start-hint">
+          «بدء العلاج» يُنزلها في ملفّ المريض فتُنفَّذ في الحال — لا تنتظر اعتماداً، ويُنبَّه المشرفُ ليطّلع عليها.
         </p>
       )}
       {!editing && plan.status === "approved" && plan.canWrite && !plan.canApprove && (
-        <p className="text-[11px] text-muted-foreground print:hidden">
-          {protocolApproved ? "تعديلُك يُبقيها تُنفَّذ ويعيدها لمراجعة المشرف." : "تعديلُ الخطّة المعتمَدة يعيدها إلى الاعتماد."}
-        </p>
+        <p className="text-[11px] text-muted-foreground print:hidden">تعديلُك يُبقيها تُنفَّذ، ويُنبَّه المشرفُ ليطّلع عليه.</p>
       )}
+      {!editing && showDiff && <PlanDiffBox view={plan.protocolDiff} lang={lang}
+        protocolTitle={lang === "en" ? plan.protocol?.titleEn ?? "" : plan.protocol?.titleAr ?? ""} />}
       {!editing && plan.canApprove && canReviewFrom(plan.status, plan.reviewStatus) && (
         <p className="text-[11px] text-muted-foreground print:hidden">
           «موافقة المشرف» أو عدّلها أو أوقفها أو غيّر نوعَها — وكاتبُها يُنبَّه بما تفعل.
@@ -323,14 +328,16 @@ export default function PhysioPlanPage() {
           </div>
           <div className={`space-y-3 ${printMode === "progress" ? "print:hidden" : ""}`}>
           <Section title={t.dose}>
-            <div className="text-sm flex flex-wrap gap-4" data-testid="plan-dose">
+            <div className="text-sm flex flex-wrap gap-4 items-center" data-testid="plan-dose">
               {plan.totalSessions ? <span><b>{plan.totalSessions}</b> {t.total}</span> : null}
               <span><b>{plan.sessionsPerWeek ?? "—"}</b> {t.perWeek}</span>
               <span><b>{plan.durationWeeks ?? "—"}</b> {t.weeks}</span>
               <span><b>{plan.sessionMinutes ?? "—"}</b> {t.perSession}</span>
+              <DiffBadge item={diffAt(diff, "dose")} lang={lang} testId="plan-dose-diff" />
             </div>
+            <DiffFields item={diffAt(diff, "dose")} lang={lang} />
           </Section>
-          <Section title={t.goals}><TextBlock row={plan} field="goals" lang={lang} /></Section>
+          <Section title={t.goals}><TextDiff diff={diff} k="goals" lang={lang} /><TextBlock row={plan} field="goals" lang={lang} /></Section>
           <Section title={t.devices}>
             {plan.devices.length === 0 ? <p className="text-sm text-muted-foreground">{t.noDevices}</p> : (
               <div className="overflow-x-auto">
@@ -341,8 +348,13 @@ export default function PhysioPlanPage() {
                   </tr></thead>
                   <tbody>
                     {plan.devices.map((d) => (
-                      <tr key={d.deviceId} className="border-b last:border-0 align-top" data-testid={`plan-device-${d.deviceId}`}>
-                        <td className="py-1.5">{lang === "en" ? d.nameEn : d.nameAr}
+                      <tr key={d.deviceId} className={`border-b last:border-0 align-top ${diffAt(diff, `device:${d.deviceId}`) ? "bg-amber-50/30" : ""}`} data-testid={`plan-device-${d.deviceId}`}>
+                        <td className="py-1.5">{lang === "en" ? d.nameEn : d.nameAr}{" "}
+                          <DiffBadge item={diffAt(diff, `device:${d.deviceId}`)} lang={lang} testId={`plan-device-diff-${d.deviceId}`} />
+                          {diffAt(diff, `device:${d.deviceId}`)?.kind === "added" && (
+                            <div className="text-[11px] text-emerald-800 print:hidden">{lang === "en" ? diffAt(diff, `device:${d.deviceId}`)?.noteEn : diffAt(diff, `device:${d.deviceId}`)?.noteAr}</div>
+                          )}
+                          <DiffFields item={diffAt(diff, `device:${d.deviceId}`)} lang={lang} testId={`plan-device-diff-fields-${d.deviceId}`} />
                           {/*  ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة، أو مساعدٌ بالتناوب ومعه «دوره في الجلسة القادمة». */}
                           <div className="text-[11px] mt-0.5" data-testid={`plan-device-use-${d.deviceId}`}>
                             {isScheduled(d)
@@ -362,19 +374,26 @@ export default function PhysioPlanPage() {
                 </table>
               </div>
             )}
+            <RemovedList items={removedDevices} lang={lang} testId="plan-devices-removed" />
           </Section>
+          {/*  §4.do — مقاييسُ هذا المريض: تتبع البروتوكولَ حتى يعدّلها كاتبُ الخطّة لمريضه. */}
+          <Card className="print:shadow-none print:border-0"><CardContent className="p-4 print:p-0 print:pb-3">
+            <PlanMeasuresSection planId={plan.id} measures={plan.measures ?? []} own={Boolean(plan.measuresOwn)} hasProtocol={Boolean(plan.protocol)}
+              canEdit={plan.canWrite} closed={isPlanClosed(plan.status)} lang={lang} diff={diff} showDiff={showDiff}
+              onSaved={() => { refresh(); qc.invalidateQueries({ queryKey: [`/api/physio/plans/${plan.id}/assessments`] }); }} />
+          </CardContent></Card>
           {/*  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول: يعدّلها كاتبُ الخطّة بمرونة البروتوكول نفسِها، والبروتوكولُ لا يُمَسّ. */}
           {((plan.phases ?? []).length > 0 || (plan.canWrite && !isPlanClosed(plan.status))) && (
             <Card className="print:shadow-none print:border-0"><CardContent className="p-4 print:p-0 print:pb-3">
               <ProtocolPhasesSection phases={plan.phases ?? []} canEdit={plan.canWrite} isArchived={isPlanClosed(plan.status)} lang={lang}
                 saveUrl={`/api/physio/plans/${plan.id}/phases`} onSaved={refresh} title={t.phases}
-                currentSession={plan.status === "approved" && plan.rotation ? plan.rotation.sessionsSoFar + 1 : null}
-                editNote="تعديلٌ لهذا المريض وحده — البروتوكولُ الأساسيّ لا يتغيّر. وتعديلُ خطّةٍ تُنفَّذ يعيدها لمراجعة المشرف." />
+                currentSession={plan.status === "approved" && plan.rotation ? plan.rotation.sessionsSoFar + 1 : null} diff={diff}
+                editNote="تعديلٌ لهذا المريض وحده — البروتوكولُ الأساسيّ لا يتغيّر. وتعديلُ خطّةٍ تُنفَّذ يُبقيها تُنفَّذ ويُنبَّه المشرف." />
               <PhaseRangeHint plan={plan} lang={lang} />
             </CardContent></Card>
           )}
-          <Section title={t.exercises}><TextBlock row={plan} field="exercises" lang={lang} /></Section>
-          <Section title={t.precautions}><TextBlock row={plan} field="precautions" lang={lang} /></Section>
+          <Section title={t.exercises}><TextDiff diff={diff} k="exercises" lang={lang} /><TextBlock row={plan} field="exercises" lang={lang} /></Section>
+          <Section title={t.precautions}><TextDiff diff={diff} k="precautions" lang={lang} /><TextBlock row={plan} field="precautions" lang={lang} /></Section>
           <Section title={t.notes}><TextBlock row={plan} field="notes" lang={lang} /></Section>
           <Section title={t.assignees}>
             {plan.assignees.length === 0 ? <p className="text-sm text-muted-foreground">{t.noAssignees}</p>
@@ -397,6 +416,17 @@ export default function PhysioPlanPage() {
         onDeleted={() => navigate(`/patients/${plan.patientId}`)} />
       <ExecuteSessionDialog planId={execOpen ? plan.id : null} onClose={() => setExecOpen(false)} />
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
+    </div>
+  );
+}
+
+/** نصٌّ يختلف عن البروتوكول — علامةٌ فوقه ويُفتح ليُقارَن (§4.do). */
+function TextDiff({ diff, k, lang }: { diff: ProtocolDiffView["diff"] | null; k: string; lang: ProtocolLang }) {
+  const item = diffAt(diff, `text:${k}`);
+  if (!item) return null;
+  return (
+    <div className="mb-1 print:hidden" data-testid={`plan-text-diff-${k}`}>
+      <DiffBadge item={item} lang={lang} /> <DiffFields item={item} lang={lang} />
     </div>
   );
 }
@@ -500,8 +530,8 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
       devices: lines.map((l) => ({ deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn, note: l.note, noteEn: l.noteEn,
         centreUse: l.centreUse ?? "core", everyDays: l.everyDays ?? null, times: l.times ?? null })),
     })).json(),
-    onSuccess: (r: any) => {
-      toast({ title: "حُفظت الخطّة", description: r?.demoted ? "عادت الخطّةُ إلى الاعتماد ووصل التنبيه." : undefined });
+    onSuccess: () => {
+      toast({ title: "حُفظت الخطّة", description: plan.status === "approved" && !plan.canApprove ? "تبقى تُنفَّذ، ونُبّه المشرفُ ليطّلع على التعديل." : undefined });
       onDone();
     },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
@@ -547,6 +577,11 @@ function PlanEditor({ plan, lang, onDone, onCancel }: { plan: Plan; lang: Protoc
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium">{en ? l.nameEn : l.nameAr}</span>
                 <div className="flex items-center gap-1">
+                  {/*  §4.do — الترتيبُ لهذا المريض: يُحفظ بترتيب القائمة. */}
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0} aria-label="أعلى" data-testid={`plan-line-up-${l.deviceId}`}
+                    onClick={() => setLines((p) => moveItem(p, i, -1))}><ArrowUp className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === lines.length - 1} aria-label="أسفل" data-testid={`plan-line-down-${l.deviceId}`}
+                    onClick={() => setLines((p) => moveItem(p, i, 1))}><ArrowDown className="w-4 h-4" /></Button>
                   {/*  ترحيل ١٢٢ — الأساسيُّ في كلّ جلسة، والمساعدُ يتناوب: جهازٌ مساعدٌ واحد في كلّ جلسة. */}
                   <select className="rounded-md border px-2 py-1 text-xs bg-white" value={l.centreUse ?? "core"} data-testid={`select-plan-use-${l.deviceId}`}
                     onChange={(e) => setLines((p) => p.map((x, j) => (j === i ? { ...x, centreUse: e.target.value as "core" | "adjunct" } : x)))}>

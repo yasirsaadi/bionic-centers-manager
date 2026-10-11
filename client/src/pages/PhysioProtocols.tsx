@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, BookMarked, CheckCircle2, ExternalLink, ImagePlus, Pencil, Plus, Search, Trash2, Archive, RotateCcw, AlertTriangle } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, BookMarked, CheckCircle2, ExternalLink, ImagePlus, Pencil, Plus, Search, Trash2, Archive, RotateCcw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { moveItem } from "@/lib/utils";
 import { ProtocolMeasuresSection } from "@/components/physio/ProtocolMeasures";
 import { ExerciseLibraryTab, MissingImagesTab } from "@/components/physio/ExerciseLibrary";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
@@ -652,7 +653,15 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
                 </Select>
                 <Input inputMode="numeric" placeholder="دقائق" value={l.minutes ?? ""}
                   onChange={(e) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, minutes: e.target.value ? Number(e.target.value) : null } : x)))} />
-                <Button variant="ghost" size="icon" onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} aria-label="إزالة الجهاز"><Trash2 className="w-4 h-4" /></Button>
+                <div className="flex sm:flex-col items-center gap-0.5">
+                  {/*  §4.do — الترتيبُ كما يريده المشرف: الخطّةُ الجديدة تنسخ الأجهزةَ بترتيبها. */}
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0} aria-label="أعلى" data-testid={`pf-device-${i}-up`}
+                    onClick={() => setLines((xs) => moveItem(xs, i, -1))}><ArrowUp className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === lines.length - 1} aria-label="أسفل" data-testid={`pf-device-${i}-down`}
+                    onClick={() => setLines((xs) => moveItem(xs, i, 1))}><ArrowDown className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} aria-label="إزالة الجهاز"
+                    data-testid={`pf-device-${i}-remove`}><Trash2 className="w-4 h-4" /></Button>
+                </div>
               </div>
             ))}
             {unused.length > 0 && (
