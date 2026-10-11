@@ -3,17 +3,21 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanPhaseExercises,
-  physioPlanPhases, physioPlanSessionItems, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolPhaseExercises,
-  physioProtocolPhases, physioProtocols, systemUsers, type PhysioPlan,
+  branches, devices, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanMeasures, physioPlanPhaseExercises,
+  physioPlanPhases, physioPlanSessionItems, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolMeasures,
+  physioProtocolPhaseExercises, physioProtocolPhases, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
-  canApproveFrom, canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND,
-  SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, sessionAdjuncts, type PlanStatus,
+  ALREADY_STARTED, canApproveFrom, canReturnFrom, canReviewFrom, canSelfActivate, canSubmitFrom, isPlanAssigneeRole, isPlanEditable, PLAN_NOT_FOUND,
+  sessionAdjuncts, type PlanStatus,
 } from "@shared/physio_plans";
 import { centreUseOf, normalizeDose, planLineUse } from "@shared/physio_protocols";
 import { isScheduled } from "@shared/physio_device_settings";
-import { deviceParamsLine, PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
+import { PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
+import {
+  diffSummaryLine, planLineFromProtocol, planProtocolDiff, protocolPrecautionsText, type DiffPhase, type PlanDiff,
+} from "@shared/physio_plan_diff";
+import type { MeasureDef } from "@shared/physio_assessments";
 import { withImageUrls } from "../physio_protocols/exercises_store";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
@@ -159,7 +163,109 @@ export async function getPlan(id: number) {
     //  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول وتمارينها، والأجهزةُ المساعدة التي يقترحها بروتوكولُها (يختار منها الأخصائيّ).
     phases: await getPlanPhases(id),
     protocolAdjuncts: plan.protocolId ? await protocolAdjuncts(plan.protocolId, avail) : [],
+    //  §4.do — **مقاييسُ هذه الخطّة** (لها إن عُدّلت لمريضها، وإلّا مقاييسُ بروتوكولها)، **وما تختلف به عن البروتوكول كما هو الآن**.
+    measures: await effectiveMeasures(plan),
+    protocolDiff: await planDiffFor(plan),
   };
+}
+
+// ══ مقاييسُ الخطّة، وما تختلف به الخطّةُ عن بروتوكولها الآن (ترحيل ١٣٢، §4.do) ═══════════════════════════════════════════
+const measureDef = (r: any): MeasureDef => ({
+  code: r.code, nameAr: r.nameAr, nameEn: r.nameEn, unitAr: r.unitAr, unitEn: r.unitEn,
+  min: Number(r.minValue), max: Number(r.maxValue), higherIsBetter: r.higherIsBetter,
+});
+
+/** مقاييسُ بروتوكولٍ بأرقامها (الأعمدةُ `numeric` تصل نصّاً). */
+export async function protocolMeasureDefs(protocolId: number | null, ex: any = db): Promise<MeasureDef[]> {
+  if (!protocolId) return [];
+  const rows = await ex.select().from(physioProtocolMeasures).where(eq(physioProtocolMeasures.protocolId, protocolId))
+    .orderBy(asc(physioProtocolMeasures.displayOrder), asc(physioProtocolMeasures.id));
+  return rows.map(measureDef);
+}
+
+/** مقاييسُ خطّةٍ عُدّلت لمريضها. */
+export async function planOwnMeasures(planId: number, ex: any = db): Promise<MeasureDef[]> {
+  const rows = await ex.select().from(physioPlanMeasures).where(eq(physioPlanMeasures.planId, planId))
+    .orderBy(asc(physioPlanMeasures.displayOrder), asc(physioPlanMeasures.id));
+  return rows.map(measureDef);
+}
+
+/** **مقاييسُ الخطّة الفعّالة** — لها إن عُدّلت لمريضها (`measuresOwn`)، وإلّا مقاييسُ بروتوكولها الآن، وبلا بروتوكول لا شيء. */
+export async function effectiveMeasures(plan: Pick<PhysioPlan, "id" | "protocolId" | "measuresOwn">, ex: any = db): Promise<MeasureDef[]> {
+  return plan.measuresOwn ? planOwnMeasures(plan.id, ex) : protocolMeasureDefs(plan.protocolId, ex);
+}
+
+/** مراحلُ بتمارينها للمقارنة — بلا صور. */
+async function phasesForDiff(ex: any, owner: { planId: number } | { protocolId: number }): Promise<DiffPhase[]> {
+  const isPlan = "planId" in owner;
+  const P: any = isPlan ? physioPlanPhases : physioProtocolPhases;
+  const L: any = isPlan ? physioPlanPhaseExercises : physioProtocolPhaseExercises;
+  const phases = await ex.select().from(P).where(isPlan ? eq(P.planId, owner.planId) : eq(P.protocolId, (owner as any).protocolId))
+    .orderBy(asc(P.position));
+  if (!phases.length) return [];
+  const links = await ex.select({ link: L, nameAr: physioExercises.nameAr, nameEn: physioExercises.nameEn })
+    .from(L).innerJoin(physioExercises, eq(physioExercises.id, L.exerciseId))
+    .where(inArray(L.phaseId, phases.map((p: any) => p.id))).orderBy(asc(L.position), asc(L.id));
+  return phases.map((p: any) => ({
+    ...p,
+    exercises: links.filter((l: any) => l.link.phaseId === p.id)
+      .map((l: any) => ({ ...l.link, exercise: { nameAr: l.nameAr, nameEn: l.nameEn } })),
+  }));
+}
+
+/**
+ * **ما تختلف به الخطّةُ عن بروتوكولها كما هو الآن** — والمرجعُ «البروتوكولُ الذي عدّله المشرفُ آخرَ مرّة» (قرارُ المالك): بحالته ومَن عدّله
+ * ومتى، وهل عُدّل بعد نسخ الخطّة منه (فبعضُ الفروق منه لا من كاتب الخطّة). وخطّةٌ بلا بروتوكول ⟵ `null`.
+ */
+export async function planDiffFor(plan: PhysioPlan, ex: any = db): Promise<{
+  diff: PlanDiff; changedSinceCopy: boolean;
+  reference: { status: string; updatedAt: Date | null; updatedByName: string | null; approvedAt: Date | null; approvedByName: string | null };
+} | null> {
+  if (!plan.protocolId) return null;
+  const [pr] = await ex.select().from(physioProtocols).where(eq(physioProtocols.id, plan.protocolId));
+  if (!pr) return null;
+  const protoLines = await ex.select({ line: physioProtocolDevices, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
+    .from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+    .where(eq(physioProtocolDevices.protocolId, pr.id)).orderBy(asc(physioProtocolDevices.displayOrder));
+  const planLines = await ex.select({ line: physioPlanDevices, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
+    .from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
+    .where(eq(physioPlanDevices.planId, plan.id)).orderBy(asc(physioPlanDevices.displayOrder));
+  const flat = (r: any) => ({ ...r.line, code: r.code, nameAr: r.nameAr, nameEn: r.nameEn });
+  const diff = planProtocolDiff(
+    { ...plan, devices: planLines.map(flat), phases: await phasesForDiff(ex, { planId: plan.id }),
+      measures: plan.measuresOwn ? await planOwnMeasures(plan.id, ex) : null },
+    { ...pr, devices: protoLines.map(flat), phases: await phasesForDiff(ex, { protocolId: pr.id }), measures: await protocolMeasureDefs(pr.id, ex) },
+    await availableDeviceIds(ex, plan.branchId),
+  );
+  return {
+    diff,
+    changedSinceCopy: Boolean(plan.protocolCopiedAt && pr.updatedAt && new Date(pr.updatedAt) > new Date(plan.protocolCopiedAt)),
+    reference: { status: pr.status, updatedAt: pr.updatedAt ?? null, updatedByName: pr.updatedByName ?? null,
+      approvedAt: pr.approvedAt ?? null, approvedByName: pr.approvedByName ?? null },
+  };
+}
+
+/**
+ * **مقاييسُ الخطّة لمريضها** (§4.do — «تغيير المقاييس … مرونة عالية جداً»): تُستبدل كاملةً وتصير للخطّة (`measuresOwn`)، أو تعود إلى مقاييس
+ * بروتوكولها (`list` = null). وحالةُ الخطّة والمراجعةُ والتنبيهُ بقاعدة كلّ تعديل. والتقييماتُ السابقة لقطاتٌ بتعريف يومها فلا تتغيّر.
+ */
+export async function setPlanMeasures(id: number, list: MeasureDef[] | null, nextStatus: NextStatus, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const before = await lockPlan(tx, id);
+    if (!isPlanEditable(before.status)) throw new PlanError(409, "الخطّةُ منتهية — لا تُعدَّل");
+    if (list === null && !before.protocolId) throw new PlanError(409, "خطّةٌ بلا بروتوكول — لا مقاييسَ تعود إليها");
+    const old = await effectiveMeasures(before, tx);
+    await tx.delete(physioPlanMeasures).where(eq(physioPlanMeasures.planId, id));
+    if (list?.length) {
+      await tx.insert(physioPlanMeasures).values(list.map((m, i) => ({
+        planId: id, code: m.code, nameAr: m.nameAr, nameEn: m.nameEn, unitAr: m.unitAr, unitEn: m.unitEn,
+        minValue: String(m.min), maxValue: String(m.max), higherIsBetter: m.higherIsBetter, displayOrder: i,
+      })));
+    }
+    const r = await applyPlanEdit(tx, before, { measuresOwn: list !== null }, nextStatus, actor);
+    await notifyPlanEdit(tx, r, actor);
+    return { before: { measuresOwn: before.measuresOwn, measures: old }, after: r.after, backToReview: r.backToReview };
+  });
 }
 
 /**
@@ -252,10 +358,11 @@ async function protocolFill(tx: any, protocolId: number, branchId: number) {
   const base = {
     protocolId: pr.id, titleAr: pr.titleAr, titleEn: pr.titleEn,
     goals: pr.goals, goalsEn: pr.goalsEn, exercises: pr.exercises, exercisesEn: pr.exercisesEn,
-    precautions: [pr.contraindications, pr.precautions].filter(Boolean).join("\n\n") || null,
-    precautionsEn: [pr.contraindicationsEn, pr.precautionsEn].filter(Boolean).join("\n\n") || null,
+    precautions: protocolPrecautionsText(pr, "ar"), precautionsEn: protocolPrecautionsText(pr, "en"),
     sessionsPerWeek: pr.sessionsPerWeek, durationWeeks: pr.durationWeeks, sessionMinutes: pr.sessionMinutes,
     totalSessions: pr.totalSessions,
+    //  §4.do — متى امتلأت من البروتوكول: تعديلُ المشرف البروتوكولَ بعده يُذكر بجانب الفروق. والمقاييسُ تتبع البروتوكولَ الجديد.
+    protocolCopiedAt: new Date(), measuresOwn: false,
   };
   const avail = await availableDeviceIds(tx, branchId);
   //  **«استعمالُ المركز» يحكم لا درجةُ الدليل** (ترحيل ١٢٢، §4.cx): «لا يُستخدم» لا يدخل، والأساسيُّ والمساعدُ يدخلان بدورهما —
@@ -267,18 +374,6 @@ async function protocolFill(tx: any, protocolId: number, branchId: number) {
     .filter((r: any) => centreUseOf(r.line) !== "not_used" && avail.has(Number(r.line.deviceId)))
     .map((r: any) => planLineFromProtocol(r.line, r.code));
   return { base, lines };
-}
-
-/** بندُ خطّةٍ من جهاز بروتوكول: استعمالُه، ودقائقُه، ونصوصُه باللغتين وأوّلُها سطرُ إعداداته. */
-function planLineFromProtocol(l: any, code: string): PlanDeviceInput {
-  const withSettings = (settings: string, text: string | null) => [settings, text].filter((x) => x && x.trim()).join("\n") || null;
-  return {
-    deviceId: Number(l.deviceId), minutes: l.minutes,
-    parameters: withSettings(deviceParamsLine(code, l.params, "ar"), l.parameters),
-    parametersEn: withSettings(deviceParamsLine(code, l.params, "en"), l.parametersEn),
-    note: l.note, noteEn: l.noteEn, centreUse: centreUseOf(l) === "adjunct" ? "adjunct" : "core",
-    everyDays: l.everyDays ?? null, times: l.times ?? null,
-  };
 }
 
 const planDeviceRow = (planId: number, l: PlanDeviceInput, i: number) => ({
@@ -381,36 +476,32 @@ async function notifyAuthor(tx: any, plan: PhysioPlan, actor: Actor, line: strin
 /** مراجعةُ المشرف مكتوبةً على الصفّ: نظر فيها مَن ومتى. */
 const reviewedBy = (actor: Actor) => ({ reviewStatus: "reviewed", reviewedBy: actor.userId, reviewedByName: actor.name, reviewedAt: new Date() });
 
-/**
- * **تعديلٌ كامل** — والأجهزةُ تُستبدل. جهازٌ غيرُ متوفّرٍ في فرع الخطّة يُردّ إلّا إن كان فيها من قبل.
- * **والخطّةُ المعتمَدة** (§4.cz): بيد المشرف في خطّة غيره ⟵ تبقى، «راجعها المشرف»، ويُنبَّه كاتبُها؛ وبيد الأخصائيّ على بروتوكولٍ معتمَد ⟵
- * تبقى تُنفَّذ وتعود «بانتظار مراجعة المشرف» ويُنبَّه المشرف؛ وعلى بروتوكولٍ غير معتمَد ⟵ تعود «بانتظار الاعتماد» كما كانت.
- */
 type NextStatus = (current: PlanStatus, protocolStatus: string | null) => PlanStatus;
 
 /**
- * **حالةُ الخطّة بعد أيّ تعديل** — نصوصاً وأجهزةً ومراحلَ وتمارين، قاعدةٌ واحدة (§4.cz): بيد المشرف في خطّة غيره تبقى «راجعها المشرف»؛ وبيد
- * الأخصائيّ على بروتوكولٍ معتمَد تبقى تُنفَّذ وتعود للمراجعة؛ وعلى غير معتمَد تعود «بانتظار الاعتماد». والتنبيهاتُ بعد كتابة التوابع.
+ * **حالةُ الخطّة بعد أيّ تعديل** — نصوصاً وأجهزةً ومراحلَ وتمارينَ ومقاييس، قاعدةٌ واحدة: **المعتمَدةُ تبقى تُنفَّذ بيد أيّ كاتب** (§4.do —
+ * «لا تحتاج اعتمادَ سليم»)؛ بيد المشرف في خطّة غيره ⟵ «راجعها المشرف» ويُنبَّه كاتبُها، وبيد الأخصائيّ ⟵ «بانتظار مراجعة المشرف» ويُنبَّه
+ * المشرف باسم مَن عدّل. والتنبيهاتُ بعد كتابة التوابع (`notifyPlanEdit`) فتقول ما تختلف به الخطّةُ بعد التعديل.
  */
 async function applyPlanEdit(tx: any, before: PhysioPlan, fields: Record<string, unknown>, nextStatus: NextStatus, actor: Actor) {
   const status = nextStatus(before.status as PlanStatus, await protocolStatusOf(tx, before.protocolId));
-  const demoted = before.status === "approved" && status === "pending";
   const keptActive = before.status === "approved" && status === "approved";
   const bySupervisor = keptActive && supervisorActsOnOthers(before, actor);
   const backToReview = keptActive && !actor.isApprover;
   const [after] = await tx.update(physioPlans).set({
     ...fields, status, updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
-    ...(demoted ? { submittedAt: new Date(), decidedBy: null, decidedByName: null, decidedAt: null,
-      reviewStatus: null, reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
     ...(bySupervisor ? reviewedBy(actor) : {}),
     ...(backToReview ? { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null } : {}),
   }).where(eq(physioPlans.id, before.id)).returning();
-  return { after: after as PhysioPlan, demoted, backToReview, bySupervisor };
+  //  `demoted` باقٍ في الردّ لشاشاتٍ أقدم — لا تعود خطّةٌ إلى الاعتماد بتعديلٍ بعد اليوم (§4.do).
+  return { after: after as PhysioPlan, demoted: false, backToReview, bySupervisor };
 }
 
-async function notifyPlanEdit(tx: any, r: { after: PhysioPlan; demoted: boolean; backToReview: boolean; bySupervisor: boolean }, actor: Actor) {
-  if (r.demoted) await notifyPending(tx, r.after, actor, "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد");
-  if (r.backToReview) await notifyPending(tx, r.after, actor, "عُدّلت خطّةٌ بدأت وتُنفَّذ — للمراجعة", "✏️");
+async function notifyPlanEdit(tx: any, r: { after: PhysioPlan; backToReview: boolean; bySupervisor: boolean }, actor: Actor) {
+  if (r.backToReview) {
+    await notifyPending(tx, r.after, actor, "عُدّلت خطّةٌ تُنفَّذ — للاطّلاع والمراجعة", "✏️",
+      [`عدّلها ${actor.name ?? "—"}`, await diffLineOf(tx, r.after)]);
+  }
   if (r.bySupervisor) await notifyAuthor(tx, r.after, actor, "✏️ عدّل المشرفُ خطّتك");
 }
 
@@ -454,32 +545,41 @@ export async function setPlanPhases(id: number, phases: PhaseInput[], nextStatus
   });
 }
 
-async function notifyPending(tx: any, plan: PhysioPlan, actor: Actor, prefix = "خطّة علاج طبيعي تنتظر الاعتماد", icon = "📋") {
+async function notifyPending(tx: any, plan: PhysioPlan, actor: Actor, prefix = "خطّة علاج طبيعي تنتظر الاعتماد", icon = "📋", extra: (string | null)[] = []) {
   const who = await patientLabel(tx, plan.patientId, plan.branchId);
   await enqueueStaffEvent(tx, {
     event: "physio_plan_pending", excludeUserId: actor.userId,
-    text: `${icon} ${prefix}: ${who}\n${plan.titleAr}${plan.createdByName ? ` — كتبها ${plan.createdByName}` : ""}`,
+    text: [`${icon} ${prefix}: ${who}`, `${plan.titleAr}${plan.createdByName ? ` — كتبها ${plan.createdByName}` : ""}`, ...extra]
+      .filter(Boolean).join("\n"),
     linkPath: `/physio/plans/${plan.id}`,
   });
 }
 
+/** سطرُ الفروق في التنبيه — «تختلف عن البروتوكول في …» أو «مطابقةٌ…»؛ وخطّةٌ بلا بروتوكول ⟵ «بلا بروتوكول». */
+async function diffLineOf(ex: any, plan: PhysioPlan): Promise<string> {
+  if (!plan.protocolId) return "خطّةٌ بلا بروتوكول";
+  const d = await planDiffFor(plan, ex);
+  return d ? diffSummaryLine(d.diff) : "خطّةٌ بلا بروتوكول";
+}
+
 /**
- * **«اعتماد وبدء العلاج»** (§4.cz) — كاتبُ الخطّة يبدؤها بنفسه من المسوّدة أو المُعادة **إذا كان بروتوكولُها معتمَداً من المشرف** (يُقرأ في
- * المعاملة نفسِها). فتصير معتمَدةً تُنفَّذ في الحال، و«بانتظار مراجعة المشرف»؛ ويُنبَّه المشرفُ والمسؤول للمراجعة، والمنفّذون المسنَدون.
- * وإن بدأها مشرفٌ فهي مراجَعةٌ أصلاً.
+ * **«بدء العلاج»** (§4.cz، و§4.do) — كاتبُ الخطّة يبدؤها بنفسه من المسوّدة أو المُعادة أو المنتظِرة، **على أيّ بروتوكولٍ أو بلا بروتوكول**
+ * (قرارُ المالك ٢٠٢٦-١٠-١١: «لا تحتاج اعتمادَ سليم ليبدأ، وإنّما اطّلاعَه»). فتصير معتمَدةً تُنفَّذ في الحال، و«بانتظار مراجعة المشرف»؛
+ * ويُنبَّه المشرفُ والمسؤول باسم المريض وكاتبها وما تختلف به عن البروتوكول، والمنفّذون المسنَدون. وإن بدأها مشرفٌ فهي مراجَعةٌ أصلاً.
  */
 export async function activatePlan(id: number, actor: Actor) {
   return db.transaction(async (tx) => {
     const before = await lockPlan(tx, id);
-    if (!canSubmitFrom(before.status)) throw new PlanError(409, "الخطّةُ بدأت من قبل أو أُرسلت للاعتماد");
-    if (!canSelfActivate(before.status, await protocolStatusOf(tx, before.protocolId))) throw new PlanError(409, SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL);
+    if (!canSelfActivate(before.status)) throw new PlanError(409, ALREADY_STARTED);
     const now = new Date();
     const [after] = await tx.update(physioPlans).set({
       status: "approved", submittedAt: now, decidedBy: actor.userId, decidedByName: actor.name, decidedAt: now, returnNote: null,
       ...(actor.isApprover ? reviewedBy(actor) : { reviewStatus: "awaiting", reviewedBy: null, reviewedByName: null, reviewedAt: null }),
       updatedBy: actor.userId, updatedByName: actor.name, updatedAt: now,
     }).where(eq(physioPlans.id, id)).returning();
-    if (!actor.isApprover) await notifyPending(tx, after, actor, "خطّةٌ جديدة بدأت باعتماد الأخصائيّ — للمراجعة", "🆕");
+    if (!actor.isApprover) {
+      await notifyPending(tx, after, actor, "خطّةٌ جديدة بدأت — للاطّلاع والمراجعة", "🆕", [await diffLineOf(tx, after)]);
+    }
     const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
     await notifyAssigned(tx, after, ids, actor);
@@ -640,6 +740,8 @@ export async function changePlanProtocol(id: number, protocolId: number, actor: 
     }
     await tx.delete(physioPlanPhases).where(eq(physioPlanPhases.planId, id));
     await copyProtocolPhases(tx, protocolId, id);
+    //  §4.do — مقاييسُ الخطّة تتبع البروتوكولَ الجديد (`measuresOwn` = false في `protocolFill`).
+    await tx.delete(physioPlanMeasures).where(eq(physioPlanMeasures.planId, id));
     if (after.status === "approved") {
       const ids = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
         .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));

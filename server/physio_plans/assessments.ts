@@ -4,26 +4,20 @@
 // و«إيقاف» يجعلها `stopped` بسببه — في المعاملة نفسِها. و«مستحقّ التقييم» يُحسب من آخر تقييمٍ ويوم الاعتماد ومدّة الخطّة (`assessmentDue`).
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { branches, patients, physioAssessments, physioPlanSessions, physioPlans, physioProtocolMeasures, physioProtocols, type PhysioPlan } from "@shared/schema";
+import { branches, patients, physioAssessments, physioPlanSessions, physioPlans, physioProtocols, type PhysioPlan } from "@shared/schema";
 import {
   assessmentDue, parseAssessment, planGoalsList, type AssessmentKind, type MeasureDef, type ScoreSnap,
 } from "@shared/physio_assessments";
 import { isPlanClosed } from "@shared/physio_plans";
-import { PlanError, type Actor } from "./store";
+import { effectiveMeasures, PlanError, protocolMeasureDefs, type Actor } from "./store";
 
 /** يومُ بغداد لطابعٍ زمنيّ. */
 export const baghdadDayOf = (d: Date | string | null | undefined): string | null =>
   d ? new Date(new Date(d).getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10) : null;
 
-/** مقاييسُ بروتوكولٍ بأرقامها (الأعمدةُ `numeric` تصل نصّاً). وخطّةٌ بلا بروتوكول ⟵ لا مقاييسَ إلّا الألمَ والأهداف. */
+/** مقاييسُ بروتوكولٍ بأرقامها. وخطّةٌ بلا بروتوكول ⟵ لا مقاييسَ إلّا الألمَ والأهداف — ومقاييسُ الخطّة نفسِها في `effectiveMeasures` (§4.do). */
 export async function protocolMeasures(protocolId: number | null, ex: any = db): Promise<MeasureDef[]> {
-  if (!protocolId) return [];
-  const rows = await ex.select().from(physioProtocolMeasures).where(eq(physioProtocolMeasures.protocolId, protocolId))
-    .orderBy(asc(physioProtocolMeasures.displayOrder), asc(physioProtocolMeasures.id));
-  return rows.map((r: any) => ({
-    code: r.code, nameAr: r.nameAr, nameEn: r.nameEn, unitAr: r.unitAr, unitEn: r.unitEn,
-    min: Number(r.minValue), max: Number(r.maxValue), higherIsBetter: r.higherIsBetter,
-  }));
+  return protocolMeasureDefs(protocolId, ex);
 }
 
 export async function planAssessments(planId: number) {
@@ -38,17 +32,20 @@ export async function executedSessions(planId: number): Promise<{ executed: numb
   return { executed: Number(r?.n ?? 0), lastSessionOn: r?.last ?? null };
 }
 
-/** ما تعرضه صفحةُ الخطّة: التقييماتُ، ومقاييسُ بروتوكولها الآن وحالُ اعتمادها، وأهدافُها سطوراً، والموعدُ التالي. */
+/**
+ * ما تعرضه صفحةُ الخطّة: التقييماتُ، **ومقاييسُ الخطّة** (لها إن عُدّلت لمريضها — §4.do — وإلّا مقاييسُ بروتوكولها الآن وحالُ اعتمادها)،
+ * وأهدافُها سطوراً، والموعدُ التالي. ومقاييسُ الخطّة نفسِها لا حالَ اعتمادٍ لها (`own`): كتبها كاتبُ الخطّة لمريضه.
+ */
 export async function planAssessmentView(plan: PhysioPlan, today: string) {
   const list = await planAssessments(plan.id);
   const ses = await executedSessions(plan.id);
-  const measures = await protocolMeasures(plan.protocolId);
-  const [pr] = plan.protocolId
+  const measures = await effectiveMeasures(plan);
+  const [pr] = plan.protocolId && !plan.measuresOwn
     ? await db.select({ s: physioProtocols.measuresStatus }).from(physioProtocols).where(eq(physioProtocols.id, plan.protocolId))
     : [];
   const last = list[list.length - 1];
   return {
-    assessments: list, measures, measuresStatus: pr?.s ?? null, goals: planGoalsList(plan.goals),
+    assessments: list, measures, measuresStatus: plan.measuresOwn ? "own" : pr?.s ?? null, goals: planGoalsList(plan.goals),
     due: assessmentDue({ status: plan.status, approvedOn: baghdadDayOf(plan.decidedAt), durationWeeks: plan.durationWeeks,
       lastOn: last ? String(last.assessedOn) : null, count: list.length, today,
       totalSessions: plan.totalSessions, sessionsPerWeek: plan.sessionsPerWeek, ...ses }),
@@ -64,7 +61,7 @@ export async function recordAssessment(planId: number, body: unknown, actor: Act
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, planId)).for("update");
     if (!plan) throw new PlanError(404, "الخطّة غير موجودة");
     if (isPlanClosed(plan.status)) throw new PlanError(409, "الخطّةُ منتهية — موقوفةٌ أو متخرّجة");
-    const measures = await protocolMeasures(plan.protocolId, tx);
+    const measures = await effectiveMeasures(plan, tx);
     const input = parseAssessment(body, measures, plan.status);
     if (typeof input === "string") throw new PlanError(400, input);
     const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(physioAssessments).where(eq(physioAssessments.planId, planId));

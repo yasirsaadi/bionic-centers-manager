@@ -5,9 +5,10 @@
 //   GET  /api/physio/plans?view=pending|review|assigned — الاعتماداتُ · «للمراجعة» (للمعتمِد، §4.cz) · المسندةُ إليّ
 //   GET  /api/physio/plans/:id                   — الخطّةُ كاملة
 //   PUT  /api/physio/plans/:id/phases            — مراحلُ الخطّة وتمارينُها لهذا المريض (§4.dd) — البروتوكولُ لا يُمَسّ، والحالةُ بقاعدة التعديل
-//   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تعود إلى الاعتماد بيد غير المعتمِد — إلّا على بروتوكولٍ معتمَد (تبقى وتعود للمراجعة)
+//   PUT  /api/physio/plans/:id                   — تعديلٌ كامل؛ المعتمَدةُ تبقى تُنفَّذ بيد أيّ كاتب، وبيد الأخصائيّ تعود لمراجعة المشرف (§4.do)
+//   PUT|DELETE /api/physio/plans/:id/measures    — مقاييسُ هذه الخطّة لمريضها، أو العودةُ إلى مقاييس بروتوكولها (§4.do)
 //   POST /api/physio/plans/:id/submit|approve|return|stop
-//   POST /api/physio/plans/:id/activate          — «اعتماد وبدء العلاج» بيد كاتبها على بروتوكولٍ معتمَد (§4.cz)
+//   POST /api/physio/plans/:id/activate          — «بدء العلاج» بيد كاتبها على أيّ بروتوكول (§4.cz، و§4.do)
 //   POST /api/physio/plans/:id/review            — «موافقة المشرف» على خطّةٍ بدأها كاتبُها (§4.cz)
 //   DELETE /api/physio/plans/:id              — للمسؤول والمشرف العام حصراً
 //   POST /api/physio/plans/:id/change-protocol — تغييرُ نوع الخطّة (بروتوكولٌ آخر)، لهما حصراً
@@ -26,7 +27,7 @@ import * as exec from "./execution";
 import * as suggest from "./suggest";
 import * as assess from "./assessments";
 import * as outcomes from "./outcomes";
-import { canAssessPlans, outcomesScope } from "@shared/physio_assessments";
+import { canAssessPlans, outcomesScope, parseMeasures } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 import { doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
@@ -230,8 +231,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const r = await store.updatePlan(l.row.id, input, (cur, protocolStatus) => planStatusAfterEdit(cur, l.s, protocolStatus), actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "update", branchId: l.row.branchId, oldValues: r.before,
         newValues: { ...r.after, devices: input.devices },
-        notes: r.demoted ? "عُدّلت خطّةٌ معتمَدة فعادت إلى الاعتماد"
-          : r.backToReview ? "عُدّلت خطّةٌ بدأت على بروتوكولٍ معتمَد — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
+        notes: r.backToReview ? "عُدّلت خطّةٌ تُنفَّذ — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
       res.json({ ...r.after, demoted: r.demoted });
     } catch (e) { fail(res, e); }
   });
@@ -247,11 +247,29 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const r = await store.setPlanPhases(l.row.id, phases, (cur, protocolStatus) => planStatusAfterEdit(cur, l.s, protocolStatus), actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "update_phases", branchId: l.row.branchId, oldValues: r.before,
         newValues: { status: r.after.status, phases },
-        notes: r.demoted ? "عُدّلت مراحلُ خطّةٍ معتمَدة فعادت إلى الاعتماد"
-          : r.backToReview ? "عُدّلت مراحلُ خطّةٍ بدأت على بروتوكولٍ معتمَد — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
+        notes: r.backToReview ? "عُدّلت مراحلُ خطّةٍ تُنفَّذ — تبقى تُنفَّذ وعادت لمراجعة المشرف" : undefined });
       res.json({ status: r.after.status, demoted: r.demoted, backToReview: r.backToReview });
     } catch (e) { fail(res, e); }
   });
+
+  //  **مقاييسُ التقييم لهذه الخطّة** (§4.do — «تغيير المقاييس … مرونة عالية جداً») — كاتبو الخطط، بقاعدة مقاييس البروتوكول نفسِها (`parseMeasures`)؛
+  //  والبروتوكولُ لا يُمَسّ. و`DELETE` يعيدها إلى مقاييس بروتوكولها.
+  for (const method of ["put", "delete"] as const) {
+    app[method]("/api/physio/plans/:id/measures", isAuthenticated, async (req: any, res) => {
+      try {
+        const l = await loadPlan(req, res, idOf(req.params.id));
+        if (!l) return;
+        if (!canWritePlans(l.s)) return res.status(403).json({ error: "يعدّل الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+        const list = method === "delete" ? null : parseMeasures(req.body?.measures);
+        if (typeof list === "string") return res.status(400).json({ error: list });
+        const r = await store.setPlanMeasures(l.row.id, list, (cur, protocolStatus) => planStatusAfterEdit(cur, l.s, protocolStatus), actor(l.s));
+        await audit(req, l.s, { entityId: l.row.id, action: list === null ? "reset_measures" : "update_measures", branchId: l.row.branchId,
+          oldValues: r.before, newValues: { measuresOwn: r.after.measuresOwn, measures: list, status: r.after.status },
+          notes: list === null ? "عادت مقاييسُ الخطّة إلى مقاييس بروتوكولها" : "مقاييسُ هذه الخطّة لمريضها — البروتوكولُ لا يتغيّر" });
+        res.json({ measuresOwn: r.after.measuresOwn, measures: await store.effectiveMeasures(r.after), backToReview: r.backToReview });
+      } catch (e) { fail(res, e); }
+    });
+  }
 
   app.post("/api/physio/plans/:id/submit", isAuthenticated, async (req: any, res) => {
     try {
@@ -264,7 +282,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
-  //  **«اعتماد وبدء العلاج»** (§4.cz) — كاتبُ الخطّة يبدؤها بنفسه على بروتوكولٍ اعتمده المشرف؛ والمشرفُ يراجعها بعدها.
+  //  **«بدء العلاج»** (§4.cz، و§4.do) — كاتبُ الخطّة يبدؤها بنفسه على أيّ بروتوكول؛ والمشرفُ يُنبَّه ويراجعها بعدها.
   app.post("/api/physio/plans/:id/activate", isAuthenticated, async (req: any, res) => {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
@@ -273,7 +291,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const r = await store.activatePlan(l.row.id, actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "activate", branchId: l.row.branchId,
         oldValues: { status: r.before.status }, newValues: { status: r.after.status, reviewStatus: r.after.reviewStatus },
-        notes: "اعتمدها كاتبُها وبدأ العلاج — بروتوكولُها معتمَد" });
+        notes: "بدأها كاتبُها — والمشرفُ يُنبَّه ويراجعها بعدها" });
       res.json(r.after);
     } catch (e) { fail(res, e); }
   });

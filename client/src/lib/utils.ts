@@ -11,6 +11,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** يحرّك عنصراً خطوةً في القائمة — للترتيب بسهمَي «أعلى» و«أسفل» (أجهزةُ البروتوكول والخطّة — §4.do). */
+export function moveItem<T>(xs: T[], i: number, by: -1 | 1): T[] {
+  const j = i + by;
+  if (j < 0 || j >= xs.length) return xs;
+  const out = xs.slice();
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
+}
+
 const IRAQ_TIMEZONE = 'Asia/Baghdad';
 
 // Format date for display (day/month/year) - converts UTC to Iraq timezone

@@ -13,8 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
-import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
+import { arDigits, doseLine, mergeDose, PHASE_TEXT_FIELDS, sessionRangeLabel } from "@shared/physio_exercises";
 import { ExerciseDialog, ExerciseImage, type ExerciseCard } from "./ExerciseLibrary";
+import { diffAt, type PlanDiff } from "@shared/physio_plan_diff";
+import { DiffBadge, DiffFields, RemovedList } from "./PlanDiff";
 
 export interface PhaseExercise {
   exerciseId: number; sets: number | null; reps: number | null; holdSeconds: number | null; restSeconds: number | null;
@@ -32,23 +34,56 @@ const T = {
     title: "البرنامج على مراحل", phase: "المرحلة", goals: "الأهداف", education: "ما يُقال للمريض", exercises: "التمارين",
     criteria: "معيارُ الانتقال", notes: "ملاحظاتٌ للمعالج", none: "لا مراحلَ مفصّلة بعد لهذا البروتوكول.", edit: "تعديل المراحل",
     add: "إضافة المراحل", draftEx: "غير معتمد", details: "البطاقة", home: "للبيت",
+    replace: "⇄ استبدال…", remove: "إزالة", confirmRemove: "تأكيد الإزالة", undo: "تراجع", addEx: "+ إضافة تمرين لهذه المرحلة…",
   },
   en: {
     title: "Programme by phase", phase: "Phase", goals: "Goals", education: "What to tell the patient", exercises: "Exercises",
     criteria: "Progression criteria", notes: "Notes for the therapist", none: "No detailed phases for this protocol yet.", edit: "Edit phases",
     add: "Add phases", draftEx: "Not approved", details: "Card", home: "Home",
+    replace: "⇄ Replace…", remove: "Remove", confirmRemove: "Confirm removal", undo: "Cancel", addEx: "+ Add an exercise to this phase…",
   },
 } as const;
 
-export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived, lang, saveUrl, onSaved, title, editNote, currentSession }: {
+export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived, lang, saveUrl, onSaved, title, editNote, currentSession, diff }: {
   protocolId?: number; phases: Phase[]; canEdit: boolean; isArchived: boolean; lang: ProtocolLang;
   /** نسخةُ المريض (§4.dd): نقطةُ حفظ مراحل الخطّة، وما يُحدَّث بعدها، وعنوانُ القسم، وسطرٌ تحت المحرّر، ورقمُ الجلسة القادمة. */
   saveUrl?: string; onSaved?: () => void; title?: string; editNote?: string; currentSession?: number | null;
+  /** §4.do — ما تختلف به نسخةُ المريض عن البروتوكول: علامةٌ على المرحلة والتمرين، وما أُزيل تحتهما. */
+  diff?: PlanDiff | null;
 }) {
   const t = T[lang];
   const [open, setOpen] = useState<PhaseExercise | null>(null);
   const [editing, setEditing] = useState(false);
   const other = lang === "en" ? "rtl" : "ltr";
+  //  §4.do — **تحريرٌ مباشر من البطاقة** (المالك: «التمارين لا يمكن حذفها أو إبدالها أو إضافةُ تمرين») — إزالةٌ واستبدالٌ وإضافة بضغطة،
+  //  للمشرف في البروتوكول وللأخصائيّ في خطّة مريضه؛ يحفظ المراحلَ كلَّها بالنقطة نفسِها وبقاعدتها. والجرعةُ والنصوصُ من «تعديل المراحل».
+  const quick = canEdit && !isArchived;
+  const lib = useQuery<{ id: number; nameAr: string; nameEn: string; status: string }[]>({ queryKey: ["/api/physio/exercises"], enabled: quick });
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const quickSave = useMutation({
+    mutationFn: async (p: { body: PhaseBody[]; done: string }) =>
+      (await apiRequest("PUT", saveUrl ?? `/api/physio/protocols/${protocolId}/phases`, { phases: p.body })).json(),
+    onSuccess: (_r, p) => {
+      if (onSaved) onSaved(); else qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
+      toast({ title: p.done });
+      setConfirm(null);
+    },
+    onError: (e: any) => {
+      const raw = String(e?.message ?? "").replace(/^\d+:\s*/, "");
+      let msg = raw; try { msg = JSON.parse(raw)?.error ?? raw; } catch { /* نصٌّ خام */ }
+      toast({ title: "تعذّر الحفظ", description: msg, variant: "destructive" });
+    },
+  });
+  const libName = (id: number) => {
+    const e = (lib.data ?? []).find((x) => x.id === id);
+    return e ? (lang === "en" ? e.nameEn : e.nameAr) : `#${id}`;
+  };
+  const exName = (x: PhaseExercise) => (lang === "en" ? x.exercise.nameEn : x.exercise.nameAr);
+  const editPhase = (pos: number, fn: (xs: PhaseExerciseBody[]) => PhaseExerciseBody[], done: string) =>
+    quickSave.mutate({ body: phasesBody(phases, pos, fn), done });
+  const choicesFor = (ph: Phase) => (lib.data ?? []).filter((e) => !ph.exercises.some((x) => x.exerciseId === e.id));
   if (!phases.length && !canEdit) return null;
   const block = (ph: Phase, field: string, title: string, icon: React.ReactNode, tone: string) => {
     const v = localizedText(ph, field, lang);
@@ -91,8 +126,10 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
                   {lang === "en" ? `Next session (${currentSession}) — by the schedule` : `الجلسةُ القادمة (${arDigits(currentSession!)}) هنا بحسب الجدول`}
                 </Badge>
               )}
+              <DiffBadge item={diffAt(diff, `phase:${ph.position}`)} lang={lang} testId={`phase-${ph.position}-diff`} />
             </header>
             <div className="p-3 space-y-3">
+              <DiffFields item={diffAt(diff, `phase:${ph.position}`)} lang={lang} />
               {block(ph, "goals", t.goals, null, "bg-white")}
               {block(ph, "education", t.education, <MessageCircle className="w-4 h-4 text-sky-700" />, "border-sky-200 bg-sky-50")}
               {ph.exercises.length > 0 && (
@@ -102,36 +139,113 @@ export function ProtocolPhasesSection({ protocolId, phases, canEdit, isArchived,
                     {ph.exercises.map((x) => {
                       const e = x.exercise;
                       const note = localizedText(x, "note", lang).text;
+                      const ck = `${ph.position}:${x.exerciseId}`;
                       return (
-                        <button key={x.exerciseId} type="button" onClick={() => setOpen(x)}
+                        <div key={x.exerciseId} className="space-y-1 min-w-0">
+                        <button type="button" onClick={() => setOpen(x)}
                           className="text-start rounded-md border hover:border-primary p-2 flex gap-2 min-w-0 bg-white" data-testid={`phase-${ph.position}-exercise-${e.code}`}>
                           <div className="w-20 shrink-0">{e.images[0] ? <ExerciseImage img={e.images[0]} lang={lang} compact /> : <div className="h-16 rounded border border-dashed" />}</div>
                           <div className="min-w-0 space-y-0.5">
-                            <div className="font-medium text-sm leading-6">{lang === "en" ? e.nameEn : e.nameAr}</div>
+                            <div className="font-medium text-sm leading-6">{lang === "en" ? e.nameEn : e.nameAr}{" "}
+                              <DiffBadge item={diffAt(diff, `exercise:${ph.position}:${x.exerciseId}`)} lang={lang} testId={`phase-${ph.position}-exercise-${e.code}-diff`} /></div>
                             <div className="text-xs text-primary leading-5">{doseLine(mergeDose(e, x), e.perSide, lang)}</div>
                             {note && <div className="text-xs text-muted-foreground leading-5">{note}</div>}
+                            <DiffFields item={diffAt(diff, `exercise:${ph.position}:${x.exerciseId}`)} lang={lang} />
                             <div className="flex flex-wrap gap-1 text-[10px]">
                               {e.homeSuitable && <Badge variant="outline" className="gap-0.5 px-1.5 py-0"><Home className="w-3 h-3" />{t.home}</Badge>}
                               {e.status !== "approved" && <Badge variant="outline" className="px-1.5 py-0 border-amber-300 text-amber-800">{t.draftEx}</Badge>}
                             </div>
                           </div>
                         </button>
+                        {quick && (
+                          <div className="flex items-center gap-1 flex-wrap print:hidden" data-testid={`phase-${ph.position}-exercise-${e.code}-quick`}>
+                            <select className="h-7 rounded border bg-white px-1 text-[11px] max-w-[12rem]" value="" disabled={quickSave.isPending}
+                              data-testid={`phase-${ph.position}-exercise-${e.code}-replace`}
+                              onChange={(ev) => {
+                                const to = Number(ev.target.value);
+                                if (!to) return;
+                                editPhase(ph.position, (xs) => xs.map((y) => (y.exerciseId === x.exerciseId ? blankExercise(to) : y)),
+                                  lang === "en" ? `Replaced «${exName(x)}» with «${libName(to)}» — at its card's dose`
+                                    : `استُبدل «${exName(x)}» بـ«${libName(to)}» — بجرعة بطاقته، وتُعدَّل من «تعديل المراحل»`);
+                              }}>
+                              <option value="">{t.replace}</option>
+                              {choicesFor(ph).map((c) => <option key={c.id} value={c.id}>{lang === "en" ? c.nameEn : c.nameAr}</option>)}
+                            </select>
+                            {confirm === ck ? (
+                              <>
+                                <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" disabled={quickSave.isPending}
+                                  data-testid={`phase-${ph.position}-exercise-${e.code}-remove-confirm`}
+                                  onClick={() => editPhase(ph.position, (xs) => xs.filter((y) => y.exerciseId !== x.exerciseId),
+                                    lang === "en" ? `Removed «${exName(x)}» from phase ${ph.position}` : `أُزيل «${exName(x)}» من المرحلة ${arDigits(ph.position)}`)}>
+                                  {t.confirmRemove}
+                                </Button>
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setConfirm(null)}>{t.undo}</Button>
+                              </>
+                            ) : (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] text-red-700 gap-1" onClick={() => setConfirm(ck)}
+                                data-testid={`phase-${ph.position}-exercise-${e.code}-remove`}>
+                                <Trash2 className="w-3.5 h-3.5" /> {t.remove}
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        </div>
                       );
                     })}
                   </div>
                 </div>
               )}
+              {quick && (
+                <select className="h-8 w-full sm:w-80 rounded border bg-white px-2 text-xs print:hidden" value="" disabled={quickSave.isPending}
+                  data-testid={`phase-${ph.position}-add-exercise`}
+                  onChange={(ev) => {
+                    const to = Number(ev.target.value);
+                    if (!to) return;
+                    editPhase(ph.position, (xs) => [...xs, blankExercise(to)],
+                      lang === "en" ? `Added «${libName(to)}» to phase ${ph.position}` : `أُضيف «${libName(to)}» إلى المرحلة ${arDigits(ph.position)}`);
+                  }}>
+                  <option value="">{t.addEx}</option>
+                  {choicesFor(ph).map((c) => <option key={c.id} value={c.id}>{lang === "en" ? c.nameEn : c.nameAr}</option>)}
+                </select>
+              )}
+              <RemovedList items={(diff?.items ?? []).filter((i) => i.area === "exercise" && i.kind === "removed" && i.key.startsWith(`exercise:${ph.position}:`))}
+                lang={lang} testId={`phase-${ph.position}-removed`} />
               {block(ph, "progressCriteria", t.criteria, <CheckCircle2 className="w-4 h-4 text-emerald-700" />, "border-emerald-200 bg-emerald-50")}
               {block(ph, "notes", t.notes, <Stethoscope className="w-4 h-4 text-muted-foreground" />, "bg-muted/30")}
             </div>
           </section>
         );
       })}
+      <RemovedList items={(diff?.items ?? []).filter((i) => i.area === "phase" && i.kind === "removed")} lang={lang} testId="phases-removed" />
       {open && <ExerciseDialog exerciseId={open.exerciseId} lang={lang} phaseDose={open} phaseNote={open} onClose={() => setOpen(null)} />}
       {editing && <PhasesEditor saveUrl={saveUrl ?? `/api/physio/protocols/${protocolId}/phases`} onSaved={onSaved} note={editNote}
         initial={phases} onClose={() => setEditing(false)} />}
     </div>
   );
+}
+
+// ══ جسمُ الحفظ من المراحل المعروضة — للتحرير المباشر من البطاقة (§4.do) ════════════════════════════════
+type PhaseExerciseBody = {
+  exerciseId: number; sets: number | null; reps: number | null; holdSeconds: number | null; restSeconds: number | null;
+  doseNote: string | null; doseNoteEn: string | null; note: string | null; noteEn: string | null;
+};
+type PhaseBody = { nameAr: string; nameEn: string; sessionFrom: number | null; sessionTo: number | null; exercises: PhaseExerciseBody[]; [k: string]: unknown };
+/** تمرينٌ جديد في المرحلة — بجرعة بطاقته (الخاناتُ الفارغة تأخذها). */
+const blankExercise = (exerciseId: number): PhaseExerciseBody => ({
+  exerciseId, sets: null, reps: null, holdSeconds: null, restSeconds: null, doseNote: null, doseNoteEn: null, note: null, noteEn: null,
+});
+/** المراحلُ كلُّها كما هي، وتمارينُ المرحلة `pos` بعد `fn` — فلا يتغيّر غيرُ ما ضُغط. */
+export function phasesBody(phases: Phase[], pos: number, fn: (xs: PhaseExerciseBody[]) => PhaseExerciseBody[]): PhaseBody[] {
+  return phases.map((ph) => {
+    const exercises: PhaseExerciseBody[] = ph.exercises.map((x) => ({
+      exerciseId: x.exerciseId, sets: x.sets, reps: x.reps, holdSeconds: x.holdSeconds, restSeconds: x.restSeconds,
+      doseNote: x.doseNote, doseNoteEn: x.doseNoteEn, note: x.note, noteEn: x.noteEn,
+    }));
+    const body: PhaseBody = { nameAr: ph.nameAr, nameEn: ph.nameEn, sessionFrom: ph.sessionFrom ?? null, sessionTo: ph.sessionTo ?? null,
+      exercises: ph.position === pos ? fn(exercises) : exercises };
+    for (const f of PHASE_TEXT_FIELDS) { body[f] = ph[f] ?? null; body[`${f}En`] = ph[`${f}En`] ?? null; }
+    return body;
+  });
 }
 
 // ══ محرّرُ المراحل — المراحلُ كلُّها تُحفظ معاً ═════════════════════════════════════════════════════
@@ -176,9 +290,10 @@ function PhasesEditor({ saveUrl, onSaved, note, initial, onClose }: {
     mutationFn: async () => (await apiRequest("PUT", saveUrl, { phases })).json(),
     onSuccess: (r: any) => {
       if (onSaved) onSaved(); else qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
-      toast({ title: "حُفظت المراحل", description: r?.demoted
-        ? (onSaved ? "عادت الخطّةُ إلى الاعتماد ووصل التنبيه." : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام.")
-        : r?.backToReview ? "تبقى تُنفَّذ وعادت لمراجعة المشرف." : undefined });
+      //  الخطّةُ لا تعود إلى الاعتماد بتعديلٍ بعد §4.do — تبقى تُنفَّذ ويُنبَّه المشرف؛ والبروتوكولُ بقاعدته (`statusAfterEdit`).
+      toast({ title: "حُفظت المراحل", description: r?.demoted && !onSaved
+        ? "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام."
+        : r?.backToReview ? "تبقى تُنفَّذ، ونُبّه المشرفُ ليطّلع على التعديل." : undefined });
       onClose();
     },
     onError: (e: any) => {
@@ -221,6 +336,15 @@ function PhasesEditor({ saveUrl, onSaved, note, initial, onClose }: {
                   <div key={x.exerciseId} className="rounded border bg-white p-1.5 space-y-1">
                     <div className="flex items-center gap-1">
                       <span className="font-medium flex-1 min-w-0">{nameOf.get(x.exerciseId) ?? `#${x.exerciseId}`}</span>
+                      {/*  §4.do — استبدالُ التمرين بآخر من المكتبة في موضعه، بجرعة بطاقته. */}
+                      <select className="h-7 rounded border bg-white px-1 text-[11px] max-w-[9rem]" value="" aria-label="استبدال" data-testid={`phase-editor-${i + 1}-replace-${k}`}
+                        onChange={(e) => {
+                          const to = Number(e.target.value);
+                          if (to) setPhase(i, { exercises: ph.exercises.map((y, j) => (j === k ? { exerciseId: to, sets: "", reps: "", holdSeconds: "", restSeconds: "", doseNote: "", doseNoteEn: "", note: "", noteEn: "" } : y)) });
+                        }}>
+                        <option value="">⇄ استبدال</option>
+                        {(lib.data ?? []).filter((e) => !ph.exercises.some((y) => y.exerciseId === e.id)).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                      </select>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => move(i, k, -1)} aria-label="أعلى"><ArrowUp className="w-4 h-4" /></Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => move(i, k, 1)} aria-label="أسفل"><ArrowDown className="w-4 h-4" /></Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-700" onClick={() => setPhase(i, { exercises: ph.exercises.filter((_, j) => j !== k) })} aria-label="إزالة"><Trash2 className="w-4 h-4" /></Button>

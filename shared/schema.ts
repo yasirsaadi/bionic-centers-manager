@@ -3098,6 +3098,10 @@ export const physioPlans = pgTable("physio_plans", {
   reviewedBy: integer("reviewed_by").references(() => systemUsers.id),
   reviewedByName: text("reviewed_by_name"),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  //  ترحيل ١٣٢ (§4.do) — **مقاييسُ هذه الخطّة عُدّلت لمريضها** (`physio_plan_measures`)؛ وإلّا تتبع مقاييسَ بروتوكولها كما هي.
+  measuresOwn: boolean("measures_own").notNull().default(false),
+  //  ترحيل ١٣٢ (§4.do) — متى نُسخت الخطّةُ من بروتوكولها (إنشاءً أو تغييرَ نوع): تعديلُ البروتوكول بعده يُذكر بجانب الفروق.
+  protocolCopiedAt: timestamp("protocol_copied_at", { withTimezone: true }),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -3109,6 +3113,24 @@ export const physioPlans = pgTable("physio_plans", {
   byStatus: index("idx_physio_plans_status").on(t.status),
 }));
 export type PhysioPlan = typeof physioPlans.$inferSelect;
+
+/**
+ * **مقاييسُ التقييم لخطّة مريضٍ بعينه** (ترحيل ١٣٢، §4.do — طلبُ المالك: «تغيير المقاييس … مرونة عالية جداً»). تُكتب حين يعدّلها كاتبُ الخطّة
+ * لمريضه (`physio_plans.measures_own`)، وتُحذف حين يعيدها إلى مقاييس البروتوكول. والتقييماتُ لقطاتٌ بتعريف يومها فلا تتغيّر.
+ */
+export const physioPlanMeasures = pgTable("physio_plan_measures", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en").notNull(),
+  unitAr: text("unit_ar"),
+  unitEn: text("unit_en"),
+  minValue: numeric("min_value").notNull(),
+  maxValue: numeric("max_value").notNull(),
+  higherIsBetter: boolean("higher_is_better").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
+}, (t) => ({ uqPlanMeasure: unique("physio_plan_measures_plan_id_code_key").on(t.planId, t.code) }));
 
 export const physioPlanDevices = pgTable("physio_plan_devices", {
   id: serial("id").primaryKey(),

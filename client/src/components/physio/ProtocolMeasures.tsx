@@ -2,7 +2,7 @@
 // **اعتمادُها مستقلٌّ عن البروتوكول** — يكتبها كاتبو البروتوكولات، ويعتمدها المسؤولُ والمشرفُ العام، وتعديلُ غيرِ المعتمِد يعيدها مسوّدة.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, Plus, Ruler, Trash2 } from "lucide-react";
+import { CheckCircle2, Plus, RotateCcw, Ruler, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { GOALS_MEASURE, MEASURE_CATALOG, PAIN_MEASURE, type MeasureDef } from "@shared/physio_assessments";
+import { diffAt, type DiffItem, type PlanDiff } from "@shared/physio_plan_diff";
+import { DiffBadge, DiffFields, RemovedList } from "./PlanDiff";
 
 const errText = (e: any): string => {
   const raw = String(e?.message ?? "").replace(/^\d+:\s*/, "");
@@ -66,19 +68,82 @@ export function ProtocolMeasuresSection({ protocolId, measures, status, approved
           </tbody>
         </table>
       </div>
-      {editing && <MeasuresEditor protocolId={protocolId} initial={measures} canApprove={canApprove} onClose={() => setEditing(false)} />}
+      {editing && <MeasuresEditor saveUrl={`/api/physio/protocols/${protocolId}/measures`} initial={measures} onClose={() => setEditing(false)}
+        note={canApprove ? undefined : "وحفظُك يعيدها مسوّدةً حتى يعتمدها المشرفُ العام أو المسؤول."} />}
     </div>
   );
 }
 
-function MeasuresEditor({ protocolId, initial, canApprove, onClose }: { protocolId: number; initial: MeasureDef[]; canApprove: boolean; onClose: () => void }) {
+/**
+ * **مقاييسُ التقييم لهذه الخطّة** (ترحيل ١٣٢، §4.do — «تغيير المقاييس … مرونة عالية جداً»): ما يُقاس في تقييمات هذا المريض. تتبع بروتوكولَها
+ * حتى يعدّلها كاتبُ الخطّة لمريضه، فتصير لها ويُعلَّم ما اختلف؛ و«العودة إلى مقاييس البروتوكول» تُرجعها تتبعه. والبروتوكولُ لا يتغيّر.
+ */
+export function PlanMeasuresSection({ planId, measures, own, hasProtocol, canEdit, closed, lang, diff, showDiff, onSaved }: {
+  planId: number; measures: MeasureDef[]; own: boolean; hasProtocol: boolean; canEdit: boolean; closed: boolean; lang: "ar" | "en";
+  diff?: PlanDiff | null; showDiff: boolean; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const en = lang === "en";
+  const [editing, setEditing] = useState(false);
+  const reset = useMutation({
+    mutationFn: async () => (await apiRequest("DELETE", `/api/physio/plans/${planId}/measures`)).json(),
+    onSuccess: () => { toast({ title: "عادت مقاييسُ البروتوكول" }); onSaved(); },
+    onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+  });
+  const mark = (code: string): DiffItem | undefined => (showDiff ? diffAt(diff, `measure:${code}`) : undefined);
+  const removed = showDiff ? (diff?.items ?? []).filter((i) => i.area === "measure" && i.kind === "removed") : [];
+  return (
+    <div className="space-y-2" data-testid="plan-measures">
+      <div className="flex items-center gap-2 flex-wrap">
+        <h3 className="font-bold text-sm flex items-center gap-1"><Ruler className="w-4 h-4" /> {en ? "Outcome measures — this plan" : "مقاييسُ التقييم — لهذه الخطّة"}</h3>
+        {hasProtocol && (own
+          ? <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-300" data-testid="plan-measures-own">{en ? "Edited for this patient" : "معدَّلة لهذا المريض"}</Badge>
+          : <Badge variant="outline" className="bg-slate-50 text-slate-700" data-testid="plan-measures-follow">{en ? "From the protocol" : "من البروتوكول"}</Badge>)}
+        {canEdit && !closed && (
+          <Button size="sm" variant="outline" className="print:hidden" onClick={() => setEditing(true)} data-testid="button-edit-plan-measures">
+            {en ? "Edit for this patient" : "تعديل لهذا المريض"}
+          </Button>
+        )}
+        {canEdit && !closed && own && hasProtocol && (
+          <Button size="sm" variant="ghost" className="gap-1 print:hidden" disabled={reset.isPending} onClick={() => reset.mutate()} data-testid="button-reset-plan-measures">
+            <RotateCcw className="w-4 h-4" /> {en ? "Back to the protocol's measures" : "العودة إلى مقاييس البروتوكول"}
+          </Button>
+        )}
+      </div>
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-sm">
+          <tbody>
+            {[...measures, PAIN_MEASURE, GOALS_MEASURE].map((m) => (
+              <tr key={m.code} className="border-t first:border-t-0 align-top" data-testid={`plan-measure-${m.code}`}>
+                <td className="p-2 font-medium">{en ? m.nameEn : m.nameAr} <DiffBadge item={mark(m.code)} lang={lang} testId={`plan-measure-diff-${m.code}`} />
+                  {(m.code === PAIN_MEASURE.code || m.code === GOALS_MEASURE.code) && <span className="text-[11px] text-muted-foreground"> — {en ? "every patient" : "لكلّ مريض"}</span>}
+                  <DiffFields item={mark(m.code)} lang={lang} /></td>
+                <td className="p-2 text-xs whitespace-nowrap"><MeasureRange m={m} en={en} /></td>
+                <td className="p-2 text-xs whitespace-nowrap">{directionLabel(m, en)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <RemovedList items={removed} lang={lang} testId="plan-measures-removed" />
+      {editing && (
+        <MeasuresEditor saveUrl={`/api/physio/plans/${planId}/measures`} initial={measures} onClose={() => setEditing(false)} onSaved={onSaved}
+          note="لهذا المريض وحده — مقاييسُ البروتوكول لا تتغيّر. وتعديلُ خطّةٍ تُنفَّذ يُبقيها تُنفَّذ ويُنبَّه المشرف." />
+      )}
+    </div>
+  );
+}
+
+function MeasuresEditor({ saveUrl, initial, note, onClose, onSaved }: {
+  saveUrl: string; initial: MeasureDef[]; note?: string; onClose: () => void; onSaved?: () => void;
+}) {
   const { toast } = useToast();
   const [rows, setRows] = useState<MeasureDef[]>(initial.map((m) => ({ ...m })));
   const [pick, setPick] = useState("");
   const set = (i: number, patch: Partial<MeasureDef>) => setRows((p) => p.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("PUT", `/api/physio/protocols/${protocolId}/measures`, { measures: rows })).json(),
-    onSuccess: (r: any) => { toast({ title: "حُفظت المقاييس", description: r.demoted ? "عادت مسوّدةً بانتظار الاعتماد" : undefined }); onClose(); },
+    mutationFn: async () => (await apiRequest("PUT", saveUrl, { measures: rows })).json(),
+    onSuccess: (r: any) => { toast({ title: "حُفظت المقاييس", description: r.demoted ? "عادت مسوّدةً بانتظار الاعتماد" : undefined }); onSaved?.(); onClose(); },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
   });
   const available = MEASURE_CATALOG.filter((c) => !rows.some((r) => r.code === c.code));
@@ -88,7 +153,7 @@ function MeasuresEditor({ protocolId, initial, canApprove, onClose }: { protocol
         <DialogHeader><DialogTitle>مقاييسُ التقييم</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground">
           الألمُ وتحقّقُ الأهداف لكلّ مريضٍ دائماً، فلا تُضاف هنا. والتقييماتُ السابقة لا تتغيّر — كلٌّ محفوظٌ بتعريفه يومَه.
-          {!canApprove && " وحفظُك يعيدها مسوّدةً حتى يعتمدها المشرفُ العام أو المسؤول."}
+          {note ? ` ${note}` : ""}
         </p>
         <div className="space-y-2">
           {rows.map((m, i) => (
