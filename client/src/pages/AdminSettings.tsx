@@ -81,6 +81,7 @@ import {
 import { Pencil, Download } from "lucide-react";
 import { userEditPatch } from "./user_edit_patch";
 import StaffNotificationsTab from "@/components/admin/StaffNotificationsTab";
+import StaffGreetingsCard from "@/components/admin/StaffGreetingsCard";
 import { coveredBy, normalizeRoles, rolesOf, type UserRoleValue } from "@shared/user_roles";
 
 interface BranchWithDetails extends Branch {
@@ -3318,7 +3319,8 @@ export default function AdminSettings() {
         </div>
       </div>
 
-      <Tabs defaultValue="users" className="w-full">
+      {/*  `?tab=` يفتح تبويباً بعينه — رابطُ تذكير عبارات الترحيب (§4.dp) يفتح «تنبيهات الموظفين». */}
+      <Tabs defaultValue={(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab")) || "users"} className="w-full">
         {/*  ══ شريطُ تبويباتٍ يلتفّ (٢٠٢٦-٠٩-١٩) — شكلٌ لا وظيفة ══════════
             كان `grid-cols-9` على الشاشة المتوسّطة: تسعةُ أعمدةٍ ضيّقة تُقصّ
             عناوينَها، و`grid-cols-4` تحتها. فصار `flex-wrap` بارتفاعٍ حرّ
@@ -3855,6 +3857,7 @@ export default function AdminSettings() {
         </TabsContent>
 
         <TabsContent value="staff-notifications" className="space-y-6">
+          <StaffGreetingsCard />
           <StaffNotificationsTab />
         </TabsContent>
 

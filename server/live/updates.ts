@@ -38,6 +38,8 @@ const BROADCAST_EXEMPT: RegExp[] = [
   /^\/api\/ai\/(categorize-expense|monthly-report|survey-reply|smart-audit|explain-anomaly)$/,
   /^\/api\/patient-card\/me$/,
   /^\/api\/live\//,
+  //  «حسناً» على تحيّة اليوم (§4.dp) — يكتب يومَ صاحبه وحده، ولا يُعرض في شاشة أحد.
+  /^\/api\/greeting\/seen$/,
 ];
 
 /** **أهذه كتابةٌ تستحقّ إشارةً للجميع؟** — دالّةٌ خالصة. */
