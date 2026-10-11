@@ -53,6 +53,25 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "log-roll-1": { file: "log-roll-1.webp" },
   "log-roll-2": { file: "log-roll-2.webp" },
   "standing-extension-1": { file: "standing-extension-1.webp" },
+  //  **الدفعةُ الثالثة — صورُ «ألم الرقبة الميكانيكيّ»: خمسَ عشرةَ من سبعَ عشرة** (٢٠٢٦-١٠-١١، §4.dh): المجلّدُ نفسُه. «الدوران» صفُّه من لوحةٍ بستّة
+  //  صفوف و«الميل الجانبيّ» لوحتُه من عشر؛ و«السحب للخلف» الوضعُ الصحيح وحده؛ و«تثبيت اللوحين» لوحتا «للأسفل» و«للخلف» من ستّ؛ و«السناغ» صورتا
+  //  الدوران (٣ و٤) بلا رقميهما؛ و«الرفع الجانبيّ للوح» بلا عنوانه؛ و«الانقباض الثابت» ملفٌّ واحد لخانتين: الجبهةُ للأولى والجانبان للثانية؛
+  //  و«التجديف» الشكلُ الكامل وحده. **و«نهايةُ التجديف» و«Y منبطحاً» لم تصلا** — الملفّان أظهرا البدايةَ و«T» — فتبقيان «صورة منتظرة».
+  "band-row-1": { file: "band-row-1.webp" },
+  "cervical-isometrics-1": { file: "cervical-isometrics-1.webp" },
+  "cervical-isometrics-2": { file: "cervical-isometrics-2.webp" },
+  "cervical-retraction-1": { file: "cervical-retraction-1.webp", credit: "Shutterstock" },
+  "chin-tuck-supine-1": { file: "chin-tuck-supine-1.webp" },
+  "chin-tuck-supine-2": { file: "chin-tuck-supine-2.webp" },
+  "deep-neck-flexor-endurance-1": { file: "deep-neck-flexor-endurance-1.webp" },
+  "levator-scapulae-stretch-1": { file: "levator-scapulae-stretch-1.webp", credit: "BackIntelligence" },
+  "neck-arom-1": { file: "neck-arom-1.webp", credit: "@elite.physio.in" },
+  "neck-arom-2": { file: "neck-arom-2.webp" },
+  "prone-y-t-1": { file: "prone-y-t-1.webp" },
+  "scapular-setting-1": { file: "scapular-setting-1.webp" },
+  "self-snag-rotation-1": { file: "self-snag-rotation-1.webp" },
+  "thoracic-extension-towel-1": { file: "thoracic-extension-towel-1.webp" },
+  "upper-trap-stretch-1": { file: "upper-trap-stretch-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

@@ -340,8 +340,12 @@ async function main() {
     const misplaced = CONTENT.flatMap((c) => c.EXERCISES.flatMap((e) => e.images.map((i) => i.key)))
       .filter((k) => Boolean(EXERCISE_IMAGE_FILES[k]) === keys.includes(k));
     const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها**",
-      [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])], [200, [], 6, []]);
+    //  والثالثُ (الرقبة): وصلت خمسَ عشرةَ من سبعَ عشرة — «نهاية التجديف» و«Y» لم تُظهرهما ملفّاتُ المالك (§4.dh التكملة)، فتبقيان مطلوبتين.
+    const neckKeys = m125.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث خمسَ عشرةَ والباقيتان مطلوبتان**",
+      [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
+        neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ["band-row-2", "prone-y-t-2"].filter((k) => !keys.includes(k))],
+      [200, [], 6, [], 17, ["band-row-2", "prone-y-t-2"], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
