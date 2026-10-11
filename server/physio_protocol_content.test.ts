@@ -1,4 +1,4 @@
-// **البروتوكولاتُ المفصَّلة — المحتوى كلُّه بقواعد الشاشة، والقالبُ نفسُه لكلّ بروتوكول** (ترحيلات ١١٩ و١٢٤ و١٢٥، §4.cx · §4.dd · §4.dg · §4.dh).
+// **البروتوكولاتُ المفصَّلة — المحتوى كلُّه بقواعد الشاشة، والقالبُ نفسُه لكلّ بروتوكول** (ترحيلات ١١٩ و١٢٤ و١٢٥ و١٢٦ و١٢٨، §4.cx · §4.dd · §4.dg · §4.dh).
 // `npm run test:physio-protocol-content` — حيٌّ على النقاط الحقيقية (منفذ ٧٠٠٦، فرع ٨٩٥٥، مستخدمون ٨٩٥٦–٨٩٥٩). يحرس:
 //   ق — المحتوى قبل أن يصل القاعدة، **لكلّ ترحيل محتوى في `CONTENT`** (البروتوكولُ القادم يُضاف سطراً هنا فتحرسه القواعدُ نفسُها):
 //       كلُّ بطاقةٍ ومرحلةٍ يحفظها المحرّرُ كما هي بلا قصّ، كاملةً بالنسختين؛ رموزُ الصور فريدةٌ في المكتبة كلّها؛ كلُّ تمرينٍ في المراحل بطاقةٌ موجودة؛
@@ -31,6 +31,7 @@ import * as m119 from "./migrations/119_physio_lbp_chronic_detail";
 import * as m124 from "./migrations/124_physio_lbp_acute_detail";
 import * as m125 from "./migrations/125_physio_neck_pain_detail";
 import * as m126 from "./migrations/126_physio_knee_oa_detail";
+import * as m128 from "./migrations/128_physio_subacromial_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -48,6 +49,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m124.name, sql: m124.sql, EXERCISES: m124.EXERCISES, PROTOCOL: m124.PROTOCOL, template: true },
   { name: m125.name, sql: m125.sql, EXERCISES: m125.EXERCISES, PROTOCOL: m125.PROTOCOL, template: true },
   { name: m126.name, sql: m126.sql, EXERCISES: m126.EXERCISES, PROTOCOL: m126.PROTOCOL, template: true },
+  { name: m128.name, sql: m128.sql, EXERCISES: m128.EXERCISES, PROTOCOL: m128.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -347,11 +349,14 @@ async function main() {
     //  والرابعُ (الركبة): وصلت اثنتا عشرةَ من أربعَ عشرة — «القرفصاءُ على الحائط» وصلت أعمقَ من بطاقتها (فخذان موازيان للأرض)، و«الدرّاجةُ» دوّاساتٌ
     //  على كرسيّ والركبةُ مثنيّةٌ كثيراً وهو ما تنهى عنه بطاقتُها (§4.di التكملة) — فتبقيان مطلوبتين.
     const kneeKeys = m126.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، والباقي مطلوب**",
+    //  والخامسُ (الكتف): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها، كلُّها مطلوبة — وبطاقاتُ الرقبة الأربع التي يستعملها بصورها هي، فلا تُطلب ثانيةً (§4.dk).
+    const shoulderKeys = m128.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة مطلوبة، والباقي مطلوب**",
       [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
         neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), kneeKeys.length, kneeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
-        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1"].filter((k) => !keys.includes(k))],
-      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], []]);
+        shoulderKeys.length, shoulderKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
+        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys].filter((k) => !keys.includes(k))],
+      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
