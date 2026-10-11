@@ -14,12 +14,19 @@ import { useBranchSession } from "@/components/BranchGate";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
+import { isScheduled, scheduleOffNote, scheduleState } from "@shared/physio_device_settings";
 
-interface PlanDevice { deviceId: number; minutes: number | null; code?: string; nameAr?: string; parameters?: string | null; centreUse?: "core" | "adjunct" }
+interface PlanDevice {
+  deviceId: number; minutes: number | null; code?: string; nameAr?: string; parameters?: string | null; centreUse?: "core" | "adjunct";
+  /** §4.dn — الموعدُ الدوريّ. */
+  everyDays?: number | null; times?: number | null;
+}
 interface PlanLite {
   id: number; patientId: number; titleAr: string; devices: PlanDevice[]; patient?: { name: string; code: string | null } | null;
   /** دورُ المساعد في هذه الجلسة (ترحيل ١٢٢) — يحسبه الخادمُ بالقاعدة نفسِها التي يحكم بها الحفظ. */
   rotation?: { sessionsSoFar: number; turnDeviceId: number | null };
+  /** §4.dn — أيّامُ تنفيذ كلّ بندٍ دوريّ؛ منها يُحسب هل حان موعدُه بتاريخ الجلسة — بالقاعدة نفسِها التي يحكم بها الحفظ. */
+  scheduleHistory?: Record<number, string[]>;
 }
 interface Line { deviceId: number; done: boolean; minutes: string; note: string }
 
@@ -46,8 +53,12 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
     if (!q.data) return;
     //  **المساعدُ يتناوب** (ترحيل ١٢٢، §4.cx): الأساسيُّ مُعلَّمٌ «نُفّذ»، والمساعدُ الذي دورُه هذه الجلسة كذلك، والباقي «ليس دورَه» بلا سببٍ يُطلب.
     const turn = q.data.rotation?.turnDeviceId ?? null;
+    const today = baghdadTodayYmd();
     setLines(q.data.devices.map((d) => {
-      const offTurn = d.centreUse === "adjunct" && d.deviceId !== turn;
+      //  §4.dn — البندُ الدوريّ مُعلَّمٌ «نُفّذ» حين يحين موعدُه وحده.
+      const offTurn = isScheduled(d)
+        ? !scheduleState(d, (q.data!.scheduleHistory?.[d.deviceId] ?? []).filter((x) => x <= today), today).due
+        : d.centreUse === "adjunct" && d.deviceId !== turn;
       return { deviceId: d.deviceId, done: !offTurn && (d.code !== DRY_NEEDLING_DEVICE_CODE || canNeedle),
         minutes: d.minutes == null ? "" : String(d.minutes), note: "" };
     }));
@@ -74,7 +85,13 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   });
   const dateVerdict = checkVisitDate(date, isAdmin);
   const turnId = q.data?.rotation?.turnDeviceId ?? null;
-  const isOffTurn = (deviceId: number) => q.data?.devices.find((d) => d.deviceId === deviceId)?.centreUse === "adjunct" && deviceId !== turnId;
+  const stateOf = (d: PlanDevice) => scheduleState(d, (q.data?.scheduleHistory?.[d.deviceId] ?? []).filter((x) => x <= date), date);
+  const isOffTurn = (deviceId: number) => {
+    const d = q.data?.devices.find((x) => x.deviceId === deviceId);
+    if (!d) return false;
+    if (isScheduled(d)) return !stateOf(d).due;
+    return d.centreUse === "adjunct" && deviceId !== turnId;
+  };
   const missingReason = lines.some((l) => !l.done && !isOffTurn(l.deviceId) && !l.note.trim());
   const noneDone = !lines.some((l) => l.done);
   return (
@@ -95,7 +112,15 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
                     <Checkbox checked={l.done} disabled={needleLocked} onCheckedChange={(v) => set(i, { done: v === true })} data-testid={`exec-done-${d.deviceId}`} />
                     {d.nameAr} <span className="text-xs text-muted-foreground">({d.minutes ?? "—"} د في الخطّة)</span>
                   </label>
-                  {d.centreUse === "adjunct" && (
+                  {isScheduled(d) && (() => {
+                    const st = stateOf(d);
+                    return (
+                      <p className={`text-[11px] ${st.due ? "text-sky-800 font-medium" : "text-muted-foreground"}`} data-testid={`exec-schedule-${d.deviceId}`}>
+                        {st.due ? `موعدٌ دوريّ — يحين هذه الجلسة (المرّة ${st.done + 1}${d.times ? ` من ${d.times}` : ""})` : `${scheduleOffNote(st)} (يُنفَّذ إن أردت)`}
+                      </p>
+                    );
+                  })()}
+                  {d.centreUse === "adjunct" && !isScheduled(d) && (
                     <p className={`text-[11px] ${d.deviceId === turnId ? "text-violet-800 font-medium" : "text-muted-foreground"}`} data-testid={`exec-turn-${d.deviceId}`}>
                       {d.deviceId === turnId ? "مساعد — دورُه هذه الجلسة" : `${ADJUNCT_OFF_TURN_NOTE} (يُنفَّذ إن أردت)`}
                     </p>

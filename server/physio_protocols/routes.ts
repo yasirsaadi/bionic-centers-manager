@@ -21,6 +21,7 @@ import {
   isProtocolCategory, doseError, normalizeDose, normalizeReferences, statusAfterEdit, TOTAL_SESSIONS_MAX, type ProtocolStatus,
 } from "@shared/physio_protocols";
 import * as store from "./store";
+import { normalizeSchedule, settingsBlockedMessage } from "@shared/physio_device_settings";
 import { canApproveMeasures, canEditMeasures, parseMeasures } from "@shared/physio_assessments";
 import { registerPhysioExerciseRoutes } from "./exercise_routes";
 
@@ -73,8 +74,12 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
     //  خاناتُ الجهاز (§4.cx) — كائنٌ بقيمٍ قصيرة؛ ومطابقتُها لرمز الجهاز في `assertDevices`.
     const params = d?.params ?? {};
     if (typeof params !== "object" || Array.isArray(params)) return "معاملاتُ الجهاز غير صالحة";
+    //  §4.dn — الموعدُ الدوريّ (كلّ كم يوماً وكم مرّة)؛ الغائبُ (شاشةٌ أقدم) بلا موعد.
+    const schedule = normalizeSchedule(d?.everyDays, d?.times);
+    if (typeof schedule === "string") return schedule;
     devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000),
-      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params, centreUse: isCentreUse(d?.centreUse) ? d.centreUse : null });
+      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params, centreUse: isCentreUse(d?.centreUse) ? d.centreUse : null,
+      ...schedule });
   }
   return {
     code, titleAr, titleEn, category: b.category, ageGroup: b.ageGroup,
@@ -173,8 +178,10 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       const r = await store.updateProtocol(id, input, next, actor(s));
       await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "update",
         oldValues: r.before, newValues: { ...r.after, devices: input.devices },
-        notes: r.demoted ? "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار الاعتماد" : undefined });
-      res.json({ ...r.after, demoted: r.demoted });
+        notes: r.demoted
+          ? (r.settingsBlockers.length ? `عاد مسوّدةً: ${settingsBlockedMessage(r.settingsBlockers)}` : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار الاعتماد")
+          : undefined });
+      res.json({ ...r.after, demoted: r.demoted, settingsBlockers: r.settingsBlockers });
     } catch (e) { fail(res, e); }
   });
 

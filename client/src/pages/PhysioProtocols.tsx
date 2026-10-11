@@ -21,6 +21,7 @@ import { ProtocolMeasuresSection } from "@/components/physio/ProtocolMeasures";
 import { ExerciseLibraryTab, MissingImagesTab } from "@/components/physio/ExerciseLibrary";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
 import { DEVICE_PARAM_FIELDS, DEVICE_PARAM_LABELS, deviceParamsLine } from "@shared/physio_exercises";
+import { missingDeviceSettings, requiredSettingKeys, scheduleLabel, type SettingsBlocker } from "@shared/physio_device_settings";
 import type { MeasureDef } from "@shared/physio_assessments";
 import { useBranchSession } from "@/components/BranchGate";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
@@ -37,6 +38,8 @@ import {
 interface ListRow {
   id: number; code: string; titleAr: string; titleEn: string; category: ProtocolCategory; ageGroup: AgeGroup;
   status: "draft" | "approved"; isArchived: boolean; deviceCount: number; recommendedCount: number;
+  /** §4.dn — أجهزةٌ مستعمَلةٌ ناقصةُ الإعدادات (لا يُعتمد قبلها). */
+  settingsMissing?: number;
   /** مع البحث (§4.dc): أين وُجدت الكلمات ومقتطفٌ حولها. */
   match?: ProtocolMatch;
 }
@@ -61,6 +64,8 @@ interface DeviceLine {
   params?: Record<string, string>;
   //  ترحيل ١٢٢ — «استعمالُ المركز» فعّالاً (المكتوبُ أو المشتقّ)، وهل كُتب.
   centreUse?: CentreUse; centreUseSet?: boolean;
+  //  §4.dn — الموعدُ الدوريّ: كلّ كم يوماً وكم مرّة.
+  everyDays?: number | null; times?: number | null;
   code?: string; nameAr?: string; nameEn?: string; availableBranchIds?: number[];
 }
 interface Protocol {
@@ -78,6 +83,8 @@ interface Protocol {
   canEdit: boolean; canApprove: boolean;
   //  §4.cp — مقاييسُ التقييم واعتمادُها المستقلّ.
   measures?: MeasureDef[]; measuresStatus?: "draft" | "approved"; measuresApprovedByName?: string | null;
+  /** §4.dn — موانعُ الاعتماد: كلُّ جهازٍ مستعمَلٍ ناقصِ الإعدادات بخاناته. */
+  settingsBlockers?: SettingsBlocker[];
   canEditMeasures?: boolean; canApproveMeasures?: boolean;
   //  §4.cx — البرنامجُ على مراحل بتمارينه وبطاقاتها.
   phases?: Phase[];
@@ -251,6 +258,10 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
                     <Badge variant="outline">{L.age[r.ageGroup]}</Badge>
                     <Badge className={r.status === "approved" ? "bg-emerald-600" : "bg-amber-500"}>{lang === "en" ? (r.status === "approved" ? "Approved" : "Draft") : (r.status === "approved" ? "معتمَد" : "مسوّدة")}</Badge>
                     <span className="text-muted-foreground">{T[lang].deviceCount(r.deviceCount, r.recommendedCount)}</span>
+                    {(r.settingsMissing ?? 0) > 0 && (
+                      <Badge className="bg-red-600" data-testid={`protocol-settings-missing-${r.id}`}>
+                        {lang === "en" ? "Device settings needed before approval" : "إعداداتُ جهازٍ قبل الاعتماد"}</Badge>
+                    )}
                   </div>
                   {/*  **«وُجدت في»** — مكانُ الكلمة ومقتطفٌ حولها، فيُعرف لماذا ظهر البروتوكول قبل فتحه. */}
                   {r.match && r.match.hits.length > 0 && (
@@ -334,7 +345,9 @@ export function PhysioProtocolDetail() {
         </div>
         <div className="flex flex-wrap gap-2" dir="rtl">
           {p.canApprove && p.status === "draft" && !p.isArchived && (
-            <Button className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending} onClick={() => act.mutate(`/api/physio/protocols/${p.id}/approve`)} data-testid="protocol-approve">
+            <Button className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending || (p.settingsBlockers?.length ?? 0) > 0}
+              title={(p.settingsBlockers?.length ?? 0) > 0 ? "املأ إعداداتِ الجهاز أوّلاً" : undefined}
+              onClick={() => act.mutate(`/api/physio/protocols/${p.id}/approve`)} data-testid="protocol-approve">
               <CheckCircle2 className="w-4 h-4" /> اعتماد
             </Button>
           )}
@@ -350,6 +363,20 @@ export function PhysioProtocolDetail() {
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm flex gap-2" data-testid="protocol-draft-note">
           <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
           <span>{t.draft}</span>
+        </div>
+      )}
+
+      {/*  §4.dn — **تنبيهُ المشرف قبل الاعتماد**: إعداداتُ الجهاز من جهاز المركز (الموجاتُ الصادمة: النوعُ والشدّةُ والتردّدُ والنبضات). */}
+      {(p.settingsBlockers?.length ?? 0) > 0 && !p.isArchived && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm space-y-1" dir="rtl" data-testid="protocol-settings-blockers">
+          <div className="flex gap-2 font-semibold text-red-800"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            لا يُعتمد هذا البروتوكول قبل إعدادات الجهاز من جهاز المركز</div>
+          {p.settingsBlockers!.map((b) => (
+            <p key={b.code} data-testid={`protocol-settings-blocker-${b.code}`}><b>{b.nameAr}</b>: {b.missing.map((m) => m.ar).join("، ")}</p>
+          ))}
+          <p className="text-xs text-red-900/80">{p.canEdit
+            ? "املأها من «تعديل» في خانات الجهاز المعلَّمة بنجمة، ثمّ اعتمد — والمكتوبُ في البروتوكول (الموضعُ والجرعةُ في التجارب والموانع) دليلٌ لك."
+            : "يملؤها المشرفُ العام من جهاز المركز قبل الاعتماد."}</p>
         </div>
       )}
 
@@ -402,6 +429,15 @@ export function PhysioProtocolDetail() {
                         )}
                         <span dir={params.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{params.text ?? (d.code && deviceParamsLine(d.code, d.params, lang) ? "" : "—")}</span>
                         {note.text && <div className="text-xs text-muted-foreground mt-1" dir={note.fallback ? (lang === "en" ? "rtl" : "ltr") : undefined}>{note.text}</div>}
+                        {scheduleLabel(d, lang) && (
+                          <div className="text-xs font-medium text-sky-800 mt-1" data-testid={`protocol-device-schedule-${d.code}`}>
+                            {lang === "en" ? "Scheduled: " : "موعدٌ دوريّ: "}{scheduleLabel(d, lang)}</div>
+                        )}
+                        {missingDeviceSettings({ code: d.code, params: d.params, centreUse: d.centreUse }).length > 0 && (
+                          <div className="text-xs font-semibold text-red-700 mt-1" data-testid={`protocol-device-missing-${d.code}`}>
+                            {lang === "en" ? "Needed before approval: " : "مطلوبٌ قبل الاعتماد: "}
+                            {missingDeviceSettings({ code: d.code, params: d.params, centreUse: d.centreUse }).map((m) => (lang === "en" ? m.en : m.ar)).join(lang === "en" ? ", " : "، ")}</div>
+                        )}
                       </td>
                       <td className="p-2">{d.minutes ?? "—"}</td>
                       <td className="p-2 text-xs">
@@ -497,7 +533,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
     deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
     parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null, params: d.params ?? {},
     //  الفعّالُ يُحفَظ مكتوباً: ما يراه سليم في الصفحة هو ما يُكتب.
-    centreUse: d.centreUse })));
+    centreUse: d.centreUse, everyDays: d.everyDays ?? null, times: d.times ?? null })));
   const [refs, setRefs] = useState<ProtocolReference[]>(() => initial?.references ?? []);
   const set = (k: keyof typeof f) => (e: any) => setF((p) => ({ ...p, [k]: typeof e === "string" ? e : e.target.value }));
   const unused = useMemo(() => (matrix.data?.devices ?? []).filter((d) => !lines.some((l) => l.deviceId === d.id)), [matrix.data, lines]);
@@ -519,7 +555,11 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
     },
     onSuccess: (row: any) => {
       qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
-      toast({ title: "حُفظ", description: row?.demoted ? "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام." : undefined });
+      const blockers: SettingsBlocker[] = row?.settingsBlockers ?? [];
+      const missingText = blockers.map((b) => `${b.nameAr}: ${b.missing.map((m) => m.ar).join("، ")}`).join(" · ");
+      toast({ title: "حُفظ", description: row?.demoted
+        ? (blockers.length ? `عاد مسوّدةً — لا يبقى معتمَداً قبل إعدادات الجهاز (${missingText}).` : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام.")
+        : blockers.length ? `لا يُعتمد قبل إعدادات الجهاز: ${missingText}` : undefined });
       onClose();
       if (!initial && row?.id) navigate(`/physio/protocols/${row.id}`);
     },
@@ -563,7 +603,9 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
 
           <div className="space-y-2 rounded-md border p-2">
             <p className="font-semibold">الأجهزة: استعمالُ المركز ودرجةُ الدليل</p>
-            <p className="text-[11px] text-muted-foreground">«استعمالُ المركز» وحده يحكم خطّةَ المريض: الأساسيُّ في كلّ جلسة، والمساعدُ يتناوب (جهازٌ مساعدٌ واحد في كلّ جلسة)، و«لا يُستخدم» لا يدخل الخطّة. ودرجةُ الدليل للمعرفة ولا تمنع شيئاً.</p>
+            <p className="text-[11px] text-muted-foreground">«استعمالُ المركز» وحده يحكم خطّةَ المريض: الأساسيُّ في كلّ جلسة، والمساعدُ يتناوب (جهازٌ مساعدٌ واحد في كلّ جلسة)، و«لا يُستخدم» لا يدخل الخطّة. ودرجةُ الدليل للمعرفة ولا تمنع شيئاً.
+              و«الموعدُ الدوريّ» (كلّ كم يوماً وكم مرّة) يُخرج الجهازَ من «كلّ جلسة» ومن التناوب فيُطلب حين يحين موعدُه — كالموجات الصادمة أسبوعياً.
+              والخاناتُ بنجمةٍ حمراء إعداداتٌ من جهاز المركز لا يُعتمد البروتوكولُ قبلها.</p>
             {lines.map((l, i) => (
               <div key={l.deviceId} className="grid gap-2 sm:grid-cols-[1fr_9rem_9rem_5rem_auto] items-start border-b pb-2" data-testid={`pf-device-${i}`}>
                 <div><div className="font-medium">{nameOf(l.deviceId)?.nameAr} <span className="text-xs text-muted-foreground" dir="ltr">{nameOf(l.deviceId)?.nameEn}</span></div>
@@ -573,15 +615,33 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
                     <Input placeholder="ملاحظة" value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value || null })} />
                     <Input dir="ltr" placeholder="Note" value={l.noteEn ?? ""} onChange={(e) => setLine(i, { noteEn: e.target.value || null })} />
                   </div>
-                  {(DEVICE_PARAM_FIELDS[nameOf(l.deviceId)?.code ?? ""] ?? []).length > 0 && (
-                    <div className="grid gap-1 grid-cols-2 sm:grid-cols-3 mt-1" data-testid={`pf-device-${i}-params`}>
-                      {(DEVICE_PARAM_FIELDS[nameOf(l.deviceId)?.code ?? ""] ?? []).map((k) => (
-                        <label key={k} className="grid gap-0.5 text-xs">{DEVICE_PARAM_LABELS[k].ar}{DEVICE_PARAM_LABELS[k].unit ? ` (${DEVICE_PARAM_LABELS[k].unit})` : ""}
-                          <Input dir="ltr" value={l.params?.[k] ?? ""} onChange={(e) => setLine(i, { params: { ...(l.params ?? {}), [k]: e.target.value } })} />
-                        </label>
-                      ))}
-                    </div>
-                  )}</div>
+                  {(DEVICE_PARAM_FIELDS[nameOf(l.deviceId)?.code ?? ""] ?? []).length > 0 && (() => {
+                    const code = nameOf(l.deviceId)?.code ?? "";
+                    const required = l.centreUse === "not_used" ? new Set<string>() : requiredSettingKeys(code);
+                    const missing = new Set(missingDeviceSettings({ code, params: l.params, centreUse: l.centreUse ?? "core" }).flatMap((m) => m.keys));
+                    return (
+                      <div className="grid gap-1 grid-cols-2 sm:grid-cols-3 mt-1" data-testid={`pf-device-${i}-params`}>
+                        {(DEVICE_PARAM_FIELDS[code] ?? []).map((k) => (
+                          <label key={k} className="grid gap-0.5 text-xs">
+                            <span>{DEVICE_PARAM_LABELS[k].ar}{DEVICE_PARAM_LABELS[k].unit ? ` (${DEVICE_PARAM_LABELS[k].unit})` : ""}
+                              {required.has(k) && <span className="text-red-600 font-bold" title="من جهاز المركز — لا يُعتمد البروتوكولُ قبلها"> *</span>}</span>
+                            <Input dir="ltr" value={l.params?.[k] ?? ""} className={missing.has(k) ? "border-red-400 bg-red-50/60" : undefined}
+                              data-testid={`pf-device-${i}-param-${k}`}
+                              onChange={(e) => setLine(i, { params: { ...(l.params ?? {}), [k]: e.target.value } })} />
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  <div className="flex flex-wrap items-center gap-1 mt-1 text-xs" data-testid={`pf-device-${i}-schedule`}>
+                    <span className="text-muted-foreground">موعدٌ دوريّ (اختياري): كلّ</span>
+                    <Input inputMode="numeric" className="w-14 h-8" value={l.everyDays ?? ""} data-testid={`pf-device-${i}-everyDays`}
+                      onChange={(e) => setLine(i, { everyDays: e.target.value ? Number(e.target.value) : null })} />
+                    <span className="text-muted-foreground">يوماً، عددُ المرّات</span>
+                    <Input inputMode="numeric" className="w-14 h-8" value={l.times ?? ""} data-testid={`pf-device-${i}-times`}
+                      onChange={(e) => setLine(i, { times: e.target.value ? Number(e.target.value) : null })} />
+                    <span className="text-muted-foreground">(فارغٌ = بلا حدّ)</span>
+                  </div></div>
                 <Select value={l.centreUse ?? "core"} onValueChange={(v) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, centreUse: v as CentreUse } : x)))}>
                   <SelectTrigger data-testid={`pf-device-${i}-use`}><SelectValue /></SelectTrigger>
                   <SelectContent>{CENTRE_USES.map((u) => <SelectItem key={u} value={u}>{CENTRE_USE_LABELS[u]} — {CENTRE_USE_HINTS[u]}</SelectItem>)}</SelectContent>
@@ -596,7 +656,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
               </div>
             ))}
             {unused.length > 0 && (
-              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", centreUse: "core", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null, params: {} }])}>
+              <Select value="" onValueChange={(v) => setLines((xs) => [...xs, { deviceId: Number(v), evidence: "recommended", centreUse: "core", parameters: null, minutes: null, note: null, parametersEn: null, noteEn: null, params: {}, everyDays: null, times: null }])}>
                 <SelectTrigger className="w-60" data-testid="pf-add-device"><SelectValue placeholder="+ أضف جهازاً" /></SelectTrigger>
                 <SelectContent>{unused.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.nameAr} — {d.nameEn}</SelectItem>)}</SelectContent>
               </Select>

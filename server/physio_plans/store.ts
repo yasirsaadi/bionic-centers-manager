@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   branches, devices, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanPhaseExercises,
-  physioPlanPhases, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolPhaseExercises,
+  physioPlanPhases, physioPlanSessionItems, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolPhaseExercises,
   physioProtocolPhases, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
 import {
@@ -12,6 +12,7 @@ import {
   SELF_ACTIVATE_NEEDS_APPROVED_PROTOCOL, sessionAdjuncts, type PlanStatus,
 } from "@shared/physio_plans";
 import { centreUseOf, normalizeDose, planLineUse } from "@shared/physio_protocols";
+import { isScheduled } from "@shared/physio_device_settings";
 import { deviceParamsLine, PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
 import { withImageUrls } from "../physio_protocols/exercises_store";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
@@ -27,6 +28,9 @@ export interface PlanDeviceInput {
   parameters: string | null; parametersEn: string | null; note: string | null; noteEn: string | null;
   /** ترحيل ١٢٢ — أساسيٌّ في كلّ جلسة أو مساعدٌ بالتناوب. */
   centreUse: "core" | "adjunct";
+  /** §4.dn (ترحيل ١٣١) — الموعدُ الدوريّ: كلّ كم يوماً وكم مرّة؛ يُخرج البندَ من «كلّ جلسة» ومن التناوب. */
+  everyDays?: number | null;
+  times?: number | null;
 }
 export interface PlanInput {
   titleAr: string; titleEn: string | null;
@@ -105,6 +109,19 @@ export async function getPlanRow(id: number): Promise<PhysioPlan | null> {
   return r ?? null;
 }
 
+/** أيّامُ تنفيذ البنود الدوريّة في جلسات الخطّة غير الملغاة — `{ deviceId: ["YYYY-MM-DD", …] }` (§4.dn). */
+export async function scheduledDoneDates(ex: any, planId: number, deviceIds: number[], before?: string): Promise<Record<number, string[]>> {
+  const out: Record<number, string[]> = {};
+  for (const d of deviceIds) out[d] = [];
+  if (!deviceIds.length) return out;
+  const rows = await ex.select({ deviceId: physioPlanSessionItems.deviceId, date: physioPlanSessions.sessionDate })
+    .from(physioPlanSessionItems).innerJoin(physioPlanSessions, eq(physioPlanSessions.id, physioPlanSessionItems.sessionId))
+    .where(and(eq(physioPlanSessions.planId, planId), isNull(physioPlanSessions.cancelledAt), eq(physioPlanSessionItems.done, true),
+      inArray(physioPlanSessionItems.deviceId, deviceIds), ...(before ? [sql`${physioPlanSessions.sessionDate} <= ${before}`] : [])));
+  for (const r of rows) out[Number(r.deviceId)]?.push(String(r.date).slice(0, 10));
+  return out;
+}
+
 /** الخطّةُ كاملة: أجهزتُها بأسمائها وتوفّرِها في فرع الخطّة، ومنفّذوها، وبروتوكولُها وحالتُه، والمريضُ والفرع. */
 export async function getPlan(id: number) {
   const plan = await getPlanRow(id);
@@ -114,7 +131,7 @@ export async function getPlan(id: number) {
     id: physioPlanDevices.id, deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes,
     parameters: physioPlanDevices.parameters, parametersEn: physioPlanDevices.parametersEn,
     note: physioPlanDevices.note, noteEn: physioPlanDevices.noteEn, displayOrder: physioPlanDevices.displayOrder,
-    centreUse: physioPlanDevices.centreUse,
+    centreUse: physioPlanDevices.centreUse, everyDays: physioPlanDevices.everyDays, times: physioPlanDevices.times,
     code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
     .where(eq(physioPlanDevices.planId, id)).orderBy(asc(physioPlanDevices.displayOrder), asc(devices.displayOrder));
@@ -136,6 +153,8 @@ export async function getPlan(id: number) {
     ...plan, branchName: branch?.name ?? null, patient: patient ?? null, protocol: protocol ?? null,
     devices: lines.map((l) => ({ ...l, centreUse: planLineUse(l.centreUse), availableInBranch: avail.has(Number(l.deviceId)) })),
     rotation: { sessionsSoFar: Number(sessionsSoFar), turnDeviceId: rotation.turnDeviceId },
+    //  §4.dn — **أيّامُ تنفيذ كلّ بندٍ دوريّ** في جلسات الخطّة غير الملغاة: منها تحسب شاشةُ التنفيذ هل حان موعدُه بتاريخ الجلسة (`scheduleState`).
+    scheduleHistory: await scheduledDoneDates(db, id, lines.filter((l) => isScheduled(l)).map((l) => Number(l.deviceId))),
     assignees,
     //  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول وتمارينها، والأجهزةُ المساعدة التي يقترحها بروتوكولُها (يختار منها الأخصائيّ).
     phases: await getPlanPhases(id),
@@ -258,12 +277,13 @@ function planLineFromProtocol(l: any, code: string): PlanDeviceInput {
     parameters: withSettings(deviceParamsLine(code, l.params, "ar"), l.parameters),
     parametersEn: withSettings(deviceParamsLine(code, l.params, "en"), l.parametersEn),
     note: l.note, noteEn: l.noteEn, centreUse: centreUseOf(l) === "adjunct" ? "adjunct" : "core",
+    everyDays: l.everyDays ?? null, times: l.times ?? null,
   };
 }
 
 const planDeviceRow = (planId: number, l: PlanDeviceInput, i: number) => ({
   planId, deviceId: l.deviceId, minutes: l.minutes, parameters: l.parameters, parametersEn: l.parametersEn,
-  note: l.note, noteEn: l.noteEn, centreUse: l.centreUse, displayOrder: i,
+  note: l.note, noteEn: l.noteEn, centreUse: l.centreUse, everyDays: l.everyDays ?? null, times: l.times ?? null, displayOrder: i,
 });
 
 export async function createPlan(p: {

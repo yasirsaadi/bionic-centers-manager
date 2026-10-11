@@ -287,9 +287,10 @@ async function main() {
       FROM physio_protocols p WHERE p.code = 'lbp-chronic-adult'`)).rows[0];
     const before = await lbp();
     //  والأسابيعُ أربعةٌ لا اثنا عشر: ترحيلُ ١٢٣ (§4.dd) جعل الجرعةَ ٢٤ جلسة × ستّاً في الأسبوع بقرار المالك.
-    same("ز.٦ في القاعدة: ثلاثُ مراحل و٢٤ رابطاً وعشرةُ أجهزة وخاناتُ الكمادة، وأربعةُ أسابيع (ترحيل ١٢٣)، ومسوّدة",
+    //  والأجهزةُ أحدَ عشر: ترحيلُ ١٣١ (§4.dn) أضاف الموجاتِ الصادمة مساعداً أسبوعياً بقرار المالك.
+    same("ز.٦ في القاعدة: ثلاثُ مراحل و٢٤ رابطاً وأحدَ عشرَ جهازاً (الموجاتُ الصادمة — ترحيل ١٣١) وخاناتُ الكمادة، وأربعةُ أسابيع (ترحيل ١٢٣)، ومسوّدة",
       [before.phases, before.links, before.devices, before.hot, before.duration_weeks, before.status],
-      [3, 24, 10, { layers: "6–8", durationMin: "15–20", temperatureC: "70–75" }, 4, "draft"]);
+      [3, 24, 11, { layers: "6–8", durationMin: "15–20", temperatureC: "70–75" }, 4, "draft"]);
     const exCount = async () => Number((await q(`SELECT count(*) FROM physio_exercises WHERE code = ANY($1::text[])`, [Array.from(codes)])).rows[0].count);
     same("ز.٧ والبطاقاتُ الثماني عشرة مسوّدات", [await exCount(), Number((await q(`SELECT count(*) FROM physio_exercises WHERE code = ANY($1::text[]) AND status = 'draft'`, [Array.from(codes)])).rows[0].count)], [18, 18]);
     await q(sql119);

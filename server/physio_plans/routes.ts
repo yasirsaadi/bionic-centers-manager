@@ -21,6 +21,7 @@ import {
   canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, isPlanClosed, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
 } from "@shared/physio_plans";
 import * as store from "./store";
+import { normalizeSchedule } from "@shared/physio_device_settings";
 import * as exec from "./execution";
 import * as suggest from "./suggest";
 import * as assess from "./assessments";
@@ -68,8 +69,11 @@ export function parsePlanBody(b: any): store.PlanInput | string {
     if (minutes === "bad") return "دقائقُ الجهاز ١–١٢٠";
     //  ترحيل ١٢٢ — أساسيٌّ أو مساعدٌ بالتناوب؛ والغائبُ (شاشةٌ أقدم) أساسيٌّ كما كانت الخطّةُ تُنفَّذ.
     if (d?.centreUse !== undefined && d.centreUse !== null && d.centreUse !== "core" && d.centreUse !== "adjunct") return "استعمالُ الجهاز في الخطّة: أساسيّ أو مساعد";
+    //  §4.dn — الموعدُ الدوريّ لهذا المريض (كلّ كم يوماً وكم مرّة).
+    const schedule = normalizeSchedule(d?.everyDays, d?.times);
+    if (typeof schedule === "string") return schedule;
     devices.push({ deviceId, minutes, parameters: text(d?.parameters, 1000), parametersEn: text(d?.parametersEn, 1000),
-      note: text(d?.note, 1000), noteEn: text(d?.noteEn, 1000), centreUse: d?.centreUse === "adjunct" ? "adjunct" : "core" });
+      note: text(d?.note, 1000), noteEn: text(d?.noteEn, 1000), centreUse: d?.centreUse === "adjunct" ? "adjunct" : "core", ...schedule });
   }
   return {
     titleAr, titleEn: text(b?.titleEn, 300),

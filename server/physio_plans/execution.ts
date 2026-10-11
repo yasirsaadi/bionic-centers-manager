@@ -14,8 +14,9 @@ import {
 } from "@shared/physio_plans";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { storage } from "../storage";
+import { isScheduled, scheduleOffNote, scheduleState } from "@shared/physio_device_settings";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
-import { PlanError, type Actor } from "./store";
+import { PlanError, scheduledDoneDates, type Actor } from "./store";
 
 /** **جلساتُ اليوم** — الخططُ المعتمَدة في الفروع المعطاة، المسنَدةُ إلى السائل أوّلاً، وهل سُجّلت جلستُها اليوم وآخرُ جلسة. */
 export async function todayList(p: { branchIds: number[] | null; userId: number | null; today: string }) {
@@ -69,14 +70,24 @@ export async function executeSession(p: {
     if (!plan) throw new PlanError(404, "الخطّة غير موجودة");
     if (plan.status !== "approved") throw new PlanError(409, "تُنفَّذ الخطّةُ المعتمَدة وحدها");
     const planLines = await tx.select({ deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes, code: devices.code,
-      centreUse: physioPlanDevices.centreUse, displayOrder: physioPlanDevices.displayOrder })
+      centreUse: physioPlanDevices.centreUse, displayOrder: physioPlanDevices.displayOrder,
+      everyDays: physioPlanDevices.everyDays, times: physioPlanDevices.times })
       .from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
       .where(eq(physioPlanDevices.planId, plan.id));
     const needle = planLines.find((l) => l.code === DRY_NEEDLING_DEVICE_CODE);
     //  **المساعدُ يتناوب** (ترحيل ١٢٢، §4.cx): دورُه بعدد جلسات الخطّة قبل هذه — تحت قفل الخطّة، فجلستان متزامنتان لا تأخذان الدورَ نفسَه.
     const [{ n: sessionsSoFar }] = await tx.select({ n: sql<number>`count(*)::int` }).from(physioPlanSessions)
       .where(and(eq(physioPlanSessions.planId, plan.id), isNull(physioPlanSessions.cancelledAt)));
-    const { offTurnDeviceIds } = sessionAdjuncts(planLines.map((l) => ({ ...l, deviceId: Number(l.deviceId) })), Number(sessionsSoFar));
+    const { offTurnDeviceIds: adjunctOff } = sessionAdjuncts(planLines.map((l) => ({ ...l, deviceId: Number(l.deviceId) })), Number(sessionsSoFar));
+    //  §4.dn — **البندُ الدوريّ** (الموجاتُ الصادمة أسبوعياً): يُطلب حين يحين موعدُه بتاريخ هذه الجلسة، وإلّا فتركُه بلا سبب — كالمساعد الذي ليس دورَه.
+    const scheduled = planLines.filter((l) => isScheduled(l));
+    const history = await scheduledDoneDates(tx, plan.id, scheduled.map((l) => Number(l.deviceId)), p.sessionDate);
+    const offNotes = new Map<number, string>();
+    for (const l of scheduled) {
+      const st = scheduleState(l, history[Number(l.deviceId)] ?? [], p.sessionDate);
+      if (!st.due) offNotes.set(Number(l.deviceId), scheduleOffNote(st));
+    }
+    const offTurnDeviceIds = [...adjunctOff, ...Array.from(offNotes.keys())];
     const offTurn = new Set(offTurnDeviceIds);
     const err = executionItemsError({
       planDeviceIds: planLines.map((l) => Number(l.deviceId)), items: p.items,
@@ -111,7 +122,7 @@ export async function executeSession(p: {
     }).returning();
     await tx.insert(physioPlanSessionItems).values(p.items.map((i) => ({
       sessionId: session.id, deviceId: i.deviceId, done: i.done, minutes: i.minutes,
-      note: isOffTurn(i) ? ((i.note ?? "").trim() || ADJUNCT_OFF_TURN_NOTE) : i.note, offTurn: isOffTurn(i),
+      note: isOffTurn(i) ? ((i.note ?? "").trim() || offNotes.get(i.deviceId) || ADJUNCT_OFF_TURN_NOTE) : i.note, offTurn: isOffTurn(i),
       plannedMinutes: planLines.find((l) => Number(l.deviceId) === i.deviceId)?.minutes ?? null,
     })));
 

@@ -178,7 +178,8 @@ async function main() {
     same("ب.١ **الأساسيُّ وحده يدخل الخطّةَ الجديدة، والمساعدُ يُعرض للاختيار** — ولو كانت درجتُه «الإرشاداتُ ضدّه» (الشدّ والتحفيز)، و«لا يُستخدم» لا يُعرض",
       [created.status, (g0?.devices ?? []).map((d: any) => [d.code, d.centreUse]), offered.includes("traction"), offered.includes("electro"),
         offered.includes("laser"), offered.includes("ultrasound"), offered.length],
-      [200, [["exercise", "core"]], true, true, false, false, 7]);
+      //  ثمانية: السبعةُ ومعها الموجاتُ الصادمة مساعداً أسبوعياً (ترحيل ١٣١، §4.dn).
+      [200, [["exercise", "core"]], true, true, false, false, 8]);
     //  والأخصائيُّ يؤشّرها كلَّها لهذا المريض (ما ترسله «الأجهزةُ المساعدة لهذا المريض» في المحرّر) — فيتناوب السبعة.
     const ticked = await call("PUT", `/api/physio/plans/${plan}`, S.spec, { titleAr: g0.titleAr,
       devices: [...g0.devices, ...g0.protocolAdjuncts].map((d: any) => ({ deviceId: d.deviceId, minutes: d.minutes, parameters: d.parameters,
@@ -187,7 +188,7 @@ async function main() {
     const byCode = Object.fromEntries((g?.devices ?? []).map((d: any) => [d.code, d]));
     same("ب.١ب **والمؤشَّرُ يدخل مساعداً بالتناوب**",
       [ticked.status, byCode.traction?.centreUse, byCode.electro?.centreUse, byCode.exercise?.centreUse, (g?.devices ?? []).length],
-      [200, "adjunct", "adjunct", "core", 8]);
+      [200, "adjunct", "adjunct", "core", 9]);
     check(/^النمط: CAP → RES · القدرة: 20–40 % · المدّة: 10–15 min/.test(byCode.tecar?.parameters ?? "")
       && /^Mode: CAP → RES · Power: 20–40 % · Duration: 10–15 min/.test(byCode.tecar?.parametersEn ?? ""),
       "ب.٢ **وإعداداتُ الجهاز سطرٌ أوّل في «المعاملات» باللغتين** — يراها الأخصائيُّ ويعدّلها لهذا المريض", `${byCode.tecar?.parameters} | ${byCode.tecar?.parametersEn}`);
