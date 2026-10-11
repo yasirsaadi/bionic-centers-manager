@@ -3,7 +3,7 @@
 // على الحساب فلا تعود في اليوم نفسِه ولو من جهازٍ آخر. **وللمالك بدلَها تذكيرُ تغيير العبارات** حين يمضي شهر.
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -37,9 +37,10 @@ function useBaghdadDay(): string {
 export function DailyGreeting() {
   const [, navigate] = useLocation();
   const day = useBaghdadDay();
-  //  أُغلقت في أيّ يوم — فاليومُ التالي يُسأل عنه الخادمُ من جديد.
-  const [closedDay, setClosedDay] = useState<string | null>(null);
-  const closed = closedDay === day;
+  const qc = useQueryClient();
+  //  **الإغلاقُ يُكتب في ذاكرة الاستعلام لا في حالة المكوّن** (مراجعةُ Codex): صفحاتُ الطباعة تُنزل المكوّنَ ثمّ يُركَّب عند الرجوع، فحالةٌ محلّية
+  //  تُنسى وتعود التحيّةُ نفسُها والاستعلامُ لا يتقادم. ومفتاحُه يومُ بغداد — فاليومُ التالي يُسأل عنه الخادمُ من جديد.
+  const close = () => qc.setQueryData<Greeting>(["/api/greeting", day], { show: false });
   const q = useQuery<Greeting>({
     queryKey: ["/api/greeting", day],
     queryFn: async () => (await apiRequest("GET", "/api/greeting")).json(),
@@ -51,13 +52,13 @@ export function DailyGreeting() {
   //  يومٌ جديد يبدأ بلا خطأ الأمس.
   useEffect(() => { seen.reset(); }, [day]);
   const g = q.data;
-  if (!g || !g.show || closed) return null;
-  const done = (then?: () => void) => seen.mutate(undefined, { onSuccess: () => { setClosedDay(day); then?.(); } });
+  if (!g || !g.show) return null;
+  const done = (then?: () => void) => seen.mutate(undefined, { onSuccess: () => { close(); then?.(); } });
   const failed = seen.isError && !seen.isPending;
   const failure = failed ? (
     <div className="text-xs text-destructive space-y-1" data-testid="daily-greeting-error">
       <p>تعذّر الحفظ — تحقّق من الاتّصال واضغط ثانيةً.</p>
-      <button type="button" className="underline text-muted-foreground" onClick={() => setClosedDay(day)} data-testid="daily-greeting-close-anyway">إغلاق</button>
+      <button type="button" className="underline text-muted-foreground" onClick={close} data-testid="daily-greeting-close-anyway">إغلاق</button>
     </div>
   ) : null;
   const block = (e: Event) => e.preventDefault();
