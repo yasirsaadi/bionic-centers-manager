@@ -146,9 +146,9 @@ async function main() {
       && k.some((r) => r.code === "knee-oa-geriatric" && r.match.inTitle),
       "ب.٣ **«ركبه» تجد كلَّ بروتوكولٍ فيه «ركبة»**: ما في اسمه أوّلاً (خشونةُ الركبة…) ثمّ ما في محتواه", JSON.stringify(k.map((r) => [r.code, r.match?.inTitle])));
     const j = (await search("الجسر")).json;
-    //  و«الجسر» في مراحل البروتوكولَين المفصَّلَين كليهما (المزمن، والحادّ بعد ترحيل ١٢٤ — §4.dg).
+    //  و«الجسر» في مراحل البروتوكولات المفصَّلة التي فيها (المزمن، والحادّ بعد ترحيل ١٢٤ — §4.dg، وخشونةُ الركبة بعد ترحيل ١٢٦ — §4.di).
     same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولاتِها ومكانَها «تمارين المرحلة»",
-      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["lbp-acute-adult", "lbp-chronic-adult"], true]);
+      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult"], true]);
     const t = (await search("تيكار")).json;
     check(t.length > 0 && t.every((r) => r.match.hits.some((h: any) => h.label === "الأجهزة" && marked(h.snippet, h.ranges).includes("تيكار"))),
       "ب.٥ **واسمُ جهاز** («تيكار») يُظهر كلَّ بروتوكولٍ فيه — «الأجهزة: تيكار»", JSON.stringify(t.map((r) => [r.code, r.match.hits.map((h: any) => h.label)])));
