@@ -2639,12 +2639,17 @@ function TrainingAdminTab() {
   );
 }
 
+/** تبويباتُ الصفحة — كلُّ `TabsTrigger` أدناه، بالترتيب. */
+const ADMIN_TABS: readonly string[] = ["users", "management", "backup", "ai-memory", "ai-knowledge", "training", "ai-conversations", "accuracy", "staff-notifications"];
+
 export default function AdminSettings() {
   const { t } = useTranslation();
   //  **التبويبُ هو `?tab=` في العنوان** — مصدرٌ واحد (§4.dp — مراجعةُ Codex): الضغطُ على تبويبٍ يكتبه في العنوان، و«تغييرها الآن» من تذكير عبارات
   //  الترحيب يكتبه كذلك، فيفتح «تنبيهات الموظفين» أيّاً كان التبويبُ المفتوح وكيفما فُتح.
   const [, navigateAdmin] = useLocation();
-  const adminTab = new URLSearchParams(useSearch()).get("tab") || "users";
+  //  وقيمةٌ لا تبويبَ لها (رابطٌ قديم أو خطأ في الكتابة) ⟵ «المستخدمون»، لا صفحةٌ فارغة.
+  const requestedTab = new URLSearchParams(useSearch()).get("tab");
+  const adminTab = requestedTab && ADMIN_TABS.includes(requestedTab) ? requestedTab : "users";
   const setAdminTab = (v: string) => navigateAdmin(`/admin?tab=${encodeURIComponent(v)}`, { replace: true });
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;

@@ -193,6 +193,28 @@ async function main() {
     await q(`ALTER TABLE system_settings_x RENAME TO system_settings`);
     same("ب.١١ **فشلُ القراءة خطأٌ لا «لا تحيّة»** — فالواجهةُ تُعيد الطلبَ ولا تحفظ «لا شيء» يومَها كلَّه، ثمّ تعود بعد الإصلاح",
       [broken.status, broken.json?.show, (await call("GET", "/api/greeting", S.zahraa)).status], [500, undefined, 200]);
+    //  تسابقٌ حتميّ: مسؤولٌ آخر يحفظ عباراتٍ (معاملةٌ مفتوحة تقفل الصفّ) لحظةَ ضغطِ «أبقِها» — ثمّ يُثبِّت.
+    const newer = ["عبارةٌ حفظها مسؤولٌ آخر في اللحظة نفسِها."];
+    const tx = await pool.connect();
+    await tx.query("BEGIN");
+    await tx.query(`UPDATE system_settings SET setting_value = jsonb_set(setting_value::jsonb, '{phrases}', $2::jsonb)::text WHERE setting_key = $1`,
+      [GREETING_SETTING_KEY, JSON.stringify(newer)]);
+    const racing = call("POST", "/api/admin/greeting/keep", S.admin);
+    await new Promise((r) => setTimeout(r, 500));
+    await tx.query("COMMIT");
+    tx.release();
+    const raced = await racing;
+    const stored = JSON.parse((await q(`SELECT setting_value FROM system_settings WHERE setting_key = $1`, [GREETING_SETTING_KEY])).rows[0].setting_value);
+    same("ب.١٢ **«أبقِها» تكتب الإبقاءَ وحده** — فلا تُعيد العباراتِ القديمة فوق ما حفظه مسؤولٌ آخر في اللحظة نفسِها",
+      [raced.status, stored.phrases, typeof stored.keptAt === "string", raced.json?.phrases], [200, newer, true, newer]);
+    const saved = (await q(`SELECT setting_value FROM system_settings WHERE setting_key = $1`, [GREETING_SETTING_KEY])).rows[0].setting_value;
+    await q(`DELETE FROM system_settings WHERE setting_key = $1`, [GREETING_SETTING_KEY]);
+    const fresh = await call("POST", "/api/admin/greeting/keep", S.admin);
+    const freshRow = JSON.parse((await q(`SELECT setting_value FROM system_settings WHERE setting_key = $1`, [GREETING_SETTING_KEY])).rows[0]?.setting_value ?? "null");
+    await q(`INSERT INTO system_settings (setting_key, setting_value) VALUES ($1, $2)
+             ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`, [GREETING_SETTING_KEY, saved]);
+    same("ب.١٣ **و«أبقِها» بلا صفٍّ بعد** تكتب العباراتِ الأولى بإبقائها",
+      [fresh.status, freshRow?.phrases?.length, typeof freshRow?.keptAt === "string", fresh.json?.due], [200, 10, true, false]);
 
     // ══ ج. تذكيرُ تلغرام ══
     console.log("\n── ج. تذكيرُ تلغرام ──");

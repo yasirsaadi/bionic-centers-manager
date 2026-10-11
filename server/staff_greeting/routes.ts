@@ -134,10 +134,21 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
     const s = adminOnly(req, res);
     if (!s) return;
     try {
-      const c = await loadGreetingConfig();
-      const after: GreetingConfig = { ...c, keptAt: new Date().toISOString() };
-      await saveGreetingConfig(after);
-      await audit(req, s, "keep", { keptAt: c.keptAt ?? null }, { keptAt: after.keptAt });
+      //  **يكتب `keptAt` وحده في الصفّ نفسِه** (مراجعةُ Codex): قراءةُ الإعداد ثمّ كتابتُه كاملاً كانت تُعيد العباراتِ القديمة فوق ما حفظه مسؤولٌ آخر
+      //  بين القراءة والكتابة. والقديمُ للتدقيق من الصفّ المقفول نفسِه.
+      const keptAt = new Date().toISOString();
+      const r = await db.execute(sql`
+        WITH old AS (SELECT setting_value FROM system_settings WHERE setting_key = ${GREETING_SETTING_KEY} FOR UPDATE)
+        UPDATE system_settings s SET setting_value = jsonb_set(s.setting_value::jsonb, '{keptAt}', to_jsonb(${keptAt}::text))::text, updated_at = NOW()
+        FROM old WHERE s.setting_key = ${GREETING_SETTING_KEY}
+        RETURNING old.setting_value AS before, s.setting_value AS after`);
+      const row = r.rows[0] as { before: string; after: string } | undefined;
+      const now = new Date().toISOString();
+      const before = row ? readGreetingConfig(row.before, now) : await loadGreetingConfig();
+      let after: GreetingConfig;
+      if (row) after = readGreetingConfig(row.after, now);
+      else { after = { ...before, keptAt }; await saveGreetingConfig(after); }   // لا صفَّ بعد ⟵ العباراتُ الأولى بإبقائها
+      await audit(req, s, "keep", { keptAt: before.keptAt ?? null }, { keptAt: after.keptAt });
       res.json({ ...after, ...greetingAge(after) });
     } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر الحفظ" }); }
   });
