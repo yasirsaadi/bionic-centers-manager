@@ -56,7 +56,8 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  **الدفعةُ الثالثة — صورُ «ألم الرقبة الميكانيكيّ»: خمسَ عشرةَ من سبعَ عشرة** (٢٠٢٦-١٠-١١، §4.dh): المجلّدُ نفسُه. «الدوران» صفُّه من لوحةٍ بستّة
   //  صفوف و«الميل الجانبيّ» لوحتُه من عشر؛ و«السحب للخلف» الوضعُ الصحيح وحده؛ و«تثبيت اللوحين» لوحتا «للأسفل» و«للخلف» من ستّ؛ و«السناغ» صورتا
   //  الدوران (٣ و٤) بلا رقميهما؛ و«الرفع الجانبيّ للوح» بلا عنوانه؛ و«الانقباض الثابت» ملفٌّ واحد لخانتين: الجبهةُ للأولى والجانبان للثانية؛
-  //  و«التجديف» الشكلُ الكامل وحده. **و«نهايةُ التجديف» و«Y منبطحاً» لم تصلا** — الملفّان أظهرا البدايةَ و«T» — فتبقيان «صورة منتظرة».
+  //  و«التجديف» الشكلُ الكامل وحده. **و«نهايةُ التجديف» و«Y منبطحاً» لم تصلا** — الملفّان أظهرا البدايةَ و«T» — فبقيتا «صورة منتظرة»
+  //  (ووصلت «نهايةُ التجديف» في الدفعة الرابعة أدناه).
   "band-row-1": { file: "band-row-1.webp" },
   "cervical-isometrics-1": { file: "cervical-isometrics-1.webp" },
   "cervical-isometrics-2": { file: "cervical-isometrics-2.webp" },
@@ -72,6 +73,24 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "self-snag-rotation-1": { file: "self-snag-rotation-1.webp" },
   "thoracic-extension-towel-1": { file: "thoracic-extension-towel-1.webp" },
   "upper-trap-stretch-1": { file: "upper-trap-stretch-1.webp" },
+  //  **الدفعةُ الرابعة — «خشونة الركبة»: اثنتا عشرةَ من أربعَ عشرة، و«نهايةُ التجديف» للرقبة** (٢٠٢٦-١٠-١١، §4.di التكملة): المجلّدُ نفسُه.
+  //  **وما فيه وضعيّتا الحركة يبقى كاملاً** — صورةٌ تُظهر البدايةَ والنهاية تكفي البطاقةَ ولا يُطلَب لها ملفٌّ ثانٍ (ملاحظةُ المالك على الطلبات المكرّرة).
+  //  «سحبُ الكعب» بلا شريط البحث وعنوانه، و«رفعُ الساق مستقيمة» بلا حافّته السفلى المقطوعة، و«الوقوف على ساق» بلا عنوانه المرقّم، و«صعودُ الدرجة»
+  //  بلا فراغه الأعلى، و«النزولُ الجانبيّ» بلا السقف. **و«القرفصاءُ على الحائط» و«الدرّاجةُ الثابتة» لم تُسجَّلا**: الأولى قرفصاءُ كاملة (فخذان
+  //  موازيان للأرض ونصٌّ «دقيقتين») والبطاقةُ ربعُ قرفصاء؛ والثانية دوّاساتٌ على كرسيّ والركبةُ مثنيّةٌ كثيراً — وبطاقتُها تنهى عن ذلك.
+  "band-row-2": { file: "band-row-2.webp" },
+  "calf-raise-1": { file: "calf-raise-1.webp", credit: "WorkoutLabs" },
+  "hamstring-stretch-seated-1": { file: "hamstring-stretch-seated-1.webp" },
+  "heel-prop-1": { file: "heel-prop-1.webp" },
+  "heel-slide-1": { file: "heel-slide-1.webp", credit: "Healthwise" },
+  "lateral-step-down-1": { file: "lateral-step-down-1.webp" },
+  "quad-set-1": { file: "quad-set-1.webp" },
+  "seated-knee-extension-1": { file: "seated-knee-extension-1.webp" },
+  "seated-knee-extension-2": { file: "seated-knee-extension-2.webp", credit: "wikiHow" },
+  "side-lying-hip-abduction-1": { file: "side-lying-hip-abduction-1.webp", credit: "Run Mechanics" },
+  "single-leg-balance-1": { file: "single-leg-balance-1.webp" },
+  "step-up-1": { file: "step-up-1.webp" },
+  "straight-leg-raise-1": { file: "straight-leg-raise-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

@@ -342,12 +342,16 @@ async function main() {
     const misplaced = CONTENT.flatMap((c) => c.EXERCISES.flatMap((e) => e.images.map((i) => i.key)))
       .filter((k) => Boolean(EXERCISE_IMAGE_FILES[k]) === keys.includes(k));
     const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والثالثُ (الرقبة): وصلت خمسَ عشرةَ من سبعَ عشرة — «نهاية التجديف» و«Y» لم تُظهرهما ملفّاتُ المالك (§4.dh التكملة)، فتبقيان مطلوبتين.
+    //  والثالثُ (الرقبة): وصلت ستَّ عشرةَ من سبعَ عشرة — «نهايةُ التجديف» وصلت في الدفعة الرابعة، و«Y» لم يُظهرها ملفُّ المالك (§4.dh التكملة) فتبقى مطلوبة.
     const neckKeys = m125.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث خمسَ عشرةَ والباقيتان مطلوبتان**",
+    //  والرابعُ (الركبة): وصلت اثنتا عشرةَ من أربعَ عشرة — «القرفصاءُ على الحائط» وصلت أعمقَ من بطاقتها (فخذان موازيان للأرض)، و«الدرّاجةُ» دوّاساتٌ
+    //  على كرسيّ والركبةُ مثنيّةٌ كثيراً وهو ما تنهى عنه بطاقتُها (§4.di التكملة) — فتبقيان مطلوبتين.
+    const kneeKeys = m126.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، والباقي مطلوب**",
       [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
-        neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ["band-row-2", "prone-y-t-2"].filter((k) => !keys.includes(k))],
-      [200, [], 6, [], 17, ["band-row-2", "prone-y-t-2"], []]);
+        neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), kneeKeys.length, kneeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
+        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1"].filter((k) => !keys.includes(k))],
+      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
