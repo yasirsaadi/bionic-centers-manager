@@ -91,6 +91,10 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "single-leg-balance-1": { file: "single-leg-balance-1.webp" },
   "step-up-1": { file: "step-up-1.webp" },
   "straight-leg-raise-1": { file: "straight-leg-raise-1.webp" },
+  //  **صورةٌ معادة لبطاقةٍ جديدة — قاعدةُ المالك «لا تطلب صوراً مكرّرة»** (§4.dm): توازنُ الكاحل بطاقةٌ جديدة لأنّ هدفَ بطاقة الركبة مكتوبٌ للركبة،
+  //  والصورةُ نفسُها (واقفٌ على ساقٍ واحدة بجانب كرسيّ) تصلح لها حرفاً بحرف — فنُسخ ملفُّ `single-leg-balance-1.webp` باسم رمزها (حارسُ و.٣:
+  //  الملفُّ باسم رمزه) ولم تُطلَب من المالك.
+  "ankle-single-leg-balance-1": { file: "ankle-single-leg-balance-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
