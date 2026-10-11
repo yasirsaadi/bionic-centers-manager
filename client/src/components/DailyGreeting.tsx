@@ -1,31 +1,54 @@
 // **تحيّةُ الموظّف اليومية** (§4.dp — طلبُ المالك ٢٠٢٦-١٠-١١): نافذةٌ مرّةً كلَّ يوم بتوقيت بغداد، «صباح الخير» أو «مساء الخير» باسمه وعبارةٌ من
 // المالك، **لا تُغلق إلّا بـ«حسناً»** (لا خارجَها ولا «Esc» ولا «X»). والخادمُ يقرّر هل تظهر وما نصُّها (`/api/greeting`)، و«حسناً» يكتب يومَها
 // على الحساب فلا تعود في اليوم نفسِه ولو من جهازٍ آخر. **وللمالك بدلَها تذكيرُ تغيير العبارات** حين يمضي شهر.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
+import { baghdadTodayYmd } from "@shared/visit_date";
 
 type Greeting =
   | { show: false }
   | { show: true; kind: "greeting"; period: "morning" | "evening"; text: string }
   | { show: true; kind: "reminder"; days: number };
 
+/**
+ * **يومُ بغداد كما يراه المستخدم الآن** — يتجدّد عند أوّل لمسةٍ أو ضغطة مفتاح أو عودةٍ إلى التطبيق بعد تغيّر اليوم (مراجعةُ Codex): التطبيقُ المثبَّت
+ * يبقى مفتوحاً ليلاً على جهاز الاستقبال، فتظهر تحيّةُ اليوم الجديد حين يلمسه الموظّفُ صباحاً — بوقتها الصحيح — لا عند منتصف الليل، وبلا طلبٍ دوريّ.
+ */
+function useBaghdadDay(): string {
+  const [day, setDay] = useState(() => baghdadTodayYmd());
+  useEffect(() => {
+    const check = () => { const t = baghdadTodayYmd(); setDay((d) => (d === t ? d : t)); };
+    const events = ["pointerdown", "keydown", "focus"] as const;
+    for (const e of events) window.addEventListener(e, check, { passive: true });
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      for (const e of events) window.removeEventListener(e, check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
+  return day;
+}
+
 export function DailyGreeting() {
   const [, navigate] = useLocation();
-  const [closed, setClosed] = useState(false);
+  const day = useBaghdadDay();
+  //  أُغلقت في أيّ يوم — فاليومُ التالي يُسأل عنه الخادمُ من جديد.
+  const [closedDay, setClosedDay] = useState<string | null>(null);
+  const closed = closedDay === day;
   const q = useQuery<Greeting>({
-    queryKey: ["/api/greeting"],
+    queryKey: ["/api/greeting", day],
     queryFn: async () => (await apiRequest("GET", "/api/greeting")).json(),
     staleTime: Number.POSITIVE_INFINITY, retry: false,
   });
   const seen = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/greeting/seen", {})).json() });
   const g = q.data;
   if (!g || !g.show || closed) return null;
-  const done = (then?: () => void) => { setClosed(true); seen.mutate(); then?.(); };
+  const done = (then?: () => void) => { setClosedDay(day); seen.mutate(); then?.(); };
   const block = (e: Event) => e.preventDefault();
   const morning = g.kind === "greeting" && g.period === "morning";
   return (

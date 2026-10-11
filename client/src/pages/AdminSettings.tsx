@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearch } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2640,6 +2641,11 @@ function TrainingAdminTab() {
 
 export default function AdminSettings() {
   const { t } = useTranslation();
+  //  **التبويبُ يتبع `?tab=` في كلّ تغيّر** لا عند التركيب وحده (§4.dp — مراجعةُ Codex): «تغييرها الآن» من تذكير عبارات الترحيب يبدّل العنوانَ
+  //  والصفحةُ مفتوحة، فيفتح «تنبيهات الموظفين» ولو كان المالكُ على تبويبٍ آخر.
+  const urlTab = new URLSearchParams(useSearch()).get("tab");
+  const [adminTab, setAdminTab] = useState(urlTab || "users");
+  useEffect(() => { if (urlTab) setAdminTab(urlTab); }, [urlTab]);
   const branchSession = useBranchSession();
   const isAdmin = branchSession?.isAdmin || false;
   const { toast } = useToast();
@@ -3320,7 +3326,7 @@ export default function AdminSettings() {
       </div>
 
       {/*  `?tab=` يفتح تبويباً بعينه — رابطُ تذكير عبارات الترحيب (§4.dp) يفتح «تنبيهات الموظفين». */}
-      <Tabs defaultValue={(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab")) || "users"} className="w-full">
+      <Tabs value={adminTab} onValueChange={setAdminTab} className="w-full">
         {/*  ══ شريطُ تبويباتٍ يلتفّ (٢٠٢٦-٠٩-١٩) — شكلٌ لا وظيفة ══════════
             كان `grid-cols-9` على الشاشة المتوسّطة: تسعةُ أعمدةٍ ضيّقة تُقصّ
             عناوينَها، و`grid-cols-4` تحتها. فصار `flex-wrap` بارتفاعٍ حرّ
