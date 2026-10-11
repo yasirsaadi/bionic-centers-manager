@@ -98,8 +98,15 @@ export default function StaffGreetingsCard() {
           </Button>
         )}
         <Button size="sm" disabled={!changed || save.isPending} onClick={() => save.mutate()} data-testid="greeting-save">حفظ العبارات</Button>
-        <Button size="sm" variant="ghost" disabled={keep.isPending} onClick={() => keep.mutate()} data-testid="greeting-keep">أبقِها شهراً آخر</Button>
+        {/*  «أبقِها» تُبقي المحفوظ — **فلا تُضغط وفي البطاقة تعديلٌ لم يُحفظ** (مراجعةُ Codex): كانت تمحوه بصمت. احفظه أو تراجع عنه أوّلاً. */}
+        <Button size="sm" variant="ghost" disabled={keep.isPending || dirty} onClick={() => keep.mutate()} data-testid="greeting-keep">أبقِها شهراً آخر</Button>
+        {dirty && (
+          <Button size="sm" variant="ghost" onClick={() => setRows(base ? [...base] : null)} data-testid="greeting-undo">تراجع عن تعديلي</Button>
+        )}
       </div>
+      {dirty && (
+        <p className="text-[11px] text-amber-800" data-testid="greeting-unsaved">في البطاقة تعديلٌ لم يُحفظ — احفظه، أو تراجع عنه لتُبقي العباراتِ كما هي.</p>
+      )}
       {c && (
         <p className="text-[11px] text-muted-foreground">
           آخرُ تغيير: {new Date(c.updatedAt).toLocaleDateString("ar-IQ", { year: "numeric", month: "short", day: "numeric" })}

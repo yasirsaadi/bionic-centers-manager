@@ -45,10 +45,21 @@ export function DailyGreeting() {
     queryFn: async () => (await apiRequest("GET", "/api/greeting")).json(),
     staleTime: Number.POSITIVE_INFINITY, retry: false,
   });
+  //  **تُغلق بعد أن يُسجَّل اليومُ في الخادم لا قبله** (مراجعةُ Codex): إغلاقٌ يسبق التسجيلَ يوهم أنّها رُئيت وهي تعود بعد التحديث أو من جهازٍ آخر.
+  //  وإن فشل التسجيلُ تبقى مفتوحةً بسطر خطأٍ و«حاول ثانيةً» — **ومعها «إغلاق»** كي لا يُحبس موظّفٌ خلف نافذةٍ والشبكةُ مقطوعة (فتعود حينها، وهذا صادق).
   const seen = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/greeting/seen", {})).json() });
+  //  يومٌ جديد يبدأ بلا خطأ الأمس.
+  useEffect(() => { seen.reset(); }, [day]);
   const g = q.data;
   if (!g || !g.show || closed) return null;
-  const done = (then?: () => void) => { setClosedDay(day); seen.mutate(); then?.(); };
+  const done = (then?: () => void) => seen.mutate(undefined, { onSuccess: () => { setClosedDay(day); then?.(); } });
+  const failed = seen.isError && !seen.isPending;
+  const failure = failed ? (
+    <div className="text-xs text-destructive space-y-1" data-testid="daily-greeting-error">
+      <p>تعذّر الحفظ — تحقّق من الاتّصال واضغط ثانيةً.</p>
+      <button type="button" className="underline text-muted-foreground" onClick={() => setClosedDay(day)} data-testid="daily-greeting-close-anyway">إغلاق</button>
+    </div>
+  ) : null;
   const block = (e: Event) => e.preventDefault();
   const morning = g.kind === "greeting" && g.period === "morning";
   return (
@@ -65,7 +76,10 @@ export function DailyGreeting() {
             <DialogDescription asChild>
               <p className="text-lg leading-9 text-slate-800 font-medium" data-testid="daily-greeting-text">{g.text}</p>
             </DialogDescription>
-            <Button className="mx-auto min-w-32" onClick={() => done()} data-testid="daily-greeting-ok">حسناً</Button>
+            <Button className="mx-auto min-w-32" disabled={seen.isPending} onClick={() => done()} data-testid="daily-greeting-ok">
+              {failed ? "حاول ثانيةً" : "حسناً"}
+            </Button>
+            {failure}
           </>
         ) : (
           <>
@@ -77,9 +91,10 @@ export function DailyGreeting() {
               </p>
             </DialogDescription>
             <div className="flex gap-2 justify-center">
-              <Button onClick={() => done(() => navigate("/admin?tab=staff-notifications"))} data-testid="daily-greeting-change">تغييرها الآن</Button>
-              <Button variant="outline" onClick={() => done()} data-testid="daily-greeting-later">لاحقاً</Button>
+              <Button disabled={seen.isPending} onClick={() => done(() => navigate("/admin?tab=staff-notifications"))} data-testid="daily-greeting-change">تغييرها الآن</Button>
+              <Button variant="outline" disabled={seen.isPending} onClick={() => done()} data-testid="daily-greeting-later">لاحقاً</Button>
             </div>
+            {failure}
           </>
         )}
       </DialogContent>
