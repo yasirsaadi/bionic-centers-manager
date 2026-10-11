@@ -23,6 +23,7 @@ import { searchTokens } from "./physio_protocols/store";
 import { resolveAiAccess } from "./ai/access";
 import { SEED, sql as seedSql } from "./migrations/107_physio_protocol_seed";
 import { sql as englishSql } from "./migrations/108_physio_protocol_english";
+import * as m126 from "./migrations/126_physio_knee_oa_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -126,13 +127,14 @@ async function main() {
     const en = await read(S.doc, "/api/physio/protocols/:id/brief", { lang: "en" }, { id: knee });
     const pe = (en as any).data?.value?.protocol;
     check(!!pe, "ب.١ الموجزُ يمضي كائناً واحداً لا صفوفَ أجهزة", JSON.stringify((en as any).data).slice(0, 300));
-    //  وعددُ الجلسات معها (ترحيل ١٢٣، §4.dd) — مملوءٌ من القديم بجلسات الأسبوع × الأسابيع.
-    same("ب.٢ العنوانُ والجرعة", [pe?.title, pe?.dose], ["Knee Osteoarthritis", { totalSessions: 16, sessionsPerWeek: 2, durationWeeks: 8, minutesPerSession: 45 }]);
-    check(typeof pe?.goals === "string" && pe.goals.startsWith("Reduce pain") && typeof pe?.contraindications === "string",
+    //  وعددُ الجلسات معها (ترحيل ١٢٣، §4.dd) — وخشونةُ الركبة مفصَّلةٌ بالقالب الكامل منذ ترحيل ١٢٦ (§4.di): ٢٤ جلسة × ستّ في الأسبوع × ٥٠ دقيقة.
+    same("ب.٢ العنوانُ والجرعة", [pe?.title, pe?.dose], ["Knee Osteoarthritis", { totalSessions: 24, sessionsPerWeek: 6, durationWeeks: 4, minutesPerSession: 50 }]);
+    check(typeof pe?.goals === "string" && pe.goals.startsWith("1. Improve knee outcomes (KOOS)") && typeof pe?.contraindications === "string",
       "ب.٣ والأهدافُ والموانعُ معه", JSON.stringify([pe?.goals, pe?.contraindications]));
     const ex = (pe?.devices ?? []).find((d: any) => d.code === "exercise");
     //  ألفاظُ درجة الدليل بقرار المالك (ترحيل ١٢٢، §4.cx): تقول الدليلَ لا القرار — و«استعمالُ المركز» بجانبها.
-    same("ب.٤ والأجهزةُ بدرجتها ودقائقها ومعاملاتها", [ex?.device, ex?.evidence, ex?.minutes, ex?.parameters], ["Exercise", "Strong evidence", 35, "Strengthening + aerobic + balance"]);
+    same("ب.٤ والأجهزةُ بدرجتها ودقائقها ومعاملاتها", [ex?.device, ex?.evidence, ex?.minutes, ex?.parameters],
+      ["Exercise", "Strong evidence", 30, m126.PROTOCOL.devices.find((d) => d.code === "exercise")?.parameters?.[1]]);
     same("ب.٥ وتوفّرُها في فرع السائل", ex?.availableInAskersBranch, true);
     same("ب.٦ وجهازٌ غيرُ مفعَّل في فرعه يُقال", (pe?.devices ?? []).find((d: any) => d.code === "electro")?.availableInAskersBranch, false);
 
