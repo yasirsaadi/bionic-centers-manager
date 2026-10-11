@@ -145,7 +145,7 @@ const useLabel = (u: unknown, en: boolean) => {
   const k = u === "adjunct" ? "adjunct" : u === "not_used" ? "not_used" : "core";
   return en ? CENTRE_USE_LABELS_EN[k] : CENTRE_USE_LABELS[k];
 };
-const scheduleText = (l: { everyDays?: number | null; times?: number | null }) => scheduleLabel(l, "ar") || null;
+const scheduleText = (l: { everyDays?: number | null; times?: number | null }, lang: ProtocolLang = "ar") => scheduleLabel(l, lang) || null;
 const rangeText = (p: { sessionFrom?: number | null; sessionTo?: number | null }) =>
   p.sessionFrom != null && p.sessionTo != null ? `${p.sessionFrom}–${p.sessionTo}` : null;
 
@@ -187,9 +187,11 @@ export function planProtocolDiff(plan: DiffPlanSide, protocol: DiffProtocolSide,
     }
     const want = planLineFromProtocol(p as any, String(p.code ?? ""));
     const fields = present([
-      oneField("centreUse", "الاستعمال", "Use", useLabel(want.centreUse, false), useLabel(mine.centreUse, false), show),
+      //  القيمُ باللغتين — فالصفحةُ بالإنكليزية تعرضها بالإنكليزية.
+      biField("centreUse", "الاستعمال", "Use", [useLabel(want.centreUse, false), useLabel(want.centreUse, true)],
+        [useLabel(mine.centreUse, false), useLabel(mine.centreUse, true)]),
       oneField("minutes", "الدقائق", "Minutes", want.minutes, mine.minutes),
-      oneField("schedule", "الموعد الدوريّ", "Schedule", scheduleText(want), scheduleText(mine), show),
+      biField("schedule", "الموعد الدوريّ", "Schedule", [scheduleText(want), scheduleText(want, "en")], [scheduleText(mine), scheduleText(mine, "en")]),
       biField("parameters", "المعاملات", "Parameters", [want.parameters, want.parametersEn], [mine.parameters, mine.parametersEn]),
       biField("note", "الملاحظة", "Note", [want.note, want.noteEn], [mine.note, mine.noteEn]),
     ]);
@@ -205,16 +207,17 @@ export function planProtocolDiff(plan: DiffPlanSide, protocol: DiffProtocolSide,
   if (plan.measures) {
     const protoBy = new Map(protocol.measures.map((m) => [m.code, m]));
     const planBy = new Map(plan.measures.map((m) => [m.code, m]));
-    const bound = (m: MeasureDef) => `${m.min} – ${m.max}${m.unitAr ? ` ${m.unitAr}` : ""}`;
-    const dir = (m: MeasureDef) => (m.higherIsBetter ? "الأعلى أفضل" : "الأقلّ أفضل");
+    //  المدى بوحدتيه والاتجاهُ باللغتين — فتغييرُ الوحدة الإنكليزية وحدها فرقٌ أيضاً.
+    const bound = (m: MeasureDef, en = false) => `${m.min} – ${m.max}${(en ? m.unitEn : m.unitAr) ? ` ${en ? m.unitEn : m.unitAr}` : ""}`;
+    const dir = (m: MeasureDef, en = false) => (m.higherIsBetter ? (en ? "higher is better" : "الأعلى أفضل") : (en ? "lower is better" : "الأقلّ أفضل"));
     for (const p of protocol.measures) {
       const mine = planBy.get(p.code);
       const base = { area: "measure" as const, key: `measure:${p.code}`, nameAr: p.nameAr, nameEn: p.nameEn };
       if (!mine) { items.push({ ...base, kind: "removed" }); continue; }
       const fields = present([
         biField("name", "الاسم", "Name", [p.nameAr, p.nameEn], [mine.nameAr, mine.nameEn]),
-        oneField("range", "المدى", "Range", bound(p), bound(mine), show),
-        oneField("direction", "الاتجاه", "Direction", dir(p), dir(mine), show),
+        biField("range", "المدى", "Range", [bound(p), bound(p, true)], [bound(mine), bound(mine, true)]),
+        biField("direction", "الاتجاه", "Direction", [dir(p), dir(p, true)], [dir(mine), dir(mine, true)]),
       ]);
       if (fields.length) items.push({ ...base, nameAr: mine.nameAr, nameEn: mine.nameEn, kind: "changed", fields });
     }

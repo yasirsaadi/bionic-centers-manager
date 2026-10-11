@@ -145,6 +145,14 @@ async function main() {
   const r9 = planProtocolDiff(tx, P);
   same("ق.٩ **والنصوص**: الأهدافُ بنسختيها، والإنكليزيةُ وحدها تُعدّ فرقاً، والموانعُ والاحتياطاتُ مجموعتين ليستا فرقاً",
     [keys(r9), r9.items[1]?.fields?.[0]?.from === r9.items[1]?.fields?.[0]?.to], [["changed:text:goals", "changed:text:exercises"], true]);
+  const unitEn = copied();
+  unitEn.measures = [{ ...P.measures[0] }, { ...P.measures[1], unitEn: "sec" }];
+  const r11 = planProtocolDiff(unitEn, P);
+  same("ق.١١ **وتغييرُ الوحدة الإنكليزية وحدها فرقٌ**، **وقيمُ الاستعمال والموعد باللغتين** للصفحة الإنكليزية",
+    [keys(r11), r11.items[0]?.fields?.map((f) => [f.field, f.fromEn, f.toEn]),
+      r5.items[0]?.fields?.filter((f) => f.field === "centreUse" || f.field === "schedule").map((f) => [f.field, f.fromEn, f.toEn])],
+    [["changed:measure:tug"], [["range", "0 – 60 s", "0 – 60 sec"]],
+      [["centreUse", "Core", "Adjunct"], ["schedule", "Every 7 days · 4 times", "Every 7 days · 3 times"]]]);
   same("ق.١٠ **وسطرُ التنبيه** يعدّ ويسمّي المجالات", [diffSummaryLine(planProtocolDiff(copied(), P)), diffSummaryLine(r9), diffSummaryLine(r4)],
     ["مطابقةٌ للبروتوكول الأصليّ", "تختلف عن البروتوكول في موضعين: النصوص", "تختلف عن البروتوكول في موضعين: الأجهزة"]);
 

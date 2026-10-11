@@ -88,7 +88,7 @@ export async function listPatientPlans(patientId: number) {
 export async function listPlans(p: { status?: PlanStatus; reviewAwaiting?: boolean; assigneeUserId?: number; branchIds: number[] | null }) {
   const conds: any[] = [];
   if (p.status) conds.push(eq(physioPlans.status, p.status));
-  //  «للمراجعة» (§4.cz): بدأها كاتبُها على بروتوكولٍ معتمَد وتنتظر نظرةَ المشرف — وهي تُنفَّذ.
+  //  «للمراجعة» (§4.cz، و§4.do): بدأها كاتبُها أو عدّلها وتنتظر نظرةَ المشرف — وهي تُنفَّذ.
   if (p.reviewAwaiting) conds.push(and(eq(physioPlans.status, "approved"), eq(physioPlans.reviewStatus, "awaiting")));
   if (p.branchIds) conds.push(p.branchIds.length ? inArray(physioPlans.branchId, p.branchIds) : sql`false`);
   if (p.assigneeUserId) {
