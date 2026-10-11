@@ -10,11 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
-import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
+import { writableExpenseCategories } from "@/lib/expense_categories";
 import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_text";
-import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning } from "lucide-react";
+import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning, Settings2 } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
+  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, RESERVES_START, type ReserveKey,
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
@@ -30,6 +31,8 @@ interface Sheet {
   rows: Row[];
   totals: { income: number; outflow: number; dayNet: number; prevRemaining: number; remaining: number };
   ratio: { today: number; prev: number; received: number; remaining: number; receipts: { id: number; amount: number; note: string }[] };
+  /** قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — null ليومٍ قبل بدايتهما. */
+  reserves: { start: string; materials: ReserveState; payroll: ReserveState } | null;
   expected: {
     drRatio: { pct: number; amount: number; recorded: number | null } | null;
     hospitalRatio: { pct: number; amount: number; recorded: number | null } | null;
@@ -42,6 +45,12 @@ interface Sheet {
   /** آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما فيها بعدها (§4.ca تكملة). */
   lastPrint?: { at: string; by: string | null } | null;
   changedAfterPrint?: boolean;
+}
+
+interface ReserveState {
+  today: number; prev: number; withdrawn: number; remaining: number; opening: number; monthlyTarget: number | null;
+  withdrawals: { id: number; amount: number; note: string }[];
+  month: { target: number; setAside: number; left: number } | null;
 }
 
 const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "" : n.toLocaleString("en-US"));
@@ -377,8 +386,8 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
         </div>
       )}
 
-      {/* المربّعان — كأسفل الورقة */}
-      <div className="grid md:grid-cols-2 gap-4 pt-2">
+      {/* المربّعات — كأسفل الورقة: القاصة، ومن يوم القطع قاصةُ المواد وبجانبها قاصةُ الرواتب والإيجار أصغر (§4.dj)، وقبله مربّعُ النسبة */}
+      <div className={`grid gap-4 pt-2 ${sheet.reserves ? "md:grid-cols-[1.1fr_1fr_0.9fr]" : "md:grid-cols-2"}`} data-testid="cash-boxes">
         <div className="border-2 border-slate-600 rounded-sm p-3 space-y-2 text-sm" data-testid="cash-box">
           <h3 className="font-bold text-base">القاصة</h3>
           {/*  **ومن أين جاء الرقم** (طلبُ المالك ٢٠٢٦-١٠-٠٧، §4.ca تكملة ٨): تحت الرقم وارده وصادره كما في الجدول. */}
@@ -387,7 +396,10 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
           <BoxLine label="الباقي من أمس" value={sheet.totals.prevRemaining} />
           <BoxLine label="المتبقي في القاصة" hint="(مجموع اليوم + الباقي من أمس)" value={sheet.totals.remaining} strong testid="cash-remaining" />
         </div>
-        <div className="border-4 border-double border-emerald-700 rounded-sm p-3 space-y-2 text-sm" data-testid="ratio-box">
+        {sheet.reserves && (["materials", "payroll"] as ReserveKey[]).map((k) => (
+          <ReserveBox key={k} k={k} box={sheet.reserves![k]} sheet={sheet} branchId={branchId} book={book} day={day} write={write} />
+        ))}
+        {!sheet.reserves && <div className="border-4 border-double border-emerald-700 rounded-sm p-3 space-y-2 text-sm" data-testid="ratio-box">
           <h3 className="font-bold text-base text-emerald-800">نسبة العزل للدكتور</h3>
           {/*  النسبةُ من وارد اليوم بنسبة الفرع — كما يحسبها الخادم (`ratioAmount`)، فتُقرأ تحت الرقم. */}
           <BoxLine label="نسبة اليوم" value={sheet.ratio.today}
@@ -398,8 +410,18 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
           {sheet.ratio.received > 0 && <BoxLine label="استُلم اليوم" value={-sheet.ratio.received} />}
           <BoxLine label="المتبقي في النسبة" hint="(نسبة اليوم + المتبقي من نسبة أمس)" value={sheet.ratio.remaining} strong testid="ratio-remaining" />
           {sheet.isAdmin && sheet.canWrite && <ReceiveRatio branchId={branchId} book={book} day={day} write={write} />}
-        </div>
+        </div>}
       </div>
+      {/*  **ما بقي من نسبة الدكتور بعد إلغائها** (§4.dj): يُرى ويُستلَم حتى يصفر — ولا يظهر وهو صفر. */}
+      {sheet.reserves && (sheet.ratio.prev !== 0 || sheet.ratio.received > 0) && (
+        <div className="border border-emerald-700/50 rounded-sm p-3 space-y-2 text-sm max-w-md" data-testid="ratio-legacy">
+          <h3 className="font-semibold text-emerald-800">المتبقي من نسبة الدكتور <span className="text-xs font-normal text-muted-foreground">(أُلغيت من {ymdText(RESERVES_START)})</span></h3>
+          <BoxLine label="المتبقي من أمس" value={sheet.ratio.prev} />
+          {sheet.ratio.received > 0 && <BoxLine label="استُلم اليوم" value={-sheet.ratio.received} />}
+          <BoxLine label="المتبقي في النسبة" value={sheet.ratio.remaining} strong danger={sheet.ratio.remaining < 0} testid="ratio-legacy-remaining" />
+          {sheet.isAdmin && sheet.canWrite && <ReceiveRatio branchId={branchId} book={book} day={day} write={write} />}
+        </div>
+      )}
 
       <EditRowDialog row={editing} onClose={() => setEditing(null)} write={write} />
       <RequestCorrectionDialog target={requesting} onClose={() => setRequesting(null)} />
@@ -407,14 +429,14 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   );
 }
 
-function BoxLine({ label, hint, value, valueHint, strong, testid }: {
-  label: string; hint?: string; value: number; valueHint?: string; strong?: boolean; testid?: string;
+function BoxLine({ label, hint, value, valueHint, strong, danger, testid }: {
+  label: string; hint?: string; value: number; valueHint?: string; strong?: boolean; danger?: boolean; testid?: string;
 }) {
   return (
     <div className={`grid grid-cols-[1fr_auto] gap-3 items-start ${strong ? "pt-2" : ""}`}>
       <div className={strong ? "font-bold" : ""}>{label}{hint && <span className="block text-[11px] font-normal text-muted-foreground">{hint}</span>}</div>
-      <div className="min-w-32 text-left" dir="ltr">
-        <div className={`border-b ${strong ? "border-slate-700 border-b-2 font-bold" : "border-dotted border-slate-500"}`} data-testid={testid}>
+      <div className="min-w-28 text-left" dir="ltr">
+        <div className={`border-b ${strong ? "border-slate-700 border-b-2 font-bold" : "border-dotted border-slate-500"} ${danger ? "text-red-600" : ""}`} data-testid={testid}>
           {fmt(value)}
         </div>
         {valueHint && <div className="text-[11px] text-muted-foreground mt-0.5" data-testid={testid ? `${testid}-hint` : undefined}>{valueHint}</div>}
@@ -432,10 +454,12 @@ function AddRow({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId:
   const [category, setCategory] = useState("");
   const [note, setNote] = useState("");
   const { data: custom = [] } = useQuery<{ label: string; branchId: number | null }[]>({ queryKey: ["/api/expense-categories"] });
+  //  بابا «رواتب» و«إيجارات» تقاعدا، وبابا القاصتين من يوم بدايتهما وحده (§4.dj).
+  const withReserves = Boolean(sheet.reserves);
   const categories = useMemo(() => [
-    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).sheetOnly && !(c as any).karbalaOnly),
+    ...writableExpenseCategories({ reserves: withReserves }),
     ...custom.filter((c) => c.branchId == null || c.branchId === branchId).map((c) => ({ value: c.label, label: c.label })),
-  ], [custom, branchId]);
+  ], [custom, branchId, withReserves]);
   const kinds: { v: AddKind; label: string }[] = [
     { v: "expense", label: "مصاريف" },
     { v: "dr_transfer", label: "تحويل إلى قاصة الدكتور" },
@@ -473,6 +497,115 @@ function AddRow({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId:
       </label>
       <Button type="submit" disabled={!amount || (kind === "expense" && !category) || write.isPending} data-testid="cash-add-save">أضف</Button>
     </form>
+  );
+}
+
+const ymdText = (ymd: string) => ymd.split("-").reverse().join("/");
+
+/**
+ * **قاصةُ المواد أو قاصةُ الرواتب والإيجار** (قرارُ المالك ٢٠٢٦-١٠-١١، §4.dj) — تجميعيّةٌ كمربّع النسبة: ما عُزل اليوم (مصروفُ بابها) +
+ * المتبقي من أمس − ما سحبه المالكُ اليوم. يراها المحاسبُ والمالك؛ والسحبُ ورصيدُ البداية والهدفُ للمالك وحده. والزيادةُ على الرصيد حمراء ولا تُمنع.
+ */
+function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
+  k: ReserveKey; box: ReserveState; sheet: Sheet; branchId: number; book: Book; day: string; write: any;
+}) {
+  const L = RESERVE_LABELS[k];
+  const [settings, setSettings] = useState(false);
+  const tone = k === "materials" ? "border-teal-700 text-teal-800" : "border-indigo-700 text-indigo-800";
+  return (
+    <div className={`border-4 border-double ${tone.split(" ")[0]} rounded-sm p-3 space-y-2 text-sm`} data-testid={`reserve-box-${k}`}>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className={`font-bold text-base ${tone.split(" ")[1]}`}>{L.box}</h3>
+        {sheet.isAdmin && (
+          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => setSettings(true)} data-testid={`reserve-${k}-settings`}
+            aria-label={k === "payroll" ? "رصيد البداية والهدف الشهريّ" : "رصيد البداية"} title={k === "payroll" ? "رصيد البداية والهدف الشهريّ" : "رصيد البداية"}>
+            <Settings2 className="w-4 h-4" />
+          </Button>
+        )}
+      </div>
+      <BoxLine label={`${L.category} اليوم`} hint="(من مصاريف اليوم)" value={box.today} testid={`reserve-${k}-today`} />
+      <BoxLine label="المتبقي من أمس" value={box.prev} testid={`reserve-${k}-prev`} />
+      {box.withdrawn > 0 && <BoxLine label="سحبه المالك اليوم" value={-box.withdrawn} testid={`reserve-${k}-withdrawn`} />}
+      <BoxLine label="المتبقي في القاصة" hint={box.withdrawn > 0 ? "(اليوم + أمس − السحب)" : "(اليوم + أمس)"}
+        value={box.remaining} strong danger={box.remaining < 0} testid={`reserve-${k}-remaining`} />
+      {box.remaining < 0 && <p className="text-xs text-red-600" data-testid={`reserve-${k}-over`}>سُحب أكثر ممّا عُزل.</p>}
+      {k === "payroll" && box.month && (
+        <div className="rounded bg-indigo-50 border border-indigo-200 px-2 py-1.5 text-xs space-y-0.5" data-testid="reserve-payroll-month">
+          <div>عُزل هذا الشهر <b className="tabular-nums" dir="ltr">{fmt(box.month.setAside)}</b> من الهدف <b className="tabular-nums" dir="ltr">{fmt(box.month.target)}</b></div>
+          <div>{box.month.left > 0 ? <>الباقي على الهدف <b className="tabular-nums" dir="ltr">{fmt(box.month.left)}</b></> : <b className="text-emerald-700">بلغ الهدف</b>}</div>
+        </div>
+      )}
+      {sheet.isAdmin && box.withdrawals.length > 0 && (
+        <ul className="text-xs text-muted-foreground space-y-0.5" data-testid={`reserve-${k}-withdrawals`}>
+          {box.withdrawals.map((w) => (
+            <li key={w.id} className="flex items-center gap-1">
+              <span>سحب <span className="tabular-nums" dir="ltr">{fmt(w.amount)}</span>{w.note ? ` — ${w.note}` : ""}</span>
+              {sheet.canWrite && (
+                <button className="p-0.5 text-slate-400 hover:text-red-700" aria-label="حذف السحب"
+                  onClick={() => write.mutate({ method: "DELETE", url: `/api/cash-book/rows/entry/${w.id}` })}>
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {sheet.isAdmin && sheet.canWrite && <WithdrawReserve k={k} branchId={branchId} book={book} day={day} write={write} />}
+      {sheet.isAdmin && (
+        <ReserveSettingsDialog k={k} box={box} start={sheet.reserves!.start} branchId={branchId} book={book} write={write}
+          open={settings} onClose={() => setSettings(false)} />
+      )}
+    </div>
+  );
+}
+
+function WithdrawReserve({ k, branchId, book, day, write }: { k: ReserveKey; branchId: number; book: Book; day: string; write: any }) {
+  const [amount, setAmount] = useState("");
+  return (
+    <div className="flex gap-2 items-end pt-2 border-t">
+      <label className="grid gap-1 text-xs flex-1">سحبتُ من القاصة<AmountInput id={`reserve-${k}-withdraw`} value={amount} onChange={setAmount} /></label>
+      <Button size="sm" variant="outline" disabled={!amount} data-testid={`reserve-${k}-withdraw-save`}
+        onClick={() => write.mutate({ method: "POST", url: "/api/cash-book/rows", body: { branchId, book, date: day, kind: RESERVE_WITHDRAW_KIND[k], amount: Number(amount) } },
+          { onSuccess: () => setAmount("") })}>
+        سجّل السحب
+      </Button>
+    </div>
+  );
+}
+
+/** رصيدُ البداية (والهدفُ الشهريّ لقاصة الرواتب والإيجار) — للمالك وحده. */
+function ReserveSettingsDialog({ k, box, start, branchId, book, write, open, onClose }: {
+  k: ReserveKey; box: ReserveState; start: string; branchId: number; book: Book; write: any; open: boolean; onClose: () => void;
+}) {
+  const L = RESERVE_LABELS[k];
+  const [opening, setOpening] = useState("");
+  const [target, setTarget] = useState("");
+  useEffect(() => {
+    if (open) { setOpening(box.opening ? String(box.opening) : ""); setTarget(box.monthlyTarget ? String(box.monthlyTarget) : ""); }
+  }, [open]);
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>{L.box} — دفتر «{CASH_BOOK_LABELS[book]}»</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">تبدأ القاصة يوم {ymdText(start)}. رصيدُ البداية ما كان فيها قبل أوّل يوم — ويُضاف إليه ما عُزل بعده.</p>
+          <label className="grid gap-1">رصيد البداية<AmountInput id={`reserve-${k}-opening`} value={opening} onChange={setOpening} /></label>
+          {k === "payroll" && (
+            <label className="grid gap-1">الهدف الشهريّ (الرواتب والإيجار في الشهر)
+              <AmountInput id="reserve-payroll-target" value={target} onChange={setTarget} />
+              <span className="text-xs text-muted-foreground">اتركه فارغاً لإزالة الهدف.</span>
+            </label>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          <Button data-testid={`reserve-${k}-settings-save`} onClick={() => write.mutate({
+            method: "POST", url: "/api/cash-book/reserves",
+            body: { branchId, book, reserve: k, openingBalance: Number(opening || 0), ...(k === "payroll" ? { monthlyTarget: target ? Number(target) : null } : {}) },
+          }, { onSuccess: onClose })}>حفظ</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

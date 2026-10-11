@@ -5,8 +5,10 @@
 //   • **ب**: الرصيدُ الافتتاحيّ — قبله لا كتابة، والموظّفُ يسجّله مرّةً، والمسؤولُ يعدّله.
 //   • **ج**: الوارد — دفعاتُ المرضى بقسم حالتها لكلّ دفتر، والدفعةُ بلا قسم في دفتر الأطراف موسومةً، و«وارد آخر».
 //   • **د**: الصادر — المصروفُ صفٌّ في `expenses` بقسم الدفتر، والتحويلُ ليس مصروفاً.
-//   • **هـ**: النسب — الدكتور (بغداد ٢٠٪) من وارد الدفتر وحده، تُحدَّث ولا تتكرّر؛ والمستشفى لذي قار مصروفاً؛ والعتبة لكربلاء بيد.
-//   • **و**: الحساب — مجموعُ اليوم والباقي من أمس والمتبقي، ومربّعُ النسبة واستلامُها للمسؤول؛ ولا مجموعَ للتحويلات.
+//   • **هـ**: النسب — لا نسبةَ للدكتور من يوم القطع (§4.dj)؛ والمستشفى لذي قار مصروفاً؛ والعتبة لكربلاء بيد.
+//   • **و**: الحساب — مجموعُ اليوم والباقي من أمس والمتبقي، وما بقي من النسبة واستلامُه للمسؤول؛ ولا مجموعَ للتحويلات.
+//   • **ن**: نسبةُ الدكتور قبل يوم القطع بأيّامٍ ثابتة (٢٠٢٦-١٠-٠٩ و١٠) — كما كانت، وورقتُها المطبوعة لا تُعلَّم، ولا نسبةَ بعده.
+//   • **س**: قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — التراكمُ والسحبُ للمسؤول والبدايةُ والهدفُ، وتقاعدُ «رواتب» و«إيجارات».
 //   • **ز**: الأقفال — الأيامُ الماضية للمسؤول، والنسبُ لا تُكتب بيد، والمصروفُ يعدّله صاحبُه أو صاحبُ «إدارة المحاسبة».
 //   • **ح**: التدقيق · **ط**: المنطقُ الخالص.
 
@@ -14,7 +16,12 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages, distinctNoteParts } from "@shared/cash_book";
+import { createHash } from "crypto";
+import {
+  branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages, distinctNoteParts,
+  RESERVES_START, drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine,
+} from "@shared/cash_book";
+import { reserveBoxes, cashBookPeriod } from "./cash_book/store";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -71,6 +78,10 @@ function addDays(ymd: string, n: number) {
 }
 const TODAY = baghdadTodayYmd();
 const YDAY = addDays(TODAY, -1);
+/** نسبةُ أمس (٢٠٪ من ٣٠٠ ألف) — **ما دام أمسُ قبل يوم القطع** (§4.dj): اليومَ نعم، ومن الغد لا. وما قبل القطع يُحرس بأيّامٍ ثابتة في «ن». */
+const RY = drRatioApplies(YDAY) ? 60_000 : 0;
+/** يومان ثابتان قبل يوم القطع — لا يتغيّران بيوم التشغيل. */
+const D1 = "2026-10-09", D2 = "2026-10-10";
 /** منتصفُ نهار بغداد لتاريخٍ ما — لا يقع على حدّ يوم. */
 const noon = (ymd: string) => new Date(`${ymd}T12:00:00+03:00`);
 
@@ -85,6 +96,8 @@ async function cleanup() {
   await q(`DELETE FROM cash_book_entries WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_openings WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM cash_book_prints WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
+  await q(`DELETE FROM cash_book_reserves WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
+  await q(`DELETE FROM money_correction_requests WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM staff_notification_outbox WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM payments WHERE patient_id IN (${pids})`);
   await q(`DELETE FROM patient_cases WHERE patient_id IN (${pids})`);
@@ -182,9 +195,9 @@ async function main() {
        (await row(S.acc, { kind: "income_other", amount: 50_000, note: "بيع جوارب" })).status], [400, 200]);
 
     console.log("\n── د. الصادر ──");
-    const ex = await row(S.acc, { kind: "expense", amount: 150_000, category: "salaries", note: "راتب" });
+    const ex = await row(S.acc, { kind: "expense", amount: 150_000, category: "maintenance", note: "تصليح" });
     const [er] = await q(`SELECT section, expense_date::text d, category, amount FROM expenses WHERE id=$1`, [ex.body?.id]);
-    same("د١. **المصروفُ صفٌّ في `expenses` بقسم الدفتر ويومه** — فيدخل تقاريرَ المحاسبة", er, { section: "prosthetic", d: TODAY, category: "salaries", amount: 150_000 });
+    same("د١. **المصروفُ صفٌّ في `expenses` بقسم الدفتر ويومه** — فيدخل تقاريرَ المحاسبة", er, { section: "prosthetic", d: TODAY, category: "maintenance", amount: 150_000 });
     same("د٢. **بلا باب ⟵ ٤٠٠**، و«أخرى» بلا ملاحظة ⟵ ٤٠٠",
       [(await row(S.acc, { kind: "expense", amount: 1000 })).status, (await row(S.acc, { kind: "expense", amount: 1000, category: "other" })).status], [400, 400]);
     same("د٣. **التحويلُ إلى قاصة الدكتور ليس مصروفاً** — لا صفَّ في `expenses`",
@@ -194,20 +207,19 @@ async function main() {
       [(await row(S.acc, { kind: "dr_transfer", amount: 0 })).status, (await row(S.acc, { kind: "dr_transfer", amount: 10.5 })).status], [400, 400]);
 
     console.log("\n── هـ. النسب ──");
-    //  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — بلا زرّ.
+    //  **نسبةُ الدكتور أُلغيت من يوم القطع** (قرارُ المالك ٢٠٢٦-١٠-١١، §4.dj) — واليومُ بعده دائماً. وما قبله في «ن» بأيّامٍ ثابتة.
     const drRows = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => [r.source, r.amount]);
-    const drCols = (b: any) => (b?.rows ?? []).filter((r: any) => r.kind === "dr_ratio").map((r: any) => r.column);
     d = (await sheet(S.acc)).body;
-    same("هـ١. **نسبةُ الدكتور لبغداد ٢٠٪ من وارد الدفتر وحده، تلقائياً بلا زرّ** (١,٢٥٠,٠٠٠ ⟵ ٢٥٠,٠٠٠)", drRows(d), [["auto", 250_000]]);
+    same("هـ١. **لا سطرَ «نسبة الدكتور» من يوم القطع** — وارد بغداد ١,٢٥٠,٠٠٠ يبقى في القاصة، ولا نسبةَ متوقَّعة",
+      [drRows(d), d.expected?.drRatio, d.ratio?.today], [[], null, 0]);
     await row(S.acc, { kind: "income_other", amount: 50_000, note: "استرداد" });
     d = (await sheet(S.acc)).body;
-    same("هـ٢. **ووارد جديد يغيّرها وحده** — كالمجموع", drRows(d), [["auto", 260_000]]);
-    same("هـ٢ب. **وفي عمود «مصاريف» لا «تحويل إلى قاصة الدكتور»** — تُعزَل ولا تذهب إلى قاصة المالك يومَها", drCols(d), ["expense"]);
+    same("هـ٢. **ووارد جديد لا يُعيدها**", drRows(d), []);
     const noBtn = await ratio(S.acc, { kind: "dr_ratio" });
-    same("هـ٣. **ولا تُضاف بزرّ** — ٤٠٠ برسالةٍ تقول لماذا", [noBtn.status, /تلقائياً/.test(noBtn.body?.error ?? "")], [400, true]);
+    same("هـ٣. **ولا تُضاف بزرّ** — ٤٠٠ برسالةٍ تقول إنها أُلغيت وما بدلها", [noBtn.status, /أُلغيت/.test(noBtn.body?.error ?? "") && /قاصة المواد/.test(noBtn.body?.error ?? "")], [400, true]);
     //  ما سُجّل يدوياً قبل القرار لا يُقرأ بعده — فلا تُحسب النسبةُ مرّتين.
     await q(`INSERT INTO cash_book_entries (branch_id, book, entry_date, kind, amount) VALUES ($1,'devices',$2,'dr_ratio',999)`, [BGD, TODAY]);
-    same("هـ٣ب. **والنسبةُ المسجَّلةُ يدوياً قديماً لا تُحسب مرّةً ثانية**", drRows((await sheet(S.acc)).body), [["auto", 260_000]]);
+    same("هـ٣ب. **والنسبةُ المسجَّلةُ يدوياً قديماً لا تُقرأ**", drRows((await sheet(S.acc)).body), []);
     same("هـ٤. **ولا نسبةَ مستشفى ولا عتبة لبغداد** — ٤٠٠", [(await ratio(S.acc, { kind: "hospital_ratio" })).status,
       (await row(S.acc, { kind: "atabah_ratio", amount: 1000 })).status], [400, 400]);
 
@@ -218,7 +230,7 @@ async function main() {
     await ratio(S.accDq, { kind: "hospital_ratio" });
     const hosp = await q(`SELECT amount, section, category FROM expenses WHERE branch_id=$1 AND category='hospital_percentage'`, [DQ]);
     same("هـ٥. **نسبةُ مستشفى ذي قار ١٠٪ مصروفاً حقيقيّاً، صفّاً واحداً لليوم**", [h1.body?.amount, hosp], [80_000, [{ amount: 80_000, section: "prosthetic", category: "hospital_percentage" }]]);
-    same("هـ٦. **ونسبةُ الدكتور لذي قار ١٠٪**", drRows((await sheet(S.accDq)).body), [["auto", 80_000]]);
+    same("هـ٦. **ولا نسبةَ دكتور لذي قار اليوم** — «ارجع ما تمّ قطعه» (المالك)", drRows((await sheet(S.accDq)).body), []);
 
     await http("POST", "/api/cash-book/opening", S.admin, { branchId: KRB, book: "devices", openingDate: TODAY, cash: 0, ratio: 0 });
     const at = await row(S.accKrb, { kind: "atabah_ratio", amount: 70_000, note: "حصة العتبة" });
@@ -227,18 +239,18 @@ async function main() {
 
     console.log("\n── و. الحساب ──");
     d = (await sheet(S.acc)).body;
-    same("و١. **مجموعُ اليوم والباقي من أمس والمتبقي** — الباقي من أمس = افتتاحيّ ١٠٠ ألف + وارد أمس ٣٠٠ ألف − نسبةُ أمس ٦٠ ألفاً (تلقائياً)",
-      d.totals, { income: 1_300_000, outflow: 810_000, dayNet: 490_000, prevRemaining: 340_000, remaining: 830_000 });
+    same("و١. **مجموعُ اليوم والباقي من أمس والمتبقي** — الصادر مصروفٌ ١٥٠ ألفاً وتحويلٌ ٤٠٠ ألف بلا نسبة، والباقي من أمس = افتتاحيّ ١٠٠ ألف + وارد أمس ٣٠٠ ألف − نسبةُ أمس إن كان قبل القطع",
+      d.totals, { income: 1_300_000, outflow: 550_000, dayNet: 750_000, prevRemaining: 400_000 - RY, remaining: 1_150_000 - RY });
     same("و٢. **ولا مجموعَ للتحويلات في الردّ** — الصادرُ رقمٌ واحد", Object.keys(d.totals).some((k) => /transfer/i.test(k)), false);
-    same("و٣. **مربّعُ النسبة**: نسبةُ اليوم ٢٦٠ ألفاً + المتبقي من أمس (٥٠ ألفاً افتتاحيّ + ٦٠ ألفاً نسبةُ أمس)", [d.ratio.today, d.ratio.prev, d.ratio.remaining], [260_000, 110_000, 370_000]);
-    same("و٤. **واستلامُ النسبة للمسؤول وحده** (٤٠٣ للمحاسب)", (await row(S.acc, { kind: "ratio_received", amount: 100_000 })).status, 403);
-    await row(S.admin, { branchId: BGD, kind: "ratio_received", amount: 100_000, note: "استلمت" });
+    same("و٣. **ما بقي من النسبة**: لا نسبةَ اليوم، والمتبقي من أمس (٥٠ ألفاً افتتاحيّ + نسبةُ أمس إن كان قبل القطع)", [d.ratio.today, d.ratio.prev, d.ratio.remaining], [0, 50_000 + RY, 50_000 + RY]);
+    same("و٤. **واستلامُ ما بقي من النسبة للمسؤول وحده** (٤٠٣ للمحاسب)", (await row(S.acc, { kind: "ratio_received", amount: 30_000 })).status, 403);
+    await row(S.admin, { branchId: BGD, kind: "ratio_received", amount: 30_000, note: "استلمت" });
     d = (await sheet(S.acc)).body;
-    same("و٥. **فينقص المتبقي في النسبة ولا يمسّ القاصة**", [d.ratio.remaining, d.totals.remaining], [270_000, 830_000]);
+    same("و٥. **فينقص المتبقي في النسبة ولا يمسّ القاصة**", [d.ratio.remaining, d.totals.remaining], [20_000 + RY, 1_150_000 - RY]);
     const tomorrowLike = (await sheet(S.admin, "devices", TODAY, BGD)).body;
     same("و٦. **وكلُّ يومٍ يبدأ من باقي سابقه**: يومُ الافتتاح باقيه الافتتاحيّ",
       (await sheet(S.acc, "devices", YDAY)).body?.totals?.prevRemaining, 100_000);
-    check(tomorrowLike?.totals?.remaining === 830_000, "و٧. والمسؤولُ يرى الصفحةَ نفسَها بالأرقام نفسِها");
+    check(tomorrowLike?.totals?.remaining === 1_150_000 - RY, "و٧. والمسؤولُ يرى الصفحةَ نفسَها بالأرقام نفسِها");
 
     console.log("\n── ز. الأقفال ──");
     same("ز١. **الأمسُ مقفلٌ على المحاسب** (٤٠٣)، **ومفتوحٌ للمسؤول** (٢٠٠)",
@@ -336,23 +348,58 @@ async function main() {
       [sb.account, sb.drBox.balance, sb.drBox.received, sb.books.find((k: any) => k.book === "devices").cashRemaining,
        sb.books.find((k: any) => k.book === "devices").ratioRemaining],
       ["كي كارت 2009", boxB.totals.balance, boxB.totals.received, devB.totals.remaining, devB.ratio.remaining]);
-    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها (٦٠ ألف أمس + ٢٦٠ ألف اليوم، تلقائياً) والمستلَم، وتحويلُ ذي قار وحده لذي قار",
+    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها (أمسُ وحده إن كان قبل القطع، ولا شيءَ اليوم) والمستلَم، وتحويلُ ذي قار وحده لذي قار",
       [sb.books.find((k: any) => k.book === "devices").period, smList.find((b: any) => b.id === DQ).books[0].period.drTransfers],
-      [{ drTransfers: 501_000, drRatio: 320_000, ratioReceived: 100_000 }, 70_000]);
+      [{ drTransfers: 501_000, drRatio: RY, ratioReceived: 30_000 }, 70_000]);
     same("ي١٩. **والمجاميعُ الكلّية جمعُ الفروع**",
       [sm.totals.drBoxBalance, sm.totals.periodDrTransfers],
       [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
        smList.reduce((a: number, b: any) => a + b.books.reduce((x: number, k: any) => x + k.period.drTransfers, 0), 0)]);
 
+
+    console.log("\n── ن. نسبة الدكتور قبل يوم القطع — بأيّامٍ ثابتة (§4.dj) ──");
+    //  دفترُ العلاج الطبيعي لذي قار يبدأ ٢٠٢٦-١٠-٠٩ (قبل القطع): وارد ٤٠٠ ألف يومَ ٩ و٢٠٠ ألف يومَ ١٠ و٣٠٠ ألف اليوم.
+    await http("POST", "/api/cash-book/opening", S.admin, { branchId: DQ, book: "physio", openingDate: D1, cash: 1_000_000, ratio: 5_000 });
+    await pay(PD.id, DQ, 400_000, PD.phy, noon(D1));
+    await pay(PD.id, DQ, 200_000, PD.phy, noon(D2));
+    await pay(PD.id, DQ, 300_000, PD.phy, noon(TODAY));
+    const dq = (date: string) => sheet(S.admin, "physio", date, DQ);
+    const n1 = (await dq(D2)).body;
+    same("ن١. **قبل القطع كما كانت**: نسبةُ ذي قار ١٠٪ تلقائياً (٢٠٠ ألف ⟵ ٢٠ ألفاً)، ومربّعُها (٥ آلاف افتتاحيّ + ٤٠ ألفاً نسبةُ يوم ٩)، والباقي من أمس بعدها، ولا قاصتين",
+      [drRows(n1), [n1.ratio.today, n1.ratio.prev, n1.ratio.remaining], n1.expected?.drRatio, n1.totals.prevRemaining, n1.reserves],
+      [[["auto", 20_000]], [20_000, 45_000, 65_000], { pct: 10, amount: 20_000, recorded: 20_000 }, 1_360_000, null]);
+    const n2 = (await dq(TODAY)).body;
+    same("ن٢. **ومن يوم القطع لا نسبة**: لا سطرَ ولا نسبةَ اليوم، والباقي من أمس = مليون + ٦٠٠ ألف − ٦٠ ألفاً نسبةُ اليومين، وما بقي من النسبة يُحمل، والقاصتان ظاهرتان",
+      [drRows(n2), n2.ratio.today, n2.ratio.prev, n2.totals.prevRemaining, Boolean(n2.reserves)], [[], 0, 65_000, 1_540_000, true]);
+    //  ورقةٌ طُبعت قبل القطع ببصمة الصيغة السابقة (بلا مفتاح القاصتين) — تبقى مطابقةً لما في التطبيق.
+    const oldFingerprint = (sh: any) => createHash("sha1").update(JSON.stringify({
+      branch: sh.branch?.id, book: sh.book, day: sh.day, opening: sh.opening ?? null,
+      rows: sh.rows.map((r: any) => [r.source, r.id, r.column, r.amount, r.note, r.category ?? null]),
+      totals: sh.totals, ratio: [sh.ratio.today, sh.ratio.prev, sh.ratio.received, sh.ratio.remaining],
+      drBox: (sh.drBoxLines ?? []).map((l: any) => [l.id, l.category]),
+    })).digest("hex");
+    await q(`INSERT INTO cash_book_prints (branch_id, book, day, fingerprint, printed_by_name) VALUES ($1,'physio',$2,$3,'قبل القطع')`, [DQ, D2, oldFingerprint(n1)]);
+    same("ن٣. **ورقةٌ طُبعت قبل القطع لا تُعلَّم «عُدّلت بعد الطباعة»** — بصمتُها بالصيغة السابقة تطابق", (await dq(D2)).body.changedAfterPrint, false);
+    await row(S.admin, { branchId: DQ, book: "physio", kind: "ratio_received", amount: 65_000, note: "صفّرتُها" });
+    const n4 = (await dq(TODAY)).body;
+    same("ن٤. **والمسؤولُ يستلم ما بقي من النسبة فيصفر** — ولا يمسّ القاصة", [n4.ratio.remaining, n4.totals.remaining], [0, n2.totals.remaining]);
+    const n6 = (await dq(addDays(TODAY, 1))).body;
+    same("ن٦. **وورقةُ الغد تبدأ من متبقّي اليوم كاملاً** — لا نسبةَ تُطرح من يومٍ بعد القطع", [n6.totals.prevRemaining, n6.ratio.prev], [n4.totals.remaining, 0]);
+    const per: any = await cashBookPeriod(DQ, "physio", D1, TODAY);
+    same("ن٥. **ودفترُ الفترة للمدقّق بالقاعدة نفسِها**: نسبةُ اليومين ٦٠ ألفاً وحدها، والمتبقي = مليون + ٩٠٠ ألف − ٦٠ ألفاً",
+      [per.period.drRatio, per.endRemaining, per.endRatioBalance], [60_000, 1_840_000, 0]);
+
     console.log("\n── ل. نسبة الدكتور في التقرير المحاسبي — مسحوبات المالك (§4.ca تكملةٌ رابعة) ──");
-    const acct = (await http("GET", `/api/accounting/summary?branchId=${BGD}&startDate=${YDAY}&endDate=${TODAY}`, S.admin)).body;
-    const odB = acct.ownerDrawings?.byBranch?.find((b: any) => b.branchId === BGD);
-    same("ل١. **سطرٌ مستقلّ بنسبة الفرع** — بغداد ٢٠٪: أمس ٦٠ ألفاً + اليوم ٢٦٠ ألفاً (أطراف) + ١٠٠ ألف (علاج طبيعي)",
-      [odB?.pct, odB?.amount, acct.ownerDrawings?.total], [20, 420_000, 420_000]);
+    const acct = (await http("GET", `/api/accounting/summary?branchId=${DQ}&startDate=${D1}&endDate=${TODAY}`, S.admin)).body;
+    const odB = acct.ownerDrawings?.byBranch?.find((b: any) => b.branchId === DQ);
+    same("ل١. **سطرٌ مستقلّ بنسبة الفرع للأيام قبل القطع وحدها** — ذي قار ١٠٪: ٤٠ ألفاً + ٢٠ ألفاً، ولا شيءَ من وارد اليوم",
+      [odB?.pct, odB?.amount, acct.ownerDrawings?.total], [10, 60_000, 60_000]);
     same("ل٢. **وليست من المصاريف** — المصاريفُ والصافي كما هما، والصافي بعدها مطروحاً منه",
-      [acct.ownerDrawings?.netAfter, acct.netProfit - 420_000, Number(acct.totalExpenses) === Number((await q(
-        `SELECT COALESCE(SUM(amount),0)::bigint n FROM expenses WHERE branch_id=$1 AND expense_date BETWEEN $2 AND $3`, [BGD, YDAY, TODAY]))[0].n)],
-      [acct.netProfit - 420_000, acct.ownerDrawings?.netAfter, true]);
+      [acct.ownerDrawings?.netAfter, Number(acct.totalExpenses) === Number((await q(
+        `SELECT COALESCE(SUM(amount),0)::bigint n FROM expenses WHERE branch_id=$1 AND expense_date BETWEEN $2 AND $3`, [DQ, D1, TODAY]))[0].n)],
+      [acct.netProfit - 60_000, true]);
+    const acctAfter = (await http("GET", `/api/accounting/summary?branchId=${DQ}&startDate=${RESERVES_START}&endDate=${TODAY}`, S.admin)).body;
+    same("ل٣. **وفترةٌ بعد القطع لا سطرَ فيها** — لا «نسبة الدكتور» بصفر", [acctAfter.ownerDrawings?.byBranch, acctAfter.ownerDrawings?.total], [[], 0]);
 
     console.log("\n── ك. طباعة ورقة الدفتر (§4.ca تكملة) ──");
     const printed = (s: any, body: any) => http("POST", "/api/cash-book/printed", s, { book: "devices", date: TODAY, ...body });
@@ -395,6 +442,102 @@ async function main() {
     same("م١. **«أخرى» بوصفه مرّةً واحدة في الدفتر** — والخانتان كما هما لتقارير المحاسبة",
       [other.status, stored?.subcategory, stored?.description, otherRow?.note], [200, "قرطاسية", "قرطاسية", "قرطاسية"]);
 
+
+    console.log("\n── س. قاصة المواد وقاصة الرواتب والإيجار (§4.dj) ──");
+    const rsv = async (s: any = S.acc, book = "devices") => (await sheet(s, book)).body;
+    const pick = (b: any) => (b ? [b.today, b.prev, b.withdrawn, b.remaining] : null);
+    const r0 = await rsv();
+    same("س٠. **تبدآن من يوم القطع (أو من بداية الدفتر بعده) بصفر**",
+      [r0.reserves?.start, pick(r0.reserves?.materials), pick(r0.reserves?.payroll), r0.reserves?.payroll?.month], [reserveStartOf(YDAY), [0, 0, 0, 0], [0, 0, 0, 0], null]);
+    const mat = await row(S.acc, { kind: "expense", amount: 200_000, category: "materials_reserve", note: "عزل مواد" });
+    const pr = await row(S.acc, { kind: "expense", amount: 100_000, category: "payroll_rent" });
+    const r1 = await rsv();
+    same("س١. **«أجور مواد» و«رواتب وإيجار» مصروفٌ عاديّ** — صفّان في `expenses` بقسم الدفتر، وينقص بهما المتبقي في القاصة ٣٠٠ ألف",
+      [mat.status, pr.status, await q(`SELECT category, section FROM expenses WHERE id = ANY($1::int[]) ORDER BY id`, [[mat.body?.id, pr.body?.id]]),
+       r1.totals.remaining],
+      [200, 200, [{ category: "materials_reserve", section: "prosthetic" }, { category: "payroll_rent", section: "prosthetic" }], r0.totals.remaining - 300_000]);
+    same("س٢. **ويتراكم كلٌّ في قاصته**", [pick(r1.reserves.materials), pick(r1.reserves.payroll)], [[200_000, 0, 0, 200_000], [100_000, 0, 0, 100_000]]);
+    same("س٣. **ولكلّ دفترٍ قاصتاه** — دفترُ العلاج الطبيعي لبغداد لا يرى مصروفَ الأطراف", pick((await rsv(S.acc, "physio")).reserves?.materials), [0, 0, 0, 0]);
+    const nEntries = async () => Number((await q(`SELECT count(*)::int n FROM cash_book_entries WHERE branch_id=$1 AND kind IN ('materials_withdrawn','payroll_withdrawn')`, [BGD]))[0].n);
+    const nExp = async () => Number((await q(`SELECT count(*)::int n FROM expenses WHERE branch_id=$1`, [BGD]))[0].n);
+    const wd = (sx: any, body: any) => row(sx, { kind: "materials_withdrawn", amount: 50_000, ...body });
+    same("س٤. **السحبُ للمسؤول وحده** — ٤٠٣ للمحاسب ولمدير الفرع، ولا سطر", [(await wd(S.acc, {})).status, (await wd(S.mgr, {})).status, await nEntries()], [403, 403, 0]);
+    const expBeforeW = await nExp();
+    const w1 = await wd(S.admin, { branchId: BGD, note: "دفعة المورّد" });
+    const r2 = await rsv();
+    same("س٥. **سحبُ المالك ينقص القاصةَ وحدها** — لا صفَّ في `expenses` ولا يتغيّر نقدُ اليوم، ويظهر في المربّع",
+      [w1.status, pick(r2.reserves.materials), r2.totals, await nExp(), r2.reserves.materials.withdrawals.map((x: any) => [x.amount, x.note])],
+      [200, [200_000, 0, 50_000, 150_000], r1.totals, expBeforeW, [[50_000, "دفعة المورّد"]]]);
+    const w2 = await row(S.admin, { branchId: BGD, kind: "payroll_withdrawn", amount: 150_000 });
+    same("س٦. **وسحبُ أكثرَ ممّا عُزل لا يُمنع** — يصير المتبقي سالباً (يظهر أحمر)", [w2.status, (await rsv()).reserves.payroll.remaining], [200, -50_000]);
+    const setR = (sx: any, body: any) => http("POST", "/api/cash-book/reserves", sx, { branchId: BGD, book: "devices", ...body });
+    const nRes = async () => Number((await q(`SELECT count(*)::int n FROM cash_book_reserves WHERE branch_id=$1`, [BGD]))[0].n);
+    same("س٧. **رصيدُ البداية والهدفُ للمسؤول وحده** — ٤٠٣ للمحاسب ولمدير الفرع، ولا صفّ",
+      [(await setR(S.acc, { reserve: "materials", openingBalance: 1 })).status, (await setR(S.mgr, { reserve: "payroll", monthlyTarget: 5 })).status, await nRes()], [403, 403, 0]);
+    await setR(S.admin, { reserve: "materials", openingBalance: 1_000_000 });
+    await setR(S.admin, { reserve: "materials", openingBalance: 900_000 });
+    same("س٨. **ورصيدُ البداية يدخل «المتبقي من أمس»** — ٩٠٠ ألف بعد تعديل المليون، صفٌّ واحد وسطرا تدقيق",
+      [pick((await rsv()).reserves.materials), await nRes(),
+       (await q(`SELECT action FROM audit_log WHERE entity_type='cash_book_reserve' AND branch_id=$1 ORDER BY id`, [BGD])).map((a) => a.action)],
+      [[200_000, 900_000, 50_000, 1_050_000], 1, ["create", "update"]]);
+    same("س٩. **والهدفُ لقاصة الرواتب والإيجار وحدها، والرصيدُ لا يكون سالباً** — ٤٠٠",
+      [(await setR(S.admin, { reserve: "materials", monthlyTarget: 5 })).status, (await setR(S.admin, { reserve: "payroll", openingBalance: -1 })).status], [400, 400]);
+    await setR(S.admin, { reserve: "payroll", monthlyTarget: 2_000_000 });
+    same("س١٠. **ومع الهدف: كم عُزل هذا الشهر وكم بقي عليه**", (await rsv()).reserves.payroll.month, { target: 2_000_000, setAside: 100_000, left: 1_900_000 });
+    await setR(S.admin, { reserve: "payroll", monthlyTarget: null });
+    same("س١١. **وإزالةُ الهدف تُخفي سطره**", (await rsv()).reserves.payroll.month, null);
+
+    const [oldSal] = await q(`INSERT INTO expenses (branch_id, category, section, description, amount, expense_date, created_by)
+      VALUES ($1,'salaries','prosthetic','راتب قديم',10000,$2,'x') RETURNING id`, [BGD, TODAY]);
+    const viaAcc = await http("POST", "/api/expenses", S.admin, { branchId: BGD, category: "salaries", section: "prosthetic", amount: 1000, expenseDate: TODAY, description: "x" });
+    same("س١٢. **«رواتب» و«إيجارات» تقاعدا** — مصروفٌ جديدٌ بهما ٤٠٠ في الدفتر وفي صفحة المحاسبة وفي طلب التصحيح، برسالةٍ تدلّ على «رواتب وإيجار»",
+      [(await row(S.acc, { kind: "expense", amount: 1000, category: "salaries" })).status, (await row(S.acc, { kind: "expense", amount: 1000, category: "rent" })).status,
+       viaAcc.status, /رواتب وإيجار/.test(viaAcc.body?.error ?? ""),
+       (await http("POST", "/api/money-corrections", S.acc, { targetType: "expense", targetId: ex.body.id, action: "update", category: "salaries", reason: "خطأ في الباب" })).status],
+      [400, 400, 400, true, 400]);
+    same("س١٣. **والمكتوبُ بهما قبلُ يُعدَّل كما هو، ولا يُنقَل إليهما سطر** — في الدفتر وفي صفحة المحاسبة",
+      [(await http("PATCH", `/api/cash-book/rows/expense/${oldSal.id}`, S.admin, { amount: 12_000 })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${oldSal.id}`, S.admin, { category: "rent" })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${ex.body.id}`, S.admin, { category: "salaries" })).status,
+       (await http("PUT", `/api/expenses/${ex.body.id}`, S.admin, { category: "rent" })).status,
+       (await http("PUT", `/api/expenses/${oldSal.id}`, S.admin, { amount: 13_000 })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${oldSal.id}`, S.admin, { category: "payroll_rent" })).status],
+      [200, 400, 400, 400, 200, 200]);
+    same("س١٤. **وبابا القاصتين لا يُكتبان قبل بدايتهما** — دفترُ علاج ذي قار بدأ يوم ٩: يومُ ١٠ ⟵ ٤٠٠ في الدفتر وفي صفحة المحاسبة، والسحبُ كذلك",
+      [(await row(S.admin, { branchId: DQ, book: "physio", date: D2, kind: "expense", category: "materials_reserve", amount: 1000 })).status,
+       (await http("POST", "/api/expenses", S.admin, { branchId: DQ, category: "payroll_rent", section: "physio", amount: 1000, expenseDate: D2, description: "x" })).status,
+       (await row(S.admin, { branchId: DQ, book: "physio", date: D2, kind: "materials_withdrawn", amount: 1000 })).status], [400, 400, 400]);
+    const [preCut] = await q(`INSERT INTO expenses (branch_id, category, section, description, amount, expense_date, created_by)
+      VALUES ($1,'maintenance','physio','قبل القطع',5000,$2,'x') RETURNING id`, [DQ, D2]);
+    same("س١٤ب. **ولا يُنقَل إليهما مصروفُ يومٍ قبل بدايتهما** — في الدفتر وفي صفحة المحاسبة (٤٠٠)، وتعديلُه بغيرهما يمضي",
+      [(await http("PATCH", `/api/cash-book/rows/expense/${preCut.id}`, S.admin, { category: "materials_reserve" })).status,
+       (await http("PUT", `/api/expenses/${preCut.id}`, S.admin, { category: "payroll_rent" })).status,
+       (await http("PATCH", `/api/cash-book/rows/expense/${preCut.id}`, S.admin, { amount: 6_000 })).status], [400, 400, 200]);
+
+    //  التراكمُ عبر الأيام بالحساب نفسِه وبدايةٍ ممرَّرةٍ صريحاً — فيومُ القطع الحقيقيّ لا يسبقه يومٌ في القاصة يُختبر عليه.
+    const ins = (cat: string, amount: number, day: string) => q(`INSERT INTO expenses (branch_id, category, section, description, amount, expense_date, created_by)
+      VALUES ($1,$2,'physio','t',$3,$4,'x')`, [DQ, cat, amount, day]);
+    await ins("materials_reserve", 70_000, D1); await ins("materials_reserve", 30_000, D2);
+    await ins("payroll_rent", 40_000, D1); await ins("payroll_rent", 15_000, "2026-09-28");
+    await q(`INSERT INTO cash_book_entries (branch_id, book, entry_date, kind, amount) VALUES ($1,'physio',$2,'materials_withdrawn',20000)`, [DQ, D2]);
+    await http("POST", "/api/cash-book/reserves", S.admin, { branchId: DQ, book: "physio", reserve: "payroll", monthlyTarget: 100_000 });
+    const cfgDq = branchCashConfig(`${MARK} ذي قار`);
+    const atD1 = await reserveBoxes(DQ, cfgDq, "physio", D1, D1);
+    const atD2 = await reserveBoxes(DQ, cfgDq, "physio", D2, D1);
+    const atD3 = await reserveBoxes(DQ, cfgDq, "physio", "2026-10-11", D1);
+    same("س١٥. **التراكمُ يوماً بعد يوم**: يومَ ٩ عُزل ٧٠ ألفاً، ويومَ ١٠ الباقي من أمس ٧٠ ألفاً + ٣٠ ألفاً − سحبُ ٢٠ ألفاً = ٨٠ ألفاً، ويومَ ١١ يبدأ منها",
+      [pick(atD1?.materials), pick(atD2?.materials), atD3?.materials.prev], [[70_000, 0, 0, 70_000], [30_000, 70_000, 20_000, 80_000], 80_000]);
+    const fromSep = await reserveBoxes(DQ, cfgDq, "physio", D2, "2026-09-25");
+    same("س١٦. **والهدفُ يعدّ هذا الشهر وحده** — رواتبُ ٢٨ أيلول في الرصيد لا في عزل تشرين الأوّل",
+      [fromSep?.payroll.prev, fromSep?.payroll.month], [55_000, { target: 100_000, setAside: 40_000, left: 60_000 }]);
+    const dqNow = (await dq(TODAY)).body;
+    same("س١٧. **ويومٌ قبل البداية لا قاصةَ له، والبدايةُ يومُ القطع** — ما كُتب قبله لا يدخل قاصة ذي قار",
+      [await reserveBoxes(DQ, cfgDq, "physio", D1, D2), dqNow.reserves?.start, pick(dqNow.reserves?.materials)], [null, RESERVES_START, [0, 0, 0, 0]]);
+    await printed(S.acc, {});
+    same("س١٨. **وسحبٌ بعد الطباعة يعلّم الورقة** — القاصتان في بصمتها",
+      [(await sheet(S.acc)).body.changedAfterPrint, (await row(S.admin, { branchId: BGD, kind: "materials_withdrawn", amount: 1_000 })).status,
+       (await sheet(S.acc)).body.changedAfterPrint], [false, 200, true]);
+
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);
     check(aud.length >= 10 && aud.some((a) => a.entity_type === "cash_book_opening") && aud.some((a) => a.action === "delete"),
@@ -416,6 +559,12 @@ async function main() {
       [distinctNoteParts(["قرطاسية", " قرطاسية ", null, ""]), distinctNoteParts(["رواتب", "رواتب", "شهر أيلول"]),
         distinctNoteParts(["رواتب"], ["رواتب"]), distinctNoteParts(["أ", "ب", "أ"])],
       [["قرطاسية"], ["رواتب", "شهر أيلول"], [], ["أ", "ب"]]);
+    same("ط٨. **يومُ القطع وبدايةُ القاصتين** — النسبةُ لما قبله، والقاصتان من يومه أو من بداية الدفتر بعده",
+      [RESERVES_START, drRatioApplies("2026-10-10"), drRatioApplies("2026-10-11"), reserveStartOf("2026-10-07"), reserveStartOf("2026-11-01"), reserveStartOf(null)],
+      ["2026-10-11", true, false, "2026-10-11", "2026-11-01", null]);
+    same("ط٩. مربّعُ القاصة وهدفُ الشهر — والباقي على الهدف لا ينزل تحت الصفر",
+      [reserveBox(100, 50, 30), monthlyTargetLine(40, 100), monthlyTargetLine(140, 100), monthlyTargetLine(10, null)],
+      [{ today: 50, prev: 100, withdrawn: 30, remaining: 120 }, { target: 100, setAside: 40, left: 60 }, { target: 100, setAside: 140, left: 0 }, null]);
     same("ط٢. النسبةُ بالدينار الصحيح", [ratioAmount(1_250_000, 20), ratioAmount(15, 10), ratioAmount(0, 10), ratioAmount(100, null)], [250_000, 2, 0, 0]);
     same("ط٣. اسمُ اليوم من التاريخ وحده", [dayNameOf("2026-10-04"), dayNameOf("2026-10-03")], ["الأحد", "السبت"]);
     same("ط٤. اليومُ المفتوح", [canWriteDay({}, "2026-10-05", "2026-10-05", "2026-10-01"), canWriteDay({}, "2026-10-04", "2026-10-05", "2026-10-01"),

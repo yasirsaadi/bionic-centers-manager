@@ -974,7 +974,7 @@ export const cashBookEntries = pgTable("cash_book_entries", {
   branchId: integer("branch_id").references(() => branches.id).notNull(),
   book: text("book").notNull(), // 'devices' | 'physio'
   entryDate: date("entry_date").notNull(),
-  kind: text("kind").notNull(), // 'income_other' | 'dr_transfer' | 'dr_ratio' | 'ratio_received'
+  kind: text("kind").notNull(), // 'income_other' | 'dr_transfer' | 'dr_ratio' | 'ratio_received' | 'materials_withdrawn' | 'payroll_withdrawn' (١٢٧)
   amount: integer("amount").notNull(),
   note: text("note"),
   createdBy: integer("created_by").references(() => systemUsers.id),
@@ -1001,6 +1001,23 @@ export const cashBookOpenings = pgTable("cash_book_openings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   unique("cash_book_openings_branch_id_book_key").on(t.branchId, t.book),
+]);
+
+/** **قاصةُ المواد وقاصةُ الرواتب والإيجار** (ترحيل ١٢٧، §4.dj) — رصيدُ البداية والهدفُ الشهريّ لكلّ فرعٍ ودفترٍ وقاصة، يضعهما المالكُ وحده.
+ *  والواردُ إليها مصروفُ بابها في `expenses`، والسحبُ منها سطرٌ في `cash_book_entries` — لا يُكتبان هنا. */
+export const cashBookReserves = pgTable("cash_book_reserves", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  book: text("book").notNull(),
+  reserve: text("reserve").notNull(), // 'materials' | 'payroll'
+  openingBalance: integer("opening_balance").notNull().default(0),
+  monthlyTarget: integer("monthly_target"),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  updatedBy: integer("updated_by").references(() => systemUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique("cash_book_reserves_branch_id_book_reserve_key").on(t.branchId, t.book, t.reserve),
 ]);
 
 /** قاصةُ الدكتور (ترحيل ٠٩٩، §4.cb) — ما يصرفه المالكُ منها لكلّ فرع. خارجَ `expenses` وتقارير الفرع عمداً. */

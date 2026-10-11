@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, Fragment } from "react";
-import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
+import { EXPENSE_CATEGORIES, writableExpenseCategories } from "@/lib/expense_categories";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -88,6 +88,8 @@ import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget
 
 
 const CATEGORY_COLORS: Record<string, string> = {
+  materials_reserve: "#0f766e",
+  payroll_rent: "#1d4ed8",
   salaries: "#3b82f6",
   rent: "#f59e0b",
   medical_supplies: "#10b981",
@@ -1814,8 +1816,9 @@ export default function Accounting() {
       return res.json();
     },
   });
+  //  بابا «رواتب» و«إيجارات» تقاعدا (§4.dj) — يظهران لمصروفٍ قديمٍ يُعدَّل وهو بأحدهما وحده.
   const categoriesForForm = [
-    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).sheetOnly && (!(c as any).karbalaOnly || selectedBranchIsKarbala)),
+    ...writableExpenseCategories({ karbala: selectedBranchIsKarbala, current: editingExpense ? editingExpense.category : null }),
     ...customCategories
       .filter((c) => c.branchId == null || c.branchId === watchedBranchId)
       .map((c) => ({ value: c.label, label: c.label, custom: true })),

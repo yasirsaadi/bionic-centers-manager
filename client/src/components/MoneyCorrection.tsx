@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
+import { writableExpenseCategories } from "@/lib/expense_categories";
 import { cashCategoryLabel } from "@/lib/cash_book_text";
 
 export interface CorrectionTarget {
@@ -65,7 +65,8 @@ export function RequestCorrectionDialog({ target, onClose }: { target: Correctio
     },
     onError: (e: any) => toast({ title: "تعذّر الإرسال", description: errText(e), variant: "destructive" }),
   });
-  const manual = EXPENSE_CATEGORIES.filter((c) => !(c as any).sheetOnly && !(c as any).karbalaOnly);
+  //  البابُ المتقاعد يظهر لسطرٍ قديمٍ مكتوبٍ به وحده — ولا يُنقَل إليه سطر (§4.dj).
+  const manual = writableExpenseCategories({ current: target?.category ?? null });
   return (
     <Dialog open={target !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent dir="rtl" className="max-w-md">

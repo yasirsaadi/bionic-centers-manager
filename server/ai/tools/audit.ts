@@ -315,6 +315,7 @@ export const LEDGER_KINDS: LedgerKind[] = ["payments", "expenses", "cash_book_en
 
 const ENTRY_KIND_LABELS: Record<string, string> = {
   income_other: "وارد آخر", dr_transfer: "تحويل إلى قاصة الدكتور", ratio_received: "استلام نسبة الدكتور", dr_ratio: "نسبة الدكتور (قديم)",
+  materials_withdrawn: "سحب المالك من قاصة المواد", payroll_withdrawn: "سحب المالك من قاصة الرواتب والإيجار",
 };
 
 /**

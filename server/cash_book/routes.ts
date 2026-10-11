@@ -3,6 +3,8 @@
 //  • الموظّفُ في فرعه النشط وحده (§4.ay)، والمسؤولُ في أيّ فرعٍ يختاره.
 //  • الكتابةُ في اليوم نفسِه وحدَه، والأيامُ الماضيةُ للمسؤول — ولا يومَ قبل الرصيد الافتتاحيّ.
 //  • ونسبتا الدكتور والمستشفى تُحسبان ولا تُكتبان بيد، و«استلام النسبة» للمسؤول وحده.
+//  • والسحبُ من قاصة المواد وقاصة الرواتب والإيجار، ورصيدُ بدايتهما والهدفُ الشهريّ — للمسؤول وحده (§4.dj).
+//  • وبابا «رواتب» و«إيجارات» تقاعدا: لا مصروفَ جديدٌ بهما ولا يُنقَل إليهما مصروف.
 //  • وكلُّ كتابةٍ تكتب سطرَ تدقيق.
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -11,6 +13,7 @@ import { getSession, type BranchSession } from "../sessions_module/permissions";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import {
   type CashBook, ATABAH_RATIO_CATEGORY, HOSPITAL_RATIO_CATEGORY, canWriteCashBook, canWriteDay, isCashBook, isYmd, parseAmount,
+  RESERVE_KEYS, RESERVE_LABELS, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR, reserveOfWithdrawKind, reserveOfCategory, reserveStartOf, RESERVES_START, type ReserveKey,
 } from "@shared/cash_book";
 import * as store from "./store";
 import { drBoxLinesForDay } from "./dr_box";
@@ -60,6 +63,16 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     if (!b) { res.status(404).json({ error: "الفرع غير موجود" }); return null; }
     if (!b.config.books.includes(bookRaw)) { res.status(400).json({ error: "هذا الفرع بلا دفتر علاج طبيعي" }); return null; }
     return { s, branchId, book: bookRaw as CashBook, config: b.config };
+  }
+
+  /** بابُ قاصةٍ (§4.dj) لا يُكتب في يومٍ قبل بدايتها — فلا يخرج مالٌ من القاصة باسمها ولا يصلها. */
+  async function reserveDayOk(res: any, branchId: number, book: CashBook, category: string, day: string) {
+    const reserve = reserveOfCategory(category);
+    if (!reserve) return true;
+    const start = reserveStartOf((await store.getOpening(branchId, book))?.openingDate);
+    if (start && day >= start) return true;
+    res.status(400).json({ error: `«${RESERVE_LABELS[reserve].category}» تبدأ من ${start ?? "بداية الدفتر"} — اختر باباً آخر لما قبله` });
+    return false;
   }
 
   /** اليومُ مفتوحٌ للكتابة؟ — والسببُ بالعربية إن لم يكن. */
@@ -144,7 +157,42 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
-  // ---- سطرٌ جديد: وارد آخر · مصروف · تحويل · نسبة العتبة · استلام النسبة -----------------------------
+  // ---- قاصةُ المواد وقاصةُ الرواتب والإيجار: رصيدُ البداية والهدفُ الشهريّ — للمسؤول وحده (§4.dj) ------------------
+  app.post("/api/cash-book/reserves", isAuthenticated, async (req: Req, res) => {
+    const g = await gate(req, res, req.body?.branchId, req.body?.book);
+    if (!g) return;
+    if (!g.s.isAdmin) return res.status(403).json({ error: "رصيدُ القاصتين وهدفُهما للمسؤول وحده" });
+    const reserve = req.body?.reserve as ReserveKey;
+    if (!RESERVE_KEYS.includes(reserve)) return res.status(400).json({ error: "اختر القاصة" });
+    const rawOpening = req.body?.openingBalance;
+    const rawTarget = req.body?.monthlyTarget;
+    let openingBalance: number | undefined;
+    if (rawOpening !== undefined) {
+      const n = rawOpening === "" || rawOpening === null ? 0 : Number(String(rawOpening).replace(/[,\s]/g, ""));
+      if (!Number.isInteger(n) || n < 0 || n > 10_000_000_000) return res.status(400).json({ error: "اكتب رصيد البداية رقماً صحيحاً — صفراً أو أكثر" });
+      openingBalance = n;
+    }
+    let monthlyTarget: number | null | undefined;
+    if (rawTarget !== undefined) {
+      if (reserve !== "payroll") return res.status(400).json({ error: "الهدفُ الشهريّ لقاصة الرواتب والإيجار وحدها" });
+      if (rawTarget === null || rawTarget === "" || rawTarget === 0 || rawTarget === "0") monthlyTarget = null;
+      else {
+        const n = parseAmount(rawTarget);
+        if (n === null) return res.status(400).json({ error: "اكتب الهدف الشهريّ رقماً صحيحاً أكبر من صفر — أو اتركه فارغاً" });
+        monthlyTarget = n;
+      }
+    }
+    if (openingBalance === undefined && monthlyTarget === undefined) return res.status(400).json({ error: "لم يتغيّر شيء" });
+    if (!(await store.getOpening(g.branchId, g.book))) return res.status(409).json({ error: "سجّل الرصيد الافتتاحيّ للدفتر أوّلاً" });
+    try {
+      const r = await store.setReserveSetting({ branchId: g.branchId, book: g.book, reserve, openingBalance, monthlyTarget, userId: g.s.userId ?? null });
+      await audit(req, g.s, { entityType: "cash_book_reserve", entityId: r.after.id, action: r.before ? "update" : "create",
+        branchId: g.branchId, oldValues: r.before, newValues: r.after, notes: RESERVE_LABELS[reserve].box });
+      res.json(r.after);
+    } catch (e) { fail(res, e); }
+  });
+
+  // ---- سطرٌ جديد: وارد آخر · مصروف · تحويل · نسبة العتبة · استلام النسبة · السحبُ من القاصتين -----------------------
   app.post("/api/cash-book/rows", isAuthenticated, async (req: Req, res) => {
     const g = await gate(req, res, req.body?.branchId, req.body?.book);
     if (!g) return;
@@ -157,6 +205,17 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     if (!(await dayOpen(res, g.s, g.branchId, g.book, day))) return;
     const userId = g.s.userId ?? null;
     try {
+      //  السحبُ من القاصتين للمالك وحده (§4.dj) — ولا سحبَ في يومٍ قبل بدايتهما.
+      const reserve = reserveOfWithdrawKind(kind);
+      if (reserve) {
+        if (!g.s.isAdmin) return res.status(403).json({ error: `${RESERVE_LABELS[reserve].withdraw} للمسؤول وحده` });
+        const start = reserveStartOf((await store.getOpening(g.branchId, g.book))?.openingDate);
+        if (!start || day < start) return res.status(400).json({ error: `${RESERVE_LABELS[reserve].box} تبدأ من ${start ?? "بداية الدفتر"}` });
+        const row = await store.addEntry({ branchId: g.branchId, book: g.book, day, kind: kind as "materials_withdrawn" | "payroll_withdrawn", amount, note, userId });
+        await audit(req, g.s, { entityType: "cash_book_entry", entityId: row.id, action: "create", branchId: g.branchId, newValues: row,
+          notes: RESERVE_LABELS[reserve].withdraw });
+        return res.json(row);
+      }
       if (kind === "income_other" || kind === "dr_transfer" || kind === "ratio_received") {
         if (kind === "ratio_received" && !g.s.isAdmin) return res.status(403).json({ error: "استلام النسبة للمسؤول وحده" });
         if (kind === "income_other" && !note) return res.status(400).json({ error: "اكتب مصدر الوارد في الملاحظات" });
@@ -175,6 +234,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
           if (category === HOSPITAL_RATIO_CATEGORY || category === ATABAH_RATIO_CATEGORY) {
             return res.status(400).json({ error: "النسب لها خياراتها في الصادر" });
           }
+          if (RETIRED_EXPENSE_CATEGORIES.includes(category)) return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+          if (!(await reserveDayOk(res, g.branchId, g.book, category, day))) return;
           if (category === "other" && !note) return res.status(400).json({ error: "عند اختيار «أخرى» اكتب ما هو المصروف في الملاحظات" });
         }
         const row = await store.addExpense({ branchId: g.branchId, book: g.book, day, category, amount, note, userId });
@@ -193,8 +254,10 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const day = req.body?.date;
     const kind = req.body?.kind;
     if (!isYmd(day)) return res.status(400).json({ error: "التاريخ غير صالح" });
-    //  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — لا تُضاف بزرّ.
-    if (kind === "dr_ratio") return res.status(400).json({ error: "نسبة الدكتور تُحسب تلقائياً من وارد اليوم" });
+    //  نسبةُ الدكتور كانت تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — وأُلغيت من يوم القطع (§4.dj). لا تُضاف بزرّ.
+    if (kind === "dr_ratio") {
+      return res.status(400).json({ error: `نسبة الدكتور لا تُضاف بزرّ — كانت تُحسب تلقائياً، وأُلغيت من ${RESERVES_START} وبدلها قاصة المواد وقاصة الرواتب والإيجار` });
+    }
     if (kind !== "hospital_ratio") return res.status(400).json({ error: "نوع النسبة غير صالح" });
     if (!(await dayOpen(res, g.s, g.branchId, g.book, day))) return;
     try {
@@ -263,6 +326,11 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         || category === HOSPITAL_RATIO_CATEGORY || category === ATABAH_RATIO_CATEGORY)) {
         return res.status(400).json({ error: "لا يُغيَّر باب النسب" });
       }
+      //  لا يُنقَل مصروفٌ إلى بابٍ متقاعد — والمكتوبُ به قبلُ يُعدَّل مبلغُه وملاحظتُه كما هو.
+      if (category && category !== x.category && RETIRED_EXPENSE_CATEGORIES.includes(category)) {
+        return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+      }
+      if (category && category !== x.category && !(await reserveDayOk(res, l.g.branchId, l.g.book, category, String(x.expenseDate)))) return;
       const nextCategory = category ?? x.category;
       const nextNote = note !== undefined ? note : x.description;
       if (nextCategory === "other" && !nextNote) return res.status(400).json({ error: "عند اختيار «أخرى» اكتب ما هو المصروف في الملاحظات" });

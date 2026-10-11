@@ -1,7 +1,7 @@
 // **طباعةُ ورقة الدفتر** (ترحيل ١٠١، §4.ca تكملة) — البصمةُ وسجلُّ الطباعة.
 //
 // البصمةُ تُحسب ممّا تطبعه الورقةُ وحدَه: السطور (مصدرُها ومبلغُها وعمودُها وملاحظتُها)، والمجاميع، ومربّعُ النسبة، والرصيدُ الافتتاحيّ،
-// وسطورُ «صُرف من قاصة الدكتور». فأيُّ تغييرٍ يغيّر الورقةَ المطبوعة — ومنه تغييرُ يومٍ سابق يغيّر «الباقي من أمس» — يغيّر البصمة.
+// وسطورُ «صُرف من قاصة الدكتور»، ومربّعا قاصة المواد وقاصة الرواتب والإيجار (§4.dj). فأيُّ تغييرٍ يغيّر الورقةَ المطبوعة — ومنه تغييرُ يومٍ سابق يغيّر «الباقي من أمس» — يغيّر البصمة.
 
 import { createHash } from "crypto";
 import { and, desc, eq } from "drizzle-orm";
@@ -17,6 +17,13 @@ export function sheetFingerprint(sheet: any, drBoxLines: { id: number; category:
     totals: sheet.totals,
     ratio: sheet.ratio ? [sheet.ratio.today, sheet.ratio.prev, sheet.ratio.received, sheet.ratio.remaining] : null,
     drBox: drBoxLines.map((l) => [l.id, l.category]),
+    //  **مفتاحُ القاصتين لا يُضاف ليومٍ بلا قاصتين** — فبصمةُ ما طُبع قبل يوم القطع تبقى كما هي ولا تُعلَّم «عُدّلت بعد الطباعة».
+    ...(sheet.reserves ? {
+      reserves: ["materials", "payroll"].map((k) => {
+        const r = sheet.reserves[k];
+        return [r.today, r.prev, r.withdrawn, r.remaining, r.month ? [r.month.target, r.month.setAside] : null];
+      }),
+    } : {}),
   };
   return createHash("sha1").update(JSON.stringify(printed)).digest("hex");
 }
