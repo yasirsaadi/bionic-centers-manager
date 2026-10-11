@@ -219,8 +219,9 @@ async function main() {
         (g?.devices ?? []).map((d: any) => [d.code, d.centreUse])],
       [200, 24, 6, 4, [[1, 1, 6, 8], [2, 7, 16, 8], [3, 17, 24, 8]], [["exercise", "core"]]]);
     const tecar = (g?.protocolAdjuncts ?? []).find((d: any) => d.code === "tecar");
-    check((g?.protocolAdjuncts ?? []).length === 7 && /^النمط: CAP → RES/.test(tecar?.parameters ?? "") && tecar?.centreUse === "adjunct",
-      "ب.٢ **والمساعدُ يُعرض بإعداداته الأولى** ليؤشّر منه الأخصائيُّ لمريضه — سبعة", JSON.stringify((g?.protocolAdjuncts ?? []).map((d: any) => d.code)));
+    //  ثمانية: السبعةُ ومعها الموجاتُ الصادمة مساعداً أسبوعياً (ترحيل ١٣١، §4.dn).
+    check((g?.protocolAdjuncts ?? []).length === 8 && /^النمط: CAP → RES/.test(tecar?.parameters ?? "") && tecar?.centreUse === "adjunct",
+      "ب.٢ **والمساعدُ يُعرض بإعداداته الأولى** ليؤشّر منه الأخصائيُّ لمريضه — ثمانية", JSON.stringify((g?.protocolAdjuncts ?? []).map((d: any) => d.code)));
     check(Boolean(g?.phases?.[0]?.exercises?.[0]?.exercise?.nameAr) && Array.isArray(g?.phases?.[0]?.exercises?.[0]?.exercise?.images),
       "ب.٣ **وتمارينُ المرحلة بالبطاقة كاملةً بصورها** — كما في صفحة البروتوكول");
 
@@ -277,6 +278,9 @@ async function main() {
     const onDraft = await call("PUT", `/api/physio/plans/${plan}/phases`, S.spec, { phases: edited });
     same("ج.١ **على بروتوكولٍ غير معتمَد**: تعديلُ الأخصائيّ مراحلَ خطّةٍ معتمَدة يعيدها إلى الاعتماد — كتعديل أجهزتها",
       [onDraft.status, onDraft.json?.status, onDraft.json?.demoted], [200, "pending", true]);
+    //  ومنذ ترحيل ١٣١ (§4.dn) لا يُعتمد ألمُ الظهر المزمن قبل إعدادات الموجات الصادمة من جهاز المركز — يملؤها سليم أوّلاً كما يفعل في الشاشة.
+    await q(`UPDATE physio_protocol_devices SET params = '{"mode":"Radial","pressureBar":"2.5","frequencyHz":"5","impulses":"2000"}'::jsonb
+              WHERE protocol_id = $1 AND device_id = (SELECT id FROM devices WHERE code = 'shockwaves')`, [l0.id]);
     same("تهيئة: سليم يعتمد البروتوكولَ ثمّ الخطّة", [(await call("POST", `/api/physio/protocols/${l0.id}/approve`, S.sup)).status,
       (await call("POST", `/api/physio/plans/${plan}/approve`, S.sup)).status], [200, 200]);
     const onApproved = await call("PUT", `/api/physio/plans/${plan}/phases`, S.spec, { phases: edited });

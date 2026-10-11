@@ -87,7 +87,7 @@ async function main() {
       scheduleState(L, ["2026-01-01", "2026-01-08", "2026-01-15"], "2026-01-29"), scheduleState({}, ["2026-01-01"], "2026-01-02").due],
     [true, { due: false, done: 1, next: "2026-01-08", complete: false }, true, { due: false, done: 3, next: null, complete: true }, true]);
   same("ق.٦ **وملاحظةُ الجلسة تقول لماذا تُرك** — لم يحن (بتاريخه) أو اكتمل",
-    [scheduleOffNote(scheduleState(L, ["2026-01-01"], "2026-01-04")), scheduleOffNote(scheduleState(L, ["a", "b", "c"], "2026-02-01"))],
+    [scheduleOffNote(scheduleState(L, ["2026-01-01"], "2026-01-04")), scheduleOffNote(scheduleState(L, ["2026-01-01", "2026-01-08", "2026-01-15"], "2026-02-01"))],
     ["موعدٌ دوريّ — لم يحن (التالي 2026-01-08)", "موعدٌ دوريّ — اكتمل عددُه (3)"]);
   same("ق.٧ **والدوريُّ خارجَ تناوب المساعدين** — لا يأخذ دوراً ولا يُعدّ «ليس دورَه»",
     sessionAdjuncts([{ deviceId: 1, centreUse: "core", displayOrder: 0 }, { deviceId: 2, centreUse: "adjunct", displayOrder: 1, everyDays: 7 },
@@ -260,8 +260,9 @@ async function main() {
       deviceId: d.deviceId, done: done.includes(d.code), minutes: done.includes(d.code) ? d.minutes : null, note: notes[d.code] ?? null }));
     const run = (date: string, done: string[], notes: Record<string, string> = {}) =>
       call("POST", `/api/physio/plans/${plan}/sessions`, S.admin, { date, items: items(done, notes) });
-    const itemOf = async (sid: number, code: string) => (await q(`SELECT i.done, i.off_turn, i.note FROM physio_plan_session_items i
-        JOIN devices d ON d.id = i.device_id WHERE i.session_id = $1 AND d.code = $2`, [sid, code])).rows[0];
+    //  جلسةٌ رُدّت بلا رقم — فلا بندَ يُقرأ (يسقط التأكيدُ ولا تنهار الحزمة).
+    const itemOf = async (sid: number, code: string) => (Number.isInteger(sid) ? (await q(`SELECT i.done, i.off_turn, i.note FROM physio_plan_session_items i
+        JOIN devices d ON d.id = i.device_id WHERE i.session_id = $1 AND d.code = $2`, [sid, code])).rows[0] : undefined);
     const sid = (r: any) => Number(r.json?.session?.id ?? r.json?.id);
     const e1 = await run(D, ["exercise", "shockwaves", "tecar"]);
     const e2 = await run(addDaysYmd(D, 1), ["exercise", "tecar"]);
