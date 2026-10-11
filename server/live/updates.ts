@@ -16,6 +16,7 @@
 import fs from "fs";
 import path from "path";
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
+import { getSession } from "../sessions_module/permissions";
 
 export const LIVE_HEARTBEAT_MS = 25_000;
 export const LIVE_BATCH_MS = 1_000;
@@ -51,7 +52,7 @@ export function isBroadcastWrite(method: string, rawPath: string): boolean {
   return !BROADCAST_EXEMPT.some((re) => re.test(p));
 }
 
-interface LiveClient { res: Response; origin: string | null }
+interface LiveClient { res: Response; origin: string | null; userId: number | null }
 const clients = new Set<LiveClient>();
 let pendingOrigins: Set<string> | null = null;
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -71,6 +72,16 @@ function flushChanges() {
   if (!origins.length) return;
   const frame = `event: changed\ndata: ${JSON.stringify({ at: Date.now(), origins })}\n\n`;
   for (const c of Array.from(clients)) write(c, frame);
+}
+
+/**
+ * **إشارةٌ لصفحات حسابٍ واحد** (§4.dp — مراجعةُ Codex): «حسناً» على تحيّة اليوم تخصّ صاحبَها وحده، فلا تُحرّك شاشاتِ الجميع — لكنّ جهازَه الآخر
+ * يجب أن يعرف فتُغلق تحيّتُه المفتوحة. حدثٌ مسمّى (`event`) تتعامل معه الواجهةُ مباشرةً، لا «changed» الذي تؤجّله النافذةُ المفتوحة.
+ */
+export function notifyUser(userId: number | null | undefined, event: string): void {
+  if (userId == null) return;
+  const frame = `event: ${event}\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`;
+  for (const c of Array.from(clients)) if (c.userId === Number(userId)) write(c, frame);
 }
 
 function write(c: LiveClient, frame: string) {
@@ -128,7 +139,9 @@ export function registerLiveStream(app: Express, isAuthenticated: RequestHandler
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     (res as any).flushHeaders?.();
-    const client: LiveClient = { res, origin: typeof req.query.origin === "string" ? req.query.origin.slice(0, 64) : null };
+    const uid = Number(getSession(req)?.userId);
+    const client: LiveClient = { res, origin: typeof req.query.origin === "string" ? req.query.origin.slice(0, 64) : null,
+      userId: Number.isFinite(uid) && uid > 0 ? uid : null };
     clients.add(client);
     write(client, `retry: 3000\nevent: hello\ndata: ${JSON.stringify({ build: liveBuildId() })}\n\n`);
     const beat = setInterval(() => write(client, `: نبضة\n\n`), LIVE_HEARTBEAT_MS);

@@ -14,6 +14,7 @@ import { logAudit } from "../accounting/ledger";
 import { storage } from "../storage";
 import { getSession } from "../sessions_module/permissions";
 import { sendTelegram } from "../notifications/telegram";
+import { notifyUser } from "../live/updates";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import {
   GREETING_REMINDER_KEY, GREETING_SETTING_KEY, greetingAge, greetingCycleStart, greetingReminderText, greetingText, parseGreetings,
@@ -60,6 +61,15 @@ export function initGreetingReminder(): void {
   console.log("[greeting] monthly reminder check scheduled daily at 10:05 Baghdad");
 }
 
+/** يومُ «حسناً»: يومُ التحيّة المعروضة إن كان اليومَ أو أمسِ (بغداد)، وما سواه ⟵ اليوم. */
+export function acknowledgedDay(raw: unknown, today: string): string {
+  const d = typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+  if (!d) return today;
+  const t = Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10));
+  const yesterday = new Date(t - 86_400_000).toISOString().slice(0, 10);
+  return d === today || d === yesterday ? d : today;
+}
+
 export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) {
   const audit = (req: any, s: any, action: string, oldValues: unknown, newValues: unknown) =>
     logAudit({ entityType: "staff_greeting", entityId: 0, action, userId: s.userId ?? null, userName: s.displayName ?? null,
@@ -77,10 +87,10 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       //  المالكُ لا يُحيّي نفسَه — ويرى بدلَها تذكيرَ التغيير مرّةً في اليوم حين يحين.
       if (s.isAdmin) {
         const age = greetingAge(c);
-        return res.json(age.due ? { show: true, kind: "reminder", days: age.days } : { show: false });
+        return res.json(age.due ? { show: true, kind: "reminder", days: age.days, day: today } : { show: false });
       }
       const salutation = salutationAt();
-      return res.json({ show: true, kind: "greeting", period: salutation === "صباح الخير" ? "morning" : "evening",
+      return res.json({ show: true, kind: "greeting", period: salutation === "صباح الخير" ? "morning" : "evening", day: today,
         text: greetingText(salutation, u.name, phraseFor(c.phrases, Number(s.userId), today)) });
     } catch (e) {
       //  **فشلُ القراءة خطأٌ لا «لا تحيّة»** (مراجعةُ Codex): الواجهةُ تحفظ الجوابَ يومَها كلَّه، فـ«لا شيء» هنا تُخفي تحيّةَ اليوم ولو عاد الخادم؛
@@ -94,7 +104,14 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
     try {
       const s = getSession(req);
       if (!s?.userId) return res.json({ ok: true });
-      await db.update(systemUsers).set({ lastGreetedOn: baghdadTodayYmd() }).where(eq(systemUsers.id, Number(s.userId)));
+      //  **يُكتب يومُ التحيّة التي عُرضت** (مراجعةُ Codex): «حسناً» قبل منتصف الليل بلحظةٍ تصل بعده — فيومُ الخادم يُسكت تحيّةَ الغد ولم تُرَ.
+      //  ويُقبل اليومُ أو أمسِ وحدهما، ولا يرجع اليومُ المكتوبُ إلى الوراء (جهازٌ آخر سجّل اليوم).
+      const today = baghdadTodayYmd();
+      const day = acknowledgedDay(req.body?.day, today);
+      await db.execute(sql`UPDATE system_users SET last_greeted_on = GREATEST(COALESCE(last_greeted_on, ${day}::date), ${day}::date)
+        WHERE id = ${Number(s.userId)}`);
+      //  وجهازُه الآخر — إن كانت تحيّتُه مفتوحةً هناك — يُغلقها (إشارةٌ لصفحاته وحدها).
+      notifyUser(Number(s.userId), "greeting");
       res.json({ ok: true });
     } catch (e) {
       console.error("[greeting]", e);

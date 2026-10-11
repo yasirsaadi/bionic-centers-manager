@@ -13,8 +13,8 @@ import { baghdadTodayYmd } from "@shared/visit_date";
 
 type Greeting =
   | { show: false }
-  | { show: true; kind: "greeting"; period: "morning" | "evening"; text: string }
-  | { show: true; kind: "reminder"; days: number };
+  | { show: true; kind: "greeting"; period: "morning" | "evening"; text: string; day?: string }
+  | { show: true; kind: "reminder"; days: number; day?: string };
 
 /**
  * **يومُ بغداد كما يراه المستخدم الآن** — يتجدّد عند أوّل لمسةٍ أو ضغطة مفتاح أو عودةٍ إلى التطبيق بعد تغيّر اليوم (مراجعةُ Codex): التطبيقُ المثبَّت
@@ -53,12 +53,13 @@ export function DailyGreeting() {
   });
   //  **تُغلق بعد أن يُسجَّل اليومُ في الخادم لا قبله** (مراجعةُ Codex): إغلاقٌ يسبق التسجيلَ يوهم أنّها رُئيت وهي تعود بعد التحديث أو من جهازٍ آخر.
   //  وإن فشل التسجيلُ تبقى مفتوحةً بسطر خطأٍ و«حاول ثانيةً» — **ومعها «إغلاق»** كي لا يُحبس موظّفٌ خلف نافذةٍ والشبكةُ مقطوعة (فتعود حينها، وهذا صادق).
-  const seen = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/greeting/seen", {})).json() });
+  //  ويُرسَل يومُ التحيّة المعروضة — لا يومُ وصول الطلب (منتصفُ الليل بينهما).
+  const seen = useMutation({ mutationFn: async (shownDay?: string) => (await apiRequest("POST", "/api/greeting/seen", { day: shownDay })).json() });
   //  يومٌ جديد يبدأ بلا خطأ الأمس.
   useEffect(() => { seen.reset(); }, [day]);
   const g = q.data;
   if (!g || !g.show) return null;
-  const done = (then?: () => void) => seen.mutate(undefined, { onSuccess: () => { close(); then?.(); } });
+  const done = (then?: () => void) => seen.mutate(g.day, { onSuccess: () => { close(); then?.(); } });
   const failed = seen.isError && !seen.isPending;
   const failure = failed ? (
     <div className="text-xs text-destructive space-y-1" data-testid="daily-greeting-error">

@@ -215,6 +215,23 @@ async function main() {
              ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`, [GREETING_SETTING_KEY, saved]);
     same("ب.١٣ **و«أبقِها» بلا صفٍّ بعد** تكتب العباراتِ الأولى بإبقائها",
       [fresh.status, freshRow?.phrases?.length, typeof freshRow?.keptAt === "string", fresh.json?.due], [200, 10, true, false]);
+    const yesterday = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10)) - 86_400_000).toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10)) + 86_400_000).toISOString().slice(0, 10);
+    const lastOf = async (id: number) => (await q(`SELECT last_greeted_on::text AS d FROM system_users WHERE id = $1`, [id])).rows[0].d;
+    await q(`UPDATE system_users SET last_greeted_on = NULL WHERE id = $1`, [SALEEM]);
+    const shown = (await call("GET", "/api/greeting", S.saleem)).json;
+    await call("POST", "/api/greeting/seen", S.saleem, { day: yesterday });
+    const afterLate = [await lastOf(SALEEM), (await call("GET", "/api/greeting", S.saleem)).json?.show];
+    await call("POST", "/api/greeting/seen", S.saleem, { day: today });
+    await call("POST", "/api/greeting/seen", S.saleem, { day: yesterday });
+    const noBack = await lastOf(SALEEM);
+    await q(`UPDATE system_users SET last_greeted_on = NULL WHERE id = $1`, [SALEEM]);
+    await call("POST", "/api/greeting/seen", S.saleem, { day: tomorrow });
+    const future = await lastOf(SALEEM);
+    await q(`UPDATE system_users SET last_greeted_on = NULL WHERE id = $1`, [SALEEM]);
+    await call("POST", "/api/greeting/seen", S.saleem, { day: "2020-01-01" });
+    same("ب.١٤ **«حسناً» تكتب يومَ التحيّة المعروضة** (الجوابُ يحمله): أمسِ قبل منتصف الليل ⟵ أمس، فتظهر تحيّةُ اليوم؛ ولا يرجع المكتوبُ إلى الوراء، وغدٌ أو قديمٌ ⟵ اليوم",
+      [shown?.day, afterLate, noBack, future, await lastOf(SALEEM)], [today, [yesterday, true], today, today, today]);
 
     // ══ ج. تذكيرُ تلغرام ══
     console.log("\n── ج. تذكيرُ تلغرام ──");
