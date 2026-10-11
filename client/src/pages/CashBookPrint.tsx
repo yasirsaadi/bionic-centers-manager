@@ -12,7 +12,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { usePrintAction } from "@/hooks/use-print-action";
 import { useBranchSession } from "@/components/BranchGate";
 import { cashRowNote, drBoxLineText } from "@/lib/cash_book_text";
-import { type CashBook as Book, CASH_BOOK_LABELS, cashBookFileBase, dayNameOf, isYmd, isCashBook, packSheetPages } from "@shared/cash_book";
+import {
+  type CashBook as Book, CASH_BOOK_LABELS, cashBookFileBase, dayNameOf, isYmd, isCashBook, packSheetPages, RESERVE_LABELS, type ReserveKey,
+} from "@shared/cash_book";
 
 interface Row { source: string; id: number; column: "income" | "expense" | "transfer"; kind: string; amount: number; note: string; category: string | null }
 interface Sheet {
@@ -22,8 +24,11 @@ interface Sheet {
   rows: Row[];
   totals: { income: number; outflow: number; dayNet: number; prevRemaining: number; remaining: number };
   ratio: { today: number; prev: number; received: number; remaining: number };
+  /** قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — null ليومٍ قبل بدايتهما، فتُطبع ورقتُه بمربّع النسبة كما طُبعت. */
+  reserves?: { materials: ReserveState; payroll: ReserveState } | null;
   drBoxLines?: { id: number; category: string }[];
 }
+interface ReserveState { today: number; prev: number; withdrawn: number; remaining: number; month: { target: number; setAside: number; left: number } | null }
 type Line = { income?: number; expense?: number; transfer?: number; note: string; muted?: boolean };
 
 /** سطورُ الورقة الفارغة (للطوارئ) — تتّسع لها صفحةٌ واحدة مع المربّعين. */
@@ -265,7 +270,7 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
           </tbody>
         </table>
         {last && (
-          <div className="boxes">
+          <div className={blank || sheet?.reserves ? "boxes three" : "boxes"}>
             <div className="box">
               <h3>القاصة</h3>
               <div className="sum">
@@ -275,7 +280,24 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
                 <div className="eq">المتبقي في القاصة<span className="colhint">(مجموع اليوم + الباقي من أمس)</span></div><div>{sheet ? fmt(sheet.totals.remaining) : " "}</div>
               </div>
             </div>
-            {(blank || sheet?.branch.config.drRatioPct) && (
+            {/*  من يوم القطع (§4.dj): قاصةُ المواد وبجانبها قاصةُ الرواتب والإيجار أصغر — والورقةُ الفارغة بهما كذلك. */}
+            {(blank || sheet?.reserves) && (["materials", "payroll"] as ReserveKey[]).map((k) => {
+              const r = sheet?.reserves?.[k];
+              const L = RESERVE_LABELS[k];
+              return (
+                <div key={k} className={`box reserve ${k}`}>
+                  <h3>{L.box}</h3>
+                  <div className="sum">
+                    <div>{L.category} اليوم</div><div>{r ? fmt(r.today) : " "}</div>
+                    <div>المتبقي من أمس</div><div>{r ? fmt(r.prev) : " "}</div>
+                    {(blank || (r && r.withdrawn > 0)) && (<><div>سحبه المالك اليوم</div><div>{r ? fmt(r.withdrawn) : " "}</div></>)}
+                    <div className="eq">المتبقي في القاصة</div><div className={r && r.remaining < 0 ? "neg" : undefined}>{r ? fmt(r.remaining) : " "}</div>
+                  </div>
+                  {r?.month && <div className="month">هذا الشهر {fmt(r.month.setAside)} من {fmt(r.month.target)}</div>}
+                </div>
+              );
+            })}
+            {!blank && !sheet?.reserves && sheet?.branch.config.drRatioPct && (
               <div className="box ratio">
                 <h3>نسبة العزل للدكتور</h3>
                 <div className="sum">
@@ -286,6 +308,10 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
                   <div className="eq">المتبقي في النسبة<span className="colhint">(نسبة اليوم + المتبقي من نسبة أمس)</span></div><div>{sheet ? fmt(sheet.ratio.remaining) : " "}</div>
                 </div>
               </div>
+            )}
+            {/*  ما بقي من نسبة الدكتور بعد إلغائها — سطرٌ تحت المربّعات ما لم يصفر. */}
+            {sheet?.reserves && (sheet.ratio.prev !== 0 || sheet.ratio.received > 0) && (
+              <div className="legacy">المتبقي من نسبة الدكتور: {fmt(sheet.ratio.remaining)}{sheet.ratio.received > 0 ? ` (استلم المالك اليوم ${fmt(sheet.ratio.received)})` : ""}</div>
             )}
           </div>
         )}
@@ -338,6 +364,18 @@ const PRINT_CSS = `
 .cb-print .box h3 { margin:0 0 1mm; font-size:1rem; font-weight:700; }
 .cb-print .box.ratio { border-color:var(--in); border-style:double; border-width:3px; }
 .cb-print .box.ratio h3 { color:var(--in); }
+.cb-print .boxes.three { grid-template-columns:1.1fr 1fr 0.9fr; gap:3.5mm; }
+.cb-print .boxes.three .box { padding:2mm 3mm; }
+.cb-print .boxes.three .sum { gap:3px 8px; }
+.cb-print .boxes.three .sum div:nth-child(even) { min-width:6.2em; }
+.cb-print .box.reserve { border-style:double; border-width:3px; font-size:12.5px; }
+.cb-print .box.reserve.materials { border-color:#0f766e; }
+.cb-print .box.reserve.materials h3 { color:#0f766e; }
+.cb-print .box.reserve.payroll { border-color:#3730a3; font-size:12px; }
+.cb-print .box.reserve.payroll h3 { color:#3730a3; font-size:0.92rem; }
+.cb-print .box .month { font-size:11px; color:var(--muted); margin-top:1mm; }
+.cb-print .sum div.neg { color:#b91c1c; }
+.cb-print .legacy { grid-column:1 / -1; font-size:11.5px; color:var(--muted); }
 .cb-print .sum { display:grid; grid-template-columns:1fr auto; gap:4px 16px; font-variant-numeric:tabular-nums; }
 .cb-print .sum div:nth-child(even) { text-align:left; direction:ltr; min-width:9em; border-bottom:1px dotted var(--rule-strong); align-self:start; }
 .cb-print .colhint { display:block; font-weight:400; font-size:0.72rem; color:var(--muted); line-height:1.3; }

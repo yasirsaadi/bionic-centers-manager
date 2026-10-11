@@ -59,6 +59,7 @@ import { registerPhysioPlanRoutes } from "./physio_plans/routes";
 import { physioOfferingBranchIds } from "./physio_plans/store";
 import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
+import { RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR, RESERVES_START, RESERVE_LABELS, reserveOfCategory } from "@shared/cash_book";
 import { registerAdminReversalRoutes } from "./admin_reversal/routes";
 import * as followupStore from "./followup/store";
 import { caseNotBoughtByCase } from "./followup/case_not_bought";
@@ -6297,6 +6298,13 @@ export async function registerRoutes(
         });
       }
 
+      //  بابا «رواتب» و«إيجارات» تقاعدا (قرارُ المالك ٢٠٢٦-١٠-١١، §4.dj) — وبابا القاصتين لا يُكتبان قبل يوم بدايتهما.
+      if (RETIRED_EXPENSE_CATEGORIES.includes(data.category)) return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+      const reserveCat = reserveOfCategory(data.category);
+      if (reserveCat && String(data.expenseDate) < RESERVES_START) {
+        return res.status(400).json({ error: `«${RESERVE_LABELS[reserveCat].category}» تبدأ من ${RESERVES_START} — اختر باباً آخر لما قبله` });
+      }
+
       const expense = await storage.createExpense(data);
 
       // تلقائي: إنشاء قيد محاسبي مزدوج للمصروف
@@ -6355,6 +6363,16 @@ export async function registerRoutes(
         return res.status(400).json({
           error: "عند اختيار فئة 'أخرى'، يجب كتابة تصنيف فرعي يوضّح طبيعة المصروف",
         });
+      }
+
+      //  لا يُنقَل مصروفٌ إلى بابٍ متقاعد (§4.dj) — والمكتوبُ به قبلُ يُعدَّل كما هو. ولا بابُ قاصةٍ قبل يوم بدايتها.
+      if (req.body.category !== undefined && req.body.category !== existingExpense.category
+        && RETIRED_EXPENSE_CATEGORIES.includes(req.body.category)) {
+        return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+      }
+      const reserveCat = reserveOfCategory(effectiveCategory);
+      if (reserveCat && String(req.body.expenseDate ?? existingExpense.expenseDate) < RESERVES_START) {
+        return res.status(400).json({ error: `«${RESERVE_LABELS[reserveCat].category}» تبدأ من ${RESERVES_START} — اختر باباً آخر لما قبله` });
       }
 
       // If the edit touches the section, it must stay one of the known values.

@@ -7,7 +7,9 @@
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { getSession } from "../sessions_module/permissions";
-import { canWriteCashBook, parseAmount, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY } from "@shared/cash_book";
+import {
+  canWriteCashBook, parseAmount, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR,
+} from "@shared/cash_book";
 import * as store from "./store";
 
 const RATIO_CATEGORIES = [HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY];
@@ -58,6 +60,9 @@ export function registerMoneyCorrectionRoutes(app: Express, isAuthenticated: any
         if (type === "expense" && typeof req.body?.category === "string" && req.body.category.trim()) {
           const category = req.body.category.trim();
           if (RATIO_CATEGORIES.includes(category)) return res.status(400).json({ error: "لا يُختار بابُ النسب" });
+          if (category !== target.snapshot.category && RETIRED_EXPENSE_CATEGORIES.includes(category)) {
+            return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+          }
           if (category !== target.snapshot.category) patch.category = category;
         }
         if (Object.keys(patch).length === 0) return res.status(400).json({ error: "لم يتغيّر شيء — اكتب القيمة الصحيحة" });

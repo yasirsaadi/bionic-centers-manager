@@ -42,7 +42,8 @@ function AmountInput({ value, onChange, id }: { value: string; onChange: (v: str
 function useCategories(branchId: number | null) {
   const { data: custom = [] } = useQuery<{ label: string; branchId: number | null }[]>({ queryKey: ["/api/expense-categories"] });
   return useMemo(() => [
-    ...EXPENSE_CATEGORIES.filter((c) => !(c as any).sheetOnly && !(c as any).karbalaOnly),
+    //  الرواتبُ والإيجاراتُ باقيةٌ هنا بأسمائها — المالكُ يدفعها من قاصته؛ وبابا القاصتين (§4.dj) للدفتر وحده.
+    ...EXPENSE_CATEGORIES.filter((c: any) => !c.sheetOnly && !c.karbalaOnly && !c.reserve),
     ...custom.filter((c) => c.branchId == null || c.branchId === branchId).map((c) => ({ value: c.label, label: c.label })),
   ], [custom, branchId]);
 }

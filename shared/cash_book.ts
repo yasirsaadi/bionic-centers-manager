@@ -4,6 +4,7 @@
 // قراراتُ المالك:
 // • دفترا «أطراف ومساند» و«علاج طبيعي» لبغداد وذي قار، ودفترُ «أطراف ومساند» وحده لكربلاء والموصل.
 // • نسبةُ الدكتور من وارد **كلّ دفترٍ على حدة**: بغداد ٢٠٪، وكربلاء وذي قار والموصل ١٠٪ — ثابتة، تُحسب ولا تُكتب.
+//   **وأُلغيت من ٢٠٢٦-١٠-١١** (`RESERVES_START`): بدلها قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — والنسبةُ باقيةٌ لما قبله.
 // • نسبةُ المستشفى لذي قار وحدها ١٠٪ من وارد الدفتر — ثابتة. ونسبةُ العتبة لكربلاء وحدها — متغيّرة، يكتبها المحاسب.
 // • نسبةُ الدكتور ليست مصروفاً (مالُ المالك كالتحويل)؛ ونسبتا المستشفى والعتبة مصروفٌ حقيقيّ لجهةٍ خارجية.
 // • يكتب في الدفتر المحاسبُ ومديرُ الفرع والمسؤولُ وحدهم، وفي اليوم نفسِه وحدَه — والأيامُ الماضية للمسؤول.
@@ -39,9 +40,68 @@ export const BOOK_EXPENSE_SECTION: Record<CashBook, "prosthetic" | "physio"> = {
   physio: "physio",
 };
 
-/** ما يُكتب في جدول الدفتر نفسِه — ما ليس مصروفاً. */
-export type CashEntryKind = "income_other" | "dr_transfer" | "dr_ratio" | "ratio_received";
-export const CASH_ENTRY_KINDS: readonly CashEntryKind[] = ["income_other", "dr_transfer", "dr_ratio", "ratio_received"];
+/** ما يُكتب في جدول الدفتر نفسِه — ما ليس مصروفاً. والسحبُ من القاصتين (١٢٧) سحبُ المالك، لا مصروفٌ ثانٍ. */
+export type CashEntryKind = "income_other" | "dr_transfer" | "dr_ratio" | "ratio_received" | "materials_withdrawn" | "payroll_withdrawn";
+export const CASH_ENTRY_KINDS: readonly CashEntryKind[] = [
+  "income_other", "dr_transfer", "dr_ratio", "ratio_received", "materials_withdrawn", "payroll_withdrawn",
+];
+
+//  ══ قاصةُ المواد وقاصةُ الرواتب والإيجار بدل «نسبة الدكتور» (قرارُ المالك ٢٠٢٦-١٠-١١، ترحيل ١٢٧، §4.dj) ══════════════
+//  «ألغِ نسبة الدكتور … وبدلها ضع أجور مواد»: المحاسبُ يختار باب «أجور مواد» أو «رواتب وإيجار» ويكتب القيمة فتنزل مصروفاً عاديّاً،
+//  ومجموعُ البابين يتراكم كلٌّ في قاصته — «حين يأتي موعد طلب المواد نكون قد عزلنا سعرها، وكذلك الإيجار والرواتب».
+//  • **من هذا اليوم لا تُعزَل نسبةُ الدكتور** — وما قبله يبقى كما طُبع، وما بقي منها يُرى ويُستلَم حتى يصفر.
+//  • **القاصتان لكلّ دفتر** كمربّع النسبة، وتبدآن من هذا اليوم (أو من بداية الدفتر إن جاءت بعده) برصيدٍ يضعه المالكُ وحده (صفرٌ افتراضاً).
+//  • **والسحبُ منهما للمالك وحده** — لا يمسّ نقدَ اليوم، فالمالُ خرج يومَ كُتب مصروفاً. والزيادةُ على الرصيد تظهر حمراء ولا تُمنع.
+//  • **وهدفٌ شهريّ لقاصة الرواتب والإيجار** يضعه المالك: كم عُزل هذا الشهر وكم بقي عليه.
+//  • **وبابا «رواتب» و«إيجارات» يتقاعدان** من نوافذ الكتابة — فلا يُكتب الراتبُ مرّتين في بابين؛ والقديمُ بهما باقٍ مقروءاً.
+
+/** يومُ القطع — أوّلُ يومٍ بلا «نسبة الدكتور» وأوّلُ يومٍ للقاصتين. */
+export const RESERVES_START = "2026-10-11";
+
+/** هل تُعزَل نسبةُ الدكتور من وارد هذا اليوم؟ — للأيام قبل يوم القطع وحدها. */
+export function drRatioApplies(day: string): boolean {
+  return day < RESERVES_START;
+}
+
+/** أوّلُ يومٍ للقاصتين في دفترٍ ما: يومُ القطع، أو بدايةُ الدفتر إن جاءت بعده. وبلا بدايةٍ للدفتر: لا قاصة. */
+export function reserveStartOf(openingDate: string | null | undefined): string | null {
+  if (!openingDate) return null;
+  return openingDate > RESERVES_START ? openingDate : RESERVES_START;
+}
+
+export type ReserveKey = "materials" | "payroll";
+export const RESERVE_KEYS: readonly ReserveKey[] = ["materials", "payroll"];
+/** بابُ الصرف الذي يملأ كلَّ قاصة — يُخزَّن في `expenses.category`. */
+export const RESERVE_CATEGORY: Record<ReserveKey, string> = { materials: "materials_reserve", payroll: "payroll_rent" };
+/** نوعُ سطر السحب في جدول الدفتر. */
+export const RESERVE_WITHDRAW_KIND: Record<ReserveKey, "materials_withdrawn" | "payroll_withdrawn"> = {
+  materials: "materials_withdrawn", payroll: "payroll_withdrawn",
+};
+export const RESERVE_LABELS: Record<ReserveKey, { box: string; category: string; withdraw: string }> = {
+  materials: { box: "قاصة المواد", category: "أجور مواد", withdraw: "سحب المالك من قاصة المواد" },
+  payroll: { box: "قاصة الرواتب والإيجار", category: "رواتب وإيجار", withdraw: "سحب المالك من قاصة الرواتب والإيجار" },
+};
+export function reserveOfCategory(category: string | null | undefined): ReserveKey | null {
+  return RESERVE_KEYS.find((k) => RESERVE_CATEGORY[k] === category) ?? null;
+}
+export function reserveOfWithdrawKind(kind: string | null | undefined): ReserveKey | null {
+  return RESERVE_KEYS.find((k) => RESERVE_WITHDRAW_KIND[k] === kind) ?? null;
+}
+
+/** بابا الصرف المتقاعدان — لا يُختاران في مصروفٍ جديد ولا يُنقَل إليهما مصروف؛ والمكتوبُ بهما قبلُ يبقى ويُعدَّل. */
+export const RETIRED_EXPENSE_CATEGORIES: readonly string[] = ["salaries", "rent"];
+export const RETIRED_CATEGORY_ERROR = "بابا «رواتب» و«إيجارات» تقاعدا — اختر «رواتب وإيجار» فيُعزَل المبلغُ في قاصة الرواتب والإيجار";
+
+/** مربّعُ القاصة: الباقي من أمس + ما عُزل اليوم − ما سحبه المالكُ اليوم. */
+export function reserveBox(prev: number, todayIn: number, withdrawnToday: number) {
+  return { today: todayIn, prev, withdrawn: withdrawnToday, remaining: prev + todayIn - withdrawnToday };
+}
+
+/** هدفُ الشهر: ما عُزل هذا الشهر من الهدف وما بقي عليه (لا أقلَّ من صفر). */
+export function monthlyTargetLine(setAside: number, target: number | null) {
+  if (!target || target <= 0) return null;
+  return { target, setAside, left: Math.max(0, target - setAside) };
+}
 
 /** أنواعُ الصادر كما يختارها الموظّف — ثلاثةٌ منها صفوفُ مصاريف حقيقية. */
 export type OutflowKind = "expense" | "dr_transfer" | "dr_ratio" | "hospital_ratio" | "atabah_ratio";

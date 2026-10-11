@@ -4,13 +4,14 @@
 //   ١) **الوارد**: دفعاتُ المرضى المسجّلة في الفرع واليوم (بقسم حالتها) + «وارد آخر» من جدول الدفتر.
 //   ٢) **المصاريف** (ومعها نسبتا المستشفى والعتبة): صفوفُ `expenses` نفسُها بقسمها — فما كُتب في صفحة المحاسبة يظهر هنا،
 //      وما كُتب هنا يدخل تقاريرَ المحاسبة وقيودَها كما يدخلها أيُّ مصروف.
-//   ٣) **ما ليس مصروفاً**: التحويلُ إلى قاصة الدكتور ونسبتُه واستلامُها — في `cash_book_entries`.
+//   ٣) **ما ليس مصروفاً**: التحويلُ إلى قاصة الدكتور ونسبتُه واستلامُها، وسحبُ المالك من القاصتين — في `cash_book_entries`.
 // و«الباقي من أمس» يُحسب من الرصيد الافتتاحيّ للدفتر وما بعده وحدَه.
+// ومن ٢٠٢٦-١٠-١١ لا نسبةَ للدكتور، وبدلها قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj): مصروفُ بابيهما يتراكم كلٌّ في قاصته.
 
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  payments, patients, patientCases, expenses, branches, cashBookEntries, cashBookOpenings, type Expense,
+  payments, patients, patientCases, expenses, branches, cashBookEntries, cashBookOpenings, cashBookReserves, type Expense,
 } from "@shared/schema";
 import { activePatientDrizzle } from "../patients/active_patient";
 import { baghdadDayBounds } from "../storage";
@@ -18,6 +19,8 @@ import { createJournalForExpense, reverseJournalForSource } from "../accounting/
 import {
   type CashBook, type CashEntryKind, type OutflowKind, BOOK_EXPENSE_SECTION, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY,
   branchCashConfig, ratioAmount, dayTotals, ratioBox, distinctNoteParts, type BranchCashConfig,
+  drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine, RESERVE_KEYS, RESERVE_CATEGORY, RESERVE_WITHDRAW_KIND, RESERVES_START,
+  type ReserveKey,
 } from "@shared/cash_book";
 
 export class CashBookError extends Error {
@@ -108,14 +111,95 @@ async function dailyIncome(branchId: number, cfg: BranchCashConfig, book: CashBo
  * **نسبةُ الدكتور تُحسب ولا تُكتب** (قرارُ المالك ٢٠٢٦-١٠-٠٦): نسبةُ كلّ يومٍ من واردِه، كالمجموع — فدفعةٌ تُضاف أو تُحذف
  * تغيّرها وحدها، بلا زرّ. وما سُجّل يدوياً قبل القرار (`dr_ratio` في جدول الدفتر) لا يُقرأ بعده.
  * المجموعُ = مجموعُ نسبة كلّ يومٍ مقرَّبةً وحدها (كما تُكتب في ورقة كلّ يوم).
+ * **ولا نسبةَ من يوم القطع** (`drRatioApplies`، قرارُ المالك ٢٠٢٦-١٠-١١): أيّامُ الفترة بعده لا تُحسب.
  */
 export async function autoDrRatioSum(branchId: number, book: CashBook, from: string, toExclusive: string): Promise<number> {
   const b = await branchConfigOf(branchId);
-  if (!b?.config.drRatioPct || from >= toExclusive) return 0;
-  const days = await dailyIncome(branchId, b.config, book, from, toExclusive);
+  const end = toExclusive < RESERVES_START ? toExclusive : RESERVES_START;
+  if (!b?.config.drRatioPct || from >= end) return 0;
+  const days = await dailyIncome(branchId, b.config, book, from, end);
   let sum = 0;
   for (const v of Array.from(days.values())) sum += ratioAmount(v, b.config.drRatioPct);
   return sum;
+}
+
+/** مجموعُ مصروف بابٍ واحد في الدفتر لمدى أيّام [from, toExclusive). */
+async function categorySum(branchId: number, cfg: BranchCashConfig, book: CashBook, category: string, from: string, toExclusive: string): Promise<number> {
+  if (from >= toExclusive) return 0;
+  const [e] = await db.select({ t: sql<string>`COALESCE(SUM(${expenses.amount}), 0)` })
+    .from(expenses)
+    .where(and(eq(expenses.branchId, branchId), eq(expenses.category, category),
+      sql`${expenses.expenseDate} >= ${from}`, sql`${expenses.expenseDate} < ${toExclusive}`, expenseBookFilter(cfg, book)));
+  return Number(e?.t ?? 0);
+}
+
+/** رصيدُ البداية والهدفُ الشهريّ لكلّ قاصةٍ في الدفتر — وبلا صفٍّ: صفرٌ بلا هدف. */
+export async function getReserveSettings(branchId: number, book: CashBook) {
+  const rows = await db.select().from(cashBookReserves)
+    .where(and(eq(cashBookReserves.branchId, branchId), eq(cashBookReserves.book, book)));
+  const out = {} as Record<ReserveKey, { openingBalance: number; monthlyTarget: number | null; id: number | null }>;
+  for (const k of RESERVE_KEYS) {
+    const r = rows.find((x) => x.reserve === k);
+    out[k] = { openingBalance: r?.openingBalance ?? 0, monthlyTarget: r?.monthlyTarget ?? null, id: r?.id ?? null };
+  }
+  return out;
+}
+
+/**
+ * **مربّعا القاصتين ليومٍ من دفتر** (§4.dj) — `start` أوّلُ يومٍ لهما (`reserveStartOf`)، ويُمرَّر صريحاً فيُختبَر التراكمُ عبر الأيام.
+ * لكلّ قاصة: ما عُزل اليوم (مصروفُ بابها) + الباقي من أمس (رصيدُ البداية + ما عُزل من البداية − ما سُحب منها) − ما سحبه المالكُ اليوم.
+ * ولقاصة الرواتب والإيجار: ما عُزل هذا الشهر (من أوّله أو من البداية) أمام الهدف. ويومٌ قبل البداية: لا قاصة.
+ */
+export async function reserveBoxes(branchId: number, cfg: BranchCashConfig, book: CashBook, day: string, start: string | null) {
+  if (!start || day < start) return null;
+  const next = addDays(day, 1);
+  const settings = await getReserveSettings(branchId, book);
+  const todays = await db.select().from(cashBookEntries)
+    .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), eq(cashBookEntries.entryDate, day),
+      sql`${cashBookEntries.deletedAt} IS NULL`, sql`${cashBookEntries.kind} IN ('materials_withdrawn', 'payroll_withdrawn')`))
+    .orderBy(cashBookEntries.createdAt, cashBookEntries.id);
+  const one = async (k: ReserveKey) => {
+    const category = RESERVE_CATEGORY[k];
+    const kind = RESERVE_WITHDRAW_KIND[k];
+    const prevIn = await categorySum(branchId, cfg, book, category, start, day);
+    const prevOut = day > start ? await entrySum(branchId, book, kind, start, day) : 0;
+    const todayIn = await categorySum(branchId, cfg, book, category, day, next);
+    const withdrawals = todays.filter((e) => e.kind === kind);
+    const box = reserveBox(settings[k].openingBalance + prevIn - prevOut, todayIn, withdrawals.reduce((t, e) => t + e.amount, 0));
+    const monthFrom = `${day.slice(0, 7)}-01` > start ? `${day.slice(0, 7)}-01` : start;
+    return {
+      ...box,
+      opening: settings[k].openingBalance,
+      withdrawals: withdrawals.map((e) => ({ id: e.id, amount: e.amount, note: e.note ?? "" })),
+      month: k === "payroll" ? monthlyTargetLine(await categorySum(branchId, cfg, book, category, monthFrom, next), settings[k].monthlyTarget) : null,
+      monthlyTarget: settings[k].monthlyTarget,
+    };
+  };
+  return { start, materials: await one("materials"), payroll: await one("payroll") };
+}
+
+/** رصيدُ البداية والهدفُ الشهريّ — يضعهما المسؤولُ وحده، صفٌّ واحد لكلّ فرعٍ ودفترٍ وقاصة. */
+export async function setReserveSetting(p: {
+  branchId: number; book: CashBook; reserve: ReserveKey; openingBalance?: number; monthlyTarget?: number | null; userId: number | null;
+}) {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`cash_book_reserve:${p.branchId}:${p.book}:${p.reserve}`}))`);
+    const [cur] = await tx.select().from(cashBookReserves).where(and(
+      eq(cashBookReserves.branchId, p.branchId), eq(cashBookReserves.book, p.book), eq(cashBookReserves.reserve, p.reserve)));
+    const patch = {
+      ...(p.openingBalance !== undefined ? { openingBalance: p.openingBalance } : {}),
+      ...(p.monthlyTarget !== undefined ? { monthlyTarget: p.monthlyTarget } : {}),
+    };
+    if (cur) {
+      const [row] = await tx.update(cashBookReserves).set({ ...patch, updatedBy: p.userId, updatedAt: new Date() })
+        .where(eq(cashBookReserves.id, cur.id)).returning();
+      return { before: cur, after: row };
+    }
+    const [row] = await tx.insert(cashBookReserves).values({
+      branchId: p.branchId, book: p.book, reserve: p.reserve, ...patch, createdBy: p.userId, updatedBy: p.userId,
+    }).returning();
+    return { before: null, after: row };
+  });
 }
 
 export async function getOpening(branchId: number, book: CashBook) {
@@ -211,7 +295,8 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
   //  نسبةُ الدكتور سطرٌ محسوبٌ من وارد اليوم — آخرَ الصادر في عمود «مصاريف»، بلا زرٍّ ولا كتابةٍ ولا تعديلٍ بيد.
   //  **لا في عمود «تحويل إلى قاصة الدكتور»** (قرارُ المالك ٢٠٢٦-١٠-٠٦): النسبةُ تُعزَل في مربّعها ويستلمها المالكُ متى شاء،
   //  ولا تذهب إلى قاصته يومَها — والصادرُ رقمٌ واحد، فلا يتغيّر مجموعٌ ولا متبقٍّ بموضعها. ولا تدخل جدولَ `expenses`.
-  const todayDrRatio = ratioAmount(income, cfg.drRatioPct);
+  //  **ومن يوم القطع لا نسبة** (قرارُ المالك ٢٠٢٦-١٠-١١، §4.dj): ما كانت تأخذه يبقى في القاصة، وبدلها مصروفُ «أجور مواد» و«رواتب وإيجار».
+  const todayDrRatio = drRatioApplies(day) ? ratioAmount(income, cfg.drRatioPct) : 0;
   if (todayDrRatio > 0) {
     outflow.push({ source: "auto", id: 0, column: "expense", kind: "dr_ratio", amount: todayDrRatio, note: `عزل — ${cfg.drRatioPct}٪ من وارد اليوم`,
       category: null, unsectioned: false, createdBy: null, at: null });
@@ -229,7 +314,7 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
     const prevIncome = Array.from(days.values()).reduce((s, v) => s + v, 0);
     const prevExp = await expenseSum(branchId, cfg, book, from, day);
     const prevTransfer = await entrySum(branchId, book, "dr_transfer", from, day);
-    const prevDrRatio = Array.from(days.values()).reduce((s, v) => s + ratioAmount(v, cfg.drRatioPct), 0);
+    const prevDrRatio = Array.from(days.entries()).reduce((s, [d, v]) => s + (drRatioApplies(d) ? ratioAmount(v, cfg.drRatioPct) : 0), 0);
     const prevReceived = await entrySum(branchId, book, "ratio_received", from, day);
     prevRemaining = opening.cashBalance + prevIncome - prevExp - prevTransfer - prevDrRatio;
     prevRatio = opening.ratioBalance + prevDrRatio - prevReceived;
@@ -243,6 +328,7 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
   //  النسبتان الثابتتان كما تُحسبان الآن من وارد اليوم — والمسجَّلُ قد يكون أقدمَ من دفعةٍ لحقته.
   const hospitalExpected = ratioAmount(income, cfg.hospitalRatioPct);
   const hospitalRow = outflow.find((r) => r.kind === "hospital_ratio") ?? null;
+  const reserves = await reserveBoxes(branchId, cfg, book, day, reserveStartOf(opening?.openingDate));
 
   return {
     branch: { id: branchId, name: b.name, config: cfg },
@@ -254,8 +340,10 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
       ...ratioBox(todayDrRatio, prevRatio, received),
       receipts: receivedRows.map((x) => ({ id: x.id, amount: x.amount, note: x.note ?? "" })),
     },
+    //  قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — null ليومٍ قبل بدايتهما.
+    reserves,
     expected: {
-      drRatio: cfg.drRatioPct ? { pct: cfg.drRatioPct, amount: todayDrRatio, recorded: todayDrRatio } : null,
+      drRatio: cfg.drRatioPct && drRatioApplies(day) ? { pct: cfg.drRatioPct, amount: todayDrRatio, recorded: todayDrRatio } : null,
       hospitalRatio: cfg.hospitalRatioPct ? { pct: cfg.hospitalRatioPct, amount: hospitalExpected, recorded: hospitalRow?.amount ?? null } : null,
     },
     nextDay: next,
@@ -290,7 +378,7 @@ export async function setOpening(p: {
 }
 
 export async function addEntry(p: {
-  branchId: number; book: CashBook; day: string; kind: "income_other" | "dr_transfer" | "ratio_received";
+  branchId: number; book: CashBook; day: string; kind: "income_other" | "dr_transfer" | "ratio_received" | "materials_withdrawn" | "payroll_withdrawn";
   amount: number; note: string | null; userId: number | null;
 }) {
   return await db.transaction(async (tx) => {
@@ -419,7 +507,8 @@ export async function ownerDrawingsForPeriod(branchId: number | undefined, from:
     if (!cfg.drRatioPct) continue;
     let amount = 0;
     for (const book of cfg.books) amount += await autoDrRatioSum(b.id, book, from, next);
-    byBranch.push({ branchId: b.id, name: b.name, pct: cfg.drRatioPct, amount });
+    //  فترةٌ بعد يوم القطع لا نسبةَ فيها — فلا سطرَ «نسبة الدكتور» بصفر في التقرير (§4.dj).
+    if (amount > 0) byBranch.push({ branchId: b.id, name: b.name, pct: cfg.drRatioPct, amount });
   }
   return { total: byBranch.reduce((s, b) => s + b.amount, 0), byBranch };
 }
@@ -427,7 +516,8 @@ export async function ownerDrawingsForPeriod(branchId: number | undefined, from:
 /**
  * **دفترُ فترةٍ كاملة** — للمدقّق في المساعد (§4.cd): ما بدأت به الفترة وما انتهت إليه، ومجاميعُها، والأيامُ التي نزل فيها
  * المتبقّي تحت الصفر، والأيامُ التي لا تطابق فيها «نسبة المستشفى» المسجَّلةُ ما يُحسب من وارد اليوم.
- * الحسابُ حسابُ `getSheet` نفسُه يوماً يوماً من الرصيد الافتتاحيّ: متبقّي اليوم = متبقّي أمس + الوارد − المصاريف − التحويل − نسبةُ الدكتور.
+ * الحسابُ حسابُ `getSheet` نفسُه يوماً يوماً من الرصيد الافتتاحيّ: متبقّي اليوم = متبقّي أمس + الوارد − المصاريف − التحويل − نسبةُ الدكتور
+ * (ونسبةُ الدكتور للأيام قبل يوم القطع وحدها — §4.dj).
  */
 export async function cashBookPeriod(branchId: number, book: CashBook, from: string, toInclusive: string) {
   const b = await branchConfigOf(branchId);
@@ -473,7 +563,7 @@ export async function cashBookPeriod(branchId: number, book: CashBook, from: str
   for (let d = first; d <= toInclusive; d = addDays(d, 1)) {
     if (d === from) { startCash = cash; startRatio = ratio; }
     const inc = income.get(d) ?? 0;
-    const dr = ratioAmount(inc, cfg.drRatioPct);
+    const dr = drRatioApplies(d) ? ratioAmount(inc, cfg.drRatioPct) : 0;
     cash = cash + inc - (exp.get(d) ?? 0) - (transfer.get(d) ?? 0) - dr;
     ratio = ratio + dr - (received.get(d) ?? 0);
     if (d < from) continue;
