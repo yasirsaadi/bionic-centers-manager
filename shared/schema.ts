@@ -3199,6 +3199,8 @@ export const physioPlanSessions = pgTable("physio_plan_sessions", {
   cancelledBy: integer("cancelled_by").references(() => systemUsers.id),
   cancelledByName: text("cancelled_by_name"),
   cancelReason: text("cancel_reason"),
+  //  ترحيل ١٣٤ (§4.dr) — المرحلةُ التي نُفّذت تمارينُها في هذه الجلسة.
+  phasePosition: integer("phase_position"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   byPlan: index("idx_physio_plan_sessions_plan").on(t.planId),
@@ -3217,6 +3219,22 @@ export const physioPlanSessionItems = pgTable("physio_plan_session_items", {
   //  ترحيل ١٢٢ — مساعدٌ لم يكن دورَه في الجلسة: ليس «لم يُنفَّذ» ولا انحرافاً.
   offTurn: boolean("off_turn").notNull().default(false),
 }, (t) => ({ uqSessionDevice: unique("physio_plan_session_items_session_id_device_id_key").on(t.sessionId, t.deviceId) }));
+
+/** **تمارينُ الجلسة** (ترحيل ١٣٤، §4.dr) — تمرينٌ لكلّ سطر: نُفّذ أم لا وسببُه، وجرعتُه في الخطّة يومَها. يُحذف بحذف جلسته. */
+export const physioPlanSessionExercises = pgTable("physio_plan_session_exercises", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => physioPlanSessions.id, { onDelete: "cascade" }),
+  exerciseId: integer("exercise_id").notNull().references(() => physioExercises.id),
+  done: boolean("done").notNull(),
+  note: text("note"),
+  plannedSets: integer("planned_sets"),
+  plannedReps: integer("planned_reps"),
+  plannedHoldSeconds: integer("planned_hold_seconds"),
+  displayOrder: integer("display_order").notNull().default(0),
+}, (t) => ({
+  uqSessionExercise: unique("physio_plan_session_exercises_session_id_exercise_id_key").on(t.sessionId, t.exerciseId),
+  bySession: index("idx_physio_plan_session_exercises_session").on(t.sessionId),
+}));
 
 /**
  * **إعادةُ التقييم** (ترحيل ١١٣، §4.cp) — أوّليٌّ أو دوريٌّ أو ختاميّ؛ والقياساتُ لقطةٌ بتعريفها يومَها، وأهدافُ الخطّة وحالُها، والقرار.

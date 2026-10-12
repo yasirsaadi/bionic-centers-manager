@@ -6,11 +6,12 @@
 import { and, asc, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, dailySessions, devices, patientCases, patients, physioPlanDevices, physioPlanSessionItems,
-  physioPlanSessions, physioPlans, sessionCounts, visits,
+  branches, dailySessions, devices, patientCases, patients, physioExercises, physioPlanDevices, physioPlanPhaseExercises, physioPlanPhases,
+  physioPlanSessionExercises, physioPlanSessionItems, physioPlanSessions, physioPlans, sessionCounts, visits,
 } from "@shared/schema";
 import {
-  countsFromExecution, executionItemsError, sessionAdjuncts, sessionTreatmentType, type ExecutionItemInput,
+  countsFromExecution, exerciseItemsError, executionItemsError, phaseForSession, sessionAdjuncts, sessionTreatmentType,
+  type ExecutionItemInput, type ExerciseItemInput,
 } from "@shared/physio_plans";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { storage } from "../storage";
@@ -50,7 +51,20 @@ export async function planSessions(planId: number) {
     offTurn: physioPlanSessionItems.offTurn, nameAr: devices.nameAr, nameEn: devices.nameEn,
   }).from(physioPlanSessionItems).innerJoin(devices, eq(devices.id, physioPlanSessionItems.deviceId))
     .where(inArray(physioPlanSessionItems.sessionId, ss.map((s) => s.id))).orderBy(asc(devices.displayOrder));
-  return ss.map((s) => ({ ...s, items: items.filter((i) => i.sessionId === s.id) }));
+  const exercises = await sessionExercisesOf(db, ss.map((s) => s.id));
+  return ss.map((s) => ({ ...s, items: items.filter((i) => i.sessionId === s.id), exercises: exercises.filter((x: any) => x.sessionId === s.id) }));
+}
+
+/** تمارينُ الجلسات بأسمائها (§4.dr) — بترتيبها في المرحلة. */
+async function sessionExercisesOf(ex: any, sessionIds: number[]) {
+  if (!sessionIds.length) return [];
+  return ex.select({
+    sessionId: physioPlanSessionExercises.sessionId, exerciseId: physioPlanSessionExercises.exerciseId, done: physioPlanSessionExercises.done,
+    note: physioPlanSessionExercises.note, plannedSets: physioPlanSessionExercises.plannedSets, plannedReps: physioPlanSessionExercises.plannedReps,
+    plannedHoldSeconds: physioPlanSessionExercises.plannedHoldSeconds, nameAr: physioExercises.nameAr, nameEn: physioExercises.nameEn,
+  }).from(physioPlanSessionExercises).innerJoin(physioExercises, eq(physioExercises.id, physioPlanSessionExercises.exerciseId))
+    .where(inArray(physioPlanSessionExercises.sessionId, sessionIds))
+    .orderBy(asc(physioPlanSessionExercises.displayOrder), asc(physioPlanSessionExercises.id));
 }
 
 /** هل لهذا الملفّ خطّةٌ معتمَدة؟ — يقرؤه الاستقبالُ ليرى تنبيهَ «تسجيل زيارة جلسة علاج طبيعي». */
@@ -64,6 +78,11 @@ export async function hasApprovedPlan(patientId: number): Promise<boolean> {
 export async function executeSession(p: {
   planId: number; items: ExecutionItemInput[]; noteToSpecialist: string | null; sessionDate: string; shift: "morning" | "evening";
   actor: Actor; canDryNeedle: boolean; visitCustomDate: string | null;
+  /**
+   * §4.dr — **تمارينُ المرحلة بأعيانها**، نُفّذ أم لا وسببُه، والمرحلةُ التي اختارها المعالج (وإلّا مرحلةُ رقم الجلسة). وغيابُها (صفحةٌ أقدم لم تتحدّث)
+   * لا يُسجّل تمارين — ولا يُفشل الجلسة.
+   */
+  exercises?: ExerciseItemInput[] | null; phasePosition?: number | null;
 }) {
   return db.transaction(async (tx) => {
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, p.planId)).for("update");
@@ -96,6 +115,28 @@ export async function executeSession(p: {
     if (err) throw new PlanError(400, err);
     const isOffTurn = (i: ExecutionItemInput) => !i.done && offTurn.has(i.deviceId);
 
+    //  §4.dr — **تمارينُ المرحلة**: مرحلةُ رقم هذه الجلسة بنطاقات الخطّة، أو ما اختاره المعالج منها؛ والتمارينُ تمارينُها بأعيانها.
+    let phasePosition: number | null = null;
+    let phaseLinks: { exerciseId: number; sets: number | null; reps: number | null; holdSeconds: number | null; nameAr: string;
+      cardSets: number | null; cardReps: number | null; cardHold: number | null }[] = [];
+    if (p.exercises) {
+      const phases = await tx.select({ id: physioPlanPhases.id, position: physioPlanPhases.position, sessionFrom: physioPlanPhases.sessionFrom,
+        sessionTo: physioPlanPhases.sessionTo }).from(physioPlanPhases).where(eq(physioPlanPhases.planId, plan.id));
+      if (p.phasePosition != null && !phases.some((ph) => ph.position === p.phasePosition)) throw new PlanError(400, "مرحلةٌ ليست في الخطّة");
+      phasePosition = p.phasePosition ?? phaseForSession(phases, Number(sessionsSoFar) + 1);
+      const phase = phases.find((ph) => ph.position === phasePosition);
+      phaseLinks = phase ? await tx.select({ exerciseId: physioPlanPhaseExercises.exerciseId, sets: physioPlanPhaseExercises.sets,
+        reps: physioPlanPhaseExercises.reps, holdSeconds: physioPlanPhaseExercises.holdSeconds, nameAr: physioExercises.nameAr,
+        cardSets: physioExercises.sets, cardReps: physioExercises.reps, cardHold: physioExercises.holdSeconds })
+        .from(physioPlanPhaseExercises).innerJoin(physioExercises, eq(physioExercises.id, physioPlanPhaseExercises.exerciseId))
+        .where(eq(physioPlanPhaseExercises.phaseId, phase.id))
+        .orderBy(asc(physioPlanPhaseExercises.position), asc(physioPlanPhaseExercises.id)) : [];
+      const exErr = exerciseItemsError({ phaseExerciseIds: phaseLinks.map((x) => Number(x.exerciseId)), items: p.exercises });
+      if (exErr) throw new PlanError(400, exErr);
+    }
+    const exerciseName = (id: number) => phaseLinks.find((x) => Number(x.exerciseId) === id)?.nameAr ?? `#${id}`;
+    const skippedExercises = (p.exercises ?? []).filter((x) => !x.done).map((x) => `${exerciseName(x.exerciseId)} (${x.note})`).join("، ");
+
     const doneCodes = p.items.filter((i) => i.done).map((i) => planLines.find((l) => Number(l.deviceId) === i.deviceId)!.code);
     const devNames = await tx.select({ id: devices.id, nameAr: devices.nameAr }).from(devices);
     const nameOf = (id: number) => devNames.find((d) => d.id === id)?.nameAr ?? `#${id}`;
@@ -109,7 +150,8 @@ export async function executeSession(p: {
       patientId: plan.patientId, branchId: plan.branchId, caseId: physioCase?.id ?? null,
       treatmentType: sessionTreatmentType(doneCodes),
       details: `جلسة من الخطة: ${plan.titleAr}`,
-      notes: [doneText ? `نُفّذ: ${doneText}` : "", skipped ? `لم يُنفَّذ: ${skipped}` : ""].filter(Boolean).join(" — ") || null,
+      notes: [doneText ? `نُفّذ: ${doneText}` : "", skipped ? `لم يُنفَّذ: ${skipped}` : "",
+        skippedExercises ? `لم يُنفَّذ من التمارين: ${skippedExercises}` : ""].filter(Boolean).join(" — ") || null,
       shift: p.shift, createdBy: p.actor.userId, customDate: p.visitCustomDate,
     } as any, tx);
 
@@ -118,8 +160,18 @@ export async function executeSession(p: {
     const [session] = await tx.insert(physioPlanSessions).values({
       planId: plan.id, patientId: plan.patientId, branchId: plan.branchId, sessionDate: p.sessionDate, shift: p.shift,
       executedBy: p.actor.userId, executedByName: p.actor.name, visitId: visit.id,
-      noteToSpecialist: p.noteToSpecialist, countsWritten: writeCounts,
+      noteToSpecialist: p.noteToSpecialist, countsWritten: writeCounts, phasePosition,
     }).returning();
+    if (p.exercises?.length) {
+      await tx.insert(physioPlanSessionExercises).values(p.exercises.map((x) => {
+        const link = phaseLinks.find((l) => Number(l.exerciseId) === x.exerciseId);
+        return { sessionId: session.id, exerciseId: x.exerciseId, done: x.done, note: x.note,
+          //  الجرعةُ كما عُرضت: جرعةُ المرحلة وإلّا جرعةُ البطاقة (`mergeDose`).
+          plannedSets: link?.sets ?? link?.cardSets ?? null, plannedReps: link?.reps ?? link?.cardReps ?? null,
+          plannedHoldSeconds: link?.holdSeconds ?? link?.cardHold ?? null,
+          displayOrder: phaseLinks.findIndex((l) => Number(l.exerciseId) === x.exerciseId) };
+      }));
+    }
     await tx.insert(physioPlanSessionItems).values(p.items.map((i) => ({
       sessionId: session.id, deviceId: i.deviceId, done: i.done, minutes: i.minutes,
       note: isOffTurn(i) ? ((i.note ?? "").trim() || offNotes.get(i.deviceId) || ADJUNCT_OFF_TURN_NOTE) : i.note, offTurn: isOffTurn(i),
@@ -195,7 +247,8 @@ export async function cancelSession(id: number, reason: string, actor: Actor) {
 export async function deviations(p: { branchIds: number[] | null; sinceDate: string }) {
   const conds: any[] = [isNull(physioPlanSessions.cancelledAt), gte(physioPlanSessions.sessionDate, p.sinceDate), isNull(patients.deletedAt),
     sql`(${physioPlanSessions.noteToSpecialist} IS NOT NULL OR EXISTS (SELECT 1 FROM physio_plan_session_items i WHERE i.session_id = ${physioPlanSessions.id}
-         AND ((NOT i.done AND NOT i.off_turn) OR (i.planned_minutes IS NOT NULL AND i.minutes IS NOT NULL AND i.minutes <> i.planned_minutes))))`];
+         AND ((NOT i.done AND NOT i.off_turn) OR (i.planned_minutes IS NOT NULL AND i.minutes IS NOT NULL AND i.minutes <> i.planned_minutes)))
+         OR EXISTS (SELECT 1 FROM physio_plan_session_exercises e WHERE e.session_id = ${physioPlanSessions.id} AND NOT e.done))`];
   if (p.branchIds) conds.push(p.branchIds.length ? inArray(physioPlanSessions.branchId, p.branchIds) : sql`false`);
   const ss = await db.select({
     id: physioPlanSessions.id, planId: physioPlanSessions.planId, sessionDate: physioPlanSessions.sessionDate,
@@ -213,10 +266,16 @@ export async function deviations(p: { branchIds: number[] | null; sinceDate: str
     nameAr: devices.nameAr,
   }).from(physioPlanSessionItems).innerJoin(devices, eq(devices.id, physioPlanSessionItems.deviceId))
     .where(inArray(physioPlanSessionItems.sessionId, ss.map((s) => s.id)));
+  //  §4.dr — والتمرينُ الذي لم يُنفَّذ اختلافٌ كالجهاز.
+  const exercises = (await sessionExercisesOf(db, ss.map((s) => s.id))).filter((x: any) => !x.done);
   return ss.map((s) => ({
     ...s,
-    differences: items.filter((i) => i.sessionId === s.id
-      && ((!i.done && !i.offTurn) || (i.plannedMinutes != null && i.minutes != null && i.minutes !== i.plannedMinutes))),
+    differences: [
+      ...items.filter((i) => i.sessionId === s.id
+        && ((!i.done && !i.offTurn) || (i.plannedMinutes != null && i.minutes != null && i.minutes !== i.plannedMinutes))),
+      ...exercises.filter((x: any) => x.sessionId === s.id).map((x: any) => ({ done: false, minutes: null, plannedMinutes: null, note: x.note,
+        nameAr: x.nameAr, kind: "exercise" as const })),
+    ],
   }));
 }
 

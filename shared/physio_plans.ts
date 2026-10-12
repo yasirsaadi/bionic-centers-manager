@@ -135,6 +135,40 @@ export function executionItemsError(p: {
   return null;
 }
 
+// ══ تعليمُ كلّ تمرينٍ في الجلسة (ترحيل ١٣٤ — «الطلب الثاني»، §4.dr) ═══════════════════════════════════════════════════════
+//
+// قرارُ المالك (§4.cx): «ضع شيئاً عالمياً وستاندرد» — تمارينُ مرحلة الخطّة الحالية في «إنهاء الجلسة»، **كلُّها «نُفّذ» افتراضاً، ويُلغى ما لم يُنفَّذ بسبب**.
+
+export interface ExerciseItemInput { exerciseId: number; done: boolean; note: string | null }
+
+/**
+ * **مرحلةُ هذه الجلسة** — بنطاقات جلسات المراحل (`sessionFrom`–`sessionTo`، §4.dd): التي تحوي رقمَ الجلسة؛ وبعد آخر نطاقٍ الأخيرةُ ذاتُ النطاق؛
+ * وبلا نطاقاتٍ الأولى. ⟵ موضعُ المرحلة أو `null` لخطّةٍ بلا مراحل. والمعالجُ يختار غيرَها إن كان مريضُه في مرحلةٍ أخرى.
+ */
+export function phaseForSession(phases: readonly { position: number; sessionFrom?: number | null; sessionTo?: number | null }[], sessionNumber: number): number | null {
+  if (!phases.length) return null;
+  const sorted = [...phases].sort((a, b) => a.position - b.position);
+  const ranged = sorted.filter((p) => p.sessionFrom != null || p.sessionTo != null);
+  const hit = ranged.find((p) => (p.sessionFrom ?? 1) <= sessionNumber && sessionNumber <= (p.sessionTo ?? Number.MAX_SAFE_INTEGER));
+  if (hit) return hit.position;
+  if (ranged.length) {
+    const last = ranged.reduce((a, b) => ((b.sessionTo ?? 0) >= (a.sessionTo ?? 0) ? b : a));
+    if (sessionNumber > (last.sessionTo ?? 0)) return last.position;
+    return ranged[0].position;
+  }
+  return sorted[0].position;
+}
+
+/** **تمارينُ الجلسة هي تمارينُ المرحلة بأعيانها** — لا زائد ولا ناقص ولا مكرّر، وما لم يُنفَّذ يقول لماذا. ⟵ رسالةُ الخطأ أو `null`. */
+export function exerciseItemsError(p: { phaseExerciseIds: readonly number[]; items: readonly ExerciseItemInput[] }): string | null {
+  const ids = p.items.map((i) => i.exerciseId);
+  if (new Set(ids).size !== ids.length) return "تمرينٌ مكرّر";
+  const phase = new Set(p.phaseExerciseIds);
+  if (ids.length !== phase.size || ids.some((d) => !phase.has(d))) return "التمارينُ تمارينُ المرحلة بأعيانها — لا يُضاف تمرينٌ ولا يُحذف";
+  if (p.items.some((i) => !i.done && !(i.note ?? "").trim())) return "اكتب سببَ كلّ تمرينٍ لم يُنفَّذ";
+  return null;
+}
+
 /** **نوعُ العلاج في زيارة الجلسة** — من البنود المنفّذة، بقائمة «تسجيل زيارة جلسة علاج طبيعي» نفسِها. */
 export function sessionTreatmentType(doneCodes: readonly string[]): string {
   if (doneCodes.includes("robotik")) return "روبوت";
