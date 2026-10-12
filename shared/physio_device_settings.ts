@@ -48,6 +48,25 @@ export function protocolSettingsBlockers(lines: readonly {
     .filter((b) => b.missing.length > 0);
 }
 
+/**
+ * **إعداداتٌ ناقصة في البروتوكول لأجهزةٍ في هذه الخطّة** (§4.dq — قرارُ المالك ٢٠٢٦-١٠-١٢): الخطّةُ لا تُمنع من البدء، **ومَن يبدؤها أو يعتمدها
+ * يُطلب منه أن يذكّر المشرفَ العام بإدخالها**. المرجعُ البروتوكولُ كما هو الآن (المشرفُ يملؤه هناك)، والجهازُ المحذوفُ من الخطّة لا يُذكَر.
+ */
+export function planSettingsGaps(protocolLines: Parameters<typeof protocolSettingsBlockers>[0], planCodes: Iterable<string | null | undefined>): SettingsBlocker[] {
+  const used = new Set(Array.from(planCodes).map((c) => String(c ?? "")));
+  return protocolSettingsBlockers(protocolLines).filter((b) => used.has(b.code));
+}
+
+/** نصُّ التذكير الذي يصل المشرفَ — الجهازُ وخاناتُه، والبروتوكولُ، ومَن ذكّره ولأيّ مريض. */
+export function settingsReminderText(p: { protocolTitle: string; gaps: readonly SettingsBlocker[]; byName: string | null; patient: string }): string {
+  return [
+    `🔔 تذكير: إعداداتُ الجهاز ناقصةٌ في بروتوكول «${p.protocolTitle}»`,
+    ...p.gaps.map((b) => `• ${b.nameAr}: ${b.missing.map((m) => m.ar).join("، ")}`),
+    "أدخلها من جهاز المركز في صفحة البروتوكول ثمّ اعتمده.",
+    `ذكّرك ${p.byName ?? "—"} عند خطّة ${p.patient}`,
+  ].join("\n");
+}
+
 /** رسالةُ الرفض — تُعرض للمشرف كما هي. */
 export function settingsBlockedMessage(blockers: readonly SettingsBlocker[]): string {
   return "لا يُعتمد البروتوكولُ قبل إعدادات الجهاز — املأ من جهازكم: "

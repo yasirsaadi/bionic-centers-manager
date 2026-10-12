@@ -372,6 +372,50 @@ async function main() {
     try { await storage.deletePatient(pt2); } catch (e) { deleted = false; console.error(e); }
     same("أ.١٦ **حذفُ المريض النهائيّ يمرّ بخطّةٍ لها مقاييسُها**", [deleted, Number((await q(`SELECT count(*) FROM physio_plan_measures WHERE plan_id = $1`, [p4])).rows[0].count)],
       [true, 0]);
+
+    // ══ ت. إعداداتُ الجهاز الناقصة — «ذكّر المشرف» (§4.dq — قرارُ المالك ٢٠٢٦-١٠-١٢: لا منع، ومَن يعتمدها يذكّر سليم) ══
+    console.log("\n── ت. «ذكّر المشرف» بإعدادات الجهاز ──");
+    const outboxOf = async () => (await q(`SELECT event_type, target_user_ids, text, link_path FROM staff_notification_outbox
+      WHERE text LIKE '%' || $1 || '%' AND text LIKE '%🔔%' ORDER BY id`, [MARK])).rows;
+    const pt3 = await newPatient("هدى");
+    const p5 = (await call("POST", `/api/patients/${pt3}/physio-plans`, S.spec, { protocolId: kneeId })).json.id as number;
+    const gs = (await getPlan(p5)).settingsGaps;
+    same("ت.١ **خطّةٌ على الركبة والموجاتُ الصادمة بلا إعدادات**: الأخصائيُّ يرى الجهازَ وخاناتِه الأربع ومَن يذكّره، ولم يُذكَّر بعد",
+      [gs?.gaps?.map((g: any) => g.code), gs?.gaps?.[0]?.missing?.length, gs?.supervisors, gs?.youFill, gs?.reminder?.count], [["shockwaves"], 4, ["سليم"], false, 0]);
+    same("ت.٢ **والمشرفُ يُدَلّ على البروتوكول ليملأها**", (await getPlan(p5, S.sup)).settingsGaps?.youFill, true);
+    const started = await call("POST", `/api/physio/plans/${p5}/activate`, S.spec);
+    const techView = await getPlan(p5, S.tech);
+    same("ت.٣ **ولا تُمنع الخطّةُ من البدء** — والمنفّذُ يرى الخطّةَ ولا يرى اللافتة",
+      [started.status, (await getPlan(p5)).status, Boolean((await getPlan(p5)).settingsGaps), techView?.status, techView?.settingsGaps ?? null],
+      [200, "approved", true, "approved", null]);
+    const denied = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.tech);
+    const sent = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec);
+    const ob = await outboxOf();
+    const auditRows = (await q(`SELECT entity_id, user_id FROM audit_log WHERE entity_type = 'physio_protocol' AND action = 'remind_settings' AND user_id = $1`, [SPEC])).rows;
+    same("ت.٤ **«ذكّر سليم الآن»** يصله وحده في تلغرامه بالجهاز وخاناته والبروتوكول ومَن ذكّر، وبسطر تدقيقٍ على البروتوكول — والمنفّذُ لا يذكّر",
+      [denied.status, sent.status, sent.json?.sent, sent.json?.to, ob.length, ob[0]?.event_type, ob[0]?.target_user_ids?.map(Number), ob[0]?.link_path,
+        /إعداداتُ الجهاز ناقصةٌ/.test(ob[0]?.text ?? ""), /ذكّرك مصطفى/.test(ob[0]?.text ?? ""), /التردّد/.test(ob[0]?.text ?? ""),
+        auditRows.length, Number(auditRows[0]?.entity_id)],
+      [403, 200, true, ["سليم"], 1, "physio_plan_pending", [SUP], `/physio/protocols/${kneeId}`, true, true, true, 1, kneeId]);
+    const again = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec);
+    same("ت.٥ **وضغطةٌ ثانية خلال عشر دقائق لا تُرسل ثانيةً**", [again.status, again.json?.sent, (await outboxOf()).length], [200, false, 1]);
+    const seenPlan = (await getPlan(p5)).settingsGaps?.reminder;
+    const seenProto = (await call("GET", `/api/physio/protocols/${kneeId}`, S.sup)).json?.settingsReminder;
+    same("ت.٦ **ويُرى التذكيرُ في الخطّة وفي صفحة البروتوكول عند المشرف** — ولو لم يربط تلغرام",
+      [seenPlan?.count, seenPlan?.lastByName, seenProto?.count, seenProto?.lastByName], [1, "مصطفى", 1, "مصطفى"]);
+    same("ت.٧ **والمشرفُ لا يذكّر نفسَه**", (await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.sup)).status, 409);
+    const p6 = (await call("POST", `/api/patients/${pt3}/physio-plans`, S.spec, { protocolId: kneeId })).json.id as number;
+    const g10 = await getPlan(p6);
+    await call("PUT", `/api/physio/plans/${p6}`, S.spec, planBody(g10, { devices: planBody(g10).devices.filter((d: any) => d.deviceId !== dev.shockwaves) }));
+    same("ت.٨ **وخطّةٌ أُزيل منها الجهاز** لا تذكيرَ فيها", [(await getPlan(p6)).settingsGaps ?? null, (await call("POST", `/api/physio/plans/${p6}/remind-settings`, S.spec)).status],
+      [null, 409]);
+    const full3 = (await call("GET", `/api/physio/protocols/${kneeId}`, S.sup)).json;
+    const filledBody = protoBody(full3);
+    filledBody.devices = filledBody.devices.map((d: any) => (d.deviceId === dev.shockwaves
+      ? { ...d, params: { ...(d.params ?? {}), mode: "radial", pressureBar: "2.5", frequencyHz: "8", impulses: "2000" } } : d));
+    const fill = await call("PUT", `/api/physio/protocols/${kneeId}`, S.sup, filledBody);
+    same("ت.٩ **وحين يملؤها سليم في البروتوكول تختفي اللافتة** من الخطّة ومن صفحته",
+      [fill.status, (await getPlan(p5)).settingsGaps ?? null, (await call("GET", `/api/physio/protocols/${kneeId}`, S.sup)).json?.settingsReminder ?? null], [200, null, null]);
   } finally {
     await cleanup();
     httpServer.close();

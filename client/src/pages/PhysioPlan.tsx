@@ -29,6 +29,7 @@ import { LatestAssessmentBox } from "@/components/physio/LatestAssessment";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
 import { DiffBadge, DiffFields, PlanDiffBox, RemovedList, type ProtocolDiffView } from "@/components/physio/PlanDiff";
 import { PlanMeasuresSection } from "@/components/physio/ProtocolMeasures";
+import { PlanSettingsReminder, type PlanSettingsGapsView } from "@/components/physio/PlanSettingsReminder";
 import { diffAt } from "@shared/physio_plan_diff";
 import type { MeasureDef } from "@shared/physio_assessments";
 import { localizedText, type ProtocolLang } from "@shared/physio_protocols";
@@ -71,6 +72,8 @@ interface Plan {
   reviewStatus?: "awaiting" | "reviewed" | null; reviewedByName?: string | null; reviewedAt?: string | null;
   /** §4.do — مقاييسُ هذه الخطّة (لها إن عُدّلت لمريضها)، وما تختلف به عن بروتوكولها كما هو الآن. */
   measures?: MeasureDef[]; measuresOwn?: boolean; protocolDiff?: ProtocolDiffView | null;
+  /** §4.dq — إعداداتُ جهازٍ ناقصة في البروتوكول: لمن يبدؤها أو يعتمدها (والمشرفُ يملؤها). */
+  settingsGaps?: PlanSettingsGapsView | null;
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -158,8 +161,11 @@ export default function PhysioPlanPage() {
   const act = useMutation({
     mutationFn: async (p: { path: string; body?: any }) => (await apiRequest("POST", `/api/physio/plans/${id}/${p.path}`, p.body ?? {})).json(),
     onSuccess: (_d, p) => {
+      const askRemind = q.data?.settingsGaps && !q.data.settingsGaps.youFill
+        ? ` وإعداداتُ جهاز ${q.data.settingsGaps.gaps.map((g) => `«${g.nameAr}»`).join("، ")} ناقصةٌ في البروتوكول — ذكّر ${q.data.settingsGaps.supervisors[0] ?? "المشرف"} من الزرّ أعلى الصفحة.`
+        : "";
       toast(p.path === "activate"
-        ? { title: "بدأت الخطّة", description: "نزلت في ملفّ المريض وتُنفَّذ الآن، ونُبّه المشرفُ ليطّلع عليها." }
+        ? { title: "بدأت الخطّة", description: `نزلت في ملفّ المريض وتُنفَّذ الآن، ونُبّه المشرفُ ليطّلع عليها.${askRemind}` }
         : { title: "تم" });
       setAsk(null); refresh();
     },
@@ -249,6 +255,10 @@ export default function PhysioPlanPage() {
         )}
       </CardContent></Card>
 
+      {/*  §4.dq — الخطّةُ لا تُمنع، **ومَن يبدؤها أو يعتمدها يُطلب منه أن يذكّر المشرف** بإعدادات الجهاز الناقصة في البروتوكول. */}
+      {!editing && plan.settingsGaps && (
+        <PlanSettingsReminder planId={plan.id} protocolId={plan.protocol?.id ?? null} view={plan.settingsGaps} onSent={refresh} />
+      )}
       {/*  الأزرارُ بحسب صلاحية السائل (من الخادم) وحالة الخطّة. */}
       {!editing && (
         <div className="flex flex-wrap gap-2 print:hidden" data-testid="plan-actions">

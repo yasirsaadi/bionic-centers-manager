@@ -215,9 +215,30 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!l) return;
       const plan = await store.getPlan(l.row.id);
       const scope = scopeOf(req, l.s);
+      //  §4.dq — **إعداداتُ جهازٍ ناقصة في البروتوكول** لمن يبدأ الخطّةَ أو يعتمدها: يُطلب منه أن يذكّر المشرفَ العام (والمشرفُ نفسُه يُدَلّ على البروتوكول).
+      const writesOrApproves = canWritePlans(l.s) || canApprovePlans(l.s);
+      const gaps = writesOrApproves && !isPlanClosed(l.row.status) ? await store.planSettingsGapsFor(l.row) : null;
       res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s),
         canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s),
-        aiSuggestion: await suggest.suggestionOfPlan(l.row.id) });
+        aiSuggestion: await suggest.suggestionOfPlan(l.row.id),
+        settingsGaps: gaps ? { ...gaps, supervisors: gaps.supervisors.map((u) => u.name), youFill: l.s.permissions?.canSupervisePhysio === true } : null });
+    } catch (e) { fail(res, e); }
+  });
+
+  //  §4.dq — **«ذكّر المشرف»** بإعدادات الجهاز الناقصة في البروتوكول: لمن يكتب الخططَ أو يعتمدها، وبسطر تدقيقٍ على البروتوكول يراه المشرف.
+  app.post("/api/physio/plans/:id/remind-settings", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!canWritePlans(l.s) && !canApprovePlans(l.s)) return res.status(403).json({ error: "لكاتبي الخطط والمشرف والمسؤول" });
+      if (isPlanClosed(l.row.status)) return res.status(409).json({ error: "الخطّةُ منتهية" });
+      const r = await store.remindPlanSettings(l.row, actor(l.s));
+      if (r.sent) {
+        await logAudit({ entityType: "physio_protocol", entityId: l.row.protocolId!, action: "remind_settings", userId: l.s.userId ?? null,
+          userName: l.s.displayName ?? null, newValues: { planId: l.row.id, to: r.to, gaps: r.gaps.map((g) => ({ code: g.code, missing: g.missing.map((m) => m.ar) })) },
+          notes: `تذكيرُ المشرف بإعدادات الجهاز — من خطّة #${l.row.id}`, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
+      }
+      res.json(r);
     } catch (e) { fail(res, e); }
   });
 
