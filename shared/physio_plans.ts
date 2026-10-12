@@ -169,6 +169,23 @@ export function exerciseItemsError(p: { phaseExerciseIds: readonly number[]; ite
   return null;
 }
 
+/**
+ * **بندُ «تمارين» وتمارينُه يقولان الشيءَ نفسَه** (§4.dr — ملاحظةُ المراجعة على #622): البندُ «لم يُنفَّذ» (أو ليس دورَه) ⟵ لا تُعلَّم تمارينُه
+ * (الشاشةُ لا ترسلها، وسببُه في البند)؛ والبندُ «نُفّذ» وتمارينُه كلُّها «لم يُنفَّذ» ⟵ تناقضٌ يُكتب «نُفّذ» في الزيارة والعدّاد. و`null` = لا بندَ تمارين في الخطّة.
+ */
+export function exerciseDeviceError(p: { deviceDone: boolean | null; items: readonly ExerciseItemInput[] }): string | null {
+  if (p.deviceDone === null || p.items.length === 0) return null;
+  if (!p.deviceDone) return "بندُ «تمارين» لم يُنفَّذ — فلا تُعلَّم تمارينُه";
+  if (p.items.every((x) => !x.done)) return "لم يُنفَّذ أيُّ تمرين — أزل علامةَ بند «تمارين» واكتب سببه";
+  return null;
+}
+
+/** رمزُ بند «تمارين» بين أجهزة الخطّة (`devices.code`). */
+export const EXERCISE_DEVICE_CODE = "exercise";
+
+/** **مرحلةُ الجلسة الافتراضية تغيّرت تحت يد المعالج** — جلسةٌ سُجّلت للخطّة بعد أن فتح النافذة (§4.dr). */
+export const PHASE_MOVED = "سُجّلت جلسةٌ لهذه الخطّة قبل لحظات فتغيّرت مرحلةُ هذه الجلسة — أُعيد تحميلُ تمارينها، راجعها واحفظ";
+
 /** **نوعُ العلاج في زيارة الجلسة** — من البنود المنفّذة، بقائمة «تسجيل زيارة جلسة علاج طبيعي» نفسِها. */
 export function sessionTreatmentType(doneCodes: readonly string[]): string {
   if (doneCodes.includes("robotik")) return "روبوت";

@@ -19,7 +19,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { sql as MIGRATION_SQL } from "./migrations/134_physio_session_exercises";
-import { exerciseItemsError, phaseForSession } from "@shared/physio_plans";
+import { exerciseDeviceError, exerciseItemsError, phaseForSession, PHASE_MOVED } from "@shared/physio_plans";
 import { mergeDose } from "@shared/physio_exercises";
 
 let failures = 0;
@@ -76,6 +76,13 @@ async function main() {
       Boolean(exerciseItemsError({ phaseExerciseIds: [1, 2], items: [x(1, true), x(2, false, "  ")] })),
       exerciseItemsError({ phaseExerciseIds: [], items: [] })],
     [null, true, true, true, true, null]);
+
+  same("ق.٣ **بندُ «تمارين» وتمارينُه لا يتناقضان**: البندُ «لم يُنفَّذ» وتمارينُه مُرسَلة يُردّ، و«نُفّذ» وتمارينُه كلُّها «لم يُنفَّذ» يُردّ، وبلا بندٍ أو بلا تمارين لا شيء",
+    [exerciseDeviceError({ deviceDone: true, items: [x(1, true), x(2, false, "ألم")] }),
+      Boolean(exerciseDeviceError({ deviceDone: false, items: [x(1, true)] })),
+      Boolean(exerciseDeviceError({ deviceDone: true, items: [x(1, false, "ألم"), x(2, false, "تعب")] })),
+      exerciseDeviceError({ deviceDone: null, items: [x(1, false, "ألم")] }), exerciseDeviceError({ deviceDone: false, items: [] })],
+    [null, true, true, null, null]);
 
   // ══ أ. من الأبواب ══
   console.log("\n── أ. من الأبواب ──");
@@ -162,23 +169,35 @@ async function main() {
 
     const missing = await exec({ exercises: allDone(1).slice(1) });
     const extra = await exec({ exercises: [...allDone(1), { exerciseId: ids(2).find((id: number) => !ids(1).includes(id)), done: true, note: null }] });
-    const otherPhase = await exec({ exercises: allDone(2), phasePosition: 2 });
+    const otherPhase = await exec({ exercises: allDone(2), phasePosition: 2, phaseManual: true });
     const badPhase = await exec({ exercises: [], phasePosition: 9 });
     same("أ.٤ **الناقصُ والزائدُ يُردّان، والمعالجُ يختار مرحلةً أخرى** (تُكتب)، ومرحلةٌ ليست في الخطّة تُردّ",
       [missing.status, extra.status, otherPhase.status, otherPhase.json?.phasePosition, (await rowsOf(otherPhase.json?.id)).length, badPhase.status],
       [400, 400, 200, 2, ids(2).length, 400]);
 
+    //  بندُ «تمارين» وتمارينُه (ملاحظةُ المراجعة على #622).
+    const exDev = g.devices.find((d: any) => d.code === "exercise");
+    const itemsWith = (done: boolean) => devItems.map((d: any) => (d.deviceId === exDev?.deviceId ? { ...d, done, minutes: done ? d.minutes : null, note: done ? null : "رفض المريض" } : d));
+    const allSkipped = await exec({ exercises: allDone(1).map((e: any) => ({ ...e, done: false, note: "تعب" })) });
+    const devOffWithEx = await call("POST", `/api/physio/plans/${plan}/sessions`, S.tech, { items: itemsWith(false), exercises: allDone(1) });
+    const devOffNoEx = await call("POST", `/api/physio/plans/${plan}/sessions`, S.tech, { items: itemsWith(false) });
+    same("أ.٤ب **البندُ «نُفّذ» وتمارينُه كلُّها «لم يُنفَّذ» يُردّ، والبندُ «لم يُنفَّذ» وتمارينُه مُرسَلة يُردّ، وبلا تمارين يمرّ بلا صفوف تمارين**",
+      [Boolean(exDev), allSkipped.status, devOffWithEx.status, devOffNoEx.status, (await rowsOf(devOffNoEx.json?.id)).length],
+      [true, 400, 400, 200, 0]);
+
     const legacy = await exec({});
     same("أ.٥ **صفحةٌ أقدم بلا تمارين لا تُفشل الجلسة** — ولا تمارينَ تُكتب ولا مرحلة",
       [legacy.status, legacy.json?.phasePosition ?? null, (await rowsOf(legacy.json?.id)).length], [200, null, 0]);
 
-    //  الجلسةُ السابعة: ستُّ جلساتٍ قبلها (أربعٌ نُفّذت هنا، واثنتان تُضافان) ⟵ مرحلتُها الثانيةُ وحدها.
+    //  الجلسةُ الثامنة: سبعُ جلساتٍ قبلها (خمسٌ نُفّذت هنا، واثنتان تُضافان) ⟵ مرحلتُها الثانيةُ وحدها.
     await q(`INSERT INTO physio_plan_sessions (plan_id, patient_id, branch_id, session_date, shift) VALUES ($1, $2, $3, CURRENT_DATE, 'morning'), ($1, $2, $3, CURRENT_DATE, 'morning')`,
       [plan, pt, B1]);
     const seventhWrong = await exec({ exercises: allDone(1) });
-    const seventh = await exec({ exercises: allDone(2) });
-    same("أ.٦ **الجلسةُ السابعة في المرحلة الثانية** بنطاقها — وتمارينُ الأولى تُردّ ما لم يخترها المعالج",
-      [seventhWrong.status, seventh.status, seventh.json?.phasePosition], [400, 200, 2]);
+    //  افتراضُ شاشةٍ فُتحت قبل الجلستين (المرحلةُ الأولى) — يُعاد حسابُه تحت القفل فيُردّ، لا يُكتب كأنه اختيار.
+    const staleAuto = await exec({ exercises: allDone(1), phasePosition: 1 });
+    const seventh = await exec({ exercises: allDone(2), phasePosition: 2 });
+    same("أ.٦ **الجلسةُ الثامنة في المرحلة الثانية** بنطاقها — وتمارينُ الأولى تُردّ ما لم يخترها المعالج، **وافتراضُ الشاشة القديم ٤٠٩** برسالته، والافتراضُ الصحيح يمرّ",
+      [seventhWrong.status, staleAuto.status, staleAuto.json?.error, seventh.status, seventh.json?.phasePosition], [400, 409, PHASE_MOVED, 200, 2]);
 
     const hist = (await call("GET", `/api/physio/plans/${plan}/sessions`, S.spec)).json.sessions;
     const h3 = hist.find((s: any) => s.id === withReason.json?.id);

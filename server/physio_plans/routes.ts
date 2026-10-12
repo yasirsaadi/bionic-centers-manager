@@ -443,13 +443,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const r = await exec.executeSession({
         planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s),
         canDryNeedle: l.s.permissions?.canDryNeedle === true, visitCustomDate: sessionDate === today ? null : sessionDate,
-        exercises, phasePosition,
+        exercises, phasePosition, phaseManual: req.body?.phaseManual === true,
       });
       await logAudit({ entityType: "visit", entityId: r.visit.id, action: "create", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
         branchId: r.visit.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null, notes: `جلسة من خطة العلاج الطبيعي #${l.row.id}` });
       await audit(req, l.s, { entityId: l.row.id, action: "execute", branchId: l.row.branchId,
         newValues: { sessionId: r.session.id, sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note,
-          ...(exercises ? { phasePosition: r.session.phasePosition, exercises } : {}) } });
+          ...(exercises ? { phasePosition: r.session.phasePosition, phaseManual: req.body?.phaseManual === true, exercises } : {}) } });
       res.json({ ...r.session, visitId: r.visit.id });
     } catch (e) { fail(res, e); }
   });

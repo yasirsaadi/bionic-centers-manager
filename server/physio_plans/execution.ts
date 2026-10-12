@@ -10,7 +10,7 @@ import {
   physioPlanSessionExercises, physioPlanSessionItems, physioPlanSessions, physioPlans, sessionCounts, visits,
 } from "@shared/schema";
 import {
-  countsFromExecution, exerciseItemsError, executionItemsError, phaseForSession, sessionAdjuncts, sessionTreatmentType,
+  countsFromExecution, EXERCISE_DEVICE_CODE, exerciseDeviceError, exerciseItemsError, executionItemsError, phaseForSession, PHASE_MOVED, sessionAdjuncts, sessionTreatmentType,
   type ExecutionItemInput, type ExerciseItemInput,
 } from "@shared/physio_plans";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
@@ -83,6 +83,8 @@ export async function executeSession(p: {
    * لا يُسجّل تمارين — ولا يُفشل الجلسة.
    */
   exercises?: ExerciseItemInput[] | null; phasePosition?: number | null;
+  /** اختارها المعالجُ من القائمة — وإلّا فالمرحلةُ المرسَلة افتراضُ الشاشة، يُعاد حسابُه هنا تحت قفل الخطّة. */
+  phaseManual?: boolean;
 }) {
   return db.transaction(async (tx) => {
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, p.planId)).for("update");
@@ -123,7 +125,11 @@ export async function executeSession(p: {
       const phases = await tx.select({ id: physioPlanPhases.id, position: physioPlanPhases.position, sessionFrom: physioPlanPhases.sessionFrom,
         sessionTo: physioPlanPhases.sessionTo }).from(physioPlanPhases).where(eq(physioPlanPhases.planId, plan.id));
       if (p.phasePosition != null && !phases.some((ph) => ph.position === p.phasePosition)) throw new PlanError(400, "مرحلةٌ ليست في الخطّة");
-      phasePosition = p.phasePosition ?? phaseForSession(phases, Number(sessionsSoFar) + 1);
+      //  **الافتراضُ يُحسب هنا تحت قفل الخطّة** (ملاحظةُ المراجعة على #622): جلسةٌ سُجّلت بعد أن فتح المعالجُ النافذةَ تنقل رقمَ هذه الجلسة، وقد تنقل
+      //  مرحلتَها؛ فافتراضُ الشاشة القديم لا يُكتب كأنه اختيار — يُردّ (٤٠٩) لتُعيد الشاشةُ تحميلَ تمارين المرحلة الصحيحة. واختيارُ المعالج يُحترم.
+      const auto = phaseForSession(phases, Number(sessionsSoFar) + 1);
+      if (!p.phaseManual && p.phasePosition != null && p.phasePosition !== auto) throw new PlanError(409, PHASE_MOVED);
+      phasePosition = p.phaseManual && p.phasePosition != null ? p.phasePosition : auto;
       const phase = phases.find((ph) => ph.position === phasePosition);
       phaseLinks = phase ? await tx.select({ exerciseId: physioPlanPhaseExercises.exerciseId, sets: physioPlanPhaseExercises.sets,
         reps: physioPlanPhaseExercises.reps, holdSeconds: physioPlanPhaseExercises.holdSeconds, nameAr: physioExercises.nameAr,
@@ -133,6 +139,11 @@ export async function executeSession(p: {
         .orderBy(asc(physioPlanPhaseExercises.position), asc(physioPlanPhaseExercises.id)) : [];
       const exErr = exerciseItemsError({ phaseExerciseIds: phaseLinks.map((x) => Number(x.exerciseId)), items: p.exercises });
       if (exErr) throw new PlanError(400, exErr);
+      //  بندُ «تمارين» وتمارينُه لا يتناقضان: لم يُنفَّذ (أو ليس دورَه) ⟵ لا تُعلَّم تمارينُه، ونُفّذ ⟵ تمرينٌ واحدٌ نُفّذ على الأقلّ.
+      const exLine = planLines.find((l) => l.code === EXERCISE_DEVICE_CODE);
+      const exItem = exLine ? p.items.find((i) => i.deviceId === Number(exLine.deviceId)) : undefined;
+      const devErr = exerciseDeviceError({ deviceDone: exItem ? exItem.done : null, items: p.exercises });
+      if (devErr) throw new PlanError(400, devErr);
     }
     const exerciseName = (id: number) => phaseLinks.find((x) => Number(x.exerciseId) === id)?.nameAr ?? `#${id}`;
     const skippedExercises = (p.exercises ?? []).filter((x) => !x.done).map((x) => `${exerciseName(x.exerciseId)} (${x.note})`).join("، ");

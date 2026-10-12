@@ -15,7 +15,7 @@ import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 import { isScheduled, scheduleOffNote, scheduleState } from "@shared/physio_device_settings";
-import { phaseForSession } from "@shared/physio_plans";
+import { EXERCISE_DEVICE_CODE, phaseForSession } from "@shared/physio_plans";
 import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
 
 interface PlanDevice {
@@ -39,7 +39,6 @@ interface PlanPhase {
 }
 interface Line { deviceId: number; done: boolean; minutes: string; note: string }
 interface ExLine { exerciseId: number; done: boolean; note: string }
-const EXERCISE_DEVICE_CODE = "exercise";
 
 const errText = (e: any): string => {
   const raw = String(e?.message ?? "").replace(/^\d+:\s*/, "");
@@ -62,12 +61,15 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   const [date, setDate] = useState(baghdadTodayYmd());
   //  §4.dr — **تمارينُ المرحلة**: مرحلةُ رقم هذه الجلسة بنطاقات الخطّة (ويختار المعالجُ غيرَها)، وكلُّها «نُفّذ» افتراضاً — وما لم يُنفَّذ يقول لماذا.
   const [phasePos, setPhasePos] = useState<number | null>(null);
+  //  اختارها المعالجُ من القائمة؟ — وإلّا فهي افتراضُ رقم الجلسة: تُعاد كلّما تغيّر عددُ الجلسات، ويعيد الخادمُ حسابَها تحت قفل الخطّة.
+  const [phaseManual, setPhaseManual] = useState(false);
   const [exLines, setExLines] = useState<ExLine[]>([]);
   const phaseAt = (pos: number | null) => (q.data?.phases ?? []).find((p) => p.position === pos) ?? null;
-  const pickPhase = (pos: number | null) => {
+  const showPhase = (pos: number | null) => {
     setPhasePos(pos);
     setExLines((phaseAt(pos)?.exercises ?? []).map((x) => ({ exerciseId: x.exerciseId, done: true, note: "" })));
   };
+  const pickPhase = (pos: number | null) => { setPhaseManual(true); showPhase(pos); };
   useEffect(() => {
     if (!q.data) return;
     //  **المساعدُ يتناوب** (ترحيل ١٢٢، §4.cx): الأساسيُّ مُعلَّمٌ «نُفّذ»، والمساعدُ الذي دورُه هذه الجلسة كذلك، والباقي «ليس دورَه» بلا سببٍ يُطلب.
@@ -82,23 +84,29 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
         minutes: d.minutes == null ? "" : String(d.minutes), note: "" };
     }));
     setNote(""); setDate(baghdadTodayYmd());
-    const pos = phaseForSession(q.data.phases ?? [], (q.data.rotation?.sessionsSoFar ?? 0) + 1);
-    setPhasePos(pos);
-    setExLines(((q.data.phases ?? []).find((p) => p.position === pos)?.exercises ?? []).map((x) => ({ exerciseId: x.exerciseId, done: true, note: "" })));
+    setPhaseManual(false);
   }, [q.data?.id, planId]);
+  //  **مرحلةُ رقم هذه الجلسة** — تُعاد حين يتحدّث عددُ الجلسات (خطّةٌ مخزَّنة ثمّ أحدث، أو جلسةٌ سجّلها زميل) ما لم يخترها المعالج.
+  const sessionsSoFar = q.data?.rotation?.sessionsSoFar ?? 0;
+  const phasesKey = (q.data?.phases ?? []).map((p) => `${p.position}:${p.sessionFrom ?? ""}-${p.sessionTo ?? ""}:${p.exercises.map((x) => x.exerciseId).join(".")}`).join("|");
+  useEffect(() => {
+    if (!q.data || phaseManual) return;
+    const pos = phaseForSession(q.data.phases ?? [], sessionsSoFar + 1);
+    showPhase(pos);
+  }, [q.data?.id, planId, sessionsSoFar, phasesKey, phaseManual]);
   const setEx = (i: number, patch: Partial<ExLine>) => setExLines((p) => p.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-  //  بندُ «تمارين» نفسُه لم يُنفَّذ ⟵ التمارينُ كلُّها لم تُنفَّذ بسببه (لا يُطلب سببٌ لكلّ تمرين).
+  //  بندُ «تمارين» نفسُه لم يُنفَّذ (أو ليس دورَه) ⟵ لا تُسجَّل تمارينُه: سببُه في البند، ولا يُعدّ كلُّ تمرينٍ اختلافاً (ملاحظةُ المراجعة على #622).
   const exerciseDeviceIdx = (q.data?.devices ?? []).findIndex((d) => d.code === EXERCISE_DEVICE_CODE);
-  const exerciseDeviceOff = exerciseDeviceIdx >= 0 && lines[exerciseDeviceIdx] && !lines[exerciseDeviceIdx].done;
-  const exercisesBody = () => exLines.map((x) => (exerciseDeviceOff
-    ? { exerciseId: x.exerciseId, done: false, note: `بندُ «تمارين» لم يُنفَّذ${lines[exerciseDeviceIdx]?.note.trim() ? `: ${lines[exerciseDeviceIdx].note.trim()}` : ""}` }
-    : { exerciseId: x.exerciseId, done: x.done, note: x.note.trim() || null }));
+  const exerciseDeviceOff = exerciseDeviceIdx >= 0 && Boolean(lines[exerciseDeviceIdx]) && !lines[exerciseDeviceIdx].done;
+  //  والبندُ «نُفّذ» وتمارينُه كلُّها «لم يُنفَّذ» تناقض — يُطلب إزالةُ علامة البند (والخادمُ يردّه).
+  const allExercisesSkipped = exerciseDeviceIdx >= 0 && !exerciseDeviceOff && exLines.length > 0 && exLines.every((x) => !x.done);
+  const exercisesBody = () => exLines.map((x) => ({ exerciseId: x.exerciseId, done: x.done, note: x.note.trim() || null }));
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const m = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/physio/plans/${planId}/sessions`, {
       date, noteToSpecialist: note.trim() || undefined,
       items: lines.map((l) => ({ deviceId: l.deviceId, done: l.done, minutes: l.minutes === "" ? null : Number(l.minutes), note: l.note.trim() || null })),
-      exercises: exercisesBody(), phasePosition: phasePos,
+      ...(exerciseDeviceOff ? {} : { exercises: exercisesBody(), phasePosition: phasePos, phaseManual }),
     })).json(),
     onSuccess: () => {
       toast({ title: "سُجّلت الجلسة", description: "وكُتبت زيارةُ الجلسة في ملفّ المريض" });
@@ -111,7 +119,11 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
       }
       onClose();
     },
-    onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+    onError: (e) => {
+      //  مرحلةٌ تغيّرت تحت اليد (٤٠٩) أو غيرُها: الخطّةُ تُعاد فتُحسب مرحلةُ رقم الجلسة من جديد.
+      qc.invalidateQueries({ queryKey: [`/api/physio/plans/${planId}`] });
+      toast({ title: "خطأ", description: errText(e), variant: "destructive" });
+    },
   });
   const dateVerdict = checkVisitDate(date, isAdmin);
   const turnId = q.data?.rotation?.turnDeviceId ?? null;
@@ -179,7 +191,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
                     ))}
                   </select>
                   <span className="text-[11px] font-normal text-muted-foreground">
-                    {exerciseDeviceOff ? "بندُ «تمارين» لم يُنفَّذ — فالتمارينُ كلُّها لم تُنفَّذ بسببه" : `${arDigits(exLines.filter((x) => x.done).length)} من ${arDigits(exLines.length)} نُفّذ`}
+                    {exerciseDeviceOff ? "بندُ «تمارين» لم يُنفَّذ — لا تُسجَّل تمارينُه، وسببُه في البند" : `${arDigits(exLines.filter((x) => x.done).length)} من ${arDigits(exLines.length)} نُفّذ`}
                   </span>
                 </div>
                 {!phase?.exercises.length && <p className="text-[11px] text-muted-foreground">لا تمارينَ في هذه المرحلة.</p>}
@@ -199,6 +211,9 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
                     </div>
                   );
                 })}
+                {allExercisesSkipped && (
+                  <p className="text-[11px] text-red-700" data-testid="exec-ex-all-skipped">لم يُنفَّذ أيُّ تمرين — أزل علامةَ بند «تمارين» أعلاه واكتب سببه، أو علِّم ما نُفّذ.</p>
+                )}
               </div>
             )}
             <div>
@@ -215,7 +230,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button disabled={m.isPending || !q.data || noneDone || missingReason || !dateVerdict.ok} onClick={() => m.mutate()} data-testid="button-finish-session">
+          <Button disabled={m.isPending || !q.data || noneDone || missingReason || allExercisesSkipped || !dateVerdict.ok} onClick={() => m.mutate()} data-testid="button-finish-session">
             {m.isPending ? "جارٍ الحفظ…" : "إنهاء الجلسة"}
           </Button>
         </DialogFooter>
