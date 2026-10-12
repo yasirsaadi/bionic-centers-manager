@@ -389,7 +389,7 @@ async function main() {
     const epH = (await startEpisode(pH, "prosthetic")).body;
     const exH = (await signExam(pH, "prosthetic", {
       deviceCost: 1234000,
-      prescription: { prostheticType: "تحت الركبة", footType: "قدم ديناميكية" },
+      prescription: { prostheticType: "طرف تحت الركبة", footType: "سايمز اعتيادية" },
     })).body;
     const medical = await import("./medical/store");
     same("ح.٠ وقبل الإلغاء: البوّابةُ مفتوحة والسعرُ والمواصفاتُ مقروءة", [

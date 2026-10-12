@@ -27,8 +27,8 @@ import { resolveDeviceTargetTx } from "./device_episodes/store";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
-  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
-  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+  prostheticType: "طرف تحت الركبة", socketType: "كاربون درجة أولى", kneeJointType: "لا ينطبق",
+  footType: "أحادية المحور", siliconType: "لا ينطبق", supportType: "مسند اختبار",
 };
 
 
@@ -269,7 +269,7 @@ async function main() {
     const exam = await http("POST", `/api/medical/patients/${P}/exams`, S.doctor, {
       idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
-      prescription: { prostheticType: "تحت الركبة" },
+      prescription: { prostheticType: "طرف تحت الركبة" },
     });
     same("٢. المعاينة وُقّعت", exam.status, 200);
     same("   ومرتبطة بالجهاز الجديد", exam.body?.deviceEpisodeId, dev2);

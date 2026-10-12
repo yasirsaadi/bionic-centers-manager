@@ -113,7 +113,11 @@ export function ExamPathDecisionActions({
   });
   const saleRow: any = (patientFollowups ?? []).find((f: any) => f.id === followupId) ?? null;
   const saleSpecs: {
-    fields: { key: string; label: string; value: string | null; fromDoctor: boolean }[]; missing: string[];
+    //  **ولكلّ خانةٍ قائمتُها وحقلُها الحرّ** (§4.dw) — `options: null` نصٌّ حرّ.
+    fields: {
+      key: string; label: string; value: string | null; fromDoctor: boolean;
+      options?: string[] | null; companion?: { key: string; label: string; value: string | null } | null;
+    }[]; missing: string[];
     limbs?: { key: string; title: string }[]; identical?: boolean;
   } | null = saleRow?.deviceSpecs ?? null;
   //  ══ **ما طُلب ومَن يصنعه** (§4.cu) — من صفّ المتابعة نفسِه: أجزاءٌ عدّة ⟵ سعرٌ لكلّ جزء، وجاهزٌ ⟵ بلا خبير. ══
@@ -133,7 +137,11 @@ export function ExamPathDecisionActions({
     if (dialog !== "complete_sale" || !saleSpecs) return;
     setCSpecs((prev) => {
       const next = { ...prev };
-      for (const f of saleSpecs.fields) if (!f.fromDoctor && next[f.key] === undefined) next[f.key] = f.value ?? "";
+      for (const f of saleSpecs.fields) {
+        if (f.fromDoctor) continue;
+        if (next[f.key] === undefined) next[f.key] = f.value ?? "";
+        if (f.companion && next[f.companion.key] === undefined) next[f.companion.key] = f.companion.value ?? "";
+      }
       return next;
     });
   }, [dialog, saleSpecs]);
@@ -485,19 +493,47 @@ export function ExamPathDecisionActions({
                 {saleSpecs.fields.map((f) => f.fromDoctor ? (
                   <div key={f.key} className="flex flex-wrap items-baseline gap-1 text-xs" data-testid={`spec-doctor-${f.key}`}>
                     <span className="text-muted-foreground">{f.label}:</span> <b>{f.value}</b>
+                    {f.companion?.value && <span>— {f.companion.label}: {f.companion.value}</span>}
                     <span className="text-[10px] text-muted-foreground">(من الطبيب)</span>
                   </div>
                 ) : (
                   <div key={f.key} className="space-y-1">
                     <Label className={"text-xs" + ((cSpecs[f.key] ?? "").trim() ? "" : " text-red-700")}>{f.label}</Label>
-                    <div className="flex gap-1.5">
-                      <Input value={cSpecs[f.key] ?? ""} onChange={(e) => setCSpecs((p) => ({ ...p, [f.key]: e.target.value }))}
-                        className="bg-white h-9" data-testid={`input-sale-spec-${f.key}`} />
-                      <Button type="button" size="sm" variant={cSpecs[f.key] === NOT_APPLICABLE ? "default" : "outline"} className="h-9 shrink-0 text-xs"
-                        onClick={() => setCSpecs((p) => ({ ...p, [f.key]: NOT_APPLICABLE }))} data-testid={`button-sale-spec-na-${f.key}`}>
-                        {NOT_APPLICABLE}
-                      </Button>
-                    </div>
+                    {f.options ? (
+                      //  **قائمةُ المالك** (§4.dw) بنوع الطرف، و«لا ينطبق» آخرَها، وبجانبها حقلُها الحرّ (لا يُشترط).
+                      <div className="flex flex-wrap gap-1.5">
+                        <Select value={cSpecs[f.key] ?? ""} onValueChange={(v) => setCSpecs((p) => ({
+                          ...p, [f.key]: v, ...(v === NOT_APPLICABLE && f.companion ? { [f.companion.key]: "" } : {}),
+                        }))}>
+                          <SelectTrigger className="bg-white h-9 flex-1 min-w-[9rem]" data-testid={`input-sale-spec-${f.key}`}>
+                            <SelectValue placeholder="اختر…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(() => {
+                              const cur = cSpecs[f.key] ?? "";
+                              return cur && cur !== NOT_APPLICABLE && !f.options!.includes(cur)
+                                ? <SelectItem value={cur}>{cur} (مكتوبٌ قديماً)</SelectItem> : null;
+                            })()}
+                            {f.options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                            <SelectItem value={NOT_APPLICABLE}>{NOT_APPLICABLE}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {f.companion && cSpecs[f.key] !== NOT_APPLICABLE && (
+                          <Input value={cSpecs[f.companion.key] ?? ""} placeholder={f.companion.label} aria-label={f.companion.label}
+                            onChange={(e) => setCSpecs((p) => ({ ...p, [f.companion!.key]: e.target.value }))}
+                            className="bg-white h-9 flex-1 min-w-[8rem]" data-testid={`input-sale-companion-${f.key}`} />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex gap-1.5">
+                        <Input value={cSpecs[f.key] ?? ""} onChange={(e) => setCSpecs((p) => ({ ...p, [f.key]: e.target.value }))}
+                          className="bg-white h-9" data-testid={`input-sale-spec-${f.key}`} />
+                        <Button type="button" size="sm" variant={cSpecs[f.key] === NOT_APPLICABLE ? "default" : "outline"} className="h-9 shrink-0 text-xs"
+                          onClick={() => setCSpecs((p) => ({ ...p, [f.key]: NOT_APPLICABLE }))} data-testid={`button-sale-spec-na-${f.key}`}>
+                          {NOT_APPLICABLE}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -519,7 +555,10 @@ export function ExamPathDecisionActions({
                 ...(expertNeeded ? { expertUserId: Number(cExpert) } : {}),
                 paidNow: cPaidNow === "" ? undefined : Number(cPaidNow),
                 note: note || undefined,
-                deviceSpecs: Object.fromEntries(specsToFill.map((f) => [f.key, (cSpecs[f.key] ?? "").trim()])),
+                deviceSpecs: Object.fromEntries(specsToFill.flatMap((f) => [
+                  [f.key, (cSpecs[f.key] ?? "").trim()],
+                  ...(f.companion && (cSpecs[f.companion.key] ?? "").trim() ? [[f.companion.key, cSpecs[f.companion.key].trim()]] : []),
+                ])),
               }, "complete_sale")}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : expertNeeded ? "حفظ البيع وبدء التصنيع" : "حفظ البيع وتسليم الأجزاء"}
             </Button>

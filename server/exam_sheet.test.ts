@@ -36,7 +36,7 @@ const MARK = "اختبار-استمارة-الطبيب";
 const B1 = 9841;
 const RECV = 9851, DOC = 9852, DOC2 = 9853, MGR = 9854, EXPERT = 9855;
 const IDS = [RECV, DOC, DOC2, MGR, EXPERT];
-const SALE_SPECS = { prostheticType: "طرف", socketType: "سوكيت", kneeJointType: "لا ينطبق", footType: "قدم", siliconType: "لا ينطبق" };
+const SALE_SPECS = { prostheticType: "طرف خلال الركبة", socketType: "كاربون درجة أولى", kneeJointType: "لا ينطبق", footType: "ثابتة", siliconType: "لا ينطبق" };
 
 const q = (t: string, p: any[] = []) => pool.query(t, p);
 const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toString("base64");
@@ -158,7 +158,7 @@ async function main() {
   const examBody = (kind: string, over: Record<string, unknown> = {}) => ({
     idempotencyKey: randomUUID(), caseType: kind,
     chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", diagnosis: "بترٌ تحت الركبة الأيمن، الجذعة سليمة",
-    prescription: { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف سفلي" },
+    prescription: { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف تحت الركبة" },
     ...over,
   });
 

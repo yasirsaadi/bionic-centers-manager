@@ -26,8 +26,8 @@ import { registerRoutes } from "./routes";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
-  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
-  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+  prostheticType: "طرف تحت الركبة", socketType: "كاربون درجة أولى", kneeJointType: "لا ينطبق",
+  footType: "أحادية المحور", siliconType: "لا ينطبق", supportType: "مسند اختبار",
 };
 
 

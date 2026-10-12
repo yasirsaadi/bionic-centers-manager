@@ -163,7 +163,7 @@ async function main() {
     return { socket: n("socket"), silicone: n("silicone"), foot: n("foot"), knee: n("knee") };
   };
   const RX = { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة" };
-  const SPECS = { socketType: "لا ينطبق", kneeJointType: "لا ينطبق", footType: "لا ينطبق", siliconType: "سليكون طبي" };
+  const SPECS = { socketType: "لا ينطبق", kneeJointType: "لا ينطبق", footType: "لا ينطبق", siliconType: "فاكيوم" };
 
   try {
     console.log("\n── أ. «شراء جزء» بلا معاينة ──");
@@ -249,7 +249,7 @@ async function main() {
     const bEp = Number(opened.json?.id);
     const signed = await call("POST", `/api/medical/patients/${b}/exams`, S.doc, {
       idempotencyKey: randomUUID(), caseType: "prosthetic", deviceEpisodeId: bEp, chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-      diagnosis: "يحتاج سليكوناً وركبة.", prescription: { ...RX, prostheticType: "طرف سفلي" },
+      diagnosis: "يحتاج سليكوناً وركبة.", prescription: { ...RX, prostheticType: "طرف تحت الركبة" },
     });
     const fid = Number((await q(`SELECT id FROM post_exam_followups WHERE device_episode_id = $1 ORDER BY id DESC LIMIT 1`, [bEp])).rows[0]?.id);
     const fl = ((await call("GET", `/api/followups/patient/${b}`, S.recv)).json ?? []).find((f: any) => f.id === fid);
@@ -277,7 +277,7 @@ async function main() {
     const cEp = Number((await call("POST", `/api/patients/${c}/device-episodes`, S.recv, { serviceType: "prosthetic", requestedItems: ["socket", "silicone"], servicePath: "exam" })).json?.id);
     await call("POST", `/api/medical/patients/${c}/exams`, S.doc, {
       idempotencyKey: randomUUID(), caseType: "prosthetic", deviceEpisodeId: cEp, chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-      diagnosis: "قالبٌ وسليكون.", prescription: { ...RX, prostheticType: "طرف سفلي" },
+      diagnosis: "قالبٌ وسليكون.", prescription: { ...RX, prostheticType: "طرف تحت الركبة" },
     });
     const cf = Number((await q(`SELECT id FROM post_exam_followups WHERE device_episode_id = $1 ORDER BY id DESC LIMIT 1`, [cEp])).rows[0]?.id);
     const lines2 = [{ item: "socket", originalPrice: 800_000, discountAmount: 0 }, { item: "silicone", originalPrice: 400_000, discountAmount: 0 }];

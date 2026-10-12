@@ -333,7 +333,7 @@ async function main() {
       [200, null, 200, null, 200, ["rom"]]);
 
     console.log("\n── د. الأطرافُ كما كانت ──");
-    const pp = await call("POST", `/api/medical/patients/${p4}/exams`, S.docp, examBody({ caseType: "prosthetic", prescription: { prostheticType: "طرف" } }));
+    const pp = await call("POST", `/api/medical/patients/${p4}/exams`, S.docp, examBody({ caseType: "prosthetic", prescription: { prostheticType: "طرف خلال الركبة" } }));
     const ppRow = pp.json?.id ? (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [pp.json.id])).rows[0] : null;
     same("د.١ **معاينةٌ غيرُ العلاج الطبيعي لا يُختَم فيها تقييم** ولو أُرسل", [pp.status, ppRow?.assessment ?? null], [200, null]);
 

@@ -24,8 +24,9 @@ import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
 import { COMPONENT_LABELS, FULL_DEVICE, FULL_DEVICE_LABELS, PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 import { INJURY_SIDE_OPTIONS, PROSTHETIC_DEVICE_SPECS } from "@shared/case_fields";
 import { NOT_APPLICABLE } from "@shared/device_specs";
+import { companionOf, specChoices } from "@shared/device_spec_options";
 import {
-  LIMB_SPEC_KEYS, hasSideSpecs, limbSlots, limbSpecValue, normalizeLimbSpecs, notMadeOf, sideSpecKey, slotTitle, slotsCanShare,
+  LIMB_SPEC_KEYS, LIMB_SPEC_STORE_KEYS, hasSideSpecs, limbSlots, slotKindForKey, type LimbKind, limbSpecValue, normalizeLimbSpecs, notMadeOf, sideSpecKey, slotTitle, slotsCanShare,
 } from "@shared/limb_specs";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { cn } from "@/lib/utils";
@@ -90,20 +91,59 @@ const DEVICE_ROWS = SHEET_DEVICE_ROWS.map((r) => ({
 
 const dmy = (iso: string) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
 
-/** خانةُ مواصفةٍ واحدة بزرّ «لا ينطبق» — **مكوّنٌ خارج الورقة** فلا يُعاد تركيبُه مع كلّ حرف (فيبقى المؤشّرُ في الحقل). */
-function SpecCell({ specKey, rxKey, value, onSet, testSuffix }: {
-  specKey: string; rxKey: string; value: string; onSet: (k: string, v: string) => void; testSuffix: string;
+/** «بلا اختيار» في القائمة — قيمةٌ لا تُحفظ، تمسح الخانة. */
+const CLEAR_CHOICE = "__clear";
+
+/**
+ * **خانةُ مواصفةٍ واحدة** — **مكوّنٌ خارج الورقة** فلا يُعاد تركيبُه مع كلّ حرف (فيبقى المؤشّرُ في الحقل).
+ * **قائمةٌ حين لها قائمة** (قرارُ المالك ٢٠٢٦-١٠-١٢، §4.dw) بنوع الطرف (`kind` — السفليُّ لا يرى خيارات المرفق)، و«لا ينطبق» آخرَها،
+ * **وبجانبها حقلُها الحرّ** («موديل الركبة» …) — والمكتوبُ قبل اليوم بغير القائمة يُعرض بنفسه فيها «(مكتوبٌ قديماً)» لا يُمحى.
+ * **ونصٌّ حرّ** لما لا قائمةَ له (المرفقُ والكفّ، والسليكونيُّ التعويضيّ) بزرّ «لا ينطبق» كما كان.
+ */
+function SpecCell({ specKey, rxKey, value, kind, companionValue, onPatch, testSuffix }: {
+  specKey: string; rxKey: string; value: string; kind: LimbKind | null; companionValue: string;
+  onPatch: (patch: Record<string, string>) => void; testSuffix: string;
 }) {
   const placeholder = DEVICE_ROWS.find((r) => r.key === specKey)?.placeholder ?? "";
+  const options = specChoices(specKey, kind);
+  if (!options) {
+    return (
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Input className={cn(cellInput, "flex-1 min-w-0")} value={value} onChange={(e) => onPatch({ [rxKey]: e.target.value })}
+          placeholder={placeholder} data-testid={`exam-sheet-spec-${testSuffix}`} />
+        {LIMB_SPEC_KEYS.includes(specKey) && (
+          <Button type="button" size="sm" variant={value === NOT_APPLICABLE ? "default" : "outline"}
+            className="shrink-0 text-xs px-2 h-8" onClick={() => onPatch({ [rxKey]: NOT_APPLICABLE })} data-testid={`exam-sheet-na-${testSuffix}`}>
+            {NOT_APPLICABLE}
+          </Button>
+        )}
+      </div>
+    );
+  }
+  const comp = companionOf(specKey);
+  //  مفتاحُ الحقل الحرّ بجهة الخانة نفسِها: `kneeJointType:left` ⟵ `kneeModel:left`.
+  const compKey = comp ? rxKey.replace(specKey, comp.key) : null;
+  const legacy = Boolean(value) && value !== NOT_APPLICABLE && !options.includes(value);
   return (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <Input className={cn(cellInput, "flex-1 min-w-0")} value={value} onChange={(e) => onSet(rxKey, e.target.value)}
-        placeholder={placeholder} data-testid={`exam-sheet-spec-${testSuffix}`} />
-      {LIMB_SPEC_KEYS.includes(specKey) && (
-        <Button type="button" size="sm" variant={value === NOT_APPLICABLE ? "default" : "outline"}
-          className="shrink-0 text-xs px-2 h-8" onClick={() => onSet(rxKey, NOT_APPLICABLE)} data-testid={`exam-sheet-na-${testSuffix}`}>
-          {NOT_APPLICABLE}
-        </Button>
+    <div className="flex flex-wrap items-center gap-1.5 min-w-0 py-0.5">
+      <Select value={value || ""} onValueChange={(v) => {
+        if (v === CLEAR_CHOICE) return onPatch({ [rxKey]: "" });
+        //  «لا ينطبق» لا يُبقي موديلاً لشيءٍ لا يخصّ الجهاز.
+        onPatch(v === NOT_APPLICABLE && compKey ? { [rxKey]: v, [compKey]: "" } : { [rxKey]: v });
+      }}>
+        <SelectTrigger className={cn(cellInput, "flex-1 min-w-[9rem] justify-between")} data-testid={`exam-sheet-spec-${testSuffix}`}>
+          <SelectValue placeholder="اختر…" />
+        </SelectTrigger>
+        <SelectContent>
+          {legacy && <SelectItem value={value}>{value} (مكتوبٌ قديماً)</SelectItem>}
+          {options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+          <SelectItem value={NOT_APPLICABLE}>{NOT_APPLICABLE}</SelectItem>
+          {value && <SelectItem value={CLEAR_CHOICE}>— بلا اختيار —</SelectItem>}
+        </SelectContent>
+      </Select>
+      {comp && compKey && value !== NOT_APPLICABLE && (
+        <Input className={cn(cellInput, "flex-1 min-w-[8rem]")} value={companionValue} placeholder={comp.label}
+          onChange={(e) => onPatch({ [compKey]: e.target.value })} aria-label={comp.label} data-testid={`exam-sheet-companion-${testSuffix}`} />
       )}
     </div>
   );
@@ -156,7 +196,13 @@ export function ExamSheetForm({
     if (next.length >= slots.length) return;
     onRx(normalizeLimbSpecs({ ...rx, limbsNotMade: next }));
   };
-  const setSpec = (k: string, v: string) => setRx(k, v);
+  const setSpecs = (patch: Record<string, string>) => onRx({ ...rx, ...patch });
+  //  **ونوعُ الطرف لكلّ خانة** (§4.dw) — قائمتُها بحسبه: السفليُّ لا يرى خيارات المرفق.
+  const kindOf = (k: string) => slotKindForKey(made, k);
+  const compOf = (k: string, side: string | null) => {
+    const c = companionOf(k);
+    return c ? limbSpecValue(rx, c.key, side) : "";
+  };
   //  خاناتُ طرفٍ واحد (أو الأطراف المتماثلة): ما يخصّه بمستواه، وما كُتب في غيره بقيمةٍ حقيقية (لا يُخفى مكتوب).
   const sharedKeys = LIMB_SPEC_KEYS.filter((k) => made[0].keys.includes(k) || realSpec(rx[k]));
   //  وللأطراف المختلفة: خانةٌ تخصّ أحدَ المصنوعة على الأقلّ.
@@ -165,7 +211,7 @@ export function ExamSheetForm({
   //  **وصفةٌ قديمة بترتيبٍ آخر تُرتَّب مرّةً عند فتحها** — مبتورُ طرفين كُتبت خاناتُه عامّةً قبل §4.de (أو طرفٌ واحد بمفاتيح أطراف): تصير
   //  أطرافاً ظاهرةً يعدّلها الطبيبُ ويمسحها، لا قيمةً عامّةً تعود كلّما مُسح طرفُها.
   const mixed = isProsthetic && (multi && !identical
-    ? LIMB_SPEC_KEYS.some((k) => s(rx[k]))
+    ? LIMB_SPEC_STORE_KEYS.some((k) => s(rx[k]))
     : hasSideSpecs(rx));
   useEffect(() => {
     if (mixed) onRx(normalizeLimbSpecs(rx));
@@ -311,7 +357,7 @@ export function ExamSheetForm({
             )}
             {(!multi || identical) ? sharedKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
-                <SpecCell specKey={k} rxKey={k} value={s(rx[k])} onSet={setSpec} testSuffix={k} />
+                <SpecCell specKey={k} rxKey={k} value={s(rx[k])} kind={kindOf(k)} companionValue={compOf(k, null)} onPatch={setSpecs} testSuffix={k} />
               </SheetRow>
             )) : splitKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
@@ -323,7 +369,8 @@ export function ExamSheetForm({
                       <div key={side} className="min-w-0" data-testid={`exam-cell-spec-${k}-${side}`}>
                         <div className="text-[11px] text-slate-500 px-1.5">{slotTitle(sl)}</div>
                         {applies
-                          ? <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} onSet={setSpec} testSuffix={`${k}-${side}`} />
+                          ? <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} kind={sl.kind}
+                              companionValue={compOf(k, side)} onPatch={setSpecs} testSuffix={`${k}-${side}`} />
                           : <div className="h-9 flex items-center px-1.5 text-xs text-slate-400">{NOT_APPLICABLE}</div>}
                       </div>
                     );

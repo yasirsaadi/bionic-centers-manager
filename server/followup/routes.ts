@@ -246,10 +246,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
     const exam = await rxm.effectiveExamForEpisode(f.deviceEpisodeId, undefined, f.serviceType);
     const fromExam = exam ? rxm.deviceSpecsFromPrescription(f.serviceType, exam.prescription) : {};
     const merged = ds.mergeDeviceSpecs(fromExam, await rxm.storedEpisodeSpecs(f.deviceEpisodeId));
+    const kind = f.serviceType;
     //  **الخاناتُ بحسب بتر هذا الجهاز** (§4.de): تحت الركبة بلا ركبة، والسليكونيُّ بلا قدم، ولمبتور الطرفين خاناتُ كلّ جهة.
     return {
+      //  **ولكلّ خانةٍ قائمتُها وحقلُها الحرّ** (§4.dw) — بنوع طرفها.
       fields: ds.saleSpecFieldsFor(f.serviceType, merged).map((x) => ({
         key: x.key, label: x.label, value: ds.specResolved(merged, x.key) || null, fromDoctor: Boolean(ds.specResolved(fromExam, x.key)),
+        ...ds.saleSpecFieldExtras(kind, merged, x.key),
       })),
       missing: ds.missingSaleSpecs(f.serviceType, merged),
       //  **وأطرافُه المصنوعة** (§4.de (ب)) — لسعرٍ لكلّ طرف أو سعرٍ واحد في نافذة البيع.

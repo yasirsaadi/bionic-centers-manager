@@ -312,11 +312,11 @@ async function main() {
       //  ٣) الوصفة/المواصفات (حقلٌ حقيقيّ من `shared/case_fields.ts`).
       const r3 = await editExam(examId, S.doc, {
         caseType: "prosthetic", diagnosis: "بتر تحت الركبة — تعديلٌ أوّل",
-        prescription: { prostheticType: "فوق الركبة" },
+        prescription: { prostheticType: "طرف فوق الركبة" },
       });
       same("٦. **ويعدّل الوصفة/المواصفات وينجح**", r3.status, 200);
       same("٧. **والوصفةُ صارت الجديدة**",
-        (await examRow(examId)).prescription?.prostheticType, "فوق الركبة");
+        (await examRow(examId)).prescription?.prostheticType, "طرف فوق الركبة");
 
       //  ٤) والتاريخُ محفوظٌ عبر الثلاثة — الأصلُ يبقى مقروءاً.
       same("٨. **وثلاثُ نسخٍ محفوظة، والمعاينةُ على الرابعة**",
