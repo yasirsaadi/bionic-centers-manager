@@ -17,6 +17,7 @@
 import type { Express } from "express";
 import multer from "multer";
 import { logAudit } from "../accounting/ledger";
+import { db } from "../db";
 import { getSession, accessibleBranchesFor } from "../sessions_module/permissions";
 import { scopeReachesPatient } from "../patients/branch_access";
 import { storage } from "../storage";
@@ -269,7 +270,12 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const result = await homeSheet.sendHomeSheet(
         { id: l.row.id, patientId: l.row.patientId, status: l.row.status, branchName: plan?.branchName ?? null, patientCode: plan?.patient?.code ?? null },
         { pdf: req.file?.buffer ?? null, phasePosition: phase === "bad" ? null : phase, exerciseIds: parseIdList(req.body?.exerciseIds) },
+        //  **سطرُ المحاولة قبل أن يخرج شيء، كتابةً صارمة** (`tx: db` — خطؤه يصعد): إن تعذّر التدقيقُ لا يُرسَل ملفٌّ للمريض.
+        (attempt) => logAudit({ entityType: "physio_plan", entityId: l.row.id, action: "home_sheet_telegram_attempt", branchId: l.row.branchId,
+          userId: l.s.userId ?? null, userName: l.s.displayName ?? null, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          newValues: { patientId: l.row.patientId, ...attempt }, notes: `ورقةُ تمارين البيت إلى تلغرام — ${attempt.recipients} حساب`, tx: db }),
       );
+      //  وسطرُ النتيجة بعد الإرسال — وتعثّرُه لا يقلب نجاحاً فشلاً (`logAudit` بلا معاملة يسجّل الخطأ ولا يرميه)، فلا إعادةَ تُكرّر الملفّ.
       await audit(req, l.s, { entityId: l.row.id, action: "home_sheet_telegram", branchId: l.row.branchId,
         newValues: { patientId: l.row.patientId, ...result },
         notes: `ورقةُ تمارين البيت عبر تلغرام — وصلت ${result.sent} من ${result.recipients}` });

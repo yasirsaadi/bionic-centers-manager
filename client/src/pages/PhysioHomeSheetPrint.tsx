@@ -16,7 +16,7 @@ import { elementsToPdf, waitForImagesAndFonts } from "@/lib/print_pdf";
 import { apiRequest } from "@/lib/queryClient";
 import { intakeHeader } from "@shared/intake_sheet";
 import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
-import { homeSheetDefaultExercises, homeSheetDefaultPhase, stepLines } from "@shared/physio_home_sheet";
+import { HOME_SHEET_NOT_STARTED, homeSheetDefaultExercises, homeSheetDefaultPhase, stepLines } from "@shared/physio_home_sheet";
 import { CENTER_CONTACTS } from "@shared/patient_card";
 import { packRowsIntoPages } from "@shared/print_pages";
 import type { Phase, PhaseExercise } from "@/components/physio/ProtocolPhases";
@@ -71,7 +71,9 @@ export default function PhysioHomeSheetPrint() {
     if (!data || phasePos !== null || phases.length === 0) return;
     setPhasePos(homeSheetDefaultPhase(phases, data.rotation?.sessionsSoFar ?? 0));
   }, [data, phases, phasePos]);
-  const phase: Phase | null = phases.find((p) => p.position === phasePos) ?? null;
+  //  **الورقةُ من خطّةٍ بدأ علاجُها** (ملاحظةُ المراجعة على #623): الرابطُ المفتوح مباشرةً على مسوّدةٍ لا يُظهر ورقةً تُطبع — كالخادم في الإرسال.
+  const allowed = data?.homeSheet?.allowed === true;
+  const phase: Phase | null = allowed ? phases.find((p) => p.position === phasePos) ?? null : null;
   useEffect(() => { if (phase) setPicked(homeSheetDefaultExercises(phase.exercises)); }, [phase?.id]);
   const lines: PhaseExercise[] = useMemo(
     () => (phase && picked ? phase.exercises.filter((e) => picked.includes(e.exerciseId)) : []),
@@ -252,7 +254,7 @@ export default function PhysioHomeSheetPrint() {
             <Button size="sm" className="h-9 gap-1" onClick={printer.run} disabled={printer.disabled} data-testid="button-hs-print">
               {printer.preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} {printer.label}
             </Button>
-            {hs?.canSend && (
+            {allowed && hs?.canSend && (
               <Button size="sm" className="h-9 gap-1 bg-sky-600 hover:bg-sky-700" onClick={sendTelegram}
                 disabled={sending || Boolean(sendBlocker) || !counts || lines.length === 0} data-testid="button-hs-telegram">
                 {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} إرسال عبر تلغرام
@@ -280,7 +282,8 @@ export default function PhysioHomeSheetPrint() {
 
       {isLoading && <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}
       {!isLoading && (error || !data) && <p className="text-center text-sm text-red-700 py-20" data-testid="hs-missing">تعذّر تحميل الخطّة</p>}
-      {data && phases.length === 0 && <p className="text-center text-sm text-muted-foreground py-20" data-testid="hs-no-phases">لا مراحلَ ولا تمارينَ في هذه الخطّة بعد</p>}
+      {data && !allowed && <p className="text-center text-sm text-amber-800 py-20" data-testid="hs-not-started">{HOME_SHEET_NOT_STARTED}</p>}
+      {data && allowed && phases.length === 0 && <p className="text-center text-sm text-muted-foreground py-20" data-testid="hs-no-phases">لا مراحلَ ولا تمارينَ في هذه الخطّة بعد</p>}
       {data && phase && picked && lines.length === 0 && (
         <p className="text-center text-sm text-muted-foreground py-20" data-testid="hs-none-picked">اختر تمريناً واحداً على الأقلّ من «التمارين»</p>
       )}

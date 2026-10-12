@@ -20,7 +20,15 @@ export async function telegramRecipients(patientId: number): Promise<number> {
   return (await listActiveContacts(patientId)).filter((c) => c.channel === "telegram").length;
 }
 
-export async function sendHomeSheet(plan: HomeSheetPlan, p: { pdf: Uint8Array | null; phasePosition: number | null; exerciseIds: number[] | null }): Promise<HomeSheetResult> {
+/** ما يُعرف قبل الإرسال — يُكتب سطرَ تدقيقٍ قبل أن يخرج شيء (`beforeSend`). */
+export type HomeSheetAttempt = Omit<HomeSheetResult, "sent" | "failed">;
+
+/**
+ * يفحص ثمّ يرسل. **و`beforeSend` يُستدعى بعد الفحص وقبل أوّل نداءٍ لتلغرام** — فيه يكتب الباب سطرَ المحاولة كتابةً صارمة (ملاحظةُ المراجعة على #623):
+ * إن تعذّر التدقيقُ لا يخرج ملفٌّ للمريض، وإن تعذّر سطرُ النتيجة بعد الإرسال بقي سطرُ المحاولة يقول ما أُرسل ولمن.
+ */
+export async function sendHomeSheet(plan: HomeSheetPlan, p: { pdf: Uint8Array | null; phasePosition: number | null; exerciseIds: number[] | null },
+  beforeSend: (attempt: HomeSheetAttempt) => Promise<void> = async () => {}): Promise<HomeSheetResult> {
   if (!homeSheetAllowed(plan.status)) throw new PlanError(409, HOME_SHEET_NOT_STARTED);
   if (!patientBotEnabled()) throw new PlanError(503, "بوتُ تلغرام المرضى غيرُ مُعدّ — لا إرسال");
   if (!p.pdf || !isPdfBytes(p.pdf)) throw new PlanError(400, "الورقةُ ملفُّ PDF من صفحة الطباعة");
@@ -38,13 +46,15 @@ export async function sendHomeSheet(plan: HomeSheetPlan, p: { pdf: Uint8Array | 
   const h = intakeHeader(plan.branchName);
   const caption = homeSheetCaption({ centerName: h.centerName, city: h.city || null, phaseName: phase.nameAr ?? null, count: p.exerciseIds.length });
   const fileName = homeSheetFileName(plan.patientCode, plan.id);
+  const attempt: HomeSheetAttempt = {
+    recipients: contacts.length, phasePosition: phase.position, exerciseIds: p.exerciseIds,
+    bytes: p.pdf.length, sha256: createHash("sha256").update(p.pdf).digest("hex"),
+  };
+  await beforeSend(attempt);
   let sent = 0;
   for (const c of contacts) {
     const r = await sendDocument(String(c.externalId), p.pdf, fileName, caption);
     if (r.ok) sent++;
   }
-  return {
-    recipients: contacts.length, sent, failed: contacts.length - sent, phasePosition: phase.position, exerciseIds: p.exerciseIds,
-    bytes: p.pdf.length, sha256: createHash("sha256").update(p.pdf).digest("hex"),
-  };
+  return { ...attempt, sent, failed: contacts.length - sent };
 }

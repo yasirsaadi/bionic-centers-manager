@@ -77,6 +77,7 @@ async function cleanup() {
   await q(`DELETE FROM visits WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
+  await q(`DROP TRIGGER IF EXISTS hs_block_audit ON audit_log`);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM physio_device_branches WHERE branch_id = $1`, [B1]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [IDS]);
@@ -247,6 +248,28 @@ async function main() {
     tgFail = false;
     const after = (await q(`SELECT count(*)::int AS n, (array_agg(new_values::jsonb ORDER BY id DESC))[1] AS last FROM audit_log WHERE entity_id = $1 AND action = 'home_sheet_telegram'`, [plan])).rows[0];
     same("أ.٩ **تلغرامُ متعثّر** ⟵ ٥٠٢ بلا وصول، والمحاولةُ في سطر تدقيقٍ بما تعذّر", [down.status, down.json?.sent, after.n - before, after.last?.failed], [502, 0, 1, 2]);
+
+    //  ملاحظةُ المراجعة على #623: **سطرُ المحاولة يُكتب قبل أن يخرج شيء** — وتعذّرُه يمنع الإرسال؛ وتعذّرُ سطر النتيجة بعده لا يقلب النجاحَ فشلاً.
+    const blockAudit = async (action: string | null) => {
+      await q(`DROP TRIGGER IF EXISTS hs_block_audit ON audit_log`);
+      if (!action) return;
+      await q(`CREATE OR REPLACE FUNCTION hs_block_audit_fn() RETURNS trigger AS $$
+        BEGIN IF NEW.action = TG_ARGV[0] THEN RAISE EXCEPTION 'blocked by test'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`);
+      await q(`CREATE TRIGGER hs_block_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION hs_block_audit_fn('${action}')`);
+    };
+    const attempts = async () => Number((await q(`SELECT count(*)::int AS n FROM audit_log WHERE entity_id = $1 AND action = 'home_sheet_telegram_attempt'`, [plan])).rows[0].n);
+    tg.length = 0;
+    await blockAudit("home_sheet_telegram_attempt");
+    const noAttempt = await send(plan, S.tech, { file: PDF(), phase: 1, ids: homeIds1.join(",") });
+    await blockAudit(null);
+    same("أ.١٢ **تعذّرُ سطر المحاولة يمنع الإرسال** — ٥٠٠ ولا ملفَّ يخرج للمريض", [noAttempt.status, tg.length], [500, 0]);
+    const a0 = await attempts();
+    tg.length = 0;
+    await blockAudit("home_sheet_telegram");
+    const noResultRow = await send(plan, S.tech, { file: PDF(), phase: 1, ids: homeIds1.join(",") });
+    await blockAudit(null);
+    same("أ.١٣ **وتعذّرُ سطر النتيجة بعد الإرسال لا يقلب النجاحَ فشلاً** — ٢٠٠ بما وصل، وسطرُ المحاولة قبله مكتوب",
+      [noResultRow.status, noResultRow.json?.sent, tg.length, (await attempts()) - a0], [200, 2, 2, 1]);
 
     tg.length = 0;
     const big = await send(plan, S.tech, { file: PDF(HOME_SHEET_MAX_BYTES + 10), phase: 1, ids: homeIds1.join(",") });
