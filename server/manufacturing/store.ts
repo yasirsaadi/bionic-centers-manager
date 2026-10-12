@@ -35,7 +35,8 @@ import {
 } from "../device_episodes/store";
 import { parseComponent, componentLabel, normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { hasRole } from "@shared/user_roles";
-import { limbSpecFlat } from "@shared/limb_specs";
+import { prostheticTypeText } from "@shared/limb_specs";
+import { mergeDeviceSpecs } from "@shared/device_specs";
 
 // Thrown when a maintenance order can't be opened because the patient still has
 // an open (non-completed, non-cancelled) order. The route maps it to 409.
@@ -851,6 +852,8 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
            AND ${activeExamSql("me")}
          ORDER BY me.signed_at DESC, me.id DESC
          LIMIT 1)`,
+      //  وما ملأه الاستعلاماتُ عند «اشترى» (§4.cq) — فالاسمُ المبنيّ (§4.dw) يقول السوكيتَ الذي اختاره البيع كما تقوله الاستمارة.
+      episodeDeviceSpecs: sql<unknown>`(SELECT e.device_specs FROM patient_device_episodes e WHERE e.id = ${WO.deviceEpisodeId})`,
     })
     .from(WO)
     .innerJoin(patients, eq(patients.id, WO.patientId))
@@ -865,7 +868,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
 /** نوعُ ما يُصنَع لبطاقة الأمر — من معاينة الجهاز إن قالته، وإلّا من ملفّ المريض. */
 function itemTypeOf(r: {
   serviceType: string; prostheticType?: string | null; supportType?: string | null;
-  episodePrescription?: unknown;
+  episodePrescription?: unknown; episodeDeviceSpecs?: unknown;
 }): string | null {
   const fromFile = r.serviceType === "medical_support"
     ? (r.supportType ?? null) : (r.prostheticType ?? null);
@@ -877,8 +880,9 @@ function itemTypeOf(r: {
   //  واحدٍ فأكثر يصير الجهازُ هو المصدر: نوعٌ لم تقله وصفتُه يبقى فارغاً **لا
   //  مستعاراً** من عمودٍ كتبه جهازٌ آخر.
   if (!hasAnySpec(specs)) return fromFile;
-  //  ومبتورُ الطرفين بنوعين مختلفين يُقرأ «يمين: … | يسار: …» لا فراغاً (§4.de).
-  return (r.serviceType === "medical_support" ? specs.supportType : limbSpecFlat(specs, "prostheticType")) || null;
+  //  ومبتورُ الطرفين بنوعين مختلفين يُقرأ «يمين: … · يسار: …» لا فراغاً (§4.de)، **ونوعُ الطرف مبنيّاً** كالاستمارة (§4.dw التكملة ٢).
+  return (r.serviceType === "medical_support" ? specs.supportType
+    : prostheticTypeText(mergeDeviceSpecs(specs, r.episodeDeviceSpecs))) || null;
 }
 
 async function enrichOrders(rows: any[]): Promise<OrderCard[]> {

@@ -233,7 +233,8 @@ export default function ManufacturingOrder() {
             </p>
           )}
           <Info label="موقع البتر" value={patient?.amputationSite} />
-          <Info label="نوع الطرف" value={patient?.prostheticType} />
+          {/*  **ونوعُ الطرف في بطاقة الجهاز وحدها حين تُعرف** (§4.dw التكملة ٢) — اسمٌ واحد مبنيّ، لا ثانٍ من ملفّ المريض بجانبه. */}
+          {deviceSpecs?.source !== "exam" && <Info label="نوع الطرف" value={patient?.prostheticType} />}
           <Info label="نوع المسند" value={patient?.supportType} />
           <Info label="جهة الإصابة" value={patient?.injurySide} />
           <Info label="تصنيف المريض" value={patient?.patientClassification} />

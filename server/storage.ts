@@ -56,6 +56,7 @@ import {
 import { FIRST_STAGE, SERVICE_TYPE_LABELS } from "@shared/manufacturing";
 import { recordOrderCreatedEvent } from "./manufacturing/events";
 import { effectiveExamForEpisode, deviceSpecsFromPrescription, hasAnySpec } from "./medical/episode_prescription";
+import { prostheticTypeText } from "@shared/limb_specs";
 import type { DbTransaction as DbTransactionLike } from "./events/store";
 import { mergeContactsInto } from "./patient_contacts/store";
 import { aliasCodesOnMerge } from "./patient_code/store";
@@ -737,6 +738,11 @@ export async function startDeviceSaleOperationallyTx(tx: any, params: {
     supportType: patient.supportType, injurySide: patient.injurySide,
     injuryCause: patient.injuryCause, injuryDate: patient.injuryDate,
   };
+  //  **ونوعُ الطرف مبنيّاً** (§4.dw التكملة ٢) — الاسمُ نفسُه الذي تقوله الاستمارة، لا عمودٌ قد يخصّ جهازاً آخر.
+  if (rxSpecs && serviceType === "prosthetic") {
+    const name = prostheticTypeText({ ...detailsForType, prostheticType: rxSpecs.prostheticType ?? "" });
+    if (name) detailsForType.prostheticType = name;
+  }
   const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
 

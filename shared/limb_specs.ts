@@ -17,7 +17,9 @@ import {
   FACE_PART_CODE, LOWER_AMPUTATION_DETAILS, UPPER_AMPUTATION_DETAILS, amputationLimbKey, parseAmputationSite, type AmputationParts,
 } from "./case_fields";
 import { SHEET_DEVICE_ROWS } from "./exam_sheet";
-import { COMPANION_KEYS, companionOf, isListedChoice, parentOfCompanion, specChoices, withCompanionText } from "./device_spec_options";
+import {
+  COMPANION_KEYS, companionOf, composeProstheticName, isListedChoice, parentOfCompanion, prostheticNameOfLevel, specChoices, withCompanionText,
+} from "./device_spec_options";
 
 export const NOT_APPLICABLE_SPEC = "لا ينطبق";
 
@@ -209,6 +211,35 @@ export interface LimbSpecView {
 /** عنوانُ طرفٍ — «يمين — تحت الركبة». */
 export const slotTitle = (s: LimbSlot): string => s.title;
 
+/**
+ * **نوعُ الطرف مبنيٌّ لا يُختار** (§4.dw التكملة ٢) — لطرفٍ سفليٍّ أو علويٍّ بمستوى من القائمتين. والسليكونيُّ التعويضيّ والمستوى المجهول يبقى
+ * نوعُهما خانةً تُكتب كما كانت.
+ */
+export const isDerivedProstheticType = (s: LimbSlot): boolean => s.kind !== "silicone" && prostheticNameOfLevel(s.level) !== null;
+
+/**
+ * **«نوع الطرف الصناعي» لطرف** — مبنيّاً من مستواه وركبته وقدمه وسوكيته (`composeProstheticName`) بقراءة خانات هذا الطرف (`slotKey`، أو العامّة).
+ * **والمكتوبُ قبل اليوم نصّاً حرّاً يبقى كما كُتب** (لا يُعاد بناؤه)، وما اختير من القائمة أمس يُبنى. وطرفٌ نوعُه يُكتب ⟵ ما كُتب.
+ */
+export function prostheticNameFor(specs: Record<string, unknown>, slot: LimbSlot, slotKey: string | null): string | null {
+  const stored = limbSpecValue(specs, "prostheticType", slotKey);
+  if (!isDerivedProstheticType(slot)) return stored || null;
+  if (stored && stored !== NOT_APPLICABLE_SPEC && !isListedChoice("prostheticType", stored)) return stored;
+  const own = (b: string) => (slot.keys.includes(b) ? limbSpecValue(specs, b, slotKey) : "");
+  return composeProstheticName({
+    level: slot.level,
+    knee: own("kneeJointType"), kneeModel: own("kneeJointType") ? limbSpecValue(specs, "kneeModel", slotKey) : "",
+    foot: own("footType"), footModel: own("footType") ? limbSpecValue(specs, "footModel", slotKey) : "",
+    socket: own("socketType"),
+  });
+}
+
+/** أسماءُ أطرافٍ تُكتب مواصفاتُها مرّةً (طرفٌ واحد أو متماثلة) — كلُّ اسمٍ مرّة. */
+const sharedProstheticName = (specs: Record<string, unknown>, slots: readonly LimbSlot[]): string | null => {
+  const names = Array.from(new Set(slots.map((s) => prostheticNameFor(specs, s, null)).filter((x): x is string => Boolean(x))));
+  return names.length ? names.join(" · ") : null;
+};
+
 const realValue = (v: string) => Boolean(v) && v !== NOT_APPLICABLE_SPEC;
 
 /**
@@ -222,13 +253,18 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
   const all = limbSlotsOfSite(site === undefined ? specs.amputationSite : site);
   const label = (k: string) => SHEET_LABEL[k] ?? k;
   //  **والحقلُ الحرّ مع خانته في سطرها** (§4.dw): «هيدروليك — موديل الركبة: 3R80».
-  const shown = (k: string, slotKey: string | null) =>
-    withCompanionText(k, limbSpecValue(specs, k, slotKey) || null, companionValue(specs, k, slotKey));
+  //  **ونوعُ الطرف مبنيٌّ** (§4.dw التكملة ٢) — من مستوى كلّ طرفٍ وركبته وقدمه وسوكيته (`prostheticNameFor`).
+  const shown = (k: string, slotKey: string | null, slotsHere: readonly LimbSlot[]) => {
+    if (k === "prostheticType") {
+      return slotKey ? prostheticNameFor(specs, slotsHere.find((x) => x.key === slotKey)!, slotKey) : sharedProstheticName(specs, slotsHere);
+    }
+    return withCompanionText(k, limbSpecValue(specs, k, slotKey) || null, companionValue(specs, k, slotKey));
+  };
   if (all.length === 1) {
     const keys = all[0].keys;
     const rows = LIMB_SPEC_KEYS
       .filter((k) => keys.includes(k) || realValue(str(specs[k])))
-      .map((k) => ({ key: k, label: label(k), value: shown(k, null) }));
+      .map((k) => ({ key: k, label: label(k), value: shown(k, null, all) }));
     return { mode: "single", slots: all, allSlots: all, notMadeSlots: [], rows };
   }
   const skip = new Set(notMadeOf(specs));
@@ -240,7 +276,7 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
     const keys = slots[0].keys;
     const rows = LIMB_SPEC_KEYS
       .filter((k) => keys.includes(k) || realValue(str(specs[k])))
-      .map((k) => ({ key: k, label: label(k), value: shown(k, null) }));
+      .map((k) => ({ key: k, label: label(k), value: shown(k, null, slots) }));
     return { mode: "identical", slots, allSlots: all, notMadeSlots, rows };
   }
   const rows: LimbSpecRow[] = [];
@@ -248,7 +284,7 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
     const sides: LimbSpecSide[] = slots.map((s) => {
       const own = str(specs[sideSpecKey(k, s.key!)]);
       const applicable = s.keys.includes(k) || realValue(own);
-      return { side: s.key!, label: s.label, applicable, value: applicable ? shown(k, s.key) : (own || null) };
+      return { side: s.key!, label: s.label, applicable, value: applicable ? shown(k, s.key, slots) : (own || null) };
     });
     if (!sides.some((x) => x.applicable)) continue;
     const filled = sides.filter((x) => x.applicable && x.value);
@@ -258,6 +294,14 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
     });
   }
   return { mode: "split", slots, allSlots: all, notMadeSlots, rows };
+}
+
+/**
+ * **«نوع الطرف الصناعي» نصّاً واحداً لجهاز** — الصفُّ نفسُه في الاستمارة (`limbSpecView`): لعمود ملفّ المريض، وبطاقة أمر التصنيع في قائمة
+ * الخبير، ولقطة القسم عند البيع — **اسمٌ واحد في كلّ مكان** (المالك: «لا تقصير ولا تطويل»).
+ */
+export function prostheticTypeText(specs: Record<string, unknown>, site?: unknown): string {
+  return limbSpecView(specs, site).rows.find((r) => r.key === "prostheticType")?.value ?? "";
 }
 
 /**

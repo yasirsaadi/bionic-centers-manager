@@ -23,6 +23,7 @@ import {
   cleanSaleSpecsInput, mergeDeviceSpecs, missingSaleSpecs, saleSpecFields, saleSpecsMessage, NOT_APPLICABLE,
 } from "@shared/device_specs";
 import { sheetSpecRows, sheetLinesText } from "@shared/intake_sheet_view";
+import { isolateLtr } from "@shared/device_spec_options";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -185,8 +186,8 @@ async function main() {
     const BK = { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة" };
     const d = await examined("تحت الركبة", "prosthetic", { ...BK, prostheticType: "طرف تحت الركبة", footType: "كاربون رباعية المحاور" });
     const dl = (await call("GET", `/api/followups/patient/${d.pid}`, S.recv)).json.find((f: any) => f.id === d.fid)?.deviceSpecs;
-    same("د.١ **ملفُّ المتابعة بلا ركبة** — وما ينقص السوكيتُ والسيليكونُ وحدهما",
-      [dl?.fields.map((f: any) => f.key), dl?.missing], [["prostheticType", "socketType", "footType", "siliconType"], ["socketType", "siliconType"]]);
+    same("د.١ **ملفُّ المتابعة بلا ركبة** (ونوعُ الطرف مبنيٌّ لا يُطلب — §4.dw التكملة ٢) — وما ينقص السوكيتُ والسيليكونُ وحدهما",
+      [dl?.fields.map((f: any) => f.key), dl?.missing], [["socketType", "footType", "siliconType"], ["socketType", "siliconType"]]);
     const rd = await sale(d.fid, { socketType: "كاربون درجة ثانية", siliconType: "فاكيوم" });
     same("د.٢ **و«اشترى» يمرّ بلا ركبة** — ولا تُحفظ ركبةٌ على الحلقة", [rd.status, sorted((await stateOf(d.fid, d.epId)).device_specs)],
       [200, sorted({ socketType: "كاربون درجة ثانية", siliconType: "فاكيوم" })]);
@@ -202,8 +203,8 @@ async function main() {
     const el = (await call("GET", `/api/followups/patient/${e.pid}`, S.recv)).json.find((f: any) => f.id === e.fid)?.deviceSpecs;
     same("هـ.١ **ملفُّ المتابعة: خاناتُ كلّ جهة، والركبةُ لليسار وحده** — وما كتبه الطبيبُ لجهته",
       [el?.fields.map((f: any) => [f.key, f.fromDoctor]), el?.missing],
-      [[["prostheticType:right", true], ["socketType:right", false], ["footType:right", true], ["siliconType:right", false],
-        ["prostheticType:left", true], ["socketType:left", false], ["kneeJointType:left", true], ["footType:left", true], ["siliconType:left", false]],
+      [[["socketType:right", false], ["footType:right", true], ["siliconType:right", false],
+        ["socketType:left", false], ["kneeJointType:left", true], ["footType:left", true], ["siliconType:left", false]],
         ["socketType:right", "siliconType:right", "socketType:left", "siliconType:left"]]);
     const re1 = await sale(e.fid, { "socketType:right": "كاربون درجة أولى", "siliconType:right": "قفل محوري", "socketType:left": "كاربون درجة ثانية" });
     same("هـ.٢ **جهةٌ ناقصة ⟵ ٤٠٠ تسمّيها بجهتها**، ولا أمرَ ولا حفظ",
@@ -222,7 +223,9 @@ async function main() {
     const pr = (await q(`SELECT prosthetic_type, knee_joint_type, foot_type FROM patients WHERE id = $1`, [e.pid])).rows[0];
     same("هـ.٥ **وعمودُ ملفّ المريض يقرأ الطرفين كاملين** لا نصفاً",
       [pr.prosthetic_type, pr.knee_joint_type, pr.foot_type],
-      ["يمين: طرف تحت الركبة | يسار: طرف فوق الركبة", "يسار: هيدروليك", "يمين: كاربون رباعية المحاور | يسار: أحادية المحور"]);
+      //  ونوعُ الطرف مبنيّاً لكلّ طرف (§4.dw التكملة ٢) — النصُّ نفسُه في الاستمارة.
+      ["يمين: طرف تحت الركبة — قدم كاربون رباعية المحاور · يسار: طرف فوق الركبة — ركبة هيدروليك مع قدم أحادية المحور",
+        "يسار: هيدروليك", "يمين: كاربون رباعية المحاور | يسار: أحادية المحور"]);
 
     console.log("\n── و. مبتورُ الطرفين المتماثلين ──");
     const f2 = await examined("طرفان متماثلان", "prosthetic", {
@@ -232,7 +235,7 @@ async function main() {
     const fl = (await call("GET", `/api/followups/patient/${f2.pid}`, S.recv)).json.find((f: any) => f.id === f2.fid)?.deviceSpecs;
     same("و.١ **خاناتُهما مرّةً «للطرفين»** — بلا ركبة، والناقصُ السيليكونُ وحده",
       [fl?.fields.map((f: any) => f.label), fl?.missing],
-      [["نوع الطرف الصناعي — للطرفين", "نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"], ["siliconType"]]);
+      [["نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"], ["siliconType"]]);
     const rf = await sale(f2.fid, { siliconType: "فاكيوم", "footType:left": "ثابتة" });
     same("و.٢ و«اشترى» يمرّ — **وجهةٌ تحاول الكتابةَ فوق كلمة الطبيب «للطرفين» لا تُحفظ**",
       [rf.status, sorted((await stateOf(f2.fid, f2.epId)).device_specs)], [200, sorted({ siliconType: "فاكيوم" })]);
@@ -277,7 +280,7 @@ async function main() {
     const ml = (await call("GET", `/api/followups/patient/${m.pid}`, S.recv)).json.find((f: any) => f.id === m.fid)?.deviceSpecs;
     same("ط.١ **ملفُّ المتابعة: خاناتُ الساق وحدها بعنوانها** — والكفُّ المؤجَّلة لا يُطلب لها شيء",
       [ml?.fields.map((f: any) => [f.key, f.label, f.fromDoctor]), ml?.missing],
-      [[["prostheticType:left-lower", "نوع الطرف الصناعي — يسار سفلي", true], ["socketType:left-lower", "نوع السوكيت — يسار سفلي", false],
+      [[["socketType:left-lower", "نوع السوكيت — يسار سفلي", false],
         ["footType:left-lower", "نوع القدم — يسار سفلي", true], ["siliconType:left-lower", "نوع السليكون — يسار سفلي", false]],
         ["socketType:left-lower", "siliconType:left-lower"]]);
     const rm1 = await sale(m.fid, { "socketType:left-lower": "كاربون درجة أولى" });
@@ -295,7 +298,8 @@ async function main() {
       ["كاربون رباعية المحاور", "كاربون درجة أولى", "كف سليكونية", "left-upper", MULTI_SITE]);
     const mp = (await q(`SELECT amputation_site, prosthetic_type, foot_type FROM patients WHERE id = $1`, [m.pid])).rows[0];
     same("ط.٥ **وملفُّ المريض**: موقعُ البتر بنصّه، وأعمدتُه تقرأ الأطرافَ كاملةً",
-      [mp.amputation_site, mp.prosthetic_type, mp.foot_type], [MULTI_SITE, "يسار سفلي: طرف تحت الركبة | يسار علوي: كف سليكونية", "يسار سفلي: كاربون رباعية المحاور"]);
+      //  ونوعُ الطرف مبنيّاً للمصنوع في هذا الطلب (§4.dw التكملة ٢) — كالاستمارة؛ والكفُّ المؤجَّلة لها طلبُها.
+      [mp.amputation_site, mp.prosthetic_type, mp.foot_type], [MULTI_SITE, "يسار سفلي: طرف تحت الركبة — قدم كاربون رباعية المحاور", "يسار سفلي: كاربون رباعية المحاور"]);
     const mSheet = (await call("GET", `/api/patients/${m.pid}/intake-sheets`, S.recv)).json?.sheets?.find((x: any) => x.episodeId === m.epId);
     same("ط.٦ والاستمارةُ تقول البترَ وما لا يُصنع", [mSheet?.specs?.amputationSite, mSheet?.specs?.limbsNotMade], [MULTI_SITE, "left-upper"]);
 
@@ -359,8 +363,10 @@ async function main() {
     const lf = (k: string) => ll?.fields?.find((f: any) => f.key === k);
     same("ل.٢ **ونافذةُ «اشترى» تعرف القوائم**: السوكيتُ بقائمته وملاحظته، والسليكونُ بقائمته وموديله، والركبةُ من الطبيب بموديلها، ونوعُ الطرف بمستوى البتر",
       [lf("socketType")?.options, lf("socketType")?.companion?.key, lf("siliconType")?.options, lf("kneeJointType")?.fromDoctor,
-        lf("kneeJointType")?.companion?.value, lf("prostheticType")?.options],
-      [["كاربون درجة أولى", "كاربون درجة ثانية"], "socketNotes", ["قفل محوري", "فاكيوم"], true, "3R80", ["طرف فوق الركبة"]]);
+        lf("kneeJointType")?.companion?.value, lf("prostheticType") ?? null, ll?.typeName],
+      //  ونوعُ الطرف مبنيٌّ (§4.dw التكملة ٢): لا يُطلب، ويُعرض اسمُه.
+      [["كاربون درجة أولى", "كاربون درجة ثانية"], "socketNotes", ["قفل محوري", "فاكيوم"], true, "3R80", null,
+        `طرف فوق الركبة — ركبة هيدروليك ${isolateLtr("3R80")} مع قدم أحادية المحور`]);
     const rl1 = await sale(l.fid, { socketType: "سوكيت كربون", siliconType: "فاكيوم" });
     same("ل.٣ **و«اشترى» بسوكيتٍ بنصٍّ حرّ ⟵ ٤٠٠ يسمّيه**، ولا بيع ولا كتابةَ على الجهاز",
       [rl1.status, rl1.json?.error, (await stateOf(l.fid, l.epId)).status, (await stateOf(l.fid, l.epId)).device_specs ?? {}],
@@ -373,7 +379,15 @@ async function main() {
     const lRows = Object.fromEntries(sheetSpecRows(lSheet).map((r) => [r.key, r.value]));
     same("ل.٥ **والاستمارةُ (وأمرُ التصنيع بأسطرها) تقول الخانةَ مع حقلها في سطرها**",
       [lRows.kneeJointType, lRows.socketType, lRows.footType, "kneeModel" in lRows],
-      ["هيدروليك — موديل الركبة: 3R80", "كاربون درجة أولى — ملاحظات السوكيت: بطانة جل", "أحادية المحور", false]);
+      [`هيدروليك — موديل الركبة: ${isolateLtr("3R80")}`, "كاربون درجة أولى — ملاحظات السوكيت: بطانة جل", "أحادية المحور", false]);
+    //  **والاسمُ المبنيّ واحدٌ في كلّ مكان** (§4.dw التكملة ٢): الاستمارةُ وقائمةُ الخبير يقولانه بالسوكيت الذي اختاره البيع،
+    //  وعمودُ ملفّ المريض كما كتبته المعاينة.
+    const lName = `طرف فوق الركبة — ركبة هيدروليك ${isolateLtr("3R80")} مع قدم أحادية المحور بقالب كاربون درجة أولى`;
+    //  قائمةُ الخبير كما تبنيها وحدةُ التصنيع (`listOrders` — ما تقرؤه «/api/manufacturing/orders» و«أوامري»).
+    const lCard = (await (await import("./manufacturing/store")).listOrders({})).find((o: any) => o.patientId === l.pid);
+    const lCol = (await q(`SELECT prosthetic_type FROM patients WHERE id = $1`, [l.pid])).rows[0].prosthetic_type;
+    same("ل.٨ **«نوع الطرف الصناعي» مبنيٌّ واحد** — الاستمارةُ وقائمةُ الخبير بالسوكيت الذي اختاره «اشترى»، وعمودُ الملفّ من المعاينة",
+      [lRows.prostheticType, lCard?.itemType, lCol], [lName, lName, `طرف فوق الركبة — ركبة هيدروليك ${isolateLtr("3R80")} مع قدم أحادية المحور`]);
     //  **معاينةٌ قديمة بنصٍّ حرّ تُعدَّل وهو فيها** — ويُردّ تغييرُه إلى نصٍّ حرٍّ آخر.
     const lExam = (await q(`SELECT id FROM medical_exams WHERE patient_id = $1 ORDER BY id DESC LIMIT 1`, [l.pid])).rows[0].id;
     //  الختمُ يمنع التعديلَ المباشر — فبالباب نفسِه الذي يفتحه التنقيح (`app.allow_exam_edit`)، كمعاينةٍ كُتبت قبل القوائم.

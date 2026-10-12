@@ -26,7 +26,8 @@ import { INJURY_SIDE_OPTIONS, PROSTHETIC_DEVICE_SPECS } from "@shared/case_field
 import { NOT_APPLICABLE } from "@shared/device_specs";
 import { companionOf, isListedChoice } from "@shared/device_spec_options";
 import {
-  LIMB_SPEC_KEYS, LIMB_SPEC_STORE_KEYS, dropStaleChoices, hasSideSpecs, limbSlots, specChoicesForKey, limbSpecValue, normalizeLimbSpecs, notMadeOf, sideSpecKey, slotTitle, slotsCanShare,
+  LIMB_SPEC_KEYS, LIMB_SPEC_STORE_KEYS, dropStaleChoices, hasSideSpecs, isDerivedProstheticType, limbSlots, specChoicesForKey, limbSpecValue,
+  normalizeLimbSpecs, notMadeOf, prostheticNameFor, sideSpecKey, slotTitle, slotsCanShare,
 } from "@shared/limb_specs";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { cn } from "@/lib/utils";
@@ -152,6 +153,30 @@ function SpecCell({ specKey, rxKey, value, options, companionValue, onPatch, tes
   );
 }
 
+/**
+ * **«نوع الطرف الصناعي» مبنيّاً لا يُختار** (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.dw التكملة ٢) — اسمُ المستوى ثمّ الركبةُ والقدمُ والسوكيت، ويتحدّث مع كلّ
+ * خانةٍ تحته. **والمكتوبُ قبل اليوم نصّاً** يبقى كما هو ويُعرض بزرّ «استعمل الاسم المبنيّ» — لا يُمحى بصمت.
+ */
+function DerivedTypeCell({ name, legacy, onUseBuilt, testSuffix }: {
+  name: string | null; legacy: boolean; onUseBuilt: () => void; testSuffix: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 py-1.5 px-1.5 min-w-0" data-testid={`exam-sheet-type-${testSuffix}`}>
+      <div dir="rtl" className="flex-1 min-w-0 text-sm font-medium leading-6 text-slate-800" data-testid={`exam-sheet-type-text-${testSuffix}`}>
+        {name ?? <span className="font-normal text-slate-400">يُبنى من مستوى البتر والركبة والقدم والسوكيت</span>}
+      </div>
+      {legacy ? (
+        <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={onUseBuilt}
+          data-testid={`exam-sheet-type-use-built-${testSuffix}`}>
+          مكتوبٌ قديماً — استعمل الاسم المبنيّ
+        </Button>
+      ) : (
+        <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">تلقائي</span>
+      )}
+    </div>
+  );
+}
+
 const realSpec = (v: unknown) => typeof v === "string" && v.trim() !== "" && v.trim() !== NOT_APPLICABLE;
 
 export function ExamSheetForm({
@@ -203,6 +228,9 @@ export function ExamSheetForm({
   const setSpecs = (patch: Record<string, string>) => onRx({ ...rx, ...patch });
   //  **وقائمةُ كلّ خانة بطرفها ومستواه** (§4.dw) — السفليُّ لا يرى خيارات المرفق، وفوق الركبة لا يرى «تحت الركبة».
   const optionsOf = (k: string) => specChoicesForKey(made, k);
+  //  **ونوعُ الطرف مبنيّاً** (§4.dw التكملة ٢) — اسمٌ لكلّ طرفٍ مصنوع (يُكتب مرّةً لطرفٍ واحد أو متماثلة)، والنصُّ القديمُ يبقى حتى يُستبدل.
+  const isLegacyType = (v: string) => Boolean(v) && v !== NOT_APPLICABLE && !isListedChoice("prostheticType", v);
+  const sharedTypeName = Array.from(new Set(made.map((sl) => prostheticNameFor(rx, sl, null)).filter(Boolean))).join(" · ") || null;
   const compOf = (k: string, side: string | null) => {
     const c = companionOf(k);
     return c ? limbSpecValue(rx, c.key, side) : "";
@@ -361,7 +389,10 @@ export function ExamSheetForm({
             )}
             {(!multi || identical) ? sharedKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
-                <SpecCell specKey={k} rxKey={k} value={s(rx[k])} options={optionsOf(k)} companionValue={compOf(k, null)} onPatch={setSpecs} testSuffix={k} />
+                {k === "prostheticType" && made.every(isDerivedProstheticType)
+                  ? <DerivedTypeCell name={sharedTypeName} legacy={isLegacyType(s(rx.prostheticType))}
+                      onUseBuilt={() => setSpecs({ prostheticType: "" })} testSuffix="shared" />
+                  : <SpecCell specKey={k} rxKey={k} value={s(rx[k])} options={optionsOf(k)} companionValue={compOf(k, null)} onPatch={setSpecs} testSuffix={k} />}
               </SheetRow>
             )) : splitKeys.map((k) => (
               <SheetRow key={k} label={labelOf(k)} testId={`exam-row-spec-${k}`}>
@@ -372,10 +403,13 @@ export function ExamSheetForm({
                     return (
                       <div key={side} className="min-w-0" data-testid={`exam-cell-spec-${k}-${side}`}>
                         <div className="text-[11px] text-slate-500 px-1.5">{slotTitle(sl)}</div>
-                        {applies
-                          ? <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} options={optionsOf(sideSpecKey(k, side))}
-                              companionValue={compOf(k, side)} onPatch={setSpecs} testSuffix={`${k}-${side}`} />
-                          : <div className="h-9 flex items-center px-1.5 text-xs text-slate-400">{NOT_APPLICABLE}</div>}
+                        {!applies
+                          ? <div className="h-9 flex items-center px-1.5 text-xs text-slate-400">{NOT_APPLICABLE}</div>
+                          : k === "prostheticType" && isDerivedProstheticType(sl)
+                            ? <DerivedTypeCell name={prostheticNameFor(rx, sl, side)} legacy={isLegacyType(limbSpecValue(rx, k, side))}
+                                onUseBuilt={() => setSpecs({ [sideSpecKey(k, side)]: "" })} testSuffix={side} />
+                            : <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} options={optionsOf(sideSpecKey(k, side))}
+                                companionValue={compOf(k, side)} onPatch={setSpecs} testSuffix={`${k}-${side}`} />}
                       </div>
                     );
                   })}

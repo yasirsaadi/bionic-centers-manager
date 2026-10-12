@@ -16,10 +16,10 @@ import {
   buildAmputationSite, LOWER_AMPUTATION_DETAILS, PROSTHETIC_DEVICE_SPECS, SILICONE_PARTS, UPPER_AMPUTATION_DETAILS, type AmputationLimb, type AmputationParts,
 } from "./case_fields";
 import { checkAmputationParts } from "./patient_required";
-import { dropStaleChoices, specChoiceMessage, specChoiceProblems, specChoicesForKey } from "./limb_specs";
+import { dropStaleChoices, prostheticTypeText, specChoiceMessage, specChoiceProblems, specChoicesForKey } from "./limb_specs";
 import { saleSpecChoiceProblems, saleSpecFieldExtras } from "./device_specs";
 import {
-  FOOT_TYPES, KNEE_TYPES, LINER_TYPES, LOWER_PROSTHESIS_TYPES, PROSTHESIS_TYPES_BY_LEVEL, SOCKET_TYPES, UPPER_PROSTHESIS_TYPES, isListedChoice, specChoices,
+  FOOT_TYPES, KNEE_TYPES, LINER_TYPES, LOWER_PROSTHESIS_TYPES, PROSTHESIS_NAME_BY_LEVEL, SOCKET_TYPES, UPPER_PROSTHESIS_TYPES, composeProstheticName, isListedChoice, isolateLtr, specChoices,
 } from "./device_spec_options";
 
 let failures = 0;
@@ -165,15 +165,15 @@ same("د.٧ ومتماثلان بمستويين مختلفي الخانات ⟵ 
 
 console.log("\n── هـ. «اشترى» يشترط ما يخصّ البتر ──");
 const keysFor = (m: Record<string, string>) => saleSpecFieldsFor("prosthetic", m).map((f) => f.key);
-same("هـ.١ **تحت الركبة ⟵ لا ركبةَ مطلوبة**، وبلا بترٍ مسجَّل ⟵ الخمسُ كما كانت",
-  [keysFor({ amputationSite: site(BK) }), keysFor({})], [["prostheticType", "socketType", "footType", "siliconType"], ["prostheticType", "socketType", "kneeJointType", "footType", "siliconType"]]);
+same("هـ.١ **تحت الركبة ⟵ لا ركبةَ مطلوبة** (ونوعُ الطرف مبنيٌّ لا يُطلب — §4.dw التكملة ٢)، وبلا بترٍ مسجَّل ⟵ الخمسُ كما كانت",
+  [keysFor({ amputationSite: site(BK) }), keysFor({})], [["socketType", "footType", "siliconType"], ["prostheticType", "socketType", "kneeJointType", "footType", "siliconType"]]);
 same("هـ.٢ سليكونيٌّ ⟵ النوعُ والسيليكونُ وحدهما",
   keysFor({ amputationSite: site({ amputationType: "silicone", siliconePart: "كف", siliconeSide: "left" }) }), ["prostheticType", "siliconType"]);
 const bil = { amputationSite: site(DBL("تحت الركبة", "فوق الركبة")) };
 same("هـ.٣ **طرفان مختلفان ⟵ خاناتُ اليمين ثمّ اليسار، بعناوينها**",
   saleSpecFieldsFor("prosthetic", bil).map((f) => [f.key, f.label]),
-  [["prostheticType:right", "نوع الطرف الصناعي — يمين"], ["socketType:right", "نوع السوكيت — يمين"], ["footType:right", "نوع القدم — يمين"],
-    ["siliconType:right", "نوع السليكون — يمين"], ["prostheticType:left", "نوع الطرف الصناعي — يسار"], ["socketType:left", "نوع السوكيت — يسار"],
+  [["socketType:right", "نوع السوكيت — يمين"], ["footType:right", "نوع القدم — يمين"],
+    ["siliconType:right", "نوع السليكون — يمين"], ["socketType:left", "نوع السوكيت — يسار"],
     ["kneeJointType:left", "نوع مفصل الركبة — يسار"], ["footType:left", "نوع القدم — يسار"], ["siliconType:left", "نوع السليكون — يسار"]]);
 same("هـ.٤ وما ينقص بجهته — والعامُّ يسدّ الجهتين",
   missingSaleSpecs("prosthetic", { ...bil, footType: "كاربون", "prostheticType:right": "a", "prostheticType:left": "b", "socketType:right": "c", "siliconType:right": NOT_APPLICABLE }),
@@ -181,7 +181,7 @@ same("هـ.٤ وما ينقص بجهته — والعامُّ يسدّ الجه�
 const twoSame = { amputationSite: site(DBL("تحت الركبة", "تحت الركبة")), prostheticType: "طرف", footType: "كاربون" };
 same("هـ.٥ **ومتماثلان ⟵ خاناتُهما مرّةً «للطرفين»**",
   [saleSpecFieldsFor("prosthetic", twoSame).map((f) => f.label), missingSaleSpecs("prosthetic", twoSame)],
-  [["نوع الطرف الصناعي — للطرفين", "نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"], ["socketType", "siliconType"]]);
+  [["نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"], ["socketType", "siliconType"]]);
 same("هـ.٦ نافذةُ البيع تقبل خاناتِ الجهات — وتردّ ما ليس خانة",
   cleanSaleSpecsInput({ "footType:left": " مرنة ", "footSize:left": "42", "kneeJointType:middle": "x", socketType: "س" }, "prosthetic"),
   //  بترتيب الدخل (صار المنظِّفُ يمرّ على الدخل نفسِه ليقبل مفاتيحَ «متعدد» — §4.de)؛ والمقبولُ والمردودُ كما كانا.
@@ -232,17 +232,17 @@ same("و.٦ **مفاتيحُ الأطراف**: صالحةٌ تُقبل وعنو�
 const c1 = { amputationSite: site(CASE1) };
 same("و.٧ **«اشترى» للحالة الأولى ⟵ خاناتُ كلّ طرفٍ بعنوانه**، بلا ركبةٍ ولا قدمٍ للكفّ السليكونية",
   saleSpecFieldsFor("prosthetic", c1).map((f) => [f.key, f.label]),
-  [["prostheticType:left-lower", "نوع الطرف الصناعي — يسار سفلي"], ["socketType:left-lower", "نوع السوكيت — يسار سفلي"],
+  [["socketType:left-lower", "نوع السوكيت — يسار سفلي"],
     ["footType:left-lower", "نوع القدم — يسار سفلي"], ["siliconType:left-lower", "نوع السليكون — يسار سفلي"],
     ["prostheticType:left-upper", "نوع الطرف الصناعي — يسار علوي"], ["siliconType:left-upper", "نوع السليكون — يسار علوي"]]);
 same("و.٨ **وعلويٌّ فوق المرفق ⟵ المرفقُ والكفُّ مطلوبان بعنوانهما**",
   saleSpecFieldsFor("prosthetic", { amputationSite: site(FACE3) }).filter((f) => f.key.endsWith(":right-upper")).map((f) => f.label),
-  ["نوع الطرف الصناعي — يمين علوي", "نوع السوكيت — يمين علوي", "نوع المرفق — يمين علوي", "نوع الكف / اليد — يمين علوي", "نوع السليكون — يمين علوي"]);
+  ["نوع السوكيت — يمين علوي", "نوع المرفق — يمين علوي", "نوع الكف / اليد — يمين علوي", "نوع السليكون — يمين علوي"]);
 const notMadeHand = { ...c1, limbsNotMade: "left-upper" };
 const nmView = limbSpecView(notMadeHand);
 same("و.٩ **«يُصنع في هذا الطلب»: الكفُّ تُصنع لاحقاً ⟵ لا يُطلب لها شيءٌ الآن**، وتُذكر «لا يُصنع» في العرض",
   [saleSpecFieldsFor("prosthetic", notMadeHand).map((f) => f.key), nmView.slots.map((x) => x.key), nmView.notMadeSlots.map(slotTitle), nmView.allSlots.length],
-  [["prostheticType:left-lower", "socketType:left-lower", "footType:left-lower", "siliconType:left-lower"], ["left-lower"], ["يسار علوي — كف"], 2]);
+  [["socketType:left-lower", "footType:left-lower", "siliconType:left-lower"], ["left-lower"], ["يسار علوي — كف"], 2]);
 same("و.١٠ وما ينقص بطرفه — والعامُّ يسدّ المصنوع",
   missingSaleSpecs("prosthetic", { ...notMadeHand, prostheticType: "طرف تحت الركبة", "footType:left-lower": "كاربون" }),
   ["socketType:left-lower", "siliconType:left-lower"]);
@@ -261,10 +261,10 @@ same("و.١٣ **«متماثلة» بين المصنوعة وحدها** — سا
 const twoMadeSpecs = { amputationSite: site(THREE), limbsNotMade: "right-upper", prostheticType: "طرف", footType: "كاربون" };
 same("و.١٤ وعرضُها «متماثلة» بطرفين، و«اشترى» يقول «— للطرفين»",
   [limbSpecView(twoMadeSpecs).mode, limbSpecView(twoMadeSpecs).slots.length, saleSpecFieldsFor("prosthetic", twoMadeSpecs).map((f) => f.label)],
-  ["identical", 2, ["نوع الطرف الصناعي — للطرفين", "نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"]]);
+  ["identical", 2, ["نوع السوكيت — للطرفين", "نوع القدم — للطرفين", "نوع السليكون — للطرفين"]]);
 same("و.١٥ **قدمٌ سليكونية مع ساقين تحت الركبة لا تتماثل معهما ⟵ لكلّ طرفٍ خاناتُه**",
   saleSpecFieldsFor("prosthetic", { amputationSite: site(MULTI(L_BK, { ...L_BK, side: "right" }, { region: "lower", side: "right", kind: "silicone", detail: "قدم" })) })
-    .map((f) => f.key).slice(0, 2), ["prostheticType:left-lower", "socketType:left-lower"]);
+    .map((f) => f.key).slice(0, 2), ["socketType:left-lower", "footType:left-lower"]);
 same("و.١٥ب **وثلاثُ قطعٍ سليكونية (إصبعٌ وكفٌّ وقدم) خاناتُها متطابقة ⟵ «— للأطراف كلّها»**",
   saleSpecFieldsFor("prosthetic", { amputationSite: site(MULTI(R_FINGER_SIL, L_HAND_SIL, { region: "lower", side: "left", kind: "silicone", detail: "قدم" })),
     prostheticType: "سليكون", siliconType: "طبي" }).map((f) => f.label),
@@ -334,11 +334,11 @@ same("ح.٧ **والتفصيلُ لا يُعرض إلّا ومجموعُه ال�
     saleLinesMatchTotal(stored.slice(0, 2), null)], [true, false, false, false]);
 
 console.log("\n── ط. الخاناتُ قوائمُ المالك، وبجانب أربعٍ منها حقلٌ حرّ (§4.dw) ──");
-same("ط.١ **نوعُ الطرف بحسب الطرف**: السفليُّ قائمتُه (٧) والعلويُّ قائمتُه (٦) — لا يرى السفليُّ «تحت المرفق» — والمجهولُ الاثنتان، والسليكونيُّ التعويضيُّ حرّ",
+same("ط.١ **نوعُ الطرف بحسب الطرف**: السفليُّ قائمتُه (٧) والعلويُّ قائمتُه (٧ — ومنها «خلال الرسغ»، التكملة ٢) — لا يرى السفليُّ «تحت المرفق» — والمجهولُ الاثنتان، والسليكونيُّ التعويضيُّ حرّ",
   [specChoices("prostheticType", "lower")?.length, specChoices("prostheticType", "lower")?.includes("طرف تحت المرفق"),
     specChoices("prostheticType", "upper")?.length, specChoices("prostheticType", "upper")?.includes("طرف تحت الركبة"),
     specChoices("prostheticType", null)?.length, specChoices("prostheticType", "silicone")],
-  [7, false, 6, false, 13, null]);
+  [7, false, 7, false, 14, null]);
 same("ط.٢ **وقوائمُ المالك بحرفها**: الركبةُ ستّ، والقدمُ خمس، والسوكيتُ اثنتان، والسليكونُ «قفل محوري / فاكيوم» للعلويّ والسفليّ وحرٌّ للتعويضيّ؛ والمرفقُ والكفُّ حرّان",
   [[...KNEE_TYPES], [...FOOT_TYPES], [...SOCKET_TYPES], specChoices("siliconType", "upper"), specChoices("siliconType", "silicone"),
     specChoices("elbowType", "upper"), specChoices("handType", "upper"), LOWER_PROSTHESIS_TYPES[1], UPPER_PROSTHESIS_TYPES[0]],
@@ -375,7 +375,9 @@ const shownSplit = limbSpecView({ "footType:right": "ثابتة", "footModel:rig
 same("ط.٨ **ويُعرض مع خانته في سطرها** — «هيدروليك — موديل الركبة: 3R80»، وللجهتين كلٌّ بموديله، ولا سطرَ للحقل وحده",
   [shownSingle.rows.find((r) => r.key === "kneeJointType")?.value, shownSingle.rows.find((r) => r.key === "socketType")?.value,
     shownSingle.rows.some((r) => r.key === "kneeModel"), shownSplit.rows.find((r) => r.key === "footType")?.value],
-  ["هيدروليك — موديل الركبة: 3R80", "كاربون درجة أولى — ملاحظات السوكيت: بطانة جل", false, "يمين: ثابتة — موديل القدم: SACH · يسار: أحادية المحور"]);
+  //  والموديلُ اللاتينيّ معزولٌ (U+2068 … U+2069 — التكملة ٢) فلا تنقلب الجملةُ حوله.
+  [`هيدروليك — موديل الركبة: ${isolateLtr("3R80")}`, "كاربون درجة أولى — ملاحظات السوكيت: بطانة جل", false,
+    `يمين: ثابتة — موديل القدم: ${isolateLtr("SACH")} · يسار: أحادية المحور`]);
 same("ط.٩ **و«اشترى» يقبل الحقلَ الحرّ بجهته**، ويرفض ما ليس من القائمة بنوع طرفه، ويقبل ما حُفظ على الجهاز من قبل",
   [cleanSaleSpecsInput({ kneeModel: "3R80", "footModel:left": "SACH", "footModel:bogus": "x" }, "prosthetic"),
     saleSpecChoiceProblems("prosthetic", { prostheticType: "طرف تحت المرفق", footType: "ثابتة" }, { amputationSite: site(BK) }),
@@ -389,23 +391,24 @@ same("ط.١٠ **ونافذةُ «اشترى» تعرف قائمةَ كلّ خا�
   [1, { key: "footModel:left", label: "موديل القدم", value: "SACH" }, { options: null, companion: null }]);
 
 console.log("\n── ط (تكملة). نوعُ الطرف بمستوى البتر — ملاحظةُ المالك في أوّل فحص (§4.dw) ──");
-same("ط.١١ **فوق الركبة لا يرى غيرَ «طرف فوق الركبة»** — وكلُّ مستوى في قائمتَي البتر له ما يُصنع له من قائمة الأطراف، والمستوى المجهول قائمةُ طرفه",
+same("ط.١١ **فوق الركبة لا يرى غيرَ «طرف فوق الركبة»** — ولكلّ مستوى في قائمتَي البتر اسمٌ واحد من قائمة طرفه (التكملة ٢: سايمز وخلال الرسغ اسمٌ واحد، و«خلال الكاحل» مستوى)، والمستوى المجهول قائمةُ طرفه",
   [specChoices("prostheticType", "lower", "فوق الركبة"), specChoices("prostheticType", "lower", "سايمز"), specChoices("prostheticType", "upper", "خلال الرسغ"),
     specChoices("prostheticType", "lower", "  تحت الركبة "), specChoices("prostheticType", "lower", "مستوى قديم")?.length,
     specChoices("prostheticType", "silicone", "اصبع"), specChoices("footType", "lower", "فوق الركبة")?.length,
-    [...LOWER_AMPUTATION_DETAILS, ...UPPER_AMPUTATION_DETAILS].every((lv) => (PROSTHESIS_TYPES_BY_LEVEL[lv] ?? []).length > 0
-      && PROSTHESIS_TYPES_BY_LEVEL[lv].every((t) => (LOWER_AMPUTATION_DETAILS.includes(lv) ? LOWER_PROSTHESIS_TYPES : UPPER_PROSTHESIS_TYPES).includes(t as never)))],
-  [["طرف فوق الركبة"], ["طرف لبتر خلال الكاحل", "طرف سايمز"], ["طرف خلال الكف", "طرف تحت المرفق"], ["طرف تحت الركبة"], 7, null, 5, true]);
+    [...LOWER_AMPUTATION_DETAILS, ...UPPER_AMPUTATION_DETAILS].every((lv) => Boolean(PROSTHESIS_NAME_BY_LEVEL[lv])
+      && (LOWER_AMPUTATION_DETAILS.includes(lv) ? LOWER_PROSTHESIS_TYPES : UPPER_PROSTHESIS_TYPES).includes(PROSTHESIS_NAME_BY_LEVEL[lv] as never)),
+    LOWER_AMPUTATION_DETAILS.includes("خلال الكاحل"), specChoices("prostheticType", "lower", "خلال الكاحل")],
+  [["طرف فوق الركبة"], ["طرف سايمز"], ["طرف خلال الرسغ"], ["طرف تحت الركبة"], 7, null, 5, true, true, ["طرف لبتر خلال الكاحل"]]);
 same("ط.١٢ **والحفظُ يرفض نوعاً لا يطابق المستوى** — «طرف تحت الركبة» لفوق الركبة مرفوض، ولكلّ جهةٍ مستواها",
   [specChoiceProblems({ ...AK, prostheticType: "طرف تحت الركبة" }, limbSlots(AK)), specChoiceProblems({ ...AK, prostheticType: "طرف فوق الركبة" }, limbSlots(AK)),
     specChoiceProblems({ ...DBL_BK_AK, "prostheticType:right": "طرف تحت الركبة", "prostheticType:left": "طرف تحت الركبة" } as any, limbSlots(DBL_BK_AK)),
     saleSpecChoiceProblems("prosthetic", { prostheticType: "طرف تحت الركبة" }, { amputationSite: site(AK) })],
   [["prostheticType"], [], ["prostheticType:left"], ["prostheticType"]]);
 const DBL_BK_SY = DBL("تحت الركبة", "سايمز");
-same("ط.١٣ **والخانةُ العامّة لأطرافٍ متماثلة بما يجمعها** — تحت الركبة وسايمز ⟵ أنواعُهما معاً، وخانةُ كلّ جهةٍ بمستواها",
+same("ط.١٣ **والخانةُ العامّة لأطرافٍ متماثلة بما يجمعها** — تحت الركبة وسايمز ⟵ اسماهما معاً، وخانةُ كلّ جهةٍ بمستواها",
   [specChoicesForKey(limbSlots(DBL_BK_SY), "prostheticType"), specChoicesForKey(limbSlots(DBL_BK_SY), "prostheticType:left"),
     specChoicesForKey(limbSlots(AK), "footType")?.length],
-  [["طرف تحت الركبة", "طرف لبتر خلال الكاحل", "طرف سايمز"], ["طرف لبتر خلال الكاحل", "طرف سايمز"], 5]);
+  [["طرف تحت الركبة", "طرف سايمز"], ["طرف سايمز"], 5]);
 const toAk = dropStaleChoices(normalizeLimbSpecs({ ...BK, prostheticType: "طرف تحت الركبة", footType: "ثابتة", footModel: "SACH", ...AK } as any)) as Record<string, unknown>;
 const legacyAk = dropStaleChoices({ ...AK, prostheticType: "طرف سفلي ذكي" } as any) as Record<string, unknown>;
 const naAk = dropStaleChoices({ ...AK, prostheticType: "لا ينطبق" } as any) as Record<string, unknown>;
@@ -414,6 +417,48 @@ same("ط.١٤ **ومَن صحّح المستوى يختار النوعَ من ج
   [toAk.prostheticType, toAk.footType, toAk.footModel, legacyAk.prostheticType, naAk.prostheticType, splitStale["prostheticType:right"], "prostheticType:left" in splitStale,
     isListedChoice("prostheticType", "طرف تحت الركبة"), isListedChoice("prostheticType", "طرف سفلي ذكي")],
   [undefined, "ثابتة", "SACH", "طرف سفلي ذكي", "لا ينطبق", "طرف تحت الركبة", false, true, false]);
+
+console.log("\n── ط (تكملة ٢). «نوع الطرف الصناعي» مبنيٌّ من المستوى والركبة والقدم والسوكيت (المالك ٢٠٢٦-١٠-١٣) ──");
+const I = isolateLtr;
+same("ط.١٥ **الاسمُ المبنيّ**: المستوى ثمّ الركبةُ بموديلها «مع» القدمِ بموديلها «بقالب» السوكيت — وما لم يُكتب أو «لا ينطبق» لا يدخل، والمستوى المجهول لا اسمَ له",
+  [composeProstheticName({ level: "فوق الركبة", knee: "هيدروليك", kneeModel: "3R80", foot: "كاربون رباعية المحاور", footModel: "Triton", socket: "كاربون درجة أولى" }),
+    composeProstheticName({ level: "تحت الركبة", foot: "أحادية المحور", socket: "كاربون درجة ثانية" }),
+    composeProstheticName({ level: "تحت المرفق", socket: "كاربون درجة أولى" }),
+    composeProstheticName({ level: "فوق الركبة", knee: "لا ينطبق", kneeModel: "3R80", foot: "ثابتة" }),
+    composeProstheticName({ level: "خلال الكاحل" }), composeProstheticName({ level: "مستوى قديم", foot: "ثابتة" }), composeProstheticName({ level: null })],
+  [`طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم كاربون رباعية المحاور ${I("Triton")} بقالب كاربون درجة أولى`,
+    "طرف تحت الركبة — قدم أحادية المحور بقالب كاربون درجة ثانية", "طرف تحت المرفق — بقالب كاربون درجة أولى",
+    "طرف فوق الركبة — قدم ثابتة", "طرف لبتر خلال الكاحل", null, null]);
+const akFull = { amputationSite: site(AK), kneeJointType: "هيدروليك", kneeModel: "3R80", footType: "ثابتة", socketType: "كاربون درجة أولى",
+  socketNotes: "بطانة جل", siliconType: "قفل محوري", siliconModel: "Iceross" };
+const typeRow = (sp: Record<string, unknown>) => limbSpecView(sp).rows.find((r) => r.key === "prostheticType")?.value ?? null;
+same("ط.١٦ **وفي الاستمارة وأمر التصنيع** — بلا السليكون ولا ملاحظات السوكيت (بقرار المالك)، والمختارُ أمس من القائمة يُبنى، **والمكتوبُ قبل اليوم نصّاً يبقى**، والسليكونيُّ التعويضيُّ كما كُتب",
+  [typeRow(akFull), typeRow({ ...akFull, prostheticType: "طرف تحت الركبة" }), typeRow({ ...akFull, prostheticType: "طرف سفلي ذكي" }),
+    typeRow({ ...akFull, prostheticType: "لا ينطبق" }),
+    typeRow({ amputationSite: site({ amputationType: "silicone", siliconePart: "اذن", siliconeSide: "left" }), prostheticType: "أذن سليكون طبي" })],
+  [`طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`,
+    `طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`, "طرف سفلي ذكي",
+    `طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`, "أذن سليكون طبي"]);
+const splitSp = { amputationSite: site(DBL_BK_AK), "footType:right": "ثابتة", "socketType:right": "كاربون درجة أولى",
+  "kneeJointType:left": "مقفول", "footType:left": "ثابتة", "footModel:left": "SACH", "socketType:left": "كاربون درجة ثانية" };
+const splitRow = limbSpecView(splitSp).rows.find((r) => r.key === "prostheticType");
+same("ط.١٧ **ولمبتور الطرفين اسمٌ لكلّ طرف** بمستواه وخاناته — تحت الركبة بلا ركبة، وفوقها بركبته",
+  [splitRow?.sides?.map((x) => x.value), splitRow?.value],
+  [["طرف تحت الركبة — قدم ثابتة بقالب كاربون درجة أولى", `طرف فوق الركبة — ركبة مقفول مع قدم ثابتة ${I("SACH")} بقالب كاربون درجة ثانية`],
+    `يمين: طرف تحت الركبة — قدم ثابتة بقالب كاربون درجة أولى · يسار: طرف فوق الركبة — ركبة مقفول مع قدم ثابتة ${I("SACH")} بقالب كاربون درجة ثانية`]);
+same("ط.١٨ **والمتماثلان اسمٌ واحد** — وبمستويين مختلفين كلٌّ باسمه مرّة",
+  [typeRow({ amputationSite: site(DBL("تحت الركبة", "تحت الركبة")), footType: "ثابتة" }),
+    typeRow({ amputationSite: site(DBL_BK_SY), footType: "ثابتة" })],
+  ["طرف تحت الركبة — قدم ثابتة", "طرف تحت الركبة — قدم ثابتة · طرف سايمز — قدم ثابتة"]);
+same("ط.١٩ **واسمٌ واحد في كلّ مكان** — عمودُ ملفّ المريض وقائمةُ الخبير بالنصّ نفسِه من الوصفة، و«اشترى» لا يطلبه ويطلبه للسليكونيّ",
+  [prostheticTypeText({ ...AK, kneeJointType: "هيدروليك", footType: "ثابتة" }, site(AK)), typeRow({ amputationSite: site(AK), kneeJointType: "هيدروليك", footType: "ثابتة" }),
+    keysFor({ amputationSite: site(AK) }).includes("prostheticType"),
+    keysFor({ amputationSite: site({ amputationType: "silicone", siliconePart: "كف", siliconeSide: "left" }) }).includes("prostheticType")],
+  ["طرف فوق الركبة — ركبة هيدروليك مع قدم ثابتة", "طرف فوق الركبة — ركبة هيدروليك مع قدم ثابتة", false, true]);
+same("ط.٢٠ **والنصُّ اللاتينيّ معزول** (U+2068 … U+2069) فلا تنقلب الجملة — والعربيُّ كما هو",
+  [I("3R80"), I("C-Leg 4"), I("هيدروليك"), I("3R80").length,
+    composeProstheticName({ level: "فوق الركبة", knee: "هيدروليك", kneeModel: "3R80" })?.includes("\u20683R80\u2069")],
+  ["\u20683R80\u2069", "\u2068C-Leg 4\u2069", "هيدروليك", 6, true]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);

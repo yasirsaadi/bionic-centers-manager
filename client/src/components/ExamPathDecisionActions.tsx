@@ -122,6 +122,8 @@ export function ExamPathDecisionActions({
       options?: string[] | null; companion?: { key: string; label: string; value: string | null } | null;
     }[]; missing: string[];
     limbs?: { key: string; title: string }[]; identical?: boolean;
+    /** «نوع الطرف الصناعي» مبنيّاً (§4.dw التكملة ٢) — يُعرض ولا يُطلب. */
+    typeName?: string | null;
   } | null = saleRow?.deviceSpecs ?? null;
   //  ══ **ما طُلب ومَن يصنعه** (§4.cu) — من صفّ المتابعة نفسِه: أجزاءٌ عدّة ⟵ سعرٌ لكلّ جزء، وجاهزٌ ⟵ بلا خبير. ══
   const saleItems: RequestedItem[] = saleRow?.deviceEpisodeId
@@ -493,6 +495,11 @@ export function ExamPathDecisionActions({
             {saleSpecs && saleSpecs.fields.length > 0 && (
               <div className="space-y-2 rounded-md border bg-slate-50/60 p-2" data-testid="complete-sale-specs">
                 <div className="text-xs font-semibold">مواصفات الجهاز — لا يُقبَل «اشترى» قبل أن تمتلئ</div>
+                {saleSpecs.typeName && (
+                  <div dir="rtl" className="rounded bg-white px-2 py-1 text-xs leading-5" data-testid="sale-type-name">
+                    <span className="text-muted-foreground">نوع الطرف الصناعي:</span> <b>{saleSpecs.typeName}</b>
+                  </div>
+                )}
                 {saleSpecs.fields.map((f) => f.fromDoctor ? (
                   <div key={f.key} className="flex flex-wrap items-baseline gap-1 text-xs" data-testid={`spec-doctor-${f.key}`}>
                     <span className="text-muted-foreground">{f.label}:</span> <b>{f.value}</b>
