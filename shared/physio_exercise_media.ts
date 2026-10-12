@@ -119,7 +119,8 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "wall-slide-serratus-1": { file: "wall-slide-serratus-1.webp" },
   "doorway-pec-stretch-1": { file: "doorway-pec-stretch-1.webp" },
   "wall-push-up-plus-1": { file: "wall-push-up-plus-1.webp" },
-  //  الجلطة (§4.dl) — و«نقلُ الوزن واقفاً» منتظرة.
+  //  الجلطة (§4.dl) — و«نقلُ الوزن واقفاً» وصلت ثانيةً (٢٠٢٦-١٠-١٢): واقفةٌ أمام طاولةٍ ويداها عليها، بلا شعار الزاوية (§4.dv التكملة ٢).
+  "standing-weight-shift-1": { file: "standing-weight-shift-1.webp" },
   "overhead-shelf-lift-1": { file: "overhead-shelf-lift-1.webp" },
   "sitting-reach-1": { file: "sitting-reach-1.webp" },
   "roll-to-sit-1": { file: "roll-to-sit-1.webp", credit: "ptnodoka.com" },
