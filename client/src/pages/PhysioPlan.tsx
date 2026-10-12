@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Pencil, Play, Printer, RefreshCcw, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Home, Pencil, Play, Printer, RefreshCcw, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -74,6 +74,17 @@ interface Plan {
   measures?: MeasureDef[]; measuresOwn?: boolean; protocolDiff?: ProtocolDiffView | null;
   /** §4.dq — إعداداتُ جهازٍ ناقصة في البروتوكول: لمن يبدؤها أو يعتمدها (والمشرفُ يملؤها). */
   settingsGaps?: PlanSettingsGapsView | null;
+  /** §4.ds — ورقةُ تمارين البيت: من خطّةٍ بدأت، وإرسالُها عبر تلغرام لفريق العلاج في فرعها لمريضٍ مربوط. */
+  homeSheet?: { allowed: boolean; botEnabled: boolean; telegramRecipients: number; canSend: boolean };
+}
+
+/** **ورقةُ تمارين البيت** (§4.ds) — على الحاسوب في تبويبٍ جديد، وعلى الهاتف والتطبيق المثبَّت في مكانها (كـ`openPhysioSheetPrint`). */
+function openHomeSheet(planId: number, go: (to: string) => void) {
+  const url = `/physio-home-sheet/print?plan=${planId}`;
+  const mq = (q: string) => typeof window.matchMedia === "function" && window.matchMedia(q).matches;
+  const inPlace = mq("(display-mode: standalone)") || (navigator as any).standalone === true || mq("(pointer: coarse)") || mq("(max-width: 767px)");
+  if (inPlace) go(url);
+  else window.open(url, "_blank");
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; available: string[] }
 
@@ -198,6 +209,11 @@ export default function PhysioPlanPage() {
           <Button variant="outline" size="sm" className="gap-1" onClick={printProgress} data-testid="button-print-progress">
             <Printer className="w-4 h-4" /> {lang === "en" ? "Progress report" : "تقرير التقدّم"}
           </Button>
+          {plan.homeSheet?.allowed && (plan.phases?.length ?? 0) > 0 && (
+            <Button variant="outline" size="sm" className="gap-1" onClick={() => openHomeSheet(plan.id, navigate)} data-testid="button-home-sheet">
+              <Home className="w-4 h-4" /> {lang === "en" ? "Home exercise sheet" : "ورقة تمارين البيت"}
+            </Button>
+          )}
         </div>
       </div>
 

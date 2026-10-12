@@ -278,6 +278,7 @@
     "test:physio-device-settings": "tsx server/physio_device_settings.test.ts",
     "test:physio-plan-diff": "tsx server/physio_plan_diff.test.ts",
     "test:physio-session-exercises": "tsx server/physio_session_exercises.test.ts",
+    "test:physio-home-sheet": "tsx server/physio_home_sheet.test.ts",
     "test:staff-greeting": "tsx server/staff_greeting.test.ts",
     "test:physio-protocol-content": "tsx server/physio_protocol_content.test.ts",
     "test:protocol-search": "tsx server/protocol_search.test.ts",

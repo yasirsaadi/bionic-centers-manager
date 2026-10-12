@@ -38,6 +38,7 @@ const DrBox = lazy(() => import("@/pages/DrBox"));
 const CashBookPrint = lazy(() => import("@/pages/CashBookPrint"));
 const IntakeSheetPrint = lazy(() => import("@/pages/IntakeSheetPrint"));
 const PhysioSheetPrint = lazy(() => import("@/pages/PhysioSheetPrint"));
+const PhysioHomeSheetPrint = lazy(() => import("@/pages/PhysioHomeSheetPrint"));
 const PatientRecordPrint = lazy(() => import("@/pages/PatientRecordPrint"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
@@ -260,6 +261,17 @@ function Router() {
       <BranchGate>
         <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
           <PhysioSheetPrint />
+        </Suspense>
+      </BranchGate>
+    );
+  }
+
+  //  و«ورقةُ تمارين البيت» (§4.ds) — الورقةُ وحدها كذلك، ومنها الإرسالُ عبر تلغرام.
+  if (location.startsWith("/physio-home-sheet/print")) {
+    return (
+      <BranchGate>
+        <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+          <PhysioHomeSheetPrint />
         </Suspense>
       </BranchGate>
     );
