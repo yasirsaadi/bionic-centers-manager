@@ -357,10 +357,10 @@ async function main() {
       [true, 400, "spec_choice_invalid", ["prostheticType", "kneeJointType"], "اختر من القائمة: نوع الطرف الصناعي، نوع الركبة", 1]);
     const ll = (await call("GET", `/api/followups/patient/${l.pid}`, S.recv)).json.find((f: any) => f.id === l.fid)?.deviceSpecs;
     const lf = (k: string) => ll?.fields?.find((f: any) => f.key === k);
-    same("ل.٢ **ونافذةُ «اشترى» تعرف القوائم**: السوكيتُ بقائمته وملاحظته، والسليكونُ بقائمته وموديله، والركبةُ من الطبيب بموديلها",
+    same("ل.٢ **ونافذةُ «اشترى» تعرف القوائم**: السوكيتُ بقائمته وملاحظته، والسليكونُ بقائمته وموديله، والركبةُ من الطبيب بموديلها، ونوعُ الطرف بمستوى البتر",
       [lf("socketType")?.options, lf("socketType")?.companion?.key, lf("siliconType")?.options, lf("kneeJointType")?.fromDoctor,
-        lf("kneeJointType")?.companion?.value, lf("prostheticType")?.options?.length],
-      [["كاربون درجة أولى", "كاربون درجة ثانية"], "socketNotes", ["قفل محوري", "فاكيوم"], true, "3R80", 7]);
+        lf("kneeJointType")?.companion?.value, lf("prostheticType")?.options],
+      [["كاربون درجة أولى", "كاربون درجة ثانية"], "socketNotes", ["قفل محوري", "فاكيوم"], true, "3R80", ["طرف فوق الركبة"]]);
     const rl1 = await sale(l.fid, { socketType: "سوكيت كربون", siliconType: "فاكيوم" });
     same("ل.٣ **و«اشترى» بسوكيتٍ بنصٍّ حرّ ⟵ ٤٠٠ يسمّيه**، ولا بيع ولا كتابةَ على الجهاز",
       [rl1.status, rl1.json?.error, (await stateOf(l.fid, l.epId)).status, (await stateOf(l.fid, l.epId)).device_specs ?? {}],
@@ -391,6 +391,13 @@ async function main() {
     const le2 = await call("PATCH", `/api/medical/exams/${lExam}`, S.doc, { caseType: "prosthetic", diagnosis: "تشخيص ثالث", prescription: { ...legacyRx, footType: "قدم مرنة" } });
     same("ل.٦ **والمعاينةُ القديمة تُعدَّل وقيمتُها الحرّة فيها ⟵ ٢٠٠**، وتغييرُها إلى نصٍّ حرٍّ آخر ⟵ ٤٠٠",
       [le1.status, le2.status, le2.json?.error], [200, 400, "اختر من القائمة: نوع القدم"]);
+    //  **نوعُ الطرف بمستوى البتر** (ملاحظةُ المالك في أوّل فحص): «طرف تحت الركبة» لمريضٍ فوق الركبة يُردّ، في المعاينة وتعديلها.
+    const lMis = await signL({ ...AKL, prostheticType: "طرف تحت الركبة", kneeJointType: "هيدروليك" });
+    const le3 = await call("PATCH", `/api/medical/exams/${lExam}`, S.doc, { caseType: "prosthetic", diagnosis: "تشخيص رابع",
+      prescription: { ...legacyRx, prostheticType: "طرف تحت الركبة" } });
+    same("ل.٧ **ونوعُ طرفٍ لا يطابق مستوى البتر ⟵ ٤٠٠** — معاينةٌ جديدة وتعديلُ القديمة، ولا معاينةَ تُضاف",
+      [lMis.status, lMis.json?.missing, le3.status, le3.json?.error, await examsOfL()],
+      [400, ["prostheticType"], 400, "اختر من القائمة: نوع الطرف الصناعي", 1]);
   } finally {
     httpServer.close();
     await cleanup();

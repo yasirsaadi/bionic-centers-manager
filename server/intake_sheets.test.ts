@@ -261,7 +261,7 @@ async function main() {
     console.log("\n── د. «لم يشترِ» والإلغاء ──");
     const d = await sheetPatient("prosthetic", "حسين");
     const d1 = await openDevice(d, "prosthetic");
-    await sign(d, "prosthetic", d1, "يحتاج طرفاً.", { ...RX, prostheticType: "طرف سايمز" });
+    await sign(d, "prosthetic", d1, "يحتاج طرفاً.", { ...RX, prostheticType: "طرف تحت الركبة" });
     const nb = await call("POST", `/api/followups/${await followupOf(d1)}/not-bought`, S.recv, { reason: "السعر مرتفع" });
     const sd = (await sheets(d, S.recv)).json?.sheets?.[0] as IntakeSheet;
     same("د.١ **«لم يشترِ» بسببه** — بلا رقم", [nb.status, sd?.decision?.kind, sd?.decision?.reason, sd?.money?.total, sheetMoneyLine(sd)],
