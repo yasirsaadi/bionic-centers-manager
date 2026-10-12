@@ -430,14 +430,26 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         return res.status(400).json({ error: "دقائقُ البند ٠–٢٤٠" });
       }
       const note = typeof req.body?.noteToSpecialist === "string" && req.body.noteToSpecialist.trim() ? req.body.noteToSpecialist.trim().slice(0, 2000) : null;
+      //  §4.dr — تمارينُ المرحلة (نُفّذ أم لا وسببُه) والمرحلةُ المختارة؛ وغيابُها من صفحةٍ أقدم لا يُفشل الجلسة.
+      let exercises: { exerciseId: number; done: boolean; note: string | null }[] | null = null;
+      if (req.body?.exercises !== undefined) {
+        if (!Array.isArray(req.body.exercises) || req.body.exercises.length > 40) return res.status(400).json({ error: "التمارينُ غير صالحة" });
+        exercises = req.body.exercises.map((x: any) => ({ exerciseId: Number(x?.exerciseId), done: x?.done === true,
+          note: typeof x?.note === "string" && x.note.trim() ? x.note.trim().slice(0, 500) : null }));
+        if (exercises!.some((x) => !Number.isInteger(x.exerciseId) || x.exerciseId <= 0)) return res.status(400).json({ error: "تمرينٌ غير صالح" });
+      }
+      const phasePosition = req.body?.phasePosition == null ? null : Number(req.body.phasePosition);
+      if (phasePosition !== null && (!Number.isInteger(phasePosition) || phasePosition < 1)) return res.status(400).json({ error: "مرحلةٌ غير صالحة" });
       const r = await exec.executeSession({
         planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s),
         canDryNeedle: l.s.permissions?.canDryNeedle === true, visitCustomDate: sessionDate === today ? null : sessionDate,
+        exercises, phasePosition, phaseManual: req.body?.phaseManual === true,
       });
       await logAudit({ entityType: "visit", entityId: r.visit.id, action: "create", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
         branchId: r.visit.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null, notes: `جلسة من خطة العلاج الطبيعي #${l.row.id}` });
       await audit(req, l.s, { entityId: l.row.id, action: "execute", branchId: l.row.branchId,
-        newValues: { sessionId: r.session.id, sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note } });
+        newValues: { sessionId: r.session.id, sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note,
+          ...(exercises ? { phasePosition: r.session.phasePosition, phaseManual: req.body?.phaseManual === true, exercises } : {}) } });
       res.json({ ...r.session, visitId: r.visit.id });
     } catch (e) { fail(res, e); }
   });
