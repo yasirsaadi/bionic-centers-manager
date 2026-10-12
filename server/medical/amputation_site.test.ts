@@ -95,8 +95,10 @@ function pin(label: string, ok: boolean) {
 //  «متعدد» رابعٌ أضافه المالك ٢٠٢٦-١٠-١٠ (§4.de) — والثلاثةُ القديمة باقيةٌ بترتيبها.
 pin("4 amputation variants (the three originals in order, then متعدد)",
   AMPUTATION_TYPE_OPTIONS.length === 4 && AMPUTATION_TYPE_OPTIONS.map((o) => o.value).join("|") === "single|double|silicone|multi");
-pin("lower list = 6 levels ending خلال الحوض",
-  LOWER_AMPUTATION_DETAILS.length === 6 && LOWER_AMPUTATION_DETAILS[5] === "خلال الحوض");
+//  «خلال الكاحل» أضافه المالك ٢٠٢٦-١٠-١٣ بعد جوبارت (§4.dw التكملة ٢) — والستُّ القديمة باقيةٌ بترتيبها.
+pin("lower list = 7 levels (خلال الكاحل after جوبارت) ending خلال الحوض",
+  LOWER_AMPUTATION_DETAILS.length === 7 && LOWER_AMPUTATION_DETAILS[1] === "خلال الكاحل" && LOWER_AMPUTATION_DETAILS[6] === "خلال الحوض"
+    && LOWER_AMPUTATION_DETAILS.filter((d) => d !== "خلال الكاحل").join("|") === "جوبارت|سايمز|تحت الركبة|خلال الركبة|فوق الركبة|خلال الحوض");
 pin("upper list = 7 levels ending خلال الكتف",
   UPPER_AMPUTATION_DETAILS.length === 7 && UPPER_AMPUTATION_DETAILS[6] === "خلال الكتف");
 //  «قدم» أضافها المالك ٢٠٢٦-١٠-١٠ (§4.de) — القائمةُ ستٌّ، والخمسُ القديمة باقيةٌ بترتيبها.

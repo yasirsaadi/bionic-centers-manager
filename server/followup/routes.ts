@@ -255,6 +255,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         ...ds.saleSpecFieldExtras(kind, merged, x.key),
       })),
       missing: ds.missingSaleSpecs(f.serviceType, merged),
+      //  **ونوعُ الطرف مبنيّاً** (§4.dw التكملة ٢) — يُعرض ولا يُطلب: الاسمُ نفسُه في الاستمارة وأمر التصنيع.
+      typeName: kind === "prosthetic" ? (await import("@shared/limb_specs")).prostheticTypeText(merged) || null : null,
       //  **وأطرافُه المصنوعة** (§4.de (ب)) — لسعرٍ لكلّ طرف أو سعرٍ واحد في نافذة البيع.
       ...ds.saleLimbsFor(f.serviceType, merged),
     };

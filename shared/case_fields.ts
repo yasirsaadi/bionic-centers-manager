@@ -47,9 +47,9 @@ export const AMPUTATION_TYPE_OPTIONS = [
   { value: "multi", label: "متعدد (أطراف مختلفة)" },
 ] as const;
 
-/** Lower-limb amputation levels — verbatim, value === label. */
+/** Lower-limb amputation levels — verbatim, value === label. «خلال الكاحل» أضافه المالك ٢٠٢٦-١٠-١٣ (§4.dw). */
 export const LOWER_AMPUTATION_DETAILS = [
-  "جوبارت", "سايمز", "تحت الركبة", "خلال الركبة", "فوق الركبة", "خلال الحوض",
+  "جوبارت", "خلال الكاحل", "سايمز", "تحت الركبة", "خلال الركبة", "فوق الركبة", "خلال الحوض",
 ];
 
 /** Upper-limb amputation levels — verbatim, value === label. */

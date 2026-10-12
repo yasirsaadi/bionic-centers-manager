@@ -28,7 +28,7 @@ import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { MEDICAL_SPECIALTIES, isMedicalSpecialty, type MedicalSpecialty } from "@shared/medical";
 import { normalizeExtraComponents } from "@shared/prosthetic_parts";
 import { PROSTHETIC_SPECS, SUPPORT_SPECS, buildAmputationSite, serializeInjuries } from "@shared/case_fields";
-import { LIMB_SPEC_KEYS, limbSpecFlat } from "@shared/limb_specs";
+import { LIMB_SPEC_KEYS, limbSpecFlat, prostheticTypeText } from "@shared/limb_specs";
 import { storage } from "../storage";
 import { activePatientDrizzle } from "../patients/active_patient";
 import { scopeReachesPatient, branchOrPatientAccessSql } from "../patients/branch_access";
@@ -846,13 +846,16 @@ export async function applyPrescription(
   };
 
   if (caseType === "prosthetic") {
-    for (const f of PROSTHETIC_SPECS) put(f.key, rxSpecValue(prescription, f.key));
-    put("injurySide", prescription.injurySide);
     // The amputation builder's structured parts live in the prescription; the
     // legacy column stores the COMPOSED string, in the exact format the
     // registration form has always produced — EditPatient's parser and the
     // expert order page keep reading doctor-written values unchanged.
     const site = buildAmputationSite(prescription);
+    for (const f of PROSTHETIC_SPECS) {
+      //  **ونوعُ الطرف مبنيّاً** (§4.dw التكملة ٢) — الاسمُ نفسُه الذي تقوله الاستمارةُ وأمرُ التصنيع، لا خانةٌ يختارها الطبيب.
+      put(f.key, f.key === "prostheticType" ? prostheticTypeText(prescription, site) : rxSpecValue(prescription, f.key));
+    }
+    put("injurySide", prescription.injurySide);
     if (site) patch.amputationSite = site;
     // Raise the legacy flag too. `syncPatientCases` would infer the case from
     // the detail columns alone, but a great deal of UI still reads the FLAG:

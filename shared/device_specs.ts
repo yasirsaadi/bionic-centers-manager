@@ -12,10 +12,11 @@
 // والبترُ من معاينة الجهاز نفسِه (`amputationSite` في مواصفاته)؛ ومعاينةٌ بلا بترٍ مسجَّل ⟵ الخمسُ كما كانت.
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, type SpecField } from "./case_fields";
 import {
-  LIMB_SPEC_STORE_KEYS, NOT_APPLICABLE_SPEC, isSlotKey, limbSlotsOfSite, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel,
+  LIMB_SPEC_STORE_KEYS, NOT_APPLICABLE_SPEC, isDerivedProstheticType, isSlotKey, limbSlotsOfSite, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel,
   specChoiceProblems, specChoicesForKey, splitSpecKey,
 } from "./limb_specs";
 import { companionOf } from "./device_spec_options";
+import type { LimbSlot } from "./limb_specs";
 
 export const NOT_APPLICABLE = NOT_APPLICABLE_SPEC;
 
@@ -81,14 +82,16 @@ export function saleSpecFieldsFor(kind: DeviceKind, merged: Record<string, unkno
   if (kind !== "prosthetic") return saleSpecFields(kind).map((f) => ({ key: f.key, label: f.label }));
   const fields = PROSTHETIC_SALE_ORDER.map(prostheticSaleField).filter((f): f is SpecField => Boolean(f));
   const view = limbSpecView(merged);
+  //  **ونوعُ الطرف مبنيٌّ لا يُطلب** (§4.dw التكملة ٢) — من المستوى والركبة والقدم والسوكيت؛ ويُطلب للسليكونيّ وللمستوى المجهول كما كان.
+  const asked = (key: string, slots: readonly LimbSlot[]) => key !== "prostheticType" || !slots.every(isDerivedProstheticType);
   if (view.mode !== "split") {
     const keys = view.slots[0].keys;
     const both = view.slots.length > 2 ? "للأطراف كلّها" : "للطرفين";
-    return fields.filter((f) => keys.includes(f.key))
+    return fields.filter((f) => keys.includes(f.key) && asked(f.key, view.slots))
       .map((f) => ({ key: f.key, label: view.mode === "identical" ? `${f.label} — ${both}` : f.label }));
   }
   //  **والطرفُ الذي لا يُصنع في هذا الطلب لا يُطلب له شيء** (`limbsNotMade` — `view.slots` المصنوعةُ وحدها).
-  return view.slots.flatMap((s) => fields.filter((f) => s.keys.includes(f.key))
+  return view.slots.flatMap((s) => fields.filter((f) => s.keys.includes(f.key) && asked(f.key, [s]))
     .map((f) => ({ key: sideSpecKey(f.key, s.key!), label: saleSpecLabel(kind, sideSpecKey(f.key, s.key!)) })));
 }
 
