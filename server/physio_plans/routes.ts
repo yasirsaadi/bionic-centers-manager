@@ -232,13 +232,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!l) return;
       if (!canWritePlans(l.s) && !canApprovePlans(l.s)) return res.status(403).json({ error: "لكاتبي الخطط والمشرف والمسؤول" });
       if (isPlanClosed(l.row.status)) return res.status(409).json({ error: "الخطّةُ منتهية" });
-      const r = await store.remindPlanSettings(l.row, actor(l.s));
-      if (r.sent) {
-        await logAudit({ entityType: "physio_protocol", entityId: l.row.protocolId!, action: "remind_settings", userId: l.s.userId ?? null,
-          userName: l.s.displayName ?? null, newValues: { planId: l.row.id, to: r.to, gaps: r.gaps.map((g) => ({ code: g.code, missing: g.missing.map((m) => m.ar) })) },
-          notes: `تذكيرُ المشرف بإعدادات الجهاز — من خطّة #${l.row.id}`, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
-      }
-      res.json(r);
+      //  الإرسالُ وسطرُ التدقيق في معاملةٍ واحدة تحت قفل البروتوكول (`remindPlanSettings`).
+      res.json(await store.remindPlanSettings(l.row, actor(l.s), { ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null }));
     } catch (e) { fail(res, e); }
   });
 

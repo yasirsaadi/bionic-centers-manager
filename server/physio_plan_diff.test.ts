@@ -48,6 +48,8 @@ const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toStr
 async function cleanup() {
   const pts = (await q(`SELECT id FROM patients WHERE referral_source = $1`, [MARK])).rows.map((r) => r.id);
   await q(`DELETE FROM staff_notification_outbox WHERE text LIKE '%${MARK}%'`);
+  await q(`DELETE FROM staff_notification_prefs WHERE user_id = ANY($1::int[])`, [IDS]);
+  await q(`DELETE FROM staff_telegram_links WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM physio_assessments WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM physio_plans WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
@@ -395,8 +397,8 @@ async function main() {
     same("ت.٤ **«ذكّر سليم الآن»** يصله وحده في تلغرامه بالجهاز وخاناته والبروتوكول ومَن ذكّر، وبسطر تدقيقٍ على البروتوكول — والمنفّذُ لا يذكّر",
       [denied.status, sent.status, sent.json?.sent, sent.json?.to, ob.length, ob[0]?.event_type, ob[0]?.target_user_ids?.map(Number), ob[0]?.link_path,
         /إعداداتُ الجهاز ناقصةٌ/.test(ob[0]?.text ?? ""), /ذكّرك مصطفى/.test(ob[0]?.text ?? ""), /التردّد/.test(ob[0]?.text ?? ""),
-        auditRows.length, Number(auditRows[0]?.entity_id)],
-      [403, 200, true, ["سليم"], 1, "physio_plan_pending", [SUP], `/physio/protocols/${kneeId}`, true, true, true, 1, kneeId]);
+        auditRows.length, Number(auditRows[0]?.entity_id), sent.json?.viaTelegram],
+      [403, 200, true, ["سليم"], 1, "physio_plan_pending", [SUP], `/physio/protocols/${kneeId}`, true, true, true, 1, kneeId, false]);
     const again = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec);
     same("ت.٥ **وضغطةٌ ثانية خلال عشر دقائق لا تُرسل ثانيةً**", [again.status, again.json?.sent, (await outboxOf()).length], [200, false, 1]);
     const seenPlan = (await getPlan(p5)).settingsGaps?.reminder;
@@ -409,12 +411,38 @@ async function main() {
     await call("PUT", `/api/physio/plans/${p6}`, S.spec, planBody(g10, { devices: planBody(g10).devices.filter((d: any) => d.deviceId !== dev.shockwaves) }));
     same("ت.٨ **وخطّةٌ أُزيل منها الجهاز** لا تذكيرَ فيها", [(await getPlan(p6)).settingsGaps ?? null, (await call("POST", `/api/physio/plans/${p6}/remind-settings`, S.spec)).status],
       [null, 409]);
+    //  مراجعةُ Codex: ضغطتان متزامنتان ⟵ تذكيرٌ واحد (قفلُ البروتوكول)، وتلغرامٌ لمن ربطه؛ وفشلُ صفّ الإرسال لا يُقال «أُرسل» ولا يُسجَّل.
+    const ageReminders = () => q(`UPDATE audit_log SET created_at = created_at - interval '11 minutes' WHERE entity_type = 'physio_protocol' AND action = 'remind_settings'`);
+    await ageReminders();
+    await q(`INSERT INTO staff_telegram_links (user_id, chat_id) VALUES ($1, '555') ON CONFLICT DO NOTHING`, [SUP]);
+    await q(`INSERT INTO staff_notification_prefs (user_id, event_type) VALUES ($1, 'physio_plan_pending') ON CONFLICT DO NOTHING`, [SUP]);
+    //  تسابقٌ حتميّ: معاملةٌ مفتوحة تحبس الكتابةَ في صندوق الإرسال، فتصل الضغطتان معاً إلى لحظة الإرسال — ثمّ تُفتح.
+    const holder = await pool.connect();
+    await holder.query("BEGIN");
+    await holder.query("LOCK TABLE staff_notification_outbox IN EXCLUSIVE MODE");
+    const racing = Promise.all([1, 2].map(() => call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec)));
+    await new Promise((r) => setTimeout(r, 700));
+    await holder.query("COMMIT");
+    holder.release();
+    const both = await racing;
+    same("ت.٩ **ضغطتان متزامنتان ترسلان تذكيراً واحداً** — والثانيةُ تنتظر الأولى فتجدها؛ ومَن ربط تلغرامَه يُقال إنّه يصله فيه",
+      [both.map((x) => x.status), both.map((x) => x.json?.sent).sort(), (await outboxOf()).length, both.find((x) => x.json?.sent)?.json?.viaTelegram],
+      [[200, 200], [false, true], 2, true]);
+    await ageReminders();
+    const auditBefore = Number((await q(`SELECT count(*) FROM audit_log WHERE entity_type = 'physio_protocol' AND action = 'remind_settings'`)).rows[0].count);
+    await q(`ALTER TABLE staff_notification_outbox RENAME TO staff_notification_outbox_x`);
+    const broken = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec);
+    await q(`ALTER TABLE staff_notification_outbox_x RENAME TO staff_notification_outbox`);
+    const auditAfter = Number((await q(`SELECT count(*) FROM audit_log WHERE entity_type = 'physio_protocol' AND action = 'remind_settings'`)).rows[0].count);
+    const retry = await call("POST", `/api/physio/plans/${p5}/remind-settings`, S.spec);
+    same("ت.١٠ **وصفُّ إرسالٍ لم يُكتب لا يُقال «أُرسل»** ولا يُسجَّل ولا يحجب المحاولةَ التالية",
+      [broken.status, auditAfter - auditBefore, retry.status, retry.json?.sent, (await outboxOf()).length], [503, 0, 200, true, 3]);
     const full3 = (await call("GET", `/api/physio/protocols/${kneeId}`, S.sup)).json;
     const filledBody = protoBody(full3);
     filledBody.devices = filledBody.devices.map((d: any) => (d.deviceId === dev.shockwaves
       ? { ...d, params: { ...(d.params ?? {}), mode: "radial", pressureBar: "2.5", frequencyHz: "8", impulses: "2000" } } : d));
     const fill = await call("PUT", `/api/physio/protocols/${kneeId}`, S.sup, filledBody);
-    same("ت.٩ **وحين يملؤها سليم في البروتوكول تختفي اللافتة** من الخطّة ومن صفحته",
+    same("ت.١١ **وحين يملؤها سليم في البروتوكول تختفي اللافتة** من الخطّة ومن صفحته",
       [fill.status, (await getPlan(p5)).settingsGaps ?? null, (await call("GET", `/api/physio/protocols/${kneeId}`, S.sup)).json?.settingsReminder ?? null], [200, null, null]);
   } finally {
     await cleanup();

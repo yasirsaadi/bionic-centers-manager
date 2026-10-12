@@ -27,9 +27,12 @@ export function PlanSettingsReminder({ planId, protocolId, view, onSent }: { pla
   const names = view.supervisors.length ? view.supervisors.join("، ") : "المشرف العام";
   const remind = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/physio/plans/${planId}/remind-settings`, {})).json(),
-    onSuccess: (r: { sent: boolean; to: string[] }) => {
+    onSuccess: (r: { sent: boolean; to: string[]; viaTelegram: boolean }) => {
+      //  ما يُقال هو ما وقع: تلغرامٌ لمن ربطه وفعّل النوع، وإلّا صفحةُ البروتوكول وحدها — فتُذكِّره بنفسك أيضاً.
       toast(r.sent
-        ? { title: `أُرسل التذكير إلى ${r.to.join("، ")}`, description: "يصله في تلغرام، ويراه في صفحة البروتوكول." }
+        ? { title: `سُجّل التذكير لـ${r.to.join("، ")}`, description: r.viaTelegram
+          ? "يصله في تلغرام، ويراه في صفحة البروتوكول."
+          : "لم يربط تلغرامَ التنبيهات — يراه في صفحة البروتوكول وحدها؛ فأخبره أيضاً." }
         : { title: "ذُكِّر قبل دقائق", description: "لا يُرسَل تذكيرٌ ثانٍ للبروتوكول نفسِه خلال عشر دقائق." });
       onSent();
     },
