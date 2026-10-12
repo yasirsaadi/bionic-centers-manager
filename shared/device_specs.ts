@@ -12,8 +12,10 @@
 // والبترُ من معاينة الجهاز نفسِه (`amputationSite` في مواصفاته)؛ ومعاينةٌ بلا بترٍ مسجَّل ⟵ الخمسُ كما كانت.
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, type SpecField } from "./case_fields";
 import {
-  LIMB_SPEC_KEYS, NOT_APPLICABLE_SPEC, isSlotKey, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel, splitSpecKey,
+  LIMB_SPEC_STORE_KEYS, NOT_APPLICABLE_SPEC, isSlotKey, limbSlotsOfSite, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel,
+  slotKindForKey, specChoiceProblems, splitSpecKey,
 } from "./limb_specs";
+import { companionOf, specChoices } from "./device_spec_options";
 
 export const NOT_APPLICABLE = NOT_APPLICABLE_SPEC;
 
@@ -110,11 +112,11 @@ export function missingSaleSpecs(kind: DeviceKind, merged: Record<string, string
 export function cleanSaleSpecsInput(input: unknown, kind: DeviceKind): Record<string, string> {
   const out: Record<string, string> = {};
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
-  //  للأطراف: خاناتُ الطرف كلُّها، وبمفتاح أيّ طرفٍ صالح (`footType:right`، `handType:left-upper`).
+  //  للأطراف: خاناتُ الطرف كلُّها وحقولُها الحرّة (§4.dw — «موديل الركبة» …)، وبمفتاح أيّ طرفٍ صالح (`footType:right`، `handType:left-upper`).
   const allowed = (k: string) => {
     if (kind !== "prosthetic") return SALE_REQUIRED_SPECS[kind].includes(k);
     const { base, side } = splitSpecKey(k);
-    return LIMB_SPEC_KEYS.includes(base) && (side === null ? base === k : isSlotKey(side));
+    return LIMB_SPEC_STORE_KEYS.includes(base) && (side === null ? base === k : isSlotKey(side));
   };
   for (const [k, raw] of Object.entries(input as Record<string, unknown>)) {
     if (!allowed(k)) continue;
@@ -128,3 +130,32 @@ export function saleSpecsMessage(kind: DeviceKind, missing: string[]): string {
   const labels = missing.map((k) => saleSpecLabel(kind, k));
   return `أكمل مواصفات الجهاز قبل «اشترى»: ${labels.join("، ")} — واكتب «${NOT_APPLICABLE}» لما لا يخصّ هذا الجهاز`;
 }
+
+/**
+ * **ما يُكتب عند «اشترى» من قائمته** (§4.dw): خاناتُ الطرف التي يملؤها الاستعلاماتُ بغير قائمتها — مفاتيحُها. نوعُ الطرف من بتر هذا الجهاز
+ * (`merged.amputationSite`)، وما حُفظ على الجهاز من قبل (`stored`) يُقبل كما هو. وللمساند لا قائمة.
+ */
+export function saleSpecChoiceProblems(
+  kind: DeviceKind, incoming: Record<string, string>, merged: Record<string, unknown>, stored?: Record<string, unknown> | null,
+): string[] {
+  if (kind !== "prosthetic") return [];
+  return specChoiceProblems(incoming, limbSlotsOfSite(merged.amputationSite), stored ?? null);
+}
+
+/**
+ * **قائمةُ خانةٍ في نافذة «اشترى» وحقلُها الحرّ** (§4.dw) — `options` (`null` نصٌّ حرّ) بنوع طرفها، و`companion` مفتاحُه بجهة الخانة وعنوانُه وقيمتُه.
+ */
+export function saleSpecFieldExtras(kind: DeviceKind, merged: Record<string, unknown>, key: string): {
+  options: string[] | null; companion: { key: string; label: string; value: string | null } | null;
+} {
+  if (kind !== "prosthetic") return { options: null, companion: null };
+  const { base, side } = splitSpecKey(key);
+  const opts = specChoices(base, slotKindForKey(limbSlotsOfSite(merged.amputationSite), key));
+  const c = companionOf(base);
+  const cKey = c ? (side ? sideSpecKey(c.key, side) : c.key) : null;
+  return {
+    options: opts ? [...opts] : null,
+    companion: c && cKey ? { key: cKey, label: c.label, value: specResolved(merged, cKey) || null } : null,
+  };
+}
+

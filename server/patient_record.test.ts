@@ -169,14 +169,14 @@ async function main() {
   }
   const openDevice = async (pid: number, requestedItem = "full_device") =>
     Number((await call("POST", `/api/patients/${pid}/device-episodes`, S.recv, { serviceType: "prosthetic", requestedItem, servicePath: "exam" })).json?.id);
-  const RX = { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف سفلي", kneeJointType: "لا ينطبق" };
+  const RX = { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف تحت الركبة", kneeJointType: "لا ينطبق" };
   const sign = (pid: number, ep: number) => call("POST", `/api/medical/patients/${pid}/exams`, S.doc, {
     idempotencyKey: randomUUID(), caseType: "prosthetic", deviceEpisodeId: ep,
     chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", diagnosis: "يحتاج طرفاً.", prescription: RX,
   });
   const followupOf = async (ep: number) => Number((await q(`SELECT id FROM post_exam_followups WHERE device_episode_id = $1 ORDER BY id DESC LIMIT 1`, [ep])).rows[0]?.id);
   const sheetsOf = async (pid: number, s = S.recv) => ((await call("GET", `/api/patients/${pid}/intake-sheets`, s)).json?.sheets ?? []) as IntakeSheet[];
-  const SPECS = { socketType: "سوكيت عادي", footType: "قدم مرنة", siliconType: "لا ينطبق" };
+  const SPECS = { socketType: "كاربون درجة ثانية", footType: "أحادية المحور", siliconType: "لا ينطبق" };
 
   try {
     console.log("\n── أ. «طلب معاينة طبية» في ورقة جهازه ──");

@@ -25,7 +25,8 @@ import {
   PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, buildAmputationSite, type AmputationParts,
 } from "@shared/case_fields";
 import { mergeDeviceSpecs } from "@shared/device_specs";
-import { LIMB_SPEC_KEYS, notMadeOf, splitSpecKey } from "@shared/limb_specs";
+import { LIMB_SPEC_STORE_KEYS, notMadeOf, splitSpecKey } from "@shared/limb_specs";
+import { COMPANION_KEYS } from "@shared/device_spec_options";
 
 export type DeviceServiceType = "prosthetic" | "medical_support";
 
@@ -97,11 +98,13 @@ export function deviceSpecsFromPrescription(
   for (const f of fields) put(f.key, rx[f.key]);
   put("injurySide", rx.injurySide);
   if (serviceType === "prosthetic") {
+    //  **والحقولُ الحرّة بجانب الخانات** (§4.dw — «موديل الركبة» …) تسير معها إلى الحلقة وأمر التصنيع والاستمارة.
+    for (const k of COMPANION_KEYS) put(k, rx[k]);
     //  **ولأكثر من طرفٍ مواصفاتُ كلّ طرف** (§4.de) — `footType:right`، `handType:left-upper` بجانب العامّ، ويقرؤها `limbSpecView`؛
     //  ومعها **ما لا يُصنع في هذا الطلب** (`limbsNotMade`) فلا تُطلب له مواصفات ولا يُعرض في أمر التصنيع طرفاً مصنوعاً.
     for (const [k, v] of Object.entries(rx)) {
       const { base, side } = splitSpecKey(k);
-      if (side && LIMB_SPEC_KEYS.includes(base)) put(k, v);
+      if (side && LIMB_SPEC_STORE_KEYS.includes(base)) put(k, v);
     }
     const notMade = notMadeOf(rx);
     if (notMade.length) out.limbsNotMade = notMade.join(",");

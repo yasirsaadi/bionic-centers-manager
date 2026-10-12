@@ -55,6 +55,8 @@ import {
 } from "@shared/lock_conflict";
 import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
 import { prepareExamSheet, applyExamSheet, physioOnsetAtSigning } from "./exam_sheet_edit";
+import { limbSlots, specChoiceMessage, specChoiceProblems } from "@shared/limb_specs";
+import type { AmputationParts } from "@shared/case_fields";
 import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio_assessment_input";
 
 type Req = any;
@@ -662,6 +664,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  ══ **تعديلُ الطبيب لحقول الاستعلامات على الاستمارة** (§4.cq، ٢ب) — يُفحَص هنا قبل أيّ كتابة، ويُكتب بعد التوقيع ══
       const sheetPrep = await prepareExamSheet(patientId, caseType, req.body);
       if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
+      //  ══ **وخاناتُ الجهاز من قوائمها** (قرارُ المالك ٢٠٢٦-١٠-١٢، §4.dw) — قبل أيّ كتابة؛ والمعاينةُ الجديدة لا تحمل قديماً ══
+      const specBad = caseType === "prosthetic" ? specChoiceProblems(prescription, limbSlots(prescription as AmputationParts)) : [];
+      if (specBad.length) return res.status(400).json({ error: specChoiceMessage(specBad), missing: specBad, code: "spec_choice_invalid" });
       //  ══ **والتقييمُ الأوّليّ للعلاج الطبيعي** (§4.da) — يُفحَص هنا قبل أيّ كتابة، ويُختَم مع المعاينة نفسِها ══
       const assessPrep = prepareAssessmentForCreate(caseType, req.body);
       if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });
@@ -1085,6 +1090,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  **وتعديلُ الاستمارة يُفحَص قبل أيّ كتابة** — كالتوقيع (§4.cq، ٢ب). وصاحبُ التنقيح هو مَن يصحّح: الطبيبُ أو المديرُ أو المسؤول.
       const sheetPrep = await prepareExamSheet(exam.patientId, caseType, req.body);
       if (!sheetPrep.ok) return res.status(400).json({ error: sheetPrep.error, missing: sheetPrep.missing, code: "exam_sheet_invalid" });
+      //  **وخاناتُ الجهاز من قوائمها** (§4.dw) — وما كان في المعاينة قبل التعديل يبقى مقبولاً (ملفٌّ قديمٌ يُعدَّل وهو فيه).
+      const specBad = caseType === "prosthetic"
+        ? specChoiceProblems(prescription, limbSlots(prescription as AmputationParts), (exam.prescription ?? {}) as Record<string, unknown>) : [];
+      if (specBad.length) return res.status(400).json({ error: specChoiceMessage(specBad), missing: specBad, code: "spec_choice_invalid" });
       //  **والتقييمُ الأوّليّ** (§4.da) — قبل أيّ كتابة كالتوقيع. الغيابُ يُبقي المخزَّن.
       const assessPrep = prepareAssessmentForRevise(caseType, req.body, exam.assessment ?? null);
       if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });

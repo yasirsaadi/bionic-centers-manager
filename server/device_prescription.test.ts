@@ -4,7 +4,7 @@
 // ══ الواقعةُ المُعادُ إنتاجُها على الأساس (64a8bcbd) ═════════════════════
 // وصفةُ الطبيب تُكتب عند كلّ توقيعٍ على أعمدة صفّ المريض الواحدة، وكلُّ
 // قراءةٍ تصنيعية كانت تقرأ تلك الأعمدة: بعد معاينة الجهاز B صارت صفحةُ أمر
-// A تعرض نوعَ B وجهتَه، وقائمةُ الأوامر تعرض «نوع-B» على أمر A، ومعاينةُ
+// A تعرض نوعَ B وجهتَه، وقائمةُ الأوامر تعرض «طرف فوق الركبة» على أمر A، ومعاينةُ
 // مسندٍ تقلب جهةَ أمر الطرف، وبيعُ B يكتب مواصفاتِ B في تفاصيل الحالة.
 //
 // يُشغَّل على Postgres محلّي: DATABASE_URL=... npx tsx server/device_prescription.test.ts
@@ -17,8 +17,8 @@ import { registerRoutes } from "./routes";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
-  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
-  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+  prostheticType: "طرف خلال الركبة", socketType: "كاربون درجة أولى", kneeJointType: "لا ينطبق",
+  footType: "أحادية المحور", siliconType: "لا ينطبق", supportType: "مسند اختبار",
 };
 
 
@@ -49,12 +49,12 @@ const S = {
 type Svc = "prosthetic" | "medical_support";
 
 const A_RX = {
-  prostheticType: "نوع-A", siliconType: "سليكون-A", footType: "قدم-A", kneeJointType: "ركبة-A",
+  prostheticType: "طرف تحت الركبة", siliconType: "قفل محوري", footType: "ثابتة", kneeJointType: "مقفول",
   injurySide: "يمين", amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة",
 };
 const A_SITE = "احادي - طرف سفلي - يمين - تحت الركبة";
 const B_RX = {
-  prostheticType: "نوع-B", footType: "قدم-B", kneeJointType: "ركبة-B",
+  prostheticType: "طرف فوق الركبة", footType: "كاربون رباعية المحاور", kneeJointType: "هيدروليك",
   injurySide: "يسار", amputationType: "single", singleLimb: "lower", singleSide: "left", singleDetail: "فوق الركبة",
 };
 const B_SITE = "احادي - طرف سفلي - يسار - فوق الركبة";
@@ -228,27 +228,27 @@ async function main() {
       same("١. صفحةُ أمر A تعرض مواصفاتِ معاينته هو — والمصدرُ مُعلَن", stripExam(specsOf(d0)), expectA);
       same("   ومعرّفُ المعاينة الحاكمة", specsOf(d0).examId, ex1);
       same("   وهويّةُ الجهاز على الأمر", [d0.body?.order?.deviceEpisodeId, d0.body?.order?.sequenceNumber], [A, 1]);
-      same("٢. وقائمةُ الأوامر تسمّي نوعَ A", await listItem(woA), { itemType: "نوع-A" });
+      same("٢. وقائمةُ الأوامر تسمّي نوعَ A", await listItem(woA), { itemType: "طرف تحت الركبة" });
       same("٣. وتفاصيلُ الحالة لُقطت من معاينة A لا من أعمدة المريض",
         [(await caseDetails(p, "prosthetic")).prostheticType, (await caseDetails(p, "prosthetic")).amputationSite,
-          (await caseDetails(p, "prosthetic")).footType], ["نوع-A", A_SITE, "قدم-A"]);
+          (await caseDetails(p, "prosthetic")).footType], ["طرف تحت الركبة", A_SITE, "ثابتة"]);
 
       const B = await openEpisode(p, "prosthetic", "socket");
       await signExam(p, S.doc2, "prosthetic", B, B_RX);
       same("٤. أعمدةُ المريض المشتركة صارت لِـB (كما كانت دائماً)",
-        [(await patientCols(p)).prosthetic_type, (await patientCols(p)).injury_side], ["نوع-B", "يسار"]);
+        [(await patientCols(p)).prosthetic_type, (await patientCols(p)).injury_side], ["طرف فوق الركبة", "يسار"]);
       same("٥. **وأمرُ A لا يتغيّر بمعاينة B**", stripExam(specsOf(await detail(woA))), expectA);
-      same("٦. **وقائمةُ الأوامر تبقى على نوع A**", await listItem(woA), { itemType: "نوع-A" });
-      same("٧. وتفاصيلُ الحالة لم تُمَسّ بالتوقيع وحده", (await caseDetails(p, "prosthetic")).prostheticType, "نوع-A");
+      same("٦. **وقائمةُ الأوامر تبقى على نوع A**", await listItem(woA), { itemType: "طرف تحت الركبة" });
+      same("٧. وتفاصيلُ الحالة لم تُمَسّ بالتوقيع وحده", (await caseDetails(p, "prosthetic")).prostheticType, "طرف تحت الركبة");
 
       const woB = await sell(B, 300_000);
       same("٨. أمرُ B على مواصفات B", stripExam(specsOf(await detail(woB))), expectB);
       same("٩. **وأمرُ A ما زال على A بعد بيع B**", stripExam(specsOf(await detail(woA))), expectA);
-      same("١٠. والقائمةُ تفرّق بينهما", [await listItem(woA), await listItem(woB)], [{ itemType: "نوع-A" }, { itemType: "نوع-B" }]);
+      same("١٠. والقائمةُ تفرّق بينهما", [await listItem(woA), await listItem(woB)], [{ itemType: "طرف تحت الركبة" }, { itemType: "طرف فوق الركبة" }]);
       //  الحالةُ خيطٌ واحد لكلّ (مريض، اختصاص) — تفاصيلُها لقطةُ **آخر بيع من
       //  معاينة جهازه هو**؛ الحقيقةُ لكلّ جهازٍ على أمره وحلقته لا هنا.
       same("١١. وتفاصيلُ الحالة لقطةُ آخر بيع — من معاينة B هو",
-        [(await caseDetails(p, "prosthetic")).prostheticType, (await caseDetails(p, "prosthetic")).amputationSite], ["نوع-B", B_SITE]);
+        [(await caseDetails(p, "prosthetic")).prostheticType, (await caseDetails(p, "prosthetic")).amputationSite], ["طرف فوق الركبة", B_SITE]);
     }
 
     // ══ ب. عُوين A ثمّ B ثمّ بِيع A — الالتقاطُ من معاينة A لا من الأعمدة ═══
@@ -259,14 +259,14 @@ async function main() {
       await signExam(p, S.doc, "prosthetic", A, A_RX);
       const B = await openEpisode(p, "prosthetic", "socket");
       await signExam(p, S.doc2, "prosthetic", B, B_RX);
-      same("١٢. الإعداد: الأعمدةُ على B قبل بيع A", (await patientCols(p)).prosthetic_type, "نوع-B");
+      same("١٢. الإعداد: الأعمدةُ على B قبل بيع A", (await patientCols(p)).prosthetic_type, "طرف فوق الركبة");
       const woA = await sell(A);
       const cd = await caseDetails(p, "prosthetic");
       same("١٣. **تفاصيلُ الحالة من معاينة A** — لا من الأعمدة التي كتبتها B",
         [cd.prostheticType, cd.footType, cd.kneeJointType, cd.injurySide, cd.amputationSite, cd.siliconType],
-        ["نوع-A", "قدم-A", "ركبة-A", "يمين", A_SITE, "سليكون-A"]);
+        ["طرف تحت الركبة", "ثابتة", "مقفول", "يمين", A_SITE, "قفل محوري"]);
       same("١٤. وصفحةُ أمر A على A", stripExam(specsOf(await detail(woA))), expectA);
-      same("١٥. والقائمة", await listItem(woA), { itemType: "نوع-A" });
+      same("١٥. والقائمة", await listItem(woA), { itemType: "طرف تحت الركبة" });
       const woB = await sell(B, 300_000);
       same("١٦. ثمّ بيعُ B على B وA كما هو", [stripExam(specsOf(await detail(woB))), stripExam(specsOf(await detail(woA)))], [expectB, expectA]);
     }
@@ -302,10 +302,10 @@ async function main() {
       await signExam(p, S.doc2, "prosthetic", B, B_RX);
       const woB = await sell(B, 300_000);
       const patch = await http("PATCH", `/api/medical/exams/${ex1}`, S.doc, {
-        diagnosis: "تصحيح", prescription: { ...A_RX, footType: "قدم-A2" },
+        diagnosis: "تصحيح", prescription: { ...A_RX, footType: "سايمز كاربون" },
       });
       same("٢١. صاحبُ المعاينة يصحّح وصفته", patch.status, 200);
-      same("٢٢. **فيتبعه أمرُ A** (المعاينةُ نفسُها بنسختها المحفوظة)", specsOf(await detail(woA)).footType, "قدم-A2");
+      same("٢٢. **فيتبعه أمرُ A** (المعاينةُ نفسُها بنسختها المحفوظة)", specsOf(await detail(woA)).footType, "سايمز كاربون");
       same("٢٣. وأمرُ B لا يُمَسّ", stripExam(specsOf(await detail(woB))), expectB);
     }
 
@@ -336,7 +336,7 @@ async function main() {
       check(!/"cost"|"totalcost"|"approvedprice"|"agreedcost"|"remaining"|"maintenancefinalprice"|"maintenanceoriginalprice"/.test(raw), "٢٨. وبلا مبلغٍ واحد في الاستجابة", raw.slice(0, 200));
       const my = await http("GET", "/api/manufacturing/my-orders", S.expert);
       const mine = (Array.isArray(my.body) ? my.body : []).find((o: any) => Number(o.id) === woA);
-      same("٢٩. وقائمتُه تسمّي نوعَ جهازه من معاينته", mine?.itemType ?? null, "نوع-A");
+      same("٢٩. وقائمتُه تسمّي نوعَ جهازه من معاينته", mine?.itemType ?? null, "طرف تحت الركبة");
     }
 
     // ══ ز. المساند: بيعُ A بعد معاينة B ═══════════════════════════════════
@@ -391,14 +391,14 @@ async function main() {
       const p = await mkPatient("ط", ["prosthetic"]);
       await q(`UPDATE patients SET prosthetic_type='من الملف', foot_type='قدمُ الملفّ', injury_side='يسار' WHERE id=$1`, [p]);
       const A = await openEpisode(p, "prosthetic");
-      await signExam(p, S.doc, "prosthetic", A, { prostheticType: "نوع-A" } as any);
+      await signExam(p, S.doc, "prosthetic", A, { prostheticType: "طرف تحت الركبة" } as any);
       const woA = await sell(A);
       //  **وبِيع قبل ترحيل ١١٥** — بلا خاناتٍ محفوظة من البيع (القسمُ ح أعلاه).
       await q(`UPDATE patient_device_episodes SET device_specs = '{}'::jsonb WHERE id = $1`, [A]);
       const d = await detail(woA);
       const s = specsOf(d);
       same("٣٦. المصدرُ المعاينة، والنوعُ منها",
-        [s.source, s.prostheticType, await listItem(woA)], ["exam", "نوع-A", { itemType: "نوع-A" }]);
+        [s.source, s.prostheticType, await listItem(woA)], ["exam", "طرف تحت الركبة", { itemType: "طرف تحت الركبة" }]);
       same("٣٧. **وبطاقةُ الجهاز تقول وصفتَه وحدها** — لا تستعير",
         [s.footType ?? null, s.injurySide ?? null], [null, null]);
       //  والمقصودُ بعينه: **موقعُ البتر وجهةُ الإصابة** — ليسا من مفاتيح
@@ -412,7 +412,7 @@ async function main() {
       //  ما سكتت عنه الوصفة. والوصفةُ تعلو عليه حيث نطقت.
       const det = await caseDetails(p, "prosthetic");
       same("٣٩. **ولقطةُ البيع تُكمَل من الملفّ حين لا لبس** — والوصفةُ تعلو",
-        [det.prostheticType, det.footType, det.injurySide], ["نوع-A", "قدمُ الملفّ", "يسار"]);
+        [det.prostheticType, det.footType, det.injurySide], ["طرف تحت الركبة", "قدمُ الملفّ", "يسار"]);
     }
 
     // ══ ي. وبأكثرَ من حلقةٍ لا يُستعار شيء — الصمتُ أصدق ═══════════════════
@@ -425,12 +425,12 @@ async function main() {
       const B = await openEpisode(p, "prosthetic", "socket");
       await signExam(p, S.doc2, "prosthetic", B, B_RX);
       same("٤٠. الإعداد: عمودُ الملفّ يحمل قدمَ B", (await patientCols(p)).foot_type, B_RX.footType);
-      await signExam(p, S.doc, "prosthetic", A, { prostheticType: "نوع-A" } as any);
+      await signExam(p, S.doc, "prosthetic", A, { prostheticType: "طرف تحت الركبة" } as any);
       const woA = await sell(A);
       const det = await caseDetails(p, "prosthetic");
       same("٤١. **لقطةُ A لا تستعير قدمَ B** — ولا جهتَه",
-        [det.prostheticType, det.footType ?? null, det.injurySide ?? null], ["نوع-A", null, null]);
-      same("٤٢. وبطاقةُ A على وصفتها", specsOf(await detail(woA)).prostheticType, "نوع-A");
+        [det.prostheticType, det.footType ?? null, det.injurySide ?? null], ["طرف تحت الركبة", null, null]);
+      same("٤٢. وبطاقةُ A على وصفتها", specsOf(await detail(woA)).prostheticType, "طرف تحت الركبة");
       same("٤٣. وحلقةُ B لم تُمَسّ", (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [B]))[0].status, "examined");
     }
 
@@ -451,7 +451,7 @@ async function main() {
       const devs = (cases.body ?? []).find((c: any) => c.caseType === "prosthetic")?.devices ?? null;
       same("٤٥. **جهازان بمواصفات معاينة كلٍّ منهما** — A بنوعه وقدمه وموقع بتره، وB بنوعه",
         devs?.map((d: any) => [d.episodeId, d.sequenceNumber, d.status, d.specs?.prostheticType, d.specs?.footType, d.specs?.amputationSite ?? null]),
-        [[A, 1, "in_manufacturing", "نوع-A", "قدم-A", A_SITE], [B, 2, "in_manufacturing", B_RX.prostheticType, B_RX.footType, devs?.[1]?.specs?.amputationSite ?? null]]);
+        [[A, 1, "in_manufacturing", "طرف تحت الركبة", "ثابتة", A_SITE], [B, 2, "in_manufacturing", B_RX.prostheticType, B_RX.footType, devs?.[1]?.specs?.amputationSite ?? null]]);
       const docCases = await http("GET", `/api/patients/${p}/cases`, S.doc);
       same("٤٦. والطبيبُ يراها أيضاً (مواصفاتٌ سريرية لا مال)",
         (docCases.body ?? []).find((c: any) => c.caseType === "prosthetic")?.devices?.length ?? 0, 2);
@@ -461,7 +461,7 @@ async function main() {
       await signExam(p1, S.doc, "prosthetic", A1, A_RX);
       await sell(A1);
       const one = (await http("GET", `/api/patients/${p1}/cases`, S.admin)).body?.find((c: any) => c.caseType === "prosthetic");
-      same("٤٧. **وجهازٌ واحد يبقى كما كان** — لا قائمةَ أجهزة، ولقطتُه هي معاينتُه", [one?.devices ?? null, one?.details?.prostheticType], [null, "نوع-A"]);
+      same("٤٧. **وجهازٌ واحد يبقى كما كان** — لا قائمةَ أجهزة، ولقطتُه هي معاينتُه", [one?.devices ?? null, one?.details?.prostheticType], [null, "طرف تحت الركبة"]);
 
       //  جهازٌ لم يُبَع (ينتظر المعاينة) لا يُعدّ — والملغى كذلك.
       await openEpisode(p1, "prosthetic");

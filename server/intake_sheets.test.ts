@@ -172,11 +172,11 @@ async function main() {
     console.log("\n── أ. جهازٌ مُهدى — الورقةُ مكتملة ──");
     const a = await sheetPatient("prosthetic", "سعد");
     const aEp = await openDevice(a, "prosthetic");
-    const sa = await sign(a, "prosthetic", aEp, "جذعة تحت الركبة الأيمن بطول جيد.\nيحتاج طرفاً بسوكيت سليكون.",
-      { ...RX, prostheticType: "طرف سفلي تحت الركبة", kneeJointType: "لا ينطبق" });
+    const sa = await sign(a, "prosthetic", aEp, "جذعة تحت الركبة الأيمن بطول جيد.\nيحتاج طرفاً بكاربون درجة ثانية.",
+      { ...RX, prostheticType: "طرف تحت الركبة", kneeJointType: "لا ينطبق" });
     const sale = await call("POST", `/api/followups/${await followupOf(aEp)}/complete-sale`, S.recv, {
       originalPrice: 1_500_000, discountAmount: 1_500_000, expertUserId: EXPERT,
-      deviceSpecs: { socketType: "سوكيت سليكون", footType: "قدم كربون", siliconType: "لا ينطبق" },
+      deviceSpecs: { socketType: "كاربون درجة ثانية", footType: "كاربون رباعية المحاور", siliconType: "لا ينطبق" },
     });
     same("أ.٠ المعاينةُ والبيعُ المجانيّ يمرّان", [sa.status, sale.status], [200, 200]);
     const ra = await sheets(a, S.recv);
@@ -189,10 +189,10 @@ async function main() {
         pt?.injuryDate, pt?.generalNotes, pt?.hadPriorCenterHistory, /^WB-|^[A-Z]{2}-/.test(pt?.patientCode ?? "") || pt?.patientCode === null],
       [`سعد ${MARK}`, "بغداد", "الكرادة", "من شخص آخر", MARK, "40", "78", "172", "حادث سير", "2021-03-04", "يأتي مع ابنه", false, true]);
     same("أ.٣ **«المعاينة الطبية» من معاينة هذا الجهاز** باسم الطبيب",
-      [s1?.exam?.text, s1?.exam?.doctorName, typeof s1?.exam?.signedAt], ["جذعة تحت الركبة الأيمن بطول جيد.\nيحتاج طرفاً بسوكيت سليكون.", "د. سامر", "string"]);
+      [s1?.exam?.text, s1?.exam?.doctorName, typeof s1?.exam?.signedAt], ["جذعة تحت الركبة الأيمن بطول جيد.\nيحتاج طرفاً بكاربون درجة ثانية.", "د. سامر", "string"]);
     same("أ.٤ **خاناتُ الجهاز الخمس مدموجة** — ما كتبه الطبيبُ وما أكمله الاستعلاماتُ عند البيع",
       [s1?.specs?.prostheticType, s1?.specs?.kneeJointType, s1?.specs?.socketType, s1?.specs?.footType, s1?.specs?.siliconType, [...(s1?.filledAtSale ?? [])].sort()],
-      ["طرف سفلي تحت الركبة", "لا ينطبق", "سوكيت سليكون", "قدم كربون", "لا ينطبق", ["footType", "siliconType", "socketType"]]);
+      ["طرف تحت الركبة", "لا ينطبق", "كاربون درجة ثانية", "كاربون رباعية المحاور", "لا ينطبق", ["footType", "siliconType", "socketType"]]);
     same("أ.٥ **«مجاني» بسعره الأصليّ** — ولا دفعةَ مُخترَعة",
       [s1?.decision?.kind, s1?.money, sheetMoneyLine(s1!),
         Number((await q(`SELECT count(*) FROM payments WHERE device_episode_id = $1`, [aEp])).rows[0].count)],
@@ -224,7 +224,7 @@ async function main() {
     const c = await sheetPatient("prosthetic", "منى");
     const c1 = await openDevice(c, "prosthetic");
     await sign(c, "prosthetic", c1, "بتر تحت الركبة — طرف عادي.",
-      { ...RX, prostheticType: "طرف سفلي", socketType: "سوكيت عادي", kneeJointType: "لا ينطبق", footType: "قدم مرنة", siliconType: "سليكون طبي" });
+      { ...RX, prostheticType: "طرف تحت الركبة", socketType: "كاربون درجة ثانية", kneeJointType: "لا ينطبق", footType: "أحادية المحور", siliconType: "فاكيوم" });
     const saleC = await call("POST", `/api/followups/${await followupOf(c1)}/complete-sale`, S.recv, {
       originalPrice: 2_500_000, discountAmount: 500_000, expertUserId: EXPERT, paidNow: 500_000,
     });
@@ -261,7 +261,7 @@ async function main() {
     console.log("\n── د. «لم يشترِ» والإلغاء ──");
     const d = await sheetPatient("prosthetic", "حسين");
     const d1 = await openDevice(d, "prosthetic");
-    await sign(d, "prosthetic", d1, "يحتاج طرفاً.", { ...RX, prostheticType: "طرف علوي" });
+    await sign(d, "prosthetic", d1, "يحتاج طرفاً.", { ...RX, prostheticType: "طرف سايمز" });
     const nb = await call("POST", `/api/followups/${await followupOf(d1)}/not-bought`, S.recv, { reason: "السعر مرتفع" });
     const sd = (await sheets(d, S.recv)).json?.sheets?.[0] as IntakeSheet;
     same("د.١ **«لم يشترِ» بسببه** — بلا رقم", [nb.status, sd?.decision?.kind, sd?.decision?.reason, sd?.money?.total, sheetMoneyLine(sd)],

@@ -202,7 +202,7 @@ async function main() {
   const signProsthetic = async (pid: number, epId: number) => call("POST", `/api/medical/patients/${pid}/exams`, S.doc, {
     idempotencyKey: randomUUID(), caseType: "prosthetic", deviceEpisodeId: epId,
     chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", diagnosis: "بترٌ تحت الركبة الأيمن",
-    prescription: { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف سفلي" },
+    prescription: { amputationType: "single", singleLimb: "lower", singleSide: "right", singleDetail: "تحت الركبة", prostheticType: "طرف تحت الركبة" },
   });
 
   try {
@@ -220,7 +220,7 @@ async function main() {
     const audit2 = (await q(`SELECT notes FROM audit_log WHERE entity_type = 'patient' AND entity_id = $1 AND user_id = $2 ORDER BY id DESC LIMIT 1`, [A.pid, RECV])).rows[0];
     check(/الاسم/.test(audit2?.notes ?? "") && /كيف عرف الشخص الآخر بالمركز/.test(audit2?.notes ?? ""),
       "أ.٣ وسطرُ التدقيق يسمّي ما تغيّر بالعربية", audit2?.notes);
-    const a4 = await put(A.pid, S.recv, { name: `أحمد ${MARK}`, prostheticType: "ركبة ذكية" });
+    const a4 = await put(A.pid, S.recv, { name: `أحمد ${MARK}`, prostheticType: "طرف فوق الركبة" });
     const r4 = await row(A.pid);
     same("أ.٤ **ما يكتبه الفاحص ليس للاستعلامات** — يُردّ الطلبُ كلُّه بأسماء خاناته، ولا يُكتب الاسمُ معه",
       [a4.status, a4.json?.code, /نوع الطرف الصناعي/.test(a4.json?.message ?? ""), r4.name, r4.pt], [403, "PATIENT_FIELDS_LOCKED", true, `أحمد كريم ${MARK}`, null]);
@@ -264,10 +264,10 @@ async function main() {
     same("ب.٤ وتاريخُ الإصابة وحالتُه مقفولان معاً", [b4.status, b4b.status, (await row(A.pid)).d], [403, 403, "2021-03-04"]);
     const b5 = await put(A.pid, S.mgr, { name: `أحمد علي ${MARK}`, age: "45" });
     const b6 = await put(A.pid, S.mgrNoKey, { name: `أحمد مدير ${MARK}` });
-    const b7 = await put(A.pid, S.admin, { age: "46", prostheticType: "طرف سفلي ذكي" });
+    const b7 = await put(A.pid, S.admin, { age: "46", prostheticType: "طرف فوق الركبة" });
     const r7 = await row(A.pid);
     same("ب.٥ **مديرُ الفرع بمفتاح «تعديل مرضى» يعدّل بعد المعاينة** · وبلا مفتاح لا · والمسؤولُ يعدّل كلَّ شيء",
-      [b5.status, b6.status, b7.status, r7.name, r7.age, r7.pt], [200, 403, 200, `أحمد علي ${MARK}`, "46", "طرف سفلي ذكي"]);
+      [b5.status, b6.status, b7.status, r7.name, r7.age, r7.pt], [200, 403, 200, `أحمد علي ${MARK}`, "46", "طرف فوق الركبة"]);
     const b8 = await setItem(A.pid, A.epId, S.recv, ["full_device"]);
     same("ب.٦ **«المطلوب» بعد المعاينة ليس للاستعلامات** — والورقةُ لا تعرض زرَّه لها، وتعرضه للمدير",
       [b8.status, /المسؤولُ أو مديرُ الفرع/.test(b8.json?.message ?? ""), await sheetEditable(A.pid, A.epId, S.recv), await sheetEditable(A.pid, A.epId, S.mgr)],

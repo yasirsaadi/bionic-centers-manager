@@ -385,7 +385,7 @@ async function main() {
     const signed = await http("POST", `/api/medical/patients/${pL}/exams`, S.doctor, {
       idempotencyKey: crypto.randomUUID(),
       caseType: "prosthetic", diagnosis: "بتر تحت الركبة",
-      prescription: { prostheticType: "تحت الركبة" },
+      prescription: { prostheticType: "طرف تحت الركبة" },
     });
     same("ل. التوقيع نجح", signed.status, 200);
     same("   والمعاينة تحمل معرّف الحلقة", signed.body?.deviceEpisodeId, eL.id);
@@ -398,7 +398,7 @@ async function main() {
     same("ع. و`latestDeviceCostForEpisode` يقرأ سعر معاينتها",
       await medical.latestDeviceCostForEpisode(eL.id), 900000);
     same("ف. و`prescribedSpecsForEpisode` يقرأ وصفتها",
-      await medical.prescribedSpecsForEpisode(eL.id, "prosthetic"), { prostheticType: "تحت الركبة" });
+      await medical.prescribedSpecsForEpisode(eL.id, "prosthetic"), { prostheticType: "طرف تحت الركبة" });
     same("   ولم تعد منتظرة", await medical.getPendingForPatient(pL), []);
 
     //  والحلقة الأخرى لا ترى شيئاً من ذلك — لا رجوع إلى (مريض، اختصاص).
@@ -444,12 +444,12 @@ async function main() {
     const eV = await episodes.startDeviceEpisode({ patientId: pV, serviceType: "prosthetic", createdBy: MANAGER });
     const signV = await http("POST", `/api/medical/patients/${pV}/exams`, S.doctor, {
       idempotencyKey: crypto.randomUUID(),
-      caseType: "prosthetic", diagnosis: "تشخيص أوّل", prescription: { prostheticType: "فوق الركبة" },
+      caseType: "prosthetic", diagnosis: "تشخيص أوّل", prescription: { prostheticType: "طرف فوق الركبة" },
     });
     same("والمعاينة ارتبطت بحلقتها", signV.body?.deviceEpisodeId, eV.id);
 
     const revSame = await http("PATCH", `/api/medical/exams/${signV.body.id}`, S.doctor, {
-      caseType: "prosthetic", diagnosis: "تشخيص مصحَّح", prescription: { prostheticType: "فوق الركبة" },
+      caseType: "prosthetic", diagnosis: "تشخيص مصحَّح", prescription: { prostheticType: "طرف فوق الركبة" },
     });
     same("أ. التعديل بنفس الاختصاص ينجح", revSame.status, 200);
     same("   والرابط بالجهاز كما هو", revSame.body?.deviceEpisodeId, eV.id);

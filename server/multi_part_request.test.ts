@@ -195,7 +195,7 @@ async function main() {
     same("ج.١ الطبيبُ يرى ما طُلب على الجهاز المنتظر", (aw?.awaitingEpisodes ?? []).find((e: any) => e.id === bEp)?.extraComponents, []);
     const signed = await call("POST", `/api/medical/patients/${b}/exams`, S.doc, {
       idempotencyKey: randomUUID(), caseType: "prosthetic", deviceEpisodeId: bEp, chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-      diagnosis: "يحتاج قالباً وسليكوناً وقدماً.", prescription: { ...RX, prostheticType: "طرف سفلي" }, requestedItems: ["socket", "silicone", "foot"],
+      diagnosis: "يحتاج قالباً وسليكوناً وقدماً.", prescription: { ...RX, prostheticType: "طرف تحت الركبة" }, requestedItems: ["socket", "silicone", "foot"],
     });
     const au = (await q(`SELECT notes, new_values::jsonb AS nv FROM audit_log WHERE entity_type = 'patient_device_episode' AND entity_id = $1 AND action = 'update' ORDER BY id`, [bEp])).rows;
     same("ج.٢ **الطبيبُ يضيف السليكونَ والقدم** — يُكتب على الجهاز بسطر تدقيقٍ يقول القديمَ والجديد",
@@ -206,7 +206,7 @@ async function main() {
     const examId = Number(signed.json?.id);
     const revise = (items: string[]) => call("PATCH", `/api/medical/exams/${examId}`, S.doc, {
       caseType: "prosthetic", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "", diagnosis: "يحتاج قالباً وسليكوناً وقدماً.",
-      prescription: { ...RX, prostheticType: "طرف سفلي" }, requestedItems: items,
+      prescription: { ...RX, prostheticType: "طرف تحت الركبة" }, requestedItems: items,
     });
     const sameList = await revise(["foot", "silicone", "socket"]);
     same("ج.٤ **والقائمةُ نفسُها بترتيبٍ آخر لا تُكتب ولا تُدقَّق**",
@@ -227,7 +227,7 @@ async function main() {
       lines: [{ item: "socket", originalPrice: 500_000, discountAmount: 0 }, { item: "silicone", originalPrice: 250_000, discountAmount: 0 },
         { item: "foot", originalPrice: 150_000, discountAmount: 0 }],
       expertUserId: EXPERT,
-      deviceSpecs: { socketType: "سوكيت سليكون", kneeJointType: "لا ينطبق", footType: "قدم كربون", siliconType: "سليكون طبي" },
+      deviceSpecs: { socketType: "كاربون درجة ثانية", kneeJointType: "لا ينطبق", footType: "كاربون رباعية المحاور", siliconType: "فاكيوم" },
     });
     const orders = (await q(`SELECT id FROM prosthetic_work_orders WHERE device_episode_id = $1`, [bEp])).rows;
     const orderRes = await call("GET", `/api/manufacturing/orders/${orders[0]?.id}`, S.expert);

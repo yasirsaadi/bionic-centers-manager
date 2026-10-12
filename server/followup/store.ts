@@ -2688,6 +2688,12 @@ export async function completeReceptionSale(params: {
         const incoming = Object.fromEntries(Object.entries(ds.cleanSaleSpecsInput(params.deviceSpecs, kind)).filter(([k]) => !ds.specResolved(fromExam, k)));
         const nextStored = { ...stored, ...incoming };
         const merged = ds.mergeDeviceSpecs(fromExam, nextStored);
+        //  **وما يُملأ هنا من قائمته** (قرارُ المالك ٢٠٢٦-١٠-١٢، §4.dw) — وما حُفظ على الجهاز من قبل يبقى مقبولاً.
+        const badChoice = ds.saleSpecChoiceProblems(kind, incoming, merged, stored);
+        if (badChoice.length) {
+          const { specChoiceMessage } = await import("@shared/limb_specs");
+          throw new FollowupError(specChoiceMessage(badChoice), 400);
+        }
         const missing = ds.missingSaleSpecs(kind, merged);
         if (missing.length) throw new FollowupError(ds.saleSpecsMessage(kind, missing), 400);
         //  **والكتابةُ بعد البيع لا قبله** — قراءةٌ هنا بلا قفل، والحلقةُ تُقفَل في ترتيبها القائم داخل البيع نفسِه

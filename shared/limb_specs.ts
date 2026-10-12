@@ -17,12 +17,21 @@ import {
   FACE_PART_CODE, LOWER_AMPUTATION_DETAILS, UPPER_AMPUTATION_DETAILS, amputationLimbKey, parseAmputationSite, type AmputationParts,
 } from "./case_fields";
 import { SHEET_DEVICE_ROWS } from "./exam_sheet";
+import { COMPANION_KEYS, parentOfCompanion, specChoiceAccepted, withCompanionText } from "./device_spec_options";
 
 export const NOT_APPLICABLE_SPEC = "لا ينطبق";
 
 /** خاناتُ الطرف بترتيب الورقة — الخمسُ القديمة ومعها المرفقُ والكفّ. */
 export const LIMB_SPEC_KEYS: readonly string[] = SHEET_DEVICE_ROWS.map((r) => r.key);
 const SHEET_LABEL: Record<string, string> = Object.fromEntries(SHEET_DEVICE_ROWS.map((r) => [r.key, r.label]));
+/**
+ * **ومعها الحقولُ الحرّة بجانب الخانات** (§4.dw — «موديل الركبة» …): تُخزَّن كخاناتها، بجهتها (`kneeModel:right`) وفي «متماثلان» مرّةً،
+ * وتتبع خانتَها في كلّ شيء — تخصّ ما تخصّه، وتُحذف حين تُحذف، وتُعرض معها في سطرها لا سطراً وحدها.
+ */
+export const LIMB_SPEC_STORE_KEYS: readonly string[] = [...LIMB_SPEC_KEYS, ...COMPANION_KEYS];
+/** الخانةُ التي يتبعها مفتاحٌ مخزَّن — الحقلُ الحرّ خانتُه، والخانةُ نفسُها. */
+const ownerKey = (k: string): string => parentOfCompanion(k) ?? k;
+
 /** **الخمسُ القديمة** — لطرفٍ مجهولِ المستوى أو بلا بترٍ مسجَّل، كما كانت قبل §4.de (فلا شرطَ جديدَ على معاينةٍ قديمة). */
 export const LEGACY_LIMB_SPEC_KEYS: readonly string[] = ["prostheticType", "kneeJointType", "footType", "socketType", "siliconType"];
 
@@ -140,12 +149,18 @@ export function limbSpecValue(specs: Record<string, unknown>, key: string, slotK
   return slotKey ? (str(specs[sideSpecKey(key, slotKey)]) || str(specs[key])) : str(specs[key]);
 }
 
+/** **الحقلُ الحرّ لخانةٍ وطرف** (§4.dw) — بقراءة خانته نفسِها: مفتاحُ الطرف ثمّ العامّ. */
+function companionValue(specs: Record<string, unknown>, key: string, slotKey: string | null): string | null {
+  const c = COMPANION_KEYS.find((x) => parentOfCompanion(x) === key);
+  return c ? limbSpecValue(specs, c, slotKey) || null : null;
+}
+
 /** مفاتيحُ الأطراف المكتوبةُ في المواصفات — لكلّ خانةٍ أساسية. */
 function slotEntries(specs: Record<string, unknown>): { base: string; side: string; value: string }[] {
   const out: { base: string; side: string; value: string }[] = [];
   for (const [k, v] of Object.entries(specs)) {
     const { base, side } = splitSpecKey(k);
-    if (side && LIMB_SPEC_KEYS.includes(base) && str(v)) out.push({ base, side, value: str(v) });
+    if (side && LIMB_SPEC_STORE_KEYS.includes(base) && str(v)) out.push({ base, side, value: str(v) });
   }
   return out;
 }
@@ -206,11 +221,14 @@ const realValue = (v: string) => Boolean(v) && v !== NOT_APPLICABLE_SPEC;
 export function limbSpecView(specs: Record<string, unknown>, site?: unknown): LimbSpecView {
   const all = limbSlotsOfSite(site === undefined ? specs.amputationSite : site);
   const label = (k: string) => SHEET_LABEL[k] ?? k;
+  //  **والحقلُ الحرّ مع خانته في سطرها** (§4.dw): «هيدروليك — موديل الركبة: 3R80».
+  const shown = (k: string, slotKey: string | null) =>
+    withCompanionText(k, limbSpecValue(specs, k, slotKey) || null, companionValue(specs, k, slotKey));
   if (all.length === 1) {
     const keys = all[0].keys;
     const rows = LIMB_SPEC_KEYS
       .filter((k) => keys.includes(k) || realValue(str(specs[k])))
-      .map((k) => ({ key: k, label: label(k), value: str(specs[k]) || null }));
+      .map((k) => ({ key: k, label: label(k), value: shown(k, null) }));
     return { mode: "single", slots: all, allSlots: all, notMadeSlots: [], rows };
   }
   const skip = new Set(notMadeOf(specs));
@@ -222,7 +240,7 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
     const keys = slots[0].keys;
     const rows = LIMB_SPEC_KEYS
       .filter((k) => keys.includes(k) || realValue(str(specs[k])))
-      .map((k) => ({ key: k, label: label(k), value: str(specs[k]) || null }));
+      .map((k) => ({ key: k, label: label(k), value: shown(k, null) }));
     return { mode: "identical", slots, allSlots: all, notMadeSlots, rows };
   }
   const rows: LimbSpecRow[] = [];
@@ -230,7 +248,7 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
     const sides: LimbSpecSide[] = slots.map((s) => {
       const own = str(specs[sideSpecKey(k, s.key!)]);
       const applicable = s.keys.includes(k) || realValue(own);
-      return { side: s.key!, label: s.label, applicable, value: (applicable ? limbSpecValue(specs, k, s.key) : own) || null };
+      return { side: s.key!, label: s.label, applicable, value: applicable ? shown(k, s.key) : (own || null) };
     });
     if (!sides.some((x) => x.applicable)) continue;
     const filled = sides.filter((x) => x.applicable && x.value);
@@ -262,20 +280,21 @@ export function normalizeLimbSpecs<T extends Record<string, unknown>>(rx: T): T 
   const out: Record<string, unknown> = { ...rx };
   for (const k of Object.keys(out)) {
     const { base, side } = splitSpecKey(k);
-    if (LIMB_SPEC_KEYS.includes(base) && (side || base === k)) delete out[k];
+    if (LIMB_SPEC_STORE_KEYS.includes(base) && (side || base === k)) delete out[k];
   }
-  for (const k of LIMB_SPEC_KEYS) {
+  //  والحقلُ الحرّ (§4.dw) يتبع خانتَه: يخصّ ما تخصّه (`ownerKey`).
+  for (const k of LIMB_SPEC_STORE_KEYS) {
     const top = str(rx[k]);
     const ownOf = (key: string) => own.find((e) => e.base === k && e.side === key)?.value ?? "";
     if (!multi || identical) {
       const first = all.map((s) => (s.key ? ownOf(s.key) : "")).find(Boolean) ?? own.find((e) => e.base === k)?.value ?? "";
       const v = top || first;
-      if (v && (identical ? made[0] : all[0]).keys.includes(k)) out[k] = v;
+      if (v && (identical ? made[0] : all[0]).keys.includes(ownerKey(k))) out[k] = v;
     } else {
       for (const sl of all) {
         const isMade = made.includes(sl);
         const v = ownOf(sl.key!) || (isMade ? top : "");
-        if (v && sl.keys.includes(k)) out[sideSpecKey(k, sl.key!)] = v;
+        if (v && sl.keys.includes(ownerKey(k))) out[sideSpecKey(k, sl.key!)] = v;
       }
     }
   }
@@ -286,3 +305,43 @@ export function normalizeLimbSpecs<T extends Record<string, unknown>>(rx: T): T 
   else delete out.limbsNotMade;
   return out as T;
 }
+
+/** **نوعُ الطرف لمفتاح خانة** — خانةُ الطرف بنوع طرفها، والعامّةُ بنوع الأطراف إن اتّفق وإلّا مجهول (`null`). */
+export function slotKindForKey(slots: readonly LimbSlot[], key: string): LimbKind | null {
+  const { side } = splitSpecKey(key);
+  if (side) return slots.find((x) => x.key === side)?.kind ?? null;
+  const kinds = new Set(slots.map((x) => x.kind));
+  return kinds.size === 1 ? slots[0].kind : null;
+}
+
+/** عنوانُ مفتاح خانةٍ بطرفه — «نوع الركبة»، «نوع القدم — يسار سفلي». */
+export function specKeyLabel(k: string): string {
+  const { base, side } = splitSpecKey(k);
+  const l = SHEET_LABEL[base] ?? base;
+  return side ? `${l} — ${slotKeyLabel(side)}` : l;
+}
+
+/**
+ * **خاناتٌ كُتبت بغير قائمتها** (§4.dw) — مفاتيحُها (بجهاتها)، للفحص قبل الحفظ. `slots` أطرافُ البتر (من الوصفة `limbSlots` أو من سلسلة
+ * البتر `limbSlotsOfSite`)، فخانةُ الطرف بنوع طرفها، والعامّةُ بنوع الأطراف إن اتّفق وإلّا مجهولة. **وما كان مكتوباً من قبل يُقبل**
+ * (`previous` — المعاينةُ التي تُعدَّل، أو ما حُفظ على الجهاز): قيمةٌ قديمةٌ لخانتها، بأيّ جهة، لا تمنع تعديلاً لا يمسّها.
+ */
+export function specChoiceProblems(
+  specs: Record<string, unknown>, slots: readonly LimbSlot[], previous?: Record<string, unknown> | null,
+): string[] {
+  const before = (base: string) => new Set(Object.entries(previous ?? {})
+    .filter(([pk]) => splitSpecKey(pk).base === base).map(([, pv]) => str(pv)).filter(Boolean));
+  const out: string[] = [];
+  for (const [k, raw] of Object.entries(specs)) {
+    const { base } = splitSpecKey(k);
+    const v = str(raw);
+    if (!LIMB_SPEC_KEYS.includes(base) || !v || before(base).has(v)) continue;
+    if (!specChoiceAccepted(base, v, slotKindForKey(slots, k))) out.push(k);
+  }
+  return out;
+}
+
+/** رسالةُ الرفض — «اختر من القائمة: نوع الركبة، نوع القدم — يسار». */
+export const specChoiceMessage = (keys: readonly string[]): string =>
+  `اختر من القائمة: ${keys.map(specKeyLabel).join("، ")}`;
+

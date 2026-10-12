@@ -20,8 +20,8 @@ import { registerRoutes } from "./routes";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
-  prostheticType: "طرف اختبار", socketType: "سوكيت اختبار", kneeJointType: "لا ينطبق",
-  footType: "قدم اختبار", siliconType: "لا ينطبق", supportType: "مسند اختبار",
+  prostheticType: "طرف تحت الركبة", socketType: "كاربون درجة أولى", kneeJointType: "لا ينطبق",
+  footType: "أحادية المحور", siliconType: "لا ينطبق", supportType: "مسند اختبار",
 };
 
 
@@ -555,16 +555,18 @@ async function main() {
         //  وحده — لا وصفةَ الخاسر الذي رُدّ قبل أن يكتب (ترتيبُ الكتابة:
         //  الادّعاءُ المقفول قبل `applyDecision`، مراجعة المرحلة الأولى P1-C1).
         const [specKey, specCol] = svc === "prosthetic" ? ["footType", "foot_type"] : ["supportType", "support_type"];
+        //  وللأطراف قيمتان من قائمة القدم (§4.dw) — مختلفتان كما كانتا.
+        const [rxA, rxB] = svc === "prosthetic" ? ["ثابتة", "أحادية المحور"] : ["وصفة-الطبيب-الأول", "وصفة-الطبيب-الثاني"];
         const [r1, r2] = await Promise.all([
-          signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: "وصفة-الطبيب-الأول" } }),
-          signExam(p, S.doc2, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: "وصفة-الطبيب-الثاني" } }),
+          signExam(p, S.doc, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: rxA } }),
+          signExam(p, S.doc2, svc, { deviceEpisodeId: A.episodeId, prescription: { [specKey]: rxB } }),
         ]);
         const codes = [r1.status, r2.status].sort();
         same("٥٦. **واحدٌ يمضي والآخر يُردّ ٤٠٩ بائتاً**", [codes[0] < 300, codes[1]], [true, 409]);
         same("٥٧. ومعاينةٌ واحدة على الحلقة",
           Number((await q(`SELECT count(*)::int n FROM medical_exams WHERE device_episode_id=$1`, [A.episodeId]))[0].n), 1);
         same("٥٨. ومتابعةٌ واحدة", (await followupsOfEpisode(A.episodeId)).length, 1);
-        const winner = r1.status < 300 ? "وصفة-الطبيب-الأول" : "وصفة-الطبيب-الثاني";
+        const winner = r1.status < 300 ? rxA : rxB;
         same("٥٨.ب **وملفُّ المريض يحمل وصفةَ الفائز وحده** — الخاسرُ لم يكتب حرفاً",
           (await q<{ v: string | null }>(`SELECT ${specCol} AS v FROM patients WHERE id=$1`, [p]))[0]?.v, winner);
       }
