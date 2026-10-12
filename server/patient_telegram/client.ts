@@ -1,4 +1,4 @@
-// عميل Bot API لبوت المريض — `sendMessage` وحدها اليوم.
+// عميل Bot API لبوت المريض — `sendMessage`، و`sendDocument` لورقة تمارين البيت (§4.ds).
 //
 // ══ بلا مكتبة ═══════════════════════════════════════════════════════════
 // Bot API طلبُ HTTPS واحد، و`fetch` في Node 20 يكفيه. ومكتبة كاملة كانت
@@ -49,6 +49,42 @@ export async function sendMessage(chatId: string, text: string, replyMarkup?: un
   } catch (err) {
     const name = err instanceof Error ? err.name : "Unknown";
     console.error(`[patient-telegram] sendMessage error (${name})`);
+    return { ok: false, reason: name === "AbortError" ? "timeout" : "network" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** مهلةُ رفع الملفّ — أطولُ من الرسالة: ورقةٌ مصوَّرة ببضعة ميغابايت. */
+const DOCUMENT_TIMEOUT_MS = 60_000;
+
+/**
+ * يرسل ملفّاً (ورقةَ تمارين البيت PDF — §4.ds) مع نصٍّ تحته. **لا يرمي أبداً**، ولا يطبع خطأً خاماً (التوكن في العنوان) — كـ`sendMessage`.
+ */
+export async function sendDocument(chatId: string, bytes: Uint8Array, fileName: string, caption: string): Promise<SendResult> {
+  const config = patientBotConfig();
+  if (!config) return { ok: false, reason: "disabled" };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DOCUMENT_TIMEOUT_MS);
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    form.append("caption", caption.slice(0, 1024));
+    form.append("document", new Blob([bytes], { type: "application/pdf" }), fileName);
+    const res = await fetch(`https://api.telegram.org/bot${config.token}/sendDocument`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      console.error(`[patient-telegram] sendDocument failed with status ${res.status}`);
+      return { ok: false, reason: "api_error" };
+    }
+    return { ok: true };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "Unknown";
+    console.error(`[patient-telegram] sendDocument error (${name})`);
     return { ok: false, reason: name === "AbortError" ? "timeout" : "network" };
   } finally {
     clearTimeout(timer);

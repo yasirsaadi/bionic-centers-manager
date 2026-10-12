@@ -13,7 +13,9 @@
 //   DELETE /api/physio/plans/:id              — للمسؤول والمشرف العام حصراً
 //   POST /api/physio/plans/:id/change-protocol — تغييرُ نوع الخطّة (بروتوكولٌ آخر)، لهما حصراً
 //   GET  /api/physio/plans/:id/assignee-candidates · PUT /api/physio/plans/:id/assignees
+//   POST /api/physio/plans/:id/home-sheet/telegram — ورقةُ تمارين البيت (PDF الصفحة المطبوعة) إلى تلغرام المريض (§4.ds)
 import type { Express } from "express";
+import multer from "multer";
 import { logAudit } from "../accounting/ledger";
 import { getSession, accessibleBranchesFor } from "../sessions_module/permissions";
 import { scopeReachesPatient } from "../patients/branch_access";
@@ -32,6 +34,11 @@ import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as c
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
 import { doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
 import { parsePhasesBody } from "@shared/physio_exercises";
+import { HOME_SHEET_MAX_BYTES, homeSheetAllowed, parseIdList } from "@shared/physio_home_sheet";
+import { patientBotEnabled } from "../patient_telegram/config";
+import * as homeSheet from "./home_sheet";
+
+const homeSheetUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: HOME_SHEET_MAX_BYTES, files: 1, fields: 4 } });
 
 function fail(res: any, e: unknown) {
   if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message });
@@ -221,6 +228,10 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s),
         canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s),
         aiSuggestion: await suggest.suggestionOfPlan(l.row.id),
+        //  §4.ds — ورقةُ تمارين البيت: تُطبع لكلّ قارئ، وتُرسَل عبر تلغرام بيد فريق العلاج في فرعها لمريضٍ مربوط.
+        homeSheet: { allowed: homeSheetAllowed(l.row.status), botEnabled: patientBotEnabled(),
+          telegramRecipients: await homeSheet.telegramRecipients(l.row.patientId),
+          canSend: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)) },
         settingsGaps: gaps ? { ...gaps, supervisors: gaps.supervisors.map((u) => u.name), youFill: l.s.permissions?.canSupervisePhysio === true } : null });
     } catch (e) { fail(res, e); }
   });
@@ -234,6 +245,36 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (isPlanClosed(l.row.status)) return res.status(409).json({ error: "الخطّةُ منتهية" });
       //  الإرسالُ وسطرُ التدقيق في معاملةٍ واحدة تحت قفل البروتوكول (`remindPlanSettings`).
       res.json(await store.remindPlanSettings(l.row, actor(l.s), { ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null }));
+    } catch (e) { fail(res, e); }
+  });
+
+  //  §4.ds — **ورقةُ تمارين البيت إلى تلغرام المريض**: الملفُّ من صفحة الطباعة، والمرحلةُ وتمارينُها تُفحص على الخطّة، ونصُّ الرسالة من الخادم.
+  //  لفريق العلاج في فرع الخطّة (كمن ينفّذ جلساتها)، وسطرُ تدقيقٍ بما أُرسل ولمن وبصمته.
+  app.post("/api/physio/plans/:id/home-sheet/telegram", isAuthenticated, (req: any, res, next) => {
+    homeSheetUpload.single("file")(req, res, (err: any) => {
+      if (err?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ error: "الورقةُ أكبرُ من الحدّ (١٥ م.ب)" });
+      if (err) return res.status(400).json({ error: "تعذّر قراءةُ الورقة المرسَلة" });
+      next();
+    });
+  }, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      const scope = scopeOf(req, l.s);
+      if (!canExecutePlans(l.s) || !(scope === null || scope.includes(l.row.branchId))) {
+        return res.status(403).json({ error: "إرسالُ الورقة للمريض لفريق العلاج الطبيعي في فرع الخطّة" });
+      }
+      const plan = await store.getPlan(l.row.id);
+      const phase = intIn(req.body?.phasePosition, 1, 1000);
+      const result = await homeSheet.sendHomeSheet(
+        { id: l.row.id, patientId: l.row.patientId, status: l.row.status, branchName: plan?.branchName ?? null, patientCode: plan?.patient?.code ?? null },
+        { pdf: req.file?.buffer ?? null, phasePosition: phase === "bad" ? null : phase, exerciseIds: parseIdList(req.body?.exerciseIds) },
+      );
+      await audit(req, l.s, { entityId: l.row.id, action: "home_sheet_telegram", branchId: l.row.branchId,
+        newValues: { patientId: l.row.patientId, ...result },
+        notes: `ورقةُ تمارين البيت عبر تلغرام — وصلت ${result.sent} من ${result.recipients}` });
+      if (result.sent === 0) return res.status(502).json({ error: "تعذّر الإرسالُ عبر تلغرام — أعد المحاولة بعد قليل", ...result });
+      res.json(result);
     } catch (e) { fail(res, e); }
   });
 
