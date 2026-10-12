@@ -36,6 +36,7 @@ import * as m129 from "./migrations/129_physio_stroke_subacute_detail";
 import * as m130 from "./migrations/130_physio_ankle_sprain_detail";
 import * as m135 from "./migrations/135_physio_prosthetic_gait_detail";
 import * as m136 from "./migrations/136_physio_preprosthetic_detail";
+import * as m137 from "./migrations/137_physio_upper_limb_amputation_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -58,6 +59,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m130.name, sql: m130.sql, EXERCISES: m130.EXERCISES, PROTOCOL: m130.PROTOCOL, template: true },
   { name: m135.name, sql: m135.sql, EXERCISES: m135.EXERCISES, PROTOCOL: m135.PROTOCOL, template: true },
   { name: m136.name, sql: m136.sql, EXERCISES: m136.EXERCISES, PROTOCOL: m136.PROTOCOL, template: true },
+  { name: m137.name, sql: m137.sql, EXERCISES: m137.EXERCISES, PROTOCOL: m137.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -369,15 +371,18 @@ async function main() {
     //  والتاسعُ (ما قبل الطرف السفليّ): إحدى عشرةَ بطاقةً جديدة باثنتي عشرةَ صورة، كلُّها مطلوبة — والإحدى عشرةَ المعادة بصورها هي، ومنها بطاقتا
     //  الانبطاح والنهوض من الأرض المطلوبةُ صورُهما من الثامن فلا تُطلب ثانيةً (§4.du).
     const preKeys = m136.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة والسادس الأربعَ عشرة والسابع الثماني والثامن الخمسَ عشرة والتاسع الاثنتا عشرة مطلوبة، والباقي مطلوب**",
+    //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها، كلُّها مطلوبة — والثماني المعادة بصورها هي (§4.dv).
+    const ulKeys = m137.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة والسادس الأربعَ عشرة والسابع الثماني والثامن الخمسَ عشرة والتاسع الاثنتا عشرة والعاشر الثماني عشرة مطلوبة، والباقي مطلوب**",
       [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
         neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), kneeKeys.length, kneeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
         shoulderKeys.length, shoulderKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
         strokeKeys.length, strokeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
         ankleKeys.length, ankleKeys.filter((k) => EXERCISE_IMAGE_FILES[k]), gaitKeys.length, gaitKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
         preKeys.length, preKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys, ...strokeKeys, ...ankleKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ...gaitKeys, ...preKeys].filter((k) => !keys.includes(k))],
-      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, 14, 14, 9, ["ankle-single-leg-balance-1"], 15, 15, 12, 12, []]);
+        ulKeys.length, ulKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
+        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys, ...strokeKeys, ...ankleKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ...gaitKeys, ...preKeys, ...ulKeys].filter((k) => !keys.includes(k))],
+      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, 14, 14, 9, ["ankle-single-leg-balance-1"], 15, 15, 12, 12, 18, 18, []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
