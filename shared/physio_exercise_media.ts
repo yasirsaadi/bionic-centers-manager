@@ -95,6 +95,101 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  والصورةُ نفسُها (واقفٌ على ساقٍ واحدة بجانب كرسيّ) تصلح لها حرفاً بحرف — فنُسخ ملفُّ `single-leg-balance-1.webp` باسم رمزها (حارسُ و.٣:
   //  الملفُّ باسم رمزه) ولم تُطلَب من المالك.
   "ankle-single-leg-balance-1": { file: "ankle-single-leg-balance-1.webp" },
+  //  **الدفعةُ الخامسة — كلُّ المطلوب حتى العاشر: ثمانون من اثنتين وثمانين** (٢٠٢٦-١٠-١٢): المجلّدُ نفسُه، ستّةٌ وثمانون ملفّاً (والأربعةُ الزائدة
+  //  رفعٌ أقدمُ للخانات نفسِها). **الثلاثُ المنتظرة**: «Y منبطحاً» اللوحةُ العليا وحدها (السفلى «T»)، و«القرفصاءُ على الحائط» ربعُ قرفصاء، و«الدرّاجةُ»
+  //  مقعدٌ عالٍ والركبةُ مثنيّةٌ قليلاً — **والنسخُ الأقدم كما رُدّت** (T، وقرفصاءُ كاملة، ودوّاساتٌ على كرسيّ). **وما قُصّ**: من «رفع الذراع إلى الرفّ»
+  //  صورةُ المطبخ وحدها، ومن «الوصول جالساً» الجالسُ على المقعد بلا الكرسيّ المتحرّك، ومن «النقل من السرير» عمودُ السرير ⟵ الكرسيّ بلا عنوانه
+  //  الكوريّ، ومن «الوصول والقبض» بلا أرقام المراحل اليابانية، ومن «المرآة» الخطوةُ الأولى، ومن «القفّاز» الأكلُ والشرب، ومن «المشي فوق العوائق»
+  //  اللوحةُ الوسطى بالمعالج، ومن «الانقباض الثابت للكاحل» لوحةُ الحائط (الثانيةُ رباط)، ومن «الركبة إلى الحائط» بلا العنوان الإنكليزيّ، ومن «لمس
+  //  المقعد» الوقفةُ الأولى، ومن «لبس الضاغط» لوحاتُه الثلاث، ومن «المرآة للساق» بلا النصّ الإعلانيّ، ومن «دفع الجدار» الشكلُ بلا العنوان الصينيّ،
+  //  ومن «المشّاية» أرقامُ الأشكال. **ولم تُسجَّل اثنتان** لا تُظهران بطاقتَيهما: «نقلُ الوزن واقفاً» امرأةٌ واقفةٌ وحدها بلا طاولةٍ ولا نقلٍ ولا معالج،
+  //  و«الدرجُ جلوساً» صعودٌ على اليدين والقدم وقفزٌ بالدرابزين — والبطاقةُ جلوسٌ على الدرجة (§4.dv التكملة).
+  "prone-y-t-2": { file: "prone-y-t-2.webp" },
+  "wall-squat-1": { file: "wall-squat-1.webp" },
+  "stationary-cycling-1": { file: "stationary-cycling-1.webp" },
+  //  الكتف (§4.dk).
+  "wand-flexion-supine-1": { file: "wand-flexion-supine-1.webp" },
+  "isometric-er-1": { file: "isometric-er-1.webp" },
+  "isometric-abduction-1": { file: "isometric-abduction-1.webp", credit: "Healthwise" },
+  "cross-body-stretch-1": { file: "cross-body-stretch-1.webp" },
+  "side-lying-er-1": { file: "side-lying-er-1.webp" },
+  "band-er-1": { file: "band-er-1.webp", credit: "Healthwise" },
+  "band-ir-1": { file: "band-ir-1.webp" },
+  "scaption-raise-1": { file: "scaption-raise-1.webp" },
+  "wall-slide-serratus-1": { file: "wall-slide-serratus-1.webp" },
+  "doorway-pec-stretch-1": { file: "doorway-pec-stretch-1.webp" },
+  "wall-push-up-plus-1": { file: "wall-push-up-plus-1.webp" },
+  //  الجلطة (§4.dl) — و«نقلُ الوزن واقفاً» منتظرة.
+  "overhead-shelf-lift-1": { file: "overhead-shelf-lift-1.webp" },
+  "sitting-reach-1": { file: "sitting-reach-1.webp" },
+  "roll-to-sit-1": { file: "roll-to-sit-1.webp", credit: "ptnodoka.com" },
+  "bed-to-chair-transfer-1": { file: "bed-to-chair-transfer-1.webp" },
+  "affected-arm-weight-bearing-1": { file: "affected-arm-weight-bearing-1.webp" },
+  "table-towel-slide-1": { file: "table-towel-slide-1.webp" },
+  "ankle-dorsiflexion-seated-1": { file: "ankle-dorsiflexion-seated-1.webp" },
+  "overground-gait-training-1": { file: "overground-gait-training-1.webp", credit: "fumira" },
+  "side-stepping-1": { file: "side-stepping-1.webp" },
+  "reach-grasp-task-1": { file: "reach-grasp-task-1.webp" },
+  "mirror-therapy-1": { file: "mirror-therapy-1.webp" },
+  "calf-stretch-standing-1": { file: "calf-stretch-standing-1.webp" },
+  "forced-use-mitt-1": { file: "forced-use-mitt-1.webp" },
+  "obstacle-dual-task-walking-1": { file: "obstacle-dual-task-walking-1.webp" },
+  //  الكاحل (§4.dm).
+  "ankle-alphabet-1": { file: "ankle-alphabet-1.webp", credit: "Healthwise" },
+  "ankle-isometrics-1": { file: "ankle-isometrics-1.webp", credit: "Healthwise" },
+  "band-ankle-strengthening-1": { file: "band-ankle-strengthening-1.webp" },
+  "knee-to-wall-lunge-1": { file: "knee-to-wall-lunge-1.webp" },
+  "star-excursion-reach-1": { file: "star-excursion-reach-1.webp" },
+  "forward-hop-stick-1": { file: "forward-hop-stick-1.webp" },
+  "lateral-hops-1": { file: "lateral-hops-1.webp" },
+  "figure-8-agility-1": { file: "figure-8-agility-1.webp" },
+  //  المشيُ بالطرف (§4.dt).
+  "prosthesis-donning-1": { file: "prosthesis-donning-1.webp" },
+  "residual-limb-skin-check-1": { file: "residual-limb-skin-check-1.webp" },
+  "prosthetic-weight-shift-1": { file: "prosthetic-weight-shift-1.webp" },
+  "prosthetic-stool-tap-1": { file: "prosthetic-stool-tap-1.webp" },
+  "prone-lying-1": { file: "prone-lying-1.webp" },
+  "prone-hip-extension-1": { file: "prone-hip-extension-1.webp" },
+  "prosthetic-gait-drill-1": { file: "prosthetic-gait-drill-1.webp" },
+  "resisted-gait-pnf-1": { file: "resisted-gait-pnf-1.webp" },
+  "prosthetic-turning-1": { file: "prosthetic-turning-1.webp" },
+  "prosthetic-stairs-up-1": { file: "prosthetic-stairs-up-1.webp" },
+  "prosthetic-stairs-down-1": { file: "prosthetic-stairs-down-1.webp" },
+  "floor-rise-kneel-1": { file: "floor-rise-kneel-1.webp" },
+  "floor-rise-chair-1": { file: "floor-rise-chair-1.webp" },
+  "prosthetic-ramp-1": { file: "prosthetic-ramp-1.webp" },
+  "treadmill-walking-amputee-1": { file: "treadmill-walking-amputee-1.webp" },
+  //  ما قبل الطرف السفليّ (§4.du) — و«الدرجُ جلوساً» منتظرة.
+  "residual-limb-stump-board-1": { file: "residual-limb-stump-board-1.webp" },
+  "thomas-stretch-amputee-1": { file: "thomas-stretch-amputee-1.webp" },
+  "amputee-bed-sit-up-1": { file: "amputee-bed-sit-up-1.webp" },
+  "amputee-pivot-transfer-1": { file: "amputee-pivot-transfer-1.webp" },
+  "wheelchair-amputee-propulsion-1": { file: "wheelchair-amputee-propulsion-1.webp" },
+  "residual-limb-desensitisation-1": { file: "residual-limb-desensitisation-1.webp" },
+  "shrinker-donning-1": { file: "shrinker-donning-1.webp" },
+  "seated-push-up-1": { file: "seated-push-up-1.webp" },
+  "walker-hop-to-1": { file: "walker-hop-to-1.webp" },
+  "arm-ergometer-1": { file: "arm-ergometer-1.webp" },
+  "phantom-mirror-therapy-1": { file: "phantom-mirror-therapy-1.webp", credit: "Amputee Store — EPFL / Alain Herzog, CC BY-SA" },
+  //  بترُ الطرف العلويّ (§4.dv).
+  "ul-residual-skin-care-1": { file: "ul-residual-skin-care-1.webp" },
+  "ul-compression-wrap-1": { file: "ul-compression-wrap-1.webp" },
+  "ul-distal-joint-rom-1": { file: "ul-distal-joint-rom-1.webp" },
+  "ul-residual-shoulder-rom-1": { file: "ul-residual-shoulder-rom-1.webp" },
+  "ul-residual-limb-loading-1": { file: "ul-residual-limb-loading-1.webp" },
+  "one-handed-adl-1": { file: "one-handed-adl-1.webp" },
+  "hand-dominance-writing-1": { file: "hand-dominance-writing-1.webp", credit: "wikiHow" },
+  "myo-site-training-1": { file: "myo-site-training-1.webp" },
+  "myo-graded-control-1": { file: "myo-graded-control-1.webp" },
+  "pattern-recognition-training-1": { file: "pattern-recognition-training-1.webp" },
+  "ul-phantom-mirror-gmi-1": { file: "ul-phantom-mirror-gmi-1.webp" },
+  "ul-prosthesis-donning-1": { file: "ul-prosthesis-donning-1.webp" },
+  "myo-control-accuracy-1": { file: "myo-control-accuracy-1.webp" },
+  "body-powered-control-1": { file: "body-powered-control-1.webp" },
+  "multigrip-selection-1": { file: "multigrip-selection-1.webp" },
+  "graded-object-grasp-1": { file: "graded-object-grasp-1.webp" },
+  "prosthetic-hand-drills-1": { file: "prosthetic-hand-drills-1.webp" },
+  "bimanual-adl-tasks-1": { file: "bimanual-adl-tasks-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

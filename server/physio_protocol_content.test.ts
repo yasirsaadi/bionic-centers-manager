@@ -354,35 +354,31 @@ async function main() {
     const misplaced = CONTENT.flatMap((c) => c.EXERCISES.flatMap((e) => e.images.map((i) => i.key)))
       .filter((k) => Boolean(EXERCISE_IMAGE_FILES[k]) === keys.includes(k));
     const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والثالثُ (الرقبة): وصلت ستَّ عشرةَ من سبعَ عشرة — «نهايةُ التجديف» وصلت في الدفعة الرابعة، و«Y» لم يُظهرها ملفُّ المالك (§4.dh التكملة) فتبقى مطلوبة.
+    //  والدفعةُ الخامسة (٢٠٢٦-١٠-١٢) أكملت كلَّ المطلوب حتى العاشر إلّا اثنتين لا تُظهران بطاقتَيهما (§4.dv التكملة): «نقلُ الوزن واقفاً» من السادس
+    //  (امرأةٌ واقفةٌ وحدها بلا طاولةٍ ولا نقلٍ ولا معالج)، و«الدرجُ جلوساً» من التاسع (صعودٌ على اليدين والقدم، والبطاقةُ جلوسٌ على الدرجة).
+    //  ووصلت «Y منبطحاً» للثالث، و«القرفصاءُ الجزئية» و«الدرّاجة» للرابع بعد ردّ نسخها الأولى (§4.dh · §4.di).
     const neckKeys = m125.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والرابعُ (الركبة): وصلت اثنتا عشرةَ من أربعَ عشرة — «القرفصاءُ على الحائط» وصلت أعمقَ من بطاقتها (فخذان موازيان للأرض)، و«الدرّاجةُ» دوّاساتٌ
-    //  على كرسيّ والركبةُ مثنيّةٌ كثيراً وهو ما تنهى عنه بطاقتُها (§4.di التكملة) — فتبقيان مطلوبتين.
     const kneeKeys = m126.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والخامسُ (الكتف): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها، كلُّها مطلوبة — وبطاقاتُ الرقبة الأربع التي يستعملها بصورها هي، فلا تُطلب ثانيةً (§4.dk).
+    //  والخامسُ (الكتف): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — وبطاقاتُ الرقبة الأربع التي يستعملها بصورها هي، فلا تُطلب ثانيةً (§4.dk).
     const shoulderKeys = m128.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والسادسُ (الجلطة تحت الحادّة): أربعَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها، كلُّها مطلوبة — والخمسُ المعادة (الجلوسُ والقيام، الجسر، صعودُ الدرجة،
-    //  رفعُ الكعبين، الدرّاجة) بصورها هي، و«الدرّاجة» مطلوبةٌ من الرابع فلا تُطلب ثانيةً (§4.dl).
+    //  والسادسُ (الجلطة تحت الحادّة): أربعَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — والخمسُ المعادة (الجلوسُ والقيام، الجسر، صعودُ الدرجة،
+    //  رفعُ الكعبين، الدرّاجة) بصورها هي (§4.dl).
     const strokeKeys = m129.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والسابعُ (التواءُ الكاحل): تسعُ خاناتٍ — ثمانٍ مطلوبة، و«توازنُ الكاحل» بصورة «الوقوف على ساقٍ واحدة» منسوخةً باسم رمزها فلا تُطلب (§4.dm).
+    //  والسابعُ (التواءُ الكاحل): تسعُ خاناتٍ، و«توازنُ الكاحل» بصورة «الوقوف على ساقٍ واحدة» منسوخةً باسم رمزها (§4.dm).
     const ankleKeys = m130.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والثامنُ (المشيُ بالطرف الصناعيّ): إحدى عشرةَ بطاقةً جديدة بخمسَ عشرةَ صورة، كلُّها مطلوبة — والستُّ المعادة بصورها هي (§4.dt).
+    //  والثامنُ (المشيُ بالطرف الصناعيّ): إحدى عشرةَ بطاقةً جديدة بخمسَ عشرةَ صورة — والستُّ المعادة بصورها هي (§4.dt).
     const gaitKeys = m135.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والتاسعُ (ما قبل الطرف السفليّ): إحدى عشرةَ بطاقةً جديدة باثنتي عشرةَ صورة، كلُّها مطلوبة — والإحدى عشرةَ المعادة بصورها هي، ومنها بطاقتا
-    //  الانبطاح والنهوض من الأرض المطلوبةُ صورُهما من الثامن فلا تُطلب ثانيةً (§4.du).
+    //  والتاسعُ (ما قبل الطرف السفليّ): إحدى عشرةَ بطاقةً جديدة باثنتي عشرةَ صورة — والإحدى عشرةَ المعادة بصورها هي (§4.du).
     const preKeys = m136.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها، كلُّها مطلوبة — والثماني المعادة بصورها هي (§4.dv).
+    //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — والثماني المعادة بصورها هي (§4.dv).
     const ulKeys = m137.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة والسادس الأربعَ عشرة والسابع الثماني والثامن الخمسَ عشرة والتاسع الاثنتا عشرة والعاشر الثماني عشرة مطلوبة، والباقي مطلوب**",
-      [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
-        neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), kneeKeys.length, kneeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
-        shoulderKeys.length, shoulderKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        strokeKeys.length, strokeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        ankleKeys.length, ankleKeys.filter((k) => EXERCISE_IMAGE_FILES[k]), gaitKeys.length, gaitKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        preKeys.length, preKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        ulKeys.length, ulKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys, ...strokeKeys, ...ankleKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ...gaitKeys, ...preKeys, ...ulKeys].filter((k) => !keys.includes(k))],
-      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, 14, 14, 9, ["ankle-single-leg-balance-1"], 15, 15, 12, 12, 18, 18, []]);
+    const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى العاشر إلّا اثنتين: «نقلُ الوزن واقفاً» من السادس و«الدرجُ جلوساً» من التاسع، وهما وحدهما «الصور المطلوبة»**",
+      [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
+        shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
+        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, ["standing-weight-shift-1"], 9, [], 15, [], 12, ["seated-stair-climbing-1"], 18, [],
+        ["seated-stair-climbing-1", "standing-weight-shift-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
