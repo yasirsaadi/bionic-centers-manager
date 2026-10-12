@@ -32,6 +32,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount, examPathBlockedMessage } from "@shared/commercial";
 import { NOT_APPLICABLE } from "@shared/device_specs";
+import { isListedChoice } from "@shared/device_spec_options";
+import { SpecCompanionField, specChoiceTrigger } from "@/components/intake/IntakeFields";
+import { cn } from "@/lib/utils";
 import { requestedItemsOf, type RequestedItem } from "@shared/prosthetic_parts";
 import { READY_PARTS_HINT } from "@shared/part_sale";
 import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, saleUnitsOf, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
@@ -500,28 +503,29 @@ export function ExamPathDecisionActions({
                   <div key={f.key} className="space-y-1">
                     <Label className={"text-xs" + ((cSpecs[f.key] ?? "").trim() ? "" : " text-red-700")}>{f.label}</Label>
                     {f.options ? (
-                      //  **قائمةُ المالك** (§4.dw) بنوع الطرف، و«لا ينطبق» آخرَها، وبجانبها حقلُها الحرّ (لا يُشترط).
-                      <div className="flex flex-wrap gap-1.5">
+                      //  **قائمةُ المالك** (§4.dw) بنوع الطرف ومستواه، و«لا ينطبق» آخرَها، وتحتها حقلُها الحرّ في مربّعٍ مستقلّ (لا يُشترط) —
+                      //  النافذةُ ضيّقة فالاثنان سطران، لا نصفان يضيق فيهما المكتوب.
+                      <div className="grid grid-cols-1 gap-1.5">
                         <Select value={cSpecs[f.key] ?? ""} onValueChange={(v) => setCSpecs((p) => ({
                           ...p, [f.key]: v, ...(v === NOT_APPLICABLE && f.companion ? { [f.companion.key]: "" } : {}),
                         }))}>
-                          <SelectTrigger className="bg-white h-9 flex-1 min-w-[9rem]" data-testid={`input-sale-spec-${f.key}`}>
+                          <SelectTrigger className={cn(specChoiceTrigger, "w-full")} data-testid={`input-sale-spec-${f.key}`}>
                             <SelectValue placeholder="اختر…" />
                           </SelectTrigger>
                           <SelectContent>
                             {(() => {
                               const cur = cSpecs[f.key] ?? "";
                               return cur && cur !== NOT_APPLICABLE && !f.options!.includes(cur)
-                                ? <SelectItem value={cur}>{cur} (مكتوبٌ قديماً)</SelectItem> : null;
+                                ? <SelectItem value={cur}>{cur} {isListedChoice(f.key.split(":")[0], cur) ? "(لا يطابق مستوى البتر)" : "(مكتوبٌ قديماً)"}</SelectItem>
+                                : null;
                             })()}
                             {f.options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                             <SelectItem value={NOT_APPLICABLE}>{NOT_APPLICABLE}</SelectItem>
                           </SelectContent>
                         </Select>
                         {f.companion && cSpecs[f.key] !== NOT_APPLICABLE && (
-                          <Input value={cSpecs[f.companion.key] ?? ""} placeholder={f.companion.label} aria-label={f.companion.label}
-                            onChange={(e) => setCSpecs((p) => ({ ...p, [f.companion!.key]: e.target.value }))}
-                            className="bg-white h-9 flex-1 min-w-[8rem]" data-testid={`input-sale-companion-${f.key}`} />
+                          <SpecCompanionField label={f.companion.label} value={cSpecs[f.companion.key] ?? ""}
+                            onChange={(v) => setCSpecs((p) => ({ ...p, [f.companion!.key]: v }))} testId={`input-sale-companion-${f.key}`} />
                         )}
                       </div>
                     ) : (

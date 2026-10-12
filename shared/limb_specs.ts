@@ -17,7 +17,7 @@ import {
   FACE_PART_CODE, LOWER_AMPUTATION_DETAILS, UPPER_AMPUTATION_DETAILS, amputationLimbKey, parseAmputationSite, type AmputationParts,
 } from "./case_fields";
 import { SHEET_DEVICE_ROWS } from "./exam_sheet";
-import { COMPANION_KEYS, parentOfCompanion, specChoiceAccepted, withCompanionText } from "./device_spec_options";
+import { COMPANION_KEYS, companionOf, isListedChoice, parentOfCompanion, specChoices, withCompanionText } from "./device_spec_options";
 
 export const NOT_APPLICABLE_SPEC = "لا ينطبق";
 
@@ -306,12 +306,38 @@ export function normalizeLimbSpecs<T extends Record<string, unknown>>(rx: T): T 
   return out as T;
 }
 
-/** **نوعُ الطرف لمفتاح خانة** — خانةُ الطرف بنوع طرفها، والعامّةُ بنوع الأطراف إن اتّفق وإلّا مجهول (`null`). */
-export function slotKindForKey(slots: readonly LimbSlot[], key: string): LimbKind | null {
-  const { side } = splitSpecKey(key);
-  if (side) return slots.find((x) => x.key === side)?.kind ?? null;
-  const kinds = new Set(slots.map((x) => x.kind));
-  return kinds.size === 1 ? slots[0].kind : null;
+/**
+ * **قائمةُ خانةٍ بطرفها** (§4.dw) — أو `null` نصٌّ حرّ. خانةُ الطرف (`footType:left`) بنوع طرفها ومستواه — فنوعُ الطرف لفوق الركبة «طرف فوق الركبة»
+ * وحده؛ والعامّةُ (طرفٌ واحد، أو أطرافٌ متماثلة) بما يجمع أطرافَها: قوائمُها معاً بترتيبها، ونصٌّ حرّ إن كان أحدُها حرّاً.
+ */
+export function specChoicesForKey(slots: readonly LimbSlot[], key: string): readonly string[] | null {
+  const { base, side } = splitSpecKey(key);
+  const of = (sl: LimbSlot | undefined) => specChoices(base, sl?.kind ?? null, sl?.level ?? null);
+  if (side) return of(slots.find((x) => x.key === side));
+  if (!slots.length) return of(undefined);
+  const lists = slots.map(of);
+  if (lists.some((l) => !l)) return null;
+  return Array.from(new Set(lists.flatMap((l) => [...l!])));
+}
+
+/**
+ * **قيمةٌ من القائمة لم تعد تطابق طرفَها** تُمسح حين يتغيّر البتر (§4.dw) — مَن كتب «طرف تحت الركبة» ثمّ صحّح المستوى إلى «فوق الركبة» يختار
+ * من جديد، لا يبقى له نوعٌ يرفضه الحفظ. **والمكتوبُ قبل اليوم بغير القائمة لا يُمسّ**، ومعه حقلُه الحرّ.
+ */
+export function dropStaleChoices<T extends Record<string, unknown>>(rx: T): T {
+  const slots = limbSlots(rx as AmputationParts);
+  const out: Record<string, unknown> = { ...rx };
+  for (const [k, raw] of Object.entries(rx)) {
+    const { base, side } = splitSpecKey(k);
+    const v = str(raw);
+    if (!LIMB_SPEC_KEYS.includes(base) || !v || v === NOT_APPLICABLE_SPEC || !isListedChoice(base, v)) continue;
+    const opts = specChoicesForKey(slots, k);
+    if (!opts || opts.includes(v)) continue;
+    delete out[k];
+    const c = companionOf(base);
+    if (c) delete out[side ? sideSpecKey(c.key, side) : c.key];
+  }
+  return out as T;
 }
 
 /** عنوانُ مفتاح خانةٍ بطرفه — «نوع الركبة»، «نوع القدم — يسار سفلي». */
@@ -323,7 +349,7 @@ export function specKeyLabel(k: string): string {
 
 /**
  * **خاناتٌ كُتبت بغير قائمتها** (§4.dw) — مفاتيحُها (بجهاتها)، للفحص قبل الحفظ. `slots` أطرافُ البتر (من الوصفة `limbSlots` أو من سلسلة
- * البتر `limbSlotsOfSite`)، فخانةُ الطرف بنوع طرفها، والعامّةُ بنوع الأطراف إن اتّفق وإلّا مجهولة. **وما كان مكتوباً من قبل يُقبل**
+ * البتر `limbSlotsOfSite`)، فخانةُ الطرف بنوع طرفها ومستواه، والعامّةُ بما يجمع أطرافَها (`specChoicesForKey`). **وما كان مكتوباً من قبل يُقبل**
  * (`previous` — المعاينةُ التي تُعدَّل، أو ما حُفظ على الجهاز): قيمةٌ قديمةٌ لخانتها، بأيّ جهة، لا تمنع تعديلاً لا يمسّها.
  */
 export function specChoiceProblems(
@@ -335,8 +361,9 @@ export function specChoiceProblems(
   for (const [k, raw] of Object.entries(specs)) {
     const { base } = splitSpecKey(k);
     const v = str(raw);
-    if (!LIMB_SPEC_KEYS.includes(base) || !v || before(base).has(v)) continue;
-    if (!specChoiceAccepted(base, v, slotKindForKey(slots, k))) out.push(k);
+    if (!LIMB_SPEC_KEYS.includes(base) || !v || v === NOT_APPLICABLE_SPEC || before(base).has(v)) continue;
+    const opts = specChoicesForKey(slots, k);
+    if (opts && !opts.includes(v)) out.push(k);
   }
   return out;
 }

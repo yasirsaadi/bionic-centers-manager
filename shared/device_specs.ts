@@ -13,9 +13,9 @@
 import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS, type SpecField } from "./case_fields";
 import {
   LIMB_SPEC_STORE_KEYS, NOT_APPLICABLE_SPEC, isSlotKey, limbSlotsOfSite, limbSpecValue, limbSpecView, sideSpecKey, slotKeyLabel,
-  slotKindForKey, specChoiceProblems, splitSpecKey,
+  specChoiceProblems, specChoicesForKey, splitSpecKey,
 } from "./limb_specs";
-import { companionOf, specChoices } from "./device_spec_options";
+import { companionOf } from "./device_spec_options";
 
 export const NOT_APPLICABLE = NOT_APPLICABLE_SPEC;
 
@@ -132,7 +132,7 @@ export function saleSpecsMessage(kind: DeviceKind, missing: string[]): string {
 }
 
 /**
- * **ما يُكتب عند «اشترى» من قائمته** (§4.dw): خاناتُ الطرف التي يملؤها الاستعلاماتُ بغير قائمتها — مفاتيحُها. نوعُ الطرف من بتر هذا الجهاز
+ * **ما يُكتب عند «اشترى» من قائمته** (§4.dw): خاناتُ الطرف التي يملؤها الاستعلاماتُ بغير قائمتها — مفاتيحُها. نوعُ الطرف ومستواه من بتر هذا الجهاز
  * (`merged.amputationSite`)، وما حُفظ على الجهاز من قبل (`stored`) يُقبل كما هو. وللمساند لا قائمة.
  */
 export function saleSpecChoiceProblems(
@@ -143,14 +143,14 @@ export function saleSpecChoiceProblems(
 }
 
 /**
- * **قائمةُ خانةٍ في نافذة «اشترى» وحقلُها الحرّ** (§4.dw) — `options` (`null` نصٌّ حرّ) بنوع طرفها، و`companion` مفتاحُه بجهة الخانة وعنوانُه وقيمتُه.
+ * **قائمةُ خانةٍ في نافذة «اشترى» وحقلُها الحرّ** (§4.dw) — `options` (`null` نصٌّ حرّ) بنوع طرفها ومستوى بتره، و`companion` مفتاحُه بجهة الخانة وعنوانُه وقيمتُه.
  */
 export function saleSpecFieldExtras(kind: DeviceKind, merged: Record<string, unknown>, key: string): {
   options: string[] | null; companion: { key: string; label: string; value: string | null } | null;
 } {
   if (kind !== "prosthetic") return { options: null, companion: null };
   const { base, side } = splitSpecKey(key);
-  const opts = specChoices(base, slotKindForKey(limbSlotsOfSite(merged.amputationSite), key));
+  const opts = specChoicesForKey(limbSlotsOfSite(merged.amputationSite), key);
   const c = companionOf(base);
   const cKey = c ? (side ? sideSpecKey(c.key, side) : c.key) : null;
   return {
