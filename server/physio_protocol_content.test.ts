@@ -34,6 +34,7 @@ import * as m126 from "./migrations/126_physio_knee_oa_detail";
 import * as m128 from "./migrations/128_physio_subacromial_detail";
 import * as m129 from "./migrations/129_physio_stroke_subacute_detail";
 import * as m130 from "./migrations/130_physio_ankle_sprain_detail";
+import * as m135 from "./migrations/135_physio_prosthetic_gait_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -54,6 +55,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m128.name, sql: m128.sql, EXERCISES: m128.EXERCISES, PROTOCOL: m128.PROTOCOL, template: true },
   { name: m129.name, sql: m129.sql, EXERCISES: m129.EXERCISES, PROTOCOL: m129.PROTOCOL, template: true },
   { name: m130.name, sql: m130.sql, EXERCISES: m130.EXERCISES, PROTOCOL: m130.PROTOCOL, template: true },
+  { name: m135.name, sql: m135.sql, EXERCISES: m135.EXERCISES, PROTOCOL: m135.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -360,14 +362,16 @@ async function main() {
     const strokeKeys = m129.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والسابعُ (التواءُ الكاحل): تسعُ خاناتٍ — ثمانٍ مطلوبة، و«توازنُ الكاحل» بصورة «الوقوف على ساقٍ واحدة» منسوخةً باسم رمزها فلا تُطلب (§4.dm).
     const ankleKeys = m130.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة والسادس الأربعَ عشرة والسابع الثماني مطلوبة، والباقي مطلوب**",
+    //  والثامنُ (المشيُ بالطرف الصناعيّ): إحدى عشرةَ بطاقةً جديدة بخمسَ عشرةَ صورة، كلُّها مطلوبة — والستُّ المعادة بصورها هي (§4.dt).
+    const gaitKeys = m135.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصورُ الثاني الستّ وصلت كلُّها، ومن الثالث ستَّ عشرة، ومن الرابع اثنتا عشرة، وصورُ الخامس الاثنتا عشرة والسادس الأربعَ عشرة والسابع الثماني والثامن الخمسَ عشرة مطلوبة، والباقي مطلوب**",
       [missing.status, misplaced, acuteKeys.length, acuteKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
         neckKeys.length, neckKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), kneeKeys.length, kneeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]),
         shoulderKeys.length, shoulderKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
         strokeKeys.length, strokeKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
-        ankleKeys.length, ankleKeys.filter((k) => EXERCISE_IMAGE_FILES[k]),
-        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys, ...strokeKeys, ...ankleKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])].filter((k) => !keys.includes(k))],
-      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, 14, 14, 9, ["ankle-single-leg-balance-1"], []]);
+        ankleKeys.length, ankleKeys.filter((k) => EXERCISE_IMAGE_FILES[k]), gaitKeys.length, gaitKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]).length,
+        ["prone-y-t-2", "wall-squat-1", "stationary-cycling-1", ...shoulderKeys, ...strokeKeys, ...ankleKeys.filter((k) => !EXERCISE_IMAGE_FILES[k]), ...gaitKeys].filter((k) => !keys.includes(k))],
+      [200, [], 6, [], 17, ["prone-y-t-2"], 14, ["wall-squat-1", "stationary-cycling-1"], 12, 12, 14, 14, 9, ["ankle-single-leg-balance-1"], 15, 15, []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
