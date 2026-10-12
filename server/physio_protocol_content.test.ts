@@ -354,8 +354,8 @@ async function main() {
     const misplaced = CONTENT.flatMap((c) => c.EXERCISES.flatMap((e) => e.images.map((i) => i.key)))
       .filter((k) => Boolean(EXERCISE_IMAGE_FILES[k]) === keys.includes(k));
     const acuteKeys = m124.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والدفعةُ الخامسة (٢٠٢٦-١٠-١٢) أكملت كلَّ المطلوب حتى العاشر إلّا اثنتين لا تُظهران بطاقتَيهما (§4.dv التكملة): «نقلُ الوزن واقفاً» من السادس
-    //  (امرأةٌ واقفةٌ وحدها بلا طاولةٍ ولا نقلٍ ولا معالج)، و«الدرجُ جلوساً» من التاسع (صعودٌ على اليدين والقدم، والبطاقةُ جلوسٌ على الدرجة).
+    //  والدفعةُ الخامسة (٢٠٢٦-١٠-١٢) أكملت كلَّ المطلوب حتى العاشر إلّا اثنتين لا تُظهران بطاقتَيهما (§4.dv التكملة)، ثمّ وصلت «نقلُ الوزن واقفاً»
+    //  ثانيةً أمام طاولة (التكملة ٢) — **فبقيت «الدرجُ جلوساً» من التاسع وحدها** (صعودٌ على اليدين والقدم، والبطاقةُ جلوسٌ على الدرجة).
     //  ووصلت «Y منبطحاً» للثالث، و«القرفصاءُ الجزئية» و«الدرّاجة» للرابع بعد ردّ نسخها الأولى (§4.dh · §4.di).
     const neckKeys = m125.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const kneeKeys = m126.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
@@ -373,12 +373,12 @@ async function main() {
     //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — والثماني المعادة بصورها هي (§4.dv).
     const ulKeys = m137.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى العاشر إلّا اثنتين: «نقلُ الوزن واقفاً» من السادس و«الدرجُ جلوساً» من التاسع، وهما وحدهما «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى العاشر إلّا «الدرجُ جلوساً» من التاسع، وهي وحدها «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, ["standing-weight-shift-1"], 9, [], 15, [], 12, ["seated-stair-climbing-1"], 18, [],
-        ["seated-stair-climbing-1", "standing-weight-shift-1"]]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, ["seated-stair-climbing-1"], 18, [],
+        ["seated-stair-climbing-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
