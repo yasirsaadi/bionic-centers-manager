@@ -11,6 +11,7 @@
 //   GET    /api/physio/protocol-images/:imageId          — الصورةُ نفسُها (قراءة)
 //   GET    /api/physio/devices                            — الأجهزةُ وتوفّرُها بالفروع (قراءة)
 //   PUT    /api/physio/devices/:deviceId/branches/:branchId — تبديلُ التوفّر (`canManageDeviceAvailability`)
+import { settingsReminderInfo } from "./settings_reminders";
 import type { Express } from "express";
 import multer from "multer";
 import { logAudit } from "../accounting/ledger";
@@ -133,7 +134,9 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       const p = await store.getProtocol(id);
       if (!p || (p.isArchived && !canEditProtocols(s))) return res.status(404).json({ error: "البروتوكول غير موجود" });
       res.json({ ...p, canEdit: canEditProtocols(s), canApprove: canApproveProtocols(s),
-        canEditMeasures: canEditMeasures(s), canApproveMeasures: canApproveMeasures(s) });
+        canEditMeasures: canEditMeasures(s), canApproveMeasures: canApproveMeasures(s),
+        //  §4.dq — كم مرّةً ذُكِّر المشرفُ بالإعدادات الناقصة ومَن آخرُهم (من «ذكّر المشرف» في الخطط) — يراه هنا ولو لم يربط تلغرام.
+        settingsReminder: p.settingsBlockers.length ? await settingsReminderInfo(id) : null });
     } catch (e) { fail(res, e); }
   });
 

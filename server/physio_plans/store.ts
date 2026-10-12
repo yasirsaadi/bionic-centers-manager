@@ -12,7 +12,11 @@ import {
   sessionAdjuncts, type PlanStatus,
 } from "@shared/physio_plans";
 import { centreUseOf, normalizeDose, planLineUse } from "@shared/physio_protocols";
-import { isScheduled } from "@shared/physio_device_settings";
+import { isScheduled, planSettingsGaps, settingsReminderText, type SettingsBlocker } from "@shared/physio_device_settings";
+import {
+  physioSupervisors, SETTINGS_REMINDER_ACTION, SETTINGS_REMINDER_QUIET_MS, settingsReminderInfo, type SettingsReminderInfo,
+} from "../physio_protocols/settings_reminders";
+import { logAudit } from "../accounting/ledger";
 import { PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
 import {
   diffSummaryLine, planLineFromProtocol, planProtocolDiff, protocolPrecautionsText, type DiffPhase, type PlanDiff,
@@ -243,6 +247,65 @@ export async function planDiffFor(plan: PhysioPlan, ex: any = db): Promise<{
     reference: { status: pr.status, updatedAt: pr.updatedAt ?? null, updatedByName: pr.updatedByName ?? null,
       approvedAt: pr.approvedAt ?? null, approvedByName: pr.approvedByName ?? null },
   };
+}
+
+// ══ إعداداتُ الجهاز الناقصة في البروتوكول — تذكيرُ المشرف (§4.dq — ٢٠٢٦-١٠-١٢) ═══════════════════════════════════════════
+export interface PlanSettingsGaps { gaps: SettingsBlocker[]; supervisors: { id: number; name: string }[]; reminder: SettingsReminderInfo }
+
+/**
+ * **ما ينقص بروتوكولَ الخطّة من إعدادات أجهزةٍ فيها** (الموجاتُ الصادمة: النوعُ والشدّةُ والتردّدُ والنبضات — §4.dn)، ومَن يُذكَّر، وآخرُ تذكير.
+ * لا شيءَ لخطّةٍ بلا بروتوكول، ولا لبروتوكولٍ مكتمل، ولا لجهازٍ أُزيل من الخطّة.
+ */
+export async function planSettingsGapsFor(plan: PhysioPlan, ex: any = db): Promise<PlanSettingsGaps | null> {
+  if (!plan.protocolId) return null;
+  const protoLines = await ex.select({ code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn, params: physioProtocolDevices.params,
+    centreUse: physioProtocolDevices.centreUse, evidence: physioProtocolDevices.evidence })
+    .from(physioProtocolDevices).innerJoin(devices, eq(devices.id, physioProtocolDevices.deviceId))
+    .where(eq(physioProtocolDevices.protocolId, plan.protocolId)).orderBy(asc(physioProtocolDevices.displayOrder));
+  const planCodes = (await ex.select({ code: devices.code }).from(physioPlanDevices).innerJoin(devices, eq(devices.id, physioPlanDevices.deviceId))
+    .where(eq(physioPlanDevices.planId, plan.id))).map((r: any) => r.code);
+  const gaps = planSettingsGaps(protoLines, planCodes);
+  if (!gaps.length) return null;
+  return { gaps, supervisors: await physioSupervisors(ex), reminder: await settingsReminderInfo(plan.protocolId, ex) };
+}
+
+/** مفتاحُ القفل الاستشاريّ لتذكيرات البروتوكول — مع رقمه، فضغطتان متزامنتان على البروتوكول نفسِه تمرّان واحدةً بعد واحدة. */
+const SETTINGS_REMINDER_LOCK = 7031;
+
+/**
+ * **«ذكّر المشرف»** — يصل المشرفين العامّين (غيرَ مَن ضغط) في تلغرامهم بالجهاز وخاناته والبروتوكول ومَن ذكّر ولأيّ مريض، **وسطرُ التدقيق على البروتوكول
+ * في المعاملة نفسِها** (منه يراه المشرفُ في صفحته، ومنه تُحسب العشرُ دقائق). **تحت قفلٍ على البروتوكول** (مراجعةُ Codex): ضغطتان متزامنتان لا ترسلان
+ * تذكيرين؛ **وإن لم يُكتب صفُّ الإرسال لا يُقال «أُرسل»** ولا يُسجَّل (٥٠٣). و`viaTelegram`: هل ربط أحدُهم تلغرامَه وفعّل النوع — وإلّا يُقال إنّه في صفحة البروتوكول وحدها.
+ */
+export async function remindPlanSettings(plan: PhysioPlan, actor: Actor, meta: { ip?: string | null; userAgent?: string | null } = {}):
+  Promise<{ sent: boolean; gaps: SettingsBlocker[]; to: string[]; viaTelegram: boolean }> {
+  if (!plan.protocolId) throw new PlanError(409, "خطّةٌ بلا بروتوكول — لا تذكيرَ لازم");
+  const protocolId = plan.protocolId;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SETTINGS_REMINDER_LOCK}, ${protocolId})`);
+    const g = await planSettingsGapsFor(plan, tx);
+    if (!g) throw new PlanError(409, "إعداداتُ أجهزة هذه الخطّة مكتملةٌ في البروتوكول — لا تذكيرَ لازم");
+    const targets = g.supervisors.filter((u) => u.id !== actor.userId);
+    if (!targets.length) throw new PlanError(409, "لا مشرفَ عامّاً غيرك يُذكَّر — أدخلها من صفحة البروتوكول");
+    const ids = targets.map((u) => u.id);
+    const [{ n: linked }] = (await tx.execute(sql`SELECT count(*)::int AS n FROM staff_telegram_links l
+      JOIN staff_notification_prefs p ON p.user_id = l.user_id AND p.event_type = 'physio_plan_pending'
+      WHERE l.user_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)).rows as { n: number }[];
+    const base = { gaps: g.gaps, to: targets.map((u) => u.name), viaTelegram: Number(linked) > 0 };
+    const recent = g.reminder.lastAt && Date.now() - new Date(g.reminder.lastAt).getTime() < SETTINGS_REMINDER_QUIET_MS;
+    if (recent) return { sent: false, ...base };
+    const [pr] = await tx.select({ titleAr: physioProtocols.titleAr }).from(physioProtocols).where(eq(physioProtocols.id, protocolId));
+    const queued = await enqueueStaffEvent(tx, {
+      event: "physio_plan_pending", targetUserIds: ids, excludeUserId: actor.userId,
+      text: settingsReminderText({ protocolTitle: pr?.titleAr ?? "", gaps: g.gaps, byName: actor.name, patient: await patientLabel(tx, plan.patientId, plan.branchId) }),
+      linkPath: `/physio/protocols/${protocolId}`,
+    });
+    if (!queued) throw new PlanError(503, "تعذّر إرسال التذكير الآن — حاول ثانيةً بعد قليل");
+    await logAudit({ entityType: "physio_protocol", entityId: protocolId, action: SETTINGS_REMINDER_ACTION, userId: actor.userId, userName: actor.name,
+      newValues: { planId: plan.id, to: base.to, gaps: g.gaps.map((x) => ({ code: x.code, missing: x.missing.map((m) => m.ar) })) },
+      notes: `تذكيرُ المشرف بإعدادات الجهاز — من خطّة #${plan.id}`, ipAddress: meta.ip ?? null, userAgent: meta.userAgent ?? null, tx });
+    return { sent: true, ...base };
+  });
 }
 
 /**

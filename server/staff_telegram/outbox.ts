@@ -24,11 +24,11 @@ export interface StaffEventInput {
   linkPath?: string | null;
 }
 
-/** يُدرج صفّاً واحداً. داخل معاملةٍ: بنقطة حفظ فلا يُفسدها فشلُه. */
-export async function enqueueStaffEvent(ex: Executor | null | undefined, e: StaffEventInput): Promise<void> {
-  if (!isStaffEventKey(e.event) || !e.text) return;
+/** يُدرج صفّاً واحداً. داخل معاملةٍ: بنقطة حفظ فلا يُفسدها فشلُه. ⟵ هل كُتب الصفّ (لمن يقول للمستخدم «أُرسل» — §4.dq). */
+export async function enqueueStaffEvent(ex: Executor | null | undefined, e: StaffEventInput): Promise<boolean> {
+  if (!isStaffEventKey(e.event) || !e.text) return false;
   const targets = e.targetUserIds?.filter((n) => Number.isInteger(n) && n > 0) ?? null;
-  if (targets && targets.length === 0) return;
+  if (targets && targets.length === 0) return false;
   const insert = sql`
     INSERT INTO staff_notification_outbox (event_type, branch_id, target_user_ids, exclude_user_id, specialty, text, link_path)
     VALUES (${e.event}, ${e.branchId ?? null},
@@ -51,9 +51,10 @@ export async function enqueueStaffEvent(ex: Executor | null | undefined, e: Staf
     }
   } catch {
     console.error(`[staff-telegram] enqueue failed (${e.event})`);
-    return;
+    return false;
   }
   scheduleStaffDispatch();
+  return true;
 }
 
 let nudgeTimer: NodeJS.Timeout | null = null;

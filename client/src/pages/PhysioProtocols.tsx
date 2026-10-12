@@ -86,6 +86,8 @@ interface Protocol {
   measures?: MeasureDef[]; measuresStatus?: "draft" | "approved"; measuresApprovedByName?: string | null;
   /** §4.dn — موانعُ الاعتماد: كلُّ جهازٍ مستعمَلٍ ناقصِ الإعدادات بخاناته. */
   settingsBlockers?: SettingsBlocker[];
+  /** §4.dq — تذكيراتُ «ذكّر المشرف» من الخطط بهذه الإعدادات. */
+  settingsReminder?: { count: number; lastByName: string | null; lastAt: string | null } | null;
   canEditMeasures?: boolean; canApproveMeasures?: boolean;
   //  §4.cx — البرنامجُ على مراحل بتمارينه وبطاقاتها.
   phases?: Phase[];
@@ -378,6 +380,12 @@ export function PhysioProtocolDetail() {
           <p className="text-xs text-red-900/80">{p.canEdit
             ? "املأها من «تعديل» في خانات الجهاز المعلَّمة بنجمة، ثمّ اعتمد — والمكتوبُ في البروتوكول (الموضعُ والجرعةُ في التجارب والموانع) دليلٌ لك."
             : "يملؤها المشرفُ العام من جهاز المركز قبل الاعتماد."}</p>
+          {(p.settingsReminder?.count ?? 0) > 0 && p.settingsReminder?.lastAt && (
+            <p className="text-xs font-semibold text-red-900" data-testid="protocol-settings-reminded">
+              🔔 ذُكِّر المشرفُ بها من الخطط {p.settingsReminder.count === 1 ? "مرّةً" : `${p.settingsReminder.count} مرّات`} — آخرُها من {p.settingsReminder.lastByName ?? "—"}
+              {" · "}{new Date(p.settingsReminder.lastAt).toLocaleString("ar-IQ", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
         </div>
       )}
 
