@@ -450,7 +450,7 @@ export const PROTOCOL: ProtocolContentSeed = {
     "• جرحٌ ملتئمٌ وجذعٌ ثابتُ الحجم جاهزٌ للقالب: محيطُه لا يتغيّر أكثرَ من ٠٫٥ سم في ثلاثة قياساتٍ بين كلٍّ منها يومان.\n" +
     "• لا تيبّسَ يمنع القالب: الركبةُ تستقيم أو ينقصها ١٠° على الأكثر (تحت الركبة)، والوركُ يستقيم أو ينقصه ١٥° على الأكثر (فوق الركبة).\n" +
     "• استقلالٌ في السرير والانتقال (والمرحاضِ العربيّ والأرضِ إن كانا في البيت) والكرسيّ المتحرّك — BAMS ٨ من ٨ لمبتور الساق الواحدة.\n" +
-    "• وقوفٌ على الساق السليمة ١٥–٣٠ ثانية بلا يدين، وباسطاتُ الورك ومبعداتُه ٤ من ٥ فأكثر.\n" +
+    "• وقوفٌ على الساق السليمة ١٥–٣٠ ثانية بلا يدين (ولمبتور الطرفين بدلها: جلوسٌ متوازن بلا يدين مع الوصول خارج قاعدة الجلوس، وانتقالٌ مستقلّ)، وباسطاتُ الورك ومبعداتُه ٤ من ٥ فأكثر.\n" +
     "• لياقةٌ للمشي بالطرف: تحسّنٌ على جهاز تدوير الذراعين، و٣٠ واط لمبتور فوق الركبة الوعائيّ (Erjavec 2014).\n" +
     "• ألمٌ شبحيّ وألمُ جذعٍ تحت السيطرة، ويعرف المريضُ كيف يديرهما.\n" +
     "• يعرف كيف ينهض من الأرض وماذا يفعل إن لم يستطع، ويحمي قدمَه السليمة، ويؤدّي برنامجَه المنزليّ وحده.\n" +
@@ -458,7 +458,7 @@ export const PROTOCOL: ProtocolContentSeed = {
     "• A healed wound and a residual limb of stable volume ready for casting: circumference changing by no more than 0.5 cm over three measurements two days apart.\n" +
     "• No contracture that prevents casting: the knee straight or within 10° (below the knee), the hip straight or within 15° (above the knee).\n" +
     "• Independence in bed, transfers (including a squat toilet and the floor if the home has them) and the wheelchair — BAMS 8 of 8 for a single-leg amputee.\n" +
-    "• Standing on the sound leg for 15–30 seconds without hands, and hip extensors and abductors at 4/5 or better.\n" +
+    "• Standing on the sound leg for 15–30 seconds without hands (for bilateral amputees instead: balanced sitting without hands while reaching outside the base of support, and independent transfers), and hip extensors and abductors at 4/5 or better.\n" +
     "• Fitness for prosthetic walking: improvement on the arm ergometer, and 30 W for a vascular above-knee amputee (Erjavec 2014).\n" +
     "• Phantom and residual-limb pain under control, with the patient knowing how to manage them.\n" +
     "• Knows how to get up from the floor and what to do if unable, protects the sound foot, and does the home programme independently.\n" +
@@ -652,8 +652,8 @@ export const PROTOCOL: ProtocolContentSeed = {
       sessionFrom: 1, sessionTo: 6,
       timeframe: ["الأسبوعُ الأوّل في المركز — وغالباً بعد أسبوعين أو ثلاثة من العملية", "The first week at the centre — usually two to three weeks after surgery"],
       goals: [
-        "جرحٌ يُحمى ويُراقب، ووضعياتٌ يعرفها المريضُ ومرافقُه، وركبةٌ تستقيم (تحت الركبة) ووركٌ يبلغ الصفر (فوق الركبة) أو لا نقصَ عن القياس الأوّل، وحركةٌ في السرير وانتقالٌ إلى الكرسيّ وتنقّلٌ به في الداخل وحده (BAMS ٨ من ٨)، وألمٌ في التمرين ٤ من ١٠ أو أقلّ، ورباطٌ ضاغطٌ بدأ حين أذن الجرّاح، وبرنامجٌ منزليّ يوميّ يؤدّى صحيحاً.",
-        "A protected, monitored wound; positioning known by the patient and carer; a straight knee (below the knee) and a hip at zero (above the knee) or no loss from baseline; independent bed mobility, transfer to the wheelchair and indoor wheeling (BAMS 8 of 8); exercise pain at 4/10 or less; a shrinker started once the surgeon allows; and a daily home programme done correctly.",
+        "جرحٌ يُحمى ويُراقب، ووضعياتٌ يعرفها المريضُ ومرافقُه، وركبةٌ تستقيم (تحت الركبة) ووركٌ يبلغ الصفر (فوق الركبة) أو لا نقصَ عن القياس الأوّل، وحركةٌ في السرير وانتقالٌ إلى الكرسيّ وتنقّلٌ به في الداخل وحده (BAMS ٨ من ٨، ولمبتور الطرفين بنودُه الثلاثة بلا الوقوف)، وألمٌ في التمرين ٤ من ١٠ أو أقلّ، ورباطٌ ضاغطٌ بدأ حين أذن الجرّاح، وبرنامجٌ منزليّ يوميّ يؤدّى صحيحاً.",
+        "A protected, monitored wound; positioning known by the patient and carer; a straight knee (below the knee) and a hip at zero (above the knee) or no loss from baseline; independent bed mobility, transfer to the wheelchair and indoor wheeling (BAMS 8 of 8, or its first three items without standing for bilateral amputees); exercise pain at 4/10 or less; a shrinker started once the surgeon allows; and a daily home programme done correctly.",
       ],
       education: [
         "الرسائلُ الأساسية — بلغةٍ بسيطة:\n" +
@@ -676,13 +676,13 @@ export const PROTOCOL: ProtocolContentSeed = {
       criteria: [
         "ينتقل إلى المرحلة ٢ حين تتحقّق كلُّها:\n" +
         "• يأذن الجرّاحُ أو فريقُ الجروح، ولا علامةَ التهاب.\n" +
-        "• BAMS ٨ من ٨ لمبتور الساق الواحدة: يجلس من الاستلقاء، وينتقل إلى الكرسيّ، ويتنقّل به في الداخل، ويقف على ساقه السليمة — وحده (Kristensen 2018).\n" +
+        "• BAMS ٨ من ٨ لمبتور الساق الواحدة: يجلس من الاستلقاء، وينتقل إلى الكرسيّ، ويتنقّل به في الداخل، ويقف على ساقه السليمة — وحده (Kristensen 2018)؛ ولمبتور الطرفين البنودُ الثلاثةُ الأولى وحده (بندُ الوقوف لا ينطبق).\n" +
         "• الركبةُ تستقيم تماماً (تحت الركبة)، أو الوركُ يبلغ الصفرَ في وضعية توماس (فوق الركبة)، أو لا نقصَ عن القياس الأوّل.\n" +
         "• الألمُ في التمرين ٤ من ١٠ أو أقلّ.\n" +
         "• يؤدّي هو أو مرافقُه الوضعياتِ والبرنامجَ المنزليّ صحيحاً أمام المعالج.",
         "Moves to phase 2 when all of these are met:\n" +
         "• The surgeon or wound team agrees, with no signs of infection.\n" +
-        "• BAMS 8 of 8 for a single-leg amputee: lying to sitting, transfer to the chair, indoor wheeling, and standing on the sound leg — all independently (Kristensen 2018).\n" +
+        "• BAMS 8 of 8 for a single-leg amputee: lying to sitting, transfer to the chair, indoor wheeling, and standing on the sound leg — all independently (Kristensen 2018); for bilateral amputees the first three items independently (the standing item does not apply).\n" +
         "• The knee straightens fully (below the knee), or the hip reaches zero in the Thomas position (above the knee), or there is no loss from baseline.\n" +
         "• Exercise pain at 4/10 or less.\n" +
         "• The patient or carer performs the positioning and home programme correctly in front of the therapist.",
@@ -728,8 +728,8 @@ export const PROTOCOL: ProtocolContentSeed = {
       sessionFrom: 7, sessionTo: 16,
       timeframe: ["نحو الأسبوعين الثاني والثالث في المركز", "About weeks 2–3 at the centre"],
       goals: [
-        "باسطاتُ الورك ومبعداتُه بجهتيه ٤ من ٥، وعضلاتُ الركبة تحت البتر والساقُ السليمة والذراعان والجذعُ أقوى؛ ووقوفٌ على الساق السليمة ١٠ ثوانٍ بلا يدين؛ وانتقالٌ مستقلّ في كلّ ما يحتاجه البيت ومهاراتُ كرسيٍّ على الأرض المستوية؛ ورباطٌ ضاغطٌ يلبسه وحده سبعةَ أيّامٍ بلا أذىً للجلد؛ وتنقّلٌ قصيرٌ بالمشّاية لمن يحتاجه بأمان؛ ونهوضٌ من الأرض جُرِّب.",
-        "Hip extensors and abductors on both sides at 4/5, with stronger knee muscles below the amputation, sound leg, arms and trunk; standing on the sound leg for 10 seconds without hands; independent transfers for everything the home needs and wheelchair skills on level ground; a shrinker put on independently for seven days without skin damage; short, safe walking with a frame for those who need it; and floor recovery tried.",
+        "باسطاتُ الورك ومبعداتُه بجهتيه ٤ من ٥، وعضلاتُ الركبة تحت البتر والساقُ السليمة والذراعان والجذعُ أقوى؛ ووقوفٌ على الساق السليمة ١٠ ثوانٍ بلا يدين (ولمبتور الطرفين جلوسٌ متوازن بلا يدين)؛ وانتقالٌ مستقلّ في كلّ ما يحتاجه البيت ومهاراتُ كرسيٍّ على الأرض المستوية؛ ورباطٌ ضاغطٌ يلبسه وحده سبعةَ أيّامٍ بلا أذىً للجلد؛ وتنقّلٌ قصيرٌ بالمشّاية لمن يحتاجه بأمان؛ ونهوضٌ من الأرض جُرِّب.",
+        "Hip extensors and abductors on both sides at 4/5, with stronger knee muscles below the amputation, sound leg, arms and trunk; standing on the sound leg for 10 seconds without hands (balanced sitting without hands for bilateral amputees); independent transfers for everything the home needs and wheelchair skills on level ground; a shrinker put on independently for seven days without skin damage; short, safe walking with a frame for those who need it; and floor recovery tried.",
       ],
       education: [
         "الرسائلُ الأساسية — بلغةٍ بسيطة:\n" +
@@ -754,7 +754,7 @@ export const PROTOCOL: ProtocolContentSeed = {
         "• انتقالٌ مستقلّ بين السرير والكرسيّ والمرحاض (والمرحاضِ العربيّ والأرضِ إن كانا في بيته).\n" +
         "• جُرِّب النهوضُ من الأرض بإشراف.\n" +
         "• مهاراتُ الكرسيّ على الأرض المستوية مستقلّة، ومسجّلةٌ في الاستبيان العربيّ (Sarsak 2026).\n" +
-        "• يقف على الساق السليمة ١٠ ثوانٍ بلا يدين (وبأطراف الأصابع للضعيف الوعائيّ).\n" +
+        "• يقف على الساق السليمة ١٠ ثوانٍ بلا يدين (وبأطراف الأصابع للضعيف الوعائيّ) — ولمبتور الطرفين بدلها: يجلس على حافّة السرير بلا يدين ٣٠ ثانية ويصل خارج قاعدة جلوسه ويعود، وينتقل إلى الكرسيّ ومنه وحده من الأمام أو الخلف (اقتراح).\n" +
         "• باسطاتُ الورك ومبعداتُه ٤ من ٥ فأكثر في الاختبار اليدويّ.",
         "Moves to phase 3 when all of these are met:\n" +
         "• The wound is closed with no discharge.\n" +
@@ -762,7 +762,7 @@ export const PROTOCOL: ProtocolContentSeed = {
         "• Independent transfers between bed, chair and toilet (including a squat toilet and the floor if the home has them).\n" +
         "• Floor recovery has been tried under supervision.\n" +
         "• Independent wheelchair skills on level ground, recorded on the Arabic questionnaire (Sarsak 2026).\n" +
-        "• Stands on the sound leg for 10 seconds without hands (fingertip support for a frail vascular patient).\n" +
+        "• Stands on the sound leg for 10 seconds without hands (fingertip support for a frail vascular patient) — for bilateral amputees instead: sits on the edge of the bed without hands for 30 seconds, reaches outside the base of support and returns, and transfers to and from the wheelchair independently forwards or backwards (proposed).\n" +
         "• Hip extensors and abductors at 4/5 or better on manual testing.",
       ],
       notes: [
@@ -812,8 +812,8 @@ export const PROTOCOL: ProtocolContentSeed = {
       sessionFrom: 17, sessionTo: 24,
       timeframe: ["نحو الأسبوع الرابع — ويمتدّ بستِّ جلساتٍ في كلّ مرّة حتى نحو ٤٨ حين لا تتحقّق المعايير", "About week 4 — extended by six sessions at a time up to about 48 when the criteria are not met"],
       goals: [
-        "جذعٌ ملتئمٌ ثابتُ الحجم بندبةٍ متحرّكة وبلا تيبّسٍ يمنع القالب، ووقوفٌ على الساق السليمة ١٥–٣٠ ثانية، وتنقّلٌ آمن بالكرسيّ أو المشّاية أو العكّازين، وAMPnoPRO وTUG أو المشيُ دقيقتين بالمساعد مسجّلةٌ ومتحسّنة، وبرنامجٌ منزليّ مستقلّ — ثمّ الإحالةُ لأخذ القالب.",
-        "A healed residual limb of stable volume with a mobile scar and no contracture that prevents casting, standing on the sound leg for 15–30 seconds, safe mobility in the wheelchair or with a frame or crutches, AMPnoPRO and TUG or the two-minute walk with the aid recorded and improved, and an independent home programme — then referral for casting.",
+        "جذعٌ ملتئمٌ ثابتُ الحجم بندبةٍ متحرّكة وبلا تيبّسٍ يمنع القالب، ووقوفٌ على الساق السليمة ١٥–٣٠ ثانية (ولمبتور الطرفين توازنُ الجلوس والانتقالُ المستقلّ)، وتنقّلٌ آمن بالكرسيّ أو المشّاية أو العكّازين، وAMPnoPRO وTUG أو المشيُ دقيقتين بالمساعد مسجّلةٌ ومتحسّنة، وبرنامجٌ منزليّ مستقلّ — ثمّ الإحالةُ لأخذ القالب.",
+        "A healed residual limb of stable volume with a mobile scar and no contracture that prevents casting, standing on the sound leg for 15–30 seconds (sitting balance and independent transfers for bilateral amputees), safe mobility in the wheelchair or with a frame or crutches, AMPnoPRO and TUG or the two-minute walk with the aid recorded and improved, and an independent home programme — then referral for casting.",
       ],
       education: [
         "الرسائلُ الأساسية — بلغةٍ بسيطة:\n" +
@@ -834,16 +834,16 @@ export const PROTOCOL: ProtocolContentSeed = {
         "• الجرحُ ملتئمٌ والندبةُ متحرّكة، ولا ورمٌ عصبيّ مؤلم ولا نتوءُ عظمٍ يمنع تحميلَ القالب.\n" +
         "• محيطُ الجذع ثابت: لا يتغيّر أكثرَ من ٠٫٥ سم عند كلّ مستوى في ثلاثة قياساتٍ بين كلٍّ منها يومان (القاعدةُ من Sanders & Fatone 2011، والسماحُ مقترح).\n" +
         "• التيبّس: نقصُ بسط الركبة ١٠° على الأكثر (تحت الركبة)، ونقصُ بسط الورك ١٥° على الأكثر (فوق الركبة) — حدودٌ مقترحة، والأشدُّ يُركَّب له بقالبٍ معدَّل (Poonsiri 2022).\n" +
-        "• يقف على الساق السليمة ١٥–٣٠ ثانية.\n" +
-        "• AMPnoPRO وTUG أو المشيُ دقيقتين بالمساعد مسجّلةٌ ومتحسّنة.\n" +
+        "• يقف على الساق السليمة ١٥–٣٠ ثانية — ولمبتور الطرفين بدلها: معيارُ الجلوس والانتقال في المرحلة ٢ ثابت، ويدفع الكرسيَّ وحده، والقرارُ مع فنّيّ الأطراف والطبيب.\n" +
+        "• AMPnoPRO وTUG أو المشيُ دقيقتين بالمساعد مسجّلةٌ ومتحسّنة — ولمبتور الطرفين (لا يُجرى له AMPnoPRO فوق مفصل القدم) BAMS ومهاراتُ الكرسيّ بالاستبيان العربيّ.\n" +
         "• يؤدّي برنامجَه المنزليّ وحده.\n" +
         "وإن لم تتحقّق في الجلسة ٢٤: ستُّ جلساتٍ أخرى في كلّ مرّة حتى نحو ٤٨ — خاصّةً مع جرحٍ لم يلتئم، أو بترٍ وعائيٍّ فوق الركبة، أو بترِ الطرفين، أو كسورٍ أو إصابةِ أعصاب.",
         "Referred for casting when all of these are met:\n" +
         "• The wound is healed and the scar mobile, with no painful neuroma or bony prominence that prevents socket loading.\n" +
         "• Stable circumference: no more than 0.5 cm change at each level over three measurements two days apart (the rule from Sanders & Fatone 2011; the tolerance is a proposal).\n" +
         "• Contracture: knee extension lacking no more than 10° (below the knee), and hip extension lacking no more than 15° (above the knee) — proposed limits; worse contractures are fitted with an adapted socket (Poonsiri 2022).\n" +
-        "• Stands on the sound leg for 15–30 seconds.\n" +
-        "• AMPnoPRO and TUG or the two-minute walk with the aid recorded and improved.\n" +
+        "• Stands on the sound leg for 15–30 seconds — for bilateral amputees instead: the phase 2 sitting and transfer criterion is maintained, the patient wheels independently, and the decision is made with the prosthetist and the doctor.\n" +
+        "• AMPnoPRO and TUG or the two-minute walk with the aid recorded and improved — for bilateral amputees (AMPnoPRO is not done above the ankle) BAMS and wheelchair skills on the Arabic questionnaire.\n" +
         "• Does the home programme independently.\n" +
         "If they are not met by session 24: six more sessions at a time up to about 48 — especially with an unhealed wound, a vascular above-knee amputation, bilateral amputation, or fractures or nerve injury.",
       ],
