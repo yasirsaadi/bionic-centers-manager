@@ -160,7 +160,7 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "floor-rise-chair-1": { file: "floor-rise-chair-1.webp" },
   "prosthetic-ramp-1": { file: "prosthetic-ramp-1.webp" },
   "treadmill-walking-amputee-1": { file: "treadmill-walking-amputee-1.webp" },
-  //  ما قبل الطرف السفليّ (§4.du) — و«الدرجُ جلوساً» منتظرة.
+  //  ما قبل الطرف السفليّ (§4.du) — و«الدرجُ جلوساً» وصلت ثالثاً (٢٠٢٦-١٠-١٢): جالسٌ على الدرجة يدفع بيديه والساق السليمة (§4.dv التكملة ٣).
   "residual-limb-stump-board-1": { file: "residual-limb-stump-board-1.webp" },
   "thomas-stretch-amputee-1": { file: "thomas-stretch-amputee-1.webp" },
   "amputee-bed-sit-up-1": { file: "amputee-bed-sit-up-1.webp" },
@@ -170,6 +170,7 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "shrinker-donning-1": { file: "shrinker-donning-1.webp" },
   "seated-push-up-1": { file: "seated-push-up-1.webp" },
   "walker-hop-to-1": { file: "walker-hop-to-1.webp" },
+  "seated-stair-climbing-1": { file: "seated-stair-climbing-1.webp" },
   "arm-ergometer-1": { file: "arm-ergometer-1.webp" },
   "phantom-mirror-therapy-1": { file: "phantom-mirror-therapy-1.webp", credit: "Amputee Store — EPFL / Alain Herzog, CC BY-SA" },
   //  بترُ الطرف العلويّ (§4.dv).
