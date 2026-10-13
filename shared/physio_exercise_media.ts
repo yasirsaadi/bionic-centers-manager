@@ -209,9 +209,25 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "leg-press-progressive-1": { file: "leg-press-progressive-1.webp" },
   "kneeling-floor-transfer-1": { file: "kneeling-floor-transfer-1.webp" },
   //  **ما بعد استبدال الورك** (ترحيل ١٤٠، §4.dz): بطاقتا الدرج والسيارة للورك بصورتَي بطاقتَي الركبة منسوختين باسم رمزيهما — تُظهران الحركةَ نفسَها
-  //  (الصعودُ بالسليمة والعكّازُ والدرابزين، والجلوسُ في المقعد ثمّ إدخالُ الساق) بلا ما يخصّ الركبة؛ والإحدى عشرةَ الباقية في «الصور المطلوبة».
+  //  (الصعودُ بالسليمة والعكّازُ والدرابزين، والجلوسُ في المقعد ثمّ إدخالُ الساق) بلا ما يخصّ الركبة.
   "stairs-after-hip-surgery-1": { file: "stairs-after-hip-surgery-1.webp", credit: "MG共享康复" },
   "car-transfer-hip-1": { file: "car-transfer-hip-1.webp" },
+  //  **الدفعةُ السابعة — ما بعد استبدال الورك: الإحدى عشرة كلُّها** (٢٠٢٦-١٠-١٣، §4.dz التكملة): المجلّدُ نفسُه، ملفٌّ لكلّ خانة طابق Drive بايتاً ببايت.
+  //  **وما قُصّ**: من «الحركة الآمنة» الكتابةُ البرتغالية تحت الأشكال وكلمةُ «لا» فوقها (وبقيت الأسهمُ والعلاماتُ الحمراء)، ومن «مُلبِس الجوارب» التعليماتُ
+  //  الإنكليزية (فأُعيد صفُّ الرسوم الأربعة بأرقامها)، **ومن «الصلاة» صفُّ الأرض كلُّه** (السجودُ على الأرض ممنوعٌ في الأسابيع الأولى — فبقي صفُّ الكرسيّ وحده)،
+  //  ومن «رفع الحوض على درجة» الحروفُ والعنوانُ والشعار، ومن «شدّ المقعدة» و«الصدفة» الهوامشُ البيضاء. **و«النهوض من السرير» هي صورةُ «التقلّب ككتلة»
+  //  بعينها** (`log-roll-2`، الفرقُ ٣ في البصمة) — فنُسخ ملفُّها المسجَّل باسم الرمز.
+  "gluteal-sets-1": { file: "gluteal-sets-1.webp" },
+  "supine-hip-abduction-slide-1": { file: "supine-hip-abduction-slide-1.webp" },
+  "standing-hip-three-way-1": { file: "standing-hip-three-way-1.webp" },
+  "hip-safe-movement-1": { file: "hip-safe-movement-1.webp" },
+  "bed-mobility-hip-1": { file: "bed-mobility-hip-1.webp" },
+  "raised-seat-transfer-hip-1": { file: "raised-seat-transfer-hip-1.webp" },
+  "dressing-aids-hip-1": { file: "dressing-aids-hip-1.webp" },
+  "walking-aid-gait-hip-1": { file: "walking-aid-gait-hip-1.webp" },
+  "prayer-progression-hip-1": { file: "prayer-progression-hip-1.webp" },
+  "pelvic-drop-step-1": { file: "pelvic-drop-step-1.webp", credit: "Run Mechanics" },
+  "clamshell-1": { file: "clamshell-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
