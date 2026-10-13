@@ -1,4 +1,4 @@
-// **أنواعُ تنبيهات الموظّفين** (§4.by) — أربعةَ عشرَ نوعاً (الرابعَ عشرَ «كلُّ مبلغٍ يدخل» للمسؤول وحده). وثلاثةٌ عرضها المساعدُ ثمّ أُسقطت لأنها لا تقع اليوم:
+// **أنواعُ تنبيهات الموظّفين** (§4.by) — أربعةَ عشرَ نوعاً (الرابعَ عشرَ «كلُّ مبلغٍ يدخل» للمسؤول وحده)، وأنواعُ العلاج الطبيعي (§4.cm)، و«طلبُ تصحيح صرف» (§4.ce). وثلاثةٌ عرضها المساعدُ ثمّ أُسقطت لأنها لا تقع اليوم:
 // «خصمٌ ينتظر الاعتماد» و«خصمٌ قُرِّر» (الطلبُ يُعتمَد في حفظه نفسِه — `applyDiscountImmediatelyTx`)، و«مبلغٌ أُعيد للتصحيح»
 // (`pending_service_charges` تاريخٌ لا مسار).
 // — مصدرٌ واحد يقرؤه الخادمُ ولوحةُ المسؤول.
@@ -28,6 +28,8 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "followups_digest", label: "تذكير صباحي بالمتابعات المستحقّة اليوم", group: "الاستقبال ومدير الفرع", scope: "branch", digest: true },
   { key: "payment_received", label: "كلّ مبلغ يدخل أيّ فرع — المبلغ والمريض والقسم والفرع", group: "المسؤول", scope: "global" },
   { key: "payment_correction_pending", label: "طلب تصحيح دفعة ينتظر القرار", group: "المسؤول", scope: "global" },
+  //  طلبُ تصحيح مصروفٍ أو سطرِ دفتر (§4.ce التكملة) — كان يظهر في الدفتر وحده فلا يعرف به المالكُ إلّا إن فتحه.
+  { key: "money_correction_pending", label: "طلب تصحيح صرف أو سطر في دفتر القاصة ينتظر القرار", group: "المسؤول", scope: "global" },
   { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل", group: "المسؤول", scope: "branch" },
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
   { key: "evening_summary", label: "ملخّص يومي مسائي لكلّ فرع", group: "المسؤول", scope: "branch", digest: true },
@@ -69,7 +71,7 @@ const DOCTOR_EVENTS = ["exam_request"];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
 const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
-const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "ai_suggestion"];
+const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "money_correction_pending", "ai_suggestion"];
 const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
 const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];

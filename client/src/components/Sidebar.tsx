@@ -252,7 +252,19 @@ export function Sidebar() {
       return res.json();
     },
   });
-  const paymentCorrectionsCount = paymentCorrectionsData?.count ?? 0;
+  //  **وطلباتُ تصحيح الصرف وسطور الدفتر معها** (§4.ce التكملة) — كانت تظهر في الدفتر وحده فلا يعرف بها المالك.
+  //  نقطتها للمسؤول العام وحده كعدّاد الدفعات، والرقمُ واحدٌ للنوعين.
+  const { data: moneyCorrectionsData } = useQuery<{ count: number }>({
+    queryKey: ["/api/money-corrections", "pending-count"],
+    enabled: !!branchSession?.isAdmin,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/money-corrections/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0);
 
   //  ══ **شارةُ «القالب الاختباري»** (§4.bz) — مرضى يُطلَب الاتصالُ بهم اليوم بشأن قالبهم النهائي ════════
   //  للاستعلامات والإدارة لا للخبير. **بلا `refetchInterval`** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): تتحدّث عند الكتابة والعودة.
@@ -349,7 +361,8 @@ export function Sidebar() {
     //  و`hideWhenZero` تُخفي الصفَّ كلَّه حين لا يوجد طلبٌ معلَّق — نفسُ نمط
     //  «خصومات سابقة» و«الطابور الموروث» أعلاه بالضبط.
     //  **ويبقى ظاهراً ولو فرغ المعلَّق** (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والصفحةُ صارت تعرض المعتمَد والمرفوض بقرارهما.
-    { label: "طلبات تصحيح الدفعات", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount },
+    //  **وصارت «طلبات التصحيح»** تجمع الدفعات والمصاريف وسطورَ الدفتر (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.ce التكملة).
+    { label: "طلبات التصحيح", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount },
     //  سردٌ إشرافيٌّ للقراءة فقط — بلا شارةٍ (ليست طابورَ انتظار).
     { label: "المراجعة اليومية", icon: Eye, href: "/daily-review", adminOnly: true, settingKey: null, permission: null },
     //  لوحةُ التصنيع: المسؤولُ والمديرُ (اللوحة) والخبيرُ بدوره أو بقدرته (أوامرُه) — كبوّابتَي الخادم.

@@ -2,17 +2,37 @@
 //
 //   POST /api/money-corrections               — الموظّفُ يطلب تعديلَ مصروفٍ أو سطرِ دفتر، أو حذفَه، بسبب.
 //   GET  /api/money-corrections               — المسؤولُ: كلُّ الطلبات (أو المعلَّقة)؛ وغيرُه: طلباتُه هو.
+//   GET  /api/money-corrections/pending-count — المسؤولُ وحده: عددُ المعلَّق، لرقم «طلبات التصحيح» في الشريط (§4.ce التكملة).
 //   POST /api/money-corrections/:id/approve   — المسؤولُ وحده: يُطبَّق.
 //   POST /api/money-corrections/:id/reject    — المسؤولُ وحده.
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
+import { db } from "../db";
+import { notifyMoneyCorrection } from "../staff_telegram/notify";
 import { getSession } from "../sessions_module/permissions";
 import {
   canWriteCashBook, parseAmount, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR,
+  INCOME_OTHER_LABEL, OUTFLOW_LABELS,
 } from "@shared/cash_book";
 import * as store from "./store";
 
 const RATIO_CATEGORIES = [HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY];
+
+const money = (n: number) => n.toLocaleString("en-US");
+const dmy = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}`;
+
+/** نصُّ تنبيه المسؤول: ما الهدف، وما المطلوب منه — من لقطة السطر والمطلوب، كما يقرؤهما في «طلبات التصحيح». */
+function describeRequest(type: string, kind: string | undefined, action: string, snap: store.Snapshot, patch: Record<string, unknown> | null) {
+  const what = type === "expense" ? "مصروف" : `سطر «${kind === "income_other" ? INCOME_OTHER_LABEL : OUTFLOW_LABELS.dr_transfer}» في دفتر القاصة`;
+  const day = `بتاريخ ${dmy(snap.date)}`;
+  if (action === "delete") return { what, change: `المطلوب: حذفُ السطر (${money(snap.amount)} ${day})` };
+  const parts: string[] = [];
+  if (patch?.amount !== undefined) parts.push(`المبلغ ${money(snap.amount)} ← ${money(Number(patch.amount))}`);
+  if (patch?.category !== undefined) parts.push("والبابُ يتغيّر");
+  if (patch?.note !== undefined) parts.push(`الوصف «${snap.note ?? ""}» ← «${patch.note ?? ""}»`);
+  if (patch?.amount === undefined) parts.unshift(`المبلغ ${money(snap.amount)}`);
+  return { what, change: `المطلوب: ${parts.join(" · ")} — ${day}` };
+}
 
 function fail(res: any, e: unknown) {
   if (e instanceof store.CorrectionError) return res.status(e.status).json({ error: e.message });
@@ -71,14 +91,29 @@ export function registerMoneyCorrectionRoutes(app: Express, isAuthenticated: any
         if (type === "expense" && nextCategory === "other" && !nextNote) return res.status(400).json({ error: "عند «أخرى» اكتب ما هو المصروف" });
         if (type === "cash_book_entry" && target.entry.kind === "income_other" && !nextNote) return res.status(400).json({ error: "اكتب مصدر الوارد" });
       }
-      const row = await store.createRequest({
-        targetType: type, targetId: id, branchId: target.branchId, action, snapshot: target.snapshot, patch, reason,
-        userId: s.userId ?? null, userName: s.displayName ?? null,
+      //  الطلبُ وتنبيهُ المسؤول في معاملةٍ واحدة — طلبٌ ارتدّ لا يُنبَّه به (§4.ce التكملة).
+      const said = describeRequest(type, target.entry?.kind, action, target.snapshot, patch);
+      const row = await db.transaction(async (tx) => {
+        const r = await store.createRequest({
+          targetType: type, targetId: id, branchId: target.branchId, action, snapshot: target.snapshot, patch, reason,
+          userId: s.userId ?? null, userName: s.displayName ?? null,
+        }, tx);
+        await notifyMoneyCorrection(tx, {
+          branchId: target.branchId, what: said.what, change: said.change, reason, actorName: s.displayName ?? null, actorUserId: s.userId ?? null,
+        });
+        return r;
       });
       await logAudit({ entityType: "money_correction_request", entityId: row.id, action: "create", userId: s.userId ?? null,
         userName: s.displayName ?? null, branchId: target.branchId, newValues: row, ipAddress: req.ip ?? null, userAgent: req.get?.("user-agent") ?? null });
       res.json(row);
     } catch (e) { fail(res, e); }
+  });
+
+  //  رقمُ «طلبات التصحيح» في الشريط يجمع الدفعات وهذه — للمسؤول وحده، كعدّاد الدفعات (§4.ce التكملة).
+  app.get("/api/money-corrections/pending-count", isAuthenticated, async (req: any, res) => {
+    const s = getSession(req) ?? {};
+    if (!s.isAdmin) return res.status(403).json({ error: "للمسؤول وحده" });
+    try { res.json({ count: await store.pendingCount(null) }); } catch (e) { fail(res, e); }
   });
 
   app.get("/api/money-corrections", isAuthenticated, async (req: any, res) => {

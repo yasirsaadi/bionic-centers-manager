@@ -39,12 +39,13 @@ export async function loadTarget(type: TargetType, id: number) {
   return e ? { branchId: e.branchId, snapshot: entrySnapshot(e), expense: null as any, entry: e } : null;
 }
 
+/** `ex` معاملةُ الطلب — تنبيهُ المسؤول يُدرَج فيها معه (§4.ce التكملة). */
 export async function createRequest(p: {
   targetType: TargetType; targetId: number; branchId: number; action: CorrectionAction; snapshot: Snapshot;
   patch: Record<string, unknown> | null; reason: string; userId: number | null; userName: string | null;
-}) {
+}, ex: Pick<typeof db, "insert"> = db) {
   try {
-    const [row] = await db.insert(moneyCorrectionRequests).values({
+    const [row] = await ex.insert(moneyCorrectionRequests).values({
       targetType: p.targetType, targetId: p.targetId, branchId: p.branchId, action: p.action,
       beforeSnapshot: p.snapshot, requestedPatch: p.patch, reason: p.reason,
       requestedBy: p.userId, requestedByName: p.userName,
