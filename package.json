@@ -281,6 +281,7 @@
     "test:physio-home-sheet": "tsx server/physio_home_sheet.test.ts",
     "test:staff-greeting": "tsx server/staff_greeting.test.ts",
     "test:physio-protocol-content": "tsx server/physio_protocol_content.test.ts",
+    "test:physio-supervisor-checklist": "tsx server/physio_supervisor_checklist.test.ts",
     "test:protocol-search": "tsx server/protocol_search.test.ts",
     "test:intake-sheets": "tsx server/intake_sheets.test.ts",
     "test:patient-record": "tsx server/patient_record.test.ts",

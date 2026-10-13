@@ -21,6 +21,8 @@ import { moveItem } from "@/lib/utils";
 import { ProtocolMeasuresSection } from "@/components/physio/ProtocolMeasures";
 import { ExerciseLibraryTab, MissingImagesTab } from "@/components/physio/ExerciseLibrary";
 import { ProtocolPhasesSection, type Phase } from "@/components/physio/ProtocolPhases";
+import { SupervisorChecklistButton } from "@/components/physio/SupervisorChecklist";
+import { isDetailedProtocol, type ChecklistItem } from "@shared/physio_supervisor_checklist";
 import { DEVICE_PARAM_FIELDS, DEVICE_PARAM_LABELS, deviceParamsLine } from "@shared/physio_exercises";
 import { missingDeviceSettings, requiredSettingKeys, scheduleLabel, type SettingsBlocker } from "@shared/physio_device_settings";
 import type { MeasureDef } from "@shared/physio_assessments";
@@ -41,6 +43,8 @@ interface ListRow {
   status: "draft" | "approved"; isArchived: boolean; deviceCount: number; recommendedCount: number;
   /** §4.dn — أجهزةٌ مستعمَلةٌ ناقصةُ الإعدادات (لا يُعتمد قبلها). */
   settingsMissing?: number;
+  /** §4.dy — مراحلُه (مكتملُ التفصيل إن كانت له)، وبنودُ سليم المفتوحة. */
+  phaseCount?: number; openItems?: number;
   /** مع البحث (§4.dc): أين وُجدت الكلمات ومقتطفٌ حولها. */
   match?: ProtocolMatch;
 }
@@ -91,6 +95,8 @@ interface Protocol {
   canEditMeasures?: boolean; canApproveMeasures?: boolean;
   //  §4.cx — البرنامجُ على مراحل بتمارينه وبطاقاتها.
   phases?: Phase[];
+  /** §4.dy — «اضغطه يا سليم»: البنودُ المكتوبة وما علّمه منها. */
+  checklist?: ChecklistItem[];
 }
 interface Matrix { devices: { id: number; code: string; nameAr: string; nameEn: string }[]; branches: { id: number; name: string }[]; available: string[]; canManage: boolean }
 
@@ -189,14 +195,26 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
   if (term) { params.set("q", term); params.set("lang", lang); }
   if (category !== "all") params.set("category", category);
   if (age !== "all") params.set("ageGroup", age);
-  if (status !== "all") params.set("status", status);
+  if (status === "detailed") params.set("detailed", "1");
+  else if (status !== "all") params.set("status", status);
   if (archived) params.set("archived", "1");
   const url = `/api/physio/protocols${params.toString() ? `?${params}` : ""}`;
   const list = useQuery<ListRow[]>({ queryKey: ["/api/physio/protocols", url], queryFn: async () => (await apiRequest("GET", url)).json() });
   const rows = list.data ?? [];
+  //  §4.dy — **كم اكتمل**: المكتبةُ كلُّها (بلا مرشّح) — المفصَّلُ منها والمعتمَدُ من المفصَّل؛ والطلبُ نفسُه المخزَّن حين لا مرشّح.
+  const all = useQuery<ListRow[]>({ queryKey: ["/api/physio/protocols", "/api/physio/protocols"], queryFn: async () => (await apiRequest("GET", "/api/physio/protocols")).json() });
+  const detailedAll = (all.data ?? []).filter((r) => isDetailedProtocol(r.phaseCount));
 
   return (
     <div className="space-y-3 pt-3">
+      {all.data && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm" data-testid="protocols-detailed-count">
+          <span className="inline-block h-3 w-3 rounded-sm bg-indigo-600" />
+          <b className="text-indigo-900">{lang === "en" ? `Fully detailed: ${detailedAll.length} of ${all.data.length}` : `المفصَّلة بالكامل: ${detailedAll.length.toLocaleString("ar-IQ")} من ${all.data.length.toLocaleString("ar-IQ")}`}</b>
+          <span className="text-indigo-900/80">{lang === "en" ? `· approved: ${detailedAll.filter((r) => r.status === "approved").length}` : `· المعتمَدُ منها: ${detailedAll.filter((r) => r.status === "approved").length.toLocaleString("ar-IQ")}`}</span>
+          <span className="text-xs text-indigo-900/70">{lang === "en" ? "— framed in blue below, ready for the supervisor's approval" : "— مؤطَّرةٌ بالأزرق أدناه، وجاهزةٌ لاعتماد المشرف العام"}</span>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 items-center">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground" />
@@ -223,6 +241,7 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
             <SelectItem value="all">كل الحالات</SelectItem>
             <SelectItem value="approved">معتمَدة</SelectItem>
             <SelectItem value="draft">مسوّدات</SelectItem>
+            <SelectItem value="detailed">المفصَّلة بالكامل</SelectItem>
           </SelectContent>
         </Select>
         {canEdit && (
@@ -250,7 +269,8 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
           <div className={`grid gap-2 ${term ? "" : "md:grid-cols-2"}`}>
             {rows.map((r) => (
               <Link key={r.id} href={`/physio/protocols/${r.id}`}>
-                <a className="block rounded-lg border bg-white hover:border-primary p-3 space-y-1" data-testid={`protocol-row-${r.id}`} dir={lang === "en" ? "ltr" : "rtl"}>
+                <a className={`block rounded-lg border p-3 space-y-1 ${isDetailedProtocol(r.phaseCount) ? "border-2 border-indigo-500 bg-indigo-50/70 hover:border-indigo-700" : "bg-white hover:border-primary"}`}
+                  data-testid={`protocol-row-${r.id}`} data-detailed={isDetailedProtocol(r.phaseCount) ? "1" : "0"} dir={lang === "en" ? "ltr" : "rtl"}>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold"><Highlighted text={lang === "en" ? r.titleEn : r.titleAr} ranges={lang === "en" ? r.match?.titleRanges.en : r.match?.titleRanges.ar} /></span>
                     <span className="text-xs text-muted-foreground" dir={lang === "en" ? "rtl" : "ltr"}>
@@ -260,6 +280,14 @@ function Library({ canEdit, lang }: { canEdit: boolean; lang: ProtocolLang }) {
                     <Badge variant="secondary">{L.category[r.category]}</Badge>
                     <Badge variant="outline">{L.age[r.ageGroup]}</Badge>
                     <Badge className={r.status === "approved" ? "bg-emerald-600" : "bg-amber-500"}>{lang === "en" ? (r.status === "approved" ? "Approved" : "Draft") : (r.status === "approved" ? "معتمَد" : "مسوّدة")}</Badge>
+                    {isDetailedProtocol(r.phaseCount) && (
+                      <Badge className="bg-indigo-600" data-testid={`protocol-detailed-${r.id}`}>
+                        {r.status === "approved" ? (lang === "en" ? "Fully detailed" : "مفصَّلٌ بالكامل") : (lang === "en" ? "Fully detailed — ready for your approval" : "مفصَّلٌ بالكامل — جاهزٌ لاعتمادك")}</Badge>
+                    )}
+                    {(r.openItems ?? 0) > 0 && (
+                      <Badge variant="outline" className="border-indigo-400 text-indigo-900" data-testid={`protocol-open-items-${r.id}`}>
+                        {lang === "en" ? `Questions for Saleem: ${r.openItems}` : `أسئلةٌ لسليم: ${(r.openItems ?? 0).toLocaleString("ar-IQ")}`}</Badge>
+                    )}
                     <span className="text-muted-foreground">{T[lang].deviceCount(r.deviceCount, r.recommendedCount)}</span>
                     {(r.settingsMissing ?? 0) > 0 && (
                       <Badge className="bg-red-600" data-testid={`protocol-settings-missing-${r.id}`}>
@@ -347,6 +375,8 @@ export function PhysioProtocolDetail() {
           )}
         </div>
         <div className="flex flex-wrap gap-2" dir="rtl">
+          {/*  §4.dy — «اضغطه يا سليم»: لمَن يعتمد (المشرفُ العام والمسؤول)، وفيه كلُّ ما ينتظر قرارَه في هذا البروتوكول. */}
+          {p.canApprove && !p.isArchived && <SupervisorChecklistButton protocol={p} lang={lang} />}
           {p.canApprove && p.status === "draft" && !p.isArchived && (
             <Button className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={act.isPending || (p.settingsBlockers?.length ?? 0) > 0}
               title={(p.settingsBlockers?.length ?? 0) > 0 ? "املأ إعداداتِ الجهاز أوّلاً" : undefined}

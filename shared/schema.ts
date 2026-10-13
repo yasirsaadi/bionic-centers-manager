@@ -2958,6 +2958,25 @@ export const physioProtocolMeasures = pgTable("physio_protocol_measures", {
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqProtocolMeasure: unique("physio_protocol_measures_protocol_id_code_key").on(t.protocolId, t.code) }));
 
+//  ترحيل ١٣٩ (§4.dy) — «اضغطه يا سليم»: ما ينتظر قرارَ المشرف العام في البروتوكول، بندٌ بندٌ، ويعلّمه «تمّ» بقراره.
+export const physioProtocolChecklist = pgTable("physio_protocol_checklist", {
+  id: serial("id").primaryKey(),
+  protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),
+  itemKey: text("item_key").notNull(),
+  topic: text("topic").notNull(),
+  textAr: text("text_ar").notNull(),
+  textEn: text("text_en").notNull(),
+  position: integer("position").notNull().default(0),
+  doneAt: timestamp("done_at"),
+  doneBy: integer("done_by"),
+  doneByName: text("done_by_name"),
+  note: text("note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => ({
+  uqProtocolItem: unique("physio_protocol_checklist_protocol_id_item_key_key").on(t.protocolId, t.itemKey),
+  byProtocol: index("idx_physio_protocol_checklist_protocol").on(t.protocolId),
+}));
+
 export const physioProtocolDevices = pgTable("physio_protocol_devices", {
   id: serial("id").primaryKey(),
   protocolId: integer("protocol_id").notNull().references(() => physioProtocols.id, { onDelete: "cascade" }),

@@ -2,7 +2,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, physioDeviceBranches, physioProtocolDevices, physioProtocolImages, physioProtocolMeasures, physioProtocols,
+  branches, devices, physioDeviceBranches, physioProtocolChecklist, physioProtocolDevices, physioProtocolImages, physioProtocolMeasures, physioProtocols,
   type PhysioProtocol,
 } from "@shared/schema";
 import type { MeasureDef } from "@shared/physio_assessments";
@@ -52,8 +52,10 @@ export interface Actor { userId: number | null; name: string | null }
  * **ومع سؤال** (§4.dc): البحثُ في كلّ ما داخل البروتوكول بتطبيعٍ عربيٍّ واحد (`searchProtocolIds`) — والنتائجُ بترتيب الأدقّ، ولكلٍّ
  * `match`: أين وُجدت الكلمات ومقتطفٌ حولها. والمرشّحاتُ (الفئة والعمر والحالة والأرشيف) تُطبَّق قبل البحث.
  */
-export async function listProtocols(p: { q?: string; category?: string; ageGroup?: string; status?: string; archived?: boolean; lang?: "ar" | "en" }) {
+export async function listProtocols(p: { q?: string; category?: string; ageGroup?: string; status?: string; archived?: boolean; lang?: "ar" | "en"; detailed?: boolean }) {
   const conds: any[] = [eq(physioProtocols.isArchived, Boolean(p.archived))];
+  //  §4.dy — «المفصَّلة» وحدها: ما له مراحلُ بتمارينها (القالبُ الكامل).
+  if (p.detailed) conds.push(sql`EXISTS (SELECT 1 FROM physio_protocol_phases ph WHERE ph.protocol_id = "physio_protocols"."id")`);
   if (p.category) conds.push(eq(physioProtocols.category, p.category));
   if (p.ageGroup) conds.push(eq(physioProtocols.ageGroup, p.ageGroup));
   if (p.status) conds.push(eq(physioProtocols.status, p.status));
@@ -73,6 +75,9 @@ async function listRows(conds: any[]) {
     totalSessions: physioProtocols.totalSessions, sessionsPerWeek: physioProtocols.sessionsPerWeek,
     deviceCount: sql<number>`(SELECT count(*)::int FROM physio_protocol_devices d WHERE d.protocol_id = "physio_protocols"."id")`,
     recommendedCount: sql<number>`(SELECT count(*)::int FROM physio_protocol_devices d WHERE d.protocol_id = "physio_protocols"."id" AND d.evidence = 'recommended')`,
+    //  §4.dy — **مكتملُ التفصيل** (له مراحل) يُلوَّن في المكتبة، **وبنودُ سليم المفتوحة** شارةٌ عليه.
+    phaseCount: sql<number>`(SELECT count(*)::int FROM physio_protocol_phases ph WHERE ph.protocol_id = "physio_protocols"."id")`,
+    openItems: sql<number>`(SELECT count(*)::int FROM physio_protocol_checklist c WHERE c.protocol_id = "physio_protocols"."id" AND c.done_at IS NULL)`,
   }).from(physioProtocols).where(and(...conds))
     .orderBy(asc(physioProtocols.category), asc(physioProtocols.titleAr));
 }
@@ -124,7 +129,35 @@ export async function getProtocol(id: number) {
     measures,
     //  §4.cx — مراحلُ البرنامج بتمارينها وبطاقاتها كاملة.
     phases: await getPhases(id),
+    //  §4.dy — «اضغطه يا سليم»: البنودُ المكتوبة بترتيبها، وما علّمه منها «تمّ» بقراره.
+    checklist: await getChecklist(id),
   };
+}
+
+/** بنودُ المشرف العام لبروتوكول (ترحيل ١٣٩). */
+export async function getChecklist(protocolId: number) {
+  return db.select({ key: physioProtocolChecklist.itemKey, topic: physioProtocolChecklist.topic, textAr: physioProtocolChecklist.textAr,
+    textEn: physioProtocolChecklist.textEn, position: physioProtocolChecklist.position, doneAt: physioProtocolChecklist.doneAt,
+    doneByName: physioProtocolChecklist.doneByName, note: physioProtocolChecklist.note })
+    .from(physioProtocolChecklist).where(eq(physioProtocolChecklist.protocolId, protocolId))
+    .orderBy(asc(physioProtocolChecklist.position), asc(physioProtocolChecklist.id));
+}
+
+/**
+ * **سليم يعلّم البندَ «تمّ» بقراره أو يعيده مفتوحاً** — يُرجع ما قبله وما بعده لسطر التدقيق؛ و`null` إن لم يكن البندُ لهذا البروتوكول.
+ * والقرارُ نصٌّ قصير يبقى مع البند (يُمسح بإعادته مفتوحاً).
+ */
+export async function setChecklistItem(protocolId: number, key: string, done: boolean, note: string | null, actor: Actor) {
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(physioProtocolChecklist)
+      .where(and(eq(physioProtocolChecklist.protocolId, protocolId), eq(physioProtocolChecklist.itemKey, key))).for("update");
+    if (!before) return null;
+    const [after] = await tx.update(physioProtocolChecklist).set(done
+      ? { doneAt: before.doneAt ?? new Date(), doneBy: actor.userId, doneByName: actor.name, note }
+      : { doneAt: null, doneBy: null, doneByName: null, note: null })
+      .where(eq(physioProtocolChecklist.id, before.id)).returning();
+    return { before, after };
+  });
 }
 
 async function availabilityRows() {

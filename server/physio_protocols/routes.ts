@@ -5,6 +5,7 @@
 //   POST   /api/physio/protocols                         — جديدٌ مسوّدةً (`canEditProtocols`)
 //   PUT    /api/physio/protocols/:id                     — تعديلٌ كامل؛ المعتمَدُ يعود مسوّدةً بيد غير المعتمِد (`statusAfterEdit`)
 //   POST   /api/physio/protocols/:id/approve             — اعتمادُ المسوّدة (`canApproveProtocols`)
+//   POST   /api/physio/protocols/:id/checklist/:key      — «اضغطه يا سليم»: البندُ «تمّ» بقراره أو مفتوحٌ ثانيةً (`canApproveProtocols`، §4.dy)
 //   POST   /api/physio/protocols/:id/archive|restore     — أرشفةٌ واستعادة — لا محو (`canEditProtocols`)
 //   POST   /api/physio/protocols/:id/images              — صورةٌ توضيحية بمصدرها (`canEditProtocols`)
 //   DELETE /api/physio/protocols/:id/images/:imageId
@@ -24,6 +25,7 @@ import {
 import * as store from "./store";
 import { normalizeSchedule, settingsBlockedMessage } from "@shared/physio_device_settings";
 import { canApproveMeasures, canEditMeasures, parseMeasures } from "@shared/physio_assessments";
+import { CHECKLIST_NOTE_MAX } from "@shared/physio_supervisor_checklist";
 import { registerPhysioExerciseRoutes } from "./exercise_routes";
 
 const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: store.IMAGE_MAX_BYTES, files: 1 } });
@@ -119,6 +121,8 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
         ageGroup: isAgeGroup(req.query.ageGroup) ? req.query.ageGroup : undefined,
         status: req.query.status === "draft" || req.query.status === "approved" ? req.query.status : undefined,
         archived,
+        //  §4.dy — «المفصَّلة» وحدها (لها مراحل).
+        detailed: req.query.detailed === "1",
         //  لغةُ المقتطف في «وُجدت في» (§4.dc) — لغةُ الصفحة؛ وبلا تحديد لغةُ السؤال.
         lang: req.query.lang === "en" || req.query.lang === "ar" ? req.query.lang : undefined,
       }));
@@ -197,6 +201,29 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       const row = await store.approveProtocol(id, actor(s));
       await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "approve", newValues: { status: "approved", approvedByName: row.approvedByName } });
       res.json(row);
+    } catch (e) { fail(res, e); }
+  });
+
+  //  ══ «اضغطه يا سليم» (§4.dy) — المشرفُ العام يعلّم البندَ «تمّ» بقراره، أو يعيده مفتوحاً. والمسؤولُ كذلك (قاعدةُ الاعتماد نفسُها) ══════════
+  app.post("/api/physio/protocols/:id/checklist/:key", isAuthenticated, async (req: any, res) => {
+    const s = sess(req);
+    if (!canApproveProtocols(s)) return res.status(403).json({ error: "بنودُ «اضغطه يا سليم» يعلّمها المشرفُ العام أو المسؤول" });
+    const id = idOf(req.params.id);
+    const key = String(req.params.key ?? "");
+    if (!id || !/^[a-z0-9][a-z0-9-]{0,59}$/.test(key)) return res.status(400).json({ error: "بندٌ غير صالح" });
+    if (typeof req.body?.done !== "boolean") return res.status(400).json({ error: "تمّ أم لا؟" });
+    const raw = req.body?.note;
+    if (raw !== undefined && raw !== null && typeof raw !== "string") return res.status(400).json({ error: "القرارُ نصّ" });
+    const note = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    if (note && note.length > CHECKLIST_NOTE_MAX) return res.status(400).json({ error: `القرارُ ${CHECKLIST_NOTE_MAX} حرفاً على الأكثر` });
+    try {
+      const r = await store.setChecklistItem(id, key, req.body.done, req.body.done ? note : null, actor(s));
+      if (!r) return res.status(404).json({ error: "البندُ غير موجود في هذا البروتوكول" });
+      await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "update",
+        oldValues: { checklist: key, done: Boolean(r.before.doneAt), note: r.before.note },
+        newValues: { checklist: key, done: Boolean(r.after.doneAt), note: r.after.note },
+        notes: req.body.done ? "«اضغطه يا سليم»: بندٌ تمّ" : "«اضغطه يا سليم»: بندٌ أُعيد مفتوحاً" });
+      res.json({ key, doneAt: r.after.doneAt, doneByName: r.after.doneByName, note: r.after.note });
     } catch (e) { fail(res, e); }
   });
 
