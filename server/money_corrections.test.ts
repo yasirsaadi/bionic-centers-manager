@@ -6,6 +6,7 @@
 //   • **ج**: الرؤية — الموظّفُ طلباتِه، والمسؤولُ المعلَّقَ كلَّه، والدفترُ يَسِم السطر.
 //   • **د**: القرار للمسؤول وحده — الاعتمادُ يطبّق ويكتب التدقيق، ولا يُطبَّق مرّتين، ولا على سطرٍ تغيّر بعد الطلب.
 //   • **هـ**: سطورُ الدفتر — التحويلُ إلى قاصة الدكتور يُعدَّل، و«وارد آخر» يُحذف ناعماً، واستلامُ النسبة للمسؤول وحده.
+//   • **و**: «طلبات التصحيح» (§4.ce التكملة) — تنبيهُ المسؤول في معاملة الطلب، والعدّادُ للمسؤول وحده، والقرارُ من أيّ مكانٍ يظهر في المكانين.
 
 import express from "express";
 import { createServer } from "http";
@@ -13,6 +14,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { claim } from "./money_corrections/store";
 import { baghdadTodayYmd } from "@shared/visit_date";
+import { eligibleStaffEvents } from "@shared/staff_notifications";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -65,6 +67,7 @@ async function http(method: string, path: string, session: any, body?: any) {
 }
 
 async function cleanup() {
+  await q(`DELETE FROM staff_notification_outbox WHERE event_type = 'money_correction_pending' AND text LIKE $1`, [`%${MARK}%`]);
   await q(`DELETE FROM money_correction_requests WHERE branch_id = ANY($1::int[])`, [BRANCHES]);
   await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE source_type='expense'
              AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[])))`, [BRANCHES]).catch(() => undefined);
@@ -143,6 +146,15 @@ async function main() {
       [200, "pending", 500_000, { amount: 50_000 }, 500_000]);
     same("ب٥. **وطلبٌ معلَّقٌ واحد للسطر** (٤٠٩)",
       (await ask(S.racc, { targetType: "expense", targetId: e1, action: "delete", reason: "مكرّر" })).status, 409);
+    //  تنبيهُ المسؤول (§4.ce التكملة): صفٌّ واحد للطلب المحفوظ — والطلبُ المرتدّ (ب٥) لا يترك صفّاً.
+    const outbox = async () => q(`SELECT text, link_path, exclude_user_id, branch_id, target_user_ids FROM staff_notification_outbox
+       WHERE event_type = 'money_correction_pending' AND text LIKE $1 ORDER BY id`, [`%${MARK}%`]);
+    const ob = await outbox();
+    same("ب٦. **تنبيهٌ واحد للمسؤول بالطلب المحفوظ** — والمرتدُّ لا يترك صفّاً؛ عامٌّ لا فرعيّ، والطالبُ مستثنى، والرابطُ قسمُ الصفحة",
+      ob.map((r) => [r.link_path, r.exclude_user_id, r.branch_id, r.target_user_ids]), [["/payment-corrections#money", ACC, null, null]]);
+    check(ob.length === 1 && ob[0].text.includes(`${MARK} بغداد`) && ob[0].text.includes(`u${ACC}`)
+      && ob[0].text.includes("المبلغ 500,000 ← 50,000") && ob[0].text.includes("كتبتُ صفراً زائداً") && ob[0].text.startsWith("🧾 طلب تصحيح مصروف"),
+      "ب٧. **ونصُّه يقول الفرعَ والطالبَ والمطلوبَ والسبب** — كما يقرؤه المالكُ في تلغرام", JSON.stringify(ob[0]?.text));
 
     console.log("\n── ج. الرؤية ──");
     const eR = await expense(BG, "stationery", 30_000, "أوراق", RACC);
@@ -194,6 +206,37 @@ async function main() {
     const rec = await entry("ratio_received", 1_000, null);
     same("هـ٣. **واستلامُ النسبة للمسؤول وحده — لا طلبَ عليه** (٤٠٣)",
       (await ask(S.acc, { targetType: "cash_book_entry", targetId: rec, action: "delete", reason: "خطأ" })).status, 403);
+
+    console.log("\n── و. «طلبات التصحيح» ──");
+    const dbPending = async () => Number((await q(`SELECT count(*)::int n FROM money_correction_requests WHERE status = 'pending'`))[0].n);
+    const cnt = async (s: any) => http("GET", "/api/money-corrections/pending-count", s);
+    const e5 = await expense(BG, "transport", 80_000, "صيانة سيارة", ACC);
+    const r5 = await ask(S.acc, { targetType: "expense", targetId: e5, action: "update", amount: 8_000, reason: "صفرٌ زائد" });
+    const c0 = await cnt(S.admin);
+    same("و١. **عدّادُ «طلبات التصحيح» للمسؤول وحده** — يساوي المعلَّقَ في القاعدة، والموظّفُ ٤٠٣",
+      [c0.status, c0.body?.count === await dbPending() && c0.body?.count >= 1, (await cnt(S.acc)).status, (await cnt(S.racc)).status], [200, true, 403, 403]);
+    const tr2 = await entry("dr_transfer", 900_000, "تحويل الأسبوع");
+    const r6 = await ask(S.acc, { targetType: "cash_book_entry", targetId: tr2, action: "delete", reason: "سُجّل مرّتين" });
+    const ob6 = (await outbox()).at(-1);
+    check(!!ob6 && ob6.text.startsWith("🧾 طلب تصحيح سطر «تحويل إلى قاصة الدكتور» في دفتر القاصة") && ob6.text.includes("حذفُ السطر (900,000"),
+      "و٢. **وطلبُ سطر الدفتر يُنبَّه به بنوعه** — «تحويل إلى قاصة الدكتور» وحذفُه بمبلغه", JSON.stringify(ob6?.text));
+    //  الطلبُ واحدٌ في المكانين: يُعتمد من الصفحة فيختفي من بطاقة الدفتر ووسمِ سطره، ويظهر في «معتمَدة» بقراره، وينقص العدّاد.
+    const c1 = Number((await cnt(S.admin)).body?.count);
+    const sheetBefore = (await http("GET", `/api/cash-book?book=devices&date=${TODAY}`, S.acc)).body;
+    await http("POST", `/api/money-corrections/${r5.body.id}/approve`, S.admin);
+    const sheetAfter = (await http("GET", `/api/cash-book?book=devices&date=${TODAY}`, S.acc)).body;
+    const approvedList = (await http("GET", "/api/money-corrections?status=approved", S.admin)).body;
+    const pendingList = (await http("GET", "/api/money-corrections?status=pending", S.admin)).body;
+    same("و٣. **قرارٌ من مكانٍ يظهر في الآخر**: السطرُ لم يعد موسوماً في الدفتر، والطلبُ في «معتمَدة» باسم المسؤول لا في «بانتظار قرارك»، والعدّادُ نقص واحداً",
+      [(sheetBefore.pendingCorrections ?? []).includes(`expense:${e5}`), (sheetAfter.pendingCorrections ?? []).includes(`expense:${e5}`),
+        approvedList.find((r: any) => r.id === r5.body.id)?.decidedByName ?? null, pendingList.some((r: any) => r.id === r5.body.id),
+        (await cnt(S.admin)).body?.count, await amountOf(e5)],
+      [true, false, `u${ADMIN}`, false, c1 - 1, 8_000]);
+    same("و٤. **وضغطةٌ ثانية من المكان الآخر ⟵ ٤٠٩** — لا يُطبَّق مرّتين", (await http("POST", `/api/money-corrections/${r5.body.id}/approve`, S.admin)).status, 409);
+    await http("POST", `/api/money-corrections/${r6.body.id}/reject`, S.admin);
+    same("و٥. **ونوعُ التنبيه للمسؤول وحده** — لا يُختار لمحاسبٍ ولا لاستقبالٍ ولا لمدير فرع",
+      ["admin", "accountant", "reception", "branch_manager"].map((role) => eligibleStaffEvents({ role }).includes("money_correction_pending")),
+      [true, false, false, false]);
   } finally {
     await cleanup();
     httpServer.close();

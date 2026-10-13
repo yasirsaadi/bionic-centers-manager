@@ -196,6 +196,25 @@ export function notifyPaymentCorrection(ex: Executor | null | undefined, p: {
 }
 
 /**
+ * **طلبُ تصحيح صرفٍ أو سطرِ دفتر** (§4.ce التكملة) — للمسؤول وحده، داخل معاملة الطلب نفسِه: طلبٌ لم يُحفظ لا يُنبَّه به.
+ * والرابطُ إلى «طلبات التصحيح» حيث يُعتمد كما يُعتمد من الدفتر — الطلبُ واحدٌ في المكانين.
+ */
+export function notifyMoneyCorrection(ex: Executor | null | undefined, p: {
+  branchId: number; what: string; change: string; reason: string; actorName?: string | null;
+  actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    const r = await (ex ?? db).execute(sql`SELECT name FROM branches WHERE id = ${p.branchId}`);
+    const branch = (r.rows[0] as any)?.name ? ` — فرع ${(r.rows[0] as any).name}` : "";
+    await enqueueStaffEvent(ex, {
+      event: "money_correction_pending", excludeUserId: p.actorUserId ?? null,
+      text: `🧾 طلب تصحيح ${p.what} ينتظر قرارك${branch}${p.actorName ? ` — من ${p.actorName}` : ""}\n${p.change}\nالسبب: ${p.reason}`,
+      linkPath: "/payment-corrections#money",
+    });
+  });
+}
+
+/**
  * **كلُّ مبلغٍ يدخل أيَّ فرع** (قرارُ المالك ٢٠٢٦-١٠-٠٤، للمسؤول وحده) — يُنادى من `insertPaymentRow`، الكاتبِ
  * الوحيد لصفوف الدفعات الموجبة، فلا بابَ دفعٍ يفلت. والقسمُ من حالة الدفعة، وإن غابت فوسمُها كما كُتب.
  * والصفرُ (جلساتٌ مُهداة) ليس مالاً يدخل فلا يُنبَّه به.

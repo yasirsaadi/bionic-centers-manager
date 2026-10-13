@@ -1181,10 +1181,10 @@ async function main() {
         "ذ٣٣. **Sidebar.tsx يجلب `GET /api/admin/payment-corrections/pending-count` بعينها**");
 
       // ١٤. عنصرُ الشريط الجانبيّ — للمسؤول العام حصراً، يبقى ظاهراً عند الصفر (§4.ci)،
-      // ورابطُه لم يتغيّر.
+      // ورابطُه لم يتغيّر. **واسمُه «طلبات التصحيح»** منذ جمع المصاريفَ وسطورَ الدفتر (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.ce التكملة).
       const sidebarItemLine = sidebarSrc.split("\n")
-        .find((l) => l.includes('"طلبات تصحيح الدفعات"'));
-      check(!!sidebarItemLine, "ذ٣٤. **عنصرُ «طلبات تصحيح الدفعات» موجودٌ في baseMenuItems**",
+        .find((l) => l.includes('"طلبات التصحيح"'));
+      check(!!sidebarItemLine, "ذ٣٤. **عنصرُ «طلبات التصحيح» موجودٌ في baseMenuItems**",
         String(sidebarItemLine));
       check(!!sidebarItemLine && /adminOnly:\s*true/.test(sidebarItemLine),
         "ذ٣٥. **وهو `adminOnly: true` — للمسؤول العام حصراً، لا مديرَ فرعٍ ولا دوراً آخر**",
@@ -1207,6 +1207,12 @@ async function main() {
         "ذ٣٩. **جلبُ العدّاد مشروطٌ بـ`branchSession?.isAdmin` وحده**", badgeBlock);
       check(/refetchInterval:\s*5 \* 60_000/.test(badgeBlock),
         "ذ٤٠. **وبنفس فاصل التحديث الدوريّ (٥ دقائق) المستعمَل لبقيّة شارات الطوابير**", badgeBlock);
+      //  والرقمُ واحدٌ للنوعين (§4.ce التكملة): عدّادُ الدفعات وعدّادُ المصاريف وسطور الدفتر معاً، والثاني للمسؤول وحده كالأوّل.
+      const sumBlock = sidebarSrc.slice(sidebarSrc.indexOf("paymentCorrectionsData"),
+        sidebarSrc.indexOf("\n", sidebarSrc.indexOf("const paymentCorrectionsCount")));
+      check(/\/api\/money-corrections\/pending-count/.test(sumBlock) && /paymentCorrectionsCount = \(paymentCorrectionsData\?\.count \?\? 0\) \+ \(moneyCorrectionsData\?\.count \?\? 0\)/.test(sumBlock)
+        && (sumBlock.match(/enabled:\s*!!branchSession\?\.isAdmin/g) ?? []).length === 2,
+        "ذ٤٠ب. **والشارةُ تجمع عدّادَ المصاريف وسطور الدفتر مع الدفعات** — وكلاهما للمسؤول وحده", sumBlock);
 
       // ١٦. المسارُ لم يتغيّر في App.tsx (تثبيتٌ إضافيّ إلى جانب خ١١).
       check(/path="\/payment-corrections"/.test(appSrc) && /component=\{PaymentCorrections\}/.test(appSrc),

@@ -1,7 +1,9 @@
 // **طلبُ تصحيح المال** (قرارُ المالك ٢٠٢٦-١٠-٠٧، §4.ce): تعديلُ المصروف وسطرِ الدفتر وحذفُهما للمسؤول وحده، أو بطلبٍ يعتمده.
 //   • `RequestCorrectionDialog` — الموظّفُ يكتب القيمةَ الصحيحة (أو يطلب الحذف) وسببَها.
 //   • `CorrectionRequestsPanel` — المسؤولُ يرى المعلَّق فيعتمده أو يرفضه؛ وغيرُه يرى طلباتِه وحالَها.
-import { useEffect, useState } from "react";
+//   • `MoneyCorrectionsSection` — القسمُ نفسُه في صفحة «طلبات التصحيح» بفلاترها الثلاثة (§4.ce التكملة): **الطلبُ واحدٌ في المكانين**،
+//     يُعتمد من أيّهما مرّةً واحدة (الخادمُ يحجزه عند أوّل قرار)، والمكانُ الآخر يتحدّث بالإشارة الحيّة.
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,7 +120,7 @@ interface RequestRow {
   beforeSnapshot: { amount: number; note: string | null; category: string | null; date: string; kind?: string };
   requestedPatch: { amount?: number; note?: string | null; category?: string } | null;
   reason: string; requestedByName: string | null; requestedAt: string; branchName: string;
-  decidedByName: string | null; decisionNote: string | null;
+  decidedByName: string | null; decidedAt: string | null; decisionNote: string | null;
 }
 
 const ENTRY_KIND: Record<string, string> = { income_other: "وارد آخر", dr_transfer: "تحويل إلى قاصة الدكتور" };
@@ -137,46 +139,108 @@ function changeText(r: RequestRow): string {
   return parts.join(" · ");
 }
 
-/** بطاقةُ الطلبات — للمسؤول المعلَّقُ كلُّه بقراره، ولغيره طلباتُه الأخيرة بحالها. لا تظهر إن لم يكن شيء. */
-export function CorrectionRequestsPanel({ isAdmin }: { isAdmin: boolean }) {
+/** القرارُ نفسُه في كلّ مكان — الاعتمادُ يطبّق والرفضُ يغلق، ورسالةُ الخادم بالعربية عند التعارض. */
+function useMoneyDecision() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const q = useQuery<RequestRow[]>({
-    queryKey: ["/api/money-corrections", isAdmin ? "pending" : "mine"],
-    queryFn: async () => (await apiRequest("GET", `/api/money-corrections${isAdmin ? "?status=pending" : ""}`)).json(),
-  });
-  const decide = useMutation({
+  return useMutation({
     mutationFn: async (p: { id: number; decision: "approve" | "reject" }) =>
       (await apiRequest("POST", `/api/money-corrections/${p.id}/${p.decision}`, {})).json(),
     onSuccess: (_d, p) => { invalidateMoney(qc); toast({ title: p.decision === "approve" ? "اعتُمد وطُبّق" : "رُفض الطلب" }); },
-    onError: (e: any) => toast({ title: "تعذّر", description: errText(e), variant: "destructive" }),
+    onError: (e: any) => { invalidateMoney(qc); toast({ title: "تعذّر", description: errText(e), variant: "destructive" }); },
+  });
+}
+
+const STATUS_TEXT: Record<string, string> = { approved: "اعتُمد", rejected: "رُفض", pending: "بانتظار المسؤول" };
+
+/** سطرُ طلبٍ واحد — في بطاقة الدفتر وفي صفحة «طلبات التصحيح» بالشكل نفسِه. */
+function RequestItem({ r, isAdmin, decide }: { r: RequestRow; isAdmin: boolean; decide: ReturnType<typeof useMoneyDecision> }) {
+  const busy = decide.isPending && decide.variables?.id === r.id;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-background px-3 py-2 border" data-testid={`correction-${r.id}`}>
+      <span className="font-medium">{targetLabel(r)}</span>
+      <span className="text-muted-foreground tabular-nums">{dmy(r.beforeSnapshot.date)}</span>
+      {isAdmin && <span className="text-muted-foreground">{r.branchName} · {r.requestedByName ?? "موظّف"}</span>}
+      <span className="basis-full">{changeText(r)}</span>
+      <span className="basis-full text-muted-foreground">السبب: {r.reason}</span>
+      {isAdmin && r.status === "pending" ? (
+        <span className="flex gap-2 ms-auto">
+          <Button size="sm" disabled={busy} onClick={() => decide.mutate({ id: r.id, decision: "approve" })}
+            data-testid={`correction-approve-${r.id}`}>اعتمد وطبّق</Button>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => decide.mutate({ id: r.id, decision: "reject" })}
+            data-testid={`correction-reject-${r.id}`}>ارفض</Button>
+        </span>
+      ) : (
+        <>
+          {r.status !== "pending" && r.decidedByName && (
+            <span className="text-muted-foreground text-xs">
+              {STATUS_TEXT[r.status]} — {r.decidedByName}{r.decidedAt ? ` · ${dmy(r.decidedAt.slice(0, 10))}` : ""}{r.decisionNote ? ` · ${r.decisionNote}` : ""}
+            </span>
+          )}
+          <Badge variant={r.status === "approved" ? "default" : r.status === "rejected" ? "destructive" : "secondary"} className="ms-auto"
+            data-testid={`correction-status-${r.id}`}>
+            {STATUS_TEXT[r.status] ?? r.status}
+          </Badge>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** بطاقةُ الطلبات — للمسؤول المعلَّقُ كلُّه بقراره، ولغيره طلباتُه الأخيرة بحالها. لا تظهر إن لم يكن شيء. */
+export function CorrectionRequestsPanel({ isAdmin }: { isAdmin: boolean }) {
+  const decide = useMoneyDecision();
+  const q = useQuery<RequestRow[]>({
+    queryKey: ["/api/money-corrections", isAdmin ? "pending" : "mine"],
+    queryFn: async () => (await apiRequest("GET", `/api/money-corrections${isAdmin ? "?status=pending" : ""}`)).json(),
   });
   const rows = (q.data ?? []).filter((r) => isAdmin || r.status === "pending" || Date.now() - Date.parse(r.requestedAt) < 7 * 86_400_000);
   if (!rows.length) return null;
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 space-y-2 text-sm" data-testid="correction-panel">
       <p className="font-semibold">{isAdmin ? `طلبات تصحيح المال بانتظارك (${rows.length})` : "طلبات التصحيح التي قدّمتَها"}</p>
-      {rows.map((r) => (
-        <div key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-background px-3 py-2 border" data-testid={`correction-${r.id}`}>
-          <span className="font-medium">{targetLabel(r)}</span>
-          <span className="text-muted-foreground tabular-nums">{dmy(r.beforeSnapshot.date)}</span>
-          {isAdmin && <span className="text-muted-foreground">{r.branchName} · {r.requestedByName ?? "موظّف"}</span>}
-          <span className="basis-full">{changeText(r)}</span>
-          <span className="basis-full text-muted-foreground">السبب: {r.reason}</span>
-          {isAdmin ? (
-            <span className="flex gap-2 ms-auto">
-              <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: r.id, decision: "approve" })}
-                data-testid={`correction-approve-${r.id}`}>اعتمد وطبّق</Button>
-              <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id: r.id, decision: "reject" })}
-                data-testid={`correction-reject-${r.id}`}>ارفض</Button>
-            </span>
-          ) : (
-            <Badge variant={r.status === "approved" ? "default" : r.status === "rejected" ? "destructive" : "secondary"} className="ms-auto">
-              {r.status === "approved" ? "اعتُمد" : r.status === "rejected" ? "رُفض" : "بانتظار المسؤول"}
-            </Badge>
-          )}
-        </div>
-      ))}
+      {rows.map((r) => <RequestItem key={r.id} r={r} isAdmin={isAdmin} decide={decide} />)}
     </div>
+  );
+}
+
+/**
+ * **قسمُ «تصحيح المصاريف وسطور دفتر القاصة» في صفحة «طلبات التصحيح»** (§4.ce التكملة) — للمسؤول، بفلتر الصفحة نفسِه.
+ * يقرأ النقطةَ التي تقرؤها بطاقةُ الدفتر ويعتمد بالبابين نفسيهما — فلا نسخةَ ثانية من الطلب ولا من قراره.
+ * ورابطُ تنبيه تلغرام ينتهي بـ`#money` فتنزل الصفحةُ إليه.
+ */
+export function MoneyCorrectionsSection({ status }: { status: "pending" | "approved" | "rejected" }) {
+  const decide = useMoneyDecision();
+  const ref = useRef<HTMLElement | null>(null);
+  const q = useQuery<RequestRow[]>({
+    queryKey: ["/api/money-corrections", status],
+    queryFn: async () => (await apiRequest("GET", `/api/money-corrections?status=${status}`)).json(),
+  });
+  const rows = q.data ?? [];
+  useEffect(() => {
+    if (q.isSuccess && window.location.hash === "#money") ref.current?.scrollIntoView({ block: "start" });
+  }, [q.isSuccess]);
+  return (
+    <section id="money" ref={ref} className="space-y-2 scroll-mt-20" data-testid="money-corrections-section">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-bold">تصحيح المصاريف وسطور دفتر القاصة</h2>
+        {status === "pending" && rows.length > 0 && <Badge className="bg-primary/10 text-primary hover:bg-primary/10" data-testid="money-corrections-count">{rows.length}</Badge>}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        تعديلُ مصروفٍ أو سطرٍ في دفتر القاصة أو حذفُه، طلبه موظّفٌ غيرُ المسؤول. هو الطلبُ نفسُه الظاهرُ في دفتر القاصة وتبويب المصاريف —
+        ما تعتمده هنا أو هناك يُطبَّق مرّةً واحدة ويظهر محسوماً في المكانين.
+      </p>
+      {q.isLoading ? (
+        <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>
+      ) : q.isError ? (
+        <p className="text-sm text-destructive">{errText(q.error)}</p>
+      ) : rows.length === 0 ? (
+        <p className="rounded-md border px-3 py-6 text-center text-sm text-muted-foreground" data-testid="money-corrections-empty">
+          {status === "pending" ? "لا توجد طلباتُ تصحيحِ صرفٍ معلَّقة." : "لا توجد طلباتٌ بهذه الحالة."}
+        </p>
+      ) : (
+        <div className="space-y-2 text-sm">{rows.map((r) => <RequestItem key={r.id} r={r} isAdmin decide={decide} />)}</div>
+      )}
+    </section>
   );
 }

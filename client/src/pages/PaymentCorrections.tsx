@@ -1,4 +1,5 @@
-// طلباتُ تصحيح الدفعات — قائمةٌ واعتماد (2026-08-30).
+// طلباتُ التصحيح — قائمةٌ واعتماد (2026-08-30). **وصارت تجمع قسمين** (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.ce التكملة): تصحيحُ الدفعات
+// كما كان، و«تصحيح المصاريف وسطور دفتر القاصة» (`MoneyCorrectionsSection`) — الطلبُ نفسُه الظاهرُ في الدفتر، لا نسخةٌ منه.
 //
 // ══ المسؤولُ العامّ وحده ═════════════════════════════════════════════════
 // نفسُ حارس `isGlobalAdmin` في `server/payments/correction_routes.ts` —
@@ -38,6 +39,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
+import { MoneyCorrectionsSection } from "@/components/MoneyCorrection";
 import {
   Banknote, Loader2, ShieldAlert, AlertTriangle, AlertCircle, Trash2, Pencil, Check, X,
 } from "lucide-react";
@@ -373,7 +375,7 @@ export default function PaymentCorrections() {
         <Card><CardContent className="py-10 text-center space-y-2">
           <ShieldAlert className="w-8 h-8 mx-auto text-muted-foreground" />
           <p className="text-sm text-muted-foreground" data-testid="text-corrections-forbidden">
-            طلباتُ تصحيح الدفعات للمسؤول العام فقط.
+            طلباتُ التصحيح للمسؤول العام فقط.
           </p>
         </CardContent></Card>
       </div>
@@ -384,7 +386,23 @@ export default function PaymentCorrections() {
     <div className="p-4 md:p-6 space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <Banknote className="w-6 h-6 text-primary" />
-        <h1 className="text-xl font-bold text-primary">طلباتُ تصحيح الدفعات</h1>
+        <h1 className="text-xl font-bold text-primary">طلباتُ التصحيح</h1>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        ما طلب موظّفٌ غيرُ المسؤول العام تصحيحَه، وينتظر قرارك: الدفعات أوّلاً، ثمّ المصاريف وسطور دفتر القاصة.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        {STATUS_FILTERS.map((f) => (
+          <Button key={f.key} size="sm" variant={status === f.key ? "default" : "outline"}
+            onClick={() => setStatus(f.key)} data-testid={`corrections-filter-${f.key}`}>
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-bold">تصحيح الدفعات</h2>
         {status === "pending" && rows.length > 0 && (
           <Badge className="bg-primary/10 text-primary hover:bg-primary/10" data-testid="corrections-count">
             {rows.length}
@@ -397,15 +415,6 @@ export default function PaymentCorrections() {
         قرارك. الاعتمادُ يُطبِّق التغييرَ فوراً على الدفعة ويُقيِّد أثرَه
         المحاسبيّ؛ والرفضُ يُغلق الطلبَ بلا أثرٍ مالي.
       </p>
-
-      <div className="flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((f) => (
-          <Button key={f.key} size="sm" variant={status === f.key ? "default" : "outline"}
-            onClick={() => setStatus(f.key)} data-testid={`corrections-filter-${f.key}`}>
-            {f.label}
-          </Button>
-        ))}
-      </div>
 
       {isLoading ? (
         <Card><CardContent className="flex justify-center py-10">
@@ -437,6 +446,9 @@ export default function PaymentCorrections() {
           ))}
         </div>
       )}
+
+      {/*  القسمُ الثاني: المصاريف وسطورُ الدفتر — بالفلتر نفسِه (§4.ce التكملة). */}
+      <MoneyCorrectionsSection status={status} />
 
       {/* ══ حوارُ التأكيد — مشتركٌ للاعتماد والرفض معاً ═══════════════════
           مغلَقٌ افتراضاً (`open={!!confirm}`)، فتحُه من زرّ الصفّ لا من
