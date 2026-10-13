@@ -192,6 +192,22 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "graded-object-grasp-1": { file: "graded-object-grasp-1.webp" },
   "prosthetic-hand-drills-1": { file: "prosthetic-hand-drills-1.webp" },
   "bimanual-adl-tasks-1": { file: "bimanual-adl-tasks-1.webp" },
+  //  **الدفعةُ السادسة — ما بعد استبدال الركبة: الاثنتا عشرة كلُّها** (٢٠٢٦-١٠-١٣، §4.dx التكملة): المجلّدُ نفسُه، ملفٌّ لكلّ خانة طابق Drive بايتاً ببايت.
+  //  **وما قُصّ**: من «ضخّ الكاحل» العنوانُ والتعليماتُ الإنكليزية (وبقي سطرُ الموقع)، ومن «تحريك الرضفة» النصُّ اليابانيّ وطُليت تسميةُ العظم وخطُّها،
+  //  ومن «المشي بالمشّاية» أسماءُ الخطوات الإنكليزية تحت الأشكال، ومن «ثني الركبة على الدرجة» الخلفيةُ الفارغة، ومن «ثني الركبة جالساً» و«ضغط
+  //  الساقين» الهوامشُ البيضاء — **والوضعيّتان باقيتان فيهما**، وفي «الدرج» الصعودُ والنزول معاً كما في خطوات البطاقة.
+  "ankle-pumps-1": { file: "ankle-pumps-1.webp", credit: "medmovie.com" },
+  "patellar-self-mobilisation-1": { file: "patellar-self-mobilisation-1.webp" },
+  "cold-elevation-1": { file: "cold-elevation-1.webp" },
+  "seated-knee-flexion-slide-1": { file: "seated-knee-flexion-slide-1.webp" },
+  "walking-aid-gait-1": { file: "walking-aid-gait-1.webp" },
+  "stairs-after-knee-surgery-1": { file: "stairs-after-knee-surgery-1.webp", credit: "MG共享康复" },
+  "car-transfer-1": { file: "car-transfer-1.webp" },
+  "scar-mobilisation-1": { file: "scar-mobilisation-1.webp" },
+  "terminal-knee-extension-1": { file: "terminal-knee-extension-1.webp" },
+  "knee-flexion-step-stretch-1": { file: "knee-flexion-step-stretch-1.webp" },
+  "leg-press-progressive-1": { file: "leg-press-progressive-1.webp" },
+  "kneeling-floor-transfer-1": { file: "kneeling-floor-transfer-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

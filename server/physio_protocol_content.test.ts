@@ -374,14 +374,15 @@ async function main() {
     const preKeys = m136.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — والثماني المعادة بصورها هي (§4.dv).
     const ulKeys = m137.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والحادي عشرَ (ما بعد استبدال الركبة): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها لم تصل بعد — فهي وحدها «الصور المطلوبة»؛ والعشرون المعادة بصورها هي (§4.dx).
+    //  والحادي عشرَ (ما بعد استبدال الركبة): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٣، §4.dx التكملة)؛
+    //  والعشرون المعادة بصورها هي. **فـ«الصور المطلوبة» فارغة** — والمفصَّلُ القادم يُضيف خاناته هنا.
     const tkaKeys = m138.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى العاشر، و«الصور المطلوبة» صورُ الحادي عشرَ الاثنتا عشرة وحدها**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الحادي عشر، و«الصور المطلوبة» فارغة**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
-        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys).length, [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, 12, [...tkaKeys].sort()]);
+        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
