@@ -38,6 +38,7 @@ import * as m135 from "./migrations/135_physio_prosthetic_gait_detail";
 import * as m136 from "./migrations/136_physio_preprosthetic_detail";
 import * as m137 from "./migrations/137_physio_upper_limb_amputation_detail";
 import * as m138 from "./migrations/138_physio_tka_detail";
+import * as m140 from "./migrations/140_physio_tha_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -62,6 +63,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m136.name, sql: m136.sql, EXERCISES: m136.EXERCISES, PROTOCOL: m136.PROTOCOL, template: true },
   { name: m137.name, sql: m137.sql, EXERCISES: m137.EXERCISES, PROTOCOL: m137.PROTOCOL, template: true },
   { name: m138.name, sql: m138.sql, EXERCISES: m138.EXERCISES, PROTOCOL: m138.PROTOCOL, template: true },
+  { name: m140.name, sql: m140.sql, EXERCISES: m140.EXERCISES, PROTOCOL: m140.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -375,14 +377,18 @@ async function main() {
     //  والعاشرُ (بترُ الطرف العلويّ): ثماني عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — والثماني المعادة بصورها هي (§4.dv).
     const ulKeys = m137.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والحادي عشرَ (ما بعد استبدال الركبة): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٣، §4.dx التكملة)؛
-    //  والعشرون المعادة بصورها هي. **فـ«الصور المطلوبة» فارغة** — والمفصَّلُ القادم يُضيف خاناته هنا.
+    //  والعشرون المعادة بصورها هي.
     const tkaKeys = m138.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    //  والثاني عشرَ (ما بعد استبدال الورك): ثلاثَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — الدرجُ والسيارة بصورتَي بطاقتَي الركبة منسوختين (تُظهران الحركةَ
+    //  نفسَها)، **والإحدى عشرةَ الباقية وحدها «الصور المطلوبة»**؛ والثماني عشرةَ المعادة بصورها هي (§4.dz).
+    const thaKeys = m140.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    const thaCopied = ["stairs-after-hip-surgery-1", "car-transfer-hip-1"];
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الحادي عشر، و«الصور المطلوبة» فارغة**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الحادي عشر، و«الصور المطلوبة» صورُ الثاني عشرَ الإحدى عشرة وحدها** (واثنتان منسوختان في مكانهما)",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
-        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], []]);
+        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys).length, thaCopied.filter((k) => !thaKeys.includes(k) || notYet([k]).length), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, 11, [], thaKeys.filter((k) => !thaCopied.includes(k)).sort()]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;

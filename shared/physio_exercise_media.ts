@@ -208,6 +208,10 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "knee-flexion-step-stretch-1": { file: "knee-flexion-step-stretch-1.webp" },
   "leg-press-progressive-1": { file: "leg-press-progressive-1.webp" },
   "kneeling-floor-transfer-1": { file: "kneeling-floor-transfer-1.webp" },
+  //  **ما بعد استبدال الورك** (ترحيل ١٤٠، §4.dz): بطاقتا الدرج والسيارة للورك بصورتَي بطاقتَي الركبة منسوختين باسم رمزيهما — تُظهران الحركةَ نفسَها
+  //  (الصعودُ بالسليمة والعكّازُ والدرابزين، والجلوسُ في المقعد ثمّ إدخالُ الساق) بلا ما يخصّ الركبة؛ والإحدى عشرةَ الباقية في «الصور المطلوبة».
+  "stairs-after-hip-surgery-1": { file: "stairs-after-hip-surgery-1.webp", credit: "MG共享康复" },
+  "car-transfer-hip-1": { file: "car-transfer-hip-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
