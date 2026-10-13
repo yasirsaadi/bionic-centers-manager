@@ -8,6 +8,7 @@
 //       مسوّدة، والخططُ المفتوحة تأخذ نسختَها والموقوفةُ لا، وألمُ الظهر المزمن لا يُمَسّ.
 //   ج — **كلُّ بروتوكولٍ بعد الثاني على القاعدة بالقواعد نفسِها** (سطرُه في `CONTENT` يكفي): الجرعةُ والنطاقاتُ والروابطُ والأجهزةُ والمراجع، والبطاقاتُ
 //       مسوّدات، ولا تكرار، والخطّةُ المفتوحة تأخذ نسختَها، وكلُّ بروتوكولٍ مفصَّلٍ غيره لا يُمَسّ.
+//   ص — وصفُ صور الورك كما وصلت (ترحيل ١٤١): يقبله المحرّر، ولا يُكتب فوق وصفٍ عدّله المشرف، والإعادةُ لا تفعل شيئاً.
 //   ب — من الأبواب الحقيقية: صفحةُ البروتوكول وموجزُ المساعد يحملانه، والخطّةُ الجديدة تنسخ مراحلَه وعددَه وتأخذ الأساسيَّ وحده، وكلُّ صورةٍ
 //       في مكانها: ما وصل معروضٌ وما لم يصل في «الصور المطلوبة» (وصورُ الثاني وصلت ٢٠٢٦-١٠-١٠)؛ وكلُّ بروتوكولٍ بعده بصفحته وخطّته (ب.٥).
 
@@ -39,6 +40,7 @@ import * as m136 from "./migrations/136_physio_preprosthetic_detail";
 import * as m137 from "./migrations/137_physio_upper_limb_amputation_detail";
 import * as m138 from "./migrations/138_physio_tka_detail";
 import * as m140 from "./migrations/140_physio_tha_detail";
+import * as m141 from "./migrations/141_physio_tha_image_captions";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -300,6 +302,52 @@ async function main() {
       (await Promise.all(others.map(snapshot))).map((x, i) => x === othersBefore[i]), others.map(() => true));
   }
 
+  // ══ ص. وصفُ صور الورك كما وصلت (ترحيل ١٤١، §4.dz التكملة) ══
+  //  الوصفُ يُعرض تحت الصورة، وكُتب في ١٤٠ قبل وصولها — فيُصحَّح ما خالفها، ولا يُكتب فوق وصفٍ عدّله المشرف.
+  console.log("\n── ص. وصفُ صور ما بعد استبدال الورك كما وصلت ──");
+  const capKeys = Object.keys(m141.CAPTIONS);
+  const thaCards = m140.EXERCISES.map((e) => e.code);
+  const imagesOf = async () => Object.fromEntries((await q(`SELECT code, images FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [thaCards])).rows
+    .map((r) => [r.code, r.images]));
+  const sorted = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+  const capOf = (imgs: Record<string, any[]>) => sorted(Object.fromEntries(Object.values(imgs).flat().filter((i) => capKeys.includes(i.key)).map((i) => [i.key, [i.captionAr, i.captionEn]])));
+  const capIssues = m140.EXERCISES.filter((e) => e.images.some((i) => m141.CAPTIONS[i.key])).flatMap((e) => {
+    const body = exerciseBody({ ...e, images: e.images.map((i) => (m141.CAPTIONS[i.key] ? { ...i, ...m141.CAPTIONS[i.key] } : i)) });
+    const r = parseExerciseBody(body);
+    if (typeof r === "string") return [`${e.code}: ${r}`];
+    return r.images.some((im, i) => im.captionAr !== body.images[i].captionAr || im.captionEn !== body.images[i].captionEn) ? [`${e.code}.images قُصّت`] : [];
+  });
+  same("ص.١ **الوصفُ الجديد لكلّ صورةٍ يقبله المحرّرُ كما هو** — ولأربع صورٍ من صور الورك", [capKeys.length, capIssues], [4, []]);
+  //  من الوصف كما زرعه ١٤٠ — والقالبُ قد يحمل ١٤١ مطبَّقاً (قاعدةٌ بُنيت بعده)، فلا يُبنى التأكيدُ على حاله.
+  for (const e of m140.EXERCISES.filter((x) => x.images.some((i) => m141.CAPTIONS[i.key]))) {
+    await q(`UPDATE physio_exercises SET images = $1::jsonb WHERE code = $2`,
+      [JSON.stringify(e.images.map((i) => ({ key: i.key, captionAr: i.ar, captionEn: i.en, search: i.search }))), e.code]);
+  }
+  const capBefore = await imagesOf();
+  //  سليمٌ عدّل وصفَ «مُلبِس الجوارب» قبل الترحيل — يبقى وصفُه.
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', '"وصفُ سليم"') WHERE code = 'dressing-aids-hip'`);
+  await q(m141.sql);
+  const capAfter = await imagesOf();
+  same("ص.٢ **يتغيّر وصفُ الصور الثلاث كما وصلت، ووصفٌ عدّله المشرفُ يبقى**، ورموزُها وكلماتُ بحثها كما هي",
+    [capOf(capAfter), Object.values(capAfter).flat().map((i: any) => [i.key, i.search])],
+    [sorted({ ...Object.fromEntries(capKeys.map((k) => [k, [m141.CAPTIONS[k].ar, m141.CAPTIONS[k].en]])),
+      "dressing-aids-hip-1": ["وصفُ سليم", capBefore["dressing-aids-hip"][0].captionEn] }),
+      Object.values(capBefore).flat().map((i: any) => [i.key, i.search])]);
+  same("ص.٣ **وبطاقاتُ الورك الأخرى لم تُمَسّ**",
+    thaCards.filter((c) => !["raised-seat-transfer-hip", "hip-safe-movement", "bed-mobility-hip", "dressing-aids-hip"].includes(c))
+      .filter((c) => JSON.stringify(capAfter[c]) !== JSON.stringify(capBefore[c])), []);
+  //  بالنصّ من القاعدة (جزءُ المليون من الثانية) — `Date` في جافاسكربت يقف عند الجزء من الألف فتتساوى كتابتان متقاربتان.
+  const stamp = async () => (await q(`SELECT code, updated_at::text AS t FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [thaCards])).rows
+    .map((r) => [r.code, r.t]);
+  const stamps = await stamp();
+  await q(m141.sql);
+  same("ص.٤ **والإعادةُ لا تفعل شيئاً** — لا وصفَ ولا وقتَ تعديل", [await imagesOf(), await stamp()], [capAfter, stamps]);
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', to_jsonb($1::text)) WHERE code = 'dressing-aids-hip'`,
+    [m140.EXERCISES.find((e) => e.code === "dressing-aids-hip")!.images[0].ar]);
+  await q(m141.sql);
+  same("ص.٥ **وحين يعود الوصفُ كما زرعه ١٤٠ يكتب الترحيلُ الجديدَ** (لباقي الحزمة)",
+    capOf(await imagesOf())["dressing-aids-hip-1"], [m141.CAPTIONS["dressing-aids-hip-1"].ar, m141.CAPTIONS["dressing-aids-hip-1"].en]);
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
@@ -379,16 +427,15 @@ async function main() {
     //  والحادي عشرَ (ما بعد استبدال الركبة): اثنتا عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٣، §4.dx التكملة)؛
     //  والعشرون المعادة بصورها هي.
     const tkaKeys = m138.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والثاني عشرَ (ما بعد استبدال الورك): ثلاثَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — الدرجُ والسيارة بصورتَي بطاقتَي الركبة منسوختين (تُظهران الحركةَ
-    //  نفسَها)، **والإحدى عشرةَ الباقية وحدها «الصور المطلوبة»**؛ والثماني عشرةَ المعادة بصورها هي (§4.dz).
+    //  والثاني عشرَ (ما بعد استبدال الورك): ثلاثَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — الدرجُ والسيارة بصورتَي بطاقتَي الركبة منسوختين، **والإحدى عشرةَ
+    //  الباقية وصلت** (٢٠٢٦-١٠-١٣، §4.dz التكملة)؛ والثماني عشرةَ المعادة بصورها هي. **فـ«الصور المطلوبة» فارغة** — والمفصَّلُ القادم يُضيف خاناته هنا.
     const thaKeys = m140.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    const thaCopied = ["stairs-after-hip-surgery-1", "car-transfer-hip-1"];
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الحادي عشر، و«الصور المطلوبة» صورُ الثاني عشرَ الإحدى عشرة وحدها** (واثنتان منسوختان في مكانهما)",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثاني عشر، و«الصور المطلوبة» فارغة**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
-        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys).length, thaCopied.filter((k) => !thaKeys.includes(k) || notYet([k]).length), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, 11, [], thaKeys.filter((k) => !thaCopied.includes(k)).sort()]);
+        gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
