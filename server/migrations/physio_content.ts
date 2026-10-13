@@ -173,3 +173,23 @@ SELECT ins.id, pe.exercise_id, pe.position, pe.sets, pe.reps, pe.hold_seconds, p
   JOIN physio_protocol_phases ph ON ph.protocol_id = pl.protocol_id AND ph.position = ins.position
   JOIN physio_protocol_phase_exercises pe ON pe.phase_id = ph.id;`;
 }
+
+/** **بندٌ ينتظر قرارَ المشرف العام** (ترحيل ١٣٩، §4.dy) — سؤالٌ واحد بنصّه باللغتين وموضوعه. */
+export interface ChecklistSeed { key: string; topic: "dose" | "limits" | "devices" | "settings" | "measures" | "content"; ar: string; en: string }
+
+/**
+ * **«اضغطه يا سليم»** — بنودُ البروتوكول في `physio_protocol_checklist` بترتيبها. **لا يكتب فوق بندٍ قائم** (`ON CONFLICT DO NOTHING`): ما علّمه سليم «تمّ»
+ * يبقى كما هو، والإعادةُ لا تكرّر. والبروتوكولُ القادم يزرع بنودَه في ترحيله بهذه الدالّة نفسِها.
+ */
+export function checklistSql(protocolCode: string, items: ChecklistSeed[]): string {
+  if (!items.length) return "";
+  const rows = items.map((it, i) => `(${[lit(it.key), lit(it.topic), lit(it.ar), lit(it.en), String(i)].join(", ")})`).join(",\n    ");
+  return `INSERT INTO physio_protocol_checklist (protocol_id, item_key, topic, text_ar, text_en, position)
+SELECT p.id, v.item_key, v.topic, v.text_ar, v.text_en, v.position
+FROM physio_protocols p
+CROSS JOIN (VALUES
+    ${rows}
+  ) AS v(item_key, topic, text_ar, text_en, position)
+WHERE p.code = ${lit(protocolCode)}
+ON CONFLICT (protocol_id, item_key) DO NOTHING;`;
+}
