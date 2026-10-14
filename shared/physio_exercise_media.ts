@@ -239,6 +239,14 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "short-foot-1": { file: "short-foot-1.webp" },
   "low-dye-taping-1": { file: "low-dye-taping-1.webp" },
   "night-splint-1": { file: "night-splint-1.webp" },
+  //  **الدفعةُ التاسعة — عِرقُ النسا: أربعٌ من خمس** (٢٠٢٦-١٠-١٤، §4.ec التكملة): **لم يُرفع شيءٌ منها إلى المجلّد، فبحث عنها المساعدُ بطلب المالك**
+  //  («حاول بصور البروتوكول الذي لم تجلب صوره») — والمصدرُ اسمُ الموقع ورابطُ صفحته، ولا صورةَ من مواقع الصور المدفوعة ولا بعلامتها.
+  //  «الانبطاح على المرفقين» **من صورةٍ مسجَّلة**: النصفُ السفليّ من «البسط من الانبطاح ١» هو الوضعُ نفسُه (مُحيت منه «POSITION 2»)؛ و«تصحيح الميل»
+  //  لوحاه دون لافتة الحائط. **و«الركوع بثني الركبتين» تنتظر**: الصورةُ الوحيدة بركبتين مثنيّتين ظهرُها منحنٍ، والبطاقةُ تقول ظهراً مستقيماً.
+  "prone-on-elbows-1": { file: "prone-on-elbows-1.webp" },
+  "lateral-shift-correction-1": { file: "lateral-shift-correction-1.webp", credit: "Lombafit", sourceUrl: "https://www.lombafit.com/methode-mckenzie/" },
+  "supine-sciatic-slider-1": { file: "supine-sciatic-slider-1.webp", credit: "Rehab Hero", sourceUrl: "https://www.rehabhero.ca/exercise/knee-sciatic-nerve-flossing" },
+  "slump-slider-seated-1": { file: "slump-slider-seated-1.webp", credit: "Dani Winks Flexibility", sourceUrl: "https://www.daniwinksflexibility.com/bendy-blog/what-is-sciatic-nerve-tension-and-how-do-i-fix-it" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

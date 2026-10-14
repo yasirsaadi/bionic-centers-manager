@@ -484,16 +484,16 @@ async function main() {
     const thaKeys = m140.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والثالثَ عشرَ (ألمُ الكعب): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٤، §4.eb التكملة)؛ والسبعُ المعادة بصورها هي.
     const heelKeys = m143.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والرابعَ عشرَ (عِرقُ النسا): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **والخمسُ في «الصور المطلوبة»** (لا صورةَ مسجَّلة تطابقها — §4.ec)؛
-    //  والأربعَ عشرةَ المعادة بصورها هي. والمفصَّلُ القادم يُضيف خاناته هنا.
+    //  والرابعَ عشرَ (عِرقُ النسا): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت أربعٌ** (٢٠٢٦-١٠-١٤، §4.ec التكملة: «الانبطاح على المرفقين» من صورةٍ
+    //  مسجَّلة، وثلاثٌ بحث عنها المساعد)، **و«الركوع بثني الركبتين» وحدها في «الصور المطلوبة»**؛ والأربعَ عشرةَ المعادة بصورها هي. والمفصَّلُ القادم يُضيف خاناته هنا.
     const sciaticaKeys = m145.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، وخمسُ الرابعَ عشرَ وحدها في «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، وأربعٌ من خمس الرابعَ عشرَ، و«الركوع بثني الركبتين» وحدها في «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
         sciaticaKeys.length, notYet(sciaticaKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, sciaticaKeys, [...sciaticaKeys].sort()]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, ["prayer-bent-knee-ruku-1"], ["prayer-bent-knee-ruku-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
