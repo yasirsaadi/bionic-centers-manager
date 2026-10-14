@@ -51,6 +51,7 @@ import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
 import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
 import { registerPatientEditRulesRoutes, patientEditStateFor } from "./patients/edit_rules";
 import { applyEditLocks, editLockMessage, lockedPatientFields } from "@shared/patient_edit_rules";
+import { parseSharedPhone } from "@shared/shared_phone";
 import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
@@ -90,7 +91,7 @@ import {
   previewCaseRemovalTx, closeCaseWithHistoryTx, closureAuditNote, CaseClosureError,
 } from "./patient_cases/closure";
 import {
-  checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError,
+  checkNameAvailability, PatientNameConflictError, PatientPhoneConflictError, type ActivePhoneHolderRow, loadPhoneSharing,
   PatientPhoneTrashConflictError,
 } from "./patients/duplicate_guard";
 import {
@@ -574,6 +575,17 @@ export async function registerRoutes(
     if (!patient) return false;
     return await scopeReachesPatient(accessibleBranchesFor(req), patient as any);
   };
+
+  //  ══ **ردُّ الرقم المسجَّل لغيره — بأسماء حامليه** (§4.ef) ══ فتسأل الشاشةُ «الشخص نفسه أم قريبٌ له؟» بدل رسالةٍ تُغلق الباب.
+  //  و`reachable`: يفتح السائلُ ملفَّه؟ — «الشخص نفسه» ينقله إليه، وإلّا يُقال أين الملفّ.
+  const phoneConflictBody = async (req: any, err: PatientPhoneConflictError) => ({
+    message: err.message,
+    code: "patient_phone_conflict",
+    holders: await Promise.all((err.holders ?? []).map(async (h: ActivePhoneHolderRow) => ({
+      id: h.id, name: h.name, patientCode: h.patientCode, branchName: h.branchName,
+      reachable: await reachesPatient(req, { id: h.id, branchId: h.branchId }),
+    }))),
+  });
 
   //  **الفرعُ الذي تُنسَب إليه حركةٌ جديدة** — «الفرع الذي حدثت فيه».
   //  موظّفُ ذي قار يقبض على ملفٍّ مسجَّلٍ في كربلاء ⟶ الدفعةُ في ذي قار،
@@ -2442,8 +2454,16 @@ export async function registerRoutes(
       });
     }
 
+    //  ══ **الرقمُ المشترك** (§4.ef) — مع مَن، ومَن يستعمله أيضاً، وهل يفتح السائلُ ملفَّه.
+    const sharing = await loadPhoneSharing(db as any, patient as any);
+    const reach = async (x: { id: number; branchId: number | null }) => reachesPatient(req, x);
+    const phoneSharedWith = sharing.with ? { ...sharing.with, reachable: await reach(sharing.with) } : null;
+    const phoneSharedBy = await Promise.all(sharing.usedBy.map(async (u) => ({ ...u, reachable: await reach(u) })));
+
     res.json({
       ...patient,
+      phoneSharedWith,
+      phoneSharedBy,
       ...(canViewPaymentsForThisPatient
         ? { payments: paymentsWithDisplay }
         //  ══ ملخّصُ جلساتٍ غيرُ ماليّ — راجع تعليق `summarizePaymentSessions`
@@ -2870,6 +2890,13 @@ export async function registerRoutes(
         }
       }
 
+      //  ══ **تأكيدُ الرقم المشترك** (§4.ef) — «قريب يستعمل الرقم نفسه» من نافذة الاستقبال؛ وشكلٌ لا يُقبل يُردّ لا يُتجاهل.
+      const sharedPhone = parseSharedPhone(req.body?.sharedPhone);
+      if (sharedPhone === undefined) {
+        return res.status(400).json({ message: "تأكيد الرقم المشترك غير صالح — اختر صاحب الرقم وصلته", field: "sharedPhone" });
+      }
+      delete creationBody.sharedPhone;
+
       const input = api.patients.create.input.parse({
         ...creationBody,
         branchId
@@ -2922,7 +2949,7 @@ export async function registerRoutes(
         //  الطوران الداخليّان (`before/after_sync_patient_cases`) يصلان من
         //  داخل المخزن بنفس معرّف الارتباط — نفسُ نمط `onPhase` القائم في
         //  `server/ai/knowledge/routes.ts`.
-        { onPhase: (phase) => diagPhase(req, phase) },
+        { onPhase: (phase) => diagPhase(req, phase), sharedPhone },
       );
       diagPhase(req, "after_create_patient");
 
@@ -2958,6 +2985,11 @@ export async function registerRoutes(
         branchId: patient.branchId,
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
+        //  **ومَن وافق على الرقم المشترك ومتى** (§4.ef) — في سطر التسجيل نفسِه.
+        ...(patient.phoneSharedWithPatientId ? {
+          newValues: { phoneSharedWithPatientId: patient.phoneSharedWithPatientId, phoneSharedRelation: patient.phoneSharedRelation },
+          notes: `سُجّل برقمٍ مشترك مع الملفّ #${patient.phoneSharedWithPatientId} (${patient.phoneSharedRelation ?? "قريب"})`,
+        } : {}),
       });
       diagPhase(req, "after_audit");
 
@@ -2974,7 +3006,7 @@ export async function registerRoutes(
         return res.status(409).json({ message: err.message, code: "patient_name_conflict" });
       }
       if (err instanceof PatientPhoneConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
+        return res.status(409).json(await phoneConflictBody(req, err));
       }
       // ══ **والمحذوفُ لا يمنع تسجيلاً إطلاقاً** (قرارُ مالكٍ صريح،
       //  ٢٠٢٦-٠٩-١٨) ══════════════════════════════════════════════════════
@@ -3094,6 +3126,12 @@ export async function registerRoutes(
       //  أصلاً (الفحصُ أعلاه) — فالكلفةُ معه، لا بدور «مدير فرع».
       const mayEditCost = canEditThisPatient;
       const patch: any = { ...req.body };
+      //  ══ **تأكيدُ الرقم المشترك** (§4.ef) — حين يتغيّر الرقمُ إلى رقمٍ يحمله قريبٌ له ملفّ. يُقرأ ويُنزع قبل أن يصل المخزن.
+      const sharedPhone = parseSharedPhone(patch.sharedPhone);
+      if (sharedPhone === undefined) {
+        return res.status(400).json({ message: "تأكيد الرقم المشترك غير صالح — اختر صاحب الرقم وصلته", field: "sharedPhone" });
+      }
+      delete patch.sharedPhone;
       if (!mayEditCost) delete patch.totalCost;
 
       //  ══ **فرعُ التسجيل وأعمدةُ الحذف ليست حقولَ تعديل** (المراجعةُ الشاملة ٢٠٢٦-١٠-٠٢، §4.bo) ══
@@ -3359,10 +3397,12 @@ export async function registerRoutes(
       // `syncSoleCaseCost` تُبقي كلَّ حالةٍ كما هي وتُرجع `caseCostSync:
       // "ambiguous"` وحدها، تُترجَم هنا إلى ملاحظةٍ صريحة (نفسُ قناة
       // `costNote` القائمة أصلاً لقفل الطبيب) — لا صمتَ ولا كتابةً عشوائية.
-      const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true);
+      const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true, null, sharedPhone);
       //  ══ **ولا يمرّ تعديلٌ بلا تدقيق** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bs) — بالقديم والجديد لِما تغيّر فعلاً. ══
       {
-        const diff = diffPatientEdit(existingPatient as any, (patient ?? {}) as any, Object.keys(patch));
+        //  والرقمُ المشترك يكتبه المخزنُ مع الهاتف (§4.ef) — فيُقرأ في السطر حين يُرسَل الهاتف.
+        const diff = diffPatientEdit(existingPatient as any, (patient ?? {}) as any,
+          [...Object.keys(patch), ...(patch.phone !== undefined ? ["phoneSharedWithPatientId", "phoneSharedRelation"] : [])]);
         if (diff.fields.length > 0) {
           await logAudit({
             entityType: "patient", entityId: id, action: "update",
@@ -3396,7 +3436,7 @@ export async function registerRoutes(
       //  الحارسُ يرمي **داخل** معاملة `storage.updatePatient` (حين تمسّ
       //  التعديلُ الهاتف)، فتتراجع المعاملةُ كاملةً — لا صفَّ نصفَ مُحدَّث.
       if (err instanceof PatientPhoneConflictError) {
-        return res.status(409).json({ message: err.message, code: "patient_phone_conflict" });
+        return res.status(409).json(await phoneConflictBody(req, err));
       }
       // ══ أو رقمٌ محجوزٌ لمريضٍ **محذوف** — نفسُ حجز الهويّة، على التعديل
       //  أيضاً (تصحيحٌ لاحقٌ ثانٍ، ٢٠٢٦-٠٩-٠٨) ═══════════════════════════

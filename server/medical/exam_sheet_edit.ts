@@ -86,7 +86,9 @@ export async function applyExamSheet(
       }
     } catch (err) {
       if (err instanceof PatientPhoneConflictError || err instanceof PatientPhoneTrashConflictError) {
-        notes.push(`حُفظت المعاينة، ولم تُحفظ تعديلاتُ بيانات المريض: ${err.message}`);
+        //  ورقمٌ يحمله قريبٌ له ملفّ (§4.ef) يُثبَّت مشتركاً من «تعديل بيانات المريض» — حيث يُسأل الشخصُ نفسُه أم قريبٌ له.
+        const hint = err instanceof PatientPhoneConflictError ? " — وإن كان رقمَ قريبٍ له فأثبته من «تعديل بيانات المريض»" : "";
+        notes.push(`حُفظت المعاينة، ولم تُحفظ تعديلاتُ بيانات المريض: ${err.message}${hint}`);
       } else {
         console.error("[medical] exam sheet patient edit failed:", err);
         notes.push("حُفظت المعاينة، ولم تُحفظ تعديلاتُ بيانات المريض — أعدها من «تعديل المعاينة»");
