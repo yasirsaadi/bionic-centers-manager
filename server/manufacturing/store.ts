@@ -751,6 +751,8 @@ export interface OrderCard {
   expertUserId: number;
   expertName: string | null;
   assignedAt: string | null; // created_at
+  /** آخرُ تحويلٍ من خبيرٍ إلى خبير (`reassigned` في التاريخ) أو `null` — «الأحدث أولاً» يرتّب بوصول الأمر إلى خبيره الحاليّ (§4.ee). */
+  reassignedAt: string | null;
   startedAt: string | null;
   expectedDeliveryDate: string | null;
   completedAt: string | null;
@@ -907,13 +909,20 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
   // ويلزمها `fromStage` لتميّز الدخولَ من الحركة داخل المرحلة نفسها.
   const hist = await db
     .select({
-      workOrderId: WH.workOrderId, fromStage: WH.fromStage, toStage: WH.toStage,
+      workOrderId: WH.workOrderId, actionType: WH.actionType, fromStage: WH.fromStage, toStage: WH.toStage,
       createdAt: WH.createdAt,
     })
     .from(WH)
     .where(inArray(WH.workOrderId, ids));
   const histByOrder = new Map<number, StageHistoryRow[]>();
+  //  وآخرُ تحويلٍ لكلّ أمر (§4.ee) — من الأسطر نفسِها، بلا استعلامٍ ثانٍ.
+  const reassignedByOrder = new Map<number, Date>();
   for (const h of hist) {
+    if (h.actionType === "reassigned" && h.createdAt) {
+      const at = new Date(h.createdAt);
+      const prev = reassignedByOrder.get(h.workOrderId);
+      if (!prev || at > prev) reassignedByOrder.set(h.workOrderId, at);
+    }
     const list = histByOrder.get(h.workOrderId) ?? [];
     list.push({ fromStage: h.fromStage, toStage: h.toStage, at: h.createdAt });
     histByOrder.set(h.workOrderId, list);
@@ -946,6 +955,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       expertUserId: r.expertUserId,
       expertName: r.expertName ?? null,
       assignedAt: r.assignedAt ? new Date(r.assignedAt).toISOString() : null,
+      reassignedAt: reassignedByOrder.get(r.id)?.toISOString() ?? null,
       startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,
       expectedDeliveryDate: r.expectedDeliveryDate ? String(r.expectedDeliveryDate) : null,
       completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
