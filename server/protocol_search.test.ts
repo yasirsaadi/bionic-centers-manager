@@ -148,9 +148,10 @@ async function main() {
     const j = (await search("الجسر")).json;
     //  و«الجسر» في مراحل البروتوكولات المفصَّلة التي فيها (المزمن، والحادّ بعد ترحيل ١٢٤ — §4.dg، وخشونةُ الركبة بعد ترحيل ١٢٦ — §4.di،
     //  والجلطةُ تحت الحادّة بعد ترحيل ١٢٩ — §4.dl، والمشيُ بالطرف الصناعيّ بعد ترحيل ١٣٥ — §4.dt، وما قبل الطرف بعد ترحيل ١٣٦ — §4.du،
-    //  وما بعد استبدال الركبة بعد ترحيل ١٣٨ — §4.dx، وما بعد استبدال الورك بعد ترحيل ١٤٠ — §4.dz).
+    //  وما بعد استبدال الركبة بعد ترحيل ١٣٨ — §4.dx، وما بعد استبدال الورك بعد ترحيل ١٤٠ — §4.dz، وعِرقُ النسا بعد ترحيل ١٤٥ — §4.ec:
+    //  الجسرُ في مرحلتَيه الثانية والثالثة بطاقةً، لا كلمةً عابرة كما وقع في ألم الكعب).
     same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولاتِها ومكانَها «تمارين المرحلة»",
-      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
+      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "lumbar-radiculopathy-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
     const t = (await search("تيكار")).json;
     check(t.length > 0 && t.every((r) => r.match.hits.some((h: any) => h.label === "الأجهزة" && marked(h.snippet, h.ranges).includes("تيكار"))),
       "ب.٥ **واسمُ جهاز** («تيكار») يُظهر كلَّ بروتوكولٍ فيه — «الأجهزة: تيكار»", JSON.stringify(t.map((r) => [r.code, r.match.hits.map((h: any) => h.label)])));
