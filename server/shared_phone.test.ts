@@ -4,7 +4,7 @@
 //   ق — القواعدُ الصافية (`shared/shared_phone.ts`): قراءةُ التأكيد كلِّه أو ردُّه كلِّه، وسطرُ العرض.
 //   أ — التسجيل: الرقمُ المسجَّل لغيره يُردّ **بأسماء حامليه**، والتأكيدُ على حاملٍ فعليّ يسجّل بصلته، والتأكيدُ على غير حاملٍ يُردّ،
 //       والشكلُ الفاسد ٤٠٠ بلا ملفّ، والاسمُ يبقى يُفحص، والجسمُ لا يكتب الاشتراكَ مباشرة، وسطرُ التدقيق يقول مَن وافق.
-//   ب — العرض: «مشترك مع» على ملفّ القريب و«يستعمله أيضاً» على ملفّ صاحب الرقم، ويختفيان حين لا يعود الرقمُ واحداً.
+//   ب — العرض: «مشترك مع» على ملفّ القريب و«يستعمله أيضاً» على ملفّ صاحب الرقم، ويختفيان حين لا يعود الرقمُ واحداً، وبفهرسٍ (١٤٨).
 //   ج — التعديل: رقمٌ جديد يمحو الاشتراك، والعودةُ إلى رقم القريب تُسأل ثمّ تُثبَّت بالتأكيد، وفي سطر التدقيق.
 //   د — الدمجُ ينقل الاشتراكَ إلى الهدف، والحذفُ النهائيّ لصاحب الرقم لا يتعطّل ويُسقط الربطَ وحده.
 //   و — الواجهة: قراءةُ الردّ من الخطأين، والشاشاتُ الأربع تفتح النافذةَ وتعيد الحفظَ بالتأكيد.
@@ -199,6 +199,18 @@ async function main() {
         (gW?.phoneSharedBy ?? []).map((u: any) => [short(u.name), u.relation]),
         gA?.phoneSharedWith, (gA?.phoneSharedBy ?? []).map((u: any) => [short(u.name), u.relation])],
       [[A, "أحمد حسين", "زوج", true], [["علي أحمد", "أم"]], null, [["فاطمة كاظم", "زوج"]]]);
+    //  «يستعمله أيضاً» يُسأل في كلّ فتحٍ للملفّ — فهرسٌ جزئيّ (ترحيل ١٤٨) لا مسحٌ لجدول المرضى كلِّه (ملاحظةُ مراجعة Codex على #649).
+    const ixDef = (await q(`SELECT indexdef FROM pg_indexes WHERE tablename = 'patients' AND indexname = 'ix_patients_phone_shared_with'`))[0]?.indexdef ?? "";
+    const planClient = await pool.connect();
+    let plan = "";
+    try {
+      await planClient.query("BEGIN");
+      await planClient.query("SET LOCAL enable_seqscan = off");
+      plan = (await planClient.query(`EXPLAIN SELECT id FROM patients WHERE phone_shared_with_patient_id = $1 AND deleted_at IS NULL`, [A])).rows
+        .map((r: any) => r["QUERY PLAN"]).join(" ");
+    } finally { await planClient.query("ROLLBACK"); planClient.release(); }
+    check(/\(phone_shared_with_patient_id\)/.test(ixDef) && /WHERE \(phone_shared_with_patient_id IS NOT NULL\)/.test(ixDef) && /ix_patients_phone_shared_with/.test(plan),
+      "ب.٢ **«يستعمله أيضاً» بفهرسٍ جزئيّ** على `phone_shared_with_patient_id` — وسؤالُ الملفّ يستعمله", `def=${ixDef} | plan=${plan}`);
 
     // ══ ج — التعديل ══════════════════════════════════════════════════════════════════════════
     console.log("\n── ج. التعديل ──");
