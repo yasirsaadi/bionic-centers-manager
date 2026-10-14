@@ -26,7 +26,7 @@ import { INJURY_SIDE_OPTIONS, PROSTHETIC_DEVICE_SPECS } from "@shared/case_field
 import { NOT_APPLICABLE } from "@shared/device_specs";
 import { companionOf, isListedChoice } from "@shared/device_spec_options";
 import {
-  LIMB_SPEC_KEYS, LIMB_SPEC_STORE_KEYS, dropStaleChoices, hasSideSpecs, isDerivedProstheticType, limbSlots, specChoicesForKey, limbSpecValue,
+  LIMB_SPEC_KEYS, LIMB_SPEC_STORE_KEYS, dropStaleChoices, hasSideSpecs, isDerivedProstheticType, limbSlots, specChoicesForKey, limbSpecValue, limbSpecInputValue,
   normalizeLimbSpecs, notMadeOf, prostheticNameFor, sideSpecKey, slotTitle, slotsCanShare,
 } from "@shared/limb_specs";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
@@ -231,9 +231,10 @@ export function ExamSheetForm({
   //  **ونوعُ الطرف مبنيّاً** (§4.dw التكملة ٢) — اسمٌ لكلّ طرفٍ مصنوع (يُكتب مرّةً لطرفٍ واحد أو متماثلة)، والنصُّ القديمُ يبقى حتى يُستبدل.
   const isLegacyType = (v: string) => Boolean(v) && v !== NOT_APPLICABLE && !isListedChoice("prostheticType", v);
   const sharedTypeName = Array.from(new Set(made.map((sl) => prostheticNameFor(rx, sl, null)).filter(Boolean))).join(" · ") || null;
+  //  **والخانةُ وهي تُكتب تقرأ ما كُتب بحرفه** (`limbSpecInputValue` — §4.dw التكملة ٣): القراءةُ المقصوصة كانت تُسقط المسافةَ مع كلّ حرف.
   const compOf = (k: string, side: string | null) => {
     const c = companionOf(k);
-    return c ? limbSpecValue(rx, c.key, side) : "";
+    return c ? limbSpecInputValue(rx, c.key, side) : "";
   };
   //  خاناتُ طرفٍ واحد (أو الأطراف المتماثلة): ما يخصّه بمستواه، وما كُتب في غيره بقيمةٍ حقيقية (لا يُخفى مكتوب).
   const sharedKeys = LIMB_SPEC_KEYS.filter((k) => made[0].keys.includes(k) || realSpec(rx[k]));
@@ -408,7 +409,7 @@ export function ExamSheetForm({
                           : k === "prostheticType" && isDerivedProstheticType(sl)
                             ? <DerivedTypeCell name={prostheticNameFor(rx, sl, side)} legacy={isLegacyType(limbSpecValue(rx, k, side))}
                                 onUseBuilt={() => setSpecs({ [sideSpecKey(k, side)]: "" })} testSuffix={side} />
-                            : <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecValue(rx, k, side)} options={optionsOf(sideSpecKey(k, side))}
+                            : <SpecCell specKey={k} rxKey={sideSpecKey(k, side)} value={limbSpecInputValue(rx, k, side)} options={optionsOf(sideSpecKey(k, side))}
                                 companionValue={compOf(k, side)} onPatch={setSpecs} testSuffix={`${k}-${side}`} />}
                       </div>
                     );

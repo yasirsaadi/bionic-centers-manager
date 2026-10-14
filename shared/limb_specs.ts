@@ -151,6 +151,18 @@ export function limbSpecValue(specs: Record<string, unknown>, key: string, slotK
   return slotKey ? (str(specs[sideSpecKey(key, slotKey)]) || str(specs[key])) : str(specs[key]);
 }
 
+/**
+ * **قيمةُ خانةٍ لطرف كما كُتبت — للخانة وهي تُكتب** (§4.dw التكملة ٣): `limbSpecValue` تقصّ الفراغَ من طرفيها، فإن قرأت بها خانةٌ نصّيةٌ
+ * قيمتَها أثناء الكتابة سقطت المسافةُ مع كلّ حرف («امريكي وسليف» ⟵ «امريكيوسليف» — ملاحظةُ المالك ٢٠٢٦-١٠-١٤). فالشاشةُ تقرأ بهذه، والعرضُ
+ * والطباعةُ والاسمُ المبنيّ بتلك. والاختيارُ نفسُه: مفتاحُ الطرف ما دام فيه حرف، ثمّ العامّ.
+ */
+export function limbSpecInputValue(specs: Record<string, unknown>, key: string, slotKey: string | null): string {
+  const raw = (k: string) => (typeof specs[k] === "string" ? (specs[k] as string) : "");
+  if (!slotKey) return raw(key);
+  const own = raw(sideSpecKey(key, slotKey));
+  return own.trim() ? own : raw(key);
+}
+
 /** **الحقلُ الحرّ لخانةٍ وطرف** (§4.dw) — بقراءة خانته نفسِها: مفتاحُ الطرف ثمّ العامّ. */
 function companionValue(specs: Record<string, unknown>, key: string, slotKey: string | null): string | null {
   const c = COMPANION_KEYS.find((x) => parentOfCompanion(x) === key);
@@ -218,7 +230,7 @@ export const slotTitle = (s: LimbSlot): string => s.title;
 export const isDerivedProstheticType = (s: LimbSlot): boolean => s.kind !== "silicone" && prostheticNameOfLevel(s.level) !== null;
 
 /**
- * **«نوع الطرف الصناعي» لطرف** — مبنيّاً من مستواه وركبته وقدمه وسوكيته (`composeProstheticName`) بقراءة خانات هذا الطرف (`slotKey`، أو العامّة).
+ * **«نوع الطرف الصناعي» لطرف** — مبنيّاً من مستواه وركبته وقدمه وسوكيته وسليكونه (`composeProstheticName`) بقراءة خانات هذا الطرف (`slotKey`، أو العامّة).
  * **والمكتوبُ قبل اليوم نصّاً حرّاً يبقى كما كُتب** (لا يُعاد بناؤه)، وما اختير من القائمة أمس يُبنى. وطرفٌ نوعُه يُكتب ⟵ ما كُتب.
  */
 export function prostheticNameFor(specs: Record<string, unknown>, slot: LimbSlot, slotKey: string | null): string | null {
@@ -231,6 +243,7 @@ export function prostheticNameFor(specs: Record<string, unknown>, slot: LimbSlot
     knee: own("kneeJointType"), kneeModel: own("kneeJointType") ? limbSpecValue(specs, "kneeModel", slotKey) : "",
     foot: own("footType"), footModel: own("footType") ? limbSpecValue(specs, "footModel", slotKey) : "",
     socket: own("socketType"),
+    liner: own("siliconType"), linerModel: own("siliconType") ? limbSpecValue(specs, "siliconModel", slotKey) : "",
   });
 }
 
@@ -253,7 +266,7 @@ export function limbSpecView(specs: Record<string, unknown>, site?: unknown): Li
   const all = limbSlotsOfSite(site === undefined ? specs.amputationSite : site);
   const label = (k: string) => SHEET_LABEL[k] ?? k;
   //  **والحقلُ الحرّ مع خانته في سطرها** (§4.dw): «هيدروليك — موديل الركبة: 3R80».
-  //  **ونوعُ الطرف مبنيٌّ** (§4.dw التكملة ٢) — من مستوى كلّ طرفٍ وركبته وقدمه وسوكيته (`prostheticNameFor`).
+  //  **ونوعُ الطرف مبنيٌّ** (§4.dw التكملة ٢) — من مستوى كلّ طرفٍ وركبته وقدمه وسوكيته وسليكونه (`prostheticNameFor`).
   const shown = (k: string, slotKey: string | null, slotsHere: readonly LimbSlot[]) => {
     if (k === "prostheticType") {
       return slotKey ? prostheticNameFor(specs, slotsHere.find((x) => x.key === slotKey)!, slotKey) : sharedProstheticName(specs, slotsHere);

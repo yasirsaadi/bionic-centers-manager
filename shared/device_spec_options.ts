@@ -4,7 +4,7 @@
 //
 //   • **نوعُ الطرف بحسب الطرف نفسِه**: السفليُّ قائمتُه والعلويُّ قائمتُه — «لا يجوز يختار طرفاً سفلياً فتظهر له خلال المرفق».
 //     **وبمستوى بتره متى عُرف** (ملاحظةُ المالك في أوّل فحص: «المريض فوق الركبة وفي خيارات نوع الطرف تحت الركبة وجوبارت وسايمز؟») —
-//     **بل صار مبنيّاً لا يُختار** (المالك ٢٠٢٦-١٠-١٣): اسمُ المستوى ثمّ الركبةُ والقدمُ والسوكيت (`composeProstheticName`).
+//     **بل صار مبنيّاً لا يُختار** (المالك ٢٠٢٦-١٠-١٣): اسمُ المستوى ثمّ الركبةُ والقدمُ والسوكيت — والسليكونُ منذ ٢٠٢٦-١٠-١٤ (`composeProstheticName`).
 //     والطرفُ المجهول (معاينةٌ بلا بترٍ مسجَّل) القائمتان معاً، والمستوى المجهول قائمةُ طرفه؛
 //     **والسليكونيُّ التعويضيّ نصٌّ حرّ كما كان** (أذنٌ أو إصبع — قائمةُ المالك للأطراف).
 //   • **نوعُ السليكون للعلويّ والسفليّ** «قفل محوري» أو «فاكيوم»، والسليكونيُّ التعويضيّ نصٌّ حرّ كما كان.
@@ -118,11 +118,13 @@ export function withCompanionText(base: string, value: string | null, companion:
 
 /**
  * **«نوع الطرف الصناعي» مبنيّاً** (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.dw التكملة ٢) — كان تكراراً لمستوى البتر، فصار اسمَ المستوى ثمّ ما يُصنع منه:
- * «طرف فوق الركبة — ركبة هيدروليك 3R80 مع قدم كاربون رباعية المحاور Triton بقالب كاربون درجة أولى». **الركبةُ والقدمُ والسوكيت وحدها**
- * (والسليكونُ وملاحظاتُ السوكيت لا — بقرار المالك)، والموديلُ بجانب خانته، وما لم يُكتب أو «لا ينطبق» لا يدخل. و`null` لمستوى لا اسمَ له.
+ * «طرف فوق الركبة — ركبة هيدروليك 3R80 مع قدم كاربون رباعية المحاور Triton بقالب كاربون درجة أولى وسليكون فاكيوم». **الركبةُ والقدمُ
+ * والسوكيت والسليكون** (ملاحظاتُ السوكيت لا)، والموديلُ بجانب خانته، وما لم يُكتب أو «لا ينطبق» لا يدخل. و`null` لمستوى لا اسمَ له.
+ * **والسليكونُ دخل الاسمَ بطلب المالك ٢٠٢٦-١٠-١٤** («اضف نوع السليكون عالطرف ليظهر بالاسم» — §4.dw التكملة ٣) — كان خارجه بقراره ٢٠٢٦-١٠-١٣.
  */
 export function composeProstheticName(p: {
   level: string | null; knee?: string; kneeModel?: string; foot?: string; footModel?: string; socket?: string;
+  liner?: string; linerModel?: string;
 }): string | null {
   const name = prostheticNameOfLevel(p.level);
   if (!name) return null;
@@ -131,9 +133,10 @@ export function composeProstheticName(p: {
     return t && t !== NOT_APPLICABLE_CHOICE ? t : "";
   };
   const withModel = (v: string, m?: string) => [isolateLtr(v), real(m) ? isolateLtr(real(m)) : ""].filter(Boolean).join(" ");
-  const knee = real(p.knee), foot = real(p.foot), socket = real(p.socket);
+  const knee = real(p.knee), foot = real(p.foot), socket = real(p.socket), liner = real(p.liner);
   let body = knee ? `ركبة ${withModel(knee, p.kneeModel)}` : "";
   if (foot) body += `${body ? " مع " : ""}قدم ${withModel(foot, p.footModel)}`;
   if (socket) body += `${body ? " " : ""}بقالب ${isolateLtr(socket)}`;
+  if (liner) body += `${body ? " و" : ""}سليكون ${withModel(liner, p.linerModel)}`;
   return body ? `${name} — ${body}` : name;
 }
