@@ -28,6 +28,7 @@ export function LiveUpdates() {
       clearInterval: (t) => window.clearInterval(t),
       refresh: () => { void queryClient.invalidateQueries(); },
       onGreeting: () => { void queryClient.invalidateQueries({ queryKey: ["/api/greeting"] }); },
+      onSidebarOrder: () => { void queryClient.invalidateQueries({ queryKey: ["/api/sidebar-order"] }); },
       reload: () => window.location.reload(),
       onUpdateAvailable: (build) => {
         setNewBuild(build);

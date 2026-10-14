@@ -19,6 +19,7 @@ import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import { registerStaffTelegramRoutes } from "./staff_telegram/routes";
 import { registerStaffGreetingRoutes } from "./staff_greeting/routes";
+import { registerSidebarOrderRoutes } from "./sidebar_order/routes";
 import { registerPatientCardRoutes } from "./patient_card/routes";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
@@ -9029,6 +9030,8 @@ export async function registerRoutes(
   registerStaffTelegramRoutes(app, isAuthenticated);
   //  تحيّةُ الموظّف اليومية (§4.dp) — مرّةً كلَّ يوم، والعباراتُ للمسؤول.
   registerStaffGreetingRoutes(app, isAuthenticated);
+  //  ترتيبُ الشريط الجانبيّ لكلّ حساب (§4.ed) — صاحبُه وحده يرتّب قائمتَه.
+  registerSidebarOrderRoutes(app, isAuthenticated);
   //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
   registerPatientCardRoutes(app, isAuthenticated);
 

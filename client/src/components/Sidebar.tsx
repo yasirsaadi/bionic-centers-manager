@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock, ArrowUpDown, ArrowUpToLine, ChevronUp, ChevronDown } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -22,8 +22,11 @@ import { canCreateReview, canDecideReview, canSuperviseReview, RETURNED_FROM_DOC
 //  القانونية التي تحرس `/api/discounts/:id/decide` فعلياً
 //  (`shared/discount.ts`)، فالأهليّةُ هنا منها لا من قائمة أدوارٍ يدوية.
 import { canApproveServiceDiscount, DISCOUNT_HISTORY_TITLE } from "@shared/discount";
-import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { applySidebarOrder, moveSidebarItem, type SidebarMove } from "@shared/sidebar_order";
 import logoImage from "@/assets/logo.png";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -290,6 +293,70 @@ export function Sidebar() {
   });
   const trialCallCount = (trialRows ?? []).filter((r) => r.callState !== null).length;
 
+  //  ══ **ترتيبُ الشريط لكلّ حساب** (ترحيل ١٤٦، §4.ed) ══ صاحبُ الحساب يرتّب فقراتِه («أصعد ما أريد وأُنزل ما أستعمله قليلاً»)،
+  //  ويُحفظ على حسابه فيتبعه على كلّ جهاز. الترتيبُ عرضٌ لا صلاحية: يُطبَّق قبل التصفية، فلا يُظهر فقرةً لا يملكها صاحبُها.
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const sidebarUserId = branchSession?.userId ?? null;
+  const canReorder = Boolean(sidebarUserId);
+  const { data: sidebarOrderData } = useQuery<{ order: string[] | null }>({
+    queryKey: ["/api/sidebar-order", sidebarUserId],
+    enabled: canReorder,
+    queryFn: async () => {
+      const res = await fetch("/api/sidebar-order", { credentials: "include" });
+      //  تعذّر التحميل ⟵ الترتيبُ الأصليّ، لا شريطٌ فارغ.
+      if (!res.ok) return { order: null };
+      return res.json();
+    },
+  });
+  const [reorderOpen, setReorderOpen] = useState(false);
+  //  ما رتّبه الآن ولم يصل الخادمَ بعد — `undefined` = لا مسوّدة (المحفوظ)، و`null` = الأصليّ.
+  const [orderDraft, setOrderDraft] = useState<string[] | null | undefined>(undefined);
+  const [lastMoved, setLastMoved] = useState<string | null>(null);
+  const pendingOrder = useRef<string[] | null | undefined>(undefined);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  //  الحفظُ متسلسلٌ: نقرتان سريعتان لا يسبق حفظُ الأولى حفظَ الثانية فيكتب فوقها.
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const flushOrderSave = (): Promise<void> => {
+    if (saveTimer.current !== null) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    const order = pendingOrder.current;
+    if (order === undefined) return saveChain.current;
+    pendingOrder.current = undefined;
+    saveChain.current = saveChain.current.then(async () => {
+      try {
+        const res = await apiRequest("PUT", "/api/sidebar-order", { order });
+        const body = await res.json();
+        queryClient.setQueryData(["/api/sidebar-order", sidebarUserId], { order: body?.order ?? null });
+      } catch {
+        toast({ title: "تعذّر حفظ ترتيب القائمة", description: "أُعيد الترتيبُ المحفوظ — حاول ثانيةً.", variant: "destructive" });
+        pendingOrder.current = undefined;
+        setOrderDraft(undefined);
+        void queryClient.invalidateQueries({ queryKey: ["/api/sidebar-order"] });
+      }
+    });
+    return saveChain.current;
+  };
+  //  صفحةٌ تُغلق قبل مهلة الحفظ لا تُضيع آخرَ نقرة.
+  useEffect(() => () => { void flushOrderSave(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const finishReorder = () => {
+    setReorderOpen(false);
+    setLastMoved(null);
+    void flushOrderSave().then(() => setOrderDraft(undefined));
+  };
+  //  إغلاقُ قائمة الهاتف وهي في الترتيب = «تمّ»: فلا تُفتح بعدها بصفوفٍ لا تُضغط.
+  const prevMobileOpen = useRef(mobileOpen);
+  useEffect(() => {
+    if (prevMobileOpen.current && !mobileOpen && reorderOpen) finishReorder();
+    prevMobileOpen.current = mobileOpen;
+  }, [mobileOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  //  الفقرةُ التي تحرّكت تبقى أمام العين — ولو قفزت إلى أعلى القائمة.
+  useEffect(() => {
+    if (!lastMoved) return;
+    for (const el of Array.from(document.querySelectorAll(`[data-reorder-href="${CSS.escape(lastMoved)}"]`))) {
+      try { (el as HTMLElement).scrollIntoView({ block: "nearest" }); } catch { /* زينة */ }
+    }
+  }, [lastMoved, orderDraft]);
+
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileOpen(false);
@@ -391,8 +458,11 @@ export function Sidebar() {
     { label: t.sidebar.systemSettings, icon: Settings, href: "/admin", adminOnly: true, settingKey: null, permission: null },
   ];
 
+  const effectiveSidebarOrder = orderDraft !== undefined ? orderDraft : (sidebarOrderData?.order ?? null);
+  const orderedMenuItems = applySidebarOrder(baseMenuItems, effectiveSidebarOrder);
+
   // Filter menu items based on admin status, branch settings, and permissions
-  const menuItems = baseMenuItems.filter(item => {
+  const menuItems = orderedMenuItems.filter(item => {
     // Admin-only items are only shown to admin users
     if (item.adminOnly && !branchSession?.isAdmin) {
       return false;
@@ -442,6 +512,24 @@ export function Sidebar() {
     return true;
   });
 
+  //  التحريكُ بين الظاهر وحده، والترتيبُ المحفوظ كاملٌ (ومنه المخفيّ الآن) — فلا تقفز فقرةٌ مخفيّة حين تعود.
+  const moveItem = (href: string, dir: SidebarMove) => {
+    const next = moveSidebarItem(orderedMenuItems.map((i) => i.href), menuItems.map((i) => i.href), href, dir);
+    if (!next) return;
+    setOrderDraft(next);
+    setLastMoved(href);
+    pendingOrder.current = next;
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { void flushOrderSave(); }, 700);
+  };
+  const resetOrder = () => {
+    if (!window.confirm("إعادةُ القائمة إلى ترتيبها الأصليّ؟")) return;
+    setOrderDraft(null);
+    setLastMoved(null);
+    pendingOrder.current = null;
+    void flushOrderSave();
+  };
+
   // NOTE: this is a plain JSX element, NOT a nested component. Defining it as
   // a component (`const SidebarContent = () => ...`) made React see a brand
   // new component type on every render, remounting the whole sidebar — which
@@ -469,8 +557,62 @@ export function Sidebar() {
         </Button>
       </div>
 
-      <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-1 md:space-y-2">
-        {menuItems.map((item) => {
+      <nav className={cn("flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 md:space-y-2",
+        //  في الترتيب حاشيةٌ أضيق: الأسهمُ الثلاثة تأخذ مكاناً، فلا تلتفّ الأسماءُ سطوراً.
+        reorderOpen ? "px-2 py-4 md:py-6" : "p-4 md:p-6")}>
+        {/*  **وضعُ الترتيب** (§4.ed): لافتةٌ ثابتةٌ أعلى القائمة بـ«تمّ» و«الترتيب الأصلي»، والفقراتُ صفوفٌ بأسهمٍ لا روابط.
+            والالتصاقُ يقف تحت حاشية القائمة — فإزاحتُه السالبةُ بقدرها تلصقه بحافّتها ولا يُطلّ صفٌّ فوقه. */}
+        {reorderOpen && (
+          <div className="sticky -top-4 md:-top-6 z-10 -mx-2 -mt-4 md:-mt-6 mb-2 px-3 py-2.5 bg-amber-50 border-b border-amber-200 shadow-sm"
+            data-testid="sidebar-reorder-bar">
+            <p className="text-xs text-amber-900 leading-relaxed">
+              {language === "ar"
+                ? "رتّب فقراتك بالأسهم: ما تستعمله كثيراً للأعلى. يُحفظ على حسابك ويتبعك على كلّ جهاز."
+                : "Use the arrows to order your menu. Saved to your account on every device."}
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <Button size="sm" className="h-8" onClick={finishReorder} data-testid="button-sidebar-reorder-done">
+                {language === "ar" ? "تمّ" : "Done"}
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 bg-white" onClick={resetOrder}
+                disabled={effectiveSidebarOrder === null} data-testid="button-sidebar-reorder-reset">
+                {language === "ar" ? "الترتيب الأصلي" : "Default order"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {reorderOpen ? menuItems.map((item, index) => {
+          const moved = lastMoved === item.href;
+          const arrow = "inline-flex h-8 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-25 disabled:pointer-events-none";
+          return (
+            <div key={item.href} data-reorder-href={item.href} data-testid={`sidebar-reorder-row-${item.href}`} className={cn(
+              "flex items-center gap-2 pr-2 pl-1 py-1 rounded-xl ring-1 transition-colors",
+              moved ? "bg-amber-50 ring-amber-300" : "bg-white ring-slate-200"
+            )}>
+              <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1", sidebarToneOf(item.href).tile)}>
+                <item.icon className={cn("w-4 h-4", sidebarToneOf(item.href).icon)} />
+              </span>
+              <span className="flex-1 min-w-0 text-sm font-medium text-slate-700 leading-tight">{item.label}</span>
+              <span className="flex shrink-0 items-center">
+                <button type="button" className={arrow} disabled={index === 0} onClick={() => moveItem(item.href, "top")}
+                  title={language === "ar" ? "أعلى القائمة" : "Move to top"} aria-label={language === "ar" ? "أعلى القائمة" : "Move to top"}
+                  data-testid={`button-sidebar-top-${item.href}`}>
+                  <ArrowUpToLine className="w-4 h-4" />
+                </button>
+                <button type="button" className={arrow} disabled={index === 0} onClick={() => moveItem(item.href, "up")}
+                  title={language === "ar" ? "لأعلى" : "Move up"} aria-label={language === "ar" ? "لأعلى" : "Move up"}
+                  data-testid={`button-sidebar-up-${item.href}`}>
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+                <button type="button" className={arrow} disabled={index === menuItems.length - 1} onClick={() => moveItem(item.href, "down")}
+                  title={language === "ar" ? "لأسفل" : "Move down"} aria-label={language === "ar" ? "لأسفل" : "Move down"}
+                  data-testid={`button-sidebar-down-${item.href}`}>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              </span>
+            </div>
+          );
+        }) : menuItems.map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href} className={cn(
@@ -498,6 +640,14 @@ export function Sidebar() {
             </Link>
           );
         })}
+        {/*  **«ترتيب القائمة»** آخرَ القائمة — لكلّ مَن دخل بحسابه (§4.ed). */}
+        {canReorder && !reorderOpen && (
+          <button type="button" onClick={() => setReorderOpen(true)} data-testid="button-sidebar-reorder"
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-colors">
+            <ArrowUpDown className="w-4 h-4" />
+            {language === "ar" ? "ترتيب القائمة" : "Reorder menu"}
+          </button>
+        )}
       </nav>
 
       {/*  **أسفلُ الشريط نحيف** (قرارُ المالك ٢٠٢٦-١٠-٠٦): كان أربعَ طبقاتٍ تغطّي جزءاً من القائمة المتحرّكة على الشاشات القصيرة.
