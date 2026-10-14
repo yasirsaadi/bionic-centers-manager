@@ -557,10 +557,13 @@ export function Sidebar() {
         </Button>
       </div>
 
-      <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-1 md:space-y-2">
-        {/*  **وضعُ الترتيب** (§4.ed): لافتةٌ ثابتةٌ أعلى القائمة بـ«تمّ» و«الترتيب الأصلي»، والفقراتُ صفوفٌ بأسهمٍ لا روابط. */}
+      <nav className={cn("flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 md:space-y-2",
+        //  في الترتيب حاشيةٌ أضيق: الأسهمُ الثلاثة تأخذ مكاناً، فلا تلتفّ الأسماءُ سطوراً.
+        reorderOpen ? "px-2 py-4 md:py-6" : "p-4 md:p-6")}>
+        {/*  **وضعُ الترتيب** (§4.ed): لافتةٌ ثابتةٌ أعلى القائمة بـ«تمّ» و«الترتيب الأصلي»، والفقراتُ صفوفٌ بأسهمٍ لا روابط.
+            والالتصاقُ يقف تحت حاشية القائمة — فإزاحتُه السالبةُ بقدرها تلصقه بحافّتها ولا يُطلّ صفٌّ فوقه. */}
         {reorderOpen && (
-          <div className="sticky top-0 z-10 -mx-4 md:-mx-6 -mt-4 md:-mt-6 mb-2 px-4 md:px-6 py-2.5 bg-amber-50 border-b border-amber-200 shadow-sm"
+          <div className="sticky -top-4 md:-top-6 z-10 -mx-2 -mt-4 md:-mt-6 mb-2 px-3 py-2.5 bg-amber-50 border-b border-amber-200 shadow-sm"
             data-testid="sidebar-reorder-bar">
             <p className="text-xs text-amber-900 leading-relaxed">
               {language === "ar"
@@ -580,7 +583,7 @@ export function Sidebar() {
         )}
         {reorderOpen ? menuItems.map((item, index) => {
           const moved = lastMoved === item.href;
-          const arrow = "inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-25 disabled:pointer-events-none";
+          const arrow = "inline-flex h-8 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-25 disabled:pointer-events-none";
           return (
             <div key={item.href} data-reorder-href={item.href} data-testid={`sidebar-reorder-row-${item.href}`} className={cn(
               "flex items-center gap-2 pr-2 pl-1 py-1 rounded-xl ring-1 transition-colors",
