@@ -26,7 +26,7 @@ interface Sheet {
   ratio: { today: number; prev: number; received: number; remaining: number };
   /** قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — null ليومٍ قبل بدايتهما، فتُطبع ورقتُه بمربّع النسبة كما طُبعت. */
   reserves?: { materials: ReserveState; payroll: ReserveState } | null;
-  drBoxLines?: { id: number; category: string }[];
+  drBoxLines?: { id: number; category: string; amount?: number; note?: string }[];
 }
 interface ReserveState { today: number; prev: number; withdrawn: number; remaining: number; month: { target: number; setAside: number; left: number } | null }
 type Line = { income?: number; expense?: number; transfer?: number; note: string; muted?: boolean };
@@ -52,7 +52,7 @@ function linesOf(s: Sheet): Line[] {
     transfer: r.column === "transfer" ? r.amount : undefined,
     note: cashRowNote(r),
   }));
-  for (const l of s.drBoxLines ?? []) out.push({ note: drBoxLineText(l.category), muted: true });
+  for (const l of s.drBoxLines ?? []) out.push({ note: drBoxLineText(l), muted: true });
   return out;
 }
 

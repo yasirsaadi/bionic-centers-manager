@@ -15,7 +15,7 @@ import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_t
 import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning, Settings2 } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
-  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, RESERVES_START, type ReserveKey,
+  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, RESERVES_START, type ReserveKey, DR_BOX_WITHDRAWAL_LABEL,
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
@@ -40,8 +40,8 @@ interface Sheet {
   canWrite: boolean; isAdmin: boolean; userId: number | null; canManageExpenses: boolean;
   /** سطورٌ عليها «طلب تصحيح» معلَّق — «expense:12» و«cash_book_entry:7» (§4.ce). */
   pendingCorrections?: string[];
-  /** ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم — البابُ وحده بلا مبلغ (§4.cb). */
-  drBoxLines?: { id: number; category: string }[];
+  /** ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم — البابُ وحده بلا مبلغ (§4.cb)، و«سحب من قاصة الدكتور» بمبلغه وملاحظته (تكملةٌ ثالثة). */
+  drBoxLines?: { id: number; category: string; amount?: number; note?: string }[];
   /** آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما فيها بعدها (§4.ca تكملة). */
   lastPrint?: { at: string; by: string | null } | null;
   changedAfterPrint?: boolean;
@@ -344,7 +344,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
             {(sheet.drBoxLines ?? []).map((l) => (
               <tr key={`drbox-${l.id}`} className="bg-slate-50 text-slate-500" data-testid={`cash-drbox-${l.id}`}>
                 <td className="border" /><td className="border" /><td className="border" />
-                <td className="border px-2 py-1.5 italic">{drBoxLineText(l.category)}</td>
+                <td className="border px-2 py-1.5 italic">{drBoxLineText(l)}</td>
                 <td className="border" />
               </tr>
             ))}
@@ -445,7 +445,7 @@ function BoxLine({ label, hint, value, valueHint, strong, danger, testid }: {
   );
 }
 
-type AddKind = "income_other" | "expense" | "dr_transfer" | "atabah_ratio";
+type AddKind = "income_other" | "expense" | "dr_transfer" | "dr_box_withdrawal" | "atabah_ratio";
 
 /** سطرٌ جديد: يختار العمودَ أوّلاً، ثمّ المبلغ، ثمّ باب الصرف والملاحظة — و«Enter» يحفظ. */
 function AddRow({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId: number; book: Book; day: string; write: any }) {
@@ -463,6 +463,8 @@ function AddRow({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId:
   const kinds: { v: AddKind; label: string }[] = [
     { v: "expense", label: "مصاريف" },
     { v: "dr_transfer", label: "تحويل إلى قاصة الدكتور" },
+    //  المالكُ حوّل من حسابه للفرع (رواتبَ مثلاً) — يُسحب من قاصة الدكتور لهذا الفرع ولا يمسّ القاصة (§4.cb تكملةٌ ثالثة).
+    { v: "dr_box_withdrawal", label: DR_BOX_WITHDRAWAL_LABEL },
     ...(sheet.branch.config.hasAtabahRatio ? [{ v: "atabah_ratio" as AddKind, label: "نسبة العتبة" }] : []),
     { v: "income_other", label: INCOME_OTHER_LABEL },
   ];
@@ -493,9 +495,17 @@ function AddRow({ sheet, branchId, book, day, write }: { sheet: Sheet; branchId:
       )}
       <label className="grid gap-1 text-xs flex-1 min-w-[12rem]">الملاحظات
         <Input id="cash-add-note" value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder={kind === "dr_transfer" ? "مثلاً: يوم أمس / اليوم" : kind === "income_other" ? "مصدر الوارد" : "تفصيل"} />
+          placeholder={kind === "dr_transfer" ? "مثلاً: يوم أمس / اليوم" : kind === "income_other" ? "مصدر الوارد"
+            : kind === "dr_box_withdrawal" ? "ما هو السحب — مثلاً: رواتب شهر ٩" : "تفصيل"} />
       </label>
-      <Button type="submit" disabled={!amount || (kind === "expense" && !category) || write.isPending} data-testid="cash-add-save">أضف</Button>
+      <Button type="submit" disabled={!amount || (kind === "expense" && !category) || (kind === "dr_box_withdrawal" && !note.trim()) || write.isPending}
+        data-testid="cash-add-save">أضف</Button>
+      {kind === "dr_box_withdrawal" && (
+        <p className="basis-full text-xs text-blue-900 bg-blue-50 border border-blue-200 rounded px-2 py-1.5" data-testid="cash-add-withdrawal-hint">
+          حين يحوّل المالكُ مبلغاً من حسابه لهذا الفرع ويرسل الإيصال: يُسحب من قاصة الدكتور لهذا الفرع، ولا يدخل مجموعَ القاصة ولا المتبقي.
+          ويظهر سطراً رماديّاً في الدفتر. وتصحيحُه بعد الحفظ للمسؤول.
+        </p>
+      )}
     </form>
   );
 }

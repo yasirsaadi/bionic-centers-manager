@@ -1,6 +1,7 @@
 // **قاصةُ الدكتور لكلّ فرع** (ترحيل ٠٩٩، §4.cb) — للمسؤول وحده.
 // الواردُ = «تحويل إلى قاصة الدكتور» من دفتر القاصة · المصروفُ يكتبه المالكُ هنا · والرصيدُ الفرقُ بينهما من البداية.
 // والفرعُ يرى في دفتره يومَ الصرف وبابَه فقط — بلا مبلغ.
+// و«سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره حين يحوّل له المالكُ من حسابه (§4.cb تكملةٌ ثالثة) — يظهر هنا مصروفاً باسم كاتبه.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
 import { Pencil, Trash2 } from "lucide-react";
-import { CASH_BOOK_LABELS, dayNameOf, drBoxAccountLabel } from "@shared/cash_book";
+import { CASH_BOOK_LABELS, dayNameOf, drBoxAccountLabel, DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 interface Report {
@@ -22,14 +23,17 @@ interface Report {
   totals: { received: number; spent: number; balance: number };
   period: { received: number; spent: number };
   transfers: { id: number; date: string; book: "devices" | "physio"; amount: number; note: string }[];
-  expenses: { id: number; date: string; category: string; amount: number; note: string }[];
+  expenses: { id: number; date: string; category: string; amount: number; note: string; byName: string | null }[];
 }
 type Expense = Report["expenses"][number];
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const digits = (v: string) => v.replace(/[^\d]/g, "");
 const dmy = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}`;
-const categoryLabel = (c: string) => EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c;
+const categoryLabel = (c: string) => (c === DR_BOX_WITHDRAWAL_CATEGORY ? DR_BOX_WITHDRAWAL_LABEL : EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c);
+/** ما سجّله الفرعُ سحباً من دفتره يقول مَن كتبه — وما كتبه المالكُ بابُه وحده. */
+const expenseLabel = (e: { category: string; byName: string | null }) =>
+  e.category === DR_BOX_WITHDRAWAL_CATEGORY ? `${DR_BOX_WITHDRAWAL_LABEL} (سجّله الفرع${e.byName ? `: ${e.byName}` : ""})` : categoryLabel(e.category);
 
 function AmountInput({ value, onChange, id }: { value: string; onChange: (v: string) => void; id: string }) {
   return (
@@ -89,7 +93,7 @@ export default function DrBox() {
   //  الحركةُ مرتّبةً بالتاريخ: ما وصل من الدفتر وما صُرف منها.
   const moves = r ? [
     ...r.transfers.map((t) => ({ key: `t-${t.id}`, date: t.date, in: t.amount, out: 0, label: `تحويل من دفتر «${CASH_BOOK_LABELS[t.book]}»`, note: t.note, exp: null as Expense | null })),
-    ...r.expenses.map((e) => ({ key: `e-${e.id}`, date: e.date, in: 0, out: e.amount, label: categoryLabel(e.category), note: e.note, exp: e })),
+    ...r.expenses.map((e) => ({ key: `e-${e.id}`, date: e.date, in: 0, out: e.amount, label: expenseLabel(e), note: e.note, exp: e })),
   ].sort((a, b) => a.date.localeCompare(b.date)) : [];
 
   return (
@@ -97,7 +101,8 @@ export default function DrBox() {
       <div className="bg-white border rounded-md shadow-sm p-4 md:p-6 space-y-4">
         <div className="border-b-2 border-[#1d2b55] pb-3">
           <h1 className="text-xl md:text-2xl font-bold text-[#1d2b55]">قاصة الدكتور</h1>
-          <p className="text-sm text-muted-foreground">الوارد إليها من «تحويل إلى قاصة الدكتور» في دفتر القاصة، والمصروف منها تكتبه هنا. والفرع يرى في دفتره يوم الصرف وبابه فقط، بلا مبلغ.</p>
+          <p className="text-sm text-muted-foreground">الوارد إليها من «تحويل إلى قاصة الدكتور» في دفتر القاصة، والمصروف منها تكتبه هنا. والفرع يرى في دفتره يوم الصرف وبابه فقط، بلا مبلغ.
+            وما حوّلتَه للفرع من حسابك يسجّله الفرعُ من دفتره «{DR_BOX_WITHDRAWAL_LABEL}» فيظهر هنا باسم كاتبه — تعدّله أو تحذفه من هنا.</p>
         </div>
 
         <div className="flex flex-wrap items-end gap-x-6 gap-y-3 text-sm">

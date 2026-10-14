@@ -538,6 +538,74 @@ async function main() {
       [(await sheet(S.acc)).body.changedAfterPrint, (await row(S.admin, { branchId: BGD, kind: "materials_withdrawn", amount: 1_000 })).status,
        (await sheet(S.acc)).body.changedAfterPrint], [false, 200, true]);
 
+    console.log("\n── ص. «سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره (§4.cb تكملةٌ ثالثة) ──");
+    //  «أحوّل لهم مبالغ لحساباتهم مثل رواتب وأنسى أن أسحبها من قاصتي» (المالك ٢٠٢٦-١٠-١٤): الموظّفُ يسجّله حين يصله الإيصال.
+    const wdr = (s: any, body: any) => row(s, { kind: "dr_box_withdrawal", amount: 250_000, note: "رواتب شهر ٩ — إيصال كي كارت", ...body });
+    const drCount = async () => Number((await q(`SELECT count(*)::int n FROM dr_box_expenses WHERE branch_id = ANY($1::int[])`, [BRANCHES]))[0].n);
+    //  بصمةُ الورقة بصيغتها قبل اليوم — سطرُ المالك [الرقم، الباب] وحده.
+    const fpBefore = (sh: any) => createHash("sha1").update(JSON.stringify({
+      branch: sh.branch?.id, book: sh.book, day: sh.day, opening: sh.opening ?? null,
+      rows: sh.rows.map((r: any) => [r.source, r.id, r.column, r.amount, r.note, r.category ?? null]),
+      totals: sh.totals, ratio: [sh.ratio.today, sh.ratio.prev, sh.ratio.received, sh.ratio.remaining],
+      drBox: (sh.drBoxLines ?? []).map((l: any) => [l.id, l.category]),
+      ...(sh.reserves ? { reserves: ["materials", "payroll"].map((k) => {
+        const r = sh.reserves[k]; return [r.today, r.prev, r.withdrawn, r.remaining, r.month ? [r.month.target, r.month.setAside] : null];
+      }) } : {}),
+    })).digest("hex");
+    const ownerSp = await spend(S.admin, { note: "سرّيّةُ-ص" });
+    const shOwner = (await sheet(S.acc)).body;
+    await q(`INSERT INTO cash_book_prints (branch_id, book, day, fingerprint, printed_by_name) VALUES ($1,'devices',$2,$3,'قبل السحب')`, [BGD, TODAY, fpBefore(shOwner)]);
+    same("ص١. **ورقةٌ فيها ما صرفه المالكُ تبقى مطابقةً لما طُبع قبل اليوم** — لا مبلغَ ولا ملاحظةَ أُضيفا لسطره في البصمة",
+      [ownerSp.status, (await sheet(S.acc)).body.changedAfterPrint], [200, false]);
+
+    const balance0 = (await box(S.admin)).body.totals.balance;
+    const expCount0 = Number((await q(`SELECT count(*)::int n FROM expenses WHERE branch_id=$1`, [BGD]))[0].n);
+    const entCount0 = Number((await q(`SELECT count(*)::int n FROM cash_book_entries WHERE branch_id=$1`, [BGD]))[0].n);
+    const dr0 = await drCount();
+    same("ص٢. **بلا ملاحظة ⟵ ٤٠٠** برسالةٍ تطلب ما هو السحب، ولا صفّ",
+      [(await wdr(S.acc, { note: "" })).status, /ما هو السحب/.test((await wdr(S.acc, { note: "  " })).body?.error ?? ""), await drCount()], [400, true, dr0]);
+    const wb1 = await wdr(S.acc, {});
+    const [w1Row] = await q(`SELECT branch_id, expense_date::text d, category, amount, note, created_by FROM dr_box_expenses WHERE id=$1`, [wb1.body?.id]);
+    same("ص٣. **المحاسبُ يسجّله ⟵ صفٌّ في قاصة الدكتور لفرعه ويومه** بباب السحب ومبلغه وملاحظته، وكاتبُه هو",
+      [wb1.status, w1Row], [200, { branch_id: BGD, d: TODAY, category: "branch_withdrawal", amount: 250_000, note: "رواتب شهر ٩ — إيصال كي كارت", created_by: ACC }]);
+    let rp = (await box(S.admin)).body;
+    same("ص٤. **فينقص رصيدَ قاصة الدكتور لفرعه بمبلغه** — ويقرؤه المالكُ في صفحته بباب السحب واسم كاتبه",
+      [rp.totals.balance, rp.expenses.find((e: any) => e.id === wb1.body.id)?.category, rp.expenses.find((e: any) => e.id === wb1.body.id)?.byName],
+      [balance0 - 250_000, "branch_withdrawal", `u${ACC}`]);
+    const shW = (await sheet(S.acc)).body;
+    same("ص٥. **ولا يمسّ نقدَ القاصة**: المجاميعُ والمتبقي كما هي، ولا صفَّ في `expenses` ولا في سطور الدفتر",
+      [shW.totals, Number((await q(`SELECT count(*)::int n FROM expenses WHERE branch_id=$1`, [BGD]))[0].n),
+       Number((await q(`SELECT count(*)::int n FROM cash_book_entries WHERE branch_id=$1`, [BGD]))[0].n)],
+      [shOwner.totals, expCount0, entCount0]);
+    same("ص٦. **والفرعُ يرى سطرَه بمبلغه وملاحظته — وما صرفه المالكُ بابُه وحده** بلا مبلغٍ ولا ملاحظة",
+      [shW.drBoxLines, JSON.stringify(shW).includes("سرّيّةُ-ص")],
+      [[{ id: ownerSp.body.id, category: "salaries" }, { id: wb1.body.id, category: "branch_withdrawal", amount: 250_000, note: "رواتب شهر ٩ — إيصال كي كارت" }], false]);
+    same("ص٧. **والسحبُ بعد الطباعة يعلّم الورقة** «عُدّلت بعد الطباعة»", shW.changedAfterPrint, true);
+    await printed(S.acc, {});
+    await http("PATCH", `/api/dr-box/expenses/${wb1.body.id}`, S.admin, { amount: 260_000 });
+    same("ص٨. **وتصحيحُ مبلغه من المسؤول يعلّمها ثانيةً** — مبلغُه في البصمة، والرصيدُ يتبعه",
+      [(await sheet(S.acc)).body.changedAfterPrint, (await box(S.admin)).body.totals.balance], [true, balance0 - 260_000]);
+    same("ص٩. **والموظّفُ لا يعدّله ولا يحذفه** — المحاسبُ ومديرُ الفرع ٤٠٣، والسطرُ باقٍ بمبلغ المسؤول",
+      [(await http("PATCH", `/api/dr-box/expenses/${wb1.body.id}`, S.acc, { amount: 1 })).status,
+       (await http("DELETE", `/api/dr-box/expenses/${wb1.body.id}`, S.mgr)).status,
+       (await q(`SELECT amount, deleted_at IS NULL alive FROM dr_box_expenses WHERE id=$1`, [wb1.body.id]))[0]],
+      [403, 403, { amount: 260_000, alive: true }]);
+    const dqBal0 = (await box(S.admin, YDAY, TODAY, DQ)).body.totals.balance;
+    const wDq = await wdr(S.accDq, { amount: 40_000, note: "راتب الحارس" });
+    same("ص١٠. **وفي فرعه النشط وحده**: محاسبُ ذي قار يُنقص قاصةَ ذي قار وحدها، ومحاسبُ بغداد لا يكتب لذي قار (٤٠٣)",
+      [wDq.status, (await box(S.admin, YDAY, TODAY, DQ)).body.totals.balance, (await box(S.admin)).body.totals.balance,
+       (await wdr(S.acc, { branchId: DQ })).status],
+      [200, dqBal0 - 40_000, balance0 - 260_000, 403]);
+    const dr1 = await drCount();
+    same("ص١١. **والاستقبالُ لا يكتبه، ولا الموظّفُ في يومٍ ماضٍ** — ٤٠٣، ولا صفّ",
+      [(await wdr(S.recv, {})).status, (await wdr(S.acc, { date: YDAY })).status, await drCount()], [403, 403, dr1]);
+    const [wAud] = await q(`SELECT action, user_id, notes FROM audit_log WHERE entity_type='dr_box_expense' AND entity_id=$1 ORDER BY id LIMIT 1`, [wb1.body.id]);
+    same("ص١٢. **وسطرُ تدقيقٍ بكاتبه** — «من دفتر القاصة»", [wAud?.action, wAud?.user_id, /من دفتر القاصة/.test(wAud?.notes ?? "")], ["create", ACC, true]);
+    const smW = (await sumOf(S.admin, `?from=${TODAY}&to=${TODAY}`)).body;
+    const bW: any = Object.values(smW.branches).find((b: any) => b.id === BGD);
+    same("ص١٣. **وخلاصةُ المالك تسمّيه بالعربية** في مصروف الفترة بالباب — للمساعد الذكيّ",
+      bW.drBox.periodSpentByCategory.find((c: any) => c.category === "سحب من قاصة الدكتور")?.amount, 260_000);
+
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);
     check(aud.length >= 10 && aud.some((a) => a.entity_type === "cash_book_opening") && aud.some((a) => a.action === "delete"),

@@ -8,15 +8,18 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { cashBookPrints } from "@shared/schema";
 import type { CashBook } from "@shared/cash_book";
+import type { DrBoxLine } from "./dr_box";
 
-export function sheetFingerprint(sheet: any, drBoxLines: { id: number; category: string }[]): string {
+export function sheetFingerprint(sheet: any, drBoxLines: DrBoxLine[]): string {
   const printed = {
     branch: sheet.branch?.id, book: sheet.book, day: sheet.day,
     opening: sheet.opening ?? null,
     rows: (sheet.rows ?? []).map((r: any) => [r.source, r.id, r.column, r.amount, r.note, r.category ?? null]),
     totals: sheet.totals,
     ratio: sheet.ratio ? [sheet.ratio.today, sheet.ratio.prev, sheet.ratio.received, sheet.ratio.remaining] : null,
-    drBox: drBoxLines.map((l) => [l.id, l.category]),
+    //  ما صرفه المالكُ: رقمُه وبابُه كما كانت البصمة. **و«سحب من قاصة الدكتور» بمبلغه وملاحظته** (§4.cb تكملةٌ ثالثة) — الورقةُ تطبعهما.
+    //  ولا يُضاف شيءٌ لسطر المالك، فورقةٌ طُبعت قبل اليوم لا تُعلَّم «عُدّلت بعد الطباعة».
+    drBox: drBoxLines.map((l) => (l.amount !== undefined ? [l.id, l.category, l.amount, l.note ?? ""] : [l.id, l.category])),
     //  **مفتاحُ القاصتين لا يُضاف ليومٍ بلا قاصتين** — فبصمةُ ما طُبع قبل يوم القطع تبقى كما هي ولا تُعلَّم «عُدّلت بعد الطباعة».
     ...(sheet.reserves ? {
       reserves: ["materials", "payroll"].map((k) => {

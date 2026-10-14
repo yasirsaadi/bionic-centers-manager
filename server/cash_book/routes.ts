@@ -5,6 +5,7 @@
 //  • ونسبتا الدكتور والمستشفى تُحسبان ولا تُكتبان بيد، و«استلام النسبة» للمسؤول وحده.
 //  • والسحبُ من قاصة المواد وقاصة الرواتب والإيجار، ورصيدُ بدايتهما والهدفُ الشهريّ — للمسؤول وحده (§4.dj).
 //  • وبابا «رواتب» و«إيجارات» تقاعدا: لا مصروفَ جديدٌ بهما ولا يُنقَل إليهما مصروف.
+//  • و«سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره، فيُسحب من قاصة الدكتور لفرعه — لا يمسّ نقدَ القاصة (§4.cb تكملةٌ ثالثة).
 //  • وكلُّ كتابةٍ تكتب سطرَ تدقيق.
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -14,9 +15,10 @@ import { baghdadTodayYmd } from "@shared/visit_date";
 import {
   type CashBook, ATABAH_RATIO_CATEGORY, HOSPITAL_RATIO_CATEGORY, canWriteCashBook, canWriteDay, isCashBook, isYmd, parseAmount,
   RESERVE_KEYS, RESERVE_LABELS, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR, reserveOfWithdrawKind, reserveOfCategory, reserveStartOf, RESERVES_START, type ReserveKey,
+  DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL, DR_BOX_WITHDRAWAL_NOTE_ERROR,
 } from "@shared/cash_book";
 import * as store from "./store";
-import { drBoxLinesForDay } from "./dr_box";
+import { addDrBoxExpense, drBoxLinesForDay } from "./dr_box";
 import { sheetFingerprint, lastPrint, recordPrint } from "./prints";
 import { registerDrBoxRoutes } from "./dr_box_routes";
 import { pendingTargets } from "../money_corrections/store";
@@ -192,7 +194,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
-  // ---- سطرٌ جديد: وارد آخر · مصروف · تحويل · نسبة العتبة · استلام النسبة · السحبُ من القاصتين -----------------------
+  // ---- سطرٌ جديد: وارد آخر · مصروف · تحويل · سحب من قاصة الدكتور · نسبة العتبة · استلام النسبة · السحبُ من القاصتين ------
   app.post("/api/cash-book/rows", isAuthenticated, async (req: Req, res) => {
     const g = await gate(req, res, req.body?.branchId, req.body?.book);
     if (!g) return;
@@ -214,6 +216,16 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         const row = await store.addEntry({ branchId: g.branchId, book: g.book, day, kind: kind as "materials_withdrawn" | "payroll_withdrawn", amount, note, userId });
         await audit(req, g.s, { entityType: "cash_book_entry", entityId: row.id, action: "create", branchId: g.branchId, newValues: row,
           notes: RESERVE_LABELS[reserve].withdraw });
+        return res.json(row);
+      }
+      //  «سحب من قاصة الدكتور» (قرارُ المالك ٢٠٢٦-١٠-١٤، §4.cb تكملةٌ ثالثة): المالكُ حوّل من حسابه للفرع — رواتبَ مثلاً — والموظّفُ
+      //  يسجّله حين يصله الإيصال. **صفٌّ في قاصة الدكتور لفرع الدفتر، لا في الدفتر**: لا يمسّ نقدَ القاصة ولا مجموعَها ولا المحاسبة.
+      //  والفرعُ والدفترُ واليومُ من البوّابة نفسِها (فرعُه النشط، واليومُ نفسُه لغير المسؤول)، والملاحظةُ إلزامية.
+      if (kind === "dr_box_withdrawal") {
+        if (!note) return res.status(400).json({ error: DR_BOX_WITHDRAWAL_NOTE_ERROR });
+        const row = await addDrBoxExpense({ branchId: g.branchId, day, category: DR_BOX_WITHDRAWAL_CATEGORY, amount, note, userId });
+        await audit(req, g.s, { entityType: "dr_box_expense", entityId: row.id, action: "create", branchId: g.branchId, newValues: row,
+          notes: `${DR_BOX_WITHDRAWAL_LABEL} — من دفتر القاصة` });
         return res.json(row);
       }
       if (kind === "income_other" || kind === "dr_transfer" || kind === "ratio_received") {

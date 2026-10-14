@@ -10,6 +10,7 @@ import { db } from "../db";
 import { expenses, invoices, patients, payments, visits, branches, anomalyDecisions } from "@shared/schema";
 import { and, eq, gte, lte, sql, desc, or, isNull } from "drizzle-orm";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL } from "@shared/cash_book";
 
 export type AnomalySeverity = "high" | "medium" | "low";
 
@@ -373,6 +374,8 @@ export function categoryArabicLabel(category: string): string {
     //  بابا القاصتين بدل «نسبة الدكتور» (§4.dj) — ورواتبُ وإيجاراتُ ما قبله باقيةٌ بأسمائها.
     materials_reserve: "أجور مواد",
     payroll_rent: "رواتب وإيجار",
+    //  سحبٌ من قاصة الدكتور سجّله الفرعُ من دفتره (§4.cb تكملةٌ ثالثة) — بابٌ في قاصة الدكتور وحدها.
+    [DR_BOX_WITHDRAWAL_CATEGORY]: DR_BOX_WITHDRAWAL_LABEL,
     medical_supplies: "مستلزمات طبية",
     maintenance: "صيانة",
     utilities: "كهرباء ومياه",

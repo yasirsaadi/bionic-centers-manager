@@ -4,12 +4,14 @@
 //   • الواردُ إليها = «تحويل إلى قاصة الدكتور» من دفتر القاصة لذلك الفرع (بدفتريه) — لا يُكتب مرّةً ثانية هنا.
 //   • والمصروفُ منها يكتبه المالكُ وحده، وتقريرُها ورصيدُها له وحده.
 //   • والفرعُ يرى في دفتره يومَ الصرف وبابَه فقط — بلا مبلغٍ ولا ملاحظة (`drBoxLinesForDay`).
+//   • **و«سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره** (قرارُ المالك ٢٠٢٦-١٠-١٤، §4.cb تكملةٌ ثالثة): صفٌّ هنا بباب
+//     `DR_BOX_WITHDRAWAL_CATEGORY` وكاتبُه الموظّف — يُنقص الرصيدَ كأيّ مصروف، ويراه الفرعُ بمبلغه وملاحظته لأنه كتبهما.
 //   • ولا تدخل `expenses` ولا تقاريرَ الفرع: المالُ خرج من قاصة الفرع يومَ التحويل.
 
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
-import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings } from "@shared/schema";
-import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, type CashBook } from "@shared/cash_book";
+import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings, systemUsers } from "@shared/schema";
+import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, DR_BOX_WITHDRAWAL_CATEGORY, type CashBook } from "@shared/cash_book";
 import { categoryArabicLabel } from "../anomalies/detector";
 import { CashBookError, getSheet, autoDrRatioSum } from "./store";
 
@@ -57,9 +59,12 @@ export async function drBoxReport(branchId: number, from: string, to: string) {
     .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.kind, "dr_transfer"), sql`${cashBookEntries.deletedAt} IS NULL`,
       gte(cashBookEntries.entryDate, from), lte(cashBookEntries.entryDate, to)))
     .orderBy(asc(cashBookEntries.entryDate), asc(cashBookEntries.id));
+  //  وكاتبُ كلّ سطر — فيعرف المالكُ ما سجّله الفرعُ سحباً من دفتره (§4.cb تكملةٌ ثالثة) ممّا كتبه هو.
   const spent = await db.select({
     id: drBoxExpenses.id, date: drBoxExpenses.expenseDate, category: drBoxExpenses.category, amount: drBoxExpenses.amount, note: drBoxExpenses.note,
+    byName: systemUsers.displayName,
   }).from(drBoxExpenses)
+    .leftJoin(systemUsers, eq(systemUsers.id, drBoxExpenses.createdBy))
     .where(and(eq(drBoxExpenses.branchId, branchId), alive, gte(drBoxExpenses.expenseDate, from), lte(drBoxExpenses.expenseDate, to)))
     .orderBy(asc(drBoxExpenses.expenseDate), asc(drBoxExpenses.id));
 
@@ -75,15 +80,25 @@ export async function drBoxReport(branchId: number, from: string, to: string) {
       spent: spent.reduce((s, r) => s + r.amount, 0),
     },
     transfers: transfers.map((r) => ({ ...r, note: r.note ?? "" })),
-    expenses: spent.map((r) => ({ ...r, note: r.note ?? "" })),
+    expenses: spent.map((r) => ({ ...r, note: r.note ?? "", byName: r.byName ?? null })),
   };
 }
 
-/** ما يراه الفرعُ في دفتره: يومُ الصرف وبابُه — بلا مبلغٍ ولا ملاحظة. */
-export async function drBoxLinesForDay(branchId: number, day: string): Promise<{ id: number; category: string }[]> {
-  return await db.select({ id: drBoxExpenses.id, category: drBoxExpenses.category }).from(drBoxExpenses)
+/** سطرُ قاصة الدكتور في دفتر الفرع — المبلغُ والملاحظةُ لسحبٍ سجّله الفرعُ وحده. */
+export type DrBoxLine = { id: number; category: string; amount?: number; note?: string };
+
+/**
+ * ما يراه الفرعُ في دفتره: يومُ الصرف وبابُه — **بلا مبلغٍ ولا ملاحظة** لما صرفه المالكُ بنفسه (قرارُه، §4.cb).
+ * **و«سحب من قاصة الدكتور» بمبلغه وملاحظته** (§4.cb تكملةٌ ثالثة): الفرعُ كتبهما، فيرى ما سجّل ولا يسجّله مرّتين.
+ */
+export async function drBoxLinesForDay(branchId: number, day: string): Promise<DrBoxLine[]> {
+  const rows = await db.select({ id: drBoxExpenses.id, category: drBoxExpenses.category, amount: drBoxExpenses.amount, note: drBoxExpenses.note })
+    .from(drBoxExpenses)
     .where(and(eq(drBoxExpenses.branchId, branchId), eq(drBoxExpenses.expenseDate, day), alive))
     .orderBy(asc(drBoxExpenses.id));
+  return rows.map((r) => r.category === DR_BOX_WITHDRAWAL_CATEGORY
+    ? { id: r.id, category: r.category, amount: r.amount, note: r.note ?? "" }
+    : { id: r.id, category: r.category });
 }
 
 export async function getDrBoxExpense(id: number) {
