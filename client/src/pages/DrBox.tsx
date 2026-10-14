@@ -297,7 +297,7 @@ function EditExpense({ row, branchId, today, onClose, write }: { row: Expense | 
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button disabled={!amount || !category || !date} onClick={() => row && write.mutate({
+          <Button disabled={!amount || !category || !date || (category === DR_BOX_WITHDRAWAL_CATEGORY && !note.trim())} onClick={() => row && write.mutate({
             method: "PATCH", url: `/api/dr-box/expenses/${row.id}`, body: { date, category, amount: Number(amount), note },
           }, { onSuccess: onClose })}>حفظ</Button>
         </DialogFooter>

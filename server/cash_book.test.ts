@@ -605,6 +605,12 @@ async function main() {
     const bW: any = Object.values(smW.branches).find((b: any) => b.id === BGD);
     same("ص١٣. **وخلاصةُ المالك تسمّيه بالعربية** في مصروف الفترة بالباب — للمساعد الذكيّ",
       bW.drBox.periodSpentByCategory.find((c: any) => c.category === "سحب من قاصة الدكتور")?.amount, 260_000);
+    const noteNow = async () => (await q(`SELECT note FROM dr_box_expenses WHERE id=$1`, [wb1.body.id]))[0].note;
+    same("ص١٤. **وتصحيحُه لا يمحو ملاحظتَه** — المسؤولُ يفرّغها ⟵ ٤٠٠ وتبقى؛ ويكتبه المسؤولُ في صفحته بلا ملاحظة ⟵ ٤٠٠؛ ويغيّرها بأخرى ⟵ ٢٠٠",
+      [(await http("PATCH", `/api/dr-box/expenses/${wb1.body.id}`, S.admin, { note: "  " })).status, await noteNow(),
+       (await spend(S.admin, { category: "branch_withdrawal", note: "" })).status,
+       (await http("PATCH", `/api/dr-box/expenses/${wb1.body.id}`, S.admin, { note: "رواتب شهر ٩ — مصحّحة" })).status, await noteNow()],
+      [400, "رواتب شهر ٩ — إيصال كي كارت", 400, 200, "رواتب شهر ٩ — مصحّحة"]);
 
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);
