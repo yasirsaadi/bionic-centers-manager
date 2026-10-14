@@ -111,6 +111,7 @@ import { PhysioPlansSection } from "@/components/physio/PhysioPlansSection";
  *  وتعديلُها وحذفُها للمسؤول والمشرف العام حصراً (طلبُه اللاحق في اليوم نفسِه). */
 const LEGACY_PLANS_ADDABLE = false;
 import { hasRole } from "@shared/user_roles";
+import { InstallmentsBox } from "@/components/installments/InstallmentParts";
 
 const TREATMENT_TYPE_OPTIONS = [
   { value: "استشارة طبية", label: "استشارة طبية" },
@@ -1281,6 +1282,9 @@ export default function PatientDetails() {
             </div>
           </Card>
           )}
+
+          {/* خططُ الأقساط (§4.ea) — لمن يرى الدفعات؛ ولا تظهر إن لم تكن للمريض خطّة. */}
+          {(isAdmin || (permissions.canViewPatients && permissions.canViewPayments)) && <InstallmentsBox patientId={patient.id} />}
 
           {/* قنوات تواصل المريض — الصلاحية يفرضها الخادم، والبطاقة تصمت
               بلا أزرار حين يردّ 403. */}

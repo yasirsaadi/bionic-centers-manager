@@ -54,6 +54,9 @@ import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
+import { registerInstallmentRoutes } from "./installments/routes";
+import { createPlanFromPaymentsTx, InstallmentError } from "./installments/store";
+import { parseInstallmentInput, type InstallmentInput } from "@shared/installments";
 import { registerPhysioProtocolRoutes } from "./physio_protocols/routes";
 import { liveBroadcastMiddleware, registerLiveStream } from "./live/updates";
 import { registerPhysioPlanRoutes } from "./physio_plans/routes";
@@ -4540,9 +4543,17 @@ export async function registerRoutes(
       treatmentEntries,
       deviceEpisodeId: requestedEpisodeId,
       unallocatedDeviceBalance,
+      //  «هذا المريض أقساط» (§4.ea) — خطّةٌ تُفتح في معاملة الدفعة نفسِها، فلا تبقى دفعةٌ بلا خطّتها ولا خطّةٌ بلا دفعتها.
+      installmentPlan: rawInstallmentPlan,
       ...bodyWithoutEntries
     } = req.body ?? {};
     const input = api.payments.create.input.parse(bodyWithoutEntries);
+    let installmentInput: InstallmentInput | null = null;
+    if (rawInstallmentPlan) {
+      const parsedPlan = parseInstallmentInput(rawInstallmentPlan, baghdadTodayYmd());
+      if (!parsedPlan.ok) return res.status(400).json({ message: parsedPlan.error });
+      installmentInput = parsedPlan.value as InstallmentInput;
+    }
     
     //  **الجلسةُ المجّانية خصمٌ كامل ⟵ مفتاحُ «اعتماد الخصم»، لا دورُ «مدير فرع»**
     //  (قرارُ المالك ٢٠٢٦-٠٩-٣٠، تدقيقُ لوحة الصلاحيات): «إن كان الزرّ مطفأً على أيٍّ كان
@@ -4722,7 +4733,28 @@ export async function registerRoutes(
       await storage.creditGiftToPlanTx(tx, payment);
       return payment;
     };
-    const writePayment = async (values: any) => await db.transaction((tx) => writePaymentTx(tx, values));
+    //  الخطّةُ على الدفعات التي كتبتها هذه المعاملة (المدفوعةِ منها وحدها) — وخطؤها يُرجع المعاملةَ كلَّها.
+    let createdInstallment: { id: number; caseId: number; totalAmount: number } | null = null;
+    const openInstallmentTx = async (tx: any, written: any[]) => {
+      if (!installmentInput) return;
+      const paid = written.filter((p) => !p.isFreeSessions && Number(p.amount) > 0);
+      if (paid.length === 0) throw new InstallmentError(400, "خطّةُ الأقساط تُفتح مع دفعةٍ مبلغُها أكبر من صفر");
+      createdInstallment = await createPlanFromPaymentsTx(tx, paid, installmentInput, { userId, userName });
+    };
+    const writePayment = async (values: any) => await db.transaction(async (tx) => {
+      const p = await writePaymentTx(tx, values);
+      await openInstallmentTx(tx, [p]);
+      return p;
+    });
+    //  وسطرُ تدقيق الخطّة بعد التزامها — كسطر الدفعة.
+    const auditInstallment = async () => {
+      if (!createdInstallment) return;
+      await logAudit({
+        entityType: "installment_plan", entityId: createdInstallment.id, action: "create", userId, userName,
+        branchId: input.branchId, newValues: { ...createdInstallment, ...installmentInput },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      });
+    };
 
     //  كم صفَّ دفعةٍ **التُزم فعلاً** — لا يُقال «لم يُحفَظ شيء» بعد التزام.
     let committedPayments = 0;
@@ -4775,6 +4807,7 @@ export async function registerRoutes(
         if (rows.length === 0 && !isFreeSessions && Number(input.amount) > 0) {
           rows.push({ payment: await writePaymentTx(tx, { ...input }), freeEntry: false });
         }
+        await openInstallmentTx(tx, rows.map((r) => r.payment));
         return rows;
       });
       committedPayments = created.length;
@@ -4794,7 +4827,10 @@ export async function registerRoutes(
           userAgent: req.get("user-agent") ?? null,
         });
       }
-      res.status(201).json(created[0]?.payment || { message: "No payments created" });
+      await auditInstallment();
+      res.status(201).json(created[0]?.payment
+        ? { ...created[0].payment, installmentPlanId: (createdInstallment as any)?.id ?? null }
+        : { message: "No payments created" });
     } else {
       const payment = await writePayment({ ...input });
       committedPayments = 1;
@@ -4811,12 +4847,17 @@ export async function registerRoutes(
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
       });
-      res.status(201).json(payment);
+      await auditInstallment();
+      res.status(201).json({ ...payment, installmentPlanId: (createdInstallment as any)?.id ?? null });
     }
     } catch (err: any) {
       // هوية جهازٍ غير صالحة — جوابُ عملٍ من داخل المعاملة، لا 500.
       if (err instanceof DeviceEpisodeError) {
         return res.status(err.status).json({ message: err.message });
+      }
+      //  وخطّةُ أقساطٍ رُفضت (قسمان، لا دين، خطّةٌ قائمة) — المعاملةُ ارتدّت كلُّها، فلا دفعةَ حُفظت.
+      if (err instanceof InstallmentError && committedPayments === 0) {
+        return res.status(err.status).json({ message: `${err.message} — لم تُحفظ الدفعة.` });
       }
       //  ══ **والفشلُ يُقال، ولا يبقى الطلبُ معلَّقاً** ══════════════════════
       //  المعالِجُ غيرُ متزامن، وExpress 4 لا يلتقط رفضَ الوعود — فخطأٌ غيرُ
@@ -8951,6 +8992,7 @@ export async function registerRoutes(
   //  دفترُ القاصة اليوميّ (§4.ca).
   registerCashBookRoutes(app, isAuthenticated);
   registerMoneyCorrectionRoutes(app, isAuthenticated);
+  registerInstallmentRoutes(app, isAuthenticated);
   registerPhysioProtocolRoutes(app, isAuthenticated);
   registerPhysioPlanRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);

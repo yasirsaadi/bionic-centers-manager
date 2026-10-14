@@ -665,7 +665,8 @@ export const patientNotificationDeliveries = pgTable("patient_notification_deliv
   // الفهرس الأول.
   uniqueIndex("uq_pnd_contact_link_type")
     .on(t.patientContactId, t.notificationType)
-    .where(sql`patient_event_id IS NULL`),
+    //  وتذكيرُ القسط خارجه (ترحيل ١٤٢): يتكرّر كلَّ شهر، وتكرارُه محروسٌ بسجلّ `installment_reminders`.
+    .where(sql`patient_event_id IS NULL AND notification_type <> 'installment_due'`),
   index("idx_pnd_due").on(t.nextAttemptAt).where(sql`status IN ('pending', 'failed')`),
   index("idx_pnd_locked").on(t.lockedAt).where(sql`status = 'processing'`),
   index("idx_pnd_patient").on(t.patientId),
@@ -1125,7 +1126,31 @@ export const installmentPlans = pgTable("installment_plans", {
   notes: text("notes"),
   createdBy: text("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+  //  نظامُ الأقساط (ترحيل ١٤٢، §4.ea): القسمُ، والدفعةُ التي فتحت الخطّة (ما بعدها يُحسب على الأقساط)، وساعةُ التذكير، والكفيل، والأثر.
+  caseId: integer("case_id").references(() => patientCases.id),
+  openingPaymentId: integer("opening_payment_id"),
+  reminderTime: text("reminder_time").notNull().default("10:00"),
+  guarantorName: text("guarantor_name"),
+  guarantorPhone: text("guarantor_phone"),
+  createdByUserId: integer("created_by_user_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+  updatedByName: text("updated_by_name"),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelledByName: text("cancelled_by_name"),
+  cancelReason: text("cancel_reason"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("uq_installment_active_case").on(t.caseId).where(sql`status = 'active' AND case_id IS NOT NULL`),
+  index("idx_installment_plans_patient").on(t.patientId),
+]);
+
+/** ما أُرسل من تذكيرات الأقساط — (خطّة، قسط، قبل/في يومه) مرّةً واحدة (ترحيل ١٤٢). */
+export const installmentReminders = pgTable("installment_reminders", {
+  planId: integer("plan_id").notNull().references(() => installmentPlans.id, { onDelete: "cascade" }),
+  dueIndex: integer("due_index").notNull(),
+  kind: text("kind").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.planId, t.dueIndex, t.kind] })]);
 
 // Patient invoices for accounting system
 export const invoices = pgTable("invoices", {

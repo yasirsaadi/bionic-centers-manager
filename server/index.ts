@@ -12,6 +12,7 @@ import { db } from "./db";
 // سجلّ الطلبات يطبع جسم كل استجابة /api؛ هذا يحجب الأسرار عنه بالاسم.
 import { redactForLog } from "./log_redaction";
 import { startNotificationDispatcher } from "./patient_notifications/dispatcher";
+import { startInstallmentReminders } from "./installments/reminders";
 
 // Resilience: a single failing request must NEVER take down the whole service.
 // In Express, an async handler that rejects (or any stray promise rejection)
@@ -161,6 +162,8 @@ app.use((req, res, next) => {
       // عامل صادر إشعارات المريض. يبدأ بعد الترحيلات والمسارات، ويصمت
       // معلَناً إن لم يكن بوت المريض مُعدّاً.
       startNotificationDispatcher();
+      //  تذكيرُ الأقساط (§4.ea) — دورةٌ كلَّ دقيقة، بالساعة التي اختارها الموظّف لكلّ خطّة.
+      startInstallmentReminders();
       // One-time patient-cases backfill runs in the BACKGROUND, AFTER the
       // server is listening — so a large dataset never blocks/times-out the
       // deploy. It's guarded (runs once) and fails safe.

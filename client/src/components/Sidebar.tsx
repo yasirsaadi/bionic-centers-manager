@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -266,6 +266,20 @@ export function Sidebar() {
   });
   const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0);
 
+  //  ══ **«الأقساط»** (§4.ea) — لمن يرى المرضى ودفعاتِهم، كحارس الخادم؛ والرقمُ المتأخّرةُ في فرع الجلسة (والمسؤولُ كلُّ الفروع).
+  const installmentsEligible = Boolean(branchSession?.isAdmin) || (permissions.canViewPatients && permissions.canViewPayments);
+  const { data: installmentsData } = useQuery<{ count: number }>({
+    queryKey: ["/api/installments", "overdue-count"],
+    enabled: installmentsEligible,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/installments/overdue-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const installmentsOverdue = installmentsData?.count ?? 0;
+
   //  ══ **شارةُ «القالب الاختباري»** (§4.bz) — مرضى يُطلَب الاتصالُ بهم اليوم بشأن قالبهم النهائي ════════
   //  للاستعلامات والإدارة لا للخبير. **بلا `refetchInterval`** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): تتحدّث عند الكتابة والعودة.
   const trialEligible = Boolean(branchSession) && !onlyRoles(branchSession, ["prosthetics_expert"])
@@ -363,6 +377,8 @@ export function Sidebar() {
     //  **ويبقى ظاهراً ولو فرغ المعلَّق** (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والصفحةُ صارت تعرض المعتمَد والمرفوض بقرارهما.
     //  **وصارت «طلبات التصحيح»** تجمع الدفعات والمصاريف وسطورَ الدفتر (قرارُ المالك ٢٠٢٦-١٠-١٣، §4.ce التكملة).
     { label: "طلبات التصحيح", icon: Banknote, href: "/payment-corrections", adminOnly: true, settingKey: null, permission: null, badge: paymentCorrectionsCount },
+    //  الأقساطُ (§4.ea): ظاهرةٌ ولو صفرَ المتأخّر — ففيها المستحقُّ قريباً وكلُّ الخطط.
+    { label: "الأقساط", icon: CalendarClock, href: "/installments", adminOnly: false, settingKey: null, permission: null, eligible: installmentsEligible, badge: installmentsOverdue },
     //  سردٌ إشرافيٌّ للقراءة فقط — بلا شارةٍ (ليست طابورَ انتظار).
     { label: "المراجعة اليومية", icon: Eye, href: "/daily-review", adminOnly: true, settingKey: null, permission: null },
     //  لوحةُ التصنيع: المسؤولُ والمديرُ (اللوحة) والخبيرُ بدوره أو بقدرته (أوامرُه) — كبوّابتَي الخادم.

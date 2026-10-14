@@ -62,6 +62,7 @@
     "test:maintenance-warranty": "tsx server/maintenance_warranty_similar.test.ts",
     "test:trial-socket": "tsx server/trial_socket.test.ts",
     "test:cash-book": "tsx server/cash_book.test.ts",
+    "test:installments": "tsx server/installments.test.ts",
     "test:money-corrections": "tsx server/money_corrections.test.ts",
     "test:document-files": "tsx server/document_files.test.ts",
     "test:registry-assignment": "tsx client/src/pages/patient_registry_assignment.test.ts",
