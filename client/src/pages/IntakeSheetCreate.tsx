@@ -39,6 +39,9 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
+import { phoneConflictOf } from "@/lib/phone_conflict";
+import type { PhoneHolder, SharedPhoneConfirm } from "@shared/shared_phone";
 import { cn } from "@/lib/utils";
 
 const baghdadToday = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -104,8 +107,10 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
     requestedItems: f.department === "prosthetic" ? f.requestedItems : [FULL_DEVICE],
   }), [f, referralSubSource, amputationSite]);
 
+  //  ══ **الرقمُ المسجَّل لغيره ⟵ سؤالٌ لا رفض** (§4.ef) ══ «قريب يستعمل الرقم نفسه» يعيد الحفظَ بالتأكيد.
+  const [phoneHolders, setPhoneHolders] = useState<PhoneHolder[] | null>(null);
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (sharedPhone?: SharedPhoneConfirm) => {
       const dep = f.department as IntakeDepartment;
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: dep, requestedItems: values.requestedItems,
@@ -118,6 +123,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
         amputationSite: values.amputationSite, supportType: values.supportType, injurySide: values.injurySide,
         generalNotes: f.generalNotes.trim(),
         totalCost: 0, whatsappNotificationsEnabled: false,
+        ...(sharedPhone ? { sharedPhone } : {}),
       })).json();
       //  **وطلبُ المعاينة في الحفظ نفسِه** — كما يفتحه «يحتاج معاينة طبية». فشلُه لا يُلغي ملفّاً حُفظ: يُقال ويُكمَل من الملفّ.
       try {
@@ -130,6 +136,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
       }
     },
     onSuccess: (r) => {
+      setPhoneHolders(null);
       if (r.routed) {
         toast({ title: "حُفظت الاستمارة", description: "وأُرسل المراجعُ إلى الطبيب للمعاينة" });
       } else {
@@ -139,6 +146,8 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
       setLocation(`/patients/${r.id}`);
     },
     onError: (e) => {
+      const holders = phoneConflictOf(e);
+      if (holders) { setPhoneHolders(holders); return; }
       const b = errBody(e);
       if (b.missing.length) setMissing(b.missing);
       toast({ title: "لم تُحفظ الاستمارة", description: b.message, variant: "destructive" });
@@ -163,12 +172,14 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
       });
       return;
     }
-    save.mutate();
+    save.mutate(undefined);
   }
 
   const isProsthetic = f.department === "prosthetic";
   return (
     <div className="max-w-4xl mx-auto py-2 md:py-6 space-y-3 overflow-x-clip" dir="rtl">
+      <SharedPhoneDialog holders={phoneHolders} mode="create" pending={save.isPending}
+        onCancel={() => setPhoneHolders(null)} onConfirm={(c) => save.mutate(c)} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" onClick={onBack} className="p-2" aria-label="رجوع"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
         <div className="text-sm text-muted-foreground">إضافة مريض — أطراف صناعية ومساند</div>
