@@ -247,6 +247,13 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "lateral-shift-correction-1": { file: "lateral-shift-correction-1.webp", credit: "Lombafit", sourceUrl: "https://www.lombafit.com/methode-mckenzie/" },
   "supine-sciatic-slider-1": { file: "supine-sciatic-slider-1.webp", credit: "Rehab Hero", sourceUrl: "https://www.rehabhero.ca/exercise/knee-sciatic-nerve-flossing" },
   "slump-slider-seated-1": { file: "slump-slider-seated-1.webp", credit: "Dani Winks Flexibility", sourceUrl: "https://www.daniwinksflexibility.com/bendy-blog/what-is-sciatic-nerve-tension-and-how-do-i-fix-it" },
+  //  الكتفُ المتجمّد (ترحيل ١٤٩، §4.eg) — الستُّ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها).
+  "codman-pendulum-1": { file: "codman-pendulum-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://orthoinfo.aaos.org/en/recovery/rotator-cuff-and-shoulder-conditioning-program" },
+  "wand-er-supine-1": { file: "wand-er-supine-1.webp", credit: "UW Medicine Orthopaedics & Sports Medicine (Matsen)", sourceUrl: "https://orthop.washington.edu/patient-care/articles/shoulder/rehabilitation-after-shoulder-arthroplasty.html" },
+  "wall-finger-walk-1": { file: "wall-finger-walk-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://orthoinfo.aaos.org/en/recovery/shoulder-surgery-exercise-guide" },
+  "towel-ir-behind-back-1": { file: "towel-ir-behind-back-1.webp", credit: "UW Medicine Orthopaedics & Sports Medicine (Matsen)", sourceUrl: "https://orthop.washington.edu/patient-care/articles/shoulder/rehabilitation-after-shoulder-arthroplasty.html" },
+  "sleeper-stretch-1": { file: "sleeper-stretch-1.webp", credit: "H2 Health", sourceUrl: "https://www.h2health.com/stretches-and-exercises/" },
+  "prayer-wudu-reach-1": { file: "prayer-wudu-reach-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7566" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

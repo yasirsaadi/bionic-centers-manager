@@ -21,6 +21,7 @@ import * as m139 from "./migrations/139_physio_supervisor_checklist";
 import * as m140 from "./migrations/140_physio_tha_detail";
 import * as m143 from "./migrations/143_physio_plantar_heel_detail";
 import * as m145 from "./migrations/145_physio_sciatica_detail";
+import * as m149 from "./migrations/149_physio_frozen_shoulder_detail";
 import { CHECKLIST_NOTE_MAX, CHECKLIST_TOPICS, isDetailedProtocol, liveChecks, openItemsCount, supervisorTodoCount } from "@shared/physio_supervisor_checklist";
 
 let failures = 0;
@@ -54,7 +55,7 @@ async function main() {
   // ══ ق. قبل القاعدة ══
   console.log("\n── ق. المحسوبُ والبنودُ المكتوبة ──");
   //  بنودُ ١٣٩ للأحد عشر، ثمّ كلُّ مفصَّلٍ بعده يزرع بنودَه في ترحيله بـ`checklistSql` (§4.dy) — فيُضاف هنا.
-  const all = Object.entries({ ...m139.ITEMS, [m140.PROTOCOL.code]: m140.CHECKLIST, [m143.PROTOCOL.code]: m143.CHECKLIST, [m145.PROTOCOL.code]: m145.CHECKLIST });
+  const all = Object.entries({ ...m139.ITEMS, [m140.PROTOCOL.code]: m140.CHECKLIST, [m143.PROTOCOL.code]: m143.CHECKLIST, [m145.PROTOCOL.code]: m145.CHECKLIST, [m149.PROTOCOL.code]: m149.CHECKLIST });
   const issues = all.flatMap(([code, items]) => [
     ...(items.length ? [] : [`${code}: بلا بنود`]),
     ...(new Set(items.map((i) => i.key)).size === items.length ? [] : [`${code}: رمزٌ مكرّر`]),
@@ -63,8 +64,8 @@ async function main() {
     ...items.filter((i) => !i.ar.trim() || !i.en.trim()).map((i) => `${code}.${i.key}: نصٌّ ناقص`),
     ...items.filter((i) => (i.ar + i.en).includes("**")).map((i) => `${code}.${i.key}: «**»`),
   ]);
-  same("ق.١ **كلُّ بندٍ برمزٍ فريد يقبله الباب، وموضوعٍ معروف، ونصٍّ باللغتين بلا «**»** — والبروتوكولاتُ الأربعةَ عشرَ المفصَّلة كلُّها لها بنود",
-    [issues, all.length], [[], 14]);
+  same("ق.١ **كلُّ بندٍ برمزٍ فريد يقبله الباب، وموضوعٍ معروف، ونصٍّ باللغتين بلا «**»** — والبروتوكولاتُ الخمسةَ عشرَ المفصَّلة كلُّها لها بنود",
+    [issues, all.length], [[], 15]);
 
   const blockers = [{ code: "shockwaves", nameAr: "موجات صادمة", nameEn: "Shockwaves", missing: [{ ar: "التردّد", en: "Frequency" }] }];
   const card = (status: string, urls: (string | null)[]) => ({ status, nameAr: "x", images: urls.map((url) => ({ url })) });
