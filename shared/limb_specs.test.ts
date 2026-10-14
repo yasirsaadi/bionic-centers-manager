@@ -4,7 +4,7 @@
 // (٢) مبتورُ الطرفين خاناتٌ لكلّ جهة، و«متماثلان» تُكتب مرّةً للطرفين؛ (٣) ولا يُخفى مكتوب؛ (٤) و«اشترى» يشترط ما يخصّ البترَ وحده — بجهاته؛
 // (٥) وأمرُ التصنيع لا يفقد خانة؛ (٦) و«متعدد» طرفاً طرفاً، و«يُصنع في هذا الطلب» يحصر الشرطَ في المصنوع.
 import {
-  ELBOW_LEVELS, KNEE_LEVELS, LEGACY_LIMB_SPEC_KEYS, LIMB_SPEC_KEYS, isSlotKey, limbSlots, limbSlotsOfSite, limbSpecFlat, limbSpecKeys, limbSpecValue,
+  ELBOW_LEVELS, KNEE_LEVELS, LEGACY_LIMB_SPEC_KEYS, LIMB_SPEC_KEYS, isSlotKey, limbSlots, limbSlotsOfSite, limbSpecFlat, limbSpecKeys, limbSpecValue, limbSpecInputValue,
   limbSpecView, normalizeLimbSpecs, slotKeyLabel, slotTitle, slotsCanShare, splitSpecKey,
 } from "./limb_specs";
 import {
@@ -432,13 +432,12 @@ same("ط.١٥ **الاسمُ المبنيّ**: المستوى ثمّ الركب�
 const akFull = { amputationSite: site(AK), kneeJointType: "هيدروليك", kneeModel: "3R80", footType: "ثابتة", socketType: "كاربون درجة أولى",
   socketNotes: "بطانة جل", siliconType: "قفل محوري", siliconModel: "Iceross" };
 const typeRow = (sp: Record<string, unknown>) => limbSpecView(sp).rows.find((r) => r.key === "prostheticType")?.value ?? null;
-same("ط.١٦ **وفي الاستمارة وأمر التصنيع** — بلا السليكون ولا ملاحظات السوكيت (بقرار المالك)، والمختارُ أمس من القائمة يُبنى، **والمكتوبُ قبل اليوم نصّاً يبقى**، والسليكونيُّ التعويضيُّ كما كُتب",
+const akName = `طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى وسليكون قفل محوري ${I("Iceross")}`;
+same("ط.١٦ **وفي الاستمارة وأمر التصنيع** — والسليكونُ بموديله فيه (المالك ٢٠٢٦-١٠-١٤) وملاحظاتُ السوكيت لا، والمختارُ أمس من القائمة يُبنى، **والمكتوبُ قبل اليوم نصّاً يبقى**، والسليكونيُّ التعويضيُّ كما كُتب",
   [typeRow(akFull), typeRow({ ...akFull, prostheticType: "طرف تحت الركبة" }), typeRow({ ...akFull, prostheticType: "طرف سفلي ذكي" }),
     typeRow({ ...akFull, prostheticType: "لا ينطبق" }),
     typeRow({ amputationSite: site({ amputationType: "silicone", siliconePart: "اذن", siliconeSide: "left" }), prostheticType: "أذن سليكون طبي" })],
-  [`طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`,
-    `طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`, "طرف سفلي ذكي",
-    `طرف فوق الركبة — ركبة هيدروليك ${I("3R80")} مع قدم ثابتة بقالب كاربون درجة أولى`, "أذن سليكون طبي"]);
+  [akName, akName, "طرف سفلي ذكي", akName, "أذن سليكون طبي"]);
 const splitSp = { amputationSite: site(DBL_BK_AK), "footType:right": "ثابتة", "socketType:right": "كاربون درجة أولى",
   "kneeJointType:left": "مقفول", "footType:left": "ثابتة", "footModel:left": "SACH", "socketType:left": "كاربون درجة ثانية" };
 const splitRow = limbSpecView(splitSp).rows.find((r) => r.key === "prostheticType");
@@ -459,6 +458,30 @@ same("ط.٢٠ **والنصُّ اللاتينيّ معزول** (U+2068 … U+206
   [I("3R80"), I("C-Leg 4"), I("هيدروليك"), I("3R80").length,
     composeProstheticName({ level: "فوق الركبة", knee: "هيدروليك", kneeModel: "3R80" })?.includes("\u20683R80\u2069")],
   ["\u20683R80\u2069", "\u2068C-Leg 4\u2069", "هيدروليك", 6, true]);
+
+console.log("\n── ط (تكملة ٣). السليكونُ في الاسم، والخانةُ الحرّة تحفظ مسافاتها وهي تُكتب (المالك ٢٠٢٦-١٠-١٤) ──");
+const BK1 = { amputationSite: site(BK) };
+same("ط.٢١ **«وسليكون» آخرَ الاسم بموديله** — بعد السوكيت، ووحدَه بلا «و»، والموديلُ العربيّ بمسافته، و«لا ينطبق» لا يدخل ولا موديلٌ بلا نوعه، ولمبتور الطرفين سليكونُ كلّ طرف",
+  [composeProstheticName({ level: "تحت الركبة", foot: "أحادية المحور", footModel: "سنكل", socket: "كاربون درجة ثانية", liner: "فاكيوم", linerModel: "امريكي وسليف" }),
+    composeProstheticName({ level: "تحت الركبة", liner: "قفل محوري" }),
+    composeProstheticName({ level: "تحت الركبة", foot: "ثابتة", liner: "لا ينطبق", linerModel: "Iceross" }),
+    composeProstheticName({ level: "تحت الركبة", foot: "ثابتة", linerModel: "Iceross" }),
+    typeRow({ ...BK1, footType: "ثابتة", siliconType: "فاكيوم", siliconModel: "امريكي وسليف" }),
+    typeRow({ ...BK1, footType: "ثابتة", siliconType: "لا ينطبق", siliconModel: "Iceross" }),
+    limbSpecView({ amputationSite: site(DBL_BK_AK), "footType:right": "ثابتة", "siliconType:right": "فاكيوم", "footType:left": "ثابتة", "siliconType:left": "قفل محوري" })
+      .rows.find((r) => r.key === "prostheticType")?.sides?.map((x) => x.value)],
+  ["طرف تحت الركبة — قدم أحادية المحور سنكل بقالب كاربون درجة ثانية وسليكون فاكيوم امريكي وسليف",
+    "طرف تحت الركبة — سليكون قفل محوري",
+    "طرف تحت الركبة — قدم ثابتة", "طرف تحت الركبة — قدم ثابتة",
+    "طرف تحت الركبة — قدم ثابتة وسليكون فاكيوم امريكي وسليف", "طرف تحت الركبة — قدم ثابتة",
+    ["طرف تحت الركبة — قدم ثابتة وسليكون فاكيوم", "طرف فوق الركبة — قدم ثابتة وسليكون قفل محوري"]]);
+same("ط.٢٢ **والخانةُ وهي تُكتب تقرأ ما كُتب بحرفه** (`limbSpecInputValue`) — المسافةُ الأخيرة باقية فتُكتب الكلمةُ بعدها، ومفتاحُ الطرف ثمّ العامّ؛ **والعرضُ مقصوصٌ كما كان**",
+  [limbSpecInputValue({ siliconModel: "امريكي " }, "siliconModel", null),
+    limbSpecInputValue({ "siliconModel:left": "امريكي " }, "siliconModel", "left"),
+    limbSpecInputValue({ siliconModel: "عام ", "siliconModel:left": "" }, "siliconModel", "left"),
+    limbSpecInputValue({ siliconModel: 5 }, "siliconModel", null),
+    limbSpecValue({ siliconModel: "امريكي " }, "siliconModel", null)],
+  ["امريكي ", "امريكي ", "عام ", "", "امريكي"]);
 
 console.log(failures ? `\n❌ ${failures} فشل` : "\n✅ كلُّها نجحت");
 process.exit(failures ? 1 : 0);
