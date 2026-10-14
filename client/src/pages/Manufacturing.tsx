@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -9,6 +9,10 @@ import {
   bucketCounts, ordersInBucket, nextBucket, bucketDef, type BucketTone,
 } from "./manufacturing_buckets";
 import { rowToneOf } from "./manufacturing_row_tone";
+import {
+  MANUFACTURING_SORTS, MANUFACTURING_SORT_LABELS, manufacturingSortKey, nameInitialOf, readManufacturingSort, sortManufacturingOrders,
+  type ManufacturingSort,
+} from "./manufacturing_sort";
 import { TRIAL_CALL_STATE_EXPERT_LABELS, type TrialCallState } from "@shared/trial_socket";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Wrench, Search, AlertTriangle } from "lucide-react";
+import { Wrench, Search, AlertTriangle, ArrowDownUp } from "lucide-react";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, BUILD_STAGES,
 } from "@shared/manufacturing";
@@ -26,6 +30,8 @@ interface OrderCard {
   id: number; patientId: number; patientName: string; branchId: number; branchName: string | null;
   serviceType: string; itemType: string | null; currentStage: string; status: string;
   expertUserId: number; expertName: string | null; assignedAt: string | null; startedAt: string | null;
+  //  آخرُ تحويلٍ من خبيرٍ إلى خبير (§4.ee) — «الأحدث أولاً» يرتّب بوصول الأمر إلى خبيره الحاليّ.
+  reassignedAt?: string | null;
   expectedDeliveryDate: string | null; completedAt: string | null; finalResult: string | null;
   reworkCount: number; daysInStage: number; isOverdue: boolean;
   //  سببُ التوقّف الحاليّ — يرسله `listOrders` منذ ٢٠٢٦-٠٨-٣١،
@@ -94,6 +100,8 @@ function OrderRow({ o }: { o: OrderCard }) {
                 <span>الفرع: {o.branchName ?? "—"}</span>
                 <span>الخبير: {o.expertName ?? "—"}</span>
                 <span>الإسناد: {fmtDate(o.assignedAt)}</span>
+                {/*  التحويلُ يقول لماذا صعد الأمرُ في «الأحدث أولاً» (§4.ee). */}
+                {o.reassignedAt && <span data-testid={`row-reassigned-${o.id}`}>آخر تحويل: {fmtDate(o.reassignedAt)}</span>}
                 <span>التسليم المتوقّع: {fmtDate(o.expectedDeliveryDate)}</span>
                 <span>في المرحلة منذ {o.daysInStage} يوم</span>
                 {o.reworkCount > 0 && <span>إعادة عمل فني: {o.reworkCount}</span>}
@@ -153,6 +161,16 @@ export default function Manufacturing() {
   //  التصنيفُ المختار من الشرائط — `null` يعني «كلَّها». وهو **فوق**
   //  مرشِّحات الخادم لا بدلاً منها، فيتركّب مع الخبير والفرع والبحث.
   const [bucket, setBucket] = useState<string | null>(null);
+  //  ══ **الترتيب** (§4.ee) — «الأحدث أولاً» أو «حسب الاسم»، محفوظٌ لكلّ مستخدمٍ على جهازه. ══
+  const sortKey = manufacturingSortKey(session?.userId);
+  const [sortMode, setSortModeState] = useState<ManufacturingSort>(() => {
+    try { return readManufacturingSort(localStorage.getItem(sortKey)); } catch { return "newest"; }
+  });
+  const setSortMode = (v: string) => {
+    const m = readManufacturingSort(v);
+    setSortModeState(m);
+    try { localStorage.setItem(sortKey, m); } catch { /* الترتيبُ يبقى للصفحة وحدها */ }
+  };
 
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -200,7 +218,8 @@ export default function Manufacturing() {
   //  من `orders` نفسِها بعد مرشِّحات الخادم.
   const chips = useMemo(() => bucketCounts(orders, nowMonth, nowDay), [orders, nowMonth, nowDay]);
   const visibleOrders = useMemo(
-    () => ordersInBucket(orders, bucket, nowMonth, nowDay), [orders, bucket, nowMonth, nowDay]);
+    () => sortManufacturingOrders(ordersInBucket(orders, bucket, nowMonth, nowDay), sortMode),
+    [orders, bucket, nowMonth, nowDay, sortMode]);
   const activeBucket = bucketDef(bucket);
 
   const experts: { expertUserId: number; expertName: string }[] = overview?.experts ?? [];
@@ -301,6 +320,15 @@ export default function Manufacturing() {
             {STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={sortMode} onValueChange={setSortMode}>
+          <SelectTrigger className="w-[170px]" data-testid="select-sort" aria-label="ترتيب القائمة">
+            <ArrowDownUp className="w-4 h-4 text-muted-foreground shrink-0" />
+            <SelectValue placeholder="الترتيب" />
+          </SelectTrigger>
+          <SelectContent>
+            {MANUFACTURING_SORTS.map((m) => <SelectItem key={m} value={m}>{MANUFACTURING_SORT_LABELS[m]}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {/*  ══ **شرائطُ التصنيف — تُضغَط فتُرشِّح** (٢٠٢٦-٠٩-٢٤) ══════════════
@@ -364,7 +392,22 @@ export default function Manufacturing() {
         </div>
       ) : (
         <div className="space-y-3">
-          {visibleOrders.map((o) => <OrderRow key={o.id} o={o} />)}
+          {/*  «حسب الاسم»: عنوانُ حرفٍ فوق كلّ مجموعة — يُنزَل إلى الحرف بالعين لا بالبحث (§4.ee). */}
+          {visibleOrders.map((o, i) => {
+            const letter = sortMode === "name" ? nameInitialOf(o.patientName) : null;
+            const newGroup = letter !== null && (i === 0 || nameInitialOf(visibleOrders[i - 1].patientName) !== letter);
+            return (
+              <Fragment key={o.id}>
+                {newGroup && (
+                  <div className="flex items-center gap-2 pt-2 first:pt-0" data-testid={`letter-${letter}`}>
+                    <span className="inline-flex h-7 min-w-7 px-2 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold text-sm">{letter}</span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                )}
+                <OrderRow o={o} />
+              </Fragment>
+            );
+          })}
         </div>
       )}
 
