@@ -1,8 +1,10 @@
 // نصُّ عمود «الملاحظات» لسطر الدفتر — واحدٌ للشاشة (`CashBook.tsx`) وللورقة المطبوعة (`CashBookPrint.tsx`)، فلا تختلفان.
 import { EXPENSE_CATEGORIES } from "@/lib/expense_categories";
-import { OUTFLOW_LABELS, INCOME_OTHER_LABEL, distinctNoteParts } from "@shared/cash_book";
+import { OUTFLOW_LABELS, INCOME_OTHER_LABEL, distinctNoteParts, DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL } from "@shared/cash_book";
 
-export const cashCategoryLabel = (c: string | null) => (c ? EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c : "");
+export const cashCategoryLabel = (c: string | null) => (!c ? ""
+  : c === DR_BOX_WITHDRAWAL_CATEGORY ? DR_BOX_WITHDRAWAL_LABEL
+  : EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c);
 
 export function cashRowNote(r: { kind: string; source: string; note: string; category: string | null }): string {
   if (r.kind === "income_other") return `${INCOME_OTHER_LABEL}${r.note ? ` — ${r.note}` : ""}`;
@@ -17,5 +19,13 @@ export function cashRowNote(r: { kind: string; source: string; note: string; cat
   return r.note;
 }
 
-/** سطرُ «صُرف من قاصة الدكتور» كما يراه الفرع — البابُ وحده (§4.cb). */
-export const drBoxLineText = (category: string) => `صُرف من قاصة الدكتور — ${cashCategoryLabel(category)}`;
+/**
+ * سطرُ قاصة الدكتور كما يراه الفرع: «صُرف من قاصة الدكتور — الباب» لما صرفه المالكُ، بلا مبلغ (§4.cb)؛
+ * و«سحب من قاصة الدكتور — المبلغ — الملاحظة» لما سجّله الفرعُ نفسُه (§4.cb تكملةٌ ثالثة). ولا يدخل أيٌّ منهما مجموعَ الدفتر.
+ */
+export function drBoxLineText(l: { category: string; amount?: number; note?: string }): string {
+  if (l.amount !== undefined) {
+    return [DR_BOX_WITHDRAWAL_LABEL, l.amount.toLocaleString("en-US"), ...(l.note ? [l.note] : [])].join(" — ");
+  }
+  return `صُرف من قاصة الدكتور — ${cashCategoryLabel(l.category)}`;
+}

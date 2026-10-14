@@ -115,6 +115,17 @@ export const OUTFLOW_LABELS: Record<OutflowKind, string> = {
 };
 export const INCOME_OTHER_LABEL = "وارد آخر";
 
+/**
+ * **«سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره** (قرارُ المالك ٢٠٢٦-١٠-١٤، §4.cb تكملةٌ ثالثة): «أحياناً أحوّل لهم مبالغ لحساباتهم
+ * مثل رواتب وأنسى أن أسحبها من قاصتي — والموظّفُ لن ينسى حين أرسل له الإيصال». فالمحاسبُ أو مديرُ الفرع يختاره في نوع السطر ويكتب
+ * المبلغ والملاحظة، **فيُسحب من قاصة الدكتور لفرع الدفتر**: صفٌّ في `dr_box_expenses` بهذا الباب — لا في الدفتر، فلا يمسّ نقدَ
+ * القاصة ولا مجموعَ اليوم ولا تقاريرَ المحاسبة (المالُ خرج من حساب المالك لا من قاصة الفرع). والملاحظةُ إلزامية: ما هو السحب.
+ * ويرى الفرعُ سطرَه بمبلغه وملاحظته (كتبهما هو)، وما صرفه المالكُ بنفسه يبقى بابَه وحده.
+ */
+export const DR_BOX_WITHDRAWAL_CATEGORY = "branch_withdrawal";
+export const DR_BOX_WITHDRAWAL_LABEL = "سحب من قاصة الدكتور";
+export const DR_BOX_WITHDRAWAL_NOTE_ERROR = "اكتب ما هو السحب في الملاحظات — مثلاً: رواتب شهر ٩";
+
 /** فئتا المصروف للنسبتين — `shrine_percentage` قائمةٌ أصلاً في فئات المصاريف («نسبة العتبة»). */
 export const HOSPITAL_RATIO_CATEGORY = "hospital_percentage";
 export const ATABAH_RATIO_CATEGORY = "shrine_percentage";
