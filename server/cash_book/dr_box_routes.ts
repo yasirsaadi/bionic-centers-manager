@@ -4,7 +4,7 @@ import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { getSession } from "../sessions_module/permissions";
 import { baghdadTodayYmd } from "@shared/visit_date";
-import { drBoxAccountLabel, isYmd, parseAmount } from "@shared/cash_book";
+import { drBoxAccountLabel, isYmd, parseAmount, DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_NOTE_ERROR } from "@shared/cash_book";
 import { CashBookError, branchConfigOf } from "./store";
 import * as box from "./dr_box";
 
@@ -94,6 +94,7 @@ export function registerDrBoxRoutes(app: Express, isAuthenticated: any) {
     if (!category) return res.status(400).json({ error: "اختر باب الصرف" });
     const amount = parseAmount(req.body?.amount);
     if (amount === null) return res.status(400).json({ error: "اكتب المبلغ رقماً صحيحاً أكبر من صفر" });
+    if (category === DR_BOX_WITHDRAWAL_CATEGORY && !cleanNote(req.body?.note)) return res.status(400).json({ error: DR_BOX_WITHDRAWAL_NOTE_ERROR });
     try {
       if (!(await branchConfigOf(branchId))) return res.status(404).json({ error: "الفرع غير موجود" });
       const row = await box.addDrBoxExpense({ branchId, day, category, amount, note: cleanNote(req.body?.note), userId: s.userId ?? null });
@@ -123,6 +124,11 @@ export function registerDrBoxRoutes(app: Express, isAuthenticated: any) {
     }
     if (req.body?.note !== undefined) patch.note = cleanNote(req.body.note);
     try {
+      //  «سحب من قاصة الدكتور» سجّله الفرعُ بملاحظةٍ إلزامية تقول ما هو (§4.cb تكملةٌ ثالثة) — والتصحيحُ لا يتركه بلا تفسير.
+      const cur = await box.getDrBoxExpense(id);
+      if (cur && (patch.category ?? cur.category) === DR_BOX_WITHDRAWAL_CATEGORY && !(patch.note !== undefined ? patch.note : cur.note)) {
+        return res.status(400).json({ error: DR_BOX_WITHDRAWAL_NOTE_ERROR });
+      }
       const r = await box.updateDrBoxExpense(id, patch);
       await audit(req, s, { entityId: id, action: "update", branchId: r.after.branchId, oldValues: r.before, newValues: r.after });
       res.json(r.after);
