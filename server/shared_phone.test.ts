@@ -7,12 +7,16 @@
 //   ب — العرض: «مشترك مع» على ملفّ القريب و«يستعمله أيضاً» على ملفّ صاحب الرقم، ويختفيان حين لا يعود الرقمُ واحداً.
 //   ج — التعديل: رقمٌ جديد يمحو الاشتراك، والعودةُ إلى رقم القريب تُسأل ثمّ تُثبَّت بالتأكيد، وفي سطر التدقيق.
 //   د — الدمجُ ينقل الاشتراكَ إلى الهدف، والحذفُ النهائيّ لصاحب الرقم لا يتعطّل ويُسقط الربطَ وحده.
+//   و — الواجهة: قراءةُ الردّ من الخطأين، والشاشاتُ الأربع تفتح النافذةَ وتعيد الحفظَ بالتأكيد.
 import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
+import fs from "fs";
+import path from "path";
 import { PHONE_RELATIONS, parseSharedPhone, sharedPhoneLabel } from "@shared/shared_phone";
+import { phoneConflictOf } from "../client/src/lib/phone_conflict";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) { console.error("Refusing to run: LOCAL TEST database only."); process.exit(1); }
@@ -88,6 +92,30 @@ async function main() {
       parseSharedPhone({ withPatientId: 1.5, relation: "زوج" }), parseSharedPhone({ relation: "زوج" }), parseSharedPhone("زوج"), parseSharedPhone([1])],
     [undefined, undefined, undefined, undefined, undefined, undefined]);
   same("ق.٤ سطرُ العرض", [sharedPhoneLabel("أحمد حسين", "زوج"), sharedPhoneLabel("أحمد", null)], ["مشترك مع: أحمد حسين (زوج)", "مشترك مع: أحمد"]);
+
+  // ══ و — الواجهة: قراءةُ الردّ ومصادرُ الشاشات الأربع ══════════════════════════════════════════
+  console.log("\n── و. الواجهة ──");
+  const holder = { id: 5, name: "أحمد", patientCode: "WB-1", branchName: "بغداد", reachable: true };
+  const body = { message: "x", code: "patient_phone_conflict", holders: [holder] };
+  same("و.١ **ردُّ الرقم المسجَّل يُقرأ من الخطأين**: خطأٌ يحمل جسمَه (`useCreatePatient`) وخطأُ «409: {…}» (`apiRequest`)",
+    [phoneConflictOf(Object.assign(new Error("x"), { body })), phoneConflictOf(new Error(`409: ${JSON.stringify(body)}`))], [[holder], [holder]]);
+  same("و.٢ وغيرُه لا يفتح النافذة: رمزٌ آخر، أو بلا حاملين، أو نصٌّ عاديّ",
+    [phoneConflictOf(new Error(`409: ${JSON.stringify({ code: "patient_name_conflict" })}`)),
+      phoneConflictOf(new Error(`409: ${JSON.stringify({ code: "patient_phone_conflict", holders: [] })}`)), phoneConflictOf(new Error("تعذّر"))],
+    [null, null, null]);
+  const src = (f: string) => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", f), "utf8");
+  const sheets = ["client/src/pages/IntakeSheetCreate.tsx", "client/src/pages/PhysioSheetCreate.tsx"].map(src);
+  check(sheets.every((c) => /<SharedPhoneDialog holders=\{phoneHolders\} mode="create"/.test(c) && /onConfirm=\{\(c\) => save\.mutate\(c\)\}/.test(c)
+    && /\.\.\.\(sharedPhone \? \{ sharedPhone \} : \{\}\)/.test(c) && /if \(holders\) \{ setPhoneHolders\(holders\); return; \}/.test(c)),
+    "و.٣ **الاستمارتان** (أطراف ومساند · علاج طبيعي): الردُّ يفتح النافذة لا توستاً، والتأكيدُ يعيد الحفظَ ومعه `sharedPhone`");
+  const edit = src("client/src/pages/EditPatient.tsx"), create = src("client/src/pages/CreatePatient.tsx");
+  check(/<SharedPhoneDialog holders=\{phoneConflict\?\.holders \?\? null\} mode="edit"/.test(edit) && /savePatient\(\{ \.\.\.phoneConflict\.data, sharedPhone: c \}\)/.test(edit),
+    "و.٤ **«تعديل بيانات المريض»** بالنافذة نفسِها، والتأكيدُ يعيد الحفظَ بما كُتب ومعه `sharedPhone`");
+  check(/mode="create"/.test(create) && /submitPatient\(\{ \.\.\.phoneConflict\.data, sharedPhone: c \}\)/.test(create),
+    "و.٥ و«إضافة مريض» القديمة بالنافذة نفسِها");
+  const hooks = src("client/src/hooks/use-patients.ts");
+  check((hooks.match(/if \(phoneConflictOf\(error\)\) return;/g) ?? []).length === 2 && (hooks.match(/\{ status: res\.status, body: error \}/g) ?? []).length === 2,
+    "و.٦ والخطّافان يحملان الجسمَ مع الخطأ ولا يُظهران توستَ خطأٍ فوق النافذة");
 
   // ══ الإعداد ═════════════════════════════════════════════════════════════════════════════════
   await q(`INSERT INTO branches (id, name) VALUES (1, 'بغداد'), (2, 'كربلاء') ON CONFLICT DO NOTHING`);
