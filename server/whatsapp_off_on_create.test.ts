@@ -35,7 +35,9 @@ async function main() {
   const src = readFileSync("client/src/pages/CreatePatient.tsx", "utf8");
   same("١. نموذجُ التسجيل بلا مربّع واتساب", /checkbox-whatsapp-consent|label-whatsapp-consent/.test(src), false);
   same("٢. ويرسل whatsappNotificationsEnabled: false صراحةً",
-    /sessionCount: 0,[\s\S]{0,200}whatsappNotificationsEnabled: false,\s*\};\s*mutate\(submitData/.test(src), true);
+    //  الإرسالُ يمرّ بـ`submitPatient` منذ §4.ef (يعيد الكائنَ نفسَه بتأكيد «الرقم المشترك») — فالكائنُ نفسُه يصل `mutate`.
+    /sessionCount: 0,[\s\S]{0,200}whatsappNotificationsEnabled: false,\s*\};\s*submitPatient\(submitData\)/.test(src)
+      && /function submitPatient\(submitData: any\) \{\s*mutate\(submitData/.test(src), true);
 
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, branch_ids, is_active,

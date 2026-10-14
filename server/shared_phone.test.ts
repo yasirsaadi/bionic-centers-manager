@@ -116,6 +116,9 @@ async function main() {
   const hooks = src("client/src/hooks/use-patients.ts");
   check((hooks.match(/if \(phoneConflictOf\(error\)\) return;/g) ?? []).length === 2 && (hooks.match(/\{ status: res\.status, body: error \}/g) ?? []).length === 2,
     "و.٦ والخطّافان يحملان الجسمَ مع الخطأ ولا يُظهران توستَ خطأٍ فوق النافذة");
+  const dialog = src("client/src/components/SharedPhoneDialog.tsx");
+  check(/setOwnerId\(holders && holders\.length === 1 \? holders\[0\]\.id : null\)/.test(dialog) && /disabled=\{!ownerId \|\| !relation \|\| pending\}/.test(dialog),
+    "و.٧ **صاحبُ الرقم لا يُختار صامتاً**: الواحدُ تلقائياً، وأكثرُ من واحد يختاره الاستقبال — والحفظُ معطّلٌ بلا صاحبٍ وصلة");
 
   // ══ الإعداد ═════════════════════════════════════════════════════════════════════════════════
   await q(`INSERT INTO branches (id, name) VALUES (1, 'بغداد'), (2, 'كربلاء') ON CONFLICT DO NOTHING`);

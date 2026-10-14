@@ -23,7 +23,8 @@ export function SharedPhoneDialog({ holders, mode, pending, onCancel, onConfirm 
   const [ownerId, setOwnerId] = useState<number | null>(null);
   const [relation, setRelation] = useState<PhoneRelation | null>(null);
   useEffect(() => {
-    setOwnerId(holders && holders.length > 0 ? holders[0].id : null);
+    //  صاحبٌ واحد يُختار تلقائياً، وأكثرُ من واحد يختاره الاستقبالُ بنفسه — فلا يُربَط بأوّلهم صامتاً.
+    setOwnerId(holders && holders.length === 1 ? holders[0].id : null);
     setRelation(null);
   }, [holders]);
 
@@ -77,7 +78,10 @@ export function SharedPhoneDialog({ holders, mode, pending, onCancel, onConfirm 
             </div>
           )}
           <div className="space-y-1">
-            <div className="text-xs text-slate-600">{owner ? `«${owner.name}» بالنسبة لهذا المريض:` : "صاحب الرقم بالنسبة لهذا المريض:"}</div>
+            <div className="text-xs text-slate-600" data-testid="shared-phone-rel-question">
+              {owner ? `ما صلةُ «${owner.name}» بهذا المريض؟` : "اختر صاحبَ الرقم أوّلاً، ثمّ صلتَه بهذا المريض"}
+              <span className="block text-[11px] text-muted-foreground">مثلاً: إن كان زوجَها فاختر «زوج»، وإن كان أباه فاختر «أب».</span>
+            </div>
             <div className="grid grid-cols-3 gap-1.5">
               {PHONE_RELATIONS.map((r) => (
                 <button key={r} type="button" onClick={() => setRelation(r)} data-testid={`shared-phone-rel-${r}`}
