@@ -14,7 +14,7 @@ export type ManufacturingSort = (typeof MANUFACTURING_SORTS)[number];
 
 export const MANUFACTURING_SORT_LABELS: Record<ManufacturingSort, string> = {
   newest: "الأحدث أولاً",
-  name: "حسب الاسم (أ – ي)",
+  name: "حسب الاسم",
 };
 
 /** القيمةُ المحفوظة على الجهاز — وما لا يُعرف ⟵ «الأحدث أولاً». */

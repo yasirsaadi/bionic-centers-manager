@@ -54,7 +54,7 @@ async function main() {
     ["name", "newest", "newest", "newest"]);
   same("ق.٢ والتسميتان بحرف الشاشة، ومفتاحُ الحفظ لكلّ مستخدم",
     [MANUFACTURING_SORT_LABELS.newest, MANUFACTURING_SORT_LABELS.name, manufacturingSortKey(7), manufacturingSortKey(undefined)],
-    ["الأحدث أولاً", "حسب الاسم (أ – ي)", "manufacturing-sort:7", "manufacturing-sort:anon"]);
+    ["الأحدث أولاً", "حسب الاسم", "manufacturing-sort:7", "manufacturing-sort:anon"]);
   same("ق.٣ **الوصولُ = آخرُ تحويلٍ إن كان بعد الإسناد**، وإلّا الإسناد",
     [arrivedAtOf(order(1, "x", "2026-09-01T10:00:00Z", "2026-10-14T08:00:00Z")) === Date.parse("2026-10-14T08:00:00Z"),
       arrivedAtOf(order(1, "x", "2026-10-01T10:00:00Z", null)) === Date.parse("2026-10-01T10:00:00Z")],
