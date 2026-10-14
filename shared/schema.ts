@@ -255,6 +255,9 @@ export const patients = pgTable("patients", {
   //  ومهلةُ الاستعادة: «ما زال قابلاً للاستعادة» و«انقضت مدّته».
   index("ix_patients_restore_until").on(t.restoreUntil)
     .where(sql`deleted_at IS NOT NULL`),
+  //  و«يستعمله أيضاً» (ترحيل ١٤٨، §4.ef): مَن يشير إلى هذا الملفّ برقمه — في كلّ فتحٍ للملفّ وفي الحذف النهائيّ والدمج.
+  index("ix_patients_phone_shared_with").on(t.phoneSharedWithPatientId)
+    .where(sql`phone_shared_with_patient_id IS NOT NULL`),
 ]);
 
 // ── Independent cases per patient (Phase 1 foundation) ──────────────────────
