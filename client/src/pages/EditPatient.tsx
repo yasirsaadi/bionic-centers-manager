@@ -14,6 +14,9 @@ import {
   PRIOR_CENTER_HISTORY_UNKNOWN_LABEL, parsePriorCenterHistory,
 } from "@shared/service_path";
 import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
+import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
+import { phoneConflictOf } from "@/lib/phone_conflict";
+import type { PhoneHolder } from "@shared/shared_phone";
 import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n/LanguageContext";
@@ -150,6 +153,8 @@ export default function EditPatient() {
   };
   const missingSomeType = !!patient && Object.values(hasType).some((v) => !v);
   const { mutate, isPending } = useUpdatePatient();
+  //  ══ **الرقمُ المسجَّل لغيره ⟵ سؤالٌ لا رفض** (§4.ef) ══ النافذةُ تحمل ما أُرسل، و«قريب يستعمل الرقم نفسه» يعيده بالتأكيد.
+  const [phoneConflict, setPhoneConflict] = useState<{ holders: PhoneHolder[]; data: any } | null>(null);
   //  **ما يُقفَل على هذا الموظّف الآن** (§4.db): بعد المعاينة بياناتُ الاستعلامات للمسؤول ومدير الفرع، وما يكتبه الفاحصُ ليس للاستعلامات.
   const { data: editScope } = useQuery<EditScope>({ queryKey: [`/api/patients/${patientId}/edit-scope`], enabled: Number.isFinite(patientId) });
   const lockOf = (field: string): string | null => editScope?.reasons?.[field] || null;
@@ -402,7 +407,15 @@ export default function EditPatient() {
     for (const k of ["referralSubSource", "presentingComplaint"] as const) {
       if (!String(data[k] ?? "").trim() && !(patient as any)?.[k]) delete data[k];
     }
+    savePatient(data);
+  }
+
+  function savePatient(data: any) {
     mutate({ id: patientId, data }, {
+      onError: (e) => {
+        const holders = phoneConflictOf(e);
+        if (holders) setPhoneConflict({ holders, data });
+      },
       //  ══ **ملاحظةُ الكلفة من الخادم — كانت تُقرأ ولا تُعرَض** (تصحيحٌ
       //  لاحقٌ على PR #267، 2026-08-31) ═══════════════════════════════════
       //  `costNote` تصل في استجابة الحفظ حين يُقفَل تعديلُ الكلفة (سعرٌ
@@ -412,6 +425,7 @@ export default function EditPatient() {
       //  لم يُنفَّذ كما كتبه. توستٌ إضافيّ (لا بديلَ عن توست الهوك العامّ)
       //  حين تحضر الملاحظة فقط.
       onSuccess: (result: any) => {
+        setPhoneConflict(null);
         if (result?.costNote) {
           toast({ title: "ملاحظة حول الكلفة", description: result.costNote });
         }
@@ -443,6 +457,9 @@ export default function EditPatient() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 md:space-y-6 page-transition py-2 md:py-6">
+      <SharedPhoneDialog holders={phoneConflict?.holders ?? null} mode="edit" pending={isPending}
+        onCancel={() => setPhoneConflict(null)}
+        onConfirm={(c) => phoneConflict && savePatient({ ...phoneConflict.data, sharedPhone: c })} />
       <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
         <Button variant="ghost" onClick={() => setLocation(`/patients/${patientId}${branchParam}`)} className="p-2 shrink-0">
           <BackArrowIcon className="w-5 h-5 text-slate-500" />

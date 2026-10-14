@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
+import { phoneConflictOf } from "@/lib/phone_conflict";
 import { InsertPatient, InsertPayment, InsertVisit } from "@shared/schema";
 
 function getBranchSession() {
@@ -82,7 +83,8 @@ export function useCreatePatient() {
       
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في إضافة المريض");
+        //  **والجسمُ مع الخطأ** (§4.ef): ردُّ «الرقم مسجَّل لغيره» يحمل أسماءَ حامليه، فتسأل الصفحةُ لا تكتفي بالرسالة.
+        throw Object.assign(new Error(error.message || "فشل في إضافة المريض"), { status: res.status, body: error });
       }
       return api.patients.create.responses[201].parse(await res.json());
     },
@@ -100,6 +102,8 @@ export function useCreatePatient() {
       });
     },
     onError: (error) => {
+      //  الرقمُ المسجَّل لغيره تسأل عنه الصفحةُ بنافذتها (§4.ef) — لا توستَ خطأٍ فوقها.
+      if (phoneConflictOf(error)) return;
       toast({
         title: "خطأ",
         description: error.message,
@@ -234,7 +238,7 @@ export function useUpdatePatient() {
 
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || "فشل في تحديث بيانات المريض");
+        throw Object.assign(new Error(error.message || "فشل في تحديث بيانات المريض"), { status: res.status, body: error });
       }
       return res.json();
     },
@@ -248,6 +252,8 @@ export function useUpdatePatient() {
       });
     },
     onError: (error) => {
+      //  الرقمُ المسجَّل لغيره تسأل عنه الصفحةُ بنافذتها (§4.ef) — لا توستَ خطأٍ فوقها.
+      if (phoneConflictOf(error)) return;
       toast({
         title: "خطأ",
         description: error.message,

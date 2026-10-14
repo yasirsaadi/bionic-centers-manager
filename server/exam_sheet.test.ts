@@ -253,7 +253,7 @@ async function main() {
       deviceEpisodeId: c.epId, sheet: { phone: otherPhone, address: "الكاظمية" },
     });
     same("ج.١ **رقمٌ محجوزٌ لمريضٍ آخر ⟵ المعاينةُ تُحفَظ ويُقال إن التعديل لم يُحفظ** — والملفُّ كما كان كلُّه",
-      [rc.status, /لم تُحفظ تعديلاتُ بيانات المريض: رقم الهاتف مسجَّل لمريضٍ آخر/.test(rc.json?.sheetNote ?? ""), (await patientRow(c.pid)).address],
+      [rc.status, /لم تُحفظ تعديلاتُ بيانات المريض: رقم الهاتف مسجَّل باسم: .*جار.*«تعديل بيانات المريض»/.test(rc.json?.sheetNote ?? ""), (await patientRow(c.pid)).address],
       [200, true, "الكرادة"]);
     const ph1 = await sheetPatient("physiotherapy", "علاج");
     const rp = await call("POST", `/api/medical/patients/${ph1.pid}/exams`, S.doc, {

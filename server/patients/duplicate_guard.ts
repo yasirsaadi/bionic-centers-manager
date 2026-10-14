@@ -194,11 +194,27 @@ export class PatientNameConflictError extends Error {
   }
 }
 
-/** يُرمى حين يحمل مريضٌ فعّالٌ آخر نفسَ رقم الهاتف المطبَّع. */
+/** حاملُ الرقم كما يُقرأ تحت القفل — والمسارُ يضيف «يفتحه السائل؟» قبل أن يردّ (§4.ef). */
+export interface ActivePhoneHolderRow {
+  id: number;
+  name: string;
+  patientCode: string | null;
+  branchId: number | null;
+  branchName: string | null;
+}
+
+/**
+ * يُرمى حين يحمل مريضٌ فعّالٌ آخر نفسَ رقم الهاتف المطبَّع **ولم يُؤكَّد الرقمُ مشتركاً معه** (§4.ef). ويحمل **مَن يحملون الرقم** —
+ * فتسأل الشاشةُ «الشخص نفسه أم قريبٌ له؟» بأسمائهم، لا رسالةً تُغلق الباب.
+ */
 export class PatientPhoneConflictError extends Error {
-  constructor() {
-    super("رقم الهاتف مسجَّل لمريضٍ آخر");
+  holders: ActivePhoneHolderRow[];
+  constructor(holders: ActivePhoneHolderRow[] = []) {
+    super(holders.length
+      ? `رقم الهاتف مسجَّل باسم: ${holders.map((h) => h.name).join("، ")}`
+      : "رقم الهاتف مسجَّل لمريضٍ آخر");
     this.name = "PatientPhoneConflictError";
+    this.holders = holders;
   }
 }
 
@@ -409,6 +425,30 @@ export async function hasActivePhoneConflict(
 }
 
 /**
+ * **مَن يحمل الرقمَ من الفعّالين** (بمعزلٍ عن `excludePatientId`) — بأسمائهم وفروعهم، للنافذة (§4.ef). قراءةٌ بلا قفل؛
+ * `assertPhoneAvailable` تناديها بعد قفلَيها.
+ */
+export async function findActivePhoneHolders(
+  runner: SqlRunner,
+  phoneE164: string,
+  excludePatientId: number | null,
+): Promise<ActivePhoneHolderRow[]> {
+  const result: any = await runner.execute(sql`
+    SELECT ap.id, ap.name, ap.patient_code, ap.branch_id, b.name AS branch_name
+      FROM patients ap
+      LEFT JOIN branches b ON b.id = ap.branch_id
+     WHERE ${activePatientSql("ap")} AND ap.phone_e164 = ${phoneE164}
+       AND (${excludePatientId}::int IS NULL OR ap.id <> ${excludePatientId}::int)
+     ORDER BY ap.id
+  `);
+  const rows: any[] = result?.rows ?? (Array.isArray(result) ? result : []);
+  return rows.map((r) => ({
+    id: Number(r.id), name: String(r.name ?? ""), patientCode: r.patient_code ?? null,
+    branchId: r.branch_id == null ? null : Number(r.branch_id), branchName: r.branch_name ?? null,
+  }));
+}
+
+/**
  * **نظيرُها على السلّة** — تطابقٌ تامّ لا بادئة، كأصلها. **تُنادى من التعديل
  * وحده** (`checkTrash` في `assertPhoneAvailable`، القسم ٤ في شرح الملفّ) —
  * التسجيلُ لا يفحص السلّةَ إطلاقاً بعد قرار ٢٠٢٦-٠٩-١٨ (القسم ٣).
@@ -452,18 +492,65 @@ export async function assertPhoneAvailable(
   tx: SqlRunner,
   phoneE164: string,
   excludePatientId: number | null,
-  opts: { checkTrash?: boolean } = {},
-): Promise<void> {
+  opts: { checkTrash?: boolean; sharedWithPatientId?: number | null } = {},
+): Promise<{ sharedWithPatientId: number | null }> {
   // قفلُ الهويّة المشترك أوّلاً — قبل قفل الهاتف الخاصّ (القسم ٥): يمنع
   // استعادةً متزامنة من الالتزام بين فحص الفعّال وفحص المحذوف أدناه.
   await acquirePatientIdentityLock(tx);
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(${PATIENT_PHONE_LOCK_NAMESPACE}, hashtext(${phoneE164}))`,
   );
-  if (await hasActivePhoneConflict(tx, phoneE164, excludePatientId)) {
-    throw new PatientPhoneConflictError();
+  //  ══ **الرقمُ المشترك المؤكَّد** (§4.ef، قرارُ المالك ٢٠٢٦-١٠-١٤) ══ يُقبل حين يكون الملفُّ الذي أكّد عليه الاستقبالُ **بين حاملي
+  //  الرقم الفعّالين الآن** — يُقرأ تحت القفلين نفسَيهما، فتأكيدٌ على ملفٍّ لم يعد يحمل الرقم (حُذف، أو غيّر رقمَه) لا يمرّ.
+  //  وبلا تأكيدٍ يُرمى التعارضُ ومعه الحاملون، فتسأل الشاشة.
+  const holders = await findActivePhoneHolders(tx, phoneE164, excludePatientId);
+  let sharedWithPatientId: number | null = null;
+  if (holders.length > 0) {
+    const want = opts.sharedWithPatientId ?? null;
+    if (want === null || !holders.some((h) => h.id === want)) {
+      throw new PatientPhoneConflictError(holders);
+    }
+    sharedWithPatientId = want;
   }
   if (opts.checkTrash && await hasTrashedPhoneConflict(tx, phoneE164)) {
     throw new PatientPhoneTrashConflictError();
   }
+  return { sharedWithPatientId };
+}
+
+/**
+ * **ما يُعرض بجانب الرقم في ملفّ المريض** (§4.ef): «مشترك مع: أحمد (زوج)» على ملفّ مَن سُجّل برقم قريبه، و«يستعمله أيضاً: فاطمة»
+ * على ملفّ صاحب الرقم. **يُعرض ما دام صحيحاً الآن**: الملفّان فعّالان ويحملان الرقمَ نفسَه — فرقمٌ تغيّر في أحدهما لا يبقى
+ * يقول «مشترك» عن رقمٍ لم يعد واحداً. قراءةٌ وحدها.
+ */
+export async function loadPhoneSharing(
+  runner: SqlRunner,
+  patient: { id: number; phoneE164?: string | null; phoneSharedWithPatientId?: number | null; phoneSharedRelation?: string | null },
+): Promise<{
+  with: { id: number; name: string; patientCode: string | null; branchId: number | null; relation: string | null } | null;
+  usedBy: { id: number; name: string; patientCode: string | null; branchId: number | null; relation: string | null }[];
+}> {
+  const e164 = patient.phoneE164 ?? null;
+  if (!e164) return { with: null, usedBy: [] };
+  const rowsOf = (r: any): any[] => r?.rows ?? (Array.isArray(r) ? r : []);
+  let withRow: any = null;
+  if (patient.phoneSharedWithPatientId) {
+    withRow = rowsOf(await runner.execute(sql`
+      SELECT ap.id, ap.name, ap.patient_code, ap.branch_id FROM patients ap
+       WHERE ap.id = ${patient.phoneSharedWithPatientId} AND ${activePatientSql("ap")} AND ap.phone_e164 = ${e164}
+    `))[0] ?? null;
+  }
+  const usedBy = rowsOf(await runner.execute(sql`
+    SELECT ap.id, ap.name, ap.patient_code, ap.branch_id, ap.phone_shared_relation FROM patients ap
+     WHERE ap.phone_shared_with_patient_id = ${patient.id} AND ${activePatientSql("ap")} AND ap.phone_e164 = ${e164}
+     ORDER BY ap.id
+  `));
+  const shape = (r: any, relation: string | null) => ({
+    id: Number(r.id), name: String(r.name ?? ""), patientCode: r.patient_code ?? null,
+    branchId: r.branch_id == null ? null : Number(r.branch_id), relation,
+  });
+  return {
+    with: withRow ? shape(withRow, patient.phoneSharedRelation ?? null) : null,
+    usedBy: usedBy.map((r) => shape(r, r.phone_shared_relation ?? null)),
+  };
 }

@@ -5,6 +5,9 @@ import { insertPatientSchema, type Branch } from "@shared/schema";
 import { SUPPORT_SPECS } from "@shared/case_fields";
 import { normalizePhone } from "@shared/phone";
 import { useCreatePatient } from "@/hooks/use-patients";
+import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
+import { phoneConflictOf } from "@/lib/phone_conflict";
+import type { PhoneHolder } from "@shared/shared_phone";
 import { useToast } from "@/hooks/use-toast";
 import { amputationSiteOf } from "@/components/AmputationBuilder";
 import { checkRequiredPatientData, checkAmputationParts } from "@shared/patient_required";
@@ -567,8 +570,19 @@ function PatientRegistrationForm({ physioOnly = false, onBack }: { physioOnly?: 
       //  صراحةً (§4.bu) — لا موافقةَ واتساب عند التسجيل؛ الخادمُ يرفعها إن غاب الحقل.
       whatsappNotificationsEnabled: false,
     };
+    submitPatient(submitData);
+  }
+
+  //  ══ **الرقمُ المسجَّل لغيره ⟵ سؤالٌ لا رفض** (§4.ef) ══ النافذةُ تحمل ما أُرسل، و«قريب يستعمل الرقم نفسه» يعيده بالتأكيد.
+  const [phoneConflict, setPhoneConflict] = useState<{ holders: PhoneHolder[]; data: any } | null>(null);
+  function submitPatient(submitData: any) {
     mutate(submitData as any, {
+      onError: (e) => {
+        const holders = phoneConflictOf(e);
+        if (holders) setPhoneConflict({ holders, data: submitData });
+      },
       onSuccess: (data) => {
+        setPhoneConflict(null);
         //  ══ **«ما سبب حضور المريض اليوم؟» — يُطرَح فور الحفظ** ══════════
         //  علمٌ أحاديّ الاستعمال في `sessionStorage`: `PatientServiceLauncher`
         //  يقرؤه ويمسحه عند فتح صفحة هذا المريض بعينه، فيفتح مُوجِّهاً
@@ -586,6 +600,9 @@ function PatientRegistrationForm({ physioOnly = false, onBack }: { physioOnly?: 
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 md:space-y-6 page-transition py-2 md:py-6">
+      <SharedPhoneDialog holders={phoneConflict?.holders ?? null} mode="create" pending={isPending}
+        onCancel={() => setPhoneConflict(null)}
+        onConfirm={(c) => phoneConflict && submitPatient({ ...phoneConflict.data, sharedPhone: c })} />
       <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
         <Button variant="ghost" onClick={() => (onBack ? onBack() : setLocation("/patients"))} className="p-2 shrink-0">
           <BackArrow className="w-5 h-5 text-slate-500" />

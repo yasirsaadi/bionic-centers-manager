@@ -14,6 +14,8 @@ export const PATIENT_FIELD_LABELS: Record<string, string> = {
   whatsappNotificationsEnabled: "إشعارات واتساب", notes: "الملاحظات",
   governorate: "المحافظة", injuryDateStatus: "تاريخ الإصابة (منذ الولادة / غير معروف)",
   presentingComplaint: "سبب المراجعة",
+  //  الرقمُ المشترك (§4.ef).
+  phoneSharedWithPatientId: "الرقم مشترك مع الملفّ", phoneSharedRelation: "صلة صاحب الرقم",
 };
 
 /** لا تُعدّ تغييراً: أختامٌ يكتبها الخادم. */

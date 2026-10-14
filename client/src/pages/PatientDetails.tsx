@@ -30,6 +30,7 @@ import { pickPhysioSessions, perVisitSessionMode } from "./physio_sessions_sourc
 import { physioSessionRows } from "@shared/physio_sheet_view";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
+import { sharedPhoneLabel } from "@shared/shared_phone";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -977,6 +978,28 @@ export default function PatientDetails() {
                 <>
                   <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>
                   <span className="flex items-center gap-1"><Phone className="w-3 h-3 md:w-4 md:h-4" /> {patient.phone}</span>
+                  {/*  **الرقمُ المشترك** (§4.ef): «مشترك مع: أحمد (زوج)» على ملفّ القريب، و«يستعمله أيضاً» على ملفّ صاحب الرقم —
+                      والاسمُ يفتح ملفَّه لمن يصله. ويظهر ما دام الرقمُ واحداً فعلاً (الخادمُ يقرّر). */}
+                  {(patient as any).phoneSharedWith && (() => {
+                    const w = (patient as any).phoneSharedWith;
+                    const label = sharedPhoneLabel(w.name, w.relation);
+                    return (
+                      <span className="flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 border border-sky-200 px-1.5 py-0.5 text-[11px] md:text-xs" data-testid="phone-shared-with">
+                        {w.reachable ? <Link href={`/patients/${w.id}`} className="underline underline-offset-2">{label}</Link> : label}
+                      </span>
+                    );
+                  })()}
+                  {((patient as any).phoneSharedBy ?? []).length > 0 && (
+                    <span className="flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 border border-sky-200 px-1.5 py-0.5 text-[11px] md:text-xs" data-testid="phone-shared-by">
+                      يستعمله أيضاً:{" "}
+                      {((patient as any).phoneSharedBy as any[]).map((u, i) => (
+                        <span key={u.id}>
+                          {i > 0 && "، "}
+                          {u.reachable ? <Link href={`/patients/${u.id}`} className="underline underline-offset-2">{u.name}</Link> : u.name}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </>
               )}
               <span className="w-1 h-1 bg-slate-300 rounded-full self-center hidden md:block"></span>

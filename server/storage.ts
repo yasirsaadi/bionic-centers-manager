@@ -49,6 +49,7 @@ import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
 import { assertNameAvailableForRegistration, assertPhoneAvailable } from "./patients/duplicate_guard";
+import type { SharedPhoneConfirm } from "@shared/shared_phone";
 //  واتساب: جهةُ الاتصال وترحيبُ التسجيل — **قاعدةُ بياناتٍ فقط، ولا شبكة**.
 import {
   registerWhatsappWelcome, ensureWhatsappContact, revokeWhatsappContacts,
@@ -2204,7 +2205,8 @@ export class DatabaseStorage implements IStorage {
    */
   async createPatient(
     insertPatient: InsertPatient,
-    opts?: { onPhase?: (phase: string) => void },
+    //  `sharedPhone` (§4.ef): تأكيدُ الاستقبال أنّ الرقمَ رقمُ قريبٍ له ملفّ — يُقبل تحت قفل الرقم إن كان ذاك الملفُّ يحمله فعلاً.
+    opts?: { onPhase?: (phase: string) => void; sharedPhone?: SharedPhoneConfirm | null },
   ): Promise<Patient> {
     const { registrationDate, ...patientData } = insertPatient as InsertPatient & { registrationDate?: string | null };
 
@@ -2216,6 +2218,9 @@ export class DatabaseStorage implements IStorage {
     // لا يمكن أن يلتقيا على رمز، ويجعل قيمةً ملفَّقة في جسم الطلب بلا أثر
     // حتى لو تجاوزت عقدَ zod. نفس نمط الأعمدة المشتقّة من الهاتف تحته.
     delete valuesToInsert.patientCode;
+    //  والرقمُ المشترك (§4.ef) لا يُكتب من الجسم — يضعه فحصُ الرقم أدناه وحده.
+    delete valuesToInsert.phoneSharedWithPatientId;
+    delete valuesToInsert.phoneSharedRelation;
 
     // ══ صدقُ التسجيل (تصحيحٌ معماريّ) — التسجيلُ بلا كلفةٍ دائماً ═══════
     // نفسُ نمط `patientCode` أعلاه بالضبط: قيمةٌ يرسلها المنادي — حاضراً
@@ -2288,7 +2293,13 @@ export class DatabaseStorage implements IStorage {
       //  وحده). الشرحُ الكامل في `patients/duplicate_guard.ts`، القسم ٣.
       await assertNameAvailableForRegistration(tx, valuesToInsert.name);
       if (valuesToInsert.phoneE164) {
-        await assertPhoneAvailable(tx, valuesToInsert.phoneE164, null);
+        //  **ورقمُ قريبٍ مؤكَّد يمرّ** (§4.ef): «قريب يستعمل الرقم نفسه» في نافذة الاستقبال — والملفُّ المؤكَّد عليه يُحفظ مع صلته.
+        const { sharedWithPatientId } = await assertPhoneAvailable(tx, valuesToInsert.phoneE164, null,
+          { sharedWithPatientId: opts?.sharedPhone?.withPatientId ?? null });
+        if (sharedWithPatientId !== null) {
+          valuesToInsert.phoneSharedWithPatientId = sharedWithPatientId;
+          valuesToInsert.phoneSharedRelation = opts?.sharedPhone?.relation ?? null;
+        }
       }
 
       const [row] = await tx.insert(patients).values(valuesToInsert).returning();
@@ -2371,6 +2382,8 @@ export class DatabaseStorage implements IStorage {
     //  **فرعُ قيد الكلفة** (ترحيل ٠٨٠) — «الفرعُ الذي حدثت فيه الحركة».
     //  غيابُه يُبقي السلوكَ القائم بحرفه: فرعُ تسجيل المريض.
     costBranchId: number | null = null,
+    //  تأكيدُ الرقم المشترك (§4.ef) — حين يتغيّر الرقمُ إلى رقمٍ يحمله قريبٌ له ملفّ.
+    sharedPhone: SharedPhoneConfirm | null = null,
   ): Promise<(Patient & { caseCostSync?: "synced" | "ambiguous" | null }) | undefined> {
     // ══ تعديلٌ يمسّ وجهةَ واتساب ⟶ **وحدةٌ دائمة واحدة** ═══════════════
     //
@@ -2390,7 +2403,7 @@ export class DatabaseStorage implements IStorage {
       //  `patient_cases.cost` يجب أن تنجحا معاً أو تتراجعا معاً.
       || (syncSoleCaseCost && (updates as any).totalCost !== undefined))) {
       return await db.transaction((t) =>
-        this.updatePatient(id, updates, costSource, costCaseId, t, syncSoleCaseCost));
+        this.updatePatient(id, updates, costSource, costCaseId, t, syncSoleCaseCost, costBranchId, sharedPhone));
     }
     const h = tx ?? db;
     // The generic patch is one of the ways total_cost moves (management edit,
@@ -2424,6 +2437,9 @@ export class DatabaseStorage implements IStorage {
     delete patch.phoneE164;
     delete patch.phoneCountry;
     delete patch.phoneStatus;
+    //  والرقمُ المشترك (§4.ef) لا يُكتب من الجسم — يضعه فحصُ الرقم أدناه وحده.
+    delete patch.phoneSharedWithPatientId;
+    delete patch.phoneSharedRelation;
     if ((updates as any).phone !== undefined) {
       // The stored country is the normalization hint, so re-typing a Turkish
       // number on a Turkish file still resolves as Turkish.
@@ -2453,7 +2469,16 @@ export class DatabaseStorage implements IStorage {
       //  الفعّالين فقط؛ فحصُ السلّة لا يحتاج استثناءً — صفٌّ فعّالٌ لا يظهر
       //  بين المحذوفين أبداً.
       if (n.e164 && n.e164 !== existing?.phoneE164) {
-        await assertPhoneAvailable(h, n.e164, id, { checkTrash: true });
+        //  **والرقمُ الجديد مشتركٌ مؤكَّد أو لا اشتراك** (§4.ef): رقمٌ يحمله قريبٌ أُكّد عليه يُحفظ بصلته، ورقمٌ لا يحمله غيرُه يمحو
+        //  اشتراكاً قديماً — فلا يبقى «مشترك مع أحمد» على رقمٍ لم يعد رقمَه.
+        const { sharedWithPatientId } = await assertPhoneAvailable(h, n.e164, id,
+          { checkTrash: true, sharedWithPatientId: sharedPhone?.withPatientId ?? null });
+        patch.phoneSharedWithPatientId = sharedWithPatientId;
+        patch.phoneSharedRelation = sharedWithPatientId !== null ? (sharedPhone?.relation ?? null) : null;
+      } else if (!n.e164) {
+        //  الرقمُ مُسح ⟵ لا اشتراك.
+        patch.phoneSharedWithPatientId = null;
+        patch.phoneSharedRelation = null;
       }
     }
 
@@ -3741,6 +3766,13 @@ export class DatabaseStorage implements IStorage {
       //  تكتب `treatment_type` من نصّ الخطة، والرقعةُ أعلاه قد تكتبه من
       //  المصدر — فالترتيبُ يجعل نصَّ الخطة المجموعة هو الأخير.
       await this.carryPhysioPlanOnMergeTx(tx, sourceId, targetId, movedPaymentIds);
+
+      //  ══ **الرقمُ المشترك يتبع الدمج** (§4.ef) ══ مَن سُجّل برقمٍ مشترك مع المصدر صار مشتركاً مع الهدف — وإلّا أسقط حذفُ المصدر
+      //  الربطَ (`ON DELETE SET NULL`). والهدفُ نفسُه إن كان مشتركاً مع المصدر فهما الآن ملفٌّ واحد: لا اشتراكَ مع نفسه.
+      await tx.update(patients).set({ phoneSharedWithPatientId: targetId })
+        .where(eq(patients.phoneSharedWithPatientId, sourceId));
+      await tx.update(patients).set({ phoneSharedWithPatientId: null, phoneSharedRelation: null })
+        .where(and(eq(patients.id, targetId), eq(patients.phoneSharedWithPatientId, targetId)));
 
       await tx.delete(patients).where(eq(patients.id, sourceId));
       return { patient, moved };

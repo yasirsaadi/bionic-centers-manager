@@ -45,6 +45,10 @@ export const patients = pgTable("patients", {
   phoneE164: text("phone_e164"),       // +9647701234567 — مفتاح المطابقة وكشف التكرار
   phoneCountry: text("phone_country"), // IQ | TR | ISO أخرى | INTL
   phoneStatus: text("phone_status"),   // ok | needs_review
+  // ترحيل ١٤٧ (§4.ef): رقمٌ مشترك مع قريبٍ له ملفّ — الملفُّ الذي أُكّد عليه الرقم وصلتُه بهذا المريض. يكتبهما الخادمُ وحده بعد فحص الرقم
+  // (`duplicate_guard.ts`)، وتُنزعان من كلّ طلبٍ يرسلهما مباشرة. والمفتاحُ `ON DELETE SET NULL` في الترحيل.
+  phoneSharedWithPatientId: integer("phone_shared_with_patient_id"),
+  phoneSharedRelation: text("phone_shared_relation"),
 
   // ══ إشعاراتُ واتساب — قرارٌ صغير عند التسجيل (ترحيل ٠٦٢) ═════════════
   // **الافتراضُ في القاعدة `FALSE` عمداً**، والنموذجُ الجديد يرسل `true`.
@@ -1697,6 +1701,8 @@ export const insertPatientSchema = createInsertSchema(patients).omit({
   deletedPendingJson: true, deletedNeededAdmin: true,
   //  مفتاحُ بطاقة المريض بابُه الوحيد نقطتُه (§4.bv) — لا يُكتب من التسجيل.
   patientCardEnabled: true, patientCardEnabledAt: true, patientCardEnabledBy: true,
+  //  الرقمُ المشترك (§4.ef) يكتبه الخادمُ وحده بعد فحص الرقم — لا من جسم الطلب.
+  phoneSharedWithPatientId: true, phoneSharedRelation: true,
 }).extend({
   registrationDate: z.string().optional().nullable(), // تاريخ التسجيل (اختياري - للتسجيل بأثر رجعي)
 });
