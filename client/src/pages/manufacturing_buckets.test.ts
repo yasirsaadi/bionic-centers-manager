@@ -230,7 +230,10 @@ check(!/orders\.filter\(\(o\)\s*=>\s*o\.isOverdue/.test(pageCode),
   "ز.٣ **ولا شرطَ تصنيفٍ مكتوبٌ في الصفحة** ينحرف عنه يوماً");
 check(pageCode.includes("ordersInBucket(orders, bucket, nowMonth, nowDay)"),
   "ز.٤ والقائمةُ المعروضةُ هي المُرشَّحة");
-check(pageCode.includes("visibleOrders.map((o) => <OrderRow"),
+//  ومنذ §4.ee تُرسم بعنوان الحرف فوق كلّ مجموعة («حسب الاسم») — فالشكلُ صار دالّةً بجسم، والقاعدةُ هي هي:
+//  الصفُّ من `visibleOrders`، ولا `orders.map` يرسم صفّاً.
+check(/visibleOrders\.map\(\(o(?:, i)?\) =>[\s\S]{0,900}?<OrderRow o=\{o\}/.test(pageCode)
+  && !/\borders\.map\([\s\S]{0,300}?<OrderRow/.test(pageCode),
   "ز.٥ **والصفوفُ تُرسَم من المُرشَّحة لا من كلّ الأوامر**");
 check(pageCode.includes("visibleOrders.length === 0"),
   "ز.٦ ورسالةُ الفراغ تقيس المعروض");
