@@ -36,6 +36,9 @@ export interface DeviceSeed {
   code: string; evidence: Ev; minutes?: number; params?: Record<string, string>; parameters?: Bi; note?: Bi;
   /** «استعمالُ المركز» (ترحيل ١٢٢) — اختياريّ؛ وبلا قيمةٍ يُشتقّ من درجة الدليل. */
   centreUse?: CentreUse;
+  /** **الموعدُ الدوريّ** (ترحيل ١٣١، §4.dn) — كلَّ كم يوماً وكم مرّةً في الدورة؛ اختياريّ. والسطرُ يُحذف ويُعاد إدراجُه، فبلا هذين يضيع
+   *  الموعدُ الأسبوعيّ الذي كتبه ١٣١ لسطر الموجات الصادمة في بروتوكولٍ مزروع (ترحيل ١٤٣ أوّلُ مَن احتاجه). */
+  everyDays?: number; times?: number;
 }
 export interface RefSeed { title: string; org: string; year: number; url?: string }
 export interface ProtocolContentSeed {
@@ -95,18 +98,21 @@ export function protocolContentSql(p: ProtocolContentSeed): string {
 
   //  «استعمالُ المركز» عمودٌ يظهر حين يُعطى لجهازٍ واحدٍ على الأقلّ — وبلا قيمةٍ لجهازٍ يُكتب `NULL` (يُشتقّ من الدليل).
   const withUse = p.devices.some((d) => d.centreUse !== undefined);
+  //  والموعدُ الدوريّ كذلك: عمودان يظهران حين يحملهما جهازٌ واحدٌ على الأقلّ.
+  const withSchedule = p.devices.some((d) => d.everyDays !== undefined || d.times !== undefined);
   const deviceRows = p.devices.map((d, i) => `(${[
     lit(d.code), lit(d.evidence), `${lit(d.parameters?.[0])}::text`, `${lit(d.parameters?.[1])}::text`, `${num(d.minutes)}::int`,
     `${lit(d.note?.[0])}::text`, `${lit(d.note?.[1])}::text`, `${lit(JSON.stringify(d.params ?? {}))}::jsonb`, String(i),
     ...(withUse ? [`${lit(d.centreUse)}::text`] : []),
+    ...(withSchedule ? [`${num(d.everyDays)}::int`, `${num(d.times)}::int`] : []),
   ].join(", ")})`).join(",\n    ");
   const devices = `DELETE FROM physio_protocol_devices WHERE protocol_id IN (SELECT id FROM physio_protocols WHERE code = ${code} AND updated_by IS NULL);
-INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, parameters, parameters_en, minutes, note, note_en, params, display_order${withUse ? ", centre_use" : ""})
-SELECT p.id, d.id, v.evidence, v.parameters, v.parameters_en, v.minutes, v.note, v.note_en, v.params, v.ord${withUse ? ", v.centre_use" : ""}
+INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, parameters, parameters_en, minutes, note, note_en, params, display_order${withUse ? ", centre_use" : ""}${withSchedule ? ", every_days, times" : ""})
+SELECT p.id, d.id, v.evidence, v.parameters, v.parameters_en, v.minutes, v.note, v.note_en, v.params, v.ord${withUse ? ", v.centre_use" : ""}${withSchedule ? ", v.every_days, v.times" : ""}
 FROM physio_protocols p
 CROSS JOIN (VALUES
     ${deviceRows}
-  ) AS v(code, evidence, parameters, parameters_en, minutes, note, note_en, params, ord${withUse ? ", centre_use" : ""})
+  ) AS v(code, evidence, parameters, parameters_en, minutes, note, note_en, params, ord${withUse ? ", centre_use" : ""}${withSchedule ? ", every_days, times" : ""})
 JOIN devices d ON d.code = v.code
 WHERE p.code = ${code} AND p.updated_by IS NULL;`;
 
