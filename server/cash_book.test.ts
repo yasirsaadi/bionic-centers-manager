@@ -468,6 +468,19 @@ async function main() {
     same("س٥. **سحبُ المالك ينقص القاصةَ وحدها** — لا صفَّ في `expenses` ولا يتغيّر نقدُ اليوم، ويظهر في المربّع",
       [w1.status, pick(r2.reserves.materials), r2.totals, await nExp(), r2.reserves.materials.withdrawals.map((x: any) => [x.amount, x.note])],
       [200, [200_000, 0, 50_000, 150_000], r1.totals, expBeforeW, [[50_000, "دفعة المورّد"]]]);
+    //  **ملاحظةُ السحب «أين ذهب المبلغ»** (طلبُ المالك ٢٠٢٦-١٠-١٤، §4.dj التكملة): اختيارية، والمالكُ يكتبها لسحبٍ سُجّل بلاها أو يعدّلها أو يمسحها —
+    //  والمبلغُ لا يتغيّر بها، والمحاسبُ لا يمسّها.
+    const wNote = (sx: any, note: unknown) => http("PATCH", `/api/cash-book/rows/entry/${w1.body?.id}`, sx, { note });
+    const accNote = await wNote(S.acc, "محاولة");
+    const fixNote = await wNote(S.admin, "  مواد من المورّد — دفعة ١  ");
+    const afterFix = (await rsv()).reserves.materials;
+    const clrNote = await wNote(S.admin, "");
+    const afterClr = (await rsv()).reserves.materials;
+    same("س٥ب. **ملاحظةُ السحب يكتبها المالكُ بعده ويعدّلها ويمسحها** — المحاسبُ ٤٠٣ ولا تتغيّر، والمبلغُ والمتبقي كما هما، والمسحُ يُبقي السحبَ بلا ملاحظة",
+      [accNote.status, fixNote.status, afterFix.withdrawals.map((x: any) => [x.amount, x.note]), pick(afterFix),
+       clrNote.status, afterClr.withdrawals.map((x: any) => [x.amount, x.note]), pick(afterClr)],
+      [403, 200, [[50_000, "مواد من المورّد — دفعة ١"]], [200_000, 0, 50_000, 150_000], 200, [[50_000, ""]], [200_000, 0, 50_000, 150_000]]);
+    await wNote(S.admin, "دفعة المورّد");
     const w2 = await row(S.admin, { branchId: BGD, kind: "payroll_withdrawn", amount: 150_000 });
     same("س٦. **وسحبُ أكثرَ ممّا عُزل لا يُمنع** — يصير المتبقي سالباً (يظهر أحمر)", [w2.status, (await rsv()).reserves.payroll.remaining], [200, -50_000]);
     const setR = (sx: any, body: any) => http("POST", "/api/cash-book/reserves", sx, { branchId: BGD, book: "devices", ...body });

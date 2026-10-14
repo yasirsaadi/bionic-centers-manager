@@ -548,15 +548,7 @@ function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
       {sheet.isAdmin && box.withdrawals.length > 0 && (
         <ul className="text-xs text-muted-foreground space-y-0.5" data-testid={`reserve-${k}-withdrawals`}>
           {box.withdrawals.map((w) => (
-            <li key={w.id} className="flex items-center gap-1">
-              <span>سحب <span className="tabular-nums" dir="ltr">{fmt(w.amount)}</span>{w.note ? ` — ${w.note}` : ""}</span>
-              {sheet.canWrite && (
-                <button className="p-0.5 text-slate-400 hover:text-red-700" aria-label="حذف السحب"
-                  onClick={() => write.mutate({ method: "DELETE", url: `/api/cash-book/rows/entry/${w.id}` })}>
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </li>
+            <WithdrawalLine key={w.id} k={k} w={w} canWrite={sheet.canWrite} write={write} />
           ))}
         </ul>
       )}
@@ -569,14 +561,69 @@ function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
   );
 }
 
+/** مثالُ ملاحظة السحب لكلّ قاصة — «أين ذهب المبلغ». */
+const WITHDRAW_NOTE_HINT: Record<ReserveKey, string> = { materials: "مثلاً: مواد من المورّد", payroll: "مثلاً: رواتب شهر ٩" };
+
+/**
+ * **سطرُ سحبٍ في المربّع** — المبلغُ وملاحظتُه، وللمالك قلمٌ يكتب الملاحظةَ أو يعدّلها (سحبٌ سُجّل بلا ملاحظة يأخذها بعده — §4.dj التكملة) وزرُّ حذف.
+ */
+function WithdrawalLine({ k, w, canWrite, write }: { k: ReserveKey; w: { id: number; amount: number; note: string }; canWrite: boolean; write: any }) {
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState(w.note);
+  //  **الخانةُ سطرٌ كامل** — المربّعُ ضيّق، وخانةٌ بجانب المبلغ والزرّين كانت ٢٦ بكسلاً فيقف فيها المؤشّرُ أوّلَ النصّ مع العربية.
+  if (editing) {
+    return (
+      <li className="grid gap-1 rounded border bg-white p-1.5" data-testid={`reserve-${k}-withdrawal-${w.id}`}>
+        <span>سحب <span className="tabular-nums" dir="ltr">{fmt(w.amount)}</span> — أين ذهب المبلغ؟</span>
+        <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={WITHDRAW_NOTE_HINT[k]} className="h-8 text-sm" autoFocus
+          data-testid={`reserve-${k}-withdrawal-note-input-${w.id}`} />
+        <div className="flex gap-1">
+          <Button size="sm" variant="outline" className="h-7 px-3 text-xs" disabled={write.isPending} data-testid={`reserve-${k}-withdrawal-note-save-${w.id}`}
+            onClick={() => write.mutate({ method: "PATCH", url: `/api/cash-book/rows/entry/${w.id}`, body: { note } }, { onSuccess: () => setEditing(false) })}>
+            حفظ
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setNote(w.note); setEditing(false); }}>إلغاء</Button>
+        </div>
+      </li>
+    );
+  }
+  return (
+    <li className="flex items-center gap-1" data-testid={`reserve-${k}-withdrawal-${w.id}`}>
+      <span>سحب <span className="tabular-nums" dir="ltr">{fmt(w.amount)}</span>{w.note ? ` — ${w.note}` : ""}</span>
+      {canWrite && (
+        <>
+          <button className="p-0.5 text-slate-400 hover:text-slate-900" aria-label={w.note ? "تعديل ملاحظة السحب" : "اكتب أين ذهب المبلغ"}
+            title={w.note ? "تعديل ملاحظة السحب" : "اكتب أين ذهب المبلغ"} onClick={() => { setNote(w.note); setEditing(true); }}
+            data-testid={`reserve-${k}-withdrawal-note-edit-${w.id}`}>
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button className="p-0.5 text-slate-400 hover:text-red-700" aria-label="حذف السحب"
+            onClick={() => write.mutate({ method: "DELETE", url: `/api/cash-book/rows/entry/${w.id}` })}>
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </>
+      )}
+    </li>
+  );
+}
+
+/**
+ * **سحبُ المالك من القاصة** — المبلغُ **وملاحظةٌ اختيارية «أين ذهب المبلغ»** (طلبُ المالك ٢٠٢٦-١٠-١٤: «إضافة كتابة ملاحظة وتكون غالباً بسيطة لمعرفة
+ * أين ذهبت الأموال» — §4.dj التكملة). والخادمُ يحفظها منذ ترحيل ١٢٧ (`cash_book_entries.note`)، ويقرؤها كشفُ حركات المساعد.
+ */
 function WithdrawReserve({ k, branchId, book, day, write }: { k: ReserveKey; branchId: number; book: Book; day: string; write: any }) {
   const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
   return (
-    <div className="flex gap-2 items-end pt-2 border-t">
-      <label className="grid gap-1 text-xs flex-1">سحبتُ من القاصة<AmountInput id={`reserve-${k}-withdraw`} value={amount} onChange={setAmount} /></label>
-      <Button size="sm" variant="outline" disabled={!amount} data-testid={`reserve-${k}-withdraw-save`}
-        onClick={() => write.mutate({ method: "POST", url: "/api/cash-book/rows", body: { branchId, book, date: day, kind: RESERVE_WITHDRAW_KIND[k], amount: Number(amount) } },
-          { onSuccess: () => setAmount("") })}>
+    <div className="grid gap-2 pt-2 border-t">
+      <label className="grid gap-1 text-xs">سحبتُ من القاصة<AmountInput id={`reserve-${k}-withdraw`} value={amount} onChange={setAmount} /></label>
+      <label className="grid gap-1 text-xs">أين ذهب المبلغ؟ (اختياري)
+        <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={WITHDRAW_NOTE_HINT[k]} data-testid={`reserve-${k}-withdraw-note`} />
+      </label>
+      <Button size="sm" variant="outline" className="justify-self-start" disabled={!amount || write.isPending} data-testid={`reserve-${k}-withdraw-save`}
+        onClick={() => write.mutate({ method: "POST", url: "/api/cash-book/rows",
+          body: { branchId, book, date: day, kind: RESERVE_WITHDRAW_KIND[k], amount: Number(amount), ...(note.trim() ? { note: note.trim() } : {}) } },
+          { onSuccess: () => { setAmount(""); setNote(""); } })}>
         سجّل السحب
       </Button>
     </div>
