@@ -45,6 +45,7 @@ import * as m144 from "./migrations/144_physio_heel_image_captions";
 import * as m143 from "./migrations/143_physio_plantar_heel_detail";
 import * as m145 from "./migrations/145_physio_sciatica_detail";
 import * as m149 from "./migrations/149_physio_frozen_shoulder_detail";
+import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -401,6 +402,38 @@ async function main() {
   await q(m144.sql);
   same("ض.٥ **وحين يعود الوصفُ كما زرعه ١٤٣ يكتب الترحيلُ الجديدَ** (لباقي الحزمة)",
     hCapOf(await hImagesOf())["short-foot-1"], [m144.CAPTIONS["short-foot-1"].ar, m144.CAPTIONS["short-foot-1"].en]);
+
+  // ══ ط. مسافةُ اليد خلف الظهر في الكتف المتجمّد بإشارة، والأكثرُ أفضل (ترحيل ١٥٠، §4.eg التكملة — مراجعةُ Codex) ══
+  console.log("\n── ط. مسافةُ اليد خلف الظهر بإشارة ──");
+  const T = m150.TEXTS;
+  const occ = (s: string, x: string) => s.split(x).length - 1;
+  same("ط.١ **كلُّ تصحيحٍ يجد نصَّه مرّةً واحدة** فيما كتبه ١٤٩ فيتغيّر، والقديمُ («الأقلّ أفضل») خرج، والجديدُ في حدّ المحرّر بلا «**»",
+    [(Object.keys(T) as (keyof typeof T)[]).map((k) => [occ(T[k][0], m150.FIXES[k][0]), T[k][0] !== T[k][1], occ(T[k][1], m150.FIXES[k][0]), occ(T[k][1], m150.FIXES[k][1])]),
+      T.assessmentAr[1].length <= PROTOCOL_TEXT_MAX && T.assessmentEn[1].length <= PROTOCOL_TEXT_MAX, Object.values(T).some(([, b]) => b.includes("**")),
+      [T.assessmentAr[0], T.assessmentEn[0], T.checklistAr[0], T.checklistEn[0]]],
+    [[[1, true, 0, 1], [1, true, 0, 1], [1, true, 0, 1], [1, true, 0, 1]], true, false,
+      [m149.PROTOCOL.assessment[0], m149.PROTOCOL.assessment[1], m149.CHECKLIST.find((i) => i.key === "measures-add")!.ar, m149.CHECKLIST.find((i) => i.key === "measures-add")!.en]]);
+  const fsId = Number((await q(`SELECT id FROM physio_protocols WHERE code = $1`, [m149.PROTOCOL.code])).rows[0]?.id);
+  await q(m149.sql); //  البندُ والنصوصُ كما زرعها ١٤٩ — والقالبُ قد يحمل ١٥٠ مطبَّقاً.
+  await q(`UPDATE physio_protocols SET assessment = $2, assessment_en = $3 WHERE id = $1`, [fsId, T.assessmentAr[0], T.assessmentEn[0]]);
+  await q(`UPDATE physio_protocol_checklist SET text_ar = $2, text_en = $3, done_at = now(), done_by_name = 'سليم' WHERE protocol_id = $1 AND item_key = 'measures-add'`,
+    [fsId, T.checklistAr[0], T.checklistEn[0]]);
+  //  سليمٌ عدّل «التقييم» بالإنكليزية قبل الترحيل — يبقى نصُّه.
+  await q(`UPDATE physio_protocols SET assessment_en = 'Saleem''s text' WHERE id = $1`, [fsId]);
+  const fsState = async () => {
+    const p = (await q(`SELECT assessment, assessment_en, updated_at::text AS t FROM physio_protocols WHERE id = $1`, [fsId])).rows[0];
+    const c = (await q(`SELECT text_ar, text_en, done_at IS NOT NULL AS done FROM physio_protocol_checklist WHERE protocol_id = $1 AND item_key = 'measures-add'`, [fsId])).rows[0];
+    return { ar: p?.assessment, en: p?.assessment_en, t: p?.t, cAr: c?.text_ar, cEn: c?.text_en, done: c?.done };
+  };
+  await q(m150.sql);
+  const fs1 = await fsState();
+  same("ط.٢ **يتصحّح «التقييم» العربيّ وبندُ المقاييس باللغتين، والإنكليزيُّ الذي عدّله المشرفُ يبقى، والبندُ المعلَّم «تمّ» يبقى معلَّماً**",
+    [fs1.ar, fs1.en, fs1.cAr, fs1.cEn, fs1.done], [T.assessmentAr[1], "Saleem's text", T.checklistAr[1], T.checklistEn[1], true]);
+  await q(m150.sql);
+  same("ط.٣ **والإعادةُ لا تفعل شيئاً** — لا نصَّ ولا وقتَ تعديل", await fsState(), fs1);
+  await q(`UPDATE physio_protocols SET assessment_en = $2 WHERE id = $1`, [fsId, T.assessmentEn[0]]);
+  await q(m150.sql);
+  same("ط.٤ **وحين يعود النصُّ كما زرعه ١٤٩ يكتب الترحيلُ الجديدَ**", (await fsState()).en, T.assessmentEn[1]);
 
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
