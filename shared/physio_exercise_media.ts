@@ -228,6 +228,17 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "prayer-progression-hip-1": { file: "prayer-progression-hip-1.webp" },
   "pelvic-drop-step-1": { file: "pelvic-drop-step-1.webp", credit: "Run Mechanics" },
   "clamshell-1": { file: "clamshell-1.webp" },
+  //  **الدفعةُ الثامنة — ألمُ الكعب الأخمصيّ: الستّ كلُّها** (٢٠٢٦-١٠-١٤، §4.eb التكملة): المجلّدُ نفسُه، ملفٌّ لكلّ خانة طابق Drive بايتاً ببايت، ولا تكرارَ
+  //  مع المسجَّلة في البصمة. **وما قُصّ**: من «شدّ اللفافة» العنوانُ الإنكليزيّ؛ ومن «ثني الأصابع بالمنشفة» عمودُ التعليمات الإنكليزية وتعليقُ كلّ خطوة
+  //  (فبقي الشكلُ الجالس وخطواتُه الثلاث بأرقامها)؛ ومن «القدم القصيرة» النصُّ التشيكيّ كلُّه (فبقي الشكلُ الجالس والقدمُ مرتخيةً فوق القدم مفعَّلةً
+  //  بسهميها)؛ **ومن «الجبيرة الليلية» الشريطُ الإنكليزيّ وقائمةُ الأمراض الدعائية** بجانبها (طُليت بلون الخلفية). **وبقيت حروفُ «التشريط» A–D**:
+  //  تقول ترتيبَ الشرائط هنا، لا كحروف «رفع الحوض».
+  "plantar-fascia-stretch-1": { file: "plantar-fascia-stretch-1.webp" },
+  "heel-raise-towel-high-load-1": { file: "heel-raise-towel-high-load-1.webp" },
+  "towel-toe-curl-1": { file: "towel-toe-curl-1.webp" },
+  "short-foot-1": { file: "short-foot-1.webp" },
+  "low-dye-taping-1": { file: "low-dye-taping-1.webp" },
+  "night-splint-1": { file: "night-splint-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
