@@ -62,6 +62,7 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/returned-charges": "مبالغ مُعادة للتصحيح",
   "/returned-from-doctor": "المُرجَعون من الطبيب",
   "/payment-corrections": "طلبات التصحيح",
+  "/installments": "الأقساط",
   "/daily-review": "المراجعة اليومية",
   "/patient-trash": "المحذوفات",
   "/my-exams": "معايناتي",

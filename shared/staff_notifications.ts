@@ -26,6 +26,8 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "ready_for_fitting", label: "طرف جاهز للتركيب — يُستدعى المريض", group: "الاستقبال ومدير الفرع", scope: "branch" },
   { key: "delivered", label: "طرف سُلِّم", group: "الاستقبال ومدير الفرع", scope: "branch" },
   { key: "followups_digest", label: "تذكير صباحي بالمتابعات المستحقّة اليوم", group: "الاستقبال ومدير الفرع", scope: "branch", digest: true },
+  //  قسطٌ مستحقّ (§4.ea): قبل موعده بيوم وفي يومه بالساعة التي اختارها الموظّف — للاستقبال ومدير الفرع (قرارُ المالك).
+  { key: "installment_due", label: "قسطٌ مستحقّ غداً أو اليوم — المريض والمبلغ والموعد", group: "الاستقبال ومدير الفرع", scope: "branch" },
   { key: "payment_received", label: "كلّ مبلغ يدخل أيّ فرع — المبلغ والمريض والقسم والفرع", group: "المسؤول", scope: "global" },
   { key: "payment_correction_pending", label: "طلب تصحيح دفعة ينتظر القرار", group: "المسؤول", scope: "global" },
   //  طلبُ تصحيح مصروفٍ أو سطرِ دفتر (§4.ce التكملة) — كان يظهر في الدفتر وحده فلا يعرف به المالكُ إلّا إن فتحه.
@@ -69,7 +71,7 @@ export interface StaffEligibilityUser {
 
 const DOCTOR_EVENTS = ["exam_request"];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
-const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest"];
+const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
 const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "money_correction_pending", "ai_suggestion"];
 const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];

@@ -119,6 +119,8 @@ const MERGE_DECISIONS: Record<string, string> = {
   //  **قبل** حذف حالات المصدر — و`ON DELETE SET NULL` شبكةُ أمانٍ لا خطّة.
   "cost_entries.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف، قبل الحذف",
   "medical_review_requests.case_id": "remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف",
+  //  خطّةُ الأقساط تتبع قسمَها (ترحيل ١٤٢، §4.ea)، وخطّتان نشطتان على القسم نفسِه تردّان الدمجَ قبل أوّل كتابة.
+  "installment_plans.case_id": "remap من حالة المصدر إلى حالة الهدف؛ وخطّتان نشطتان على نوع القسم نفسِه ⟵ رفضُ الدمج",
 
   // ── تشير إلى patient_device_episodes.id (migration 049) ────────────────
   // الحلقة تُنقَل **بمعرّفها** فلا يتغيّر `id`، ولذلك لا يحتاج أيٌّ من هذه

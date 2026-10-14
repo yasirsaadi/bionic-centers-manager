@@ -43,6 +43,8 @@ import {
 import { PlusCircle, Loader2, Calendar, Plus, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useBranchSession } from "@/components/BranchGate";
+import { useQueryClient } from "@tanstack/react-query";
+import { InstallmentFields, emptyInstallmentDraft, draftToPayload, type InstallmentDraft } from "@/components/installments/InstallmentParts";
 import { z } from "zod";
 
 interface PaymentModalProps {
@@ -164,6 +166,9 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
     patientId, deviceService, ["in_manufacturing", "delivered"],
   );
   const [manualCostOverride, setManualCostOverride] = useState(false);
+  //  «هذا المريض أقساط» (§4.ea) — الخطّةُ تُرسَل مع الدفعة وتُفتح في معاملتها نفسِها.
+  const [installment, setInstallment] = useState<InstallmentDraft>(emptyInstallmentDraft);
+  const queryClient = useQueryClient();
   const { mutate, isPending } = useAddPayment();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -290,6 +295,11 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
       else if (deviceTarget) deviceIdentity.deviceEpisodeId = Number(deviceTarget);
     }
 
+    if (installment.enabled && !(installment.monthlyAmount > 0)) {
+      toast({ title: "اكتب القسط الشهري", variant: "destructive" });
+      return;
+    }
+
     mutate({
       ...values,
       date: submissionDate,
@@ -297,6 +307,7 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
       sessionCount,
       ...deviceIdentity,
       treatmentEntries: sendEntries ? validEntries : undefined,
+      ...(installment.enabled ? { installmentPlan: draftToPayload(installment) } : {}),
     } as any, {
       onSuccess: () => {
         setOpen(false);
@@ -304,6 +315,8 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
         setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
         setManualCostOverride(false);
         setDeviceTarget(""); setAskedCase("");
+        if (installment.enabled) queryClient.invalidateQueries({ queryKey: ["/api/installments"] });
+        setInstallment(emptyInstallmentDraft());
       },
     });
   }
@@ -314,9 +327,14 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
       setTreatmentEntries([{ treatmentType: "", sessionCount: 0, cost: 0 }]);
       setManualCostOverride(false);
       setDeviceTarget("");
+      setInstallment(emptyInstallmentDraft());
       form.reset();
     }
   };
+  //  قسمُ هذه الدفعة — للأقساط: جهازٌ محسوم، أو علاجٌ طبيعيّ (محسومٌ أو ببنوده).
+  const installmentCase: string | null = deviceService
+    ?? (resolvedCase === "physiotherapy" || (showTreatmentSection && treatmentEntries.some((e) => e.treatmentType)) ? "physiotherapy" : null);
+  const watchedAmount = Number(form.watch("amount")) || 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -549,6 +567,9 @@ export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, 
                 </FormItem>
               )}
             />
+
+            <InstallmentFields patientId={patientId} caseType={installmentCase} amount={watchedAmount}
+              draft={installment} onChange={setInstallment} />
 
             <Button type="submit" className="w-full h-11 text-base font-semibold" disabled={isPending}>
               {isPending ? (

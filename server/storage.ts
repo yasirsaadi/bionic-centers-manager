@@ -3265,6 +3265,22 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
+      // ══ **خطّتا أقساطٍ نشطتان على القسم نفسه — يُرفض الدمج كلُّه** (ترحيل ١٤٢، §4.ea) ══
+      //  الخطّةُ تتبع قسمَها (`case_id`)، والقسمُ يُطوى في قسم الهدف من نوعه أدناه — و`uq_installment_active_case`
+      //  يقبل خطّةً نشطةً واحدة للقسم. فلا يُختار عن الموظّف أيُّ الجدولين جدولُ المريض: يُلغي المديرُ إحداهما ثمّ يُعاد الدمج.
+      const planClash = await tx.execute<{ case_type: string }>(sql`
+        SELECT DISTINCT sc.case_type FROM installment_plans sp
+          JOIN patient_cases sc ON sc.id = sp.case_id
+         WHERE sp.patient_id = ${sourceId} AND sp.status = 'active'
+           AND EXISTS (
+             SELECT 1 FROM installment_plans tp JOIN patient_cases tc ON tc.id = tp.case_id
+              WHERE tp.patient_id = ${targetId} AND tp.status = 'active' AND tc.case_type = sc.case_type)
+      `);
+      if ((planClash.rows ?? []).length > 0) {
+        throw new Error("لا يمكن الدمج: للملفّين خطّتا أقساطٍ نشطتان على القسم نفسه."
+          + " ألغِ إحداهما من ملفّ المريض ثم أعد الدمج. ولم يتغيّر شيء في الملفّين.");
+      }
+
       // ══ حلقتان مفتوحتان من النوع نفسه — لم تعد مانعةً للدمج (ترحيل ٠٧٣)
       // ═══════════════════════════════════════════════════════════════════
       // كانت هذه النقطة تردّ الدمج لمجرّد أن كلا الملفّين يحمل حلقةً مفتوحة
@@ -3320,6 +3336,8 @@ export class DatabaseStorage implements IStorage {
         //  قبل حذف حالة المصدر، وإلّا سقط الدمجُ على مفتاحها.
         await tx.update(pendingServiceCharges).set({ caseId: tc.id, updatedAt: new Date() })
           .where(eq(pendingServiceCharges.caseId, sc.id));
+        //  وخطّةُ الأقساط تتبع قسمَها (ترحيل ١٤٢) — وتصادمُ خطّتين نشطتين رُدّ قبل أوّل كتابة أعلاه.
+        await tx.update(installmentPlans).set({ caseId: tc.id }).where(eq(installmentPlans.caseId, sc.id));
 
         // ── حلقات الأجهزة (migration 049) ────────────────────────────────
         // الحلقة تشير إلى الحالة، فحذف حالة المصدر أسفلُ يكسر مفتاحها ما لم

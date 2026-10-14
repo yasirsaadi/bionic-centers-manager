@@ -237,6 +237,16 @@ export function templateKindFor(notificationType: string): "welcome" | "update" 
   return notificationType === REGISTRATION_WELCOME ? "welcome" : "update";
 }
 
+/** نصُّ تذكير القسط من حمولته — أو `null` لحمولةٍ ناقصة. */
+function installmentText(p: Record<string, unknown>): string | null {
+  const amount = Number(p.amount);
+  const date = formatPatientDate(p.dueDate);
+  if (!(amount > 0) || !date) return null;
+  const when = p.kind === "before" ? "غداً" : "اليوم";
+  const nth = Number(p.index) > 0 && Number(p.count) > 0 ? ` (القسط ${p.index} من ${p.count})` : "";
+  return `قسطكم الشهري ${Math.round(amount).toLocaleString("en-US")} دينار مستحقّ ${when} ${date}${nth}${p.branchName ? ` — فرع ${p.branchName}` : ""}.`;
+}
+
 /**
  * **نصُّ تلغرام** (§4.bl) — المعلومةُ نفسُها التي يحملها قالبا واتساب، **نصّاً كاملاً** لا معامِلات: تلغرامُ لا قوالبَ فيه.
  * والصياغةُ من هذا الملفّ وحده كي لا يصير للرسائل كتالوجان:
@@ -252,6 +262,12 @@ export function renderTelegramText(
 ): string | null {
   if (!isCanonicalPatientCode(patientCode)) return null;
   const code = String(patientCode);
+  //  **تذكيرُ القسط** (§4.ea) — تلغرامُ وحده يُرسله (لا يُدرَج لواتساب)، فنصُّه هنا لا في قالبَي واتساب؛ وفيه المبلغُ والموعد
+  //  لأنهما معنى التذكير (بطاقةُ المريض نفسُها تُريه دفعاتِه ومتبقّيه — §4.bv)، ولا اسمَ ولا هاتف.
+  if (notificationType === "installment_due") {
+    const t = installmentText(payload ?? {});
+    return t ? `تذكير بخصوص ملفكم رقم ${code}:\n${t}\nهذه رسالة خدمية تخص ملفكم في المركز.` : null;
+  }
   if (templateKindFor(notificationType) === "welcome") {
     if (welcomeParam(payload ?? {}) === null) return null;
     return welcomePreview(code).replace("عبر هذا الرقم", "عبر Telegram");

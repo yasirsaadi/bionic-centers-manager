@@ -60,6 +60,7 @@ const TONE_BY_HREF: Record<string, SidebarTone> = {
   "/cash-book": T.emerald,
   "/dr-box": T.green,
   "/payment-corrections": T.teal,
+  "/installments": T.emerald,
   "/daily-review": T.teal,
   "/statistics": T.emerald,
   //  العلاجُ الطبيعيّ

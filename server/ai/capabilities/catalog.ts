@@ -200,6 +200,14 @@ export const DESCRIBED: Record<string, { d: string; q?: string[]; f?: true }> = 
       + "والسبب، ومَن طلب ومتى، والحالة: pending بانتظار المسؤول، approved اعتُمد وطُبّق، rejected رُفض. المسؤولُ يرى كلَّ الفروع، وغيرُه طلباتِه هو في فرعه.",
     q: ["status", "branchId"], f: true,
   },
+  //  نظامُ الأقساط (§4.ea): القائمةُ بنطاق فرع السائل (والمسؤولُ كلُّها)، وخططُ مريضٍ بعينه.
+  "/api/installments": {
+    d: "خططُ الأقساط النشطة: المريضُ ورمزُه وهاتفُه والقسم والفرع، والمبلغُ الكلّيّ والقسطُ الشهريّ وعددُ الأقساط، والمدفوعُ منها (figures.paidCount/paidToward)، "
+      + "والقسطُ التالي وموعدُه (figures.nextDueDate/nextAmount)، والمتأخّر (figures.overdueCount/overdueAmount)، والكفيل. scope: overdue المتأخّرة (الافتراض)، upcoming المستحقّة خلال سبعة أيام، active كلُّها.",
+    q: ["scope", "branchId"], f: true,
+  },
+  "/api/installments/overdue-count": { d: "عددُ خطط الأقساط المتأخّرة في نطاق السائل." },
+  "/api/patients/:id/installments": { d: "خططُ أقساط مريضٍ بعينه بكلّ حالاتها (نشطة · مكتملة · ملغاة) وأرقامُها، وديونُ أقسامه.", f: true },
   "/api/money-corrections/pending-count": { d: "عددُ طلبات تصحيح المصاريف وسطور دفتر القاصة المعلَّقة (للمسؤول وحده)." },
   "/api/dr-box/summary": {
     d: "أرصدةُ المالك في كلّ الفروع دفعةً واحدة (للمسؤول وحده): لكلّ فرع حسابُه في «كي كارت» (account: بغداد «كي كارت 2009»، ذي قار «كي كارت 4325»، كربلاء «حساب السوبر»)، "
