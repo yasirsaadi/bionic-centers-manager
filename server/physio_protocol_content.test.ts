@@ -41,6 +41,7 @@ import * as m137 from "./migrations/137_physio_upper_limb_amputation_detail";
 import * as m138 from "./migrations/138_physio_tka_detail";
 import * as m140 from "./migrations/140_physio_tha_detail";
 import * as m141 from "./migrations/141_physio_tha_image_captions";
+import * as m144 from "./migrations/144_physio_heel_image_captions";
 import * as m143 from "./migrations/143_physio_plantar_heel_detail";
 
 let failures = 0;
@@ -355,6 +356,48 @@ async function main() {
   same("ص.٥ **وحين يعود الوصفُ كما زرعه ١٤٠ يكتب الترحيلُ الجديدَ** (لباقي الحزمة)",
     capOf(await imagesOf())["dressing-aids-hip-1"], [m141.CAPTIONS["dressing-aids-hip-1"].ar, m141.CAPTIONS["dressing-aids-hip-1"].en]);
 
+  // ══ ض. وصفُ صور ألم الكعب كما وصلت (ترحيل ١٤٤، §4.eb التكملة) — بقاعدة ١٤١ نفسِها ══
+  console.log("\n── ض. وصفُ صور ألم الكعب كما وصلت ──");
+  const hCapKeys = Object.keys(m144.CAPTIONS);
+  const heelCards = m143.EXERCISES.map((e) => e.code);
+  const hImagesOf = async () => Object.fromEntries((await q(`SELECT code, images FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [heelCards])).rows
+    .map((r) => [r.code, r.images]));
+  const hCapOf = (imgs: Record<string, any[]>) => sorted(Object.fromEntries(Object.values(imgs).flat().filter((i) => hCapKeys.includes(i.key)).map((i) => [i.key, [i.captionAr, i.captionEn]])));
+  const hCapIssues = m143.EXERCISES.filter((e) => e.images.some((i) => m144.CAPTIONS[i.key])).flatMap((e) => {
+    const body = exerciseBody({ ...e, images: e.images.map((i) => (m144.CAPTIONS[i.key] ? { ...i, ...m144.CAPTIONS[i.key] } : i)) });
+    const r = parseExerciseBody(body);
+    if (typeof r === "string") return [`${e.code}: ${r}`];
+    return r.images.some((im, i) => im.captionAr !== body.images[i].captionAr || im.captionEn !== body.images[i].captionEn) ? [`${e.code}.images قُصّت`] : [];
+  });
+  same("ض.١ **الوصفُ الجديد يقبله المحرّرُ كما هو** — لصورتين: «التشريط» و«القدم القصيرة»", [hCapKeys.sort(), hCapIssues], [["low-dye-taping-1", "short-foot-1"], []]);
+  //  من الوصف كما زرعه ١٤٣ — والقالبُ قد يحمل ١٤٤ مطبَّقاً.
+  for (const e of m143.EXERCISES.filter((x) => x.images.some((i) => m144.CAPTIONS[i.key]))) {
+    await q(`UPDATE physio_exercises SET images = $1::jsonb WHERE code = $2`,
+      [JSON.stringify(e.images.map((i) => ({ key: i.key, captionAr: i.ar, captionEn: i.en, search: i.search }))), e.code]);
+  }
+  const hBefore = await hImagesOf();
+  //  سليمٌ عدّل وصفَ «القدم القصيرة» قبل الترحيل — يبقى وصفُه.
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', '"وصفُ سليم"') WHERE code = 'short-foot'`);
+  await q(m144.sql);
+  const hAfter = await hImagesOf();
+  same("ض.٢ **يتغيّر وصفُ «التشريط» كما وصل، ووصفٌ عدّله المشرفُ يبقى**، ورموزُها وكلماتُ بحثها كما هي",
+    [hCapOf(hAfter), Object.values(hAfter).flat().map((i: any) => [i.key, i.search])],
+    [sorted({ "low-dye-taping-1": [m144.CAPTIONS["low-dye-taping-1"]?.ar, m144.CAPTIONS["low-dye-taping-1"]?.en],
+      "short-foot-1": ["وصفُ سليم", hBefore["short-foot"][0].captionEn] }),
+      Object.values(hBefore).flat().map((i: any) => [i.key, i.search])]);
+  same("ض.٣ **وبطاقاتُ الكعب الأخرى لم تُمَسّ**",
+    heelCards.filter((c) => !["low-dye-taping", "short-foot"].includes(c)).filter((c) => JSON.stringify(hAfter[c]) !== JSON.stringify(hBefore[c])), []);
+  const hStamp = async () => (await q(`SELECT code, updated_at::text AS t FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [heelCards])).rows
+    .map((r) => [r.code, r.t]);
+  const hStamps = await hStamp();
+  await q(m144.sql);
+  same("ض.٤ **والإعادةُ لا تفعل شيئاً** — لا وصفَ ولا وقتَ تعديل", [await hImagesOf(), await hStamp()], [hAfter, hStamps]);
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', to_jsonb($1::text)) WHERE code = 'short-foot'`,
+    [m143.EXERCISES.find((e) => e.code === "short-foot")!.images[0].ar]);
+  await q(m144.sql);
+  same("ض.٥ **وحين يعود الوصفُ كما زرعه ١٤٣ يكتب الترحيلُ الجديدَ** (لباقي الحزمة)",
+    hCapOf(await hImagesOf())["short-foot-1"], [m144.CAPTIONS["short-foot-1"].ar, m144.CAPTIONS["short-foot-1"].en]);
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
@@ -435,16 +478,17 @@ async function main() {
     //  والعشرون المعادة بصورها هي.
     const tkaKeys = m138.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والثاني عشرَ (ما بعد استبدال الورك): ثلاثَ عشرةَ بطاقةً جديدة بصورةٍ لكلٍّ منها — الدرجُ والسيارة بصورتَي بطاقتَي الركبة منسوختين، **والإحدى عشرةَ
-    //  الباقية وصلت** (٢٠٢٦-١٠-١٣، §4.dz التكملة)؛ والثماني عشرةَ المعادة بصورها هي. **فـ«الصور المطلوبة» فارغة** — والمفصَّلُ القادم يُضيف خاناته هنا.
+    //  الباقية وصلت** (٢٠٢٦-١٠-١٣، §4.dz التكملة)؛ والثماني عشرةَ المعادة بصورها هي.
     const thaKeys = m140.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والثالثَ عشرَ (ألمُ الكعب): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها، **كلُّها في «الصور المطلوبة»** (فُحص Drive أوّلاً — §4.eb)؛ والسبعُ المعادة بصورها هي.
+    //  والثالثَ عشرَ (ألمُ الكعب): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٤، §4.eb التكملة)؛ والسبعُ المعادة بصورها هي.
+    //  **فـ«الصور المطلوبة» فارغة** — والمفصَّلُ القادم يُضيف خاناته هنا.
     const heelKeys = m143.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثاني عشر، والمطلوبةُ صورُ الثالثَ عشرَ الستّ وحدها**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، و«الصور المطلوبة» فارغة**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, heelKeys, [...heelKeys].sort()]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
