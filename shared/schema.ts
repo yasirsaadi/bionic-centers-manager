@@ -1927,6 +1927,8 @@ export const systemUsers = pgTable("system_users", {
   isActive: boolean("is_active").default(true),
   /** ترحيل ١٣٣ (§4.dp) — يومُ بغداد الذي ضغط فيه الموظّفُ «حسناً» على تحيّة اليوم: لا تظهر ثانيةً فيه ولو من جهازٍ آخر. */
   lastGreetedOn: date("last_greeted_on"),
+  /** ترحيل ١٤٦ (§4.ed) — ترتيبُ فقرات الشريط الجانبيّ لصاحب الحساب (مسارات)، و`null` = الأصليّ. عرضٌ لا صلاحية (`shared/sidebar_order.ts`). */
+  sidebarOrder: jsonb("sidebar_order").$type<string[] | null>(),
   // Patient Permissions
   canViewPatients: boolean("can_view_patients").default(true),
   canAddPatients: boolean("can_add_patients").default(true),

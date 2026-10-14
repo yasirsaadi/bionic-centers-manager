@@ -224,6 +224,8 @@ const LIVE_REFRESH_EXEMPT = [
   /^\/api\/admin\/operation-reversal\/preview$/,
   //  «حسناً» على تحيّة اليوم (§4.dp) — يومُ صاحبها وحده، فلا تُعاد شاشتُه.
   /^\/api\/greeting\/seen$/,
+  //  ترتيبُ الشريط الجانبيّ (§4.ed) — قائمةُ صاحبه وحده، والشريطُ يتبدّل من الحفظ نفسِه.
+  /^\/api\/sidebar-order$/,
 ];
 
 /**
