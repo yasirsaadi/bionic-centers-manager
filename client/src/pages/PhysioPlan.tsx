@@ -317,7 +317,7 @@ export default function PhysioPlanPage() {
           {plan.canWrite && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
-          {/*  الحذفُ للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧). */}
+          {/*  تغييرُ النوع والحذفُ لكاتب الخطّة: الأخصائيّ والمشرف العام والمسؤول (§4.eh). */}
           {plan.canDelete && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setTypeOpen(true)} data-testid="button-change-plan-type"><RefreshCcw className="w-4 h-4" /> تغيير نوع الخطّة</Button>
           )}

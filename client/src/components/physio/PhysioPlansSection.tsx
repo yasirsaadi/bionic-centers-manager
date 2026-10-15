@@ -100,7 +100,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                   data-testid={`button-execute-physio-plan-${p.id}`}><Play className="w-4 h-4" /> تنفيذ جلسة</Button>
               </div>
             )}
-            {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — للمسؤول والمشرف العام حصراً (طلبُ المالك ٢٠٢٦-١٠-٠٧)، والخادمُ يحرسهما. */}
+            {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — لكاتبها: الأخصائيّ والمشرف العام والمسؤول (§4.eh)، والخادمُ يحرسهما. */}
             {q.data?.canDelete && (
               <div className="flex flex-col justify-center gap-1">
                 {!isPlanClosed(p.status) && (
@@ -181,7 +181,7 @@ export function DeletePlanDialog({ plan, onClose, patientId, onDeleted }: {
     <Dialog open={plan !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent dir="rtl" className="max-w-md">
         <DialogHeader><DialogTitle>حذف الخطّة</DialogTitle></DialogHeader>
-        <p className="text-sm">تُحذف خطّة «{plan?.titleAr}» بأجهزتها وإسنادها من ملفّ المريض، ويُحفظ ما حُذف في سجلّ التدقيق. لإنهاء خطّةٍ نُفّذت استعمل «إيقاف الخطّة» بدل الحذف.</p>
+        <p className="text-sm">تُحذف خطّة «{plan?.titleAr}» بأجهزتها وإسنادها من ملفّ المريض، ويُحفظ ما حُذف في سجلّ التدقيق. لإنهاء خطّةٍ نُفّذت استعمل «إيقاف الخطّة» بدل الحذف. وإن كان علاجُها قد بدأ يعلم المشرفُ بالحذف.</p>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
           <Button variant="destructive" disabled={m.isPending || !plan} onClick={() => plan && m.mutate(plan.id)} data-testid="button-confirm-delete-physio-plan">حذف</Button>
@@ -231,7 +231,7 @@ function ProtocolPicker({ enabled, disabled, onPick, excludeId }: {
 }
 
 /**
- * **تغييرُ نوع الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — للمسؤول والمشرف العام: بروتوكولٌ آخر يملأ الخطّةَ نفسَها،
+ * **تغييرُ نوع الخطّة** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — لكاتبها: الأخصائيّ والمشرف العام والمسؤول (§4.eh): بروتوكولٌ آخر يملأ الخطّةَ نفسَها،
  * لا تعديلُ مواصفاتها. ويبقى المنفّذون وملاحظاتُ الأخصائيّ والحالة.
  */
 export function ChangePlanTypeDialog({ plan, onClose, patientId, onChanged }: {
@@ -256,7 +256,7 @@ export function ChangePlanTypeDialog({ plan, onClose, patientId, onChanged }: {
         <DialogHeader><DialogTitle>تغيير نوع الخطّة</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground" data-testid="hint-change-plan-type">
           النوعُ الحاليّ: <b>{plan?.titleAr}</b>. اختر البروتوكولَ الصحيح فتمتلئ الخطّةُ منه — العنوانُ والأهدافُ والتمارينُ والموانعُ والجرعةُ والأجهزة.
-          ويبقى المنفّذون وملاحظاتُ الأخصائيّ وحالةُ الخطّة، ويُكتب التغييرُ في سجلّ التدقيق.
+          ويبقى المنفّذون وملاحظاتُ الأخصائيّ وحالةُ الخطّة، ويُكتب التغييرُ في سجلّ التدقيق؛ وإن كان علاجُها قد بدأ يعلم المشرفُ بالتغيير.
         </p>
         <ProtocolPicker enabled={plan !== null} disabled={m.isPending} excludeId={plan?.protocolId ?? null} onPick={(id) => m.mutate(id)} />
       </DialogContent>
