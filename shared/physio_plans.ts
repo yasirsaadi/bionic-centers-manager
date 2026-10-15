@@ -39,8 +39,9 @@ export const PLAN_TEXT_FIELDS = ["goals", "exercises", "precautions", "notes"] a
 export const canWritePlans = (s: ProtocolSessionLike | null | undefined): boolean => canWritePatientPlans(s);
 /** **يعتمد ويعيد**: المسؤولُ والمشرفُ العام. */
 export const canApprovePlans = (s: ProtocolSessionLike | null | undefined): boolean => canApproveProtocols(s);
-/** **يحذف** الخطّة: المسؤولُ والمشرفُ العام **حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧) — والأخصائيُّ يوقفها ولا يحذفها. */
-export const canDeletePlans = (s: ProtocolSessionLike | null | undefined): boolean => canApproveProtocols(s);
+/** **يحذف الخطّةَ ويغيّر نوعَها**: كاتبُها — الأخصائيُّ والمشرفُ العام والمسؤول (طلبُ المالك ٢٠٢٦-١٠-١٥: «مثل مصطفى وسارة»، وكانا
+ *  للمشرف والمسؤول حصراً منذ ٢٠٢٦-١٠-٠٧). والمنفّذُ (معالجٌ · فنّيّ · مدرّب) لا؛ وخطّةٌ لها جلساتٌ أو تقييماتٌ لا تُحذف بيد أحد (§4.eh). */
+export const canDeletePlans = (s: ProtocolSessionLike | null | undefined): boolean => canWritePlans(s);
 /** **يقرأ** الخطط: مَن يقرأ المكتبة. */
 export const canReadPlans = (s: ProtocolSessionLike | null | undefined): boolean => canReadProtocols(s);
 

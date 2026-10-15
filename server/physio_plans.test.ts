@@ -37,8 +37,8 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6987;
 const BASE = `http://127.0.0.1:${PORT}`;
 const B1 = 9641, B2 = 9642;
-const ADMIN = 9651, SUP = 9652, SPEC = 9653, TECH = 9654, DOC = 9655, REC = 9656, TECH2 = 9657;
-const IDS = [ADMIN, SUP, SPEC, TECH, DOC, REC, TECH2];
+const ADMIN = 9651, SUP = 9652, SPEC = 9653, TECH = 9654, DOC = 9655, REC = 9656, TECH2 = 9657, SPEC2 = 9658;
+const IDS = [ADMIN, SUP, SPEC, TECH, DOC, REC, TECH2, SPEC2];
 const PCODE = "tstplan-protocol";
 const MARK = "اختبار-خطط-العلاج";
 
@@ -48,6 +48,7 @@ const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toStr
 async function cleanup() {
   const pts = (await q(`SELECT id FROM patients WHERE referral_source = $1`, [MARK])).rows.map((r) => r.id);
   await q(`DELETE FROM staff_notification_outbox WHERE (link_path LIKE '/physio/plans/%' OR link_path LIKE '/patients/%') AND text LIKE '%${MARK}%'`);
+  await q(`DELETE FROM physio_plan_sessions WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM physio_plans WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
@@ -85,13 +86,15 @@ async function main() {
                   ($4, 'pl-tech', 'x', 'تقنيّ', 'physio_technician', $8, $9::jsonb, true, false),
                   ($5, 'pl-doc', 'x', 'طبيب', 'doctor', $8, $9::jsonb, true, false),
                   ($6, 'pl-rec', 'x', 'استقبال', 'reception', $8, $9::jsonb, true, false),
-                  ($7, 'pl-tech2', 'x', 'تقنيّ الفرع الآخر', 'physio_technician', $10, $11::jsonb, true, false)`,
-    [ADMIN, SUP, SPEC, TECH, DOC, REC, TECH2, B1, JSON.stringify([B1]), B2, JSON.stringify([B2])]);
+                  ($7, 'pl-tech2', 'x', 'تقنيّ الفرع الآخر', 'physio_technician', $10, $11::jsonb, true, false),
+                  ($12, 'pl-spec2', 'x', 'سارة', 'physio_specialist', $8, $9::jsonb, true, false)`,
+    [ADMIN, SUP, SPEC, TECH, DOC, REC, TECH2, B1, JSON.stringify([B1]), B2, JSON.stringify([B2]), SPEC2]);
 
   const S = {
     admin: hdr({ userId: ADMIN, displayName: "المسؤول", role: "admin", branchId: null, isAdmin: true, permissions: { canSupervisePhysio: true } }),
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
     spec: hdr({ userId: SPEC, displayName: "مصطفى", role: "physio_specialist", branchId: B1, isAdmin: false, permissions: {} }),
+    spec2: hdr({ userId: SPEC2, displayName: "سارة", role: "physio_specialist", branchId: B1, isAdmin: false, permissions: {} }),
     tech: hdr({ userId: TECH, displayName: "تقنيّ", role: "physio_technician", branchId: B1, isAdmin: false, permissions: {} }),
     doc: hdr({ userId: DOC, displayName: "طبيب", role: "doctor", branchId: B1, isAdmin: false, permissions: {} }),
     rec: hdr({ userId: REC, displayName: "استقبال", role: "reception", branchId: B1, isAdmin: false, permissions: { canViewPatients: true } }),
@@ -222,13 +225,15 @@ async function main() {
     same("و.٧ والموقوفةُ لا تُعدَّل", (await call("PUT", `/api/physio/plans/${id}`, S.spec, editBody())).status, 409);
     same("و.٨ والمنفّذُ يراها تاريخاً", (await call("GET", `/api/physio/plans/${id}`, S.tech)).status, 200);
 
-    console.log("\n── ي. الحذفُ للمسؤول والمشرف العام حصراً ──");
+    //  §4.eh — طلبُ المالك ٢٠٢٦-١٠-١٥: «مثل مصطفى وسارة» — وكان للمسؤول والمشرف العام حصراً (٢٠٢٦-١٠-٠٧).
+    console.log("\n── ي. الحذفُ لكاتب الخطّة: الأخصائيّ والمشرف العام والمسؤول — والمنفّذُ والطبيبُ لا ──");
     const del1 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P })).json.id as number;
     await call("PUT", `/api/physio/plans/${del1}/assignees`, S.spec, { userIds: [TECH] });
-    same("ي.١ الأخصائيُّ لا يحذف", (await call("DELETE", `/api/physio/plans/${del1}`, S.spec)).status, 403);
-    same("ي.٢ ولا الطبيب", (await call("DELETE", `/api/physio/plans/${del1}`, S.doc)).status, 403);
-    same("ي.٣ والقائمةُ تقول للأخصائيّ «لا حذف» وللمشرف «حذف»",
-      [(await call("GET", `/api/patients/${pt}/physio-plans`, S.spec)).json?.canDelete, (await call("GET", `/api/patients/${pt}/physio-plans`, S.sup)).json?.canDelete], [false, true]);
+    same("ي.١ الطبيبُ لا يحذف", (await call("DELETE", `/api/physio/plans/${del1}`, S.doc)).status, 403);
+    same("ي.٢ ولا الاستقبال", (await call("DELETE", `/api/physio/plans/${del1}`, S.rec)).status, 403);
+    const canDel = async (sess: string) => (await call("GET", `/api/patients/${pt}/physio-plans`, sess)).json?.canDelete;
+    same("ي.٣ والقائمةُ تقول «حذف» للأخصائيَّين والمشرف، و«لا» للطبيب والمنفّذ",
+      [await canDel(S.spec), await canDel(S.spec2), await canDel(S.sup), await canDel(S.doc), await canDel(S.tech)], [true, true, true, false, false]);
     same("ي.٤ المشرفُ يحذف", (await call("DELETE", `/api/physio/plans/${del1}`, S.sup)).status, 200);
     same("ي.٥ ولا يبقى منها شيء", Number((await q(`SELECT (SELECT count(*) FROM physio_plans WHERE id = $1) + (SELECT count(*) FROM physio_plan_devices WHERE plan_id = $1)
       + (SELECT count(*) FROM physio_plan_assignees WHERE plan_id = $1) AS n`, [del1])).rows[0].n), 0);
@@ -237,8 +242,33 @@ async function main() {
     same("ي.٦ وما حُذف كاملاً في سطر التدقيق (الأجهزةُ والمنفّذون)", [delAudit.length, delAudit[0]?.old_values?.devices?.length, delAudit[0]?.old_values?.assignees], [1, 1, [TECH]]);
     const del2 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "للحذف" })).json.id as number;
     same("ي.٧ والمسؤولُ يحذف", (await call("DELETE", `/api/physio/plans/${del2}`, S.admin)).status, 200);
+    //  تنبيهاتُ الحذف برابط ملفّ المريض — الخطّةُ لم تعد.
+    const delOut = async (event: string, like: string) => (await q(`SELECT target_user_ids, exclude_user_id, text FROM staff_notification_outbox
+      WHERE event_type = $1 AND link_path = $2 AND text LIKE $3 ORDER BY id`, [event, `/patients/${pt}`, `%${like}%`])).rows;
+    const del3 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "مسوّدةُ مصطفى" })).json.id as number;
+    same("ي.٨ **الأخصائيُّ يحذف مسوّدتَه** — ولا تنبيهَ للمشرف (لم يبدأ علاجُها) ولا لنفسه",
+      [(await call("DELETE", `/api/physio/plans/${del3}`, S.spec)).status, (await delOut("physio_plan_pending", "مسوّدةُ مصطفى")).length,
+        (await delOut("physio_plan_decided", "مسوّدةُ مصطفى")).length], [200, 0, 0]);
+    const del4 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "خطّةُ مصطفى تُنفَّذ" })).json.id as number;
+    await call("PUT", `/api/physio/plans/${del4}/assignees`, S.spec, { userIds: [TECH] });
+    await call("POST", `/api/physio/plans/${del4}/activate`, S.spec);
+    same("ي.٩ والمنفّذُ المسنَد لا يحذف ولو رآها", [(await call("GET", `/api/physio/plans/${del4}`, S.tech)).status,
+      (await call("DELETE", `/api/physio/plans/${del4}`, S.tech)).status], [200, 403]);
+    same("ي.١٠ **وسارةُ تحذف خطّةَ مصطفى التي بدأ علاجُها**", (await call("DELETE", `/api/physio/plans/${del4}`, S.spec2)).status, 200);
+    const delPend = await delOut("physio_plan_pending", "خطّةُ مصطفى تُنفَّذ");
+    same("ي.١١ **فيعلم المشرفُ والمسؤول** (عامّ، بلا الحاذفة) باسم المريض والخطّة ومَن حذفها",
+      delPend.map((r) => [r.target_user_ids, r.exclude_user_id, /حُذفت خطّةٌ بدأ علاجُها/.test(r.text), r.text.includes(MARK), /حذفها سارة/.test(r.text)]),
+      [[null, SPEC2, true, true, true]]);
+    same("ي.١٢ **ويعلم مصطفى أنّ زميلاً حذف خطّتَه** — باسمها",
+      (await delOut("physio_plan_decided", "خطّةُ مصطفى تُنفَّذ")).map((r) => [r.target_user_ids, /حذف زميلٌ خطّتك/.test(r.text), /سارة/.test(r.text)]), [[[SPEC], true, true]]);
+    const del5 = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { titleAr: "خطّةٌ لها جلسة" })).json.id as number;
+    await call("POST", `/api/physio/plans/${del5}/activate`, S.spec);
+    await q(`INSERT INTO physio_plan_sessions (plan_id, patient_id, branch_id, session_date, shift, executed_by)
+             VALUES ($1, $2, $3, CURRENT_DATE, 'morning', $4)`, [del5, pt, B1, SPEC]);
+    same("ي.١٣ **وخطّةٌ لها جلسةٌ منفّذة لا يحذفها الأخصائيُّ** — كما لا يحذفها أحد", (await call("DELETE", `/api/physio/plans/${del5}`, S.spec)).status, 409);
+    await q(`DELETE FROM physio_plan_sessions WHERE plan_id = $1`, [del5]);
 
-    console.log("\n── م. تغييرُ نوع الخطّة — للمسؤول والمشرف العام حصراً ──");
+    console.log("\n── م. تغييرُ نوع الخطّة — لكاتبها: الأخصائيّ والمشرف العام والمسؤول (§4.eh) ──");
     const P2 = (await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, goals, sessions_per_week, duration_weeks, status)
                          VALUES ($1, 'ألم أسفل الظهر', 'Low back pain', 'spine', 'adult', 'تقليل الألم', 2, 6, 'approved') RETURNING id`, [PCODE + "-2"])).rows[0].id;
     await q(`INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, minutes, display_order) VALUES ($1,$2,'recommended',25,0)`, [P2, D4]);
@@ -247,7 +277,8 @@ async function main() {
     await call("PUT", `/api/physio/plans/${ct}`, S.spec, { titleAr: "شلل دماغي", notes: "ملاحظةُ الأخصائيّ لهذا المريض", devices: [{ deviceId: D1, minutes: 15 }] });
     await call("PUT", `/api/physio/plans/${ct}/assignees`, S.spec, { userIds: [TECH] });
     await call("POST", `/api/physio/plans/${ct}/approve`, S.sup);
-    same("م.١ الأخصائيُّ لا يغيّر النوع", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.spec, { protocolId: P2 })).status, 403);
+    same("م.١ المنفّذُ والطبيبُ لا يغيّران النوع", [(await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.tech, { protocolId: P2 })).status,
+      (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.doc, { protocolId: P2 })).status], [403, 403]);
     same("م.٢ والنوعُ نفسُه ⟵ ٤٠٩", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.sup, { protocolId: P })).status, 409);
     const assignedBefore = (await outbox("physio_plan_assigned", ct)).length;
     same("م.٣ المشرفُ يغيّر النوع", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.sup, { protocolId: P2 })).status, 200);
@@ -260,6 +291,38 @@ async function main() {
     same("م.٧ وسطرُ تدقيق", await auditCount(ct, "change_protocol"), 1);
     await call("POST", `/api/physio/plans/${ct}/stop`, S.spec, { reason: "x" });
     same("م.٨ والموقوفةُ لا يتغيّر نوعُها", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.admin, { protocolId: P })).status, 409);
+    same("م.٨ب ولا بيد الأخصائيّ", (await call("POST", `/api/physio/plans/${ct}/change-protocol`, S.spec, { protocolId: P })).status, 409);
+    //  §4.eh — الأخصائيُّ يغيّر النوع؛ وفي خطّةٍ تُنفَّذ تبقى تُنفَّذ وتنتظر مراجعةَ المشرف، كأيّ تعديلٍ بيده (§4.do).
+    const swOut = async (event: string, planId: number) => (await q(`SELECT target_user_ids, exclude_user_id, text FROM staff_notification_outbox
+      WHERE event_type = $1 AND link_path = $2 ORDER BY id`, [event, `/physio/plans/${planId}`])).rows;
+    const sw = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P })).json.id as number;
+    await call("PUT", `/api/physio/plans/${sw}/assignees`, S.spec, { userIds: [TECH] });
+    await call("POST", `/api/physio/plans/${sw}/activate`, S.spec);
+    await call("POST", `/api/physio/plans/${sw}/review`, S.sup);
+    same("م.٩ (تمهيد) خطّةُ مصطفى تُنفَّذ وراجعها المشرف", (await call("GET", `/api/physio/plans/${sw}`, S.sup)).json?.reviewStatus, "reviewed");
+    const swPendBefore = (await swOut("physio_plan_pending", sw)).length;
+    const assignedBeforeSw = (await swOut("physio_plan_assigned", sw)).length;
+    const swr = await call("POST", `/api/physio/plans/${sw}/change-protocol`, S.spec2, { protocolId: P2 });
+    same("م.١٠ **سارةُ تغيّر نوعَ خطّة مصطفى التي تُنفَّذ**: تمتلئ من الجديد وتبقى تُنفَّذ، و«بانتظار مراجعة المشرف» وتُمحى مراجعتُه السابقة",
+      [swr.status, swr.json?.protocolId, swr.json?.status, swr.json?.reviewStatus, swr.json?.reviewedByName, swr.json?.updatedByName],
+      [200, P2, "approved", "awaiting", null, "سارة"]);
+    const swPend = (await swOut("physio_plan_pending", sw)).slice(swPendBefore);
+    same("م.١١ **ويعلم المشرفُ والمسؤول** (عامّ، بلا سارة) بمَن غيّر ومن أيّ نوعٍ إلى أيّ نوع",
+      swPend.map((r) => [r.target_user_ids, r.exclude_user_id, /تغيّر نوعُ خطّةٍ تُنفَّذ/.test(r.text), /غيّرها سارة/.test(r.text), r.text.includes("⟵ ألم أسفل الظهر")]),
+      [[null, SPEC2, true, true, true]]);
+    same("م.١٢ **ويعلم مصطفى أنّ زميلاً غيّر نوعَ خطّته** — والمنفّذُ كما كان",
+      [(await swOut("physio_plan_decided", sw)).filter((r) => /غيّر زميلٌ نوعَ خطّتك/.test(r.text)).map((r) => r.target_user_ids),
+        (await swOut("physio_plan_assigned", sw)).length - assignedBeforeSw], [[[SPEC]], 1]);
+    const decBefore = (await swOut("physio_plan_decided", sw)).length;
+    const back = await call("POST", `/api/physio/plans/${sw}/change-protocol`, S.spec, { protocolId: P });
+    same("م.١٣ ومصطفى يعيده على خطّته هو: يعلم المشرف، ولا يُنبَّه هو بفعل نفسه",
+      [back.status, back.json?.reviewStatus, (await swOut("physio_plan_pending", sw)).length - swPendBefore, (await swOut("physio_plan_decided", sw)).length - decBefore],
+      [200, "awaiting", 2, 0]);
+    same("م.١٤ وسطرا تدقيق بالاسمين", (await q(`SELECT user_name FROM audit_log WHERE entity_type = 'physio_plan' AND entity_id = $1 AND action = 'change_protocol' ORDER BY id`, [sw])).rows
+      .map((r) => r.user_name), ["سارة", "مصطفى"]);
+    const swDraft = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: P })).json.id as number;
+    const dr = await call("POST", `/api/physio/plans/${swDraft}/change-protocol`, S.spec, { protocolId: P2 });
+    same("م.١٥ والمسوّدةُ يغيّر نوعَها كاتبُها بلا تنبيهٍ للمشرف — تبقى مسوّدة", [dr.status, dr.json?.status, (await swOut("physio_plan_pending", swDraft)).length], [200, "draft", 0]);
 
     console.log("\n── ك. الخططُ القديمة: المشرفُ العام يعدّل ويحذف ──");
     const legacy = (await q(`INSERT INTO treatment_plans (patient_id, branch_id, diagnosis) VALUES ($1, $2, 'تشخيص قديم') RETURNING id`, [pt, B1])).rows[0].id;
@@ -279,9 +342,10 @@ async function main() {
     await q(migration110Sql);
     const prefs = (await q(`SELECT user_id, array_agg(event_type ORDER BY event_type) AS ev FROM staff_notification_prefs WHERE user_id = ANY($1::int[]) GROUP BY user_id ORDER BY user_id`, [IDS])).rows
       .map((r) => [Number(r.user_id), r.ev]);
-    same("ل.١ المسؤول: الانتظار · المشرف: الانتظارُ والقرار · الأخصائيّ: القرارُ والإسناد · التقنيّان والطبيبُ المعالجُ أيضاً: الإسناد · الاستقبال: لا شيء — والإعادةُ لا تكرّر",
+    same("ل.١ المسؤول: الانتظار · المشرف: الانتظارُ والقرار · الأخصائيّان: القرارُ والإسناد · التقنيّان والطبيبُ المعالجُ أيضاً: الإسناد · الاستقبال: لا شيء — والإعادةُ لا تكرّر",
       prefs, [[ADMIN, ["physio_plan_pending"]], [SUP, ["physio_plan_decided", "physio_plan_pending"]],
-        [SPEC, ["physio_plan_assigned", "physio_plan_decided"]], [TECH, ["physio_plan_assigned"]], [DOC, ["physio_plan_assigned"]], [TECH2, ["physio_plan_assigned"]]]);
+        [SPEC, ["physio_plan_assigned", "physio_plan_decided"]], [TECH, ["physio_plan_assigned"]], [DOC, ["physio_plan_assigned"]], [TECH2, ["physio_plan_assigned"]],
+        [SPEC2, ["physio_plan_assigned", "physio_plan_decided"]]]);
     await q(`DELETE FROM staff_notification_prefs WHERE user_id = ANY($1::int[])`, [IDS]);
 
     console.log("\n── ن. الأخصائيُّ يبدأ خطّتَه بنفسه على أيّ بروتوكول، والمشرفُ يراجعها بعدها (§4.cz، و§4.do) ──");

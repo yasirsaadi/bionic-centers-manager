@@ -402,12 +402,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
-  //  **تغييرُ نوع الخطّة — للمسؤول والمشرف العام حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧): بروتوكولٌ آخر يملؤها، لا تعديلُ مواصفاتها.
+  //  **تغييرُ نوع الخطّة — لكاتبها: الأخصائيّ والمشرف العام والمسؤول** (طلبُ المالك ٢٠٢٦-١٠-٠٧، ووُسّع للأخصائيّ ٢٠٢٦-١٠-١٥ — §4.eh):
+  //  بروتوكولٌ آخر يملؤها، لا تعديلُ مواصفاتها. وبيد الأخصائيّ في خطّةٍ تُنفَّذ ⟵ «بانتظار مراجعة المشرف» ويُنبَّه المشرف.
   app.post("/api/physio/plans/:id/change-protocol", isAuthenticated, async (req: any, res) => {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
-      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يغيّر نوعَ الخطّة المسؤولُ أو المشرفُ العام حصراً" });
+      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يغيّر نوعَ الخطّة الأخصائيُّ أو المشرفُ العام أو المسؤول" });
       const protocolId = idOf(req.body?.protocolId);
       if (!protocolId) return res.status(400).json({ error: "اختر البروتوكول" });
       const r = await store.changePlanProtocol(l.row.id, protocolId, actor(l.s));
@@ -418,12 +419,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
-  //  **الحذف — للمسؤول والمشرف العام حصراً** (طلبُ المالك ٢٠٢٦-١٠-٠٧). والأخصائيُّ يوقف ولا يحذف.
+  //  **الحذف — لكاتب الخطّة: الأخصائيّ والمشرف العام والمسؤول** (طلبُ المالك ٢٠٢٦-١٠-٠٧، ووُسّع للأخصائيّ ٢٠٢٦-١٠-١٥ — §4.eh).
+  //  والحارسان أدناه لكلّ أحد: ما نُفّذ أو قيس لا يُمحى.
   app.delete("/api/physio/plans/:id", isAuthenticated, async (req: any, res) => {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
-      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يحذف الخطّةَ المسؤولُ أو المشرفُ العام حصراً" });
+      if (!canDeletePlans(l.s)) return res.status(403).json({ error: "يحذف الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
       //  **خطّةٌ لها جلساتٌ منفّذة لا تُحذف** (§4.cn) — زياراتُها وعدّاداتُها قائمة؛ تُوقَف فتبقى تاريخاً.
       if (await exec.planHasSessions(l.row.id)) return res.status(409).json({ error: "للخطّة جلساتٌ منفّذة — أوقفها بدل الحذف" });
       //  وكذا خطّةٌ لها تقييمات (§4.cp) — قياساتُ المريض تاريخٌ لا يُمحى.
