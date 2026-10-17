@@ -11,7 +11,7 @@
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings, systemUsers } from "@shared/schema";
-import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, DR_BOX_WITHDRAWAL_CATEGORY, type CashBook } from "@shared/cash_book";
+import { branchCashConfig, drBoxAccountLabel, CASH_BOOK_LABELS, DR_BOX_WITHDRAWAL_CATEGORY, RESERVES_START, type CashBook } from "@shared/cash_book";
 import { categoryArabicLabel } from "../anomalies/detector";
 import { CashBookError, getSheet, autoDrRatioSum } from "./store";
 
@@ -149,7 +149,9 @@ export async function ownerSummary(from: string, to: string, today: string) {
     branchId: cashBookEntries.branchId, book: cashBookEntries.book, kind: cashBookEntries.kind,
     n: sql<number>`COALESCE(SUM(${cashBookEntries.amount}), 0)::bigint`,
   }).from(cashBookEntries)
-    .where(and(sql`${cashBookEntries.deletedAt} IS NULL`, gte(cashBookEntries.entryDate, from), lte(cashBookEntries.entryDate, to)))
+    .where(and(sql`${cashBookEntries.deletedAt} IS NULL`, gte(cashBookEntries.entryDate, from), lte(cashBookEntries.entryDate, to),
+      //  استلامُ النسبة بعد إلغائها لا يُقرأ (§4.dj التكملة ٢) — كورقة الدفتر.
+      sql`NOT (${cashBookEntries.kind} = 'ratio_received' AND ${cashBookEntries.entryDate} >= ${RESERVES_START})`))
     .groupBy(cashBookEntries.branchId, cashBookEntries.book, cashBookEntries.kind);
   const periodOf = (b: number, book: string, kind: string) =>
     Number(periodRows.find((r) => r.branchId === b && r.book === book && r.kind === kind)?.n ?? 0);

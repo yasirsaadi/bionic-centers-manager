@@ -19,9 +19,10 @@ import { registerRoutes } from "./routes";
 import { createHash } from "crypto";
 import {
   branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages, distinctNoteParts,
-  RESERVES_START, drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine,
+  RESERVES_START, drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine, DR_RATIO_RETIRED_ERROR,
 } from "@shared/cash_book";
 import { reserveBoxes, cashBookPeriod } from "./cash_book/store";
+import { financialLedger } from "./ai/tools/audit";
 import { baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
@@ -242,11 +243,19 @@ async function main() {
     same("و١. **مجموعُ اليوم والباقي من أمس والمتبقي** — الصادر مصروفٌ ١٥٠ ألفاً وتحويلٌ ٤٠٠ ألف بلا نسبة، والباقي من أمس = افتتاحيّ ١٠٠ ألف + وارد أمس ٣٠٠ ألف − نسبةُ أمس إن كان قبل القطع",
       d.totals, { income: 1_300_000, outflow: 550_000, dayNet: 750_000, prevRemaining: 400_000 - RY, remaining: 1_150_000 - RY });
     same("و٢. **ولا مجموعَ للتحويلات في الردّ** — الصادرُ رقمٌ واحد", Object.keys(d.totals).some((k) => /transfer/i.test(k)), false);
-    same("و٣. **ما بقي من النسبة**: لا نسبةَ اليوم، والمتبقي من أمس (٥٠ ألفاً افتتاحيّ + نسبةُ أمس إن كان قبل القطع)", [d.ratio.today, d.ratio.prev, d.ratio.remaining], [0, 50_000 + RY, 50_000 + RY]);
-    same("و٤. **واستلامُ ما بقي من النسبة للمسؤول وحده** (٤٠٣ للمحاسب)", (await row(S.acc, { kind: "ratio_received", amount: 30_000 })).status, 403);
-    await row(S.admin, { branchId: BGD, kind: "ratio_received", amount: 30_000, note: "استلمت" });
+    //  **نسبةُ الدكتور بعد إلغائها صفر** (قرارُ المالك ٢٠٢٦-١٠-١٧ بعد استلامٍ خاطئ من بقيّتها، §4.dj التكملة ٢): كانت تُحمل وتُستلَم حتى تصفر.
+    same("و٣. **لا نسبةَ بعد إلغائها** — لا نسبةَ اليوم ولا متبقّيَ من أمس، ولو حمل الافتتاحُ ٥٠ ألفاً نسبةً", [d.ratio.today, d.ratio.prev, d.ratio.received, d.ratio.remaining], [0, 0, 0, 0]);
+    const recvCount = async () => Number((await q(`SELECT count(*)::int n FROM cash_book_entries WHERE branch_id=$1 AND kind='ratio_received' AND deleted_at IS NULL`, [BGD]))[0].n);
+    const rc0 = await recvCount();
+    const radm = await row(S.admin, { branchId: BGD, kind: "ratio_received", amount: 30_000, note: "استلمت" });
+    same("و٤. **ولا استلامَ منها** — المحاسبُ ٤٠٣ كما كان، والمسؤولُ ٤٠٠ بأنها أُلغيت وصُفّرت، ولا سطرَ يُكتب",
+      [(await row(S.acc, { kind: "ratio_received", amount: 30_000 })).status, radm.status, radm.body?.error, await recvCount() - rc0],
+      [403, 400, DR_RATIO_RETIRED_ERROR, 0]);
+    //  **والاستلامُ الخاطئ الذي كُتب قبل هذا القرار** (ذي قار ١٠-١٧: ألفٌ من بقيّةٍ خمسمائة فصار المتبقي −٥٠٠) — صفٌّ قائمٌ لا يُقرأ.
+    await q(`INSERT INTO cash_book_entries (branch_id, book, entry_date, kind, amount, note, created_by) VALUES ($1,'devices',$2,'ratio_received',30000,'استلمت',$3)`, [BGD, TODAY, ADMIN]);
     d = (await sheet(S.acc)).body;
-    same("و٥. **فينقص المتبقي في النسبة ولا يمسّ القاصة**", [d.ratio.remaining, d.totals.remaining], [20_000 + RY, 1_150_000 - RY]);
+    same("و٥. **واستلامٌ كُتب بعد القطع لا يُقرأ** — النسبةُ صفرٌ لا سالبة، بلا سطرٍ في المربّع، والقاصةُ كما هي",
+      [d.ratio.received, d.ratio.remaining, d.ratio.receipts, d.totals.remaining], [0, 0, [], 1_150_000 - RY]);
     const tomorrowLike = (await sheet(S.admin, "devices", TODAY, BGD)).body;
     same("و٦. **وكلُّ يومٍ يبدأ من باقي سابقه**: يومُ الافتتاح باقيه الافتتاحيّ",
       (await sheet(S.acc, "devices", YDAY)).body?.totals?.prevRemaining, 100_000);
@@ -348,9 +357,9 @@ async function main() {
       [sb.account, sb.drBox.balance, sb.drBox.received, sb.books.find((k: any) => k.book === "devices").cashRemaining,
        sb.books.find((k: any) => k.book === "devices").ratioRemaining],
       ["كي كارت 2009", boxB.totals.balance, boxB.totals.received, devB.totals.remaining, devB.ratio.remaining]);
-    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها (أمسُ وحده إن كان قبل القطع، ولا شيءَ اليوم) والمستلَم، وتحويلُ ذي قار وحده لذي قار",
+    same("ي١٨. **ومجاميعُ الفترة لكلّ دفتر** — تحويلاتُ بغداد (٥٠٠ ألف + ألف أمس) ونسبتُها (أمسُ وحده إن كان قبل القطع، ولا شيءَ اليوم)، **والمستلَمُ صفر**: استلامُ اليوم بعد إلغائها لا يُقرأ، وتحويلُ ذي قار وحده لذي قار",
       [sb.books.find((k: any) => k.book === "devices").period, smList.find((b: any) => b.id === DQ).books[0].period.drTransfers],
-      [{ drTransfers: 501_000, drRatio: RY, ratioReceived: 30_000 }, 70_000]);
+      [{ drTransfers: 501_000, drRatio: RY, ratioReceived: 0 }, 70_000]);
     same("ي١٩. **والمجاميعُ الكلّية جمعُ الفروع**",
       [sm.totals.drBoxBalance, sm.totals.periodDrTransfers],
       [smList.reduce((a: number, b: any) => a + b.drBox.balance, 0),
@@ -369,8 +378,8 @@ async function main() {
       [drRows(n1), [n1.ratio.today, n1.ratio.prev, n1.ratio.remaining], n1.expected?.drRatio, n1.totals.prevRemaining, n1.reserves],
       [[["auto", 20_000]], [20_000, 45_000, 65_000], { pct: 10, amount: 20_000, recorded: 20_000 }, 1_360_000, null]);
     const n2 = (await dq(TODAY)).body;
-    same("ن٢. **ومن يوم القطع لا نسبة**: لا سطرَ ولا نسبةَ اليوم، والباقي من أمس = مليون + ٦٠٠ ألف − ٦٠ ألفاً نسبةُ اليومين، وما بقي من النسبة يُحمل، والقاصتان ظاهرتان",
-      [drRows(n2), n2.ratio.today, n2.ratio.prev, n2.totals.prevRemaining, Boolean(n2.reserves)], [[], 0, 65_000, 1_540_000, true]);
+    same("ن٢. **ومن يوم القطع لا نسبة**: لا سطرَ ولا نسبةَ اليوم، والباقي من أمس = مليون + ٦٠٠ ألف − ٦٠ ألفاً نسبةُ اليومين، **وما بقي من النسبة (٦٥ ألفاً) صُفّر**، والقاصتان ظاهرتان",
+      [drRows(n2), n2.ratio.today, n2.ratio.prev, n2.ratio.remaining, n2.totals.prevRemaining, Boolean(n2.reserves)], [[], 0, 0, 0, 1_540_000, true]);
     //  ورقةٌ طُبعت قبل القطع ببصمة الصيغة السابقة (بلا مفتاح القاصتين) — تبقى مطابقةً لما في التطبيق.
     const oldFingerprint = (sh: any) => createHash("sha1").update(JSON.stringify({
       branch: sh.branch?.id, book: sh.book, day: sh.day, opening: sh.opening ?? null,
@@ -380,14 +389,27 @@ async function main() {
     })).digest("hex");
     await q(`INSERT INTO cash_book_prints (branch_id, book, day, fingerprint, printed_by_name) VALUES ($1,'physio',$2,$3,'قبل القطع')`, [DQ, D2, oldFingerprint(n1)]);
     same("ن٣. **ورقةٌ طُبعت قبل القطع لا تُعلَّم «عُدّلت بعد الطباعة»** — بصمتُها بالصيغة السابقة تطابق", (await dq(D2)).body.changedAfterPrint, false);
-    await row(S.admin, { branchId: DQ, book: "physio", kind: "ratio_received", amount: 65_000, note: "صفّرتُها" });
+    const n4a = await row(S.admin, { branchId: DQ, book: "physio", kind: "ratio_received", amount: 65_000, note: "صفّرتُها" });
+    //  **واستلامُ ذي قار الخاطئ نفسُه** (ألفٌ يومَ ١٠-١٧) صفٌّ قائم — لا يُقرأ في الورقة ولا دفتر الفترة ولا كشف المساعد.
+    await q(`INSERT INTO cash_book_entries (branch_id, book, entry_date, kind, amount, note, created_by) VALUES ($1,'physio',$2,'ratio_received',1000,'خطأ',$3)`, [DQ, TODAY, ADMIN]);
     const n4 = (await dq(TODAY)).body;
-    same("ن٤. **والمسؤولُ يستلم ما بقي من النسبة فيصفر** — ولا يمسّ القاصة", [n4.ratio.remaining, n4.totals.remaining], [0, n2.totals.remaining]);
+    same("ن٤. **ولا استلامَ بعد القطع** — المسؤولُ ٤٠٠، والاستلامُ الخاطئ القائم لا يُقرأ: النسبةُ صفرٌ لا سالبة، والقاصةُ كما هي",
+      [n4a.status, n4.ratio.received, n4.ratio.remaining, n4.totals.remaining], [400, 0, 0, n2.totals.remaining]);
+    //  **وقبل القطع كما كانت** — المسؤولُ يستلم في يومٍ قبله فينقص مربّعُ ذلك اليوم، ولا يعود شيءٌ بعد القطع.
+    const n4b = await row(S.admin, { branchId: DQ, book: "physio", date: D2, kind: "ratio_received", amount: 5_000, note: "قبل القطع" });
+    const n4c = (await dq(D2)).body;
+    same("ن٤ب. **والاستلامُ في يومٍ قبل القطع باقٍ** — ينقص مربّعَ يومه (٦٥ ⟵ ٦٠ ألفاً)، وما بعد القطع صفرٌ كما هو",
+      [n4b.status, n4c.ratio.received, n4c.ratio.remaining, (await dq(TODAY)).body.ratio.remaining], [200, 5_000, 60_000, 0]);
     const n6 = (await dq(addDays(TODAY, 1))).body;
     same("ن٦. **وورقةُ الغد تبدأ من متبقّي اليوم كاملاً** — لا نسبةَ تُطرح من يومٍ بعد القطع", [n6.totals.prevRemaining, n6.ratio.prev], [n4.totals.remaining, 0]);
     const per: any = await cashBookPeriod(DQ, "physio", D1, TODAY);
-    same("ن٥. **ودفترُ الفترة للمدقّق بالقاعدة نفسِها**: نسبةُ اليومين ٦٠ ألفاً وحدها، والمتبقي = مليون + ٩٠٠ ألف − ٦٠ ألفاً",
-      [per.period.drRatio, per.endRemaining, per.endRatioBalance], [60_000, 1_840_000, 0]);
+    const perAfter: any = await cashBookPeriod(DQ, "physio", RESERVES_START, TODAY);
+    const led = await financialLedger({ branchId: DQ, start: RESERVES_START, end: TODAY, kind: "cash_book_entries", limit: 100 });
+    same("ن٥. **ودفترُ الفترة للمدقّق بالقاعدة نفسِها**: نسبةُ اليومين ٦٠ ألفاً وحدها، والمتبقي = مليون + ٩٠٠ ألف − ٦٠ ألفاً، والمستلَمُ ٥ آلاف قبل القطع وحده، **ورصيدُ النسبة صفرٌ بعد القطع** لا سالب — ولفترةٍ تبدأ يومَه صفرٌ من أوّلها، وكشفُ المساعد بلا الاستلام الخاطئ",
+      [per.period.drRatio, per.endRemaining, per.period.ratioReceived, per.startRatioBalance, per.endRatioBalance,
+        perAfter.startRatioBalance, perAfter.endRatioBalance, perAfter.period.ratioReceived,
+        (led as any).rows.some((r: any) => r.kind === "استلام نسبة الدكتور")],
+      [60_000, 1_840_000, 5_000, 5_000, 0, 0, 0, 0, false]);
 
     console.log("\n── ل. نسبة الدكتور في التقرير المحاسبي — مسحوبات المالك (§4.ca تكملةٌ رابعة) ──");
     const acct = (await http("GET", `/api/accounting/summary?branchId=${DQ}&startDate=${D1}&endDate=${TODAY}`, S.admin)).body;

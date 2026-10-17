@@ -309,10 +309,6 @@ function Page({ branchName, book, day, lines, sheet, stamp, blank, last, pad, pa
                 </div>
               </div>
             )}
-            {/*  ما بقي من نسبة الدكتور بعد إلغائها — سطرٌ تحت المربّعات ما لم يصفر. */}
-            {sheet?.reserves && (sheet.ratio.prev !== 0 || sheet.ratio.received > 0) && (
-              <div className="legacy">المتبقي من نسبة الدكتور: {fmt(sheet.ratio.remaining)}{sheet.ratio.received > 0 ? ` (استلم المالك اليوم ${fmt(sheet.ratio.received)})` : ""}</div>
-            )}
           </div>
         )}
         {!measuring && <div className="grow" />}
@@ -375,7 +371,6 @@ const PRINT_CSS = `
 .cb-print .box.reserve.payroll h3 { color:#3730a3; font-size:0.92rem; }
 .cb-print .box .month { font-size:11px; color:var(--muted); margin-top:1mm; }
 .cb-print .sum div.neg { color:#b91c1c; }
-.cb-print .legacy { grid-column:1 / -1; font-size:11.5px; color:var(--muted); }
 .cb-print .sum { display:grid; grid-template-columns:1fr auto; gap:4px 16px; font-variant-numeric:tabular-nums; }
 .cb-print .sum div:nth-child(even) { text-align:left; direction:ltr; min-width:9em; border-bottom:1px dotted var(--rule-strong); align-self:start; }
 .cb-print .colhint { display:block; font-weight:400; font-size:0.72rem; color:var(--muted); line-height:1.3; }
