@@ -275,6 +275,14 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "seated-forward-flexion-1": { file: "seated-forward-flexion-1.webp", credit: "NHS Greater Glasgow and Clyde (MSK Physiotherapy)", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/1848/308219_2_0-information-on-stenosis.pdf" },
   "rollator-flexed-walking-1": { file: "rollator-flexed-walking-1.webp", credit: "nathanmac87 (Flickr) via Wikimedia Commons — CC BY 2.0 (cropped and resized)", sourceUrl: "https://commons.wikimedia.org/wiki/File:Los_Angeles_Weekend_(20477413034)_(cropped).jpg" },
   "tandem-stance-1": { file: "tandem-stance-1.webp", credit: "NHS Greater Glasgow and Clyde (Mental Health Physiotherapists)", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/nkgh2jey/falls-2021-exercises-for-strength-and-balance.pdf" },
+  //  ألمُ الرضفة الفخذيّ (ترحيل ١٥٥، §4.en) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها — «الوركُ بثلاثة اتّجاهات»
+  //  المسجَّلةُ بلا مطّاط)، ورآها كلَّها قبل تسجيلها؛ ورُدّت صورٌ تنسبها نشراتُها إلى مكتبات تمارين تجارية. وتمطيطُ الفخذ رسمٌ بلا حائطٍ ولا كرسيّ (وصفُه يقوله)،
+  //  والجريُ شكلان بلا كتابة — الأيسرُ المطلوب، ووصفُ الصورة يقوله؛ وهو والشريطُ صورتا بحثين برخصة CC BY.
+  "quadriceps-stretch-standing-1": { file: "quadriceps-stretch-standing-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://www.orthoinfo.org/en/recovery/knee-conditioning-program/" },
+  "standing-band-hip-abduction-1": { file: "standing-band-hip-abduction-1.webp", credit: "Arthritis Action", sourceUrl: "https://www.arthritisaction.org.uk/wp-content/uploads/2018/06/Hip-strength-exercises.pdf" },
+  "single-leg-squat-to-box-1": { file: "single-leg-squat-to-box-1.webp", credit: "Wrightington, Wigan and Leigh Teaching Hospitals NHS FT", sourceUrl: "https://www.wwl.nhs.uk/pdfreader/accessiblePDF/cnv-wwl-68ca8bce8ec828.01098451" },
+  "running-cadence-1": { file: "running-cadence-1.webp", credit: "Wallace et al., Evol Hum Sci 2022 (drawing by Samantha Shields) — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9624512/" },
+  "patellar-taping-1": { file: "patellar-taping-1.webp", credit: "Yoon & Son, Medicina 2022 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9501162/" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

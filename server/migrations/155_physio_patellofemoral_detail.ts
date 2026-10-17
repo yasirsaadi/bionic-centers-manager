@@ -58,8 +58,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Kneecap pain above 2/10 or lasting after the stretch, a muscle cramp, or dizziness → stop and tell the therapist."],
     equipment: ["حائطٌ أو كرسيٌّ ثابت للاستناد، وحزامٌ أو منشفة إن لم تصل اليد.", "A wall or stable chair for support, and a strap or towel if the hand cannot reach."],
     doseNote: ["٣ × ١٥–٣٠ ثانية مرّتين يومياً لمن قصرت عضلتُه (Lee 2021) — ولا حاجةَ إليه لمن طولُها طبيعيّ.", "3 × 15–30 seconds twice a day for those with a tight quadriceps (Lee 2021) — not needed when its length is normal."],
-    images: [{ key: "quadriceps-stretch-standing-1", ar: "واقفٌ يستند إلى حائطٍ بيد، والأخرى تمسك كاحلَ الساق المثنيّة والكعبُ قرب الألية والركبتان متلاصقتان",
-      en: "Standing with one hand on a wall, the other holding the ankle of the bent leg with the heel near the buttock and the knees together", search: "standing quadriceps stretch" }],
+    images: [{ key: "quadriceps-stretch-standing-1", ar: "واقفٌ يمسك قدمَ الساق المثنيّة خلفه بيد الجهة نفسِها، والكعبُ قرب الألية والركبتان متلاصقتان والفخذُ عموديّ — والاستنادُ بالأخرى إلى حائطٍ أو كرسيّ كما في «البداية» لا يظهر في الرسم",
+      en: "Standing and holding the foot of the leg bent behind with the same-side hand, the heel near the buttock, the knees together and the thigh vertical — the other hand on a wall or chair, as in the starting position, is not drawn", search: "standing quadriceps stretch" }],
   },
   {
     code: "standing-band-hip-abduction-er", nameAr: "تقوية الورك واقفاً بالمطّاط (التبعيد والتدوير إلى الخارج)", nameEn: "Standing band hip abduction and external rotation",
@@ -98,8 +98,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Pain in the standing knee above 2/10, or hip or groin pain → ease off or stop and tell the therapist."],
     equipment: ["مطّاطٌ مقاوم بألوانٍ متدرّجة، وحائطٌ أو طاولة للاستناد.", "Resistance bands in graded colours, and a wall or table for support."],
     doseNote: ["٣ × ١٠ بمطّاطٍ تتعب به في آخر ثلاثة، ثمّ ٣ × ١٠–١٥ بمطّاطٍ أقوى؛ في أيّام التقوية بالمركز وفي البيت حتى ستّة أيّام في الأسبوع (Ferber 2015).", "3 × 10 with a band that tires you in the last three, then 3 × 10–15 with a stronger band; on the strengthening days in the centre and at home up to six days a week (Ferber 2015)."],
-    images: [{ key: "standing-band-hip-abduction-1", ar: "واقفٌ بجانب حائطٍ والمطّاطُ حول الكاحلين يبعد ساقاً إلى الجانب والأصابعُ إلى الأمام والجذعُ مستقيم",
-      en: "Standing beside a wall with a band around both ankles, moving one leg out to the side with the toes forward and the trunk upright", search: "standing hip abduction resistance band ankles" }],
+    images: [{ key: "standing-band-hip-abduction-1", ar: "واقفٌ يستند بيدٍ إلى ظهر كرسيّ والمطّاطُ حول الكاحلين، يبعد ساقاً إلى الجانب والأصابعُ إلى الأمام — حركةُ التبعيد، والتدويرُ في الخطوات",
+      en: "Standing with one hand on the back of a chair and a band around both ankles, moving one leg out to the side with the toes forward — the abduction part; the rotation is in the steps", search: "standing hip abduction resistance band ankles" }],
   },
   {
     code: "single-leg-squat-to-box", nameAr: "القرفصاء على ساقٍ واحدة حتى الكرسيّ", nameEn: "Single-leg squat to a box or chair",
@@ -138,8 +138,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Kneecap pain above 2/10 during it, pain worse the next morning, or a feeling of the knee giving way → go back a step and tell the therapist."],
     equipment: ["كرسيٌّ أو صندوقٌ ثابت بارتفاعاتٍ مختلفة، ومرآة.", "A stable chair or box of different heights, and a mirror."],
     doseNote: ["٣ × ١٠ ثمّ ٣ × ١٥ في أيّام التقوية (ثلاثاً في الأسبوع)، والعمقُ يزيد بقاعدة الألم (Ferber 2015).", "3 × 10 then 3 × 15 on the strengthening days (three a week), with the depth increasing by the pain rule (Ferber 2015)."],
-    images: [{ key: "single-leg-squat-to-box-1", ar: "واقفٌ على ساقٍ واحدة أمام صندوقٍ أو كرسيّ ينزل بالأليتين نحوه والساقُ الأخرى مرفوعةٌ إلى الأمام والذراعان ممدودتان",
-      en: "Standing on one leg in front of a box or chair, lowering the buttocks towards it with the other leg lifted forward and the arms out in front", search: "single leg squat to box" }],
+    images: [{ key: "single-leg-squat-to-box-1", ar: "واقفٌ على ساقٍ واحدة أمام كرسيّ ينزل بالأليتين نحو مقعده، والساقُ الأخرى مرفوعةٌ إلى الأمام والركبةُ فوق القدم",
+      en: "Standing on one leg in front of a chair, lowering the buttocks towards the seat, with the other leg lifted forward and the knee over the foot", search: "single leg squat to box" }],
   },
   {
     code: "running-cadence-retraining", nameAr: "إعادة تعليم الجري بزيادة عدد الخطوات", nameEn: "Running retraining with a higher step rate",
@@ -176,8 +176,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Knee pain of 3/10 or more during or after running, worse the next morning, or pain in the calf or Achilles tendon → reduce the distance and tell the therapist (Bramah 2019)."],
     equipment: ["جهازُ جري أو أرضٌ مستوية، وهاتفٌ فيه تطبيقُ منظّمٍ إيقاعيّ أو ساعةٌ تعدّ الخطوات.", "A treadmill or level ground, and a phone with a metronome app or a watch that counts steps."],
     doseNote: ["جلسةٌ واحدة بإشراف، ثمّ أسبوعان بالمنظّم وأسبوعان بالساعة؛ والمسافةُ تزيد ما دام الألمُ أقلَّ من ٣ من ١٠ (Bramah 2019).", "One supervised session, then two weeks with the metronome and two with the watch; distance increases while pain stays below 3/10 (Bramah 2019)."],
-    images: [{ key: "running-cadence-1", ar: "عدّاءٌ يهبط بقدمه تحت جسمه بخطوةٍ قصيرة، مقارنةً بخطوةٍ طويلة تهبط على الكعب أمام الجسم",
-      en: "A runner landing with the foot under the body in a short stride, compared with a long stride landing on the heel in front of the body", search: "running overstriding vs short stride under the body" }],
+    images: [{ key: "running-cadence-1", ar: "شكلان لعدّاءةٍ من الجانب: الأيسرُ هو المطلوب — القدمُ تهبط تحت الجسم والساقُ عمودية؛ والأيمنُ الخطوةُ الطويلة تهبط على الكعب بعيداً أمام الجسم",
+      en: "Two side views of a runner: the left one is the aim — the foot lands under the body with the shin vertical; the right one is a long stride landing on the heel far in front of the body", search: "running overstriding vs short stride under the body" }],
   },
   {
     code: "patellar-taping-mcconnell", nameAr: "الشريط اللاصق للرضفة (المفصَّل لكلّ مريض — طريقة McConnell)", nameEn: "Tailored patellar taping (McConnell)",
@@ -214,8 +214,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Itching, blisters or redness of the skin (skin reactions in about 40% with daily taping — Collins 2008), or no pain relief → remove it and tell the therapist."],
     equipment: ["شريطٌ واقٍ للجلد، وشريطٌ صلب من أكسيد الزنك بعرض ٣٨ ملم، ومقصّ.", "A protective under-tape, rigid zinc-oxide tape 38 mm wide, and scissors."],
     doseNote: ["يُعاد يومياً ويُلبس في النهار وفي التمرين حتى أربعة أسابيع ثمّ يُقلَّل (Rathleff 2018 · Willy 2019).", "Reapplied daily and worn during the day and in exercise for up to four weeks, then weaned (Rathleff 2018 · Willy 2019)."],
-    images: [{ key: "patellar-taping-1", ar: "ركبةٌ ممدودة عليها شريطٌ لاصق يسحب الرضفةَ إلى الداخل من حافّتها الخارجية",
-      en: "A straight knee with tape pulling the kneecap inwards from its outer edge", search: "McConnell patellar taping medial glide" }],
+    images: [{ key: "patellar-taping-1", ar: "ساقٌ ممدودة، وعلى الرضفة شريطٌ واقٍ للجلد ثمّ شريطٌ صلب يعبرها بعرض الساق ويسحبها إلى الداخل من حافّتها الخارجية حتى تظهر طيّاتُ الجلد",
+      en: "A straight leg with a protective under-tape over the kneecap and a rigid strip across it, pulling the kneecap inwards from its outer edge until skin folds appear", search: "McConnell patellar taping medial glide" }],
   },
 ];
 
