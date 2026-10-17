@@ -1931,8 +1931,10 @@ export async function getWorklist(
            -- الطلب كما كان، والخيطُ بلا حلقة بتاريخ إنشائه.
            -- **والصفُّ بلا حلقة يدخله طلبٌ عارٍ بتاريخ الطلب** (§4.el): «طلب معاينة جديدة» للعلاج الطبيعي كان يأخذ تاريخَ
            -- فتح القسم قبل شهر، فيهبط آخرَ «الأحدث أولاً» ويُحسب غائباً عن القائمة. والطلبُ نفسُه شرطُ الإدراج أدناه.
+           -- **وآخرُ دخولٍ للطلب لا أوّلُه** (من مراجعة Codex على #660): إلغاءُ المعاينة يعيد طلبَها منتظراً ويكتب updated_at
+           -- وحده (cancel_exam.ts) — فطلبٌ أُرسل قبل شهرٍ وأُلغيت معاينتُه اليوم ينتظر منذ اليوم، كالجهاز العائد (awaiting_since).
            COALESCE(ep.awaiting_since, ep.created_at,
-             (SELECT MAX(COALESCE(r.decided_at, r.created_at)) FROM medical_review_requests r
+             (SELECT MAX(GREATEST(r.created_at, r.decided_at, r.updated_at)) FROM medical_review_requests r
                WHERE r.patient_id = pc.patient_id AND r.service_type = pc.case_type
                  AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
                  AND ${specialtyLevelRequestSql("r")}),
