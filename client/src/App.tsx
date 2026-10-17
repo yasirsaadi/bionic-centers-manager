@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { DailyGreeting } from "@/components/DailyGreeting";
+import { ExamQueuedNotice } from "@/components/ExamQueuedNotice";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { BranchGate, getBranchSession, setBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -364,6 +365,8 @@ function Router() {
       <AiChatDrawer />
       {/*  تحيّةُ الموظّف اليومية (§4.dp) — مرّةً كلَّ يوم، لا تُغلق إلّا بـ«حسناً». */}
       <DailyGreeting />
+      {/*  «أصبح المريض في «معايناتي»» لمَن أدخله (§4.em) — لا تُغلق إلّا بـ«حسناً». */}
+      <ExamQueuedNotice />
     </BranchGate>
   );
 }
