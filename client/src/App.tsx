@@ -27,6 +27,7 @@ import { useState, useEffect, useRef, lazy, Suspense } from "react";
 const CreatePatient = lazy(() => import("@/pages/CreatePatient"));
 const PatientDetails = lazy(() => import("@/pages/PatientDetails"));
 const EditPatient = lazy(() => import("@/pages/EditPatient"));
+const NewExamRequest = lazy(() => import("@/pages/NewExamRequest"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const DailyPatientReport = lazy(() => import("@/pages/DailyPatientReport"));
 const Branches = lazy(() => import("@/pages/Branches"));
@@ -314,6 +315,7 @@ function Router() {
             <Route path="/patients" component={PatientsList} />
             <Route path="/patients/new" component={CreatePatient} />
             <Route path="/patients/:id/edit" component={EditPatient} />
+            <Route path="/patients/:id/new-exam" component={NewExamRequest} />
             <Route path="/patients/:id" component={PatientDetails} />
             <Route path="/follow-ups" component={FollowUps} />
             <Route path="/post-exam-followups" component={PostExamFollowups} />

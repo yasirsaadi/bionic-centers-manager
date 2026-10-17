@@ -55,6 +55,7 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/patients/new": "تسجيل مريض جديد",
   "/patients/:id": "تفاصيل المريض",
   "/patients/:id/edit": "تعديل بيانات المريض",
+  "/patients/:id/new-exam": "طلب معاينة جديدة",
   "/follow-ups": "المتابعات",
   "/post-exam-followups": "بانتظار الحسم",
   "/discount-approvals": "اعتماد الخصومات",

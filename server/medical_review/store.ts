@@ -12,7 +12,7 @@ import { notifyExamRequest, notifyReturnedFromDoctor } from "../staff_telegram/n
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  isReviewServiceType, isReviewKind, isReviewPath, isReviewDecision,
+  isReviewServiceType, isExamRequestServiceType, PHYSIO_EXAM_REQUEST_SERVICE, isReviewKind, isReviewPath, isReviewDecision,
   isPathAllowedForKind, isAwaitingFullExam, STATUS_AFTER, requestBranchInScope,
   type ReviewServiceType, type ReviewKind, type ReviewPath, type ReviewDecision,
 } from "@shared/medical_review";
@@ -185,13 +185,23 @@ export async function createReviewRequestTx(tx: any, params: {
    * يسقط إلى فرع الجلسة ثمّ فرع التسجيل.
    */
   operationBranchId?: number | null;
+  /**
+   * **طلبُ معاينةٍ جديدة للعلاج الطبيعي** (ترحيل ١٥٤، §4.el) — يفتحه «طلب معاينة جديدة» وحده (`server/patients/new_exam_request.ts`).
+   * بغيره يبقى العلاجُ الطبيعيّ مردوداً كما كان: نافذةُ المراجعة العامّة و«إضافة نوع الحالة» لا تُنشئانه.
+   */
+  physioExamRequest?: boolean;
 }): Promise<ReviewRow> {
   const {
     patientId, serviceType, requestedPath, reviewKind, createdBy, branchIds,
   } = params;
 
-  if (!isReviewServiceType(serviceType)) {
+  const physio = serviceType === PHYSIO_EXAM_REQUEST_SERVICE && params.physioExamRequest === true;
+  if (!isReviewServiceType(serviceType) && !physio) {
     throw new ReviewError("مراجعة الطبيب للأطراف والمساند فقط", 400);
+  }
+  //  **وشكلُه الواحد** — كاملٌ عارٍ، كقيد القاعدة (`medical_review_requests_physio_shape_check`).
+  if (physio && (requestedPath !== "full" || params.deviceEpisodeId != null || params.workOrderId != null || params.visitId != null)) {
+    throw new ReviewError("طلبُ معاينة العلاج الطبيعي معاينةٌ كاملة بلا جهاز", 400);
   }
   if (!isReviewPath(requestedPath)) throw new ReviewError("مسار المراجعة غير صالح", 400);
   if (!isReviewKind(reviewKind)) throw new ReviewError("سبب الزيارة غير صالح", 400);
@@ -985,7 +995,9 @@ export async function closeRequestsAwaitingExam(params: {
   /** معاملةُ التوقيع نفسُها — فالإغلاقُ والتوقيعُ حدثٌ واحد لا حدثان. */
   tx?: { execute: (q: any) => Promise<any> };
 }): Promise<ClosedReviewRequest[]> {
-  if (!isReviewServiceType(params.serviceType)) return [];
+  //  **والعلاجُ الطبيعيّ معها** (ترحيل ١٥٤): طلبُه عارٍ دائماً، فيُغلقه أيُّ توقيعٍ للاختصاص — ولولا ذلك لبقي `pending` أبداً
+  //  يحجز فهرسَ التفرّد العاري فيُردّ الطلبُ التالي ٤٠٩ ويُعاد القديمُ الذي سبق المعاينة، فلا يظهر المريضُ في أيّ قائمة.
+  if (!isExamRequestServiceType(params.serviceType)) return [];
   //  الطلبُ على مستوى الاختصاص (عارٍ أو مرساتُه جهازٌ حيّ لا ينتظر) يُنجزه
   //  أيُّ توقيع؛ وطلبُ حلقةٍ منتظرة لا يُنجزه إلّا توقيعُها هي.
   const anchor = params.deviceEpisodeId === null

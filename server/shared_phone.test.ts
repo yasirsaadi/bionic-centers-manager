@@ -105,7 +105,8 @@ async function main() {
     [null, null, null]);
   const src = (f: string) => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", f), "utf8");
   const sheets = ["client/src/pages/IntakeSheetCreate.tsx", "client/src/pages/PhysioSheetCreate.tsx"].map(src);
-  check(sheets.every((c) => /<SharedPhoneDialog holders=\{phoneHolders\} mode="create"/.test(c) && /onConfirm=\{\(c\) => save\.mutate\(c\)\}/.test(c)
+  //  والنافذةُ للتسجيل «create»، ولمريضٍ قائم في «طلب معاينة جديدة» «edit» (§4.el) — الشرطُ نفسُه بحرفه لا أيُّ قيمة.
+  check(sheets.every((c) => /<SharedPhoneDialog holders=\{phoneHolders\} mode=\{existing \? "edit" : "create"\}/.test(c) && /onConfirm=\{\(c\) => save\.mutate\(c\)\}/.test(c)
     && /\.\.\.\(sharedPhone \? \{ sharedPhone \} : \{\}\)/.test(c) && /if \(holders\) \{ setPhoneHolders\(holders\); return; \}/.test(c)),
     "و.٣ **الاستمارتان** (أطراف ومساند · علاج طبيعي): الردُّ يفتح النافذة لا توستاً، والتأكيدُ يعيد الحفظَ ومعه `sharedPhone`");
   const edit = src("client/src/pages/EditPatient.tsx"), create = src("client/src/pages/CreatePatient.tsx");

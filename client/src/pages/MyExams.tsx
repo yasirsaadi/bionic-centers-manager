@@ -508,12 +508,10 @@ export default function MyExams() {
                                     <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
                                   </Button>
                                 )}
-                                {/*  **وللأجهزة وحدها**: العلاجُ الطبيعي لا حلقاتِ أجهزةٍ له
-                                    ولا طلباتِ مراجعة (`reviewServiceOfCaseType` تُرجع
-                                    `null` له)، فصفُّه يقف على القاعدة القديمة وحدها
-                                    ولا شيءَ فيه يُلغى — وزرٌّ يردّه الخادمُ دائماً
-                                    ليس زرّاً. */}
-                                {isDeviceServiceKind(r.caseType) && (
+                                {/*  **وللأجهزة، ولطلب معاينة العلاج الطبيعي** (ترحيل ١٥٤، §4.el): صفُّ العلاج الطبيعي
+                                    بلا طلبٍ يقف على القاعدة القديمة («لم يُعايَن قطّ») ولا شيءَ فيه يُلغى — وزرٌّ يردّه
+                                    الخادمُ دائماً ليس زرّاً؛ أمّا ما أرسلته الاستعلاماتُ بـ«طلب معاينة جديدة» فطلبٌ يُلغى. */}
+                                {(isDeviceServiceKind(r.caseType) || (r.caseType === "physiotherapy" && !!r.reviewKind)) && (
                                   <Button
                                     size="sm" variant="outline"
                                     className="h-8 text-xs gap-1 text-destructive hover:text-destructive"

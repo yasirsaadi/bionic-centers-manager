@@ -45,7 +45,7 @@ import * as store from "./store";
 import { DeviceEpisodeError, isDeviceServiceType, getEpisodeDisplayFieldsByIds } from "../device_episodes/store";
 import type * as FollowupStore from "../followup/store";
 import * as reviewStore from "../medical_review/store";
-import { canSuperviseReview } from "@shared/medical_review";
+import { canSuperviseReview, isReviewServiceType } from "@shared/medical_review";
 import { cancelledExamIds, isExamCancelled } from "./active_exam";
 import { cancelExam, ExamCancelError } from "./cancel_exam";
 import { cancelExamRequest, CancelExamRequestError } from "./cancel_exam_request";
@@ -1420,7 +1420,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  يُنشئ الطلبَ بنفسه). فالطبيبُ يعرف «عاد للشراء» ولو كان هو
           //  نفسُه مَن أحال المريض سابقاً.
           const withKind = hit ? { ...withAlias, reviewKind: hit.reviewKind } : withAlias;
-          return hit && hit.createdBy !== userId
+          //  **ولا إرجاعَ لطلب العلاج الطبيعي** (ترحيل ١٥٤): «المُرجَعون من الطبيب» للأطراف والمساند وحدهما، فطلبٌ مُرجَعٌ منه
+          //  يختفي من كلّ قائمة — وما أُرسل خطأً يُلغيه «إلغاء المعاينة».
+          return hit && hit.createdBy !== userId && isReviewServiceType(r.caseType)
             ? { ...withKind, returnableRequestId: hit.requestId }
             : withKind;
         }),

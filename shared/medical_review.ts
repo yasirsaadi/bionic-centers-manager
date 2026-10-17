@@ -11,10 +11,13 @@
 // لا باباً واحداً. فالمريض العائد لتعديلٍ بسيط لا يُجبَر على سجلٍّ سريريٍّ
 // كامل، ولا يمرّ بلا نظرةِ طبيب.
 //
-// ══ والعلاج الطبيعي خارج هذا الملفّ كلّه ═══════════════════════════════
-// لا اسمَه هنا ولا قيمةَ تقبله: `REVIEW_SERVICE_TYPES` نوعان فقط، وقيدُ
-// `CHECK` في القاعدة يرفض الثالث. فمسارُه — تسجيلاً وتسعيراً وجلساتٍ
-// ومعاينةً اختيارية — لا يمرّ من هنا ولا يتأثّر بحرف.
+// ══ والعلاج الطبيعي خارج المراجعة كلّها — إلّا بابٌ واحد ══════════════
+// `REVIEW_SERVICE_TYPES` نوعان فقط: طابورُ القرار السريع و«المُرجَعون من
+// الطبيب» ونافذةُ «إرسال لمراجعة الطبيب» لا تعرف الثالث. **والاستثناءُ
+// الوحيد** (ترحيل ١٥٤، §4.el): «طلب معاينة جديدة» من الاستعلامات يُنشئ
+// للعلاج الطبيعي **طلبَ معاينةٍ كاملة عارياً** — بلا مسارٍ سريع ولا مرساة
+// (قيدُ `medical_review_requests_physio_shape_check`) — فيعود المريضُ إلى
+// «معايناتي» بعد معاينته الأولى، ويُغلقه توقيعُ المعاينة التالية.
 
 import { hasRole } from "./user_roles";
 
@@ -24,6 +27,11 @@ export type ReviewServiceType = (typeof REVIEW_SERVICE_TYPES)[number];
 
 export const isReviewServiceType = (v: unknown): v is ReviewServiceType =>
   typeof v === "string" && (REVIEW_SERVICE_TYPES as readonly string[]).includes(v);
+
+/** **ما يقبله طلبُ المعاينة الكاملة** (ترحيل ١٥٤): النوعان والعلاجُ الطبيعيّ — والأخيرُ بشكله الواحد. */
+export const PHYSIO_EXAM_REQUEST_SERVICE = "physiotherapy" as const;
+export const isExamRequestServiceType = (v: unknown): v is ReviewServiceType | typeof PHYSIO_EXAM_REQUEST_SERVICE =>
+  isReviewServiceType(v) || v === PHYSIO_EXAM_REQUEST_SERVICE;
 
 /**
  * المساران اللذان يختار الاستقبالُ بينهما.

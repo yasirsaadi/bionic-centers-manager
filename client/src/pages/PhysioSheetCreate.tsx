@@ -6,16 +6,20 @@
 // وما بعد ذلك ظاهرٌ **مقفول**: التقييمُ الأوّليّ وقرارُ الفاحص يملؤهما الأخصائيّ أو الطبيب في «معاينة جديدة»، والخطّةُ والمالُ والجلساتُ من سجلّاتها.
 // **ولا طلبَ يُرسَل بعد الحفظ**: انتظارُ معاينة العلاج الطبيعي مشتقٌّ من الملفّ نفسِه (§4.bi) — فالمريضُ يظهر في «معايناتي» حين يُحفظ.
 // **والفرعُ فرعُ علاجٍ طبيعيّ** (بغداد وذي قار اليوم — `offersPhysio` من توفّر أجهزته)، والخادمُ يردّ غيرَه.
+//
+// **ولمريضٍ قائم** (`existing` — «طلب معاينة جديدة»، §4.el): الورقةُ نفسُها مملوءةً بما في ملفّه، يعدّل الموظّفُ ما شاء (و«سبب المراجعة»
+// سببُ هذه المراجعة) ثمّ «إرسال للمعاينة» — ما تغيّر وطلبُ المعاينة في حفظٍ واحد، فيعود المريضُ إلى «معايناتي» حتى يعاينه الفاحص.
 import { useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Building2, Loader2, Send } from "lucide-react";
 import type { Branch } from "@shared/schema";
 import { normalizePhone } from "@shared/phone";
 import {
   checkIntakeSheet, REFERRAL_OTHER_PERSON, REFERRAL_SOURCES, REFERRAL_SUB_OTHER, REFERRAL_SUB_SOURCES, type InjuryDateStatus,
 } from "@shared/intake_sheet";
-import { serializeInjuries, type InjuryEntry } from "@shared/case_fields";
+import { injuriesWithLegacyFallback, serializeInjuries, type InjuryEntry } from "@shared/case_fields";
+import { NEW_EXAM_REQUEST_LABEL, changedSheetValues, referralSubSourceChoice } from "@shared/new_exam_request";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { PHYSIO_SHEET_NOTES_LABEL } from "@shared/exam_sheet";
 import { PT_FORM_CODE, PT_FORM_VERSION } from "@shared/physio_initial_assessment";
@@ -34,7 +38,7 @@ import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
 import type { PhoneHolder, SharedPhoneConfirm } from "@shared/shared_phone";
@@ -62,39 +66,78 @@ interface SheetState {
   generalNotes: string;
 }
 
-export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
+/** **مريضٌ قائم يُرسَل لمعاينةٍ جديدة** — صفُّه كما يقرؤه `GET /api/patients/:id`. */
+export interface ExistingPhysioPatient { patient: Record<string, any> & { id: number } }
+
+const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+
+/** الورقةُ مملوءةً بما في الملفّ — والإصاباتُ من عموديها القديمين إن لم تُكتب قائمةً بعد. */
+function stateFromPatient(e: ExistingPhysioPatient): SheetState {
+  const p = e.patient;
+  const ref = referralSubSourceChoice(p.referralSubSource);
+  return {
+    branchId: Number(p.branchId) || 0, registrationDate: baghdadToday(), name: str(p.name), phone: str(p.phone),
+    hadPriorCenterHistory: p.hadPriorCenterHistory === true, governorate: str(p.governorate), address: str(p.address),
+    referralSource: str(p.referralSource), referralSubSource: ref.choice, referralSubSourceOther: ref.other, referralNotes: str(p.referralNotes),
+    presentingComplaint: str(p.presentingComplaint), injuries: injuriesWithLegacyFallback(p.injuries, p.injuryType, p.injuryArea),
+    age: str(p.age), weight: str(p.weight), height: str(p.height), injuryCause: str(p.injuryCause),
+    injuryDate: p.injuryDateStatus ? "" : str(p.injuryDate), injuryDateStatus: p.injuryDateStatus ?? null, generalNotes: str(p.generalNotes),
+  };
+}
+
+/** خاناتُ الملفّ كما تكتبها الورقة — بأسماء أعمدة `patients`، والإصاباتُ وعموداها معاً. */
+function patientFieldsOf(s: SheetState) {
+  const sub = s.referralSource === REFERRAL_OTHER_PERSON
+    ? (s.referralSubSource === REFERRAL_SUB_OTHER ? s.referralSubSourceOther.trim() : s.referralSubSource) : "";
+  return {
+    name: s.name.trim(), phone: s.phone.trim(), hadPriorCenterHistory: s.hadPriorCenterHistory,
+    governorate: s.governorate, address: s.address.trim(), referralSource: s.referralSource, referralSubSource: sub,
+    referralNotes: s.referralNotes.trim(), presentingComplaint: s.presentingComplaint.trim(), ...serializeInjuries(s.injuries),
+    age: s.age.trim(), weight: s.weight.trim(), height: s.height.trim(), injuryCause: s.injuryCause.trim(),
+    injuryDate: s.injuryDateStatus ? null : (s.injuryDate || null), injuryDateStatus: s.injuryDateStatus,
+    generalNotes: s.generalNotes.trim(),
+  };
+}
+
+export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => void; existing?: ExistingPhysioPatient }) {
   const [, setLocation] = useLocation();
   const search = new URLSearchParams(useSearch());
   const session = useBranchSession();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const isAdmin = Boolean(session?.isAdmin);
-  //  حصر (§4.ch): موظّفُ استقبالٍ لا دورَ له غيره لا يسجّل بتاريخٍ قديم — كصفحة التسجيل.
-  const canBackdate = !onlyRoles(session, ["reception"]);
+  //  حصر (§4.ch): موظّفُ استقبالٍ لا دورَ له غيره لا يسجّل بتاريخٍ قديم — كصفحة التسجيل. **والمريضُ القائم يُرسَل اليوم.**
+  const canBackdate = !existing && !onlyRoles(session, ["reception"]);
   const { data: branches = [] } = useQuery<BranchWithPhysio[]>({ queryKey: ["/api/branches"] });
   //  المسؤولُ يختار من فروع العلاج الطبيعي وحدها؛ والموظّفُ فرعُه — والخادمُ يردّ فرعاً بلا علاجٍ طبيعيّ.
   const physioBranches = branches.filter((b) => b.offersPhysio && !b.temporarilyClosed);
 
-  const [f, setF] = useState<SheetState>(() => ({
+  const [f, setF] = useState<SheetState>(() => existing ? stateFromPatient(existing) : ({
     branchId: !isAdmin && session?.branchId ? session.branchId : (Number(search.get("branch")) || session?.branchId || 0),
     registrationDate: baghdadToday(), name: "", phone: "", hadPriorCenterHistory: false,
     governorate: "", address: "", referralSource: "", referralSubSource: "", referralSubSourceOther: "", referralNotes: "",
     presentingComplaint: "", injuries: [],
     age: "", weight: "", height: "", injuryCause: "", injuryDate: "", injuryDateStatus: null, generalNotes: "",
   }));
+  //  ما فُتحت عليه الورقة — يُقارَن به عند الإرسال، فلا يُكتب ما لم يُلمَس.
+  const [opened] = useState<SheetState>(f);
   const [missing, setMissing] = useState<string[]>([]);
   const set = <K extends keyof SheetState>(k: K, v: SheetState[K]) => {
     setF((p) => ({ ...p, [k]: v }));
     setMissing((m) => m.filter((x) => x !== k && !(k === "injuryDateStatus" && x === "injuryDate")));
   };
   const miss = (k: string) => missing.includes(k);
-  const nameCheck = useNameAvailability(f.name);
+  //  تحقّقُ الاسم للتسجيل الجديد وحده — اسمُ المريض القائم اسمُه.
+  const nameCheck = useNameAvailability(existing ? null : f.name);
 
-  const branchName = isAdmin
+  //  الترويسةُ فرعُ اليوم — والمريضُ القائم يُرسَل من الفرع النشط (§4.ay).
+  const activeBranchId = existing ? (session?.branchId ?? f.branchId) : f.branchId;
+  const branchName = isAdmin && !existing
     ? branches.find((b) => b.id === f.branchId)?.name
-    : (session?.branchName || branches.find((b) => b.id === session?.branchId)?.name);
+    : (session?.branchName || branches.find((b) => b.id === (session?.branchId ?? f.branchId))?.name);
   //  فرعُ الموظّف بلا علاجٍ طبيعيّ — يُقال قبل أن يملأ الورقة لا بعد الحفظ.
-  const branchLacksPhysio = !isAdmin && branches.length > 0 && Boolean(f.branchId)
-    && !branches.find((b) => b.id === f.branchId)?.offersPhysio;
+  const branchLacksPhysio = !isAdmin && branches.length > 0 && Boolean(activeBranchId)
+    && !branches.find((b) => b.id === activeBranchId)?.offersPhysio;
 
   const referralSubSource = f.referralSource === REFERRAL_OTHER_PERSON
     ? (f.referralSubSource === REFERRAL_SUB_OTHER ? f.referralSubSourceOther.trim() : f.referralSubSource) : "";
@@ -109,6 +152,14 @@ export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
   const [phoneHolders, setPhoneHolders] = useState<PhoneHolder[] | null>(null);
   const save = useMutation({
     mutationFn: async (sharedPhone?: SharedPhoneConfirm) => {
+      if (existing) {
+        //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
+        await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
+          department: "physiotherapy", fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
+          ...(sharedPhone ? { sharedPhone } : {}),
+        });
+        return { id: existing.patient.id };
+      }
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: "physiotherapy",
         branchId: f.branchId, registrationDate: canBackdate ? f.registrationDate : undefined,
@@ -127,7 +178,13 @@ export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
     },
     onSuccess: (r) => {
       setPhoneHolders(null);
-      toast({ title: "حُفظت الاستمارة", description: "والمراجعُ بانتظار معاينة العلاج الطبيعي" });
+      if (existing) {
+        invalidatePatientData(queryClient, r.id);
+        queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${r.id}/exams`] });
+      }
+      toast(existing
+        ? { title: "أُرسل المراجعُ لمعاينة العلاج الطبيعي", description: "يظهر في «معايناتي» حتى يعاينه الأخصائيّ أو الطبيب" }
+        : { title: "حُفظت الاستمارة", description: "والمراجعُ بانتظار معاينة العلاج الطبيعي" });
       setLocation(`/patients/${r.id}`);
     },
     onError: (e) => {
@@ -135,7 +192,7 @@ export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
       if (holders) { setPhoneHolders(holders); return; }
       const b = errBody(e);
       if (b.missing.length) setMissing(b.missing);
-      toast({ title: "لم تُحفظ الاستمارة", description: b.message, variant: "destructive" });
+      toast({ title: existing ? "لم يُرسَل الطلب" : "لم تُحفظ الاستمارة", description: b.message, variant: "destructive" });
     },
   });
 
@@ -162,14 +219,21 @@ export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="max-w-4xl mx-auto py-2 md:py-6 space-y-3 overflow-x-clip" dir="rtl">
-      <SharedPhoneDialog holders={phoneHolders} mode="create" pending={save.isPending}
+      <SharedPhoneDialog holders={phoneHolders} mode={existing ? "edit" : "create"} pending={save.isPending}
         onCancel={() => setPhoneHolders(null)} onConfirm={(c) => save.mutate(c)} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" onClick={onBack} className="p-2" aria-label="رجوع"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
-        <div className="text-sm text-muted-foreground">إضافة مريض — علاج طبيعي</div>
+        <div className="text-sm text-muted-foreground" data-testid="pt-intake-title">
+          {existing ? `${NEW_EXAM_REQUEST_LABEL} — علاج طبيعي` : "إضافة مريض — علاج طبيعي"}
+        </div>
       </div>
+      {existing && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900" data-testid="pt-intake-existing-note">
+          بياناتُ المراجع من ملفّه — عدّل ما تغيّر منها، واكتب «سبب المراجعة» لهذه المرّة، ثمّ أرسله للمعاينة. وما تغيّر يُكتب في ملفّه بسطر تدقيق.
+        </div>
+      )}
 
-      {isAdmin && (
+      {isAdmin && !existing && (
         <div className={cn("flex items-center gap-2 rounded-lg border bg-white p-2", miss("branchId") && "border-red-400")}>
           <Building2 className="w-4 h-4 text-primary" />
           <span className="text-sm font-medium">الفرع</span>
@@ -301,7 +365,7 @@ export default function PhysioSheetCreate({ onBack }: { onBack: () => void }) {
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <Button onClick={submit} disabled={save.isPending || branchLacksPhysio} className="gap-2 min-w-[12rem]" data-testid="pt-intake-submit">
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} حفظ وإرسال للمعاينة
+            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {existing ? "إرسال للمعاينة" : "حفظ وإرسال للمعاينة"}
           </Button>
           {missing.length > 0 && <span className="text-xs text-red-600" data-testid="pt-intake-missing">الخانات المحدّدة بالأحمر إلزامية</span>}
         </div>
