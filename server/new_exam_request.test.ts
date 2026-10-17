@@ -365,6 +365,19 @@ async function main() {
     await q(`UPDATE physio_device_branches SET available = true WHERE branch_id = $1`, [B1]);
     same("د.١٢ **فرعٌ بلا علاجٍ طبيعيّ لا يُرسَل منه** — ٤٠٠ بخانة الفرع، ولا طلبَ ولا «سبب مراجعة» يُكتب",
       [d12.status, d12.json?.field, ...after12], [400, "branchId", 0, "ألم جديد في الرقبة"]);
+    //  **وإلغاءُ المعاينة يعيد طلبَها إلى «معايناتي» منذ الإلغاء** (من مراجعة Codex على #660): الطلبُ أُرسل، ووُقّعت معاينتُه،
+    //  ثمّ أُلغيت — فدخل الطابورَ لحظةَ الإلغاء، ولا يهبط آخرَ «الأحدث أولاً» بتاريخ إرساله. (والمعاينةُ الموقّعة مختومةٌ لا يُرجَع
+    //  تاريخُها، فيُقاس بلحظة الإلغاء المكتوبة في القاعدة؛ وثانيتان بين الإرسال والإلغاء تجعلان الفرقَ أوضحَ من دقّة الساعة.)
+    await new Promise((r) => setTimeout(r, 2000));
+    const d13 = await call("POST", `/api/medical/exams/${Number(s2.json?.id)}/cancel`, S.admin, { reason: "وُقّعت على المريض الخطأ" });
+    const cancelledAt = (await q(`SELECT cancelled_at FROM medical_exam_cancellations WHERE exam_id = $1`, [Number(s2.json?.id)])).rows[0]?.cancelled_at;
+    const sentAt = (await q(`SELECT created_at FROM medical_review_requests WHERE id = $1`, [Number(reqs7[0]?.id)])).rows[0]?.created_at;
+    const wl13 = await worklistRow(S.spec, F.pid, "physiotherapy");
+    const at13 = wl13?.waitingSince ? new Date(wl13.waitingSince).getTime() : NaN;
+    same("د.١٣ **إلغاءُ المعاينة يعيد طلبَها منتظراً منذ الإلغاء** لا منذ إرساله — فيكون أوّلَ «الأحدث أولاً»",
+      [d13.status, (d13.json?.requestsReopened ?? []).length, wl13 !== null,
+        new Date(cancelledAt).getTime() - new Date(sentAt).getTime() > 1500, at13 >= new Date(cancelledAt).getTime() - 5],
+      [200, 1, true, true, true]);
 
     // ══ هـ. الشكلُ الواحد في القاعدة والمخزن ══
     console.log("\n── هـ. الشكل ──");
