@@ -296,7 +296,8 @@
     "test:dashboard-privacy": "tsx client/src/pages/dashboard_privacy_ui.test.ts",
     "test:physio-protocol-seed": "tsx server/physio_protocol_seed.test.ts",
     "test:physio-protocol-english": "tsx server/physio_protocol_english.test.ts",
-    "test:ai-physio-protocols": "tsx server/ai_physio_protocols.test.ts"
+    "test:ai-physio-protocols": "tsx server/ai_physio_protocols.test.ts",
+    "test:new-exam-request": "tsx server/new_exam_request.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

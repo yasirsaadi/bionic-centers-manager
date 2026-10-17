@@ -50,6 +50,7 @@ import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
 import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
 import { registerPatientEditRulesRoutes, patientEditStateFor } from "./patients/edit_rules";
+import { registerNewExamRequestRoutes } from "./patients/new_exam_request";
 import { applyEditLocks, editLockMessage, lockedPatientFields } from "@shared/patient_edit_rules";
 import { parseSharedPhone } from "@shared/shared_phone";
 import { registerFollowupRoutes } from "./followup/routes";
@@ -9023,6 +9024,8 @@ export async function registerRoutes(
   //  «استمارة مراجع — علاج طبيعي» مكتملةً (§4.da — المرحلةُ الثالثة): قراءةٌ محضة للعرض والطباعة.
   registerPhysioSheetRoutes(app, isAuthenticated);
   registerPatientEditRulesRoutes(app, isAuthenticated);
+  //  «طلب معاينة جديدة» — الاستمارةُ ببيانات المريض ثمّ الإرسالُ للمعاينة (§4.el).
+  registerNewExamRequestRoutes(app, isAuthenticated, { phoneConflictBody });
 
   // متابعةُ ما بعد المعاينة (ترحيل ٠٥٣): قرار المريض، وتعديل السعر
   // باعتماد الطبيب، واعتمادُ الشراء الذي ينادي «تخصيص» نفسها.

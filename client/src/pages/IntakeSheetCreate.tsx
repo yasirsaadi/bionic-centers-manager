@@ -6,9 +6,12 @@
 // **والحفظُ يرسل المريضَ إلى الطبيب**: يُنشئ الملفّ ثمّ طلبَ المعاينة (`device-episodes` بمسار `exam`) — الطلبُ نفسُه الذي يفتحه
 // «يحتاج معاينة طبية»، ومعه زيارةُ «طلب معاينة طبية». وإن تعذّر الطلبُ بعد حفظ الملفّ، تُفتح للموظّف نافذةُ «سبب الحضور» في
 // الملفّ (الشريطُ الأحمر «لم يُحدَّد سبب الحضور» شبكةُ أمانٍ قائمة) — فلا مريضَ يضيع بصمت.
+//
+// **ولمريضٍ قائم** (`existing` — «طلب معاينة جديدة»، §4.el): الورقةُ نفسُها مملوءةً بما في ملفّه، وقسمُها ثابت، والفرعُ والتاريخُ
+// فرعُ اليوم وتاريخُه؛ يعدّل الموظّفُ ما شاء ثمّ «إرسال للمعاينة» — يُرسَل ما تغيّر وحده مع «المطلوب» في حفظٍ واحد.
 import { useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Building2, Loader2, Send } from "lucide-react";
 import type { Branch } from "@shared/schema";
 import { normalizePhone } from "@shared/phone";
@@ -18,7 +21,8 @@ import {
 } from "@shared/intake_sheet";
 import { FULL_DEVICE } from "@shared/prosthetic_parts";
 import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
-import { INJURY_SIDE_OPTIONS } from "@shared/case_fields";
+import { INJURY_SIDE_OPTIONS, parseAmputationSite } from "@shared/case_fields";
+import { NEW_EXAM_REQUEST_LABEL, changedSheetValues, referralSubSourceChoice } from "@shared/new_exam_request";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { EXAM_SHEET_TEXT_LABEL, SHEET_DEVICE_ROWS } from "@shared/exam_sheet";
 import { limbSlots } from "@shared/limb_specs";
@@ -38,7 +42,7 @@ import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
 import type { PhoneHolder, SharedPhoneConfirm } from "@shared/shared_phone";
@@ -65,23 +69,65 @@ interface SheetState {
   generalNotes: string;
 }
 
-export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
+/** **مريضٌ قائم يُرسَل لمعاينةٍ جديدة** — صفُّه كما يقرؤه `GET /api/patients/:id`، والقسمُ الذي يُطلب له. */
+export interface ExistingDevicePatient {
+  patient: Record<string, any> & { id: number };
+  department: "prosthetic" | "medical_support";
+}
+
+const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+
+/** الورقةُ مملوءةً بما في الملفّ — و«المطلوب» فارغٌ: يختاره الموظّفُ لهذا الطلب. */
+function stateFromPatient(e: ExistingDevicePatient): SheetState {
+  const p = e.patient;
+  const ref = referralSubSourceChoice(p.referralSubSource);
+  return {
+    branchId: Number(p.branchId) || 0, registrationDate: baghdadToday(), name: str(p.name), phone: str(p.phone),
+    hadPriorCenterHistory: p.hadPriorCenterHistory === true, governorate: str(p.governorate), address: str(p.address),
+    referralSource: str(p.referralSource), referralSubSource: ref.choice, referralSubSourceOther: ref.other,
+    department: e.department, amp: parseAmputationSite(p.amputationSite), requestedItems: [],
+    supportType: str(p.supportType), injurySide: str(p.injurySide),
+    age: str(p.age), weight: str(p.weight), height: str(p.height), injuryCause: str(p.injuryCause),
+    injuryDate: p.injuryDateStatus ? "" : str(p.injuryDate), injuryDateStatus: p.injuryDateStatus ?? null, generalNotes: str(p.generalNotes),
+  };
+}
+
+/** خاناتُ الملفّ كما تكتبها الورقة — بأسماء أعمدة `patients`، لتُقارَن بما فُتحت عليه. */
+function patientFieldsOf(s: SheetState) {
+  const sub = s.referralSource === REFERRAL_OTHER_PERSON
+    ? (s.referralSubSource === REFERRAL_SUB_OTHER ? s.referralSubSourceOther.trim() : s.referralSubSource) : "";
+  return {
+    name: s.name.trim(), phone: s.phone.trim(), hadPriorCenterHistory: s.hadPriorCenterHistory,
+    governorate: s.governorate, address: s.address.trim(), referralSource: s.referralSource, referralSubSource: sub,
+    age: s.age.trim(), weight: s.weight.trim(), height: s.height.trim(), injuryCause: s.injuryCause.trim(),
+    injuryDate: s.injuryDateStatus ? null : (s.injuryDate || null), injuryDateStatus: s.injuryDateStatus,
+    generalNotes: s.generalNotes.trim(),
+    ...(s.department === "prosthetic"
+      ? { amputationSite: amputationSiteOf(s.amp) }
+      : { supportType: s.supportType.trim(), injurySide: s.injurySide.trim() }),
+  };
+}
+
+export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => void; existing?: ExistingDevicePatient }) {
   const [, setLocation] = useLocation();
   const search = new URLSearchParams(useSearch());
   const session = useBranchSession();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const isAdmin = Boolean(session?.isAdmin);
-  //  حصر (§4.ch): موظّفُ استقبالٍ لا دورَ له غيره لا يسجّل بتاريخٍ قديم — كصفحة التسجيل.
-  const canBackdate = !onlyRoles(session, ["reception"]);
+  //  حصر (§4.ch): موظّفُ استقبالٍ لا دورَ له غيره لا يسجّل بتاريخٍ قديم — كصفحة التسجيل. **والمريضُ القائم يُرسَل اليوم.**
+  const canBackdate = !existing && !onlyRoles(session, ["reception"]);
   const { data: branches = [] } = useQuery<Branch[]>({ queryKey: ["/api/branches"] });
 
-  const [f, setF] = useState<SheetState>(() => ({
+  const [f, setF] = useState<SheetState>(() => existing ? stateFromPatient(existing) : ({
     branchId: !isAdmin && session?.branchId ? session.branchId : (Number(search.get("branch")) || session?.branchId || 0),
     registrationDate: baghdadToday(), name: "", phone: "", hadPriorCenterHistory: false,
     governorate: "", address: "", referralSource: "", referralSubSource: "", referralSubSourceOther: "",
     department: "", amp: {}, requestedItems: [], supportType: "", injurySide: "",
     age: "", weight: "", height: "", injuryCause: "", injuryDate: "", injuryDateStatus: null, generalNotes: "",
   }));
+  //  ما فُتحت عليه الورقة — يُقارَن به عند الإرسال، فلا يُكتب ما لم يُلمَس.
+  const [opened] = useState<SheetState>(f);
   const set = <K extends keyof SheetState>(k: K, v: SheetState[K]) => {
     setF((p) => ({ ...p, [k]: v }));
     setMissing((m) => m.filter((x) => x !== k && !(k === "amp" && x === "amputationSite") && !(k === "injuryDateStatus" && x === "injuryDate")
@@ -89,11 +135,13 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
   };
   const [missing, setMissing] = useState<string[]>([]);
   const miss = (k: string) => missing.includes(k);
-  const nameCheck = useNameAvailability(f.name);
+  //  تحقّقُ الاسم للتسجيل الجديد وحده — اسمُ المريض القائم اسمُه.
+  const nameCheck = useNameAvailability(existing ? null : f.name);
 
-  const branchName = isAdmin
+  //  الترويسةُ فرعُ اليوم — والمريضُ القائم يُرسَل من الفرع النشط (§4.ay).
+  const branchName = isAdmin && !existing
     ? branches.find((b) => b.id === f.branchId)?.name
-    : (session?.branchName || branches.find((b) => b.id === session?.branchId)?.name);
+    : (session?.branchName || branches.find((b) => b.id === (session?.branchId ?? f.branchId))?.name);
 
   const referralSubSource = f.referralSource === REFERRAL_OTHER_PERSON
     ? (f.referralSubSource === REFERRAL_SUB_OTHER ? f.referralSubSourceOther.trim() : f.referralSubSource) : "";
@@ -112,6 +160,15 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
   const save = useMutation({
     mutationFn: async (sharedPhone?: SharedPhoneConfirm) => {
       const dep = f.department as IntakeDepartment;
+      if (existing) {
+        //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
+        await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
+          department: dep, requestedItems: values.requestedItems,
+          fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
+          ...(sharedPhone ? { sharedPhone } : {}),
+        });
+        return { id: existing.patient.id, routed: true as const, routeError: null };
+      }
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: dep, requestedItems: values.requestedItems,
         branchId: f.branchId, registrationDate: canBackdate ? f.registrationDate : undefined,
@@ -137,7 +194,11 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
     },
     onSuccess: (r) => {
       setPhoneHolders(null);
-      if (r.routed) {
+      if (existing) {
+        invalidatePatientData(queryClient, r.id);
+        queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${r.id}/exams`] });
+        toast({ title: "أُرسل المراجعُ إلى الطبيب للمعاينة", description: "يظهر في «معايناتي» بطلبه الجديد" });
+      } else if (r.routed) {
         toast({ title: "حُفظت الاستمارة", description: "وأُرسل المراجعُ إلى الطبيب للمعاينة" });
       } else {
         markReceptionRoutingPending(sessionResumeStore(), r.id);
@@ -150,7 +211,7 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
       if (holders) { setPhoneHolders(holders); return; }
       const b = errBody(e);
       if (b.missing.length) setMissing(b.missing);
-      toast({ title: "لم تُحفظ الاستمارة", description: b.message, variant: "destructive" });
+      toast({ title: existing ? "لم يُرسَل الطلب" : "لم تُحفظ الاستمارة", description: b.message, variant: "destructive" });
     },
   });
 
@@ -178,14 +239,21 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
   const isProsthetic = f.department === "prosthetic";
   return (
     <div className="max-w-4xl mx-auto py-2 md:py-6 space-y-3 overflow-x-clip" dir="rtl">
-      <SharedPhoneDialog holders={phoneHolders} mode="create" pending={save.isPending}
+      <SharedPhoneDialog holders={phoneHolders} mode={existing ? "edit" : "create"} pending={save.isPending}
         onCancel={() => setPhoneHolders(null)} onConfirm={(c) => save.mutate(c)} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" onClick={onBack} className="p-2" aria-label="رجوع"><ArrowRight className="w-5 h-5 text-slate-500" /></Button>
-        <div className="text-sm text-muted-foreground">إضافة مريض — أطراف صناعية ومساند</div>
+        <div className="text-sm text-muted-foreground" data-testid="intake-title">
+          {existing ? `${NEW_EXAM_REQUEST_LABEL} — ${INTAKE_DEPARTMENT_LABELS[existing.department]}` : "إضافة مريض — أطراف صناعية ومساند"}
+        </div>
       </div>
+      {existing && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900" data-testid="intake-existing-note">
+          بياناتُ المراجع من ملفّه — عدّل ما تغيّر منها، واختر المطلوب، ثمّ أرسله للطبيب. وما تغيّر يُكتب في ملفّه بسطر تدقيق.
+        </div>
+      )}
 
-      {isAdmin && (
+      {isAdmin && !existing && (
         <div className={cn("flex items-center gap-2 rounded-lg border bg-white p-2", miss("branchId") && "border-red-400")}>
           <Building2 className="w-4 h-4 text-primary" />
           <span className="text-sm font-medium">الفرع</span>
@@ -254,8 +322,9 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
           <SheetRow label="نوع الإصابة" missing={miss("department") || miss("amputationSite") || miss("supportType") || miss("injurySide")} testId="row-injury-type">
             <div className="space-y-3 py-1">
               <div className="flex flex-wrap gap-2">
-                {(Object.keys(INTAKE_DEPARTMENT_LABELS) as IntakeDepartment[]).map((d) => (
-                  <button key={d} type="button" onClick={() => set("department", d)} aria-pressed={f.department === d}
+                {/*  والمريضُ القائم قسمُه ثابت — طلبُ قسمٍ آخر من زرّه. */}
+                {(existing ? [existing.department] : (Object.keys(INTAKE_DEPARTMENT_LABELS) as IntakeDepartment[])).map((d) => (
+                  <button key={d} type="button" onClick={() => { if (!existing) set("department", d); }} aria-pressed={f.department === d}
                     className={cn("rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
                       f.department === d ? "border-primary bg-primary text-primary-foreground" : "bg-white hover:bg-slate-50")}
                     data-testid={`intake-dept-${d}`}>{INTAKE_DEPARTMENT_LABELS[d]}</button>
@@ -343,13 +412,16 @@ export default function IntakeSheetCreate({ onBack }: { onBack: () => void }) {
             <div className="border-b border-l border-slate-700 px-2 py-1.5 font-semibold text-center">التاريخ</div>
             <div className="border-b border-slate-700 px-2 py-1.5 font-semibold text-center">أسباب المراجعة</div>
             <div className="border-l border-slate-700 px-2 py-1.5 text-center text-slate-400" dir="ltr">{dmy(f.registrationDate)}</div>
-            <div className="px-2 py-1.5 text-slate-400">طلب معاينة طبية — يُسجَّل عند الحفظ، وتظهر هنا زياراتُه كلُّها من سجلّ الزيارات</div>
+            <div className="px-2 py-1.5 text-slate-400">
+              {existing ? "طلب معاينة طبية — يُسجَّل عند الإرسال، وزياراتُه السابقة في سجلّ الزيارات"
+                : "طلب معاينة طبية — يُسجَّل عند الحفظ، وتظهر هنا زياراتُه كلُّها من سجلّ الزيارات"}
+            </div>
           </div>
         </SheetTable>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <Button onClick={submit} disabled={save.isPending} className="gap-2 min-w-[12rem]" data-testid="intake-submit">
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} حفظ وإرسال للطبيب
+            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {existing ? "إرسال للطبيب للمعاينة" : "حفظ وإرسال للطبيب"}
           </Button>
           {missing.length > 0 && <span className="text-xs text-red-600" data-testid="intake-missing">الخانات المحدّدة بالأحمر إلزامية</span>}
         </div>

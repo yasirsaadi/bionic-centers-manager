@@ -23,6 +23,7 @@ import { MergePatientDialog } from "@/components/MergePatientDialog";
 import { SendToDoctorReviewDialog } from "@/components/medical/SendToDoctorReviewDialog";
 import { canCreateReview } from "@shared/medical_review";
 import { PatientMedicalExams } from "@/components/medical/PatientMedicalExams";
+import { newExamDepartmentsOf } from "@shared/new_exam_request";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, toEnglishDigits } from "@/lib/utils";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { resolvePurchasedSessions } from "@shared/pricing";
@@ -1093,6 +1094,7 @@ export default function PatientDetails() {
           patientId={patient.id}
           patientName={patient.name}
           branchName={branches?.find((b) => b.id === patient.branchId)?.name ?? null}
+          requestDepartments={newExamDepartmentsOf(patient)}
         />
       </div>
 

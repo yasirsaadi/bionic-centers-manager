@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2, Trash2, ShieldAlert } from "lucide-react";
+import { Stethoscope, Lock, Plus, Printer, FilePlus2, Clock, Pencil, History, CheckCircle2, Trash2, ShieldAlert, Send } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { NEW_EXAM_REQUEST_LABEL, type NewExamRequestDepartment } from "@shared/new_exam_request";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
@@ -181,12 +186,16 @@ export function PatientMedicalExams({
   patientId,
   patientName,
   branchName,
+  requestDepartments = [],
 }: {
   patientId: number;
   patientName?: string | null;
   branchName?: string | null;
+  /** أقسامُ الملفّ التي يُطلب لها «طلب معاينة جديدة» (§4.el) — من أعلام المريض (`newExamDepartmentsOf`). */
+  requestDepartments?: NewExamRequestDepartment[];
 }) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
 
   const [examOpen, setExamOpen] = useState(false);
@@ -206,6 +215,10 @@ export function PatientMedicalExams({
   //  **والحجبُ عرضٌ لا إذن**: الخادمُ يفحص الدورَ والفرعَ في كلّ نداء.
   const session = useBranchSession();
   const mayReverse = Boolean(session?.isAdmin) || hasRole(session, "branch_manager");
+  //  ══ **«طلب معاينة جديدة» للاستعلامات** (§4.el) ══ صلاحيةُ التسجيل نفسُها («مثل صلاحيات التسجيل لاول مرة» — المالك)،
+  //  والخادمُ يعيد فحصَها والفرعَ. يفتح ورقةَ القسم مملوءةً بالملفّ، ثمّ «إرسال للمعاينة».
+  const mayRequest = (Boolean(session?.isAdmin) || session?.permissions?.canAddPatients === true) && requestDepartments.length > 0;
+  const openRequest = (d: NewExamRequestDepartment) => setLocation(`/patients/${patientId}/new-exam?dept=${d}`);
   const [reversalFor, setReversalFor] = useState<number | null>(null);
 
   const queryKey = [`/api/medical/patients/${patientId}/exams`];
@@ -401,7 +414,9 @@ ${addenda}
 
   // Hide the card entirely only when there is nothing to show AND nothing the
   // viewer could do about it — otherwise the pending badges are the point.
-  if (exams.length === 0 && pending.length === 0 && !isDoctor) return null;
+  if (exams.length === 0 && pending.length === 0 && !isDoctor && !mayRequest) return null;
+  //  العلاجُ الطبيعيّ لا يُطلب له وهو ينتظر — طلبُ الجهاز يتعدّد (لكلّ جهازٍ طلبُه).
+  const requestWaiting = (d: NewExamRequestDepartment) => d === "physiotherapy" && pending.includes("physiotherapy");
 
   return (
     <>
@@ -424,6 +439,31 @@ ${addenda}
             )}
           </h3>
 
+          <div className="flex flex-wrap items-center gap-2">
+          {mayRequest && (requestDepartments.length === 1 ? (
+            <Button size="sm" variant="outline" className="h-8 border-teal-300 text-teal-800 bg-white"
+              disabled={requestWaiting(requestDepartments[0])}
+              title={requestWaiting(requestDepartments[0]) ? "بانتظار المعاينة أصلاً" : undefined}
+              onClick={() => openRequest(requestDepartments[0])} data-testid="button-request-new-exam">
+              <Send className="w-4 h-4 ml-1" /> {NEW_EXAM_REQUEST_LABEL}
+            </Button>
+          ) : (
+            <DropdownMenu dir="rtl">
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-8 border-teal-300 text-teal-800 bg-white" data-testid="button-request-new-exam">
+                  <Send className="w-4 h-4 ml-1" /> {NEW_EXAM_REQUEST_LABEL}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">لأيّ قسم؟</DropdownMenuLabel>
+                {requestDepartments.map((d) => (
+                  <DropdownMenuItem key={d} disabled={requestWaiting(d)} onSelect={() => openRequest(d)} data-testid={`request-new-exam-${d}`}>
+                    {specialtyLabel(d)}{requestWaiting(d) ? " — بانتظار المعاينة" : ""}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ))}
           {isDoctor && (
             <Button
               size="sm"
@@ -442,6 +482,7 @@ ${addenda}
               <Plus className="w-4 h-4 ml-1" /> معاينة جديدة
             </Button>
           )}
+          </div>
         </div>
 
         {/* Which specialties the doctor has DECIDED — the positive counterpart to

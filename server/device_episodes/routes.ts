@@ -111,6 +111,76 @@ function fail(res: any, err: unknown, fallback: string) {
   return res.status(500).json({ error: fallback });
 }
 
+/**
+ * **فتحُ طلب جهازٍ على مسار المعاينة — داخل معاملة المنادي**: الحلقةُ (`awaiting_exam`) وزيارةُ «طلب معاينة طبية».
+ * يستعمله هذا البابُ و«طلب معاينة جديدة» (§4.el — `server/patients/new_exam_request.ts`) فيكتبان الشيءَ نفسَه بحرفه.
+ *
+ * **وطلبُ المعاينة حضورٌ** — زيارةُ «طلب معاينة طبية» في معاملة الطلب نفسِها (§4.aw). **وبلا ربطٍ بالحلقة**:
+ * حلقةٌ تشير إليها زيارةٌ تصير تاريخاً لا يُسحَب (`classifyCaseDisposal`)، والطلبُ الخاطئ يبقى قابلاً للسحب كما كان.
+ */
+export async function openExamEpisodeTx(tx: any, p: {
+  patientId: number; serviceType: "prosthetic" | "medical_support"; createdBy: number | null;
+  requestedItem: string | null; extraComponents: string[]; actingBranchId: number | null;
+}) {
+  const ep = await episodes.startDeviceEpisodeTx(tx, {
+    patientId: p.patientId, serviceType: p.serviceType, createdBy: p.createdBy,
+    requestedItem: p.requestedItem as any, extraComponents: p.extraComponents as any, servicePath: "exam", actingBranchId: p.actingBranchId,
+  });
+  await recordAttendanceVisitTx(tx, {
+    patientId: p.patientId, caseId: ep.caseId, branchId: ep.branchId,
+    reason: ATTENDANCE_REASONS.examRequest,
+    notes: p.requestedItem ? requestedItemLabel(p.requestedItem as any, p.serviceType, p.extraComponents as any) : null,
+    createdBy: p.createdBy ?? null,
+  });
+  return ep;
+}
+
+/** **وبعد الالتزام**: التوجيهُ الإلزاميّ إلى الطبيب وسطرُ التدقيق — كما يفعلهما بابُ طلب الجهاز بحرفه. */
+export async function routeAndAuditExamEpisode(req: Req, p: {
+  episode: Awaited<ReturnType<typeof openExamEpisodeTx>>; patientId: number; patientName: string | null;
+  serviceType: "prosthetic" | "medical_support"; reviewNote?: string; auditSuffix?: string;
+}) {
+  const { episode, patientId, serviceType } = p;
+  const session = getSession(req);
+  // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
+  //  **جهازٌ جديد ⟶ معاينةٌ كاملة، بلا استثناء ولا خيارٍ للموظّف.**
+  //  والطلب مربوطٌ بالحلقة نفسها لا بالمريض وحده، فمريضٌ فتح جهازين في
+  //  اختصاصين مختلفين له طلبان يقرأ الطبيبُ فرقَهما.
+  //  ويشمل **المريض القديم**: استثناؤه يرفع الإلزام عن الانتظار
+  //  التلقائي، ولا يُخرجه من طلبٍ صرّح به الاستقبال بفعله.
+  //  **والتوجيهُ يتبع مسارَ العملية لا تاريخَ المريض** (ترحيل ٠٦٥): مسارُ `exam` — وهو وحده يصل هنا (`no_exam` يُردّ قبله ٤٠٩)
+  //  ⟶ طلبُ معاينةٍ كاملة، ولو كان المريضُ مصنَّفاً «قديماً».
+  const routing = await routeServiceToDoctorReview(req, {
+    patientId, caseType: serviceType,
+    reviewKind: "new_device", requestedPath: "full",
+    //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
+    //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
+    receptionNote: [requestedItemLine(episode.requestedItem, serviceType, episode.extraComponents),
+      (p.reviewNote ?? "").trim()]
+      .filter(Boolean).join(" — "),
+    deviceEpisodeId: episode.id,
+  });
+
+  await logAudit({
+    entityType: "patient_device_episode",
+    entityId: episode.id,
+    action: "create",
+    userId: session.userId,
+    userName: session.userName ?? null,
+    branchId: episode.branchId,
+    newValues: episode,
+    ipAddress: req.ip ?? null,
+    userAgent: req.get("user-agent") ?? null,
+    notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType, episode.extraComponents)})`
+      + ` للمريض ${p.patientName ?? patientId}`
+      + " — المسار: يحتاج معاينة"
+      + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : "")
+      + (p.auditSuffix ?? ""),
+  });
+
+  return routing;
+}
+
 export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) {
   // ── حلقات المريض ─────────────────────────────────────────────────────
   app.get("/api/patients/:patientId/device-episodes", isAuthenticated, async (req: Req, res) => {
@@ -263,58 +333,14 @@ export function registerDeviceEpisodeRoutes(app: Express, isAuthenticated: any) 
       });
       //  **وطلبُ المعاينة حضورٌ** — زيارةُ «طلب معاينة طبية» في معاملة الطلب نفسِها (§4.aw). **وبلا ربطٍ بالحلقة**:
       //  حلقةٌ تشير إليها زيارةٌ تصير تاريخاً لا يُسحَب (`classifyCaseDisposal`)، والطلبُ الخاطئ يبقى قابلاً للسحب كما كان.
-      const episode = await db.transaction(async (tx) => {
-        const ep = await episodes.startDeviceEpisodeTx(tx, {
-          patientId, serviceType, createdBy: session.userId,
-          requestedItem: parsedItem.value, extraComponents, servicePath, actingBranchId,
-        });
-        await recordAttendanceVisitTx(tx, {
-          patientId, caseId: ep.caseId, branchId: ep.branchId,
-          reason: ATTENDANCE_REASONS.examRequest,
-          notes: parsedItem.value ? requestedItemLabel(parsedItem.value, serviceType, extraComponents) : null,
-          createdBy: session.userId ?? null,
-        });
-        return ep;
-      });
+      const episode = await db.transaction((tx) => openExamEpisodeTx(tx, {
+        patientId, serviceType, createdBy: session.userId,
+        requestedItem: parsedItem.value, extraComponents, actingBranchId,
+      }));
 
-      // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
-      //  **جهازٌ جديد ⟶ معاينةٌ كاملة، بلا استثناء ولا خيارٍ للموظّف.**
-      //  والطلب مربوطٌ بالحلقة نفسها لا بالمريض وحده، فمريضٌ فتح جهازين في
-      //  اختصاصين مختلفين له طلبان يقرأ الطبيبُ فرقَهما.
-      //  ويشمل **المريض القديم**: استثناؤه يرفع الإلزام عن الانتظار
-      //  التلقائي، ولا يُخرجه من طلبٍ صرّح به الاستقبال بفعله.
-      //  **والتوجيهُ يتبع مسارَ العملية لا تاريخَ المريض** (ترحيل ٠٦٥):
-      //  مساره `exam` ⟶ طلبُ معاينةٍ كاملة كما كان حرفاً بحرف، ولو كان
-      //  المريضُ مصنَّفاً «قديماً». ومساره `no_exam` ⟶ **لا طلبَ ولا
-      //  طابور**: العمليةُ قيلت صراحةً إنها لا تحتاج الطبيب، فسَوقُها إليه
-      //  يُغرق قائمتَه بما لا قرارَ له فيه.
-      const routing = servicePath === "exam"
-        ? await routeServiceToDoctorReview(req, {
-          patientId, caseType: serviceType,
-          reviewKind: "new_device", requestedPath: "full",
-          //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
-          //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
-          receptionNote: [requestedItemLine(episode.requestedItem, serviceType, episode.extraComponents),
-            typeof req.body?.reviewNote === "string" ? req.body.reviewNote.trim() : ""]
-            .filter(Boolean).join(" — "),
-          deviceEpisodeId: episode.id,
-        })
-        : { request: null as { id: number } | null };
-
-      await logAudit({
-        entityType: "patient_device_episode",
-        entityId: episode.id,
-        action: "create",
-        userId: session.userId,
-        userName: session.userName ?? null,
-        branchId: episode.branchId,
-        newValues: episode,
-        ipAddress: req.ip ?? null,
-        userAgent: req.get("user-agent") ?? null,
-        notes: `بدء جهاز جديد #${episode.sequenceNumber} (${requestedItemLabel(episode.requestedItem, serviceType, episode.extraComponents)})`
-          + ` للمريض ${patient.name ?? patientId}`
-          + (servicePath === "exam" ? " — المسار: يحتاج معاينة" : " — المسار: بلا معاينة")
-          + (routing.request ? ` — طلب مراجعة #${routing.request.id} (معاينة كاملة)` : ""),
+      const routing = await routeAndAuditExamEpisode(req, {
+        episode, patientId, patientName: patient.name ?? null, serviceType,
+        reviewNote: typeof req.body?.reviewNote === "string" ? req.body.reviewNote : "",
       });
 
       res.status(201).json({ ...episode, reviewRequestId: routing.request?.id ?? null });
