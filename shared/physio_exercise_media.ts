@@ -269,6 +269,12 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "radial-deviation-hammer-1": { file: "radial-deviation-hammer-1.webp", credit: "Nova Scotia Health", sourceUrl: "https://www.nshealth.ca/sites/default/files/documents/1349-2025.03.11.pdf" },
   "wrist-extensor-stretch-1": { file: "wrist-extensor-stretch-1.webp", credit: "NHS Greater Glasgow and Clyde", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/je5g5qzk/tennis-elbow-exercise-booklet.pdf" },
   "elbow-self-mwm-1": { file: "elbow-self-mwm-1.webp", credit: "Coombes et al., BMC Musculoskelet Disord 2009 — CC BY 2.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC2707364/" },
+  //  تضيّقُ القناة القطنية (ترحيل ١٥٣، §4.ek) — الأربعُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها — «سحب الركبة
+  //  إلى الصدر» المسجَّلةُ ركبةٌ واحدة)، ورآها كلَّها قبل تسجيلها؛ ورُدّت صورٌ تنسبها نشراتُها إلى مكتبات تمارين تجارية. والمشّايةُ صورةٌ برخصةٍ مفتوحة قُصّت وصُغّرت.
+  "double-knee-to-chest-1": { file: "double-knee-to-chest-1.webp", credit: "NHS Greater Glasgow and Clyde (MSK Physiotherapy)", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/lwacd0ys/spinal-stenosis-patient-info.pdf" },
+  "seated-forward-flexion-1": { file: "seated-forward-flexion-1.webp", credit: "NHS Greater Glasgow and Clyde (MSK Physiotherapy)", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/1848/308219_2_0-information-on-stenosis.pdf" },
+  "rollator-flexed-walking-1": { file: "rollator-flexed-walking-1.webp", credit: "nathanmac87 (Flickr) via Wikimedia Commons — CC BY 2.0 (cropped and resized)", sourceUrl: "https://commons.wikimedia.org/wiki/File:Los_Angeles_Weekend_(20477413034)_(cropped).jpg" },
+  "tandem-stance-1": { file: "tandem-stance-1.webp", credit: "NHS Greater Glasgow and Clyde (Mental Health Physiotherapists)", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/nkgh2jey/falls-2021-exercises-for-strength-and-balance.pdf" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
