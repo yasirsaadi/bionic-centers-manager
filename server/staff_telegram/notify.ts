@@ -6,6 +6,7 @@ import { DEPARTMENT_LABELS, type Department } from "@shared/service_taxonomy";
 import { PURPOSE_LABELS, REASON_CODE_LABELS } from "@shared/manufacturing";
 import { enqueueStaffEvent, type Executor } from "./outbox";
 import { db } from "../db";
+import { noteExamQueued } from "../medical/exam_queued_notice";
 
 async function ctx(ex: Executor | null | undefined, patientId: number, branchId: number | null | undefined) {
   //  فرعُ الحدث، وإن غاب ففرعُ تسجيل المريض — للنصّ وللتوجيه معاً.
@@ -45,6 +46,8 @@ export function notifyExamRequest(ex: Executor | null | undefined, p: {
 }) {
   return safe(ex, async () => {
     const c = await ctx(ex, p.patientId, p.branchId);
+    //  **ونافذةٌ لمَن أدخله** (§4.em): «أصبح المريض في «معايناتي»» — قبل التلغرام وبمعزلٍ عنه، فتظهر ولو لم يُربط أحد.
+    noteExamQueued({ patientId: p.patientId, patient: c.who, department: dept(p.specialty) });
     await enqueueStaffEvent(ex, {
       event: "exam_request", branchId: c.branchId, specialty: p.specialty, excludeUserId: p.actorUserId ?? null,
       text: `🩺 معاينة جديدة في «معايناتي»: ${c.who} — ${dept(p.specialty)}${c.branch}`, linkPath: "/my-exams",

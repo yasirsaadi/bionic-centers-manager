@@ -6,6 +6,7 @@ import {
   enumerateReportDays, dayMoney, sumDailyRows, MAX_DAILY_BREAKDOWN_DAYS, NON_ATTENDANCE_VISIT_DETAILS, type DailyRow,
 } from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
+import { examQueuedNoticeMiddleware } from "./medical/exam_queued_notice";
 import { createServer, type Server } from "http";
 import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
@@ -395,6 +396,8 @@ export async function registerRoutes(
 ): Promise<Server> {
   //  إعادةُ فتح قسمٍ مغلق تُعلَن للموظّف بترويسةٍ على الردّ الناجح (§4.ar البند ٣).
   app.use("/api", caseReopenNoticeMiddleware);
+  //  ومريضٌ دخل «معايناتي» يُعلَن لمَن أدخله بالطريقة نفسِها — نافذةٌ لا تُغلق إلّا بـ«حسناً» (§4.em).
+  app.use("/api", examQueuedNoticeMiddleware);
   //  ══ تشخيصٌ مؤقّت — «وصولُ الطلب الخام» قبل أيّ كود جلسة ═══════════════
   //  محصورٌ بفحص نمطٍ رخيص على طريقين محدَّدين فقط (راجع الملفّ)؛ كلُّ طلبٍ
   //  آخر يمرّ بلا أثر. يُزال مع بقيّة الاستدعاءات المذكورة أعلاه.
