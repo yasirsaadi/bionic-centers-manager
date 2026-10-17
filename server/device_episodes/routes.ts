@@ -17,7 +17,8 @@ import { logAudit } from "../accounting/ledger";
 import { db } from "../db";
 import { recordAttendanceVisitTx } from "../visits/attendance";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
-import { routeServiceToDoctorReview } from "../medical_review/routing";
+import { routeServiceToDoctorReview, reviewBranchScope } from "../medical_review/routing";
+import { createReviewRequestTx } from "../medical_review/store";
 import * as episodes from "./store";
 import { DeviceEpisodeError, isDeviceServiceType } from "./store";
 import {
@@ -135,11 +136,14 @@ export async function openExamEpisodeTx(tx: any, p: {
   return ep;
 }
 
-/** **وبعد الالتزام**: التوجيهُ الإلزاميّ إلى الطبيب وسطرُ التدقيق — كما يفعلهما بابُ طلب الجهاز بحرفه. */
+/**
+ * التوجيهُ الإلزاميّ إلى الطبيب وسطرُ التدقيق — **بعد الالتزام** في بابِ طلب الجهاز كما كان، **أو داخل معاملة المنادي** حين يمرّرها
+ * («طلب معاينة جديدة»، §4.el — من مراجعة Codex): فلا يلتزم الجهازُ وتعديلُ الملفّ بلا طلبه إلى الطبيب، فيُردّ «فشل» ويفتح الإرسالُ الثاني جهازاً ثانياً.
+ */
 export async function routeAndAuditExamEpisode(req: Req, p: {
   episode: Awaited<ReturnType<typeof openExamEpisodeTx>>; patientId: number; patientName: string | null;
   serviceType: "prosthetic" | "medical_support"; reviewNote?: string; auditSuffix?: string;
-}) {
+}, tx?: any) {
   const { episode, patientId, serviceType } = p;
   const session = getSession(req);
   // ── توجيهٌ إلزامي إلى الطبيب (ترحيل ٠٥٥) ────────────────────────
@@ -150,18 +154,29 @@ export async function routeAndAuditExamEpisode(req: Req, p: {
   //  التلقائي، ولا يُخرجه من طلبٍ صرّح به الاستقبال بفعله.
   //  **والتوجيهُ يتبع مسارَ العملية لا تاريخَ المريض** (ترحيل ٠٦٥): مسارُ `exam` — وهو وحده يصل هنا (`no_exam` يُردّ قبله ٤٠٩)
   //  ⟶ طلبُ معاينةٍ كاملة، ولو كان المريضُ مصنَّفاً «قديماً».
-  const routing = await routeServiceToDoctorReview(req, {
-    patientId, caseType: serviceType,
-    reviewKind: "new_device", requestedPath: "full",
-    //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
-    //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
-    receptionNote: [requestedItemLine(episode.requestedItem, serviceType, episode.extraComponents),
-      (p.reviewNote ?? "").trim()]
-      .filter(Boolean).join(" — "),
-    deviceEpisodeId: episode.id,
-  });
+  //  **الطبيبُ يقرأ ما طُلب في طلبه** — «المطلوب: ركبة» لا «جهاز
+  //  جديد» وحدها. فيعرف قبل أن يفتح الملفّ ماذا يفحص ولماذا.
+  const receptionNote = [requestedItemLine(episode.requestedItem, serviceType, episode.extraComponents),
+    (p.reviewNote ?? "").trim()]
+    .filter(Boolean).join(" — ");
+  //  والحلقةُ جديدةٌ في المعاملة نفسِها فلا طلبَ معلَّقاً عليها يُعاد (`ensureReviewRouting`) — النواةُ نفسُها بنطاق الجلسة نفسِه.
+  const routing = tx
+    ? {
+      created: true,
+      request: await createReviewRequestTx(tx, {
+        patientId, serviceType, reviewKind: "new_device", requestedPath: "full", receptionNote,
+        deviceEpisodeId: episode.id, createdBy: session.userId ?? null,
+        branchIds: reviewBranchScope(req), sessionBranchId: session.branchId ?? null,
+      }),
+    }
+    : await routeServiceToDoctorReview(req, {
+      patientId, caseType: serviceType,
+      reviewKind: "new_device", requestedPath: "full", receptionNote,
+      deviceEpisodeId: episode.id,
+    });
 
   await logAudit({
+    tx,
     entityType: "patient_device_episode",
     entityId: episode.id,
     action: "create",

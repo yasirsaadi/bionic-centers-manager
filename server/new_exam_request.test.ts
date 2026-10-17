@@ -56,6 +56,8 @@ async function cleanup() {
   for (const id of pts) await storage.deletePatient(id);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [IDS]);
+  await q(`DROP TRIGGER IF EXISTS ner_fail_routing ON medical_review_requests`);
+  await q(`DELETE FROM physio_device_branches WHERE branch_id = ANY($1::int[])`, [[B1, B2]]);
   await q(`DELETE FROM branches WHERE id = ANY($1::int[])`, [[B1, B2]]);
 }
 
@@ -92,6 +94,8 @@ async function main() {
 
   await cleanup();
   await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع طلب المعاينة'), ($2, 'فرع آخر للطلب')`, [B1, B2]);
+  //  الفرعُ الأوّل فيه علاجٌ طبيعيّ (جهازٌ متوفّر — `physioOfferingBranchIds`)، والثاني لا.
+  await q(`INSERT INTO physio_device_branches (device_id, branch_id, available) SELECT id, $1, true FROM devices ORDER BY id LIMIT 1`, [B1]);
   const users: [number, string, Record<string, unknown>][] = [
     [RECV, "reception", { can_add_patients: true, can_edit_patients: false }],
     [RECV_NOADD, "reception", { can_add_patients: false, can_edit_patients: true }],
@@ -289,6 +293,17 @@ async function main() {
         (await q(`SELECT phone_shared_with_patient_id AS w FROM patients WHERE id = $1`, [P.pid])).rows[0]?.w], [201, true, M.pid]);
     const c7 = await nexr(P.pid, S.recv, { department: "prosthetic", requestedItems: ["socket"], sharedPhone: { withPatientId: M.pid, relation: "جار" } });
     same("ج.٧ وصلةٌ ليست من القائمة تُردّ", [c7.status, c7.json?.field], [400, "sharedPhone"]);
+    //  **والتوجيهُ إلى الطبيب في المعاملة نفسِها** (من مراجعة Codex): يُفشَل عمداً بمُطلِقٍ في القاعدة، فيتراجع الحفظُ كلُّه —
+    //  لا جهازَ ولا زيارةَ ولا تعديلَ يلتزم بلا طلبه، فلا يفتح الإرسالُ الثاني جهازاً ثانياً.
+    await q(`CREATE OR REPLACE FUNCTION ner_fail_routing_fn() RETURNS trigger AS $f$
+      BEGIN IF NEW.patient_id = ${P.pid} AND NEW.service_type = 'prosthetic' THEN RAISE EXCEPTION 'ner: routing fails'; END IF; RETURN NEW; END $f$ LANGUAGE plpgsql`);
+    await q(`CREATE TRIGGER ner_fail_routing BEFORE INSERT ON medical_review_requests FOR EACH ROW EXECUTE FUNCTION ner_fail_routing_fn()`);
+    const ep8 = await episodes(P.pid), v8 = await examVisits(P.pid);
+    const c8 = await nexr(P.pid, S.recv, { department: "prosthetic", requestedItems: ["socket"], fields: { age: "44" } });
+    const after8 = [await episodes(P.pid) - ep8, await examVisits(P.pid) - v8, (await row(P.pid)).age];
+    await q(`DROP TRIGGER IF EXISTS ner_fail_routing ON medical_review_requests`);
+    same("ج.٨ **فشلُ التوجيه يُرجع الحفظَ كلَّه** — لا جهازَ ولا زيارةَ ولا عمرَ جديد",
+      [c8.status, ...after8], [500, 0, 0, "42"]);
 
     // ══ د. العلاجُ الطبيعيّ ══
     console.log("\n── د. العلاج الطبيعي ──");
@@ -338,6 +353,14 @@ async function main() {
       [d10.status, /إضافة خدمة جديدة/.test(d10.json?.message ?? ""), (await row(P.pid)).pc, (await physioReqs(P.pid)).length], [400, true, null, 0]);
     const d11 = await nexr(F.pid, S.recv, { department: "physiotherapy", fields: { presentingComplaint: " " } });
     same("د.١١ و«سبب المراجعة» إلزاميٌّ في استمارته", [d11.status, d11.json?.missing], [400, ["presentingComplaint"]]);
+    //  **والعلاجُ الطبيعيّ في فروعه وحدها** (من مراجعة Codex) — الفرعُ النشط بلا جهازٍ متوفّر يُردّ، والطلبُ المباشر لا يتجاوزه.
+    await q(`UPDATE physio_device_branches SET available = false WHERE branch_id = $1`, [B1]);
+    const r12 = (await physioReqs(F.pid)).length;
+    const d12 = await nexr(F.pid, S.recv, { department: "physiotherapy", fields: { presentingComplaint: "ألم في الكتف" } });
+    const after12 = [(await physioReqs(F.pid)).length - r12, (await row(F.pid)).pc];
+    await q(`UPDATE physio_device_branches SET available = true WHERE branch_id = $1`, [B1]);
+    same("د.١٢ **فرعٌ بلا علاجٍ طبيعيّ لا يُرسَل منه** — ٤٠٠ بخانة الفرع، ولا طلبَ ولا «سبب مراجعة» يُكتب",
+      [d12.status, d12.json?.field, ...after12], [400, "branchId", 0, "ألم جديد في الرقبة"]);
 
     // ══ هـ. الشكلُ الواحد في القاعدة والمخزن ══
     console.log("\n── هـ. الشكل ──");

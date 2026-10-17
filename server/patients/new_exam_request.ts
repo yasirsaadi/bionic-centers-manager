@@ -8,7 +8,7 @@
 //     قفلُ ما بعد المعاينة (§4.db) لا يحكم هذا البابَ بقرار المالك، فالمعاينةُ الجديدة تُكتب على البيانات الجديدة. **وخاناتُ الفاحص لا تُقبل**
 //     (التشخيصُ ومواصفاتُ الطرف — ٤٠٠)، وغيرُ خانات الاستمارة كذلك. وكلُّ ما تغيّر في سطر تدقيقٍ بالقديم والجديد.
 //   • **والطلبُ في المعاملة نفسِها**: الأطرافُ والمساند ⟵ طلبُ جهازٍ على مسار المعاينة (`openExamEpisodeTx` — ما يفعله «يحتاج معاينة طبية»
-//     بحرفه، ومعه زيارةُ «طلب معاينة طبية»، ثمّ التوجيهُ إلى الطبيب بعد الالتزام)؛ **والعلاجُ الطبيعيّ** ⟵ طلبُ معاينةٍ كاملة عارٍ (ترحيل ١٥٤)
+//     بحرفه، ومعه زيارةُ «طلب معاينة طبية» والتوجيهُ إلى الطبيب — في المعاملة نفسِها)؛ **والعلاجُ الطبيعيّ** ⟵ طلبُ معاينةٍ كاملة عارٍ (ترحيل ١٥٤)
 //     يعيده إلى «معايناتي» ويُغلقه توقيعُ المعاينة التالية — **بلا زيارة**: زيارةُ العلاج الطبيعي تُعدّ جلسة.
 //   • **والاستمارةُ كاملةٌ كما في التسجيل** (`checkIntakeSheet` على الملفّ بعد التعديل) — فلا يُرسَل ملفٌّ ناقص.
 import type { Express } from "express";
@@ -22,6 +22,7 @@ import { openExamEpisodeTx, routeAndAuditExamEpisode } from "../device_episodes/
 import { DeviceEpisodeError } from "../device_episodes/store";
 import { createReviewRequestTx, ReviewError } from "../medical_review/store";
 import { getPendingForPatient } from "../medical/store";
+import { physioOfferingBranchIds } from "../physio_plans/store";
 import { ensureCaseTx } from "../patient_cases/reopen";
 import { PatientPhoneConflictError, PatientPhoneTrashConflictError } from "./duplicate_guard";
 import { ALWAYS_OPEN_FIELDS, DEPARTMENT_INTAKE_FIELDS, EXAMINER_FIELDS, SHARED_INTAKE_FIELDS, editValueChanged } from "@shared/patient_edit_rules";
@@ -156,6 +157,11 @@ export function registerNewExamRequestRoutes(
       const actingBranchId = resolveActingBranchId({
         scope: writeScope(s), sessionBranchId: s?.branchId ?? null, homeBranchId: patientRef.branchId, patientBranchIds,
       });
+      //  **والعلاجُ الطبيعيّ في فروعه وحدها** — كالتسجيل (`offersPhysio`)، فلا يُرسَل مريضٌ إلى «معايناتي» فرعٍ بلا أخصائيّ
+      //  (من مراجعة Codex: الشاشةُ تمنعه بعد تحميل الفروع وحدها، والطلبُ المباشر يتجاوزها).
+      if (dept === "physiotherapy" && (actingBranchId === null || !(await physioOfferingBranchIds()).has(actingBranchId))) {
+        return res.status(400).json({ message: "العلاج الطبيعي غير متوفّر في الفرع النشط — بدّل إلى فرعٍ فيه علاجٌ طبيعيّ", field: "branchId" });
+      }
       const userId: number | null = s?.userId ?? null;
       const userName: string | null = s?.displayName ?? null;
 
@@ -186,7 +192,8 @@ export function registerNewExamRequestRoutes(
           const row = await createReviewRequestTx(tx, {
             patientId: id, serviceType: "physiotherapy", requestedPath: "full", reviewKind: "other",
             receptionNote: ["طلب معاينة جديدة", reason ? `سبب المراجعة: ${reason}` : "", note].filter(Boolean).join(" — "),
-            createdBy: userId, branchIds: writeScope(s), sessionBranchId: s?.branchId ?? null, physioExamRequest: true,
+            createdBy: userId, branchIds: writeScope(s), sessionBranchId: s?.branchId ?? null, operationBranchId: actingBranchId,
+            physioExamRequest: true,
           });
           await logAudit({
             tx, entityType: "medical_review_request", entityId: row.id, action: "create", userId, userName,
@@ -199,18 +206,16 @@ export function registerNewExamRequestRoutes(
         const episode = await openExamEpisodeTx(tx, {
           patientId: id, serviceType: dept, createdBy: userId, requestedItem, extraComponents, actingBranchId,
         });
-        return { kind: "device" as const, reviewRequestId: null as number | null, episode };
-      });
-
-      if (out.kind === "device" && out.episode) {
+        //  **والتوجيهُ إلى الطبيب في المعاملة نفسِها** — جهازٌ بلا طلبه لا يلتزم (من مراجعة Codex).
         const routing = await routeAndAuditExamEpisode(req, {
-          episode: out.episode, patientId: id, patientName: merged.name ?? null, serviceType: dept as "prosthetic" | "medical_support",
+          episode, patientId: id, patientName: merged.name ?? null, serviceType: dept as "prosthetic" | "medical_support",
           reviewNote: typeof req.body?.receptionNote === "string" ? req.body.receptionNote : "",
           auditSuffix: " — من «طلب معاينة جديدة»",
-        });
-        return res.status(201).json({ department: dept, episodeId: out.episode.id, reviewRequestId: routing.request?.id ?? null });
-      }
-      return res.status(201).json({ department: dept, episodeId: null, reviewRequestId: out.reviewRequestId });
+        }, tx);
+        return { kind: "device" as const, reviewRequestId: routing.request?.id ?? null, episode };
+      });
+
+      return res.status(201).json({ department: dept, episodeId: out.episode?.id ?? null, reviewRequestId: out.reviewRequestId });
     } catch (err: any) {
       if (err instanceof PatientPhoneConflictError) return res.status(409).json(await deps.phoneConflictBody(req, err));
       if (err instanceof PatientPhoneTrashConflictError) {
