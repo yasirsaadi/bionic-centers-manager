@@ -482,7 +482,7 @@ export async function deleteEntry(id: number, userId: number | null) {
   return row ?? null;
 }
 
-export async function updateExpenseRow(id: number, patch: { amount?: number; description?: string | null; category?: string }, userId: number | null) {
+export async function updateExpenseRow(id: number, patch: { amount?: number; description?: string | null; category?: string; expenseDate?: string }, userId: number | null) {
   const [row] = await db.update(expenses).set(patch).where(eq(expenses.id, id)).returning();
   if (!row) return null;
   await reverseJournalForSource("expense", id, userId, "تعديل المصروف من دفتر القاصة");
