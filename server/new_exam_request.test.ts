@@ -317,6 +317,8 @@ async function main() {
       [(await pendingOf(F.pid))?.includes("physiotherapy"), await worklistRow(S.spec, F.pid, "physiotherapy"),
         (await call("PUT", `/api/patients/${F.pid}`, S.noadd, { presentingComplaint: "ألم جديد في الرقبة" })).status],
       [false, null, 403]);
+    //  القسمُ فُتح قبل شهر — فصفُّ الطلب يجب أن يقول «منذ الطلب» لا «منذ فتح القسم» (سؤالُ المالك عن مصطفى، ٢٠٢٦-١٠-١٧).
+    await q(`UPDATE patient_cases SET created_at = NOW() - interval '30 days' WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [F.pid]);
     const vF = await allVisits(F.pid);
     const d3 = await nexr(F.pid, S.recv, { department: "physiotherapy", receptionNote: "عاد بعد شهرين", fields: { presentingComplaint: "ألم جديد في الرقبة", age: "51" } });
     const reqs3 = await physioReqs(F.pid);
@@ -331,6 +333,8 @@ async function main() {
     same("د.٥ **ويعود إلى «معايناتي»** وشارةِ الانتظار — ولا «إرجاع للاستعلامات» له (للأطراف والمساند وحدهما)",
       [(await pendingOf(F.pid))?.includes("physiotherapy"), wlF !== null, wlFdoc?.reviewKind, "returnableRequestId" in (wlFdoc ?? {})],
       [true, true, "other", false]);
+    same("د.٥ب **وينتظر منذ الطلب لا منذ فتح القسم قبل شهر** — فيكون أوّلَ «الأحدث أولاً» في «معايناتي»",
+      wlF?.waitingSince ? Date.now() - new Date(wlF.waitingSince).getTime() < 120_000 : null, true);
     const d6 = await nexr(F.pid, S.recv, { department: "physiotherapy" });
     same("د.٦ **ولا يُطلَب مرّتين** — ٤٠٩ ما دام الأوّلُ ينتظر", [d6.status, d6.json?.code, (await physioReqs(F.pid)).length],
       [409, "physio_exam_already_pending", 1]);

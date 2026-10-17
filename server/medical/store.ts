@@ -1929,7 +1929,14 @@ export async function getWorklist(
            -- «عاد للشراء» اليوم ينتظر منذ اليوم لا منذ فتح الطلب قبل شهرين.
            -- والصفُّ السابق للترحيل (awaiting_since NULL) يُقرأ بتاريخ فتح
            -- الطلب كما كان، والخيطُ بلا حلقة بتاريخ إنشائه.
-           COALESCE(ep.awaiting_since, ep.created_at, pc.created_at) AS waiting_since,
+           -- **والصفُّ بلا حلقة يدخله طلبٌ عارٍ بتاريخ الطلب** (§4.el): «طلب معاينة جديدة» للعلاج الطبيعي كان يأخذ تاريخَ
+           -- فتح القسم قبل شهر، فيهبط آخرَ «الأحدث أولاً» ويُحسب غائباً عن القائمة. والطلبُ نفسُه شرطُ الإدراج أدناه.
+           COALESCE(ep.awaiting_since, ep.created_at,
+             (SELECT MAX(COALESCE(r.decided_at, r.created_at)) FROM medical_review_requests r
+               WHERE r.patient_id = pc.patient_id AND r.service_type = pc.case_type
+                 AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+                 AND ${specialtyLevelRequestSql("r")}),
+             pc.created_at) AS waiting_since,
            ep.id AS episode_id,
            ep.requested_item,
            ep.extra_components,

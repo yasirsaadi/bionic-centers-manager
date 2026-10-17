@@ -441,12 +441,19 @@ ${addenda}
 
           <div className="flex flex-wrap items-center gap-2">
           {mayRequest && (requestDepartments.length === 1 ? (
-            <Button size="sm" variant="outline" className="h-8 border-teal-300 text-teal-800 bg-white"
-              disabled={requestWaiting(requestDepartments[0])}
-              title={requestWaiting(requestDepartments[0]) ? "بانتظار المعاينة أصلاً" : undefined}
-              onClick={() => openRequest(requestDepartments[0])} data-testid="button-request-new-exam">
-              <Send className="w-4 h-4 ml-1" /> {NEW_EXAM_REQUEST_LABEL}
-            </Button>
+            <>
+              {/*  **سببُ التعطيل مكتوبٌ لا مخبّأٌ في تلميح** — التلميحُ لا يظهر على الهاتف والآيباد (سؤالُ المالك ٢٠٢٦-١٠-١٧). */}
+              {requestWaiting(requestDepartments[0]) && (
+                <span className="text-xs text-amber-800" data-testid="request-new-exam-waiting">
+                  بانتظار معاينة العلاج الطبيعي في «معايناتي» — يُطلب غيرُها بعد توقيعها
+                </span>
+              )}
+              <Button size="sm" variant="outline" className="h-8 border-teal-300 text-teal-800 bg-white"
+                disabled={requestWaiting(requestDepartments[0])}
+                onClick={() => openRequest(requestDepartments[0])} data-testid="button-request-new-exam">
+                <Send className="w-4 h-4 ml-1" /> {NEW_EXAM_REQUEST_LABEL}
+              </Button>
+            </>
           ) : (
             <DropdownMenu dir="rtl">
               <DropdownMenuTrigger asChild>
