@@ -262,6 +262,13 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "triceps-band-extension-1": { file: "triceps-band-extension-1.webp", credit: "Versus Arthritis", sourceUrl: "https://www.arthritis-uk.org/media/fg1ot4q0/versus-arthritis-resistance-band-exercise-sheet-upper-body-2.pdf" },
   "wrist-extension-weight-1": { file: "wrist-extension-weight-1.webp", credit: "Leicestershire Partnership NHS Trust", sourceUrl: "https://www.leicspart.nhs.uk/wp-content/uploads/2022/07/514-Tennis-Elbow.pdf" },
   "grip-putty-squeeze-1": { file: "grip-putty-squeeze-1.webp", credit: "Sherwood Forest Hospitals NHS FT", sourceUrl: "https://www.sfh-tr.nhs.uk/media/3lxfm3sa/pil202508-05-tphe-therapeutic-putty-hand-exercises.pdf" },
+  //  مرفقُ التنس (ترحيل ١٥٢، §4.ej) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها)، ورآها كلَّها قبل تسجيلها؛
+  //  ورُدّت صورٌ تنسبها نشراتُها إلى مكتبة تمارين تجارية. والتحريكُ الذاتيّ صورةُ التجربة نفسِها (يدٌ تدفع لا حزام — والبطاقةُ كُتبت عليها).
+  "wrist-extensor-isometric-1": { file: "wrist-extensor-isometric-1.webp", credit: "Leicestershire Partnership NHS Trust", sourceUrl: "https://www.leicspart.nhs.uk/wp-content/uploads/2022/07/514-Tennis-Elbow.pdf" },
+  "forearm-rotation-hammer-1": { file: "forearm-rotation-hammer-1.webp", credit: "Oxford University Hospitals NHS FT (Nuffield Orthopaedic Centre)", sourceUrl: "https://www.ouh.nhs.uk/media/lsjlro5o/85220advice.pdf" },
+  "radial-deviation-hammer-1": { file: "radial-deviation-hammer-1.webp", credit: "Nova Scotia Health", sourceUrl: "https://www.nshealth.ca/sites/default/files/documents/1349-2025.03.11.pdf" },
+  "wrist-extensor-stretch-1": { file: "wrist-extensor-stretch-1.webp", credit: "NHS Greater Glasgow and Clyde", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/je5g5qzk/tennis-elbow-exercise-booklet.pdf" },
+  "elbow-self-mwm-1": { file: "elbow-self-mwm-1.webp", credit: "Coombes et al., BMC Musculoskelet Disord 2009 — CC BY 2.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC2707364/" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
