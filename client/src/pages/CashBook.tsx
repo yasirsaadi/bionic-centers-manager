@@ -15,7 +15,7 @@ import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_t
 import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning, Settings2 } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
-  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, RESERVES_START, type ReserveKey, DR_BOX_WITHDRAWAL_LABEL,
+  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, type ReserveKey, DR_BOX_WITHDRAWAL_LABEL, drRatioApplies,
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
@@ -231,13 +231,15 @@ function OpeningFields({ today, initial, label, onSave }: {
   //  آخرُ يومٍ مُغلَق = يومُ البدء ناقصَ يوم. وأقصاه أمس: اليومُ لم يُغلَق بعد.
   const [closedDay, setClosedDay] = useState(initial ? shiftYmd(initial.date, -1) : shiftYmd(today, -1));
   const lastClosable = shiftYmd(today, -1);
+  //  **ولا «نسبة» لدفترٍ يبدأ بعد إلغائها** (§4.dj التكملة ٢) — خانتُها لبدايةٍ قبل يوم القطع وحدها.
+  const withRatio = drRatioApplies(shiftYmd(closedDay, 1));
   return (
     <div className="flex flex-wrap gap-4 items-end">
       <label className="grid gap-1 text-sm">آخر يومٍ في الدفتر الورقي<Input type="date" value={closedDay} max={lastClosable} onChange={(e) => setClosedDay(e.target.value)} className="w-40" data-testid="cash-opening-closed-day" /></label>
       <label className="grid gap-1 text-sm">المتبقي في القاصة في نهايته<AmountInput id="open-cash" value={cash} onChange={setCash} /></label>
-      <label className="grid gap-1 text-sm">المتبقي في النسبة في نهايته<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>
+      {withRatio && <label className="grid gap-1 text-sm">المتبقي في النسبة في نهايته<AmountInput id="open-ratio" value={ratio} onChange={setRatio} /></label>}
       <Button disabled={!closedDay || closedDay > lastClosable}
-        onClick={() => onSave({ openingDate: shiftYmd(closedDay, 1), cash: Number(cash || 0), ratio: Number(ratio || 0) })} data-testid="cash-opening-save">
+        onClick={() => onSave({ openingDate: shiftYmd(closedDay, 1), cash: Number(cash || 0), ratio: withRatio ? Number(ratio || 0) : 0 })} data-testid="cash-opening-save">
         {label}
       </Button>
     </div>
@@ -285,7 +287,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       <PrintBar sheet={sheet} branchId={branchId} book={book} day={day} />
       {sheet.isAdmin && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="cash-opening-line">
-          <span>بداية الدفتر: رصيدُ نهاية {shiftYmd(sheet.opening!.date, -1).split("-").reverse().join("/")} — النقد {fmt(sheet.opening!.cash)} · النسبة {fmt(sheet.opening!.ratio)} · والحسابُ من {sheet.opening!.date.split("-").reverse().join("/")}</span>
+          <span>بداية الدفتر: رصيدُ نهاية {shiftYmd(sheet.opening!.date, -1).split("-").reverse().join("/")} — النقد {fmt(sheet.opening!.cash)}{drRatioApplies(sheet.opening!.date) ? ` · النسبة ${fmt(sheet.opening!.ratio)}` : ""} · والحسابُ من {sheet.opening!.date.split("-").reverse().join("/")}</span>
           <Button size="sm" variant="outline" className="h-7" onClick={() => setEditOpening(true)} data-testid="cash-opening-edit">تعديل بداية الدفتر</Button>
           <EditOpeningDialog sheet={sheet} branchId={branchId} book={book} write={write} open={editOpening} onClose={() => setEditOpening(false)} />
         </div>
@@ -412,16 +414,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
           {sheet.isAdmin && sheet.canWrite && <ReceiveRatio branchId={branchId} book={book} day={day} write={write} />}
         </div>}
       </div>
-      {/*  **ما بقي من نسبة الدكتور بعد إلغائها** (§4.dj): يُرى ويُستلَم حتى يصفر — ولا يظهر وهو صفر. */}
-      {sheet.reserves && (sheet.ratio.prev !== 0 || sheet.ratio.received > 0) && (
-        <div className="border border-emerald-700/50 rounded-sm p-3 space-y-2 text-sm max-w-md" data-testid="ratio-legacy">
-          <h3 className="font-semibold text-emerald-800">المتبقي من نسبة الدكتور <span className="text-xs font-normal text-muted-foreground">(أُلغيت من {ymdText(RESERVES_START)})</span></h3>
-          <BoxLine label="المتبقي من أمس" value={sheet.ratio.prev} />
-          {sheet.ratio.received > 0 && <BoxLine label="استُلم اليوم" value={-sheet.ratio.received} />}
-          <BoxLine label="المتبقي في النسبة" value={sheet.ratio.remaining} strong danger={sheet.ratio.remaining < 0} testid="ratio-legacy-remaining" />
-          {sheet.isAdmin && sheet.canWrite && <ReceiveRatio branchId={branchId} book={book} day={day} write={write} />}
-        </div>
-      )}
+      {/*  **ولا مربّعَ لنسبة الدكتور بعد إلغائها** (قرارُ المالك ٢٠٢٦-١٠-١٧، §4.dj التكملة ٢): صُفّر ما بقي منها يومَ القطع. */}
 
       <EditRowDialog row={editing} onClose={() => setEditing(null)} write={write} />
       <RequestCorrectionDialog target={requesting} onClose={() => setRequesting(null)} />

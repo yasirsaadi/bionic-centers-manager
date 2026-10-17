@@ -322,7 +322,10 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
     prevRemaining = opening.cashBalance;
     prevRatio = opening.ratioBalance;
   }
-  const receivedRows = entRows.filter((x) => x.kind === "ratio_received");
+  //  **ومن يوم القطع لا نسبةَ تُحمل ولا تُستلَم** (قرارُ المالك ٢٠٢٦-١٠-١٧، §4.dj التكملة ٢): ما بقي منها يومَ القطع صُفّر،
+  //  واستلامٌ كُتب بعده لا يُقرأ — فلا مربّعَ لها ولا رقمَ سالب. وأوراقُ ما قبل القطع كما كانت حرفاً.
+  if (!drRatioApplies(day)) prevRatio = 0;
+  const receivedRows = drRatioApplies(day) ? entRows.filter((x) => x.kind === "ratio_received") : [];
   const received = receivedRows.reduce((s, x) => s + x.amount, 0);
 
   //  النسبتان الثابتتان كما تُحسبان الآن من وارد اليوم — والمسجَّلُ قد يكون أقدمَ من دفعةٍ لحقته.
@@ -561,14 +564,17 @@ export async function cashBookPeriod(branchId: number, book: CashBook, from: str
   const hospitalMismatches: { date: string; expected: number; recorded: number }[] = [];
   let lowest: { date: string; remaining: number } | null = null;
   for (let d = first; d <= toInclusive; d = addDays(d, 1)) {
-    if (d === from) { startCash = cash; startRatio = ratio; }
+    //  **ونسبةُ الدكتور تُغلق يومَ القطع** (§4.dj التكملة ٢) — رصيدُها صفرٌ منه، واستلامٌ بعده لا يُحسب، كورقة اليوم.
+    const ratioOpen = drRatioApplies(d);
+    if (d === from) { startCash = cash; startRatio = ratioOpen ? ratio : 0; }
     const inc = income.get(d) ?? 0;
-    const dr = drRatioApplies(d) ? ratioAmount(inc, cfg.drRatioPct) : 0;
+    const dr = ratioOpen ? ratioAmount(inc, cfg.drRatioPct) : 0;
+    const rec = ratioOpen ? (received.get(d) ?? 0) : 0;
     cash = cash + inc - (exp.get(d) ?? 0) - (transfer.get(d) ?? 0) - dr;
-    ratio = ratio + dr - (received.get(d) ?? 0);
+    ratio = ratioOpen ? ratio + dr - rec : 0;
     if (d < from) continue;
     period.income += inc; period.otherIncome += otherIncome.get(d) ?? 0; period.expenses += exp.get(d) ?? 0;
-    period.drTransfers += transfer.get(d) ?? 0; period.drRatio += dr; period.ratioReceived += received.get(d) ?? 0;
+    period.drTransfers += transfer.get(d) ?? 0; period.drRatio += dr; period.ratioReceived += rec;
     if (cash < 0) negativeDays.push({ date: d, remaining: cash });
     if (!lowest || cash < lowest.remaining) lowest = { date: d, remaining: cash };
     if (cfg.hospitalRatioPct) {
@@ -578,7 +584,7 @@ export async function cashBookPeriod(branchId: number, book: CashBook, from: str
     }
   }
   //  فترةٌ تبدأ قبل الافتتاح: ما قبله ليس في الدفتر، فرصيدُ البداية هو الافتتاحيّ.
-  if (from < first) { startCash = opening.cashBalance; startRatio = opening.ratioBalance; }
+  if (from < first) { startCash = opening.cashBalance; startRatio = drRatioApplies(first) ? opening.ratioBalance : 0; }
   return {
     ...base, started: true as const,
     opening: { date: opening.openingDate, cash: opening.cashBalance, ratio: opening.ratioBalance },

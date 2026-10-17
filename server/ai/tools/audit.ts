@@ -17,7 +17,7 @@ import { auditLog, branches, expenses, patientCases, patients, payments, cashBoo
 import { activePatientDrizzle } from "../../patients/active_patient";
 import { categoryArabicLabel, detectAnomalies } from "../../anomalies/detector";
 import { DEPARTMENT_LABELS, isDepartment } from "@shared/service_taxonomy";
-import { branchCashConfig, CASH_BOOK_LABELS, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY, type CashBook } from "@shared/cash_book";
+import { branchCashConfig, CASH_BOOK_LABELS, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY, RESERVES_START, type CashBook } from "@shared/cash_book";
 import { cashBookPeriod, ownerDrawingsForPeriod } from "../../cash_book/store";
 import { ownerSummary } from "../../cash_book/dr_box";
 import { todayInBaghdad } from "./reports";
@@ -354,7 +354,9 @@ export async function financialLedger(params: {
       note: cashBookEntries.note, branchName: branches.name }).from(cashBookEntries)
       .innerJoin(branches, eq(branches.id, cashBookEntries.branchId))
       .where(and(branchId ? eq(cashBookEntries.branchId, branchId) : sql`TRUE`, sql`${cashBookEntries.deletedAt} IS NULL`,
-        sql`${cashBookEntries.entryDate} >= ${start}`, sql`${cashBookEntries.entryDate} <= ${end}`, sql`${cashBookEntries.kind} <> 'dr_ratio'`))
+        sql`${cashBookEntries.entryDate} >= ${start}`, sql`${cashBookEntries.entryDate} <= ${end}`, sql`${cashBookEntries.kind} <> 'dr_ratio'`,
+        //  واستلامُ النسبة بعد إلغائها لا يُقرأ (§4.dj التكملة ٢) — كورقة الدفتر ودفتر الفترة.
+        sql`NOT (${cashBookEntries.kind} = 'ratio_received' AND ${cashBookEntries.entryDate} >= ${RESERVES_START})`))
       .orderBy(cashBookEntries.entryDate, cashBookEntries.id);
     if (params.category) list = list.filter((e) => matches(ENTRY_KIND_LABELS[e.kind] ?? e.kind, e.kind, params.category!));
     if (min != null) list = list.filter((e) => e.amount >= min);

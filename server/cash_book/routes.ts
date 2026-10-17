@@ -15,7 +15,7 @@ import { baghdadTodayYmd } from "@shared/visit_date";
 import {
   type CashBook, ATABAH_RATIO_CATEGORY, HOSPITAL_RATIO_CATEGORY, canWriteCashBook, canWriteDay, isCashBook, isYmd, parseAmount,
   RESERVE_KEYS, RESERVE_LABELS, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR, reserveOfWithdrawKind, reserveOfCategory, reserveStartOf, RESERVES_START, type ReserveKey,
-  DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL, DR_BOX_WITHDRAWAL_NOTE_ERROR,
+  DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL, DR_BOX_WITHDRAWAL_NOTE_ERROR, DR_RATIO_RETIRED_ERROR, drRatioApplies,
 } from "@shared/cash_book";
 import * as store from "./store";
 import { addDrBoxExpense, drBoxLinesForDay } from "./dr_box";
@@ -230,6 +230,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
       }
       if (kind === "income_other" || kind === "dr_transfer" || kind === "ratio_received") {
         if (kind === "ratio_received" && !g.s.isAdmin) return res.status(403).json({ error: "استلام النسبة للمسؤول وحده" });
+        //  **ولا استلامَ من النسبة بعد إلغائها** (§4.dj التكملة ٢) — رصيدُها صفرٌ من يوم القطع، فاستلامٌ بعده لا يُستلم من شيء.
+        if (kind === "ratio_received" && !drRatioApplies(day)) return res.status(400).json({ error: DR_RATIO_RETIRED_ERROR });
         if (kind === "income_other" && !note) return res.status(400).json({ error: "اكتب مصدر الوارد في الملاحظات" });
         const row = await store.addEntry({ branchId: g.branchId, book: g.book, day, kind, amount, note, userId });
         await audit(req, g.s, { entityType: "cash_book_entry", entityId: row.id, action: "create", branchId: g.branchId, newValues: row });
