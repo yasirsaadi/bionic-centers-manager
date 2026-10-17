@@ -416,7 +416,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       </div>
       {/*  **ولا مربّعَ لنسبة الدكتور بعد إلغائها** (قرارُ المالك ٢٠٢٦-١٠-١٧، §4.dj التكملة ٢): صُفّر ما بقي منها يومَ القطع. */}
 
-      <EditRowDialog row={editing} onClose={() => setEditing(null)} write={write} />
+      <EditRowDialog row={editing} onClose={() => setEditing(null)} write={write} day={day} today={sheet.today} openingDate={sheet.opening?.date ?? null} />
       <RequestCorrectionDialog target={requesting} onClose={() => setRequesting(null)} />
     </div>
   );
@@ -673,11 +673,20 @@ function ReceiveRatio({ branchId, book, day, write }: { branchId: number; book: 
   );
 }
 
-function EditRowDialog({ row, onClose, write }: { row: Row | null; onClose: () => void; write: any }) {
+const dmyOf = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+
+function EditRowDialog({ row, onClose, write, day, today, openingDate }: {
+  row: Row | null; onClose: () => void; write: any; day: string; today: string; openingDate: string | null;
+}) {
+  const { toast } = useToast();
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  useEffect(() => { if (row) { setAmount(String(row.amount)); setNote(row.note ?? ""); } }, [row]);
+  const [date, setDate] = useState(day);
+  useEffect(() => { if (row) { setAmount(String(row.amount)); setNote(row.note ?? ""); setDate(day); } }, [row, day]);
   const auto = row?.kind === "dr_ratio" || row?.kind === "hospital_ratio";
+  //  المصروفُ يُنقل إلى يومٍ آخر (طلبُ المالك ٢٠٢٦-١٠-١٧) — والنسبُ تُحسب من وارد يومها فلا تُنقل.
+  const movable = row?.source === "expense" && row.kind !== "hospital_ratio" && row.kind !== "atabah_ratio";
+  const moved = movable && date !== day;
   return (
     <Dialog open={row !== null} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent dir="rtl" className="max-w-md">
@@ -687,13 +696,27 @@ function EditRowDialog({ row, onClose, write }: { row: Row | null; onClose: () =
             ? <p className="text-sm text-muted-foreground">النسبة تُحسب من وارد اليوم — عدّلها بزرّ «حدّث»، أو احذف السطر.</p>
             : <label className="grid gap-1 text-sm">المبلغ<AmountInput id="cash-edit-amount" value={amount} onChange={setAmount} autoFocus /></label>}
           <label className="grid gap-1 text-sm">الملاحظات<Input value={note} onChange={(e) => setNote(e.target.value)} /></label>
+          {movable && (
+            <label className="grid gap-1 text-sm">التاريخ
+              <Input type="date" value={date} min={openingDate ?? undefined} max={today} data-testid="cash-edit-date"
+                onChange={(e) => e.target.value && setDate(e.target.value)} className="w-44" />
+              {moved && <span className="text-xs text-amber-700" data-testid="cash-edit-date-hint">
+                يُنقل المصروفُ إلى ورقة {dayNameOf(date)} <span dir="ltr">{dmyOf(date)}</span> ويخرج من ورقة هذا اليوم.
+              </span>}
+            </label>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button disabled={!auto && !amount} onClick={() => row && write.mutate({
+          <Button disabled={(!auto && !amount) || !date} data-testid="cash-edit-save" onClick={() => row && write.mutate({
             method: "PATCH", url: `/api/cash-book/rows/${row.source}/${row.id}`,
-            body: { ...(auto ? {} : { amount: Number(amount) }), note },
-          }, { onSuccess: onClose })}>حفظ</Button>
+            body: { ...(auto ? {} : { amount: Number(amount) }), note, ...(moved ? { date } : {}) },
+          }, {
+            onSuccess: () => {
+              onClose();
+              if (moved) toast({ title: "نُقل المصروف", description: `تجده في ورقة ${dayNameOf(date)} ${dmyOf(date)}` });
+            },
+          })}>حفظ</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -10,6 +10,7 @@
 //   • **ن**: نسبةُ الدكتور قبل يوم القطع بأيّامٍ ثابتة (٢٠٢٦-١٠-٠٩ و١٠) — كما كانت، وورقتُها المطبوعة لا تُعلَّم، ولا نسبةَ بعده.
 //   • **س**: قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj) — التراكمُ والسحبُ للمسؤول والبدايةُ والهدفُ، وتقاعدُ «رواتب» و«إيجارات».
 //   • **ز**: الأقفال — الأيامُ الماضية للمسؤول، والنسبُ لا تُكتب بيد، والمصروفُ يعدّله صاحبُه أو صاحبُ «إدارة المحاسبة».
+//   • **ع**: نقلُ المصروف إلى يومٍ آخر بالقلم — للمسؤول، وبقاعدة الكتابة وبداية القاصتين والأبواب المتقاعدة، والنسبُ لا تُنقل، والقيدُ والتدقيقُ يتبعانه.
 //   • **ح**: التدقيق · **ط**: المنطقُ الخالص.
 
 import express from "express";
@@ -86,8 +87,14 @@ const D1 = "2026-10-09", D2 = "2026-10-10";
 /** منتصفُ نهار بغداد لتاريخٍ ما — لا يقع على حدّ يوم. */
 const noon = (ymd: string) => new Date(`${ymd}T12:00:00+03:00`);
 
+const TEST_CASH_ACCOUNT = "1111T9701";
+
 async function cleanup() {
   const pids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
+  //  قيودُ فروع الاختبار كلُّها — ومنها قيودُ العكس — ثمّ حسابُ صندوقها (ع).
+  await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE branch_id = ANY($1::int[]))`, [BRANCHES]).catch(() => undefined);
+  await q(`DELETE FROM journal_entries WHERE branch_id = ANY($1::int[])`, [BRANCHES]).catch(() => undefined);
+  await q(`DELETE FROM chart_of_accounts WHERE account_code = $1`, [TEST_CASH_ACCOUNT]);
   await q(`DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE source_type='expense'
              AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[])))`, [BRANCHES]).catch(() => undefined);
   await q(`DELETE FROM journal_entries WHERE source_type='expense' AND source_id IN (SELECT id FROM expenses WHERE branch_id = ANY($1::int[]))`, [BRANCHES]).catch(() => undefined);
@@ -646,6 +653,75 @@ async function main() {
        (await spend(S.admin, { category: "branch_withdrawal", note: "" })).status,
        (await http("PATCH", `/api/dr-box/expenses/${wb1.body.id}`, S.admin, { note: "رواتب شهر ٩ — مصحّحة" })).status, await noteNow()],
       [400, "رواتب شهر ٩ — إيصال كي كارت", 400, 200, "رواتب شهر ٩ — مصحّحة"]);
+
+    console.log("\n── ع. نقلُ المصروف إلى يومٍ آخر بالقلم (طلبُ المالك ٢٠٢٦-١٠-١٧) ──");
+    const mv = (s: any, id: number, body: any) => http("PATCH", `/api/cash-book/rows/expense/${id}`, s, body);
+    const dayOf = async (id: number) => (await q(`SELECT expense_date::text d FROM expenses WHERE id=$1`, [id]))[0].d;
+    //  حسابُ صندوقٍ لفرع الاختبار — فيُكتب للمصروف قيدٌ محاسبيّ يُرى أنّه يتبع اليوم (بلا صندوق لا قيد).
+    await q(`INSERT INTO chart_of_accounts (account_code, account_name_ar, account_type, branch_id, normal_balance)
+             VALUES ($1,'صندوق اختبار الدفتر','asset',$2,'debit') ON CONFLICT (account_code) DO NOTHING`, [TEST_CASH_ACCOUNT, BGD]);
+    const m1 = await row(S.admin, { branchId: BGD, kind: "expense", amount: 77_000, category: "maintenance", note: "كُتب في يومٍ خطأ" });
+    same("ع١. **النقلُ للمسؤول وحده** — المحاسبُ ومديرُ الفرع ٤٠٣، واليومُ كما هو",
+      [(await mv(S.acc, m1.body.id, { date: YDAY })).status, (await mv(S.mgr, m1.body.id, { date: YDAY })).status, await dayOf(m1.body.id)],
+      [403, 403, TODAY]);
+    same("ع٢. **ولا إلى يومٍ لم يأتِ ولا قبل بداية الدفتر ولا بتاريخٍ تالف** — ٤٠٣ و٤٠٣ و٤٠٠، واليومُ كما هو",
+      [(await mv(S.admin, m1.body.id, { date: addDays(TODAY, 1) })).status, (await mv(S.admin, m1.body.id, { date: addDays(YDAY, -1) })).status,
+       (await mv(S.admin, m1.body.id, { date: "16/10/2026" })).status, await dayOf(m1.body.id)],
+      [403, 403, 400, TODAY]);
+    const bT = (await sheet(S.admin, "devices", TODAY, BGD)).body, bY = (await sheet(S.admin, "devices", YDAY, BGD)).body;
+    const moved1 = await mv(S.admin, m1.body.id, { date: YDAY });
+    const aT = (await sheet(S.admin, "devices", TODAY, BGD)).body, aY = (await sheet(S.admin, "devices", YDAY, BGD)).body;
+    const onSheet = (b: any) => (b?.rows ?? []).filter((r: any) => r.source === "expense" && r.id === m1.body.id).map((r: any) => [r.amount, r.note]);
+    same("ع٣. **والمسؤولُ ينقله إلى أمس**: يخرج من ورقة اليوم ويدخل ورقةَ أمس بمبلغه وملاحظته",
+      [moved1.status, await dayOf(m1.body.id), onSheet(bT), onSheet(aT), onSheet(bY), onSheet(aY)],
+      [200, YDAY, [[77_000, "كُتب في يومٍ خطأ"]], [], [], [[77_000, "كُتب في يومٍ خطأ"]]]);
+    same("ع٤. **والحسابُ يتبعه**: صادرُ أمس +٧٧ ألفاً ومتبقّيه −٧٧ ألفاً، وصادرُ اليوم وباقيه من أمس −٧٧ ألفاً فمتبقّي اليوم كما كان",
+      [aY.totals.outflow - bY.totals.outflow, aY.totals.remaining - bY.totals.remaining,
+       aT.totals.outflow - bT.totals.outflow, aT.totals.prevRemaining - bT.totals.prevRemaining, aT.totals.remaining - bT.totals.remaining],
+      [77_000, -77_000, -77_000, -77_000, 0]);
+    same("ع٥. **والقيدُ المحاسبيّ يتبعه**: القديمُ معكوس، والقائمُ بتاريخ أمس",
+      await q(`SELECT entry_date::text d, status FROM journal_entries WHERE source_type='expense' AND source_id=$1 ORDER BY id`, [m1.body.id]),
+      [{ d: TODAY, status: "reversed" }, { d: YDAY, status: "posted" }]);
+    same("ع٦. **وسطرُ تدقيقٍ باليومين**",
+      (await q(`SELECT notes, old_values::jsonb->>'expenseDate' o, new_values::jsonb->>'expenseDate' n, user_id FROM audit_log
+                WHERE entity_type='expense' AND entity_id=$1 AND action='update' ORDER BY id DESC LIMIT 1`, [m1.body.id]))[0],
+      { notes: `من دفتر القاصة — نُقل من ${TODAY} إلى ${YDAY}`, o: TODAY, n: YDAY, user_id: ADMIN });
+    same("ع٧. **وإرسالُ يومه نفسِه ليس نقلاً** — يُعدَّل المبلغُ وحده، بلا «نُقل» في التدقيق",
+      [(await mv(S.admin, m1.body.id, { date: YDAY, amount: 78_000 })).status, await dayOf(m1.body.id),
+       (await q(`SELECT notes FROM audit_log WHERE entity_type='expense' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [m1.body.id]))[0].notes],
+      [200, YDAY, "من دفتر القاصة"]);
+
+    //  دفترُ علاج ذي قار يبدأ يومَ ٩ (قبل القطع) — فيُختبر فيه ما قبل القطع وبدايةُ القاصتين.
+    const dqRow = (body: any) => row(S.admin, { branchId: DQ, book: "physio", ...body });
+    const m2 = await dqRow({ date: "2026-10-12", kind: "expense", amount: 40_000, category: "maintenance", note: "ص" });
+    same("ع٨. **ودفترُ المصروف هو الحَكَم**: علاجُ ذي قار بدأ يوم ٩ — يومُ ٨ ⟵ ٤٠٣، ويومُ ١٠ ⟵ ٢٠٠",
+      [(await mv(S.admin, m2.body.id, { date: "2026-10-08" })).status, (await mv(S.admin, m2.body.id, { date: D2 })).status, await dayOf(m2.body.id)],
+      [403, 200, D2]);
+    const m3 = await dqRow({ date: RESERVES_START, kind: "expense", amount: 9_000, category: "materials_reserve" });
+    same("ع٩. **وبابُ القاصة لا يُنقل قبل بدايتها** — «أجور مواد» يومَ القطع إلى يوم ١٠ ⟵ ٤٠٠، وإلى يوم ١٢ ⟵ ٢٠٠",
+      [m3.status, (await mv(S.admin, m3.body.id, { date: D2 })).status, await dayOf(m3.body.id),
+       (await mv(S.admin, m3.body.id, { date: "2026-10-12" })).status, await dayOf(m3.body.id)],
+      [200, 400, RESERVES_START, 200, "2026-10-12"]);
+    const [sal] = await q(`INSERT INTO expenses (branch_id, category, section, description, amount, expense_date, created_by)
+      VALUES ($1,'salaries','physio','راتب قبل القطع',3000,$2,'x') RETURNING id`, [DQ, D2]);
+    const salAfter = await mv(S.admin, sal.id, { date: "2026-10-12" });
+    same("ع١٠. **وبابٌ متقاعد لا يُحمل إلى ما بعد القطع** — «رواتب» يومَ ١٠ إلى يوم ٩ ⟵ ٢٠٠، وإلى ١٢ ⟵ ٤٠٠ يدلّ على «رواتب وإيجار»، ومعه بابُه الجديد ⟵ ٢٠٠",
+      [(await mv(S.admin, sal.id, { date: D1 })).status, salAfter.status, /رواتب وإيجار/.test(salAfter.body?.error ?? ""), await dayOf(sal.id),
+       (await mv(S.admin, sal.id, { date: "2026-10-12", category: "payroll_rent" })).status,
+       (await q(`SELECT category, expense_date::text d FROM expenses WHERE id=$1`, [sal.id]))[0]],
+      [200, 400, true, D1, 200, { category: "payroll_rent", d: "2026-10-12" }]);
+    const hrId = Number((await q(`SELECT id FROM expenses WHERE branch_id=$1 AND category='hospital_percentage' ORDER BY id LIMIT 1`, [DQ]))[0]?.id
+      ?? (await q(`INSERT INTO expenses (branch_id, category, section, description, amount, expense_date, created_by)
+           VALUES ($1,'hospital_percentage','physio','نسبة',2000,$2,'x') RETURNING id`, [DQ, D2]))[0].id);
+    const hrDay = await dayOf(hrId);
+    same("ع١١. **والنسبةُ تُحسب من وارد يومها فلا تُنقل** — ٤٠٠ ويومُها كما هو",
+      [(await mv(S.admin, hrId, { date: hrDay === D1 ? D2 : D1 })).status, await dayOf(hrId)], [400, hrDay]);
+    const e1 = await dqRow({ date: "2026-10-12", kind: "dr_transfer", amount: 5_000 });
+    same("ع١٢. **وسطرُ الدفتر غيرُ المصروف لا يُنقل** — التحويلُ إلى يومٍ آخر ٤٠٠، ويومُه نفسُه مع ملاحظةٍ ٢٠٠",
+      [(await http("PATCH", `/api/cash-book/rows/entry/${e1.body.id}`, S.admin, { date: "2026-10-13" })).status,
+       (await http("PATCH", `/api/cash-book/rows/entry/${e1.body.id}`, S.admin, { date: "2026-10-12", note: "تصحيح" })).status,
+       (await q(`SELECT entry_date::text d, note FROM cash_book_entries WHERE id=$1`, [e1.body.id]))[0]],
+      [400, 200, { d: "2026-10-12", note: "تصحيح" }]);
 
     console.log("\n── ح. التدقيق ──");
     const aud = await q(`SELECT entity_type, action FROM audit_log WHERE user_id = ANY($1::int[]) AND entity_type IN ('cash_book_entry','cash_book_opening','expense') ORDER BY id`, [USERS]);

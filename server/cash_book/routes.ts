@@ -320,8 +320,15 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const amount = req.body?.amount === undefined ? undefined : parseAmount(req.body.amount);
     if (amount === null) return res.status(400).json({ error: "اكتب المبلغ رقماً صحيحاً أكبر من صفر" });
     const note = typeof req.body?.note === "string" ? (req.body.note.trim().slice(0, 500) || null) : undefined;
+    //  **نقلُ المصروف إلى يومٍ آخر** (طلبُ المالك ٢٠٢٦-١٠-١٧ — مصروفاتٌ كُتبت في الجمعة وهي للخميس): المصروفُ وحده،
+    //  واليومُ الجديد بقاعدة الكتابة نفسِها (لا يومٌ لم يأتِ ولا ما قبل بداية الدفتر)، والقيدُ المحاسبيّ يتبعه.
+    const rawDate = req.body?.date;
+    if (rawDate !== undefined && !isYmd(rawDate)) return res.status(400).json({ error: "التاريخ غير صالح" });
     try {
       if (l.source === "entry") {
+        if (rawDate !== undefined && rawDate !== String(l.entry.entryDate)) {
+          return res.status(400).json({ error: "لا يُنقل هذا السطر إلى يومٍ آخر — احذفه واكتبه في يومه" });
+        }
         if (l.entry.kind === "dr_ratio" && amount !== undefined) {
           return res.status(400).json({ error: "نسبة الدكتور تُحسب من وارد اليوم — استعمل «تحديث النسبة»" });
         }
@@ -344,17 +351,32 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
       if (category && category !== x.category && RETIRED_EXPENSE_CATEGORIES.includes(category)) {
         return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
       }
-      if (category && category !== x.category && !(await reserveDayOk(res, l.g.branchId, l.g.book, category, String(x.expenseDate)))) return;
+      const day = rawDate !== undefined && rawDate !== String(x.expenseDate) ? String(rawDate) : undefined;
+      if (day !== undefined) {
+        //  النسبةُ تُحسب من وارد يومها — فلا تُنقل إلى يومٍ آخر.
+        if (x.category === HOSPITAL_RATIO_CATEGORY || x.category === ATABAH_RATIO_CATEGORY) {
+          return res.status(400).json({ error: "النسبة تُحسب من وارد يومها — لا تُنقل إلى يومٍ آخر" });
+        }
+        if (!(await dayOpen(res, l.g.s, l.g.branchId, l.g.book, day))) return;
+      }
       const nextCategory = category ?? x.category;
+      //  وبابٌ متقاعد لا يُحمل إلى ما بعد يوم القطع (§4.dj) — يُغيَّر بابُه معه إلى «رواتب وإيجار».
+      if (day !== undefined && day >= RESERVES_START && RETIRED_EXPENSE_CATEGORIES.includes(nextCategory)) {
+        return res.status(400).json({ error: RETIRED_CATEGORY_ERROR });
+      }
+      //  بابُ قاصةٍ لا يُكتب قبل يوم بدايتها — بابُه الجديد أو يومُه الجديد.
+      if (((category && category !== x.category) || day !== undefined)
+        && !(await reserveDayOk(res, l.g.branchId, l.g.book, nextCategory, day ?? String(x.expenseDate)))) return;
       const nextNote = note !== undefined ? note : x.description;
       if (nextCategory === "other" && !nextNote) return res.status(400).json({ error: "عند اختيار «أخرى» اكتب ما هو المصروف في الملاحظات" });
       const row = await store.updateExpenseRow(x.id, {
         ...(amount !== undefined ? { amount } : {}),
         ...(note !== undefined ? { description: note, ...(nextCategory === "other" ? { subcategory: note } : {}) } : {}),
         ...(category ? { category } : {}),
+        ...(day !== undefined ? { expenseDate: day } : {}),
       }, l.g.s.userId ?? null);
       await audit(req, l.g.s, { entityType: "expense", entityId: x.id, action: "update", branchId: l.g.branchId,
-        oldValues: x, newValues: row, notes: "من دفتر القاصة" });
+        oldValues: x, newValues: row, notes: day !== undefined ? `من دفتر القاصة — نُقل من ${x.expenseDate} إلى ${day}` : "من دفتر القاصة" });
       res.json(row);
     } catch (e) { fail(res, e); }
   });
