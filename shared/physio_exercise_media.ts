@@ -254,6 +254,14 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "towel-ir-behind-back-1": { file: "towel-ir-behind-back-1.webp", credit: "UW Medicine Orthopaedics & Sports Medicine (Matsen)", sourceUrl: "https://orthop.washington.edu/patient-care/articles/shoulder/rehabilitation-after-shoulder-arthroplasty.html" },
   "sleeper-stretch-1": { file: "sleeper-stretch-1.webp", credit: "H2 Health", sourceUrl: "https://www.h2health.com/stretches-and-exercises/" },
   "prayer-wudu-reach-1": { file: "prayer-wudu-reach-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7566" },
+  //  الاعتلالُ الجذريّ العنقيّ (ترحيل ١٥١، §4.ei) — الستُّ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها)، ورآها كلَّها قبل تسجيلها؛
+  //  وصورةُ العصب الزنديّ الأولى رُدّت لأنّ مصدرَها مكتبةُ تمارين تجارية، فبُدّلت بصور المستشفى نفسِه.
+  "median-nerve-slider-1": { file: "median-nerve-slider-1.webp", credit: "Queensland Health — Metro North Hand Therapy (drawings after Coppieters et al.)", sourceUrl: "https://metronorth.health.qld.gov.au/tpch/wp-content/uploads/sites/3/2021/12/ot-exercises-to-glide-my-median-nerve.pdf" },
+  "ulnar-nerve-slider-1": { file: "ulnar-nerve-slider-1.webp", credit: "East Kent Hospitals University NHS FT", sourceUrl: "https://leaflets.ekhuft.nhs.uk/cubital-tunnel-syndrome/html/" },
+  "shoulder-abduction-relief-1": { file: "shoulder-abduction-relief-1.webp", credit: "Kimura et al., Cureus 2023 — CC BY 3.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9918333/" },
+  "triceps-band-extension-1": { file: "triceps-band-extension-1.webp", credit: "Versus Arthritis", sourceUrl: "https://www.arthritis-uk.org/media/fg1ot4q0/versus-arthritis-resistance-band-exercise-sheet-upper-body-2.pdf" },
+  "wrist-extension-weight-1": { file: "wrist-extension-weight-1.webp", credit: "Leicestershire Partnership NHS Trust", sourceUrl: "https://www.leicspart.nhs.uk/wp-content/uploads/2022/07/514-Tennis-Elbow.pdf" },
+  "grip-putty-squeeze-1": { file: "grip-putty-squeeze-1.webp", credit: "Sherwood Forest Hospitals NHS FT", sourceUrl: "https://www.sfh-tr.nhs.uk/media/3lxfm3sa/pil202508-05-tphe-therapeutic-putty-hand-exercises.pdf" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
