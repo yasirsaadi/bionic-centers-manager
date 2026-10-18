@@ -64,8 +64,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "A treadmill with an overhead safety harness and a stop button, a heart-rate monitor, a blood-pressure monitor and a step counter."],
     doseNote: ["٢٠ دقيقة من الدفعات داخل كتلة مشيٍ نحو ٣٠ دقيقة في أيّام الشدّة الأربعة — ٢٠٠٠–٣٠٠٠ خطوة في الجلسة كما في التجارب (Hornby 2019 · Boyne 2023).",
       "20 minutes of bursts within a walking block of about 30 minutes on the four high-intensity days — 2,000–3,000 steps per session, as in the trials (Hornby 2019 · Boyne 2023)."],
-    images: [{ key: "hit-treadmill-walking-1", ar: "مريضُ جلطة يمشي على سيرٍ متحرّك بحزام أمانٍ فوق الرأس والمعالجُ بجانبه",
-      en: "A stroke survivor walking on a treadmill in an overhead safety harness with the therapist beside them", search: "stroke treadmill training safety harness" }],
+    images: [{ key: "hit-treadmill-walking-1", ar: "رسمٌ لرجلٍ يمشي على سيرٍ متحرّك بحزام أمانٍ على الصدر معلّقٍ بإطارٍ فوق الرأس لا يحمل الوزن، ويدُه تلمس الدرابزين (من تجربةٍ في التصلّب المتعدّد بالإعداد نفسِه) — والمعالجُ بجانب الساق المصابة في الخطوات",
+      en: "A drawing of a man walking on a treadmill in a chest harness hung from an overhead frame that does not take body weight, one hand touching the rail (from a multiple-sclerosis trial with the same set-up) — the therapist beside the affected leg is in the steps", search: "stroke treadmill training safety harness" }],
   },
   {
     code: "reactive-stepping-practice", nameAr: "تمرين الخطوة الإنقاذية (التوازن التفاعليّ)", nameEn: "Reactive stepping practice (lean-and-release and pushes)",
@@ -102,8 +102,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Dizziness, pain in the affected shoulder, marked fear, or blood pressure above the limit → stop; never done without a harness or a second therapist."],
     equipment: ["حزامُ أمانٍ فوق الرأس أو قضبانٌ متوازية، وحزامُ إمساكٍ عند الصدر، ومعالجان، وعوائقُ خفيفة.", "An overhead safety harness or parallel bars, a chest strap, two therapists and light obstacles."],
     doseNote: ["٣ مجموعات × ٥ لكلّ اتّجاه في اليومين الأخفّ من كلّ أسبوع (Mansfield 2018 — والعددُ اقتراح).", "3 sets × 5 in each direction on the two lighter days of each week (Mansfield 2018 — the numbers are a suggestion)."],
-    images: [{ key: "reactive-stepping-practice-1", ar: "معالجٌ يمسك المريضَ المائلَ إلى الأمام بحزامٍ ثمّ يُفلته فيخطو خطوةً سريعة",
-      en: "A therapist holding a forward-leaning patient by a strap, then releasing so the patient takes a quick step", search: "lean and release reactive balance training stroke" }],
+    images: [{ key: "reactive-stepping-practice-1", ar: "رسمٌ بوضعين: امرأةٌ بحزام أمانٍ معلّق تميل إلى الأمام وحبلٌ عند الخصر يمسكها، ثمّ بعد الإفلات تخطو خطوةً واسعة إلى الأمام والسهمُ يبيّن مسارَ القدم — وفي المركز يمسك المعالجُ الحزامَ بيده كما في الخطوات",
+      en: "A drawing in two poses: a woman in an overhead safety harness leaning forward, held by a tether at the waist, then after the release taking a long step forward, with an arrow showing the foot's path — in the centre the therapist holds the strap by hand, as in the steps", search: "lean and release reactive balance training stroke" }],
   },
   {
     code: "stairs-speed-training", nameAr: "الدرج بسرعةٍ متزايدة ودرابزينٍ أقلّ", nameEn: "Stair training at increasing speed with less rail",
@@ -141,8 +141,8 @@ export const EXERCISES: ExerciseSeed[] = [
     equipment: ["درجٌ بدرابزين أو درجاتُ تدريب، وحزامُ إمساك، وساعةُ توقيت.", "A staircase with a rail or training steps, a gait belt and a stopwatch."],
     doseNote: ["٣ مجموعات من ٣ صعوداتٍ ونزولات لدرجٍ ثابت مع قياس الزمن في أيّام الشدّة، وفي البيت بالدرابزين — والتجاربُ ٢٤ جلسة ٥٠ دقيقة (Nascimento 2025).",
       "3 sets of 3 ascents and descents of a fixed flight, timed, on the high-intensity days, and at home with the rail — the trials used 24 sessions of 50 minutes (Nascimento 2025)."],
-    images: [{ key: "stairs-speed-training-1", ar: "مريضُ جلطة يصعد الدرجَ ممسكاً بالدرابزين والمعالجُ بجانبه",
-      en: "A stroke survivor climbing stairs holding the rail with the therapist beside them", search: "stroke stair climbing training therapist rail" }],
+    images: [{ key: "stairs-speed-training-1", ar: "مريضُ جلطة كبيرٌ في السنّ يصعد الدرجَ ممسكاً بالدرابزين بيده وحزامُ إمساكٍ على خصره، والمعالجةُ على الدرجة تحته تمسك ذراعَه (والوجهان مموَّهان، وجهازُ كاحلٍ بحثيّ على ساقه لا علاقةَ له بالبطاقة)",
+      en: "An older stroke survivor climbing stairs holding the rail, with a gait belt at the waist and the therapist on the step below holding his arm (faces blurred; a research ankle device on his leg is unrelated to the card)", search: "stroke stair climbing training therapist rail" }],
   },
   {
     code: "floor-rise-hemiparesis", nameAr: "النزول إلى الأرض والقيام منها مع شلل نصف الجسم (وخطّة السقوط)", nameEn: "Getting down to and up from the floor with hemiparesis (and the fall plan)",
@@ -179,8 +179,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Dizziness, shoulder or knee pain, or blood pressure above the limit → stop; anyone who falls and hits their head while on a blood thinner → emergency department."],
     equipment: ["فرشة، وكرسيٌّ ثابتٌ أو أريكة، وحزامُ إمساك، وهاتفٌ في المتناول في البيت.", "A mat, a stable chair or sofa, a gait belt, and a phone within reach at home."],
     doseNote: ["مرّتان إلى ثلاثٍ في اليومين الأخفّ من المرحلة الثانية، ثمّ مع المرافق في البيت أسبوعياً (اقتراح).", "Two to three times on the two lighter days of phase 2, then weekly at home with the carer (a suggestion)."],
-    images: [{ key: "floor-rise-hemiparesis-1", ar: "مريضُ جلطة يقوم من الأرض بنصف ركوعٍ والساقُ السليمة أمامه ويدُه السليمة على كرسيّ",
-      en: "A stroke survivor rising from the floor through half-kneeling with the good leg forward and the good hand on a chair", search: "stroke getting up from the floor half kneeling chair" }],
+    images: [{ key: "floor-rise-hemiparesis-1", ar: "صورتان تُقرآن من اليمين: الجلوسُ الجانبيّ على الورك واليدان على الأرض، ثمّ نصفُ الركوع واليدان على مقعد كرسيّ قبل الوقوف — ومَن معه شللٌ نصفيّ يقدّم الساقَ السليمة ويرتكز باليد السليمة كما في الخطوات",
+      en: "Two photos read from the right: side-sitting on the hip with the hands on the floor, then half-kneeling with the hands on a chair seat before standing — a person with hemiparesis brings the good leg forward and pushes with the good hand, as in the steps", search: "stroke getting up from the floor half kneeling chair" }],
   },
   {
     code: "prayer-hemiparesis-pathway", nameAr: "الصلاة بعد الجلطة: القيامُ بجانب كرسيّ ثمّ الركوعُ ثمّ السجود", nameEn: "Prayer after stroke: standing beside a chair, bowing, then prostration",
@@ -217,8 +217,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Dizziness on rising from prostration, loss of balance, or pain in the affected shoulder → back to the previous step and tell the therapist."],
     equipment: ["سجّادةُ صلاة، وكرسيٌّ ثابت، ووسادة، وحزامُ إمساكٍ في الجلسة.", "A prayer mat, a stable chair, a cushion, and a gait belt in the session."],
     doseNote: ["كلُّ وضعٍ ٣–٥ مرّات في الأيّام الأخفّ من المرحلة الثالثة، ثمّ في الصلوات اليومية بقدر ما يستطيع بأمان (اقتراح).", "Each position 3–5 times on the lighter days of phase 3, then in the daily prayers as far as is safe (a suggestion)."],
-    images: [{ key: "prayer-hemiparesis-pathway-1", ar: "أوضاعُ الصلاة: القيامُ والركوعُ والسجود — والكرسيُّ بجانب الجهة المصابة في الخطوات",
-      en: "The positions of prayer: standing, bowing and prostration — the chair beside the affected side is in the steps", search: "muslim prayer positions standing bowing prostration chair" }],
+    images: [{ key: "prayer-hemiparesis-pathway-1", ar: "ثلاثةُ رموز تُقرأ من اليمين على سجّادة الصلاة: القيامُ والركوعُ والسجود — والكرسيُّ بجانب الجهة المصابة والصلاةُ جالساً في الخطوات",
+      en: "Three symbols read from the right on a prayer mat: standing, bowing and prostration — the chair beside the affected side and seated prayer are in the steps", search: "muslim prayer positions standing bowing prostration chair" }],
   },
   {
     code: "wudu-affected-arm-assist", nameAr: "الوضوء جالساً والذراعُ المصابة تساعد", nameEn: "Wudu (ablution) seated with the affected arm assisting",
@@ -255,8 +255,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Slipping or dizziness, or pain in the affected shoulder on raising the hand to the head → a smaller range (elbow on the edge) and tell the therapist."],
     equipment: ["كرسيٌّ ثابت، وإناءٌ صغير، وسجّادةٌ مانعةٌ للانزلاق، ومنشفة.", "A stable chair, a small bowl, a non-slip mat and a towel."],
     doseNote: ["مرّةً في الجلسة في المرحلة الثالثة، ثمّ في كلّ وضوءٍ في البيت (اقتراح).", "Once per session in phase 3, then at every ablution at home (a suggestion)."],
-    images: [{ key: "wudu-affected-arm-assist-1", ar: "شخصٌ جالسٌ على كرسيّ يتوضّأ أمام المغسلة بيديه معاً",
-      en: "A person seated on a chair performing ablution at a basin with both hands", search: "wudu ablution seated chair" }],
+    images: [{ key: "wudu-affected-arm-assist-1", ar: "رجلٌ كبيرٌ جالسٌ على مقعدٍ خشبيّ أمام صنبور الوضوء في مسجد، ظهرُه إلى الكاميرا، يغسل بيدٍ ويتّكئ بالأخرى على الجدار — والكرسيُّ الثابت ومشاركةُ اليد المصابة في الخطوات",
+      en: "An older man seated on a wooden bench at a mosque ablution tap, his back to the camera, washing with one hand and leaning on the wall with the other — the stable chair and the affected hand taking part are in the steps", search: "wudu ablution seated chair" }],
   },
 ];
 
@@ -496,13 +496,13 @@ export const PROTOCOL: ProtocolContentSeed = {
         "Rotating adjunct by the centre's rule (Saleem) — and here the evidence is strong: an orthosis or functional stimulation 1 A (Richards 2026), functional stimulation strongly recommended (Salbach 2026) and equivalent to the orthosis (Kluding 2013 · Bethoux 2014), cyclical stimulation increased strength with high certainty (Scrivener 2025), and TENS reduced spasticity (Mahmood 2019); for the arm after a year it did not improve daily activities (Eraifej 2017), and NICE says not routinely, except as a trial (NICE NG236). Never instead of exercise. Contraindicated with a pacemaker and over skin with poor sensation, with caution in epilepsy."] },
     { code: "shockwaves", centreUse: "adjunct", evidence: "optional", minutes: 10, everyDays: 7, times: 3,
       params: { sessions: "3 (1 / week × 3) — or 3 / week × 4 weeks" },
-      parameters: ["للتشنّج الموضعيّ الذي يعيق هدفاً — باسطاتُ القدم (الساق) أو قابضاتُ الرسغ والأصابع — بعد التمطيط أو البوتوكس لا بدلهما: على بطن العضلة واتّصالها بالوتر، أسبوعياً ثلاثَ جلسات، ويتبعه تمطيطٌ وتدريبُ مهمّةٍ فوراً، ويُعاد قياسُ أشوورث في الأسبوعين الرابع والثاني عشر؛ ولألم الكتف بعد مراجعة الطبيب وحدها. " +
+      parameters: ["للتشنّج الموضعيّ الذي يعيق هدفاً — عضلةُ الساق القابضةُ للقدم أو قابضاتُ الرسغ والأصابع — بعد التمطيط أو البوتوكس لا بدلهما: على بطن العضلة واتّصالها بالوتر، أسبوعياً ثلاثَ جلسات، ويتبعه تمطيطٌ وتدريبُ مهمّةٍ فوراً، ويُعاد قياسُ أشوورث في الأسبوعين الرابع والثاني عشر؛ ولألم الكتف بعد مراجعة الطبيب وحدها. " +
         "وفي التجارب: الشعاعيُّ ٠٫١٠–٠٫٢٠ مللي جول/مم² و٤٠٠٠–٦٠٠٠ نبضة ثلاثاً في الأسبوع أربعةَ أسابيع مع العلاج الطبيعيّ للساق (Zeren 2026)، و٠٫٣٤ مللي جول/مم² و٢٠٠٠ نبضة جلسةً واحدة (Radinmehr 2019)، وأسبوعياً ثلاثاً للذراع فبقي الأثرُ ١٦ أسبوعاً مقابل ثمانية لجلسةٍ واحدة (Li 2016). " +
         "والإعداداتُ (النوعُ والشدّةُ والتردّدُ والنبضات) من جهاز المركز في خاناتها — يملؤها المشرفُ قبل الاعتماد؛ فقيمُ الأدبيات لا تنتقل بين جهازٍ وآخر.",
         "For focal spasticity that limits a goal — the ankle plantar flexors (calf) or the wrist and finger flexors — after stretching or botulinum toxin, never instead of them: over the muscle belly and the muscle–tendon junction, weekly for three sessions, followed at once by stretching and task practice, with the Ashworth score re-measured at weeks 4 and 12; and for shoulder pain only after medical review. " +
         "In trials: radial 0.10–0.20 mJ/mm² and 4,000–6,000 pulses three times a week for four weeks with physiotherapy for the leg (Zeren 2026), 0.34 mJ/mm² and 2,000 pulses as a single session (Radinmehr 2019), and weekly × 3 for the arm, with the effect lasting 16 weeks against eight for a single session (Li 2016). " +
         "The settings (type, intensity, frequency, impulses) come from the centre's own device, in their fields — the supervisor fills them before approval, since published values do not transfer between devices."],
-      note: ["مساعدٌ بموعدٍ دوريّ — الكنديّ «يُنظر فيه» لتشنّج باسطات القدم وألمِ الكتف (Salbach 2026)، والأمريكيّ يعدّه للتشنّج فجوةً معرفية ولألم الكتف 2a (Richards 2026)، والبريطانيّ لم يذكره؛ وفي التحليلات خفّف التشنّجَ حتى ١٢ أسبوعاً (Jia 2020 · Guo 2017) ولا إعداداتِ معيارية (Opara 2021). حذرٌ مع المميّعات (لا قاعدةَ من التجارب)؛ ممنوعٌ على الخثرة والورم والجلد المجروح.",
+      note: ["مساعدٌ بموعدٍ دوريّ — الكنديّ «يُنظر فيه» لتشنّج عضلة الساق القابضة للقدم وألمِ الكتف (Salbach 2026)، والأمريكيّ يعدّه للتشنّج فجوةً معرفية ولألم الكتف 2a (Richards 2026)، والبريطانيّ لم يذكره؛ وفي التحليلات خفّف التشنّجَ حتى ١٢ أسبوعاً (Jia 2020 · Guo 2017) ولا إعداداتِ معيارية (Opara 2021). حذرٌ مع المميّعات (لا قاعدةَ من التجارب)؛ ممنوعٌ على الخثرة والورم والجلد المجروح.",
         "Adjunct on a periodic schedule — the Canadian guideline says consider it for plantar-flexor spasticity and shoulder pain (Salbach 2026), the American guideline calls it a knowledge gap for spasticity and 2a for shoulder pain (Richards 2026), and NICE does not mention it; in meta-analyses it reduced spasticity for up to 12 weeks (Jia 2020 · Guo 2017), with no standard settings (Opara 2021). Caution with anticoagulants (no trial-based rule); contraindicated over thrombosis, tumour and broken skin."] },
     { code: "needle", centreUse: "adjunct", evidence: "optional", minutes: 10, everyDays: 2, times: 3,
       params: { needleSize: "Centre's needles (sizes in trials not verified)", points: "Focal spastic muscle: calf, wrist and finger flexors", sessions: "3 within about a week" },
