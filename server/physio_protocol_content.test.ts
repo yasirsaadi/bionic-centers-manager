@@ -49,6 +49,7 @@ import * as m151 from "./migrations/151_physio_cervical_radiculopathy_detail";
 import * as m152 from "./migrations/152_physio_lateral_elbow_detail";
 import * as m153 from "./migrations/153_physio_lumbar_stenosis_detail";
 import * as m155 from "./migrations/155_physio_patellofemoral_detail";
+import * as m156 from "./migrations/156_physio_hip_oa_detail";
 import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
 
 let failures = 0;
@@ -82,6 +83,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m152.name, sql: m152.sql, EXERCISES: m152.EXERCISES, PROTOCOL: m152.PROTOCOL, template: true },
   { name: m153.name, sql: m153.sql, EXERCISES: m153.EXERCISES, PROTOCOL: m153.PROTOCOL, template: true },
   { name: m155.name, sql: m155.sql, EXERCISES: m155.EXERCISES, PROTOCOL: m155.PROTOCOL, template: true },
+  { name: m156.name, sql: m156.sql, EXERCISES: m156.EXERCISES, PROTOCOL: m156.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
