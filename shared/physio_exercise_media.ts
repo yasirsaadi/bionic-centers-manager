@@ -299,6 +299,11 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "floor-rise-hemiparesis-1": { file: "floor-rise-hemiparesis-1.webp", credit: "Seeley et al., Age Ageing 2026 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13023370/" },
   "prayer-hemiparesis-pathway-1": { file: "prayer-hemiparesis-pathway-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7984" },
   "wudu-affected-arm-assist-1": { file: "wudu-affected-arm-assist-1.webp", credit: "np&djjewell (Flickr) via Wikimedia Commons — CC BY 2.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Ablution_(Wudu)_S%C3%BCleymaniye_Mosque,_Istanbul_(6328282594).jpg" },
+  "standing-hamstring-curl-1": { file: "standing-hamstring-curl-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://www.orthoinfo.org/en/recovery/knee-conditioning-program/" },
+  "fitball-hamstring-curl-1": { file: "fitball-hamstring-curl-1.webp", credit: "Eric Astrauskas (Flickr) — CC BY 2.0", sourceUrl: "https://www.flickr.com/photos/121183998@N08/43844585072" },
+  "knee-stability-band-loop-1": { file: "knee-stability-band-loop-1.webp", credit: "Silva et al., Trials 2019 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC6788005/" },
+  "skater-hop-soft-landing-1": { file: "skater-hop-soft-landing-1.webp", credit: "Kim, Brain Sci 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12293109/" },
+  "hop-cross-four-directions-1": { file: "hop-cross-four-directions-1.webp", credit: "Vijayakumar & Palekar, Cureus 2024 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC11180489/" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
