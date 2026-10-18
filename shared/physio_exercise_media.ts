@@ -291,6 +291,14 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "hip-long-axis-distraction-1": { file: "hip-long-axis-distraction-1.webp", credit: "Wong & Macpherson, Cureus 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12358169/" },
   "contralateral-cane-walking-1": { file: "contralateral-cane-walking-1.webp", credit: "NHS Fife (Physiotherapy Dept)", sourceUrl: "https://www.nhsfife.org/media/erxpgb68/using_a_walking_stick_v7.pdf" },
   "prayer-floor-sitting-hip-oa-1": { file: "prayer-floor-sitting-hip-oa-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7975" },
+  //  **الجلطةُ المزمنة — البطاقاتُ الستّ الجديدة** (٢٠٢٦-١٠-١٨، §4.ep): لا صورةَ لها في Drive (آخرُ ملفٍّ فيه ٢٠٢٦-١٠-١٤) ولا في المسجَّل؛ فبحث عنها المساعدُ على الويب
+  //  ورآها: أربعٌ من أبحاثٍ برخصة CC BY (طوبقت الرخصةُ مع Europe PMC، ولا ملاحظةَ «بإذن» على الشكل)، ورموزُ Tawasol للصلاة، وصورةُ وضوءٍ برخصة CC BY 2.0.
+  "hit-treadmill-walking-1": { file: "hit-treadmill-walking-1.webp", credit: "Cleland et al., Mult Scler Relat Disord 2026 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12926876/" },
+  "reactive-stepping-practice-1": { file: "reactive-stepping-practice-1.webp", credit: "Bosquée et al., Eur Rev Aging Phys Act 2021 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC8493681/" },
+  "stairs-speed-training-1": { file: "stairs-speed-training-1.webp", credit: "Yeung et al., J NeuroEng Rehabil 2021 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC7847008/" },
+  "floor-rise-hemiparesis-1": { file: "floor-rise-hemiparesis-1.webp", credit: "Seeley et al., Age Ageing 2026 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13023370/" },
+  "prayer-hemiparesis-pathway-1": { file: "prayer-hemiparesis-pathway-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7984" },
+  "wudu-affected-arm-assist-1": { file: "wudu-affected-arm-assist-1.webp", credit: "np&djjewell (Flickr) via Wikimedia Commons — CC BY 2.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Ablution_(Wudu)_S%C3%BCleymaniye_Mosque,_Istanbul_(6328282594).jpg" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
