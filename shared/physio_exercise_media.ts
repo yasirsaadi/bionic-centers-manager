@@ -283,6 +283,14 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "single-leg-squat-to-box-1": { file: "single-leg-squat-to-box-1.webp", credit: "Wrightington, Wigan and Leigh Teaching Hospitals NHS FT", sourceUrl: "https://www.wwl.nhs.uk/pdfreader/accessiblePDF/cnv-wwl-68ca8bce8ec828.01098451" },
   "running-cadence-1": { file: "running-cadence-1.webp", credit: "Wallace et al., Evol Hum Sci 2022 (drawing by Samantha Shields) — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9624512/" },
   "patellar-taping-1": { file: "patellar-taping-1.webp", credit: "Yoon & Son, Medicina 2022 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9501162/" },
+  //  خشونةُ الورك (ترحيل ١٥٦، §4.eo) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في المسجَّل يُظهر حركاتها، وموصلُ Drive لم يكن متّصلاً في الجلسة)،
+  //  ورآها كلَّها قبل تسجيلها؛ ورُدّت صورٌ تنسبها نشراتُها إلى مكتبات تمارين تجارية. والتدويرُ الداخليّ صورةُ قياسٍ بيد الفاحص (لا صورةَ مفتوحة للمريض وحده)،
+  //  والشدُّ من الكاحل، والصلاةُ رمزا التشهّد والسجود بوضعهما المعتاد — ووصفُ كلٍّ منها في الترحيل يقول ذلك.
+  "hip-internal-rotation-stretch-1": { file: "hip-internal-rotation-stretch-1.webp", credit: "Ganokroj et al., BMC Musculoskelet Disord 2021 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC7879637/" },
+  "quadruped-rock-back-1": { file: "quadruped-rock-back-1.webp", credit: "Songjaroen et al., Sci Rep 2021 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC8292547/" },
+  "hip-long-axis-distraction-1": { file: "hip-long-axis-distraction-1.webp", credit: "Wong & Macpherson, Cureus 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12358169/" },
+  "contralateral-cane-walking-1": { file: "contralateral-cane-walking-1.webp", credit: "NHS Fife (Physiotherapy Dept)", sourceUrl: "https://www.nhsfife.org/media/erxpgb68/using_a_walking_stick_v7.pdf" },
+  "prayer-floor-sitting-hip-oa-1": { file: "prayer-floor-sitting-hip-oa-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7975" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

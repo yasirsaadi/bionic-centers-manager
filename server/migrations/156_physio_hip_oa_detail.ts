@@ -58,8 +58,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Groin pain above 5/10 during it, or pain not back to usual by the next morning → a smaller range and tell the therapist."],
     equipment: ["كرسيٌّ ثابت بلا عجلات، أو سريرٌ للانبطاح.", "A firm chair without wheels, or a bed for lying face down."],
     doseNote: ["٣ × ٤٥ ثانية بينها ١٥ ثانية، مرّتين يومياً في البيت — جرعةُ التمطيط في التجربة (Ceballos-Laita 2022).", "3 × 45 seconds with 15 seconds between, twice a day at home — the trial's stretching dose (Ceballos-Laita 2022)."],
-    images: [{ key: "hip-internal-rotation-stretch-1", ar: "جالسٌ على كرسيٍّ والركبتان متلاصقتان وقدمُ جهةٍ تنزلق إلى الخارج فيدور الفخذُ إلى الداخل — أو منبطحاً والركبتان مثنيّتان والقدمان تسقطان إلى الخارج",
-      en: "Sitting on a chair with the knees together and one foot sliding outwards so the thigh rotates inwards — or lying face down with the knees bent and the feet falling outwards", search: "seated hip internal rotation stretch knees together" }],
+    images: [{ key: "hip-internal-rotation-stretch-1", ar: "جالسٌ على حافّة سرير والفاحصُ يدير ساقَه إلى الخارج فيدور الفخذُ إلى الداخل (صورةُ قياسٍ من بحث، بهاتفٍ على الساق) — والمريضُ يؤدّيها وحده والركبتان متلاصقتان كما في الخطوات",
+      en: "Sitting on the edge of a couch while the examiner turns the lower leg outwards so the thigh rotates inwards (a measurement photo from a study, with a phone on the shin) — the patient does it alone with the knees together, as in the steps", search: "seated hip internal rotation stretch knees together" }],
   },
   {
     code: "quadruped-rock-back", nameAr: "الرجوع على أربع نحو الكعبين (ثني الورك للسجود)", nameEn: "Quadruped rock-back (hip flexion for prostration)",
@@ -96,8 +96,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Groin pain above 5/10, knee pain, or pain not settled by the next morning → stop and tell the therapist."],
     equipment: ["فرشةٌ ووسادةٌ للركبتين.", "A mat and a pillow for the knees."],
     doseNote: ["٢–٣ × ١٠ ببطءٍ يومياً (اقتراح — لا تجربة).", "2–3 × 10 slowly, daily (a suggestion — no trial)."],
-    images: [{ key: "quadruped-rock-back-1", ar: "على اليدين والركبتين والظهرُ مستوٍ، ثمّ الأليتان ترجعان نحو الكعبين",
-      en: "On the hands and knees with the back level, then the buttocks rocking back towards the heels", search: "quadruped rock back hip flexion" }],
+    images: [{ key: "quadruped-rock-back-1", ar: "صورتان: اليسرى البداية على اليدين والركبتين والوركُ فوق الركبة، واليمنى الأليتان راجعتان نحو الكعبين والظهرُ مستوٍ — ويدا الأخصائيّة على الحوض",
+      en: "Two photos: on the hands and knees with the hip over the knee (left), then the buttocks rocked back towards the heels with the back level (right) — with the therapist's hands on the pelvis", search: "quadruped rock back hip flexion" }],
   },
   {
     code: "hip-long-axis-distraction", nameAr: "الشدّ الطوليّ للورك باليد (يؤدّيه الأخصائيّ)", nameEn: "Long-axis hip distraction (therapist technique)",
@@ -134,8 +134,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Not done with suspected avascular necrosis, fracture, infection or tumour, severe osteoporosis, a replacement in the same hip, or a flare after a recent injection; stop if pain increases or numbness appears in the leg."],
     equipment: ["سريرُ علاج، وحزامُ تحريكٍ عريض، ومنشفةٌ للتبطين.", "A treatment couch, a wide mobilisation belt and a towel for padding."],
     doseNote: ["١٠–٣٠ دقيقة من العلاج اليدويّ في الجلسة، ٢–٣ مرّات في الأسبوع، وستُّ جلساتٍ إلى عشر في الدورة على الأكثر (Shepherd 2022).", "10–30 minutes of manual therapy per session, 2–3 times a week, and at most six to ten sessions per course (Shepherd 2022)."],
-    images: [{ key: "hip-long-axis-distraction-1", ar: "المريضُ مستلقٍ على ظهره والأخصائيّ يشدّ ساقَه على طولها بيديه أو بحزامٍ حول الفخذ",
-      en: "The patient lying on the back with the therapist pulling the leg along its length with the hands or a belt around the thigh", search: "long axis hip distraction manual therapy" }],
+    images: [{ key: "hip-long-axis-distraction-1", ar: "المريضُ مستلقٍ على ظهره والأخصائيّ يمسك الكاحلَ وأسفلَ الساق بيديه ويشدّ الساقَ المستقيمة على طولها والوركُ مثنيٌّ قليلاً، وسهمٌ يبيّن الاتّجاه — والحزامُ فوق الركبة بديلٌ إن آلمته الركبة",
+      en: "The patient lying on the back with the therapist holding the ankle and lower leg and pulling the straight leg along its length with the hip slightly flexed, an arrow showing the direction — a belt above the knee is the alternative if the knee hurts", search: "long axis hip distraction manual therapy" }],
   },
   {
     code: "contralateral-cane-walking", nameAr: "المشي بالعصا في اليد المقابلة للورك المتألّم", nameEn: "Walking with a cane in the hand opposite the painful hip",
@@ -173,8 +173,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في كتف العصا أو رسغها، أو عدمُ ثبات ⟵ يُراجع الأخصائيّ (تقييمُ التوازن).", "Shoulder or wrist pain on the cane side, or unsteadiness → see the therapist (a balance assessment)."],
     equipment: ["عصا بنقطةٍ واحدة قابلةٌ لضبط الطول، وطرفٌ مطاطيٌّ سليم.", "An adjustable single-point cane with an intact rubber tip."],
     doseNote: ["كلّما كان ألمُ المشي ٤ من ١٠ فأكثر أو ظهر العرج (اقتراح)، ويُراجع استعمالُها عند كلّ انتقالٍ بين المراحل.", "Whenever walking pain is 4/10 or more or a limp appears (a suggestion), with its use reviewed at each change of phase."],
-    images: [{ key: "contralateral-cane-walking-1", ar: "كبيرٌ في السنّ يمشي والعصا في اليد المقابلة للساق المتألّمة، والعصا والساقُ المتألّمة تتقدّمان معاً",
-      en: "An older adult walking with the cane in the hand opposite the painful leg, the cane and the painful leg moving forward together", search: "walking with cane opposite hand hip" }],
+    images: [{ key: "contralateral-cane-walking-1", ar: "رسمان لكبيرٍ في السنّ من الجانب: واقفٌ والعصا بجانبه، ثمّ يخطو فتتقدّم العصا مع الساق البعيدة — المقابلة لليد التي تمسكها",
+      en: "Two side-view drawings of an older man: standing with the stick beside him, then stepping so that the stick moves forward with the far leg — the one opposite the hand holding it", search: "walking with cane opposite hand hip" }],
   },
   {
     code: "prayer-floor-sitting-hip-oa", nameAr: "الصلاة والجلوس على الأرض مع خشونة الورك", nameEn: "Prayer and floor sitting with hip osteoarthritis",
@@ -211,8 +211,8 @@ export const EXERCISES: ExerciseSeed[] = [
       "Pain above 5/10, pain not settled by the next morning, or the leg giving way → back to the previous step and tell the therapist."],
     equipment: ["سجّادة، ووسادةٌ صلبة أو بساطٌ مطويّ، وكرسيٌّ صغير، وكرسيٌّ ثابت، ومقعدُ مرحاضٍ مرتفعٌ متنقّل عند الحاجة.", "A prayer mat, a firm cushion or folded mat, a low stool, a stable chair, and a portable raised toilet seat when needed."],
     doseNote: ["كلُّ وضعٍ ٣–٥ مرّات في الأيّام الخفيفة، ثمّ في الصلوات اليومية بقدر ما يتحمّل (اقتراح).", "Each position 3–5 times on light days, then in the daily prayers as tolerated (a suggestion)."],
-    images: [{ key: "prayer-floor-sitting-hip-oa-1", ar: "مصلٍّ في السجود والركبتان متباعدتان، أو جالسٌ للتشهّد على وسادةٍ تحت الأليتين",
-      en: "A worshipper in prostration with the knees apart, or sitting for tashahhud on a cushion under the buttocks", search: "muslim prayer sujood position hip" }],
+    images: [{ key: "prayer-floor-sitting-hip-oa-1", ar: "رمزان: الجلوسُ للتشهّد (اليسار) والسجودُ (اليمين) على سجّادة الصلاة بوضعهما المعتاد — والوسادةُ تحت الأليتين وتباعدُ الركبتين في الخطوات",
+      en: "Two symbols: sitting for tashahhud (left) and prostration (right) on a prayer mat in their usual form — the cushion under the buttocks and the wider knees are in the steps", search: "muslim prayer sujood position hip" }],
   },
 ];
 
