@@ -304,6 +304,13 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "knee-stability-band-loop-1": { file: "knee-stability-band-loop-1.webp", credit: "Silva et al., Trials 2019 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC6788005/" },
   "skater-hop-soft-landing-1": { file: "skater-hop-soft-landing-1.webp", credit: "Kim, Brain Sci 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12293109/" },
   "hop-cross-four-directions-1": { file: "hop-cross-four-directions-1.webp", credit: "Vijayakumar & Palekar, Cureus 2024 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC11180489/" },
+  "prone-hang-extension-1": { file: "prone-hang-extension-1.webp", credit: "James Paget University Hospitals NHS FT — ACL reconstruction leaflet (PH36)", sourceUrl: "https://www.jpaget.nhs.uk/media/gshbpdbh/ph-36-anterior-cruciate-ligament-reconstruction-ver-3.pdf" },
+  "acl-open-chain-knee-extension-1": { file: "acl-open-chain-knee-extension-1.webp", credit: "Kasnesis et al., Sci Data 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC11992047/" },
+  "single-leg-pogo-hops-1": { file: "single-leg-pogo-hops-1.webp", credit: "Ortega-Prados et al., J Clin Med 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12294919/" },
+  "walk-jog-progression-1": { file: "walk-jog-progression-1.webp", credit: "Ortega-Prados et al., J Clin Med 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12294919/" },
+  "deceleration-cutting-drills-1": { file: "deceleration-cutting-drills-1.webp", credit: "Ortega-Prados et al., J Clin Med 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12294919/" },
+  "nordic-hamstring-curl-1": { file: "nordic-hamstring-curl-1.webp", credit: "Whyte et al., PLOS One 2026 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12931786/" },
+  "fifa-11-plus-warm-up-1": { file: "fifa-11-plus-warm-up-1.webp", credit: "Steindy (Wikimedia Commons) — CC BY-SA 3.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Andorra_national_football_team_-_Warm_up_(002).jpg" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
