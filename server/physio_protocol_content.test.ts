@@ -56,6 +56,7 @@ import * as m158 from "./migrations/158_physio_meniscal_detail";
 import * as m159 from "./migrations/159_physio_acl_reconstruction_detail";
 import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
 import * as m160 from "./migrations/160_physio_prayer_image_captions";
+import * as m161 from "./migrations/161_physio_carpal_tunnel_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -92,6 +93,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m157.name, sql: m157.sql, EXERCISES: m157.EXERCISES, PROTOCOL: m157.PROTOCOL, template: true },
   { name: m158.name, sql: m158.sql, EXERCISES: m158.EXERCISES, PROTOCOL: m158.PROTOCOL, template: true },
   { name: m159.name, sql: m159.sql, EXERCISES: m159.EXERCISES, PROTOCOL: m159.PROTOCOL, template: true },
+  { name: m161.name, sql: m161.sql, EXERCISES: m161.EXERCISES, PROTOCOL: m161.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -613,13 +615,15 @@ async function main() {
     //  والثالثُ والعشرون (ما بعد إعادة بناء الرباط الصليبيّ): ثماني بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت سبعٌ مع ترحيلها** (٢٠٢٦-١٠-١٩، بحث عنها المساعد، §4.er)،
     //  **و«الصلاة والركوع بعد الرباط» أرسلها المالكُ** (٢٠٢٦-١٠-١٩، ترحيل ١٦٠)؛ والمعادةُ بصورها هي.
     const aclKeys = m159.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    //  والرابعُ والعشرون (متلازمةُ النفق الرسغي): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — CTS_IMAGES_NOTE (٢٠٢٦-١٠-١٩، §4.et)؛ والمعادةُ بصورها هي.
+    const ctsKeys = m161.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
     same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين — فـ«الصور المطلوبة» فارغة** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
-        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], []]);
+        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
