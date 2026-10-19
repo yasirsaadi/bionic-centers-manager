@@ -311,6 +311,13 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "deceleration-cutting-drills-1": { file: "deceleration-cutting-drills-1.webp", credit: "Ortega-Prados et al., J Clin Med 2025 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12294919/" },
   "nordic-hamstring-curl-1": { file: "nordic-hamstring-curl-1.webp", credit: "Whyte et al., PLOS One 2026 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12931786/" },
   "fifa-11-plus-warm-up-1": { file: "fifa-11-plus-warm-up-1.webp", credit: "Steindy (Wikimedia Commons) — CC BY-SA 3.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Andorra_national_football_team_-_Warm_up_(002).jpg" },
+  //  **صورُ الصلاة الثلاث التي انتظرت المالك** (٢٠٢٦-١٠-١٩ — أرسلها في المحادثة بعد أن رآها في «الصور المطلوبة»، ورتّبها بمواقعها):
+  //  لا اسمَ موقعٍ مكتوبٌ على أيٍّ منها فبلا مصدر (قاعدةُ الدفعة الأولى أعلاه). «الركوع» صورةٌ كما هي، و«الصلاة مع الغضروف» رسمان
+  //  كما هما، و«الصلاة بعد الرباط» قُصّ منها صفُّ الرسوم الثلاثة على الكرسيّ وحده — النصُّ الإندونيسيّ فوقه وتحته خارجَها.
+  //  ووصفُ الثلاث كما وصلت بترحيل ١٦٠.
+  "prayer-bent-knee-ruku-1": { file: "prayer-bent-knee-ruku-1.webp" },
+  "prayer-deep-flexion-meniscus-1": { file: "prayer-deep-flexion-meniscus-1.webp" },
+  "prayer-kneeling-after-acl-1": { file: "prayer-kneeling-after-acl-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

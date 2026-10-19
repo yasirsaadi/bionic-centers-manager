@@ -8,6 +8,7 @@
 //       مسوّدة، والخططُ المفتوحة تأخذ نسختَها والموقوفةُ لا، وألمُ الظهر المزمن لا يُمَسّ.
 //   ج — **كلُّ بروتوكولٍ بعد الثاني على القاعدة بالقواعد نفسِها** (سطرُه في `CONTENT` يكفي): الجرعةُ والنطاقاتُ والروابطُ والأجهزةُ والمراجع، والبطاقاتُ
 //       مسوّدات، ولا تكرار، والخطّةُ المفتوحة تأخذ نسختَها، وكلُّ بروتوكولٍ مفصَّلٍ غيره لا يُمَسّ.
+//   ظ — وصفُ صور الصلاة الثلاث كما وصلت (ترحيل ١٦٠) بالقاعدة نفسِها، لبطاقاتٍ من ثلاثة بروتوكولات.
 //   ص — وصفُ صور الورك كما وصلت (ترحيل ١٤١): يقبله المحرّر، ولا يُكتب فوق وصفٍ عدّله المشرف، والإعادةُ لا تفعل شيئاً.
 //   ب — من الأبواب الحقيقية: صفحةُ البروتوكول وموجزُ المساعد يحملانه، والخطّةُ الجديدة تنسخ مراحلَه وعددَه وتأخذ الأساسيَّ وحده، وكلُّ صورةٍ
 //       في مكانها: ما وصل معروضٌ وما لم يصل في «الصور المطلوبة» (وصورُ الثاني وصلت ٢٠٢٦-١٠-١٠)؛ وكلُّ بروتوكولٍ بعده بصفحته وخطّته (ب.٥).
@@ -54,6 +55,7 @@ import * as m157 from "./migrations/157_physio_stroke_chronic_detail";
 import * as m158 from "./migrations/158_physio_meniscal_detail";
 import * as m159 from "./migrations/159_physio_acl_reconstruction_detail";
 import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
+import * as m160 from "./migrations/160_physio_prayer_image_captions";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -451,6 +453,52 @@ async function main() {
   await q(m150.sql);
   same("ط.٤ **وحين يعود النصُّ كما زرعه ١٤٩ يكتب الترحيلُ الجديدَ**", (await fsState()).en, T.assessmentEn[1]);
 
+  // ══ ظ. وصفُ صور الصلاة الثلاث كما وصلت (ترحيل ١٦٠ — أرسلها المالكُ ٢٠٢٦-١٠-١٩) — بقاعدة ١٤١ و١٤٤ نفسِها ══
+  console.log("\n── ظ. وصفُ صور الصلاة الثلاث كما وصلت ──");
+  const pCapKeys = Object.keys(m160.CAPTIONS);
+  const pSrc = m160.SOURCES.filter((e) => e.images.some((i) => m160.CAPTIONS[i.key]));
+  const pCards = pSrc.map((e) => e.code);
+  const pImagesOf = async () => Object.fromEntries((await q(`SELECT code, images FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [pCards])).rows
+    .map((r) => [r.code, r.images]));
+  const pCapOf = (imgs: Record<string, any[]>) => sorted(Object.fromEntries(Object.values(imgs).flat().filter((i) => pCapKeys.includes(i.key)).map((i) => [i.key, [i.captionAr, i.captionEn]])));
+  const pCapIssues = pSrc.flatMap((e) => {
+    const body = exerciseBody({ ...e, images: e.images.map((i) => (m160.CAPTIONS[i.key] ? { ...i, ...m160.CAPTIONS[i.key] } : i)) });
+    const r = parseExerciseBody(body);
+    if (typeof r === "string") return [`${e.code}: ${r}`];
+    return r.images.some((im, i) => im.captionAr !== body.images[i].captionAr || im.captionEn !== body.images[i].captionEn) ? [`${e.code}.images قُصّت`] : [];
+  });
+  same("ظ.١ **الوصفُ الجديد يقبله المحرّرُ كما هو** — لثلاث بطاقاتٍ من ثلاثة بروتوكولات (عِرقُ النسا والغضروفُ والرباط)",
+    [[...pCapKeys].sort(), [...pCards].sort(), pCapIssues],
+    [["prayer-bent-knee-ruku-1", "prayer-deep-flexion-meniscus-1", "prayer-kneeling-after-acl-1"],
+      ["prayer-bent-knee-ruku", "prayer-deep-flexion-meniscus", "prayer-kneeling-after-acl"], []]);
+  //  من الوصف كما زرعته ترحيلاتُها — والقالبُ قد يحمل ١٦٠ مطبَّقاً.
+  for (const e of pSrc) {
+    await q(`UPDATE physio_exercises SET images = $1::jsonb WHERE code = $2`,
+      [JSON.stringify(e.images.map((i) => ({ key: i.key, captionAr: i.ar, captionEn: i.en, search: i.search }))), e.code]);
+  }
+  const pBefore = await pImagesOf();
+  //  سليمٌ عدّل وصفَ «الصلاة مع الغضروف» قبل الترحيل — يبقى وصفُه.
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', '"وصفُ سليم"') WHERE code = 'prayer-deep-flexion-meniscus'`);
+  await q(m160.sql);
+  const pAfter = await pImagesOf();
+  same("ظ.٢ **يتغيّر وصفُ «الركوع» و«الصلاة بعد الرباط» كما وصلتا، ووصفٌ عدّله المشرفُ يبقى**، ورموزُها وكلماتُ بحثها كما هي",
+    [pCapOf(pAfter), Object.values(pAfter).flat().map((i: any) => [i.key, i.search])],
+    [sorted({ "prayer-bent-knee-ruku-1": [m160.CAPTIONS["prayer-bent-knee-ruku-1"].ar, m160.CAPTIONS["prayer-bent-knee-ruku-1"].en],
+      "prayer-deep-flexion-meniscus-1": ["وصفُ سليم", pBefore["prayer-deep-flexion-meniscus"][0].captionEn],
+      "prayer-kneeling-after-acl-1": [m160.CAPTIONS["prayer-kneeling-after-acl-1"].ar, m160.CAPTIONS["prayer-kneeling-after-acl-1"].en] }),
+      Object.values(pBefore).flat().map((i: any) => [i.key, i.search])]);
+  const pStamp = async () => (await q(`SELECT code, updated_at::text AS t FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [pCards])).rows
+    .map((r) => [r.code, r.t]);
+  const pStamps = await pStamp();
+  await q(m160.sql);
+  same("ظ.٣ **والإعادةُ لا تفعل شيئاً** — لا وصفَ ولا وقتَ تعديل", [await pImagesOf(), await pStamp()], [pAfter, pStamps]);
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', to_jsonb($1::text)) WHERE code = 'prayer-deep-flexion-meniscus'`,
+    [m158.EXERCISES.find((e) => e.code === "prayer-deep-flexion-meniscus")!.images[0].ar]);
+  await q(m160.sql);
+  same("ظ.٤ **وحين يعود الوصفُ كما زرعه ١٥٨ يكتب الترحيلُ الجديدَ**",
+    pCapOf(await pImagesOf())["prayer-deep-flexion-meniscus-1"],
+    [m160.CAPTIONS["prayer-deep-flexion-meniscus-1"].ar, m160.CAPTIONS["prayer-deep-flexion-meniscus-1"].en]);
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
@@ -536,7 +584,7 @@ async function main() {
     //  والثالثَ عشرَ (ألمُ الكعب): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها** (٢٠٢٦-١٠-١٤، §4.eb التكملة)؛ والسبعُ المعادة بصورها هي.
     const heelKeys = m143.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والرابعَ عشرَ (عِرقُ النسا): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت أربعٌ** (٢٠٢٦-١٠-١٤، §4.ec التكملة: «الانبطاح على المرفقين» من صورةٍ
-    //  مسجَّلة، وثلاثٌ بحث عنها المساعد)، **و«الركوع بثني الركبتين» وحدها في «الصور المطلوبة»**؛ والأربعَ عشرةَ المعادة بصورها هي.
+    //  مسجَّلة، وثلاثٌ بحث عنها المساعد)، **و«الركوع بثني الركبتين» أرسلها المالكُ** (٢٠٢٦-١٠-١٩، ترحيل ١٦٠)؛ والأربعَ عشرةَ المعادة بصورها هي.
     const sciaticaKeys = m145.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والخامسَ عشرَ (الكتفُ المتجمّد): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها مع ترحيلها** (٢٠٢٦-١٠-١٤، بحث عنها المساعد على الويب، §4.eg)؛
     //  والأربعَ عشرةَ المعادة بصورها هي.
@@ -560,18 +608,18 @@ async function main() {
     //  والمعادةُ بصورها هي.
     const chronicStrokeKeys = m157.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والثاني والعشرون (إصاباتُ الغضروف الهلاليّ): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت خمسٌ مع ترحيلها** (٢٠٢٦-١٠-١٨، بحث عنها المساعد، §4.eq)،
-    //  **و«الصلاة مع الغضروف» في «الصور المطلوبة»** (لا صورةَ مفتوحة الرخصة للجلوس على الكعبين بوسادة ولا للصلاة على الكرسيّ تخصّها)؛ والمعادةُ بصورها هي. والمفصَّلُ القادم يُضيف خاناته هنا.
+    //  **و«الصلاة مع الغضروف» أرسلها المالكُ** (٢٠٢٦-١٠-١٩، ترحيل ١٦٠)؛ والمعادةُ بصورها هي. والمفصَّلُ القادم يُضيف خاناته هنا.
     const meniscalKeys = m158.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والثالثُ والعشرون (ما بعد إعادة بناء الرباط الصليبيّ): ثماني بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت سبعٌ مع ترحيلها** (٢٠٢٦-١٠-١٩، بحث عنها المساعد، §4.er)،
-    //  **و«الصلاة والركوع بعد الرباط» في «الصور المطلوبة»** (لا صورةَ مفتوحة الرخصة للسجود على وسادة ولا للصلاة على الكرسيّ تخصّها)؛ والمعادةُ بصورها هي.
+    //  **و«الصلاة والركوع بعد الرباط» أرسلها المالكُ** (٢٠٢٦-١٠-١٩، ترحيل ١٦٠)؛ والمعادةُ بصورها هي.
     const aclKeys = m159.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، وأربعٌ من خمس الرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين، وخمسٌ من ستّ للثاني والعشرين، وسبعٌ من ثمانٍ للثالث والعشرين، و«الركوع بثني الركبتين» و«الصلاة مع الغضروف» و«الصلاة والركوع بعد الرباط» وحدها في «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين — فـ«الصور المطلوبة» فارغة** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
         sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, ["prayer-bent-knee-ruku-1"], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, ["prayer-deep-flexion-meniscus-1"], 8, ["prayer-kneeling-after-acl-1"], ["prayer-bent-knee-ruku-1", "prayer-deep-flexion-meniscus-1", "prayer-kneeling-after-acl-1"]]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
