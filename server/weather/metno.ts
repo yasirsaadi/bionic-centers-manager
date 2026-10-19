@@ -36,6 +36,8 @@ let fetchImpl: WeatherFetch = (url, init) => fetch(url, init) as unknown as Prom
 export function setWeatherFetchForTests(f: WeatherFetch | null) {
   fetchImpl = f ?? ((url, init) => fetch(url, init) as unknown as Promise<FetchResult>);
 }
+/** الجالبُ الواحد للمصدرين (التوقّعُ هنا ورصدُ المطارات في `metar.ts`) — فالمزيّفُ في الاختبار يحلّ محلَّهما معاً. */
+export const weatherFetch: WeatherFetch = (url, init) => fetchImpl(url, init);
 
 interface CityCache {
   series: WeatherPoint[];
@@ -74,7 +76,7 @@ async function refresh(city: WeatherCity, entry: CityCache, nowMs: number): Prom
   const headers: Record<string, string> = { "User-Agent": WEATHER_USER_AGENT, Accept: "application/json" };
   if (entry.lastModified) headers["If-Modified-Since"] = entry.lastModified;
   try {
-    const res = await fetchImpl(`${ENDPOINT}?lat=${city.lat}&lon=${city.lon}`, {
+    const res = await weatherFetch(`${ENDPOINT}?lat=${city.lat}&lon=${city.lon}`, {
       headers,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
