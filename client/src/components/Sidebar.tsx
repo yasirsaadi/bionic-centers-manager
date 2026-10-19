@@ -38,6 +38,7 @@ import { canViewOutcomes } from "@shared/physio_assessments";
 import { canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 import { sidebarToneOf } from "@/components/sidebar_tones";
+import { SidebarClockWeather, TopBarClockWeather } from "@/components/ClockWeather";
 
 
 interface BranchSettings {
@@ -536,25 +537,29 @@ export function Sidebar() {
   // reset the nav's scroll position to the top after every navigation.
   const sidebarContent = (
     <>
-      <div className="p-4 flex items-center gap-3 border-b border-border/50">
-        <img src={logoImage} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
-        <div>
-          {t.sidebar.centerName.split('\n').map((line, i) => (
-            i === 0 
-              ? <h1 key={i} className="font-display font-bold text-xs md:text-sm text-primary leading-tight">{line}</h1>
-              : <p key={i} className="text-xs md:text-sm font-bold text-slate-700">{line}</p>
-          ))}
+      <div className="p-4 border-b border-border/50">
+        <div className="flex items-center gap-3">
+          <img src={logoImage} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
+          <div>
+            {t.sidebar.centerName.split('\n').map((line, i) => (
+              i === 0 
+                ? <h1 key={i} className="font-display font-bold text-xs md:text-sm text-primary leading-tight">{line}</h1>
+                : <p key={i} className="text-xs md:text-sm font-bold text-slate-700">{line}</p>
+            ))}
+          </div>
+          {/* Close button for mobile */}
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="md:hidden mr-auto"
+            onClick={() => setMobileOpen(false)}
+            data-testid="button-close-mobile-menu"
+          >
+            <X className="w-5 h-5" />
+          </Button>
         </div>
-        {/* Close button for mobile */}
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          className="md:hidden mr-auto"
-          onClick={() => setMobileOpen(false)}
-          data-testid="button-close-mobile-menu"
-        >
-          <X className="w-5 h-5" />
-        </Button>
+        {/*  **الساعةُ والطقسُ** تحت الاسم (§4.es — البديلُ «ج» باختيار المالك): شريحتان، والطقسُ لمدينة الفرع النشط. */}
+        <SidebarClockWeather />
       </div>
 
       <nav className={cn("flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 md:space-y-2",
@@ -747,7 +752,11 @@ export function Sidebar() {
           </Button>
           <div className="flex items-center gap-2">
             <img src={logoImage} alt="Logo" className="w-8 h-8 object-contain" />
-            <span className="font-display font-bold text-sm text-primary">مراكز د. ياسر الساعدي</span>
+            {/*  والساعةُ والحرارةُ سطرٌ صغير تحت الاسم (§4.es) — لا يزيد ارتفاعَ الشريط. */}
+            <div className="leading-tight">
+              <span className="block font-display font-bold text-sm text-primary">مراكز د. ياسر الساعدي</span>
+              <TopBarClockWeather />
+            </div>
           </div>
           {/*  الفرعُ النشط ظاهرٌ في شريط الهاتف أيضاً — ويُبدَّل منه (§4.ay). */}
           <BranchSwitcher compact />

@@ -233,6 +233,7 @@
     "test:sidebar-section-visibility": "tsx client/src/components/sidebar_section_visibility.test.ts",
     "test:sidebar-tones": "tsx client/src/components/sidebar_tones.test.ts",
     "test:sidebar-order": "tsx server/sidebar_order.test.ts",
+    "test:weather": "tsx server/weather.test.ts",
     "test:session-store-pool": "tsx server/session_store_pool.test.ts",
     "test:my-exams-phone": "tsx client/src/pages/my_exams_phone_ui.test.ts",
     "test:device-sale-category": "tsx shared/device_sale_category.test.ts",

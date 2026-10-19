@@ -21,6 +21,7 @@ import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
 import { registerStaffTelegramRoutes } from "./staff_telegram/routes";
 import { registerStaffGreetingRoutes } from "./staff_greeting/routes";
 import { registerSidebarOrderRoutes } from "./sidebar_order/routes";
+import { registerWeatherRoutes } from "./weather/routes";
 import { registerPatientCardRoutes } from "./patient_card/routes";
 import { notifyNewPatient, testAndLink, TELEGRAM_SETTINGS } from "./notifications/telegram";
 import { z } from "zod";
@@ -9078,6 +9079,8 @@ export async function registerRoutes(
   registerStaffGreetingRoutes(app, isAuthenticated);
   //  ترتيبُ الشريط الجانبيّ لكلّ حساب (§4.ed) — صاحبُه وحده يرتّب قائمتَه.
   registerSidebarOrderRoutes(app, isAuthenticated);
+  //  الساعةُ والطقسُ في رأس القائمة (§4.es) — طقسُ مدينة الفرع النشط من الأرصاد النرويجية، محفوظاً في الخادم.
+  registerWeatherRoutes(app, isAuthenticated);
   //  بطاقةُ المريض في تلغرام (§4.bv) — عامّةٌ بتوقيع تلغرام لا بجلسة موظّف.
   registerPatientCardRoutes(app, isAuthenticated);
 
