@@ -615,15 +615,15 @@ async function main() {
     //  والثالثُ والعشرون (ما بعد إعادة بناء الرباط الصليبيّ): ثماني بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت سبعٌ مع ترحيلها** (٢٠٢٦-١٠-١٩، بحث عنها المساعد، §4.er)،
     //  **و«الصلاة والركوع بعد الرباط» أرسلها المالكُ** (٢٠٢٦-١٠-١٩، ترحيل ١٦٠)؛ والمعادةُ بصورها هي.
     const aclKeys = m159.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
-    //  والرابعُ والعشرون (متلازمةُ النفق الرسغي): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — CTS_IMAGES_NOTE (٢٠٢٦-١٠-١٩، §4.et)؛ والمعادةُ بصورها هي.
+    //  والرابعُ والعشرون (متلازمةُ النفق الرسغي): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت أربعٌ مع ترحيلها** (بحث عنها المساعد ورآها)، **و«الرسغ المستقيم في العمل والبيت والصلاة» في «الصور المطلوبة»** (لا صورةَ بترخيصٍ مقبول تُظهر الرسغَ مستقيماً) (٢٠٢٦-١٠-١٩، §4.et)؛ والمعادةُ بصورها هي.
     const ctsKeys = m161.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين — فـ«الصور المطلوبة» فارغة** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **وأربعٌ من خمسٍ للرابع والعشرين، و«الرسغ المستقيم في العمل والبيت والصلاة» وحدها في «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
         sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, [], []]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], ["neutral-wrist-tasks-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;

@@ -62,7 +62,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["زرقةٌ أو برودةٌ في الأصابع، أو تنميلٌ يزيد بها، أو احمرارٌ يبقى أو جرحٌ في الجلد — وخاصّةً مع ضعف الإحساس والسكّريّ (JOSPT 2019) ⟵ تُنزع ويُخبَر الأخصائيّ.", "Blue or cold fingers, tingling that increases with it, lasting redness or a sore on the skin — especially with reduced sensation and diabetes (JOSPT 2019) → take it off and tell the therapist."],
     equipment: ["جبيرةُ رسغٍ جاهزة بسنادةٍ مستقيمة على باطن الرسغ (لا مرفوعة)، أو مصنوعةٌ على المقاس — يفحصها الأخصائيّ.", "A ready-made wrist splint with a straight palm-side stay (not cocked up), or a custom-made one — checked by the therapist."],
     doseNote: ["كلَّ ليلة ستّةَ أسابيع على الأقلّ — ساوت اثني عشر (Gatheridge 2020)، وستّةُ أشهرٍ قد تفوق ستّةَ أسابيع (Karjalainen 2023).", "Every night for at least six weeks — equal to twelve (Gatheridge 2020), and six months may beat six weeks (Karjalainen 2023)."],
-    images: [{ key: "wrist-night-splint-1", ar: "WNS_AR", en: "WNS_EN", search: "neutral wrist splint night carpal tunnel" }],
+    images: [{ key: "wrist-night-splint-1", ar: "جبيرةُ رسغٍ جاهزة بسنادةٍ على يدٍ مستريحة على سرير، من الجانب — الرسغُ مستقيمٌ مع الساعد والأصابعُ والإبهامُ حرّة", en: "A ready-made wrist splint with a stay on a hand resting on a bed, seen from the side — the wrist straight with the forearm and the fingers and thumb free", search: "neutral wrist splint night carpal tunnel" }],
   },
   {
     code: "tendon-gliding", nameAr: "انزلاق أوتار الأصابع (الأوضاع الخمسة)", nameEn: "Tendon gliding exercises (five positions)",
@@ -99,7 +99,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الرسغ أو الأصابع، أو تنميلٌ يزيد أثناءه أو يبقى بعده ⟵ يُخفَّف ويُخبَر الأخصائيّ.", "Pain in the wrist or fingers, or tingling that increases during it or stays afterwards → ease off and tell the therapist."],
     equipment: ["لا شيء.", "None."],
     doseNote: ["٥ ثوانٍ لكلّ وضع، ١٠ مرّات، ٣ مرّات يومياً (Abdolrazaghi 2023)؛ و٥–١٠ مرّات خمسَ مرّاتٍ يومياً بلا ألمٍ ولا زيادةِ أعراض (Lewis 2016).", "5 seconds per position, 10 rounds, 3 times a day (Abdolrazaghi 2023); or 5–10 rounds five times a day without pain or increased symptoms (Lewis 2016)."],
-    images: [{ key: "tendon-gliding-1", ar: "TG_AR", en: "TG_EN", search: "tendon gliding exercises five positions hook fist" }],
+    images: [{ key: "tendon-gliding-1", ar: "رسومٌ للأوضاع الخمسة من اليسار إلى اليمين: اليدُ مستقيمة، فالقبضةُ المعقوفة، فالقبضةُ الكاملة، فالطاولة، فالقبضةُ المستقيمة", en: "Drawings of the five positions from left to right: straight hand, hook fist, full fist, tabletop, then straight fist", search: "tendon gliding exercises five positions hook fist" }],
   },
   {
     code: "median-nerve-glide-hand", nameAr: "انزلاق العصب الأوسط في الرسغ واليد (الأوضاع الستّة)", nameEn: "Median nerve gliding at the wrist and hand (six positions)",
@@ -138,7 +138,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلٌ أو ألمٌ يزيد أثناءه أو يبقى بعده أكثرَ من دقائق، أو يوقظك تلك الليلة ⟵ يُترك ويُخبَر الأخصائيّ (Totten 1991 · Lewis 2016).", "Tingling or pain that increases during it or lasts more than a few minutes afterwards, or wakes you that night → stop and tell the therapist (Totten 1991 · Lewis 2016)."],
     equipment: ["لا شيء.", "None."],
     doseNote: ["٥ ثوانٍ لكلّ وضع، ١٠ مرّات، ٣ مرّات يومياً (Abdolrazaghi 2023) — بلا ألمٍ ولا زيادةِ أعراض (Lewis 2016).", "5 seconds per position, 10 rounds, 3 times a day (Abdolrazaghi 2023) — without pain or increased symptoms (Lewis 2016)."],
-    images: [{ key: "median-nerve-glide-hand-1", ar: "MNG_AR", en: "MNG_EN", search: "median nerve gliding six positions wrist" }],
+    images: [{ key: "median-nerve-glide-hand-1", ar: "ستُّ صورٍ تُقرأ من اليسار إلى اليمين، الصفُّ الأعلى ثمّ الأسفل: القبضة، فالأصابعُ مفرودة، فالرسغُ والأصابعُ إلى الخلف، فالإبهامُ إلى الجانب، فالكفُّ إلى الأعلى، فاليدُ الأخرى تسحب الإبهامَ برفق", en: "Six photos read left to right, top row then bottom: the fist, the fingers straight, the wrist and fingers back, the thumb out to the side, the palm turned up, then the other hand gently drawing the thumb back", search: "median nerve gliding six positions wrist" }],
   },
   {
     code: "neutral-wrist-tasks", nameAr: "الرسغ المستقيم في العمل والبيت والصلاة", nameEn: "A straight wrist at work, at home and in prayer",
@@ -179,7 +179,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["مهمّةٌ تُبقي التنميلَ بعدها أو توقظك ليلاً ⟵ تُعدَّل أو تُقسَّم، ويُخبَر الأخصائيّ.", "A task that leaves tingling afterwards or wakes you at night → modify or split it, and tell the therapist."],
     equipment: ["سنادٌ للساعد عند الحاسوب، ومقابضُ أسمك للأدوات، وقفّازاتٌ للاهتزاز.", "A forearm support at the computer, thicker tool handles, and gloves for vibration."],
     doseNote: ["في كلّ يوم؛ والاستراحةُ كلَّ ٢٠–٣٠ دقيقة اقتراحٌ من أثر التحريك على الضغط (Seradge 1995) لا معيارٌ مجرَّب.", "Every day; the break every 20–30 minutes is a suggestion from the effect of movement on pressure (Seradge 1995), not a tested standard."],
-    images: [{ key: "neutral-wrist-tasks-1", ar: "NWT_AR", en: "NWT_EN", search: "neutral wrist keyboard ergonomics" }],
+    images: [{ key: "neutral-wrist-tasks-1", ar: "صورتان من الجانب: الرسغُ مرفوعٌ فوق لوحة المفاتيح، ثمّ مستقيمٌ مع الساعد والساعدُ مسنود", en: "Two side views: the wrist cocked up over the keyboard, then straight with the forearm and the forearm supported", search: "neutral wrist keyboard ergonomics" }],
   },
   {
     code: "palm-scar-massage", nameAr: "تدليك ندبة الكفّ بعد عملية النفق الرسغي", nameEn: "Palm scar massage after carpal tunnel release",
@@ -214,7 +214,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["احمرارٌ أو سخونةٌ أو إفرازاتٌ من الجرح، أو حمّى، أو تنميلٌ جديد يزيد ⟵ يُترك ويُراجَع الجرّاح.", "Redness, warmth or discharge from the wound, fever, or new increasing tingling → stop and see the surgeon."],
     equipment: ["كريمٌ عاديّ بلا عطر، وقماشٌ ناعم.", "Plain unscented cream, and soft cloth."],
     doseNote: ["دقيقتان إلى ثلاث، مرّتين إلى ثلاثٍ يومياً — اقتراح.", "Two to three minutes, two to three times a day — a suggestion."],
-    images: [{ key: "palm-scar-massage-1", ar: "PSM_AR", en: "PSM_EN", search: "scar massage palm carpal tunnel release" }],
+    images: [{ key: "palm-scar-massage-1", ar: "إبهامُ اليد الأخرى على قاعدة الكفّ: بدوائر صغيرة (السهمُ الدائريّ)، ثمّ طولاً وعرضاً (السهمان المتقاطعان) — والندبةُ نفسُها لا تظهر في الصورة", en: "The thumb of the other hand on the base of the palm: in small circles (the circular arrow), then along and across (the crossed arrows) — the scar itself is not visible in the picture", search: "scar massage palm carpal tunnel release" }],
   },
 ];
 

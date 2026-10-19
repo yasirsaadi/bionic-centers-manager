@@ -318,6 +318,15 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "prayer-bent-knee-ruku-1": { file: "prayer-bent-knee-ruku-1.webp" },
   "prayer-deep-flexion-meniscus-1": { file: "prayer-deep-flexion-meniscus-1.webp" },
   "prayer-kneeling-after-acl-1": { file: "prayer-kneeling-after-acl-1.webp" },
+  //  **صورُ «متلازمة النفق الرسغي» الأربع** (٢٠٢٦-١٠-١٩، §4.et — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه): ثلاثٌ من أبحاثٍ برخصة CC BY
+  //  (طوبقت الرخصةُ مع Europe PMC) — انزلاقُ الأوتار رسومُ Loh 2018 جُمعت أوضاعُها الخمسة في صفٍّ واحد بترتيب التمرين وحُذفت تسمياتُها الإنكليزية ووضعُ «الراحة»،
+  //  وانزلاقُ العصب ستُّ صورٍ من Akdağ 2024 (والموافقةُ مكتوبة) طُمس رقمُ اللوحة فيها، والجبيرةُ من بروتوكول تجربة Atroshi 2019 بلا لوحة الجبيرة المنزوعة؛
+  //  وتدليكُ الندبة من منشور مستشفى كوين فكتوريا (NHS، بلا رخصةٍ معلنة وصورتُه منه). **و«الرسغ المستقيم في العمل» بلا صورة** — لم تُوجد صورةٌ بترخيصٍ مقبول
+  //  تُظهر الرسغَ مستقيماً بحجمٍ يُقرأ، فهي في «الصور المطلوبة» تنتظر المالك.
+  "tendon-gliding-1": { file: "tendon-gliding-1.webp", credit: "Loh et al., PeerJ 2018 — CC BY 4.0 (adapted)", sourceUrl: "https://peerj.com/articles/5406/" },
+  "median-nerve-glide-hand-1": { file: "median-nerve-glide-hand-1.webp", credit: "Akdağ et al., Front Neurosci 2024 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC10835795/" },
+  "wrist-night-splint-1": { file: "wrist-night-splint-1.webp", credit: "Atroshi et al., Trials 2019 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC6712840/" },
+  "palm-scar-massage-1": { file: "palm-scar-massage-1.webp", credit: "Queen Victoria Hospital NHS FT — Hand Therapy: Scar Massage (0128)", sourceUrl: "https://www.qvh.nhs.uk/download/patient-information-leaflets/scar-massage-0128" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
