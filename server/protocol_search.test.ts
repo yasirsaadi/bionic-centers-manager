@@ -150,10 +150,10 @@ async function main() {
     //  والجلطةُ تحت الحادّة بعد ترحيل ١٢٩ — §4.dl، والمشيُ بالطرف الصناعيّ بعد ترحيل ١٣٥ — §4.dt، وما قبل الطرف بعد ترحيل ١٣٦ — §4.du،
     //  وما بعد استبدال الركبة بعد ترحيل ١٣٨ — §4.dx، وما بعد استبدال الورك بعد ترحيل ١٤٠ — §4.dz، وعِرقُ النسا بعد ترحيل ١٤٥ — §4.ec،
     //  وتضيّقُ القناة القطنية بعد ترحيل ١٥٣ — §4.ek، وألمُ الرضفة الفخذيّ بعد ترحيل ١٥٥ — §4.en، وخشونةُ الورك بعد ترحيل ١٥٦ — §4.eo،
-    //  والجلطةُ المزمنة بعد ترحيل ١٥٧ — §4.ep، وإصاباتُ الغضروف الهلاليّ بعد ترحيل ١٥٨ — §4.eq:
+    //  والجلطةُ المزمنة بعد ترحيل ١٥٧ — §4.ep، وإصاباتُ الغضروف الهلاليّ بعد ترحيل ١٥٨ — §4.eq، وما بعد إعادة بناء الرباط الصليبيّ بعد ترحيل ١٥٩ — §4.er:
     //  الجسرُ في مرحلتَيه الثانية والثالثة بطاقةً، لا كلمةً عابرة كما وقع في ألم الكعب).
     same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولاتِها ومكانَها «تمارين المرحلة»",
-      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["hip-oa-geriatric", "knee-meniscal-adult", "knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "lumbar-radiculopathy-adult", "lumbar-stenosis-geriatric", "patellofemoral-pain-adult", "stroke-chronic-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
+      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["acl-reconstruction-adult", "hip-oa-geriatric", "knee-meniscal-adult", "knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "lumbar-radiculopathy-adult", "lumbar-stenosis-geriatric", "patellofemoral-pain-adult", "stroke-chronic-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
     const t = (await search("تيكار")).json;
     check(t.length > 0 && t.every((r) => r.match.hits.some((h: any) => h.label === "الأجهزة" && marked(h.snippet, h.ranges).includes("تيكار"))),
       "ب.٥ **واسمُ جهاز** («تيكار») يُظهر كلَّ بروتوكولٍ فيه — «الأجهزة: تيكار»", JSON.stringify(t.map((r) => [r.code, r.match.hits.map((h: any) => h.label)])));

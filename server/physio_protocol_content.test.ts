@@ -52,6 +52,7 @@ import * as m155 from "./migrations/155_physio_patellofemoral_detail";
 import * as m156 from "./migrations/156_physio_hip_oa_detail";
 import * as m157 from "./migrations/157_physio_stroke_chronic_detail";
 import * as m158 from "./migrations/158_physio_meniscal_detail";
+import * as m159 from "./migrations/159_physio_acl_reconstruction_detail";
 import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
 
 let failures = 0;
@@ -88,6 +89,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m156.name, sql: m156.sql, EXERCISES: m156.EXERCISES, PROTOCOL: m156.PROTOCOL, template: true },
   { name: m157.name, sql: m157.sql, EXERCISES: m157.EXERCISES, PROTOCOL: m157.PROTOCOL, template: true },
   { name: m158.name, sql: m158.sql, EXERCISES: m158.EXERCISES, PROTOCOL: m158.PROTOCOL, template: true },
+  { name: m159.name, sql: m159.sql, EXERCISES: m159.EXERCISES, PROTOCOL: m159.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -560,13 +562,16 @@ async function main() {
     //  والثاني والعشرون (إصاباتُ الغضروف الهلاليّ): ستُّ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت خمسٌ مع ترحيلها** (٢٠٢٦-١٠-١٨، بحث عنها المساعد، §4.eq)،
     //  **و«الصلاة مع الغضروف» في «الصور المطلوبة»** (لا صورةَ مفتوحة الرخصة للجلوس على الكعبين بوسادة ولا للصلاة على الكرسيّ تخصّها)؛ والمعادةُ بصورها هي. والمفصَّلُ القادم يُضيف خاناته هنا.
     const meniscalKeys = m158.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    //  والثالثُ والعشرون (ما بعد إعادة بناء الرباط الصليبيّ): ثماني بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت سبعٌ مع ترحيلها** (٢٠٢٦-١٠-١٩، بحث عنها المساعد، §4.er)،
+    //  **و«الصلاة والركوع بعد الرباط» في «الصور المطلوبة»** (لا صورةَ مفتوحة الرخصة للسجود على وسادة ولا للصلاة على الكرسيّ تخصّها)؛ والمعادةُ بصورها هي.
+    const aclKeys = m159.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، وأربعٌ من خمس الرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين، وخمسٌ من ستّ للثاني والعشرين، و«الركوع بثني الركبتين» و«الصلاة مع الغضروف» وحدهما في «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، وأربعٌ من خمس الرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين، وخمسٌ من ستّ للثاني والعشرين، وسبعٌ من ثمانٍ للثالث والعشرين، و«الركوع بثني الركبتين» و«الصلاة مع الغضروف» و«الصلاة والركوع بعد الرباط» وحدها في «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
-        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, ["prayer-bent-knee-ruku-1"], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, ["prayer-deep-flexion-meniscus-1"], ["prayer-bent-knee-ruku-1", "prayer-deep-flexion-meniscus-1"]]);
+        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, ["prayer-bent-knee-ruku-1"], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, ["prayer-deep-flexion-meniscus-1"], 8, ["prayer-kneeling-after-acl-1"], ["prayer-bent-knee-ruku-1", "prayer-deep-flexion-meniscus-1", "prayer-kneeling-after-acl-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
