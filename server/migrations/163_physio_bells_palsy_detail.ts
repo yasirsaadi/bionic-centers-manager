@@ -61,8 +61,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["عينٌ حمراء مؤلمة، أو غشاوةٌ في النظر، أو إحساسُ رملٍ يزيد، أو إفرازات ⟵ إلى طبيب العيون في اليوم نفسه (القواعدُ في «موانع وإحالة»).", "A red painful eye, blurred vision, an increasing gritty feeling, or discharge → to an eye doctor the same day (the rules under 'Contraindications and referral')."],
     equipment: ["قطرةٌ ومرهمٌ يصفهما الطبيب، وغطاءٌ حافظ للرطوبة أو لاصقٌ طبّيّ، ونظّارةٌ محيطة، ومرآة.", "Drops and ointment prescribed by the doctor, a moisture chamber or medical tape, wraparound glasses, and a mirror."],
     doseNote: ["الإغلاقُ بالإصبع عشرَ مرّاتٍ ثلاثاً يومياً حتى ينغلق الجفنُ وحده، والقطرةُ والمرهمُ كما وصف الطبيب — اقتراحٌ لا معيارٌ مجرَّب.", "Finger closure ten times, three times a day, until the lid closes by itself, with drops and ointment as the doctor prescribed — a suggestion rather than a tested standard."],
-    images: [{ key: "eye-care-closure-1", ar: "رأسُ إصبعٍ يسحب الجفنَ العلويّ برفقٍ حتى ينطبق، ونظّارةٌ محيطة للحماية",
-      en: "A fingertip gently drawing the upper lid down until it closes, and wraparound glasses for protection", search: "facial palsy eye closure finger assisted eyelid taping" }],
+    images: [{ key: "eye-care-closure-1", ar: "غطاءٌ زجاجيّ حافظٌ للرطوبة مثبَّتٌ على العين في أوّل أيّام شلل الوجه — والقطرةُ والإغلاقُ بالإصبع في الخطوات",
+      en: "A clear moisture-chamber shield fixed over the eye on the first day of a facial palsy — drops and finger closure are in the steps", search: "facial palsy eye closure finger assisted eyelid taping" }],
   },
   {
     code: "facial-mirror-retraining", nameAr: "إعادة تدريب الوجه أمام المرآة: حركاتٌ صغيرة متناظرة", nameEn: "Facial retraining in front of a mirror: small symmetric movements",
@@ -101,8 +101,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["العينُ تضيق أو زاويةُ الفم تُشدّ حين تحرّك جزءاً آخر (التزامن) ⟵ توقّف وأعِدها أصغر وأخبر الأخصائيّ؛ وألمٌ في الوجه أو تهيّجٌ في العين ⟵ توقّف.", "The eye narrowing or the mouth corner pulling when you move another part (synkinesis) → stop, repeat it smaller and tell the therapist; facial pain or eye irritation → stop."],
     equipment: ["مرآة، أو كاميرا الهاتف الأمامية.", "A mirror, or the phone's front camera."],
     doseNote: ["عشرُ مرّاتٍ لكلّ حركة، مرّتين يومياً ربعَ ساعة — كجرعة البيت في تجربة المرآة (Martineau 2022)؛ والأكثرُ ليس أفضل.", "Ten times per movement, twice a day for a quarter of an hour — as in the home dose of the mirror trial (Martineau 2022); more is not better."],
-    images: [{ key: "facial-mirror-retraining-1", ar: "خمسُ حركاتٍ صغيرة أمام المرآة: رفعُ الحاجبين، وإغماضٌ لطيف، وتجعيدُ الأنف، وابتسامةٌ مغلقة، وضمُّ الشفتين",
-      en: "Five small movements in front of a mirror: raising the eyebrows, gentle eye closure, nose wrinkle, closed-lip smile, and pucker", search: "facial palsy neuromuscular retraining mirror exercises expressions" }],
+    images: [{ key: "facial-mirror-retraining-1", ar: "رسمٌ للحركات الخمس: رفعُ الحاجبين، وإغماضٌ لطيف، وتجعيدُ الأنف، وابتسامةٌ والشفتان مغلقتان، وضمُّ الشفتين",
+      en: "A drawing of the five movements: raising the eyebrows, gentle eye closure, nose wrinkle, closed-lip smile, and pucker", search: "facial palsy neuromuscular retraining mirror exercises expressions" }],
   },
   {
     code: "facial-self-massage", nameAr: "تدليك الوجه الذاتيّ", nameEn: "Facial self-massage",
@@ -139,8 +139,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["احمرارٌ أو حرقٌ أو جرحٌ في الجلد (ومنه أثرُ الكيّ)، أو ألم ⟵ توقّف وأخبر الأخصائيّ.", "Redness, a burn or a wound on the skin (including a cautery mark), or pain → stop and tell the therapist."],
     equipment: ["مرآة، وكريمٌ بلا عطر.", "A mirror and an unscented cream."],
     doseNote: ["خمسُ دقائق إلى عشرٍ مرّتين يومياً — من برامج تمثيل الوجه، والجرعةُ اقتراح.", "Five to ten minutes twice a day — from mime therapy programmes; the dose is a suggestion."],
-    images: [{ key: "facial-self-massage-1", ar: "رؤوسُ الأصابع تمسح الخدَّ من زاوية الفم نحو الأذن، والجبهةَ إلى الأعلى",
-      en: "Fingertips stroking the cheek from the mouth corner towards the ear, and the forehead upwards", search: "facial palsy self massage mime therapy" }],
+    images: [{ key: "facial-self-massage-1", ar: "الكفّان على الخدّين تمسحانهما إلى الأعلى (صورةٌ من ١٩١٠) — والمسحُ برؤوس الأصابع على مناطق الوجه في الخطوات",
+      en: "The palms on the cheeks stroking them upwards (a 1910 photograph) — fingertip strokes over each area of the face are in the steps", search: "facial palsy self massage mime therapy" }],
   },
   {
     code: "lip-seal-cheek-puff", nameAr: "إغلاق الشفتين ونفخ الخدّين والمصّ بالقصبة", nameEn: "Lip seal, cheek puff and sucking through a straw",
@@ -175,8 +175,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["سعالٌ أو شرقةٌ مع الشرب ⟵ توقّف وأخبر الأخصائيّ؛ والعينُ تنغلق مع الجهد ⟵ أصغر.", "Coughing or choking while drinking → stop and tell the therapist; the eye closing with the effort → smaller."],
     equipment: ["قصبة، وكوبُ ماء، ومرآة.", "A straw, a cup of water and a mirror."],
     doseNote: ["عشرُ مرّاتٍ لكلّ واحدة مرّتين يومياً — اقتراح.", "Ten times each, twice a day — a suggestion."],
-    images: [{ key: "lip-seal-cheek-puff-1", ar: "الخدّان منفوخان والشفتان مغلقتان، والمصُّ بقصبة",
-      en: "The cheeks puffed with the lips closed, and sucking through a straw", search: "facial palsy cheek puff lip seal straw exercise" }],
+    images: [{ key: "lip-seal-cheek-puff-1", ar: "رسم: الخدّان منفوخان والشفتان مضمومتان، وإصبعٌ يرفع زاويةَ الفم — والمصُّ بالقصبة في الخطوات",
+      en: "Drawing: the cheeks puffed with the lips pursed, and a finger lifting the mouth corner — sucking through a straw is in the steps", search: "facial palsy cheek puff lip seal straw exercise" }],
   },
   {
     code: "synkinesis-dissociation", nameAr: "فصل حركة العين عن الفم: ضبط التزامن", nameEn: "Separating eye and mouth movement: synkinesis control",
@@ -211,8 +211,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["شدٌّ أو ألمٌ يزيد، أو تشنّجٌ في الوجه، أو تهيّجٌ في العين ⟵ توقّف؛ والتزامنُ يزيد رغم التمرين ⟵ الأخصائيّ (والحقنُ بقرار الطبيب).", "Increasing tightness or pain, a facial spasm, or eye irritation → stop; synkinesis increasing despite practice → the therapist (and injections are the doctor's decision)."],
     equipment: ["مرآة، ولاصقٌ طبّيّ صغير إن وُصف.", "A mirror, and a small piece of medical tape if prescribed."],
     doseNote: ["عشرُ مرّاتٍ لكلّ حركة، وجلسةُ مرآةٍ من ربع ساعة إلى نصف ساعة يومياً — والنصفُ في تجربة المرآة (Nakamura 2003)؛ اقتراح.", "Ten times per movement, with a mirror session of 15 to 30 minutes a day — 30 in the mirror trial (Nakamura 2003); a suggestion."],
-    images: [{ key: "synkinesis-dissociation-1", ar: "ابتسامةٌ صغيرة والعينان مفتوحتان بالتساوي أمام المرآة، مقابلَ العين التي تضيق مع الابتسامة",
-      en: "A small smile with both eyes equally open in the mirror, compared with the eye narrowing on smiling", search: "facial synkinesis retraining smile keep eye open mirror" }],
+    images: [{ key: "synkinesis-dissociation-1", ar: "ابتسامةٌ صغيرة ثمّ ضمُّ الشفتين، والأصابعُ عند العين تحفظها مفتوحةً وتتحسّس تضيّقها",
+      en: "A small smile, then a pucker, with the fingers at the eye keeping it open and feeling it narrow", search: "facial synkinesis retraining smile keep eye open mirror" }],
   },
   {
     code: "facial-cheek-stretch", nameAr: "تمطيط عضلات الخدّ وزاوية الفم", nameEn: "Stretching the cheek and mouth-corner muscles",
@@ -247,8 +247,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألم، أو قرحةٌ أو جرحٌ في الفم، أو ألمٌ في الفكّ ⟵ توقّف.", "Pain, an ulcer or wound in the mouth, or jaw pain → stop."],
     equipment: ["يدان نظيفتان (أو قفّازٌ طبّيّ)، ومرآة.", "Clean hands (or a medical glove) and a mirror."],
     doseNote: ["مبكّراً على الجهة السليمة عشرَ مرّاتٍ × ١٠–١٥ ثانية أربعاً يومياً (Santiago 2024)، ومتأخّراً على الجهة المشدودة ٣–٥ × ٣٠ ثانية مرّتين يومياً — اقتراح.", "Early, on the healthy side, ten times × 10–15 seconds four times a day (Santiago 2024); later, on the tight side, 3–5 × 30 seconds twice a day — a suggestion."],
-    images: [{ key: "facial-cheek-stretch-1", ar: "الإبهامُ داخلَ الخدّ والأصابعُ خارجه تمطّ الخدَّ برفقٍ إلى الخارج",
-      en: "The thumb inside the cheek and the fingers outside, gently stretching the cheek outwards", search: "facial synkinesis cheek stretch thumb inside cheek" }],
+    images: [{ key: "facial-cheek-stretch-1", ar: "الإبهامُ بقفّازٍ داخلَ الخدّ والأصابعُ خارجه تمطّه برفق",
+      en: "The gloved thumb inside the cheek with the fingers outside, stretching it gently", search: "facial synkinesis cheek stretch thumb inside cheek" }],
   },
   {
     code: "facial-function-tasks", nameAr: "مهامّ الوجه اليومية: الكلام والأكل والشرب والوضوء", nameEn: "Daily facial tasks: speech, eating, drinking and ablution",
@@ -281,8 +281,8 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["سعالٌ أو شرقةٌ مع الشرب ⟵ الأخصائيّ أو الطبيب؛ وألمٌ في العين بعد الوضوء ⟵ قطرةٌ وحمايةُ العين.", "Coughing or choking when drinking → the therapist or doctor; eye pain after ablution → drops and eye protection."],
     equipment: ["كوب، وقصبة، ومرآة.", "A cup, a straw and a mirror."],
     doseNote: ["خمسَ مرّاتٍ لكلّ مهمّةٍ يومياً، وفي كلّ وجبةٍ ووضوء — اقتراح.", "Five times per task daily, and at every meal and ablution — a suggestion."],
-    images: [{ key: "facial-function-tasks-1", ar: "الشربُ برشفاتٍ صغيرة والإصبعُ يسند زاويةَ الفم الضعيفة",
-      en: "Drinking in small sips with a finger supporting the weak mouth corner", search: "facial palsy drinking support lip corner functional exercise" }],
+    images: [{ key: "facial-function-tasks-1", ar: "المضمضةُ في الوضوء بماءٍ في الكفّ — وإسنادُ الشفتين بأصابع اليد الأخرى والشربُ برشفاتٍ في الخطوات",
+      en: "Rinsing the mouth in ablution with water in the palm — supporting the lips with the other hand's fingers and drinking in sips are in the steps", search: "facial palsy drinking support lip corner functional exercise" }],
   },
 ];
 

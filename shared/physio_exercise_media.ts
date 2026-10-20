@@ -332,13 +332,26 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  والركبتان)؛ **وصندوقُ المرآة ملفُّ `ul-phantom-mirror-gmi-1.webp` المسجَّل منسوخاً باسم رمزه** (حارسُ و.٣ — وقاعدةُ المالك: لا تُطلب صورةٌ مكرّرة). **و«عصر المنشفة» بلا صورة** — لا صورةَ بترخيصٍ مقبول.
   //  **وتصحيحٌ معها**: صورةُ «انزلاق العصب الأوسط» من Metro North برخصة CC BY-ND 4.0 (صفحةُ الحقوق في موقعهم) — والرسمان جزءٌ منها بلا تعديل فيجوز نشرُه،
   //  وسطرُها صار يحمل إشعارَ الحقوق واسمَ الرخصة كما تشترط.
+  //  **وتصحيحٌ ثانٍ** (٢٠٢٦-١٠-٢٠، §4.ev): شروطُ موقع مستشفيات أكسفورد تحصر استعمالَ موادّه في «البحث والدراسة الخاصّة والاستعمال الداخليّ» وحده —
+  //  فصورةُ «الاستناد» صارت صورتَي مستشفيات باث وحدها (الجلوسُ إلى الخلف ثمّ الميلُ إلى الأمام على اليدين والركبتين، بلا الطاولة)؛ وشروطُ باث تطلب ذكرَ المصدر
+  //  وحقِّ النشر عند إعادة النشر، فسطراها يحملان «©».
   "wrist-flex-ext-arom-1": { file: "wrist-flex-ext-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
   "wrist-deviation-arom-1": { file: "wrist-deviation-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
   "forearm-rot-arom-1": { file: "forearm-rot-arom-1.webp", credit: "Northern Care Alliance NHS FT — Following wrist injury (PI_SU_1526)", sourceUrl: "https://www.northerncarealliance.nhs.uk/patient-information/patient-leaflets/othopaedic-surgery-following-wrist-injury" },
-  "prayer-stretch-wrist-1": { file: "prayer-stretch-wrist-1.webp", credit: "Royal United Hospitals Bath NHS FT — Wrist Exercises (HTH/024)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH024_Wrist_Exercises.pdf" },
+  "prayer-stretch-wrist-1": { file: "prayer-stretch-wrist-1.webp", credit: "© Royal United Hospitals Bath NHS FT — Wrist Exercises (HTH/024)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH024_Wrist_Exercises.pdf" },
   "hand-elevation-pump-1": { file: "hand-elevation-pump-1.webp", credit: "Worcestershire Acute Hospitals NHS Trust — In-cast Exercises for Fractures of the Wrist", sourceUrl: "https://www.worcsacute.nhs.uk/leaflets/in-cast-exercises-for-fractures-of-the-wrist/" },
-  "wrist-weight-bearing-progression-1": { file: "wrist-weight-bearing-progression-1.webp", credit: "Oxford University Hospitals NHS FT (content from University Hospitals Sussex) + Royal United Hospitals Bath (HTH018b)", sourceUrl: "https://www.ouh.nhs.uk/media/jsnlfzn4/102394wrist.pdf" },
+  "wrist-weight-bearing-progression-1": { file: "wrist-weight-bearing-progression-1.webp", credit: "© Royal United Hospitals Bath NHS FT — Wrist Stability (HTH018b)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH018b_Wrist_stability.pdf" },
   "wrist-gmi-mirror-1": { file: "wrist-gmi-mirror-1.webp" },
+  //  **صورُ «شلل العصب الوجهي» السبع** (٢٠٢٦-١٠-٢٠، §4.ev — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه، ولا صورةَ وجهٍ في المسجَّل):
+  //  رسمان من بحثٍ برخصة CC BY رُسما بمساعدة الذكاء الاصطناعيّ — فالوجوهُ مصنوعة لا أشخاص؛ وصورتان من منشور مستشفى هَل البريطانيّ بتصوير موظّفيه
+  //  (بلا رخصةٍ معلنة، ولا صفحةَ شروطٍ في موقعه)؛ وصورتان من ويكيميديا برخصة CC BY-SA (الأولى بإذن صاحبتها، والثانية مضمضةٌ في الوضوء)؛ وصورةٌ من ١٩١٠ ملكٌ عامّ.
+  "eye-care-closure-1": { file: "eye-care-closure-1.webp", credit: "Andrea Kamphuis, Wikimedia Commons — CC BY-SA 4.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Fazialisl%C3%A4hmung_Tag_01_Uhrglasverband_1000.jpg" },
+  "facial-mirror-retraining-1": { file: "facial-mirror-retraining-1.webp", credit: "Lin, Front Neurol 2026 — CC BY 4.0 (schematic drawn with AI assistance)", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13642283/" },
+  "facial-self-massage-1": { file: "facial-self-massage-1.webp", credit: "Margaret Mixter, Health and Beauty Hints (1910), photo Joel Feder — public domain", sourceUrl: "https://commons.wikimedia.org/wiki/File:Face_massage_-_Healthbeautyhint00mixt_0021.jpg" },
+  "lip-seal-cheek-puff-1": { file: "lip-seal-cheek-puff-1.webp", credit: "Lin, Front Neurol 2026 — CC BY 4.0 (schematic drawn with AI assistance)", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13642283/" },
+  "synkinesis-dissociation-1": { file: "synkinesis-dissociation-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
+  "facial-cheek-stretch-1": { file: "facial-cheek-stretch-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
+  "facial-function-tasks-1": { file: "facial-function-tasks-1.webp", credit: "Pharouqenr, Wikimedia Commons (Wiki Loves Ramadan 2026) — CC BY-SA 4.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:A_Muslim_man_performs_ablution_(wudu)_during_the_holy_month_of_Ramadan.jpg" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
