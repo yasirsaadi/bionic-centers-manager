@@ -352,6 +352,18 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "synkinesis-dissociation-1": { file: "synkinesis-dissociation-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
   "facial-cheek-stretch-1": { file: "facial-cheek-stretch-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
   "facial-function-tasks-1": { file: "facial-function-tasks-1.webp", credit: "Pharouqenr, Wikimedia Commons (Wiki Loves Ramadan 2026) — CC BY-SA 4.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:A_Muslim_man_performs_ablution_(wudu)_during_the_holy_month_of_Ramadan.jpg" },
+  //  **صورُ «الشلل الدماغي عند الأطفال» التسع** (٢٠٢٦-١٠-٢٠، §4.ew — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه): أربعٌ من منشورات تحالف الشلل الدماغيّ الأستراليّ
+  //  وصفحاته (ثلاثٌ منها مقصوصةٌ من دليلَي الأهل)، واثنتان من كتيّب العناية بالوضعيات لـNHS Grampian، وكليفلاند كلينك، ومقالُ Rehab Management، وصورةُ بحثٍ برخصة CC BY —
+  //  بقرار المالك: الاستعمالُ خاصّ فلا تُردّ صورةٌ لحقوقها، والمصدرُ يُكتب.
+  "cp-goal-task-practice-1": { file: "cp-goal-task-practice-1.webp", credit: "Cerebral Palsy Alliance — Therapy and support for school-age children (7–12), p. 20", sourceUrl: "https://cerebralpalsy.org.au/wp-content/uploads/2023/06/CPA40_EarlyInterventionGuide_7-12_LR.pdf" },
+  "cp-early-motor-play-1": { file: "cp-early-motor-play-1.webp", credit: "© NHS Grampian — A Guide to 24 Hour Postural Management (CGD 150534), p. 5", sourceUrl: "https://www.rach.scot.nhs.uk/wp-content/uploads/2023/05/Parent-Booklet-FINAL-Draft-1.pdf" },
+  "cp-cimt-play-1": { file: "cp-cimt-play-1.webp", credit: "© Cleveland Clinic Children's — constraint-induced movement therapy", sourceUrl: "https://my.clevelandclinic.org/patient-stories/590-innovative-therapy-helps-child-gain-use-of-both-arms" },
+  "cp-bimanual-play-1": { file: "cp-bimanual-play-1.webp", credit: "Cerebral Palsy Alliance — Therapy and support for school-age children (7–12), p. 15", sourceUrl: "https://cerebralpalsy.org.au/wp-content/uploads/2023/06/CPA40_EarlyInterventionGuide_7-12_LR.pdf" },
+  "cp-functional-strength-play-1": { file: "cp-functional-strength-play-1.webp", credit: "Cerebral Palsy Alliance — Gross motor skills group", sourceUrl: "https://cerebralpalsy.org.au/services/gross-motor-skills-group/" },
+  "cp-treadmill-training-1": { file: "cp-treadmill-training-1.webp", credit: "Cerebral Palsy Alliance — Bodyweight supported treadmill training", sourceUrl: "https://cerebralpalsy.org.au/services/bodyweight-supported-treadmill-training/" },
+  "cp-standing-frame-abduction-1": { file: "cp-standing-frame-abduction-1.webp", credit: "Rehab Management — Case study: standing program prevents surgery (2022)", sourceUrl: "https://rehabpub.com/mobility/standing-systems/case-study-standing-program-prevents-surgery/" },
+  "cp-afo-wear-skin-1": { file: "cp-afo-wear-skin-1.webp", credit: "Guner et al., Children (Basel) 2023 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC10137149/" },
+  "cp-24h-postural-care-1": { file: "cp-24h-postural-care-1.webp", credit: "© NHS Grampian — A Guide to 24 Hour Postural Management (CGD 150534), p. 6", sourceUrl: "https://www.rach.scot.nhs.uk/wp-content/uploads/2023/05/Parent-Booklet-FINAL-Draft-1.pdf" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */

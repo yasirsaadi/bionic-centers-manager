@@ -59,7 +59,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["نوبةٌ أو تعبٌ شديد أو بكاءٌ لا يهدأ أو ألمٌ جديد ⟵ توقّف، واكتب ما حدث للطبيب (القواعدُ في «موانع وإحالة»).", "A seizure, marked fatigue, crying that will not settle or new pain → stop, and write down what happened for the doctor (the rules under 'Contraindications and referral')."],
     equipment: ["أدواتُ المهمّة نفسُها في البيت أو المركز، وورقةُ الأهداف بدرجاتها الخمس.", "The task's own objects at home or in the centre, and the goal sheet with its five levels."],
     doseNote: ["٢٠–٣٠ دقيقة من كلّ جلسة على الأهداف، والأهلُ يكرّرونها يومياً — والأهدافُ تتحقّق بنحو ١٤–٢٥ ساعة تدريب (Jackman 2020).", "20–30 minutes of each session on the goals, repeated daily by the family — goals are reached with about 14–25 hours of practice (Jackman 2020)."],
-    images: [{ key: "cp-goal-task-practice-1", ar: "@@GOAL_AR@@", en: "@@GOAL_EN@@", search: "child cerebral palsy goal directed task practice therapist" }],
+    images: [{ key: "cp-goal-task-practice-1", ar: "طفلٌ يدهن الخبزَ المحمّص بالسكّين بنفسه، والمعالجةُ خلفه يداها بجانب يديه تساعد قليلاً — المهمّةُ كاملةٌ في مكانها", en: "A boy spreads toast with a knife himself, the therapist behind him keeping her hands beside his to help a little — the whole task in its place", search: "child cerebral palsy goal directed task practice therapist" }],
   },
   {
     code: "cp-early-motor-play", nameAr: "اللعبُ الحركيّ المبكّر للرضيع والطفل الصغير مع أهله", nameEn: "Early motor play for infants and toddlers with their family",
@@ -98,7 +98,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["حركاتٌ متكرّرة غريبة أو تحديقٌ أو تصلّبٌ مفاجئ (قد تكون نوبات)، أو فقدُ مهارةٍ كان يتقنها، أو سعالٌ واختناقٌ عند الرضاعة ⟵ إلى الطبيب (القواعدُ في «موانع وإحالة»).", "Repeated odd movements, staring or sudden stiffening (possible seizures), loss of a skill already gained, or coughing and choking at feeds → to the doctor (the rules under 'Contraindications and referral')."],
     equipment: ["بساطٌ على الأرض، وألعابٌ ملوّنة بأصوات، ووسادةٌ للإسناد، ومرآة.", "A floor mat, colourful toys with sounds, a cushion for support, and a mirror."],
     doseNote: ["مرّاتٌ قصيرة كثيرة في اليوم يقودها الأهل، والجلسةُ لتدريبهم — «تدريبٌ يوميّ متكرّر قدر الإمكان» (Morgan 2021).", "Many short bouts a day led by the family, with the session used to coach them — 'daily repeated practice as possible' (Morgan 2021)."],
-    images: [{ key: "cp-early-motor-play-1", ar: "@@EARLY_AR@@", en: "@@EARLY_EN@@", search: "infant cerebral palsy early intervention floor play parent coaching" }],
+    images: [{ key: "cp-early-motor-play-1", ar: "طفلةٌ صغيرة جالسةٌ على بساط اللعب تمدّ يدها إلى لوحة ألعاب، ومَن خلفها يسندها عند الجذع", en: "A toddler sitting on a play mat reaches for a toy board, supported at the trunk by the parent behind her", search: "infant cerebral palsy early intervention floor play parent coaching" }],
   },
   {
     code: "cp-cimt-play", nameAr: "العلاجُ القسريّ باللعب: اليدُ القويّة في قفّاز والضعيفةُ تلعب", nameEn: "Constraint-induced play: the stronger hand in a mitt, the weaker hand plays",
@@ -135,7 +135,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["احمرارٌ أو جرحٌ تحت القفّاز أو الجبيرة، أو ضيقٌ وبكاءٌ لا يهدأ ⟵ يُنزع القفّازُ ويُخبَر الأخصائيّ؛ والإحباطُ ورفضُ القيد وتهيّجُ الجلد من الجبس قد تحدث وتزول (Hoare 2019).", "Redness or a sore under the mitt or splint, or distress and crying that will not settle → remove the mitt and tell the therapist; frustration, refusing the constraint and skin irritation from casts can happen and resolve (Hoare 2019)."],
     equipment: ["قفّازٌ سميك أو جوربٌ مخيط أو جبيرةٌ خفيفة، وألعابٌ تناسب العمر.", "A thick mitt, a sewn sock or a light splint, and toys suited to the child's age."],
     doseNote: ["للرضيع ٣٠–٦٠ دقيقة يومياً ستّةَ أسابيع (Morgan 2021)، وللأكبر نحو ساعتين يومياً في البيت ثمانيةَ أسابيع (Al-Oraibi 2011) — واليدُ تحتاج نحو ٤٠ ساعة (Jackman 2020).", "For an infant 30–60 minutes a day for six weeks (Morgan 2021); for older children about two hours a day at home for eight weeks (Al-Oraibi 2011) — the hand needs about 40 hours (Jackman 2020)."],
-    images: [{ key: "cp-cimt-play-1", ar: "@@CIMT_AR@@", en: "@@CIMT_EN@@", search: "constraint induced movement therapy child mitt play hemiplegia" }],
+    images: [{ key: "cp-cimt-play-1", ar: "طفلةٌ يدُها اليسرى في جبسٍ ورديّ تثبّت مشابكَ ملوّنة على حافّة سلّةٍ بيدها الأخرى، والمعالجةُ تمسك السلّة", en: "A girl with a pink cast on her left arm clips coloured pegs onto the rim of a tub with her other hand while the therapist holds the tub", search: "constraint induced movement therapy child mitt play hemiplegia" }],
   },
   {
     code: "cp-bimanual-play", nameAr: "اللعبُ والمهامُّ بكلتا اليدين", nameEn: "Two-handed play and tasks (bimanual training)",
@@ -170,7 +170,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تعبٌ أو ألمٌ في اليد أو الرسغ أو بكاءٌ متواصل ⟵ راحةٌ أو لعبةٌ أسهل؛ وألمٌ يتكرّر ⟵ الأخصائيّ.", "Fatigue, pain in the hand or wrist, or continuous crying → a rest or an easier game; recurring pain → the therapist."],
     equipment: ["ألعابٌ بقطعتين (علبٌ بأغطية، وخرزٌ وخيط، وصلصال، ومكعّبات)، وطاولةٌ وكرسيٌّ ثابتان.", "Two-part toys (lidded boxes, beads and string, play dough, blocks), and a steady table and chair."],
     doseNote: ["في التجارب ٦٠–٩٠ ساعة في مخيّماتٍ مكثّفة (Gordon 2011 · Sakzewski 2015)؛ وفي المركز جزءٌ من كلّ جلسة، والبيتُ يومياً يحمل التكرار.", "Trials used 60–90 hours in intensive camps (Gordon 2011 · Sakzewski 2015); in the centre it is part of each session, and daily home practice carries the repetitions."],
-    images: [{ key: "cp-bimanual-play-1", ar: "@@BIMAN_AR@@", en: "@@BIMAN_EN@@", search: "bimanual training child hemiplegia HABIT play both hands" }],
+    images: [{ key: "cp-bimanual-play-1", ar: "طفلةٌ تفتح برطماناً بيديها معاً: يدٌ تمسكه من أسفل والأخرى تدير الغطاء", en: "A girl opens a jar with both hands: one holds it from below while the other twists the lid", search: "bimanual training child hemiplegia HABIT play both hands" }],
   },
   {
     code: "cp-functional-strength-play", nameAr: "تقويةٌ وظيفية باللعب: القرفصاءُ والقيامُ والصعود", nameEn: "Functional strengthening through play: squats, sit-to-stand and step-ups",
@@ -207,7 +207,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الركبة أو الورك أو القدم يبقى بعد التمرين ⟵ يتوقّف ويُفحص (الوركُ في «موانع وإحالة»).", "Pain in the knee, hip or foot that lasts after the exercise → stop and have it examined (the hip under 'Contraindications and referral')."],
     equipment: ["مقعدٌ أو كرسيٌّ ثابت، ودرجةٌ أو صندوق، وألعابٌ وسلّة، وحقيبةُ ظهرٍ بوزنٍ خفيف.", "A steady bench or chair, a step or box, toys and a basket, and a backpack with a light weight."],
     doseNote: ["١–٣ مجموعات × ٦–١٥ مرّة، مرّتين إلى أربعٍ في الأسبوع في أيّامٍ غير متتالية، ١٢–١٦ أسبوعاً (Verschuren 2016) — فالبيتُ يُكمل بعد الكتلة.", "1–3 sets × 6–15 repetitions, two to four times a week on non-consecutive days, for 12–16 weeks (Verschuren 2016) — so home training continues after the block."],
-    images: [{ key: "cp-functional-strength-play-1", ar: "@@STR_AR@@", en: "@@STR_EN@@", search: "child cerebral palsy sit to stand squat step up strengthening" }],
+    images: [{ key: "cp-functional-strength-play-1", ar: "طفلٌ ينزل في القرفصاء ليلتقط كرةً كبيرة عن الأرض، والمعالجةُ راكعةٌ بجانبه توجّهه", en: "A boy squats to pick up a big ball from the floor, with a kneeling therapist beside him guiding", search: "child cerebral palsy sit to stand squat step up strengthening" }],
   },
   {
     code: "cp-treadmill-training", nameAr: "المشيُ على السير المتحرّك للطفل، وبحزامٍ يحمل بعضَ الوزن عند الحاجة", nameEn: "Treadmill walking for children, with a harness carrying some body weight when needed",
@@ -244,7 +244,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ضيقُ نفسٍ شديد أو شحوبٌ أو دوخة أو نوبة ⟵ أوقف السيرَ فوراً؛ وطفلٌ يخاف من السير أو الحزام ويبكي ⟵ المشيُ على الأرض بدلاً منه.", "Marked breathlessness, pallor, dizziness or a seizure → stop the treadmill at once; a child frightened of the treadmill or harness who keeps crying → overground walking instead."],
     equipment: ["سيرٌ متحرّك بمقبضين ومفتاحِ إيقافٍ قريب، وحزامُ إسنادٍ للأطفال إن وُجد، والدعامةُ والحذاء.", "A treadmill with rails and a nearby stop switch, a children's support harness if available, and the orthoses and shoes."],
     doseNote: ["٢٠–٣٠ دقيقة مرّتين إلى ثلاثٍ في الأسبوع (Grecco 2013)؛ واللياقةُ ٢٠ دقيقةً فأكثر ثلاثاً في الأسبوع ثمانيةَ أسابيع (Verschuren 2016).", "20–30 minutes two to three times a week (Grecco 2013); for fitness 20 minutes or more three times a week for eight weeks (Verschuren 2016)."],
-    images: [{ key: "cp-treadmill-training-1", ar: "@@TREAD_AR@@", en: "@@TREAD_EN@@", search: "child cerebral palsy treadmill training body weight support harness" }],
+    images: [{ key: "cp-treadmill-training-1", ar: "فتاةٌ تمشي على السير المتحرّك بحزامٍ معلّق يحمل بعضَ وزنها، والمعالجةُ بجانبها تشجّعها", en: "A girl walks on a treadmill in an overhead harness carrying some of her weight, with the therapist beside her encouraging", search: "child cerebral palsy treadmill training body weight support harness" }],
   },
   {
     code: "cp-standing-frame-abduction", nameAr: "برنامجُ الوقوف في جهاز الوقوف والساقان متباعدتان", nameEn: "Standing programme in a stander with the legs apart",
@@ -281,7 +281,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الورك أو الركبة، أو احمرارٌ لا يزول بعد نصف ساعة، أو تعبٌ وضيقُ نفس، أو نوبة ⟵ يُنزل ويُخبَر الأخصائيّ؛ وألمُ الورك يحتاج صورةَ الحوض (القواعدُ في «موانع وإحالة»).", "Pain in the hip or knee, redness that lasts over half an hour, fatigue and breathlessness, or a seizure → take the child out and tell the therapist; hip pain needs a pelvic X-ray (the rules under 'Contraindications and referral')."],
     equipment: ["جهازُ وقوف (أماميّ أو خلفيّ أو عموديّ) بمباعِدٍ للساقين، والدعامةُ والحذاء، وطاولةٌ للعب.", "A stander (prone, supine or upright) with a leg abductor, the orthoses and shoes, and a play tray."],
     doseNote: ["للورك ٦٠ دقيقة يومياً والتبعيدُ ٣٠–٦٠ درجةً للوركين معاً، وللعظم ٦٠–٩٠، خمسةَ أيّامٍ في الأسبوع (Paleg 2013 · Battisti 2023).", "For the hips 60 minutes a day with 30–60 degrees of total hip abduction, for bone 60–90 minutes, five days a week (Paleg 2013 · Battisti 2023)."],
-    images: [{ key: "cp-standing-frame-abduction-1", ar: "@@STAND_AR@@", en: "@@STAND_EN@@", search: "child standing frame stander hip abduction cerebral palsy" }],
+    images: [{ key: "cp-standing-frame-abduction-1", ar: "طفلةٌ في جهاز وقوفٍ والساقان متباعدتان، بالدعامة والحذاء وواقيَي الركبتين، وطاولةٌ أمامها", en: "A girl in a stander with her legs wide apart, wearing orthoses, shoes and knee pads, with a tray in front of her", search: "child standing frame stander hip abduction cerebral palsy" }],
   },
   {
     code: "cp-afo-wear-skin", nameAr: "الدعامةُ القدمية كلَّ يوم: لبسُها وجدولُها وفحصُ الجلد", nameEn: "The ankle-foot orthosis every day: putting it on, the wearing schedule and skin checks",
@@ -320,7 +320,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["احمرارٌ يبقى أكثرَ من نصف ساعة، أو فقاعة، أو جرح، أو ألمٌ لا يزول بإعادة اللبس ⟵ لا تُلبس حتى يراها الأخصائيّ أو قسمُ المساند (NICE CG145 2012).", "Redness lasting more than half an hour, a blister, a sore, or pain not relieved by putting it back on → not worn until the therapist or the orthotics department has seen it (NICE CG145 2012)."],
     equipment: ["الدعامةُ التي صنعها المركز، وجواربُ قطنية طويلة، وحذاءٌ أوسع بفتحةٍ واسعة.", "The orthosis made by the centre, long cotton socks, and a wider shoe with a wide opening."],
     doseNote: ["دعامةُ المشي في ساعات النهار والنشاط، ودعامةُ التمطيط ستَّ ساعاتٍ يومياً فأكثر (NICE CG145 2012).", "A walking orthosis during the day and activity, and a stretching orthosis six hours a day or more (NICE CG145 2012)."],
-    images: [{ key: "cp-afo-wear-skin-1", ar: "@@AFO_AR@@", en: "@@AFO_EN@@", search: "child ankle foot orthosis AFO shoes cerebral palsy" }],
+    images: [{ key: "cp-afo-wear-skin-1", ar: "ساقا طفلٍ في حذاءٍ رياضيّ: في إحداهما دعامةٌ طويلة إلى تحت الركبة بحزامٍ على الساق، وفي الأخرى دعامةٌ قصيرة عند الكاحل — كلتاهما داخل الحذاء", en: "A child's legs in trainers: one wears a tall orthosis to below the knee with a shin strap, the other a short ankle-height orthosis — both inside the shoes", search: "child ankle foot orthosis AFO shoes cerebral palsy" }],
   },
   {
     code: "cp-24h-postural-care", nameAr: "العنايةُ بالوضعيات على مدار اليوم والليل: الجلوسُ والنومُ المتناظران", nameEn: "24-hour postural care: symmetric sitting and lying",
@@ -357,7 +357,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ عند التحريك، أو بكاءٌ في وضعٍ معيّن، أو صعوبةٌ جديدة في تغيير الحفاض والتنظيف، أو سعالٌ واختناقٌ عند الأكل، أو احمرارٌ لا يزول ⟵ إلى الأخصائيّ؛ فألمُ الورك وصعوبةُ التنظيف قد يعنيان خروجَ الورك (NICE CG145 2012).", "Pain on moving, crying in a particular position, new difficulty with nappy changes and cleaning, coughing and choking at meals, or redness that does not fade → to the therapist; hip pain and difficulty with cleaning can mean the hip is displacing (NICE CG145 2012)."],
     equipment: ["كرسيٌّ مكيَّف أو عربةٌ بإسناد، ووسائدُ ولفائف (منشفةٌ ملفوفة)، ووسادةٌ بين الركبتين، وجهازُ الوقوف.", "An adapted seat or a supportive buggy, cushions and rolls (a rolled towel), a cushion between the knees, and the stander."],
     doseNote: ["كلَّ يومٍ نهاراً وليلاً — والدليلُ على منع خروج الورك منخفضُ الجودة (Gmelig Meyling 2018)، فهي جزءٌ من مراقبة الورك لا بديلٌ عنها.", "Every day, day and night — the evidence for preventing hip displacement is low quality (Gmelig Meyling 2018), so it is part of hip surveillance, not a replacement for it."],
-    images: [{ key: "cp-24h-postural-care-1", ar: "@@POST_AR@@", en: "@@POST_EN@@", search: "24 hour postural care child cerebral palsy night positioning seating" }],
+    images: [{ key: "cp-24h-postural-care-1", ar: "طفلٌ مستلقٍ على ظهره في سريره على نظامٍ لدعم الاستلقاء: وسائدُ وأحزمةٌ تُبقي فخذيه وركبتيه متناظرتين", en: "A boy lying on his back in his cot on a lying-support system, with padded supports and straps holding his thighs and knees symmetrical", search: "24 hour postural care child cerebral palsy night positioning seating" }],
   },
 ];
 
@@ -826,6 +826,7 @@ export const PROTOCOL: ProtocolContentSeed = {
         { code: "obstacle-dual-task-walking", sets: 1, reps: 5,
           note: ["للمستويين I–II: المشيُ في الشارع والمدرسة.", "For levels I–II: walking in the street and at school."] },
         { code: "wheelchair-skills", sets: 1, reps: 5,
+          doseNote: ["نحو ١٠ دقائق في الجلسة، والكرسيُّ في البيت والمدرسة يومياً.", "About 10 minutes per session, with the chair used daily at home and at school."],
           note: ["للمستويات III–V: الكرسيُّ اليدويّ أو الكهربائيّ للتنقّل المستقلّ.", "For levels III–V: a manual or powered chair for independent mobility."] },
         { code: "cp-afo-wear-skin", sets: 1, reps: 1,
           note: ["الطفلُ الأكبر يلبسها ويفحص جلدَه بنفسه.", "An older child puts it on and checks their own skin."] },
