@@ -265,10 +265,10 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  مرفقُ التنس (ترحيل ١٥٢، §4.ej) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها)، ورآها كلَّها قبل تسجيلها؛
   //  ورُدّت صورٌ تنسبها نشراتُها إلى مكتبة تمارين تجارية. والتحريكُ الذاتيّ صورةُ التجربة نفسِها (يدٌ تدفع لا حزام — والبطاقةُ كُتبت عليها).
   "wrist-extensor-isometric-1": { file: "wrist-extensor-isometric-1.webp", credit: "Leicestershire Partnership NHS Trust", sourceUrl: "https://www.leicspart.nhs.uk/wp-content/uploads/2022/07/514-Tennis-Elbow.pdf" },
-  //  **بُدّلت ٢٠٢٦-١٠-٢٠ (§4.ev)**: كانت من مستشفيات أكسفورد وشروطُ موقعها «للبحث والدراسة الخاصّة والاستعمال الداخليّ وحده» — فصارت صورَ كوين فكتوريا (شروطُها تسمح بإعادة النشر
-  //  بذكر المصدر وحقِّ النشر): عصاً تُمسك من طرفها كالمطرقة. **وأُزيلت صورتا «الميل بالمطرقة» (نوفا سكوشا) و«القرفصاء على ساقٍ إلى الكرسيّ» (رايتنغتون، ١٥٥)**:
-  //  مصدراهما «كلُّ الحقوق محفوظة» (وفي مكتبة نوفا سكوشا رخصةٌ لغير التجاريّ) — فعادتا إلى «الصور المطلوبة».
-  "forearm-rotation-hammer-1": { file: "forearm-rotation-hammer-1.webp", credit: "© Queen Victoria Hospital NHS FT — Hand Therapy: Wrist – Intermediate, Active Control Through Range (0143)", sourceUrl: "https://www.qvh.nhs.uk/wp-content/uploads/2026/05/Hand-therapy-Wrist-Intermediate-Active-Control-0143.pdf" },
+  //  **صورُ المصادر ذات الحقوق مقبولة — قرارُ المالك ٢٠٢٦-١٠-٢٠** («استخدم حتى إن كانت بحقوق لأنّي لن أنشرها ولن أستخدمها تجارياً — استخدامٌ شخصيّ خاصّ»، §4.ew):
+  //  فعادت الصورُ الأربع التي بُدّلت أو أُزيلت يومَها لشروط مصادرها (أكسفورد · نوفا سكوشا · رايتنغتون)، والمصدرُ مكتوبٌ كما كان.
+  "forearm-rotation-hammer-1": { file: "forearm-rotation-hammer-1.webp", credit: "Oxford University Hospitals NHS FT (Nuffield Orthopaedic Centre)", sourceUrl: "https://www.ouh.nhs.uk/media/lsjlro5o/85220advice.pdf" },
+  "radial-deviation-hammer-1": { file: "radial-deviation-hammer-1.webp", credit: "Nova Scotia Health", sourceUrl: "https://www.nshealth.ca/sites/default/files/documents/1349-2025.03.11.pdf" },
   "wrist-extensor-stretch-1": { file: "wrist-extensor-stretch-1.webp", credit: "NHS Greater Glasgow and Clyde", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/je5g5qzk/tennis-elbow-exercise-booklet.pdf" },
   "elbow-self-mwm-1": { file: "elbow-self-mwm-1.webp", credit: "Coombes et al., BMC Musculoskelet Disord 2009 — CC BY 2.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC2707364/" },
   //  تضيّقُ القناة القطنية (ترحيل ١٥٣، §4.ek) — الأربعُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها — «سحب الركبة
@@ -282,6 +282,7 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  والجريُ شكلان بلا كتابة — الأيسرُ المطلوب، ووصفُ الصورة يقوله؛ وهو والشريطُ صورتا بحثين برخصة CC BY.
   "quadriceps-stretch-standing-1": { file: "quadriceps-stretch-standing-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://www.orthoinfo.org/en/recovery/knee-conditioning-program/" },
   "standing-band-hip-abduction-1": { file: "standing-band-hip-abduction-1.webp", credit: "Arthritis Action", sourceUrl: "https://www.arthritisaction.org.uk/wp-content/uploads/2018/06/Hip-strength-exercises.pdf" },
+  "single-leg-squat-to-box-1": { file: "single-leg-squat-to-box-1.webp", credit: "Wrightington, Wigan and Leigh Teaching Hospitals NHS FT", sourceUrl: "https://www.wwl.nhs.uk/pdfreader/accessiblePDF/cnv-wwl-68ca8bce8ec828.01098451" },
   "running-cadence-1": { file: "running-cadence-1.webp", credit: "Wallace et al., Evol Hum Sci 2022 (drawing by Samantha Shields) — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9624512/" },
   "patellar-taping-1": { file: "patellar-taping-1.webp", credit: "Yoon & Son, Medicina 2022 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9501162/" },
   //  خشونةُ الورك (ترحيل ١٥٦، §4.eo) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في المسجَّل يُظهر حركاتها، وموصلُ Drive لم يكن متّصلاً في الجلسة)،
@@ -333,15 +334,13 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  والركبتان)؛ **وصندوقُ المرآة ملفُّ `ul-phantom-mirror-gmi-1.webp` المسجَّل منسوخاً باسم رمزه** (حارسُ و.٣ — وقاعدةُ المالك: لا تُطلب صورةٌ مكرّرة). **و«عصر المنشفة» بلا صورة** — لا صورةَ بترخيصٍ مقبول.
   //  **وتصحيحٌ معها**: صورةُ «انزلاق العصب الأوسط» من Metro North برخصة CC BY-ND 4.0 (صفحةُ الحقوق في موقعهم) — والرسمان جزءٌ منها بلا تعديل فيجوز نشرُه،
   //  وسطرُها صار يحمل إشعارَ الحقوق واسمَ الرخصة كما تشترط.
-  //  **وتصحيحٌ ثانٍ** (٢٠٢٦-١٠-٢٠، §4.ev): شروطُ موقع مستشفيات أكسفورد تحصر استعمالَ موادّه في «البحث والدراسة الخاصّة والاستعمال الداخليّ» وحده —
-  //  فصورةُ «الاستناد» صارت صورتَي مستشفيات باث وحدها (الجلوسُ إلى الخلف ثمّ الميلُ إلى الأمام على اليدين والركبتين، بلا الطاولة)؛ وشروطُ باث تطلب ذكرَ المصدر
-  //  وحقِّ النشر عند إعادة النشر، فسطراها يحملان «©».
+  //  **وصورةُ «الاستناد» بُدّلت يومَ ٢٠٢٦-١٠-٢٠ لشروط أكسفورد (§4.ev) ثمّ عادت كما كانت بقرار المالك في اليوم نفسه** — الاستعمالُ خاصّ (§4.ew)؛ وسطرا باث بـ«©».
   "wrist-flex-ext-arom-1": { file: "wrist-flex-ext-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
   "wrist-deviation-arom-1": { file: "wrist-deviation-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
   "forearm-rot-arom-1": { file: "forearm-rot-arom-1.webp", credit: "Northern Care Alliance NHS FT — Following wrist injury (PI_SU_1526)", sourceUrl: "https://www.northerncarealliance.nhs.uk/patient-information/patient-leaflets/othopaedic-surgery-following-wrist-injury" },
   "prayer-stretch-wrist-1": { file: "prayer-stretch-wrist-1.webp", credit: "© Royal United Hospitals Bath NHS FT — Wrist Exercises (HTH/024)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH024_Wrist_Exercises.pdf" },
   "hand-elevation-pump-1": { file: "hand-elevation-pump-1.webp", credit: "Worcestershire Acute Hospitals NHS Trust — In-cast Exercises for Fractures of the Wrist", sourceUrl: "https://www.worcsacute.nhs.uk/leaflets/in-cast-exercises-for-fractures-of-the-wrist/" },
-  "wrist-weight-bearing-progression-1": { file: "wrist-weight-bearing-progression-1.webp", credit: "© Royal United Hospitals Bath NHS FT — Wrist Stability (HTH018b)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH018b_Wrist_stability.pdf" },
+  "wrist-weight-bearing-progression-1": { file: "wrist-weight-bearing-progression-1.webp", credit: "Oxford University Hospitals NHS FT (content from University Hospitals Sussex) + © Royal United Hospitals Bath (HTH018b)", sourceUrl: "https://www.ouh.nhs.uk/media/jsnlfzn4/102394wrist.pdf" },
   "wrist-gmi-mirror-1": { file: "wrist-gmi-mirror-1.webp" },
   //  **صورُ «شلل العصب الوجهي» السبع** (٢٠٢٦-١٠-٢٠، §4.ev — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه، ولا صورةَ وجهٍ في المسجَّل):
   //  رسمان من بحثٍ برخصة CC BY رُسما بمساعدة الذكاء الاصطناعيّ — فالوجوهُ مصنوعة لا أشخاص؛ وصورتان من منشور مستشفى هَل البريطانيّ بتصوير موظّفيه
@@ -353,6 +352,18 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "synkinesis-dissociation-1": { file: "synkinesis-dissociation-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
   "facial-cheek-stretch-1": { file: "facial-cheek-stretch-1.webp", credit: "© Hull University Teaching Hospitals NHS Trust — Facial Exercises and Stretches (HEY1663/2026)", sourceUrl: "https://www.hey.nhs.uk/patient-leaflet/facial-exercises-and-stretches/" },
   "facial-function-tasks-1": { file: "facial-function-tasks-1.webp", credit: "Pharouqenr, Wikimedia Commons (Wiki Loves Ramadan 2026) — CC BY-SA 4.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:A_Muslim_man_performs_ablution_(wudu)_during_the_holy_month_of_Ramadan.jpg" },
+  //  **صورُ «الشلل الدماغي عند الأطفال» التسع** (٢٠٢٦-١٠-٢٠، §4.ew — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه): أربعٌ من منشورات تحالف الشلل الدماغيّ الأستراليّ
+  //  وصفحاته (ثلاثٌ منها مقصوصةٌ من دليلَي الأهل)، واثنتان من كتيّب العناية بالوضعيات لـNHS Grampian، وكليفلاند كلينك، ومقالُ Rehab Management، وصورةُ بحثٍ برخصة CC BY —
+  //  بقرار المالك: الاستعمالُ خاصّ فلا تُردّ صورةٌ لحقوقها، والمصدرُ يُكتب.
+  "cp-goal-task-practice-1": { file: "cp-goal-task-practice-1.webp", credit: "Cerebral Palsy Alliance — Therapy and support for school-age children (7–12), p. 20", sourceUrl: "https://cerebralpalsy.org.au/wp-content/uploads/2023/06/CPA40_EarlyInterventionGuide_7-12_LR.pdf" },
+  "cp-early-motor-play-1": { file: "cp-early-motor-play-1.webp", credit: "© NHS Grampian — A Guide to 24 Hour Postural Management (CGD 150534), p. 5", sourceUrl: "https://www.rach.scot.nhs.uk/wp-content/uploads/2023/05/Parent-Booklet-FINAL-Draft-1.pdf" },
+  "cp-cimt-play-1": { file: "cp-cimt-play-1.webp", credit: "© Cleveland Clinic Children's — constraint-induced movement therapy", sourceUrl: "https://my.clevelandclinic.org/patient-stories/590-innovative-therapy-helps-child-gain-use-of-both-arms" },
+  "cp-bimanual-play-1": { file: "cp-bimanual-play-1.webp", credit: "Cerebral Palsy Alliance — Therapy and support for school-age children (7–12), p. 15", sourceUrl: "https://cerebralpalsy.org.au/wp-content/uploads/2023/06/CPA40_EarlyInterventionGuide_7-12_LR.pdf" },
+  "cp-functional-strength-play-1": { file: "cp-functional-strength-play-1.webp", credit: "Cerebral Palsy Alliance — Gross motor skills group", sourceUrl: "https://cerebralpalsy.org.au/services/gross-motor-skills-group/" },
+  "cp-treadmill-training-1": { file: "cp-treadmill-training-1.webp", credit: "Cerebral Palsy Alliance — Bodyweight supported treadmill training", sourceUrl: "https://cerebralpalsy.org.au/services/bodyweight-supported-treadmill-training/" },
+  "cp-standing-frame-abduction-1": { file: "cp-standing-frame-abduction-1.webp", credit: "Rehab Management — Case study: standing program prevents surgery (2022)", sourceUrl: "https://rehabpub.com/mobility/standing-systems/case-study-standing-program-prevents-surgery/" },
+  "cp-afo-wear-skin-1": { file: "cp-afo-wear-skin-1.webp", credit: "Guner et al., Children (Basel) 2023 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC10137149/" },
+  "cp-24h-postural-care-1": { file: "cp-24h-postural-care-1.webp", credit: "© NHS Grampian — A Guide to 24 Hour Postural Management (CGD 150534), p. 6", sourceUrl: "https://www.rach.scot.nhs.uk/wp-content/uploads/2023/05/Parent-Booklet-FINAL-Draft-1.pdf" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
