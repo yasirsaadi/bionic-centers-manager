@@ -256,7 +256,7 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "prayer-wudu-reach-1": { file: "prayer-wudu-reach-1.webp", credit: "Tawasol Symbols (Mada) — CC BY-SA 4.0", sourceUrl: "https://globalsymbols.com/symbolsets/tawasol/symbols/7566" },
   //  الاعتلالُ الجذريّ العنقيّ (ترحيل ١٥١، §4.ei) — الستُّ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها)، ورآها كلَّها قبل تسجيلها؛
   //  وصورةُ العصب الزنديّ الأولى رُدّت لأنّ مصدرَها مكتبةُ تمارين تجارية، فبُدّلت بصور المستشفى نفسِه.
-  "median-nerve-slider-1": { file: "median-nerve-slider-1.webp", credit: "Queensland Health — Metro North Hand Therapy (drawings after Coppieters et al.)", sourceUrl: "https://metronorth.health.qld.gov.au/tpch/wp-content/uploads/sites/3/2021/12/ot-exercises-to-glide-my-median-nerve.pdf" },
+  "median-nerve-slider-1": { file: "median-nerve-slider-1.webp", credit: "© State of Queensland (Metro North Hospital and Health Service) — CC BY-ND 4.0 (drawings after Coppieters et al.)", sourceUrl: "https://metronorth.health.qld.gov.au/tpch/wp-content/uploads/sites/3/2021/12/ot-exercises-to-glide-my-median-nerve.pdf" },
   "ulnar-nerve-slider-1": { file: "ulnar-nerve-slider-1.webp", credit: "East Kent Hospitals University NHS FT", sourceUrl: "https://leaflets.ekhuft.nhs.uk/cubital-tunnel-syndrome/html/" },
   "shoulder-abduction-relief-1": { file: "shoulder-abduction-relief-1.webp", credit: "Kimura et al., Cureus 2023 — CC BY 3.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9918333/" },
   "triceps-band-extension-1": { file: "triceps-band-extension-1.webp", credit: "Versus Arthritis", sourceUrl: "https://www.arthritis-uk.org/media/fg1ot4q0/versus-arthritis-resistance-band-exercise-sheet-upper-body-2.pdf" },
@@ -327,6 +327,18 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "median-nerve-glide-hand-1": { file: "median-nerve-glide-hand-1.webp", credit: "Akdağ et al., Front Neurosci 2024 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC10835795/" },
   "wrist-night-splint-1": { file: "wrist-night-splint-1.webp", credit: "Atroshi et al., Trials 2019 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC6712840/" },
   "palm-scar-massage-1": { file: "palm-scar-massage-1.webp", credit: "Queen Victoria Hospital NHS FT — Hand Therapy: Scar Massage (0128)", sourceUrl: "https://www.qvh.nhs.uk/download/patient-information-leaflets/scar-massage-0128" },
+  //  **صورُ «ما بعد كسر الكعبرة البعيد» السبع** (٢٠٢٦-١٠-١٩، §4.eu — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه، والمسجَّلُ لا يُظهر الحركاتِ بلا ثقل):
+  //  ستٌّ من منشورات مستشفياتٍ بريطانية بتصويرها هي (بلا رخصةٍ معلنة) — طُمس حرفا «a/b» في صورة التدوير، و«الاستناد» صورتان من مصدرين جُمعتا (الطاولةُ ثمّ اليدان
+  //  والركبتان)؛ **وصندوقُ المرآة ملفُّ `ul-phantom-mirror-gmi-1.webp` المسجَّل منسوخاً باسم رمزه** (حارسُ و.٣ — وقاعدةُ المالك: لا تُطلب صورةٌ مكرّرة). **و«عصر المنشفة» بلا صورة** — لا صورةَ بترخيصٍ مقبول.
+  //  **وتصحيحٌ معها**: صورةُ «انزلاق العصب الأوسط» من Metro North برخصة CC BY-ND 4.0 (صفحةُ الحقوق في موقعهم) — والرسمان جزءٌ منها بلا تعديل فيجوز نشرُه،
+  //  وسطرُها صار يحمل إشعارَ الحقوق واسمَ الرخصة كما تشترط.
+  "wrist-flex-ext-arom-1": { file: "wrist-flex-ext-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
+  "wrist-deviation-arom-1": { file: "wrist-deviation-arom-1.webp", credit: "University Hospital Southampton NHS FT — Wrist exercises (3459)", sourceUrl: "https://www.uhs.nhs.uk/Media/UHS-website-2019/Patientinformation/Medicinestherapiesandanaesthetics/Wrist-exercises-3459-PIL.pdf" },
+  "forearm-rot-arom-1": { file: "forearm-rot-arom-1.webp", credit: "Northern Care Alliance NHS FT — Following wrist injury (PI_SU_1526)", sourceUrl: "https://www.northerncarealliance.nhs.uk/patient-information/patient-leaflets/othopaedic-surgery-following-wrist-injury" },
+  "prayer-stretch-wrist-1": { file: "prayer-stretch-wrist-1.webp", credit: "Royal United Hospitals Bath NHS FT — Wrist Exercises (HTH/024)", sourceUrl: "https://ruh.nhs.uk/patients/patient_information/HTH024_Wrist_Exercises.pdf" },
+  "hand-elevation-pump-1": { file: "hand-elevation-pump-1.webp", credit: "Worcestershire Acute Hospitals NHS Trust — In-cast Exercises for Fractures of the Wrist", sourceUrl: "https://www.worcsacute.nhs.uk/leaflets/in-cast-exercises-for-fractures-of-the-wrist/" },
+  "wrist-weight-bearing-progression-1": { file: "wrist-weight-bearing-progression-1.webp", credit: "Oxford University Hospitals NHS FT (content from University Hospitals Sussex) + Royal United Hospitals Bath (HTH018b)", sourceUrl: "https://www.ouh.nhs.uk/media/jsnlfzn4/102394wrist.pdf" },
+  "wrist-gmi-mirror-1": { file: "wrist-gmi-mirror-1.webp" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
