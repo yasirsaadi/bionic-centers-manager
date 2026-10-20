@@ -513,10 +513,14 @@ async function main() {
   const wCap = m164.CAPTIONS["wrist-weight-bearing-progression-1"];
   const wBody = exerciseBody({ ...wSeed, images: wSeed.images.map((i) => ({ ...i, ...wCap })) });
   const wParsed = parseExerciseBody(wBody);
-  same("ع.١ **الوصفُ الجديد يقبله المحرّرُ كما هو**، والترحيلُ يمسّ بطاقةً واحدة",
-    [Object.keys(m164.CAPTIONS), m164.SOURCES.filter((e) => e.images.some((i) => m164.CAPTIONS[i.key])).map((e) => e.code),
-      typeof wParsed === "string" ? wParsed : [wParsed.images[0].captionAr, wParsed.images[0].captionEn]],
-    [["wrist-weight-bearing-progression-1"], [wCode], [wCap.ar, wCap.en]]);
+  const hSeed = m152.EXERCISES.find((e) => e.code === "forearm-rotation-hammer")!;
+  const hCap = m164.CAPTIONS["forearm-rotation-hammer-1"];
+  const hParsed = parseExerciseBody(exerciseBody({ ...hSeed, images: hSeed.images.map((i) => ({ ...i, ...hCap })) }));
+  same("ع.١ **الوصفُ الجديد يقبله المحرّرُ كما هو**، والترحيلُ يمسّ البطاقتين وحدهما (المطرقةُ من ١٥٢ والاستنادُ من ١٦٢)",
+    [Object.keys(m164.CAPTIONS).sort(), m164.SOURCES.filter((e) => e.images.some((i) => m164.CAPTIONS[i.key])).map((e) => e.code).sort(),
+      typeof wParsed === "string" ? wParsed : [wParsed.images[0].captionAr, wParsed.images[0].captionEn],
+      typeof hParsed === "string" ? hParsed : [hParsed.images[0].captionAr, hParsed.images[0].captionEn]],
+    [["forearm-rotation-hammer-1", "wrist-weight-bearing-progression-1"], ["forearm-rotation-hammer", wCode], [wCap.ar, wCap.en], [hCap.ar, hCap.en]]);
   const wImages = async () => (await q(`SELECT images FROM physio_exercises WHERE code = $1`, [wCode])).rows[0]?.images;
   const wStamp = async () => (await q(`SELECT updated_at::text AS t FROM physio_exercises WHERE code = $1`, [wCode])).rows[0]?.t;
   await q(`UPDATE physio_exercises SET images = $1::jsonb WHERE code = $2`,
@@ -628,12 +632,14 @@ async function main() {
     const cervKeys = m151.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والسابعَ عشرَ (مرفقُ التنس): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها مع ترحيلها** (٢٠٢٦-١٠-١٧، بحث عنها المساعد على الويب، §4.ej)؛
     //  والمعادةُ بصورها هي.
+    //  **وأُزيلت صورةُ «الميل بالمطرقة» ٢٠٢٦-١٠-٢٠** (§4.ev): مصدرُها «كلُّ الحقوق محفوظة» — فعادت إلى «الصور المطلوبة»؛ وصورةُ «التدوير بالمطرقة» بُدّلت.
     const elbowKeys = m152.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والثامنَ عشرَ (تضيّقُ القناة القطنية): أربعُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها مع ترحيلها** (٢٠٢٦-١٠-١٧، بحث عنها المساعد على الويب، §4.ek)؛
     //  والمعادةُ بصورها هي.
     const lssKeys = m153.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والتاسعَ عشرَ (ألمُ الرضفة الفخذيّ): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها مع ترحيلها** (٢٠٢٦-١٠-١٧، بحث عنها المساعد على الويب، §4.en)؛
     //  والمعادةُ بصورها هي.
+    //  **وأُزيلت صورةُ «القرفصاء على ساقٍ إلى الكرسيّ» ٢٠٢٦-١٠-٢٠** (§4.ev): منشورُها «كلُّ الحقوق محفوظة» — فعادت إلى «الصور المطلوبة».
     const pfpKeys = m155.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     //  والعشرون (خشونةُ الورك): خمسُ بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت كلُّها مع ترحيلها** (٢٠٢٦-١٠-١٨، بحث عنها المساعد على الويب، §4.eo)؛
     //  والمعادةُ بصورها هي.
@@ -655,12 +661,12 @@ async function main() {
     //  والسادسُ والعشرون (شللُ العصب الوجهيّ): سبعُ بطاقاتٍ جديدة في منطقة «الوجه» بصورةٍ لكلٍّ منها — **وصلت السبعُ مع ترحيلها** (بحث عنها المساعد ورآها)؛ والمعادةُ بصورتها هي (§4.ev).
     const bellKeys = m163.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **وأربعٌ من خمسٍ للرابع والعشرين، وسبعٌ من ثمانٍ للخامس والعشرين، والسبعُ للسادس والعشرين، و«الرسغ المستقيم في العمل والبيت والصلاة» و«عصر المنشفة» وحدهما في «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، وأربعٌ من خمسٍ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، وأربعٌ من خمسٍ للتاسعَ عشرَ، والخمسُ للعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **وأربعٌ من خمسٍ للرابع والعشرين، وسبعٌ من ثمانٍ للخامس والعشرين، والسبعُ للسادس والعشرين، و«الرسغ المستقيم في العمل والبيت والصلاة» و«عصر المنشفة» و«الميل بالمطرقة» و«القرفصاء على ساقٍ إلى الكرسيّ» (أُزيلتا لأنّ مصدرَيهما يمنع النشر) وحدها في «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
         sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), drfKeys.length, notYet(drfKeys), bellKeys.length, notYet(bellKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], 8, ["towel-wring-1"], 7, [], ["neutral-wrist-tasks-1", "towel-wring-1"]]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, ["radial-deviation-hammer-1"], 4, [], 5, ["single-leg-squat-to-box-1"], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], 8, ["towel-wring-1"], 7, [], ["neutral-wrist-tasks-1", "radial-deviation-hammer-1", "single-leg-squat-to-box-1", "towel-wring-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;

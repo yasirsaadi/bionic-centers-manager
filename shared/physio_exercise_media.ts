@@ -265,8 +265,10 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  مرفقُ التنس (ترحيل ١٥٢، §4.ej) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها)، ورآها كلَّها قبل تسجيلها؛
   //  ورُدّت صورٌ تنسبها نشراتُها إلى مكتبة تمارين تجارية. والتحريكُ الذاتيّ صورةُ التجربة نفسِها (يدٌ تدفع لا حزام — والبطاقةُ كُتبت عليها).
   "wrist-extensor-isometric-1": { file: "wrist-extensor-isometric-1.webp", credit: "Leicestershire Partnership NHS Trust", sourceUrl: "https://www.leicspart.nhs.uk/wp-content/uploads/2022/07/514-Tennis-Elbow.pdf" },
-  "forearm-rotation-hammer-1": { file: "forearm-rotation-hammer-1.webp", credit: "Oxford University Hospitals NHS FT (Nuffield Orthopaedic Centre)", sourceUrl: "https://www.ouh.nhs.uk/media/lsjlro5o/85220advice.pdf" },
-  "radial-deviation-hammer-1": { file: "radial-deviation-hammer-1.webp", credit: "Nova Scotia Health", sourceUrl: "https://www.nshealth.ca/sites/default/files/documents/1349-2025.03.11.pdf" },
+  //  **بُدّلت ٢٠٢٦-١٠-٢٠ (§4.ev)**: كانت من مستشفيات أكسفورد وشروطُ موقعها «للبحث والدراسة الخاصّة والاستعمال الداخليّ وحده» — فصارت صورَ كوين فكتوريا (شروطُها تسمح بإعادة النشر
+  //  بذكر المصدر وحقِّ النشر): عصاً تُمسك من طرفها كالمطرقة. **وأُزيلت صورتا «الميل بالمطرقة» (نوفا سكوشا) و«القرفصاء على ساقٍ إلى الكرسيّ» (رايتنغتون، ١٥٥)**:
+  //  مصدراهما «كلُّ الحقوق محفوظة» (وفي مكتبة نوفا سكوشا رخصةٌ لغير التجاريّ) — فعادتا إلى «الصور المطلوبة».
+  "forearm-rotation-hammer-1": { file: "forearm-rotation-hammer-1.webp", credit: "© Queen Victoria Hospital NHS FT — Hand Therapy: Wrist – Intermediate, Active Control Through Range (0143)", sourceUrl: "https://www.qvh.nhs.uk/wp-content/uploads/2026/05/Hand-therapy-Wrist-Intermediate-Active-Control-0143.pdf" },
   "wrist-extensor-stretch-1": { file: "wrist-extensor-stretch-1.webp", credit: "NHS Greater Glasgow and Clyde", sourceUrl: "https://rightdecisions.scot.nhs.uk/media/je5g5qzk/tennis-elbow-exercise-booklet.pdf" },
   "elbow-self-mwm-1": { file: "elbow-self-mwm-1.webp", credit: "Coombes et al., BMC Musculoskelet Disord 2009 — CC BY 2.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC2707364/" },
   //  تضيّقُ القناة القطنية (ترحيل ١٥٣، §4.ek) — الأربعُ بحث عنها المساعد على الويب (لا شيءَ في Drive ولا في المسجَّل يُظهر حركاتها — «سحب الركبة
@@ -280,7 +282,6 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   //  والجريُ شكلان بلا كتابة — الأيسرُ المطلوب، ووصفُ الصورة يقوله؛ وهو والشريطُ صورتا بحثين برخصة CC BY.
   "quadriceps-stretch-standing-1": { file: "quadriceps-stretch-standing-1.webp", credit: "OrthoInfo — AAOS", sourceUrl: "https://www.orthoinfo.org/en/recovery/knee-conditioning-program/" },
   "standing-band-hip-abduction-1": { file: "standing-band-hip-abduction-1.webp", credit: "Arthritis Action", sourceUrl: "https://www.arthritisaction.org.uk/wp-content/uploads/2018/06/Hip-strength-exercises.pdf" },
-  "single-leg-squat-to-box-1": { file: "single-leg-squat-to-box-1.webp", credit: "Wrightington, Wigan and Leigh Teaching Hospitals NHS FT", sourceUrl: "https://www.wwl.nhs.uk/pdfreader/accessiblePDF/cnv-wwl-68ca8bce8ec828.01098451" },
   "running-cadence-1": { file: "running-cadence-1.webp", credit: "Wallace et al., Evol Hum Sci 2022 (drawing by Samantha Shields) — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9624512/" },
   "patellar-taping-1": { file: "patellar-taping-1.webp", credit: "Yoon & Son, Medicina 2022 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9501162/" },
   //  خشونةُ الورك (ترحيل ١٥٦، §4.eo) — الخمسُ بحث عنها المساعد على الويب (لا شيءَ في المسجَّل يُظهر حركاتها، وموصلُ Drive لم يكن متّصلاً في الجلسة)،
