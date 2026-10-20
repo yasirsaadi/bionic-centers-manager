@@ -58,6 +58,7 @@ import * as m150 from "./migrations/150_physio_frozen_shoulder_hbb_direction";
 import * as m160 from "./migrations/160_physio_prayer_image_captions";
 import * as m161 from "./migrations/161_physio_carpal_tunnel_detail";
 import * as m162 from "./migrations/162_physio_distal_radius_detail";
+import * as m163 from "./migrations/163_physio_bells_palsy_detail";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -96,6 +97,7 @@ const CONTENT: { name: string; sql: string; EXERCISES: ExerciseSeed[]; PROTOCOL:
   { name: m159.name, sql: m159.sql, EXERCISES: m159.EXERCISES, PROTOCOL: m159.PROTOCOL, template: true },
   { name: m161.name, sql: m161.sql, EXERCISES: m161.EXERCISES, PROTOCOL: m161.PROTOCOL, template: true },
   { name: m162.name, sql: m162.sql, EXERCISES: m162.EXERCISES, PROTOCOL: m162.PROTOCOL, template: true },
+  { name: m163.name, sql: m163.sql, EXERCISES: m163.EXERCISES, PROTOCOL: m163.PROTOCOL, template: true },
 ];
 //  بصمةُ ما يُنتجه ترحيلُ ١١٩ — مُشغَّلٌ على الإنتاج؛ وأداةُ البناء المشتركة تتوسّع لكلّ بروتوكول، فلا يتغيّر ما أنتجته له.
 const SQL119_SHA256 = "1a34f512f4e765e3f20b28364853eb31ebdf21625f81f52de564f6fa77dc24eb";
@@ -622,13 +624,15 @@ async function main() {
     //  والخامسُ والعشرون (ما بعد كسر الكعبرة البعيد): ثماني بطاقاتٍ جديدة بصورةٍ لكلٍّ منها — **وصلت سبعٌ مع ترحيلها** (ستٌّ من منشورات مستشفياتٍ بريطانية، وصندوقُ المرآة بملفّه المسجَّل — §4.eu)،
     //  **و«عصر المنشفة» في «الصور المطلوبة»** (لا صورةَ بترخيصٍ مقبول)؛ والمعادةُ بصورها هي.
     const drfKeys = m162.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
+    //  والسادسُ والعشرون (شللُ العصب الوجهيّ): سبعُ بطاقاتٍ جديدة في منطقة «الوجه» بصورةٍ لكلٍّ منها — BELL_IMAGES_NOTE؛ والمعادةُ بصورتها هي (§4.ev).
+    const bellKeys = m163.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
     same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **وأربعٌ من خمسٍ للرابع والعشرين، وسبعٌ من ثمانٍ للخامس والعشرين، و«الرسغ المستقيم في العمل والبيت والصلاة» و«عصر المنشفة» وحدهما في «الصور المطلوبة»**",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
-        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), drfKeys.length, notYet(drfKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], 8, ["towel-wring-1"], ["neutral-wrist-tasks-1", "towel-wring-1"]]);
+        sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), drfKeys.length, notYet(drfKeys), bellKeys.length, notYet(bellKeys), [...keys].sort()],
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], 8, ["towel-wring-1"], 7, ["eye-care-closure-1", "facial-mirror-retraining-1", "facial-self-massage-1", "lip-seal-cheek-puff-1", "synkinesis-dissociation-1", "facial-cheek-stretch-1", "facial-function-tasks-1"], ["eye-care-closure-1", "facial-cheek-stretch-1", "facial-function-tasks-1", "facial-mirror-retraining-1", "facial-self-massage-1", "lip-seal-cheek-puff-1", "neutral-wrist-tasks-1", "synkinesis-dissociation-1", "towel-wring-1"]]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;
