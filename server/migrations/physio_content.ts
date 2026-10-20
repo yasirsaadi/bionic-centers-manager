@@ -18,7 +18,7 @@ type Ev = "recommended" | "optional" | "not_recommended";
 export interface ExerciseSeed {
   code: string; nameAr: string; nameEn: string;
   kind: "mobility" | "stretch" | "strength" | "motor_control" | "endurance" | "aerobic" | "balance" | "functional" | "breathing" | "neural";
-  region: "lumbar" | "thoracic" | "cervical" | "shoulder" | "elbow" | "wrist_hand" | "hip" | "knee" | "ankle_foot" | "whole_body";
+  region: "lumbar" | "thoracic" | "cervical" | "shoulder" | "elbow" | "wrist_hand" | "hip" | "knee" | "ankle_foot" | "whole_body" | "face";
   perSide?: boolean; homeSuitable?: boolean;
   sets?: number; reps?: number; hold?: number; rest?: number;
   purpose: Bi; start: Bi; steps: [string[], string[]]; cues: [string[], string[]];

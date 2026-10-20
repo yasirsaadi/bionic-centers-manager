@@ -28,16 +28,16 @@ export const EXERCISE_KIND_LABELS_EN: Record<ExerciseKind, string> = {
 export const isExerciseKind = (v: unknown): v is ExerciseKind => typeof v === "string" && (EXERCISE_KINDS as readonly string[]).includes(v);
 
 export const BODY_REGIONS = [
-  "lumbar", "thoracic", "cervical", "shoulder", "elbow", "wrist_hand", "hip", "knee", "ankle_foot", "whole_body",
+  "lumbar", "thoracic", "cervical", "shoulder", "elbow", "wrist_hand", "hip", "knee", "ankle_foot", "whole_body", "face",
 ] as const;
 export type BodyRegion = (typeof BODY_REGIONS)[number];
 export const BODY_REGION_LABELS: Record<BodyRegion, string> = {
   lumbar: "أسفل الظهر", thoracic: "أعلى الظهر", cervical: "الرقبة", shoulder: "الكتف", elbow: "المرفق", wrist_hand: "الرسغ واليد",
-  hip: "الورك", knee: "الركبة", ankle_foot: "الكاحل والقدم", whole_body: "الجسم كلّه",
+  hip: "الورك", knee: "الركبة", ankle_foot: "الكاحل والقدم", whole_body: "الجسم كلّه", face: "الوجه",
 };
 export const BODY_REGION_LABELS_EN: Record<BodyRegion, string> = {
   lumbar: "Lumbar spine", thoracic: "Thoracic spine", cervical: "Cervical spine", shoulder: "Shoulder", elbow: "Elbow",
-  wrist_hand: "Wrist & hand", hip: "Hip", knee: "Knee", ankle_foot: "Ankle & foot", whole_body: "Whole body",
+  wrist_hand: "Wrist & hand", hip: "Hip", knee: "Knee", ankle_foot: "Ankle & foot", whole_body: "Whole body", face: "Face",
 };
 export const isBodyRegion = (v: unknown): v is BodyRegion => typeof v === "string" && (BODY_REGIONS as readonly string[]).includes(v);
 
