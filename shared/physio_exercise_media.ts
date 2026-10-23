@@ -364,6 +364,19 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "cp-standing-frame-abduction-1": { file: "cp-standing-frame-abduction-1.webp", credit: "Rehab Management — Case study: standing program prevents surgery (2022)", sourceUrl: "https://rehabpub.com/mobility/standing-systems/case-study-standing-program-prevents-surgery/" },
   "cp-afo-wear-skin-1": { file: "cp-afo-wear-skin-1.webp", credit: "Guner et al., Children (Basel) 2023 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC10137149/" },
   "cp-24h-postural-care-1": { file: "cp-24h-postural-care-1.webp", credit: "© NHS Grampian — A Guide to 24 Hour Postural Management (CGD 150534), p. 6", sourceUrl: "https://www.rach.scot.nhs.uk/wp-content/uploads/2023/05/Parent-Booklet-FINAL-Draft-1.pdf" },
+  //  **صورُ «إصابة الحبل الشوكي» العشر** (٢٠٢٦-١٠-٢٣، §4.ex — بحث عنها المساعد ورآها كلَّها، وDrive فُحص ولا جديدَ فيه): منشورُ MSKTC بإذن نسخه مع الإسناد، وثلاثُ لقطاتٍ
+  //  من مقاطع يوتيوب لأصحابها المصابين، وثلاثٌ من ويكيميديا (قبضةُ الوتر صورتان لصاحبهما جنباً إلى جنب، والمسجدُ النبويّ مقصوص)، ورسمُ Healthwise، وكتيّبُ Parkwood،
+  //  وبطاقةُ مؤسّسة ريف بالعربية — بقرار المالك: الاستعمالُ خاصّ فلا تُردّ صورةٌ لحقوقها، والمصدرُ يُكتب.
+  "sci-pressure-relief-1": { file: "sci-pressure-relief-1.webp", credit: "MSKTC / Northwest Regional SCI System, University of Washington — Pressure Relief (© 2009 MSKTC, may be reproduced with attribution), p. 2", sourceUrl: "https://sci.washington.edu/info/pamphlets/msktc-pressure_relief.asp" },
+  "sci-sliding-board-transfer-1": { file: "sci-sliding-board-transfer-1.webp", credit: "Rachelle Chapman, YouTube — sliding-board transfer (video frame)", sourceUrl: "https://www.youtube.com/watch?v=Hzw9cZDhYRo" },
+  "sci-standing-frame-1": { file: "sci-standing-frame-1.webp", credit: "Em Quattrocchi, YouTube — EasyStand standing frame (video frame)", sourceUrl: "https://www.youtube.com/watch?v=uaqklouzhik" },
+  "sci-tenodesis-grasp-1": { file: "sci-tenodesis-grasp-1.webp", credit: "plastische_erasmusmc, Wikimedia Commons — CC BY-SA 3.0 (Tenodese hand + Wrist related tenodesis effect, second step)", sourceUrl: "https://commons.wikimedia.org/wiki/File:Tenodese_hand.JPG" },
+  "sci-assisted-cough-1": { file: "sci-assisted-cough-1.webp", credit: "© 2022 Healthwise — via HealthLinkBC, Spinal cord injury: abdominal thrust assist (assisted cough)", sourceUrl: "https://www.healthlinkbc.ca/healthwise/spinal-cord-injury-abdominal-thrust-assist-assisted-cough" },
+  "sci-kafo-walking-1": { file: "sci-kafo-walking-1.webp", credit: "ray3578, Wikimedia Commons — CC BY-SA 4.0", sourceUrl: "https://commons.wikimedia.org/wiki/File:Crutches_and_swinging_leg_braces.jpg" },
+  "sci-bwstt-locomotor-1": { file: "sci-bwstt-locomotor-1.webp", credit: "© St. Joseph's Health Care London – Parkwood Institute — Locomotor Training Program brochure, p. 1", sourceUrl: "https://sjhc.london.on.ca/media/10317/download" },
+  "sci-autonomic-dysreflexia-1": { file: "sci-autonomic-dysreflexia-1.webp", credit: "© Christopher & Dana Reeve Foundation with Kennedy Krieger ICSCI — Autonomic Dysreflexia card (Arabic), p. 1", sourceUrl: "https://www.christopherreeve.org/wp-content/uploads/2024/04/ArabicADGuide-web.pdf" },
+  "sci-long-sitting-bed-mobility-1": { file: "sci-long-sitting-bed-mobility-1.webp", credit: "Wheelchair Wellness, YouTube — long sitting in bed (video frame)", sourceUrl: "https://www.youtube.com/watch?v=jmhJlVkT584" },
+  "sci-wheelchair-prayer-1": { file: "sci-wheelchair-prayer-1.webp", credit: "Indonesiagood, Wikimedia Commons — CC BY 4.0 (cropped)", sourceUrl: "https://commons.wikimedia.org/wiki/File:Masjid_Nabawi_(Umroh_Ramadhan_2023)-19.jpg" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
