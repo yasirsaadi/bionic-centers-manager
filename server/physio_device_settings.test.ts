@@ -146,8 +146,10 @@ async function main() {
   same("أ.٦ **وكلُّ سطر موجاتٍ صادمة في المكتبة أسبوعيّ** — المزروعةُ كذلك",
     (await q(`SELECT count(*) FILTER (WHERE pd.every_days IS DISTINCT FROM 7)::int AS n FROM physio_protocol_devices pd JOIN devices d ON d.id = pd.device_id
         WHERE d.code = 'shockwaves'`)).rows[0].n, 0);
-  const refDup = (await q(`SELECT p.code, e->>'url' AS url, count(*)::int AS n FROM physio_protocols p, jsonb_array_elements(p."references") e
-      WHERE e->>'url' = ANY($1::text[]) GROUP BY 1, 2`, [REFS.map((r) => r.url)])).rows;
+  //  في بروتوكولها هي — وبروتوكولٌ آخر يذكر المرجعَ نفسَه بحقّه (الرقبةُ الارتجاجية تذكر مرجعَ الرقبة، §4.fn) ليس تكراراً.
+  const refDup = (await q(`SELECT p.code, e->>'url' AS url, count(*)::int AS n FROM physio_protocols p, jsonb_array_elements(p."references") e,
+      unnest($1::text[], $2::text[]) AS r(code, url) WHERE p.code = r.code AND e->>'url' = r.url GROUP BY 1, 2`,
+    [REFS.map((r) => r.code), REFS.map((r) => r.url)])).rows;
   same("أ.٧ **ومراجعُ الدليل الجديدة في بروتوكولاتها مرّةً واحدة**",
     [refDup.length, refDup.every((r) => r.n === 1)], [REFS.length, true]);
 
