@@ -66,7 +66,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["أيُّ علامةٍ من بطاقة «علامات الخطر بعد حادث السيارة» ⟵ الطوارئ أو الطبيب في اليوم نفسه.", "Any sign on the 'warning signs after a car crash' card → the emergency department or the doctor the same day."],
     equipment: ["البطاقةُ مطبوعة؛ ولا طوق.", "The printed card; no collar."],
     doseNote: ["٥ التفاتاتٍ وإيماءاتٍ لكلّ اتّجاه كلَّ ساعة يقظة (اقتراحٌ مشتقّ من Rosenfeld 2003)، وتُراجَع في كلّ جلسة؛ وزياراتُ المسار «أ» في الأسبوع ٠ و١–٢ و٦ (JOSPT 2017 · Rebbeck 2016).", "5 turns and nods each way every waking hour (a proposal derived from Rosenfeld 2003), reviewed at every session; the pathway-A visits are at week 0, week 1–2 and week 6 (JOSPT 2017 · Rebbeck 2016)."],
-    images: [{ key: "wad-act-as-usual-first-days-1", ar: "رجلٌ في بيته يضع طوقاً ليّناً للرقبة في درج وهو يلتفت برأسه بلطف لينظر فوق كتفه، وأحدُ أقاربه بجانبه", en: "A man at home putting a soft neck collar away in a drawer while gently turning his head to look over his shoulder, a relative beside him", search: "whiplash advice stay active no soft collar neck movement" }],
+    images: [{ key: "wad-act-as-usual-first-days-1", ar: "ثلاثُ صور: طوقُ رقبةٍ طريٌّ أصفر على رجلٍ وعليه علامةُ خطأٍ حمراء؛ ورسمٌ لشابٍّ يلتفت برأسه فوق كتفه وسهمٌ يبيّن الالتفات؛ ورجلٌ يمشي في الشارع", en: "Three pictures: a yellow soft neck collar on a man, crossed out in red; a line drawing of a young man turning his head to look over his shoulder, with an arrow showing the turn; and a man walking along a street", search: "whiplash advice stay active no soft collar neck movement" }],
   },
   {
     code: "wad-head-relocation-laser", nameAr: "تدريبُ إعادة الرأس إلى الوسط بمؤشّرٍ ليزريّ", nameEn: "Head relocation training with a laser pointer",
@@ -105,7 +105,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["دوخةٌ تبقى أكثرَ من دقيقة، أو غثيان، أو اضطرابٌ في الرؤية، أو ألمٌ فوق قاعدة الأعراض.", "Dizziness lasting more than a minute, nausea, visual disturbance, or pain above the symptom rule."],
     equipment: ["مؤشّرٌ ليزريّ على عصابة رأس (أو ضوءُ الهاتف مثبَّتاً)، وهدفٌ ورقيّ.", "A laser pointer on a headband (or a phone torch fixed in place), and a paper target."],
     doseNote: ["٥ مرّاتٍ لكلّ اتّجاه × ٢–٣ دورات يومياً في البيت (اقتراح)؛ وبإشرافٍ مرّةً في الأسبوع ستّةَ أسابيع (Jull 2007b) أو ثلاثاً في الأسبوع أربعةَ أسابيع (Canli 2025).", "5 repetitions each way × 2–3 rounds daily at home (a proposal); supervised once a week for six weeks (Jull 2007b), or three times a week for four weeks (Canli 2025)."],
-    images: [{ key: "wad-head-relocation-laser-1", ar: "امرأةٌ جالسةٌ أمام حائطٍ مغمضةُ العينين، ومؤشّرٌ ليزريّ صغير على عصابة رأسها يضع نقطةً حمراء قربَ هدفٍ دائريّ على بعد ٩٠ سم", en: "A woman seated facing a wall with her eyes closed, a small laser on a headband putting a red dot near a bull's-eye target 90 cm away", search: "cervical joint position error laser head relocation training target" }],
+    images: [{ key: "wad-head-relocation-laser-1", ar: "امرأةٌ جالسةٌ مستقيمةً على كرسيّ، على عينيها غطاءٌ وعلى جبهتها عصابةٌ فيها مؤشّرُ ليزر صغير، وشعاعُه الأحمر على هدفٍ بحلقاتٍ على الحائط أمامها على بعد ٩٠ سم، والهدفُ مكبَّراً إلى اليمين", en: "A woman sitting upright on a chair, wearing an eye mask and a headband with a small laser on her forehead; its red beam hits a ringed target on the wall 90 cm in front of her, with the target enlarged on the right", search: "cervical joint position error laser head relocation training target" }],
   },
   {
     code: "wad-gaze-stability-eye-head", nameAr: "تناسقُ العين والرأس وثباتُ النظر", nameEn: "Eye–head coordination and gaze stability",
@@ -144,7 +144,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["دوخةٌ لا تهدأ خلال دقيقة، أو غثيان، أو رؤيةٌ مزدوجة، أو صداعٌ جديد.", "Dizziness that does not settle within a minute, nausea, double vision, or a new headache."],
     equipment: ["بطاقتان عليهما حروف، وقلم.", "Two letter cards, and a pen."],
     doseNote: ["كلُّ جزءٍ ٥–١٠ مرّات أو ٢٠–٣٠ ثانية، مرّتين أو ثلاثاً في اليوم (اقتراح)؛ وفي التجربة بإشرافٍ ثلاثاً في الأسبوع أربعةَ أسابيع (Canli 2025).", "Each part 5–10 repetitions or 20–30 seconds, two or three times a day (a proposal); the trial supervised it three times a week for four weeks (Canli 2025)."],
-    images: [{ key: "wad-gaze-stability-eye-head-1", ar: "رجلٌ جالسٌ يثبّت عينيه على بطاقة حرفٍ بطول الذراع وهو يدير رأسه ببطء، والأخصائيُّ يمسك بطاقةً ثانية لقفزات العين", en: "A man seated keeping his eyes on a letter card at arm's length while slowly turning his head, the therapist holding a second card for the eye jumps", search: "gaze stability exercise head turns letter card neck pain" }],
+    images: [{ key: "wad-gaze-stability-eye-head-1", ar: "رجلٌ جالسٌ على حافّة سرير العلاج ويداه ممدودتان أمامه تمسكان قلماً أحمر على امتداد الذراعين وعيناه عليه: في الصفّ الأعلى يدير رأسَه إلى جانبٍ ثمّ الوسط ثمّ الجانب الآخر، وفي الأسفل يرفعه ثمّ الوسط ثمّ يخفضه", en: "A man sitting on the edge of a treatment table with his arms straight out, holding a red pencil at arm's length and keeping his eyes on it: top row, his head turns to one side, to the centre and to the other side; bottom row, it tilts up, to the centre and down", search: "gaze stability exercise head turns letter card neck pain" }],
   },
   {
     code: "wad-balance-head-turns", nameAr: "التوازنُ واقفاً مع التفات الرأس", nameEn: "Standing balance with head turns",
@@ -183,7 +183,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["فقدُ التوازن، أو دوخةٌ لا تهدأ خلال دقيقة.", "Loss of balance, or dizziness that does not settle within a minute."],
     equipment: ["زاويةُ غرفة، وكرسيّ، ووسادة.", "A room corner, a chair, and a cushion."],
     doseNote: ["٣ × ٣٠ ثانية لكلّ وضعية يومياً (اقتراح)، وفي التجربة ستّةُ أسابيع (Hansson 2006)؛ وفي البيت بحضور أحد الأهل.", "3 × 30 seconds per position daily (a proposal), six weeks in the trial (Hansson 2006); at home with a family member nearby."],
-    images: [{ key: "wad-balance-head-turns-1", ar: "امرأةٌ واقفةٌ والقدمُ أمام القدم في زاوية غرفةٍ وكرسيٌّ أمامها، تلتفت برأسها إلى جهة، وأحدُ أقاربها قريبٌ منها", en: "A woman standing heel-to-toe in the corner of a room with a chair in front, turning her head to one side, a relative close by", search: "tandem stance head turns balance exercise corner chair" }],
+    images: [{ key: "wad-balance-head-turns-1", ar: "الرجلُ نفسُه واقفاً في زاوية الغرفة للأمان: في الصفّ الأعلى القدمان متلاصقتان والرأسُ يلتفت إلى جانبٍ ثمّ الأمام ثمّ الجانب الآخر، وفي الأسفل قدمٌ أمام الأخرى بالالتفاتات الثلاث نفسِها", en: "The same man standing in the corner of a room for safety: top row, feet together with the head turned one way, straight ahead, then the other way; bottom row, one foot in front of the other with the same three head positions", search: "tandem stance head turns balance exercise corner chair" }],
   },
   {
     code: "wad-neck-specific-resisted-endurance", nameAr: "تمارينُ الرقبة الخاصّة للتحمّل بالمطّاط أو البكرة", nameEn: "Neck-specific endurance training with a band or pulley",
@@ -222,7 +222,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ فوق قاعدة الأعراض، أو تنميلٌ يزيد في الذراع، أو دوخة.", "Pain above the symptom rule, increasing tingling in the arm, or dizziness."],
     equipment: ["مطّاطٌ خفيف أو حزامُ رأس، وبكرةٌ إن وُجدت.", "A light elastic band or head harness, and a pulley if available."],
     doseNote: ["الدرجةُ الأولى ٣ × ٥ يومياً، والثانية ٣ × ١٠، والثالثة حتى ٣ × ٣٠ لكلّ اتّجاه؛ وجلستان بإشرافٍ في الأسبوع اثني عشرَ أسبوعاً مع البيت (Ludvigsson 2015).", "Level 1 3 × 5 daily, level 2 3 × 10, and level 3 up to 3 × 30 per direction; two supervised sessions a week for twelve weeks plus home (Ludvigsson 2015)."],
-    images: [{ key: "wad-neck-specific-resisted-endurance-1", ar: "رجلٌ جالسٌ مستقيماً ومطّاطٌ خفيف حول مؤخّرة رأسه مثبَّتٌ بباب، يومئ ببطء إلى الأمام ضدّه", en: "A man sitting upright with a light elastic band around the back of his head, anchored to a door, slowly nodding forward against it", search: "neck specific exercise resistance band head whiplash endurance" }],
+    images: [{ key: "wad-neck-specific-resisted-endurance-1", ar: "امرأةٌ واقفةٌ وشريطٌ مطّاطيّ حول رأسها: في الأعلى يساراً يشدّ الشريطُ من الخلف وهي تثني رأسَها إلى الأمام، وفي الأعلى يميناً يشدّ من الأمام وهي تثبّت رأسَها إلى الخلف، وفي الأسفل يشدّ من جانبها وهي تدير رأسَها بعيداً عنه", en: "A woman standing with an elastic band looped around her head: top left, the band pulls from behind as she bends her head forward; top right, it pulls from in front as she holds her head back; bottom, it pulls from her side as she turns her head away from it", search: "neck specific exercise resistance band head whiplash endurance" }],
   },
   {
     code: "wad-stress-inoculation-skills", nameAr: "تهدئةُ الضغط بعد الحادث: التنفّسُ والاسترخاءُ وأفكارُ التكيّف", nameEn: "Calming the stress after the crash: breathing, relaxation and coping thoughts",
@@ -261,7 +261,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ذكرياتٌ تقتحم بقوّة، أو ذعر، أو يأس، أو أفكارٌ بإيذاء النفس ⟵ الأخصائيُّ النفسيّ في اليوم نفسه.", "Intrusive flashbacks, panic, hopelessness or thoughts of self-harm → the psychologist the same day."],
     equipment: ["دفتر.", "A diary."],
     doseNote: ["١٠–١٥ دقيقة يومياً في البيت (اقتراح)، تُعلَّم في ستّ جلساتٍ في الأسابيع الستّة الأولى (Sterling 2019 · Elphinston 2020).", "10–15 minutes daily at home (a proposal), taught over six sessions in the first six weeks (Sterling 2019 · Elphinston 2020)."],
-    images: [{ key: "wad-stress-inoculation-skills-1", ar: "امرأةٌ في بيتها جالسةٌ على كرسيٍّ مغمضةُ العينين، يدٌ على صدرها ويدٌ على بطنها، ودفترٌ صغير على الطاولة", en: "A woman at home sitting on a chair with her eyes closed, one hand on her chest and one on her belly, a small diary on the table", search: "relaxation breathing stress management after car accident" }],
+    images: [{ key: "wad-stress-inoculation-skills-1", ar: "شابّةٌ جالسةٌ مستقيمةً على حافّة سرير العلاج وقدماها على الأرض، يدُها اليمنى على صدرها واليسرى على بطنها للتنفّس البطنيّ البطيء", en: "A young woman sitting upright on the edge of a treatment couch with her feet on the floor, her right hand on her chest and her left hand on her belly for slow belly breathing", search: "relaxation breathing stress management after car accident" }],
   },
   {
     code: "wad-graded-car-travel", nameAr: "العودةُ إلى السيارة: المقعدُ ومسندُ الرأس وحزامُ الأمان والقيادةُ بالتدريج", nameEn: "Back in the car: seat, headrest, seat belt and a graded return to driving",
@@ -300,7 +300,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["لا تستطيع الالتفاتَ بما يكفي لتنظر بأمان، أو دواءٌ يُنعس ⟵ لا تقُد.", "You cannot turn far enough to check safely, or a medicine makes you drowsy → do not drive."],
     equipment: ["سيارةُ المريض.", "The patient's car."],
     doseNote: ["تدرّبٌ قصير يومياً يُبنى في ٢–٤ أسابيع (اقتراح).", "Short daily practice built up over 2–4 weeks (a proposal)."],
-    images: [{ key: "wad-graded-car-travel-1", ar: "رجلٌ في سيارةٍ يضبط مسندَ الرأس حتى يحاذي أعلاه أعلى رأسه، وحزامُ الأمان مربوط، وشارعٌ عراقيّ في الخارج", en: "A man in a car adjusting the headrest so its top is level with the top of his head, seat belt on, an Iraqi street outside", search: "head restraint adjustment top of head seat belt driver" }],
+    images: [{ key: "wad-graded-car-travel-1", ar: "رسمٌ جانبيّ لامرأةٍ جالسةٍ في مقعد السيارة وحزامُ الأمان على صدرها، ومسندُ الرأس مرفوعٌ حتى يحاذي أعلاه أعلى رأسها خلفه مباشرة", en: "A side-view drawing of a woman sitting in a car seat with the seat belt across her chest; the head restraint is raised so its top is level with the top of her head, just behind it", search: "head restraint adjustment top of head seat belt driver" }],
   },
   {
     code: "wad-prayer-neck-friendly", nameAr: "الصلاةُ والوضوءُ والرقبةُ تؤلم", nameEn: "Prayer and wudu with a sore neck",
@@ -339,7 +339,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["دوخةٌ عند النظر إلى الأعلى أو الالتفات، أو تنميلٌ في الذراع ⟵ اجلس وأخبر الأخصائيّ.", "Dizziness on looking up or turning, or tingling in the arm → sit down and tell the specialist."],
     equipment: ["سجّادةُ الصلاة، ومقعدٌ صغير.", "A prayer mat, and a low stool."],
     doseNote: ["ركعتان للتدريب في الجلسة (اقتراح)، والصلواتُ الخمس في اليوم تدريبٌ على الحركة (اقتراح).", "Two practice rak'ahs in the session (a proposal), with the five daily prayers serving as movement practice (a proposal)."],
-    images: [{ key: "wad-prayer-neck-friendly-1", ar: "رجلٌ على سجّادة الصلاة يدير رأسه بلطفٍ إلى اليمين في آخر الصلاة (التسليم)، ومقعدٌ صغير بجانبه", en: "A man on a prayer mat gently turning his head to the right at the end of prayer (taslim), with a low stool nearby", search: "Muslim prayer taslim head turn neck pain" }],
+    images: [{ key: "wad-prayer-neck-friendly-1", ar: "شابٌّ بطاقيّةٍ بيضاء جالسٌ على سجّادة الصلاة في آخر الصلاة، يدير رأسَه بلطفٍ إلى يمينه للتسليم ويداه على فخذيه", en: "A young man in a white prayer cap kneeling on a prayer mat at the end of prayer, gently turning his head to his right for the taslim, with his hands resting on his thighs", search: "Muslim prayer taslim head turn neck pain" }],
   },
   {
     code: "wad-sleep-pillow-floor", nameAr: "وضعيةُ النوم وارتفاعُ الوسادة (على السرير أو فراش الأرض)", nameEn: "Sleeping position and pillow height (bed or floor mattress)",
@@ -378,7 +378,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلُ الذراعين عند الاستيقاظ ⟵ غيّر الوضعيةَ وأخبر الأخصائيّ.", "Numb arms on waking → change the position and tell the specialist."],
     equipment: ["وسادة، ومنشفة.", "A pillow, and a towel."],
     doseNote: ["كلَّ ليلة، ويُراجَع في الجلسة الثانية (اقتراح).", "Every night, checked at the second session (a proposal)."],
-    images: [{ key: "wad-sleep-pillow-floor-1", ar: "امرأةٌ مستلقيةٌ على جنبها على فراشٍ على الأرض، ومنشفةٌ مطويّة تحت وسادةٍ رقيقة حتى يكون رأسُها على استقامة عمودها", en: "A woman lying on her side on a floor mattress, a folded towel under a thin pillow so her head is level with her spine", search: "side lying pillow height neck alignment sleeping position" }],
+    images: [{ key: "wad-sleep-pillow-floor-1", ar: "رسمٌ لرجلٍ مسنّ نائمٍ على جنبه على وسادةٍ تُبقي رأسَه مستوياً، وخطٌّ متقطّع يبيّن أنّ أنفَه على خطّ منتصف جسمه (أعلى)، والرجلُ نفسُه مستلقياً على ظهره ورأسُه على وسادة (أسفل)", en: "A drawing of an older man lying on his side on a pillow that keeps his head level, with a dashed line showing his nose in line with the middle of his body (top), and the same man lying on his back with his head on a pillow (bottom)", search: "side lying pillow height neck alignment sleeping position" }],
   },
   {
     code: "wad-warning-signs-after-crash", nameAr: "علاماتُ الخطر بعد حادث السيارة: متى تذهب إلى الطوارئ", nameEn: "Warning signs after a car crash: when to go to the emergency department",
@@ -415,7 +415,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["أيُّ علامةٍ فيها ⟵ لا جلسةَ اليوم، والطوارئ أو الطبيب في اليوم نفسه.", "Any sign on it → no session today, and the emergency department or the doctor the same day."],
     equipment: ["البطاقةُ مطبوعةً بالعربية وبالصور.", "The card printed in Arabic with pictures."],
     doseNote: ["تُعطى مرّةً، وتُراجَع في كلّ مراجعة.", "Given once, and re-checked at every review."],
-    images: [{ key: "wad-warning-signs-after-crash-1", ar: "بطاقةٌ بسيطة برموز: رقبةٌ عليها علامةٌ حمراء، ورأسٌ حوله دوائرُ الدوخة، ويدٌ فيها تنميل، ورمزُ سيارة إسعاف، مكتوبةٌ بالعربية", en: "A simple pictogram card: a neck with a red mark, a head with dizziness spirals, a hand with tingling and an ambulance symbol, labelled in Arabic", search: "neck injury red flags warning signs patient leaflet" }],
+    images: [{ key: "wad-warning-signs-after-crash-1", ar: "بطاقةُ تحذيرٍ بإطارٍ أحمر من الرموز: رقبةٌ بومضة ألمٍ حمراء، ويدٌ بأصابعَ منمّلة، وامرأةٌ بصداعٍ شديدٍ مفاجئ، ووجهٌ دائخٌ بعينين حلزونيّتين، وصبيٌّ يتقيّأ، وصبيٌّ يمسك صدرَه من الألم، وسهمٌ أحمر إلى سيارة إسعافٍ عليها هلالٌ أحمر", en: "A red-framed warning card of pictograms: a neck with a red flash of pain, a hand with tingling fingers, a woman with a sudden severe headache, a dizzy face with spiral eyes, a boy vomiting and a boy holding his painful chest, with a red arrow pointing to an ambulance marked with a red crescent", search: "neck injury red flags warning signs patient leaflet" }],
   },
 ];
 
