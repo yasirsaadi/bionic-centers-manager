@@ -147,14 +147,14 @@ export const EXERCISES: ExerciseSeed[] = [
     steps: [[
       "افحصوا جلدَ الذراع والإبط واليد.",
       "ألبسوه كمّاً قطنياً رقيقاً.",
-      "ضعوا الذراعَ كما علّمها أخصائيُّ المساند: المرفقُ مثنيّ والكفُّ إلى الأعلى والكتفُ مدوّرٌ إلى الخارج.",
+      "ضعوا الذراعَ كما علّمها أخصائيُّ المساند: الجبيرةُ على باطن الذراع والمرفقُ مستقيم والكفُّ إلى الأعلى، ثمّ أديروا الكتفَ إلى الخارج بأيديكم واربطوا الأحزمةَ إلى حزام الخصر لتُبقيه — ولا تُشدّ الأحزمةُ لتدير الكتف (ومشدُّ الصدر والذراع وحده يثني المرفق).",
       "اربطوا الأحزمةَ بحيث يمرّ إصبعٌ تحت كلّ حزام.",
       "عند النزع افحصوا الجلد، ثمّ التحريكُ السلبيّ (بطاقةُ تحريك الأهل).",
       "أحضروا الجبيرةَ في كلّ زيارة لتُضبط — أوّلُ فحصٍ بعد ٢–٣ أسابيع (Cawthorn 2023).",
     ], [
       "Check the skin of the arm, armpit and hand.",
       "Put on a thin cotton sleeve.",
-      "Place the arm as the orthotist taught: elbow bent, palm up and shoulder turned out.",
+      "Place the arm as the orthotist taught: the splint along the inside of the arm with the elbow straight and the palm up, then turn the shoulder out with your hands and fasten the straps to the waistband to hold it — the straps are not pulled to turn the shoulder (only the thoracobrachial brace bends the elbow).",
       "Fasten the straps so that one finger fits under each.",
       "On removal check the skin, then do the passive stretches (the parent range-of-motion card).",
       "Bring the splint to every visit to be adjusted — the first check after 2–3 weeks (Cawthorn 2023).",
