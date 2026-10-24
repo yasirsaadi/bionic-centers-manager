@@ -61,7 +61,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ حادّ في قاعدة الإبهام يبقى أكثرَ من ساعةٍ إلى ساعتين، أو مفصلٌ حارٌّ متورّم ⟵ قاعدةُ النوبة.", "Sharp thumb-base pain lasting more than one to two hours, or a hot swollen joint → the flare rule."],
     equipment: ["طاولة، ومنشفة.", "A table, and a towel."],
     doseNote: ["٥–١٠ مرّات لكلّ حركة × مجموعةٌ واحدة، مرّةً إلى مرّتين في اليوم (اقتراح؛ والتجاربُ أوصت بالتمرين يومياً أو مرّتين إلى ثلاثٍ في الأسبوع — Osteras 2017).", "5–10 repetitions per movement × one set, once or twice a day (a proposal; the trials instructed exercise daily or two to three times a week — Osteras 2017)."],
-    images: [{ key: "handoa-thumb-opposition-mobility-1", ar: "يدُ امرأةٍ مسنّة على طاولة تلمس بطرف الإبهام طرفَ كلّ إصبعٍ بحلقةٍ مستديرة، وأسهمٌ تُظهر رفعَ الإبهام عن الكفّ وإبعادَه إلى الجانب", en: "An older woman's hand on a table touching the thumb tip to each fingertip in a round ring, with arrows showing the thumb lifted away from the palm and moved out to the side", search: "thumb opposition exercise osteoarthritis palmar radial abduction" }],
+    images: [{ key: "handoa-thumb-opposition-mobility-1", ar: "في الصفّ الأعلى يدٌ على طاولةٍ زرقاء يلمس طرفُ إبهامها أطرافَ السبّابة والوسطى والبنصر والخنصر بالتتابع، كلَّ مرّةٍ بدائرةٍ مستديرة؛ وفي الأسفل الإبهامُ مرفوعٌ بعيداً عن الكفّ وسهمٌ مزدوج، واليدُ على جانب الخنصر والإبهامُ مرفوعٌ إلى الأعلى", en: "Top row: a hand on a blue table touching the thumb tip to the index, middle, ring and little fingertips in turn, each time making a round O; bottom row: the thumb lifted away from the palm with a double arrow, and the hand on its little-finger side with the thumb lifted up", search: "thumb opposition exercise osteoarthritis palmar radial abduction" }],
   },
   {
     code: "handoa-thumb-web-space-stretch", nameAr: "تمطيطُ المسافة بين الإبهام والسبّابة (العضلةُ المقرِّبة للإبهام)", nameEn: "First web-space (thumb adductor) stretch",
@@ -96,7 +96,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في مفصل الإبهام الأوسط، أو تنميل.", "Pain in the thumb's middle joint, or tingling."],
     equipment: ["علبةٌ أو قنينةٌ كبيرة.", "A large can or bottle."],
     doseNote: ["٣ × ٢٠–٣٠ ثانية، مرّةً إلى مرّتين في اليوم (اقتراح؛ والبرنامجُ المجرَّب يتبع إرشادَ التمطيط للكلّية الأمريكية للطبّ الرياضيّ — Kjeken 2015).", "3 × 20–30 seconds, once or twice a day (a proposal; the tested programme follows the American College of Sports Medicine flexibility guidance — Kjeken 2015)."],
-    images: [{ key: "handoa-thumb-web-space-stretch-1", ar: "يدٌ تُوسّع بلطفٍ المسافةَ بين الإبهام والسبّابة في اليد الأخرى بإمساك عظم مشط الإبهام لا طرفه", en: "One hand gently widening the thumb–index web space of the other hand by holding the thumb's metacarpal, not its tip", search: "thumb web space stretch adductor pollicis" }],
+    images: [{ key: "handoa-thumb-web-space-stretch-1", ar: "رسمٌ ليدٍ من ظهرها والأصابعُ إلى الأسفل، واليدُ الأخرى تمسك الإبهامَ قرب قاعدته وتبعده عن السبّابة لتوسيع ما بينهما", en: "A line drawing of a hand seen from the back with the fingers pointing down; the other hand holds the thumb near its base and draws it away from the index finger to widen the web space", search: "thumb web space stretch adductor pollicis" }],
   },
   {
     code: "handoa-thumb-stable-c-isometrics", nameAr: "وضعُ الحرف C الثابت: تثبيتُ الإبهام بلا حركة", nameEn: "Stable C-posture: isometric thumb stabilising",
@@ -131,7 +131,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ أكثرُ من نقطتين فوق المعتاد، أو طقطقةٌ مؤلمة، أو مفصلٌ حارّ.", "Pain more than two points above usual, painful clicking, or a hot joint."],
     equipment: ["كرةٌ طريّة أو منشفةٌ ملفوفة.", "A soft ball or a rolled towel."],
     doseNote: ["١٠ مرّات × ثباتٌ ٥–١٠ ثوانٍ × ١–٢ مجموعة يومياً (اقتراح — لا تجربةَ تعطي هذه الجرعة).", "10 repetitions × 5–10-second holds × 1–2 sets daily (a proposal — no trial gives this dose)."],
-    images: [{ key: "handoa-thumb-stable-c-isometrics-1", ar: "يدٌ تشكّل الحرفَ C مستديراً حول كرةٍ صغيرة طريّة ومفصلُ الإبهام الأوسط مثنيٌّ قليلاً، وبجانبها إبهامٌ منهار متعرّج عليه علامةُ خطأ", en: "A hand forming a round letter C around a small soft ball with the thumb's middle joint slightly bent, beside a collapsed zig-zag thumb marked with a cross", search: "stable C posture thumb CMC osteoarthritis exercise" }],
+    images: [{ key: "handoa-thumb-stable-c-isometrics-1", ar: "يساراً: يدٌ تلتفّ حول كرةٍ بهيئة حرف C مستديرة، ووسادةُ الإبهام تضغط على الكرة ومفاصلُه منثنيةٌ قليلاً؛ ويميناً وعليها علامةُ خطأٍ سوداء: يدٌ مفتوحة والإبهامُ مرفوعٌ ومفصلُه الأخير منثنٍ إلى الخلف", en: "Left: a hand curved round a ball in a stable round C, the thumb pad pressing on the ball with its joints slightly bent; right, crossed out with a black X: an open hand with the thumb lifted and its end joint bent backwards", search: "stable C posture thumb CMC osteoarthritis exercise" }],
   },
   {
     code: "handoa-index-abduction-fdi", nameAr: "تقويةُ العضلة بين العظام الظهرية الأولى (إبعادُ السبّابة)", nameEn: "First dorsal interosseous strengthening (index abduction)",
@@ -166,7 +166,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في مفاصل السبّابة فوق قاعدة الجلسة.", "Pain in the index finger joints above the session rule."],
     equipment: ["رباطٌ مطّاطيّ صغير.", "A small rubber band."],
     doseNote: ["٨–١٢ مرّة × ٢–٣ مجموعات، ثلاثاً في الأسبوع — أيّامُ القوّة كما في برنامج البيت المجرَّب (Osteras 2014b)، والمجموعاتُ والتكرارُ كبطاقة تقوية اليد.", "8–12 repetitions × 2–3 sets, three times a week — the strength days of the tested home programme (Osteras 2014b), with sets and repetitions as in the hand strengthening card."],
-    images: [{ key: "handoa-index-abduction-fdi-1", ar: "يدٌ مسطّحة على طاولة ورباطٌ مطّاطيّ حول السبّابة والوسطى، والسبّابةُ تتحرّك نحو الإبهام", en: "A hand flat on a table with a rubber band around the index and middle fingers, the index finger moving towards the thumb", search: "first dorsal interosseous strengthening rubber band index abduction" }],
+    images: [{ key: "handoa-index-abduction-fdi-1", ar: "يساراً: يدٌ مبسوطةٌ على طاولةٍ زرقاء وحول أصابعها شريطٌ مطّاطيّ، في الراحة ثمّ والسبّابةُ تتحرّك إلى جهة الإبهام بسهمٍ مزدوج؛ ويميناً: يدٌ على طاولةٍ خشبية تدفع سبّابتَها نحو الإبهام وأصابعُ اليد الأخرى تقاومها", en: "Left pair: a hand flat on a blue table with a rubber band round the fingers, at rest and then with the index finger moving towards the thumb (double arrow); right: a hand on a wooden table pushing its index finger towards the thumb while the other hand's fingers resist it", search: "first dorsal interosseous strengthening rubber band index abduction" }],
   },
   {
     code: "handoa-thumb-position-sense", nameAr: "تدريبُ إحساس وضع الإبهام", nameEn: "Thumb position-sense training",
@@ -201,7 +201,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ أو تعب.", "Pain or fatigue."],
     equipment: ["ورقةٌ بنقاطٍ معلَّمة، وقلم، وكرةٌ صغيرة.", "A sheet with marked dots, a pen, and a small ball."],
     doseNote: ["٣ أوضاع × ١٠ مرّات، ٥–١٠ دقائق يومياً (اقتراح؛ والتجربةُ استمرّت ١٢ أسبوعاً — Cantero-Tellez 2022).", "3 positions × 10 repetitions, 5–10 minutes daily (a proposal; the trial ran for 12 weeks — Cantero-Tellez 2022)."],
-    images: [{ key: "handoa-thumb-position-sense-1", ar: "مريضٌ مغمضُ العينين يضع طرفَ إبهامه على نقطةٍ معلَّمة على ورقةٍ فوق الطاولة", en: "A patient with eyes closed placing the thumb tip on a marked dot on a sheet of paper on the table", search: "thumb joint position sense proprioception training osteoarthritis" }],
+    images: [{ key: "handoa-thumb-position-sense-1", ar: "يساراً: يدُ امرأةٍ مبسوطةٌ على ورقةٍ عليها خطوطٌ ملوّنة ترسم أوضاعَ الإبهام المطلوبة؛ ويميناً: طرفُ الإبهام يضغط على علاماتٍ مرقّمة (١–٤) على عصاً خشبية ليقف عند الرقم الذي يُسمّى", en: "Left: a woman's hand lying flat on a sheet of paper where coloured outlines mark the thumb target positions; right: the thumb tip pressing on numbered marks (1–4) on a wooden stick to stop at the number named", search: "thumb joint position sense proprioception training osteoarthritis" }],
   },
   {
     code: "handoa-thumb-base-orthosis-wear", nameAr: "جبيرةُ قاعدة الإبهام: متى تُلبس وكيف يُعتنى بها", nameEn: "Thumb-base orthosis: when to wear it and how to care for it",
@@ -238,7 +238,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلٌ أو وخز، أو احمرارٌ يبقى أكثرَ من ٣٠ دقيقة، أو تقرّحُ الجلد ⟵ قسمُ المساند.", "Numbness or tingling, redness lasting more than 30 minutes, or skin breakdown → the orthotics department."],
     equipment: ["الجبيرة (من قسم المساند).", "The orthosis (from the orthotics department)."],
     doseNote: ["يومياً في الأعمال أو خمسَ ليالٍ في الأسبوع فأكثر (خمسُ ساعاتٍ فأكثر في الليلة) ٨–١٢ أسبوعاً على الأقلّ وحتى ١٢ شهراً (Gravas 2019a · Rannou 2009).", "Daily for tasks or on five nights a week or more (five hours or more a night) for at least 8–12 weeks and up to 12 months (Gravas 2019a · Rannou 2009)."],
-    images: [{ key: "handoa-thumb-base-orthosis-wear-1", ar: "جبيرةٌ لقاعدة الإبهام على يدٍ ترفع قِدرَ طبخ، وبجانبها الجبيرةُ نفسُها تُخلع قرب صنبورٍ للوضوء", en: "A thumb-base orthosis on a hand lifting a cooking pot, beside the same orthosis being taken off next to a tap for wudu", search: "thumb CMC orthosis hand-based splint wearing cooking" }],
+    images: [{ key: "handoa-thumb-base-orthosis-wear-1", ar: "يساراً: يدٌ مسنّة تلبس جبيرةً حراريةً سوداء مثقّبة لقاعدة الإبهام يمسكها حزامٌ حول الكفّ؛ ويميناً: يدٌ تلبس جبيرةً طريّةً زرقاء قصيرة للإبهام، والإبهامُ والسبّابة يصنعان دائرة", en: "Left: an older hand wearing a black perforated thermoplastic thumb-base splint held by a strap round the palm; right: a hand wearing a short soft blue thumb orthosis, the thumb and index making a round O", search: "thumb CMC orthosis hand-based splint wearing cooking" }],
   },
   {
     code: "handoa-finger-night-splint", nameAr: "جبيرةٌ ليلية لمفاصل أطراف الأصابع المؤلمة", nameEn: "Night splint for painful finger end-joints",
@@ -273,7 +273,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تقرّحُ الجلد، أو تورّم، أو تنميل؛ ومفصلٌ حارٌّ أحمر ⟵ الطبيب.", "Skin breakdown, swelling or numbness; a hot red joint → the doctor."],
     equipment: ["جبيرةُ ميزابٍ من البلاستيك الحراريّ وشريطٌ لاصق أو فيلكرو، وخاتمُ إصبعٍ اختياريّ.", "A thermoplastic gutter splint with tape or Velcro, and an optional finger ring splint."],
     doseNote: ["كلَّ ليلة ثلاثةَ أشهر ثمّ المراجعة (Watt 2014).", "Every night for three months, then review (Watt 2014)."],
-    images: [{ key: "handoa-finger-night-splint-1", ar: "جبيرةٌ صغيرة على شكل ميزاب على طول المفصل الطرفيّ للسبّابة، وباطنُ الإصبع مكشوف", en: "A small gutter-shaped splint along the end joint of the index finger, with the finger pad uncovered", search: "DIP joint gutter splint night osteoarthritis finger" }],
+    images: [{ key: "handoa-finger-night-splint-1", ar: "يساراً: ظهرُ يدٍ مسنّة بعُقَدٍ عظمية على المفاصل الأخيرة، والسبّابةُ في جبيرةٍ بيضاء صغيرة على مفصلها الأخير بحزامٍ أبيض؛ ويميناً: جبيرةٌ حراريةٌ مثقّبة للمفصل الأخير على إصبعٍ بحزامٍ أبيض لاصق", en: "Left: the back of an older hand with bony nodes at the end joints, the index finger in a small white splint over its end joint with a white strap; right: a perforated thermoplastic end-joint splint on a finger with a white Velcro strap", search: "DIP joint gutter splint night osteoarthritis finger" }],
   },
   {
     code: "handoa-warm-soak-before-exercise", nameAr: "النقعُ الدافئ أو الشمعُ المنزليّ قبل تمارين اليد", nameEn: "Warm soak or home wax before hand exercise",
@@ -308,7 +308,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["مفصلٌ حارٌّ أحمر متورّم (ويُستعمل روتينُ يوم النوبة بدلها)، أو ضعفُ الإحساس، أو حكّةٌ أو تهيّجٌ في الجلد (Aksanyar 2022).", "A hot, red, swollen joint (the flare-day routine is used instead), reduced sensation, or itching or skin irritation (Aksanyar 2022)."],
     equipment: ["حوض، وميزانُ حرارة، ومنشفة؛ وعدّةُ شمعٍ اختيارية.", "A basin, a thermometer and a towel; an optional wax kit."],
     doseNote: ["١٥–٢٠ دقيقة قبل التمرين، ٥–٧ أيّامٍ في الأسبوع خلال الكتلة، ثمّ في أيّام التمرين (Cheng 2026 · Horvath 2012).", "15–20 minutes before exercise, 5–7 days a week during the block, then on exercise days (Cheng 2026 · Horvath 2012)."],
-    images: [{ key: "handoa-warm-soak-before-exercise-1", ar: "يدا امرأةٍ مسنّة في حوضِ ماءٍ دافئ معه ميزانُ حرارة، وفي الزاوية يدٌ مكسوّةٌ بالشمع ملفوفةٌ بمنشفة", en: "An older woman's hands in a basin of warm water with a thermometer, with an inset of a wax-coated hand wrapped in a towel", search: "paraffin wax bath hand osteoarthritis warm water soak" }],
+    images: [{ key: "handoa-warm-soak-before-exercise-1", ar: "يساراً: امرأةٌ مسنّة بكمامةٍ جالسةٌ إلى طاولة ويداها في حوضٍ رماديّ مغطّى بمنشفةٍ بيضاء؛ ويميناً: معالجٌ يرفع غطاءً بلاستيكياً عن يدين مغطّاتين بالشمع الأبيض", en: "Left: an older woman in a face mask sitting at a table with both hands in a grey basin covered by a white towel; right: a therapist peeling a plastic sheet back from two hands coated in white paraffin wax", search: "paraffin wax bath hand osteoarthritis warm water soak" }],
   },
   {
     code: "handoa-thumb-sparing-kitchen-tasks", nameAr: "أعمالُ المطبخ والبيت بطرقٍ تحمي الإبهام", nameEn: "Thumb-sparing ways for kitchen and household tasks",
@@ -345,7 +345,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمُ قاعدة الإبهام يبقى أكثرَ من ساعةٍ بعد المهمّة ⟵ غيّر الطريقة.", "Thumb-base pain lasting more than an hour after a task → change the method."],
     equipment: ["فتّاحةُ برطمانات، وأنابيبُ إسفنجٍ أو مقابضُ سميكة، ومدوّرُ مفاتيح، وعربةُ تسوّق، وعجّانة.", "A jar opener, foam tubing or thick handles, a key turner, a shopping trolley, and a mixer."],
     doseNote: ["٢–٣ مهامّ تُتدرَّب في الجلسة في المرحلتين ٢ و٣، ثمّ يومياً؛ والتجاربُ أعطتها في أربع جلساتٍ جماعية (Dziedzic 2015) أو جلسةٍ إلى اثنتين مع البيت (Gravas 2019a · Stoffer-Marx 2018).", "2–3 tasks practised per session in phases 2 and 3, then daily; the trials gave it in four group sessions (Dziedzic 2015) or one to two sessions plus home (Gravas 2019a · Stoffer-Marx 2018)."],
-    images: [{ key: "handoa-thumb-sparing-kitchen-tasks-1", ar: "امرأةٌ في مطبخ بيتها تعجن بباطن كفٍّ مفتوحة، وعلى الطاولة فتّاحةُ برطمانات وسكّينٌ بمقبضٍ سميك، وأكياسُ التسوّق معلّقةٌ على ساعدها", en: "A woman in her home kitchen kneading dough with the heel of an open palm, with a jar opener and a thick-handled knife on the counter and shopping bags hung over her forearm", search: "joint protection kitchen hand osteoarthritis assistive devices jar opener" }],
+    images: [{ key: "handoa-thumb-sparing-kitchen-tasks-1", ar: "أعلى يميناً: يدا امرأةٍ مسنّة تفتح برطماناً بمخروطٍ مطّاطيّ في كفّها والبرطمانُ على حصيرةٍ لا تنزلق؛ وأعلى يساراً: عجنُ العجين بقاعدة الكفّ المفتوحة؛ وأسفل يساراً: سكّينُ خبزٍ مقبضُها بزاويةٍ قائمة؛ وأسفل يميناً: حقيبةُ تسوّقٍ معلّقةٌ على الساعد المثني", en: "Top right: an older woman opening a jar with a rubber grip cone in her palm, the jar on a non-slip mat; top left: kneading dough with the heel of the open hand; bottom left: a bread knife with its handle set at a right angle; bottom right: a shopping bag hung over the bent forearm", search: "joint protection kitchen hand osteoarthritis assistive devices jar opener" }],
   },
   {
     code: "handoa-prayer-wudu-thumb", nameAr: "الصلاةُ والوضوءُ مع ألم مفاصل الإبهام والأصابع", nameEn: "Prayer and wudu with painful thumb and finger joints",
@@ -382,7 +382,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ حادّ في الإبهام عند النهوض ⟵ الكرسيّ.", "Sharp thumb pain on rising → the chair."],
     equipment: ["سجّادة، وكرسيّ، ومسبحةٌ حبّاتُها كبيرة.", "A mat, a chair, and large-bead prayer beads."],
     doseNote: ["في كلّ صلاة؛ وتُتدرَّب مرّةً في المرحلة الثالثة (اقتراح)، والسؤالُ الشرعيّ لعالِم المريض.", "At every prayer; practised once in phase 3 (a proposal), with religious questions for the patient's own scholar."],
-    images: [{ key: "handoa-prayer-wudu-thumb-1", ar: "رجلٌ ساجد والكفّان مسطّحتان والأصابعُ مضمومة والإبهامُ مسترخٍ بجانب السبّابة، وفي الزاوية مسبحةٌ حبّاتُها كبيرة", en: "A man in sujood with palms flat, fingers together and the thumb relaxed beside the index finger, with an inset of large-bead prayer beads", search: "sujood hand position prayer flat palms arthritis" }],
+    images: [{ key: "handoa-prayer-wudu-thumb-1", ar: "أعلى يساراً: رجلٌ ساجدٌ على سجّادة الصلاة وكفُّه مبسوطةٌ بجانب رأسه والأصابعُ مضمومة؛ وأعلى يميناً: يدٌ مسنّة تفتح صنبورَ المطبخ بذراعٍ قصيرة بجانب اليد لا بالقرص؛ وأسفل: مسبحةٌ بحبّاتٍ كبيرة كريمية اللون وشرّابةٍ حمراء", en: "Top left: a man in sujood on a prayer mat, his palm flat beside his head with the fingers together; top right: an older hand working a short lever on a kitchen tap with the side of the hand, not a pinch; bottom: a misbaha of large cream-coloured beads with a red tassel", search: "sujood hand position prayer flat palms arthritis" }],
   },
 ];
 
