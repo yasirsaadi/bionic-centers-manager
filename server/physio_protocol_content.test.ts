@@ -25,11 +25,13 @@ import { createHash } from "crypto";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { DEVICE_PARAM_FIELDS, normalizeDeviceParams, parseExerciseBody, parsePhasesBody } from "@shared/physio_exercises";
+import { BODY_REGIONS, DEVICE_PARAM_FIELDS, EXERCISE_KINDS, normalizeDeviceParams, parseExerciseBody, parsePhasesBody } from "@shared/physio_exercises";
 import { normalizeDose } from "@shared/physio_protocols";
 import { EXERCISE_IMAGE_FILES } from "@shared/physio_exercise_media";
 import type { ExerciseSeed, ProtocolContentSeed } from "./migrations/physio_content";
+import * as m118 from "./migrations/118_physio_exercise_library";
 import * as m119 from "./migrations/119_physio_lbp_chronic_detail";
+import * as m181 from "./migrations/181_physio_exercise_region_face";
 import * as m124 from "./migrations/124_physio_lbp_acute_detail";
 import * as m125 from "./migrations/125_physio_neck_pain_detail";
 import * as m126 from "./migrations/126_physio_knee_oa_detail";
@@ -252,10 +254,19 @@ async function main() {
   }
   same("ق.١١ **وترحيلُ ١١٩ لم يتغيّر حرفٌ منه** — أداةُ البناء توسّعت للقالب الكامل والحقولُ الجديدة اختيارية",
     createHash("sha256").update(m119.sql).digest("hex"), SQL119_SHA256);
+  //  §4.fl — **قيدُ القاعدة على الإنتاج هو قائمةُ الشيفرة**: قاعدةُ الاختبار تُبنى بـ`db:push` بلا قيود CHECK المكتوبة في نصّ الترحيلات، فبطاقةٌ بمنطقةٍ
+  //  جديدة («الوجه»، ١٦٣) مرّت هنا ورُفضت على الإنتاج فوقف كلُّ ترحيلٍ بعدها؛ فالمناطقُ في الشيفرة هي قيدُ ١٨١، والأنواعُ هي قيدُ ١١٨ — ومَن زاد واحدةً زاد قيدَها.
+  const kinds118 = (m118.sql.match(/kind TEXT NOT NULL CHECK \(kind IN \(([^)]*)\)\)/)?.[1] ?? "").split(",").map((s) => s.trim().replace(/'/g, ""));
+  same("ق.١٣ **المناطقُ والأنواعُ في الشيفرة هي قيدا القاعدة على الإنتاج** — «الوجه» في قيد ١٨١، والأنواعُ العشرة في قيد ١١٨",
+    [[...BODY_REGIONS], [...EXERCISE_KINDS]], [[...m181.REGIONS], kinds118]);
 
   // ══ أ. الترحيل على القاعدة ══
   console.log("\n── أ. ترحيل ١٢٤ على القاعدة ──");
   await cleanup();
+  //  §4.fl — **وقاعدةُ الاختبار صارت كالإنتاج في هذا العمود**: ١٨١ كتب القيدَ هنا أيضاً، فبطاقةٌ بمنطقةٍ خارجَه تسقط في الاختبار قبل الإنتاج.
+  const regionCheck = (await q(`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid = 'physio_exercises'::regclass AND conname = 'physio_exercises_region_check'`)).rows[0]?.d ?? "";
+  same("أ.٠ **قيدُ المنطقة على القاعدة بالمناطق كلِّها** — ومعها «الوجه»",
+    BODY_REGIONS.map((r) => regionCheck.includes(`'${r}'`)), BODY_REGIONS.map(() => true));
   const proto = async (code: string) => (await q(`SELECT p.id, p.status, p.summary, p.total_sessions, p.sessions_per_week, p.duration_weeks, p.session_minutes,
       jsonb_array_length(p."references") AS refs,
       (SELECT json_agg(json_build_array(ph.position, ph.session_from, ph.session_to) ORDER BY ph.position) FROM physio_protocol_phases ph WHERE ph.protocol_id = p.id) AS ranges,
