@@ -44,6 +44,8 @@ const ADMIN = 8961, SUP = 8962, SPEC = 8963, TECH = 8964;
 const IDS = [ADMIN, SUP, SPEC, TECH];
 const MARK = "اختبار-نسخة-المريض";
 const LBP = "lbp-chronic-adult";
+//  §4.fo — بروتوكولُ الاختبار «بلا مراحل»: اكتملت المكتبةُ (٤٤ مفصَّلاً كلُّها بمراحل)، فلا يُبحث عنه فيها — يُنشأ هنا ويُحذف.
+const NO_PHASES = "pc-test-no-phases";
 
 const q = (t: string, p: any[] = []) => pool.query(t, p);
 const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toString("base64");
@@ -62,6 +64,7 @@ async function cleanup() {
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM physio_device_branches WHERE branch_id = $1`, [B1]);
+  await q(`DELETE FROM physio_protocols WHERE code = $1`, [NO_PHASES]);
   await q(`UPDATE physio_protocols SET updated_by = NULL WHERE updated_by = ANY($1::int[])`, [IDS]);
   await q(`UPDATE physio_protocols SET approved_by = NULL WHERE approved_by = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM system_users WHERE id = ANY($1::int[])`, [IDS]);
@@ -300,8 +303,8 @@ async function main() {
 
     // ══ د. تغييرُ النوع و«اقترح خطّة» ══
     console.log("\n── د. تغييرُ النوع واقترح خطّة ──");
-    const noPhases = Number((await q(`SELECT p.id FROM physio_protocols p WHERE p.is_archived = false AND p.code <> $1
-        AND NOT EXISTS (SELECT 1 FROM physio_protocol_phases ph WHERE ph.protocol_id = p.id) ORDER BY p.id LIMIT 1`, [LBP])).rows[0].id);
+    const noPhases = Number((await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, sessions_per_week, duration_weeks, session_minutes, status)
+        VALUES ($1, 'بروتوكولٌ بلا مراحل', 'Protocol without phases', 'other', 'adult', 3, 4, 45, 'draft') RETURNING id`, [NO_PHASES])).rows[0].id);
     const ch = await call("POST", `/api/physio/plans/${other.json?.id}/change-protocol`, S.sup, { protocolId: noPhases });
     same("د.١ **تغييرُ النوع إلى بروتوكولٍ بلا مراحل يُزيل مراحلَ القديم**", [ch.status, (await planPhaseCount(Number(other.json?.id))).phases], [200, 0]);
     const back = await call("POST", `/api/physio/plans/${other.json?.id}/change-protocol`, S.sup, { protocolId: l0.id });

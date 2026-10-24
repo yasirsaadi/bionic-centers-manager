@@ -37,6 +37,8 @@ const ADMIN = 8991, SUP = 8992, SPEC = 8993, TECH = 8994;
 const IDS = [ADMIN, SUP, SPEC, TECH];
 const MARK = "اختبار-استعمال-المركز";
 const LBP = "lbp-chronic-adult";
+//  §4.fo — بروتوكولُ الاختبار «لم يُقرَّر فيه بعد»: اكتملت المكتبةُ (٤٤ مفصَّلاً كلُّها بلا استثناء استعمالُ أجهزتها مكتوب)، فلا يُبحث عنه فيها — يُنشأ هنا ويُحذف.
+const UNDECIDED = "cu-test-undecided";
 
 const q = (t: string, p: any[] = []) => pool.query(t, p);
 const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toString("base64");
@@ -54,6 +56,8 @@ async function cleanup() {
   await q(`DELETE FROM daily_sessions WHERE branch_id = $1`, [B1]);
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[])`, [IDS]);
   await q(`DELETE FROM physio_device_branches WHERE branch_id = $1`, [B1]);
+  await q(`DELETE FROM physio_protocol_devices WHERE protocol_id IN (SELECT id FROM physio_protocols WHERE code = $1)`, [UNDECIDED]);
+  await q(`DELETE FROM physio_protocols WHERE code = $1`, [UNDECIDED]);
   //  سليمُ الاختبار عدّل بروتوكولَ ألم الظهر (د.١) — فيُفكّ اسمُه منه قبل حذف حسابه.
   await q(`UPDATE physio_protocols SET updated_by = NULL WHERE updated_by = ANY($1::int[])`, [IDS]);
   await q(`UPDATE physio_protocols SET approved_by = NULL WHERE approved_by = ANY($1::int[])`, [IDS]);
@@ -196,10 +200,12 @@ async function main() {
 
     //  بروتوكولٌ لم يقرّر فيه سليم بعد — يبقى كما كان: «غير موصى به» لا يدخل، و«اختياري» يدخل مساعداً. («لم يُقرَّر» = لا استعمالَ مكتوباً لأيّ جهاز —
     //  فألمُ الظهر الحادّ بعد ترحيل ١٢٤ ليس منها: استعمالُ أجهزته مكتوب.)
-    const other = (await q(`SELECT p.id FROM physio_protocols p WHERE p.code <> $1 AND p.is_archived = false
-        AND EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.evidence = 'not_recommended')
-        AND EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.evidence = 'optional')
-        AND NOT EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.centre_use IS NOT NULL) ORDER BY p.id LIMIT 1`, [LBP])).rows[0];
+    const undecidedId = (await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, sessions_per_week, duration_weeks, session_minutes, status)
+        VALUES ($1, 'بروتوكولٌ لم يُقرَّر فيه', 'Undecided protocol', 'other', 'adult', 3, 4, 45, 'draft') RETURNING id`, [UNDECIDED])).rows[0].id;
+    await q(`INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, minutes, display_order)
+        VALUES ($1, $2, 'recommended', 20, 0), ($1, $3, 'optional', 15, 1), ($1, $4, 'not_recommended', NULL, 2)`, [undecidedId, dev.exercise, dev.tecar, dev.laser]);
+    const other = (await q(`SELECT p.id FROM physio_protocols p WHERE p.code = $1
+        AND NOT EXISTS (SELECT 1 FROM physio_protocol_devices d WHERE d.protocol_id = p.id AND d.centre_use IS NOT NULL)`, [UNDECIDED])).rows[0];
     if (other) {
       const op = (await call("POST", `/api/patients/${pt}/physio-plans`, S.spec, { protocolId: Number(other.id) })).json;
       const og = (await call("GET", `/api/physio/plans/${op?.id}`, S.spec)).json;

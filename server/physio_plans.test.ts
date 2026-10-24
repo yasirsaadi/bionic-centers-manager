@@ -174,8 +174,11 @@ async function main() {
       devices: [{ deviceId: D1, minutes: 20, parameters: "تحفيز" }, { deviceId: D4, minutes: 10 }], ...extra,
     });
     same("ت.١ جهازٌ غيرُ متوفّرٍ في الفرع ⟵ ٤٠٠", (await call("PUT", `/api/physio/plans/${id}`, S.spec, editBody({ devices: [{ deviceId: D2 }] }))).status, 400);
-    const e1 = await call("PUT", `/api/physio/plans/${id}`, S.spec, editBody());
+    //  §4.fo — ونصُّ الجهاز الطويل (المفصَّلةُ حتى ١٧٢٩ حرفاً) يُحفظ كاملاً في خطّة المريض — كان يُقصّ عند ١٠٠٠.
+    const longAr = "تحفيزٌ بشرطه، ".repeat(130).trim();
+    const e1 = await call("PUT", `/api/physio/plans/${id}`, S.spec, editBody({ devices: [{ deviceId: D1, minutes: 20, parameters: longAr }, { deviceId: D4, minutes: 10 }] }));
     same("ت.٢ التعديلُ يُحفَظ والمسوّدةُ تبقى مسوّدة", [e1.status, e1.json?.status], [200, "draft"]);
+    same("ت.٣ ونصُّ الجهاز الطويل يعود كاملاً", ((await call("GET", `/api/physio/plans/${id}`, S.spec)).json?.devices ?? []).find((d: any) => d.deviceId === D1)?.parameters, longAr);
 
     console.log("\n── د. الإرسالُ والاعتماد ──");
     same("د.١ الأخصائيُّ يرسل", (await call("POST", `/api/physio/plans/${id}/submit`, S.spec)).json?.status, "pending");
