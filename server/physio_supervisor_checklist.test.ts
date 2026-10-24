@@ -36,6 +36,9 @@ import * as m163 from "./migrations/163_physio_bells_palsy_detail";
 import * as m166 from "./migrations/166_physio_cerebral_palsy_detail";
 import * as m167 from "./migrations/167_physio_sci_incomplete_detail";
 import * as m168 from "./migrations/168_physio_osteoporosis_falls_detail";
+import * as m169 from "./migrations/169_physio_rheumatoid_arthritis_detail";
+import * as m170 from "./migrations/170_physio_scoliosis_ais_detail";
+import * as m171 from "./migrations/171_physio_lymphedema_detail";
 import { CHECKLIST_NOTE_MAX, CHECKLIST_TOPICS, isDetailedProtocol, liveChecks, openItemsCount, supervisorTodoCount } from "@shared/physio_supervisor_checklist";
 
 let failures = 0;
@@ -69,7 +72,7 @@ async function main() {
   // ══ ق. قبل القاعدة ══
   console.log("\n── ق. المحسوبُ والبنودُ المكتوبة ──");
   //  بنودُ ١٣٩ للأحد عشر، ثمّ كلُّ مفصَّلٍ بعده يزرع بنودَه في ترحيله بـ`checklistSql` (§4.dy) — فيُضاف هنا.
-  const all = Object.entries({ ...m139.ITEMS, [m140.PROTOCOL.code]: m140.CHECKLIST, [m143.PROTOCOL.code]: m143.CHECKLIST, [m145.PROTOCOL.code]: m145.CHECKLIST, [m149.PROTOCOL.code]: m149.CHECKLIST, [m151.PROTOCOL.code]: m151.CHECKLIST, [m152.PROTOCOL.code]: m152.CHECKLIST, [m153.PROTOCOL.code]: m153.CHECKLIST, [m155.PROTOCOL.code]: m155.CHECKLIST, [m156.PROTOCOL.code]: m156.CHECKLIST, [m157.PROTOCOL.code]: m157.CHECKLIST, [m158.PROTOCOL.code]: m158.CHECKLIST, [m159.PROTOCOL.code]: m159.CHECKLIST, [m161.PROTOCOL.code]: m161.CHECKLIST, [m162.PROTOCOL.code]: m162.CHECKLIST, [m163.PROTOCOL.code]: m163.CHECKLIST, [m166.PROTOCOL.code]: m166.CHECKLIST, [m167.PROTOCOL.code]: m167.CHECKLIST, [m168.PROTOCOL.code]: m168.CHECKLIST });
+  const all = Object.entries({ ...m139.ITEMS, [m140.PROTOCOL.code]: m140.CHECKLIST, [m143.PROTOCOL.code]: m143.CHECKLIST, [m145.PROTOCOL.code]: m145.CHECKLIST, [m149.PROTOCOL.code]: m149.CHECKLIST, [m151.PROTOCOL.code]: m151.CHECKLIST, [m152.PROTOCOL.code]: m152.CHECKLIST, [m153.PROTOCOL.code]: m153.CHECKLIST, [m155.PROTOCOL.code]: m155.CHECKLIST, [m156.PROTOCOL.code]: m156.CHECKLIST, [m157.PROTOCOL.code]: m157.CHECKLIST, [m158.PROTOCOL.code]: m158.CHECKLIST, [m159.PROTOCOL.code]: m159.CHECKLIST, [m161.PROTOCOL.code]: m161.CHECKLIST, [m162.PROTOCOL.code]: m162.CHECKLIST, [m163.PROTOCOL.code]: m163.CHECKLIST, [m166.PROTOCOL.code]: m166.CHECKLIST, [m167.PROTOCOL.code]: m167.CHECKLIST, [m168.PROTOCOL.code]: m168.CHECKLIST, [m169.PROTOCOL.code]: m169.CHECKLIST, [m170.PROTOCOL.code]: m170.CHECKLIST, [m171.PROTOCOL.code]: m171.CHECKLIST });
   const issues = all.flatMap(([code, items]) => [
     ...(items.length ? [] : [`${code}: بلا بنود`]),
     ...(new Set(items.map((i) => i.key)).size === items.length ? [] : [`${code}: رمزٌ مكرّر`]),
@@ -78,8 +81,8 @@ async function main() {
     ...items.filter((i) => !i.ar.trim() || !i.en.trim()).map((i) => `${code}.${i.key}: نصٌّ ناقص`),
     ...items.filter((i) => (i.ar + i.en).includes("**")).map((i) => `${code}.${i.key}: «**»`),
   ]);
-  same("ق.١ **كلُّ بندٍ برمزٍ فريد يقبله الباب، وموضوعٍ معروف، ونصٍّ باللغتين بلا «**»** — والبروتوكولاتُ التسعة والعشرون المفصَّلة كلُّها لها بنود",
-    [issues, all.length], [[], 29]);
+  same("ق.١ **كلُّ بندٍ برمزٍ فريد يقبله الباب، وموضوعٍ معروف، ونصٍّ باللغتين بلا «**»** — والبروتوكولاتُ الاثنان والثلاثون المفصَّلة كلُّها لها بنود",
+    [issues, all.length], [[], 32]);
 
   const blockers = [{ code: "shockwaves", nameAr: "موجات صادمة", nameEn: "Shockwaves", missing: [{ ar: "التردّد", en: "Frequency" }] }];
   const card = (status: string, urls: (string | null)[]) => ({ status, nameAr: "x", images: urls.map((url) => ({ url })) });
@@ -169,7 +172,7 @@ async function main() {
     const rows: any[] = Array.isArray(list.json) ? list.json : [];
     const detailed = rows.filter((r) => isDetailedProtocol(r.phaseCount)).map((r) => r.code).sort();
     const tka = rows.find((r) => r.code === TKA);
-    same("ب.١ **القائمةُ تقول مَن اكتمل** (التسعة والعشرون لهم مراحل، والباقي بلا) **وكم سؤالاً مفتوحاً لسليم** على كلّ بروتوكول",
+    same("ب.١ **القائمةُ تقول مَن اكتمل** (الاثنان والثلاثون لهم مراحل، والباقي بلا) **وكم سؤالاً مفتوحاً لسليم** على كلّ بروتوكول",
       [list.status, detailed, tka?.openItems, rows.filter((r) => !isDetailedProtocol(r.phaseCount)).every((r) => r.openItems === 0)],
       [200, all.map(([c]) => c).sort(), m139.ITEMS[TKA].length, true]);
     const only = await call("GET", "/api/physio/protocols?detailed=1", S.spec);
