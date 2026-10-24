@@ -61,7 +61,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["مفصلٌ في اليد حارٌّ أو متورّم في اليوم التالي، أو ألمٌ يزيد أكثرَ من نقطةٍ إلى نقطةٍ ونصف من ١٠ عن المعتاد (Wolfe 2007) ⟵ خفّف درجةً وأخبر الأخصائيّ؛ عجزٌ مفاجئ عن بسط إصبع ⟵ توقّف وإلى الجرّاح (قطعُ وتر — NICE NG100 2018).", "A hand joint hot or swollen the next day, or pain more than one to one and a half points out of 10 above usual (Wolfe 2007) → go down a step and tell the specialist; sudden inability to straighten a finger → stop and to the surgeon (tendon rupture — NICE NG100 2018)."],
     equipment: ["معجونٌ علاجيّ بدرجات، وحلقاتٌ مطّاطية، وعلبةٌ ٠٫٥–١ كغم.", "Graded therapy putty, rubber bands, and a 0.5–1 kg can."],
     doseNote: ["٨–١٢ مرّة × ١–٣ مجموعات يومياً في البيت، ومراجعةٌ مع الأخصائيّ خمسَ مرّاتٍ إلى ستٍّ خلال ١٢ أسبوعاً (SARAH Trial Team 2012 · Williamson 2017 · Kiltz 2023).", "8–12 repetitions × 1–3 sets daily at home, with five to six reviews by the specialist over 12 weeks (SARAH Trial Team 2012 · Williamson 2017 · Kiltz 2023)."],
-    images: [{ key: "ra-hand-strengthening-1", ar: "يدٌ على طاولة تعصر معجوناً علاجياً، وبجانبها يدٌ تفتح أصابعَها ضدّ حلقةٍ مطّاطية والرسغُ مستقيم", en: "A hand on a table squeezing therapy putty, and beside it a hand spreading its fingers against a rubber band with the wrist straight", search: "SARAH hand exercise rheumatoid arthritis putty band" }],
+    images: [{ key: "ra-hand-strengthening-1", ar: "في اليسار يدٌ تعصر لفّةً برتقالية من المعجون العلاجيّ في قبضةٍ كاملة؛ وفي اليمين رسمان ليدٍ والكفُّ إلى الأسفل وحلقةٌ مطّاطية حول الأصابع الأربع: الأصابعُ متلاصقة، ثمّ مفتوحةٌ ضدّ الحلقة والرسغُ مستقيم", en: "Left, a hand squeezes a roll of orange therapy putty into a full fist; right, two drawings of a hand palm-down with a rubber band around the four fingers: fingers together, then spread against the band with the wrist straight", search: "SARAH hand exercise rheumatoid arthritis putty band" }],
   },
   {
     code: "ra-joint-protection-hand", nameAr: "حمايةُ مفاصل اليد في أعمال البيت اليومية", nameEn: "Hand joint protection in daily household tasks",
@@ -100,7 +100,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في اليد يبقى أكثرَ من ساعةٍ بعد العمل ⟵ غيّر طريقتَه أو قسّمه؛ مفصلٌ حارٌّ متورّم ⟵ أرِحه من الحمل اليومَ واتبع روتينَ يوم النوبة.", "Hand pain lasting more than an hour after a task → change the method or split the task; a hot swollen joint → rest it from loading today and follow the flare-day routine."],
     equipment: ["فاتحةُ برطمان، ومقابضُ سميكة أو إسفنجٌ للفّها، وقدرٌ بمقبضين، وممسحةٌ بعصّارة.", "A jar opener, thick handles or foam to wrap them, a two-handled pot, and a mop with a wringer."],
     doseNote: ["عملان أو ثلاثة في كلّ جلسةٍ من المرحلة الأولى، ثمّ في كلّ عملٍ يوميّ؛ والبرنامجُ نحو ثماني ساعات أو أربعُ جلساتٍ في ثلاثة أسابيع (Hammond 2001 · Niedermann 2011).", "Two or three tasks per session in the first phase, then in every daily task; the programme is about eight hours or four sessions over three weeks (Hammond 2001 · Niedermann 2011)."],
-    images: [{ key: "ra-joint-protection-hand-1", ar: "رسمان: في الأوّل أصابعُ تقرص مقبضَ قدرٍ ثقيل وعلامةُ خطأ، وفي الثاني الساعدان تحت القدر قريباً من الجسم وعلامةُ صحّ", en: "Two drawings: first, fingers pinching the handle of a heavy pot with a cross; second, both forearms under the pot close to the body with a tick", search: "joint protection rheumatoid arthritis carry pot forearms" }],
+    images: [{ key: "ra-joint-protection-hand-1", ar: "في اليسار يدٌ تمسك مقبضَ قدرٍ والكفُّ الأخرى والساعدُ تحته على منشفةٍ مطويّة يحملانه من أسفل؛ وفي اليمين امرأةٌ تحمل صينيةً عليها كوبٌ ووعاء على الكفّين المسطّحتين والساعدين قريباً من جسمها", en: "Left, one hand holds a saucepan handle while the other palm and forearm, on a folded tea towel, carry it from underneath; right, a woman carries a tray with a mug and a jar on both flat palms and forearms, close to her body", search: "joint protection rheumatoid arthritis carry pot forearms" }],
   },
   {
     code: "ra-energy-pacing", nameAr: "تنظيمُ الجهد وحفظُ الطاقة للإعياء", nameEn: "Pacing and energy conservation for fatigue",
@@ -139,7 +139,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["إعياءٌ شديد مفاجئ مع حرارةٍ أو ضيقِ نفَسٍ أو سعال ⟵ إلى الطبيب (قد تكون عدوى، وخطرُها أعلى مع الأدوية الحيوية — Galloway 2011b)؛ حزنٌ أو فقدُ الرغبة أكثرَ الأيّام ⟵ أخبر الأخصائيّ (الاكتئاب — Matcham 2013).", "Sudden severe fatigue with fever, breathlessness or cough → to the doctor (it may be an infection, which is more likely on biologics — Galloway 2011b); sadness or loss of interest on most days → tell the specialist (depression — Matcham 2013)."],
     equipment: ["دفترُ النشاط أو الهاتف، وجدولٌ أسبوعيّ.", "The activity diary or a phone, and a weekly timetable."],
     doseNote: ["يومياً، ويُراجَع السجلُّ كلَّ ستّ جلسات؛ وبرنامجُ «رافت» سبعُ جلسات (Hewlett 2019).", "Daily, with the diary reviewed every six sessions; the RAFT programme is seven sessions (Hewlett 2019)."],
-    images: [{ key: "ra-energy-pacing-1", ar: "رسمٌ لجدول يومٍ تُقسَّم فيه أعمالُ البيت إلى قِطَعٍ قصيرة بينها رموزُ كرسيٍّ للراحة", en: "A drawing of a day chart in which household tasks are broken into short blocks with chair icons for rest between them", search: "pacing energy conservation activity chart rheumatoid fatigue" }],
+    images: [{ key: "ra-energy-pacing-1", ar: "جدولان لثلاثة أيّامٍ من السابعة صباحاً إلى التاسعة مساءً بألوان الإشارة: في الأوّل بلا تنظيم كتلٌ حمراء طويلة من العمل والتنظيف والتسوّق ثمّ يومٌ كامل في السرير، وفي الثاني بالتنظيم كلُّ يومٍ مقسَّم إلى مهامّ قصيرة حمراء وبرتقالية بينها استراحاتٌ خضراء (والتسمياتُ بالإنكليزية)", en: "Two three-day timetables from 7 am to 9 pm in traffic-light colours: without pacing, long red blocks of work, cleaning and shopping, then a whole day in bed; with pacing, each day split into short red and orange tasks with green breaks between them (labels in English)", search: "pacing energy conservation activity chart rheumatoid fatigue" }],
   },
   {
     code: "ra-flare-gentle-routine", nameAr: "روتينُ يوم النوبة: البرودةُ والحركةُ بلا حمل", nameEn: "Flare-day routine: cold and movement without load",
@@ -176,7 +176,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["حرارةٌ في الجسم، أو مفصلٌ واحد شديدُ الحرارة والألم، أو نوبةٌ تبقى أكثرَ من يومين إلى ثلاثة ⟵ إلى الطبيب (المفصلُ المتقيّح يُشبه النوبة — Favero 2008 · NICE NG100 2018)؛ ومفصلٌ حارٌّ واحد عند مريضٍ على الأدوية الحيوية أو الكورتيزون ⟵ في اليوم نفسه (Galloway 2011a · Edwards 2007).", "A fever, a single very hot and painful joint, or a flare lasting more than two to three days → to the doctor (a septic joint looks like a flare — Favero 2008 · NICE NG100 2018); and a single hot joint in a patient on biologics or steroids → the same day (Galloway 2011a · Edwards 2007)."],
     equipment: ["كمادةٌ باردة ومنشفة، وجبيرةُ راحةٍ إن وُصفت.", "A cold pack and a towel, and a resting splint if prescribed."],
     doseNote: ["مرّتين إلى ثلاثٍ في اليوم أيّامَ النوبة (اقتراحٌ لا جرعةٌ مجرَّبة).", "Two to three times a day on flare days (a proposal, not a tested dose)."],
-    images: [{ key: "ra-flare-gentle-routine-1", ar: "شخصٌ في السرير يضع كمادةً باردة ملفوفة على رسغٍ متورّم، ويثني أصابعَ اليد الأخرى بلطف", en: "A person in bed holding a wrapped cold pack on a swollen wrist while gently bending the fingers of the other hand", search: "rheumatoid flare cold pack wrist gentle range of motion" }],
+    images: [{ key: "ra-flare-gentle-routine-1", ar: "رسمان: في اليسار يدٌ تضع كيساً من البازلاء المجمَّدة ملفوفاً بقطعة قماش على جانب الركبة وحوله رقاقاتُ ثلج، وفي اليمين يدٌ تنفتح بلطف ثمّ تنطوي في قبضةٍ ليّنة", en: "Two drawings: left, a hand holds a bag of frozen peas wrapped in a cloth against the side of a knee with snowflakes around it; right, a hand gently opening and then curling into a soft fist", search: "rheumatoid flare cold pack wrist gentle range of motion" }],
   },
   {
     code: "ra-morning-stiffness-routine", nameAr: "روتينُ تيبّس الصباح", nameEn: "Morning stiffness routine",
@@ -215,7 +215,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["مفصلٌ جديد حارٌّ متورّم ⟵ يُستثنى من الدفء ويُتبع روتينُ يوم النوبة؛ تيبّسٌ يطول أسبوعاً عن المعتاد ⟵ أخبر الأخصائيّ (قد يكون المرضُ نشطاً — Khan 2009).", "A new hot swollen joint → left out of the warmth, and the flare-day routine followed; stiffness longer than usual for a week → tell the specialist (the disease may be active — Khan 2009)."],
     equipment: ["وعاءٌ بماءٍ دافئ، ومنشفة.", "A basin of warm water, and a towel."],
     doseNote: ["١٠–١٥ دقيقة كلَّ صباح (اقتراحٌ لا جرعةٌ مجرَّبة).", "10–15 minutes every morning (a proposal, not a tested dose)."],
-    images: [{ key: "ra-morning-stiffness-routine-1", ar: "شخصٌ في السرير يحرّك كاحلَه في دوائر، وفي إطارٍ صغير يدان في وعاءٍ بماءٍ دافئ", en: "A person in bed moving an ankle in circles, with an inset of two hands in a basin of warm water", search: "morning stiffness routine rheumatoid arthritis bed exercises" }],
+    images: [{ key: "ra-morning-stiffness-routine-1", ar: "قدمان بجوربين على سريرٍ بشرشفٍ أبيض: كاحلٌ يتّجه إلى الأسفل والآخرُ مسحوبٌ إلى الأعلى — تحريكُ الكاحلين في الاستلقاء", en: "Two feet in socks on a bed with a white sheet: one ankle pointed down and the other pulled up — moving the ankles while lying", search: "morning stiffness routine rheumatoid arthritis bed exercises" }],
   },
   {
     code: "ra-wrist-working-splint", nameAr: "جبيرةُ الرسغ للعمل: متى تُلبس ومتى تُخلع", nameEn: "The wrist working splint: when to wear it and when to take it off",
@@ -252,7 +252,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلٌ أو وخزٌ في الأصابع، أو احمرارٌ لا يزول بعد خلعها نصفَ ساعة، أو ضعفٌ في القبضة ⟵ تُخلع وتُراجَع (Egan 2001).", "Numbness or tingling in the fingers, redness that does not fade half an hour after removing it, or weaker grip → take it off and have it reviewed (Egan 2001)."],
     equipment: ["جبيرةُ رسغٍ جاهزة أو مصنوعة في قسم المساند.", "A prefabricated wrist splint, or one made in the orthotics department."],
     doseNote: ["أثناء الأعمال المؤلمة، والمراجعةُ بعد أربعة أسابيع (Veehof 2008).", "During painful tasks, with a review after four weeks (Veehof 2008)."],
-    images: [{ key: "ra-wrist-working-splint-1", ar: "امرأةٌ تلبس جبيرةَ رسغٍ من جهة الكفّ وترفع إبريقاً بيديها الاثنتين", en: "A woman wearing a palm-side wrist splint lifting a kettle with both hands", search: "wrist working splint rheumatoid arthritis" }],
+    images: [{ key: "ra-wrist-working-splint-1", ar: "امرأةٌ بقميصٍ أحمر تلبس جبيرةَ رسغٍ سوداء للعمل بأحزمةٍ لاصقة وتمسك كوباً، بينما تصبّ من إبريقٍ مائلٍ في حاملٍ معدنيّ على صينية", en: "A woman in a red top wears a black wrist working splint with Velcro straps and holds a mug while pouring from a kettle tilted in a wire kettle tipper on a tray", search: "wrist working splint rheumatoid arthritis" }],
   },
   {
     code: "ra-foot-care-orthoses", nameAr: "نعلُ القدم والحذاءُ والعنايةُ بالقدم", nameEn: "Foot orthoses, footwear and foot care",
@@ -289,7 +289,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["فقاعةٌ أو نقطةُ ألمٍ لا تزول (٣٠٪ في البداية — Woodburn 2002)، أو جرحٌ أو قرحةٌ في القدم ⟵ يُخلع ويُراجَع؛ قرحةٌ مع بقعٍ سوداء صغيرة حول الأظافر أو ضعفٌ في رفع القدم ⟵ إلى الطبيب (التهابُ الأوعية — Ntatsaki 2014).", "A blister or tender spot that does not settle (30% at the start — Woodburn 2002), or a wound or ulcer on the foot → take it off and have it reviewed; an ulcer with small black spots around the nails or weakness lifting the foot → to the doctor (vasculitis — Ntatsaki 2014)."],
     equipment: ["نعلٌ مصنوع على المقاس أو شبهُ صلب من قسم المساند، وحذاءٌ عميق عريض بأربطة.", "A custom or semi-rigid foot orthosis from the orthotics department, and a deep, wide, laced shoe."],
     doseNote: ["يومياً، والمراجعةُ بعد أربعة إلى ستّة أسابيع (اقتراحٌ لا موعدٌ مجرَّب).", "Daily, with a review after four to six weeks (a proposal, not a tested interval)."],
-    images: [{ key: "ra-foot-care-orthoses-1", ar: "قدمٌ بمقدّمٍ مشوّه تدخل حذاءً عميقاً بأربطة، وبجانبه نعلٌ مصبوب على شكل القدم", en: "A foot with a deformed forefoot going into a deep laced shoe, with a moulded insole beside it", search: "rheumatoid foot orthoses extra depth shoe" }],
+    images: [{ key: "ra-foot-care-orthoses-1", ar: "في اليسار القدمان من الأعلى بتشوّهات الروماتويد (أصابعُ صغيرة منحنية مخلبية وإبهامٌ مائل)، وفي اليمين أعلاه حذاءٌ رماديّ عميقٌ عريض بأربطةٍ وحزامٍ لاصق، وتحته زوجُ نعلٍ مشكَّل من الأعلى ومن الأسفل", en: "Left, both feet from above with rheumatoid deformities (bent, clawed small toes and a drifted big toe); top right, a deep, wide grey shoe with laces and a Velcro strap; below it, a pair of shaped insoles from the top and from below", search: "rheumatoid foot orthoses extra depth shoe" }],
   },
   {
     code: "ra-prayer-joint-protection", nameAr: "الصلاةُ مع اليدين والرسغين والركبتين الملتهبة", nameEn: "Prayer with inflamed hands, wrists and knees",
@@ -330,7 +330,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["رسغٌ أو ركبةٌ تتورّم بعد الصلاة ⟵ الكرسيُّ وأخبر الأخصائيّ؛ تنميلٌ في اليدين أو ألمٌ في مؤخّر الرأس أو دوخةٌ عند الركوع أو السجود ⟵ الكرسيُّ وإلى الطبيب في اليوم نفسه (الرقبة — Subagio 2023).", "A wrist or knee that swells after prayer → the chair, and tell the specialist; numb hands, pain at the back of the head, or dizziness on bowing or prostrating → the chair and to the doctor the same day (the neck — Subagio 2023)."],
     equipment: ["سجّادةٌ غيرُ زلقة، ووسادةٌ للركبتين، وكرسيٌّ ثابت.", "A non-slip prayer mat, a cushion for the knees, and a steady chair."],
     doseNote: ["في كلّ صلاة، ويُتدرَّج بالاستناد على الكفّ (بطاقةُ الاستناد المتدرّج).", "At every prayer, progressing through weight-bearing on the hand (the graded weight-bearing card)."],
-    images: [{ key: "ra-prayer-joint-protection-1", ar: "رجلٌ ساجد والكفّان مسطّحتان ووسادةٌ تحت ركبتيه، وكرسيٌّ بجانبه", en: "A man in prostration with flat palms and a cushion under his knees, with a chair beside him", search: "prayer prostration cushion knees flat palms" }],
+    images: [{ key: "ra-prayer-joint-protection-1", ar: "في اليسار رجلٌ بثوبٍ أبيض ساجدٌ على سجّادةٍ حمراء والكفّان مسطّحتان على السجّادة والأصابعُ متلاصقة والمرفقان مرفوعان عن الأرض؛ وفي اليمين رجلٌ بثوب المستشفى الأخضر يصلّي جالساً على كرسيٍّ بجانب السرير ويداه مسطّحتان على فخذيه", en: "Left, a man in a white thobe in prostration on a red rug, both palms flat with the fingers together and the elbows off the floor; right, a man in a green hospital gown prays seated on a chair beside a bed with both hands flat on his thighs", search: "prayer prostration cushion knees flat palms" }],
   },
   {
     code: "ra-interval-cycling", nameAr: "الدرّاجةُ بفتراتٍ عالية الشدّة للمرض المضبوط", nameEn: "Interval cycling for well-controlled disease",
@@ -367,7 +367,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الصدر، أو ضيقُ نفَسٍ لا يتناسب مع الجهد، أو دوخة ⟵ توقّف وإلى الطبيب؛ مقياسُ DAS28 من ٣٫٢ فأكثر أو ركبةٌ متورّمة جديدة ⟵ الدرّاجةُ بشدّةٍ ثابتة متوسّطة بدلها.", "Chest pain, breathlessness out of proportion to the effort, or dizziness → stop and to the doctor; DAS28 of 3.2 or more, or a newly swollen knee → steady moderate cycling instead."],
     equipment: ["درّاجةٌ ثابتة، وجهازُ نبضٍ أو لوحةُ بورغ.", "A stationary bike, and a heart-rate monitor or a Borg chart."],
     doseNote: ["ثلاثاً في الأسبوع × ٣٠ دقيقة بعد فحص القلب، لمن مقياسُ DAS28 عنده أقلُّ من ٣٫٢ (Bartlett 2018 · Bilberg 2024)؛ ورقمُ بورغ اقتراح.", "Three times a week × 30 minutes after a heart check, for those with DAS28 below 3.2 (Bartlett 2018 · Bilberg 2024); the Borg figure is a proposal."],
-    images: [{ key: "ra-interval-cycling-1", ar: "شخصٌ على درّاجةٍ ثابتة بجانب لوحةٍ تتناوب فيها «٦٠ ثانيةً قويّة» بالأحمر و«٦٠ ثانيةً سهلة» بالأخضر", en: "A person on a stationary bike beside a chart alternating a red '60 seconds hard' and a green '60 seconds easy'", search: "interval cycling stationary bike older adult heart rate" }],
+    images: [{ key: "ra-interval-cycling-1", ar: "رسمٌ لرجلٍ بقميصٍ أزرق وسروالٍ أخضر وعصابة رأس يدوّس على درّاجةٍ ثابتة ويمسك المقود", en: "A drawing of a man in a blue T-shirt, green shorts and a headband pedalling a stationary exercise bike, holding the handlebars", search: "interval cycling stationary bike older adult heart rate" }],
   },
   {
     code: "ra-neck-safe-mobility", nameAr: "حركةُ الرقبة الآمنة وعلاماتُ الخطر", nameEn: "Safe neck movement and warning signs",
@@ -404,7 +404,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["أيُّ علامةٍ من علامات الخطر ⟵ توقّف وإلى الطبيب في اليوم نفسه (Subagio 2023 · Kim 2005).", "Any warning sign → stop and to the doctor the same day (Subagio 2023 · Kim 2005)."],
     equipment: ["كرسيٌّ بظهر.", "A chair with a backrest."],
     doseNote: ["خمسُ مرّاتٍ بطيئة لكلّ اتّجاه يومياً (اقتراحٌ لا جرعةٌ مجرَّبة).", "Five slow repetitions in each direction daily (a proposal, not a tested dose)."],
-    images: [{ key: "ra-neck-safe-mobility-1", ar: "امرأةٌ جالسة تدير رأسها بلطف، وبجانبها إطارٌ لتقويم الرقبة عليه علامةُ منع، ورموزٌ لعلامات الخطر", en: "A seated woman gently turning her head, with a crossed-out panel of neck manipulation and warning-sign icons beside her", search: "rheumatoid arthritis neck exercises cervical spine safety" }],
+    images: [{ key: "ra-neck-safe-mobility-1", ar: "رسمان للرأس والكتفين لرجلٍ بقميصٍ أزرق فاتح يدير رأسه ببطء لينظر فوق كتفه اليسرى ثمّ فوق اليمنى، وسهمٌ لكلّ جهة", en: "Two head-and-shoulders drawings of a man in a light-blue top turning his head slowly to look over his left shoulder and then over his right, with an arrow for each direction", search: "rheumatoid arthritis neck exercises cervical spine safety" }],
   },
 ];
 
