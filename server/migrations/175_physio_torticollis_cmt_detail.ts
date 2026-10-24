@@ -64,7 +64,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["يقاوم الرضيعُ ويستمرّ بكاؤه، أو يتغيّر لونُه أو تنفّسه (APTA CMT 2018 · Tang 2025)؛ أو أحسستم «طقّةً» أو ارتخاءً مفاجئاً في العضلة ⟵ توقّفوا وأخبروا الأخصائيّ — يحدث عند نحو ٩٪ ولا ضررَ بعيداً منه (Cheng 2001b)؛ أو تغيّرت الكتلةُ في الرقبة أو كبرت.", "The infant resists and keeps crying, or their colour or breathing changes (APTA CMT 2018 · Tang 2025); or you feel a 'snap' or a sudden give in the muscle → stop and tell the specialist — it happens in about 9% with no long-term harm (Cheng 2001b); or the lump in the neck changes or grows."],
     equipment: ["سطحٌ ثابت أو حضنُ مَن يحمل الرضيع؛ والمنقلةُ المفصلية (Arthrodial protractor) للأخصائيّ وحده.", "A firm surface or the lap of the person holding the infant; the arthrodial protractor is for the specialist only."],
     doseNote: ["١٠ مرّات × ثباتُ ١٠ ثوانٍ، ٥–١٠ مرّاتٍ في اليوم (٥٠–١٠٠ تمطيطة) كلَّ يومٍ حتى الخروج (He 2017 · Kwon 2023)؛ وفي الجلسة ٣ × ١٥ بيد الأخصائيّ (Kwon 2023).", "10 repetitions × a 10-second hold, 5–10 times a day (50–100 stretches) every day until discharge (He 2017 · Kwon 2023); in the session 3 × 15 by the specialist (Kwon 2023)."],
-    images: [{ key: "cmt-passive-rotation-stretch-1", ar: "شخصٌ جالسٌ والرضيعُ مستلقٍ على ظهره في حضنه ووجهُه إليه، يدٌ على صدر الرضيع وكتفه، والأخرى تدير ذقنَه بلطفٍ نحو كتف الجهة المشدودة", en: "A seated adult with the infant lying on the back on their lap and facing them, one hand across the infant's chest and shoulder, the other gently turning the chin toward the shoulder on the tight side", search: "torticollis infant neck rotation stretch parent lap" }],
+    images: [{ key: "cmt-passive-rotation-stretch-1", ar: "صورةٌ بالأبيض والأسود لرضيعٍ مستلقٍ على ظهره على ملاءةٍ بيضاء، يدُ شخصٍ بالغ على جانب رأسه تدير وجهَه نحو كتفه اليمنى، واليدُ الأخرى على صدره تثبّت الكتفين", en: "Black-and-white photo of a baby lying on its back on a white sheet; an adult's hand on the side of the head turns the face toward the baby's right shoulder while the other hand across the chest keeps the shoulders down", search: "torticollis infant neck rotation stretch parent lap" }],
   },
   {
     code: "cmt-lateral-flexion-stretch", nameAr: "تمطيطُ الرقبة بالميل الجانبيّ بعيداً عن الجهة المشدودة", nameEn: "Passive neck side-bending stretch away from the tight side",
@@ -101,7 +101,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["كتمطيط التدوير: مقاومةٌ مع بكاءٍ مستمرّ، أو تغيّرُ اللون أو التنفّس، أو «طقّةٌ» أو ارتخاءٌ مفاجئ، أو تغيّرُ الكتلة ⟵ توقّفوا وأخبروا الأخصائيّ (APTA CMT 2018 · Cheng 2001b).", "As for the rotation stretch: resistance with ongoing crying, a change in colour or breathing, a 'snap' or a sudden give, or a change in the lump → stop and tell the specialist (APTA CMT 2018 · Cheng 2001b)."],
     equipment: ["سطحٌ ثابت أو الحضن.", "A firm surface or the lap."],
     doseNote: ["١٠ × ثباتُ ١٠ ثوانٍ، ٥–١٠ مرّاتٍ في اليوم مع تمطيط التدوير (He 2017 · Kwon 2023).", "10 × a 10-second hold, 5–10 times a day together with the rotation stretch (He 2017 · Kwon 2023)."],
-    images: [{ key: "cmt-lateral-flexion-stretch-1", ar: "رضيعٌ مستلقٍ على ظهره، ويدُ شخصٍ بالغ تثبّت كتفَه اليمنى والأخرى تُميل رأسَه لتقترب أذنُه اليسرى من كتفه اليسرى", en: "An infant lying on the back while an adult's hand holds the right shoulder down and the other hand bends the head so the left ear moves toward the left shoulder", search: "torticollis lateral flexion stretch infant shoulder" }],
+    images: [{ key: "cmt-lateral-flexion-stretch-1", ar: "صورةٌ بالأبيض والأسود لرضيعٍ مستلقٍ على ظهره، يدُ بالغٍ تثبّت كتفَه اليمنى، والأخرى على أعلى رأسه تُميله فتقترب أذنُه اليسرى من كتفه اليسرى", en: "Black-and-white photo of a baby lying on its back; one adult hand holds the right shoulder down and the other, on top of the head, tilts it so the left ear moves toward the left shoulder", search: "torticollis lateral flexion stretch infant shoulder" }],
   },
   {
     code: "cmt-tummy-time-progression", nameAr: "وقتُ البطن كلَّ يوم، يزيد خطوةً خطوة", nameEn: "Daily tummy time, built up step by step",
@@ -140,7 +140,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["إن نعس الرضيعُ ⟵ اقلبوه على ظهره لينام؛ وإن تقيّأ أو انزعج كثيراً ⟵ توقّفوا وحاولوا بعد قليل. ولا يُترك نائماً على بطنه أبداً (AAP Moon 2022).", "If the infant gets drowsy → turn them onto the back to sleep; if they vomit or become very upset → stop and try again a little later. Never leave the infant asleep on the tummy (AAP Moon 2022)."],
     equipment: ["بساطٌ نظيف على الأرض، ومنشفةٌ صغيرة ملفوفة، وألعاب، ومرآةٌ لا تنكسر.", "A clean mat on the floor, a small rolled towel, toys, and an unbreakable mirror."],
     doseNote: ["ثلاثَ مرّاتٍ في اليوم فأكثر من اليوم الثاني (APTA CMT 2018)، يبلغ مجموعُها ٣٠ دقيقةً في اليوم فأكثر نحو الشهر الثاني (WHO 2019 · Zhang 2023)، وأكثرُ كلّما تحمّل.", "Three or more times a day from the second day (APTA CMT 2018), adding up to 30 minutes a day or more by about two months (WHO 2019 · Zhang 2023), and more as tolerated."],
-    images: [{ key: "cmt-tummy-time-progression-1", ar: "رضيعٌ على بطنه على بساطٍ على الأرض مستندٌ إلى ساعديه، وأحدُ أهله مستلقٍ أمامه وجهاً لوجه في الجهة التي يحتاج أن يلتفت إليها ويمسك لعبة", en: "An infant on the tummy on a floor mat, propped on the forearms, with a family member lying face to face on the side the infant needs to turn toward, holding a toy", search: "tummy time infant torticollis toy side floor mat" }],
+    images: [{ key: "cmt-tummy-time-progression-1", ar: "رضيعةٌ بملابس ورديّة منقّطة على بطنها على بساطٍ أبيض وورديّ، مستندةٌ إلى ساعديها تنظر إلى لعبةٍ قماشية، وأمُّها مستلقيةٌ أمامها على الأرض وجهاً لوجه تمسك اللعبة", en: "A baby girl in a pink spotted sleepsuit lies on her tummy on a white-and-pink mat, propped on her forearms and looking at a soft toy that her mother, lying face-to-face with her on the floor, holds", search: "tummy time infant torticollis toy side floor mat" }],
   },
   {
     code: "cmt-lateral-head-righting", nameAr: "استقامةُ الرأس الجانبية لتقوية الجهة الأضعف", nameEn: "Lateral head-righting to strengthen the weaker side",
@@ -177,7 +177,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["لا يستطيع رفعَ رأسه ⟵ قلّلوا الميل؛ يتعب أو يبكي ⟵ توقّفوا؛ وقبل أن يحمل رأسَه في الحمل المنتصب ⟵ على الجنب وحده.", "Cannot lift the head → reduce the tilt; tires or cries → stop; and before the infant can hold the head when carried upright → in side-lying only."],
     equipment: ["مرآةٌ لا تنكسر؛ وكرةُ العلاج في المركز.", "An unbreakable mirror; the therapy ball at the centre."],
     doseNote: ["٥–١٠ ميلات × ٣–٥ ثوانٍ، ٣–٥ مرّاتٍ في اليوم — اقتراحٌ مشتقّ، فلا تجربةَ نشرت جرعة (Ohman 2011).", "5–10 tilts × 3–5 seconds, 3–5 times a day — a derived proposal, as no trial has published a dose (Ohman 2011)."],
-    images: [{ key: "cmt-lateral-head-righting-1", ar: "شخصٌ يحمل رضيعَه منتصباً أمام مرآة ويُميل جسمَه إلى جهة، والرضيعُ يرفع رأسَه عائداً نحو الاستقامة", en: "An adult holding an infant upright in front of a mirror and tilting the body to one side, while the infant lifts the head back toward upright", search: "head righting torticollis infant mirror tilt" }],
+    images: [{ key: "cmt-lateral-head-righting-1", ar: "صورةٌ بالأبيض والأسود لامرأةٍ تحمل رضيعاً على جنبه على طول ساعدها وظهرُه إلى جسمها ويدُها الأخرى بين ساقيه، وجسمُ الرضيع مائلٌ وهو يرفع رأسَه بنفسه نحو الاستقامة", en: "Black-and-white photo of a woman carrying a baby on its side along her forearm, its back against her body and her other hand between its legs; the baby's body is tilted and it lifts its own head toward upright", search: "head righting torticollis infant mirror tilt" }],
   },
   {
     code: "cmt-visual-tracking-rotation", nameAr: "متابعةُ الوجه أو اللعبة للالتفات نحو الجهة المشدودة", nameEn: "Following a face or toy to turn toward the tight side",
@@ -214,7 +214,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["يُشيح بنظره أو ينزعج ⟵ حاولوا لاحقاً؛ وإن لم يتبع الوجهَ أو اللعبةَ بعينيه، أو رأيتم حَوَلاً أو اهتزازاً في العينين ⟵ أخبروا الأخصائيّ (APTA CMT 2018).", "The infant looks away or fusses → try again later; if they do not follow the face or toy with the eyes, or you see a squint or shaking of the eyes → tell the specialist (APTA CMT 2018)."],
     equipment: ["لعبةٌ عالية التباين أو خشخيشة؛ وكرسيٌّ دوّار في المركز.", "A high-contrast toy or a rattle; a rotating stool at the centre."],
     doseNote: ["٥–١٠ التفاتاتٍ نحو الجهة المحدودة، مرّاتٍ في اليوم أثناء اللعب — اقتراحٌ مشتقّ (APTA CMT 2018).", "5–10 turns toward the limited side, several times a day during play — a derived proposal (APTA CMT 2018)."],
-    images: [{ key: "cmt-visual-tracking-rotation-1", ar: "رضيعٌ على ظهره يدير رأسَه ليتبع خشخيشةً حمراء يحرّكها أحدُ أهله ببطءٍ إلى جهة", en: "An infant on the back turning the head to follow a red rattle that a family member moves slowly to one side", search: "infant visual tracking head turn rattle torticollis" }],
+    images: [{ key: "cmt-visual-tracking-rotation-1", ar: "من الأعلى: رضيعٌ صغير بملابس مخطّطة على ظهره على بطّانيةٍ بيضاء، تتبع عيناه خشخيشةً خضراء على شكل سلحفاة ترفعها امرأةٌ إلى جانبه، ويدُها الأخرى على بطنه", en: "Seen from above: a young baby in a striped sleepsuit on its back on a white blanket, its eyes following a green turtle rattle that a woman holds up to its side, her other hand on its tummy", search: "infant visual tracking head turn rattle torticollis" }],
   },
   {
     code: "cmt-carrying-positions", nameAr: "أوضاعُ الحمل التي تمطّ الرقبة وتقوّيها", nameEn: "Carrying positions that stretch and strengthen the neck",
@@ -251,7 +251,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["يرتخي أو ينعس أو ينزعج ⟵ غيّروا الوضع؛ ولا وضعَ في الحامل يُطبق فيه الذقنُ على الصدر أثناء النوم (اقتراحٌ مشتقّ).", "The infant goes floppy, drowsy or upset → change the position; and no carrier position that presses the chin onto the chest during sleep (a derived proposal)."],
     equipment: ["حمّالةٌ أو حاملٌ ليّن بمقعدٍ عريض (اختياريّ).", "A sling or soft carrier with a wide seat (optional)."],
     doseNote: ["أثناء الحمل اليوميّ، مرّاتٍ كثيرة في اليوم (APTA CMT 2018).", "During everyday carrying, many times a day (APTA CMT 2018)."],
-    images: [{ key: "cmt-carrying-positions-1", ar: "شخصٌ يحمل رضيعَه على بطنه على طول ساعده («حملُ الكرة»)، ورأسُ الرضيع على كفّه مائلٌ بلطفٍ بعيداً عن الجهة المشدودة", en: "An adult carrying an infant face-down along the forearm (the 'football hold'), the infant's head resting on the hand and bent gently away from the tight side", search: "football hold carrying position torticollis baby" }],
+    images: [{ key: "cmt-carrying-positions-1", ar: "امرأةٌ بقميصٍ أبيض ونظّارة واقفةٌ في غرفة الجلوس تحمل رضيعاً على بطنه على ساعديها ويدُها تحت صدره، والرضيعُ يرفع رأسَه وينظر إلى الأمام", en: "A woman in a white T-shirt and glasses stands in a living room carrying a baby face-down along her forearms, one hand under its chest, while the baby lifts its head and looks ahead", search: "football hold carrying position torticollis baby" }],
   },
   {
     code: "cmt-feeding-sleep-setup", nameAr: "الرضاعةُ والنومُ وترتيبُ الغرفة لكي يلتفت الرضيعُ نحو الجهة المشدودة", nameEn: "Feeding, sleep and room set-up that make the infant turn toward the tight side",
@@ -290,7 +290,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["مشكلاتُ الرضاعة (التقامٌ ضعيف، أو شرقة، أو قلقٌ من الوزن) ⟵ إلى طبيب الأطفال أو مَن يساعد في الرضاعة (Genna 2015)؛ وتقيّؤٌ أو تقوّسٌ مع الرضعات ⟵ إلى الطبيب (Bess 2022 · Deskin 1995).", "Feeding problems (a poor latch, choking, or a concern about weight) → to the paediatrician or breastfeeding support (Genna 2015); vomiting or arching with feeds → to the doctor (Bess 2022 · Deskin 1995)."],
     equipment: ["لا شيء.", "None."],
     doseNote: ["طوالَ اليوم، كلَّ يوم (APTA CMT 2018).", "All day, every day (APTA CMT 2018)."],
-    images: [{ key: "cmt-feeding-sleep-setup-1", ar: "غرفةُ نومٍ فيها رضيعٌ نائمٌ على ظهره في سريرٍ مستوٍ بلا وسادة، والبابُ والنافذةُ وسريرُ أحد الوالدين في الجهة التي يحتاج أن يلتفت إليها", en: "A bedroom with an infant asleep on the back in a flat cot with no pillow, and the door, the window and a parent's bed on the side the infant needs to turn toward", search: "safe sleep crib position torticollis room setup" }],
+    images: [{ key: "cmt-feeding-sleep-setup-1", ar: "غرفةُ نوم: مولودٌ بملابس بيضاء نائمٌ على ظهره في سريرٍ بفراشٍ مستوٍ وملاءةٍ زرقاء ولا شيءَ غيرَها، وأمُّه واقفةٌ بجانبه، وسريرُ الوالدين والمصباحُ والنافذةُ بجانب سريره", en: "A bedroom: a newborn in a white sleepsuit sleeps on its back in a cot with a flat mattress, a fitted blue sheet and nothing else in it; the mother stands beside it, and the parents' bed, a lamp and a window are next to the cot", search: "safe sleep crib position torticollis room setup" }],
   },
   {
     code: "cmt-rolling-side-lying-play", nameAr: "اللعبُ على الجنب والتدحرجُ لحركةٍ متناظرة", nameEn: "Side-lying and rolling play for symmetrical movement",
@@ -327,7 +327,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["انزعاجٌ أو تعب ⟵ توقّفوا؛ وفقدُ مهارةٍ كان يتقنها أو ضعفٌ في يدٍ أو ساق ⟵ إلى الأخصائيّ (APTA CMT 2018).", "Distress or tiredness → stop; loss of a skill the infant had, or weakness of an arm or leg → to the specialist (APTA CMT 2018)."],
     equipment: ["بساط، ومنشفةٌ ملفوفة، وألعاب.", "A mat, a rolled towel, and toys."],
     doseNote: ["٢–٣ مرّاتِ لعبٍ في اليوم، ٥–١٠ دقائق لكلّ مرّة — اقتراحٌ مشتقّ (APTA CMT 2018).", "2–3 play sessions a day, 5–10 minutes each — a derived proposal (APTA CMT 2018)."],
-    images: [{ key: "cmt-rolling-side-lying-play-1", ar: "رضيعٌ مستلقٍ على جنبه على بساط يرفع رأسَه لينظر إلى لعبةٍ ممسوكة أعلى منه قليلاً، ومنشفةٌ ملفوفة خلف ظهره", en: "An infant lying on one side on a mat, lifting the head to look at a toy held slightly above, with a rolled towel behind the back", search: "side lying play infant head lift toy torticollis" }],
+    images: [{ key: "cmt-rolling-side-lying-play-1", ar: "من الأعلى: رضيعٌ صغير بالحفّاظ مستلقٍ على جنبه على بطّانيةٍ رمادية وأمامه خشخيشةٌ خضراء على شكل حلقة، ويدا شخصٍ بالغ على وركه وفخذه تبقيانه على جنبه", en: "Seen from above: a young baby in a nappy lies on its side on a grey blanket facing a green ring rattle, while an adult's two hands at the hip and thigh keep it on its side", search: "side lying play infant head lift toy torticollis" }],
   },
   {
     code: "cmt-parent-watch-signs", nameAr: "علاماتُ الخطر: متى تتوقّفون عن التمارين وتتّصلون", nameEn: "Warning signs: when to stop the exercises and call",
@@ -364,7 +364,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["أيُّ علامةٍ ممّا سبق.", "Any of the signs above."],
     equipment: ["البطاقةُ المصوّرة ورقمُ هاتف المركز.", "The picture card and the centre's phone number."],
     doseNote: ["مراقبةٌ يومية من الأهل، ومراجعةٌ في كلّ زيارة (APTA CMT 2018).", "Daily watching by the family, and a review at every visit (APTA CMT 2018)."],
-    images: [{ key: "cmt-parent-watch-signs-1", ar: "بطاقةٌ مصوّرة بسيطة: أحدُ الوالدين يمسك هاتفاً، وبجانبه رموزٌ لميزان حرارة ورضيعٍ يتقيّأ وعينٍ بحَوَل ورضيعٍ ساقاه غيرُ متساويتين", en: "A simple picture card: a parent holding a phone, beside icons of a thermometer, a vomiting infant, a squinting eye and an infant with uneven legs", search: "torticollis red flags parent warning signs infant" }],
+    images: [{ key: "cmt-parent-watch-signs-1", ar: "بطاقةٌ مصوّرة بلا كلمات بإطارٍ أحمر: على اليمين ستّةُ رموز تحذير — ميزانُ حرارة، ووجهٌ يتقيّأ، ووجهٌ نعسان، وعين، وساق، وضوءُ إنذارٍ أحمر — وعلى اليسار أمٌّ ترضع طفلَها بالقنينة وسمّاعةُ هاتف", en: "A wordless picture card in a red frame: six warning icons — a thermometer, a vomiting face, a sleepy face, an eye, a leg and a red alarm light — beside a mother bottle-feeding her baby and a telephone receiver", search: "torticollis red flags parent warning signs infant" }],
   },
 ];
 

@@ -63,7 +63,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ حادّ في الفكّ، أو قفلٌ لا يفتح أو لا يغلق، أو تورّمٌ جديد أمام الأذن ⟵ توقّف، وإلى طبيب المفاصل وطبيب تقويم الأسنان (Stoustrup 2023).", "Sharp jaw pain, locking open or closed, or new swelling in front of the ear → stop, and to the rheumatologist and the orthodontist (Stoustrup 2023)."],
     equipment: ["مرآة، ومسطرةٌ بالملّيمتر، وسجلٌّ منزليّ.", "A mirror, a millimetre ruler, and a home diary."],
     doseNote: ["٥–١٠ مرّات لكلّ حركة × ١–٢ في اليوم في البيت (اقتراح)؛ والدراسةُ وصفت تمارينَ البيت بين ثماني زياراتٍ أسبوعية (Vassis 2023).", "5–10 repetitions of each movement × 1–2 times a day at home (a proposal); the study prescribed home exercises between eight weekly visits (Vassis 2023)."],
-    images: [{ key: "jia-jaw-mobility-home-1", ar: "رسمٌ لفتاةٍ نحو الثانية عشرة جالسةٍ أمام مرآة، إصبعٌ على كلّ مفصل فكٍّ أمام الأذن والفمُ مفتوحٌ قليلاً، ومسطرةٌ على الطاولة", en: "Drawing of a girl of about twelve sitting in front of a mirror, one finger on each jaw joint in front of the ear and the mouth slightly open, with a ruler on the table", search: "jaw TMJ exercise child mirror mouth opening ruler" }],
+    images: [{ key: "jia-jaw-mobility-home-1", ar: "صورةٌ عن قرب لفمٍ مفتوحٍ على اتّساعه، ويدُ فاحصٍ بقفّازٍ أزرق تضع مسطرةً معدنية بالمليمتر على الأسنان الأمامية العليا لتقيس مقدارَ فتح الفم", en: "Close-up of a wide-open mouth while a gloved examiner holds a steel millimetre ruler against the upper front teeth to measure how far the mouth opens", search: "jaw TMJ exercise child mirror mouth opening ruler" }],
   },
   {
     code: "jia-play-rom-morning-routine", nameAr: "روتينُ الصباح للتيبّس باللعب", nameEn: "Morning stiffness routine through play",
@@ -102,7 +102,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ فوق ٣ من ١٠، أو مفصلٌ جديد حارّ متورّم، أو بكاءٌ ورفض ⟵ أوقف ذلك التمرين، وأخبر الأخصائيّ.", "Pain above 3 out of 10, a new hot swollen joint, or crying and refusal → stop that exercise, and tell the specialist."],
     equipment: ["فراشٌ وموسيقى، ولوحةُ ملصقات.", "A mat and music, and a sticker chart."],
     doseNote: ["١٠–١٥ دقيقة كلَّ صباح وقبل النوم (اقتراح)؛ والبرنامجُ المجرَّب في البيت أربعةُ أيّامٍ في الأسبوع (Tarakci 2012).", "10–15 minutes every morning and before bed (a proposal); the tested home programme ran four days a week (Tarakci 2012)."],
-    images: [{ key: "jia-play-rom-morning-routine-1", ar: "أمٌّ وطفلٌ في الخامسة على فراشٍ يمدّان الذراعين والساقين واسعاً في «نجمة البحر» ويبتسمان", en: "A mother and a five-year-old child on a mat stretching their arms and legs wide in a 'starfish', both smiling", search: "child morning stretch play parent starfish exercise" }],
+    images: [{ key: "jia-play-rom-morning-routine-1", ar: "أربعُ صورٍ لفتاةٍ بقميصٍ أبيض وبنطالٍ أسود على فراشٍ أزرق: أعلى اليمين مستلقيةٌ على ظهرها تدوّر ساقيها في الهواء، وأعلى اليسار على أربعٍ تقوّس ظهرَها، وأسفلَ اليمين على أربعٍ ظهرُها مقعَّر ورأسُها مرفوع، وأسفلَ اليسار تمشي على يديها وقدميها (مشيُ الدبّ)", en: "Four photos of a girl in a white T-shirt and black leggings on a blue mat: top right on her back pedalling her legs in the air, top left on hands and knees with the back rounded, bottom right on hands and knees with the back dipped and head up, bottom left walking on hands and feet (bear walk)", search: "child morning stretch play parent starfish exercise" }],
   },
   {
     code: "jia-knee-extension-night-splint", nameAr: "جبيرةُ مدّ الركبة الليلية: لبسُها ووقتُها وفحصُ الجلد", nameEn: "Night knee extension splint: putting it on, wear time and skin checks",
@@ -141,7 +141,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلٌ، أو تغيّرُ لون الأصابع، أو جرحٌ في الجلد، أو ألمٌ يوقظ الطفل ⟵ انزعها، ولا تُلبس حتى يراها الأخصائيّ أو قسمُ المساند.", "Numbness, a change in toe colour, broken skin, or pain that wakes the child → take it off, and do not use it until the specialist or the orthotics department has seen it."],
     equipment: ["جبيرةُ مدّ الركبة من قسم المساند (بلاستيكٌ حراريّ أو قابلةٌ للضبط)، وجوربٌ قطنيّ طويل.", "A knee extension splint from the orthotics department (thermoplastic or adjustable), and a long cotton sock."],
     doseNote: ["كلَّ ليلة ما بقي التيبّس، ومراجعةٌ كلَّ ٢–٤ أسابيع (اقتراح — لا تجربةَ لجرعة الجبيرة).", "Every night while the contracture persists, with a review every 2–4 weeks (a proposal — there is no trial of splint dose)."],
-    images: [{ key: "jia-knee-extension-night-splint-1", ar: "طفلٌ في السابعة نائم وإحدى ساقيه في جبيرةٍ مبطّنة تمدّ الركبة، وأحدُ الوالدين يفحص الحزامَ بإصبع", en: "A sleeping seven-year-old with one leg in a padded knee extension splint, and a parent checking the strap with one finger", search: "knee extension night splint child juvenile arthritis" }],
+    images: [{ key: "jia-knee-extension-night-splint-1", ar: "جبيرتا ركبةٍ قماشيتان بالورديّ والأبيض بقضبانٍ جانبية وأحزمةٍ لاصقة تُبقيان الركبةَ مستقيمة على ساقين ممدودتين فوق سرير العلاج: اليسرى مربوطتان، والوسطى إصبعٌ يشير إلى الرضفة بين الحزامين، واليمنى رسمٌ لطفلٍ جالسٍ بهما", en: "Pink-and-white fabric knee gaiters with side bars and Velcro straps that keep the knee straight, on legs lying straight on a treatment couch: left both fastened, middle a finger pointing to the kneecap between the straps, right a drawing of a child sitting in them", search: "knee extension night splint child juvenile arthritis" }],
   },
   {
     code: "jia-resting-wrist-hand-splint", nameAr: "جبيرةُ الرسغ واليد: وقتُ لبسها وفحصُها", nameEn: "Resting wrist and hand splint: wear time and checks",
@@ -180,7 +180,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["تنميلٌ، أو تورّمُ الأصابع، أو احمرارٌ أو جرحٌ من الضغط ⟵ انزعها، وإلى قسم المساند.", "Numbness, swollen fingers, or redness or a sore from pressure → take it off, and to the orthotics department."],
     equipment: ["جبيرةُ راحةٍ أو عملٍ للرسغ واليد من قسم المساند.", "A resting or working wrist and hand splint from the orthotics department."],
     doseNote: ["كما وصفها الطبيبُ أو الأخصائيّ، وتُراجَع في كلّ كتلة (اقتراح — لا تجربةَ لوقت لبسها).", "As prescribed by the doctor or specialist, and reviewed at every block (a proposal — there is no trial of wearing time)."],
-    images: [{ key: "jia-resting-wrist-hand-splint-1", ar: "ساعدُ طفلٍ في العاشرة ويدُه مستريحان في جبيرة رسغٍ ويد على طاولة، والرسغُ مرفوعٌ قليلاً والأصابعُ وردية مرتخية", en: "The forearm and hand of a ten-year-old resting in a wrist and hand splint on a table, the wrist slightly extended and the fingers pink and relaxed", search: "resting wrist hand splint child juvenile arthritis" }],
+    images: [{ key: "jia-resting-wrist-hand-splint-1", ar: "في الأعلى رسمٌ خطّيّ لساعدٍ ويدٍ مستريحين في جبيرة راحةٍ مصبوبة بثلاثة أحزمة، والرسغُ مرفوعٌ قليلاً والأصابعُ مسنودة؛ وفي الأسفل رسمٌ ملوّن لجبيرة رسغٍ جاهزة للعمل والأصابعُ والإبهامُ حرّة", en: "Top: a line drawing of a forearm and hand resting in a moulded resting splint with three straps, the wrist slightly extended and the fingers supported; bottom: a colour drawing of a ready-made wrist working splint with the fingers and thumb free", search: "resting wrist hand splint child juvenile arthritis" }],
   },
   {
     code: "jia-foot-orthoses-shoe-raise", nameAr: "نعلُ القدم الطبّيّ ورفعُ الحذاء في حذاء المدرسة", nameEn: "Foot orthoses and a shoe raise in school shoes",
@@ -219,7 +219,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ جديد، أو فقاعات، أو احمرارٌ يبقى أكثرَ من نصف ساعة ⟵ لا يُلبس حتى يراه قسمُ المساند.", "New pain, blisters, or redness lasting more than half an hour → not worn until the orthotics department has seen it."],
     equipment: ["نعلٌ مصنوعٌ أو جاهزٌ مضبوط من قسم المساند، ورفعُ الحذاء كما يصفه قسمُ المساند.", "A custom or adjusted preformed orthosis from the orthotics department, and a shoe raise as the orthotics department prescribes."],
     doseNote: ["يومياً؛ ومراجعةٌ في ٤ أسابيع و٣ أشهر كمواعيد التجربة (Fellas 2022a)، وقياسُ طول الساقين في كلّ كتلة (Sherry 1999).", "Daily; with a review at 4 weeks and 3 months, as in the trial (Fellas 2022a), and leg length measured at every block (Sherry 1999)."],
-    images: [{ key: "jia-foot-orthoses-shoe-raise-1", ar: "حذاءُ مدرسةٍ لطفلٍ يُدخَل فيه نعلٌ طبّيّ مصنوع، وبجانبه حذاءٌ ثانٍ برفعٍ صغير تحت الكعب", en: "A child's school shoe with a custom orthosis being slipped inside, and beside it a second shoe with a small heel raise", search: "child foot orthoses school shoe heel raise juvenile arthritis" }],
+    images: [{ key: "jia-foot-orthoses-shoe-raise-1", ar: "في الأعلى قدمٌ حافية تخطو على نعلٍ طبّيّ مصبوبٍ بطول القدم؛ وفي الأسفل حذاءان رياضيّان برباطٍ وكعبٍ منخفض، من النوع الذي يناسب النعل", en: "Top: a bare foot stepping onto a full-length moulded insole; bottom: a pair of low-heeled lace-up trainers, the kind of shoe suited to insoles", search: "child foot orthoses school shoe heel raise juvenile arthritis" }],
   },
   {
     code: "jia-pilates-mat-sequence", nameAr: "سلسلةُ البيلاتس على الفراش للأطفال", nameEn: "Pilates mat sequence for children",
@@ -258,7 +258,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمُ مفصلٍ فوق ٣ من ١٠، أو ألمُ الرسغ على أربع ⟵ إلى الساعدين، أو اترك ذلك التمرين.", "Joint pain above 3 out of 10, or wrist pain on all fours → move to the forearms, or leave that exercise out."],
     equipment: ["فراش، وكرةٌ صغيرة، ومطّاط.", "A mat, a small ball, and a band."],
     doseNote: ["٥ مرّات لكلّ تمرين في الجلسات الثلاث الأولى ثمّ ٨ ثمّ ١٠ (Mendonca 2013)؛ والمجرَّب ٥٠ دقيقة مرّتين في الأسبوع ستّةَ أشهر أو ثلاثاً ثلاثةَ أشهر (Mendonca 2013 · Azab 2022)، والبيتُ ٣–٤ أيّام (اقتراح).", "5 repetitions of each exercise for the first three sessions, then 8, then 10 (Mendonca 2013); tested as 50 minutes twice a week for six months or three times a week for three months (Mendonca 2013 · Azab 2022), and home 3–4 days (a proposal)."],
-    images: [{ key: "jia-pilates-mat-sequence-1", ar: "فتاةٌ في الحادية عشرة على فراشٍ ترفع حوضَها في جسرٍ صغير والذراعان بجانبها، والأخصائيّةُ راكعةٌ بجانبها", en: "An eleven-year-old girl on a mat lifting her pelvis into a small bridge with her arms by her sides, and the therapist kneeling beside her", search: "children Pilates mat bridge exercise therapist" }],
+    images: [{ key: "jia-pilates-mat-sequence-1", ar: "فتياتٌ على فراشٍ أزرق: أعلى اليمين جسرٌ والذراعان بجانبها، وأعلى اليسار على أربعٍ تمدّ ذراعاً إلى الأمام والساقَ المقابلة إلى الخلف، وفي الأسفل منبطحةٌ ترفع ذراعيها ورأسَها وساقيها («السباحة»)", en: "Girls on a blue mat: top right a bridge with the arms by the sides, top left on hands and knees reaching one arm forward and the opposite leg back, bottom lying face down lifting the arms, head and legs ('swimming')", search: "children Pilates mat bridge exercise therapist" }],
   },
   {
     code: "jia-balance-proprioception-circuit", nameAr: "دائرةُ التوازن والإحساس بوضع المفاصل", nameEn: "Balance and proprioception circuit",
@@ -297,7 +297,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ فوق ٣ من ١٠، أو ركبةٌ أو كاحلٌ متورّم ⟵ المحطّاتُ على الأرض الثابتة وحدها.", "Pain above 3 out of 10, or a swollen knee or ankle → the stations on stable floor only."],
     equipment: ["وسادةٌ أو لوح توازن، وشريطٌ على الأرض، وأقماع، وكرة، وترامبولين صغير.", "A cushion or balance board, a tape line on the floor, cones, a ball, and a mini-trampoline."],
     doseNote: ["٣٠–٤٥ ثانية لكلّ محطّة × ٢–٣ دورات في الجلسة؛ والمجرَّب ثلاثاً في الأسبوع × ٤٥ دقيقة اثني عشرَ أسبوعاً (Baydogan 2015 — وأوقاتُ المحطّات اقتراح)، ومحطّاتُ الأرض في البيت.", "30–45 seconds per station × 2–3 rounds per session; tested as three times a week × 45 minutes for twelve weeks (Baydogan 2015 — the station times are a proposal), with the floor stations at home."],
-    images: [{ key: "jia-balance-proprioception-circuit-1", ar: "صبيٌّ في التاسعة واقفٌ على ساقٍ واحدة على وسادةٍ إسفنجية يلتقط كرة، والأخصائيُّ وعارضةُ الحائط قريبان", en: "A nine-year-old boy standing on one leg on a foam cushion catching a ball, with the therapist and a wall bar nearby", search: "child balance foam cushion single leg ball catch physiotherapy" }],
+    images: [{ key: "jia-balance-proprioception-circuit-1", ar: "أعلى اليمين فتاةٌ تضع قدماً على صندوقٍ منخفض، وأعلى اليسار قدمان بحذاءٍ رياضيّ تمشيان بين خطّين متوازيين من الشريط، وأسفلَ اليمين طفلٌ يخطو على بلاطاتٍ ملوّنة، وأسفلَ اليسار فتاتان على ركبةٍ واحدة تتقاذفان كرةً شائكة", en: "Top right a girl with one foot on a low step box, top left feet in trainers walking between two parallel tape lines, bottom right a child stepping onto coloured floor mats, bottom left two girls kneeling on one knee throwing and catching a spiky ball", search: "child balance foam cushion single leg ball catch physiotherapy" }],
   },
   {
     code: "jia-cardio-karate-dance", nameAr: "اللياقةُ بلا قفز: حركاتُ الكاراتيه والرقص", nameEn: "Low-impact cardio: karate and dance moves",
@@ -336,7 +336,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمُ مفصلٍ فوق ٣ من ١٠، أو دوخة، أو ضيقُ نفَسٍ غير معتاد ⟵ توقّف واجلس.", "Joint pain above 3 out of 10, dizziness, or unusual breathlessness → stop and sit down."],
     equipment: ["موسيقى، وفيديو مسجَّل للبيت.", "Music, and a recorded video for home."],
     doseNote: ["جلسةٌ ٦٠ دقيقة (١٠ إحماء، ٢٥ هوائيّ، ١٥ تقوية، ١٠ تهدئة) مرّتين في المركز ومرّةً في البيت بالفيديو ثمانيةَ أسابيع (Klepper 1999)، أو ٥٠ دقيقة ثلاثاً واحدةٌ منها بإشراف (Singh-Grewal 2007).", "A 60-minute session (10 warm-up, 25 aerobic, 15 strength, 10 cool-down) twice at the centre and once at home by video for eight weeks (Klepper 1999), or 50 minutes three times a week, one of them supervised (Singh-Grewal 2007)."],
-    images: [{ key: "jia-cardio-karate-dance-1", ar: "ثلاثةُ أطفالٍ في قاعة رياضة يلكمون لكمةَ الكاراتيه وقدمٌ تخطو إلى الأمام، ومكبّرُ صوتٍ في الخلف", en: "Three children in a gym throwing karate punches with one foot stepping forward, and a speaker in the background", search: "children cardio karate exercise class punches" }],
+    images: [{ key: "jia-cardio-karate-dance-1", ar: "أطفالٌ بملابس الفنون القتالية البيضاء وأحزمةٍ حمراء يتدرّبون على اللكم في وقفة الخطوة إلى الأمام في قاعة، والمدرّبُ يرفع وسادةً لإحدى البنات", en: "Children in white martial-arts uniforms with red belts practise punches in a forward stance in a hall, while an instructor holds a pad up for one girl", search: "children cardio karate exercise class punches" }],
   },
   {
     code: "jia-jump-rope-bone-loading", nameAr: "نطُّ الحبل والقفزُ لعظامٍ قويّة", nameEn: "Rope skipping and jumps for strong bones",
@@ -375,7 +375,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمُ الركبة أو الكاحل أو الورك فوق ٣ من ١٠، أو تورّمٌ في اليوم التالي ⟵ توقّف عن القفز وأخبر الأخصائيّ؛ ولا يُؤدّى مع مفصلٍ نشط في الساق.", "Knee, ankle or hip pain above 3 out of 10, or swelling the next day → stop jumping and tell the specialist; never with an active joint in the leg."],
     equipment: ["حبلُ نطّ.", "A skipping rope."],
     doseNote: ["نحو ١٠٠ قفزة بالقدمين في الجلسة ثلاثاً في الأسبوع اثني عشرَ أسبوعاً، مع تقويةٍ ٣ × ١٠ (Sandstedt 2012 · Sandstedt 2013).", "About 100 two-footed jumps per session, three times a week for twelve weeks, with strengthening 3 × 10 (Sandstedt 2012 · Sandstedt 2013)."],
-    images: [{ key: "jia-jump-rope-bone-loading-1", ar: "فتاةٌ في الحادية عشرة تنطّ الحبلَ في ساحة المدرسة بحذاءٍ رياضيّ والركبتان مثنيّتان قليلاً", en: "An eleven-year-old girl skipping with a rope in a schoolyard in sports shoes, with the knees slightly bent", search: "girl skipping rope schoolyard sports shoes" }],
+    images: [{ key: "jia-jump-rope-bone-loading-1", ar: "صبيٌّ بقميص مدرسة وبنطالٍ داكن وحذاءٍ رياضيّ ينطّ الحبلَ على ملعبٍ عشبيّ، والقدمان فوق الأرض والركبتان مثنيّتان قليلاً", en: "A boy in a school T-shirt, dark trousers and trainers skips with a rope on a grass field, both feet off the ground and the knees slightly bent", search: "girl skipping rope schoolyard sports shoes" }],
   },
   {
     code: "jia-prayer-floor-sitting-squat-toilet", nameAr: "الصلاةُ والجلوسُ على الأرض والمرحاضُ العربيّ مع التهاب المفاصل", nameEn: "Prayer, floor sitting and the squat toilet with arthritis",
@@ -414,7 +414,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمُ الركبة أو الكاحل فوق ٣ من ١٠، أو تورّمٌ في اليوم التالي ⟵ الكرسيُّ والإطارُ حتى يهدأ.", "Knee or ankle pain above 3 out of 10, or swelling the next day → the chair and the frame until it settles."],
     equipment: ["سجّادةُ صلاة، ووسادة، وكرسيٌّ ثابت، وإطارُ مرحاضٍ أو مقبض.", "A prayer mat, a cushion, a steady chair, and a toilet frame or rail."],
     doseNote: ["٣–٥ مرّات في الجلسة في المرحلة الثالثة، وفي البيت الصلواتُ اليومية والمرحاضُ هي التمرين (اقتراح).", "3–5 times per session in phase 3, and at home the daily prayers and toilet use are the practice (a proposal)."],
-    images: [{ key: "jia-prayer-floor-sitting-squat-toilet-1", ar: "صبيٌّ في الثانية عشرة على سجّادة صلاةٍ ينهض من الجلوس على عقبيه ويدُه على كرسيّ، ووسادةٌ تحت ركبتيه", en: "A twelve-year-old boy on a prayer mat rising from sitting on his heels with one hand on a chair, and a cushion under his knees", search: "boy rising from prayer position chair support cushion" }],
+    images: [{ key: "jia-prayer-floor-sitting-squat-toilet-1", ar: "أربعةُ رموزٍ تُقرأ من اليمين: أعلى اليمين صبيٌّ على ركبةٍ واحدة، وأعلى اليسار الصبيُّ جالسٌ متربّعاً على الأرض، وأسفلَ اليمين مصلٍّ ساجدٌ على سجّادةٍ حمراء، وأسفلَ اليسار مرحاضٌ بمقبضٍ قابلٍ للطيّ", en: "Four pictograms read from the right: top right a boy kneeling on one knee, top left the boy sitting cross-legged on the floor, bottom right a figure in prostration on a red prayer mat, bottom left a toilet with a fold-down grab rail", search: "boy rising from prayer position chair support cushion" }],
   },
 ];
 
