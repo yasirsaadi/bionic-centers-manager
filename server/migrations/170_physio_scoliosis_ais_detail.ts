@@ -64,7 +64,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ فوق المعتاد أو تنميلٌ أو دوخة ⟵ توقّف وأخبر الأخصائيّ؛ ألمٌ جديد في الليل أو ضعفٌ في الساقين ⟵ إلى الطبيب (Davies 2009).", "Pain above the usual, tingling or dizziness → stop and tell the specialist; new night pain or weakness in the legs → to the doctor (Davies 2009)."],
     equipment: ["مرآةٌ على الحائط أو مرآةٌ طويلة، وكرسيٌّ صغير بلا ظهر، وملصقاتٌ صغيرة للعلامات إن أمكن.", "A wall or full-length mirror, a small backless stool, and small marker stickers if available."],
     doseNote: ["١٠ مرّات بثباتٍ ١٠ ثوانٍ يتدرّج إلى ٣٠، يومياً ضمن البرنامج المنزليّ ٣٠–٤٥ دقيقة (Schreiber 2016)، وخمسُ دقائق يومياً في نموذج سياس (Zaina 2009a) — والأرقامُ لكلّ ثباتٍ اقتراح.", "10 holds of 10 seconds progressing to 30, daily within the 30–45-minute home programme (Schreiber 2016), and five minutes a day in the SEAS model (Zaina 2009a) — the per-hold numbers are a proposal."],
-    images: [{ key: "scol-3d-autocorrection-mirror-1", ar: "فتاةٌ مراهقة بقميصٍ رياضيّ تجلس على كرسيٍّ صغير أمام مرآة، وأسهمٌ تدلّ على الاستطالة إلى الأعلى والإزاحة إلى الجانب وفكّ دوران الجذع", en: "A teenage girl in a sports top sitting on a small stool in front of a mirror, with arrows showing upward elongation, a sideways shift and correction of trunk rotation", search: "scoliosis self correction mirror exercise" }],
+    images: [{ key: "scol-3d-autocorrection-mirror-1", ar: "صورتان لمراهقةٍ من الخلف بقميصٍ أبيض أمام مرآةٍ وسلّمِ حائطٍ خشبيّ: واقفةً تمسك القضبان، ثمّ جالسةً على كرسيٍّ صغير؛ وأسهمٌ تدلّ على الاستطالة إلى الأعلى (أبيض) وتصحيحِ الأضلاع جانباً ودوراناً (أحمر) وموضعِ التنفّس (أزرق)", en: "Two back views of a teenager in a white vest in front of a mirror and wall bars: standing holding the bars, then sitting on a stool; arrows show the upward lengthening (white), the sideways and rotational correction of the ribs (red) and where to breathe (blue)", search: "scoliosis self correction mirror exercise" }],
   },
   {
     code: "scol-rotational-angular-breathing", nameAr: "التنفّسُ التصحيحيّ الدورانيّ نحو الجهة المقعّرة", nameEn: "Rotational corrective breathing into the concave side",
@@ -101,7 +101,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["دوخةٌ أو تنميلٌ في اليدين أو ضيقُ نفَس ⟵ عُد إلى التنفّس العاديّ واجلس.", "Dizziness, tingling in the hands or breathlessness → return to normal breathing and sit."],
     equipment: ["لا شيء، ولفّةُ منشفةٍ إن احتاج.", "Nothing, and a towel roll if needed."],
     doseNote: ["٣ مجموعات × ٦–١٠ أنفاس يومياً — اقتراحٌ داخل البرنامج المنزليّ اليوميّ (Schreiber 2016)، ومكوّنُ التنفّس موصوفٌ في شروث (Berdishevsky 2016).", "3 sets × 6–10 breaths daily — a proposal within the daily home programme (Schreiber 2016), with the breathing component as described for Schroth (Berdishevsky 2016)."],
-    images: [{ key: "scol-rotational-angular-breathing-1", ar: "فتاةٌ جالسةٌ مستقيمة ويدُها على أضلاع ظهرها من جهةٍ واحدة، وأسهمٌ تدلّ على امتلاء الجهة المقعّرة بالهواء", en: "A girl sitting upright with her hand on the back ribs of one side, with arrows showing air filling the concave side", search: "Schroth rotational angular breathing scoliosis" }],
+    images: [{ key: "scol-rotational-angular-breathing-1", ar: "مراهقةٌ من الخلف تجلس مستقيمةً على كرسيٍّ صغير وشريطٌ مطّاطيّ أحمر على كتفها، ويدُ المعالج على أضلاع ظهرها السفلى من جهةٍ واحدة لتتنفّس نحوها فتتّسع تلك الجهة", en: "A teenager seen from behind sits upright on a stool with a red elastic band over one shoulder, while the therapist's hand rests on the lower back ribs on one side for her to breathe into and widen that side", search: "Schroth rotational angular breathing scoliosis" }],
   },
   {
     code: "scol-side-lying-corrective", nameAr: "التصحيحُ في الاستلقاء على الجنب فوق لفّةٍ من المنشفة", nameEn: "Side-lying corrective hold over a towel roll",
@@ -140,7 +140,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ عند اللفّة أو تنميلٌ في الذراع ⟵ غيّر الوضعَ أو توقّف.", "Pain at the roll or numbness in the arm → change position or stop."],
     equipment: ["لفّةُ منشفةٍ صلبة، وفرشة، ووسادة.", "A firm towel roll, a mat and a pillow."],
     doseNote: ["٥–١٠ مرّات × ٣–٥ أنفاس، يومياً أو خمسةَ أيّامٍ في الأسبوع فأكثر (Karavidas 2024 · Kwan 2017) — والجرعةُ لكلّ ثباتٍ اقتراح.", "5–10 holds × 3–5 breaths, daily or at least five days a week (Karavidas 2024 · Kwan 2017) — the per-hold dose is a proposal."],
-    images: [{ key: "scol-side-lying-corrective-1", ar: "مراهقةٌ مستلقيةٌ على جنبها فوق فرشة ولفّةُ منشفةٍ تحت وسط جذعها، والذراعان والساقان ممدودةٌ طويلاً", en: "A teenager lying on her side on a mat with a rolled towel under the middle of her trunk, arms and legs stretched long", search: "Schroth side lying towel roll scoliosis" }],
+    images: [{ key: "scol-side-lying-corrective-1", ar: "مراهقةٌ مستلقيةٌ على جنبها فوق فرشةٍ زرقاء ووسادةٌ صغيرة مطويّة تحت خصرها: الذراعُ السفلى ممدودةٌ فوق الرأس واليدُ العليا على الخصر، والساقُ العليا ممدودةٌ مستقيمة والسفلى مثنيّة", en: "A teenager lies on her side on a blue mat with a small folded pad under her waist: the lower arm stretched overhead and the upper hand on the waist, the top leg held long and straight and the lower knee bent", search: "Schroth side lying towel roll scoliosis" }],
   },
   {
     code: "scol-side-shift", nameAr: "الإزاحةُ الجانبية للجذع فوق الحوض", nameEn: "Active side-shift of the trunk over the pelvis",
@@ -177,7 +177,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الظهر يزيد ⟵ مدىً أصغر أو توقّف وأخبر الأخصائيّ.", "Back pain that increases → a smaller range, or stop and tell the specialist."],
     equipment: ["مرآة، وشريطٌ لاصق لخطٍّ عموديّ عليها.", "A mirror, and tape for a vertical line on it."],
     doseNote: ["١٠ مرّات بثباتٍ ١٠ ثوانٍ يومياً — اقتراحٌ داخل البرنامج المنزليّ اليوميّ (Schreiber 2016).", "10 repetitions with a 10-second hold daily — a proposal within the daily home programme (Schreiber 2016)."],
-    images: [{ key: "scol-side-shift-1", ar: "فتاةٌ واقفة ويداها على وركيها تزيح جذعها إلى الجانب فوق حوضٍ ثابت، وخطٌّ عموديّ مستقيم على المرآة", en: "A girl standing with her hands on her hips, shifting her trunk sideways over a stable pelvis, with a straight vertical line on the mirror", search: "side shift exercise scoliosis" }],
+    images: [{ key: "scol-side-shift-1", ar: "ثلاثُ صورٍ من الخلف لشابٍّ بسروالٍ أحمر: واقفٌ مسترخياً، ثمّ يداه على وركيه، ثمّ يزيح جذعَه جانباً فوق حوضٍ ثابت؛ وبجانبها رسمٌ للعمود بأسهمٍ مرقّمة للاستطالة والإزاحة وفكّ الدوران", en: "Three back views of a young man in red shorts: standing relaxed, then hands on hips, then sliding his trunk sideways over a still pelvis; beside them a spine drawing with numbered arrows for lengthening, side-shift and derotation", search: "side shift exercise scoliosis" }],
   },
   {
     code: "scol-stabilised-correction-arm-lift", nameAr: "تثبيتُ التصحيح أثناء رفع الذراعين وحمل الوزن", nameEn: "Holding the correction during arm lifts and loading (stabilisation)",
@@ -216,7 +216,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ضاع التصحيح ⟵ تنتهي المجموعة؛ ألم ⟵ توقّف وأخبر الأخصائيّ.", "The correction is lost → the set ends; pain → stop and tell the specialist."],
     equipment: ["قنّينتا ماءٍ صغيرتان (نصفُ كيلو)، ووسادة.", "Two small water bottles (half a kilo), and a cushion."],
     doseNote: ["٣ × ٨–١٠ مرّات، مرّتين إلى ثلاثٍ في الأسبوع بإشرافٍ وفي البيت — من نموذج سياس: جلستان × ٤٠ دقيقة أسبوعياً وخمسُ دقائق يومياً (Zaina 2009a · Negrini 2019)، والتكراراتُ اقتراح.", "3 × 8–10 repetitions, two to three times a week supervised and at home — from the SEAS model: two 40-minute sessions a week plus five minutes daily (Zaina 2009a · Negrini 2019); the repetitions are a proposal."],
-    images: [{ key: "scol-stabilised-correction-arm-lift-1", ar: "مراهقةٌ واقفةٌ مستقيمة على ساقٍ واحدة، تمسك قنّينتَي ماءٍ صغيرتين إلى الأمام وجذعُها مستقيم", en: "A teenager standing tall on one leg, holding two small water bottles out in front while keeping her trunk straight", search: "SEAS scoliosis stabilisation exercise arms" }],
+    images: [{ key: "scol-stabilised-correction-arm-lift-1", ar: "مراهقةٌ بقميصٍ أبيض تقف مستقيمةً على ساقٍ واحدة والأخرى مثنيّةٌ بزاويةٍ قائمة، وذراعاها ممدودتان جانباً بمستوى الكتف وجذعُها مستقيم", en: "A teenager in a white vest stands tall on one leg with the other hip and knee bent to a right angle, arms stretched out to the sides at shoulder height and the trunk straight", search: "SEAS scoliosis stabilisation exercise arms" }],
   },
   {
     code: "scol-in-brace-breathing-shift", nameAr: "التمارينُ داخل الدعامة: التنفّسُ نحو النافذة والابتعادُ عن الوسادة", nameEn: "Exercises inside the brace: breathing into the window and moving away from the pad",
@@ -253,7 +253,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ تحت وسادة، أو ألمٌ في الجلد، أو احمرارٌ لا يزول بعد خلع الدعامة ⟵ إلى قسم المساند.", "Pain under a pad, skin pain, or redness that does not fade after taking the brace off → to the orthotics department."],
     equipment: ["دعامةُ المريض، وقميصٌ قطنيّ تحتها.", "The patient's brace, and a cotton undershirt beneath it."],
     doseNote: ["٢–٣ × ١٠ أنفاس يومياً — اقتراح؛ والتمرينُ أثناء الدعامة توصيةُ الإرشاد (Negrini 2018).", "2–3 × 10 breaths daily — a proposal; exercise during bracing is the guideline's recommendation (Negrini 2018)."],
-    images: [{ key: "scol-in-brace-breathing-shift-1", ar: "فتاةٌ تلبس دعامةَ جنفٍ صلبة فوق قميصٍ قطنيّ، وأسهمٌ تدلّ على تمدّد صدرها نحو النافذة المفتوحة في الدعامة", en: "A girl wearing a rigid scoliosis brace over a cotton T-shirt, with arrows showing her chest expanding into the brace's open window", search: "scoliosis brace exercise window breathing" }],
+    images: [{ key: "scol-in-brace-breathing-shift-1", ar: "مريضةٌ مستلقيةٌ على جنبها بدعامةٍ صلبة بيضاء من نوع شينو، وأصابعُ المعالج تدلّ على النافذة المفتوحة في الدعامة حيث يبرز الجلدُ مع الشهيق (سهمٌ أسود)، وعلاماتٌ حمراء لمواضع الضغط", en: "A patient lies on her side in a white rigid Chêneau-type brace; the therapist's fingers point to the open window where the skin bulges out on breathing in (black arrow), and red marks show the pressure areas", search: "scoliosis brace exercise window breathing" }],
   },
   {
     code: "scol-brace-day-heat-skin", nameAr: "يومُ الدعامة في الحرّ: القميصُ القطنيّ وفحصُ الجلد والماء", nameEn: "A brace day in the heat: cotton undershirt, skin check and water",
@@ -292,7 +292,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["جرحٌ أو فقاعةٌ أو ألمٌ في الجلد ⟵ قسمُ المساند في الأسبوع نفسه؛ دوخةٌ أو صداعٌ أو غثيانٌ في الحرّ ⟵ مكانٌ بارد وماء وأخبر الأهلَ أو الطبيب (Weinstein 2013 · AAP 2011).", "A sore, a blister or skin pain → the orthotics department the same week; dizziness, headache or nausea in the heat → a cool place, water, and tell the parents or the doctor (Weinstein 2013 · AAP 2011)."],
     equipment: ["قمصانٌ قطنية (اثنان أو ثلاثة)، ومرآةٌ يدوية، وقنّينةُ ماء، وسجلُّ الساعات.", "Cotton undershirts (two or three), a hand mirror, a water bottle and an hours log."],
     doseNote: ["فحصُ الجلد مرّتين يومياً (اقتراح)، والساعاتُ كما يصفها الطبيب — ١٨ ساعةً يومياً فأكثر في البداية (Negrini 2018).", "A skin check twice a day (a proposal), and the hours as the doctor prescribes — 18 hours a day or more at the start (Negrini 2018)."],
-    images: [{ key: "scol-brace-day-heat-skin-1", ar: "فتاةٌ تلبس قميصاً قطنياً سادة قبل دعامتها، وبجانبها قنّينةُ ماء ومرآةٌ يدوية", en: "A girl pulling on a plain cotton T-shirt before her brace, with a water bottle and a hand mirror beside her", search: "scoliosis brace cotton undershirt skin care" }],
+    images: [{ key: "scol-brace-day-heat-skin-1", ar: "مراهقةٌ واقفة تلبس دعامةً صلبةً ملوّنة من نوع شينو بحزامين أبيضين فوق قميصٍ قطنيّ أبيض ضيّق يظهر فوق الدعامة وتحتها", en: "A teenager standing in a colourful rigid Chêneau-type brace fastened with two white straps over a close-fitting white cotton T-shirt that shows above and below the brace", search: "scoliosis brace cotton undershirt skin care" }],
   },
   {
     code: "scol-prayer-with-brace", nameAr: "الصلاةُ مع الجنف والدعامة: خياراتٌ يتّفق عليها الأهل", nameEn: "Prayer with scoliosis and a brace: options agreed with the family",
@@ -331,7 +331,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألم ⟵ توقّف وأخبر الأخصائيّ؛ بعد التثبيت الجراحيّ ⟵ لا حركةَ إلّا بما يسمح به الجرّاح (Almanna 2025).", "Pain → stop and tell the specialist; after spinal fusion → no movement beyond what the surgeon allows (Almanna 2025)."],
     equipment: ["سجّادةُ صلاة، وكرسيٌّ ثابت.", "A prayer mat and a steady chair."],
     doseNote: ["في الصلوات الخمس؛ ولا دراسةَ للجنف أو الدعامة مع الصلاة (بحثٌ صفريّ).", "At the five daily prayers; there is no study of scoliosis or bracing with prayer (a documented zero result)."],
-    images: [{ key: "scol-prayer-with-brace-1", ar: "فتاةٌ بلباس الصلاة تقف مستقيمةً على سجّادة، وصورةٌ ثانية لها راكعةً وظهرُها مستقيم", en: "A girl in prayer clothes standing upright on a prayer mat, and a second picture of her bowing with a straight back", search: "prayer ruku straight back posture" }],
+    images: [{ key: "scol-prayer-with-brace-1", ar: "رسمٌ لفتاةٍ بلباس الصلاة الورديّ والحجاب على سجّادةٍ خضراء مرّتين: واقفةً مستقيمة، ثمّ راكعةً من الوركين وظهرُها مستوٍ", en: "A drawing of a girl in pink prayer clothes and a headscarf on a green prayer mat, twice: standing upright, then bowing in ruku from the hips with her back level", search: "prayer ruku straight back posture" }],
   },
   {
     code: "scol-corrected-sitting-school", nameAr: "الجلوسُ المصحَّح في المدرسة ووقتِ الدراسة", nameEn: "Corrected sitting at school and during home study",
@@ -368,7 +368,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["لا ينطبق — وألمُ الظهر عند الجلوس يُخبَر به الأخصائيّ.", "Not applicable — back pain when sitting is reported to the specialist."],
     equipment: ["كرسيٌّ وطاولة، ووسادةٌ صغيرة.", "A chair and a desk, and a small cushion."],
     doseNote: ["في كلّ حصّةٍ ووقتِ دراسة؛ والفاصلُ بين التصحيحين لقرار سليم (اقتراحٌ بلا مصدر).", "In every lesson and study period; the interval between corrections is for Saleem to decide (a proposal without a source)."],
-    images: [{ key: "scol-corrected-sitting-school-1", ar: "تلميذةٌ تجلس مستقيمةً إلى طاولة، وزنُها متساوٍ على الجهتين وكتبُها أمامها", en: "A schoolgirl sitting upright at a desk, her weight even on both sides and her books in front of her", search: "schoolgirl correct sitting posture desk" }],
+    images: [{ key: "scol-corrected-sitting-school-1", ar: "رسمٌ لتلميذٍ بقميصٍ أخضر يجلس مستقيماً إلى طاولة المدرسة وظهرُه على المسند، وساعداه على الطاولة، وفخذاه على المقعد وقدماه مسطّحتان على الأرض", en: "A drawing of a schoolboy in a green T-shirt sitting upright at a desk with his back against the backrest, forearms on the desk, thighs on the seat and both feet flat on the floor", search: "schoolgirl correct sitting posture desk" }],
   },
   {
     code: "scol-school-bag-carry", nameAr: "الحقيبةُ المدرسية: الحمّالتان معاً ووزنٌ لا يتجاوز ١٠٪ من وزن الجسم", nameEn: "School bag: both straps and no more than 10% of body weight",
@@ -405,7 +405,7 @@ export const EXERCISES: ExerciseSeed[] = [
     stopIf: ["ألمٌ في الظهر أثناء الحمل ⟵ حقيبةٌ أخفّ وأخبر الأخصائيّ.", "Back pain while carrying → a lighter bag, and tell the specialist."],
     equipment: ["ميزانُ الحمّام، وحقيبةُ ظهرٍ بحمّالتين عريضتين مبطّنتين.", "A bathroom scale, and a backpack with two wide padded straps."],
     doseNote: ["كلَّ يومٍ مدرسيّ؛ والحدُّ ١٠٪ من وزن الجسم (Sahli 2013).", "Every school day; the limit is 10% of body weight (Sahli 2013)."],
-    images: [{ key: "scol-school-bag-carry-1", ar: "فتاةٌ تقف على ميزان الحمّام وتمسك حقيبتها، ثمّ تلبسها على الكتفين عاليةً على ظهرها", en: "A girl standing on a bathroom scale holding her backpack, then wearing it on both shoulders high on her back", search: "school backpack both straps weigh bag" }],
+    images: [{ key: "scol-school-bag-carry-1", ar: "رسمٌ لصبيٍّ يمشي مرّتين: في الأوّل (علامةُ صحّ) مستقيماً والحقيبةُ على الكتفين بحمّالتين مشدودتين عاليةً على ظهره، وفي الثاني (علامةُ خطأ) الحمّالتان مرخيّتان والحقيبةُ منخفضة وهو منحنٍ إلى الأمام", en: "A drawing of a boy walking, twice: in the first (green tick) upright with the rucksack on both shoulders, straps tight and the bag high on his back; in the second (red cross) the straps are loose, the bag hangs low and he leans forward", search: "school backpack both straps weigh bag" }],
   },
 ];
 
