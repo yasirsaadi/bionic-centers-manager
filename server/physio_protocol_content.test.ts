@@ -81,6 +81,7 @@ import * as m180 from "./migrations/180_physio_achilles_tendinopathy_detail";
 import * as m182 from "./migrations/182_physio_hand_oa_detail";
 import * as m183 from "./migrations/183_physio_whiplash_detail";
 import * as m184 from "./migrations/184_physio_multiple_sclerosis_detail";
+import * as m185 from "./migrations/185_physio_last_three_image_captions";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -614,6 +615,51 @@ async function main() {
   await q(m165.sql);
   same("غ.٣ **ووصفٌ عدّله المشرفُ بعد ١٦٤ يبقى**", Object.values(await gCaps()).map((v: any) => v[0]), ["وصفُ سليم", "وصفُ سليم"]);
 
+  // ══ ف. وصفُ الصور الثلاث الأخيرة كما وصلت (ترحيل ١٨٥ — اثنتان من Drive المالك والثالثةُ كوّنها المساعد) — بقاعدة ١٦٠ نفسِها ══
+  console.log("\n── ف. وصفُ الصور الثلاث الأخيرة كما وصلت ──");
+  const fCapKeys = Object.keys(m185.CAPTIONS);
+  const fSrc = m185.SOURCES.filter((e) => e.images.some((i) => m185.CAPTIONS[i.key]));
+  const fCards = fSrc.map((e) => e.code);
+  const fImagesOf = async () => Object.fromEntries((await q(`SELECT code, images FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [fCards])).rows
+    .map((r) => [r.code, r.images]));
+  const fCapOf = (imgs: Record<string, any[]>) => sorted(Object.fromEntries(Object.values(imgs).flat().filter((i) => fCapKeys.includes(i.key)).map((i) => [i.key, [i.captionAr, i.captionEn]])));
+  const fCapIssues = fSrc.flatMap((e) => {
+    const body = exerciseBody({ ...e, images: e.images.map((i) => (m185.CAPTIONS[i.key] ? { ...i, ...m185.CAPTIONS[i.key] } : i)) });
+    const r = parseExerciseBody(body);
+    if (typeof r === "string") return [`${e.code}: ${r}`];
+    return r.images.some((im, i) => im.captionAr !== body.images[i].captionAr || im.captionEn !== body.images[i].captionEn) ? [`${e.code}.images قُصّت`] : [];
+  });
+  same("ف.١ **الوصفُ الجديد يقبله المحرّرُ كما هو** — لثلاث بطاقاتٍ من ثلاثة بروتوكولات (النفقُ الرسغي وكسرُ الكعبرة والكفّة)، وصورُها الثلاث مسجَّلة",
+    [[...fCapKeys].sort(), [...fCards].sort(), fCapIssues, fCapKeys.filter((k) => !EXERCISE_IMAGE_FILES[k])],
+    [["neutral-wrist-tasks-1", "rcr-wudu-with-sling-1", "towel-wring-1"], ["neutral-wrist-tasks", "rcr-wudu-with-sling", "towel-wring"], [], []]);
+  //  من الوصف كما زرعته ترحيلاتُها — والقالبُ قد يحمل ١٨٥ مطبَّقاً.
+  for (const e of fSrc) {
+    await q(`UPDATE physio_exercises SET images = $1::jsonb WHERE code = $2`,
+      [JSON.stringify(e.images.map((i) => ({ key: i.key, captionAr: i.ar, captionEn: i.en, search: i.search }))), e.code]);
+  }
+  const fBefore = await fImagesOf();
+  //  سليمٌ عدّل وصفَ «عصر المنشفة» قبل الترحيل — يبقى وصفُه.
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', '"وصفُ سليم"') WHERE code = 'towel-wring'`);
+  await q(m185.sql);
+  const fAfter = await fImagesOf();
+  same("ف.٢ **يتغيّر وصفُ «الرسغ المستقيم» و«الوضوء مع المعلاق» كما وصلتا، ووصفٌ عدّله المشرفُ يبقى**، ورموزُها وكلماتُ بحثها كما هي",
+    [fCapOf(fAfter), Object.values(fAfter).flat().map((i: any) => [i.key, i.search])],
+    [sorted({ "neutral-wrist-tasks-1": [m185.CAPTIONS["neutral-wrist-tasks-1"].ar, m185.CAPTIONS["neutral-wrist-tasks-1"].en],
+      "rcr-wudu-with-sling-1": [m185.CAPTIONS["rcr-wudu-with-sling-1"].ar, m185.CAPTIONS["rcr-wudu-with-sling-1"].en],
+      "towel-wring-1": ["وصفُ سليم", fBefore["towel-wring"][0].captionEn] }),
+      Object.values(fBefore).flat().map((i: any) => [i.key, i.search])]);
+  const fStamp = async () => (await q(`SELECT code, updated_at::text AS t FROM physio_exercises WHERE code = ANY($1::text[]) ORDER BY code`, [fCards])).rows
+    .map((r) => [r.code, r.t]);
+  const fStamps = await fStamp();
+  await q(m185.sql);
+  same("ف.٣ **والإعادةُ لا تفعل شيئاً** — لا وصفَ ولا وقتَ تعديل", [await fImagesOf(), await fStamp()], [fAfter, fStamps]);
+  await q(`UPDATE physio_exercises SET images = jsonb_set(images, '{0,captionAr}', to_jsonb($1::text)) WHERE code = 'towel-wring'`,
+    [m162.EXERCISES.find((e) => e.code === "towel-wring")!.images[0].ar]);
+  await q(m185.sql);
+  same("ف.٤ **وحين يعود الوصفُ كما زرعه ١٦٢ يكتب الترحيلُ الجديدَ**",
+    fCapOf(await fImagesOf())["towel-wring-1"],
+    [m185.CAPTIONS["towel-wring-1"].ar, m185.CAPTIONS["towel-wring-1"].en]);
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
@@ -769,12 +815,12 @@ async function main() {
     const wadKeys = m183.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const msKeys = m184.EXERCISES.flatMap((e) => e.images.map((i) => i.key));
     const notYet = (ks: string[]) => ks.filter((k) => !EXERCISE_IMAGE_FILES[k]);
-    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **وأربعٌ من خمسٍ للرابع والعشرين، وسبعٌ من ثمانٍ للخامس والعشرين، والسبعُ للسادس والعشرين، والتسعُ للسابع والعشرين، والعشرُ للثامن والعشرين، والتسعُ للتاسع والعشرين، والعشرُ للثلاثين وللحادي والثلاثين وللثاني والثلاثين، والتسعُ للثالث والثلاثين، والعشرُ للرابع والثلاثين وللخامس والثلاثين، والتسعُ للسادس والثلاثين، والعشرُ للسابع والثلاثين وللثامن والثلاثين، وسبعٌ من ثمانٍ للتاسع والثلاثين، والسبعُ للأربعين، والتسعُ للحادي والأربعين، والعشرُ للثاني والأربعين وللثالث والأربعين، والتسعُ للرابع والأربعين، و«الرسغ المستقيم في العمل والبيت والصلاة» و«عصر المنشفة» و«الوضوء مع المعلاق» وحدها في «الصور المطلوبة»**",
+    same("ب.٤ **وصورُ كلّ بروتوكولٍ مفصَّل في مكانها**: ما وصل ملفُّه خارجَ «الصور المطلوبة» وما لم يصل فيها — **وصلت كلُّها من الثاني إلى الثالثَ عشرَ، والخمسُ للرابعَ عشرَ، والستُّ للخامسَ عشرَ وللسادسَ عشرَ، والخمسُ للسابعَ عشرَ، والأربعُ للثامنَ عشرَ، والخمسُ للتاسعَ عشرَ وللعشرين، والستُّ للحادي والعشرين وللثاني والعشرين، والثماني للثالث والعشرين** (صورُ الصلاة الثلاث أرسلها المالكُ، ترحيل ١٦٠)، **والخمسُ للرابع والعشرين، والثماني للخامس والعشرين، والسبعُ للسادس والعشرين، والتسعُ للسابع والعشرين، والعشرُ للثامن والعشرين، والتسعُ للتاسع والعشرين، والعشرُ للثلاثين وللحادي والثلاثين وللثاني والثلاثين، والتسعُ للثالث والثلاثين، والعشرُ للرابع والثلاثين وللخامس والثلاثين، والتسعُ للسادس والثلاثين، والعشرُ للسابع والثلاثين وللثامن والثلاثين، والثماني للتاسع والثلاثين، والسبعُ للأربعين، والتسعُ للحادي والأربعين، والعشرُ للثاني والأربعين وللثالث والأربعين، والتسعُ للرابع والأربعين — و«الصور المطلوبة» فارغةٌ للبروتوكولات كلّها** (اثنتان من Drive المالك والثالثةُ كوّنها المساعد، ترحيل ١٨٥)",
       [missing.status, misplaced, acuteKeys.length, notYet(acuteKeys), neckKeys.length, notYet(neckKeys), kneeKeys.length, notYet(kneeKeys),
         shoulderKeys.length, notYet(shoulderKeys), strokeKeys.length, notYet(strokeKeys), ankleKeys.length, notYet(ankleKeys),
         gaitKeys.length, notYet(gaitKeys), preKeys.length, notYet(preKeys), ulKeys.length, notYet(ulKeys), tkaKeys.length, notYet(tkaKeys), thaKeys.length, notYet(thaKeys), heelKeys.length, notYet(heelKeys),
         sciaticaKeys.length, notYet(sciaticaKeys), frozenKeys.length, notYet(frozenKeys), cervKeys.length, notYet(cervKeys), elbowKeys.length, notYet(elbowKeys), lssKeys.length, notYet(lssKeys), pfpKeys.length, notYet(pfpKeys), hoaKeys.length, notYet(hoaKeys), chronicStrokeKeys.length, notYet(chronicStrokeKeys), meniscalKeys.length, notYet(meniscalKeys), aclKeys.length, notYet(aclKeys), ctsKeys.length, notYet(ctsKeys), drfKeys.length, notYet(drfKeys), bellKeys.length, notYet(bellKeys), cpKeys.length, notYet(cpKeys), sciKeys.length, notYet(sciKeys), osteoKeys.length, notYet(osteoKeys), raKeys.length, notYet(raKeys), scolKeys.length, notYet(scolKeys), lymphKeys.length, notYet(lymphKeys), fmKeys.length, notYet(fmKeys), axspaKeys.length, notYet(axspaKeys), pdKeys.length, notYet(pdKeys), cmtKeys.length, notYet(cmtKeys), bpbiKeys.length, notYet(bpbiKeys), jiaKeys.length, notYet(jiaKeys), rcrKeys.length, notYet(rcrKeys), calcKeys.length, notYet(calcKeys), achKeys.length, notYet(achKeys), handoaKeys.length, notYet(handoaKeys), wadKeys.length, notYet(wadKeys), msKeys.length, notYet(msKeys), [...keys].sort()],
-      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, ["neutral-wrist-tasks-1"], 8, ["towel-wring-1"], 7, [], 9, [], 10, [], 9, [], 10, [], 10, [], 10, [], 9, [], 10, [], 10, [], 9, [], 10, [], 10, [], 8, ["rcr-wudu-with-sling-1"], 7, [], 9, [], 10, [], 10, [], 9, [], ["neutral-wrist-tasks-1", "rcr-wudu-with-sling-1", "towel-wring-1"]]);
+      [200, [], 6, [], 17, [], 14, [], 12, [], 14, [], 9, [], 15, [], 12, [], 18, [], 12, [], 13, [], 6, [], 5, [], 6, [], 6, [], 5, [], 4, [], 5, [], 5, [], 6, [], 6, [], 8, [], 5, [], 8, [], 7, [], 9, [], 10, [], 9, [], 10, [], 10, [], 10, [], 9, [], 10, [], 10, [], 9, [], 10, [], 10, [], 8, [], 7, [], 9, [], 10, [], 10, [], 9, [], []]);
     for (const c of CONTENT.slice(CONTENT.findIndex((x) => x.name === m124.name) + 1)) {
       const tag = c.name.slice(0, 3);
       const P = c.PROTOCOL;

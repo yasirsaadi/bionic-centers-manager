@@ -563,6 +563,12 @@ export const EXERCISE_IMAGE_FILES: Record<string, ExerciseImageFile> = {
   "ms-prayer-wudu-ms-1": { file: "ms-prayer-wudu-ms-1.webp", credit: "Brocken Inaglory, Wikimedia Commons — GFDL 1.2+ / CC BY-SA 4.0 + Tawasol symbol 7976 (Mada) — CC BY-SA 4.0 + © North Metropolitan Health Service 2021 — How to get off the floor", sourceUrl: "https://commons.wikimedia.org/wiki/File:Wudu_in_turkey.jpg" },
   "ms-carer-led-daily-circuit-1": { file: "ms-carer-led-daily-circuit-1.webp", credit: "van Helden et al., Sci Rep 2023, Fig. 1A — © The Author(s) 2023, CC BY 4.0 + Hidalgo Mas et al., BMJ Open 2025, Fig. 2 — CC BY 4.0", sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12374656/" },
   "ms-relapse-action-plan-1": { file: "ms-relapse-action-plan-1.webp", credit: "ARASAAC pictograms (Sergio Palao, Government of Aragón) via Global Symbols — CC BY-NC-SA 4.0, assembled with arrows", sourceUrl: "https://globalsymbols.com/symbolsets/arasaac/symbols/19741" },
+  //  **الصورُ الثلاث الأخيرة في «الصور المطلوبة»** (٢٠٢٦-١٠-٢٤): «الرسغ المستقيم في العمل والبيت والصلاة» و«عصر المنشفة» وضعهما المالكُ في Drive
+  //  ولا اسمَ موقعٍ مكتوبٌ عليهما فبلا مصدر (قاعدةُ صور الصلاة أعلاه) — كما هما؛ و«الوضوء مع المعلاق» لم يجدها فكوّنها المساعدُ ورآها: الوضوءُ جالساً
+  //  على مقاعدَ حجرية في إسطنبول، والذراعُ في المعلاق تمسك الصابونَ واليدُ السليمة تغسل (نشرةُ كينغز كوليدج). ووصفُ الثلاث كما وصلت بترحيل ١٨٥.
+  "neutral-wrist-tasks-1": { file: "neutral-wrist-tasks-1.webp" },
+  "towel-wring-1": { file: "towel-wring-1.webp" },
+  "rcr-wudu-with-sling-1": { file: "rcr-wudu-with-sling-1.webp", credit: "Maja ruszpel, Wikimedia Commons (Ablucja-meczet.jpg) — GFDL 1.2+ / CC BY-SA 4.0 + King's College Hospital NHS FT — Therapy while your arm is in a sling, PL451.2 (2022), p. 2", sourceUrl: "https://commons.wikimedia.org/wiki/File:Ablucja-meczet.jpg" },
 };
 
 /** رابطُ الصورة إن وصلت، وإلّا `null`. */
