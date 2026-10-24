@@ -26,7 +26,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { BODY_REGIONS, DEVICE_PARAM_FIELDS, EXERCISE_KINDS, normalizeDeviceParams, parseExerciseBody, parsePhasesBody } from "@shared/physio_exercises";
-import { normalizeDose } from "@shared/physio_protocols";
+import { DEVICE_TEXT_MAX, normalizeDose } from "@shared/physio_protocols";
 import { EXERCISE_IMAGE_FILES } from "@shared/physio_exercise_media";
 import type { ExerciseSeed, ProtocolContentSeed } from "./migrations/physio_content";
 import * as m118 from "./migrations/118_physio_exercise_library";
@@ -239,6 +239,10 @@ async function main() {
     //  الشاشةُ تعرض النصَّ كما هو — لا تنسيق؛ فـ«**» تظهر نجمتين حرفاً بحرف (وقعت في مسوّدة ١٢٥ وأُصلحت قبل الدمج).
     const stars = [c.PROTOCOL, ...c.EXERCISES].map((x) => JSON.stringify(x)).filter((j) => j.includes("**")).map((j) => JSON.parse(j).code);
     same(`ق.١٢/${tag} **ولا علامةَ تنسيقٍ «**» في نصٍّ يُعرض** — البطاقاتُ والبروتوكولُ بنصٍّ خام`, stars, []);
+    //  §4.fo — نافذتا تعديل البروتوكول وخطّة المريض تحفظان نصَّ الجهاز حتى `DEVICE_TEXT_MAX`؛ فنصٌّ أطولُ يُقصّ بصمت عند أوّل حفظ (كان الحدُّ ١٠٠٠ فقصّ ثلاثة مفصَّلات).
+    const longDeviceTexts = p.devices.flatMap((d) => (["parameters", "note"] as const).flatMap((k) =>
+      (d[k] ?? []).map((s, i) => (s.length > DEVICE_TEXT_MAX ? `${d.code}.${k}[${i}]=${s.length}` : null)))).filter(Boolean);
+    same(`ق.١٤/${tag} **ونصُّ كلّ جهازٍ في حدّ ما تحفظه نافذةُ التعديل** (${DEVICE_TEXT_MAX} حرفٍ لكلّ لغة)`, longDeviceTexts, []);
     if (!c.template) continue;
     //  القالبُ الكامل (§4.dd): العددُ أساسُ الجرعة، والمراحلُ تغطّي الجلساتِ متّصلة، ولكلّ جهازٍ استعمالُه.
     const ranges = p.phases.map((ph) => [ph.sessionFrom, ph.sessionTo]);

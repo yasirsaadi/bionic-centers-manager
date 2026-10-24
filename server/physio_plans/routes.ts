@@ -33,7 +33,7 @@ import * as outcomes from "./outcomes";
 import { canAssessPlans, outcomesScope, parseMeasures } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
 import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
-import { doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
+import { DEVICE_TEXT_MAX, doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
 import { parsePhasesBody } from "@shared/physio_exercises";
 import { HOME_SHEET_MAX_BYTES, homeSheetAllowed, parseIdList } from "@shared/physio_home_sheet";
 import { patientBotEnabled } from "../patient_telegram/config";
@@ -81,8 +81,8 @@ export function parsePlanBody(b: any): store.PlanInput | string {
     //  §4.dn — الموعدُ الدوريّ لهذا المريض (كلّ كم يوماً وكم مرّة).
     const schedule = normalizeSchedule(d?.everyDays, d?.times);
     if (typeof schedule === "string") return schedule;
-    devices.push({ deviceId, minutes, parameters: text(d?.parameters, 1000), parametersEn: text(d?.parametersEn, 1000),
-      note: text(d?.note, 1000), noteEn: text(d?.noteEn, 1000), centreUse: d?.centreUse === "adjunct" ? "adjunct" : "core", ...schedule });
+    devices.push({ deviceId, minutes, parameters: text(d?.parameters, DEVICE_TEXT_MAX), parametersEn: text(d?.parametersEn, DEVICE_TEXT_MAX),
+      note: text(d?.note, DEVICE_TEXT_MAX), noteEn: text(d?.noteEn, DEVICE_TEXT_MAX), centreUse: d?.centreUse === "adjunct" ? "adjunct" : "core", ...schedule });
   }
   return {
     titleAr, titleEn: text(b?.titleEn, 300),

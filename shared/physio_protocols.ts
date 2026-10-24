@@ -48,6 +48,9 @@ export function centreUseOf(row: { centreUse?: unknown; evidence?: unknown }): C
 
 /** سقفُ عدد الجلسات في البروتوكول والخطّة (ترحيل ١٢٣). */
 export const TOTAL_SESSIONS_MAX = 300;
+//  §4.fo — حدُّ نصّ سطر الجهاز (الوصفُ والملاحظةُ بلغتيهما) في تعديل البروتوكول وخطّة المريض: كان ١٠٠٠ فيقصّ نصوصَ المفصَّلة الأطول
+//  (الكتفُ التكلّسيّ ١٧٢٩ حرفاً) بصمت عند أوّل حفظ؛ وحارسُ `test:physio-protocol-content` (ق.١٤) يُبقي كلَّ مفصَّلٍ تحته.
+export const DEVICE_TEXT_MAX = 2000;
 export interface DoseLike { sessionsPerWeek: number | null; durationWeeks: number | null; totalSessions: number | null }
 
 /**

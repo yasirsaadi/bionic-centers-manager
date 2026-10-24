@@ -20,7 +20,7 @@ import { getSession } from "../sessions_module/permissions";
 import {
   canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel, isCentreUse,
   isProtocolLang,
-  isProtocolCategory, doseError, normalizeDose, normalizeReferences, statusAfterEdit, TOTAL_SESSIONS_MAX, type ProtocolStatus,
+  isProtocolCategory, DEVICE_TEXT_MAX, doseError, normalizeDose, normalizeReferences, statusAfterEdit, TOTAL_SESSIONS_MAX, type ProtocolStatus,
 } from "@shared/physio_protocols";
 import * as store from "./store";
 import { normalizeSchedule, settingsBlockedMessage } from "@shared/physio_device_settings";
@@ -80,8 +80,8 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
     //  §4.dn — الموعدُ الدوريّ (كلّ كم يوماً وكم مرّة)؛ الغائبُ (شاشةٌ أقدم) بلا موعد.
     const schedule = normalizeSchedule(d?.everyDays, d?.times);
     if (typeof schedule === "string") return schedule;
-    devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, 1000), minutes, note: text(d?.note, 1000),
-      parametersEn: text(d?.parametersEn, 1000), noteEn: text(d?.noteEn, 1000), params, centreUse: isCentreUse(d?.centreUse) ? d.centreUse : null,
+    devicesIn.push({ deviceId, evidence: d.evidence, parameters: text(d?.parameters, DEVICE_TEXT_MAX), minutes, note: text(d?.note, DEVICE_TEXT_MAX),
+      parametersEn: text(d?.parametersEn, DEVICE_TEXT_MAX), noteEn: text(d?.noteEn, DEVICE_TEXT_MAX), params, centreUse: isCentreUse(d?.centreUse) ? d.centreUse : null,
       ...schedule });
   }
   return {
