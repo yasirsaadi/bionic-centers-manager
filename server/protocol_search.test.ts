@@ -152,10 +152,11 @@ async function main() {
     //  وتضيّقُ القناة القطنية بعد ترحيل ١٥٣ — §4.ek، وألمُ الرضفة الفخذيّ بعد ترحيل ١٥٥ — §4.en، وخشونةُ الورك بعد ترحيل ١٥٦ — §4.eo،
     //  والجلطةُ المزمنة بعد ترحيل ١٥٧ — §4.ep، وإصاباتُ الغضروف الهلاليّ بعد ترحيل ١٥٨ — §4.eq، وما بعد إعادة بناء الرباط الصليبيّ بعد ترحيل ١٥٩ — §4.er،
     //  والروماتويديُّ بعد ترحيل ١٦٩ — §4.ez، والجنفُ عند المراهقين بعد ترحيل ١٧٠ — §4.fa، والوذمةُ اللمفية بعد ترحيل ١٧١ — §4.fb،
-    //  والألمُ العضليّ الليفيّ بعد ترحيل ١٧٢ — §4.fc، والتهابُ الفقار المحوريّ بعد ترحيل ١٧٣ — §4.fd (بطاقةُ «اللوح الجانبيّ» في مراحله وفيها «الجسر»):
+    //  والألمُ العضليّ الليفيّ بعد ترحيل ١٧٢ — §4.fc، والتهابُ الفقار المحوريّ بعد ترحيل ١٧٣ — §4.fd (بطاقةُ «اللوح الجانبيّ» في مراحله وفيها «الجسر»)،
+    //  والتهابُ المفاصل اليفعيّ بعد ترحيل ١٧٧ — §4.fh:
     //  الجسرُ في مرحلتَيه الثانية والثالثة بطاقةً، لا كلمةً عابرة كما وقع في ألم الكعب).
     same("ب.٤ **وكلمةٌ في بطاقة تمرين** («الجسر») تُظهر بروتوكولاتِها ومكانَها «تمارين المرحلة»",
-      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["acl-reconstruction-adult", "axial-spa-adult", "fibromyalgia-adult", "hip-oa-geriatric", "knee-meniscal-adult", "knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "lumbar-radiculopathy-adult", "lumbar-stenosis-geriatric", "lymphedema-adult", "patellofemoral-pain-adult", "rheumatoid-arthritis-adult", "scoliosis-ais-pediatric", "stroke-chronic-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
+      [j.map((r) => r.code).sort(), j.every((r) => r.match?.hits?.some((h: any) => /^تمارين المرحلة/.test(h.label)))], [["acl-reconstruction-adult", "axial-spa-adult", "fibromyalgia-adult", "hip-oa-geriatric", "jia-pediatric", "knee-meniscal-adult", "knee-oa-geriatric", "lbp-acute-adult", "lbp-chronic-adult", "lower-limb-preprosthetic-adult", "lower-limb-prosthetic-gait-adult", "lumbar-radiculopathy-adult", "lumbar-stenosis-geriatric", "lymphedema-adult", "patellofemoral-pain-adult", "rheumatoid-arthritis-adult", "scoliosis-ais-pediatric", "stroke-chronic-adult", "stroke-subacute-adult", "tha-geriatric", "tka-geriatric"], true]);
     const t = (await search("تيكار")).json;
     check(t.length > 0 && t.every((r) => r.match.hits.some((h: any) => h.label === "الأجهزة" && marked(h.snippet, h.ranges).includes("تيكار"))),
       "ب.٥ **واسمُ جهاز** («تيكار») يُظهر كلَّ بروتوكولٍ فيه — «الأجهزة: تيكار»", JSON.stringify(t.map((r) => [r.code, r.match.hits.map((h: any) => h.label)])));
