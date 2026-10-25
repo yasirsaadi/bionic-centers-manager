@@ -21,6 +21,7 @@ import {
   canApproveProtocols, canConsultProtocols, canEditProtocols, canManageDeviceAvailability, canReadProtocols, isAgeGroup, isEvidenceLevel, isCentreUse,
   isProtocolLang,
   isProtocolCategory, DEVICE_TEXT_MAX, doseError, normalizeDose, normalizeReferences, statusAfterEdit, TOTAL_SESSIONS_MAX, type ProtocolStatus,
+  PROTOCOL_TEXT_MAX, REFERENCES_MAX,
 } from "@shared/physio_protocols";
 import * as store from "./store";
 import { normalizeSchedule, settingsBlockedMessage } from "@shared/physio_device_settings";
@@ -36,7 +37,7 @@ function fail(res: any, e: unknown) {
   res.status(500).json({ error: "تعذّر تنفيذ الطلب — لم يتغيّر شيء" });
 }
 
-const text = (v: unknown, max = 8000) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
+const text = (v: unknown, max = PROTOCOL_TEXT_MAX) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 const intIn = (v: unknown, lo: number, hi: number): number | null | "bad" => {
   if (v === undefined || v === null || v === "") return null;
   const n = Number(v);
@@ -62,6 +63,7 @@ export function parseProtocolBody(b: any): store.ProtocolInput | string {
   const dose = normalizeDose({ sessionsPerWeek, durationWeeks, totalSessions });
   const tooLong = doseError(dose);
   if (tooLong) return tooLong;
+  if (Array.isArray(b?.references) && b.references.length > REFERENCES_MAX) return `المراجعُ ${REFERENCES_MAX} على الأكثر`;
   const references = normalizeReferences(b?.references ?? []);
   if (!references) return "كلُّ مرجعٍ بعنوانه، ورابطُه إن وُجد يبدأ بـ http";
   if (!Array.isArray(b?.devices) || b.devices.length > 40) return "قائمةُ الأجهزة غير صالحة";
