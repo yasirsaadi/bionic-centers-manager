@@ -51,6 +51,12 @@ export const TOTAL_SESSIONS_MAX = 300;
 //  §4.fo — حدُّ نصّ سطر الجهاز (الوصفُ والملاحظةُ بلغتيهما) في تعديل البروتوكول وخطّة المريض: كان ١٠٠٠ فيقصّ نصوصَ المفصَّلة الأطول
 //  (الكتفُ التكلّسيّ ١٧٢٩ حرفاً) بصمت عند أوّل حفظ؛ وحارسُ `test:physio-protocol-content` (ق.١٤) يُبقي كلَّ مفصَّلٍ تحته.
 export const DEVICE_TEXT_MAX = 2000;
+//  §4.fp — حدودُ ما تحفظه نافذةُ تعديل البروتوكول من مراجعه ونصوصه. **كانت المراجعُ تُقصّ إلى ثلاثين بصمت** والمفصَّلةُ فيها حتى ٢٠٢ مرجع،
+//  وعنوانُ المرجع إلى ٤٠٠ وفيها ٤٢٠، والنصوصُ الستّة إلى ٨٠٠٠ وأطولُها ٧٣٦٨ — فأوّلُ حفظٍ يُضيع ما بعد الحدّ. فالحدودُ فوق المكتوب بفسحة،
+//  وما زاد على عدد المراجع يُردّ برسالةٍ لا يُقصّ؛ وحارسُ `test:physio-protocol-content` (ق.١٥) يحفظ كلَّ مفصَّلٍ كما هو.
+export const REFERENCES_MAX = 400;
+export const REFERENCE_TITLE_MAX = 1000;
+export const PROTOCOL_TEXT_MAX = 20000;
 export interface DoseLike { sessionsPerWeek: number | null; durationWeeks: number | null; totalSessions: number | null }
 
 /**
@@ -184,13 +190,13 @@ export function statusAfterEdit(current: ProtocolStatus, editor: ProtocolSession
 /** مرجعٌ عالميّ للبروتوكول. */
 export interface ProtocolReference { title: string; org?: string | null; year?: number | null; url?: string | null }
 
-/** يطبّع قائمة المراجع من الطلب: عنوانٌ إلزاميّ، ورابطٌ إن وُجد يبدأ بـ http(s). */
+/** يطبّع قائمة المراجع من الطلب: عنوانٌ إلزاميّ، ورابطٌ إن وُجد يبدأ بـ http(s) — وأكثرُ من `REFERENCES_MAX` يُردّ لا يُقصّ (§4.fp). */
 export function normalizeReferences(input: unknown): ProtocolReference[] | null {
-  if (!Array.isArray(input)) return null;
+  if (!Array.isArray(input) || input.length > REFERENCES_MAX) return null;
   const out: ProtocolReference[] = [];
-  for (const r of input.slice(0, 30)) {
+  for (const r of input) {
     if (!r || typeof r !== "object") return null;
-    const title = typeof (r as any).title === "string" ? (r as any).title.trim().slice(0, 400) : "";
+    const title = typeof (r as any).title === "string" ? (r as any).title.trim().slice(0, REFERENCE_TITLE_MAX) : "";
     if (!title) return null;
     const url = typeof (r as any).url === "string" && (r as any).url.trim() ? (r as any).url.trim().slice(0, 1000) : null;
     if (url && !/^https?:\/\//i.test(url)) return null;

@@ -13,6 +13,7 @@ import { db } from "./db";
 import { redactForLog } from "./log_redaction";
 import { startNotificationDispatcher } from "./patient_notifications/dispatcher";
 import { startInstallmentReminders } from "./installments/reminders";
+import { installJsonParsers } from "./json_body";
 
 // Resilience: a single failing request must NEVER take down the whole service.
 // In Express, an async handler that rejects (or any stray promise rejection)
@@ -54,13 +55,10 @@ declare module "http" {
   }
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
+//  حدُّ الجسم ١٠٠ كيلوبايت، ومكتبةُ البروتوكولات بحدٍّ أكبر (`server/json_body.ts`، §4.fp).
+installJsonParsers(app, (req, _res, buf) => {
+  req.rawBody = buf;
+});
 
 app.use(express.urlencoded({ extended: false }));
 

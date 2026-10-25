@@ -26,7 +26,9 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { BODY_REGIONS, DEVICE_PARAM_FIELDS, EXERCISE_KINDS, normalizeDeviceParams, parseExerciseBody, parsePhasesBody } from "@shared/physio_exercises";
-import { DEVICE_TEXT_MAX, normalizeDose } from "@shared/physio_protocols";
+import { DEVICE_TEXT_MAX, normalizeDose, PROTOCOL_TEXT_MAX, REFERENCES_MAX } from "@shared/physio_protocols";
+import { parseProtocolBody } from "./physio_protocols/routes";
+import { installJsonParsers, PROTOCOL_JSON_LIMIT } from "./json_body";
 import { EXERCISE_IMAGE_FILES } from "@shared/physio_exercise_media";
 import type { ExerciseSeed, ProtocolContentSeed } from "./migrations/physio_content";
 import * as m118 from "./migrations/118_physio_exercise_library";
@@ -82,6 +84,7 @@ import * as m182 from "./migrations/182_physio_hand_oa_detail";
 import * as m183 from "./migrations/183_physio_whiplash_detail";
 import * as m184 from "./migrations/184_physio_multiple_sclerosis_detail";
 import * as m185 from "./migrations/185_physio_last_three_image_captions";
+import * as m186 from "./migrations/186_physio_protocol_references_restore";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -188,7 +191,8 @@ const phasesBody = (p: ProtocolContentSeed, idOf: (code: string) => number) => p
   exercises: ph.exercises.map((x) => ({ exerciseId: idOf(x.code), sets: x.sets, reps: x.reps, holdSeconds: x.hold, restSeconds: x.rest,
     doseNote: x.doseNote?.[0], doseNoteEn: x.doseNote?.[1], note: x.note?.[0], noteEn: x.note?.[1] })),
 }));
-const PROTOCOL_TEXT_MAX = 8000; //  `text()` في `server/physio_protocols/routes.ts` — حدُّ المحرّر.
+
+const TEXT6 = ["summary", "goals", "assessment", "exercises", "contraindications", "precautions"] as const;
 
 async function main() {
   // ══ ق. المحتوى قبل القاعدة ══
@@ -250,6 +254,22 @@ async function main() {
     const longDeviceTexts = p.devices.flatMap((d) => (["parameters", "note"] as const).flatMap((k) =>
       (d[k] ?? []).map((s, i) => (s.length > DEVICE_TEXT_MAX ? `${d.code}.${k}[${i}]=${s.length}` : null)))).filter(Boolean);
     same(`ق.١٤/${tag} **ونصُّ كلّ جهازٍ في حدّ ما تحفظه نافذةُ التعديل** (${DEVICE_TEXT_MAX} حرفٍ لكلّ لغة)`, longDeviceTexts, []);
+    //  §4.fp — **البروتوكولُ كما ترسله نافذةُ التعديل يحفظه الخادمُ كما هو**: كانت المراجعُ تُقصّ إلى ثلاثين بصمت (والمفصَّلةُ حتى ٢٠٢)
+    //  وعنوانُ المرجع إلى ٤٠٠، والجسمُ فوق ١٠٠ كيلوبايت يُردّ — فكلُّ مرجعٍ ونصٍّ يعود من `parseProtocolBody` بحرفه، والجسمُ تحت حدّ المكتبة.
+    const editorBody = { code: p.code, titleAr: "بروتوكول", titleEn: "Protocol", category: "spine", ageGroup: "adult",
+      ...Object.fromEntries(TEXT6.flatMap((k) => [[k, p[k][0]], [`${k}En`, p[k][1]]])),
+      sessionsPerWeek: p.spw, durationWeeks: p.weeks, sessionMinutes: p.minutes, totalSessions: p.totalSessions ?? null,
+      references: p.refs.map((r) => ({ title: r.title, org: r.org, year: r.year, url: r.url ?? null })),
+      devices: p.devices.map((d, i) => ({ deviceId: i + 1, evidence: d.evidence, centreUse: d.centreUse ?? null, minutes: d.minutes ?? null,
+        parameters: d.parameters?.[0] ?? null, parametersEn: d.parameters?.[1] ?? null, note: d.note?.[0] ?? null, noteEn: d.note?.[1] ?? null,
+        params: d.params ?? {}, everyDays: d.everyDays ?? null, times: d.times ?? null })) };
+    const saved = parseProtocolBody(editorBody);
+    const saveIssues = typeof saved === "string" ? [saved] : [
+      ...(JSON.stringify(saved.references) === JSON.stringify(editorBody.references) ? [] : [`المراجع ${saved.references.length} من ${editorBody.references.length}`]),
+      ...TEXT6.flatMap((k) => [[k, 0], [`${k}En`, 1]] as const).filter(([k, i]) => (saved as any)[k] !== p[k.replace(/En$/, "") as typeof TEXT6[number]][i].trim()).map(([k]) => `${k} قُصّ`),
+    ];
+    same(`ق.١٥/${tag} **وتحفظه نافذةُ التعديل كما هو**: ${p.refs.length} مرجعاً بلا قصّ (الحدُّ ${REFERENCES_MAX})، والنصوصُ بحرفها، والجسمُ تحت ${PROTOCOL_JSON_LIMIT}`,
+      [saveIssues, Buffer.byteLength(JSON.stringify(editorBody)) < 4 * 1024 * 1024], [[], true]);
     if (!c.template) continue;
     //  القالبُ الكامل (§4.dd): العددُ أساسُ الجرعة، والمراحلُ تغطّي الجلساتِ متّصلة، ولكلّ جهازٍ استعمالُه.
     const ranges = p.phases.map((ph) => [ph.sessionFrom, ph.sessionTo]);
@@ -660,13 +680,61 @@ async function main() {
     fCapOf(await fImagesOf())["towel-wring-1"],
     [m185.CAPTIONS["towel-wring-1"].ar, m185.CAPTIONS["towel-wring-1"].en]);
 
+  // ══ ك. المراجعُ التي قصّها حفظٌ سابق عند ثلاثين تعود من سجلّ التدقيق (ترحيل ١٨٦، §4.fp) ══
+  console.log("\n── ك. المراجعُ المقصوصة تعود ──");
+  const kRefs = async (code: string) => (await q(`SELECT "references" AS r FROM physio_protocols WHERE code = $1`, [code])).rows[0].r as any[];
+  const kRow = async (code: string) => (await q(`SELECT to_jsonb(p) AS j, p.id FROM physio_protocols p WHERE code = $1`, [code])).rows[0];
+  const K_CUT = "whiplash-adult", K_WHOLE = "multiple-sclerosis-adult", K_CHOSEN = "rotator-cuff-repair-adult";
+  const kPristine: Record<string, any[]> = {};
+  for (const c of [K_CUT, K_WHOLE, K_CHOSEN]) kPristine[c] = await kRefs(c);
+  const kAudit = async (code: string, oldRefs: any[], newRefs: any[], at: string) => {
+    const r = await kRow(code);
+    await q(`INSERT INTO audit_log (entity_type, entity_id, action, user_id, user_name, old_values, new_values, created_at)
+             VALUES ('physio_protocol', $1, 'update', $2, 'سليم', $3, $4, $5::timestamp)`,
+      [r.id, SUP, JSON.stringify({ ...r.j, references: oldRefs }), JSON.stringify({ ...r.j, references: newRefs }), at]);
+  };
+  const kSet = async (code: string, refs: any[]) =>
+    q(`UPDATE physio_protocols SET "references" = $1::jsonb, updated_by = $2, updated_by_name = 'سليم' WHERE code = $3`, [JSON.stringify(refs), SUP, code]);
+  //  (١) الرقبةُ الارتجاجية: حفظٌ قديمٌ قصّ ١٨٠ إلى ثلاثين — وسليم عدّل الأوّلَ ونقل الحادي والثلاثين مكانَ الثاني — ثمّ حفظٌ ثانٍ بثلاثين.
+  const cutFull = kPristine[K_CUT];
+  const cut30 = [{ ...cutFull[0], title: "مرجعٌ عدّله سليم" }, cutFull[30], ...cutFull.slice(2, 30)];
+  await kAudit(K_CUT, cutFull, cut30, "2026-10-24 10:00:00");
+  await kAudit(K_CUT, cut30, cut30, "2026-10-24 11:00:00");
+  await kSet(K_CUT, cut30);
+  //  (٢) التصلّبُ اللويحيّ: حُفظ بعد الإصلاح بمراجعه كلّها — لا قصّ.
+  await kAudit(K_WHOLE, kPristine[K_WHOLE], kPristine[K_WHOLE], "2026-10-24 12:00:00");
+  await kSet(K_WHOLE, kPristine[K_WHOLE]);
+  //  (٣) الكفّة: سليم أبقى خمسةً وعشرين مرجعاً بقراره — ليس قصّاً.
+  const chosen = kPristine[K_CHOSEN].slice(0, 25);
+  await kAudit(K_CHOSEN, kPristine[K_CHOSEN], chosen, "2026-10-24 13:00:00");
+  await kSet(K_CHOSEN, chosen);
+  const kAudits = async () => Number((await q(`SELECT count(*)::int AS n FROM audit_log WHERE user_name = 'ترحيل ١٨٦'`)).rows[0].n);
+  const kA0 = await kAudits();
+  await q(m186.sql);
+  const restored = await kRefs(K_CUT);
+  const expected = [...cut30, ...cutFull.slice(31)];
+  //  الثاني استبدله سليم بالحادي والثلاثين — فيعود ١٧٩: ثلاثونه ثمّ ما بعد الحادي والثلاثين، ولا يتكرّر المنقول.
+  same("ك.١ **مراجعُ الحفظ القاصّ تعود خلف ما حفظه المشرف**: ١٧٩ مرجعاً من ١٨٠، وتعديلُه في الثلاثين الأولى باقٍ، ولا مرجعَ مكرّر، وسطرُ تدقيقٍ واحد",
+    [restored.length, restored[0].title, JSON.stringify(restored) === JSON.stringify(expected),
+      new Set(restored.map((r) => r.title.toLowerCase())).size, (await kAudits()) - kA0],
+    [cutFull.length - 1, "مرجعٌ عدّله سليم", true, cutFull.length - 1, 1]);
+  same("ك.٢ **وما لم يُقصّ لا يُمسّ**: المحفوظُ كاملاً كما هو، والخمسةُ والعشرون التي اختارها المشرفُ كما هي",
+    [JSON.stringify(await kRefs(K_WHOLE)) === JSON.stringify(kPristine[K_WHOLE]), (await kRefs(K_CHOSEN)).length], [true, 25]);
+  await q(m186.sql);
+  same("ك.٣ **والإعادةُ لا تفعل شيئاً** — لا مرجعَ ولا سطرَ تدقيق", [JSON.stringify(await kRefs(K_CUT)) === JSON.stringify(expected), (await kAudits()) - kA0], [true, 1]);
+  for (const c of [K_CUT, K_WHOLE, K_CHOSEN]) {
+    await q(`UPDATE physio_protocols SET "references" = $1::jsonb, updated_by = NULL WHERE code = $2`, [JSON.stringify(kPristine[c]), c]);
+  }
+  await q(`DELETE FROM audit_log WHERE user_name IN ('سليم', 'ترحيل ١٨٦') AND entity_type = 'physio_protocol' AND created_at >= '2026-10-24' AND (user_id = $1 OR user_id IS NULL)`, [SUP]);
+
   // ══ ب. من الأبواب الحقيقية ══
   const S = {
     sup: hdr({ userId: SUP, displayName: "سليم", role: "branch_manager", branchId: B1, isAdmin: false, permissions: { canSupervisePhysio: true } }),
     spec: hdr({ userId: SPEC, displayName: "مصطفى", role: "physio_specialist", branchId: B1, isAdmin: false, permissions: {} }),
   };
   const app = express();
-  app.use(express.json({ limit: "5mb" }));
+  //  §4.fp — **حدُّ الإنتاج نفسُه** (`installJsonParsers`)، لا حدٌّ يكتبه الاختبار: كان هنا ٥ ميغابايت فلم يُرَ أنّ الإنتاجَ يردّ ما فوق ١٠٠ كيلوبايت.
+  installJsonParsers(app);
   app.use((req: any, _res, next) => {
     const h = req.get("x-test-session");
     if (h) {
@@ -836,6 +904,40 @@ async function main() {
         [200, P.totalSessions, shape, 200, P.totalSessions, shape,
           P.devices.filter((d) => d.centreUse === "core").map((d) => d.code), P.devices.filter((d) => d.centreUse === "adjunct").length]);
     }
+    //  §4.fp — **من الباب الحقيقيّ بحدّ الإنتاج**: أكبرُ بروتوكولٍ كما ترسله نافذةُ التعديل (فوق ١٠٠ كيلوبايت) يُحفظ، ومراجعُه كلُّها تعود بحرفها؛
+    //  وأكثرُ من الحدّ يُردّ برسالةٍ لا يُقصّ.
+    const sizes: [number, number][] = [];
+    const bodyOf = (d: any) => {
+      const keys = ["code", "titleAr", "titleEn", "category", "ageGroup", ...TEXT6.flatMap((k) => [k, `${k}En`]), "sessionsPerWeek", "durationWeeks", "sessionMinutes", "totalSessions"];
+      return { ...Object.fromEntries(keys.map((k) => [k, d[k] == null ? "" : String(d[k])])), references: d.references ?? [],
+        devices: (d.devices ?? []).map((x: any) => ({ deviceId: x.deviceId, evidence: x.evidence, parameters: x.parameters, minutes: x.minutes, note: x.note,
+          parametersEn: x.parametersEn ?? null, noteEn: x.noteEn ?? null, params: x.params ?? {}, centreUse: x.centreUse, everyDays: x.everyDays ?? null, times: x.times ?? null })) };
+    };
+    for (const r of (await q(`SELECT id FROM physio_protocols WHERE NOT is_archived`)).rows) {
+      const d = (await call("GET", `/api/physio/protocols/${r.id}`, S.sup)).json;
+      sizes.push([Buffer.byteLength(JSON.stringify(bodyOf(d))), Number(r.id)]);
+    }
+    sizes.sort((a, b) => b[0] - a[0]);
+    const bigId = sizes[0][1];
+    const before = (await call("GET", `/api/physio/protocols/${bigId}`, S.sup)).json;
+    const put = await call("PUT", `/api/physio/protocols/${bigId}`, S.sup, bodyOf(before));
+    const after = (await call("GET", `/api/physio/protocols/${bigId}`, S.sup)).json;
+    same(`ب.٦ **أكبرُ بروتوكولٍ يُحفظ من نافذة التعديل بحدّ الإنتاج** (${before.code} — ${Math.round(sizes[0][0] / 1024)} كيلوبايت)، ومراجعُه الـ${before.references.length} تعود كلُّها بحرفها، والنصوصُ كما هي`,
+      [sizes[0][0] > 100 * 1024, sizes.filter(([n]) => n > 100 * 1024).length > 1, put.status, after.references.length,
+        JSON.stringify(after.references) === JSON.stringify(before.references), TEXT6.every((k) => after[k] === before[k] && after[`${k}En`] === before[`${k}En`])],
+      [true, true, 200, before.references.length, true, true]);
+    const tooMany = await call("PUT", `/api/physio/protocols/${bigId}`, S.sup,
+      { ...bodyOf(after), references: Array.from({ length: REFERENCES_MAX + 1 }, (_, i) => ({ title: `مرجع ${i}`, org: null, year: null, url: null })) });
+    same(`ب.٧ **وأكثرُ من ${REFERENCES_MAX} مرجعٍ يُردّ برسالة لا يُقصّ**، والمحفوظُ باقٍ`,
+      [tooMany.status, tooMany.json?.error, (await call("GET", `/api/physio/protocols/${bigId}`, S.sup)).json?.references?.length],
+      [400, `المراجعُ ${REFERENCES_MAX} على الأكثر`, before.references.length]);
+    //  والنصُّ الطويلُ بعد ٨٠٠٠ حرف (الحدُّ القديم، وأطولُ المكتوب ٧٣٦٨) يُحفظ كاملاً — ثمّ يعود كما كان.
+    const longSummary = `${before.summaryEn}\n${"More detail for the supervisor. ".repeat(250)}`.slice(0, 15000);
+    const longPut = await call("PUT", `/api/physio/protocols/${bigId}`, S.sup, { ...bodyOf(after), summaryEn: longSummary });
+    const longBack = (await call("GET", `/api/physio/protocols/${bigId}`, S.sup)).json?.summaryEn ?? "";
+    await call("PUT", `/api/physio/protocols/${bigId}`, S.sup, bodyOf(after));
+    same(`ب.٨ **ونصٌّ أطولُ من ٨٠٠٠ حرف يُحفظ كاملاً** (${longSummary.length} حرفاً — الحدُّ ${PROTOCOL_TEXT_MAX})`,
+      [longPut.status, longBack.length, longBack === longSummary.trim()], [200, longSummary.trim().length, true]);
   } finally {
     await cleanup();
     httpServer.close();
