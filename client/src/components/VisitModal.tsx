@@ -38,7 +38,7 @@ import {
 import { z } from "zod";
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
-import { checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
+import { checkVisitDate, mayBackdateVisits, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
 import { useBranchSession } from "@/components/BranchGate";
 
 // **«تسجيل زيارة جلسة علاج طبيعي» — للعلاج الطبيعي وحده** (فصلُ الزرّين، قرارُ المالك ٢٠٢٦-٠٩-٣٠).
@@ -179,9 +179,10 @@ export function VisitModal({
   };
 
   //  **تاريخُ الزيارة بالقاعدة نفسِها التي يفرضها الخادم** (§4.ar البند ٢٦) — يُقال قبل الحفظ لا بعده.
-  const isAdminSession = Boolean((useBranchSession() as any)?.isAdmin);
+  //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr) — والخادمُ يحكم بالقاعدة نفسِها.
+  const mayBackdate = mayBackdateVisits(useBranchSession() as any);
   function onSubmit(values: z.infer<typeof formSchema>) {
-    const dateVerdict = checkVisitDate(values.customDate || null, isAdminSession);
+    const dateVerdict = checkVisitDate(values.customDate || null, mayBackdate);
     if (!dateVerdict.ok) {
       form.setError("customDate", { message: dateVerdict.message });
       return;
@@ -257,9 +258,9 @@ export function VisitModal({
                     data-testid="input-visit-date"
                   />
                   <p className="text-xs text-muted-foreground">{t.modals.visitDateNote}</p>
-                  {!isAdminSession && (
+                  {!mayBackdate && (
                     <p className="text-xs text-muted-foreground" data-testid="visit-date-rule">
-                      لا تاريخ مستقبلي، وأقدمُ من {VISIT_BACKDATE_STAFF_DAYS} أيام يسجّله المسؤول العام فقط.
+                      لا تاريخ مستقبلي، وأقدمُ من {VISIT_BACKDATE_STAFF_DAYS} أيام يسجّله المسؤول العام أو مَن منحه صلاحيتَه.
                     </p>
                   )}
                   <FormMessage />

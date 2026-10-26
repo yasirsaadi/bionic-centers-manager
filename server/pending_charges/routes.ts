@@ -33,7 +33,7 @@
  * باقيةٌ في القاعدة كما هي.
  */
 
-import { baghdadMomentOn, baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
+import { baghdadMomentOn, baghdadTodayYmd, checkVisitDate, mayBackdateVisits } from "@shared/visit_date";
 import { MAINTENANCE_PAID_ON_REQUIRED_MESSAGE } from "@shared/maintenance";
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
@@ -708,7 +708,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       if (!paidNowResult.ok) return res.status(400).json({ error: paidNowResult.error });
 
       //  ══ **صيانةٌ حدثت في يومٍ سابق** (طلبُ المالك ٢٠٢٦-٠٩-٣٠) ══════════════
-      //  بقاعدة «تسجيل زيارة» نفسِها (`checkVisitDate`): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول وحده. والزيارةُ
+      //  بقاعدة «تسجيل زيارة» نفسِها (`checkVisitDate`): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول ولحامل `canBackdateVisits` (§4.fr). والزيارةُ
       //  وقيدُ الكلفة بتاريخ الصيانة. **والمقبوضُ يُسأل عنه صراحةً** حين يوجد: دُفع يومَ الصيانة ⟵ بتاريخها،
       //  أو دُفع اليوم ⟵ يدخل صندوقَ اليوم. والمجّانيُّ والضمانُ والدَّينُ بلا مقبوضٍ فلا سؤال.
       const rawVisitDate = typeof req.body?.visitDate === "string" ? req.body.visitDate.trim() : "";
@@ -716,7 +716,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       let visitAt: Date | undefined;
       let paymentAtWall: string | undefined;
       if (visitYmd) {
-        const dv = checkVisitDate(visitYmd, Boolean(getSession(req).isAdmin));
+        const dv = checkVisitDate(visitYmd, mayBackdateVisits(getSession(req)));
         if (!dv.ok) return res.status(dv.status).json({ error: dv.message });
         const moment = baghdadMomentOn(visitYmd);
         visitAt = moment.at;

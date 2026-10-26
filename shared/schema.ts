@@ -1993,6 +1993,8 @@ export const systemUsers = pgTable("system_users", {
   canSupervisePhysio: boolean("can_supervise_physio").notNull().default(false),
   /** «الإبر الجافة» — لا يطبّقها إلّا حاملُه (ترحيل ١٠٤، §4.cg). */
   canDryNeedle: boolean("can_dry_needle").notNull().default(false),
+  /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — يشعله المسؤولُ لموظّفٍ بعينه؛ بلاه المسؤولُ العام وحده. */
+  canBackdateVisits: boolean("can_backdate_visits").notNull().default(false),
   // Which specialties this doctor may sign for: a subset of
   // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
   // so granting the flag without a specialty is a no-op by design.

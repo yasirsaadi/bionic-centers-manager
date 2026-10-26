@@ -2728,6 +2728,8 @@ export default function AdminSettings() {
     canApproveDiscount: false,
     canSupervisePhysio: false,
     canDryNeedle: false,
+    //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — كالإبر الجافة: خارجَ قوالب الأدوار، فتبديلُ الدور لا يشعله ولا يطفئه.
+    canBackdateVisits: false,
     medicalSpecialties: [] as string[],
     language: "ar",
   });
@@ -2953,6 +2955,7 @@ export default function AdminSettings() {
       canApproveDiscount: false,
       canSupervisePhysio: false,
       canDryNeedle: false,
+      canBackdateVisits: false,
       medicalSpecialties: [] as string[],
       language: "ar",
     });
@@ -3008,6 +3011,7 @@ export default function AdminSettings() {
       canApproveDiscount: (user as any).canApproveDiscount ?? false,
       canSupervisePhysio: (user as any).canSupervisePhysio ?? false,
       canDryNeedle: (user as any).canDryNeedle ?? false,
+      canBackdateVisits: (user as any).canBackdateVisits ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
         ? ((user as any).medicalSpecialties as string[])
         : [],
@@ -4422,6 +4426,22 @@ export default function AdminSettings() {
                         data-testid="switch-canDeleteVisits"
                       />
                       <Label htmlFor="canDeleteVisits" className="text-sm">حذف زيارات المرضى</Label>
+                    </div>
+                    {/* «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — بلاه أقدمُ من ٣ أيام للمسؤول العام وحده،
+                        في كلّ باب تاريخ: تسجيلُ الزيارة وتعديلُ تاريخها والصيانةُ وجلسةُ العلاج الطبيعي والعودةُ للقالب. */}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="canBackdateVisits"
+                          checked={userFormData.canBackdateVisits}
+                          onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canBackdateVisits: checked }))}
+                          data-testid="switch-canBackdateVisits"
+                        />
+                        <Label htmlFor="canBackdateVisits" className="text-sm">تسجيل وتعديل زيارات أقدم من ٣ أيام</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        بلا هذا المفتاح يسجّل الموظف الزيارة أو يعدّل تاريخها حتى ٣ أيام قبل اليوم فقط، وما هو أقدم للمسؤول العام.
+                      </p>
                     </div>
                     {/* Session-tracking module permissions (migration 009).
                         Reception gets entry by default; managers get all

@@ -23,7 +23,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { DeviceEpisodeSelect, useDeviceEpisodes, UNALLOCATED } from "./DeviceEpisodeSelect";
 import { ReviewPathPicker } from "@/components/medical/ReviewPathPicker";
 import type { ReviewKind, ReviewPath } from "@shared/medical_review";
-import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate, mayBackdateVisits, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
 import { DEVICE_FOLLOWUP_LABEL, DEVICE_FOLLOWUP_HINT } from "./reception_routing";
 import { ATTENDANCE_REASONS } from "@shared/attendance";
 
@@ -46,7 +46,8 @@ export function DeviceFollowupVisitDialog({
   const training = mode === "training";
   const title = training ? ATTENDANCE_REASONS.training : DEVICE_FOLLOWUP_LABEL;
   const { mutate, isPending } = useAddVisit();
-  const isAdmin = Boolean((useBranchSession() as any)?.isAdmin);
+  //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr) — والخادمُ يحكم بالقاعدة نفسِها.
+  const mayBackdate = mayBackdateVisits(useBranchSession() as any);
 
   const [date, setDate] = useState(baghdadTodayYmd());
   const [notes, setNotes] = useState("");
@@ -73,7 +74,7 @@ export function DeviceFollowupVisitDialog({
   );
 
   function submit() {
-    const verdict = checkVisitDate(date || null, isAdmin);
+    const verdict = checkVisitDate(date || null, mayBackdate);
     if (!verdict.ok) { setDateError(verdict.message); return; }
     setDateError(null);
     mutate({
@@ -105,9 +106,9 @@ export function DeviceFollowupVisitDialog({
           <div className="space-y-1.5">
             <Label className="flex items-center gap-2"><Calendar className="w-4 h-4" /> تاريخ الزيارة</Label>
             <DatePickerIraq value={date} onChange={(v: string) => setDate(v)} data-testid="input-followup-date" />
-            {!isAdmin && (
+            {!mayBackdate && (
               <p className="text-xs text-muted-foreground">
-                زيارةٌ فاتت؟ اختر يومها — حتى {VISIT_BACKDATE_STAFF_DAYS} أيام، وأقدمُ من ذلك يسجّله المسؤول العام.
+                زيارةٌ فاتت؟ اختر يومها — حتى {VISIT_BACKDATE_STAFF_DAYS} أيام، وأقدمُ من ذلك يسجّله المسؤول العام أو مَن منحه صلاحيتَه.
               </p>
             )}
             {dateError && <p className="text-xs text-destructive" data-testid="followup-date-error">{dateError}</p>}

@@ -13,7 +13,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useBranchSession } from "@/components/BranchGate";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
-import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
+import { checkVisitDate, baghdadTodayYmd, mayBackdateVisits } from "@shared/visit_date";
 import { isScheduled, scheduleOffNote, scheduleState } from "@shared/physio_device_settings";
 import { EXERCISE_DEVICE_CODE, phaseForSession } from "@shared/physio_plans";
 import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
@@ -49,7 +49,8 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   const qc = useQueryClient();
   const { toast } = useToast();
   const permissions = usePermissions();
-  const isAdmin = Boolean((useBranchSession() as any)?.isAdmin);
+  //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr).
+  const mayBackdate = mayBackdateVisits(useBranchSession() as any);
   const canNeedle = permissions.canDryNeedle === true;
   const q = useQuery<PlanLite>({
     queryKey: [`/api/physio/plans/${planId}`],
@@ -125,7 +126,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
       toast({ title: "خطأ", description: errText(e), variant: "destructive" });
     },
   });
-  const dateVerdict = checkVisitDate(date, isAdmin);
+  const dateVerdict = checkVisitDate(date, mayBackdate);
   const turnId = q.data?.rotation?.turnDeviceId ?? null;
   const stateOf = (d: PlanDevice) => scheduleState(d, (q.data?.scheduleHistory?.[d.deviceId] ?? []).filter((x) => x <= date), date);
   const isOffTurn = (deviceId: number) => {
