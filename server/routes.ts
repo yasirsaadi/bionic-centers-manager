@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { diffPatientEdit, patientEditNote } from "./patients/patient_edit_audit";
-import { ATTENDANCE_REASONS } from "@shared/attendance";
+import { ATTENDANCE_REASONS, visitReasonLabel } from "@shared/attendance";
 import {
   parseReportRange, parseReportServices, scopeDepartmentMoney,
   enumerateReportDays, dayMoney, sumDailyRows, MAX_DAILY_BREAKDOWN_DAYS, NON_ATTENDANCE_VISIT_DETAILS, type DailyRow,
@@ -2163,6 +2163,32 @@ export async function registerRoutes(
       }
     }
 
+    //  ══ **آخرُ سبب حضور** لتصدير السجلّ (طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fq) — بطلبه وحده (`lastVisit=1`)، فلا يثقل الشاشة ══
+    //  آخرُ زيارةٍ حضوريّة (غيرُ محذوفة، ولا «خدمة جديدة» ولا «إضافة نوع حالة») **من الأقسام المختارة** حين يُختار قسمٌ أو قسمان
+    //  (قسمُ الزيارة من خيطها كالتقرير اليوميّ — وزيارةٌ بلا قسمٍ لا تُنسَب بالتخمين)، **وفي الفترة** حين تُعطى (يومُ بغداد، والطرفان شاملان).
+    const lastVisitByPatient = new Map<number, { reason: string | null; at: unknown }>();
+    if (req.query.lastVisit === "1" && ids.length > 0) {
+      const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+      const inServices = services.length > 0 && services.length < 3
+        ? sql`AND pc.case_type IN (${sql.join(services.map((x) => sql`${x}`), sql`, `)})` : sql``;
+      const inPeriod = activeRange
+        ? sql`AND ((v.visit_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Baghdad')::date BETWEEN ${activeRange.from}::date AND ${activeRange.to}::date`
+        : sql``;
+      const last = await db.execute(sql`
+        SELECT DISTINCT ON (v.patient_id) v.patient_id, v.visit_date, v.details, pc.case_type
+          FROM visits v
+          LEFT JOIN patient_cases pc ON pc.id = v.case_id
+         WHERE v.patient_id IN (${idList})
+           AND v.deleted_at IS NULL
+           AND COALESCE(v.details, '') <> ALL(string_to_array(${NON_ATTENDANCE_VISIT_DETAILS.join(",")}::text, ','))
+           ${inServices} ${inPeriod}
+         ORDER BY v.patient_id, v.visit_date DESC, v.id DESC
+      `);
+      for (const r of last.rows as any[]) {
+        lastVisitByPatient.set(Number(r.patient_id), { reason: visitReasonLabel(r.details, r.case_type), at: r.visit_date });
+      }
+    }
+
     // ══ إسنادُ الخبير الفعّال لأجهزة هذه الصفحة ═══════════════════════
     // استعلامٌ واحد إضافي لمرضى الصفحة الظاهرة — لا واحدٌ لكل صفّ.
     //
@@ -2240,6 +2266,10 @@ export async function registerRoutes(
         ...(scopedMoney.has(r.id) ? { scopedCost: scopedMoney.get(r.id)!.cost } : {}),
         ...(canViewPayments && scopedMoney.has(r.id) ? { scopedPaid: scopedMoney.get(r.id)!.paid } : {}),
         activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
+        ...(req.query.lastVisit === "1" ? {
+          lastVisitReason: lastVisitByPatient.get(r.id)?.reason ?? null,
+          lastVisitAt: lastVisitByPatient.get(r.id)?.at ?? null,
+        } : {}),
       })),
     });
   });
@@ -5921,6 +5951,8 @@ export async function registerRoutes(
           phone: r.phone,
           problem,
           actionToday,
+          //  **«سبب الزيارة»** (طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fq) — السببُ المكتوب وحده، بلا الملاحظات التي يقع عليها `actionToday`.
+          visitReason: visitReasonLabel(r.details, r.caseType),
           treatment: r.treatment,
           //  **قسمُ الزيارة بالعربية** (٢٠٢٦-٠٩-٢٧) — «روبوت» نوعٌ لا قسم، والسؤالُ «مَن أخذ علاجاً
           //  طبيعياً؟» يُجاب بالقسم. من `visits.case_id`، و`null` لزيارةٍ بلا قسم.

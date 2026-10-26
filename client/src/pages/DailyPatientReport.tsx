@@ -26,7 +26,8 @@ interface DailyPatientRow {
   age: number | null;
   phone: string | null;
   problem: string | null;
-  actionToday: string | null;
+  /** **«سبب الزيارة»** (§4.fq) — السببُ المكتوب للزيارة وحده (`visitReasonLabel`)، والملاحظاتُ في عمودها. */
+  visitReason: string | null;
   treatment: string | null;
   /** قسمُ الزيارة بالعربية من خيطها — `null` لزيارةٍ بلا قسم. */
   serviceType: string | null;
@@ -237,7 +238,7 @@ export default function DailyPatientReport() {
         age: "العمر",
         phone: "الهاتف",
         problem: "المشكلة",
-        actionToday: "الإجراء اليوم",
+        visitReason: "سبب الزيارة",
         treatment: "العلاج",
         notes: "ملاحظات",
         date: "التاريخ",
@@ -267,7 +268,7 @@ export default function DailyPatientReport() {
         age: "Age",
         phone: "Phone",
         problem: "Problem",
-        actionToday: "Action Today",
+        visitReason: "Visit reason",
         treatment: "Treatment",
         notes: "Notes",
         date: "Date",
@@ -317,7 +318,7 @@ export default function DailyPatientReport() {
       base[labels.phone] = row.phone || "";
       base[labels.department] = row.serviceType || "";
       base[labels.problem] = row.problem || "";
-      base[labels.actionToday] = row.actionToday || "";
+      base[labels.visitReason] = row.visitReason || "";
       base[labels.treatment] = row.treatment || "";
       base[labels.notes] = row.notes || "";
       if (showBranchColumn) base[labels.branch] = row.branchName || "";
@@ -385,7 +386,7 @@ export default function DailyPatientReport() {
 
     const head = [
       "#", labels.patientName, labels.age, labels.phone, labels.department, labels.problem,
-      labels.actionToday, labels.treatment, labels.notes,
+      labels.visitReason, labels.treatment, labels.notes,
       ...(showBranchColumn ? [labels.branch] : []),
       labels.date,
     ];
@@ -397,7 +398,7 @@ export default function DailyPatientReport() {
       row.phone || "-",
       row.serviceType || "-",
       row.problem || "-",
-      row.actionToday || "-",
+      row.visitReason || "-",
       row.treatment || "-",
       row.notes || "-",
       ...(showBranchColumn ? [row.branchName || "-"] : []),
@@ -633,7 +634,7 @@ export default function DailyPatientReport() {
                     <TableHead>{labels.phone}</TableHead>
                     <TableHead>{labels.department}</TableHead>
                     <TableHead>{labels.problem}</TableHead>
-                    <TableHead>{labels.actionToday}</TableHead>
+                    <TableHead>{labels.visitReason}</TableHead>
                     <TableHead>{labels.treatment}</TableHead>
                     <TableHead>{labels.notes}</TableHead>
                     {showBranchColumn && <TableHead>{labels.branch}</TableHead>}
@@ -658,8 +659,8 @@ export default function DailyPatientReport() {
                       <TableCell className="max-w-[220px] whitespace-pre-wrap" data-testid={`text-problem-${row.visitId}`}>
                         {row.problem || "-"}
                       </TableCell>
-                      <TableCell className="max-w-[260px] whitespace-pre-wrap" data-testid={`text-action-${row.visitId}`}>
-                        {row.actionToday || "-"}
+                      <TableCell className="max-w-[260px] whitespace-pre-wrap" data-testid={`text-reason-${row.visitId}`}>
+                        {row.visitReason || "-"}
                       </TableCell>
                       <TableCell data-testid={`text-treatment-${row.visitId}`}>
                         {row.treatment || "-"}

@@ -27,3 +27,16 @@ export function partPurchaseReason(itemLabel: string): string {
 export function devicePurchaseReason(serviceType: string): string {
   return serviceType === "medical_support" ? "شراء مسند طبي" : "شراء طرف صناعي";
 }
+
+/** جلسةُ العلاج الطبيعيّ تُسجَّل بلا سببٍ مكتوب («تسجيل زيارة جلسة علاج طبيعي»، §4.av) — فهذا سببُها. */
+export const PHYSIO_SESSION_REASON = "جلسة علاج طبيعي";
+
+/**
+ * **«سبب الزيارة»** في التقرير اليوميّ وتصدير سجلّ المرضى (طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fq): السببُ المكتوب للزيارة
+ * (`visits.details`) كما هو، وزيارةُ العلاج الطبيعيّ بلا سببٍ مكتوب «جلسة علاج طبيعي»، وغيرُها بلا سببٍ `null` — لا يُخمَّن.
+ */
+export function visitReasonLabel(details: string | null | undefined, caseType: string | null | undefined): string | null {
+  const d = typeof details === "string" ? details.trim() : "";
+  if (d) return d;
+  return caseType === "physiotherapy" ? PHYSIO_SESSION_REASON : null;
+}

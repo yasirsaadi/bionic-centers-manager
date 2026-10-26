@@ -337,6 +337,21 @@ async function main() {
     const ro = await http(`/api/reports/daily-patient-report?${rng}&services=physiotherapy`, S.recvOther);
     same("هـ٢. وموظّفُ الفرع الآخر يرى فرعَه وحده",
       [(ro.body?.visits ?? []).length, ro.body?.financial?.scoped?.selected], [1, { revenue: 0, paid: 444000 }]);
+
+    // ══ ي. «سبب الزيارة» (طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fq) — السببُ المكتوب وحده، والملاحظاتُ في عمودها ══
+    console.log("\n── ي. سبب الزيارة ──");
+    const reasonOf = (r: any) => Object.fromEntries((r.body?.visits ?? []).map((v: any) => [v.visitId, v.visitReason]));
+    same("ي١. **سببُ كلّ زيارةٍ ما كُتب لها** — ومنها التي بلا قسم",
+      reasonOf(all3), { [v1]: "قياس طرف", [v2]: "استلام مسند", [v3]: "جلسة علاج", [v4]: "زيارة قديمة بلا قسم" });
+    //  يومٌ بعد الفترة كلّها: جلسةُ علاجٍ طبيعيّ بلا سببٍ مكتوب (كـ«تسجيل زيارة جلسة علاج طبيعي») وملاحظتُها، وزيارةُ جهازٍ بلا سبب.
+    const D5 = "2001-03-20";
+    const [{ id: v6 }] = await q<{ id: number }>(`INSERT INTO visits (patient_id, branch_id, case_id, visit_date, details, notes)
+       VALUES ($1,$2,$3,$4::timestamp,NULL,'ركبةٌ أخفّ') RETURNING id`, [A, BR, aPhy, bg(D5, "10:00")]);
+    const [{ id: v7 }] = await q<{ id: number }>(`INSERT INTO visits (patient_id, branch_id, case_id, visit_date, details, notes)
+       VALUES ($1,$2,$3,$4::timestamp,'  ','جاء يسأل') RETURNING id`, [A, BR, aPro, bg(D5, "11:00")]);
+    const d5 = (await http(url(`date=${D5}`), S.admin)).body?.visits ?? [];
+    same("ي٢. **جلسةُ العلاج الطبيعيّ بلا سببٍ مكتوب «جلسة علاج طبيعي»، وزيارةُ الجهاز بلا سببٍ فارغة** — والملاحظةُ في عمودها لا في السبب",
+      d5.map((v: any) => [v.visitId, v.visitReason, v.notes]), [[v6, "جلسة علاج طبيعي", "ركبةٌ أخفّ"], [v7, null, "جاء يسأل"]]);
   } finally {
     await cleanup();
     await q(`UPDATE audit_log SET user_id = NULL WHERE user_id = ANY($1::int[])`, [ALL]);
