@@ -205,6 +205,13 @@ async function main() {
       [(await legacyMaint(pF, { visitDate: ymd(5), underWarranty: true })).status,
         (await legacyMaint(pF, { visitDate: ymd(5), underWarranty: true }, S.admin)).status], [403, 201]);
     same("أ٨. ولا تاريخَ مستقبليّ", (await legacyMaint(pF, { visitDate: ymd(-1), underWarranty: true })).status, 400);
+    //  مفتاحُ «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — في تاريخ الصيانة أيضاً.
+    const pF2 = await mkPatient("و٢-مفتاح");
+    await q(`UPDATE system_users SET can_backdate_visits = true WHERE id = $1`, [RECV]);
+    const fBack = await legacyMaint(pF2, { visitDate: ymd(5), underWarranty: true });
+    await q(`UPDATE system_users SET can_backdate_visits = false WHERE id = $1`, [RECV]);
+    same("أ٨ب. **وحاملُ مفتاح «زيارات أقدم من ٣ أيام» يسجّل صيانةً قبل ٥ أيام** ⟵ ٢٠١ والزيارةُ بيومها",
+      [fBack.status, (await rowsOf(pF2)).visit_day], [201, ymd(5)]);
     const pG = await mkPatient("ز-بلا تاريخ");
     const g = await legacyMaint(pG, { originalPrice: 30000, discountAmount: 0, paidNow: 30000 });
     same("أ٩. **وبلا تاريخٍ (أو بتاريخ اليوم) كما كانت تماماً** — بلا سؤال، وكلُّه اليوم",

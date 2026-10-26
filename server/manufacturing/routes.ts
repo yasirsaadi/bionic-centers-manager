@@ -16,7 +16,7 @@ import {
   TRIAL_ALREADY_AWAITING_ERROR, TRIAL_NOT_ELIGIBLE_ERROR, TRIAL_DATE_ERROR, TRIAL_NOT_AWAITING_ERROR, TRIAL_CALL_NOTE_ERROR,
   canDeliverTrialSocket, isTrialAwaiting, isValidTrialDate,
 } from "@shared/trial_socket";
-import { baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate, mayBackdateVisits } from "@shared/visit_date";
 import * as followupStore from "../followup/store";
 import {
   hasSignedExam, isLegacyPatient, latestDeviceCost, prescribedSpecs,
@@ -1122,7 +1122,7 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!(await reachesOrderPatient(s, raw))) return res.status(403).json({ error: "غير مصرح" });
     const today = baghdadTodayYmd();
     const day = strOrU(req.body?.date) ?? today;
-    const v = checkVisitDate(day, s.isAdmin);
+    const v = checkVisitDate(day, mayBackdateVisits(s));
     if (!v.ok) return res.status(v.status).json({ error: v.message });
     const note = (strOrU(req.body?.note) ?? "").trim() || null;
     try {

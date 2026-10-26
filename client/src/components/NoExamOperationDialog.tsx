@@ -77,7 +77,7 @@ import { partsNeedExpert, READY_PARTS_HINT, READY_SALE_SUCCESS_MESSAGE } from "@
 import type { RequestedItem } from "@shared/prosthetic_parts";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useBranchSession } from "@/components/BranchGate";
-import { baghdadTodayYmd, checkVisitDate, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate, mayBackdateVisits, VISIT_BACKDATE_STAFF_DAYS } from "@shared/visit_date";
 import { MAINTENANCE_PAID_ON_LABELS } from "@shared/maintenance";
 import {
   resolveResumeTarget, nextSubmissionToken, mintSubmissionToken,
@@ -218,7 +218,8 @@ export function NoExamOperationDialog({
   const todayYmd = baghdadTodayYmd();
   const [maintDate, setMaintDate] = useState(todayYmd);
   const [paidOn, setPaidOn] = useState<"" | "visit_day" | "today">("");
-  const isAdminSession = Boolean((useBranchSession() as any)?.isAdmin);
+  //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr) — والخادمُ يحكم بالقاعدة نفسِها.
+  const mayBackdate = mayBackdateVisits(useBranchSession() as any);
 
   //  ══ **الصيانةُ المبسّطة — حقلها الخاصّ** (المرحلة الثالثة) ═══════════
   //  جهازٌ يُختار من قائمة؛ بيعُ الجزء لا جهازَ قائماً له فلا يحتاج نظيرَه.
@@ -370,7 +371,7 @@ export function NoExamOperationDialog({
   const maintBackdated = kind === "maintenance" && maintDate !== todayYmd;
   const askPaidOn = maintBackdated && paidNowCheck.ok && paidNowCheck.amount > 0;
   const maintDateVerdict = kind === "maintenance"
-    ? checkVisitDate(maintDate || null, isAdminSession)
+    ? checkVisitDate(maintDate || null, mayBackdate)
     : { ok: true as const };
 
   const save = useMutation({
@@ -959,9 +960,9 @@ export function NoExamOperationDialog({
               <Label className="text-sm font-medium">تاريخ الصيانة</Label>
               <DatePickerIraq value={maintDate} onChange={(v: string) => { setMaintDate(v); setPaidOn(""); }}
                 data-testid="no-exam-op-maint-date" />
-              {!isAdminSession && (
+              {!mayBackdate && (
                 <p className="text-xs text-muted-foreground">
-                  صيانةٌ حدثت ولم تُسجَّل؟ اختر يومها — حتى {VISIT_BACKDATE_STAFF_DAYS} أيام، وأقدمُ من ذلك يسجّله المسؤول العام.
+                  صيانةٌ حدثت ولم تُسجَّل؟ اختر يومها — حتى {VISIT_BACKDATE_STAFF_DAYS} أيام، وأقدمُ من ذلك يسجّله المسؤول العام أو مَن منحه صلاحيتَه.
                 </p>
               )}
               {!maintDateVerdict.ok && (

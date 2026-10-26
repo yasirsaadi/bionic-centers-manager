@@ -237,6 +237,14 @@ async function main() {
     check(out[0]?.text.includes("تقييمٌ أوّليّ") && out[0]?.text.includes("تقييمٌ ختاميّ") && out[0]?.text.includes("متأخّرٌ 2 يوماً"), "د.٢ وفيها الأنواعُ والتأخّر", out[0]?.text);
     same("د.٣ **وخططُه هو وحدها** — لا مريضَ زميله", out[0]?.text.includes("مريض الزميل"), false);
 
+    console.log("\n── د٢. تقييمٌ بتاريخٍ أقدم من ٣ أيام (ترحيل ١٨٧، §4.fr) ──");
+    const oldAssess = () => call("POST", `/api/physio/plans/${pNo}/assessments`, S.spec, { assessedOn: addDays(today, -5), decision: "continue", pain: 4 });
+    same("د٢.١ الأخصائيُّ بلا مفتاح «زيارات أقدم من ٣ أيام» ⟵ ٤٠٣", (await oldAssess()).status, 403);
+    await q(`UPDATE system_users SET can_backdate_visits = true WHERE id = $1`, [SPEC]);
+    const okOld = await oldAssess();
+    await q(`UPDATE system_users SET can_backdate_visits = false WHERE id = $1`, [SPEC]);
+    same("د٢.٢ **وبالمفتاح ⟵ ٢٠٠** بتاريخه", [okOld.status, okOld.json?.assessedOn ?? okOld.json?.assessed_on ?? null], [200, addDays(today, -5)]);
+
     console.log("\n── هـ. حذفُ المريض ──");
     let deleted = true;
     try { await storage.deletePatient(pt); await storage.deletePatient(pt2); await storage.deletePatient(pt3); } catch (e) { deleted = false; console.error(e); }

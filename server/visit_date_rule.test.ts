@@ -5,11 +5,13 @@
 // (أ) القاعدةُ الخالصة: اليومُ وحتى ٣ أيامٍ قبله للموظّف · أقدمُ للمسؤول العام وحده · المستقبلُ مرفوضٌ للجميع.
 // (ب) `POST /api/visits`: بلا `canAddPatients` ⟵ ٤٠٣ · اليومَ و٣ أيام ⟵ تُسجَّل · ٤ أيام ⟵ ٤٠٣ برسالة المسؤول · والمسؤولُ يسجّلها ·
 //     والمستقبلُ ⟵ ٤٠٠ حتى للمسؤول. (ج) تعديلُ التاريخ (`PATCH`) بالقاعدة نفسِها.
+// (د) **مفتاحُ «تسجيل وتعديل زيارات أقدم من ٣ أيام»** (`canBackdateVisits`، ترحيل ١٨٧، §4.fr): حاملُه يسجّل ويعدّل أقدمَ من ٣ أيام،
+//     والمستقبلُ مرفوضٌ له، ومديرُ الفرع بلاه لا · والمسؤولُ يشعله ويطفئه من نافذة المستخدم فيحكم من الطلب التالي بلا دخولٍ جديد، وبسطر تدقيق.
 import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { checkVisitDate, VISIT_BACKDATE_MESSAGE, VISIT_FUTURE_MESSAGE, baghdadTodayYmd } from "@shared/visit_date";
+import { checkVisitDate, mayBackdateVisits, VISIT_BACKDATE_MESSAGE, VISIT_FUTURE_MESSAGE, baghdadTodayYmd } from "@shared/visit_date";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -25,8 +27,8 @@ function same(msg: string, got: unknown, expected: unknown) {
 const PORT = 6883;
 const MARK = "اختبار-تاريخ-الزيارة";
 const q = async (t: string, p: any[] = []) => (await pool.query(t, p)).rows as any[];
-const RECV = 9951, VIEWER = 9952, EDITOR = 9953, ADMIN = 9954;
-const USERS = [RECV, VIEWER, EDITOR, ADMIN];
+const RECV = 9951, VIEWER = 9952, EDITOR = 9953, ADMIN = 9954, BACK = 9955, MGR = 9956;
+const USERS = [RECV, VIEWER, EDITOR, ADMIN, BACK, MGR];
 const sess = (userId: number, role: string, isAdmin = false) => ({ userId, role, isAdmin, branchId: 1, accessibleBranches: [1],
   displayName: `موظف ${userId}`, permissions: {} });
 async function http(method: string, path: string, s: any, body?: any) {
@@ -61,15 +63,21 @@ async function main() {
     [{ ok: false, status: 403, message: VISIT_BACKDATE_MESSAGE }, { ok: true }]);
   same("أ٣. **المستقبلُ مرفوضٌ حتى للمسؤول**", checkVisitDate("2026-09-30", true, T), { ok: false, status: 400, message: VISIT_FUTURE_MESSAGE });
   same("أ٤. وفارغٌ = اليوم", checkVisitDate(null, false, T), { ok: true });
+  same("أ٥. **مَن يتجاوز الأيامَ الثلاثة**: المسؤولُ وحاملُ المفتاح وحدهما (والنصُّ «true» ليس مفتاحاً)",
+    [mayBackdateVisits({ isAdmin: true }), mayBackdateVisits({ isAdmin: false, permissions: { canBackdateVisits: true } }),
+      mayBackdateVisits({ permissions: { canBackdateVisits: "true" } }), mayBackdateVisits({ permissions: {} }), mayBackdateVisits(null)],
+    [true, true, false, false, false]);
 
   await q(`INSERT INTO branches (id,name) VALUES (1,'بغداد') ON CONFLICT DO NOTHING`);
-  for (const [id, role, add, edit] of [[RECV, "reception", true, false], [VIEWER, "reception", false, false],
-    [EDITOR, "reception", true, true], [ADMIN, "admin", true, true]] as any[]) {
+  for (const [id, role, add, edit, back] of [[RECV, "reception", true, false, false], [VIEWER, "reception", false, false, false],
+    [EDITOR, "reception", true, true, false], [ADMIN, "admin", true, true, false],
+    [BACK, "reception", true, true, true], [MGR, "branch_manager", true, true, false]] as any[]) {
     await q(`INSERT INTO system_users (id,username,password_hash,display_name,role,branch_id,branch_ids,is_active,
-               can_view_patients,can_add_patients,can_edit_visits)
-             VALUES ($1,$2,'x','موظف',$3,1,'[1]'::jsonb,true,true,$4,$5)
+               can_view_patients,can_add_patients,can_edit_visits,can_backdate_visits)
+             VALUES ($1,$2,'x','موظف',$3,1,'[1]'::jsonb,true,true,$4,$5,$6)
              ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, is_active=true, can_add_patients=EXCLUDED.can_add_patients,
-               can_edit_visits=EXCLUDED.can_edit_visits, can_view_patients=true`, [id, `vd_u${id}`, role, add, edit]);
+               can_edit_visits=EXCLUDED.can_edit_visits, can_view_patients=true, can_backdate_visits=EXCLUDED.can_backdate_visits`,
+      [id, `vd_u${id}`, role, add, edit, back]);
   }
   await cleanup();
   const pid = Number((await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id,
@@ -121,6 +129,32 @@ async function main() {
       [after.treatment_type, new Date(after.visit_date).getTime()], ["استشارة طبية", new Date(before).getTime()]);
     same("ج٦. **ونقلُها إلى تاريخٍ قديمٍ آخر يبقى ٤٠٣**",
       (await http("PATCH", `/api/visits/${vid}`, sess(EDITOR, "reception"), { customDate: ago(6) })).status, 403);
+
+    console.log("\n── د. مفتاحُ «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) ──");
+    same("د١. **حاملُ المفتاح يسجّل قبل ٤ أيام وقبل ثلاثين يوماً**",
+      [(await visit(sess(BACK, "reception"), ago(4))).status, (await visit(sess(BACK, "reception"), ago(30))).status], [201, 201]);
+    same("د٢. **والمستقبلُ مرفوضٌ له كغيره**", (await visit(sess(BACK, "reception"), ago(-1))).status, 400);
+    same("د٣. **ويعدّل تاريخَ زيارةٍ إلى تسعة أيام قبل اليوم**",
+      (await http("PATCH", `/api/visits/${vid}`, sess(BACK, "reception"), { customDate: ago(9) })).status, 200);
+    const mgrOld = await visit(sess(MGR, "branch_manager"), ago(4));
+    same("د٤. **ومديرُ الفرع بلا المفتاح ⟵ ٤٠٣** — الدورُ لا يمنحه", [mgrOld.status, mgrOld.body?.message], [403, VISIT_BACKDATE_MESSAGE]);
+    same("د٥. **والموظّفُ لا يشعله لنفسه** (نافذةُ المستخدمين للمسؤول وحده)",
+      (await http("PATCH", `/api/admin/users/${RECV}`, sess(RECV, "reception"), { canBackdateVisits: true })).status, 403);
+
+    const off = await http("PATCH", `/api/admin/users/${BACK}`, sess(ADMIN, "admin", true), { canBackdateVisits: false });
+    const afterOff = await visit(sess(BACK, "reception"), ago(4));
+    same("د٦. **المسؤولُ يطفئه ⟵ الطلبُ التالي ٤٠٣ بلا دخولٍ جديد**", [off.status, afterOff.status, afterOff.body?.message],
+      [200, 403, VISIT_BACKDATE_MESSAGE]);
+    const auditOff = (await q(`SELECT old_values, new_values FROM audit_log WHERE entity_type='system_user' AND entity_id=$1
+                                 ORDER BY id DESC LIMIT 1`, [BACK]))[0];
+    same("د٧. **وسطرُ تدقيقٍ بالقديم والجديد**",
+      [JSON.parse(auditOff?.old_values ?? "{}").canBackdateVisits, JSON.parse(auditOff?.new_values ?? "{}").canBackdateVisits], [true, false]);
+    const on = await http("PATCH", `/api/admin/users/${RECV}`, sess(ADMIN, "admin", true), { canBackdateVisits: "true" });
+    same("د٨. **ويشعله لموظّفٍ آخر ⟵ يسجّل قبل ٤ أيام في الحال** (والنصُّ «true» يُطبَّع)",
+      [on.status, (await q(`SELECT can_backdate_visits b FROM system_users WHERE id=$1`, [RECV]))[0].b,
+        (await visit(sess(RECV, "reception"), ago(4))).status], [200, true, 201]);
+    same("د٩. **وتعديلُ زيارته بلا مفتاح «تعديل الزيارات» يبقى ٤٠٣** — المفتاحُ للتاريخ لا لصلاحية التعديل",
+      (await http("PATCH", `/api/visits/${vid}`, sess(RECV, "reception"), { customDate: ago(7) })).status, 403);
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     await cleanup();

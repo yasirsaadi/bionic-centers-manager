@@ -211,6 +211,14 @@ async function main() {
       [true, manualBefore[ROBOT] ?? 0, manualBefore[LASER] ?? 0]);
     same("ز.٥ ومرّتين ⟵ ٤٠٩", (await call("POST", `/api/physio/sessions/${r2.json.id}/cancel`, S.sup, { reason: "x" })).status, 409);
 
+    console.log("\n── ز٢. جلسةٌ بتاريخٍ أقدم من ٣ أيام (ترحيل ١٨٧، §4.fr) ──");
+    const day5 = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10)) - 5 * 86_400_000).toISOString().slice(0, 10);
+    same("ز٢.١ المنفّذُ بلا مفتاح «زيارات أقدم من ٣ أيام» ⟵ ٤٠٣", (await exec(S.techN, { items: okItems, date: day5 })).status, 403);
+    await q(`UPDATE system_users SET can_backdate_visits = true WHERE id = $1`, [TECH_N]);
+    const back5 = await exec(S.techN, { items: okItems, date: day5 });
+    await q(`UPDATE system_users SET can_backdate_visits = false WHERE id = $1`, [TECH_N]);
+    same("ز٢.٢ **وبالمفتاح ⟵ ٢٠٠**", back5.status, 200);
+
     console.log("\n── ح. لا حذفَ لخطّةٍ لها جلسات ──");
     same("ح.١ ⟵ ٤٠٩", (await call("DELETE", `/api/physio/plans/${plan}`, S.admin)).status, 409);
 

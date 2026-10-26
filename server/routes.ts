@@ -102,7 +102,7 @@ import {
   NEW_SERVICE_LABELS, NEW_SERVICE_REDIRECTS,
 } from "./new_service/store";
 import { newServiceDiscountRef } from "@shared/discount";
-import { baghdadTodayYmd, checkVisitDate } from "@shared/visit_date";
+import { baghdadTodayYmd, checkVisitDate, mayBackdateVisits } from "@shared/visit_date";
 import {
   checkRequiredPatientData, checkAmputationSite, isAdministrativeOnlyPatch,
 } from "@shared/patient_required";
@@ -342,6 +342,8 @@ function buildStoredPermissions(systemUser: SystemUser) {
     //  و«الإبر الجافة» لأشخاصٍ بأعيانهم بقرار المالك — ولا للمسؤول ضمناً: ليس قراراً إدارياً.
     canSupervisePhysio: isAdminRow || Boolean(systemUser.canSupervisePhysio),
     canDryNeedle: Boolean(systemUser.canDryNeedle),
+    //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — مفتاحٌ مخزَّن لموظّفٍ بعينه، لا يمنحه دور؛ والمسؤولُ بسلطته.
+    canBackdateVisits: isAdminRow || Boolean(systemUser.canBackdateVisits),
   };
 }
 
@@ -1419,8 +1421,8 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
-      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle"] as const) {
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1576,8 +1578,8 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
-      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle"] as const) {
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -4291,12 +4293,12 @@ export async function registerRoutes(
     const branchSession = (req.session as any).branchSession;
     //  ══ **صلاحيةُ الزرّ نفسِه، وتاريخٌ لا يتجاوز القاعدة** (§4.ar البند ٢٦) ══════════════════════════════════
     //  زرُّ «إضافة زيارة» لا يظهر إلّا بـ`canAddPatients`، والخادمُ لم يكن يفحصها. والتاريخُ كان يقبل أيَّ يوم:
-    //  المستقبلُ مرفوضٌ للجميع، وأقدمُ من ٣ أيام للمسؤول العام وحده (قرارُ المالك).
+    //  المستقبلُ مرفوضٌ للجميع، وأقدمُ من ٣ أيام للمسؤول العام وحده (قرارُ المالك) — ولحامل `canBackdateVisits` (§4.fr).
     if (!(branchSession?.isAdmin || branchSession?.permissions?.canAddPatients)) {
       return res.status(403).json({ message: "ليس لديك صلاحية إضافة زيارة" });
     }
     {
-      const v = checkVisitDate((input as any).customDate, Boolean(branchSession?.isAdmin));
+      const v = checkVisitDate((input as any).customDate, mayBackdateVisits(branchSession));
       if (!v.ok) return res.status(v.status).json({ message: v.message });
     }
     let visitShift = branchSession?.shift;
@@ -4483,7 +4485,7 @@ export async function registerRoutes(
       return res.status(403).json({ message: "لا يمكنك تعديل زيارة من فرع آخر" });
     }
     const { details, notes, treatmentType, sessionCount, cost, customDate } = req.body;
-    //  **وتعديلُ التاريخ بالقاعدة نفسِها** (§4.ar البند ٢٦): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول العام وحده.
+    //  **وتعديلُ التاريخ بالقاعدة نفسِها** (§4.ar البند ٢٦): لا مستقبل، وأقدمُ من ٣ أيام للمسؤول العام وحده ولحامل `canBackdateVisits` (§4.fr).
     //  **وحين يتغيّر التاريخُ فعلاً فقط** (واقعةُ المالك ٢٠٢٦-٠٩-٣٠، حيدر حسون): نافذةُ «تحرير
     //  الزيارة» ترسل التاريخَ دائماً، فكان تغييرُ «نوع العلاج» وحده على زيارةٍ عمرُها ٤ أيام يُردّ
     //  «من صلاحية المسؤول العام» — والتاريخُ لم يُمَسّ. فالتاريخُ نفسُه (بيومه في بغداد) ليس تعديلاً:
@@ -4494,7 +4496,7 @@ export async function registerRoutes(
     const dateChanged = customDate !== undefined && customDate !== null && customDate !== ""
       && String(customDate) !== existingYmd;
     if (dateChanged) {
-      const v = checkVisitDate(String(customDate), Boolean(branchSession?.isAdmin));
+      const v = checkVisitDate(String(customDate), mayBackdateVisits(branchSession));
       if (!v.ok) return res.status(v.status).json({ message: v.message });
     }
 

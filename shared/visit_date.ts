@@ -4,13 +4,24 @@
 //  لكن اتركها للمسؤول العام فقط». فالقاعدة:
 //   · يومٌ **لم يأتِ بعد** ⟵ مرفوضٌ للجميع (زيارةٌ لم تقع لا تُعَدّ جلسةً في يومٍ مقبل)؛
 //   · اليومُ وحتى **٣ أيامٍ قبله** ⟵ للموظّف كما كان؛
-//   · **أقدمُ من ٣ أيام** ⟵ للمسؤول العام وحده.
+//   · **أقدمُ من ٣ أيام** ⟵ للمسؤول العام وحده — **ولمن يشعل له المسؤولُ مفتاحَ «تسجيل وتعديل زيارات أقدم من ٣ أيام»**
+//     (`canBackdateVisits`، طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fr: «خيار أضيفه أو أغلقه لأيّ موظّف»).
 // والأيامُ أيامُ بغداد (`YYYY-MM-DD`)، وفارغٌ = اليوم.
 
 export const VISIT_BACKDATE_STAFF_DAYS = 3;
 export const VISIT_FUTURE_MESSAGE = "لا يمكن تسجيل زيارة بتاريخ لم يأتِ بعد";
 export const VISIT_BACKDATE_MESSAGE =
-  `تسجيل زيارة أقدم من ${VISIT_BACKDATE_STAFF_DAYS} أيام من صلاحية المسؤول العام فقط — راجع المسؤول`;
+  `تسجيل زيارة أقدم من ${VISIT_BACKDATE_STAFF_DAYS} أيام يحتاج صلاحيةً يمنحها المسؤول العام — راجع المسؤول`;
+
+/**
+ * **مَن يتجاوز الأيامَ الثلاثة**: المسؤولُ العام بسلطته، ومَن يحمل `canBackdateVisits` — مفتاحٌ في نافذة الموظّف يشعله المسؤولُ
+ * ويطفئه، ولا يمنحه دور (ولا مديرُ الفرع ضمناً). والجلسةُ تُبنى من صفّ الحساب في كلّ طلب، فالإطفاءُ يحكم من الطلب التالي.
+ */
+export function mayBackdateVisits(
+  s: { isAdmin?: unknown; permissions?: { canBackdateVisits?: unknown } | null } | null | undefined,
+): boolean {
+  return Boolean(s?.isAdmin) || s?.permissions?.canBackdateVisits === true;
+}
 
 /** يومُ بغداد الآن `YYYY-MM-DD`. */
 export function baghdadTodayYmd(now: Date = new Date()): string {
@@ -26,14 +37,15 @@ function daysBetween(a: string, b: string): number {
 
 export type VisitDateVerdict = { ok: true } | { ok: false; status: 400 | 403; message: string };
 
+/** `mayBackdate` = `mayBackdateVisits(الجلسة)` — المسؤولُ أو حاملُ المفتاح. */
 export function checkVisitDate(
-  customDate: string | null | undefined, isAdmin: boolean, today: string = baghdadTodayYmd(),
+  customDate: string | null | undefined, mayBackdate: boolean, today: string = baghdadTodayYmd(),
 ): VisitDateVerdict {
   if (!customDate) return { ok: true };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(customDate)) return { ok: false, status: 400, message: "تاريخ الزيارة غير صالح" };
   const back = daysBetween(customDate, today);
   if (back < 0) return { ok: false, status: 400, message: VISIT_FUTURE_MESSAGE };
-  if (back > VISIT_BACKDATE_STAFF_DAYS && !isAdmin) return { ok: false, status: 403, message: VISIT_BACKDATE_MESSAGE };
+  if (back > VISIT_BACKDATE_STAFF_DAYS && !mayBackdate) return { ok: false, status: 403, message: VISIT_BACKDATE_MESSAGE };
   return { ok: true };
 }
 

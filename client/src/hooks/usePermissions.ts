@@ -37,6 +37,8 @@ interface UserPermissions {
   canSupervisePhysio: boolean;
   /** «الإبر الجافة» لأشخاصٍ بأعيانهم (§4.cg). */
   canDryNeedle: boolean;
+  /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — مفتاحٌ لموظّفٍ بعينه، والمسؤولُ بسلطته. */
+  canBackdateVisits: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -65,6 +67,7 @@ const defaultAdminPermissions: UserPermissions = {
   canApproveDiscount: false,
   canSupervisePhysio: true,
   canDryNeedle: false,
+  canBackdateVisits: true,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -93,6 +96,7 @@ const defaultBranchPermissions: UserPermissions = {
   canApproveDiscount: false,
   canSupervisePhysio: false,
   canDryNeedle: false,
+  canBackdateVisits: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -125,6 +129,7 @@ export function usePermissions(): UserPermissions {
       canApproveDiscount: false,
       canSupervisePhysio: false,
       canDryNeedle: false,
+      canBackdateVisits: false,
     };
   }
 
@@ -156,6 +161,7 @@ export function usePermissions(): UserPermissions {
       canApproveDiscount: perms.canApproveDiscount ?? false,
       canSupervisePhysio: perms.canSupervisePhysio ?? false,
       canDryNeedle: perms.canDryNeedle ?? false,
+      canBackdateVisits: perms.canBackdateVisits ?? false,
     };
   }
   

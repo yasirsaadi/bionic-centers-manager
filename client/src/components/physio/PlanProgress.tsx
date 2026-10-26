@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/hooks/use-toast";
 import { useBranchSession } from "@/components/BranchGate";
 import { apiRequest } from "@/lib/queryClient";
-import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
+import { checkVisitDate, baghdadTodayYmd, mayBackdateVisits } from "@shared/visit_date";
 import {
   ASSESSMENT_DECISIONS, DECISION_LABELS, DECISION_LABELS_EN, GOAL_STATUS_LABELS, GOALS_MEASURE, KIND_LABELS, KIND_LABELS_EN, PAIN_MEASURE,
   VERDICT_LABELS, VERDICT_LABELS_EN, compareAssessments, goalsPct, normalized,
@@ -166,7 +166,8 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
   prefillPain?: number | null;
 }) {
   const { toast } = useToast();
-  const isAdmin = Boolean((useBranchSession() as any)?.isAdmin);
+  //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr).
+  const mayBackdate = mayBackdateVisits(useBranchSession() as any);
   const [date, setDate] = useState(baghdadTodayYmd());
   const [pain, setPain] = useState<string>(prefillPain === null ? "" : String(prefillPain));
   const [values, setValues] = useState<Record<string, string>>({});
@@ -185,7 +186,7 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
     },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
   });
-  const dateOk = checkVisitDate(date, isAdmin);
+  const dateOk = checkVisitDate(date, mayBackdate);
   const anything = pain !== "" || Object.values(values).some((x) => x !== "") || goals.some((g) => g !== null);
   const approved = planStatus === "approved";
   return (

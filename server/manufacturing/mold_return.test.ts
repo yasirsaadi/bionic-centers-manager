@@ -175,6 +175,9 @@ async function main() {
     same("أ.٨ بعد القالب ٤٠٩", (await post(wo1, S.reception, {})).status, 409);
     same("أ.٩ ولا زيارة", (await visitsOf(p1)).length, n1);
     same("أ.١٠ والمسؤولُ أبعد من ٣ أيام", (await post(wo2, S.admin, { date: daysAgoYmd(10) })).status, 200);
+    //  مفتاحُ «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — الجلسةُ هنا من الرأس كما هي.
+    const recvBack = { ...S.reception, permissions: { ...S.reception.permissions, canBackdateVisits: true } };
+    same("أ.١١ **وحاملُ المفتاح أبعد من ٣ أيام** ⟵ ٢٠٠", (await post(wo2, recvBack, { date: daysAgoYmd(10) })).status, 200);
   } finally {
     server.close();
     await cleanup();

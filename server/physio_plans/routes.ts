@@ -32,7 +32,7 @@ import * as assess from "./assessments";
 import * as outcomes from "./outcomes";
 import { canAssessPlans, outcomesScope, parseMeasures } from "@shared/physio_assessments";
 import { canCancelSessions, canExecutePlans, canSuggestPlans, canWritePlans as canWrite } from "@shared/physio_plans";
-import { checkVisitDate, baghdadTodayYmd } from "@shared/visit_date";
+import { checkVisitDate, baghdadTodayYmd, mayBackdateVisits } from "@shared/visit_date";
 import { DEVICE_TEXT_MAX, doseError, normalizeDose, TOTAL_SESSIONS_MAX } from "@shared/physio_protocols";
 import { parsePhasesBody } from "@shared/physio_exercises";
 import { HOME_SHEET_MAX_BYTES, homeSheetAllowed, parseIdList } from "@shared/physio_home_sheet";
@@ -467,7 +467,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (scope !== null && !scope.includes(l.row.branchId)) return res.status(403).json({ error: "تُنفَّذ الخطّةُ في فرعها — بيد مَن يعمل فيه" });
       const today = baghdadTodayYmd();
       const sessionDate = dateOf(req.body?.date, today);
-      const v = checkVisitDate(sessionDate, Boolean(l.s.isAdmin));
+      const v = checkVisitDate(sessionDate, mayBackdateVisits(l.s));
       if (!v.ok) return res.status(v.status).json({ error: v.message });
       if (!Array.isArray(req.body?.items) || req.body.items.length > 40) return res.status(400).json({ error: "البنودُ غير صالحة" });
       const items = req.body.items.map((i: any) => ({
@@ -545,7 +545,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!l) return;
       if (!canAssessPlans(l.s)) return res.status(403).json({ error: "يقيّم الأخصائيُّ أو المشرفُ العام أو المسؤول" });
       const day = typeof req.body?.assessedOn === "string" && req.body.assessedOn ? req.body.assessedOn : baghdadTodayYmd();
-      const v = checkVisitDate(day, Boolean(l.s.isAdmin));
+      const v = checkVisitDate(day, mayBackdateVisits(l.s));
       if (!v.ok) return res.status(v.status).json({ error: v.message });
       const r = await assess.recordAssessment(l.row.id, { ...req.body, assessedOn: day }, actor(l.s));
       await audit(req, l.s, { entityId: l.row.id, action: "assess", branchId: l.row.branchId,
