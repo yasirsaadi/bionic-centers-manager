@@ -258,6 +258,8 @@ export default function PatientsList() {
     isMedicalSupport: boolean | null; amputationSite: string | null; supportType: string | null;
     diseaseType: string | null; patientClassification: string | null; totalCost: number | null;
     createdAt: string | null;
+    /** **آخرُ سبب حضور** وتاريخُه (§4.fq) — للتصدير وحده (`lastVisit=1`)، بالأقسام والفترة المختارة؛ `null` بلا زيارةٍ فيها. */
+    lastVisitReason?: string | null; lastVisitAt?: string | null;
     /**
      * غائبٌ (لا صفر) حين لا يملك المستخدمُ `canViewPayments` — الخادم
      * يحذف الحقلَ لا يُصفّره (إصلاحٌ 2026-09-02). المستهلكون هنا يتحقّقون
@@ -354,6 +356,7 @@ export default function PatientsList() {
     params.delete("visitDate");
     const range = exportPeriodRange(period, baghdadToday());
     if (range) { params.set("activeFrom", range.from); params.set("activeTo", range.to); }
+    params.set("lastVisit", "1");
     const res = await fetch(`/api/patients/registry?${params}`, { credentials: "include" });
     if (!res.ok) return [];
     return (await res.json()).rows;
@@ -446,6 +449,8 @@ export default function PatientsList() {
         "الحالة": [patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند طبية" : null].filter(Boolean).join(" + ") || "-",
         "تصنيف المريض": patient.patientClassification === "new" ? "مريض جديد" : patient.patientClassification === "past" ? "مريض قديم" : "",
         "الفرع": getBranchName(patient.branchId),
+        "آخر سبب حضور": patient.lastVisitReason ?? "",
+        "تاريخ آخر حضور": patient.lastVisitAt ? formatDateIraq(new Date(patient.lastVisitAt)) : "",
         "التكلفة الكلية": totalCost,
         ...(paymentFields ?? {}),
         "تاريخ التسجيل": patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : "",
@@ -472,6 +477,8 @@ export default function PatientsList() {
       return;
     }
 
+    //  سببُ الحضور نصٌّ يكتبه الموظّف — يُهرَّب قبل أن يدخل الورقة (كـ`esc` في التقرير اليوميّ).
+    const esc = (v: string) => v.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
     const dateLabel = `${exportBranchLabel} — ${exportPeriodLabel(period, baghdadToday())} — ${exportServicesLabel(services)}`
       + ` — ${dataToExport.length} مريض`;
     
@@ -508,6 +515,7 @@ export default function PatientsList() {
               <th>الحالة</th>
               <th>التصنيف</th>
               <th>الفرع</th>
+              <th>آخر سبب حضور</th>
               <th>التكلفة</th>
               ${permissions.canViewPayments ? "<th>المدفوع</th><th>المتبقي</th>" : ""}
               <th>التاريخ</th>
@@ -536,6 +544,7 @@ export default function PatientsList() {
                 <td>${[patient.isAmputee ? "بتر" : null, patient.isPhysiotherapy ? "علاج طبيعي" : null, patient.isMedicalSupport ? "مساند" : null].filter(Boolean).join(" + ") || "-"}</td>
                 <td>${patient.patientClassification === "new" ? "جديد" : patient.patientClassification === "past" ? "قديم" : "-"}</td>
                 <td>${getBranchName(patient.branchId)}</td>
+                <td>${patient.lastVisitReason ? `${esc(patient.lastVisitReason)}${patient.lastVisitAt ? `<br><small>${formatDateIraq(new Date(patient.lastVisitAt))}</small>` : ""}` : "-"}</td>
                 <td>${totalCost.toLocaleString()}</td>
                 ${paymentCells}
                 <td>${patient.createdAt ? formatDateTimeIraq(new Date(patient.createdAt)) : ""}</td>

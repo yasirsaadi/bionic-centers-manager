@@ -110,6 +110,26 @@ async function main() {
     same("وأطراف ⟵ كلفةُ الأطراف ومدفوعُها", await money("services=prosthetic", B.id), [1100000, 550000, 1000000, 500000]);
     same("**ومريضُ قسمٍ واحد داخل الاختيار ⟵ رقماه الكاملان** (لا مالٌ مقسوم)", (await money("services=physiotherapy", A.id)).slice(2), [null, null]);
     same("وبلا اختيار أقسام ⟵ الكاملان وحدهما", (await money("", B.id)).slice(2), [null, null]);
+
+    // ══ **آخرُ سبب حضور** لتصدير السجلّ (طلبُ المالك ٢٠٢٦-١٠-٢٦، §4.fq) — `lastVisit=1` ══
+    //  ب: زيارةُ طرفه يومَ DAY بلا سببٍ مكتوب، ثمّ «صيانة» على طرفه يومَ ٢٠، ثمّ «خدمة جديدة» على علاجه يومَ ٢٥ (ليست حضوراً).
+    await q(`INSERT INTO visits (patient_id, branch_id, case_id, visit_date, details, session_count, cost)
+             VALUES ($1,1,$2,'2026-01-20 09:00','صيانة',1,0), ($1,1,$3,'2026-01-25 09:00','خدمة جديدة',1,0)`,
+      [B.id, B.cases.prosthetic, B.cases.physiotherapy]);
+    const last = async (qs: string) => {
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/patients/registry?pageSize=100&branchId=1&${qs}`);
+      return Object.fromEntries(((await r.json() as any).rows ?? []).filter((x: any) => [A.id, B.id, C.id, D.id].includes(x.id)).map((x: any) =>
+        [x.id, "lastVisitReason" in x ? [x.lastVisitReason, x.lastVisitAt ? String(x.lastVisitAt).slice(0, 10) : null] : "غائب"]));
+    };
+    same("**آخرُ زيارةٍ حضوريّة لكلّ مريض وسببُها**: ب «صيانة» يومَ ٢٠ (و«خدمة جديدة» بعدها ليست حضوراً)، وأ جلسةُ علاجٍ طبيعيّ بلا سببٍ مكتوب، ود زيارةٌ بلا قسمٍ ولا سبب، وج بلا زيارة",
+      await last("lastVisit=1"), {
+        [A.id]: ["جلسة علاج طبيعي", DAY], [B.id]: ["صيانة", "2026-01-20"], [C.id]: [null, null], [D.id]: [null, DAY] });
+    same("**وبالقسم المختار: آخرُ زيارةٍ من القسم نفسِه** — علاجُ ب الطبيعيّ لا حضورَ فيه",
+      [(await last("lastVisit=1&services=physiotherapy"))[B.id], (await last("lastVisit=1&services=prosthetic"))[B.id]],
+      [[null, null], ["صيانة", "2026-01-20"]]);
+    same("**وفي الفترة: آخرُ حضورٍ فيها** — ب يومَ DAY لا يومَ ٢٠",
+      (await last("lastVisit=1&activeFrom=2026-01-10&activeTo=2026-01-16"))[B.id], [null, DAY]);
+    same("وبلا `lastVisit` لا يُحسب (الشاشةُ لا تحتاجه)", (await last(""))[B.id], "غائب");
   } finally {
     await new Promise((r) => srv.close(() => r(null)));
     //  تنظيفٌ كي تُعاد الحزمةُ على القاعدة نفسِها.
