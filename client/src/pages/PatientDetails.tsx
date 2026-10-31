@@ -121,6 +121,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
   { value: "تمارين مع أجهزة", label: "تمارين مع أجهزة" },
+  { value: "تمارين CP للأطفال", label: "تمارين CP للأطفال" },
   { value: "أبر صينية", label: "أبر صينية" },
 ];
 
@@ -689,6 +690,7 @@ export default function PatientDetails() {
       "أجهزة علاج طبيعي": t.patientDetails.treatmentTypePhysioDevices,
       "جهاز علاج طبيعي": t.patientDetails.treatmentTypePhysioDevices,
       "تمارين مع أجهزة": t.patientDetails.treatmentTypeExercisesWithDevices,
+      "تمارين CP للأطفال": t.patientDetails.treatmentTypeCpChildExercises,
     };
     return map[type] || type;
   };

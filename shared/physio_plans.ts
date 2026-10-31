@@ -11,7 +11,7 @@
 import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canReadProtocols, canWritePatientPlans, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
 import { isScheduled } from "./physio_device_settings";
-import { EXERCISES_WITH_DEVICES } from "./pricing";
+import { CP_CHILD_EXERCISES, EXERCISES_WITH_DEVICES } from "./pricing";
 
 export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
 export type PlanStatus = (typeof PLAN_STATUSES)[number];
@@ -194,14 +194,21 @@ export const PHASE_MOVED = "سُجّلت جلسةٌ لهذه الخطّة قبل
  * و**«تمارين مع أجهزة»** (§4.ft) لمن اشتراها وحده (`boughtByType` — `resolvePurchasedSessions().byType`):
  * جلسةٌ فيها التمرينُ وجهازٌ معاً تُعدّ عليها، وجلسةُ تمارينَ وحدها أو أجهزةٍ وحدها تُعدّ عليها **ما لم يشترِ ذلك النوعَ بعينه**
  * — فلا يبقى «باقٍ» على ما اشتراه وجلساتُه تُعدّ على نوعٍ لم يشترِه. ومَن لم يشترِها فقاعدتُه كما كانت حرفاً.
+ *
+ * و**«تمارين CP للأطفال»** (§4.fu) بالقاعدة نفسِها: طفلٌ اشتراها ولم يشترِ نوعَ البنود بعينه تُعدّ جلستُه عليها.
+ * والروبوتُ والإبرُ كما كانا لكلّ أحد.
  */
 export function sessionTreatmentType(doneCodes: readonly string[], boughtByType: Readonly<Record<string, number>> = {}): string {
   if (doneCodes.includes("robotik")) return "روبوت";
   const withDevice = doneCodes.some((c) => c !== "exercise" && c !== "needle");
   const base = withDevice ? "أجهزة علاج طبيعي" : doneCodes.includes("needle") ? "أبر صينية" : "تمارين تأهيلية";
-  if (!((boughtByType[EXERCISES_WITH_DEVICES] ?? 0) > 0) || base === "أبر صينية") return base;
-  if (withDevice && doneCodes.includes("exercise")) return EXERCISES_WITH_DEVICES;
-  return (boughtByType[base] ?? 0) > 0 ? base : EXERCISES_WITH_DEVICES;
+  if (base === "أبر صينية") return base;
+  const bought = (t: string) => (boughtByType[t] ?? 0) > 0;
+  if (bought(EXERCISES_WITH_DEVICES) && withDevice && doneCodes.includes("exercise")) return EXERCISES_WITH_DEVICES;
+  if (bought(base)) return base;
+  if (bought(EXERCISES_WITH_DEVICES)) return EXERCISES_WITH_DEVICES;
+  if (bought(CP_CHILD_EXERCISES)) return CP_CHILD_EXERCISES;
+  return base;
 }
 
 /** هل تُكتب جلسةُ هذا اليوم في عدّادات الأجهزة؟ من يوم القفل فصاعداً وحده. */

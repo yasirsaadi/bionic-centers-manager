@@ -27,6 +27,11 @@ import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { payments, patientCases } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
+
+//  **الأسعارُ من الجدول لا أرقامٌ مكتوبة** (§4.fu): الروبوتُ والأجهزةُ بسعرهما الحاليّ، فتغييرُ السعر لا يحوّل اختباراً عن قاعدته.
+const R = PHYSIO_TREATMENT_PRICES["روبوت"];
+const DV = PHYSIO_TREATMENT_PRICES["أجهزة علاج طبيعي"];
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -169,22 +174,22 @@ async function main() {
     same("**ولم يُحرَّك دينارٌ واحد**", (await storage.getPatient(pNo))?.totalCost ?? 0, 0);
     same("ولا دفعة", (await db.select().from(payments).where(eq(payments.patientId, pNo))).length, 0);
 
-    //  **بالسعر القياسيّ**: روبوتٌ ٥٠,٠٠٠ للجلسة × جلستين = ١٠٠,٠٠٠.
+    //  **بالسعر القياسيّ**: روبوتٌ بسعر الجدول للجلسة × جلستين (كان ٥٠,٠٠٠ × ٢ = ١٠٠,٠٠٠).
     //  كانت هذه الحمولة تطلب جلستين بـ٥٠,٠٠٠ — أي **نصفَ القياسيّ بلا
     //  خصم**، وهو بالضبط الالتفافُ الذي صار الخادمُ يردّه (2026-08-21).
     //  فصارت متّسقةً مع نفسها: الحارسُ المُختبَر هنا هو حالةُ العلاج
     //  الطبيعي، لا السعر.
     const pYes = await mkPatient("مريض علاج طبيعي", true);
     r = await req(`/api/patients/${pYes}/new-service`, S.manager, {
-      serviceType: "additional_therapy", serviceCost: 100000, initialPayment: 100000,
+      serviceType: "additional_therapy", serviceCost: 2 * R, initialPayment: 2 * R,
       sessionCount: 2, paymentTreatmentType: "روبوت",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 2 * R }],
       submissionToken: token(),
     });
     same("١٤. ولمريض العلاج الطبيعي ⇒ تُقبَل", r.status, 200);
-    same("والكلفة قُيِّدت", (await storage.getPatient(pYes))?.totalCost, 100000);
+    same("والكلفة قُيِّدت", (await storage.getPatient(pYes))?.totalCost, 2 * R);
     const payYes = await db.select().from(payments).where(eq(payments.patientId, pYes));
-    same("ودفعةٌ بجلساتها", payYes.map((p) => [p.amount, p.sessionCount]), [[100000, 2]]);
+    same("ودفعةٌ بجلساتها", payYes.map((p) => [p.amount, p.sessionCount]), [[2 * R, 2]]);
 
     // ولا يتغيّر شيءٌ في الاستشارة و«خدمة أخرى» — لم تُمَسّا بالحارس.
     for (const [st, label] of [["consultation", "استشارة"], ["other", "خدمة أخرى"]] as [string, string][]) {
@@ -358,8 +363,8 @@ async function main() {
     const pA = await mkPatient("أ — مقبوضٌ صفرٌ مرفوض", true);
     const rA = await req(`/api/patients/${pA}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
-      serviceCost: 50000, initialPayment: 0, submissionToken: token(),
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }],
+      serviceCost: R, initialPayment: 0, submissionToken: token(),
     });
     same("أ. **صفرٌ صريحٌ ⟶ ٤٠٠**", rA.status, 400);
     check(String(rA.json?.message ?? "").includes("أدخل المبلغ المدفوع الآن"),
@@ -374,8 +379,8 @@ async function main() {
     const pAb = await mkPatient("أ.ب — بلا حقل دفعٍ إطلاقاً", true);
     const rAb = await req(`/api/patients/${pAb}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
-      serviceCost: 50000, submissionToken: token(),
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }],
+      serviceCost: R, submissionToken: token(),
       // بلا initialPayment إطلاقاً — لا `undefined` صريحاً حتى.
     });
     same("أ.ب. **والغيابُ التامّ للحقل مرفوضٌ كذلك ٤٠٠**", rAb.status, 400);
@@ -394,11 +399,11 @@ async function main() {
     const pB = await mkPatient("ب — مقبوضٌ جزئيّ", true);
     const rB = await req(`/api/patients/${pB}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
-      serviceCost: 50000, initialPayment: 20000, submissionToken: token(),
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }],
+      serviceCost: R, initialPayment: 20000, submissionToken: token(),
     });
     same("ب. تُقبَل", rB.status, 200);
-    same("والكلفةُ الكاملة ٥٠,٠٠٠ — لا علاقةَ لها بالمقبوض", (await storage.getPatient(pB))?.totalCost, 50000);
+    same("والكلفةُ الكاملة (سعرُ جلسة الروبوت) — لا علاقةَ لها بالمقبوض", (await storage.getPatient(pB))?.totalCost, R);
     const payB = await db.select().from(payments).where(eq(payments.patientId, pB));
     same("**والدفعةُ ٢٠,٠٠٠ بالضبط — لا كلفةَ البند كاملةً**",
       payB.map((p) => [p.amount, p.sessionCount]), [[20000, 1]]);
@@ -407,13 +412,13 @@ async function main() {
     const pC = await mkPatient("ج — مقبوضٌ كامل", true);
     const rC = await req(`/api/patients/${pC}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
-      serviceCost: 50000, initialPayment: 50000, submissionToken: token(),
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }],
+      serviceCost: R, initialPayment: R, submissionToken: token(),
     });
     same("ج. تُقبَل", rC.status, 200);
     const payC = await db.select().from(payments).where(eq(payments.patientId, pC));
     same("**والدفعةُ الكاملة كما كانت** — لا ارتدادَ في الحالة الشائعة",
-      payC.map((p) => [p.amount, p.sessionCount]), [[50000, 1]]);
+      payC.map((p) => [p.amount, p.sessionCount]), [[R, 1]]);
 
     // — D. بندان، مقبوضٌ جزئيّ ⟶ الجلساتُ كلُّها محفوظة، ومجموعُ الدفعات
     //      يساوي المقبوضَ بالضبط، موزَّعاً تناسبياً لا على البند الأوّل وحده —
@@ -421,18 +426,18 @@ async function main() {
     const rD = await req(`/api/patients/${pD}/new-service`, S.manager, {
       serviceType: "additional_therapy",
       treatmentEntries: [
-        { treatmentType: "روبوت", sessionCount: 2, cost: 100000 },
-        { treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: 25000 },
+        { treatmentType: "روبوت", sessionCount: 2, cost: 2 * R },
+        { treatmentType: "أجهزة علاج طبيعي", sessionCount: 1, cost: DV },
       ],
-      serviceCost: 125000, initialPayment: 50000, submissionToken: token(),
+      serviceCost: 2 * R + DV, initialPayment: 50000, submissionToken: token(),
     });
     same("د. تُقبَل", rD.status, 200);
-    same("والكلفةُ الكاملة ١٢٥,٠٠٠", (await storage.getPatient(pD))?.totalCost, 125000);
+    same("والكلفةُ الكاملة (روبوتان وجهاز)", (await storage.getPatient(pD))?.totalCost, 2 * R + DV);
     const payD = await db.select().from(payments).where(eq(payments.patientId, pD));
     const sessionsD = payD.map((p) => p.sessionCount).sort((a, b) => (a ?? 0) - (b ?? 0));
     same("**وكلا البندين محفوظُ الجلسات** — ١ و٢ معاً لا أحدُهما فقط", sessionsD, [1, 2]);
     const sumD = payD.reduce((s, p) => s + (p.amount || 0), 0);
-    same("**ومجموعُ الدفعات ٥٠,٠٠٠ بالضبط — لا ١٢٥,٠٠٠**", sumD, 50000);
+    same("**ومجموعُ الدفعات ٥٠,٠٠٠ بالضبط — لا الكلفةُ كاملة**", sumD, 50000);
     check(payD.every((p) => (p.amount || 0) >= 0), "ولا مبلغَ سالباً في أيّ صفّ");
 
     // — E. خصمٌ على الجلسات الإضافية: الكلفةُ النهائية تبقى مستقلّةً عن
@@ -440,8 +445,8 @@ async function main() {
     const pE = await mkPatient("هـ — خصمٌ ومقبوضٌ جزئيّ", true);
     const rE = await req(`/api/patients/${pE}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
-      serviceCost: 100000,
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 2 * R }],
+      serviceCost: 2 * R,
       discount: { finalPrice: 40000, reason: "negotiation" },
       initialPayment: 10000, submissionToken: token(),
     });
@@ -455,8 +460,8 @@ async function main() {
     const pF = await mkPatient("و — مجّانيّ", true);
     const rF = await req(`/api/patients/${pF}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: 50000 }],
-      serviceCost: 50000,
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }],
+      serviceCost: R,
       discount: { isFree: true },
       initialPayment: 999999, submissionToken: token(),
     });
@@ -476,8 +481,8 @@ async function main() {
     const pZ = await mkPatient("ز — خصمٌ بمقبوضٍ صفر", true);
     const rZ = await req(`/api/patients/${pZ}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
-      serviceCost: 100000,
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 2 * R }],
+      serviceCost: 2 * R,
       discount: { finalPrice: 80000, reason: "negotiation" },
       initialPayment: 0, submissionToken: token(),
     });
@@ -494,8 +499,8 @@ async function main() {
     const pZb = await mkPatient("ز.ب — خصمٌ بلا حقل دفعٍ إطلاقاً", true);
     const rZb = await req(`/api/patients/${pZb}/new-service`, S.manager, {
       serviceType: "additional_therapy",
-      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 100000 }],
-      serviceCost: 100000,
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2, cost: 2 * R }],
+      serviceCost: 2 * R,
       discount: { finalPrice: 80000, reason: "negotiation" },
       submissionToken: token(),
     });
