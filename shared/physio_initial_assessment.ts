@@ -44,7 +44,13 @@ export const PT_RELIEVING: readonly Opt[] = [
   o("heat", "Heat", "الحرارة"), o("ice", "Ice", "الثلج"), o("rest", "Rest", "الراحة"),
   o("medication", "Medication", "الدواء"), o("position_change", "Position Change", "تغيير الوضعية"),
 ];
-export const PT_SENSATION: readonly Opt[] = [o("intact", "Intact", "سليم"), o("impaired", "Impaired", "ضعيف"), o("absent", "Absent", "معدوم")];
+export const PT_SENSATION: readonly Opt[] = [
+  o("intact", "Intact", "سليم"), o("impaired", "Impaired", "ضعيف"), o("absent", "Absent", "معدوم"),
+  //  §4.fv — طلبُ المالك: «Hypersensation» بالإنجليزية وبنسق الخيارات نفسِه (صفةٌ كأخواتها).
+  o("hypersensitive", "Hypersensitive", "مفرط الحساسية"),
+];
+/** **أيحتاج هذا الإحساسُ «المناطق المصابة»؟** — كلُّ ما ليس سليماً: ضعيفٌ أو معدومٌ أو مفرطُ الحساسية (§4.fv). قاعدةٌ واحدة للتطبيع والتنبيه. */
+export const sensationNeedsRegions = (s: string | null | undefined): boolean => s === "impaired" || s === "absent" || s === "hypersensitive";
 
 /** قوةُ العضلات اليدويّة — الصفوفُ الستّة بألفاظ الورقة. */
 export const PT_MMT_GROUPS: readonly Opt[] = [
@@ -128,7 +134,8 @@ export const PT_LABELS = {
   relieving: { en: "Relieving:", ar: "ما يخفّفه:" },
   sensation: { en: "Sensation", ar: "الإحساس" },
   overallStatus: { en: "Overall Status:", ar: "الحالة العامّة:" },
-  affectedRegions: { en: "Affected Region(s), if impaired/absent:", ar: "المناطق المصابة (إن كان ضعيفاً أو معدوماً):" },
+  //  §4.fv — «if not intact» يجمع الضعيفَ والمعدومَ والمفرط: «impaired/absent/hypersensitive» كلمةٌ واحدة بلا مسافة فتفيض عن عمودها.
+  affectedRegions: { en: "Affected Region(s), if not intact:", ar: "المناطق المصابة (إن لم يكن سليماً):" },
   mmt: { en: "Manual Muscle Testing (MMT)", ar: "اختبار قوة العضلات اليدويّ" },
   muscleGroup: { en: "Muscle Group", ar: "المجموعة العضلية" },
   right: { en: "Right", ar: "يمين" },
@@ -304,7 +311,7 @@ export function parseInitialAssessment(raw: unknown, opts: { today?: string } = 
   a.allergySpecify = a.allergy.some((x) => x !== "nka") ? txt(r.allergySpecify) : null;
   a.locationOther = txt(r.locationOther);
   a.relievingOther = txt(r.relievingOther);
-  a.sensationRegions = a.sensation === "impaired" || a.sensation === "absent" ? txt(r.sensationRegions) : null;
+  a.sensationRegions = sensationNeedsRegions(a.sensation) ? txt(r.sensationRegions) : null;
 
   const grid = <T extends string>(key: "mmt" | "ashworth", rows: readonly Opt[], grades: readonly T[], label: string) => {
     const src = r[key] && typeof r[key] === "object" ? r[key] : {};
@@ -356,7 +363,7 @@ export function assessmentGaps(a: PhysioInitialAssessment | null, diagnosis?: un
       if (a.location.length === 0 && !a.locationOther) gaps.push("location");
     }
     if (!a.sensation) gaps.push("sensation");
-    else if ((a.sensation === "impaired" || a.sensation === "absent") && !a.sensationRegions) gaps.push("sensationRegions");
+    else if (sensationNeedsRegions(a.sensation) && !a.sensationRegions) gaps.push("sensationRegions");
   }
   if (a.previousTherapy === "yes" && a.previousVisits === null) gaps.push("previousVisits");
   if (a.plan.length === 0) gaps.push("plan");
