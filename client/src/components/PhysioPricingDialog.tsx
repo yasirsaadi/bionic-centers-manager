@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, X, Stethoscope } from "lucide-react";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, type PhysioEntry } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost, physioPriceListText, type PhysioEntry } from "@shared/pricing";
 import { api } from "@shared/routes";
 import { invalidatePatientData } from "@/lib/queryClient";
 import {
@@ -103,7 +103,7 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
         </DialogHeader>
         <div className="space-y-3 mt-2">
           <p className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
-            بعد فحص الطبيب: اختر أنواع العلاج وعدد الجلسات — الكلفة تُحسب تلقائياً (روبوت 50,000 / جلسة، الأجهزة والتمارين والأبر 25,000 / جلسة).
+            بعد فحص الطبيب: اختر أنواع العلاج وعدد الجلسات — الكلفة تُحسب تلقائياً ({physioPriceListText()}).
           </p>
 
           {rxExam?.doctorName && prescribed.length > 0 && (

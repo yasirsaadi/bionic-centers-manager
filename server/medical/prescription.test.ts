@@ -39,9 +39,12 @@ ok("مناطق الإصابة 23 قيمة", INJURY_AREA_OPTIONS.length === 23);
 ok("حقول الطرف السبعة كاملة", PROSTHETIC_SPECS.length === 7);
 
 // The doctor's treatment picker must offer exactly what pricing knows.
-ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 6 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
-// §4.ft — «تمارين مع أجهزة» في قائمة الوصفة نفسِها، بسعر جلسةٍ واحدة.
-ok("«تمارين مع أجهزة» في قائمة الوصفة بسعر جلسة", PHYSIO_TREATMENT_TYPES.includes("تمارين مع أجهزة") && physioEntryCost({ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }) === 300000);
+ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 7 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
+// §4.ft — «تمارين مع أجهزة» في قائمة الوصفة نفسِها، بسعر جلسةٍ واحدة (٣٥٬٠٠٠ من §4.fu).
+ok("«تمارين مع أجهزة» في قائمة الوصفة بسعر جلسة", PHYSIO_TREATMENT_TYPES.includes("تمارين مع أجهزة") && physioEntryCost({ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }) === 420000);
+// §4.fu — «تمارين CP للأطفال» في القائمة بـ٢٥٬٠٠٠، والروبوتُ ٧٥٬٠٠٠.
+ok("«تمارين CP للأطفال» في قائمة الوصفة بـ٢٥٬٠٠٠ والروبوتُ ٧٥٬٠٠٠", PHYSIO_TREATMENT_TYPES.includes("تمارين CP للأطفال")
+  && physioEntryCost({ treatmentType: "تمارين CP للأطفال", sessionCount: 24 }) === 600000 && physioEntryCost({ treatmentType: "روبوت", sessionCount: 10 }) === 750000);
 
 // Spec keys must match the patient columns the writer targets.
 const cols = ["prostheticType","siliconType","siliconSize","suspensionSystem","footType","footSize","kneeJointType"];

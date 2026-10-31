@@ -269,6 +269,7 @@
     "test:physio-exercises": "tsx server/physio_exercises.test.ts",
     "test:physio-plans": "tsx server/physio_plans.test.ts",
     "test:physio-execution": "tsx server/physio_execution.test.ts",
+    "test:legacy-physio-freeze": "tsx server/legacy_physio_freeze.test.ts",
     "test:physio-suggest": "tsx server/physio_suggest.test.ts",
     "test:physio-assessments": "tsx server/physio_assessments.test.ts",
     "test:physio-outcomes": "tsx server/physio_outcomes.test.ts",

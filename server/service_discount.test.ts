@@ -43,6 +43,13 @@ import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { logAudit } from "./accounting/ledger";
 import * as discountStore from "./discounts/store";
+import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
+
+//  **السعرُ الأصليُّ من الجدول** (§4.fu): عشرُ جلسات روبوت وأربعٌ بسعر الجدول الحاليّ (كانتا ٥٠٠٬٠٠٠ و٢٠٠٬٠٠٠ بـ٥٠٬٠٠٠ للجلسة).
+const R10 = 10 * PHYSIO_TREATMENT_PRICES["روبوت"];
+const R4 = 4 * PHYSIO_TREATMENT_PRICES["روبوت"];
+/** نسبةُ الخصم بمنزلتين — كما يحسبها الخادم (١/٣ ⟵ ٣٣٫٣٣). */
+const pctOf = (orig: number, fin: number) => Math.round(((orig - fin) / orig) * 10000) / 100;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const readSrc = (p: string) => readFileSync(join(HERE, p), "utf8");
@@ -334,7 +341,7 @@ async function main() {
         entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
       });
       same("١. تسعيرٌ بلا خصم ينجح فوراً", r.status, 200);
-      same("   والكلفةُ تُقيَّد كما كانت", (await money(p)).totalCost, 500_000);
+      same("   والكلفةُ تُقيَّد كما كانت", (await money(p)).totalCost, R10);
       same("   **ولا صفَّ خصمٍ يُنشأ**",
         (await q(`SELECT count(*)::int n FROM service_discount_requests WHERE patient_id=$1`, [p]))[0].n, 0);
       same("   والخطّةُ محفوظة",
@@ -346,11 +353,11 @@ async function main() {
       await mkCase(p, 1, "physiotherapy");
       const r = await http("POST", `/api/patients/${p}/price-physio`, S.recv, {
         entries: [{ treatmentType: "روبوت", sessionCount: 4 }],
-        discount: { finalPrice: 200_000 },
+        discount: { finalPrice: R4 },
       });
       same("٢. **سعرٌ يساوي الأصلي ليس خصماً** — يمرّ فوراً", r.status, 200);
       same("   بلا صفٍّ ولا اعتماد", r.body?.pendingApproval, undefined);
-      same("   والكلفةُ كاملة", (await money(p)).totalCost, 200_000);
+      same("   والكلفةُ كاملة", (await money(p)).totalCost, R4);
     }
 
     // ══ ٢. المخفَّضُ عبر بابٍ حيّ يُطبَّق فوراً ═══════════════════════
@@ -375,7 +382,7 @@ async function main() {
       same("٥. والصفُّ يحمل السعرين والفرقَ والنسبة، ومعتمَدٌ فوراً",
         [Number(row.original_price), Number(row.proposed_final_price),
           Number(row.discount_amount), Number(row.discount_percentage), row.status],
-        [500_000, 400_000, 100_000, 20, "approved"]);
+        [R10, 400_000, R10 - 400_000, pctOf(R10, 400_000), "approved"]);
       same("   والسببَ وطالبَه", [row.reason, row.requested_by_name], ["negotiation", "استعلامات"]);
       same("   وقسمَه", row.department, "physiotherapy");
     }
@@ -483,7 +490,7 @@ async function main() {
       same("   والعَلَمُ مرفوعٌ والسعرُ صفر",
         [row.is_free, Number(row.approved_final_price), Number(row.discount_percentage)],
         [true, 0, 100]);
-      same("   والسعرُ الأصليُّ محفوظٌ كما كان", Number(row.original_price), 500_000);
+      same("   والسعرُ الأصليُّ محفوظٌ كما كان", Number(row.original_price), R10);
       const m = await money(p);
       same("١٤. **ولا إيرادَ ولا دَين ولا دفعةٌ ملفَّقة**",
         [m.totalCost, m.ledger, m.payments], [0, 0, 0]);
@@ -808,7 +815,7 @@ async function main() {
         entries: [{ treatmentType: "روبوت", sessionCount: 10 }],
       });
       same("٣٣. والاستعلامات يكمل بالسعر الأصلي بعده", ok.status, 200);
-      same("   بكلفتِه كاملة", (await money(physioPatient)).totalCost, 500_000);
+      same("   بكلفتِه كاملة", (await money(physioPatient)).totalCost, R10);
     }
 
     // ══ ١٠. تعديلٌ واعتماد — على بقيّةٍ تاريخية (البابُ التاريخيّ) ═══════
@@ -905,9 +912,9 @@ async function main() {
       const row = (await q(`SELECT * FROM service_discount_requests WHERE id=$1`,
         [r.body?.discountRequestId]))[0];
       same("٤٠. **السعرُ الأصليُّ من الجدول لا من الطلب**",
-        Number(row.original_price), 500_000);
+        Number(row.original_price), R10);
       same("   والفرقُ والنسبةُ محسوبان لا مُعلَنان",
-        [Number(row.discount_amount), Number(row.discount_percentage)], [100_000, 20]);
+        [Number(row.discount_amount), Number(row.discount_percentage)], [R10 - 400_000, pctOf(R10, 400_000)]);
     }
     {
       //  **ولا يُهرَّب «مجّاني» بسعرٍ موجب** — لا في الطلب ولا في القاعدة.

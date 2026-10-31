@@ -19,9 +19,14 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
-import { resolvePurchasedSessions } from "../shared/pricing";
+import { resolvePurchasedSessions, PHYSIO_TREATMENT_PRICES } from "../shared/pricing";
 import { readFileSync } from "fs";
 import { pickPhysioSessions, perVisitSessionMode } from "../client/src/pages/physio_sessions_source";
+
+//  **الأسعارُ من الجدول** (§4.fu): الروبوتُ والأجهزةُ بسعرهما الحاليّ — والاشتقاقُ من الكلفة بالجدول الحاليّ، فكلفةُ المريض هنا
+//  عددُ جلساته × السعر الحاليّ (كانت ×٥٠٬٠٠٠ و×٢٥٬٠٠٠ قبل الأسعار الجديدة).
+const R = PHYSIO_TREATMENT_PRICES["روبوت"];
+const DV = PHYSIO_TREATMENT_PRICES["أجهزة علاج طبيعي"];
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -162,14 +167,14 @@ async function state(pid: number) {
       const pid = await mk("خطة-مدفوع-خدمة", true);
       const b = await state(pid);
       const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
-        serviceType: "additional_therapy", serviceCost: 150000, initialPayment: 150000,
+        serviceType: "additional_therapy", serviceCost: 6 * DV, initialPayment: 6 * DV,
         treatmentEntries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }],
       });
       const a = await state(pid);
       check(r.status < 300, "ج١. البيع نجح", String(r.status));
       check(a.sessions === 16, "ج٢. الجلسات تُحتسب: ١٠ ⟶ ١٦", `${b.sessions} ⟶ ${a.sessions}`);
-      check(a.cost === b.cost + 150000, "ج٣. **والمالُ يُحتسب**: الكلفة +١٥٠,٠٠٠", `${b.cost} ⟶ ${a.cost}`);
-      check(a.paid === b.paid + 150000, "ج٤. والمقبوض +١٥٠,٠٠٠", `${b.paid} ⟶ ${a.paid}`);
+      check(a.cost === b.cost + 6 * DV, "ج٣. **والمالُ يُحتسب**: الكلفة + ستّ جلساتٍ بسعرها", `${b.cost} ⟶ ${a.cost}`);
+      check(a.paid === b.paid + 6 * DV, "ج٤. والمقبوض + ستّ جلساتٍ بسعرها", `${b.paid} ⟶ ${a.paid}`);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -207,21 +212,21 @@ async function state(pid: number) {
       const pid = (await q(
         `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
                                is_physiotherapy,treatment_type,total_cost)
-         VALUES ($1,'شكل-انتصار',$2,'مراجعة',45,'ألم',true,'روبوت',1300000) RETURNING id`,
+         VALUES ($1,'شكل-انتصار',$2,'مراجعة',45,'ألم',true,'روبوت',${26 * R}) RETURNING id`,
         [`WB-${++code}`, BR])).rows[0].id;
       await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
-               VALUES ($1,$2,'physiotherapy',1300000,'auto','active')`, [pid, BR]);
+               VALUES ($1,$2,'physiotherapy',${26 * R},'auto','active')`, [pid, BR]);
       await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
-               VALUES ($1,$2,50000,'روبوت',1,false),($1,$2,50000,'روبوت',1,false),
+               VALUES ($1,$2,${R},'روبوت',1,false),($1,$2,${R},'روبوت',1,false),
                       ($1,$2,0,'أجهزة علاج طبيعي',6,true)`, [pid, BR]);
       const s = await state(pid);
-      check(s.src === "cost", "هـ١. المصدرُ اشتقاقٌ من الكلفة (١,٣٠٠,٠٠٠ ÷ ٥٠,٠٠٠)", s.src);
+      check(s.src === "cost", "هـ١. المصدرُ اشتقاقٌ من الكلفة (كلفةُ ٢٦ جلسة ÷ سعرِ الجلسة — كانت ١,٣٠٠,٠٠٠ ÷ ٥٠,٠٠٠)", s.src);
       check(s.sessions === 32, "هـ٢. **٢٦ مشتراة + ٦ مهداة = ٣٢** — الهديّةُ لم تعد تسقط", String(s.sessions));
 
       //  وبعد أن تُصحَّح الكلفةُ إلى المدفوع فعلاً، يسقط الاشتقاق ويعود
       //  العدّادُ إلى سجلّ الدفعات — جلستان مدفوعتان + ستٌّ مهداة.
-      await q(`UPDATE patients SET total_cost=100000 WHERE id=$1`, [pid]);
-      await q(`UPDATE patient_cases SET cost=100000, cost_source='manual' WHERE patient_id=$1 AND case_type='physiotherapy'`, [pid]);
+      await q(`UPDATE patients SET total_cost=${2 * R} WHERE id=$1`, [pid]);
+      await q(`UPDATE patient_cases SET cost=${2 * R}, cost_source='manual' WHERE patient_id=$1 AND case_type='physiotherapy'`, [pid]);
       const s2 = await state(pid);
       check(s2.src === "payments" && s2.sessions === 8,
         "هـ٣. وبعد تصحيح الكلفة: ٨ من الدفعات (٢ مدفوعة + ٦ مهداة)", `${s2.sessions} (${s2.src})`);
@@ -645,7 +650,7 @@ async function state(pid: number) {
     console.log("\n── ص. و«خدمة جديدة» كذلك ──");
     await planWriterRace("سباق-خدمة", "ص", (pid) =>
       http("POST", `/api/patients/${pid}/new-service`, S, {
-        serviceType: "additional_therapy", serviceCost: 250000, initialPayment: 250000,
+        serviceType: "additional_therapy", serviceCost: 5 * R, initialPayment: 5 * R,
         treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 5 }],
       }));
 
@@ -976,7 +981,7 @@ async function state(pid: number) {
     {
       const pid = await mk("مستورَدٌ-ثمّ-هديّة", false);
       const ns = await http("POST", `/api/patients/${pid}/new-service`, S, {
-        serviceType: "additional_therapy", serviceCost: 100000, initialPayment: 100000,
+        serviceType: "additional_therapy", serviceCost: 2 * R, initialPayment: 2 * R,
         treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 2 }],
       });
       const payId = (await q(
@@ -1100,13 +1105,13 @@ async function state(pid: number) {
       const pid = (await q(
         `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
                                is_physiotherapy,treatment_type,total_cost)
-         VALUES ($1,'محجوبٌ-عنه-المال',$2,'مراجعة',44,'ألم',true,'روبوت',500000) RETURNING id`,
+         VALUES ($1,'محجوبٌ-عنه-المال',$2,'مراجعة',44,'ألم',true,'روبوت',${10 * R}) RETURNING id`,
         [`WB-${++code}`, BR])).rows[0].id;
       await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
-               VALUES ($1,$2,'physiotherapy',500000,'manual','active')`, [pid, BR]);
+               VALUES ($1,$2,'physiotherapy',${10 * R},'manual','active')`, [pid, BR]);
       await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions,notes)
-               VALUES ($1,$2,50000,'روبوت',1,false,'ملاحظةٌ لا يجوز أن تصل'),
-                      ($1,$2,50000,'روبوت',1,false,'ثانية'),
+               VALUES ($1,$2,${R},'روبوت',1,false,'ملاحظةٌ لا يجوز أن تصل'),
+                      ($1,$2,${R},'روبوت',1,false,'ثانية'),
                       ($1,$2,0,'روبوت',6,true,'تبرّع')`, [pid, BR]);
 
       const blind = await http("GET", `/api/patients/${pid}`, SB);
@@ -1129,7 +1134,7 @@ async function state(pid: number) {
 
       //  **والفرقُ حقيقيٌّ لا صوريّ**: الملخّصُ المدموج وحده يُنتج ١٠.
       const fromSummaryOnly = resolvePurchasedSessions({
-        plan: null, treatmentTypeText: "روبوت", caseCost: 500000,
+        plan: null, treatmentTypeText: "روبوت", caseCost: 10 * R,
         paymentSessions: (summary ?? []) as any,
       });
       check(fromSummaryOnly.total === 10,
@@ -1437,7 +1442,7 @@ async function state(pid: number) {
       const pid = await mk("وسم-خدمةٍ-مدفوعة", true);
       const b = await state(pid);
       const r = await http("POST", `/api/patients/${pid}/new-service`, S, {
-        serviceType: "additional_therapy", serviceCost: 250000, initialPayment: 250000,
+        serviceType: "additional_therapy", serviceCost: 5 * R, initialPayment: 5 * R,
         treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 5 }],
       });
       const row = (await q(
@@ -1522,19 +1527,19 @@ async function state(pid: number) {
       const pid = (await q(
         `INSERT INTO patients (patient_code,name,branch_id,referral_source,age,medical_condition,
                                is_physiotherapy,treatment_type,total_cost)
-         VALUES ($1,'تبويبُ-الزيارات',$2,'مراجعة',44,'ألم',true,'روبوت',500000) RETURNING id`,
+         VALUES ($1,'تبويبُ-الزيارات',$2,'مراجعة',44,'ألم',true,'روبوت',${10 * R}) RETURNING id`,
         [`WB-${++code}`, BR])).rows[0].id;
       await q(`INSERT INTO patient_cases (patient_id,branch_id,case_type,cost,cost_source,status)
-               VALUES ($1,$2,'physiotherapy',500000,'manual','active')`, [pid, BR]);
+               VALUES ($1,$2,'physiotherapy',${10 * R},'manual','active')`, [pid, BR]);
       await q(`INSERT INTO payments (patient_id,branch_id,amount,payment_treatment_type,session_count,is_free_sessions)
-               VALUES ($1,$2,50000,'روبوت',1,false),($1,$2,50000,'روبوت',1,false),($1,$2,0,'روبوت',6,true)`,
+               VALUES ($1,$2,${R},'روبوت',1,false),($1,$2,${R},'روبوت',1,false),($1,$2,0,'روبوت',6,true)`,
         [pid, BR]);
 
       const blind = await http("GET", `/api/patients/${pid}`, SB);
       const server = blind.body?.physioSessionsResolved;
       const casePayments: any[] = blind.body?.payments ?? [];
       const localOnly = resolvePurchasedSessions({
-        plan: null, treatmentTypeText: "روبوت", caseCost: 500000,
+        plan: null, treatmentTypeText: "روبوت", caseCost: 10 * R,
         paymentSessions: casePayments.map((p: any) => ({
           treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
           isFree: Boolean(p.isFreeSessions),
@@ -1842,13 +1847,14 @@ async function state(pid: number) {
     {
       const pid = await mk("مجّانيٌّ-بمبلغ", true);
       //  يُسدَّد الملفُّ بالكامل فيصير المتبقّي صفراً — فالحارسُ مسلَّحٌ فعلاً.
+      //  كلفةُ الخطّة عشرُ جلسات روبوت بسعر الجدول (كانت ٥٠٠٬٠٠٠ — §4.fu).
       await http("POST", `/api/payments`, S, {
-        patientId: pid, branchId: BR, amount: 500000, paymentMethod: "cash",
+        patientId: pid, branchId: BR, amount: 10 * R, paymentMethod: "cash",
         paymentTreatmentType: "روبوت",
       });
       const b = await state(pid);
       const blocked = await http("POST", `/api/payments`, S, {
-        patientId: pid, branchId: BR, amount: 50000, paymentMethod: "cash",
+        patientId: pid, branchId: BR, amount: R, paymentMethod: "cash",
         paymentTreatmentType: "روبوت",
       });
       check(blocked.status === 400,
@@ -1878,7 +1884,7 @@ async function state(pid: number) {
       check(Number(je) === 0 && Number(row?.amount) === 0,
         "لل٦. **والصفُّ والدفترُ متّفقان**: صفرٌ هنا وصفرٌ هناك", `${je} / ${row?.amount}`);
       //  والمدفوعُ العاديُّ لم يُمَسّ: العلمُ مُطفأٌ فيبقى المبلغُ كما وصل.
-      check(b.paid === 500000,
+      check(b.paid === 10 * R,
         "لل٧. والدفعةُ العادية قبله خُزّنت بمبلغها كاملاً", String(b.paid));
     }
 

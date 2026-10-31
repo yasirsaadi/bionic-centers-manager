@@ -88,6 +88,17 @@ async function main() {
     sessionTreatmentType(["exercise", "needle"], CWD),
   ], ["أجهزة علاج طبيعي", "أجهزة علاج طبيعي", "تمارين مع أجهزة", "تمارين مع أجهزة", "تمارين مع أجهزة", "أجهزة علاج طبيعي", "تمارين تأهيلية",
     "تمارين مع أجهزة", "روبوت", "أبر صينية", "أبر صينية"]);
+  //  §4.fu — «تمارين CP للأطفال» لمن اشتراها بالقاعدة نفسِها.
+  const CP = { "تمارين CP للأطفال": 24 };
+  same("ق.٨ج «تمارين CP للأطفال» لمن اشتراها، والروبوتُ والإبرُ وما اشتراه بعينه كما كانت", [
+    sessionTreatmentType(["exercise"], CP),
+    sessionTreatmentType(["exercise", "laser"], CP),
+    sessionTreatmentType(["electro"], CP),
+    sessionTreatmentType(["exercise"], { ...CP, "تمارين تأهيلية": 6 }),
+    sessionTreatmentType(["robotik", "exercise"], CP),
+    sessionTreatmentType(["needle"], CP),
+    sessionTreatmentType(["exercise"], { ...CP, "تمارين CP للأطفال": 0 }),
+  ], ["تمارين CP للأطفال", "تمارين CP للأطفال", "تمارين CP للأطفال", "تمارين تأهيلية", "روبوت", "أبر صينية", "تمارين تأهيلية"]);
   check(!!countsFromError("2026-10-07", "2026-10-07") && countsFromError("2026-10-08", "2026-10-07") === null && countsFromError(null, "2026-10-07") === null,
     "ق.٩ يومُ القفل من الغد، و«بلا» يرفعه");
 
@@ -259,6 +270,10 @@ async function main() {
       [pt2, JSON.stringify([{ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }, { treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }])]);
     same("ي.٤ ومَن اشترى الأجهزةَ أيضاً: الجهازُ وحده ⟵ «أجهزة علاج طبيعي»، والاثنان معاً ⟵ «تمارين مع أجهزة»",
       [await exec2(false, true), await exec2(true, true)], ["أجهزة علاج طبيعي", "تمارين مع أجهزة"]);
+    //  §4.fu — طفلٌ اشترى «تمارين CP للأطفال» وحدها: جلستُه تُعدّ عليها.
+    await q(`UPDATE patients SET physio_plan = $2::jsonb WHERE id = $1`, [pt2, JSON.stringify([{ treatmentType: "تمارين CP للأطفال", sessionCount: 24 }])]);
+    same("ي.٥ ومَن اشترى «تمارين CP للأطفال» وحدها: التمرينُ والجهازُ ⟵ «تمارين CP للأطفال»", [await exec2(true, false), await exec2(true, true)],
+      ["تمارين CP للأطفال", "تمارين CP للأطفال"]);
 
     console.log("\n── ح. لا حذفَ لخطّةٍ لها جلسات ──");
     same("ح.١ ⟵ ٤٠٩", (await call("DELETE", `/api/physio/plans/${plan}`, S.admin)).status, 409);

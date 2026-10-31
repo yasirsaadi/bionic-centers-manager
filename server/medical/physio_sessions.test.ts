@@ -8,7 +8,7 @@
 //
 // Pure logic, no database: `npm run test:physio-sessions`.
 
-import { resolvePurchasedSessions, parsePlanFromText } from "@shared/pricing";
+import { resolvePurchasedSessions, parsePlanFromText, PHYSIO_PRICES_BEFORE_2026_11 } from "@shared/pricing";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown) {
@@ -21,6 +21,8 @@ function check(name: string, got: unknown, want: unknown) {
   }
 }
 
+//  **بأسعارهما يومَ سُعّرا** (٢٥٬٠٠٠ للأجهزة — `PHYSIO_PRICES_BEFORE_2026_11`): الحالتان قبل الأسعار الجديدة (§4.fu)،
+//  وترحيلُ ١٨٨ يجمّد عدّادَ أمثالهما خطّةً محفوظة بهذه الأسعار نفسِها — فالقاعدةُ تُختبر بها.
 console.log("\n── الحالتان اللتان كشفتا الخلل ──");
 check(
   "منتهى: 275,000 لأجهزة علاج طبيعي ⇒ 11 جلسة (لا 4 من الدفعات)",
@@ -29,7 +31,7 @@ check(
     treatmentTypeText: "أجهزة علاج طبيعي",
     caseCost: 275000,
     paymentSessions: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 4 }],
-  }),
+  }, PHYSIO_PRICES_BEFORE_2026_11),
   { byType: { "أجهزة علاج طبيعي": 11 }, total: 11, source: "cost" },
 );
 check(
@@ -39,7 +41,7 @@ check(
     treatmentTypeText: "أجهزة علاج طبيعي",
     caseCost: 1000000,
     paymentSessions: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 11 }],
-  }),
+  }, PHYSIO_PRICES_BEFORE_2026_11),
   { byType: { "أجهزة علاج طبيعي": 40 }, total: 40, source: "cost" },
 );
 
@@ -110,8 +112,13 @@ check(
   "none",
 );
 check(
-  "روبوت 500,000 ⇒ 10 جلسات",
-  resolvePurchasedSessions({ treatmentTypeText: "روبوت", caseCost: 500000 }).total,
+  "روبوت 750,000 ⇒ 10 جلسات (بالسعر الحاليّ ٧٥٬٠٠٠ — §4.fu)",
+  resolvePurchasedSessions({ treatmentTypeText: "روبوت", caseCost: 750000 }).total,
+  10,
+);
+check(
+  "وروبوت 500,000 بالسعر القديم ⇒ 10 جلسات (ما يجمّده ترحيلُ ١٨٨)",
+  resolvePurchasedSessions({ treatmentTypeText: "روبوت", caseCost: 500000 }, PHYSIO_PRICES_BEFORE_2026_11).total,
   10,
 );
 

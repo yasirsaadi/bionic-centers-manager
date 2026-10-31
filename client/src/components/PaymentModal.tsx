@@ -91,6 +91,7 @@ const TREATMENT_TYPE_OPTIONS: { value: string; labelKey?: string; label?: string
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
   { value: "تمارين مع أجهزة", labelKey: "exercisesWithDevices" as const },
+  { value: "تمارين CP للأطفال", labelKey: "cpChildExercises" as const },
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 

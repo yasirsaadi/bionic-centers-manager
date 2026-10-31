@@ -1,20 +1,52 @@
 // Physiotherapy per-session prices — the single source of truth, shared by the
 // client (live preview while typing) and the SERVER (authoritative compute; a
 // tampered request can never invent its own prices).
+//
+//  **أسعارُ المالك من ٢٠٢٦-١١-٠١** (§4.fu): الروبوتُ ٧٥٬٠٠٠، والتمارينُ والأجهزةُ والتمارينُ مع الأجهزة ٣٥٬٠٠٠،
+//  والإبرُ وتمارينُ أطفال الشلل الدماغيّ ٢٥٬٠٠٠، والاستشارةُ مجّانية. **والسعرُ للبيع الجديد وحده**: ما بيع قبله
+//  محفوظٌ بكلفته في الحالة والقيد، ولا بابَ يعيد تسعيرَه (تعديلُ الخطة لا يمسّ المال).
 export const PHYSIO_TREATMENT_PRICES: Record<string, number> = {
+  "استشارة طبية": 0,
+  "روبوت": 75000,
+  "تمارين تأهيلية": 35000,
+  "أجهزة علاج طبيعي": 35000,
+  //  §4.ft — **التمرينُ والأجهزةُ في جلسةٍ واحدة**: جلسةٌ واحدة تُعدّ مرّةً وتُسعَّر سعرَ جلسة، لا تمارينُ وأجهزةٌ بجلستين.
+  "تمارين مع أجهزة": 35000,
+  //  §4.fu — **تمارينُ أطفال الشلل الدماغيّ** نوعٌ مستقلّ بسعره.
+  "تمارين CP للأطفال": 25000,
+  "أبر صينية": 25000,
+};
+
+/**
+ * **الأسعارُ قبل ٢٠٢٦-١١-٠١ — مجمَّدةٌ لا تُعدَّل** (§4.fu).
+ *
+ * لا يقرؤها إلّا ترحيلُ ١٨٨: مريضُ ما قبل الخطّة المحفوظة كان عددُ ما اشتراه يُشتقّ من كلفته ÷ سعرِ نوعه **بالجدول الحاليّ**،
+ * فتغييرُ السعر كان سيغيّر عدّادَه بصمت (٢٧٥٬٠٠٠ ÷ ٢٥٬٠٠٠ = ١١ ⟵ لا يقبل القسمةَ على ٣٥٬٠٠٠ فيهبط إلى دفعاته).
+ * فالترحيلُ يحسب عدّادَه بهذه الأسعار ويكتبه خطّةً محفوظة قبل أن يُقرأ بالجديدة.
+ */
+export const PHYSIO_PRICES_BEFORE_2026_11: Readonly<Record<string, number>> = Object.freeze({
   "استشارة طبية": 0,
   "روبوت": 50000,
   "تمارين تأهيلية": 25000,
   "أجهزة علاج طبيعي": 25000,
-  //  §4.ft — **التمرينُ والأجهزةُ في جلسةٍ واحدة**: جلسةٌ واحدة تُعدّ مرّةً وتُسعَّر سعرَ جلسة، لا تمارينُ وأجهزةٌ بجلستين.
   "تمارين مع أجهزة": 25000,
   "أبر صينية": 25000,
-};
+});
 
 export const PHYSIO_TREATMENT_TYPES = Object.keys(PHYSIO_TREATMENT_PRICES);
 
 /** «تمارين مع أجهزة» — نوعٌ واحد للجلسة التي فيها التمرينُ والأجهزةُ معاً (§4.ft). */
 export const EXERCISES_WITH_DEVICES = "تمارين مع أجهزة";
+
+/** «تمارين CP للأطفال» — تمارينُ أطفال الشلل الدماغيّ (§4.fu). */
+export const CP_CHILD_EXERCISES = "تمارين CP للأطفال";
+
+/** «روبوت 75,000 / جلسة · …» — سطرُ الأسعار كما يقرؤه الموظّف، من الجدول نفسِه فلا يشيخ نصٌّ مكتوبٌ باليد. */
+export function physioPriceListText(): string {
+  return PHYSIO_TREATMENT_TYPES
+    .map((t) => (PHYSIO_TREATMENT_PRICES[t] > 0 ? `${t} ${PHYSIO_TREATMENT_PRICES[t].toLocaleString("en-US")} / جلسة` : `${t} مجانية`))
+    .join("، ");
+}
 
 export interface PhysioEntry {
   treatmentType: string;
@@ -166,7 +198,10 @@ export function resolvePurchasedSessions(input: {
      */
     isFree?: boolean | null;
   }[];
-}): { byType: Record<string, number>; total: number; source: "plan" | "cost" | "payments" | "none" } {
+},
+  /** جدولُ الاشتقاق من الكلفة — الحاليّ دائماً، إلّا ترحيلَ ١٨٨ يمرّر أسعارَ ما قبل ٢٠٢٦-١١-٠١ (§4.fu). */
+  prices: Readonly<Record<string, number>> = PHYSIO_TREATMENT_PRICES,
+): { byType: Record<string, number>; total: number; source: "plan" | "cost" | "payments" | "none" } {
   const sum = (byType: Record<string, number>) =>
     Object.keys(byType).reduce((s, k) => s + byType[k], 0);
 
@@ -233,7 +268,7 @@ export function resolvePurchasedSessions(input: {
   //  (`freeTotal = 0` ⟶ `paidTotal === paymentsTotal` والإضافةُ صفر).
   const label = String(input.treatmentTypeText ?? "").trim();
   const cost = Math.max(0, Math.floor(Number(input.caseCost) || 0));
-  const price = PHYSIO_TREATMENT_PRICES[label];
+  const price = prices[label];
   if (label && !label.includes("،") && price && price > 0 && cost > 0 && cost % price === 0) {
     const derived = cost / price;
     if (derived > paidTotal) {
