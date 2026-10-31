@@ -3,10 +3,10 @@
 // «إنهاء الجلسة» في معاملةٍ واحدة بقفل الخطّة: جلسةٌ وبنودُها، وزيارةُ جلسة العلاج الطبيعي (تُخصم من المدفوعة)، وعدّاداتُ الأجهزة
 // إن كان الفرعُ قد بلغ يومَ القفل، وتنبيهُ «ملاحظة للأخصائيّ». والإلغاءُ (للمسؤول والمشرف) يعكسها كلَّها: الزيارةُ تُحذف حذفاً ناعماً
 // والعدّادُ ينقص — والجلسةُ تبقى تاريخاً بسببها.
-import { and, asc, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, dailySessions, devices, patientCases, patients, physioExercises, physioPlanDevices, physioPlanPhaseExercises, physioPlanPhases,
+  branches, dailySessions, devices, patientCases, patients, payments, physioExercises, physioPlanDevices, physioPlanPhaseExercises, physioPlanPhases,
   physioPlanSessionExercises, physioPlanSessionItems, physioPlanSessions, physioPlans, sessionCounts, visits,
 } from "@shared/schema";
 import {
@@ -14,6 +14,7 @@ import {
   type ExecutionItemInput, type ExerciseItemInput,
 } from "@shared/physio_plans";
 import { ADJUNCT_OFF_TURN_NOTE, DRY_NEEDLING_DEVICE_CODE } from "@shared/physio_protocols";
+import { resolvePurchasedSessions } from "@shared/pricing";
 import { storage } from "../storage";
 import { isScheduled, scheduleOffNote, scheduleState } from "@shared/physio_device_settings";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
@@ -155,11 +156,23 @@ export async function executeSession(p: {
     const skipped = p.items.filter((i) => !i.done && !isOffTurn(i)).map((i) => `${nameOf(i.deviceId)} (${i.note})`).join("، ");
 
     //  **زيارةُ جلسة العلاج الطبيعي** — كما يكتبها «تسجيل زيارة جلسة علاج طبيعي»: على قسم العلاج الطبيعي، وبنوع علاجٍ من قائمته.
-    const [physioCase] = await tx.select({ id: patientCases.id }).from(patientCases)
+    const [physioCase] = await tx.select({ id: patientCases.id, cost: patientCases.cost }).from(patientCases)
       .where(and(eq(patientCases.patientId, plan.patientId), eq(patientCases.caseType, "physiotherapy"))).limit(1);
+    //  **ما اشتراه المريض لكلّ نوع** — بقاعدة ملفّه نفسِها (`resolvePurchasedSessions`)، كي تُعدّ «تمارين مع أجهزة» على مَن اشتراها (§4.ft).
+    const [buyer] = await tx.select({ physioPlan: patients.physioPlan, treatmentType: patients.treatmentType, totalCost: patients.totalCost })
+      .from(patients).where(eq(patients.id, plan.patientId));
+    const buyerPays = await tx.select({ treatmentType: payments.paymentTreatmentType, sessionCount: payments.sessionCount, isFree: payments.isFreeSessions })
+      .from(payments).where(and(eq(payments.patientId, plan.patientId),
+        physioCase ? or(eq(payments.caseId, physioCase.id), isNull(payments.caseId)) : isNull(payments.caseId)));
+    const bought = resolvePurchasedSessions({
+      plan: Array.isArray(buyer?.physioPlan) ? buyer.physioPlan : null,
+      treatmentTypeText: buyer?.treatmentType ?? null,
+      caseCost: physioCase ? Number(physioCase.cost ?? 0) : Number(buyer?.totalCost ?? 0),
+      paymentSessions: buyerPays,
+    }).byType;
     const visit = await storage.createVisit({
       patientId: plan.patientId, branchId: plan.branchId, caseId: physioCase?.id ?? null,
-      treatmentType: sessionTreatmentType(doneCodes),
+      treatmentType: sessionTreatmentType(doneCodes, bought),
       details: `جلسة من الخطة: ${plan.titleAr}`,
       notes: [doneText ? `نُفّذ: ${doneText}` : "", skipped ? `لم يُنفَّذ: ${skipped}` : "",
         skippedExercises ? `لم يُنفَّذ من التمارين: ${skippedExercises}` : ""].filter(Boolean).join(" — ") || null,
