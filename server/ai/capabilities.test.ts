@@ -346,6 +346,20 @@ async function main() {
     ok(!mixed.ok && /لا يُجمع search مع visitDate/.test(String(mixed.data?.error)),
       "search مع visitDate يُرفض برسالةٍ تقول لماذا — لا نتيجةً تبدو مقيَّدةً بالتاريخ وليست");
 
+    console.log("\nط — «عدد المرضى الذين أُجريت لهم جلسة أو جلستان أو ثلاث فقط وتوقّفوا» (طلبُ المالك ٢٠٢٦-١٠-٣١، §4.fs)");
+    for (const topic of ["عدد المرضى الذين اجريت لهم جلسة او جلستين او ثلاثة جلسات فقط و توقفوا عن متابعة الجلسات",
+      "المرضى المنقطعين عن العلاج الطبيعي", "مرضى تركوا العلاج ولم يكملوا الجلسات"]) {
+      const l = await call(qAccess, qSess, "list_capabilities", { topic });
+      const names = ((l.data?.capabilities ?? []) as any[]).map((c) => String(c.name));
+      same(`«${topic}» ⟵ تقريرُ المنقطعين أوّلاً`, names[0], "/api/reports/physio-dropouts");
+    }
+    const drop = await call(qAccess, qSess, "read_capability", { name: "/api/reports/physio-dropouts" });
+    const dropValue = (drop.data?.value ?? {}) as any;
+    ok(drop.ok && typeof dropValue.counts?.total === "number" && /جلسات فقط/.test(String(dropValue.rule?.text)),
+      "وتقرؤه بصلاحية التقارير: الأعدادُ والتعريفُ في الجواب كاملاً (بلا مصفوفةٍ تبتلعهما)");
+    const dropNo = await call(access(rSess, bB.id), rSess, "read_capability", { name: "/api/reports/physio-dropouts" });
+    ok(!dropNo.ok && /صلاحية عرض التقارير/.test(JSON.stringify(dropNo.data)), "ومَن لا يملك التقارير يُردّ برسالة النقطة");
+
     console.log("\nو — وصفرُ كتابة");
     same("بصمةُ الجداول كما هي", await snapshot(), before);
   } finally {

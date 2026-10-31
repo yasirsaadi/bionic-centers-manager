@@ -178,6 +178,7 @@
     "test:delete-switch-migration": "tsx server/delete_switch_migration.test.ts",
     "test:discount-authority": "tsx server/discount_authority.test.ts",
     "test:visit-date-rule": "tsx server/visit_date_rule.test.ts",
+    "test:physio-dropouts": "tsx server/physio_dropouts.test.ts",
     "test:registry-export-services": "tsx client/src/pages/registry_export_services.test.ts",
     "test:daily-report-scope": "tsx server/daily_report_scope.test.ts",
     "test:daily-report-rows": "tsx client/src/pages/daily_report_rows.test.ts",
