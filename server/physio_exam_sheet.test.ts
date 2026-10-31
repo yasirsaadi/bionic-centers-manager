@@ -23,7 +23,7 @@ import { storage } from "./storage";
 import { prepareSheetEdit } from "@shared/exam_sheet";
 import { writesPhysioExamByRole } from "@shared/user_roles";
 import {
-  assessmentGaps, assessmentGapsText, assessmentHasContent, assessmentSummaryAr, emptyInitialAssessment, parseInitialAssessment, PT_FORM_CODE,
+  assessmentGaps, assessmentGapsText, assessmentHasContent, assessmentSummaryAr, emptyInitialAssessment, parseInitialAssessment, PT_FORM_CODE, PT_SENSATION,
 } from "@shared/physio_initial_assessment";
 
 let failures = 0;
@@ -93,6 +93,13 @@ async function main() {
     parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 2, painWorst: 6, symptoms: "constant", locationOther: "Elbow", sensation: "intact", plan: ["rom"] }).ok, true);
   const imp = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 0, painWorst: 0, sensation: "impaired", plan: ["rom"] });
   same("ق.٥ إحساسٌ ضعيف ⟵ تنبيهٌ بالمناطق المصابة", imp.ok ? imp.gaps : null, ["sensationRegions"]);
+  //  §4.fv — «Hypersensitive» خيارٌ رابع بنسق أخواته، ويطلب المناطقَ المصابة كالضعيف والمعدوم.
+  const hyper = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 0, painWorst: 0, sensation: "hypersensitive", plan: ["rom"] });
+  same("ق.٥ب إحساسٌ مفرط ⟵ يُقبل وتنبيهٌ بالمناطق المصابة", [hyper.ok, hyper.ok ? hyper.gaps : null], [true, ["sensationRegions"]]);
+  const hyperR = parseInitialAssessment({ ...emptyInitialAssessment(), painBest: 0, painWorst: 0, sensation: "hypersensitive", sensationRegions: "Right foot", plan: ["rom"] });
+  same("ق.٥ج ومناطقُه تُحفظ ولا تنبيه، والملخّصُ يقول «Hypersensitive»",
+    [hyperR.ok ? hyperR.value.sensationRegions : null, hyperR.ok ? hyperR.gaps : null, PT_SENSATION.map((x) => x.en)],
+    ["Right foot", [], ["Intact", "Impaired", "Absent", "Hypersensitive"]]);
   const badCode = parseInitialAssessment({ ...GOOD(), location: ["back", "elbow"] });
   same("ق.٦ رمزٌ غيرُ معروف يُردّ ويُسمّى — لا يسقط صامتاً", badCode.ok ? null : badCode.missing, ["location"]);
   const plus = parseInitialAssessment({ ...GOOD(), mmt: { ...GOOD().mmt, hip: { r: "4+", l: "4" } } });
