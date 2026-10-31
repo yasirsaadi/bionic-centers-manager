@@ -8,7 +8,7 @@
 // in a report. These assertions pin that contract down.
 
 import { serializeInjuries, parseInjuries, INJURY_TYPE_OPTIONS, INJURY_AREA_OPTIONS, PROSTHETIC_SPECS } from "@shared/case_fields";
-import { PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) fail++; console.log(`${cond ? "✅" : "❌"} ${label}`); };
@@ -39,7 +39,9 @@ ok("مناطق الإصابة 23 قيمة", INJURY_AREA_OPTIONS.length === 23);
 ok("حقول الطرف السبعة كاملة", PROSTHETIC_SPECS.length === 7);
 
 // The doctor's treatment picker must offer exactly what pricing knows.
-ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 5 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
+ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 6 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
+// §4.ft — «تمارين مع أجهزة» في قائمة الوصفة نفسِها، بسعر جلسةٍ واحدة.
+ok("«تمارين مع أجهزة» في قائمة الوصفة بسعر جلسة", PHYSIO_TREATMENT_TYPES.includes("تمارين مع أجهزة") && physioEntryCost({ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }) === 300000);
 
 // Spec keys must match the patient columns the writer targets.
 const cols = ["prostheticType","siliconType","siliconSize","suspensionSystem","footType","footSize","kneeJointType"];

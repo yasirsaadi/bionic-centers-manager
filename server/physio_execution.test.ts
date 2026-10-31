@@ -72,6 +72,22 @@ async function main() {
   same("ق.٧ وبعلَمها مقبولة", executionItemsError({ ...base, canDryNeedle: true, items: [it(1, true), it(2, true), it(3, true)] }), null);
   same("ق.٨ نوعُ العلاج من البنود", [sessionTreatmentType(["robotik", "exercise"]), sessionTreatmentType(["laser"]), sessionTreatmentType(["needle"]), sessionTreatmentType(["exercise"])],
     ["روبوت", "أجهزة علاج طبيعي", "أبر صينية", "تمارين تأهيلية"]);
+  //  §4.ft — «تمارين مع أجهزة» لمن اشتراها وحده، وقاعدةُ غيره كما كانت حرفاً.
+  const CWD = { "تمارين مع أجهزة": 12 };
+  same("ق.٨ب «تمارين مع أجهزة» لمن اشتراها، وما اشتراه بعينه يبقى له", [
+    sessionTreatmentType(["exercise", "laser"]),
+    sessionTreatmentType(["exercise", "laser"], { "تمارين مع أجهزة": 0 }),
+    sessionTreatmentType(["exercise", "laser"], CWD),
+    sessionTreatmentType(["exercise"], CWD),
+    sessionTreatmentType(["laser"], CWD),
+    sessionTreatmentType(["laser"], { ...CWD, "أجهزة علاج طبيعي": 6 }),
+    sessionTreatmentType(["exercise"], { ...CWD, "تمارين تأهيلية": 6 }),
+    sessionTreatmentType(["exercise", "laser"], { ...CWD, "أجهزة علاج طبيعي": 6, "تمارين تأهيلية": 6 }),
+    sessionTreatmentType(["robotik", "exercise"], CWD),
+    sessionTreatmentType(["needle"], CWD),
+    sessionTreatmentType(["exercise", "needle"], CWD),
+  ], ["أجهزة علاج طبيعي", "أجهزة علاج طبيعي", "تمارين مع أجهزة", "تمارين مع أجهزة", "تمارين مع أجهزة", "أجهزة علاج طبيعي", "تمارين تأهيلية",
+    "تمارين مع أجهزة", "روبوت", "أبر صينية", "أبر صينية"]);
   check(!!countsFromError("2026-10-07", "2026-10-07") && countsFromError("2026-10-08", "2026-10-07") === null && countsFromError(null, "2026-10-07") === null,
     "ق.٩ يومُ القفل من الغد، و«بلا» يرفعه");
 
@@ -218,6 +234,31 @@ async function main() {
     const back5 = await exec(S.techN, { items: okItems, date: day5 });
     await q(`UPDATE system_users SET can_backdate_visits = false WHERE id = $1`, [TECH_N]);
     same("ز٢.٢ **وبالمفتاح ⟵ ٢٠٠**", back5.status, 200);
+
+    console.log("\n── ي. «تمارين مع أجهزة» — جلسةٌ واحدة تُعدّ على ما اشتراه (§4.ft) ──");
+    const EXER = dev.exercise;
+    const pt2 = (await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, physio_plan, treatment_type, total_cost)
+                          VALUES ($1, '07701234568', $2, '30', 'physio', $3, true, $4::jsonb, 'تمارين مع أجهزة (12 جلسة)', 300000) RETURNING id`,
+      [`مراجع ${MARK}`, MARK, B1, JSON.stringify([{ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }])])).rows[0].id;
+    await q(`INSERT INTO patient_cases (patient_id, case_type, cost) VALUES ($1, 'physiotherapy', 300000)`, [pt2]);
+    const plan2 = (await call("POST", `/api/patients/${pt2}/physio-plans`, S.spec, { titleAr: "خطة تمارين مع أجهزة" })).json.id as number;
+    await call("PUT", `/api/physio/plans/${plan2}`, S.spec, { titleAr: "خطة تمارين مع أجهزة", devices: [{ deviceId: EXER, minutes: 20 }, { deviceId: LASER, minutes: 10 }] });
+    await call("PUT", `/api/physio/plans/${plan2}/assignees`, S.spec, { userIds: [TECH] });
+    await call("POST", `/api/physio/plans/${plan2}/approve`, S.sup);
+    const items2 = (ex: boolean, la: boolean) => [{ deviceId: EXER, done: ex, minutes: null, note: ex ? null : "تعب" }, { deviceId: LASER, done: la, minutes: null, note: la ? null : "عطل" }];
+    const exec2 = async (ex: boolean, la: boolean) => {
+      const r = await call("POST", `/api/physio/plans/${plan2}/sessions`, S.tech, { items: items2(ex, la) });
+      return r.status === 200 ? (await q(`SELECT treatment_type FROM visits WHERE id = $1`, [r.json.visitId])).rows[0]?.treatment_type : `HTTP ${r.status}`;
+    };
+    same("ي.١ التمرينُ والجهازُ معاً ⟵ «تمارين مع أجهزة»", await exec2(true, true), "تمارين مع أجهزة");
+    same("ي.٢ والتمرينُ وحده أو الجهازُ وحده لمن لم يشترِهما ⟵ «تمارين مع أجهزة»", [await exec2(true, false), await exec2(false, true)], ["تمارين مع أجهزة", "تمارين مع أجهزة"]);
+    const sheetRows = async () => ((await call("GET", `/api/patients/${pt2}/physio-sheet`, S.admin)).json?.sessions ?? [])
+      .map((r: any) => [r.type, r.bought, r.done, r.remaining]);
+    same("ي.٣ والعدّادُ في ملفّه: ١٢ اشتراها، ٣ حضرها، ٩ باقية — سطرٌ واحد", await sheetRows(), [["تمارين مع أجهزة", 12, 3, 9]]);
+    await q(`UPDATE patients SET physio_plan = $2::jsonb WHERE id = $1`,
+      [pt2, JSON.stringify([{ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }, { treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }])]);
+    same("ي.٤ ومَن اشترى الأجهزةَ أيضاً: الجهازُ وحده ⟵ «أجهزة علاج طبيعي»، والاثنان معاً ⟵ «تمارين مع أجهزة»",
+      [await exec2(false, true), await exec2(true, true)], ["أجهزة علاج طبيعي", "تمارين مع أجهزة"]);
 
     console.log("\n── ح. لا حذفَ لخطّةٍ لها جلسات ──");
     same("ح.١ ⟵ ٤٠٩", (await call("DELETE", `/api/physio/plans/${plan}`, S.admin)).status, 409);

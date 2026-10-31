@@ -46,6 +46,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { useQueryClient } from "@tanstack/react-query";
 import { InstallmentFields, emptyInstallmentDraft, draftToPayload, type InstallmentDraft } from "@/components/installments/InstallmentParts";
 import { z } from "zod";
+import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
 
 interface PaymentModalProps {
   patientId: number;
@@ -89,6 +90,7 @@ const TREATMENT_TYPE_OPTIONS: { value: string; labelKey?: string; label?: string
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  { value: "تمارين مع أجهزة", labelKey: "exercisesWithDevices" as const },
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
@@ -101,13 +103,8 @@ const MANUAL_AMOUNT_TYPES = new Set<string>([AMPUTEE_TYPE.value, SUPPORT_TYPE.va
 // Types with no session-count input at all.
 const NON_SESSION_TYPES = new Set<string>(["استشارة طبية", AMPUTEE_TYPE.value, SUPPORT_TYPE.value]);
 
-const TREATMENT_PRICES: Record<string, number> = {
-  "استشارة طبية": 0,
-  "روبوت": 50000,
-  "تمارين تأهيلية": 25000,
-  "أجهزة علاج طبيعي": 25000,
-  "أبر صينية": 25000,
-};
+//  **جدولُ الأسعار مصدرٌ واحد** (`@shared/pricing`) — نسخةٌ محلّية هنا كانت تُنسى حين يُضاف نوع (§4.ft).
+const TREATMENT_PRICES: Record<string, number> = PHYSIO_TREATMENT_PRICES;
 
 export function PaymentModal({ patientId, branchId, isPhysiotherapy, isAmputee, isMedicalSupport }: PaymentModalProps) {
   const [open, setOpen] = useState(false);

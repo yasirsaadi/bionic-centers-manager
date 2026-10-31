@@ -49,6 +49,7 @@ import { hasRole, onlyRoles } from "@shared/user_roles";
 import { cn } from "@/lib/utils";
 import IntakeSheetCreate from "./IntakeSheetCreate";
 import PhysioSheetCreate, { type BranchWithPhysio } from "./PhysioSheetCreate";
+import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -64,16 +65,12 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  { value: "تمارين مع أجهزة", labelKey: "exercisesWithDevices" as const },
   { value: "أبر صينية", labelKey: "acupuncture" as const },
 ];
 
-const TREATMENT_PRICES: Record<string, number> = {
-  "استشارة طبية": 0,
-  "روبوت": 50000,
-  "تمارين تأهيلية": 25000,
-  "أجهزة علاج طبيعي": 25000,
-  "أبر صينية": 25000,
-};
+//  **جدولُ الأسعار مصدرٌ واحد** (`@shared/pricing`) — نسخةٌ محلّية هنا كانت تُنسى حين يُضاف نوع (§4.ft).
+const TREATMENT_PRICES: Record<string, number> = PHYSIO_TREATMENT_PRICES;
 
 const injuryAreaOptions = [
   "الرأس", "الرقبة", "الصدر", "القطن", "العمود الفقري", "الكتف",

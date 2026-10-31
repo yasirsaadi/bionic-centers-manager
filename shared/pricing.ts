@@ -6,10 +6,15 @@ export const PHYSIO_TREATMENT_PRICES: Record<string, number> = {
   "روبوت": 50000,
   "تمارين تأهيلية": 25000,
   "أجهزة علاج طبيعي": 25000,
+  //  §4.ft — **التمرينُ والأجهزةُ في جلسةٍ واحدة**: جلسةٌ واحدة تُعدّ مرّةً وتُسعَّر سعرَ جلسة، لا تمارينُ وأجهزةٌ بجلستين.
+  "تمارين مع أجهزة": 25000,
   "أبر صينية": 25000,
 };
 
 export const PHYSIO_TREATMENT_TYPES = Object.keys(PHYSIO_TREATMENT_PRICES);
+
+/** «تمارين مع أجهزة» — نوعٌ واحد للجلسة التي فيها التمرينُ والأجهزةُ معاً (§4.ft). */
+export const EXERCISES_WITH_DEVICES = "تمارين مع أجهزة";
 
 export interface PhysioEntry {
   treatmentType: string;

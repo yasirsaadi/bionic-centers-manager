@@ -11,6 +11,7 @@
 import { adjunctTurn, planLineUse, canApproveProtocols, canConsultProtocols, canReadProtocols, canWritePatientPlans, type ProtocolSessionLike } from "./physio_protocols";
 import { hasAnyRole, PHYSIO_ROLES } from "./user_roles";
 import { isScheduled } from "./physio_device_settings";
+import { EXERCISES_WITH_DEVICES } from "./pricing";
 
 export const PLAN_STATUSES = ["draft", "pending", "approved", "returned", "stopped", "graduated"] as const;
 export type PlanStatus = (typeof PLAN_STATUSES)[number];
@@ -187,12 +188,20 @@ export const EXERCISE_DEVICE_CODE = "exercise";
 /** **مرحلةُ الجلسة الافتراضية تغيّرت تحت يد المعالج** — جلسةٌ سُجّلت للخطّة بعد أن فتح النافذة (§4.dr). */
 export const PHASE_MOVED = "سُجّلت جلسةٌ لهذه الخطّة قبل لحظات فتغيّرت مرحلةُ هذه الجلسة — أُعيد تحميلُ تمارينها، راجعها واحفظ";
 
-/** **نوعُ العلاج في زيارة الجلسة** — من البنود المنفّذة، بقائمة «تسجيل زيارة جلسة علاج طبيعي» نفسِها. */
-export function sessionTreatmentType(doneCodes: readonly string[]): string {
+/**
+ * **نوعُ العلاج في زيارة الجلسة** — من البنود المنفّذة، بقائمة «تسجيل زيارة جلسة علاج طبيعي» نفسِها.
+ *
+ * و**«تمارين مع أجهزة»** (§4.ft) لمن اشتراها وحده (`boughtByType` — `resolvePurchasedSessions().byType`):
+ * جلسةٌ فيها التمرينُ وجهازٌ معاً تُعدّ عليها، وجلسةُ تمارينَ وحدها أو أجهزةٍ وحدها تُعدّ عليها **ما لم يشترِ ذلك النوعَ بعينه**
+ * — فلا يبقى «باقٍ» على ما اشتراه وجلساتُه تُعدّ على نوعٍ لم يشترِه. ومَن لم يشترِها فقاعدتُه كما كانت حرفاً.
+ */
+export function sessionTreatmentType(doneCodes: readonly string[], boughtByType: Readonly<Record<string, number>> = {}): string {
   if (doneCodes.includes("robotik")) return "روبوت";
-  if (doneCodes.some((c) => c !== "exercise" && c !== "needle")) return "أجهزة علاج طبيعي";
-  if (doneCodes.includes("needle")) return "أبر صينية";
-  return "تمارين تأهيلية";
+  const withDevice = doneCodes.some((c) => c !== "exercise" && c !== "needle");
+  const base = withDevice ? "أجهزة علاج طبيعي" : doneCodes.includes("needle") ? "أبر صينية" : "تمارين تأهيلية";
+  if (!((boughtByType[EXERCISES_WITH_DEVICES] ?? 0) > 0) || base === "أبر صينية") return base;
+  if (withDevice && doneCodes.includes("exercise")) return EXERCISES_WITH_DEVICES;
+  return (boughtByType[base] ?? 0) > 0 ? base : EXERCISES_WITH_DEVICES;
 }
 
 /** هل تُكتب جلسةُ هذا اليوم في عدّادات الأجهزة؟ من يوم القفل فصاعداً وحده. */
