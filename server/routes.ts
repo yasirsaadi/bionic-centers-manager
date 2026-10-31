@@ -51,6 +51,7 @@ import { routeServiceToDoctorReview, classifyFromBody } from "./medical_review/r
 import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
 import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
+import { registerPhysioDropoutRoutes } from "./reports/physio_dropouts";
 import { registerPatientEditRulesRoutes, patientEditStateFor } from "./patients/edit_rules";
 import { registerNewExamRequestRoutes } from "./patients/new_exam_request";
 import { applyEditLocks, editLockMessage, lockedPatientFields } from "@shared/patient_edit_rules";
@@ -9061,6 +9062,8 @@ export async function registerRoutes(
   registerIntakeSheetRoutes(app, isAuthenticated);
   //  «استمارة مراجع — علاج طبيعي» مكتملةً (§4.da — المرحلةُ الثالثة): قراءةٌ محضة للعرض والطباعة.
   registerPhysioSheetRoutes(app, isAuthenticated);
+  //  المنقطعون عن العلاج الطبيعي بعد ١–٣ جلسات (§4.fs) — يقرؤه المساعدُ بجلسة السائل.
+  registerPhysioDropoutRoutes(app, isAuthenticated);
   registerPatientEditRulesRoutes(app, isAuthenticated);
   //  «طلب معاينة جديدة» — الاستمارةُ ببيانات المريض ثمّ الإرسالُ للمعاينة (§4.el).
   registerNewExamRequestRoutes(app, isAuthenticated, { phoneConflictBody });
