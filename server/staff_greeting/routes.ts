@@ -151,7 +151,8 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       const after: GreetingConfig = { phrases, updatedAt: new Date().toISOString(), updatedByName: s.displayName ?? null, keptAt: null };
       await saveGreetingConfig(after);
       await audit(req, s, "update", { phrases: before.phrases }, { phrases });
-      res.json({ ...after, ...greetingAge(after) });
+      //  `weatherFx` في كلّ جوابٍ للبطاقة (مراجعةُ Codex) — وإلّا قرأت الواجهةُ غيابَه «مفعّلاً» فأظهرت المفتاحَ معكوساً.
+      res.json({ ...after, ...greetingAge(after), weatherFx: await loadWeatherFxEnabled() });
     } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر الحفظ" }); }
   });
 
@@ -174,7 +175,7 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       if (row) after = readGreetingConfig(row.after, now);
       else { after = { ...before, keptAt }; await saveGreetingConfig(after); }   // لا صفَّ بعد ⟵ العباراتُ الأولى بإبقائها
       await audit(req, s, "keep", { keptAt: before.keptAt ?? null }, { keptAt: after.keptAt });
-      res.json({ ...after, ...greetingAge(after) });
+      res.json({ ...after, ...greetingAge(after), weatherFx: await loadWeatherFxEnabled() });
     } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر الحفظ" }); }
   });
 

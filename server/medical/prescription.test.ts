@@ -8,7 +8,7 @@
 // in a report. These assertions pin that contract down.
 
 import { serializeInjuries, parseInjuries, INJURY_TYPE_OPTIONS, INJURY_AREA_OPTIONS, PROSTHETIC_SPECS } from "@shared/case_fields";
-import { PHYSIO_KNOWN_TREATMENT_TYPES, PHYSIO_TREATMENT_TYPES, physioEntryCost, physioSessionsEnterPlan } from "@shared/pricing";
+import { PHYSIO_KNOWN_TREATMENT_TYPES, PHYSIO_TREATMENT_TYPES, physioEntryCost, physioSessionsEnterPlan, retiredTypeInEntries } from "@shared/pricing";
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) fail++; console.log(`${cond ? "✅" : "❌"} ${label}`); };
@@ -47,6 +47,8 @@ ok("«تمارين مع أجهزة» خارج قائمة الوصفة والبي
 // §4.fu — «تمارين CP للأطفال» في القائمة بـ٢٥٬٠٠٠، والروبوتُ ٧٥٬٠٠٠ — و§4.fx: الإبرُ ٣٥٬٠٠٠.
 ok("«تمارين CP للأطفال» في قائمة الوصفة بـ٢٥٬٠٠٠ والروبوتُ ٧٥٬٠٠٠", PHYSIO_TREATMENT_TYPES.includes("تمارين CP للأطفال")
   && physioEntryCost({ treatmentType: "تمارين CP للأطفال", sessionCount: 24 }) === 600000 && physioEntryCost({ treatmentType: "روبوت", sessionCount: 10 }) === 750000);
+ok("بنودُ بيعٍ فيها نوعٌ متقاعد تُعرف (فتُردّ كلُّها)", retiredTypeInEntries([{ treatmentType: "روبوت" }, { treatmentType: " تمارين مع أجهزة " }]) === "تمارين مع أجهزة"
+  && retiredTypeInEntries([{ treatmentType: "روبوت" }]) === null && retiredTypeInEntries("x") === null);
 ok("الإبرُ الصينية ٣٥٬٠٠٠ للجلسة (§4.fx)", physioEntryCost({ treatmentType: "أبر صينية", sessionCount: 10 }) === 350000);
 
 // Spec keys must match the patient columns the writer targets.

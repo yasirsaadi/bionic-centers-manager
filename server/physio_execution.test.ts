@@ -299,6 +299,10 @@ async function main() {
     const c0 = await costOf(pt3);
     const sellCombo = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin, { entries: [{ treatmentType: "تمارين مع أجهزة", sessionCount: 5 }] });
     const c1 = await costOf(pt3);
+    //  ومختلطٌ من نافذةٍ قديمة (مراجعةُ Codex): لا يُباع نصفُه بصمت.
+    const sellMixed = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin,
+      { entries: [{ treatmentType: "روبوت", sessionCount: 2 }, { treatmentType: "تمارين مع أجهزة", sessionCount: 5 }] });
+    same("ي.٨ب **بيعٌ مختلط فيه النوعُ المتقاعد ⟵ ٤٠٠ كلُّه** بلا كلفة", [sellMixed.status, (await costOf(pt3)) - c1], [400, 0]);
     const sellNeedles = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin, { entries: [{ treatmentType: "أبر صينية", sessionCount: 10 }] });
     same("ي.٨ **ولا تُباع** (٤٠٠ بلا كلفة)، **والإبرُ الصينية ٣٥٬٠٠٠ للجلسة** (١٠ ⟵ ٣٥٠٬٠٠٠)",
       [sellCombo.status, c1 - c0, sellNeedles.status, (await costOf(pt3)) - c1], [400, 0, 200, 350000]);

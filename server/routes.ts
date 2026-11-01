@@ -12,7 +12,7 @@ import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, retiredPhysioTypesIn, RETIRED_TYPE_ERROR, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, retiredPhysioTypesIn, retiredTypeInEntries, RETIRED_TYPE_ERROR, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
@@ -3726,6 +3726,9 @@ export async function registerRoutes(
           throw new NewServiceError("يجب تفعيل حالة العلاج الطبيعي للمريض أولاً", 400);
         }
 
+        //  **النوعُ المتقاعد يردّ الطلبَ كلَّه** (§4.fx — مراجعةُ Codex) — لا يُسقَط سطرُه بصمتٍ وينجح الباقي.
+        const retiredInSale = retiredTypeInEntries(treatmentEntries);
+        if (retiredInSale) throw new NewServiceError(RETIRED_TYPE_ERROR(retiredInSale), 400);
         const entries = normalizeEntries(treatmentEntries);
 
         // ══ ── **الاتفاقُ الذي أبرمه الاستقبال** ── ═══════════════════════
@@ -3948,6 +3951,9 @@ export async function registerRoutes(
       }
 
       const rawEntries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      //  **النوعُ المتقاعد يردّ الطلبَ كلَّه** (§4.fx — مراجعةُ Codex) — لا يُسقَط سطرُه بصمتٍ ويُباع الباقي.
+      const retiredInPricing = retiredTypeInEntries(rawEntries);
+      if (retiredInPricing) return res.status(400).json({ message: RETIRED_TYPE_ERROR(retiredInPricing) });
       const entries = rawEntries
         .map((e: any) => ({
           treatmentType: String(e?.treatmentType || ""),

@@ -191,6 +191,18 @@ async function main() {
     const payYes = await db.select().from(payments).where(eq(payments.patientId, pYes));
     same("ودفعةٌ بجلساتها", payYes.map((p) => [p.amount, p.sessionCount]), [[2 * R, 2]]);
 
+    //  §4.fx — مراجعةُ Codex: نافذةٌ قديمة ترسل روبوتاً و«تمارين مع أجهزة» ⟵ الطلبُ كلُّه ٤٠٠، لا بيعُ نصفه بصمت.
+    const pMix = await mkPatient("مريض بيعٍ مختلط بنوعٍ متقاعد", true);
+    r = await req(`/api/patients/${pMix}/new-service`, S.manager, {
+      //  الكلفةُ كلفةُ الروبوت وحده — ما يبقى لو أُسقط السطرُ المتقاعد — فبلا الحارس يمرّ البيعُ ناقصاً بصمت.
+      serviceType: "additional_therapy", serviceCost: R, initialPayment: R,
+      sessionCount: 2, paymentTreatmentType: "روبوت، تمارين مع أجهزة",
+      treatmentEntries: [{ treatmentType: "روبوت", sessionCount: 1, cost: R }, { treatmentType: "تمارين مع أجهزة", sessionCount: 1, cost: 35000 }],
+      submissionToken: token(),
+    });
+    same("١٤ب. **بيعٌ فيه نوعٌ متقاعد ⇒ ٤٠٠ كلُّه** — لا كلفةَ ولا دفعة",
+      [r.status, (await storage.getPatient(pMix))?.totalCost ?? 0, (await db.select().from(payments).where(eq(payments.patientId, pMix))).length], [400, 0, 0]);
+
     // ولا يتغيّر شيءٌ في الاستشارة و«خدمة أخرى» — لم تُمَسّا بالحارس.
     for (const [st, label] of [["consultation", "استشارة"], ["other", "خدمة أخرى"]] as [string, string][]) {
       const p = await mkPatient(`مريض ${label}`, false);

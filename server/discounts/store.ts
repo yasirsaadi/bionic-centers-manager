@@ -18,7 +18,7 @@ import {
   type Department, type ServiceDiscount,
 } from "@shared/discount";
 import { isDepartment } from "@shared/service_taxonomy";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, RETIRED_TYPE_ERROR, physioEntryCost, retiredTypeInEntries } from "@shared/pricing";
 import { parseComponent } from "@shared/prosthetic_parts";
 import { NEW_SERVICE_LABELS } from "../new_service/store";
 
@@ -191,6 +191,9 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
     }
     out.serviceType = st;
     const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+    //  **النوعُ المتقاعد يردّ الطلبَ كلَّه** (§4.fx — مراجعةُ Codex).
+    const retiredInRequest = retiredTypeInEntries(entries);
+    if (retiredInRequest) throw new DiscountError(RETIRED_TYPE_ERROR(retiredInRequest), 400);
     const clean = entries
       .map((e: any) => ({
         treatmentType: String(e?.treatmentType ?? ""),
@@ -212,6 +215,9 @@ function sanitizePayload(dept: Department, raw: any): DiscountPayload {
   }
   if (dept === "physiotherapy") {
     const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+    //  **النوعُ المتقاعد يردّ الطلبَ كلَّه** (§4.fx — مراجعةُ Codex).
+    const retiredInRequest = retiredTypeInEntries(entries);
+    if (retiredInRequest) throw new DiscountError(RETIRED_TYPE_ERROR(retiredInRequest), 400);
     const clean = entries
       .map((e: any) => ({
         treatmentType: String(e?.treatmentType ?? ""),
