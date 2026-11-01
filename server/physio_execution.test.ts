@@ -51,6 +51,7 @@ async function cleanup() {
   await q(`DELETE FROM patient_branch_access WHERE patient_id = ANY($1::int[])`, [pts]);
   //  «الكلفة والجلسات» (ي.٨) يكتب قيدَ الكلفة.
   await q(`DELETE FROM cost_entries WHERE patient_id = ANY($1::int[])`, [pts]);
+  await q(`DELETE FROM payments WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM session_counts WHERE daily_session_id IN (SELECT id FROM daily_sessions WHERE branch_id = ANY($1::int[]))`, [[B1, B2]]);
@@ -301,6 +302,21 @@ async function main() {
     const sellNeedles = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin, { entries: [{ treatmentType: "أبر صينية", sessionCount: 10 }] });
     same("ي.٨ **ولا تُباع** (٤٠٠ بلا كلفة)، **والإبرُ الصينية ٣٥٬٠٠٠ للجلسة** (١٠ ⟵ ٣٥٠٬٠٠٠)",
       [sellCombo.status, c1 - c0, sellNeedles.status, (await costOf(pt3)) - c1], [400, 0, 200, 350000]);
+    //  ومن بابِ الدفعة (مراجعةٌ مستقلّة): هديّةٌ أو دفعةٌ بالنوع المتقاعد لمن لم يشترِه ⟵ ٤٠٠ ولا تدخل خطّتَه؛ ولصاحبه تُقبل.
+    const gift = (pid: number, type: string) => call("POST", "/api/payments", S.admin, {
+      patientId: pid, branchId: B1, amount: 0, paymentMethod: "cash", paymentTreatmentType: type, sessionCount: 2,
+      treatmentEntries: [{ treatmentType: type, sessionCount: 2, cost: 0, isFree: true }],
+    });
+    const planBefore = JSON.stringify(await planOf(pt3));
+    const giftOther = await gift(pt3, "تمارين مع أجهزة");
+    const planAfter = JSON.stringify(await planOf(pt3));
+    const giftOwner = await gift(pt2, "تمارين مع أجهزة");
+    const okGift = await gift(pt3, "أجهزة علاج طبيعي");
+    const giftId = (await q(`SELECT id FROM payments WHERE patient_id = $1 ORDER BY id DESC LIMIT 1`, [pt3])).rows[0]?.id;
+    const editor = hdr({ userId: ADMIN, displayName: "المسؤول", role: "admin", branchId: B1, isAdmin: true, permissions: { canEditPayments: true } });
+    const retag = await call("PATCH", `/api/payments/${giftId}`, editor, { paymentTreatmentType: "تمارين مع أجهزة", reason: "اختبار" });
+    same("ي.٩ **بابُ الدفعة لا يبيعها لمن لم يشترِها** (هديّةٌ ⟵ ٤٠٠ والخطّةُ كما هي، وإعادةُ الوسم ⟵ ٤٠٠)، **ولصاحبها تُقبل**",
+      [giftOther.status, planAfter === planBefore, retag.status, giftOwner.status, okGift.status], [400, true, 400, 201, 201]);
 
     console.log("\n── ح. لا حذفَ لخطّةٍ لها جلسات ──");
     same("ح.١ ⟵ ٤٠٩", (await call("DELETE", `/api/physio/plans/${plan}`, S.admin)).status, 409);

@@ -52,6 +52,18 @@ export const PHYSIO_PRICES_BEFORE_2026_11: Readonly<Record<string, number>> = Ob
 /** ما يُباع اليوم — قوائمُ البيع وحارسُ أبوابه. */
 export const PHYSIO_TREATMENT_TYPES = Object.keys(PHYSIO_TREATMENT_PRICES);
 
+/**
+ * **الأنواعُ المتقاعدة في وسم دفعة** (§4.fx) — الوسمُ قد يكون مركّباً («روبوت، تمارين مع أجهزة»).
+ * بابُ الدفعة يردّها لمريضٍ لم يشترِها قبل اليوم، فلا يُباع النوعُ المتقاعد من بابٍ لم يُحرس.
+ */
+export function retiredPhysioTypesIn(tag: string | null | undefined): string[] {
+  const parts = String(tag ?? "").split("،").map((x) => x.trim()).filter(Boolean);
+  return Array.from(new Set(parts.filter((x) => PHYSIO_RETIRED_TREATMENT_TYPES.includes(x))));
+}
+
+export const RETIRED_TYPE_ERROR = (t: string) =>
+  `«${t}» لم تعد تُباع (التمرينُ والأجهزةُ منفصلان) — اختر «تمارين تأهيلية» أو «أجهزة علاج طبيعي»`;
+
 /** ما يُعرف — يُباع أو تقاعد (§4.fx). */
 export const PHYSIO_KNOWN_TREATMENT_TYPES = Object.keys(PHYSIO_KNOWN_TREATMENT_PRICES);
 export const PHYSIO_RETIRED_TREATMENT_TYPES = Object.keys(PHYSIO_RETIRED_TREATMENT_PRICES);
