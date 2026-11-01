@@ -44,7 +44,7 @@ import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } fro
 import { activePatientDrizzle, belongsToActivePatientSql } from "./patients/active_patient";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { wantedServices } from "@shared/case_signals";
-import { mergePhysioPlan, describePhysioPlan, physioSessionsEnterPlan, physioPlanKeyForPayment, PHYSIO_TREATMENT_TYPES, type PhysioPlanEntry } from "@shared/pricing";
+import { mergePhysioPlan, describePhysioPlan, physioSessionsEnterPlan, physioPlanKeyForPayment, PHYSIO_KNOWN_TREATMENT_TYPES, type PhysioPlanEntry } from "@shared/pricing";
 import { normalizePhone, DEFAULT_PHONE_COUNTRY } from "@shared/phone";
 //  منعُ تكرار التسجيل — بالاسم عند الإنشاء وحده، وبالهاتف عند الإنشاء
 //  والتعديل معاً. الشرحُ الكامل في الملفّ نفسِه.
@@ -1499,8 +1499,8 @@ export class DatabaseStorage implements IStorage {
     const wos: { st: string }[] = await tx.select({ st: prostheticWorkOrders.serviceType }).from(prostheticWorkOrders).where(eq(prostheticWorkOrders.patientId, patientId));
     const pays: { tag: string | null }[] = await tx.select({ tag: payments.paymentTreatmentType }).from(payments).where(eq(payments.patientId, patientId));
     const hasWO = (st: string) => wos.some((w) => w.st === st);
-    //  من جدول الأسعار نفسِه — نوعٌ يُضاف هناك («تمارين مع أجهزة» §4.ft) يُقرأ هنا بلا لمسة.
-    const PHYSIO_TAGS = new Set(PHYSIO_TREATMENT_TYPES);
+    //  من جدول الأسعار نفسِه — نوعٌ يُضاف هناك يُقرأ هنا بلا لمسة؛ **وكلُّ نوعٍ يُعرف** (§4.fx): دفعةُ «تمارين مع أجهزة» القديمة علاجٌ طبيعيّ.
+    const PHYSIO_TAGS = new Set(PHYSIO_KNOWN_TREATMENT_TYPES);
     // Tags can be COMPOUND ("روبوت، أطراف صناعية") when one receipt mixes
     // services — match by containment/split, never by exact equality.
     const hasTag = (pred: (t: string) => boolean) => pays.some((x) => x.tag && pred(x.tag));

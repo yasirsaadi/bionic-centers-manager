@@ -2,20 +2,36 @@
 // client (live preview while typing) and the SERVER (authoritative compute; a
 // tampered request can never invent its own prices).
 //
-//  **أسعارُ المالك من ٢٠٢٦-١١-٠١** (§4.fu): الروبوتُ ٧٥٬٠٠٠، والتمارينُ والأجهزةُ والتمارينُ مع الأجهزة ٣٥٬٠٠٠،
-//  والإبرُ وتمارينُ أطفال الشلل الدماغيّ ٢٥٬٠٠٠، والاستشارةُ مجّانية. **والسعرُ للبيع الجديد وحده**: ما بيع قبله
-//  محفوظٌ بكلفته في الحالة والقيد، ولا بابَ يعيد تسعيرَه (تعديلُ الخطة لا يمسّ المال).
+//  **أسعارُ المالك من ٢٠٢٦-١١-٠١** (§4.fu): الروبوتُ ٧٥٬٠٠٠، والتمارينُ والأجهزةُ ٣٥٬٠٠٠، وتمارينُ أطفال الشلل الدماغيّ
+//  ٢٥٬٠٠٠، والاستشارةُ مجّانية — **والإبرُ ٣٥٬٠٠٠ بقرار المالك في اليوم نفسِه** (§4.fx، وكانت ٢٥٬٠٠٠).
+//  **والسعرُ للبيع الجديد وحده**: ما بيع قبله محفوظٌ بكلفته في الحالة والقيد، ولا بابَ يعيد تسعيرَه (تعديلُ الخطة لا يمسّ المال).
+//
+//  **وهذا الجدولُ ما يُباع اليوم** — منه قوائمُ البيع والوصفة، وحارسُ كلّ بابٍ يبيع. والنوعُ المتقاعد في الجدول الذي يليه.
 export const PHYSIO_TREATMENT_PRICES: Record<string, number> = {
   "استشارة طبية": 0,
   "روبوت": 75000,
   "تمارين تأهيلية": 35000,
   "أجهزة علاج طبيعي": 35000,
-  //  §4.ft — **التمرينُ والأجهزةُ في جلسةٍ واحدة**: جلسةٌ واحدة تُعدّ مرّةً وتُسعَّر سعرَ جلسة، لا تمارينُ وأجهزةٌ بجلستين.
-  "تمارين مع أجهزة": 35000,
   //  §4.fu — **تمارينُ أطفال الشلل الدماغيّ** نوعٌ مستقلّ بسعره.
   "تمارين CP للأطفال": 25000,
-  "أبر صينية": 25000,
+  "أبر صينية": 35000,
 };
+
+/**
+ * **أنواعٌ لا تُباع بعد اليوم — وتبقى مقروءة** (§4.fx).
+ *
+ * «تمارين مع أجهزة» (§4.ft) أُزيلت بقرار المالك ٢٠٢٦-١١-٠١ برأي سليم: **لا نجمع التمرينَ والأجهزة، نتركهما منفصلين لنعرف كم أخذ
+ * المريضُ في كلّ قسم**. فلا يُختار في بيعٍ ولا وصفةٍ ولا زيارةٍ ولا دفعةٍ جديدة — لكنّ ما بيع منه (إن بيع) يبقى: خطّتُه المحفوظة وعدّادُه
+ * وزياراتُه ودفعاتُه، ويُعرف علاجاً طبيعياً، ويُحفَظ سطرُه حين تُعدَّل الخطّة، وتُعدّ جلستُه عليه لمن اشتراه (`sessionTreatmentType`).
+ */
+export const PHYSIO_RETIRED_TREATMENT_PRICES: Readonly<Record<string, number>> = Object.freeze({
+  "تمارين مع أجهزة": 35000,
+});
+
+/** **كلُّ نوعٍ يُعرف** — ما يُباع وما تقاعد. للقراءة والتعرّف وحدهما، **لا لقائمة بيع**. */
+export const PHYSIO_KNOWN_TREATMENT_PRICES: Readonly<Record<string, number>> = Object.freeze({
+  ...PHYSIO_TREATMENT_PRICES, ...PHYSIO_RETIRED_TREATMENT_PRICES,
+});
 
 /**
  * **الأسعارُ قبل ٢٠٢٦-١١-٠١ — مجمَّدةٌ لا تُعدَّل** (§4.fu).
@@ -33,9 +49,14 @@ export const PHYSIO_PRICES_BEFORE_2026_11: Readonly<Record<string, number>> = Ob
   "أبر صينية": 25000,
 });
 
+/** ما يُباع اليوم — قوائمُ البيع وحارسُ أبوابه. */
 export const PHYSIO_TREATMENT_TYPES = Object.keys(PHYSIO_TREATMENT_PRICES);
 
-/** «تمارين مع أجهزة» — نوعٌ واحد للجلسة التي فيها التمرينُ والأجهزةُ معاً (§4.ft). */
+/** ما يُعرف — يُباع أو تقاعد (§4.fx). */
+export const PHYSIO_KNOWN_TREATMENT_TYPES = Object.keys(PHYSIO_KNOWN_TREATMENT_PRICES);
+export const PHYSIO_RETIRED_TREATMENT_TYPES = Object.keys(PHYSIO_RETIRED_TREATMENT_PRICES);
+
+/** «تمارين مع أجهزة» — نوعٌ واحد للجلسة التي فيها التمرينُ والأجهزةُ معاً (§4.ft) — **متقاعدٌ منذ ٢٠٢٦-١١-٠١** (§4.fx). */
 export const EXERCISES_WITH_DEVICES = "تمارين مع أجهزة";
 
 /** «تمارين CP للأطفال» — تمارينُ أطفال الشلل الدماغيّ (§4.fu). */
@@ -93,7 +114,8 @@ export function entersPhysioPlan(treatmentType: string, sessionCount: number): b
  */
 export function physioSessionsEnterPlan(treatmentType: string, sessionCount: number): boolean {
   const type = String(treatmentType ?? "").trim();
-  return PHYSIO_TREATMENT_TYPES.includes(type) && entersPhysioPlan(type, sessionCount);
+  //  **كلُّ نوعٍ يُعرف** (§4.fx) — دفعةُ «تمارين مع أجهزة» القديمة تبقى في خطّة صاحبها، ويُطرح منها تعديلُها أو حذفُها.
+  return PHYSIO_KNOWN_TREATMENT_TYPES.includes(type) && entersPhysioPlan(type, sessionCount);
 }
 
 /** الدلوُ الذي تضع فيه بذرةُ التسعير دفعةً بلا نوعٍ مسجَّل. */
@@ -200,7 +222,7 @@ export function resolvePurchasedSessions(input: {
   }[];
 },
   /** جدولُ الاشتقاق من الكلفة — الحاليّ دائماً، إلّا ترحيلَ ١٨٨ يمرّر أسعارَ ما قبل ٢٠٢٦-١١-٠١ (§4.fu). */
-  prices: Readonly<Record<string, number>> = PHYSIO_TREATMENT_PRICES,
+  prices: Readonly<Record<string, number>> = PHYSIO_KNOWN_TREATMENT_PRICES,
 ): { byType: Record<string, number>; total: number; source: "plan" | "cost" | "payments" | "none" } {
   const sum = (byType: Record<string, number>) =>
     Object.keys(byType).reduce((s, k) => s + byType[k], 0);
@@ -284,7 +306,9 @@ export function resolvePurchasedSessions(input: {
 // Cost of one entry: sessions × the type's price, 0 when marked free.
 export function physioEntryCost(e: PhysioEntry): number {
   if (e.isFree) return 0;
-  const price = PHYSIO_TREATMENT_PRICES[e.treatmentType];
+  //  **بكلّ نوعٍ يُعرف** (§4.fx): البيعُ لا يصل هنا بنوعٍ متقاعد (حارسُ كلّ بابٍ بـ`PHYSIO_TREATMENT_TYPES`)، لكنّ ما حُفظ قبل التقاعد
+  //  — طلبُ خصمٍ معلَّق، أو خطّةٌ يوزَّع عليها خصم — يُقرأ بسعره لا بصفر.
+  const price = PHYSIO_KNOWN_TREATMENT_PRICES[e.treatmentType];
   if (price === undefined) return 0;
   const n = Math.max(0, Math.floor(Number(e.sessionCount) || 0));
   return n * price;

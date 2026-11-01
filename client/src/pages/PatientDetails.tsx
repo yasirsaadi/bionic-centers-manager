@@ -1,3 +1,4 @@
+import { PHYSIO_RETIRED_TREATMENT_TYPES } from "@shared/pricing";
 import { TrialSocketBanner } from "@/components/trial/TrialSocketPieces";
 import { injuryDateDisplay } from "@shared/intake_sheet";
 import { freeDeviceRows, sheetVisitPaidLine } from "@shared/intake_sheet_view";
@@ -120,6 +121,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", label: "روبوت" },
   { value: "تمارين تأهيلية", label: "تمارين تأهيلية" },
   { value: "أجهزة علاج طبيعي", label: "أجهزة علاج طبيعي" },
+  //  متقاعدٌ (§4.fx) — يظهر في تعديل دفعةٍ أو زيارةٍ قديمةٍ هو نوعُها وحدها (`optionsFor`).
   { value: "تمارين مع أجهزة", label: "تمارين مع أجهزة" },
   { value: "تمارين CP للأطفال", label: "تمارين CP للأطفال" },
   { value: "أبر صينية", label: "أبر صينية" },
@@ -134,6 +136,10 @@ const PAYMENT_TYPE_OPTIONS = [
   { value: "أطراف صناعية", label: "أطراف صناعية" },
   { value: "مساند طبية", label: "مساند طبية" },
 ];
+
+/** قائمةُ التعديل: النوعُ المتقاعد لا يظهر إلّا إن كان نوعَ ما يُعدَّل (§4.fx). */
+const optionsFor = (current: string | null | undefined) =>
+  PAYMENT_TYPE_OPTIONS.filter((o) => !PHYSIO_RETIRED_TREATMENT_TYPES.includes(o.value) || o.value === current);
 
 const injuryTypeOptions = [
   "التهاب اوتار", "وثي", "قطع اوتار", "تشنج عضلي", "إصابة عصب محيطي", "التهاب اعصاب سكري",
@@ -2274,7 +2280,7 @@ export default function PatientDetails() {
                   <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
                 </SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_TYPE_OPTIONS.map((option) => (
+                  {optionsFor(editTreatmentType).map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {translateTreatmentType(option.value)}
                     </SelectItem>
@@ -2373,7 +2379,7 @@ export default function PatientDetails() {
                   <SelectValue placeholder={t.patientDetails.selectTreatmentType} />
                 </SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_TYPE_OPTIONS.map((option) => (
+                  {optionsFor(editPaymentTreatmentType).map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {translateTreatmentType(option.value)}
                     </SelectItem>

@@ -12,7 +12,7 @@ import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
@@ -4036,12 +4036,16 @@ export async function registerRoutes(
       }
 
       const raw = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      //  **النوعُ المتقاعد يبقى لمن كان في خطّته** (§4.fx): تعديلُ خطّة مريضٍ اشترى «تمارين مع أجهزة» لا يُسقط سطرَه بصمت،
+      //  ولا يضيفه لمن لم يكن له — فهو لا يُباع بعد اليوم.
+      const ownRetired = new Set((Array.isArray(patient.physioPlan) ? patient.physioPlan as any[] : [])
+        .map((e: any) => String(e?.treatmentType || "").trim()).filter((t: string) => PHYSIO_RETIRED_TREATMENT_TYPES.includes(t)));
       const cleaned = raw
         .map((e: any) => ({
           treatmentType: String(e?.treatmentType || "").trim(),
           sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
         }))
-        .filter((e: any) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+        .filter((e: any) => (PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) || ownRetired.has(e.treatmentType)) && e.sessionCount > 0);
       // Replace, don't merge: this dialog shows the current plan and saves what
       // the user sees, so merging would silently double what they just edited.
       const plan = mergePhysioPlan(null, cleaned);
