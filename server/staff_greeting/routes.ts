@@ -5,6 +5,7 @@
 //   GET  /api/admin/greeting      — العباراتُ وعمرُها (للمسؤول)
 //   PUT  /api/admin/greeting      — تغييرُ العبارات (للمسؤول، بسطر تدقيق)
 //   POST /api/admin/greeting/keep — «أبقِها شهراً آخر» (للمسؤول، بسطر تدقيق)
+//   PUT  /api/admin/greeting/weather-fx — مفتاحُ مؤثّر الطقس مع التحيّة (§4.fw — للمسؤول، بسطر تدقيق)
 import type { Express } from "express";
 import cron from "node-cron";
 import { eq, sql } from "drizzle-orm";
@@ -20,10 +21,16 @@ import {
   GREETING_REMINDER_KEY, GREETING_SETTING_KEY, greetingAge, greetingCycleStart, greetingReminderText, greetingText, parseGreetings,
   phraseFor, readGreetingConfig, salutationAt, type GreetingConfig,
 } from "@shared/staff_greeting";
+import { WEATHER_FX_SETTING_KEY, weatherFxEnabled } from "@shared/weather_greeting_fx";
 
 /** العباراتُ المحفوظة — وما لم تُحفَظ فالأولى بيوم اليوم. */
 export async function loadGreetingConfig(): Promise<GreetingConfig> {
   return readGreetingConfig(await storage.getSystemSetting(GREETING_SETTING_KEY), new Date().toISOString());
+}
+
+/** مفتاحُ مؤثّر الطقس مع التحيّة (§4.fw) — مفعّلٌ ما لم يُطفئه المسؤول. */
+export async function loadWeatherFxEnabled(): Promise<boolean> {
+  return weatherFxEnabled(await storage.getSystemSetting(WEATHER_FX_SETTING_KEY));
 }
 
 async function saveGreetingConfig(c: GreetingConfig): Promise<void> {
@@ -90,8 +97,9 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
         return res.json(age.due ? { show: true, kind: "reminder", days: age.days, day: today } : { show: false });
       }
       const salutation = salutationAt();
+      //  `weatherFx`: هل يُرافقها مؤثّرُ الطقس (§4.fw) — والطقسُ نفسُه تقرؤه الواجهةُ من شريحتها، فلا طلبَ جديد.
       return res.json({ show: true, kind: "greeting", period: salutation === "صباح الخير" ? "morning" : "evening", day: today,
-        text: greetingText(salutation, u.name, phraseFor(c.phrases, Number(s.userId), today)) });
+        text: greetingText(salutation, u.name, phraseFor(c.phrases, Number(s.userId), today)), weatherFx: await loadWeatherFxEnabled() });
     } catch (e) {
       //  **فشلُ القراءة خطأٌ لا «لا تحيّة»** (مراجعةُ Codex): الواجهةُ تحفظ الجوابَ يومَها كلَّه، فـ«لا شيء» هنا تُخفي تحيّةَ اليوم ولو عاد الخادم؛
       //  والخطأُ تُعيد الواجهةُ طلبَه.
@@ -129,7 +137,7 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
     if (!adminOnly(req, res)) return;
     try {
       const c = await loadGreetingConfig();
-      res.json({ ...c, ...greetingAge(c) });
+      res.json({ ...c, ...greetingAge(c), weatherFx: await loadWeatherFxEnabled() });
     } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر التحميل" }); }
   });
 
@@ -167,6 +175,20 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       else { after = { ...before, keptAt }; await saveGreetingConfig(after); }   // لا صفَّ بعد ⟵ العباراتُ الأولى بإبقائها
       await audit(req, s, "keep", { keptAt: before.keptAt ?? null }, { keptAt: after.keptAt });
       res.json({ ...after, ...greetingAge(after) });
+    } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر الحفظ" }); }
+  });
+
+  //  **مفتاحُ مؤثّر الطقس** (§4.fw): يطفئه المسؤولُ للجميع أو يعيده — والتحيّةُ نفسُها لا تتغيّر.
+  app.put("/api/admin/greeting/weather-fx", isAuthenticated, async (req: any, res) => {
+    const s = adminOnly(req, res);
+    if (!s) return;
+    if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "القيمة يجب أن تكون نعم أو لا" });
+    try {
+      const before = await loadWeatherFxEnabled();
+      const enabled: boolean = req.body.enabled;
+      await storage.setSystemSetting(WEATHER_FX_SETTING_KEY, enabled ? "true" : "false");
+      if (before !== enabled) await audit(req, s, "update", { weatherFx: before }, { weatherFx: enabled });
+      res.json({ weatherFx: enabled });
     } catch (e) { console.error("[greeting]", e); res.status(500).json({ error: "تعذّر الحفظ" }); }
   });
 }
