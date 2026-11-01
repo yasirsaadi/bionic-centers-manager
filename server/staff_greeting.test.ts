@@ -6,6 +6,7 @@
 //   ب — الأبواب: التحيّةُ للموظّف مرّةً في اليوم (و«حسناً» تُسكتها حتى الغد ولو من جهازٍ آخر)، والمالكُ لا يُحيّى ويرى التذكيرَ حين يحين،
 //       والعباراتُ للمسؤول وحده بتدقيق، و«أبقِها شهراً آخر»، و«حسناً» لا تحرّك شاشاتِ الآخرين.
 //   ج — تذكيرُ تلغرام: لا شيء قبل الشهر، ورسالةٌ واحدة لكلّ دورة ولو تسابقت نسختان، وفشلُ الإرسال يُطلق الحجزَ ليُعاد.
+//   ط — مؤثّرُ الطقس مع التحيّة (§4.fw): أيُّ طقسٍ يُطلقه ونصُّ سطره بلا جنس، ومفتاحُ المسؤول في جواب التحيّة وبابُه بتدقيق.
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -25,6 +26,8 @@ import {
   DEFAULT_GREETINGS, GREETING_REMINDER_KEY, GREETING_SETTING_KEY, greetingAge, greetingText, parseGreetings, phraseFor, salutationAt,
 } from "@shared/staff_greeting";
 import { baghdadTodayYmd } from "@shared/visit_date";
+import { WEATHER_FX_SETTING_KEY, weatherFxEnabled, weatherFxFor, weatherGreetingLine, WEATHER_FX_KINDS } from "@shared/weather_greeting_fx";
+import { WEATHER_LABELS, type WeatherKind } from "@shared/weather";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -44,7 +47,7 @@ const IDS = [ADMIN, SALEEM, ZAHRAA, TECH];
 
 const q = (t: string, p: any[] = []) => pool.query(t, p);
 const hdr = (s: Record<string, unknown>) => Buffer.from(JSON.stringify(s)).toString("base64");
-const KEYS = [GREETING_SETTING_KEY, GREETING_REMINDER_KEY, "telegram_bot_token", "telegram_chat_id"];
+const KEYS = [GREETING_SETTING_KEY, GREETING_REMINDER_KEY, "telegram_bot_token", "telegram_chat_id", WEATHER_FX_SETTING_KEY];
 
 async function cleanup() {
   await q(`DELETE FROM audit_log WHERE user_id = ANY($1::int[]) OR entity_type = 'staff_greeting'`, [IDS]);
@@ -249,6 +252,43 @@ async function main() {
     same("ج.٤ **ولا تُعاد في الدورة نفسِها**", [await runGreetingReminder(), sent.length], ["already", 1]);
     await call("POST", "/api/admin/greeting/keep", S.admin);
     same("ج.٥ **و«أبقِها» يبدأ دورةً لا تذكيرَ فيها قبل شهرها**", [await runGreetingReminder(), sent.length], ["not_due", 1]);
+
+    // ══ ط. مؤثّرُ الطقس مع التحيّة (§4.fw) ══
+    console.log("\n── ط. مؤثّرُ الطقس مع التحيّة ──");
+    const kinds = Object.keys(WEATHER_LABELS) as WeatherKind[];
+    same("ط.١ **المطرُ والغبارُ وحدهما يُطلقانه** — الصافي والغائم والضباب والثلج والدخان بلا مؤثّر",
+      Object.fromEntries(kinds.map((k) => [k, weatherFxFor(k)])),
+      { clear: null, fair: null, partly: null, cloudy: null, fog: null, drizzle: "drizzle", rain: "rain", heavy_rain: "heavy", thunder: "thunder",
+        sleet: "rain", snow: null, dust: "dust", blowing_dust: "storm", duststorm: "storm", haze: "dust", mist: null, smoke: null });
+    same("ط.١ب وبلا طقسٍ معروف ⟵ لا مؤثّر", [weatherFxFor(null), weatherFxFor(undefined)], [null, null]);
+    const lines = WEATHER_FX_KINDS.map((fx) => weatherGreetingLine(fx, "بغداد"));
+    same("ط.٢ **سطرُ الطقس باسم المدينة وبلا فعلِ أمرٍ بجنس المخاطَب** (قاعدةُ العبارات — «الحذرُ» لا «انتبه»)",
+      [lines.every((l) => l.includes("بغداد")), lines.some((l) => /(^|— )(انتبه|تمهّل[^ُ]|ابقَ|احذر|قلّل)/.test(l)), weatherGreetingLine("rain", "بغداد")],
+      [true, false, "بغداد ممطرةٌ اليوم ☔ — الحذرُ في الطريق"]);
+    same("ط.٣ **مفعّلٌ ما لم يُطفأ صراحةً**",
+      [weatherFxEnabled(undefined), weatherFxEnabled(""), weatherFxEnabled("true"), weatherFxEnabled("false"), weatherFxEnabled("0")], [true, true, true, false, false]);
+    await q(`DELETE FROM system_settings WHERE setting_key = $1`, [WEATHER_FX_SETTING_KEY]);
+    await q(`UPDATE system_users SET last_greeted_on = NULL WHERE id = $1`, [ZAHRAA]);
+    const gOn = (await call("GET", "/api/greeting", S.zahraa)).json;
+    same("ط.٤ **التحيّةُ تقول إنّ المؤثّرَ مفعّل** افتراضاً", [gOn?.kind, gOn?.weatherFx], ["greeting", true]);
+    const denied = await call("PUT", "/api/admin/greeting/weather-fx", S.saleem, { enabled: false });
+    const badFx = await call("PUT", "/api/admin/greeting/weather-fx", S.admin, { enabled: "no" });
+    same("ط.٥ **المفتاحُ للمسؤول وحده، وبقيمة نعم/لا**", [denied.status, badFx.status], [403, 400]);
+    const auditCount = async () => Number((await q(`SELECT COUNT(*)::int AS n FROM audit_log WHERE entity_type = 'staff_greeting' AND new_values LIKE '%weatherFx%'`)).rows[0].n);
+    const a0 = await auditCount();
+    const off = await call("PUT", "/api/admin/greeting/weather-fx", S.admin, { enabled: false });
+    const gOff = (await call("GET", "/api/greeting", S.zahraa)).json;
+    const adminView = (await call("GET", "/api/admin/greeting", S.admin)).json;
+    const a1 = await auditCount();
+    await call("PUT", "/api/admin/greeting/weather-fx", S.admin, { enabled: false });
+    const a2 = await auditCount();
+    const lastAudit = (await q(`SELECT old_values, new_values FROM audit_log WHERE entity_type = 'staff_greeting' AND new_values LIKE '%weatherFx%' ORDER BY id DESC LIMIT 1`)).rows[0];
+    same("ط.٦ **إطفاؤه يصل التحيّةَ وبطاقةَ المسؤول، بسطر تدقيقٍ بالقديم والجديد، والتكرارُ بلا سطرٍ ثانٍ**",
+      [off.status, off.json?.weatherFx, gOff?.weatherFx, gOff?.text === gOn?.text, adminView?.weatherFx, a1 - a0, a2 - a1,
+        JSON.parse(lastAudit?.old_values ?? "{}").weatherFx, JSON.parse(lastAudit?.new_values ?? "{}").weatherFx],
+      [200, false, false, true, false, 1, 0, true, false]);
+    await call("PUT", "/api/admin/greeting/weather-fx", S.admin, { enabled: true });
+    same("ط.٧ **وإعادتُه تعيده**", (await call("GET", "/api/greeting", S.zahraa)).json?.weatherFx, true);
   } finally {
     await q(`DELETE FROM system_settings WHERE setting_key = ANY($1::text[])`, [KEYS]);
     await q(MIGRATION_SQL);

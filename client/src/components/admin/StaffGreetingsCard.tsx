@@ -2,7 +2,10 @@
 // و«أبقِها شهراً آخر». والتذكيرُ يصله بعد ثلاثين يوماً في تلغرام وفي نافذةٍ عند دخوله.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Smile, Trash2 } from "lucide-react";
+import { CloudRain, Plus, Smile, Trash2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { WeatherFxLayer } from "@/components/WeatherFxLayer";
+import { weatherGreetingLine, type WeatherFx } from "@shared/weather_greeting_fx";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,7 +14,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { GREETING_MAX_CHARS, GREETINGS_MAX, greetingText } from "@shared/staff_greeting";
 
-interface Config { phrases: string[]; updatedAt: string; updatedByName: string | null; keptAt?: string | null; days: number; due: boolean }
+interface Config { phrases: string[]; updatedAt: string; updatedByName: string | null; keptAt?: string | null; days: number; due: boolean; weatherFx?: boolean }
+
+/** أزرارُ معاينة المؤثّر للمالك — فالتحيّةُ لا تظهر لحسابه (§4.dp)، ويرى هنا ما يراه موظّفوه. */
+const FX_PREVIEW: { fx: WeatherFx; label: string }[] = [
+  { fx: "drizzle", label: "رذاذ" }, { fx: "rain", label: "مطر" }, { fx: "heavy", label: "مطر غزير" },
+  { fx: "thunder", label: "رعد" }, { fx: "dust", label: "غبار" }, { fx: "storm", label: "عاصفة ترابية" },
+];
 
 const errText = (e: any): string => {
   const raw = String(e?.message ?? "").replace(/^\d+:\s*/, "");
@@ -49,6 +58,18 @@ export default function StaffGreetingsCard() {
     mutationFn: async () => (await apiRequest("POST", "/api/admin/greeting/keep", {})).json(),
     onSuccess: (c: Config) => done(c, "أُبقيت العبارات شهراً آخر"),
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+  });
+  //  **مؤثّرُ الطقس مع التحيّة** (§4.fw): مفتاحٌ للجميع، ومعاينةٌ على هذه الشاشة.
+  //  `n` يتزايد مع كلّ ضغطة — فالزرُّ نفسُه مرّتين يعيد المعاينةَ من أوّلها (لمستُه توقف السابقة، والمفتاحُ الجديد يركّب غيرها).
+  const [preview, setPreview] = useState<{ fx: WeatherFx; n: number } | null>(null);
+  const fxSwitch = useMutation({
+    mutationFn: async (enabled: boolean) => (await apiRequest("PUT", "/api/admin/greeting/weather-fx", { enabled })).json(),
+    onSuccess: (r: { weatherFx: boolean }) => {
+      qc.setQueryData<Config>(["/api/admin/greeting"], (old) => (old ? { ...old, weatherFx: r.weatherFx } : old));
+      qc.invalidateQueries({ queryKey: ["/api/greeting"] });
+      toast({ title: r.weatherFx ? "مؤثّرُ الطقس مفعّل مع التحيّة" : "أُطفئ مؤثّرُ الطقس — التحيّةُ وحدها" });
+    },
+    onError: (e) => toast({ title: "تعذّر الحفظ", description: errText(e), variant: "destructive" }),
   });
   const c = q.data;
   const list = rows ?? [];
@@ -113,6 +134,29 @@ export default function StaffGreetingsCard() {
           {c.updatedByName ? ` — ${c.updatedByName}` : " — العباراتُ الأولى"}
           {c.keptAt ? ` · أُبقيت في ${new Date(c.keptAt).toLocaleDateString("ar-IQ", { month: "short", day: "numeric" })}` : ""}
         </p>
+      )}
+      {c && (
+        <div className="border-t pt-3 space-y-2" data-testid="weather-fx-settings">
+          <div className="flex items-center gap-2 flex-wrap">
+            <CloudRain className="w-5 h-5 text-sky-500" />
+            <label htmlFor="weather-fx-switch" className="font-semibold text-sm">مطر وغبار مع التحيّة</label>
+            <Switch id="weather-fx-switch" checked={c.weatherFx !== false} disabled={fxSwitch.isPending}
+              onCheckedChange={(v) => fxSwitch.mutate(v)} data-testid="weather-fx-switch" />
+          </div>
+          <p className="text-xs text-muted-foreground leading-6">
+            حين يكون طقسُ مدينة الفرع ممطراً أو مغبرّاً فعلاً، تنزل مع تحيّة الموظّف قطراتُ مطرٍ أو غبارٌ سبعَ ثوانٍ ثمّ تتلاشى، وسطرٌ في التحيّة
+            مثل «{weatherGreetingLine("rain", "بغداد")}». لا يحجب زرّاً، ولمسةٌ توقفه، ومَن ضبط جهازَه على «تقليل الحركة» يرى السطرَ وحده.
+          </p>
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="text-xs text-muted-foreground">معاينة:</span>
+            {FX_PREVIEW.map((p) => (
+              <Button key={p.fx} size="sm" variant="outline" className="h-7" onClick={() => setPreview((old) => ({ fx: p.fx, n: (old?.n ?? 0) + 1 }))} data-testid={`weather-fx-preview-${p.fx}`}>
+                {p.label}
+              </Button>
+            ))}
+          </div>
+          {preview && <WeatherFxLayer key={preview.n} fx={preview.fx} onDone={() => setPreview((cur) => (cur?.n === preview.n ? null : cur))} />}
+        </div>
       )}
     </Card>
   );
