@@ -30,10 +30,11 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { PHYSIO_TREATMENT_PRICES } from "@shared/pricing";
 
-//  **الأسعارُ من الجدول** (§4.fu): جلسةُ الاتّفاق «أبر صينية» لأنّ سعرَها ٢٥٬٠٠٠ قبل الأسعار الجديدة وبعدها — فأرقامُ الاتّفاق
-//  (النصفُ ١٢٬٥٠٠ والباقي) كما كُتبت؛ والروبوتُ بسعر الجدول. وشرطٌ مسبَق يقول ذلك صريحاً إن تغيّر سعرُ الإبر يوماً.
+//  **الأسعارُ من الجدول** (§4.fu): جلسةُ الاتّفاق بنوعٍ سعرُه ٢٥٬٠٠٠ — فأرقامُ الاتّفاق (النصفُ ١٢٬٥٠٠ والباقي) كما كُتبت؛ والروبوتُ
+//  بسعر الجدول. كانت «أبر صينية» حتى صار سعرُها ٣٥٬٠٠٠ (§4.fx)، فصارت «تمارين CP للأطفال». وشرطٌ مسبَق يقول ذلك صريحاً إن تغيّر سعرُها.
 const R = PHYSIO_TREATMENT_PRICES["روبوت"];
-if (PHYSIO_TREATMENT_PRICES["أبر صينية"] !== 25000) throw new Error("reception_agreement: الاختبارُ مبنيٌّ على «أبر صينية» بـ٢٥٬٠٠٠ — حدّث أرقامَه");
+const AGREED = "تمارين CP للأطفال";
+if (PHYSIO_TREATMENT_PRICES[AGREED] !== 25000) throw new Error(`reception_agreement: الاختبارُ مبنيٌّ على «${AGREED}» بـ٢٥٬٠٠٠ — حدّث أرقامَه`);
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -160,14 +161,14 @@ async function money(patientId: number) {
 const newService = (session: any, patientId: number, body: any) =>
   http("POST", `/api/patients/${patientId}/new-service`, session, body);
 
-/** طلبُ جلسةٍ واحدة «أبر صينية» — سعرُها القياسي ٢٥,٠٠٠ (كانت «أجهزة علاج طبيعي» حتى صار سعرُها ٣٥٬٠٠٠ — §4.fu). */
+/** طلبُ جلسةٍ واحدة بنوع الاتّفاق — سعرُها القياسي ٢٥,٠٠٠ (كانت «أجهزة علاج طبيعي» ثمّ «أبر صينية» حتى صار سعرُ كلٍّ ٣٥٬٠٠٠ — §4.fu · §4.fx). */
 const sessionBody = (token: string, extra: any = {}) => ({
   serviceType: "additional_therapy",
   serviceCost: 25000,
   initialPayment: 25000,
   submissionToken: token,
-  treatmentEntries: [{ treatmentType: "أبر صينية", sessionCount: 1, cost: 25000 }],
-  paymentTreatmentType: "أبر صينية",
+  treatmentEntries: [{ treatmentType: AGREED, sessionCount: 1, cost: 25000 }],
+  paymentTreatmentType: AGREED,
   sessionCount: 1,
   ...extra,
 });
@@ -205,7 +206,7 @@ async function mkHistoricalPending(patientId: number, opts: {
   const finalPrice = isFree ? 0 : opts.finalPrice;
   const discountAmount = opts.originalPrice - finalPrice;
   const discountPercentage = Math.round((discountAmount / opts.originalPrice) * 10000) / 100;
-  const entries = opts.entries ?? [{ treatmentType: "أبر صينية", sessionCount: 1 }];
+  const entries = opts.entries ?? [{ treatmentType: AGREED, sessionCount: 1 }];
   const payload = {
     kind: "new_service", serviceType: "additional_therapy",
     entries, serviceNotes: null,
@@ -332,7 +333,7 @@ async function main() {
     const pB2 = await mk("ب.ب — أصلٌ ملفَّق", { physio: true });
     await newService(S.recv, pB2, sessionBody("tok-agreement-b2", {
       serviceCost: 8000,
-      treatmentEntries: [{ treatmentType: "أبر صينية", sessionCount: 1, cost: 8000 }],
+      treatmentEntries: [{ treatmentType: AGREED, sessionCount: 1, cost: 8000 }],
       discount: { finalPrice: 4000, isFree: false, reason: "humanitarian" },
     }));
     const reqB2 = (await pendingFor(pB2))[0];
@@ -502,7 +503,7 @@ async function main() {
     const beforeM = await money(pM);
     const sneak = await newService(S.recv, pM, sessionBody("tok-agreement-m", {
       serviceCost: 12500,   // القياسيُّ ٢٥,٠٠٠ — وبلا حقل خصمٍ إطلاقاً
-      treatmentEntries: [{ treatmentType: "أبر صينية", sessionCount: 1, cost: 12500 }],
+      treatmentEntries: [{ treatmentType: AGREED, sessionCount: 1, cost: 12500 }],
       initialPayment: 12500,
     }));
     same("م. **مبلغٌ أقلُّ من القياسيّ بلا خصمٍ يُردّ ٤٠٠**", sneak.status, 400);
@@ -525,7 +526,7 @@ async function main() {
     const pM2 = await mk("م.ب — سطرٌ مضخَّم", { physio: true });
     const inflated = await newService(S.recv, pM2, sessionBody("tok-agreement-m2", {
       serviceCost: 25000,
-      treatmentEntries: [{ treatmentType: "أبر صينية", sessionCount: 1, cost: 100000 }],
+      treatmentEntries: [{ treatmentType: AGREED, sessionCount: 1, cost: 100000 }],
       initialPayment: 25000,
     }));
     same("م.ب والخدمةُ تمرّ بالقياسيّ", inflated.status, 200);
@@ -535,7 +536,7 @@ async function main() {
 
     // ══ ن. الخصمُ على نوعين يحفظ جلسات النوعين ════════════════════════
     console.log("\n── ن. نوعان مع خصم ──");
-    //  روبوتٌ بسعر الجدول + إبرٌ ٢٥,٠٠٠ قياسيّاً.
+    //  روبوتٌ بسعر الجدول + جلسةُ الاتّفاق ٢٥,٠٠٠ قياسيّاً.
     const twoTypes = (token: string, extra: any = {}) => ({
       serviceType: "additional_therapy",
       serviceCost: R + 25000,
@@ -543,9 +544,9 @@ async function main() {
       submissionToken: token,
       treatmentEntries: [
         { treatmentType: "روبوت", sessionCount: 1, cost: R },
-        { treatmentType: "أبر صينية", sessionCount: 1, cost: 25000 },
+        { treatmentType: AGREED, sessionCount: 1, cost: 25000 },
       ],
-      paymentTreatmentType: "روبوت، أبر صينية",
+      paymentTreatmentType: `روبوت، ${AGREED}`,
       sessionCount: 2,
       ...extra,
     });
@@ -559,7 +560,7 @@ async function main() {
     const pN1 = await mk("ن.أ — نوعان كامل", { physio: true });
     same("ن.أ الخدمةُ تمرّ", (await newService(S.recv, pN1, twoTypes("tok-agreement-n1"))).status, 200);
     same("   والنوعان مسجَّلان بجلستيهما",
-      await typesOf(pN1), ["أبر صينية:1", "روبوت:1"]);
+      await typesOf(pN1), [`${AGREED}:1`, "روبوت:1"]);
     same("   والكلفةُ القياسية كاملة", (await money(pN1)).totalCost, R + 25000);
 
     //  ن.ب — بخصمٍ إلى ٤٠,٠٠٠: **يُطبَّق فوراً**، والنوعان يبقيان، والمجموعُ
@@ -575,7 +576,7 @@ async function main() {
     same("   والطلبُ معتمَدٌ فوراً بالأصل القياسيّ", [Number(reqN2?.original_price), reqN2?.status],
       [R + 25000, "approved"]);
     same("   **والنوعان باقيان بجلستيهما رغم الخصم**",
-      await typesOf(pN2), ["أبر صينية:1", "روبوت:1"]);
+      await typesOf(pN2), [`${AGREED}:1`, "روبوت:1"]);
     const mN2 = await money(pN2);
     same("   ومجموعُ الدفعات = المعتمَد بالضبط", mN2.paid, 40000);
     same("   وكلفةُ المريض = كلفةُ الحالة = المعتمَد",
@@ -630,7 +631,7 @@ async function main() {
     }));
     same("ن.د الخدمةُ تُنفَّذ فوراً مجّاناً", rN3.status, 201);
     same("   **والنوعان باقيان بجلستيهما**",
-      await typesOf(pN3), ["أبر صينية:1", "روبوت:1"]);
+      await typesOf(pN3), [`${AGREED}:1`, "روبوت:1"]);
     const mN3 = await money(pN3);
     same("   وبقيمةٍ ماليّة صفر", [mN3.paid, mN3.totalCost, mN3.caseCost], [0, 0, 0]);
     same("   والجلستان معدودتان", mN3.sessions, 2);

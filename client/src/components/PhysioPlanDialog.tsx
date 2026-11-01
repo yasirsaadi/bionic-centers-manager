@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, X, ListChecks } from "lucide-react";
-import { PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
+import { PHYSIO_RETIRED_TREATMENT_TYPES, PHYSIO_TREATMENT_TYPES } from "@shared/pricing";
 import { api } from "@shared/routes";
 
 type Row = { treatmentType: string; sessionCount: number };
@@ -39,6 +39,11 @@ export function PhysioPlanDialog({ patient, open, onOpenChange }: {
   }, [open, patient?.id]);
 
   const valid = rows.filter((r) => r.treatmentType && r.sessionCount > 0);
+  //  **ما يُباع اليوم + النوعُ المتقاعد الذي في خطّة هذا المريض** (§4.fx) — قاعدةُ الخادم نفسُها: سطرُه القديم يبقى، ولا يُضاف لغيره.
+  const typeChoices = [
+    ...PHYSIO_TREATMENT_TYPES.filter((tp) => tp !== "استشارة طبية"),
+    ...PHYSIO_RETIRED_TREATMENT_TYPES.filter((tp) => (patient?.physioPlan ?? []).some((r) => r?.treatmentType === tp)),
+  ];
   const total = valid.reduce((s, r) => s + r.sessionCount, 0);
 
   const save = useMutation({
@@ -85,7 +90,7 @@ export function PhysioPlanDialog({ patient, open, onOpenChange }: {
                     <SelectValue placeholder="اختر نوع العلاج" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PHYSIO_TREATMENT_TYPES.filter((tp) => tp !== "استشارة طبية").map((tp) => (
+                    {typeChoices.map((tp) => (
                       <SelectItem key={tp} value={tp}>{tp}</SelectItem>
                     ))}
                   </SelectContent>

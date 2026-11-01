@@ -8,7 +8,7 @@
 // in a report. These assertions pin that contract down.
 
 import { serializeInjuries, parseInjuries, INJURY_TYPE_OPTIONS, INJURY_AREA_OPTIONS, PROSTHETIC_SPECS } from "@shared/case_fields";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost } from "@shared/pricing";
+import { PHYSIO_KNOWN_TREATMENT_TYPES, PHYSIO_TREATMENT_TYPES, physioEntryCost, physioSessionsEnterPlan } from "@shared/pricing";
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) fail++; console.log(`${cond ? "✅" : "❌"} ${label}`); };
@@ -39,12 +39,15 @@ ok("مناطق الإصابة 23 قيمة", INJURY_AREA_OPTIONS.length === 23);
 ok("حقول الطرف السبعة كاملة", PROSTHETIC_SPECS.length === 7);
 
 // The doctor's treatment picker must offer exactly what pricing knows.
-ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 7 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
-// §4.ft — «تمارين مع أجهزة» في قائمة الوصفة نفسِها، بسعر جلسةٍ واحدة (٣٥٬٠٠٠ من §4.fu).
-ok("«تمارين مع أجهزة» في قائمة الوصفة بسعر جلسة", PHYSIO_TREATMENT_TYPES.includes("تمارين مع أجهزة") && physioEntryCost({ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }) === 420000);
-// §4.fu — «تمارين CP للأطفال» في القائمة بـ٢٥٬٠٠٠، والروبوتُ ٧٥٬٠٠٠.
+ok("أنواع العلاج تطابق جدول التسعير", PHYSIO_TREATMENT_TYPES.length === 6 && PHYSIO_TREATMENT_TYPES.includes("روبوت"));
+// §4.fx — «تمارين مع أجهزة» **تقاعدت** برأي سليم (التمرينُ والأجهزةُ منفصلان): لا في قائمة الوصفة ولا بيع، وتبقى معروفةً لما بيع منها.
+ok("«تمارين مع أجهزة» خارج قائمة الوصفة والبيع، ومعروفةٌ بسعرها لما بيع منها",
+  !PHYSIO_TREATMENT_TYPES.includes("تمارين مع أجهزة") && PHYSIO_KNOWN_TREATMENT_TYPES.includes("تمارين مع أجهزة")
+  && physioEntryCost({ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }) === 420000 && physioSessionsEnterPlan("تمارين مع أجهزة", 3));
+// §4.fu — «تمارين CP للأطفال» في القائمة بـ٢٥٬٠٠٠، والروبوتُ ٧٥٬٠٠٠ — و§4.fx: الإبرُ ٣٥٬٠٠٠.
 ok("«تمارين CP للأطفال» في قائمة الوصفة بـ٢٥٬٠٠٠ والروبوتُ ٧٥٬٠٠٠", PHYSIO_TREATMENT_TYPES.includes("تمارين CP للأطفال")
   && physioEntryCost({ treatmentType: "تمارين CP للأطفال", sessionCount: 24 }) === 600000 && physioEntryCost({ treatmentType: "روبوت", sessionCount: 10 }) === 750000);
+ok("الإبرُ الصينية ٣٥٬٠٠٠ للجلسة (§4.fx)", physioEntryCost({ treatmentType: "أبر صينية", sessionCount: 10 }) === 350000);
 
 // Spec keys must match the patient columns the writer targets.
 const cols = ["prostheticType","siliconType","siliconSize","suspensionSystem","footType","footSize","kneeJointType"];

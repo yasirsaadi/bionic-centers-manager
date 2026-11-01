@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, X, Stethoscope } from "lucide-react";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, physioPriceListText, type PhysioEntry } from "@shared/pricing";
+import { PHYSIO_RETIRED_TREATMENT_TYPES, PHYSIO_TREATMENT_TYPES, physioEntryCost, physioPriceListText, type PhysioEntry } from "@shared/pricing";
 import { api } from "@shared/routes";
 import { invalidatePatientData } from "@/lib/queryClient";
 import {
@@ -50,8 +50,13 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
   const rxExam = (examData?.exams ?? []).find((e: any) => e.caseType === "physiotherapy");
   const prescribed: Row[] = Array.isArray(rxExam?.prescription?.treatments)
     ? rxExam.prescription.treatments
-        .filter((t: any) => t?.treatmentType)
+        .filter((t: any) => t?.treatmentType && !PHYSIO_RETIRED_TREATMENT_TYPES.includes(t.treatmentType))
         .map((t: any) => ({ treatmentType: t.treatmentType, sessionCount: Number(t.sessionCount) || 0 }))
+    : [];
+  //  **وصفةٌ قديمة فيها نوعٌ متقاعد** (§4.fx): لا يُنسخ صامتاً (الخادمُ لا يبيعه فيسقط سطرُه بلا خطأ) — يُقال للموظّف ليختار بدله.
+  const retiredInRx: string[] = Array.isArray(rxExam?.prescription?.treatments)
+    ? rxExam.prescription.treatments.filter((t: any) => PHYSIO_RETIRED_TREATMENT_TYPES.includes(t?.treatmentType))
+        .map((t: any) => `${t.treatmentType} (${Number(t.sessionCount) || 0})`)
     : [];
 
   useEffect(() => {
@@ -106,6 +111,11 @@ export function PhysioPricingDialog({ patient, open, onOpenChange }: {
             بعد فحص الطبيب: اختر أنواع العلاج وعدد الجلسات — الكلفة تُحسب تلقائياً ({physioPriceListText()}).
           </p>
 
+          {retiredInRx.length > 0 && (
+            <p className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-md px-3 py-2" data-testid="physio-retired-rx">
+              في وصفة الطبيب «{retiredInRx.join("، ")}» — هذا النوع لم يعد يُباع (التمرينُ والأجهزةُ منفصلان). أضِف بدله «تمارين تأهيلية» أو «أجهزة علاج طبيعي».
+            </p>
+          )}
           {rxExam?.doctorName && prescribed.length > 0 && (
             <p className="text-xs text-teal-900 bg-teal-50/60 border border-teal-300 rounded-md px-3 py-2 flex gap-2">
               <Stethoscope className="w-4 h-4 shrink-0 mt-0.5" />

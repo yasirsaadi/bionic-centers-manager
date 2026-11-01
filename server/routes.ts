@@ -12,7 +12,7 @@ import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { PHYSIO_TREATMENT_TYPES, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
+import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, retiredPhysioTypesIn, RETIRED_TYPE_ERROR, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
@@ -392,6 +392,19 @@ function summarizePaymentSessions(
     else byType.set(type, { treatmentType: type || null, sessionCount: n });
   }
   return Array.from(byType.values());
+}
+
+/**
+ * **أيملك المريضُ هذه الأنواعَ المتقاعدة؟** (§4.fx) — في خطّته المحفوظة أو في دفعةٍ له قبل اليوم. فدفعةُ صاحبها تُسجَّل وتُعدَّل،
+ * ولا تُفتح لغيره: مراجعةٌ مستقلّة وجدت بابَ الدفعة يقبل «تمارين مع أجهزة» (هديّةً تدخل الخطّة) لمريضٍ لم يشترِها قطّ.
+ */
+async function patientOwnsPhysioTypes(patientId: number, types: string[]): Promise<boolean> {
+  if (types.length === 0) return true;
+  const p: any = (await storage.getPatient(patientId)) ?? (await (storage as any).getPatientAnyState?.(patientId));
+  const plan: any[] = Array.isArray(p?.physioPlan) ? p.physioPlan : [];
+  const pays = await storage.getPaymentsByPatientId(patientId);
+  return types.every((t) => plan.some((e) => String(e?.treatmentType ?? "").trim() === t)
+    || pays.some((x: any) => retiredPhysioTypesIn(x.paymentTreatmentType).includes(t)));
 }
 
 export async function registerRoutes(
@@ -4036,12 +4049,16 @@ export async function registerRoutes(
       }
 
       const raw = Array.isArray(req.body?.entries) ? req.body.entries : [];
+      //  **النوعُ المتقاعد يبقى لمن كان في خطّته** (§4.fx): تعديلُ خطّة مريضٍ اشترى «تمارين مع أجهزة» لا يُسقط سطرَه بصمت،
+      //  ولا يضيفه لمن لم يكن له — فهو لا يُباع بعد اليوم.
+      const ownRetired = new Set((Array.isArray(patient.physioPlan) ? patient.physioPlan as any[] : [])
+        .map((e: any) => String(e?.treatmentType || "").trim()).filter((t: string) => PHYSIO_RETIRED_TREATMENT_TYPES.includes(t)));
       const cleaned = raw
         .map((e: any) => ({
           treatmentType: String(e?.treatmentType || "").trim(),
           sessionCount: Math.max(0, Math.floor(Number(e?.sessionCount) || 0)),
         }))
-        .filter((e: any) => PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) && e.sessionCount > 0);
+        .filter((e: any) => (PHYSIO_TREATMENT_TYPES.includes(e.treatmentType) || ownRetired.has(e.treatmentType)) && e.sessionCount > 0);
       // Replace, don't merge: this dialog shows the current plan and saves what
       // the user sees, so merging would silently double what they just edited.
       const plan = mergePhysioPlan(null, cleaned);
@@ -4745,6 +4762,11 @@ export async function registerRoutes(
     const taggedType = entriesArray.length > 0
       ? entriesArray.map((e: any) => e?.treatmentType).filter(Boolean).join("، ")
       : (input as any).paymentTreatmentType;
+    //  **النوعُ المتقاعد لا يُباع من هذا الباب** (§4.fx) — إلّا دفعةً لمن اشتراه قبل اليوم.
+    const retiredTagged = retiredPhysioTypesIn(taggedType);
+    if (retiredTagged.length > 0 && !(await patientOwnsPhysioTypes(Number((input as any).patientId), retiredTagged))) {
+      return res.status(400).json({ message: RETIRED_TYPE_ERROR(retiredTagged[0]) });
+    }
     const deviceService = deviceServiceOfPaymentType(taggedType);
     if (deviceService === "mixed") {
       return res.status(400).json({
@@ -5101,6 +5123,14 @@ export async function registerRoutes(
       // نفسُ حارس إسناد الجهاز القائم — يُفحَص دائماً، محمياً كان التغييرُ
       // أم لا (بلا أثرٍ إن لم يُلمَس `paymentTreatmentType` فعلاً).
       assertDeviceAttributionCompatible(beforeEdit, diff.changed);
+      //  **ولا يُعاد وسمُ دفعةٍ إلى نوعٍ متقاعد لم يشترِه صاحبُها** (§4.fx).
+      if (diff.changed.paymentTreatmentType !== undefined) {
+        const before = retiredPhysioTypesIn(beforeEdit.paymentTreatmentType);
+        const added = retiredPhysioTypesIn(diff.changed.paymentTreatmentType as any).filter((t) => !before.includes(t));
+        if (added.length > 0 && !(await patientOwnsPhysioTypes(beforeEdit.patientId, added))) {
+          return res.status(400).json({ message: RETIRED_TYPE_ERROR(added[0]) });
+        }
+      }
 
       if (!diff.touchesProtected) {
         // ══ مباشرٌ وفوريّ — بلا سببٍ، بلا طلب، وبلا لمسِ القيد إطلاقاً ═════

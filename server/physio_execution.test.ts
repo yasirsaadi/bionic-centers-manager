@@ -49,6 +49,9 @@ async function cleanup() {
   await q(`DELETE FROM physio_plans WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM visits WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_branch_access WHERE patient_id = ANY($1::int[])`, [pts]);
+  //  «الكلفة والجلسات» (ي.٨) يكتب قيدَ الكلفة.
+  await q(`DELETE FROM cost_entries WHERE patient_id = ANY($1::int[])`, [pts]);
+  await q(`DELETE FROM payments WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM session_counts WHERE daily_session_id IN (SELECT id FROM daily_sessions WHERE branch_id = ANY($1::int[]))`, [[B1, B2]]);
@@ -274,6 +277,46 @@ async function main() {
     await q(`UPDATE patients SET physio_plan = $2::jsonb WHERE id = $1`, [pt2, JSON.stringify([{ treatmentType: "تمارين CP للأطفال", sessionCount: 24 }])]);
     same("ي.٥ ومَن اشترى «تمارين CP للأطفال» وحدها: التمرينُ والجهازُ ⟵ «تمارين CP للأطفال»", [await exec2(true, false), await exec2(true, true)],
       ["تمارين CP للأطفال", "تمارين CP للأطفال"]);
+
+    //  §4.fx — «تمارين مع أجهزة» تقاعدت: لا تُباع ولا تُضاف، وسطرُها القديم يبقى لصاحبه.
+    console.log("\n── ي٢. «تمارين مع أجهزة» متقاعدة — والإبرُ ٣٥٬٠٠٠ (§4.fx) ──");
+    const planOf = async (id: number) => (await q(`SELECT physio_plan FROM patients WHERE id = $1`, [id])).rows[0]?.physio_plan;
+    await q(`UPDATE patients SET physio_plan = $2::jsonb WHERE id = $1`,
+      [pt2, JSON.stringify([{ treatmentType: "تمارين مع أجهزة", sessionCount: 12 }, { treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }])]);
+    const keep = await call("PUT", `/api/patients/${pt2}/physio-plan`, S.admin,
+      { entries: [{ treatmentType: "تمارين مع أجهزة", sessionCount: 10 }, { treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }] });
+    same("ي.٦ **تعديلُ خطّة مَن اشتراها يُبقي سطرَها** (لا يُسقط بصمت)",
+      [keep.status, ((await planOf(pt2)) ?? []).map((e: any) => [e.treatmentType, e.sessionCount])],
+      [200, [["تمارين مع أجهزة", 10], ["أجهزة علاج طبيعي", 6]]]);
+    const pt3 = (await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, physio_plan, treatment_type, total_cost)
+                          VALUES ($1, '07701234569', $2, '30', 'physio', $3, true, $4::jsonb, 'أجهزة علاج طبيعي (6 جلسات)', 210000) RETURNING id`,
+      [`مراجع ${MARK}`, MARK, B1, JSON.stringify([{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }])])).rows[0].id;
+    await q(`INSERT INTO patient_cases (patient_id, case_type, cost) VALUES ($1, 'physiotherapy', 210000)`, [pt3]);
+    await call("PUT", `/api/patients/${pt3}/physio-plan`, S.admin,
+      { entries: [{ treatmentType: "أجهزة علاج طبيعي", sessionCount: 6 }, { treatmentType: "تمارين مع أجهزة", sessionCount: 5 }] });
+    same("ي.٧ **ولا تُضاف لمن لم يشترِها**", ((await planOf(pt3)) ?? []).map((e: any) => [e.treatmentType, e.sessionCount]), [["أجهزة علاج طبيعي", 6]]);
+    const costOf = async (id: number) => Number((await q(`SELECT total_cost FROM patients WHERE id = $1`, [id])).rows[0]?.total_cost ?? 0);
+    const c0 = await costOf(pt3);
+    const sellCombo = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin, { entries: [{ treatmentType: "تمارين مع أجهزة", sessionCount: 5 }] });
+    const c1 = await costOf(pt3);
+    const sellNeedles = await call("POST", `/api/patients/${pt3}/price-physio`, S.admin, { entries: [{ treatmentType: "أبر صينية", sessionCount: 10 }] });
+    same("ي.٨ **ولا تُباع** (٤٠٠ بلا كلفة)، **والإبرُ الصينية ٣٥٬٠٠٠ للجلسة** (١٠ ⟵ ٣٥٠٬٠٠٠)",
+      [sellCombo.status, c1 - c0, sellNeedles.status, (await costOf(pt3)) - c1], [400, 0, 200, 350000]);
+    //  ومن بابِ الدفعة (مراجعةٌ مستقلّة): هديّةٌ أو دفعةٌ بالنوع المتقاعد لمن لم يشترِه ⟵ ٤٠٠ ولا تدخل خطّتَه؛ ولصاحبه تُقبل.
+    const gift = (pid: number, type: string) => call("POST", "/api/payments", S.admin, {
+      patientId: pid, branchId: B1, amount: 0, paymentMethod: "cash", paymentTreatmentType: type, sessionCount: 2,
+      treatmentEntries: [{ treatmentType: type, sessionCount: 2, cost: 0, isFree: true }],
+    });
+    const planBefore = JSON.stringify(await planOf(pt3));
+    const giftOther = await gift(pt3, "تمارين مع أجهزة");
+    const planAfter = JSON.stringify(await planOf(pt3));
+    const giftOwner = await gift(pt2, "تمارين مع أجهزة");
+    const okGift = await gift(pt3, "أجهزة علاج طبيعي");
+    const giftId = (await q(`SELECT id FROM payments WHERE patient_id = $1 ORDER BY id DESC LIMIT 1`, [pt3])).rows[0]?.id;
+    const editor = hdr({ userId: ADMIN, displayName: "المسؤول", role: "admin", branchId: B1, isAdmin: true, permissions: { canEditPayments: true } });
+    const retag = await call("PATCH", `/api/payments/${giftId}`, editor, { paymentTreatmentType: "تمارين مع أجهزة", reason: "اختبار" });
+    same("ي.٩ **بابُ الدفعة لا يبيعها لمن لم يشترِها** (هديّةٌ ⟵ ٤٠٠ والخطّةُ كما هي، وإعادةُ الوسم ⟵ ٤٠٠)، **ولصاحبها تُقبل**",
+      [giftOther.status, planAfter === planBefore, retag.status, giftOwner.status, okGift.status], [400, true, 400, 201, 201]);
 
     console.log("\n── ح. لا حذفَ لخطّةٍ لها جلسات ──");
     same("ح.١ ⟵ ٤٠٩", (await call("DELETE", `/api/physio/plans/${plan}`, S.admin)).status, 409);

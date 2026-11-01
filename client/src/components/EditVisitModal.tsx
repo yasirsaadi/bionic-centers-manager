@@ -1,3 +1,4 @@
+import { PHYSIO_RETIRED_TREATMENT_TYPES } from "@shared/pricing";
 import { useForm } from "react-hook-form";
 import { PatientVisibleBadge } from "@/components/patient/PatientVisibleBadge";
 import { useUpdateVisit } from "@/hooks/use-patients";
@@ -69,6 +70,7 @@ const TREATMENT_TYPE_OPTIONS = [
   { value: "روبوت", labelKey: "robot" as const },
   { value: "تمارين تأهيلية", labelKey: "rehabExercises" as const },
   { value: "أجهزة علاج طبيعي", labelKey: "physioDevices" as const },
+  //  متقاعدٌ (§4.fx) — يظهر لزيارةٍ قديمةٍ هو نوعُها وحدها.
   { value: "تمارين مع أجهزة", labelKey: "exercisesWithDevices" as const },
   { value: "تمارين CP للأطفال", labelKey: "cpChildExercises" as const },
   { value: "أبر صينية", labelKey: "acupuncture" as const },
@@ -208,7 +210,7 @@ export function EditVisitModal({ visit, patientId, open, onOpenChange, isAdmin, 
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {TREATMENT_TYPE_OPTIONS.map((opt) => (
+                      {TREATMENT_TYPE_OPTIONS.filter((opt) => !PHYSIO_RETIRED_TREATMENT_TYPES.includes(opt.value) || opt.value === field.value).map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {t.modals[opt.labelKey]}
                         </SelectItem>
