@@ -11,7 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { weatherFxFor, weatherGreetingLine, type WeatherFx } from "@shared/weather_greeting_fx";
-import { useBranchWeather } from "@/components/ClockWeather";
+import { useBranchWeatherState } from "@/components/ClockWeather";
 import { WeatherFxLayer, prefersReducedMotion } from "@/components/WeatherFxLayer";
 
 /** ما رُئي في هذه الصفحة — احتياطُ `localStorage` حين لا يُكتب. */
@@ -66,7 +66,16 @@ export function DailyGreeting() {
   const g = q.data;
   //  **مؤثّرُ الطقس مع التحيّة** (§4.fw): طقسُ مدينة الفرع من شريحتها (الاستعلامُ نفسُه — لا طلبَ جديد)، ممطرٌ أو مغبرٌّ فعلاً ⟵ سطرٌ في التحيّة
   //  ومعه سبعُ ثوانٍ من القطرات أو الغبار. والمسؤولُ يطفئه للجميع (`weatherFx: false`).
-  const weather = useBranchWeather();
+  const { weather, settled: weatherSettled } = useBranchWeatherState();
+  //  **«حسناً» تنتظر أوّلَ جوابٍ للطقس** (مراجعةُ Codex): التحيّةُ والطقسُ يُطلبان معاً، فـ«حسناً» قبل وصول الطقس كانت تُغلق التحيّةَ
+  //  ويضيع مطرُ اليوم. وحدُّ الانتظار ٤ ثوانٍ — طقسٌ بطيءٌ أو معطّل لا يحبس الموظّف.
+  const [weatherWaitOver, setWeatherWaitOver] = useState(false);
+  useEffect(() => {
+    if (weatherSettled) return;
+    const t = setTimeout(() => setWeatherWaitOver(true), 4000);
+    return () => clearTimeout(t);
+  }, [weatherSettled]);
+  const waitingForWeather = !weatherSettled && !weatherWaitOver;
   const fx: WeatherFx | null = g && g.show && g.kind === "greeting" && g.weatherFx !== false ? weatherFxFor(weather?.kind) : null;
   const [playing, setPlaying] = useState<WeatherFx | null>(null);
   useEffect(() => {
@@ -119,7 +128,7 @@ export function DailyGreeting() {
               <p className={`mx-auto rounded-lg px-3 py-2 text-[15px] font-semibold ${fx === "dust" || fx === "storm" ? "bg-amber-50 text-amber-800" : "bg-sky-50 text-sky-800"}`}
                 data-testid="daily-greeting-weather">{weatherGreetingLine(fx, weather.city)}</p>
             )}
-            <Button className="mx-auto min-w-32" disabled={seen.isPending} onClick={() => done()} data-testid="daily-greeting-ok">
+            <Button className="mx-auto min-w-32" disabled={seen.isPending || waitingForWeather} onClick={() => done()} data-testid="daily-greeting-ok">
               {failed ? "حاول ثانيةً" : "حسناً"}
             </Button>
             {failure}

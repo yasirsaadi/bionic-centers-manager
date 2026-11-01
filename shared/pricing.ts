@@ -61,6 +61,17 @@ export function retiredPhysioTypesIn(tag: string | null | undefined): string[] {
   return Array.from(new Set(parts.filter((x) => PHYSIO_RETIRED_TREATMENT_TYPES.includes(x))));
 }
 
+/** **أوّلُ نوعٍ متقاعد في بنود طلبِ بيع** (§4.fx — مراجعةُ Codex): البابُ يردّ الطلبَ كلَّه بها قبل أيّ تصفية،
+ * فنافذةٌ قديمة ترسل «روبوت» و«تمارين مع أجهزة» لا تنجح ببيع نصفِ ما اختاره الموظّف. */
+export function retiredTypeInEntries(entries: unknown): string | null {
+  if (!Array.isArray(entries)) return null;
+  for (const e of entries) {
+    const t = String((e as any)?.treatmentType ?? "").trim();
+    if (PHYSIO_RETIRED_TREATMENT_TYPES.includes(t)) return t;
+  }
+  return null;
+}
+
 export const RETIRED_TYPE_ERROR = (t: string) =>
   `«${t}» لم تعد تُباع (التمرينُ والأجهزةُ منفصلان) — اختر «تمارين تأهيلية» أو «أجهزة علاج طبيعي»`;
 

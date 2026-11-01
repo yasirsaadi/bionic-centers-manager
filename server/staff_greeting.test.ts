@@ -287,6 +287,10 @@ async function main() {
       [off.status, off.json?.weatherFx, gOff?.weatherFx, gOff?.text === gOn?.text, adminView?.weatherFx, a1 - a0, a2 - a1,
         JSON.parse(lastAudit?.old_values ?? "{}").weatherFx, JSON.parse(lastAudit?.new_values ?? "{}").weatherFx],
       [200, false, false, true, false, 1, 0, true, false]);
+    const putOff = (await call("PUT", "/api/admin/greeting", S.admin, { phrases: ["عبارةٌ للاختبار"] })).json;
+    const keepOff = (await call("POST", "/api/admin/greeting/keep", S.admin)).json;
+    same("ط.٦ب **وحفظُ العبارات و«أبقِها» يحملان المفتاحَ كما هو** (مراجعةُ Codex — كانت البطاقةُ تقرأ غيابَه «مفعّلاً»)",
+      [putOff?.weatherFx, keepOff?.weatherFx], [false, false]);
     await call("PUT", "/api/admin/greeting/weather-fx", S.admin, { enabled: true });
     same("ط.٧ **وإعادتُه تعيده**", (await call("GET", "/api/greeting", S.zahraa)).json?.weatherFx, true);
   } finally {

@@ -43,7 +43,8 @@ export default function StaffGreetingsCard() {
   }, [q.data]);
   const newerElsewhere = Boolean(q.data && base && dirty && !same(q.data.phrases, base));
   const done = (c: Config, title: string) => {
-    qc.setQueryData(["/api/admin/greeting"], c);
+    //  ويبقى المفتاحُ على ما كان إن غاب عن الجواب (مراجعةُ Codex).
+    qc.setQueryData<Config>(["/api/admin/greeting"], (old) => ({ ...c, weatherFx: c.weatherFx ?? old?.weatherFx }));
     qc.invalidateQueries({ queryKey: ["/api/greeting"] });
     setRows([...c.phrases]);
     setBase([...c.phrases]);

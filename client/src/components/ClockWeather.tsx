@@ -52,8 +52,13 @@ export function useMinuteNow(): number {
 export const WEATHER_REFETCH_MS = 10 * 60_000;
 
 export function useBranchWeather(): WeatherNow | null {
+  return useBranchWeatherState().weather;
+}
+
+/** الطقسُ **وهل استقرّ أوّلُ جوابٍ له** (نجح أو فشل) — تحيّةُ الصباح تنتظره كي لا يفوتها مطرُ اليوم (§4.fw). */
+export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean } {
   const session = useBranchSession();
-  const { data } = useQuery<{ weather: WeatherNow | null }>({
+  const { data, isFetched, isError } = useQuery<{ weather: WeatherNow | null }>({
     queryKey: ["/api/weather", session?.branchId ?? null],
     enabled: !!session,
     refetchInterval: WEATHER_REFETCH_MS,
@@ -64,7 +69,7 @@ export function useBranchWeather(): WeatherNow | null {
       return res.json();
     },
   });
-  return data?.weather ?? null;
+  return { weather: data?.weather ?? null, settled: isFetched || isError };
 }
 
 const ICONS: Record<WeatherKind, { day: typeof Sun; night?: typeof Sun; tone: string; nightTone?: string }> = {
