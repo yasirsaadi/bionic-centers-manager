@@ -6,7 +6,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { accessibleBranchesOf } from "../auth/session_refresh";
-import { staffEventDef, eligibleStaffEvents } from "@shared/staff_notifications";
+import { staffEventDef, staffEventDeliverable } from "@shared/staff_notifications";
 import { staffBotConfig } from "./config";
 import { appUrl } from "./config";
 import { sendStaffMessage } from "./client";
@@ -39,8 +39,10 @@ export async function resolveStaffRecipients(row: Pick<OutboxRow,
   for (const u of r.rows as any[]) {
     const id = Number(u.id);
     //  **ودورُه يحقّ له النوعَ اليوم** — اختيارٌ قديمٌ قبل تغيّر الدور لا يُرسَل.
-    if (!eligibleStaffEvents({ role: String(u.role), extraRoles: u.extra_roles, canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert, canSupervisePhysio: u.can_supervise_physio })
-      .includes(row.event_type)) continue;
+    //  إلّا ردّاً موجَّهاً على طلبٍ قدّمه — يصله ولو تغيّر دورُه بعد الطلب (`REQUESTER_REPLY_EVENTS`، §4.fy).
+    const targeted = Boolean(row.target_user_ids && row.target_user_ids.length > 0);
+    if (!staffEventDeliverable({ role: String(u.role), extraRoles: u.extra_roles, canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert, canSupervisePhysio: u.can_supervise_physio },
+      row.event_type, targeted)) continue;
     if (row.exclude_user_id && id === Number(row.exclude_user_id)) continue;
     if (row.target_user_ids && row.target_user_ids.length > 0) {
       if (!row.target_user_ids.map(Number).includes(id)) continue;

@@ -12,6 +12,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { resolveStaffRecipients } from "./staff_telegram/dispatcher";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { eligibleStaffEvents } from "@shared/staff_notifications";
 import { amountInArabicWords, canRequestReserveWithdrawal } from "@shared/reserve_withdrawals";
@@ -248,6 +249,16 @@ async function main() {
       ["admin", "accountant", "branch_manager", "reception"].map((role) => [
         eligibleStaffEvents({ role }).includes("reserve_withdrawal_pending"), eligibleStaffEvents({ role }).includes("reserve_withdrawal_decided")]),
       [[true, true], [false, true], [false, true], [false, false]]);
+    //  مراجعةُ Codex على #698: الطالبُ صار استقبالاً قبل القرار — ردُّ طلبه يصله، وغيرُ الموجَّه لا يتجاوز الدور.
+    await q(`INSERT INTO staff_telegram_links (user_id, chat_id) VALUES ($1, 'rw-test-chat') ON CONFLICT (user_id) DO UPDATE SET chat_id = EXCLUDED.chat_id`, [ACC]);
+    await q(`INSERT INTO staff_notification_prefs (user_id, event_type) VALUES ($1, 'reserve_withdrawal_decided'), ($1, 'money_correction_pending') ON CONFLICT DO NOTHING`, [ACC]);
+    await q(`UPDATE system_users SET role = 'reception' WHERE id = $1`, [ACC]);
+    const toAcc = async (event: string, targets: number[] | null) => (await resolveStaffRecipients({ event_type: event, branch_id: BG, target_user_ids: targets, exclude_user_id: null, specialty: null }))
+      .map((r) => r.userId).includes(ACC);
+    same("و٣. **ردُّ الطلب يصل صاحبَه ولو تغيّر دورُه** — والنوعُ غيرُ الموجَّه يبقى بالدور",
+      [await toAcc("reserve_withdrawal_decided", [ACC]), await toAcc("money_correction_pending", null)], [true, false]);
+    await q(`UPDATE system_users SET role = 'accountant' WHERE id = $1`, [ACC]);
+    await q(`DELETE FROM staff_telegram_links WHERE user_id = $1`, [ACC]);
   } finally {
     await cleanup();
     httpServer.close();
