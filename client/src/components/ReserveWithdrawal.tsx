@@ -234,8 +234,17 @@ export function ReserveWithdrawalsSection({ status }: { status: "pending" | "app
     queryFn: async () => (await apiRequest("GET", `/api/reserve-withdrawals?status=${status}`)).json(),
   });
   const rows = q.data ?? [];
+  //  القسمُ الثالث في الصفحة: ما فوقه يُحمَّل معه فيدفعه — فالنزولُ يُعاد حتى يستقرّ ما فوقه (ثانيتان)، ويتوقّف إن حرّك المستخدمُ الصفحة.
   useEffect(() => {
-    if (q.isSuccess && window.location.hash === "#withdrawals") ref.current?.scrollIntoView({ block: "start" });
+    if (!q.isSuccess || window.location.hash !== "#withdrawals") return;
+    let stopped = false;
+    const stop = () => { stopped = true; };
+    const go = () => { if (!stopped) ref.current?.scrollIntoView({ block: "start" }); };
+    go();
+    const timers = [300, 800, 1500, 2200].map((ms) => window.setTimeout(go, ms));
+    window.addEventListener("wheel", stop, { once: true, passive: true });
+    window.addEventListener("touchstart", stop, { once: true, passive: true });
+    return () => { timers.forEach(clearTimeout); window.removeEventListener("wheel", stop); window.removeEventListener("touchstart", stop); };
   }, [q.isSuccess]);
   return (
     <section id="withdrawals" ref={ref} className="space-y-2 scroll-mt-20" data-testid="withdrawals-section">

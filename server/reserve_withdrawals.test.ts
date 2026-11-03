@@ -181,6 +181,14 @@ async function main() {
     const payrollCard = all.body?.find((r: any) => r.reserve === "payroll");
     same("ج٢. **المبلغُ فوق الرصيد يُقبل ويُوسم** (قرارُ المالك) — ٢٬٥٠٠٬٠٠٠ من ٢٬٠٠٠٬٠٠٠",
       [payrollCard?.exceeds, payrollCard?.balanceAfter, payrollCard?.amountWords], [true, -500_000, "مليونان وخمسمئة ألف دينار"]);
+    //  طلبُ المحاسب على بغداد، ثمّ صار فرعُه النشط ذي قار، أو صار استقبالاً — لا يقرأ طلبَه ولا رصيدَ قاصة بغداد.
+    //  الجلسةُ تُحدَّث من صفّ الحساب في كلّ طلب — فالتغييرُ في الصفّ نفسِه.
+    await q(`UPDATE system_users SET branch_ids = $2::jsonb WHERE id = $1`, [ACC, JSON.stringify([BG, DQ])]);
+    const inDq = await http("GET", "/api/reserve-withdrawals", { ...S.acc, branchId: DQ, accessibleBranches: [BG, DQ] });
+    await q(`UPDATE system_users SET branch_ids = $2::jsonb, role = 'reception' WHERE id = $1`, [ACC, JSON.stringify([BG])]);
+    const asRecv = await http("GET", "/api/reserve-withdrawals", { ...S.acc, role: "reception" });
+    await q(`UPDATE system_users SET role = 'accountant' WHERE id = $1`, [ACC]);
+    same("ج١ب. **غيرُ المسؤول في فرعه النشط وحده ومَن يكتب الدفترَ وحده**", [inDq.status, inDq.body?.length, asRecv.status], [200, 0, 403]);
     same("ج٣. **العدّادُ للمسؤول وحده**",
       [(await http("GET", "/api/reserve-withdrawals/pending-count", S.admin)).body?.count, (await http("GET", "/api/reserve-withdrawals/pending-count", S.acc)).status], [2, 403]);
     const sh = await sheet(S.acc2);

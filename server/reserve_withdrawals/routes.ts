@@ -117,11 +117,12 @@ export function registerReserveWithdrawalRoutes(app: Express, isAuthenticated: a
     const s = getSession(req) ?? {};
     const status = ["pending", "approved", "rejected"].includes(String(req.query.status)) ? String(req.query.status) : null;
     const branchQ = Number(req.query.branchId);
+    //  غيرُ المسؤول: مَن يكتب الدفترَ وحده، وطلباتُه هو **في فرعه النشط وحده** (§4.ay، كطلبات التصحيح) — فلا يقرأ رصيدَ قاصة فرعٍ أُخرج منه.
+    if (!s.isAdmin && !canWriteCashBook(s)) return res.status(403).json({ error: "دفتر القاصة للمحاسب ومدير الفرع والمسؤول" });
     try {
       const rows = await store.listRequests({
         status,
-        branchId: s.isAdmin && Number.isInteger(branchQ) && branchQ > 0 ? branchQ : null,
-        //  غيرُ المسؤول يرى طلباتِه هو وحده.
+        branchId: s.isAdmin ? (Number.isInteger(branchQ) && branchQ > 0 ? branchQ : null) : (Number(s.branchId) || -1),
         requestedBy: s.isAdmin ? null : (s.userId ?? -1),
         limit: 200,
       });
