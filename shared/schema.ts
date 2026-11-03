@@ -1095,6 +1095,32 @@ export const moneyCorrectionRequests = pgTable("money_correction_requests", {
   index("ix_mcr_status").on(t.status, t.branchId),
 ]);
 
+// **طلبُ سحبٍ من قاصة المواد أو قاصة الرواتب والإيجار** (ترحيل ١٨٩، §4.fy) — يطلبه حاملُ المفتاح، ويعتمده المسؤولُ فيُكتب
+// سطرُ السحب نفسُه (`entry_id`) بيوم الاعتماد، أو يرفضه فلا يتغيّر شيء.
+export const reserveWithdrawalRequests = pgTable("reserve_withdrawal_requests", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  book: text("book").notNull(),
+  reserve: text("reserve").notNull(), // materials | payroll
+  amount: integer("amount").notNull(),
+  purpose: text("purpose").notNull(),
+  /** رصيدُ القاصة لحظةَ الطلب — للعلم؛ والبطاقةُ تعرض الرصيدَ الحاليّ. */
+  balanceAtRequest: integer("balance_at_request"),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  /** سطرُ السحب الذي كتبه الاعتماد في `cash_book_entries`. */
+  entryId: integer("entry_id"),
+}, (t) => [
+  uniqueIndex("uq_rwr_one_pending").on(t.branchId, t.book, t.reserve).where(sql`status = 'pending'`),
+  index("ix_rwr_status").on(t.status, t.branchId),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and
@@ -1995,6 +2021,8 @@ export const systemUsers = pgTable("system_users", {
   canDryNeedle: boolean("can_dry_needle").notNull().default(false),
   /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — يشعله المسؤولُ لموظّفٍ بعينه؛ بلاه المسؤولُ العام وحده. */
   canBackdateVisits: boolean("can_backdate_visits").notNull().default(false),
+  /** «طلب سحب من القاصات» (ترحيل ١٨٩، §4.fy) — يطلب السحبَ من قاصة المواد أو قاصة الرواتب والإيجار، ولا يُنفَّذ حتى يعتمده المسؤول. لا يمنحه دور. */
+  canRequestReserveWithdrawal: boolean("can_request_reserve_withdrawal").notNull().default(false),
   // Which specialties this doctor may sign for: a subset of
   // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
   // so granting the flag without a specialty is a no-op by design.

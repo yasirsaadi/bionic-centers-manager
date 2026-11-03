@@ -60,6 +60,7 @@ import { registerFollowupRoutes } from "./followup/routes";
 import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
+import { registerReserveWithdrawalRoutes, enableDecidedNotice } from "./reserve_withdrawals/routes";
 import { registerInstallmentRoutes } from "./installments/routes";
 import { createPlanFromPaymentsTx, InstallmentError } from "./installments/store";
 import { parseInstallmentInput, type InstallmentInput } from "@shared/installments";
@@ -345,6 +346,8 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canDryNeedle: Boolean(systemUser.canDryNeedle),
     //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — مفتاحٌ مخزَّن لموظّفٍ بعينه، لا يمنحه دور؛ والمسؤولُ بسلطته.
     canBackdateVisits: isAdminRow || Boolean(systemUser.canBackdateVisits),
+    //  «طلب سحب من القاصات» (§4.fy) — مفتاحٌ مخزَّن لا يمنحه دور؛ والمسؤولُ يسحب مباشرةً فلا يطلب.
+    canRequestReserveWithdrawal: !isAdminRow && Boolean(systemUser.canRequestReserveWithdrawal),
   };
 }
 
@@ -1435,8 +1438,8 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
-      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits"] as const) {
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1511,6 +1514,9 @@ export async function registerRoutes(
         userAgent: req.get("user-agent"),
         notes: `إنشاءُ حساب الموظّف «${user.username}»`,
       });
+      if (user.canRequestReserveWithdrawal) {
+        await enableDecidedNotice(user.id).catch((e) => console.error("[reserve-withdrawals] notice pref failed:", e));
+      }
 
       res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
     } catch (err) {
@@ -1592,8 +1598,8 @@ export async function registerRoutes(
         userData.canApproveDiscount =
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
-      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits"] as const) {
+      // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1670,6 +1676,11 @@ export async function registerRoutes(
       const user = await storage.updateSystemUser(id, updateData);
       if (!user) {
         return res.status(404).json({ message: "المستخدم غير موجود" });
+      }
+
+      //  مفتاحُ «طلب سحب من القاصات» يُشعَل الآن ⟵ تنبيهُ قرار طلبه يُفعَّل مرّةً (§4.fy).
+      if (!before?.canRequestReserveWithdrawal && user.canRequestReserveWithdrawal) {
+        await enableDecidedNotice(id).catch((e) => console.error("[reserve-withdrawals] notice pref failed:", e));
       }
 
       const diff = userAuditDiff(before as any, user as any);
@@ -9113,6 +9124,7 @@ export async function registerRoutes(
   //  دفترُ القاصة اليوميّ (§4.ca).
   registerCashBookRoutes(app, isAuthenticated);
   registerMoneyCorrectionRoutes(app, isAuthenticated);
+  registerReserveWithdrawalRoutes(app, isAuthenticated);
   registerInstallmentRoutes(app, isAuthenticated);
   registerPhysioProtocolRoutes(app, isAuthenticated);
   registerPhysioPlanRoutes(app, isAuthenticated);

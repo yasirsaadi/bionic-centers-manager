@@ -2730,6 +2730,7 @@ export default function AdminSettings() {
     canDryNeedle: false,
     //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — كالإبر الجافة: خارجَ قوالب الأدوار، فتبديلُ الدور لا يشعله ولا يطفئه.
     canBackdateVisits: false,
+    canRequestReserveWithdrawal: false,
     medicalSpecialties: [] as string[],
     language: "ar",
   });
@@ -2956,6 +2957,7 @@ export default function AdminSettings() {
       canSupervisePhysio: false,
       canDryNeedle: false,
       canBackdateVisits: false,
+      canRequestReserveWithdrawal: false,
       medicalSpecialties: [] as string[],
       language: "ar",
     });
@@ -3012,6 +3014,7 @@ export default function AdminSettings() {
       canSupervisePhysio: (user as any).canSupervisePhysio ?? false,
       canDryNeedle: (user as any).canDryNeedle ?? false,
       canBackdateVisits: (user as any).canBackdateVisits ?? false,
+      canRequestReserveWithdrawal: (user as any).canRequestReserveWithdrawal ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
         ? ((user as any).medicalSpecialties as string[])
         : [],
@@ -4441,6 +4444,21 @@ export default function AdminSettings() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         بلا هذا المفتاح يسجّل الموظف الزيارة أو يعدّل تاريخها حتى ٣ أيام قبل اليوم فقط، وما هو أقدم للمسؤول العام.
+                      </p>
+                    </div>
+                    {/* «طلب سحب من القاصات» (ترحيل ١٨٩، §4.fy) — يطلب ولا يسحب: السحبُ يُكتب بعد اعتماد المسؤول. */}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="canRequestReserveWithdrawal"
+                          checked={userFormData.canRequestReserveWithdrawal}
+                          onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canRequestReserveWithdrawal: checked }))}
+                          data-testid="switch-canRequestReserveWithdrawal"
+                        />
+                        <Label htmlFor="canRequestReserveWithdrawal" className="text-sm">طلب سحب من القاصات (المواد · الرواتب والإيجار)</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        يظهر له زرّ «طلب سحب» في دفتر القاصة لفرعه، ولا يُسحب شيء حتى تعتمده أنت من «طلبات التصحيح». يعمل لمن يفتح دفتر القاصة (المحاسب ومدير الفرع).
                       </p>
                     </div>
                     {/* Session-tracking module permissions (migration 009).
