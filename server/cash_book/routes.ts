@@ -3,7 +3,8 @@
 //  • الموظّفُ في فرعه النشط وحده (§4.ay)، والمسؤولُ في أيّ فرعٍ يختاره.
 //  • الكتابةُ في اليوم نفسِه وحدَه، والأيامُ الماضيةُ للمسؤول — ولا يومَ قبل الرصيد الافتتاحيّ.
 //  • ونسبتا الدكتور والمستشفى تُحسبان ولا تُكتبان بيد، و«استلام النسبة» للمسؤول وحده.
-//  • والسحبُ من قاصة المواد وقاصة الرواتب والإيجار، ورصيدُ بدايتهما والهدفُ الشهريّ — للمسؤول وحده (§4.dj).
+//  • والسحبُ من قاصة المواد وقاصة الرواتب والإيجار، ورصيدُ بدايتهما والهدفُ الشهريّ — للمسؤول وحده (§4.dj)؛
+//    وحاملُ مفتاح «طلب سحب من القاصات» يطلبه، فيُكتب بعد اعتماد المسؤول (§4.fy — `server/reserve_withdrawals/`).
 //  • وبابا «رواتب» و«إيجارات» تقاعدا: لا مصروفَ جديدٌ بهما ولا يُنقَل إليهما مصروف.
 //  • و«سحب من قاصة الدكتور» يسجّله الفرعُ من دفتره، فيُسحب من قاصة الدكتور لفرعه — لا يمسّ نقدَ القاصة (§4.cb تكملةٌ ثالثة).
 //  • وكلُّ كتابةٍ تكتب سطرَ تدقيق.
@@ -22,6 +23,8 @@ import { addDrBoxExpense, drBoxLinesForDay } from "./dr_box";
 import { sheetFingerprint, lastPrint, recordPrint } from "./prints";
 import { registerDrBoxRoutes } from "./dr_box_routes";
 import { pendingTargets } from "../money_corrections/store";
+import { pendingForBook } from "../reserve_withdrawals/store";
+import { amountInArabicWords, canRequestReserveWithdrawal } from "@shared/reserve_withdrawals";
 
 type Req = any;
 
@@ -111,6 +114,12 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         drBoxLines,
         //  سطورٌ عليها «طلب تصحيح» معلَّق (§4.ce) — «expense:12» و«cash_book_entry:7».
         pendingCorrections: await pendingTargets(g.branchId),
+        //  «طلب سحب من القاصات» (§4.fy): مَن يحمل المفتاحَ يطلب، والمعلَّقُ يظهر تحت مربّع قاصته بانتظار المسؤول.
+        canRequestReserveWithdrawal: canRequestReserveWithdrawal(g.s),
+        pendingReserveWithdrawals: (await pendingForBook(g.branchId, g.book)).map((r) => ({
+          id: r.id, reserve: r.reserve, amount: r.amount, amountWords: amountInArabicWords(r.amount), purpose: r.purpose,
+          requestedByName: r.requestedByName, requestedAt: r.requestedAt, mine: r.requestedBy != null && r.requestedBy === g.s.userId,
+        })),
         lastPrint: printed ? { at: printed.printedAt.toISOString(), by: printed.printedByName ?? null } : null,
         changedAfterPrint: printed ? printed.fingerprint !== sheetFingerprint(sheet, drBoxLines) : false,
       });

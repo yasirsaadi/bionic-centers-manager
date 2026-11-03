@@ -32,6 +32,9 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "payment_correction_pending", label: "طلب تصحيح دفعة ينتظر القرار", group: "المسؤول", scope: "global" },
   //  طلبُ تصحيح مصروفٍ أو سطرِ دفتر (§4.ce التكملة) — كان يظهر في الدفتر وحده فلا يعرف به المالكُ إلّا إن فتحه.
   { key: "money_correction_pending", label: "طلب تصحيح صرف أو سطر في دفتر القاصة ينتظر القرار", group: "المسؤول", scope: "global" },
+  //  طلبُ سحبٍ من قاصة المواد أو قاصة الرواتب والإيجار (§4.fy) — للمسؤول؛ وقرارُه لطالبه وحده.
+  { key: "reserve_withdrawal_pending", label: "طلب سحب من قاصة المواد أو الرواتب والإيجار ينتظر القرار", group: "المسؤول", scope: "global" },
+  { key: "reserve_withdrawal_decided", label: "طلبُه للسحب من القاصات اعتُمد أو رُفض", group: "الاستقبال ومدير الفرع", scope: "targeted" },
   { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل", group: "المسؤول", scope: "branch" },
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
   { key: "evening_summary", label: "ملخّص يومي مسائي لكلّ فرع", group: "المسؤول", scope: "branch", digest: true },
@@ -73,7 +76,9 @@ const DOCTOR_EVENTS = ["exam_request"];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
 const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
-const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "money_correction_pending", "ai_suggestion"];
+const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "money_correction_pending", "reserve_withdrawal_pending", "ai_suggestion"];
+//  قرارُ طلب السحب (§4.fy) — لمَن يكتب دفترَ القاصة (المحاسبُ ومديرُ الفرع)، وهو وحده يطلب.
+const CASH_BOOK_EVENTS = ["reserve_withdrawal_decided"];
 const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
 const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
@@ -88,6 +93,7 @@ export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   //  والمديرُ بلا «طلب معاينة» — «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤)؛ ومَن مُنح كتابةَ المعاينة يصله بالسطر أعلاه.
   if (role("branch_manager")) [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));
   if (role("reception") || role("accountant")) FRONT_DESK_EVENTS.forEach((k) => out.add(k));
+  if (role("branch_manager") || role("accountant")) CASH_BOOK_EVENTS.forEach((k) => out.add(k));
   //  خطّةُ العلاج الطبيعي (§4.cm): المشرفُ العام يعتمد ويكتب؛ والأخصائيُّ يكتب وقد ينفّذ؛ وأدوارُ القسم تنفّذ.
   if (u.canSupervisePhysio) [...PHYSIO_APPROVER_EVENTS, ...PHYSIO_WRITER_EVENTS].forEach((k) => out.add(k));
   if (role("physio_specialist")) [...PHYSIO_WRITER_EVENTS, ...PHYSIO_EXECUTOR_EVENTS].forEach((k) => out.add(k));

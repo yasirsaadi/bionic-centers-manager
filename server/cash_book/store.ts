@@ -380,17 +380,22 @@ export async function setOpening(p: {
   });
 }
 
-export async function addEntry(p: {
+type EntryInput = {
   branchId: number; book: CashBook; day: string; kind: "income_other" | "dr_transfer" | "ratio_received" | "materials_withdrawn" | "payroll_withdrawn";
   amount: number; note: string | null; userId: number | null;
-}) {
-  return await db.transaction(async (tx) => {
-    await lockDay(tx, p.branchId, p.book, p.day);
-    const [row] = await tx.insert(cashBookEntries).values({
-      branchId: p.branchId, book: p.book, entryDate: p.day, kind: p.kind, amount: p.amount, note: p.note, createdBy: p.userId,
-    }).returning();
-    return row;
-  });
+};
+
+/** سطرُ دفترٍ داخل معاملة المُستدعي — بقفل اليوم نفسِه. يكتب به اعتمادُ «طلب سحب من القاصات» (§4.fy) مع حجز الطلب في معاملةٍ واحدة. */
+export async function addEntryTx(tx: any, p: EntryInput) {
+  await lockDay(tx, p.branchId, p.book, p.day);
+  const [row] = await tx.insert(cashBookEntries).values({
+    branchId: p.branchId, book: p.book, entryDate: p.day, kind: p.kind, amount: p.amount, note: p.note, createdBy: p.userId,
+  }).returning();
+  return row as typeof cashBookEntries.$inferSelect;
+}
+
+export async function addEntry(p: EntryInput) {
+  return await db.transaction(async (tx) => addEntryTx(tx, p));
 }
 
 /** مصروفٌ من صفحة الدفتر — صفٌّ في `expenses` بقسم الدفتر وقيدُه، كما تكتبه صفحةُ المحاسبة. */

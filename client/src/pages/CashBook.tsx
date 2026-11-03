@@ -19,6 +19,7 @@ import {
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
+import { RequestWithdrawalDialog, ReserveWithdrawalsPanel } from "@/components/ReserveWithdrawal";
 
 interface Row {
   source: "payment" | "entry" | "expense" | "auto"; id: number; column: "income" | "expense" | "transfer";
@@ -45,6 +46,9 @@ interface Sheet {
   /** آخرُ طباعةٍ لهذه الورقة، وهل تغيّر ما فيها بعدها (§4.ca تكملة). */
   lastPrint?: { at: string; by: string | null } | null;
   changedAfterPrint?: boolean;
+  /** «طلب سحب من القاصات» (§4.fy): هل يطلب صاحبُ الجلسة، والمعلَّقُ على هذا الدفتر. */
+  canRequestReserveWithdrawal?: boolean;
+  pendingReserveWithdrawals?: { id: number; reserve: ReserveKey; amount: number; amountWords: string; purpose: string; requestedByName: string | null; mine: boolean }[];
 }
 
 interface ReserveState {
@@ -182,6 +186,7 @@ export default function CashBook() {
         {!sheet && !q.isError && <p className="text-center text-muted-foreground py-10">جارٍ التحميل…</p>}
         {q.isError && <p className="text-center text-red-600 py-10">{(q.error as Error).message}</p>}
         {session && <CorrectionRequestsPanel isAdmin={isAdmin} />}
+        {session && <ReserveWithdrawalsPanel isAdmin={isAdmin} enabled={isAdmin || Boolean(sheet?.canRequestReserveWithdrawal)} />}
         <div className={q.isPlaceholderData ? "opacity-50 pointer-events-none transition-opacity" : "transition-opacity"}
           aria-busy={q.isPlaceholderData} data-testid="cash-sheet-wrap">
         {sheet && !sheet.opening && (sheet.isAdmin
@@ -514,6 +519,8 @@ function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
 }) {
   const L = RESERVE_LABELS[k];
   const [settings, setSettings] = useState(false);
+  const [ask, setAsk] = useState(false);
+  const pending = (sheet.pendingReserveWithdrawals ?? []).filter((p) => p.reserve === k);
   const tone = k === "materials" ? "border-teal-700 text-teal-800" : "border-indigo-700 text-indigo-800";
   return (
     <div className={`border-4 border-double ${tone.split(" ")[0]} rounded-sm p-3 space-y-2 text-sm`} data-testid={`reserve-box-${k}`}>
@@ -546,6 +553,25 @@ function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
         </ul>
       )}
       {sheet.isAdmin && sheet.canWrite && <WithdrawReserve k={k} branchId={branchId} book={book} day={day} write={write} />}
+      {pending.length > 0 && (
+        <ul className="text-xs space-y-1" data-testid={`reserve-${k}-pending`}>
+          {pending.map((p) => (
+            <li key={p.id} className="rounded border border-amber-300 bg-amber-50 px-2 py-1" data-testid={`reserve-${k}-pending-${p.id}`}>
+              طلب سحب <b className="tabular-nums" dir="ltr">{fmt(p.amount)}</b> — {p.purpose}
+              <span className="block text-amber-800">{p.mine ? "طلبُك" : `من ${p.requestedByName ?? "موظّف"}`} · بانتظار اعتماد المسؤول</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {sheet.canRequestReserveWithdrawal && !sheet.isAdmin && day === sheet.today && (
+        <>
+          <Button size="sm" variant="outline" className="justify-self-start" onClick={() => setAsk(true)} disabled={pending.length > 0}
+            title={pending.length > 0 ? "على هذه القاصة طلبٌ معلَّق — انتظر قرار المسؤول" : undefined} data-testid={`reserve-${k}-request`}>
+            طلب سحب
+          </Button>
+          <RequestWithdrawalDialog reserve={k} branchId={branchId} book={book} balance={box.remaining} open={ask} onClose={() => setAsk(false)} />
+        </>
+      )}
       {sheet.isAdmin && (
         <ReserveSettingsDialog k={k} box={box} start={sheet.reserves!.start} branchId={branchId} book={book} write={write}
           open={settings} onClose={() => setSettings(false)} />

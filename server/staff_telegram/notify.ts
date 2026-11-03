@@ -218,6 +218,47 @@ export function notifyMoneyCorrection(ex: Executor | null | undefined, p: {
 }
 
 /**
+ * **طلبُ سحبٍ من القاصات** (§4.fy) — للمسؤول، داخل معاملة الطلب نفسِه. والنصُّ يقول كلَّ ما يحتاجه القرار: الفرعُ والدفترُ والقاصة،
+ * والمبلغُ رقماً وكلمات، والرصيدُ الآن وبعده، والغرض، والطالب.
+ */
+export function notifyReserveWithdrawalPending(ex: Executor | null | undefined, p: {
+  branchId: number; bookLabel: string; boxLabel: string; amountText: string; amountWords: string;
+  balanceText: string; afterText: string; exceeds: boolean; purpose: string; actorName?: string | null; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    const r = await (ex ?? db).execute(sql`SELECT name FROM branches WHERE id = ${p.branchId}`);
+    const branch = (r.rows[0] as any)?.name ? `فرع ${(r.rows[0] as any).name}` : `فرع #${p.branchId}`;
+    await enqueueStaffEvent(ex, {
+      event: "reserve_withdrawal_pending", excludeUserId: p.actorUserId ?? null,
+      text: [
+        `💰 طلب سحب من ${p.boxLabel} ينتظر قرارك`,
+        `${branch} — ${p.bookLabel}`,
+        `المبلغ: ${p.amountText} دينار (${p.amountWords})`,
+        `الرصيد الآن: ${p.balanceText} — وبعد السحب: ${p.afterText}${p.exceeds ? " ⚠️ المبلغ أكبر من الرصيد" : ""}`,
+        `الغرض: ${p.purpose}`,
+        p.actorName ? `الطالب: ${p.actorName}` : "",
+      ].filter(Boolean).join("\n"),
+      linkPath: "/payment-corrections#withdrawals",
+    });
+  });
+}
+
+/** قرارُ المسؤول على طلب السحب — لطالبه وحده. */
+export function notifyReserveWithdrawalDecided(ex: Executor | null | undefined, p: {
+  requesterUserId: number; approved: boolean; boxLabel: string; amountText: string; note?: string | null;
+}) {
+  return safe(ex, async () => {
+    await enqueueStaffEvent(ex, {
+      event: "reserve_withdrawal_decided", targetUserIds: [p.requesterUserId],
+      text: p.approved
+        ? `✅ اعتُمد طلبُك للسحب من ${p.boxLabel}: ${p.amountText} دينار — سُجّل في دفتر القاصة${p.note ? `\nملاحظة المسؤول: ${p.note}` : ""}`
+        : `❌ رُفض طلبُك للسحب من ${p.boxLabel}: ${p.amountText} دينار — لم يتغيّر شيء${p.note ? `\nالسبب: ${p.note}` : ""}`,
+      linkPath: "/cash-book",
+    });
+  });
+}
+
+/**
  * **كلُّ مبلغٍ يدخل أيَّ فرع** (قرارُ المالك ٢٠٢٦-١٠-٠٤، للمسؤول وحده) — يُنادى من `insertPaymentRow`، الكاتبِ
  * الوحيد لصفوف الدفعات الموجبة، فلا بابَ دفعٍ يفلت. والقسمُ من حالة الدفعة، وإن غابت فوسمُها كما كُتب.
  * والصفرُ (جلساتٌ مُهداة) ليس مالاً يدخل فلا يُنبَّه به.

@@ -268,7 +268,18 @@ export function Sidebar() {
       return res.json();
     },
   });
-  const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0);
+  //  **وطلباتُ السحب من القاصتين** (§4.fy) — قسمٌ ثالث في الصفحة نفسِها، والرقمُ يجمعها.
+  const { data: reserveWithdrawalsData } = useQuery<{ count: number }>({
+    queryKey: ["/api/reserve-withdrawals", "pending-count"],
+    enabled: !!branchSession?.isAdmin,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/reserve-withdrawals/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0) + (reserveWithdrawalsData?.count ?? 0);
 
   //  ══ **«الأقساط»** (§4.ea) — لمن يرى المرضى ودفعاتِهم، كحارس الخادم؛ والرقمُ المتأخّرةُ في فرع الجلسة (والمسؤولُ كلُّ الفروع).
   const installmentsEligible = Boolean(branchSession?.isAdmin) || (permissions.canViewPatients && permissions.canViewPayments);

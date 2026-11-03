@@ -40,6 +40,7 @@ import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { useBranchSession } from "@/components/BranchGate";
 import { MoneyCorrectionsSection } from "@/components/MoneyCorrection";
+import { ReserveWithdrawalsSection } from "@/components/ReserveWithdrawal";
 import {
   Banknote, Loader2, ShieldAlert, AlertTriangle, AlertCircle, Trash2, Pencil, Check, X,
 } from "lucide-react";
@@ -449,6 +450,9 @@ export default function PaymentCorrections() {
 
       {/*  القسمُ الثاني: المصاريف وسطورُ الدفتر — بالفلتر نفسِه (§4.ce التكملة). */}
       <MoneyCorrectionsSection status={status} />
+
+      {/*  القسمُ الثالث: طلباتُ السحب من القاصتين — بالفلتر نفسِه (§4.fy). */}
+      <ReserveWithdrawalsSection status={status} />
 
       {/* ══ حوارُ التأكيد — مشتركٌ للاعتماد والرفض معاً ═══════════════════
           مغلَقٌ افتراضاً (`open={!!confirm}`)، فتحُه من زرّ الصفّ لا من
