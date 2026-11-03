@@ -79,6 +79,19 @@ const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
 const ADMIN_ONLY_EVENTS = ["payment_received", "payment_correction_pending", "money_correction_pending", "reserve_withdrawal_pending", "ai_suggestion"];
 //  قرارُ طلب السحب (§4.fy) — لمَن يكتب دفترَ القاصة (المحاسبُ ومديرُ الفرع)، وهو وحده يطلب.
 const CASH_BOOK_EVENTS = ["reserve_withdrawal_decided"];
+
+/**
+ * **أنواعٌ موجَّهةٌ لصاحب طلبٍ قدّمه** — تصله ولو تغيّر دورُه بعد الطلب (مراجعةُ Codex على #698): الطلبُ قُدّم بحقّ، والقرارُ جوابُه.
+ * فالمُرسِلُ لا يعيد فحصَ الدور لها، ويكفيها أن تكون موجَّهةً إليه (`target_user_ids`) وأن يكون تنبيهُها مفعّلاً له.
+ * والأهليّةُ بالدور تبقى لما يُعرض في «تنبيهات الموظفين».
+ */
+export const REQUESTER_REPLY_EVENTS: readonly string[] = ["reserve_withdrawal_decided"];
+
+/** هل يُرسَل النوعُ لهذا الموظّف؟ — بالدور، أو ردّاً موجَّهاً على طلبه. */
+export function staffEventDeliverable(u: StaffEligibilityUser, event: string, targeted: boolean): boolean {
+  if (targeted && REQUESTER_REPLY_EVENTS.includes(event)) return true;
+  return eligibleStaffEvents(u).includes(event);
+}
 const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
 const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
