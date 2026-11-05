@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { notePaymentAmount } from "./payments/big_payment_notice";
 import { notifyOrderAssigned, notifyPaymentReceived } from "./staff_telegram/notify";
 import { recordAttendanceVisitTx } from "./visits/attendance";
 import { devicePurchaseReason } from "@shared/attendance";
@@ -3957,6 +3958,8 @@ export class DatabaseStorage implements IStorage {
       paymentData.caseId = await this.resolveCaseId(paymentData.patientId, { tag: paymentData.paymentTreatmentType ?? null }, tx);
     }
     const [payment] = await (tx ?? db).insert(payments).values(paymentData).returning();
+    //  وشرائطُ الدفعة الكبيرة لمَن سجّلها (§4.ga) — تُعلَن مع الردّ الناجح وحده، فمعاملةٌ تراجعت لا تُعلَن.
+    notePaymentAmount(payment.amount);
     //  تنبيهُ المسؤول بكلّ مبلغٍ يدخل (§4.by) — داخل المعاملة نفسِها، فدفعةٌ تُلغى بالتراجع لا تُبلَّغ.
     await notifyPaymentReceived(tx ?? null, {
       paymentId: payment.id, patientId: payment.patientId, branchId: payment.branchId, amount: payment.amount,

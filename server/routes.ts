@@ -7,6 +7,7 @@ import {
 } from "@shared/daily_report_scope";
 import { caseReopenNoticeMiddleware } from "./patient_cases/reopen_notice";
 import { examQueuedNoticeMiddleware } from "./medical/exam_queued_notice";
+import { bigPaymentNoticeMiddleware } from "./payments/big_payment_notice";
 import { createServer, type Server } from "http";
 import { storage, baghdadDayBounds } from "./storage";
 import { db } from "./db";
@@ -423,6 +424,8 @@ export async function registerRoutes(
   app.use("/api", caseReopenNoticeMiddleware);
   //  ومريضٌ دخل «معايناتي» يُعلَن لمَن أدخله بالطريقة نفسِها — نافذةٌ لا تُغلق إلّا بـ«حسناً» (§4.em).
   app.use("/api", examQueuedNoticeMiddleware);
+  //  ودفعةٌ من ٣٥٠ ألفاً فما فوق تطلق شرائطَ ملوّنة عند مَن سجّلها — بالطريقة نفسِها (§4.ga).
+  app.use("/api", bigPaymentNoticeMiddleware);
   //  ══ تشخيصٌ مؤقّت — «وصولُ الطلب الخام» قبل أيّ كود جلسة ═══════════════
   //  محصورٌ بفحص نمطٍ رخيص على طريقين محدَّدين فقط (راجع الملفّ)؛ كلُّ طلبٍ
   //  آخر يمرّ بلا أثر. يُزال مع بقيّة الاستدعاءات المذكورة أعلاه.
