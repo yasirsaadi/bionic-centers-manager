@@ -5,6 +5,8 @@ import { toEnglishDigits } from "./lib/utils";
 import { toast } from "./hooks/use-toast";
 import { pushExamQueued } from "./components/ExamQueuedNotice";
 import { EXAM_QUEUED_HEADER, decodeExamQueued } from "@shared/exam_queued_notice";
+import { BIG_PAYMENT_HEADER, decodeBigPayment } from "@shared/big_payment";
+import { installPressTracker, launchPaymentConfetti } from "./lib/payment_confetti";
 
 // Deploy-safety: after a new release, an app that was ALREADY OPEN still holds
 // references to the PREVIOUS build's hashed lazy-chunk URLs. Navigating then
@@ -29,6 +31,7 @@ window.addEventListener("vite:preloadError", (event) => {
 // session, and return to the login screen. Login/verify endpoints are exempt
 // so a wrong-password 401 doesn't trigger a redirect loop.
 {
+  installPressTracker();
   const AUTH_EXEMPT = ["/api/verify-branch", "/api/auth/switch-branch", "/api/auth/user", "/api/logout"];
   const originalFetch = window.fetch.bind(window);
   let loggingOut = false;
@@ -62,6 +65,9 @@ window.addEventListener("vite:preloadError", (event) => {
       }
       //  **ومريضٌ دخل «معايناتي» يُقال لمَن أدخله** (§4.em): نافذةٌ لا تُغلق إلّا بـ«حسناً» — من أيّ بابٍ كان.
       pushExamQueued(decodeExamQueued(res.headers.get(EXAM_QUEUED_HEADER)));
+      //  **ودفعةٌ من ٣٥٠ ألفاً فما فوق** تطلق شرائطَ ملوّنة من الزرّ الذي ضغطه الموظّف (§4.ga) — من أيّ بابٍ كان.
+      const big = decodeBigPayment(res.headers.get(BIG_PAYMENT_HEADER));
+      if (big) launchPaymentConfetti(big);
     } catch {
       /* never let the guard break a request */
     }
