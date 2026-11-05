@@ -296,7 +296,9 @@ async function lockBox(tx: Tx, branchId: number) {
 
 export async function createDelivery(p: {
   branchId: number; amount: number; note: string | null; userId: number | null; userName: string | null; today: string;
-}, after: (tx: Tx, row: DeliveryRow, remaining: number) => Promise<void>): Promise<DeliveryRow> {
+}, after: (tx: Tx, row: DeliveryRow, remaining: number) => Promise<void>,
+  /** **المسؤولُ يسلّم مباشرةً**: الاعتمادُ في معاملة الطلب نفسِها — ففشلُه لا يترك طلباً معلَّقاً يحجز من المتاح. */
+  andThen?: (tx: Tx, row: DeliveryRow) => Promise<DeliveryRow>): Promise<DeliveryRow> {
   await reconcileBranch(p.branchId, p.today);
   return await db.transaction(async (tx: any) => {
     await lockBox(tx, p.branchId);
@@ -319,7 +321,7 @@ export async function createDelivery(p: {
       VALUES (${p.branchId}, ${p.amount}, ${p.note}, ${remaining}, ${p.userId}, ${p.userName}) RETURNING id`);
     const row = (await rows<DeliveryRow>(tx, sql`${SELECT_DELIVERY} WHERE d.id = ${ins.id}`))[0];
     await after(tx, row, remaining);
-    return row;
+    return andThen ? await andThen(tx, row) : row;
   });
 }
 
@@ -330,7 +332,15 @@ export async function approveDelivery(id: number, p: { userId: number | null; us
   if (!cur) throw new HospitalError(404, "الطلب غير موجود");
   if (cur.status !== "pending") throw new HospitalError(409, "حُسم هذا الطلبُ قبلُ");
   await reconcileBranch(cur.branchId, p.today);
-  return await db.transaction(async (tx: any) => {
+  return await db.transaction(async (tx: any) => approveDeliveryTx(tx, id, p, after));
+}
+
+/** الاعتمادُ داخل معاملةٍ قائمة — من نقطة الاعتماد، ومن تسليم المسؤول المباشر في معاملة طلبه. */
+export async function approveDeliveryTx(tx: any, id: number, p: { userId: number | null; userName: string | null; note: string | null; today: string },
+  after: (tx: Tx, row: DeliveryRow, remainingBefore: number) => Promise<void>): Promise<DeliveryRow> {
+  const cur = (await rows<DeliveryRow>(tx, sql`${SELECT_DELIVERY} WHERE d.id = ${id}`))[0];
+  if (!cur) throw new HospitalError(404, "الطلب غير موجود");
+  {
     await lockBox(tx, cur.branchId);
     //  المتبقّي قبل هذا التسليم — من المحفوظ تحت قفل المربّع، فلا يُعتمد طلبان معاً على ما يكفي أحدَهما.
     const remainingBefore = await remainingAt(cur.branchId, p.today, tx);
@@ -345,7 +355,7 @@ export async function approveDelivery(id: number, p: { userId: number | null; us
     const row = (await rows<DeliveryRow>(tx, sql`${SELECT_DELIVERY} WHERE d.id = ${id}`))[0];
     await after(tx, row, remainingBefore);
     return row;
-  });
+  }
 }
 
 export async function rejectDelivery(id: number, p: { userId: number | null; userName: string | null; note: string },
