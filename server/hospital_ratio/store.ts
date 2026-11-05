@@ -46,7 +46,7 @@ export async function hospitalBranches(): Promise<{ id: number; name: string; co
  * (كلُّ دفعةٍ سالبة، إلّا استرجاعاً قرّر المسؤولُ ألّا يُخصم). بالقواعد نفسِها التي يقرأ بها الدفترُ وارده: فرعُ الدفعة، وقسمُ حالتها،
  * ومريضٌ قائمٌ لا في السلّة.
  */
-export async function dayInputs(branchId: number, cfg: BranchCashConfig, book: CashBook, from: string, toInclusive: string): Promise<HospitalDayInput[]> {
+export async function dayInputs(branchId: number, cfg: BranchCashConfig, book: CashBook, from: string, toInclusive: string, ex: any = db): Promise<HospitalDayInput[]> {
   const { start } = baghdadDayBounds(from);
   const { start: end } = baghdadDayBounds(addDays(toInclusive, 1));
   const map = new Map<string, HospitalDayInput>();
@@ -55,25 +55,25 @@ export async function dayInputs(branchId: number, cfg: BranchCashConfig, book: C
     if (!x) { x = { day: d, positive: 0, deducted: 0 }; map.set(d, x); }
     return x;
   };
-  const pays = await db.select({ amount: payments.amount, date: payments.date, deduct: patientRefundRequests.deductHospital })
+  const pays = await ex.select({ amount: payments.amount, date: payments.date, deduct: patientRefundRequests.deductHospital })
     .from(payments)
     .innerJoin(patients, eq(patients.id, payments.patientId))
     .leftJoin(patientCases, eq(patientCases.id, payments.caseId))
     .leftJoin(patientRefundRequests, eq(patientRefundRequests.paymentId, payments.id))
     .where(and(eq(payments.branchId, branchId), gte(payments.date, start!), lt(payments.date, end!),
       activePatientDrizzle(), paymentBookFilter(cfg, book)));
-  for (const p of pays) {
+  for (const p of pays as { amount: number; date: Date | null; deduct: boolean | null }[]) {
     if (!p.date) continue;
     const amount = Number(p.amount);
     const d = at(baghdadDay(p.date));
     if (amount > 0) d.positive += amount;
     else if (amount < 0 && p.deduct !== false) d.deducted += -amount;
   }
-  const others = await db.select({ day: cashBookEntries.entryDate, amount: cashBookEntries.amount }).from(cashBookEntries)
+  const others = await ex.select({ day: cashBookEntries.entryDate, amount: cashBookEntries.amount }).from(cashBookEntries)
     .where(and(eq(cashBookEntries.branchId, branchId), eq(cashBookEntries.book, book), eq(cashBookEntries.kind, "income_other"),
       sql`${cashBookEntries.deletedAt} IS NULL`,
       sql`${cashBookEntries.entryDate} >= ${from}`, sql`${cashBookEntries.entryDate} <= ${toInclusive}`));
-  for (const o of others) if (o.amount > 0) at(String(o.day)).positive += o.amount;
+  for (const o of others as { day: string; amount: number }[]) if (o.amount > 0) at(String(o.day)).positive += o.amount;
   return Array.from(map.values()).sort((a, b) => a.day.localeCompare(b.day));
 }
 
@@ -88,7 +88,21 @@ export async function seriesFor(branchId: number, cfg: BranchCashConfig, book: C
  * تحت قفلٍ للفرع (فلا يتسابق اثنان)، وقفلِ اليوم نفسِه الذي يأخذه الدفتر. وقيدُ كلّ صفٍّ تغيّر يُعكَس ويُعاد بعد المعاملة —
  * كما يفعل تحديثُ النسبة بالزرّ (`syncRatio`). ويُرجع عددَ ما تغيّر.
  */
-export async function reconcileBranch(branchId: number, today: string = baghdadTodayYmd()): Promise<number> {
+const branchChains = new Map<number, Promise<unknown>>();
+/**
+ * **واحدٌ لكلّ فرعٍ في الوقت نفسِه داخل الخادم** — والقيدُ بعد المعاملة جزءٌ منه: فلا يعكس اثنان القيدَ نفسَه ولا يكتبانه مرّتين
+ * (قفلُ القاعدة ينتهي مع المعاملة، والقيدُ بعدها).
+ */
+export function reconcileBranch(branchId: number, today: string = baghdadTodayYmd()): Promise<number> {
+  const prev = branchChains.get(branchId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => reconcileBranchNow(branchId, today));
+  const tail = run.catch(() => undefined);
+  branchChains.set(branchId, tail);
+  void tail.then(() => { if (branchChains.get(branchId) === tail) branchChains.delete(branchId); });
+  return run;
+}
+
+async function reconcileBranchNow(branchId: number, today: string): Promise<number> {
   const b = await branchConfigOf(branchId);
   if (!b?.config.hospitalRatioPct || today < HOSPITAL_AUTO_START) return 0;
   const cfg = b.config;
@@ -97,7 +111,7 @@ export async function reconcileBranch(branchId: number, today: string = baghdadT
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`hospital_ratio:${branchId}`}))`);
     for (const book of cfg.books) {
       const section = BOOK_EXPENSE_SECTION[book];
-      const series = hospitalSeries(await dayInputs(branchId, cfg, book, HOSPITAL_AUTO_START, today), cfg.hospitalRatioPct);
+      const series = hospitalSeries(await dayInputs(branchId, cfg, book, HOSPITAL_AUTO_START, today, tx), cfg.hospitalRatioPct);
       const want = new Map(series.filter((r) => r.amount > 0).map((r) => [r.day, r.amount]));
       const have = await rows<{ id: number; day: string; amount: number }>(tx, sql`
         SELECT id, expense_date::text AS day, amount FROM expenses
@@ -171,9 +185,9 @@ export function reconcileAll(): Promise<number> {
 }
 
 /** ما عُزل في دفترٍ في مدى [from, toExclusive) من الصفوف المكتوبة. */
-async function isolatedSum(branchId: number, from: string, toExclusive: string, section?: string): Promise<number> {
+async function isolatedSum(branchId: number, from: string, toExclusive: string, section?: string, ex: Tx = db as any): Promise<number> {
   if (from >= toExclusive) return 0;
-  const [r] = await rows<{ t: number }>(db as any, sql`
+  const [r] = await rows<{ t: number }>(ex, sql`
     SELECT COALESCE(SUM(amount), 0)::int AS t FROM expenses
      WHERE branch_id = ${branchId} AND category = ${HOSPITAL_RATIO_CATEGORY}
        AND (${section ?? null}::text IS NULL OR section = ${section ?? null})
@@ -181,18 +195,18 @@ async function isolatedSum(branchId: number, from: string, toExclusive: string, 
   return Number(r?.t ?? 0);
 }
 
-async function deliveredSum(branchId: number, from: string, toExclusive: string): Promise<number> {
+async function deliveredSum(branchId: number, from: string, toExclusive: string, ex: Tx = db as any): Promise<number> {
   if (from >= toExclusive) return 0;
-  const [r] = await rows<{ t: number }>(db as any, sql`
+  const [r] = await rows<{ t: number }>(ex, sql`
     SELECT COALESCE(SUM(amount), 0)::int AS t FROM hospital_ratio_deliveries
      WHERE branch_id = ${branchId} AND status = 'approved' AND delivered_on >= ${from} AND delivered_on < ${toExclusive}`);
   return Number(r?.t ?? 0);
 }
 
 /** المتبقّي للمستشفى في نهاية يوم — كلُّ ما عُزل من البداية − كلُّ ما سُلّم. */
-export async function remainingAt(branchId: number, dayInclusive: string): Promise<number> {
+export async function remainingAt(branchId: number, dayInclusive: string, ex: Tx = db as any): Promise<number> {
   const next = addDays(dayInclusive, 1);
-  return (await isolatedSum(branchId, HOSPITAL_AUTO_START, next)) - (await deliveredSum(branchId, HOSPITAL_AUTO_START, next));
+  return (await isolatedSum(branchId, HOSPITAL_AUTO_START, next, undefined, ex)) - (await deliveredSum(branchId, HOSPITAL_AUTO_START, next, ex));
 }
 
 /**
@@ -286,7 +300,7 @@ export async function createDelivery(p: {
   await reconcileBranch(p.branchId, p.today);
   return await db.transaction(async (tx: any) => {
     await lockBox(tx, p.branchId);
-    const remaining = await remainingAt(p.branchId, p.today);
+    const remaining = await remainingAt(p.branchId, p.today, tx);
     const [pend] = await rows<{ t: number }>(tx, sql`
       SELECT COALESCE(SUM(amount), 0)::int AS t FROM hospital_ratio_deliveries WHERE branch_id = ${p.branchId} AND status = 'pending'`);
     const pendingTotal = Number(pend?.t ?? 0);
@@ -319,7 +333,7 @@ export async function approveDelivery(id: number, p: { userId: number | null; us
   return await db.transaction(async (tx: any) => {
     await lockBox(tx, cur.branchId);
     //  المتبقّي قبل هذا التسليم — من المحفوظ تحت قفل المربّع، فلا يُعتمد طلبان معاً على ما يكفي أحدَهما.
-    const remainingBefore = await remainingAt(cur.branchId, p.today);
+    const remainingBefore = await remainingAt(cur.branchId, p.today, tx);
     if (cur.amount > remainingBefore) {
       throw new HospitalError(409, `المبلغ أكبر من المتبقّي للمستشفى الآن (${remainingBefore.toLocaleString("en-US")}) — لم يتغيّر شيء`);
     }
@@ -342,7 +356,7 @@ export async function rejectDelivery(id: number, p: { userId: number | null; use
              decided_at = now(), decision_note = ${p.note}
        WHERE id = ${id} AND status = 'pending' RETURNING id`);
     if (!claimed.length) {
-      const cur = await getDelivery(id);
+      const cur = (await rows<DeliveryRow>(tx, sql`${SELECT_DELIVERY} WHERE d.id = ${id}`))[0] ?? null;
       throw new HospitalError(cur ? 409 : 404, cur ? "حُسم هذا الطلبُ قبلُ" : "الطلب غير موجود");
     }
     const row = (await rows<DeliveryRow>(tx, sql`${SELECT_DELIVERY} WHERE d.id = ${id}`))[0];

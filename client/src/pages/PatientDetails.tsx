@@ -1729,6 +1729,9 @@ export default function PatientDetails() {
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600" dir="auto" style={{ unicodeBidi: "plaintext" }}>{(payment as any).displayDescription || payment.notes || "-"}</td>
                           {(permissions.canEditPayments || permissions.canDeletePayments) && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
+                              {payment.amount < 0 && /^سند \d+/.test(payment.notes ?? "") ? (
+                                <span className="text-[11px] text-slate-400" title="دفعةُ استرجاعٍ بسندها — لا تُعدَّل ولا تُحذف">—</span>
+                              ) : (
                               <div className="flex gap-1 justify-center">
                                 {permissions.canEditPayments && (
                                 <Button 
@@ -1754,6 +1757,7 @@ export default function PatientDetails() {
                                 </Button>
                                 )}
                               </div>
+                              )}
                             </td>
                           )}
                         </tr>

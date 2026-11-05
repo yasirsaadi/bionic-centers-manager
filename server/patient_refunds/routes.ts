@@ -168,7 +168,15 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
     if (!branchId) return res.status(409).json({ error: "تعذّر تحديد فرع الاسترجاع" });
 
     try {
-      let row = await store.create({
+      //  **المسؤولُ يسترجع مباشرةً**: قراراه يُفحصان قبل أيّ كتابة، والاعتمادُ في معاملة الطلب نفسِها — فشلُه لا يترك طلباً يتيماً.
+      let adminInput: store.ApproveInput | null = null;
+      if (s.isAdmin) {
+        const branchName = ((await db.execute(sql`SELECT name FROM branches WHERE id = ${branchId}`)).rows[0] as any)?.name ?? "";
+        adminInput = approvalInput(s, req.body, { branchName, reason });
+        const caseType = ((await db.execute(sql`SELECT case_type FROM patient_cases WHERE id = ${caseId} AND patient_id = ${patient.id}`)).rows[0] as any)?.case_type ?? "";
+        await store.approvePrecheck({ patientId: patient.id, caseType, reduceCost: adminInput.reduceCost, hasActiveFollowup: adminInput.hasActiveFollowup });
+      }
+      const row = await store.create({
         patientId: patient.id, caseId, branchId, amount, reason, detail,
         userId: s.userId ?? null, userName: s.displayName ?? null,
       }, async (tx, r, m) => {
@@ -184,11 +192,7 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
             actorName: s.displayName ?? null, actorUserId: s.userId ?? null,
           });
         }
-      });
-      //  **والمسؤولُ يسترجع مباشرةً** بقراريه في الطلب نفسِه — الكتابةُ هي كتابةُ الاعتماد بحرفها.
-      if (s.isAdmin) {
-        row = await approveAs(req, s, row.id, req.body);
-      }
+      }, adminInput ? (tx, r) => store.approveTx(tx, r.id, adminInput!, afterApprove(req, s, adminInput!)) : undefined);
       res.status(201).json(await present(row));
     } catch (e) { fail(res, e); }
   });
@@ -229,11 +233,9 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
     res.json(await present(row));
   });
 
-  /** اعتمادُ طلبٍ بقرارَي المسؤول — من نقطة الاعتماد، ومن طلب المسؤول نفسِه. */
-  async function approveAs(req: any, s: BranchSession, id: number, body: any): Promise<store.RequestRow> {
+  /** قرارا المسؤول من جسم الطلب — والسؤالُ عن نسبة المستشفى إلزاميّ في فرعها من يوم البدء. */
+  function approvalInput(s: BranchSession, body: any, cur: { branchName?: string | null; reason: string }) {
     const note = typeof body?.note === "string" && body.note.trim() ? body.note.trim().slice(0, 500) : null;
-    const cur = await store.getRequest(id);
-    if (!cur) throw new store.RefundError(404, "الطلب غير موجود");
     const ask = hospitalBranch(cur.branchName) && hospitalAutoApplies(baghdadTodayYmd());
     let deductHospital: boolean | null = null;
     if (ask) {
@@ -243,24 +245,38 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
       deductHospital = body.deductHospital;
     }
     const reduceCost = typeof body?.reduceCost === "boolean" ? body.reduceCost : defaultReduceCost(cur.reason);
-    return await store.approve(id, {
+    const input: store.ApproveInput = {
       userId: s.userId ?? null, userName: s.displayName ?? null, note, deductHospital, reduceCost,
       hasActiveFollowup: (patientId, caseType) => followupStore.hasActiveFollowup({ patientId, serviceType: caseType as any }),
-    }, async (tx, row, done) => {
+    };
+    return input;
+  }
+
+  /** ما يُكتب مع الاعتماد في معاملته: سطرا التدقيق وتنبيهُ الطالب. */
+  function afterApprove(req: any, s: BranchSession, input: store.ApproveInput) {
+    return async (tx: any, row: store.RequestRow, done: { paymentId: number; journalPosted: boolean }) => {
       await auditRow(req, s, tx, { entityType: "payment", entityId: done.paymentId, action: "create", branchId: row.branchId,
         newValues: { amount: -row.amount, caseId: row.caseId, refundRequestId: row.id, journalPosted: done.journalPosted },
         notes: `دفعة استرجاع — سند ${row.id} — ${row.patientName ?? ""}` });
       await auditRow(req, s, tx, { entityType: "patient_refund_request", entityId: row.id, action: "approve", branchId: row.branchId,
         oldValues: { status: "pending" },
-        newValues: { status: "approved", paymentId: done.paymentId, deductHospital, reduceCost, costBefore: row.costBefore, costAfter: row.costAfter, note },
+        newValues: { status: "approved", paymentId: done.paymentId, deductHospital: input.deductHospital, reduceCost: input.reduceCost,
+          costBefore: row.costBefore, costAfter: row.costAfter, note: input.note },
         notes: `اعتمادُ استرجاع ${money(row.amount)} — ${row.patientName ?? ""}${row.requestedByName ? ` — طلبه ${row.requestedByName}` : ""}` });
       if (row.requestedBy && row.requestedBy !== s.userId) {
         await notifyRefundDecided(tx, {
           requesterUserId: row.requestedBy, approved: true, patientName: row.patientName ?? "", amountText: money(row.amount),
-          voucherNo: refundVoucherNo(row.id), patientId: row.patientId, note,
+          voucherNo: refundVoucherNo(row.id), patientId: row.patientId, note: input.note,
         });
       }
-    });
+    };
+  }
+
+  async function approveAs(req: any, s: BranchSession, id: number, body: any): Promise<store.RequestRow> {
+    const cur = await store.getRequest(id);
+    if (!cur) throw new store.RefundError(404, "الطلب غير موجود");
+    const input = approvalInput(s, body, cur);
+    return await store.approve(id, input, afterApprove(req, s, input));
   }
 
   app.post("/api/patient-refunds/:id/approve", isAuthenticated, async (req: any, res) => {

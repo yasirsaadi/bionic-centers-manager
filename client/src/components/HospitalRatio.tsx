@@ -62,6 +62,7 @@ export function HospitalBox({ box, branchId, isAdmin, canWrite, canRequest, pend
   const physio = box.books.find((b) => b.book === "physio");
   const devices = box.books.find((b) => b.book === "devices");
   const pendingTotal = pending.reduce((t, p) => t + p.amount, 0);
+  const adjusted = box.deductionToday > 0 || box.carriedToday > 0 || box.deferred > 0;
   return (
     <div className="border-4 border-double border-teal-700 rounded-sm p-3 space-y-1.5 text-sm" data-testid="hospital-box">
       <button type="button" className="w-full text-start space-y-1.5" onClick={() => setHistory(true)} aria-label="سجلّ التسليمات" data-testid="hospital-box-open">
@@ -69,17 +70,16 @@ export function HospitalBox({ box, branchId, isAdmin, canWrite, canRequest, pend
           <h3 className="font-bold text-base text-teal-800">{HOSPITAL_BOX_LABEL}</h3>
           <History className="w-4 h-4 mr-auto text-teal-700 shrink-0" />
         </div>
-        {physio && <Row label={`عزل العلاج الطبيعي (${box.pct}٪)`} value={physio.amount} testid="hospital-physio" />}
-        {devices && <Row label={`عزل الأطراف والمساند (${box.pct}٪)`} value={devices.amount} testid="hospital-devices" />}
-        {box.deductionToday > 0 && <Row label="منه خصمُ استرجاع (بقرارك)" value={-box.deductionToday} danger testid="hospital-deduction" />}
-        {box.carriedToday > 0 && <Row label="منه خصمٌ مؤجَّل من أيّامٍ قبله" value={-box.carriedToday} danger testid="hospital-carried" />}
+        {/*  الأسطرُ تُجمع إلى «مجموع اليوم»: حين يكون خصمٌ يُعرض عُشرُ الوارد قبله، ثمّ الخصمُ، ثمّ ما يُؤجَّل. */}
+        {physio && <Row label={`عزل العلاج الطبيعي (${box.pct}٪)`} value={adjusted ? physio.gross : physio.amount} testid="hospital-physio" />}
+        {devices && <Row label={`عزل الأطراف والمساند (${box.pct}٪)`} value={adjusted ? devices.gross : devices.amount} testid="hospital-devices" />}
+        {box.deductionToday > 0 && <Row label="خصمُ استرجاع (بقرارك)" value={-box.deductionToday} danger testid="hospital-deduction" />}
+        {box.carriedToday > 0 && <Row label="خصمٌ مؤجَّل من أيّامٍ قبله" value={-box.carriedToday} danger testid="hospital-carried" />}
+        {box.deferred > 0 && <Row label="ما زاد من الخصم — يُؤجَّل إلى الغد" value={box.deferred} testid="hospital-deferred-line" />}
         <Row label="مجموع اليوم" value={box.today} testid="hospital-today" />
         <Row label="المتبقي من أمس" value={box.prev} testid="hospital-prev" />
         {box.delivered > 0 && <Row label="سُلّم للمستشفى اليوم" value={-box.delivered} testid="hospital-delivered" />}
         <Row label="المتبقي للمستشفى" value={box.remaining} strong testid="hospital-remaining" />
-        {box.deferred > 0 && (
-          <p className="text-xs text-rose-700" data-testid="hospital-deferred">مؤجَّلٌ من استرجاع: <Num n={box.deferred} /> — يُخصم من الأيّام التالية.</p>
-        )}
         <p className="text-[11px] text-muted-foreground text-center">اضغط المربّع لترى سجلّ التسليمات</p>
       </button>
       {pending.length > 0 && (
@@ -120,7 +120,7 @@ function RequestDeliveryDialog({ branchId, isAdmin, remaining, pendingTotal, ope
       toast({ title: isAdmin ? "سُجّل التسليم ونقص المربّع" : "أُرسل الطلب إلى المسؤول" });
       setAmount(""); setNote(""); onClose();
     },
-    onError: (e: any) => toast({ title: "تعذّر", description: errText(e), variant: "destructive" }),
+    onError: (e: any) => { invalidate(qc); toast({ title: "تعذّر", description: errText(e), variant: "destructive" }); },
   });
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>

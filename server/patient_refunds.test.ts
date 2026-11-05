@@ -359,6 +359,51 @@ async function main() {
       [(await deliver(S.admin, { branchId: DQ, amount: 5_000 })).body?.status, (await deliver(S.admin, { branchId: DQ, amount: 41_000 })).status,
        (await sheetOf("physio")).hospitalBox?.remaining], ["approved", 409, 40_000]);
 
+    // ══ ط. حرّاسُ المراجعة ═════════════════════════════════════════════════════════════════════
+    console.log("\n── ط. الحرّاس ──");
+    //  خطّةُ أقساطٍ نشطة على الحالة: الاسترجاعُ يُردّ — والمسؤولُ المباشرُ لا يترك طلباً يتيماً.
+    const I = await mkPatient("إيناس", [{ type: "physiotherapy", cost: 600_000 }]);
+    await payOn(I.id, I.cases.physiotherapy, 200_000, D2);
+    await q(`INSERT INTO installment_plans (patient_id, branch_id, total_amount, installment_amount, number_of_installments, start_date, status, case_id)
+             VALUES ($1,$2,400000,100000,4,$3,'active',$4)`, [I.id, DQ, TODAY, I.cases.physiotherapy]);
+    const di = await ask(S.admin, { patientId: I.id, caseId: I.cases.physiotherapy, amount: 50_000, reason: "overpaid", detail: "زيادة",
+      deductHospital: false, reduceCost: false });
+    same("ط١. **المسؤولُ المباشر يفشل بلا طلبٍ يتيم** — خطّةُ أقساطٍ نشطة ⟵ ٤٠٩، ولا طلبَ ولا دفعةٌ سالبة",
+      [di.status, String(di.body?.error ?? di.body?.message ?? "").includes("أقساط"),
+       (await q(`SELECT count(*)::int n FROM patient_refund_requests WHERE patient_id=$1`, [I.id]))[0].n,
+       (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND amount<0`, [I.id]))[0].n], [409, true, 0, 0]);
+    const ri = await ask(S.recv, { patientId: I.id, caseId: I.cases.physiotherapy, amount: 50_000, reason: "overpaid", detail: "زيادة" });
+    same("ط٢. **وطلبُ الموظّف يبقى معلَّقاً** حين يُعتمد على خطّةٍ نشطة ⟵ ٤٠٩",
+      [ri.status, (await http("POST", `/api/patient-refunds/${ri.body.id}/approve`, S.admin, { deductHospital: false, reduceCost: false })).status,
+       (await q(`SELECT status FROM patient_refund_requests WHERE id=$1`, [ri.body.id]))[0].status], [201, 409, "pending"]);
+    await q(`UPDATE patient_refund_requests SET status='rejected' WHERE id=$1`, [ri.body.id]);
+    await q(`DELETE FROM installment_plans WHERE patient_id=$1`, [I.id]);
+    //  دفعةُ الاسترجاع لا تُعدَّل ولا تُحذف — ولا لمسؤول.
+    const refundPayId = refundPays[0].id;
+    const adminPay = { ...S.admin, permissions: { canEditPayments: true, canDeletePayments: true } };
+    same("ط٣. **دفعةُ الاسترجاع لا تُعدَّل ولا تُحذف** (تعديل · معلومات الجلسات · حذف) ⟵ ٤٠٠ والمبلغُ كما هو",
+      [(await http("PATCH", `/api/payments/${refundPayId}`, adminPay, { amount: -1000, reason: "تجربة" })).status,
+       (await http("PATCH", `/api/payments/${refundPayId}/session-info`, adminPay, { sessionCount: 2 })).status,
+       (await http("DELETE", `/api/payments/${refundPayId}`, adminPay, { reason: "تجربة" })).status,
+       (await q(`SELECT amount FROM payments WHERE id=$1`, [refundPayId]))[0]?.amount], [400, 400, 400, -300_000]);
+    //  صفُّ العزل التلقائيّ لا يُمسّ باليد.
+    const autoRow = (await q<{ id: number }>(`SELECT id FROM expenses WHERE branch_id=$1 AND category='hospital_percentage' AND expense_date=$2`, [DQ, D1]))[0];
+    same("ط٤. **صفُّ العزل التلقائيّ لا يُعدَّل ولا يُحذف** (الدفترُ وباب المصروفات) ⟵ ٤٠٠ والصفُّ باقٍ",
+      [(await http("PATCH", `/api/cash-book/rows/expense/${autoRow.id}`, S.admin, { note: "يدوي" })).status,
+       (await http("DELETE", `/api/cash-book/rows/expense/${autoRow.id}`, S.admin)).status,
+       (await http("PUT", `/api/expenses/${autoRow.id}`, S.admin, { amount: 1 })).status,
+       (await http("DELETE", `/api/expenses/${autoRow.id}`, S.admin)).status,
+       (await q(`SELECT amount FROM expenses WHERE id=$1`, [autoRow.id]))[0]?.amount], [400, 400, 400, 400, 75_000]);
+    //  مطابقاتٌ متزامنة لفرعٍ واحد: تتسلسل، فتُحسب الكتابةُ مرّةً واحدة ولا يبقى قيدان قائمان لصفٍّ واحد.
+    await hospital.reconcileBranch(DQ);  //  ما تركه ط١ (دفعةُ إيناس) يُطابَق أوّلاً.
+    await payOn(A.id, A.cases.physiotherapy, 10_000, D1);
+    const runs = await Promise.all([hospital.reconcileBranch(DQ), hospital.reconcileBranch(DQ), hospital.reconcileBranch(DQ)]);
+    same("ط٥. **ثلاثُ مطابقاتٍ معاً ⟵ تغييرٌ واحد**، وعزلُ اليوم ٧٦ ألفاً، ولا قيدان قائمان لصفّ",
+      [runs.reduce((t, n) => t + n, 0), (await hospitalRows("physio")).map((r) => r.amount),
+       (await q(`SELECT COALESCE(MAX(n),0)::int m FROM (SELECT count(*) n FROM journal_entries WHERE source_type='expense' AND status='posted'
+                  AND source_id IN (SELECT id FROM expenses WHERE branch_id=$1) GROUP BY source_id) x`, [DQ]))[0].m <= 1],
+      [1, [12345, 76_000, 20_000], true]);
+
     // ══ ح. الحذف والدمج والتنبيهات ════════════════════════════════════════════════════════════
     console.log("\n── ح. الحذف والدمج ──");
     const M1 = await mkPatient("مرتضى", [{ type: "physiotherapy", cost: 100_000 }]);

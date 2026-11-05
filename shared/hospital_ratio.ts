@@ -73,4 +73,10 @@ export const HOSPITAL_DELIVERY_STATUS_LABELS: Record<HospitalDeliveryStatus, str
 export const DELIVERY_NOTE_MAX = 500;
 /** خطأ «المبلغُ أكبر من المتبقّي» — لا يُسلَّم للمستشفى أكثرُ ممّا عُزل له. */
 export const DELIVERY_EXCEEDS_ERROR = "المبلغ أكبر من المتبقّي للمستشفى";
+/** صفُّ عزلٍ يكتبه الخادمُ في يومٍ تلقائيّ — لا يُعدَّل ولا يُحذف باليد (يعيده المطابِقُ كما كان). */
+export function isAutoHospitalRow(x: { category?: string | null; expenseDate?: string | Date | null }): boolean {
+  if (x.category !== "hospital_percentage" || !x.expenseDate) return false;
+  const day = x.expenseDate instanceof Date ? x.expenseDate.toISOString().slice(0, 10) : String(x.expenseDate).slice(0, 10);
+  return hospitalAutoApplies(day);
+}
 export const HOSPITAL_AUTO_ERROR = "نسبة مستشفى العين تُعزل تلقائياً من وارد اليوم — لا تُضاف بزرّ";

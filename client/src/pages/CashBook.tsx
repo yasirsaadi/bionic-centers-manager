@@ -283,7 +283,9 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   const income = sheet.rows.filter((r) => r.column === "income");
   const outflow = sheet.rows.filter((r) => r.column !== "income");
   //  تصحيحُ سطرٍ مكتوب للمسؤول وحده (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والموظّفُ يطلبه منه قبل الطباعة.
-  const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto";
+  const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto"
+    //  صفُّ «نسبة مستشفى العين» في يومٍ تلقائيّ يكتبه الخادمُ ويحدّثه وحده (§4.fz) — لا قلمَ ولا حذف.
+    && !(r.kind === "hospital_ratio" && hospitalAutoApplies(day));
   const noteOf = (r: Row) => cashRowNote(r);
   //  وغيرُ المسؤول يطلب التصحيحَ فيعتمده (§4.ce) — على المصروف (غير النسب) و«وارد آخر» والتحويل إلى قاصة الدكتور.
   const [requesting, setRequesting] = useState<CorrectionTarget | null>(null);
@@ -418,7 +420,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
         ))}
         {/*  «نسبة مستشفى العين» (§4.fz) — مربّعٌ جديد بجانب القاصات، والقاصاتُ كما هي. */}
         {sheet.hospitalBox && (
-          <HospitalBox box={sheet.hospitalBox} branchId={branchId} isAdmin={sheet.isAdmin} canWrite={day === sheet.today || sheet.isAdmin}
+          <HospitalBox box={sheet.hospitalBox} branchId={branchId} isAdmin={sheet.isAdmin} canWrite={sheet.canWrite && day === sheet.today}
             canRequest={!sheet.isAdmin} pending={sheet.pendingHospitalDeliveries ?? []} />
         )}
         {!sheet.reserves && <div className="border-4 border-double border-emerald-700 rounded-sm p-3 space-y-2 text-sm" data-testid="ratio-box">

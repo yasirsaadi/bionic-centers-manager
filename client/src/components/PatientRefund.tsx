@@ -65,9 +65,9 @@ export function openRefundVoucher(id: number) {
 }
 
 /** قرارا المسؤول — في نافذة الاعتماد وفي استرجاعه المباشر. */
-function DecisionChoices({ askHospital, amount, deduct, setDeduct, reduce, setReduce, caseCost }: {
+function DecisionChoices({ askHospital, amount, deduct, setDeduct, reduce, setReduce, caseCost, caseType }: {
   askHospital: boolean; amount: number; deduct: boolean | null; setDeduct: (v: boolean) => void;
-  reduce: boolean; setReduce: (v: boolean) => void; caseCost: number | null;
+  reduce: boolean; setReduce: (v: boolean) => void; caseCost: number | null; caseType: string;
 }) {
   return (
     <div className="space-y-2">
@@ -90,6 +90,11 @@ function DecisionChoices({ askHospital, amount, deduct, setDeduct, reduce, setRe
           خفّض كلفة الحالة بالمبلغ نفسِه
           {caseCost != null && <> (<Num n={caseCost} /> ← <Num n={Math.max(0, caseCost - amount)} />)</>}
           <span className="block text-xs text-muted-foreground">فلا يظهر المريضُ مديناً بما استُرجع. اتركه لدفعٍ زائدٍ عن الكلفة.</span>
+          {reduce && caseType === "physio" && (
+            <span className="block text-xs text-amber-800 mt-1" data-testid="refund-physio-sessions-note">
+              الجلساتُ المشتراة لا تنقص وحدها — بعد الاعتماد عدّلها من «الكلفة والجلسات» في ملفّ المريض.
+            </span>
+          )}
         </span>
       </label>
     </div>
@@ -114,7 +119,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
   const [detail, setDetail] = useState("");
   const [deduct, setDeduct] = useState<boolean | null>(null);
   const [reduce, setReduce] = useState(false);
-  useEffect(() => { if (open) { setAmount(""); setReason(""); setDetail(""); setDeduct(null); setReduce(false); } }, [open]);
+  useEffect(() => { if (open) { setCaseId(cases.length === 1 ? cases[0].caseId : null); setAmount(""); setReason(""); setDetail(""); setDeduct(null); setReduce(false); } }, [open]);
   useEffect(() => { if (open && caseId === null && cases.length === 1) setCaseId(cases[0].caseId); }, [open, cases.length]);
   const c = cases.find((x) => x.caseId === caseId) ?? null;
   useEffect(() => { if (c && deduct === null && c.suggestDeductHospital !== null) setDeduct(c.suggestDeductHospital); }, [c?.caseId]);
@@ -133,7 +138,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
       onClose();
       if (isAdmin && r.status === "approved") openRefundVoucher(r.id);
     },
-    onError: (e: any) => toast({ title: "تعذّر الإرسال", description: errText(e), variant: "destructive" }),
+    onError: (e: any) => { invalidate(qc, patientId); toast({ title: "تعذّر الإرسال", description: errText(e), variant: "destructive" }); },
   });
   const ready = c && n > 0 && !tooMuch && reason && detail.trim().length >= REFUND_DETAIL_MIN
     && !(isAdmin && opts.data?.askHospital && deduct === null);
@@ -187,7 +192,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
                 </label>
                 {isAdmin && c && n > 0 && (
                   <DecisionChoices askHospital={Boolean(opts.data?.askHospital)} amount={n} deduct={deduct} setDeduct={setDeduct}
-                    reduce={reduce} setReduce={setReduce} caseCost={c.cost} />
+                    reduce={reduce} setReduce={setReduce} caseCost={c.cost} caseType={c.caseType} />
                 )}
                 {!isAdmin && (
                   <p className="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-amber-900 text-xs">
@@ -308,7 +313,7 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
           </DialogHeader>
           {dialog === "approve" && (
             <DecisionChoices askHospital={r.askHospital} amount={r.amount} deduct={deduct} setDeduct={setDeduct}
-              reduce={reduce} setReduce={setReduce} caseCost={r.caseCost} />
+              reduce={reduce} setReduce={setReduce} caseCost={r.caseCost} caseType={r.caseType} />
           )}
           <label className="grid gap-1 text-sm">{dialog === "approve" ? "ملاحظة (اختيارية)" : "سبب الرفض"}
             <Input value={note} onChange={(e) => setNote(e.target.value)} data-testid="refund-decision-note" />

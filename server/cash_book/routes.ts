@@ -26,7 +26,7 @@ import { pendingTargets } from "../money_corrections/store";
 import { pendingForBook } from "../reserve_withdrawals/store";
 import { amountInArabicWords, canRequestReserveWithdrawal } from "@shared/reserve_withdrawals";
 import * as hospital from "../hospital_ratio/store";
-import { HOSPITAL_AUTO_ERROR, hospitalAutoApplies } from "@shared/hospital_ratio";
+import { HOSPITAL_AUTO_ERROR, hospitalAutoApplies, isAutoHospitalRow } from "@shared/hospital_ratio";
 
 type Req = any;
 
@@ -374,6 +374,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         return res.json(row);
       }
       const x = l.expense;
+      if (isAutoHospitalRow(x)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
       if (x.category === HOSPITAL_RATIO_CATEGORY && amount !== undefined) {
         return res.status(400).json({ error: "نسبة المستشفى تُحسب من وارد اليوم — استعمل «تحديث النسبة»" });
       }
@@ -426,6 +427,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
           oldValues: l.entry, newValues: row });
         return res.json({ success: true });
       }
+      if (isAutoHospitalRow(l.expense)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
       await audit(req, l.g.s, { entityType: "expense", entityId: l.expense.id, action: "delete", branchId: l.g.branchId,
         oldValues: l.expense, notes: "من دفتر القاصة" });
       await store.deleteExpenseRow(l.expense.id, l.g.s.userId ?? null);
