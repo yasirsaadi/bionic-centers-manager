@@ -1339,7 +1339,8 @@ export default function PatientDetails() {
               <TabsTrigger value="visits" className="flex-1 max-w-[130px] data-[state=active]:bg-blue-600 data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.visitHistory}
               </TabsTrigger>
-              {permissions.canViewPayments && (
+              {/*  وحاملُ مفتاح الاسترجاع يرى التبويب ليطلب (§4.fz) — بلا جدول الدفعات ما لم يملك عرضَها. */}
+              {(permissions.canViewPayments || permissions.canRequestRefund) && (
               <TabsTrigger value="payments" className="flex-1 max-w-[130px] data-[state=active]:bg-primary data-[state=active]:text-white rounded-lg transition-all">
                 {t.patientDetails.paymentHistory}
               </TabsTrigger>
@@ -1630,9 +1631,14 @@ export default function PatientDetails() {
                   تصل مَن لا يملك عرضَها ولو صار `tab` القيمة «payments»
                   بطريقةٍ لا تمرّ بالنقر على تبويبٍ لم يعد ظاهراً. */}
               {!permissions.canViewPayments ? (
+                <>
+                {permissions.canRequestRefund && (
+                  <PatientRefundsBar patientId={patient.id} patientName={patient.name ?? ""} canRequest isAdmin={false} />
+                )}
                 <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-muted-foreground">
                   ليس لديك صلاحية عرض الدفعات
                 </div>
+                </>
               ) : (
               <>
               {/*  «طلب استرجاع مبلغ لمريض» (§4.fz) — الزرُّ لحامل المفتاح والمسؤول، وطلباتُ استرجاعه بحالها وسندها. */}

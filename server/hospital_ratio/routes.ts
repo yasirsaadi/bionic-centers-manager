@@ -91,7 +91,7 @@ export function registerHospitalRatioRoutes(app: Express, isAuthenticated: any) 
     const note = typeof req.body?.note === "string" && req.body.note.trim() ? req.body.note.trim().slice(0, DELIVERY_NOTE_MAX) : null;
     const today = baghdadTodayYmd();
     try {
-      let row = await store.createDelivery({ branchId, amount, note, userId: s.userId ?? null, userName: s.displayName ?? null, today },
+      const row = await store.createDelivery({ branchId, amount, note, userId: s.userId ?? null, userName: s.displayName ?? null, today },
         async (tx, r, remaining) => {
           await auditRow(req, s, tx, { entityType: "hospital_ratio_delivery", entityId: r.id, action: "create", branchId,
             newValues: { amount, note, remaining }, notes: `طلب تسليم ${money(amount)} لمستشفى العين` });
@@ -101,23 +101,30 @@ export function registerHospitalRatioRoutes(app: Express, isAuthenticated: any) 
               afterText: money(remaining - amount), exceeds: amount > remaining, note, actorName: s.displayName ?? null, actorUserId: s.userId ?? null,
             });
           }
-        });
-      //  **والمسؤولُ يسلّم مباشرةً** — بكتابة الاعتماد نفسِها.
-      if (s.isAdmin) row = await approveAs(req, s, row.id, null);
+        },
+        //  **والمسؤولُ يسلّم مباشرةً** — بكتابة الاعتماد نفسِها وفي معاملة الطلب: فشلُه لا يترك طلباً معلَّقاً.
+        s.isAdmin ? (tx, r) => store.approveDeliveryTx(tx, r.id, approveInput(s, null), approveAfter(req, s, null)) : undefined);
       res.status(201).json(present(row));
     } catch (e) { fail(res, e); }
   });
 
-  async function approveAs(req: any, s: BranchSession, id: number, note: string | null) {
+  function approveInput(s: BranchSession, note: string | null) {
+    return { userId: s.userId ?? null, userName: s.displayName ?? null, note, today: baghdadTodayYmd() };
+  }
+  function approveAfter(req: any, s: BranchSession, note: string | null) {
     const today = baghdadTodayYmd();
-    return await store.approveDelivery(id, { userId: s.userId ?? null, userName: s.displayName ?? null, note, today }, async (tx, row, before) => {
+    return async (tx: any, row: store.DeliveryRow, before: number) => {
       await auditRow(req, s, tx, { entityType: "hospital_ratio_delivery", entityId: row.id, action: "approve", branchId: row.branchId,
         oldValues: { status: "pending", remaining: before }, newValues: { status: "approved", deliveredOn: today, remaining: before - row.amount, note },
         notes: `تسليم ${money(row.amount)} لمستشفى العين${row.requestedByName ? ` — طلبه ${row.requestedByName}` : ""}` });
       if (row.requestedBy && row.requestedBy !== s.userId) {
         await notifyHospitalDeliveryDecided(tx, { requesterUserId: row.requestedBy, approved: true, amountText: money(row.amount), note });
       }
-    });
+    };
+  }
+
+  async function approveAs(req: any, s: BranchSession, id: number, note: string | null) {
+    return await store.approveDelivery(id, approveInput(s, note), approveAfter(req, s, note));
   }
 
   app.post("/api/hospital-ratio/deliveries/:id/approve", isAuthenticated, async (req: any, res) => {
