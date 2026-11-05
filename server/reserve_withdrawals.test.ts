@@ -160,16 +160,19 @@ async function main() {
       [r1.status, r1.body?.status, r1.body?.amount, r1.body?.amountWords, r1.body?.balance, r1.body?.balanceAfter, r1.body?.exceeds,
        r1.body?.boxLabel, await remaining("materials"), (await entries()).length],
       [200, "pending", 250_000, "مئتان وخمسون ألف دينار", 400_000, 150_000, false, "قاصة المواد", 400_000, 0]);
-    same("ب٥. **وطلبٌ معلَّقٌ واحد للقاصة** — زميلُه على القاصة نفسِها ⟵ ٤٠٩، وعلى الأخرى يُقبل",
+    //  قرارُ المالك ٢٠٢٦-١١-٠٥ (ترحيل ١٩٠): «يرسل أكثرَ من طلب، وحين أفرغ أوافق واحدةً واحدة» — والضغطةُ المكرّرة وحدها تُردّ.
+    same("ب٥. **أكثرُ من طلبٍ معلَّق على القاصة نفسِها** — زميلُه على المواد يُقبل وعلى الرواتب يُقبل، **والطلبُ نفسُه مكرّراً ⟵ ٤٠٩**",
       [(await ask(S.mgr, { book: "devices", reserve: "materials", amount: 1000, purpose: "مواد أخرى" })).status,
-       (await ask(S.mgr, { book: "devices", reserve: "payroll", amount: 2_500_000, purpose: `رواتب شهر ١١ ${MARK}` })).status], [409, 200]);
+       (await ask(S.mgr, { book: "devices", reserve: "payroll", amount: 2_500_000, purpose: `رواتب شهر ١١ ${MARK}` })).status,
+       (await ask(S.acc, { book: "devices", reserve: "materials", amount: "250,000", purpose: `مواد سيليكون من المورّد ${MARK}` })).status],
+      [200, 200, 409]);
     const pend = await outbox("reserve_withdrawal_pending");
     const t = String(pend[0]?.text ?? "");
     same("ب٦. **تنبيهُ المسؤول مقروءاً** — صفٌّ لكلّ طلبٍ محفوظ، فيه الفرعُ والدفترُ والقاصة والمبلغُ رقماً وكلمات والرصيدُ وبعده والغرضُ والطالب، بلا الطالب نفسِه",
       [pend.length, t.includes("قاصة المواد"), t.includes("بغداد"), t.includes("الأطراف") || t.includes("أطراف") || t.includes("الأجهزة"),
        t.includes("250,000"), t.includes("مئتان وخمسون ألف دينار"), t.includes("400,000"), t.includes("150,000"), t.includes("مواد سيليكون"),
        t.includes("u9962"), Number(pend[0]?.exclude_user_id), pend[0]?.link_path],
-      [2, true, true, true, true, true, true, true, true, true, ACC, "/payment-corrections#withdrawals"]);
+      [3, true, true, true, true, true, true, true, true, true, ACC, "/payment-corrections#withdrawals"]);
     const reqAudit = await q(`SELECT action FROM audit_log WHERE entity_type='reserve_withdrawal_request' AND entity_id=$1`, [r1.body?.id]);
     same("ب٧. وسطرُ تدقيقٍ للطلب", reqAudit.map((r) => r.action), ["create"]);
 
@@ -178,7 +181,11 @@ async function main() {
     const other = await http("GET", "/api/reserve-withdrawals", S.acc2);
     const all = await http("GET", "/api/reserve-withdrawals?status=pending", S.admin);
     same("ج١. **الطالبُ طلباتِه وحده، وزميلُه بلا طلباتٍ لا يرى شيئاً، والمسؤولُ كلَّها**",
-      [mine.body?.map((r: any) => r.id), other.body?.length, all.body?.length], [[r1.body?.id], 0, 2]);
+      [mine.body?.map((r: any) => r.id), other.body?.length, all.body?.length], [[r1.body?.id], 0, 3]);
+    const r1Card = all.body?.find((r: any) => r.id === r1.body?.id);
+    same("ج١ج. **البطاقةُ تقول ما معها على القاصة**: طلبٌ آخر بـ١٬٠٠٠، وإن اعتُمدت كلُّها يبقى ١٤٩٬٠٠٠",
+      [r1Card?.otherPendingCount, r1Card?.otherPendingAmount, r1Card?.balanceAfter, r1Card?.balanceAfterAllPending, r1Card?.allPendingExceed],
+      [1, 1000, 150_000, 149_000, false]);
     const payrollCard = all.body?.find((r: any) => r.reserve === "payroll");
     same("ج٢. **المبلغُ فوق الرصيد يُقبل ويُوسم** (قرارُ المالك) — ٢٬٥٠٠٬٠٠٠ من ٢٬٠٠٠٬٠٠٠",
       [payrollCard?.exceeds, payrollCard?.balanceAfter, payrollCard?.amountWords], [true, -500_000, "مليونان وخمسمئة ألف دينار"]);
@@ -191,10 +198,10 @@ async function main() {
     await q(`UPDATE system_users SET role = 'accountant' WHERE id = $1`, [ACC]);
     same("ج١ب. **غيرُ المسؤول في فرعه النشط وحده ومَن يكتب الدفترَ وحده**", [inDq.status, inDq.body?.length, asRecv.status], [200, 0, 403]);
     same("ج٣. **العدّادُ للمسؤول وحده**",
-      [(await http("GET", "/api/reserve-withdrawals/pending-count", S.admin)).body?.count, (await http("GET", "/api/reserve-withdrawals/pending-count", S.acc)).status], [2, 403]);
+      [(await http("GET", "/api/reserve-withdrawals/pending-count", S.admin)).body?.count, (await http("GET", "/api/reserve-withdrawals/pending-count", S.acc)).status], [3, 403]);
     const sh = await sheet(S.acc2);
     same("ج٤. **الدفترُ يُظهر المعلَّقَ لكلّ مَن يفتحه** (وزميلُ بلا مفتاح لا يطلب)",
-      [sh?.canRequestReserveWithdrawal, sh?.pendingReserveWithdrawals?.length, sh?.pendingReserveWithdrawals?.map((p: any) => p.mine)], [false, 2, [false, false]]);
+      [sh?.canRequestReserveWithdrawal, sh?.pendingReserveWithdrawals?.length, sh?.pendingReserveWithdrawals?.map((p: any) => p.mine)], [false, 3, [false, false, false]]);
     same("ج٥. ولصاحب الطلب «طلبُك» والمفتاحُ ظاهر",
       [(await sheet(S.acc))?.canRequestReserveWithdrawal, (await sheet(S.acc))?.pendingReserveWithdrawals?.find((p: any) => p.reserve === "materials")?.mine], [true, true]);
 
@@ -220,7 +227,7 @@ async function main() {
     const aud = await q(`SELECT entity_type, action, notes FROM audit_log WHERE branch_id=$1 AND entity_type IN ('cash_book_entry','reserve_withdrawal_request') ORDER BY id`, [BG]);
     same("د٤. **سطرا تدقيق**: سطرُ الدفتر «بطلب» صاحبه، والاعتمادُ على الطلب",
       [aud.filter((a) => a.entity_type === "cash_book_entry").map((a) => String(a.notes).includes("بطلب u9962")),
-       aud.filter((a) => a.entity_type === "reserve_withdrawal_request").map((a) => a.action)], [[true], ["create", "create", "approve"]]);
+       aud.filter((a) => a.entity_type === "reserve_withdrawal_request").map((a) => a.action)], [[true], ["create", "create", "create", "approve"]]);
     const dec = await outbox("reserve_withdrawal_decided");
     same("د٥. **الطالبُ يُبلَّغ وحده** بالقرار",
       [dec.length, (dec[0]?.target_user_ids ?? []).map(Number), String(dec[0]?.text).includes("اعتُمد"), String(dec[0]?.text).includes("250,000")],

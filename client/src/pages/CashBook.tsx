@@ -565,11 +565,11 @@ function ReserveBox({ k, box, sheet, branchId, book, day, write }: {
       )}
       {sheet.canRequestReserveWithdrawal && !sheet.isAdmin && day === sheet.today && (
         <>
-          <Button size="sm" variant="outline" className="justify-self-start" onClick={() => setAsk(true)} disabled={pending.length > 0}
-            title={pending.length > 0 ? "على هذه القاصة طلبٌ معلَّق — انتظر قرار المسؤول" : undefined} data-testid={`reserve-${k}-request`}>
+          <Button size="sm" variant="outline" className="justify-self-start" onClick={() => setAsk(true)} data-testid={`reserve-${k}-request`}>
             طلب سحب
           </Button>
-          <RequestWithdrawalDialog reserve={k} branchId={branchId} book={book} balance={box.remaining} open={ask} onClose={() => setAsk(false)} />
+          <RequestWithdrawalDialog reserve={k} branchId={branchId} book={book} balance={box.remaining}
+            pendingTotal={pending.reduce((t, p) => t + p.amount, 0)} pendingCount={pending.length} open={ask} onClose={() => setAsk(false)} />
         </>
       )}
       {sheet.isAdmin && (

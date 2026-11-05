@@ -22,6 +22,8 @@ export interface WithdrawalRow {
   reserve: ReserveKey; boxLabel: string; amount: number; amountWords: string; purpose: string;
   status: "pending" | "approved" | "rejected"; statusLabel: string;
   balance: number | null; balanceAfter: number | null; exceeds: boolean; balanceAtRequest: number | null;
+  /** طلباتٌ أخرى معلَّقة على القاصة نفسِها (ترحيل ١٩٠) — وما يبقى إن اعتُمدت كلُّها. */
+  otherPendingCount?: number; otherPendingAmount?: number; balanceAfterAllPending?: number | null; allPendingExceed?: boolean;
   requestedBy: number | null; requestedByName: string | null; requestedAt: string;
   decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; entryId: number | null;
 }
@@ -50,8 +52,8 @@ function invalidate(qc: ReturnType<typeof useQueryClient>) {
 }
 
 /** طلبُ السحب — من مربّع القاصة في الدفتر، لحامل المفتاح. */
-export function RequestWithdrawalDialog({ reserve, branchId, book, balance, open, onClose }: {
-  reserve: ReserveKey; branchId: number; book: CashBook; balance: number; open: boolean; onClose: () => void;
+export function RequestWithdrawalDialog({ reserve, branchId, book, balance, pendingTotal = 0, pendingCount = 0, open, onClose }: {
+  reserve: ReserveKey; branchId: number; book: CashBook; balance: number; pendingTotal?: number; pendingCount?: number; open: boolean; onClose: () => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -78,6 +80,11 @@ export function RequestWithdrawalDialog({ reserve, branchId, book, balance, open
         </DialogHeader>
         <div className="space-y-3 text-sm" data-testid="withdrawal-request-dialog">
           <p className="rounded-md bg-muted px-3 py-2">الرصيد الآن في القاصة: <b className="tabular-nums" dir="ltr">{money(balance)}</b> دينار</p>
+          {pendingCount > 0 && (
+            <p className="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-amber-900" data-testid="withdrawal-pending-note">
+              وعلى القاصة {pendingCount === 1 ? "طلبٌ معلَّق" : `${pendingCount} طلباتٍ معلَّقة`} بمجموع <b className="tabular-nums" dir="ltr">{money(pendingTotal)}</b> بانتظار المسؤول.
+            </p>
+          )}
           <label className="grid gap-1">المبلغ المطلوب
             <Input inputMode="numeric" dir="ltr" className="text-left tabular-nums" value={amount ? Number(amount).toLocaleString("en-US") : ""}
               placeholder="0" onChange={(e) => setAmount(digits(e.target.value))} data-testid="withdrawal-amount" autoFocus />
@@ -161,6 +168,16 @@ export function WithdrawalCard({ r, isAdmin }: { r: WithdrawalRow; isAdmin: bool
             <span className="tabular-nums" dir="ltr">{money(r.balance)}</span>
             {" ← بعد السحب "}
             <b className={`tabular-nums ${r.exceeds ? "text-red-700" : ""}`} dir="ltr">{money(r.balanceAfter)}</b>
+          </Line>
+        )}
+        {pending && (r.otherPendingCount ?? 0) > 0 && (
+          <Line label="طلباتٌ أخرى معلَّقة" testid={`withdrawal-others-${r.id}`}>
+            {r.otherPendingCount === 1 ? "طلبٌ آخر" : `${r.otherPendingCount} طلباتٍ أخرى`} على القاصة نفسِها بمجموع <span className="tabular-nums" dir="ltr">{money(r.otherPendingAmount)}</span>
+            {r.balanceAfterAllPending != null && (
+              <span className="block">
+                إن اعتُمدت كلُّها يبقى <b className={`tabular-nums ${r.allPendingExceed ? "text-red-700" : ""}`} dir="ltr">{money(r.balanceAfterAllPending)}</b>
+              </span>
+            )}
           </Line>
         )}
         <Line label="الغرض" testid={`withdrawal-purpose-${r.id}`}>{r.purpose}</Line>
