@@ -20,6 +20,8 @@ import {
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
 import { RequestWithdrawalDialog, ReserveWithdrawalsPanel } from "@/components/ReserveWithdrawal";
+import { HospitalBox, type HospitalBoxState } from "@/components/HospitalRatio";
+import { hospitalAutoApplies } from "@shared/hospital_ratio";
 
 interface Row {
   source: "payment" | "entry" | "expense" | "auto"; id: number; column: "income" | "expense" | "transfer";
@@ -49,6 +51,11 @@ interface Sheet {
   /** «طلب سحب من القاصات» (§4.fy): هل يطلب صاحبُ الجلسة، والمعلَّقُ على هذا الدفتر. */
   canRequestReserveWithdrawal?: boolean;
   pendingReserveWithdrawals?: { id: number; reserve: ReserveKey; amount: number; amountWords: string; purpose: string; requestedByName: string | null; mine: boolean }[];
+  /** مجموعُ الاسترجاع في الصادر (§4.fz) — والنسبُ من الوارد ناقصاً إيّاه. */
+  refundTotal?: number;
+  /** «نسبة مستشفى العين» (§4.fz) — في دفتر «علاج طبيعي» لذي قار من يوم البدء، والمعلَّقُ من طلبات التسليم. */
+  hospitalBox?: HospitalBoxState | null;
+  pendingHospitalDeliveries?: { id: number; amount: number; amountWords: string; note: string | null; requestedByName: string | null; mine: boolean }[];
 }
 
 interface ReserveState {
@@ -276,7 +283,9 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
   const income = sheet.rows.filter((r) => r.column === "income");
   const outflow = sheet.rows.filter((r) => r.column !== "income");
   //  تصحيحُ سطرٍ مكتوب للمسؤول وحده (قرارُ المالك ٢٠٢٦-١٠-٠٧) — والموظّفُ يطلبه منه قبل الطباعة.
-  const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto";
+  const editable = (r: Row) => sheet.isAdmin && sheet.canWrite && r.source !== "payment" && r.source !== "auto"
+    //  صفُّ «نسبة مستشفى العين» في يومٍ تلقائيّ يكتبه الخادمُ ويحدّثه وحده (§4.fz) — لا قلمَ ولا حذف.
+    && !(r.kind === "hospital_ratio" && hospitalAutoApplies(day));
   const noteOf = (r: Row) => cashRowNote(r);
   //  وغيرُ المسؤول يطلب التصحيحَ فيعتمده (§4.ce) — على المصروف (غير النسب) و«وارد آخر» والتحويل إلى قاصة الدكتور.
   const [requesting, setRequesting] = useState<CorrectionTarget | null>(null);
@@ -319,7 +328,8 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
           </thead>
           <tbody>
             {[...income, ...outflow].map((r) => (
-              <tr key={`${r.source}-${r.id}`} data-testid={`cash-row-${r.source}-${r.id}`}>
+              <tr key={`${r.source}-${r.id}`} data-testid={`cash-row-${r.source}-${r.id}`}
+                className={r.kind === "refund" ? "bg-rose-50 text-rose-800 font-semibold" : undefined}>
                 <td className="border px-2 py-1.5 text-left" dir="ltr">{r.column === "income" ? fmt(r.amount) : ""}</td>
                 <td className="border px-2 py-1.5 text-left" dir="ltr">{r.column === "expense" ? fmt(r.amount) : ""}</td>
                 <td className="border px-2 py-1.5 text-left bg-blue-50/60" dir="ltr">{r.column === "transfer" ? fmt(r.amount) : ""}</td>
@@ -376,7 +386,7 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       )}
 
       {/*  نسبةُ الدكتور تُحسب تلقائياً من وارد اليوم (قرارُ المالك ٢٠٢٦-١٠-٠٦) — لا زرَّ لها. ونسبةُ المستشفى لذي قار باقيةٌ بزرّها. */}
-      {sheet.canWrite && cfg.hospitalRatioPct && (
+      {sheet.canWrite && cfg.hospitalRatioPct && !hospitalAutoApplies(day) && (
         <div className="flex flex-wrap gap-2 items-center">
           {sheet.expected.hospitalRatio && (
             <Button variant="outline" size="sm" className="gap-1" data-testid="cash-hospital-ratio"
@@ -394,7 +404,9 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
       )}
 
       {/* المربّعات — كأسفل الورقة: القاصة، ومن يوم القطع قاصةُ المواد وبجانبها قاصةُ الرواتب والإيجار أصغر (§4.dj)، وقبله مربّعُ النسبة */}
-      <div className={`grid gap-4 pt-2 ${sheet.reserves ? "md:grid-cols-[1.1fr_1fr_0.9fr]" : "md:grid-cols-2"}`} data-testid="cash-boxes">
+      <div className={`grid gap-4 pt-2 ${sheet.reserves
+        ? (sheet.hospitalBox ? "md:grid-cols-2 2xl:grid-cols-[1.1fr_1fr_0.9fr_1fr]" : "md:grid-cols-[1.1fr_1fr_0.9fr]")
+        : "md:grid-cols-2"}`} data-testid="cash-boxes">
         <div className="border-2 border-slate-600 rounded-sm p-3 space-y-2 text-sm" data-testid="cash-box">
           <h3 className="font-bold text-base">القاصة</h3>
           {/*  **ومن أين جاء الرقم** (طلبُ المالك ٢٠٢٦-١٠-٠٧، §4.ca تكملة ٨): تحت الرقم وارده وصادره كما في الجدول. */}
@@ -406,12 +418,17 @@ function SheetBody({ sheet, branchId, book, day, write }: { sheet: Sheet; branch
         {sheet.reserves && (["materials", "payroll"] as ReserveKey[]).map((k) => (
           <ReserveBox key={k} k={k} box={sheet.reserves![k]} sheet={sheet} branchId={branchId} book={book} day={day} write={write} />
         ))}
+        {/*  «نسبة مستشفى العين» (§4.fz) — مربّعٌ جديد بجانب القاصات، والقاصاتُ كما هي. */}
+        {sheet.hospitalBox && (
+          <HospitalBox box={sheet.hospitalBox} branchId={branchId} isAdmin={sheet.isAdmin} canWrite={sheet.canWrite && day === sheet.today}
+            canRequest={!sheet.isAdmin} pending={sheet.pendingHospitalDeliveries ?? []} />
+        )}
         {!sheet.reserves && <div className="border-4 border-double border-emerald-700 rounded-sm p-3 space-y-2 text-sm" data-testid="ratio-box">
           <h3 className="font-bold text-base text-emerald-800">نسبة العزل للدكتور</h3>
           {/*  النسبةُ من وارد اليوم بنسبة الفرع — كما يحسبها الخادم (`ratioAmount`)، فتُقرأ تحت الرقم. */}
           <BoxLine label="نسبة اليوم" value={sheet.ratio.today}
             hint={sheet.branch.config.drRatioPct ? `(${sheet.branch.config.drRatioPct}٪ من الوارد)` : undefined}
-            valueHint={sheet.branch.config.drRatioPct ? `${fmt(sheet.totals.income)} × ${sheet.branch.config.drRatioPct}%` : undefined}
+            valueHint={sheet.branch.config.drRatioPct ? `${fmt(sheet.totals.income - (sheet.refundTotal ?? 0))} × ${sheet.branch.config.drRatioPct}%` : undefined}
             testid="ratio-today" />
           <BoxLine label="المتبقي من نسبة أمس" value={sheet.ratio.prev} />
           {sheet.ratio.received > 0 && <BoxLine label="استُلم اليوم" value={-sheet.ratio.received} />}

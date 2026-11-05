@@ -25,8 +25,25 @@ import { registerDrBoxRoutes } from "./dr_box_routes";
 import { pendingTargets } from "../money_corrections/store";
 import { pendingForBook } from "../reserve_withdrawals/store";
 import { amountInArabicWords, canRequestReserveWithdrawal } from "@shared/reserve_withdrawals";
+import * as hospital from "../hospital_ratio/store";
+import { HOSPITAL_AUTO_ERROR, hospitalAutoApplies, isAutoHospitalRow } from "@shared/hospital_ratio";
 
 type Req = any;
+
+/**
+ * **ورقةُ اليوم كما تُعرض وتُطبع** — ولفرع نسبة المستشفى (ذي قار، §4.fz): يُطابَق العزلُ التلقائيّ قبل القراءة فتقرأ الورقةُ ما يجب أن يكون،
+ * ومربّعُ «نسبة مستشفى العين» في دفتر «علاج طبيعي» وحده (قرارُ المالك) يجمع الدفترين.
+ */
+async function fullSheet(branchId: number, book: CashBook, day: string) {
+  const b = await store.branchConfigOf(branchId);
+  const hospitalBranch = Boolean(b?.config.hospitalRatioPct);
+  if (hospitalBranch && hospitalAutoApplies(baghdadTodayYmd())) {
+    await hospital.reconcileBranch(branchId).catch((e) => console.error("[hospital-ratio] reconcile on read failed:", e));
+  }
+  const sheet: any = await store.getSheet(branchId, book, day);
+  sheet.hospitalBox = hospitalBranch && book === "physio" ? await hospital.boxFor(branchId, day) : null;
+  return sheet;
+}
 
 function sessionOf(req: Req): BranchSession {
   return getSession(req) ?? {};
@@ -100,7 +117,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     if (!g) return;
     const day = isYmd(req.query.date) ? String(req.query.date) : baghdadTodayYmd();
     try {
-      const sheet = await store.getSheet(g.branchId, g.book, day);
+      const sheet = await fullSheet(g.branchId, g.book, day);
       const today = baghdadTodayYmd();
       //  ما صُرف من قاصة الدكتور لهذا الفرع في هذا اليوم: البابُ وحده، بلا مبلغٍ ولا ملاحظة (§4.cb).
       const drBoxLines = await drBoxLinesForDay(g.branchId, day);
@@ -120,6 +137,13 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
           id: r.id, reserve: r.reserve, amount: r.amount, amountWords: amountInArabicWords(r.amount), purpose: r.purpose,
           requestedByName: r.requestedByName, requestedAt: r.requestedAt, mine: r.requestedBy != null && r.requestedBy === g.s.userId,
         })),
+        //  «نسبة مستشفى العين» (§4.fz): المحاسبُ والمديرُ يطلبان التسليمَ من المربّع، والمعلَّقُ يظهر تحته بانتظار المسؤول.
+        pendingHospitalDeliveries: sheet.hospitalBox
+          ? (await hospital.listDeliveries({ status: "pending", branchId: g.branchId })).map((r) => ({
+            id: r.id, amount: r.amount, amountWords: amountInArabicWords(r.amount), note: r.note,
+            requestedByName: r.requestedByName, requestedAt: r.requestedAt, mine: r.requestedBy != null && r.requestedBy === g.s.userId,
+          }))
+          : [],
         lastPrint: printed ? { at: printed.printedAt.toISOString(), by: printed.printedByName ?? null } : null,
         changedAfterPrint: printed ? printed.fingerprint !== sheetFingerprint(sheet, drBoxLines) : false,
       });
@@ -133,7 +157,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     const day = req.body?.date;
     if (!isYmd(day) || day > baghdadTodayYmd()) return res.status(400).json({ error: "التاريخ غير صالح" });
     try {
-      const sheet = await store.getSheet(g.branchId, g.book, day);
+      const sheet = await fullSheet(g.branchId, g.book, day);
       if (!sheet.opening || day < sheet.opening.date) return res.status(409).json({ error: "هذا اليوم قبل بداية الدفتر" });
       const row = await recordPrint({
         branchId: g.branchId, book: g.book, day,
@@ -282,6 +306,8 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
       return res.status(400).json({ error: `نسبة الدكتور لا تُضاف بزرّ — كانت تُحسب تلقائياً، وأُلغيت من ${RESERVES_START} وبدلها قاصة المواد وقاصة الرواتب والإيجار` });
     }
     if (kind !== "hospital_ratio") return res.status(400).json({ error: "نوع النسبة غير صالح" });
+    //  **ومن يوم البدء تُعزل وحدها** (قرارُ المالك ٢٠٢٦-١١-٠٥، §4.fz) — لا زرّ.
+    if (hospitalAutoApplies(day)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
     if (!(await dayOpen(res, g.s, g.branchId, g.book, day))) return;
     try {
       const r = await store.syncRatio({ branchId: g.branchId, book: g.book, day, kind, userId: g.s.userId ?? null });
@@ -348,6 +374,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
         return res.json(row);
       }
       const x = l.expense;
+      if (isAutoHospitalRow(x)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
       if (x.category === HOSPITAL_RATIO_CATEGORY && amount !== undefined) {
         return res.status(400).json({ error: "نسبة المستشفى تُحسب من وارد اليوم — استعمل «تحديث النسبة»" });
       }
@@ -400,6 +427,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
           oldValues: l.entry, newValues: row });
         return res.json({ success: true });
       }
+      if (isAutoHospitalRow(l.expense)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
       await audit(req, l.g.s, { entityType: "expense", entityId: l.expense.id, action: "delete", branchId: l.g.branchId,
         oldValues: l.expense, notes: "من دفتر القاصة" });
       await store.deleteExpenseRow(l.expense.id, l.g.s.userId ?? null);

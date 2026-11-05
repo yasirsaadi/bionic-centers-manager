@@ -13,6 +13,7 @@ import { db } from "./db";
 import { redactForLog } from "./log_redaction";
 import { startNotificationDispatcher } from "./patient_notifications/dispatcher";
 import { startInstallmentReminders } from "./installments/reminders";
+import { startHospitalRatioReconcile } from "./hospital_ratio/scheduler";
 import { installJsonParsers } from "./json_body";
 
 // Resilience: a single failing request must NEVER take down the whole service.
@@ -162,6 +163,8 @@ app.use((req, res, next) => {
       startNotificationDispatcher();
       //  تذكيرُ الأقساط (§4.ea) — دورةٌ كلَّ دقيقة، بالساعة التي اختارها الموظّف لكلّ خطّة.
       startInstallmentReminders();
+      //  نسبةُ مستشفى العين تُعزل وحدها (§4.fz): بعد كلّ كتابة، وكلَّ ليلة، وعند الإقلاع.
+      startHospitalRatioReconcile();
       // One-time patient-cases backfill runs in the BACKGROUND, AFTER the
       // server is listening — so a large dataset never blocks/times-out the
       // deploy. It's guarded (runs once) and fails safe.

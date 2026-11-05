@@ -61,6 +61,9 @@ import { registerPendingChargeRoutes } from "./pending_charges/routes";
 import { registerCashBookRoutes } from "./cash_book/routes";
 import { registerMoneyCorrectionRoutes } from "./money_corrections/routes";
 import { registerReserveWithdrawalRoutes, enableDecidedNotice } from "./reserve_withdrawals/routes";
+import { registerPatientRefundRoutes, enableRefundDecidedNotice } from "./patient_refunds/routes";
+import { registerHospitalRatioRoutes } from "./hospital_ratio/routes";
+import { HOSPITAL_AUTO_ERROR, isAutoHospitalRow } from "@shared/hospital_ratio";
 import { registerInstallmentRoutes } from "./installments/routes";
 import { createPlanFromPaymentsTx, InstallmentError } from "./installments/store";
 import { parseInstallmentInput, type InstallmentInput } from "@shared/installments";
@@ -348,6 +351,8 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canBackdateVisits: isAdminRow || Boolean(systemUser.canBackdateVisits),
     //  «طلب سحب من القاصات» (§4.fy) — مفتاحٌ مخزَّن لا يمنحه دور؛ والمسؤولُ يسحب مباشرةً فلا يطلب.
     canRequestReserveWithdrawal: !isAdminRow && Boolean(systemUser.canRequestReserveWithdrawal),
+    //  «طلب استرجاع مبلغ لمريض» (§4.fz) — مفتاحٌ مخزَّن لا يمنحه دور؛ والمسؤولُ يسترجع مباشرةً.
+    canRequestRefund: !isAdminRow && Boolean(systemUser.canRequestRefund),
   };
 }
 
@@ -1439,7 +1444,7 @@ export async function registerRoutes(
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
       // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal"] as const) {
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1516,6 +1521,9 @@ export async function registerRoutes(
       });
       if (user.canRequestReserveWithdrawal) {
         await enableDecidedNotice(user.id).catch((e) => console.error("[reserve-withdrawals] notice pref failed:", e));
+      }
+      if (user.canRequestRefund) {
+        await enableRefundDecidedNotice(user.id).catch((e) => console.error("[patient-refunds] notice pref failed:", e));
       }
 
       res.json({ ...user, passwordHash: undefined, passwordPlain: undefined });
@@ -1599,7 +1607,7 @@ export async function registerRoutes(
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
       // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal"] as const) {
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1681,6 +1689,10 @@ export async function registerRoutes(
       //  مفتاحُ «طلب سحب من القاصات» يُشعَل الآن ⟵ تنبيهُ قرار طلبه يُفعَّل مرّةً (§4.fy).
       if (!before?.canRequestReserveWithdrawal && user.canRequestReserveWithdrawal) {
         await enableDecidedNotice(id).catch((e) => console.error("[reserve-withdrawals] notice pref failed:", e));
+      }
+      //  ومفتاحُ «طلب استرجاع مبلغ لمريض» كذلك (§4.fz).
+      if (!before?.canRequestRefund && user.canRequestRefund) {
+        await enableRefundDecidedNotice(id).catch((e) => console.error("[patient-refunds] notice pref failed:", e));
       }
 
       const diff = userAuditDiff(before as any, user as any);
@@ -5004,6 +5016,17 @@ export async function registerRoutes(
   // — مديرُ الفرع بمن فيه — يقدّم طلباً معلَّقاً يعتمده المسؤولُ من
   // `server/payments/correction_routes.ts`. لا توسيعَ لصلاحية: القدرةُ على
   // الكتابة الفعلية بقيت للمسؤول وحده كما كانت.
+
+  /** **دفعةُ الاسترجاع لا تُعدَّل ولا تُحذف** (§4.fz): كتبها اعتمادُ طلبٍ بسنده — وتصحيحُها استرجاعٌ آخر أو دفعة. */
+  async function refundPaymentGuard(id: number, res: any): Promise<boolean> {
+    const r = await db.execute(sql`SELECT id FROM patient_refund_requests WHERE payment_id = ${id} LIMIT 1`);
+    if (r.rows.length) {
+      res.status(400).json({ message: `هذه دفعةُ استرجاع (سند ${(r.rows[0] as any).id}) — لا تُعدَّل ولا تُحذف` });
+      return false;
+    }
+    return true;
+  }
+
   app.delete("/api/payments/:id", isAuthenticated, async (req, res) => {
     const permissions = getPermissions(req);
     if (!permissions.canDeletePayments) {
@@ -5027,6 +5050,7 @@ export async function registerRoutes(
       }
     }
 
+    if (!(await refundPaymentGuard(id, res))) return;
     const reason = strOrNull(req.body?.reason);
     if (!reason) {
       return res.status(400).json({ message: "سبب التصحيح مطلوب لحذف دفعة" });
@@ -5076,6 +5100,7 @@ export async function registerRoutes(
     if (allowed !== null && !allowed.includes(existing.branchId)) {
       return res.status(403).json({ message: "لا يمكنك تعديل دفعة من فرع آخر" });
     }
+    if (!(await refundPaymentGuard(id, res))) return;
 
     const { sessionCount, paymentTreatmentType } = req.body;
     const diff = diffPaymentPatch(existing, { paymentTreatmentType });
@@ -5132,6 +5157,7 @@ export async function registerRoutes(
     const { amount, notes, sessionCount, paymentTreatmentType, customDate, isFreeSessions, reason } = req.body;
     const [beforeEdit] = await db.select().from(payments).where(eq(payments.id, id));
     if (!beforeEdit) return res.status(404).json({ message: "الدفعة غير موجودة" });
+    if (!(await refundPaymentGuard(id, res))) return;
 
     try {
       const diff = diffPaymentPatch(beforeEdit, {
@@ -6525,6 +6551,7 @@ export async function registerRoutes(
       if (!isAdmin && branchSession?.branchId && existingExpense.branchId !== branchSession.branchId) {
         return res.status(403).json({ error: "لا يمكنك تعديل مصروف من فرع آخر" });
       }
+      if (isAutoHospitalRow(existingExpense)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
 
       // Same "other → subcategory required" rule as on create.
       const effectiveCategory = req.body.category ?? existingExpense.category;
@@ -6598,6 +6625,7 @@ export async function registerRoutes(
     if (!isAdmin && branchSession?.branchId && existingExpense.branchId !== branchSession.branchId) {
       return res.status(403).json({ error: "لا يمكنك حذف مصروف من فرع آخر" });
     }
+    if (isAutoHospitalRow(existingExpense)) return res.status(400).json({ error: HOSPITAL_AUTO_ERROR });
 
     // عكس القيد قبل الحذف
     await reverseJournalForSource("expense", id, userId, "حذف المصروف");
@@ -9125,6 +9153,8 @@ export async function registerRoutes(
   registerCashBookRoutes(app, isAuthenticated);
   registerMoneyCorrectionRoutes(app, isAuthenticated);
   registerReserveWithdrawalRoutes(app, isAuthenticated);
+  registerPatientRefundRoutes(app, isAuthenticated);
+  registerHospitalRatioRoutes(app, isAuthenticated);
   registerInstallmentRoutes(app, isAuthenticated);
   registerPhysioProtocolRoutes(app, isAuthenticated);
   registerPhysioPlanRoutes(app, isAuthenticated);

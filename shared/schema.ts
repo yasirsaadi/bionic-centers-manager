@@ -1121,6 +1121,59 @@ export const reserveWithdrawalRequests = pgTable("reserve_withdrawal_requests", 
   index("ix_rwr_status").on(t.status, t.branchId),
 ]);
 
+// **طلبُ استرجاع مبلغٍ لمريض** (ترحيل ١٩١، §4.fz) — يطلبه حاملُ المفتاح، ويعتمده المسؤولُ فتُكتب دفعةُ الاسترجاع السالبة (`payment_id`)
+// بيوم الاعتماد بقيدها، أو يرفضه فلا يتغيّر شيء. ورقمُ الطلب رقمُ السند. و`deduct_hospital` قرارُ المسؤول في ذي قار.
+export const patientRefundRequests = pgTable("patient_refund_requests", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  /** حالةُ المريض التي يُستردّ منها — بلا مفتاحٍ أجنبيّ عمداً: سحبُ الحالة لا يتعثّر بطلبٍ مرفوض. */
+  caseId: integer("case_id").notNull(),
+  caseType: text("case_type").notNull(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  amount: integer("amount").notNull(),
+  reason: text("reason").notNull(),
+  detail: text("detail").notNull(),
+  netPaidAtRequest: integer("net_paid_at_request"),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  deductHospital: boolean("deduct_hospital"),
+  /** أتنقص كلفةُ الحالة بالمبلغ نفسِه — فلا يُعدّ المريضُ مديناً بما استُرجع (قرارُ المسؤول عند الاعتماد). */
+  reduceCost: boolean("reduce_cost"),
+  costBefore: integer("cost_before"),
+  costAfter: integer("cost_after"),
+  paymentId: integer("payment_id"),
+}, (t) => [
+  index("ix_prr_status").on(t.status, t.branchId),
+  index("ix_prr_patient").on(t.patientId),
+]);
+
+// **طلبُ تسليمٍ لمستشفى العين** (ترحيل ١٩٢، §4.fz) — من مربّع «نسبة مستشفى العين»؛ يعتمده المسؤولُ فينقص المربّع بيوم الاعتماد
+// (`delivered_on`)، ولا يمسّ القاصةَ ولا المصاريف: المالُ خرج منها يومَ العزل.
+export const hospitalRatioDeliveries = pgTable("hospital_ratio_deliveries", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").references(() => branches.id).notNull(),
+  amount: integer("amount").notNull(),
+  note: text("note"),
+  remainingAtRequest: integer("remaining_at_request"),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  deliveredOn: date("delivered_on"),
+}, (t) => [
+  index("ix_hrd_status").on(t.status, t.branchId),
+]);
+
 // Admin-managed CUSTOM expense categories — added on top of the built-in list
 // (رواتب، إيجارات، …) without a code change. The expense row stores the
 // category as free text (its label), so a custom category needs no slug and
@@ -2023,6 +2076,7 @@ export const systemUsers = pgTable("system_users", {
   canBackdateVisits: boolean("can_backdate_visits").notNull().default(false),
   /** «طلب سحب من القاصات» (ترحيل ١٨٩، §4.fy) — يطلب السحبَ من قاصة المواد أو قاصة الرواتب والإيجار، ولا يُنفَّذ حتى يعتمده المسؤول. لا يمنحه دور. */
   canRequestReserveWithdrawal: boolean("can_request_reserve_withdrawal").notNull().default(false),
+  canRequestRefund: boolean("can_request_refund").notNull().default(false),
   // Which specialties this doctor may sign for: a subset of
   // ["prosthetic","medical_support","physiotherapy"]. Empty = may sign nothing,
   // so granting the flag without a specialty is a no-op by design.

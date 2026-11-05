@@ -7,6 +7,8 @@ export const cashCategoryLabel = (c: string | null) => (!c ? ""
   : EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c);
 
 export function cashRowNote(r: { kind: string; source: string; note: string; category: string | null }): string {
+  //  الاسترجاعُ لمريض (§4.fz) — ملاحظتُه «استرجاع: الاسم (الرمز) — سند …» كما يكتبها الخادم.
+  if (r.kind === "refund") return `↩ ${r.note}`;
   if (r.kind === "income_other") return `${INCOME_OTHER_LABEL}${r.note ? ` — ${r.note}` : ""}`;
   if (r.kind === "dr_transfer") return `${OUTFLOW_LABELS.dr_transfer}${r.note ? ` (${r.note})` : ""}`;
   //  نسبةُ الدكتور محسوبةٌ تلقائياً، وملاحظتُها نسبتُها («٢٠٪ من وارد اليوم»).

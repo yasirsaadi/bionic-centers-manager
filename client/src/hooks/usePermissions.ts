@@ -40,6 +40,7 @@ interface UserPermissions {
   /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — مفتاحٌ لموظّفٍ بعينه، والمسؤولُ بسلطته. */
   canBackdateVisits: boolean;
   canRequestReserveWithdrawal: boolean;
+  canRequestRefund: boolean;
 }
 
 const defaultAdminPermissions: UserPermissions = {
@@ -70,6 +71,7 @@ const defaultAdminPermissions: UserPermissions = {
   canDryNeedle: false,
   canBackdateVisits: true,
   canRequestReserveWithdrawal: false,
+  canRequestRefund: false,
 };
 
 const defaultBranchPermissions: UserPermissions = {
@@ -100,6 +102,7 @@ const defaultBranchPermissions: UserPermissions = {
   canDryNeedle: false,
   canBackdateVisits: false,
   canRequestReserveWithdrawal: false,
+  canRequestRefund: false,
 };
 
 export function usePermissions(): UserPermissions {
@@ -134,6 +137,7 @@ export function usePermissions(): UserPermissions {
       canDryNeedle: false,
       canBackdateVisits: false,
       canRequestReserveWithdrawal: false,
+      canRequestRefund: false,
     };
   }
 
@@ -167,6 +171,7 @@ export function usePermissions(): UserPermissions {
       canDryNeedle: perms.canDryNeedle ?? false,
       canBackdateVisits: perms.canBackdateVisits ?? false,
       canRequestReserveWithdrawal: perms.canRequestReserveWithdrawal ?? false,
+      canRequestRefund: perms.canRequestRefund ?? false,
     };
   }
   

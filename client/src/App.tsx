@@ -42,6 +42,7 @@ const IntakeSheetPrint = lazy(() => import("@/pages/IntakeSheetPrint"));
 const PhysioSheetPrint = lazy(() => import("@/pages/PhysioSheetPrint"));
 const PhysioHomeSheetPrint = lazy(() => import("@/pages/PhysioHomeSheetPrint"));
 const PatientRecordPrint = lazy(() => import("@/pages/PatientRecordPrint"));
+const RefundVoucherPrint = lazy(() => import("@/pages/RefundVoucherPrint"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Surveys = lazy(() => import("@/pages/Surveys"));
 const AdminSettings = lazy(() => import("@/pages/AdminSettings"));
@@ -248,6 +249,17 @@ function Router() {
 
   //  ورقةُ الدفتر للطباعة (§4.ca تكملة): صفحةٌ بلا شريطٍ جانبيّ ولا إطار — ما يُطبع هو الورقةُ وحدها.
   //  وورقةُ «استمارة المراجع» للطباعة (§4.cq) — الورقةُ وحدها كذلك.
+  //  وسندُ الاسترجاع (§4.fz) — الورقةُ وحدها كذلك.
+  if (location.startsWith("/refund-voucher/print")) {
+    return (
+      <BranchGate>
+        <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>}>
+          <RefundVoucherPrint />
+        </Suspense>
+      </BranchGate>
+    );
+  }
+
   if (location.startsWith("/intake-sheet/print")) {
     return (
       <BranchGate>

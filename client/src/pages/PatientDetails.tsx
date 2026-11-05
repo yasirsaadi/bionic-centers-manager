@@ -90,6 +90,7 @@ import {
   HelpCircle
 } from "lucide-react";
 import { PaymentModal } from "@/components/PaymentModal";
+import { PatientRefundsBar } from "@/components/PatientRefund";
 import { deviceOrdinalLabel } from "@shared/device_label";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
@@ -1633,6 +1634,10 @@ export default function PatientDetails() {
                   ليس لديك صلاحية عرض الدفعات
                 </div>
               ) : (
+              <>
+              {/*  «طلب استرجاع مبلغ لمريض» (§4.fz) — الزرُّ لحامل المفتاح والمسؤول، وطلباتُ استرجاعه بحالها وسندها. */}
+              <PatientRefundsBar patientId={patient.id} patientName={patient.name ?? ""}
+                canRequest={Boolean(isAdmin || permissions.canRequestRefund)} isAdmin={Boolean(isAdmin)} />
               <div className="overflow-x-auto rounded-md border border-slate-300">
                 <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
                   <thead>
@@ -1688,8 +1693,9 @@ export default function PatientDetails() {
                     ) : (
                       casePayments?.map((payment) => (
                         <tr key={payment.id} className="hover:bg-slate-50">
-                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-emerald-600">
+                          <td className={`border border-slate-300 px-3 py-2 text-center font-bold ${payment.amount < 0 ? "text-rose-700 bg-rose-50" : "text-emerald-600"}`}>
                             {payment.amount.toLocaleString('ar-IQ')} {t.patientDetails.currency}
+                            {payment.amount < 0 && <span className="block text-[11px] font-semibold">استرجاع</span>}
                             {(payment as any).isFreeSessions && (
                               <Badge variant="secondary" className="mr-1 text-xs" data-testid={`badge-free-session-${payment.id}`}>{t.modals.freeSessions}</Badge>
                             )}
@@ -1723,6 +1729,9 @@ export default function PatientDetails() {
                           <td className="border border-slate-300 px-3 py-2 text-center text-slate-600" dir="auto" style={{ unicodeBidi: "plaintext" }}>{(payment as any).displayDescription || payment.notes || "-"}</td>
                           {(permissions.canEditPayments || permissions.canDeletePayments) && (
                             <td className="border border-slate-300 px-3 py-2 text-center">
+                              {payment.amount < 0 && /^سند \d+/.test(payment.notes ?? "") ? (
+                                <span className="text-[11px] text-slate-400" title="دفعةُ استرجاعٍ بسندها — لا تُعدَّل ولا تُحذف">—</span>
+                              ) : (
                               <div className="flex gap-1 justify-center">
                                 {permissions.canEditPayments && (
                                 <Button 
@@ -1748,6 +1757,7 @@ export default function PatientDetails() {
                                 </Button>
                                 )}
                               </div>
+                              )}
                             </td>
                           )}
                         </tr>
@@ -1756,6 +1766,7 @@ export default function PatientDetails() {
                   </tbody>
                 </table>
               </div>
+              </>
               )}
             </TabsContent>
 

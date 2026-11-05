@@ -133,8 +133,8 @@ async function main() {
     console.log("\n── أ. لوحة المسؤول ──");
     same("أ١. لغير المسؤول ⟵ ٤٠٣", (await http("GET", "/api/admin/staff-notifications", S.recv1)).status, 403);
     const g = await http("GET", "/api/admin/staff-notifications", S.admin);
-    same("أ٢. البوتُ جاهز والأنواعُ ثلاثةٌ وعشرون (ومنها خمسةُ خطط العلاج الطبيعي — §4.cp: «مستحقّ التقييم» الصباحيّ، و«طلبُ تصحيح صرف» — §4.ce التكملة، و«قسطٌ مستحقّ» — §4.ea، و«طلب سحب» وقرارُه — §4.fy)، والموظّفُ غيرُ النشط لا يظهر",
-      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 23, false]);
+    same("أ٢. البوتُ جاهز والأنواعُ سبعةٌ وعشرون (ومنها خمسةُ خطط العلاج الطبيعي — §4.cp: «مستحقّ التقييم» الصباحيّ، و«طلبُ تصحيح صرف» — §4.ce التكملة، و«قسطٌ مستحقّ» — §4.ea، و«طلب سحب» وقرارُه — §4.fy، و«طلب استرجاع» و«طلب تسليم لمستشفى العين» وقراراهما — §4.fz)، والموظّفُ غيرُ النشط لا يظهر",
+      [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 27, false]);
     same("أ٣. الأنواعُ الثلاثة التي لا تقع اليوم ليست فيها",
       ["charge_returned", "discount_pending", "discount_decided"].some((k) => g.body?.events?.some((e: any) => e.key === k)), false);
     same("أ٤. نوعٌ مجهول ⟵ ٤٠٠", (await http("PUT", `/api/admin/staff-notifications/${RECV1}`, S.admin, { events: ["nope"] })).status, 400);
@@ -153,12 +153,12 @@ async function main() {
       [bad.status, (await q(`SELECT count(*)::int n FROM staff_notification_prefs WHERE user_id=$1 AND event_type='exam_request'`, [RECV1]))[0].n], [400, 0]);
     const g2 = (await http("GET", "/api/admin/staff-notifications", S.admin)).body;
     const el = (id: number) => g2.users.find((u: any) => u.id === id)?.eligible;
-    same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول)",
-      el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due"]);
-    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه (ومنه «قسطٌ مستحقّ» — §4.ea، و«قرارُ طلبه للسحب» — §4.fy) · والمسؤولُ الثلاثةُ والعشرون",
+    same("أ٤ج. **الاستقبالُ يُعرض له ما يخصّه وحده** (لا معاينة ولا خبير ولا مسؤول — ومعه «قرارُ طلبه للاسترجاع»، §4.fz)",
+      el(RECV1), ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due", "refund_request_decided"]);
+    same("أ٤د. والطبيبُ معايناته · والخبيرُ أوامرُه · والمديرُ ما يخصّه (ومنه «قسطٌ مستحقّ» — §4.ea، و«قرارُ طلبه للسحب» — §4.fy، وقرارا الاسترجاع والتسليم — §4.fz) · والمسؤولُ السبعةُ والعشرون",
       [el(DOC_P), el(EXP1), el(MGR1), el(ADMIN)?.length],
       [["exam_request"], ["order_assigned", "order_reassigned", "expert_due_digest"],
-       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due", "reserve_withdrawal_decided", "order_hold_rework", "evening_summary"], 23]);
+       ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due", "reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided", "order_hold_rework", "evening_summary"], 27]);
     //  «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤) — و«كلُّ مبلغٍ يدخل» للمسؤول وحده.
     const mgrBad = await Promise.all(["exam_request", "payment_received"].map(async (k) =>
       (await http("PUT", `/api/admin/staff-notifications/${MGR1}`, S.admin, { events: [k] })).status));

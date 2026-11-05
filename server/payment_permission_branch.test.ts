@@ -1211,8 +1211,10 @@ async function main() {
       const sumBlock = sidebarSrc.slice(sidebarSrc.indexOf("paymentCorrectionsData"),
         sidebarSrc.indexOf("\n", sidebarSrc.indexOf("const paymentCorrectionsCount")));
       check(/\/api\/money-corrections\/pending-count/.test(sumBlock) && /paymentCorrectionsCount = \(paymentCorrectionsData\?\.count \?\? 0\) \+ \(moneyCorrectionsData\?\.count \?\? 0\)/.test(sumBlock)
-        && (sumBlock.match(/enabled:\s*!!branchSession\?\.isAdmin/g) ?? []).length === 2,
-        "ذ٤٠ب. **والشارةُ تجمع عدّادَ المصاريف وسطور الدفتر مع الدفعات** — وكلاهما للمسؤول وحده", sumBlock);
+        //  **وكلُّ عدّادٍ يُجمع في الرقم للمسؤول وحده** — مهما زاد عددُها (طلبُ السحب §4.fy، والاسترجاعُ والتسليمُ §4.fz).
+        && (sumBlock.match(/useQuery</g) ?? []).length >= 2
+        && (sumBlock.match(/enabled:\s*!!branchSession\?\.isAdmin/g) ?? []).length === (sumBlock.match(/useQuery</g) ?? []).length,
+        "ذ٤٠ب. **والشارةُ تجمع عدّادَ المصاريف وسطور الدفتر مع الدفعات** — وكلُّ عدّاداتها للمسؤول وحده", sumBlock);
 
       // ١٦. المسارُ لم يتغيّر في App.tsx (تثبيتٌ إضافيّ إلى جانب خ١١).
       check(/path="\/payment-corrections"/.test(appSrc) && /component=\{PaymentCorrections\}/.test(appSrc),
