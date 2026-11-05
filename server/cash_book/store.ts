@@ -14,6 +14,7 @@ import {
   payments, patients, patientCases, expenses, branches, cashBookEntries, cashBookOpenings, cashBookReserves, type Expense,
 } from "@shared/schema";
 import { activePatientDrizzle } from "../patients/active_patient";
+import { HOSPITAL_AUTO_START, hospitalAutoApplies } from "@shared/hospital_ratio";
 import { baghdadDayBounds } from "../storage";
 import { createJournalForExpense, reverseJournalForSource } from "../accounting/auto_journal";
 import {
@@ -32,7 +33,7 @@ export async function branchConfigOf(branchId: number): Promise<{ name: string; 
   return b ? { name: b.name, config: branchCashConfig(b.name) } : null;
 }
 
-function addDays(ymd: string, n: number): string {
+export function addDays(ymd: string, n: number): string {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -41,7 +42,7 @@ function addDays(ymd: string, n: number): string {
 //  ══ تصفيةُ الدفتر — قاعدةٌ واحدة للدفعات وللمصاريف ═══════════════════════════════
 //  فرعٌ بدفترٍ واحد: كلُّ ماله فيه. وفرعٌ بدفترين: العلاجُ الطبيعيُّ ما كانت حالتُه/قسمُه علاجاً طبيعياً، والباقي كلُّه
 //  لدفتر الأطراف والمساند — ومنه ما بلا قسم (دفعةٌ بلا حالة، مصروفٌ مشترك) **موسوماً بذلك** لا مخفيّاً.
-function paymentBookFilter(cfg: BranchCashConfig, book: CashBook) {
+export function paymentBookFilter(cfg: BranchCashConfig, book: CashBook) {
   if (cfg.books.length === 1) return sql`TRUE`;
   return book === "physio"
     ? sql`${patientCases.caseType} = 'physiotherapy'`
@@ -213,7 +214,7 @@ export interface SheetRow {
   source: "payment" | "entry" | "expense" | "auto";
   id: number;
   column: "income" | "expense" | "transfer";
-  kind: "payment" | "income_other" | OutflowKind;
+  kind: "payment" | "income_other" | "refund" | OutflowKind;
   amount: number;
   note: string;
   category: string | null;
@@ -221,6 +222,8 @@ export interface SheetRow {
   unsectioned: boolean;
   createdBy: number | null;
   at: string | null;
+  /** للاسترجاع وحده: ملاحظتُه كما كانت سطرَ وارد — لبصمة ما طُبع قبل أن ينتقل إلى الصادر. */
+  legacyNote?: string;
 }
 
 function expenseKind(category: string): OutflowKind {
@@ -261,20 +264,30 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
 
   const twoBooks = cfg.books.length > 1;
   const rows: SheetRow[] = [];
+  //  **الاسترجاعُ في الصادر** (§4.fz — كما وافق عليه المالك في التصميم): دفعةٌ سالبة سطرٌ أحمر «استرجاع» في عمود المصاريف بمبلغها موجباً،
+  //  لا رقمٌ سالبٌ في الوارد. **والمجموعُ والمتبقّي كما كانا** (الوارد − الصادر لا يتغيّر بموضعها)، والنسبُ من صافي الوارد كما كانت.
+  const refundRows: SheetRow[] = [];
   for (const p of payRows) {
     const who = `${p.patientName ?? ""}${p.patientCode ? ` (${p.patientCode})` : ""}`.trim();
-    rows.push({
-      source: "payment", id: p.id, column: "income", kind: "payment", amount: Number(p.amount),
-      note: [`دفعة: ${who}`, p.notes?.trim()].filter(Boolean).join(" — "), category: null,
+    const amount = Number(p.amount);
+    const legacyNote = [`دفعة: ${who}`, p.notes?.trim()].filter(Boolean).join(" — ");
+    const base = {
+      source: "payment" as const, id: p.id, category: null,
       unsectioned: twoBooks && book === "devices" && !p.caseType, createdBy: null,
       at: p.date ? new Date(p.date).toISOString() : null,
-    });
+    };
+    if (amount < 0) {
+      refundRows.push({ ...base, column: "expense", kind: "refund", amount: -amount, legacyNote,
+        note: [`استرجاع: ${who}`, p.notes?.trim()].filter(Boolean).join(" — ") });
+      continue;
+    }
+    rows.push({ ...base, column: "income", kind: "payment", amount, note: legacyNote });
   }
   for (const e of entRows.filter((x) => x.kind === "income_other")) {
     rows.push({ source: "entry", id: e.id, column: "income", kind: "income_other", amount: e.amount, note: e.note ?? "",
       category: null, unsectioned: false, createdBy: e.createdBy, at: e.createdAt.toISOString() });
   }
-  const outflow: SheetRow[] = [];
+  const outflow: SheetRow[] = [...refundRows];
   for (const x of expRows) {
     const kind = expenseKind(x.category);
     outflow.push({
@@ -291,7 +304,10 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
       category: null, unsectioned: false, createdBy: e.createdBy, at: e.createdAt.toISOString() });
   }
   outflow.sort((a, c) => (a.at ?? "").localeCompare(c.at ?? "") || a.id - c.id);
-  const income = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
+  const refundTotal = refundRows.reduce((s, r) => s + r.amount, 0);
+  const grossIncome = rows.filter((r) => r.column === "income").reduce((s, r) => s + r.amount, 0);
+  //  **صافي الوارد** (الوارد − الاسترجاع) — منه تُحسب النسبُ كما كانت قبل أن ينتقل الاسترجاعُ إلى الصادر.
+  const income = grossIncome - refundTotal;
   //  نسبةُ الدكتور سطرٌ محسوبٌ من وارد اليوم — آخرَ الصادر في عمود «مصاريف»، بلا زرٍّ ولا كتابةٍ ولا تعديلٍ بيد.
   //  **لا في عمود «تحويل إلى قاصة الدكتور»** (قرارُ المالك ٢٠٢٦-١٠-٠٦): النسبةُ تُعزَل في مربّعها ويستلمها المالكُ متى شاء،
   //  ولا تذهب إلى قاصته يومَها — والصادرُ رقمٌ واحد، فلا يتغيّر مجموعٌ ولا متبقٍّ بموضعها. ولا تدخل جدولَ `expenses`.
@@ -338,7 +354,9 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
     book, day,
     opening: opening ? { date: opening.openingDate, cash: opening.cashBalance, ratio: opening.ratioBalance } : null,
     rows,
-    totals: dayTotals(income, out, prevRemaining),
+    totals: dayTotals(grossIncome, out, prevRemaining),
+    //  مجموعُ الاسترجاع في الصادر — لبصمة الطباعة (ورقةٌ طُبعت قبل أن ينتقل لا تُعلَّم «عُدّلت»).
+    refundTotal,
     ratio: {
       ...ratioBox(todayDrRatio, prevRatio, received),
       receipts: receivedRows.map((x) => ({ id: x.id, amount: x.amount, note: x.note ?? "" })),
@@ -355,7 +373,7 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
 
 //  ══ الكتابة ════════════════════════════════════════════════════════════════════════
 //  كلُّ كتابةٍ على يومٍ من دفترٍ تتسلسل بقفلٍ استشاريّ على (الفرع، الدفتر، اليوم) — فلا تُكتب نسبةٌ مرّتين بضغطتين.
-async function lockDay(tx: any, branchId: number, book: CashBook, day: string) {
+export async function lockDay(tx: any, branchId: number, book: CashBook, day: string) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`cash_book:${branchId}:${book}:${day}`}))`);
 }
 
@@ -568,6 +586,13 @@ export async function cashBookPeriod(branchId: number, book: CashBook, from: str
   const negativeDays: { date: string; remaining: number }[] = [];
   const hospitalMismatches: { date: string; expected: number; recorded: number }[] = [];
   let lowest: { date: string; remaining: number } | null = null;
+  //  **ومن يوم العزل التلقائيّ** (§4.fz) يُطابَق المكتوبُ سلسلةَ العزل لا عُشرَ الصافي: الاسترجاعُ الذي قرّر المسؤولُ ألّا يُخصم،
+  //  والخصمُ المؤجَّل إلى الأيّام التالية، كلاهما صحيحٌ وليس فرقاً.
+  const autoHospital = new Map<string, number>();
+  if (cfg.hospitalRatioPct && toInclusive >= HOSPITAL_AUTO_START) {
+    const { seriesFor } = await import("../hospital_ratio/store");
+    for (const r of await seriesFor(branchId, cfg, book, toInclusive)) autoHospital.set(r.day, r.amount);
+  }
   for (let d = first; d <= toInclusive; d = addDays(d, 1)) {
     //  **ونسبةُ الدكتور تُغلق يومَ القطع** (§4.dj التكملة ٢) — رصيدُها صفرٌ منه، واستلامٌ بعده لا يُحسب، كورقة اليوم.
     const ratioOpen = drRatioApplies(d);
@@ -583,7 +608,7 @@ export async function cashBookPeriod(branchId: number, book: CashBook, from: str
     if (cash < 0) negativeDays.push({ date: d, remaining: cash });
     if (!lowest || cash < lowest.remaining) lowest = { date: d, remaining: cash };
     if (cfg.hospitalRatioPct) {
-      const expected = ratioAmount(inc, cfg.hospitalRatioPct);
+      const expected = hospitalAutoApplies(d) ? (autoHospital.get(d) ?? 0) : ratioAmount(inc, cfg.hospitalRatioPct);
       const recorded = hospital.get(d) ?? 0;
       if (expected !== recorded) hospitalMismatches.push({ date: d, expected, recorded });
     }

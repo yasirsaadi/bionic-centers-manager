@@ -2731,6 +2731,7 @@ export default function AdminSettings() {
     //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — كالإبر الجافة: خارجَ قوالب الأدوار، فتبديلُ الدور لا يشعله ولا يطفئه.
     canBackdateVisits: false,
     canRequestReserveWithdrawal: false,
+    canRequestRefund: false,
     medicalSpecialties: [] as string[],
     language: "ar",
   });
@@ -2958,6 +2959,7 @@ export default function AdminSettings() {
       canDryNeedle: false,
       canBackdateVisits: false,
       canRequestReserveWithdrawal: false,
+      canRequestRefund: false,
       medicalSpecialties: [] as string[],
       language: "ar",
     });
@@ -3015,6 +3017,7 @@ export default function AdminSettings() {
       canDryNeedle: (user as any).canDryNeedle ?? false,
       canBackdateVisits: (user as any).canBackdateVisits ?? false,
       canRequestReserveWithdrawal: (user as any).canRequestReserveWithdrawal ?? false,
+      canRequestRefund: (user as any).canRequestRefund ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
         ? ((user as any).medicalSpecialties as string[])
         : [],
@@ -4459,6 +4462,21 @@ export default function AdminSettings() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         يظهر له زرّ «طلب سحب» في دفتر القاصة لفرعه، ولا يُسحب شيء حتى تعتمده أنت من «طلبات التصحيح». يعمل لمن يفتح دفتر القاصة (المحاسب ومدير الفرع).
+                      </p>
+                    </div>
+                    {/* «طلب استرجاع مبلغ لمريض» (ترحيل ١٩١، §4.fz) — يطلب ولا يسترجع: الاسترجاعُ يُكتب بعد اعتماد المسؤول. */}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="canRequestRefund"
+                          checked={userFormData.canRequestRefund}
+                          onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canRequestRefund: checked }))}
+                          data-testid="switch-canRequestRefund"
+                        />
+                        <Label htmlFor="canRequestRefund" className="text-sm">طلب استرجاع مبلغ لمريض</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        يظهر له زرّ «طلب استرجاع» في ملفّ المريض، ولا يُسترجَع شيء حتى تعتمده أنت من «طلبات التصحيح».
                       </p>
                     </div>
                     {/* Session-tracking module permissions (migration 009).

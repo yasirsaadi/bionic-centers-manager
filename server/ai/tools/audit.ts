@@ -130,14 +130,16 @@ export async function financialAudit(params: { branchId: number | undefined; sta
   }
   const dupKey = (e: typeof exps[number]) => `${e.branchId}|${e.date}|${e.category}|${e.amount}`;
   const dupGroups = new Map<string, typeof exps>();
-  for (const e of exps) dupGroups.set(dupKey(e), [...(dupGroups.get(dupKey(e)) ?? []), e]);
+  //  **نسبةُ المستشفى يكتبها الخادمُ وحده** (§4.fz): صفٌّ لكلّ دفترٍ ويوم — فلا «تكرار» بين دفترين ولا «قيدٌ متأخّر» لدفعةٍ لحقت يومَها.
+  const auto = (e: typeof exps[number]) => e.category === "hospital_percentage";
+  for (const e of exps) if (!auto(e)) dupGroups.set(dupKey(e), [...(dupGroups.get(dupKey(e)) ?? []), e]);
   const duplicates = Array.from(dupGroups.values()).filter((g) => g.length > 1).map((g) => ({
     date: String(g[0].date), category: catLabel(g[0].category), amount: g[0].amount, times: g.length,
     branch: g[0].branchName, descriptions: g.map((e) => e.description?.trim() || "—").slice(0, 4),
   }));
   const bare = exps.filter((e) => !e.description?.trim() && !e.notes?.trim() && !e.subcategory?.trim() && !e.vendor?.trim());
   //  **مصروفٌ مكتوبٌ بعد يومه بأكثر من ثلاثة أيام** — قيدٌ متأخّر يستحقّ السؤال عن سببه.
-  const late = exps.map((e) => ({ e, lagDays: e.createdAt ? Math.floor((Date.parse(`${baghdadDay(e.createdAt)}T00:00:00Z`) - Date.parse(`${e.date}T00:00:00Z`)) / DAY_MS) : 0 }))
+  const late = exps.filter((e) => !auto(e)).map((e) => ({ e, lagDays: e.createdAt ? Math.floor((Date.parse(`${baghdadDay(e.createdAt)}T00:00:00Z`) - Date.parse(`${e.date}T00:00:00Z`)) / DAY_MS) : 0 }))
     .filter((x) => x.lagDays > 3);
   const expenseDetail = {
     total: s.totalExpenses, count: exps.length,

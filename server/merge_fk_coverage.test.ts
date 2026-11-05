@@ -110,6 +110,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   //  الفهرس هو الخطر هنا. والتاريخُ كلُّه (المعلَّقُ المُغلَق والمُقرَّرُ
   //  سلفاً) ينتقل بمعرّفه.
   "financial_correction_requests.patient_id": "إغلاق المعلَّق تلقائياً (رفضٌ بلا تطبيق) ثم repoint — التاريخ كلُّه محفوظ",
+  "patient_refund_requests.patient_id": "رفضُ المعلَّق تلقائياً ثم repoint، و`case_id` (بلا مفتاح) يُرمَّم مع الحالات — §4.fz",
 
   // ── تشير إلى patient_cases.id ─────────────────────────────────────────
   "visits.case_id": "remap من حالة المصدر إلى حالة الهدف",

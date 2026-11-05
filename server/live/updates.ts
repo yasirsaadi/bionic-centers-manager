@@ -119,9 +119,27 @@ export function liveBuildId(): string | null {
   return cachedBuild;
 }
 
+/**
+ * **مستمعو «كتابةٌ نجحت»** في الخادم نفسِه — يُنادَون بعد كلّ كتابةٍ ناجحة على `/api/…` (ولو كانت مستثناةً من إشارة الشاشات)، بلا انتظار.
+ * أوّلُهم مطابقةُ نسبة مستشفى العين (§4.fz): دفعةٌ تُضاف أو تُحذف أو تُصحَّح تغيّر عزلَ يومها. ولا يُنادَون لما يكتبه مؤقّتٌ في الخادم.
+ */
+const writeListeners: Array<() => void> = [];
+export function onSuccessfulWrite(cb: () => void): void {
+  writeListeners.push(cb);
+}
+function fireWriteListeners() {
+  for (const cb of writeListeners) {
+    try { cb(); } catch (e) { console.error("[live] write listener failed:", e); }
+  }
+}
+
 /** وسيطُ الكتابة: يُركَّب قبل النقاط، ويُرسل الإشارةَ بعد أن ينتهي الردّ بنجاح. */
 export const liveBroadcastMiddleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
   const p = req.originalUrl ?? req.url;
+  const m = String(req.method ?? "").toUpperCase();
+  if (writeListeners.length && (m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE") && String(p).startsWith("/api/")) {
+    res.on("finish", () => { if (res.statusCode < 400) fireWriteListeners(); });
+  }
   if (isBroadcastWrite(req.method, p)) {
     const origin = typeof req.get(LIVE_ORIGIN_HEADER) === "string" ? String(req.get(LIVE_ORIGIN_HEADER)).slice(0, 64) : null;
     res.on("finish", () => {

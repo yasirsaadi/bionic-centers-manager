@@ -38,6 +38,7 @@ import {
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
   patientBranchAccess,
   financialCorrectionRequests,
+  patientRefundRequests,
 } from "@shared/schema";
 import { eq, desc, and, sum, or, isNull, isNotNull, gte, lte, sql, inArray } from "drizzle-orm";
 //  **المريضُ الفعّال — تعريفٌ واحد** (ترحيل ٠٦٨). الشرحُ في الملفّ نفسِه.
@@ -2653,6 +2654,10 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`
         DELETE FROM financial_correction_requests WHERE patient_id = ${id}
       `);
+      //  طلباتُ الاسترجاع (ترحيل ١٩١، §4.fz) — ودفعةُ الاسترجاع المعتمدة صفٌّ في `payments` يُحذف معها أدناه.
+      await tx.execute(sql`
+        DELETE FROM patient_refund_requests WHERE patient_id = ${id}
+      `);
       await tx.execute(sql`
         DELETE FROM post_exam_followups WHERE patient_id = ${id}
       `);
@@ -3409,6 +3414,11 @@ export class DatabaseStorage implements IStorage {
           UPDATE cost_entries SET case_id = ${to}
            WHERE case_id = ${from} AND patient_id = ${sourceId}
         `);
+        //  طلبُ الاسترجاع يتبع حالتَه (ترحيل ١٩١، §4.fz) — بلا مفتاحٍ أجنبيّ، فيُرمَّم صراحةً.
+        await tx.execute(sql`
+          UPDATE patient_refund_requests SET case_id = ${to}
+           WHERE case_id = ${from} AND patient_id = ${sourceId}
+        `);
       }
       //  **ولا إغلاقَ هنا**: التصادمُ الحقيقيُّ الوحيد رُدّ قبل أوّل كتابة
       //  أعلاه، وما بقي يتعايش. فالمتابعاتُ تُنقَل بحالتها كما هي.
@@ -3683,6 +3693,14 @@ export class DatabaseStorage implements IStorage {
       // عبر `repoint("payments", ...)` أعلاه، فيبقى الربطُ صحيحاً بلا لمسة.
       await repoint("financialCorrectionRequests", financialCorrectionRequests,
         financialCorrectionRequests.patientId);
+      //  طلباتُ الاسترجاع (§4.fz) — المعلَّقُ منها يُرفض تلقائياً (حدُّه صافي مدفوع ملفٍّ تغيّر)، والتاريخُ كلُّه يتبع صاحبَه.
+      await tx.execute(sql`
+        UPDATE patient_refund_requests
+           SET status = 'rejected', decided_at = NOW(),
+               decision_note = 'أُغلق طلب الاسترجاع تلقائياً بسبب دمج ملف المريض — يُقدَّم من جديد على الملف المدموج'
+         WHERE patient_id = ${sourceId} AND status = 'pending'
+      `);
+      await repoint("patientRefundRequests", patientRefundRequests, patientRefundRequests.patientId);
 
       // أمّا جهات الاتصال فلها تصادم مشروع: الحساب نفسه مرتبطٌ ونشِط على
       // الملفّين. إعادة التوجيه وحدها كانت ستنتهك `uq_patient_contacts_active`

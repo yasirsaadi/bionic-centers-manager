@@ -279,7 +279,29 @@ export function Sidebar() {
       return res.json();
     },
   });
-  const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0) + (reserveWithdrawalsData?.count ?? 0);
+  //  «طلب استرجاع مبلغ لمريض» و«طلب تسليم لمستشفى العين» (§4.fz) — يُجمعان في رقم «طلبات التصحيح».
+  const { data: refundsData } = useQuery<{ count: number }>({
+    queryKey: ["/api/patient-refunds", "pending-count"],
+    enabled: !!branchSession?.isAdmin,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/patient-refunds/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const { data: hospitalDeliveriesData } = useQuery<{ count: number }>({
+    queryKey: ["/api/hospital-ratio", "pending-count"],
+    enabled: !!branchSession?.isAdmin,
+    refetchInterval: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch("/api/hospital-ratio/deliveries/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0) + (reserveWithdrawalsData?.count ?? 0)
+    + (refundsData?.count ?? 0) + (hospitalDeliveriesData?.count ?? 0);
 
   //  ══ **«الأقساط»** (§4.ea) — لمن يرى المرضى ودفعاتِهم، كحارس الخادم؛ والرقمُ المتأخّرةُ في فرع الجلسة (والمسؤولُ كلُّ الفروع).
   const installmentsEligible = Boolean(branchSession?.isAdmin) || (permissions.canViewPatients && permissions.canViewPayments);

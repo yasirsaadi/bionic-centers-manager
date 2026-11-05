@@ -295,3 +295,83 @@ export function notifyAiSuggestion(p: { title: string; actorName?: string | null
     });
   });
 }
+
+/**
+ * **طلبُ استرجاع مبلغٍ لمريض** (§4.fz) — للمسؤول، داخل معاملة الطلب نفسِه: المريضُ ورمزُه والفرعُ والقسم، والمبلغُ رقماً وكلمات،
+ * وما دفعه وما استُرجع قبله، والسببُ وتفصيلُه، والطالب.
+ */
+export function notifyRefundPending(ex: Executor | null | undefined, p: {
+  patientId: number; branchId: number; caseLabel: string; amountText: string; amountWords: string;
+  netPaidText: string; refundedBeforeText: string; reason: string; detail: string; requestId: number;
+  actorName?: string | null; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    const c = await ctx(ex, p.patientId, p.branchId);
+    await enqueueStaffEvent(ex, {
+      event: "refund_request_pending", excludeUserId: p.actorUserId ?? null,
+      text: [
+        `↩️ طلب استرجاع بانتظار اعتمادك`,
+        `المريض: ${c.who}${c.branch}`,
+        `القسم: ${p.caseLabel}`,
+        `المبلغ: ${p.amountText} دينار (${p.amountWords})`,
+        `صافي ما دفعه: ${p.netPaidText} — واستُرجع قبله: ${p.refundedBeforeText}`,
+        `السبب: ${p.reason} — ${p.detail}`,
+        p.actorName ? `الطالب: ${p.actorName}` : "",
+      ].filter(Boolean).join("\n"),
+      linkPath: "/payment-corrections#refunds",
+    });
+  });
+}
+
+/** قرارُ المسؤول على طلب الاسترجاع — لطالبه وحده، وفيه رقمُ السند ليُطبع ويوقّعه المريض. */
+export function notifyRefundDecided(ex: Executor | null | undefined, p: {
+  requesterUserId: number; approved: boolean; patientName: string; amountText: string; voucherNo: string; patientId: number;
+  note?: string | null;
+}) {
+  return safe(ex, async () => {
+    await enqueueStaffEvent(ex, {
+      event: "refund_request_decided", targetUserIds: [p.requesterUserId],
+      text: p.approved
+        ? `✅ اعتُمد الاسترجاع: ${p.patientName} — ${p.amountText} دينار\nسلّم المبلغ للمريض واطبع السند رقم ${p.voucherNo} ليوقّعه.${p.note ? `\nملاحظة المسؤول: ${p.note}` : ""}`
+        : `❌ رُفض طلب الاسترجاع: ${p.patientName} — ${p.amountText} دينار — لم يتغيّر شيء${p.note ? `\nالسبب: ${p.note}` : ""}`,
+      linkPath: `/patients/${p.patientId}`,
+    });
+  });
+}
+
+/** **طلبُ تسليمٍ لمستشفى العين** (§4.fz) — للمسؤول: الفرعُ والمبلغُ رقماً وكلمات، والمتبقّي الآن وبعد التسليم، والملاحظة والطالب. */
+export function notifyHospitalDeliveryPending(ex: Executor | null | undefined, p: {
+  branchId: number; amountText: string; amountWords: string; remainingText: string; afterText: string; exceeds: boolean;
+  note?: string | null; actorName?: string | null; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    const r = await (ex ?? db).execute(sql`SELECT name FROM branches WHERE id = ${p.branchId}`);
+    const branch = (r.rows[0] as any)?.name ? `فرع ${(r.rows[0] as any).name}` : `فرع #${p.branchId}`;
+    await enqueueStaffEvent(ex, {
+      event: "hospital_delivery_pending", excludeUserId: p.actorUserId ?? null,
+      text: [
+        `🏥 طلب تسليم لمستشفى العين ينتظر قرارك — ${branch}`,
+        `المبلغ: ${p.amountText} دينار (${p.amountWords})`,
+        `المتبقّي للمستشفى الآن: ${p.remainingText} — وبعد التسليم: ${p.afterText}${p.exceeds ? " ⚠️ المبلغ أكبر من المتبقّي" : ""}`,
+        p.note ? `ملاحظة: ${p.note}` : "",
+        p.actorName ? `الطالب: ${p.actorName}` : "",
+      ].filter(Boolean).join("\n"),
+      linkPath: "/payment-corrections#hospital",
+    });
+  });
+}
+
+/** قرارُ المسؤول على طلب التسليم — لطالبه وحده. */
+export function notifyHospitalDeliveryDecided(ex: Executor | null | undefined, p: {
+  requesterUserId: number; approved: boolean; amountText: string; note?: string | null;
+}) {
+  return safe(ex, async () => {
+    await enqueueStaffEvent(ex, {
+      event: "hospital_delivery_decided", targetUserIds: [p.requesterUserId],
+      text: p.approved
+        ? `✅ اعتُمد تسليمُ ${p.amountText} دينار لمستشفى العين — نقص مربّع النسبة${p.note ? `\nملاحظة المسؤول: ${p.note}` : ""}`
+        : `❌ رُفض طلبُ تسليم ${p.amountText} دينار لمستشفى العين — لم يتغيّر شيء${p.note ? `\nالسبب: ${p.note}` : ""}`,
+      linkPath: "/cash-book",
+    });
+  });
+}
