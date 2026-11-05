@@ -45,18 +45,25 @@ export async function enableDecidedNotice(userId: number) {
 }
 
 /** البطاقةُ كما يقرؤها المسؤول — كلُّ ما يحتاجه القرار مقروءاً. */
-async function present(row: store.RequestRow, branchName: string, today: string) {
+async function present(row: store.RequestRow, branchName: string, today: string, sums?: Map<string, { total: number; count: number }>) {
   const reserve = row.reserve as ReserveKey;
   const book = row.book as CashBook;
+  const pending = row.status === "pending";
   //  الرصيدُ الحاليّ للمعلَّق (القرارُ عليه)، وللمحسوم ما كان لحظةَ الطلب.
-  const balance = row.status === "pending" ? await store.reserveBalance(row.branchId, book, reserve, today) : row.balanceAtRequest;
+  const balance = pending ? await store.reserveBalance(row.branchId, book, reserve, today) : row.balanceAtRequest;
   const b = balance == null ? null : balanceAfter(balance, row.amount);
+  //  **وطلباتٌ أخرى معلَّقة على القاصة نفسِها** (ترحيل ١٩٠): مجموعُها وما يبقى إن اعتُمدت كلُّها — فالمسؤولُ يقرّر واحداً واحداً وهو يرى الكلّ.
+  const sum = pending ? (sums ?? await store.pendingSums()).get(`${row.branchId}:${row.book}:${row.reserve}`) : undefined;
+  const others = sum && sum.count > 1 ? { count: sum.count - 1, amount: sum.total - row.amount } : null;
+  const all = others && balance != null ? balanceAfter(balance, sum!.total) : null;
   return {
     id: row.id, branchId: row.branchId, branchName, book, bookLabel: CASH_BOOK_LABELS[book] ?? book,
     reserve, boxLabel: RESERVE_LABELS[reserve]?.box ?? reserve,
     amount: row.amount, amountWords: amountInArabicWords(row.amount), purpose: row.purpose,
     status: row.status as ReserveWithdrawalStatus, statusLabel: RESERVE_WITHDRAWAL_STATUS_LABELS[row.status as ReserveWithdrawalStatus] ?? row.status,
     balance, balanceAfter: b?.after ?? null, exceeds: b?.exceeds ?? false, balanceAtRequest: row.balanceAtRequest,
+    otherPendingCount: others?.count ?? 0, otherPendingAmount: others?.amount ?? 0,
+    balanceAfterAllPending: all?.after ?? null, allPendingExceed: all?.exceeds ?? false,
     requestedBy: row.requestedBy, requestedByName: row.requestedByName, requestedAt: row.requestedAt,
     decidedByName: row.decidedByName, decidedAt: row.decidedAt, decisionNote: row.decisionNote, entryId: row.entryId,
   };
@@ -127,7 +134,8 @@ export function registerReserveWithdrawalRoutes(app: Express, isAuthenticated: a
         limit: 200,
       });
       const today = baghdadTodayYmd();
-      res.json(await Promise.all(rows.map((r) => present(r.r, r.branchName, today))));
+      const sums = await store.pendingSums();
+      res.json(await Promise.all(rows.map((r) => present(r.r, r.branchName, today, sums))));
     } catch (e) { fail(res, e); }
   });
 

@@ -1117,7 +1117,7 @@ export const reserveWithdrawalRequests = pgTable("reserve_withdrawal_requests", 
   /** سطرُ السحب الذي كتبه الاعتماد في `cash_book_entries`. */
   entryId: integer("entry_id"),
 }, (t) => [
-  uniqueIndex("uq_rwr_one_pending").on(t.branchId, t.book, t.reserve).where(sql`status = 'pending'`),
+  //  أكثرُ من طلبٍ معلَّقٍ على القاصة نفسِها (ترحيل ١٩٠ — طلبُ المالك): لا قيدَ تفرّد.
   index("ix_rwr_status").on(t.status, t.branchId),
 ]);
 

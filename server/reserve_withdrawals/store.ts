@@ -22,23 +22,39 @@ export async function reserveBalance(branchId: number, book: CashBook, reserve: 
   return boxes ? boxes[reserve].remaining : null;
 }
 
+/**
+ * طلبٌ جديد — **وأكثرُ من طلبٍ معلَّقٍ على القاصة نفسِها مقبول** (ترحيل ١٩٠ — طلبُ المالك: «يرسل أكثر من طلب، وحين أفرغ أوافق واحدةً واحدة»).
+ * والضغطةُ المكرّرة وحدها تُردّ: طلبٌ مطابق (الطالبُ والقاصةُ والمبلغُ والغرض) معلَّقٌ بعدُ ⟵ ٤٠٩ — بقفلٍ على الطالب والقاصة فلا يمرّ اثنان معاً.
+ */
 export async function create(p: {
   branchId: number; book: CashBook; reserve: ReserveKey; amount: number; purpose: string; balance: number;
   userId: number | null; userName: string | null;
 }, after: (tx: any, row: RequestRow) => Promise<void>) {
-  try {
-    return await db.transaction(async (tx) => {
-      const [row] = await tx.insert(reserveWithdrawalRequests).values({
-        branchId: p.branchId, book: p.book, reserve: p.reserve, amount: p.amount, purpose: p.purpose, balanceAtRequest: p.balance,
-        requestedBy: p.userId, requestedByName: p.userName,
-      }).returning();
-      await after(tx, row);
-      return row;
-    });
-  } catch (e: any) {
-    if (e?.code === "23505") throw new WithdrawalError(409, "على هذه القاصة طلبُ سحبٍ معلَّق — انتظر قرارَ المسؤول عليه أوّلاً");
-    throw e;
-  }
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`reserve_withdrawal:${p.branchId}:${p.book}:${p.reserve}:${p.userId ?? 0}`}))`);
+    const [dup] = await tx.select({ id: reserveWithdrawalRequests.id }).from(reserveWithdrawalRequests).where(and(
+      eq(reserveWithdrawalRequests.branchId, p.branchId), eq(reserveWithdrawalRequests.book, p.book), eq(reserveWithdrawalRequests.reserve, p.reserve),
+      eq(reserveWithdrawalRequests.status, "pending"), eq(reserveWithdrawalRequests.amount, p.amount), eq(reserveWithdrawalRequests.purpose, p.purpose),
+      p.userId == null ? sql`${reserveWithdrawalRequests.requestedBy} IS NULL` : eq(reserveWithdrawalRequests.requestedBy, p.userId),
+    )).limit(1);
+    if (dup) throw new WithdrawalError(409, "هذا الطلبُ نفسُه (المبلغُ والغرض) أُرسل وما زال بانتظار المسؤول — لا حاجةَ لإرساله ثانيةً");
+    const [row] = await tx.insert(reserveWithdrawalRequests).values({
+      branchId: p.branchId, book: p.book, reserve: p.reserve, amount: p.amount, purpose: p.purpose, balanceAtRequest: p.balance,
+      requestedBy: p.userId, requestedByName: p.userName,
+    }).returning();
+    await after(tx, row);
+    return row;
+  });
+}
+
+/** مجموعُ المعلَّق على قاصةٍ بعينها (فرع، دفتر) — لبطاقة المسؤول: ما يبقى إن اعتمدها كلَّها. */
+export async function pendingSums(): Promise<Map<string, { total: number; count: number }>> {
+  const r = await db.execute(sql`
+    SELECT branch_id, book, reserve, COALESCE(SUM(amount), 0)::bigint AS total, COUNT(*)::int AS n
+      FROM reserve_withdrawal_requests WHERE status = 'pending' GROUP BY branch_id, book, reserve`);
+  const m = new Map<string, { total: number; count: number }>();
+  for (const x of r.rows as any[]) m.set(`${x.branch_id}:${x.book}:${x.reserve}`, { total: Number(x.total), count: Number(x.n) });
+  return m;
 }
 
 export async function getRequest(id: number) {
