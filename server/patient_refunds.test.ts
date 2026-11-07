@@ -573,6 +573,21 @@ async function main() {
         .map((x: any) => [x.session_count, x.plan_credited === true]),
        ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [T2.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount])],
       [201, [[5, true], [10, false]], [[DEV, 8]]]);
+    //  مراجعةُ Codex الرابعة: شراءٌ بعد الاسترجاع لا يُحمَّل استرجاعاً سبقه.
+    const T3 = await mkPatient("شراءٌ بعد الاسترجاع", [{ type: "physiotherapy", cost: 525_000 }], BG);
+    await q(`UPDATE patients SET is_physiotherapy = true WHERE id = $1`, [T3.id]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,350000,$3,$4,10,$5, now() - interval '9 day')`, [T3.id, BG, T3.cases.physiotherapy, DEV, MARK]);
+    const t3r = await ask(S.admin, { patientId: T3.id, caseId: T3.cases.physiotherapy, amount: 315_000, reason: "stopped_treatment",
+      detail: "تسعٌ قبل الشراء الجديد", sessionsReturned: [{ treatmentType: DEV, sessionCount: 9 }], reduceCost: false });
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,175000,$3,$4,5,$5, now() + interval '1 day')`, [T3.id, BG, T3.cases.physiotherapy, DEV, MARK]);
+    await storage.pricePhysiotherapy(T3.id, { entries: [{ treatmentType: DEV, sessionCount: 2 }], totalCost: 70_000, totalSessions: 2, treatmentType: DEV } as any);
+    same("ي١٦. **الشراءُ بعد الاسترجاع موسوم**: العشرُ التي أُرجع منها تسعٌ بلا وسم، والخمسُ اللاحقة موسومة، والخطّةُ ١٠ − ٩ + ٥ + ٢ = ٨",
+      [t3r.status, (await q(`SELECT session_count, plan_credited FROM payments WHERE patient_id=$1 AND amount > 0 ORDER BY id`, [T3.id]))
+        .map((x: any) => [x.session_count, x.plan_credited === true]),
+       ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [T3.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount])],
+      [201, [[10, false], [5, true]], [[DEV, 8]]]);
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();

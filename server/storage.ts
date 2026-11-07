@@ -1768,25 +1768,36 @@ export class DatabaseStorage implements IStorage {
         //  **وما أكله استرجاعٌ لا يُوسَم — وحده** (مراجعتا Codex): الوسمُ «كلُّ جلسات هذا الصفّ في الخطّة». فالمُرجَعُ يُوزَّع على صفوف
         //  نوعه — المدفوعُ قبل المُهدى والأحدثُ أوّلاً (ما يُستردّ آخرُ ما اشتُري) — وما أكله كلَّه أو بعضَه يبقى بلا وسم فتصحيحُه لا يمسّ
         //  الخطّة؛ وبقيّةُ صفوف النوع موسومةٌ كما كانت، فتصحيحُها يُنقص الخطّةَ ويزيدها بقاعدتها. (وجزءُ صفٍّ لا يُعبَّر عنه بعلَمٍ واحد.)
+        //  **وكلُّ استرجاعٍ يأكل ممّا وُجد يومَ اعتماده وحده** (مراجعة Codex الرابعة): صفُّ الاسترجاع يُكتب في معاملة الاعتماد،
+        //  فما معرّفُه أصغرُ هو بالضبط ما كان في القاعدة حينها؛ وشراءٌ بعده لا يُحمَّل استرجاعاً سبقه. والاستردادات بترتيب كتابتها،
+        //  وما بقي من صفٍّ أكل بعضَه استرجاعٌ يأكله التالي.
         const consumed = new Set<number>();
         const meta = new Map((priorPayments as { id: number; isFree: boolean | null; date: Date | string | null }[])
           .map((r) => [r.id, r]));
-        const left: Record<string, number> = {};
-        for (const r of returnedRows) {
-          const k = physioPlanKeyForPayment(r?.treatmentType, 1);
-          if (k) left[k] = (left[k] ?? 0) + Math.max(0, Math.floor(Number(r?.sessionCount) || 0));
-        }
-        for (const k of Object.keys(left)) {
-          const rows = seeded.filter((r) => r.key === k && r.sessionCount > 0).sort((a, b) => {
-            const fa = meta.get(a.id)?.isFree ? 1 : 0, fb = meta.get(b.id)?.isFree ? 1 : 0;
-            if (fa !== fb) return fa - fb;
-            const da = new Date(meta.get(a.id)?.date ?? 0).getTime(), db2 = new Date(meta.get(b.id)?.date ?? 0).getTime();
-            return db2 - da || b.id - a.id;
-          });
-          for (const r of rows) {
-            if (left[k] <= 0) break;
-            consumed.add(r.id);
-            left[k] -= r.sessionCount;
+        const room = new Map(seeded.map((r) => [r.id, r.sessionCount]));
+        const refunds = (priorPayments as { id: number; returned: { treatmentType: string; sessionCount: number }[] | null }[])
+          .filter((p) => Array.isArray(p.returned) && p.returned.length > 0)
+          .sort((a, b) => a.id - b.id);
+        for (const rf of refunds) {
+          const left: Record<string, number> = {};
+          for (const r of rf.returned!) {
+            const k = physioPlanKeyForPayment(r?.treatmentType, 1);
+            if (k) left[k] = (left[k] ?? 0) + Math.max(0, Math.floor(Number(r?.sessionCount) || 0));
+          }
+          for (const k of Object.keys(left)) {
+            const rows = seeded.filter((r) => r.key === k && r.id < rf.id && (room.get(r.id) ?? 0) > 0).sort((a, b) => {
+              const fa = meta.get(a.id)?.isFree ? 1 : 0, fb = meta.get(b.id)?.isFree ? 1 : 0;
+              if (fa !== fb) return fa - fb;
+              const da = new Date(meta.get(a.id)?.date ?? 0).getTime(), db2 = new Date(meta.get(b.id)?.date ?? 0).getTime();
+              return db2 - da || b.id - a.id;
+            });
+            for (const r of rows) {
+              if (left[k] <= 0) break;
+              const take = Math.min(left[k], room.get(r.id) ?? 0);
+              room.set(r.id, (room.get(r.id) ?? 0) - take);
+              consumed.add(r.id);
+              left[k] -= take;
+            }
           }
         }
         const credited = seeded.filter((r) => !consumed.has(r.id));
