@@ -559,6 +559,20 @@ async function main() {
       [[DEV, 3]]);
     same("ي١٤. **وما أكل منه استرجاعٌ لا يُوسَم في البذرة** — فتصحيحُ دفعة كرار القديمة لاحقاً لا يأكل الجلستين الجديدتين",
       (await q(`SELECT plan_credited FROM payments WHERE patient_id=$1 AND amount > 0`, [K.id])).map((x: any) => x.plan_credited === true), [false]);
+    //  مراجعةُ Codex الثالثة: صفوفُ النوع التي لم يأكلها الاسترجاعُ تبقى موسومة.
+    const T2 = await mkPatient("دفعتان", [{ type: "physiotherapy", cost: 525_000 }], BG);
+    await q(`UPDATE patients SET is_physiotherapy = true WHERE id = $1`, [T2.id]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,175000,$3,$4,5,$5, now() - interval '9 day'), ($1,$2,350000,$3,$4,10,$5, now() - interval '3 day')`,
+      [T2.id, BG, T2.cases.physiotherapy, DEV, MARK]);
+    const t2r = await ask(S.admin, { patientId: T2.id, caseId: T2.cases.physiotherapy, amount: 315_000, reason: "stopped_treatment",
+      detail: "تسعٌ من الأحدث", sessionsReturned: [{ treatmentType: DEV, sessionCount: 9 }], reduceCost: false });
+    await storage.pricePhysiotherapy(T2.id, { entries: [{ treatmentType: DEV, sessionCount: 2 }], totalCost: 70_000, totalSessions: 2, treatmentType: DEV } as any);
+    same("ي١٥. **الاسترجاعُ يأكل الأحدثَ وحده**: دفعةُ الخمس القديمة موسومةٌ ودفعةُ العشر التي أُرجع منها تسعٌ بلا وسم، والخطّةُ ٥ + ١٠ − ٩ + ٢ = ٨",
+      [t2r.status, (await q(`SELECT session_count, plan_credited FROM payments WHERE patient_id=$1 AND amount > 0 ORDER BY date`, [T2.id]))
+        .map((x: any) => [x.session_count, x.plan_credited === true]),
+       ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [T2.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount])],
+      [201, [[5, true], [10, false]], [[DEV, 8]]]);
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();
