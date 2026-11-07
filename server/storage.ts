@@ -1764,9 +1764,13 @@ export class DatabaseStorage implements IStorage {
         //  محدد» بـ`plan_credited = NULL` — فحذفُه لاحقاً لا يطرح منه شيئاً
         //  وجلساتُه تبقى في العدّاد إلى الأبد. و«استشارة طبية» تسقط من
         //  `seeded` أصلاً فلا تُوسَم.
-        if (seeded.length > 0) {
+        //  **وما أكل منه استرجاعٌ لا يُوسَم** (مراجعةُ Codex): الوسمُ «كلُّ جلسات هذا الصفّ في الخطّة»، وصفٌّ أُرجع من نوعه جزءٌ
+        //  ليس كذلك — فتصحيحُه لاحقاً كان يطرح دلتاه كاملةً فيأكل جلساتٍ اشتُريت بعده. فيبقى بلا وسم، وتصحيحُه لا يمسّ الخطّة.
+        const returnedKeys = new Set(returnedRows.map((r) => physioPlanKeyForPayment(r?.treatmentType, 1)).filter(Boolean));
+        const credited = seeded.filter((r) => !returnedKeys.has(r.key));
+        if (credited.length > 0) {
           await tx.update(payments).set({ planCredited: true })
-            .where(inArray(payments.id, seeded.map((r) => r.id)));
+            .where(inArray(payments.id, credited.map((r) => r.id)));
         }
       }
       const plan = mergePhysioPlan(base, params.entries);
