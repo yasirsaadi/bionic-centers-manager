@@ -513,12 +513,6 @@ async function main() {
       [201, "approved", [[DEV, 6]], 6]);
 
     // ══ ي١٠–ي١٣. مراجعةُ Codex: لا طرحَ مرّتين، والخطّةُ المستنفَدة حاكمة، والتسعيرُ لا يُحيي المُرجَع ══
-    same("ي١٠. **ما يُكتب بعد أثر تخفيض الكلفة**: المشتقُّ ١٠ ⟵ ٦ بالتخفيض فلا طرحَ فوقه · والدفعاتُ لا تتأثّر فيُكتب العددُ كاملاً",
-      [refundStore.effectiveReturned([{ treatmentType: DEV, sessionCount: 4 }],
-         [{ treatmentType: DEV, bought: 10 } as any], [{ treatmentType: DEV, bought: 6 } as any]),
-       refundStore.effectiveReturned([{ treatmentType: DEV, sessionCount: 4 }],
-         [{ treatmentType: DEV, bought: 10 } as any], [{ treatmentType: DEV, bought: 10 } as any])],
-      [[], [{ treatmentType: DEV, sessionCount: 4 }]]);
     //  مثالُ المراجعة نفسُه: ١٠ جلساتٍ بـ٣٥٠ ألفاً، وعلى الأقساط جلستان، ويُرجع أربعاً بـ١٤٠ ألفاً مع تخفيض الكلفة.
     const CD = await mkPatient("مشتقٌّ من الكلفة", [{ type: "physiotherapy", cost: 350_000 }], BG);
     await q(`UPDATE patients SET is_physiotherapy = true, treatment_type = $2 WHERE id = $1`, [CD.id, DEV]);
@@ -531,6 +525,19 @@ async function main() {
       [cBefore, cr.status, (await refundStore.physioSessionStateTx(db as any, CD.id, CD.cases.physiotherapy)).state[0]?.bought,
        (await q(`SELECT returned_sessions FROM payments WHERE patient_id=$1 AND amount<0`, [CD.id]))[0]?.returned_sessions ?? null],
       [10, 201, 6, null]);
+    same("ي١١ب. **وتجمّد خطّةً بـ«قبل − المُرجَع»** فلا تتبع الكلفةَ بعدها",
+      ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [CD.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount]),
+      [[DEV, 6]]);
+    //  مراجعةُ Codex الثانية: مبلغٌ لا يساوي ثمنَ الجلسات (١٠ آلاف عن أربع) مع تخفيض الكلفة ⟵ ٣٤٠ ألفاً لا تُقسم على ٣٥ ألفاً.
+    const CE = await mkPatient("اشتقاقٌ يسقط", [{ type: "physiotherapy", cost: 350_000 }], BG);
+    await q(`UPDATE patients SET is_physiotherapy = true, treatment_type = $2 WHERE id = $1`, [CE.id, DEV]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,200000,$3,$4,2,$5, now() - interval '3 day')`, [CE.id, BG, CE.cases.physiotherapy, DEV, MARK]);
+    const ce = await ask(S.admin, { patientId: CE.id, caseId: CE.cases.physiotherapy, amount: 10_000, reason: "stopped_treatment",
+      detail: "أربعٌ بمبلغٍ قليل", sessionsReturned: [{ treatmentType: DEV, sessionCount: 4 }], reduceCost: true });
+    same("ي١٠. **سقوطُ الاشتقاق بعد التخفيض لا يُسقط العدد**: ١٠ − ٤ = ٦ لا جلستا الأقساط",
+      [ce.status, (await q(`SELECT cost FROM patient_cases WHERE id=$1`, [CE.cases.physiotherapy]))[0].cost,
+       (await refundStore.physioSessionStateTx(db as any, CE.id, CE.cases.physiotherapy)).state[0]?.bought], [201, 340_000, 6]);
     //  خطّةٌ صُحّحت إلى أربعٍ تحت دفعةٍ قديمة بعشر — يُرجع الأربعَ كلَّها.
     const Z = await mkPatient("خطّةٌ تُستنفَد", [{ type: "physiotherapy", cost: 140_000 }], BG);
     await q(`UPDATE patients SET is_physiotherapy = true, physio_plan = $2::jsonb WHERE id = $1`, [Z.id, JSON.stringify([{ treatmentType: DEV, sessionCount: 4 }])]);
@@ -550,6 +557,8 @@ async function main() {
     same("ي١٣. **التسعيرُ لا يُحيي المُرجَع**: بذرةُ كرار من دفعاته ١٠ − ٩ = ١ ثمّ +٢ = ٣ لا ١٢",
       ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [K.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount]),
       [[DEV, 3]]);
+    same("ي١٤. **وما أكل منه استرجاعٌ لا يُوسَم في البذرة** — فتصحيحُ دفعة كرار القديمة لاحقاً لا يأكل الجلستين الجديدتين",
+      (await q(`SELECT plan_credited FROM payments WHERE patient_id=$1 AND amount > 0`, [K.id])).map((x: any) => x.plan_credited === true), [false]);
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();
