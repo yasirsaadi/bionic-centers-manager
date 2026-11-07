@@ -12,9 +12,10 @@ import {
   REFUND_CASE_LABELS, REFUND_EXCEEDS_ERROR, REFUND_SESSIONS_EXCEED_ERROR, REFUND_SESSIONS_REQUIRED_ERROR, refundReasonLabel,
   returnedSessionsLine, type ReturnedSessions,
 } from "@shared/patient_refunds";
-import { PHYSIO_KNOWN_TREATMENT_PRICES, resolvePurchasedSessions } from "@shared/pricing";
+import {
+  PHYSIO_KNOWN_TREATMENT_PRICES, describePhysioPlan, physioPlanKeyForPayment, resolvePurchasedSessions, type PhysioPlanEntry,
+} from "@shared/pricing";
 import { physioSessionRows } from "@shared/physio_sheet_view";
-import { storage } from "../storage";
 
 export class RefundError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -125,10 +126,10 @@ export async function physioSessionStateTx(ex: Tx, patientId: number, caseId: nu
  */
 export async function checkReturnedSessionsTx(ex: Tx, p: {
   patientId: number; caseId: number; caseType: string; list: ReturnedSessions[] | null; exceptRequestId?: number;
-}): Promise<{ list: ReturnedSessions[] | null; hasPlan: boolean }> {
+}): Promise<{ list: ReturnedSessions[] | null; hasPlan: boolean; state: PhysioSessionState[] }> {
   if (p.caseType !== "physiotherapy") {
     if (p.list && p.list.length) throw new RefundError(400, "الجلساتُ تُرجَع مع قسم العلاج الطبيعي وحده");
-    return { list: null, hasPlan: false };
+    return { list: null, hasPlan: false, state: [] };
   }
   if (!p.list) throw new RefundError(400, REFUND_SESSIONS_REQUIRED_ERROR);
   const { state, hasPlan } = await physioSessionStateTx(ex, p.patientId, p.caseId, p.exceptRequestId);
@@ -140,7 +141,48 @@ export async function checkReturnedSessionsTx(ex: Tx, p: {
         + (row.pending > 0 ? ` (ومعلَّقٌ في طلبٍ آخر ${row.pending})` : ""));
     }
   }
-  return { list: p.list, hasPlan };
+  return { list: p.list, hasPlan, state };
+}
+
+/**
+ * **ما يُكتب على صفّ الاسترجاع فعلاً** (مراجعةُ Codex): مريضٌ يُشتقّ عدّادُه من الكلفة يرى تخفيضَها قد أنقص المشترى قبلُ،
+ * فطرحُ العدد كاملاً فوقه يعدّه مرّتين (١٠ جلسات بـ٣٥٠ ألفاً، يُرجع ٤ ويُخفَّض ١٤٠ ألفاً ⟵ المشتقُّ ٦، والطرحُ ثانيةً ⟵ ٢).
+ * فالمكتوبُ ما يبقى ليصل العدّادُ إلى «قبل − المُرجَع» بعد التخفيض — والدفعاتُ لا تتأثّر بالكلفة فيُكتب العددُ كاملاً.
+ */
+export function effectiveReturned(list: ReturnedSessions[], before: PhysioSessionState[], after: PhysioSessionState[]): ReturnedSessions[] {
+  const bought = (st: PhysioSessionState[], t: string) => st.find((r) => r.treatmentType === t)?.bought ?? 0;
+  return list
+    .map((x) => {
+      const target = Math.max(0, bought(before, x.treatmentType) - x.sessionCount);
+      const need = bought(after, x.treatmentType) - target;
+      return { treatmentType: x.treatmentType, sessionCount: Math.max(0, Math.min(x.sessionCount, need)) };
+    })
+    .filter((x) => x.sessionCount > 0);
+}
+
+/**
+ * **إنقاصُ الخطّة لصاحبها** — بقاعدة `adjustPhysioPlanForGift` (المفتاحُ والقفلُ والنصّ)، **إلّا أنّ الخطّة لا تُفرَّغ**:
+ * ما يبلغ الصفرَ كلُّه يبقى مُعلَّماً `depleted` فيبقى العدّادُ على الخطّة لا على الكلفة والدفعات (مراجعةُ Codex).
+ */
+async function returnFromPlanTx(tx: Tx, patientId: number, list: ReturnedSessions[]) {
+  const [row] = await rows<{ physio_plan: unknown; treatment_type: string | null }>(tx, sql`
+    SELECT physio_plan, treatment_type FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  const current = Array.isArray(row?.physio_plan) ? (row!.physio_plan as PhysioPlanEntry[]) : [];
+  const byType: Record<string, number> = {};
+  for (const e of current) {
+    const t = String(e?.treatmentType ?? "").trim();
+    if (t) byType[t] = (byType[t] ?? 0) + Math.max(0, Math.floor(Number(e?.sessionCount) || 0));
+  }
+  for (const x of list) {
+    const key = physioPlanKeyForPayment(x.treatmentType, 1) ?? x.treatmentType;
+    byType[key] = Math.max(0, (byType[key] ?? 0) - x.sessionCount);
+  }
+  const live = Object.keys(byType).filter((t) => byType[t] > 0).map((t) => ({ treatmentType: t, sessionCount: byType[t] }));
+  const next: PhysioPlanEntry[] = live.length > 0 ? live
+    : Object.keys(byType).map((t) => ({ treatmentType: t, sessionCount: 0, depleted: true }));
+  await tx.execute(sql`UPDATE patients SET physio_plan = ${JSON.stringify(next)}::jsonb,
+                              treatment_type = COALESCE(NULLIF(${describePhysioPlan(next)}, ''), treatment_type)
+                        WHERE id = ${patientId}`);
 }
 
 /** قفلُ المريض — قفلُ إغلاق الحالة نفسُه — والملفُّ قائمٌ لا في السلّة. */
@@ -339,13 +381,17 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
       + (sessions.list && sessions.list.length ? ` — أُرجع ${returnedSessionsLine(sessions.list)}` : ""),
     actorUserId: p.userId,
   });
-  //  **والعدّادُ ينقص بما أُرجع**: على صفّ الاسترجاع نفسِه (يطرحه `resolvePurchasedSessions` لمن لا خطّةَ له)،
-  //  ولصاحب الخطّة تُنقَص خطّتُه — والعدّادُ يقرؤها وحدها فلا يُطرح مرّتين.
+  //  **والعدّادُ ينقص بما أُرجع**: لصاحب الخطّة تُنقَص خطّتُه (والعدّادُ يقرؤها وحدها فلا يُطرح مرّتين)، ولغيره يُكتب على صفّ
+  //  الاسترجاع نفسِه ما يبقى بعد أثر تخفيض الكلفة (`effectiveReturned`) فيطرحه `resolvePurchasedSessions`.
   if (sessions.list && sessions.list.length) {
-    await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(sessions.list)}::jsonb WHERE id = ${written.paymentId}`);
     if (sessions.hasPlan) {
-      await storage.adjustPhysioPlanForGift(cur.patientId,
-        sessions.list.map((x) => ({ treatmentType: x.treatmentType, delta: -x.sessionCount })), tx as any);
+      await returnFromPlanTx(tx, cur.patientId, sessions.list);
+    } else {
+      const after = (await physioSessionStateTx(tx, cur.patientId, cur.caseId, cur.id)).state;
+      const eff = effectiveReturned(sessions.list, sessions.state, after);
+      if (eff.length) {
+        await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(eff)}::jsonb WHERE id = ${written.paymentId}`);
+      }
     }
   }
   await tx.execute(sql`

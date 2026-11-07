@@ -102,6 +102,11 @@ export interface PhysioEntry {
 export interface PhysioPlanEntry {
   treatmentType: string;
   sessionCount: number;
+  /**
+   * **خطّةٌ أُرجعت جلساتُها كلُّها باسترجاعٍ معتمَد** (ترحيل ١٩٣، مراجعةُ Codex): صفرٌ صادقٌ يبقى الخطّةَ الحاكمة —
+   * فلا يعود العدّادُ إلى الكلفة أو الدفعات فيُحيي ما أُرجع. لا يكتبه إلّا الاسترجاع، وأيُّ كاتبٍ للخطّة بعده يُسقطه.
+   */
+  depleted?: boolean;
 }
 
 /**
@@ -300,7 +305,10 @@ export function resolvePurchasedSessions(input: {
   //  لا عند القراءة: نافذةُ الدفعات صارت ترفع خطّتَه كما ترفعها «خدمة
   //  جديدة» بالضبط (`server/routes.ts`).
   const fromPlan = (input.plan ?? []).filter((e) => e?.treatmentType && Number(e.sessionCount) > 0);
-  if (fromPlan.length > 0) {
+  //  **والخطّةُ المستنفَدة باسترجاعٍ تبقى حاكمة** (`depleted`) — صفرٌ لا رجوعٌ إلى الكلفة والدفعات.
+  const depletedPlan = fromPlan.length === 0
+    && (input.plan ?? []).some((e) => e?.treatmentType && (e as PhysioPlanEntry).depleted === true);
+  if (fromPlan.length > 0 || depletedPlan) {
     const byType: Record<string, number> = {};
     for (const e of fromPlan) byType[e.treatmentType] = (byType[e.treatmentType] ?? 0) + Number(e.sessionCount);
     return { byType, total: sum(byType), source: "plan" };

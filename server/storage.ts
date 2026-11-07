@@ -1727,7 +1727,7 @@ export class DatabaseStorage implements IStorage {
       let base = existing.physioPlan;
       if (!Array.isArray(base) || base.length === 0) {
         const priorPayments = await tx
-          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount })
+          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount, returned: payments.returnedSessions })
           .from(payments)
           .where(eq(payments.patientId, patientId));
         //  **الصفوفُ المستورَدة تُحسَب مرّةً واحدة ثمّ تُوسَم بأعيانها** —
@@ -1738,6 +1738,18 @@ export class DatabaseStorage implements IStorage {
           .filter((r): r is { id: number; key: string; sessionCount: number } => r.key !== null);
         const legacy = seeded.map((r) => ({ treatmentType: r.key, sessionCount: r.sessionCount }));
         base = legacy.length > 0 ? mergePhysioPlan(null, legacy) : null;
+        //  **والمُرجَعُ باسترجاعٍ معتمَد يُطرح من البذرة** (ترحيل ١٩٣، §4.fz) — وإلّا أحيا التسعيرُ ما أُرجع.
+        const returnedRows = (priorPayments as { returned: { treatmentType: string; sessionCount: number }[] | null }[])
+          .flatMap((r) => (Array.isArray(r.returned) ? r.returned : []));
+        if (base && returnedRows.length) {
+          const by: Record<string, number> = {};
+          for (const e of base) by[e.treatmentType] = (by[e.treatmentType] ?? 0) + e.sessionCount;
+          for (const r of returnedRows) {
+            const k = physioPlanKeyForPayment(r?.treatmentType, 1);
+            if (k && k in by) by[k] = Math.max(0, by[k] - Math.max(0, Math.floor(Number(r?.sessionCount) || 0)));
+          }
+          base = Object.keys(by).filter((k) => by[k] > 0).map((k) => ({ treatmentType: k, sessionCount: by[k] }));
+        }
         //  ══ **وما استوردَته الخطةُ صار فيها فعلاً — فيُوسَم** ════════════
         //  البذرةُ أعلاه تسحب **كلَّ** دفعةٍ حاملةٍ لجلسات، ومنها الهدايا.
         //  فهديّةُ مريضِ المفرد كانت موسومةً `false` («مُنحت ولم تُقيَّد»)،
