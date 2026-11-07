@@ -730,11 +730,13 @@ export default function PatientDetails() {
   //  `isFree` منها كما هي.
   const legacyPaymentSessions: {
     treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
+    returned?: { treatmentType: string | null; sessionCount: number | null }[] | null;
   }[] =
     patient.payments
       ? patient.payments.map((p) => ({
           treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
           isFree: Boolean((p as any).isFreeSessions),
+          returned: (p as any).returnedSessions ?? null,
         }))
       : ((patient as any).paymentSessionsSummary ?? []);
   const showAll = selectedCaseId == null || selectedCaseId === ALL_CASES;
@@ -773,7 +775,8 @@ export default function PatientDetails() {
   const rawPaymentsRedacted = !patient.payments;
   const resolveSessionsFor = (
     caseCost: number,
-    paymentSessions: { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null }[],
+    paymentSessions: { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
+      returned?: { treatmentType: string | null; sessionCount: number | null }[] | null }[],
   ) =>
     pickPhysioSessions(serverResolvedSessions, rawPaymentsRedacted, () =>
       resolvePurchasedSessions({
@@ -782,10 +785,11 @@ export default function PatientDetails() {
         caseCost,
         paymentSessions,
       }));
-  const casePaymentSessions = (): { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null }[] =>
+  const casePaymentSessions = (): { treatmentType: string | null; sessionCount: number | null; isFree?: boolean | null;
+    returned?: { treatmentType: string | null; sessionCount: number | null }[] | null }[] =>
     (casePayments ?? []).map((p: any) => ({
       treatmentType: p.paymentTreatmentType ?? null, sessionCount: p.sessionCount ?? null,
-      isFree: Boolean(p.isFreeSessions),
+      isFree: Boolean(p.isFreeSessions), returned: p.returnedSessions ?? null,
     }));
   // Sessions are a PHYSIOTHERAPY concept only (owner's rule): the remaining-
   // sessions counter must never appear for a prosthetic/support case — device
@@ -1057,7 +1061,8 @@ export default function PatientDetails() {
             <PatientDepartmentBadges patient={patient} className="text-xs md:text-base px-2 md:px-4 py-1 md:py-1.5 h-auto" />
           )}
           {(() => {
-            const totalSessions = legacyPaymentSessions.reduce((sum, p) => sum + (p.sessionCount || 0), 0) || 0;
+            const totalSessions = Math.max(0, legacyPaymentSessions.reduce((sum, p) => sum + Math.max(0, p.sessionCount || 0)
+              - (p.returned ?? []).reduce((r, x) => r + Math.max(0, Number(x?.sessionCount) || 0), 0), 0));
             if (totalSessions > 0) {
               return (
                 <Badge variant="outline" className="text-xs md:text-sm px-2 md:px-3 py-1 md:py-1.5 h-auto gap-1 bg-blue-50 text-blue-700 border-blue-200">

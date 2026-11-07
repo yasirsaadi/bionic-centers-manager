@@ -161,7 +161,7 @@ export async function executeSession(p: {
     //  **ما اشتراه المريض لكلّ نوع** — بقاعدة ملفّه نفسِها (`resolvePurchasedSessions`)، كي تُعدّ «تمارين مع أجهزة» على مَن اشتراها (§4.ft).
     const [buyer] = await tx.select({ physioPlan: patients.physioPlan, treatmentType: patients.treatmentType, totalCost: patients.totalCost })
       .from(patients).where(eq(patients.id, plan.patientId));
-    const buyerPays = await tx.select({ treatmentType: payments.paymentTreatmentType, sessionCount: payments.sessionCount, isFree: payments.isFreeSessions })
+    const buyerPays = await tx.select({ treatmentType: payments.paymentTreatmentType, sessionCount: payments.sessionCount, isFree: payments.isFreeSessions, returned: payments.returnedSessions })
       .from(payments).where(and(eq(payments.patientId, plan.patientId),
         physioCase ? or(eq(payments.caseId, physioCase.id), isNull(payments.caseId)) : isNull(payments.caseId)));
     const bought = resolvePurchasedSessions({

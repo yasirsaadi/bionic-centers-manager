@@ -242,6 +242,11 @@ export function resolvePurchasedSessions(input: {
      * السابق **حرفاً بحرف**.
      */
     isFree?: boolean | null;
+    /**
+     * **جلساتٌ أُرجعت باسترجاعٍ معتمَد** (`payments.returned_sessions` على صفّ الاسترجاع السالب — ترحيل ١٩٣، §4.fz التكملة):
+     * تُطرح من المشترى لكلّ نوع، **إلّا صاحبَ الخطّة** — فخطّتُه نفسُها أُنقصت عند الاعتماد (`adjustPhysioPlanForGift`)، والطرحُ هنا يعدّها مرّتين.
+     */
+    returned?: readonly { treatmentType: string | null; sessionCount: number | null }[] | null;
   }[];
 },
   /** جدولُ الاشتقاق من الكلفة — الحاليّ دائماً، إلّا ترحيلَ ١٨٨ يمرّر أسعارَ ما قبل ٢٠٢٦-١١-٠١ (§4.fu). */
@@ -269,6 +274,23 @@ export function resolvePurchasedSessions(input: {
   const paymentsByType: Record<string, number> = { ...paidByType };
   for (const t of Object.keys(freeByType)) paymentsByType[t] = (paymentsByType[t] ?? 0) + freeByType[t];
   const paymentsTotal = paidTotal + freeTotal;
+
+  //  المُرجَعُ باسترجاعٍ معتمَد — يُطرح من نتيجة الكلفة أو الدفعات (لا الخطّة)، ولا ينزل نوعٌ تحت الصفر.
+  const returnedByType: Record<string, number> = {};
+  for (const p of input.paymentSessions ?? []) {
+    for (const r of p?.returned ?? []) {
+      const n = Math.max(0, Math.floor(Number(r?.sessionCount) || 0));
+      if (n <= 0) continue;
+      const type = (r?.treatmentType || "").trim() || "غير محدد";
+      returnedByType[type] = (returnedByType[type] ?? 0) + n;
+    }
+  }
+  const lessReturned = (byType: Record<string, number>, source: "cost" | "payments" | "none") => {
+    if (Object.keys(returnedByType).length === 0) return { byType, total: sum(byType), source };
+    const out: Record<string, number> = { ...byType };
+    for (const t of Object.keys(returnedByType)) if (t in out) out[t] = Math.max(0, out[t] - returnedByType[t]);
+    return { byType: out, total: sum(out), source };
+  };
 
   //  ══ **ولا يُضاف المُهدى فوق الخطة** — وهذا مقصودٌ لا سهو ═══════════
   //  البابان اللذان يكتبان الخطةَ يضعان الجلسةَ المجانية **داخلها**:
@@ -319,11 +341,11 @@ export function resolvePurchasedSessions(input: {
     if (derived > paidTotal) {
       const byType: Record<string, number> = { [label]: derived };
       for (const t of Object.keys(freeByType)) byType[t] = (byType[t] ?? 0) + freeByType[t];
-      return { byType, total: derived + freeTotal, source: "cost" };
+      return lessReturned(byType, "cost");
     }
   }
 
-  return { byType: paymentsByType, total: paymentsTotal, source: paymentsTotal > 0 ? "payments" : "none" };
+  return lessReturned(paymentsByType, paymentsTotal > 0 ? "payments" : "none");
 }
 
 // Cost of one entry: sessions × the type's price, 0 when marked free.

@@ -57,14 +57,16 @@ const S = {
 async function main() {
   const express = (await import("express")).default;
   const { createServer } = await import("http");
-  const { pool } = await import("./db");
+  const { pool, db } = await import("./db");
   const { registerRoutes } = await import("./routes");
   const { storage } = await import("./storage");
   const hospital = await import("./hospital_ratio/store");
   const { cashBookPeriod } = await import("./cash_book/store");
   const { sheetFingerprint } = await import("./cash_book/prints");
   const { hospitalSeries, HOSPITAL_AUTO_START, HOSPITAL_AUTO_START_DEFAULT, hospitalAutoApplies } = await import("@shared/hospital_ratio");
-  const { canRequestRefund, defaultReduceCost } = await import("@shared/patient_refunds");
+  const { canRequestRefund, defaultReduceCost, parseReturnedSessions, suggestReturnedSessions, returnedSessionsLine } = await import("@shared/patient_refunds");
+  const { resolvePurchasedSessions } = await import("@shared/pricing");
+  const refundStore = await import("./patient_refunds/store");
   const { eligibleStaffEvents, staffEventDeliverable } = await import("@shared/staff_notifications");
 
   const q = async <T = any>(text: string, params: any[] = []): Promise<T[]> => (await pool.query(text, params)).rows as T[];
@@ -206,7 +208,8 @@ async function main() {
     same("ج١. النافذة: القسمُ بصافي ما دُفع والمتاح، وفي ذي قار سؤالُ النسبة",
       [opts.status, opts.body?.cases?.[0]?.netPaid, opts.body?.cases?.[0]?.available, opts.body?.askHospital, opts.body?.cases?.[0]?.suggestDeductHospital],
       [200, 700_000, 700_000, true, true]);
-    const ask = (s: any, body: any) => http("POST", "/api/patient-refunds", s, body);
+    //  «كم جلسةً تُرجَع» إلزاميّةٌ للعلاج الطبيعي منذ ترحيل ١٩٣ — والأقسامُ أعلاه بلا جلساتٍ مسجَّلة، فصفرٌ صادق.
+    const ask = (s: any, body: any) => http("POST", "/api/patient-refunds", s, { sessionsReturned: [], ...body });
     const base = { patientId: A.id, caseId: A.cases.physiotherapy, reason: "stopped_treatment", detail: "حضر ٤ جلسات من ١٠ وسافر" };
     same("ج٢. فوق المدفوع ⟵ ٤٠٩ · بلا تفصيل ⟵ ٤٠٠ · بلا سبب ⟵ ٤٠٠ · قسمٌ ليس للمريض ⟵ ٤٠٩",
       [(await ask(S.recv, { ...base, amount: 800_000 })).status, (await ask(S.recv, { ...base, amount: 1000, detail: "x" })).status,
@@ -425,6 +428,89 @@ async function main() {
        ["accountant", "branch_manager", "reception"].map((role) => eligibleStaffEvents({ role }).includes("hospital_delivery_decided")),
        staffEventDeliverable({ role: "doctor" }, "refund_request_decided", true), staffEventDeliverable({ role: "doctor" }, "refund_request_decided", false)],
       [[true, false, false, false], [true, true, true, false], [true, true, false], true, false]);
+
+    // ══ ي. الجلساتُ المُرجَعة (ترحيل ١٩٣ — واقعةُ كرار ناصر) ════════════════════════════════════
+    console.log("\n── ي. الجلساتُ المُرجَعة ──");
+    const DEV = "أجهزة علاج طبيعي";
+    const pay = (type: string, n: number | null, extra: any = {}) => ({ treatmentType: type, sessionCount: n, ...extra });
+    same("ي١. **العدّادُ يطرح المُرجَع** من الدفعات (كرار: ٥ + ١ + ١٠ − ٩ = ٧)، ومن الكلفة، **ولا يطرح من الخطّة**",
+      [resolvePurchasedSessions({ treatmentTypeText: `${DEV} (20 جلسات)، أبر صينية (6 جلسات)`, caseCost: 195_000,
+         paymentSessions: [pay(DEV, 5), pay(DEV, 1), pay(DEV, 10), pay("علاج طبيعي", null, { returned: [{ treatmentType: DEV, sessionCount: 9 }] })] }).byType,
+       resolvePurchasedSessions({ treatmentTypeText: DEV, caseCost: 350_000,
+         paymentSessions: [pay(DEV, 2), pay("علاج طبيعي", null, { returned: [{ treatmentType: DEV, sessionCount: 4 }] })] }),
+       resolvePurchasedSessions({ plan: [{ treatmentType: DEV, sessionCount: 6 }],
+         paymentSessions: [pay(DEV, 10), pay("علاج طبيعي", null, { returned: [{ treatmentType: DEV, sessionCount: 4 }] })] }).byType,
+       resolvePurchasedSessions({ paymentSessions: [pay(DEV, 2), pay("x", null, { returned: [{ treatmentType: DEV, sessionCount: 9 }] })] }).byType],
+      [{ [DEV]: 7 }, { byType: { [DEV]: 6 }, total: 6, source: "cost" }, { [DEV]: 6 }, { [DEV]: 0 }]);
+    same("ي٢. القراءةُ والاقتراح: الصفرُ يُحذف والمكرّرُ يُجمع والسالبُ يُردّ، و٣١٥ ألفاً ÷ ٣٥ ألفاً = ٩ لا تتجاوز الباقي",
+      [parseReturnedSessions([{ treatmentType: DEV, sessionCount: 2 }, { treatmentType: DEV, sessionCount: 1 }, { treatmentType: "إبر", sessionCount: 0 }]),
+       parseReturnedSessions([{ treatmentType: DEV, sessionCount: -1 }]), parseReturnedSessions("x"),
+       suggestReturnedSessions(315_000, 35_000, 9), suggestReturnedSessions(315_000, 35_000, 5), returnedSessionsLine([{ treatmentType: DEV, sessionCount: 9 }])],
+      [[{ treatmentType: DEV, sessionCount: 3 }], null, null, 9, 5, `9 جلسات ${DEV}`]);
+
+    await q(`UPDATE system_users SET can_request_refund = true WHERE id = $1`, [MGR_BG]);
+    const mgr = { ...S.mgrBg, permissions: { canRequestRefund: true, canViewPayments: true } };
+    const K = await mkPatient("كرار", [{ type: "physiotherapy", cost: 350_000 }], BG);
+    await q(`UPDATE patients SET is_physiotherapy = true, treatment_type = $2 WHERE id = $1`, [K.id, `${DEV} (10 جلسات)`]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,350000,$3,$4,10,$5, now() - interval '3 day')`, [K.id, BG, K.cases.physiotherapy, DEV, MARK]);
+    await q(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, visit_date) VALUES ($1,$2,$3,$4, now() - interval '2 day')`,
+      [K.id, BG, K.cases.physiotherapy, DEV]);
+    const ko = await http("GET", `/api/patients/${K.id}/refund-options`, mgr);
+    const ks = ko.body?.cases?.[0]?.sessions?.[0];
+    same("ي٣. **النافذةُ تعرض جلسات القسم**: اشترى ١٠ · حضر ١ · الباقي ٩ · بسعره",
+      [ko.status, ks?.treatmentType, ks?.bought, ks?.done, ks?.remaining, ks?.available, ks?.price], [200, DEV, 10, 1, 9, 9, 35_000]);
+    const kb = { patientId: K.id, caseId: K.cases.physiotherapy, amount: 315_000, reason: "stopped_treatment", detail: "حضر جلسة من عشر" };
+    same("ي٤. **بلا عدد الجلسات ⟵ ٤٠٠** · فوق الباقي ⟵ ٤٠٩ · نوعٌ ليس في القسم ⟵ ٤٠٩ · مصفوفةٌ فاسدة ⟵ ٤٠٠ · جلساتٌ لقسم جهاز ⟵ ٤٠٠",
+      [(await http("POST", "/api/patient-refunds", mgr, kb)).status,
+       (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 10 }] })).status,
+       (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: "روبوت", sessionCount: 1 }] })).status,
+       (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 1.5 }] })).status,
+       (await ask(S.recv, { patientId: B.id, caseId: B.cases.prosthetic, amount: 1000, reason: "overpaid", detail: "جهاز",
+         sessionsReturned: [{ treatmentType: DEV, sessionCount: 1 }] })).status,
+       (await q(`SELECT count(*)::int n FROM patient_refund_requests WHERE patient_id = $1`, [K.id]))[0].n],
+      [400, 409, 409, 400, 400, 0]);
+    const kr = await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 9 }] });
+    same("ي٥. **الطلبُ بتسع جلسات ⟵ ٢٠١** والبطاقةُ تقولها، وطلبٌ آخر بجلسةٍ ⟵ ٤٠٩ (التسعُ معلَّقة)",
+      [kr.status, kr.body?.sessionsLine, (kr.body?.sessionsReturned ?? []).map((x: any) => [x.treatmentType, x.sessionCount]),
+       (await ask(mgr, { ...kb, amount: 1000, detail: "طلبٌ ثانٍ", sessionsReturned: [{ treatmentType: DEV, sessionCount: 1 }] })).status],
+      [201, `9 جلسات ${DEV}`, [[DEV, 9]], 409]);
+    //  زيارةٌ بعد الطلب: الباقي ٨ — فلا يُعتمد بتسع، والبطاقةُ تقول ذلك.
+    const [lateVisit] = await q<{ id: number }>(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, visit_date)
+      VALUES ($1,$2,$3,$4, now()) RETURNING id`, [K.id, BG, K.cases.physiotherapy, DEV]);
+    const card = await http("GET", `/api/patient-refunds/${kr.body.id}`, S.admin);
+    same("ي٦. **حضر بعد الطلب ⟵ الاعتمادُ ٤٠٩** ويبقى الطلبُ معلَّقاً، والبطاقةُ ترى الممكن الآن ٨",
+      [card.body?.sessionsNow?.[0]?.available,
+       (await http("POST", `/api/patient-refunds/${kr.body.id}/approve`, S.admin, { reduceCost: true })).status,
+       (await q(`SELECT status FROM patient_refund_requests WHERE id=$1`, [kr.body.id]))[0].status,
+       (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND amount<0`, [K.id]))[0].n], [8, 409, "pending", 0]);
+    await q(`DELETE FROM visits WHERE id=$1`, [lateVisit.id]);
+    const kap = await http("POST", `/api/patient-refunds/${kr.body.id}/approve`, S.admin, { reduceCost: true });
+    const kpay = (await q(`SELECT returned_sessions, notes FROM payments WHERE patient_id=$1 AND amount<0`, [K.id]))[0];
+    const kstate = await refundStore.physioSessionStateTx(db as any, K.id, K.cases.physiotherapy);
+    same("ي٧. **الاعتمادُ يطرح التسع**: على صفّ الاسترجاع، والعدّادُ ١ · حضر ١ · باقي ٠، والملاحظةُ تقولها، ودفعتُه الأصلية كما هي",
+      [kap.status, (kpay?.returned_sessions ?? []).map((x: any) => [x.treatmentType, x.sessionCount]), kpay?.notes?.includes(`أُرجع 9 جلسات ${DEV}`), kstate.state[0]?.bought, kstate.state[0]?.remaining,
+       (await q(`SELECT session_count FROM payments WHERE patient_id=$1 AND amount>0`, [K.id]))[0].session_count],
+      [200, [[DEV, 9]], true, 1, 0, 10]);
+    //  مَن لا يرى المال يرى العدّادَ محسوباً في الخادم — وبالطرح نفسِه.
+    await q(`UPDATE system_users SET can_view_payments = false WHERE id = $1`, [MGR_BG]);
+    const noMoney = { ...S.mgrBg, permissions: {} };
+    const kview = await http("GET", `/api/patients/${K.id}`, noMoney);
+    await q(`UPDATE system_users SET can_view_payments = true WHERE id = $1`, [MGR_BG]);
+    same("ي٨. **ملفُّ المريض لمن حُجب عنه المال**: العدّادُ ١ والملخّصُ ١ — لا ١٠",
+      [kview.status, kview.body?.physioSessionsResolved?.byType, kview.body?.paymentSessionsSummary], [200, { [DEV]: 1 }, [{ treatmentType: DEV, sessionCount: 1 }]]);
+
+    //  صاحبُ الخطّة: الخطّةُ نفسُها تنقص، والعدّادُ لا يطرح مرّتين.
+    const P = await mkPatient("صاحب خطّة", [{ type: "physiotherapy", cost: 350_000 }], BG);
+    await q(`UPDATE patients SET is_physiotherapy = true, physio_plan = $2::jsonb WHERE id = $1`, [P.id, JSON.stringify([{ treatmentType: DEV, sessionCount: 10 }])]);
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+             VALUES ($1,$2,350000,$3,$4,10,$5, now() - interval '3 day')`, [P.id, BG, P.cases.physiotherapy, DEV, MARK]);
+    const pr = await ask(S.admin, { patientId: P.id, caseId: P.cases.physiotherapy, amount: 140_000, reason: "stopped_treatment",
+      detail: "أربعٌ تُرجَع", sessionsReturned: [{ treatmentType: DEV, sessionCount: 4 }], reduceCost: true });
+    const pstate = await refundStore.physioSessionStateTx(db as any, P.id, P.cases.physiotherapy);
+    same("ي٩. **صاحبُ الخطّة** (المسؤولُ مباشرةً): الخطّةُ ١٠ ⟵ ٦ والعدّادُ ٦ لا ٢",
+      [pr.status, pr.body?.status, ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [P.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount]), pstate.state[0]?.bought],
+      [201, "approved", [[DEV, 6]], 6]);
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();

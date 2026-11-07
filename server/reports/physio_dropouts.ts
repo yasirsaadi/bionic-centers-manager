@@ -126,17 +126,17 @@ export async function physioDropouts(q: DropoutQuery, branchId: number | null, t
   const open = rows.filter((x) => !(x.plan_status && isPlanClosed(String(x.plan_status))));
 
   //  ══ ما اشتراه وما بقي — بحساب ملفّ المريض نفسِه ══ (دفعاتُ القسم والبلا قسم، كاستمارة العلاج الطبيعي)
-  const pays = new Map<number, { treatmentType: string | null; sessionCount: number | null; isFree: boolean }[]>();
+  const pays = new Map<number, { treatmentType: string | null; sessionCount: number | null; isFree: boolean; returned: { treatmentType: string | null; sessionCount: number | null }[] | null }[]>();
   if (open.length > 0) {
     const pr = await db.execute(sql`
-      SELECT patient_id, payment_treatment_type, session_count, is_free_sessions
+      SELECT patient_id, payment_treatment_type, session_count, is_free_sessions, returned_sessions
         FROM payments
        WHERE patient_id IN (${sql.join(open.map((x) => sql`${Number(x.patient_id)}`), sql`, `)})
          AND (case_id IN (${sql.join(open.map((x) => sql`${Number(x.case_id)}`), sql`, `)}) OR case_id IS NULL)
     `);
     for (const x of (pr.rows ?? []) as Record<string, any>[]) {
       const list = pays.get(Number(x.patient_id)) ?? [];
-      list.push({ treatmentType: x.payment_treatment_type ?? null, sessionCount: x.session_count == null ? null : Number(x.session_count), isFree: x.is_free_sessions === true });
+      list.push({ treatmentType: x.payment_treatment_type ?? null, sessionCount: x.session_count == null ? null : Number(x.session_count), isFree: x.is_free_sessions === true, returned: Array.isArray(x.returned_sessions) ? x.returned_sessions : null });
       pays.set(Number(x.patient_id), list);
     }
   }

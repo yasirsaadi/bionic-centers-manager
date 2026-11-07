@@ -770,6 +770,8 @@ export const payments = pgTable("payments", {
   //  `null` لم يُسأل (صفٌّ سابقٌ للترحيل) · `false` مُنح ولم يُقيَّد في خطة ·
   //  `true` قُيِّد فعلاً، وهو وحدَه يُطرَح عند الحذف أو التصحيح. بلا افتراض.
   planCredited: boolean("plan_credited"),
+  /** جلساتٌ أُرجعت باسترجاعٍ معتمَد — على صفّ الاسترجاع السالب وحده (ترحيل ١٩٣، §4.fz): `[{treatmentType, sessionCount}]`. */
+  returnedSessions: jsonb("returned_sessions").$type<{ treatmentType: string; sessionCount: number }[]>(),
   // Which case this payment settles. Nullable during the additive phase;
   // backfilled best-effort from the treatment-type tag.
   caseId: integer("case_id").references(() => patientCases.id),
@@ -1148,6 +1150,8 @@ export const patientRefundRequests = pgTable("patient_refund_requests", {
   costBefore: integer("cost_before"),
   costAfter: integer("cost_after"),
   paymentId: integer("payment_id"),
+  /** جلساتُ العلاج الطبيعي المُرجَعة مع المبلغ (ترحيل ١٩٣) — `[{treatmentType, sessionCount}]`، ولغير العلاج الطبيعي `null`. */
+  sessionsReturned: jsonb("sessions_returned").$type<{ treatmentType: string; sessionCount: number }[]>(),
 }, (t) => [
   index("ix_prr_status").on(t.status, t.branchId),
   index("ix_prr_patient").on(t.patientId),

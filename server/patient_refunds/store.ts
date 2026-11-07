@@ -8,7 +8,13 @@ import { db } from "../db";
 import { recordRefundPaymentTx } from "../accounting/refund_payment";
 import { CLOSURE_PAYMENT_TAG, type ClosureServiceType } from "@shared/case_closure";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
-import { REFUND_CASE_LABELS, REFUND_EXCEEDS_ERROR, refundReasonLabel } from "@shared/patient_refunds";
+import {
+  REFUND_CASE_LABELS, REFUND_EXCEEDS_ERROR, REFUND_SESSIONS_EXCEED_ERROR, REFUND_SESSIONS_REQUIRED_ERROR, refundReasonLabel,
+  returnedSessionsLine, type ReturnedSessions,
+} from "@shared/patient_refunds";
+import { PHYSIO_KNOWN_TREATMENT_PRICES, resolvePurchasedSessions } from "@shared/pricing";
+import { physioSessionRows } from "@shared/physio_sheet_view";
+import { storage } from "../storage";
 
 export class RefundError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -27,7 +33,7 @@ export interface RequestRow {
   requestedBy: number | null; requestedByName: string | null; requestedAt: string;
   decidedBy: number | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null;
   deductHospital: boolean | null; reduceCost: boolean | null; costBefore: number | null; costAfter: number | null;
-  paymentId: number | null;
+  paymentId: number | null; sessionsReturned: ReturnedSessions[] | null;
   patientName?: string | null; patientCode?: string | null; branchName?: string | null;
 }
 
@@ -37,7 +43,7 @@ const SELECT_ROW = sql`
          r.requested_by AS "requestedBy", r.requested_by_name AS "requestedByName", r.requested_at AS "requestedAt",
          r.decided_by AS "decidedBy", r.decided_by_name AS "decidedByName", r.decided_at AS "decidedAt",
          r.decision_note AS "decisionNote", r.deduct_hospital AS "deductHospital", r.reduce_cost AS "reduceCost",
-         r.cost_before AS "costBefore", r.cost_after AS "costAfter", r.payment_id AS "paymentId",
+         r.cost_before AS "costBefore", r.cost_after AS "costAfter", r.payment_id AS "paymentId", r.sessions_returned AS "sessionsReturned",
          p.name AS "patientName", p.patient_code AS "patientCode", b.name AS "branchName"
     FROM patient_refund_requests r
     JOIN patients p ON p.id = r.patient_id
@@ -58,6 +64,83 @@ async function pendingOnCaseTx(ex: Tx, caseId: number, exceptId?: number): Promi
     SELECT COALESCE(SUM(amount), 0)::int AS t FROM patient_refund_requests
      WHERE case_id = ${caseId} AND status = 'pending' AND id <> ${exceptId ?? 0}`);
   return Number(r?.t ?? 0);
+}
+
+export interface PhysioSessionState {
+  treatmentType: string; bought: number; done: number; remaining: number;
+  /** معلَّقٌ في طلباتِ استرجاعٍ أخرى على الحالة. */
+  pending: number;
+  /** ما يجوز إرجاعُه الآن: الباقي غيرُ المحضور ناقصاً المعلَّق. */
+  available: number;
+  price: number | null;
+}
+
+/**
+ * **جلساتُ قسم العلاج الطبيعي لكلّ نوع** — بقاعدة ملفّ المريض نفسِها (`resolvePurchasedSessions` ثمّ `physioSessionRows`):
+ * دفعاتُ الحالة وما بلا حالة، وزياراتُها بلا حلقة جهاز. والمُرجَعُ سابقاً مطروحٌ بالقاعدة نفسِها.
+ */
+export async function physioSessionStateTx(ex: Tx, patientId: number, caseId: number, exceptRequestId?: number) {
+  const [pt] = await rows<{ physio_plan: unknown; treatment_type: string | null; total_cost: number | null }>(ex, sql`
+    SELECT physio_plan, treatment_type, total_cost FROM patients WHERE id = ${patientId}`);
+  const [c] = await rows<{ cost: number | null }>(ex, sql`SELECT cost FROM patient_cases WHERE id = ${caseId}`);
+  const pays = await rows<{ payment_treatment_type: string | null; session_count: number | null; is_free_sessions: boolean | null; returned_sessions: unknown }>(ex, sql`
+    SELECT payment_treatment_type, session_count, is_free_sessions, returned_sessions FROM payments
+     WHERE patient_id = ${patientId} AND (case_id = ${caseId} OR case_id IS NULL)`);
+  const visits = await rows<{ treatment_type: string | null; details: string | null; notes: string | null }>(ex, sql`
+    SELECT treatment_type, details, notes FROM visits
+     WHERE patient_id = ${patientId} AND deleted_at IS NULL AND device_episode_id IS NULL
+       AND (case_id = ${caseId} OR case_id IS NULL)`);
+  const plan = Array.isArray(pt?.physio_plan) ? (pt!.physio_plan as any[]) : null;
+  const bought = resolvePurchasedSessions({
+    plan, treatmentTypeText: pt?.treatment_type ?? null,
+    caseCost: c ? Number(c.cost ?? 0) : Number(pt?.total_cost ?? 0),
+    paymentSessions: pays.map((x) => ({
+      treatmentType: x.payment_treatment_type, sessionCount: x.session_count, isFree: x.is_free_sessions === true,
+      returned: Array.isArray(x.returned_sessions) ? (x.returned_sessions as any[]) : null,
+    })),
+  });
+  const pendingRows = await rows<{ sessions_returned: unknown }>(ex, sql`
+    SELECT sessions_returned FROM patient_refund_requests
+     WHERE case_id = ${caseId} AND status = 'pending' AND id <> ${exceptRequestId ?? 0}`);
+  const pendingBy: Record<string, number> = {};
+  for (const r of pendingRows) {
+    for (const x of (Array.isArray(r.sessions_returned) ? r.sessions_returned : []) as ReturnedSessions[]) {
+      pendingBy[x.treatmentType] = (pendingBy[x.treatmentType] ?? 0) + (Number(x.sessionCount) || 0);
+    }
+  }
+  const state: PhysioSessionState[] = physioSessionRows(bought.byType,
+    visits.map((v) => ({ treatmentType: v.treatment_type, details: v.details, notes: v.notes })))
+    .map((r) => {
+      const remaining = Math.max(0, r.remaining);
+      const pending = pendingBy[r.type] ?? 0;
+      return { treatmentType: r.type, bought: r.bought, done: r.done, remaining, pending,
+        available: Math.max(0, remaining - pending), price: PHYSIO_KNOWN_TREATMENT_PRICES[r.type] ?? null };
+    });
+  return { state, hasPlan: bought.source === "plan" };
+}
+
+/**
+ * **فحصُ الجلسات المُرجَعة** — لقسم العلاج الطبيعي مصفوفةٌ إلزامية (والفارغةُ «لا جلسات»)، ولغيره لا شيء.
+ * كلُّ نوعٍ من أنواع الحالة، ولا يتجاوز ما يجوز إرجاعُه الآن.
+ */
+export async function checkReturnedSessionsTx(ex: Tx, p: {
+  patientId: number; caseId: number; caseType: string; list: ReturnedSessions[] | null; exceptRequestId?: number;
+}): Promise<{ list: ReturnedSessions[] | null; hasPlan: boolean }> {
+  if (p.caseType !== "physiotherapy") {
+    if (p.list && p.list.length) throw new RefundError(400, "الجلساتُ تُرجَع مع قسم العلاج الطبيعي وحده");
+    return { list: null, hasPlan: false };
+  }
+  if (!p.list) throw new RefundError(400, REFUND_SESSIONS_REQUIRED_ERROR);
+  const { state, hasPlan } = await physioSessionStateTx(ex, p.patientId, p.caseId, p.exceptRequestId);
+  for (const x of p.list) {
+    const row = state.find((r) => r.treatmentType === x.treatmentType);
+    if (!row) throw new RefundError(409, `لا جلساتِ «${x.treatmentType}» في هذا القسم — لم يتغيّر شيء`);
+    if (x.sessionCount > row.available) {
+      throw new RefundError(409, `${REFUND_SESSIONS_EXCEED_ERROR} في «${x.treatmentType}» — الممكن الآن ${row.available}`
+        + (row.pending > 0 ? ` (ومعلَّقٌ في طلبٍ آخر ${row.pending})` : ""));
+    }
+  }
+  return { list: p.list, hasPlan };
 }
 
 /** قفلُ المريض — قفلُ إغلاق الحالة نفسُه — والملفُّ قائمٌ لا في السلّة. */
@@ -89,6 +172,7 @@ export async function refundOptions(patientId: number) {
       caseId: c.id, caseType: c.case_type, label: REFUND_CASE_LABELS[c.case_type] ?? c.case_type,
       cost: Number(c.cost ?? 0), netPaid: m.net, refundedBefore: m.refunded, pending,
       available: Math.max(0, m.net - pending),
+      sessions: c.case_type === "physiotherapy" ? (await physioSessionStateTx(db as any, patientId, c.id)).state : null,
     });
   }
   return out;
@@ -105,6 +189,8 @@ export async function caseHasPaymentSince(caseId: number, day: string): Promise<
 export async function create(p: {
   patientId: number; caseId: number; branchId: number; amount: number; reason: string; detail: string;
   userId: number | null; userName: string | null;
+  /** لقسم العلاج الطبيعي: الجلساتُ المُرجَعة لكلّ نوع (`parseReturnedSessions`) — وإلّا `null`. */
+  sessionsReturned: ReturnedSessions[] | null;
 }, after: (tx: Tx, row: RequestRow, money: { net: number; refunded: number; pending: number; caseType: string }) => Promise<void>,
   /** للمسؤول: الاعتمادُ في المعاملة نفسِها — فشلُه يُسقط الطلبَ معه. */
   andThen?: (tx: Tx, row: RequestRow) => Promise<RequestRow>): Promise<RequestRow> {
@@ -125,11 +211,13 @@ export async function create(p: {
        WHERE case_id = ${p.caseId} AND status = 'pending' AND amount = ${p.amount} AND detail = ${p.detail}
          AND requested_by IS NOT DISTINCT FROM ${p.userId}`);
     if (dup) throw new RefundError(409, `طلبٌ بالمبلغ والتفصيل نفسيهما معلَّقٌ قبلُ (رقم ${dup.id}) — بانتظار المسؤول`);
+    const sessions = await checkReturnedSessionsTx(tx, { patientId: p.patientId, caseId: p.caseId, caseType: c.case_type, list: p.sessionsReturned });
     const [ins] = await rows<{ id: number }>(tx, sql`
       INSERT INTO patient_refund_requests
-        (patient_id, case_id, case_type, branch_id, amount, reason, detail, net_paid_at_request, requested_by, requested_by_name)
+        (patient_id, case_id, case_type, branch_id, amount, reason, detail, net_paid_at_request, requested_by, requested_by_name,
+         sessions_returned)
       VALUES (${p.patientId}, ${p.caseId}, ${c.case_type}, ${p.branchId}, ${p.amount}, ${p.reason}, ${p.detail}, ${m.net},
-              ${p.userId}, ${p.userName})
+              ${p.userId}, ${p.userName}, ${sessions.list === null ? null : JSON.stringify(sessions.list)}::jsonb)
       RETURNING id`);
     const row = (await rows<RequestRow>(tx, sql`${SELECT_ROW} WHERE r.id = ${ins.id}`))[0];
     await after(tx, row, { ...m, pending, caseType: c.case_type });
@@ -220,6 +308,11 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
   if (plan) {
     throw new RefundError(409, "لهذه الحالة خطّةُ أقساطٍ نشطة — عدّلها أو ألغِها من «الأقساط» أوّلاً، ثمّ اعتمد الاسترجاع");
   }
+  //  **الجلساتُ المُرجَعة تُعاد فحصاً تحت القفل** — زيارةٌ سُجّلت بعد الطلب تُنقص الباقي، فلا يُرجَع ما حُضر.
+  const sessions = await checkReturnedSessionsTx(tx, {
+    patientId: cur.patientId, caseId: cur.caseId, caseType: c.case_type,
+    list: c.case_type === "physiotherapy" ? (cur.sessionsReturned ?? []) : null, exceptRequestId: cur.id,
+  });
   let costBefore: number | null = null;
   let costAfter: number | null = null;
   if (p.reduceCost) {
@@ -242,9 +335,19 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
     patientId: cur.patientId, branchId: cur.branchId, caseId: cur.caseId, amount: cur.amount,
     paymentTreatmentType: CLOSURE_PAYMENT_TAG[service] ?? null,
     //  «سند ن — السبب: التفصيل» — والدفترُ يكتب قبلها «استرجاع: الاسم»، وجدولُ الدفعات يسمها «استرجاع» بالأحمر.
-    notes: `سند ${cur.id} — ${refundReasonLabel(cur.reason)}: ${cur.detail}`,
+    notes: `سند ${cur.id} — ${refundReasonLabel(cur.reason)}: ${cur.detail}`
+      + (sessions.list && sessions.list.length ? ` — أُرجع ${returnedSessionsLine(sessions.list)}` : ""),
     actorUserId: p.userId,
   });
+  //  **والعدّادُ ينقص بما أُرجع**: على صفّ الاسترجاع نفسِه (يطرحه `resolvePurchasedSessions` لمن لا خطّةَ له)،
+  //  ولصاحب الخطّة تُنقَص خطّتُه — والعدّادُ يقرؤها وحدها فلا يُطرح مرّتين.
+  if (sessions.list && sessions.list.length) {
+    await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(sessions.list)}::jsonb WHERE id = ${written.paymentId}`);
+    if (sessions.hasPlan) {
+      await storage.adjustPhysioPlanForGift(cur.patientId,
+        sessions.list.map((x) => ({ treatmentType: x.treatmentType, delta: -x.sessionCount })), tx as any);
+    }
+  }
   await tx.execute(sql`
     UPDATE patient_refund_requests SET payment_id = ${written.paymentId}, deduct_hospital = ${p.deductHospital},
            reduce_cost = ${p.reduceCost}, cost_before = ${costBefore}, cost_after = ${costAfter}
