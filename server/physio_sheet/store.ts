@@ -122,7 +122,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
 
   // ══ الدفعاتُ (لمن يرى المال) والجلسات (للجميع — حقيقةٌ سريرية بلا مبلغ) ══
   const payr = await db.execute(sql`
-    SELECT id, amount, date, visit_id, case_id, device_episode_id, notes, payment_treatment_type, session_count, is_free_sessions
+    SELECT id, amount, date, visit_id, case_id, device_episode_id, notes, payment_treatment_type, session_count, is_free_sessions, returned_sessions
       FROM payments
      WHERE patient_id = ${patientId} AND (case_id = ${caseId ?? -1} OR case_id IS NULL)
      ORDER BY date, id
@@ -141,7 +141,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
     plan: Array.isArray(p.physio_plan) ? p.physio_plan : null,
     treatmentTypeText: str(p.treatment_type),
     caseCost: c ? Number(c.cost ?? 0) : Number(p.total_cost ?? 0),
-    paymentSessions: pays.map((x) => ({ treatmentType: str(x.payment_treatment_type), sessionCount: num(x.session_count), isFree: x.is_free_sessions === true })),
+    paymentSessions: pays.map((x) => ({ treatmentType: str(x.payment_treatment_type), sessionCount: num(x.session_count), isFree: x.is_free_sessions === true, returned: Array.isArray(x.returned_sessions) ? x.returned_sessions : null })),
   });
   const sessions = physioSessionRows(purchased.byType,
     vrows.map((v) => ({ treatmentType: str(v.treatment_type), details: str(v.details), notes: str(v.notes) })));

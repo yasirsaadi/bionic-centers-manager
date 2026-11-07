@@ -78,6 +78,9 @@ export default function RefundVoucherPrint() {
                 <div className="words" data-testid="rv-words">{r.amountWords} عراقي لا غير</div>
               </div>
               <p className="rv-line">عن: {r.caseLabel} — {r.reasonLabel} ({r.detail}).</p>
+              {r.sessionsLine && r.caseType === "physiotherapy" && (
+                <p className="rv-line" data-testid="rv-sessions">الجلسات المُرجَعة: {r.sessionsLine}.</p>
+              )}
               <p className="rv-small">طلبه: {r.requestedByName ?? "—"} · اعتمده: {r.decidedByName ?? "—"} — {dmy(r.decidedAt)}</p>
               <div className="rv-sign">
                 <div><span>توقيع المستلم</span></div>

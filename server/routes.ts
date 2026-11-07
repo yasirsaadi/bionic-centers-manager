@@ -379,7 +379,7 @@ function buildStoredPermissions(systemUser: SystemUser) {
  * طريقة استهلاكها؛ المصدرُ وحده يتبدّل من الصفوف الخام إلى هذه اللقطة.
  */
 function summarizePaymentSessions(
-  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount">[],
+  payments: Pick<Payment, "paymentTreatmentType" | "sessionCount" | "returnedSessions">[],
 ): { treatmentType: string | null; sessionCount: number }[] {
   //  ══ **ولا رايةَ مجّانيّةٍ تخرج من هنا** (تصحيحُ ٢٠٢٦-٠٩-٢١) ═══════════
   //  حاولت تمريرةٌ سابقة أن تفصل المُهدى عن المدفوع في هذا الملخّص كي تصل
@@ -400,7 +400,14 @@ function summarizePaymentSessions(
     if (row) row.sessionCount += n;
     else byType.set(type, { treatmentType: type || null, sessionCount: n });
   }
-  return Array.from(byType.values());
+  //  **والمُرجَعُ باسترجاعٍ معتمَد يُطرح** (ترحيل ١٩٣، §4.fz) — عددٌ بنوعه، لا مال.
+  for (const p of payments) {
+    for (const r of (p.returnedSessions ?? []) as { treatmentType: string; sessionCount: number }[]) {
+      const row = byType.get(r?.treatmentType ?? "");
+      if (row) row.sessionCount = Math.max(0, row.sessionCount - Math.max(0, Math.floor(Number(r?.sessionCount) || 0)));
+    }
+  }
+  return Array.from(byType.values()).filter((r) => r.sessionCount > 0);
 }
 
 /**
@@ -2527,6 +2534,7 @@ export async function registerRoutes(
           treatmentType: p.paymentTreatmentType ?? null,
           sessionCount: p.sessionCount ?? null,
           isFree: Boolean(p.isFreeSessions),
+          returned: (p as any).returnedSessions ?? null,
         })),
       });
     }

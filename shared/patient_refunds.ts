@@ -59,3 +59,39 @@ export function refundVoucherNo(id: number): string {
 export function defaultReduceCost(reason: string | null | undefined): boolean {
   return reason === "stopped_treatment" || reason === "device_not_made";
 }
+
+// ══ **جلساتُ العلاج الطبيعي المُرجَعة** (ترحيل ١٩٣ — واقعةُ كرار ناصر ٢٠٢٦-١١-٠٧) ══════════════════════════════════════════════════
+// استرجاعُ قسم العلاج الطبيعي يسأل «كم جلسةً تُرجَع من كلّ نوع» — صفرٌ مقبولٌ (دفعٌ زائد)، والحدُّ الباقي غيرُ المحضور لكلّ نوع ناقصاً
+// المعلَّقَ في طلباتٍ أخرى. والاعتمادُ يطرحها من العدّاد: على صفّ الاسترجاع (`payments.returned_sessions`) أو من الخطّة لصاحبها.
+export interface ReturnedSessions { treatmentType: string; sessionCount: number }
+export const REFUND_SESSIONS_REQUIRED_ERROR = "اكتب كم جلسةً تُرجَع من كلّ نوع — صفرٌ إن لم تُرجَع جلسة";
+export const REFUND_SESSIONS_EXCEED_ERROR = "عددُ الجلسات المُرجَعة أكبر من الباقي غير المحضور";
+
+/** يقرأ المُرسَل: مصفوفةٌ بأنواعٍ مكتوبة وأعدادٍ صحيحة غير سالبة، والصفرُ يُحذف — و`null` لغير المصفوفة. */
+export function parseReturnedSessions(raw: unknown): ReturnedSessions[] | null {
+  if (!Array.isArray(raw)) return null;
+  const by = new Map<string, number>();
+  for (const x of raw) {
+    const t = String((x as any)?.treatmentType ?? "").trim();
+    const n = Number((x as any)?.sessionCount);
+    if (!t || !Number.isInteger(n) || n < 0 || n > 1000) return null;
+    if (n > 0) by.set(t, (by.get(t) ?? 0) + n);
+  }
+  return Array.from(by, ([treatmentType, sessionCount]) => ({ treatmentType, sessionCount }));
+}
+
+export function returnedSessionsTotal(list: readonly ReturnedSessions[] | null | undefined): number {
+  return (list ?? []).reduce((s, x) => s + (Number(x?.sessionCount) || 0), 0);
+}
+
+/** «٩ جلسات أجهزة علاج طبيعي · ٢ إبر صينية» — للبطاقة والسند وسجلّ التدقيق. */
+export function returnedSessionsLine(list: readonly ReturnedSessions[] | null | undefined): string {
+  const parts = (list ?? []).filter((x) => x.sessionCount > 0).map((x) => `${x.sessionCount} ${x.sessionCount === 1 ? "جلسة" : "جلسات"} ${x.treatmentType}`);
+  return parts.length ? parts.join(" · ") : "لا جلسات";
+}
+
+/** الاقتراحُ في النافذة: المبلغ ÷ سعرِ النوع، مقرَّباً للأسفل، ولا يتجاوز الباقي. */
+export function suggestReturnedSessions(amount: number, price: number | null | undefined, remaining: number): number {
+  if (!price || price <= 0 || !(amount > 0)) return 0;
+  return Math.max(0, Math.min(remaining, Math.floor(amount / price)));
+}

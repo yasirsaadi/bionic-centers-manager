@@ -26,7 +26,8 @@ import { baghdadTodayYmd } from "@shared/visit_date";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import {
   REFUND_CASE_LABELS, REFUND_DETAIL_ERROR, REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_STATUS_LABELS,
-  canRequestRefund, defaultReduceCost, refundReasonLabel, refundReasonOf, refundVoucherNo, type RefundStatus,
+  canRequestRefund, defaultReduceCost, parseReturnedSessions, refundReasonLabel, refundReasonOf, refundVoucherNo, returnedSessionsLine,
+  type RefundStatus,
 } from "@shared/patient_refunds";
 import * as store from "./store";
 
@@ -83,6 +84,11 @@ async function present(row: store.RequestRow) {
     deductHospital: row.deductHospital, reduceCost: row.reduceCost, costBefore: row.costBefore, costAfter: row.costAfter,
     requestedBy: row.requestedBy, requestedByName: row.requestedByName, requestedAt: row.requestedAt,
     decidedByName: row.decidedByName, decidedAt: row.decidedAt, decisionNote: row.decisionNote, paymentId: row.paymentId,
+    //  **الجلساتُ المُرجَعة** (ترحيل ١٩٣) — وللمعلَّق ما يجوز إرجاعُه الآن، فيرى المسؤولُ زيارةً سُجّلت بعد الطلب.
+    sessionsReturned: row.sessionsReturned ?? null,
+    sessionsLine: row.caseType === "physiotherapy" ? returnedSessionsLine(row.sessionsReturned) : null,
+    sessionsNow: pending && row.caseType === "physiotherapy"
+      ? (await store.physioSessionStateTx(db as any, row.patientId, row.caseId, row.id)).state : null,
   };
 }
 
@@ -155,6 +161,10 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
     if (!reason) return res.status(400).json({ error: "اختر سبب الاسترجاع" });
     const detail = typeof req.body?.detail === "string" ? req.body.detail.trim() : "";
     if (detail.length < REFUND_DETAIL_MIN || detail.length > REFUND_DETAIL_MAX) return res.status(400).json({ error: REFUND_DETAIL_ERROR });
+    //  **كم جلسةً تُرجَع** — لقسم العلاج الطبيعي إلزاميّ (والمخزنُ يردّ غيابَه)، ومصفوفةٌ فاسدة تُردّ هنا.
+    const rawSessions = req.body?.sessionsReturned;
+    const sessionsReturned = rawSessions == null ? null : parseReturnedSessions(rawSessions);
+    if (rawSessions != null && sessionsReturned === null) return res.status(400).json({ error: "عدد الجلسات المُرجَعة غير صالح" });
 
     //  **فرعُ الاسترجاع فرعُ الجلسة** — حيث يخرج المالُ من قاصته فعلاً (كالدفعة الجديدة)؛ والمسؤولُ على «كلّ الفروع» يختار لملفٍّ متعدّد الفروع.
     const patientBranchIds = await patientBranchIdsOf(patient as any);
@@ -178,17 +188,19 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
       }
       const row = await store.create({
         patientId: patient.id, caseId, branchId, amount, reason, detail,
-        userId: s.userId ?? null, userName: s.displayName ?? null,
+        userId: s.userId ?? null, userName: s.displayName ?? null, sessionsReturned,
       }, async (tx, r, m) => {
         await auditRow(req, s, tx, { entityType: "patient_refund_request", entityId: r.id, action: "create", branchId,
-          newValues: { patientId: r.patientId, caseId, amount, reason, detail, netPaid: m.net },
-          notes: `طلب استرجاع ${money(amount)} — ${REFUND_CASE_LABELS[m.caseType] ?? m.caseType} — ${refundReasonLabel(reason)}` });
+          newValues: { patientId: r.patientId, caseId, amount, reason, detail, netPaid: m.net, sessionsReturned: r.sessionsReturned ?? null },
+          notes: `طلب استرجاع ${money(amount)} — ${REFUND_CASE_LABELS[m.caseType] ?? m.caseType} — ${refundReasonLabel(reason)}`
+            + (m.caseType === "physiotherapy" ? ` — يُرجع ${returnedSessionsLine(r.sessionsReturned)}` : "") });
         //  المسؤولُ يسترجع مباشرةً: لا تنبيهَ له بطلبه هو.
         if (!s.isAdmin) {
           await notifyRefundPending(tx, {
             patientId: r.patientId, branchId, caseLabel: REFUND_CASE_LABELS[m.caseType] ?? m.caseType,
             amountText: money(amount), amountWords: amountInArabicWords(amount), netPaidText: money(m.net),
-            refundedBeforeText: money(m.refunded), reason: refundReasonLabel(reason), detail, requestId: r.id,
+            refundedBeforeText: money(m.refunded), reason: refundReasonLabel(reason),
+            detail: m.caseType === "physiotherapy" ? `${detail} — يُرجع ${returnedSessionsLine(r.sessionsReturned)}` : detail, requestId: r.id,
             actorName: s.displayName ?? null, actorUserId: s.userId ?? null,
           });
         }
@@ -256,7 +268,8 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
   function afterApprove(req: any, s: BranchSession, input: store.ApproveInput) {
     return async (tx: any, row: store.RequestRow, done: { paymentId: number; journalPosted: boolean }) => {
       await auditRow(req, s, tx, { entityType: "payment", entityId: done.paymentId, action: "create", branchId: row.branchId,
-        newValues: { amount: -row.amount, caseId: row.caseId, refundRequestId: row.id, journalPosted: done.journalPosted },
+        newValues: { amount: -row.amount, caseId: row.caseId, refundRequestId: row.id, journalPosted: done.journalPosted,
+          returnedSessions: row.sessionsReturned ?? null },
         notes: `دفعة استرجاع — سند ${row.id} — ${row.patientName ?? ""}` });
       await auditRow(req, s, tx, { entityType: "patient_refund_request", entityId: row.id, action: "approve", branchId: row.branchId,
         oldValues: { status: "pending" },
