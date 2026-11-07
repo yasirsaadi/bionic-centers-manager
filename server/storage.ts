@@ -1727,7 +1727,8 @@ export class DatabaseStorage implements IStorage {
       let base = existing.physioPlan;
       if (!Array.isArray(base) || base.length === 0) {
         const priorPayments = await tx
-          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount, returned: payments.returnedSessions })
+          .select({ id: payments.id, type: payments.paymentTreatmentType, n: payments.sessionCount, returned: payments.returnedSessions,
+            isFree: payments.isFreeSessions, date: payments.date })
           .from(payments)
           .where(eq(payments.patientId, patientId));
         //  **الصفوفُ المستورَدة تُحسَب مرّةً واحدة ثمّ تُوسَم بأعيانها** —
@@ -1764,10 +1765,31 @@ export class DatabaseStorage implements IStorage {
         //  محدد» بـ`plan_credited = NULL` — فحذفُه لاحقاً لا يطرح منه شيئاً
         //  وجلساتُه تبقى في العدّاد إلى الأبد. و«استشارة طبية» تسقط من
         //  `seeded` أصلاً فلا تُوسَم.
-        //  **وما أكل منه استرجاعٌ لا يُوسَم** (مراجعةُ Codex): الوسمُ «كلُّ جلسات هذا الصفّ في الخطّة»، وصفٌّ أُرجع من نوعه جزءٌ
-        //  ليس كذلك — فتصحيحُه لاحقاً كان يطرح دلتاه كاملةً فيأكل جلساتٍ اشتُريت بعده. فيبقى بلا وسم، وتصحيحُه لا يمسّ الخطّة.
-        const returnedKeys = new Set(returnedRows.map((r) => physioPlanKeyForPayment(r?.treatmentType, 1)).filter(Boolean));
-        const credited = seeded.filter((r) => !returnedKeys.has(r.key));
+        //  **وما أكله استرجاعٌ لا يُوسَم — وحده** (مراجعتا Codex): الوسمُ «كلُّ جلسات هذا الصفّ في الخطّة». فالمُرجَعُ يُوزَّع على صفوف
+        //  نوعه — المدفوعُ قبل المُهدى والأحدثُ أوّلاً (ما يُستردّ آخرُ ما اشتُري) — وما أكله كلَّه أو بعضَه يبقى بلا وسم فتصحيحُه لا يمسّ
+        //  الخطّة؛ وبقيّةُ صفوف النوع موسومةٌ كما كانت، فتصحيحُها يُنقص الخطّةَ ويزيدها بقاعدتها. (وجزءُ صفٍّ لا يُعبَّر عنه بعلَمٍ واحد.)
+        const consumed = new Set<number>();
+        const meta = new Map((priorPayments as { id: number; isFree: boolean | null; date: Date | string | null }[])
+          .map((r) => [r.id, r]));
+        const left: Record<string, number> = {};
+        for (const r of returnedRows) {
+          const k = physioPlanKeyForPayment(r?.treatmentType, 1);
+          if (k) left[k] = (left[k] ?? 0) + Math.max(0, Math.floor(Number(r?.sessionCount) || 0));
+        }
+        for (const k of Object.keys(left)) {
+          const rows = seeded.filter((r) => r.key === k && r.sessionCount > 0).sort((a, b) => {
+            const fa = meta.get(a.id)?.isFree ? 1 : 0, fb = meta.get(b.id)?.isFree ? 1 : 0;
+            if (fa !== fb) return fa - fb;
+            const da = new Date(meta.get(a.id)?.date ?? 0).getTime(), db2 = new Date(meta.get(b.id)?.date ?? 0).getTime();
+            return db2 - da || b.id - a.id;
+          });
+          for (const r of rows) {
+            if (left[k] <= 0) break;
+            consumed.add(r.id);
+            left[k] -= r.sessionCount;
+          }
+        }
+        const credited = seeded.filter((r) => !consumed.has(r.id));
         if (credited.length > 0) {
           await tx.update(payments).set({ planCredited: true })
             .where(inArray(payments.id, credited.map((r) => r.id)));
