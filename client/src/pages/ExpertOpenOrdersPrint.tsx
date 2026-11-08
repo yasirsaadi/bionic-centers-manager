@@ -110,11 +110,13 @@ export default function ExpertOpenOrdersPrint() {
       const max = PAGE_MAX_MM * mm;
       const firstFixed = first.getBoundingClientRect().height - sum;
       const foot = rest.getBoundingClientRect().height - restBare.getBoundingClientRect().height;
-      setCounts(firstFixed + sum <= max ? [heights.length] : packRowsIntoPages(heights, {
-        first: max - firstFixed - foot,
-        rest: max - rest.getBoundingClientRect().height,
-        tail: 0,
-      }));
+      const firstRoom = max - firstFixed - foot;
+      const restRoom = max - rest.getBoundingClientRect().height;
+      //  صفٌّ أوّلُ أطولُ ممّا يتّسع تحت البطاقات (عذرٌ طويلٌ جدّاً) ⟵ الصفحةُ الأولى بلا صفّ والصفوفُ من الثانية — وإلّا أجبره
+      //  `packRowsIntoPages` على الأولى فتجاوزت A4 بالبطاقات والملاحظة (مراجعة Codex على #712).
+      setCounts(firstFixed + sum <= max ? [heights.length]
+        : heights[0] > firstRoom ? [0, ...packRowsIntoPages(heights, { first: restRoom, rest: restRoom, tail: 0 })]
+        : packRowsIntoPages(heights, { first: firstRoom, rest: restRoom, tail: 0 }));
     };
     (document as any).fonts?.ready ? (document as any).fonts.ready.then(run) : run();
     return () => { cancelled = true; };

@@ -124,6 +124,8 @@ const expertOpen = src("client/src/pages/ExpertOpenOrdersPrint.tsx");
 same("ط.١ **الصفوفُ بالقياس لا بعددٍ ثابت** — `packRowsIntoPages` على ارتفاع كلّ صفّ، ولا ١٤ ثمّ ٢٠ — والعذرُ الطويل لا يُقصّ بين صفحتين",
   [/packRowsIntoPages\(heights, \{/.test(expertOpen), /first\.querySelectorAll\("tbody tr"\)\)\.map\(\(el\) => el\.getBoundingClientRect\(\)\.height\)/.test(expertOpen),
     /FIRST_PAGE_ROWS|PAGE_ROWS = /.test(expertOpen)], [true, true, false]);
+same("ط.١ب **صفٌّ أوّلُ أطولُ من مكانه تحت البطاقات ⟵ الأولى بلا صفّ والصفوفُ من الثانية** (مراجعة Codex على #712)",
+  [/heights\[0\] > firstRoom \? \[0, \.\.\.packRowsIntoPages\(heights, \{ first: restRoom, rest: restRoom, tail: 0 \}\)\]/.test(expertOpen)], [true]);
 same("ط.٢ **والطباعةُ تنتظر الخطّة، والترقيمُ متّصل، ونسختا القياس لا تُطبعان ولا تُجمعان في الملفّ**",
   [/ready: Boolean\(q\.data && counts\)/.test(expertOpen), /const n = offset \+ i \+ 1;/.test(expertOpen),
     /\.no-print, \.eo-measure \{ display:none !important; \}/.test(expertOpen), /querySelectorAll<HTMLElement>\("\.eo-pages \.eo-page"\)/.test(expertOpen)],
