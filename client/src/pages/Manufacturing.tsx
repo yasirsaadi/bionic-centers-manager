@@ -21,7 +21,8 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Wrench, Search, AlertTriangle, ArrowDownUp } from "lucide-react";
+import { Wrench, Search, AlertTriangle, ArrowDownUp, Printer } from "lucide-react";
+import { STALE_NO_DATE_DAYS } from "@shared/expert_open_orders";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, BUILD_STAGES,
 } from "@shared/manufacturing";
@@ -422,7 +423,12 @@ export default function Manufacturing() {
                   <thead>
                     <tr className="text-muted-foreground border-b">
                       <th className="text-right py-2">الخبير</th>
+                      {/*  **غيرُ المكتملة مقسومةً** (§4.gc — «مستقبلاً لا حاجةَ لنيون»): بقاعدة `expert_open_orders` نفسِها التي تطبع بها
+                          الورقة. «راكدة» = بلا موعدٍ ولا عذرٍ منذ ثلاثة أسابيع — لا تظهر «متأخّرة» لأنّ التأخّرَ يُقاس من الموعد. */}
                       <th className="py-2">قيد العمل</th>
+                      <th className="py-2">منها بعذر</th>
+                      <th className="py-2">بلا موعد</th>
+                      <th className="py-2" title={`بلا موعدٍ ولا عذرٍ منذ ${STALE_NO_DATE_DAYS} يوماً فأكثر`}>راكدة</th>
                       <th className="py-2">مكتمل</th>
                       <th className="py-2">متأخر بدون عذر</th>
                       <th className="py-2">متأخر بعذر</th>
@@ -436,9 +442,28 @@ export default function Manufacturing() {
                   </thead>
                   <tbody>
                     {overview.experts.map((e: any) => (
-                      <tr key={e.expertUserId} className="border-b last:border-0 text-center">
-                        <td className="text-right py-2 font-medium">{e.expertName}</td>
+                      <tr key={e.expertUserId} className="border-b last:border-0 text-center" data-testid={`expert-row-${e.expertUserId}`}>
+                        <td className="text-right py-2 font-medium">
+                          <div className="flex items-center gap-1.5">
+                            {/*  الاسمُ يرشّح القائمةَ أعلاه بالخبير، والطابعةُ تفتح ورقةَ حالاته غير المكتملة للإدارة. */}
+                            <button type="button" className="hover:underline text-right" data-testid={`expert-filter-${e.expertUserId}`}
+                              onClick={() => { setExpertFilter(String(e.expertUserId)); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                              {e.expertName}
+                            </button>
+                            <a href={`/manufacturing/expert-open/print?${new URLSearchParams({
+                                expertUserId: String(e.expertUserId), name: e.expertName ?? "",
+                                ...(branchFilter !== "all" ? { branchId: branchFilter } : {}),
+                              })}`}
+                              className="text-muted-foreground hover:text-primary" title="طباعة حالاته غير المكتملة"
+                              data-testid={`expert-print-${e.expertUserId}`}>
+                              <Printer className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </td>
                         <td>{e.active}</td>
+                        <td className={e.open?.excused > 0 ? "text-emerald-700" : ""}>{e.open?.excused ?? 0}</td>
+                        <td className={e.open?.noDate > 0 ? "text-amber-700" : ""}>{e.open?.noDate ?? 0}</td>
+                        <td className={e.open?.stale > 0 ? "text-amber-700 font-bold" : ""}>{e.open?.stale ?? 0}</td>
                         <td>{e.completed}</td>
                         <td className={e.overdue > 0 ? "text-red-600 font-bold" : ""}>{e.overdue}</td>
                         <td className={e.overdueExcused > 0 ? "text-amber-700 font-bold" : ""}>{e.overdueExcused}</td>

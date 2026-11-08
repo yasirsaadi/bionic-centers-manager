@@ -5,6 +5,7 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
+import { addToOpenSummary, emptyOpenSummary } from "@shared/expert_open_orders";
 import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn, notifyDeliveryDateChanged } from "../staff_telegram/notify";
 import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
 import { baghdadTodayYmd, baghdadMomentOn } from "@shared/visit_date";
@@ -740,6 +741,8 @@ export interface OrderCard {
   id: number;
   patientId: number;
   patientName: string;
+  /** رمزُ المريض — لورقة «الحالات غير المكتملة» (§4.gc). */
+  patientCode: string | null;
   branchId: number;
   branchName: string | null;
   serviceType: string;
@@ -836,7 +839,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
       holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
       //  القالبُ الاختباري (§4.bz) — شريطُه في اللوحة وتفصيلُه على الصفّ.
       trialFinalDate: WO.trialFinalDate, trialSocketCount: WO.trialSocketCount, trialLastCallAt: WO.trialLastCallAt,
-      patientName: patients.name, prostheticType: patients.prostheticType, supportType: patients.supportType,
+      patientName: patients.name, patientCode: patients.patientCode, prostheticType: patients.prostheticType, supportType: patients.supportType,
       branchName: branches.name, expertName: systemUsers.displayName,
       deviceEpisodeId: WO.deviceEpisodeId,
       // ══ **ما يُصنَع من معاينة هذا الجهاز هو** (المرحلة الثانية، MULTI-2) ═══
@@ -944,6 +947,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       id: r.id,
       patientId: r.patientId,
       patientName: r.patientName,
+      patientCode: r.patientCode ?? null,
       branchId: r.branchId,
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
@@ -2256,7 +2260,13 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
       expertUserId: o.expertUserId, expertName: o.expertName ?? `#${o.expertUserId}`,
       total: 0, active: 0, completed: 0, overdue: 0, overdueExcused: 0, reworks: 0,
       firstFitSuccess: 0, completedWithResult: 0, durationSum: 0, durationCount: 0,
+      //  **غيرُ المكتملة مقسومةً** (§4.gc): بعذر · بلا عذر · بلا موعد · فات موعدها · راكدة — بقاعدة `expert_open_orders` وحدها،
+      //  وهي قاعدةُ ورقة الطباعة نفسُها. و`open.open` يساوي `active` دائماً.
+      open: emptyOpenSummary(),
     };
+    addToOpenSummary(e.open, {
+      status: o.status, expectedDeliveryDate: o.expectedDeliveryDate, holdReasonCode: o.holdReasonCode, assignedAt: o.createdAt,
+    }, today);
     e.total++;
     if (notFinished(o.status)) e.active++;
     if (o.status === "completed") {

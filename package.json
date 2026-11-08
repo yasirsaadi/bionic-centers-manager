@@ -57,6 +57,7 @@
     "test:device-label": "tsx shared/device_label.test.ts",
     "test:manufacturing-share": "tsx server/manufacturing/branch_share_visibility.test.ts",
     "test:manufacturing-overview-lateness": "tsx server/manufacturing/overview_lateness.test.ts",
+    "test:expert-open-orders": "tsx server/manufacturing/expert_open_orders.test.ts",
     "test:manufacturing-excuse": "tsx server/manufacturing/excuse_persistence.test.ts",
     "test:restore-excuses": "tsx server/manufacturing/restore_erased_excuses.test.ts",
     "test:manufacturing-write-authority": "tsx server/manufacturing/write_authority.test.ts",
