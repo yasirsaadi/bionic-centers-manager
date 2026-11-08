@@ -1148,6 +1148,184 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   return { followup: toRow(row), delta, deviceEpisodeId: ep.id };
 }
 
+/**
+ * **«تصحيح سعر البيع» بعد إتمام البيع** (§4.ge — واقعةُ بيداء كريم محمد، ٢٠٢٦-١١-٠٨).
+ *
+ * سُجّل البيعُ بسعرٍ خطأ (١٩٬٠٠٠٬٠٠٠ بخصم ٧٬٠٠٠٬٠٠٠) وبدأ التصنيع، والصحيحُ ٤٬٣٥٠٬٠٠٠ بخصم ٣٥٠٬٠٠٠. وتعديلُ نصّ المعاينة لا يحرّك مالاً
+ * (السعرُ في المعاينة نصٌّ حرّ، والطبيبُ بلا سلطةٍ تجارية — §4.h)، و«التصحيح الإداريّ» يُبطل أمرَ التصنيع ليُعاد البيع. فهذا البابُ
+ * **يصحّح السعرَ وحده ويُبقي الأمرَ وخبيرَه ومراحلَه** — للمسؤول ومدير الفرع (قرارُ المالك)، أثناء التصنيع وبعد التسليم، بسببٍ مكتوب.
+ *
+ * ══ المواضعُ كلُّها تتحرّك معاً أو لا يتحرّك شيء ═════════════════════════
+ * المتابعةُ (السعرُ الأصليّ ونوعُه والنهائيّ — فتقول البطاقةُ الأصليَّ والخصمَ الجديدين) · الحلقةُ (`agreed_cost`، وأسطرُ الأجزاء تُمحى
+ * لأنها لا تطابق المجموعَ الجديد) · كلفةُ الخيط ومجموعُ المريض بالفرق · قيدٌ موقَّع في `cost_entries` بهويّة الجهاز (فيقرؤه أيُّ تصحيحٍ
+ * إداريٍّ بعده — §4.am) · حدثُ المتابعة. وكلُّ شرطٍ يُعاد تحت القفل، والكتابةُ بشرط السعر القديم فلا تكتب فوق تغيّرٍ متزامن.
+ *
+ * ══ والدفعُ الزائد لا يمنع (قرارُ المالك) ═════════════════════════════════
+ * يُعاد `creditBalance` = ما دُفع على الخيط فوق كلفته الجديدة، فتقول الشاشةُ «رصيدٌ للمريض — اطلب استرجاعاً» (§4.fz) ولا تخترع ردّاً.
+ */
+export async function correctSalePriceAfterConversion(params: {
+  followupId: number;
+  originalPrice: unknown;
+  discountAmount: unknown;
+  /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
+  reason: string;
+  actor: Actor;
+}): Promise<{
+  followup: FollowupRow; delta: number; deviceEpisodeId: number;
+  previous: { originalPrice: number | null; approvedPrice: number; priceKind: PriceKind | null };
+  creditBalance: number;
+}> {
+  const reason = (params.reason ?? "").trim();
+  if (reason.length === 0) {
+    throw new FollowupError("تصحيح سعر البيع يتطلّب سبباً مكتوباً — اكتب سبب التصحيح ثم أعد المحاولة", 400);
+  }
+  const offer = deriveOfferFromDiscount({
+    originalPrice: params.originalPrice, discountAmount: params.discountAmount,
+  });
+  if (!offer.ok || offer.finalPrice === null || offer.originalPrice === null || offer.kind === null) {
+    throw new FollowupError(offer.error ?? "السعر غير صالح", 400);
+  }
+  const price = offer.finalPrice;
+  const DRIFT = "تغيّرت حالة البيع أثناء الحفظ — لم يُعدَّل شيء. حدّث الصفحة وأعد المحاولة.";
+
+  return await db.transaction(async (tx: any) => {
+    const {
+      lockEpisodeForPriceCorrection, correctEpisodeAgreedCost, setEpisodeSaleLinesTx, PRICE_CORRECTABLE_STATUSES,
+    } = await import("../device_episodes/store");
+
+    // ① المتابعةُ تحت القفل — **بيعٌ تمّ** وحده.
+    const r = await tx.execute(sql`
+      SELECT ${SELECT_COLS} FROM post_exam_followups WHERE id = ${params.followupId} FOR UPDATE
+    `);
+    const curRow = (r.rows ?? [])[0];
+    if (!curRow) throw new FollowupError("المتابعة غير موجودة", 404);
+    const cur = toRow(curRow);
+    if (cur.status !== "converted") {
+      throw new FollowupError("تصحيح سعر البيع لبيعٍ تمّ وحده — هذا الملفّ لم يُبَع بعد، فالسعرُ يُكتب عند «إتمام البيع».", 409);
+    }
+    if (cur.deviceEpisodeId === null) throw new FollowupError(DRIFT, 409);
+    if (cur.approvedPrice === price && cur.originalPrice === offer.originalPrice) {
+      throw new FollowupError("السعر الجديد هو السعر المسجَّل نفسُه — لا شيء يُصحَّح", 400);
+    }
+
+    // ② الحلقةُ تحت القفل — لهذا المريض وهذا الخيط، قيد التصنيع أو مسلَّمة، وغيرُ مُبطَلةٍ إدارياً.
+    const ep = await lockEpisodeForPriceCorrection(tx, cur.deviceEpisodeId);
+    if (!ep) throw new FollowupError(DRIFT, 409);
+    if (ep.patientId !== cur.patientId || (cur.caseId !== null && ep.caseId !== cur.caseId)) {
+      throw new FollowupError(DRIFT, 409);
+    }
+    if (!(PRICE_CORRECTABLE_STATUSES as readonly string[]).includes(ep.status)) {
+      throw new FollowupError("لا يُصحَّح سعرُ جهازٍ ليس قيد التصنيع ولا مسلَّماً (ألغي أو أُبطل)", 409);
+    }
+    const voided = await tx.execute(sql`
+      SELECT 1 FROM patient_device_episodes WHERE id = ${ep.id} AND admin_void_reversal_id IS NOT NULL
+    `);
+    if ((voided.rows ?? []).length > 0) {
+      throw new FollowupError("هذه العملية أُبطلت بتصحيحٍ إداريّ — لا سعرَ يُصحَّح عليها", 409);
+    }
+
+    // ③ ولا يُصحَّح ملفٌّ رقماه مختلفان أصلاً — الفرقُ فوق خللٍ يُنتج رقماً ثالثاً لا يفسّره أحد.
+    if (ep.agreedCost !== cur.approvedPrice) {
+      throw new FollowupError(
+        "سعر المتابعة وسعر طلب الجهاز غير متطابقين في هذا الملفّ"
+        + ` (${cur.approvedPrice.toLocaleString("en-US")} مقابل ${ep.agreedCost.toLocaleString("en-US")} د.ع)`
+        + " — يحتاج مراجعة إدارية قبل التصحيح.", 409,
+      );
+    }
+
+    // ④ وطلبُ خصمٍ معلَّق على هذا الجهاز يُحسم أوّلاً.
+    const pend = await tx.execute(sql`
+      SELECT id FROM service_discount_requests
+       WHERE patient_id = ${cur.patientId}
+         AND department = ${cur.serviceType}
+         AND status = 'pending'
+         AND context_ref IN (${refList(deviceDiscountRefs({
+           followupId: cur.id, deviceEpisodeId: cur.deviceEpisodeId, serviceType: cur.serviceType,
+         }))})
+       LIMIT 1
+    `);
+    if ((pend.rows ?? []).length > 0) {
+      throw new FollowupError("على هذا الجهاز طلبُ خصمٍ معلَّق — احسمه ثم صحّح السعر.", 409);
+    }
+
+    const delta = price - cur.approvedPrice;
+
+    // ⑤ المتابعة — الأصليُّ ونوعُه والنهائيّ، بشرط السعر القديم.
+    const upd = await tx.execute(sql`
+      UPDATE post_exam_followups
+         SET approved_price = ${price}, original_price = ${offer.originalPrice},
+             price_kind = ${offer.kind}, updated_at = NOW()
+       WHERE id = ${cur.id} AND status = 'converted' AND approved_price = ${cur.approvedPrice}
+      RETURNING ${SELECT_COLS}
+    `);
+    const row = (upd.rows ?? [])[0];
+    if (!row) throw new FollowupError(DRIFT, 409);
+
+    // ⑥ الحلقة — سعرُها وحدَه، ولا حالةَ تُلمَس؛ وأسطرُ الأجزاء القديمة تُمحى (مجموعُها لم يعد السعر).
+    const moved = await correctEpisodeAgreedCost(tx, {
+      episodeId: ep.id, agreedCost: price, expectStatus: ep.status,
+    });
+    if (!moved) throw new FollowupError(DRIFT, 409);
+    await setEpisodeSaleLinesTx(tx, { episodeId: ep.id, lines: null });
+
+    // ⑦ كلفةُ الخيط ومجموعُ المريض بالفرق — زيادةٌ ذرّية — وقيدٌ موقَّع بهويّة الجهاز.
+    if (delta !== 0) {
+      if (cur.caseId !== null) {
+        await tx.execute(sql`
+          UPDATE patient_cases
+             SET cost = GREATEST(0, COALESCE(cost, 0) + ${delta}),
+                 cost_source = 'manual', updated_at = NOW()
+           WHERE id = ${cur.caseId}
+        `);
+      }
+      await tx.execute(sql`
+        UPDATE patients
+           SET total_cost = GREATEST(0, COALESCE(total_cost, 0) + ${delta})
+         WHERE id = ${cur.patientId}
+      `);
+      await tx.execute(sql`
+        INSERT INTO cost_entries
+          (patient_id, branch_id, amount, source, case_id, device_episode_id, notes)
+        VALUES (${cur.patientId}, ${cur.branchId}, ${delta}, 'sale_price_correction',
+                ${cur.caseId}, ${ep.id}, ${"تصحيح سعر البيع — " + reason})
+      `);
+    }
+
+    // ⑧ الحدث.
+    await appendEvent(tx, {
+      followupId: cur.id, patientId: cur.patientId, branchId: cur.branchId,
+      eventType: "sale_price_corrected",
+      fromStatus: cur.status, toStatus: cur.status,
+      note: reason,
+      payload: {
+        previousPrice: cur.approvedPrice, finalPrice: price, delta,
+        previousOriginalPrice: cur.originalPrice, originalPrice: offer.originalPrice,
+        discountAmount: offer.discountAmount, priceKind: offer.kind,
+        deviceEpisodeId: ep.id, episodeStatus: ep.status, correctionReason: reason,
+        setByUserId: params.actor.userId, setByName: params.actor.userName,
+      },
+      actor: params.actor,
+    });
+
+    // ⑨ ما دُفع على الخيط فوق كلفته الجديدة — رصيدٌ للمريض يُستردّ بطلب استرجاع (§4.fz)، لا يُخترع ردّ.
+    let creditBalance = 0;
+    if (cur.caseId !== null) {
+      const b = await tx.execute(sql`
+        SELECT COALESCE((SELECT cost FROM patient_cases WHERE id = ${cur.caseId}), 0) AS cost,
+               COALESCE((SELECT SUM(amount) FROM payments WHERE case_id = ${cur.caseId}), 0) AS paid
+      `);
+      const bb = (b.rows ?? [])[0] ?? {};
+      creditBalance = Math.max(0, Number(bb.paid ?? 0) - Number(bb.cost ?? 0));
+    }
+
+    return {
+      followup: toRow(row), delta, deviceEpisodeId: ep.id,
+      previous: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
+      creditBalance,
+    };
+  });
+}
+
 // ── الانتقالات ───────────────────────────────────────────────────────────
 
 /** تأجيل: سببٌ منظَّم + موعدٌ أو استثناءٌ صريح. */
