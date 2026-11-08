@@ -2532,15 +2532,17 @@ export async function changeAssignmentDate(p: { orderId: number; newDay: string;
       .where(eq(WH.workOrderId, o.id)).orderBy(asc(WH.createdAt));
     //  أوّلُ حدثٍ حقيقيّ بعد الإنشاء — لا سطرُ الإنشاء نفسُه، ولا تعديلُ تاريخٍ سابق.
     const later = hist.filter((h) => h.actionType !== "created" && h.actionType !== ASSIGNMENT_DATE_ACTION);
-    //  **وما سبق الإسنادَ الحاليّ لا يقيّده** (§4.gd التكملة): أمرٌ أُعيد فتحُه بتاريخٍ جديد يحمل أحداثاً قبله (إلغاؤه وما قبله) — تلك
-    //  تاريخٌ وقع لا مراحلُ هذه البداية. وفي الأمر العاديّ لا حدثَ قبل إسناده أصلاً، فالقاعدةُ كما كانت.
-    const assignedAt = new Date(o.createdAt).getTime();
+    //  **وما سبق إعادةَ الفتح لا يقيّده** (§4.gd التكملة ٢): أمرٌ أُعيد فتحُه يحمل أحداثاً قبله (إلغاؤه وما قبله) — تلك
+    //  تاريخٌ وقع لا مراحلُ هذه البداية. والحدُّ **آخرُ سطر «إعادة فتح»** لا تاريخُ الإسناد: الإسنادُ يتحرّك (قد يُختار يومٌ
+    //  قبل الإلغاء القديم)، والفتحُ لحظةٌ ثابتة (مراجعة Codex على #718). وفي الأمر بلا فتحٍ فكلُّ حدثٍ لاحقٌ يقيّده كما كان.
+    const reopens = hist.filter((h) => h.actionType === "reopened");
+    const boundary = reopens.length ? new Date(reopens[reopens.length - 1].createdAt).getTime() : -Infinity;
     const candidates: { day: string; label: string; at: number }[] = later
-      .filter((h) => new Date(h.createdAt).getTime() > assignedAt)
+      .filter((h) => h.actionType !== "reopened" && new Date(h.createdAt).getTime() > boundary)
       .map((h) => ({
         day: baghdadDay(h.createdAt), label: STAGE_EVENT_LABEL[h.actionType] ?? h.actionType, at: new Date(h.createdAt).getTime(),
       }));
-    if (o.startedAt && new Date(o.startedAt).getTime() > assignedAt) {
+    if (o.startedAt && new Date(o.startedAt).getTime() > boundary) {
       candidates.push({ day: baghdadDay(o.startedAt), label: "بدء العمل", at: new Date(o.startedAt).getTime() });
     }
     candidates.sort((a, b) => a.at - b.at);
@@ -2560,8 +2562,12 @@ export async function changeAssignmentDate(p: { orderId: number; newDay: string;
     if (newAt.getTime() > ceiling) newAt = new Date(ceiling - 1000);
 
     await tx.update(WO).set({ createdAt: newAt, updatedAt: new Date() }).where(eq(WO.id, o.id));
-    await tx.update(WH).set({ createdAt: newAt })
-      .where(and(eq(WH.workOrderId, o.id), eq(WH.actionType, "created")));
+    //  وسطرُ «إنشاء الأمر» يتبع الإسنادَ في الأمر العاديّ (يومٌ واحد لهما) — **أمّا المُعاد فتحُه فإنشاؤه يبقى بيومه الحقيقيّ**
+    //  كما وعدت `reopenCancelledOrder`، فتعديلٌ لاحق لا يمحوه (مراجعة Codex على #718).
+    if (!reopens.length) {
+      await tx.update(WH).set({ createdAt: newAt })
+        .where(and(eq(WH.workOrderId, o.id), eq(WH.actionType, "created")));
+    }
     await tx.insert(WH).values({
       workOrderId: o.id, actionType: ASSIGNMENT_DATE_ACTION, fromStage: null, toStage: null,
       notes: assignmentDateNote(currentDay, p.newDay, p.reason), performedBy: p.performedBy,
