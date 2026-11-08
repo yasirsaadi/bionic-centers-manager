@@ -266,6 +266,13 @@ check(pageCode.includes('data-testid="button-more-filters"') && pageCode.include
   && /\[serviceFilter, purposeFilter, stageFilter, statusFilter\]\.filter\(\(v\) => v !== "all"\)\.length/.test(pageCode)
   && /\{hiddenActive > 0 && \(\s*<span[^>]*data-testid="badge-more-filters">\{hiddenActive\}<\/span>/.test(pageCode),
   "ز.١٣ج **«مرشّحات أخرى» تحمل عددَ المفعَّل منها** — فلا يختفي مرشِّحٌ مفعَّل عن العين");
+//  مراجعة Codex على #726: الهاتفُ واحدٌ في القرارين — طيُّ المرشِّحات (`useIsMobile` تحت ٧٦٨) وسحبُ الشرائط (`md:` = ٧٦٨)،
+//  وفرعُ الخبير يُطوى كالفرع.
+check(pageCode.includes("flex-nowrap overflow-x-auto md:flex-wrap md:overflow-visible")
+  && !/overflow-x-auto sm:flex-wrap/.test(pageCode)
+  && pageCode.includes("{!isMobile && expertBranchSelect}") && pageCode.includes("{isMobile && expertBranchSelect}")
+  && !/\{expertOnly && accessible\.length > 1 && \(\s*<Select/.test(pageCode),
+  "ز.١٣د **الهاتفُ حدٌّ واحد**: الشرائطُ تُسحَب حتى ٧٦٨ كطيّ المرشِّحات، وفرعُ الخبير يُطوى معها");
 check(pageCode.includes('<th className="py-2">متأخر بدون عذر</th>')
   && pageCode.includes('<th className="py-2">متأخر بعذر</th>')
   && pageCode.includes('{e.overdue}</td>') && pageCode.includes('{e.overdueExcused}</td>'),

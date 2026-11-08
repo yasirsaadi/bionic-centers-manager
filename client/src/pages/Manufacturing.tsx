@@ -238,8 +238,20 @@ export default function Manufacturing() {
   //  المرشِّحاتُ المطويّة المفعَّلة — رقمُ الزرّ. والفرعُ والخبيرُ يُعدّان على الهاتف وحده حيث يُطويان معها.
   const showBranch = isAdmin || isManager;
   const showExpert = (isAdmin || isManager) && experts.length > 0;
+  //  وفرعُ الخبير ذي الفروع المتعدّدة يُطوى على الهاتف كذلك (مراجعة Codex على #726).
+  const showExpertBranch = expertOnly && accessible.length > 1;
   const hiddenActive = [serviceFilter, purposeFilter, stageFilter, statusFilter].filter((v) => v !== "all").length
-    + (isMobile ? [showBranch ? branchFilter : "all", showExpert ? expertFilter : "all"].filter((v) => v !== "all").length : 0);
+    + (isMobile ? [showBranch || showExpertBranch ? branchFilter : "all", showExpert ? expertFilter : "all"].filter((v) => v !== "all").length : 0);
+
+  const expertBranchSelect = showExpertBranch && (
+    <Select value={branchFilter} onValueChange={setBranchFilter}>
+      <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="الفرع" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">كل فروعي</SelectItem>
+        {accessible.map((b) => <SelectItem key={b} value={String(b)}>#{b}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
 
   const branchSelect = showBranch && (
     <Select value={branchFilter} onValueChange={setBranchFilter}>
@@ -304,15 +316,7 @@ export default function Manufacturing() {
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث باسم المريض…" className="pr-9 h-9" />
         </div>
-        {expertOnly && accessible.length > 1 && (
-          <Select value={branchFilter} onValueChange={setBranchFilter}>
-            <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="الفرع" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">كل فروعي</SelectItem>
-              {accessible.map((b) => <SelectItem key={b} value={String(b)}>#{b}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        )}
+        {!isMobile && expertBranchSelect}
         {!isMobile && branchSelect}
         {!isMobile && expertSelect}
         {!isMobile && sortSelect}
@@ -331,6 +335,7 @@ export default function Manufacturing() {
       </div>
       {moreOpen && (
         <div id="mfg-more-filters" className="flex flex-wrap items-center gap-2 mb-2 p-2 rounded-lg border bg-slate-50" data-testid="more-filters">
+          {isMobile && expertBranchSelect}
           {isMobile && branchSelect}
           {isMobile && expertSelect}
           {isMobile && sortSelect}
@@ -372,8 +377,8 @@ export default function Manufacturing() {
           كانت تعدّ ولا تُضغَط. وهي الآن أزرارٌ ملوّنةٌ بمعنى حالتها،
           **تتركّب فوق مرشِّحات الخادم**: «عناد» ثمّ «متأخرون» ⟶ متأخرو
           عناد وحدهم. والضغطةُ الثانية على الشريط نفسِه تُلغي اختيارَه.
-          وعلى الهاتف سطرٌ واحد يُسحَب أفقياً (٢٠٢٦-١١-٠٨). */}
-      <div className="flex flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible gap-1.5 mb-3 pb-1 sm:pb-0" role="group" aria-label="تصنيفات أوامر التصنيع">
+          وعلى الهاتف سطرٌ واحد يُسحَب أفقياً (٢٠٢٦-١١-٠٨) — حتى ٧٦٨ نقطة، حدِّ `useIsMobile` نفسِه (مراجعة Codex على #726). */}
+      <div className="flex flex-nowrap overflow-x-auto md:flex-wrap md:overflow-visible gap-1.5 mb-3 pb-1 md:pb-0" role="group" aria-label="تصنيفات أوامر التصنيع">
         {chips.map(({ def, count }) => {
           const on = bucket === def.key;
           return (
