@@ -1216,6 +1216,11 @@ export async function updateStage(params: {
       patch.holdNote = null;
       if (params.finalNotes) patch.finalNotes = params.finalNotes;
     }
+    //  **طلبُ الإلغاء المعلَّق يسقط بانتهاء الأمر** (مراجعة Codex على #714): الخبيرُ طلب الإلغاء ثمّ أكمل
+    //  الأمرَ قبل ردّ المدير — والرفضُ والسحبُ يرفضان المنتهي، فيبقى طلبٌ بلا قرارٍ إلى الأبد. فيُمحى هنا
+    //  في المعاملة نفسِها ويُكتب سطرُ «سقوط طلب الإلغاء» بعد سطر الانتقال.
+    const lapsedRequest = (delivered || maintenanceDone) && live.cancelRequestedAt != null;
+    if (lapsedRequest) Object.assign(patch, CLEARED_CANCEL_REQUEST);
     const [updated] = await tx.update(WO).set(patch).where(eq(WO.id, order.id)).returning();
 
     // حلقةُ الجهاز تتبع أمرها إلى نهايته — في المعاملة نفسها. والحارسان
@@ -1240,6 +1245,9 @@ export async function updateStage(params: {
       notes: params.notes ?? null,
       performedBy: params.performedBy,
     }).returning({ id: WH.id });
+    if (lapsedRequest) {
+      await insertCancelRequestLapsed(tx, order.id, toStage, delivered ? "بتسليم الأمر" : "بإنجاز الصيانة", params.performedBy);
+    }
 
     // حدث المريض — في المعاملة نفسها، فالأمر وسجلّه وحدثه ينجحون معاً أو
     // يفشلون معاً. ويشمل هذا المسارَ الإداري: تصحيحُ الإدارة يحرّك المرحلة
@@ -1359,6 +1367,8 @@ interface LockedOrder {
   startedAt: Date | null;
   /** سببُ التوقّف المكتوب كما هو في الصفّ — يقرؤه `documentHoldReason` تحت القفل. */
   holdReasonCode: string | null;
+  /** طلبُ إلغاءٍ معلَّق — يُمحى تحت القفل حين ينتهي الأمر بغير قرارٍ عليه. */
+  cancelRequestedAt: Date | null;
 }
 
 /**
@@ -1375,6 +1385,7 @@ async function lockOrder(tx: any, orderId: number): Promise<LockedOrder> {
       expectedDeliveryDate: WO.expectedDeliveryDate,
       expertUserId: WO.expertUserId, startedAt: WO.startedAt,
       holdReasonCode: WO.holdReasonCode,
+      cancelRequestedAt: WO.cancelRequestedAt,
     })
     .from(WO)
     .where(eq(WO.id, orderId))
@@ -1386,6 +1397,7 @@ async function lockOrder(tx: any, orderId: number): Promise<LockedOrder> {
     expertUserId: locked?.expertUserId ?? 0,
     startedAt: locked?.startedAt ?? null,
     holdReasonCode: locked?.holdReasonCode ?? null,
+    cancelRequestedAt: locked?.cancelRequestedAt ?? null,
   };
 }
 
@@ -1879,6 +1891,19 @@ export async function cancelOrder(params: {
 //  الخبيرُ يطلب بسببه والأمرُ يبقى قائماً كما هو (لا تتغيّر حالتُه ولا مرحلتُه)، فيصل المديرَ والمسؤولَ تنبيهٌ؛ والموافقةُ هي `cancelOrder`
 //  نفسُها تقرأ الطلبَ وتمحوه، والرفضُ يمحوه بسطرٍ في الخطّ الزمني. وطالبُه يسحبه ما دام معلَّقاً.
 
+/** أعمدةُ طلب الإلغاء فارغةً — لكلّ بابٍ يُنهي الطلبَ بلا قرار (التسليم، إنجازُ الصيانة، الإبطالُ الإداريّ). */
+const CLEARED_CANCEL_REQUEST = { cancelRequestedAt: null, cancelRequestedBy: null, cancelRequestNote: null } as const;
+
+/** سطرُ «سقوط طلب الإلغاء» — الطلبُ لم يُقبل ولم يُرفض، بل انتهى الأمرُ قبل الردّ عليه. */
+async function insertCancelRequestLapsed(tx: any, orderId: number, stage: string | null, why: string, performedBy: number | null) {
+  await tx.insert(WH).values({
+    workOrderId: orderId, actionType: "cancel_request_lapsed",
+    fromStage: stage, toStage: stage,
+    notes: `سقط طلبُ الإلغاء المعلَّق ${why} قبل الردّ عليه`,
+    performedBy,
+  });
+}
+
 export class CancelRequestError extends Error {
   constructor(message: string, public readonly status = 409) { super(message); }
 }
@@ -2037,6 +2062,8 @@ export async function voidOrderAdministratively(
     .set({
       //  المنتهي يبقى على حالته — الوسمُ وحده يرفع سلطتَه.
       ...(wasTerminal ? {} : { status: "cancelled", holdReasonCode: null, holdNote: null }),
+      //  والإبطالُ الإداريّ يُنهي سلطةَ الأمر — فطلبُ إلغاءٍ معلَّقٌ عليه يسقط معه (كالتسليم في `advanceOrder`).
+      ...CLEARED_CANCEL_REQUEST,
       adminVoidReversalId: params.reversalId,
       updatedAt: new Date(),
     })
@@ -2049,6 +2076,9 @@ export async function voidOrderAdministratively(
       + (wasTerminal ? " (بقي سجل التنفيذ والتسليم كما هو)" : ""),
     performedBy: params.performedBy,
   });
+  if (live.cancelRequestedAt != null) {
+    await insertCancelRequestLapsed(tx, params.orderId, live.currentStage, "بالإلغاء الإداريّ للعملية", params.performedBy);
+  }
   return { wasTerminal, status: live.status, currentStage: live.currentStage };
 }
 
@@ -2463,7 +2493,7 @@ export class AssignmentDateError extends Error {
 const STAGE_EVENT_LABEL: Record<string, string> = {
   stage_change: "انتقال مرحلة", status_change: "تغيير حالة", reassigned: "تحويل خبير", rework: "إعادة عمل",
   delivered: "تسليم", date_change: "تحديد موعد التسليم", hold_reason: "كتابة سبب التوقّف", mold_return: "حضور لأخذ القالب", trial_socket: "تسليم قالب اختباري", trial_return: "عودة للقالب النهائي",
-  cancel_request: "طلب إلغاء", cancel_request_rejected: "رفض طلب الإلغاء", cancel_request_withdrawn: "سحب طلب الإلغاء", reopened: "إعادة فتح الأمر",
+  cancel_request: "طلب إلغاء", cancel_request_rejected: "رفض طلب الإلغاء", cancel_request_withdrawn: "سحب طلب الإلغاء", cancel_request_lapsed: "سقوط طلب الإلغاء", reopened: "إعادة فتح الأمر",
 };
 
 /**
