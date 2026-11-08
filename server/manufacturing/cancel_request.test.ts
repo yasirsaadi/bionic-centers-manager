@@ -14,7 +14,8 @@ import { registerRoutes } from "../routes";
 import { voidOrderAdministratively } from "./store";
 import { FINAL_RESULTS } from "@shared/manufacturing";
 import { workHistoryMovementLabel } from "@shared/daily_review";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
+import * as manufacturing from "@shared/manufacturing";
 
 const PORT = 6051 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -60,19 +61,44 @@ const eq = (got: unknown, want: unknown, m: string) =>
   ok(JSON.stringify(got) === JSON.stringify(want), m, `want ${JSON.stringify(want)} got ${JSON.stringify(got)}`);
 
 async function main() {
-  console.log("\nو — كلُّ سطرٍ يكتبه التصنيعُ في سجلّ الأمر له اسمٌ عربيّ في «المراجعة اليومية» (مراجعة Codex على #715)");
+  console.log("\nو — كلُّ سطرٍ يُكتب في سجلّ أمر التصنيع له اسمٌ عربيّ في «المراجعة اليومية» (مراجعة Codex على #715 و#716)");
   {
-    const src = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
+    //  **كلُّ كاتبٍ لا ملفٌّ واحد** (مراجعة Codex على #716): كلُّ ملفٍّ في الخادم يذكر الجدولَ يُقرأ — بصيغتيه: `actionType:` (الحرفيُّ،
+    //  وفرعا التعبير الشرطيّ، والثابتُ المشترك `…_ACTION`) و`INSERT INTO prosthetic_work_history … VALUES (…, '<نوع>'`.
+    const root = new URL("../", import.meta.url);
+    const files: string[] = [];
+    const walk = (dir: URL) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (ent.isDirectory()) { if (ent.name !== "migrations" && ent.name !== "node_modules") walk(new URL(`${ent.name}/`, dir)); continue; }
+        if (!ent.name.endsWith(".ts") || ent.name.endsWith(".test.ts")) continue;
+        const u = new URL(ent.name, dir);
+        const txt = readFileSync(u, "utf8");
+        if (/prosthetic_work_history|prostheticWorkHistory/.test(txt)) files.push(u.pathname);
+      }
+    };
+    walk(root);
     const written = new Set<string>();
-    for (const m of src.matchAll(/actionType:\s*(?:[^,\n]*\?\s*)?"([a-z_]+)"(?:\s*:\s*"([a-z_]+)")?/g)) {
-      written.add(m[1]); if (m[2]) written.add(m[2]);
+    const unresolved: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/actionType:\s*([^\n]*)/g)) {
+        const expr = m[1];
+        for (const lit of expr.matchAll(/"([a-z_]+)"/g)) written.add(lit[1]);
+        for (const id of expr.matchAll(/\b([A-Z][A-Z_]*_ACTION)\b/g)) {
+          const v = (manufacturing as any)[id[1]];
+          if (typeof v === "string") written.add(v); else unresolved.push(`${f}: ${id[1]}`);
+        }
+      }
+      for (const m of src.matchAll(/INSERT INTO prosthetic_work_history[\s\S]*?VALUES\s*\([^,]*,\s*'([a-z_]+)'/g)) written.add(m[1]);
     }
     //  `created` فتحُ الأمر نفسُه — مستبعَدٌ من أسرة الحركات قبل التسمية (`WORK_HISTORY_OPENING_ACTION_TYPE`).
     written.delete("created");
-    const raw = [...written].filter((a) => workHistoryMovementLabel(a, null) === a);
-    ok(written.has("cancel_request_lapsed") && written.has("cancel_request_withdrawn") && written.has("cancel_request_rejected"),
-      "و١. القراءةُ تجد الأنواعَ الثلاثة الجديدة (والمكتوبَين بتعبيرٍ شرطيّ)", JSON.stringify([...written]));
-    eq(raw, [], "و٢. ولا نوعَ يُعرض برمزه الخام");
+    const mustSee = ["cancel_request_lapsed", "cancel_request_withdrawn", "cancel_request_rejected", "delivered", "stage_change",
+      "assignment_date_change", "mold_return", "component_added", "status_change"];
+    eq(mustSee.filter((a) => !written.has(a)), [],
+      "و١. القراءةُ تجد الأنواعَ بكلّ صيغها: الحرفيَّ وفرعَي الشرط والثابتَ المشترك وسطرَ SQL في ملفٍّ آخر");
+    eq(unresolved, [], "و١ب. ولا ثابتَ `…_ACTION` لا يُعرف معناه");
+    eq([...written].filter((a) => workHistoryMovementLabel(a, null) === a), [], "و٢. ولا نوعَ يُعرض برمزه الخام");
   }
 
   const t = Date.now() % 1000000;
