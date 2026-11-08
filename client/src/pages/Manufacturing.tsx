@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -21,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Wrench, Search, AlertTriangle, ArrowDownUp, Printer } from "lucide-react";
+import { Wrench, Search, AlertTriangle, ArrowDownUp, Printer, SlidersHorizontal } from "lucide-react";
 import { STALE_NO_DATE_DAYS } from "@shared/expert_open_orders";
 import {
   STAGE_LABELS, STATUS_LABELS, STATUSES, SERVICE_TYPE_LABELS, REASON_CODE_LABELS, BUILD_STAGES,
@@ -85,7 +86,7 @@ function OrderRow({ o }: { o: OrderCard }) {
   return (
     <Link href={`/manufacturing/orders/${o.id}`}>
       <Card className={`hover:shadow-sm transition-shadow cursor-pointer ${t.cardClass}`}>
-        <CardContent className="p-4">
+        <CardContent className="px-4 py-3">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0 flex-1">
               {/* الاسمُ سطرٌ قائمٌ بذاته — لا ينضغط بين الشارات */}
@@ -164,6 +165,10 @@ export default function Manufacturing() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expertFilter, setExpertFilter] = useState<string>("all");
+  //  **«مرشّحات أخرى»** (طلبُ المالك ٢٠٢٦-١١-٠٨ — رأسُ الصفحة كان يدفع أوّلَ مريضٍ ٨٠٠ نقطة): النوعُ والعمليةُ والمرحلةُ والحالة
+  //  تُطوى تحت زرٍّ يحمل عددَ المفعَّل منها — فلا يختفي مرشِّحٌ مفعَّل عن العين. وعلى الهاتف يُطوى معها الفرعُ والخبيرُ والترتيب.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const isMobile = useIsMobile();
   //  التصنيفُ المختار من الشرائط — `null` يعني «كلَّها». وهو **فوق**
   //  مرشِّحات الخادم لا بدلاً منها، فيتركّب مع الخبير والفرع والبحث.
   const [bucket, setBucket] = useState<string | null>(null);
@@ -230,118 +235,145 @@ export default function Manufacturing() {
 
   const experts: { expertUserId: number; expertName: string }[] = overview?.experts ?? [];
 
+  //  المرشِّحاتُ المطويّة المفعَّلة — رقمُ الزرّ. والفرعُ والخبيرُ يُعدّان على الهاتف وحده حيث يُطويان معها.
+  const showBranch = isAdmin || isManager;
+  const showExpert = (isAdmin || isManager) && experts.length > 0;
+  const hiddenActive = [serviceFilter, purposeFilter, stageFilter, statusFilter].filter((v) => v !== "all").length
+    + (isMobile ? [showBranch ? branchFilter : "all", showExpert ? expertFilter : "all"].filter((v) => v !== "all").length : 0);
+
+  const branchSelect = showBranch && (
+    <Select value={branchFilter} onValueChange={setBranchFilter}>
+      <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="الفرع" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">كل الفروع</SelectItem>
+        {branches.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+  const expertSelect = showExpert && (
+    <Select value={expertFilter} onValueChange={setExpertFilter}>
+      <SelectTrigger className="w-[150px] h-9"><SelectValue placeholder="الخبير" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">كل الخبراء</SelectItem>
+        {experts.map((e) => <SelectItem key={e.expertUserId} value={String(e.expertUserId)}>{e.expertName}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+  const sortSelect = (
+    <Select value={sortMode} onValueChange={setSortMode}>
+      <SelectTrigger className="w-[160px] h-9" data-testid="select-sort" aria-label="ترتيب القائمة">
+        <ArrowDownUp className="w-4 h-4 text-muted-foreground shrink-0" />
+        <SelectValue placeholder="الترتيب" />
+      </SelectTrigger>
+      <SelectContent>
+        {MANUFACTURING_SORTS.map((m) => <SelectItem key={m} value={m}>{MANUFACTURING_SORT_LABELS[m]}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto" dir="rtl">
-      <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
+      {/*  ══ **رأسٌ مضغوط** (طلبُ المالك ٢٠٢٦-١١-٠٨، بنموذجٍ وافق عليه قبل التنفيذ): العنوانُ وأرقامُ اللوحة في سطرٍ واحد،
+          والمرشِّحاتُ صفٌّ واحد و«مرشّحات أخرى»، والشرائطُ أصغر — فيظهر أوّلُ مريضٍ في ربع المسافة. ══ */}
+      <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Wrench className="w-6 h-6 text-primary" />
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Wrench className="w-5 h-5 text-primary" />
             تصنيع الأطراف والمساند
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {expertOnly ? "الحالات المسندة إليك — تابع مراحل التصنيع وسجّل إعادة العمل والنتائج."
-              : "متابعة أوامر التصنيع، مراحلها، وإعادات العمل."}
-          </p>
+          {expertOnly && (
+            <p className="text-xs text-muted-foreground mt-0.5">الحالات المسندة إليك — تابع مراحل التصنيع وسجّل إعادة العمل والنتائج.</p>
+          )}
         </div>
         {/*  «أمر تصنيع لمريض موجود» خرج من هنا (§4.bp): كان يُنشئ أمراً بلا معاينةٍ ولا كلفة.
             الجهازُ الجديد بابُه «إضافة خدمة جديدة» ⟵ معاينة ⟵ «إتمام البيع» في ملفّ المريض. */}
+        {/*  **أرقامُ اللوحة شريطٌ واحد** — وما تقوله الشرائطُ تحته لا يتكرّر هنا (قرارُ المالك ٢٠٢٦-١١-٠٨):
+            «جاهز للتسليم» و«متأخرة بدون عذر» و«متأخرة بعذر» شرائطُ تُضغَط بأعدادها، فبقي ما لا شريطَ له. */}
+        {(isAdmin || isManager) && overview && (
+          <div className="flex rounded-lg border bg-white overflow-hidden" data-testid="mfg-summary">
+            <StatTile label="الإجمالي" value={overview.totals.total} />
+            <StatTile label="لم تتحرّك ≥14 يوم" value={overview.totals.stale} tone="amber" />
+            <StatTile label="مكتملة" value={overview.totals.completed} />
+          </div>
+        )}
       </div>
 
-      {/* Admin/manager overview —
-          «متأخرة» كانت رقماً واحداً يخلط مَن كتب خبيرُه عذرَه بمَن لم يكتب،
-          فانقسمت اثنين بقرار المالك (٢٠٢٦-٠٩-٢٤): الأحمرُ بدون عذرٍ وحدَه،
-          والكهرمانيُّ بعذر — ومجموعُهما الرقمُ القديم بالضبط. */}
-      {(isAdmin || isManager) && overview && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-5">
-          <StatTile label="إجمالي الأوامر" value={overview.totals.total} />
-          <StatTile label="جاهز للتسليم" value={overview.totals.ready} tone="green" />
-          <StatTile label="متأخرة بدون عذر" value={overview.totals.overdue} tone="red" />
-          <StatTile label="متأخرة بعذر" value={overview.totals.overdueExcused} tone="amber" />
-          <StatTile label="لم تتحرّك ≥14 يوم" value={overview.totals.stale} tone="amber" />
-          <StatTile label="مكتملة" value={overview.totals.completed} />
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Filters — صفٌّ واحد، والباقي تحت «مرشّحات أخرى» */}
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث باسم المريض…" className="pr-9" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث باسم المريض…" className="pr-9 h-9" />
         </div>
-        {(isAdmin || isManager) && (
-          <Select value={branchFilter} onValueChange={setBranchFilter}>
-            <SelectTrigger className="w-[140px]"><SelectValue placeholder="الفرع" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">كل الفروع</SelectItem>
-              {branches.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        )}
         {expertOnly && accessible.length > 1 && (
           <Select value={branchFilter} onValueChange={setBranchFilter}>
-            <SelectTrigger className="w-[140px]"><SelectValue placeholder="الفرع" /></SelectTrigger>
+            <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="الفرع" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">كل فروعي</SelectItem>
               {accessible.map((b) => <SelectItem key={b} value={String(b)}>#{b}</SelectItem>)}
             </SelectContent>
           </Select>
         )}
-        {(isAdmin || isManager) && experts.length > 0 && (
-          <Select value={expertFilter} onValueChange={setExpertFilter}>
-            <SelectTrigger className="w-[150px]"><SelectValue placeholder="الخبير" /></SelectTrigger>
+        {!isMobile && branchSelect}
+        {!isMobile && expertSelect}
+        {!isMobile && sortSelect}
+        <Button
+          type="button" variant="outline" size="sm"
+          className={`h-9 gap-1.5 ${hiddenActive > 0 ? "border-teal-300 bg-teal-50 text-teal-900" : ""}`}
+          aria-expanded={moreOpen} aria-controls="mfg-more-filters"
+          onClick={() => setMoreOpen((v) => !v)} data-testid="button-more-filters"
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          {isMobile ? "المرشّحات" : "مرشّحات أخرى"}
+          {hiddenActive > 0 && (
+            <span className="rounded-full bg-teal-700 text-white text-[11px] leading-[18px] px-1.5" data-testid="badge-more-filters">{hiddenActive}</span>
+          )}
+        </Button>
+      </div>
+      {moreOpen && (
+        <div id="mfg-more-filters" className="flex flex-wrap items-center gap-2 mb-2 p-2 rounded-lg border bg-slate-50" data-testid="more-filters">
+          {isMobile && branchSelect}
+          {isMobile && expertSelect}
+          {isMobile && sortSelect}
+          <Select value={serviceFilter} onValueChange={setServiceFilter}>
+            <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="النوع" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">كل الخبراء</SelectItem>
-              {experts.map((e) => <SelectItem key={e.expertUserId} value={String(e.expertUserId)}>{e.expertName}</SelectItem>)}
+              <SelectItem value="all">كل الأنواع</SelectItem>
+              <SelectItem value="prosthetic">أطراف صناعية</SelectItem>
+              <SelectItem value="medical_support">مساند طبية</SelectItem>
             </SelectContent>
           </Select>
-        )}
-        <Select value={serviceFilter} onValueChange={setServiceFilter}>
-          <SelectTrigger className="w-[140px]"><SelectValue placeholder="النوع" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">كل الأنواع</SelectItem>
-            <SelectItem value="prosthetic">أطراف صناعية</SelectItem>
-            <SelectItem value="medical_support">مساند طبية</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={purposeFilter} onValueChange={setPurposeFilter}>
-          <SelectTrigger className="w-[150px]" data-testid="select-purpose"><SelectValue placeholder="العملية" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">تصنيع وصيانة</SelectItem>
-            <SelectItem value="initial_build">تصنيع كامل</SelectItem>
-            <SelectItem value="maintenance">صيانة</SelectItem>
-            <SelectItem value="followup">متابعة</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={stageFilter} onValueChange={setStageFilter}>
-          <SelectTrigger className="w-[170px]"><SelectValue placeholder="المرحلة" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">كل المراحل</SelectItem>
-            {BUILD_STAGES.map((st) => <SelectItem key={st} value={st}>{STAGE_LABELS[st]}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[140px]"><SelectValue placeholder="الحالة" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">كل الحالات</SelectItem>
-            {STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={sortMode} onValueChange={setSortMode}>
-          <SelectTrigger className="w-[170px]" data-testid="select-sort" aria-label="ترتيب القائمة">
-            <ArrowDownUp className="w-4 h-4 text-muted-foreground shrink-0" />
-            <SelectValue placeholder="الترتيب" />
-          </SelectTrigger>
-          <SelectContent>
-            {MANUFACTURING_SORTS.map((m) => <SelectItem key={m} value={m}>{MANUFACTURING_SORT_LABELS[m]}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
+          <Select value={purposeFilter} onValueChange={setPurposeFilter}>
+            <SelectTrigger className="w-[150px] h-9" data-testid="select-purpose"><SelectValue placeholder="العملية" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">تصنيع وصيانة</SelectItem>
+              <SelectItem value="initial_build">تصنيع كامل</SelectItem>
+              <SelectItem value="maintenance">صيانة</SelectItem>
+              <SelectItem value="followup">متابعة</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={stageFilter} onValueChange={setStageFilter}>
+            <SelectTrigger className="w-[170px] h-9"><SelectValue placeholder="المرحلة" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">كل المراحل</SelectItem>
+              {BUILD_STAGES.map((st) => <SelectItem key={st} value={st}>{STAGE_LABELS[st]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[140px] h-9"><SelectValue placeholder="الحالة" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">كل الحالات</SelectItem>
+              {STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/*  ══ **شرائطُ التصنيف — تُضغَط فتُرشِّح** (٢٠٢٦-٠٩-٢٤) ══════════════
           كانت تعدّ ولا تُضغَط. وهي الآن أزرارٌ ملوّنةٌ بمعنى حالتها،
           **تتركّب فوق مرشِّحات الخادم**: «عناد» ثمّ «متأخرون» ⟶ متأخرو
-          عناد وحدهم. والضغطةُ الثانية على الشريط نفسِه تُلغي اختيارَه. */}
-      <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="تصنيفات أوامر التصنيع">
+          عناد وحدهم. والضغطةُ الثانية على الشريط نفسِه تُلغي اختيارَه.
+          وعلى الهاتف سطرٌ واحد يُسحَب أفقياً (٢٠٢٦-١١-٠٨). */}
+      <div className="flex flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible gap-1.5 mb-3 pb-1 sm:pb-0" role="group" aria-label="تصنيفات أوامر التصنيع">
         {chips.map(({ def, count }) => {
           const on = bucket === def.key;
           return (
@@ -352,7 +384,7 @@ export default function Manufacturing() {
               data-testid={`chip-bucket-${def.key}`}
               onClick={() => setBucket((cur) => nextBucket(cur, def.key))}
               className={[
-                "text-xs px-3 py-2.5 sm:py-1.5 rounded-lg border flex items-center gap-1.5",
+                "text-xs px-2.5 py-2.5 sm:py-1.5 rounded-md border flex items-center gap-1.5 shrink-0 whitespace-nowrap",
                 "transition-colors cursor-pointer",
                 CHIP_TONE[def.tone],
                 on ? `ring-2 ring-offset-1 font-bold ${CHIP_RING[def.tone]}` : "",
@@ -369,7 +401,7 @@ export default function Manufacturing() {
             type="button"
             data-testid="chip-bucket-clear"
             onClick={() => setBucket(null)}
-            className="text-xs px-3 py-2.5 sm:py-1.5 rounded-lg border bg-white text-slate-600 hover:bg-slate-50"
+            className="text-xs px-2.5 py-2.5 sm:py-1.5 rounded-md border bg-white text-slate-600 hover:bg-slate-50 shrink-0 whitespace-nowrap"
           >
             إظهار الكل
           </button>
@@ -397,7 +429,7 @@ export default function Manufacturing() {
           ) : "لا توجد أوامر مطابقة."}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {/*  «حسب الاسم»: عنوانُ حرفٍ فوق كلّ مجموعة — يُنزَل إلى الحرف بالعين لا بالبحث (§4.ee). */}
           {visibleOrders.map((o, i) => {
             const letter = sortMode === "name" ? nameInitialOf(o.patientName) : null;
@@ -521,12 +553,11 @@ export default function Manufacturing() {
 
 function StatTile({ label, value, tone }: { label: string; value: number; tone?: "green" | "red" | "amber" }) {
   const color = tone === "green" ? "text-green-700" : tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-slate-800";
+  //  خليّةٌ في شريط الأرقام — الرقمُ والعنوانُ متجاوران لا مربّعٌ بطوله (٢٠٢٦-١١-٠٨).
   return (
-    <Card>
-      <CardContent className="p-3 text-center">
-        <div className={`text-2xl font-bold ${color}`}>{value}</div>
-        <div className="text-xs text-muted-foreground mt-1">{label}</div>
-      </CardContent>
-    </Card>
+    <div className="flex items-baseline gap-1.5 px-3 py-1.5 border-s first:border-s-0">
+      <span className={`text-base font-bold ${color}`}>{value}</span>
+      <span className="text-xs text-muted-foreground whitespace-nowrap">{label}</span>
+    </div>
   );
 }
