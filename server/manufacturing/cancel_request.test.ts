@@ -11,6 +11,8 @@ import { sql } from "drizzle-orm";
 import express from "express";
 import { createServer } from "http";
 import { registerRoutes } from "../routes";
+import { voidOrderAdministratively } from "./store";
+import { FINAL_RESULTS } from "@shared/manufacturing";
 
 const PORT = 6051 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -180,11 +182,38 @@ async function main() {
     const Q = await mkOrder({ status: "cancelled", stage: "order_received" });
     eq([(await post(`/api/manufacturing/orders/${Q.id}/reopen`, admin, { reason: "قحطان دفع يوم ٩/٨" })).status, (await row(Q.id)).status], [200, "active"],
       "د١١. وأمرٌ ملغى بالباب القديم بلا جهازٍ مرتبط يُعاد فتحُه");
+
+    console.log("\nهـ — الطلبُ المعلَّق يسقط بانتهاء الأمر بلا قرار (مراجعة Codex على #714)");
+    //  الخبيرُ طلب الإلغاء ثمّ أكمل الأمرَ — والرفضُ والسحبُ يرفضان المنتهي، فكان يبقى طلبٌ بلا قرارٍ إلى الأبد.
+    const E = await mkOrder({ stage: "ready_for_fitting", episode: true });
+    await post(`/api/manufacturing/orders/${E.id}/cancel-request`, expert, { note: "سبب قبل التسليم" });
+    const adv = await fetch(BASE + `/api/manufacturing/orders/${E.id}/advance`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-test-session": Buffer.from(JSON.stringify(expert), "utf8").toString("base64") },
+      body: JSON.stringify({ toStage: "delivered", finalResult: FINAL_RESULTS[0], expectedDeliveryDate: "2026-11-20" }),
+    });
+    const w5 = await row(E.id);
+    eq([adv.status, w5.status, w5.cancel_requested_at, w5.cancel_requested_by, w5.cancel_request_note], [200, "completed", null, null, null],
+      "هـ١. التسليمُ يُكمل الأمرَ ويمحو الطلبَ المعلَّق");
+    const h5 = await hist(E.id);
+    ok(h5.some((h) => h.action_type === "cancel_request_lapsed" && /بتسليم الأمر/.test(h.notes)), "هـ٢. وسقوطُه سطرٌ في الخطّ الزمني", JSON.stringify(h5));
+    const list2 = await get(`/api/manufacturing/orders?branchId=${bA}`, mgr);
+    ok(!(list2.body ?? []).find((o: any) => o.id === E.id)?.cancelRequestedAt, "هـ٣. ولا شارةَ طلبٍ في القائمة بعده");
+
+    const F = await mkOrder({});
+    await post(`/api/manufacturing/orders/${F.id}/cancel-request`, expert, { note: "سبب قبل الإبطال" });
+    await db.transaction(async (tx) => {
+      await voidOrderAdministratively(tx, { orderId: F.id, reversalId: 999999, reason: "تصحيح", performedBy: AD });
+    });
+    const w6 = await row(F.id);
+    eq([w6.status, w6.cancel_requested_at, w6.cancel_request_note], ["cancelled", null, null], "هـ٤. والإبطالُ الإداريّ يمحو الطلبَ المعلَّق كذلك");
+    ok((await hist(F.id)).some((h) => h.action_type === "cancel_request_lapsed" && /بالإلغاء الإداريّ/.test(h.notes)), "هـ٥. وسقوطُه سطرٌ بسببه");
   } finally {
     if (srv) srv.close();
     const L = (xs: number[]) => sql.join((xs.length ? xs : [-1]).map((i) => sql`${i}`), sql`, `);
     await db.execute(sql`DELETE FROM prosthetic_work_history WHERE work_order_id IN (${L(orderIds)})`);
     await db.execute(sql`DELETE FROM patient_events WHERE patient_id IN (${L(patientIds)})`).catch(() => {});
+    await db.execute(sql`DELETE FROM visits WHERE patient_id IN (${L(patientIds)})`);
     await db.execute(sql`DELETE FROM prosthetic_work_orders WHERE id IN (${L(orderIds)})`);
     await db.execute(sql`DELETE FROM patient_device_episodes WHERE id IN (${L(epIds)})`);
     await db.execute(sql`DELETE FROM patient_cases WHERE id IN (${L(caseIds)})`);

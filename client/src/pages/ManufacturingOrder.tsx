@@ -490,6 +490,7 @@ export default function ManufacturingOrder() {
                     : h.actionType === "cancel_request" ? "طلب إلغاء"
                     : h.actionType === "cancel_request_rejected" ? "رفض طلب الإلغاء"
                     : h.actionType === "cancel_request_withdrawn" ? "سحب طلب الإلغاء"
+                    : h.actionType === "cancel_request_lapsed" ? "سقوط طلب الإلغاء"
                     : h.actionType === "reopened" ? "إعادة فتح الأمر"
                     : `${STAGE_LABELS[h.fromStage] ?? h.fromStage ?? ""} ← ${STAGE_LABELS[h.toStage] ?? h.toStage ?? ""}`}
                 </div>
