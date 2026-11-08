@@ -575,6 +575,18 @@ export function assignmentDateError(p: {
   return null;
 }
 
+/**
+ * **تاريخُ الإسناد عند «إعادة فتح الأمر»** (§4.gd التكملة — طلبُ المالك ٢٠٢٦-١١-٠٨: «أريد فتحه اليوم ولا أريد ٥ آب»): الأمرُ الملغى
+ * يُفتح بتاريخه الأصليّ أو بيومٍ يختاره المسؤول (اليومُ افتراضاً). لا مستقبل، ولا قبل تسجيل المريض — وأحداثُ ما قبل الإلغاء لا تقيّده:
+ * هي تاريخٌ وقع، والإسنادُ الجديد بدايةٌ جديدة بعد الفتح.
+ */
+export function reopenAssignmentDayError(p: { newDay: string; today: string; patientRegisteredDay: string | null }): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.newDay)) return "اختر تاريخاً صحيحاً";
+  if (p.newDay > p.today) return "لا يُختار تاريخٌ في المستقبل";
+  if (p.patientRegisteredDay && p.newDay < p.patientRegisteredDay) return `لا يسبق تاريخَ تسجيل المريض (${p.patientRegisteredDay})`;
+  return null;
+}
+
 export function assignmentDateNote(fromDay: string, toDay: string, reason: string): string {
   return `تعديل تاريخ إسناد الأمر من ${fromDay} إلى ${toDay} — السبب: ${reason}`;
 }

@@ -226,6 +226,43 @@ async function main() {
     eq([(await post(`/api/manufacturing/orders/${Q.id}/reopen`, admin, { reason: "قحطان دفع يوم ٩/٨" })).status, (await row(Q.id)).status], [200, "active"],
       "د١١. وأمرٌ ملغى بالباب القديم بلا جهازٍ مرتبط يُعاد فتحُه");
 
+    console.log("\nهـب — إعادةُ الفتح بتاريخ إسنادٍ يختاره المسؤول (طلبُ المالك: «أريد فتحه اليوم ولا أريد ٥ آب»)");
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+    const dayOf = async (id: number) => (await one(sql`SELECT to_char(created_at AT TIME ZONE 'Asia/Baghdad','YYYY-MM-DD') AS d FROM prosthetic_work_orders WHERE id=${id}`)).d;
+    const mkOld = async () => {
+      const R = await mkOrder({ status: "cancelled", stage: "order_received" });
+      await db.execute(sql`UPDATE patients SET created_at = '2026-08-01T09:00:00+03:00' WHERE id=${R.patient}`);
+      await db.execute(sql`UPDATE prosthetic_work_orders SET created_at = '2026-08-05T20:27:00+03:00' WHERE id=${R.id}`);
+      await db.execute(sql`INSERT INTO prosthetic_work_history (work_order_id, action_type, from_stage, to_stage, notes, performed_by, created_at)
+                           VALUES (${R.id}, 'created', NULL, 'order_received', 'إنشاء', ${X}, '2026-08-05T20:27:00+03:00'),
+                                  (${R.id}, 'status_change', 'order_received', 'order_received', 'الحالة: cancelled', ${X}, '2026-08-09T15:28:00+03:00')`);
+      return R;
+    };
+    const R1 = await mkOld();
+    const fut = await post(`/api/manufacturing/orders/${R1.id}/reopen`, admin, { reason: "x", assignmentDay: "2099-01-01" });
+    eq([fut.status, (await row(R1.id)).status, await dayOf(R1.id)], [400, "cancelled", "2026-08-05"],
+      "هـب١. يومٌ في المستقبل يُردّ (٤٠٠) ولا يُفتح الأمرُ ولا يتحرّك تاريخُه");
+    const early = await post(`/api/manufacturing/orders/${R1.id}/reopen`, admin, { reason: "x", assignmentDay: "2026-07-01" });
+    eq([early.status, (await row(R1.id)).status], [400, "cancelled"], "هـب٢. ولا قبل تسجيل المريض (٤٠٠)");
+    const ok1 = await post(`/api/manufacturing/orders/${R1.id}/reopen`, admin, { reason: "قحطان دفع", assignmentDay: today });
+    eq([ok1.status, (await row(R1.id)).status, await dayOf(R1.id)], [200, "active", today],
+      "هـب٣. **يُفتح بتاريخ اليوم** — تاريخُ الإسناد اليوم لا ٥ آب");
+    const h1 = await hist(R1.id);
+    const [cr] = (await db.execute(sql`SELECT to_char(created_at AT TIME ZONE 'Asia/Baghdad','YYYY-MM-DD') AS d FROM prosthetic_work_history WHERE work_order_id=${R1.id} AND action_type='created'`)).rows as any[];
+    ok(cr?.d === "2026-08-05" && h1.some((h) => h.action_type === "assignment_date_change" && /2026-08-05/.test(h.notes) && new RegExp(today).test(h.notes) && /إعادة فتح الأمر/.test(h.notes)),
+      "هـب٤. و«إنشاء الأمر» يبقى بيومه الحقيقيّ، وسطرُ تعديل الإسناد بالتاريخين والسبب", JSON.stringify(h1));
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Baghdad" });
+    const ch = await fetch(BASE + `/api/manufacturing/orders/${R1.id}/assignment-date`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", "x-test-session": Buffer.from(JSON.stringify(admin), "utf8").toString("base64") },
+      body: JSON.stringify({ date: yesterday, reason: "تصحيح" }),
+    });
+    eq([ch.status, await dayOf(R1.id)], [200, yesterday],
+      "هـب٥. **وتعديلُ تاريخ الإسناد بعده لا يقيّده إلغاءُ ٩ آب** — أحداثُ ما قبل الفتح تاريخٌ وقع");
+    const R2 = await mkOld();
+    const ok2 = await post(`/api/manufacturing/orders/${R2.id}/reopen`, admin, { reason: "بتاريخه" });
+    eq([ok2.status, await dayOf(R2.id), (await hist(R2.id)).some((h) => h.action_type === "assignment_date_change")], [200, "2026-08-05", false],
+      "هـب٦. وبلا يومٍ يُفتح بتاريخه الأصليّ كما كان، بلا سطر تعديل");
+
     console.log("\nهـ — الطلبُ المعلَّق يسقط بانتهاء الأمر بلا قرار (مراجعة Codex على #714)");
     //  الخبيرُ طلب الإلغاء ثمّ أكمل الأمرَ — والرفضُ والسحبُ يرفضان المنتهي، فكان يبقى طلبٌ بلا قرارٍ إلى الأبد.
     const E = await mkOrder({ stage: "ready_for_fitting", episode: true });

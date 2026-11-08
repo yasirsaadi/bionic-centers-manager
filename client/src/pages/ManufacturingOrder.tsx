@@ -558,7 +558,15 @@ export function timelineNote(notes: string): string {
 /** طلبُ الإلغاء · الإلغاءُ المباشر · الموافقةُ · الرفضُ أو السحب · إعادةُ الفتح (§4.gd) — والسببُ إلزاميٌّ إلّا للرفض والسحب. */
 function CancelDialog({ kind, withdraw, onClose, order, onDone }: any) {
   const [note, setNote] = useState("");
-  useEffect(() => { setNote(kind === "approve" ? (order.cancelRequestNote ?? "") : ""); }, [kind, order.cancelRequestNote]);
+  //  **إعادةُ الفتح تسأل عن تاريخ الإسناد** (طلبُ المالك ٢٠٢٦-١١-٠٨): بتاريخه الأصليّ أم بيومٍ يُختار — واليومُ افتراضاً.
+  const originalDay = order.createdAt ? baghdadDay(order.createdAt) : "";
+  const todayDay = baghdadDay(new Date());
+  const [dateMode, setDateMode] = useState<"new" | "original">("new");
+  const [newDay, setNewDay] = useState(todayDay);
+  useEffect(() => {
+    setNote(kind === "approve" ? (order.cancelRequestNote ?? "") : "");
+    setDateMode("new"); setNewDay(baghdadDay(new Date()));
+  }, [kind, order.cancelRequestNote]);
   const base = `/api/manufacturing/orders/${order.id}`;
   const url = kind === "request" ? `${base}/cancel-request`
     : kind === "reject" ? `${base}/cancel-request/${withdraw ? "withdraw" : "reject"}`
@@ -575,12 +583,37 @@ function CancelDialog({ kind, withdraw, onClose, order, onDone }: any) {
   } as const;
   const cfg = kind ? (t as any)[kind] : null;
   if (!cfg) return null;
-  const body = kind === "reopen" ? { reason: note.trim() } : { note: note.trim() || undefined };
+  const body = kind === "reopen"
+    ? { reason: note.trim(), ...(dateMode === "new" && newDay !== originalDay ? { assignmentDay: newDay } : {}) }
+    : { note: note.trim() || undefined };
+  const dayInvalid = kind === "reopen" && dateMode === "new" && (!newDay || newDay > todayDay);
   return (
     <Dialog open={!!kind} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent dir="rtl" className="max-w-md">
         <DialogHeader><DialogTitle>{cfg.title}</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground" data-testid="hint-cancel-dialog">{cfg.hint}</p>
+        {kind === "reopen" && (
+          <div className="space-y-2 rounded-md border p-3 text-sm" data-testid="reopen-date-choice">
+            <div className="font-medium">تاريخ الإسناد بعد الفتح</div>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="reopen-date" checked={dateMode === "original"} onChange={() => setDateMode("original")}
+                data-testid="radio-reopen-original" />
+              بتاريخه الأصليّ ({fmtD(order.createdAt)})
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="reopen-date" checked={dateMode === "new"} onChange={() => setDateMode("new")}
+                data-testid="radio-reopen-new" />
+              بتاريخٍ أحدّده
+            </label>
+            {dateMode === "new" && (
+              <Input type="date" value={newDay} max={todayDay} onChange={(e) => setNewDay(e.target.value)}
+                className="w-auto" data-testid="input-reopen-day" />
+            )}
+            <p className="text-xs text-muted-foreground">
+              يتغيّر تاريخُ الإسناد وحده (ما تُقاس به المدّة والتأخّر)، ويبقى «إنشاء الأمر» في الخطّ الزمنيّ بيومه الحقيقيّ.
+            </p>
+          </div>
+        )}
         {!(kind === "reject" && withdraw) && (
           <div>
             <label className="text-sm font-medium">{kind === "reject" ? "ملاحظة (اختياري)" : "السبب"}{cfg.need && <span className="text-red-500"> *</span>}</label>
@@ -590,7 +623,7 @@ function CancelDialog({ kind, withdraw, onClose, order, onDone }: any) {
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>رجوع</Button>
           <Button variant={kind === "reopen" || kind === "reject" ? "default" : "destructive"} data-testid="button-confirm-cancel-dialog"
-            disabled={m.isPending || (cfg.need && !note.trim())} onClick={() => m.mutate(body)}>
+            disabled={m.isPending || (cfg.need && !note.trim()) || dayInvalid} onClick={() => m.mutate(body)}>
             {cfg.btn}
           </Button>
         </DialogFooter>

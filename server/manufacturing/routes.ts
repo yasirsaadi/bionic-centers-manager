@@ -1248,8 +1248,10 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     if (!raw) return res.status(404).json({ error: "الأمر غير موجود" });
     try {
       const reason = String(req.body?.reason ?? "");
-      const updated = await store.reopenCancelledOrder({ orderId: id, reason, performedBy: s.userId ?? null });
-      await audit(req, "prosthetic_work_order", id, "reopen", raw.branchId, `إعادة فتح أمر التصنيع بعد إلغائه — ${reason.trim()}`);
+      const assignmentDay = req.body?.assignmentDay ? String(req.body.assignmentDay) : null;
+      const updated = await store.reopenCancelledOrder({ orderId: id, reason, performedBy: s.userId ?? null, assignmentDay });
+      await audit(req, "prosthetic_work_order", id, "reopen", raw.branchId, `إعادة فتح أمر التصنيع بعد إلغائه — ${reason.trim()}`
+        + (assignmentDay ? ` — تاريخ الإسناد: ${assignmentDay}` : ""));
       res.json(updated);
     } catch (e: any) {
       if (cancelRequestError(res, e)) return;
