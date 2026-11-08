@@ -13,6 +13,8 @@ import { createServer } from "http";
 import { registerRoutes } from "../routes";
 import { voidOrderAdministratively } from "./store";
 import { FINAL_RESULTS } from "@shared/manufacturing";
+import { workHistoryMovementLabel } from "@shared/daily_review";
+import { readFileSync } from "fs";
 
 const PORT = 6051 + (Date.now() % 7);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -58,6 +60,21 @@ const eq = (got: unknown, want: unknown, m: string) =>
   ok(JSON.stringify(got) === JSON.stringify(want), m, `want ${JSON.stringify(want)} got ${JSON.stringify(got)}`);
 
 async function main() {
+  console.log("\nو — كلُّ سطرٍ يكتبه التصنيعُ في سجلّ الأمر له اسمٌ عربيّ في «المراجعة اليومية» (مراجعة Codex على #715)");
+  {
+    const src = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
+    const written = new Set<string>();
+    for (const m of src.matchAll(/actionType:\s*(?:[^,\n]*\?\s*)?"([a-z_]+)"(?:\s*:\s*"([a-z_]+)")?/g)) {
+      written.add(m[1]); if (m[2]) written.add(m[2]);
+    }
+    //  `created` فتحُ الأمر نفسُه — مستبعَدٌ من أسرة الحركات قبل التسمية (`WORK_HISTORY_OPENING_ACTION_TYPE`).
+    written.delete("created");
+    const raw = [...written].filter((a) => workHistoryMovementLabel(a, null) === a);
+    ok(written.has("cancel_request_lapsed") && written.has("cancel_request_withdrawn") && written.has("cancel_request_rejected"),
+      "و١. القراءةُ تجد الأنواعَ الثلاثة الجديدة (والمكتوبَين بتعبيرٍ شرطيّ)", JSON.stringify([...written]));
+    eq(raw, [], "و٢. ولا نوعَ يُعرض برمزه الخام");
+  }
+
   const t = Date.now() % 1000000;
   const one = async (q: any) => (await db.execute(q)).rows[0] as any;
   const userIds: number[] = [], patientIds: number[] = [], orderIds: number[] = [], caseIds: number[] = [], epIds: number[] = [];
