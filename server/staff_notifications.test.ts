@@ -258,6 +258,21 @@ async function main() {
       ob.map((r) => [r.event_type, r.branch_id, r.text.includes("المواد غير متوفّرة") && r.text.includes("نفد السيليكون")]), [["order_hold_rework", 1, true]]);
     same("د٦ب. **وفيه خبيرُ الأمر** — والخبيرُ نفسُه سجّله فلا «سجّله»",
       ob.map((r) => [r.text.includes(`الخبير: موظّف ${EXP2}`), r.text.includes("سجّله")]), [[true, false]]);
+    //  تغيّرُ موعد التسليم (§4.gb التكملة): أوّلُ تحديدٍ لا يُنبَّه به، وتأجيلُه وتقديمُه يُنبَّه بهما بالموعدين والسبب والخبير.
+    const mfg2 = mfg as any;
+    m = await maxId();
+    order = await mfg2.updateDeliveryDate({ order, expectedDeliveryDate: "2026-12-01", performedBy: EXP2, authority: { via: "role" } });
+    same("د٦ج. **أوّلُ تحديدٍ للموعد لا يُنبَّه به**", (await outbox(m)).length, 0);
+    m = await maxId();
+    order = await mfg2.updateDeliveryDate({ order, expectedDeliveryDate: "2026-12-10", reason: "تأخّر وصول القدم", performedBy: RECV1, authority: { via: "role" } });
+    ob = await outbox(m);
+    same("د٦د. **تأجيلُ الموعد** ⟵ تنبيهٌ فرعيٌّ بالموعدين والسبب والخبير ومَن سجّله",
+      ob.map((r) => [r.event_type, r.branch_id, r.text.includes("تأجيل موعد التسليم") && r.text.includes("من 2026-12-01 إلى 2026-12-10")
+        && r.text.includes("تأخّر وصول القدم") && r.text.includes(`الخبير: موظّف ${EXP2}`) && r.text.includes(`سجّله: موظّف ${RECV1}`)]),
+      [["order_hold_rework", 1, true]]);
+    m = await maxId();
+    order = await mfg2.updateDeliveryDate({ order, expectedDeliveryDate: "2026-12-05", reason: "وصلت القدم", performedBy: EXP2, authority: { via: "role" } });
+    same("د٦هـ. **وتقديمُه** يُسمّى تقديماً", (await outbox(m)).map((r) => r.text.includes("تقديم موعد التسليم")), [true]);
 
     const bld = await mfg.createWorkOrderForExisting({ patientId: pB, branchId: 2, serviceType: "medical_support", expertUserId: EXP1, assignedBy: ADMIN, purpose: "maintenance" });
     await q(`UPDATE prosthetic_work_orders SET purpose='initial_build', current_stage='manufacturing' WHERE id=$1`, [bld.id]);

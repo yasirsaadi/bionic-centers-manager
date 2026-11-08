@@ -5,7 +5,7 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
-import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn } from "../staff_telegram/notify";
+import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn, notifyDeliveryDateChanged } from "../staff_telegram/notify";
 import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
 import { baghdadTodayYmd, baghdadMomentOn } from "@shared/visit_date";
 import { recordAttendanceVisitTx } from "../visits/attendance";
@@ -1458,6 +1458,14 @@ export async function updateDeliveryDate(params: {
       expectedDeliveryDate,
       historyId: dateRow.id,
     });
+    //  **وتغييرُ موعدٍ قائم ينبّه الفرعَ** (§4.gb التكملة) — بالموعدين والسبب والخبير؛ وأوّلُ تحديدٍ لا.
+    if (actual) {
+      await notifyDeliveryDateChanged(tx, {
+        orderId: order.id, patientId: updated.patientId, branchId: updated.branchId,
+        fromDate: dateStr(actual) ?? String(actual), toDate: dateStr(expectedDeliveryDate) ?? expectedDeliveryDate,
+        reason: params.reason ?? null, actorUserId: params.performedBy,
+      });
+    }
     return updated;
   });
 }
