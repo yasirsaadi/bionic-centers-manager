@@ -347,7 +347,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         mayCancelDecision: canCancelDecision(s) && !isTerminal(f.status),
         //  **«تصحيح سعر البيع»** (§4.ge) — لبيعٍ تمّ بجهازٍ مرتبط، للمسؤول ومدير الفرع؛ والخادمُ يعيد الشروطَ كلَّها تحت القفل.
         //  والجهازُ نفسُه قيد التصنيع أو مسلَّم وغيرُ مُبطَل — فلا يظهر زرٌّ يردّه الخادمُ دائماً (أمرٌ أُلغي فأُلغي جهازُه).
+        //  **ومن فرعٍ يصله السائل** (مراجعة Codex على #719): الملفُّ المشترك يعرض المنتهيةَ من فروعٍ أخرى، و`loadInScope` يردّها ٤٠٣.
         mayCorrectSalePrice: canCorrectSalePrice(s) && f.status === "converted" && f.deviceEpisodeId !== null
+          && canReachBranch(req, f.branchId)
           && await store.episodeAllowsSalePriceCorrection(f.deviceEpisodeId),
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
