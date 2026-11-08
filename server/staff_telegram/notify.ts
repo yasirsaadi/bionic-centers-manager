@@ -205,6 +205,27 @@ export function notifyHoldRework(ex: Executor | null | undefined, p: {
   });
 }
 
+/**
+ * **تغيّر موعد التسليم** (طلبُ المالك ٢٠٢٦-١١-٠٨: «تأجيل فلان») — يُنادى من `updateDeliveryDate` في معاملته حين يتحرّك موعدٌ قائم؛
+ * وأوّلُ تحديدٍ ليس تغييراً فلا يُنبَّه به. بنوع «توقّف أو إعادة عمل» نفسِه (`order_hold_rework`) فيصل مَن يتابع ذاك بلا تفعيلٍ جديد.
+ */
+export function notifyDeliveryDateChanged(ex: Executor | null | undefined, p: {
+  orderId: number; patientId: number; branchId: number | null; fromDate: string; toDate: string;
+  reason?: string | null; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    if (!p.fromDate || p.fromDate === p.toDate) return;
+    const c = await ctx(ex, p.patientId, p.branchId);
+    const people = await orderPeople(ex, p.orderId, p.actorUserId);
+    const verb = p.toDate > p.fromDate ? "📅 تأجيل موعد التسليم" : "📅 تقديم موعد التسليم";
+    await enqueueStaffEvent(ex, {
+      event: "order_hold_rework", branchId: c.branchId, excludeUserId: p.actorUserId ?? null,
+      text: `${verb} — أمر التصنيع رقم ${p.orderId}: ${c.who}${c.branch}\nمن ${p.fromDate} إلى ${p.toDate}${people}${p.reason ? `\nالسبب: ${p.reason}` : ""}`,
+      linkPath: `/manufacturing/orders/${p.orderId}`,
+    });
+  });
+}
+
 export function notifyPaymentCorrection(ex: Executor | null | undefined, p: {
   patientId: number; branchId: number | null; kind: string; reason?: string | null; actorName?: string | null;
   actorUserId?: number | null;
