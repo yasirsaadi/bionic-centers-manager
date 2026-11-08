@@ -403,6 +403,19 @@ async function main() {
     same("ط٣. **وقيدٌ لاحق للجهاز (صيانة) لا يُزيح الحدّ** — قلمُ الكلفة بين البيع والصيانة يُحسب «بعد البيع» ⟵ ٤٠٩ ولا يتحرّك السعر",
       [rFm.status, /عُدّلت بعد البيع/.test(rFm.body?.error ?? ""), mFm.followup[1]], [409, true, 0]);
 
+    //  مراجعة Codex على #722: رسمُ صيانةٍ يُكتب بعد البيع مؤرَّخاً بيوم زيارةٍ قبله — لا يسحب الحدَّ إلى ما قبل البيع.
+    const Fb = await operation("مجاني ثم صيانة مؤرخة قبله");
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,0,'case_cost_edit',$2,'قلم الكلفة قبل البيع', NOW() - interval '1 day')`, [Fb.patientId, Fb.caseId]);
+    await http("POST", `/api/followups/${Fb.followupId}/complete-sale`, S.recv, {
+      deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 1_000_000, expertUserId: EXPERT,
+    });
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id, notes, created_at)
+             VALUES ($1,1,50000,'maintenance',$2,$3,'صيانة مؤرخة بيوم الزيارة', NOW() - interval '2 days')`, [Fb.patientId, Fb.caseId, Fb.episodeId]);
+    const rFb = await correct(Fb.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    same("ط٤. **وقيدٌ للجهاز مؤرَّخٌ قبل البيع لا يسحب الحدّ** — قلمُ الكلفة قبل البيع لا يمنع التصحيح (٢٠٠)",
+      [rFb.status, (await moneyOf(Fb)).followup[1]], [200, 2_000_000]);
+
     //  متابعةٌ منتهية من فرعٍ لا يصله مديرُ الفرع (ملفٌّ مشترك) — بلا زرّ له، وبزرٍّ للمسؤول.
     const Sh = await operation("بيع من فرع آخر", { original: 2_000_000, discount: 0 });
     await q(`UPDATE post_exam_followups SET branch_id = 2 WHERE id=$1`, [Sh.followupId]);
