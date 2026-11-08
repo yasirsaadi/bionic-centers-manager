@@ -343,6 +343,36 @@ async function main() {
 
     const cardI = (await http("GET", `/api/followups/patient/${I.patientId}`, S.admin)).body?.[0];
     same("ز٦. **ولا زرَّ لجهازٍ ألغي** — لا يُعرض ما يردّه الخادمُ دائماً", [cardI?.status, cardI?.mayCorrectSalePrice], ["converted", false]);
+
+    // ══ ح) مراجعة Codex على #717 ═══════════════════════════════════════
+    console.log("\n── ح) مراجعة Codex ──");
+    const C = await operation("متابعة بلا حالة", { original: 3_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET case_id = NULL WHERE id=$1`, [C.followupId]);
+    const rc = await correct(C.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    const mC = await moneyOf(C);
+    same("ح١. **متابعةٌ بلا حالة ⟵ حالةُ الجهاز**: تتحرّك كلفةُ الحالة مع الباقي",
+      [rc.status, mC.caseCost, mC.total, mC.episode[1]], [200, 2_000_000, 2_000_000, 2_000_000]);
+
+    const Rf = await operation("تخفيض مع استرجاع", { original: 5_000_000, discount: 0 });
+    await q(`UPDATE patient_cases SET cost = 3000000 WHERE id=$1`, [Rf.caseId]);
+    await q(`UPDATE patients SET total_cost = 3000000 WHERE id=$1`, [Rf.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes)
+             VALUES ($1,1,-2000000,'refund_cost_reduction',$2,'تخفيض مع استرجاع')`, [Rf.patientId, Rf.caseId]);
+    const rr = await correct(Rf.followupId, S.admin, { originalPrice: 1_000_000, discountAmount: 0, reason: "x" });
+    const mR = await moneyOf(Rf);
+    same("ح٢. **كلفةٌ عُدّلت بعد البيع بتخفيضٍ مع استرجاع ⟵ ٤٠٩** ولا يُطرح المبلغُ مرّتين",
+      [rr.status, /عُدّلت بعد البيع/.test(rr.body?.error ?? ""), mR.caseCost, mR.followup[1]], [409, true, 3_000_000, 5_000_000]);
+
+    //  مريضٌ عائد: بيعٌ قديم وجهازٌ أحدث — البيعُ القديم بزرّه رغم أنه ليس المتابعةَ الفعّالة.
+    const O = await operation("مريض عائد", { original: 2_000_000, discount: 0 });
+    const ep2 = await http("POST", `/api/patients/${O.patientId}/device-episodes`, S.recv, { serviceType: "prosthetic", servicePath: "exam" });
+    await http("POST", `/api/medical/patients/${O.patientId}/exams`, S.doc, {
+      idempotencyKey: crypto.randomUUID(), caseType: "prosthetic", diagnosis: "جهاز ثانٍ", prescription: {}, deviceEpisodeId: Number(ep2.body?.id),
+    });
+    const listO = (await http("GET", `/api/followups/patient/${O.patientId}`, S.admin)).body ?? [];
+    const older = listO.find((f: any) => f.id === O.followupId);
+    same("ح٣. للمريض متابعتان، والقديمةُ المُباعة تحمل `mayCorrectSalePrice`",
+      [listO.length, older?.status, older?.mayCorrectSalePrice], [2, "converted", true]);
   } finally {
     httpServer.close();
     await cleanup();

@@ -1180,6 +1180,8 @@ export async function correctSalePriceAfterConversion(params: {
   /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
   reason: string;
   actor: Actor;
+  /** سطرُ التدقيق يُكتب **في المعاملة نفسِها** (مراجعة Codex على #717) — بعنوان الجهاز ومتصفّحه من الطلب. */
+  audit?: { ipAddress: string | null; userAgent: string | null };
 }): Promise<{
   followup: FollowupRow; delta: number; deviceEpisodeId: number;
   previous: { originalPrice: number | null; approvedPrice: number; priceKind: PriceKind | null };
@@ -1237,6 +1239,9 @@ export async function correctSalePriceAfterConversion(params: {
     if (ep.patientId !== cur.patientId || (cur.caseId !== null && ep.caseId !== cur.caseId)) {
       throw new FollowupError(DRIFT, 409);
     }
+    //  **حالةُ الجهاز حين لا تحملها المتابعة** (مراجعة Codex على #717): متابعةٌ موروثة بلا `case_id` وجهازُها مربوطٌ بحالته (ترحيل ٠٦٣)
+    //  — فالحالةُ حالةُ الجهاز، وإلّا تحرّك كلُّ شيءٍ إلّا كلفة الحالة وتخطّى حارسا الأقساط والرصيد.
+    const caseId: number | null = cur.caseId ?? ep.caseId ?? null;
     if (!(PRICE_CORRECTABLE_STATUSES as readonly string[]).includes(ep.status)) {
       throw new FollowupError("لا يُصحَّح سعرُ جهازٍ ليس قيد التصنيع ولا مسلَّماً (ألغي أو أُبطل)", 409);
     }
@@ -1271,11 +1276,31 @@ export async function correctSalePriceAfterConversion(params: {
       throw new FollowupError("على هذا الجهاز طلبُ خصمٍ معلَّق — احسمه ثم صحّح السعر.", 409);
     }
 
+    // ④أ **وكلفةُ الحالة لم تُعدَّل بعد البيع بيدٍ أخرى** (مراجعة Codex على #717): تخفيضٌ مع استرجاع (`refund_cost_reduction`) أو قلمُ
+    //    الكلفة (`case_cost_edit`) لا يحملان هويّةَ الجهاز ولا يمسّان سعرَه — فإضافةُ فرق البيع فوقهما تطرح المبلغَ مرّتين (بيعٌ ٥ ملايين ثمّ
+    //    تخفيضُ ٢ ثمّ تصحيحٌ إلى ١ كان يكتب −٤ فوق ٣). فيُردّ ليُراجَع بيد إنسان، والقياسُ من قيد البيع نفسِه (أوّلُ قيدٍ للجهاز).
+    if (caseId !== null) {
+      const adj = await tx.execute(sql`
+        SELECT 1 FROM cost_entries ce
+         WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit')
+           AND ce.created_at >= COALESCE(
+             (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId}),
+             '-infinity'::timestamptz)
+         LIMIT 1
+      `);
+      if ((adj.rows ?? []).length > 0) {
+        throw new FollowupError(
+          "كلفةُ هذه الحالة عُدّلت بعد البيع (تخفيضٌ مع استرجاع أو قلمُ الكلفة) — تصحيحُ السعر فوقها يطرح المبلغَ مرّتين."
+          + " يحتاج مراجعة إدارية: صحّح الكلفة من قلم الحالة.", 409,
+        );
+      }
+    }
+
     // ④ب **وخطّةُ أقساطٍ نشطة على الحالة تُعدَّل أوّلاً** (مراجعةٌ مستقلّة، كحارس الاسترجاع): مجموعُها ثابتٌ منذ فُتحت، فخفضُ السعر
     //    يُبقي أقساطاً وتذكيراتٍ بمالٍ لم يعد على المريض، ورفعُه يُنهيها والدَّينُ باقٍ.
-    if (cur.caseId !== null) {
+    if (caseId !== null) {
       const plan = await tx.execute(sql`
-        SELECT id FROM installment_plans WHERE case_id = ${cur.caseId} AND status = 'active' LIMIT 1
+        SELECT id FROM installment_plans WHERE case_id = ${caseId} AND status = 'active' LIMIT 1
       `);
       if ((plan.rows ?? []).length > 0) {
         throw new FollowupError("لهذه الحالة خطّةُ أقساطٍ نشطة — عدّلها أو ألغِها من «الأقساط» أوّلاً، ثمّ صحّح سعر البيع.", 409);
@@ -1306,12 +1331,12 @@ export async function correctSalePriceAfterConversion(params: {
 
     // ⑦ كلفةُ الخيط ومجموعُ المريض بالفرق — زيادةٌ ذرّية — وقيدٌ موقَّع بهويّة الجهاز.
     if (delta !== 0) {
-      if (cur.caseId !== null) {
+      if (caseId !== null) {
         await tx.execute(sql`
           UPDATE patient_cases
              SET cost = GREATEST(0, COALESCE(cost, 0) + ${delta}),
                  cost_source = 'manual', updated_at = NOW()
-           WHERE id = ${cur.caseId}
+           WHERE id = ${caseId}
         `);
       }
       await tx.execute(sql`
@@ -1331,7 +1356,7 @@ export async function correctSalePriceAfterConversion(params: {
         INSERT INTO cost_entries
           (patient_id, branch_id, amount, source, case_id, device_episode_id, notes)
         VALUES (${cur.patientId}, ${saleBranch}, ${delta}, 'sale_price_correction',
-                ${cur.caseId}, ${ep.id}, ${"تصحيح سعر البيع — " + reason})
+                ${caseId}, ${ep.id}, ${"تصحيح سعر البيع — " + reason})
       `);
     }
 
@@ -1353,14 +1378,29 @@ export async function correctSalePriceAfterConversion(params: {
 
     // ⑨ ما دُفع على الخيط فوق كلفته الجديدة — رصيدٌ للمريض يُستردّ بطلب استرجاع (§4.fz)، لا يُخترع ردّ.
     let creditBalance = 0;
-    if (cur.caseId !== null) {
+    if (caseId !== null) {
       const b = await tx.execute(sql`
-        SELECT COALESCE((SELECT cost FROM patient_cases WHERE id = ${cur.caseId}), 0) AS cost,
-               COALESCE((SELECT SUM(amount) FROM payments WHERE case_id = ${cur.caseId}), 0) AS paid
+        SELECT COALESCE((SELECT cost FROM patient_cases WHERE id = ${caseId}), 0) AS cost,
+               COALESCE((SELECT SUM(amount) FROM payments WHERE case_id = ${caseId}), 0) AS paid
       `);
       const bb = (b.rows ?? [])[0] ?? {};
       creditBalance = Math.max(0, Number(bb.paid ?? 0) - Number(bb.cost ?? 0));
     }
+
+    //  ⑩ **التدقيقُ في المعاملة نفسِها** — فلا يتحرّك مالٌ بلا أثر، ويسقط التصحيحُ كلُّه إن سقط السطر.
+    const { logAudit } = await import("../accounting/ledger");
+    await logAudit({
+      tx, entityType: "post_exam_followup", entityId: cur.id, action: "update",
+      userId: params.actor.userId, userName: params.actor.userName, branchId: cur.branchId,
+      oldValues: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
+      newValues: {
+        originalPrice: offer.originalPrice, approvedPrice: price, priceKind: offer.kind,
+        delta, deviceEpisodeId: ep.id, reason,
+      },
+      ipAddress: params.audit?.ipAddress ?? null, userAgent: params.audit?.userAgent ?? null,
+      notes: `تصحيح سعر البيع لمتابعة #${cur.id}: ${cur.approvedPrice.toLocaleString()} ⟶ ${price.toLocaleString()} د.ع`
+        + ` (${delta > 0 ? "+" : ""}${delta.toLocaleString()}) — ${reason}`,
+    });
 
     return {
       followup: toRow(row), delta, deviceEpisodeId: ep.id,

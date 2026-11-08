@@ -781,6 +781,27 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             إجراءاتُ الملفّ الواحد تقع في دقائق)، وفعلٌ عربيّ، وفاعلٌ باسمه،
             وتفصيلٌ من الحمولة المخزَّنة. والترجمةُ في `shared/followup_events`
             وحدها — فلا رمزَ إنجليزيٌّ يتسرّب. */}
+        {/*  ══ **مبيعاتٌ سابقة يُصحَّح سعرُها** (مراجعة Codex على #717) ══════════
+            البطاقةُ تعرض المتابعةَ الفعّالة وحدها، فمريضٌ عائدٌ بجهازٍ أحدث كان بيعُه القديم بلا زرّ مع أن الخادم يسمح.
+            فكلُّ بيعٍ آخر يقول عنه الخادمُ `mayCorrectSalePrice` يُعرض هنا بسطرٍ وزرّه. */}
+        {(followups ?? []).filter((f) => f.id !== active.id && f.mayCorrectSalePrice === true).length > 0 && (
+          <div className="space-y-2 rounded-md border px-3 py-2 text-xs" data-testid="list-older-sales">
+            <div className="font-medium text-foreground">مبيعاتٌ سابقة لهذا المريض</div>
+            {(followups ?? []).filter((f) => f.id !== active.id && f.mayCorrectSalePrice === true).map((f) => (
+              <div key={f.id} className="flex flex-wrap items-center justify-between gap-2" data-testid={`older-sale-${f.id}`}>
+                <span>
+                  {SERVICE_LABELS[f.serviceType] ?? f.serviceType}
+                  {f.requestedItem ? ` — ${requestedItemLabel(f.requestedItem, f.serviceType)}` : ""}
+                  {f.convertedWorkOrderId ? ` (أمر التصنيع #${f.convertedWorkOrderId})` : ""}
+                  {" — "}<b>{f.approvedPrice.toLocaleString()} د.ع</b>
+                </span>
+                <SalePriceCorrection followupId={f.id} patientId={patientId}
+                  originalPrice={f.originalPrice ?? null} approvedPrice={f.approvedPrice} />
+              </div>
+            ))}
+          </div>
+        )}
+
         {(active.events ?? []).length > 0 && (
           <details className="text-xs" data-testid="details-followup-history">
             <summary className="cursor-pointer text-muted-foreground">

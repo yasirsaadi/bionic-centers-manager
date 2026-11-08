@@ -1111,20 +1111,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         discountAmount: req.body?.discountAmount ?? 0,
         reason: str(req.body?.reason) ?? "",
         actor: actorOf(req),
-      });
-      const p = out.previous;
-      await logAudit({
-        entityType: "post_exam_followup", entityId: f.id, action: "update",
-        userId: s.userId, userName: s.userName, branchId: f.branchId,
-        oldValues: { originalPrice: p.originalPrice, approvedPrice: p.approvedPrice, priceKind: p.priceKind },
-        newValues: {
-          originalPrice: out.followup.originalPrice, approvedPrice: out.followup.approvedPrice,
-          priceKind: out.followup.priceKind, delta: out.delta, deviceEpisodeId: out.deviceEpisodeId,
-          reason: str(req.body?.reason),
-        },
-        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `تصحيح سعر البيع لمتابعة #${f.id}: ${p.approvedPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
-          + ` (${out.delta > 0 ? "+" : ""}${out.delta.toLocaleString()}) — ${str(req.body?.reason) ?? ""}`,
+        audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
       });
       res.json(out);
     } catch (e) { if (!fail(res, e)) throw e; }
