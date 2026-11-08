@@ -373,6 +373,30 @@ async function main() {
     const older = listO.find((f: any) => f.id === O.followupId);
     same("ح٣. للمريض متابعتان، والقديمةُ المُباعة تحمل `mayCorrectSalePrice`",
       [listO.length, older?.status, older?.mayCorrectSalePrice], [2, "converted", true]);
+
+    console.log("\n── ط) مراجعة Codex على #719 ──");
+    //  بيعٌ مجانيّ لا يكتب قيداً للجهاز — وتعديلٌ للكلفة قبله لا يُحسب «بعد البيع».
+    const Fr = await operation("مجاني ثم تصحيح");
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,0,'case_cost_edit',$2,'قلم الكلفة قبل البيع', NOW() - interval '1 day')`, [Fr.patientId, Fr.caseId]);
+    const sf = await http("POST", `/api/followups/${Fr.followupId}/complete-sale`, S.recv, {
+      deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 1_000_000, expertUserId: EXPERT,
+    });
+    const [devEntries] = await q(`SELECT count(*)::int n FROM cost_entries WHERE device_episode_id=$1`, [Fr.episodeId]);
+    same("ط٠. البيعُ المجانيّ تمّ بلا قيدٍ للجهاز (شرطُ الحالة)", [sf.status, devEntries.n], [200, 0]);
+    const rFr = await correct(Fr.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "سُجّل مجانياً خطأً" });
+    const mF = await moneyOf(Fr);
+    same("ط١. **وتصحيحُه إلى سعرٍ مدفوع يمرّ** — قلمُ الكلفة قبل البيع لا يُحسب بعده (الحدُّ لحظةُ الإتمام)",
+      [rFr.status, mF.followup[1], mF.caseCost, mF.episode[1]], [200, 2_000_000, 2_000_000, 2_000_000]);
+
+    //  متابعةٌ منتهية من فرعٍ لا يصله مديرُ الفرع (ملفٌّ مشترك) — بلا زرّ له، وبزرٍّ للمسؤول.
+    const Sh = await operation("بيع من فرع آخر", { original: 2_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET branch_id = 2 WHERE id=$1`, [Sh.followupId]);
+    const asMgr = ((await http("GET", `/api/followups/patient/${Sh.patientId}`, S.mgr)).body ?? []).find((f: any) => f.id === Sh.followupId);
+    const asAdmin = ((await http("GET", `/api/followups/patient/${Sh.patientId}`, S.admin)).body ?? []).find((f: any) => f.id === Sh.followupId);
+    const postMgr = await correct(Sh.followupId, S.mgr, { originalPrice: 1_000_000, discountAmount: 0, reason: "x" });
+    same("ط٢. **بيعٌ من فرعٍ آخر يظهر لمدير الفرع بلا زرّ** (والخادمُ يردّه ٤٠٣)، وللمسؤول بزرّه",
+      [asMgr?.status, asMgr?.mayCorrectSalePrice, postMgr.status, asAdmin?.mayCorrectSalePrice], ["converted", false, 403, true]);
   } finally {
     httpServer.close();
     await cleanup();

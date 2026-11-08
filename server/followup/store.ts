@@ -1285,6 +1285,8 @@ export async function correctSalePriceAfterConversion(params: {
          WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit')
            AND ce.created_at >= COALESCE(
              (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId}),
+             --  وبيعٌ بلا قيد (مجانيٌّ فرقُه صفر، أو موروثٌ بلا هويّة جهاز) يُقاس بلحظة إتمامه — لا بالتاريخ كلِّه (مراجعة Codex على #719).
+             (SELECT converted_at FROM post_exam_followups WHERE id = ${cur.id}),
              '-infinity'::timestamptz)
          LIMIT 1
       `);
