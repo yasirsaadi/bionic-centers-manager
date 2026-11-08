@@ -39,6 +39,7 @@ import {
 import { DEVICE_PAYMENT_TAGS } from "@shared/device_attribution";
 import type { Payment } from "@shared/schema";
 import { scopeReachesPatient } from "../patients/branch_access";
+import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 
 /**
  * **فرعُ القرار ما دام يصل ملفَّ المريض** — وإلّا `null`، فيبقى المنادي على
@@ -1148,6 +1149,15 @@ export async function applyExamPriceCorrectionAfterSale(params: {
   return { followup: toRow(row), delta, deviceEpisodeId: ep.id };
 }
 
+/** الجهازُ يقبل «تصحيح سعر البيع»: قيد التصنيع أو مسلَّم، وغيرُ مُبطَلٍ إدارياً — للشاشة وحدها، والكتابةُ تعيده تحت القفل. */
+export async function episodeAllowsSalePriceCorrection(episodeId: number): Promise<boolean> {
+  const r = await db.execute(sql`
+    SELECT 1 FROM patient_device_episodes
+     WHERE id = ${episodeId} AND status IN ('in_manufacturing', 'delivered') AND admin_void_reversal_id IS NULL
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
 /**
  * **«تصحيح سعر البيع» بعد إتمام البيع** (§4.ge — واقعةُ بيداء كريم محمد، ٢٠٢٦-١١-٠٨).
  *
@@ -1193,6 +1203,18 @@ export async function correctSalePriceAfterConversion(params: {
       lockEpisodeForPriceCorrection, correctEpisodeAgreedCost, setEpisodeSaleLinesTx, PRICE_CORRECTABLE_STATUSES,
     } = await import("../device_episodes/store");
 
+    // ⓪ **المريضُ أوّلاً — بترتيب أقفال إخوته** (مراجعةٌ مستقلّة): قفلُ ٩١٩ ثمّ صفُّ المريض، كالاسترجاع والتصحيح الإداريّ ومزامنة
+    //    الحالات، فلا جمودَ بينها على المريض نفسِه. والمريضُ يُقرأ من المتابعة بلا قفل ثمّ يُعاد التحقّقُ منه تحت قفلها.
+    const pre = await tx.execute(sql`SELECT patient_id FROM post_exam_followups WHERE id = ${params.followupId}`);
+    const prePatient = Number((pre.rows ?? [])[0]?.patient_id ?? 0);
+    if (!prePatient) throw new FollowupError("المتابعة غير موجودة", 404);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${prePatient})`);
+    const pr = await tx.execute(sql`SELECT deleted_at FROM patients WHERE id = ${prePatient} FOR UPDATE`);
+    const prow = (pr.rows ?? [])[0];
+    if (!prow) throw new FollowupError("المريض غير موجود", 404);
+    //  **ومريضُ السلّة لا يُمسّ مالُه** — يُستعاد أوّلاً.
+    if (prow.deleted_at) throw new FollowupError(PATIENT_IN_TRASH_ERROR, 409);
+
     // ① المتابعةُ تحت القفل — **بيعٌ تمّ** وحده.
     const r = await tx.execute(sql`
       SELECT ${SELECT_COLS} FROM post_exam_followups WHERE id = ${params.followupId} FOR UPDATE
@@ -1200,6 +1222,7 @@ export async function correctSalePriceAfterConversion(params: {
     const curRow = (r.rows ?? [])[0];
     if (!curRow) throw new FollowupError("المتابعة غير موجودة", 404);
     const cur = toRow(curRow);
+    if (cur.patientId !== prePatient) throw new FollowupError(DRIFT, 409);
     if (cur.status !== "converted") {
       throw new FollowupError("تصحيح سعر البيع لبيعٍ تمّ وحده — هذا الملفّ لم يُبَع بعد، فالسعرُ يُكتب عند «إتمام البيع».", 409);
     }
@@ -1248,13 +1271,26 @@ export async function correctSalePriceAfterConversion(params: {
       throw new FollowupError("على هذا الجهاز طلبُ خصمٍ معلَّق — احسمه ثم صحّح السعر.", 409);
     }
 
+    // ④ب **وخطّةُ أقساطٍ نشطة على الحالة تُعدَّل أوّلاً** (مراجعةٌ مستقلّة، كحارس الاسترجاع): مجموعُها ثابتٌ منذ فُتحت، فخفضُ السعر
+    //    يُبقي أقساطاً وتذكيراتٍ بمالٍ لم يعد على المريض، ورفعُه يُنهيها والدَّينُ باقٍ.
+    if (cur.caseId !== null) {
+      const plan = await tx.execute(sql`
+        SELECT id FROM installment_plans WHERE case_id = ${cur.caseId} AND status = 'active' LIMIT 1
+      `);
+      if ((plan.rows ?? []).length > 0) {
+        throw new FollowupError("لهذه الحالة خطّةُ أقساطٍ نشطة — عدّلها أو ألغِها من «الأقساط» أوّلاً، ثمّ صحّح سعر البيع.", 409);
+      }
+    }
+
     const delta = price - cur.approvedPrice;
 
-    // ⑤ المتابعة — الأصليُّ ونوعُه والنهائيّ، بشرط السعر القديم.
+    // ⑤ المتابعة — الأصليُّ ونوعُه والنهائيّ، بشرط السعر القديم. **ومصدرُ السعر يصير قرارَ إدارة** (`manager_set`): وإلّا بقي «من
+    //    المعاينة» فيكتب تعديلُ الطبيب لسعر معاينته فوق هذا التصحيح (`classifyExamPriceChange` ⟵ `sync_after_sale`) أو يُردّ حفظُه —
+    //    وهو بلا سلطةٍ تجارية (§4.h). (مراجعةٌ مستقلّة.)
     const upd = await tx.execute(sql`
       UPDATE post_exam_followups
          SET approved_price = ${price}, original_price = ${offer.originalPrice},
-             price_kind = ${offer.kind}, updated_at = NOW()
+             price_kind = ${offer.kind}, price_source = 'manager_set', updated_at = NOW()
        WHERE id = ${cur.id} AND status = 'converted' AND approved_price = ${cur.approvedPrice}
       RETURNING ${SELECT_COLS}
     `);
@@ -1283,10 +1319,18 @@ export async function correctSalePriceAfterConversion(params: {
            SET total_cost = GREATEST(0, COALESCE(total_cost, 0) + ${delta})
          WHERE id = ${cur.patientId}
       `);
+      //  **فرعُ القيد فرعُ البيع نفسِه** (مراجعةٌ مستقلّة): قيدُ البيع كُتب بفرع العملية، وفرعُ المتابعة قد يختلف — فالتقريرُ بالفرع
+      //  كان سيقسم الجهازَ الواحد بين فرعين. يُقرأ من أوّل قيدٍ لهذا الجهاز، وإلّا ففرعُ المتابعة.
+      const sb = await tx.execute(sql`
+        SELECT branch_id FROM cost_entries
+         WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId} AND branch_id IS NOT NULL
+         ORDER BY id LIMIT 1
+      `);
+      const saleBranch = Number((sb.rows ?? [])[0]?.branch_id ?? cur.branchId);
       await tx.execute(sql`
         INSERT INTO cost_entries
           (patient_id, branch_id, amount, source, case_id, device_episode_id, notes)
-        VALUES (${cur.patientId}, ${cur.branchId}, ${delta}, 'sale_price_correction',
+        VALUES (${cur.patientId}, ${saleBranch}, ${delta}, 'sale_price_correction',
                 ${cur.caseId}, ${ep.id}, ${"تصحيح سعر البيع — " + reason})
       `);
     }

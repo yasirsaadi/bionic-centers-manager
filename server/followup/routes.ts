@@ -346,7 +346,9 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  ٤٠٩ على أيّ حال.
         mayCancelDecision: canCancelDecision(s) && !isTerminal(f.status),
         //  **«تصحيح سعر البيع»** (§4.ge) — لبيعٍ تمّ بجهازٍ مرتبط، للمسؤول ومدير الفرع؛ والخادمُ يعيد الشروطَ كلَّها تحت القفل.
-        mayCorrectSalePrice: canCorrectSalePrice(s) && f.status === "converted" && f.deviceEpisodeId !== null,
+        //  والجهازُ نفسُه قيد التصنيع أو مسلَّم وغيرُ مُبطَل — فلا يظهر زرٌّ يردّه الخادمُ دائماً (أمرٌ أُلغي فأُلغي جهازُه).
+        mayCorrectSalePrice: canCorrectSalePrice(s) && f.status === "converted" && f.deviceEpisodeId !== null
+          && await store.episodeAllowsSalePriceCorrection(f.deviceEpisodeId),
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
           price: !canOverwriteCommercialField({ field: priceField, session: owner }),

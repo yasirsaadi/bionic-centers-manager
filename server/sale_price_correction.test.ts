@@ -146,6 +146,7 @@ async function cleanup() {
     `DELETE FROM medical_exams WHERE patient_id IN (${ids})`,
     `DELETE FROM journal_entries WHERE id IN (SELECT entry_id FROM journal_lines WHERE patient_id IN (${ids}))`,
     `DELETE FROM journal_lines WHERE patient_id IN (${ids})`,
+    `DELETE FROM installment_plans WHERE patient_id IN (${ids})`,
     `DELETE FROM payments WHERE patient_id IN (${ids})`,
     `DELETE FROM cost_entries WHERE patient_id IN (${ids})`,
     `DELETE FROM visits WHERE patient_id IN (${ids})`,
@@ -301,6 +302,47 @@ async function main() {
     await q(`UPDATE patient_device_episodes SET status='cancelled' WHERE id=$1`, [I.episodeId]);
     const ri = await correct(I.followupId, S.admin, { originalPrice: 1_500_000, discountAmount: 0, reason: "x" });
     same("و٤. وجهازٌ ليس قيد التصنيع ولا مسلَّماً يُردّ (٤٠٩)", ri.status, 409);
+
+    // ══ ز) ما أمسكته المراجعةُ المستقلّة ═════════════════════════════════
+    console.log("\n── ز) المراجعة المستقلّة ──");
+    const [srcA] = await q(`SELECT price_source FROM post_exam_followups WHERE id=$1`, [A.followupId]);
+    same("ز١. مصدرُ السعر بعد التصحيح قرارُ إدارة لا «من المعاينة»", srcA?.price_source, "manager_set");
+    //  بيعٌ سعرُه «من المعاينة» (الموروث: الطبيبُ كتب السعر) — يُصحَّح، ثمّ يعدّل أحدٌ سعرَ المعاينة: لا يكتب فوق التصحيح.
+    const X = await operation("سعرٌ من المعاينة", { original: 6_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET price_source='exam' WHERE id=$1`, [X.followupId]);
+    const rx = await correct(X.followupId, S.admin, { originalPrice: 5_000_000, discountAmount: 0, reason: "تصحيح" });
+    const [exX] = await q(`SELECT medical_exam_id id FROM post_exam_followups WHERE id=$1`, [X.followupId]);
+    const ed = await http("PATCH", `/api/medical/exams/${exX.id}`, S.admin, {
+      caseType: "prosthetic", diagnosis: "طرف مقفول مع قدم متحركة", prescription: {},
+      deviceCost: 9_000_000, priceCorrectionReason: "تعديل المعاينة",
+    });
+    const mX = await moneyOf(X);
+    same("ز٢. **وتعديلُ سعر المعاينة بعده لا يكتب فوق التصحيح** — والمعاينةُ تُحفظ",
+      [rx.status, ed.status, mX.followup[1], mX.episode[1], mX.caseCost], [200, 200, 5_000_000, 5_000_000, 5_000_000]);
+
+    const P = await operation("أقساط", { original: 3_000_000, discount: 0 });
+    await q(`INSERT INTO installment_plans (patient_id, branch_id, case_id, total_amount, installment_amount, number_of_installments, start_date, status)
+             VALUES ($1,1,$2,3000000,500000,6,CURRENT_DATE,'active')`, [P.patientId, P.caseId]);
+    const rp = await correct(P.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    same("ز٣. **خطّةُ أقساطٍ نشطة على الحالة ⟵ ٤٠٩** تُعدَّل من «الأقساط» أوّلاً، ولا يتحرّك شيء",
+      [rp.status, /خطّةُ أقساطٍ نشطة/.test(rp.body?.error ?? ""), (await moneyOf(P)).caseCost], [409, true, 3_000_000]);
+
+    const T = await operation("في السلّة", { original: 3_000_000, discount: 0 });
+    const del = await http("DELETE", `/api/patients/${T.patientId}`, { ...S.admin, permissions: { ...perms, canDeletePatients: true } }, { reason: "اختبار السلّة" });
+    const [tr] = await q(`SELECT deleted_at IS NOT NULL d FROM patients WHERE id=$1`, [T.patientId]);
+    check(del.status < 300 && tr?.d === true, "ز٤٠. المريضُ في السلّة بالباب الحقيقيّ", JSON.stringify(del));
+    const rt = await correct(T.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    same("ز٤. **ومريضُ السلّة لا يُمسّ مالُه** (٤٠٩)", [rt.status, /المحذوفات/.test(rt.body?.error ?? "")], [409, true]);
+
+    const B = await operation("فرعان", { original: 3_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET branch_id = 2 WHERE id=$1`, [B.followupId]);
+    const rb = await correct(B.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    const br = await q(`SELECT source, branch_id::int b FROM cost_entries WHERE device_episode_id=$1 ORDER BY id`, [B.episodeId]);
+    same("ز٥. **قيدُ التصحيح بفرع قيد البيع** لا بفرع المتابعة — فلا ينقسم الجهازُ بين فرعين",
+      [rb.status, br.map((x: any) => x.b)], [200, [1, 1]]);
+
+    const cardI = (await http("GET", `/api/followups/patient/${I.patientId}`, S.admin)).body?.[0];
+    same("ز٦. **ولا زرَّ لجهازٍ ألغي** — لا يُعرض ما يردّه الخادمُ دائماً", [cardI?.status, cardI?.mayCorrectSalePrice], ["converted", false]);
   } finally {
     httpServer.close();
     await cleanup();
