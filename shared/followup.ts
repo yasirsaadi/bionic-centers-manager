@@ -392,6 +392,17 @@ export function canCancelDecision(
   return hasRole(s, "branch_manager");
 }
 
+/**
+ * **«تصحيح سعر البيع» بعد إتمام البيع** (§4.ge): للمسؤول ولمدير الفرع (قرارُ المالك ٢٠٢٦-١١-٠٨) — كسلطة «إلغاء الحسم» والتصحيح الإداريّ.
+ * والشاشةُ تعرضه لبيعٍ تمّ وحده، والخادمُ يعيد كلَّ شرطٍ تحت القفل.
+ */
+export function canCorrectSalePrice(
+  s: FollowupSessionLike | null | undefined,
+): boolean {
+  if (s?.isAdmin === true) return true;
+  return hasRole(s, "branch_manager");
+}
+
 export function canSetCommercialPrice(
   s: FollowupSessionLike | null | undefined,
 ): boolean {

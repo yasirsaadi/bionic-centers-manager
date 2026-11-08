@@ -140,6 +140,8 @@ export function workHistoryMovementLabel(actionType: string, notes: string | nul
     case "assignment_date_change": return "تعديل تاريخ الإسناد";
     // الاستعلاماتُ سجّلت عودةَ المريض لأخذ القالب على أمره القائم (§4.cl).
     case "mold_return": return "حضر لأخذ القالب";
+    // جزءٌ أُلحق بجهازٍ قيد التصنيع من «بلا معاينة» (`server/pending_charges/store.ts`).
+    case "component_added": return "إلحاق جزء بالجهاز";
     // القالبُ الاختباريّ واتّصالُ الاستعلامات والعودةُ للنهائي (§4.bz).
     case "trial_socket": return "تسليم قالب اختباري";
     case "trial_call": return "اتصال الاستعلامات بشأن القالب النهائي";

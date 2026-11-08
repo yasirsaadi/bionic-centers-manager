@@ -53,6 +53,7 @@ import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import { PriceTransition } from "@/components/PriceTransition";
+import { SalePriceCorrection } from "@/components/SalePriceCorrection";
 import {
   followupEventView, purchasePresentation, purchaseStateText, replacementEpisodeIdOf,
 } from "@shared/followup_events";
@@ -98,6 +99,8 @@ interface Followup {
   //  الشاشةُ لا تحسب قفلاً ولا فعلاً: تعرض ما قاله الخادمُ بالدوالّ التي
   //  يحرس بها نقاطَه. فلا يظهر زرٌّ يُردّ ولا يُخفى زرٌّ يُقبَل.
   examPath?: boolean;
+  /** **«تصحيح سعر البيع»** بعد إتمامه (§4.ge) — يقوله الخادم: بيعٌ تمّ بجهاز، للمسؤول ومدير الفرع. */
+  mayCorrectSalePrice?: boolean;
   actions?: string[] | null;
   missing?: string[];
   missingLabel?: string;
@@ -581,6 +584,11 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
               {active.soldReadyAt ? `✅ ${CONVERTED_READY_LABEL}` : "✅ تم الشراء — بدأ التصنيع"}
               {active.convertedWorkOrderId && ` (أمر التصنيع #${active.convertedWorkOrderId})`}
             </div>
+            {/*  **«تصحيح سعر البيع»** (§4.ge) — السعرُ وحده يتحرّك، والأمرُ وخبيرُه باقيان. */}
+            {active.mayCorrectSalePrice === true && (
+              <SalePriceCorrection followupId={active.id} patientId={patientId}
+                originalPrice={active.originalPrice ?? null} approvedPrice={active.approvedPrice} />
+            )}
             {/*  ══ **تفاصيلُ البيع بعد الإتمام** (المرحلة الثانية) ══════════
                 السعرُ الأصليّ والخصمُ والنهائيّ والخبير — والمجّانيُّ صريحٌ،
                 لا صفرٌ يُقرأ «غير مسعَّر». ولمسارِ المعاينة وحده — الصفوفُ

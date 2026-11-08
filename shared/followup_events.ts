@@ -111,6 +111,8 @@ export const FOLLOWUP_EVENT_TITLES: Record<string, string> = {
   //  خلطُه بـ`commercial_price_set` كان سيجعل التقرير يقرأ تصحيحاً إملائياً
   //  قرارَ مديرٍ بالبيع بسعرٍ آخر.
   exam_price_corrected: "صحّح الطبيب السعر الأصلي",
+  //  ══ **تصحيحُ سعر البيع بعد إتمامه** (§4.ge) — سلطةُ المسؤول أو مدير الفرع، لا الطبيب.
+  sale_price_corrected: "تصحيح سعر البيع",
   discount_price_applied: "تم اعتماد الخصم",
   //  ══ **تفاصيلُ البيع — حقلٌ حقلاً** (المرحلة الثانية، ترحيل ٠٦٦) ═════
   //  حدثٌ واحد لثلاثة حقول (سعرٌ · خبيرٌ · قرار)، والتفصيلُ في حمولته:
@@ -233,6 +235,22 @@ export function followupEventView(
       }
       //  والسببُ **معنوناً**: بلا العنوان يظهر نصُّ الموظّف عائماً بين
       //  الأرقام فلا يُعرَف أهو سببٌ أم ملاحظةٌ أم اسمُ جهاز.
+      const why = typeof p.correctionReason === "string" ? p.correctionReason.trim() : "";
+      if (why) out.facts.push(`سبب التصحيح: ${why}`);
+      break;
+    }
+    case "sale_price_corrected": {
+      const from = Number(p.previousPrice), to = Number(p.finalPrice);
+      if (Number.isFinite(from) && Number.isFinite(to) && from !== to) out.transition = { from, to };
+      const orig = Number(p.originalPrice), disc = Number(p.discountAmount);
+      if (Number.isFinite(orig) && orig > 0) {
+        out.facts.push(`السعر الأصلي: ${money(orig)} د.ع`
+          + (Number.isFinite(disc) && disc > 0 ? ` — الخصم: ${money(disc)} د.ع` : ""));
+      }
+      const delta = Number(p.delta);
+      if (Number.isFinite(delta) && delta !== 0) {
+        out.facts.push(`الفرق: ${delta > 0 ? "+" : "−"}${money(Math.abs(delta))} د.ع — حُدّثت كلفة الجهاز وحساب المريض`);
+      }
       const why = typeof p.correctionReason === "string" ? p.correctionReason.trim() : "";
       if (why) out.facts.push(`سبب التصحيح: ${why}`);
       break;
@@ -416,7 +434,7 @@ export function followupEventView(
     && type !== "closed_decision_cancelled"
     && type !== "administrative_reversal"
     //  ومن تصحيح السعر: خرج أعلاه معنوناً «سبب التصحيح» — ومرّتين ضجيج.
-    && type !== "exam_price_corrected") {
+    && type !== "exam_price_corrected" && type !== "sale_price_corrected") {
     out.facts.push(note);
   }
   return out;

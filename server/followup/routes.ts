@@ -57,7 +57,7 @@ import * as decisionQueue from "./decision_queue_store";
 import { scopeReachesPatient } from "../patients/branch_access";
 import { DeviceEpisodeError } from "../device_episodes/store";
 import {
-  canActCommercially, canCancelDecision, canConfirmPurchase,
+  canActCommercially, canCancelDecision, canCorrectSalePrice, canConfirmPurchase,
   canDecideLegacyPriceRequest, canSetCommercialPrice, canSignalPurchaseInterest,
   canViewFollowup, allowedActions, isTerminal,
 } from "@shared/followup";
@@ -345,6 +345,10 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         //  **والمنتهيةُ لا تُلغى**: الشاشةُ تعرف من الحالة، والخادمُ يردّ
         //  ٤٠٩ على أيّ حال.
         mayCancelDecision: canCancelDecision(s) && !isTerminal(f.status),
+        //  **«تصحيح سعر البيع»** (§4.ge) — لبيعٍ تمّ بجهازٍ مرتبط، للمسؤول ومدير الفرع؛ والخادمُ يعيد الشروطَ كلَّها تحت القفل.
+        //  والجهازُ نفسُه قيد التصنيع أو مسلَّم وغيرُ مُبطَل — فلا يظهر زرٌّ يردّه الخادمُ دائماً (أمرٌ أُلغي فأُلغي جهازُه).
+        mayCorrectSalePrice: canCorrectSalePrice(s) && f.status === "converted" && f.deviceEpisodeId !== null
+          && await store.episodeAllowsSalePriceCorrection(f.deviceEpisodeId),
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
           price: !canOverwriteCommercialField({ field: priceField, session: owner }),
@@ -1091,6 +1095,41 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
   // ── تحديدُ السعر التجاري — **قرارُ مديرِ الفرع لا طلبٌ يُعتمَد** ──────
   //  الطبيبُ يملك القرار السريري، والفرعُ يملك القرار التجاري. فلا صفَّ
   //  طلبٍ يُنشأ ولا حالةَ انتظارٍ تُحتجَز ولا طابورَ يمتلئ.
+  // ── «تصحيح سعر البيع» بعد إتمامه (§4.ge) ─────────────────────────────
+  //  السعرُ الأصليّ ومقدارُ الخصم كـ«إتمام البيع» نفسِه، وسببٌ مكتوب؛ والأمرُ وخبيرُه ومراحلُه باقية.
+  app.post("/api/followups/:id/correct-sale-price", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!canCorrectSalePrice(s)) {
+      return res.status(403).json({ error: "تصحيح سعر البيع للمسؤول العام أو مدير الفرع" });
+    }
+    const f = await loadInScope(req, res);
+    if (!f) return;
+    try {
+      const out = await store.correctSalePriceAfterConversion({
+        followupId: f.id,
+        originalPrice: req.body?.originalPrice,
+        discountAmount: req.body?.discountAmount ?? 0,
+        reason: str(req.body?.reason) ?? "",
+        actor: actorOf(req),
+      });
+      const p = out.previous;
+      await logAudit({
+        entityType: "post_exam_followup", entityId: f.id, action: "update",
+        userId: s.userId, userName: s.userName, branchId: f.branchId,
+        oldValues: { originalPrice: p.originalPrice, approvedPrice: p.approvedPrice, priceKind: p.priceKind },
+        newValues: {
+          originalPrice: out.followup.originalPrice, approvedPrice: out.followup.approvedPrice,
+          priceKind: out.followup.priceKind, delta: out.delta, deviceEpisodeId: out.deviceEpisodeId,
+          reason: str(req.body?.reason),
+        },
+        ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+        notes: `تصحيح سعر البيع لمتابعة #${f.id}: ${p.approvedPrice.toLocaleString()} ⟶ ${out.followup.approvedPrice.toLocaleString()} د.ع`
+          + ` (${out.delta > 0 ? "+" : ""}${out.delta.toLocaleString()}) — ${str(req.body?.reason) ?? ""}`,
+      });
+      res.json(out);
+    } catch (e) { if (!fail(res, e)) throw e; }
+  });
+
   app.post("/api/followups/:id/commercial-price", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
     if (!canSetCommercialPrice(s)) {
