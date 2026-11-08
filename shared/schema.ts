@@ -1662,6 +1662,13 @@ export const prostheticWorkOrders = pgTable("prosthetic_work_orders", {
    * السلطة التجارية بالوسم وحده. وأمرٌ لم ينتهِ يأخذ الوسمَ و`cancelled`.
    */
   adminVoidReversalId: integer("admin_void_reversal_id"),
+  /**
+   * **طلبُ الإلغاء** (ترحيل ١٩٤، §4.gd) — الخبيرُ يطلب بسببه والأمرُ يبقى قائماً حتى يوافق المديرُ أو المسؤول.
+   * الثلاثةُ معاً أو فارغةٌ معاً؛ وتُفرَغ بالموافقة (فيُلغى الأمر) أو بالرفض أو بسحب الطلب.
+   */
+  cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+  cancelRequestedBy: integer("cancel_requested_by").references(() => systemUsers.id),
+  cancelRequestNote: text("cancel_request_note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [

@@ -15,7 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2 } from "lucide-react";
+import { ArrowRight, Wrench, History, PauseCircle, PlayCircle, UserCog, CalendarDays, Settings2, Ban, RotateCcw } from "lucide-react";
 import { sheetSpecView } from "@shared/intake_sheet_view";
 import { NOT_APPLICABLE_SPEC, slotTitle, splitSpecKey } from "@shared/limb_specs";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
@@ -70,6 +70,8 @@ export default function ManufacturingOrder() {
   const [dateOpen, setDateOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState(false);
   const [assignDateOpen, setAssignDateOpen] = useState(false);
+  //  طلبُ الإلغاء وقرارُه وإعادةُ الفتح (§4.gd) — نافذةٌ واحدة بنوعها.
+  const [cancelKind, setCancelKind] = useState<null | "request" | "cancel" | "approve" | "reject" | "reopen">(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: orderKey });
@@ -116,6 +118,9 @@ export default function ManufacturingOrder() {
   // فنقطة القراءة ونقطة الكتابة تتشاركان الشرط نفسه حرفياً. ولذلك الزرّ
   // ظاهر لكل مَن وصل إلى هنا، والخادم يبقى هو الحارس لا الواجهة.
   const canSetDeliveryDate = true;
+  //  **الخبيرُ يطلب الإلغاء والمديرُ أو المسؤولُ يقرّر** (§4.gd — قولُ المالك: «ممكن أن يلغي لكن بمصادقة المدير»).
+  const pendingCancel = !isCompleted && !!order.cancelRequestedAt;
+  const isRequester = pendingCancel && session?.userId != null && Number(order.cancelRequestedBy) === Number(session.userId);
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
@@ -333,6 +338,42 @@ export default function ManufacturingOrder() {
         </Card>
       )}
 
+      {/* طلبُ إلغاءٍ معلَّق — الأمرُ قائمٌ حتى يقرّر المديرُ أو المسؤول (§4.gd) */}
+      {pendingCancel && (
+        <Card className="mb-4 border-rose-300 bg-rose-50/60" data-testid="card-cancel-request">
+          <CardContent className="p-4 text-sm space-y-2">
+            <p className="font-semibold text-rose-800">طلب إلغاء هذا الأمر — بانتظار موافقة المدير أو المسؤول</p>
+            <p>السبب: {order.cancelRequestNote}</p>
+            <p className="text-[11px] text-muted-foreground">طلبه {order.cancelRequestedByName ?? "—"} • {fmt(order.cancelRequestedAt)} — والأمرُ مستمرّ حتى القرار.</p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {canReassign && (
+                <>
+                  <Button size="sm" variant="destructive" className="gap-1" data-testid="button-approve-cancel" onClick={() => setCancelKind("approve")}>
+                    <Ban className="w-4 h-4" /> موافقة وإلغاء الأمر
+                  </Button>
+                  <Button size="sm" variant="outline" data-testid="button-reject-cancel" onClick={() => setCancelKind("reject")}>رفض الطلب — يستمرّ الأمر</Button>
+                </>
+              )}
+              {isRequester && !canReassign && (
+                <Button size="sm" variant="outline" data-testid="button-withdraw-cancel" onClick={() => setCancelKind("reject")}>سحب طلبي</Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* أمرٌ ملغى — والمسؤولُ وحده يعيد فتحه (§4.gd، واقعةُ قحطان ياسين علوان) */}
+      {order.status === "cancelled" && isAdmin && !order.adminVoided && (
+        <Card className="mb-4 border-slate-300 bg-slate-50" data-testid="card-reopen">
+          <CardContent className="p-4 text-sm flex flex-wrap items-center justify-between gap-2">
+            <span>هذا الأمر ملغى. إن أُلغي خطأً أعِد فتحه — يعود في مرحلته نفسِها وبخبيره نفسِه، والدفعاتُ كما هي.</span>
+            <Button size="sm" className="gap-1" data-testid="button-reopen" onClick={() => setCancelKind("reopen")}>
+              <RotateCcw className="w-4 h-4" /> إعادة فتح الأمر
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Actions — زرّان لا أكثر */}
       {!isCompleted && (
         <div className="flex flex-wrap gap-2 mb-6">
@@ -374,6 +415,16 @@ export default function ManufacturingOrder() {
               <Settings2 className="w-4 h-4" /> تعديل إداري للمرحلة
             </Button>
           )}
+          {/* الإلغاء: المديرُ والمسؤولُ مباشرةً، والخبيرُ طلباً بسببه ينتظر موافقتهما (§4.gd). */}
+          {!pendingCancel && (canReassign ? (
+            <Button size="sm" variant="ghost" onClick={() => setCancelKind("cancel")} className="gap-1 text-red-700" data-testid="button-cancel-order">
+              <Ban className="w-4 h-4" /> إلغاء الأمر
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setCancelKind("request")} className="gap-1 text-red-700" data-testid="button-request-cancel">
+              <Ban className="w-4 h-4" /> طلب إلغاء الأمر
+            </Button>
+          ))}
           {/* تصحيحُ تاريخ الإسناد — للمسؤول وحده، ما دام الأمرُ قيد العمل (§4.ck). */}
           {isAdmin && (
             <Button size="sm" variant="ghost" onClick={() => setAssignDateOpen(true)} className="gap-1 text-muted-foreground" data-testid="button-assignment-date">
@@ -436,9 +487,13 @@ export default function ManufacturingOrder() {
                     : h.actionType === "created" ? "إنشاء الأمر"
                     : h.actionType === "assignment_date_change" ? "تعديل تاريخ الإسناد"
                     : h.actionType === "mold_return" ? "حضر لأخذ القالب"
+                    : h.actionType === "cancel_request" ? "طلب إلغاء"
+                    : h.actionType === "cancel_request_rejected" ? "رفض طلب الإلغاء"
+                    : h.actionType === "cancel_request_withdrawn" ? "سحب طلب الإلغاء"
+                    : h.actionType === "reopened" ? "إعادة فتح الأمر"
                     : `${STAGE_LABELS[h.fromStage] ?? h.fromStage ?? ""} ← ${STAGE_LABELS[h.toStage] ?? h.toStage ?? ""}`}
                 </div>
-                {h.notes && <div className="text-xs text-muted-foreground">{h.notes}</div>}
+                {h.notes && <div className="text-xs text-muted-foreground">{timelineNote(h.notes)}</div>}
                 <div className="text-[11px] text-muted-foreground">{h.performedByName ?? "—"} • {fmt(h.createdAt)}</div>
               </li>
             ))}
@@ -472,6 +527,7 @@ export default function ManufacturingOrder() {
       <TrialSocketDialog open={trialOpen} onOpenChange={setTrialOpen} order={order} onDone={invalidate} />
       {canReassign && <AdminStageDialog open={adminStageOpen} onOpenChange={setAdminStageOpen} order={order} stages={stages} onDone={invalidate} />}
       {isAdmin && <AssignmentDateDialog open={assignDateOpen} onOpenChange={setAssignDateOpen} order={order} onDone={invalidate} />}
+      <CancelDialog kind={cancelKind} withdraw={isRequester && !canReassign} onClose={() => setCancelKind(null)} order={order} onDone={invalidate} />
       <DeliveryDateDialog open={dateOpen} onOpenChange={setDateOpen} orderId={order.id} current={order.expectedDeliveryDate} onDone={invalidate} />
       {canReassign && <ReassignDialog open={reassignOpen} onOpenChange={setReassignOpen} orderId={order.id} branchId={order.branchId} currentExpert={order.expertUserId} onDone={invalidate} />}
     </div>
@@ -490,7 +546,57 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** سطرُ الباب القديم «الحالة: cancelled» (قبل #205) يُقرأ بالعربية — كما في أمر قحطان ياسين علوان. */
+export function timelineNote(notes: string): string {
+  const m = /^الحالة: ([a-z_]+)([\s\S]*)$/.exec(notes);
+  return m ? `الحالة: ${STATUS_LABELS[m[1]] ?? m[1]}${m[2]}` : notes;
+}
+
 // ---- dialogs ----------------------------------------------------------------
+
+/** طلبُ الإلغاء · الإلغاءُ المباشر · الموافقةُ · الرفضُ أو السحب · إعادةُ الفتح (§4.gd) — والسببُ إلزاميٌّ إلّا للرفض والسحب. */
+function CancelDialog({ kind, withdraw, onClose, order, onDone }: any) {
+  const [note, setNote] = useState("");
+  useEffect(() => { setNote(kind === "approve" ? (order.cancelRequestNote ?? "") : ""); }, [kind, order.cancelRequestNote]);
+  const base = `/api/manufacturing/orders/${order.id}`;
+  const url = kind === "request" ? `${base}/cancel-request`
+    : kind === "reject" ? `${base}/cancel-request/${withdraw ? "withdraw" : "reject"}`
+    : kind === "reopen" ? `${base}/reopen` : `${base}/cancel`;
+  const m = useAction(url, "POST", () => { onClose(); onDone(); }, onDone);
+  const t = {
+    request: { title: "طلب إلغاء الأمر", hint: "لا يُلغى الأمرُ الآن: يصل الطلبُ مديرَ الفرع والمسؤول، ويبقى الأمرُ قائماً حتى يوافق أحدُهما أو يرفض.", btn: "إرسال الطلب", need: true },
+    cancel: { title: "إلغاء الأمر", hint: "يُلغى الأمرُ وجهازُه. الدفعاتُ لا تُمسّ — واسترجاعُ المال بابُه «طلب استرجاع». ويستطيع المسؤولُ إعادةَ فتحه لاحقاً.", btn: "إلغاء الأمر", need: true },
+    approve: { title: "موافقة وإلغاء الأمر", hint: "يُلغى الأمرُ بسبب الخبير (ويمكنك تعديله). الدفعاتُ لا تُمسّ، ويستطيع المسؤولُ إعادةَ فتحه لاحقاً.", btn: "موافقة وإلغاء", need: true },
+    reject: withdraw
+      ? { title: "سحب طلب الإلغاء", hint: "يُمحى طلبُك ويستمرّ الأمرُ كما هو.", btn: "سحب الطلب", need: false }
+      : { title: "رفض طلب الإلغاء", hint: "يُمحى الطلبُ ويستمرّ الأمرُ كما هو، ويُكتب الرفضُ في الخطّ الزمني.", btn: "رفض الطلب", need: false },
+    reopen: { title: "إعادة فتح الأمر", hint: "يعود الأمرُ نشطاً في مرحلته نفسِها وبخبيره نفسِه، ويعود جهازُه «قيد التصنيع». الدفعاتُ كما هي ولا يُطلب سعرٌ جديد.", btn: "إعادة فتح الأمر", need: true },
+  } as const;
+  const cfg = kind ? (t as any)[kind] : null;
+  if (!cfg) return null;
+  const body = kind === "reopen" ? { reason: note.trim() } : { note: note.trim() || undefined };
+  return (
+    <Dialog open={!!kind} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-md">
+        <DialogHeader><DialogTitle>{cfg.title}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground" data-testid="hint-cancel-dialog">{cfg.hint}</p>
+        {!(kind === "reject" && withdraw) && (
+          <div>
+            <label className="text-sm font-medium">{kind === "reject" ? "ملاحظة (اختياري)" : "السبب"}{cfg.need && <span className="text-red-500"> *</span>}</label>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} className="mt-1" data-testid="input-cancel-note" />
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>رجوع</Button>
+          <Button variant={kind === "reopen" || kind === "reject" ? "default" : "destructive"} data-testid="button-confirm-cancel-dialog"
+            disabled={m.isPending || (cfg.need && !note.trim())} onClick={() => m.mutate(body)}>
+            {cfg.btn}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // `onFail` لحالة ٤٠٩: الأمر تحرّك تحت أيدي المستخدم، فيُعاد الجلب ليرى
 // حاله الحقيقي بدل أن يعيد المحاولة على صورة زالت.

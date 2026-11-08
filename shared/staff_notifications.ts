@@ -41,7 +41,7 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   //  طلبُ تسليمٍ لمستشفى العين من مربّع نسبته (§4.fz) — للمسؤول؛ وقرارُه لطالبه وحده.
   { key: "hospital_delivery_pending", label: "طلب تسليم مبلغ لمستشفى العين ينتظر القرار", group: "المسؤول", scope: "global" },
   { key: "hospital_delivery_decided", label: "طلبُه لتسليم مبلغ لمستشفى العين اعتُمد أو رُفض", group: "الاستقبال ومدير الفرع", scope: "targeted" },
-  { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل أو تغيّر موعد تسليمه", group: "المسؤول", scope: "branch" },
+  { key: "order_hold_rework", label: "أمر تصنيع توقّف أو سُجّلت عليه إعادة عمل أو تغيّر موعد تسليمه أو طلب خبيرُه إلغاءه", group: "المسؤول", scope: "branch" },
   { key: "ai_suggestion", label: "اقتراح معرفة جديد للمساعد الذكي", group: "المسؤول", scope: "global" },
   { key: "evening_summary", label: "ملخّص يومي مسائي لكلّ فرع", group: "المسؤول", scope: "branch", digest: true },
   //  خطّةُ العلاج الطبيعي (§4.cm) — للمسؤول والمشرف العام، ولكاتبها، ولمنفّذيها.

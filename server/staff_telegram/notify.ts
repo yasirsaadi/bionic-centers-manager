@@ -226,6 +226,24 @@ export function notifyDeliveryDateChanged(ex: Executor | null | undefined, p: {
   });
 }
 
+/**
+ * **طلبُ إلغاء أمر تصنيع** (§4.gd) — الخبيرُ يطلب والمديرُ أو المسؤولُ يقرّر. بنوع «توقّف أو إعادة عمل» نفسِه (`order_hold_rework`)،
+ * فيصل مدراءَ الفرع والمسؤولَ الذين يتابعون ذاك بلا تفعيلٍ جديد، ورابطُه صفحةُ الأمر حيث زرّا الموافقة والرفض.
+ */
+export function notifyCancelRequest(ex: Executor | null | undefined, p: {
+  orderId: number; patientId: number; branchId: number | null; note: string; actorUserId?: number | null;
+}) {
+  return safe(ex, async () => {
+    const c = await ctx(ex, p.patientId, p.branchId);
+    const people = await orderPeople(ex, p.orderId, p.actorUserId);
+    await enqueueStaffEvent(ex, {
+      event: "order_hold_rework", branchId: c.branchId, excludeUserId: p.actorUserId ?? null,
+      text: `🛑 طلب إلغاء أمر التصنيع رقم ${p.orderId} — ينتظر موافقتك: ${c.who}${c.branch}${people}\nالسبب: ${p.note}`,
+      linkPath: `/manufacturing/orders/${p.orderId}`,
+    });
+  });
+}
+
 export function notifyPaymentCorrection(ex: Executor | null | undefined, p: {
   patientId: number; branchId: number | null; kind: string; reason?: string | null; actorName?: string | null;
   actorUserId?: number | null;
