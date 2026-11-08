@@ -200,7 +200,7 @@ import {
   deliveryDateSetNote, deliveryDateChangeNote, latenessOf,
   isHoldStatus, writtenHoldExcuse,
   type StageHistoryRow,
-  ASSIGNMENT_DATE_ACTION, assignmentDateError, assignmentDateNote, baghdadDay,
+  ASSIGNMENT_DATE_ACTION, assignmentDateError, assignmentDateNote, baghdadDay, reopenAssignmentDayError,
   MOLD_RETURN_ACTION, isMoldReturnEligible, moldReturnNote,
 } from "@shared/manufacturing";
 
@@ -1981,6 +1981,8 @@ export async function clearOrderCancelRequest(params: {
  */
 export async function reopenCancelledOrder(params: {
   orderId: number; reason: string; performedBy: number | null;
+  /** يومُ الإسناد بعد الفتح (YYYY-MM-DD) — غيابُه أو مساواتُه للحاليّ = التاريخُ الأصليّ كما هو. */
+  assignmentDay?: string | null;
 }): Promise<ProstheticWorkOrder> {
   const reason = params.reason.trim();
   if (!reason) throw new CancelRequestError("اكتب سبب إعادة الفتح", 400);
@@ -2020,6 +2022,27 @@ export async function reopenCancelledOrder(params: {
       notes: `إعادة فتح الأمر بعد إلغائه — ${reason}`,
       performedBy: params.performedBy,
     });
+    //  **وبتاريخ إسنادٍ يختاره المسؤول** (طلبُ المالك): يتحرّك تاريخُ الإسناد وحده (`created_at` الأمر — ما تقيس به «راكدة» والتأخّر)،
+    //  وسطرُ «إنشاء الأمر» يبقى بيومه الحقيقيّ — فالخطُّ الزمنيّ يقول: أُنشئ ٥ آب، أُلغي، أُعيد فتحُه وأُسند من جديد يومَ كذا.
+    const currentDay = baghdadDay(row.createdAt);
+    const day = (params.assignmentDay ?? "").trim();
+    if (day && day !== currentDay) {
+      const [pt] = await tx.select({ createdAt: patients.createdAt }).from(patients).where(eq(patients.id, row.patientId));
+      const err = reopenAssignmentDayError({
+        newDay: day, today: baghdadTodayYmd(), patientRegisteredDay: pt?.createdAt ? baghdadDay(pt.createdAt) : null,
+      });
+      if (err) throw new CancelRequestError(err, 400);
+      //  اليومُ هو اليوم ⟵ اللحظةُ الآن؛ ويومٌ مضى ⟵ ساعةُ الإسناد الأصلية في ذلك اليوم.
+      const timeOfDay = new Date(row.createdAt).toLocaleTimeString("en-GB", { timeZone: "Asia/Baghdad", hour12: false });
+      const newAt = day === baghdadTodayYmd() ? new Date() : new Date(`${day}T${timeOfDay}+03:00`);
+      const [moved] = await tx.update(WO).set({ createdAt: newAt, updatedAt: new Date() })
+        .where(eq(WO.id, params.orderId)).returning();
+      await tx.insert(WH).values({
+        workOrderId: params.orderId, actionType: ASSIGNMENT_DATE_ACTION, fromStage: null, toStage: null,
+        notes: assignmentDateNote(currentDay, day, `إعادة فتح الأمر — ${reason}`), performedBy: params.performedBy,
+      });
+      return moved;
+    }
     return updated;
   });
 }
@@ -2509,10 +2532,17 @@ export async function changeAssignmentDate(p: { orderId: number; newDay: string;
       .where(eq(WH.workOrderId, o.id)).orderBy(asc(WH.createdAt));
     //  أوّلُ حدثٍ حقيقيّ بعد الإنشاء — لا سطرُ الإنشاء نفسُه، ولا تعديلُ تاريخٍ سابق.
     const later = hist.filter((h) => h.actionType !== "created" && h.actionType !== ASSIGNMENT_DATE_ACTION);
-    const candidates: { day: string; label: string; at: number }[] = later.map((h) => ({
-      day: baghdadDay(h.createdAt), label: STAGE_EVENT_LABEL[h.actionType] ?? h.actionType, at: new Date(h.createdAt).getTime(),
-    }));
-    if (o.startedAt) candidates.push({ day: baghdadDay(o.startedAt), label: "بدء العمل", at: new Date(o.startedAt).getTime() });
+    //  **وما سبق الإسنادَ الحاليّ لا يقيّده** (§4.gd التكملة): أمرٌ أُعيد فتحُه بتاريخٍ جديد يحمل أحداثاً قبله (إلغاؤه وما قبله) — تلك
+    //  تاريخٌ وقع لا مراحلُ هذه البداية. وفي الأمر العاديّ لا حدثَ قبل إسناده أصلاً، فالقاعدةُ كما كانت.
+    const assignedAt = new Date(o.createdAt).getTime();
+    const candidates: { day: string; label: string; at: number }[] = later
+      .filter((h) => new Date(h.createdAt).getTime() > assignedAt)
+      .map((h) => ({
+        day: baghdadDay(h.createdAt), label: STAGE_EVENT_LABEL[h.actionType] ?? h.actionType, at: new Date(h.createdAt).getTime(),
+      }));
+    if (o.startedAt && new Date(o.startedAt).getTime() > assignedAt) {
+      candidates.push({ day: baghdadDay(o.startedAt), label: "بدء العمل", at: new Date(o.startedAt).getTime() });
+    }
     candidates.sort((a, b) => a.at - b.at);
     const currentDay = baghdadDay(o.createdAt);
     const err = assignmentDateError({
