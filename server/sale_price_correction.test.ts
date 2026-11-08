@@ -389,6 +389,20 @@ async function main() {
     same("ط١. **وتصحيحُه إلى سعرٍ مدفوع يمرّ** — قلمُ الكلفة قبل البيع لا يُحسب بعده (الحدُّ لحظةُ الإتمام)",
       [rFr.status, mF.followup[1], mF.caseCost, mF.episode[1]], [200, 2_000_000, 2_000_000, 2_000_000]);
 
+    //  مراجعة Codex على #721: بيعٌ مجانيّ ⟵ تخفيضُ الكلفة بعده ⟵ رسمُ صيانةٍ للجهاز بعدهما — الرسمُ لا يُزيح الحدَّ عن لحظة البيع.
+    const Fm = await operation("مجاني ثم تخفيض ثم صيانة");
+    await http("POST", `/api/followups/${Fm.followupId}/complete-sale`, S.recv, {
+      deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 1_000_000, expertUserId: EXPERT,
+    });
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,0,'case_cost_edit',$2,'قلم الكلفة بعد البيع', NOW() + interval '1 second')`, [Fm.patientId, Fm.caseId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id, notes, created_at)
+             VALUES ($1,1,50000,'maintenance',$2,$3,'رسم صيانة لاحق', NOW() + interval '2 seconds')`, [Fm.patientId, Fm.caseId, Fm.episodeId]);
+    const rFm = await correct(Fm.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
+    const mFm = await moneyOf(Fm);
+    same("ط٣. **وقيدٌ لاحق للجهاز (صيانة) لا يُزيح الحدّ** — قلمُ الكلفة بين البيع والصيانة يُحسب «بعد البيع» ⟵ ٤٠٩ ولا يتحرّك السعر",
+      [rFm.status, /عُدّلت بعد البيع/.test(rFm.body?.error ?? ""), mFm.followup[1]], [409, true, 0]);
+
     //  متابعةٌ منتهية من فرعٍ لا يصله مديرُ الفرع (ملفٌّ مشترك) — بلا زرّ له، وبزرٍّ للمسؤول.
     const Sh = await operation("بيع من فرع آخر", { original: 2_000_000, discount: 0 });
     await q(`UPDATE post_exam_followups SET branch_id = 2 WHERE id=$1`, [Sh.followupId]);
