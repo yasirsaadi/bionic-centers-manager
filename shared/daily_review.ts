@@ -140,6 +140,16 @@ export function workHistoryMovementLabel(actionType: string, notes: string | nul
     case "assignment_date_change": return "تعديل تاريخ الإسناد";
     // الاستعلاماتُ سجّلت عودةَ المريض لأخذ القالب على أمره القائم (§4.cl).
     case "mold_return": return "حضر لأخذ القالب";
+    // القالبُ الاختباريّ واتّصالُ الاستعلامات والعودةُ للنهائي (§4.bz).
+    case "trial_socket": return "تسليم قالب اختباري";
+    case "trial_call": return "اتصال الاستعلامات بشأن القالب النهائي";
+    case "trial_return": return "عودة للقالب النهائي";
+    // طلبُ الإلغاء بموافقة المدير وإعادةُ فتح الملغى (§4.gd).
+    case "cancel_request": return "طلب إلغاء الأمر";
+    case "cancel_request_rejected": return "رفض طلب الإلغاء";
+    case "cancel_request_withdrawn": return "سحب طلب الإلغاء";
+    case "cancel_request_lapsed": return "سقوط طلب الإلغاء";
+    case "reopened": return "إعادة فتح الأمر";
     case "status_change": {
       const n = (notes ?? "").trim();
       const hit = STATUS_CHANGE_PREFIXES.find((x) => n.startsWith(x.prefix));
