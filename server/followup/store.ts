@@ -1283,11 +1283,13 @@ export async function correctSalePriceAfterConversion(params: {
       const adj = await tx.execute(sql`
         SELECT 1 FROM cost_entries ce
          WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit')
-           AND ce.created_at >= COALESCE(
-             (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId}),
-             --  وبيعٌ بلا قيد (مجانيٌّ فرقُه صفر، أو موروثٌ بلا هويّة جهاز) يُقاس بلحظة إتمامه — لا بالتاريخ كلِّه (مراجعة Codex على #719).
+           --  الحدُّ **أبكرُ** لحظتَي البيع: إتمامُه (converted_at) وأوّلُ قيدٍ للجهاز. فبيعٌ بلا قيد (مجانيٌّ فرقُه صفر، أو موروثٌ بلا
+           --  هويّة جهاز) يُقاس بإتمامه لا بالتاريخ كلِّه (مراجعة Codex على #719)، ولا يُزيحه قيدٌ لاحق للجهاز نفسِه — رسمُ صيانةٍ بعد
+           --  البيع كان يصير «أوّلَ قيد» فيُسقط تعديلاً وقع بينهما (مراجعة Codex على #721). و LEAST يتجاهل الغائب.
+           AND ce.created_at >= COALESCE(LEAST(
              (SELECT converted_at FROM post_exam_followups WHERE id = ${cur.id}),
-             '-infinity'::timestamptz)
+             (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId})
+           ), '-infinity'::timestamptz)
          LIMIT 1
       `);
       if ((adj.rows ?? []).length > 0) {
