@@ -76,12 +76,13 @@ console.log("\n── مطابقةُ لوحة التصنيع ──");
   check("١٢. **كلُّ عذرٍ يقع في القسم الذي تضعه فيه شرائطُ اللوحة**",
     mismatch.length === 0, `مختلفٌ: ${JSON.stringify(mismatch)}`);
 
-  const mfg = readFileSync(join(import.meta.dirname, "./Manufacturing.tsx"), "utf8");
-  const lateTiles = [...mfg.matchAll(/<StatTile\s+label="([^"]+)"/g)]
-    .map((m) => m[1]).filter((l) => l.includes("متأخر"));
-  check("١٣. **عنوانا القسمين هما مربّعا اللوحة بحرفهما**",
-    JSON.stringify(lateTiles) === JSON.stringify([def("overdue")?.title, def("overdue_excused")?.title]),
-    JSON.stringify(lateTiles));
+  //  ومنذ ٢٠٢٦-١١-٠٨ خرج مربّعا «متأخرة» من شريط أرقام اللوحة (قرارُ المالك: المكرّرُ يُحذف) — فاللوحةُ تقول القسمين
+  //  بشريطيها `overdue` و`overdue_excused`، وعنوانا القسمين هنا يطابقانهما بما يفرّق بينهما: «بدون عذر» و«بعذر».
+  check("١٣. **عنوانا القسمين يفرّقان كشريطَي اللوحة**: «بدون عذر» للأحمر و«بعذر» للكهرمانيّ",
+    def("overdue")!.title.includes("بدون عذر") && red.label.includes("بدون عذر")
+    && def("overdue_excused")!.title.endsWith("بعذر") && amber.label.endsWith("بعذر")
+    && !def("overdue_excused")!.title.includes("بدون"),
+    JSON.stringify([def("overdue")?.title, red.label, def("overdue_excused")?.title, amber.label]));
 }
 
 // ══ عقدُ المصدر — لا الرسم ═══════════════════════════════════════════════

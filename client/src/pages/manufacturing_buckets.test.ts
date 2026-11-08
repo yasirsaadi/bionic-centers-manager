@@ -254,9 +254,18 @@ check(pageCode.includes("إظهار كل الأوامر") && pageCode.includes("
 //  والرقمُ نفسُه يُعدّ في ثلاثة مواضعَ أخرى على الشاشة ذاتها — من الخادم.
 //  فإن بقي أحدُها «متأخرة» رقماً واحداً يخلط الاثنين، قال المربّعُ شيئاً
 //  وقال الشريطُ تحته غيرَه (قرارُ المالك ٢٠٢٦-٠٩-٢٤).
-check(pageCode.includes('<StatTile label="متأخرة بدون عذر" value={overview.totals.overdue} tone="red" />')
-  && pageCode.includes('<StatTile label="متأخرة بعذر" value={overview.totals.overdueExcused} tone="amber" />'),
-  "ز.١٣ **مربّعُ «متأخرة» انقسم اثنين**: الأحمرُ بدون عذر، والكهرمانيُّ بعذر");
+//  ومنذ ٢٠٢٦-١١-٠٨ (قرارُ المالك «احذف المكرّر من الشريط»): مربّعا «متأخرة» و«جاهز للتسليم» خرجا من شريط الأرقام لأنّ
+//  الشرائطَ تحته تقولها بأعدادها وتُضغَط — فالانقسامُ صار في الشريطين `overdue` و`overdue_excused` وحدهما.
+check(!/<StatTile\s+label="[^"]*(متأخر|جاهز)/.test(pageCode)
+  && ["overdue", "overdue_excused", "ready"].every((k) => !!bucketDef(k)),
+  "ز.١٣ **ولا رقمَ مكرّراً في شريط الأرقام**: المتأخرةُ بقسميها والجاهزةُ شرائطُ تُضغَط");
+const tiles = [...pageCode.matchAll(/<StatTile\s+label="([^"]+)"/g)].map((m) => m[1]);
+check(JSON.stringify(tiles) === JSON.stringify(["الإجمالي", "لم تتحرّك ≥14 يوم", "مكتملة"]),
+  "ز.١٣ب **وشريطُ الأرقام ما لا شريطَ له**: الإجمالي والتي لم تتحرّك والمكتملة", JSON.stringify(tiles));
+check(pageCode.includes('data-testid="button-more-filters"') && pageCode.includes("aria-expanded={moreOpen}")
+  && /\[serviceFilter, purposeFilter, stageFilter, statusFilter\]\.filter\(\(v\) => v !== "all"\)\.length/.test(pageCode)
+  && /\{hiddenActive > 0 && \(\s*<span[^>]*data-testid="badge-more-filters">\{hiddenActive\}<\/span>/.test(pageCode),
+  "ز.١٣ج **«مرشّحات أخرى» تحمل عددَ المفعَّل منها** — فلا يختفي مرشِّحٌ مفعَّل عن العين");
 check(pageCode.includes('<th className="py-2">متأخر بدون عذر</th>')
   && pageCode.includes('<th className="py-2">متأخر بعذر</th>')
   && pageCode.includes('{e.overdue}</td>') && pageCode.includes('{e.overdueExcused}</td>'),
