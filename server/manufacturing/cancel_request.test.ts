@@ -262,6 +262,28 @@ async function main() {
     const ok2 = await post(`/api/manufacturing/orders/${R2.id}/reopen`, admin, { reason: "بتاريخه" });
     eq([ok2.status, await dayOf(R2.id), (await hist(R2.id)).some((h) => h.action_type === "assignment_date_change")], [200, "2026-08-05", false],
       "هـب٦. وبلا يومٍ يُفتح بتاريخه الأصليّ كما كان، بلا سطر تعديل");
+    //  مراجعة Codex على #718 — (١) تعديلٌ لاحق لا يمحو يومَ الإنشاء، (٢) الحدُّ سطرُ الفتح لا تاريخُ الإسناد المتحرّك.
+    const crDay = async (id: number) => ((await db.execute(sql`SELECT to_char(created_at AT TIME ZONE 'Asia/Baghdad','YYYY-MM-DD') AS d FROM prosthetic_work_history WHERE work_order_id=${id} AND action_type='created'`)).rows as any[])[0]?.d;
+    eq(await crDay(R1.id), "2026-08-05", "هـب٧. **وتعديلُ الإسناد بعد الفتح لا يمحو يومَ «إنشاء الأمر»** — يبقى ٥ آب");
+    const patchDay = (id: number, date: string) => fetch(BASE + `/api/manufacturing/orders/${id}/assignment-date`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", "x-test-session": Buffer.from(JSON.stringify(admin), "utf8").toString("base64") },
+      body: JSON.stringify({ date, reason: "تصحيح" }),
+    });
+    const R3 = await mkOld();
+    eq((await post(`/api/manufacturing/orders/${R3.id}/reopen`, admin, { reason: "بيومٍ قديم", assignmentDay: "2026-08-06" })).status, 200,
+      "هـب٨. يُفتح بيومٍ قبل الإلغاء القديم (٦ آب)");
+    const ch3 = await patchDay(R3.id, "2026-08-10");
+    eq([ch3.status, await dayOf(R3.id), await crDay(R3.id)], [200, "2026-08-10", "2026-08-05"],
+      "هـب٩. **ثمّ يُعدَّل إسنادُه إلى ما بعد إلغاء ٩ آب** — أحداثُ ما قبل الفتح لا تقيّده ولو سبقها الإسنادُ المختار، والإنشاءُ بيومه");
+    //  والأمرُ بلا فتحٍ كما كان: حدثٌ لاحق يقيّده، وإنشاؤه يتبع الإسناد.
+    const N = await mkOrder({ stage: "order_received" });
+    await db.execute(sql`UPDATE patients SET created_at = '2026-08-01T09:00:00+03:00' WHERE id=${N.patient}`);
+    await db.execute(sql`UPDATE prosthetic_work_orders SET created_at = '2026-08-05T20:27:00+03:00' WHERE id=${N.id}`);
+    await db.execute(sql`INSERT INTO prosthetic_work_history (work_order_id, action_type, from_stage, to_stage, notes, performed_by, created_at)
+                         VALUES (${N.id}, 'created', NULL, 'order_received', 'إنشاء', ${X}, '2026-08-05T20:27:00+03:00'),
+                                (${N.id}, 'status_change', 'order_received', 'order_received', 'توقّف', ${X}, '2026-08-09T15:28:00+03:00')`);
+    eq((await patchDay(N.id, "2026-08-10")).status, 400, "هـب١٠. وأمرٌ لم يُفتح ثانيةً يقيّده حدثُه اللاحق كما كان (٤٠٠)");
+    eq([(await patchDay(N.id, "2026-08-07")).status, await crDay(N.id)], [200, "2026-08-07"], "هـب١١. وإنشاؤه يتبع إسنادَه كما كان");
 
     console.log("\nهـ — الطلبُ المعلَّق يسقط بانتهاء الأمر بلا قرار (مراجعة Codex على #714)");
     //  الخبيرُ طلب الإلغاء ثمّ أكمل الأمرَ — والرفضُ والسحبُ يرفضان المنتهي، فكان يبقى طلبٌ بلا قرارٍ إلى الأبد.
