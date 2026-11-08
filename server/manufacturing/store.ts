@@ -6,7 +6,7 @@
 //   - atomic patient + work-order creation via a real transaction.
 
 import { addToOpenSummary, emptyOpenSummary } from "@shared/expert_open_orders";
-import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn, notifyDeliveryDateChanged } from "../staff_telegram/notify";
+import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn, notifyDeliveryDateChanged, notifyCancelRequest } from "../staff_telegram/notify";
 import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
 import { baghdadTodayYmd, baghdadMomentOn } from "@shared/visit_date";
 import { recordAttendanceVisitTx } from "../visits/attendance";
@@ -31,7 +31,7 @@ import {
   orderDeviceSpecs, deviceSpecsFromPrescription, hasAnySpec, type OrderDeviceSpecs,
 } from "../medical/episode_prescription";
 import {
-  syncEpisodeToOrderTerminalState, lockCaseAndReadOpenEpisode,
+  syncEpisodeToOrderTerminalState, restoreEpisodeForReopenedOrder, lockCaseAndReadOpenEpisode,
   isDeviceServiceType, DeviceEpisodeError, resolveDeviceTargetTx,
 } from "../device_episodes/store";
 import { parseComponent, componentLabel, normalizeExtraComponents } from "@shared/prosthetic_parts";
@@ -743,6 +743,8 @@ export interface OrderCard {
   patientName: string;
   /** رمزُ المريض — لورقة «الحالات غير المكتملة» (§4.gc). */
   patientCode: string | null;
+  /** طلبُ إلغاءٍ معلَّق ينتظر المديرَ أو المسؤول (§4.gd) — شارةٌ على البطاقة. */
+  cancelRequestedAt: Date | string | null;
   branchId: number;
   branchName: string | null;
   serviceType: string;
@@ -839,7 +841,7 @@ export async function listOrders(f: OrderFilters): Promise<OrderCard[]> {
       holdReasonCode: WO.holdReasonCode, holdNote: WO.holdNote,
       //  القالبُ الاختباري (§4.bz) — شريطُه في اللوحة وتفصيلُه على الصفّ.
       trialFinalDate: WO.trialFinalDate, trialSocketCount: WO.trialSocketCount, trialLastCallAt: WO.trialLastCallAt,
-      patientName: patients.name, patientCode: patients.patientCode, prostheticType: patients.prostheticType, supportType: patients.supportType,
+      patientName: patients.name, patientCode: patients.patientCode, cancelRequestedAt: WO.cancelRequestedAt, prostheticType: patients.prostheticType, supportType: patients.supportType,
       branchName: branches.name, expertName: systemUsers.displayName,
       deviceEpisodeId: WO.deviceEpisodeId,
       // ══ **ما يُصنَع من معاينة هذا الجهاز هو** (المرحلة الثانية، MULTI-2) ═══
@@ -948,6 +950,7 @@ async function enrichOrders(rows: any[]): Promise<OrderCard[]> {
       patientId: r.patientId,
       patientName: r.patientName,
       patientCode: r.patientCode ?? null,
+      cancelRequestedAt: r.cancelRequestedAt ?? null,
       branchId: r.branchId,
       branchName: r.branchName ?? null,
       serviceType: r.serviceType,
@@ -1012,6 +1015,10 @@ export async function getOrderDetail(id: number) {
       startedAt: WO.startedAt, completedAt: WO.completedAt, finalResult: WO.finalResult,
       finalNotes: WO.finalNotes, expertUserId: WO.expertUserId, assignedBy: WO.assignedBy,
       createdAt: WO.createdAt,
+      //  طلبُ الإلغاء المعلَّق (§4.gd) — بطاقتُه وزرّا الموافقة والرفض في صفحة الأمر.
+      cancelRequestedAt: WO.cancelRequestedAt, cancelRequestedBy: WO.cancelRequestedBy, cancelRequestNote: WO.cancelRequestNote,
+      cancelRequestedByName: sql<string | null>`(SELECT display_name FROM system_users WHERE id = ${WO.cancelRequestedBy})`,
+      adminVoided: sql<boolean>`(${WO.adminVoidReversalId} IS NOT NULL)`,
       branchName: branches.name, expertName: systemUsers.displayName,
       //  **هويّةُ الجهاز** (المرحلة الثانية، MULTI-2): الأمرُ يعرف حلقتَه، فتُقرأ
       //  مواصفاتُه من معاينة تلك الحلقة لا من أعمدة المريض المشتركة.
@@ -1836,9 +1843,15 @@ export async function cancelOrder(params: {
     const live = await lockOrder(tx, order.id);
     assertWriteAuthority(live, params.authority);
     assertNotTerminal(live);
+    //  **وطلبُ الخبير المعلَّق يُقرأ تحت القفل** (§4.gd): الموافقةُ عليه إلغاءٌ بسببه ومَن طلبه، فيُكتبان في السطر ويُمحى الطلب.
+    const pending = await readCancelRequest(tx, order.id);
+    const note = (params.note ?? "").trim() || pending?.note || null;
     const cancelledAt = new Date();
     const [updated] = await tx.update(WO)
-      .set({ status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: cancelledAt })
+      .set({
+        status: "cancelled", holdReasonCode: null, holdNote: null, updatedAt: cancelledAt,
+        cancelRequestedAt: null, cancelRequestedBy: null, cancelRequestNote: null,
+      })
       .where(eq(WO.id, order.id)).returning();
 
     // والإلغاء كذلك — بالختم نفسه. والسبب هو ملاحظة الإلغاء إن كتبها
@@ -1846,15 +1859,140 @@ export async function cancelOrder(params: {
     // ولا عكسٌ مالي هنا — تصحيح الحساب قرارٌ تجاري صريح لا أثرٌ جانبي.
     await syncEpisodeToOrderTerminalState(tx, updated, {
       status: "cancelled", at: cancelledAt,
-      reason: (params.note ?? "").trim() || null,
+      reason: note,
       actor: { userId: params.performedBy, userName: null },
     });
 
+    const byRequest = pending ? ` — بموافقةٍ على طلب ${pending.byName ?? "الخبير"}` : "";
     await tx.insert(WH).values({
       workOrderId: order.id,
       actionType: "status_change",
       fromStage: live.currentStage, toStage: live.currentStage,
-      notes: `إلغاء الأمر${params.note ? ` — ${params.note}` : ""}`,
+      notes: `إلغاء الأمر${byRequest}${note ? ` — ${note}` : ""}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+// ══ **طلبُ الإلغاء وموافقةُ المدير** (ترحيل ١٩٤، §4.gd — قولُ المالك ٢٠٢٦-١١-٠٨: «ممكن أن يلغي لكن بمصادقة المدير») ══
+//  الخبيرُ يطلب بسببه والأمرُ يبقى قائماً كما هو (لا تتغيّر حالتُه ولا مرحلتُه)، فيصل المديرَ والمسؤولَ تنبيهٌ؛ والموافقةُ هي `cancelOrder`
+//  نفسُها تقرأ الطلبَ وتمحوه، والرفضُ يمحوه بسطرٍ في الخطّ الزمني. وطالبُه يسحبه ما دام معلَّقاً.
+
+export class CancelRequestError extends Error {
+  constructor(message: string, public readonly status = 409) { super(message); }
+}
+
+async function readCancelRequest(tx: any, orderId: number): Promise<{ at: Date; byUserId: number | null; byName: string | null; note: string | null } | null> {
+  const r = await tx.execute(sql`
+    SELECT wo.cancel_requested_at AS at, wo.cancel_requested_by AS by_user_id, wo.cancel_request_note AS note, u.display_name AS by_name
+      FROM prosthetic_work_orders wo LEFT JOIN system_users u ON u.id = wo.cancel_requested_by
+     WHERE wo.id = ${orderId}`);
+  const row = (r.rows ?? [])[0] as any;
+  if (!row || !row.at) return null;
+  return { at: row.at, byUserId: row.by_user_id ?? null, byName: row.by_name ?? null, note: row.note ?? null };
+}
+
+/** الخبيرُ (أو كلُّ مَن يكتب على الأمر) يطلب إلغاءَه بسببٍ مكتوب — والأمرُ يبقى قائماً حتى يُقرَّر. */
+export async function requestOrderCancel(params: {
+  order: ProstheticWorkOrder; note: string; performedBy: number | null; authority: WriteAuthority;
+}): Promise<ProstheticWorkOrder> {
+  const note = params.note.trim();
+  if (!note) throw new CancelRequestError("اكتب سبب طلب الإلغاء", 400);
+  return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, params.order.id);
+    assertWriteAuthority(live, params.authority);
+    assertNotTerminal(live);
+    if (await readCancelRequest(tx, params.order.id)) throw new CancelRequestError("على هذا الأمر طلبُ إلغاءٍ ينتظر قرار المدير");
+    const [updated] = await tx.update(WO)
+      .set({ cancelRequestedAt: new Date(), cancelRequestedBy: params.performedBy, cancelRequestNote: note, updatedAt: new Date() })
+      .where(eq(WO.id, params.order.id)).returning();
+    await tx.insert(WH).values({
+      workOrderId: params.order.id, actionType: "cancel_request",
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: `طلب إلغاء الأمر — ${note} (بانتظار موافقة المدير أو المسؤول)`,
+      performedBy: params.performedBy,
+    });
+    await notifyCancelRequest(tx, {
+      orderId: params.order.id, patientId: updated.patientId, branchId: updated.branchId,
+      note, actorUserId: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/** المديرُ أو المسؤولُ يرفض الطلب (`withdraw: false`)، أو طالبُه يسحبه (`withdraw: true`) — والأمرُ كما كان. */
+export async function clearOrderCancelRequest(params: {
+  order: ProstheticWorkOrder; note?: string | null; performedBy: number | null; withdraw: boolean;
+}): Promise<ProstheticWorkOrder> {
+  return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, params.order.id);
+    assertNotTerminal(live);
+    const pending = await readCancelRequest(tx, params.order.id);
+    if (!pending) throw new CancelRequestError("لا طلبَ إلغاءٍ معلَّق على هذا الأمر");
+    if (params.withdraw && pending.byUserId !== params.performedBy) throw new CancelRequestError("يسحب الطلبَ صاحبُه وحده", 403);
+    const [updated] = await tx.update(WO)
+      .set({ cancelRequestedAt: null, cancelRequestedBy: null, cancelRequestNote: null, updatedAt: new Date() })
+      .where(eq(WO.id, params.order.id)).returning();
+    const note = (params.note ?? "").trim();
+    await tx.insert(WH).values({
+      workOrderId: params.order.id, actionType: params.withdraw ? "cancel_request_withdrawn" : "cancel_request_rejected",
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: params.withdraw
+        ? "سحب طلب الإلغاء — الأمر مستمرّ"
+        : `رُفض طلب الإلغاء${pending.byName ? ` (طلبه ${pending.byName})` : ""} — الأمر مستمرّ${note ? ` — ${note}` : ""}`,
+      performedBy: params.performedBy,
+    });
+    return updated;
+  });
+}
+
+/**
+ * **إعادةُ فتح أمرٍ ملغى** — للمسؤول وحده (§4.gd، واقعةُ قحطان ياسين علوان).
+ *
+ * الإلغاءُ لا يحرّك المرحلة، فالأمرُ يعود نشطاً **في مرحلته نفسِها وبخبيره نفسِه**، وحلقةُ جهازه الملغاةُ معه تعود «قيد التصنيع» — فيعود
+ * سعرُها إلى كلفة المريض كما كان، والدفعاتُ لم تُمسّ أصلاً (الإلغاءُ لا يعكس مالاً). ولا يُعاد فتحُ ما أبطله تصحيحٌ إداريّ (له عكسُه الماليّ
+ * الخاصّ)، ولا ما أُغلقت حالتُه، ولا ما قام بعده أمرٌ نشطٌ للجهاز نفسِه.
+ */
+export async function reopenCancelledOrder(params: {
+  orderId: number; reason: string; performedBy: number | null;
+}): Promise<ProstheticWorkOrder> {
+  const reason = params.reason.trim();
+  if (!reason) throw new CancelRequestError("اكتب سبب إعادة الفتح", 400);
+  return await db.transaction(async (tx) => {
+    const live = await lockOrder(tx, params.orderId);
+    if (live.status !== "cancelled") throw new CancelRequestError("الأمر ليس ملغى");
+    const [row] = await tx.select().from(WO).where(eq(WO.id, params.orderId));
+    if (row.adminVoidReversalId) {
+      throw new CancelRequestError("أُلغي هذا الأمر بتصحيحٍ إداري عكس مالَه — لا يُعاد فتحُه من هنا");
+    }
+    let episodeRestore = false;
+    if (row.deviceEpisodeId && row.purpose === "initial_build") {
+      const ep = await tx.execute(sql`
+        SELECT e.status, e.admin_void_reversal_id, pc.status AS case_status
+          FROM patient_device_episodes e LEFT JOIN patient_cases pc ON pc.id = e.case_id
+         WHERE e.id = ${row.deviceEpisodeId}`);
+      const e = (ep.rows ?? [])[0] as any;
+      if (e?.admin_void_reversal_id) throw new CancelRequestError("أُبطل جهازُ هذا الأمر بتصحيحٍ إداري — لا يُعاد فتحُه من هنا");
+      if (e?.case_status === "closed") throw new CancelRequestError("حالةُ المريض لهذا القسم مغلقة — أعِد فتحها أوّلاً");
+      episodeRestore = e?.status === "cancelled";
+    }
+    if (row.purpose === "initial_build" && await hasOpenOrderTx(tx, {
+      patientId: row.patientId, serviceType: row.serviceType, purpose: "initial_build", deviceEpisodeId: row.deviceEpisodeId ?? null,
+    })) {
+      throw new CancelRequestError("لهذا الجهاز أمرُ تصنيعٍ آخر قيد العمل — لا يُفتح أمران له");
+    }
+    const [updated] = await tx.update(WO)
+      .set({
+        status: "active", holdReasonCode: null, holdNote: null,
+        cancelRequestedAt: null, cancelRequestedBy: null, cancelRequestNote: null, updatedAt: new Date(),
+      })
+      .where(eq(WO.id, params.orderId)).returning();
+    if (episodeRestore) await restoreEpisodeForReopenedOrder(tx, row.deviceEpisodeId!);
+    await tx.insert(WH).values({
+      workOrderId: params.orderId, actionType: "reopened",
+      fromStage: live.currentStage, toStage: live.currentStage,
+      notes: `إعادة فتح الأمر بعد إلغائه — ${reason}`,
       performedBy: params.performedBy,
     });
     return updated;
@@ -2325,6 +2463,7 @@ export class AssignmentDateError extends Error {
 const STAGE_EVENT_LABEL: Record<string, string> = {
   stage_change: "انتقال مرحلة", status_change: "تغيير حالة", reassigned: "تحويل خبير", rework: "إعادة عمل",
   delivered: "تسليم", date_change: "تحديد موعد التسليم", hold_reason: "كتابة سبب التوقّف", mold_return: "حضور لأخذ القالب", trial_socket: "تسليم قالب اختباري", trial_return: "عودة للقالب النهائي",
+  cancel_request: "طلب إلغاء", cancel_request_rejected: "رفض طلب الإلغاء", cancel_request_withdrawn: "سحب طلب الإلغاء", reopened: "إعادة فتح الأمر",
 };
 
 /**

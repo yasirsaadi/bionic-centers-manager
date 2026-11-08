@@ -2103,6 +2103,22 @@ export async function correctEpisodeAgreedCost(
  * أمرها بعينه، فلو ولّدت الدالّة وقتها لاختلف الرقمان بأجزاء الثانية
  * وصار لكل جدولٍ روايةٌ للحظة واحدة.
  */
+/**
+ * **إعادةُ فتح أمرٍ ملغى تعيد جهازَه** (§4.gd) — عكسُ نصف «الإلغاء» من `syncEpisodeToOrderTerminalState` وحده: الجهازُ الملغى مع أمره يعود
+ * «قيد التصنيع» بلا ختم إلغاءٍ ولا سببه. ولا يُمسّ ما أبطله تصحيحٌ إداريّ (له عكسُه الخاصّ) ولا ما ليس ملغى. ترجع: أعيد أم لا.
+ */
+export async function restoreEpisodeForReopenedOrder(
+  tx: { execute: (q: any) => Promise<any> },
+  episodeId: number,
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    UPDATE patient_device_episodes
+       SET status = 'in_manufacturing', cancelled_at = NULL, cancel_reason = NULL, updated_at = NOW()
+     WHERE id = ${episodeId} AND status = 'cancelled' AND admin_void_reversal_id IS NULL
+     RETURNING id`);
+  return (r.rows ?? []).length > 0;
+}
+
 export async function syncEpisodeToOrderTerminalState(
   tx: { execute: (q: any) => Promise<any> },
   order: { deviceEpisodeId: number | null; purpose: string | null },

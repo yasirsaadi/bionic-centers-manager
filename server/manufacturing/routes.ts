@@ -1183,6 +1183,81 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
     }
   });
 
+  // ---- طلبُ الإلغاء: الخبيرُ يطلب والمديرُ أو المسؤولُ يقرّر (ترحيل ١٩٤، §4.gd) ------------------
+  //  قولُ المالك ٢٠٢٦-١١-٠٨: «ممكن أن يلغي لكن بمصادقة المدير». فالخبيرُ لا يلغي، يطلب بسببه والأمرُ قائم؛ والمديرُ والمسؤولُ يلغيان
+  //  مباشرةً من «إلغاء الأمر» (وهي الموافقةُ نفسُها حين يكون طلبٌ معلَّق) أو يرفضان.
+  const cancelRequestError = (res: any, e: unknown): boolean => {
+    if (e instanceof store.CancelRequestError) { res.status(e.status).json({ error: e.message }); return true; }
+    return handledConflict(res, e);
+  };
+  app.post("/api/manufacturing/orders/:id/cancel-request", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (s.isAdmin || isManager(s)) return res.status(400).json({ error: "للمدير والمسؤول «إلغاء الأمر» مباشرةً — الطلبُ للخبير" });
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    const { raw, authority } = w;
+    try {
+      const updated = await store.requestOrderCancel({
+        order: raw, authority, note: String(req.body?.note ?? ""), performedBy: s.userId ?? null,
+      });
+      await audit(req, "prosthetic_work_order", raw.id, "cancel_request", raw.branchId, `طلب إلغاء أمر التصنيع — ${String(req.body?.note ?? "").trim()}`);
+      res.json(updated);
+    } catch (e) {
+      if (cancelRequestError(res, e)) return;
+      throw e;
+    }
+  });
+  app.post("/api/manufacturing/orders/:id/cancel-request/reject", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!(s.isAdmin || isManager(s))) return res.status(403).json({ error: "قرارُ طلب الإلغاء للمدير والمسؤول" });
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    try {
+      const updated = await store.clearOrderCancelRequest({
+        order: w.raw, note: strOrU(req.body?.note) ?? null, performedBy: s.userId ?? null, withdraw: false,
+      });
+      await audit(req, "prosthetic_work_order", w.raw.id, "cancel_request_rejected", w.raw.branchId, "رفض طلب إلغاء أمر التصنيع");
+      res.json(updated);
+    } catch (e) {
+      if (cancelRequestError(res, e)) return;
+      throw e;
+    }
+  });
+  app.post("/api/manufacturing/orders/:id/cancel-request/withdraw", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    const w = await loadWritable(req, res);
+    if (!w) return;
+    try {
+      const updated = await store.clearOrderCancelRequest({
+        order: w.raw, performedBy: s.userId ?? null, withdraw: true,
+      });
+      await audit(req, "prosthetic_work_order", w.raw.id, "cancel_request_withdrawn", w.raw.branchId, "سحب طلب إلغاء أمر التصنيع");
+      res.json(updated);
+    } catch (e) {
+      if (cancelRequestError(res, e)) return;
+      throw e;
+    }
+  });
+  //  **إعادةُ فتح أمرٍ ملغى** — للمسؤول وحده بسببٍ مكتوب (واقعةُ قحطان ياسين علوان).
+  app.post("/api/manufacturing/orders/:id/reopen", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!s.isAdmin) return res.status(403).json({ error: "إعادةُ فتح الأمر للمسؤول وحده" });
+    const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "معرّف غير صالح" });
+    const raw = await store.getRawOrder(id);
+    if (!raw) return res.status(404).json({ error: "الأمر غير موجود" });
+    try {
+      const reason = String(req.body?.reason ?? "");
+      const updated = await store.reopenCancelledOrder({ orderId: id, reason, performedBy: s.userId ?? null });
+      await audit(req, "prosthetic_work_order", id, "reopen", raw.branchId, `إعادة فتح أمر التصنيع بعد إلغائه — ${reason.trim()}`);
+      res.json(updated);
+    } catch (e: any) {
+      if (cancelRequestError(res, e)) return;
+      if (e?.code === "23505") return res.status(409).json({ error: "لهذا الجهاز أمرٌ آخر قيد العمل — لا يُفتح أمران له" });
+      throw e;
+    }
+  });
+
   // ---- cancel ----------------------------------------------------------------
   app.post("/api/manufacturing/orders/:id/cancel", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);

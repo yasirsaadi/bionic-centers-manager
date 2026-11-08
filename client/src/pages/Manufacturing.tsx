@@ -40,6 +40,8 @@ interface OrderCard {
   holdReasonCode: string | null; holdNote: string | null;
   //  القالبُ الاختباري (§4.bz).
   trialAwaiting?: boolean; trialFinalDate?: string | null; trialSocketCount?: number; trialCallState?: TrialCallState;
+  //  طلبُ إلغاءٍ معلَّق ينتظر المديرَ أو المسؤول (§4.gd).
+  cancelRequestedAt?: string | null;
 }
 
 interface Branch { id: number; name: string; }
@@ -125,6 +127,9 @@ function OrderRow({ o }: { o: OrderCard }) {
             </div>
             <div className="text-left flex flex-col items-end gap-1 shrink-0">
               <Badge variant="outline" className={`text-xs ${statusTone(o.status)}`}>{STATUS_LABELS[o.status] ?? o.status}</Badge>
+              {o.cancelRequestedAt && o.status !== "cancelled" && o.status !== "completed" && (
+                <Badge variant="outline" className="text-xs border-rose-300 bg-rose-50 text-rose-800" data-testid={`badge-cancel-request-${o.id}`}>طلب إلغاء — بانتظار المدير</Badge>
+              )}
               <span className="text-xs font-medium text-slate-700">{STAGE_LABELS[o.currentStage] ?? o.currentStage}</span>
             </div>
           </div>
