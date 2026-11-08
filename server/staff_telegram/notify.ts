@@ -41,6 +41,25 @@ async function safe(ex: Executor | null | undefined, fn: () => Promise<void>): P
 
 const dept = (s: string | null | undefined) => DEPARTMENT_LABELS[s as Department] ?? "";
 
+/**
+ * **خبيرُ الأمر ومَن سجّل الحركة** (طلبُ المالك ٢٠٢٦-١١-٠٨: «لا يظهر مَن قام بذلك، فقط الفرع») — سطرٌ يُلحق برسائل التصنيع
+ * التي تذهب للفرع: الخبيرُ المُسنَد إليه الأمرُ الآن، و«سجّله» حين ضغط الزرَّ غيرُه (استقبالٌ أو مسؤول). وأيُّ غيابٍ يُسقط جزءَه وحده.
+ */
+async function orderPeople(ex: Executor | null | undefined, orderId: number, actorUserId: number | null | undefined): Promise<string> {
+  const r = await (ex ?? db).execute(sql`
+    SELECT wo.expert_user_id, e.display_name AS expert, a.display_name AS actor
+      FROM prosthetic_work_orders wo
+      LEFT JOIN system_users e ON e.id = wo.expert_user_id
+      LEFT JOIN system_users a ON a.id = ${actorUserId ?? null}::int
+     WHERE wo.id = ${orderId}`);
+  const row = (r.rows[0] ?? {}) as any;
+  const expert = String(row.expert ?? "").trim();
+  const actor = String(row.actor ?? "").trim();
+  const byOther = actor && actorUserId != null && Number(row.expert_user_id) !== Number(actorUserId);
+  const parts = [expert ? `الخبير: ${expert}` : "", byOther ? `سجّله: ${actor}` : ""].filter(Boolean);
+  return parts.length ? `\n${parts.join(" — ")}` : "";
+}
+
 export function notifyExamRequest(ex: Executor | null | undefined, p: {
   patientId: number; branchId: number | null; specialty: string; actorUserId?: number | null;
 }) {
@@ -159,9 +178,10 @@ export function notifyStage(ex: Executor | null | undefined, p: {
 }) {
   return safe(ex, async () => {
     const c = await ctx(ex, p.patientId, p.branchId);
+    const people = await orderPeople(ex, p.orderId, p.actorUserId);
     const text = p.stage === "ready_for_fitting"
-      ? `✅ جاهز للتجربة والتسليم: ${c.who} (أمر ${p.orderId})${c.branch} — يُستدعى المريض`
-      : `📦 سُلِّم: ${c.who} (أمر ${p.orderId})${c.branch}`;
+      ? `✅ جاهز للتجربة والتسليم: ${c.who} (أمر ${p.orderId})${c.branch} — يُستدعى المريض${people}`
+      : `📦 سُلِّم: ${c.who} (أمر ${p.orderId})${c.branch}${people}`;
     await enqueueStaffEvent(ex, {
       event: p.stage, branchId: c.branchId, excludeUserId: p.actorUserId ?? null,
       text, linkPath: `/patients/${p.patientId}`,
@@ -176,9 +196,10 @@ export function notifyHoldRework(ex: Executor | null | undefined, p: {
   return safe(ex, async () => {
     const c = await ctx(ex, p.patientId, p.branchId);
     const reason = [p.reasonCode ? REASON_CODE_LABELS[p.reasonCode] ?? p.reasonCode : null, p.note].filter(Boolean).join(" — ");
+    const people = await orderPeople(ex, p.orderId, p.actorUserId);
     await enqueueStaffEvent(ex, {
       event: "order_hold_rework", branchId: c.branchId, excludeUserId: p.actorUserId ?? null,
-      text: `${p.kind === "hold" ? "⏸️ توقّف" : "🔧 إعادة عمل على"} أمر التصنيع رقم ${p.orderId}: ${c.who}${c.branch}${reason ? `\nالسبب: ${reason}` : ""}`,
+      text: `${p.kind === "hold" ? "⏸️ توقّف" : "🔧 إعادة عمل على"} أمر التصنيع رقم ${p.orderId}: ${c.who}${c.branch}${people}${reason ? `\nالسبب: ${reason}` : ""}`,
       linkPath: `/manufacturing/orders/${p.orderId}`,
     });
   });

@@ -256,6 +256,8 @@ async function main() {
     ob = await outbox(m);
     same("د٦. التوقّفُ ⟵ تنبيهٌ فرعيٌّ بالسبب مقروءاً",
       ob.map((r) => [r.event_type, r.branch_id, r.text.includes("المواد غير متوفّرة") && r.text.includes("نفد السيليكون")]), [["order_hold_rework", 1, true]]);
+    same("د٦ب. **وفيه خبيرُ الأمر** — والخبيرُ نفسُه سجّله فلا «سجّله»",
+      ob.map((r) => [r.text.includes(`الخبير: موظّف ${EXP2}`), r.text.includes("سجّله")]), [[true, false]]);
 
     const bld = await mfg.createWorkOrderForExisting({ patientId: pB, branchId: 2, serviceType: "medical_support", expertUserId: EXP1, assignedBy: ADMIN, purpose: "maintenance" });
     await q(`UPDATE prosthetic_work_orders SET purpose='initial_build', current_stage='manufacturing' WHERE id=$1`, [bld.id]);
@@ -267,6 +269,15 @@ async function main() {
     ob = await outbox(m);
     same("د٧. «جاهز للتجربة والتسليم» ⟵ تنبيهُ الاستقبال في فرع الأمر",
       ob.map((r) => [r.event_type, r.branch_id]), [["ready_for_fitting", 2]]);
+    same("د٧أ. **وفيه خبيرُ الأمر**", ob.map((r) => r.text.includes(`الخبير: موظّف ${EXP1}`)), [true]);
+    const pD = await mkPatient("سجاد", 2);
+    const dlv = await mfg.createWorkOrderForExisting({ patientId: pD, branchId: 2, serviceType: "medical_support", expertUserId: EXP1, assignedBy: ADMIN, purpose: "maintenance" });
+    await q(`UPDATE prosthetic_work_orders SET purpose='initial_build', current_stage='ready_for_fitting' WHERE id=$1`, [dlv.id]);
+    m = await maxId();
+    await mfg.updateStage({ order: { ...dlv, purpose: "initial_build", currentStage: "ready_for_fitting" }, toStage: "delivered", performedBy: RECV2, authority: { via: "role" } } as any);
+    ob = await outbox(m);
+    same("د٧ب. **التسليمُ بيد غير الخبير** ⟵ «الخبير: …» و«سجّله: …» معاً",
+      ob.map((r) => [r.event_type, r.text.includes(`الخبير: موظّف ${EXP1}`) && r.text.includes(`سجّله: موظّف ${RECV2}`)]), [["delivered", true]]);
 
     m = await maxId();
     await createSuggestion({ suggestedText: "سعر الركبة الجديد ٣ مليون", reason: "تحديث", actor: { userId: RECV1, name: "استقبال ١", role: "reception", branchId: 1 } as any });
