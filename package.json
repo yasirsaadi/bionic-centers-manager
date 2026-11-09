@@ -17,6 +17,7 @@
     "test:mold-return": "tsx server/manufacturing/mold_return.test.ts",
     "test:manufacturing-view": "tsx client/src/pages/manufacturing_view_mode.test.ts",
     "test:manufacturing-buckets": "tsx client/src/pages/manufacturing_buckets.test.ts",
+    "test:page-padding": "tsx client/src/pages/page_padding.test.ts",
     "test:manufacturing-purpose": "tsx server/manufacturing_purpose_filter.test.ts",
     "test:manufacturing-row-tone": "tsx client/src/pages/manufacturing_row_tone.test.ts",
     "test:manufacturing-sort": "tsx server/manufacturing_sort.test.ts",

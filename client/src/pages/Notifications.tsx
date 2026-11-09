@@ -102,7 +102,7 @@ export default function Notifications() {
   );
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
+    <div className="max-w-4xl mx-auto" dir="rtl">
       <div className="mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Bell className="w-6 h-6 text-primary" />

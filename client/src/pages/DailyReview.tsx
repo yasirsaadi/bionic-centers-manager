@@ -232,7 +232,7 @@ export default function DailyReview() {
 
   if (!isAdmin) {
     return (
-      <div className="p-4 md:p-6" dir="rtl">
+      <div className="" dir="rtl">
         <Card><CardContent className="py-10 text-center space-y-2">
           <ShieldAlert className="w-8 h-8 mx-auto text-muted-foreground" />
           <p className="text-sm text-muted-foreground" data-testid="text-daily-review-forbidden">
@@ -244,7 +244,7 @@ export default function DailyReview() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4" dir="rtl">
+    <div className="space-y-4" dir="rtl">
       <div>
         <h1 className="text-2xl font-bold">المراجعة اليومية</h1>
         <p className="text-sm text-muted-foreground">

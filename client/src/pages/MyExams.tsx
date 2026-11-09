@@ -295,7 +295,7 @@ export default function MyExams() {
   }, [pageRows, filtered]);
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto" dir="rtl">
+    <div className="max-w-5xl mx-auto" dir="rtl">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-5">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">

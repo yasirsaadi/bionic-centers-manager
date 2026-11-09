@@ -238,7 +238,7 @@ export default function MedicalReview() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
+    <div className="max-w-4xl mx-auto" dir="rtl">
       <div className="mb-5">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <ClipboardCheck className="w-5 h-5 text-primary" /> مراجعة حركة مرضى الأطراف والمساند

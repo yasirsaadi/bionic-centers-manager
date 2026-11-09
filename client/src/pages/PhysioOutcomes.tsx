@@ -65,7 +65,7 @@ export default function PhysioOutcomes() {
   const q = useQuery<Report>({ queryKey: ["/api/physio/outcomes", from, to, branchId], queryFn: async () => (await apiRequest("GET", url)).json() });
   const r = q.data;
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-4" dir="rtl">
+    <div className="max-w-6xl mx-auto space-y-4" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><TrendingUp className="w-5 h-5 text-green-700" /> نتائج العلاج الطبيعي</h1>
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs">من (يومُ اعتماد الخطّة)<Input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="mt-1 bg-white w-40" data-testid="outcomes-from" /></label>

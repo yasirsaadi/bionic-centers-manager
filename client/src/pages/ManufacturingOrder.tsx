@@ -123,7 +123,7 @@ export default function ManufacturingOrder() {
   const isRequester = pendingCancel && session?.userId != null && Number(order.cancelRequestedBy) === Number(session.userId);
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto" dir="rtl">
+    <div className="max-w-4xl mx-auto" dir="rtl">
       <Link href="/manufacturing">
         <Button variant="ghost" size="sm" className="mb-3 gap-1"><ArrowRight className="w-4 h-4" /> رجوع لوحدة التصنيع</Button>
       </Link>

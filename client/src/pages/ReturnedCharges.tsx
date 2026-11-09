@@ -83,7 +83,7 @@ export default function ReturnedCharges() {
 
   if (!mayCorrect) {
     return (
-      <div className="p-4 md:p-6" dir="rtl">
+      <div className="" dir="rtl">
         <Card><CardContent className="py-10 text-center space-y-2">
           <ShieldAlert className="w-8 h-8 mx-auto text-muted-foreground" />
           <p className="text-sm text-muted-foreground" data-testid="text-returned-forbidden">
@@ -95,7 +95,7 @@ export default function ReturnedCharges() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4" dir="rtl">
+    <div className="space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <Undo2 className="w-6 h-6 text-amber-700" />
         <h1 className="text-xl font-bold text-amber-800">{RETURNED_QUEUE_TITLE}</h1>
