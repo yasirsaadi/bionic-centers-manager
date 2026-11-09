@@ -29,5 +29,17 @@ for (const f of readdirSync(here).filter((n) => n.endsWith(".tsx"))) {
 }
 check(offenders.length === 0, "٢. **ولا جذرَ صفحةٍ يضيف حشوةً فوقها**", offenders.join(" | "));
 
+//  وغلافُ الصفحة داخل جذرها (`container` أو `mx-auto`) بلا حشوةٍ كذلك — «المحاسبة» كان جذرُها بلا حشوة
+//  وغلافُها الداخليّ `container mx-auto p-4 md:p-6` فبقي ٤٤ نقطة (ملاحظةُ Codex على #728).
+const wrappers: string[] = [];
+for (const f of readdirSync(here).filter((n) => n.endsWith(".tsx"))) {
+  const src = readFileSync(join(here, f), "utf8");
+  for (const m of src.matchAll(/className="([^"]*)"/g)) {
+    const cls = m[1];
+    if (/(?<![\w-])(?:container|mx-auto)(?![\w-])/.test(cls) && PAD.test(cls)) wrappers.push(`${f}: ${cls}`);
+  }
+}
+check(wrappers.length === 0, "٣. **ولا غلافَ صفحةٍ (`container` · `mx-auto`) يضيف حشوةً فوقها**", wrappers.join(" | "));
+
 console.log(`\n${fails === 0 ? "✅ كلُّها نجحت" : `❌ ${fails} فشل`}`);
 process.exit(fails === 0 ? 0 : 1);
