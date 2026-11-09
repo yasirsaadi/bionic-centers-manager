@@ -196,7 +196,7 @@ export default function PhysioPlanPage() {
   const removedDevices = (diff?.items ?? []).filter((i) => i.area === "device" && i.kind === "removed");
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3 print:p-0" dir={lang === "en" ? "ltr" : "rtl"}>
+    <div className="max-w-4xl mx-auto space-y-3 print:p-0" dir={lang === "en" ? "ltr" : "rtl"}>
       <div className="flex items-center justify-between gap-2 flex-wrap print:hidden">
         <Link href={`/patients/${plan.patientId}`}>
           <Button variant="ghost" size="sm" className="gap-1"><ArrowRight className="w-4 h-4" /> {t.back}</Button>
@@ -677,7 +677,7 @@ export function PhysioPlansList({ canApprove, canWrite = false }: { canApprove: 
   const wantDue = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "due";
   const [tab, setTab] = useState<"pending" | "review" | "assigned" | "deviations" | "due">(wantDue && canWrite ? "due" : canApprove ? "pending" : "assigned");
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3" dir="rtl">
+    <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ClipboardList className="w-5 h-5 text-green-700" /> خطط العلاج الطبيعي</h1>
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>

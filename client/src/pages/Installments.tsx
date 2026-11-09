@@ -24,7 +24,7 @@ export default function Installments() {
   const rows = q.data ?? [];
   const tab = TABS.find((t) => t.key === scope)!;
   return (
-    <div className="p-4 md:p-6 space-y-4" dir="rtl">
+    <div className="space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <CalendarClock className="w-6 h-6 text-primary" />
         <h1 className="text-xl font-bold text-primary">الأقساط</h1>

@@ -2964,7 +2964,7 @@ export default function Accounting() {
   //  الجانبيّ يُخفيها، لكنّ الرابطَ المباشر كان يفتحها كاملةً ثمّ تُردّ كلُّ نداءاتها. (بعد كلّ الخطّافات.)
   if (!fullAccounting && !canAddExpenses) {
     return (
-      <div className="container mx-auto p-6" dir="rtl">
+      <div className="container mx-auto" dir="rtl">
         <p className="text-sm text-muted-foreground">ليس لديك صلاحية المحاسبة — راجع المسؤول.</p>
       </div>
     );

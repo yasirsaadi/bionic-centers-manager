@@ -567,15 +567,16 @@ export default function PatientsList() {
   };
 
   return (
-    <div className="space-y-4 md:space-y-6 page-transition" dir={dir}>
-      <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center md:gap-4">
+    //  ══ **رأسٌ مضغوط** (طلبُ المالك ٢٠٢٦-١١-٠٩ بعد رأس التصنيع — §4.gg): العنوانُ بلا سطرٍ تحته، والفرعُ والتبويبان في سطرٍ واحد
+    //  على الحاسوب، والصفُّ لا يكسر الاسمَ كلمةً كلمة. ══
+    <div className="space-y-3 page-transition" dir={dir}>
+      <div className="flex flex-col gap-2 md:flex-row md:justify-between md:items-center md:gap-4">
         <div>
-          <h2 className="text-2xl md:text-3xl font-display font-bold text-slate-800">{t.patients.title}</h2>
-          <p className="text-sm md:text-base text-muted-foreground mt-1">{t.patients.subtitle}</p>
+          <h2 className="text-xl md:text-2xl font-display font-bold text-slate-800">{t.patients.title}</h2>
         </div>
         {permissions.canAddPatients && (
           <Link href="/patients/new">
-            <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 h-10 md:h-12 px-4 md:px-6 rounded-xl w-full md:w-auto">
+            <Button className="gap-2 bg-primary hover:bg-primary/90 text-white shadow-sm h-10 px-4 md:px-5 rounded-xl w-full md:w-auto">
               <Plus className="w-5 h-5" />
               {t.patients.addNewPatient}
             </Button>
@@ -584,7 +585,7 @@ export default function PatientsList() {
       </div>
 
       {/* Branch Filter + View Mode Tabs */}
-      <div className="flex flex-col gap-3 bg-white p-3 md:p-4 rounded-xl border border-border shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-white p-3 rounded-xl border border-border shadow-sm">
         {/* Branch Filter - Admin sees selector, Staff sees their branch badge */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
@@ -618,7 +619,7 @@ export default function PatientsList() {
         </div>
 
         {/* View Mode Tabs */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-2 border-t border-slate-100">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-2 border-t border-slate-100 lg:pt-0 lg:border-t-0">
           <Tabs value={viewMode} onValueChange={handleViewModeChange} className="w-full sm:w-auto">
             <TabsList className="grid grid-cols-2 w-full sm:w-auto">
               <TabsTrigger value="date" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-white" data-testid="tab-date-patients">
@@ -651,13 +652,13 @@ export default function PatientsList() {
       </div>
 
       <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
-        <div className="p-3 md:p-4 border-b border-border">
+        <div className="p-3 border-b border-border">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className={`absolute ${dir === "rtl" ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground`} />
               <Input 
                 placeholder={t.patients.searchByNameOrCondition}
-                className={`${dir === "rtl" ? "pr-10" : "pl-10"} h-10 md:h-11 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base`}
+                className={`${dir === "rtl" ? "pr-10" : "pl-10"} h-10 bg-slate-50 border-slate-200 focus:bg-white transition-colors text-sm md:text-base`}
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 data-testid="input-search-patients"
@@ -668,7 +669,7 @@ export default function PatientsList() {
                 variant="outline"
                 size="sm"
                 onClick={() => openExport("excel")}
-                className="gap-2 h-10 md:h-11 text-green-700 border-green-200 hover:bg-green-50"
+                className="gap-2 h-10 text-green-700 border-green-200 hover:bg-green-50"
                 data-testid="button-export-excel"
               >
                 <FileSpreadsheet className="w-4 h-4" />
@@ -678,7 +679,7 @@ export default function PatientsList() {
                 variant="outline"
                 size="sm"
                 onClick={() => openExport("pdf")}
-                className="gap-2 h-10 md:h-11 text-red-700 border-red-200 hover:bg-red-50"
+                className="gap-2 h-10 text-red-700 border-red-200 hover:bg-red-50"
                 data-testid="button-export-pdf"
               >
                 <FileText className="w-4 h-4" />
@@ -769,14 +770,14 @@ export default function PatientsList() {
               <Table className="min-w-[1080px]">
                 <TableHeader className="bg-slate-50/50">
                   <TableRow>
-                    <TableHead className="text-center font-bold text-slate-700 py-4 w-12 first:pr-4">#</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">{t.patients.name}</TableHead>
+                    <TableHead className="text-center font-bold text-slate-700 py-3 w-12 first:pr-4">#</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 min-w-[140px]">{t.patients.name}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patientDetails.age}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700">{t.patients.branch}</TableHead>
                     <TableHead className="text-right font-bold text-slate-700 min-w-[180px]">{t.patientDetails.condition}</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700 min-w-[220px]">{t.patients.diseaseType}</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">{t.patientForm.patientClassification}</TableHead>
-                    <TableHead className="text-right font-bold text-slate-700">{t.patients.registrationDate}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 min-w-[190px]">{t.patients.diseaseType}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 whitespace-nowrap">{t.patientForm.patientClassification}</TableHead>
+                    <TableHead className="text-right font-bold text-slate-700 whitespace-nowrap">{t.patients.registrationDate}</TableHead>
                     <TableHead className="text-left font-bold text-slate-700 last:pl-6 whitespace-nowrap">{t.patients.actions}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -790,10 +791,10 @@ export default function PatientsList() {
                   ) : (
                     paginatedPatients?.map((patient, index) => (
                       <TableRow key={patient.id} className="hover:bg-slate-50/80 transition-colors">
-                        <TableCell className="text-center font-mono text-sm text-slate-500 pr-4 py-4">
+                        <TableCell className="text-center font-mono text-sm text-slate-500 pr-4 py-2.5">
                           {startIndex + index + 1}
                         </TableCell>
-                        <TableCell className="font-medium text-slate-900 py-4">
+                        <TableCell className="font-medium text-slate-900 py-2.5">
                           <Link href={`/patients/${patient.id}${selectedBranch !== "all" ? `?branch=${selectedBranch}` : ""}`} data-testid={`patient-name-link-${patient.id}`}
                             className="hover:text-primary hover:underline underline-offset-4">
                             {patient.name}
@@ -809,7 +810,7 @@ export default function PatientsList() {
                         </TableCell>
                         <TableCell className="text-slate-600">{patient.age}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1 text-slate-600">
+                          <div className="flex items-center gap-1 text-slate-600 whitespace-nowrap">
                             <Building2 className="w-3 h-3" />
                             <span className="text-sm">{(() => { const name = getBranchName(patient.branchId); return t.branches[name as keyof typeof t.branches] || name; })()}</span>
                           </div>
@@ -820,7 +821,7 @@ export default function PatientsList() {
                         {/*  التفاصيلُ الطويلة تُقصّ عند ثلاثة أسطرٍ مقروءة
                             ويبقى النصُّ كاملاً في `title` — لا يُحذَف منه
                             شيء، ولا يُكسَر كلُّ كلمةٍ على سطر. */}
-                        <TableCell className="text-slate-600 min-w-[220px] max-w-[340px]">
+                        <TableCell className="text-slate-600 min-w-[190px] max-w-[340px]">
                           <div
                             className="line-clamp-3 break-words leading-relaxed"
                             title={patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? (patient.supportType ?? "") : (patient.diseaseType || "-")}
@@ -829,11 +830,12 @@ export default function PatientsList() {
                             {patient.isAmputee ? `${t.patients.amputeePrefix} ${patient.amputationSite}` : patient.isMedicalSupport ? patient.supportType : patient.diseaseType || '-'}
                           </div>
                         </TableCell>
-                        <TableCell className="text-slate-600 text-sm">
+                        <TableCell className="text-slate-600 text-sm whitespace-nowrap">
                           {patient.patientClassification === "new" ? t.patientForm.newPatient : patient.patientClassification === "past" ? t.patientForm.pastPatient : "-"}
                         </TableCell>
-                        <TableCell className="text-slate-500 font-mono text-sm">
-                          <div>{formatDateTimeIraq(patient.createdAt)}</div>
+                        {/*  اليومُ ثمّ الساعة — كان السطرُ الأوّل «اليوم - الساعة» ويُكرَّر الساعةُ تحته فينكسر في ثلاثة أسطر (٢٠٢٦-١١-٠٩). */}
+                        <TableCell className="text-slate-500 font-mono text-sm whitespace-nowrap">
+                          <div>{formatDateIraq(patient.createdAt)}</div>
                           <div className="text-xs text-slate-400">{formatTimeIraq(patient.createdAt)}</div>
                         </TableCell>
                         <TableCell className="pl-6">

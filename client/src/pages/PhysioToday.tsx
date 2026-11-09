@@ -49,7 +49,7 @@ export default function PhysioToday() {
     </div>
   );
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-3" dir="rtl">
+    <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><CalendarCheck className="w-5 h-5 text-green-700" /> جلسات اليوم</h1>
       <p className="text-xs text-muted-foreground">الخططُ المعتمَدة في فرعك. «إنهاء الجلسة» يكتب زيارةَ الجلسة في ملفّ المريض — فلا تُسجَّل زيارتُها ثانيةً من «سبب الحضور».</p>
       <div className="relative max-w-sm">

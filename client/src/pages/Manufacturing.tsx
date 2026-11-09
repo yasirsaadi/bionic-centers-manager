@@ -284,7 +284,7 @@ export default function Manufacturing() {
   );
 
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto" dir="rtl">
+    <div className="max-w-6xl mx-auto" dir="rtl">
       {/*  ══ **رأسٌ مضغوط** (طلبُ المالك ٢٠٢٦-١١-٠٨، بنموذجٍ وافق عليه قبل التنفيذ): العنوانُ وأرقامُ اللوحة في سطرٍ واحد،
           والمرشِّحاتُ صفٌّ واحد و«مرشّحات أخرى»، والشرائطُ أصغر — فيظهر أوّلُ مريضٍ في ربع المسافة. ══ */}
       <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">

@@ -96,7 +96,7 @@ export default function ReturnedFromDoctor() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="p-4 md:p-6 space-y-4" dir="rtl">
+    <div className="space-y-4" dir="rtl">
       <div className="flex items-center gap-2">
         <Undo2 className="w-5 h-5 text-red-600" />
         <h1 className="text-xl font-bold">{RETURNED_FROM_DOCTOR_TITLE}</h1>

@@ -137,7 +137,7 @@ export default function CashBook() {
   const branchName = sheet?.branch.name ?? branchList.find((b) => b.id === branchId)?.name ?? "";
 
   return (
-    <div className="p-3 md:p-6 max-w-5xl mx-auto" dir="rtl">
+    <div className="max-w-5xl mx-auto" dir="rtl">
       <div className="bg-white border rounded-md shadow-sm p-4 md:p-6 space-y-4">
         {/* الرأس — كما في الدفتر */}
         <div className="flex items-center justify-between gap-4 border-b-2 border-[#1d2b55] pb-3">

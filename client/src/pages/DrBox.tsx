@@ -97,7 +97,7 @@ export default function DrBox() {
   ].sort((a, b) => a.date.localeCompare(b.date)) : [];
 
   return (
-    <div className="p-3 md:p-6 max-w-5xl mx-auto" dir="rtl">
+    <div className="max-w-5xl mx-auto" dir="rtl">
       <div className="bg-white border rounded-md shadow-sm p-4 md:p-6 space-y-4">
         <div className="border-b-2 border-[#1d2b55] pb-3">
           <h1 className="text-xl md:text-2xl font-bold text-[#1d2b55]">قاصة الدكتور</h1>

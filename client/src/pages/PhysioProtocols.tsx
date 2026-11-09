@@ -159,7 +159,7 @@ export default function PhysioProtocols() {
     return <div className="p-6 text-center text-muted-foreground" dir="rtl">مكتبةُ البروتوكولات لقسم العلاج الطبيعي.</div>;
   }
   return (
-    <div className="p-4 md:p-6 space-y-4" dir="rtl">
+    <div className="space-y-4" dir="rtl">
       <div className="flex flex-wrap items-center gap-2">
         <BookMarked className="w-6 h-6 text-primary" />
         <h1 className="text-xl font-bold text-primary">بروتوكولات العلاج الطبيعي</h1>
@@ -355,7 +355,7 @@ export function PhysioProtocolDetail() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-5xl" dir={dir} data-testid="protocol-detail">
+    <div className="space-y-4 max-w-5xl" dir={dir} data-testid="protocol-detail">
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <Link href="/physio/protocols"><a className="inline-flex items-center gap-1 text-sm text-primary">{lang === "en" ? <ArrowRight className="w-4 h-4 rotate-180" /> : <ArrowRight className="w-4 h-4" />} {t.library}</a></Link>
         <LangToggle lang={lang} onChange={setLang} />
