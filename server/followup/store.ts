@@ -1218,9 +1218,12 @@ export async function saleCostDriftForCase(h: any, caseId: number): Promise<Sale
                (SELECT MIN(ce2.created_at) FROM cost_entries ce2
                  WHERE ce2.device_episode_id = f.device_episode_id AND ce2.patient_id = f.patient_id)) AS at
         FROM post_exam_followups f
-        LEFT JOIN patient_device_episodes e ON e.id = f.device_episode_id
+        JOIN patient_device_episodes e ON e.id = f.device_episode_id
        WHERE f.status = 'converted' AND f.device_episode_id IS NOT NULL
          AND COALESCE(f.case_id, e.case_id) = ${caseId}
+         --  **البيعُ الحيّ وحده** (المراجعةُ الثانية): جهازٌ أُلغي أمرُه (المتابعةُ تبقى «تم الشراء») أو أُبطل لا مالَ له يُطوى فيه —
+         --  وقلمٌ أزال مالَه بعده تصحيحٌ مشروع، فلو بدأ الحدُّ منه لطلب تصحيحُ الجهاز الحيّ إعادةَ مال الملغى.
+         AND e.status IN ('in_manufacturing', 'delivered') AND e.admin_void_reversal_id IS NULL
     )
     SELECT ce.id, ce.amount, ce.source, ce.created_at, ce.notes
       FROM cost_entries ce
@@ -1324,7 +1327,8 @@ export async function correctSalePriceAfterConversion(params: {
     if (cur.deviceEpisodeId === null) throw new FollowupError(DRIFT, 409);
     //  **والسعرُ نفسُه يمرّ إن كان على القسم ما يُطوى** (§4.gh — مراجعةٌ مستقلّة): سعرُ البيع صحيحٌ والكلفةُ وحدها انحرفت بقلمٍ قديم —
     //  فالحفظُ «مطابقةُ الكلفة لسعر البيع» لا أكثر. ويُحكم عليه بعد قياس الانحراف (④أ).
-    const priceChanged = !(cur.approvedPrice === price && cur.originalPrice === offer.originalPrice);
+    //  والأصليُّ الفارغ (بيعٌ موروث) هو النهائيُّ نفسُه — كما تفهمه النافذة (المراجعةُ الثانية)، فلا تُكتب «مطابقةُ الكلفة» تصحيحاً للسعر.
+    const priceChanged = !(cur.approvedPrice === price && (cur.originalPrice ?? cur.approvedPrice) === offer.originalPrice);
 
     // ② الحلقةُ تحت القفل — لهذا المريض وهذا الخيط، قيد التصنيع أو مسلَّمة، وغيرُ مُبطَلةٍ إدارياً.
     const ep = await lockEpisodeForPriceCorrection(tx, cur.deviceEpisodeId);
@@ -1394,7 +1398,9 @@ export async function correctSalePriceAfterConversion(params: {
                  (SELECT COALESCE(total_cost, 0) FROM patients WHERE id = ${cur.patientId}) AS t
         `);
         const c0 = (cc.rows ?? [])[0] ?? {};
-        if (Number(c0.c ?? 0) - drift.net < 0 || Number(c0.t ?? 0) - drift.net < 0) {
+        //  **ومعه فرقُ البيع** (المراجعةُ الثانية): الحدُّ للنتيجة كلِّها، فلا يقصّ `GREATEST` في ⑦ ما يكتبه القيدُ كاملاً.
+        const d0 = priceChanged ? price - cur.approvedPrice : 0;
+        if (Number(c0.c ?? 0) - drift.net + d0 < 0 || Number(c0.t ?? 0) - drift.net + d0 < 0) {
           throw new FollowupError("طيُّ تعديلات الكلفة بعد البيع يُنزل الكلفةَ تحت الصفر — يحتاج مراجعة إدارية.", 409);
         }
         absorbed = drift.net;

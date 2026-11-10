@@ -515,6 +515,51 @@ async function main() {
     same("ي٧د. **وتصحيحُ الجهاز الثاني لا يعيد ما طُوي** — ٢٠٠ بلا سؤال، والقسمُ ٩ + ٤ = ١٣ مليوناً",
       [sW2.status, cW.c, wA.status, wB.status, wB.body?.code ?? null, cWc.c, pWt.t], [200, W.caseId, 200, 200, null, 13_000_000, 13_000_000]);
 
+    //  **جهازٌ أُلغي أمرُه لا يبدأ منه الحدّ** (المراجعةُ الثانية): بيعٌ ٥ ثمّ أُلغي، والقلمُ أزال مالَه، ثمّ بيعٌ ٤ في القسم نفسِه — تصحيحُه
+    //  إلى ٣٫٥ يمضي بلا سؤال ولا يعيد مالَ الملغى.
+    const Xc = await operation("ملغى ثم جديد", { original: 5_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET converted_at = NOW() - interval '3 hours' WHERE id=$1`, [Xc.followupId]);
+    await q(`UPDATE patient_device_episodes SET status='cancelled' WHERE id=$1`, [Xc.episodeId]);
+    await q(`UPDATE patient_cases SET cost = 0 WHERE id=$1`, [Xc.caseId]);
+    await q(`UPDATE patients SET total_cost = 0 WHERE id=$1`, [Xc.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,-5000000,'case_cost_edit',$2,'إزالة مال الملغى', NOW() - interval '2 hours')`, [Xc.patientId, Xc.caseId]);
+    const epX2 = await http("POST", `/api/patients/${Xc.patientId}/device-episodes`, S.recv, { serviceType: "prosthetic", servicePath: "exam" });
+    const exX2 = await http("POST", `/api/medical/patients/${Xc.patientId}/exams`, S.doc, {
+      idempotencyKey: crypto.randomUUID(), caseType: "prosthetic", diagnosis: "جهاز جديد", prescription: {}, deviceEpisodeId: Number(epX2.body?.id),
+    });
+    const [fX2] = await q(`SELECT id FROM post_exam_followups WHERE medical_exam_id=$1`, [Number(exX2.body?.id)]);
+    await http("POST", `/api/followups/${fX2.id}/complete-sale`, S.recv, {
+      deviceSpecs: SALE_SPECS_TEST, originalPrice: 4_000_000, discountAmount: 0, expertUserId: EXPERT,
+    });
+    const rX2 = await correct(fX2.id, S.admin, { originalPrice: 4_000_000, discountAmount: 500_000, reason: "خصم" });
+    const [cX] = await q(`SELECT cost::int c FROM patient_cases WHERE id=$1`, [Xc.caseId]);
+    const [tX] = await q(`SELECT total_cost::int t FROM patients WHERE id=$1`, [Xc.patientId]);
+    same("ي٧و. **وجهازٌ أُلغي أمرُه خارجُ الحدّ** — تصحيحُ الجديد يمضي (٢٠٠) والقسمُ ٣٫٥ ملايين لا ٨٫٥",
+      [rX2.status, rX2.body?.code ?? null, cX.c, tX.t], [200, null, 3_500_000, 3_500_000]);
+
+    //  **وطيٌّ مع فرق البيع تحت الصفر يُردّ** لا يُقصّ (المراجعةُ الثانية).
+    const Z = await operation("تحت الصفر", { original: 5_000_000, discount: 0 });
+    await q(`UPDATE patient_cases SET cost = 3000000 WHERE id=$1`, [Z.caseId]);
+    await q(`UPDATE patients SET total_cost = 3000000 WHERE id=$1`, [Z.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, created_at)
+             VALUES ($1,1,2000000,'case_cost_edit',$2, NOW() + interval '1 second')`, [Z.patientId, Z.caseId]);
+    const rZ = await correct(Z.followupId, S.admin, { originalPrice: 5_000_000, discountAmount: 3_000_000, reason: "x", absorbCaseCostEdit: 2_000_000 });
+    same("ي٧ز. **طيٌّ يُنزل الكلفةَ مع فرق البيع تحت الصفر ⟵ ٤٠٩** ولا يتحرّك شيء",
+      [rZ.status, /تحت الصفر/.test(rZ.body?.error ?? ""), (await moneyOf(Z)).caseCost], [409, true, 3_000_000]);
+
+    //  **وبيعٌ موروث بلا سعرٍ أصليّ**: «مطابقة الكلفة» بالسعر نفسِه لا تكتب السعرَ ولا تمحو أسطرَ الأجزاء (المراجعةُ الثانية).
+    const Lg = await operation("موروث بلا أصلي", { original: 3_000_000, discount: 0 });
+    await q(`UPDATE post_exam_followups SET original_price = NULL, price_kind = NULL, price_source = 'exam' WHERE id=$1`, [Lg.followupId]);
+    await q(`UPDATE patient_cases SET cost = 2500000 WHERE id=$1`, [Lg.caseId]);
+    await q(`UPDATE patients SET total_cost = 2500000 WHERE id=$1`, [Lg.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, created_at)
+             VALUES ($1,1,-500000,'case_cost_edit',$2, NOW() + interval '1 second')`, [Lg.patientId, Lg.caseId]);
+    const rLg = await correct(Lg.followupId, S.admin, { originalPrice: 3_000_000, discountAmount: 0, reason: "مطابقة", absorbCaseCostEdit: -500_000 });
+    const [fLg] = await q(`SELECT original_price, price_source FROM post_exam_followups WHERE id=$1`, [Lg.followupId]);
+    same("ي٧ح. **والموروثُ بلا أصليّ يُطابَق ولا يُعاد كتابةُ سعره** — ٣ ملايين، والأصليُّ فارغٌ ومصدرُه كما كان",
+      [rLg.status, rLg.body?.delta, (await moneyOf(Lg)).caseCost, fLg.original_price, fLg.price_source], [200, 0, 3_000_000, null, "exam"]);
+
     //  و«تعديل مريض» القديم (`manual_edit`) خارجُ الطيّ عمداً — يكتب القسمَ قيمةً مطلقة فعكسُ قيده لا يعكس أثرَه (مراجعةٌ مستقلّة).
     const K = await operation("تعديل مريض قديم", { original: 4_000_000, discount: 0 });
     await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, created_at)

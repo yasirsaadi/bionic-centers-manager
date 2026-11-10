@@ -106,11 +106,15 @@ export function SalePriceCorrection(props: {
       }
       return body;
     },
-    onSuccess: (out: any) => {
-      setOpen(false);
-      qc.invalidateQueries({ queryKey: [`/api/followups/patient/${props.patientId}`] });
-      qc.invalidateQueries({ queryKey: [`/api/patients/${props.patientId}/device-episodes`] });
+    onSuccess: async (out: any) => {
+      //  **تُغلق النافذةُ بعد أن تصل الأرقامُ الجديدة** (المراجعةُ الثانية): فتحُها ثانيةً قبل ذلك كان يعرض الانحرافَ المطويَّ والسعرَ القديم.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: [`/api/followups/patient/${props.patientId}`] }),
+        qc.invalidateQueries({ queryKey: [`/api/patients/${props.patientId}/device-episodes`] }),
+        qc.invalidateQueries({ queryKey: ["/api/patients/:id", props.patientId, "cases"] }),
+      ]).catch(() => {});
       invalidatePatientData(qc, props.patientId);
+      setOpen(false);
       const credit = Number(out?.creditBalance ?? 0);
       toast({
         title: "صُحّح سعر البيع",
