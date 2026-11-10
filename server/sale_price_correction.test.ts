@@ -580,6 +580,12 @@ async function main() {
     await q(`UPDATE patients SET is_physiotherapy = true WHERE id=$1`, [Cl.patientId]);
     const uCl = await http("PUT", `/api/patients/${Cl.patientId}`, S.admin, { totalCost: 2_300_000 });
     same("ي٩ب. **وقسمٌ مُباعٌ مغلق لا يمنع كلفةَ العلاج الطبيعيّ النشط** (٢٠٠)", [uCl.status, (await moneyOf(Cl)).total], [200, 2_300_000]);
+    //  مراجعة Codex على #730: قسمٌ مُباعٌ مغلق ولا قسمَ نشط — الإجماليُّ وحده كان سيتحرّك وقسمُ البيع على رقمه.
+    const Cz = await operation("مغلق وحده", { original: 2_000_000, discount: 0 });
+    await q(`UPDATE patient_cases SET status='closed' WHERE id=$1`, [Cz.caseId]);
+    const uCz = await http("PUT", `/api/patients/${Cz.patientId}`, S.admin, { totalCost: 1_500_000 });
+    same("ي٩ج. **وقسمٌ مُباعٌ مغلقٌ وحده يمنع** (٤٠٩) — لا قسمَ يذهب إليه الفرق", [uCz.status, uCz.body?.code, (await moneyOf(Cz)).total],
+      [409, "case_has_sale_price_correction", 2_000_000]);
 
     const [pl] = await q<{ id: number }>(
       `INSERT INTO patients (name, phone, referral_source, age, height, weight, medical_condition, amputation_site, branch_id,

@@ -169,9 +169,11 @@ export default function EditPatient() {
       return res.json();
     },
   });
-  //  والقسمُ النشط وحده — كالخادم: قسمٌ مغلقٌ بجهازٍ مسلَّم لا يمنع كلفةَ العلاج الطبيعيّ النشط.
-  const lockingCases = (casesForCost ?? []).filter((c) => c.status === "active" && (c.saleCorrections?.length ?? 0) > 0);
-  const costLockedBySale = lockingCases.length > 0;
+  //  كالخادم: تمرّ وحدها حين يذهب الفرقُ إلى قسمٍ نشطٍ وحيدٍ بلا بيع (قسمٌ مغلقٌ بجهازٍ مسلَّم والعلاجُ الطبيعيّ نشط).
+  const lockingCases = (casesForCost ?? []).filter((c) => (c.saleCorrections?.length ?? 0) > 0);
+  const activeForCost = (casesForCost ?? []).filter((c) => c.status === "active");
+  const costLockedBySale = lockingCases.length > 0
+    && !(activeForCost.length === 1 && (activeForCost[0].saleCorrections?.length ?? 0) === 0);
   //  ومَن لا يصحّح لا يُدلّ على قلمٍ لا يراه (مراجعةٌ مستقلّة).
   const canCorrectHere = lockingCases.some((c) => (c.saleCorrections ?? []).some((x) => x.mayCorrect === true));
   const intakeLockedAfterExam = !!editScope && !editScope.privileged && editScope.examinedAny;

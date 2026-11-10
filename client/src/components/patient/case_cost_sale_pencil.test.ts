@@ -35,7 +35,7 @@ check(/\{serverError && \(/.test(spc) && /clearError\(\); setOriginal/.test(spc)
   "٥ج. والخطأُ يظهر ولو مع سؤال الطيّ، ويُمحى حين تتغيّر الخانات");
 check(!/apiRequest\(/.test(spc) && /body\?\.error \?\? body\?\.message/.test(spc),
   "٦. والخطأُ نصُّه لا «409: {…}»");
-check(/disabled=\{costLockedBySale\}/.test(edit) && /c\.status === "active" && \(c\.saleCorrections\?\.length \?\? 0\) > 0/.test(edit)
+check(/disabled=\{costLockedBySale\}/.test(edit) && /activeForCost\.length === 1 && \(activeForCost\[0\]\.saleCorrections\?\.length \?\? 0\) === 0/.test(edit)
   && /canCorrectHere/.test(edit),
   "٧. و«تعديل مريض» يعرض الكلفةَ لمريضٍ له جهازٌ مُباع ولا يغيّرها");
 
