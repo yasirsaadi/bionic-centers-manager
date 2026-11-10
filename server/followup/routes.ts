@@ -285,6 +285,13 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
       .filter((f) => isTerminal(f.status) || canReachBranch(req, f.branchId));
     const s = getSession(req);
     const owner = ownerSessionOf(req);
+    //  **انحرافُ كلفة القسم بعد البيع** لكلّ بيعٍ يُصحَّح (§4.gh) — فتقوله نافذةُ التصحيح من أوّل فتحها، ويُطوى بموافقة.
+    const caseOfFollowup = new Map<number, number>();
+    if (canCorrectSalePrice(s)) {
+      for (const x of await store.salePriceCorrectablesForPatient(patientId)) caseOfFollowup.set(x.followupId, x.caseId);
+    }
+    const driftByCase = new Map<number, Awaited<ReturnType<typeof store.saleCostDriftForCase>>>();
+    for (const cid of Array.from(new Set(Array.from(caseOfFollowup.values())))) driftByCase.set(cid, await store.saleCostDriftForCase(db, cid));
     const withDetail = await Promise.all(rows.map(async (f) => {
       //  ══ **الشاشةُ تقرأ ما يقرؤه الخادم** (المرحلة ٢) ══════════════════
       //  ما بقي ناقصاً · وأيُّ حقلٍ مقفولٌ على مَن · والأفعالُ المتاحة —
@@ -351,6 +358,7 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         mayCorrectSalePrice: canCorrectSalePrice(s) && f.status === "converted" && f.deviceEpisodeId !== null
           && canReachBranch(req, f.branchId)
           && await store.episodeAllowsSalePriceCorrection(f.deviceEpisodeId),
+        saleCostDrift: caseOfFollowup.has(f.id) ? driftByCase.get(caseOfFollowup.get(f.id)!) ?? null : null,
         //  **الأقفالُ يقولها الخادم** — والشاشةُ تعرضها ولا تخترعها.
         locks: {
           price: !canOverwriteCommercialField({ field: priceField, session: owner }),

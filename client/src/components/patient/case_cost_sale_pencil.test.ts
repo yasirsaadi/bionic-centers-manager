@@ -18,15 +18,25 @@ check(/const pencilIsSaleCorrection = saleCorrections\.length > 0;/.test(tabs)
   "١. القلمُ يكتب حرّاً على قسمٍ بلا بيعٍ وحده");
 check(/\(pencilIsSaleCorrection \? correctable\.length > 0 : canEditCost\) && !editing/.test(tabs),
   "٢. وعلى قسمٍ مُباع يظهر لمن يصحّح وحده");
-check(/<SalePriceCorrection[\s\S]{0,400}hideTrigger open onOpenChange=/.test(tabs) && /onClick=\{onPencil\}/.test(tabs),
+check(/<SalePriceCorrection[\s\S]{0,700}hideTrigger open onOpenChange=/.test(tabs) && /onClick=\{onPencil\}/.test(tabs),
   "٣. **والضغطُ يفتح «تصحيح سعر البيع» نفسَه** بلا زرٍّ ثانٍ");
+check(/drift=\{correcting\.costDrift \?\? null\}/.test(tabs) && /drift=\{active\.saleCostDrift \?\? null\}/.test(readFileSync(join(here, "..", "PostExamDecisionCard.tsx"), "utf8")),
+  "٣ب. **والانحرافُ يصل النافذةَ من البابين** فتقوله من أوّل فتحها");
+check(/الجهاز #\$\{x\.sequenceNumber\}/.test(tabs) && !/الجهاز \{i \+ 1\}/.test(tabs),
+  "٣ج. واختيارُ الجهاز برقمه في الملفّ لا بترتيب القائمة");
 check(/correctable\.length === 1\) setCorrectingId\(correctable\[0\]\.followupId\);\s*else setPickDevice\(true\);/.test(tabs),
   "٤. ولقسمٍ بأكثر من جهاز يُسأل: أيُّ جهاز");
-check(/e\?\.body\?\.code === "case_cost_edit_absorb"/.test(spc) && /absorbCaseCostEdit: absorb/.test(spc),
-  "٥. والقلمُ القديم بعد البيع يُطوى بموافقةٍ على مبلغه بعينه");
+check(/e\?\.body\?\.code === "case_cost_edit_absorb"/.test(spc) && /absorbCaseCostEdit: absorb/.test(spc)
+  && /setAbsorb\(net !== 0 \? net : null\)/.test(spc),
+  "٥. وما عُدّل بعد البيع يُطوى بموافقةٍ على صافيه بعينه — معروضاً من أوّل الفتح");
+check(/\(!unchanged \|\| absorb !== null\)/.test(spc) && /مطابقة الكلفة لسعر البيع/.test(spc),
+  "٥ب. والسعرُ نفسُه يُحفظ «مطابقةً للكلفة» حين على القسم ما يُطوى");
+check(/\{serverError && \(/.test(spc) && /clearError\(\); setOriginal/.test(spc),
+  "٥ج. والخطأُ يظهر ولو مع سؤال الطيّ، ويُمحى حين تتغيّر الخانات");
 check(!/apiRequest\(/.test(spc) && /body\?\.error \?\? body\?\.message/.test(spc),
   "٦. والخطأُ نصُّه لا «409: {…}»");
-check(/disabled=\{costLockedBySale\}/.test(edit) && /saleCorrections\?\.length \?\? 0\) > 0/.test(edit),
+check(/disabled=\{costLockedBySale\}/.test(edit) && /c\.status === "active" && \(c\.saleCorrections\?\.length \?\? 0\) > 0/.test(edit)
+  && /canCorrectHere/.test(edit),
   "٧. و«تعديل مريض» يعرض الكلفةَ لمريضٍ له جهازٌ مُباع ولا يغيّرها");
 
 console.log(`\n${fails === 0 ? "✅ كلُّها نجحت" : `❌ ${fails} فشل`}`);

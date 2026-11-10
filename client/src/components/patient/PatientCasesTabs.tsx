@@ -20,7 +20,7 @@ import { PhysioSheetBox } from "@/components/physio/PhysioSheetBox";
 import { specKeysCoveredBySheets } from "@shared/intake_sheet_view";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { SalePriceCorrection } from "@/components/SalePriceCorrection";
+import { SalePriceCorrection, type SaleCostDrift } from "@/components/SalePriceCorrection";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -54,7 +54,10 @@ export interface CaseRow {
    * نفسَه (فيتحرّك السعرُ والجهازُ والكلفةُ وحسابُ المريض معاً) لا الكتابةَ الحرّة — والخادمُ يردّ تلك على هذا القسم.
    * و`mayCorrect` قاعدةُ زرّ البطاقة نفسُها لهذا المستخدم.
    */
-  saleCorrections?: { followupId: number; deviceEpisodeId: number; approvedPrice: number; originalPrice: number | null; label: string; mayCorrect: boolean }[];
+  saleCorrections?: {
+    followupId: number; deviceEpisodeId: number; sequenceNumber: number | null; approvedPrice: number; originalPrice: number | null;
+    label: string; mayCorrect: boolean; costDrift?: SaleCostDrift | null;
+  }[];
 }
 
 const CASE_META: Record<string, { label: string; icon: any }> = {
@@ -545,11 +548,11 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
                   كلفةُ هذا القسم مجموعُ أسعار أجهزته المُباعة، فتُعدَّل بتصحيح سعر الجهاز نفسِه.
                 </p>
                 <div className="space-y-2">
-                  {correctable.map((x, i) => (
+                  {correctable.map((x) => (
                     <Button key={x.followupId} type="button" variant="outline" className="w-full justify-between"
                       data-testid={`pick-sale-device-${x.followupId}`}
                       onClick={() => { setPickDevice(false); setCorrectingId(x.followupId); }}>
-                      <span>الجهاز {i + 1} — {x.label}</span>
+                      <span>{x.sequenceNumber !== null ? `الجهاز #${x.sequenceNumber}` : "الجهاز"} — {x.label}</span>
                       <span className="text-muted-foreground">{fmtIQD(x.approvedPrice)}</span>
                     </Button>
                   ))}
@@ -562,7 +565,9 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
               key={correcting.followupId}
               followupId={correcting.followupId} patientId={patientId}
               originalPrice={correcting.originalPrice} approvedPrice={correcting.approvedPrice}
-              deviceLabel={correctable.length > 1 ? correcting.label : null}
+              deviceLabel={correctable.length > 1
+                ? `${correcting.sequenceNumber !== null ? `#${correcting.sequenceNumber} ` : ""}${correcting.label}` : null}
+              drift={correcting.costDrift ?? null}
               hideTrigger open onOpenChange={(v) => { if (!v) setCorrectingId(null); }} />
           )}
           <AlertDialog open={confirmBelowSold} onOpenChange={setConfirmBelowSold}>

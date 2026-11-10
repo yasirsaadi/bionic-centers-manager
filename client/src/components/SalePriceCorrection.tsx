@@ -18,6 +18,15 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { invalidatePatientData } from "@/lib/queryClient";
 import { deriveOfferFromDiscount } from "@shared/commercial";
+import { formatDateIraq } from "@/lib/utils";
+
+export interface SaleCostDriftEntry { id: number; amount: number; source: string; createdAt: string; notes: string | null }
+export interface SaleCostDrift { net: number; entries: SaleCostDriftEntry[] }
+const DRIFT_SOURCE_LABEL: Record<string, string> = {
+  case_cost_edit: "قلم الكلفة",
+  refund_cost_reduction: "تخفيضٌ مع استرجاع",
+};
+const signed = (n: number) => `${n > 0 ? "+" : "−"}${Math.abs(n).toLocaleString()} د.ع`;
 
 export function SalePriceCorrection(props: {
   followupId: number;
@@ -30,6 +39,8 @@ export function SalePriceCorrection(props: {
   onOpenChange?: (open: boolean) => void;
   /** اسمُ الجهاز في العنوان حين يُفتح من قلم الحالة (لحالةٍ فيها أكثرُ من جهاز). */
   deviceLabel?: string | null;
+  /** **ما انحرفت به كلفةُ القسم بعد البيع** (§4.gh) — يقوله الخادم، فتعرضه النافذةُ من أوّل فتحها وتطويه بموافقة. */
+  drift?: SaleCostDrift | null;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -39,8 +50,9 @@ export function SalePriceCorrection(props: {
   const [original, setOriginal] = useState("");
   const [discount, setDiscount] = useState("");
   const [reason, setReason] = useState("");
-  //  **قلمُ الكلفة بعد البيع يُطوى بموافقةٍ صريحة** (§4.gh): الخادمُ يقول مبلغَه، والحفظُ الثاني يرسله بعينه.
+  //  **ما عُدّل في كلفة القسم بعد البيع يُطوى بموافقةٍ صريحة** (§4.gh): الخادمُ يقول صافيه وقيودَه، والحفظُ يرسل الصافي بعينه.
   const [absorb, setAbsorb] = useState<number | null>(null);
+  const [absorbEntries, setAbsorbEntries] = useState<SaleCostDriftEntry[]>([]);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const reset = () => {
@@ -48,7 +60,9 @@ export function SalePriceCorrection(props: {
     setOriginal(String(orig));
     setDiscount(String(Math.max(0, orig - props.approvedPrice)));
     setReason("");
-    setAbsorb(null);
+    const net = Number(props.drift?.net ?? 0);
+    setAbsorb(net !== 0 ? net : null);
+    setAbsorbEntries(net !== 0 ? props.drift?.entries ?? [] : []);
     setServerError(null);
   };
   const setOpen = (v: boolean) => {
@@ -102,12 +116,15 @@ export function SalePriceCorrection(props: {
         title: "صُحّح سعر البيع",
         description: credit > 0
           ? `دفع المريض على هذا الجهاز أكثر من سعره الجديد بـ ${credit.toLocaleString()} د.ع — صار رصيداً له. لإرجاعه استعمل «طلب استرجاع» من حالة المريض.`
-          : "حُدّثت كلفة الجهاز وحساب المريض، وبقي أمر التصنيع كما هو.",
+          : Number(out?.delta ?? 0) === 0
+            ? "طابقت كلفةُ القسم سعرَ البيع، وبقي أمر التصنيع كما هو."
+            : "حُدّثت كلفة الجهاز وحساب المريض، وبقي أمر التصنيع كما هو.",
       });
     },
     onError: (e: any) => {
       if (e?.body?.code === "case_cost_edit_absorb" && Number.isFinite(Number(e.body.caseCostEditAmount))) {
         setAbsorb(Number(e.body.caseCostEditAmount));
+        setAbsorbEntries(Array.isArray(e.body.entries) ? e.body.entries : []);
         setServerError(null);
         return;
       }
@@ -116,7 +133,9 @@ export function SalePriceCorrection(props: {
     },
   });
 
-  const canSave = offer.ok && !unchanged && reason.trim().length > 0 && !save.isPending;
+  //  **وسعرٌ لم يتغيّر يُحفظ حين على القسم ما يُطوى** — «مطابقةُ الكلفة لسعر البيع» (مراجعةٌ مستقلّة: كان لا بابَ لها).
+  const canSave = offer.ok && (!unchanged || absorb !== null) && reason.trim().length > 0 && !save.isPending;
+  const clearError = () => setServerError(null);
 
   return (
     <>
@@ -139,13 +158,13 @@ export function SalePriceCorrection(props: {
             <div className="space-y-1">
               <Label htmlFor="sp-original" className="text-xs">السعر الأصلي (د.ع)</Label>
               <MoneyInput id="sp-original" allowEmpty value={original}
-                onValueChange={(v) => setOriginal(v === null ? "" : String(v))}
+                onValueChange={(v) => { clearError(); setOriginal(v === null ? "" : String(v)); }}
                 data-testid="input-correct-sale-original" />
             </div>
             <div className="space-y-1">
               <Label htmlFor="sp-discount" className="text-xs">مقدار الخصم (د.ع)</Label>
               <MoneyInput id="sp-discount" allowEmpty value={discount}
-                onValueChange={(v) => setDiscount(v === null ? "" : String(v))}
+                onValueChange={(v) => { clearError(); setDiscount(v === null ? "" : String(v)); }}
                 data-testid="input-correct-sale-discount" />
             </div>
             <div className="rounded-md bg-muted px-3 py-2 text-xs" data-testid="text-correct-sale-preview">
@@ -164,20 +183,30 @@ export function SalePriceCorrection(props: {
             </div>
             <div className="space-y-1">
               <Label htmlFor="sp-reason" className="text-xs">سبب التصحيح (إلزامي)</Label>
-              <Textarea id="sp-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+              <Textarea id="sp-reason" rows={2} value={reason} onChange={(e) => { clearError(); setReason(e.target.value); }}
                 placeholder="مثال: سُجّل السعر خطأً عند إتمام البيع"
                 data-testid="input-correct-sale-reason" />
             </div>
             {absorb !== null && (
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
                 data-testid="text-correct-sale-absorb">
-                عُدّلت كلفةُ هذا القسم من القلم بعد البيع بمقدار{" "}
-                <b>{absorb > 0 ? "+" : "−"}{Math.abs(absorb).toLocaleString()} د.ع</b>.
-                سيُلغى ذلك التعديل ويحلّ محلَّه هذا التصحيح، فتصير الكلفةُ مطابقةً لسعر البيع الجديد.
-                اضغط «تأكيد وحفظ».
+                <div>
+                  عُدّلت كلفةُ هذا القسم بعد البيع بصافي <b>{signed(absorb)}</b> دون أن يتغيّر سعرُ البيع.
+                  عند الحفظ يُلغى ذلك ويحلّ محلَّه هذا التصحيح، فتصير الكلفةُ مطابقةً لسعر البيع. والدفعاتُ لا تُمسّ.
+                </div>
+                {absorbEntries.length > 0 && (
+                  <ul className="mt-1 list-disc pr-4" data-testid="list-correct-sale-absorb">
+                    {absorbEntries.slice(0, 8).map((x) => (
+                      <li key={x.id}>
+                        {formatDateIraq(x.createdAt)} — {DRIFT_SOURCE_LABEL[x.source] ?? x.source}: <b>{signed(x.amount)}</b>
+                      </li>
+                    ))}
+                    {absorbEntries.length > 8 && <li>و{absorbEntries.length - 8} غيرُها</li>}
+                  </ul>
+                )}
               </div>
             )}
-            {serverError && absorb === null && (
+            {serverError && (
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
                 data-testid="text-correct-sale-error">{serverError}</div>
             )}
@@ -187,7 +216,7 @@ export function SalePriceCorrection(props: {
             <Button type="button" disabled={!canSave} onClick={() => save.mutate()}
               data-testid="button-correct-sale-save">
               {save.isPending && <Loader2 className="ml-1 h-4 w-4 animate-spin" />}
-              {absorb !== null ? "تأكيد وحفظ" : "حفظ التصحيح"}
+              {absorb !== null ? (unchanged ? "مطابقة الكلفة لسعر البيع" : "تأكيد وحفظ") : "حفظ التصحيح"}
             </Button>
           </DialogFooter>
         </DialogContent>

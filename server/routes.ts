@@ -2615,13 +2615,19 @@ export async function registerRoutes(
     const scopeForCorrection = accessibleBranchesFor(req);
     const mayCorrectAny = canCorrectSalePrice(branchSession);
     const saleCorrectionsByCase = new Map<number, any[]>();
+    const driftForCase = new Map<number, Awaited<ReturnType<typeof followupStore.saleCostDriftForCase>>>();
     for (const x of correctables) {
+      if (mayCorrectAny && !driftForCase.has(x.caseId)) {
+        driftForCase.set(x.caseId, await followupStore.saleCostDriftForCase(db, x.caseId));
+      }
       const list = saleCorrectionsByCase.get(x.caseId) ?? [];
       list.push({
-        followupId: x.followupId, deviceEpisodeId: x.deviceEpisodeId,
+        followupId: x.followupId, deviceEpisodeId: x.deviceEpisodeId, sequenceNumber: x.sequenceNumber,
         approvedPrice: x.approvedPrice, originalPrice: x.originalPrice,
         label: requestedItemLabel(x.requestedItem),
         mayCorrect: mayCorrectAny && (scopeForCorrection === null || scopeForCorrection.includes(x.branchId)),
+        //  ما انحرف به القسمُ بعد البيع (§4.gh) — لمن يصحّح وحده، فتقوله النافذةُ من أوّل فتحها.
+        costDrift: driftForCase.get(x.caseId) ?? null,
       });
       saleCorrectionsByCase.set(x.caseId, list);
     }
@@ -3519,7 +3525,9 @@ export async function registerRoutes(
       //  فيطرح الفرقَ مرّتين. فتغييرُها يُردّ هنا؛ وإرسالُها بقيمتها نفسِها (النموذجُ يرسل الكائنَ كاملاً) يمرّ.
       if (patch.totalCost !== undefined && patch.totalCost !== null
         && Math.round(Number(patch.totalCost)) !== Math.round(Number(existingPatient.totalCost ?? 0))
-        && (await followupStore.salePriceCorrectablesForPatient(id)).length > 0) {
+        //  **والقسمُ النشط وحده** (مراجعةٌ مستقلّة): قسمُ أطرافٍ مغلقٌ بجهازٍ مسلَّم وعلاجٌ طبيعيٌّ هو النشطُ الوحيد — الخانةُ تكتب
+        //  العلاجَ الطبيعيّ وحده (`syncSoleCaseCost`)، فلا تُردّ.
+        && (await followupStore.salePriceCorrectablesForPatient(id)).some((x) => x.caseStatus === "active")) {
         return res.status(409).json({
           code: "case_has_sale_price_correction", field: "totalCost",
           message: "لهذا المريض جهازٌ مُباع — الكلفةُ تُعدَّل من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً.",

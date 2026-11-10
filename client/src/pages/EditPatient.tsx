@@ -160,7 +160,7 @@ export default function EditPatient() {
   const lockOf = (field: string): string | null => editScope?.reasons?.[field] || null;
   //  ══ **مريضٌ له جهازٌ مُباع: الكلفةُ تُعدَّل من «تصحيح سعر البيع» وحده** (§4.gh — قرارُ المالك ٢٠٢٦-١١-١٠) ══
   //  الخانةُ هنا كانت تحرّك الكلفةَ بلا السعر ولا الجهاز — فتظهر للقراءة وتدلّ على المكان الواحد، والخادمُ يردّ تغييرَها.
-  const { data: casesForCost } = useQuery<{ saleCorrections?: unknown[] }[]>({
+  const { data: casesForCost } = useQuery<{ status?: string; saleCorrections?: { mayCorrect?: boolean }[] }[]>({
     queryKey: ["/api/patients/:id", patientId, "cases"],
     enabled: Number.isFinite(patientId) && canEditCost && !addingMode,
     queryFn: async () => {
@@ -169,7 +169,11 @@ export default function EditPatient() {
       return res.json();
     },
   });
-  const costLockedBySale = (casesForCost ?? []).some((c) => (c.saleCorrections?.length ?? 0) > 0);
+  //  والقسمُ النشط وحده — كالخادم: قسمٌ مغلقٌ بجهازٍ مسلَّم لا يمنع كلفةَ العلاج الطبيعيّ النشط.
+  const lockingCases = (casesForCost ?? []).filter((c) => c.status === "active" && (c.saleCorrections?.length ?? 0) > 0);
+  const costLockedBySale = lockingCases.length > 0;
+  //  ومَن لا يصحّح لا يُدلّ على قلمٍ لا يراه (مراجعةٌ مستقلّة).
+  const canCorrectHere = lockingCases.some((c) => (c.saleCorrections ?? []).some((x) => x.mayCorrect === true));
   const intakeLockedAfterExam = !!editScope && !editScope.privileged && editScope.examinedAny;
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
@@ -1168,8 +1172,9 @@ export default function EditPatient() {
                       </FormControl>
                       {costLockedBySale && (
                         <p className="text-xs text-amber-800" data-testid="text-total-cost-locked-by-sale">
-                          لهذا المريض جهازٌ مُباع — تُعدَّل الكلفةُ من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»،
-                          فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً.
+                          {canCorrectHere
+                            ? "لهذا المريض جهازٌ مُباع — تُعدَّل الكلفةُ من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً."
+                            : "لهذا المريض جهازٌ مُباع — تعديلُ كلفته للمسؤول أو مدير الفرع من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً."}
                         </p>
                       )}
                       <FormMessage />
