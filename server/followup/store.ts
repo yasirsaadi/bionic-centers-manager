@@ -61,10 +61,13 @@ export async function decisionBranchReachingPatient(
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
 export class FollowupError extends Error {
   status: number;
-  constructor(message: string, status = 409) {
+  /** حقولٌ تصل الشاشةَ مع الرسالة (رمزٌ ومبلغ) — فتسأل المستخدمَ بدل أن تعرض نصّاً خاماً. */
+  extra?: Record<string, unknown>;
+  constructor(message: string, status = 409, extra?: Record<string, unknown>) {
     super(message);
     this.name = "FollowupError";
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -1159,6 +1162,35 @@ export async function episodeAllowsSalePriceCorrection(episodeId: number): Promi
 }
 
 /**
+ * **بيوعُ الحالة التي يُصحَّح سعرُها** (§4.gh): متابعةٌ «تم الشراء» بجهازٍ قيد التصنيع أو مسلَّم وغيرِ مُبطَل — والحالةُ حالةُ المتابعة
+ * أو حالةُ جهازها. فمتى وُجد منها شيءٌ في حالةٍ **فقلمُ كلفتها هو «تصحيح سعر البيع»** لا كتابةٌ حرّة فوق الكلفة: مكانٌ واحد يحرّك
+ * السعرَ والجهازَ والحالةَ والمريضَ معاً (قرارُ المالك ٢٠٢٦-١١-١٠). للشاشة وللحارس معاً، والكتابةُ تعيد شروطَها تحت القفل.
+ */
+export async function salePriceCorrectablesForPatient(patientId: number, tx?: any): Promise<Array<{
+  caseId: number; followupId: number; branchId: number; deviceEpisodeId: number;
+  approvedPrice: number; originalPrice: number | null; requestedItem: string | null;
+}>> {
+  const h = tx ?? db;
+  const r = await h.execute(sql`
+    SELECT COALESCE(f.case_id, e.case_id) AS case_id, f.id AS followup_id, f.branch_id, e.id AS episode_id,
+           f.approved_price, f.original_price, e.requested_item
+      FROM post_exam_followups f
+      JOIN patient_device_episodes e ON e.id = f.device_episode_id
+     WHERE f.patient_id = ${patientId} AND f.status = 'converted'
+       AND e.patient_id = ${patientId}
+       AND e.status IN ('in_manufacturing', 'delivered') AND e.admin_void_reversal_id IS NULL
+       AND COALESCE(f.case_id, e.case_id) IS NOT NULL
+     ORDER BY e.id
+  `);
+  return (r.rows ?? []).map((x: any) => ({
+    caseId: Number(x.case_id), followupId: Number(x.followup_id), branchId: Number(x.branch_id),
+    deviceEpisodeId: Number(x.episode_id), approvedPrice: Number(x.approved_price ?? 0),
+    originalPrice: x.original_price === null || x.original_price === undefined ? null : Number(x.original_price),
+    requestedItem: x.requested_item ?? null,
+  }));
+}
+
+/**
  * **«تصحيح سعر البيع» بعد إتمام البيع** (§4.ge — واقعةُ بيداء كريم محمد، ٢٠٢٦-١١-٠٨).
  *
  * سُجّل البيعُ بسعرٍ خطأ (١٩٬٠٠٠٬٠٠٠ بخصم ٧٬٠٠٠٬٠٠٠) وبدأ التصنيع، والصحيحُ ٤٬٣٥٠٬٠٠٠ بخصم ٣٥٠٬٠٠٠. وتعديلُ نصّ المعاينة لا يحرّك مالاً
@@ -1179,6 +1211,8 @@ export async function correctSalePriceAfterConversion(params: {
   discountAmount: unknown;
   /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
   reason: string;
+  /** موافقةٌ صريحة على طيّ قلم الكلفة بعد البيع — مبلغُه بعينه كما قاله الخادم (§4.gh)، وغيرُه يُردّ. */
+  absorbCaseCostEdit?: number | null;
   actor: Actor;
   /** سطرُ التدقيق يُكتب **في المعاملة نفسِها** (مراجعة Codex على #717) — بعنوان الجهاز ومتصفّحه من الطلب. */
   audit?: { ipAddress: string | null; userAgent: string | null };
@@ -1186,6 +1220,7 @@ export async function correctSalePriceAfterConversion(params: {
   followup: FollowupRow; delta: number; deviceEpisodeId: number;
   previous: { originalPrice: number | null; approvedPrice: number; priceKind: PriceKind | null };
   creditBalance: number;
+  absorbedCaseCostEdit: number;
 }> {
   const reason = (params.reason ?? "").trim();
   if (reason.length === 0) {
@@ -1276,27 +1311,46 @@ export async function correctSalePriceAfterConversion(params: {
       throw new FollowupError("على هذا الجهاز طلبُ خصمٍ معلَّق — احسمه ثم صحّح السعر.", 409);
     }
 
-    // ④أ **وكلفةُ الحالة لم تُعدَّل بعد البيع بيدٍ أخرى** (مراجعة Codex على #717): تخفيضٌ مع استرجاع (`refund_cost_reduction`) أو قلمُ
-    //    الكلفة (`case_cost_edit`) لا يحملان هويّةَ الجهاز ولا يمسّان سعرَه — فإضافةُ فرق البيع فوقهما تطرح المبلغَ مرّتين (بيعٌ ٥ ملايين ثمّ
-    //    تخفيضُ ٢ ثمّ تصحيحٌ إلى ١ كان يكتب −٤ فوق ٣). فيُردّ ليُراجَع بيد إنسان، والقياسُ من قيد البيع نفسِه (أوّلُ قيدٍ للجهاز).
+    // ④أ **وكلفةُ الحالة بعد البيع بيدٍ أخرى** (مراجعة Codex على #717، وواقعةُ محمد علي محسن ٢٠٢٦-١١-١٠ — §4.gh): تخفيضٌ مع استرجاع
+    //    (`refund_cost_reduction`) أو قلمُ الكلفة (`case_cost_edit`) لا يحملان هويّةَ الجهاز ولا يمسّان سعرَه — فإضافةُ فرق البيع فوقهما
+    //    تطرح المبلغَ مرّتين (بيعٌ ٥ ملايين ثمّ تخفيضُ ٢ ثمّ تصحيحٌ إلى ٣ كان يكتب −٢ فوق ٣ = ١).
+    //    • **ما صافيه صفر لا يمنع**: قلمٌ نزل ثمّ رجع لم يترك أثراً في المال — وكان يقفل التصحيحَ إلى الأبد.
+    //    • **وقلمٌ صافيه غيرُ صفر يُلغى ويحلّ محلَّه التصحيح** بموافقةٍ صريحة على مبلغه بعينه (`absorbCaseCostEdit`) — فالقلمُ نفسُه صار
+    //      بابَ هذا التصحيح على الحالة المُباعة (قرارُ المالك: «عدّلتُ من أيّ مكانٍ يتعدّل في كلّ مكان»)، وما كُتب به قبل اليوم يُطوى فيه.
+    //    • **والتخفيضُ مع الاسترجاع يبقى مانعاً**: مالٌ خرج فعلاً بقرارٍ آخر، ويُراجَع بيد إنسان.
+    //    والحدُّ **لحظةُ إتمام البيع** (converted_at — يكتبها بابُ البيع الوحيد NOW()): فبيعٌ بلا قيد (مجانيٌّ فرقُه صفر) يُقاس بها لا
+    //    بالتاريخ كلِّه (#719)، ولا يُزيحها قيدٌ للجهاز بعد البيع (صيانةٌ لاحقة — #721) ولا قبله (صيانةٌ مؤرَّخةٌ بيوم زيارتها — #722).
+    //    وأوّلُ قيدٍ للجهاز احتياطٌ لصفٍّ موروثٍ بلا لحظة إتمام.
+    let absorbed = 0;
     if (caseId !== null) {
       const adj = await tx.execute(sql`
-        SELECT 1 FROM cost_entries ce
-         WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit')
-           --  الحدُّ **لحظةُ إتمام البيع** (converted_at — يكتبها بابُ البيع الوحيد NOW()): فبيعٌ بلا قيد (مجانيٌّ فرقُه صفر) يُقاس بها لا
-           --  بالتاريخ كلِّه (مراجعة Codex على #719)، ولا يُزيحها قيدٌ للجهاز بعد البيع (صيانةٌ لاحقة — #721) ولا قبله (صيانةٌ مؤرَّخةٌ بيوم
-           --  زيارتها — #722)، فقيودُ الجهاز قد تحمل يومَ الزيارة لا يومَ الكتابة. وأوّلُ قيدٍ للجهاز احتياطٌ لصفٍّ موروثٍ بلا لحظة إتمام.
+        SELECT COALESCE(SUM(ce.amount) FILTER (WHERE ce.source IN ('case_cost_edit', 'manual_edit')), 0)::bigint AS pencil,
+               COUNT(*) FILTER (WHERE ce.source = 'refund_cost_reduction' AND ce.amount <> 0)::int AS refunds
+          FROM cost_entries ce
+         --  و«تعديل مريض» (manual_edit) يكتب الكلفةَ على القسم الوحيد بالطريقة نفسِها — فيُحسب معه (كان لا يراه الحارسُ أصلاً).
+         WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit', 'manual_edit')
            AND ce.created_at >= COALESCE(
              (SELECT converted_at FROM post_exam_followups WHERE id = ${cur.id}),
              (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId}),
              '-infinity'::timestamptz)
-         LIMIT 1
       `);
-      if ((adj.rows ?? []).length > 0) {
+      const a0 = (adj.rows ?? [])[0] ?? {};
+      if (Number(a0.refunds ?? 0) > 0) {
         throw new FollowupError(
-          "كلفةُ هذه الحالة عُدّلت بعد البيع (تخفيضٌ مع استرجاع أو قلمُ الكلفة) — تصحيحُ السعر فوقها يطرح المبلغَ مرّتين."
-          + " يحتاج مراجعة إدارية: صحّح الكلفة من قلم الحالة.", 409,
+          "كلفةُ هذه الحالة عُدّلت بعد البيع بتخفيضٍ مع استرجاع — تصحيحُ السعر فوقه يطرح المبلغَ مرّتين."
+          + " يحتاج مراجعة إدارية.", 409,
         );
+      }
+      const pencil = Number(a0.pencil ?? 0);
+      if (pencil !== 0) {
+        if (params.absorbCaseCostEdit !== pencil) {
+          throw new FollowupError(
+            `كلفةُ هذه الحالة عُدّلت بعد البيع (قلمُ الكلفة أو «تعديل مريض») بـ ${pencil > 0 ? "+" : "−"}${Math.abs(pencil).toLocaleString("en-US")} د.ع`
+            + " — يُلغى ذلك التعديل ويحلّ محلَّه هذا التصحيح. أكّد ذلك ثمّ احفظ.", 409,
+            { code: "case_cost_edit_absorb", caseCostEditAmount: pencil },
+          );
+        }
+        absorbed = pencil;
       }
     }
 
@@ -1332,6 +1386,24 @@ export async function correctSalePriceAfterConversion(params: {
     });
     if (!moved) throw new FollowupError(DRIFT, 409);
     await setEpisodeSaleLinesTx(tx, { episodeId: ep.id, lines: null });
+
+    // ⑥أ **طيُّ قلم الكلفة بعد البيع** (§4.gh): قيدٌ يعكس صافيه بالمصدر نفسِه، فيصير صافي القلم بعد البيع صفراً (فلا يمنع تصحيحاً
+    //    بعده)، وتعود الكلفةُ والمجموعُ إلى ما كانا عليه قبله — ثمّ يقع فرقُ البيع فوقهما مرّةً واحدة.
+    if (absorbed !== 0 && caseId !== null) {
+      await tx.execute(sql`
+        UPDATE patient_cases SET cost = GREATEST(0, COALESCE(cost, 0) - ${absorbed}), cost_source = 'manual', updated_at = NOW()
+         WHERE id = ${caseId}
+      `);
+      await tx.execute(sql`
+        UPDATE patients SET total_cost = GREATEST(0, COALESCE(total_cost, 0) - ${absorbed}) WHERE id = ${cur.patientId}
+      `);
+      const cb = await tx.execute(sql`SELECT branch_id FROM patients WHERE id = ${cur.patientId}`);
+      await tx.execute(sql`
+        INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes)
+        VALUES (${cur.patientId}, ${Number((cb.rows ?? [])[0]?.branch_id ?? cur.branchId)}, ${-absorbed}, 'case_cost_edit',
+                ${caseId}, ${"إلغاء تعديل قلم الكلفة بعد البيع — حلّ محلَّه تصحيح سعر البيع: " + reason})
+      `);
+    }
 
     // ⑦ كلفةُ الخيط ومجموعُ المريض بالفرق — زيادةٌ ذرّية — وقيدٌ موقَّع بهويّة الجهاز.
     if (delta !== 0) {
@@ -1375,6 +1447,7 @@ export async function correctSalePriceAfterConversion(params: {
         previousOriginalPrice: cur.originalPrice, originalPrice: offer.originalPrice,
         discountAmount: offer.discountAmount, priceKind: offer.kind,
         deviceEpisodeId: ep.id, episodeStatus: ep.status, correctionReason: reason,
+        ...(absorbed !== 0 ? { absorbedCaseCostEdit: absorbed } : {}),
         setByUserId: params.actor.userId, setByName: params.actor.userName,
       },
       actor: params.actor,
@@ -1399,17 +1472,19 @@ export async function correctSalePriceAfterConversion(params: {
       oldValues: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
       newValues: {
         originalPrice: offer.originalPrice, approvedPrice: price, priceKind: offer.kind,
-        delta, deviceEpisodeId: ep.id, reason,
+        delta, deviceEpisodeId: ep.id, reason, ...(absorbed !== 0 ? { absorbedCaseCostEdit: absorbed } : {}),
       },
       ipAddress: params.audit?.ipAddress ?? null, userAgent: params.audit?.userAgent ?? null,
       notes: `تصحيح سعر البيع لمتابعة #${cur.id}: ${cur.approvedPrice.toLocaleString()} ⟶ ${price.toLocaleString()} د.ع`
-        + ` (${delta > 0 ? "+" : ""}${delta.toLocaleString()}) — ${reason}`,
+        + ` (${delta > 0 ? "+" : ""}${delta.toLocaleString()})`
+        + (absorbed !== 0 ? ` — وأُلغي تعديلُ قلم الكلفة بعد البيع (${absorbed.toLocaleString()})` : "")
+        + ` — ${reason}`,
     });
 
     return {
       followup: toRow(row), delta, deviceEpisodeId: ep.id,
       previous: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
-      creditBalance,
+      creditBalance, absorbedCaseCostEdit: absorbed,
     };
   });
 }

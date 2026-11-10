@@ -1548,9 +1548,21 @@ async function main() {
                  VALUES ($1, 1, 2000000, $2, $3)`,
         [a.patientId, b.episodeId, `${MARK} دفعة على الجهاز الباقي`]);
 
+        //  القلمُ على حالةٍ مُباعة صار «تصحيح سعر البيع» (§4.gh) — فيردّ الكتابةَ الحرّة، والأثرُ الموروث (WB-01982 على الإنتاج)
+        //  يُكتب كما كان يكتبه `updateCaseCost` بحرفه: كلفةُ الخيط والإجماليّ وقيدُ الفرق `case_cost_edit`.
         const edit = await http("PATCH",
           `/api/patients/${a.patientId}/cases/${a.caseId}`, S.admin, { cost: 2_700_000 });
-        same("ص٨. تخفيضُ كلفة الخيط يمضي من بابه", edit.status, 200);
+        same("ص٨. **قلمُ الكلفة على حالةٍ مُباعة يردّ الكتابةَ الحرّة** (٤٠٩ برمزه — §4.gh)",
+          [edit.status, edit.body?.code], [409, "case_has_sale_price_correction"]);
+        {
+          const [pc] = await q(`SELECT cost::int c FROM patient_cases WHERE id=$1`, [a.caseId]);
+          const [pp] = await q(`SELECT branch_id FROM patients WHERE id=$1`, [a.patientId]);
+          const d = 2_700_000 - pc.c;
+          await q(`UPDATE patient_cases SET cost=2700000, cost_source='manual' WHERE id=$1`, [a.caseId]);
+          await q(`UPDATE patients SET total_cost = total_cost + $2 WHERE id=$1`, [a.patientId, d]);
+          await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id) VALUES ($1,$2,$3,'case_cost_edit',$4)`,
+            [a.patientId, pp.branch_id, d, a.caseId]);
+        }
         const mid = await shape(a.patientId);
         same("ص٩. فالدفاتر تحمل جهازاً واحداً بينما الجهازان حيّان",
           [mid.total, mid.caseCost,
@@ -1617,9 +1629,18 @@ async function main() {
         //  وخيطٌ ثانٍ كي لا تُزامِن «تعديل مريض» كلفةَ الخيط الوحيد مع
         //  المجموع — فيبقى المجموعُ أقلَّ منها، وهو الشكلُ المقصود هنا.
         await mkCase(a.patientId, 1, "physiotherapy");
+        //  «تعديل مريض» يردّ تغييرَ كلفة مريضٍ له جهازٌ مُباع (§4.gh) — والأثرُ الموروث يُكتب كما كان يكتبه بحرفه: قسمان نشطان
+        //  فلا قسمَ يُمَسّ، والإجماليُّ وحده وقيدُ فرقه `manual_edit` بلا قسم.
         const edit = await http("PUT", `/api/patients/${a.patientId}`, S.admin,
           { totalCost: 2_700_000 });
-        same("ص٢٤. تخفيضُ مجموع المريض وحده يمضي", edit.status, 200);
+        same("ص٢٤. **«تعديل مريض» يردّ تغييرَ كلفة مريضٍ له جهازٌ مُباع** (٤٠٩ برمزه — §4.gh)",
+          [edit.status, edit.body?.code], [409, "case_has_sale_price_correction"]);
+        {
+          const [pp] = await q(`SELECT branch_id, total_cost::int t FROM patients WHERE id=$1`, [a.patientId]);
+          await q(`UPDATE patients SET total_cost=2700000 WHERE id=$1`, [a.patientId]);
+          await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source) VALUES ($1,$2,$3,'manual_edit')`,
+            [a.patientId, pp.branch_id, 2_700_000 - pp.t]);
+        }
         const mid = await shape(a.patientId);
         same("ص٢٥. فالمجموعُ أقلُّ من كلفة الخيط",
           [mid.total, mid.caseCost], [2_700_000, 5_400_000]);
@@ -1648,9 +1669,18 @@ async function main() {
         same("ص٣٠. تسعيرُ خيط العلاج الطبيعي يمضي", (await http("PATCH",
           `/api/patients/${a.patientId}/cases/${physioCaseId}`, S.admin,
           { cost: 3_000_000 })).status, 200);
-        same("ص٣١. وتخفيضُ خيط الأجهزة يمضي", (await http("PATCH",
-          `/api/patients/${a.patientId}/cases/${a.caseId}`, S.admin,
-          { cost: 2_700_000 })).status, 200);
+        const edit31 = await http("PATCH", `/api/patients/${a.patientId}/cases/${a.caseId}`, S.admin, { cost: 2_700_000 });
+        same("ص٣١. **وقلمُ خيط الأجهزة المُباع يردّ الكتابةَ الحرّة** (٤٠٩ — §4.gh)، فيُكتب أثرُه الموروث بحرف `updateCaseCost`",
+          [edit31.status, edit31.body?.code], [409, "case_has_sale_price_correction"]);
+        {
+          const [pc] = await q(`SELECT cost::int c FROM patient_cases WHERE id=$1`, [a.caseId]);
+          const [pp] = await q(`SELECT branch_id FROM patients WHERE id=$1`, [a.patientId]);
+          const d = 2_700_000 - pc.c;
+          await q(`UPDATE patient_cases SET cost=2700000, cost_source='manual' WHERE id=$1`, [a.caseId]);
+          await q(`UPDATE patients SET total_cost = total_cost + $2 WHERE id=$1`, [a.patientId, d]);
+          await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id) VALUES ($1,$2,$3,'case_cost_edit',$4)`,
+            [a.patientId, pp.branch_id, d, a.caseId]);
+        }
         const mid = await shape(a.patientId);
         same("ص٣٢. فالمجموعُ واسعٌ وخيطُ الأجهزة قصير",
           [mid.total, mid.caseCost], [5_700_000, 2_700_000]);

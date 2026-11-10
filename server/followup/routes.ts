@@ -168,7 +168,7 @@ async function retiredOnExamPath(res: any, followupId: number): Promise<boolean>
 /** يترجم خطأ العمل إلى ردٍّ صريح — والسباق يُقال للمستخدم لا يُبتلع. */
 function fail(res: any, err: unknown): boolean {
   if (err instanceof FollowupError) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json({ error: err.message, ...(err.extra ?? {}) });
     return true;
   }
   //  ══ **وتعارضُ الأقفال خطأُ عملٍ أيضاً** ═════════════════════════════
@@ -1112,6 +1112,8 @@ export function registerFollowupRoutes(app: Express, isAuthenticated: any) {
         originalPrice: req.body?.originalPrice,
         discountAmount: req.body?.discountAmount ?? 0,
         reason: str(req.body?.reason) ?? "",
+        absorbCaseCostEdit: Number.isFinite(Number(req.body?.absorbCaseCostEdit)) && req.body?.absorbCaseCostEdit !== null
+          ? Number(req.body.absorbCaseCostEdit) : null,
         actor: actorOf(req),
         audit: { ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null },
       });

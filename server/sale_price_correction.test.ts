@@ -395,7 +395,7 @@ async function main() {
       deviceSpecs: SALE_SPECS_TEST, originalPrice: 1_000_000, discountAmount: 1_000_000, expertUserId: EXPERT,
     });
     await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
-             VALUES ($1,1,0,'case_cost_edit',$2,'قلم الكلفة بعد البيع', NOW() + interval '1 second')`, [Fm.patientId, Fm.caseId]);
+             VALUES ($1,1,-300000,'case_cost_edit',$2,'قلم الكلفة بعد البيع', NOW() + interval '1 second')`, [Fm.patientId, Fm.caseId]);
     await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, device_episode_id, notes, created_at)
              VALUES ($1,1,50000,'maintenance',$2,$3,'رسم صيانة لاحق', NOW() + interval '2 seconds')`, [Fm.patientId, Fm.caseId, Fm.episodeId]);
     const rFm = await correct(Fm.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
@@ -415,6 +415,85 @@ async function main() {
     const rFb = await correct(Fb.followupId, S.admin, { originalPrice: 2_000_000, discountAmount: 0, reason: "x" });
     same("ط٤. **وقيدٌ للجهاز مؤرَّخٌ قبل البيع لا يسحب الحدّ** — قلمُ الكلفة قبل البيع لا يمنع التصحيح (٢٠٠)",
       [rFb.status, (await moneyOf(Fb)).followup[1]], [200, 2_000_000]);
+
+    // ══ ي) القلمُ والتصحيحُ مكانٌ واحد (§4.gh — واقعةُ محمد علي محسن ٢٠٢٦-١١-١٠) ══════════
+    console.log("\n── ي) قلمُ الكلفة على حالةٍ مُباعة ──");
+    //  الواقعة: بيعٌ ١٠ ملايين، والقلمُ نزل بالكلفة ثمّ أرجعها (صافيه صفر) — فكان التصحيحُ مقفولاً إلى الأبد.
+    const M = await operation("محمد علي محسن", { original: 10_000_000, discount: 0 });
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,-2000000,'case_cost_edit',$2,'قلم نزل', NOW() + interval '1 second'),
+                    ($1,1, 2000000,'case_cost_edit',$2,'قلم رجع', NOW() + interval '2 seconds')`, [M.patientId, M.caseId]);
+    const rM = await correct(M.followupId, S.mgr, { originalPrice: 10_000_000, discountAmount: 2_000_000, reason: "تخفيض من الدكتور" });
+    const mM = await moneyOf(M);
+    same("ي١. **قلمٌ صافيه صفر بعد البيع لا يقفل التصحيح** — ١٠ ⟵ ٨ ملايين في كلّ موضع",
+      [rM.status, mM.followup, mM.episode[1], mM.caseCost, mM.total, mM.ledger],
+      [200, ["converted", 8_000_000, 10_000_000, "discount"], 8_000_000, 8_000_000, 8_000_000, 8_000_000]);
+
+    const pM = await http("PATCH", `/api/patients/${M.patientId}/cases/${M.caseId}`, S.admin, { cost: 5_000_000 });
+    same("ي٢. **والقلمُ الحرّ على حالةٍ مُباعة يُردّ** (٤٠٩ برمزه) — ولو للمسؤول — ولا يتحرّك شيء",
+      [pM.status, pM.body?.code, (await moneyOf(M)).caseCost], [409, "case_has_sale_price_correction", 8_000_000]);
+
+    const casesMgr = (await http("GET", `/api/patients/${M.patientId}/cases`, S.mgr)).body ?? [];
+    const casesRecv = (await http("GET", `/api/patients/${M.patientId}/cases`, S.recv)).body ?? [];
+    const scM = casesMgr.find((c: any) => c.id === M.caseId)?.saleCorrections ?? [];
+    const scR = casesRecv.find((c: any) => c.id === M.caseId)?.saleCorrections ?? [];
+    same("ي٣. **بطاقةُ القسم تحمل بيعَها** — فيفتح القلمُ «تصحيح سعر البيع» لمدير الفرع، والاستعلاماتُ تراه بلا صلاحية",
+      [scM.length, scM[0]?.followupId, scM[0]?.approvedPrice, scM[0]?.originalPrice, scM[0]?.mayCorrect, scR.length, scR[0]?.mayCorrect],
+      [1, M.followupId, 8_000_000, 10_000_000, true, 1, false]);
+
+    //  قلمٌ قديم صافيه غيرُ صفر (بيعٌ ٥ ثمّ القلمُ إلى ٣) — يُطوى بموافقةٍ على مبلغه بعينه، ولا يُطرح مرّتين.
+    const L = await operation("قلم قديم", { original: 5_000_000, discount: 0 });
+    await q(`UPDATE patient_cases SET cost = 3000000 WHERE id=$1`, [L.caseId]);
+    await q(`UPDATE patients SET total_cost = 3000000 WHERE id=$1`, [L.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes, created_at)
+             VALUES ($1,1,-2000000,'case_cost_edit',$2,'قلم بعد البيع', NOW() + interval '1 second')`, [L.patientId, L.caseId]);
+    const bodyL = { originalPrice: 5_000_000, discountAmount: 2_000_000, reason: "الخصم الصحيح" };
+    const rL0 = await correct(L.followupId, S.admin, bodyL);
+    same("ي٤. بلا موافقة ⟵ ٤٠٩ برمز الطيّ ومبلغه، ولا يتحرّك شيء",
+      [rL0.status, rL0.body?.code, rL0.body?.caseCostEditAmount, /عُدّلت بعد البيع/.test(rL0.body?.error ?? ""), (await moneyOf(L)).followup[1]],
+      [409, "case_cost_edit_absorb", -2_000_000, true, 5_000_000]);
+    const rL1 = await correct(L.followupId, S.admin, { ...bodyL, absorbCaseCostEdit: -1_000_000 });
+    same("ي٥. وموافقةٌ على مبلغٍ آخر تُردّ (٤٠٩)", [rL1.status, rL1.body?.code], [409, "case_cost_edit_absorb"]);
+    const rL2 = await correct(L.followupId, S.admin, { ...bodyL, absorbCaseCostEdit: -2_000_000 });
+    const mL = await moneyOf(L);
+    const [pencilL] = await q(`SELECT COALESCE(SUM(amount),0)::int s FROM cost_entries WHERE case_id=$1 AND source='case_cost_edit'`, [L.caseId]);
+    same("ي٦. **وبالموافقة يُطوى القلمُ ويقع التصحيحُ مرّةً واحدة** — ٣ ملايين في كلّ موضع لا مليونٌ واحد، وصافي القلم صفر",
+      [rL2.status, rL2.body?.absorbedCaseCostEdit, mL.followup[1], mL.episode[1], mL.caseCost, mL.total, mL.ledger, pencilL.s],
+      [200, -2_000_000, 3_000_000, 3_000_000, 3_000_000, 3_000_000, 3_000_000, 0]);
+    const rL3 = await correct(L.followupId, S.admin, { originalPrice: 5_000_000, discountAmount: 1_000_000, reason: "تصحيح ثانٍ" });
+    same("ي٧. وتصحيحٌ بعده يمرّ بلا سؤال (٢٠٠) — ٤ ملايين", [rL3.status, (await moneyOf(L)).caseCost], [200, 4_000_000]);
+
+    //  و«تعديل مريض» القديم بعد البيع (`manual_edit` على القسم) يُحسب كالقلم — كان لا يراه الحارسُ فيُطرح الفرقُ مرّتين.
+    const K = await operation("تعديل مريض قديم", { original: 4_000_000, discount: 0 });
+    await q(`UPDATE patient_cases SET cost = 3500000 WHERE id=$1`, [K.caseId]);
+    await q(`UPDATE patients SET total_cost = 3500000 WHERE id=$1`, [K.patientId]);
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, created_at)
+             VALUES ($1,1,-500000,'manual_edit',$2, NOW() + interval '1 second')`, [K.patientId, K.caseId]);
+    const rK0 = await correct(K.followupId, S.admin, { originalPrice: 4_000_000, discountAmount: 500_000, reason: "الخصم" });
+    const rK1 = await correct(K.followupId, S.admin, { originalPrice: 4_000_000, discountAmount: 500_000, reason: "الخصم", absorbCaseCostEdit: -500_000 });
+    const mK = await moneyOf(K);
+    same("ي٧ب. **و«تعديل مريض» القديم بعد البيع يُطوى كالقلم** — ٣٫٥ ملايين لا ٣",
+      [rK0.status, rK0.body?.caseCostEditAmount, rK1.status, mK.caseCost, mK.total, mK.ledger], [409, -500_000, 200, 3_500_000, 3_500_000, 3_500_000]);
+
+    const uM = await http("PUT", `/api/patients/${M.patientId}`, S.admin, { totalCost: 1_000_000 });
+    same("ي٨. **و«تعديل مريض» لا يغيّر كلفةَ مريضٍ له جهازٌ مُباع** (٤٠٩ برمزه) ولا يتحرّك شيء",
+      [uM.status, uM.body?.code, (await moneyOf(M)).total], [409, "case_has_sale_price_correction", 8_000_000]);
+    const uM2 = await http("PUT", `/api/patients/${M.patientId}`, S.admin, { totalCost: 8_000_000, address: "النجف" });
+    same("ي٩. وإرسالُها بقيمتها نفسِها مع تعديلٍ آخر يمرّ (٢٠٠)", [uM2.status, (await moneyOf(M)).total], [200, 8_000_000]);
+
+    const [pl] = await q<{ id: number }>(
+      `INSERT INTO patients (name, phone, referral_source, age, height, weight, medical_condition, amputation_site, branch_id,
+         is_amputee, is_medical_support, is_physiotherapy, total_cost, patient_classification)
+       VALUES ($1,'07701234568',$2,'40','172','78','بتر','احادي - طرف سفلي - يمين - فوق الركبة',1,true,false,false,1000000,'old') RETURNING id`,
+      [`${MARK} بلا بيع`, MARK]);
+    const [plc] = await q<{ id: number }>(
+      `INSERT INTO patient_cases (patient_id, branch_id, case_type, cost, cost_source, status)
+       VALUES ($1,1,'prosthetic',1000000,'manual','active') RETURNING id`, [pl.id]);
+    const pPl = await http("PATCH", `/api/patients/${pl.id}/cases/${plc.id}`, S.admin, { cost: 1_500_000 });
+    const [plcs] = await q(`SELECT cost::int c FROM patient_cases WHERE id=$1`, [plc.id]);
+    const casesPl = (await http("GET", `/api/patients/${pl.id}/cases`, S.admin)).body ?? [];
+    same("ي١٠. **وحالةٌ بلا بيعٍ يُصحَّح يبقى قلمُها حرّاً كما كان** (٢٠٠) وبطاقتُها بلا بيوع",
+      [pPl.status, plcs.c, casesPl.find((c: any) => c.id === plc.id)?.saleCorrections ?? null], [200, 1_500_000, null]);
 
     //  متابعةٌ منتهية من فرعٍ لا يصله مديرُ الفرع (ملفٌّ مشترك) — بلا زرّ له، وبزرٍّ للمسؤول.
     const Sh = await operation("بيع من فرع آخر", { original: 2_000_000, discount: 0 });

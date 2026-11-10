@@ -18,6 +18,9 @@ import { PROSTHETIC_DEVICE_SPECS, SUPPORT_SPECS } from "@shared/case_fields";
 import { DeviceSheetsBox, useIntakeSheets } from "@/components/intake/DeviceSheetsBox";
 import { PhysioSheetBox } from "@/components/physio/PhysioSheetBox";
 import { specKeysCoveredBySheets } from "@shared/intake_sheet_view";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SalePriceCorrection } from "@/components/SalePriceCorrection";
 
 // Phase 2 (relocated): the case selector lives as clickable CHIPS in the
 // patient header (next to the branch), and clicking a chip shows that case's
@@ -46,6 +49,12 @@ export interface CaseRow {
   devices?: { episodeId: number; sequenceNumber: number; status: string; requestedItem: string; specs: Record<string, string> | null }[];
   /** آخرُ قرار شراءٍ على قسم الجهاز «لم يشترِ» ولا جهازَ حيٌّ بعده (§4.bm) — غائبةٌ في غير ذلك. */
   notBought?: { at: string | null; reason: string | null; note: string | null };
+  /**
+   * **بيوعُ هذا القسم التي يُصحَّح سعرُها** (§4.gh — قرارُ المالك ٢٠٢٦-١١-١٠): متى وُجدت فقلمُ «التكلفة» يفتح «تصحيح سعر البيع»
+   * نفسَه (فيتحرّك السعرُ والجهازُ والكلفةُ وحسابُ المريض معاً) لا الكتابةَ الحرّة — والخادمُ يردّ تلك على هذا القسم.
+   * و`mayCorrect` قاعدةُ زرّ البطاقة نفسُها لهذا المستخدم.
+   */
+  saleCorrections?: { followupId: number; deviceEpisodeId: number; approvedPrice: number; originalPrice: number | null; label: string; mayCorrect: boolean }[];
 }
 
 const CASE_META: Record<string, { label: string; icon: any }> = {
@@ -156,6 +165,18 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
   });
   const soldTotal = isDeviceCase ? soldDevicesTotal(episodeData?.episodes, caseRow.id) : 0;
   const [confirmBelowSold, setConfirmBelowSold] = useState(false);
+  //  ══ **قسمٌ مُباع: القلمُ هو «تصحيح سعر البيع»** (§4.gh) ══
+  const saleCorrections = caseRow.saleCorrections ?? [];
+  const correctable = saleCorrections.filter((x) => x.mayCorrect);
+  const pencilIsSaleCorrection = saleCorrections.length > 0;
+  const [pickDevice, setPickDevice] = useState(false);
+  const [correctingId, setCorrectingId] = useState<number | null>(null);
+  const correcting = correctable.find((x) => x.followupId === correctingId) ?? null;
+  const onPencil = () => {
+    if (!pencilIsSaleCorrection) { setDraft(caseRow.cost || 0); setEditing(true); return; }
+    if (correctable.length === 1) setCorrectingId(correctable[0].followupId);
+    else setPickDevice(true);
+  };
   const trySave = () => {
     if (needsBelowSoldConfirm(draft, soldTotal)) setConfirmBelowSold(true);
     else save.mutate();
@@ -493,10 +514,11 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
           editing && canViewCasePayments ? " col-span-3 md:col-span-1" : ""}`}>
           <div className="text-xs opacity-80 flex items-center justify-center gap-1">
             التكلفة
-            {canEditCost && !editing && (
+            {(pencilIsSaleCorrection ? correctable.length > 0 : canEditCost) && !editing && (
               //  الحشوةُ تكبّر هدفَ اللمس، والهامشُ السالب يمنعها من دفع
               //  سطر العنوان — فالشكلُ كما هو والضغطةُ تصير ممكنة.
-              <button type="button" onClick={() => { setDraft(caseRow.cost || 0); setEditing(true); }} data-testid={`edit-case-cost-${caseRow.id}`} className="text-primary hover:opacity-70 inline-flex items-center justify-center p-2 -m-2 md:p-0 md:m-0 relative before:absolute before:-inset-2.5 before:content-[''] md:before:hidden" aria-label="تعديل التكلفة">
+              //  وفي قسمٍ مُباع يفتح «تصحيح سعر البيع» لمن يصحّحه وحده (§4.gh) — ولغيره لا قلم، فالخادمُ يردّ الكتابةَ الحرّة.
+              <button type="button" onClick={onPencil} data-testid={`edit-case-cost-${caseRow.id}`} className="text-primary hover:opacity-70 inline-flex items-center justify-center p-2 -m-2 md:p-0 md:m-0 relative before:absolute before:-inset-2.5 before:content-[''] md:before:hidden" aria-label="تعديل التكلفة">
                 <Pencil className="w-3.5 h-3.5 md:w-3 md:h-3" />
               </button>
             )}
@@ -514,6 +536,34 @@ export function PatientCasePanel({ caseRow, patientId }: { caseRow: CaseRow; pat
             <div className="text-[11px] text-muted-foreground mt-1" data-testid={`case-cost-sold-hint-${caseRow.id}`}>
               أسعار الأجهزة المُباعة في هذا القسم: {fmtIQD(soldTotal)}
             </div>
+          )}
+          {pencilIsSaleCorrection && (
+            <Dialog open={pickDevice} onOpenChange={setPickDevice}>
+              <DialogContent className="max-w-sm" dir="rtl" data-testid={`dialog-pick-sale-device-${caseRow.id}`}>
+                <DialogHeader><DialogTitle>أيُّ جهازٍ يُصحَّح سعرُه؟</DialogTitle></DialogHeader>
+                <p className="text-xs text-muted-foreground">
+                  كلفةُ هذا القسم مجموعُ أسعار أجهزته المُباعة، فتُعدَّل بتصحيح سعر الجهاز نفسِه.
+                </p>
+                <div className="space-y-2">
+                  {correctable.map((x, i) => (
+                    <Button key={x.followupId} type="button" variant="outline" className="w-full justify-between"
+                      data-testid={`pick-sale-device-${x.followupId}`}
+                      onClick={() => { setPickDevice(false); setCorrectingId(x.followupId); }}>
+                      <span>الجهاز {i + 1} — {x.label}</span>
+                      <span className="text-muted-foreground">{fmtIQD(x.approvedPrice)}</span>
+                    </Button>
+                  ))}
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+          {correcting && (
+            <SalePriceCorrection
+              key={correcting.followupId}
+              followupId={correcting.followupId} patientId={patientId}
+              originalPrice={correcting.originalPrice} approvedPrice={correcting.approvedPrice}
+              deviceLabel={correctable.length > 1 ? correcting.label : null}
+              hideTrigger open onOpenChange={(v) => { if (!v) setCorrectingId(null); }} />
           )}
           <AlertDialog open={confirmBelowSold} onOpenChange={setConfirmBelowSold}>
             <AlertDialogContent dir="rtl">
