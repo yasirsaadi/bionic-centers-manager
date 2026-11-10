@@ -16,6 +16,8 @@ import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, retiredPhysioTypesIn, retiredTypeInEntries, RETIRED_TYPE_ERROR, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
 import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
 import { normalizePhone } from "@shared/phone";
+import { canCorrectSalePrice } from "@shared/followup";
+import { requestedItemLabel } from "@shared/prosthetic_parts";
 import { nudgeDispatcher } from "./patient_notifications/dispatcher";
 import { registerPatientCommunicationRoutes } from "./patient_contacts/routes";
 import { registerPatientTelegramWebhook } from "./patient_telegram/webhook";
@@ -2606,8 +2608,33 @@ export async function registerRoutes(
     //  ══ **مواصفاتُ كلّ جهازٍ على حدة** (المالك ٢٠٢٦-١٠-٠٥) — حين للخيط جهازان مَبيعان فأكثر: `details` صفٌّ واحد يحمل
     //  آخرَ بيع، فتُرفَق الأجهزةُ بمواصفات معاينة كلٍّ منها وتعرضها البطاقةُ بدلَه. وجهازٌ واحد يبقى كما كان (لقطتُه هي معاينتُه).
     const devicesByCase = await caseDeviceSpecs(cases.map((c) => c.id));
+    //  ══ **قلمُ الكلفة على حالةٍ مُباعة هو «تصحيح سعر البيع»** (§4.gh — قرارُ المالك ٢٠٢٦-١١-١٠) ══
+    //  لكلّ حالةٍ بيوعُها التي يُصحَّح سعرُها، ولكلٍّ منها: أيصحّحه هذا المستخدم (`mayCorrect` — قاعدةُ زرّ البطاقة نفسُها:
+    //  مسؤولٌ أو مديرُ فرع، ومن فرعٍ يصله). فالشاشةُ تفتح من القلم النافذةَ نفسَها، والخادمُ يردّ القلمَ الحرّ عليها.
+    const correctables = financiallyBlind ? [] : await followupStore.salePriceCorrectablesForPatient(id);
+    const scopeForCorrection = accessibleBranchesFor(req);
+    const mayCorrectAny = canCorrectSalePrice(branchSession);
+    const saleCorrectionsByCase = new Map<number, any[]>();
+    const driftForCase = new Map<number, Awaited<ReturnType<typeof followupStore.saleCostDriftForCase>>>();
+    for (const x of correctables) {
+      if (mayCorrectAny && !driftForCase.has(x.caseId)) {
+        driftForCase.set(x.caseId, await followupStore.saleCostDriftForCase(db, x.caseId));
+      }
+      const list = saleCorrectionsByCase.get(x.caseId) ?? [];
+      list.push({
+        followupId: x.followupId, deviceEpisodeId: x.deviceEpisodeId, sequenceNumber: x.sequenceNumber,
+        approvedPrice: x.approvedPrice, originalPrice: x.originalPrice,
+        label: requestedItemLabel(x.requestedItem),
+        mayCorrect: mayCorrectAny && (scopeForCorrection === null || scopeForCorrection.includes(x.branchId)),
+        //  ما انحرف به القسمُ بعد البيع (§4.gh) — لمن يصحّح وحده، فتقوله النافذةُ من أوّل فتحها.
+        costDrift: driftForCase.get(x.caseId) ?? null,
+      });
+      saleCorrectionsByCase.set(x.caseId, list);
+    }
     // Attach per-case paid total + visit count (case-attributed rows).
-    const enriched = cases.map((c00) => {
+    const enriched = cases.map((c000) => {
+      const sc = saleCorrectionsByCase.get(c000.id);
+      const c00 = sc ? { ...c000, saleCorrections: sc } : c000;
       const devs = devicesByCase.get(c00.id);
       const c0 = devs && devs.length >= 2 ? { ...c00, devices: devs } : c00;
       const nb = notBought.get(c0.id);
@@ -2678,6 +2705,17 @@ export async function registerRoutes(
       return res.status(409).json({
         //  طلبُ تعديل السعر تقاعد؛ والسعرُ في البيع الجديد يُكتب داخل «إتمام البيع» (§4.bt — «تحديد السعر النهائي» للمسار الموروث وحده).
         message: "لهذا القسم جهازٌ ينتظر قرار البيع — احسمه أوّلاً من بطاقة «قرار المريض بعد المعاينة»: «إتمام البيع» (والسعرُ يُكتب فيه) أو «لم يشترِ»، ثمّ عدّل الكلفة",
+      });
+    }
+
+    //  ══ **وحالةٌ فيها بيعٌ يُصحَّح سعرُه: مكانٌ واحد** (§4.gh — قرارُ المالك ٢٠٢٦-١١-١٠: «إن عدّلتُ من الأعلى أو من الأسفل يتعدّل في
+    //  كلّ مكان، أو اترك مكاناً واحداً كي لا أتوه») ══
+    //  القلمُ الحرّ كان يحرّك الكلفةَ وحدها ويُبقي السعرَ والجهاز — ثمّ يقفل «تصحيح سعر البيع» لأنّ الفرقَ يُطرح مرّتين. فالقلمُ في
+    //  الشاشة يفتح نافذةَ التصحيح نفسَها، وهذا البابُ يردّه هنا — **والمسؤولُ ليس مستثنى**.
+    if ((await followupStore.salePriceCorrectablesForPatient(patientId)).some((x) => x.caseId === caseId)) {
+      return res.status(409).json({
+        code: "case_has_sale_price_correction",
+        message: "في هذا القسم جهازٌ مُباع — كلفتُه تُعدَّل من «تصحيح سعر البيع» فتتحرّك معها كلفةُ الجهاز وحسابُ المريض وسعرُ البيع معاً.",
       });
     }
 
@@ -3482,6 +3520,19 @@ export async function registerRoutes(
       // `syncSoleCaseCost` تُبقي كلَّ حالةٍ كما هي وتُرجع `caseCostSync:
       // "ambiguous"` وحدها، تُترجَم هنا إلى ملاحظةٍ صريحة (نفسُ قناة
       // `costNote` القائمة أصلاً لقفل الطبيب) — لا صمتَ ولا كتابةً عشوائية.
+      //  ══ **ومريضٌ له جهازٌ مُباع: الكلفةُ من «تصحيح سعر البيع» وحده** (§4.gh — قرارُ المالك ٢٠٢٦-١١-١٠) ══
+      //  هذه الخانةُ كانت تحرّك الإجماليَّ وكلفةَ الحالة الوحيدة بلا السعر ولا الجهاز — ولا يراها حارسُ التصحيح (`manual_edit`)
+      //  فيطرح الفرقَ مرّتين. فتغييرُها يُردّ هنا؛ وإرسالُها بقيمتها نفسِها (النموذجُ يرسل الكائنَ كاملاً) يمرّ.
+      if (patch.totalCost !== undefined && patch.totalCost !== null
+        && Math.round(Number(patch.totalCost)) !== Math.round(Number(existingPatient.totalCost ?? 0))
+        //  **والقسمُ النشط وحده** (مراجعةٌ مستقلّة): قسمُ أطرافٍ مغلقٌ بجهازٍ مسلَّم وعلاجٌ طبيعيٌّ هو النشطُ الوحيد — الخانةُ تكتب
+        //  العلاجَ الطبيعيّ وحده (`syncSoleCaseCost`)، فلا تُردّ.
+        && (await followupStore.salePriceCorrectablesForPatient(id)).some((x) => x.caseStatus === "active")) {
+        return res.status(409).json({
+          code: "case_has_sale_price_correction", field: "totalCost",
+          message: "لهذا المريض جهازٌ مُباع — الكلفةُ تُعدَّل من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً.",
+        });
+      }
       const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true, null, sharedPhone);
       //  ══ **ولا يمرّ تعديلٌ بلا تدقيق** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bs) — بالقديم والجديد لِما تغيّر فعلاً. ══
       {

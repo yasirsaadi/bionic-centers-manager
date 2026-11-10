@@ -206,11 +206,28 @@ async function execute(body: any) {
 }
 
 /** يضبط مجموعَ المريض من «تعديل مريض» — نفسُ بابِ الواقعة الموثَّقة. */
+/**
+ * **تخفيضُ كلفةٍ بعد البيع كما كان «تعديل مريض» يكتبه** — بيانٌ موروث على الإنتاج (WB-01982 وأخواته).
+ * البابُ نفسُه صار يردّه منذ §4.gh (الكلفةُ على مريضٍ له جهازٌ مُباع تُعدَّل من «تصحيح سعر البيع» وحده) — فيُطرق أوّلاً ويُثبَت ردُّه،
+ * ثمّ يُكتب الأثرُ الذي كان يكتبه بحرفه (`updatePatient(…, "manual_edit", …, syncSoleCaseCost)`): الإجماليّ، والقسمُ الوحيد، وقيدُ الفرق عليه.
+ */
+let legacyDoorRefused = 0;
 async function setTotalCost(patientId: number, to: number) {
   const [p] = await q(`SELECT * FROM patients WHERE id=$1`, [patientId]);
-  return await http("PUT", `/api/patients/${patientId}`, S.admin, {
+  const door = await http("PUT", `/api/patients/${patientId}`, S.admin, {
     name: p.name, phone: p.phone, branchId: p.branch_id, totalCost: to,
   });
+  if (door.status !== 409 || door.body?.code !== "case_has_sale_price_correction") return door;
+  legacyDoorRefused++;
+  const delta = to - Number(p.total_cost ?? 0);
+  const [c] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND status='active'`, [patientId]);
+  await q(`UPDATE patients SET total_cost=$2 WHERE id=$1`, [patientId, to]);
+  await q(`UPDATE patient_cases SET cost=$2, cost_source='manual' WHERE id=$1`, [c.id, to]);
+  if (delta !== 0) {
+    await q(`INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id) VALUES ($1,$2,$3,'manual_edit',$4)`,
+      [patientId, p.branch_id, delta, c.id]);
+  }
+  return { status: 200, body: { legacy: true } };
 }
 
 async function cleanup() {
@@ -484,6 +501,8 @@ async function main() {
         [MARK]);
       same("٢٤. **ولا قيدَ عكسٍ يفوق أكبرَ قيدٍ موجبٍ على الملفّ**", over, []);
     }
+    //  وكلُّ تخفيضٍ فوقُ طرق البابَ أوّلاً فردّه (§4.gh) — والأثرُ الموروث كُتب بحرفه.
+    same("٣٠. **«تعديل مريض» يردّ تغييرَ كلفة مريضٍ له جهازٌ مُباع** في كلّ تخفيضٍ أعلاه (٥ من ٥)", legacyDoorRefused, 5);
   } finally {
     server.close();
     await cleanup();

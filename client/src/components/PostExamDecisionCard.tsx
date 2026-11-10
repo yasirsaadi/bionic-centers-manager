@@ -53,7 +53,7 @@ import { reopenPayload, deferPayload } from "@/components/followup_dialog_ui";
 import { ExamPathDecisionActions } from "@/components/ExamPathDecisionActions";
 import { LegacyDecisionActions } from "@/components/LegacyDecisionActions";
 import { PriceTransition } from "@/components/PriceTransition";
-import { SalePriceCorrection } from "@/components/SalePriceCorrection";
+import { SalePriceCorrection, type SaleCostDrift } from "@/components/SalePriceCorrection";
 import {
   followupEventView, purchasePresentation, purchaseStateText, replacementEpisodeIdOf,
 } from "@shared/followup_events";
@@ -101,6 +101,8 @@ interface Followup {
   examPath?: boolean;
   /** **«تصحيح سعر البيع»** بعد إتمامه (§4.ge) — يقوله الخادم: بيعٌ تمّ بجهاز، للمسؤول ومدير الفرع. */
   mayCorrectSalePrice?: boolean;
+  /** ما انحرفت به كلفةُ القسم بعد البيع (§4.gh) — لمن يصحّح. */
+  saleCostDrift?: SaleCostDrift | null;
   actions?: string[] | null;
   missing?: string[];
   missingLabel?: string;
@@ -587,7 +589,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
             {/*  **«تصحيح سعر البيع»** (§4.ge) — السعرُ وحده يتحرّك، والأمرُ وخبيرُه باقيان. */}
             {active.mayCorrectSalePrice === true && (
               <SalePriceCorrection followupId={active.id} patientId={patientId}
-                originalPrice={active.originalPrice ?? null} approvedPrice={active.approvedPrice} />
+                originalPrice={active.originalPrice ?? null} approvedPrice={active.approvedPrice}
+                drift={active.saleCostDrift ?? null} />
             )}
             {/*  ══ **تفاصيلُ البيع بعد الإتمام** (المرحلة الثانية) ══════════
                 السعرُ الأصليّ والخصمُ والنهائيّ والخبير — والمجّانيُّ صريحٌ،
@@ -796,7 +799,8 @@ export function PostExamDecisionCard({ patientId }: { patientId: number }) {
                   {" — "}<b>{f.approvedPrice.toLocaleString()} د.ع</b>
                 </span>
                 <SalePriceCorrection followupId={f.id} patientId={patientId}
-                  originalPrice={f.originalPrice ?? null} approvedPrice={f.approvedPrice} />
+                  originalPrice={f.originalPrice ?? null} approvedPrice={f.approvedPrice}
+                  drift={f.saleCostDrift ?? null} />
               </div>
             ))}
           </div>

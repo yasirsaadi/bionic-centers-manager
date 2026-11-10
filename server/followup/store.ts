@@ -61,10 +61,13 @@ export async function decisionBranchReachingPatient(
 /** خطأُ عملٍ بحالة HTTP — تُرجعها النقطة كما هي بدل 500. */
 export class FollowupError extends Error {
   status: number;
-  constructor(message: string, status = 409) {
+  /** حقولٌ تصل الشاشةَ مع الرسالة (رمزٌ ومبلغ) — فتسأل المستخدمَ بدل أن تعرض نصّاً خاماً. */
+  extra?: Record<string, unknown>;
+  constructor(message: string, status = 409, extra?: Record<string, unknown>) {
     super(message);
     this.name = "FollowupError";
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -1159,6 +1162,96 @@ export async function episodeAllowsSalePriceCorrection(episodeId: number): Promi
 }
 
 /**
+ * **بيوعُ الحالة التي يُصحَّح سعرُها** (§4.gh): متابعةٌ «تم الشراء» بجهازٍ قيد التصنيع أو مسلَّم وغيرِ مُبطَل — والحالةُ حالةُ المتابعة
+ * أو حالةُ جهازها. فمتى وُجد منها شيءٌ في حالةٍ **فقلمُ كلفتها هو «تصحيح سعر البيع»** لا كتابةٌ حرّة فوق الكلفة: مكانٌ واحد يحرّك
+ * السعرَ والجهازَ والحالةَ والمريضَ معاً (قرارُ المالك ٢٠٢٦-١١-١٠). للشاشة وللحارس معاً، والكتابةُ تعيد شروطَها تحت القفل.
+ */
+export async function salePriceCorrectablesForPatient(patientId: number, tx?: any): Promise<Array<{
+  caseId: number; caseStatus: string | null; followupId: number; branchId: number; deviceEpisodeId: number;
+  sequenceNumber: number | null; approvedPrice: number; originalPrice: number | null; requestedItem: string | null;
+}>> {
+  const h = tx ?? db;
+  const r = await h.execute(sql`
+    SELECT COALESCE(f.case_id, e.case_id) AS case_id, pc.status AS case_status, f.id AS followup_id, f.branch_id,
+           e.id AS episode_id, e.sequence_number, f.approved_price, f.original_price, e.requested_item
+      FROM post_exam_followups f
+      JOIN patient_device_episodes e ON e.id = f.device_episode_id
+      LEFT JOIN patient_cases pc ON pc.id = COALESCE(f.case_id, e.case_id)
+     WHERE f.patient_id = ${patientId} AND f.status = 'converted'
+       AND e.patient_id = ${patientId}
+       AND e.status IN ('in_manufacturing', 'delivered') AND e.admin_void_reversal_id IS NULL
+       AND COALESCE(f.case_id, e.case_id) IS NOT NULL
+     ORDER BY e.id
+  `);
+  return (r.rows ?? []).map((x: any) => ({
+    caseId: Number(x.case_id), caseStatus: x.case_status ?? null,
+    followupId: Number(x.followup_id), branchId: Number(x.branch_id),
+    deviceEpisodeId: Number(x.episode_id),
+    sequenceNumber: x.sequence_number === null || x.sequence_number === undefined ? null : Number(x.sequence_number),
+    approvedPrice: Number(x.approved_price ?? 0),
+    originalPrice: x.original_price === null || x.original_price === undefined ? null : Number(x.original_price),
+    requestedItem: x.requested_item ?? null,
+  }));
+}
+
+export interface SaleCostDriftEntry { id: number; amount: number; source: string; createdAt: string; notes: string | null }
+export interface SaleCostDrift { net: number; bySource: Record<string, number>; entries: SaleCostDriftEntry[] }
+
+/** المصادرُ التي تحرّك كلفةَ القسم بعد البيع بلا سعره ولا جهازه — فتُطوى في «تصحيح سعر البيع» بموافقة (§4.gh). */
+export const SALE_COST_DRIFT_SOURCES = ["case_cost_edit", "refund_cost_reduction"] as const;
+
+/**
+ * **ما حرّك كلفةَ القسم بعد بيعه بلا سعرٍ ولا جهاز** (§4.gh): قلمُ الكلفة (`case_cost_edit`) والتخفيضُ مع الاسترجاع
+ * (`refund_cost_reduction`) — كلاهما يكتب الفرقَ نفسَه على القسم والإجماليّ معاً، فيُعكسان بدقّة.
+ *
+ * • **الحدُّ أوّلُ بيعٍ في القسم** لا بيعُ الجهاز المصحَّح (مراجعةٌ مستقلّة): قسمٌ بجهازين، والقلمُ بين بيعيهما — لو قاس كلُّ جهازٍ
+ *   من بيعه لرأى الثاني عكسَ الطيّ دون أصله فأعاده. ولحظةُ البيع `converted_at` (يكتبها بابُ البيع NOW()، فلا يُزيحها قيدُ صيانةٍ
+ *   مؤرَّخٌ بيوم زيارته — #721/#722)، وأوّلُ قيدٍ للجهاز احتياطٌ لصفٍّ موروثٍ بلاها.
+ * • **و«تعديل مريض» (`manual_edit`) خارجها عمداً** (مراجعةٌ مستقلّة): يكتب الإجماليَّ فرقاً لكنّه يكتب القسمَ الوحيد **قيمةً مطلقة**،
+ *   فعكسُ قيده لا يعكس ما فعله بالقسم. وصار بابُه يردّ تغييرَ كلفة مريضٍ له بيع، فلا يُكتب منه جديد.
+ * • والصافي وحده يحكم: ما نزل ثمّ رجع لا أثرَ له (واقعةُ محمد علي محسن).
+ */
+export async function saleCostDriftForCase(h: any, caseId: number): Promise<SaleCostDrift> {
+  const r = await h.execute(sql`
+    WITH sales AS (
+      SELECT COALESCE(f.converted_at,
+               (SELECT MIN(ce2.created_at) FROM cost_entries ce2
+                 WHERE ce2.device_episode_id = f.device_episode_id AND ce2.patient_id = f.patient_id)) AS at
+        FROM post_exam_followups f
+        JOIN patient_device_episodes e ON e.id = f.device_episode_id
+       WHERE f.status = 'converted' AND f.device_episode_id IS NOT NULL
+         AND COALESCE(f.case_id, e.case_id) = ${caseId}
+         --  **البيعُ الحيّ وحده** (المراجعةُ الثانية): جهازٌ أُلغي أمرُه (المتابعةُ تبقى «تم الشراء») أو أُبطل لا مالَ له يُطوى فيه —
+         --  وقلمٌ أزال مالَه بعده تصحيحٌ مشروع، فلو بدأ الحدُّ منه لطلب تصحيحُ الجهاز الحيّ إعادةَ مال الملغى.
+         AND e.status IN ('in_manufacturing', 'delivered') AND e.admin_void_reversal_id IS NULL
+    )
+    SELECT ce.id, ce.amount, ce.source, ce.created_at, ce.notes
+      FROM cost_entries ce
+     WHERE ce.case_id = ${caseId} AND ce.source IN ('case_cost_edit', 'refund_cost_reduction') AND ce.amount <> 0
+       AND ce.created_at >= COALESCE((SELECT MIN(at) FROM sales), '-infinity'::timestamptz)
+     ORDER BY ce.created_at, ce.id
+  `);
+  const bySource: Record<string, number> = {};
+  const entries: SaleCostDriftEntry[] = [];
+  for (const x of (r.rows ?? []) as any[]) {
+    const amount = Number(x.amount ?? 0);
+    bySource[x.source] = (bySource[x.source] ?? 0) + amount;
+    entries.push({
+      id: Number(x.id), amount, source: String(x.source),
+      createdAt: x.created_at instanceof Date ? x.created_at.toISOString() : String(x.created_at), notes: x.notes ?? null,
+    });
+  }
+  const net = Object.values(bySource).reduce((a, b) => a + b, 0);
+  //  **ما يقرؤه المستخدم: ما بقي بلا عكس** — قيدٌ ألغاه قيدٌ مثلُه بالعكس (قلمٌ نزل ثمّ رجع، أو طيٌّ سابق) لا يُعرض.
+  const open: SaleCostDriftEntry[] = [];
+  for (const e of entries) {
+    const k = open.findIndex((o) => o.source === e.source && o.amount === -e.amount);
+    if (k >= 0) open.splice(k, 1); else open.push(e);
+  }
+  return { net, bySource, entries: net === 0 ? [] : open };
+}
+
+/**
  * **«تصحيح سعر البيع» بعد إتمام البيع** (§4.ge — واقعةُ بيداء كريم محمد، ٢٠٢٦-١١-٠٨).
  *
  * سُجّل البيعُ بسعرٍ خطأ (١٩٬٠٠٠٬٠٠٠ بخصم ٧٬٠٠٠٬٠٠٠) وبدأ التصنيع، والصحيحُ ٤٬٣٥٠٬٠٠٠ بخصم ٣٥٠٬٠٠٠. وتعديلُ نصّ المعاينة لا يحرّك مالاً
@@ -1179,6 +1272,8 @@ export async function correctSalePriceAfterConversion(params: {
   discountAmount: unknown;
   /** إلزاميٌّ: تصحيحُ مالٍ بعد البيع لا يقع بلا سببٍ مكتوب. */
   reason: string;
+  /** موافقةٌ صريحة على طيّ تعديلات الكلفة بعد البيع — صافيها بعينه كما قاله الخادم (§4.gh)، وغيرُه يُردّ. */
+  absorbCaseCostEdit?: number | null;
   actor: Actor;
   /** سطرُ التدقيق يُكتب **في المعاملة نفسِها** (مراجعة Codex على #717) — بعنوان الجهاز ومتصفّحه من الطلب. */
   audit?: { ipAddress: string | null; userAgent: string | null };
@@ -1186,6 +1281,7 @@ export async function correctSalePriceAfterConversion(params: {
   followup: FollowupRow; delta: number; deviceEpisodeId: number;
   previous: { originalPrice: number | null; approvedPrice: number; priceKind: PriceKind | null };
   creditBalance: number;
+  absorbedCaseCostEdit: number;
 }> {
   const reason = (params.reason ?? "").trim();
   if (reason.length === 0) {
@@ -1229,9 +1325,10 @@ export async function correctSalePriceAfterConversion(params: {
       throw new FollowupError("تصحيح سعر البيع لبيعٍ تمّ وحده — هذا الملفّ لم يُبَع بعد، فالسعرُ يُكتب عند «إتمام البيع».", 409);
     }
     if (cur.deviceEpisodeId === null) throw new FollowupError(DRIFT, 409);
-    if (cur.approvedPrice === price && cur.originalPrice === offer.originalPrice) {
-      throw new FollowupError("السعر الجديد هو السعر المسجَّل نفسُه — لا شيء يُصحَّح", 400);
-    }
+    //  **والسعرُ نفسُه يمرّ إن كان على القسم ما يُطوى** (§4.gh — مراجعةٌ مستقلّة): سعرُ البيع صحيحٌ والكلفةُ وحدها انحرفت بقلمٍ قديم —
+    //  فالحفظُ «مطابقةُ الكلفة لسعر البيع» لا أكثر. ويُحكم عليه بعد قياس الانحراف (④أ).
+    //  والأصليُّ الفارغ (بيعٌ موروث) هو النهائيُّ نفسُه — كما تفهمه النافذة (المراجعةُ الثانية)، فلا تُكتب «مطابقةُ الكلفة» تصحيحاً للسعر.
+    const priceChanged = !(cur.approvedPrice === price && (cur.originalPrice ?? cur.approvedPrice) === offer.originalPrice);
 
     // ② الحلقةُ تحت القفل — لهذا المريض وهذا الخيط، قيد التصنيع أو مسلَّمة، وغيرُ مُبطَلةٍ إدارياً.
     const ep = await lockEpisodeForPriceCorrection(tx, cur.deviceEpisodeId);
@@ -1276,28 +1373,42 @@ export async function correctSalePriceAfterConversion(params: {
       throw new FollowupError("على هذا الجهاز طلبُ خصمٍ معلَّق — احسمه ثم صحّح السعر.", 409);
     }
 
-    // ④أ **وكلفةُ الحالة لم تُعدَّل بعد البيع بيدٍ أخرى** (مراجعة Codex على #717): تخفيضٌ مع استرجاع (`refund_cost_reduction`) أو قلمُ
-    //    الكلفة (`case_cost_edit`) لا يحملان هويّةَ الجهاز ولا يمسّان سعرَه — فإضافةُ فرق البيع فوقهما تطرح المبلغَ مرّتين (بيعٌ ٥ ملايين ثمّ
-    //    تخفيضُ ٢ ثمّ تصحيحٌ إلى ١ كان يكتب −٤ فوق ٣). فيُردّ ليُراجَع بيد إنسان، والقياسُ من قيد البيع نفسِه (أوّلُ قيدٍ للجهاز).
+    // ④أ **وكلفةُ القسم بعد البيع بيدٍ أخرى** (مراجعة Codex على #717، وواقعةُ محمد علي محسن ٢٠٢٦-١١-١٠ — §4.gh): قلمُ الكلفة والتخفيضُ
+    //    مع الاسترجاع لا يحملان هويّةَ الجهاز ولا يمسّان سعرَه — فإضافةُ فرق البيع فوقهما تطرح المبلغَ مرّتين (بيعٌ ٥ ملايين ثمّ تخفيضُ ٢
+    //    ثمّ تصحيحٌ إلى ٣ كان يكتب −٢ فوق ٣ = ١). وكان يُردّ لوجود أيّ قيدٍ منهما — ولو صافيه صفر — فيُقفل التصحيحُ إلى الأبد.
+    //    • **صافيه صفر ⟵ يمرّ.**
+    //    • **وغيرُ صفر يُطوى بموافقةٍ صريحة على مبلغه بعينه** (`absorbCaseCostEdit` = ما قاله الخادم): تُكتب قيودٌ تعكس صافي كلِّ مصدر
+    //      وتعود الكلفةُ والمجموعُ إلى ما قبلها، ثمّ يقع فرقُ البيع مرّةً واحدة. فالمستخدمُ يقول السعرَ الصحيح، وما انحرف قبله يُطوى فيه
+    //      (قرارُ المالك: «عدّلتُ من أيّ مكانٍ يتعدّل في كلّ مكان»). **والدفعاتُ لا تُمسّ**: الاسترجاعُ نفسُه يبقى.
+    let absorbed = 0;
+    let absorbedBySource: Record<string, number> = {};
     if (caseId !== null) {
-      const adj = await tx.execute(sql`
-        SELECT 1 FROM cost_entries ce
-         WHERE ce.case_id = ${caseId} AND ce.source IN ('refund_cost_reduction', 'case_cost_edit')
-           --  الحدُّ **لحظةُ إتمام البيع** (converted_at — يكتبها بابُ البيع الوحيد NOW()): فبيعٌ بلا قيد (مجانيٌّ فرقُه صفر) يُقاس بها لا
-           --  بالتاريخ كلِّه (مراجعة Codex على #719)، ولا يُزيحها قيدٌ للجهاز بعد البيع (صيانةٌ لاحقة — #721) ولا قبله (صيانةٌ مؤرَّخةٌ بيوم
-           --  زيارتها — #722)، فقيودُ الجهاز قد تحمل يومَ الزيارة لا يومَ الكتابة. وأوّلُ قيدٍ للجهاز احتياطٌ لصفٍّ موروثٍ بلا لحظة إتمام.
-           AND ce.created_at >= COALESCE(
-             (SELECT converted_at FROM post_exam_followups WHERE id = ${cur.id}),
-             (SELECT MIN(created_at) FROM cost_entries WHERE device_episode_id = ${ep.id} AND patient_id = ${cur.patientId}),
-             '-infinity'::timestamptz)
-         LIMIT 1
-      `);
-      if ((adj.rows ?? []).length > 0) {
-        throw new FollowupError(
-          "كلفةُ هذه الحالة عُدّلت بعد البيع (تخفيضٌ مع استرجاع أو قلمُ الكلفة) — تصحيحُ السعر فوقها يطرح المبلغَ مرّتين."
-          + " يحتاج مراجعة إدارية: صحّح الكلفة من قلم الحالة.", 409,
-        );
+      const drift = await saleCostDriftForCase(tx, caseId);
+      if (drift.net !== 0) {
+        if (params.absorbCaseCostEdit !== drift.net) {
+          throw new FollowupError(
+            `كلفةُ هذا القسم عُدّلت بعد البيع بـ ${drift.net > 0 ? "+" : "−"}${Math.abs(drift.net).toLocaleString("en-US")} د.ع`
+            + " (قلمُ الكلفة أو تخفيضٌ مع استرجاع) — يُلغى ذلك ويحلّ محلَّه هذا التصحيح. أكّد ثمّ احفظ.", 409,
+            { code: "case_cost_edit_absorb", caseCostEditAmount: drift.net, entries: drift.entries },
+          );
+        }
+        //  ولا يُطوى ما يُنزل الكلفةَ أو المجموعَ تحت الصفر — رقمٌ لا يفسّره أحد (الطيُّ يعكس قيوداً بدقّة، والقصُّ يكسرها).
+        const cc = await tx.execute(sql`
+          SELECT (SELECT COALESCE(cost, 0) FROM patient_cases WHERE id = ${caseId}) AS c,
+                 (SELECT COALESCE(total_cost, 0) FROM patients WHERE id = ${cur.patientId}) AS t
+        `);
+        const c0 = (cc.rows ?? [])[0] ?? {};
+        //  **ومعه فرقُ البيع** (المراجعةُ الثانية): الحدُّ للنتيجة كلِّها، فلا يقصّ `GREATEST` في ⑦ ما يكتبه القيدُ كاملاً.
+        const d0 = priceChanged ? price - cur.approvedPrice : 0;
+        if (Number(c0.c ?? 0) - drift.net + d0 < 0 || Number(c0.t ?? 0) - drift.net + d0 < 0) {
+          throw new FollowupError("طيُّ تعديلات الكلفة بعد البيع يُنزل الكلفةَ تحت الصفر — يحتاج مراجعة إدارية.", 409);
+        }
+        absorbed = drift.net;
+        absorbedBySource = drift.bySource;
       }
+    }
+    if (!priceChanged && absorbed === 0) {
+      throw new FollowupError("السعر الجديد هو السعر المسجَّل نفسُه — لا شيء يُصحَّح", 400);
     }
 
     // ④ب **وخطّةُ أقساطٍ نشطة على الحالة تُعدَّل أوّلاً** (مراجعةٌ مستقلّة، كحارس الاسترجاع): مجموعُها ثابتٌ منذ فُتحت، فخفضُ السعر
@@ -1316,22 +1427,49 @@ export async function correctSalePriceAfterConversion(params: {
     // ⑤ المتابعة — الأصليُّ ونوعُه والنهائيّ، بشرط السعر القديم. **ومصدرُ السعر يصير قرارَ إدارة** (`manager_set`): وإلّا بقي «من
     //    المعاينة» فيكتب تعديلُ الطبيب لسعر معاينته فوق هذا التصحيح (`classifyExamPriceChange` ⟵ `sync_after_sale`) أو يُردّ حفظُه —
     //    وهو بلا سلطةٍ تجارية (§4.h). (مراجعةٌ مستقلّة.)
-    const upd = await tx.execute(sql`
-      UPDATE post_exam_followups
-         SET approved_price = ${price}, original_price = ${offer.originalPrice},
-             price_kind = ${offer.kind}, price_source = 'manager_set', updated_at = NOW()
-       WHERE id = ${cur.id} AND status = 'converted' AND approved_price = ${cur.approvedPrice}
-      RETURNING ${SELECT_COLS}
-    `);
-    const row = (upd.rows ?? [])[0];
-    if (!row) throw new FollowupError(DRIFT, 409);
+    //     وسعرٌ لم يتغيّر (مطابقةُ الكلفة وحدها) لا يمسّ المتابعةَ ولا الجهازَ ولا أسطرَ أجزائه.
+    let row: any = curRow;
+    if (priceChanged) {
+      const upd = await tx.execute(sql`
+        UPDATE post_exam_followups
+           SET approved_price = ${price}, original_price = ${offer.originalPrice},
+               price_kind = ${offer.kind}, price_source = 'manager_set', updated_at = NOW()
+         WHERE id = ${cur.id} AND status = 'converted' AND approved_price = ${cur.approvedPrice}
+        RETURNING ${SELECT_COLS}
+      `);
+      row = (upd.rows ?? [])[0];
+      if (!row) throw new FollowupError(DRIFT, 409);
 
-    // ⑥ الحلقة — سعرُها وحدَه، ولا حالةَ تُلمَس؛ وأسطرُ الأجزاء القديمة تُمحى (مجموعُها لم يعد السعر).
-    const moved = await correctEpisodeAgreedCost(tx, {
-      episodeId: ep.id, agreedCost: price, expectStatus: ep.status,
-    });
-    if (!moved) throw new FollowupError(DRIFT, 409);
-    await setEpisodeSaleLinesTx(tx, { episodeId: ep.id, lines: null });
+      // ⑥ الحلقة — سعرُها وحدَه، ولا حالةَ تُلمَس؛ وأسطرُ الأجزاء القديمة تُمحى (مجموعُها لم يعد السعر).
+      const moved = await correctEpisodeAgreedCost(tx, {
+        episodeId: ep.id, agreedCost: price, expectStatus: ep.status,
+      });
+      if (!moved) throw new FollowupError(DRIFT, 409);
+      await setEpisodeSaleLinesTx(tx, { episodeId: ep.id, lines: null });
+    }
+
+    // ⑥أ **طيُّ قلم الكلفة بعد البيع** (§4.gh): قيدٌ يعكس صافيه بالمصدر نفسِه، فيصير صافي القلم بعد البيع صفراً (فلا يمنع تصحيحاً
+    //    بعده)، وتعود الكلفةُ والمجموعُ إلى ما كانا عليه قبله — ثمّ يقع فرقُ البيع فوقهما مرّةً واحدة.
+    //     **بمصدر كلِّ قيدٍ نفسِه** — فيبقى تقريرُ «التخفيض مع الاسترجاع» صادقاً (أُلغي التخفيضُ لا الاسترجاع)، وصافي كلّ مصدرٍ بعد البيع صفر.
+    if (absorbed !== 0 && caseId !== null) {
+      await tx.execute(sql`
+        UPDATE patient_cases SET cost = COALESCE(cost, 0) - ${absorbed}, cost_source = 'manual', updated_at = NOW()
+         WHERE id = ${caseId}
+      `);
+      await tx.execute(sql`
+        UPDATE patients SET total_cost = COALESCE(total_cost, 0) - ${absorbed} WHERE id = ${cur.patientId}
+      `);
+      const cb = await tx.execute(sql`SELECT branch_id FROM patients WHERE id = ${cur.patientId}`);
+      const cbBranch = Number((cb.rows ?? [])[0]?.branch_id ?? cur.branchId);
+      for (const [source, amount] of Object.entries(absorbedBySource)) {
+        if (amount === 0) continue;
+        await tx.execute(sql`
+          INSERT INTO cost_entries (patient_id, branch_id, amount, source, case_id, notes)
+          VALUES (${cur.patientId}, ${cbBranch}, ${-amount}, ${source}, ${caseId},
+                  ${"إلغاء تعديل الكلفة بعد البيع — حلّ محلَّه تصحيح سعر البيع: " + reason})
+        `);
+      }
+    }
 
     // ⑦ كلفةُ الخيط ومجموعُ المريض بالفرق — زيادةٌ ذرّية — وقيدٌ موقَّع بهويّة الجهاز.
     if (delta !== 0) {
@@ -1375,6 +1513,7 @@ export async function correctSalePriceAfterConversion(params: {
         previousOriginalPrice: cur.originalPrice, originalPrice: offer.originalPrice,
         discountAmount: offer.discountAmount, priceKind: offer.kind,
         deviceEpisodeId: ep.id, episodeStatus: ep.status, correctionReason: reason,
+        ...(absorbed !== 0 ? { absorbedCaseCostEdit: absorbed } : {}),
         setByUserId: params.actor.userId, setByName: params.actor.userName,
       },
       actor: params.actor,
@@ -1399,17 +1538,19 @@ export async function correctSalePriceAfterConversion(params: {
       oldValues: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
       newValues: {
         originalPrice: offer.originalPrice, approvedPrice: price, priceKind: offer.kind,
-        delta, deviceEpisodeId: ep.id, reason,
+        delta, deviceEpisodeId: ep.id, reason, ...(absorbed !== 0 ? { absorbedCaseCostEdit: absorbed } : {}),
       },
       ipAddress: params.audit?.ipAddress ?? null, userAgent: params.audit?.userAgent ?? null,
       notes: `تصحيح سعر البيع لمتابعة #${cur.id}: ${cur.approvedPrice.toLocaleString()} ⟶ ${price.toLocaleString()} د.ع`
-        + ` (${delta > 0 ? "+" : ""}${delta.toLocaleString()}) — ${reason}`,
+        + ` (${delta > 0 ? "+" : ""}${delta.toLocaleString()})`
+        + (absorbed !== 0 ? ` — وأُلغي تعديلُ الكلفة بعد البيع (${absorbed.toLocaleString()})` : "")
+        + ` — ${reason}`,
     });
 
     return {
       followup: toRow(row), delta, deviceEpisodeId: ep.id,
       previous: { originalPrice: cur.originalPrice, approvedPrice: cur.approvedPrice, priceKind: cur.priceKind },
-      creditBalance,
+      creditBalance, absorbedCaseCostEdit: absorbed,
     };
   });
 }
