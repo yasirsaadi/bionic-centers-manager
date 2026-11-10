@@ -3524,14 +3524,21 @@ export async function registerRoutes(
       //  هذه الخانةُ كانت تحرّك الإجماليَّ وكلفةَ الحالة الوحيدة بلا السعر ولا الجهاز — ولا يراها حارسُ التصحيح (`manual_edit`)
       //  فيطرح الفرقَ مرّتين. فتغييرُها يُردّ هنا؛ وإرسالُها بقيمتها نفسِها (النموذجُ يرسل الكائنَ كاملاً) يمرّ.
       if (patch.totalCost !== undefined && patch.totalCost !== null
-        && Math.round(Number(patch.totalCost)) !== Math.round(Number(existingPatient.totalCost ?? 0))
-        //  **والقسمُ النشط وحده** (مراجعةٌ مستقلّة): قسمُ أطرافٍ مغلقٌ بجهازٍ مسلَّم وعلاجٌ طبيعيٌّ هو النشطُ الوحيد — الخانةُ تكتب
-        //  العلاجَ الطبيعيّ وحده (`syncSoleCaseCost`)، فلا تُردّ.
-        && (await followupStore.salePriceCorrectablesForPatient(id)).some((x) => x.caseStatus === "active")) {
-        return res.status(409).json({
-          code: "case_has_sale_price_correction", field: "totalCost",
-          message: "لهذا المريض جهازٌ مُباع — الكلفةُ تُعدَّل من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً.",
-        });
+        && Math.round(Number(patch.totalCost)) !== Math.round(Number(existingPatient.totalCost ?? 0))) {
+        //  **ولا يمرّ إلّا حين يذهب الفرقُ إلى قسمٍ بلا بيع** (مراجعة Codex على #730): `syncSoleCaseCost` يكتب القسمَ النشطَ الوحيد —
+        //  فقسمٌ مُباعٌ مغلق والعلاجُ الطبيعيّ نشطٌ وحده يمرّ (الفرقُ له)، أمّا بلا قسمٍ نشط أو بأكثرَ من واحد فالإجماليُّ وحده يتحرّك
+        //  وقسمُ البيع على رقمه، فيُطرح الفرقُ مرّتين عند التصحيح.
+        const sold = await followupStore.salePriceCorrectablesForPatient(id);
+        if (sold.length > 0) {
+          const activeCases = (await storage.getCasesByPatientId(id)).filter((c: any) => c.status === "active");
+          const goesToUnsoldCase = activeCases.length === 1 && !sold.some((x) => x.caseId === activeCases[0].id);
+          if (!goesToUnsoldCase) {
+            return res.status(409).json({
+              code: "case_has_sale_price_correction", field: "totalCost",
+              message: "لهذا المريض جهازٌ مُباع — الكلفةُ تُعدَّل من قلم «التكلفة» في بطاقة القسم أو من «تصحيح سعر البيع»، فيتحرّك سعرُ البيع وكلفةُ الجهاز وحسابُ المريض معاً.",
+            });
+          }
+        }
       }
       const patient = await storage.updatePatient(id, patch, "manual_edit", null, undefined, true, null, sharedPhone);
       //  ══ **ولا يمرّ تعديلٌ بلا تدقيق** (قرارُ المالك ٢٠٢٦-١٠-٠٣، §4.bs) — بالقديم والجديد لِما تغيّر فعلاً. ══
