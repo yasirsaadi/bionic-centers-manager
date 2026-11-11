@@ -95,3 +95,25 @@ export function suggestReturnedSessions(amount: number, price: number | null | u
   if (!price || price <= 0 || !(amount > 0)) return 0;
   return Math.max(0, Math.min(remaining, Math.floor(amount / price)));
 }
+
+// ══ **«استمارة استرداد مبلغ»** (ترحيل ١٩٥، §4.gi — طلبُ المالك ٢٠٢٦-١١-١١ بتصميمه) ══════════════════════════════════════════════
+// نافذةُ الطلب بشكل الاستمارة الورقية، وتُطبع بعد الاعتماد ليوقّعها المريض أو وليُّ أمره. اسمُ المرافق ورقمُ الجنسية يُحفظان وغيرُ إلزاميَّين.
+export const REFUND_COMPANION_MAX = 120;
+export const REFUND_NATIONAL_ID_MAX = 40;
+export const REFUND_FORM_FIELD_ERROR = "اسم المرافق أو رقم الجنسية أطول من المسموح";
+/** نصٌّ اختياريّ: فارغٌ ⟵ `null`، وأطولُ من الحدّ ⟵ `undefined` (يُردّ). */
+export function optionalFormText(raw: unknown, max: number): string | null | undefined {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim().replace(/\s+/g, " ");
+  if (!t) return null;
+  return t.length > max ? undefined : t;
+}
+
+/** **قبل الاعتماد لا طباعة** (قرارُ المالك): رسالةُ زرّ الطباعة لطلبٍ معلَّق. */
+export const REFUND_PRINT_PENDING_MESSAGE = "تواصل مع الدكتور ياسر ليعتمد طلب الاسترجاع كي تتمكّن من طباعة الاستمارة.";
+
+/** «نوع الاسترداد» في الاستمارة: علاجٌ طبيعي أم مساند وأطراف — من قسم الحالة. */
+export function refundFormKind(caseType: string | null | undefined): "physio" | "devices" {
+  return caseType === "physiotherapy" ? "physio" : "devices";
+}

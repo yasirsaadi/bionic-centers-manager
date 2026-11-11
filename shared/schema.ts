@@ -1152,6 +1152,9 @@ export const patientRefundRequests = pgTable("patient_refund_requests", {
   paymentId: integer("payment_id"),
   /** جلساتُ العلاج الطبيعي المُرجَعة مع المبلغ (ترحيل ١٩٣) — `[{treatmentType, sessionCount}]`، ولغير العلاج الطبيعي `null`. */
   sessionsReturned: jsonb("sessions_returned").$type<{ treatmentType: string; sessionCount: number }[]>(),
+  /** «استمارة استرداد مبلغ» (ترحيل ١٩٥، §4.gi) — اسمُ المرافق ورقمُ الجنسية، يُحفظان وغيرُ إلزاميَّين. */
+  companionName: text("companion_name"),
+  nationalId: text("national_id"),
 }, (t) => [
   index("ix_prr_status").on(t.status, t.branchId),
   index("ix_prr_patient").on(t.patientId),
