@@ -3,7 +3,7 @@
 // كانت «سند استرجاع» بسيطاً (§4.fz)؛ صارت ورقةَ المالك نفسَها على A4: رأسُ المركز بشعاره وهاتفَي فرعه، وشريطُ العنوان، وصفوفُ اسم المريض
 // والمرافق ورقم الجنسية ورقم الملف (من الملفّ والطلب — لا تُكتب باليد)، ونوعُ الاسترداد مُعلَّماً من قسم الحالة، والمبلغُ والسبب، و«قد استلمت
 // مبلغ وقدره» بالكلمات، والتاريخُ وتوقيعُ المريض أو وليّ أمره. **ولا استمارةَ قبل اعتماد المسؤول** — والرسالةُ تقول لمن يتواصل.
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight, BadgeDollarSign, ClipboardList, FileText, HandHeart, IdCard, Loader2, Phone, Printer, ShieldCheck, User, Users, Accessibility,
@@ -14,7 +14,7 @@ import { usePrintAction } from "@/hooks/use-print-action";
 import { apiRequest } from "@/lib/queryClient";
 import { intakeHeader } from "@shared/intake_sheet";
 import { CENTER_CONTACTS } from "@shared/patient_card";
-import { REFUND_PRINT_PENDING_MESSAGE, refundFormKind } from "@shared/patient_refunds";
+import { REFUND_PRINT_PENDING_MESSAGE, refundFormKind, refundPrintFit } from "@shared/patient_refunds";
 import type { RefundRow } from "@/components/PatientRefund";
 import bionicLogo from "@/assets/intake/bionic.jpg";
 import warithLogo from "@/assets/intake/warith.jpg";
@@ -26,6 +26,15 @@ const dmyParts = (iso: string | null | undefined) => {
   const [d, m, y] = s.split("/");
   return { d, m, y };
 };
+
+/** **ورقةٌ واحدة في طباعة المتصفّح أيضاً** (ملاحظة Codex على #732): الصفحةُ `min-height` لا ارتفاعٌ ثابت، والسببُ وتفصيلُه (حتى ٥٠٠ حرف)
+ *  يطيلانها فيسقط التوقيعُ إلى ورقةٍ ثانية — و`fitOnePage` يصغّر ملفَّ PDF المصوَّر وحده لا `window.print()`. فتُقاس نسبةُ الارتفاع إلى العرض
+ *  (لا تتغيّر بتكبير الهاتف) ويُكتب عاملُ تصغيرٍ في `--rf-fit` تقرؤه قاعدةُ الطباعة وحدها؛ والشاشةُ كما هي. */
+function fitRefundPagesForPrint() {
+  document.querySelectorAll<HTMLElement>(".rf-page").forEach((el) => {
+    el.style.setProperty("--rf-fit", String(refundPrintFit(el.scrollHeight, el.offsetWidth)));
+  });
+}
 
 /** هاتفا الفرع كما في بطاقة المريض (`CENTER_CONTACTS`) — «ذي قار» ⟵ «ذي قار بايونك». */
 function branchPhones(branchName: string | null | undefined): string[] {
@@ -58,6 +67,12 @@ export default function RefundVoucherPrint() {
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   }, []);
+  useLayoutEffect(() => {
+    fitRefundPagesForPrint();
+    void document.fonts?.ready.then(fitRefundPagesForPrint);
+    window.addEventListener("beforeprint", fitRefundPagesForPrint);
+    return () => window.removeEventListener("beforeprint", fitRefundPagesForPrint);
+  }, [r]);
   const printer = usePrintAction({
     ready: Boolean(r && r.status === "approved"),
     collect: () => Array.from(document.querySelectorAll<HTMLElement>(".rf-page")),
@@ -163,9 +178,9 @@ export default function RefundVoucherPrint() {
 }
 
 const RF_CSS = `
-@page { size: A4 portrait; margin: 8mm; }
+@page { size: A4 portrait; margin: 0; }
 .rv-pages { padding:12px 0 40px; }
-.rf-page { width:210mm; min-height:277mm; box-sizing:border-box; padding:10mm 11mm 8mm; margin:0 auto 12px; background:#fff;
+.rf-page { width:210mm; min-height:294mm; box-sizing:border-box; padding:10mm 11mm 8mm; margin:0 auto 12px; background:#fff;
   box-shadow:0 1px 6px rgba(31,42,46,.18); display:flex; flex-direction:column; gap:4.2mm; font-size:15px; line-height:1.6; color:#0f2a5c;
   background-image:linear-gradient(180deg,#f4f8fd 0,#fff 28%,#fff 80%,#eef5fc 100%); }
 .rf-head { display:grid; grid-template-columns:1fr auto; align-items:center; gap:6mm; }
@@ -213,7 +228,7 @@ const RF_CSS = `
   .no-print { display:none !important; }
   .rv-root { background:#fff !important; }
   .rv-pages { padding:0; zoom:1 !important; }
-  .rf-page { box-shadow:none; margin:0; min-height:279mm; }
+  .rf-page { box-shadow:none; margin:0 auto; min-height:294mm; zoom:var(--rf-fit, 1); }
   * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 }
 `;
