@@ -392,7 +392,7 @@ export function notifyRefundDecided(ex: Executor | null | undefined, p: {
     await enqueueStaffEvent(ex, {
       event: "refund_request_decided", targetUserIds: [p.requesterUserId],
       text: p.approved
-        ? `✅ اعتُمد الاسترجاع: ${p.patientName} — ${p.amountText} دينار\nسلّم المبلغ للمريض واطبع السند رقم ${p.voucherNo} ليوقّعه.${p.note ? `\nملاحظة المسؤول: ${p.note}` : ""}`
+        ? `✅ اعتُمد الاسترجاع: ${p.patientName} — ${p.amountText} دينار\nسلّم المبلغ للمريض واطبع «استمارة استرداد مبلغ» رقم ${p.voucherNo} ليوقّعها.${p.note ? `\nملاحظة المسؤول: ${p.note}` : ""}`
         : `❌ رُفض طلب الاسترجاع: ${p.patientName} — ${p.amountText} دينار — لم يتغيّر شيء${p.note ? `\nالسبب: ${p.note}` : ""}`,
       linkPath: `/patients/${p.patientId}`,
     });

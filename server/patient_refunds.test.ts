@@ -254,8 +254,8 @@ async function main() {
        (await q(`SELECT amount FROM cost_entries WHERE patient_id=$1 AND source='refund_cost_reduction'`, [A.id])).map((r: any) => r.amount)],
       [400_000, 400_000, [-300_000]]);
     const dec = await outbox("refund_request_decided");
-    check(dec.length === 1 && dec[0].target_user_ids?.[0] === RECV && dec[0].text.includes(`السند رقم ${id1}`) && dec[0].text.includes("300,000"),
-      "د٦. **تنبيهُ الطالب** برقم السند ليطبعه، وموجَّهٌ إليه وحده", JSON.stringify(dec));
+    check(dec.length === 1 && dec[0].target_user_ids?.[0] === RECV && dec[0].text.includes(`«استمارة استرداد مبلغ» رقم ${id1}`) && dec[0].text.includes("300,000"),
+      "د٦. **تنبيهُ الطالب** برقم الاستمارة ليطبعها (§4.gi)، وموجَّهٌ إليه وحده", JSON.stringify(dec));
     same("د٧. سطرا تدقيق: دفعةُ الاسترجاع والاعتماد",
       (await q(`SELECT entity_type, action FROM audit_log WHERE branch_id=$1 AND (entity_type='payment' OR (entity_type='patient_refund_request' AND entity_id=$2)) ORDER BY id`, [DQ, id1]))
         .map((r: any) => `${r.entity_type}:${r.action}`), ["patient_refund_request:create", "payment:create", "patient_refund_request:approve"]);
@@ -588,6 +588,35 @@ async function main() {
         .map((x: any) => [x.session_count, x.plan_credited === true]),
        ((await q(`SELECT physio_plan FROM patients WHERE id=$1`, [T3.id]))[0].physio_plan ?? []).map((x: any) => [x.treatmentType, x.sessionCount])],
       [201, [[10, false], [5, true]], [[DEV, 8]]]);
+
+    // ══ ك. «استمارة استرداد مبلغ» (ترحيل ١٩٥، §4.gi) ══════════════════════════════════════════════════════════════════════════
+    console.log("\n── ك. الاستمارة ──");
+    const F = await mkPatient("استمارة", [{ type: "prosthetic", cost: 1_000_000 }]);
+    const [fcode] = await q(`SELECT patient_code FROM patients WHERE id = $1`, [F.id]);
+    await payOn(F.id, F.cases.prosthetic, 600_000, TODAY, "أطراف صناعية");
+    const fo = await http("GET", `/api/patients/${F.id}/refund-options`, S.recv);
+    same("ك١. **رأسُ الاستمارة من الملفّ**: اسمُ المريض ورقمُ ملفّه في نافذة الطلب",
+      [fo.status, fo.body?.patientName, fo.body?.patientCode, Boolean(fcode?.patient_code)], [200, `${MARK} استمارة`, fcode?.patient_code, true]);
+    const fb = { patientId: F.id, caseId: F.cases.prosthetic, reason: "device_not_made", detail: "لم يُصنع الطرف" };
+    const f1 = await ask(S.recv, { ...fb, amount: 100_000, companionName: "  علي   حسين ", nationalId: " 199012345678 " });
+    const [fr] = await q(`SELECT companion_name, national_id FROM patient_refund_requests WHERE id=$1`, [f1.body?.id]);
+    same("ك٢. **اسمُ المرافق ورقمُ الجنسية يُحفظان** (بلا مسافاتٍ زائدة) ويعودان في البطاقة",
+      [f1.status, fr?.companion_name, fr?.national_id, f1.body?.companionName, f1.body?.nationalId],
+      [201, "علي حسين", "199012345678", "علي حسين", "199012345678"]);
+    const f2 = await ask(S.recv, { ...fb, amount: 50_000, detail: "بلا مرافق", companionName: "   ", nationalId: "" });
+    const [fr2] = await q(`SELECT companion_name, national_id FROM patient_refund_requests WHERE id=$1`, [f2.body?.id]);
+    same("ك٣. **وغيرُ إلزاميَّين**: الفارغُ يُحفظ فراغاً لا نصّاً", [f2.status, fr2?.companion_name, fr2?.national_id], [201, null, null]);
+    same("ك٤. **والأطولُ من الحدّ يُردّ لا يُقصّ** (٤٠٠) — المرافقُ ورقمُ الجنسية — ونوعٌ غيرُ نصّيّ ٤٠٠",
+      [(await ask(S.recv, { ...fb, amount: 10_000, detail: "طويل", companionName: "س".repeat(121) })).status,
+       (await ask(S.recv, { ...fb, amount: 10_000, detail: "طويل", nationalId: "1".repeat(41) })).status,
+       (await ask(S.recv, { ...fb, amount: 10_000, detail: "رقم", nationalId: 12345 })).status],
+      [400, 400, 400]);
+    same("ك٥. **والبطاقةُ للطباعة بالحقلين وهي معلَّقة** — والصفحةُ تمنع الطباعةَ قبل الاعتماد",
+      [(await http("GET", `/api/patient-refunds/${f1.body?.id}`, S.recv)).body?.companionName, (await http("GET", `/api/patient-refunds/${f1.body?.id}`, S.recv)).body?.status],
+      ["علي حسين", "pending"]);
+    const [aud] = await q(`SELECT new_values FROM audit_log WHERE entity_type='patient_refund_request' AND entity_id=$1 AND action='create'`, [f1.body?.id]);
+    const nv = typeof aud?.new_values === "string" ? JSON.parse(aud.new_values) : aud?.new_values;
+    same("ك٦. وسطرُ التدقيق يحملهما", [nv?.companionName, nv?.nationalId], ["علي حسين", "199012345678"]);
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();

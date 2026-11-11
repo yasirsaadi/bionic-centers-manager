@@ -13,11 +13,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, Printer, Undo2 } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, ClipboardList, FileText, IdCard, Printer, Undo2, User, Users } from "lucide-react";
 import { amountInArabicWords } from "@shared/reserve_withdrawals";
 import {
-  REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_REASONS, defaultReduceCost, suggestReturnedSessions, type ReturnedSessions,
+  REFUND_COMPANION_MAX, REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_NATIONAL_ID_MAX, REFUND_PRINT_PENDING_MESSAGE, REFUND_REASONS,
+  defaultReduceCost, suggestReturnedSessions, type ReturnedSessions,
 } from "@shared/patient_refunds";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { baghdadDateTime } from "@/components/ReserveWithdrawal";
 
 export interface RefundRow {
@@ -32,6 +36,8 @@ export interface RefundRow {
   requestedBy: number | null; requestedByName: string | null; requestedAt: string;
   decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; paymentId: number | null;
   sessionsReturned: ReturnedSessions[] | null; sessionsLine: string | null; sessionsNow: SessionState[] | null;
+  /** «استمارة استرداد مبلغ» (ترحيل ١٩٥، §4.gi) — غيرُ إلزاميَّين. */
+  companionName: string | null; nationalId: string | null;
 }
 interface SessionState {
   treatmentType: string; bought: number; done: number; remaining: number; pending: number; available: number; price: number | null;
@@ -108,13 +114,29 @@ function DecisionChoices({ askHospital, amount, deduct, setDeduct, reduce, setRe
   );
 }
 
-/** طلبُ الاسترجاع — من ملفّ المريض، لحامل المفتاح والمسؤول. */
+/** صفٌّ من «استمارة استرداد مبلغ» (§4.gi): العنوانُ بأيقونته على اليمين، والخانةُ على اليسار — كالورقة. */
+function FormRow({ icon: Icon, label, children, testid }: { icon: any; label: string; children: React.ReactNode; testid?: string }) {
+  return (
+    <div className="grid grid-cols-[8.5rem_1fr] rounded-lg border-[1.5px] border-blue-800/70 overflow-hidden bg-white" data-testid={testid}>
+      <div className="flex items-center gap-1.5 px-2 bg-blue-50 border-l-[1.5px] border-blue-800/70 font-bold text-blue-950 text-[13px]">
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-900 text-white shrink-0"><Icon className="w-3.5 h-3.5" /></span>
+        {label}
+      </div>
+      <div className="min-w-0 p-1.5 flex flex-col justify-center">{children}</div>
+    </div>
+  );
+}
+
+/** طلبُ الاسترجاع — من ملفّ المريض، لحامل المفتاح والمسؤول — **بشكل «استمارة استرداد مبلغ»** (§4.gi). */
 export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
   patientId: number; patientName: string; open: boolean; onClose: () => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const opts = useQuery<{ cases: CaseOption[]; isAdmin: boolean; branchName: string; askHospital: boolean; mustChooseBranch: boolean }>({
+  const opts = useQuery<{
+    cases: CaseOption[]; isAdmin: boolean; branchName: string; askHospital: boolean; mustChooseBranch: boolean;
+    patientName?: string; patientCode?: string;
+  }>({
     queryKey: ["/api/patient-refunds", "options", patientId],
     enabled: open,
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/refund-options`)).json(),
@@ -124,12 +146,15 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState<string>("");
   const [detail, setDetail] = useState("");
+  //  **الاستمارة** (ترحيل ١٩٥): اسمُ المرافق ورقمُ الجنسية — يُحفظان وغيرُ إلزاميَّين (قرارُ المالك).
+  const [companion, setCompanion] = useState("");
+  const [nationalId, setNationalId] = useState("");
   const [deduct, setDeduct] = useState<boolean | null>(null);
   const [reduce, setReduce] = useState(false);
   //  **كم جلسةً تُرجَع من كلّ نوع** — لقسم العلاج الطبيعي (ترحيل ١٩٣). المقترحُ من المبلغ ما لم يكتب الموظّفُ بيده.
   const [sessions, setSessions] = useState<Record<string, string>>({});
   const [sessionsTouched, setSessionsTouched] = useState(false);
-  useEffect(() => { if (open) { setCaseId(cases.length === 1 ? cases[0].caseId : null); setAmount(""); setReason(""); setDetail(""); setDeduct(null); setReduce(false); setSessions({}); setSessionsTouched(false); } }, [open]);
+  useEffect(() => { if (open) { setCaseId(cases.length === 1 ? cases[0].caseId : null); setAmount(""); setReason(""); setDetail(""); setCompanion(""); setNationalId(""); setDeduct(null); setReduce(false); setSessions({}); setSessionsTouched(false); } }, [open]);
   useEffect(() => { if (open && caseId === null && cases.length === 1) setCaseId(cases[0].caseId); }, [open, cases.length]);
   const c = cases.find((x) => x.caseId === caseId) ?? null;
   useEffect(() => { if (c && deduct === null && c.suggestDeductHospital !== null) setDeduct(c.suggestDeductHospital); }, [c?.caseId]);
@@ -154,12 +179,13 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
   const send = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/patient-refunds", {
       patientId, caseId, amount: n, reason, detail: detail.trim(),
+      ...(companion.trim() ? { companionName: companion.trim() } : {}), ...(nationalId.trim() ? { nationalId: nationalId.trim() } : {}),
       ...(physio ? { sessionsReturned: sessionsList } : {}),
       ...(isAdmin ? { reduceCost: reduce, ...(opts.data?.askHospital ? { deductHospital: deduct } : {}) } : {}),
     })).json() as Promise<RefundRow>,
     onSuccess: (r) => {
       invalidate(qc, patientId);
-      toast({ title: isAdmin ? `استُرجع ${money(r.amount)} — سند رقم ${r.voucherNo}` : "أُرسل الطلب إلى المسؤول — لا يُسلَّم المبلغ قبل اعتماده" });
+      toast({ title: isAdmin ? `استُرجع ${money(r.amount)} — استمارة رقم ${r.voucherNo}` : "أُرسل الطلب إلى المسؤول — تُطبع الاستمارة ويُسلَّم المبلغ بعد اعتماده" });
       onClose();
       if (isAdmin && r.status === "approved") openRefundVoucher(r.id);
     },
@@ -169,11 +195,13 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
     && !(isAdmin && opts.data?.askHospital && deduct === null);
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent dir="rtl" className="max-w-md max-h-[90dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isAdmin ? "استرجاع مبلغ" : "طلب استرجاع"} — {patientName}</DialogTitle>
-          <DialogDescription>
-            {isAdmin ? "يُكتب الاسترجاعُ حركةً مستقلّةً بيوم اليوم، وتُطبع له سندٌ يوقّعه المريض." : "يُرسل الطلبُ إلى المسؤول للاعتماد."}
+      <DialogContent dir="rtl" className="max-w-lg max-h-[90dvh] overflow-y-auto bg-gradient-to-b from-sky-50 to-white">
+        <DialogHeader className="items-center">
+          <DialogTitle className="rounded-full px-8 py-1.5 text-white text-lg bg-gradient-to-l from-blue-800 via-blue-600 to-green-600" data-testid="refund-form-title">
+            استمارة استرداد مبلغ
+          </DialogTitle>
+          <DialogDescription className="text-center">
+            {isAdmin ? "يُكتب الاسترجاعُ حركةً مستقلّةً بيوم اليوم، وتُطبع الاستمارة ليوقّعها المريض." : "يُرسل الطلبُ إلى المسؤول للاعتماد، وتُطبع الاستمارة بعد اعتماده."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm" data-testid="refund-request-dialog">
@@ -183,15 +211,37 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
             : !cases.length ? <p className="rounded-md bg-muted px-3 py-2" data-testid="refund-no-money">لا مبلغَ مدفوعاً في ملفّ هذا المريض يُسترجع منه.</p>
             : (
               <>
-                <div className="grid gap-1">القسم
+                <FormRow icon={User} label="اسم المريض" testid="refund-form-patient">
+                  <span className="font-bold px-1.5" data-testid="refund-form-patient-name">{opts.data?.patientName || patientName}</span>
+                </FormRow>
+                <FormRow icon={Users} label="اسم المرافق" testid="refund-form-companion">
+                  <Input className="h-8 border-0 shadow-none focus-visible:ring-1" value={companion} maxLength={REFUND_COMPANION_MAX}
+                    onChange={(e) => setCompanion(e.target.value)} placeholder="اختياري" data-testid="refund-companion" />
+                </FormRow>
+                <FormRow icon={IdCard} label="رقم الجنسية" testid="refund-form-national-id">
+                  <Input className="h-8 border-0 shadow-none focus-visible:ring-1 text-left" dir="ltr" value={nationalId} maxLength={REFUND_NATIONAL_ID_MAX}
+                    onChange={(e) => setNationalId(e.target.value)} placeholder="اختياري" data-testid="refund-national-id" />
+                </FormRow>
+                <FormRow icon={ClipboardList} label="رقم الملف" testid="refund-form-code">
+                  <bdi dir="ltr" className="font-bold px-1.5" data-testid="refund-form-code-value">{opts.data?.patientCode || "—"}</bdi>
+                </FormRow>
+                <fieldset className="relative rounded-lg border-[1.5px] border-green-600 px-2 pt-4 pb-2" data-testid="refund-form-kind">
+                  <legend className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-5 py-0.5 text-white font-bold text-sm bg-gradient-to-l from-green-600 to-lime-500">
+                    نوع الاسترداد
+                  </legend>
                   <div className="grid grid-cols-2 gap-2">
                     {cases.map((x) => (
                       <button key={x.caseId} type="button" onClick={() => { setCaseId(x.caseId); setDeduct(x.suggestDeductHospital); }}
-                        className={`rounded-md border-2 py-1.5 px-2 text-center ${caseId === x.caseId ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200"}`}
-                        data-testid={`refund-case-${x.caseType}`}>{x.label}</button>
+                        className={`flex items-center justify-center gap-2 rounded-md border-2 py-1.5 px-2 font-bold ${caseId === x.caseId ? "border-blue-900 bg-blue-50" : "border-slate-200 bg-white"}`}
+                        data-testid={`refund-case-${x.caseType}`}>
+                        <span className={`inline-flex items-center justify-center w-5 h-5 rounded border-2 border-blue-900 text-xs ${caseId === x.caseId ? "bg-blue-900 text-white" : ""}`}>
+                          {caseId === x.caseId ? "✓" : ""}
+                        </span>
+                        {x.label}
+                      </button>
                     ))}
                   </div>
-                </div>
+                </fieldset>
                 {c && (
                   <div className="rounded-md bg-muted px-3 py-2 space-y-0.5" data-testid="refund-case-money">
                     <p>دفع في هذا القسم: <b><Num n={c.netPaid + c.refundedBefore} /></b></p>
@@ -199,12 +249,12 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
                     <p>الحدّ الأعلى للاسترجاع: <b><Num n={c.available} /></b></p>
                   </div>
                 )}
-                <label className="grid gap-1">المبلغ المسترجَع
-                  <Input inputMode="numeric" dir="ltr" className="text-left tabular-nums" value={amount ? Number(amount).toLocaleString("en-US") : ""}
+                <FormRow icon={BadgeDollarSign} label="المبلغ المُسترد" testid="refund-form-amount">
+                  <Input inputMode="numeric" dir="ltr" className="h-8 border-0 shadow-none focus-visible:ring-1 text-left tabular-nums font-bold"
+                    value={amount ? Number(amount).toLocaleString("en-US") : ""}
                     onChange={(e) => setAmount(digits(e.target.value))} data-testid="refund-amount" />
-                  {n > 0 && <span className="text-muted-foreground text-xs" data-testid="refund-amount-words">{amountInArabicWords(n)}</span>}
-                  {tooMuch && <span className="rounded bg-red-50 border border-red-300 text-red-800 px-2 py-1 text-xs" data-testid="refund-too-much">المبلغ أكبر من الحدّ الأعلى للاسترجاع</span>}
-                </label>
+                </FormRow>
+                {tooMuch && <span className="block rounded bg-red-50 border border-red-300 text-red-800 px-2 py-1 text-xs" data-testid="refund-too-much">المبلغ أكبر من الحدّ الأعلى للاسترجاع</span>}
                 {physio && (
                   <div className="rounded-lg border-2 border-sky-400 bg-sky-50 p-2 space-y-1.5" data-testid="refund-sessions">
                     <p className="font-bold">كم جلسةً تُرجَع؟</p>
@@ -231,23 +281,31 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
                     {sessionsBad && <span className="block rounded bg-red-50 border border-red-300 text-red-800 px-2 py-1 text-xs" data-testid="refund-sessions-too-many">عددُ الجلسات أكبر من الباقي غير المحضور</span>}
                   </div>
                 )}
-                <label className="grid gap-1">السبب
-                  <select className="border rounded-md px-3 py-2 bg-background" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="refund-reason">
-                    <option value="">— اختر —</option>
-                    {REFUND_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                </label>
-                <label className="grid gap-1">التفصيل (إلزامي)
-                  <Textarea value={detail} maxLength={REFUND_DETAIL_MAX} onChange={(e) => setDetail(e.target.value)} rows={2}
-                    placeholder="مثلاً: حضر ٤ جلسات من ١٠ وسافر — يُردّ ثمن ٦ جلسات" data-testid="refund-detail" />
-                </label>
+                <FormRow icon={FileText} label="سبب الاسترجاع" testid="refund-form-reason">
+                  <div className="grid gap-1.5">
+                    <select className="border rounded-md px-2 py-1.5 bg-background" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="refund-reason">
+                      <option value="">— اختر السبب —</option>
+                      {REFUND_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                    <Textarea value={detail} maxLength={REFUND_DETAIL_MAX} onChange={(e) => setDetail(e.target.value)} rows={2}
+                      placeholder="التفصيل (إلزامي) — مثلاً: حضر ٤ جلسات من ١٠ وسافر" data-testid="refund-detail" />
+                  </div>
+                </FormRow>
+                <div className="rounded-lg border-[1.5px] border-blue-800/70 bg-sky-100/70 px-3 py-2 font-bold text-blue-950" data-testid="refund-form-received">
+                  قد استلمت مبلغ وقدره:{" "}
+                  <span className="font-semibold" data-testid="refund-amount-words">{n > 0 ? `${amountInArabicWords(n)} عراقي لا غير` : "…"}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div className="rounded-lg border border-dashed border-blue-800/40 p-2">التاريخ: يُكتب يومَ الاعتماد</div>
+                  <div className="rounded-lg border border-dashed border-blue-800/40 p-2">توقيع المريض أو وليّ أمره — على الورقة المطبوعة</div>
+                </div>
                 {isAdmin && c && n > 0 && (
                   <DecisionChoices askHospital={Boolean(opts.data?.askHospital)} amount={n} deduct={deduct} setDeduct={setDeduct}
                     reduce={reduce} setReduce={setReduce} caseCost={c.cost} caseType={c.caseType} />
                 )}
                 {!isAdmin && (
                   <p className="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-amber-900 text-xs">
-                    يُرسل الطلب إلى المسؤول للاعتماد. لا يُسلَّم المبلغ للمريض قبل الاعتماد.
+                    يُرسل الطلب إلى المسؤول للاعتماد. لا يُسلَّم المبلغ ولا تُطبع الاستمارة قبل الاعتماد.
                   </p>
                 )}
               </>
@@ -256,7 +314,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
           <Button className="bg-rose-700 hover:bg-rose-800" disabled={!ready || send.isPending} onClick={() => send.mutate()} data-testid="refund-submit">
-            {isAdmin ? "استرجع واطبع السند" : "إرسال الطلب"}
+            {isAdmin ? "استرجع واطبع الاستمارة" : "إرسال الطلب"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -278,6 +336,7 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [dialog, setDialog] = useState<"approve" | "reject" | null>(null);
+  const [printBlocked, setPrintBlocked] = useState(false);
   const [note, setNote] = useState("");
   const [deduct, setDeduct] = useState<boolean | null>(r.suggestDeductHospital);
   const [reduce, setReduce] = useState<boolean>(r.suggestReduceCost);
@@ -289,7 +348,7 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
     onSuccess: (_d, p) => {
       invalidate(qc, r.patientId);
       setDialog(null);
-      toast({ title: p.decision === "approve" ? `اعتُمد الاسترجاع — سند رقم ${r.voucherNo}` : "رُفض الطلب — لم يتغيّر شيء" });
+      toast({ title: p.decision === "approve" ? `اعتُمد الاسترجاع — استمارة رقم ${r.voucherNo}` : "رُفض الطلب — لم يتغيّر شيء" });
     },
     onError: (e: any) => { invalidate(qc, r.patientId); toast({ title: "تعذّر", description: errText(e), variant: "destructive" }); },
   });
@@ -311,6 +370,13 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
           <a href={`/patients/${r.patientId}`} className="underline-offset-2 hover:underline">{r.patientName}</a>
           {r.patientCode && <> · <span dir="ltr">{r.patientCode}</span></>}
         </Line>
+        {(r.companionName || r.nationalId) && (
+          <Line label="المرافق والجنسية" testid={`refund-form-fields-${r.id}`}>
+            {r.companionName ? <>المرافق: {r.companionName}</> : null}
+            {r.companionName && r.nationalId ? " · " : null}
+            {r.nationalId ? <>رقم الجنسية: <bdi dir="ltr">{r.nationalId}</bdi></> : null}
+          </Line>
+        )}
         <Line label="الفرع والقسم">{r.branchName} — {r.caseLabel}</Line>
         <Line label="المبلغ" testid={`refund-amount-${r.id}`}>
           <b className="text-lg"><Num n={r.amount} /></b> دينار
@@ -348,9 +414,11 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
         )}
       </div>
       <div className="flex gap-2 justify-end flex-wrap">
-        {r.status === "approved" && (
-          <Button size="sm" variant="outline" className="gap-1" onClick={() => openRefundVoucher(r.id)} data-testid={`refund-voucher-${r.id}`}>
-            <Printer className="w-3.5 h-3.5" /> طباعة السند رقم {r.voucherNo}
+        {/*  **طباعةُ الاستمارة** (§4.gi): ظاهرةٌ للمعلَّق أيضاً، وضغطُها قبل الاعتماد يقول لمن يتواصل (قرارُ المالك) — لا ورقةَ قبل اعتماده. */}
+        {r.status !== "rejected" && (
+          <Button size="sm" variant="outline" className="gap-1"
+            onClick={() => (r.status === "approved" ? openRefundVoucher(r.id) : setPrintBlocked(true))} data-testid={`refund-voucher-${r.id}`}>
+            <Printer className="w-3.5 h-3.5" /> طباعة الاستمارة رقم {r.voucherNo}
           </Button>
         )}
         {isAdmin && pending && (
@@ -362,6 +430,17 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
           </>
         )}
       </div>
+      <AlertDialog open={printBlocked} onOpenChange={setPrintBlocked}>
+        <AlertDialogContent dir="rtl" data-testid={`refund-print-blocked-${r.id}`}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>الطلب لم يُعتمد بعد</AlertDialogTitle>
+            <AlertDialogDescription className="text-base text-foreground">{REFUND_PRINT_PENDING_MESSAGE}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction data-testid={`refund-print-blocked-ok-${r.id}`}>حسناً</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={dialog !== null} onOpenChange={(v) => { if (!v) setDialog(null); }}>
         <DialogContent dir="rtl" className="max-w-md max-h-[90dvh] overflow-y-auto">
           <DialogHeader>

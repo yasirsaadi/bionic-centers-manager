@@ -27,6 +27,7 @@ import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import {
   REFUND_CASE_LABELS, REFUND_DETAIL_ERROR, REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_STATUS_LABELS,
   canRequestRefund, defaultReduceCost, parseReturnedSessions, refundReasonLabel, refundReasonOf, refundVoucherNo, returnedSessionsLine,
+  REFUND_COMPANION_MAX, REFUND_NATIONAL_ID_MAX, REFUND_FORM_FIELD_ERROR, optionalFormText,
   type RefundStatus,
 } from "@shared/patient_refunds";
 import * as store from "./store";
@@ -74,6 +75,7 @@ async function present(row: store.RequestRow) {
     branchId: row.branchId, branchName: row.branchName ?? "",
     amount: row.amount, amountWords: amountInArabicWords(row.amount),
     reason: row.reason, reasonLabel: refundReasonLabel(row.reason), detail: row.detail,
+    companionName: row.companionName ?? null, nationalId: row.nationalId ?? null,
     status: row.status as RefundStatus, statusLabel: REFUND_STATUS_LABELS[row.status as RefundStatus] ?? row.status,
     //  للمعلَّق: صافي ما دُفع الآن وما يبقى له بعده، وللمحسوم: ما كان لحظةَ الطلب.
     netPaid: netNow ?? row.netPaidAtRequest, refundedBefore: money_?.refunded ?? null,
@@ -132,6 +134,8 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
       }
       res.json({
         cases: withSuggest, isAdmin: Boolean(s.isAdmin), branchName, askHospital,
+        //  رأسُ الاستمارة (§4.gi): اسمُ المريض ورقمُ ملفّه من الملفّ نفسِه — لا يُكتبان باليد.
+        patientName: (patient as any).name ?? "", patientCode: (patient as any).patientCode ?? "",
         mustChooseBranch: adminMustChooseBranch({ isAdmin: Boolean(s.isAdmin), sessionBranchId: s.branchId ?? null, patientBranchIds }),
       });
     } catch (e) { fail(res, e); }
@@ -165,6 +169,10 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
     const rawSessions = req.body?.sessionsReturned;
     const sessionsReturned = rawSessions == null ? null : parseReturnedSessions(rawSessions);
     if (rawSessions != null && sessionsReturned === null) return res.status(400).json({ error: "عدد الجلسات المُرجَعة غير صالح" });
+    //  **الاستمارة** (ترحيل ١٩٥): اسمُ المرافق ورقمُ الجنسية يُحفظان وغيرُ إلزاميَّين — والأطولُ من الحدّ يُردّ لا يُقصّ.
+    const companionName = optionalFormText(req.body?.companionName, REFUND_COMPANION_MAX);
+    const nationalId = optionalFormText(req.body?.nationalId, REFUND_NATIONAL_ID_MAX);
+    if (companionName === undefined || nationalId === undefined) return res.status(400).json({ error: REFUND_FORM_FIELD_ERROR });
 
     //  **فرعُ الاسترجاع فرعُ الجلسة** — حيث يخرج المالُ من قاصته فعلاً (كالدفعة الجديدة)؛ والمسؤولُ على «كلّ الفروع» يختار لملفٍّ متعدّد الفروع.
     const patientBranchIds = await patientBranchIdsOf(patient as any);
@@ -188,10 +196,11 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
       }
       const row = await store.create({
         patientId: patient.id, caseId, branchId, amount, reason, detail,
-        userId: s.userId ?? null, userName: s.displayName ?? null, sessionsReturned,
+        userId: s.userId ?? null, userName: s.displayName ?? null, sessionsReturned, companionName, nationalId,
       }, async (tx, r, m) => {
         await auditRow(req, s, tx, { entityType: "patient_refund_request", entityId: r.id, action: "create", branchId,
-          newValues: { patientId: r.patientId, caseId, amount, reason, detail, netPaid: m.net, sessionsReturned: r.sessionsReturned ?? null },
+          newValues: { patientId: r.patientId, caseId, amount, reason, detail, netPaid: m.net, sessionsReturned: r.sessionsReturned ?? null,
+            ...(companionName ? { companionName } : {}), ...(nationalId ? { nationalId } : {}) },
           notes: `طلب استرجاع ${money(amount)} — ${REFUND_CASE_LABELS[m.caseType] ?? m.caseType} — ${refundReasonLabel(reason)}`
             + (m.caseType === "physiotherapy" ? ` — يُرجع ${returnedSessionsLine(r.sessionsReturned)}` : "") });
         //  المسؤولُ يسترجع مباشرةً: لا تنبيهَ له بطلبه هو.

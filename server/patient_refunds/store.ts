@@ -35,6 +35,7 @@ export interface RequestRow {
   decidedBy: number | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null;
   deductHospital: boolean | null; reduceCost: boolean | null; costBefore: number | null; costAfter: number | null;
   paymentId: number | null; sessionsReturned: ReturnedSessions[] | null;
+  companionName: string | null; nationalId: string | null;
   patientName?: string | null; patientCode?: string | null; branchName?: string | null;
 }
 
@@ -45,6 +46,7 @@ const SELECT_ROW = sql`
          r.decided_by AS "decidedBy", r.decided_by_name AS "decidedByName", r.decided_at AS "decidedAt",
          r.decision_note AS "decisionNote", r.deduct_hospital AS "deductHospital", r.reduce_cost AS "reduceCost",
          r.cost_before AS "costBefore", r.cost_after AS "costAfter", r.payment_id AS "paymentId", r.sessions_returned AS "sessionsReturned",
+         r.companion_name AS "companionName", r.national_id AS "nationalId",
          p.name AS "patientName", p.patient_code AS "patientCode", b.name AS "branchName"
     FROM patient_refund_requests r
     JOIN patients p ON p.id = r.patient_id
@@ -241,6 +243,8 @@ export async function create(p: {
   userId: number | null; userName: string | null;
   /** لقسم العلاج الطبيعي: الجلساتُ المُرجَعة لكلّ نوع (`parseReturnedSessions`) — وإلّا `null`. */
   sessionsReturned: ReturnedSessions[] | null;
+  /** «استمارة استرداد مبلغ» (ترحيل ١٩٥) — غيرُ إلزاميَّين. */
+  companionName?: string | null; nationalId?: string | null;
 }, after: (tx: Tx, row: RequestRow, money: { net: number; refunded: number; pending: number; caseType: string }) => Promise<void>,
   /** للمسؤول: الاعتمادُ في المعاملة نفسِها — فشلُه يُسقط الطلبَ معه. */
   andThen?: (tx: Tx, row: RequestRow) => Promise<RequestRow>): Promise<RequestRow> {
@@ -265,9 +269,10 @@ export async function create(p: {
     const [ins] = await rows<{ id: number }>(tx, sql`
       INSERT INTO patient_refund_requests
         (patient_id, case_id, case_type, branch_id, amount, reason, detail, net_paid_at_request, requested_by, requested_by_name,
-         sessions_returned)
+         sessions_returned, companion_name, national_id)
       VALUES (${p.patientId}, ${p.caseId}, ${c.case_type}, ${p.branchId}, ${p.amount}, ${p.reason}, ${p.detail}, ${m.net},
-              ${p.userId}, ${p.userName}, ${sessions.list === null ? null : JSON.stringify(sessions.list)}::jsonb)
+              ${p.userId}, ${p.userName}, ${sessions.list === null ? null : JSON.stringify(sessions.list)}::jsonb,
+              ${p.companionName ?? null}, ${p.nationalId ?? null})
       RETURNING id`);
     const row = (await rows<RequestRow>(tx, sql`${SELECT_ROW} WHERE r.id = ${ins.id}`))[0];
     await after(tx, row, { ...m, pending, caseType: c.case_type });
