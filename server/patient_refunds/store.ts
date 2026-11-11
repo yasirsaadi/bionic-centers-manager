@@ -9,7 +9,7 @@ import { recordRefundPaymentTx } from "../accounting/refund_payment";
 import { CLOSURE_PAYMENT_TAG, type ClosureServiceType } from "@shared/case_closure";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import {
-  REFUND_CASE_LABELS, REFUND_EXCEEDS_ERROR, REFUND_SESSIONS_EXCEED_ERROR, REFUND_SESSIONS_REQUIRED_ERROR, refundReasonLabel,
+  REFUND_CASE_LABELS, REFUND_EXCEEDS_ERROR, REFUND_SESSIONS_REQUIRED_ERROR, refundReasonLabel, clampReturnedSessions, returnedSessionsTotal, physioRefundGuide,
   returnedSessionsLine, type ReturnedSessions,
 } from "@shared/patient_refunds";
 import {
@@ -124,26 +124,24 @@ export async function physioSessionStateTx(ex: Tx, patientId: number, caseId: nu
 
 /**
  * **فحصُ الجلسات المُرجَعة** — لقسم العلاج الطبيعي مصفوفةٌ إلزامية (والفارغةُ «لا جلسات»)، ولغيره لا شيء.
- * كلُّ نوعٍ من أنواع الحالة، ولا يتجاوز ما يجوز إرجاعُه الآن.
+ * كلُّ نوعٍ من أنواع الحالة. **وأكثرُ من الباقي لا يُمنع** (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj) — تنبيهٌ أحمر للموظّف والمسؤول؛
+ * و`applied` ما يُطرح فعلاً من العدّاد عند الاعتماد: الأقلُّ من المطلوب والباقي، فلا ينزل تحت الصفر.
  */
 export async function checkReturnedSessionsTx(ex: Tx, p: {
   patientId: number; caseId: number; caseType: string; list: ReturnedSessions[] | null; exceptRequestId?: number;
-}): Promise<{ list: ReturnedSessions[] | null; hasPlan: boolean; source: string; state: PhysioSessionState[] }> {
+}): Promise<{ list: ReturnedSessions[] | null; applied: ReturnedSessions[] | null; hasPlan: boolean; source: string; state: PhysioSessionState[] }> {
   if (p.caseType !== "physiotherapy") {
     if (p.list && p.list.length) throw new RefundError(400, "الجلساتُ تُرجَع مع قسم العلاج الطبيعي وحده");
-    return { list: null, hasPlan: false, source: "none", state: [] };
+    return { list: null, applied: null, hasPlan: false, source: "none", state: [] };
   }
   if (!p.list) throw new RefundError(400, REFUND_SESSIONS_REQUIRED_ERROR);
   const { state, hasPlan, source } = await physioSessionStateTx(ex, p.patientId, p.caseId, p.exceptRequestId);
   for (const x of p.list) {
-    const row = state.find((r) => r.treatmentType === x.treatmentType);
-    if (!row) throw new RefundError(409, `لا جلساتِ «${x.treatmentType}» في هذا القسم — لم يتغيّر شيء`);
-    if (x.sessionCount > row.available) {
-      throw new RefundError(409, `${REFUND_SESSIONS_EXCEED_ERROR} في «${x.treatmentType}» — الممكن الآن ${row.available}`
-        + (row.pending > 0 ? ` (ومعلَّقٌ في طلبٍ آخر ${row.pending})` : ""));
+    if (!state.some((r) => r.treatmentType === x.treatmentType)) {
+      throw new RefundError(409, `لا جلساتِ «${x.treatmentType}» في هذا القسم — لم يتغيّر شيء`);
     }
   }
-  return { list: p.list, hasPlan, source, state };
+  return { list: p.list, applied: clampReturnedSessions(p.list, state), hasPlan, source, state };
 }
 
 /**
@@ -226,6 +224,9 @@ export async function refundOptions(patientId: number) {
       available: Math.max(0, m.net - pending),
       sessions: c.case_type === "physiotherapy" ? (await physioSessionStateTx(db as any, patientId, c.id)).state : null,
     });
+    const last = out[out.length - 1];
+    //  **قيمةُ الجلسات الباقية بسعر ما دفعه** (§4.gj) — سطرٌ هادئ في النافذة، وما فوقه تنبيهٌ أحمر لا منع.
+    (last as any).physioGuide = last.sessions ? physioRefundGuide(m.net, last.sessions) : null;
   }
   return out;
 }
@@ -391,19 +392,23 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
     paymentTreatmentType: CLOSURE_PAYMENT_TAG[service] ?? null,
     //  «سند ن — السبب: التفصيل» — والدفترُ يكتب قبلها «استرجاع: الاسم»، وجدولُ الدفعات يسمها «استرجاع» بالأحمر.
     notes: `سند ${cur.id} — ${refundReasonLabel(cur.reason)}: ${cur.detail}`
-      + (sessions.list && sessions.list.length ? ` — أُرجع ${returnedSessionsLine(sessions.list)}` : ""),
+      + (sessions.applied && sessions.applied.length ? ` — أُرجع ${returnedSessionsLine(sessions.applied)}` : "")
+      + (sessions.list && returnedSessionsTotal(sessions.list) > returnedSessionsTotal(sessions.applied)
+        ? ` (طُلب ${returnedSessionsLine(sessions.list)} — أكثر من الباقي)` : ""),
     actorUserId: p.userId,
   });
   //  **والعدّادُ ينقص بما أُرجع** بحسب مصدره: الخطّةُ تُنقَص (والعدّادُ يقرؤها وحدها فلا يُطرح مرّتين)، والمشتقُّ من الكلفة يُجمَّد
   //  خطّةً بـ«قبل − المُرجَع» (فلا يُسقطه تخفيضُ الكلفة ولا يُطرح فوقه)، والدفعاتُ يُكتب على صفّ الاسترجاع فيطرحه `resolvePurchasedSessions`.
-  if (sessions.list && sessions.list.length) {
+  //  **وما يُطرح هو `applied`** (§4.gj): المطلوبُ فوق الباقي لا يُنزل العدّادَ تحت الصفر.
+  const applied = sessions.applied ?? [];
+  if (applied.length) {
     if (sessions.hasPlan) {
-      await returnFromPlanTx(tx, cur.patientId, sessions.list);
+      await returnFromPlanTx(tx, cur.patientId, applied);
     } else if (sessions.source === "cost") {
-      await freezeCostPlanTx(tx, cur.patientId, cur.caseId, sessions.state, sessions.list);
+      await freezeCostPlanTx(tx, cur.patientId, cur.caseId, sessions.state, applied);
     } else {
       //  من الدفعات: الكلفةُ لا تمسّها، فيُكتب العددُ كاملاً على صفّ الاسترجاع ويطرحه العدّاد.
-      await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(sessions.list)}::jsonb WHERE id = ${written.paymentId}`);
+      await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(applied)}::jsonb WHERE id = ${written.paymentId}`);
     }
   }
   await tx.execute(sql`

@@ -28,6 +28,7 @@ import {
   REFUND_CASE_LABELS, REFUND_DETAIL_ERROR, REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_STATUS_LABELS,
   canRequestRefund, defaultReduceCost, parseReturnedSessions, refundReasonLabel, refundReasonOf, refundVoucherNo, returnedSessionsLine,
   REFUND_COMPANION_MAX, REFUND_NATIONAL_ID_MAX, REFUND_FORM_FIELD_ERROR, optionalFormText,
+  physioRefundGuide, refundOverSessionsValue, sessionsOverRemaining, physioRefundWarnings,
   type RefundStatus,
 } from "@shared/patient_refunds";
 import * as store from "./store";
@@ -68,6 +69,9 @@ async function present(row: store.RequestRow) {
     ? ((await db.execute(sql`SELECT cost FROM patient_cases WHERE id = ${row.caseId}`)).rows as any[])
     : [];
   const netNow = money_?.net ?? null;
+  const sessionsNow = pending && row.caseType === "physiotherapy"
+    ? (await store.physioSessionStateTx(db as any, row.patientId, row.caseId, row.id)).state : null;
+  const guide = sessionsNow && netNow != null ? physioRefundGuide(netNow, sessionsNow) : null;
   return {
     id: row.id, voucherNo: refundVoucherNo(row.id),
     patientId: row.patientId, patientName: row.patientName ?? "", patientCode: row.patientCode ?? "",
@@ -89,8 +93,12 @@ async function present(row: store.RequestRow) {
     //  **الجلساتُ المُرجَعة** (ترحيل ١٩٣) — وللمعلَّق ما يجوز إرجاعُه الآن، فيرى المسؤولُ زيارةً سُجّلت بعد الطلب.
     sessionsReturned: row.sessionsReturned ?? null,
     sessionsLine: row.caseType === "physiotherapy" ? returnedSessionsLine(row.sessionsReturned) : null,
-    sessionsNow: pending && row.caseType === "physiotherapy"
-      ? (await store.physioSessionStateTx(db as any, row.patientId, row.caseId, row.id)).state : null,
+    sessionsNow,
+    //  **تنبيهاتُ العلاج الطبيعي** (§4.gj) — حيّةً للمعلَّق: قيمةُ الجلسات الباقية بسعر ما دفعه، وما فوقها، والجلساتُ فوق الباقي.
+    physioGuide: guide,
+    overSessionsValue: guide ? refundOverSessionsValue(row.amount, guide) : 0,
+    sessionsOverRemaining: sessionsNow ? sessionsOverRemaining(row.sessionsReturned, sessionsNow) : [],
+    physioWarnings: sessionsNow && netNow != null ? physioRefundWarnings(row.amount, row.sessionsReturned, sessionsNow, netNow) : [],
   };
 }
 
@@ -205,7 +213,11 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
             + (m.caseType === "physiotherapy" ? ` — يُرجع ${returnedSessionsLine(r.sessionsReturned)}` : "") });
         //  المسؤولُ يسترجع مباشرةً: لا تنبيهَ له بطلبه هو.
         if (!s.isAdmin) {
+          const warnings = m.caseType === "physiotherapy"
+            ? physioRefundWarnings(amount, r.sessionsReturned, (await store.physioSessionStateTx(tx, r.patientId, caseId, r.id)).state, m.net)
+            : [];
           await notifyRefundPending(tx, {
+            warnings,
             patientId: r.patientId, branchId, caseLabel: REFUND_CASE_LABELS[m.caseType] ?? m.caseType,
             amountText: money(amount), amountWords: amountInArabicWords(amount), netPaidText: money(m.net),
             refundedBeforeText: money(m.refunded), reason: refundReasonLabel(reason),

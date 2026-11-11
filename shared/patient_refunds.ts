@@ -65,7 +65,6 @@ export function defaultReduceCost(reason: string | null | undefined): boolean {
 // المعلَّقَ في طلباتٍ أخرى. والاعتمادُ يطرحها من العدّاد: على صفّ الاسترجاع (`payments.returned_sessions`) أو من الخطّة لصاحبها.
 export interface ReturnedSessions { treatmentType: string; sessionCount: number }
 export const REFUND_SESSIONS_REQUIRED_ERROR = "اكتب كم جلسةً تُرجَع من كلّ نوع — صفرٌ إن لم تُرجَع جلسة";
-export const REFUND_SESSIONS_EXCEED_ERROR = "عددُ الجلسات المُرجَعة أكبر من الباقي غير المحضور";
 
 /** يقرأ المُرسَل: مصفوفةٌ بأنواعٍ مكتوبة وأعدادٍ صحيحة غير سالبة، والصفرُ يُحذف — و`null` لغير المصفوفة. */
 export function parseReturnedSessions(raw: unknown): ReturnedSessions[] | null {
@@ -89,6 +88,68 @@ export function returnedSessionsLine(list: readonly ReturnedSessions[] | null | 
   const parts = (list ?? []).filter((x) => x.sessionCount > 0).map((x) => `${x.sessionCount} ${x.sessionCount === 1 ? "جلسة" : "جلسات"} ${x.treatmentType}`);
   return parts.length ? parts.join(" · ") : "لا جلسات";
 }
+
+// ══ **تنبيهاتُ العلاج الطبيعي — لا منع** (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj) ══════════════════════════════════════════════════════════
+// المنعُ الوحيد: لا يُرجَع أكثرُ ممّا دفعه المريض. وما سواه **تنبيهٌ أحمر** للموظّف وللمسؤول، والاعتمادُ قرارُه:
+//   • المبلغُ أكثرُ من قيمة الجلسات الباقية — وسعرُ الجلسة **ممّا دفعه المريض** (صافي ما دُفع ÷ ما اشتراه من جلسات)، لا سعرُ النظام.
+//   • عددُ الجلسات المُرجَعة أكثرُ من الباقي — والعدّادُ عند الاعتماد ينقص بالباقي وحده فلا ينزل تحت الصفر.
+export interface PhysioRefundSessionRow { treatmentType: string; bought: number; remaining: number; pending: number; available: number }
+export interface PhysioRefundGuide {
+  /** صافي ما دفعه في القسم الآن. */ netPaid: number;
+  /** ما اشتراه من جلسات (بعد ما أُرجع قبلُ). */ bought: number;
+  /** الباقي غيرُ المحضور، بعد المعلَّق في طلباتٍ أخرى. */ available: number;
+  /** سعرُ الجلسة ممّا دفعه — `null` حين لا جلسات مشتراة. */ perSession: number | null;
+  /** قيمةُ الجلسات الباقية بسعر ما دفعه — الحدُّ الذي يُنبَّه فوقه. */ limit: number;
+}
+export function physioRefundGuide(netPaid: number, rows: readonly PhysioRefundSessionRow[] | null | undefined): PhysioRefundGuide {
+  const list = rows ?? [];
+  const bought = list.reduce((s, r) => s + Math.max(0, Number(r.bought) || 0), 0);
+  const available = list.reduce((s, r) => s + Math.max(0, Number(r.available) || 0), 0);
+  const net = Math.max(0, Number(netPaid) || 0);
+  const perSession = bought > 0 ? Math.round(net / bought) : null;
+  const limit = bought > 0 ? Math.round((net * available) / bought) : 0;
+  return { netPaid: net, bought, available, perSession, limit };
+}
+/** المبلغُ فوق قيمة الجلسات الباقية؟ — وبكم. */
+export function refundOverSessionsValue(amount: number, guide: PhysioRefundGuide): number {
+  return Math.max(0, Math.round(Number(amount) || 0) - guide.limit);
+}
+/** الأنواعُ التي طُلب إرجاعُ أكثرَ من الباقي منها — بالعدد المطلوب والباقي. */
+export function sessionsOverRemaining(list: readonly ReturnedSessions[] | null | undefined,
+  rows: readonly { treatmentType: string; available: number }[] | null | undefined): { treatmentType: string; asked: number; available: number }[] {
+  const out: { treatmentType: string; asked: number; available: number }[] = [];
+  for (const x of list ?? []) {
+    const available = Math.max(0, Number((rows ?? []).find((r) => r.treatmentType === x.treatmentType)?.available) || 0);
+    if (x.sessionCount > available) out.push({ treatmentType: x.treatmentType, asked: x.sessionCount, available });
+  }
+  return out;
+}
+/** ما يُطرح فعلاً من العدّاد: لكلّ نوعٍ الأقلُّ من المطلوب والباقي — فلا ينزل العدّادُ تحت الصفر. */
+export function clampReturnedSessions(list: readonly ReturnedSessions[] | null | undefined,
+  rows: readonly { treatmentType: string; remaining: number }[] | null | undefined): ReturnedSessions[] {
+  return (list ?? []).map((x) => {
+    const remaining = Math.max(0, Number((rows ?? []).find((r) => r.treatmentType === x.treatmentType)?.remaining) || 0);
+    return { treatmentType: x.treatmentType, sessionCount: Math.min(x.sessionCount, remaining) };
+  }).filter((x) => x.sessionCount > 0);
+}
+
+/** نصُّ التنبيهات الحمراء — للنافذة والبطاقة وتلغرام بحرفٍ واحد. فارغةٌ حين لا تجاوز. */
+export function physioRefundWarnings(amount: number, list: readonly ReturnedSessions[] | null | undefined,
+  rows: readonly PhysioRefundSessionRow[] | null | undefined, netPaid: number): string[] {
+  const out: string[] = [];
+  const g = physioRefundGuide(netPaid, rows);
+  const over = refundOverSessionsValue(amount, g);
+  if (over > 0) {
+    out.push(g.bought > 0 && g.available > 0
+      ? `المبلغ ${fmt(amount)} أكثر من قيمة الجلسات الباقية (${g.available} ${g.available === 1 ? "جلسة" : "جلسات"} × ${fmt(g.perSession ?? 0)} = ${fmt(g.limit)}) بـ${fmt(over)}`
+      : `المبلغ ${fmt(amount)} ولا جلسات باقية غير محضورة للمريض`);
+  }
+  for (const x of sessionsOverRemaining(list, rows)) {
+    out.push(`طُلب إرجاع ${x.asked} ${x.treatmentType} والباقي ${x.available} — العدّاد ينقص بالباقي وحده`);
+  }
+  return out;
+}
+const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 
 /** الاقتراحُ في النافذة: المبلغ ÷ سعرِ النوع، مقرَّباً للأسفل، ولا يتجاوز الباقي. */
 export function suggestReturnedSessions(amount: number, price: number | null | undefined, remaining: number): number {

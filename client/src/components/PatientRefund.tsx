@@ -18,6 +18,7 @@ import { amountInArabicWords } from "@shared/reserve_withdrawals";
 import {
   REFUND_COMPANION_MAX, REFUND_DETAIL_MAX, REFUND_DETAIL_MIN, REFUND_NATIONAL_ID_MAX, REFUND_PRINT_PENDING_MESSAGE, REFUND_REASONS,
   defaultReduceCost, suggestReturnedSessions, type ReturnedSessions,
+  physioRefundWarnings, type PhysioRefundGuide,
 } from "@shared/patient_refunds";
 import {
   AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -36,6 +37,8 @@ export interface RefundRow {
   requestedBy: number | null; requestedByName: string | null; requestedAt: string;
   decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; paymentId: number | null;
   sessionsReturned: ReturnedSessions[] | null; sessionsLine: string | null; sessionsNow: SessionState[] | null;
+  /** تنبيهاتُ العلاج الطبيعي الحمراء للمعلَّق (§4.gj) — لا تمنع الاعتماد. */
+  physioWarnings?: string[];
   /** «استمارة استرداد مبلغ» (ترحيل ١٩٥، §4.gi) — غيرُ إلزاميَّين. */
   companionName: string | null; nationalId: string | null;
 }
@@ -45,12 +48,7 @@ interface SessionState {
 interface CaseOption {
   caseId: number; caseType: string; label: string; cost: number; netPaid: number; refundedBefore: number; pending: number; available: number;
   suggestDeductHospital: boolean | null; sessions: SessionState[] | null;
-}
-
-/** ما يُرجَع أكثرَ ممّا يجوز الآن — زيارةٌ سُجّلت بعد الطلب أو طلبٌ آخر معلَّق. */
-function sessionsOver(list: ReturnedSessions[] | null, now: SessionState[] | null): string[] {
-  if (!list || !now) return [];
-  return list.filter((x) => x.sessionCount > (now.find((r) => r.treatmentType === x.treatmentType)?.available ?? 0)).map((x) => x.treatmentType);
+  physioGuide?: PhysioRefundGuide | null;
 }
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toLocaleString("en-US"));
@@ -169,13 +167,15 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
     //  الاقتراحُ لنوعٍ واحدٍ له سعر: المبلغ ÷ السعر — ولأكثر من نوع يكتبه الموظّف.
     const priced = sessionRows.filter((r) => r.available > 0 && r.price);
     const next: Record<string, string> = {};
-    if (priced.length === 1) next[priced[0].treatmentType] = String(suggestReturnedSessions(n, priced[0].price, priced[0].available));
+    //  سعرُ الجلسة ممّا دفعه المريض (§4.gj) — وسعرُ النظام حين لا جلسات مشتراة يُحسب منها.
+    if (priced.length === 1) next[priced[0].treatmentType] = String(suggestReturnedSessions(n, c?.physioGuide?.perSession ?? priced[0].price, priced[0].available));
     setSessions(next);
   }, [n, c?.caseId, sessionsTouched]);
   const sessionsList: ReturnedSessions[] = sessionRows
     .map((r) => ({ treatmentType: r.treatmentType, sessionCount: Number(sessions[r.treatmentType] || 0) }))
     .filter((x) => x.sessionCount > 0);
-  const sessionsBad = physio && sessionRows.some((r) => Number(sessions[r.treatmentType] || 0) > r.available);
+  //  **تنبيهٌ أحمر لا منع** (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj): المبلغُ فوق قيمة الجلسات الباقية بسعر ما دفعه، والجلساتُ فوق الباقي.
+  const physioWarnings = physio && c && n > 0 ? physioRefundWarnings(n, sessionsList, c.sessions ?? [], c.netPaid) : [];
   const send = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/patient-refunds", {
       patientId, caseId, amount: n, reason, detail: detail.trim(),
@@ -191,7 +191,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
     },
     onError: (e: any) => { invalidate(qc, patientId); toast({ title: "تعذّر الإرسال", description: errText(e), variant: "destructive" }); },
   });
-  const ready = c && n > 0 && !tooMuch && !sessionsBad && reason && detail.trim().length >= REFUND_DETAIL_MIN
+  const ready = c && n > 0 && !tooMuch && reason && detail.trim().length >= REFUND_DETAIL_MIN
     && !(isAdmin && opts.data?.askHospital && deduct === null);
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -278,7 +278,20 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
                         </label>
                       );
                     })}
-                    {sessionsBad && <span className="block rounded bg-red-50 border border-red-300 text-red-800 px-2 py-1 text-xs" data-testid="refund-sessions-too-many">عددُ الجلسات أكبر من الباقي غير المحضور</span>}
+                  </div>
+                )}
+                {physio && c?.physioGuide && (
+                  <p className="rounded-md bg-muted px-3 py-2 text-xs" data-testid="refund-physio-guide">
+                    حدّ الاسترجاع المعتاد: قيمة الجلسات الباقية{" "}
+                    {c.physioGuide.bought > 0
+                      ? <>— <b><Num n={c.physioGuide.available} /></b> {c.physioGuide.available === 1 ? "جلسة" : "جلسات"} × <b><Num n={c.physioGuide.perSession} /></b> (سعر الجلسة ممّا دفعه: <Num n={c.physioGuide.netPaid} /> ÷ <Num n={c.physioGuide.bought} />) = <b><Num n={c.physioGuide.limit} /></b> دينار</>
+                      : <>— لا جلسات مشتراة في هذا القسم</>}
+                  </p>
+                )}
+                {physioWarnings.length > 0 && (
+                  <div className="rounded-md bg-red-600 text-white px-3 py-2 text-sm font-semibold space-y-1" data-testid="refund-physio-warning">
+                    {physioWarnings.map((w) => <p key={w} className="flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{w}</p>)}
+                    <p className="text-xs font-normal opacity-90">يمكنك الإرسال، ويظهر هذا التنبيه للمسؤول عند الاعتماد.</p>
                   </div>
                 )}
                 <FormRow icon={FileText} label="سبب الاسترجاع" testid="refund-form-reason">
@@ -360,6 +373,11 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
         <Badge variant={r.status === "approved" ? "default" : r.status === "rejected" ? "destructive" : "secondary"} className="ms-auto"
           data-testid={`refund-status-${r.id}`}>{r.statusLabel}</Badge>
       </div>
+      {pending && (r.physioWarnings?.length ?? 0) > 0 && (
+        <div className="rounded bg-red-600 text-white px-3 py-1.5 text-sm font-semibold space-y-1" data-testid={`refund-physio-warning-${r.id}`}>
+          {r.physioWarnings!.map((w) => <p key={w} className="flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{w}</p>)}
+        </div>
+      )}
       {r.exceeds && pending && (
         <div className="flex items-center gap-2 rounded bg-red-600 text-white px-3 py-1.5 text-sm font-semibold" data-testid={`refund-exceeds-${r.id}`}>
           <AlertTriangle className="w-4 h-4 shrink-0" /> المبلغ أكبر من صافي ما دفعه المريض الآن — لا يُعتمد
@@ -395,11 +413,7 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
         {r.caseType === "physiotherapy" && r.sessionsLine && (
           <Line label="الجلسات المُرجَعة" testid={`refund-sessions-${r.id}`}>
             <b>{r.sessionsLine}</b>
-            {pending && sessionsOver(r.sessionsReturned, r.sessionsNow).length > 0 && (
-              <span className="block text-red-700 font-semibold" data-testid={`refund-sessions-over-${r.id}`}>
-                أكثر من الباقي الآن ({sessionsOver(r.sessionsReturned, r.sessionsNow).join("، ")}) — حضر بعد الطلب؛ ارفضه ليُعاد بعددٍ صحيح
-              </span>
-            )}
+
           </Line>
         )}
         <Line label="السبب" testid={`refund-reason-${r.id}`}>{r.reasonLabel} — {r.detail}</Line>
@@ -425,7 +439,7 @@ export function RefundCard({ r, isAdmin }: { r: RefundRow; isAdmin: boolean }) {
           <>
             <Button size="sm" variant="outline" className="border-red-400 text-red-700" disabled={decide.isPending}
               onClick={() => { setNote(""); setDialog("reject"); }} data-testid={`refund-reject-${r.id}`}>رفض بسبب</Button>
-            <Button size="sm" disabled={decide.isPending || r.exceeds || sessionsOver(r.sessionsReturned, r.sessionsNow).length > 0} onClick={() => { setNote(""); setDialog("approve"); }}
+            <Button size="sm" disabled={decide.isPending || r.exceeds} onClick={() => { setNote(""); setDialog("approve"); }}
               data-testid={`refund-approve-${r.id}`}>اعتماد</Button>
           </>
         )}
