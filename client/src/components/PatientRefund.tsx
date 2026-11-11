@@ -49,6 +49,8 @@ interface CaseOption {
   caseId: number; caseType: string; label: string; cost: number; netPaid: number; refundedBefore: number; pending: number; available: number;
   suggestDeductHospital: boolean | null; sessions: SessionState[] | null;
   physioGuide?: PhysioRefundGuide | null;
+  /** المُهدى بلا مال — يُطرح من قسمة سعر الجلسة (§4.gj). */
+  freeSessions?: number;
 }
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toLocaleString("en-US"));
@@ -175,7 +177,7 @@ export function RequestRefundDialog({ patientId, patientName, open, onClose }: {
     .map((r) => ({ treatmentType: r.treatmentType, sessionCount: Number(sessions[r.treatmentType] || 0) }))
     .filter((x) => x.sessionCount > 0);
   //  **تنبيهٌ أحمر لا منع** (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj): المبلغُ فوق قيمة الجلسات الباقية بسعر ما دفعه، والجلساتُ فوق الباقي.
-  const physioWarnings = physio && c && n > 0 ? physioRefundWarnings(n, sessionsList, c.sessions ?? [], c.netPaid) : [];
+  const physioWarnings = physio && c && n > 0 ? physioRefundWarnings(n, sessionsList, c.sessions ?? [], c.netPaid, c.freeSessions ?? 0) : [];
   const send = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/patient-refunds", {
       patientId, caseId, amount: n, reason, detail: detail.trim(),

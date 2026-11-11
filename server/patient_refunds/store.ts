@@ -119,7 +119,9 @@ export async function physioSessionStateTx(ex: Tx, patientId: number, caseId: nu
       return { treatmentType: r.type, bought: r.bought, done: r.done, remaining, pending,
         available: Math.max(0, remaining - pending), price: PHYSIO_KNOWN_TREATMENT_PRICES[r.type] ?? null };
     });
-  return { state, hasPlan: bought.source === "plan", source: bought.source };
+  //  **المُهدى بلا مال** (مراجعةُ §4.gj): يُطرح من المشترى حين يُحسب سعرُ الجلسة ممّا دفعه، وإلّا خفّض السعرَ ونبّه بلا سبب.
+  const freeSessions = pays.reduce((n, x) => n + (x.is_free_sessions === true ? Math.max(0, Number(x.session_count) || 0) : 0), 0);
+  return { state, hasPlan: bought.source === "plan", source: bought.source, freeSessions };
 }
 
 /**
@@ -218,15 +220,18 @@ export async function refundOptions(patientId: number) {
   for (const c of cases) {
     const m = await caseMoneyTx(db as any, c.id);
     const pending = await pendingOnCaseTx(db as any, c.id);
+    const physioState = c.case_type === "physiotherapy" ? await physioSessionStateTx(db as any, patientId, c.id) : null;
     out.push({
       caseId: c.id, caseType: c.case_type, label: REFUND_CASE_LABELS[c.case_type] ?? c.case_type,
       cost: Number(c.cost ?? 0), netPaid: m.net, refundedBefore: m.refunded, pending,
       available: Math.max(0, m.net - pending),
-      sessions: c.case_type === "physiotherapy" ? (await physioSessionStateTx(db as any, patientId, c.id)).state : null,
+      sessions: physioState ? physioState.state : null,
     });
+    const freeOf = physioState?.freeSessions ?? 0;
     const last = out[out.length - 1];
     //  **قيمةُ الجلسات الباقية بسعر ما دفعه** (§4.gj) — سطرٌ هادئ في النافذة، وما فوقه تنبيهٌ أحمر لا منع.
-    (last as any).physioGuide = last.sessions ? physioRefundGuide(m.net, last.sessions) : null;
+    (last as any).physioGuide = last.sessions ? physioRefundGuide(m.net, last.sessions, freeOf) : null;
+    (last as any).freeSessions = freeOf;
   }
   return out;
 }
@@ -411,9 +416,13 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
       await tx.execute(sql`UPDATE payments SET returned_sessions = ${JSON.stringify(applied)}::jsonb WHERE id = ${written.paymentId}`);
     }
   }
+  //  **والطلبُ يحمل ما أُرجع فعلاً** (مراجعةُ §4.gj): المطلوبُ فوق الباقي لا يُطرح، فالاستمارةُ التي يوقّعها المريض والبطاقةُ والتدقيقُ
+  //  تقول ما نقص من العدّاد — والمطلوبُ باقٍ في سطر تدقيق الطلب وفي ملاحظة الدفعة «(طُلب …)».
+  const appliedJson = sessions.list === null ? null : JSON.stringify(sessions.applied ?? []);
   await tx.execute(sql`
     UPDATE patient_refund_requests SET payment_id = ${written.paymentId}, deduct_hospital = ${p.deductHospital},
-           reduce_cost = ${p.reduceCost}, cost_before = ${costBefore}, cost_after = ${costAfter}
+           reduce_cost = ${p.reduceCost}, cost_before = ${costBefore}, cost_after = ${costAfter},
+           sessions_returned = COALESCE(${appliedJson}::jsonb, sessions_returned)
      WHERE id = ${id}`);
   const row = (await rows<RequestRow>(tx, sql`${SELECT_ROW} WHERE r.id = ${id}`))[0];
   await after(tx, row, { paymentId: written.paymentId, journalPosted: written.journalPosted });

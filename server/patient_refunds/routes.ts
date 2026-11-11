@@ -69,9 +69,10 @@ async function present(row: store.RequestRow) {
     ? ((await db.execute(sql`SELECT cost FROM patient_cases WHERE id = ${row.caseId}`)).rows as any[])
     : [];
   const netNow = money_?.net ?? null;
-  const sessionsNow = pending && row.caseType === "physiotherapy"
-    ? (await store.physioSessionStateTx(db as any, row.patientId, row.caseId, row.id)).state : null;
-  const guide = sessionsNow && netNow != null ? physioRefundGuide(netNow, sessionsNow) : null;
+  const physioNow = pending && row.caseType === "physiotherapy"
+    ? await store.physioSessionStateTx(db as any, row.patientId, row.caseId, row.id) : null;
+  const sessionsNow = physioNow?.state ?? null;
+  const guide = sessionsNow && netNow != null ? physioRefundGuide(netNow, sessionsNow, physioNow!.freeSessions) : null;
   return {
     id: row.id, voucherNo: refundVoucherNo(row.id),
     patientId: row.patientId, patientName: row.patientName ?? "", patientCode: row.patientCode ?? "",
@@ -98,7 +99,7 @@ async function present(row: store.RequestRow) {
     physioGuide: guide,
     overSessionsValue: guide ? refundOverSessionsValue(row.amount, guide) : 0,
     sessionsOverRemaining: sessionsNow ? sessionsOverRemaining(row.sessionsReturned, sessionsNow) : [],
-    physioWarnings: sessionsNow && netNow != null ? physioRefundWarnings(row.amount, row.sessionsReturned, sessionsNow, netNow) : [],
+    physioWarnings: sessionsNow && netNow != null ? physioRefundWarnings(row.amount, row.sessionsReturned, sessionsNow, netNow, physioNow!.freeSessions) : [],
   };
 }
 
@@ -213,9 +214,8 @@ export function registerPatientRefundRoutes(app: Express, isAuthenticated: any) 
             + (m.caseType === "physiotherapy" ? ` — يُرجع ${returnedSessionsLine(r.sessionsReturned)}` : "") });
         //  المسؤولُ يسترجع مباشرةً: لا تنبيهَ له بطلبه هو.
         if (!s.isAdmin) {
-          const warnings = m.caseType === "physiotherapy"
-            ? physioRefundWarnings(amount, r.sessionsReturned, (await store.physioSessionStateTx(tx, r.patientId, caseId, r.id)).state, m.net)
-            : [];
+          const ps = m.caseType === "physiotherapy" ? await store.physioSessionStateTx(tx, r.patientId, caseId, r.id) : null;
+          const warnings = ps ? physioRefundWarnings(amount, r.sessionsReturned, ps.state, m.net, ps.freeSessions) : [];
           await notifyRefundPending(tx, {
             warnings,
             patientId: r.patientId, branchId, caseLabel: REFUND_CASE_LABELS[m.caseType] ?? m.caseType,

@@ -476,7 +476,7 @@ async function main() {
     const k2card = await http("GET", `/api/patient-refunds/${k2.body?.id}`, S.admin);
     same("ي٥. **الطلبُ بتسع جلسات ⟵ ٢٠١** بلا تنبيه، وطلبٌ آخر بجلسةٍ والتسعُ معلَّقة ⟵ ٢٠١ **بتنبيهٍ أحمر** في البطاقة وتلغرام",
       [kr.status, kr.body?.sessionsLine, (kr.body?.sessionsReturned ?? []).map((x: any) => [x.treatmentType, x.sessionCount]), kr.body?.physioWarnings,
-       k2.status, (k2card.body?.physioWarnings ?? []).some((w: string) => w.includes(`طُلب إرجاع 1 ${DEV} والباقي 0`)),
+       k2.status, (k2card.body?.physioWarnings ?? []).some((w: string) => w.includes(`طُلب إرجاع 1 ${DEV} والباقي 0 (بعد 9 معلَّقة في طلبٍ آخر)`)),
        (await outbox("refund_request_pending")).some((r: any) => r.text.includes("🔴 تنبيه: طُلب إرجاع 1"))],
       [201, `9 جلسات ${DEV}`, [[DEV, 9]], [], 201, true, true]);
     await http("POST", `/api/patient-refunds/${k2.body?.id}/reject`, S.admin, { note: "مكرّر" });
@@ -487,7 +487,7 @@ async function main() {
     same("ي٦. **حضر بعد الطلب ⟵ البطاقةُ تنبّه بالأحمر**: الممكن الآن ٨، و«طُلب ٩ والباقي ٨»، والمبلغُ فوق قيمة الثماني",
       [card.body?.sessionsNow?.[0]?.available, card.body?.sessionsOverRemaining,
        (card.body?.physioWarnings ?? []).length, card.body?.overSessionsValue],
-      [8, [{ treatmentType: DEV, asked: 9, available: 8 }], 2, 35_000]);
+      [8, [{ treatmentType: DEV, asked: 9, available: 8, pending: 0 }], 2, 35_000]);
     await q(`DELETE FROM visits WHERE id=$1`, [lateVisit.id]);
     const kap = await http("POST", `/api/patient-refunds/${kr.body.id}/approve`, S.admin, { reduceCost: true });
     const kpay = (await q(`SELECT returned_sessions, notes FROM payments WHERE patient_id=$1 AND amount<0`, [K.id]))[0];
@@ -642,7 +642,14 @@ async function main() {
         [g.perSession, g.limit, refundOverSessionsValue(290_000, g), refundOverSessionsValue(270_000, g),
          physioRefundGuide(100_000, []).limit, clampReturnedSessions([{ treatmentType: DEV, sessionCount: 9 }], [{ treatmentType: DEV, remaining: 8 }]),
          sessionsOverRemaining([{ treatmentType: DEV, sessionCount: 9 }], [{ treatmentType: DEV, available: 8 }])],
-        [30_000, 270_000, 20_000, 0, 0, [{ treatmentType: DEV, sessionCount: 8 }], [{ treatmentType: DEV, asked: 9, available: 8 }]]);
+        [30_000, 270_000, 20_000, 0, 0, [{ treatmentType: DEV, sessionCount: 8 }], [{ treatmentType: DEV, asked: 9, available: 8, pending: 0 }]]);
+      //  مراجعةُ §4.gj: المُهدى بلا مال لا يُخفّض السعر، والمعادلةُ تجمع بالسعر المعروض، والحدُّ لا يتجاوز ما دفعه.
+      const gGift = physioRefundGuide(300_000, [{ treatmentType: DEV, bought: 12, remaining: 9, pending: 0, available: 9 }], 2);
+      const gOdd = physioRefundGuide(100_000, [{ treatmentType: DEV, bought: 11, remaining: 10, pending: 0, available: 10 }]);
+      const gCap = physioRefundGuide(200_000, [{ treatmentType: DEV, bought: 3, remaining: 3, pending: 0, available: 3 }]);
+      same("م١ب. **الهديةُ خارج القسمة** (٣٠٠ ألف ÷ ١٠ مدفوعة = ٣٠ ألفاً لا ٢٥)، و١٠ × ٩٬٠٩١ = ٩٠٬٩١٠ تجمع، والحدُّ ٢٠٠ ألف لا ٢٠٠٬٠٠١ (٣ × ٦٦٬٦٦٧)",
+        [gGift.perSession, gGift.limit, gOdd.perSession, gOdd.limit === gOdd.available * (gOdd.perSession ?? 0), gCap.limit],
+        [30_000, 270_000, 9_091, true, 200_000]);
 
       const W = await mkPatient("تنبيه الجلسات", [{ type: "physiotherapy", cost: 300_000 }], BG);
       await q(`UPDATE patients SET is_physiotherapy = true, treatment_type = $2 WHERE id = $1`, [W.id, `${DEV} (10 جلسات)`]);
@@ -673,6 +680,11 @@ async function main() {
          Boolean(wpay?.notes?.includes(`أُرجع 8 جلسات ${DEV}`) && wpay?.notes?.includes(`طُلب 9 جلسات ${DEV}`)),
          wstate.state[0]?.bought, wstate.state[0]?.done, wstate.state[0]?.remaining],
         [200, [[DEV, 8]], true, 2, 2, 0]);
+      const wdone = await http("GET", `/api/patient-refunds/${wr.body?.id}`, S.admin);
+      same("م٤ب. **والاستمارةُ والبطاقةُ بعد الاعتماد تقول ما أُرجع فعلاً** (٨ لا ٩)، والمطلوبُ باقٍ في سطر تدقيق الطلب",
+        [wdone.body?.sessionsLine, (await q(`SELECT new_values FROM audit_log WHERE entity_type='patient_refund_request' AND entity_id=$1 AND action='create'`, [wr.body?.id]))
+          .map((r: any) => (typeof r.new_values === "string" ? JSON.parse(r.new_values) : r.new_values)?.sessionsReturned?.[0]?.sessionCount)[0]],
+        [`8 جلسات ${DEV}`, 9]);
       same("م٥. **والمنعُ الوحيد باقٍ**: فوق صافي ما دفعه (١٠ آلاف) ⟵ ٤٠٩",
         (await ask(mgr, { ...wb, amount: 20_000, detail: "فوق المدفوع", sessionsReturned: [] })).status, 409);
     }

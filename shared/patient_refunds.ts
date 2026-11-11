@@ -101,13 +101,18 @@ export interface PhysioRefundGuide {
   /** سعرُ الجلسة ممّا دفعه — `null` حين لا جلسات مشتراة. */ perSession: number | null;
   /** قيمةُ الجلسات الباقية بسعر ما دفعه — الحدُّ الذي يُنبَّه فوقه. */ limit: number;
 }
-export function physioRefundGuide(netPaid: number, rows: readonly PhysioRefundSessionRow[] | null | undefined): PhysioRefundGuide {
+export function physioRefundGuide(netPaid: number, rows: readonly PhysioRefundSessionRow[] | null | undefined,
+  /** الجلساتُ المُهداة — بلا مال، فلا تدخل في قسمة سعر الجلسة (مراجعةُ §4.gj). */ freeSessions = 0): PhysioRefundGuide {
   const list = rows ?? [];
-  const bought = list.reduce((s, r) => s + Math.max(0, Number(r.bought) || 0), 0);
+  const all = list.reduce((s, r) => s + Math.max(0, Number(r.bought) || 0), 0);
+  const free = Math.max(0, Math.floor(Number(freeSessions) || 0));
+  //  المشترى بالمال وحده؛ وإن أكلت الهدايا العددَ كلَّه (بياناتٌ قديمة) يُقسم على الكلّ.
+  const bought = all - free > 0 ? all - free : all;
   const available = list.reduce((s, r) => s + Math.max(0, Number(r.available) || 0), 0);
   const net = Math.max(0, Number(netPaid) || 0);
   const perSession = bought > 0 ? Math.round(net / bought) : null;
-  const limit = bought > 0 ? Math.round((net * available) / bought) : 0;
+  //  الحدُّ = الباقي × سعرُ الجلسة كما يُعرض (فالمعادلةُ تجمع)، ولا يتجاوز ما دفعه.
+  const limit = perSession != null ? Math.min(net, available * perSession) : 0;
   return { netPaid: net, bought, available, perSession, limit };
 }
 /** المبلغُ فوق قيمة الجلسات الباقية؟ — وبكم. */
@@ -116,11 +121,12 @@ export function refundOverSessionsValue(amount: number, guide: PhysioRefundGuide
 }
 /** الأنواعُ التي طُلب إرجاعُ أكثرَ من الباقي منها — بالعدد المطلوب والباقي. */
 export function sessionsOverRemaining(list: readonly ReturnedSessions[] | null | undefined,
-  rows: readonly { treatmentType: string; available: number }[] | null | undefined): { treatmentType: string; asked: number; available: number }[] {
-  const out: { treatmentType: string; asked: number; available: number }[] = [];
+  rows: readonly { treatmentType: string; available: number; pending?: number }[] | null | undefined): { treatmentType: string; asked: number; available: number; pending: number }[] {
+  const out: { treatmentType: string; asked: number; available: number; pending: number }[] = [];
   for (const x of list ?? []) {
-    const available = Math.max(0, Number((rows ?? []).find((r) => r.treatmentType === x.treatmentType)?.available) || 0);
-    if (x.sessionCount > available) out.push({ treatmentType: x.treatmentType, asked: x.sessionCount, available });
+    const row = (rows ?? []).find((r) => r.treatmentType === x.treatmentType);
+    const available = Math.max(0, Number(row?.available) || 0);
+    if (x.sessionCount > available) out.push({ treatmentType: x.treatmentType, asked: x.sessionCount, available, pending: Math.max(0, Number(row?.pending) || 0) });
   }
   return out;
 }
@@ -135,9 +141,9 @@ export function clampReturnedSessions(list: readonly ReturnedSessions[] | null |
 
 /** نصُّ التنبيهات الحمراء — للنافذة والبطاقة وتلغرام بحرفٍ واحد. فارغةٌ حين لا تجاوز. */
 export function physioRefundWarnings(amount: number, list: readonly ReturnedSessions[] | null | undefined,
-  rows: readonly PhysioRefundSessionRow[] | null | undefined, netPaid: number): string[] {
+  rows: readonly PhysioRefundSessionRow[] | null | undefined, netPaid: number, freeSessions = 0): string[] {
   const out: string[] = [];
-  const g = physioRefundGuide(netPaid, rows);
+  const g = physioRefundGuide(netPaid, rows, freeSessions);
   const over = refundOverSessionsValue(amount, g);
   if (over > 0) {
     out.push(g.bought > 0 && g.available > 0
@@ -145,7 +151,8 @@ export function physioRefundWarnings(amount: number, list: readonly ReturnedSess
       : `المبلغ ${fmt(amount)} ولا جلسات باقية غير محضورة للمريض`);
   }
   for (const x of sessionsOverRemaining(list, rows)) {
-    out.push(`طُلب إرجاع ${x.asked} ${x.treatmentType} والباقي ${x.available} — العدّاد ينقص بالباقي وحده`);
+    out.push(`طُلب إرجاع ${x.asked} ${x.treatmentType} والباقي ${x.available}`
+      + (x.pending > 0 ? ` (بعد ${x.pending} معلَّقة في طلبٍ آخر)` : "") + " — العدّاد ينقص بالباقي وحده");
   }
   return out;
 }
