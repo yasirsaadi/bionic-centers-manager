@@ -617,6 +617,16 @@ async function main() {
     const [aud] = await q(`SELECT new_values FROM audit_log WHERE entity_type='patient_refund_request' AND entity_id=$1 AND action='create'`, [f1.body?.id]);
     const nv = typeof aud?.new_values === "string" ? JSON.parse(aud.new_values) : aud?.new_values;
     same("ك٦. وسطرُ التدقيق يحملهما", [nv?.companionName, nv?.nationalId], ["علي حسين", "199012345678"]);
+    //  **ورقةٌ واحدة في طباعة المتصفّح** (ملاحظة Codex على #732): ما لا يزيد على صفحة ٢٩٤ × ٢١٠ لا يُصغَّر، وما زاد يُصغَّر حتى يدخلها
+    //  — والنسبةُ وحدها تحكم فتكبيرُ الهاتف لا يغيّرها، وقياسٌ فارغ لا يُصغّر.
+    {
+      const { refundPrintFit, REFUND_PRINT_PAGE_RATIO } = await import("@shared/patient_refunds");
+      const big = refundPrintFit(1500, 794);
+      same("ك٧. **التصغيرُ للطباعة**: صفحةٌ بقدرها ١، وأطولُ تُصغَّر فتدخل الورقة، وبتكبير الهاتف العاملُ نفسُه، والقياسُ الفارغ ١",
+        [refundPrintFit(Math.floor(794 * REFUND_PRINT_PAGE_RATIO), 794), big < 1 && Math.abs(1500 * big / 794 - REFUND_PRINT_PAGE_RATIO) < 1e-9,
+         Math.abs(refundPrintFit(750, 397) - big) < 1e-9, refundPrintFit(0, 0), refundPrintFit(900, 0)],
+        [1, true, true, 1, 1]);
+    }
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();

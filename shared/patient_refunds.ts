@@ -117,3 +117,11 @@ export const REFUND_PRINT_PENDING_MESSAGE = "تواصل مع الدكتور يا
 export function refundFormKind(caseType: string | null | undefined): "physio" | "devices" {
   return caseType === "physiotherapy" ? "physio" : "devices";
 }
+
+/** عاملُ تصغير «استمارة استرداد مبلغ» في طباعة المتصفّح (§4.gi — ملاحظة Codex على #732): ارتفاعُ الصفحة إلى عرضها، والصفحةُ ٢٩٤ × ٢١٠ مم على ورقةٍ بلا هامش (حشوتُها هامشُها)؛
+ *  ما زاد يُصغَّر حتى يدخل ورقةً واحدة، وما دونه ١. النسبةُ لا تتغيّر بتكبير الشاشة على الهاتف. */
+export const REFUND_PRINT_PAGE_RATIO = 294 / 210;
+export function refundPrintFit(height: number, width: number): number {
+  if (!(height > 0) || !(width > 0)) return 1;
+  return Math.min(1, REFUND_PRINT_PAGE_RATIO / (height / width));
+}
