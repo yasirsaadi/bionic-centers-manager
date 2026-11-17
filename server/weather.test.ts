@@ -10,6 +10,9 @@
 //       وجلبُ الرسائل (`server/weather/metar.ts`) بطلبٍ واحد للمطارات كلِّها وعشرِ دقائق وتراجعٍ بعد الفشل.
 //   أ — النقطةُ حيّةً (منفذ ٧٠١٩): بلا جلسة ٤٠١، وكلُّ فرعٍ مدينتُه، و«كل الفروع» للمسؤول بغداد، والفرعُ المجهول والمصدرُ المعطّل ⟵ `null` لا خطأ،
 //       وغبارُ مطار بغداد يصل شريحةَ فرع بغداد بحرارة المطار.
+//   ج — مكانُ الجهاز (§4.gl): الإحداثياتُ بخانةٍ عشرية، وأقربُ مدينةٍ معروفة ضمن ٤٠ كم، واسمُ المكان من الخريطة (`geocode.ts`) مرّةً لكلّ مكان
+//       وطلبٌ في الثانية، والفشلُ لا يُعاد قبل ساعة، وحدُّ الأماكن الجديدة؛ وحيّاً: إسطنبول باسمها، وجهازُ بغداد في جلسة الموصل ⟵ بغداد،
+//       والإحداثياتُ الفاسدة ⟵ الفرع.
 //   ش — مصدرُ الواجهة: الشريحتان في رأس القائمة والسطرُ في شريط الهاتف بحجمٍ يُقرأ، والاستطلاعُ لهذه الشريحة وحدها بمفتاح الفرع.
 import express from "express";
 import fs from "fs";
@@ -18,9 +21,10 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import {
-  BAGHDAD_OFFSET_MS, OBS_MAX_AGE_MS, SERIES_GRACE_MS, WEATHER_CITIES, WEATHER_STATIONS, cityForBranchName, combineWeather, conditionOf,
+  BAGHDAD_OFFSET_MS, DEVICE_PLACE_FALLBACK, OBS_MAX_AGE_MS, deviceWeatherPlace, parseDeviceCoords, placeNameFromAddress, SERIES_GRACE_MS, WEATHER_CITIES, WEATHER_STATIONS, cityForBranchName, combineWeather, conditionOf,
   currentFromSeries, distanceKm, formatClock12, formatTemp, isNightAt, kindFromWx, parseMetar, pickObservation, sunElevationDeg, weatherLabel,
 } from "@shared/weather";
+import { GEO_RETRY_MS, NEW_PLACES_PER_HOUR, admitPlace, placeName, resetGeocodeForTests, reverseUrl } from "./weather/geocode";
 import { metarObservations, metarUrl, parseMetarJson, resetMetarCacheForTests } from "./weather/metar";
 import {
   REFRESH_MS, RETRY_AFTER_FAILURE_MS, WEATHER_USER_AGENT, cityWeatherNow, nextFetchTime, parseMetno, resetWeatherCacheForTests,
@@ -65,7 +69,18 @@ function fakeSource() {
   let next: Reply | Error = { status: 200, body: metnoBody(T0, [30, 31, 32]) };
   let nextMetar: Reply | Error = { status: 200, body: [] };
   let gate: Promise<void> | null = null;
+  let geoDelay = 0;
+  const geoCalls: { url: string; at: number; headers: Record<string, string> }[] = [];
+  let geoReply: (lang: string) => Reply | Error = (lang) => ({ status: 200, body: { address: lang === "ar"
+    ? { town: "زيتون بورنو", province: "إسطنبول", country: "تركيا" } : { town: "Zeytinburnu", province: "Istanbul", country: "Turkey" } } });
   const fn: WeatherFetch = async (url, init) => {
+    if (url.startsWith("https://nominatim.openstreetmap.org/")) {
+      geoCalls.push({ url, at: Date.now(), headers: { ...init.headers } });
+      if (geoDelay) await sleep(geoDelay);
+      const r = geoReply(new URL(url).searchParams.get("accept-language") ?? "");
+      if (r instanceof Error) throw r;
+      return { status: r.status, headers: { get: () => null }, json: async () => r.body };
+    }
     const isMetar = url.startsWith("https://aviationweather.gov/");
     (isMetar ? metarCalls : calls).push({ url, headers: { ...init.headers } });
     if (gate && !isMetar) await gate;
@@ -76,7 +91,9 @@ function fakeSource() {
     return res;
   };
   return {
-    calls, metarCalls, fn,
+    calls, metarCalls, geoCalls, fn,
+    replyGeo(f: (lang: string) => Reply | Error) { geoReply = f; },
+    delayGeo(ms: number) { geoDelay = ms; },
     reply(r: Reply | Error) { next = r; },
     replyMetar(r: Reply | Error) { nextMetar = r; },
     hold() { let open!: () => void; gate = new Promise<void>((r) => { open = r; }); return () => { gate = null; open(); }; },
@@ -97,6 +114,22 @@ async function main() {
     ["مسؤول النظام", "فرع البصرة", "", null, undefined].map((n) => cityForBranchName(n as any)), [null, null, null, null, null]);
   check(WEATHER_CITIES.every((c) => [c.lat, c.lon].every((v) => Math.abs(v * 1e4 - Math.round(v * 1e4)) < 1e-6)),
     "ق.٤ **الإحداثياتُ بأربع خاناتٍ عشرية حدّاً** — شرطُ الأرصاد النرويجية (الخامسةُ تُرَدّ ٤٠٣)");
+
+  same("ج.١ **إحداثياتُ الجهاز تُقرَّب لخانةٍ عشرية**، وما لا يُقرأ أو خارجُ الكرة أو الفارغ ⟵ `null`",
+    [parseDeviceCoords("41.0082", "28.9784"), parseDeviceCoords(33.31, 44.37), parseDeviceCoords("abc", "1"), parseDeviceCoords("91", "0"),
+      parseDeviceCoords("10", "181"), parseDeviceCoords("", ""), parseDeviceCoords(undefined, undefined), parseDeviceCoords(["1"], "2")],
+    [{ lat: 41, lon: 29 }, { lat: 33.3, lon: 44.4 }, null, null, null, null, null, null]);
+  const ist = deviceWeatherPlace(41, 29);
+  same("ج.٢ **قريبٌ من مدينةٍ معروفة (ضمن ٤٠ كم) ⟵ تلك المدينة**، وبعيدٌ ⟵ مكانٌ جديد بإحداثياته بلا اسمٍ بعد",
+    [deviceWeatherPlace(33.3, 44.4).city.key, deviceWeatherPlace(33.3, 44.4).known, deviceWeatherPlace(31.1, 46.3).city.key,
+      deviceWeatherPlace(33.6, 44.4).city.key, ist.known, ist.city.key, ist.city.lat, ist.city.lon, ist.city.name],
+    ["baghdad", true, "nasiriyah", "baghdad", false, "geo:41,29", 41, 29, ""]);
+  same("ج.٣ وأبعدُ من ٤٠ كم عن كلّ مدينة (أربيل) ⟵ مكانٌ جديد", deviceWeatherPlace(36.2, 44).known, false);
+  same("ج.٤ **اسمُ المكان من عنوان الخريطة**: المدينةُ ثمّ الولايةُ التركية (إسطنبول لا حيُّها) ثمّ البلدة… وما لا اسمَ فيه ⟵ `null`",
+    [placeNameFromAddress({ town: "زيتون بورنو", province: "إسطنبول" }), placeNameFromAddress({ city: "أربيل", county: "قضاء أربيل" }),
+      placeNameFromAddress({ county: "قضاء البصرة", state: "محافظة البصرة" }), placeNameFromAddress({ village: "  قرية  " }),
+      placeNameFromAddress({ country: "تركيا" }), placeNameFromAddress(null), placeNameFromAddress("x")],
+    ["إسطنبول", "أربيل", "قضاء البصرة", "قرية", null, null, null]);
 
   same("ق.٥ **حالةُ الطقس من رمز الأرصاد** — الصافي والقليل والجزئيّ نهاراً وليلاً، والغائمُ والضباب",
     ["clearsky_day", "clearsky_night", "fair_day", "partlycloudy_night", "cloudy", "fog"].map((s) => conditionOf(s)),
@@ -321,6 +354,37 @@ async function main() {
   resetMetarCacheForTests();
   src.replyMetar({ status: 200, body: [] });
 
+  // ══ ج — اسمُ المكان من الخريطة ═══════════════════════════════════════════════════════════════
+  console.log("\n── ج. اسمُ المكان من الخريطة ──");
+  resetGeocodeForTests();
+  src.geoCalls.length = 0;
+  const g0 = Date.now();
+  const nm = await placeName("geo:41,29", 41, 29, g0);
+  same("ج.٥ **إسطنبول بالعربية والإنكليزية** — طلبان (عربيّ ثمّ إنكليزيّ) بإحداثياتٍ بخانةٍ عشرية و`zoom=10`",
+    [nm, src.geoCalls.map((c) => c.url)], [{ ar: "إسطنبول", en: "Istanbul" }, [reverseUrl(41, 29, "ar"), reverseUrl(41, 29, "en")]]);
+  check(src.geoCalls.every((c) => c.headers["User-Agent"] === WEATHER_USER_AGENT),
+    "ج.٦ **وتعريفٌ صريح في `User-Agent`** — شرطُ OpenStreetMap");
+  check(src.geoCalls.length === 2 && src.geoCalls[1].at - src.geoCalls[0].at >= 1000,
+    "ج.٧ **وطلبٌ واحد في الثانية على الأكثر**", JSON.stringify(src.geoCalls.map((c) => c.at - g0)));
+  same("ج.٨ **والمحفوظُ يُقرأ بلا طلبٍ جديد**", [await placeName("geo:41,29", 41, 29, g0 + 5000), src.geoCalls.length],
+    [{ ar: "إسطنبول", en: "Istanbul" }, 2]);
+  src.replyGeo(() => new Error("ENOTFOUND"));
+  same("ج.٩ **والفشلُ ⟵ `null`** (فيُعرض «موقعك»)", await placeName("geo:51.5,-0.1", 51.5, -0.1, g0), null);
+  const afterFail = src.geoCalls.length;
+  src.replyGeo((lang) => ({ status: 200, body: { address: { city: lang === "ar" ? "لندن" : "London" } } }));
+  same("ج.١٠ **ولا يُعاد قبل ساعة**، وبعدها يُجلب", [await placeName("geo:51.5,-0.1", 51.5, -0.1, g0 + 60_000), src.geoCalls.length === afterFail,
+    await placeName("geo:51.5,-0.1", 51.5, -0.1, g0 + GEO_RETRY_MS + 1)], [null, true, { ar: "لندن", en: "London" }]);
+  src.replyGeo((lang) => (lang === "en" ? { status: 500 } : { status: 200, body: { address: { city: "باريس" } } }));
+  same("ج.١١ والإنكليزيُّ الفاشل يقوم العربيُّ مقامه", await placeName("geo:48.9,2.4", 48.9, 2.4, g0), { ar: "باريس", en: "باريس" });
+  resetGeocodeForTests();
+  const admitted = Array.from({ length: NEW_PLACES_PER_HOUR + 1 }, (_, i) => admitPlace(`geo:${i},0`, g0));
+  same("ج.١٢ **حدُّ الأماكن الجديدة في الساعة**: الزائدُ يُردّ، والمعروفُ يبقى مقبولاً، وبعد ساعةٍ يعود الحدّ",
+    [admitted.filter(Boolean).length, admitted[NEW_PLACES_PER_HOUR], admitPlace("geo:0,0", g0 + 1000), admitPlace("geo:x", g0 + 60 * 60 * 1000)],
+    [NEW_PLACES_PER_HOUR, false, true, true]);
+  resetGeocodeForTests();
+  src.replyGeo((lang) => ({ status: 200, body: { address: lang === "ar"
+    ? { town: "زيتون بورنو", province: "إسطنبول" } : { town: "Zeytinburnu", province: "Istanbul" } } }));
+
   // ══ أ — النقطةُ حيّة ══════════════════════════════════════════════════════════════════════
   console.log("\n── أ. النقطةُ حيّةً (منفذ ٧٠١٩) ──");
   const PORT = 7019;
@@ -396,6 +460,43 @@ async function main() {
       ["duststorm", "عاصفة ترابية", 38, "observed", "observed", "مطار بغداد", 2]);
     const krbLive = (await get({ userId: 2, isAdmin: true, role: "admin", branchId: 2, branchName: "الوارث كربلاء", permissions: {} })).body?.weather;
     same("أ.٨ **وكربلاء تأخذ الغبارَ من مطار بغداد (٧٥ كم) والحرارةَ من توقّعها**", [krbLive?.kind, krbLive?.tempC, krbLive?.tempFrom], ["duststorm", 24, "forecast"]);
+
+    const getAt = async (s: Record<string, unknown>, qs: string) => {
+      const r = await fetch(`${BASE}/api/weather${qs}`, { headers: { "x-test-session": hdr(s) } });
+      return (await r.json())?.weather;
+    };
+    resetWeatherCacheForTests();
+    resetGeocodeForTests();
+    src.reply({ status: 200, body: metnoBody(hour, [17, 17, 17], ["cloudy", "cloudy", "cloudy"]) });
+    const fcMark = src.calls.length;
+    const istLive = await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=41.0082&lon=28.9784");
+    same("أ.٩ **جهازٌ في إسطنبول في جلسة فرع بغداد ⟵ طقسُ إسطنبول باسمها**، والتوقّعُ بإحداثياتها المقرَّبة، ولا رصدَ مطارٍ عراقيّ، و«حسب موقع جهازك»",
+      [istLive?.cityKey, istLive?.city, istLive?.cityEn, istLive?.tempC, istLive?.kind, istLive?.observed, istLive?.fromDevice,
+        src.calls.slice(fcMark).some((c) => c.url.includes("lat=41&lon=29"))],
+      ["geo:41,29", "إسطنبول", "Istanbul", 17, "cloudy", null, true, true]);
+    const nearB = await getAt(staff("mosul", "اختبار الطقس الموصل"), "?lat=33.3&lon=44.4");
+    same("أ.١٠ **وجهازٌ في بغداد في جلسة فرع الموصل ⟵ بغداد** باسمها ورصد مطارها (الغبار)",
+      [nearB?.cityKey, nearB?.city, nearB?.fromDevice, nearB?.kind], ["baghdad", "بغداد", true, "duststorm"]);
+    const bad = await getAt(staff("mosul", "اختبار الطقس الموصل"), "?lat=abc&lon=200");
+    const none = await getAt(staff("mosul", "اختبار الطقس الموصل"), "");
+    same("أ.١١ **والإحداثياتُ الفاسدة أو الغائبة ⟵ مدينةُ الفرع كما كانت**", [bad?.city, bad?.fromDevice, none?.city, none?.fromDevice],
+      ["الموصل", false, "الموصل", false]);
+    resetGeocodeForTests();
+    src.replyGeo(() => ({ status: 503 }));
+    const unnamed = await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=51.5&lon=-0.1");
+    same("أ.١٢ **والمكانُ الذي لا يُعرف اسمُه ⟵ «موقعك»** بطقسه لا بطقس الفرع", [unnamed?.cityKey, unnamed?.city, unnamed?.cityEn, unnamed?.fromDevice],
+      ["geo:51.5,-0.1", DEVICE_PLACE_FALLBACK.ar, DEVICE_PLACE_FALLBACK.en, true]);
+    resetGeocodeForTests();
+    src.replyGeo((lang) => ({ status: 200, body: { address: { city: lang === "ar" ? "أنقرة" : "Ankara" } } }));
+    src.delayGeo(4500);
+    const t1 = Date.now();
+    const slow = await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=39.9&lon=32.9");
+    const waited = Date.now() - t1;
+    check(slow?.city === DEVICE_PLACE_FALLBACK.ar && slow?.cityKey === "geo:39.9,32.9" && waited < 4200,
+      "أ.١٣ **الخريطةُ البطيئة لا تحبس الطقس**: بعد ثلاث ثوانٍ «موقعك» بطقس المكان", JSON.stringify([slow?.city, waited]));
+    await sleep(4500 + 1300 + 4500);
+    src.delayGeo(0);
+    same("أ.١٤ **والجلبُ يكمل في الخلفية** فالطلبُ التالي يأخذ الاسم", (await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=39.9&lon=32.9"))?.city, "أنقرة");
   } finally {
     httpServer.close();
     setWeatherFetchForTests(null);
@@ -412,7 +513,17 @@ async function main() {
   check(header.includes("<SidebarClockWeather />"), "ش.١ **الشريحتان في رأس القائمة** (فتظهران على الحاسوب وفي قائمة الهاتف المنزلقة)");
   const topBar = sidebar.slice(sidebar.indexOf("Mobile Header"), sidebar.indexOf("Mobile Sidebar Overlay"));
   check(topBar.includes("<TopBarClockWeather />"), "ش.٢ **والسطرُ الصغير في شريط الهاتف العلويّ** تحت الاسم");
-  check(/queryKey: \["\/api\/weather", session\?\.branchId \?\? null\]/.test(cw), "ش.٣ **مفتاحُ الطقس فرعُ الجلسة** — فيتبدّل بتبديل الفرع");
+  check(/queryKey: \["\/api\/weather", session\?\.branchId \?\? null, coords\?\.lat \?\? null, coords\?\.lon \?\? null\]/.test(cw),
+    "ش.٣ **مفتاحُ الطقس فرعُ الجلسة ومكانُ الجهاز** — فيتبدّل بتبديل أيٍّ منهما");
+  check(/enabled: !!session && ready/.test(cw) && /`\?lat=\$\{coords\.lat\}&lon=\$\{coords\.lon\}`/.test(cw)
+      && /roundDeviceCoord\(p\.coords\.latitude\)/.test(cw) && /PERMISSION_DENIED/.test(cw) && /GEO_WAIT_MS = 4000/.test(cw),
+    "ش.٣ب **مكانُ الجهاز** (§4.gl): يُقرَّب قبل أن يُرسل، والرفضُ ⟵ الفرع، ولا انتظارَ أكثرَ من أربع ثوانٍ قبل طقس الفرع");
+  const greet = read("client/src/components/DailyGreeting.tsx");
+  check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady\]/.test(greet) && /geoReady: ready/.test(cw),
+    "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");
+  check(/useSyncExternalStore\(geo\.subscribe/.test(cw), "ش.٣ج **ومخزنٌ واحد للموقع** — الشريحتان وسطرُ الهاتف والتحيّةُ يطلبونه مرّةً");
+  check(cw.includes("GEO_CREDIT") && cw.includes("https://www.openstreetmap.org/copyright") && /sidebar-weather-from-device/.test(cw),
+    "ش.٣د **واسمُ المكان بمصدره** (© OpenStreetMap) و«حسب موقع جهازك» في التفصيل");
   check(/refetchInterval: WEATHER_REFETCH_MS/.test(cw) && /WEATHER_REFETCH_MS = 10 \* 60_000/.test(cw),
     "ش.٤ **ويتحدّث كلَّ عشر دقائق** — لهذه الشريحة وحدها");
   check(/refetchInterval: false/.test(read("client/src/lib/queryClient.ts")), "ش.٥ والعامُّ باقٍ `false` (§4.cy)");

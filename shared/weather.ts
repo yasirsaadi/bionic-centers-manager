@@ -320,6 +320,10 @@ export interface WeatherNow {
   kindFrom: "observed" | "forecast" | null;
   /** الرصدُ المقروء — المطارُ وبُعدُه ولحظتُه والرؤية. */
   observed: { icao: string; station: string; stationEn: string; km: number; at: string; visibilityKm: number | null } | null;
+  /** الاسمُ الإنكليزيّ للمكان (زرُّ اللغة) — للمكان خارج `WEATHER_CITIES` يأتي من الخريطة. */
+  cityEn?: string | null;
+  /** **مكانُ الجهاز لا فرعُ الجلسة** (§4.gl) — يقوله التفصيل. */
+  fromDevice?: boolean;
 }
 
 /**
@@ -346,6 +350,7 @@ export function combineWeather(
   return {
     cityKey: city.key,
     city: city.name,
+    cityEn: city.nameEn || null,
     tempC: Math.round(temp * 10) / 10,
     kind,
     night: isNightAt(city.lat, city.lon, nowMs),
@@ -363,3 +368,61 @@ export function combineWeather(
 
 export const WEATHER_CREDIT = "التوقّع من الأرصاد النرويجية";
 export const OBS_CREDIT = "الرصد من مطارات العراق عبر";
+export const GEO_CREDIT = "اسمُ المكان من";
+
+// ══ مكانُ الجهاز (§4.gl — طلبُ المالك ٢٠٢٦-١١-١٧: «أنا في إسطنبول والطقسُ بغداد») ════════════════════════════
+//
+//  الجهازُ يرسل إحداثياته **بخانةٍ عشرية واحدة** (نحو ١١ كم — تكفي المدينةَ ولا تكشف بيتاً)، والخادمُ يختار:
+//    • قريبٌ من مدينةٍ معروفة (ضمن ٤٠ كم) ⟵ **تلك المدينة نفسُها** باسمها ورصد مطارها (موظّفُ بغداد يرى «بغداد» كما كان).
+//    • وإلّا ⟵ مكانٌ جديد بإحداثياته (`geo:…`) واسمُه من الخريطة (`placeNameFromAddress`).
+//    • ولا إحداثيات (رفض الإذن أو جهازٌ بلا موقع) ⟵ **مدينةُ الفرع كما كانت**.
+
+/** خاناتُ إحداثيات الجهاز التي تصل الخادم. */
+export const DEVICE_COORD_DECIMALS = 1;
+/** الجهازُ ضمن هذه المسافة من مدينةٍ معروفة يأخذ تلك المدينة. */
+export const DEVICE_NEAR_CITY_KM = 40;
+
+export function roundDeviceCoord(n: number): number {
+  const f = 10 ** DEVICE_COORD_DECIMALS;
+  return Math.round(n * f) / f;
+}
+
+/** إحداثياتُ الطلب — أو `null` لما لا يُقرأ أو خارج الكرة. تُقرَّب دائماً، فلا تُحفظ دقّةٌ أكثر ممّا يلزم. */
+export function parseDeviceCoords(lat: unknown, lon: unknown): { lat: number; lon: number } | null {
+  if (typeof lat !== "string" && typeof lat !== "number") return null;
+  if (typeof lon !== "string" && typeof lon !== "number") return null;
+  if (String(lat).trim() === "" || String(lon).trim() === "") return null;
+  const a = Number(lat);
+  const o = Number(lon);
+  if (!Number.isFinite(a) || !Number.isFinite(o) || Math.abs(a) > 90 || Math.abs(o) > 180) return null;
+  return { lat: roundDeviceCoord(a), lon: roundDeviceCoord(o) };
+}
+
+/** مكانُ الجهاز: مدينةٌ معروفة قريبة (`known`) أو مكانٌ بإحداثياته بلا اسمٍ بعد. */
+export function deviceWeatherPlace(lat: number, lon: number): { city: WeatherCity; known: boolean } {
+  const near = WEATHER_CITIES
+    .map((c) => ({ c, km: distanceKm(lat, lon, c.lat, c.lon) }))
+    .filter((x) => x.km <= DEVICE_NEAR_CITY_KM)
+    .sort((a, b) => a.km - b.km)[0];
+  if (near) return { city: near.c, known: true };
+  const la = roundDeviceCoord(lat);
+  const lo = roundDeviceCoord(lon);
+  return { city: { key: `geo:${la},${lo}`, name: "", nameEn: "", lat: la, lon: lo, match: [] }, known: false };
+}
+
+/** الاسمُ إن لم يُعرف — لا تخمين. */
+export const DEVICE_PLACE_FALLBACK = { ar: "موقعك", en: "Your location" } as const;
+
+/**
+ * **اسمُ المكان من عنوان الخريطة** (`address` في جواب OpenStreetMap): المدينةُ ثمّ الولاية التركية (`province` — إسطنبول لا حيُّها)
+ * ثمّ البلدةُ فالقرية فالقضاءُ فالمحافظة. وما لا اسمَ فيه ⟵ `null`.
+ */
+export function placeNameFromAddress(address: unknown): string | null {
+  if (!address || typeof address !== "object") return null;
+  const a = address as Record<string, unknown>;
+  for (const k of ["city", "province", "town", "village", "municipality", "county", "state"]) {
+    const v = a[k];
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 60);
+  }
+  return null;
+}
