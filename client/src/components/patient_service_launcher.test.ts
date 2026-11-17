@@ -694,6 +694,10 @@ function main() {
       && /\{saleOnly \? \(\s*partSaleOption &&/.test(launcherCode) && /onClick=\{\(\) => choose\(partSaleOption\)\}/.test(launcherCode),
     "١٨.ب **والموزِّعُ في هذا الوضع زرٌّ واحد** يفتح الخيارَ نفسَه — بلا «سبب الحضور» ولا «إضافة خدمة جديدة»");
 
+  check(/const flow = saleOnly && rawFlow && !\(rawFlow\.kind === "no_exam_operation" && rawFlow\.initialKind === "device_sale"\)\s*\? null : rawFlow;/.test(launcherCode)
+      && /if \(saleOnly\) return;\s*const resume = takeDeviceFlowResume/.test(launcherCode),
+    "١٨.ج **ووضعُ «البيع وحده» يحكم المسار** — لا استئنافَ «جهاز جديد» ولا نافذةَ غيرِ بيع الجزء (مراجعةُ Codex على #740)");
+
   // ══ ١٩. «يحتاج تركيباً عند الخبير» — للجاهز وحده (§4.go) ══
   const NOEX = code(read("NoExamOperationDialog.tsx"));
   check(/const saleReadyMade = saleAllReady && !expertInstall;/.test(NOEX)

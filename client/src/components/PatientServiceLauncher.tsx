@@ -99,7 +99,13 @@ export function PatientServiceLauncher({
     onRoutingOpenChange?.(v);
   };
   /** المسار المفتوح الآن — واحدٌ لا أكثر. */
-  const [flow, setFlow] = useState<ServiceFlow | null>(null);
+  const [rawFlow, setFlow] = useState<ServiceFlow | null>(null);
+  /**
+   * **وضعُ «البيع وحده» يحكم المسارَ لا الزرَّ وحده** (§4.go — مراجعةُ Codex على #740): استئنافٌ محفوظٌ في هذا المتصفّح
+   * (مستخدمٌ آخر على الجهاز نفسِه) كان يفتح «جهاز جديد» للمحاسب. فلا يُركَّب في هذا الوضع إلّا بيعُ الجزء.
+   */
+  const flow = saleOnly && rawFlow && !(rawFlow.kind === "no_exam_operation" && rawFlow.initialKind === "device_sale")
+    ? null : rawFlow;
   const [, setLocation] = useLocation();
   /** الجزءُ المستأنَف بعد العودة من «تعديل مريض» — يُملأ من التخزين لا غير. */
   const [resumeItem, setResumeItem] = useState<string>("");
@@ -112,11 +118,13 @@ export function PatientServiceLauncher({
   //  **والقسمُ وما طُلب وحدهما** يُستأنفان: مسارُ النافذة `"exam"` ثابتٌ
   //  فلا شيءَ فيه يُحفَظ ولا يُستعاد.
   useEffect(() => {
+    //  ولا يُستهلَك الاستئنافُ في وضع «البيع وحده» — يبقى لصاحبه.
+    if (saleOnly) return;
     const resume = takeDeviceFlowResume(sessionResumeStore(), patient.id);
     if (!resume) return;
     setResumeItem(resume.requestedItem);
     setFlow({ kind: "device_episode", serviceType: resume.serviceType });
-  }, [patient.id]);
+  }, [patient.id, saleOnly]);
 
   //  ══ **جلسةُ الفرع — لتصفية خيار «صيانة» وحده** (المرحلة الثالثة) ═════
   //  `canCompleteMaintenance` تُفحَص هنا لإخفاء الزرّ عمّن سيردّه الخادمُ —
