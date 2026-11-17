@@ -521,8 +521,9 @@ async function main() {
   const greet = read("client/src/components/DailyGreeting.tsx");
   check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet) && /geoReady: ready/.test(cw),
     "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");
-  check(/setInterval\(\(\) => \{ if \(document\.visibilityState === "visible"\) ask\(\); \}, GEO_REFRESH_MS\)/.test(cw),
-    "ش.٣و **والجهازُ المفتوح دائماً يُسأل عن مكانه كلَّ نصف ساعة** (مراجعة Codex) — لا عند العودة إلى الصفحة وحدها");
+  check(/setInterval\(\(\) => \{ if \(document\.visibilityState === "visible"\) ask\(\); \}, GEO_POLL_MS\)/.test(cw)
+      && /GEO_POLL_MS = 5 \* 60_000/.test(cw) && /Date\.now\(\) - lastAsk < GEO_REFRESH_MS/.test(cw),
+    "ش.٣و **والجهازُ المفتوح دائماً يُسأل عن مكانه كلَّ نصف ساعة من آخر سؤال** (مراجعتا Codex) — فحصٌ كلَّ خمس دقائق، فلا يتأخّر أكثر من ٣٥ دقيقة");
   check(/useEffect\(\(\) => \{ setWeatherWaitOver\(false\); \}, \[weatherKey\]\);/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet)
       && /weatherKey: `\$\{session\?\.branchId/.test(cw),
     "ش.٣ز **وموقعٌ متأخّر يبدّل الطلبَ يعيد مهلةَ «حسناً»** (مراجعة Codex) — فلا تُغلَق التحيّةُ قبل جواب المكان الصحيح");

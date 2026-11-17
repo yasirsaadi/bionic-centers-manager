@@ -63,6 +63,7 @@ type GeoState = { coords: DeviceCoords; ready: boolean };
 const GEO_STORE_KEY = "bcm.weather.deviceCoords";
 export const GEO_REFRESH_MS = 30 * 60_000;
 export const GEO_WAIT_MS = 4000;
+export const GEO_POLL_MS = 5 * 60_000;
 
 function readStoredCoords(): DeviceCoords {
   try {
@@ -117,8 +118,9 @@ const geo = (() => {
     setTimeout(() => set({ ...state, ready: true }), GEO_WAIT_MS);
     ask();
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ask(); });
-    //  والجهازُ الذي يبقى مفتوحاً ويتنقّل (مراجعة Codex) يُسأل كلَّ نصف ساعة أيضاً — `ask` يمنع التكرار قبلها.
-    setInterval(() => { if (document.visibilityState === "visible") ask(); }, GEO_REFRESH_MS);
+    //  والجهازُ الذي يبقى مفتوحاً ويتنقّل (مراجعة Codex) يُسأل كلَّ نصف ساعة أيضاً: فحصٌ كلَّ خمس دقائق و`ask` يمنع التكرار قبل
+    //  نصف ساعةٍ من آخر سؤال — فالسؤالُ يُحسب من آخر سؤالٍ فعليّ لا من دقّةٍ ثابتة (لا يتأخّر أكثر من ٣٥ دقيقة).
+    setInterval(() => { if (document.visibilityState === "visible") ask(); }, GEO_POLL_MS);
   };
   return {
     subscribe(l: () => void) { start(); listeners.add(l); return () => { listeners.delete(l); }; },
