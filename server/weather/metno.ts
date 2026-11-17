@@ -47,6 +47,8 @@ interface CityCache {
   inflight: Promise<void> | null;
 }
 const cache = new Map<string, CityCache>();
+/** سقفُ المحفوظ — مدنُ الفروع وأماكنُ الأجهزة معاً. */
+export const MAX_CACHED_PLACES = 300;
 /** للاختبار وحده. */
 export function resetWeatherCacheForTests() { cache.clear(); }
 
@@ -115,6 +117,12 @@ export async function cityWeatherNow(city: WeatherCity, nowMs = Date.now()) {
   if (!entry) {
     entry = { series: [], updatedAt: null, lastModified: null, nextFetchAt: 0, inflight: null };
     cache.set(city.key, entry);
+    //  أماكنُ الأجهزة (§4.gl) لا حدَّ لعددها — فالأقدمُ منها يُترك ومدنُ الفروع باقية.
+    if (cache.size > MAX_CACHED_PLACES) {
+      for (const [k, v] of Array.from(cache.entries())) {
+        if (k.startsWith("geo:") && k !== city.key && !v.inflight) { cache.delete(k); break; }
+      }
+    }
   }
   if (nowMs >= entry.nextFetchAt && !entry.inflight) {
     const e = entry;

@@ -8,7 +8,7 @@
 //    • والضغطُ على الطقس يفتح سطرَ التفصيل ومصدرَه — شرطُ ترخيص الأرصاد (CC BY 4.0).
 //
 //  والحالةُ في هذه المكوّنات الصغيرة وحدها، فدقّةُ الدقيقة لا تُعيد رسمَ القائمة كلِّها.
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Clock3, Sun, Moon, CloudSun, CloudMoon, Cloud, CloudFog, CloudDrizzle, CloudRain, CloudLightning, CloudHail, Snowflake, Thermometer,
@@ -19,7 +19,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  OBS_CREDIT, WEATHER_CITIES, WEATHER_CREDIT, formatClock12, formatTemp, toArabicDigits, weatherLabel, type WeatherKind, type WeatherNow,
+  GEO_CREDIT, OBS_CREDIT, WEATHER_CITIES, WEATHER_CREDIT, formatClock12, roundDeviceCoord, formatTemp, toArabicDigits, weatherLabel, type WeatherKind, type WeatherNow,
 } from "@shared/weather";
 
 /** الآن — يتبدّل على رأس كلّ دقيقة، وعند العودة إلى الصفحة. */
@@ -51,6 +51,83 @@ export function useMinuteNow(): number {
 
 export const WEATHER_REFETCH_MS = 10 * 60_000;
 
+// ══ مكانُ الجهاز (§4.gl — قرارُ المالك ٢٠٢٦-١١-١٧: «تلقائي لكل جهاز») ══════════════════════════════════════════
+//
+//  مخزنٌ واحد للصفحة كلِّها (الشريحتان وسطرُ الهاتف وتحيّةُ الصباح يقرؤونه) — فطلبُ الموقع مرّةً لا ثلاثاً.
+//    • المتصفّحُ يسأل الإذنَ مرّةً، **والإحداثياتُ تُقرَّب لخانةٍ عشرية** (نحو ١١ كم) قبل أن تُحفظ أو تُرسل.
+//    • تُحفظ على الجهاز (`localStorage`) فالفتحُ التالي يبدأ بها، وتُجدَّد كلَّ نصف ساعة وعند العودة إلى الصفحة.
+//    • **وما دام الجوابُ لم يأتِ** ننتظر حتى `GEO_WAIT_MS` ثمّ نعرض طقسَ الفرع — فلا تختفي الشريحةُ بانتظار إذنٍ لم يُضغط.
+//    • **والرفضُ يمحو المحفوظ** ⟵ طقسُ الفرع كما كان.
+type DeviceCoords = { lat: number; lon: number } | null;
+type GeoState = { coords: DeviceCoords; ready: boolean };
+const GEO_STORE_KEY = "bcm.weather.deviceCoords";
+export const GEO_REFRESH_MS = 30 * 60_000;
+export const GEO_WAIT_MS = 4000;
+
+function readStoredCoords(): DeviceCoords {
+  try {
+    const v = JSON.parse(localStorage.getItem(GEO_STORE_KEY) ?? "null");
+    return v && Number.isFinite(v.lat) && Number.isFinite(v.lon) ? { lat: roundDeviceCoord(v.lat), lon: roundDeviceCoord(v.lon) } : null;
+  } catch { return null; }
+}
+function writeStoredCoords(c: DeviceCoords) {
+  try {
+    if (c) localStorage.setItem(GEO_STORE_KEY, JSON.stringify(c));
+    else localStorage.removeItem(GEO_STORE_KEY);
+  } catch { /* وضعٌ خاصّ أو تخزينٌ محجوب — لا شيء يُحفظ */ }
+}
+
+const geo = (() => {
+  const hasGeo = typeof navigator !== "undefined" && !!navigator.geolocation;
+  const stored = hasGeo ? readStoredCoords() : null;
+  let state: GeoState = { coords: stored, ready: stored != null || !hasGeo };
+  const listeners = new Set<() => void>();
+  let started = false;
+  let lastAsk = 0;
+  const set = (next: GeoState) => {
+    if (next.ready === state.ready && next.coords?.lat === state.coords?.lat && next.coords?.lon === state.coords?.lon) return;
+    state = next;
+    listeners.forEach((l) => l());
+  };
+  const ask = () => {
+    if (!hasGeo || Date.now() - lastAsk < GEO_REFRESH_MS) return;
+    lastAsk = Date.now();
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const c = { lat: roundDeviceCoord(p.coords.latitude), lon: roundDeviceCoord(p.coords.longitude) };
+        writeStoredCoords(c);
+        set({ coords: c, ready: true });
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          writeStoredCoords(null);
+          set({ coords: null, ready: true });
+        } else {
+          //  مهلةٌ أو موقعٌ غير متاح: يبقى المحفوظُ إن كان، وتُعاد المحاولةُ عند العودة إلى الصفحة.
+          lastAsk = 0;
+          set({ ...state, ready: true });
+        }
+      },
+      { enableHighAccuracy: false, maximumAge: GEO_REFRESH_MS, timeout: 20_000 },
+    );
+  };
+  const start = () => {
+    if (started || !hasGeo) return;
+    started = true;
+    setTimeout(() => set({ ...state, ready: true }), GEO_WAIT_MS);
+    ask();
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ask(); });
+  };
+  return {
+    subscribe(l: () => void) { start(); listeners.add(l); return () => { listeners.delete(l); }; },
+    get: () => state,
+  };
+})();
+
+export function useDeviceCoords(): GeoState {
+  return useSyncExternalStore(geo.subscribe, geo.get, geo.get);
+}
+
 export function useBranchWeather(): WeatherNow | null {
   return useBranchWeatherState().weather;
 }
@@ -58,13 +135,15 @@ export function useBranchWeather(): WeatherNow | null {
 /** الطقسُ **وهل استقرّ أوّلُ جوابٍ له** (نجح أو فشل) — تحيّةُ الصباح تنتظره كي لا يفوتها مطرُ اليوم (§4.fw). */
 export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean } {
   const session = useBranchSession();
+  const { coords, ready } = useDeviceCoords();
   const { data, isFetched, isError } = useQuery<{ weather: WeatherNow | null }>({
-    queryKey: ["/api/weather", session?.branchId ?? null],
-    enabled: !!session,
+    queryKey: ["/api/weather", session?.branchId ?? null, coords?.lat ?? null, coords?.lon ?? null],
+    enabled: !!session && ready,
     refetchInterval: WEATHER_REFETCH_MS,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const res = await fetch("/api/weather", { credentials: "include" });
+      const q = coords ? `?lat=${coords.lat}&lon=${coords.lon}` : "";
+      const res = await fetch(`/api/weather${q}`, { credentials: "include" });
       if (!res.ok) return { weather: null };
       return res.json();
     },
@@ -104,7 +183,7 @@ export function WeatherIcon({ w, className }: { w: Pick<WeatherNow, "kind" | "ni
 }
 
 function cityName(w: WeatherNow, en: boolean) {
-  return en ? WEATHER_CITIES.find((c) => c.key === w.cityKey)?.nameEn ?? w.city : w.city;
+  return en ? w.cityEn || WEATHER_CITIES.find((c) => c.key === w.cityKey)?.nameEn || w.city : w.city;
 }
 
 const km = (n: number, en: boolean) => (en ? `${n} km` : `${toArabicDigits(String(n))} كم`);
@@ -151,6 +230,11 @@ export function SidebarClockWeather() {
               <WeatherIcon w={w} className="w-10 h-10 shrink-0" />
               <div className="min-w-0">
                 <div className="text-xs text-slate-500">{en ? `Weather now in ${cityName(w, true)}` : `الطقس الآن في ${w.city}`}</div>
+                {w.fromDevice && (
+                  <div className="text-[11px] text-sky-700" data-testid="sidebar-weather-from-device">
+                    {en ? "By this device's location" : "حسب موقع جهازك"}
+                  </div>
+                )}
                 <div className="font-display text-xl font-extrabold text-slate-800 leading-tight">
                   <bdi dir="ltr">{formatTemp(w.tempC, en)}</bdi>{label ? ` ${label}` : ""}
                 </div>
@@ -184,9 +268,20 @@ export function SidebarClockWeather() {
               <a href="https://www.met.no/en" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline hover:text-slate-700">MET Norway</a>
               {" · "}
               <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline hover:text-slate-700">CC BY 4.0</a>
-              <br />
-              {en ? "Observations: Iraqi airports via " : `${OBS_CREDIT} `}
-              <a href="https://aviationweather.gov/" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline hover:text-slate-700">aviationweather.gov</a>
+              {(obs || !w.cityKey.startsWith("geo:")) && (
+                <>
+                  <br />
+                  {en ? "Observations: Iraqi airports via " : `${OBS_CREDIT} `}
+                  <a href="https://aviationweather.gov/" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline hover:text-slate-700">aviationweather.gov</a>
+                </>
+              )}
+              {w.cityKey.startsWith("geo:") && (
+                <>
+                  <br />
+                  {en ? "Place name: " : `${GEO_CREDIT} `}
+                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline hover:text-slate-700">© OpenStreetMap</a>
+                </>
+              )}
             </p>
           </PopoverContent>
         </Popover>
