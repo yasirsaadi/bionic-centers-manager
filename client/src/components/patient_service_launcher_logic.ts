@@ -103,6 +103,11 @@ export interface PatientServiceFlags {
   isAmputee?: boolean | null;
   isMedicalSupport?: boolean | null;
   isPhysiotherapy?: boolean | null;
+  /**
+   * **هل يبيع صاحبُ الجلسة جزءاً؟** (`canCompleteComponentSale` — مفتاحُ «إضافة مدفوعات» أو المسؤول).
+   * غيابُه = لا: الخيارُ يُخفى احتياطاً، والخادمُ الحارسُ الأخير.
+   */
+  maySellComponent?: boolean;
   /** حلقات المريض — تُقرأ لاستئناف بيعٍ ناقص، لا لبناء القائمة. */
   episodes?: PatientEpisodeSummary[] | null;
 }
@@ -145,12 +150,28 @@ export const GROUP_LABELS: Record<LauncherGroup, string> = DEPARTMENT_LABELS;
  */
 export const OPENS_PHYSIO_DESCRIPTION = "يفتح للمريض قسمَ علاجٍ طبيعيّ ويرسله لمعاينته — لا لقطع الأطراف أو المساند وصيانتها";
 
+/**
+ * **«شراء جزء من طرف صناعي» في «إضافة خدمة جديدة» أيضاً** (واقعةُ حامد علي صالح، قرارُ المالك ٢٠٢٦-١١-١٧):
+ * عمر — مديرُ فرع بغداد — بحث عن بيع السليكون في هذه النافذة فلم يجد للأطراف فيها شيئاً، فاختار «خدمة أخرى»
+ * فصار علاجاً طبيعياً. فصار لمريض الأطراف فيها **بابُ البيع نفسُه** الذي في «سبب الحضور» — المسارُ ذاتُه
+ * (`no_exam_operation` · `device_sale`) والنافذةُ ذاتُها والنقطةُ ذاتُها؛ اختصارٌ إليه لا بابٌ موازٍ بمنطقٍ ثانٍ.
+ */
+export const PART_SALE_LABEL = "شراء جزء من طرف صناعي";
+export const PART_SALE_DESCRIPTION = "سليكون، قدم، ركبة، قالب… — بسعره وخبيره على قسم الأطراف، لا علاجاً طبيعياً";
+
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
   const hasSupport = Boolean(p.isMedicalSupport);
   const hasPhysio = Boolean(p.isPhysiotherapy);
 
   const all: (LauncherOption | null)[] = [
+    !(hasProsthetic && p.maySellComponent === true) ? null : {
+      id: "part_sale",
+      label: PART_SALE_LABEL,
+      description: PART_SALE_DESCRIPTION,
+      group: "prosthetic",
+      flow: { kind: "no_exam_operation", serviceType: "prosthetic", initialKind: "device_sale" },
+    },
     hasProsthetic ? null : {
       id: "prosthetic_case",
       label: "إضافة حالة أطراف صناعية",

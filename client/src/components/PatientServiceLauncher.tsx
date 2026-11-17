@@ -27,6 +27,7 @@ import {
   RECEPTION_ROUTING_QUESTION, receptionRoutingGroups, takeReceptionRoutingPending, returnToPurchaseVisible,
 } from "./reception_routing";
 import { useBranchSession } from "./BranchGate";
+import { canCompleteComponentSale } from "@shared/component_sale";
 
 // موزِّع خدمات المريض — **بابان لا أكثر**.
 //
@@ -154,7 +155,8 @@ export function PatientServiceLauncher({
   const moldOrders = useMoldReturnOrders(patient.id, routingOpen);
   const [moldReturnFor, setMoldReturnFor] = useState<MoldOrder | null>(null);
 
-  const options = launcherOptions(patient);
+  //  **وبيعُ الجزء لصاحب مفتاحه وحده** — القاعدةُ نفسُها التي تُظهره في «سبب الحضور» (`receptionRoutingChoices`).
+  const options = launcherOptions({ ...patient, maySellComponent: canCompleteComponentSale(branchSession) });
   //  **تنبيهٌ لا وضع** (§4.gm): «استشارة» و«خدمة أخرى» لمريضٍ بلا علاجٍ طبيعيّ تفتحان قسمَه — فتقوله النافذةُ بالأحمر قبل الحفظ.
   //  ووضعُ الجلسات في النافذة يبقى من نوع الخدمة وحده (حارسُ «لا علمَ يقرّر وضعاً» في `test:service-launcher`).
   const newServiceOpensPhysio = !patient.isPhysiotherapy;

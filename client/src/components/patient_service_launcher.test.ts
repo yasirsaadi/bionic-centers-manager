@@ -21,8 +21,10 @@ import { join } from "path";
 import {
   launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes,
   FLOW_ENDPOINTS, GROUP_LABELS, nextSubmissionToken, mintSubmissionToken, OPENS_PHYSIO_DESCRIPTION,
+  PART_SALE_LABEL,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
+import { receptionRoutingChoices } from "./reception_routing";
 import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 
 let failures = 0;
@@ -649,6 +651,37 @@ function main() {
   check(/\{opensPhysioCase && \(/.test(newServiceCode) && /data-testid="new-service-opens-physio"/.test(newServiceCode)
       && /onClick=\{onUseDeviceRouting\}/.test(newServiceCode),
     "١٦. **والنافذةُ تقوله بالأحمر قبل الحفظ** مع زرّ «الذهاب إلى «سبب الحضور»»");
+
+  // ══ ١٧. «شراء جزء من طرف صناعي» في «إضافة خدمة جديدة» لمريض الأطراف (واقعةُ حامد — قرارُ المالك ٢٠٢٦-١١-١٧) ══
+  //  عمر بحث عن بيع السليكون في هذه النافذة فلم يجد للأطراف فيها شيئاً، فاختار «خدمة أخرى» فصار علاجاً طبيعياً.
+  console.log("\n── «شراء جزء» في «إضافة خدمة جديدة» ──");
+  const seller = launcherOptions({ isAmputee: true, maySellComponent: true });
+  const partSale = opt(seller, "part_sale");
+  same("١٧. **لمريض الأطراف ولمن يبيع: أوّلُ خيارٍ «شراء جزء من طرف صناعي» تحت الأطراف**",
+    ids(seller), ["part_sale", "support_case", "physio_case", "consultation", "other"]);
+  check(partSale?.group === "prosthetic" && partSale?.label === PART_SALE_LABEL && /سليكون/.test(partSale?.description ?? ""),
+    "١٧.أ في قسم الأطراف، وباسمه في «سبب الحضور»، والسطرُ يذكر السليكون", JSON.stringify(partSale));
+  //  **المسارُ نفسُه حرفاً** الذي يخرج من «سبب الحضور» — اختصارٌ لا بابٌ ثانٍ بمنطقٍ ثانٍ.
+  const routingSale = receptionRoutingChoices("prosthetic", { isAdmin: false, permissions: { canAddPayments: true } } as any)
+    .find((c) => c.id === "device_sale");
+  same("١٧.ب **والمسارُ هو مسارُ «سبب الحضور» بعينه** (`no_exam_operation` · `device_sale`)",
+    partSale?.flow, routingSale?.flow);
+  same("١٧.ج ومَن لا يبيع (بلا مفتاح «إضافة مدفوعات») لا يراه — كما في «سبب الحضور»",
+    ids(launcherOptions({ isAmputee: true, maySellComponent: false })), ["support_case", "physio_case", "consultation", "other"]);
+  for (const flags of [
+    { maySellComponent: true }, { isMedicalSupport: true, maySellComponent: true },
+    { isPhysiotherapy: true, maySellComponent: true },
+  ] as any[]) {
+    check(!opt(launcherOptions(flags), "part_sale"),
+      `١٧.د ولا يظهر لمن لا قسمَ أطرافٍ له — ${JSON.stringify(flags)}`);
+  }
+  //  **والاستثناءُ الوحيد من «لا عمليةَ جهاز في هذه القائمة» (١.ج) هو هذا**: لا صيانة ولا معاينة ولا غيرُه.
+  const deviceOps = launcherOptions({ isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true, maySellComponent: true })
+    .filter((o) => o.flow.kind !== "case_type" && o.flow.kind !== "new_service");
+  same("١٧.هـ **وعمليةُ الجهاز الوحيدة فيها بيعُ جزء الأطراف** — لا صيانة ولا معاينة",
+    deviceOps.map((o) => [o.id, o.flow]), [["part_sale", routingSale?.flow]]);
+  check(/launcherOptions\(\{ \.\.\.patient, maySellComponent: canCompleteComponentSale\(branchSession\) \}\)/.test(launcherCode),
+    "١٧.و **والموزِّعُ يقرّر البيعَ بقاعدة «سبب الحضور» نفسِها** (`canCompleteComponentSale` على جلسة الفرع)");
 
   console.log(failures === 0 ? "\n✅ all service-launcher cases pass" : `\n❌ ${failures} case(s) failed`);
   process.exit(failures === 0 ? 0 : 1);

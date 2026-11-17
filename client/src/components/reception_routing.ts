@@ -38,7 +38,7 @@
 // (`noExamSaleServiceTypes`) لا من شرطٍ مكتوبٍ بيدٍ ثانية هنا ينحرف عنها.
 
 import { ATTENDANCE_REASONS } from "@shared/attendance";
-import type { ServiceFlow } from "./patient_service_launcher_logic";
+import { PART_SALE_LABEL, type ServiceFlow } from "./patient_service_launcher_logic";
 import type { ResumeStore } from "./device_flow_resume";
 import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import { noExamSaleServiceTypes } from "@shared/prosthetic_parts";
@@ -101,7 +101,7 @@ export function receptionRoutingDepartments(p: {
 }
 
 const SALE_LABEL: Record<ReceptionRoutingServiceType, string> = {
-  prosthetic: "شراء جزء من طرف صناعي",
+  prosthetic: PART_SALE_LABEL,
   //  لا يُعرَض — المساندُ خارجَ `noExamSaleServiceTypes`. ويبقى العنوانُ
   //  هنا كي يظلّ السجلّ مكتملَ الشكل، ولا يصير غيابُه هو الحارس.
   medical_support: "شراء مسند طبي",
