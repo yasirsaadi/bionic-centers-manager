@@ -76,13 +76,18 @@ interface PatientServiceLauncherProps {
    */
   routingOpen?: boolean;
   onRoutingOpenChange?: (open: boolean) => void;
+  /**
+   * **بيعُ الجزء وحده** (§4.go — قرارُ المالك ٢٠٢٦-١١-١٧): مَن يبيع (`canCompleteComponentSale` — «إضافة مدفوعات») بلا «إضافة مرضى»،
+   * كالمحاسب، يرى زرّاً واحداً «شراء جزء من طرف صناعي» — لا «إضافة خدمة جديدة» ولا «سبب الحضور»، فتلك تفتح أقساماً ومعاينات.
+   */
+  saleOnly?: boolean;
 }
 
 //  ترتيبُ الأقسام الثلاثة على الشاشة — **ولا رابعَ بعدها**.
 const GROUP_ORDER: LauncherGroup[] = ["prosthetic", "medical_support", "physiotherapy"];
 
 export function PatientServiceLauncher({
-  patient, routingOpen: routingOpenProp, onRoutingOpenChange,
+  patient, routingOpen: routingOpenProp, onRoutingOpenChange, saleOnly = false,
 }: PatientServiceLauncherProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   /** مُوجِّهُ «ما سبب حضور المريض اليوم؟» — بحالةٍ داخلية ما لم تُدَر من الخارج. */
@@ -121,7 +126,7 @@ export function PatientServiceLauncher({
 
   //  أقسامُ الأجهزة التي يملكها المريض — **كلُّها**، بلا تفضيلٍ صامت
   //  للأطراف. وفارغةٌ لمريض العلاج الطبيعي وحده، فلا مُوجِّه له إطلاقاً.
-  const routingSections = receptionRoutingGroups(patient, branchSession);
+  const routingSections = saleOnly ? [] : receptionRoutingGroups(patient, branchSession);
   const hasRouting = routingSections.length > 0;
 
   // ══ **المُوجِّهُ يُفتَح مرّةً واحدة بعد التسجيل مباشرةً** ═════════════════
@@ -157,6 +162,7 @@ export function PatientServiceLauncher({
 
   //  **وبيعُ الجزء لصاحب مفتاحه وحده** — القاعدةُ نفسُها التي تُظهره في «سبب الحضور» (`receptionRoutingChoices`).
   const options = launcherOptions({ ...patient, maySellComponent: canCompleteComponentSale(branchSession) });
+  const partSaleOption = options.find((o) => o.id === "part_sale") ?? null;
   //  **تنبيهٌ لا وضع** (§4.gm): «استشارة» و«خدمة أخرى» لمريضٍ بلا علاجٍ طبيعيّ تفتحان قسمَه — فتقوله النافذةُ بالأحمر قبل الحفظ.
   //  ووضعُ الجلسات في النافذة يبقى من نوع الخدمة وحده (حارسُ «لا علمَ يقرّر وضعاً» في `test:service-launcher`).
   const newServiceOpensPhysio = !patient.isPhysiotherapy;
@@ -318,6 +324,16 @@ export function PatientServiceLauncher({
       <TrialReturnDialog order={trialReturnFor} patientId={patient.id} onClose={() => setTrialReturnFor(null)} />
       <MoldReturnDialog order={moldReturnFor} patientId={patient.id} onClose={() => setMoldReturnFor(null)} />
 
+      {/*  **بيعُ الجزء وحده** (§4.go) — الخيارُ نفسُه من القائمة بمساره بعينه، زرّاً واحداً لمن يبيع بلا «إضافة مرضى». */}
+      {saleOnly ? (
+        partSaleOption && (
+          <Button variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
+            onClick={() => choose(partSaleOption)} data-testid="button-part-sale-only">
+            <RefreshCcw className="w-4 h-4" />
+            {partSaleOption.label}
+          </Button>
+        )
+      ) : (
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogTrigger asChild>
           <Button
@@ -382,6 +398,7 @@ export function PatientServiceLauncher({
           </div>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* المسارات القائمة — تُركَّب عند اختيارها وحدها، فلا نوافذ خاملة
           تستطلع الخادم ولا حالة قديمة تعلق من اختيارٍ سابق. */}
