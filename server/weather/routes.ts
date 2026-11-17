@@ -19,6 +19,8 @@ import { cityWeatherNow } from "./metno";
 import { metarObservations } from "./metar";
 import { admitPlace, placeName } from "./geocode";
 
+export const GEO_NAME_DEADLINE_MS = 3000;
+
 export function registerWeatherRoutes(app: Express, isAuthenticated: any) {
   app.get("/api/weather", isAuthenticated, async (req: any, res) => {
     try {
@@ -33,7 +35,11 @@ export function registerWeatherRoutes(app: Express, isAuthenticated: any) {
           city = place.city;
           fromDevice = true;
         } else if (admitPlace(place.city.key, nowMs)) {
-          const nm = await placeName(place.city.key, place.city.lat, place.city.lon, nowMs);
+          //  لا ينتظر الطلبُ الخريطةَ أكثرَ من ثلاث ثوانٍ: بعدها «موقعك»، والجلبُ يكمل فيأخذ الطلبُ التالي الاسم.
+          const nm = await Promise.race([
+            placeName(place.city.key, place.city.lat, place.city.lon, nowMs),
+            new Promise<null>((r) => setTimeout(() => r(null), GEO_NAME_DEADLINE_MS).unref()),
+          ]);
           city = { ...place.city, name: nm?.ar ?? DEVICE_PLACE_FALLBACK.ar, nameEn: nm?.en ?? DEVICE_PLACE_FALLBACK.en };
           fromDevice = true;
         }

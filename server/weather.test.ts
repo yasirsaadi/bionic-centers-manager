@@ -69,12 +69,14 @@ function fakeSource() {
   let next: Reply | Error = { status: 200, body: metnoBody(T0, [30, 31, 32]) };
   let nextMetar: Reply | Error = { status: 200, body: [] };
   let gate: Promise<void> | null = null;
+  let geoDelay = 0;
   const geoCalls: { url: string; at: number; headers: Record<string, string> }[] = [];
   let geoReply: (lang: string) => Reply | Error = (lang) => ({ status: 200, body: { address: lang === "ar"
     ? { town: "زيتون بورنو", province: "إسطنبول", country: "تركيا" } : { town: "Zeytinburnu", province: "Istanbul", country: "Turkey" } } });
   const fn: WeatherFetch = async (url, init) => {
     if (url.startsWith("https://nominatim.openstreetmap.org/")) {
       geoCalls.push({ url, at: Date.now(), headers: { ...init.headers } });
+      if (geoDelay) await sleep(geoDelay);
       const r = geoReply(new URL(url).searchParams.get("accept-language") ?? "");
       if (r instanceof Error) throw r;
       return { status: r.status, headers: { get: () => null }, json: async () => r.body };
@@ -91,6 +93,7 @@ function fakeSource() {
   return {
     calls, metarCalls, geoCalls, fn,
     replyGeo(f: (lang: string) => Reply | Error) { geoReply = f; },
+    delayGeo(ms: number) { geoDelay = ms; },
     reply(r: Reply | Error) { next = r; },
     replyMetar(r: Reply | Error) { nextMetar = r; },
     hold() { let open!: () => void; gate = new Promise<void>((r) => { open = r; }); return () => { gate = null; open(); }; },
@@ -483,6 +486,17 @@ async function main() {
     const unnamed = await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=51.5&lon=-0.1");
     same("أ.١٢ **والمكانُ الذي لا يُعرف اسمُه ⟵ «موقعك»** بطقسه لا بطقس الفرع", [unnamed?.cityKey, unnamed?.city, unnamed?.cityEn, unnamed?.fromDevice],
       ["geo:51.5,-0.1", DEVICE_PLACE_FALLBACK.ar, DEVICE_PLACE_FALLBACK.en, true]);
+    resetGeocodeForTests();
+    src.replyGeo((lang) => ({ status: 200, body: { address: { city: lang === "ar" ? "أنقرة" : "Ankara" } } }));
+    src.delayGeo(4500);
+    const t1 = Date.now();
+    const slow = await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=39.9&lon=32.9");
+    const waited = Date.now() - t1;
+    check(slow?.city === DEVICE_PLACE_FALLBACK.ar && slow?.cityKey === "geo:39.9,32.9" && waited < 4200,
+      "أ.١٣ **الخريطةُ البطيئة لا تحبس الطقس**: بعد ثلاث ثوانٍ «موقعك» بطقس المكان", JSON.stringify([slow?.city, waited]));
+    await sleep(4500 + 1300 + 4500);
+    src.delayGeo(0);
+    same("أ.١٤ **والجلبُ يكمل في الخلفية** فالطلبُ التالي يأخذ الاسم", (await getAt(staff("baghdad", "اختبار الطقس بغداد"), "?lat=39.9&lon=32.9"))?.city, "أنقرة");
   } finally {
     httpServer.close();
     setWeatherFetchForTests(null);
@@ -504,6 +518,9 @@ async function main() {
   check(/enabled: !!session && ready/.test(cw) && /`\?lat=\$\{coords\.lat\}&lon=\$\{coords\.lon\}`/.test(cw)
       && /roundDeviceCoord\(p\.coords\.latitude\)/.test(cw) && /PERMISSION_DENIED/.test(cw) && /GEO_WAIT_MS = 4000/.test(cw),
     "ش.٣ب **مكانُ الجهاز** (§4.gl): يُقرَّب قبل أن يُرسل، والرفضُ ⟵ الفرع، ولا انتظارَ أكثرَ من أربع ثوانٍ قبل طقس الفرع");
+  const greet = read("client/src/components/DailyGreeting.tsx");
+  check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady\]/.test(greet) && /geoReady: ready/.test(cw),
+    "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");
   check(/useSyncExternalStore\(geo\.subscribe/.test(cw), "ش.٣ج **ومخزنٌ واحد للموقع** — الشريحتان وسطرُ الهاتف والتحيّةُ يطلبونه مرّةً");
   check(cw.includes("GEO_CREDIT") && cw.includes("https://www.openstreetmap.org/copyright") && /sidebar-weather-from-device/.test(cw),
     "ش.٣د **واسمُ المكان بمصدره** (© OpenStreetMap) و«حسب موقع جهازك» في التفصيل");

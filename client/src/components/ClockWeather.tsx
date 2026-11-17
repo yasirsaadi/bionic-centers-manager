@@ -133,7 +133,7 @@ export function useBranchWeather(): WeatherNow | null {
 }
 
 /** الطقسُ **وهل استقرّ أوّلُ جوابٍ له** (نجح أو فشل) — تحيّةُ الصباح تنتظره كي لا يفوتها مطرُ اليوم (§4.fw). */
-export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean } {
+export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean; geoReady: boolean } {
   const session = useBranchSession();
   const { coords, ready } = useDeviceCoords();
   const { data, isFetched, isError } = useQuery<{ weather: WeatherNow | null }>({
@@ -148,7 +148,8 @@ export function useBranchWeatherState(): { weather: WeatherNow | null; settled: 
       return res.json();
     },
   });
-  return { weather: data?.weather ?? null, settled: isFetched || isError };
+  //  `geoReady`: الطلبُ لا يبدأ قبل جواب الموقع (أو مهلته) — فانتظارُ التحيّة يُعدّ منه لا من التركيب (§4.gl).
+  return { weather: data?.weather ?? null, settled: isFetched || isError, geoReady: ready };
 }
 
 const ICONS: Record<WeatherKind, { day: typeof Sun; night?: typeof Sun; tone: string; nightTone?: string }> = {
