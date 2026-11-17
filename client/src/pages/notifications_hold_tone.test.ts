@@ -126,5 +126,24 @@ console.log("\n── عقد الخادم ──");
     && routes.includes("holdReasonLabel: excuse === null ? null : (REASON_CODE_LABELS[excuse] ?? excuse),"));
 }
 
+console.log("\n── شارةُ الشريط الجانبيّ: الأحمرُ وحده (طلبُ المالك ٢٠٢٦-١١-١٧) ──");
+{
+  const { countsAsRedAlert } = await import("@shared/manufacturing");
+  const kinds: AlertKind[] = ["overdue", "due_today", "due_tomorrow", "due_in_2_days", "completed"] as AlertKind[];
+  const codes = [null, "", "  ", "waiting_patient", "trial_socket"];
+  let same = true;
+  for (const k of kinds) for (const c of codes) {
+    if (countsAsRedAlert(k, c) !== (sectionOf({ kind: k, holdReasonCode: c } as any) === "overdue")) same = false;
+  }
+  check("٢٥. **العدُّ هو قسمُ «متأخرة بدون عذر» نفسُه** — كلُّ نوعٍ مع كلّ عذر يطابق `sectionOf`", same);
+  check("٢٦. **المتأخّرُ بعذرٍ واليومُ وغداً وبعد يومين والمكتملُ لا تُعدّ**، والمتأخّرُ بلا عذر يُعدّ",
+    countsAsRedAlert("overdue", null) && countsAsRedAlert("overdue", " ")
+    && !countsAsRedAlert("overdue", "waiting_patient") && !countsAsRedAlert("due_today", null)
+    && !countsAsRedAlert("due_tomorrow", null) && !countsAsRedAlert("due_in_2_days", null) && !countsAsRedAlert("completed", null));
+  const routes = readFileSync(join(import.meta.dirname, "../../../server/manufacturing/routes.ts"), "utf8");
+  check("٢٧. **الخادمُ يعدّ بها** `alertCount`",
+    routes.includes("const alertCount = items.filter((i) => countsAsRedAlert(i.kind, i.holdReasonCode)).length;"));
+}
+
 console.log(`\n${failures === 0 ? "✅ كل الحالات نجحت" : `❌ ${failures} حالة فاشلة`}\n`);
 process.exit(failures === 0 ? 0 : 1);

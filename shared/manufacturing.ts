@@ -256,6 +256,14 @@ export function writtenHoldExcuse(code: string | null | undefined): string | nul
   return t === "" ? null : t;
 }
 
+/**
+ * **ما تعدّه شارةُ «التنبيهات» في الشريط الجانبيّ** (طلبُ المالك ٢٠٢٦-١١-١٧): الأحمرُ وحده — «متأخرة بدون عذر».
+ * فيذهب الرقمُ بالإنجاز أو الإلغاء أو كتابة العذر أو تأجيل الموعد؛ وما يقترب موعدُه في الصفحة بلا عدد.
+ */
+export function countsAsRedAlert(kind: string, holdReasonCode: string | null | undefined): boolean {
+  return kind === "overdue" && writtenHoldExcuse(holdReasonCode) === null;
+}
+
 /** `late` = متأخرٌ بدون عذر · `late_excused` = متأخرٌ بعذر · `not_late` = ليس متأخراً. */
 export type Lateness = "not_late" | "late" | "late_excused";
 
