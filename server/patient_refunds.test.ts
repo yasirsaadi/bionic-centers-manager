@@ -461,29 +461,33 @@ async function main() {
     same("ي٣. **النافذةُ تعرض جلسات القسم**: اشترى ١٠ · حضر ١ · الباقي ٩ · بسعره",
       [ko.status, ks?.treatmentType, ks?.bought, ks?.done, ks?.remaining, ks?.available, ks?.price], [200, DEV, 10, 1, 9, 9, 35_000]);
     const kb = { patientId: K.id, caseId: K.cases.physiotherapy, amount: 315_000, reason: "stopped_treatment", detail: "حضر جلسة من عشر" };
-    same("ي٤. **بلا عدد الجلسات ⟵ ٤٠٠** · فوق الباقي ⟵ ٤٠٩ · نوعٌ ليس في القسم ⟵ ٤٠٩ · مصفوفةٌ فاسدة ⟵ ٤٠٠ · جلساتٌ لقسم جهاز ⟵ ٤٠٠",
+    //  **فوق الباقي لم يعد يُمنع** (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj) — تنبيهٌ أحمر، ويُفحص في ي١٤–ي١٨.
+    same("ي٤. **بلا عدد الجلسات ⟵ ٤٠٠** · نوعٌ ليس في القسم ⟵ ٤٠٩ · مصفوفةٌ فاسدة ⟵ ٤٠٠ · جلساتٌ لقسم جهاز ⟵ ٤٠٠",
       [(await http("POST", "/api/patient-refunds", mgr, kb)).status,
-       (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 10 }] })).status,
        (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: "روبوت", sessionCount: 1 }] })).status,
        (await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 1.5 }] })).status,
        (await ask(S.recv, { patientId: B.id, caseId: B.cases.prosthetic, amount: 1000, reason: "overpaid", detail: "جهاز",
          sessionsReturned: [{ treatmentType: DEV, sessionCount: 1 }] })).status,
        (await q(`SELECT count(*)::int n FROM patient_refund_requests WHERE patient_id = $1`, [K.id]))[0].n],
-      [400, 409, 409, 400, 400, 0]);
+      [400, 409, 400, 400, 0]);
     const kr = await ask(mgr, { ...kb, sessionsReturned: [{ treatmentType: DEV, sessionCount: 9 }] });
-    same("ي٥. **الطلبُ بتسع جلسات ⟵ ٢٠١** والبطاقةُ تقولها، وطلبٌ آخر بجلسةٍ ⟵ ٤٠٩ (التسعُ معلَّقة)",
-      [kr.status, kr.body?.sessionsLine, (kr.body?.sessionsReturned ?? []).map((x: any) => [x.treatmentType, x.sessionCount]),
-       (await ask(mgr, { ...kb, amount: 1000, detail: "طلبٌ ثانٍ", sessionsReturned: [{ treatmentType: DEV, sessionCount: 1 }] })).status],
-      [201, `9 جلسات ${DEV}`, [[DEV, 9]], 409]);
-    //  زيارةٌ بعد الطلب: الباقي ٨ — فلا يُعتمد بتسع، والبطاقةُ تقول ذلك.
+    //  طلبٌ ثانٍ بجلسةٍ والتسعُ معلَّقة: **يُرسل بتنبيهٍ أحمر** (§4.gj) — والمسؤولُ يراه في البطاقة وتلغرام، ثمّ يُرفض هنا ليمضي الاختبار.
+    const k2 = await ask(mgr, { ...kb, amount: 1000, detail: "طلبٌ ثانٍ", sessionsReturned: [{ treatmentType: DEV, sessionCount: 1 }] });
+    const k2card = await http("GET", `/api/patient-refunds/${k2.body?.id}`, S.admin);
+    same("ي٥. **الطلبُ بتسع جلسات ⟵ ٢٠١** بلا تنبيه، وطلبٌ آخر بجلسةٍ والتسعُ معلَّقة ⟵ ٢٠١ **بتنبيهٍ أحمر** في البطاقة وتلغرام",
+      [kr.status, kr.body?.sessionsLine, (kr.body?.sessionsReturned ?? []).map((x: any) => [x.treatmentType, x.sessionCount]), kr.body?.physioWarnings,
+       k2.status, (k2card.body?.physioWarnings ?? []).some((w: string) => w.includes(`طُلب إرجاع 1 ${DEV} والباقي 0 (بعد 9 معلَّقة في طلبٍ آخر)`)),
+       (await outbox("refund_request_pending")).some((r: any) => r.text.includes("🔴 تنبيه: طُلب إرجاع 1"))],
+      [201, `9 جلسات ${DEV}`, [[DEV, 9]], [], 201, true, true]);
+    await http("POST", `/api/patient-refunds/${k2.body?.id}/reject`, S.admin, { note: "مكرّر" });
+    //  زيارةٌ بعد الطلب: الباقي ٨ — **والاعتمادُ لا يُمنع**، والبطاقةُ تنبّه بالأحمر (والاعتمادُ نفسُه في ي١٦ على مريضٍ آخر).
     const [lateVisit] = await q<{ id: number }>(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, visit_date)
       VALUES ($1,$2,$3,$4, now()) RETURNING id`, [K.id, BG, K.cases.physiotherapy, DEV]);
     const card = await http("GET", `/api/patient-refunds/${kr.body.id}`, S.admin);
-    same("ي٦. **حضر بعد الطلب ⟵ الاعتمادُ ٤٠٩** ويبقى الطلبُ معلَّقاً، والبطاقةُ ترى الممكن الآن ٨",
-      [card.body?.sessionsNow?.[0]?.available,
-       (await http("POST", `/api/patient-refunds/${kr.body.id}/approve`, S.admin, { reduceCost: true })).status,
-       (await q(`SELECT status FROM patient_refund_requests WHERE id=$1`, [kr.body.id]))[0].status,
-       (await q(`SELECT count(*)::int n FROM payments WHERE patient_id=$1 AND amount<0`, [K.id]))[0].n], [8, 409, "pending", 0]);
+    same("ي٦. **حضر بعد الطلب ⟵ البطاقةُ تنبّه بالأحمر**: الممكن الآن ٨، و«طُلب ٩ والباقي ٨»، والمبلغُ فوق قيمة الثماني",
+      [card.body?.sessionsNow?.[0]?.available, card.body?.sessionsOverRemaining,
+       (card.body?.physioWarnings ?? []).length, card.body?.overSessionsValue],
+      [8, [{ treatmentType: DEV, asked: 9, available: 8, pending: 0 }], 2, 35_000]);
     await q(`DELETE FROM visits WHERE id=$1`, [lateVisit.id]);
     const kap = await http("POST", `/api/patient-refunds/${kr.body.id}/approve`, S.admin, { reduceCost: true });
     const kpay = (await q(`SELECT returned_sessions, notes FROM payments WHERE patient_id=$1 AND amount<0`, [K.id]))[0];
@@ -627,6 +631,64 @@ async function main() {
          Math.abs(refundPrintFit(750, 397) - big) < 1e-9, refundPrintFit(0, 0), refundPrintFit(900, 0)],
         [1, true, true, 1, 1]);
     }
+
+    // ══ م. تنبيهاتُ العلاج الطبيعي — لا منع (قرارُ المالك ٢٠٢٦-١١-١١، §4.gj) ══════════════════════════════════════════════════════
+    //  المنعُ الوحيد: فوق ما دفعه. والمبلغُ فوق قيمة الجلسات الباقية **بسعر ما دفعه** والجلساتُ فوق الباقي تنبيهٌ أحمر، والعدّادُ لا ينزل تحت الصفر.
+    console.log("\n── م. تنبيهاتُ العلاج الطبيعي ──");
+    {
+      const { physioRefundGuide, refundOverSessionsValue, clampReturnedSessions, sessionsOverRemaining } = await import("@shared/patient_refunds");
+      const g = physioRefundGuide(300_000, [{ treatmentType: DEV, bought: 10, remaining: 9, pending: 0, available: 9 }]);
+      same("م١. **سعرُ الجلسة ممّا دفعه** (٣٠٠ ألف ÷ ١٠ = ٣٠ ألفاً لا ٣٥ النظام) والحدُّ ٩ × ٣٠ = ٢٧٠ ألفاً، وفوقه بكم، وبلا جلساتٍ مشتراة صفر، والعدّادُ يُطرح بالباقي وحده",
+        [g.perSession, g.limit, refundOverSessionsValue(290_000, g), refundOverSessionsValue(270_000, g),
+         physioRefundGuide(100_000, []).limit, clampReturnedSessions([{ treatmentType: DEV, sessionCount: 9 }], [{ treatmentType: DEV, remaining: 8 }]),
+         sessionsOverRemaining([{ treatmentType: DEV, sessionCount: 9 }], [{ treatmentType: DEV, available: 8 }])],
+        [30_000, 270_000, 20_000, 0, 0, [{ treatmentType: DEV, sessionCount: 8 }], [{ treatmentType: DEV, asked: 9, available: 8, pending: 0 }]]);
+      //  مراجعةُ §4.gj: المُهدى بلا مال لا يُخفّض السعر، والمعادلةُ تجمع بالسعر المعروض، والحدُّ لا يتجاوز ما دفعه.
+      const gGift = physioRefundGuide(300_000, [{ treatmentType: DEV, bought: 12, remaining: 9, pending: 0, available: 9 }], 2);
+      const gOdd = physioRefundGuide(100_000, [{ treatmentType: DEV, bought: 11, remaining: 10, pending: 0, available: 10 }]);
+      const gCap = physioRefundGuide(200_000, [{ treatmentType: DEV, bought: 3, remaining: 3, pending: 0, available: 3 }]);
+      same("م١ب. **الهديةُ خارج القسمة** (٣٠٠ ألف ÷ ١٠ مدفوعة = ٣٠ ألفاً لا ٢٥)، و١٠ × ٩٬٠٩١ = ٩٠٬٩١٠ تجمع، والحدُّ ٢٠٠ ألف لا ٢٠٠٬٠٠١ (٣ × ٦٦٬٦٦٧)",
+        [gGift.perSession, gGift.limit, gOdd.perSession, gOdd.limit === gOdd.available * (gOdd.perSession ?? 0), gCap.limit],
+        [30_000, 270_000, 9_091, true, 200_000]);
+
+      const W = await mkPatient("تنبيه الجلسات", [{ type: "physiotherapy", cost: 300_000 }], BG);
+      await q(`UPDATE patients SET is_physiotherapy = true, treatment_type = $2 WHERE id = $1`, [W.id, `${DEV} (10 جلسات)`]);
+      await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, session_count, notes, date)
+               VALUES ($1,$2,300000,$3,$4,10,$5, now() - interval '3 day')`, [W.id, BG, W.cases.physiotherapy, DEV, MARK]);
+      await q(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, visit_date) VALUES ($1,$2,$3,$4, now() - interval '2 day')`,
+        [W.id, BG, W.cases.physiotherapy, DEV]);
+      const wo = await http("GET", `/api/patients/${W.id}/refund-options`, mgr);
+      same("م٢. **النافذةُ تعرض الحدَّ المعتاد**: ٩ جلسات × ٣٠ ألفاً (ممّا دفعه) = ٢٧٠ ألفاً",
+        [wo.status, wo.body?.cases?.[0]?.physioGuide], [200, { netPaid: 300_000, bought: 10, available: 9, perSession: 30_000, limit: 270_000 }]);
+
+      const wb = { patientId: W.id, caseId: W.cases.physiotherapy, reason: "stopped_treatment" };
+      const wr = await ask(mgr, { ...wb, amount: 290_000, detail: "أكثر من الباقي", sessionsReturned: [{ treatmentType: DEV, sessionCount: 9 }] });
+      const wcard = await http("GET", `/api/patient-refunds/${wr.body?.id}`, S.admin);
+      same("م٣. **فوق قيمة الجلسات ⟵ يُرسل (٢٠١)** وتنبيهٌ أحمر بالفرق ٢٠ ألفاً في البطاقة وتلغرام",
+        [wr.status, wcard.body?.overSessionsValue, (wcard.body?.physioWarnings ?? []).some((w: string) => w.includes("بـ20,000")),
+         (await outbox("refund_request_pending")).some((r: any) => r.text.includes("🔴 تنبيه: المبلغ 290,000 أكثر من قيمة الجلسات الباقية"))],
+        [201, 20_000, true, true]);
+
+      //  حضر بعد الطلب: الباقي ٨ — **والاعتمادُ يمرّ** والعدّادُ ينقص بثمانٍ لا تسع.
+      await q(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, visit_date) VALUES ($1,$2,$3,$4, now())`,
+        [W.id, BG, W.cases.physiotherapy, DEV]);
+      const wap = await http("POST", `/api/patient-refunds/${wr.body?.id}/approve`, S.admin, { reduceCost: false });
+      const wpay = (await q(`SELECT returned_sessions, notes FROM payments WHERE patient_id=$1 AND amount<0`, [W.id]))[0];
+      const wstate = await refundStore.physioSessionStateTx(db as any, W.id, W.cases.physiotherapy);
+      same("م٤. **الجلساتُ فوق الباقي لا تمنع الاعتماد** (٢٠٠): يُطرح ٨ لا ٩، والملاحظةُ تقول «طُلب ٩»، والعدّادُ ٢ · حضر ٢ · باقي ٠ لا سالب",
+        [wap.status, (wpay?.returned_sessions ?? []).map((x: any) => [x.treatmentType, x.sessionCount]),
+         Boolean(wpay?.notes?.includes(`أُرجع 8 جلسات ${DEV}`) && wpay?.notes?.includes(`طُلب 9 جلسات ${DEV}`)),
+         wstate.state[0]?.bought, wstate.state[0]?.done, wstate.state[0]?.remaining],
+        [200, [[DEV, 8]], true, 2, 2, 0]);
+      const wdone = await http("GET", `/api/patient-refunds/${wr.body?.id}`, S.admin);
+      same("م٤ب. **والاستمارةُ والبطاقةُ بعد الاعتماد تقول ما أُرجع فعلاً** (٨ لا ٩)، والمطلوبُ باقٍ في سطر تدقيق الطلب",
+        [wdone.body?.sessionsLine, (await q(`SELECT new_values FROM audit_log WHERE entity_type='patient_refund_request' AND entity_id=$1 AND action='create'`, [wr.body?.id]))
+          .map((r: any) => (typeof r.new_values === "string" ? JSON.parse(r.new_values) : r.new_values)?.sessionsReturned?.[0]?.sessionCount)[0]],
+        [`8 جلسات ${DEV}`, 9]);
+      same("م٥. **والمنعُ الوحيد باقٍ**: فوق صافي ما دفعه (١٠ آلاف) ⟵ ٤٠٩",
+        (await ask(mgr, { ...wb, amount: 20_000, detail: "فوق المدفوع", sessionsReturned: [] })).status, 409);
+    }
+
   } finally {
     await cleanup().catch((e) => console.error("cleanup failed", e));
     httpServer.close();

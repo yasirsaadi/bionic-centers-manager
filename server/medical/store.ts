@@ -1884,15 +1884,15 @@ export async function getWorklist(
   //  يحرّك `ep.branch_id`، فملفٌّ أُتيح لفرعٍ بلا نقلِ مسؤولية يبقى عملُه
   //  حيث هو — **ولا يُقرأ `patient_branch_access` هنا إطلاقاً**.
   //
-  //  **والصفُّ بلا حلقة كما كان بحرفه**: `ep.branch_id` تصل `NULL` من
-  //  الانضمام الخارجيّ، فيسقط `COALESCE` إلى فرع الحالة ثمّ التسجيل.
+  //  **والصفُّ بلا حلقة بفرع طلبه** (٢٠٢٦-١١-١٧): `rq.branch_id` — آخرُ طلبٍ على مستوى الاختصاص — ثمّ فرعُ الحالة ثمّ
+  //  التسجيل كما كان. فـ«طلب معاينة جديدة» من فرعٍ أُتيح له الملفّ يذهب إلى طابوره.
   //  (وخريطتا الانتظار على قاعدتهما — هذا طابورُ العمل وحده.)
   const scoped =
     branchIds === null
       ? sql`TRUE`
       : branchIds.length === 0
         ? sql`FALSE`
-        : sql`COALESCE(ep.branch_id, pc.branch_id, p.branch_id) IN (${sql.join(
+        : sql`COALESCE(ep.branch_id, rq.branch_id, pc.branch_id, p.branch_id) IN (${sql.join(
             branchIds.map((id) => sql`${id}`),
             sql`, `,
           )})`;
@@ -1922,7 +1922,9 @@ export async function getWorklist(
            -- **ورقمُ الفرع واسمُه من فرع الحلقة حين توجد** — الصفُّ يقول
            -- مَن يملك هذا العمل الآن لا أين سُجّل المريضُ يوماً. والصفُّ بلا
            -- حلقة يبقى على فرع الحالة ثمّ التسجيل كما كان.
-           COALESCE(ep.branch_id, pc.branch_id, p.branch_id) AS branch_id,
+           -- **والصفُّ بلا حلقة بفرع طلبه** (طلبُ المالك ٢٠٢٦-١١-١٧): ملفُّ ذي قار أُتيح لبغداد وطلبت بغدادُ المعاينة ⟵ «بغداد»
+           -- لا فرعُ القسم — والطلبُ يحفظ فرعَه (createReviewRequestTx). والنطاقُ بالقاعدة نفسِها فيراه أخصائيُّ الفرع الطالب.
+           COALESCE(ep.branch_id, rq.branch_id, pc.branch_id, p.branch_id) AS branch_id,
            b.name AS branch_name,
            pc.case_type,
            -- **منذ متى ينتظر الطبيبَ** = آخرُ دخولٍ إلى الطابور (ترحيل ٠٧٧):
@@ -1961,9 +1963,18 @@ export async function getWorklist(
      AND COALESCE((SELECT r.status FROM medical_review_requests r
                     WHERE r.device_episode_id = ep.id
                     ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '') <> 'returned'
+    -- فرعُ آخر طلبٍ «على مستوى الاختصاص» للصفّ بلا حلقة — بشرط الإدراج نفسِه أدناه وبترتيب «منذ» أعلاه.
+    LEFT JOIN LATERAL (
+      SELECT r.branch_id FROM medical_review_requests r
+       WHERE ep.id IS NULL AND r.patient_id = pc.patient_id AND r.service_type = pc.case_type
+         AND (r.status = 'escalated' OR (r.status = 'pending' AND r.requested_path = 'full'))
+         AND ${specialtyLevelRequestSql("r")}
+       ORDER BY GREATEST(r.created_at, r.decided_at, r.updated_at) DESC NULLS LAST, r.id DESC
+       LIMIT 1
+    ) rq ON TRUE
     -- **واسمُ الفرع بعد الحلقة لا قبلها**: الانضمامُ يقرأ عمودَ فرع الحلقة،
     -- ولا يراه لو سبقه. فرُتِّب بعده ليطابق الاسمُ الرقمَ المعروض.
-    LEFT JOIN branches b ON b.id = COALESCE(ep.branch_id, pc.branch_id, p.branch_id)
+    LEFT JOIN branches b ON b.id = COALESCE(ep.branch_id, rq.branch_id, pc.branch_id, p.branch_id)
     WHERE pc.status = 'active'
       AND p.deleted_at IS NULL
       AND ${scoped}

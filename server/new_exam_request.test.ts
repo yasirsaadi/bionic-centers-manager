@@ -379,6 +379,19 @@ async function main() {
         new Date(cancelledAt).getTime() - new Date(sentAt).getTime() > 1500, at13 >= new Date(cancelledAt).getTime() - 5],
       [200, 1, true, true, true]);
 
+    //  **الصفُّ بفرع طلبه لا بفرع القسم** (طلبُ المالك ٢٠٢٦-١١-١٧ — مريضةُ ذي قار أُتيح ملفُّها لبغداد فطلبت بغدادُ المعاينة):
+    //  قسمُ العلاج الطبيعيّ مسجَّلٌ في الفرع الآخر، والاستعلاماتُ في B1 تطلب ⟵ «معايناتي» تقول B1، وأخصائيُّ B1 يراه.
+    {
+      const G = await mkPatient("هدى", "physiotherapy");
+      const sG = await signPhysio(G.pid);
+      check(sG.status === 200, "تهيئة: المعاينةُ الأولى لهدى", JSON.stringify(sG.json));
+      await q(`UPDATE patient_cases SET branch_id = $2 WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [G.pid, B2]);
+      const dG = await nexr(G.pid, S.recv, { department: "physiotherapy" });
+      const wlG = await worklistRow(S.spec, G.pid, "physiotherapy");
+      same("د.١٤ **طلبٌ من فرعٍ غير فرع القسم ⟵ «معايناتي» بفرع الطلب**، ويراه أخصائيُّ ذلك الفرع",
+        [dG.status, wlG !== null, wlG?.branchId, wlG?.branchName], [201, true, B1, "فرع طلب المعاينة"]);
+    }
+
     // ══ هـ. الشكلُ الواحد في القاعدة والمخزن ══
     console.log("\n── هـ. الشكل ──");
     //  مريضان لهذا القسم وحده — فلا يقيس أحدُ الحارسَين أثرَ الآخر (فهرسُ التفرّد العاري).

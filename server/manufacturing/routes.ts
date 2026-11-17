@@ -28,7 +28,7 @@ import {
 import {
   isValidFinalResult, isValidStageFor, DELIVERED_STAGE, isAtOrBeyondMoldStage,
   defaultNextStage, nextStages, reworkReturnStages, isHoldStatus, isValidHoldReason,
-  MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS, writtenHoldExcuse,
+  MAINTENANCE_DONE_STAGES, REASON_CODE_LABELS, writtenHoldExcuse, countsAsRedAlert,
   MOLD_RETURN_NOT_ELIGIBLE_ERROR, moldReturnNote,
 } from "@shared/manufacturing";
 import { canConfirmPurchase } from "@shared/followup";
@@ -1479,7 +1479,9 @@ export function registerManufacturingRoutes(app: Express, isAuthenticated: any) 
 
     const rank: Record<string, number> = { overdue: 0, due_today: 1, due_tomorrow: 2, due_in_2_days: 3, completed: 4 };
     items.sort((a, b) => (rank[a.kind] - rank[b.kind]) || a.days - b.days);
-    const alertCount = items.filter((i) => i.kind !== "completed").length;
+    //  **الشارةُ للأحمر وحده** (طلبُ المالك ٢٠٢٦-١١-١٧): «متأخرة بدون عذر» — بتعريف `writtenHoldExcuse` الذي تقسم به الصفحة.
+    //  فيذهب الرقمُ حين يكتمل الأمرُ أو يُلغى، أو يُكتب له عذر، أو يُؤجَّل موعدُه؛ وما يقترب موعدُه يبقى في الصفحة بلا عدد.
+    const alertCount = items.filter((i) => countsAsRedAlert(i.kind, i.holdReasonCode)).length;
     res.json({ alertCount, items });
   });
 

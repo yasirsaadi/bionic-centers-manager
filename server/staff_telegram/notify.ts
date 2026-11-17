@@ -364,6 +364,8 @@ export function notifyRefundPending(ex: Executor | null | undefined, p: {
   patientId: number; branchId: number; caseLabel: string; amountText: string; amountWords: string;
   netPaidText: string; refundedBeforeText: string; reason: string; detail: string; requestId: number;
   actorName?: string | null; actorUserId?: number | null;
+  /** تنبيهاتُ العلاج الطبيعي الحمراء (§4.gj) — المبلغُ فوق قيمة الجلسات الباقية، والجلساتُ فوق الباقي. */
+  warnings?: readonly string[];
 }) {
   return safe(ex, async () => {
     const c = await ctx(ex, p.patientId, p.branchId);
@@ -371,6 +373,7 @@ export function notifyRefundPending(ex: Executor | null | undefined, p: {
       event: "refund_request_pending", excludeUserId: p.actorUserId ?? null,
       text: [
         `↩️ طلب استرجاع بانتظار اعتمادك`,
+        ...(p.warnings ?? []).map((w) => `🔴 تنبيه: ${w}`),
         `المريض: ${c.who}${c.branch}`,
         `القسم: ${p.caseLabel}`,
         `المبلغ: ${p.amountText} دينار (${p.amountWords})`,
