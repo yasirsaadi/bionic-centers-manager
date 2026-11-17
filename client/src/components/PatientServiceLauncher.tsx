@@ -196,7 +196,9 @@ export function PatientServiceLauncher({
     setResumeItem("");
     //  إغلاقٌ بيدِ الموظّف قرارٌ صريح — فلا تُفتح النافذةُ عليه ثانيةً
     //  بلقطةٍ بقيت من محاولةٍ سابقة.
-    clearDeviceFlowResume(sessionResumeStore());
+    //  ووضعُ «البيع وحده» لم يقرأ اللقطةَ ولا يكتبها — فلا يمحو ما ليس له
+    //  (مراجعةُ Codex على #741).
+    if (!saleOnly) clearDeviceFlowResume(sessionResumeStore());
   }
 
   /**
