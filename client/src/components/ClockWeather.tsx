@@ -117,6 +117,8 @@ const geo = (() => {
     setTimeout(() => set({ ...state, ready: true }), GEO_WAIT_MS);
     ask();
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ask(); });
+    //  والجهازُ الذي يبقى مفتوحاً ويتنقّل (مراجعة Codex) يُسأل كلَّ نصف ساعة أيضاً — `ask` يمنع التكرار قبلها.
+    setInterval(() => { if (document.visibilityState === "visible") ask(); }, GEO_REFRESH_MS);
   };
   return {
     subscribe(l: () => void) { start(); listeners.add(l); return () => { listeners.delete(l); }; },
@@ -133,7 +135,7 @@ export function useBranchWeather(): WeatherNow | null {
 }
 
 /** الطقسُ **وهل استقرّ أوّلُ جوابٍ له** (نجح أو فشل) — تحيّةُ الصباح تنتظره كي لا يفوتها مطرُ اليوم (§4.fw). */
-export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean; geoReady: boolean } {
+export function useBranchWeatherState(): { weather: WeatherNow | null; settled: boolean; geoReady: boolean; weatherKey: string } {
   const session = useBranchSession();
   const { coords, ready } = useDeviceCoords();
   const { data, isFetched, isError } = useQuery<{ weather: WeatherNow | null }>({
@@ -149,7 +151,11 @@ export function useBranchWeatherState(): { weather: WeatherNow | null; settled: 
     },
   });
   //  `geoReady`: الطلبُ لا يبدأ قبل جواب الموقع (أو مهلته) — فانتظارُ التحيّة يُعدّ منه لا من التركيب (§4.gl).
-  return { weather: data?.weather ?? null, settled: isFetched || isError, geoReady: ready };
+  //  `weatherKey`: يتبدّل حين يتبدّل الطلبُ نفسُه (فرعٌ أو مكانٌ جديد) — فتعيد التحيّةُ انتظارَها للجواب الجديد.
+  return {
+    weather: data?.weather ?? null, settled: isFetched || isError, geoReady: ready,
+    weatherKey: `${session?.branchId ?? ""}:${coords?.lat ?? ""}:${coords?.lon ?? ""}`,
+  };
 }
 
 const ICONS: Record<WeatherKind, { day: typeof Sun; night?: typeof Sun; tone: string; nightTone?: string }> = {
