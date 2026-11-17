@@ -138,6 +138,13 @@ export const GROUP_LABELS: Record<LauncherGroup, string> = DEPARTMENT_LABELS;
  * **ولا حارسَ سقط بذلك**: الخادمُ يردّ النوعَ المكرَّر ٤٠٩ كما كان، وفهرسُ
  * `patient_cases` الفريد يمنع الصفَّ الثاني. الاختفاءُ عرضٌ لا حماية.
  */
+/**
+ * **«استشارة» و«خدمة أخرى» علاجٌ طبيعيّ — تفتحان قسمَه لمن لا قسمَ له** (واقعةُ حامد علي صالح، ٢٠٢٦-١١-١٧):
+ * مديرُ فرعٍ سجّل شراءَ سليكونٍ لمريض أطراف بـ«خدمة أخرى»، ففُتح له قسمُ علاجٍ طبيعيّ ودخل «معايناتي» ودُفع المبلغُ في دفتر العلاج الطبيعي.
+ * فالسطرُ يقول ذلك قبل الضغط، والنافذةُ تقوله ثانيةً بالأحمر مع بابٍ إلى «سبب الحضور» (`NewServiceModal` · `opensPhysioCase`).
+ */
+export const OPENS_PHYSIO_DESCRIPTION = "يفتح للمريض قسمَ علاجٍ طبيعيّ ويرسله لمعاينته — لا لقطع الأطراف أو المساند وصيانتها";
+
 export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
   const hasProsthetic = Boolean(p.isAmputee);
   const hasSupport = Boolean(p.isMedicalSupport);
@@ -175,14 +182,14 @@ export function launcherOptions(p: PatientServiceFlags): LauncherOption[] {
     {
       id: "consultation",
       label: "استشارة طبية",
-      description: "تسجيل استشارة على ملف المريض",
+      description: hasPhysio ? "تسجيل استشارة على ملف المريض" : OPENS_PHYSIO_DESCRIPTION,
       group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "consultation" },
     },
     {
       id: "other",
       label: "خدمة أخرى",
-      description: "خدمة لا مسار خاصّ لها",
+      description: hasPhysio ? "خدمة لا مسار خاصّ لها" : OPENS_PHYSIO_DESCRIPTION,
       group: "physiotherapy",
       flow: { kind: "new_service", serviceType: "other" },
     },
