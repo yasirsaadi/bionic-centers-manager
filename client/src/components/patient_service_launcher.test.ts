@@ -683,6 +683,25 @@ function main() {
   check(/launcherOptions\(\{ \.\.\.patient, maySellComponent: canCompleteComponentSale\(branchSession\) \}\)/.test(launcherCode),
     "١٧.و **والموزِّعُ يقرّر البيعَ بقاعدة «سبب الحضور» نفسِها** (`canCompleteComponentSale` على جلسة الفرع)");
 
+  // ══ ١٨. المحاسبُ: «شراء جزء» وحده (§4.go — قرارُ المالك ٢٠٢٦-١١-١٧) ══
+  console.log("\n── المحاسب: «شراء جزء» وحده ──");
+  check(/\(permissions\.canAddPatients \|\| \(patient\.isAmputee && canCompleteComponentSale\(branchSession\)\)\)/.test(detailsCode),
+    "١٨. **صفحةُ المريض تُظهر الموزِّعَ لمن يبيع بلا «إضافة مرضى»** — لمريض الأطراف وحده");
+  check(/saleOnly=\{!permissions\.canAddPatients\}/.test(detailsCode)
+      && /permissions\.canAddPatients && patient\.isPhysiotherapy && \(\s*<VisitModal/.test(detailsCode),
+    "١٨.أ **وبوضع «البيع وحده»**، وزيارةُ العلاج الطبيعي باقيةٌ لـ«إضافة مرضى» وحده");
+  check(/const routingSections = saleOnly \? \[\] : receptionRoutingGroups/.test(launcherCode)
+      && /\{saleOnly \? \(\s*partSaleOption &&/.test(launcherCode) && /onClick=\{\(\) => choose\(partSaleOption\)\}/.test(launcherCode),
+    "١٨.ب **والموزِّعُ في هذا الوضع زرٌّ واحد** يفتح الخيارَ نفسَه — بلا «سبب الحضور» ولا «إضافة خدمة جديدة»");
+
+  // ══ ١٩. «يحتاج تركيباً عند الخبير» — للجاهز وحده (§4.go) ══
+  const NOEX = code(read("NoExamOperationDialog.tsx"));
+  check(/const saleReadyMade = saleAllReady && !expertInstall;/.test(NOEX)
+      && /\{saleAllReady && \(/.test(NOEX) && /data-testid="no-exam-op-expert-install"/.test(NOEX),
+    "١٩. **المربّعُ للأجزاء الجاهزة وحدها**، والتأشيرُ يُظهر الخبيرَ (لا جاهز)");
+  check(/expertUserId: Number\(expertId\), \.\.\.\(saleAllReady \? \{ expertInstall: true \} : \{\}\)/.test(NOEX),
+    "١٩.أ **ويُرسَل `expertInstall` مع الخبير** للجاهز المؤشَّر وحده");
+
   console.log(failures === 0 ? "\n✅ all service-launcher cases pass" : `\n❌ ${failures} case(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
 }

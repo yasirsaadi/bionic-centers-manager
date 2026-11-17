@@ -73,7 +73,7 @@ import {
 import { useDeviceEpisodes, describeEpisode } from "./DeviceEpisodeSelect";
 import { RequestedPartsPicker } from "@/components/intake/RequestedPartsPicker";
 import { SaleLinesEditor, saleLinesPayload, saleLinesPreview, saleUnitsOf, type SaleLineInputs } from "@/components/sale/SaleLinesEditor";
-import { partsNeedExpert, READY_PARTS_HINT, READY_SALE_SUCCESS_MESSAGE } from "@shared/part_sale";
+import { partsNeedExpert, READY_PARTS_HINT, READY_SALE_SUCCESS_MESSAGE, EXPERT_INSTALL_LABEL } from "@shared/part_sale";
 import type { RequestedItem } from "@shared/prosthetic_parts";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { useBranchSession } from "@/components/BranchGate";
@@ -171,6 +171,8 @@ export function NoExamOperationDialog({
   //  **أجزاءٌ عدّة في بيعٍ واحد، وسعرٌ لكلٍّ منها** (§4.cu) — والأوّلُ هو «ما طُلب» كما كان.
   const [saleParts, setSaleParts] = useState<string[]>([]);
   const [lineInputs, setLineInputs] = useState<SaleLineInputs>({});
+  /** **«يحتاج تركيباً عند الخبير»** (§4.go) — غيرُ مؤشَّرٍ افتراضاً، ويُعرض للأجزاء الجاهزة وحدها. */
+  const [expertInstall, setExpertInstall] = useState(false);
   const requestedItem = saleParts[0] ?? "";
   const [component, setComponent] = useState<string>("");
   const [expertId, setExpertId] = useState<string>("");
@@ -248,6 +250,7 @@ export function NoExamOperationDialog({
   //  فلا يُورَّث قرارُ عمليةٍ سابقة إلى عمليةٍ جديدة.
   useEffect(() => {
     setUnderWarranty(false);
+    setExpertInstall(false);
     setMaintenanceMode("maintenance");
     setSimilarRows(null);
     setSimilarAck(false);
@@ -348,7 +351,9 @@ export function NoExamOperationDialog({
   const saleUnits = saleUnitsOf(saleParts as RequestedItem[], "prosthetic");
   const linesTotals = saleByLines ? saleLinesPreview(saleUnits, lineInputs) : null;
   //  **جاهزٌ بلا خبير**: لا قالبَ ولا غلافَ إسفنجيّ بين الأجزاء — والإلحاقُ بطرفٍ قيد التصنيع يبقى عند خبيره.
-  const saleReadyMade = saleByLines && !attaching && saleParts.length > 0 && !partsNeedExpert(saleParts);
+  const saleAllReady = saleByLines && !attaching && saleParts.length > 0 && !partsNeedExpert(saleParts);
+  //  **والموظّفُ يطلب له خبيراً** (§4.go): «يحتاج تركيباً عند الخبير» يجعله أمرَ عملٍ بخبيره كالقالب.
+  const saleReadyMade = saleAllReady && !expertInstall;
   const expertShown = !attaching && !saleReadyMade;
   const offer = warrantyOn || followupOn
     ? deriveMaintenanceTerms({ originalPrice: null, discountAmount: 0, underWarranty: true })
@@ -421,7 +426,7 @@ export function NoExamOperationDialog({
           : {
             components: saleParts, lines: saleLinesPayload(saleUnits, lineInputs),
             ...(attaching ? { attachToDeviceEpisodeId: resolvedAttachEpisodeId }
-              : saleReadyMade ? {} : { expertUserId: Number(expertId) }),
+              : saleReadyMade ? {} : { expertUserId: Number(expertId), ...(saleAllReady ? { expertInstall: true } : {}) }),
           }),
         //  **والاستئنافُ بسعره الواحد كما كان** — طلبٌ موروثٌ بجزءٍ واحد.
         ...(existingEpisodeId ? { originalPrice, discountAmount } : {}),
@@ -662,8 +667,21 @@ export function NoExamOperationDialog({
                 {saleParts.length > 0 && !attaching && (
                   <p className={`text-xs font-medium ${saleReadyMade ? "text-emerald-700" : "text-amber-700"}`}
                     data-testid="no-exam-op-route">
-                    {saleReadyMade ? "جاهز — يُسلَّم اليوم بلا خبيرٍ ولا أمر تصنيع" : "يُصنع عند الخبير — أمرُ تصنيعٍ واحد للأجزاء كلّها"}
+                    {saleReadyMade ? "جاهز — يُسلَّم اليوم بلا خبيرٍ ولا أمر تصنيع"
+                      : saleAllReady ? "يُركَّب عند الخبير — أمرُ عملٍ واحد للأجزاء كلّها"
+                      : "يُصنع عند الخبير — أمرُ تصنيعٍ واحد للأجزاء كلّها"}
                   </p>
+                )}
+                {/*  **«يحتاج تركيباً عند الخبير»** (§4.go) — للجاهز وحده؛ والقالبُ والغلافُ الإسفنجيّ بخبيرٍ إلزاميّ بلا مربّع. */}
+                {saleAllReady && (
+                  <div className="flex items-start gap-2 rounded-md border px-3 py-2">
+                    <Checkbox id="no-exam-op-expert-install-box" checked={expertInstall}
+                      onCheckedChange={(v) => setExpertInstall(!!v)}
+                      data-testid="no-exam-op-expert-install" />
+                    <Label htmlFor="no-exam-op-expert-install-box" className="cursor-pointer text-sm font-normal leading-5">
+                      <b>{EXPERT_INSTALL_LABEL}</b> — أشّره حين يُركَّب الجزءُ أو يُضبط على الطرف، فتختار خبيرَ الفرع ويصله أمرُ عمل
+                    </Label>
+                  </div>
                 )}
               </div>
             )

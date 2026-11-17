@@ -361,6 +361,27 @@ async function main() {
     } catch (e: any) { guardMsg = String(e?.message ?? ""); }
     same("و.٢ **والبيعُ الجاهزُ يردّ القالبَ تحت القفل** ولو ناداه مُستدعٍ مباشرةً",
       [opened2, /قالبٌ أو غلافٌ إسفنجيّ/.test(guardMsg)], [true, true]);
+
+    //  ══ ز. «يحتاج تركيباً عند الخبير» (§4.go — قرارُ المالك ٢٠٢٦-١١-١٧) ══
+    console.log("\n── ز. «يحتاج تركيباً عند الخبير» ──");
+    const z = await patient("زيد");
+    const nz = await epCount(z);
+    const zNoExpert = await sell(z, { components: ["knee"], expertInstall: true,
+      lines: [{ item: "knee", originalPrice: 900_000, discountAmount: 0 }], paidNow: 0 });
+    same("ز.١ **المؤشَّرُ بلا خبير يُردّ — ولا يُكتب شيء**",
+      [zNoExpert.status, /اختر الخبير/.test(zNoExpert.json?.error ?? ""), (await epCount(z)) - nz], [400, true, 0]);
+    const zr = await sell(z, { components: ["knee", "foot"], expertInstall: true, expertUserId: EXPERT,
+      lines: [{ item: "knee", originalPrice: 900_000, discountAmount: 0 }, { item: "foot", originalPrice: 400_000, discountAmount: 0 }], paidNow: 300_000 });
+    const zEp = Number(zr.json?.deviceEpisodeId) || 0;
+    const zRow = await ep(zEp);
+    const zOrd = (await q(`SELECT expert_user_id FROM prosthetic_work_orders WHERE device_episode_id = $1`, [zEp])).rows;
+    same("ز.٢ **ركبةٌ وقدمٌ مؤشَّرتان: أمرُ عملٍ واحد عند الخبير** — لا تسليمَ جاهز، والمالُ كما في البيع",
+      [zr.status, zr.json?.ready, zRow?.status, zRow?.ready, zOrd.length, Number(zOrd[0]?.expert_user_id), Number(zRow?.agreed_cost), await money(z, zEp)],
+      [201, false, "in_manufacturing", false, 1, EXPERT, 1_300_000, [1_300_000, 300_000, 1_300_000]]);
+    const zPlain = await sell(z, { components: ["tube"], expertUserId: EXPERT,
+      lines: [{ item: "tube", originalPrice: 100_000, discountAmount: 0 }], paidNow: 0 });
+    same("ز.٣ **وبلا تأشير يبقى الجاهزُ جاهزاً** — والخبيرُ المُرسَل لا يُقرأ",
+      [zPlain.status, zPlain.json?.ready, await orders(Number(zPlain.json?.deviceEpisodeId) || 0)], [201, true, 0]);
   } finally {
     httpServer.close();
     await cleanup();

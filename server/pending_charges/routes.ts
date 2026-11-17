@@ -405,7 +405,9 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
       //  (`storage.ts: loadInManufacturingDeviceOperationTx`). **وأجزاءٌ جاهزةٌ كلُّها** (لا قالبَ ولا غلافَ إسفنجيّ) تُسلَّم
       //  اليوم بلا أمر — فلا يُسأل عن خبير ولا يُقرأ ما وصل. والاستئنافُ يُحسم في المخزن تحت القفل (أجزاؤه من الحلقة).
       let expertUserId: number | null = Number(req.body?.expertUserId);
-      const expertNeeded = hasExisting ? null : partsNeedExpert(parts);
+      //  **«يحتاج تركيباً عند الخبير»** (§4.go) — لبيعٍ جديد وحده: الجاهزُ يصير أمرَ عملٍ بخبيره. والاستئنافُ والإلحاقُ لا يقرآنه.
+      const expertInstall = req.body?.expertInstall === true && !hasExisting && !hasAttach;
+      const expertNeeded = hasExisting ? null : (partsNeedExpert(parts) || expertInstall);
       if (hasAttach || expertNeeded === false) {
         expertUserId = null;
       } else if (expertNeeded === null && !(Number.isInteger(expertUserId) && expertUserId > 0)) {
@@ -458,7 +460,7 @@ export function registerPendingChargeRoutes(app: Express, isAuthenticated: any) 
         patientId, branchId: opBranchId, expertUserId,
         originalPrice: offer.originalPrice!, priceKind: offer.kind!,
         finalPrice: offer.finalPrice!, paidNow: paidNowResult.amount,
-        note, actor: actorOf(req), component, extraComponents, lines,
+        note, actor: actorOf(req), component, extraComponents, lines, expertInstall,
         existingEpisodeId, attachToDeviceEpisodeId,
         submissionToken,
       });

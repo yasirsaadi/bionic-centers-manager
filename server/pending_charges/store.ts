@@ -407,6 +407,11 @@ export async function createComponentSaleOperation(params: {
   expertUserId: number | null;
   /** **بقيّةُ الأجزاء** بعد `component` (ترحيل ١١٦، §4.ct) — بترتيب الورقة. وغيابُها جزءٌ واحد كما كان. */
   extraComponents?: ProstheticComponent[] | null;
+  /**
+   * **«يحتاج تركيباً عند الخبير»** (§4.go): أجزاءٌ جاهزة كلُّها ويريد الموظّفُ لها خبيراً ⟵ أمرُ عملٍ كالقالب. ولا يغيّر شيئاً
+   * حين يُصنع شيءٌ عند الخبير أصلاً، ولا في الاستئناف ولا الإلحاق.
+   */
+  expertInstall?: boolean;
   /** **سعرٌ لكلّ جزء** (§4.cu) — مُتحقَّقٌ سلفاً بـ`parseSaleLines`، ومجموعُها `originalPrice`/`finalPrice` أدناه. */
   lines?: SaleLine[] | null;
   /** ثلاثتُها مُشتقّةٌ سلفاً بـ`deriveComponentSaleOffer` — لا حسابَ هنا. */
@@ -615,7 +620,8 @@ export async function createComponentSaleOperation(params: {
 
     const label = requestedItemLabel(component, "prosthetic", extras);
     //  ══ **أيُصنع شيءٌ عند الخبير؟** (§4.cu) — من الحلقة نفسِها لا من الطلب: قالبٌ أو غلافٌ إسفنجيّ ⟵ أمرٌ عنده؛ وإلّا جاهز. ══
-    const ready = !needsExpertOrder("prosthetic", component, extras);
+    const ready = !needsExpertOrder("prosthetic", component, extras)
+      && !(params.expertInstall === true && params.existingEpisodeId == null && params.attachToDeviceEpisodeId == null);
     let workOrderId: number | null = null;
     let basis: Awaited<ReturnType<typeof store.startReadyPartSaleTx>> | Awaited<ReturnType<typeof store.startDeviceSaleOperationallyTx>>;
     if (ready) {
@@ -626,7 +632,9 @@ export async function createComponentSaleOperation(params: {
       });
     } else {
       if (params.expertUserId === null || !Number.isInteger(params.expertUserId) || params.expertUserId <= 0) {
-        throw new ChargeError("اختر الخبير — في الطلب قالبٌ أو غلافٌ إسفنجيّ يُصنع عنده", 400);
+        throw new ChargeError(params.expertInstall === true
+          ? "اختر الخبير — أشّرتَ «يحتاج تركيباً عند الخبير»"
+          : "اختر الخبير — في الطلب قالبٌ أو غلافٌ إسفنجيّ يُصنع عنده", 400);
       }
       //  ══ **الخبيرُ يُعاد التحقّق منه تحت القفل — بفرع العملية الفعليّ** —
       //  لا لقطةَ فحصِ النقطة ولا `params.branchId`. ══════════════════════════

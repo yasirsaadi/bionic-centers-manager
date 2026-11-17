@@ -8,6 +8,7 @@ import { compressImageForUpload } from "@/lib/compress_image";
 import { usePatient, useUploadDocument, useDeleteVisit, useDeletePayment, useDeleteDocument, useUpdateVisit } from "@/hooks/use-patients";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { useBranchSession } from "@/components/BranchGate";
+import { canCompleteComponentSale } from "@shared/component_sale";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DeletePatientDialog } from "@/components/DeletePatientDialog";
 import { PatientBranchAccessDialog, usePatientBranchAccess }
@@ -1374,16 +1375,18 @@ export default function PatientDetails() {
                   الموزِّع باسمه الذي يعرفه الموظّف («أطراف صناعية»…) بدل
                   مصطلحٍ داخليّ لا يميّزه أحد عن «خدمة جديدة».
                   والبوّابة كما كانت: `canAddPatients` بلا توسيع. */}
-              {permissions.canAddPatients && (
+              {/*  **ومَن يبيع بلا «إضافة مرضى»** (المحاسب — §4.go) يرى «شراء جزء» وحده لمريض الأطراف. */}
+              {(permissions.canAddPatients || (patient.isAmputee && canCompleteComponentSale(branchSession))) && (
               <div className="flex justify-end gap-2 mb-4 flex-wrap">
                 {/*  **جلساتُ العلاج الطبيعي وحدها** (فصلُ الزرّين ٢٠٢٦-٠٩-٣٠) — والأجهزةُ بابُها «ما سبب حضور المريض اليوم؟». */}
-                {patient.isPhysiotherapy && (
+                {permissions.canAddPatients && patient.isPhysiotherapy && (
                   <VisitModal patientId={patient.id} branchId={patient.branchId} isPhysiotherapy={!!patient.isPhysiotherapy} isAmputee={!!patient.isAmputee} isMedicalSupport={!!patient.isMedicalSupport} />
                 )}
                 <PatientServiceLauncher
                   patient={patient}
                   routingOpen={routingOpen}
                   onRoutingOpenChange={setRoutingOpen}
+                  saleOnly={!permissions.canAddPatients}
                 />
               </div>
               )}
