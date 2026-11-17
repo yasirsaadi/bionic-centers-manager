@@ -66,16 +66,18 @@ export function DailyGreeting() {
   const g = q.data;
   //  **مؤثّرُ الطقس مع التحيّة** (§4.fw): طقسُ مدينة الفرع من شريحتها (الاستعلامُ نفسُه — لا طلبَ جديد)، ممطرٌ أو مغبرٌّ فعلاً ⟵ سطرٌ في التحيّة
   //  ومعه سبعُ ثوانٍ من القطرات أو الغبار. والمسؤولُ يطفئه للجميع (`weatherFx: false`).
-  const { weather, settled: weatherSettled, geoReady } = useBranchWeatherState();
+  const { weather, settled: weatherSettled, geoReady, weatherKey } = useBranchWeatherState();
   //  **«حسناً» تنتظر أوّلَ جوابٍ للطقس** (مراجعةُ Codex): التحيّةُ والطقسُ يُطلبان معاً، فـ«حسناً» قبل وصول الطقس كانت تُغلق التحيّةَ
   //  ويضيع مطرُ اليوم. وحدُّ الانتظار ٤ ثوانٍ — طقسٌ بطيءٌ أو معطّل لا يحبس الموظّف.
   const [weatherWaitOver, setWeatherWaitOver] = useState(false);
+  //  موقعٌ وصل متأخّراً فبدّل الطلب (مراجعة Codex): المهلةُ تُعاد للجواب الجديد، فلا تُغلَق التحيّةُ قبل مطر المكان الصحيح.
+  useEffect(() => { setWeatherWaitOver(false); }, [weatherKey]);
   useEffect(() => {
     //  المهلةُ تبدأ حين يبدأ طلبُ الطقس — بعد جواب الموقع أو مهلته (§4.gl) — لا عند التركيب، وإلّا انتهت معاً قبل أن يجيب.
     if (weatherSettled || !geoReady) return;
     const t = setTimeout(() => setWeatherWaitOver(true), 4000);
     return () => clearTimeout(t);
-  }, [weatherSettled, geoReady]);
+  }, [weatherSettled, geoReady, weatherKey]);
   const waitingForWeather = !weatherSettled && !weatherWaitOver;
   const fx: WeatherFx | null = g && g.show && g.kind === "greeting" && g.weatherFx !== false ? weatherFxFor(weather?.kind) : null;
   const [playing, setPlaying] = useState<WeatherFx | null>(null);

@@ -519,8 +519,13 @@ async function main() {
       && /roundDeviceCoord\(p\.coords\.latitude\)/.test(cw) && /PERMISSION_DENIED/.test(cw) && /GEO_WAIT_MS = 4000/.test(cw),
     "ش.٣ب **مكانُ الجهاز** (§4.gl): يُقرَّب قبل أن يُرسل، والرفضُ ⟵ الفرع، ولا انتظارَ أكثرَ من أربع ثوانٍ قبل طقس الفرع");
   const greet = read("client/src/components/DailyGreeting.tsx");
-  check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady\]/.test(greet) && /geoReady: ready/.test(cw),
+  check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet) && /geoReady: ready/.test(cw),
     "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");
+  check(/setInterval\(\(\) => \{ if \(document\.visibilityState === "visible"\) ask\(\); \}, GEO_REFRESH_MS\)/.test(cw),
+    "ش.٣و **والجهازُ المفتوح دائماً يُسأل عن مكانه كلَّ نصف ساعة** (مراجعة Codex) — لا عند العودة إلى الصفحة وحدها");
+  check(/useEffect\(\(\) => \{ setWeatherWaitOver\(false\); \}, \[weatherKey\]\);/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet)
+      && /weatherKey: `\$\{session\?\.branchId/.test(cw),
+    "ش.٣ز **وموقعٌ متأخّر يبدّل الطلبَ يعيد مهلةَ «حسناً»** (مراجعة Codex) — فلا تُغلَق التحيّةُ قبل جواب المكان الصحيح");
   check(/useSyncExternalStore\(geo\.subscribe/.test(cw), "ش.٣ج **ومخزنٌ واحد للموقع** — الشريحتان وسطرُ الهاتف والتحيّةُ يطلبونه مرّةً");
   check(cw.includes("GEO_CREDIT") && cw.includes("https://www.openstreetmap.org/copyright") && /sidebar-weather-from-device/.test(cw),
     "ش.٣د **واسمُ المكان بمصدره** (© OpenStreetMap) و«حسب موقع جهازك» في التفصيل");
