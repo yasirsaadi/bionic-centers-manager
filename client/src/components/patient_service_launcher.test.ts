@@ -20,7 +20,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   launcherOptions, resumableNoExamSales, inManufacturingFullDeviceEpisodes,
-  FLOW_ENDPOINTS, GROUP_LABELS, nextSubmissionToken, mintSubmissionToken,
+  FLOW_ENDPOINTS, GROUP_LABELS, nextSubmissionToken, mintSubmissionToken, OPENS_PHYSIO_DESCRIPTION,
   type LauncherOption,
 } from "./patient_service_launcher_logic";
 import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
@@ -634,6 +634,21 @@ function main() {
     "برسالته الصريحة");
   check(!/serviceType === "consultation" && !patient/.test(srv),
     "ولم تُمَسّ الاستشارة و«خدمة أخرى» بشرطٍ جديد");
+
+  // ══ ١٤. «خدمة أخرى» و«استشارة» تقولان إنهما تفتحان العلاجَ الطبيعيّ (§4.gm — واقعةُ حامد علي صالح) ══
+  console.log("\n── «خدمة أخرى» لمريضٍ بلا علاجٍ طبيعيّ ──");
+  const descOf = (flags: any, id: string) => launcherOptions(flags).find((o) => o.id === id)?.description;
+  check(descOf({ isAmputee: true }, "other") === OPENS_PHYSIO_DESCRIPTION && descOf({ isAmputee: true }, "consultation") === OPENS_PHYSIO_DESCRIPTION,
+    "١٤. **لمريض أطرافٍ بلا علاجٍ طبيعيّ يقول السطرُ إنّهما تفتحان قسمَه وتُرسلانه لمعاينته**");
+  check(descOf({ isAmputee: true, isPhysiotherapy: true }, "other") === "خدمة لا مسار خاصّ لها"
+      && descOf({ isPhysiotherapy: true }, "consultation") === "تسجيل استشارة على ملف المريض",
+    "ولصاحب العلاج الطبيعيّ يبقى السطرُ كما كان");
+  check(/opensPhysioCase=\{newServiceOpensPhysio\}/.test(launcherCode) && /const newServiceOpensPhysio = !patient\.isPhysiotherapy;/.test(launcherCode)
+      && /onUseDeviceRouting=\{hasRouting \? changeReceptionRoutingReason : undefined\}/.test(launcherCode),
+    "١٥. **والموزِّعُ يقول للنافذة إنّ الحفظ يفتح القسم**، ويعطيها بابَ «سبب الحضور» لصاحب قسم جهاز");
+  check(/\{opensPhysioCase && \(/.test(newServiceCode) && /data-testid="new-service-opens-physio"/.test(newServiceCode)
+      && /onClick=\{onUseDeviceRouting\}/.test(newServiceCode),
+    "١٦. **والنافذةُ تقوله بالأحمر قبل الحفظ** مع زرّ «الذهاب إلى «سبب الحضور»»");
 
   console.log(failures === 0 ? "\n✅ all service-launcher cases pass" : `\n❌ ${failures} case(s) failed`);
   process.exit(failures === 0 ? 0 : 1);

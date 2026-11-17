@@ -155,6 +155,9 @@ export function PatientServiceLauncher({
   const [moldReturnFor, setMoldReturnFor] = useState<MoldOrder | null>(null);
 
   const options = launcherOptions(patient);
+  //  **تنبيهٌ لا وضع** (§4.gm): «استشارة» و«خدمة أخرى» لمريضٍ بلا علاجٍ طبيعيّ تفتحان قسمَه — فتقوله النافذةُ بالأحمر قبل الحفظ.
+  //  ووضعُ الجلسات في النافذة يبقى من نوع الخدمة وحده (حارسُ «لا علمَ يقرّر وضعاً» في `test:service-launcher`).
+  const newServiceOpensPhysio = !patient.isPhysiotherapy;
 
   /** فتحُ مسارٍ — من القائمة الكاملة أو من مُوجِّه «سبب الحضور»، سيّان. */
   function chooseFlow(newFlow: ServiceFlow) {
@@ -399,6 +402,8 @@ export function PatientServiceLauncher({
           onOpenChange={closeFlow}
           initialServiceType={flow.serviceType}
           hideTrigger
+          opensPhysioCase={newServiceOpensPhysio}
+          onUseDeviceRouting={hasRouting ? changeReceptionRoutingReason : undefined}
         />
       )}
 

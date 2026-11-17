@@ -56,6 +56,12 @@ interface NewServiceModalProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   initialServiceType?: string;
+  /**
+   * **المريضُ بلا قسم علاجٍ طبيعيّ** (§4.gm): الحفظُ يفتحه له ويدخله «معايناتي» — فيُقال ذلك بالأحمر قبل الحفظ.
+   * و`onUseDeviceRouting` (لصاحب قسم أطرافٍ أو مساند) يعيده إلى «سبب الحضور» حيث شراءُ الجزء والصيانة.
+   */
+  opensPhysioCase?: boolean;
+  onUseDeviceRouting?: () => void;
   hideTrigger?: boolean;
 }
 
@@ -91,7 +97,7 @@ const TREATMENT_PRICES = PHYSIO_TREATMENT_PRICES;
 
 export function NewServiceModal({
   patientId, branchId, currentTotalCost,
-  open: openProp, onOpenChange, initialServiceType, hideTrigger,
+  open: openProp, onOpenChange, initialServiceType, hideTrigger, opensPhysioCase, onUseDeviceRouting,
 }: NewServiceModalProps) {
   const [openSelf, setOpenSelf] = useState(false);
   const controlled = openProp !== undefined;
@@ -370,6 +376,21 @@ export function NewServiceModal({
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 mt-4">
+            {opensPhysioCase && (
+              <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 space-y-2" data-testid="new-service-opens-physio">
+                <p className="font-bold">هذا المريض ليس لديه قسم علاج طبيعي.</p>
+                <p>الحفظ هنا يفتح له قسمَ علاجٍ طبيعيّ جديداً، ويُدخله «معايناتي» لمعاينة العلاج الطبيعي، ويُسجَّل المبلغ في العلاج الطبيعي.</p>
+                {onUseDeviceRouting && (
+                  <>
+                    <p>إن كان الطلبُ قطعةً لطرفٍ صناعيّ أو مسند (سليكون، قدم، ركبة…) أو صيانةً، فبابُه «سبب الحضور».</p>
+                    <Button type="button" variant="outline" size="sm" className="border-red-300 text-red-800 hover:bg-red-100"
+                      onClick={onUseDeviceRouting} data-testid="new-service-use-device-routing">
+                      الذهاب إلى «سبب الحضور»
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
             {/* ── النوع الموجَّه **مقفل** ────────────────────────────────
                 الموزِّع طبّق شروط الأهلية قبل الفتح: «جلسات علاج إضافية»
                 معطَّلة لمريضٍ بلا علاج طبيعي مثلاً. وقائمةٌ قابلة للتغيير
