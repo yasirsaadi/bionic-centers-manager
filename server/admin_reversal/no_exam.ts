@@ -29,6 +29,7 @@ import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { markEpisodeAdministrativelyVoid } from "../device_episodes/store";
 import { voidOrderAdministratively } from "../manufacturing/store";
 import { recordRefundPaymentTx } from "../accounting/refund_payment";
+import { capRefundableByCase } from "./refundable";
 import { CLOSURE_PAYMENT_TAG } from "@shared/case_closure";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
 import {
@@ -90,6 +91,21 @@ const num = (v: unknown): number | null =>
  * ولا بيعَ جزء. `h` معاملةٌ أو القاعدة، و`lock` يقفل صفَّ الأمر.
  */
 export async function resolveNoExamOrder(h: any, orderId: number, lock = false): Promise<NoExamOrder | null> {
+  return await withRefundableCap(h, await resolveNoExamOrderRaw(h, orderId, lock));
+}
+
+/**
+ * **المردودُ لا يتجاوز ما بقي عند المركز على الحالة** (`capRefundableByCase` — واقعةُ فاطمة حميد شاكر، §4.gp):
+ * «طلبُ استرجاع» سابقٌ على الحالة بلا حلقة يُنقص مقبوضَ العملية، فلا يُردّ المبلغُ نفسُه مرّتين.
+ */
+async function withRefundableCap(h: any, op: NoExamOrder | null): Promise<NoExamOrder | null> {
+  if (!op || op.paid <= 0) return op;
+  const caseId = op.payment?.caseId ?? op.caseId;
+  const episodeId = op.payment?.episodeId ?? op.ownEpisodeId;
+  return { ...op, paid: await capRefundableByCase(h, { patientId: op.patientId, caseId, episodeId, paid: op.paid }) };
+}
+
+async function resolveNoExamOrderRaw(h: any, orderId: number, lock: boolean): Promise<NoExamOrder | null> {
   const r = await h.execute(sql`
     SELECT wo.id, wo.patient_id, wo.branch_id, wo.service_type, wo.purpose, wo.status,
            wo.current_stage, wo.started_at, wo.admin_void_reversal_id, wo.device_episode_id,
@@ -205,7 +221,7 @@ export async function resolveReadySale(h: any, episodeId: number, lock = false):
         WHERE patient_id = ${patientId} AND device_episode_id = ${episodeId}) AS paid
   `);
   const mm = (m.rows ?? [])[0] as any;
-  return {
+  return await withRefundableCap(h, {
     kind: "ready_sale", orderId: null, patientId, patientName: row.patient_name ?? null,
     branchId: num(row.branch_id), serviceType: String(row.case_type), orderStatus: String(row.status),
     orderStage: null, orderStartedAt: null,
@@ -214,7 +230,7 @@ export async function resolveReadySale(h: any, episodeId: number, lock = false):
     itemLabel: requestedItemLabel(row.requested_item, row.case_type, row.extra_components),
     cost: Math.max(0, Number(mm?.cost ?? 0)), costUnknown: false,
     paid: Math.max(0, Number(mm?.paid ?? 0)), payment: null,
-  };
+  });
 }
 
 /** **أمرُ تصنيعِ جهازٍ بلا متابعة** (البند ٣٢) — مالُه من حلقته، أو من قيود معاملته إن لم تكن له حلقة. */

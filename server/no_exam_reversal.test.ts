@@ -112,6 +112,7 @@ async function cleanup() {
   await q(`DELETE FROM journal_lines WHERE entry_id IN (
              SELECT id FROM journal_entries WHERE created_by = ANY(ARRAY[${USERS.join(",")}]))`);
   await q(`DELETE FROM journal_entries WHERE created_by = ANY(ARRAY[${USERS.join(",")}])`);
+  await q(`DELETE FROM patient_refund_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
@@ -337,6 +338,25 @@ async function main() {
       [okG.status, (await snap(pG)).ledger, (await snap(pG)).total, beforeG.ledger,
         (await q(`SELECT admin_void_reversal_id FROM patient_device_episodes WHERE id=$1`, [epG.id]))[0].admin_void_reversal_id],
       [200, 400000, 400000, 400000, null]);
+
+    //  ══ واقعةُ فاطمة حميد شاكر (كربلاء، §4.gp): «طلبُ استرجاع» على الحالة ثمّ إلغاءُ بيع الجزء — لا يُردّ المبلغُ مرّتين ══
+    console.log("\n── ح. استرجاعٌ سابقٌ على الحالة ثمّ إلغاءُ بيع الجزء ──");
+    const pH = await mkPatient("ح");
+    const sH = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(),
+      patientId: pH, component: "socket", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 100000,
+    });
+    check(sH.status === 201, "ح١. (الإعداد) بيعُ الجزء بمقبوضٍ ١٠٠,٠٠٠", JSON.stringify(sH.body));
+    const [cH] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pH]);
+    const rfH = await http("POST", "/api/patient-refunds", S.admin, {
+      patientId: pH, caseId: cH.id, amount: 100000, reason: "overpaid", detail: "استرجاع قبل الإلغاء" });
+    check(rfH.status === 201, "ح٢. (الإعداد) استرجاعُ المقبوض كاملاً اعتُمد", JSON.stringify(rfH.body));
+    const woH = Number(sH.body?.workOrderId);
+    const pvH = await preview(woH);
+    same("ح٣. **المعاينةُ لا ترى مقبوضاً يُردّ** بعد الاسترجاع", [pvH.status, pvH.body?.paidAmount], [200, 0]);
+    const okH = await execute(woH, pvH.body?.stateStamp);
+    check(okH.status === 200, "ح٤. **بيعُ الجزء يُلغى بلا سؤال ردّ**", JSON.stringify(okH.body));
+    same("ح٥. **ولا ردَّ ثانياً**: الدفعةُ واسترجاعُها وحدهما",
+      (await q(`SELECT amount::int AS a FROM payments WHERE patient_id=$1 ORDER BY id`, [pH])).map((r: any) => r.a), [100000, -100000]);
   } finally {
     await cleanup();
     await q(`UPDATE system_users SET is_active = false WHERE id = ANY($1::int[])`, [USERS]);
