@@ -215,6 +215,7 @@ async function cleanup() {
     `DELETE FROM journal_entries WHERE id IN
        (SELECT entry_id FROM journal_lines WHERE patient_id IN (${ids}))`,
     `DELETE FROM journal_lines WHERE patient_id IN (${ids})`,
+    `DELETE FROM patient_refund_requests WHERE patient_id IN (${ids})`,
     `DELETE FROM payments WHERE patient_id IN (${ids})`,
     `DELETE FROM cost_entries WHERE patient_id IN (${ids})`,
     `DELETE FROM visits WHERE patient_id IN (${ids})`,
@@ -558,6 +559,38 @@ async function main() {
       same("٤٩. **وصفُّ ردٍّ واحدٌ بالضبط — لا يُردّ المالُ مرّتين**",
         (await paymentsOf(d.patientId)).filter((x: any) => Number(x.amount) < 0).length, 1);
       same("٥٠. **والصافي صفرٌ لا سالب**", await netPaid(d.episodeId), 0);
+    }
+
+    // ══ ك) **«طلبُ استرجاع» سابقٌ ثمّ إلغاءُ العملية ⟶ لا يُردّ المبلغُ مرّتين** (واقعةُ فاطمة حميد شاكر — كربلاء، §4.gp) ══
+    //  دفعةُ «طلب الاسترجاع» على الحالة بلا حلقة، فكان مقبوضُ الحلقة يبقى كاملاً ويُردّ ثانيةً عند الإلغاء.
+    console.log("\n── ك) استرجاعٌ سابقٌ على الحالة ثمّ الإلغاء ──");
+    const refundFirst = (d: { patientId: number; caseId: number }, amount: number, extra: any = {}) =>
+      http("POST", "/api/patient-refunds", S.admin, {
+        patientId: d.patientId, caseId: d.caseId, amount, reason: "overpaid", detail: "استرجاع قبل الإلغاء", ...extra });
+    {
+      const d = await soldOperation("ك١", 1_000_000);
+      await pay(d, 300_000);
+      const rf = await refundFirst(d, 300_000);
+      same("٥١. (الإعدادُ: الاسترجاعُ الكامل اعتُمد)", rf.status, 201);
+      const pv = await preview(d.followupId);
+      same("٥٢. **المعاينةُ المسبقة لا ترى مالاً عند المركز** بعد استرجاعه", pv.body?.paidAmount, 0);
+      const r = await executeFull(d.followupId);
+      same("٥٣. **والإلغاءُ يمضي بلا سؤال إرجاع** — لا شيءَ يُردّ", r.status, 200);
+      same("٥٤. **ولا صفَّ ردٍّ ثانٍ**: الدفعةُ ثمّ استرجاعُها وحده",
+        (await paymentsOf(d.patientId)).map((x: any) => Number(x.amount)), [300_000, -300_000]);
+    }
+    {
+      const d = await soldOperation("ك٢", 1_000_000);
+      await pay(d, 500_000);
+      same("٥٥. (الإعدادُ: استرجاعٌ جزئيّ مع تخفيض الكلفة)", (await refundFirst(d, 200_000, { reduceCost: true })).status, 201);
+      const pv = await preview(d.followupId);
+      same("٥٦. **المعاينةُ المسبقة ترى الباقي وحده**", pv.body?.paidAmount, 300_000);
+      const r = await executeFull(d.followupId, { refundAnswer: "yes" });
+      same("٥٧. **والإلغاءُ يردّ الباقي وحده**", [r.status, (await paymentsOf(d.patientId)).map((x: any) => Number(x.amount))],
+        [200, [500_000, -200_000, -300_000]]);
+      const [pt] = await q(`SELECT total_cost FROM patients WHERE id=$1`, [d.patientId]);
+      const [pc] = await q(`SELECT cost FROM patient_cases WHERE id=$1`, [d.caseId]);
+      same("٥٨. **والكلفةُ صفرٌ لا سالب** — تخفيضُ الاسترجاع ثمّ عكسُ الباقي", [Number(pt.total_cost), Number(pc.cost)], [0, 0]);
     }
   } finally {
     await cleanup();

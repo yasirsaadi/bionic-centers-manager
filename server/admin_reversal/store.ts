@@ -33,6 +33,7 @@ import {
 } from "../device_episodes/store";
 import { voidOrderAdministratively } from "../manufacturing/store";
 import { recordRefundPaymentTx } from "../accounting/refund_payment";
+import { capRefundableByCase } from "./refundable";
 import { CLOSURE_PAYMENT_TAG } from "@shared/case_closure";
 import {
   FULL_DEVICE, requestedItemLabel, requestedItemOptions,
@@ -145,7 +146,12 @@ export async function resolveOperation(
         SELECT COALESCE(SUM(amount), 0)::int AS paid FROM payments
          WHERE patient_id = ${patientId} AND device_episode_id = ${episodeId}
       `);
-  const paidAmount = Number((pay.rows ?? [])[0]?.paid ?? 0);
+  //  **ولا يتجاوز ما بقي عند المركز على حالتها** — استرجاعٌ سابقٌ على الحالة بلا حلقة يُنقصه (واقعةُ فاطمة حميد شاكر، §4.gp).
+  const paidAmount = await capRefundableByCase(h, {
+    patientId, episodeId,
+    caseId: row.case_id === null || row.case_id === undefined ? null : Number(row.case_id),
+    paid: Number((pay.rows ?? [])[0]?.paid ?? 0),
+  });
 
   // ══ **«صُحّحت» تعني العمليةَ القائمة، لا تاريخَ المتابعة** ═════════════
   //  التفرّدُ على المتابعة مدى الحياة كان يقفل البابَ إلى الأبد: «تراجع عن
@@ -807,9 +813,9 @@ export async function executeReversal(params: {
     //  بعده لكُتب الرقمُ كاذباً ثمّ صُحّح بتحديثٍ ثانٍ يقرأ بينهما مَن يقرأ.
     //
     //  **والمبلغُ هو `op.paidAmount`** — مجموعُ صفوف الدفعات على **هذه
-    //  الحلقة بعينها** مقروءاً تحت القفل (②)، وهو **صافٍ بطبيعته**: يشمل أيَّ
-    //  استردادٍ سابق (صفوفٌ سالبة)، فلا يُردّ المبلغُ مرّتين ولا يُردّ أكثرُ
-    //  ممّا عند المركز.
+    //  الحلقة بعينها** مقروءاً تحت القفل (②)، وهو **صافٍ**: يشمل ردَّ إلغاءٍ
+    //  سابق (مربوطٌ بالحلقة)، **ومحدودٌ بصافي الحالة** (`capRefundableByCase`)
+    //  فيشمل «طلبَ استرجاع» سابقاً بلا حلقة (§4.gp) — فلا يُردّ المبلغُ مرّتين.
     //
     //  **وما بعد الحارس لا يمرّ إلّا «نعم»** — فالسؤالُ إن طُرح فالردُّ واقع.
     //  و«لا» ارتدّت قبل هذا السطر بلا كتابةِ حرف، ولا فرعَ لها هنا.
