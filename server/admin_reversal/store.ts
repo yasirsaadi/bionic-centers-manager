@@ -115,7 +115,7 @@ export async function resolveOperation(
            f.device_episode_id, f.converted_work_order_id,
            p.name AS patient_name,
            e.status AS episode_status, e.agreed_cost, e.requested_item, e.service_path,
-           e.admin_void_reversal_id AS episode_void, e.sold_ready_at,
+           e.admin_void_reversal_id AS episode_void, e.sold_ready_at, e.case_id AS episode_case_id,
            wo.status AS order_status, wo.current_stage, wo.started_at, wo.completed_at,
            wo.admin_void_reversal_id AS order_void
       FROM post_exam_followups f
@@ -149,7 +149,9 @@ export async function resolveOperation(
   //  **ولا يتجاوز ما بقي عند المركز على حالتها** — استرجاعٌ سابقٌ على الحالة بلا حلقة يُنقصه (واقعةُ فاطمة حميد شاكر، §4.gp).
   const paidAmount = await capRefundableByCase(h, {
     patientId, episodeId,
-    caseId: row.case_id === null || row.case_id === undefined ? null : Number(row.case_id),
+    //  **وحالتُها `COALESCE(f.case_id, e.case_id)`** — متابعةٌ موروثةٌ بلا حالة تُعرَف حالتُها من حلقتها (مراجعةُ Codex على #743).
+    caseId: (row.case_id ?? row.episode_case_id) === null || (row.case_id ?? row.episode_case_id) === undefined
+      ? null : Number(row.case_id ?? row.episode_case_id),
     paid: Number((pay.rows ?? [])[0]?.paid ?? 0),
   });
 
@@ -718,7 +720,7 @@ export async function executeReversal(params: {
     const followupId = Number((lock.rows ?? [])[0].id);
 
     // ── ② القراءةُ تحت القفل — والختمُ يُقارَن ─────────────────────────
-    const op = await resolveOperation(tx, { followupId });
+    let op = await resolveOperation(tx, { followupId });
     if (!op) throw new ReversalError("العملية غير موجودة", 404);
 
     // ── ②-ب **الإذنُ يُعاد فحصُه تحت القفل** ───────────────────────────
@@ -732,6 +734,9 @@ export async function executeReversal(params: {
     const liveBranch = (br.rows ?? [])[0]?.branch_id ?? null;
     //  **وحُذف الملفُّ بين المعاينة والتنفيذ** ⟶ لا كتابةَ ولا نصفُ تصحيح.
     if ((br.rows ?? [])[0]?.deleted_at) throw new ReversalError(PATIENT_IN_TRASH_ERROR, 409);
+    //  **والمقبوضُ يُعاد قراءتُه بعد قفل المريض** (مراجعةُ Codex على #743): اعتمادُ «طلب استرجاع» يقفل المريضَ نفسَه، فما قُرئ
+    //  قبل القفل قد يسبق دفعتَه السالبة. وبعد القفل يرى كلُّ سطرٍ ما اعتُمد، والختمُ يقارن الجديدَ فيُردّ ٤٠٩ إن تغيّر.
+    op = (await resolveOperation(tx, { followupId })) ?? op;
     if (!params.authz.isAdmin) {
       if (!hasRole(params.authz, "branch_manager")) {
         throw new ReversalError(

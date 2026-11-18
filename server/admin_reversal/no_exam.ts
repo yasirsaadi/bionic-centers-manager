@@ -409,15 +409,18 @@ export async function executeNoExamReversal(params: {
 
   return await db.transaction(async (tx) => {
     // ① الأمرُ (أو حلقةُ البيع الجاهز) مقفولاً، ثمّ المريضُ مقفولاً — والإذنُ يُفحَص على صفّه الحيّ.
-    const op = typeof params.orderId === "number"
+    const resolveLocked = async () => typeof params.orderId === "number"
       ? await resolveNoExamOrder(tx, params.orderId, true)
       : typeof params.episodeId === "number" ? await resolveReadySale(tx, params.episodeId, true) : null;
+    let op = await resolveLocked();
     if (!op) throw new ReversalError("العملية غير موجودة", 404);
     const br = await tx.execute(sql`
       SELECT branch_id, deleted_at FROM patients WHERE id = ${op.patientId} FOR UPDATE
     `);
     const pRow = (br.rows ?? [])[0] as any;
     if (pRow?.deleted_at) throw new ReversalError(PATIENT_IN_TRASH_ERROR, 409);
+    //  **والمقبوضُ يُعاد قراءتُه بعد قفل المريض** (مراجعةُ Codex على #743) — اعتمادُ «طلب استرجاع» يقفله، والختمُ يقارن الجديد.
+    op = (await resolveLocked()) ?? op;
     const liveBranch = num(pRow?.branch_id);
     if (!params.authz.isAdmin) {
       if (!hasRole(params.authz, "branch_manager")) {
