@@ -357,6 +357,29 @@ async function main() {
     check(okH.status === 200, "ح٤. **بيعُ الجزء يُلغى بلا سؤال ردّ**", JSON.stringify(okH.body));
     same("ح٥. **ولا ردَّ ثانياً**: الدفعةُ واسترجاعُها وحدهما",
       (await q(`SELECT amount::int AS a FROM payments WHERE patient_id=$1 ORDER BY id`, [pH])).map((r: any) => r.a), [100000, -100000]);
+
+    //  مراجعةُ Codex على #743: اعتمادُ استرجاعٍ يقفل المريضَ ولم يُثبَّت بعد، والإلغاءُ ينتظر القفلَ ثمّ يقرأ المقبوضَ من جديد.
+    console.log("\n── ط. استرجاعٌ يُعتمد في اللحظة نفسِها ──");
+    const pI = await mkPatient("ط");
+    const sI = await http("POST", "/api/no-exam/device-sale", S.recv, { submissionToken: randomUUID(),
+      patientId: pI, component: "socket", expertUserId: EXPERT, originalPrice: 300000, discountAmount: 0, paidNow: 100000,
+    });
+    const woI = Number(sI.body?.workOrderId);
+    const [cI] = await q(`SELECT id FROM patient_cases WHERE patient_id=$1 AND case_type='prosthetic'`, [pI]);
+    const pvI = await preview(woI);
+    same("ط١. (الإعداد) المعاينةُ ترى ١٠٠,٠٠٠", pvI.body?.paidAmount, 100000);
+    const cl = await pool.connect();
+    await cl.query("BEGIN");
+    await cl.query("SELECT pg_advisory_xact_lock(919, $1)", [pI]);
+    await cl.query("SELECT id FROM patients WHERE id = $1 FOR UPDATE", [pI]);
+    await cl.query(`INSERT INTO payments (patient_id, branch_id, amount, case_id, notes) VALUES ($1,1,-100000,$2,'استرجاعٌ في اللحظة نفسِها')`, [pI, cI.id]);
+    const inflightI = execute(woI, pvI.body?.stateStamp, { refundAnswer: "yes" });
+    await new Promise((r) => setTimeout(r, 800));
+    await cl.query("COMMIT");
+    cl.release();
+    same("ط٢. **الإلغاءُ المنتظرُ يُردّ ٤٠٩ لتغيّر الأثر**", (await inflightI).status, 409);
+    same("ط٣. **ولا ردَّ ثانياً**",
+      (await q(`SELECT amount::int AS a FROM payments WHERE patient_id=$1 ORDER BY id`, [pI])).map((r: any) => r.a), [100000, -100000]);
   } finally {
     await cleanup();
     await q(`UPDATE system_users SET is_active = false WHERE id = ANY($1::int[])`, [USERS]);

@@ -592,6 +592,36 @@ async function main() {
       const [pc] = await q(`SELECT cost FROM patient_cases WHERE id=$1`, [d.caseId]);
       same("٥٨. **والكلفةُ صفرٌ لا سالب** — تخفيضُ الاسترجاع ثمّ عكسُ الباقي", [Number(pt.total_cost), Number(pc.cost)], [0, 0]);
     }
+    {
+      //  مراجعةُ Codex على #743 (١): متابعةٌ موروثةٌ بلا حالة — حالتُها من حلقتها.
+      const d = await soldOperation("ك٣", 1_000_000);
+      await pay(d, 300_000);
+      same("٥٩. (الإعدادُ: استرجاعٌ كامل)", (await refundFirst(d, 300_000)).status, 201);
+      await q(`UPDATE post_exam_followups SET case_id = NULL WHERE id = $1`, [d.followupId]);
+      const pv = await preview(d.followupId);
+      same("٦٠. **متابعةٌ بلا حالة تُقرأ حالتُها من الحلقة** — لا مقبوضَ يُردّ", pv.body?.paidAmount, 0);
+    }
+    {
+      //  مراجعةُ Codex على #743 (٢): اعتمادُ استرجاعٍ يقفل المريضَ ولم يُثبَّت بعد، والإلغاءُ ينتظر القفلَ ثمّ يمضي.
+      const d = await soldOperation("ك٤", 1_000_000);
+      await pay(d, 300_000);
+      const pv = await preview(d.followupId);
+      same("٦١. (الإعدادُ: المعاينةُ ترى ٣٠٠,٠٠٠)", pv.body?.paidAmount, 300_000);
+      const c = await pool.connect();
+      await c.query("BEGIN");
+      await c.query("SELECT pg_advisory_xact_lock(919, $1)", [d.patientId]);
+      await c.query("SELECT id FROM patients WHERE id = $1 FOR UPDATE", [d.patientId]);
+      await c.query(`INSERT INTO payments (patient_id, branch_id, amount, case_id, notes) VALUES ($1,1,-300000,$2,'استرجاعٌ يُعتمد في الوقت نفسِه')`,
+        [d.patientId, d.caseId]);
+      const inflight = executeRaw({ followupId: d.followupId, intent: "cancel_operation", reasonNote: "سباق",
+        stateStamp: pv.body?.stateStamp, refundAnswer: "yes" });
+      await new Promise((r) => setTimeout(r, 800));
+      await c.query("COMMIT");
+      c.release();
+      const r = await inflight;
+      same("٦٢. **الإلغاءُ المنتظرُ قفلَ المريض يرى الاسترجاعَ بعده** — يُردّ ٤٠٩ لتغيّر الأثر", r.status, 409);
+      same("٦٣. **ولا ردَّ ثانياً**", (await paymentsOf(d.patientId)).map((x: any) => Number(x.amount)), [300_000, -300_000]);
+    }
   } finally {
     await cleanup();
     await q(`UPDATE system_users SET is_active=false WHERE id = ANY($1::int[])`,
