@@ -1342,6 +1342,9 @@ export class DatabaseStorage implements IStorage {
   async ensurePhysiotherapyCase(
     patientId: number, outerTx?: any,
     actor?: { userId?: number | null; userName?: string | null },
+    //  **فرعُ الحركة** (§4.gq): حالةٌ تُفتح من «خدمة جديدة» تولد في الفرع الذي باعها، لا في فرع تسجيل المريض —
+    //  فمريضُ أطراف بغداد يشتري علاجاً طبيعياً في «مركز بغداد للعلاج الطبيعي» فتذهب معاينتُه إلى مركزه. وبلا فرعٍ ⟵ فرعُ التسجيل كما كان.
+    actingBranchId?: number | null,
   ): Promise<number | null> {
     const body = async (tx: any) => {
       //  نفسُ قفل `syncPatientCases` (919) — فلا يتسابق الفتحُ مع مزامنةٍ
@@ -1356,7 +1359,7 @@ export class DatabaseStorage implements IStorage {
       const clean = (o: Record<string, any>) =>
         Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
       const ensured = await ensureCaseTx(tx, {
-        patientId, caseType: "physiotherapy", branchId: p.branchId,
+        patientId, caseType: "physiotherapy", branchId: actingBranchId ?? p.branchId,
         create: {
           cost: 0, costSource: "auto",
           //  نفسُ حقول `syncPatientCases` لحالة العلاج الطبيعي.

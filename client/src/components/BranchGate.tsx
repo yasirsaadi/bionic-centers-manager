@@ -159,10 +159,20 @@ export function BranchGate({ children }: BranchGateProps) {
   const [selectedBranch, setSelectedBranch] = useState("");
   //  **الفرعُ المغلقُ مؤقتاً لا يُعرَض للدخول** (ترحيل ٠٩٤، §4.bw) — والخادمُ يرفضه على كلّ حال.
   const [closedIds, setClosedIds] = useState<number[]>([]);
+  //  **والفرعُ المضاف بعد الخمسة** (مركزُ بغداد للعلاج الطبيعي — §4.gq) من الخادم باسمه، مفتاحُه `branch-<id>`.
+  const [extraBranches, setExtraBranches] = useState<{ id: number; name: string }[]>([]);
   useEffect(() => {
     fetch("/api/public/closed-branches").then((r) => (r.ok ? r.json() : { ids: [] }))
-      .then((d) => setClosedIds(Array.isArray(d?.ids) ? d.ids.map(Number) : [])).catch(() => setClosedIds([]));
+      .then((d) => {
+        setClosedIds(Array.isArray(d?.ids) ? d.ids.map(Number) : []);
+        setExtraBranches(Array.isArray(d?.extra) ? d.extra.filter((b: any) => Number.isInteger(Number(b?.id)) && typeof b?.name === "string") : []);
+      })
+      .catch(() => { setClosedIds([]); setExtraBranches([]); });
   }, []);
+  const loginOptions = [
+    ...userOptions.filter((o) => !("branchId" in o) || !closedIds.includes((o as any).branchId)),
+    ...extraBranches.map((b) => ({ value: `branch-${b.id}`, label: b.name, labelEn: b.name, icon: Building2 })),
+  ];
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -259,7 +269,7 @@ export function BranchGate({ children }: BranchGateProps) {
                 <SelectValue placeholder={t.login.selectBranch} />
               </SelectTrigger>
               <SelectContent>
-                {userOptions.filter((o) => !("branchId" in o) || !closedIds.includes((o as any).branchId)).map((option) => (
+                {loginOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     <span className="flex items-center gap-2">
                       <option.icon className="w-4 h-4 text-primary" />

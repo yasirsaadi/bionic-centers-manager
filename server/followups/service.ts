@@ -45,8 +45,12 @@ function daysSinceIraq(lastVisit: Date | string): number {
  * episodes — no N+1 regardless of patient count.
  */
 export async function computeActiveReminders(branchId?: number): Promise<ReminderItem[]> {
+  //  **فرعُ المتابعة فرعُ قسم العلاج الطبيعي** (§4.gq): مريضُ أطرافِ بغداد الذي يُعالَج في «مركز بغداد للعلاج الطبيعي» يتابعه
+  //  مركزُه لا فرعُ تسجيله. وبلا حالة علاجٍ طبيعيّ (ملفٌّ قديم) ⟵ فرعُ التسجيل كما كان.
+  const physioBranch = sql<number>`COALESCE((SELECT pc.branch_id FROM patient_cases pc
+      WHERE pc.patient_id = ${patients.id} AND pc.case_type = 'physiotherapy' ORDER BY pc.id LIMIT 1), ${patients.branchId})`.mapWith(Number);
   const conditions = [eq(patients.isPhysiotherapy, true)];
-  if (branchId) conditions.push(eq(patients.branchId, branchId));
+  if (branchId) conditions.push(sql`${physioBranch} = ${branchId}`);
 
   // Physio patients with their last non-deleted visit. innerJoin guarantees
   // "at least one visit"; the deletedAt filter lives in the join condition so
@@ -57,7 +61,7 @@ export async function computeActiveReminders(branchId?: number): Promise<Reminde
       name: patients.name,
       phone: patients.phone,
       patientCode: patients.patientCode,
-      branchId: patients.branchId,
+      branchId: physioBranch,
       lastVisit: sql<string>`MAX(${visits.visitDate})`,
     })
     .from(patients)

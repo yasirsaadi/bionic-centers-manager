@@ -194,6 +194,16 @@ const usernameToBranch: Record<string, { branchId: number | "admin"; branchName:
   "kirkuk": { branchId: 5, branchName: "بايونك كركوك" },
 };
 
+//  **فرعٌ أُضيف بعد الخمسة** (مركزُ بغداد للعلاج الطبيعي — §4.gq): مفتاحُه في شاشة الدخول `branch-<id>` من
+//  `/api/public/closed-branches` (`extra`) لا من القائمة الثابتة، فلا يحتاج فرعٌ جديدٌ تعديلَ الشيفرة.
+//  ويُحسم الفرعُ هنا رقماً وحدَه؛ وأنه من فروع الحساب ومفتوحٌ يُفحَص بعده كأيّ فرع.
+export function loginBranchIdOf(key: string): number | null {
+  const m = usernameToBranch[key];
+  if (m) return typeof m.branchId === "number" ? m.branchId : null;
+  const dyn = /^branch-(\d+)$/.exec(key);
+  return dyn ? Number(dyn[1]) : null;
+}
+
 //  **الملفُّ في الذاكرة ثمّ في قاعدة البيانات** (§4.cf) — كان يُكتب على قرص خادم Render فيضيع مع كلّ نشر.
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -773,15 +783,15 @@ export async function registerRoutes(
           //  الذي يبدأ حسابُه بكربلاء يدخل «ذي قار» ويعمل في جلسة كربلاء — وكلُّ دفعةٍ يقبضها تُنسَب لكربلاء
           //  (`actingBranchFor` تقرأ فرعَ الجلسة). والفرعُ المختار يُعتمَد الآن بعد ثبوت أنه من فروعه.
           if (!isAdmin && accessibleBranches.length > 0) {
-            const branchMapping = usernameToBranch[normalizedBranchKey];
-            if (branchMapping && branchMapping.branchId !== "admin" && typeof branchMapping.branchId === "number") {
-              if (closed.has(branchMapping.branchId)) {
+            const chosenBranchId = loginBranchIdOf(normalizedBranchKey);
+            if (chosenBranchId !== null) {
+              if (closed.has(chosenBranchId)) {
                 return res.status(401).json({ message: `${BRANCH_CLOSED_MESSAGE} — لا دخول إليه حتى يُعاد فتحه` });
               }
-              if (!accessibleBranches.includes(branchMapping.branchId)) {
+              if (!accessibleBranches.includes(chosenBranchId)) {
                 return res.status(401).json({ message: "لا يمكنك الدخول إلى هذا الفرع" });
               }
-              userBranchId = branchMapping.branchId;
+              userBranchId = chosenBranchId;
             }
           }
 
@@ -1401,10 +1411,18 @@ export async function registerRoutes(
     res.json({ success: true, changed: true });
   });
 
-  //  **قائمةُ شاشة الدخول** — معرّفاتُ الفروع المغلقة وحدها، بلا جلسة (الشاشةُ قبل الدخول). لا سرَّ فيها.
+  //  **قائمةُ شاشة الدخول** — معرّفاتُ الفروع المغلقة، و`extra` الفروعُ المفتوحة بعد الخمسة الثابتة (§4.gq) بأسمائها،
+  //  بلا جلسة (الشاشةُ قبل الدخول). أسماءُ الفروع تُكتب على لافتاتها — لا سرَّ فيها.
   app.get("/api/public/closed-branches", async (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ids: Array.from(await closedBranchIds()) });
+    const closed = await closedBranchIds();
+    const fixed = new Set(Object.values(usernameToBranch).map((m) => m.branchId).filter((x): x is number => typeof x === "number"));
+    const all = await storage.getBranches();
+    const extra = all
+      .filter((b: any) => !fixed.has(Number(b.id)) && !closed.has(Number(b.id)))
+      .sort((a: any, b: any) => Number(a.id) - Number(b.id))
+      .map((b: any) => ({ id: Number(b.id), name: String(b.name) }));
+    res.json({ ids: Array.from(closed), extra });
   });
 
   // ========== System Users Management ==========

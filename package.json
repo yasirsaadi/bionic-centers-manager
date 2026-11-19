@@ -286,6 +286,7 @@
     "test:exam-sheet": "tsx server/exam_sheet.test.ts",
     "test:physio-exam-sheet": "tsx server/physio_exam_sheet.test.ts",
     "test:physio-sheet-view": "tsx server/physio_sheet_view.test.ts",
+    "test:physio-center-split": "tsx server/physio_center_split.test.ts",
     "test:patient-edit-rules": "tsx server/patient_edit_rules.test.ts",
     "test:physio-centre-use": "tsx server/physio_centre_use.test.ts",
     "test:physio-plan-copy": "tsx server/physio_plan_copy.test.ts",
