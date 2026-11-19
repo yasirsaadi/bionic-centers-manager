@@ -44,11 +44,17 @@ function daysSinceIraq(lastVisit: Date | string): number {
  * One aggregation query for last-visit-per-patient + one lookup for handled
  * episodes — no N+1 regardless of patient count.
  */
+/** فرعُ قسم العلاج الطبيعي للمريض، وبلا حالةٍ فرعُ تسجيله (§4.gq) — تعبيرٌ واحد للقائمة والتسجيل معاً،
+ *  فما تعرضه القائمةُ لموظّفي فرعٍ يقبل تسجيلَهم (`getReminderSnapshot` ⟵ `/api/follow-ups`). */
+function physioBranchExpr() {
+  return sql<number>`COALESCE((SELECT pc.branch_id FROM patient_cases pc
+      WHERE pc.patient_id = ${patients.id} AND pc.case_type = 'physiotherapy' ORDER BY pc.id LIMIT 1), ${patients.branchId})`.mapWith(Number);
+}
+
 export async function computeActiveReminders(branchId?: number): Promise<ReminderItem[]> {
   //  **فرعُ المتابعة فرعُ قسم العلاج الطبيعي** (§4.gq): مريضُ أطرافِ بغداد الذي يُعالَج في «مركز بغداد للعلاج الطبيعي» يتابعه
   //  مركزُه لا فرعُ تسجيله. وبلا حالة علاجٍ طبيعيّ (ملفٌّ قديم) ⟵ فرعُ التسجيل كما كان.
-  const physioBranch = sql<number>`COALESCE((SELECT pc.branch_id FROM patient_cases pc
-      WHERE pc.patient_id = ${patients.id} AND pc.case_type = 'physiotherapy' ORDER BY pc.id LIMIT 1), ${patients.branchId})`.mapWith(Number);
+  const physioBranch = physioBranchExpr();
   const conditions = [eq(patients.isPhysiotherapy, true)];
   if (branchId) conditions.push(sql`${physioBranch} = ${branchId}`);
 
@@ -131,7 +137,8 @@ export async function getReminderSnapshot(patientId: number): Promise<ReminderSn
   const [row] = await db
     .select({
       isPhysiotherapy: patients.isPhysiotherapy,
-      branchId: patients.branchId,
+      //  فرعُ القسم كالقائمة (§4.gq، مراجعةُ Codex على #745) — كان فرعَ التسجيل فيردّ ٤٠٣ موظّفي المركز.
+      branchId: physioBranchExpr(),
       lastVisit: sql<string | null>`MAX(${visits.visitDate})`,
     })
     .from(patients)

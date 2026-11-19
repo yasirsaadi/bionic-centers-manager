@@ -194,6 +194,14 @@ async function main() {
     same("د٤. وبغدادُ تتابع مريضَ قسمها وحده", inBaghdad.filter(([id]) => id === p.id || id === p2.id), [[p2.id, BAGHDAD]]);
     const all = (await computeActiveReminders()).filter((r: any) => r.patientId === p.id);
     same("د٥. والقائمةُ الجامعة تقول فرعَ القسم واسمَه", [all[0]?.branchId, all[0]?.branchName], [CENTER, CENTER_NAME]);
+    //  مراجعةُ Codex على #745: القائمةُ تعرضه للمركز، فتسجيلُ الاتّصال من المركز يُقبل ويُكتب بفرعه.
+    const logged = await call("c", "POST", "/api/follow-ups", { patientId: p.id, outcomeNote: "اتّصلنا — يعود الأحد" });
+    same("د٥ب. **موظّفةُ المركز تسجّل الاتّصالَ بمريضه** — والسطرُ بفرع القسم",
+      [logged.status, logged.body?.branchId], [200, CENTER]);
+    const fromBaghdad = await call("b2", "POST", "/api/verify-branch", { branchKey: "baghdad", username: "ps-emp", password: PASSWORD });
+    same("د٥ج. (وموظّفُ بغداد لا يدخل بهذا الحساب أصلاً)", fromBaghdad.status, 401);
+    same("د٥د. والمسجَّلُ خرج من قائمة المركز",
+      (await computeActiveReminders(CENTER)).some((r: any) => r.patientId === p.id), false);
 
     const sheet = await physioSheetFor(p.id, { withMoney: false, session: sessions.get("c")?.branchSession });
     same("د٦. **ترويسةُ ورقة العلاج الطبيعي فرعُ القسم**", (sheet as any)?.patient?.branchName, CENTER_NAME);
