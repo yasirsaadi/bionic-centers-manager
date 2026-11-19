@@ -39,7 +39,11 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
            p.had_prior_center_history, p.age, p.weight, p.height, p.injury_cause, p.injury_date::text AS injury_date,
            p.injury_date_status, p.general_notes, p.presenting_complaint, p.injuries, p.injury_type, p.injury_area,
            p.created_at, p.is_physiotherapy, p.physio_plan, p.treatment_type, p.total_cost, b.name AS branch_name
-      FROM patients p LEFT JOIN branches b ON b.id = p.branch_id
+      FROM patients p
+      -- ترويسةُ الورقة فرعُ قسم العلاج الطبيعي لا فرعُ التسجيل (§4.gq): مريضُ أطراف بغداد يُعالَج في مركزه المستقلّ.
+      LEFT JOIN branches b ON b.id = COALESCE((SELECT pc.branch_id FROM patient_cases pc
+                                                WHERE pc.patient_id = p.id AND pc.case_type = 'physiotherapy'
+                                                ORDER BY pc.id LIMIT 1), p.branch_id)
      WHERE p.id = ${patientId} AND p.deleted_at IS NULL
   `);
   const p = (pr.rows ?? [])[0] as Record<string, any> | undefined;

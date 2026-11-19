@@ -147,8 +147,16 @@ export interface BranchCashConfig {
   defaultBook: CashBook;
 }
 
+/** فرعٌ للعلاج الطبيعي وحده — «مركز بغداد للعلاج الطبيعي» (§4.gq). القاعدةُ بالاسم كأخواتها. */
+export function isPhysioCenterName(branchName: string | null | undefined): boolean {
+  return String(branchName ?? "").includes("للعلاج الطبيعي");
+}
+
 export function branchCashConfig(branchName: string | null | undefined): BranchCashConfig {
   const n = String(branchName ?? "");
+  //  **مركزُ العلاج الطبيعي المستقلّ** (فصلُ بغداد ٢٠٢٦-١١-٢١، §4.gq) — يسبق قاعدةَ «بغداد» لأنّ اسمَه يحملها: دفترُ «علاج طبيعي» وحده،
+  //  بلا نسبة دكتور (تقاعدت يومَ القطع — §4.dj) ولا نسبة مستشفى. وكلُّ ماله في دفتره الوحيد (`paymentBookFilter`).
+  if (isPhysioCenterName(n)) return { books: ["physio"], drRatioPct: null, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "physio" };
   if (n.includes("بغداد")) return { books: ["devices", "physio"], drRatioPct: 20, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "devices" };
   if (n.includes("ذي قار")) return { books: ["devices", "physio"], drRatioPct: 10, hospitalRatioPct: 10, hasAtabahRatio: false, defaultBook: "physio" };
   if (n.includes("كربلاء")) return { books: ["devices"], drRatioPct: 10, hospitalRatioPct: null, hasAtabahRatio: true, defaultBook: "devices" };

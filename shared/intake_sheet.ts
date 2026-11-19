@@ -77,6 +77,8 @@ export function intakeHeader(branchName: string | null | undefined): { brand: In
   const raw = String(branchName ?? "").trim();
   //  «كربلاء الوارث» ⟵ «كربلاء»: اسمُ المركز في السطر الأوّل، والمدينةُ وحدها في الثاني.
   const city = brand === "warith" ? "كربلاء" : raw;
+  //  «مركز بغداد للعلاج الطبيعي» (§4.gq): الاسمُ الذي وافق عليه المالكُ سطرٌ أوّل كما هو، والمدينةُ وحيُّها في الثاني.
+  if (raw.includes("للعلاج الطبيعي")) return { brand, centerName: raw, city: "بغداد - السيدية" };
   return {
     brand,
     centerName: brand === "warith" ? "مركز الوارث للأطراف الذكية والتأهيل الطبي" : "مركز بايونك للأطراف الصناعية الذكية والتأهيل الطبي",

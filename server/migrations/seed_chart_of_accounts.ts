@@ -153,13 +153,29 @@ export async function seedChartOfAccounts(): Promise<{ created: number; skipped:
     await upsertAccount(acc);
   }
 
-  // صناديق الفروع
-  const allBranches = await db.select({ id: branches.id, name: branches.name }).from(branches);
+  // صناديق الفروع — **صندوقٌ لكلّ فرعٍ بفرعه لا بترتيبه** (فصلُ بغداد، §4.gq): كان الرمزُ من موضع الفرع في قائمةٍ بلا
+  // ترتيب، فالفرعُ السادس قد يأخذ رمزَ فرعٍ قائم فيُتخطّى بلا صندوق (وقيودُ دفعاته تسقط)، وفرعٌ قائمٌ يُعطى صندوقاً ثانياً.
+  // فالآن: بالمعرّف تصاعدياً، وفرعٌ له صندوقٌ `1111xx` يُتخطّى، والجديدُ يأخذ أوّلَ رمزٍ لم يُستعمل.
+  const allBranches = await db.select({ id: branches.id, name: branches.name }).from(branches).orderBy(branches.id);
   const cashAccounts = cashAccountsForBranches(allBranches);
+  const existingCash = await db
+    .select({ code: chartOfAccounts.accountCode, branchId: chartOfAccounts.branchId })
+    .from(chartOfAccounts)
+    .where(sql`${chartOfAccounts.accountCode} LIKE '1111__'`);
+  const usedCodes = new Set(existingCash.map((a) => a.code));
+  const branchesWithCash = new Set(existingCash.map((a) => a.branchId).filter((x): x is number => x !== null));
 
   for (let i = 0; i < cashAccounts.length; i++) {
-    const acc = cashAccounts[i];
     const branchId = allBranches[i].id;
+    if (branchesWithCash.has(branchId)) { skipped++; continue; }
+    let acc = cashAccounts[i];
+    if (usedCodes.has(acc.code)) {
+      let n = 1;
+      while (usedCodes.has(`1111${String(n).padStart(2, "0")}`)) n++;
+      acc = { ...acc, code: `1111${String(n).padStart(2, "0")}` };
+    }
+    usedCodes.add(acc.code);
+    branchesWithCash.add(branchId);
     await upsertAccount(acc, branchId);
   }
 

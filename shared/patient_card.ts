@@ -83,8 +83,13 @@ export function cardDeviceStatus(episodeStatus: string | null | undefined, notBo
 export const CENTER_CLOSING = "نتمنى لكم الصحة والسلامة الدائمة";
 export const CENTER_CONTACT_NOTE =
   "يرجى التواصل مع الفرع الأقرب إليك وحسب حالتك إن كانت أطراف ومساند أو علاج طبيعي لمعرفة العنوان والأسعار ومواعيد الحجز";
-export const CENTER_CONTACTS: { branch: string; services: string; phones: string[] }[] = [
-  { branch: "بغداد بايونك", services: "أطراف ومساند وعلاج طبيعي", phones: ["07702663334", "07802663334"] },
+export const CENTER_CONTACTS: { branch: string; services: string; phones: string[]; address?: string }[] = [
+  //  فصلُ بغداد (٢٠٢٦-١١-٢١، §4.gq): الأطرافُ والمساند في مكانها، والعلاجُ الطبيعيّ مركزٌ مستقلّ بعنوانه ورقمه.
+  { branch: "بغداد بايونك", services: "أطراف ومساند فقط", phones: ["07702663334", "07802663334"] },
+  {
+    branch: "مركز بغداد للعلاج الطبيعي", services: "علاج طبيعي فقط", phones: ["07751119333"],
+    address: "السيدية قرب المستشفى الملكي مقابل مجمع مارينا السكني مجاور المجسر",
+  },
   { branch: "ذي قار بايونك", services: "أطراف ومساند وعلاج طبيعي", phones: ["07850010605", "07750010605"] },
   { branch: "كربلاء الوارث", services: "أطراف ومساند فقط", phones: ["07704666299", "07800765397"] },
   { branch: "الموصل بايونك", services: "أطراف ومساند فقط", phones: ["07721166632", "07821166632"] },

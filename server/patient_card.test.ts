@@ -71,9 +71,9 @@ async function main() {
     [cardDeviceStatus("awaiting_exam", false), cardDeviceStatus("examined", false), cardDeviceStatus("examined", true),
      cardDeviceStatus("in_manufacturing", false), cardDeviceStatus("delivered", false), cardDeviceStatus(null, false)],
     ["بانتظار المعاينة الطبية", "تمّت المعاينة — بانتظار قرار الشراء", "تمّ الفحص فقط — لم يتمّ الشراء", "قيد التصنيع", "تمّ التسليم", null]);
-  same("ب٥. الخاتمة: أربعةُ فروعٍ بنصّ المالك، ورقمان صحيحان لكلٍّ منها",
+  same("ب٥. الخاتمة: خمسةُ فروعٍ بنصّ المالك (ومركزُ بغداد للعلاج الطبيعي برقمه — §4.gq)، وأرقامٌ صحيحة",
     CENTER_CONTACTS.map((c) => [c.branch, c.phones.length, c.phones.every((p) => /^07\d{9}$/.test(p))]),
-    [["بغداد بايونك", 2, true], ["ذي قار بايونك", 2, true], ["كربلاء الوارث", 2, true], ["الموصل بايونك", 2, true]]);
+    [["بغداد بايونك", 2, true], ["مركز بغداد للعلاج الطبيعي", 1, true], ["ذي قار بايونك", 2, true], ["كربلاء الوارث", 2, true], ["الموصل بايونك", 2, true]]);
 
   console.log("\n── ج. أمرُ «بطاقتي» ──");
   same("ج١. «/card» و«بطاقتي» أمرٌ، و«/card 5» لا", [isCardCommand("/card"), isCardCommand("بطاقتي"), isCardCommand("/card 5")], [true, true, false]);
