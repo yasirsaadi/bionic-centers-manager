@@ -265,9 +265,11 @@ async function main() {
     same("٨هـ. سجلُّ المسؤول بفرع ذي قار يحمل ملفَّ كربلاء المُتاحَ لها — كسجلّ موظّف ذي قار",
       [(regAdmDq.body?.rows ?? []).some((p: any) => Number(p.id) === pid), regAdmDq.body?.counts?.branch, regAdmDq.body?.total],
       [true, regAfter.body?.counts?.branch, regAfter.body?.total]);
-    const other = (regAdmin.body?.rows ?? []).filter((p: any) => Number(p.id) !== pid);
-    check(other.every((p: any) => Array.isArray(p.sharedBranchIds) && p.sharedBranchIds.length === 0),
-      "٨د. والملفُّ غيرُ المُتاح بلا فرعٍ مُتاح", JSON.stringify(other.map((p: any) => p.sharedBranchIds)));
+    //  مريضٌ مضبوطٌ بلا إتاحة (مراجعةُ Codex على #751): لا يُحكم على صفوفٍ لا يملكها الاختبار في قاعدةٍ قد تُعاد.
+    const unshared = await mkPatient("بلا-إتاحة", KARBALA);
+    const regUnshared = await http("GET", `/api/patients/registry?pageSize=500&branchId=${KARBALA}`, S.admin);
+    same("٨د. والملفُّ غيرُ المُتاح بلا فرعٍ مُتاح",
+      (regUnshared.body?.rows ?? []).find((p: any) => Number(p.id) === unshared)?.sharedBranchIds, []);
 
     //  ⑤ خدمةٌ جديدة في ذي قار.
     const svc = await http("POST", `/api/patients/${pid}/new-service`, S.dhiqar, {
