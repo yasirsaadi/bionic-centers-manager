@@ -377,7 +377,11 @@ export async function approveTx(tx: Tx, id: number, p: ApproveInput, after: Afte
   let costBefore: number | null = null;
   let costAfter: number | null = null;
   if (p.reduceCost) {
-    const [pt] = await rows<{ branch_id: number }>(tx, sql`SELECT branch_id FROM patients WHERE id = ${cur.patientId}`);
+    //  فرعُ القسم لا فرعُ التسجيل (§4.gq) — دينُ القسم هناك؛ وبلا فرعٍ للحالة ⟵ فرعُ التسجيل كما كان.
+    const [pt] = await rows<{ branch_id: number }>(tx, sql`
+      SELECT COALESCE(pc.branch_id, p.branch_id) AS branch_id
+        FROM patients p LEFT JOIN patient_cases pc ON pc.id = ${cur.caseId} AND pc.patient_id = p.id
+       WHERE p.id = ${cur.patientId}`);
     costBefore = Number(c.cost ?? 0);
     costAfter = Math.max(0, costBefore - cur.amount);
     const delta = costAfter - costBefore;

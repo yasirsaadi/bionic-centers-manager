@@ -63,6 +63,9 @@ const login = (sid: string, branchKey: string) =>
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM follow_up_calls WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM journal_lines WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM patient_refund_requests WHERE patient_id IN (${ids})`);
+  await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM visits WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM cost_entries WHERE patient_id IN (${ids})`);
@@ -202,6 +205,31 @@ async function main() {
     same("د٥ج. (وموظّفُ بغداد لا يدخل بهذا الحساب أصلاً)", fromBaghdad.status, 401);
     same("د٥د. والمسجَّلُ خرج من قائمة المركز",
       (await computeActiveReminders(CENTER)).some((r: any) => r.patientId === p.id), false);
+
+    console.log("\n── هـ. قيدُ الكلفة على فرع القسم ──");
+    //  قلمُ الكلفة على حالة العلاج الطبيعي لمريض أطراف بغداد قسمُه في المركز ⟵ الفرقُ يُقيَّد على المركز.
+    const [pc1] = await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [p.id]);
+    await storage.updateCaseCost(p.id, Number(pc1.id), 300000);
+    const [ce1] = await q(`SELECT branch_id, amount FROM cost_entries WHERE patient_id = $1 AND source = 'case_cost_edit' ORDER BY id DESC LIMIT 1`, [p.id]);
+    same("هـ١. **قلمُ الكلفة يقيّد الفرقَ على فرع القسم** لا فرع التسجيل", [Number(ce1?.branch_id), Number(ce1?.amount)], [CENTER, 300000]);
+    const [pc2] = await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [p2.id]);
+    await storage.updateCaseCost(p2.id, Number(pc2.id), 100000);
+    const [ce2] = await q(`SELECT branch_id FROM cost_entries WHERE patient_id = $1 AND source = 'case_cost_edit' ORDER BY id DESC LIMIT 1`, [p2.id]);
+    same("هـ٢. وحالةُ بغداد ببغداد", Number(ce2?.branch_id), BAGHDAD);
+    //  «تخفيض الكلفة» مع اعتماد الاسترجاع ⟵ الفرقُ على فرع القسم كذلك.
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id, payment_treatment_type, notes)
+             VALUES ($1,$2,100000,$3,'physiotherapy','دفعة اختبار')`, [p.id, CENTER, Number(pc1.id)]);
+    const refunds = await import("./patient_refunds/store");
+    const req1 = await refunds.create({
+      patientId: p.id, caseId: Number(pc1.id), branchId: CENTER, amount: 50000, reason: "other", detail: "اختبار الفصل",
+      userId: EMP, userName: "مديرة المركز", sessionsReturned: [],
+    }, async () => {});
+    await refunds.approve(req1.id, {
+      userId: EMP, userName: "مديرة المركز", note: null, deductHospital: false, reduceCost: true,
+      hasActiveFollowup: async () => false,
+    }, async () => {});
+    const [ce3] = await q(`SELECT branch_id FROM cost_entries WHERE patient_id = $1 AND source = 'refund_cost_reduction' ORDER BY id DESC LIMIT 1`, [p.id]);
+    same("هـ٣. **تخفيضُ الكلفة مع الاسترجاع على فرع القسم**", Number(ce3?.branch_id), CENTER);
 
     const sheet = await physioSheetFor(p.id, { withMoney: false, session: sessions.get("c")?.branchSession });
     same("د٦. **ترويسةُ ورقة العلاج الطبيعي فرعُ القسم**", (sheet as any)?.patient?.branchName, CENTER_NAME);
