@@ -94,3 +94,17 @@ export const CENTER_CONTACTS: { branch: string; services: string; phones: string
   { branch: "كربلاء الوارث", services: "أطراف ومساند فقط", phones: ["07704666299", "07800765397"] },
   { branch: "الموصل بايونك", services: "أطراف ومساند فقط", phones: ["07721166632", "07821166632"] },
 ];
+
+/**
+ * **أرقامُ الفرع من اسمه** — للأوراق المطبوعة (سندُ الاسترجاع وورقةُ تمارين البيت). «بغداد أطراف» (اسمُ فرع ١ منذ ٢٠٢٦-١١-٢٠ بطلب المالك)
+ * و«بغداد» القديمة ⟵ «بغداد بايونك»، و«مركز بغداد للعلاج الطبيعي» ⟵ سطرُه وحده، و«ذي قار» ⟵ «ذي قار بايونك»، و«كربلاء الوارث» كما هو.
+ * فكلمةُ «أطراف» تُطرح قبل المطابقة، والمركزُ لا يُطابَق إلّا باسمه.
+ */
+export function branchContactFor(branchName: string | null | undefined): (typeof CENTER_CONTACTS)[number] | null {
+  const raw = String(branchName ?? "").trim();
+  if (!raw) return null;
+  if (raw.includes("للعلاج الطبيعي")) return CENTER_CONTACTS.find((c) => c.branch === raw) ?? null;
+  const n = raw.replace(/(^|\s)[أا]طراف(?=\s|$)/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return null;
+  return CENTER_CONTACTS.find((c) => !c.branch.includes("للعلاج الطبيعي") && (c.branch.includes(n) || n.includes(c.branch))) ?? null;
+}

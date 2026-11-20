@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { scrollPageToTop } from "@/lib/scroll_top";
 import { useTranslation } from "@/i18n/LanguageContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -857,7 +858,7 @@ function ResultsTab() {
                       size="sm"
                       className="h-8 text-xs"
                       disabled={safeRespPage <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      onClick={() => { scrollPageToTop(); setPage((p) => Math.max(1, p - 1)); }}
                       data-testid="button-responses-prev"
                     >
                       السابق
@@ -868,7 +869,7 @@ function ResultsTab() {
                       size="sm"
                       className="h-8 text-xs"
                       disabled={safeRespPage >= respTotalPages}
-                      onClick={() => setPage((p) => Math.min(respTotalPages, p + 1))}
+                      onClick={() => { scrollPageToTop(); setPage((p) => Math.min(respTotalPages, p + 1)); }}
                       data-testid="button-responses-next"
                     >
                       التالي

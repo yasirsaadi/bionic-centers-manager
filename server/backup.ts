@@ -258,7 +258,7 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
   }
 }
 
-const BRANCH_ORDER = ["كربلاء", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
+const BRANCH_ORDER = ["كربلاء", "بغداد أطراف", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
 
 export interface NightlyBranchRow {
   name: string;

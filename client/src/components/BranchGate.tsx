@@ -10,7 +10,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 
 const userOptions = [
   { value: "admin", label: "مسؤول النظام", labelEn: "System Admin", icon: ShieldCheck },
-  { value: "baghdad", branchId: 1, label: "بايونك بغداد", labelEn: "Bionic Baghdad", icon: Building2 },
+  { value: "baghdad", branchId: 1, label: "بغداد أطراف", labelEn: "Baghdad Prosthetics", icon: Building2 },
   { value: "karbala", branchId: 2, label: "الوارث كربلاء", labelEn: "Al-Warith Karbala", icon: Building2 },
   { value: "dhiqar", branchId: 3, label: "بايونك ذي قار", labelEn: "Bionic Dhi Qar", icon: Building2 },
   { value: "mosul", branchId: 4, label: "بايونك الموصل", labelEn: "Bionic Mosul", icon: Building2 },

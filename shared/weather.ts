@@ -382,6 +382,22 @@ export const DEVICE_COORD_DECIMALS = 1;
 /** الجهازُ ضمن هذه المسافة من مدينةٍ معروفة يأخذ تلك المدينة. */
 export const DEVICE_NEAR_CITY_KM = 40;
 
+/** حالُ إذن الموقع كما يقولها المتصفّح (`navigator.permissions`) — و`unknown` لمتصفّحٍ لا يقولها. */
+export type GeoPermission = "granted" | "prompt" | "denied" | "unknown";
+
+/**
+ * **أيُسأل الجهازُ عن موقعه الآن؟** (طلبُ المالك ٢٠٢٦-١١-٢٠: «على الآيفون كلَّ مرّة أفتح التطبيق يطلب إذنَ الموقع»)
+ * تطبيقُ الشاشة الرئيسية على الآيفون لا يحفظ الإذنَ بين فتحةٍ وأخرى، فكلُّ سؤالٍ نافذةُ إذنٍ جديدة. فالقاعدة:
+ *   • الإذنُ ممنوحٌ الآن ⟵ يُسأل (بلا نافذة) فيتجدّد المكان.
+ *   • مرفوض ⟵ لا يُسأل أبداً.
+ *   • غيرُ ذلك (سيُعرض سؤالٌ أو لا يُعرف) ⟵ **مرّةً واحدة في عمر الجهاز**، وبعدها المكانُ المحفوظ أو الفرع.
+ */
+export function shouldAskDeviceLocation(p: { permission: GeoPermission; askedBefore: boolean }): boolean {
+  if (p.permission === "granted") return true;
+  if (p.permission === "denied") return false;
+  return !p.askedBefore;
+}
+
 export function roundDeviceCoord(n: number): number {
   const f = 10 ** DEVICE_COORD_DECIMALS;
   return Math.round(n * f) / f;

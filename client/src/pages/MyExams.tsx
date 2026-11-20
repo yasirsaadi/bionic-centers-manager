@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { scrollPageToTop } from "@/lib/scroll_top";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -551,7 +552,7 @@ export default function MyExams() {
                       size="sm"
                       className="h-8 gap-1 text-xs"
                       disabled={safePage <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      onClick={() => { scrollPageToTop(); setPage((p) => Math.max(1, p - 1)); }}
                       data-testid="button-prev-page"
                     >
                       <ChevronRight className="w-3.5 h-3.5" /> السابق
@@ -562,7 +563,7 @@ export default function MyExams() {
                       size="sm"
                       className="h-8 gap-1 text-xs"
                       disabled={safePage >= totalPages}
-                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      onClick={() => { scrollPageToTop(); setPage((p) => Math.min(totalPages, p + 1)); }}
                       data-testid="button-next-page"
                     >
                       التالي <ChevronLeft className="w-3.5 h-3.5" />

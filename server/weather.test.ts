@@ -22,7 +22,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import {
   BAGHDAD_OFFSET_MS, DEVICE_PLACE_FALLBACK, OBS_MAX_AGE_MS, deviceWeatherPlace, parseDeviceCoords, placeNameFromAddress, SERIES_GRACE_MS, WEATHER_CITIES, WEATHER_STATIONS, cityForBranchName, combineWeather, conditionOf,
-  currentFromSeries, distanceKm, formatClock12, formatTemp, isNightAt, kindFromWx, parseMetar, pickObservation, sunElevationDeg, weatherLabel,
+  currentFromSeries, distanceKm, formatClock12, formatTemp, isNightAt, kindFromWx, parseMetar, pickObservation, sunElevationDeg, weatherLabel, shouldAskDeviceLocation,
 } from "@shared/weather";
 import { GEO_RETRY_MS, NEW_PLACES_PER_HOUR, admitPlace, placeName, resetGeocodeForTests, reverseUrl } from "./weather/geocode";
 import { metarObservations, metarUrl, parseMetarJson, resetMetarCacheForTests } from "./weather/metar";
@@ -518,6 +518,15 @@ async function main() {
   check(/enabled: !!session && ready/.test(cw) && /`\?lat=\$\{coords\.lat\}&lon=\$\{coords\.lon\}`/.test(cw)
       && /roundDeviceCoord\(p\.coords\.latitude\)/.test(cw) && /PERMISSION_DENIED/.test(cw) && /GEO_WAIT_MS = 4000/.test(cw),
     "ش.٣ب **مكانُ الجهاز** (§4.gl): يُقرَّب قبل أن يُرسل، والرفضُ ⟵ الفرع، ولا انتظارَ أكثرَ من أربع ثوانٍ قبل طقس الفرع");
+  //  **نافذةُ الإذن مرّةً واحدة في عمر الجهاز** (طلبُ المالك ٢٠٢٦-١١-٢٠ — الآيفون يسأل في كلّ فتحة).
+  same("ش.٣ح القاعدة: الممنوحُ يُسأل بلا نافذة، والمرفوضُ أبداً، والباقي مرّةً واحدة",
+    (["granted", "denied", "prompt", "unknown"] as const).flatMap((permission) =>
+      [false, true].map((askedBefore) => shouldAskDeviceLocation({ permission, askedBefore }))),
+    [true, true, false, false, true, false, true, false]);
+  check(/if \(!shouldAskDeviceLocation\(\{ permission, askedBefore: readAskedBefore\(\) \}\)\)/.test(cw)
+      && cw.indexOf("markAskedBefore();") < cw.indexOf("navigator.geolocation.getCurrentPosition(")
+      && cw.indexOf("markAskedBefore();") > cw.indexOf("shouldAskDeviceLocation({ permission"),
+    "ش.٣ط **والواجهةُ تسأل القاعدةَ قبل كلّ طلبٍ للموقع، وتعلّم «سُئل» قبل أن تطلبه**");
   const greet = read("client/src/components/DailyGreeting.tsx");
   check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet) && /geoReady: ready/.test(cw),
     "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");

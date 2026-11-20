@@ -188,7 +188,7 @@ const verifyBranchSchema = z.object({
 // Username to branch mapping
 const usernameToBranch: Record<string, { branchId: number | "admin"; branchName: string }> = {
   "admin": { branchId: "admin", branchName: "مسؤول النظام" },
-  "baghdad": { branchId: 1, branchName: "بايونك بغداد" },
+  "baghdad": { branchId: 1, branchName: "بغداد أطراف" },
   "karbala": { branchId: 2, branchName: "الوارث كربلاء" },
   "dhiqar": { branchId: 3, branchName: "بايونك ذي قار" },
   "mosul": { branchId: 4, branchName: "بايونك الموصل" },
@@ -2123,8 +2123,10 @@ export async function registerRoutes(
       //  بلا تفرقةٍ بين الأقسام. **وفرعُ تسجيله لا يتغيّر بذلك بحرف.**
       conditions.push(patientVisibleToScopeSql([branchSession?.branchId ?? -1]));
     } else if (!search && req.query.branchId && req.query.branchId !== "all") {
+      //  **والمسؤولُ يرى الفرعَ كما يراه موظّفوه** (طلبُ المالك ٢٠٢٦-١١-٢٠ — §4.gr التكملة): المسجَّلون فيه **والمُتاحُ له**،
+      //  بشرط الموظّف نفسِه (`patientVisibleToScopeSql`) — كان فرعَ التسجيل وحده فغاب مرضى القسمين عن «مركز بغداد للعلاج الطبيعي».
       const b = parseInt(String(req.query.branchId));
-      if (Number.isFinite(b)) conditions.push(eq(patients.branchId, b));
+      if (Number.isFinite(b)) conditions.push(patientVisibleToScopeSql([b]));
     }
     // ══ البحث برمز المريض (ترحيل ٠٥٢) ═════════════════════════════════
     // الرمز مقصودٌ بذاته: مَن يكتب WB-01629 لا يريد اسماً يحوي هذا النصّ.
@@ -2326,7 +2328,7 @@ export async function registerRoutes(
     if (!isAdmin) badgeConds.push(patientVisibleToScopeSql([branchSession?.branchId ?? -1]));
     else if (req.query.branchId && req.query.branchId !== "all") {
       const b = parseInt(String(req.query.branchId));
-      if (Number.isFinite(b)) badgeConds.push(eq(patients.branchId, b));
+      if (Number.isFinite(b)) badgeConds.push(patientVisibleToScopeSql([b])); //  بنطاق القائمة نفسِه (§4.gr التكملة)
     }
     const badgeWhere = badgeConds.length ? and(...badgeConds) : sql`TRUE`;
     const [[{ count: branchCount }], dateCountRow] = await Promise.all([

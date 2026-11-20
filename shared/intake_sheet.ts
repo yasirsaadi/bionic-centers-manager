@@ -76,7 +76,8 @@ export function intakeHeader(branchName: string | null | undefined): { brand: In
   const brand = intakeBrandOf(branchName);
   const raw = String(branchName ?? "").trim();
   //  «كربلاء الوارث» ⟵ «كربلاء»: اسمُ المركز في السطر الأوّل، والمدينةُ وحدها في الثاني.
-  const city = brand === "warith" ? "كربلاء" : raw;
+  //  و«بغداد أطراف» (اسمُ فرع ١ منذ ٢٠٢٦-١١-٢٠) ⟵ «بغداد»: كلمةُ «أطراف» تميّز الفرعَ في التطبيق لا مدينتَه في الورقة.
+  const city = brand === "warith" ? "كربلاء" : raw.replace(/(^|\s)[أا]طراف(?=\s|$)/g, " ").replace(/\s+/g, " ").trim();
   //  «مركز بغداد للعلاج الطبيعي» (§4.gq): الاسمُ الذي وافق عليه المالكُ سطرٌ أوّل كما هو، والمدينةُ وحيُّها في الثاني.
   if (raw.includes("للعلاج الطبيعي")) return { brand, centerName: raw, city: "بغداد - السيدية" };
   return {

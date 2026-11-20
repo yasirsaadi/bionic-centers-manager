@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import { scrollPageToTop } from "@/lib/scroll_top";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { useQuery } from "@tanstack/react-query";
@@ -489,7 +490,7 @@ export default function Manufacturing() {
                           <div className="flex items-center gap-1.5">
                             {/*  الاسمُ يرشّح القائمةَ أعلاه بالخبير، والطابعةُ تفتح ورقةَ حالاته غير المكتملة للإدارة. */}
                             <button type="button" className="hover:underline text-right" data-testid={`expert-filter-${e.expertUserId}`}
-                              onClick={() => { setExpertFilter(String(e.expertUserId)); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                              onClick={() => { setExpertFilter(String(e.expertUserId)); scrollPageToTop(); }}>
                               {e.expertName}
                             </button>
                             <a href={`/manufacturing/expert-open/print?${new URLSearchParams({
