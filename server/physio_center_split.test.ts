@@ -13,7 +13,7 @@ import { registerRoutes, loginBranchIdOf } from "./routes";
 import { storage } from "./storage";
 import { branchCashConfig, isPhysioCenterName } from "@shared/cash_book";
 import { intakeHeader } from "@shared/intake_sheet";
-import { CENTER_CONTACTS } from "@shared/patient_card";
+import { CENTER_CONTACTS, branchContactFor } from "@shared/patient_card";
 import { computeActiveReminders } from "./followups/service";
 import { physioSheetFor } from "./physio_sheet/store";
 import { seedChartOfAccounts } from "./migrations/seed_chart_of_accounts";
@@ -98,6 +98,13 @@ async function main() {
     [contact?.phones, contact?.services, !!contact?.address], [["07751119333"], "علاج طبيعي فقط", true]);
   const bg = CENTER_CONTACTS.find((c) => c.branch.includes("بغداد") || "بغداد".includes(c.branch));
   same("أ٧. و«بغداد» يجد رقمَي الأطراف لا رقمَ المركز", [bg?.branch, bg?.services], ["بغداد بايونك", "أطراف ومساند فقط"]);
+  //  **«بغداد أطراف» اسمُ فرع ١ الجديد** (طلبُ المالك ٢٠٢٦-١١-٢٠، §4.gr التكملة): قواعدُ الاسم كلُّها كما كانت لـ«بغداد».
+  same("أ٧ب. «بغداد أطراف» (وبلا همزة): دفتران، وترويسةُ بايونك ومدينتُها «بغداد»، ورقما الأطراف لا المركز",
+    ["بغداد أطراف", "بغداد اطراف"].map((n) => [branchCashConfig(n).books, intakeHeader(n).centerName, intakeHeader(n).city, branchContactFor(n)?.branch, isPhysioCenterName(n)]),
+    [0, 1].map(() => [["devices", "physio"], "مركز بايونك للأطراف الصناعية الذكية والتأهيل الطبي", "بغداد", "بغداد بايونك", false]));
+  same("أ٧ج. وأرقامُ الطباعة بالقاعدة الواحدة: المركزُ رقمُه، و«بغداد» القديمة و«ذي قار» و«كربلاء الوارث» كما كانت",
+    [CENTER_NAME, "بغداد", "ذي قار", "كربلاء الوارث", ""].map((n) => branchContactFor(n)?.branch ?? null),
+    [CENTER_NAME, "بغداد بايونك", "ذي قار بايونك", "كربلاء الوارث", null]);
   same("أ٨. مفتاحُ الدخول: الثابتُ والمضافُ رقماً، والمسؤولُ والمجهولُ بلا فرع",
     [loginBranchIdOf("baghdad"), loginBranchIdOf("branch-6"), loginBranchIdOf("admin"), loginBranchIdOf("x"), loginBranchIdOf("branch-")],
     [1, 6, null, null, null]);

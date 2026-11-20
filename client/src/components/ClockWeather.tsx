@@ -19,7 +19,7 @@ import { useTranslation } from "@/i18n/LanguageContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  GEO_CREDIT, OBS_CREDIT, WEATHER_CITIES, WEATHER_CREDIT, formatClock12, roundDeviceCoord, formatTemp, toArabicDigits, weatherLabel, type WeatherKind, type WeatherNow,
+  GEO_CREDIT, OBS_CREDIT, WEATHER_CITIES, WEATHER_CREDIT, formatClock12, roundDeviceCoord, shouldAskDeviceLocation, type GeoPermission, formatTemp, toArabicDigits, weatherLabel, type WeatherKind, type WeatherNow,
 } from "@shared/weather";
 
 /** الآن — يتبدّل على رأس كلّ دقيقة، وعند العودة إلى الصفحة. */
@@ -78,6 +78,20 @@ function writeStoredCoords(c: DeviceCoords) {
   } catch { /* وضعٌ خاصّ أو تخزينٌ محجوب — لا شيء يُحفظ */ }
 }
 
+const GEO_ASKED_KEY = "bcm.weather.geoAsked";
+function readAskedBefore(): boolean {
+  try { return localStorage.getItem(GEO_ASKED_KEY) === "1"; } catch { return false; }
+}
+function markAskedBefore() {
+  try { localStorage.setItem(GEO_ASKED_KEY, "1"); } catch { /* تخزينٌ محجوب — يُسأل كما كان */ }
+}
+async function readGeoPermission(): Promise<GeoPermission> {
+  try {
+    const st = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
+    return st?.state === "granted" || st?.state === "prompt" || st?.state === "denied" ? st.state : "unknown";
+  } catch { return "unknown"; }
+}
+
 const geo = (() => {
   const hasGeo = typeof navigator !== "undefined" && !!navigator.geolocation;
   const stored = hasGeo ? readStoredCoords() : null;
@@ -90,9 +104,18 @@ const geo = (() => {
     state = next;
     listeners.forEach((l) => l());
   };
-  const ask = () => {
+  const ask = async () => {
     if (!hasGeo || Date.now() - lastAsk < GEO_REFRESH_MS) return;
     lastAsk = Date.now();
+    //  **نافذةُ الإذن مرّةً واحدة في عمر الجهاز** (طلبُ المالك ٢٠٢٦-١١-٢٠ — الآيفون يسأل في كلّ فتحة): يُسأل المتصفّحُ عن حال الإذن
+    //  أوّلاً، ولا يُطلب الموقعُ إلّا إن كان ممنوحاً (فلا نافذة) أو لم يُسأل هذا الجهازُ قطّ (`shouldAskDeviceLocation`).
+    const permission = await readGeoPermission();
+    if (!shouldAskDeviceLocation({ permission, askedBefore: readAskedBefore() })) {
+      if (permission === "denied") { writeStoredCoords(null); set({ coords: null, ready: true }); }
+      else set({ ...state, ready: true }); //  المكانُ المحفوظُ إن كان، وإلّا الفرع
+      return;
+    }
+    markAskedBefore();
     navigator.geolocation.getCurrentPosition(
       (p) => {
         const c = { lat: roundDeviceCoord(p.coords.latitude), lon: roundDeviceCoord(p.coords.longitude) };

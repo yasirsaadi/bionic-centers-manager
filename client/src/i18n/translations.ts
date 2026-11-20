@@ -36,6 +36,7 @@ const translations = {
     },
     branches: {
       "بايونك بغداد": "بايونك بغداد",
+      "بغداد أطراف": "بغداد أطراف",
       "الوارث كربلاء": "الوارث كربلاء",
       "بايونك ذي قار": "بايونك ذي قار",
       "بايونك الموصل": "بايونك الموصل",
@@ -1269,6 +1270,7 @@ const translations = {
     },
     branches: {
       "بايونك بغداد": "Bionic Baghdad",
+      "بغداد أطراف": "Baghdad Prosthetics",
       "الوارث كربلاء": "Al-Warith Karbala",
       "بايونك ذي قار": "Bionic Dhi Qar",
       "بايونك الموصل": "Bionic Mosul",

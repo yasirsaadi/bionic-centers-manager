@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { scrollPageToTop } from "@/lib/scroll_top";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -472,7 +473,7 @@ function Pagination({
           variant="outline"
           size="sm"
           disabled={page <= 1}
-          onClick={() => onPage(page - 1)}
+          onClick={() => { scrollPageToTop(); onPage(page - 1); }}
         >
           <ChevronRight className="w-4 h-4 ml-1" />
           السابق
@@ -484,7 +485,7 @@ function Pagination({
           variant="outline"
           size="sm"
           disabled={page >= totalPages}
-          onClick={() => onPage(page + 1)}
+          onClick={() => { scrollPageToTop(); onPage(page + 1); }}
         >
           التالي
           <ChevronLeft className="w-4 h-4 mr-1" />

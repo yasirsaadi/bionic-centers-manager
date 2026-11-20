@@ -1,4 +1,5 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { scrollPageToTop } from "@/lib/scroll_top";
 import { Link, useSearch, useLocation } from "wouter";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { 
@@ -914,7 +915,7 @@ export default function PatientsList() {
               size="sm"
               onClick={() => {
                 setCurrentPage(p => Math.max(1, p - 1));
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                scrollPageToTop();
               }}
               disabled={currentPage === 1}
               className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"
@@ -930,7 +931,7 @@ export default function PatientsList() {
               size="sm"
               onClick={() => {
                 setCurrentPage(p => Math.min(totalPages, p + 1));
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                scrollPageToTop();
               }}
               disabled={currentPage >= totalPages}
               className="gap-1 h-8 md:h-9 text-xs md:text-sm px-2 md:px-3"

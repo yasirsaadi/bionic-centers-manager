@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { usePrintAction } from "@/hooks/use-print-action";
 import { apiRequest } from "@/lib/queryClient";
 import { intakeHeader } from "@shared/intake_sheet";
-import { CENTER_CONTACTS } from "@shared/patient_card";
+import { CENTER_CONTACTS, branchContactFor } from "@shared/patient_card";
 import { REFUND_PRINT_PENDING_MESSAGE, refundFormKind, refundPrintFit } from "@shared/patient_refunds";
 import type { RefundRow } from "@/components/PatientRefund";
 import bionicLogo from "@/assets/intake/bionic.jpg";
@@ -38,9 +38,7 @@ function fitRefundPagesForPrint() {
 
 /** هاتفا الفرع كما في بطاقة المريض (`CENTER_CONTACTS`) — «ذي قار» ⟵ «ذي قار بايونك». */
 function branchPhones(branchName: string | null | undefined): string[] {
-  const n = String(branchName ?? "").trim();
-  if (!n) return [];
-  return CENTER_CONTACTS.find((c) => c.branch.includes(n) || n.includes(c.branch))?.phones ?? [];
+  return branchContactFor(branchName)?.phones ?? [];
 }
 
 function Row({ icon: Icon, label, children, testid, tall }: { icon: any; label: string; children: React.ReactNode; testid?: string; tall?: boolean }) {

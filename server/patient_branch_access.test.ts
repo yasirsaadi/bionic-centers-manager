@@ -260,6 +260,11 @@ async function main() {
     const regAdmin = await http("GET", `/api/patients/registry?pageSize=200&branchId=${KARBALA}`, S.admin);
     const rowAdm = (regAdmin.body?.rows ?? []).find((p: any) => Number(p.id) === pid);
     same("٨ج. وسجلُّ المسؤول (فرعُ كربلاء) كذلك", rowAdm?.sharedBranchIds, [DHIQAR]);
+    //  **والمسؤولُ يرى الفرعَ كما يراه موظّفوه** (§4.gr التكملة): فرعُ ذي قار في سجلّه يحمل الملفَّ المُتاحَ لها، والرقمُ فوقه معه.
+    const regAdmDq = await http("GET", `/api/patients/registry?pageSize=200&branchId=${DHIQAR}`, S.admin);
+    same("٨هـ. سجلُّ المسؤول بفرع ذي قار يحمل ملفَّ كربلاء المُتاحَ لها — كسجلّ موظّف ذي قار",
+      [(regAdmDq.body?.rows ?? []).some((p: any) => Number(p.id) === pid), regAdmDq.body?.counts?.branch, regAdmDq.body?.total],
+      [true, regAfter.body?.counts?.branch, regAfter.body?.total]);
     const other = (regAdmin.body?.rows ?? []).filter((p: any) => Number(p.id) !== pid);
     check(other.every((p: any) => Array.isArray(p.sharedBranchIds) && p.sharedBranchIds.length === 0),
       "٨د. والملفُّ غيرُ المُتاح بلا فرعٍ مُتاح", JSON.stringify(other.map((p: any) => p.sharedBranchIds)));

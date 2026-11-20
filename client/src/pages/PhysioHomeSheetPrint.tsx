@@ -17,7 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { intakeHeader } from "@shared/intake_sheet";
 import { arDigits, doseLine, mergeDose, sessionRangeLabel } from "@shared/physio_exercises";
 import { HOME_SHEET_NOT_STARTED, homeSheetDefaultExercises, homeSheetDefaultPhase, stepLines } from "@shared/physio_home_sheet";
-import { CENTER_CONTACTS } from "@shared/patient_card";
+import { CENTER_CONTACTS, branchContactFor } from "@shared/patient_card";
 import { packRowsIntoPages } from "@shared/print_pages";
 import type { Phase, PhaseExercise } from "@/components/physio/ProtocolPhases";
 import bionicLogo from "@/assets/intake/bionic.jpg";
@@ -42,12 +42,8 @@ const errText = (raw: string): string => {
 };
 
 /** أرقامُ الفرع للتواصل — من نصّ المالك في بطاقة المريض (§4.bv)؛ والفرعُ الذي ليس فيه لا سطرَ له. */
-function branchPhones(branchName: string | null): string[] {
-  const n = String(branchName ?? "").trim();
-  if (!n) return [];
-  //  «بغداد» ⟵ «بغداد بايونك»، و«ذي قار» ⟵ «ذي قار بايونك»، و«كربلاء الوارث» كما هو.
-  const hit = CENTER_CONTACTS.find((c) => c.branch.includes(n) || n.includes(c.branch));
-  return hit?.phones ?? [];
+function branchPhones(branchName: string | null | undefined): string[] {
+  return branchContactFor(branchName)?.phones ?? [];
 }
 
 export default function PhysioHomeSheetPrint() {
