@@ -82,6 +82,9 @@ const GEO_ASKED_KEY = "bcm.weather.geoAsked";
 function readAskedBefore(): boolean {
   try { return localStorage.getItem(GEO_ASKED_KEY) === "1"; } catch { return false; }
 }
+function clearAskedBefore() {
+  try { localStorage.removeItem(GEO_ASKED_KEY); } catch { /* تخزينٌ محجوب */ }
+}
 function markAskedBefore() {
   try { localStorage.setItem(GEO_ASKED_KEY, "1"); } catch { /* تخزينٌ محجوب — يُسأل كما كان */ }
 }
@@ -128,6 +131,8 @@ const geo = (() => {
           set({ coords: null, ready: true });
         } else {
           //  مهلةٌ أو موقعٌ غير متاح: يبقى المحفوظُ إن كان، وتُعاد المحاولةُ عند العودة إلى الصفحة.
+          //  **وجهازٌ بلا مكانٍ محفوظ لا يُعدّ «سُئل»** (مراجعةُ Codex على #752): فشلٌ عابر لا يحكم عليه بطقس الفرع أبداً.
+          if (!state.coords) clearAskedBefore();
           lastAsk = 0;
           set({ ...state, ready: true });
         }

@@ -527,6 +527,12 @@ async function main() {
       && cw.indexOf("markAskedBefore();") < cw.indexOf("navigator.geolocation.getCurrentPosition(")
       && cw.indexOf("markAskedBefore();") > cw.indexOf("shouldAskDeviceLocation({ permission"),
     "ش.٣ط **والواجهةُ تسأل القاعدةَ قبل كلّ طلبٍ للموقع، وتعلّم «سُئل» قبل أن تطلبه**");
+  {
+    const transient = cw.slice(cw.indexOf("if (err.code === err.PERMISSION_DENIED)"), cw.indexOf("{ enableHighAccuracy: false"));
+    check(/\} else \{[\s\S]*if \(!state\.coords\) clearAskedBefore\(\);[\s\S]*lastAsk = 0;/.test(transient)
+        && /localStorage\.removeItem\(GEO_ASKED_KEY\)/.test(cw),
+      "ش.٣ي **والفشلُ العابر بلا مكانٍ محفوظ يمحو «سُئل»** (مراجعة Codex على #752) — فيُعاد السؤالُ ولا يبقى الجهازُ على طقس الفرع");
+  }
   const greet = read("client/src/components/DailyGreeting.tsx");
   check(/if \(weatherSettled \|\| !geoReady\) return;/.test(greet) && /\[weatherSettled, geoReady, weatherKey\]/.test(greet) && /geoReady: ready/.test(cw),
     "ش.٣هـ **مهلةُ «حسناً» للطقس تبدأ بعد جواب الموقع** (مراجعة §4.gl) — لا تنتهي مع مهلة الموقع قبل أن يُطلب الطقس");
