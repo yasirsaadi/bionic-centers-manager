@@ -1425,7 +1425,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<{ case: PatientCase; totalCost: number } | undefined> {
     return await db.transaction(async (tx) => {
       const locked = await tx.execute(sql`
-        SELECT pc.cost AS case_cost, p.branch_id, p.total_cost
+        SELECT pc.cost AS case_cost, COALESCE(pc.branch_id, p.branch_id) AS branch_id, p.total_cost
           FROM patient_cases pc
           JOIN patients p ON p.id = pc.patient_id
          WHERE pc.id = ${caseId} AND pc.patient_id = ${patientId}
@@ -1436,6 +1436,8 @@ export class DatabaseStorage implements IStorage {
 
       const oldCaseCost = Number(row.case_cost) || 0;
       const oldTotalCost = Number(row.total_cost) || 0;
+      //  **قيدُ الفرق على فرع القسم لا فرع التسجيل** (§4.gq): مريضُ أطراف بغداد الذي قسمُه الطبيعيّ في مركزه يُعدَّل
+      //  ثمنُ علاجه هناك — فكان الفرقُ يُقيَّد على بغداد ويبقى دينُ المركز كما هو. وبلا فرعٍ للحالة ⟵ فرعُ التسجيل كما كان.
       const branchId = Number(row.branch_id);
       const delta = cost - oldCaseCost;
 
