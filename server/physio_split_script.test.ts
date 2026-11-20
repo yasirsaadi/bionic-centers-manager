@@ -134,6 +134,16 @@ async function main() {
     pairs.map((r) => [Number(r.branch_id) === NEW ? "new" : Number(r.branch_id), r.s, r.t]),
     [[1, -410000, "2026-11-20 21:00:00"], ["new", 410000, "2026-11-20 21:00:00"]]);
 
+  //  **قيدا النقل رصيدٌ لا بيع** (مراجعةٌ مستقلّة): مبيعاتُ السبت لكلّ فرعٍ صفر، والديونُ انتقلت.
+  const sat1 = await storage.getAccountingSummary(1, "2026-11-21", "2026-11-21", { baghdadDays: true });
+  const satN = await storage.getAccountingSummary(NEW, "2026-11-21", "2026-11-21", { baghdadDays: true });
+  same("ب٩. **مبيعاتُ السبت صفر في الفرعين** — النقلُ لا يُقرأ بيعاً ولا تخفيضاً",
+    [sat1.totalRevenue, satN.totalRevenue, (sat1 as any).reductions?.total ?? 0], [0, 0, 0]);
+  same("ب١٠. وقيودُ التقرير اليوميّ بلا قيد نقل",
+    (await storage.getCostEntriesByBranchSince(NEW, new Date("2026-11-20T00:00:00Z"))).length, 0);
+  same("ب١١. والديونُ انتقلت: «المتبقّي» للمركز ٤٣٠ ألفاً للمدينين (والدائنُ رصيدٌ منفصل)",
+    (await storage.getAccountingSummary(NEW)).totalRemaining, 430000);
+
   console.log("\n── ج. المرضى والطلبات ──");
   const home = new Map((await q(`SELECT id, branch_id FROM patients`)).map((r) => [Number(r.id), Number(r.branch_id)]));
   same("ج١. فرعُ التسجيل: أ و و إلى المركز، وب ود في بغداد، وج في كربلاء، وهـ في ذي قار",

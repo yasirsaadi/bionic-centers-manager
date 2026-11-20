@@ -1,3 +1,4 @@
+import { BALANCE_ONLY_COST_SOURCE } from "@shared/cost_ledger";
 import type { Express } from "express";
 import { diffPatientEdit, patientEditNote } from "./patients/patient_edit_audit";
 import { ATTENDANCE_REASONS, visitReasonLabel } from "@shared/attendance";
@@ -5505,6 +5506,7 @@ export async function registerRoutes(
             SELECT branch_id, COALESCE(SUM(amount), 0)::bigint AS sold
             FROM cost_entries ce
             WHERE ce.created_at >= ${startOfDay} AND ce.created_at < ${endOfDay}
+              AND ce.source <> ${BALANCE_ONLY_COST_SOURCE}
               AND ${belongsToActivePatientSql("ce")}
             GROUP BY branch_id
           `)

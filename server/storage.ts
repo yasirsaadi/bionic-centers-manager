@@ -1,3 +1,4 @@
+import { BALANCE_ONLY_COST_SOURCE } from "@shared/cost_ledger";
 import { db } from "./db";
 import { notePaymentAmount } from "./payments/big_payment_notice";
 import { notifyOrderAssigned, notifyPaymentReceived } from "./staff_telegram/notify";
@@ -1214,7 +1215,8 @@ export class DatabaseStorage implements IStorage {
   }
   // Dated cost-ledger rows for the daily report window (migration 033).
   async getCostEntriesByBranchSince(branchId: number, cutoff: Date | null) {
-    const conds = [eq(costEntries.branchId, branchId), belongsToActivePatientSql("cost_entries")];
+    const conds = [eq(costEntries.branchId, branchId), belongsToActivePatientSql("cost_entries"),
+      sql`${costEntries.source} <> ${BALANCE_ONLY_COST_SOURCE}`];
     if (cutoff) conds.push(gte(costEntries.createdAt, cutoff));
     return await db.select().from(costEntries).where(and(...conds)).orderBy(desc(costEntries.createdAt));
   }
@@ -4468,7 +4470,7 @@ export class DatabaseStorage implements IStorage {
       .from(payments).where(paidWhere);
     const totalPaid = Number(paidQuery[0]?.total) || 0;
 
-    const revConds: any[] = [belongsToActivePatientSql("cost_entries")];
+    const revConds: any[] = [belongsToActivePatientSql("cost_entries"), sql`${costEntries.source} <> ${BALANCE_ONLY_COST_SOURCE}`];
     if (branchId) revConds.push(eq(costEntries.branchId, branchId));
     if (rangeStart) revConds.push(gte(costEntries.createdAt, rangeStart));
     if (endExclusive) revConds.push(sql`${costEntries.createdAt} < ${endExclusive}`);
@@ -4573,7 +4575,7 @@ export class DatabaseStorage implements IStorage {
         LEFT JOIN patient_cases c ON c.id = e.case_id
         LEFT JOIN patient_device_episodes pe ON pe.id = e.device_episode_id
         LEFT JOIN patient_cases ec ON ec.id = pe.case_id
-       WHERE ${belongsToActivePatientSql("e")}${bRevBranch}${bRevStart}${bRevEnd}
+       WHERE ${belongsToActivePatientSql("e")} AND e.source <> ${BALANCE_ONLY_COST_SOURCE}${bRevBranch}${bRevStart}${bRevEnd}
        GROUP BY 1
     `);
     const revenueByDept = (revenueRowsRaw.rows ?? []).map((r: any) => ({
