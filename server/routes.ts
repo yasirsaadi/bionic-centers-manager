@@ -2296,6 +2296,28 @@ export async function registerRoutes(
       }
     }
 
+    //  ══ **الفروعُ المُتاحُ لها الملفّ** (طلبُ المالك ٢٠٢٦-١١-٢٠ بعد فصل «مركز بغداد للعلاج الطبيعي» — §4.gr) ══
+    //  عمودُ «فرع» كان فرعَ التسجيل وحده، فمريضُ القسمين في بغداد لا يقول إنّ علاجَه الطبيعيّ في المركز. استعلامٌ واحد
+    //  لمرضى الصفحة، بترتيب المنح (الأقدمُ أوّلاً) كرأس الملفّ، وفرعُ التسجيل يُستبعد هنا وفي الواجهة (`patientHeaderBranches`).
+    //  **عرضٌ لا نطاق**: الشرطُ الذي يحدّد مَن يظهر لم يتغيّر بحرف.
+    const sharedByPatient = new Map<number, number[]>();
+    if (ids.length > 0) {
+      const shared = await db.execute(sql`
+        SELECT pba.patient_id, pba.branch_id
+          FROM patient_branch_access pba
+          JOIN patients p ON p.id = pba.patient_id
+         WHERE pba.patient_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+           AND pba.branch_id IS DISTINCT FROM p.branch_id
+         ORDER BY pba.patient_id, pba.granted_at, pba.id
+      `);
+      for (const r of shared.rows as any[]) {
+        const pid = Number(r.patient_id);
+        const list = sharedByPatient.get(pid) ?? [];
+        if (!list.includes(Number(r.branch_id))) list.push(Number(r.branch_id));
+        sharedByPatient.set(pid, list);
+      }
+    }
+
     // Tab-badge counts: patients in the selected branch scope, and of those,
     // patients with a visit on the selected day — independent of the search.
     //  **ونطاقُ الرقم نطاقُ القائمة تحته** (§4.ar البند ١١): كان الرقمُ لفرع التسجيل وحده، والقائمةُ تُظهر
@@ -2336,6 +2358,7 @@ export async function registerRoutes(
         ...(scopedMoney.has(r.id) ? { scopedCost: scopedMoney.get(r.id)!.cost } : {}),
         ...(canViewPayments && scopedMoney.has(r.id) ? { scopedPaid: scopedMoney.get(r.id)!.paid } : {}),
         activeDeviceAssignments: assignmentsByPatient.get(r.id) ?? [],
+        sharedBranchIds: sharedByPatient.get(r.id) ?? [],
         ...(req.query.lastVisit === "1" ? {
           lastVisitReason: lastVisitByPatient.get(r.id)?.reason ?? null,
           lastVisitAt: lastVisitByPatient.get(r.id)?.at ?? null,

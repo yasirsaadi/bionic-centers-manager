@@ -254,6 +254,15 @@ async function main() {
     check((regAfter.body?.patients ?? regAfter.body?.rows ?? [])
       .some((p: any) => Number(p.id) === pid),
       "٨. ويظهر في سجلّ مرضى ذي قار", JSON.stringify(regAfter.body).slice(0, 200));
+    //  **وعمودُ «فرع» يقول الفرعَ المُتاحَ له** (§4.gr): `sharedBranchIds` بلا فرع التسجيل — في سجلّ ذي قار وسجلّ المسؤول.
+    const rowDq = (regAfter.body?.rows ?? []).find((p: any) => Number(p.id) === pid);
+    same("٨ب. صفُّ السجلّ يحمل ذي قار فرعاً مُتاحاً، وفرعُ التسجيل كربلاء", [rowDq?.branchId, rowDq?.sharedBranchIds], [KARBALA, [DHIQAR]]);
+    const regAdmin = await http("GET", `/api/patients/registry?pageSize=200&branchId=${KARBALA}`, S.admin);
+    const rowAdm = (regAdmin.body?.rows ?? []).find((p: any) => Number(p.id) === pid);
+    same("٨ج. وسجلُّ المسؤول (فرعُ كربلاء) كذلك", rowAdm?.sharedBranchIds, [DHIQAR]);
+    const other = (regAdmin.body?.rows ?? []).filter((p: any) => Number(p.id) !== pid);
+    check(other.every((p: any) => Array.isArray(p.sharedBranchIds) && p.sharedBranchIds.length === 0),
+      "٨د. والملفُّ غيرُ المُتاح بلا فرعٍ مُتاح", JSON.stringify(other.map((p: any) => p.sharedBranchIds)));
 
     //  ⑤ خدمةٌ جديدة في ذي قار.
     const svc = await http("POST", `/api/patients/${pid}/new-service`, S.dhiqar, {
