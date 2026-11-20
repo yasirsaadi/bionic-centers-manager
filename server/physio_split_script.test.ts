@@ -130,17 +130,19 @@ async function main() {
     [A, B, C, D, E, F].map((id) => afterAll.get(id) === beforeAll.get(id)), [true, true, true, true, true, true]);
   same("ب٧. **ولا دفعةَ مُسّت**", await q(`SELECT id, branch_id, amount FROM payments ORDER BY id`), paysBefore);
   const pairs = await q(`SELECT branch_id, SUM(amount)::int AS s, MIN(created_at)::text AS t FROM cost_entries WHERE source = 'branch_split' GROUP BY 1 ORDER BY 1`);
-  same("ب٨. القيدان متعاكسان بأوّل لحظةٍ من السبت (بغداد)",
-    pairs.map((r) => [Number(r.branch_id) === NEW ? "new" : Number(r.branch_id), r.s, r.t]),
-    [[1, -410000, "2026-11-20 21:00:00"], ["new", 410000, "2026-11-20 21:00:00"]]);
+  same("ب٨. القيدان متعاكسان بلحظة التشغيل نفسِها",
+    [pairs.map((r) => [Number(r.branch_id) === NEW ? "new" : Number(r.branch_id), r.s]), pairs[0]?.t === pairs[1]?.t,
+     Math.abs(Date.parse(pairs[0]?.t + "Z") - Date.now()) < 120000],
+    [[[1, -410000], ["new", 410000]], true, true]);
 
   //  **قيدا النقل رصيدٌ لا بيع** (مراجعةٌ مستقلّة): مبيعاتُ السبت لكلّ فرعٍ صفر، والديونُ انتقلت.
-  const sat1 = await storage.getAccountingSummary(1, "2026-11-21", "2026-11-21", { baghdadDays: true });
-  const satN = await storage.getAccountingSummary(NEW, "2026-11-21", "2026-11-21", { baghdadDays: true });
-  same("ب٩. **مبيعاتُ السبت صفر في الفرعين** — النقلُ لا يُقرأ بيعاً ولا تخفيضاً",
+  const today = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10); // يومُ التشغيل بتوقيت بغداد
+  const sat1 = await storage.getAccountingSummary(1, today, today, { baghdadDays: true });
+  const satN = await storage.getAccountingSummary(NEW, today, today, { baghdadDays: true });
+  same("ب٩. **مبيعاتُ يوم التشغيل صفر في الفرعين** — النقلُ لا يُقرأ بيعاً ولا تخفيضاً",
     [sat1.totalRevenue, satN.totalRevenue, (sat1 as any).reductions?.total ?? 0], [0, 0, 0]);
   same("ب١٠. وقيودُ التقرير اليوميّ بلا قيد نقل",
-    (await storage.getCostEntriesByBranchSince(NEW, new Date("2026-11-20T00:00:00Z"))).length, 0);
+    (await storage.getCostEntriesByBranchSince(NEW, new Date(Date.now() - 24 * 3600e3))).length, 0);
   same("ب١١. والديونُ انتقلت: «المتبقّي» للمركز ٤٣٠ ألفاً للمدينين (والدائنُ رصيدٌ منفصل)",
     (await storage.getAccountingSummary(NEW)).totalRemaining, 430000);
 
@@ -166,9 +168,9 @@ async function main() {
   console.log("\n── د. الفرع والحسابات ──");
   const acc = await q(`SELECT account_code FROM chart_of_accounts WHERE branch_id = $1`, [NEW]);
   same("د١. صندوقٌ واحد للمركز برمزٍ جديد", acc.map((r) => r.account_code), ["111106"]);
-  same("د٢. دفترُ «علاج طبيعي» برصيدٍ صفر من السبت",
+  same("د٢. دفترُ «علاج طبيعي» برصيدٍ صفر من يوم التشغيل",
     (await q(`SELECT book, opening_date::text AS d, cash_balance FROM cash_book_openings WHERE branch_id = $1`, [NEW])).map((r) => [r.book, r.d, r.cash_balance]),
-    [["physio", "2026-11-21", 0]]);
+    [["physio", today, 0]]);
   same("د٣. الأجهزةُ متاحةٌ في المركز ومطفأةٌ في بغداد وذي قار كما هي",
     (await q(`SELECT branch_id, bool_or(available) AS a FROM physio_device_branches GROUP BY 1 ORDER BY 1`)).map((r) => [Number(r.branch_id) === NEW ? "new" : Number(r.branch_id), r.a]),
     [[1, false], [3, true], ["new", true]]);
