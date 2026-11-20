@@ -63,7 +63,10 @@ const login = (sid: string, branchKey: string) =>
 async function cleanup() {
   const ids = `SELECT id FROM patients WHERE referral_source = '${MARK}'`;
   await q(`DELETE FROM follow_up_calls WHERE patient_id IN (${ids})`);
-  await q(`DELETE FROM journal_lines WHERE patient_id IN (${ids})`);
+  //  رأسُ القيد بلا عمود مريض — يُحذف عبر سطوره قبلها، وإلّا بقي قيدٌ فارغ (مراجعةُ Codex على #747).
+  await q(`WITH e AS (SELECT DISTINCT entry_id FROM journal_lines WHERE patient_id IN (${ids})),
+                dl AS (DELETE FROM journal_lines WHERE entry_id IN (SELECT entry_id FROM e))
+           DELETE FROM journal_entries WHERE id IN (SELECT entry_id FROM e)`);
   await q(`DELETE FROM patient_refund_requests WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM payments WHERE patient_id IN (${ids})`);
   await q(`DELETE FROM patient_events WHERE patient_id IN (${ids})`);
