@@ -46,6 +46,7 @@ import { Stethoscope } from "lucide-react";
 import { formatDateIraq, formatDateTimeIraq, formatTimeIraq, getTodayIraq } from "@/lib/utils";
 import { useTranslation, useLanguage } from "@/i18n/LanguageContext";
 import { onlyRoles } from "@shared/user_roles";
+import { patientHeaderBranches } from "./patient_header_branches";
 
 function isSameDay(date1: Date, date2: Date): boolean {
   return date1.getFullYear() === date2.getFullYear() &&
@@ -270,6 +271,8 @@ export default function PatientsList() {
     scopedCost?: number; scopedPaid?: number;
     /** أوامر البناء الأولي الفعّالة — واحدٌ لكل خدمة على الأكثر. */
     activeDeviceAssignments?: ActiveAssignment[];
+    /** الفروعُ المُتاحُ لها الملفّ غيرَ فرع التسجيل، بترتيب المنح (§4.gr). */
+    sharedBranchIds?: number[];
   }
   interface RegistryResponse {
     total: number; page: number; pageSize: number;
@@ -810,10 +813,29 @@ export default function PatientsList() {
                         </TableCell>
                         <TableCell className="text-slate-600">{patient.age}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1 text-slate-600 whitespace-nowrap">
-                            <Building2 className="w-3 h-3" />
-                            <span className="text-sm">{(() => { const name = getBranchName(patient.branchId); return t.branches[name as keyof typeof t.branches] || name; })()}</span>
-                          </div>
+                          {(() => {
+                            //  فرعُ التسجيل ثمّ كلُّ فرعٍ أُتيح له الملفّ (§4.gr) — بقاعدة رأس الملفّ نفسِها.
+                            const { home, shared } = patientHeaderBranches({
+                              homeBranchId: patient.branchId,
+                              access: (patient.sharedBranchIds ?? []).map((branchId) => ({ branchId })),
+                              branches,
+                              translate: (n) => t.branches[n as keyof typeof t.branches] || n,
+                            });
+                            return (
+                              <div className="text-slate-600" data-testid={`patient-branches-${patient.id}`}>
+                                <div className="flex items-center gap-1 whitespace-nowrap">
+                                  <Building2 className="w-3 h-3" />
+                                  <span className="text-sm">{home?.label ?? "-"}</span>
+                                </div>
+                                {shared.map((b) => (
+                                  <div key={b.id} className="mt-1 text-xs leading-snug text-sky-700"
+                                    title="الملفُّ متاحٌ لهذا الفرع أيضاً" data-testid={`patient-shared-branch-${patient.id}-${b.id}`}>
+                                    + {b.label}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <CaseTypeBadges patient={patient} labels={{ amputee: t.patients.amputee, physiotherapy: t.patients.physiotherapy, medicalSupport: t.patients.medicalSupportLabel }} pending={pendingByPatient[patient.id] ?? []} decided={visibleDecided(patient, decidedByPatient[patient.id] ?? [])} assignments={patient.activeDeviceAssignments ?? []} unrouted={unroutedByPatient[patient.id] ?? []} />
