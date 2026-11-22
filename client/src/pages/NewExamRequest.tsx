@@ -10,14 +10,17 @@ import { isNewExamRequestDepartment } from "@shared/new_exam_request";
 import { Button } from "@/components/ui/button";
 import IntakeSheetCreate from "./IntakeSheetCreate";
 import PhysioSheetCreate from "./PhysioSheetCreate";
+import { transferBannerText, parseNewExamQuery } from "@shared/returned_transfer";
 
 export default function NewExamRequest() {
   const { id } = useParams<{ id: string }>();
   const patientId = Number(id);
-  const dept = new URLSearchParams(useSearch()).get("dept");
+  //  **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu): `replaces` الطلبُ المُرجَع الذي يُلغيه هذا الإرسال، و`from` قسمُه للّافتة،
+  //  و«رجوع» إلى «المُرجَعون» للتحويل ولإعادة إرسال العلاج الطبيعيّ منها (`parseNewExamQuery` — عكسُ روابطها بحرفها).
+  const { dept, replacesRequestId, from, backToReturned } = parseNewExamQuery(useSearch());
   const [, setLocation] = useLocation();
   const { data: patient, isLoading } = usePatient(patientId);
-  const back = () => setLocation(`/patients/${patientId}`);
+  const back = () => setLocation(backToReturned ? "/returned-from-doctor" : `/patients/${patientId}`);
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;
@@ -30,9 +33,17 @@ export default function NewExamRequest() {
       </div>
     );
   }
-  //  `key`: ورقةٌ لكلّ (مريض، قسم) — فلا تبقى حالُ ورقةٍ مفتوحة إن تبدّل الرابط.
+  //  `key`: ورقةٌ لكلّ (مريض، قسم، طلبٍ يُستبدَل) — فلا تبقى حالُ ورقةٍ مفتوحة إن تبدّل الرابط.
+  const banner = replacesRequestId ? (
+    <div className="max-w-4xl mx-auto mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-900"
+      dir="rtl" data-testid="new-exam-transfer-banner">
+      {transferBannerText(from)}
+    </div>
+  ) : null;
   if (dept === "physiotherapy") {
-    return <PhysioSheetCreate key={`${patientId}:pt`} onBack={back} existing={{ patient: patient as any }} />;
+    return <>{banner}<PhysioSheetCreate key={`${patientId}:pt:${replacesRequestId ?? ""}`} onBack={back}
+      existing={{ patient: patient as any, replacesRequestId }} /></>;
   }
-  return <IntakeSheetCreate key={`${patientId}:${dept}`} onBack={back} existing={{ patient: patient as any, department: dept }} />;
+  return <>{banner}<IntakeSheetCreate key={`${patientId}:${dept}:${replacesRequestId ?? ""}`} onBack={back}
+    existing={{ patient: patient as any, department: dept, replacesRequestId }} /></>;
 }

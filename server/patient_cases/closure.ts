@@ -27,6 +27,8 @@ import {
 } from "@shared/case_closure";
 import { classifyCaseDisposal, type CaseDisposal } from "./disposal";
 import { recordRefundPaymentTx } from "../accounting/refund_payment";
+import { logAudit } from "../accounting/ledger";
+import { ATTENDANCE_REASONS } from "@shared/attendance";
 
 type Executor = { execute: (q: any) => Promise<any> };
 
@@ -283,3 +285,121 @@ export function closureAuditNote(o: CaseClosureOutcome): string {
 }
 
 export { CLOSURE_MESSAGES, computeClosureMoney };
+
+// ══ **إغلاقُ القسم الفارغ تلقائياً** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢) ═════════════════════════════════
+//
+// المالك: حين يُرجِع الطبيبُ معاينةً للاستعلامات «يجب أن يتمكّن من إمّا إلغائها أو تحويل المريض من علاج طبيعي إلى أطراف أو بالعكس»،
+// **والقسمُ القديم يُغلَق تلقائياً إن كان فارغاً، وإلّا يبقى كما هو ويُلغى طلبُه وحده**.
+//
+// **و«الفارغ» بأشدّ معنى** — أيُّ أثرٍ حقيقيّ يُبقيه:
+//   ① `classifyCaseDisposal` تقول «سقالة» (لا معاينةَ موقّعة ولا متابعة ولا أمرَ تصنيع ولا دفعةً على القسم ولا عمليةً معلَّقة ولا خصماً
+//      ينتظر ولا حلقةً حيّة ولا طلباً قُرِّر فيه)؛ ② وكلفةُ القسم صفر؛ ③ ولا حلقةَ جهازٍ عليه غيرُ ملغاة (فطلبُ جهازٍ آخر ينتظر يُبقيه —
+//   وهو ما تعدّه ①سقالةً)؛ ④ ولا زيارةَ حيّةً عليه غيرُ علامتَي المسار نفسِه («إضافة نوع حالة» و«طلب معاينة طبية» — الزيارتان اللتان
+//   تعدّهما ① سقالةً)، **ولا زيارةَ حيّةً ولا دفعةً بلا قسمٍ للمريض** (لا يُعرف قسمُها فتُبقي كلَّ قسم)؛ ⑤ ولا قيدَ كلفةٍ ولا خطّةَ
+//   أقساطٍ ولا طلبَ استرجاعٍ ولا طلبَ خصمٍ بأيّ حالة، **ولا طلبَ معاينةٍ آخر معلَّقاً أو مُرجَعاً** على القسم؛ ⑥ **وللعلاج الطبيعيّ**
+//   فوقها: لا خطّةَ علاج (`physio_plans` · `treatment_plans` — بالمريض، فلا قسمَ فيهما) — كقاعدة `retireAcrossPhysiotherapy`
+//   («للعلاج الطبيعي جلساتٌ أو خطّةُ علاجٍ مسجَّلة»).
+//
+// **والإغلاقُ لا الحذف** («يُغلَق» قولُ المالك): الصفُّ يبقى بتاريخه، ويُفتَح مُدقَّقاً حين يعود المريضُ لخدمة (`ensureCaseTx`)،
+// **وأعلامُ المريض لا تُمَسّ** — قاعدةُ الإغلاق في هذا الملفّ (`closeCaseWithHistoryTx` يغيّر الحالةَ وحدها).
+//
+// **تحت قفل المريض** (٩١٩) **ثمّ صفّ القسم** — بترتيب `lockCaseTx`؛ ويُنادى داخل معاملة المُنادي بعد أن يسحب الطلبَ المُرجَع،
+// فالسحبُ والإغلاقُ وسطرُ التدقيق حدثٌ واحد أو لا شيء.
+export type AutoCloseOutcome =
+  | { closed: true; caseId: number }
+  | { closed: false; caseId: number | null; keptBecause: string };
+
+export async function closeCaseIfEmptyTx(
+  tx: Executor,
+  params: {
+    patientId: number;
+    caseType: ClosureServiceType;
+    reason: string;
+    actor: { userId: number | null; userName: string | null };
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<AutoCloseOutcome> {
+  const { patientId, caseType } = params;
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
+  const [p] = await rows(tx, sql`SELECT id, branch_id FROM patients WHERE id = ${patientId} FOR UPDATE`);
+  const [c] = await rows(tx, sql`
+    SELECT id, status, cost, branch_id FROM patient_cases
+     WHERE patient_id = ${patientId} AND case_type = ${caseType}
+     FOR UPDATE
+  `);
+  if (!p || !c) return { closed: false, caseId: c ? Number(c.id) : null, keptBecause: "لا قسمَ من هذا النوع" };
+  const caseId = Number(c.id);
+  if (String(c.status) !== "active") return { closed: false, caseId, keptBecause: "القسمُ مغلقٌ أصلاً" };
+  const kept = (keptBecause: string): AutoCloseOutcome => ({ closed: false, caseId, keptBecause });
+
+  const disposal = await classifyCaseDisposal(tx, { patientId, caseId, caseType });
+  if (!disposal.disposable) return kept(disposal.blocker.reason);
+  if (Number(c.cost ?? 0) !== 0) return kept("على القسم كلفةٌ مسجَّلة");
+  const markers = sql`('إضافة نوع حالة', ${ATTENDANCE_REASONS.examRequest})`;
+  const physio = caseType === "physiotherapy";
+  //  **ما لا قسمَ له يُبقي كلَّ قسم** (مراجعةُ ما بعد البناء): زيارةٌ أو دفعةٌ قديمة بلا `case_id` لا يُعرف قسمُها بيقين — فالأشدُّ
+  //  أن تُبقيه، أطرافاً كان أو مساند أو علاجاً طبيعياً. **و`details` قد يكون فارغاً** (`POST /api/visits` يكتب زيارةً بلا وصف):
+  //  `NULL NOT IN (…)` في SQL مجهولٌ لا صحيح، فكانت الزيارةُ الحقيقية بلا وصف تسقط من الفحص — فالمقارنةُ على `COALESCE`.
+  const [hit] = await rows(tx, sql`
+    SELECT 'episode' AS k FROM patient_device_episodes WHERE case_id = ${caseId} AND status <> 'cancelled'
+    UNION ALL
+    SELECT 'visit' FROM visits
+     WHERE deleted_at IS NULL AND COALESCE(details, '') NOT IN ${markers}
+       AND (case_id = ${caseId} OR (patient_id = ${patientId} AND case_id IS NULL))
+    UNION ALL
+    SELECT 'payment' FROM payments WHERE patient_id = ${patientId} AND case_id IS NULL
+    UNION ALL
+    SELECT 'cost_entry' FROM cost_entries WHERE case_id = ${caseId}
+    UNION ALL
+    SELECT 'installment' FROM installment_plans WHERE case_id = ${caseId}
+    UNION ALL
+    SELECT 'refund' FROM patient_refund_requests WHERE case_id = ${caseId}
+    UNION ALL
+    --  **وطلبٌ آخرُ ينتظر على القسم** (معلَّقٌ أو مُرجَعٌ بلا حلقة — تعدّه ① «سقالةً») يُبقيه: الإغلاقُ لا يسحبه فيعلق على قسمٍ مغلق.
+    --  والطلبُ الذي يُلغى الآن صار «cancelled» قبل هذا الفحص فلا يُعدّ.
+    SELECT 'request' FROM medical_review_requests
+     WHERE status IN ('pending', 'returned')
+       AND (case_id = ${caseId} OR (patient_id = ${patientId} AND service_type = ${caseType}))
+    UNION ALL
+    --  **وأيُّ طلب خصمٍ على القسم** — معتمَداً أو مرفوضاً أو معلَّقاً: قرارٌ ماليّ مسجَّل (① تفحص المعلَّقَ وحده).
+    SELECT 'discount' FROM service_discount_requests WHERE case_id = ${caseId}
+    ${physio ? sql`
+    UNION ALL
+    SELECT 'plan' FROM physio_plans WHERE patient_id = ${patientId}
+    UNION ALL
+    SELECT 'plan' FROM treatment_plans WHERE patient_id = ${patientId}` : sql``}
+    LIMIT 1
+  `);
+  if (hit) {
+    const why: Record<string, string> = {
+      episode: "على القسم طلبُ جهازٍ آخر قائم",
+      visit: "على القسم زياراتٌ أو جلساتٌ مسجَّلة",
+      cost_entry: "على القسم قيودُ كلفة",
+      installment: "على القسم خطّةُ أقساط",
+      refund: "على القسم طلبُ استرجاع",
+      payment: "للمريض دفعاتٌ غيرُ منسوبةٍ لقسم",
+      request: "على القسم طلبُ معاينةٍ آخر ينتظر",
+      discount: "على القسم طلبُ خصمٍ مسجَّل",
+      plan: "للعلاج الطبيعي خطّةُ علاجٍ مسجَّلة",
+    };
+    return kept(why[String(hit.k)] ?? "على القسم سجلّ");
+  }
+
+  const closed = await rows(tx, sql`
+    UPDATE patient_cases SET status = 'closed', updated_at = NOW()
+     WHERE id = ${caseId} AND status = 'active'
+    RETURNING id
+  `);
+  if (!closed.length) return kept("تغيّرت حالة القسم");
+  const branchId = (() => { try { return resolveBranchId(p, c); } catch { return null; } })();
+  await logAudit({
+    tx, entityType: "patient_case", entityId: caseId, action: "update",
+    userId: params.actor.userId, userName: params.actor.userName, branchId,
+    oldValues: { status: "active" },
+    newValues: { status: "closed", caseType, autoClosed: true },
+    ipAddress: params.ipAddress ?? null, userAgent: params.userAgent ?? null,
+    notes: `إغلاق تلقائي لقسم ${CLOSURE_SERVICE_LABEL[caseType]} الفارغ (#${caseId}) — ${params.reason}`,
+  });
+  return { closed: true, caseId };
+}

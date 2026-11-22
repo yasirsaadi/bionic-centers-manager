@@ -75,7 +75,7 @@ async function rows(tx: Executor, q: any): Promise<Record<string, any>[]> {
  * فكلُّ ما يقرّر يُقرأ **الآن وتحت القفل** ويُطابَق، والتناقضُ يُردّ ٤٠٩
  * **بصفر كتابة** — لا نصفَ إلغاء.
  */
-export async function cancelExamRequest(params: {
+type CancelExamRequestParams = {
   patientId: number;
   caseType: MedicalSpecialty;
   /** هويّةُ الجهاز من الصفّ — `null` لصفٍّ بلا حلقة. لا يُخمَّن أبداً. */
@@ -84,13 +84,27 @@ export async function cancelExamRequest(params: {
   actor: { userId: number | null; userName: string | null };
   /** نطاقُ الجلسة الحيّ — `null` للمسؤول العام. */
   branchIds: number[] | null;
-}): Promise<CancelExamRequestResult> {
+};
+
+export async function cancelExamRequest(params: CancelExamRequestParams): Promise<CancelExamRequestResult> {
+  return await db.transaction(async (tx) => cancelExamRequestTx(tx, params));
+}
+
+/**
+ * **الفعلُ نفسُه داخل معاملة المُنادي** (§4.gu): إلغاءُ الطلب المُرجَع من الاستعلامات وتحويلُ المريض إلى قسمٍ آخر يسحبان حلقةً
+ * تنتظر بهذه القاعدة بحرفها — مع إغلاق القسم الفارغ وإنشاء الطلب الجديد — حدثاً واحداً أو لا شيء. والقفلُ (٩١٩) يُعاد أخذُه
+ * في المعاملة نفسِها بلا أثر.
+ */
+export async function cancelExamRequestTx(
+  tx: Executor,
+  params: CancelExamRequestParams,
+): Promise<CancelExamRequestResult> {
   const reason = (params.reason ?? "").trim();
   if (!reason) {
     throw new CancelExamRequestError("سبب الإلغاء إلزامي", 400, "reason_required");
   }
 
-  return await db.transaction(async (tx) => {
+  {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${params.patientId})`);
 
     // ── ① المريضُ تحت القفل — لا لقطةَ ما قبلَه ────────────────────────────
@@ -246,5 +260,5 @@ export async function cancelExamRequest(params: {
       //  **فرعُ العملية لا فرعُ التسجيل** — نفسُ الرقم الذي حرس الطلب.
       branchId: scopeBranch,
     };
-  });
+  }
 }

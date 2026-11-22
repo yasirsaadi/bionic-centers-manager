@@ -1381,7 +1381,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  للاستعلامات». ويُرفَق `returnableRequestId` لمن يملك القدرة —
       //  ومَن أنشأ الطلبَ بنفسه لا يُعرَض له الزرّ (والخادم يردّه أيضاً).
       const mayReturn = await liveCanSuperviseWorklist(userId);
-      const pend = mayReturn
+      //  **وصفُّ العلاج الطبيعيّ يُرجعه مَن يكتب معاينتَه** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢): القائمةُ نفسُها من `doctorSpecialties`،
+      //  فمَن فيها العلاجُ الطبيعيّ يكتب معاينتَه — والإرجاعُ أقلُّ أثراً من التوقيع. **وللعلاج الطبيعيّ وحده.**
+      const mayReturnPhysio = mayReturn || specialties.includes("physiotherapy");
+      const pend = mayReturn || mayReturnPhysio
         ? await reviewStore.pendingFullRequestsFor({
           patientIds: rows.map((r) => r.patientId), branchIds: branchScope(req),
         })
@@ -1420,11 +1423,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           //  يُنشئ الطلبَ بنفسه). فالطبيبُ يعرف «عاد للشراء» ولو كان هو
           //  نفسُه مَن أحال المريض سابقاً.
           const withKind = hit ? { ...withAlias, reviewKind: hit.reviewKind } : withAlias;
-          //  **ولا إرجاعَ لطلب العلاج الطبيعي** (ترحيل ١٥٤): «المُرجَعون من الطبيب» للأطراف والمساند وحدهما، فطلبٌ مُرجَعٌ منه
-          //  يختفي من كلّ قائمة — وما أُرسل خطأً يُلغيه «إلغاء المعاينة».
-          return hit && hit.createdBy !== userId && isReviewServiceType(r.caseType)
-            ? { ...withKind, returnableRequestId: hit.requestId }
-            : withKind;
+          //  **والعلاجُ الطبيعيّ يُرجَع كالأطراف والمساند** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢، وكان «لا إرجاع» منذ ترحيل ١٥٤):
+          //  «حين أعيد معاينة للاستعلامات يجب أن يتمكّن من إمّا إلغائها أو تحويل المريض» — فطلبُه المُرجَع في «المُرجَعون من الطبيب».
+          const mayReturnRow = isReviewServiceType(r.caseType) ? mayReturn
+            : r.caseType === "physiotherapy" ? mayReturnPhysio : false;
+          if (hit && hit.createdBy !== userId && mayReturnRow) return { ...withKind, returnableRequestId: hit.requestId };
+          //  **وصفُّ العلاج الطبيعيّ بلا طلبٍ قطّ** (القاعدةُ ③ — مريضٌ جديد لم يُعايَن) يُرجَع ببابه: يُكتب الطلبُ مُرجَعاً عند الإرجاع.
+          if (!hit && r.episodeId === null && r.caseType === "physiotherapy" && mayReturnPhysio) {
+            return { ...withKind, returnableImplicit: true };
+          }
+          return withKind;
         }),
         specialties,
         canReturnRequests: mayReturn,

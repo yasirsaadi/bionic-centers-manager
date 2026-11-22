@@ -3,6 +3,7 @@
 //
 // الطلبُ المُرجَع يظهر في القائمة وعدّادها لمن يرسل ولمن يعاين، في فرعه وحده،
 // ويخرج بإعادة الإرسال أو بتوقيع معاينة أو بإلغاء الطلب.
+// **والاستعلاماتُ يُلغيه أيضاً** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢) بسببٍ إلزاميّ، والقسمُ يُغلَق تلقائياً إن صار فارغاً (قسم ح).
 
 import express from "express";
 import { createServer } from "http";
@@ -279,8 +280,10 @@ async function main() {
       patientId: p6, caseType: "medical_support", deviceEpisodeId: null, reason: "منور",
     });
     same("ز٣. **نقطةُ «معايناتي» لا تجد ما تسحبه** (ما رآه المالك)", oldPath.body?.code, "nothing_to_cancel");
-    const byRecv = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.recv, { reason: "x" });
-    same("ز٤. والاستعلاماتُ لا يملك هذا الزرّ ⟵ ٤٠٣", byRecv.status, 403);
+    //  **قرارُ المالك ٢٠٢٦-١١-٢٢ (§4.gu) قلب هذا التأكيد**: كان «الاستعلاماتُ لا يملك هذا الزرّ ⟵ ٤٠٣»، وصار الاستعلاماتُ يُلغي
+    //  (قسم ح). فالـ٤٠٣ الآن لمن ليس منهما — الخبيرُ بلا «إضافة مرضى» ولا «كتابة معاينة».
+    const byExpert = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.expert, { reason: "x" });
+    same("ز٤. ومَن لا يُرسل ولا يعاين (الخبير) لا يملك هذا الزرّ ⟵ ٤٠٣", byExpert.status, 403);
     const noReason = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.doc, { reason: " " });
     same("ز٥. وبلا سبب ⟵ ٤٠٠", noReason.status, 400);
     const closed = await http("POST", `/api/medical-review/requests/${bareReq.body.id}/close-returned`, S.doc, { reason: "منور" });
@@ -302,6 +305,61 @@ async function main() {
     same("ز١٠. حلقةٌ تنتظر ⟵ لم تعد تنتظر، وخرج من القائمة",
       [closedF.status, (await returnedOf(p7)).length, fStatus !== "awaiting_exam"], [200, 0, true]);
     same("ز١١. ولا تعود إلى «معايناتي»", await worklistEpisodes(p7), []);
+
+    console.log("\n── ح. الاستعلاماتُ يُلغي الطلبَ المُرجَع — والقسمُ الفارغ يُغلق (§4.gu) ──");
+    const caseStatus = async (pid: number, t: string) =>
+      (await q(`SELECT status FROM patient_cases WHERE patient_id=$1 AND case_type=$2`, [pid, t]))[0]?.status ?? null;
+    const p8 = await mkPatient("فاطمة", svc);
+    await mkCase(p8, svc);
+    const G = await openEpisode(p8, svc);
+    await doReturn(G.requestId!, "ليست مريضة أطراف");
+    same("ح١. (الإعداد) في القائمة وحلقتُه تنتظر", (await returnedOf(p8)).map((r) => r.episodeAwaiting), [true]);
+    const g0 = await http("POST", `/api/medical-review/requests/${G.requestId}/close-returned`, S.recv, { reason: "  " });
+    const gB2 = await http("POST", `/api/medical-review/requests/${G.requestId}/close-returned`, S.recvB2, { reason: "x" });
+    same("ح٢. بلا سبب ⟵ ٤٠٠ · ومن فرعٍ آخر لا يراه ⟵ ٤٠٩", [g0.status, gB2.status], [400, 409]);
+    const g1 = await http("POST", `/api/medical-review/requests/${G.requestId}/close-returned`, S.recv, { reason: "سُجّلت خطأً" });
+    const gEp = (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [G.episodeId]))[0]?.status ?? "deleted";
+    const gReq = (await q(`SELECT status, decision FROM medical_review_requests WHERE id=$1`, [G.requestId]))[0];
+    same("ح٣. **الاستعلاماتُ يُلغيه** ⟵ الحلقةُ لم تعد تنتظر، والطلبُ مسحوبٌ بقرار الطبيب، **والقسمُ الفارغ أُغلق**",
+      [g1.status, gEp !== "awaiting_exam", gReq.status, gReq.decision, g1.body?.caseClosed, await caseStatus(p8, svc),
+        (await returnedOf(p8)).length, await worklistEpisodes(p8)],
+      [200, true, "cancelled", "return_to_reception", true, "closed", 0, []]);
+    const gAudit = await q(`SELECT entity_type, notes FROM audit_log WHERE user_id=$1 AND (
+        (entity_type='medical_review_request' AND entity_id=$2) OR
+        (entity_type='patient_case' AND entity_id=(SELECT id FROM patient_cases WHERE patient_id=$3 AND case_type=$4)))
+      ORDER BY id`, [RECV, G.requestId, p8, svc]);
+    same("ح٤. **وسطرا تدقيق** — الإلغاءُ بسببه، والإغلاقُ التلقائيّ",
+      gAudit.map((a: any) => [a.entity_type, /سُجّلت خطأً/.test(a.notes) || /إغلاق تلقائي/.test(a.notes)]),
+      [["medical_review_request", true], ["patient_case", true]]);
+    //  وقسمٌ فيه دفعة ⟵ يبقى، والطلبُ وحده يُلغى.
+    const p9 = await mkPatient("مريم", svc);
+    const c9 = await mkCase(p9, svc);
+    const H = await openEpisode(p9, svc);
+    await doReturn(H.requestId!, "خطأ");
+    await q(`INSERT INTO payments (patient_id, branch_id, amount, case_id) VALUES ($1, 1, 25000, $2)`, [p9, c9]);
+    const h1 = await http("POST", `/api/medical-review/requests/${H.requestId}/close-returned`, S.recv, { reason: "لا يحتاج" });
+    same("ح٥. **وقسمٌ فيه دفعة لا يُغلق** — يُلغى الطلبُ وحده ويُقال لماذا بقي",
+      [h1.status, h1.body?.caseClosed, typeof h1.body?.caseKeptBecause, await caseStatus(p9, svc), (await returnedOf(p9)).length],
+      [200, false, "string", "active", 0]);
+    //  وقسمٌ عليه كلفة ⟵ يبقى.
+    const p10 = await mkPatient("سارة", svc);
+    const c10 = await mkCase(p10, svc);
+    const I = await openEpisode(p10, svc);
+    await doReturn(I.requestId!, "خطأ");
+    await q(`UPDATE patient_cases SET cost = 150000 WHERE id = $1`, [c10]);
+    const i1 = await http("POST", `/api/medical-review/requests/${I.requestId}/close-returned`, S.recv, { reason: "لا يحتاج" });
+    same("ح٦. **وقسمٌ عليه كلفة لا يُغلق**", [i1.status, i1.body?.caseClosed, await caseStatus(p10, svc)], [200, false, "active"]);
+    //  وقسمٌ عليه طلبُ جهازٍ آخر ينتظر ⟵ يبقى (والطلبُ الآخر لا يُمَسّ).
+    const p11 = await mkPatient("ليث", svc);
+    await mkCase(p11, svc);
+    const J1 = await openEpisode(p11, svc);
+    const J2 = await openEpisode(p11, svc, "foot");
+    await doReturn(J1.requestId!, "خطأ");
+    const j1 = await http("POST", `/api/medical-review/requests/${J1.requestId}/close-returned`, S.recv, { reason: "لا يحتاج" });
+    const j2Status = (await q(`SELECT status FROM patient_device_episodes WHERE id=$1`, [J2.episodeId]))[0]?.status;
+    same("ح٧. **وقسمٌ عليه جهازٌ آخر ينتظر لا يُغلق** — والجهازُ الآخر باقٍ في «معايناتي»",
+      [j1.status, j1.body?.caseClosed, await caseStatus(p11, svc), j2Status, await worklistEpisodes(p11)],
+      [200, false, "active", "awaiting_exam", [J2.episodeId]]);
 
     console.log("\n── و. المحذوفُ في السلّة خارجها ──");
     const p4 = await mkPatient("سلمان", svc);

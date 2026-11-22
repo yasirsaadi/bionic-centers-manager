@@ -38,6 +38,11 @@ interface WorklistRow {
    */
   returnableRequestId?: number | null;
   /**
+   * **صفُّ علاجٍ طبيعيٍّ بلا طلبٍ قطّ يُرجَع** (§4.gu) — مريضٌ جديد ينتظر معاينته الأولى بلا طلب: يُكتب طلبُه مُرجَعاً عند الإرجاع
+   * (`/api/medical-review/patients/:id/return-implicit`). يرسله الخادمُ لمن يُرجع وحده.
+   */
+  returnableImplicit?: boolean;
+  /**
    * **سببُ الزيارة** حين وضعه طلبُ مراجعةٍ في القائمة (ترحيل ٠٧٢) — يظهر
    * دائماً لمن له طلبٌ حاكم، بصرف النظر عن مالك الإرجاع. القيمةُ الوحيدة
    * التي تُعرَض بادجاً صريحاً هي `return_to_purchase`: الطبيبُ يحتاج أن
@@ -125,15 +130,18 @@ export default function MyExams() {
 
   const submitReturn = async () => {
     const id = returning?.returnableRequestId;
+    const implicitFor = !id && returning?.returnableImplicit ? returning.patientId : null;
     const reason = returnReason.trim();
-    if (!id || !reason) return;
+    if ((!id && !implicitFor) || !reason) return;
     setReturnBusy(true);
     try {
-      const res = await fetch(`/api/medical-review/requests/${id}/return`, {
+      const res = await fetch(implicitFor
+        ? `/api/medical-review/patients/${implicitFor}/return-implicit`
+        : `/api/medical-review/requests/${id}/return`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify(implicitFor ? { reason, serviceType: "physiotherapy" } : { reason }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "تعذّر إرجاع الطلب");
@@ -504,6 +512,16 @@ export default function MyExams() {
                                     size="sm" variant="outline" className="h-8 text-xs gap-1"
                                     onClick={() => { setReturning(r); setReturnReason(""); }}
                                     data-testid={`return-request-${key}`}
+                                  >
+                                    <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
+                                  </Button>
+                                )}
+                                {/*  **وصفُّ العلاج الطبيعيّ بلا طلب** (§4.gu) — الزرُّ نفسُه، ويُكتب الطلبُ مُرجَعاً عند الإرجاع. */}
+                                {r.returnableRequestId == null && r.returnableImplicit === true && (
+                                  <Button
+                                    size="sm" variant="outline" className="h-8 text-xs gap-1"
+                                    onClick={() => { setReturning(r); setReturnReason(""); }}
+                                    data-testid={`return-implicit-${key}`}
                                   >
                                     <Undo2 className="w-3.5 h-3.5" /> إرجاع للاستعلامات
                                   </Button>

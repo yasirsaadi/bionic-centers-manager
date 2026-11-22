@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { transferOutcomeText, withReplaces } from "@shared/returned_transfer";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
@@ -67,7 +68,11 @@ interface SheetState {
 }
 
 /** **مريضٌ قائم يُرسَل لمعاينةٍ جديدة** — صفُّه كما يقرؤه `GET /api/patients/:id`. */
-export interface ExistingPhysioPatient { patient: Record<string, any> & { id: number } }
+export interface ExistingPhysioPatient {
+  patient: Record<string, any> & { id: number };
+  /** **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu) — الطلبُ المُرجَع في القسم الآخر يُلغى مع هذا الإرسال. */
+  replacesRequestId?: number | null;
+}
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
@@ -154,11 +159,11 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
     mutationFn: async (sharedPhone?: SharedPhoneConfirm) => {
       if (existing) {
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
-        await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
+        const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: "physiotherapy", fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
           ...(sharedPhone ? { sharedPhone } : {}),
-        });
-        return { id: existing.patient.id };
+        }, existing.replacesRequestId));
+        return { id: existing.patient.id, transfer: existing.replacesRequestId ? await res.json().catch(() => null) : null };
       }
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: "physiotherapy",
@@ -174,15 +179,19 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         totalCost: 0, whatsappNotificationsEnabled: false,
         ...(sharedPhone ? { sharedPhone } : {}),
       })).json();
-      return { id: created.id as number };
+      return { id: created.id as number, transfer: null };
     },
     onSuccess: (r) => {
       setPhoneHolders(null);
       if (existing) {
         invalidatePatientData(queryClient, r.id);
         queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${r.id}/exams`] });
+        queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned/count"] });
       }
-      toast(existing
+      toast(r.transfer
+        ? { title: "حُوِّل المراجعُ إلى العلاج الطبيعي", description: transferOutcomeText(r.transfer) }
+        : existing
         ? { title: "أُرسل المراجعُ لمعاينة العلاج الطبيعي", description: "يظهر في «معايناتي» حتى يعاينه الأخصائيّ أو الطبيب" }
         : { title: "حُفظت الاستمارة", description: "والمراجعُ بانتظار معاينة العلاج الطبيعي" });
       setLocation(`/patients/${r.id}`);
