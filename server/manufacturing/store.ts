@@ -5,6 +5,7 @@
 //   - append-only history & rework (no delete methods exist here)
 //   - atomic patient + work-order creation via a real transaction.
 
+import { sortByBranchDisplay } from "@shared/branch_order";
 import { addToOpenSummary, emptyOpenSummary } from "@shared/expert_open_orders";
 import { notifyOrderAssigned, notifyOrderReassigned, notifyStage, notifyHoldRework, notifyTrialReturn, notifyMoldReturn, notifyDeliveryDateChanged, notifyCancelRequest } from "../staff_telegram/notify";
 import { TRIAL_SOCKET_REASON, canDeliverTrialSocket, isTrialAwaiting, trialCallState, type TrialCallState } from "@shared/trial_socket";
@@ -2499,7 +2500,7 @@ export async function getOverview(scope: { branchIds?: number[] | null }) {
     stageCounts,
     experts: expertList,
     topReasons,
-    branches: Array.from(branchAgg.values()).sort((a, b) => b.total - a.total),
+    branches: sortByBranchDisplay(Array.from(branchAgg.values()), (b) => b.branchName, (b) => b.branchId), //  بترتيب العرض الواحد (§4.gt)
   };
 }
 

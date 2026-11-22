@@ -10,6 +10,7 @@
 // يُحسم في `registry.ts` قبل الوصول هنا: مديرُ الفرع ⟵ فرعُه النشط وحده، والمسؤولُ ⟵ ما يختاره أو كلُّ الفروع.
 // وقاصةُ الدكتور (`includeDrBox`) للمسؤول وحده — مالُ المالك الخاصّ لا يصل مديرَ فرع.
 
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage, baghdadDayBounds } from "../../storage";
@@ -93,8 +94,8 @@ export async function financialAudit(params: { branchId: number | undefined; sta
   const { branchId, start, end } = params;
   const s = await storage.getAccountingSummary(branchId, start, end);
   const [pays, exps] = await Promise.all([paymentRows(branchId, start, end), expenseRows(branchId, start, end)]);
-  const scopeBranches = await db.select({ id: branches.id, name: branches.name }).from(branches)
-    .where(branchId ? eq(branches.id, branchId) : sql`TRUE`).orderBy(branches.id);
+  const scopeBranches = sortBranchesForDisplay(await db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches)
+    .where(branchId ? eq(branches.id, branchId) : sql`TRUE`)); //  بترتيب العرض الواحد (§4.gt)
 
   // ── الوارد ──
   const payTotal = pays.reduce((t, p) => t + p.amount, 0);

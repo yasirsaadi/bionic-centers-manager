@@ -8,6 +8,7 @@
 //     `DR_BOX_WITHDRAWAL_CATEGORY` وكاتبُه الموظّف — يُنقص الرصيدَ كأيّ مصروف، ويراه الفرعُ بمبلغه وملاحظته لأنه كتبهما.
 //   • ولا تدخل `expenses` ولا تقاريرَ الفرع: المالُ خرج من قاصة الفرع يومَ التحويل.
 
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import { branches, cashBookEntries, drBoxExpenses, drBoxOpenings, systemUsers } from "@shared/schema";
@@ -143,7 +144,8 @@ export async function deleteDrBoxExpense(id: number, userId: number | null) {
  * **كلُّ رقمٍ يُحسب هنا بالمصادر نفسِها** (`drBoxReport` و`getSheet`) — لا حسابٌ ثانٍ ينحرف.
  */
 export async function ownerSummary(from: string, to: string, today: string) {
-  const list = await db.select({ id: branches.id, name: branches.name, closed: branches.temporarilyClosed }).from(branches).orderBy(asc(branches.id));
+  const list = (await db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches).then(sortBranchesForDisplay))
+    .map((b) => ({ id: b.id, name: b.name, closed: b.temporarilyClosed })); //  بترتيب العرض الواحد (§4.gt)
 
   const periodRows = await db.select({
     branchId: cashBookEntries.branchId, book: cashBookEntries.book, kind: cashBookEntries.kind,

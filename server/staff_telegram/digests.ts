@@ -2,6 +2,7 @@
 // **رسالةٌ واحدة لكلّ مستلِم** تجمع فروعَه هو (المسؤولُ: كلُّ الفروع المفتوحة) — لا رسالةً لكلّ فرع. وتُكتب في الصندوق
 // موجَّهةً إليه بعينه، فيمرّ عليها المُرسِلُ كأيّ تنبيه. **والحجزُ اليوميّ** بنقطة `system_settings` كالنسخة الليلية:
 // مثيلٌ واحد يكتب مهما تعدّدت الخوادم.
+import { sortByBranchDisplay } from "@shared/branch_order";
 import cron from "node-cron";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
@@ -34,7 +35,7 @@ async function holdersOf(event: string): Promise<Holder[]> {
 
 async function openBranches(): Promise<{ id: number; name: string }[]> {
   const r = await db.execute(sql`SELECT id, name FROM branches WHERE COALESCE(temporarily_closed, false) = false ORDER BY id`);
-  return (r.rows as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) }));
+  return sortByBranchDisplay((r.rows as any[]).map((b) => ({ id: Number(b.id), name: String(b.name) })), (b) => b.name, (b) => b.id); //  بترتيب العرض الواحد (§4.gt)
 }
 
 function branchesFor(h: Holder, open: { id: number; name: string }[]) {

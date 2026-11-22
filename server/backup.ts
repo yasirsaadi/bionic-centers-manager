@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import cron from "node-cron";
 import { db } from "./db";
 import { patients, branches, payments, expenses, systemSettings } from "@shared/schema";
@@ -258,7 +259,6 @@ async function sendBackupEmail(filter: BackupFilter = { type: "all" }): Promise<
   }
 }
 
-const BRANCH_ORDER = ["كربلاء", "بغداد أطراف", "بغداد", "ذي قار", "الموصل", "موصل", "كركوك"];
 
 export interface NightlyBranchRow {
   name: string;
@@ -277,11 +277,7 @@ export interface NightlyReportData {
 
 export async function getNightlyReportData(): Promise<NightlyReportData> {
   const allBranches = await db.select().from(branches);
-  const sortedBranches = [...allBranches].sort((a, b) => {
-    const ai = BRANCH_ORDER.indexOf(a.name);
-    const bi = BRANCH_ORDER.indexOf(b.name);
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-  });
+  const sortedBranches = sortBranchesForDisplay(allBranches); //  بترتيب العرض الواحد (§4.gt)
 
   const patientStats = await db
     .select({

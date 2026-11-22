@@ -3,6 +3,7 @@
 // الخطّةُ تدخل التقرير إن اعتُمدت (معتمَدةٌ أو متخرّجة) أو أُوقفت بعد نشاط (جلسةٍ أو تقييم) — ويومُ اعتمادها داخل الفترة.
 // ولكلّ خطّة: حكمُ أوّل تقييمٍ وآخره (`compareAssessments`)، والالتزامُ بعدد الجلسات (`adherence`)، وهل تأخّر تقييمُها (`assessmentDue`).
 // والمعالجُ «الرئيسيّ» مَن نفّذ أكثرَ جلساتها.
+import { sortBranchesForDisplay, sortByBranchDisplay } from "@shared/branch_order";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { branches, patients, physioAssessments, physioPlans, physioProtocols } from "@shared/schema";
@@ -74,7 +75,7 @@ export async function outcomesReport(f: OutcomeFilter) {
     period: { from: f.from, to: f.to },
     totals: groupOf("all", "الكلّ", rows),
     byProtocol: summarizeOutcomes(rows, (r) => [r.protocolKey, r.protocolTitle]),
-    byBranch: summarizeOutcomes(rows, (r) => [r.branchKey, r.branchName]),
+    byBranch: sortByBranchDisplay(summarizeOutcomes(rows, (r) => [r.branchKey, r.branchName]), (g) => g.name), //  بترتيب العرض الواحد (§4.gt)
     bySpecialist: summarizeOutcomes(rows, (r) => [r.specialistKey, r.specialistName]),
     byExecutor: summarizeOutcomes(rows, (r) => [r.executorKey, r.executorName]),
     overdue: rows.filter((r) => r.overdue).map((r) => ({ planId: r.planId, titleAr: r.titleAr, patientName: r.patientName, patientCode: r.patientCode,
@@ -84,5 +85,6 @@ export async function outcomesReport(f: OutcomeFilter) {
 
 /** فروعُ مرشِّح الصفحة — لمَن نطاقُه كلُّ الفروع. */
 export async function branchList() {
-  return db.select({ id: branches.id, name: branches.name }).from(branches).orderBy(asc(branches.id));
+  return sortBranchesForDisplay(await db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches))
+    .map((b) => ({ id: b.id, name: b.name })); //  بترتيب العرض الواحد (§4.gt)
 }

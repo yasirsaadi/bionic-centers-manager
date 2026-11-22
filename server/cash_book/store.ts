@@ -8,6 +8,7 @@
 // و«الباقي من أمس» يُحسب من الرصيد الافتتاحيّ للدفتر وما بعده وحدَه.
 // ومن ٢٠٢٦-١٠-١١ لا نسبةَ للدكتور، وبدلها قاصةُ المواد وقاصةُ الرواتب والإيجار (§4.dj): مصروفُ بابيهما يتراكم كلٌّ في قاصته.
 
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -524,8 +525,8 @@ export async function deleteExpenseRow(id: number, userId: number | null) {
  * الحسابُ نفسُه الذي في الدفتر: نسبةُ كلّ يومٍ من وارده (`autoDrRatioSum`)، لكلّ دفترٍ من دفاتر الفرع.
  */
 export async function ownerDrawingsForPeriod(branchId: number | undefined, from: string, toInclusive: string) {
-  const list = await db.select({ id: branches.id, name: branches.name }).from(branches)
-    .where(branchId ? eq(branches.id, branchId) : sql`TRUE`).orderBy(branches.id);
+  const list = sortBranchesForDisplay(await db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches)
+    .where(branchId ? eq(branches.id, branchId) : sql`TRUE`)); //  بترتيب العرض الواحد (§4.gt)
   const next = addDays(toInclusive, 1);
   const byBranch: { branchId: number; name: string; pct: number; amount: number }[] = [];
   for (const b of list) {

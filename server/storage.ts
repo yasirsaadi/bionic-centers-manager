@@ -1,4 +1,5 @@
 import { BALANCE_ONLY_COST_SOURCE } from "@shared/cost_ledger";
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import { db } from "./db";
 import { notePaymentAmount } from "./payments/big_payment_notice";
 import { notifyOrderAssigned, notifyPaymentReceived } from "./staff_telegram/notify";
@@ -1180,7 +1181,9 @@ export async function loadInManufacturingDeviceOperationTx(tx: any, params: {
 export class DatabaseStorage implements IStorage {
   // Branches
   async getBranches(): Promise<Branch[]> {
-    return await db.select().from(branches);
+    //  **بترتيب العرض الواحد** (طلبُ المالك ٢٠٢٦-١١-٢٢ — «في كلّ موقع في التطبيق»): بغداد أطراف ثمّ المركز ثمّ كربلاء ثمّ ذي قار
+    //  ثمّ الموصل، والمغلقُ مؤقتاً آخراً (`shared/branch_order.ts`). كان بلا ترتيب فخرج الفرعُ المُعاد تسميتُه آخراً.
+    return sortBranchesForDisplay(await db.select().from(branches));
   }
   async createBranch(insertBranch: InsertBranch): Promise<Branch> {
     const [branch] = await db.insert(branches).values(insertBranch).returning();

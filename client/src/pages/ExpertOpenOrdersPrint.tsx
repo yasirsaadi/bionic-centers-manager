@@ -5,6 +5,7 @@
 // الخبراء» (`shared/expert_open_orders.ts`)، فلا تقول الورقةُ رقماً ويقول الجدولُ غيرَه. والصفوفُ تُقسَّم على صفحاتٍ **بالقياس**
 // (`packRowsIntoPages` — كالسجلّ الكامل) ورأسٍ مكرَّر، فلا يقطع صانعُ الملفّ صفّاً في منتصفه: الاسمُ والعذرُ المكتوب نصٌّ بلا حدّ،
 // وعددٌ ثابت من الصفوف (كان ١٤ ثمّ ٢٠) يتجاوز A4 بعذرٍ طويل فيُقصّ الصفُّ بين صفحتين بلا رأس جدول (مراجعة Codex على #711).
+import { sortByBranchDisplay } from "@shared/branch_order";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Loader2, Printer } from "lucide-react";
@@ -129,7 +130,7 @@ export default function ExpertOpenOrdersPrint() {
   }, [counts, rows]);
 
   const expertName = (q.data?.[0]?.expertName ?? nameHint) || `#${expertUserId}`;
-  const branchNames = Array.from(new Set(rows.map(({ r }) => r.branchName).filter(Boolean))) as string[];
+  const branchNames = sortByBranchDisplay(Array.from(new Set(rows.map(({ r }) => r.branchName).filter(Boolean))) as string[], (n) => n); //  بترتيب العرض الواحد (§4.gt)
   const h = intakeHeader(branchNames.length === 1 ? branchNames[0] : null);
   const maint = rows.filter(({ r }) => r.purpose === "maintenance").length;
 

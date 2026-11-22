@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { sortBranchesForDisplay, sortByBranchDisplay } from "@shared/branch_order";
 import { z } from "zod";
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db";
@@ -102,7 +103,7 @@ export function registerSessionTrackingRoutes(
     async (req: Request, res: Response) => {
       try {
         const allowed = accessibleBranchesFor(req);
-        const rows = await db.select().from(branches).orderBy(asc(branches.name));
+        const rows = sortBranchesForDisplay(await db.select().from(branches)); //  بترتيب العرض الواحد (§4.gt)
         const filtered = allowed === null ? rows : rows.filter((b) => allowed.includes(b.id));
         res.json(filtered);
       } catch (err) {
@@ -783,8 +784,8 @@ export function registerSessionTrackingRoutes(
                 lte(dailySessions.sessionDate, to),
               ),
             )
-            .groupBy(branches.id, branches.name)
-            .orderBy(asc(branches.name));
+            .groupBy(branches.id, branches.name);
+          byBranch = sortByBranchDisplay(byBranch, (r) => r.name, (r) => r.branchId); //  بترتيب العرض الواحد (§4.gt)
         }
 
         res.json({ byDevice, byDay, byShift, byBranch });

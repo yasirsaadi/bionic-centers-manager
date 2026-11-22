@@ -12,6 +12,7 @@
 //  • **وتُستبعد الخطّةُ المغلقة بقرار** — «تخرّج» أو «إيقاف» من الأخصائيّ (`isPlanClosed`) — فتلك نهايةٌ لا انقطاع؛ وعددُها يُقال.
 //  • **والفرعُ فرعُ آخر جلسة** — حيث انقطع، فمنه يُتابَع.
 //  • **و«اشترى أكثر ممّا حضر»** بحساب ملفّ المريض نفسِه (`resolvePurchasedSessions` ثمّ `physioSessionRows`): جلساتٌ مدفوعةٌ لم تُحضَر.
+import { sortByBranchDisplay } from "@shared/branch_order";
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
@@ -170,7 +171,7 @@ export async function physioDropouts(q: DropoutQuery, branchId: number | null, t
   //  ══ الملخّص بلا مصفوفة ══ طبقةُ القدرات تأخذ أطولَ مصفوفةٍ وتُسقط ما حولها (`shape.ts`)، فالفروعُ كائنٌ لا مصفوفة،
   //  والقائمةُ بـ`list=1` وحدها — فنداءُ الأعداد يصل المساعدَ كاملاً.
   const byBranch: Record<string, ReturnType<typeof countBySessions>> = {};
-  for (const name of Array.from(new Set(patients.map((p) => p.branchName ?? "غير محدد")))) {
+  for (const name of sortByBranchDisplay(Array.from(new Set(patients.map((p) => p.branchName ?? "غير محدد"))), (n) => n)) { //  بترتيب العرض الواحد (§4.gt)
     byBranch[name] = countBySessions(patients.filter((p) => (p.branchName ?? "غير محدد") === name), q.maxSessions);
   }
   const paidMore = patients.filter((p) => p.remainingSessions > 0);
