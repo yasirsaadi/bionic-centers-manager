@@ -1,4 +1,5 @@
 import { BALANCE_ONLY_COST_SOURCE } from "@shared/cost_ledger";
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import type { Express } from "express";
 import { diffPatientEdit, patientEditNote } from "./patients/patient_edit_audit";
 import { ATTENDANCE_REASONS, visitReasonLabel } from "@shared/attendance";
@@ -1421,8 +1422,7 @@ export async function registerRoutes(
     const all = await storage.getBranches();
     const extra = all
       .filter((b: any) => !fixed.has(Number(b.id)) && !closed.has(Number(b.id)))
-      .sort((a: any, b: any) => Number(a.id) - Number(b.id))
-      .map((b: any) => ({ id: Number(b.id), name: String(b.name) }));
+      .map((b: any) => ({ id: Number(b.id), name: String(b.name) })); //  بترتيب العرض الواحد (§4.gt) — `getBranches` مرتّبةٌ أصلاً
     res.json({ ids: Array.from(closed), extra });
   });
 
@@ -7135,7 +7135,7 @@ export async function registerRoutes(
     // Every branch gets a card — including one that has taken nothing yet, so
     // a silent branch is visibly silent rather than absent.
     const [allBranches, sums] = await Promise.all([
-      db.select({ id: branches.id, name: branches.name }).from(branches).orderBy(branches.id),
+      db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches).then(sortBranchesForDisplay), //  بترتيب العرض الواحد (§4.gt)
       db
         .select({
           branchId: payments.branchId,

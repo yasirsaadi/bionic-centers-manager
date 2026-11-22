@@ -23,3 +23,8 @@ export function sortBranchesForDisplay<T extends { id: number; name: string; tem
     || (branchDisplayRank(a.name) - branchDisplayRank(b.name))
     || (a.id - b.id));
 }
+
+/** للصفوف التي ليست فروعاً بأسمائها (صفُّ تقريرٍ لكلّ فرع، أو أسماءٌ وحدها): يرتّب بترتيب الاسم ثمّ المفتاح. */
+export function sortByBranchDisplay<T>(list: T[], name: (t: T) => string | null | undefined, key: (t: T) => number = () => 0): T[] {
+  return [...list].sort((a, b) => (branchDisplayRank(name(a)) - branchDisplayRank(name(b))) || (key(a) - key(b)));
+}

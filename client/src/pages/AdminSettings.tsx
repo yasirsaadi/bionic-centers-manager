@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sortByBranchDisplay } from "@shared/branch_order";
 import { useLocation, useSearch } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -3455,9 +3456,9 @@ export default function AdminSettings() {
                       const userBranchIds: number[] = Array.isArray((user as any).branchIds) && (user as any).branchIds.length > 0
                         ? (user as any).branchIds as number[]
                         : (user.branchId ? [user.branchId] : []);
-                      const userBranchNames = userBranchIds
+                      const userBranchNames = sortByBranchDisplay(userBranchIds
                         .map((id) => branches?.find((b) => b.id === id)?.name)
-                        .filter(Boolean) as string[];
+                        .filter(Boolean) as string[], (n) => n); //  بترتيب العرض الواحد (§4.gt)
                       return (
                         <tr key={user.id} className="border-b hover-elevate" data-testid={`row-user-${user.id}`}>
                           <td className="py-3 px-4">{user.username}</td>

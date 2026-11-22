@@ -67,13 +67,14 @@ console.log("\n── ب. فروعٌ متعدّدة ──");
 {
   const many = head([grant(KARBALA), grant(BAGHDAD)]);
   same("٦. **كلُّ الفروع الإضافية تظهر**",
-    many.shared, [{ id: KARBALA, label: "كربلاء" }, { id: BAGHDAD, label: "بغداد" }]);
-  same("   ونصُّها بالفاصلة العربية", formatSharedBranches(many.shared), "كربلاء، بغداد");
+    many.shared, [{ id: BAGHDAD, label: "بغداد" }, { id: KARBALA, label: "كربلاء" }]);
+  same("   ونصُّها بالفاصلة العربية", formatSharedBranches(many.shared), "بغداد، كربلاء");
   same("   وفرعُ التسجيل واحدٌ لا يتكاثر", many.home, { id: DHIQAR, label: "ذي قار" });
 
-  //  ترتيبُ المنح كما أرسله الخادم (`ORDER BY granted_at ASC`) — لا يُعاد فرزُه.
-  same("٧. وترتيبُ المنح محفوظ — الأقدمُ أوّلاً",
-    formatSharedBranches(head([grant(BAGHDAD), grant(KARBALA)]).shared), "بغداد، كربلاء");
+  //  **بترتيب العرض الواحد لا بترتيب المنح** (طلبُ المالك ٢٠٢٦-١١-٢٢ — §4.gt): بغداد قبل كربلاء أيّاً كان الأقدمُ منحاً.
+  same("٧. وترتيبُ العرض الواحد أيّاً كان ترتيبُ المنح",
+    [formatSharedBranches(head([grant(BAGHDAD), grant(KARBALA)]).shared), formatSharedBranches(head([grant(KARBALA), grant(BAGHDAD)]).shared)],
+    ["بغداد، كربلاء", "بغداد، كربلاء"]);
 
   same("٨. وسحبُ أحدِهما يُبقي الآخر وحده",
     formatSharedBranches(head([grant(BAGHDAD)]).shared), "بغداد");

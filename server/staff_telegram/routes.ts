@@ -3,6 +3,7 @@
 // الـwebhook نسخةُ بوت المرضى في حراسته: سرٌّ في الترويسة وحدها، بمقارنةٍ ثابتة الزمن، وما لا نفهمه يُتجاهَل بـ٢٠٠.
 // والربطُ بتذكرةٍ يصدرها **المسؤولُ وحده** لموظّفٍ بعينه: لمرّةٍ واحدة، صالحةٌ ٢٤ ساعة، وبصمتُها وحدها تُحفَظ.
 // ولوحةُ المسؤول (`/api/admin/staff-notifications/*`) **له وحده** — مَن يستلم وعن ماذا (قرارُ المالك).
+import { sortByBranchDisplay } from "@shared/branch_order";
 import type { Express, RequestHandler } from "express";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { sql } from "drizzle-orm";
@@ -141,7 +142,7 @@ export function registerStaffTelegramRoutes(app: Express, isAuthenticated: Reque
     const list = (users.rows as any[]).map((u) => {
       const who = { role: String(u.role), extraRoles: u.extra_roles, canWriteMedicalExam: u.can_write_medical_exam, canWorkAsExpert: u.can_work_as_expert, canSupervisePhysio: u.can_supervise_physio };
       const branches = u.role === "admin" ? ["كل الفروع"]
-        : accessibleBranchesOf({ branchId: u.branch_id, branchIds: u.branch_ids }).map((b) => branchName.get(b) ?? `#${b}`);
+        : sortByBranchDisplay(accessibleBranchesOf({ branchId: u.branch_id, branchIds: u.branch_ids }).map((b) => branchName.get(b) ?? `#${b}`), (n) => n); //  بترتيب العرض الواحد (§4.gt)
       return {
         id: Number(u.id), displayName: String(u.display_name ?? ""), role: u.role, roles: rolesOf({ role: u.role, extraRoles: u.extra_roles }), branches,
         rank: staffRoleRank(who), eligible: eligibleStaffEvents(who),

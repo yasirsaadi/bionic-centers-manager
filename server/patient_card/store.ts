@@ -1,5 +1,6 @@
 // بناءُ بطاقة المريض (§4.bv) — **قراءةٌ محضة**، ولا يخرج منها حقلٌ خارجَ `PatientCard`.
 // ملاحظاتُ الطبيب والخصوماتُ وأسماءُ الموظّفين وأسبابُ التوقّف: لا تُقرأ هنا أصلاً. وسببُ الزيارة يظهر كما في سجلّ الملفّ (قرارُ المالك).
+import { sortByBranchDisplay } from "@shared/branch_order";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { caseNotBoughtByCase } from "../followup/case_not_bought";
@@ -31,11 +32,13 @@ export async function buildPatientCard(patientId: number): Promise<PatientCard |
       FROM patients p WHERE p.id = ${patientId} AND p.deleted_at IS NULL`);
   if (!p) return null;
 
-  const branches = (await rows(sql`
+  const branchesRaw = (await rows(sql`
     SELECT b.name FROM branches b
      WHERE b.id = ${p.branch_id}
         OR b.id IN (SELECT branch_id FROM patient_branch_access WHERE patient_id = ${patientId})
-     ORDER BY (b.id = ${p.branch_id}) DESC, b.name`)).map((b) => String(b.name));
+     ORDER BY (b.id = ${p.branch_id}) DESC, b.id`)).map((b) => String(b.name));
+  //  فرعُ التسجيل أوّلاً، والباقي بترتيب العرض الواحد (§4.gt).
+  const branches = [...branchesRaw.slice(0, 1), ...sortByBranchDisplay(branchesRaw.slice(1), (n) => n)];
 
   //  آخرُ جهازٍ حيٍّ لكلّ قسم — «المطلوب» (طرفٌ كامل أو جزء).
   const eps = await rows(sql`

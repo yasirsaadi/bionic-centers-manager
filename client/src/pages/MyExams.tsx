@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { sortByBranchDisplay } from "@shared/branch_order";
 import { scrollPageToTop } from "@/lib/scroll_top";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -225,9 +226,7 @@ export default function MyExams() {
       });
       b.count += 1;
     }
-    return Object.keys(seen)
-      .map((k) => seen[Number(k)])
-      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
+    return sortByBranchDisplay(Object.keys(seen).map((k) => seen[Number(k)]), (b) => b.name, (b) => b.id); //  بترتيب العرض الواحد (§4.gt)
   }, [rows]);
 
   //  الاختصاص والفرع يُرشَّحان هنا، والترتيبُ كلّه في `rankWorklist`:

@@ -1,4 +1,5 @@
 // **مكتبةُ بروتوكولات العلاج الطبيعي** (ترحيل ١٠٦، §4.cj) — طبقةُ البيانات. القواعدُ في `shared/physio_protocols.ts`.
+import { sortBranchesForDisplay } from "@shared/branch_order";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -360,7 +361,8 @@ export async function deleteImage(protocolId: number, imageId: number) {
 export async function deviceMatrix() {
   const devs = await db.select({ id: devices.id, code: devices.code, nameAr: devices.nameAr, nameEn: devices.nameEn })
     .from(devices).where(eq(devices.isActive, true)).orderBy(asc(devices.displayOrder));
-  const brs = await db.select({ id: branches.id, name: branches.name }).from(branches).orderBy(asc(branches.id));
+  const brs = sortBranchesForDisplay(await db.select({ id: branches.id, name: branches.name, temporarilyClosed: branches.temporarilyClosed }).from(branches))
+    .map((b) => ({ id: b.id, name: b.name })); //  بترتيب العرض الواحد (§4.gt)
   const avail = await availabilityRows();
   return { devices: devs, branches: brs, available: avail.filter((a) => a.available).map((a) => `${a.deviceId}:${a.branchId}`) };
 }
