@@ -145,6 +145,8 @@ export async function cancelReturnedRequestTx(tx: Executor, params: {
     const done = await cancelExamRequestTx(tx, {
       patientId, caseType: serviceType as any, deviceEpisodeId: episodeId, reason, actor: params.actor,
       branchIds: params.branchIds,
+      //  **الجهازُ المُرجَع وحده** — طلبُ اختصاصٍ عارٍ مستقلّ على الملفّ يبقى، فيُبقي القسمَ مفتوحاً (مراجعةُ Codex على #758).
+      episodeOnly: true,
     });
     return { requestId: params.requestId, patientId, serviceType, ...done };
   }
