@@ -108,8 +108,9 @@ function main() {
   }
   const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
   //  **وقراءتان لا أكثر** — حلقاتُ المريض، وأهليّةُ «عاد للشراء» (قرارُ المالك ٢٠٢٦-١٠-٠٥: الزرُّ لمن يستحقّه وحده).
-  same("ولا نقطةَ إلا قراءةَ حلقاتِ المريض وأهليّةِ «عاد للشراء»",
-    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
+  //  **وثالثةٌ بقرار المالك ٢٠٢٦-١١-٢٢** (§4.gv): قائمةُ الفروع العامّة — لفتح القسم الآخر في فرعه من «سبب الحضور».
+  same("ولا نقطةَ إلا قراءةَ الفروع وحلقاتِ المريض وأهليّةِ «عاد للشراء»",
+    launcherEndpoints, ["/api/branches", "/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
   for (const flow of ["AddCaseTypeModal", "NewServiceModal", "NewDeviceEpisodeModal",
     "NoExamOperationDialog", "ReturnToPurchaseDialog"]) {
     check(launcherCode.includes(`<${flow}`), `ويفتح «${flow}» القائمة`);

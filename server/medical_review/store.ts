@@ -128,6 +128,8 @@ export async function createReviewRequest(params: {
   branchIds: number[] | null;
   /** فرعُ جلسة المنادي — يحسم فرعَ الطلب الجديد (راجع `createReviewRequestTx`). */
   sessionBranchId?: number | null;
+  /** فرعُ العملية — يُفحَص ولا يُصدَّق (راجع `createReviewRequestTx`). */
+  operationBranchId?: number | null;
 }): Promise<ReviewRow> {
   //  ══ **«عاد للشراء» مملوكةٌ لتدفّقها الخاصّ وحده** (ترحيل ٠٧٢) ═════════
   //  صار `return_to_purchase` قيمةً صحيحة في `isReviewKind`، فهذا البابُ
@@ -336,6 +338,8 @@ export async function ensureReviewRouting(params: {
   branchIds: number[] | null;
   /** فرعُ جلسة المنادي — يحسم فرعَ الطلب الجديد. */
   sessionBranchId?: number | null;
+  /** فرعُ العملية (قسمٌ فُتح في فرعه — §4.gv). */
+  operationBranchId?: number | null;
 }): Promise<{ created: boolean; request: ReviewRow | null }> {
   //  حارسٌ صامت: العلاج الطبيعي (أو أي نوعٍ آخر) لا يُوجَّه ولا يُخطئ.
   if (!isReviewServiceType(params.serviceType)) return { created: false, request: null };

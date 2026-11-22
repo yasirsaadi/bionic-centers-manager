@@ -43,6 +43,7 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { transferOutcomeText, withReplaces } from "@shared/returned_transfer";
+import { CrossExamBanner, useCrossExamTarget } from "@/components/CrossExamBanner";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
@@ -76,6 +77,8 @@ export interface ExistingDevicePatient {
   department: "prosthetic" | "medical_support";
   /** **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu) — الطلبُ المُرجَع في القسم الآخر يُلغى مع هذا الإرسال. */
   replacesRequestId?: number | null;
+  /** **فتحُ القسم من «سبب الحضور»** (§4.gv) — مريضُ علاجٍ طبيعيّ وحده؛ يُرسَل إلى فرع الأجهزة بالمدينة («بغداد أطراف» من المركز). */
+  openDepartment?: boolean;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -146,6 +149,11 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
     ? branches.find((b) => b.id === f.branchId)?.name
     : (session?.branchName || branches.find((b) => b.id === (session?.branchId ?? f.branchId))?.name);
 
+  //  **فتحُ القسم في فرعه** (§4.gv) — يقول الفرعَ قبل الإرسال، ويُمنع الإرسالُ حين لا فرعَ في المدينة.
+  const openMode = Boolean(existing?.openDepartment);
+  const crossTarget = useCrossExamTarget(existing?.department ?? "prosthetic", (existing?.patient ?? {}) as { branchId?: number | null }, openMode);
+  const noCrossHome = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose);
+
   const referralSubSource = f.referralSource === REFERRAL_OTHER_PERSON
     ? (f.referralSubSource === REFERRAL_SUB_OTHER ? f.referralSubSourceOther.trim() : f.referralSubSource) : "";
   const amputationSite = f.department === "prosthetic" ? amputationSiteOf(f.amp) : "";
@@ -168,11 +176,14 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: dep, requestedItems: values.requestedItems,
           fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true } : {}),
         }, existing.replacesRequestId));
+        const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
         return {
           id: existing.patient.id, routed: true as const, routeError: null,
-          transfer: existing.replacesRequestId ? await res.json().catch(() => null) : null,
+          transfer: existing.replacesRequestId ? body : null,
+          //  **فرعُ القسم من ردّ الخادم** لا من حساب الشاشة — هو ما كُتب فعلاً (§4.gv).
+          opened: existing.openDepartment && body?.openedDepartment ? { targetBranchId: body.targetBranchId ?? null, targetBranchName: body.targetBranchName ?? null } : null,
         };
       }
       const created = await (await apiRequest("POST", "/api/patients", {
@@ -193,9 +204,9 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         await apiRequest("POST", `/api/patients/${created.id}/device-episodes`, {
           serviceType: dep, requestedItems: values.requestedItems, servicePath: "exam",
         });
-        return { id: created.id as number, routed: true as const, routeError: null, transfer: null };
+        return { id: created.id as number, routed: true as const, routeError: null, transfer: null, opened: null };
       } catch (e) {
-        return { id: created.id as number, routed: false as const, routeError: errBody(e).message, transfer: null };
+        return { id: created.id as number, routed: false as const, routeError: errBody(e).message, transfer: null, opened: null };
       }
     },
     onSuccess: (r) => {
@@ -207,7 +218,9 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned/count"] });
         toast(r.transfer
           ? { title: `حُوِّل المراجعُ إلى ${INTAKE_DEPARTMENT_LABELS[existing.department]}`, description: transferOutcomeText(r.transfer) }
-          : { title: "أُرسل المراجعُ إلى الطبيب للمعاينة", description: "يظهر في «معايناتي» بطلبه الجديد" });
+          : { title: "أُرسل المراجعُ إلى الطبيب للمعاينة", description: r.opened && r.opened.targetBranchId !== null && Number(r.opened.targetBranchId) !== Number(session?.branchId ?? 0)
+            ? `فُتح له قسمُ ${INTAKE_DEPARTMENT_LABELS[existing.department]} في ${r.opened.targetBranchName ?? "فرعه"} — يظهر في «معايناتي» عند طبيبه`
+            : "يظهر في «معايناتي» بطلبه الجديد" });
       } else if (r.routed) {
         toast({ title: "حُفظت الاستمارة", description: "وأُرسل المراجعُ إلى الطبيب للمعاينة" });
       } else {
@@ -257,6 +270,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
           {existing ? `${NEW_EXAM_REQUEST_LABEL} — ${INTAKE_DEPARTMENT_LABELS[existing.department]}` : "إضافة مريض — أطراف صناعية ومساند"}
         </div>
       </div>
+      {openMode && existing && <CrossExamBanner dept={existing.department} target={crossTarget} />}
       {existing && (
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900" data-testid="intake-existing-note">
           بياناتُ المراجع من ملفّه — عدّل ما تغيّر منها، واختر المطلوب، ثمّ أرسله للطبيب. وما تغيّر يُكتب في ملفّه بسطر تدقيق.
@@ -277,7 +291,8 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
       )}
 
       <div className="bg-white rounded-xl border shadow-sm p-3 md:p-8" data-testid="intake-sheet">
-        <IntakeSheetHeader branchName={branchName} />
+        {/*  **ورأسُ الورقة فرعُ القسم في وضع الفتح** (§4.gv) — الورقةُ تُرسَل إليه، لا إلى الفرع النشط. */}
+        <IntakeSheetHeader branchName={openMode && crossTarget.differs ? (crossTarget.targetName ?? branchName) : branchName} />
 
         <SheetTable>
           <SheetPair>
@@ -430,7 +445,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         </SheetTable>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button onClick={submit} disabled={save.isPending} className="gap-2 min-w-[12rem]" data-testid="intake-submit">
+          <Button onClick={submit} disabled={save.isPending || noCrossHome} className="gap-2 min-w-[12rem]" data-testid="intake-submit">
             {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {existing ? "إرسال للطبيب للمعاينة" : "حفظ وإرسال للطبيب"}
           </Button>
           {missing.length > 0 && <span className="text-xs text-red-600" data-testid="intake-missing">الخانات المحدّدة بالأحمر إلزامية</span>}

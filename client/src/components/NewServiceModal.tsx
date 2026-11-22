@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCcw, Loader2, Plus, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useBranchSession } from "@/components/BranchGate";
+import { CrossExamMoveNote } from "./CrossExamBanner";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { nextSubmissionToken, mintSubmissionToken } from "./patient_service_launcher_logic";
@@ -380,6 +381,7 @@ export function NewServiceModal({
               <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 space-y-2" data-testid="new-service-opens-physio">
                 <p className="font-bold">هذا المريض ليس لديه قسم علاج طبيعي.</p>
                 <p>الحفظ هنا يفتح له قسمَ علاجٍ طبيعيّ جديداً، ويُدخله «معايناتي» لمعاينة العلاج الطبيعي، ويُسجَّل المبلغ في العلاج الطبيعي.</p>
+                <CrossExamMoveNote dept="physiotherapy" patient={{ id: patientId, branchId }} enabled={Boolean(opensPhysioCase)} />
                 {onUseDeviceRouting && (
                   <>
                     <p>إن كان الطلبُ قطعةً لطرفٍ صناعيّ أو مسند (سليكون، قدم، ركبة…) أو صيانةً، فبابُه «سبب الحضور».</p>

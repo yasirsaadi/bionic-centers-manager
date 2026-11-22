@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import IntakeSheetCreate from "./IntakeSheetCreate";
 import PhysioSheetCreate from "./PhysioSheetCreate";
 import { transferBannerText, parseNewExamQuery } from "@shared/returned_transfer";
+import { parseOpenDepartmentQuery } from "@shared/cross_department_exam";
 
 export default function NewExamRequest() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +19,8 @@ export default function NewExamRequest() {
   //  **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu): `replaces` الطلبُ المُرجَع الذي يُلغيه هذا الإرسال، و`from` قسمُه للّافتة،
   //  و«رجوع» إلى «المُرجَعون» للتحويل ولإعادة إرسال العلاج الطبيعيّ منها (`parseNewExamQuery` — عكسُ روابطها بحرفها).
   const { dept, replacesRequestId, from, backToReturned } = parseNewExamQuery(useSearch());
+  //  **فتحُ قسمٍ ليس للمريض من «سبب الحضور»** (§4.gv) — الورقةُ نفسُها، ولافتتُها وفرعُها في الورقة.
+  const openDepartment = parseOpenDepartmentQuery(useSearch());
   const [, setLocation] = useLocation();
   const { data: patient, isLoading } = usePatient(patientId);
   const back = () => setLocation(backToReturned ? "/returned-from-doctor" : `/patients/${patientId}`);
@@ -41,9 +44,9 @@ export default function NewExamRequest() {
     </div>
   ) : null;
   if (dept === "physiotherapy") {
-    return <>{banner}<PhysioSheetCreate key={`${patientId}:pt:${replacesRequestId ?? ""}`} onBack={back}
-      existing={{ patient: patient as any, replacesRequestId }} /></>;
+    return <>{banner}<PhysioSheetCreate key={`${patientId}:pt:${replacesRequestId ?? ""}:${openDepartment}`} onBack={back}
+      existing={{ patient: patient as any, replacesRequestId, openDepartment }} /></>;
   }
-  return <>{banner}<IntakeSheetCreate key={`${patientId}:${dept}:${replacesRequestId ?? ""}`} onBack={back}
-    existing={{ patient: patient as any, department: dept, replacesRequestId }} /></>;
+  return <>{banner}<IntakeSheetCreate key={`${patientId}:${dept}:${replacesRequestId ?? ""}:${openDepartment}`} onBack={back}
+    existing={{ patient: patient as any, department: dept, replacesRequestId, openDepartment }} /></>;
 }

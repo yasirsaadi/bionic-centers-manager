@@ -4354,11 +4354,12 @@ export async function registerRoutes(
       }
       const actingBranchId = await actingBranchFor(req, patient);
       const auditBranchId = actingBranchId ?? patient.branchId;
-      const { patient: updated, workOrderId } = await storage.addPatientCaseType({
+      const { patient: updated, workOrderId, caseBranchId, caseBranchMoved } = await storage.addPatientCaseType({
         patientId, caseType, fields,
         expertUserId: null, expectedDeliveryDate: null,
         skipWorkOrder: true,
         performedBy: branchSession?.userId ?? null,
+        performedByName: branchSession?.displayName ?? null,
         actingBranchId,
       });
 
@@ -4372,6 +4373,8 @@ export async function registerRoutes(
         patientId, caseType,
         reviewKind: "new_device", requestedPath: "full",
         receptionNote: req.body?.reviewNote ?? null,
+        //  **والقسمُ الذي فُتح في فرعه** (§4.gv د) — طلبُه هناك، عند طبيبه.
+        operationBranchId: caseBranchMoved ? caseBranchId : null,
       });
 
       await logAudit({
@@ -4390,9 +4393,13 @@ export async function registerRoutes(
         });
       }
 
+      //  **وفرعُ القسم إن وُلد في غير الفرع النشط** (§4.gv د) — تقوله النافذةُ من هنا لا من حسابها.
+      const caseBranchName = caseBranchMoved && caseBranchId != null
+        ? (((await db.execute(sql`SELECT name FROM branches WHERE id = ${caseBranchId}`)).rows ?? [])[0] as any)?.name ?? null : null;
       res.json({
         success: true, patient: updated, workOrderId,
         reviewRequestId: caseRouting.request?.id ?? null,
+        caseBranchId, caseBranchMoved, caseBranchName,
       });
     } catch (err: any) {
       console.error("Error adding case type:", err);

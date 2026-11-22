@@ -96,7 +96,7 @@ import { deviceOrdinalLabel } from "@shared/device_label";
 import { VisitModal } from "@/components/VisitModal";
 import { EditVisitModal } from "@/components/EditVisitModal";
 import { PatientServiceLauncher } from "@/components/PatientServiceLauncher";
-import { RECEPTION_ROUTING_QUESTION } from "@/components/reception_routing";
+import { RECEPTION_ROUTING_QUESTION, receptionCrossExamChoices, crossExamActingBranch } from "@/components/reception_routing";
 import { PhysioPlanDialog } from "@/components/PhysioPlanDialog";
 import { Input } from "@/components/ui/input";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
@@ -957,8 +957,12 @@ export default function PatientDetails() {
                   إليه أدناه)، لا نسخةٌ ثانية تنحرف عنه.
                   والبوّابةُ `canAddPatients` نفسُها بلا توسيع.
                   ويلتفّ تحت الاسم في الشاشات الصغيرة بحكم `flex-wrap`. */}
+              {/*  **ومريضُ العلاج الطبيعيّ وحده** يرى الزرَّ حين يفتح له «سبب الحضور» قسماً آخر (§4.gv — `receptionCrossExamChoices`). */}
               {permissions.canAddPatients
-                && (!!patient.isAmputee || !!patient.isMedicalSupport) && (
+                && (!!patient.isAmputee || !!patient.isMedicalSupport || receptionCrossExamChoices(patient, {
+                  branches: branches as any, mayRequest: true,
+                  actingBranchId: crossExamActingBranch(branchSession, patient, (branchAccess?.access ?? []).map((a) => Number(a.branchId))),
+                }).length > 0) && (
                 <Button
                   size="sm"
                   className="gap-1.5 h-8 print:hidden"
