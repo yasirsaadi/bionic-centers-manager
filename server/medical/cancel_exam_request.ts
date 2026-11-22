@@ -84,6 +84,11 @@ type CancelExamRequestParams = {
   actor: { userId: number | null; userName: string | null };
   /** نطاقُ الجلسة الحيّ — `null` للمسؤول العام. */
   branchIds: number[] | null;
+  /**
+   * **الحلقةُ وطلباتُها وحدها** (مراجعةُ Codex على #758): إلغاءُ الطلب المُرجَع وتحويلُه يخصّان جهازاً بعينه — فلا تُسحَب معه
+   * طلباتُ الاختصاص العارية المستقلّة (ولا يردّه قرارُ إحالةٍ عليها)، وإلّا ضاع طلبٌ مشروع وأُغلق القسمُ لأنّه لم يعد يمنع.
+   */
+  episodeOnly?: boolean;
 };
 
 export async function cancelExamRequest(params: CancelExamRequestParams): Promise<CancelExamRequestResult> {
@@ -207,10 +212,12 @@ export async function cancelExamRequestTx(
     //  **ولا تُمرَّر إليها نطاقُ فرع**: النطاقُ فُرض للتوّ على صفّ المريض
     //  المقفول أعلاه، و`getWorklist` نفسُها لا تفلتر `r.branch_id` — فطلبُ
     //  مريضٍ نُقل بين فرعين يبقى قابلاً للإلغاء كما يبقى صفُّه ظاهراً.
-    const specialtyRequests = await lockSpecialtyLevelQueueRequestsTx(tx, {
-      patientId: params.patientId,
-      serviceType: params.caseType,
-    });
+    const specialtyRequests = params.episodeOnly && episodeToCancel !== null
+      ? []
+      : await lockSpecialtyLevelQueueRequestsTx(tx, {
+        patientId: params.patientId,
+        serviceType: params.caseType,
+      });
     //  **وقرارُ الطبيب لا يُسحَب من هنا**: `escalated` إحالةٌ وقعت — طبيبٌ
     //  نظر وقال «يتطلّب معاينة كاملة». وبابُها «إرجاع للاستعلامات» بسببه،
     //  لا زرٌّ يمحوها بلا أثر.

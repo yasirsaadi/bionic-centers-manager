@@ -360,6 +360,20 @@ async function main() {
     same("ح٧. **وقسمٌ عليه جهازٌ آخر ينتظر لا يُغلق** — والجهازُ الآخر باقٍ في «معايناتي»",
       [j1.status, j1.body?.caseClosed, await caseStatus(p11, svc), j2Status, await worklistEpisodes(p11)],
       [200, false, "active", "awaiting_exam", [J2.episodeId]]);
+    //  **وطلبُ اختصاصٍ عارٍ مستقلّ أقدمُ لا يُسحَب مع الجهاز المُرجَع** (مراجعةُ Codex على #758): يبقى منتظراً ويُبقي القسمَ مفتوحاً.
+    //  (أقدم لأنّ الأحدثَ يُخرج المُرجَعَ من القائمة أصلاً — «أُعيد إرساله».)
+    const p12 = await mkPatient("حسين", svc);
+    const c12 = await mkCase(p12, svc);
+    const K = await openEpisode(p12, svc);
+    await doReturn(K.requestId!, "خطأ");
+    const [bare12] = await q(`INSERT INTO medical_review_requests
+        (patient_id, service_type, case_id, branch_id, requested_path, review_kind, status, created_by, reception_note, created_at)
+      VALUES ($1, $2, $3, 1, 'full', 'other', 'pending', $4, 'طلب مستقلّ أقدم', NOW() - INTERVAL '1 day') RETURNING id`, [p12, svc, c12, RECV]);
+    const k1 = await http("POST", `/api/medical-review/requests/${K.requestId}/close-returned`, S.recv, { reason: "لا يحتاج" });
+    const bare12After = (await q(`SELECT status FROM medical_review_requests WHERE id=$1`, [bare12.id]))[0]?.status;
+    same("ح٨. **الطلبُ العاري المستقلّ باقٍ منتظراً والقسمُ مفتوح** — يُلغى الجهازُ المُرجَع وحده",
+      [k1.status, bare12After, k1.body?.caseClosed, await caseStatus(p12, svc)],
+      [200, "pending", false, "active"]);
 
     console.log("\n── و. المحذوفُ في السلّة خارجها ──");
     const p4 = await mkPatient("سلمان", svc);
