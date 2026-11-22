@@ -44,7 +44,7 @@ export interface HeaderBranch {
 export interface HeaderBranches {
   /** فرعُ التسجيل — `null` لصفٍّ قديمٍ بلا فرع. لا يُخترَع. */
   home: HeaderBranch | null;
-  /** الفروعُ الإضافية المُتاحُ لها الملفّ — **كلُّها**، بترتيب المنح. */
+  /** الفروعُ الإضافية المُتاحُ لها الملفّ — **كلُّها**، بترتيب العرض الواحد (§4.gt). */
   shared: HeaderBranch[];
 }
 
@@ -61,9 +61,10 @@ export function patientHeaderBranches(params: {
   const { homeBranchId, access, branches } = params;
   const translate = params.translate ?? ((n: string) => n);
 
+  const sourceName = (id: number, serverName?: string | null): string =>
+    ((branches ?? []).find((b) => Number(b.id) === id)?.name ?? serverName ?? "").trim();
   const label = (id: number, serverName?: string | null): string => {
-    const listed = (branches ?? []).find((b) => Number(b.id) === id)?.name;
-    const raw = (listed ?? serverName ?? "").trim();
+    const raw = sourceName(id, serverName);
     return raw ? translate(raw) : `فرع #${id}`;
   };
 
@@ -72,17 +73,20 @@ export function patientHeaderBranches(params: {
 
   const seen = new Set<number>();
   const shared: HeaderBranch[] = [];
+  const rankName = new Map<number, string>();   // الاسمُ الأصليّ قبل الترجمة — الترتيبُ به (مراجعةُ Codex)
   for (const row of access ?? []) {
     const id = Number(row?.branchId);
     if (!isBranchId(id)) continue;
     if (homeId !== null && id === homeId) continue;   // فرعُ التسجيل ليس «أيضاً»
     if (seen.has(id)) continue;
     seen.add(id);
+    rankName.set(id, sourceName(id, row?.branchName));
     shared.push({ id, label: label(id, row?.branchName) });
   }
 
   //  **بترتيب العرض الواحد لا بترتيب المنح** (طلبُ المالك ٢٠٢٦-١١-٢٢ «في كلّ موقع في التطبيق» — §4.gt): بغداد أطراف ثمّ المركز ثمّ …
-  return { home, shared: sortByBranchDisplay(shared, (b) => b.label, (b) => b.id) };
+  //  والترتيبُ **بالاسم الأصليّ لا بالمترجَم** — في الواجهة الإنكليزية يُترجَم الاسمُ المعروف فلا تعرفه القاعدةُ العربية.
+  return { home, shared: sortByBranchDisplay(shared, (b) => rankName.get(b.id), (b) => b.id) };
 }
 
 /** «كربلاء، بغداد» — الفاصلةُ العربية، وفراغٌ صريح حين لا إتاحة. */

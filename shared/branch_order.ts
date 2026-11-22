@@ -3,17 +3,22 @@
 //  يأتي بعد المعروفة بترتيب رقمه. والقاعدةُ الواحدة يقرؤها الخادمُ (`storage.getBranches`) وشاشةُ الدخول.
 const RANKS: Array<(n: string) => boolean> = [
   (n) => n.includes("بغداد") && !n.includes("للعلاج الطبيعي"),
-  (n) => n.includes("للعلاج الطبيعي"),
+  (n) => n.includes("بغداد") && n.includes("للعلاج الطبيعي"),   // مركزُ بغداد وحده — مركزٌ آخرُ جديد غيرُ معروف (مراجعةُ Codex)
   (n) => n.includes("كربلاء"),
   (n) => n.includes("ذي قار"),
   (n) => n.includes("موصل"),
-  (n) => n.includes("كركوك"),
 ];
+
+//  **كركوك آخراً دائماً — بعد غير المعروف أيضاً** (مراجعةُ Codex): الصفوفُ التي بلا حقل إغلاق (`sortByBranchDisplay`)
+//  لا تعرف أنّه مغلق، فرتبتُه بعد رتبة الفرع الجديد غير المعروف.
+const UNKNOWN_RANK = RANKS.length;
+const KIRKUK_RANK = RANKS.length + 1;
 
 export function branchDisplayRank(name: string | null | undefined): number {
   const n = String(name ?? "");
+  if (n.includes("كركوك")) return KIRKUK_RANK;
   const i = RANKS.findIndex((f) => f(n));
-  return i === -1 ? RANKS.length : i;
+  return i === -1 ? UNKNOWN_RANK : i;
 }
 
 /** يرتّب نسخةً ولا يمسّ الأصل: المفتوحُ قبل المغلق مؤقتاً، ثمّ ترتيبُ الاسم، ثمّ الرقم. */

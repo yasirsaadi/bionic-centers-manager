@@ -126,6 +126,15 @@ console.log("\n── هـ. الترجمة ──");
   });
   same("١٨. الاسمان يمرّان بالمترجم — الرأسُ يتبع لغة الواجهة",
     [en.home?.label, formatSharedBranches(en.shared)], ["Dhi Qar", "Karbala"]);
+  //  **والترتيبُ بالاسم الأصليّ لا المترجَم** (مراجعةُ Codex): «Baghdad Prosthetics» مترجَماً قبل المركز غيرِ المترجَم.
+  const en2 = patientHeaderBranches({
+    homeBranchId: DHIQAR,
+    access: [grant(8, "مركز بغداد للعلاج الطبيعي"), grant(9, "بغداد أطراف")],
+    branches: BRANCHES,
+    translate: (n) => ({ "بغداد أطراف": "Baghdad Prosthetics" } as Record<string, string>)[n] || n,
+  });
+  same("١٨ب. الترتيبُ بالاسم الأصليّ ولو تُرجم",
+    formatSharedBranches(en2.shared), "Baghdad Prosthetics، مركز بغداد للعلاج الطبيعي");
 }
 
 // ══ و. عقدُ الشاشة — الرأسُ يعرض ما تشتقّه هذه الدالّة فعلاً ══════════════
