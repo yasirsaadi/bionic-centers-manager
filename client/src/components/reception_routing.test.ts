@@ -21,7 +21,11 @@ import { join } from "path";
 import {
   RECEPTION_ROUTING_QUESTION, receptionRoutingChoices, receptionRoutingDepartments, returnToPurchaseVisible,
   receptionRoutingGroups, markReceptionRoutingPending, takeReceptionRoutingPending,
+  receptionCrossExamChoices, crossExamActingBranch, crossExamAdminMustChoose,
 } from "./reception_routing";
+import {
+  crossExamDepartments, departmentHomeBranch, branchOffersDepartment, crossExamHref, parseOpenDepartmentQuery, CROSS_EXAM_ADMIN_CHOOSE_HINT,
+} from "@shared/cross_department_exam";
 import { launcherOptions } from "./patient_service_launcher_logic";
 import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
 import type { ResumeStore } from "./device_flow_resume";
@@ -451,8 +455,9 @@ function main() {
     check(!launcherCode.includes(forbidden), `٣٧. ولا «${forbidden}» في الموزِّع بعد إضافة المُوجِّه`);
   }
   const launcherEndpoints = [...launcherCode.matchAll(/["'`](\/api\/[^"'`]*)/g)].map((m) => m[1]);
-  same("٣٨. **وقراءتان لا أكثر** — حلقاتُ المريض وأهليّةُ «عاد للشراء» (٢٠٢٦-١٠-٠٥)",
-    launcherEndpoints, ["/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
+  //  **وثالثةٌ بقرار المالك ٢٠٢٦-١١-٢٢** (§4.gv): قائمةُ الفروع العامّة بمفتاحها المشترك — لفتح القسم الآخر في فرعه.
+  same("٣٨. **وثلاثُ قراءاتٍ لا أكثر** — الفروعُ (§4.gv) وحلقاتُ المريض وأهليّةُ «عاد للشراء» (٢٠٢٦-١٠-٠٥)",
+    launcherEndpoints, ["/api/branches", "/api/patients/${patient.id}/device-episodes", "/api/followups/patient/${patient.id}/return-to-purchase-eligible"]);
   check(!routingCode.includes("/api/"),
     "٣٩. **وملفُّ منطق التوجيه بلا أيّ نقطة نهاية** — موزِّعٌ فوق موزِّع لا نظامٌ ثانٍ");
 
@@ -488,7 +493,7 @@ function main() {
   check(detailsCode.includes("button-header-reception-routing"),
     "١٦.أ **وزرٌّ في رأس الصفحة بجوار الاسم والرمز**");
   check(/\{RECEPTION_ROUTING_QUESTION\}/.test(detailsCode)
-    && /import \{ RECEPTION_ROUTING_QUESTION \}/.test(detailsCode),
+    && /import \{ RECEPTION_ROUTING_QUESTION[ ,]/.test(detailsCode),
   "١٦.ب بعنوانِ السؤال نفسِه من مصدره — لا نصّاً منسوخاً");
   check(/routingOpen=\{routingOpen\}/.test(detailsCode)
     && /onRoutingOpenChange=\{setRoutingOpen\}/.test(detailsCode),
@@ -502,8 +507,9 @@ function main() {
   same("١٦.هـ **وحوارُ المُوجِّه واحدٌ في الموزِّع لا أكثر**",
     (launcherCode.match(/open=\{routingOpen\} onOpenChange=\{setRoutingOpen\}/g) ?? []).length, 1);
   //  والبوّابةُ نفسُها بلا توسيع.
-  check(/permissions\.canAddPatients\s*\n?\s*&& \(!!patient\.isAmputee \|\| !!patient\.isMedicalSupport\)/.test(detailsCode),
-    "١٦.و **والبوّابةُ `canAddPatients` نفسُها** — ولمريض الأجهزة وحده");
+  //  **ومريضُ العلاج الطبيعيّ وحده** يراه حين يفتح له «سبب الحضور» قسماً (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢).
+  check(/permissions\.canAddPatients\s*\n?\s*&& \(!!patient\.isAmputee \|\| !!patient\.isMedicalSupport \|\| receptionCrossExamChoices\(/.test(detailsCode),
+    "١٦.و **والبوّابةُ `canAddPatients` نفسُها** — لمريض الأجهزة، ولمريض العلاج الطبيعيّ حين يفتح له قسماً (§4.gv)");
   //  والموزِّعُ يقبل الإدارة ويبقى عاملاً بلا — نفسُ نمط بقيّة النوافذ.
   check(/const routingControlled = routingOpenProp !== undefined;/.test(launcherCode)
     && /if \(!routingControlled\) setRoutingOpenSelf\(v\);\s*onRoutingOpenChange\?\.\(v\);/.test(launcherCode),
@@ -552,6 +558,92 @@ function main() {
       [false, true]);
     check(/returnToPurchaseVisible\(returnQ, section\.serviceType\)/.test(read("PatientServiceLauncher.tsx")),
       "ع٤. والموزِّعُ يشترطه قبل رسم الزرّ");
+  }
+
+
+  // ══ (ف) **فتحُ القسم الآخر** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢) ══
+  {
+    console.log("\n── ف. فتحُ القسم الآخر من «سبب الحضور» ──");
+    same("ف١. **القاعدةُ بحرف المالك**: جهازٌ بلا علاجٍ طبيعيّ ⟵ علاجٌ طبيعيّ · علاجٌ طبيعيّ وحده ⟵ أطرافٌ ومساند · الاثنان ⟵ لا شيء",
+      [crossExamDepartments({ isAmputee: true }), crossExamDepartments({ isMedicalSupport: true }),
+        crossExamDepartments({ isAmputee: true, isMedicalSupport: true }), crossExamDepartments({ isPhysiotherapy: true }),
+        crossExamDepartments({ isAmputee: true, isPhysiotherapy: true }), crossExamDepartments({ isMedicalSupport: true, isPhysiotherapy: true }),
+        crossExamDepartments({ isAmputee: true, isMedicalSupport: true, isPhysiotherapy: true }), crossExamDepartments({})],
+      [["physiotherapy"], ["physiotherapy"], ["physiotherapy"], ["prosthetic", "medical_support"], [], [], [], []]);
+    //  الفروعُ كما على الإنتاج (§4.gq): العلاجُ الطبيعيّ في ذي قار والمركز وحدهما، وكركوك مغلقٌ مؤقتاً.
+    const BR = [
+      { id: 1, name: "بغداد أطراف" }, { id: 2, name: "الوارث كربلاء" }, { id: 3, name: "بايونك ذي قار" },
+      { id: 4, name: "بايونك الموصل" }, { id: 5, name: "بايونك كركوك", temporarilyClosed: true }, { id: 6, name: "مركز بغداد للعلاج الطبيعي" },
+    ];
+    const PH = new Set([3, 6]);
+    const home = (dept: any, acting: number | null, branches = BR, ph: Set<number> = PH) =>
+      departmentHomeBranch({ dept, actingBranchId: acting, branches, physioBranchIds: ph });
+    same("ف٢. **العلاجُ الطبيعيّ لكلّ فرع**: بغداد أطراف ⟵ المركز · كربلاء والموصل ⟵ لا شيء · ذي قار ⟵ هي · كركوك (مغلق) ⟵ لا شيء · المركز ⟵ هو",
+      [1, 2, 3, 4, 5, 6].map((b) => home("physiotherapy", b)), [6, null, 3, null, null, 6]);
+    same("ف٣. **الأطرافُ لكلّ فرع**: المركز ⟵ بغداد أطراف · والباقي في فرعه · وكركوك المغلقُ لا شيء",
+      [1, 2, 3, 4, 5, 6].map((b) => home("prosthetic", b)), [1, 2, 3, 4, null, 1]);
+    same("ف٤. **والمساندُ كالأطراف**", [1, 2, 3, 4, 5, 6].map((b) => home("medical_support", b)), [1, 2, 3, 4, null, 1]);
+    same("ف٥. **لا تخمين**: فرعان في المدينة يقدّمانه ⟵ لا شيء · مدينةٌ مجهولة ⟵ لا شيء · بلا فرعٍ نشط ⟵ لا شيء · المركزُ المغلقُ مؤقتاً ⟵ لا شيء",
+      [home("physiotherapy", 1, [...BR, { id: 7, name: "بغداد الكرخ" }], new Set([3, 6, 7])),
+        home("physiotherapy", 9, [...BR, { id: 9, name: "فرع جديد" }]), home("physiotherapy", null),
+        home("physiotherapy", 1, BR.map((b) => b.id === 6 ? { ...b, temporarilyClosed: true } : b))],
+      [null, null, null, null]);
+    same("ف٦. **أيقدّمه الفرع**: المركزُ لا أجهزةَ فيه · بغداد أطراف لا علاجَ طبيعيّاً فيه · المغلقُ لا شيء",
+      [branchOffersDepartment(BR[5], "prosthetic", PH), branchOffersDepartment(BR[0], "physiotherapy", PH),
+        branchOffersDepartment(BR[0], "prosthetic", PH), branchOffersDepartment(BR[4], "prosthetic", PH)],
+      [false, false, true, false]);
+    const choices = (p: any, acting: number | null, mayRequest = true) => receptionCrossExamChoices({ id: 9, ...p }, {
+      branches: BR.map((b) => ({ ...b, offersPhysio: PH.has(b.id) })), actingBranchId: acting, mayRequest,
+    }).map((c) => [c.dept, c.targetBranchId, c.hint]);
+    same("ف٧. **الخياراتُ لكلّ فرع ولكلّ مريض**: أطرافُ بغداد ⟵ المركز بسطر «يُرسَل إلى» · أطرافُ ذي قار محلّيّ بلا سطر · أطرافُ كربلاء والموصل لا شيء",
+      [choices({ isAmputee: true }, 1), choices({ isAmputee: true }, 3), choices({ isAmputee: true }, 2), choices({ isAmputee: true }, 4)],
+      [[["physiotherapy", 6, "يُرسَل إلى: مركز بغداد للعلاج الطبيعي"]], [["physiotherapy", 3, null]], [], []]);
+    same("ف٨. **ومريضُ العلاج الطبيعيّ**: من المركز ⟵ أطرافٌ ومساند في بغداد أطراف · ومن ذي قار محلّيّان · والاثنان لا شيء · وبلا صلاحية لا شيء",
+      [choices({ isPhysiotherapy: true }, 6), choices({ isPhysiotherapy: true }, 3),
+        choices({ isPhysiotherapy: true, isAmputee: true }, 3), choices({ isAmputee: true }, 1, false)],
+      [[["prosthetic", 1, "يُرسَل إلى: بغداد أطراف"], ["medical_support", 1, "يُرسَل إلى: بغداد أطراف"]],
+        [["prosthetic", 3, null], ["medical_support", 3, null]], [], []]);
+    same("ف٩. **وقبل تحميل الفروع لا خيار** (لا يظهر ثمّ يختفي)", receptionCrossExamChoices({ id: 1, isAmputee: true }, {
+      branches: undefined, actingBranchId: 1, mayRequest: true,
+    }), []);
+    same("ف١٠. **الرابطُ ورقةُ «طلب معاينة جديدة» بوضع الفتح** ويُقرأ بعكسه، والتحويلُ لا يُقرأ فتحاً",
+      [crossExamHref(5, "physiotherapy"), parseOpenDepartmentQuery(crossExamHref(5, "physiotherapy").split("?")[1]),
+        parseOpenDepartmentQuery("dept=physiotherapy&replaces=3&open=1"), parseOpenDepartmentQuery("dept=physiotherapy")],
+      ["/patients/5/new-exam?dept=physiotherapy&open=1", true, false, false]);
+    same("ف١١. **فرعُ الحركة كالخادم**: الموظّفُ فرعُه · المسؤولُ فرعُه إن كان فرعَ التسجيل وإلّا فرعُ التسجيل",
+      [crossExamActingBranch({ branchId: 6 }, { branchId: 1 }), crossExamActingBranch({ isAdmin: true, branchId: 6 }, { branchId: 1 }),
+        crossExamActingBranch({ isAdmin: true, branchId: 0 }, { branchId: 3 }), crossExamActingBranch({ isAdmin: true, branchId: 3 }, { branchId: 3 })],
+      [6, 1, 3, 3]);
+    same("ف١١ب. **والمسؤولُ فرعُه المختار إن وصل الملفَّ بإتاحة** (`resolveActingBranchId`) — مريضُ ذي قار المُتاح لبغداد أطراف ⟵ ١ لا ٣",
+      [crossExamActingBranch({ isAdmin: true, branchId: 1 }, { branchId: 3 }, [1]), crossExamActingBranch({ isAdmin: true, branchId: 1 }, { branchId: 3 }, [6]),
+        crossExamActingBranch({ isAdmin: true, branchId: 3 }, { branchId: 2 }, [3])],
+      [1, 3, 3]);
+    same("ف١١ج. **والمسؤولُ يختار أوّلاً لمريضٍ بفرعين** (`adminMustChooseBranch`) — لا للموظّف، ولا لفرعٍ واحد، ولا لفرعٍ يصل",
+      [crossExamAdminMustChoose({ isAdmin: true, branchId: 0 }, { branchId: 1 }, [3]), crossExamAdminMustChoose({ isAdmin: true, branchId: 6 }, { branchId: 1 }, [3]),
+        crossExamAdminMustChoose({ isAdmin: true, branchId: 3 }, { branchId: 1 }, [3]), crossExamAdminMustChoose({ isAdmin: true, branchId: 0 }, { branchId: 1 }, []),
+        crossExamAdminMustChoose({ branchId: 0 }, { branchId: 1 }, [3])],
+      [true, true, false, false, false]);
+    same("ف١١د. **وسطرُ الخيار حينها يطلب الاختيار** لا «يُرسَل إلى» تخميناً",
+      receptionCrossExamChoices({ id: 1, isAmputee: true }, { branches: BR.map((b) => ({ ...b, offersPhysio: PH.has(b.id) })), actingBranchId: 1, mayRequest: true, adminMustChoose: true }).map((c) => c.hint),
+      [CROSS_EXAM_ADMIN_CHOOSE_HINT]);
+    const launcher = read("PatientServiceLauncher.tsx");
+    check(/receptionCrossExamChoices\(patient/.test(launcher) && /hasRouting = routingSections\.length > 0 \|\| crossChoices\.length > 0/.test(launcher)
+      && /setLocation\(c\.href\)/.test(launcher),
+      "ف١٢. **والموزِّعُ يعرضها** ويفتح الحوارَ لمريض العلاج الطبيعيّ وحده، والضغطُ يفتح الورقة");
+    check(/receptionCrossExamChoices\(patient, \{/.test(read("..", "pages", "PatientDetails.tsx")),
+      "ف١٣. **وزرُّ رأس الصفحة يظهر لمريض العلاج الطبيعيّ** حين يفتح له «سبب الحضور» قسماً");
+    check(/openDepartment: true/.test(read("..", "pages", "PhysioSheetCreate.tsx")) && /openDepartment: true/.test(read("..", "pages", "IntakeSheetCreate.tsx"))
+      && /parseOpenDepartmentQuery\(useSearch\(\)\)/.test(read("..", "pages", "NewExamRequest.tsx")),
+      "ف١٤. **والورقتان ترسلان `openDepartment`** والصفحةُ تقرؤه من رابطها");
+    {
+      const pt = read("..", "pages", "PhysioSheetCreate.tsx"), it = read("..", "pages", "IntakeSheetCreate.tsx");
+      check([pt, it].every((x) => /branchName=\{openMode && crossTarget\.differs \? \(crossTarget\.targetName \?\? branchName\) : branchName\}/.test(x)
+          && /r\.opened\.targetBranchName/.test(x) && /body\?\.openedDepartment/.test(x))
+        && /const branchLacksPhysio = !openMode/.test(pt)
+        && /<CrossExamMoveNote dept="physiotherapy"/.test(read("NewServiceModal.tsx")) && /<CrossExamMoveNote/.test(read("AddCaseTypeModal.tsx"))
+        && /crossExamAdminMustChoose\(branchSession, patient, sharedBranchIds\)/.test(read("PatientServiceLauncher.tsx")),
+        "ف١٥. **وفي وضع الفتح**: رأسُ الورقة فرعُ القسم، والإشعارُ من ردّ الخادم، والصندوقُ الكهرمانيّ للتسجيل وحده، و«إضافة خدمة جديدة» تقول فرعَ القسم، والموزِّعُ بفروع الملفّ");
+    }
   }
 
   console.log(failures === 0 ? "\n✅ all reception-routing cases pass" : `\n❌ ${failures} case(s) failed`);

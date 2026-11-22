@@ -12,6 +12,7 @@
 // ونطاق الفرع مفروضٌ في الخادم لا في الواجهة: كل نقطة تقرأ فرع المريض من
 // صفّه ثم تقارنه بنطاق الجلسة.
 
+import { scopeWith } from "../patients/department_home";
 import type { Express } from "express";
 import { logAudit } from "../accounting/ledger";
 import { db } from "../db";
@@ -122,13 +123,18 @@ function fail(res: any, err: unknown, fallback: string) {
 export async function openExamEpisodeTx(tx: any, p: {
   patientId: number; serviceType: "prosthetic" | "medical_support"; createdBy: number | null;
   requestedItem: string | null; extraComponents: string[]; actingBranchId: number | null;
+  /**
+   * **فرعُ زيارة «طلب معاينة طبية»** حين يختلف عن فرع الجهاز (§4.gv): قسمٌ فُتح في فرعه من جلسة فرعٍ آخر — الجهازُ عند طبيبه، والحضورُ
+   * حيث حضر المريضُ اليوم. وغيابُه = فرعُ الجهاز كما كان.
+   */
+  visitBranchId?: number | null;
 }) {
   const ep = await episodes.startDeviceEpisodeTx(tx, {
     patientId: p.patientId, serviceType: p.serviceType, createdBy: p.createdBy,
     requestedItem: p.requestedItem as any, extraComponents: p.extraComponents as any, servicePath: "exam", actingBranchId: p.actingBranchId,
   });
   await recordAttendanceVisitTx(tx, {
-    patientId: p.patientId, caseId: ep.caseId, branchId: ep.branchId,
+    patientId: p.patientId, caseId: ep.caseId, branchId: p.visitBranchId ?? ep.branchId,
     reason: ATTENDANCE_REASONS.examRequest,
     notes: p.requestedItem ? requestedItemLabel(p.requestedItem as any, p.serviceType, p.extraComponents as any) : null,
     createdBy: p.createdBy ?? null,
@@ -143,6 +149,8 @@ export async function openExamEpisodeTx(tx: any, p: {
 export async function routeAndAuditExamEpisode(req: Req, p: {
   episode: Awaited<ReturnType<typeof openExamEpisodeTx>>; patientId: number; patientName: string | null;
   serviceType: "prosthetic" | "medical_support"; reviewNote?: string; auditSuffix?: string;
+  /** فرعُ القسم الذي فُتح في فرعه (§4.gv) — يُحسَم إليه فرعُ الطلب، ويُضاف إلى النطاق لذلك وحده. */
+  operationBranchId?: number | null;
 }, tx?: any) {
   const { episode, patientId, serviceType } = p;
   const session = getSession(req);
@@ -166,7 +174,8 @@ export async function routeAndAuditExamEpisode(req: Req, p: {
       request: await createReviewRequestTx(tx, {
         patientId, serviceType, reviewKind: "new_device", requestedPath: "full", receptionNote,
         deviceEpisodeId: episode.id, createdBy: session.userId ?? null,
-        branchIds: reviewBranchScope(req), sessionBranchId: session.branchId ?? null,
+        branchIds: scopeWith(reviewBranchScope(req), p.operationBranchId ?? null), sessionBranchId: session.branchId ?? null,
+        operationBranchId: p.operationBranchId ?? null,
       }),
     }
     : await routeServiceToDoctorReview(req, {

@@ -25,8 +25,10 @@ import {
 } from "./device_flow_resume";
 import {
   RECEPTION_ROUTING_QUESTION, receptionRoutingGroups, takeReceptionRoutingPending, returnToPurchaseVisible,
+  receptionCrossExamChoices, crossExamActingBranch, crossExamAdminMustChoose,
 } from "./reception_routing";
 import { useBranchSession } from "./BranchGate";
+import { usePatientBranchAccess } from "./PatientBranchAccessDialog";
 import { canCompleteComponentSale } from "@shared/component_sale";
 
 // موزِّع خدمات المريض — **بابان لا أكثر**.
@@ -135,17 +137,32 @@ export function PatientServiceLauncher({
   //  أقسامُ الأجهزة التي يملكها المريض — **كلُّها**، بلا تفضيلٍ صامت
   //  للأطراف. وفارغةٌ لمريض العلاج الطبيعي وحده، فلا مُوجِّه له إطلاقاً.
   const routingSections = saleOnly ? [] : receptionRoutingGroups(patient, branchSession);
-  const hasRouting = routingSections.length > 0;
+  //  **وفتحُ القسم الآخر** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢): «معاينة علاج طبيعي» لمريض الجهاز، و«معاينة أطراف صناعية» و«معاينة مساند
+  //  طبية» لمريض العلاج الطبيعيّ وحده — فمريضُ العلاج الطبيعيّ صار له «سبب حضور» بها. والمفتاحُ مفتاحُ قائمة الفروع العامّة، فلا طلبَ ثانٍ.
+  const { data: branchList } = useQuery<{ id: number; name: string; temporarilyClosed?: boolean | null; offersPhysio?: boolean }[]>({
+    queryKey: ["/api/branches"], enabled: !saleOnly,
+  });
+  //  **وفروعُ الملفّ** — فرعُ المسؤول المختار يُحسب إن وصل الملفَّ بإتاحة، كما يحسمه الخادم (`resolveActingBranchId`)؛ مفتاحُ رأس الملفّ.
+  const { data: branchAccess } = usePatientBranchAccess(Number(patient.id), !saleOnly);
+  const sharedBranchIds = (branchAccess?.access ?? []).map((a) => Number(a.branchId));
+  const crossChoices = saleOnly ? [] : receptionCrossExamChoices(patient, {
+    branches: branchList, actingBranchId: crossExamActingBranch(branchSession, patient, sharedBranchIds),
+    mayRequest: Boolean(branchSession?.isAdmin) || branchSession?.permissions?.canAddPatients === true,
+    adminMustChoose: crossExamAdminMustChoose(branchSession, patient, sharedBranchIds),
+  });
+  const hasRouting = routingSections.length > 0 || crossChoices.length > 0;
 
   // ══ **المُوجِّهُ يُفتَح مرّةً واحدة بعد التسجيل مباشرةً** ═════════════════
   //  العلمُ في `sessionStorage`، ونفسُ نمط الاستئناف أعلاه: القراءةُ تمسح
   //  دائماً، فتحديثُ الصفحة أو فتحُ مريضٍ آخر بعده لا يعيد فتحه.
+  //  (لأقسام الأجهزة وحدها — فتحُ القسم الآخر خيارٌ لا يُفرض بعد التسجيل.)
+  const hasDeviceRouting = routingSections.length > 0;
   useEffect(() => {
-    if (!hasRouting) return;
+    if (!hasDeviceRouting) return;
     const pending = takeReceptionRoutingPending(sessionResumeStore(), patient.id);
     if (pending) setRoutingOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patient.id, hasRouting]);
+  }, [patient.id, hasDeviceRouting]);
 
   // حلقات المريض — تُقرأ لاستئناف بيعٍ بلا معاينة بقي ناقصاً. والخادم يبقى
   // صاحب القرار: يردّ 409 على السباق مهما قالت الواجهة.
@@ -326,6 +343,26 @@ export function PatientServiceLauncher({
                   ))}
                 </div>
               ))}
+              {/*  ══ **قسمٌ جديد** (§4.gv) — ورقةُ «طلب معاينة جديدة» نفسُها بوضع الفتح، و«يُرسَل إلى» حين يذهب إلى فرعٍ آخر. ══ */}
+              {crossChoices.length > 0 && (
+                <div className="grid gap-2" data-testid="reception-routing-cross">
+                  {routingSections.length > 0 && (
+                    <h4 className="text-xs font-semibold text-muted-foreground">قسمٌ جديد لهذا المريض</h4>
+                  )}
+                  {crossChoices.map((c) => (
+                    <button key={c.dept} type="button"
+                      onClick={() => { setRoutingOpen(false); setLocation(c.href); }}
+                      data-testid={`reception-routing-cross-${c.dept}`}
+                      className="w-full text-right rounded-lg border border-sky-300 bg-sky-50/60 px-3 py-2.5 transition-colors
+                        hover:bg-sky-100 hover:border-sky-400">
+                      <div className="text-sm font-medium text-sky-900">{c.label}</div>
+                      {c.hint && (
+                        <div className="text-[11px] text-sky-800 mt-0.5" data-testid={`reception-routing-cross-hint-${c.dept}`}>{c.hint}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>

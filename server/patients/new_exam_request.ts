@@ -37,6 +37,8 @@ import { transferTargets, type TransferDepartment } from "@shared/returned_trans
 import { patients } from "@shared/schema";
 import { cancelReturnedAndCloseTx } from "../medical_review/returned_actions";
 import { CancelExamRequestError } from "../medical/cancel_exam_request";
+import { grantDepartmentHomeAccessTx, scopeWith, openDepartmentState, openDepartmentTarget, OpenDepartmentError } from "./department_home";
+import { noDepartmentHomeMessage, CROSS_EXAM_DEPARTMENT_NAMES } from "@shared/cross_department_exam";
 
 type Req = any;
 
@@ -100,6 +102,13 @@ export function registerNewExamRequestRoutes(
       if (replacesRequestId !== null && (!Number.isInteger(replacesRequestId) || replacesRequestId <= 0)) {
         return res.status(400).json({ message: "رقم الطلب المُرجَع غير صالح", field: "replacesRequestId" });
       }
+      //  ══ **فتحُ القسم الآخر من «سبب الحضور»** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢) ═══════════════════════════════════════
+      //  «إذا كان أطراف فأضف معاينة علاج طبيعي، وإن كان علاج طبيعي فأضف معاينة أطراف ومساند، وإن كان لديه الاثنان فلا يظهر شيء».
+      //  علمٌ صريح (`openDepartment`) يفتح قسماً **ليس للمريض** بقاعدة `crossExamDepartments` وحدها، في **فرع القسم** (`departmentHomeBranch`).
+      const openDepartment = req.body?.openDepartment === true;
+      if (openDepartment && replacesRequestId !== null) {
+        return res.status(400).json({ message: "فتحُ قسمٍ جديد والتحويلُ من «المُرجَعون» لا يجتمعان في طلبٍ واحد", code: "open_with_replaces" });
+      }
 
       const existing = await storage.getPatient(id);
       if (!existing) {
@@ -112,6 +121,11 @@ export function registerNewExamRequestRoutes(
       const patientRef = { id, branchId: existing.branchId ?? null };
       if (!(await scopeReachesPatient(writeScope(s), patientRef))) {
         return res.status(403).json({ message: "لا يمكنك إرسال مريض فرعٍ آخر للمعاينة — بدّل الفرع النشط" });
+      }
+      //  **القسمُ ليس للمريض حقاً** — بعلمه أو بقسمٍ نشط؛ وإلّا فبابُه «طلب معاينة جديدة» العاديّ. (ويُعاد الحكمُ بعد قفل ٩١٩ في المعاملة.)
+      const openState = openDepartment ? await openDepartmentState(db as any, id, dept) : null;
+      if (openState && !openState.ok) {
+        return res.status(openState.error.status).json({ message: openState.error.message, code: openState.error.code });
       }
 
       // ── ما تغيّر من خانات الاستمارة ── غيرُ خاناتها يُردّ صريحاً، وما لم يتغيّر يسقط فلا يُكتب ولا يظهر في التدقيق.
@@ -183,7 +197,8 @@ export function registerNewExamRequestRoutes(
 
       // ── فرعُ الحركة ── للأجهزة كبابِ طلب الجهاز (§4.ay)؛ وللعلاج الطبيعيّ يحسمه الطلبُ نفسُه.
       const patientBranchIds = await patientBranchIdsOf(patientRef);
-      if (dept !== "physiotherapy" && adminMustChooseBranch({
+      //  **وفتحُ القسم يحسمه فرعُ الحركة** (§4.gv) — فالمسؤولُ يختار الفرعَ لمريضٍ متعدّد الفروع كبابِ الجهاز، ولا يُخمَّن له.
+      if ((dept !== "physiotherapy" || openDepartment) && adminMustChooseBranch({
         isAdmin: writeScope(s) === null, sessionBranchId: s?.branchId ?? null, patientBranchIds,
       })) {
         return res.status(409).json({ message: ADMIN_BRANCH_CHOICE_ERROR });
@@ -193,7 +208,17 @@ export function registerNewExamRequestRoutes(
       });
       //  **والعلاجُ الطبيعيّ في فروعه وحدها** — كالتسجيل (`offersPhysio`)، فلا يُرسَل مريضٌ إلى «معايناتي» فرعٍ بلا أخصائيّ
       //  (من مراجعة Codex: الشاشةُ تمنعه بعد تحميل الفروع وحدها، والطلبُ المباشر يتجاوزها).
-      if (dept === "physiotherapy" && (actingBranchId === null || !(await physioOfferingBranchIds()).has(actingBranchId))) {
+      //  **وفتحُ القسم يذهب إلى فرعه** (§4.gv) — فلا يُشترط أن يقدّمه الفرعُ النشط؛ ولا فرعَ في المدينة ⟵ ٤٠٠ (كربلاء والموصل للعلاج الطبيعيّ).
+      //  والقسمُ المغلقُ يُعاد في فرعه (`openDepartmentTarget`) — فالقسمُ والطلبُ والجهازُ في فرعٍ واحد.
+      const openTarget = openState?.ok ? await openDepartmentTarget(undefined, dept, actingBranchId, openState.closedCase) : null;
+      if (openTarget?.error) {
+        return res.status(openTarget.error.status).json({ message: openTarget.error.message, code: openTarget.error.code });
+      }
+      if (openTarget && openTarget.target === null) {
+        return res.status(400).json({ message: noDepartmentHomeMessage(dept), code: "no_department_home", field: "branchId" });
+      }
+      const targetBranchId: number | null = openTarget?.target ?? null;
+      if (!openDepartment && dept === "physiotherapy" && (actingBranchId === null || !(await physioOfferingBranchIds()).has(actingBranchId))) {
         return res.status(400).json({ message: "العلاج الطبيعي غير متوفّر في الفرع النشط — بدّل إلى فرعٍ فيه علاجٌ طبيعيّ", field: "branchId" });
       }
       const userId: number | null = s?.userId ?? null;
@@ -203,6 +228,15 @@ export function registerNewExamRequestRoutes(
       const out = await db.transaction(async (tx) => {
         //  **قفلُ المريض أوّلاً** حين يُحوَّل — بترتيب أبواب الإلغاء والإغلاق (٩١٩ ثمّ صفُّ المريض)، لا بعد قفل صفّه بالتعديل.
         let replaced: Awaited<ReturnType<typeof cancelReturnedAndCloseTx>> | null = null;
+        if (openDepartment) {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${id})`);
+          //  **ويُعاد الحكمُ بعد القفل** — نقرتان معاً أو قسمان جهازيّان معاً: الثانيةُ تقرأ ما كتبته الأولى فتُردّ بلا كتابة.
+          const again = await openDepartmentState(tx as any, id, dept);
+          if (!again.ok) throw again.error;
+          if ((again.closedCase?.id ?? null) !== (openState?.ok ? openState.closedCase?.id ?? null : null)) {
+            throw new OpenDepartmentError("تغيّر ملفُّ المريض أثناء الإرسال — أعد فتح الورقة وأرسله ثانيةً", 409, "patient_changed");
+          }
+        }
         if (replacesRequestId !== null) {
           await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${id})`);
           const [old] = ((await tx.execute(sql`
@@ -241,6 +275,36 @@ export function registerNewExamRequestRoutes(
             } as any);
           }
         }
+        //  ══ **فتحُ القسم في فرعه** (§4.gv): الملفُّ يُتاح لفرع القسم إن لم يصله (استثناءٌ مقصود من «المنحُ للمسؤول» بقرار المالك،
+        //  محصورٌ بهذا الباب)، ثمّ القسمُ وعلمُه وسطرُ تدقيق. **ولا يتحرّك غيرُها**: فرعُ التسجيل والمالُ والزياراتُ والأقسامُ القائمة.
+        let accessGranted = false;
+        if (openDepartment && targetBranchId !== null) {
+          if (targetBranchId !== actingBranchId) {
+            accessGranted = await grantDepartmentHomeAccessTx(tx as any, {
+              patientId: id, targetBranchId, dept, actor: { userId, userName }, via: "«سبب الحضور»",
+              ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            });
+          }
+          //  **صفُّ المريض قبل صفّ القسم** — ترتيبُ الأقفال (`startDeviceEpisodeTx` · `executeReversal`): العلمُ يُرفع أوّلاً.
+          const flag = dept === "prosthetic" ? { isAmputee: true } : dept === "medical_support" ? { isMedicalSupport: true } : { isPhysiotherapy: true };
+          await (tx as any).update(patients).set(flag).where(eq(patients.id, id));
+          const c = await ensureCaseTx(tx as any, {
+            patientId: id, caseType: dept, branchId: targetBranchId,
+            create: { cost: 0, costSource: "auto", details: dept === "physiotherapy" ? physioDetails(updated) : deviceDetails(dept, updated) },
+            reopen: { reason: `فتح قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} من «سبب الحضور»`, actor: { userId, userName } },
+            notifyExam: false,
+          });
+          if (!c) throw new ReviewError("تعذّر فتح القسم", 500);
+          await logAudit({
+            tx, entityType: "patient", entityId: id, action: "update", userId, userName, branchId: actingBranchId,
+            newValues: { openedDepartment: dept, caseId: c.id, caseBranchId: c.branchId, targetBranchId, accessGranted },
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+            notes: `فتح قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} من «سبب الحضور» في ${openTarget?.name ?? `الفرع #${targetBranchId}`}`
+              + (accessGranted ? " — وأُتيح له الملفّ" : ""),
+          } as any);
+        }
+        //  فرعُ الطلب والجهاز: فرعُ القسم حين يُفتح، وإلّا فرعُ الحركة كما كان.
+        const requestBranchId = targetBranchId ?? actingBranchId;
         if (dept === "physiotherapy") {
           //  **والتحويلُ يفتح القسمَ إن غاب** (§4.gu) — مريضُ أطرافٍ سُجّل خطأً لا قسمَ علاجٍ طبيعيٍّ له؛ والطلبُ أدناه يُنبّه الطبيب.
           const c = await ensureCaseTx(tx as any, {
@@ -258,16 +322,17 @@ export function registerNewExamRequestRoutes(
           const row = await createReviewRequestTx(tx, {
             patientId: id, serviceType: "physiotherapy", requestedPath: "full", reviewKind: "other",
             receptionNote: ["طلب معاينة جديدة", reason ? `سبب المراجعة: ${reason}` : "", note].filter(Boolean).join(" — "),
-            createdBy: userId, branchIds: writeScope(s), sessionBranchId: s?.branchId ?? null, operationBranchId: actingBranchId,
+            createdBy: userId, branchIds: scopeWith(writeScope(s), targetBranchId), sessionBranchId: s?.branchId ?? null,
+            operationBranchId: requestBranchId,
             physioExamRequest: true,
           });
           await logAudit({
             tx, entityType: "medical_review_request", entityId: row.id, action: "create", userId, userName,
-            branchId: (row as any).branchId ?? actingBranchId, newValues: row as any,
+            branchId: (row as any).branchId ?? requestBranchId, newValues: row as any,
             ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
             notes: `طلب معاينة جديدة — علاج طبيعي — للمريض ${merged.name ?? id}`,
           } as any);
-          return { kind: "physio" as const, reviewRequestId: row.id, episode: null, replaced };
+          return { kind: "physio" as const, reviewRequestId: row.id, episode: null, replaced, accessGranted };
         }
         if (replaced) {
           //  **والقسمُ الهدفُ يُفتَح إن غاب** — بالتفاصيل التي يكتبها «إضافة نوع حالة» للقسم، وعلمُه يُرفع معه (`addPatientCaseType`).
@@ -282,19 +347,22 @@ export function registerNewExamRequestRoutes(
           }
         }
         const episode = await openExamEpisodeTx(tx, {
-          patientId: id, serviceType: dept, createdBy: userId, requestedItem, extraComponents, actingBranchId,
+          patientId: id, serviceType: dept, createdBy: userId, requestedItem, extraComponents, actingBranchId: requestBranchId,
+          visitBranchId: actingBranchId,
         });
         //  **والتوجيهُ إلى الطبيب في المعاملة نفسِها** — جهازٌ بلا طلبه لا يلتزم (من مراجعة Codex).
         const routing = await routeAndAuditExamEpisode(req, {
           episode, patientId: id, patientName: merged.name ?? null, serviceType: dept as "prosthetic" | "medical_support",
           reviewNote: typeof req.body?.receptionNote === "string" ? req.body.receptionNote : "",
-          auditSuffix: " — من «طلب معاينة جديدة»",
+          auditSuffix: openDepartment ? " — فتحُ القسم من «سبب الحضور»" : " — من «طلب معاينة جديدة»",
+          operationBranchId: targetBranchId,
         }, tx);
-        return { kind: "device" as const, reviewRequestId: routing.request?.id ?? null, episode, replaced };
+        return { kind: "device" as const, reviewRequestId: routing.request?.id ?? null, episode, replaced, accessGranted };
       });
 
       return res.status(201).json({
         department: dept, episodeId: out.episode?.id ?? null, reviewRequestId: out.reviewRequestId,
+        ...(openDepartment ? { openedDepartment: true, targetBranchId, targetBranchName: openTarget?.name ?? null, accessGranted: out.accessGranted } : {}),
         ...(out.replaced ? {
           replacedRequestId: out.replaced.requestId,
           oldCaseClosed: out.replaced.caseClosure.closed,
@@ -306,6 +374,7 @@ export function registerNewExamRequestRoutes(
       if (err instanceof PatientPhoneTrashConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
       }
+      if (err instanceof OpenDepartmentError) return res.status(err.status).json({ message: err.message, code: err.code });
       if (err instanceof CancelExamRequestError) {
         return res.status(err.status ?? 409).json({ message: err.message, code: err.code, field: "replacesRequestId" });
       }

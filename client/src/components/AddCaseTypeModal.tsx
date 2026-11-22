@@ -21,6 +21,7 @@ import {
 import {
   CORE_MEASUREMENT_FIELDS, FIELD_LABELS, meaningfulMeasure,
 } from "@shared/patient_required";
+import { CrossExamMoveNote } from "./CrossExamBanner";
 
 interface AddCaseTypeModalProps {
   patient: {
@@ -145,14 +146,16 @@ export function AddCaseTypeModal({
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (body: any) => {
       const addedTypeIsAmputee = isAmputeeCase;
       invalidatePatientData(queryClient, patient.id);
       toast({
         title: "تمت إضافة نوع الحالة",
-        description: addedTypeIsAmputee
+        description: (addedTypeIsAmputee
           ? "الملفّ مكتمل. تُستكمل بقية تفاصيل النوع الجديد في صفحة الحقول الكاملة."
-          : "أكمل الآن بقية حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة.",
+          : "أكمل الآن بقية حقول النوع الجديد — فُتحت لك صفحة الحقول الكاملة.")
+          //  **فرعُ القسم من ردّ الخادم** (§4.gv د) — ما كُتب فعلاً.
+          + (body?.caseBranchMoved && body?.caseBranchName ? ` وفُتح القسمُ في ${body.caseBranchName} وأُتيح له الملفّ.` : ""),
       });
       const addedType = caseType;
       reset();
@@ -250,6 +253,13 @@ export function AddCaseTypeModal({
             </div>
           )}
 
+          {/*  **والقسمُ الغائب يولد في فرعه** (§4.gv د) — يُقال قبل الحفظ كما يقوله «سبب الحضور». */}
+          {caseType && (
+            <div className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-md px-3 py-2 empty:hidden">
+              <CrossExamMoveNote dept={caseType === "amputee" ? "prosthetic" : caseType === "medical_support" ? "medical_support" : "physiotherapy"}
+                patient={patient} enabled={caseType === "amputee" || caseType === "medical_support" || caseType === "physiotherapy"} />
+            </div>
+          )}
           {caseType && !isAmputeeCase && (
             <div className="text-xs text-muted-foreground bg-slate-50 border rounded-md px-3 py-2">
               بعد الحفظ ستُفتح لك <b>صفحة الحقول الكاملة</b> للنوع الجديد (كما في تسجيل مريض جديد) لتكمل بقية التفاصيل.

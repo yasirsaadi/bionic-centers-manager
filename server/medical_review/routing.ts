@@ -16,6 +16,7 @@
 // السريع للجهاز الجديد، ومنعُ العلاج الطبيعي، وحارسُ التكرار — في الطبقة
 // وفي القاعدة، لا هنا.
 
+import { scopeWith } from "../patients/department_home";
 import { ensureReviewRouting, type ReviewRow } from "./store";
 import { isReviewKind, isReviewPath, requiresFullPath } from "@shared/medical_review";
 
@@ -84,6 +85,11 @@ export async function routeServiceToDoctorReview(req: Req, params: {
   deviceEpisodeId?: number | null;
   workOrderId?: number | null;
   visitId?: number | null;
+  /**
+   * **فرعُ القسم حين فُتح في فرعه** (§4.gv): قسمُ أطرافٍ يُفتح من مركز العلاج الطبيعيّ يولد في «بغداد أطراف» — فطلبُه هناك، عند طبيبه.
+   * يُضاف إلى النطاق ليُحسَم إليه، والملفُّ أُتيح له قبلها في المعاملة التي فتحت القسم.
+   */
+  operationBranchId?: number | null;
 }): Promise<RoutingResult> {
   const serviceType = reviewServiceOfCaseType(params.caseType);
   if (!serviceType) return { created: false, request: null };
@@ -98,8 +104,9 @@ export async function routeServiceToDoctorReview(req: Req, params: {
     workOrderId: params.workOrderId ?? null,
     visitId: params.visitId ?? null,
     createdBy: (s?.userId ?? null) as number | null,
-    branchIds: reviewBranchScope(req),
+    branchIds: scopeWith(reviewBranchScope(req), params.operationBranchId ?? null),
     //  **فرعُ الحركة** — الطلبُ يقع حيث وقعت الخدمةُ التي وجّهته (ترحيل ٠٨٠).
     sessionBranchId: (s?.branchId ?? null) as number | null,
+    operationBranchId: params.operationBranchId ?? null,
   });
 }

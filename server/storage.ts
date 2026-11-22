@@ -78,6 +78,7 @@ import {
   CaseDisposalBlockedError, type CaseScaffolding,
 } from "./patient_cases/disposal";
 import { ensureCaseTx } from "./patient_cases/reopen";
+import { routeNewCaseBranchTx } from "./patients/department_home";
 import { noteCaseReopened } from "./patient_cases/reopen_notice";
 import { TERMINAL_STATUS_SQL_LIST } from "@shared/followup";
 import { noExamSaleRefusal, FULL_DEVICE } from "@shared/prosthetic_parts";
@@ -204,7 +205,8 @@ export interface IStorage {
     performedBy: number | null;
     skipWorkOrder?: boolean;
     actingBranchId?: number | null;
-  }): Promise<{ patient: Patient; workOrderId: number | null }>;
+    performedByName?: string | null;
+  }): Promise<{ patient: Patient; workOrderId: number | null; caseBranchId: number | null; caseBranchMoved: boolean }>;
   mergePatients(sourceId: number, targetId: number): Promise<{ patient: Patient; moved: Record<string, number> }>;
   getPatientsSince(branchId: number, cutoff: Date | null): Promise<Patient[]>;
   getPaymentsByBranchSince(branchId: number, cutoff: Date | null): Promise<Payment[]>;
@@ -1363,8 +1365,16 @@ export class DatabaseStorage implements IStorage {
       //  استئنافُ الخدمة. والقانونُ واحدٌ لكلّ الأبواب (`ensureCaseTx`) — مُدقَّقاً ومُعلَناً.
       const clean = (o: Record<string, any>) =>
         Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+      //  ══ **والقسمُ الجديد في فرع العلاج الطبيعيّ** (§4.gv د — قرارُ المالك ٢٠٢٦-١١-٢٢) ══
+      //  «استشارة» أو «خدمة أخرى» أو «جلسات إضافية» من جلسة فرعٍ بلا علاجٍ طبيعيّ («بغداد أطراف» بعد الفصل) كانت تفتح القسمَ فيه، فلا
+      //  يراه أخصائيّ. فالقسمُ **الغائب** يولد في فرع العلاج الطبيعيّ بالمدينة ويُتاح له الملفّ (`routeNewCaseBranchTx`)؛ والمالُ يبقى
+      //  في فرع الحركة كما كان (`new_service/store.ts` — `opBranchId`). ولا فرعَ في المدينة ⟵ فرعُ الحركة كما كان.
+      const home = await routeNewCaseBranchTx(tx, {
+        patientId, caseType: "physiotherapy", actingBranchId: actingBranchId ?? p.branchId,
+        actor: actor ?? {}, via: "«إضافة خدمة جديدة»",
+      });
       const ensured = await ensureCaseTx(tx, {
-        patientId, caseType: "physiotherapy", branchId: actingBranchId ?? p.branchId,
+        patientId, caseType: "physiotherapy", branchId: home.branchId,
         create: {
           cost: 0, costSource: "auto",
           //  نفسُ حقول `syncPatientCases` لحالة العلاج الطبيعي.
@@ -2903,7 +2913,9 @@ export class DatabaseStorage implements IStorage {
      * وغيابُه ⟶ فرعُ التسجيل، وهو السلوكُ القائم قبل هذا الإصلاح بحرفه.
      */
     actingBranchId?: number | null;
-  }): Promise<{ patient: Patient; workOrderId: number | null }> {
+    /** اسمُ الفاعل — لسطر إتاحة الملفّ لفرع القسم (§4.gv). */
+    performedByName?: string | null;
+  }): Promise<{ patient: Patient; workOrderId: number | null; caseBranchId: number | null; caseBranchMoved: boolean }> {
     const { patientId, caseType, fields } = params;
     return await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(patients).where(eq(patients.id, patientId));
@@ -2951,11 +2963,18 @@ export class DatabaseStorage implements IStorage {
       const cleanDetails = Object.fromEntries(Object.entries(detailsForType).filter(([, v]) => v !== null && v !== undefined && v !== ""));
       //  حالةٌ قائمة أصلاً ⟵ قرارٌ يفعّلها بلا لمسِ كلفتها، **ومغلقةٌ تُفتَح مُدقَّقةً** (§4.ar البندان ٣ و٣٣):
       //  إضافةُ نوع الحالة عودةٌ للخدمة. وغائبةٌ ⟵ تُفتَح **بكلفةِ صفر دائماً** — لا مصدرَ تسعيرٍ هنا.
-      const caseId: number = (await ensureCaseTx(tx, {
-        patientId, caseType: caseTypeKey, branchId: opBranchId,
+      //  **والقسمُ الغائب في فرعه** (§4.gv د): علاجٌ طبيعيّ من فرعٍ بلا علاجٍ طبيعيّ، أو أطرافٌ ومساند من مركز العلاج الطبيعيّ ⟵ فرعُ القسم
+      //  بالمدينة ويُتاح له الملفّ. والزيارةُ العلامة وأمرُ التصنيع في فرع الحركة كما كانا — القسمُ وحده يتحرّك.
+      const home = await routeNewCaseBranchTx(tx, {
+        patientId, caseType: caseTypeKey, actingBranchId: opBranchId,
+        actor: { userId: params.performedBy, userName: params.performedByName ?? null }, via: "«إضافة خدمة جديدة»",
+      });
+      const ensuredCase = (await ensureCaseTx(tx, {
+        patientId, caseType: caseTypeKey, branchId: home.branchId,
         create: { cost: 0, details: cleanDetails, costSource: "auto" },
         reopen: { reason: "إضافة نوع حالة", actor: { userId: params.performedBy } },
-      }))!.id;
+      }))!;
+      const caseId: number = ensuredCase.id;
 
       //  لا قيدَ كلفةٍ هنا بعد اليوم — راجع صدقَ القرار في توثيق الدالّة
       //  أعلاه. التسعيرُ من مسار الخدمة المخصَّص وحده.
@@ -3004,7 +3023,7 @@ export class DatabaseStorage implements IStorage {
         workOrderId = wo.id;
       }
 
-      return { patient, workOrderId };
+      return { patient, workOrderId, caseBranchId: ensuredCase.branchId, caseBranchMoved: home.moved };
     });
   }
 

@@ -44,6 +44,10 @@ import { DEPARTMENT_LABELS } from "@shared/service_taxonomy";
 import { noExamSaleServiceTypes } from "@shared/prosthetic_parts";
 import { canCompleteMaintenance, type MaintenanceSessionLike } from "@shared/maintenance";
 import { canCompleteComponentSale, type ComponentSaleSessionLike } from "@shared/component_sale";
+import {
+  crossExamDepartments, departmentHomeBranch, crossExamHref, crossExamTargetLine, CROSS_EXAM_LABELS, CROSS_EXAM_ADMIN_CHOOSE_HINT,
+  type BranchFact, type CrossExamDepartment,
+} from "@shared/cross_department_exam";
 
 /**
  * جلسةٌ تصلح للبابين معاً — `canCompleteMaintenance` و`canCompleteComponentSale`
@@ -217,6 +221,46 @@ export function receptionRoutingGroups(p: {
   }));
 }
 
+// ══ **فتحُ القسم الآخر** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢) ══════════════════════════════════════════════════════════
+// «إذا كان أطراف فأضف معاينة علاج طبيعي، وإن كان علاج طبيعي فأضف معاينة أطراف ومساند، وإن كان لديه الاثنان فلا يظهر شيء. عمّم ذلك لكلّ
+// الفروع». فالخيارُ قسمٌ **ليس للمريض** (`crossExamDepartments`)، ويفتح ورقةَ «طلب معاينة جديدة» نفسَها بوضع الفتح (`crossExamHref`)؛
+// ويُخفى حين لا فرعَ في المدينة يقدّمه (`departmentHomeBranch` ⟵ `null` — كربلاء والموصل للعلاج الطبيعيّ)، ويقول «يُرسَل إلى: …» حين
+// يختلف فرعُ القسم عن الفرع النشط. **ولمن يسجّل المرضى وحده** — صلاحيةُ «طلب معاينة جديدة» (`mayRequestNewExam`).
+
+export interface CrossExamChoice {
+  dept: CrossExamDepartment;
+  label: string;
+  /** «يُرسَل إلى: …» حين يذهب إلى فرعٍ غير النشط. */
+  hint: string | null;
+  href: string;
+  targetBranchId: number;
+}
+
+export function receptionCrossExamChoices(
+  patient: { id: number; isAmputee?: boolean | null; isMedicalSupport?: boolean | null; isPhysiotherapy?: boolean | null },
+  ctx: {
+    branches: readonly (BranchFact & { offersPhysio?: boolean | null })[] | null | undefined;
+    actingBranchId: number | null | undefined;
+    mayRequest: boolean;
+    /** المسؤولُ لم يختر فرعاً يصل الملفّ — الخيارُ يظهر وسطرُه يطلب الاختيار (`crossExamAdminMustChoose`). */
+    adminMustChoose?: boolean;
+  },
+): CrossExamChoice[] {
+  if (!ctx.mayRequest || !ctx.branches || ctx.branches.length === 0) return [];
+  const physioBranchIds = new Set(ctx.branches.filter((b) => b.offersPhysio).map((b) => Number(b.id)));
+  const out: CrossExamChoice[] = [];
+  for (const dept of crossExamDepartments(patient)) {
+    const target = departmentHomeBranch({ dept, actingBranchId: ctx.actingBranchId, branches: ctx.branches, physioBranchIds });
+    if (target === null) continue;
+    const differs = Number(target) !== Number(ctx.actingBranchId);
+    out.push({
+      dept, label: CROSS_EXAM_LABELS[dept], targetBranchId: target, href: crossExamHref(patient.id, dept),
+      hint: ctx.adminMustChoose ? CROSS_EXAM_ADMIN_CHOOSE_HINT : differs ? crossExamTargetLine(ctx.branches.find((b) => Number(b.id) === target)?.name) : null,
+    });
+  }
+  return out;
+}
+
 // ══ العلمُ الأحاديّ الاستعمال — يُفتَح فور التسجيل، ولا يلاحق التحديث ═════
 //
 // نفسُ نمط `device_flow_resume.ts` حرفاً: `sessionStorage` (يعبر التنقّل،
@@ -256,4 +300,36 @@ export function takeReceptionRoutingPending(
   }
   if (!raw) return false;
   return Number(raw) === Number(patientId);
+}
+
+/**
+ * **فرعُ الحركة كما يحسمه الخادم** (`resolveActingBranchId`) — للخيار وحده: الموظّفُ فرعُه النشط؛ والمسؤولُ فرعُه المختار **إن وصل الملفّ**
+ * (فرعُ التسجيل أو فرعٌ أُتيح له — `sharedBranchIds`)، وإلّا فرعُ التسجيل. فما يقوله «يُرسَل إلى» هو ما يكتبه الخادم ولو اختلفت المدينتان.
+ */
+export function crossExamActingBranch(
+  session: { isAdmin?: boolean | null; branchId?: number | null } | null | undefined,
+  patient: { branchId?: number | null },
+  sharedBranchIds: readonly number[] = [],
+): number | null {
+  const sb = Number(session?.branchId ?? 0);
+  const home = patient.branchId == null ? null : Number(patient.branchId);
+  if (!session?.isAdmin) return sb > 0 ? sb : home;
+  const reaches = sb > 0 && (sb === home || sharedBranchIds.map(Number).includes(sb));
+  return reaches ? sb : home;
+}
+
+/**
+ * **المسؤولُ يختار الفرع أوّلاً** (§4.ay — `adminMustChooseBranch` في الخادم): لمريضٍ له أكثرُ من فرع والفرعُ المختار ليس منها، فالخادمُ
+ * يردّ فتحَ القسم — فلا يُقال له «يُرسَل إلى» تخميناً.
+ */
+export function crossExamAdminMustChoose(
+  session: { isAdmin?: boolean | null; branchId?: number | null } | null | undefined,
+  patient: { branchId?: number | null },
+  sharedBranchIds: readonly number[] = [],
+): boolean {
+  if (!session?.isAdmin) return false;
+  const all = new Set<number>([...(patient.branchId == null ? [] : [Number(patient.branchId)]), ...sharedBranchIds.map(Number)]);
+  if (all.size < 2) return false;
+  const sb = Number(session?.branchId ?? 0);
+  return !(sb > 0 && all.has(sb));
 }

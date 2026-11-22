@@ -39,6 +39,7 @@ import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { transferOutcomeText, withReplaces } from "@shared/returned_transfer";
+import { CrossExamBanner, useCrossExamTarget } from "@/components/CrossExamBanner";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
@@ -72,6 +73,8 @@ export interface ExistingPhysioPatient {
   patient: Record<string, any> & { id: number };
   /** **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu) — الطلبُ المُرجَع في القسم الآخر يُلغى مع هذا الإرسال. */
   replacesRequestId?: number | null;
+  /** **فتحُ القسم من «سبب الحضور»** (§4.gv) — للمريض قسمُ جهازٍ بلا علاجٍ طبيعيّ؛ يُرسَل إلى فرع العلاج الطبيعيّ بالمدينة. */
+  openDepartment?: boolean;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -141,8 +144,13 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
     ? branches.find((b) => b.id === f.branchId)?.name
     : (session?.branchName || branches.find((b) => b.id === (session?.branchId ?? f.branchId))?.name);
   //  فرعُ الموظّف بلا علاجٍ طبيعيّ — يُقال قبل أن يملأ الورقة لا بعد الحفظ.
-  const branchLacksPhysio = !isAdmin && branches.length > 0 && Boolean(activeBranchId)
-    && !branches.find((b) => b.id === activeBranchId)?.offersPhysio;
+  //  **وفتحُ القسم يذهب إلى فرعه** (§4.gv) — فالفرعُ النشط لا يُشترط، والممنوعُ ألّا يكون في المدينة فرعٌ يقدّمه.
+  const openMode = Boolean(existing?.openDepartment);
+  const crossTarget = useCrossExamTarget("physiotherapy", (existing?.patient ?? {}) as { branchId?: number | null }, openMode);
+  //  وفي وضع الفتح لافتتُه وحدها (`CrossExamBanner`) — فالصندوقُ الكهرمانيّ أدناه لغة التسجيل لا الفتح.
+  const crossBlocked = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose);
+  const branchLacksPhysio = !openMode && !isAdmin && branches.length > 0 && Boolean(activeBranchId)
+      && !branches.find((b) => b.id === activeBranchId)?.offersPhysio;
 
   const referralSubSource = f.referralSource === REFERRAL_OTHER_PERSON
     ? (f.referralSubSource === REFERRAL_SUB_OTHER ? f.referralSubSourceOther.trim() : f.referralSubSource) : "";
@@ -161,9 +169,14 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: "physiotherapy", fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true } : {}),
         }, existing.replacesRequestId));
-        return { id: existing.patient.id, transfer: existing.replacesRequestId ? await res.json().catch(() => null) : null };
+        const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
+        return {
+          id: existing.patient.id, transfer: existing.replacesRequestId ? body : null,
+          //  **فرعُ القسم من ردّ الخادم** لا من حساب الشاشة (§4.gv).
+          opened: existing.openDepartment && body?.openedDepartment ? { targetBranchId: body.targetBranchId ?? null, targetBranchName: body.targetBranchName ?? null } : null,
+        };
       }
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: "physiotherapy",
@@ -179,7 +192,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         totalCost: 0, whatsappNotificationsEnabled: false,
         ...(sharedPhone ? { sharedPhone } : {}),
       })).json();
-      return { id: created.id as number, transfer: null };
+      return { id: created.id as number, transfer: null, opened: null };
     },
     onSuccess: (r) => {
       setPhoneHolders(null);
@@ -192,7 +205,9 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
       toast(r.transfer
         ? { title: "حُوِّل المراجعُ إلى العلاج الطبيعي", description: transferOutcomeText(r.transfer) }
         : existing
-        ? { title: "أُرسل المراجعُ لمعاينة العلاج الطبيعي", description: "يظهر في «معايناتي» حتى يعاينه الأخصائيّ أو الطبيب" }
+        ? { title: "أُرسل المراجعُ لمعاينة العلاج الطبيعي", description: r.opened && r.opened.targetBranchId !== null && Number(r.opened.targetBranchId) !== Number(session?.branchId ?? 0)
+          ? `فُتح له قسمُ العلاج الطبيعي في ${r.opened.targetBranchName ?? "فرعه"} — يظهر في «معايناتي» عند أخصائيّيه`
+          : "يظهر في «معايناتي» حتى يعاينه الأخصائيّ أو الطبيب" }
         : { title: "حُفظت الاستمارة", description: "والمراجعُ بانتظار معاينة العلاج الطبيعي" });
       setLocation(`/patients/${r.id}`);
     },
@@ -236,6 +251,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
           {existing ? `${NEW_EXAM_REQUEST_LABEL} — علاج طبيعي` : "إضافة مريض — علاج طبيعي"}
         </div>
       </div>
+      {openMode && <CrossExamBanner dept="physiotherapy" target={crossTarget} />}
       {existing && (
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900" data-testid="pt-intake-existing-note">
           بياناتُ المراجع من ملفّه — عدّل ما تغيّر منها، واكتب «سبب المراجعة» لهذه المرّة، ثمّ أرسله للمعاينة. وما تغيّر يُكتب في ملفّه بسطر تدقيق.
@@ -262,7 +278,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
       )}
 
       <div className="bg-white rounded-xl border shadow-sm p-3 md:p-8" data-testid="pt-intake-sheet">
-        <IntakeSheetHeader branchName={branchName} title={PHYSIO_SHEET_TITLE} />
+        <IntakeSheetHeader branchName={openMode && crossTarget.differs ? (crossTarget.targetName ?? branchName) : branchName} title={PHYSIO_SHEET_TITLE} />
 
         <SheetTable>
           <SheetPair>
@@ -373,7 +389,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         <p className="mt-2 text-[11px] text-slate-500 text-left" dir="ltr">{PT_FORM_CODE} · v{PT_FORM_VERSION}</p>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button onClick={submit} disabled={save.isPending || branchLacksPhysio} className="gap-2 min-w-[12rem]" data-testid="pt-intake-submit">
+          <Button onClick={submit} disabled={save.isPending || branchLacksPhysio || crossBlocked} className="gap-2 min-w-[12rem]" data-testid="pt-intake-submit">
             {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {existing ? "إرسال للمعاينة" : "حفظ وإرسال للمعاينة"}
           </Button>
           {missing.length > 0 && <span className="text-xs text-red-600" data-testid="pt-intake-missing">الخانات المحدّدة بالأحمر إلزامية</span>}
