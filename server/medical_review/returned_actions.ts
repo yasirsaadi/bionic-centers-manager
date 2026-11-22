@@ -111,6 +111,13 @@ export async function cancelReturnedRequestTx(tx: Executor, params: {
   const [head] = await rows(tx, sql`SELECT patient_id FROM medical_review_requests WHERE id = ${params.requestId}`);
   if (!head) throw fail("الطلب المُرجَع غير موجود", 404, "request_missing");
   const patientId = Number(head.patient_id);
+  //  **النطاقُ قبل كلّ خطأٍ يكشف شيئاً** (مراجعةُ ما بعد البناء): «ليس لهذا المريض» يقول إنّ الرقمَ موجود — فطلبُ فرعٍ لا يراه
+  //  السائلُ يُردّ ٤٠٣ قبله، لا ٤٠٠. (ويُعاد الفحصُ تحت القفل أدناه.)
+  const inScope = async () => (await rows(tx, sql`
+    SELECT 1 AS ok FROM medical_review_requests r
+     WHERE r.id = ${params.requestId} AND ${branchOrPatientAccessSql(params.branchIds, "r.branch_id", "r.patient_id")}
+  `)).length > 0;
+  if (!(await inScope())) throw fail("غير مصرح لك بهذا الفرع", 403, "branch_out_of_scope");
   if (params.expectPatientId !== undefined && patientId !== params.expectPatientId) {
     throw fail("الطلب المُرجَع ليس لهذا المريض", 400, "request_other_patient");
   }
@@ -127,11 +134,7 @@ export async function cancelReturnedRequestTx(tx: Executor, params: {
        FOR UPDATE OF r
   `);
   //  **والنطاقُ بقاعدة القائمة نفسِها** (فرعُ الطلب أو إتاحةُ الملفّ) — ولا يُسحَب ما لا يراه.
-  const [inScope] = await rows(tx, sql`
-    SELECT 1 AS ok FROM medical_review_requests r
-     WHERE r.id = ${params.requestId} AND ${branchOrPatientAccessSql(params.branchIds, "r.branch_id", "r.patient_id")}
-  `);
-  if (!inScope) throw fail("غير مصرح لك بهذا الفرع", 403, "branch_out_of_scope");
+  if (!(await inScope())) throw fail("غير مصرح لك بهذا الفرع", 403, "branch_out_of_scope");
   if (String(r.status) !== "returned" || !(await returnedRequestStillListedTx(tx, params.requestId))) {
     throw fail("تغيّر هذا الطلب — حدّث الصفحة", 409, "request_not_returned");
   }

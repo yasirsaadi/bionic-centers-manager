@@ -42,7 +42,7 @@ import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { transferOutcomeText } from "@shared/returned_transfer";
+import { transferOutcomeText, withReplaces } from "@shared/returned_transfer";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
@@ -165,12 +165,11 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
       const dep = f.department as IntakeDepartment;
       if (existing) {
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
-        const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
+        const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: dep, requestedItems: values.requestedItems,
           fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
           ...(sharedPhone ? { sharedPhone } : {}),
-          ...(existing.replacesRequestId ? { replacesRequestId: existing.replacesRequestId } : {}),
-        });
+        }, existing.replacesRequestId));
         return {
           id: existing.patient.id, routed: true as const, routeError: null,
           transfer: existing.replacesRequestId ? await res.json().catch(() => null) : null,

@@ -24,6 +24,32 @@ export function transferHref(patientId: number, target: TransferDepartment, requ
   return `/patients/${patientId}/new-exam?dept=${target}&replaces=${requestId}&from=${from}`;
 }
 
+/** رابطُ «إعادة إرسال للمعاينة» لصفّ علاجٍ طبيعيّ مُرجَع — ورقةُ القسم نفسِه بلا طلبٍ يُلغى، و«رجوع» منها إلى «المُرجَعون». */
+export function resendPhysioHref(patientId: number): string {
+  return `/patients/${patientId}/new-exam?dept=physiotherapy&back=returned`;
+}
+
+/**
+ * **ما تقرؤه ورقةُ «طلب معاينة جديدة» من رابطها** — عكسُ `transferHref` و`resendPhysioHref` بحرفهما (حارسُ ط في
+ * `test:new-exam-request`): `replaces` الطلبُ المُرجَع الذي يُلغيه الإرسال، و`from` قسمُه للّافتة، و«رجوع» إلى «المُرجَعون» لهما.
+ */
+export function parseNewExamQuery(search: string): {
+  dept: string | null; replacesRequestId: number | null; from: string | null; backToReturned: boolean;
+} {
+  const qs = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const n = Number(qs.get("replaces"));
+  const replacesRequestId = Number.isInteger(n) && n > 0 ? n : null;
+  return {
+    dept: qs.get("dept"), replacesRequestId, from: qs.get("from"),
+    backToReturned: replacesRequestId !== null || qs.get("back") === "returned",
+  };
+}
+
+/** جسمُ `POST …/new-exam-request` بالطلب الذي يُستبدَل إن وُجد — الورقتان تبنيانه بهذه الدالّة وحدها. */
+export function withReplaces<T extends Record<string, unknown>>(body: T, replacesRequestId: number | null | undefined): T & { replacesRequestId?: number } {
+  return replacesRequestId ? { ...body, replacesRequestId } : body;
+}
+
 /** لافتةُ ورقة التحويل. */
 export function transferBannerText(from: string | null | undefined): string {
   const label = from && from in TRANSFER_DEPARTMENT_LABELS ? TRANSFER_DEPARTMENT_LABELS[from as TransferDepartment] : "القسم السابق";

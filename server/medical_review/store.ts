@@ -815,6 +815,8 @@ export interface ReturnedRequestRow {
   decidedAt: string | null;
   decidedByName: string | null;
   branchName: string | null;
+  /** فرعُ تسجيل المريض — لفرع الحركة في التحويل (`resolveActingBranchId`). */
+  patientBranchId: number | null;
 }
 
 /**
@@ -879,7 +881,7 @@ export async function listReturnedRequests(params: {
   const rows = await db.execute<Record<string, any>>(sql`
     SELECT r.id, r.patient_id, r.service_type, r.requested_path, r.review_kind,
            r.device_episode_id, r.doctor_note, r.decided_at,
-           p.name AS patient_name, p.patient_code,
+           p.name AS patient_name, p.patient_code, p.branch_id AS patient_branch_id,
            b.name AS branch_name, du.display_name AS decided_by_name,
            e.sequence_number AS ep_seq, e.status AS ep_status
       FROM medical_review_requests r
@@ -907,6 +909,7 @@ export async function listReturnedRequests(params: {
     decidedAt: r.decided_at ? new Date(r.decided_at).toISOString() : null,
     decidedByName: r.decided_by_name ?? null,
     branchName: r.branch_name ?? null,
+    patientBranchId: r.patient_branch_id == null ? null : Number(r.patient_branch_id),
   }));
 }
 

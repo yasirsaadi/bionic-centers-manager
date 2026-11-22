@@ -1458,7 +1458,8 @@ function physioExamExemptSql() {
  * مريضُ علاجٍ طبيعيّ جديد ينتظر الطبيبَ **بلا طلبٍ قطّ** (القاعدةُ «③» — البند ١٧): قسمٌ نشط بلا معاينة. فإن أرجعه الطبيبُ
  * («إرجاع للاستعلامات») كُتب له طلبٌ مُرجَعٌ عارٍ (`decision = 'return_to_reception'`)، **وهذا الطلبُ يُطفئ القاعدةَ ③ للقسم**
  * في المواضع الثلاثة معاً (الشارةُ · «معايناتي» · بطاقةُ المريض) — ولو ألغاه الاستعلاماتُ بعدها (الإلغاءُ يُبقي قرارَ الطبيب).
- * **ولا يعود إلّا بطلبٍ صريح** («طلب معاينة جديدة» — القاعدةُ «②»). والطلبُ الملغى بلا إرجاع (`decision` فارغ) لا يُطفئ شيئاً.
+ * **ولا يعود إلّا بطلبٍ صريح** («طلب معاينة جديدة» — القاعدةُ «②») **أو بفتح القسم من إغلاقه** (عودةٌ للخدمة). والطلبُ الملغى
+ * بلا إرجاع (`decision` فارغ) لا يُطفئ شيئاً.
  */
 export function physioReturnedToReceptionSql() {
   return sql`(pc.case_type = 'physiotherapy' AND EXISTS (
@@ -1466,7 +1467,14 @@ export function physioReturnedToReceptionSql() {
      WHERE rw.patient_id = pc.patient_id AND rw.service_type = pc.case_type
        AND rw.device_episode_id IS NULL
        AND rw.decision = 'return_to_reception'
-       AND rw.status IN ('returned', 'cancelled')))`;
+       AND rw.status IN ('returned', 'cancelled')
+       --  **وفي فترة القسم الحاليّة وحدها** (مراجعةُ ما بعد البناء): قسمٌ أُغلق ثمّ فُتح لعودة المريض لخدمة («خدمة أخرى» ·
+       --  «إضافة نوع حالة» · تسعيرُ جلسات — كلُّها «ensureCaseTx») يدخل الطابورَ من جديد، فإرجاعٌ قبل الفتح لا يُطفئه بعده.
+       --  وكلُّ فتحٍ يكتب سطرَ تدقيقه («reopenClosedCaseAuditedTx» — §4.ar البند ٣)، وقسمٌ حُذف ثمّ أُنشئ له «created_at» جديد.
+       AND GREATEST(rw.created_at, rw.decided_at) >= GREATEST(pc.created_at, COALESCE((
+         SELECT MAX(al.created_at) FROM audit_log al
+          WHERE al.entity_type = 'patient_case' AND al.entity_id = pc.id
+            AND al.new_values LIKE '%"status":"active"%'), pc.created_at))))`;
 }
 
 /**

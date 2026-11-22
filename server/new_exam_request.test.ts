@@ -24,6 +24,8 @@ import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
 import { EXAMINER_FIELDS } from "@shared/patient_edit_rules";
 import { isExamRequestServiceType, isReviewServiceType } from "@shared/medical_review";
 import { changedSheetValues, newExamDepartmentsOf, referralSubSourceChoice } from "@shared/new_exam_request";
+import { transferTargets, transferHref, resendPhysioHref, parseNewExamQuery, withReplaces } from "@shared/returned_transfer";
+import { readFileSync } from "fs";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -554,6 +556,151 @@ async function main() {
       [g4.status, ...s4], [500, ...s0]);
     const g5 = await nexr(R.pid, S.recv, { department: "physiotherapy", fields: { presentingComplaint: "ألم" }, replacesRequestId: rRid });
     same("ز.٢٠ وبعدها التحويلُ نفسُه يمرّ", [g5.status, (await reqOf(rRid)).status, (await physioReqs(R.pid)).length], [201, "cancelled", 1]);
+
+    // ══ ح. مراجعةُ ما بعد البناء (§4.gu التكملة) ══
+    console.log("\n── ح. مراجعة ما بعد البناء: الإطفاءُ بزمنه، والفارغُ بأشدّ معنى، والتحويلُ بأقسامه ونطاقه ──");
+    //  ح.١ — **الإطفاءُ في فترة القسم وحدها**: أُرجع ⟵ أُلغي فأُغلق ⟵ فُتح من «إضافة نوع حالة» ⟵ يعود إلى المواضع الثلاثة.
+    const RO = await mkPatient("رؤى", "physiotherapy");
+    const roRid = Number((await returnImplicit(RO.pid, S.spec, "القسم خطأ")).json?.requestId);
+    const roCancel = await closeReturned(roRid, S.recv, "لا يحتاج");
+    same("ح.١أ (الإعداد) أُرجع ثمّ أُلغي فأُغلق القسمُ الفارغ", [roCancel.status, roCancel.json?.caseClosed, (await caseOf(RO.pid, "physiotherapy"))?.status],
+      [200, true, "closed"]);
+    const roReopen = await call("POST", `/api/patients/${RO.pid}/add-case-type`, S.recv, { caseType: "physiotherapy" });
+    same("ح.١ب **فتحُ القسم من إغلاقه لعودة المريض يعيده إلى المواضع الثلاثة** — الإرجاعُ القديم لا يُطفئ الفترةَ الجديدة",
+      [roReopen.status, (await caseOf(RO.pid, "physiotherapy"))?.status, (await physioReqs(RO.pid)).length,
+        !!(await worklistRow(S.spec, RO.pid, "physiotherapy")), await registryPending(RO.pid), (await pendingOf(RO.pid))?.includes("physiotherapy")],
+      [200, "active", 1, true, true, true]);
+
+    //  ح.٢ — **زيارةٌ بلا وصف تُبقي القسم** (`NULL NOT IN (…)` مجهولٌ لا صحيح).
+    const NV = await mkPatient("نوال", "physiotherapy");
+    const nvRid = Number((await returnImplicit(NV.pid, S.spec, "خطأ")).json?.requestId);
+    await q(`INSERT INTO visits (patient_id, branch_id, case_id, treatment_type, session_count) VALUES ($1, $2, $3, 'روبوت', 1)`,
+      [NV.pid, B1, (await caseOf(NV.pid, "physiotherapy"))?.id]);
+    const nvCancel = await closeReturned(nvRid, S.recv, "لا يحتاج");
+    same("ح.٢ **جلسةٌ بلا وصف تُبقي القسمَ مفتوحاً**", [nvCancel.status, nvCancel.json?.caseClosed, (await caseOf(NV.pid, "physiotherapy"))?.status],
+      [200, false, "active"]);
+
+    //  ح.٣ — **زيارةٌ قديمة بلا قسم تُبقي قسمَ الجهاز** (كالعلاج الطبيعيّ).
+    const UV = await mkPatient("وليد", "prosthetic");
+    const uvRid = Number((await q(`SELECT id FROM medical_review_requests WHERE device_episode_id = $1 AND status = 'pending'`, [UV.epId])).rows[0].id);
+    await call("POST", `/api/medical-review/requests/${uvRid}/return`, S.doc, { reason: "خطأ" });
+    await q(`INSERT INTO visits (patient_id, branch_id, case_id, details) VALUES ($1, $2, NULL, 'حضور قديم')`, [UV.pid, B1]);
+    const uvCancel = await closeReturned(uvRid, S.recv, "لا يحتاج");
+    same("ح.٣ **حضورٌ قديم بلا قسم يُبقي قسمَ الأطراف**", [uvCancel.status, uvCancel.json?.caseClosed, (await caseOf(UV.pid, "prosthetic"))?.status],
+      [200, false, "active"]);
+
+    //  ح.٤ — **طلبُ خصمٍ معتمَد يُبقي القسم** (كلفتُه صفرٌ بعد خصمٍ كامل).
+    const DS = await mkPatient("دعاء", "physiotherapy");
+    const dsRid = Number((await returnImplicit(DS.pid, S.spec, "خطأ")).json?.requestId);
+    await q(`INSERT INTO service_discount_requests (patient_id, case_id, branch_id, department, original_price, proposed_final_price,
+        discount_amount, discount_percentage, is_free, reason, status, approved_final_price, decided_at, applied_at)
+      VALUES ($1, $2, $3, 'physiotherapy', 100000, 0, 100000, 100, true, 'مجاني', 'approved', 0, NOW(), NOW())`,
+      [DS.pid, (await caseOf(DS.pid, "physiotherapy"))?.id, B1]);
+    const dsCancel = await closeReturned(dsRid, S.recv, "لا يحتاج");
+    same("ح.٤ **طلبُ خصمٍ معتمَد يُبقي القسم**", [dsCancel.status, dsCancel.json?.caseClosed, (await caseOf(DS.pid, "physiotherapy"))?.status],
+      [200, false, "active"]);
+
+    //  ح.٥ — **طلبٌ آخرُ ينتظر على القسم يُبقيه**: الطلبُ المُرجَع عارٍ فيُسحَب وحده (`cancelScaffoldRequestsById`)، وقبله طلبٌ
+    //  معلَّق على القسم نفسِه — كانت ① تعدّه «سقالة» فيُغلَق القسمُ ويبقى الطلبُ معلَّقاً على قسمٍ مغلق.
+    const OR = await mkPatient("عُلا", "physiotherapy");
+    const orCase = (await caseOf(OR.pid, "physiotherapy"))?.id;
+    await q(`INSERT INTO medical_review_requests (patient_id, service_type, case_id, branch_id, requested_path, review_kind, status, created_at)
+      VALUES ($1, 'physiotherapy', $2, $3, 'full', 'other', 'pending', NOW() - interval '1 day')`, [OR.pid, orCase, B1]);
+    const orRid = Number((await q(`INSERT INTO medical_review_requests (patient_id, service_type, case_id, branch_id, requested_path, review_kind,
+        status, decision, decided_by, decided_at, doctor_note)
+      VALUES ($1, 'physiotherapy', $2, $3, 'full', 'other', 'returned', 'return_to_reception', $4, NOW(), 'خطأ') RETURNING id`,
+      [OR.pid, orCase, B1, SPEC])).rows[0].id);
+    const orCancel = await closeReturned(orRid, S.recv, "لا يحتاج");
+    same("ح.٥ **طلبٌ آخرُ معلَّق على القسم يُبقيه** — ويبقى الطلبُ المعلَّق على قسمٍ مفتوح",
+      [orCancel.status, orCancel.json?.caseClosed, (await caseOf(OR.pid, "physiotherapy"))?.status,
+        (await physioReqs(OR.pid)).map((r: any) => r.status)],
+      [200, false, "active", ["pending", "cancelled"]]);
+
+    //  ح.٦ — **تحويلٌ علاج طبيعي ⟵ أطراف وللعلاج الطبيعيّ خطّة** ⟵ يبقى القسمُ، والتحويلُ يقع.
+    const PL = await mkPatient("لمى", "physiotherapy");
+    const plRid = Number((await returnImplicit(PL.pid, S.spec, "مريضة أطراف")).json?.requestId);
+    await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar) VALUES ($1, $2, 'خطّة')`, [PL.pid, B1]);
+    const plTr = await nexr(PL.pid, S.recv, {
+      department: "prosthetic", requestedItems: ["full_device"], replacesRequestId: plRid,
+      fields: { amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" },
+    });
+    same("ح.٦ **وقسمُ علاجٍ طبيعيّ فيه خطّة لا يُغلق بالتحويل** — والطلبُ وحده يُلغى، والأطرافُ تُفتح",
+      [plTr.status, plTr.json?.oldCaseClosed, /خطّة/.test(plTr.json?.oldCaseKeptBecause ?? ""), (await caseOf(PL.pid, "physiotherapy"))?.status,
+        (await reqOf(plRid)).status, (await caseOf(PL.pid, "prosthetic"))?.status],
+      [201, false, true, "active", "cancelled", "active"]);
+
+    //  ح.٧ — **لا تحويلَ بين الأطراف والمساند** بطلبٍ يُكتب باليد.
+    const AM = await mkPatient("أمل", "prosthetic");
+    const amRid = Number((await q(`SELECT id FROM medical_review_requests WHERE device_episode_id = $1 AND status = 'pending'`, [AM.epId])).rows[0].id);
+    await call("POST", `/api/medical-review/requests/${amRid}/return`, S.doc, { reason: "خطأ" });
+    const amSnap = async () => [(await reqOf(amRid)).status, (await caseOf(AM.pid, "prosthetic"))?.status, await caseOf(AM.pid, "medical_support"), await episodes(AM.pid)];
+    const am0 = await amSnap();
+    const amTr = await nexr(AM.pid, S.recv, { department: "medical_support", replacesRequestId: amRid, fields: { supportType: "مسند ركبة", injurySide: "يمين" } });
+    same("ح.٧ **أطراف ⟵ مساند يُردّ ٤٠٠** — ولا شيءَ يُكتب", [amTr.status, amTr.json?.code, ...(await amSnap())],
+      [400, "replaces_department_not_allowed", ...am0]);
+
+    //  ح.٨ — **النطاقُ قبل «ليس لهذا المريض»**: طلبُ فرعٍ لا يراه السائلُ ⟵ ٤٠٣ لا ٤٠٠.
+    const FB = await mkPatient("فرح", "prosthetic");
+    const fbRid = Number((await q(`SELECT id FROM medical_review_requests WHERE device_episode_id = $1 AND status = 'pending'`, [FB.epId])).rows[0].id);
+    await call("POST", `/api/medical-review/requests/${fbRid}/return`, S.doc, { reason: "خطأ" });
+    await q(`UPDATE patients SET branch_id = $2 WHERE id = $1`, [FB.pid, B2]);
+    await q(`UPDATE medical_review_requests SET branch_id = $2 WHERE id = $1`, [fbRid, B2]);
+    await q(`UPDATE patient_cases SET branch_id = $2 WHERE patient_id = $1`, [FB.pid, B2]);
+    const AM2 = await mkPatient("أسيل", "physiotherapy");
+    const fbTr = await nexr(AM2.pid, S.recv, { department: "prosthetic", requestedItems: ["full_device"], replacesRequestId: fbRid,
+      fields: { amputationSite: "احادي - طرف سفلي - يمين - تحت الركبة" } });
+    same("ح.٨ **طلبُ فرعٍ آخر ⟵ ٤٠٣ قبل أن يُقال لأيّ مريضٍ هو**", [fbTr.status, fbTr.json?.code, (await reqOf(fbRid)).status],
+      [403, "branch_out_of_scope", "returned"]);
+
+    //  ح.٩ — **العدّادُ يعدّ صفوفَ العلاج الطبيعيّ** كالقائمة، **وأقسامُ التحويل من الخادم بفرع الحركة**.
+    const CT = await mkPatient("كرم", "physiotherapy");
+    const ctRid = Number((await returnImplicit(CT.pid, S.spec, "خطأ")).json?.requestId);
+    const listAll = (await call("GET", "/api/medical-review/returned", S.recv)).json?.rows ?? [];
+    const cnt = (await call("GET", "/api/medical-review/returned/count", S.recv)).json?.count;
+    const ctRow = listAll.find((r: any) => r.requestId === ctRid);
+    same("ح.٩ **العدّادُ يساوي القائمة وفيها العلاجُ الطبيعيّ** — وصفُّه يُحوَّل إلى الأطراف والمساند",
+      [cnt === listAll.length, listAll.some((r: any) => r.serviceType === "physiotherapy"), ctRow?.transferTargets],
+      [true, true, ["prosthetic", "medical_support"]]);
+    const FBrow = await mkPatient("فاتن", "prosthetic");
+    const fbr = Number((await q(`SELECT id FROM medical_review_requests WHERE device_episode_id = $1 AND status = 'pending'`, [FBrow.epId])).rows[0].id);
+    await call("POST", `/api/medical-review/requests/${fbr}/return`, S.doc, { reason: "خطأ" });
+    const tgt = async (sx: string) => ((await call("GET", "/api/medical-review/returned", sx)).json?.rows ?? []).find((r: any) => r.requestId === fbr)?.transferTargets;
+    const tAdminB1 = await tgt(S.admin);
+    await q(`UPDATE patients SET branch_id = $2 WHERE id = $1`, [FBrow.pid, B2]);
+    await q(`UPDATE medical_review_requests SET branch_id = $2 WHERE id = $1`, [fbr, B2]);
+    const adminAll = hdr({ userId: ADMIN, displayName: "مسؤول", role: "admin", roles: ["admin"], branchId: 0, accessibleBranches: [], isAdmin: true,
+      permissions: { canViewPatients: true } });
+    same("ح.١٠ **«تحويل إلى علاج طبيعي» بفرع الحركة** — يظهر لمريض فرعٍ فيه علاجٌ طبيعيّ، ولا يظهر للمسؤول في «كل الفروع» على مريض فرعٍ بلا علاجٍ طبيعيّ",
+      [tAdminB1, await tgt(adminAll)], [["physiotherapy"], []]);
+
+    //  ح.١١ — **تنبيهُ «معايناتي» مرّةً واحدة** للتحويل إلى العلاج الطبيعيّ (القسمُ يُفتح والطلبُ يُنبّه — `notifyExam: false`).
+    const NT = await mkPatient("نجلاء", "prosthetic");
+    const ntRid = Number((await q(`SELECT id FROM medical_review_requests WHERE device_episode_id = $1 AND status = 'pending'`, [NT.epId])).rows[0].id);
+    await call("POST", `/api/medical-review/requests/${ntRid}/return`, S.doc, { reason: "علاج طبيعي" });
+    await q(`UPDATE patients SET is_physiotherapy = false WHERE id = $1`, [NT.pid]);
+    const ntBefore = await count(`SELECT COUNT(*)::int n FROM staff_notification_outbox WHERE event_type = 'exam_request' AND text LIKE $1`, [`%نجلاء ${MARK}%`]);
+    const ntTr = await nexr(NT.pid, S.recv, { department: "physiotherapy", fields: { presentingComplaint: "ألم" }, replacesRequestId: ntRid });
+    const ntAfter = await count(`SELECT COUNT(*)::int n FROM staff_notification_outbox WHERE event_type = 'exam_request' AND text LIKE $1`, [`%نجلاء ${MARK}%`]);
+    same("ح.١١ **تنبيهٌ واحد لمعاينةٍ واحدة** — القسمُ الجديد لا يُنبّه فوق الطلب",
+      [ntTr.status, ntAfter - ntBefore], [201, 1]);
+
+    //  ح.١٢ — **الروابطُ تُقرأ بعكسها والجسمُ يحمل الطلبَ المُستبدَل** (الشاشةُ بلا متصفّح).
+    const href = transferHref(7, "physiotherapy", 42, "prosthetic");
+    const parsed = parseNewExamQuery(href.split("?")[1]);
+    const resend = parseNewExamQuery(resendPhysioHref(7).split("?")[1]);
+    same("ح.١٢ **رابطُ التحويل يُقرأ بعكسه** · وإعادةُ الإرسال ترجع إلى «المُرجَعون» بلا طلبٍ يُلغى · والجسمُ يحمل الرقمَ",
+      [parsed, resend, withReplaces({ department: "x" }, 42), withReplaces({ department: "x" }, null)],
+      [{ dept: "physiotherapy", replacesRequestId: 42, from: "prosthetic", backToReturned: true },
+        { dept: "physiotherapy", replacesRequestId: null, from: null, backToReturned: true },
+        { department: "x", replacesRequestId: 42 }, { department: "x" }]);
+    same("ح.١٣ **أقسامُ التحويل**: بين العلاج الطبيعيّ وقسمَي الجهاز وحده، والعلاجُ الطبيعيّ في فروعه",
+      [transferTargets("physiotherapy", false), transferTargets("prosthetic", true), transferTargets("medical_support", false), transferTargets("x", true)],
+      [["prosthetic", "medical_support"], ["physiotherapy"], [], []]);
+    const srcOf = (f: string) => readFileSync(new URL(`../client/src/pages/${f}`, import.meta.url), "utf8");
+    same("ح.١٤ **الورقتان تبنيان جسمَ الإرسال بـ`withReplaces`** والصفحةُ تقرأ رابطها بـ`parseNewExamQuery` وأقسامَ الخادم",
+      [/new-exam-request`, withReplaces\(/.test(srcOf("PhysioSheetCreate.tsx")), /new-exam-request`, withReplaces\(/.test(srcOf("IntakeSheetCreate.tsx")),
+        /parseNewExamQuery\(useSearch\(\)\)/.test(srcOf("NewExamRequest.tsx")), /r\.transferTargets/.test(srcOf("ReturnedFromDoctor.tsx"))],
+      [true, true, true, true]);
 
     // ══ هـ. الشكلُ الواحد في القاعدة والمخزن ══
     console.log("\n── هـ. الشكل ──");

@@ -10,19 +10,17 @@ import { isNewExamRequestDepartment } from "@shared/new_exam_request";
 import { Button } from "@/components/ui/button";
 import IntakeSheetCreate from "./IntakeSheetCreate";
 import PhysioSheetCreate from "./PhysioSheetCreate";
-import { transferBannerText } from "@shared/returned_transfer";
+import { transferBannerText, parseNewExamQuery } from "@shared/returned_transfer";
 
 export default function NewExamRequest() {
   const { id } = useParams<{ id: string }>();
   const patientId = Number(id);
-  const qs = new URLSearchParams(useSearch());
-  const dept = qs.get("dept");
-  //  **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu): `replaces` الطلبُ المُرجَع الذي يُلغيه هذا الإرسال، و`from` قسمُه للّافتة.
-  const replacesRequestId = Number(qs.get("replaces")) > 0 ? Number(qs.get("replaces")) : null;
-  const from = qs.get("from");
+  //  **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu): `replaces` الطلبُ المُرجَع الذي يُلغيه هذا الإرسال، و`from` قسمُه للّافتة،
+  //  و«رجوع» إلى «المُرجَعون» للتحويل ولإعادة إرسال العلاج الطبيعيّ منها (`parseNewExamQuery` — عكسُ روابطها بحرفها).
+  const { dept, replacesRequestId, from, backToReturned } = parseNewExamQuery(useSearch());
   const [, setLocation] = useLocation();
   const { data: patient, isLoading } = usePatient(patientId);
-  const back = () => setLocation(replacesRequestId ? "/returned-from-doctor" : `/patients/${patientId}`);
+  const back = () => setLocation(backToReturned ? "/returned-from-doctor" : `/patients/${patientId}`);
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;

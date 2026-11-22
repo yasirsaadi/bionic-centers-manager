@@ -34,7 +34,7 @@ import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { queryClient } from "@/lib/queryClient";
 import {
-  TRANSFER_DEPARTMENT_LABELS, closureOutcomeText, transferHref, transferTargets,
+  TRANSFER_DEPARTMENT_LABELS, closureOutcomeText, transferHref, resendPhysioHref, type TransferDepartment,
 } from "@shared/returned_transfer";
 import { specialtyLabel } from "@shared/medical";
 import {
@@ -57,6 +57,8 @@ interface Row {
   decidedAt: string | null;
   decidedByName: string | null;
   branchName: string | null;
+  /** أقسامُ «تحويل إلى …» — من الخادم بفرع الحركة (لمن يُرسل الطلبات وحده). */
+  transferTargets?: TransferDepartment[];
 }
 
 export default function ReturnedFromDoctor() {
@@ -108,14 +110,7 @@ export default function ReturnedFromDoctor() {
   const rows = data?.rows ?? [];
   //  **مَن يكتب المعاينة** — الطبيبُ، **وأخصائيُّ العلاج الطبيعيّ لصفّ قسمه** (اختصاصاتُه من الخادم).
   const mayExam = canDecideReview(branchSession as any) || (data?.examSpecialties ?? []).includes("physiotherapy");
-  //  **والتحويلُ إلى العلاج الطبيعيّ في فروعه وحدها** — كورقة التسجيل (`offersPhysio`)، والخادمُ يردّ غيرَه.
-  const { data: branches = [] } = useQuery<{ id: number; offersPhysio?: boolean; temporarilyClosed?: boolean }[]>({
-    queryKey: ["/api/branches"], enabled: mayResend,
-  });
-  const isAdmin = Boolean((branchSession as any)?.isAdmin);
-  const branchOffersPhysio = isAdmin
-    ? branches.some((b) => b.offersPhysio && !b.temporarilyClosed)
-    : Boolean(branches.find((b) => b.id === (branchSession as any)?.branchId)?.offersPhysio);
+  //  **وأقسامُ التحويل يقولها الخادمُ لكلّ صفّ** (`transferTargets`) — بفرع الحركة نفسِه الذي يحسمه الإرسال، فلا زرَّ يُردّ.
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -129,8 +124,10 @@ export default function ReturnedFromDoctor() {
         )}
       </div>
       <p className="text-sm text-muted-foreground">
-        مرضى أرجعهم الطبيب للاستعلامات مع سبب الإرجاع. صحّح ما طلبه ثم أعد الإرسال — ويخرج المريض من هذه القائمة
-        حين يُعاد إرساله أو يُعايَن أو يُلغى طلبه.
+        مرضى أرجعهم الطبيب للاستعلامات مع سبب الإرجاع. صحّح ما طلبه ثم أعد الإرسال — وإن كان المريض مسجّلاً في القسم
+        الخطأ فاضغط «تحويل إلى …» (من العلاج الطبيعي إلى الأطراف أو المساند، أو بالعكس)، أو «إلغاء الطلب» إن لم يعد يحتاج
+        المعاينة. ويُغلق القسم القديم تلقائياً إن كان فارغاً. ويخرج المريض من هذه القائمة حين يُعاد إرساله أو يُحوَّل أو
+        يُعايَن أو يُلغى طلبه.
       </p>
 
       {isLoading ? (
@@ -174,7 +171,7 @@ export default function ReturnedFromDoctor() {
                     </Button>
                   </Link>
                   {mayResend && r.serviceType === "physiotherapy" && (
-                    <Link href={`/patients/${r.patientId}/new-exam?dept=physiotherapy`}>
+                    <Link href={resendPhysioHref(r.patientId)}>
                       <Button variant="outline" size="sm" className="gap-1.5" data-testid={`returned-resend-physio-${r.requestId}`}>
                         <Send className="w-4 h-4" /> إعادة إرسال للمعاينة
                       </Button>
@@ -196,7 +193,7 @@ export default function ReturnedFromDoctor() {
                       <Stethoscope className="w-4 h-4" /> كتابة معاينة
                     </Button>
                   )}
-                  {mayResend && transferTargets(r.serviceType, branchOffersPhysio).map((t) => (
+                  {mayResend && (r.transferTargets ?? []).map((t) => (
                     <Link key={t} href={transferHref(r.patientId, t, r.requestId, r.serviceType)}>
                       <Button variant="outline" size="sm" className="gap-1.5" data-testid={`returned-transfer-${t}-${r.requestId}`}>
                         <ArrowLeftRight className="w-4 h-4" /> تحويل إلى {TRANSFER_DEPARTMENT_LABELS[t]}

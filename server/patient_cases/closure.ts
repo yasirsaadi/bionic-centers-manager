@@ -295,9 +295,10 @@ export { CLOSURE_MESSAGES, computeClosureMoney };
 //   ① `classifyCaseDisposal` تقول «سقالة» (لا معاينةَ موقّعة ولا متابعة ولا أمرَ تصنيع ولا دفعةً على القسم ولا عمليةً معلَّقة ولا خصماً
 //      ينتظر ولا حلقةً حيّة ولا طلباً قُرِّر فيه)؛ ② وكلفةُ القسم صفر؛ ③ ولا حلقةَ جهازٍ عليه غيرُ ملغاة (فطلبُ جهازٍ آخر ينتظر يُبقيه —
 //   وهو ما تعدّه ①سقالةً)؛ ④ ولا زيارةَ حيّةً عليه غيرُ علامتَي المسار نفسِه («إضافة نوع حالة» و«طلب معاينة طبية» — الزيارتان اللتان
-//   تعدّهما ① سقالةً)؛ ⑤ ولا قيدَ كلفةٍ ولا خطّةَ أقساطٍ ولا طلبَ استرجاعٍ عليه؛ ⑥ **وللعلاج الطبيعيّ** فوقها: لا خطّةَ علاج
-//   (`physio_plans` · `treatment_plans` — بالمريض، فلا قسمَ فيهما)، ولا زيارةَ حيّةً بلا قسم، ولا دفعةً بلا قسم — كقاعدة
-//   `retireAcrossPhysiotherapy` («للعلاج الطبيعي جلساتٌ أو خطّةُ علاجٍ مسجَّلة»).
+//   تعدّهما ① سقالةً)، **ولا زيارةَ حيّةً ولا دفعةً بلا قسمٍ للمريض** (لا يُعرف قسمُها فتُبقي كلَّ قسم)؛ ⑤ ولا قيدَ كلفةٍ ولا خطّةَ
+//   أقساطٍ ولا طلبَ استرجاعٍ ولا طلبَ خصمٍ بأيّ حالة، **ولا طلبَ معاينةٍ آخر معلَّقاً أو مُرجَعاً** على القسم؛ ⑥ **وللعلاج الطبيعيّ**
+//   فوقها: لا خطّةَ علاج (`physio_plans` · `treatment_plans` — بالمريض، فلا قسمَ فيهما) — كقاعدة `retireAcrossPhysiotherapy`
+//   («للعلاج الطبيعي جلساتٌ أو خطّةُ علاجٍ مسجَّلة»).
 //
 // **والإغلاقُ لا الحذف** («يُغلَق» قولُ المالك): الصفُّ يبقى بتاريخه، ويُفتَح مُدقَّقاً حين يعود المريضُ لخدمة (`ensureCaseTx`)،
 // **وأعلامُ المريض لا تُمَسّ** — قاعدةُ الإغلاق في هذا الملفّ (`closeCaseWithHistoryTx` يغيّر الحالةَ وحدها).
@@ -337,21 +338,33 @@ export async function closeCaseIfEmptyTx(
   if (Number(c.cost ?? 0) !== 0) return kept("على القسم كلفةٌ مسجَّلة");
   const markers = sql`('إضافة نوع حالة', ${ATTENDANCE_REASONS.examRequest})`;
   const physio = caseType === "physiotherapy";
+  //  **ما لا قسمَ له يُبقي كلَّ قسم** (مراجعةُ ما بعد البناء): زيارةٌ أو دفعةٌ قديمة بلا `case_id` لا يُعرف قسمُها بيقين — فالأشدُّ
+  //  أن تُبقيه، أطرافاً كان أو مساند أو علاجاً طبيعياً. **و`details` قد يكون فارغاً** (`POST /api/visits` يكتب زيارةً بلا وصف):
+  //  `NULL NOT IN (…)` في SQL مجهولٌ لا صحيح، فكانت الزيارةُ الحقيقية بلا وصف تسقط من الفحص — فالمقارنةُ على `COALESCE`.
   const [hit] = await rows(tx, sql`
     SELECT 'episode' AS k FROM patient_device_episodes WHERE case_id = ${caseId} AND status <> 'cancelled'
     UNION ALL
     SELECT 'visit' FROM visits
-     WHERE deleted_at IS NULL AND details NOT IN ${markers}
-       AND (case_id = ${caseId} ${physio ? sql`OR (patient_id = ${patientId} AND case_id IS NULL)` : sql``})
+     WHERE deleted_at IS NULL AND COALESCE(details, '') NOT IN ${markers}
+       AND (case_id = ${caseId} OR (patient_id = ${patientId} AND case_id IS NULL))
+    UNION ALL
+    SELECT 'payment' FROM payments WHERE patient_id = ${patientId} AND case_id IS NULL
     UNION ALL
     SELECT 'cost_entry' FROM cost_entries WHERE case_id = ${caseId}
     UNION ALL
     SELECT 'installment' FROM installment_plans WHERE case_id = ${caseId}
     UNION ALL
     SELECT 'refund' FROM patient_refund_requests WHERE case_id = ${caseId}
-    ${physio ? sql`
     UNION ALL
-    SELECT 'payment' FROM payments WHERE patient_id = ${patientId} AND case_id IS NULL
+    --  **وطلبٌ آخرُ ينتظر على القسم** (معلَّقٌ أو مُرجَعٌ بلا حلقة — تعدّه ① «سقالةً») يُبقيه: الإغلاقُ لا يسحبه فيعلق على قسمٍ مغلق.
+    --  والطلبُ الذي يُلغى الآن صار «cancelled» قبل هذا الفحص فلا يُعدّ.
+    SELECT 'request' FROM medical_review_requests
+     WHERE status IN ('pending', 'returned')
+       AND (case_id = ${caseId} OR (patient_id = ${patientId} AND service_type = ${caseType}))
+    UNION ALL
+    --  **وأيُّ طلب خصمٍ على القسم** — معتمَداً أو مرفوضاً أو معلَّقاً: قرارٌ ماليّ مسجَّل (① تفحص المعلَّقَ وحده).
+    SELECT 'discount' FROM service_discount_requests WHERE case_id = ${caseId}
+    ${physio ? sql`
     UNION ALL
     SELECT 'plan' FROM physio_plans WHERE patient_id = ${patientId}
     UNION ALL
@@ -366,6 +379,8 @@ export async function closeCaseIfEmptyTx(
       installment: "على القسم خطّةُ أقساط",
       refund: "على القسم طلبُ استرجاع",
       payment: "للمريض دفعاتٌ غيرُ منسوبةٍ لقسم",
+      request: "على القسم طلبُ معاينةٍ آخر ينتظر",
+      discount: "على القسم طلبُ خصمٍ مسجَّل",
       plan: "للعلاج الطبيعي خطّةُ علاجٍ مسجَّلة",
     };
     return kept(why[String(hit.k)] ?? "على القسم سجلّ");

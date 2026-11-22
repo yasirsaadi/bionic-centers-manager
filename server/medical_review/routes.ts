@@ -44,6 +44,9 @@ import {
   isReviewDecision, requestBranchInScope, type ReviewDecision, PHYSIO_EXAM_REQUEST_SERVICE,
 } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
+import { transferTargets } from "@shared/returned_transfer";
+import { patientBranchIdsOf, resolveActingBranchId } from "../patients/branch_access";
+import { physioOfferingBranchIds } from "../physio_plans/store";
 import { hasRole, rolesOf } from "@shared/user_roles";
 
 type Req = any;
@@ -287,7 +290,25 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
       //  نقطةُ المعاينة ٤٠٣. القائمةُ نفسُها تُظهر الاختصاصين لمن يُرسل الطلبات.
       const s = getSession(req);
       const examSpecialties = await medical.doctorSpecialties(s.userId);
-      res.json({ rows, examSpecialties });
+      //  **أقسامُ «تحويل إلى …» لكلّ صفّ من الخادم** (§4.gu، مراجعةُ ما بعد البناء): بقاعدة `transferTargets` **وفرعِ الحركة نفسِه**
+      //  الذي يحسمه «طلب معاينة جديدة» (`resolveActingBranchId` بنطاق الكتابة) — فلا يظهر زرُّ «علاج طبيعي» لمسؤولٍ في «كل الفروع»
+      //  على مريضٍ فرعُه بلا علاجٍ طبيعيّ ثمّ يُردّ عند الإرسال. ولمن يُرسل الطلبات وحده.
+      const mayTransfer = canCreateReview(s);
+      const offering = mayTransfer ? await physioOfferingBranchIds() : new Set<number>();
+      const scope = s?.isAdmin ? null : s?.branchId ? [Number(s.branchId)] : [];
+      const withTargets = [];
+      for (const r of rows) {
+        let targets: string[] = [];
+        if (mayTransfer) {
+          const patientBranchIds = await patientBranchIdsOf({ id: r.patientId, branchId: r.patientBranchId });
+          const acting = resolveActingBranchId({
+            scope, sessionBranchId: s?.branchId ?? null, homeBranchId: r.patientBranchId, patientBranchIds,
+          });
+          targets = transferTargets(r.serviceType, acting !== null && offering.has(acting));
+        }
+        withTargets.push({ ...r, transferTargets: targets });
+      }
+      res.json({ rows: withTargets, examSpecialties });
     } catch (err: any) {
       console.error("[medical-review] returned list failed:", err);
       res.status(500).json({ error: "تعذّر تحميل المُرجَعين" });

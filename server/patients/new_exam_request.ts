@@ -33,6 +33,7 @@ import { parseSharedPhone } from "@shared/shared_phone";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { NEW_EXAM_REQUEST_DEPARTMENTS, isNewExamRequestDepartment, type NewExamRequestDepartment } from "@shared/new_exam_request";
 import { specialtyLabel } from "@shared/medical";
+import { transferTargets, type TransferDepartment } from "@shared/returned_transfer";
 import { patients } from "@shared/schema";
 import { cancelReturnedAndCloseTx } from "../medical_review/returned_actions";
 import { CancelExamRequestError } from "../medical/cancel_exam_request";
@@ -210,6 +211,13 @@ export function registerNewExamRequestRoutes(
           if (old && Number(old.patient_id) === id && String(old.service_type) === dept) {
             throw new CancelExamRequestError(
               "التحويلُ إلى قسمٍ آخر — لإعادة إرسال القسم نفسِه استعمل «إعادة إرسال للطبيب»", 400, "replaces_same_department",
+            );
+          }
+          //  **والأقسامُ المسموحة بقاعدة الشاشة نفسِها** (`transferTargets`): بين العلاج الطبيعيّ وقسمَي الجهاز وحده — فلا تحويلَ بين
+          //  الأطراف والمساند بطلبٍ يُكتب باليد. (وتوفّرُ العلاج الطبيعيّ في الفرع يفحصه البابُ أعلاه — `physioOfferingBranchIds`.)
+          if (old && Number(old.patient_id) === id && !transferTargets(String(old.service_type), true).includes(dept as TransferDepartment)) {
+            throw new CancelExamRequestError(
+              "التحويلُ بين العلاج الطبيعي وقسمَي الأطراف والمساند وحده", 400, "replaces_department_not_allowed",
             );
           }
           replaced = await cancelReturnedAndCloseTx(tx, {
