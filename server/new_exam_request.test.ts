@@ -22,9 +22,9 @@ import { allowedSheetFields, mayRequestNewExam } from "./patients/new_exam_reque
 import { createReviewRequestTx } from "./medical_review/store";
 import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
 import { EXAMINER_FIELDS } from "@shared/patient_edit_rules";
-import { isExamRequestServiceType, isReviewServiceType } from "@shared/medical_review";
+import { isExamRequestServiceType, isReviewServiceType, REVIEW_KIND_LABELS } from "@shared/medical_review";
 import { changedSheetValues, newExamDepartmentsOf, referralSubSourceChoice } from "@shared/new_exam_request";
-import { transferTargets, transferHref, resendPhysioHref, parseNewExamQuery, withReplaces } from "@shared/returned_transfer";
+import { transferTargets, transferHref, resendPhysioHref, parseNewExamQuery, withReplaces, returnedKindLabel } from "@shared/returned_transfer";
 import { readFileSync } from "fs";
 
 let failures = 0;
@@ -701,6 +701,15 @@ async function main() {
       [/new-exam-request`, withReplaces\(/.test(srcOf("PhysioSheetCreate.tsx")), /new-exam-request`, withReplaces\(/.test(srcOf("IntakeSheetCreate.tsx")),
         /parseNewExamQuery\(useSearch\(\)\)/.test(srcOf("NewExamRequest.tsx")), /r\.transferTargets/.test(srcOf("ReturnedFromDoctor.tsx"))],
       [true, true, true, true]);
+    //  ح.١٥ — **بطاقةُ المُرجَع على الهاتف** (§4.gu التكملة ٣): طلبُ العلاج الطبيعيّ (الصريحُ والضمنيّ، نوعُه `other`) لا يقول «أخرى»،
+    //  و«·» لا تبدأ سطراً: الفرعُ داخل عنصر النوع، والفاصلُ بمسافتين لا تنكسران.
+    const rfd = srcOf("ReturnedFromDoctor.tsx");
+    same("ح.١٥ **«طلب معاينة» لا «أخرى» للعلاج الطبيعيّ** والأجهزةُ بنوعها · والصفحةُ بالقاعدة · ولا «·» بمسافةٍ عادية",
+      [returnedKindLabel("physiotherapy", "other", REVIEW_KIND_LABELS), returnedKindLabel("prosthetic", "other", REVIEW_KIND_LABELS),
+        returnedKindLabel("prosthetic", "maintenance", REVIEW_KIND_LABELS), returnedKindLabel("medical_support", "zz", REVIEW_KIND_LABELS),
+        /returnedKindLabel\(r\.serviceType, r\.reviewKind, REVIEW_KIND_LABELS\)/.test(rfd), /REVIEW_KIND_LABELS\[r\.reviewKind\]/.test(rfd),
+        /[ >]·[ {]|` · /.test(rfd.replace(/\/\/.*$|\{\/\*[\s\S]*?\*\/\}/gm, "")), (rfd.match(/\\u00a0·\\u00a0/g) ?? []).length],
+      ["طلب معاينة", "أخرى", "صيانة", "zz", true, false, false, 2]);
 
     // ══ هـ. الشكلُ الواحد في القاعدة والمخزن ══
     console.log("\n── هـ. الشكل ──");

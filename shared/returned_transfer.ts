@@ -68,3 +68,13 @@ export function transferOutcomeText(r: { oldCaseClosed?: boolean | null; oldCase
   if (!r) return "أُلغي الطلب المُرجَع.";
   return `أُلغي الطلب المُرجَع ${closureOutcomeText({ closed: r.oldCaseClosed, keptBecause: r.oldCaseKeptBecause })}`;
 }
+
+/**
+ * **نوعُ الطلب على بطاقة المُرجَع** (§4.gu التكملة ٣). طلبُ العلاج الطبيعيّ — الصريحُ من «طلب معاينة جديدة» والضمنيُّ من
+ * `return-implicit` — يُكتب بنوع `other` لأنّه لا جهازَ له، فكانت البطاقةُ تقول «أخرى» ولا تعني شيئاً للاستعلامات. فهو «طلب معاينة»
+ * (والقسمُ في شارته بجانبه)، والأجهزةُ بتسمية نوعها كما كانت.
+ */
+export function returnedKindLabel(serviceType: string, reviewKind: string, labels: Record<string, string>): string {
+  if (serviceType === "physiotherapy" && reviewKind === "other") return "طلب معاينة";
+  return labels[reviewKind] ?? reviewKind;
+}

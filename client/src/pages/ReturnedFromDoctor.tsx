@@ -34,7 +34,7 @@ import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
 import { queryClient } from "@/lib/queryClient";
 import {
-  TRANSFER_DEPARTMENT_LABELS, closureOutcomeText, transferHref, resendPhysioHref, type TransferDepartment,
+  TRANSFER_DEPARTMENT_LABELS, closureOutcomeText, transferHref, resendPhysioHref, returnedKindLabel, type TransferDepartment,
 } from "@shared/returned_transfer";
 import { specialtyLabel } from "@shared/medical";
 import {
@@ -153,16 +153,18 @@ export default function ReturnedFromDoctor() {
                     <span className="text-xs text-muted-foreground">جهاز #{r.episodeSequence}</span>
                   )}
                   <span className="text-xs text-muted-foreground">
-                    {REVIEW_KIND_LABELS[r.reviewKind] ?? r.reviewKind}
+                    {returnedKindLabel(r.serviceType, r.reviewKind, REVIEW_KIND_LABELS)}
+                    {/* **الفرعُ في عنصر النوع نفسِه و«·» ملتصقةٌ بطرفيها** — كانت عنصراً مستقلّاً في الصفّ الملتفّ، فيبدأ به سطرٌ على الهاتف. */}
+                    {r.branchName && <span className="whitespace-nowrap">{"\u00a0·\u00a0"}{r.branchName}</span>}
                   </span>
-                  {r.branchName && <span className="text-xs text-muted-foreground">· {r.branchName}</span>}
                 </div>
                 <div className="text-sm rounded border border-red-200 bg-red-50 text-red-800 px-3 py-2 leading-relaxed"
                   style={{ unicodeBidi: "plaintext" }}>
                   <span className="font-medium">سبب الإرجاع: </span>{r.doctorNote ?? "—"}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  أرجعه {r.decidedByName ?? "—"}{r.decidedAt ? ` · ${formatDateTimeIraq(r.decidedAt)}` : ""}
+                  أرجعه {r.decidedByName ?? "—"}
+                  {r.decidedAt && <span className="whitespace-nowrap">{"\u00a0·\u00a0"}{formatDateTimeIraq(r.decidedAt)}</span>}
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Link href={`/patients/${r.patientId}`}>
