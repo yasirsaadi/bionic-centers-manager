@@ -11,6 +11,10 @@
 // جديد. (والأخيرُ هنا لأن المُرجَعَ خرج من «معايناتي» بالبند ١٨، فلولاه لفقد
 // الطبيبُ زرَّ سحبِ طلبٍ لا لزوم له. ونقطتُه `close-returned` لأن نقطةَ
 // «معايناتي» لا تجد ما تسحبه حين لا حلقةَ تنتظر.)
+//
+// **والاستعلاماتُ يُلغي أو يحوّل** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢): «إلغاء الطلب» بسببٍ إلزاميّ، و«تحويل إلى …» بين العلاج الطبيعيّ
+// وقسمَي الجهاز يفتح ورقةَ «طلب معاينة جديدة» للقسم الآخر (`replaces`) — والقسمُ القديم يُغلَق تلقائياً إن كان فارغاً، في الحالين.
+// **والعلاجُ الطبيعيّ منها**: طلبُه المُرجَع هنا، وإعادةُ إرساله ورقتُه نفسُها (نافذةُ المراجعة للجهاز وحده).
 
 import { useState } from "react";
 import { Link } from "wouter";
@@ -23,11 +27,15 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Undo2, ExternalLink, Stethoscope, XCircle } from "lucide-react";
+import { Undo2, ExternalLink, Stethoscope, XCircle, ArrowLeftRight, Send } from "lucide-react";
 import { useBranchSession } from "@/components/BranchGate";
 import { SendToDoctorReviewDialog } from "@/components/medical/SendToDoctorReviewDialog";
 import { NewExamDialog } from "@/components/medical/NewExamDialog";
 import { formatDateTimeIraq } from "@/lib/utils";
+import { queryClient } from "@/lib/queryClient";
+import {
+  TRANSFER_DEPARTMENT_LABELS, closureOutcomeText, transferHref, transferTargets,
+} from "@shared/returned_transfer";
 import { specialtyLabel } from "@shared/medical";
 import {
   canCreateReview, canDecideReview, REVIEW_KIND_LABELS, RETURNED_FROM_DOCTOR_TITLE,
@@ -39,7 +47,7 @@ interface Row {
   patientId: number;
   patientName: string;
   patientCode: string | null;
-  serviceType: "prosthetic" | "medical_support";
+  serviceType: "prosthetic" | "medical_support" | "physiotherapy";
   requestedPath: ReviewPath;
   reviewKind: ReviewKind;
   deviceEpisodeId: number | null;
@@ -54,7 +62,6 @@ interface Row {
 export default function ReturnedFromDoctor() {
   const branchSession = useBranchSession();
   const mayResend = canCreateReview(branchSession as any);
-  const mayExam = canDecideReview(branchSession as any);
   const [examFor, setExamFor] = useState<Row | null>(null);
   const { toast } = useToast();
   const [cancelling, setCancelling] = useState<Row | null>(null);
@@ -77,7 +84,12 @@ export default function ReturnedFromDoctor() {
       if (!res.ok) throw new Error(body?.error ?? "تعذّر إلغاء طلب المعاينة");
       setCancelling(null);
       setCancelReason("");
-      toast({ title: "أُلغي طلب المعاينة", description: "خرج من القائمة — ويبقى في سجل المرضى كما هو." });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned/count"] });
+      toast({
+        title: "أُلغي طلب المعاينة",
+        description: `خرج من القائمة — ${closureOutcomeText({ closed: body?.caseClosed, keptBecause: body?.caseKeptBecause })}`,
+      });
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     } finally {
@@ -94,6 +106,16 @@ export default function ReturnedFromDoctor() {
     },
   });
   const rows = data?.rows ?? [];
+  //  **مَن يكتب المعاينة** — الطبيبُ، **وأخصائيُّ العلاج الطبيعيّ لصفّ قسمه** (اختصاصاتُه من الخادم).
+  const mayExam = canDecideReview(branchSession as any) || (data?.examSpecialties ?? []).includes("physiotherapy");
+  //  **والتحويلُ إلى العلاج الطبيعيّ في فروعه وحدها** — كورقة التسجيل (`offersPhysio`)، والخادمُ يردّ غيرَه.
+  const { data: branches = [] } = useQuery<{ id: number; offersPhysio?: boolean; temporarilyClosed?: boolean }[]>({
+    queryKey: ["/api/branches"], enabled: mayResend,
+  });
+  const isAdmin = Boolean((branchSession as any)?.isAdmin);
+  const branchOffersPhysio = isAdmin
+    ? branches.some((b) => b.offersPhysio && !b.temporarilyClosed)
+    : Boolean(branches.find((b) => b.id === (branchSession as any)?.branchId)?.offersPhysio);
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -151,7 +173,14 @@ export default function ReturnedFromDoctor() {
                       <ExternalLink className="w-4 h-4" /> فتح الملف
                     </Button>
                   </Link>
-                  {mayResend && (
+                  {mayResend && r.serviceType === "physiotherapy" && (
+                    <Link href={`/patients/${r.patientId}/new-exam?dept=physiotherapy`}>
+                      <Button variant="outline" size="sm" className="gap-1.5" data-testid={`returned-resend-physio-${r.requestId}`}>
+                        <Send className="w-4 h-4" /> إعادة إرسال للمعاينة
+                      </Button>
+                    </Link>
+                  )}
+                  {mayResend && r.serviceType !== "physiotherapy" && (
                     <SendToDoctorReviewDialog
                       patientId={r.patientId}
                       services={[r.serviceType]}
@@ -167,11 +196,18 @@ export default function ReturnedFromDoctor() {
                       <Stethoscope className="w-4 h-4" /> كتابة معاينة
                     </Button>
                   )}
-                  {mayExam && (data?.examSpecialties ?? []).includes(r.serviceType) && (
+                  {mayResend && transferTargets(r.serviceType, branchOffersPhysio).map((t) => (
+                    <Link key={t} href={transferHref(r.patientId, t, r.requestId, r.serviceType)}>
+                      <Button variant="outline" size="sm" className="gap-1.5" data-testid={`returned-transfer-${t}-${r.requestId}`}>
+                        <ArrowLeftRight className="w-4 h-4" /> تحويل إلى {TRANSFER_DEPARTMENT_LABELS[t]}
+                      </Button>
+                    </Link>
+                  ))}
+                  {(mayResend || mayExam && (data?.examSpecialties ?? []).includes(r.serviceType)) && (
                     <Button variant="outline" size="sm"
-                      className="gap-1.5 text-destructive hover:text-destructive"
+                      className="gap-1.5 text-destructive hover:text-destructive" data-testid={`returned-cancel-${r.requestId}`}
                       onClick={() => { setCancelling(r); setCancelReason(""); }}>
-                      <XCircle className="w-4 h-4" /> إلغاء المعاينة
+                      <XCircle className="w-4 h-4" /> {mayResend ? "إلغاء الطلب" : "إلغاء المعاينة"}
                     </Button>
                   )}
                 </div>
@@ -188,7 +224,8 @@ export default function ReturnedFromDoctor() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {cancelling?.patientName} — {cancelling ? specialtyLabel(cancelling.serviceType) : ""}.
-            يُسحب الطلب ويخرج من القائمة، ويبقى الملف في سجل المرضى كما هو.
+            يُسحب الطلب ويخرج من القائمة، ويبقى الملف في سجل المرضى كما هو — ويُغلق القسم تلقائياً إن كان فارغاً
+            (بلا دفعات ولا زيارات ولا كلفة ولا جهاز آخر ولا خطة علاج).
           </p>
           <Textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={3}
             placeholder="سبب الإلغاء (إلزامي)" />

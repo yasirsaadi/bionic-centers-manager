@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { DatePickerIraq } from "@/components/DatePickerIraq";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { transferOutcomeText } from "@shared/returned_transfer";
 import { apiRequest, invalidatePatientData } from "@/lib/queryClient";
 import { SharedPhoneDialog } from "@/components/SharedPhoneDialog";
 import { phoneConflictOf } from "@/lib/phone_conflict";
@@ -73,6 +74,8 @@ interface SheetState {
 export interface ExistingDevicePatient {
   patient: Record<string, any> & { id: number };
   department: "prosthetic" | "medical_support";
+  /** **تحويلٌ من «المُرجَعون من الطبيب»** (§4.gu) — الطلبُ المُرجَع في القسم الآخر يُلغى مع هذا الإرسال. */
+  replacesRequestId?: number | null;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -162,12 +165,16 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
       const dep = f.department as IntakeDepartment;
       if (existing) {
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
-        await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
+        const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, {
           department: dep, requestedItems: values.requestedItems,
           fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
           ...(sharedPhone ? { sharedPhone } : {}),
+          ...(existing.replacesRequestId ? { replacesRequestId: existing.replacesRequestId } : {}),
         });
-        return { id: existing.patient.id, routed: true as const, routeError: null };
+        return {
+          id: existing.patient.id, routed: true as const, routeError: null,
+          transfer: existing.replacesRequestId ? await res.json().catch(() => null) : null,
+        };
       }
       const created = await (await apiRequest("POST", "/api/patients", {
         intakeSheet: true, department: dep, requestedItems: values.requestedItems,
@@ -187,9 +194,9 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         await apiRequest("POST", `/api/patients/${created.id}/device-episodes`, {
           serviceType: dep, requestedItems: values.requestedItems, servicePath: "exam",
         });
-        return { id: created.id as number, routed: true as const, routeError: null };
+        return { id: created.id as number, routed: true as const, routeError: null, transfer: null };
       } catch (e) {
-        return { id: created.id as number, routed: false as const, routeError: errBody(e).message };
+        return { id: created.id as number, routed: false as const, routeError: errBody(e).message, transfer: null };
       }
     },
     onSuccess: (r) => {
@@ -197,7 +204,11 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
       if (existing) {
         invalidatePatientData(queryClient, r.id);
         queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${r.id}/exams`] });
-        toast({ title: "أُرسل المراجعُ إلى الطبيب للمعاينة", description: "يظهر في «معايناتي» بطلبه الجديد" });
+        queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/medical-review/returned/count"] });
+        toast(r.transfer
+          ? { title: `حُوِّل المراجعُ إلى ${INTAKE_DEPARTMENT_LABELS[existing.department]}`, description: transferOutcomeText(r.transfer) }
+          : { title: "أُرسل المراجعُ إلى الطبيب للمعاينة", description: "يظهر في «معايناتي» بطلبه الجديد" });
       } else if (r.routed) {
         toast({ title: "حُفظت الاستمارة", description: "وأُرسل المراجعُ إلى الطبيب للمعاينة" });
       } else {

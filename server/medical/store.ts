@@ -1453,6 +1453,23 @@ function physioExamExemptSql() {
 }
 
 /**
+ * **قسمُ العلاج الطبيعيّ الذي أرجعه الطبيبُ للاستعلامات** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢).
+ *
+ * مريضُ علاجٍ طبيعيّ جديد ينتظر الطبيبَ **بلا طلبٍ قطّ** (القاعدةُ «③» — البند ١٧): قسمٌ نشط بلا معاينة. فإن أرجعه الطبيبُ
+ * («إرجاع للاستعلامات») كُتب له طلبٌ مُرجَعٌ عارٍ (`decision = 'return_to_reception'`)، **وهذا الطلبُ يُطفئ القاعدةَ ③ للقسم**
+ * في المواضع الثلاثة معاً (الشارةُ · «معايناتي» · بطاقةُ المريض) — ولو ألغاه الاستعلاماتُ بعدها (الإلغاءُ يُبقي قرارَ الطبيب).
+ * **ولا يعود إلّا بطلبٍ صريح** («طلب معاينة جديدة» — القاعدةُ «②»). والطلبُ الملغى بلا إرجاع (`decision` فارغ) لا يُطفئ شيئاً.
+ */
+export function physioReturnedToReceptionSql() {
+  return sql`(pc.case_type = 'physiotherapy' AND EXISTS (
+    SELECT 1 FROM medical_review_requests rw
+     WHERE rw.patient_id = pc.patient_id AND rw.service_type = pc.case_type
+       AND rw.device_episode_id IS NULL
+       AND rw.decision = 'return_to_reception'
+       AND rw.status IN ('returned', 'cancelled')))`;
+}
+
+/**
  * **خيطٌ بلا حلقةٍ إطلاقاً — أيُقرأ «ينتظر معاينة»؟**
  *
  * `TRUE` فقط لمن تبقى القاعدةُ القديمة سارية عليه:
@@ -1667,7 +1684,7 @@ export async function getPendingExams(
   const preServicePath = preServicePathThreadSql(await servicePathEraStartedAt());
   const legacyPath = legacyOnly
     ? sql`(${noEpisodes} AND ${isExempt} AND ${neverExamined})`
-    : sql`(${noEpisodes} AND NOT ${isExempt} AND ${neverExamined} AND ${preServicePath})`;
+    : sql`(${noEpisodes} AND NOT ${isExempt} AND ${neverExamined} AND ${preServicePath} AND NOT ${physioReturnedToReceptionSql()})`;
   // The optional list is for the exempt only; a mandatory awaiting-exam
   // episode belongs in the amber queue, never in the quiet one.
   //  والمنتظِرُ معاينةً كاملة يقع في الطابور الإلزامي دائماً — لا في الهادئة.
@@ -2021,6 +2038,8 @@ export async function getWorklist(
           AND ${preServicePathThreadSql(await servicePathEraStartedAt())}
           -- **وعلاجٌ طبيعيّ سبق ٢٠٢٦-١٠-٠٢ مُعفى** (البند ١٧) — فلا يعلق في القائمة صفٌّ لا يُلغى.
           AND NOT ${physioExamExemptSql()}
+          -- **وما أرجعه الطبيبُ للاستعلامات خرج** (§4.gu) — ولا يعود إلّا بطلبٍ صريح.
+          AND NOT ${physioReturnedToReceptionSql()}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id
@@ -2161,6 +2180,38 @@ export async function branchNames(): Promise<Record<number, string>> {
  *
  * والقاعدةُ الآن واحدةٌ في المواضع الثلاثة.
  */
+/**
+ * **أينتظر قسمُ العلاج الطبيعيّ الطبيبَ بالقاعدة ③ الآن؟** — تحت قفل المُنادي (§4.gu).
+ *
+ * «إرجاع للاستعلامات» لصفٍّ بلا طلبٍ قطّ يُعاد فيه الفحصُ داخل معاملته: بين رسم الصفّ والضغطة قد تُكتب معاينةٌ أو يُرسَل طلبٌ صريح
+ * أو يُرجَع من طبيبٍ آخر. **ونفسُ شروط المواضع الثلاثة بحرفها** (`getPendingForPatient` ③) — لا قاعدةٌ ثالثة. ويُرجع صفَّ القسم
+ * (لنطاقه وفرعه) أو `null`.
+ */
+export async function physioImplicitWaitTx(
+  tx: { execute: (q: any) => Promise<any> },
+  patientId: number,
+): Promise<{ caseId: number; branchId: number | null } | null> {
+  if (await isLegacyPatient(patientId)) return null;
+  const preServicePath = preServicePathThreadSql(await servicePathEraStartedAt());
+  const r = await tx.execute(sql`
+    SELECT pc.id, COALESCE(pc.branch_id, p.branch_id) AS branch_id
+      FROM patient_cases pc
+      JOIN patients p ON p.id = pc.patient_id
+     WHERE pc.patient_id = ${patientId} AND pc.case_type = 'physiotherapy' AND pc.status = 'active'
+       AND p.deleted_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM patient_device_episodes e WHERE e.case_id = pc.id)
+       AND ${preServicePath}
+       AND NOT ${physioExamExemptSql()}
+       AND NOT ${physioReturnedToReceptionSql()}
+       AND NOT EXISTS (
+         SELECT 1 FROM medical_exams me
+          WHERE me.patient_id = pc.patient_id AND me.case_type = pc.case_type
+            AND ${activeExamSql("me")})
+  `);
+  const row = ((r.rows ?? []) as Record<string, any>[])[0];
+  return row ? { caseId: Number(row.id), branchId: row.branch_id == null ? null : Number(row.branch_id) } : null;
+}
+
 export async function getPendingForPatient(patientId: number): Promise<string[]> {
   // The legacy exemption is evaluated INSIDE the query now, not as an early
   // return. Returning [] up front was the bug: it answered "waits on no one"
@@ -2206,6 +2257,8 @@ export async function getPendingForPatient(patientId: number): Promise<string[]>
           AND ${preServicePath}
           -- **وعلاجٌ طبيعيّ سبق ٢٠٢٦-١٠-٠٢ مُعفى** — كالطابور وقائمة الطبيب (البند ١٧).
           AND NOT ${physioExamExemptSql()}
+          -- **وما أرجعه الطبيبُ للاستعلامات خرج** — كالطابور وقائمة الطبيب (§4.gu).
+          AND NOT ${physioReturnedToReceptionSql()}
           AND NOT EXISTS (
             SELECT 1 FROM medical_exams me
             WHERE me.patient_id = pc.patient_id

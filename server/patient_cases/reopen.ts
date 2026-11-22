@@ -109,6 +109,11 @@ export async function ensureCaseTx(
     patientId: number; caseType: string; branchId: number | null;
     create: { cost?: number; costSource?: "auto" | "manual"; details?: Record<string, any> } | false;
     reopen: { reason: string; actor?: { userId?: number | null; userName?: string | null } } | false;
+    /**
+     * `false` ⟵ لا تنبيهَ «طلب معاينة» لحالة علاجٍ طبيعيٍّ جديدة — للمُنادي الذي يُنشئ طلبَها الصريح في المعاملة نفسِها فيُنبَّه
+     * الطبيبُ منه (تحويلُ المريض من «المُرجَعون من الطبيب»، §4.gu) — فلا تنبيهان لمعاينةٍ واحدة. والغيابُ = التنبيهُ كما كان.
+     */
+    notifyExam?: boolean;
   },
 ): Promise<EnsuredCase | null> {
   const read = async () => {
@@ -150,7 +155,7 @@ export async function ensureCaseTx(
   const fresh = (ins.rows ?? [])[0];
   //  **حالةُ علاجٍ طبيعيٍّ جديدة تدخل «معايناتي»** (البند ١٧ — معاينتُها إلزامية) ⟵ تنبيهُ الطبيب (§4.by).
   //  والأطرافُ والمساند لا تدخل الطابورَ بحالتها بل بجهازها، فتنبيهُها هناك.
-  if (fresh && params.caseType === "physiotherapy") {
+  if (fresh && params.caseType === "physiotherapy" && params.notifyExam !== false) {
     await notifyExamRequest(tx as any, { patientId: params.patientId, specialty: "physiotherapy", branchId: params.branchId });
   }
   if (fresh) return settle(fresh, true);

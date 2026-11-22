@@ -41,7 +41,7 @@ import * as medical from "../medical/store";
 import {
   canCreateReview, canDecideReview, canSuperviseReview, REVIEW_DECISION_LABELS,
   REVIEW_PATH_LABELS, REVIEW_KIND_LABELS, REVIEW_SERVICE_TYPES,
-  isReviewDecision, requestBranchInScope, type ReviewDecision,
+  isReviewDecision, requestBranchInScope, type ReviewDecision, PHYSIO_EXAM_REQUEST_SERVICE,
 } from "@shared/medical_review";
 import { specialtyLabel } from "@shared/medical";
 import { hasRole, rolesOf } from "@shared/user_roles";
@@ -137,6 +137,17 @@ async function specialtyAllowed(
   if (u.isAdmin || hasRole(u, "branch_manager")) return true;
   const mine = await medical.doctorSpecialties(userId);
   return mine.includes(serviceType as any);
+}
+
+/**
+ * **أخصائيُّ العلاج الطبيعيّ يُرجِع صفَّ العلاج الطبيعيّ** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢).
+ *
+ * مَن يكتب معاينةَ العلاج الطبيعيّ بدوره (`doctorSpecialties` — الأخصائيُّ والمشرفُ العامّ بلا علَم طبيب، §4.da) يقول «هذا ليس
+ * قسمي» كما يقوله الطبيب. **وللعلاج الطبيعيّ وحده**: لا يفتح هذا إرجاعَ طلبِ جهازٍ ولا قرارَ مراجعةٍ ولا أيَّ بابٍ آخر.
+ */
+async function liveCanReturnPhysio(userId: number | null): Promise<boolean> {
+  if (await liveCanSupervise(userId)) return true;
+  return (await medical.doctorSpecialties(userId)).includes(PHYSIO_EXAM_REQUEST_SERVICE);
 }
 
 /** صفُّ الطلب — للتحقّق من اختصاصه قبل أي فعل. `null` إن لم يوجد. */
@@ -257,12 +268,15 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
   // ── «المُرجَعون من الطبيب» — للاستعلامات وللطبيب (§4.ar، تكملةُ البند ١٨) ──
   //  الاستعلاماتُ ومَن فوقه يرى اختصاصَي الجهاز معاً، والطبيبُ اختصاصَه وحده.
   //  والفرعُ كطابور المراجعة بحرفه. **قراءةٌ محضة** — والأفعالُ أبوابُها القائمة.
+  //  **والعلاجُ الطبيعيّ منها** (§4.gu): الاستعلاماتُ يرى الأقسامَ الثلاثة، والطبيبُ اختصاصاتِه وأخصائيُّ العلاج الطبيعيّ قسمَه.
   const returnedFor = async (req: Req) => {
     const s = getSession(req);
-    if (!canCreateReview(s) && !canDecideReview(s)) return null;
-    const specialties = canCreateReview(s)
-      ? REVIEW_SERVICE_TYPES
-      : await reviewSpecialtiesFor(s.userId);
+    const physioExaminer = (await medical.doctorSpecialties(s.userId)).includes(PHYSIO_EXAM_REQUEST_SERVICE);
+    if (!canCreateReview(s) && !canDecideReview(s) && !physioExaminer) return null;
+    const specialties: readonly string[] = canCreateReview(s)
+      ? [...REVIEW_SERVICE_TYPES, PHYSIO_EXAM_REQUEST_SERVICE]
+      : [...(canDecideReview(s) ? await reviewSpecialtiesFor(s.userId) : []),
+         ...(physioExaminer ? [PHYSIO_EXAM_REQUEST_SERVICE] : [])];
     return await store.listReturnedRequests({ branchIds: branchScope(req), specialties });
   };
   app.get("/api/medical-review/returned", isAuthenticated, async (req: Req, res) => {
@@ -272,7 +286,7 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
       //  **اختصاصاتُ المعاينة لصاحب الجلسة** (§4.bt) — فلا تظهر «كتابة معاينة» على صفّ اختصاصٍ تردّه
       //  نقطةُ المعاينة ٤٠٣. القائمةُ نفسُها تُظهر الاختصاصين لمن يُرسل الطلبات.
       const s = getSession(req);
-      const examSpecialties = canDecideReview(s) ? await medical.doctorSpecialties(s.userId) : [];
+      const examSpecialties = await medical.doctorSpecialties(s.userId);
       res.json({ rows, examSpecialties });
     } catch (err: any) {
       console.error("[medical-review] returned list failed:", err);
@@ -299,9 +313,14 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
   //    (`cancelScaffoldRequestsById`): **قرارُ الطبيب وسببُه يبقيان**، ويُلحَق
   //    سطرٌ بمَن سحب ولماذا. لا حلقةَ ولا مالَ يُمَسّ.
   //  والصفُّ يُقرأ من القائمة نفسِها بنطاق الجلسة — فلا يُسحَب ما لا يراه.
+  //  ══ **والاستعلاماتُ يُلغيه أيضاً** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢) ═══════════════════════════════════════════════
+  //  «حين أعيد معاينة للاستعلامات يجب أن يتمكّن من إمّا إلغائها أو تحويل المريض» — فالبابُ لمن يُرسل الطلبات (`canCreateReview`)
+  //  ولمن يكتب المعاينة، **بسببٍ إلزاميّ**، والكتابةُ نفسُها (`cancelReturnedAndCloseTx`) في معاملةٍ واحدة:
+  //  الطلبُ يُسحَب ⟵ **والقسمُ يُغلَق تلقائياً إن صار فارغاً** (`closeCaseIfEmptyTx`)، وإلّا يبقى كما هو.
   app.post("/api/medical-review/requests/:id/close-returned", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!canDecideReview(s)) return res.status(403).json({ error: "غير مصرح" });
+    const physioExaminer = (await medical.doctorSpecialties(s.userId)).includes(PHYSIO_EXAM_REQUEST_SERVICE);
+    if (!canCreateReview(s) && !canDecideReview(s) && !physioExaminer) return res.status(403).json({ error: "غير مصرح" });
     const requestId = parseInt(String(req.params.id));
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
     if (!Number.isFinite(requestId)) return res.status(400).json({ error: "معرّف غير صالح" });
@@ -311,37 +330,51 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
       const row = (rows ?? []).find((r) => r.requestId === requestId);
       if (!row) return res.status(409).json({ error: "تغيّر هذا الطلب — حدّث الصفحة" });
       const actor = { userId: s.userId, userName: s.userName };
-      if (row.episodeAwaiting && row.deviceEpisodeId !== null) {
-        const { cancelExamRequest } = await import("../medical/cancel_exam_request");
-        await cancelExamRequest({
-          patientId: row.patientId, caseType: row.serviceType as any,
-          deviceEpisodeId: row.deviceEpisodeId, reason, actor, branchIds: branchScope(req),
-        });
-      } else {
-        const { cancelScaffoldRequestsById } = await import("../patient_cases/disposal");
-        const moved = await db.transaction(async (tx) => {
-          const cur = await tx.execute(sql`
-            SELECT status FROM medical_review_requests WHERE id = ${requestId} FOR UPDATE
-          `);
-          if (String((cur.rows ?? [])[0]?.status ?? "") !== "returned") return false;
-          await cancelScaffoldRequestsById(tx, { ids: [requestId], reason, actor });
-          return true;
-        });
-        if (!moved) return res.status(409).json({ error: "تغيّر هذا الطلب — حدّث الصفحة" });
-      }
-      await logAudit({
-        entityType: "medical_review_request", entityId: requestId, action: "update",
-        userId: s.userId, userName: s.userName, branchId: s.branchId,
+      const { cancelReturnedAndCloseTx } = await import("./returned_actions");
+      const done = await db.transaction((tx) => cancelReturnedAndCloseTx(tx, {
+        requestId, reason, actor, branchIds: branchScope(req),
         ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
-        notes: `إلغاء طلب معاينة مُرجَع (${specialtyLabel(row.serviceType)}) للمريض #${row.patientId} — ${reason}`,
+      }));
+      res.json({
+        ok: true,
+        caseClosed: done.caseClosure.closed,
+        caseKeptBecause: done.caseClosure.closed ? null : done.caseClosure.keptBecause,
       });
-      res.json({ ok: true });
     } catch (err: any) {
       if (err?.name === "CancelExamRequestError") {
         return res.status(err.status ?? 409).json({ error: err.message, code: err.code });
       }
       console.error("[medical-review] close-returned failed:", err);
       res.status(500).json({ error: "تعذّر إلغاء الطلب" });
+    }
+  });
+
+  // ── «إرجاع للاستعلامات» لصفّ علاجٍ طبيعيٍّ بلا طلبٍ قطّ (§4.gu) ───────────────────────────────────────────────
+  //  مريضٌ جديد ينتظر معاينته الأولى بالقاعدة ③ لا طلبَ له يُرجَع — فيُكتب طلبُه مُرجَعاً عند الإرجاع (`returnImplicitPhysioExam`).
+  //  والإذنُ كإرجاع الطلب (`/return`) بحرفه: مَن يراجع إشرافياً أو يكتب معاينةَ العلاج الطبيعيّ، **وفي اختصاصه**.
+  app.post("/api/medical-review/patients/:id/return-implicit", isAuthenticated, async (req: Req, res) => {
+    const s = getSession(req);
+    if (!(await liveCanReturnPhysio(s.userId)) || !(await specialtyAllowed(s.userId, PHYSIO_EXAM_REQUEST_SERVICE))) {
+      return res.status(403).json({ error: "الإرجاع للمسؤول أو مدير الفرع أو مَن يكتب معاينة العلاج الطبيعي" });
+    }
+    const patientId = parseInt(String(req.params.id));
+    if (!Number.isFinite(patientId)) return res.status(400).json({ error: "معرّف غير صالح" });
+    if (String(req.body?.serviceType ?? PHYSIO_EXAM_REQUEST_SERVICE) !== PHYSIO_EXAM_REQUEST_SERVICE) {
+      return res.status(400).json({ error: "هذا البابُ لصفّ العلاج الطبيعي بلا طلب — طلبُ الجهاز يُرجَع من زرّه" });
+    }
+    try {
+      const { returnImplicitPhysioExam } = await import("./returned_actions");
+      const out = await returnImplicitPhysioExam({
+        patientId, reason: req.body?.reason, actor: { userId: s.userId, userName: s.userName },
+        branchIds: branchScope(req), ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+      });
+      res.json(out);
+    } catch (err: any) {
+      if (err?.name === "CancelExamRequestError") {
+        return res.status(err.status ?? 409).json({ error: err.message, code: err.code });
+      }
+      console.error("[medical-review] return-implicit failed:", err);
+      res.status(500).json({ error: "تعذّر إرجاع الطلب" });
     }
   });
 
@@ -425,13 +458,17 @@ export function registerMedicalReviewRoutes(app: Express, isAuthenticated: any) 
   //  معاينةَ تُكتب ولا تُحذف، ويستطيع الاستعلاماتُ إرسالَ طلبٍ مصحَّح.
   app.post("/api/medical-review/requests/:id/return", isAuthenticated, async (req: Req, res) => {
     const s = getSession(req);
-    if (!(await liveCanSupervise(s.userId))) {
+    //  **وطلبُ العلاج الطبيعيّ يُرجعه مَن يكتب معاينتَه** (§4.gu) — للعلاج الطبيعيّ وحده.
+    const rType = await requestServiceType(parseInt(req.params.id));
+    const mayReturn = rType === PHYSIO_EXAM_REQUEST_SERVICE
+      ? await liveCanReturnPhysio(s.userId)
+      : await liveCanSupervise(s.userId);
+    if (!mayReturn) {
       return res.status(403).json({
         error: "الإرجاع فعلٌ إشرافيّ — للمسؤول أو مدير الفرع أو طبيب الاختصاص",
       });
     }
     //  والاختصاصُ هنا كما في البتّ — طبيبٌ لا يُرجع طلبَ اختصاصٍ ليس له.
-    const rType = await requestServiceType(parseInt(req.params.id));
     if (rType && !(await specialtyAllowed(s.userId, rType))) {
       return res.status(403).json({
         error: `هذا الطلب في اختصاص ${specialtyLabel(rType)} — وليس من اختصاصاتك`,

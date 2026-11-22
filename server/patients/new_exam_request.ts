@@ -12,7 +12,7 @@
 //     يعيده إلى «معايناتي» ويُغلقه توقيعُ المعاينة التالية — **بلا زيارة**: زيارةُ العلاج الطبيعي تُعدّ جلسة.
 //   • **والاستمارةُ كاملةٌ كما في التسجيل** (`checkIntakeSheet` على الملفّ بعد التعديل) — فلا يُرسَل ملفٌّ ناقص.
 import type { Express } from "express";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { logAudit } from "../accounting/ledger";
@@ -32,6 +32,10 @@ import { normalizePhone } from "@shared/phone";
 import { parseSharedPhone } from "@shared/shared_phone";
 import { PATIENT_IN_TRASH_ERROR } from "@shared/patient_trash";
 import { NEW_EXAM_REQUEST_DEPARTMENTS, isNewExamRequestDepartment, type NewExamRequestDepartment } from "@shared/new_exam_request";
+import { specialtyLabel } from "@shared/medical";
+import { patients } from "@shared/schema";
+import { cancelReturnedAndCloseTx } from "../medical_review/returned_actions";
+import { CancelExamRequestError } from "../medical/cancel_exam_request";
 
 type Req = any;
 
@@ -50,6 +54,26 @@ export function allowedSheetFields(dept: NewExamRequestDepartment): Set<string> 
   ]);
 }
 
+const cleanDetails = (o: Record<string, any>) =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+/** تفاصيلُ قسمٍ يُفتَح بالتحويل — حقولُ `addPatientCaseType` للقسم بحرفها. */
+function physioDetails(p: any): Record<string, any> {
+  return cleanDetails({
+    diseaseType: p?.diseaseType, injuryType: p?.injuryType, injuryArea: p?.injuryArea,
+    injuries: p?.injuries, treatmentType: p?.treatmentType,
+  });
+}
+function deviceDetails(dept: "prosthetic" | "medical_support", p: any): Record<string, any> {
+  return cleanDetails(dept === "prosthetic" ? {
+    amputationSite: p?.amputationSite, prostheticType: p?.prostheticType, siliconType: p?.siliconType,
+    siliconSize: p?.siliconSize, suspensionSystem: p?.suspensionSystem, footType: p?.footType, footSize: p?.footSize,
+    kneeJointType: p?.kneeJointType, injurySide: p?.injurySide, injuryCause: p?.injuryCause,
+    injuryDate: p?.injuryDate, injuryType: p?.injuryType,
+  } : {
+    supportType: p?.supportType, injurySide: p?.injurySide, injuryCause: p?.injuryCause, injuryDate: p?.injuryDate,
+  });
+}
+
 export function registerNewExamRequestRoutes(
   app: Express,
   isAuthenticated: any,
@@ -65,6 +89,15 @@ export function registerNewExamRequestRoutes(
       const dept = req.body?.department;
       if (!isNewExamRequestDepartment(dept)) {
         return res.status(400).json({ message: `القسم غير صالح — ${NEW_EXAM_REQUEST_DEPARTMENTS.join(" / ")}`, field: "department" });
+      }
+
+      //  ══ **تحويلُ المريض من «المُرجَعون من الطبيب»** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢) ══════════════════════════════
+      //  «تحويل المريض من علاج طبيعي إلى أطراف أو بالعكس» — الطلبُ الجديد في القسم الآخر **والطلبُ المُرجَع يُلغى والقسمُ القديم
+      //  يُغلَق إن صار فارغاً**، في المعاملة نفسِها: فشلُ أيٍّ منها يتراجع بها كلِّها.
+      const rawReplaces = req.body?.replacesRequestId;
+      const replacesRequestId = rawReplaces === undefined || rawReplaces === null || rawReplaces === "" ? null : Number(rawReplaces);
+      if (replacesRequestId !== null && (!Number.isInteger(replacesRequestId) || replacesRequestId <= 0)) {
+        return res.status(400).json({ message: "رقم الطلب المُرجَع غير صالح", field: "replacesRequestId" });
       }
 
       const existing = await storage.getPatient(id);
@@ -167,6 +200,25 @@ export function registerNewExamRequestRoutes(
 
       // ── حفظٌ واحد: التعديلُ وسطرُ تدقيقه والطلبُ ──
       const out = await db.transaction(async (tx) => {
+        //  **قفلُ المريض أوّلاً** حين يُحوَّل — بترتيب أبواب الإلغاء والإغلاق (٩١٩ ثمّ صفُّ المريض)، لا بعد قفل صفّه بالتعديل.
+        let replaced: Awaited<ReturnType<typeof cancelReturnedAndCloseTx>> | null = null;
+        if (replacesRequestId !== null) {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${id})`);
+          const [old] = ((await tx.execute(sql`
+            SELECT patient_id, service_type FROM medical_review_requests WHERE id = ${replacesRequestId}
+          `)).rows ?? []) as Record<string, any>[];
+          if (old && Number(old.patient_id) === id && String(old.service_type) === dept) {
+            throw new CancelExamRequestError(
+              "التحويلُ إلى قسمٍ آخر — لإعادة إرسال القسم نفسِه استعمل «إعادة إرسال للطبيب»", 400, "replaces_same_department",
+            );
+          }
+          replaced = await cancelReturnedAndCloseTx(tx, {
+            requestId: replacesRequestId, reason: `تحويل المريض إلى قسم ${specialtyLabel(dept)}`,
+            actor: { userId, userName }, branchIds: writeScope(s), expectPatientId: id,
+            auditSuffix: " — من «المُرجَعون من الطبيب»",
+            ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          });
+        }
         let updated: any = existing;
         if (Object.keys(patch).length > 0) {
           updated = await storage.updatePatient(id, patch as any, "manual_edit", null, tx, false, null, sharedPhone ?? null);
@@ -182,10 +234,16 @@ export function registerNewExamRequestRoutes(
           }
         }
         if (dept === "physiotherapy") {
+          //  **والتحويلُ يفتح القسمَ إن غاب** (§4.gu) — مريضُ أطرافٍ سُجّل خطأً لا قسمَ علاجٍ طبيعيٍّ له؛ والطلبُ أدناه يُنبّه الطبيب.
           const c = await ensureCaseTx(tx as any, {
             patientId: id, caseType: "physiotherapy", branchId: actingBranchId,
-            create: false, reopen: { reason: "طلب معاينة جديدة — علاج طبيعي", actor: { userId, userName } },
+            create: replaced ? { cost: 0, costSource: "auto", details: physioDetails(updated) } : false,
+            reopen: { reason: "طلب معاينة جديدة — علاج طبيعي", actor: { userId, userName } },
+            notifyExam: false,
           });
+          if (c && replaced && !updated?.isPhysiotherapy) {
+            await (tx as any).update(patients).set({ isPhysiotherapy: true }).where(eq(patients.id, id));
+          }
           if (!c) throw new ReviewError("لا قسمَ علاجٍ طبيعيّ في ملفّ المريض — أضفه من «إضافة خدمة جديدة»", 400);
           const reason = String(merged.presentingComplaint ?? "").trim();
           const note = typeof req.body?.receptionNote === "string" ? req.body.receptionNote.trim() : "";
@@ -201,7 +259,19 @@ export function registerNewExamRequestRoutes(
             ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
             notes: `طلب معاينة جديدة — علاج طبيعي — للمريض ${merged.name ?? id}`,
           } as any);
-          return { kind: "physio" as const, reviewRequestId: row.id, episode: null };
+          return { kind: "physio" as const, reviewRequestId: row.id, episode: null, replaced };
+        }
+        if (replaced) {
+          //  **والقسمُ الهدفُ يُفتَح إن غاب** — بالتفاصيل التي يكتبها «إضافة نوع حالة» للقسم، وعلمُه يُرفع معه (`addPatientCaseType`).
+          const c = await ensureCaseTx(tx as any, {
+            patientId: id, caseType: dept, branchId: actingBranchId,
+            create: { cost: 0, costSource: "auto", details: deviceDetails(dept, updated) },
+            reopen: { reason: "طلب معاينة جديدة — تحويلٌ من قسمٍ آخر", actor: { userId, userName } },
+          });
+          const flag = dept === "prosthetic" ? { isAmputee: true } : { isMedicalSupport: true };
+          if (c && !(dept === "prosthetic" ? updated?.isAmputee : updated?.isMedicalSupport)) {
+            await (tx as any).update(patients).set(flag).where(eq(patients.id, id));
+          }
         }
         const episode = await openExamEpisodeTx(tx, {
           patientId: id, serviceType: dept, createdBy: userId, requestedItem, extraComponents, actingBranchId,
@@ -212,14 +282,24 @@ export function registerNewExamRequestRoutes(
           reviewNote: typeof req.body?.receptionNote === "string" ? req.body.receptionNote : "",
           auditSuffix: " — من «طلب معاينة جديدة»",
         }, tx);
-        return { kind: "device" as const, reviewRequestId: routing.request?.id ?? null, episode };
+        return { kind: "device" as const, reviewRequestId: routing.request?.id ?? null, episode, replaced };
       });
 
-      return res.status(201).json({ department: dept, episodeId: out.episode?.id ?? null, reviewRequestId: out.reviewRequestId });
+      return res.status(201).json({
+        department: dept, episodeId: out.episode?.id ?? null, reviewRequestId: out.reviewRequestId,
+        ...(out.replaced ? {
+          replacedRequestId: out.replaced.requestId,
+          oldCaseClosed: out.replaced.caseClosure.closed,
+          oldCaseKeptBecause: out.replaced.caseClosure.closed ? null : out.replaced.caseClosure.keptBecause,
+        } : {}),
+      });
     } catch (err: any) {
       if (err instanceof PatientPhoneConflictError) return res.status(409).json(await deps.phoneConflictBody(req, err));
       if (err instanceof PatientPhoneTrashConflictError) {
         return res.status(409).json({ message: err.message, code: "patient_phone_trash_conflict" });
+      }
+      if (err instanceof CancelExamRequestError) {
+        return res.status(err.status ?? 409).json({ message: err.message, code: err.code, field: "replacesRequestId" });
       }
       if (err instanceof ReviewError || err instanceof DeviceEpisodeError) {
         return res.status((err as any).status ?? 400).json({ message: err.message, ...((err as any).code ? { code: (err as any).code } : {}) });

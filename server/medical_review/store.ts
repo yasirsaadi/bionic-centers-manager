@@ -818,39 +818,12 @@ export interface ReturnedRequestRow {
 }
 
 /**
- * **«المُرجَعون من الطبيب»** (§4.ar — تكملةُ البند ١٨، طلبُ المالك ٢٠٢٦-٠٩-٣٠).
- *
- * كان الإرجاعُ يُخرج المريضَ من «معايناتي» ولا يُدخله قائمةً عند الاستعلامات —
- * فلا يعرف الموظّفُ به إلّا إن فتح ملفَّه صدفةً. هذه **قراءةٌ محضة** لما هو
- * قائمٌ أصلاً في `medical_review_requests`: لا عمودَ ولا حالةَ جديدة.
- *
- * طلبٌ `returned` **ما زال معلَّقاً** ما لم يَحدث بعده أيٌّ من:
- * • **طلبٌ لاحقٌ** لنفس (المريض، الاختصاص) — على حلقته نفسِها أو عارٍ (إعادةُ الإرسال).
- * • **معاينةٌ فعّالة وُقّعت بعد الإرجاع** — وحلقتُه إن كانت تنتظر فمعاينتُها هي.
- * • **حلقتُه أُلغيت أو حُذفت** («إلغاء المعاينة»)، **أو القسمُ لم يعد فعّالاً**.
- * والمحذوفُ في السلّة خارجها. والنطاقُ كنطاق طابور المراجعة بحرفه.
+ * **«ما زال مُرجَعاً معلَّقاً»** — شروطُ قائمة «المُرجَعون من الطبيب» بحرفها، بلا النطاق ولا الاختصاص. تقرؤها القائمةُ، **وتعيدها
+ * أبوابُ الفعل عليه تحت القفل** (§4.gu: الإلغاءُ والتحويل) — فلا يُسحَب طلبٌ خرج من القائمة بين العرض والضغطة. تتطلّب `r` و`p` و`e`.
  */
-export async function listReturnedRequests(params: {
-  branchIds: number[] | null;
-  specialties: readonly string[];
-}): Promise<ReturnedRequestRow[]> {
-  const device = params.specialties.filter(isReviewServiceType);
-  if (device.length === 0) return [];
-  const rows = await db.execute<Record<string, any>>(sql`
-    SELECT r.id, r.patient_id, r.service_type, r.requested_path, r.review_kind,
-           r.device_episode_id, r.doctor_note, r.decided_at,
-           p.name AS patient_name, p.patient_code,
-           b.name AS branch_name, du.display_name AS decided_by_name,
-           e.sequence_number AS ep_seq, e.status AS ep_status
-      FROM medical_review_requests r
-      JOIN patients p ON p.id = r.patient_id
-      LEFT JOIN branches b ON b.id = r.branch_id
-      LEFT JOIN system_users du ON du.id = r.decided_by
-      LEFT JOIN patient_device_episodes e ON e.id = r.device_episode_id
-     WHERE r.status = 'returned'
+const returnedStillListedSql = () => sql`(
+  r.status = 'returned'
        AND p.deleted_at IS NULL
-       AND ${branchOrPatientAccessSql(params.branchIds, "r.branch_id", "r.patient_id")}
-       AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
        AND (r.device_episode_id IS NULL OR (e.id IS NOT NULL AND e.status <> 'cancelled'))
        AND EXISTS (SELECT 1 FROM patient_cases pc
                     WHERE pc.patient_id = r.patient_id AND pc.case_type = r.service_type
@@ -868,6 +841,55 @@ export async function listReturnedRequests(params: {
             AND ${activeExamSql("me")}
             AND (r.device_episode_id IS NULL OR e.status IS DISTINCT FROM 'awaiting_exam'
                  OR me.device_episode_id = r.device_episode_id))
+)`;
+
+/** الصفُّ نفسُه تحت قفل المُنادي — `true` إن كان ما زال في القائمة. */
+export async function returnedRequestStillListedTx(
+  tx: { execute: (q: any) => Promise<any> }, requestId: number,
+): Promise<boolean> {
+  const r = await tx.execute(sql`
+    SELECT 1 FROM medical_review_requests r
+      JOIN patients p ON p.id = r.patient_id
+      LEFT JOIN patient_device_episodes e ON e.id = r.device_episode_id
+     WHERE r.id = ${requestId} AND ${returnedStillListedSql()}
+  `);
+  return (r.rows ?? []).length > 0;
+}
+
+/**
+ * **«المُرجَعون من الطبيب»** (§4.ar — تكملةُ البند ١٨، طلبُ المالك ٢٠٢٦-٠٩-٣٠).
+ *
+ * كان الإرجاعُ يُخرج المريضَ من «معايناتي» ولا يُدخله قائمةً عند الاستعلامات —
+ * فلا يعرف الموظّفُ به إلّا إن فتح ملفَّه صدفةً. هذه **قراءةٌ محضة** لما هو
+ * قائمٌ أصلاً في `medical_review_requests`: لا عمودَ ولا حالةَ جديدة.
+ *
+ * طلبٌ `returned` **ما زال معلَّقاً** ما لم يَحدث بعده أيٌّ من:
+ * • **طلبٌ لاحقٌ** لنفس (المريض، الاختصاص) — على حلقته نفسِها أو عارٍ (إعادةُ الإرسال).
+ * • **معاينةٌ فعّالة وُقّعت بعد الإرجاع** — وحلقتُه إن كانت تنتظر فمعاينتُها هي.
+ * • **حلقتُه أُلغيت أو حُذفت** («إلغاء المعاينة»)، **أو القسمُ لم يعد فعّالاً**.
+ * والمحذوفُ في السلّة خارجها. والنطاقُ كنطاق طابور المراجعة بحرفه.
+ */
+export async function listReturnedRequests(params: {
+  branchIds: number[] | null;
+  specialties: readonly string[];
+}): Promise<ReturnedRequestRow[]> {
+  //  **والعلاجُ الطبيعيّ منها** (§4.gu — قرارُ المالك ٢٠٢٦-١١-٢٢): طلبُه المُرجَع يُقرأ هنا كطلبَي الجهاز، فيُلغيه الاستعلاماتُ أو يحوّله.
+  const device = params.specialties.filter(isExamRequestServiceType);
+  if (device.length === 0) return [];
+  const rows = await db.execute<Record<string, any>>(sql`
+    SELECT r.id, r.patient_id, r.service_type, r.requested_path, r.review_kind,
+           r.device_episode_id, r.doctor_note, r.decided_at,
+           p.name AS patient_name, p.patient_code,
+           b.name AS branch_name, du.display_name AS decided_by_name,
+           e.sequence_number AS ep_seq, e.status AS ep_status
+      FROM medical_review_requests r
+      JOIN patients p ON p.id = r.patient_id
+      LEFT JOIN branches b ON b.id = r.branch_id
+      LEFT JOIN system_users du ON du.id = r.decided_by
+      LEFT JOIN patient_device_episodes e ON e.id = r.device_episode_id
+     WHERE ${branchOrPatientAccessSql(params.branchIds, "r.branch_id", "r.patient_id")}
+       AND r.service_type IN (${sql.join(device.map((d) => sql`${d}`), sql`, `)})
+       AND ${returnedStillListedSql()}
      ORDER BY r.decided_at DESC NULLS LAST, r.id DESC
   `);
   return (rows.rows ?? []).map((r) => ({
