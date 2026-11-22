@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { branchDisplayRank } from "@shared/branch_order";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -169,10 +170,13 @@ export function BranchGate({ children }: BranchGateProps) {
       })
       .catch(() => { setClosedIds([]); setExtraBranches([]); });
   }, []);
+  //  **بترتيب العرض الواحد** (طلبُ المالك ٢٠٢٦-١١-٢٢): المسؤولُ أوّلاً ثمّ الفروعُ بـ`branchDisplayRank` — فالمركزُ بعد «بغداد أطراف» لا آخرَ القائمة.
   const loginOptions = [
     ...userOptions.filter((o) => !("branchId" in o) || !closedIds.includes((o as any).branchId)),
     ...extraBranches.map((b) => ({ value: `branch-${b.id}`, label: b.name, labelEn: b.name, icon: Building2 })),
-  ];
+  ].map((o, i) => ({ o, i, rank: o.value === "admin" ? -1 : branchDisplayRank(o.label) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map(({ o }) => o);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
