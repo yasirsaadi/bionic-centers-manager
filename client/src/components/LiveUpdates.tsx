@@ -4,6 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useBranchSession } from "@/components/BranchGate";
 import { LIVE_UPDATE_EVENT, startLiveUpdates } from "@/lib/live_updates";
+import { GREETING_QUERY_ROOT, refreshesOnBroadcast } from "@shared/staff_greeting";
 
 /**
  * **التحديثُ الحيّ لكلّ مستخدم** (§4.cy): يفتح اتصالَ الصفحة الدائم ما دام المستخدمُ داخلاً، ويُظهر شريطَ «نسخةٌ أحدث» حين لا تُعاد
@@ -26,8 +27,9 @@ export function LiveUpdates() {
       clearTimeout: (t) => window.clearTimeout(t),
       setInterval: (fn, ms) => window.setInterval(fn, ms),
       clearInterval: (t) => window.clearInterval(t),
-      refresh: () => { void queryClient.invalidateQueries(); },
-      onGreeting: () => { void queryClient.invalidateQueries({ queryKey: ["/api/greeting"] }); },
+      //  كلُّ ما يُعرض إلّا التحيّة (§4.gw): جلبُها يعدّ إنجازَ الأمس، فلا يُعاد مع كتابة كلّ زميل — إلّا وهي في خطأ.
+      refresh: () => { void queryClient.invalidateQueries({ predicate: (q) => refreshesOnBroadcast(q.queryKey, q.state.status) }); },
+      onGreeting: () => { void queryClient.invalidateQueries({ queryKey: [GREETING_QUERY_ROOT] }); },
       onSidebarOrder: () => { void queryClient.invalidateQueries({ queryKey: ["/api/sidebar-order"] }); },
       reload: () => window.location.reload(),
       onUpdateAvailable: (build) => {
