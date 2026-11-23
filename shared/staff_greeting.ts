@@ -184,13 +184,22 @@ const ROLE_ACHIEVEMENTS: Record<string, AchievementKey[]> = {
 const PHYSIO_SUPERVISOR_ACHIEVEMENTS: AchievementKey[] = ["physioExams", "physioSessions"];
 export const MAX_ACHIEVEMENTS = 4;
 
-/** **ما يُعدّ لهذا الحساب** — اتّحادُ أبواب أدواره بترتيبها (الأعلى أوّلاً)، ثمّ علَمُ الإشراف. والمسؤولُ لا شيء (لا تحيّةَ له). */
-export function achievementKeysFor(roles: readonly string[], canSupervisePhysio = false): AchievementKey[] {
+/** علَما العمل بلا دور (مراجعةُ Codex على §4.gw): مديرُ فرعٍ أو محاسبٌ يوقّع المعاينة بـ`canWriteMedicalExam` أو يعمل خبيراً بـ`canWorkAsExpert` — فعملُه بهما يُعدّ له. */
+export interface AchievementFlags { canSupervisePhysio?: boolean; canWriteMedicalExam?: boolean; canWorkAsExpert?: boolean }
+
+/**
+ * **ما يُعدّ لهذا الحساب** — اتّحادُ أبواب أدواره بترتيبها (الأعلى أوّلاً)، ثمّ أعلامُ العمل: الإشراف، وتوقيعُ المعاينة (أبوابُ الطبيب)، والعملُ خبيراً
+ * (أبوابُ الخبير). والمسؤولُ لا شيء (لا تحيّةَ له). (`true` وحدها ⟵ علَمُ الإشراف، كما كانت.)
+ */
+export function achievementKeysFor(roles: readonly string[], flags: boolean | AchievementFlags = false): AchievementKey[] {
   if (roles.includes("admin")) return [];
+  const f: AchievementFlags = typeof flags === "boolean" ? { canSupervisePhysio: flags } : flags;
   const out: AchievementKey[] = [];
   const add = (ks: readonly AchievementKey[]) => { for (const k of ks) if (!out.includes(k)) out.push(k); };
   for (const r of roles) add(ROLE_ACHIEVEMENTS[r] ?? []);
-  if (canSupervisePhysio) add(PHYSIO_SUPERVISOR_ACHIEVEMENTS);
+  if (f.canSupervisePhysio === true) add(PHYSIO_SUPERVISOR_ACHIEVEMENTS);
+  if (f.canWriteMedicalExam === true) add(ROLE_ACHIEVEMENTS.doctor);
+  if (f.canWorkAsExpert === true) add(ROLE_ACHIEVEMENTS.prosthetics_expert);
   return out;
 }
 
