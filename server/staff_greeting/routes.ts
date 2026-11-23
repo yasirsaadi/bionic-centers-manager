@@ -35,19 +35,33 @@ export async function loadWeatherFxEnabled(): Promise<boolean> {
   return weatherFxEnabled(await storage.getSystemSetting(WEATHER_FX_SETTING_KEY));
 }
 
+/** الإعدادُ المحفوظ كائناً يُدمج فيه — وما ليس كائنَ JSON صالحاً (تالفٌ أو فارغٌ أو مصفوفة) ⟵ كائنٌ فارغ، فالحفظُ يُصلحه (مراجعةُ Codex). */
+export function storedGreetingObject(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
+}
+
 /**
- * **يدمج حقولاً في الإعداد بتحديثٍ واحد للصفّ** (مراجعةُ Codex على «أبقِها» — §4.dp): قراءةُ الإعداد ثمّ كتابتُه كاملاً تمحو ما كتبه مسؤولٌ آخر
- * بينهما (العباراتُ فوق السطر أو السطرُ فوق العبارات). وبلا صفٍّ بعد ⟵ العباراتُ الأولى بالحقول. ⟵ الإعدادُ بعد الدمج.
+ * **يدمج حقولاً في الإعداد تحت قفل الصفّ** (مراجعةُ Codex على «أبقِها» — §4.dp): قراءةُ الإعداد ثمّ كتابتُه كاملاً بلا قفل تمحو ما كتبه مسؤولٌ آخر
+ * بينهما (العباراتُ فوق السطر أو السطرُ فوق العبارات). وبلا صفٍّ بعد ⟵ العباراتُ الأولى بالحقول. **والقيمةُ التالفة لا تُسقط الحفظ** (مراجعةُ Codex
+ * على §4.gw): كانت تُحوَّل إلى `jsonb` في الاستعلام فيردّ ٥٠٠ ولا يُصلحها شيءٌ من الواجهة — فصارت تُقرأ هنا، والتالفُ يُبدأ من العبارات الأولى.
+ * ⟵ الإعدادُ بعد الدمج.
  */
 async function mergeGreetingConfig(patch: Partial<GreetingConfig>): Promise<GreetingConfig> {
   const now = new Date().toISOString();
-  const seed = JSON.stringify({ phrases: [...DEFAULT_GREETINGS], updatedAt: now, updatedByName: null, ...patch });
-  const r = await db.execute(sql`
-    INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (${GREETING_SETTING_KEY}, ${seed}, NOW())
-    ON CONFLICT (setting_key) DO UPDATE
-      SET setting_value = (COALESCE(NULLIF(system_settings.setting_value, ''), '{}')::jsonb || ${JSON.stringify(patch)}::jsonb)::text, updated_at = NOW()
-    RETURNING setting_value`);
-  return readGreetingConfig((r.rows[0] as any)?.setting_value, now);
+  const seed = { phrases: [...DEFAULT_GREETINGS], updatedAt: now, updatedByName: null };
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (${GREETING_SETTING_KEY}, '', NOW())
+      ON CONFLICT (setting_key) DO NOTHING`);
+    const r = await tx.execute(sql`SELECT setting_value FROM system_settings WHERE setting_key = ${GREETING_SETTING_KEY} FOR UPDATE`);
+    const stored = storedGreetingObject((r.rows[0] as any)?.setting_value);
+    const merged = JSON.stringify({ ...(Object.keys(stored).length ? stored : seed), ...patch });
+    await tx.execute(sql`UPDATE system_settings SET setting_value = ${merged}, updated_at = NOW() WHERE setting_key = ${GREETING_SETTING_KEY}`);
+    return readGreetingConfig(merged, now);
+  });
 }
 
 /** يومُ «حسناً»: يومُ التحيّة المعروضة إن كان اليومَ أو أمسِ (بغداد)، وما سواه ⟵ اليوم. */
@@ -69,7 +83,8 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       const s = getSession(req);
       if (!s?.userId) return res.json({ show: false });
       const [u] = await db.select({ name: systemUsers.displayName, last: systemUsers.lastGreetedOn, role: systemUsers.role,
-        extraRoles: systemUsers.extraRoles, canSupervisePhysio: systemUsers.canSupervisePhysio })
+        extraRoles: systemUsers.extraRoles, canSupervisePhysio: systemUsers.canSupervisePhysio,
+        canWriteMedicalExam: systemUsers.canWriteMedicalExam, canWorkAsExpert: systemUsers.canWorkAsExpert })
         .from(systemUsers).where(eq(systemUsers.id, Number(s.userId)));
       const today = baghdadTodayYmd();
       if (!u || String(u.last ?? "").slice(0, 10) === today) return res.json({ show: false });
@@ -78,8 +93,9 @@ export function registerStaffGreetingRoutes(app: Express, isAuthenticated: any) 
       const c = await loadGreetingConfig();
       const salutation = salutationAt();
       //  **إنجازُ الأمس** (§4.gw): أرقامُ صاحب الجلسة وحده بأدواره، ولا صفر — وبلا إنجازٍ ⟵ العبارةُ المتناوبة كما كانت.
-      //  الأدوارُ والعلَمُ من صفّ الحساب نفسِه (لا من نسخة الجلسة).
-      const keys = achievementKeysFor(rolesOf({ role: u.role, extraRoles: u.extraRoles }), u.canSupervisePhysio === true);
+      //  الأدوارُ والأعلامُ من صفّ الحساب نفسِه (لا من نسخة الجلسة) — وعلَما المعاينة والخبير يُعدّان عملَهما لمن لا يحمل دورَهما (مراجعةُ Codex).
+      const keys = achievementKeysFor(rolesOf({ role: u.role, extraRoles: u.extraRoles }), {
+        canSupervisePhysio: u.canSupervisePhysio === true, canWriteMedicalExam: u.canWriteMedicalExam === true, canWorkAsExpert: u.canWorkAsExpert === true });
       const yesterday = previousYmd(today);
       const achievements = achievementLines(keys, await loadDayStats(Number(s.userId), keys, yesterday));
       const text = achievements.length

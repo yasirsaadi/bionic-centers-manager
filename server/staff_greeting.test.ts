@@ -112,6 +112,13 @@ async function main() {
       achievementLines(achievementKeysFor(["branch_manager"], true), { ...st, visits: 3 }).length,
       achievementKeysFor(["admin", "reception"]), achievementKeysFor(["surveyor"])],
     [["registrations", "payments", "visits", "physioExams", "physioSessions"], ["medicalExams", "physioExams", "physioSessions"], 4, [], []]);
+  same("ق.٨ب **علَما المعاينة والخبير يُعدّان عملَهما لمن لا يحمل دورَهما** (مراجعةُ Codex) — مديرٌ بالعلَمين، ومحاسبٌ خبير، و`true` وحدها علَمُ الإشراف كما كانت",
+    [achievementKeysFor(["branch_manager"], { canWriteMedicalExam: true, canWorkAsExpert: true }),
+      achievementKeysFor(["accountant"], { canWorkAsExpert: true }), achievementKeysFor(["doctor"], { canWriteMedicalExam: true }),
+      achievementKeysFor(["reception"], true), achievementKeysFor(["admin"], { canWriteMedicalExam: true })],
+    [["registrations", "payments", "visits", "medicalExams", "physioExams", "deliveries", "maintenanceDone", "stageMoves"],
+      ["registrations", "payments", "visits", "deliveries", "maintenanceDone", "stageMoves"], ["medicalExams", "physioExams"],
+      ["registrations", "payments", "visits", "physioExams", "physioSessions"], []]);
   same("ق.٩ **النصُّ بلا جنس** — التحيّةُ والاسمُ و«إنجازك أمس» والبنودُ وشكرُ دكتور ياسر",
     achievementGreetingText("صباح الخير", "زهراء", ["تسجيل مريضين", "تسجيل 3 زيارات"]),
     "صباح الخير زهراء، إنجازك أمس: تسجيل مريضين · تسجيل 3 زيارات — دكتور ياسر يشكرك ويتمنّى لك يوماً موفّقاً.");
@@ -291,6 +298,21 @@ async function main() {
     await q(`INSERT INTO system_settings (setting_key, setting_value) VALUES ($1, $2)
              ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`, [GREETING_SETTING_KEY, saved]);
     same("ب.١٣ **والسطرُ بلا صفٍّ بعد** يكتب العباراتِ الأولى معه", [fresh.status, freshRow?.phrases?.length, freshRow?.note], [200, 10, "أوّلُ سطر"]);
+    //  قيمةٌ تالفة في الصفّ (مراجعةُ Codex): القراءةُ تعود إلى الأولى، والحفظُ يُصلحها لا يردّ ٥٠٠ — السطرُ ثمّ العبارات، ثمّ مصفوفةٌ بدل كائن.
+    const repair = [];
+    for (const bad of ["{broken", "[1,2]"]) {
+      await q(`UPDATE system_settings SET setting_value = $2 WHERE setting_key = $1`, [GREETING_SETTING_KEY, bad]);
+      const loads = (await call("GET", "/api/admin/greeting", S.admin)).status;
+      const noteFix = await call("PUT", "/api/admin/greeting/note", S.admin, { note: "سطرٌ يُصلح" });
+      const rawRow = (await q(`SELECT setting_value FROM system_settings WHERE setting_key = $1`, [GREETING_SETTING_KEY])).rows[0].setting_value;
+      let row: any = null; try { row = JSON.parse(rawRow); } catch { row = rawRow; }
+      await q(`UPDATE system_settings SET setting_value = $2 WHERE setting_key = $1`, [GREETING_SETTING_KEY, bad]);
+      const phrasesFix = await call("PUT", "/api/admin/greeting", S.admin, { phrases: mine });
+      repair.push([loads, noteFix.status, row?.phrases?.length, row?.note, phrasesFix.status, phrasesFix.json?.phrases]);
+    }
+    await q(`UPDATE system_settings SET setting_value = $2 WHERE setting_key = $1`, [GREETING_SETTING_KEY, saved]);
+    same("ب.١٣ب **الإعدادُ التالف يُصلحه الحفظ** — تالفٌ ومصفوفة: القراءةُ ٢٠٠، والسطرُ يُحفظ مع العبارات الأولى، والعباراتُ تُحفظ",
+      repair, [[200, 200, 10, "سطرٌ يُصلح", 200, mine], [200, 200, 10, "سطرٌ يُصلح", 200, mine]]);
     const yesterday = previousYmd(today);
     const tomorrow = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10)) + 86_400_000).toISOString().slice(0, 10);
     const lastOf = async (id: number) => (await q(`SELECT last_greeted_on::text AS d FROM system_users WHERE id = $1`, [id])).rows[0].d;
@@ -457,6 +479,13 @@ async function main() {
     await sessionRow(DOC, yTz);
     same("د.٨ب **الأدوارُ من صفّ الحساب** — دورٌ إضافيّ أُعطي اليومَ يظهر بابُه ولو كانت الجلسةُ أقدم",
       (await greet(S.doc, DOC))?.achievements, ["توقيع معاينتين طبيتين", "توقيع معاينة علاج طبيعي واحدة", "إكمال جلسة علاج طبيعي واحدة"]);
+
+    // ── علَمُ المعاينة على حساب مدير الفرع (مراجعةُ Codex): معاينةٌ وقّعها بعلَمه تُعدّ له ──
+    await q(`UPDATE system_users SET can_write_medical_exam = true WHERE id = $1`, [SALEEM]);
+    await exam(tp, "prosthetic", SALEEM, yTz);
+    same("د.٨ج **علَمُ المعاينة يُعدّ عملَه** — المديرُ المشرف وقّع معاينةَ أطرافٍ بعلَمه فظهرت رابعةً",
+      (await greet(S.saleem, SALEEM))?.achievements,
+      ["تسجيل مريض واحد", "توقيع معاينة علاج طبيعي واحدة", "إكمال جلسة علاج طبيعي واحدة", "توقيع معاينة طبية واحدة"]);
 
     // ── حدُّ منتصف الليل +٠٣ (نور) ──
     const prev = previousYmd(Y);
