@@ -9,30 +9,57 @@ import { crossExamActingBranch, crossExamAdminMustChoose } from "./reception_rou
 import { usePatientBranchAccess } from "./PatientBranchAccessDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  crossExamBannerText, crossExamMoveNoteText, CROSS_EXAM_ADMIN_CHOOSE_HINT, CROSS_EXAM_DEPARTMENT_NAMES, crossExamTargetOptions,
+  crossExamBannerText, crossExamMoveNoteText, CROSS_EXAM_ADMIN_CHOOSE_HINT, CROSS_EXAM_DEPARTMENT_NAMES, crossExamTargetOptions, branchOffersDepartment,
   departmentHomeBranch, noCrossExamTargetsMessage, noDepartmentHomeMessage, type CrossExamDepartment,
 } from "@shared/cross_department_exam";
 
 type BranchRow = { id: number; name: string; temporarilyClosed?: boolean | null; offersPhysio?: boolean };
+type CaseLite = { id: number; caseType: string; branchId: number | null; status?: string | null };
 
 export function useCrossExamTarget(dept: CrossExamDepartment, patient: { id?: number | null; branchId?: number | null }, enabled: boolean) {
   const session = useBranchSession();
   //  **اختيارُ الاستعلامات** — `null` ⟵ فرعُ المدينة المختارُ مسبقاً.
   const [chosen, setChosen] = useState<number | null>(null);
   const { data: branches } = useQuery<BranchRow[]>({ queryKey: ["/api/branches"], enabled });
+  //  **أقسامُ المريض** (مراجعةُ Codex): القسمُ المغلقُ يُعاد في فرعه لا في المختار (`openDepartmentTarget`) — فالقائمةُ تقول فرعَه وحده.
+  //  المفتاحُ مفتاحُ صفحة المريض نفسُه (`/api/patients/:id/cases`) فلا طلبَ ثانٍ.
+  const { data: cases } = useQuery<CaseLite[]>({
+    queryKey: ["/api/patients/:id", Number(patient.id ?? 0), "cases"],
+    enabled: enabled && Boolean(patient.id),
+    queryFn: async () => {
+      const res = await fetch(`/api/patients/${patient.id}/cases`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
   //  **فروعُ الملفّ** — فرعُ المسؤول المختار يُحسب إن وصل الملفَّ بإتاحة، كما يحسمه الخادم (`resolveActingBranchId`). المفتاحُ مفتاحُ رأس الملفّ.
   const { data: access } = usePatientBranchAccess(Number(patient.id ?? 0), enabled && Boolean(patient.id));
   const none = {
     ready: false, targetBranchId: null as number | null, targetName: null as string | null, differs: false, adminMustChoose: false,
     options: [] as { id: number; name: string }[], chosen: null as number | null, setChosen,
+    /** القسمُ المغلقُ في فرعٍ لا يقدّمه — لا يُفتح من هنا (`department_closed_elsewhere`). */
+    closedElsewhere: null as string | null,
   };
   if (!enabled) return none;
   const shared = (access?.access ?? []).map((a) => Number(a.branchId));
   if (session?.isAdmin && patient.id && !access) return none;
   const acting = crossExamActingBranch(session, patient, shared);
   if (crossExamAdminMustChoose(session, patient, shared)) return { ...none, ready: true, adminMustChoose: true };
-  if (!branches || branches.length === 0) return none;
+  if (!branches || branches.length === 0 || (patient.id && !cases)) return none;
   const physioBranchIds = new Set(branches.filter((b) => b.offersPhysio).map((b) => Number(b.id)));
+  //  **القسمُ المغلقُ يحكم** كالخادم (`openDepartmentState` — أحدثُ صفٍّ من هذا النوع): يُعاد في فرعه، فالقائمةُ فرعُه وحده؛
+  //  وفرعُه لا يقدّمه ⟵ لا إرسال.
+  const closed = (cases ?? []).filter((c) => c.caseType === dept).sort((a, b) => b.id - a.id)[0] ?? null;
+  if (closed) {
+    const cb = branches.find((b) => Number(b.id) === Number(closed.branchId)) ?? null;
+    if (!cb || !branchOffersDepartment(cb, dept, physioBranchIds)) {
+      return { ...none, ready: true, closedElsewhere: cb?.name ?? "فرعٍ آخر" };
+    }
+    return {
+      ...none, ready: true, targetBranchId: Number(cb.id), targetName: cb.name, differs: Number(cb.id) !== acting,
+      options: [{ id: Number(cb.id), name: cb.name }],
+    };
+  }
   const options = crossExamTargetOptions({ dept, branches, physioBranchIds }).map((b) => ({ id: Number(b.id), name: b.name }));
   //  المختارُ من القائمة وحدها — فإن خرج منها (أُغلق الفرع) عاد الاختيارُ إلى فرع المدينة.
   const picked = chosen !== null && options.some((o) => o.id === chosen) ? chosen : null;
@@ -40,7 +67,7 @@ export function useCrossExamTarget(dept: CrossExamDepartment, patient: { id?: nu
   return {
     ready: true, adminMustChoose: false, targetBranchId: target, differs: target !== null && target !== acting,
     targetName: target === null ? null : branches.find((b) => Number(b.id) === target)?.name ?? null,
-    options, chosen: picked, setChosen,
+    options, chosen: picked, setChosen, closedElsewhere: null,
   };
 }
 
@@ -50,6 +77,13 @@ export function CrossExamBanner({ dept, target }: { dept: CrossExamDepartment; t
     return (
       <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-900" data-testid="cross-exam-admin-choose">
         {CROSS_EXAM_ADMIN_CHOOSE_HINT}
+      </div>
+    );
+  }
+  if (target.closedElsewhere) {
+    return (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800" data-testid="cross-exam-closed-elsewhere">
+        {`للمريض قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} مغلق في ${target.closedElsewhere} لا يقدّمه — لا يُفتح من «سبب الحضور»؛ راجع المسؤول`}
       </div>
     );
   }

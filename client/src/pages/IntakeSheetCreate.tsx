@@ -152,7 +152,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
   //  **فتحُ القسم في فرعه** (§4.gv) — يقول الفرعَ قبل الإرسال ويختاره الاستعلامات من قائمة، ويُمنع الإرسالُ حتى يُختار (كربلاء والموصل).
   const openMode = Boolean(existing?.openDepartment);
   const crossTarget = useCrossExamTarget(existing?.department ?? "prosthetic", (existing?.patient ?? {}) as { branchId?: number | null }, openMode);
-  const noCrossHome = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose);
+  const noCrossHome = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose || Boolean(crossTarget.closedElsewhere));
 
   const referralSubSource = f.referralSource === REFERRAL_OTHER_PERSON
     ? (f.referralSubSource === REFERRAL_SUB_OTHER ? f.referralSubSourceOther.trim() : f.referralSubSource) : "";
@@ -176,7 +176,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: dep, requestedItems: values.requestedItems,
           fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.chosen !== null ? { targetBranchId: crossTarget.chosen } : {}) } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.targetBranchId !== null ? { targetBranchId: crossTarget.targetBranchId } : {}) } : {}),
         }, existing.replacesRequestId));
         const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
         return {

@@ -655,8 +655,12 @@ function main() {
       "ف١٤. **والورقتان ترسلان `openDepartment`** والصفحةُ تقرؤه من رابطها");
     {
       const pt = read("..", "pages", "PhysioSheetCreate.tsx"), it = read("..", "pages", "IntakeSheetCreate.tsx"), bn = read("CrossExamBanner.tsx");
-      check([pt, it].every((x) => /openDepartment: true, \.\.\.\(crossTarget\.chosen !== null \? \{ targetBranchId: crossTarget\.chosen \} : \{\}\)/.test(x)),
-        "ف١٤ب. **والورقتان ترسلان الفرعَ الذي اختاره الاستعلامات** (`targetBranchId`) — ولا ترسلانه حين لم يُغيَّر فيحسمه الخادمُ بقاعدته");
+      check([pt, it].every((x) => /openDepartment: true, \.\.\.\(crossTarget\.targetBranchId !== null \? \{ targetBranchId: crossTarget\.targetBranchId \} : \{\}\)/.test(x)
+          && /crossTarget\.adminMustChoose \|\| Boolean\(crossTarget\.closedElsewhere\)/.test(x)),
+        "ف١٤ب. **والورقتان ترسلان الفرعَ الظاهر في «يُرسَل إلى»** (`targetBranchId`) — فلا يحسم الخادمُ فرعاً غيرَ ما رآه الموظّف (مراجعةُ Codex)، والقسمُ المغلقُ في فرعٍ لا يقدّمه يمنع الإرسال");
+      check(/const closed = \(cases \?\? \[\]\)\.filter\(\(c\) => c\.caseType === dept\)\.sort\(\(a, b\) => b\.id - a\.id\)\[0\]/.test(bn)
+          && /options: \[\{ id: Number\(cb\.id\), name: cb\.name \}\]/.test(bn) && /data-testid="cross-exam-closed-elsewhere"/.test(bn),
+        "ف١٤د. **والقسمُ المغلقُ يحكم القائمة** كالخادم: أحدثُ قسمٍ من النوع، فرعُه وحده، وفرعُه الذي لا يقدّمه لافتةٌ حمراء");
       check(/data-testid="cross-exam-target"/.test(bn) && /crossExamTargetOptions\(/.test(bn) && /target\.setChosen\(Number\(v\)\)/.test(bn),
         "ف١٤ج. **واللافتةُ قائمةُ «يُرسَل إلى»** من فروع القسم المفتوحة، والاختيارُ يُحفظ");
     }

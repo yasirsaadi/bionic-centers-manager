@@ -148,7 +148,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
   const openMode = Boolean(existing?.openDepartment);
   const crossTarget = useCrossExamTarget("physiotherapy", (existing?.patient ?? {}) as { branchId?: number | null }, openMode);
   //  وفي وضع الفتح لافتتُه وحدها (`CrossExamBanner`) — فالصندوقُ الكهرمانيّ أدناه لغة التسجيل لا الفتح.
-  const crossBlocked = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose);
+  const crossBlocked = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose || Boolean(crossTarget.closedElsewhere));
   const branchLacksPhysio = !openMode && !isAdmin && branches.length > 0 && Boolean(activeBranchId)
       && !branches.find((b) => b.id === activeBranchId)?.offersPhysio;
 
@@ -169,7 +169,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: "physiotherapy", fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.chosen !== null ? { targetBranchId: crossTarget.chosen } : {}) } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.targetBranchId !== null ? { targetBranchId: crossTarget.targetBranchId } : {}) } : {}),
         }, existing.replacesRequestId));
         const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
         return {
