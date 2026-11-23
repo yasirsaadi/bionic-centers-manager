@@ -25,6 +25,7 @@ import {
 } from "./reception_routing";
 import {
   crossExamDepartments, departmentHomeBranch, branchOffersDepartment, crossExamHref, parseOpenDepartmentQuery, CROSS_EXAM_ADMIN_CHOOSE_HINT,
+  crossExamTargetOptions, resolveCrossExamTarget, CROSS_EXAM_CHOOSE_TARGET_HINT,
 } from "@shared/cross_department_exam";
 import { launcherOptions } from "./patient_service_launcher_logic";
 import { PROSTHETIC_COMPONENTS } from "@shared/prosthetic_parts";
@@ -595,9 +596,26 @@ function main() {
     const choices = (p: any, acting: number | null, mayRequest = true) => receptionCrossExamChoices({ id: 9, ...p }, {
       branches: BR.map((b) => ({ ...b, offersPhysio: PH.has(b.id) })), actingBranchId: acting, mayRequest,
     }).map((c) => [c.dept, c.targetBranchId, c.hint]);
-    same("ف٧. **الخياراتُ لكلّ فرع ولكلّ مريض**: أطرافُ بغداد ⟵ المركز بسطر «يُرسَل إلى» · أطرافُ ذي قار محلّيّ بلا سطر · أطرافُ كربلاء والموصل لا شيء",
+    same("ف٧. **الخياراتُ لكلّ فرع ولكلّ مريض**: أطرافُ بغداد ⟵ المركز بسطر «يُرسَل إلى» · أطرافُ ذي قار محلّيّ بلا سطر · **وأطرافُ كربلاء والموصل يظهر لهم الخيار** والفرعُ يُختار في الورقة (طلبُ المالك ٢٠٢٦-١١-٢٣)",
       [choices({ isAmputee: true }, 1), choices({ isAmputee: true }, 3), choices({ isAmputee: true }, 2), choices({ isAmputee: true }, 4)],
-      [[["physiotherapy", 6, "يُرسَل إلى: مركز بغداد للعلاج الطبيعي"]], [["physiotherapy", 3, null]], [], []]);
+      [[["physiotherapy", 6, "يُرسَل إلى: مركز بغداد للعلاج الطبيعي"]], [["physiotherapy", 3, null]],
+        [["physiotherapy", null, CROSS_EXAM_CHOOSE_TARGET_HINT]], [["physiotherapy", null, CROSS_EXAM_CHOOSE_TARGET_HINT]]]);
+    same("ف٧ب. **ولا خيارَ حين لا فرعَ مفتوح يقدّمه أصلاً** — العلاجُ الطبيعيّ بلا فرعٍ يقدّمه ⟵ لا شيء من كربلاء",
+      receptionCrossExamChoices({ id: 9, isAmputee: true }, {
+        branches: BR.map((b) => ({ ...b, offersPhysio: false })), actingBranchId: 2, mayRequest: true,
+      }), []);
+    same("ف٧ج. **قائمةُ «يُرسَل إلى»**: العلاجُ الطبيعيّ المركزُ ثمّ ذي قار · الأطرافُ كلُّ مفتوحٍ إلّا المركز بترتيب العرض · بلا كركوك المغلق",
+      [crossExamTargetOptions({ dept: "physiotherapy", branches: BR, physioBranchIds: PH }).map((b) => b.id),
+        crossExamTargetOptions({ dept: "prosthetic", branches: BR, physioBranchIds: PH }).map((b) => b.id)],
+      [[6, 3], [1, 2, 3, 4]]);
+    const rs = (dept: any, acting: number | null, chosen: number | null) =>
+      resolveCrossExamTarget({ dept, actingBranchId: acting, chosenBranchId: chosen, branches: BR, physioBranchIds: PH });
+    same("ف٧د. **فرعُ الإرسال**: المختارُ يحكم (كربلاء ⟵ المركز أو ذي قار · بغداد ⟵ ذي قار) · وبلا اختيارٍ فرعُ المدينة أو لا شيء · والمختارُ الذي لا يقدّمه أو المغلقُ مردود",
+      [rs("physiotherapy", 2, 6), rs("physiotherapy", 2, 3), rs("physiotherapy", 1, 3), rs("physiotherapy", 1, null), rs("physiotherapy", 2, null),
+        rs("physiotherapy", 2, 1), rs("prosthetic", 6, 5), rs("prosthetic", 6, 6), rs("physiotherapy", 2, 99)],
+      [{ target: 6, invalid: false }, { target: 3, invalid: false }, { target: 3, invalid: false }, { target: 6, invalid: false },
+        { target: null, invalid: false }, { target: null, invalid: true }, { target: null, invalid: true }, { target: null, invalid: true },
+        { target: null, invalid: true }]);
     same("ف٨. **ومريضُ العلاج الطبيعيّ**: من المركز ⟵ أطرافٌ ومساند في بغداد أطراف · ومن ذي قار محلّيّان · والاثنان لا شيء · وبلا صلاحية لا شيء",
       [choices({ isPhysiotherapy: true }, 6), choices({ isPhysiotherapy: true }, 3),
         choices({ isPhysiotherapy: true, isAmputee: true }, 3), choices({ isAmputee: true }, 1, false)],
@@ -635,6 +653,13 @@ function main() {
     check(/openDepartment: true/.test(read("..", "pages", "PhysioSheetCreate.tsx")) && /openDepartment: true/.test(read("..", "pages", "IntakeSheetCreate.tsx"))
       && /parseOpenDepartmentQuery\(useSearch\(\)\)/.test(read("..", "pages", "NewExamRequest.tsx")),
       "ف١٤. **والورقتان ترسلان `openDepartment`** والصفحةُ تقرؤه من رابطها");
+    {
+      const pt = read("..", "pages", "PhysioSheetCreate.tsx"), it = read("..", "pages", "IntakeSheetCreate.tsx"), bn = read("CrossExamBanner.tsx");
+      check([pt, it].every((x) => /openDepartment: true, \.\.\.\(crossTarget\.chosen !== null \? \{ targetBranchId: crossTarget\.chosen \} : \{\}\)/.test(x)),
+        "ف١٤ب. **والورقتان ترسلان الفرعَ الذي اختاره الاستعلامات** (`targetBranchId`) — ولا ترسلانه حين لم يُغيَّر فيحسمه الخادمُ بقاعدته");
+      check(/data-testid="cross-exam-target"/.test(bn) && /crossExamTargetOptions\(/.test(bn) && /target\.setChosen\(Number\(v\)\)/.test(bn),
+        "ف١٤ج. **واللافتةُ قائمةُ «يُرسَل إلى»** من فروع القسم المفتوحة، والاختيارُ يُحفظ");
+    }
     {
       const pt = read("..", "pages", "PhysioSheetCreate.tsx"), it = read("..", "pages", "IntakeSheetCreate.tsx");
       check([pt, it].every((x) => /branchName=\{openMode && crossTarget\.differs \? \(crossTarget\.targetName \?\? branchName\) : branchName\}/.test(x)

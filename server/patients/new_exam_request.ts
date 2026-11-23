@@ -106,6 +106,12 @@ export function registerNewExamRequestRoutes(
       //  «إذا كان أطراف فأضف معاينة علاج طبيعي، وإن كان علاج طبيعي فأضف معاينة أطراف ومساند، وإن كان لديه الاثنان فلا يظهر شيء».
       //  علمٌ صريح (`openDepartment`) يفتح قسماً **ليس للمريض** بقاعدة `crossExamDepartments` وحدها، في **فرع القسم** (`departmentHomeBranch`).
       const openDepartment = req.body?.openDepartment === true;
+      //  **والفرعُ الذي يختاره الاستعلامات** (طلبُ المالك ٢٠٢٦-١١-٢٣) — رقمٌ صحيح موجب أو لا شيء؛ ولغير الفتح لا يُقرأ.
+      const rawTarget = req.body?.targetBranchId;
+      const chosenTargetBranchId = rawTarget === undefined || rawTarget === null || rawTarget === "" ? null : Number(rawTarget);
+      if (openDepartment && chosenTargetBranchId !== null && (!Number.isInteger(chosenTargetBranchId) || chosenTargetBranchId <= 0)) {
+        return res.status(400).json({ message: "الفرع المختار غير صالح", field: "targetBranchId", code: "cross_exam_target_invalid" });
+      }
       if (openDepartment && replacesRequestId !== null) {
         return res.status(400).json({ message: "فتحُ قسمٍ جديد والتحويلُ من «المُرجَعون» لا يجتمعان في طلبٍ واحد", code: "open_with_replaces" });
       }
@@ -210,7 +216,7 @@ export function registerNewExamRequestRoutes(
       //  (من مراجعة Codex: الشاشةُ تمنعه بعد تحميل الفروع وحدها، والطلبُ المباشر يتجاوزها).
       //  **وفتحُ القسم يذهب إلى فرعه** (§4.gv) — فلا يُشترط أن يقدّمه الفرعُ النشط؛ ولا فرعَ في المدينة ⟵ ٤٠٠ (كربلاء والموصل للعلاج الطبيعيّ).
       //  والقسمُ المغلقُ يُعاد في فرعه (`openDepartmentTarget`) — فالقسمُ والطلبُ والجهازُ في فرعٍ واحد.
-      const openTarget = openState?.ok ? await openDepartmentTarget(undefined, dept, actingBranchId, openState.closedCase) : null;
+      const openTarget = openState?.ok ? await openDepartmentTarget(undefined, dept, actingBranchId, openState.closedCase, chosenTargetBranchId) : null;
       if (openTarget?.error) {
         return res.status(openTarget.error.status).json({ message: openTarget.error.message, code: openTarget.error.code });
       }

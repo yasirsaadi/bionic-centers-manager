@@ -189,6 +189,45 @@ async function main() {
       [k1.status, k1.json?.code, await caseOf(K, "physiotherapy"), (await pat(K)).p, (await reqsOf(K, "physiotherapy")).length],
       [400, "no_department_home", null, false, 0]);
 
+    // ══ ج٢. **الاستعلاماتُ يختار الفرعَ المحوَّل إليه** (طلبُ المالك ٢٠٢٦-١١-٢٣) ══
+    console.log("\n── ج٢. اختيارُ الفرع من الاستعلامات ──");
+    const k2 = await nexr(K, S.r2, { department: "physiotherapy", openDepartment: true, targetBranchId: 6, fields: { presentingComplaint: "ألم" } });
+    const kWl = await worklistRow(S.sara, K, "physiotherapy");
+    same("ج.٣ **كربلاء تختار المركز** ⟵ القسمُ والطلبُ فيه، والملفُّ أُتيح له، ويظهر لسارة في «معايناتي»",
+      [k2.status, k2.json?.targetBranchId, k2.json?.targetBranchName, k2.json?.accessGranted, (await caseOf(K, "physiotherapy"))?.b,
+        (await reqsOf(K, "physiotherapy")).map((r: any) => r.b), (await accessOf(K)).map((r: any) => r.b), (await pat(K)).p, Boolean(kWl)],
+      [201, 6, "مركز بغداد للعلاج الطبيعي", true, 6, [6], [6], true, true]);
+    const K3 = await mkPatient("عباس", 2, { amp: true });
+    const k3a = await nexr(K3, S.r2, { department: "physiotherapy", openDepartment: true, targetBranchId: 1, fields: { presentingComplaint: "ألم" } });
+    const k3b = await nexr(K3, S.r2, { department: "physiotherapy", openDepartment: true, targetBranchId: 99, fields: { presentingComplaint: "ألم" } });
+    const k3c = await nexr(K3, S.r2, { department: "physiotherapy", openDepartment: true, targetBranchId: "abc", fields: { presentingComplaint: "ألم" } });
+    same("ج.٤ **الفرعُ الذي لا يقدّمه أو المجهولُ أو غيرُ الرقم ⟵ ٤٠٠** ولا شيءَ يُكتب",
+      [k3a.status, k3a.json?.code, k3b.status, k3b.json?.code, k3c.status, k3c.json?.code,
+        await caseOf(K3, "physiotherapy"), (await reqsOf(K3, "physiotherapy")).length, (await accessOf(K3)).length, (await pat(K3)).p],
+      [400, "cross_exam_target_invalid", 400, "cross_exam_target_invalid", 400, "cross_exam_target_invalid", null, 0, 0, false]);
+    const k3d = await nexr(K3, S.r2, { department: "physiotherapy", openDepartment: true, targetBranchId: 3, fields: { presentingComplaint: "ألم" } });
+    same("ج.٥ **وكربلاء تختار ذي قار** ⟵ القسمُ والطلبُ في ذي قار",
+      [k3d.status, (await caseOf(K3, "physiotherapy"))?.b, (await reqsOf(K3, "physiotherapy")).map((r: any) => r.b), (await accessOf(K3)).map((r: any) => r.b)],
+      [201, 3, [3], [3]]);
+    const M = await mkPatient("نور", 2, { physio: true });
+    const m1 = await nexr(M, S.r2, { department: "medical_support", openDepartment: true, targetBranchId: 5,
+      requestedItems: ["full_device"], fields: { supportType: "مسند ركبة" } });
+    same("ج.٦ **كركوك المغلقُ مؤقتاً مردود** ولا قسمَ مساند", [m1.status, m1.json?.code, await caseOf(M, "medical_support")],
+      [400, "cross_exam_target_invalid", null]);
+    const m2 = await nexr(M, S.r2, { department: "medical_support", openDepartment: true, targetBranchId: 1, requestedItems: ["full_device"], fields: { supportType: "مسند ركبة" } });
+    same("ج.٦ب **ومريضُ العلاج الطبيعيّ في كربلاء يختار «بغداد أطراف» للمساند** ⟵ القسمُ والطلبُ والجهازُ هناك والملفُّ أُتيح لها",
+      [m2.status, m2.json?.targetBranchId, (await caseOf(M, "medical_support"))?.b, (await reqsOf(M, "medical_support")).map((r: any) => r.b),
+        (await accessOf(M)).map((r: any) => r.b), (await pat(M)).m],
+      [201, 1, 1, [1], [1], true]);
+    const BG = await mkPatient("سيف", 1, { amp: true });
+    const bg1 = await nexr(BG, S.r1, { department: "physiotherapy", openDepartment: true, targetBranchId: 3, fields: { presentingComplaint: "ألم" } });
+    same("ج.٧ **وبغداد تختار غيرَ فرع مدينتها** (ذي قار بدل المركز) ⟵ هناك",
+      [bg1.status, bg1.json?.targetBranchId, (await caseOf(BG, "physiotherapy"))?.b, (await reqsOf(BG, "physiotherapy")).map((r: any) => r.b)],
+      [201, 3, 3, [3]]);
+    const BD = await mkPatient("حيدر", 1, { amp: true });
+    const bd1 = await nexr(BD, S.r1, { department: "physiotherapy", openDepartment: true, fields: { presentingComplaint: "ألم" } });
+    same("ج.٨ **وبلا اختيارٍ فرعُ المدينة كما كان** (بغداد أطراف ⟵ المركز)", [bd1.status, (await caseOf(BD, "physiotherapy"))?.b], [201, 6]);
+
     // ══ د. الحرّاس ══
     console.log("\n── د. الحرّاس ──");
     const D = await mkPatient("مريم", 3, { amp: true, physio: true });
@@ -289,6 +328,15 @@ async function main() {
       [co1.status, coCase?.status, coCase?.b, (await reqsOf(CO, "physiotherapy")).map((r: any) => r.b), co1.json?.targetBranchId,
         (await accessOf(CO)).map((r: any) => r.b)],
       [201, "active", 3, [3], 3, [3]]);
+    const CO2 = await mkPatient("رقية", 1, { amp: true, physio: true });
+    await q(`UPDATE patient_cases SET status = 'closed', branch_id = 3 WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [CO2]);
+    await q(`UPDATE patients SET is_physiotherapy = false WHERE id = $1`, [CO2]);
+    const co2a = await nexr(CO2, S.r1, { department: "physiotherapy", openDepartment: true, targetBranchId: 6, fields: { presentingComplaint: "ألم" } });
+    const co2b = await nexr(CO2, S.r1, { department: "physiotherapy", openDepartment: true, targetBranchId: 3, fields: { presentingComplaint: "ألم" } });
+    same("و.٥ب **والقسمُ المغلقُ في فرعٍ يقدّمه لا يُنقل باختيارٍ آخر** ⟵ ٤٠٩ باسم فرعه، واختيارُ فرعه يمرّ",
+      [co2a.status, co2a.json?.code, /بايونك ذي قار/.test(co2a.json?.message ?? ""), co2b.status, (await caseOf(CO2, "physiotherapy"))?.b,
+        (await reqsOf(CO2, "physiotherapy")).map((r: any) => r.b)],
+      [409, "department_closed_in_branch", true, 201, 3, [3]]);
     const AD = await mkPatient("كرار", 1, { amp: true });
     await q(`INSERT INTO patient_branch_access (patient_id, branch_id, granted_by_name, note) VALUES ($1, 3, 'اختبار', 'اختبار')`, [AD]);
     const ad1 = await nexr(AD, S.adm0, { department: "physiotherapy", openDepartment: true, fields: { presentingComplaint: "ألم" } });

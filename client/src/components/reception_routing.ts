@@ -46,6 +46,7 @@ import { canCompleteMaintenance, type MaintenanceSessionLike } from "@shared/mai
 import { canCompleteComponentSale, type ComponentSaleSessionLike } from "@shared/component_sale";
 import {
   crossExamDepartments, departmentHomeBranch, crossExamHref, crossExamTargetLine, CROSS_EXAM_LABELS, CROSS_EXAM_ADMIN_CHOOSE_HINT,
+  crossExamTargetOptions, CROSS_EXAM_CHOOSE_TARGET_HINT,
   type BranchFact, type CrossExamDepartment,
 } from "@shared/cross_department_exam";
 
@@ -224,16 +225,17 @@ export function receptionRoutingGroups(p: {
 // ══ **فتحُ القسم الآخر** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢) ══════════════════════════════════════════════════════════
 // «إذا كان أطراف فأضف معاينة علاج طبيعي، وإن كان علاج طبيعي فأضف معاينة أطراف ومساند، وإن كان لديه الاثنان فلا يظهر شيء. عمّم ذلك لكلّ
 // الفروع». فالخيارُ قسمٌ **ليس للمريض** (`crossExamDepartments`)، ويفتح ورقةَ «طلب معاينة جديدة» نفسَها بوضع الفتح (`crossExamHref`)؛
-// ويُخفى حين لا فرعَ في المدينة يقدّمه (`departmentHomeBranch` ⟵ `null` — كربلاء والموصل للعلاج الطبيعيّ)، ويقول «يُرسَل إلى: …» حين
-// يختلف فرعُ القسم عن الفرع النشط. **ولمن يسجّل المرضى وحده** — صلاحيةُ «طلب معاينة جديدة» (`mayRequestNewExam`).
+// ويظهر ما دام فرعٌ مفتوح يقدّم القسم (`crossExamTargetOptions` — **وكربلاء والموصل معه**، طلبُ المالك ٢٠٢٦-١١-٢٣) والفرعُ يُختار في
+// الورقة؛ ويقول «يُرسَل إلى: …» حين يختلف فرعُ المدينة عن الفرع النشط، و«تختار الفرع …» حين لا فرعَ في المدينة. **ولمن يسجّل المرضى وحده** — صلاحيةُ «طلب معاينة جديدة» (`mayRequestNewExam`).
 
 export interface CrossExamChoice {
   dept: CrossExamDepartment;
   label: string;
-  /** «يُرسَل إلى: …» حين يذهب إلى فرعٍ غير النشط. */
+  /** «يُرسَل إلى: …» حين يذهب إلى فرعٍ غير النشط، و«تختار الفرع …» حين لا فرعَ في المدينة. */
   hint: string | null;
   href: string;
-  targetBranchId: number;
+  /** فرعُ المدينة المختارُ مسبقاً — `null`: يُختار في الورقة. */
+  targetBranchId: number | null;
 }
 
 export function receptionCrossExamChoices(
@@ -250,12 +252,14 @@ export function receptionCrossExamChoices(
   const physioBranchIds = new Set(ctx.branches.filter((b) => b.offersPhysio).map((b) => Number(b.id)));
   const out: CrossExamChoice[] = [];
   for (const dept of crossExamDepartments(patient)) {
+    if (crossExamTargetOptions({ dept, branches: ctx.branches, physioBranchIds }).length === 0) continue;
     const target = departmentHomeBranch({ dept, actingBranchId: ctx.actingBranchId, branches: ctx.branches, physioBranchIds });
-    if (target === null) continue;
-    const differs = Number(target) !== Number(ctx.actingBranchId);
+    const differs = target !== null && Number(target) !== Number(ctx.actingBranchId);
     out.push({
       dept, label: CROSS_EXAM_LABELS[dept], targetBranchId: target, href: crossExamHref(patient.id, dept),
-      hint: ctx.adminMustChoose ? CROSS_EXAM_ADMIN_CHOOSE_HINT : differs ? crossExamTargetLine(ctx.branches.find((b) => Number(b.id) === target)?.name) : null,
+      hint: ctx.adminMustChoose ? CROSS_EXAM_ADMIN_CHOOSE_HINT
+        : target === null ? CROSS_EXAM_CHOOSE_TARGET_HINT
+        : differs ? crossExamTargetLine(ctx.branches.find((b) => Number(b.id) === target)?.name) : null,
     });
   }
   return out;

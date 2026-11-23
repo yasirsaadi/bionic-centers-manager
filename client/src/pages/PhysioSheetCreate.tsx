@@ -169,7 +169,7 @@ export default function PhysioSheetCreate({ onBack, existing }: { onBack: () => 
         //  **حفظٌ واحد**: ما تغيّر من الملفّ وطلبُ المعاينة معاً (`new-exam-request`) — فلا يُكتب أحدُهما دون الآخر.
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: "physiotherapy", fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.chosen !== null ? { targetBranchId: crossTarget.chosen } : {}) } : {}),
         }, existing.replacesRequestId));
         const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
         return {
