@@ -1,10 +1,10 @@
 // **تحيّةُ الموظّف اليومية** (§4.dp — طلبُ المالك ٢٠٢٦-١٠-١١): نافذةٌ مرّةً كلَّ يوم بتوقيت بغداد، «صباح الخير» أو «مساء الخير» باسمه وعبارةٌ من
 // المالك، **لا تُغلق إلّا بـ«حسناً»** (لا خارجَها ولا «Esc» ولا «X»). والخادمُ يقرّر هل تظهر وما نصُّها (`/api/greeting`)، و«حسناً» يكتب يومَها
-// على الحساب فلا تعود في اليوم نفسِه ولو من جهازٍ آخر. **وللمالك بدلَها تذكيرُ تغيير العبارات** حين يمضي شهر.
+// على الحساب فلا تعود في اليوم نفسِه ولو من جهازٍ آخر. **ومن ٢٠٢٦-١١-٢٣ تقول إنجازَ صاحبها أمس** (§4.gw) — أرقامُه وحده، ولا صفر؛
+// وبلا إنجازٍ عبارةٌ متناوبة كما كانت. ولا تظهر للمالك، ولا تذكيرَ له (تقاعد).
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Moon, Sparkles, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
@@ -12,6 +12,7 @@ import { useBranchSession } from "@/components/BranchGate";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { weatherFxFor, weatherGreetingLine, type WeatherFx } from "@shared/weather_greeting_fx";
 import { useBranchWeatherState } from "@/components/ClockWeather";
+import { GREETING_QUERY_ROOT, greetingBody } from "@shared/staff_greeting";
 import { WeatherFxLayer, prefersReducedMotion } from "@/components/WeatherFxLayer";
 
 /** ما رُئي في هذه الصفحة — احتياطُ `localStorage` حين لا يُكتب. */
@@ -19,8 +20,13 @@ const FX_PLAYED_THIS_PAGE = new Set<string>();
 
 type Greeting =
   | { show: false }
-  | { show: true; kind: "greeting"; period: "morning" | "evening"; text: string; day?: string; weatherFx?: boolean }
-  | { show: true; kind: "reminder"; days: number; day?: string };
+  | {
+      show: true; kind: "greeting"; period: "morning" | "evening"; text: string; day?: string; weatherFx?: boolean;
+      /** إنجازُ الأمس (§4.gw) — بنودٌ بلا صفر؛ فارغةٌ ⟵ `text` عبارةٌ متناوبة. */
+      salutation?: string; achievements?: string[]; intro?: string; closing?: string;
+      /** سطرُ المالك تحت الإنجاز — والفارغُ لا شيء. */
+      note?: string | null;
+    };
 
 /**
  * **يومُ بغداد كما يراه المستخدم الآن** — يتجدّد عند أوّل لمسةٍ أو ضغطة مفتاح أو عودةٍ إلى التطبيق بعد تغيّر اليوم (مراجعةُ Codex): التطبيقُ المثبَّت
@@ -42,12 +48,11 @@ function useBaghdadDay(): string {
 }
 
 export function DailyGreeting() {
-  const [, navigate] = useLocation();
   const day = useBaghdadDay();
   const qc = useQueryClient();
   //  **والمفتاحُ للحساب أيضاً** (مراجعةُ Codex): جلسةٌ انتهت ودخل غيرُه من الشاشة نفسِها بلا تحميل — فلا يرث جوابَ زميله ولا اسمَه.
   const userId = useBranchSession()?.userId ?? null;
-  const key = ["/api/greeting", userId, day] as const;
+  const key = [GREETING_QUERY_ROOT, userId, day] as const;
   //  **الإغلاقُ يُكتب في ذاكرة الاستعلام لا في حالة المكوّن** (مراجعةُ Codex): صفحاتُ الطباعة تُنزل المكوّنَ ثمّ يُركَّب عند الرجوع، فحالةٌ محلّية
   //  تُنسى وتعود التحيّةُ نفسُها والاستعلامُ لا يتقادم. ومفتاحُه يومُ بغداد — فاليومُ التالي يُسأل عنه الخادمُ من جديد.
   const close = () => qc.setQueryData<Greeting>(key, { show: false });
@@ -79,7 +84,7 @@ export function DailyGreeting() {
     return () => clearTimeout(t);
   }, [weatherSettled, geoReady, weatherKey]);
   const waitingForWeather = !weatherSettled && !weatherWaitOver;
-  const fx: WeatherFx | null = g && g.show && g.kind === "greeting" && g.weatherFx !== false ? weatherFxFor(weather?.kind) : null;
+  const fx: WeatherFx | null = g && g.show && g.weatherFx !== false ? weatherFxFor(weather?.kind) : null;
   const [playing, setPlaying] = useState<WeatherFx | null>(null);
   useEffect(() => {
     if (!fx || !userId) return;
@@ -101,7 +106,7 @@ export function DailyGreeting() {
   }, [fx, userId, day]);
   const layer = playing ? <WeatherFxLayer fx={playing} onDone={() => setPlaying(null)} /> : null;
   if (!g || !g.show) return layer;
-  const done = (then?: () => void) => seen.mutate(g.day, { onSuccess: () => { close(); then?.(); } });
+  const done = () => seen.mutate(g.day, { onSuccess: () => close() });
   const failed = seen.isError && !seen.isPending;
   const failure = failed ? (
     <div className="text-xs text-destructive space-y-1" data-testid="daily-greeting-error">
@@ -110,48 +115,50 @@ export function DailyGreeting() {
     </div>
   ) : null;
   const block = (e: Event) => e.preventDefault();
-  const morning = g.kind === "greeting" && g.period === "morning";
+  const morning = g.period === "morning";
+  //  **أيُّ الجسمين** (`greetingBody` — مختبَرةٌ في `test:staff-greeting`): بنودُ الأمس أو العبارة، وسطرُ المالك في الحالين.
+  const body = greetingBody(g);
   return (
     <>
     {layer}
     <Dialog open onOpenChange={() => { /* لا تُغلق إلّا بالزرّ */ }}>
       <DialogContent dir="rtl" hideClose onPointerDownOutside={block} onInteractOutside={block} onEscapeKeyDown={block}
-        className={`max-w-md text-center ${g.kind === "greeting" ? (morning ? "bg-gradient-to-b from-amber-50 to-white" : "bg-gradient-to-b from-indigo-50 to-white") : ""}`}
+        className={`max-w-md text-center ${morning ? "bg-gradient-to-b from-amber-50 to-white" : "bg-gradient-to-b from-indigo-50 to-white"}`}
         data-testid="daily-greeting">
-        {g.kind === "greeting" ? (
-          <>
-            <div className={`mx-auto grid place-items-center w-14 h-14 rounded-full ${morning ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"}`}>
-              {morning ? <Sun className="w-8 h-8" /> : <Moon className="w-7 h-7" />}
+        <div className={`mx-auto grid place-items-center w-14 h-14 rounded-full ${morning ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"}`}>
+          {morning ? <Sun className="w-8 h-8" /> : <Moon className="w-7 h-7" />}
+        </div>
+        <DialogTitle className="sr-only">{morning ? "صباح الخير" : "مساء الخير"}</DialogTitle>
+        {body.mode === "achievements" ? (
+          //  **إنجازُ الأمس** (§4.gw): التحيّةُ ثمّ البنودُ ثمّ شكرُ دكتور ياسر — والنصُّ الكاملُ للقارئ الآليّ.
+          <DialogDescription asChild>
+            <div className="space-y-2 text-slate-800" data-testid="daily-greeting-text" aria-label={body.label}>
+              <p className="text-lg font-medium">{body.salutation}،</p>
+              <p className="text-sm text-muted-foreground">{body.intro}</p>
+              <ul className="mx-auto w-fit space-y-1 text-[15px] font-semibold text-start" data-testid="daily-greeting-achievements">
+                {body.items.map((a, i) => (
+                  <li key={i} className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${morning ? "bg-amber-500" : "bg-indigo-500"}`} />{a}</li>
+                ))}
+              </ul>
+              <p className="text-[15px] leading-7">{body.closing}</p>
             </div>
-            <DialogTitle className="sr-only">{morning ? "صباح الخير" : "مساء الخير"}</DialogTitle>
-            <DialogDescription asChild>
-              <p className="text-lg leading-9 text-slate-800 font-medium" data-testid="daily-greeting-text">{g.text}</p>
-            </DialogDescription>
-            {fx && weather && (
-              <p className={`mx-auto rounded-lg px-3 py-2 text-[15px] font-semibold ${fx === "dust" || fx === "storm" ? "bg-amber-50 text-amber-800" : "bg-sky-50 text-sky-800"}`}
-                data-testid="daily-greeting-weather">{weatherGreetingLine(fx, weather.city)}</p>
-            )}
-            <Button className="mx-auto min-w-32" disabled={seen.isPending || waitingForWeather} onClick={() => done()} data-testid="daily-greeting-ok">
-              {failed ? "حاول ثانيةً" : "حسناً"}
-            </Button>
-            {failure}
-          </>
+          </DialogDescription>
         ) : (
-          <>
-            <div className="mx-auto grid place-items-center w-14 h-14 rounded-full bg-sky-100 text-sky-700"><Sparkles className="w-7 h-7" /></div>
-            <DialogTitle>حان تغييرُ عبارات الترحيب</DialogTitle>
-            <DialogDescription asChild>
-              <p className="text-sm leading-7 text-slate-700" data-testid="daily-greeting-reminder">
-                مضى {g.days} يوماً على عبارات الترحيب التي تظهر لموظّفيك كلَّ يوم. غيّرها لتبقى جديدةً تُفرحهم، أو أبقِها شهراً آخر من البطاقة نفسِها.
-              </p>
-            </DialogDescription>
-            <div className="flex gap-2 justify-center">
-              <Button disabled={seen.isPending} onClick={() => done(() => navigate("/admin?tab=staff-notifications"))} data-testid="daily-greeting-change">تغييرها الآن</Button>
-              <Button variant="outline" disabled={seen.isPending} onClick={() => done()} data-testid="daily-greeting-later">لاحقاً</Button>
-            </div>
-            {failure}
-          </>
+          <DialogDescription asChild>
+            <p className="text-lg leading-9 text-slate-800 font-medium" data-testid="daily-greeting-text">{body.text}</p>
+          </DialogDescription>
         )}
+        {body.note && (
+          <p className="mx-auto rounded-lg bg-white/70 border px-3 py-2 text-sm leading-6 text-slate-700" data-testid="daily-greeting-note">{body.note}</p>
+        )}
+        {fx && weather && (
+          <p className={`mx-auto rounded-lg px-3 py-2 text-[15px] font-semibold ${fx === "dust" || fx === "storm" ? "bg-amber-50 text-amber-800" : "bg-sky-50 text-sky-800"}`}
+            data-testid="daily-greeting-weather">{weatherGreetingLine(fx, weather.city)}</p>
+        )}
+        <Button className="mx-auto min-w-32" disabled={seen.isPending || waitingForWeather} onClick={() => done()} data-testid="daily-greeting-ok">
+          {failed ? "حاول ثانيةً" : "حسناً"}
+        </Button>
+        {failure}
       </DialogContent>
     </Dialog>
     </>

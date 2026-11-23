@@ -1,20 +1,26 @@
-// **عباراتُ الترحيب اليومية** (§4.dp) — بطاقةُ المسؤول في «تنبيهات الموظفين»: العباراتُ التي تتناوب على موظّفيه كلَّ يوم، وعمرُها، وتغييرُها،
-// و«أبقِها شهراً آخر». والتذكيرُ يصله بعد ثلاثين يوماً في تلغرام وفي نافذةٍ عند دخوله.
+// **عباراتُ الترحيب اليومية** (§4.dp) — بطاقةُ المسؤول في «تنبيهات الموظفين». منذ ٢٠٢٦-١١-٢٣ (§4.gw) تقول التحيّةُ لكلّ موظّفٍ إنجازَه أمس،
+// والعباراتُ هنا **احتياطٌ** لمن لا إنجازَ له؛ و**سطرُ المالك** يظهر للجميع تحت الإنجاز. والتذكيرُ الشهريّ بتغييرها تقاعد.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CloudRain, Plus, Smile, Trash2 } from "lucide-react";
+import { CloudRain, MessageSquareText, Plus, Smile, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { WeatherFxLayer } from "@/components/WeatherFxLayer";
 import { weatherGreetingLine, type WeatherFx } from "@shared/weather_greeting_fx";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { GREETING_MAX_CHARS, GREETINGS_MAX, greetingText } from "@shared/staff_greeting";
+import {
+  EMPTY_YESTERDAY_STATS, GREETING_MAX_CHARS, GREETING_NOTE_MAX_CHARS, GREETINGS_MAX, achievementGreetingText, achievementLines, greetingText,
+} from "@shared/staff_greeting";
 
-interface Config { phrases: string[]; updatedAt: string; updatedByName: string | null; keptAt?: string | null; days: number; due: boolean; weatherFx?: boolean }
+interface Config { phrases: string[]; updatedAt: string; updatedByName: string | null; note?: string | null; weatherFx?: boolean }
+
+/** مثالُ إنجاز الأمس في البطاقة — كما يراه موظّفُ استقبال. */
+const ACHIEVEMENT_EXAMPLE = achievementGreetingText("صباح الخير", "زهراء", achievementLines(["registrations", "payments", "visits"],
+  { ...EMPTY_YESTERDAY_STATS, registrations: 9, payments: 14, paymentsSum: 1_250_000, visits: 23 }));
 
 /** أزرارُ معاينة المؤثّر للمالك — فالتحيّةُ لا تظهر لحسابه (§4.dp)، ويرى هنا ما يراه موظّفوه. */
 const FX_PREVIEW: { fx: WeatherFx; label: string }[] = [
@@ -52,13 +58,22 @@ export default function StaffGreetingsCard() {
   };
   const save = useMutation({
     mutationFn: async () => (await apiRequest("PUT", "/api/admin/greeting", { phrases: rows ?? [] })).json(),
-    onSuccess: (c: Config) => done(c, "حُفظت العبارات — ويُعدّ الشهرُ من اليوم"),
+    onSuccess: (c: Config) => done(c, "حُفظت العبارات"),
     onError: (e) => toast({ title: "تعذّر الحفظ", description: errText(e), variant: "destructive" }),
   });
-  const keep = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/admin/greeting/keep", {})).json(),
-    onSuccess: (c: Config) => done(c, "أُبقيت العبارات شهراً آخر"),
-    onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),
+  //  **سطرُ المالك** (§4.gw): خانةٌ واحدة تُحفظ وحدها — والعباراتُ لا تُمسّ. وما لم يُعدَّل هنا يتبع المحفوظ (جهازٌ آخر حفظ ⟵ يظهر).
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  const noteValue = noteDraft ?? q.data?.note ?? "";
+  const noteDirty = noteDraft !== null && noteDraft.replace(/\s+/g, " ").trim() !== (q.data?.note ?? "");
+  const saveNote = useMutation({
+    mutationFn: async () => (await apiRequest("PUT", "/api/admin/greeting/note", { note: noteValue })).json(),
+    onSuccess: (c: Config) => {
+      qc.setQueryData<Config>(["/api/admin/greeting"], (old) => ({ ...c, weatherFx: c.weatherFx ?? old?.weatherFx }));
+      qc.invalidateQueries({ queryKey: ["/api/greeting"] });
+      setNoteDraft(null);
+      toast({ title: c.note ? "حُفظ السطر — يظهر للجميع تحت إنجاز الأمس" : "مُحي السطر — لا شيء يظهر تحت الإنجاز" });
+    },
+    onError: (e) => toast({ title: "تعذّر الحفظ", description: errText(e), variant: "destructive" }),
   });
   //  **مؤثّرُ الطقس مع التحيّة** (§4.fw): مفتاحٌ للجميع، ومعاينةٌ على هذه الشاشة.
   //  `n` يتزايد مع كلّ ضغطة — فالزرُّ نفسُه مرّتين يعيد المعاينةَ من أوّلها (لمستُه توقف السابقة، والمفتاحُ الجديد يركّب غيرها).
@@ -76,18 +91,30 @@ export default function StaffGreetingsCard() {
   const list = rows ?? [];
   const changed = c ? JSON.stringify(list.map((x) => x.trim()).filter(Boolean)) !== JSON.stringify(c.phrases) : false;
   return (
-    <Card className="p-6 space-y-3" data-testid="staff-greetings-card">
+    <Card className="p-6 space-y-3" dir="rtl" data-testid="staff-greetings-card">
       <div className="flex items-center gap-2 flex-wrap">
         <Smile className="w-5 h-5 text-amber-500" />
-        <h3 className="font-semibold">عبارات الترحيب اليومية</h3>
-        {c && (c.due
-          ? <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-300" data-testid="greetings-due">حان التغيير — مضى {c.days} يوماً</Badge>
-          : <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300" data-testid="greetings-age">مضى {c.days} يوماً من ٣٠</Badge>)}
+        <h3 className="font-semibold">تحيّة الموظّفين اليومية</h3>
       </div>
       <p className="text-sm text-muted-foreground leading-7">
-        تظهر لكلّ موظّفٍ مرّةً كلَّ يوم عند دخوله الأوّل: «صباح الخير» حتى الثانية عشرة ظهراً و«مساء الخير» بعدها، ثمّ اسمُه، ثمّ عبارةٌ من هذه —
-        تتناوب يوماً بعد يوم. وبعد ثلاثين يوماً يصلك تذكيرٌ في تلغرام وعند دخولك لتغييرها.
+        تظهر لكلّ موظّفٍ مرّةً كلَّ يوم عند دخوله الأوّل: «صباح الخير» حتى الثانية عشرة ظهراً و«مساء الخير» بعدها، ثمّ اسمُه، ثمّ <b>إنجازُه أمس</b> من
+        سجلّات النظام — أرقامُه وحده، بلا مقارنةٍ بزملائه — وشكرُك. ومَن لم يُسجَّل له عملٌ أمس (أو كان أمسِ عطلة) يرى بدلَها عبارةً من العبارات أدناه،
+        تتناوب يوماً بعد يوم.
       </p>
+      <p className="text-xs rounded border bg-amber-50/60 p-2 leading-6" data-testid="greeting-achievement-example">مثال: {ACHIEVEMENT_EXAMPLE}</p>
+      {c && (
+        <div className="space-y-1" data-testid="greeting-note-settings">
+          <label htmlFor="greeting-note" className="text-sm font-semibold flex items-center gap-1">
+            <MessageSquareText className="w-4 h-4 text-amber-600" /> سطرٌ منك يظهر للجميع تحت الإنجاز (اختياري)
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            <Input id="greeting-note" className="bg-white flex-1 min-w-[200px]" value={noteValue} maxLength={GREETING_NOTE_MAX_CHARS}
+              placeholder="فارغٌ ⟵ لا يظهر شيء" onChange={(e) => setNoteDraft(e.target.value)} data-testid="greeting-note-input" />
+            <Button size="sm" disabled={!noteDirty || saveNote.isPending} onClick={() => saveNote.mutate()} data-testid="greeting-note-save">حفظ السطر</Button>
+          </div>
+        </div>
+      )}
+      <h4 className="font-semibold text-sm pt-1">العبارات — لمن لا إنجازَ له أمس</h4>
       {q.isLoading && <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>}
       {newerElsewhere && (
         <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs flex items-center gap-2 flex-wrap" data-testid="greetings-newer">
@@ -120,20 +147,17 @@ export default function StaffGreetingsCard() {
           </Button>
         )}
         <Button size="sm" disabled={!changed || save.isPending} onClick={() => save.mutate()} data-testid="greeting-save">حفظ العبارات</Button>
-        {/*  «أبقِها» تُبقي المحفوظ — **فلا تُضغط وفي البطاقة تعديلٌ لم يُحفظ** (مراجعةُ Codex): كانت تمحوه بصمت. احفظه أو تراجع عنه أوّلاً. */}
-        <Button size="sm" variant="ghost" disabled={keep.isPending || dirty} onClick={() => keep.mutate()} data-testid="greeting-keep">أبقِها شهراً آخر</Button>
         {dirty && (
           <Button size="sm" variant="ghost" onClick={() => setRows(base ? [...base] : null)} data-testid="greeting-undo">تراجع عن تعديلي</Button>
         )}
       </div>
       {dirty && (
-        <p className="text-[11px] text-amber-800" data-testid="greeting-unsaved">في البطاقة تعديلٌ لم يُحفظ — احفظه، أو تراجع عنه لتُبقي العباراتِ كما هي.</p>
+        <p className="text-[11px] text-amber-800" data-testid="greeting-unsaved">في العبارات تعديلٌ لم يُحفظ — احفظه، أو تراجع عنه لتُبقيها كما هي.</p>
       )}
       {c && (
         <p className="text-[11px] text-muted-foreground">
           آخرُ تغيير: {new Date(c.updatedAt).toLocaleDateString("ar-IQ", { year: "numeric", month: "short", day: "numeric" })}
           {c.updatedByName ? ` — ${c.updatedByName}` : " — العباراتُ الأولى"}
-          {c.keptAt ? ` · أُبقيت في ${new Date(c.keptAt).toLocaleDateString("ar-IQ", { month: "short", day: "numeric" })}` : ""}
         </p>
       )}
       {c && (

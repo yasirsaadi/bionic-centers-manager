@@ -2645,8 +2645,8 @@ const ADMIN_TABS: readonly string[] = ["users", "management", "backup", "ai-memo
 
 export default function AdminSettings() {
   const { t } = useTranslation();
-  //  **التبويبُ هو `?tab=` في العنوان** — مصدرٌ واحد (§4.dp — مراجعةُ Codex): الضغطُ على تبويبٍ يكتبه في العنوان، و«تغييرها الآن» من تذكير عبارات
-  //  الترحيب يكتبه كذلك، فيفتح «تنبيهات الموظفين» أيّاً كان التبويبُ المفتوح وكيفما فُتح.
+  //  **التبويبُ هو `?tab=` في العنوان** — مصدرٌ واحد (§4.dp — مراجعةُ Codex): الضغطُ على تبويبٍ يكتبه في العنوان، ورابطٌ
+  //  بـ`?tab=` يفتح تبويبَه أيّاً كان التبويبُ المفتوح وكيفما فُتح.
   const [, navigateAdmin] = useLocation();
   //  وقيمةٌ لا تبويبَ لها (رابطٌ قديم أو خطأ في الكتابة) ⟵ «المستخدمون»، لا صفحةٌ فارغة.
   const requestedTab = new URLSearchParams(useSearch()).get("tab");
@@ -3341,7 +3341,7 @@ export default function AdminSettings() {
         </div>
       </div>
 
-      {/*  `?tab=` يفتح تبويباً بعينه — رابطُ تذكير عبارات الترحيب (§4.dp) يفتح «تنبيهات الموظفين». */}
+      {/*  `?tab=` يفتح تبويباً بعينه، وتحديثُ الصفحة يُبقيه. */}
       <Tabs value={adminTab} onValueChange={setAdminTab} className="w-full">
         {/*  ══ شريطُ تبويباتٍ يلتفّ (٢٠٢٦-٠٩-١٩) — شكلٌ لا وظيفة ══════════
             كان `grid-cols-9` على الشاشة المتوسّطة: تسعةُ أعمدةٍ ضيّقة تُقصّ
