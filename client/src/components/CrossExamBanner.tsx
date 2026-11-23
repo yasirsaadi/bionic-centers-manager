@@ -1,21 +1,31 @@
-// **لافتةُ فتح القسم في ورقة «طلب معاينة جديدة»** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢): تقول القسمَ والفرعَ الذي يُرسَل إليه حين يختلف عن
-// الفرع النشط — بالقاعدة نفسِها التي يحسم بها الخادمُ (`departmentHomeBranch`)، فما يُقال هنا هو ما يقع.
+// **لافتةُ فتح القسم في ورقة «طلب معاينة جديدة»** (§4.gv — قرارُ المالك ٢٠٢٦-١١-٢٢): تقول القسمَ والفرعَ الذي يُرسَل إليه — بالقاعدة نفسِها
+// التي يحسم بها الخادمُ (`resolveCrossExamTarget`)، فما يُقال هنا هو ما يقع. **والفرعُ قائمةٌ يختار منها الاستعلامات** (طلبُ المالك
+// ٢٠٢٦-١١-٢٣): الفروعُ المفتوحة التي تقدّم القسم (`crossExamTargetOptions`)، والمختارُ مسبقاً فرعُ المدينة، وبلا فرعٍ فيها (كربلاء والموصل
+// للعلاج الطبيعيّ) لا يُرسَل قبل الاختيار.
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useBranchSession } from "./BranchGate";
 import { crossExamActingBranch, crossExamAdminMustChoose } from "./reception_routing";
 import { usePatientBranchAccess } from "./PatientBranchAccessDialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  crossExamBannerText, crossExamMoveNoteText, CROSS_EXAM_ADMIN_CHOOSE_HINT, departmentHomeBranch, noDepartmentHomeMessage, type CrossExamDepartment,
+  crossExamBannerText, crossExamMoveNoteText, CROSS_EXAM_ADMIN_CHOOSE_HINT, CROSS_EXAM_DEPARTMENT_NAMES, crossExamTargetOptions,
+  departmentHomeBranch, noCrossExamTargetsMessage, noDepartmentHomeMessage, type CrossExamDepartment,
 } from "@shared/cross_department_exam";
 
 type BranchRow = { id: number; name: string; temporarilyClosed?: boolean | null; offersPhysio?: boolean };
 
 export function useCrossExamTarget(dept: CrossExamDepartment, patient: { id?: number | null; branchId?: number | null }, enabled: boolean) {
   const session = useBranchSession();
+  //  **اختيارُ الاستعلامات** — `null` ⟵ فرعُ المدينة المختارُ مسبقاً.
+  const [chosen, setChosen] = useState<number | null>(null);
   const { data: branches } = useQuery<BranchRow[]>({ queryKey: ["/api/branches"], enabled });
   //  **فروعُ الملفّ** — فرعُ المسؤول المختار يُحسب إن وصل الملفَّ بإتاحة، كما يحسمه الخادم (`resolveActingBranchId`). المفتاحُ مفتاحُ رأس الملفّ.
   const { data: access } = usePatientBranchAccess(Number(patient.id ?? 0), enabled && Boolean(patient.id));
-  const none = { ready: false, targetBranchId: null as number | null, targetName: null as string | null, differs: false, adminMustChoose: false };
+  const none = {
+    ready: false, targetBranchId: null as number | null, targetName: null as string | null, differs: false, adminMustChoose: false,
+    options: [] as { id: number; name: string }[], chosen: null as number | null, setChosen,
+  };
   if (!enabled) return none;
   const shared = (access?.access ?? []).map((a) => Number(a.branchId));
   if (session?.isAdmin && patient.id && !access) return none;
@@ -23,10 +33,14 @@ export function useCrossExamTarget(dept: CrossExamDepartment, patient: { id?: nu
   if (crossExamAdminMustChoose(session, patient, shared)) return { ...none, ready: true, adminMustChoose: true };
   if (!branches || branches.length === 0) return none;
   const physioBranchIds = new Set(branches.filter((b) => b.offersPhysio).map((b) => Number(b.id)));
-  const target = departmentHomeBranch({ dept, actingBranchId: acting, branches, physioBranchIds });
+  const options = crossExamTargetOptions({ dept, branches, physioBranchIds }).map((b) => ({ id: Number(b.id), name: b.name }));
+  //  المختارُ من القائمة وحدها — فإن خرج منها (أُغلق الفرع) عاد الاختيارُ إلى فرع المدينة.
+  const picked = chosen !== null && options.some((o) => o.id === chosen) ? chosen : null;
+  const target = picked ?? departmentHomeBranch({ dept, actingBranchId: acting, branches, physioBranchIds });
   return {
     ready: true, adminMustChoose: false, targetBranchId: target, differs: target !== null && target !== acting,
     targetName: target === null ? null : branches.find((b) => Number(b.id) === target)?.name ?? null,
+    options, chosen: picked, setChosen,
   };
 }
 
@@ -39,16 +53,34 @@ export function CrossExamBanner({ dept, target }: { dept: CrossExamDepartment; t
       </div>
     );
   }
-  if (target.targetBranchId === null) {
+  if (target.options.length === 0) {
     return (
       <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800" data-testid="cross-exam-no-home">
-        {noDepartmentHomeMessage(dept)}
+        {noCrossExamTargetsMessage(dept)}
       </div>
     );
   }
+  const missing = target.targetBranchId === null;
   return (
-    <div className="rounded-lg border border-sky-300 bg-sky-50 p-3 text-sm font-medium text-sky-900" data-testid="cross-exam-banner">
-      {crossExamBannerText(dept, target.targetName, target.differs)}
+    <div className={`rounded-lg border p-3 text-sm font-medium space-y-2 ${missing ? "border-amber-300 bg-amber-50 text-amber-900" : "border-sky-300 bg-sky-50 text-sky-900"}`}
+      data-testid="cross-exam-banner">
+      <div>
+        {missing ? noDepartmentHomeMessage(dept) : crossExamBannerText(dept, target.targetName, target.differs)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>يُرسَل إلى:</span>
+        <Select value={target.targetBranchId === null ? "" : String(target.targetBranchId)} onValueChange={(v) => target.setChosen(Number(v))}>
+          <SelectTrigger className="h-9 w-auto min-w-[14rem] bg-white" data-testid="cross-exam-target"
+            aria-label={`الفرع الذي يُرسَل إليه قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]}`}>
+            <SelectValue placeholder="اختر الفرع" />
+          </SelectTrigger>
+          <SelectContent>
+            {target.options.map((o) => (
+              <SelectItem key={o.id} value={String(o.id)} data-testid={`cross-exam-target-${o.id}`}>{o.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     </div>
   );
 }

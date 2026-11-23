@@ -8,6 +8,7 @@
 // (`departmentHomeBranch`) — المركزُ للعلاج الطبيعيّ، و«بغداد أطراف» للأجهزة — والفرعُ النشط إن كان يقدّمه.
 import { cityForBranchName } from "./weather";
 import { isPhysioCenterName } from "./cash_book";
+import { sortBranchesForDisplay } from "./branch_order";
 
 export type CrossExamDepartment = "physiotherapy" | "prosthetic" | "medical_support";
 
@@ -71,6 +72,45 @@ export function departmentHomeBranch(p: {
   return same.length === 1 ? Number(same[0].id) : null;
 }
 
+// ══ **الاستعلاماتُ يختار الفرعَ المحوَّل إليه** (طلبُ المالك ٢٠٢٦-١١-٢٣) ══════════════════════════════════════════════════
+//  «الميزة … لم تظهر عند كربلاء والموصل … هل ممكن إظهارها لهم مع البقية وجعل إمكانية التحويل باختيار الفرع الذي سيحول له من موظف
+//  الاستعلامات». فالخيارُ يظهر ما دام فرعٌ مفتوح يقدّم القسم (`crossExamTargetOptions`)، والموظّفُ يختار منها في الورقة، والمختارُ
+//  مسبقاً فرعُ المدينة (`departmentHomeBranch`) — فلا يتغيّر شيءٌ على من لم يغيّره؛ وبلا فرعٍ في المدينة (كربلاء والموصل) يُختار قبل الإرسال.
+
+/** الفروعُ التي يُرسَل إليها القسم — المفتوحةُ التي تقدّمه، بترتيب العرض الواحد. */
+export function crossExamTargetOptions<T extends BranchFact>(p: {
+  dept: CrossExamDepartment; branches: readonly T[]; physioBranchIds: ReadonlySet<number>;
+}): T[] {
+  return sortBranchesForDisplay(p.branches.filter((b) => branchOffersDepartment(b, p.dept, p.physioBranchIds)));
+}
+
+/**
+ * **فرعُ الإرسال** — المختارُ إن قدّم القسمَ وكان مفتوحاً (وإلّا `invalid`)، وبلا اختيارٍ فرعُ المدينة (`departmentHomeBranch`) أو `null`.
+ * قاعدةٌ واحدة تقرؤها الورقةُ والخادم.
+ */
+export function resolveCrossExamTarget(p: {
+  dept: CrossExamDepartment;
+  actingBranchId: number | null | undefined;
+  chosenBranchId: number | null | undefined;
+  branches: readonly BranchFact[];
+  physioBranchIds: ReadonlySet<number>;
+}): { target: number | null; invalid: boolean } {
+  if (p.chosenBranchId != null) {
+    const b = p.branches.find((x) => Number(x.id) === Number(p.chosenBranchId));
+    return b && branchOffersDepartment(b, p.dept, p.physioBranchIds)
+      ? { target: Number(b.id), invalid: false } : { target: null, invalid: true };
+  }
+  return { target: departmentHomeBranch(p), invalid: false };
+}
+
+/** سطرُ الخيار حين لا فرعَ في المدينة يقدّمه — يُختار في الورقة. */
+export const CROSS_EXAM_CHOOSE_TARGET_HINT = "تختار الفرع الذي يُرسَل إليه في الورقة";
+
+/** رسالةُ الخادم حين يُختار فرعٌ لا يقدّم القسم أو مغلقٌ مؤقتاً. */
+export function invalidCrossExamTargetMessage(dept: CrossExamDepartment): string {
+  return `الفرع المختار لا يقدّم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} أو مغلق مؤقتاً — اختر فرعاً من القائمة`;
+}
+
 /** رابطُ ورقة «طلب معاينة جديدة» لفتح القسم — الورقةُ نفسُها (§4.el)، و`open=1` يقول للخادم «افتح قسماً ليس للمريض». */
 export function crossExamHref(patientId: number, dept: CrossExamDepartment): string {
   return `/patients/${patientId}/new-exam?dept=${dept}&open=1`;
@@ -95,9 +135,14 @@ export function crossExamBannerText(dept: CrossExamDepartment, targetBranchName:
     + (differs && targetBranchName ? ` — يُرسَل إلى: ${targetBranchName}، ويُتاح له ملفُّ المريض` : "");
 }
 
-/** رسالةُ الخادم حين لا فرعَ يقدّم القسم. */
+/** رسالةُ الخادم والورقة حين لا فرعَ مختار ولا فرعَ في المدينة يقدّم القسم — يُختار الفرع (طلبُ المالك ٢٠٢٦-١١-٢٣). */
 export function noDepartmentHomeMessage(dept: CrossExamDepartment): string {
-  return `لا يوجد فرعٌ في هذه المدينة يقدّم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} — لا يمكن فتح القسم من هنا`;
+  return `لا يوجد في هذه المدينة فرعٌ يقدّم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} — اختر الفرع الذي يُرسَل إليه المريض`;
+}
+
+/** رسالةُ الورقة والخادم حين لا فرعَ مفتوح في أيّ مدينة يقدّم القسم. */
+export function noCrossExamTargetsMessage(dept: CrossExamDepartment): string {
+  return `لا يوجد فرعٌ مفتوح يقدّم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} — لا يمكن فتح القسم من هنا`;
 }
 
 /** ما تقرؤه الورقةُ من رابطها: `open=1` وحده يعني «افتح القسم» — عكسُ `crossExamHref`. (و`parseNewExamQuery` للتحويل كما هو.) */

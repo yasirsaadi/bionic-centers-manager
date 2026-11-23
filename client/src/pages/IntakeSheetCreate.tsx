@@ -149,7 +149,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
     ? branches.find((b) => b.id === f.branchId)?.name
     : (session?.branchName || branches.find((b) => b.id === (session?.branchId ?? f.branchId))?.name);
 
-  //  **فتحُ القسم في فرعه** (§4.gv) — يقول الفرعَ قبل الإرسال، ويُمنع الإرسالُ حين لا فرعَ في المدينة.
+  //  **فتحُ القسم في فرعه** (§4.gv) — يقول الفرعَ قبل الإرسال ويختاره الاستعلامات من قائمة، ويُمنع الإرسالُ حتى يُختار (كربلاء والموصل).
   const openMode = Boolean(existing?.openDepartment);
   const crossTarget = useCrossExamTarget(existing?.department ?? "prosthetic", (existing?.patient ?? {}) as { branchId?: number | null }, openMode);
   const noCrossHome = openMode && crossTarget.ready && (crossTarget.targetBranchId === null || crossTarget.adminMustChoose);
@@ -176,7 +176,7 @@ export default function IntakeSheetCreate({ onBack, existing }: { onBack: () => 
         const res = await apiRequest("POST", `/api/patients/${existing.patient.id}/new-exam-request`, withReplaces({
           department: dep, requestedItems: values.requestedItems,
           fields: changedSheetValues(patientFieldsOf(opened), patientFieldsOf(f)),
-          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true } : {}),
+          ...(sharedPhone ? { sharedPhone } : {}), ...(existing.openDepartment ? { openDepartment: true, ...(crossTarget.chosen !== null ? { targetBranchId: crossTarget.chosen } : {}) } : {}),
         }, existing.replacesRequestId));
         const body = existing.replacesRequestId || existing.openDepartment ? await res.json().catch(() => null) : null;
         return {

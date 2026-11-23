@@ -9,7 +9,8 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { grantBranchAccessTx } from "./branch_access";
 import {
-  departmentHomeBranch, branchOffersDepartment, crossExamDepartments, CROSS_EXAM_DEPARTMENT_NAMES, type BranchFact, type CrossExamDepartment,
+  departmentHomeBranch, branchOffersDepartment, crossExamDepartments, resolveCrossExamTarget, invalidCrossExamTargetMessage,
+  CROSS_EXAM_DEPARTMENT_NAMES, type BranchFact, type CrossExamDepartment,
 } from "@shared/cross_department_exam";
 
 type Executor = { execute: (q: any) => Promise<any> };
@@ -138,18 +139,33 @@ export async function openDepartmentState(ex: Executor, patientId: number, dept:
 
 /**
  * **فرعُ فتح القسم** — القسمُ المغلقُ يُعاد في فرعه إن كان يقدّمه (فالطلبُ والجهازُ معه، لا قسمٌ في فرعٍ وطلبُه في آخر)، وإلّا رُدّ: لا يُنقل
- * قسمٌ قائم. ولا قسمَ ⟵ فرعُ القسم في مدينة فرع الحركة (`departmentHomeBranch`)، و`null` ⟵ لا فرعَ.
+ * قسمٌ قائم؛ **والفرعُ المختارُ غيرُه يُردّ باسم فرعه** فيختاره الموظّف. ولا قسمَ ⟵ **الفرعُ الذي اختاره الاستعلامات** إن قدّم القسمَ وكان
+ * مفتوحاً (طلبُ المالك ٢٠٢٦-١١-٢٣ — وإلّا ٤٠٠)، وبلا اختيارٍ فرعُ القسم في مدينة فرع الحركة (`departmentHomeBranch`)، و`null` ⟵ لا فرعَ.
  */
 export async function openDepartmentTarget(
   ex: Executor | undefined, dept: CrossExamDepartment, actingBranchId: number | null, closedCase: { branchId: number | null } | null,
+  chosenBranchId: number | null = null,
 ): Promise<{ target: number | null; name: string | null; error?: OpenDepartmentError }> {
-  if (!closedCase) return departmentHomeFor(ex, dept, actingBranchId);
   const facts = await loadBranchFacts(ex);
+  const nameOf = (id: number | null) => (id === null ? null : facts.branches.find((x) => x.id === id)?.name ?? null);
+  if (!closedCase) {
+    const r = resolveCrossExamTarget({ dept, actingBranchId, chosenBranchId, ...facts });
+    if (r.invalid) {
+      return { target: null, name: null, error: new OpenDepartmentError(invalidCrossExamTargetMessage(dept), 400, "cross_exam_target_invalid") };
+    }
+    return { target: r.target, name: nameOf(r.target) };
+  }
   const b = closedCase.branchId == null ? null : facts.branches.find((x) => x.id === closedCase.branchId) ?? null;
   if (!b || !branchOffersDepartment(b, dept, facts.physioBranchIds)) {
     return { target: null, name: null, error: new OpenDepartmentError(
       `للمريض قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} مغلق في ${b?.name ?? "فرعٍ آخر"} لا يقدّمه — لا يُفتح من «سبب الحضور»؛ راجع المسؤول`,
       409, "department_closed_elsewhere",
+    ) };
+  }
+  if (chosenBranchId != null && Number(chosenBranchId) !== b.id) {
+    return { target: null, name: null, error: new OpenDepartmentError(
+      `للمريض قسم ${CROSS_EXAM_DEPARTMENT_NAMES[dept]} مغلق في ${b.name} — يُعاد فتحه فيه؛ اختر «${b.name}»`,
+      409, "department_closed_in_branch",
     ) };
   }
   return { target: b.id, name: b.name };
