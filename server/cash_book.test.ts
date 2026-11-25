@@ -21,6 +21,7 @@ import { createHash } from "crypto";
 import {
   branchCashConfig, ratioAmount, dayNameOf, canWriteDay, drBoxAccountLabel, packSheetPages, distinctNoteParts,
   RESERVES_START, drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine, DR_RATIO_RETIRED_ERROR,
+  pickCashBook, missingCashBookMessage,
 } from "@shared/cash_book";
 import { reserveBoxes, cashBookPeriod } from "./cash_book/store";
 import { financialLedger } from "./ai/tools/audit";
@@ -174,6 +175,11 @@ async function main() {
     same("أ٣. **والمسؤولُ يختار الفرع** — بلا فرع ٤٠٠، وبفرعٍ ٢٠٠",
       [(await http("GET", `/api/cash-book?book=devices`, { ...S.admin, branchId: 0 })).status, (await sheet(S.admin, "devices", TODAY, BGD)).status], [400, 200]);
     same("أ٤. **وكربلاء بلا دفتر علاج طبيعي** — ٤٠٠", (await sheet(S.accKrb, "physio")).status, 400);
+    {
+      const kp = await sheet(S.accKrb, "physio");
+      same("أ٤ب. **والرسالةُ باسم الدفتر المطلوب** (واقعةُ المركز ٢٠٢٦-١١-٢٥ — قالت «بلا دفتر علاج طبيعي» لدفتر الأطراف)",
+        [kp.body?.error, missingCashBookMessage("devices")], ["هذا الفرع بلا دفتر «علاج طبيعي»", "هذا الفرع بلا دفتر «أطراف ومساند»"]);
+    }
 
     console.log("\n── ب. الرصيد الافتتاحيّ ──");
     const s0 = await sheet(S.acc);
@@ -734,6 +740,14 @@ async function main() {
     }), [[2, 20, null, false], [2, 10, 10, false], [1, 10, null, true], [1, 10, null, false], [1, null, null, false]]);
     same("ط١ب. الدفترُ الافتتاحيّ — ذي قار على «علاج طبيعي» والبقيّة على الأطراف", ["بايونك بغداد", "بايونك ذي قار", "الوارث كربلاء", "بايونك الموصل", "بايونك كركوك"]
       .map((n) => branchCashConfig(n).defaultBook), ["devices", "physio", "devices", "devices", "devices"]);
+    {
+      const centre = branchCashConfig("مركز بغداد للعلاج الطبيعي");
+      same("ط١ج. **الدفترُ الذي تبقى عليه الصفحة** (واقعةُ ٢٠٢٦-١١-٢٥): من «بغداد أطراف» إلى المركز ⟵ «علاج طبيعي» لا «أطراف ومساند» · الحاليُّ إن كان للفرع · ومن ذي قار إلى كربلاء ⟵ الأطراف",
+        [pickCashBook("devices", centre), pickCashBook("physio", centre), pickCashBook(null, centre),
+          pickCashBook("physio", branchCashConfig("بايونك ذي قار")), pickCashBook("physio", branchCashConfig("الوارث كربلاء")),
+          pickCashBook("devices", { books: ["physio"], defaultBook: "devices" })],
+        ["physio", "physio", "physio", "physio", "devices", "physio"]);
+    }
     //  تقطيعُ ورقة الطباعة بالارتفاع (شكوى «ورقة إضافية»): سطورٌ بارتفاع ٣٠، صفحةٌ وسطى ٦٠٠ والأخيرة ٥٤٠ بعد المجموع والمربّعين.
     const thirty = (n: number) => Array(n).fill(30);
     same("ط٥. **ما يتّسع في صفحةٍ واحدة يبقى فيها** — ١٨ سطراً (٥٤٠) ورقةٌ واحدة، لا ١٤ ثمّ ٤ كالحدّ الثابت القديم",
