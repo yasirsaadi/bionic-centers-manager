@@ -12,7 +12,7 @@ import { logAudit } from "../accounting/ledger";
 import { getSession, type BranchSession } from "../sessions_module/permissions";
 import { notifyReserveWithdrawalDecided, notifyReserveWithdrawalPending } from "../staff_telegram/notify";
 import { baghdadTodayYmd } from "@shared/visit_date";
-import { CASH_BOOK_LABELS, RESERVE_LABELS, canWriteCashBook, isCashBook, parseAmount, type CashBook, type ReserveKey } from "@shared/cash_book";
+import { CASH_BOOK_LABELS, RESERVE_LABELS, canWriteCashBook, isCashBook, parseAmount, missingCashBookMessage, type CashBook, type ReserveKey } from "@shared/cash_book";
 import {
   PURPOSE_ERROR, PURPOSE_MAX, PURPOSE_MIN, RESERVE_WITHDRAWAL_STATUS_LABELS, amountInArabicWords, balanceAfter,
   canRequestReserveWithdrawal, reserveOf, type ReserveWithdrawalStatus,
@@ -93,7 +93,7 @@ export function registerReserveWithdrawalRoutes(app: Express, isAuthenticated: a
     try {
       const b = await cash.branchConfigOf(branchId);
       if (!b) return res.status(404).json({ error: "الفرع غير موجود" });
-      if (!b.config.books.includes(book)) return res.status(400).json({ error: "هذا الفرع بلا دفتر علاج طبيعي" });
+      if (!b.config.books.includes(book)) return res.status(400).json({ error: missingCashBookMessage(book) });
       const today = baghdadTodayYmd();
       const balance = await store.reserveBalance(branchId, book, reserve, today);
       if (balance == null) return res.status(409).json({ error: `${RESERVE_LABELS[reserve].box} لم تبدأ في هذا الدفتر بعد` });

@@ -165,6 +165,20 @@ export function branchCashConfig(branchName: string | null | undefined): BranchC
   return { books: ["devices"], drRatioPct: null, hospitalRatioPct: null, hasAtabahRatio: false, defaultBook: "devices" };
 }
 
+/**
+ * **الدفترُ الذي تبقى عليه الصفحة** (واقعةُ ٢٠٢٦-١١-٢٥: «مركز بغداد للعلاج الطبيعي» فتح على «أطراف ومساند» وقال «بلا دفتر»): الحاليُّ إن كان
+ * للفرع، وإلّا دفترُ الفرع الافتتاحيّ، وإلّا أوّلُ دفاتره — **لا «أطراف ومساند» ثابتاً**، فالمركزُ لا دفترَ أطرافٍ له.
+ */
+export function pickCashBook(current: CashBook | null, cfg: Pick<BranchCashConfig, "books" | "defaultBook">): CashBook {
+  if (current && cfg.books.includes(current)) return current;
+  return cfg.books.includes(cfg.defaultBook) ? cfg.defaultBook : cfg.books[0];
+}
+
+/** رسالةُ دفترٍ ليس للفرع — باسم الدفتر المطلوب، لا «علاج طبيعي» دائماً. */
+export function missingCashBookMessage(book: CashBook): string {
+  return `هذا الفرع بلا دفتر «${CASH_BOOK_LABELS[book]}»`;
+}
+
 /** النسبةُ من وارد الدفتر — بالدينار الصحيح، والنصفُ يُجبَر للأعلى. */
 export function ratioAmount(income: number, pct: number | null): number {
   if (!pct || !Number.isFinite(income) || income <= 0) return 0;

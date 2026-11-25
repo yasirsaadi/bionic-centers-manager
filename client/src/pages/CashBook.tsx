@@ -15,7 +15,7 @@ import { cashRowNote, cashCategoryLabel, drBoxLineText } from "@/lib/cash_book_t
 import { ChevronRight, ChevronLeft, Pencil, Trash2, RefreshCw, Printer, MessageSquareWarning, Settings2 } from "lucide-react";
 import {
   type CashBook as Book, CASH_BOOK_LABELS, OUTFLOW_LABELS, INCOME_OTHER_LABEL, dayNameOf, branchCashConfig,
-  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, type ReserveKey, DR_BOX_WITHDRAWAL_LABEL, drRatioApplies,
+  RESERVE_LABELS, RESERVE_WITHDRAW_KIND, type ReserveKey, DR_BOX_WITHDRAWAL_LABEL, drRatioApplies, pickCashBook,
 } from "@shared/cash_book";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { RequestCorrectionDialog, CorrectionRequestsPanel, type CorrectionTarget } from "@/components/MoneyCorrection";
@@ -104,9 +104,11 @@ export default function CashBook() {
   const [day, setDay] = useState(today);
 
   const key = ["/api/cash-book", branchId, book, day];
+  //  ولا يُطلَب دفترٌ ليس للفرع (لحظةَ تبديل الفرع قبل أن يُردّ الاختيار) — فلا ٤٠٠ ولا «بلا دفتر» يومض.
+  const branchBooks = configBranchName ? branchCashConfig(configBranchName).books : null;
   const q = useQuery<Sheet>({
     queryKey: key,
-    enabled: Boolean(branchId && book),
+    enabled: Boolean(branchId && book && (!branchBooks || branchBooks.includes(book))),
     //  **الورقةُ لا تختفي بين يومٍ ويوم** (ملاحظةُ المالك ٢٠٢٦-١٠-٠٧: «ليست ناعمة، وتختفي المعلومات ببياض»): تبقى السابقةُ
     //  باهتةً مقفلةً حتى تصل الجديدة، بدل «جارٍ التحميل» على صفحةٍ بيضاء.
     placeholderData: keepPreviousData,
@@ -122,7 +124,13 @@ export default function CashBook() {
   //  من فرع الصفحة نفسِه لا من الورقة المعروضة — فالورقةُ الباهتةُ لفرعٍ سابق لا تردّ «علاج طبيعي» إلى الأطراف.
   const books: Book[] = configBranchName ? branchCashConfig(configBranchName).books
     : (sheet && !q.isPlaceholderData ? sheet.branch.config.books : ["devices"]);
-  useEffect(() => { if (book && !books.includes(book)) setBook("devices"); }, [books.join(","), book]);
+  //  **ولا يُردّ إلى «أطراف ومساند» ثابتاً** (واقعةُ ٢٠٢٦-١١-٢٥): مركزُ العلاج الطبيعيّ دفترُه الوحيد «علاج طبيعي» — فيُردّ إلى دفتر الفرع
+  //  (`pickCashBook`). وكان التبديلُ من «بغداد أطراف» إلى المركز يسابق الافتتاحيَّ فيغلبه «أطراف ومساند» ويقول «بلا دفتر».
+  const bookCfg = configBranchName ? branchCashConfig(configBranchName)
+    : { books, defaultBook: books[0] };
+  useEffect(() => {
+    if (book && !books.includes(book)) setBook(pickCashBook(book, bookCfg));
+  }, [books.join(","), book]);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["/api/cash-book"] });
@@ -166,7 +174,7 @@ export default function CashBook() {
                 <SelectTrigger className="w-40" data-testid="cash-book-select"><SelectValue /></SelectTrigger>
                 <SelectContent>{books.map((b) => <SelectItem key={b} value={b}>{CASH_BOOK_LABELS[b]}</SelectItem>)}</SelectContent>
               </Select>
-            ) : <span className="font-semibold h-9 flex items-center">{CASH_BOOK_LABELS.devices}</span>}
+            ) : <span className="font-semibold h-9 flex items-center" data-testid="cash-book-single">{CASH_BOOK_LABELS[books[0]]}</span>}
           </label>
           <div className="grid gap-1">
             <span className="text-muted-foreground">اليوم</span>

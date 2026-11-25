@@ -22,7 +22,7 @@ import {
   type CashBook, type CashEntryKind, type OutflowKind, BOOK_EXPENSE_SECTION, HOSPITAL_RATIO_CATEGORY, ATABAH_RATIO_CATEGORY,
   branchCashConfig, ratioAmount, dayTotals, ratioBox, distinctNoteParts, type BranchCashConfig,
   drRatioApplies, reserveStartOf, reserveBox, monthlyTargetLine, RESERVE_KEYS, RESERVE_CATEGORY, RESERVE_WITHDRAW_KIND, RESERVES_START,
-  type ReserveKey,
+  type ReserveKey, missingCashBookMessage,
 } from "@shared/cash_book";
 
 export class CashBookError extends Error {
@@ -238,7 +238,7 @@ export async function getSheet(branchId: number, book: CashBook, day: string) {
   const b = await branchConfigOf(branchId);
   if (!b) throw new CashBookError(404, "الفرع غير موجود");
   const cfg = b.config;
-  if (!cfg.books.includes(book)) throw new CashBookError(400, "هذا الفرع بلا دفتر علاج طبيعي");
+  if (!cfg.books.includes(book)) throw new CashBookError(400, missingCashBookMessage(book));
   const opening = await getOpening(branchId, book);
   const next = addDays(day, 1);
   const { start, endExclusive } = baghdadDayBounds(day, day);

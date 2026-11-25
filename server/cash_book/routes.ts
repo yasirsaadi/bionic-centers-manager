@@ -16,7 +16,7 @@ import { baghdadTodayYmd } from "@shared/visit_date";
 import {
   type CashBook, ATABAH_RATIO_CATEGORY, HOSPITAL_RATIO_CATEGORY, canWriteCashBook, canWriteDay, isCashBook, isYmd, parseAmount,
   RESERVE_KEYS, RESERVE_LABELS, RETIRED_EXPENSE_CATEGORIES, RETIRED_CATEGORY_ERROR, reserveOfWithdrawKind, reserveOfCategory, reserveStartOf, RESERVES_START, type ReserveKey,
-  DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL, DR_BOX_WITHDRAWAL_NOTE_ERROR, DR_RATIO_RETIRED_ERROR, drRatioApplies,
+  DR_BOX_WITHDRAWAL_CATEGORY, DR_BOX_WITHDRAWAL_LABEL, DR_BOX_WITHDRAWAL_NOTE_ERROR, DR_RATIO_RETIRED_ERROR, drRatioApplies, missingCashBookMessage,
 } from "@shared/cash_book";
 import * as store from "./store";
 import { addDrBoxExpense, drBoxLinesForDay } from "./dr_box";
@@ -83,7 +83,7 @@ export function registerCashBookRoutes(app: Express, isAuthenticated: any) {
     if (!isCashBook(bookRaw)) { res.status(400).json({ error: "اختر الدفتر" }); return null; }
     const b = await store.branchConfigOf(branchId);
     if (!b) { res.status(404).json({ error: "الفرع غير موجود" }); return null; }
-    if (!b.config.books.includes(bookRaw)) { res.status(400).json({ error: "هذا الفرع بلا دفتر علاج طبيعي" }); return null; }
+    if (!b.config.books.includes(bookRaw)) { res.status(400).json({ error: missingCashBookMessage(bookRaw as CashBook) }); return null; }
     return { s, branchId, book: bookRaw as CashBook, config: b.config };
   }
 
