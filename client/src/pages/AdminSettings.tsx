@@ -2731,6 +2731,7 @@ export default function AdminSettings() {
     canDryNeedle: false,
     //  «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — كالإبر الجافة: خارجَ قوالب الأدوار، فتبديلُ الدور لا يشعله ولا يطفئه.
     canBackdateVisits: false,
+    canViewTodaySummary: false,
     canRequestReserveWithdrawal: false,
     canRequestRefund: false,
     medicalSpecialties: [] as string[],
@@ -2959,6 +2960,7 @@ export default function AdminSettings() {
       canSupervisePhysio: false,
       canDryNeedle: false,
       canBackdateVisits: false,
+      canViewTodaySummary: false,
       canRequestReserveWithdrawal: false,
       canRequestRefund: false,
       medicalSpecialties: [] as string[],
@@ -3017,6 +3019,7 @@ export default function AdminSettings() {
       canSupervisePhysio: (user as any).canSupervisePhysio ?? false,
       canDryNeedle: (user as any).canDryNeedle ?? false,
       canBackdateVisits: (user as any).canBackdateVisits ?? false,
+      canViewTodaySummary: (user as any).canViewTodaySummary ?? false,
       canRequestReserveWithdrawal: (user as any).canRequestReserveWithdrawal ?? false,
       canRequestRefund: (user as any).canRequestRefund ?? false,
       medicalSpecialties: Array.isArray((user as any).medicalSpecialties)
@@ -4448,6 +4451,21 @@ export default function AdminSettings() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         بلا هذا المفتاح يسجّل الموظف الزيارة أو يعدّل تاريخها حتى ٣ أيام قبل اليوم فقط، وما هو أقدم للمسؤول العام.
+                      </p>
+                    </div>
+                    {/* «ملخص مرضى اليوم» (ترحيل ١٩٧، §4.gy) — قرارُ المالك: هو يحدّد مَن يراها. والمبالغُ فيها لمن يملك «عرض المدفوعات» وحده. */}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="canViewTodaySummary"
+                          checked={userFormData.canViewTodaySummary}
+                          onCheckedChange={(checked) => setUserFormData(prev => ({ ...prev, canViewTodaySummary: checked }))}
+                          data-testid="switch-canViewTodaySummary"
+                        />
+                        <Label htmlFor="canViewTodaySummary" className="text-sm">ملخص مرضى اليوم</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        يرى الموظف صفحة «ملخص مرضى اليوم» لفرعه: مَن حضر ولماذا وما جرى له وحالته. والمبالغ فيها لمن يملك «عرض المدفوعات» وحده.
                       </p>
                     </div>
                     {/* «طلب سحب من القاصات» (ترحيل ١٨٩، §4.fy) — يطلب ولا يسحب: السحبُ يُكتب بعد اعتماد المسؤول. */}

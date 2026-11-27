@@ -38,9 +38,12 @@ export default function NewExamRequest() {
   }
   //  `key`: ورقةٌ لكلّ (مريض، قسم، طلبٍ يُستبدَل) — فلا تبقى حالُ ورقةٍ مفتوحة إن تبدّل الرابط.
   const banner = replacesRequestId ? (
-    <div className="max-w-4xl mx-auto mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-900"
-      dir="rtl" data-testid="new-exam-transfer-banner">
-      {transferBannerText(from)}
+    //  الغلافُ يوسّط بلا حشوة، والحشوةُ في الصندوق داخله (حارسُ `test:page-padding` ٣).
+    <div className="max-w-4xl mx-auto mt-2">
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-900"
+        dir="rtl" data-testid="new-exam-transfer-banner">
+        {transferBannerText(from)}
+      </div>
     </div>
   ) : null;
   if (dept === "physiotherapy") {

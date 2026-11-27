@@ -73,6 +73,7 @@ const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "/notifications": "التنبيهات",
   "/reports": "التقارير",
   "/reports/daily-patients": "تقرير مرضى اليوم",
+  "/reports/today-summary": "ملخص مرضى اليوم",
   "/revenues": "إيرادات الفروع",
   "/branches": "الفروع",
   "/branches/:id": "تفاصيل الفرع",
