@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock, ArrowUpDown, ArrowUpToLine, ChevronUp, ChevronDown } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock, ScrollText, ArrowUpDown, ArrowUpToLine, ChevronUp, ChevronDown } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -403,6 +403,8 @@ export function Sidebar() {
     { label: t.sidebar.followUps, icon: PhoneCall, href: "/follow-ups", adminOnly: false, settingKey: "showPatients" as const, permission: "canViewPatients" as const, badge: trialCallCount },
     { label: t.sidebar.financialReports, icon: FileBarChart, href: "/reports", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
     { label: language === "ar" ? "التقرير اليومي للمرضى" : "Daily Patient Report", icon: CalendarDays, href: "/reports/daily-patients", adminOnly: false, settingKey: "showPayments" as const, permission: "canViewReports" as const },
+    //  «ملخص مرضى اليوم» (§4.gy) — بمفتاحٍ يشعله المالكُ لكلّ موظّف (`canViewTodaySummary`)، كبوّابة الخادم؛ والمسؤولُ بسلطته.
+    { label: language === "ar" ? "ملخص مرضى اليوم" : "Today's Patients", icon: ScrollText, href: "/reports/today-summary", adminOnly: false, settingKey: null, permission: "canViewTodaySummary" as const },
     { label: t.sidebar.accountingSystem, icon: Calculator, href: "/accounting", adminOnly: false, settingKey: "showAccounting" as const, permission: "canManageAccounting" as const },
     //  دفترُ القاصة اليوميّ (§4.ca) — للمحاسب ومدير الفرع والمسؤول وحدهم، كبوّابة الخادم.
     { label: "دفتر القاصة", icon: BookOpen, href: "/cash-book", adminOnly: false, settingKey: null, permission: null, eligible: canWriteCashBook(branchSession) },

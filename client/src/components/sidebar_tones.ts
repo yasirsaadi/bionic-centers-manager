@@ -56,6 +56,7 @@ const TONE_BY_HREF: Record<string, SidebarTone> = {
   //  المالُ والتقارير
   "/reports": T.emerald,
   "/reports/daily-patients": T.teal,
+  "/reports/today-summary": T.violet,
   "/accounting": T.green,
   "/cash-book": T.emerald,
   "/dr-box": T.green,

@@ -2088,6 +2088,8 @@ export const systemUsers = pgTable("system_users", {
   canDryNeedle: boolean("can_dry_needle").notNull().default(false),
   /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (ترحيل ١٨٧، §4.fr) — يشعله المسؤولُ لموظّفٍ بعينه؛ بلاه المسؤولُ العام وحده. */
   canBackdateVisits: boolean("can_backdate_visits").notNull().default(false),
+  //  «ملخص مرضى اليوم» (ترحيل ١٩٧، §4.gy) — المالكُ يشعله لموظّفٍ بعينه، لا يمنحه دور.
+  canViewTodaySummary: boolean("can_view_today_summary").notNull().default(false),
   /** «طلب سحب من القاصات» (ترحيل ١٨٩، §4.fy) — يطلب السحبَ من قاصة المواد أو قاصة الرواتب والإيجار، ولا يُنفَّذ حتى يعتمده المسؤول. لا يمنحه دور. */
   canRequestReserveWithdrawal: boolean("can_request_reserve_withdrawal").notNull().default(false),
   canRequestRefund: boolean("can_request_refund").notNull().default(false),

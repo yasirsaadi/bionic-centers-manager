@@ -39,6 +39,8 @@ interface UserPermissions {
   canDryNeedle: boolean;
   /** «تسجيل وتعديل زيارات أقدم من ٣ أيام» (§4.fr) — مفتاحٌ لموظّفٍ بعينه، والمسؤولُ بسلطته. */
   canBackdateVisits: boolean;
+  /** «ملخص مرضى اليوم» (§4.gy) — مفتاحٌ يشعله المالكُ لموظّفٍ بعينه. */
+  canViewTodaySummary: boolean;
   canRequestReserveWithdrawal: boolean;
   canRequestRefund: boolean;
 }
@@ -70,6 +72,7 @@ const defaultAdminPermissions: UserPermissions = {
   canSupervisePhysio: true,
   canDryNeedle: false,
   canBackdateVisits: true,
+  canViewTodaySummary: true,
   canRequestReserveWithdrawal: false,
   canRequestRefund: false,
 };
@@ -101,6 +104,7 @@ const defaultBranchPermissions: UserPermissions = {
   canSupervisePhysio: false,
   canDryNeedle: false,
   canBackdateVisits: false,
+  canViewTodaySummary: false,
   canRequestReserveWithdrawal: false,
   canRequestRefund: false,
 };
@@ -136,6 +140,7 @@ export function usePermissions(): UserPermissions {
       canSupervisePhysio: false,
       canDryNeedle: false,
       canBackdateVisits: false,
+      canViewTodaySummary: false,
       canRequestReserveWithdrawal: false,
       canRequestRefund: false,
     };
@@ -170,6 +175,7 @@ export function usePermissions(): UserPermissions {
       canSupervisePhysio: perms.canSupervisePhysio ?? false,
       canDryNeedle: perms.canDryNeedle ?? false,
       canBackdateVisits: perms.canBackdateVisits ?? false,
+      canViewTodaySummary: perms.canViewTodaySummary ?? false,
       canRequestReserveWithdrawal: perms.canRequestReserveWithdrawal ?? false,
       canRequestRefund: perms.canRequestRefund ?? false,
     };

@@ -16,7 +16,8 @@ import { db } from "./db";
 import { sql, eq, and, or, isNull, desc, gte, lte, inArray } from "drizzle-orm";
 import { api } from "@shared/routes";
 import { PHYSIO_TREATMENT_TYPES, PHYSIO_RETIRED_TREATMENT_TYPES, retiredPhysioTypesIn, retiredTypeInEntries, RETIRED_TYPE_ERROR, physioEntryCost, mergePhysioPlan, describePhysioPlan, resolvePurchasedSessions } from "@shared/pricing";
-import { isMedicalSpecialty, SPECIALTY_LABELS, isMedicalConditionCode, patientDepartmentsLabel } from "@shared/medical";
+import { isMedicalSpecialty, SPECIALTY_LABELS, patientDepartmentsLabel } from "@shared/medical";
+import { patientProblemText } from "@shared/today_summary";
 import { normalizePhone } from "@shared/phone";
 import { canCorrectSalePrice } from "@shared/followup";
 import { requestedItemLabel } from "@shared/prosthetic_parts";
@@ -57,6 +58,7 @@ import { registerDeviceEpisodeRoutes } from "./device_episodes/routes";
 import { registerIntakeSheetRoutes } from "./intake_sheet/routes";
 import { registerPhysioSheetRoutes } from "./physio_sheet/routes";
 import { registerPhysioDropoutRoutes } from "./reports/physio_dropouts";
+import { registerTodaySummaryRoutes } from "./reports/today_summary";
 import { registerPatientEditRulesRoutes, patientEditStateFor } from "./patients/edit_rules";
 import { registerNewExamRequestRoutes } from "./patients/new_exam_request";
 import { applyEditLocks, editLockMessage, lockedPatientFields } from "@shared/patient_edit_rules";
@@ -368,6 +370,8 @@ function buildStoredPermissions(systemUser: SystemUser) {
     canRequestReserveWithdrawal: !isAdminRow && Boolean(systemUser.canRequestReserveWithdrawal),
     //  «طلب استرجاع مبلغ لمريض» (§4.fz) — مفتاحٌ مخزَّن لا يمنحه دور؛ والمسؤولُ يسترجع مباشرةً.
     canRequestRefund: !isAdminRow && Boolean(systemUser.canRequestRefund),
+    //  «ملخص مرضى اليوم» (ترحيل ١٩٧، §4.gy) — مفتاحٌ مخزَّن يشعله المالكُ لموظّفٍ بعينه، لا يمنحه دور؛ والمسؤولُ بسلطته.
+    canViewTodaySummary: isAdminRow || Boolean(systemUser.canViewTodaySummary),
   };
 }
 
@@ -1475,7 +1479,7 @@ export async function registerRoutes(
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
       // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund"] as const) {
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund", "canViewTodaySummary"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -1638,7 +1642,7 @@ export async function registerRoutes(
           userData.canApproveDiscount === true || userData.canApproveDiscount === "true";
       }
       // عَلَما العلاج الطبيعي (ترحيل ١٠٤) و«زيارات أقدم من ٣ أيام» (ترحيل ١٨٧) و«طلب سحب من القاصات» (ترحيل ١٨٩) — نفسُ التطبيع.
-      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund"] as const) {
+      for (const k of ["canSupervisePhysio", "canDryNeedle", "canBackdateVisits", "canRequestReserveWithdrawal", "canRequestRefund", "canViewTodaySummary"] as const) {
         if (userData[k] !== undefined) userData[k] = userData[k] === true || userData[k] === "true";
       }
       if (userData.medicalSpecialties !== undefined) {
@@ -6125,16 +6129,7 @@ export async function registerRoutes(
       const rows = (result.rows || []).map((r: any) => {
         //  رمزُ القسم (`amputee`…) ليس «مشكلة» — كان يُعرض خاماً بالإنجليزية فيسبق التفصيل. فالنصُّ
         //  الحرُّ القديم وحده يتقدّم، ثمّ التفصيل، ثمّ أقسامُ المريض بالعربية (البند ٣١).
-        const rawCondition = r.medicalCondition ? String(r.medicalCondition).trim() : "";
-        const problem =
-          (rawCondition && !isMedicalConditionCode(rawCondition) ? rawCondition : null) ||
-          (r.amputationSite && String(r.amputationSite).trim()) ||
-          (r.diseaseType && String(r.diseaseType).trim()) ||
-          (r.supportType && String(r.supportType).trim()) ||
-          (r.injuryType && String(r.injuryType).trim()) ||
-          (r.injuryArea && String(r.injuryArea).trim()) ||
-          patientDepartmentsLabel(r) ||
-          null;
+        const problem = patientProblemText(r);
         const actionToday =
           (r.details && String(r.details).trim()) ||
           (r.notes && String(r.notes).trim()) ||
@@ -9260,6 +9255,8 @@ export async function registerRoutes(
   registerPhysioSheetRoutes(app, isAuthenticated);
   //  المنقطعون عن العلاج الطبيعي بعد ١–٣ جلسات (§4.fs) — يقرؤه المساعدُ بجلسة السائل.
   registerPhysioDropoutRoutes(app, isAuthenticated);
+  //  «ملخص مرضى اليوم» (§4.gy) — بمفتاحٍ يشعله المالكُ لكلّ موظّف.
+  registerTodaySummaryRoutes(app, isAuthenticated);
   registerPatientEditRulesRoutes(app, isAuthenticated);
   //  «طلب معاينة جديدة» — الاستمارةُ ببيانات المريض ثمّ الإرسالُ للمعاينة (§4.el).
   registerNewExamRequestRoutes(app, isAuthenticated, { phoneConflictBody });

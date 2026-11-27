@@ -31,6 +31,7 @@ const EditPatient = lazy(() => import("@/pages/EditPatient"));
 const NewExamRequest = lazy(() => import("@/pages/NewExamRequest"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const DailyPatientReport = lazy(() => import("@/pages/DailyPatientReport"));
+const TodaySummary = lazy(() => import("@/pages/TodaySummary"));
 const Branches = lazy(() => import("@/pages/Branches"));
 const BranchDetails = lazy(() => import("@/pages/BranchDetails"));
 const BranchRevenues = lazy(() => import("@/pages/BranchRevenues"));
@@ -150,6 +151,7 @@ function Router() {
     canViewPatients: boolean;
     canViewPayments: boolean;
     canViewReports: boolean;
+    canViewTodaySummary: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -200,6 +202,7 @@ function Router() {
       canViewPatients: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPatients),
       canViewPayments: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewPayments),
       canViewReports: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewReports),
+      canViewTodaySummary: Boolean(raw.isAdmin) || Boolean(raw.permissions?.canViewTodaySummary),
     };
     const prevPermSnapshot = prevPermSnapshotRef.current;
     //  لا مقارنةَ عند أوّل تحليلٍ ناجح (لا سابقةَ ذات معنى) — الإبطالُ
@@ -231,6 +234,12 @@ function Router() {
       const reportsViewChanged =
         prevPermSnapshot.canViewReports !== nextPermSnapshot.canViewReports
         || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin;
+      //  «ملخص مرضى اليوم» (§4.gy): مفتاحُه يفتحه، و«عرض المدفوعات» يقرّر مالَه — فأيُّهما تغيّر يُعاد جلبُه بشكله الجديد.
+      if (prevPermSnapshot.canViewTodaySummary !== nextPermSnapshot.canViewTodaySummary
+        || prevPermSnapshot.canViewPayments !== nextPermSnapshot.canViewPayments
+        || prevPermSnapshot.isAdmin !== nextPermSnapshot.isAdmin) {
+        queryClient.invalidateQueries({ queryKey: ["/api/reports/today-summary"] });
+      }
       if (reportsViewChanged) {
         queryClient.invalidateQueries({ queryKey: ["/api/reports/detailed"] });
         queryClient.invalidateQueries({ queryKey: ["/api/reports/daily-patient-report"] });
@@ -364,6 +373,7 @@ function Router() {
             <Route path="/notifications" component={Notifications} />
             <Route path="/reports" component={Reports} />
             <Route path="/reports/daily-patients" component={DailyPatientReport} />
+            <Route path="/reports/today-summary" component={TodaySummary} />
             <Route path="/revenues" component={BranchRevenues} />
             <Route path="/branches" component={Branches} />
             <Route path="/branches/:id" component={BranchDetails} />
