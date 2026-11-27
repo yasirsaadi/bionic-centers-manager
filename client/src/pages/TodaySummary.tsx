@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import type { Branch } from "@shared/schema";
 import { sortBranchesForDisplay } from "@shared/branch_order";
 import {
-  TODAY_SUMMARY_API, TODAY_SUMMARY_TITLE, arabicDayLabel, exportRows, filterCards,
+  TODAY_SUMMARY_API, TODAY_SUMMARY_TITLE, arabicDayLabel, exportRows, filterCards, totalsOf,
   type NewFilter, type TodayCard, type TodaySummaryTotals, type StatusTone,
 } from "@shared/today_summary";
 
@@ -156,7 +156,10 @@ export default function TodaySummary() {
   const printSummary = () => {
     const esc = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
     const [head, ...rows] = exportRows(visible, withMoney, formatTimeIraq);
-    const totalsLine = t ? `المرضى ${t.patients} · جدد ${t.newCount} · قدامى ${t.oldCount}${withMoney && t.paidToday != null ? ` · المقبوض ${money(t.paidToday)}` : ""}` : "";
+    //  مجاميعُ ما يُطبع وحده (بعد التصفية) — لا مجموعُ اليوم فوق بطاقاتٍ أقلّ منه؛ والتصفيةُ مذكورةٌ حين تكون.
+    const pt = totalsOf(visible, withMoney);
+    const filtered = visible.length !== allCards.length;
+    const totalsLine = `${filtered ? "المعروض بعد التصفية: " : ""}المرضى ${pt.patients} · جدد ${pt.newCount} · قدامى ${pt.oldCount}${pt.paymentOnly ? ` · دفعوا دون حضور ${pt.paymentOnly}` : ""}${withMoney && pt.paidToday != null ? ` · المقبوض ${money(pt.paidToday)}` : ""}`;
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${esc(TODAY_SUMMARY_TITLE)} — ${esc(day)}</title>
 <style>*{font-family:Tajawal,Arial,sans-serif}body{padding:16px;direction:rtl}h1{text-align:center;color:#0f766e;font-size:19px;margin:0 0 4px}
 h3{text-align:center;color:#6b7280;font-size:12px;font-weight:normal;margin:0 0 10px}table{width:100%;border-collapse:collapse;font-size:10.5px}

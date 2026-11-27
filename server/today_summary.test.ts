@@ -13,7 +13,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { baghdadTodayYmd } from "@shared/visit_date";
-import { newOrOld, parseSummaryDay, mergeSaves, filterCards, patientProblemText, type TodayCard } from "@shared/today_summary";
+import { newOrOld, parseSummaryDay, mergeSaves, filterCards, patientProblemText, totalsOf, type TodayCard } from "@shared/today_summary";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -264,6 +264,13 @@ async function main() {
     same("د٧. **ي: الحفظةُ بنوعين دفعةٌ واحدة، والاسترجاعُ حدثٌ مستقلّ**",
       [c[J.id].events.map((e) => [e.kind, e.text, e.amount ?? null]), c[J.id].money?.paid, c[J.id].money?.refunded],
       [[["visit", "جلسة علاج طبيعي", null], ["payment", "دفع — روبوت + إبر · 6 جلسة", 150000], ["refund", "استرجاع مبلغ", 30000]], 150000, 30000]);
+    {
+      //  رأسُ الطباعة المصفّاة (مراجعةُ Codex على #767): مجاميعُ البطاقات المعروضة وحدها لا اليوم كلّه.
+      const onlyNew = filterCards(mine(r.body), { who: "new", departments: null, search: "" });
+      same("د٧ب. **مجاميعُ المعروض بعد التصفية** (الجدد وحدهم: أ وحده بدفعته) — والخادمُ يحسب مجاميعَ اليوم بالدالّة نفسِها",
+        [totalsOf(onlyNew, true), JSON.stringify(totalsOf(mine(r.body), true)) === JSON.stringify(r.body.totals)],
+        [{ patients: 1, newCount: 1, oldCount: 0, paymentOnly: 0, paidToday: 500000, unpaid: 0 }, true]);
+    }
     same("د٨. **ك مراجعٌ قبل النظام سُجّل اليوم**: قديمٌ لا جديد", [c[K.id].isNew, c[K.id].newLabel], [false, "قديم — سُجّل اليوم (مراجعٌ قبل النظام)"]);
     const tot = r.body.totals;
     same("د٩. **المجاميعُ من البطاقات** (القاعدةُ لا تحمل غيرَ مرضانا): ٦ حاضرين · جديدٌ واحد · ٥ قدامى · دفعةٌ فقط واحدة · المقبوضُ ١٬٠٠٠٬٠٠٠ · ٣ لم يدفعوا",

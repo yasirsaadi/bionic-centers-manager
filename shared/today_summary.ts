@@ -426,6 +426,15 @@ export function buildTodayCards(inp: BuildInput): { cards: TodayCard[]; totals: 
     || (order.get(x.branchId ?? -1) ?? 99) - (order.get(y.branchId ?? -1) ?? 99)
     || x.firstAt.localeCompare(y.firstAt) || x.patientId - y.patientId);
 
+  const totals = totalsOf(cards, inp.withMoney);
+  return { cards, totals };
+}
+
+/**
+ * المجاميعُ من بطاقاتٍ بعينها — مصدرٌ واحد للخادم (اليومُ كلُّه) ولرأس الطباعة (المعروضُ بعد التصفية وحده، مراجعةُ Codex على #767):
+ * الطبعةُ المصفّاة لا تقول مجموعَ اليوم فوق بطاقاتٍ أقلّ منه.
+ */
+export function totalsOf(cards: TodayCard[], withMoney: boolean): TodaySummaryTotals {
   const attended = cards.filter((c) => c.attended);
   const totals: TodaySummaryTotals = {
     patients: attended.length,
@@ -433,11 +442,11 @@ export function buildTodayCards(inp: BuildInput): { cards: TodayCard[]; totals: 
     oldCount: attended.filter((c) => !c.isNew).length,
     paymentOnly: cards.length - attended.length,
   };
-  if (inp.withMoney) {
+  if (withMoney) {
     totals.paidToday = cards.reduce((s, c) => s + (c.money?.paid ?? 0), 0);
     totals.unpaid = attended.filter((c) => (c.money?.paid ?? 0) === 0).length;
   }
-  return { cards, totals };
+  return totals;
 }
 
 /** المرشِّحات في الصفحة: الكلّ · جدد · قدامى، والأقسام، والبحث بالاسم أو الرمز (تطبيعٌ عربيّ بسيط). */
