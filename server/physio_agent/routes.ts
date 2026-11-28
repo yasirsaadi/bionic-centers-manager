@@ -59,7 +59,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     const s = sess(req);
     const approver = canApproveProtocols(s);
     try {
-      if (!agentEnabled()) return res.status(503).json({ error: "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", code: "disabled" });
+      if (!agentEnabled()) return res.status(503).json({ error: "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Bionic AI)", code: "disabled" });
       const exam = await loadExam(db, examId);
       if (!exam) return res.status(404).json({ error: "المعاينةُ غير موجودة", code: "exam_not_found" });
       if (!approver && !(await writesPhysioExam(s))) return res.status(403).json({ error: "يطلبها كاتبُ معاينة العلاج الطبيعي أو المعتمِد", code: "not_writer" });

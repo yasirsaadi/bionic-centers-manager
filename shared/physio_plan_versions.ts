@@ -484,7 +484,7 @@ export const DIFF_SECTION_LABELS: Record<DiffSection, string> = {
   forbidden: "الأجهزةُ الممنوعة", other: "تغييراتٌ أخرى",
 };
 /** **أسماءُ الحقول التي لا يقارنها قسمٌ مسمّى** — بالإنكليزية «بالإنكليزية»؛ والحقلُ بلا اسمٍ هنا يُعرض باسمه (لا يسقط). */
-const FIELD_LABELS: Record<string, string> = {
+export const FIELD_LABELS: Record<string, string> = {
   nameAr: "الاسم", nameEn: "الاسمُ بالإنكليزية", timeframe: "المدّة", timeframeEn: "المدّةُ بالإنكليزية", goalsEn: "الأهدافُ بالإنكليزية",
   educationEn: "التثقيفُ بالإنكليزية", progressCriteriaEn: "معاييرُ الانتقال بالإنكليزية", notesEn: "الملاحظاتُ بالإنكليزية",
   doseNoteEn: "ملاحظةُ الجرعة بالإنكليزية", note: "الملاحظة", noteEn: "الملاحظةُ بالإنكليزية", card: "بطاقةُ التمرين",
@@ -497,7 +497,9 @@ const FIELD_LABELS: Record<string, string> = {
   higherIsBetter: "الأعلى أفضل", addedBy: "أضافه", fetchedInJob: "فُتح في الوظيفة", whyEn: "سببُ المسار بالإنكليزية", sets: "المجموعات", reps: "التكرارات",
   holdSeconds: "ثواني الثبات", restSeconds: "ثواني الراحة", doseNote: "ملاحظةُ الجرعة", sessionFrom: "من الجلسة", sessionTo: "إلى الجلسة",
   goals: "الأهداف", education: "التثقيف", progressCriteria: "معاييرُ الانتقال", notes: "الملاحظات", use: "الاستعمال", minutes: "الدقائق",
-  everyDays: "كلّ كم يوم", times: "عددُ المرّات",
+  everyDays: "كلّ كم يوم", times: "عددُ المرّات", key: "القيمة", labelEn: "اسمُ القيمة بالإنكليزية", unit: "الوحدة", modelNameEn: "الجهاز",
+  modelNameAr: "الجهازُ بالعربية", flags: "تنبيهات", steps: "الخطوات", stepsEn: "الخطواتُ بالإنكليزية", stopIf: "توقّف إذا", stopIfEn: "توقّف إذا بالإنكليزية",
+  images: "الصور", updatedAt: "عُدّلت", phase: "المرحلة", noteAr: "الملاحظة", kind: "النوع", fromId: "من تمرين", toId: "إلى تمرين", by: "بيد",
 };
 /** **نسخةٌ فارغة** من عنصرٍ مضاف (مفاتيحُ الهويّة وحدها باقية) — يُقارَن بها فيظهر كلُّ ما في المضاف لا اسمُه وحده. */
 function blankOf<T extends object>(x: T, keep: readonly string[]): Record<string, unknown> {

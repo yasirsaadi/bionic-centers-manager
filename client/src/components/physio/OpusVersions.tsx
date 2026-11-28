@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn, formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { btlModelById, btlModelsFor, unitAr } from "@shared/btl_devices";
 import { arCount, COUNT_FORMS } from "@shared/physio_agent";
-import { forbiddenLine, type Change, type PlanDiff, type PlanSnapshot } from "@shared/physio_plan_versions";
+import { FIELD_LABELS, forbiddenLine, type Change, type PlanDiff, type PlanSnapshot } from "@shared/physio_plan_versions";
 import { ar, arText, opusGet, versionKey, versionsKey, type VersionDetail, type VersionsResponse } from "@/lib/opus_agent";
 import { doseText, Fact } from "@/components/physio/OpusProposalView";
 
@@ -53,6 +53,22 @@ function fallbackText(target: string, v: [string, number, string][]): string {
     return `${p?.labelAr ?? k}: ${ar(val)}${p ? ` ${unitAr(p.unit)}` : ""} (${src === "protocol" ? "البروتوكول" : src === "approver" ? "المعتمِد" : "مصدر"})`;
   }).join("، ");
 }
+/** **قيمةٌ مركّبة لا شكلَ معروفاً لها** (بقيّةُ إعدادات الجهاز، والبطاقة، وملاحظاتُ المراحل…) — «حقل: قيمة» بأسماء الفرق،
+ *  فلا يُعرض سطرٌ بلا «كان/صار» (مراجعةُ Codex على #777). */
+function genericText(v: unknown, depth = 0): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "number") return ar(v);
+  if (typeof v === "boolean") return v ? "نعم" : "لا";
+  if (typeof v === "string") return USE_AR[v] ?? v;
+  if (Array.isArray(v)) return v.length ? v.map((x) => genericText(x, depth + 1)).join(depth ? "؛ " : "\n") : "—";
+  if (typeof v === "object") {
+    const parts = Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== null && x !== undefined && x !== "" && !(Array.isArray(x) && x.length === 0))
+      .map(([k, x]) => `${FIELD_LABELS[k] ?? k}: ${genericText(x, depth + 1)}`);
+    return parts.length ? parts.join(depth ? "، " : "\n") : "—";
+  }
+  return String(v);
+}
 /** قيمةُ «قبل» أو «بعد» بالعربية — الأرقامُ هنديّة، والقوائمُ مقروءة، والنصُّ الطويل يُطوى. */
 function valueText(v: unknown, c: Change): string | null {
   if (v === null || v === undefined || v === "") return "—";
@@ -74,7 +90,7 @@ function valueText(v: unknown, c: Change): string | null {
       return a && b ? `الجلسات ${ar(a)}–${ar(b)}` : "—";
     }
     if (c.labelAr.endsWith("— القيمُ الاحتياطية")) return fallbackText(c.target, v as [string, number, string][]) || "—";
-    return v.map((x) => (x === null ? "—" : typeof x === "number" ? ar(x) : String(x))).join("، ");
+    return v.map((x) => (x === null ? "—" : typeof x === "number" ? ar(x) : typeof x === "object" ? genericText(x, 1) : String(x))).join("، ");
   }
   if (typeof v === "object") {
     const o = v as Record<string, any>;
@@ -90,6 +106,7 @@ function valueText(v: unknown, c: Change): string | null {
         Array.isArray(o.fallback) && o.fallback.length ? `القيم: ${fallbackText(c.target, o.fallback)}` : null].filter(Boolean).join("، ");
     }
     if ("min" in o && "max" in o) return `${o.nameAr ?? ""} ${ar(o.min)}–${ar(o.max)}${o.unitAr ? ` ${o.unitAr}` : ""}`.trim();
+    return genericText(o);
   }
   return null;
 }

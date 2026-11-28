@@ -10,7 +10,7 @@ export function installAiBrandJson(app: Express): void {
     res.json = ((body: unknown) => {
       if (body === undefined) return original(body);
       const text = JSON.stringify(body);
-      if (text === undefined || !text.includes("Opus")) return original(body);
+      if (text === undefined || (!text.includes("Opus") && !text.includes("Claude"))) return original(body);
       return original(JSON.parse(brandAiText(text)));
     }) as typeof res.json;
     next();

@@ -184,7 +184,7 @@ export type EnqueueResult = { job: JobRecord } | { skipped: string; reason: stri
 /** **وضعُ وظيفةٍ في الطابور** (§4.ha ٤.٣) — داخل معاملة المُستدعي وقفلِ مريضه. التلقائيُّ يتخطّى بصمت، واليدويُّ يُردّ بالسبب. */
 export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigger; actor: Actor; strictFingerprint?: boolean; discardPlanId?: number | null }): Promise<EnqueueResult> {
   const skip = (skipped: string, reason: string, existing?: JobRecord): EnqueueResult => ({ skipped, reason, existing });
-  if (!agentEnabled()) return skip("disabled", "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)");
+  if (!agentEnabled()) return skip("disabled", "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Bionic AI)");
   const exam = await loadExam(tx, p.examId, true);
   if (!exam || exam.caseType !== "physiotherapy" || !isExamV2(readStoredAssessment(exam.assessment))) return skip("not_v2", "ليست معاينةَ علاجٍ طبيعيّ على الاستمارة الإلزامية");
   if (exam.cancelled) return skip("exam_cancelled", "المعاينةُ ملغاة");
@@ -282,7 +282,7 @@ export async function enqueueReviseTx(tx: any, p: { plan: Record<string, any>; s
   examId: number; staleness?: string | null }): Promise<JobRecord> {
   const plan = p.plan;
   const patientId = Number(plan.patient_id);
-  if (!agentEnabled()) throw new AgentJobError(503, "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", "disabled");
+  if (!agentEnabled()) throw new AgentJobError(503, "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Bionic AI)", "disabled");
   const note = String(p.note ?? "").trim();
   if (note.length < 3 || note.length > 4000) throw new AgentJobError(400, "اكتب ملاحظتَك لـ Bionic AI (ثلاثةُ أحرفٍ على الأقلّ)", "note_required");
   if (await patientTrashed(tx, patientId)) throw new AgentJobError(409, "المريضُ في السلّة", "patient_deleted");

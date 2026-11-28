@@ -5,8 +5,12 @@
 export const AI_BRAND = "Bionic AI";
 
 const LEGACY = /Claude Opus|(?<![A-Za-z_\-])Opus(?![A-Za-z_0-9])/g;
+//  «خدمةُ Claude» في أسباب الأخطاء المخزَّنة قبل ٢٠٢٦-١١-٢٨ (رسالةُ الرفض الأولى على الإنتاج) — كلمةُ الخدمة وحدها، لا كلُّ «Claude».
+const LEGACY_SERVICE = /(خدمةُ|خدمة|لخدمة|بخدمة) Claude(?![A-Za-z_0-9])/g;
 
 /** يبدّل الاسمَ القديم في نصٍّ يُعرض. */
 export function brandAiText(s: string): string {
-  return s.includes("Opus") ? s.replace(LEGACY, AI_BRAND) : s;
+  let out = s.includes("Opus") ? s.replace(LEGACY, AI_BRAND) : s;
+  if (out.includes("Claude")) out = out.replace(LEGACY_SERVICE, `$1 ${AI_BRAND}`);
+  return out;
 }
