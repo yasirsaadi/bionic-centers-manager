@@ -80,6 +80,7 @@ async function patientLabel(ex: any, patientId: number, branchId: number): Promi
 export async function listPatientPlans(patientId: number) {
   return db.select({
     id: physioPlans.id, titleAr: physioPlans.titleAr, titleEn: physioPlans.titleEn, status: physioPlans.status,
+    origin: physioPlans.origin, outOfLibrary: physioPlans.outOfLibrary, opusStaleReason: physioPlans.opusStaleReason,
     branchId: physioPlans.branchId, createdByName: physioPlans.createdByName, createdAt: physioPlans.createdAt,
     updatedAt: physioPlans.updatedAt, decidedByName: physioPlans.decidedByName, decidedAt: physioPlans.decidedAt,
     reviewStatus: physioPlans.reviewStatus, reviewedByName: physioPlans.reviewedByName,
@@ -92,8 +93,10 @@ export async function listPatientPlans(patientId: number) {
 }
 
 /** **صفحةُ الاعتمادات والمراجعة والمسندة إليّ** — قائمةٌ عبر الفروع (`branchIds` = null للمسؤول). */
-export async function listPlans(p: { status?: PlanStatus; reviewAwaiting?: boolean; assigneeUserId?: number; branchIds: number[] | null }) {
+export async function listPlans(p: { status?: PlanStatus; reviewAwaiting?: boolean; assigneeUserId?: number; branchIds: number[] | null; excludeOpus?: boolean }) {
   const conds: any[] = [];
+  //  خططُ Opus في تبويبها (§4.ha) — لا في «بانتظار الاعتماد» العامّ.
+  if (p.excludeOpus) conds.push(sql`${physioPlans.origin} <> 'opus'`);
   if (p.status) conds.push(eq(physioPlans.status, p.status));
   //  «للمراجعة» (§4.cz، و§4.do): بدأها كاتبُها أو عدّلها وتنتظر نظرةَ المشرف — وهي تُنفَّذ.
   if (p.reviewAwaiting) conds.push(and(eq(physioPlans.status, "approved"), eq(physioPlans.reviewStatus, "awaiting")));
@@ -106,7 +109,7 @@ export async function listPlans(p: { status?: PlanStatus; reviewAwaiting?: boole
     branchName: branches.name, patientId: physioPlans.patientId, patientName: patients.name, patientCode: patients.patientCode,
     createdByName: physioPlans.createdByName, submittedAt: physioPlans.submittedAt, updatedAt: physioPlans.updatedAt,
     decidedByName: physioPlans.decidedByName, decidedAt: physioPlans.decidedAt, reviewStatus: physioPlans.reviewStatus,
-    protocolStatus: physioProtocols.status,
+    protocolStatus: physioProtocols.status, origin: physioPlans.origin,
   }).from(physioPlans)
     .innerJoin(patients, eq(patients.id, physioPlans.patientId))
     .leftJoin(branches, eq(branches.id, physioPlans.branchId))
@@ -503,7 +506,7 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     const lowered = spw !== base.sessionsPerWeek || weeks !== base.durationWeeks;
     const total = lowered && spw && weeks ? Math.min(base.totalSessions ?? Number.POSITIVE_INFINITY, spw * weeks) : base.totalSessions;
     const [row] = await tx.insert(physioPlans).values({
-      ...base, patientId: sg.patientId, branchId: sg.branchId, status: "draft",
+      ...base, patientId: sg.patientId, branchId: sg.branchId, status: "draft", origin: "suggest",
       ...normalizeDose({ sessionsPerWeek: spw, durationWeeks: weeks, totalSessions: total }),
       sessionMinutes: capDose(r?.dose?.sessionMinutes, base.sessionMinutes),
       notes: typeof r?.notesAr === "string" && r.notesAr.trim() ? r.notesAr.trim() : null,

@@ -5,6 +5,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { OpusProposalView } from "@/components/physio/OpusProposalView";
+import { isOpusAwaiting } from "@shared/physio_agent";
 import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Home, Pencil, Play, Printer, RefreshCcw, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,6 +76,8 @@ interface Plan {
   measures?: MeasureDef[]; measuresOwn?: boolean; protocolDiff?: ProtocolDiffView | null;
   /** §4.dq — إعداداتُ جهازٍ ناقصة في البروتوكول: لمن يبدؤها أو يعتمدها (والمشرفُ يملؤها). */
   settingsGaps?: PlanSettingsGapsView | null;
+  /** §4.ha — مَن كتبها: يدويّاً أم «اقترح خطّة» أم Opus. */
+  origin?: "manual" | "suggest" | "opus" | null;
   /** §4.ds — ورقةُ تمارين البيت: من خطّةٍ بدأت، وإرسالُها عبر تلغرام لفريق العلاج في فرعها لمريضٍ مربوط. */
   homeSheet?: { allowed: boolean; botEnabled: boolean; telegramRecipients: number; canSend: boolean };
 }
@@ -186,6 +190,18 @@ export default function PhysioPlanPage() {
   if (q.isLoading) return <div className="p-6 text-sm text-muted-foreground">جارٍ التحميل…</div>;
   if (q.isError || !q.data) return <div className="p-6 text-sm">الخطّة غير موجودة أو ليست لك. <Link href="/patients" className="text-primary underline">سجل المرضى</Link></div>;
   const plan = q.data;
+  //  **خطّةُ Opus المنتظرة** (§4.ha ١١.٢): المعتمِدُ يقرؤها ويعتمدها من «الخطّة المقترحة» وحدها — لا أزرارَ الخطّة العادية قبل ذلك.
+  if (plan.canApprove && isOpusAwaiting({ origin: plan.origin ?? null, status: plan.status })) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
+        <Link href={`/patients/${plan.patientId}`}>
+          <Button variant="ghost" size="sm" className="gap-1"><ArrowRight className="w-4 h-4" /> {T.ar.back}</Button>
+        </Link>
+        {plan.patient && <div className="text-sm text-muted-foreground">المريض: <b className="text-foreground">{plan.patient.name}</b>{plan.branchName ? ` · ${plan.branchName}` : ""}</div>}
+        <OpusProposalView planId={plan.id} />
+      </div>
+    );
+  }
   const title = lang === "en" && plan.titleEn ? plan.titleEn : plan.titleAr;
   const statusLabel = (lang === "en" ? PLAN_STATUS_LABELS_EN : PLAN_STATUS_LABELS)[plan.status];
   //  §4.do — كاتبُ الخطّة يبدؤها بنفسه على أيّ بروتوكول، وتعديلُه لا يوقفها؛ والمشرفُ يُنبَّه ويراجع بعدها.

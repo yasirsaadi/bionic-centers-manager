@@ -1,4 +1,5 @@
 export * from "./models/auth";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { pgTable, text, serial, integer, smallint, bigint, bigserial, boolean, timestamp, varchar, date, jsonb, numeric, check, foreignKey, index, unique, uniqueIndex, primaryKey, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -2282,6 +2283,8 @@ export const physioExamRedFlagReviews = pgTable("physio_exam_red_flag_reviews", 
   decidedBy: integer("decided_by"),
   decidedByName: text("decided_by_name"),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
+  //  ترحيل ١٩٩ (§4.ha) — أجهزةٌ يمنعها المعتمِدُ باعتماده (اختيارية) فتطبّقها بوّابةُ Opus الحتمية.
+  forbiddenDevices: jsonb("forbidden_devices").$type<string[]>().notNull().default([]),
 }, (t) => [
   uniqueIndex("uq_pefr_one_open").on(t.examId).where(sql`status = 'pending'`),
   index("ix_pefr_status").on(t.status, t.requestedAt),
@@ -3106,6 +3109,10 @@ export const physioProtocols = pgTable("physio_protocols", {
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
   updatedByName: text("updated_by_name"),
+  //  ترحيل ١٩٩ (§4.ha) — سقفُ الجلسات مع التمديد المكتوب، ومسوّدةٌ وُلدت من خطّة Opus «خارج المكتبة».
+  maxTotalSessions: integer("max_total_sessions"),
+  sourcePlanId: integer("source_plan_id").references((): AnyPgColumn => physioPlans.id, { onDelete: "set null" }),
+  origin: text("origin").notNull().default("library"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -3291,6 +3298,13 @@ export const physioPlans = pgTable("physio_plans", {
   measuresOwn: boolean("measures_own").notNull().default(false),
   //  ترحيل ١٣٢ (§4.do) — متى نُسخت الخطّةُ من بروتوكولها (إنشاءً أو تغييرَ نوع): تعديلُ البروتوكول بعده يُذكر بجانب الفروق.
   protocolCopiedAt: timestamp("protocol_copied_at", { withTimezone: true }),
+  //  ترحيل ١٩٩ (§4.ha) — منشأُ الخطّة (manual · suggest · opus) ومعاينتُها ووظيفتُها و«خارج المكتبة» ومصادرُها وسببُ قِدَمها.
+  origin: text("origin").notNull().default("manual"),
+  sourceExamId: integer("source_exam_id").references(() => medicalExams.id, { onDelete: "set null" }),
+  agentJobId: integer("agent_job_id").references((): AnyPgColumn => physioAgentJobs.id, { onDelete: "set null" }),
+  outOfLibrary: boolean("out_of_library").notNull().default(false),
+  sources: jsonb("sources").$type<{ title: string; url: string; org?: string | null; year?: number | null; usedFor?: string | null }[]>().notNull().default([]),
+  opusStaleReason: text("opus_stale_reason"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -3333,6 +3347,8 @@ export const physioPlanDevices = pgTable("physio_plan_devices", {
   //  §4.dn (ترحيل ١٣١) — الموعدُ الدوريّ منسوخاً من البروتوكول، ويعدّله الأخصائيُّ لمريضه.
   everyDays: integer("every_days"),
   times: integer("times"),
+  //  ترحيل ١٩٩ (§4.ha) — موديلُ BTL وبرنامجُه وقيمُه الاحتياطية بمصدرها (`null` لما قبله والخططِ اليدوية).
+  btl: jsonb("btl").$type<Record<string, unknown> | null>(),
   displayOrder: integer("display_order").notNull().default(0),
 }, (t) => ({ uqPlanDevice: unique("physio_plan_devices_plan_id_device_id_key").on(t.planId, t.deviceId) }));
 
@@ -3463,6 +3479,55 @@ export const physioPlanSuggestions = pgTable("physio_plan_suggestions", {
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
 });
 export type PhysioPlanSuggestion = typeof physioPlanSuggestions.$inferSelect;
+
+// ══ وكيلُ Opus يكتب الخطّةَ من المعاينة (ترحيل ١٩٩، §4.ha) — القواعدُ في `shared/physio_agent.ts` ══════════
+//  القيودُ CHECK والفهارسُ الجزئية في الترحيل وحده (وظيفةٌ نشطةٌ واحدة لكلّ مريض — `uq_paj_one_active_patient`).
+/** ما تخطّاه مصالِحُ وكيل Opus الدوريّ (ترحيل ١٩٩، §4.ha) — ذاكرةٌ بلا مفتاحٍ أجنبيّ. */
+export const physioAgentReconcileSkips = pgTable("physio_agent_reconcile_skips", {
+  examId: integer("exam_id").primaryKey(),
+  reason: text("reason").notNull(),
+  skippedAt: timestamp("skipped_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const physioAgentJobs = pgTable("physio_agent_jobs", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  examId: integer("exam_id").notNull().references(() => medicalExams.id),
+  branchId: integer("branch_id").notNull().references(() => branches.id),
+  kind: text("kind").notNull().default("write"),
+  trigger: text("trigger").notNull(),
+  status: text("status").notNull().default("queued"),
+  stage: text("stage"),
+  stages: jsonb("stages").$type<{ stage: string; at: string; noteAr?: string | null }[]>().notNull().default([]),
+  examFingerprint: text("exam_fingerprint").notNull(),
+  questions: jsonb("questions").$type<any[]>().notNull().default([]),
+  qa: jsonb("qa").$type<any[]>().notNull().default([]),
+  questionRounds: integer("question_rounds").notNull().default(0),
+  failures: integer("failures").notNull().default(0),
+  maxFailures: integer("max_failures").notNull().default(5),
+  runs: integer("runs").notNull().default(0),
+  runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  lockedBy: text("locked_by"),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+  cancelRequested: boolean("cancel_requested").notNull().default(false),
+  cancelReason: text("cancel_reason"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+  error: text("error"),
+  errorDetail: text("error_detail"),
+  checkpoint: jsonb("checkpoint").$type<Record<string, any>>().notNull().default({}),
+  result: jsonb("result").$type<Record<string, any>>().notNull().default({}),
+  requestedBy: integer("requested_by").references(() => systemUsers.id),
+  requestedByName: text("requested_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("ix_paj_exam").on(t.examId, t.id),
+  index("ix_paj_patient").on(t.patientId),
+]);
+export type PhysioAgentJob = typeof physioAgentJobs.$inferSelect;
 
 export const physioPlanAssignees = pgTable("physio_plan_assignees", {
   planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),

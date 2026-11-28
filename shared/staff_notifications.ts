@@ -53,6 +53,9 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   //  العلامةُ الحمراء في معاينة العلاج الطبيعي (§4.gz، ترحيل ١٩٨) — للمسؤول والمشرف العام؛ وقرارُها لمن طلبه وحده.
   { key: "physio_exam_red_flag_pending", label: "علامةٌ حمراء في معاينة علاجٍ طبيعيّ تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
   { key: "physio_exam_red_flag_decided", label: "علامةُ معاينته الحمراء اعتُمدت أو رُفضت", group: "العلاج الطبيعي", scope: "targeted" },
+  //  وكيلُ Opus (§4.ha، ترحيل ١٩٩) — خطّتُه تنتظر المعتمِد؛ وأسئلتُه (وما لم يكتبه) لكاتب المعاينة.
+  { key: "physio_opus_plan_ready", label: "خطّةٌ كتبها Opus تنتظر الاعتماد — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_opus_questions", label: "Opus يسأل عن مريضه قبل كتابة خطّته — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -85,7 +88,7 @@ export interface StaffEligibilityUser {
 
 const DOCTOR_EVENTS = ["exam_request"];
 //  والطبيبُ قد يكتب معاينةَ العلاج الطبيعي **باختصاصه** — فقرارُ علامتها الحمراء له وحده، لا لطبيب الأطراف (§4.gz).
-const PHYSIO_DOCTOR_EVENTS = ["physio_exam_red_flag_decided"];
+const PHYSIO_DOCTOR_EVENTS = ["physio_exam_red_flag_decided", "physio_opus_questions"];
 const specialtiesOf = (u: StaffEligibilityUser): string[] =>
   Array.isArray(u.medicalSpecialties) ? u.medicalSpecialties.map(String) : [];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
@@ -103,15 +106,16 @@ const REFUND_EVENTS = ["refund_request_decided"];
  * والأهليّةُ بالدور تبقى لما يُعرض في «تنبيهات الموظفين».
  */
 export const REQUESTER_REPLY_EVENTS: readonly string[] = ["reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided",
-  "physio_exam_red_flag_decided"];
+  //  «خطّتُه اعتُمدت» لكاتبها — وكاتبُ خطّة Opus هو الفاحص، وقد يكون طبيباً باختصاص العلاج الطبيعي لا أخصائيّاً (§4.ha).
+  "physio_exam_red_flag_decided", "physio_opus_questions", "physio_plan_decided"];
 
 /** هل يُرسَل النوعُ لهذا الموظّف؟ — بالدور، أو ردّاً موجَّهاً على طلبه. */
 export function staffEventDeliverable(u: StaffEligibilityUser, event: string, targeted: boolean): boolean {
   if (targeted && REQUESTER_REPLY_EVENTS.includes(event)) return true;
   return eligibleStaffEvents(u).includes(event);
 }
-const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending"];
-const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided"];
+const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending", "physio_opus_plan_ready"];
+const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided", "physio_opus_questions"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {

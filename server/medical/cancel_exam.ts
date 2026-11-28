@@ -18,6 +18,8 @@
 // الحلقةُ إلى `awaiting_exam`: فلا يُصنَّع شيءٌ حتى تُوقَّع معاينةٌ مصحَّحة
 // تكتب إسقاطَها الصحيح بالمسار نفسه.
 
+import { onExamCancelledTx, nudgeWorkerNow } from "../physio_agent/reconcile";
+import { lockPatientAgent } from "../physio_agent/store";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
@@ -165,6 +167,10 @@ export async function cancelExam(params: {
   if (!reason) throw new ExamCancelError("اكتب سبب الإلغاء", 400);
 
   return await db.transaction(async (tx) => {
+    //  **قفلُ وكيل Opus للمريض قبل قفل المعاينة** (§4.ha) — ترتيبُ الأقفال نفسُه في كلّ باب، فلا جمود مع حفظ الخطّة.
+    const pre = await tx.execute<Record<string, any>>(sql`SELECT patient_id, case_type FROM medical_exams WHERE id = ${params.examId}`);
+    const prePatient = (pre.rows ?? [])[0];
+    if (prePatient && String(prePatient.case_type) === "physiotherapy") await lockPatientAgent(tx, Number(prePatient.patient_id));
     // ── ① المعاينة، مقفولةً ────────────────────────────────────────────
     const ex = await tx.execute<Record<string, any>>(sql`
       SELECT id, patient_id, case_type, device_episode_id, doctor_id
@@ -391,6 +397,11 @@ export async function cancelExam(params: {
       tx,
     });
 
+    //  **وكيلُ Opus** (§4.ha): وظيفةُ المعاينة الملغاة تُلغى وخطّتُها المنتظرة تقدُم — في المعاملة نفسِها، للزرّ وللتصحيح الإداريّ معاً.
+    if (String(exam.case_type) === "physiotherapy") {
+      const queued = await onExamCancelledTx(tx, params.examId, patientId, { userId: params.actor.userId, name: params.actor.userName });
+      if (queued) setImmediate(() => nudgeWorkerNow());
+    }
     return { examId: params.examId, patientId, episodeReset, followupRetired, requestsReopened };
   });
 }

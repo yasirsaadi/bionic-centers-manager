@@ -59,6 +59,8 @@ import { limbSlots, specChoiceMessage, specChoiceProblems } from "@shared/limb_s
 import type { AmputationParts } from "@shared/case_fields";
 import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio_assessment_input";
 import { latestReviews } from "../physio_exam_reviews/store";
+import { autoReconcile, onExamRevised } from "../physio_agent/reconcile";
+import { latestJobsOfExams, planStatusesOfJobs } from "../physio_agent/store";
 import { agentGateFor, examV2AgeConflict, isExamV2, newestOtherExamReview } from "@shared/physio_exam_v2";
 import { canApproveProtocols } from "@shared/physio_protocols";
 
@@ -498,6 +500,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         exams.map((e) => e.deviceEpisodeId).filter((n): n is number => typeof n === "number"));
       //  **اعتمادُ العلامة الحمراء لكلّ معاينة علاجٍ طبيعيّ** (ترحيل ١٩٨، §4.gz) — آخرُ طلبٍ وحالُ بوّابة الوكيل، فتقول البطاقةُ حالَها.
       const redFlagReviews = await latestReviews(exams.filter((e) => e.caseType === "physiotherapy").map((e) => e.id));
+      //  **حالُ وظيفة Opus لكلّ معاينة** (§4.ha) — الحالةُ والمرحلةُ وحدهما، بلا ما بداخلها (فلا طلبَ لكلّ معاينة).
+      const opusJobs = await latestJobsOfExams(exams.filter((e) => e.caseType === "physiotherapy").map((e) => e.id));
+      //  وحالُ خطّتها (منتظرة · اعتُمدت · حُذفت) — فلا يبقى «بانتظار الاعتماد» عند مَن لا يقرأ الوظيفة بعد أن تُعتمد.
+      const opusPlans = await planStatusesOfJobs(Array.from(opusJobs.values()).map((j) => j.id));
 
       res.json({
         exams: exams.map((e) => ({
@@ -524,6 +530,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           deviceRequestedItem: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.requestedItem ?? null : null,
           deviceExtraComponents: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.extraComponents ?? [] : [],
           redFlagReview: redFlagReviews.get(e.id) ?? null,
+          opusJob: (() => { const j = opusJobs.get(e.id); return j ? { id: j.id, status: j.status, stage: j.stage, errorCode: j.errorCode, failures: j.failures,
+            questionRounds: j.questionRounds, planStatus: j.status === "succeeded" ? opusPlans.get(j.id)?.status ?? null : null } : null; })(),
           agentGate: e.caseType === "physiotherapy" && isExamV2(e.assessment)
             ? agentGateFor({ assessment: e.assessment, diagnosis: e.diagnosis ?? "", cancelled: false, review: redFlagReviews.get(e.id) ?? null,
               //  والمعلَّقُ أو المرفوضُ الأحدثُ على معاينةٍ أخرى للمريض يوقفها كذلك — بالقاعدة التي تقرؤها `examAgentGate`.
@@ -926,6 +934,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // doctor must know both cases are still open. Only meaningful when THIS
       // call actually ran the decision — a raced-away loser never did.
       res.json({ ...exam, switchNote: created ? (applied.switchNote ?? null) : null, sheetNote, created });
+      //  **وكيلُ Opus** (§4.ha): معاينةُ علاجٍ طبيعيّ وُقّعت ⟵ مصالحةٌ تضع وظيفةَ الخطّة إن فتحت البوّابة (أطلق وانسَ؛ والعاملُ يصلح ما يضيع).
+      if (created && caseType === "physiotherapy") void autoReconcile(patientId, "exam_signed", { userId: session.userId ?? null, name: doctorName });
     } catch (err: any) {
       console.error("[medical] POST exam failed:", err);
       res.status(500).json({ error: err?.message || "تعذّر حفظ المعاينة" });
@@ -1249,6 +1259,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         ...updated, switchNote, sheetNote,
         priceNote: priceSyncNote,
       });
+      //  **وكيلُ Opus** (§4.ha): التنقيحُ يلغي وظيفةَ هذه المعاينة ويُقدِم خطّتَها المنتظرة، ثمّ يعيد الكتابةَ على النصّ الجديد.
+      if (exam.caseType === "physiotherapy" || caseType === "physiotherapy") {
+        void onExamRevised(examId, exam.patientId, { userId: session.userId ?? null, name: editorName });
+      }
     } catch (err: any) {
       // A refused edit is a business answer, not a server fault: the doctor
       // must read WHY and what to do instead, not a bare 500.

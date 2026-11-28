@@ -34,6 +34,8 @@ import { readStoredAssessment, type Lang, type PhysioInitialAssessment } from "@
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
 import { ExamV2Form } from "@/components/physio/ExamV2Form";
 import { RedFlagReviewBox } from "@/components/physio/RedFlagReviewBox";
+import { OpusPanel } from "@/components/physio/OpusPanel";
+import type { OpusJobSummary } from "@/lib/opus_agent";
 import {
   anyAssessmentEnglishText, anyAssessmentGapsText, anyAssessmentSummaryAr, assessmentFormLabel, isExamV2, redFlagsOf,
   type AgentGate, type RedFlagReviewSummary,
@@ -162,6 +164,8 @@ interface Exam {
   /** آخرُ طلب اعتمادٍ للعلامة الحمراء وبوّابةُ الوكيل (ترحيل ١٩٨، §4.gz) — للمعاينة الإلزامية وحدها. */
   redFlagReview?: RedFlagReviewSummary | null;
   agentGate?: AgentGate | null;
+  /** حالُ وظيفة Opus لهذه المعاينة (§4.ha) — الحالةُ والمرحلةُ وحدهما. */
+  opusJob?: OpusJobSummary | null;
 }
 
 interface ExamsResponse {
@@ -682,6 +686,10 @@ ${addenda}
                     <RedFlagReviewBox examId={exam.id} patientId={patientId} assessment={exam.assessment}
                       review={exam.redFlagReview ?? null} gate={exam.agentGate ?? null} examinerId={exam.doctorId ?? null}
                       isAuthor={exam.doctorId != null && exam.doctorId === data?.userId} canApprove={Boolean(data?.canApproveRedFlags)} />
+                  )}
+                  {/*  **Opus يكتب الخطّةَ من المعاينة** (§4.ha) — للمعاينة الإلزامية وحدها؛ والخادمُ يقول مَن يشغّل ومَن يرى. */}
+                  {exam.caseType === "physiotherapy" && isExamV2(exam.assessment) && (
+                    <OpusPanel examId={exam.id} patientId={patientId} gate={exam.agentGate ?? null} summary={exam.opusJob ?? null} />
                   )}
                   {prescriptionLines(exam).length > 0 && (
                     <div className="mb-2 rounded-lg border border-teal-200 bg-teal-50/60 p-2 space-y-1">

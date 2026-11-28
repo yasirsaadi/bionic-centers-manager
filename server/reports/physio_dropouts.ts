@@ -111,7 +111,8 @@ export async function physioDropouts(q: DropoutQuery, branchId: number | null, t
         FROM s GROUP BY patient_id, case_id
     )
     SELECT a.*, p.name, p.patient_code, p.physio_plan, p.treatment_type AS plan_text, p.total_cost, b.name AS branch_name,
-           (SELECT pl.status FROM physio_plans pl WHERE pl.patient_id = a.patient_id ORDER BY pl.id DESC LIMIT 1) AS plan_status
+           (SELECT pl.status FROM physio_plans pl WHERE pl.patient_id = a.patient_id
+              AND NOT (pl.origin = 'opus' AND pl.status IN ('draft','pending','returned')) ORDER BY pl.id DESC LIMIT 1) AS plan_status
       FROM agg a
       JOIN patients p ON p.id = a.patient_id
       LEFT JOIN branches b ON b.id = a.branch_id

@@ -193,6 +193,12 @@ export async function softDeletePatient(params: {
   const { patientId, actor } = params;
 
   return await db.transaction(async (tx: any) => {
+    //  **قفلُ وكيل Opus أوّلاً، قبل صفّ المريض** — مساراتُ الوكيل تأخذ القفلَ الاستشاريّ ثمّ تُدرج صفّاً يشير إلى المريض (`FOR KEY SHARE`)؛
+    //  فلو أخذنا `FOR UPDATE` على المريض أوّلاً ثمّ القفلَ في `onPatientGoneTx` لتبادلنا الانتظارَ معها (جمودٌ وقع على Postgres 16).
+    {
+      const { lockPatientAgent } = await import("../physio_agent/store");
+      await lockPatientAgent(tx, patientId);
+    }
     const locked = await tx.execute(sql`
       SELECT id, name, patient_code, branch_id, total_cost, deleted_at
         FROM patients WHERE id = ${patientId} FOR UPDATE
@@ -235,6 +241,11 @@ export async function softDeletePatient(params: {
     const out: any = (written.rows ?? [])[0];
     //  شرطُ الحالة في `UPDATE` حزامُ أمانٍ فوق القفل — لا نصفَ كتابة.
     if (!out) throw new TrashError("تغيّرت حالة الملف — حدّث الصفحة", 409);
+    //  **وكيلُ Opus** (ترحيل ١٩٩، §4.ha): وظيفةُ المريض النشطة تُلغى وخطّتُه المنتظرة تقدُم — في المعاملة نفسِها.
+    {
+      const { onPatientGoneTx } = await import("../physio_agent/reconcile");
+      await onPatientGoneTx(tx, patientId, "patient_deleted", { userId: actor.userId ?? null, name: actor.displayName ?? null });
+    }
 
     await logAudit({
       entityType: "patient", entityId: patientId, action: "soft_delete",

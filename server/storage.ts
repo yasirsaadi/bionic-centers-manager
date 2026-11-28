@@ -35,7 +35,7 @@ import {
   type SurveyQuestion, type InsertSurveyQuestion,
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
-  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations, physioExamRedFlagReviews,
+  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations, physioExamRedFlagReviews, physioAgentJobs,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
@@ -2754,6 +2754,9 @@ export class DatabaseStorage implements IStorage {
       // migration 028 snapshots every row into medical_exams_forensic_log
       // (which has no FKs and survives), so even a full patient delete leaves
       // the clinical evidence behind.
+      //  وظائفُ Opus (ترحيل ١٩٩، §4.ha) — مفتاحان إلى المعاينة والمريض، فقبل المعاينات (والخطّةُ تشير إليها بـ`SET NULL`). ووظيفةُ المريض
+      //  على معاينته دائماً (الدمجُ ينقلهما معاً)، فسطرٌ واحدٌ بالمريض يكفي.
+      await tx.delete(physioAgentJobs).where(eq(physioAgentJobs.patientId, id));
       const examRows = await tx.select({ id: medicalExams.id })
         .from(medicalExams)
         .where(eq(medicalExams.patientId, id));
@@ -3331,6 +3334,15 @@ export class DatabaseStorage implements IStorage {
       if (source.deletedAt || target.deletedAt) {
         throw new Error("أحد الملفين في المحذوفات — استعده أولاً ثم أعد الدمج");
       }
+      //  **وكيلُ Opus** (ترحيل ١٩٩، §4.ha): وظائفُ الملفّين النشطة تُلغى في الحال (والعاملةُ يتركها عاملُها عند نبضته)، وخططُهما المنتظرة
+      //  تقدُم — بوّابةُ المريض تتغيّر بالدمج. والقفلان بترتيب الرقم فلا جمود، **وقبل أيّ قفلٍ على صفّ مريض** (القراءتان فوق بلا قفل):
+      //  مساراتُ الوكيل تأخذ القفلَ الاستشاريّ ثمّ `FOR KEY SHARE` على المريض، فالترتيبُ المعاكس جمود (كالسلّة — `softDeletePatient`).
+      {
+        const { onPatientGoneTx } = await import("./physio_agent/reconcile");
+        for (const pid of [sourceId, targetId].sort((a, b) => a - b)) {
+          await onPatientGoneTx(tx, pid, "patient_merged", { userId: null, name: "دمج الملفّات" });
+        }
+      }
 
       // ══ **متابعتان حيّتان بلا حلقة لنفس الخدمة — يُرفض الدمج كلُّه** ═════
       //  الفهرسُ `uq_pef_active_legacy` فريدٌ على (مريض، خدمة) **للصفوف بلا
@@ -3711,6 +3723,8 @@ export class DatabaseStorage implements IStorage {
         medicalExamCancellations.patientId);
       //  وطلباتُ اعتماد العلامة الحمراء (ترحيل ١٩٨، §4.gz) تتبع معاينتَها: `exam_id` لا يتغيّر، و`patient_id` يتبع صاحبَه.
       await repoint("physioExamRedFlagReviews", physioExamRedFlagReviews, physioExamRedFlagReviews.patientId);
+      //  ووظائفُ Opus (ترحيل ١٩٩، §4.ha) تتبع معاينتَها وصاحبَها — ولا نشطةَ بينها بعد الإلغاء أعلاه، فلا يصطدم فهرسُ «وظيفةٌ نشطةٌ واحدة».
+      await repoint("physioAgentJobs", physioAgentJobs, physioAgentJobs.patientId);
 
       // ── Event log (migration 044) ────────────────────────────────────────
       // Repointing patient_id alone is NOT enough, for two independent reasons.

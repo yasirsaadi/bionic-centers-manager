@@ -152,6 +152,7 @@ export async function loadTodaySummary(opts: { day: string; branchId: number | n
     q(`SELECT DISTINCT ON (pl.patient_id) pl.patient_id AS pid, pl.status, pl.total_sessions,
               (SELECT COUNT(*) FROM physio_plan_sessions s WHERE s.plan_id = pl.id AND s.cancelled_at IS NULL)::int AS done
          FROM physio_plans pl WHERE pl.patient_id = ANY($1::int[])
+          AND NOT (pl.origin = 'opus' AND pl.status IN ('draft','pending','returned'))
         ORDER BY pl.patient_id, pl.id DESC`, [idList]),
   ]) : [[], [], [], []];
 
