@@ -25,6 +25,11 @@ import {
   type PhysioSheetVisit,
 } from "@shared/physio_sheet_view";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
+import {
+  V2_CORE_FIELDS, V2_DEVICE_NAMES, examV2Acuity, examV2Ctx, examV2ValueText, fieldApplies, fieldRequired, forbiddenDevices, isExamV2, moduleFieldsOf, moduleOf,
+  redFlagQuestionsFor, redFlagsOf, RED_FLAG_URGENCY_AR, PT_FORM_CODE_V2, PT_FORM_VERSION_V2, type PhysioExamV2, type V2Field, type V2Value,
+} from "@shared/physio_exam_v2";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import bionicLogo from "@/assets/intake/bionic.jpg";
 import warithLogo from "@/assets/intake/warith.jpg";
 
@@ -211,9 +216,19 @@ export default function PhysioSheetPrint() {
       <AssessmentPrint a={assessed.assessment} examiner={assessed.doctorName} signedAt={assessed.signedAt} />
     </>
   );
+  //  **والمعاينةُ الإلزامية `BC-PT-02`** (§4.gz) — صفحةٌ بنواتها ووحدتها وعلاماتها الحمراء وموانعها، قبل صفحة أقسام الأولى.
+  const v2Page = assessed?.assessment && isExamV2(assessed.assessment) && p && (
+    <>
+      <div className="rp-cont">
+        <span>{TITLE} — <b>{p.name}</b></span>
+        <span>رقم الملف: <b dir="ltr">{p.patientCode ?? "—"}</b></span>
+      </div>
+      <ExamV2Print a={assessed.assessment} diagnosis={assessed.diagnosis ?? ""} examiner={assessed.doctorName} signedAt={assessed.signedAt} />
+    </>
+  );
 
   const visitPages = plan?.counts ?? [];
-  const total = visitPages.length + (assessmentPage ? 1 : 0);
+  const total = visitPages.length + (v2Page ? 1 : 0) + (assessmentPage ? 1 : 0);
   let start = 0;
 
   return (
@@ -260,6 +275,16 @@ export default function PhysioSheetPrint() {
               </section>
             );
           })}
+          {v2Page && (
+            <section className="rp-page" data-testid={`psp-page-${total - (assessmentPage ? 1 : 0)}`}>
+              {v2Page}
+              <div className="rp-grow" />
+              <footer className="rp-foot">
+                <span>طُبع في <bdi dir="ltr">{printedAt}</bdi>{by}</span>
+                <span data-testid="psp-page-no-v2">صفحة {total - (assessmentPage ? 1 : 0)} من {total}</span>
+              </footer>
+            </section>
+          )}
           {assessmentPage && (
             <section className="rp-page" data-testid={`psp-page-${total}`}>
               {assessmentPage}
@@ -302,7 +327,7 @@ function AssessmentPrint({ a, examiner, signedAt }: { a: PhysioInitialAssessment
   const onset = a.onsetAtSigning === "congenital" ? "Since birth" : a.onsetAtSigning === "unknown" ? "Unknown" : a.onsetAtSigning;
   return (
     <div className="pa" dir="ltr" data-testid="psp-assessment">
-      <div className="pa-title">{L("formTitle")} <span className="pa-sub">{PT_FORM_CODE} · v{PT_FORM_VERSION} — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
+      <div className="pa-title">{L("formTitle")} <span className="pa-sub">{isExamV2(a) ? `${PT_FORM_CODE_V2} · v${PT_FORM_VERSION_V2}` : `${PT_FORM_CODE} · v${PT_FORM_VERSION}`} — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
       <table className="pa-t"><tbody>
         <tr><th colSpan={2}>{L("sectionA")} <span className="pa-tick">{a.sectionANa ? "☑" : "☐"} {L("na")}</span></th></tr>
         <tr><td className="k">{L("investigations")}</td><td>{many(PT_INVESTIGATIONS, a.investigations)}</td></tr>
@@ -342,6 +367,56 @@ function AssessmentPrint({ a, examiner, signedAt }: { a: PhysioInitialAssessment
         <tr><th>{L("plan")}</th></tr>
         <tr><td>{many(PT_PLAN_ITEMS, a.plan)}</td></tr>
       </tbody></table>
+    </div>
+  );
+}
+
+/** **المعاينةُ الإلزامية مطبوعة** (§4.gz) — الخاناتُ الظاهرةُ وحدها بقيمها، والعلاماتُ الحمراء: «نعم» بإجرائها وعددُ «لا»، والموانعُ الحتمية. */
+function ExamV2Print({ a, diagnosis, examiner, signedAt }: { a: PhysioExamV2; diagnosis: string; examiner: string; signedAt: string | null }) {
+  const ctx = examV2Ctx(a);
+  const mod = moduleOf(a.core?.group);
+  const today = baghdadTodayYmd();
+  const acuity = examV2Acuity(a.core ?? {}, today);
+  const flags = redFlagQuestionsFor(ctx.group, ctx.condition);
+  const hits = redFlagsOf(a);
+  const forbidden = forbiddenDevices(a, { today });
+  const cell = (label: string, value: string) => (
+    <tr key={label}><td className="k">{label}</td><td>{value || <span className="pa-blank">—</span>}</td></tr>
+  );
+  //  الإلزاميُّ الظاهرُ كلُّه، والاختياريُّ حين كُتب وحده — فتتّسع الصفحةُ لأطول وحدة.
+  const shown = (f: V2Field, v: V2Value | undefined) => fieldApplies(f, ctx) && (fieldRequired(f, ctx) || examV2ValueText(f, v ?? null, "ar") !== "");
+  const coreRows = V2_CORE_FIELDS.filter((f) => shown(f, a.core?.[f.key])).map((f) => cell(f.ar, examV2ValueText(f, a.core?.[f.key] ?? null, "ar")
+    + (f.key === "onsetDate" && acuity ? ` — ${acuity.ar}` : "")));
+  const half = Math.ceil(coreRows.length / 2);
+  return (
+    <div className="pa" dir="rtl" data-testid="psp-v2">
+      <div className="pa-title">معاينة العلاج الطبيعي الإلزامية <span className="pa-sub" dir="ltr">{PT_FORM_CODE_V2} · v{PT_FORM_VERSION_V2}</span>
+        <span className="pa-sub"> — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
+      <table className="pa-t pa-rtl"><tbody>
+        {cell("التشخيص", diagnosis)}
+        {cell("الإحساس في منطقة العلاج", `${PT_SENSATION.find((o) => o.code === a.sensation)?.ar ?? ""}${a.sensationRegions ? ` — ${a.sensationRegions}` : ""}`)}
+      </tbody></table>
+      <div className="pa-two">
+        <table className="pa-t pa-rtl"><tbody>{coreRows.slice(0, half)}</tbody></table>
+        <table className="pa-t pa-rtl"><tbody>{coreRows.slice(half)}</tbody></table>
+      </div>
+      {mod && (
+        <table className="pa-t pa-rtl"><tbody>
+          <tr><th colSpan={2}>وحدة «{mod.ar}»</th></tr>
+          {moduleFieldsOf(mod.group).filter((f) => shown(f, a.module?.[f.key])).map((f) => cell(f.ar, examV2ValueText(f, a.module?.[f.key] ?? null, "ar")))}
+        </tbody></table>
+      )}
+      <table className="pa-t pa-rtl"><tbody>
+        <tr><th colSpan={2}>العلاماتُ الحمراء — أُجيب عن {flags.length}: «نعم» {hits.length} و«لا» {flags.length - hits.length}</th></tr>
+        {hits.length === 0 && <tr><td colSpan={2}>لا شيء ممّا سبق</td></tr>}
+        {hits.map((h) => <tr key={h.key}><td className="k">{h.questionAr}</td><td><b>{RED_FLAG_URGENCY_AR[h.urgency]}:</b> {h.actionAr}</td></tr>)}
+      </tbody></table>
+      {forbidden.length > 0 && (
+        <table className="pa-t pa-rtl"><tbody>
+          <tr><th colSpan={2}>أجهزةٌ ممنوعة بالمعاينة</th></tr>
+          {forbidden.map((d) => cell(V2_DEVICE_NAMES[d.deviceCode] ?? d.deviceCode, d.reasonAr))}
+        </tbody></table>
+      )}
     </div>
   );
 }
@@ -395,6 +470,8 @@ table.pa-t { width:100%; border-collapse:collapse; border:1.5px solid #334155; }
 .pa-tick.on { color:#111827; font-weight:700; }
 .pa-blank { color:#94a3b8; }
 .pa-legend { font-size:9.5px; color:#475569; }
+.pa-rtl th, .pa-rtl td { text-align:right; }
+.pa-rtl td.k { width:42%; }
 @media print {
   html, body, .rp-root { background:#fff !important; }
   .no-print, .rp-measure { display:none !important; }

@@ -14,7 +14,8 @@ import { db } from "../db";
 import { activeExamSql } from "../medical/active_exam";
 import { physioSheetNotesOf } from "@shared/exam_sheet";
 import { parseInjuries } from "@shared/case_fields";
-import { assessmentSummaryAr, readStoredAssessment } from "@shared/physio_initial_assessment";
+import { readStoredAssessment } from "@shared/physio_initial_assessment";
+import { anyAssessmentSummaryAr } from "@shared/physio_exam_v2";
 import { PLAN_REVIEW_LABELS, PLAN_STATUS_LABELS, planVisibleTo, canReadPlans, type PlanReviewState, type PlanStatus } from "@shared/physio_plans";
 import { DECISION_LABELS, goalsPct, type AssessmentDecision, type GoalMark } from "@shared/physio_assessments";
 import { resolvePurchasedSessions } from "@shared/pricing";
@@ -78,7 +79,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
       : str(physioSheetNotesOf({ chiefComplaint: e.chief_complaint, clinicalFindings: e.clinical_findings, plan: e.plan, notes: e.notes }));
     return {
       id: Number(e.id), version: Number(e.version ?? 1), doctorName: String(e.doctor_name ?? ""), signedAt: iso(e.signed_at),
-      diagnosis: str(e.diagnosis) ?? str(rx.diseaseType), treatments, notes, assessment, assessmentSummary: assessmentSummaryAr(assessment),
+      diagnosis: str(e.diagnosis) ?? str(rx.diseaseType), treatments, notes, assessment, assessmentSummary: anyAssessmentSummaryAr(assessment),
     };
   });
 

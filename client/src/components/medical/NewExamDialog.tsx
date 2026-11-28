@@ -49,6 +49,37 @@ import {
   assessmentGaps, assessmentGapsText,
   emptyInitialAssessment, parseInitialAssessment, readStoredAssessment, type Lang, type PhysioInitialAssessment,
 } from "@shared/physio_initial_assessment";
+import {
+  agentGateFor, emptyExamV2, examV2AgeConflict, isExamV2, parseExamV2, redFlagsOf, type AgentGate, type PhysioExamV2, type RedFlagReviewSummary,
+} from "@shared/physio_exam_v2";
+import { arDigits } from "@shared/physio_exercises";
+import { RedFlagReviewBox } from "@/components/physio/RedFlagReviewBox";
+import { baghdadTodayYmd } from "@shared/visit_date";
+
+/**
+ * **ما يُملأ من الملفّ في نواة الاستمارة الثانية** (§4.gz — نقدُ التصميم §ج.١٦: «العمرُ والجهةُ في الملفّ يُملآن ويُؤكَّدان»):
+ * العمرُ والوزنُ والطولُ وتاريخُ الإصابة (أو «منذ الولادة / غير معروف») والجهةُ من الإصابات. ما لا يُقرأ يُترك للفاحص.
+ */
+function v2Prefill(sheet: Record<string, unknown> | null, injuriesJson: string | null): { core: Record<string, any>; keys: string[] } {
+  const core: Record<string, any> = {};
+  const n = (v: unknown, min: number, max: number) => {
+    const x = Number(String(v ?? "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace("٫", ".").trim());
+    return Number.isFinite(x) && x >= min && x <= max && String(v ?? "").trim() !== "" ? x : null;
+  };
+  const age = n(sheet?.age, 0, 120);
+  if (age !== null) core.ageYears = Math.floor(age);
+  const w = n(sheet?.weight, 1, 300);
+  if (w !== null) core.weightKg = Math.round(w * 10) / 10;
+  const h = n(sheet?.height, 30, 230);
+  if (h !== null) core.heightCm = Math.round(h);
+  const date = typeof sheet?.injuryDate === "string" ? sheet.injuryDate.slice(0, 10) : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) { core.onsetKind = "date"; core.onsetDate = date; }
+  else if (sheet?.injuryDateStatus === "congenital" || sheet?.injuryDateStatus === "unknown") core.onsetKind = sheet.injuryDateStatus;
+  const sides = new Set(parseInjuries(injuriesJson).map((r) => r.side).filter(Boolean));
+  const side = sides.has("كلاهما") || (sides.has("يمين") && sides.has("يسار")) ? "both" : sides.has("يمين") ? "right" : sides.has("يسار") ? "left" : null;
+  if (side) core.side = side;
+  return { core, keys: Object.keys(core) };
+}
 
 /** ما سجّله الاستقبالُ سريرياً عند التسجيل — يصل من باب المعاينة نفسِها. */
 interface RegistrationClinical {
@@ -329,13 +360,26 @@ export function NewExamDialog({
   const [assessLang, setAssessLang] = useState<Lang>("en");
   const [assessMissing, setAssessMissing] = useState<string[]>([]);
   const dxPrefilledRef = useRef(false);
+  //  **المعاينةُ الجديدة على الاستمارة الإلزامية `BC-PT-02`** (قرارُ المالك ٢٠٢٦-١١-٢٧، §4.gz)؛ والتنقيحُ على استمارته كما خُزّنت —
+  //  القديمةُ (`BC-PT-01` أو بلا تقييم) تُنقَّح بالأولى بلا إلزام كما كانت.
+  const [v2Prefilled, setV2Prefilled] = useState<string[]>([]);
+  const v2PrefillDoneRef = useRef(false);
+  //  **خطوةُ «أرسل للاعتماد» بعد الحفظ** (مراجعةُ المرحلة الأولى — كالنموذج: الملاحظةُ والزرُّ تحت اللافتة داخل المعاينة): رقمُ المعاينة المحفوظة.
+  const [rfStep, setRfStep] = useState<{ examId: number; assessment: unknown } | null>(null);
+  //  وتبديلُ معاينةٍ من اختصاصٍ آخر إلى العلاج الطبيعي يُملأ من الملفّ كالجديدة.
+  const v2Fresh = !isEdit || exam?.caseType !== "physiotherapy";
+  const today = baghdadTodayYmd();
   useEffect(() => {
     if (!open) return;
     setSheetVals(null);
     setSheetMissing([]);
     setRequestedOverride(null);
-    setAssessment(readStoredAssessment(exam?.assessment) ?? emptyInitialAssessment());
+    //  **وتنقيحٌ يبدّل معاينةَ اختصاصٍ آخر إلى العلاج الطبيعي معاينةٌ جديدة** — على الثانية بإلزامها كالخادم (مراجعةُ المرحلة الأولى).
+    setAssessment(exam && exam.caseType === "physiotherapy" ? (readStoredAssessment(exam.assessment) ?? emptyInitialAssessment()) : emptyExamV2());
     setAssessMissing([]);
+    setV2Prefilled([]);
+    setRfStep(null);
+    v2PrefillDoneRef.current = false;
     dxPrefilledRef.current = false;
   }, [open, exam?.id]);
   //  **تنقيحُ معاينة علاجٍ طبيعيّ قديمة على الاستمارة**: «التشخيص» في خانته، والشكوى والفحصُ والخطّةُ والملاحظاتُ تُجمَع في «ملاحظات
@@ -360,6 +404,19 @@ export function NewExamDialog({
   useEffect(() => {
     if (open && sheetSource && sheetVals === null) setSheetVals(sheetValuesFrom(sheetSource));
   }, [open, sheetSource, sheetVals]);
+  //  نواةُ الثانية تُملأ من الملفّ مرّةً واحدة لكلّ معاينةٍ جديدة — ولا تعود إن عدّلها الفاحص.
+  useEffect(() => {
+    if (!open || !v2Fresh || !physioMode || v2PrefillDoneRef.current || (!isEdit && examsLoading)) return;
+    if (!sheetSource && !patientRow) return;
+    v2PrefillDoneRef.current = true;
+    const { core, keys } = v2Prefill(sheetSource, patientRow?.injuries ?? null);
+    if (!keys.length) return;
+    //  ما كتبه الفاحصُ قبل وصول الملفّ يغلب — والملفُّ يملأ الفارغَ وحده.
+    const filled = (v: unknown) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0);
+    setAssessment((a) => (isExamV2(a)
+      ? { ...a, core: { ...a.core, ...Object.fromEntries(Object.entries(core).filter(([k]) => !filled(a.core[k]))) } } : a));
+    setV2Prefilled(keys);
+  }, [open, v2Fresh, isEdit, physioMode, sheetSource, patientRow, examsLoading]);
   //  **«المطلوب» قائمةً** (§4.ct): الكاملُ وحده أو الأجزاءُ كلُّها — من عمودَي الحلقة.
   const awaitingPick = !isEdit && resolvedEpisode !== null ? awaiting.find((e) => e.id === resolvedEpisode) : undefined;
   const baseRequestedItems: string[] | null = isEdit
@@ -544,7 +601,10 @@ export function NewExamDialog({
       // manual refresh.
       queryClient.invalidateQueries({ queryKey: [`/api/followups/patient/${patientId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/patients/${patientId}/device-episodes`] });
-      onOpenChange(false);
+      //  **علامةٌ حمراء** (§4.gz) ⟵ النافذةُ لا تُغلق: خطوةُ «أرسل للاعتماد» بملاحظة الفاحص تحت الإجراء العاجل — لا تُنسى الخطوة.
+      const withFlags = redFlagsOf(saved?.assessment).length > 0 && Number.isFinite(Number(saved?.id));
+      if (withFlags) setRfStep({ examId: Number(saved.id), assessment: saved.assessment });
+      else onOpenChange(false);
       toast({
         title: isEdit ? "حُفظ التعديل والنسخة السابقة محفوظة" : "حُفظت المعاينة ووُقّعت باسمك",
         // The server could not retire the superseded case (it already carries a
@@ -552,7 +612,7 @@ export function NewExamDialog({
         description: [saved?.switchNote, saved?.sheetNote, physioGapsRef.current && `تنبيه — ${physioGapsRef.current}، ويمكنك إكمالها بتعديل المعاينة متى شئت`]
           .filter(Boolean).join(" — ") || undefined,
       });
-      onDone?.();
+      if (!withFlags) onDone?.();
     },
     onError: (err: any) => {
       if (err?.code === "cross_retire_decision_required") {
@@ -571,10 +631,13 @@ export function NewExamDialog({
         queryClient.invalidateQueries({ queryKey: ["/api/medical/worklist"] });
       }
       if (Array.isArray(err?.missing) && err.missing.length) {
-        if (err.code === "assessment_invalid" && !err.missing.includes("diagnosis")) setAssessMissing(err.missing);
+        //  الثانيةُ تسمّي «التشخيص» بين خاناتها (`assessment_incomplete`) — فيُعلَّم في بطاقة النواة.
+        if (err.code === "assessment_incomplete" || (err.code === "assessment_invalid" && (isExamV2(assessment) || !err.missing.includes("diagnosis")))) setAssessMissing(err.missing);
         else setSheetMissing(err.missing);
+        scrollToFirstMissing();
       }
-      toast({ title: "خطأ", description: err.message, variant: "destructive" });
+      //  الناقصُ الكثير لا يُسرد في رسالةٍ تغطّي الشاشة — يُعدّ، وكلُّ خانةٍ معلَّمةٌ بالأحمر.
+      toast({ title: "خطأ", description: err.code === "assessment_incomplete" && err.missing?.length > 3 ? missingToast(err.missing.length) : err.message, variant: "destructive" });
       //  جهازٌ مُمرَّرٌ من صفّ القائمة لم يعد ينتظر: النافذةُ لا تملك بديلاً —
       //  تُغلَق ليعيد الطبيبُ الفتحَ من القائمة المحدَّثة، لا زرُّ حفظٍ يفشل ثانيةً.
       //
@@ -595,6 +658,25 @@ export function NewExamDialog({
   );
   const hasContent = hasNarrative || hasPrescription;
 
+  //  **إلى أوّل خانةٍ ناقصة** — على الهاتف ستّون خانة، والرسالةُ وحدها لا تدلّ (مراجعةُ المرحلة الأولى).
+  const scrollToFirstMissing = () => {
+    setTimeout(() => {
+      const el = document.querySelector<HTMLElement>('[role="dialog"] [data-missing="1"]');
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.querySelector<HTMLElement>("input, select, textarea, button")?.focus({ preventScroll: true });
+    }, 50);
+  };
+  const missingToast = (n: number) => `الخاناتُ الناقصة: ${arDigits(n)} — مُعلَّمةٌ بالأحمر`;
+  //  **ونهايةُ خطوة «أرسل للاعتماد»** — بعد الإرسال أو القرار أو «لاحقاً».
+  const finishRfStep = () => { setRfStep(null); onOpenChange(false); onDone?.(); };
+  const { data: rfData } = useQuery<{ exams?: { id: number; doctorId?: number | null; redFlagReview?: RedFlagReviewSummary | null; agentGate?: AgentGate | null }[];
+    userId?: number | null; canApproveRedFlags?: boolean }>({
+    queryKey: [`/api/medical/patients/${patientId}/exams`],
+    enabled: open && rfStep !== null,
+  });
+  const rfRow = rfStep ? rfData?.exams?.find((e) => e.id === rfStep.examId) ?? null : null;
+
   //  **الاستمارةُ تُفحَص قبل الإرسال بقاعدة الخادم نفسِها** — فلا يُفرَّغ إلزاميٌّ ولا تُكتب قيمةٌ غير صالحة.
   const submit = () => {
     if (onSheetForm && sheetVals && sheetSource) {
@@ -608,7 +690,24 @@ export function NewExamDialog({
     //  **التقييمُ بقاعدة الخادم نفسِها** — ومعاينةٌ قديمة بلا تقييم تُنقَّح بلا تقييم ما دام فارغاً (القاعدةُ في الخادم كذلك).
     //  **ولا خانةَ إلزامية** (قرارُ المالك ٢٠٢٦-١٠-١٠): القيمةُ غيرُ الصالحة وحدها تمنع، والناقصُ تنبيهٌ يُقال بعد الحفظ.
     physioGapsRef.current = null;
-    if (physioMode) {
+    //  **الثانيةُ إلزامية** (§4.gz): قيمةٌ غيرُ صالحة أو إلزاميٌّ ناقص ⟵ لا إرسال، والناقصُ يُعلَّم ويُسمّى — بقاعدة الخادم نفسِها.
+    if (physioMode && isExamV2(assessment)) {
+      const r = parseExamV2(assessment, { today, diagnosis: form.diagnosis });
+      if (!r.ok || r.missing.length) {
+        setAssessMissing(r.missing);
+        scrollToFirstMissing();
+        toast({ title: "المعاينة إلزامية — أكمل الخانات المعلَّمة", description: r.ok ? missingToast(r.missing.length) : r.error, variant: "destructive" });
+        return;
+      }
+      //  **والعمرُ يطابق الورقة** حين يغيّر الفرقُ سؤالَ سلامة — بقاعدة الخادم نفسِها (`examV2AgeConflict`).
+      const ageBad = examV2AgeConflict(r.value.core?.ageYears, sheetVals?.age ?? sheetSource?.age ?? null);
+      if (ageBad) {
+        setAssessMissing(["core.ageYears"]);
+        scrollToFirstMissing();
+        toast({ title: "تحقّق من العمر", description: ageBad, variant: "destructive" });
+        return;
+      }
+    } else if (physioMode) {
       const oldWithout = isEdit && !readStoredAssessment(exam?.assessment);
       const r = parseInitialAssessment(assessment);
       const empty = JSON.stringify(assessment) === JSON.stringify(emptyInitialAssessment());
@@ -653,8 +752,33 @@ export function NewExamDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && rfStep !== null) finishRfStep(); else onOpenChange(o); }}>
       <DialogContent className={`${onSheetForm ? "sm:max-w-4xl overflow-x-hidden" : "sm:max-w-[620px]"} max-h-[92vh] overflow-y-auto`} dir="rtl">
+        {rfStep !== null ? (
+          //  ══ **«أرسل للاعتماد» داخل المعاينة** — المعاينةُ حُفظت، والإجراءُ العاجل لا ينتظر؛ هنا الملاحظةُ والإرسال ══
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-red-800 flex items-center gap-2 pr-10" data-testid="exam-rf-step-title">حُفظت المعاينة — فيها علامةٌ حمراء</DialogTitle>
+              <p className="text-sm text-muted-foreground text-right">
+                نفّذ الإجراءَ العاجل الآن ولا تنتظر. ولا يكتب Opus خطّةً قبل أن يعتمدها المسؤول أو المشرف العام بملاحظته.
+              </p>
+            </DialogHeader>
+            <div data-testid="exam-rf-step">
+              {rfData ? (
+                <RedFlagReviewBox examId={rfStep.examId} patientId={patientId} assessment={rfStep.assessment}
+                  review={rfRow?.redFlagReview ?? null}
+                  gate={rfRow?.agentGate ?? agentGateFor({ assessment: rfStep.assessment, diagnosis: form.diagnosis, cancelled: false, review: rfRow?.redFlagReview ?? null })}
+                  examinerId={rfRow?.doctorId ?? null}
+                  isAuthor={rfRow ? rfRow.doctorId != null && rfRow.doctorId === rfData.userId : !isEdit}
+                  canApprove={Boolean(rfData.canApproveRedFlags)} onDone={finishRfStep} />
+              ) : <p className="text-sm text-muted-foreground">جارٍ التحميل…</p>}
+            </div>
+            <DialogFooter className="gap-2 mt-2">
+              <Button variant="outline" onClick={finishRfStep} data-testid="button-rf-step-later">لاحقاً — من بطاقة المعاينة</Button>
+            </DialogFooter>
+          </>
+        ) : (
+        <>
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
             <Stethoscope className="w-5 h-5" />
@@ -801,6 +925,8 @@ export function NewExamDialog({
                 onLang={setAssessLang}
                 missing={sheetMissing}
                 assessMissing={assessMissing}
+                today={today}
+                prefilled={v2Prefilled}
               />
             )
             : physioMode && <p className="text-sm text-muted-foreground" data-testid="exam-sheet-loading">جارٍ تحميل الاستمارة…</p>)}
@@ -841,6 +967,8 @@ export function NewExamDialog({
             {save.isPending ? "جارٍ الحفظ…" : isEdit ? "حفظ التعديل" : "حفظ وتوقيع"}
           </Button>
         </DialogFooter>
+        </>
+        )}
       </DialogContent>
     </Dialog>
     </>

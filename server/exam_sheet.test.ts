@@ -19,6 +19,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { prepareSheetEdit, examNarrativeRows, examSheetTextOf, EXAM_SHEET_TEXT_LABEL } from "@shared/exam_sheet";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -256,9 +257,10 @@ async function main() {
       [rc.status, /لم تُحفظ تعديلاتُ بيانات المريض: رقم الهاتف مسجَّل باسم: .*جار.*«تعديل بيانات المريض»/.test(rc.json?.sheetNote ?? ""), (await patientRow(c.pid)).address],
       [200, true, "الكرادة"]);
     const ph1 = await sheetPatient("physiotherapy", "علاج");
-    const rp = await call("POST", `/api/medical/patients/${ph1.pid}/exams`, S.doc, {
+    //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+    const rp = await call("POST", `/api/medical/patients/${ph1.pid}/exams`, S.doc, withCompleteExamV2({
       idempotencyKey: randomUUID(), caseType: "physiotherapy", diagnosis: "انزلاق غضروفي", sheet: { address: "الأعظمية" },
-    });
+    }));
     //  **تغيّر بقرار المالك (٢٠٢٦-١٠-٠٩، §4.da)**: كان العلاجُ الطبيعيُّ لا يُعايَن على استمارة فتُتجاهَل حقولُها؛ وصار على استمارته
     //  هو — فتعديلُ الفاحص لحقول الاستعلامات يُكتب ويُدقَّق باسمه كالأجهزة بالقاعدة نفسِها. (حرّاسُه في `test:physio-exam-sheet`.)
     same("ج.٢ **والعلاجُ الطبيعيُّ على استمارته** — تعديلُ الفاحص يُكتب ويُدقَّق كالأجهزة (§4.da)", [rp.status, (await patientRow(ph1.pid)).address, (await auditRows("patient", ph1.pid)).length],

@@ -14,8 +14,11 @@ import {
 } from "@shared/physio_plans";
 import { aiComplete, aiErrorDetail, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
 import { getProtocol } from "../physio_protocols/store";
-import { assessmentAsEnglishText, assessmentPlanLabels, assessmentSummaryAr, readStoredAssessment } from "@shared/physio_initial_assessment";
+import { assessmentPlanLabels, readStoredAssessment } from "@shared/physio_initial_assessment";
+import { anyAssessmentEnglishText, anyAssessmentSummaryAr, assessmentPainWorst, isExamV2 } from "@shared/physio_exam_v2";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { PlanError, type Actor } from "./store";
+import { examAgentGate } from "../physio_exam_reviews/store";
 
 export type Completer = (p: AiCompleteParams) => Promise<string>;
 let testCompleter: Completer | null = null;
@@ -49,7 +52,7 @@ export async function patientContext(patientId: number) {
   const [pt] = await db.select({ age: patients.age, medicalCondition: patients.medicalCondition, presentingComplaint: patients.presentingComplaint })
     .from(patients).where(eq(patients.id, patientId));
   const [ex] = await db.select({
-    signedAt: medicalExams.signedAt, chiefComplaint: medicalExams.chiefComplaint, clinicalFindings: medicalExams.clinicalFindings,
+    id: medicalExams.id, signedAt: medicalExams.signedAt, chiefComplaint: medicalExams.chiefComplaint, clinicalFindings: medicalExams.clinicalFindings,
     diagnosis: medicalExams.diagnosis, plan: medicalExams.plan, notes: medicalExams.notes, assessment: medicalExams.assessment,
   }).from(medicalExams)
     .where(and(eq(medicalExams.patientId, patientId), eq(medicalExams.caseType, "physiotherapy"),
@@ -61,15 +64,18 @@ export async function patientContext(patientId: number) {
     chiefComplaint: clip(ex.chiefComplaint, 1500), clinicalFindings: clip(ex.clinicalFindings, 1500),
     diagnosis: clip(ex.diagnosis, 1500), plan: clip(ex.plan, 1500), notes: clip(ex.notes, 1500),
     //  **التقييمُ الأوّليّ نصّاً بالإنجليزية كالورقة** — الألمُ والقوةُ والتشنّجُ والوظيفةُ وبنودُ خطّة العلاج التي أشّرها الفاحص.
-    initialAssessment: clip(assessmentAsEnglishText(assessed), 4000),
+    //  **والثانيةُ (`BC-PT-02`، §4.gz) كلُّ خاناتها**: النواةُ ووحدةُ المجموعة والعلاماتُ الحمراء بأجوبتها والموانعُ الحتمية — بحدٍّ أوسع.
+    initialAssessment: clip(anyAssessmentEnglishText(assessed, { today: baghdadTodayYmd() }), isExamV2(assessed) ? 16000 : 4000),
   } : null;
   const examHasText = Boolean(exam && (exam.chiefComplaint || exam.clinicalFindings || exam.diagnosis || exam.plan || exam.notes || exam.initialAssessment));
   return {
+    //  **أيُّ معاينةٍ يقرؤها المساعد** — وبها تُفحص بوّابةُ العلامة الحمراء للإلزامية (§4.gz).
+    examId: ex ? Number(ex.id) : null, examIsV2: isExamV2(assessed),
     age: clip(pt?.age, 40), medicalCondition: clip(pt?.medicalCondition, 300), presentingComplaint: clip(pt?.presentingComplaint, 1000),
     exam: examHasText ? exam : null,
     //  للشاشة لا للمساعد: سطرُ التقييم بالعربية وبنودُ الخطّة وأسوأُ الألم — تُعرَض بجانب اختيار البروتوكول.
     assessmentView: examHasText && assessed ? {
-      summary: assessmentSummaryAr(assessed), planItems: assessmentPlanLabels(assessed, "ar"), painWorst: assessed.painWorst,
+      summary: anyAssessmentSummaryAr(assessed), planItems: assessmentPlanLabels(assessed, "ar"), painWorst: assessmentPainWorst(assessed),
     } : null,
   };
 }
@@ -118,7 +124,18 @@ export interface SuggestInput {
 export async function suggestPlan(p: SuggestInput) {
   const ctx = await patientContext(p.patientId);
   if (!ctx.exam && !p.note) throw new PlanError(400, "لا معاينةَ علاجٍ طبيعيّ في ملفّه — اكتب سطراً عن حالته");
-  const patient = { age: ctx.age, registeredCondition: ctx.medicalCondition, reasonForVisit: ctx.presentingComplaint, physiotherapyExam: ctx.exam, specialistNote: p.note };
+  //  **بوّابةُ العلامة الحمراء** (§4.gz، مراجعةُ المرحلة الأولى): المعاينةُ الإلزامية بعلامةٍ لم تُعتمد، أو مرفوضة، أو معلَّقٌ على معاينةٍ
+  //  سابقة ⟵ لا يُرسَل شيءٌ إلى المساعد. والمعتمَدةُ تحمل ملاحظةَ الاعتماد قيداً على الاقتراح.
+  let redFlagApprovalNote: string | null = null;
+  if (ctx.examId !== null && ctx.examIsV2) {
+    const gate = await examAgentGate(ctx.examId);
+    if (!gate.allowed) throw new PlanError(409, `لا يُقترح خطّةٌ على هذه المعاينة — ${gate.reason}`);
+    redFlagApprovalNote = gate.decisionNote;
+  }
+  const patient = {
+    age: ctx.age, registeredCondition: ctx.medicalCondition, reasonForVisit: ctx.presentingComplaint, physiotherapyExam: ctx.exam, specialistNote: p.note,
+    ...(redFlagApprovalNote ? { redFlagApprovalNote } : {}),
+  };
   const lib = await library();
   const libIds = new Set(lib.map((r) => r.id));
 

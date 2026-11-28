@@ -2259,6 +2259,38 @@ export const medicalExamRevisions = pgTable("medical_exam_revisions", {
 export type MedicalExamRevision = typeof medicalExamRevisions.$inferSelect;
 
 /**
+ * **اعتمادُ العلامة الحمراء في معاينة العلاج الطبيعي** (ترحيل ١٩٨، §4.gz — قرارُ المالك ٢٠٢٦-١١-٢٧).
+ *
+ * المعاينةُ مختومة (ترحيل ٠٢٨) فلا تُكتب حالةُ الاعتماد عليها: هنا صفٌّ لكلّ طلب — يطلبه الفاحصُ بملاحظةٍ إلزامية، ويعتمده المسؤولُ أو
+ * المشرفُ العام بملاحظةٍ إلزامية (يقرؤها Opus قيداً) أو يرفضه فيتوقّف كلُّ شيء. ومعتمِدٌ يفحص بنفسه يعتمد في الخطوة نفسِها، ومعتمِدٌ على
+ * معاينة غيره يقرّر مباشرةً بملاحظة قراره وحدها.
+ * و`flags` لقطةُ ما أُجيب «نعم» يومَ الطلب — فاعتمادٌ قديم لا يغطّي علامةً أُضيفت بتنقيحٍ بعده. **طلبٌ مفتوحٌ واحد لكلّ معاينة**.
+ */
+export const physioExamRedFlagReviews = pgTable("physio_exam_red_flag_reviews", {
+  id: serial("id").primaryKey(),
+  examId: integer("exam_id").references(() => medicalExams.id).notNull(),
+  patientId: integer("patient_id").references(() => patients.id).notNull(),
+  branchId: integer("branch_id").references(() => branches.id),
+  flags: jsonb("flags").$type<{ key: string; questionAr: string; actionAr: string; urgency: string }[]>().notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  /** ملاحظةُ مَن أرسلها — فارغةٌ (`null`) في قرار معتمِدٍ مباشرٍ على معاينة غيره، ولا يكون المعلَّقُ بلاها (CHECK). */
+  examinerNote: text("examiner_note"),
+  decisionNote: text("decision_note"),
+  requestedBy: integer("requested_by"),
+  requestedByName: text("requested_by_name"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by"),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("uq_pefr_one_open").on(t.examId).where(sql`status = 'pending'`),
+  index("ix_pefr_status").on(t.status, t.requestedAt),
+  index("ix_pefr_patient").on(t.patientId),
+  index("ix_pefr_exam").on(t.examId),
+]);
+export type PhysioExamRedFlagReview = typeof physioExamRedFlagReviews.$inferSelect;
+
+/**
  * **إلغاءُ معاينةٍ موقّعة — شاهدةُ قبرٍ تُضاف، لا سجلٌّ يُمحى** (ترحيل ٠٦١).
  *
  * زرُّ «حذف» في الشاشة يعني **هذا الصفَّ**: المعاينةُ الأصلية ونسخُها

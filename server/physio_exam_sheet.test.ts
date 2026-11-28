@@ -6,6 +6,8 @@
 // نصٌّ حرّ؛ (٤) الإلزام: القسمُ الأوّل أو «لا ينطبق»، والألم، والإحساس، وبندٌ من خطّة العلاج، والتشخيص. ومعها: «سبب المراجعة» خانةٌ
 // مستقلّة لا يُفرَّغ مكتوبُها، والتنقيحُ لا يمحو، ولا قيدَ جديد على معاينةٍ قديمة. **والمرحلةُ الثانية** (ت.): التسجيلُ بالاستمارة —
 // «سبب المراجعة» إلزاميّ، و«التشخيص» للفاحص وحده، وفي فروع العلاج الطبيعي وحدها («بغداد وذي قار» — من توفّر أجهزته).
+// **وقرارُ المالك ٢٠٢٦-١١-٢٧ (§4.gz)**: المعاينةُ الجديدة على الاستمارة الإلزامية `BC-PT-02` — فالتوقيعُ (ب.) بها، و«لا خانةَ إلزامية»
+// (٢٠٢٦-١٠-١٠) يبقى للمعاينة القديمة `BC-PT-01` تُنقَّح كما كانت (ج.). وقواعدُ الأولى الصرفة (ق.) كما هي: أقسامُها مُعادةٌ في الثانية.
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -25,6 +27,8 @@ import { writesPhysioExamByRole } from "@shared/user_roles";
 import {
   assessmentGaps, assessmentGapsText, assessmentHasContent, assessmentSummaryAr, emptyInitialAssessment, parseInitialAssessment, PT_FORM_CODE, PT_SENSATION,
 } from "@shared/physio_initial_assessment";
+import { PT_FORM_CODE_V2 } from "@shared/physio_exam_v2";
+import { v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -62,6 +66,8 @@ const GOOD = () => ({
   functional: { ...emptyInitialAssessment().functional, gait: { assist: "Independent", notes: "≈ 500 m, no aid" } },
   plan: ["therapeutic_exercises", "strengthening", "pain_management"],
 });
+/** **المعاينةُ الجديدة على الثانية** (§4.gz) — نواتُها كاملة، وأقسامُ الأولى المُعادة من `GOOD` بخاناتها (القوة · أشورث · الوظيفة · الخطّة …). */
+const GOOD_V2 = (core: Record<string, any> = {}) => v2FromV1(GOOD(), { painNow: 3, painWorstWeek: 7, ...core });
 
 async function cleanup() {
   const pts = (await q(`SELECT id FROM patients WHERE referral_sub_source = $1 OR referral_source = $1`, [MARK])).rows.map((r) => Number(r.id));
@@ -199,7 +205,7 @@ async function main() {
     chiefComplaint: "", clinicalFindings: "", plan: "", notes: "لا علامات خطر. رفع الساق المستقيمة سلبي.",
     diagnosis: "ألم أسفل الظهر المزمن غير النوعي",
     prescription: { injuries: [{ type: "تشنج عضلي", area: "منطقة الظهر السفلية", side: "كلاهما" }], treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 12 }] },
-    assessment: GOOD(),
+    assessment: GOOD_V2(),
     ...over,
   });
   const examCount = async (pid: number) => Number((await q(`SELECT count(*) FROM medical_exams WHERE patient_id = $1`, [pid])).rows[0].count);
@@ -228,27 +234,34 @@ async function main() {
     same("أ.٤ والمعالجُ لا يوقّع", [asTher.status, await examCount(p1)], [403, 0]);
 
     console.log("\n── ب. التوقيع: التقييمُ يُفحَص قبل أيّ كتابة، ويُختَم مع المعاينة ──");
-    //  **لا خانةَ إلزامية** (قرارُ المالك ٢٠٢٦-١٠-١٠) — كانت ب.١ وب.٢ تردّان ٤٠٠ بلا بند خطّة وبلا تشخيص.
+    //  **الجديدةُ إلزامية** (قرارُ المالك ٢٠٢٦-١١-٢٧، §4.gz) — كانت ب.١ وب.٢ وب.٢ب تحفظ الأولى ناقصةً وفارغة (قرارُ ٢٠٢٦-١٠-١٠
+    //  «لا خانةَ إلزامية»)؛ وصار ذلك للمعاينة القديمة وحدها تُنقَّح (ج.٣ وج.٤). والإلزامُ نفسُه بتفصيله في `test:physio-exam-v2`.
     const pNoPlan = await physioPatient("بلا خطة");
     const noPlan = await call("POST", `/api/medical/patients/${pNoPlan}/exams`, S.spec, examBody({ assessment: { ...GOOD(), plan: [] } }));
-    same("ب.١ **تقييمٌ بلا بندٍ من الخطّة يُحفَظ** — والتقييمُ مختومٌ بلا بنود", [noPlan.status, await examCount(pNoPlan),
+    same("ب.١ **الاستمارةُ الأولى في معاينةٍ جديدة تُردّ** — ٤٠٠ `assessment_incomplete` ولا صفّ", [noPlan.status, noPlan.json?.code, await examCount(pNoPlan)],
+      [400, "assessment_incomplete", 0]);
+    const noPlanV2 = await call("POST", `/api/medical/patients/${pNoPlan}/exams`, S.spec, examBody({ assessment: { ...GOOD_V2(), plan: [] } }));
+    same("ب.١ب **وبنودُ «خطة العلاج» تبقى اختيارية في الثانية** — يقترحها الوكيل لا الفاحص", [noPlanV2.status, await examCount(pNoPlan),
       (await q(`SELECT assessment FROM medical_exams WHERE patient_id = $1`, [pNoPlan])).rows[0]?.assessment?.plan], [200, 1, []]);
     const pNoDx = await physioPatient("بلا تشخيص");
     const noDx = await call("POST", `/api/medical/patients/${pNoDx}/exams`, S.spec, examBody({ diagnosis: "  " }));
-    same("ب.٢ **والتشخيصُ الفارغ لا يمنع الحفظ**", [noDx.status, await examCount(pNoDx)], [200, 1]);
+    same("ب.٢ **والتشخيصُ الفارغ يمنع الحفظ في الثانية** ويُسمّى", [noDx.status, noDx.json?.code, noDx.json?.missing, await examCount(pNoDx)],
+      [400, "assessment_incomplete", ["diagnosis"], 0]);
     const pBare = await physioPatient("فارغة");
     const bareSheet = await call("POST", `/api/medical/patients/${pBare}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", diagnosis: "", plan: "", notes: "",
       prescription: {}, assessment: emptyInitialAssessment(),
     });
-    same("ب.٢ب **والاستمارةُ بلا أيّ حقلٍ تُحفَظ** (قولُ المالك «يمكن أن يحفظها بدون أي حقل»)", [bareSheet.status, await examCount(pBare)], [200, 1]);
+    same("ب.٢ب **والاستمارةُ بلا أيّ حقلٍ تُردّ في المعاينة الجديدة** بقائمة الناقص", [bareSheet.status, bareSheet.json?.code,
+      Array.isArray(bareSheet.json?.missing) && bareSheet.json.missing.includes("diagnosis") && bareSheet.json.missing.includes("core.group"), await examCount(pBare)],
+      [400, "assessment_incomplete", true, 0]);
     const bareOld = await call("POST", `/api/medical/patients/${pBare}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", diagnosis: "", plan: "", notes: "", prescription: {},
     });
     same("ب.٢ج وبلا الاستمارة (عميلٌ قديم) تبقى المعاينةُ الفارغة مرفوضةً كما كانت", [bareOld.status, bareOld.json?.error, await examCount(pBare)],
-      [400, "لا يمكن حفظ معاينة فارغة", 1]);
-    const badGrade = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: { ...GOOD(), mmt: { ...GOOD().mmt, knee: { r: "6", l: "5" } } } }));
-    same("ب.٣ ودرجةُ قوةٍ خارج ٠–٥ تُردّ", [badGrade.status, badGrade.json?.missing, await examCount(p1)], [400, ["mmt"], 0]);
+      [400, "لا يمكن حفظ معاينة فارغة", 0]);
+    const badGrade = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: { ...GOOD_V2(), mmt: { ...GOOD().mmt, knee: { r: "6", l: "5" } } } }));
+    same("ب.٣ ودرجةُ قوةٍ خارج ٠–٥ تُردّ — قسمُ الأولى المُعادُ بقاعدته", [badGrade.status, badGrade.json?.missing, await examCount(p1)], [400, ["mmt"], 0]);
     const emptied = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ sheet: { presentingComplaint: "" } }));
     same("ب.٤ **ولا يُفرَّغ «سبب المراجعة»** — يُردّ قبل التوقيع", [emptied.status, emptied.json?.missing, await examCount(p1)], [400, ["presentingComplaint"], 0]);
 
@@ -261,10 +274,10 @@ async function main() {
     const row = (await q(`SELECT assessment, diagnosis, notes, doctor_name, signed_at, case_type FROM medical_exams WHERE id = $1`, [ok.json?.id])).rows[0];
     same("ب.٥ **الأخصائيُّ يوقّع، والتقييمُ مختومٌ مع المعاينة** برمز الاستمارة ووقت الحفظ",
       //  (JSONB يرتّب المفاتيحَ — فتُقارَن القيمُ لا ترتيبُها.)
-      [ok.status, row?.case_type, row?.assessment?.form, row?.assessment?.painWorst,
+      [ok.status, row?.case_type, row?.assessment?.form, row?.assessment?.core?.painWorstWeek,
         [row?.assessment?.mmt?.hip?.r, row?.assessment?.mmt?.hip?.l], [row?.assessment?.ashworth?.lower?.r, row?.assessment?.ashworth?.lower?.l],
         [row?.assessment?.functional?.gait?.assist, row?.assessment?.functional?.gait?.notes], row?.diagnosis, row?.notes, Boolean(row?.signed_at)],
-      [200, "physiotherapy", PT_FORM_CODE, 7, ["4", "4"], ["0", "1+"], ["Independent", "≈ 500 m, no aid"],
+      [200, "physiotherapy", PT_FORM_CODE_V2, 7, ["4", "4"], ["0", "1+"], ["Independent", "≈ 500 m, no aid"],
         "ألم أسفل الظهر المزمن غير النوعي", "لا علامات خطر. رفع الساق المستقيمة سلبي.", true]);
     same("ب.٦ **«تاريخ بداية الإصابة» يُختَم من «تاريخ الإصابة» بعد تعديل الفاحص** — لا خانةٌ ثانية",
       row?.assessment?.onsetAtSigning, "unknown");
@@ -279,12 +292,12 @@ async function main() {
     const replay = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, body);
     same("ب.٩ إعادةُ الإرسال بالمفتاح نفسِه ⟵ الصفُّ نفسُه بلا كتابة", [replay.status, replay.json?.id, replay.json?.created, await examCount(p1)],
       [200, ok.json?.id, false, 1]);
-    const conflict = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, { ...body, assessment: { ...GOOD(), painWorst: 9 } });
+    const conflict = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, { ...body, assessment: GOOD_V2({ painWorstWeek: 9 }) });
     same("ب.١٠ **والمفتاحُ نفسُه بتقييمٍ آخر تعارضٌ لا إعادة**", [conflict.status, conflict.json?.code, await examCount(p1)], [409, "idempotency_conflict", 1]);
 
     const g = (await call("GET", `/api/medical/patients/${p1}/exams`, S.recv)).json;
     same("ب.١١ **ويطّلع عليه الاستعلامُ من ملفّ المريض** — التقييمُ مع معاينته",
-      [g?.exams?.[0]?.assessment?.form, g?.exams?.[0]?.assessment?.plan], [PT_FORM_CODE, ["therapeutic_exercises", "strengthening", "pain_management"]]);
+      [g?.exams?.[0]?.assessment?.form, g?.exams?.[0]?.assessment?.plan], [PT_FORM_CODE_V2, ["therapeutic_exercises", "strengthening", "pain_management"]]);
     const gs = (await call("GET", `/api/medical/patients/${p1}/exams`, S.spec)).json;
     same("ب.١٢ والأخصائيُّ يفتح على حقول الاستعلامات ومعها «سبب المراجعة»", gs?.sheet?.presentingComplaint, "ألم أسفل الظهر يزداد بالجلوس");
 
@@ -299,32 +312,49 @@ async function main() {
     const rev = await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
       caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "بعد أسبوع",
       diagnosis: "ألم أسفل الظهر المزمن غير النوعي", prescription: body.prescription,
-      assessment: { ...GOOD(), painWorst: 5 },
+      assessment: GOOD_V2({ painNow: 2, painWorstWeek: 5 }),
     });
     const live = (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [examId])).rows[0];
     const old = (await q(`SELECT version, assessment FROM medical_exam_revisions WHERE exam_id = $1 ORDER BY version`, [examId])).rows;
     same("ج.١ **التنقيحُ يكتب التقييمَ الجديد، والنسخةُ السابقة تحمل تقييمَها**",
-      [rev.status, live.version, live.assessment?.painWorst, old.map((r) => [r.version, r.assessment?.painWorst])], [200, 2, 5, [[1, 7]]]);
+      [rev.status, live.version, live.assessment?.core?.painWorstWeek, old.map((r) => [r.version, r.assessment?.core?.painWorstWeek])], [200, 2, 5, [[1, 7]]]);
     await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
       caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "نصٌّ فقط",
       diagnosis: "ألم أسفل الظهر المزمن غير النوعي", prescription: body.prescription,
     });
-    same("ج.٢ وتنقيحٌ بلا مفتاح التقييم يُبقيه كما هو", (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [examId])).rows[0].assessment?.painWorst, 5);
+    same("ج.٢ وتنقيحٌ بلا مفتاح التقييم يُبقيه كما هو", (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [examId])).rows[0].assessment?.core?.painWorstWeek, 5);
     const badRev = await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
-      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), sensation: null },
+      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD_V2(), sensation: null },
     });
-    same("ج.٣ **وتقييمٌ ناقص في التنقيح يُحفَظ** (لا إلزام) — نسخةٌ جديدة بلا إحساس",
-      [badRev.status, (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [examId])).rows.map((r) => [r.version, r.assessment?.sensation ?? null])[0]],
-      [200, [4, null]]);
+    same("ج.٣ **ومعاينةٌ على الثانية لا تُنقَّح ناقصةً** — ٤٠٠ يسمّي الإحساس، بلا نسخةٍ جديدة",
+      [badRev.status, badRev.json?.missing, (await q(`SELECT version FROM medical_exams WHERE id = $1`, [examId])).rows[0].version],
+      [400, ["sensation"], 3]);
     const badRevValue = await call("PATCH", `/api/medical/exams/${examId}`, S.spec, {
-      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), painWorst: 12 },
+      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: GOOD_V2({ painNow: 12 }),
     });
     same("ج.٣ب وقيمةٌ غيرُ صالحة في التنقيح ⟵ ٤٠٠ بلا نسخةٍ جديدة",
-      [badRevValue.status, badRevValue.json?.missing, (await q(`SELECT version FROM medical_exams WHERE id = $1`, [examId])).rows[0].version], [400, ["painWorst"], 4]);
+      [badRevValue.status, badRevValue.json?.missing, (await q(`SELECT version FROM medical_exams WHERE id = $1`, [examId])).rows[0].version], [400, ["core.painNow"], 3]);
+    //  **والمعاينةُ القديمة (`BC-PT-01`) تُنقَّح ناقصةً كما كانت** — «لا قيدَ جديد على القديم» (قرارُ ٢٠٢٦-١٠-١٠ باقٍ لها).
+    const pOldV1 = await physioPatient("قديمة أولى");
+    const oldV1Case = Number((await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [pOldV1])).rows[0].id);
+    const oldV1Id = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment)
+      VALUES ($1, $2, 'physiotherapy', $3, $4, 'أخصائيّ', 'د', '{}'::jsonb, $5::jsonb) RETURNING id`, [pOldV1, oldV1Case, B1, SPEC, JSON.stringify(GOOD())])).rows[0].id);
+    const v1Rev = await call("PATCH", `/api/medical/exams/${oldV1Id}`, S.spec, {
+      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), sensation: null },
+    });
+    same("ج.٣ج **وتقييمٌ أوّل ناقص في تنقيح معاينةٍ قديمة يُحفَظ** (لا إلزام) — نسخةٌ جديدة بلا إحساس",
+      [v1Rev.status, (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [oldV1Id])).rows.map((r) => [r.version, r.assessment?.form, r.assessment?.sensation ?? null])[0]],
+      [200, [2, PT_FORM_CODE, null]]);
+    const v1RevValue = await call("PATCH", `/api/medical/exams/${oldV1Id}`, S.spec, {
+      caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: { ...GOOD(), painWorst: 12 },
+    });
+    same("ج.٣د وقيمةٌ غيرُ صالحة فيه ⟵ ٤٠٠ كما كان", [v1RevValue.status, v1RevValue.json?.missing], [400, ["painWorst"]]);
 
-    //  **معاينةٌ قديمة بلا تقييم** (عميلٌ قديم، أو ما قبل اليوم) — تُنقَّح بلا تقييم ما دام فارغاً.
+    //  **معاينةٌ قديمة بلا تقييم** (ما قبل الاستمارة) — تُنقَّح بلا تقييم ما دام فارغاً. لا تُوقَّع اليومَ كذلك، فتُكتب كما خلّفها الماضي.
     const p4 = await physioPatient("قديم");
-    const oldExam = await call("POST", `/api/medical/patients/${p4}/exams`, S.spec, examBody({ assessment: undefined, chiefComplaint: "ألم", diagnosis: "قديم" }));
+    const p4Case = Number((await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [p4])).rows[0].id);
+    const oldExam = { status: 200, json: { id: Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, chief_complaint, diagnosis, prescription)
+      VALUES ($1, $2, 'physiotherapy', $3, $4, 'أخصائيّ', 'ألم', 'قديم', '{}'::jsonb) RETURNING id`, [p4, p4Case, B1, SPEC])).rows[0].id) } };
     const oldRow = (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [oldExam.json?.id])).rows[0];
     const reOld = await call("PATCH", `/api/medical/exams/${oldExam.json?.id}`, S.spec, {
       caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "الشكوى: ألم", diagnosis: "قديم", prescription: {},

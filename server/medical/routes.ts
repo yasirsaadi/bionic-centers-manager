@@ -54,10 +54,13 @@ import {
   LOCK_CONFLICT_CODE, LOCK_CONFLICT_ERROR, isLockConflictError,
 } from "@shared/lock_conflict";
 import { hasRole, onlyRoles, rolesOf } from "@shared/user_roles";
-import { prepareExamSheet, applyExamSheet, physioOnsetAtSigning } from "./exam_sheet_edit";
+import { prepareExamSheet, applyExamSheet, physioOnsetAtSigning, physioFileAgeAtSigning } from "./exam_sheet_edit";
 import { limbSlots, specChoiceMessage, specChoiceProblems } from "@shared/limb_specs";
 import type { AmputationParts } from "@shared/case_fields";
 import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio_assessment_input";
+import { latestReviews } from "../physio_exam_reviews/store";
+import { agentGateFor, examV2AgeConflict, isExamV2, newestOtherExamReview } from "@shared/physio_exam_v2";
+import { canApproveProtocols } from "@shared/physio_protocols";
 
 type Req = any;
 
@@ -493,6 +496,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  **«المطلوب» لجهاز كلّ معاينة** — تفتح عليه الاستمارةُ عند التنقيح (§4.cq، ٢ب).
       const episodeFields = await getEpisodeDisplayFieldsByIds(
         exams.map((e) => e.deviceEpisodeId).filter((n): n is number => typeof n === "number"));
+      //  **اعتمادُ العلامة الحمراء لكلّ معاينة علاجٍ طبيعيّ** (ترحيل ١٩٨، §4.gz) — آخرُ طلبٍ وحالُ بوّابة الوكيل، فتقول البطاقةُ حالَها.
+      const redFlagReviews = await latestReviews(exams.filter((e) => e.caseType === "physiotherapy").map((e) => e.id));
 
       res.json({
         exams: exams.map((e) => ({
@@ -518,7 +523,15 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           reversalFollowupId: followupOfExam[e.id] ?? null,
           deviceRequestedItem: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.requestedItem ?? null : null,
           deviceExtraComponents: e.deviceEpisodeId != null ? episodeFields.get(e.deviceEpisodeId)?.extraComponents ?? [] : [],
+          redFlagReview: redFlagReviews.get(e.id) ?? null,
+          agentGate: e.caseType === "physiotherapy" && isExamV2(e.assessment)
+            ? agentGateFor({ assessment: e.assessment, diagnosis: e.diagnosis ?? "", cancelled: false, review: redFlagReviews.get(e.id) ?? null,
+              //  والمعلَّقُ أو المرفوضُ الأحدثُ على معاينةٍ أخرى للمريض يوقفها كذلك — بالقاعدة التي تقرؤها `examAgentGate`.
+              otherExamReview: newestOtherExamReview(redFlagReviews, e.id) })
+            : null,
         })),
+        //  **مَن يعتمد العلامةَ الحمراء** — المسؤولُ والمشرفُ العام (`canApproveProtocols`)، يقوله الخادم.
+        canApproveRedFlags: canApproveProtocols((req.session as any)?.branchSession ?? null),
         pending, // active specialties with no exam yet → "بانتظار معاينة"
         //  **الأجهزةُ المنتظرةُ بهويّتها** (تدقيق ٢٠٢٦-٠٩-١٢): تعرضها نافذةُ
         //  المعاينة منتقياً — واحدةٌ تُنتقى تلقائياً، وأكثرُ تُختار صراحةً.
@@ -655,7 +668,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           ? v.some((row: any) => row && Object.values(row).some((x) => x !== "" && x !== 0))
           : typeof v === "string" && v.trim().length > 0,
       );
-      //  **واستمارةُ العلاج الطبيعي تُحفَظ ولو بلا حقلٍ واحد** (قرارُ المالك ٢٠٢٦-١٠-١٠) — الشاشةُ تنبّه على الناقص ولا تمنع، والتعديلُ متاحٌ بعدها.
+      //  **واستمارةُ العلاج الطبيعي تُحفَظ ولو بلا نصّ** — والجديدةُ إلزاميةٌ بخاناتها هي (`BC-PT-02`، §4.gz) فلا تكون «فارغة».
       const physioSheetSave = caseType === "physiotherapy" && req.body?.assessment !== null && typeof req.body?.assessment === "object";
       if (!hasNarrative && !hasPrescription && !physioSheetSave) {
         return res.status(400).json({ error: "لا يمكن حفظ معاينة فارغة" });
@@ -668,8 +681,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       const specBad = caseType === "prosthetic" ? specChoiceProblems(prescription, limbSlots(prescription as AmputationParts)) : [];
       if (specBad.length) return res.status(400).json({ error: specChoiceMessage(specBad), missing: specBad, code: "spec_choice_invalid" });
       //  ══ **والتقييمُ الأوّليّ للعلاج الطبيعي** (§4.da) — يُفحَص هنا قبل أيّ كتابة، ويُختَم مع المعاينة نفسِها ══
+      //  **والجديدُ على `BC-PT-02` وإلزاميّ** (قرارُ المالك ٢٠٢٦-١١-٢٧، §4.gz): الناقصُ ⟵ ٤٠٠ `assessment_incomplete` بقائمته.
       const assessPrep = prepareAssessmentForCreate(caseType, req.body);
-      if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });
+      if (!assessPrep.ok) {
+        return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: assessPrep.code, missingLabels: assessPrep.missingLabels ?? [] });
+      }
+      //  **والعمرُ يطابق الملفّ حين يغيّر الفرقُ سؤالَ سلامة** (الحمل · صفائح النموّ · العمر المصحَّح) — قبل أيّ كتابة.
+      if (isExamV2(assessPrep.value)) {
+        const ageBad = examV2AgeConflict(assessPrep.value.core?.ageYears, await physioFileAgeAtSigning(patientId, sheetPrep.prepared));
+        if (ageBad) return res.status(400).json({ error: ageBad, missing: ["core.ageYears"], code: "assessment_invalid", missingLabels: ["العمر"] });
+      }
       //  «تاريخ بداية الإصابة» هو «تاريخ الإصابة» نفسُه — يُختَم نصُّه يومَ الحفظ (بعد تعديل الفاحص له إن عدّله).
       const assessment = assessPrep.value
         ? { ...assessPrep.value, onsetAtSigning: await physioOnsetAtSigning(patientId, sheetPrep.prepared) }
@@ -1095,8 +1116,20 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         ? specChoiceProblems(prescription, limbSlots(prescription as AmputationParts), (exam.prescription ?? {}) as Record<string, unknown>) : [];
       if (specBad.length) return res.status(400).json({ error: specChoiceMessage(specBad), missing: specBad, code: "spec_choice_invalid" });
       //  **والتقييمُ الأوّليّ** (§4.da) — قبل أيّ كتابة كالتوقيع. الغيابُ يُبقي المخزَّن.
-      const assessPrep = prepareAssessmentForRevise(caseType, req.body, exam.assessment ?? null);
-      if (!assessPrep.ok) return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: "assessment_invalid" });
+      //  **والمعاينةُ القديمة (`BC-PT-01`) تُنقَّح كما كانت بلا إلزام، والثانيةُ كاملةً** (§4.gz).
+      //  **وتبديلُ معاينةٍ من اختصاصٍ آخر إلى العلاج الطبيعي معاينةٌ جديدة بإلزامها** (`exam.caseType`).
+      const assessPrep = prepareAssessmentForRevise(caseType, req.body, exam.assessment ?? null, exam.caseType);
+      if (!assessPrep.ok) {
+        return res.status(400).json({ error: assessPrep.error, missing: assessPrep.missing, code: assessPrep.code, missingLabels: assessPrep.missingLabels ?? [] });
+      }
+      //  **والعمرُ يطابق الملفّ** — للثانية الجديدة أو المخزَّنة، بعمر الملفّ كما سيُكتب بعد هذا الطلب.
+      {
+        const finalV2 = assessPrep.value !== undefined ? assessPrep.value : (caseType === "physiotherapy" ? exam.assessment : null);
+        if (isExamV2(finalV2)) {
+          const ageBad = examV2AgeConflict(finalV2.core?.ageYears, await physioFileAgeAtSigning(exam.patientId, sheetPrep.prepared));
+          if (ageBad) return res.status(400).json({ error: ageBad, missing: ["core.ageYears"], code: "assessment_invalid", missingLabels: ["العمر"] });
+        }
+      }
       const assessment = assessPrep.value
         ? { ...assessPrep.value, onsetAtSigning: await physioOnsetAtSigning(exam.patientId, sheetPrep.prepared) }
         : assessPrep.value;

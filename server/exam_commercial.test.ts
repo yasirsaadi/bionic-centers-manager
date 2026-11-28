@@ -81,6 +81,7 @@ import {
   examPathActions, examPathStatusLine, PENDING_SALE_DATA_LABEL,
   NOT_BOUGHT_LEGACY_REASON,
 } from "@shared/commercial";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
@@ -185,11 +186,11 @@ const startEpisode = (patientId: number, serviceType = "prosthetic", item = "ful
  * ي‌ب أدناه يثبت ذلك بنداءٍ خامٍ مباشر). تفاصيلُ البيع تصل من الآن فصاعداً
  * عبر `commercial()` وحدها.
  */
-const signExam = (patientId: number, caseType = "prosthetic", session: any = S.doc) =>
-  http("POST", `/api/medical/patients/${patientId}/exams`, session, {
-    idempotencyKey: crypto.randomUUID(),
-    caseType, diagnosis: "تشخيصٌ سريريّ", plan: "خطّة",
-  });
+//  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+const signExam = (patientId: number, caseType = "prosthetic", session: any = S.doc) => {
+  const body = { idempotencyKey: crypto.randomUUID(), caseType, diagnosis: "تشخيصٌ سريريّ", plan: "خطّة" };
+  return http("POST", `/api/medical/patients/${patientId}/exams`, session, caseType === "physiotherapy" ? withCompleteExamV2(body) : body);
+};
 
 const commercial = (followupId: number, patch: any, session: any) =>
   http("POST", `/api/followups/${followupId}/commercial`, session, patch);
@@ -998,11 +999,11 @@ async function main() {
       const p = await mkPatient("علاجٌ طبيعي بحمولةٍ تجارية");
       await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [p]);
       await mkCase(p, "physiotherapy");
-      const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc2, {
+      const ex = await http("POST", `/api/medical/patients/${p}/exams`, S.doc2, withCompleteExamV2({
         idempotencyKey: crypto.randomUUID(),
         caseType: "physiotherapy", diagnosis: "تشخيصٌ سريريّ",
         commercial: { price: { kind: "normal", originalPrice: 250_000 }, decision: "bought" },
-      });
+      }));
       check(ex.status === 200 || ex.status === 201,
         "٦٥. **(٥) ومعاينةُ العلاج الطبيعي كذلك** — ولو حمل الطلبُ تسعيراً",
         String(ex.status));

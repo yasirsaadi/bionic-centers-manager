@@ -10,13 +10,13 @@
 import { GovernorateSelect, InjuryDateField } from "@/components/intake/IntakeFields";
 import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTable, cellInput } from "@/components/intake/IntakeSheetFrame";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
+import { ExamV2Form } from "@/components/physio/ExamV2Form";
+import { anyAssessmentGapsText, assessmentFormLabel, isExamV2 } from "@shared/physio_exam_v2";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
 import { PHYSIO_SHEET_NOTES_LABEL } from "@shared/exam_sheet";
-import {
-  PT_FORM_CODE, PT_FORM_VERSION, PT_LABELS, assessmentGaps, assessmentGapsText, type Lang, type PhysioInitialAssessment,
-} from "@shared/physio_initial_assessment";
+import { PT_LABELS, type Lang, type PhysioInitialAssessment } from "@shared/physio_initial_assessment";
 import type { InjuryEntry } from "@shared/case_fields";
 import { cn } from "@/lib/utils";
 import { ReferralCell, type ExamSheetValues } from "./ExamSheetForm";
@@ -27,7 +27,7 @@ const dmy = (iso: string) => (iso ? iso.slice(0, 10).split("-").reverse().join("
 
 export function PhysioExamSheetForm({
   branchName, registeredAt, sheet, onSheet, rx, onRx, diagnosis, onDiagnosis, notes, onNotes,
-  assessment, onAssessment, lang, onLang, missing, assessMissing,
+  assessment, onAssessment, lang, onLang, missing, assessMissing, today, prefilled = [],
 }: {
   branchName: string | null;
   registeredAt: string | null;
@@ -47,9 +47,15 @@ export function PhysioExamSheetForm({
   missing: string[];
   /** مفاتيحُ ناقصةٌ من التقييم. */
   assessMissing: string[];
+  /** اليومُ بتوقيت بغداد — للمرحلة المشتقّة وموانع المدد. */
+  today: string;
+  /** خاناتُ النواة المملوءةُ من الملفّ (§4.gz). */
+  prefilled?: string[];
 }) {
   const miss = (k: string) => missing.includes(k);
-  const gapsText = assessmentGapsText(assessmentGaps(assessment, diagnosis));
+  //  **الثانيةُ إلزامية** (§4.gz): الناقصُ يمنع الحفظ ويُسمّى؛ والأولى (معاينةٌ قديمة تُنقَّح) تنبيهٌ كما كانت.
+  const v2 = isExamV2(assessment);
+  const gapsText = anyAssessmentGapsText(assessment, diagnosis);
   const set = <K extends keyof ExamSheetValues>(k: K, v: ExamSheetValues[K]) => onSheet({ ...sheet, [k]: v });
   const onset = sheet.injuryDate ? sheet.injuryDate.slice(0, 10) : sheet.injuryDateStatus;
 
@@ -123,9 +129,23 @@ export function PhysioExamSheetForm({
           </SheetRow>
         </SheetPair>
 
+        {/*  ══ **المعاينةُ الإلزامية `BC-PT-02`** (§4.gz): النواةُ ووحدةُ المجموعة والعلاماتُ الحمراء — فوق أقسام الأولى ══ */}
+        {isExamV2(assessment) && (
+          <>
+            <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 text-center font-bold text-slate-900" data-testid="pt-v2-band">
+              معاينة العلاج الطبيعي الإلزامية
+            </div>
+            <div className="p-2 md:p-3 bg-slate-50 border-b border-slate-700">
+              <ExamV2Form value={assessment} onChange={(v) => onAssessment(v)} diagnosis={diagnosis} onDiagnosis={onDiagnosis}
+                missing={[...assessMissing, ...(miss("diagnosis") ? ["diagnosis"] : [])]} today={today} prefilled={prefilled} testIdPrefix="pt-v2" />
+            </div>
+          </>
+        )}
         {/*  ══ التقييمُ الأوّليّ — بهيئة الورقتين الأصليتين ولغتهما ══ */}
         <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 flex flex-wrap items-center justify-center gap-2">
-          <span className="font-bold text-slate-900">التقييم الأوّلي — {PT_LABELS.formTitle.en}</span>
+          <span className="font-bold text-slate-900">
+            {v2 ? "أقسام التقييم الأوّلي: القوة والتشنّج والوظيفة" : <>التقييم الأوّلي — <bdi dir="ltr">{PT_LABELS.formTitle.en}</bdi></>}
+          </span>
           <div className="ms-auto inline-flex rounded-md border border-slate-600 overflow-hidden text-xs" role="group" aria-label="لغة الاستمارة">
             {(["en", "ar"] as const).map((l) => (
               <button key={l} type="button" onClick={() => onLang(l)} aria-pressed={lang === l}
@@ -135,13 +155,17 @@ export function PhysioExamSheetForm({
             ))}
           </div>
         </div>
-        <InitialAssessmentSheet value={assessment} onChange={onAssessment} lang={lang} onset={onset || null} missing={assessMissing} />
+        <InitialAssessmentSheet value={assessment} onChange={onAssessment} lang={lang} onset={onset || null} missing={assessMissing}
+          hide={v2 ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
 
         <SheetBand>قرار الفاحص</SheetBand>
-        <SheetRow label="التشخيص" missing={miss("diagnosis")} testId="pt-row-diagnosis">
-          <Input className={cn(cellInput, "bg-emerald-50/50")} value={diagnosis} onChange={(e) => onDiagnosis(e.target.value)}
-            placeholder="التشخيص السريري" data-testid="pt-sheet-diagnosis" />
-        </SheetRow>
+        {/*  في الثانية «التشخيص» في بطاقة النواة بجانب مجموعته — خانةٌ واحدة لا اثنتان. */}
+        {!v2 && (
+          <SheetRow label="التشخيص" missing={miss("diagnosis")} testId="pt-row-diagnosis">
+            <Input className={cn(cellInput, "bg-emerald-50/50")} value={diagnosis} onChange={(e) => onDiagnosis(e.target.value)}
+              placeholder="التشخيص السريري" data-testid="pt-sheet-diagnosis" />
+          </SheetRow>
+        )}
         <SheetRow label="العلاج الموصوف وعدد الجلسات" testId="pt-row-treatments">
           <div className="py-1.5 space-y-1">
             <PhysioTreatmentsEditor rows={(rx.treatments as TreatmentRow[] | undefined) ?? []} onChange={(rows) => onRx({ ...rx, treatments: rows })} />
@@ -158,12 +182,16 @@ export function PhysioExamSheetForm({
         <div className="px-2 py-2 text-xs text-slate-500 text-center">تظهر هنا زياراتُ المريض وجلساتُه من سجلّ الزيارات</div>
       </SheetTable>
       {/*  **لا خانةَ إلزامية — والناقصُ يُقال** (قرارُ المالك ٢٠٢٦-١٠-١٠): تُحفَظ الاستمارةُ كما هي، ويُكمَل ما نقص بتعديل المعاينة متى شاء. */}
-      {gapsText && (
+      {gapsText && (v2 ? (
+        <p className="mt-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800" data-testid="pt-sheet-gaps">
+          إلزاميّ قبل الحفظ — {gapsText}.
+        </p>
+      ) : (
         <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="pt-sheet-gaps">
           تنبيه — {gapsText}. تُحفَظ الاستمارةُ بدونها، ويمكنك إكمالها بتعديل المعاينة متى شئت.
         </p>
-      )}
-      <p className="mt-2 text-[11px] text-slate-500 text-left" dir="ltr">{PT_FORM_CODE} · v{PT_FORM_VERSION}</p>
+      ))}
+      <p className="mt-2 text-[11px] text-slate-500 text-left" dir="ltr">{assessmentFormLabel(assessment)}</p>
     </div>
   );
 }

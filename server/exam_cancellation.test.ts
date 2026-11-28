@@ -15,6 +15,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -136,10 +137,9 @@ const startEpisode = (patientId: number, serviceType: string) =>
  * كما هو، بلا لمس ٢٥+ موضع استدعاء.
  */
 async function signExam(patientId: number, caseType: string, extra: any = {}, session: any = S.doc) {
-  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
-    idempotencyKey: crypto.randomUUID(),
-    caseType, diagnosis: "تشخيص", plan: "خطة", ...extra,
-  });
+  //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+  const body = { idempotencyKey: crypto.randomUUID(), caseType, diagnosis: "تشخيص", plan: "خطة", ...extra };
+  const res = await http("POST", `/api/medical/patients/${patientId}/exams`, session, caseType === "physiotherapy" ? withCompleteExamV2(body) : body);
   if (typeof extra?.deviceCost === "number" && res.status < 300 && res.body?.id) {
     const client = await pool.connect();
     try {

@@ -132,3 +132,12 @@ export async function physioOnsetAtSigning(patientId: number, prepared: Prepared
   const status = pick("injuryDateStatus");
   return typeof status === "string" && status.trim() ? status.trim() : null;
 }
+
+/**
+ * **عمرُ الملفّ يومَ الحفظ** — كما سيُكتب بعد هذا الطلب: ما عدّله الفاحصُ على الورقة في الطلب نفسِه، وإلّا عمرُ الملفّ. به تُقارَن خانةُ
+ * العمر في المعاينة الإلزامية (`examV2AgeConflict`، §4.gz) — العمرُ «من الملفّ — تأكيدٌ فقط».
+ */
+export async function physioFileAgeAtSigning(patientId: number, prepared: PreparedExamSheet | null): Promise<unknown> {
+  if (prepared && Object.prototype.hasOwnProperty.call(prepared.patch, "age")) return prepared.patch.age;
+  return ((await intakeSheetOf(patientId)) ?? {}).age ?? null;
+}

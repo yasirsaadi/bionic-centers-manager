@@ -18,6 +18,8 @@ import { storage } from "./storage";
 import { softDeletePatient } from "./patients/trash_store";
 import { BLOCKED } from "./ai/capabilities/catalog";
 import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
+import { PT_FORM_CODE_V2 } from "@shared/physio_exam_v2";
+import { v2FromV1 } from "./test_fixtures/physio_exam_v2";
 import { physioMoneyLine, physioPlanLine, physioProgressLine, physioSessionRows } from "@shared/physio_sheet_view";
 
 let failures = 0;
@@ -151,21 +153,26 @@ async function main() {
     const caseId = Number((await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [pid])).rows[0].id);
     await q(`UPDATE patient_cases SET cost = 250000 WHERE id = $1`, [caseId]);
 
-    //  معاينةٌ قديمة (قبل الاستمارة) ثمّ معاينةٌ على الاستمارة بتقييمها.
-    const oldExam = await call("POST", `/api/medical/patients/${pid}/exams`, S.spec, {
-      idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "ألم رقبة", clinicalFindings: "تحدّد الحركة", plan: "", notes: "",
-      diagnosis: "التهاب مفاصل الرقبة", prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 6 }] },
+    //  معاينةٌ قديمة (قبل الاستمارة) ثمّ معاينةٌ على الاستمارة الأولى بتقييمها — **وُقّعتا قبل الإلزام** (§4.gz) فتُكتبان كما خلّفهما الماضي:
+    //  التوقيعُ اليوم على الثانية وحدها، والورقةُ تقرأ القديمَ كما هو.
+    const pastExam = async (minutesAgo: number, cols: Record<string, unknown>) => ({ status: 200, json: { id: Number((await q(`
+      INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, chief_complaint, clinical_findings, diagnosis, notes,
+             prescription, assessment, signed_at)
+      VALUES ($1, $2, 'physiotherapy', $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, now() - ($12 || ' minutes')::interval) RETURNING id`,
+      [pid, caseId, B1, SPEC, `م ${SPEC}`, cols.chiefComplaint ?? null, cols.clinicalFindings ?? null, cols.diagnosis, cols.notes ?? null,
+        JSON.stringify(cols.prescription ?? {}), cols.assessment ? JSON.stringify(cols.assessment) : null, String(minutesAgo)])).rows[0].id) } });
+    const oldExam = await pastExam(20, {
+      chiefComplaint: "ألم رقبة", clinicalFindings: "تحدّد الحركة", diagnosis: "التهاب مفاصل الرقبة",
+      prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 6 }] },
     });
-    await new Promise((r) => setTimeout(r, 20));
-    const newExam = await call("POST", `/api/medical/patients/${pid}/exams`, S.spec, {
-      idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "اختبار سبيرلنغ إيجابي يميناً",
-      diagnosis: "اعتلال جذر عصبي رقبي C6", assessment: GOOD(),
+    const newExam = await pastExam(10, {
+      notes: "اختبار سبيرلنغ إيجابي يميناً", diagnosis: "اعتلال جذر عصبي رقبي C6", assessment: GOOD(),
       prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }, { treatmentType: "تيكار", sessionCount: 4 }] },
     });
-    //  ومعاينةٌ ثالثة أُلغيت — ليست سلطةً سريرية، فلا تظهر في الورقة (`activeExamSql`).
+    //  ومعاينةٌ ثالثة أُلغيت — ليست سلطةً سريرية، فلا تظهر في الورقة (`activeExamSql`). وتُوقَّع اليومَ على الإلزامية.
     const cancelled = await call("POST", `/api/medical/patients/${pid}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-      diagnosis: "معاينةٌ أُلغيت", assessment: GOOD(), prescription: {},
+      diagnosis: "معاينةٌ أُلغيت", assessment: v2FromV1(GOOD()), prescription: {},
     });
     await q(`INSERT INTO medical_exam_cancellations (exam_id, patient_id, branch_id, reason) VALUES ($1, $2, $3, 'وُقّعت على المريض الخطأ')`,
       [cancelled.json?.id, pid, B1]);
@@ -273,6 +280,16 @@ async function main() {
     await softDeletePatient({ patientId: dev, reason: "تسجيلٌ مكرّر للاختبار", actor: { userId: ADMIN, isAdmin: true, role: "admin", scope: null } as any });
     same("د.٣ ومريضٌ في السلّة ⟵ ٤٠٩", (await sheet(dev, S.recv)).status, 409);
     void v2; void v3;
+
+    //  **والمعاينةُ الإلزامية تُقرأ في الورقة أيضاً** (§4.gz) — وُقّعت اليومَ فهي الأحدث، بسطرها.
+    const fresh = await call("POST", `/api/medical/patients/${pid}/exams`, S.spec, {
+      idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
+      diagnosis: "اعتلال جذر عصبي رقبي C6", assessment: v2FromV1(GOOD()), prescription: {},
+    });
+    const d2 = (await sheet(pid, S.recv)).json;
+    same("هـ.١ **والثانيةُ تُقرأ أوّلاً بسطرها**، والأولى بعدها كما كانت",
+      [fresh.status, d2?.exams?.[0]?.assessment?.form, /أسفل الظهر/.test(d2?.exams?.[0]?.assessmentSummary ?? ""), d2?.exams?.[1]?.assessment?.form],
+      [200, PT_FORM_CODE_V2, true, "BC-PT-01"]);
   } finally {
     httpServer.close();
     await cleanup();

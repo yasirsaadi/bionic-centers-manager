@@ -30,10 +30,15 @@ import {
 } from "@shared/medical";
 import { NewExamDialog } from "./NewExamDialog";
 import { examNarrativeRows, isSheetExamType } from "@shared/exam_sheet";
-import {
-  assessmentAsEnglishText, assessmentGaps, assessmentGapsText, assessmentSummaryAr, readStoredAssessment, PT_FORM_CODE, type Lang, type PhysioInitialAssessment,
-} from "@shared/physio_initial_assessment";
+import { readStoredAssessment, type Lang, type PhysioInitialAssessment } from "@shared/physio_initial_assessment";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
+import { ExamV2Form } from "@/components/physio/ExamV2Form";
+import { RedFlagReviewBox } from "@/components/physio/RedFlagReviewBox";
+import {
+  anyAssessmentEnglishText, anyAssessmentGapsText, anyAssessmentSummaryAr, assessmentFormLabel, isExamV2, redFlagsOf,
+  type AgentGate, type RedFlagReviewSummary,
+} from "@shared/physio_exam_v2";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { openIntakeSheetPrint } from "@/components/intake/DeviceSheetsBox";
 import { useBranchSession } from "@/components/BranchGate";
 import { AdministrativeReversalDialog } from "@/components/AdministrativeReversalDialog";
@@ -154,6 +159,9 @@ interface Exam {
    * يظهر عليها بابُ التصحيح الإداريّ إطلاقاً.
    */
   reversalFollowupId?: number | null;
+  /** آخرُ طلب اعتمادٍ للعلامة الحمراء وبوّابةُ الوكيل (ترحيل ١٩٨، §4.gz) — للمعاينة الإلزامية وحدها. */
+  redFlagReview?: RedFlagReviewSummary | null;
+  agentGate?: AgentGate | null;
 }
 
 interface ExamsResponse {
@@ -164,6 +172,8 @@ interface ExamsResponse {
   /** Branch manager / admin — may revise anyone's exam. */
   canManageExams: boolean;
   userId: number | null;
+  /** المسؤولُ والمشرفُ العام — يعتمدان العلامةَ الحمراء (§4.gz). */
+  canApproveRedFlags?: boolean;
 }
 
 
@@ -205,7 +215,7 @@ export function PatientMedicalExams({
   const [editing, setEditing] = useState<Exam | null>(null);
   const [historyOf, setHistoryOf] = useState<Exam | null>(null);
   //  **«عرض التقييم الأوّلي»** — لكلّ مَن يرى المريض (المعالج والاستقبال…) بلغة الورقة أو بالعربية.
-  const [assessView, setAssessView] = useState<{ a: PhysioInitialAssessment; title: string } | null>(null);
+  const [assessView, setAssessView] = useState<{ a: PhysioInitialAssessment; title: string; diagnosis?: string } | null>(null);
   const [assessLang, setAssessLang] = useState<Lang>("en");
   const [cancelling, setCancelling] = useState<Exam | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -372,9 +382,11 @@ export function PatientMedicalExams({
       .join("");
     //  **التقييمُ الأوّليّ يُطبع مع معاينته** — لا يضيع منه سطر (§4.da).
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const assessText = assessmentAsEnglishText(readStoredAssessment(exam.assessment));
+    //  والإلزاميّةُ (§4.gz) بكلّ خاناتها والعلاماتِ الحمراء بأجوبتها.
+    const stored = readStoredAssessment(exam.assessment);
+    const assessText = anyAssessmentEnglishText(stored, { today: baghdadTodayYmd() });
     const assessBlock = assessText
-      ? `<h2 style="font-size:15px;margin:22px 0 8px">Physiotherapy Initial Assessment — التقييم الأوّلي</h2><div dir="ltr" style="font-size:13px;white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">${esc(assessText)}</div><div style="font-size:11px;color:#666;margin-top:4px" dir="ltr">${PT_FORM_CODE}</div>`
+      ? `<h2 style="font-size:15px;margin:22px 0 8px">Physiotherapy Initial Assessment — التقييم الأوّلي</h2><div dir="ltr" style="font-size:13px;white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">${esc(assessText)}</div><div style="font-size:11px;color:#666;margin-top:4px" dir="ltr">${assessmentFormLabel(stored)}</div>`
       : "";
 
     const win = window.open("", "_blank", "width=900,height=1000");
@@ -647,21 +659,29 @@ ${addenda}
                   {readStoredAssessment(exam.assessment) && (
                     <div className="mb-2 rounded-lg border border-emerald-300 bg-emerald-50/60 p-2 flex flex-wrap items-center gap-2" data-testid={`exam-assessment-${exam.id}`}>
                       <div className="text-xs flex-1 min-w-[12rem]">
-                        <span className="font-bold text-emerald-900">التقييم الأوّلي: </span>
-                        <span dir="auto">{assessmentSummaryAr(readStoredAssessment(exam.assessment))}</span>
-                        {/*  **ما نقص يبقى ظاهراً** (قرارُ المالك ٢٠٢٦-١٠-١٠: لا إلزام، والتنبيهُ باقٍ حتى يُكمَل بالتعديل). */}
-                        {assessmentGapsText(assessmentGaps(readStoredAssessment(exam.assessment), exam.diagnosis ?? "")) && (
+                        <span className="font-bold text-emerald-900">{isExamV2(exam.assessment) ? "المعاينة الإلزامية: " : "التقييم الأوّلي: "}</span>
+                        <span dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(exam.assessment), { today: baghdadTodayYmd() })}</span>
+                        {/*  **ما نقص يبقى ظاهراً** — الأولى بلا إلزام (قرارُ المالك ٢٠٢٦-١٠-١٠)، والثانيةُ لا تُحفظ ناقصة (§4.gz). */}
+                        {anyAssessmentGapsText(readStoredAssessment(exam.assessment), exam.diagnosis ?? "") && (
                           <div className="mt-1 text-[11px] text-amber-800" data-testid={`exam-assessment-gaps-${exam.id}`}>
-                            تنبيه — {assessmentGapsText(assessmentGaps(readStoredAssessment(exam.assessment), exam.diagnosis ?? ""))}
+                            تنبيه — {anyAssessmentGapsText(readStoredAssessment(exam.assessment), exam.diagnosis ?? "")}
                           </div>
                         )}
                       </div>
                       <Button size="sm" variant="outline" className="h-7 text-xs"
-                        onClick={() => setAssessView({ a: readStoredAssessment(exam.assessment)!, title: `${exam.doctorName} — ${formatDateIraq(exam.signedAt)} ${formatTimeIraq(exam.signedAt)}` })}
+                        onClick={() => setAssessView({ a: readStoredAssessment(exam.assessment)!, title: `${exam.doctorName} — ${formatDateIraq(exam.signedAt)} ${formatTimeIraq(exam.signedAt)}`, diagnosis: exam.diagnosis ?? "" })}
                         data-testid={`button-view-assessment-${exam.id}`}>
-                        عرض التقييم الأوّلي
+                        {isExamV2(exam.assessment) ? "عرض المعاينة" : "عرض التقييم الأوّلي"}
                       </Button>
                     </div>
+                  )}
+                  {/*  **اعتمادُ العلامة الحمراء** (§4.gz) — لمعاينةٍ إلزامية فيها «نعم». */}
+                  {/*  وطلبٌ معلَّقٌ أو مرفوضٌ يبقى ظاهراً ولو مُحيت العلاماتُ بعده — يوقف المعاينةَ حتى يقرّر معتمِد. */}
+                  {isExamV2(exam.assessment) && (redFlagsOf(exam.assessment).length > 0
+                    || exam.redFlagReview?.status === "pending" || exam.redFlagReview?.status === "rejected") && (
+                    <RedFlagReviewBox examId={exam.id} patientId={patientId} assessment={exam.assessment}
+                      review={exam.redFlagReview ?? null} gate={exam.agentGate ?? null} examinerId={exam.doctorId ?? null}
+                      isAuthor={exam.doctorId != null && exam.doctorId === data?.userId} canApprove={Boolean(data?.canApproveRedFlags)} />
                   )}
                   {prescriptionLines(exam).length > 0 && (
                     <div className="mb-2 rounded-lg border border-teal-200 bg-teal-50/60 p-2 space-y-1">
@@ -753,13 +773,19 @@ ${addenda}
       <Dialog open={assessView !== null} onOpenChange={(o) => !o && setAssessView(null)}>
         <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden" dir="rtl" data-testid="dialog-view-assessment">
           <DialogHeader>
-            <DialogTitle className="text-primary flex flex-wrap items-center gap-2">
-              التقييم الأوّلي للعلاج الطبيعي
+            {/*  زرُّ الإغلاق في الزاوية اليمنى فعلاً (`right-4`) — فالحشوةُ يميناً لا بالجهة المنطقية. */}
+            <DialogTitle className="text-primary flex flex-wrap items-center gap-2 pr-10">
+              {assessView && isExamV2(assessView.a) ? "معاينة العلاج الطبيعي" : "التقييم الأوّلي للعلاج الطبيعي"}
               <span className="text-xs font-normal text-muted-foreground">{assessView?.title}</span>
             </DialogTitle>
           </DialogHeader>
-          <div className="flex justify-end">
-            <div className="inline-flex rounded-md border overflow-hidden text-xs" role="group" aria-label="لغة الاستمارة">
+          {assessView && isExamV2(assessView.a) && (
+            <ExamV2Form value={assessView.a} diagnosis={assessView.diagnosis ?? ""} today={baghdadTodayYmd()} testIdPrefix="view-v2" />
+          )}
+          {/*  **زرُّ اللغة لأقسام الأولى وحدها** — فهو فوقها لا فوق بطاقات الثانية (وهي عربيةٌ وحدها). */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {assessView && isExamV2(assessView.a) && <h3 className="m-0 text-sm font-bold text-slate-800">أقسامُ التقييم الأوّلي</h3>}
+            <div className="inline-flex rounded-md border overflow-hidden text-xs ms-auto" role="group" aria-label="لغة الاستمارة">
               {(["en", "ar"] as const).map((l) => (
                 <button key={l} type="button" onClick={() => setAssessLang(l)} aria-pressed={assessLang === l}
                   className={assessLang === l ? "px-2.5 py-1 bg-slate-800 text-white" : "px-2.5 py-1 bg-white"} data-testid={`view-assess-lang-${l}`}>
@@ -770,10 +796,11 @@ ${addenda}
           </div>
           {assessView && (
             <div className="border-2 border-slate-700 min-w-0">
-              <InitialAssessmentSheet value={assessView.a} lang={assessLang} onset={assessView.a.onsetAtSigning} testIdPrefix="view-pt" />
+              <InitialAssessmentSheet value={assessView.a} lang={assessLang} onset={assessView.a.onsetAtSigning} testIdPrefix="view-pt"
+                hide={isExamV2(assessView.a) ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
             </div>
           )}
-          <p className="text-[11px] text-slate-500" dir="ltr">{PT_FORM_CODE}</p>
+          <p className="text-[11px] text-slate-500" dir="ltr">{assessmentFormLabel(assessView?.a ?? null)}</p>
         </DialogContent>
       </Dialog>
 
@@ -827,9 +854,9 @@ ${addenda}
                       {readStoredAssessment(rev.assessment) && (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-muted-foreground shrink-0 min-w-[92px]">التقييم الأوّلي:</span>
-                          <span className="text-xs" dir="auto">{assessmentSummaryAr(readStoredAssessment(rev.assessment))}</span>
+                          <span className="text-xs" dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(rev.assessment))}</span>
                           <Button size="sm" variant="ghost" className="h-6 text-xs px-2"
-                            onClick={() => setAssessView({ a: readStoredAssessment(rev.assessment)!, title: `النسخة ${rev.version} — ${rev.doctorName ?? ""}` })}
+                            onClick={() => setAssessView({ a: readStoredAssessment(rev.assessment)!, title: `النسخة ${rev.version} — ${rev.doctorName ?? ""}`, diagnosis: rev.diagnosis ?? "" })}
                             data-testid={`button-view-assessment-rev-${rev.id}`}>عرض</Button>
                         </div>
                       )}

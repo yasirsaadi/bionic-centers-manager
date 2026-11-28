@@ -23,6 +23,8 @@ import { setSuggestCompleterForTests } from "./physio_plans/suggest";
 import { prefillSupported, requestMessages, type AiCompleteParams } from "./ai/provider";
 import { parseModelJson, validateAdjustments, validateChoices } from "@shared/physio_plans";
 import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
+import { V2_CORE_FIELDS, examV2Ctx, fieldApplies, moduleFieldsOf, redFlagQuestionsFor } from "@shared/physio_exam_v2";
+import { completeExamV2 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -49,6 +51,7 @@ async function cleanup() {
   await q(`DELETE FROM physio_plan_suggestions WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM physio_plans WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM medical_exam_cancellations WHERE patient_id = ANY($1::int[])`, [pts]);
+  await q(`DELETE FROM physio_exam_red_flag_reviews WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM medical_exams WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patient_cases WHERE patient_id = ANY($1::int[])`, [pts]);
   await q(`DELETE FROM patients WHERE id = ANY($1::int[])`, [pts]);
@@ -254,6 +257,34 @@ async function main() {
     same("ت.٤ **وبجانب اختيار البروتوكول سطرُ التقييم وبنودُ خطّة العلاج وأسوأُ الألم**", info4?.assessment,
       { summary: "الألم 3–7 من ١٠ · الرقبة · مستمرّ · الإحساس ضعيف · بنود خطة العلاج: 2", planItems: ["تمارين علاجية", "الشدّ"], painWorst: 7 });
     same("ت.٥ ومعاينةٌ بلا تقييم ⟵ لا سطرَ تقييم", (await call("GET", `/api/patients/${pt.id}/physio-plans`, S.spec)).json?.suggest?.assessment, null);
+    //  **والمعاينةُ الإلزامية `BC-PT-02`** (§4.gz) — كلُّ خاناتها تصل المساعد: النواةُ ووحدةُ المجموعة والعلاماتُ بأجوبتها والموانعُ الحتمية.
+    const pt5 = (await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, presenting_complaint)
+      VALUES ($1, '07705556668', $2, '46', 'physiotherapy', $3, true, 'ألم أسفل الظهر') RETURNING id`, [`إلزامية-سرّيّة ${MARK}`, MARK, B1])).rows[0].id;
+    const A5 = completeExamV2({ core: { anticoagulant: ["warfarin"], surgery: "yes", surgeryType: "spine", surgeryDate: "2025-01-01", surgeonInstructions: "yes",
+      metalInField: "yes", metalTypes: ["spinal_fixation"] }, redFlags: { visceral: "yes" }, top: { mmt: { ...emptyInitialAssessment().mmt, hip: { r: "4", l: "4" } } } });
+    const ex5 = Number((await q(`INSERT INTO medical_exams (patient_id, case_type, branch_id, doctor_name, diagnosis, assessment) VALUES ($1, 'physiotherapy', $2, 'أخصائيّ اختبار', 'ألم أسفل الظهر بعد تثبيت', $3::jsonb) RETURNING id`,
+      [pt5, B1, JSON.stringify(A5)])).rows[0].id);
+    calls.length = 0;
+    reply = { choose: { choices: [{ protocolId: P2, reasonAr: "ظهر" }] }, adjust: {} };
+    //  **بوّابةُ العلامة الحمراء** (§4.gz، مراجعةُ المرحلة الأولى): «نعم» لم تُعتمد ⟵ ٤٠٩ ولا يُنادى المساعد.
+    const blocked5 = await suggestFor(S.spec, pt5);
+    same("ت.٥ب **علامةٌ حمراء لم تُعتمد ⟵ لا اقتراح** — ٤٠٩ بسببها ولا نداءَ للمساعد",
+      [blocked5.status, /لم تُرسَل للاعتماد/.test(blocked5.json?.error ?? ""), calls.length], [409, true, 0]);
+    const appr5 = await call("POST", `/api/physio/exams/${ex5}/red-flag-review`, S.admin, { decision: "approve", decisionNote: "ألمٌ حشويّ مستبعَد بالفحص — بلا شدّ" });
+    same("ت.٥ج والمعتمِدُ يعتمدها مباشرةً بملاحظته وحدها", [appr5.status, appr5.json?.status, appr5.json?.examinerNote], [201, "approved", null]);
+    const r5 = await suggestFor(S.spec, pt5);
+    const sent5 = calls.map((c) => c.user).join("\n");
+    const ctx5 = examV2Ctx(A5);
+    const labels5 = [...V2_CORE_FIELDS.filter((f) => fieldApplies(f, ctx5)).map((f) => `${f.en}:`), ...moduleFieldsOf("lumbar").filter((f) => fieldApplies(f, ctx5)).map((f) => `${f.en}:`),
+      ...redFlagQuestionsFor("lumbar", "nonspecific").map((f) => f.key)];
+    same("ت.٦ **كلُّ خانةٍ ظاهرة في الثانية تصل المساعد** — بلا ناقص",
+      [r5.status, labels5.filter((x) => !sent5.includes(JSON.stringify(x).slice(1, -1)))], [200, []]);
+    same("ت.٧ والعلامةُ «نعم» بدرجتها والموانعُ الحتمية وأقسامُ الأولى — ولا اسمَ ولا هاتف",
+      [sent5.includes("[YES] visceral"), sent5.includes("Deterministic contraindications"), sent5.includes("shockwaves"), sent5.includes("MMT: Hip Flexors / Extensors R 4 / L 4"),
+        sent5.includes("إلزامية-سرّيّة"), sent5.includes("07705556668")], [true, true, true, true, false, false]);
+    same("ت.٧ب **وملاحظةُ الاعتماد تصل المساعدَ قيداً**", sent5.includes("redFlagApprovalNote") && sent5.includes("بلا شدّ"), true);
+    const info5 = (await call("GET", `/api/patients/${pt5}/physio-plans`, S.spec)).json?.suggest?.assessment;
+    same("ت.٨ وبجانب الاختيار سطرُها وأسوأُ ألم الأسبوع", [/أسفل الظهر/.test(info5?.summary ?? ""), /علاماتٌ حمراء: ١/.test(info5?.summary ?? ""), info5?.painWorst], [true, true, 8]);
     calls.length = 0;
     calls.push(...savedCalls);
 
