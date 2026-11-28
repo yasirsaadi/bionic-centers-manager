@@ -15,7 +15,7 @@ import {
 import { aiComplete, aiErrorDetail, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
 import { getProtocol } from "../physio_protocols/store";
 import { assessmentPlanLabels, readStoredAssessment } from "@shared/physio_initial_assessment";
-import { anyAssessmentEnglishText, anyAssessmentSummaryAr, assessmentPainWorst, isExamV2 } from "@shared/physio_exam_v2";
+import { anyAssessmentEnglishText, anyAssessmentSummaryAr, assessmentPainWorst, forbiddenDevices, isExamV2, type ForbiddenDevice } from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { PlanError, type Actor } from "./store";
 import { examAgentGate } from "../physio_exam_reviews/store";
@@ -71,6 +71,8 @@ export async function patientContext(patientId: number) {
   return {
     //  **أيُّ معاينةٍ يقرؤها المساعد** — وبها تُفحص بوّابةُ العلامة الحمراء للإلزامية (§4.gz).
     examId: ex ? Number(ex.id) : null, examIsV2: isExamV2(assessed),
+    //  **الأجهزةُ الممنوعة بالمعاينة** (مصفوفةُ الموانع الحتمية) — تُطبَّق في الشيفرة لا في النموذج (مراجعةُ Codex على #770).
+    forbidden: ex ? forbiddenDevices(assessed, { today: baghdadTodayYmd() }) : ([] as ForbiddenDevice[]),
     age: clip(pt?.age, 40), medicalCondition: clip(pt?.medicalCondition, 300), presentingComplaint: clip(pt?.presentingComplaint, 1000),
     exam: examHasText ? exam : null,
     //  للشاشة لا للمساعد: سطرُ التقييم بالعربية وبنودُ الخطّة وأسوأُ الألم — تُعرَض بجانب اختيار البروتوكول.
@@ -165,7 +167,15 @@ export async function suggestPlan(p: SuggestInput) {
   const chosen = await getProtocol(choices[0].protocolId);
   if (!chosen || chosen.isArchived) throw new PlanError(404, "البروتوكول غير موجود");
   //  «استعمالُ المركز» يحكم (ترحيل ١٢٢): «لا يُستخدم» لا يراه المساعد — والأساسيُّ والمساعدُ بدورهما.
-  const allowedRows = chosen.devices.filter((d) => centreUseOf(d) !== "not_used" && d.availableBranchIds.includes(p.branchId));
+  const usable = chosen.devices.filter((d) => centreUseOf(d) !== "not_used" && d.availableBranchIds.includes(p.branchId));
+  //  **البوّابةُ الحتمية بعد المعاينة** (§4.gz، مراجعةُ Codex على #770): ما تمنعه المعاينةُ لا يراه المساعدُ ولا يدخل الخطّة —
+  //  يُحذف هنا بسببه، ويُكتب في «التعديلات» حذفاً من الخادم لا من المساعد.
+  const forbiddenWhy = new Map(ctx.forbidden.map((f) => [f.deviceCode, f.reasonAr]));
+  const blockedRows = usable.filter((d) => forbiddenWhy.has(d.code));
+  const allowedRows = usable.filter((d) => !forbiddenWhy.has(d.code));
+  if (usable.length && !allowedRows.length) {
+    throw new PlanError(422, "أجهزةُ هذا البروتوكول كلُّها ممنوعةٌ لهذا المريض بالمعاينة — اختر بروتوكولاً آخر");
+  }
   const allowed: AllowedLine[] = allowedRows.map((d) => ({ deviceId: Number(d.deviceId), minutes: d.minutes, nameAr: d.nameAr, nameEn: d.nameEn }));
   const dose = { sessionsPerWeek: chosen.sessionsPerWeek, durationWeeks: chosen.durationWeeks, sessionMinutes: chosen.sessionMinutes };
   const rawAdj = await complete({
@@ -180,13 +190,17 @@ export async function suggestPlan(p: SuggestInput) {
     } }),
   });
   const result: SuggestionResult = validateAdjustments(rawAdj, allowed, dose);
+  for (const d of blockedRows) {
+    result.changes.unshift({ kind: "remove", deviceId: Number(d.deviceId), nameAr: d.nameAr, nameEn: d.nameEn,
+      reasonAr: `ممنوعٌ بالمعاينة: ${forbiddenWhy.get(d.code)}`, reasonEn: "Contraindicated by the structured exam" });
+  }
 
   const titleOf = new Map(lib.map((r) => [r.id, r]));
   const richChoices = choices.map((c) => ({ ...c, titleAr: titleOf.get(c.protocolId)?.titleAr ?? null, titleEn: titleOf.get(c.protocolId)?.titleEn ?? null,
     status: titleOf.get(c.protocolId)?.status ?? null, ageGroup: titleOf.get(c.protocolId)?.ageGroup ?? null }));
   const [row] = await db.insert(physioPlanSuggestions).values({
     patientId: p.patientId, branchId: p.branchId, protocolId: chosen.id,
-    input: patient, choices: richChoices, result: { ...result, protocolDevices: allowed.length },
+    input: patient, choices: richChoices, result: { ...result, protocolDevices: allowed.length + blockedRows.length },
     createdBy: p.actor.userId, createdByName: p.actor.name,
   }).returning();
   return present(row, allowed);

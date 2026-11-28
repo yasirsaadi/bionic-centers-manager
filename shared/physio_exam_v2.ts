@@ -882,7 +882,7 @@ function normalizeField(f: V2Field, raw: unknown, today?: string): FieldResult {
     case "date": {
       if (typeof raw !== "string") return bad("تاريخٌ غير صالح");
       const s = westernDigits(raw.trim()).slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) return bad("تاريخٌ غير صالح");
+      if (!isRealCalendarDate(s)) return bad("تاريخٌ غير صالح");
       if (f.noFuture && today && s > today) return bad("التاريخُ لا يكون في المستقبل");
       return { ok: true, v: s };
     }
@@ -892,6 +892,18 @@ function normalizeField(f: V2Field, raw: unknown, today?: string): FieldResult {
       return { ok: true, v: s || null };
     }
   }
+}
+
+/**
+ * **يومٌ موجودٌ في التقويم** (مراجعةُ Codex على #770): `Date.parse("2025-02-31")` يقبله ويدحرجه إلى مارس، والتاريخُ يحسب
+ * الحدّةَ ونوافذَ الجراحة والحقنة — فيُعاد بناؤه من أجزائه ويُقارَن بالمكتوب.
+ */
+export function isRealCalendarDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
 }
 
 const ctxOf = (core: V2Values, module: V2Values): V2Ctx => {

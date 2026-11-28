@@ -96,6 +96,9 @@ async function main() {
   const badPain = parseExamV2(completeExamV2({ core: { painNow: 9, painWorstWeek: 4 } }), { today: TODAY });
   same("ق.٩ب والألمُ الآن لا يزيد على الأسوأ في الأسبوع", badPain.ok ? null : badPain.missing, ["core.painNow"]);
   same("ق.٩ج والتاريخُ لا يكون في المستقبل", (parseExamV2(completeExamV2({ core: { onsetDate: "2099-01-01" } }), { today: TODAY }) as any).missing, ["core.onsetDate"]);
+  same("ق.٩هـ **ويومٌ لا يوجد في التقويم يُردّ** (٣١ شباط و٣١ نيسان — مراجعةُ Codex على #770)، والسنةُ الكبيسة تمرّ",
+    ["2025-02-31", "2025-04-31", "2024-02-29"].map((d) => (parseExamV2(completeExamV2({ core: { onsetDate: d } }), { today: TODAY }) as any).missing ?? "ERR"),
+    [["core.onsetDate"], ["core.onsetDate"], []]);
   same("ق.٩د والأرقامُ العربية تُقرأ (٤٧ ⟵ 47)", (parseExamV2(completeExamV2({ core: { ageYears: "٤٧" as any } }), { today: TODAY }) as any).value?.core?.ageYears, 47);
   same("ق.١٠ **العلاماتُ العامّة ثمانٍ لكلّ مريض**، وما يخصّ المجموعة فوقها، والمقيَّدةُ بحالةٍ مع حالتها",
     [redFlagQuestionsFor("lumbar", null).filter((f) => f.groups === null).length, redFlagQuestionsFor("lumbar", null).length,
