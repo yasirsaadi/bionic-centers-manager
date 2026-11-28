@@ -493,8 +493,18 @@ const FIELD_LABELS: Record<string, string> = {
   stopRulesEn: "قواعدُ التوقّف بالإنكليزية", homeProgramEn: "البرنامجُ المنزليّ بالإنكليزية", rationaleEn: "المبرّراتُ بالإنكليزية",
   titleAr: "عنوانُ الخطّة", titleEn: "عنوانُ الخطّة بالإنكليزية", mode: "نوعُ الخطّة", protocolId: "البروتوكول", draftProtocolId: "البروتوكولُ المسوّدة",
   protocolCode: "رمزُ البروتوكول", exerciseChanges: "تبديلاتُ التمارين", phaseNotes: "ملاحظاتُ المراحل", title: "العنوان", org: "الجهة", year: "السنة",
-  usedFor: "استُعمل لـ", reason: "السبب", source: "المصدر",
+  usedFor: "استُعمل لـ", reason: "السبب", source: "المصدر", unitAr: "الوحدة", unitEn: "الوحدةُ بالإنكليزية", min: "الحدُّ الأدنى", max: "الحدُّ الأعلى",
+  higherIsBetter: "الأعلى أفضل", addedBy: "أضافه", fetchedInJob: "فُتح في الوظيفة", whyEn: "سببُ المسار بالإنكليزية", sets: "المجموعات", reps: "التكرارات",
+  holdSeconds: "ثواني الثبات", restSeconds: "ثواني الراحة", doseNote: "ملاحظةُ الجرعة", sessionFrom: "من الجلسة", sessionTo: "إلى الجلسة",
+  goals: "الأهداف", education: "التثقيف", progressCriteria: "معاييرُ الانتقال", notes: "الملاحظات", use: "الاستعمال", minutes: "الدقائق",
+  everyDays: "كلّ كم يوم", times: "عددُ المرّات",
 };
+/** **نسخةٌ فارغة** من عنصرٍ مضاف (مفاتيحُ الهويّة وحدها باقية) — يُقارَن بها فيظهر كلُّ ما في المضاف لا اسمُه وحده. */
+function blankOf<T extends object>(x: T, keep: readonly string[]): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(x)) o[k] = keep.includes(k) ? v : Array.isArray(v) ? [] : null;
+  return o;
+}
 /** أسماءُ نصوص البروتوكول في الفرق — بالعربية وحدها (الإنكليزيُّ منها «بالإنكليزية»). */
 export const PROTOCOL_TEXT_LABELS: Record<keyof SnapProtocolTexts, string> = {
   goals: "الأهداف", goalsEn: "الأهداف بالإنكليزية", exercises: "التمارين", exercisesEn: "التمارين بالإنكليزية",
@@ -524,24 +534,32 @@ export function diffSnapshots(a: PlanSnapshot, b: PlanSnapshot, gateLog: readonl
     ["sessionMinutes", "دقائقُ الجلسة", "dose.session_minutes"], ["startingPhase", "مرحلةُ البدء", "starting_phase"]] as const) {
     if (!eq(a[k], b[k])) add("dose", { kind: "changed", target, labelAr: label, before: a[k], after: b[k] });
   }
-  if (!eq(a.track, b.track)) add("track", { kind: "changed", target: "track", labelAr: "المسار", before: a.track?.nameAr ?? null, after: b.track?.nameAr ?? null });
+  //  المسارُ حقلاً حقلاً — لا «كان: س ⟵ صار: س» والمتغيّرُ إنكليزيّه (مراجعةُ Codex على #776).
+  for (const [k, label] of [["nameAr", "المسار"], ["nameEn", "المسارُ بالإنكليزية"], ["whyEn", "سببُ المسار بالإنكليزية"]] as const) {
+    const x = a.track ? a.track[k] : null; const y = b.track ? b.track[k] : null;
+    if (!eq(x, y)) add("track", { kind: "changed", target: "track", labelAr: label, before: x, after: y });
+  }
   for (const d of b.devices) {
     const o = a.devices.find((y) => y.deviceCode === d.deviceCode);
     const target = `device:${d.deviceCode}`;
     //  الجهازُ المضاف بإعداداته كلِّها (الموديلُ والبرنامجُ والقيمُ الاحتياطية) — لا يُحفظ ما لم يُرَ.
     if (!o) { add("devices", { kind: "added", target, labelAr: d.nameAr, after: { use: d.use, minutes: d.minutes, everyDays: d.everyDays, times: d.times,
-      modelId: d.btl?.modelId ?? null, program: d.btl?.program ?? null, fallback: (d.btl?.fallback ?? []).map((f) => [f.key, f.value, f.source]) } }); continue; }
+      modelId: d.btl?.modelId ?? null, program: d.btl?.program ?? null, fallback: (d.btl?.fallback ?? []).map((f) => [f.key, f.value, f.source]) } });
+      rest("devices", target, `${d.nameAr} — `, blankOf(d, ["deviceCode", "nameAr"]), d as unknown as Record<string, unknown>, ["deviceCode", "use", "minutes", "everyDays", "times"]);
+      continue; }
     const fields: [string, unknown, unknown][] = [["الاستعمال", o.use, d.use], ["الدقائق", o.minutes, d.minutes], ["الموعدُ الدوريّ", [o.everyDays, o.times], [d.everyDays, d.times]],
       ["الموديل", o.btl?.modelId ?? null, d.btl?.modelId ?? null], ["البرنامج", o.btl?.program ?? null, d.btl?.program ?? null],
       ["القيمُ الاحتياطية", (o.btl?.fallback ?? []).map((f) => [f.key, f.value, f.source]), (d.btl?.fallback ?? []).map((f) => [f.key, f.value, f.source])], ["الملاحظة", o.note, d.note]];
     for (const [label, x, y] of fields) if (!eq(x, y)) add("devices", { kind: "changed", target, labelAr: `${d.nameAr} — ${label}`, before: x, after: y });
-    rest("devices", target, `${d.nameAr} — `, { ...o, btl: o.btl ? { ...o.btl, modelId: null, program: null, fallback: null } : null },
-      { ...d, btl: d.btl ? { ...d.btl, modelId: null, program: null, fallback: null } : null }, ["deviceCode", "use", "minutes", "everyDays", "times", "note"]);
+    //  ما لا يعرضه سطرُ «القيمُ الاحتياطية» (الوحدةُ والاسمُ الإنكليزيّ لكلّ قيمة) يبقى في «إعداداتُ الجهاز».
+    const btlRest = (x: SnapDevice["btl"]) => (x ? { ...x, modelId: null, program: null, fallback: x.fallback.map((f) => ({ key: f.key, labelEn: f.labelEn, unit: f.unit })) } : null);
+    rest("devices", target, `${d.nameAr} — `, { ...o, btl: btlRest(o.btl) }, { ...d, btl: btlRest(d.btl) }, ["deviceCode", "use", "minutes", "everyDays", "times", "note"]);
   }
   for (const o of a.devices) if (!b.devices.some((y) => y.deviceCode === o.deviceCode)) add("devices", { kind: "removed", target: `device:${o.deviceCode}`, labelAr: o.nameAr, before: { use: o.use } });
   for (const p of b.phases) {
-    const o = a.phases.find((y) => y.position === p.position);
-    if (!o) { add("phases", { kind: "added", target: `phase:${p.position}`, labelAr: p.nameAr }); continue; }
+    let o = a.phases.find((y) => y.position === p.position);
+    //  المرحلةُ المضافة تُقارَن بمرحلةٍ فارغة — فيظهر نطاقُها ونصوصُها وتمارينُها كلُّها لا اسمُها وحده (مراجعةُ Codex على #776).
+    if (!o) { add("phases", { kind: "added", target: `phase:${p.position}`, labelAr: p.nameAr }); o = blankOf(p, ["position", "nameAr"]) as unknown as SnapPhase; }
     for (const [label, k] of [["الاسم", "nameAr"], ["النطاق", "range"], ["الأهداف", "goals"], ["معاييرُ الانتقال", "progressCriteria"], ["التثقيف", "education"], ["الملاحظات", "notes"]] as const) {
       const x = k === "range" ? [o.sessionFrom, o.sessionTo] : o[k]; const y = k === "range" ? [p.sessionFrom, p.sessionTo] : p[k];
       if (!eq(x, y)) add("phases", { kind: "changed", target: k === "range" ? "phases" : `phase:${p.position}`, labelAr: `${p.nameAr} — ${label}`, before: x, after: y });
@@ -551,7 +569,10 @@ export function diffSnapshots(a: PlanSnapshot, b: PlanSnapshot, gateLog: readonl
     for (const ex of p.exercises) {
       const ox = o.exercises.find((y) => y.exerciseId === ex.exerciseId);
       const target = `exercise:${p.position}:${ex.exerciseId}`;
-      if (!ox) { add("exercises", { kind: "added", target, labelAr: `${ex.nameAr} (${p.nameAr})`, after: { dose: [ex.sets, ex.reps, ex.holdSeconds, ex.restSeconds, ex.doseNote] } }); continue; }
+      if (!ox) { add("exercises", { kind: "added", target, labelAr: `${ex.nameAr} (${p.nameAr})`, after: { dose: [ex.sets, ex.reps, ex.holdSeconds, ex.restSeconds, ex.doseNote] } });
+        rest("exercises", target, `${ex.nameAr} — `, blankOf(ex, ["exerciseId", "nameAr"]), ex as unknown as Record<string, unknown>,
+          ["exerciseId", "sets", "reps", "holdSeconds", "restSeconds", "doseNote"]);
+        continue; }
       const dx = [ox.sets, ox.reps, ox.holdSeconds, ox.restSeconds, ox.doseNote]; const dy = [ex.sets, ex.reps, ex.holdSeconds, ex.restSeconds, ex.doseNote];
       if (!eq(dx, dy)) add("exercises", { kind: "changed", target, labelAr: `${ex.nameAr} — الجرعة`, before: dx, after: dy });
       rest("exercises", target, `${ex.nameAr} — `, ox as unknown as Record<string, unknown>, ex as unknown as Record<string, unknown>,
@@ -571,14 +592,17 @@ export function diffSnapshots(a: PlanSnapshot, b: PlanSnapshot, gateLog: readonl
   }
   const mA = a.measuresOwn ? a.measures : []; const mB = b.measuresOwn ? b.measures : [];
   if (a.measuresOwn !== b.measuresOwn) add("measures", { kind: "changed", target: "measures", labelAr: b.measuresOwn ? "مقاييسُ خاصّة بالخطّة" : "مقاييسُ البروتوكول", before: a.measuresOwn, after: b.measuresOwn });
-  for (const m of mB) { const o = mA.find((y) => y.code === m.code); if (!o) add("measures", { kind: "added", target: `measure:${m.code}`, labelAr: m.nameAr }); else if (!eq(o, m)) add("measures", { kind: "changed", target: `measure:${m.code}`, labelAr: m.nameAr, before: o, after: m }); }
+  for (const m of mB) { const o = mA.find((y) => y.code === m.code); if (!o) { add("measures", { kind: "added", target: `measure:${m.code}`, labelAr: m.nameAr });
+    rest("measures", `measure:${m.code}`, `${m.nameAr} — `, blankOf(m, ["code", "nameAr"]), m as unknown as Record<string, unknown>, ["code"]); } else if (!eq(o, m)) add("measures", { kind: "changed", target: `measure:${m.code}`, labelAr: m.nameAr, before: o, after: m }); }
   for (const o of mA) if (!mB.some((y) => y.code === o.code)) add("measures", { kind: "removed", target: `measure:${o.code}`, labelAr: o.nameAr });
   const u = (s: SnapSource) => normalizeSourceUrl(s.url);
-  for (const s of b.sources) if (!a.sources.some((y) => u(y) === u(s))) add("sources", { kind: "added", target: `source:${u(s)}`, labelAr: s.title || s.url });
+  for (const s of b.sources) if (!a.sources.some((y) => u(y) === u(s))) { add("sources", { kind: "added", target: `source:${u(s)}`, labelAr: s.title || s.url });
+    rest("sources", `source:${u(s)}`, `${s.title || s.url} — `, blankOf(s, ["url", "title"]), s as unknown as Record<string, unknown>, ["url"]); }
   for (const s of a.sources) if (!b.sources.some((y) => u(y) === u(s))) add("sources", { kind: "removed", target: `source:${u(s)}`, labelAr: s.title || s.url });
   for (const s of b.sources) { const o = a.sources.find((y) => u(y) === u(s)); if (o) rest("sources", `source:${u(s)}`, `${s.title || s.url} — `,
     o as unknown as Record<string, unknown>, s as unknown as Record<string, unknown>, ["url"]); }
-  for (const f of b.forbidden) if (!a.forbidden.some((y) => y.deviceCode === f.deviceCode)) add("forbidden", { kind: "added", target: `forbidden:${f.deviceCode}`, labelAr: f.nameAr, after: f.reasonAr });
+  for (const f of b.forbidden) if (!a.forbidden.some((y) => y.deviceCode === f.deviceCode)) { add("forbidden", { kind: "added", target: `forbidden:${f.deviceCode}`, labelAr: f.nameAr, after: f.reasonAr });
+    rest("forbidden", `forbidden:${f.deviceCode}`, `${f.nameAr} — `, blankOf(f, ["deviceCode", "nameAr", "reasonAr"]), f as unknown as Record<string, unknown>, ["deviceCode"]); }
   for (const f of a.forbidden) if (!b.forbidden.some((y) => y.deviceCode === f.deviceCode)) add("forbidden", { kind: "removed", target: `forbidden:${f.deviceCode}`, labelAr: f.nameAr });
   for (const f of b.forbidden) { const o = a.forbidden.find((y) => y.deviceCode === f.deviceCode); if (o) rest("forbidden", `forbidden:${f.deviceCode}`, `${f.nameAr} — `,
     o as unknown as Record<string, unknown>, f as unknown as Record<string, unknown>, ["deviceCode"]); }
