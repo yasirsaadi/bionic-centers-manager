@@ -411,8 +411,10 @@ function MeasuresEditor({ draft, set }: { draft: PlanEdit; set: (p: Partial<Plan
         مقاييسُ خاصّة بهذه الخطّة (وإلّا فمقاييسُ البروتوكول)
       </label>
       {own && ms.map((m, i) => (
-        <div key={i} className="grid grid-cols-[1fr_4.5rem_4.5rem_auto] gap-1.5 items-end">
-          <label className="grid gap-1 text-xs min-w-0">الاسم<Input value={m.nameAr} onChange={(e) => upd(i, { nameAr: e.target.value })} className="bg-white h-9" /></label>
+        <div key={i} className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_4.5rem_4.5rem_auto] gap-1.5 items-end rounded border bg-white/60 p-1.5 sm:border-0 sm:bg-transparent sm:p-0">
+          <label className="grid gap-1 text-xs min-w-0">الاسم<Input value={m.nameAr} onChange={(e) => upd(i, { nameAr: e.target.value })} className="bg-white h-9" data-testid={`input-opus-edit-measure-ar-${i}`} /></label>
+          {/* الاسمُ الإنكليزيّ إلزاميٌّ في البوّابة (`measure_dropped`) — فبلا خانته لا يُحفظ مقياسٌ جديد (مراجعةُ Codex على #775). */}
+          <label className="grid gap-1 text-xs min-w-0">الاسم بالإنكليزية<Input dir="ltr" value={m.nameEn} onChange={(e) => upd(i, { nameEn: e.target.value })} className="bg-white h-9" data-testid={`input-opus-edit-measure-en-${i}`} /></label>
           {/* الخانةُ الفارغة لا تُكتب صفراً وهي تُمسح — تبقى القيمةُ السابقة حتى يُكتب رقم. */}
           <NumField label="من" value={m.min} onChange={(n) => { if (n !== null) upd(i, { min: n }); }} />
           <NumField label="إلى" value={m.max} onChange={(n) => { if (n !== null) upd(i, { max: n }); }} />
