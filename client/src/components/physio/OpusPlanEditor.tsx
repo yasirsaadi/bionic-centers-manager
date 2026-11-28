@@ -6,6 +6,7 @@
 // وسطرُ «الأجهزةُ الممنوعة» يركّبه الخادم — يُعرض هنا ولا يُكتب.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Plus, Trash2, ShieldAlert, Save, Search, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -83,12 +84,16 @@ export function OpusPlanEditor({ planId, patientId, branchId, opusVersion, sessi
     onSuccess: (r, edit) => setPreview({ edit: canonicalJson(edit), r }),
     onError: (e: any) => toast({ title: e.code === "version_conflict" ? "عُدّلت الخطّة من غيرك" : "تعذّرت المراجعة", description: e.message, variant: "destructive" }),
   });
+  const [, navigate] = useLocation();
   const save = useMutation({
-    mutationFn: () => opusPost<{ version: number }>(`/api/physio/plans/${planId}/opus-edit`, { baseVersion, edit: draft, reason: reason.trim(), gateHash: preview!.r.gateHash }),
+    mutationFn: () => opusPost<{ version: number; needsAssignment?: string[] }>(`/api/physio/plans/${planId}/opus-edit`, { baseVersion, edit: draft, reason: reason.trim(), gateHash: preview!.r.gateHash }),
     onSuccess: (r) => {
       invalidateOpusPlan(qc, planId, patientId);
-      toast({ title: `حُفظت النسخة ${ar(r.version)}`, description: "صارت الساريةَ الآن، ونُبّه المعالجون والفاحص بما تغيّر." });
+      const unassigned = (r.needsAssignment ?? []).length > 0;
+      toast({ title: `حُفظت النسخة ${ar(r.version)}`, description: unassigned ? "صارت الساريةَ الآن — وفيها جزءٌ بلا إسناد، فأسنِده." : "صارت الساريةَ الآن، ونُبّه المعالجون والفاحص بما تغيّر." });
       onDone();
+      //  §4.hc — نسخةٌ أضافت جزءاً بلا مُسنَد ⟵ «إسناد» في الحال.
+      if (unassigned) navigate(`/physio/plans/${planId}?assign=1`);
     },
     onError: (e: any) => {
       if (e.code === "gates_changed" && draft) { toast({ title: "تغيّرت البوّابات منذ المراجعة", description: "أُعيدت المراجعة — انظر فيها ثمّ احفظ." }); runPreview.mutate(draft); return; }

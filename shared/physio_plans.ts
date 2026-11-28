@@ -123,12 +123,14 @@ export function executionItemsError(p: {
   planDeviceIds: number[]; items: ExecutionItemInput[]; needleDeviceId: number | null; canDryNeedle: boolean;
   /** **المساعدون الذين ليس دورَهم هذه الجلسة** (ترحيل ١٢٢، §4.cx) — تركُهم ليس «لم يُنفَّذ» فلا يُطلب له سبب. */
   offTurnDeviceIds?: readonly number[];
+  /** §4.hc — جزءُ خطّة Bionic AI: «بندٌ منفّذ على الأقلّ» يُحسب مع التمارين (أو لا يُطلب في الإكمال) فيفحصه المُستدعي. والافتراضُ كما كان. */
+  requireOneDone?: boolean;
 }): string | null {
   const ids = p.items.map((i) => i.deviceId);
   if (new Set(ids).size !== ids.length) return "بندٌ مكرّر";
   const plan = new Set(p.planDeviceIds);
   if (ids.length !== plan.size || ids.some((d) => !plan.has(d))) return "البنودُ بنودُ الخطّة بأعيانها — لا يُضاف جهازٌ ولا يُحذف بند";
-  if (!p.items.some((i) => i.done)) return "لم يُعلَّم أيُّ بندٍ «نُفّذ» — لا جلسةَ تُسجَّل";
+  if (p.requireOneDone !== false && !p.items.some((i) => i.done)) return "لم يُعلَّم أيُّ بندٍ «نُفّذ» — لا جلسةَ تُسجَّل";
   const offTurn = new Set(p.offTurnDeviceIds ?? []);
   if (p.items.some((i) => !i.done && !offTurn.has(i.deviceId) && !(i.note ?? "").trim())) return "اكتب سببَ كلّ بندٍ لم يُنفَّذ";
   if (p.needleDeviceId != null && !p.canDryNeedle && p.items.some((i) => i.deviceId === p.needleDeviceId && i.done)) {

@@ -29,6 +29,8 @@ interface Assessment {
 }
 interface View {
   assessments: Assessment[]; measures: MeasureDef[]; measuresStatus: "draft" | "approved" | null; goals: string[]; due: DueState; canAssess: boolean;
+  /** §4.hc — قرارُ المالك D: التخرّجُ والإيقافُ لخطّة Bionic AI للأخصائيّ والمسؤول والمشرف العام وحدهم (وغيرُها بقاعدتها). */
+  canClose?: boolean;
 }
 
 const errText = (e: any): string => {
@@ -255,7 +257,7 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
           <div>
             <div className="text-xs font-medium mb-1">القرار</div>
             <div className="grid grid-cols-2 gap-1">
-              {ASSESSMENT_DECISIONS.map((d) => {
+              {ASSESSMENT_DECISIONS.filter((d) => view.canClose !== false || (d !== "discharge" && d !== "stop")).map((d) => {
                 const disabled = (d === "discharge" || d === "stop") && !approved;
                 return (
                   <Button key={d} type="button" size="sm" variant={decision === d ? "default" : "outline"} disabled={disabled}
@@ -264,7 +266,10 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
                 );
               })}
             </div>
-            {!approved && <p className="text-[11px] text-muted-foreground mt-1">التخرّجُ والإيقافُ لخطّةٍ معتمَدة.</p>}
+            {!approved && view.canClose !== false && <p className="text-[11px] text-muted-foreground mt-1">التخرّجُ والإيقافُ لخطّةٍ معتمَدة.</p>}
+            {view.canClose === false && (
+              <p className="text-[11px] text-muted-foreground mt-1" data-testid="assess-close-forbidden">التخرّجُ والإيقافُ للأخصائيّ أو المسؤول أو المشرف العام.</p>
+            )}
           </div>
         </div>
         <DialogFooter>

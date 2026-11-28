@@ -47,11 +47,15 @@ import { parsePhasesBody } from "@shared/physio_exercises";
 import { HOME_SHEET_MAX_BYTES, homeSheetAllowed, parseIdList } from "@shared/physio_home_sheet";
 import { patientBotEnabled } from "../patient_telegram/config";
 import * as homeSheet from "./home_sheet";
+import * as assignment from "./assignment";
+import { registerPhysioAssignmentRoutes } from "./assignment_routes";
+import { canClosePlan, closeOpusForbidden, isPlanPart, type PlanPart } from "@shared/physio_plan_assignment";
+import { AI_BRAND } from "@shared/ai_brand";
 
 const homeSheetUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: HOME_SHEET_MAX_BYTES, files: 1, fields: 4 } });
 
 function fail(res: any, e: unknown) {
-  if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
+  if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}), ...(e.extra ?? {}) });
   console.error("[physio-plans]", e);
   res.status(500).json({ error: "تعذّر تنفيذ الطلب — لم يتغيّر شيء" });
 }
@@ -111,6 +115,24 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   const idOf = (v: unknown) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
   //  **المشرفُ العام على كلّ الفروع** (§4.cg) — نطاقُه في الخطط كالمسؤول.
   const scopeOf = (req: any, s: any): number[] | null => (s.permissions?.canSupervisePhysio ? null : accessibleBranchesFor(req));
+  /**
+   * §4.hc — **«تنفيذ جلسة» لخطّة Bionic AI** بحكم الأجزاء لا بالدور وحده: معتمَدةٌ، ودورٌ من القسم (أو معتمِد)، وفرعُها في نطاقه،
+   * وجزءٌ واحدٌ على الأقلّ يسجّله اليوم (مُسنَدُه أو بديلٌ معتمَد — والمعتمِدُ كلَّها). واليدويةُ بقاعدتها كما كانت.
+   */
+  async function opusExecMap(s: any, scope: number[] | null, planRows: any[], awaiting?: Set<number>): Promise<Map<number, boolean>> {
+    const out = new Map<number, boolean>();
+    const opus = planRows.filter((r) => r.origin === "opus" && r.status === "approved");
+    if (!opus.length) return out;
+    const v = await assignment.verdictsFor(db, opus, { userId: s.userId ?? null, approver: canApproveProtocols(s) }, baghdadTodayYmd());
+    for (const r of opus) {
+      const x = v.get(Number(r.id));
+      out.set(Number(r.id), canExecutePlans(s) && (scope === null || scope.includes(Number(r.branchId ?? r.branch_id)))
+        && Boolean(x && x.plan.parts.some((part) => x.verdicts[part]?.ok)));
+      //  «بانتظار الإسناد» من الأحكام نفسِها — بلا مسحٍ ثانٍ لكلّ خطط المراكز.
+      if (awaiting && x && assignment.missingAssignments(x).length) awaiting.add(Number(r.id));
+    }
+    return out;
+  }
 
   /** الخطّةُ وحارساها: قراءةُ المريض بنطاق السائل، ورؤيةُ حالتها. */
   async function loadPlan(req: any, res: any, id: number | null) {
@@ -154,10 +176,15 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const scope = scopeOf(req, s);
       //  «تنفيذ جلسة» لكلّ خطّةٍ معتمَدة في فرعٍ يعمل فيه السائل (§4.cn) — والخادمُ يحرس التنفيذَ نفسَه ثانيةً.
       //  خطّةُ Opus المنتظرة: كاملةً للمعتمِد، وسطراً بلا عنوانٍ ولا تنفيذٍ لغيره (§4.ha).
-      const rows = (await store.listPatientPlans(patientId)).flatMap((p): any[] => {
+      const listed = await store.listPatientPlans(patientId);
+      const awaitingSet = new Set<number>();
+      const opusExec = await opusExecMap(s, scope, listed, awaitingSet);
+      const unassigned = canApproveProtocols(s) ? awaitingSet : new Set<number>();
+      const rows = listed.flatMap((p): any[] => {
         const access = planAccessFor(s, p);
         if (access === "none") return [];
         if (access === "stub") return [opusPlanStub({ id: p.id, patientId, status: p.status, createdAt: p.createdAt })];
+        if (p.origin === "opus") return [{ ...p, canExecute: opusExec.get(p.id) ?? false, awaitingAssignment: unassigned.has(p.id) }];
         return [{ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }];
       });
       //  «اقترح خطّة» (§4.co) — لكاتبي الخطط، ومعه ما سيقرؤه المساعدُ من المعاينة كي يرى الأخصائيُّ مصدرَه قبل الضغط.
@@ -257,8 +284,14 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       //  §4.dq — **إعداداتُ جهازٍ ناقصة في البروتوكول** لمن يبدأ الخطّةَ أو يعتمدها: يُطلب منه أن يذكّر المشرفَ العام (والمشرفُ نفسُه يُدَلّ على البروتوكول).
       const writesOrApproves = canWritePlans(l.s) || canApprovePlans(l.s);
       const gaps = writesOrApproves && !isPlanClosed(l.row.status) ? await store.planSettingsGapsFor(l.row) : null;
+      const isOpusLive = l.row.origin === "opus" && !isOpusAwaiting(l.row);
+      const canExecute = l.row.origin === "opus" ? (await opusExecMap(l.s, scope, [l.row])).get(l.row.id) ?? false
+        : canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId));
       res.json({ ...plan, canWrite: canWritePlans(l.s), canApprove: canApprovePlans(l.s), canDelete: canDeletePlans(l.s),
-        canExecute: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)), canCancelSessions: canCancelSessions(l.s),
+        canExecute, canCancelSessions: canCancelSessions(l.s),
+        //  §4.hc — قرارُ المالك D: الإيقافُ والتخرّجُ لخطّة Bionic AI للأخصائيّ والمسؤول والمشرف العام وحدهم (وغيرُها بقاعدتها).
+        canClose: canClosePlan(l.s, l.row, scope) && !isPlanClosed(l.row.status),
+        assignment: isOpusLive ? await assignment.assignmentView(l.row as any, { userId: l.s.userId ?? null, approver: canApproveProtocols(l.s), session: l.s, scope }) : null,
         aiSuggestion: await suggest.suggestionOfPlan(l.row.id),
         //  §4.ds — ورقةُ تمارين البيت: تُطبع لكلّ قارئ، وتُرسَل عبر تلغرام بيد فريق العلاج في فرعها لمريضٍ مربوط.
         homeSheet: { allowed: homeSheetAllowed(l.row.status), botEnabled: patientBotEnabled(),
@@ -434,7 +467,10 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
-      if (!canWritePlans(l.s)) return res.status(403).json({ error: "يوقف الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول" });
+      //  §4.hc — **قرارُ المالك D (٢٠٢٦-١١-٢٨)**: خطّةُ Bionic AI يوقفها الأخصائيُّ والمسؤولُ والمشرفُ العام وحدهم — لا المعالج.
+      if (!canClosePlan(l.s, l.row, scopeOf(req, l.s))) {
+        return res.status(403).json({ error: l.row.origin === "opus" ? closeOpusForbidden() : "يوقف الخطّةَ الأخصائيُّ أو المشرفُ العام أو المسؤول", code: "close_forbidden" });
+      }
       const reason = text(req.body?.reason, 2000);
       if (!reason) return res.status(400).json({ error: "اكتب سببَ الإيقاف" });
       const r = await store.stopPlan(l.row.id, reason, actor(l.s));
@@ -556,7 +592,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!approverOnly(res, l.s)) return;
       const r = await versions.saveOpusEdit(l.row.id, req.body, vActor(req, l.s));
       if (!r.ok) return sendRefused(res, r);
-      res.json({ version: r.version, plan: r.plan });
+      //  §4.hc — جزءٌ أضافته النسخةُ بلا إسناد ⟵ تفتح الشاشةُ «إسناد».
+      res.json({ version: r.version, plan: r.plan, needsAssignment: await assignment.unassignedPartsOf(db, l.row.id) });
     } catch (e) { fail(res, e); }
   });
   //  **طلبُ المعتمِد إلى Opus للمعتمِدين وحدهم** (§4.hb ٣.٦) — نسخةُ «تعديلٌ من Opus» سببُها نصُّ الطلب وملاحظةُ حفظه: لغيرهم سببٌ ثابت، كما يخفيها
@@ -619,7 +656,12 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const scope = scopeOf(req, s);
       const want = idOf(req.query.branchId);
       const branchIds = want ? (scope === null || scope.includes(want) ? [want] : []) : scope;
-      res.json({ today: baghdadTodayYmd(), plans: await exec.todayList({ branchIds, userId: s.userId ?? null, today: baghdadTodayYmd() }) });
+      const approver = canApproveProtocols(s);
+      const plans = await exec.todayList({ branchIds, userId: s.userId ?? null, today: baghdadTodayYmd(), approver });
+      //  §4.hc — للمعتمِد: خططُ Bionic AI «بانتظار الإسناد»؛ ولكلّ موظّف: طلباتُ البديل التي تخصّه.
+      res.json({ today: baghdadTodayYmd(), plans,
+        awaitingAssignment: approver ? plans.filter((p: any) => p.origin === "opus" && p.awaitingAssignment).map((p: any) => p.planId) : [],
+        mySubstitutions: s.userId ? await assignment.mySubstitutions(Number(s.userId)) : [] });
     } catch (e) { fail(res, e); }
   });
 
@@ -632,9 +674,20 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const scope = scopeOf(req, l.s);
       if (scope !== null && !scope.includes(l.row.branchId)) return res.status(403).json({ error: "تُنفَّذ الخطّةُ في فرعها — بيد مَن يعمل فيه" });
       const today = baghdadTodayYmd();
+      //  §4.hc — خطّةُ Bionic AI: الأجزاءُ التي يسجّلها الآن، وجلسةُ اليوم التي يُكملها (وتاريخُها تاريخُ الجلسة — يُفحص في التنفيذ).
+      let parts: PlanPart[] | null = null;
+      if (req.body?.parts !== undefined && req.body?.parts !== null) {
+        if (!Array.isArray(req.body.parts) || !req.body.parts.length || req.body.parts.some((x: unknown) => !isPlanPart(x))
+          || new Set(req.body.parts).size !== req.body.parts.length) return res.status(400).json({ error: "الأجزاء: الأجهزة أو التمارين", code: "parts_invalid" });
+        parts = req.body.parts as PlanPart[];
+      }
+      const sessionId = req.body?.sessionId == null ? null : idOf(req.body.sessionId);
+      if (req.body?.sessionId != null && !sessionId) return res.status(400).json({ error: "جلسةٌ غير صالحة" });
       const sessionDate = dateOf(req.body?.date, today);
-      const v = checkVisitDate(sessionDate, mayBackdateVisits(l.s));
-      if (!v.ok) return res.status(v.status).json({ error: v.message });
+      if (!sessionId) {
+        const v = checkVisitDate(sessionDate, mayBackdateVisits(l.s));
+        if (!v.ok) return res.status(v.status).json({ error: v.message });
+      }
       if (!Array.isArray(req.body?.items) || req.body.items.length > 40) return res.status(400).json({ error: "البنودُ غير صالحة" });
       const items = req.body.items.map((i: any) => ({
         deviceId: Number(i?.deviceId), done: i?.done === true,
@@ -661,13 +714,26 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s), planVersion,
         canDryNeedle: l.s.permissions?.canDryNeedle === true, visitCustomDate: sessionDate === today ? null : sessionDate,
         exercises, phasePosition, phaseManual: req.body?.phaseManual === true,
+        parts, sessionId, mayBackdate: mayBackdateVisits(l.s), explicitDate: typeof req.body?.date === "string" ? req.body.date : null,
       });
-      await logAudit({ entityType: "visit", entityId: r.visit.id, action: "create", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
-        branchId: r.visit.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null, notes: `جلسة من خطة العلاج الطبيعي #${l.row.id}` });
+      const attached = "attached" in r && r.attached === true;
+      if (attached) {
+        const before = (r as any).visitBefore;
+        await logAudit({ entityType: "visit", entityId: r.visit.id, action: "update", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
+          branchId: r.visit.branchId ?? l.row.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null,
+          oldValues: before ? { treatmentType: before.treatment_type, notes: before.notes } : null,
+          newValues: { treatmentType: (r.visit as any).treatment_type, notes: (r.visit as any).notes },
+          notes: `أُكملت جلسةُ خطة العلاج الطبيعي #${l.row.id} بجزءٍ ثانٍ` });
+      } else {
+        await logAudit({ entityType: "visit", entityId: r.visit.id, action: "create", userId: l.s.userId ?? null, userName: l.s.displayName ?? null,
+          branchId: r.visit.branchId, ipAddress: req.ip ?? null, userAgent: req.get("user-agent") ?? null, notes: `جلسة من خطة العلاج الطبيعي #${l.row.id}` });
+      }
+      const partsDone = "parts" in r ? (r as any).parts as PlanPart[] : null;
       await audit(req, l.s, { entityId: l.row.id, action: "execute", branchId: l.row.branchId,
-        newValues: { sessionId: r.session.id, sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note,
-          ...(exercises ? { phasePosition: r.session.phasePosition, phaseManual: req.body?.phaseManual === true, exercises } : {}) } });
-      res.json({ ...r.session, visitId: r.visit.id });
+        newValues: { sessionId: r.session.id, sessionDate: r.session.sessionDate, visitId: r.visit.id, countsWritten: r.writeCounts, items, noteToSpecialist: note,
+          ...(exercises ? { phasePosition: r.session.phasePosition, phaseManual: req.body?.phaseManual === true, exercises } : {}),
+          ...(partsDone ? { parts: partsDone, attached } : {}) } });
+      res.json({ ...r.session, visitId: r.visit.id, ...(partsDone ? { parts: partsDone, attached } : {}) });
     } catch (e) { fail(res, e); }
   });
 
@@ -675,7 +741,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
-      res.json({ sessions: await exec.planSessions(l.row.id), canExecute: canExecutePlans(l.s), canCancel: canCancelSessions(l.s) });
+      const canExecute = l.row.origin === "opus" ? (await opusExecMap(l.s, scopeOf(req, l.s), [l.row])).get(l.row.id) ?? false : canExecutePlans(l.s);
+      res.json({ sessions: await exec.planSessions(l.row.id), canExecute, canCancel: canCancelSessions(l.s) });
     } catch (e) { fail(res, e); }
   });
 
@@ -703,7 +770,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
       const v = await assess.planAssessmentView(l.row, baghdadTodayYmd());
-      res.json({ ...v, canAssess: canAssessPlans(l.s) && !isPlanClosed(l.row.status) });
+      res.json({ ...v, canAssess: canAssessPlans(l.s) && !isPlanClosed(l.row.status), canClose: canClosePlan(l.s, l.row, scopeOf(req, l.s)) && !isPlanClosed(l.row.status) });
     } catch (e) { fail(res, e); }
   });
 
@@ -715,7 +782,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const day = typeof req.body?.assessedOn === "string" && req.body.assessedOn ? req.body.assessedOn : baghdadTodayYmd();
       const v = checkVisitDate(day, mayBackdateVisits(l.s));
       if (!v.ok) return res.status(v.status).json({ error: v.message });
-      const r = await assess.recordAssessment(l.row.id, { ...req.body, assessedOn: day }, actor(l.s));
+      //  §4.hc — **قرارُ المالك D**: «تخرّج» و«إيقاف» من التقييم لخطّة Bionic AI للأخصائيّ والمسؤول والمشرف العام وحدهم (والحارسُ ثانيةً تحت القفل).
+      const decision = String(req.body?.decision ?? "").trim();
+      const canClose = canClosePlan(l.s, l.row, scopeOf(req, l.s));
+      if ((decision === "discharge" || decision === "stop") && !canClose) {
+        return res.status(403).json({ error: l.row.origin === "opus" ? closeOpusForbidden() : "يقيّم الأخصائيُّ أو المشرفُ العام أو المسؤول", code: "close_forbidden" });
+      }
+      const r = await assess.recordAssessment(l.row.id, { ...req.body, assessedOn: day }, actor(l.s), { canClose });
       await audit(req, l.s, { entityId: l.row.id, action: "assess", branchId: l.row.branchId,
         newValues: { assessmentId: r.row.id, kind: r.row.kind, assessedOn: r.row.assessedOn, pain: r.row.pain, scores: r.row.scores,
           goals: r.row.goals, decision: r.row.decision, notes: r.row.notes } });
@@ -786,6 +859,14 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
+      //  §4.hc — خطّةُ Bionic AI يُسندها المعتمِدُ وحده، ومع كلّ مرشّحٍ هل يحمل علَمَ الإبر الجافة.
+      if (l.row.origin === "opus") {
+        if (!canApproveProtocols(l.s)) return res.status(403).json({ error: `يُسند خطّةَ ${AI_BRAND} المسؤولُ أو المشرفُ العام`, code: "approver_only" });
+        const list = await store.assigneeCandidates(l.row.branchId);
+        const flags = list.length ? (await db.execute(sql`SELECT id, can_dry_needle FROM system_users WHERE id IN (${sql.join(list.map((u) => sql`${u.id}`), sql`, `)})`) as any).rows : [];
+        const planHasNeedle = ((await db.execute(sql`SELECT 1 FROM physio_plan_devices l JOIN devices d ON d.id = l.device_id WHERE l.plan_id = ${l.row.id} AND d.code = 'needle' LIMIT 1`)) as any).rows.length > 0;
+        return res.json(list.map((u) => ({ ...u, canDryNeedle: flags.find((f: any) => Number(f.id) === u.id)?.can_dry_needle === true, planHasNeedle })));
+      }
       if (!canWritePlans(l.s)) return res.status(403).json({ error: "يُسند الخطّةَ كاتبُها" });
       res.json(await store.assigneeCandidates(l.row.branchId));
     } catch (e) { fail(res, e); }
@@ -795,6 +876,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     try {
       const l = await loadPlan(req, res, idOf(req.params.id));
       if (!l) return;
+      //  §4.hc — خطّةُ Bionic AI تُسنَد بأجزائها (`PUT …/part-assignments`) بيد المعتمِد — لا بقائمة المنفّذين القديمة لأيّ أحد.
+      if (l.row.origin === "opus") return res.status(409).json({ error: `تُسنَد خطّةُ ${AI_BRAND} بأجزائها بيد المسؤول أو المشرف العام`, code: "opus_assign_by_part" });
       if (!canWritePlans(l.s)) return res.status(403).json({ error: "يُسند الخطّةَ كاتبُها" });
       const ids = Array.isArray(req.body?.userIds) ? req.body.userIds.map(Number) : null;
       if (!ids || ids.length > 20 || ids.some((n: number) => !Number.isInteger(n) || n <= 0)) return res.status(400).json({ error: "قائمةٌ غير صالحة" });
@@ -804,4 +887,6 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       res.json({ userIds: r.after });
     } catch (e) { fail(res, e); }
   });
+
+  registerPhysioAssignmentRoutes(app, isAuthenticated, { loadPlan, audit, actor, sess, scopeOf, fail, idOf });
 }

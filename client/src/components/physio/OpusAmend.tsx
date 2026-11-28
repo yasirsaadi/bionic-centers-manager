@@ -6,6 +6,7 @@
 //  • `OpusRevisionStrip` — حالُ الطلب الجاري بمراحله و«إلغاء»، والاقتراحُ المنتظر (`OpusAmendReview`: الفرقُ بالأقسام وسجلُّ البوّابات
 //    والمراجعُ والإقرارُ بكلّ ملاحظةٍ كبيرة، و«احفظ النسخة ن+١» أو «تجاهل»)، وآخرُ الطلبات ومآلُها.
 // **بلا `refetchInterval`**: التحديثُ بإشارة الخادم بعد كلّ مرحلة (§4.cy).
+import { useLocation } from "wouter";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, Loader2, CheckCircle2, Circle, Undo2, Save, X } from "lucide-react";
@@ -214,6 +215,7 @@ export function OpusAmendReview({ planId, patientId, p, onEdit }: { planId: numb
   const [note, setNote] = useState("");
   const [askDiscard, setAskDiscard] = useState(false);
   const refresh = () => invalidateOpusPlan(qc, planId, patientId);
+  const [, navigate] = useLocation();
   const issues = useMemo(() => {
     const m = new Map<string, Issue & { from: "reviewer" | "auditor" }>();
     for (const i of p.unresolved.reviewer ?? []) m.set(i.id, { ...i, from: "reviewer" });
@@ -221,9 +223,15 @@ export function OpusAmendReview({ planId, patientId, p, onEdit }: { planId: numb
     return m;
   }, [p]);
   const save = useMutation({
-    mutationFn: () => opusPost<{ version: number }>(`/api/physio/opus-jobs/${p.jobId}/proposal/save`,
+    mutationFn: () => opusPost<{ version: number; needsAssignment?: string[] }>(`/api/physio/opus-jobs/${p.jobId}/proposal/save`,
       { proposalHash: p.proposalHash, acknowledgedIssueIds: Array.from(acks), ...(note.trim() ? { note: note.trim() } : {}) }),
-    onSuccess: (r) => { refresh(); toast({ title: `حُفظت النسخة ${ar(r.version)}`, description: "صارت الساريةَ الآن، ونُبّه المعالجون بما تغيّر." }); },
+    onSuccess: (r) => {
+      refresh();
+      const unassigned = (r.needsAssignment ?? []).length > 0;
+      toast({ title: `حُفظت النسخة ${ar(r.version)}`, description: unassigned ? "صارت الساريةَ الآن — وفيها جزءٌ بلا إسناد، فأسنِده." : "صارت الساريةَ الآن، ونُبّه المعالجون بما تغيّر." });
+      //  §4.hc — نسخةٌ أضافت جزءاً بلا مُسنَد ⟵ «إسناد» في الحال.
+      if (unassigned) navigate(`/physio/plans/${planId}?assign=1`);
+    },
     onError: (e: any) => {
       refresh();
       toast({ title: e.code === "proposal_changed" ? "تغيّر الاقتراح منذ فتحتَه" : "لم تُحفظ",

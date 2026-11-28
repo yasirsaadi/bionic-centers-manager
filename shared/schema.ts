@@ -3307,6 +3307,8 @@ export const physioPlans = pgTable("physio_plans", {
   opusStaleReason: text("opus_stale_reason"),
   //  ترحيل ٢٠٠ (§4.hb) — رقمُ نسخة خطّة Opus النافذة (`physio_plan_versions`).
   opusVersion: integer("opus_version"),
+  //  ترحيل ٢٠١ (§4.hc) — أجزاءُ النسخة النافذة المطلوبة (`devices` · `exercises`) — تُكتب مع كلّ نسخة.
+  opusParts: text("opus_parts").array(),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -3408,6 +3410,8 @@ export const physioPlanSessions = pgTable("physio_plan_sessions", {
   phasePosition: integer("phase_position"),
   //  ترحيل ٢٠٠ (§4.hb) — نسخةُ خطّة Opus التي نُفّذت عليها الجلسة (وللخطّة اليدوية فارغ).
   planVersion: integer("plan_version"),
+  //  ترحيل ٢٠١ (§4.hc) — أجزاءُ خطّة Bionic AI المطلوبة في هذه الجلسة (ولليدوية فارغ).
+  partsRequired: text("parts_required").array(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   byPlan: index("idx_physio_plan_sessions_plan").on(t.planId),
@@ -3581,4 +3585,68 @@ export const physioPlanAssignees = pgTable("physio_plan_assignees", {
 }, (t) => ({
   pk: primaryKey({ columns: [t.planId, t.userId] }),
   byUser: index("idx_physio_plan_assignees_user").on(t.userId),
+}));
+
+/** **إسنادُ جزءٍ من خطّة Bionic AI** (ترحيل ٢٠١، §4.hc) — المُسنَدُ الحاليّ لكلّ جزء (الأجهزة · التمارين)، والتاريخُ في `audit_log`. */
+export const physioPlanPartAssignments = pgTable("physio_plan_part_assignments", {
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  part: text("part").notNull(),
+  userId: integer("user_id").notNull().references(() => systemUsers.id),
+  assignedBy: integer("assigned_by").references(() => systemUsers.id),
+  assignedByName: text("assigned_by_name"),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  assignedVersion: integer("assigned_version"),
+  reason: text("reason"),
+  seenAt: timestamp("seen_at", { withTimezone: true }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.planId, t.part] }),
+  byUser: index("idx_pppa_user").on(t.userId),
+}));
+
+/** **البديلُ لغياب المُسنَد** (ترحيل ٢٠١، §4.hc) — `plan_id` فارغ = كلُّ خطط المُسنَد، و`part` فارغ = الجزآن؛ ولا ينفّذ قبل اعتماد المعتمِد. */
+export const physioPlanSubstitutions = pgTable("physio_plan_substitutions", {
+  id: serial("id").primaryKey(),
+  assigneeId: integer("assignee_id").notNull().references(() => systemUsers.id),
+  assigneeName: text("assignee_name"),
+  substituteId: integer("substitute_id").notNull().references(() => systemUsers.id),
+  substituteName: text("substitute_name"),
+  requestedBy: integer("requested_by").notNull().references(() => systemUsers.id),
+  requestedByName: text("requested_by_name"),
+  planId: integer("plan_id").references(() => physioPlans.id, { onDelete: "cascade" }),
+  part: text("part"),
+  dateFrom: date("date_from").notNull(),
+  dateTo: date("date_to").notNull(),
+  effectiveFrom: date("effective_from"),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedBy: integer("decided_by").references(() => systemUsers.id),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionNote: text("decision_note"),
+  withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+  lapsedAt: timestamp("lapsed_at", { withTimezone: true }),
+  lapseReason: text("lapse_reason"),
+  lapsedBy: integer("lapsed_by").references(() => systemUsers.id),
+  substituteSeenAt: timestamp("substitute_seen_at", { withTimezone: true }),
+  requesterSeenAt: timestamp("requester_seen_at", { withTimezone: true }),
+}, (t) => ({
+  byAssignee: index("idx_psub_assignee").on(t.assigneeId, t.status),
+  bySubstitute: index("idx_psub_substitute").on(t.substituteId, t.status),
+}));
+
+/** **جزءُ الجلسة** (ترحيل ٢٠١، §4.hc) — مَن سجّل الأجهزةَ ومَن سجّل التمارينَ في الجلسة الواحدة، وبأيّ صفة. */
+export const physioPlanSessionParts = pgTable("physio_plan_session_parts", {
+  sessionId: integer("session_id").notNull().references(() => physioPlanSessions.id, { onDelete: "cascade" }),
+  part: text("part").notNull(),
+  recordedBy: integer("recorded_by").references(() => systemUsers.id),
+  recordedByName: text("recorded_by_name"),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  planVersion: integer("plan_version"),
+  via: text("via").notNull(),
+  substitutionId: integer("substitution_id").references(() => physioPlanSubstitutions.id),
+  noteToSpecialist: text("note_to_specialist"),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.sessionId, t.part] }),
+  byRecorder: index("idx_ppsp_recorder").on(t.recordedBy, t.recordedAt),
 }));

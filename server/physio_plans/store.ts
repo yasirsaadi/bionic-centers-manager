@@ -30,7 +30,7 @@ import { withImageUrls } from "../physio_protocols/exercises_store";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
 export class PlanError extends Error {
-  constructor(public status: number, message: string, public code?: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string, public extra?: Record<string, unknown>) { super(message); }
 }
 /** `isApprover`: مسؤولٌ أو مشرفٌ عام (`canApprovePlans`) — به يُعرف أنّ التعديلَ والإيقافَ والاستبدالَ قرارُ مشرفٍ يُنبَّه به كاتبُ الخطّة (§4.cz). */
 export interface Actor { userId: number | null; name: string | null; isApprover?: boolean }
@@ -808,7 +808,11 @@ export async function deletePlan(id: number, actor: Actor) {
     //  §4.hb — نسخُ خطّة Opus في صورة سطر التدقيق، ووظيفتُها تُلغى واقتراحُها يقدُم (والنسخُ تتبع الخطّةَ بـ`ON DELETE CASCADE`).
     const opusVersions = plan.origin === "opus" ? (await tx.execute(sql`SELECT version, how, reason, snapshot_hash, created_by_name, created_at FROM physio_plan_versions
         WHERE plan_id = ${id} ORDER BY version`) as any).rows : [];
+    //  §4.hc — إسنادُ الأجزاء وبدائلُ هذه الخطّة في صورة سطر التدقيق (يتبعونها بـ`ON DELETE CASCADE`).
+    const partAssignments = plan.origin === "opus" ? (await tx.execute(sql`SELECT part, user_id, assigned_by_name, assigned_at FROM physio_plan_part_assignments WHERE plan_id = ${id}`) as any).rows : [];
     if (plan.origin === "opus") await onOpusPlanClosingTx(tx, id, "plan_deleted", actor);
+    const substitutions = plan.origin === "opus" ? (await tx.execute(sql`SELECT id, assignee_id, substitute_id, part, date_from, date_to, status, lapse_reason FROM physio_plan_substitutions
+        WHERE plan_id = ${id}`) as any).rows : [];
     const lines = await tx.select().from(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     const assignees = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
@@ -823,7 +827,7 @@ export async function deletePlan(id: number, actor: Actor) {
     if (plan.status === "approved" && !actor.isApprover) {
       await notifyPending(tx, plan, actor, "حُذفت خطّةٌ بدأ علاجُها — للاطّلاع", "🗑️", [`حذفها ${actor.name ?? "—"}`], patientPath);
     }
-    return { ...plan, devices: lines, assignees, phases, ...(plan.origin === "opus" ? { opusVersions } : {}) };
+    return { ...plan, devices: lines, assignees, phases, ...(plan.origin === "opus" ? { opusVersions, partAssignments, substitutions } : {}) };
   });
 }
 

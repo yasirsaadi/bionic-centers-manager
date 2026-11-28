@@ -518,7 +518,9 @@ async function main() {
     await q(`UPDATE physio_protocols SET total_sessions = 12, max_total_sessions = 18 WHERE id = $1`, [P]);
 
     console.log("\n── س. الجلسةُ بالنسخة ──");
-    const exec = (planVersion?: number) => call("POST", `/api/physio/plans/${planA}/sessions`, S.tech, { items: [{ deviceId: devId.electro, done: true }], ...(planVersion === undefined ? {} : { planVersion }) });
+    //  §4.hc — خطّةُ Bionic AI ينفّذها مُسنَدُ جزئها: المشرفُ يُسند الأجهزةَ للمعالج، وهو يسجّل جزءَه.
+    await call("PUT", `/api/physio/plans/${planA}/part-assignments`, S.sup, { devices: TECH });
+    const exec = (planVersion?: number) => call("POST", `/api/physio/plans/${planA}/sessions`, S.tech, { parts: ["devices"], items: [{ deviceId: devId.electro, done: true }], ...(planVersion === undefined ? {} : { planVersion }) });
     const s0 = await exec();
     const s1 = await exec(1);
     const s2 = await exec(2);
@@ -807,9 +809,10 @@ async function main() {
       const c = await pool.connect();
       try { await c.query("BEGIN"); await c.query("SET LOCAL bcm.allow_plan_version_delete = 'on'"); await c.query(`DELETE FROM physio_plan_versions WHERE plan_id = $1`, [planF]);
         await c.query(`UPDATE physio_plans SET opus_version = NULL, total_sessions = 11 WHERE id = $1`, [planF]); await c.query("COMMIT"); } finally { c.release(); }
+      await call("PUT", `/api/physio/plans/${planF}/part-assignments`, S.sup, { devices: TECH });
       const pv = (await call("GET", `/api/physio/plans/${planF}`, S.tech)).json;
-      const ex1 = await call("POST", `/api/physio/plans/${planF}/sessions`, S.tech, { items: [{ deviceId: devId.electro, done: true }], planVersion: 1 });
-      const ex2 = await call("POST", `/api/physio/plans/${planF}/sessions`, S.tech, { items: [{ deviceId: devId.electro, done: true }], planVersion: pv?.executionVersion });
+      const ex1 = await call("POST", `/api/physio/plans/${planF}/sessions`, S.tech, { parts: ["devices"], items: [{ deviceId: devId.electro, done: true }], planVersion: 1 });
+      const ex2 = await call("POST", `/api/physio/plans/${planF}/sessions`, S.tech, { parts: ["devices"], items: [{ deviceId: devId.electro, done: true }], planVersion: pv?.executionVersion });
       same("FX.9 **قبل نظام النسخ ومعدَّلة: المعروضُ = المُرسَل (٢)، والقديمُ ٤٠٩، والجلسةُ تُختم بالنسخة ٢ بعد كتابة النسختين**",
         [pv?.opusVersion, pv?.executionVersion, ex1.json?.code, ex2.status, ex2.json?.planVersion, (await versionsOf(planF)).map((v) => [v.version, v.backfilled]), Number((await planRow(planF)).opus_version)],
         [2, 2, "plan_version_changed", 200, 2, [[1, true], [2, true]], 2]);

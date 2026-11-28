@@ -3,12 +3,14 @@
 //   /physio/plans              — الاعتماداتُ (للمسؤول والمشرف العام) · المسندةُ إليّ
 // كلُّ قرار صلاحيةٍ من الخادم (`canWrite`/`canApprove`)؛ والصفحةُ تُظهر الأزرارَ بحسبه وبحسب الحالة.
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { OpusProposalView } from "@/components/physio/OpusProposalView";
 import { OpusVersionBadge, OpusVersionHistory } from "@/components/physio/OpusVersions";
 import { OpusRevisionStrip, RequestOpusAmendDialog } from "@/components/physio/OpusAmend";
 import { OpusPlanEditor } from "@/components/physio/OpusPlanEditor";
+import { AssignedToYouBanner, AssignPartsDialog, holdersOf, OpusAssignmentCard, SubstituteRequestDialog, type AssignmentView } from "@/components/physio/OpusAssignment";
+import { AI_BRAND } from "@shared/ai_brand";
 import { isOpusAwaiting } from "@shared/physio_agent";
 import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Home, Pencil, Play, Printer, RefreshCcw, ShieldAlert, Sparkles, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -90,6 +92,8 @@ interface Plan {
   pendingProposal?: { jobId: number; baseVersion: number } | null;
   forbiddenNow?: { deviceCode: string; nameAr: string; reasonAr: string }[];
   newerExamSinceVersion?: boolean;
+  /** §4.hc — خطّةُ Bionic AI المعتمَدة: إسنادُ كلّ جزء والبدلاءُ ومَن يسجّل الآن؛ ومَن يوقفها أو يخرّجها (قرارُ المالك D). */
+  assignment?: AssignmentView | null; canClose?: boolean;
 }
 
 /** **ورقةُ تمارين البيت** (§4.ds) — على الحاسوب في تبويبٍ جديد، وعلى الهاتف والتطبيق المثبَّت في مكانها (كـ`openPhysioSheetPrint`). */
@@ -165,6 +169,18 @@ export default function PhysioPlanPage() {
   }, [q.data?.id, location]);
   const [ask, setAsk] = useState<null | "return" | "stop">(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  //  §4.hc — «إسناد» الأجزاء (المعتمِد) و«اطلب بديلاً».
+  const [partsOpen, setPartsOpen] = useState(false);
+  const [subOpen, setSubOpen] = useState(false);
+  const viewerId = useBranchSession()?.userId ?? null;
+  const search = useSearch();
+  //  بعد الاعتماد أو تعديلٍ ترك جزءاً بلا إسناد: `?assign=1` تفتح «إسناد» مرّةً.
+  useEffect(() => {
+    if (q.data?.assignment?.canAssign && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("assign") === "1") {
+      setPartsOpen(true);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [q.data?.id, Boolean(q.data?.assignment?.canAssign), location, search]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
@@ -320,6 +336,7 @@ export default function PhysioPlanPage() {
           وُقّعت للمريض معاينةٌ أحدث من التي بُنيت عليها النسخة السارية — {opusCanEdit ? "راجِعها، وعدّل الخطّة أو اطلب من Bionic AI تعديلاً إن غيّرت شيئاً." : "يراجعها المعتمِد."}
         </p>
       )}
+      {isOpus && plan.assignment && plan.assignment.myUnseen.length > 0 && <AssignedToYouBanner planId={plan.id} unseen={plan.assignment.myUnseen} />}
       {/*  §4.dq — الخطّةُ لا تُمنع، **ومَن يبدؤها أو يعتمدها يُطلب منه أن يذكّر المشرف** بإعدادات الجهاز الناقصة في البروتوكول. */}
       {!editing && !opusEditing && plan.settingsGaps && (
         <PlanSettingsReminder planId={plan.id} protocolId={plan.protocol?.id ?? null} view={plan.settingsGaps} onSent={refresh} />
@@ -369,10 +386,11 @@ export default function PhysioPlanPage() {
               <Undo2 className="w-4 h-4" /> إعادة بملاحظة
             </Button>
           )}
-          {plan.canWrite && !isPlanClosed(plan.status) && (
+          {plan.canWrite && !isPlanClosed(plan.status) && !isOpus && (
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setAssignOpen(true)} data-testid="button-assign-plan"><UserPlus className="w-4 h-4" /> الإسناد</Button>
           )}
-          {plan.canWrite && !isPlanClosed(plan.status) && (
+          {/*  §4.hc — قرارُ المالك D: إيقافُ خطّة Bionic AI للأخصائيّ والمسؤول والمشرف العام وحدهم — `canClose` من الخادم. */}
+          {(plan.canClose ?? plan.canWrite) && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
           {/*  تغييرُ النوع والحذفُ لكاتب الخطّة: الأخصائيّ والمشرف العام والمسؤول (§4.eh). */}
@@ -390,7 +408,7 @@ export default function PhysioPlanPage() {
       )}
       {!editing && !opusEditing && isOpus && opusLocked && !plan.canApprove && (
         <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-opus-readonly">
-          خطّةٌ كتبها Bionic AI — يعدّلها المسؤولُ أو المشرفُ العام وحدهما، وكلُّ تعديلٍ نسخةٌ مرقّمة يصلك تنبيهُها. تنفّذها كما هي.
+          خطّةٌ كتبها {AI_BRAND} — يعدّلها ويُسندها المسؤولُ أو المشرفُ العام، ويوقفها أو يخرّجها الأخصائيُّ أو أحدُهما. تنفّذ ما أُسند إليك منها كما هو.
         </p>
       )}
       {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}
@@ -418,6 +436,11 @@ export default function PhysioPlanPage() {
         <PlanEditor plan={plan} lang={lang} onDone={() => { setEditing(false); refresh(); }} onCancel={() => setEditing(false)} />
       ) : (
         <>
+          {/*  §4.hc — **الإسناد** بأجزائه أوّلَ الخطّة: مَن ينفّذ ماذا، والبدلاء. */}
+          {isOpus && plan.assignment && (
+            <OpusAssignmentCard planId={plan.id} assignment={plan.assignment} viewerId={viewerId} closed={isPlanClosed(plan.status)}
+              onAssign={() => setPartsOpen(true)} onSubstitute={() => setSubOpen(true)} />
+          )}
           {/*  **ما بُنيت عليه الخطّة** (§4.da المرحلة ٤): التقييمُ الأوّليّ في آخر معاينة — سطرُه وبنودُ «خطة العلاج» التي أشّرها الفاحص. */}
           <div className="print:hidden"><LatestAssessmentBox patientId={plan.patientId} lang={lang} /></div>
           <div className={printMode === "progress" ? "" : "print:hidden"}>
@@ -494,10 +517,12 @@ export default function PhysioPlanPage() {
           <Section title={t.exercises}><TextDiff diff={diff} k="exercises" lang={lang} /><TextBlock row={plan} field="exercises" lang={lang} /></Section>
           <Section title={t.precautions}><TextDiff diff={diff} k="precautions" lang={lang} /><TextBlock row={plan} field="precautions" lang={lang} /></Section>
           <Section title={t.notes}><TextBlock row={plan} field="notes" lang={lang} /></Section>
-          <Section title={t.assignees}>
-            {plan.assignees.length === 0 ? <p className="text-sm text-muted-foreground">{t.noAssignees}</p>
-              : <p className="text-sm">{plan.assignees.map((a) => a.name).join("، ")}</p>}
-          </Section>
+          {!(isOpus && plan.assignment) && (
+            <Section title={t.assignees}>
+              {plan.assignees.length === 0 ? <p className="text-sm text-muted-foreground">{t.noAssignees}</p>
+                : <p className="text-sm">{plan.assignees.map((a) => a.name).join("، ")}</p>}
+            </Section>
+          )}
           {isOpus && opusLocked && (
             <div className="print:hidden"><Section title={lang === "en" ? "Version history" : "سجلّ النسخ"}><OpusVersionHistory planId={plan.id} /></Section></div>
           )}
@@ -519,6 +544,13 @@ export default function PhysioPlanPage() {
       <ExecuteSessionDialog planId={execOpen ? plan.id : null} onClose={() => setExecOpen(false)} />
       {opusCanEdit && <RequestOpusAmendDialog planId={plan.id} patientId={plan.patientId} baseVersion={plan.opusVersion!} open={amendOpen} onClose={() => setAmendOpen(false)}
         hasPendingProposal={Boolean(plan.pendingProposal)} />}
+      {plan.assignment && plan.assignment.canAssign && (
+        <AssignPartsDialog planId={plan.id} branchName={plan.branchName} assignment={plan.assignment} open={partsOpen} onClose={() => setPartsOpen(false)} />
+      )}
+      {plan.assignment && (
+        <SubstituteRequestDialog open={subOpen} onClose={() => setSubOpen(false)} planId={plan.id} approver={plan.assignment.canAssign}
+          holders={holdersOf(plan.assignment)} viewerId={viewerId} />
+      )}
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
     </div>
   );

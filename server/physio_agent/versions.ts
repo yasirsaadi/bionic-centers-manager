@@ -28,6 +28,7 @@ import { AgentJobError, cancelActiveJobsTx, enqueueReviseTx, jobOf, lockPatientA
 import { AgentStop } from "./model";
 
 const rows = (r: any): Record<string, any>[] => (r?.rows ?? []) as Record<string, any>[];
+import { normalizeParts, PART_LABELS, requiredParts } from "@shared/physio_plan_assignment";
 export const sha256 = (t: string): string => createHash("sha256").update(t).digest("hex");
 export const hashOf = (s: PlanSnapshot): string => snapshotHash(s, sha256);
 
@@ -265,6 +266,13 @@ async function writeVersionTx(tx: any, plan: Record<string, any>, s: PlanSnapsho
       ${meta.actor.userId}, ${meta.actor.name}, ${meta.createdAt ? new Date(meta.createdAt as any) : sql`now()`}) RETURNING id`))[0];
   if (meta.materialize !== false) await materializeTx(tx, Number(plan.id), s, { opusVersion: meta.version, actor: meta.actor });
   else await tx.execute(sql`UPDATE physio_plans SET opus_version = ${meta.version} WHERE id = ${plan.id}`);
+  //  §4.hc — **أجزاءُ النسخة المطلوبة** تُكتب معها (`opus_parts`)؛ وجزءٌ أزالته يُسحب إسنادُه وبدائلُه، وجزءٌ أضافته «بانتظار الإسناد».
+  const newParts = requiredParts(s);
+  const oldParts = Array.isArray(plan.opus_parts) ? normalizeParts(plan.opus_parts) : null;
+  await tx.execute(sql`UPDATE physio_plans SET opus_parts = ${sql`ARRAY[${sql.join(newParts.map((x) => sql`${x}`), sql`, `)}]::text[]`} WHERE id = ${plan.id}`);
+  const added = await (await import("../physio_plans/assignment")).onVersionWrittenTx(tx, plan, newParts, meta.how === "approval" ? null : oldParts, meta.version, meta.actor);
+  plan.opus_parts = newParts;
+  plan.__addedParts = added;
   return Number(r.id);
 }
 
@@ -366,6 +374,12 @@ export async function ensureVersionOneTx(tx: any, plan: Record<string, any>, act
       createdAt: v.createdAt, diffSummaryAr: v.diffSummaryAr, materialize: false });
   }
   const last = computed[computed.length - 1].version;
+  //  §4.hc — أجزاءُ النسخة النافذة (إن لم يملأها ترحيلُ ٢٠١).
+  if (!Array.isArray(plan.opus_parts)) {
+    const parts = requiredParts(computed[computed.length - 1].snapshot);
+    await tx.execute(sql`UPDATE physio_plans SET opus_parts = ${sql`ARRAY[${sql.join(parts.map((x) => sql`${x}`), sql`, `)}]::text[]`} WHERE id = ${plan.id}`);
+    plan.opus_parts = parts;
+  }
   await logAudit({ entityType: "physio_plan", entityId: Number(plan.id), action: computed.length > 1 ? "version_backfill_divergent" : "version_backfill",
     userId: actor.userId, userName: actor.name, branchId: plan.branch_id, newValues: { versions: computed.map((v) => ({ version: v.version, how: v.how, hash: v.snapshotHash })) },
     notes: computed.length > 1 ? `نسختان لخطّةٍ اعتُمدت قبل نظام النسخ: ${BACKFILL_DIVERGENT_REASON}` : "النسخةُ ١ لخطّةٍ اعتُمدت قبل نظام النسخ", tx });
@@ -380,10 +394,19 @@ async function approverIds(ex: any): Promise<number[]> {
 async function notifyVersionedTx(tx: any, plan: Record<string, any>, version: number, how: VersionHow, summary: string, actor: Actor): Promise<void> {
   const examiner = plan.source_exam_id ? rows(await tx.execute(sql`SELECT doctor_id FROM medical_exams WHERE id = ${plan.source_exam_id}`))[0]?.doctor_id ?? null : null;
   const assignees = rows(await tx.execute(sql`SELECT user_id FROM physio_plan_assignees WHERE plan_id = ${plan.id}`)).map((r) => Number(r.user_id));
-  const targets = Array.from(new Set([examiner, plan.created_by, ...assignees, ...(await approverIds(tx))].filter((x): x is number => x != null).map(Number)));
+  //  §4.hc — ومَن يحمل جزءاً اليوم: المُسنَدون والبدلاءُ المعتمَدون النافذون (هم مَن تصلهم لافتةُ النسخة وأوراقُها في المرحلة الخامسة).
+  const holders = Object.values(await (await import("../physio_plans/assignment")).partHoldersOf(tx, Number(plan.id))).flat();
+  const approvers = await approverIds(tx);
+  const targets = Array.from(new Set([examiner, plan.created_by, ...assignees, ...holders, ...approvers].filter((x): x is number => x != null).map(Number)));
   const who = await patientLine(tx, plan);
   await enqueueStaffEvent(tx, { event: "physio_opus_plan_versioned", targetUserIds: targets, excludeUserId: actor.userId,
     text: `📝 عُدّلت خطّة العلاج الطبيعي: ${versionLabel(version)} (${VERSION_HOW_LABELS[how]}) — ${summary} — ${actor.name ?? ""}: ${who}`, linkPath: `/physio/plans/${plan.id}` });
+  const added: string[] = Array.isArray(plan.__addedParts) ? plan.__addedParts : [];
+  if (added.length) {
+    await enqueueStaffEvent(tx, { event: "physio_opus_plan_versioned", targetUserIds: approvers, excludeUserId: actor.userId,
+      text: `🧩 جزءٌ جديد بلا إسناد في ${versionLabel(version)}: ${added.map((p) => `«${PART_LABELS[p as keyof typeof PART_LABELS]}»`).join(" و")} — أسنِده: ${who}`,
+      linkPath: `/physio/plans/${plan.id}?assign=1` });
+  }
 }
 async function patientLine(ex: any, plan: Record<string, any>): Promise<string> {
   const r = rows(await ex.execute(sql`SELECT p.name, p.patient_code, b.name AS branch FROM patients p LEFT JOIN branches b ON b.id = ${plan.branch_id} WHERE p.id = ${plan.patient_id}`))[0];
@@ -422,6 +445,8 @@ export async function onOpusPlanClosingTx(tx: any, planId: number, reason: "plan
       AND status IN ('queued','running','needs_answers') LIMIT 1`))[0];
   if (j) await cancelActiveJobsTx(tx, { patientId: Number(j.patient_id), examId: Number(j.exam_id), reason, actor });
   await markProposalsStaleTx(tx, { planId, reason, actor });
+  //  §4.hc — بدائلُ هذه الخطّة المنتظرة والمعتمَدةُ القائمة تُلغى «أُغلقت الخطّة».
+  await (await import("../physio_plans/assignment")).lapseOnCloseTx(tx, planId, actor);
 }
 
 // ══ الاعتماد — النسخةُ ١ (§4.hb ٤.٥) ═════════════════════════════════════════════════════════════════
@@ -821,7 +846,7 @@ export async function forbiddenNowOf(plan: Record<string, any>): Promise<{ devic
   return forbidden.filter((f) => codes.includes(f.deviceCode)).map((f) => ({ deviceCode: f.deviceCode, nameAr: f.nameAr, reasonAr: f.reasonAr }));
 }
 
-export const _private = { reasonOf };
+export const _private = { reasonOf, writeVersionTx, proofOf, notifyVersionedTx };
 
 // ══ ما يقرؤه Opus في وظيفة «تعديل» (§4.hb ٣.٣) ═══════════════════════════════════════════════════════
 export interface RevisionInput {

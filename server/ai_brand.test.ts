@@ -23,6 +23,9 @@ async function main() {
   same("أ.٣ الأسماءُ الداخلية لا تُمسّ", ["opusVersion", "isOpusAwaiting", "OpusPanel", "physio_opus_plan_ready", "اختبار-Opus"].map(brandAiText),
     ["opusVersion", "isOpusAwaiting", "OpusPanel", "physio_opus_plan_ready", "اختبار-Opus"]);
   same("أ.٤ نصٌّ بلا الاسم يعود كما هو", brandAiText("خطّةٌ يدوية"), "خطّةٌ يدوية");
+  same("أ.٥ **«خدمةُ Claude» المخزَّنة قبل التغيير تُعرض «خدمةُ Bionic AI»** ولا تُمسّ «Claude» في غيرها",
+    [brandAiText("رفضت خدمةُ Claude الطلب"), brandAiText("تعذّر الاتّصال بخدمة Claude"), brandAiText("Claude Code")],
+    ["رفضت خدمةُ Bionic AI الطلب", "تعذّر الاتّصال بخدمة Bionic AI", "Claude Code"]);
 
   console.log("\n── ب. ردُّ الخادم ──");
   const app = express();
@@ -50,7 +53,7 @@ async function main() {
       readFileSync(f, "utf8").split("\n").forEach((l, i) => {
         if (/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)) return;
         const code = l.split("  //")[0];
-        if (pat.test(code)) hits.push(`${f}:${i + 1}`);
+        if (pat.test(code) || /(خدمةُ|خدمة|لخدمة|بخدمة) Claude/.test(code)) hits.push(`${f}:${i + 1}`);
       });
     }
   };

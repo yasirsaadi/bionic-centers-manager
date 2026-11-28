@@ -106,7 +106,7 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
           {job.kind === "revise" && job.reviseNote && <p className="m-0 text-xs text-violet-950 bg-white/70 rounded px-2 py-1" dir="auto">ملاحظةُ المعتمِد: «{job.reviseNote}»</p>}
           <StageList job={job} />
           {job.failures > 0 && job.status !== "needs_answers" && (
-            <p className="m-0 text-[11px] text-amber-800" data-testid={`opus-retry-${examId}`}>تعذّر الاتّصال بخدمة Claude — إعادةُ المحاولة {ar(job.failures)} من {ar(job.maxFailures)}.</p>
+            <p className="m-0 text-[11px] text-amber-800" data-testid={`opus-retry-${examId}`}>تعذّر الاتّصال بخدمة Bionic AI — إعادةُ المحاولة {ar(job.failures)} من {ar(job.maxFailures)}.</p>
           )}
           {job.status !== "needs_answers" && <p className="m-0 text-[11px] text-slate-600">قد يستغرق وقتاً طويلاً — تستطيع إغلاق الصفحة ويكمل في الخادم.</p>}
         </>

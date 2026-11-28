@@ -110,11 +110,14 @@ export async function loadDayStats(userId: number, keys: readonly AchievementKey
   })());
 
   if (want("physioSessions")) jobs.push((async () => {
+    //  §4.hc — جلسةُ خطّة Bionic AI بأجزائها: تُعدّ لكلّ مَن سجّل جزءاً منها أمس (مرّةً للجلسة)؛ واليدويةُ لمنفّذها كما كانت.
     const r = await db.execute(sql`
-      SELECT COUNT(*)::int AS c FROM physio_plan_sessions s
+      SELECT COUNT(DISTINCT s.id)::int AS c FROM physio_plan_sessions s
         JOIN patients p ON p.id = s.patient_id AND p.deleted_at IS NULL
-       WHERE s.executed_by = ${userId} AND s.cancelled_at IS NULL
-         AND s.created_at >= ${sTz}::timestamptz AND s.created_at < ${eTz}::timestamptz`);
+       WHERE s.cancelled_at IS NULL
+         AND ((s.parts_required IS NULL AND s.executed_by = ${userId} AND s.created_at >= ${sTz}::timestamptz AND s.created_at < ${eTz}::timestamptz)
+           OR EXISTS (SELECT 1 FROM physio_plan_session_parts sp WHERE sp.session_id = s.id AND sp.recorded_by = ${userId}
+                        AND sp.recorded_at >= ${sTz}::timestamptz AND sp.recorded_at < ${eTz}::timestamptz))`);
     out.physioSessions = n(r.rows[0]?.c);
   })());
 

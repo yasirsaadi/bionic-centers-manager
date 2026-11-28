@@ -26,6 +26,8 @@ interface PlanRow {
   canExecute?: boolean;
   /** §4.ha — خطّةُ Opus: `stub` سطرٌ بلا تفصيلٍ لغير المعتمِد حتى تُعتمد. */
   origin?: "manual" | "suggest" | "opus" | null; stub?: boolean;
+  /** §4.hc — خطّةُ Bionic AI معتمَدةٌ بجزءٍ بلا مُسنَد (للمعتمِد). */
+  awaitingAssignment?: boolean;
 }
 interface ProtocolRow { id: number; titleAr: string; titleEn: string; ageGroup: AgeGroup; status: "draft" | "approved" }
 
@@ -106,6 +108,9 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                   <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300" data-testid={`physio-plan-opus-${p.id}`}>
                     {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Bionic AI — افتحها لتعتمدها" : "كتبها Bionic AI"}
                   </Badge>
+                )}
+                {p.origin === "opus" && p.awaitingAssignment && (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-300" data-testid={`physio-plan-awaiting-assignment-${p.id}`}>بانتظار الإسناد</Badge>
                 )}
                 {p.protocolId && p.protocolStatus !== "approved" && (
                   <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">{UNAPPROVED_PROTOCOL_BADGE}</Badge>
