@@ -35,6 +35,26 @@ export const MODEL_SONNET = "claude-sonnet-4-6";
 
 export type AiModel = "haiku" | "sonnet";
 
+/**
+ * **Claude Opus 5.5 لوكيل خطّة العلاج الطبيعي** (§4.ha) — خارجَ `AiModel` عمداً: النداءاتُ الموجودة (`aiComplete`/`aiToolStep`) لا تتغيّر حرفاً.
+ * التفكيرُ دائماً `adaptive`، والعمقُ بـ`output_config.effort`، و`tool_choice` القسريّ يُردّ ٤٠٠ — فيُبنى الطلبُ كلُّه في `server/physio_agent/`.
+ */
+export const MODEL_OPUS = "claude-opus-5-5";
+
+/**
+ * **طلبٌ طويلٌ بالبثّ ثمّ الرسالةُ النهائية** — `max_tokens` حتى ١٢٨ ألفاً يُلزم البثّ (الـSDK يرفض الطلبَ الطويل بلا بثّ، والوسطاءُ يقطعون
+ * الصامت). و`maxRetries: 0`: الإعادةُ يملكها وكيلُ الخطّة (تُعدّ وتُسجَّل وتُؤجَّل بالدقائق)، و`signal` يُلغيه النبضُ أو الإيقاف.
+ */
+export async function streamOpusMessage(
+  body: Anthropic.MessageCreateParamsNonStreaming,
+  opts: { signal: AbortSignal },
+): Promise<Anthropic.Message> {
+  const client = getClient();
+  if (!client) throw new AiUnavailableError("ANTHROPIC_API_KEY is not configured");
+  const stream = client.messages.stream(body, { signal: opts.signal, timeout: 60 * 60_000, maxRetries: 0 });
+  return await stream.finalMessage();
+}
+
 export interface AiCompleteParams {
   // Reusable Arabic system prompt. Cached automatically when long enough.
   system: string;

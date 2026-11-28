@@ -25,6 +25,8 @@ import {
   canApprovePlans, canDeletePlans, canReadPlans, canWritePlans, isPlanClosed, planStatusAfterEdit, planVisibleTo, PLAN_NOT_FOUND,
 } from "@shared/physio_plans";
 import * as store from "./store";
+import * as opusPlans from "../physio_agent/plans";
+import { isOpusAwaiting, opusAwaitingBlocked, opusPlanStub, planAccessFor } from "@shared/physio_agent";
 import { normalizeSchedule } from "@shared/physio_device_settings";
 import * as exec from "./execution";
 import * as suggest from "./suggest";
@@ -113,7 +115,16 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     const patient = await storage.getPatient(row.patientId);
     const scope = scopeOf(req, s);
     const reaches = patient && (scope === null || scope.includes(row.branchId) || await scopeReachesPatient(scope, patient as any));
-    if (!reaches || !planVisibleTo(s, row.status)) { res.status(404).json({ error: PLAN_NOT_FOUND }); return null; }
+    //  **خطّةُ Opus المنتظرة للمعتمِد وحده** (§4.ha): غيرُه يرى سطرَها في القائمة ولا يفتحها.
+    if (!reaches || planAccessFor(s, row) !== "full") { res.status(404).json({ error: PLAN_NOT_FOUND }); return null; }
+    //  **وقبل الاعتماد لا تُعدَّل ولا تُنفَّذ** — إلّا الاعتمادُ والحذفُ بيد معتمِد؛ و«الإعادة إلى Opus» في المرحلة القادمة.
+    if (req.method !== "GET" && isOpusAwaiting(row)) {
+      const last = String(req.path ?? "").split("/").filter(Boolean).pop() ?? "";
+      if (last === "return") { res.status(409).json({ error: "إعادةُ خطّة Opus إليه بملاحظة في المرحلة القادمة — احذفها وأعد الكتابة الآن", code: "opus_return_next_phase" }); return null; }
+      const action = req.method === "DELETE" && /^\d+$/.test(last) ? "delete" : last;
+      const why = opusAwaitingBlocked(row, action);
+      if (why) { res.status(409).json({ error: why, code: "opus_plan_locked" }); return null; }
+    }
     return { s, row };
   }
 
@@ -127,8 +138,13 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       if (!patient || !(await scopeReachesPatient(scopeOf(req, s), patient as any))) return res.status(404).json({ error: "المريض غير موجود" });
       const scope = scopeOf(req, s);
       //  «تنفيذ جلسة» لكلّ خطّةٍ معتمَدة في فرعٍ يعمل فيه السائل (§4.cn) — والخادمُ يحرس التنفيذَ نفسَه ثانيةً.
-      const rows = (await store.listPatientPlans(patientId)).filter((p) => planVisibleTo(s, p.status))
-        .map((p) => ({ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }));
+      //  خطّةُ Opus المنتظرة: كاملةً للمعتمِد، وسطراً بلا عنوانٍ ولا تنفيذٍ لغيره (§4.ha).
+      const rows = (await store.listPatientPlans(patientId)).flatMap((p): any[] => {
+        const access = planAccessFor(s, p);
+        if (access === "none") return [];
+        if (access === "stub") return [opusPlanStub({ id: p.id, patientId, status: p.status, createdAt: p.createdAt })];
+        return [{ ...p, canExecute: p.status === "approved" && canExecutePlans(s) && (scope === null || scope.includes(p.branchId)) }];
+      });
       //  «اقترح خطّة» (§4.co) — لكاتبي الخطط، ومعه ما سيقرؤه المساعدُ من المعاينة كي يرى الأخصائيُّ مصدرَه قبل الضغط.
       //  **ومعه التقييمُ الأوّليّ** (§4.da المرحلة ٤): سطرُه وبنودُ خطّة العلاج التي أشّرها الفاحص — تُعرَض بجانب اختيار البروتوكول.
       let suggestInfo: {
@@ -209,7 +225,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     if (view !== "assigned" && !canApprovePlans(s)) return res.status(403).json({ error: "الاعتماداتُ والمراجعةُ للمسؤول والمشرف العام" });
     try {
       const rows = await store.listPlans(view === "pending"
-        ? { status: "pending", branchIds: scopeOf(req, s) }
+        ? { status: "pending", branchIds: scopeOf(req, s), excludeOpus: true }
         : view === "review"
           ? { reviewAwaiting: true, branchIds: scopeOf(req, s) }
           : { assigneeUserId: Number(s.userId), branchIds: scopeOf(req, s) });
@@ -380,11 +396,20 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         if (!canApprovePlans(l.s)) return res.status(403).json({ error: "يعتمد الخطّةَ المسؤولُ أو المشرفُ العام" });
         const note = text(req.body?.note, 2000);
         if (decision === "return" && !note) return res.status(400).json({ error: "اكتب ملاحظةَ الإعادة" });
+        //  **خطّةُ Opus** (§4.ha ٧.٤): من «الخطّة المقترحة» وبإقرارٍ بالملاحظات الكبيرة، والتدقيقُ في معاملتها.
+        if (decision === "approve" && isOpusAwaiting(l.row)) {
+          const r = await opusPlans.approveOpusPlan(l.row.id, req.body, { userId: l.s.userId ?? null, name: l.s.displayName ?? null,
+            ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
+          return res.json({ ...r.after, draftProtocolId: r.draftProtocolId });
+        }
         const r = await store.decidePlan(l.row.id, decision, note, actor(l.s));
         await audit(req, l.s, { entityId: l.row.id, action: decision, branchId: l.row.branchId,
           oldValues: { status: r.before.status }, newValues: { status: r.after.status, returnNote: r.after.returnNote } });
         res.json(r.after);
-      } catch (e) { fail(res, e); }
+      } catch (e) {
+        if (e instanceof opusPlans.OpusPlanError) return res.status(e.status).json({ error: e.message, code: e.code });
+        fail(res, e);
+      }
     });
   }
 

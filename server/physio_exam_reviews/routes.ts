@@ -12,6 +12,7 @@ import { getSession, accessibleBranchesFor } from "../sessions_module/permission
 import { scopeReachesPatient } from "../patients/branch_access";
 import { canApproveProtocols } from "@shared/physio_protocols";
 import * as store from "./store";
+import { pendingOpusCount, staleOpusCount } from "../physio_agent/plans";
 
 export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: any) {
   const sess = (req: any) => getSession(req) ?? ({} as any);
@@ -33,6 +34,7 @@ export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: an
     try {
       const review = await store.requestReview({
         examId, actor, examinerNote: req.body?.examinerNote, decision: req.body?.decision, decisionNote: req.body?.decisionNote,
+        forbiddenDevices: req.body?.forbiddenDevices,
         //  المعتمِدُ على كلّ الفروع؛ والفاحصُ بنطاق فروعه على فرع المعاينة أو ما يصل ملفَّ المريض.
         branchScopeOk: async (e) => {
           if (actor.isApprover) return true;
@@ -50,7 +52,8 @@ export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: an
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {
-      res.json(await store.decideReview({ reviewId: id, actor: actorOf(req), decision: req.body?.decision, note: req.body?.note }));
+      res.json(await store.decideReview({ reviewId: id, actor: actorOf(req), decision: req.body?.decision, note: req.body?.note,
+        forbiddenDevices: req.body?.forbiddenDevices }));
     } catch (e) { fail(res, e); }
   });
 
@@ -64,7 +67,10 @@ export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: an
   app.get("/api/physio/red-flag-reviews/pending-count", isAuthenticated, async (req: any, res) => {
     if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "اعتمادُ العلامات الحمراء للمسؤول والمشرف العام" });
     try {
-      res.json({ count: await store.pendingCount() });
+      //  والشارةُ تجمع العلاماتِ الحمراء وخططَ Opus المنتظرة الطازجة (§4.ha).
+      const redFlags = await store.pendingCount();
+      const opusPlans = await pendingOpusCount();
+      res.json({ count: redFlags + opusPlans, redFlags, opusPlans, opusStale: await staleOpusCount() });
     } catch (e) { fail(res, e); }
   });
 }

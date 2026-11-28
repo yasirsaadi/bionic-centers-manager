@@ -7,6 +7,9 @@ import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import { isExamCancelled } from "../medical/active_exam";
+import { lockPatientAgent } from "../physio_agent/store";
+import { reconcilePatientJobs, nudgeWorkerNow } from "../physio_agent/reconcile";
+import { signalJob } from "../physio_agent/store";
 import {
   agentGateFor, examV2Missing, isExamV2, newestOtherExamReview, redFlagsOf, RED_FLAG_URGENCY_AR, type AgentGate, type RedFlagReviewSummary,
 } from "@shared/physio_exam_v2";
@@ -83,12 +86,13 @@ export async function latestReviews(examIds: number[], ex: any = db): Promise<Ma
  * **بوّابةُ الوكيل لمعاينة** — تقرؤها المراحلُ اللاحقة قبل أيّ نداءٍ للوكيل: مسموحٌ حين تكون الثانيةَ كاملةً و(بلا علامةٍ حمراء أو
  * باعتمادٍ يغطّيها). قراءةٌ محضة بلا أثر.
  */
-export async function examAgentGate(examId: number): Promise<AgentGate & { examId: number; decisionNote: string | null }> {
-  const e = await examRow(db, examId);
+export async function examAgentGate(examId: number, ex: any = db): Promise<AgentGate & { examId: number; decisionNote: string | null }> {
+  //  `ex` معاملةُ المُستدعي (§4.ha): وكيلُ Opus يقرّر داخل معاملته المقفولة لا بقراءةٍ قبلها.
+  const e = await examRow(ex, examId);
   if (!e || e.caseType !== "physiotherapy") return { examId, allowed: false, code: "not_v2", reason: "ليست معاينةَ علاجٍ طبيعيّ", decisionNote: null };
-  const review = (await latestReviews([examId])).get(examId) ?? null;
-  const otherExamReview = newestOtherExamReview(await liveReviewsOfPatient(db, e.patientId), examId);
-  const gate = agentGateFor({ assessment: e.assessment, diagnosis: e.diagnosis ?? "", cancelled: await isExamCancelled(examId), review, otherExamReview });
+  const review = (await latestReviews([examId], ex)).get(examId) ?? null;
+  const otherExamReview = newestOtherExamReview(await liveReviewsOfPatient(ex, e.patientId), examId);
+  const gate = agentGateFor({ assessment: e.assessment, diagnosis: e.diagnosis ?? "", cancelled: await isExamCancelled(examId, ex), review, otherExamReview });
   return { ...gate, examId, decisionNote: gate.allowed && review?.status === "approved" ? review.decisionNote : null };
 }
 
@@ -113,15 +117,38 @@ const flagsText = (flags: RedFlagReviewSummary["flags"]) =>
  *     ويصل الفاحصَ القرارُ في تلغرام (مراجعةُ المرحلة الأولى). وبه يُرفع الرفض: المرفوضُ لا يُطلب ثانيةً إلّا بيد معتمِد —
  *     ولو مُحيت علاماتُه بعد الرفض (فالبوّابةُ لا تفتح بمحوها).
  */
+/** أجهزةٌ يمنعها المعتمِدُ باعتماده (ترحيل ١٩٩، §4.ha) — رموزُ أجهزةٍ نشطةٍ معروفة، بلا تكرار؛ وغيرُ المعروف ٤٠٠. */
+async function cleanForbiddenDevices(ex: any, raw: unknown): Promise<string[]> {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || raw.length > 20) throw new ReviewError(400, "قائمةُ الأجهزة الممنوعة غير صالحة", "forbidden_devices_invalid");
+  const codes = Array.from(new Set(raw.map((x) => String(x ?? "").trim()).filter(Boolean)));
+  if (!codes.length) return [];
+  const r = await ex.execute(sql`SELECT code FROM devices WHERE is_active AND code IN (${sql.join(codes.map((c) => sql`${c}`), sql`, `)})`);
+  const known = new Set(((r.rows ?? []) as any[]).map((x) => String(x.code)));
+  if (codes.some((c) => !known.has(c))) throw new ReviewError(400, "جهازٌ غيرُ معروف في قائمة الممنوع", "forbidden_devices_invalid");
+  return codes;
+}
+
+/** بعد كلّ طلبٍ أو قرار: المصالحةُ في المعاملة (فتحُ وظيفةٍ أو إلغاؤها)، والتنبيهُ بعد الالتزام. */
+async function reconcileInTx(tx: any, patientId: number, actor: ReviewActor): Promise<() => Promise<void>> {
+  const r = await reconcilePatientJobs(tx, patientId, { userId: actor.userId, name: actor.name, ip: actor.ip, userAgent: actor.userAgent }, "red_flag_approved");
+  return async () => { if (r.enqueued) { nudgeWorkerNow(); await signalJob(r.enqueued); } };
+}
+
 export async function requestReview(input: {
   examId: number; actor: ReviewActor; examinerNote: unknown; decision?: unknown; decisionNote?: unknown; branchScopeOk: (e: ExamRow) => Promise<boolean>;
+  forbiddenDevices?: unknown;
 }): Promise<RedFlagReviewSummary> {
   const note = cleanNote(input.examinerNote);
   const decision = input.decision === undefined || input.decision === null || input.decision === "" ? null : input.decision;
   if (decision !== null && decision !== "approve" && decision !== "reject") throw new ReviewError(400, "القرارُ «اعتماد» أو «رفض»", "decision_invalid");
   if (decision !== null && !input.actor.isApprover) throw new ReviewError(403, "الاعتمادُ للمسؤول والمشرف العام وحدهما", "not_approver");
   const decisionNote = cleanNote(input.decisionNote);
-  return db.transaction(async (tx) => {
+  let after: (() => Promise<void>) | null = null;
+  const out = await db.transaction(async (tx) => {
+    //  **قفلُ المريض قبل قفل المعاينة** (§4.ha) — ترتيبُ الأقفال الواحد مع وكيل Opus.
+    const pre = await examRow(tx, input.examId);
+    if (pre) await lockPatientAgent(tx, pre.patientId);
     const e = await examRow(tx, input.examId, true);
     if (!e || e.caseType !== "physiotherapy") throw new ReviewError(404, "المعاينةُ غير موجودة", "exam_not_found");
     if (!(await input.branchScopeOk(e))) throw new ReviewError(403, "لا يمكنك العمل على معاينة فرعٍ آخر", "branch_scope");
@@ -150,18 +177,21 @@ export async function requestReview(input: {
     }
     const flags = hits.map((h) => ({ key: h.key, questionAr: h.questionAr, actionAr: h.actionAr, urgency: h.urgency }));
     const status = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "pending";
+    const forbidden = decision === "approve" ? await cleanForbiddenDevices(tx, input.forbiddenDevices) : [];
     const ins = await tx.execute(sql`
       INSERT INTO physio_exam_red_flag_reviews (exam_id, patient_id, branch_id, flags, status, examiner_note, decision_note,
-             requested_by, requested_by_name, decided_by, decided_by_name, decided_at)
+             requested_by, requested_by_name, decided_by, decided_by_name, decided_at, forbidden_devices)
       VALUES (${e.id}, ${e.patientId}, ${e.branchId}, ${JSON.stringify(flags)}::jsonb, ${status}, ${direct ? null : note},
               ${decision ? decisionNote : null}, ${input.actor.userId}, ${input.actor.name},
-              ${decision ? input.actor.userId : null}, ${decision ? input.actor.name : null}, ${decision ? sql`now()` : null})
+              ${decision ? input.actor.userId : null}, ${decision ? input.actor.name : null}, ${decision ? sql`now()` : null},
+              ${JSON.stringify(forbidden)}::jsonb)
       RETURNING *`);
     const row = summaryOf((ins.rows ?? [])[0] as Record<string, any>);
     await logAudit({
       entityType: "physio_exam_red_flag_review", entityId: row.id, action: decision ? `request_and_${decision}` : "request",
       userId: input.actor.userId, userName: input.actor.name, branchId: e.branchId,
-      newValues: { examId: e.id, patientId: e.patientId, status, flags: flags.map((f) => f.key), examinerNote: direct ? null : note, decisionNote: decision ? decisionNote : null },
+      newValues: { examId: e.id, patientId: e.patientId, status, flags: flags.map((f) => f.key), examinerNote: direct ? null : note, decisionNote: decision ? decisionNote : null,
+        ...(forbidden.length ? { forbiddenDevices: forbidden } : {}) },
       notes: decision
         ? direct
           ? `${decision === "approve" ? "اعتمد" : "رفض"} المعتمِدُ مباشرةً العلامةَ الحمراء في المعاينة #${e.id} (الفاحص: ${e.doctorName || "—"})`
@@ -186,32 +216,41 @@ export async function requestReview(input: {
         linkPath: `/patients/${e.patientId}`,
       });
     }
+    //  **وكيلُ Opus** (§4.ha): طلبٌ معلَّقٌ يوقف وظيفةَ المريض، واعتمادٌ يفتحها.
+    after = await reconcileInTx(tx, e.patientId, input.actor);
     return row;
   });
+  if (after) await (after as () => Promise<void>)();
+  return out;
 }
 
 /** **قرارُ المعتمِد** — اعتمادٌ أو رفضٌ بملاحظةٍ إلزامية، على طلبٍ مفتوح وحده؛ والجوابُ لطالبه في تلغرام. */
-export async function decideReview(input: { reviewId: number; actor: ReviewActor; decision: unknown; note: unknown }): Promise<RedFlagReviewSummary> {
+export async function decideReview(input: { reviewId: number; actor: ReviewActor; decision: unknown; note: unknown; forbiddenDevices?: unknown }): Promise<RedFlagReviewSummary> {
   if (!input.actor.isApprover) throw new ReviewError(403, "الاعتمادُ للمسؤول والمشرف العام وحدهما", "not_approver");
   if (input.decision !== "approve" && input.decision !== "reject") throw new ReviewError(400, "القرارُ «اعتماد» أو «رفض»", "decision_invalid");
   const note = cleanNote(input.note);
   if (!note) throw new ReviewError(400, "ملاحظةُ الاعتماد إلزامية — يقرؤها Opus قيداً على الخطّة", "decision_note_required");
-  return db.transaction(async (tx) => {
+  let after: (() => Promise<void>) | null = null;
+  const out = await db.transaction(async (tx) => {
+    const pre = ((await tx.execute(sql`SELECT patient_id FROM physio_exam_red_flag_reviews WHERE id = ${input.reviewId}`)).rows ?? [])[0] as any;
+    if (pre) await lockPatientAgent(tx, Number(pre.patient_id));
     const cur = await tx.execute(sql`SELECT * FROM physio_exam_red_flag_reviews WHERE id = ${input.reviewId} FOR UPDATE`);
     const r = (cur.rows ?? [])[0] as Record<string, any> | undefined;
     if (!r) throw new ReviewError(404, "الطلبُ غير موجود", "review_not_found");
     if (r.status !== "pending") throw new ReviewError(409, "حُسم هذا الطلبُ من قبل", "review_decided");
     if (await isExamCancelled(Number(r.exam_id), tx)) throw new ReviewError(409, "المعاينةُ ملغاة", "exam_cancelled");
     const status = input.decision === "approve" ? "approved" : "rejected";
+    const forbidden = status === "approved" ? await cleanForbiddenDevices(tx, input.forbiddenDevices) : [];
     const up = await tx.execute(sql`
       UPDATE physio_exam_red_flag_reviews
-         SET status = ${status}, decision_note = ${note}, decided_by = ${input.actor.userId}, decided_by_name = ${input.actor.name}, decided_at = now()
+         SET status = ${status}, decision_note = ${note}, decided_by = ${input.actor.userId}, decided_by_name = ${input.actor.name}, decided_at = now(),
+             forbidden_devices = ${JSON.stringify(forbidden)}::jsonb
        WHERE id = ${input.reviewId} AND status = 'pending' RETURNING *`);
     const row = summaryOf((up.rows ?? [])[0] as Record<string, any>);
     await logAudit({
       entityType: "physio_exam_red_flag_review", entityId: row.id, action: input.decision as string,
       userId: input.actor.userId, userName: input.actor.name, branchId: r.branch_id ?? null,
-      oldValues: { status: "pending" }, newValues: { examId: Number(r.exam_id), status, decisionNote: note },
+      oldValues: { status: "pending" }, newValues: { examId: Number(r.exam_id), status, decisionNote: note, ...(forbidden.length ? { forbiddenDevices: forbidden } : {}) },
       notes: `${status === "approved" ? "اعتُمدت" : "رُفضت"} العلامةُ الحمراء في المعاينة #${r.exam_id}`,
       ipAddress: input.actor.ip, userAgent: input.actor.userAgent, tx,
     });
@@ -227,8 +266,11 @@ export async function decideReview(input: { reviewId: number; actor: ReviewActor
         linkPath: `/patients/${r.patient_id}`,
       });
     }
+    after = await reconcileInTx(tx, Number(r.patient_id), input.actor);
     return row;
   });
+  if (after) await (after as () => Promise<void>)();
+  return out;
 }
 
 /**

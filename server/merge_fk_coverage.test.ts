@@ -62,6 +62,7 @@ const MERGE_DECISIONS: Record<string, string> = {
   "medical_exam_cancellations.patient_id": "repoint — الشاهدة تتبع معاينتها وصاحبَها",
   //  اعتمادُ العلامة الحمراء (ترحيل ١٩٨، §4.gz): يتبع معاينتَه (`exam_id` ثابت) وصاحبَها — والمعلَّقُ يبقى معلَّقاً على المعاينة نفسِها.
   "physio_exam_red_flag_reviews.patient_id": "repoint — الطلبُ يتبع معاينتَه وصاحبَها",
+  "physio_agent_jobs.patient_id": "repoint — وظيفةُ Opus تتبع معاينتَها وصاحبَها (وتُلغى النشطةُ قبل الدمج)",
   "patient_cases.patient_id": "طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر",
   "patient_link_tokens.patient_id": "repoint — البصمة فريدة عالمياً فلا تتصادم",
   //  المبلغُ المعلَّق ورحلتُه (ترحيل ٠٦٧): يتبعان صاحبَهما. وحذفُهما كان

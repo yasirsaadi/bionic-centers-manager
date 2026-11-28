@@ -288,6 +288,7 @@
     "test:exam-sheet": "tsx server/exam_sheet.test.ts",
     "test:physio-exam-sheet": "tsx server/physio_exam_sheet.test.ts",
     "test:physio-exam-v2": "tsx server/physio_exam_v2.test.ts",
+    "test:physio-agent": "tsx server/physio_agent.test.ts",
     "test:physio-sheet-view": "tsx server/physio_sheet_view.test.ts",
     "test:physio-center-split": "tsx server/physio_center_split.test.ts",
     "test:physio-split-script": "tsx server/physio_split_script.test.ts",

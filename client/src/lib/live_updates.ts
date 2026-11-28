@@ -234,6 +234,8 @@ export function startLiveUpdates(d: LiveDeps): () => void {
     es.addEventListener("changed", onChanged);
     es.addEventListener("greeting", () => { try { d.onGreeting?.(); } catch { /* زينةٌ لا شرط */ } });
     es.addEventListener("sidebar-order", () => { try { d.onSidebarOrder?.(); } catch { /* زينةٌ لا شرط */ } });
+    //  **وكيلُ Opus** (§4.ha): مرحلةٌ جديدة أو سؤالٌ أو خطّةٌ جاهزة لصاحب المعاينة ومَن طلبها — يُحدَّث ما يعرضه (ولو كان المصدرُ صداه).
+    es.addEventListener("opus", () => requestRefresh());
     es.onerror = () => {
       //  المتصفّحُ يُعيد الاتصالَ وحده ما دام `CONNECTING`؛ و`CLOSED` (ردٌّ بغير ٢٠٠ — جلسةٌ انتهت مثلاً) لا يعود إلّا بيدنا.
       if (es && es.readyState === 2) { try { es.close(); } catch { /* */ } es = null; scheduleReconnect(); }

@@ -4,7 +4,8 @@ import { titleMatches } from "@shared/protocol_search";
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, Play, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Play, Plus, RefreshCcw, Search, Sparkles, Trash2 } from "lucide-react";
+import { OPUS_AWAITING_LABEL, isActiveJobStatus, isOpusAwaiting } from "@shared/physio_agent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,8 @@ interface PlanRow {
   decidedByName: string | null; protocolStatus: string | null; protocolId: number | null; deviceCount: number; assignees: string[];
   reviewStatus?: "awaiting" | "reviewed" | null;
   canExecute?: boolean;
+  /** §4.ha — خطّةُ Opus: `stub` سطرٌ بلا تفصيلٍ لغير المعتمِد حتى تُعتمد. */
+  origin?: "manual" | "suggest" | "opus" | null; stub?: boolean;
 }
 interface ProtocolRow { id: number; titleAr: string; titleEn: string; ageGroup: AgeGroup; status: "draft" | "approved" }
 
@@ -52,9 +55,19 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
     queryFn: async () => (await apiRequest("GET", `/api/patients/${patientId}/physio-plans`)).json(),
     retry: false,
   });
+  //  حالُ وظائف Opus من بطاقة المعاينات (الاستعلامُ نفسُه — من الذاكرة غالباً).
+  const examsQ = useQuery<{ exams: { opusJob?: { status: string } | null }[] }>({
+    queryKey: [`/api/medical/patients/${patientId}/exams`],
+    queryFn: async () => { const r = await fetch(`/api/medical/patients/${patientId}/exams`, { credentials: "include" }); if (!r.ok) throw new Error("تعذّر تحميل المعاينات"); return r.json(); },
+    enabled: Boolean(q.data?.canWrite),
+  });
   //  مَن لا يقرأ الخطط (استقبالٌ مثلاً) لا يرى هذا القسم أصلاً — والخادمُ يردّ ٤٠٣.
   if (q.isError) return null;
   const plans = q.data?.plans ?? [];
+  //  **Opus يكتب خطّةً لهذا المريض** (§4.ha ٩) — وظيفةٌ تعمل أو خطّةٌ تنتظر الاعتماد: تنبيهٌ لا منع (درسُ ٢٥)، فخطّتان معاً تُعدّان مرّتين.
+  const opusWaiting = plans.some((p) => isOpusAwaiting({ origin: p.origin ?? null, status: p.status }));
+  const opusWriting = (examsQ.data?.exams ?? []).some((e) => e.opusJob && isActiveJobStatus(e.opusJob.status));
+  const opusBusy = opusWaiting || opusWriting;
   return (
     <div className="space-y-3" data-testid="physio-plans-section">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -65,13 +78,27 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
           </Button>
         )}
       </div>
+      {opusBusy && q.data?.canWrite && (
+        <div dir="rtl" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900" data-testid="physio-plans-opus-busy">
+          {opusWriting ? "Opus يكتب خطّةً لهذا المريض الآن" : "خطّةُ Opus لهذا المريض تنتظر الاعتماد"} — خطّةٌ جديدة الآن تعني خطّتين معاً تُعدّان مرّتين.
+        </div>
+      )}
       {q.isLoading ? (
         <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
       ) : plans.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground" data-testid="physio-plans-empty">لا خطة علاج طبيعي لهذا المريض بعد.</Card>
       ) : (
         <div className="space-y-2">
-          {plans.map((p) => (
+          {plans.map((p) => p.stub ? (
+            //  **خطّةُ Opus قبل الاعتماد** لغير المعتمِد: سطرٌ لا يُفتح ولا يُنفَّذ (§4.ha ١١.٤).
+            <div key={p.id} dir="rtl" className="rounded-lg border border-dashed border-violet-300 bg-violet-50/50 px-3 py-2.5 text-sm" data-testid={`physio-plan-stub-${p.id}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Sparkles className="w-4 h-4 text-violet-700" />
+                <span className="font-semibold">{OPUS_AWAITING_LABEL}</span>
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-1">كتبها Opus في {fmt(p.createdAt)} — تظهر هنا كاملةً بعد أن يعتمدها المسؤولُ أو المشرفُ العام.</div>
+            </div>
+          ) : (
             <div key={p.id} className="flex items-stretch gap-1">
             <button type="button" onClick={() => setLocation(`/physio/plans/${p.id}`)}
               className="flex-1 text-right rounded-lg border bg-white px-3 py-2.5 hover:border-primary/40 hover:bg-slate-50"
@@ -79,6 +106,11 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-sm">{p.titleAr}</span>
                 <Badge variant="outline" className={PLAN_STATUS_TONE[p.status]}>{PLAN_STATUS_LABELS[p.status]}</Badge>
+                {p.origin === "opus" && (
+                  <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300" data-testid={`physio-plan-opus-${p.id}`}>
+                    {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Opus — افتحها لتعتمدها" : "كتبها Opus"}
+                  </Badge>
+                )}
                 {p.protocolId && p.protocolStatus !== "approved" && (
                   <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">{UNAPPROVED_PROTOCOL_BADGE}</Badge>
                 )}

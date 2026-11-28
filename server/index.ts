@@ -162,6 +162,10 @@ app.use((req, res, next) => {
       startInstallmentReminders();
       //  نسبةُ مستشفى العين تُعزل وحدها (§4.fz): بعد كلّ كتابة، وكلَّ ليلة، وعند الإقلاع.
       startHospitalRatioReconcile();
+      //  وكيلُ Opus لخطّة العلاج الطبيعي (§4.ha) — عاملٌ في الخلفية، لا يبدأ بلا مفتاح ولا تحت الاختبار.
+      import("./physio_agent/worker")
+        .then((m) => { if (m.startPhysioAgentWorker()) log("physio agent worker started"); })
+        .catch((e) => console.error("[physio-agent] worker launch failed:", e));
       // One-time patient-cases backfill runs in the BACKGROUND, AFTER the
       // server is listening — so a large dataset never blocks/times-out the
       // deploy. It's guarded (runs once) and fails safe.

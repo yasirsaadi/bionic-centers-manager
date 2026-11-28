@@ -6,7 +6,7 @@
 // والخادمُ يحكم في كلّ خطوة (مَن يطلب ومَن يقرّر والملاحظتان والمرفوض) — الشاشةُ تعرض ما يقبله وحده.
 // وتُستعمل في بطاقة المعاينة وفي خطوة «أرسل للاعتماد» بعد الحفظ داخل نافذة المعاينة (`onDone`).
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,6 +31,31 @@ export const APPROVE_LABEL = "اعتماد — يكمل Opus";
 export const REJECT_LABEL = "رفض — تتوقّف";
 export const DECISION_NOTE_PLACEHOLDER = "ملاحظةُ الاعتماد (إلزامية — يقرؤها Opus قيداً على الخطّة)";
 
+/**
+ * **أجهزةٌ ممنوعة بهذا الاعتماد** (§4.ha ١١.٦ — اختياريّ): يؤشّرها المعتمِدُ بجانب ملاحظته فتحذفها بوّابةُ الشيفرة من خطّة Opus مهما كتب،
+ * ويراها في «قيود المعتمِدين». والخادمُ يقبل الأجهزةَ المعروفة النشطة وحدها.
+ */
+export function ForbiddenDevicePicker({ value, onChange, testId }: { value: string[]; onChange: (v: string[]) => void; testId: string }) {
+  const m = useQuery<{ devices: { id: number; code: string; nameAr: string }[] }>({ queryKey: ["/api/physio/devices"], retry: false,
+    queryFn: async () => { const r = await fetch("/api/physio/devices", { credentials: "include" }); if (!r.ok) throw new Error("تعذّر التحميل"); return r.json(); } });
+  const devices = m.data?.devices ?? [];
+  if (!devices.length) return null;
+  const toggle = (c: string) => onChange(value.includes(c) ? value.filter((x) => x !== c) : [...value, c]);
+  return (
+    <details className="text-xs" data-testid={testId}>
+      <summary className="cursor-pointer text-slate-700">أجهزةٌ ممنوعة بهذا الاعتماد (اختياريّ){value.length ? ` — ${String(value.length).replace(/\d/g, (x) => "٠١٢٣٤٥٦٧٨٩"[Number(x)])}` : ""}</summary>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {devices.map((d) => (
+          <button key={d.code} type="button" aria-pressed={value.includes(d.code)} onClick={() => toggle(d.code)}
+            className={cn("rounded-full border px-3 py-1.5 min-h-[32px]", value.includes(d.code) ? "bg-red-600 border-red-600 text-white" : "bg-white border-slate-300 text-slate-800")}
+            data-testid={`${testId}-${d.code}`}>{d.nameAr}</button>
+        ))}
+      </div>
+      <p className="m-0 mt-1 text-[11px] text-slate-600">تحذفها البوّابةُ من خطّة Opus مهما كتب — مع الاعتماد وحده.</p>
+    </details>
+  );
+}
+
 export function RedFlagReviewBox({
   examId, patientId, assessment, review, gate, isAuthor, canApprove, examinerId = null, onDone,
 }: {
@@ -50,22 +75,26 @@ export function RedFlagReviewBox({
   const qc = useQueryClient();
   const [examinerNote, setExaminerNote] = useState("");
   const [decisionNote, setDecisionNote] = useState("");
+  const [forbidden, setForbidden] = useState<string[]>([]);
   const hits = redFlagsOf(assessment);
   const done = () => {
     qc.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
     qc.invalidateQueries({ queryKey: ["/api/physio/red-flag-reviews"] });
     setExaminerNote("");
     setDecisionNote("");
+    setForbidden([]);
     onDone?.();
   };
   const request = useMutation({
     mutationFn: (decision: "approve" | "reject" | null) => post(`/api/physio/exams/${examId}/red-flag-review`,
-      { ...(isAuthor || decision === null ? { examinerNote } : {}), ...(decision ? { decision, decisionNote } : {}) }),
+      { ...(isAuthor || decision === null ? { examinerNote } : {}), ...(decision ? { decision, decisionNote } : {}),
+        ...(decision === "approve" && forbidden.length ? { forbiddenDevices: forbidden } : {}) }),
     onSuccess: (_r, decision) => { done(); toast({ title: decision === "approve" ? "اعتُمدت العلامةُ الحمراء" : decision === "reject" ? "رُفضت العلامةُ الحمراء" : "أُرسلت للاعتماد — وصلت المسؤولَ والمشرفَ العام" }); },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
   const decide = useMutation({
-    mutationFn: (decision: "approve" | "reject") => post(`/api/physio/red-flag-reviews/${review!.id}/decide`, { decision, note: decisionNote }),
+    mutationFn: (decision: "approve" | "reject") => post(`/api/physio/red-flag-reviews/${review!.id}/decide`, { decision, note: decisionNote,
+      ...(decision === "approve" && forbidden.length ? { forbiddenDevices: forbidden } : {}) }),
     onSuccess: (_r, decision) => { done(); toast({ title: decision === "approve" ? "اعتُمدت العلامةُ الحمراء" : "رُفضت العلامةُ الحمراء" }); },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
@@ -118,6 +147,7 @@ export function RedFlagReviewBox({
         <div className="flex flex-col gap-1.5">
           <Textarea rows={2} value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)} placeholder={DECISION_NOTE_PLACEHOLDER}
             data-testid={`input-redflag-decision-${examId}`} />
+          <ForbiddenDevicePicker value={forbidden} onChange={setForbidden} testId={`redflag-forbidden-${examId}`} />
           <div className="flex flex-wrap gap-2">{decisionButtons((d) => decide.mutate(d), busy || !decisionNote.trim(), "")}</div>
         </div>
       )}
@@ -128,6 +158,7 @@ export function RedFlagReviewBox({
             <>
               <Textarea rows={2} value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)} placeholder={DECISION_NOTE_PLACEHOLDER}
                 data-testid={`input-redflag-self-decision-${examId}`} />
+              <ForbiddenDevicePicker value={forbidden} onChange={setForbidden} testId={`redflag-forbidden-self-${examId}`} />
               <div className="flex flex-wrap gap-2">{decisionButtons((d) => request.mutate(d), busy || !decisionNote.trim(), "self-")}</div>
               {hits.length > 0 && (
                 <details className="text-xs">
@@ -148,6 +179,7 @@ export function RedFlagReviewBox({
                 <Textarea rows={2} value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)}
                   placeholder="أنت معتمِد: ملاحظةُ الاعتماد هنا تكفي في الخطوة نفسِها (إلزامية لقرارك — يقرؤها Opus)" data-testid={`input-redflag-self-decision-${examId}`} />
               )}
+              {canApprove && <ForbiddenDevicePicker value={forbidden} onChange={setForbidden} testId={`redflag-forbidden-own-${examId}`} />}
               <div className="flex flex-wrap gap-2">
                 {hits.length > 0 && (
                   <Button size="sm" variant={canApprove ? "outline" : "default"} disabled={busy || !examinerNote.trim()} onClick={() => request.mutate(null)}
