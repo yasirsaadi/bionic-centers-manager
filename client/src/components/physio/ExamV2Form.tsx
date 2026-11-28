@@ -266,7 +266,7 @@ export function ExamV2Form({
       {hits.length > 0 && edit && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900" data-testid={tid("rf-next")}>
           علاماتٌ حمراء: {arDigits(hits.length)} — الإجراءُ العاجل تحت كلّ سؤال. بعد الحفظ تكتب ملاحظتك وتضغط «أرسل للاعتماد» في الخطوة التالية،
-          ولا يُرسَل شيءٌ إلى Opus قبل اعتماد المسؤول أو المشرف العام.
+          ولا يُرسَل شيءٌ إلى Bionic AI قبل اعتماد المسؤول أو المشرف العام.
         </p>
       )}
 

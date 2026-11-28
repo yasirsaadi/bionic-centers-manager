@@ -660,7 +660,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
                 {maxInvalid && <span className="text-[11px] text-red-700" data-testid="protocol-max-invalid">{maxInvalid}</span>}</label>
               <p className="text-[11px] text-muted-foreground m-0 sm:pt-6">
                 {canMax
-                  ? "السقفُ الذي لا تتجاوزه خطّةُ Opus لهذا البروتوكول — بين عدد الجلسات و٣٠٠. اتركه فارغاً إن لم يُكتب تمديد، فيكون السقفُ عددَ الجلسات."
+                  ? "السقفُ الذي لا تتجاوزه خطّةُ Bionic AI لهذا البروتوكول — بين عدد الجلسات و٣٠٠. اتركه فارغاً إن لم يُكتب تمديد، فيكون السقفُ عددَ الجلسات."
                   : "يغيّره المسؤولُ أو المشرفُ العام."}
               </p>
             </div>

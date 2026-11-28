@@ -102,11 +102,11 @@ function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: Exclude<OpusView, "pr
         <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", r.outOfLibrary ? "bg-violet-100 text-violet-800" : "bg-teal-100 text-teal-800")}>
           {r.outOfLibrary ? OPUS_OUT_OF_LIBRARY_LABEL : "من المكتبة"}
         </span>
-        {r.revising && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-600 text-white" data-testid={`opus-plan-revising-${r.id}`}>يعيد Opus كتابتها</span>}
+        {r.revising && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-600 text-white" data-testid={`opus-plan-revising-${r.id}`}>يعيد Bionic AI كتابتها</span>}
         {view === "decided" && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-emerald-100 text-emerald-800">{r.status === "approved" ? "اعتُمدت" : "أُغلقت"}{r.decidedByName ? ` — ${r.decidedByName}` : ""}</span>}
       </div>
       <div className="text-sm" dir="auto">{r.titleAr}</div>
-      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · الفاحص: {r.examinerName ?? "—"} · كتبها Opus {arText(formatDateIraq(r.createdAt))} {arText(formatTimeIraq(r.createdAt))}</div>
+      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · الفاحص: {r.examinerName ?? "—"} · كتبها Bionic AI {arText(formatDateIraq(r.createdAt))} {arText(formatTimeIraq(r.createdAt))}</div>
       {r.staleReason && <div className="text-xs text-amber-900">قدُمت: {JOB_ERROR_TEXTS[r.staleReason] ?? "تغيّرت المعاينةُ بعد كتابتها"}</div>}
       <div>
         <Link href={`/physio/plans/${r.id}`}>
@@ -131,7 +131,7 @@ function OpusProposalCard({ r }: { r: OpusProposalRow & { stale?: boolean } }) {
       <div className="text-sm" dir="auto">{r.titleAr}</div>
       {r.request && <div className="text-xs" dir="auto"><span className="text-muted-foreground">الطلب: </span>«{r.request}»</div>}
       {r.diffSummaryAr && <div className="text-xs text-slate-700">ما يتغيّر: {r.diffSummaryAr}</div>}
-      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · طلبه {r.requestedByName ?? "—"}{r.finishedAt ? ` · أنهاه Opus ${arText(formatDateIraq(r.finishedAt))} ${arText(formatTimeIraq(r.finishedAt))}` : ""}</div>
+      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · طلبه {r.requestedByName ?? "—"}{r.finishedAt ? ` · أنهاه Bionic AI ${arText(formatDateIraq(r.finishedAt))} ${arText(formatTimeIraq(r.finishedAt))}` : ""}</div>
       <div>
         <Link href={`/physio/plans/${r.planId}`}>
           <Button size="sm" className="bg-violet-700 hover:bg-violet-800 gap-1" data-testid={`button-open-opus-proposal-${r.jobId}`}><Sparkles className="w-4 h-4" /> راجِع الفرق واحفظ</Button>
@@ -197,12 +197,12 @@ function PhysioApprovalsInner() {
   return (
     <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-red-700" /> اعتمادات العلاج الطبيعي</h1>
-      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: "خطط Opus" }}
+      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: "خطط Bionic AI" }}
         counts={{ redflags: counts.data?.redFlags ?? 0, opus: (counts.data?.opusPlans ?? 0) + (counts.data?.opusProposals ?? 0) }} />
       {kind === "redflags" ? (
         <>
           <p className="text-xs text-muted-foreground">
-            علاماتٌ حمراء في معاينات العلاج الطبيعي أرسلها الفاحصون. الإجراءُ العاجل ظهر للفاحص لحظةَ المعاينة؛ وهنا القرار: الاعتمادُ يسمح لـ Opus
+            علاماتٌ حمراء في معاينات العلاج الطبيعي أرسلها الفاحصون. الإجراءُ العاجل ظهر للفاحص لحظةَ المعاينة؛ وهنا القرار: الاعتمادُ يسمح لـ Bionic AI
             بكتابة الخطّة وملاحظتُك قيدٌ عليها، والرفضُ يوقفها وتبقى الإحالة.
           </p>
           <Seg value={view} onChange={setView} prefix="approvals-view" options={{ pending: "بانتظار القرار", decided: "المحسومة" }} />
@@ -214,16 +214,16 @@ function PhysioApprovalsInner() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            خططٌ كتبها Opus من معاينات العلاج الطبيعي. لا يراها المعالجون قبل اعتمادك؛ افتح كلّاً منها واقرأها ثمّ اعتمدها أو احذفها.
-            و«تعديلاتٌ مقترحة» ما كتبه Opus بطلبك على خططٍ معتمَدة — تُحفظ نسخةً جديدة بعد قراءة الفرق.
+            خططٌ كتبها Bionic AI من معاينات العلاج الطبيعي. لا يراها المعالجون قبل اعتمادك؛ افتح كلّاً منها واقرأها ثمّ اعتمدها أو احذفها.
+            و«تعديلاتٌ مقترحة» ما كتبه Bionic AI بطلبك على خططٍ معتمَدة — تُحفظ نسخةً جديدة بعد قراءة الفرق.
             و«قدُمت» خططٌ تغيّرت معاينتُها بعد كتابتها — لا تُعتمد، تُحذف ويُعاد الكتابة.
           </p>
           <Seg value={opusView} onChange={setOpusView} prefix="opus-view" options={OPUS_VIEWS} counts={{ pending: counts.data?.opusPlans ?? 0, proposals: counts.data?.opusProposals ?? 0 }}
             muted={{ stale: counts.data?.opusStale ?? 0 }} />
           {oq.isLoading ? <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
             : oq.isError ? <Card className="p-4 text-sm text-red-700">تعذّر التحميل.</Card>
-              : orows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="opus-plans-empty">{opusView === "pending" ? "لا خطّةَ من Opus تنتظر الاعتماد."
-                : opusView === "proposals" ? "لا تعديلَ من Opus ينتظر حفظك." : opusView === "stale" ? "لا خطّةَ قديمة." : "لا قرارات بعد."}</Card>
+              : orows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="opus-plans-empty">{opusView === "pending" ? "لا خطّةَ من Bionic AI تنتظر الاعتماد."
+                : opusView === "proposals" ? "لا تعديلَ من Bionic AI ينتظر حفظك." : opusView === "stale" ? "لا خطّةَ قديمة." : "لا قرارات بعد."}</Card>
                 : opusView === "proposals" ? <div className="space-y-2">{orows.map((r) => <OpusProposalCard key={r.jobId} r={r as OpusProposalRow} />)}</div>
                 : <div className="space-y-2">{orows.map((r) => <OpusPlanCard key={r.id} r={r as OpusPlanRow} view={opusView} />)}</div>}
         </>

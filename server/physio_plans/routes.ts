@@ -128,7 +128,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     const last = String(req.path ?? "").split("/").filter(Boolean).pop() ?? "";
     const onPlan = /^\d+$/.test(last);
     if (req.method !== "GET" && isOpusAwaiting(row)) {
-      if (last === "return") { res.status(409).json({ error: "خطّةُ Opus تُعاد إليه بملاحظة من «أعِده إلى Opus»", code: "opus_use_opus_return" }); return null; }
+      if (last === "return") { res.status(409).json({ error: "خطّةُ Bionic AI تُعاد إليه بملاحظة من «أعِده إلى Bionic AI»", code: "opus_use_opus_return" }); return null; }
       const action = req.method === "DELETE" && onPlan ? "delete" : last;
       const why = opusAwaitingBlocked(row, action);
       if (why) { res.status(409).json({ error: why, code: "opus_plan_locked" }); return null; }
@@ -138,7 +138,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       const action = req.method === "PUT" && onPlan ? "update" : last;
       const why = opusApprovedBlocked(row, action);
       if (why) { res.status(409).json({ error: why, code: "opus_plan_versioned" }); return null; }
-      if (req.method === "DELETE" && onPlan && !canApproveProtocols(s)) { res.status(403).json({ error: "تحذف خطّةَ Opus المسؤولُ أو المشرفُ العام", code: "opus_delete_approver_only" }); return null; }
+      if (req.method === "DELETE" && onPlan && !canApproveProtocols(s)) { res.status(403).json({ error: "تحذف خطّةَ Bionic AI المسؤولُ أو المشرفُ العام", code: "opus_delete_approver_only" }); return null; }
     }
     return { s, row };
   }
@@ -484,7 +484,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   const sendRefused = (res: any, r: versions.Refused) => res.status(r.status).json({ error: r.error, code: r.code, ...(r.extra ?? {}) });
   const approverOnly = (res: any, s: any) => {
     if (canApproveProtocols(s)) return true;
-    res.status(403).json({ error: "تعديلُ خطّة Opus للمسؤول والمشرف العام", code: "approver_only" });
+    res.status(403).json({ error: "تعديلُ خطّة Bionic AI للمسؤول والمشرف العام", code: "approver_only" });
     return false;
   };
   /** ما تضيفه خطّةُ Opus إلى صفحة الخطّة: النسخةُ وعددُ النسخ ومَن يعدّل، والممنوعُ الآن، وطلبُ التعديل الجاري (بلا ملاحظته لغير المعتمِد). */
@@ -561,7 +561,7 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
   });
   //  **طلبُ المعتمِد إلى Opus للمعتمِدين وحدهم** (§4.hb ٣.٦) — نسخةُ «تعديلٌ من Opus» سببُها نصُّ الطلب وملاحظةُ حفظه: لغيرهم سببٌ ثابت، كما يخفيها
   //  لوحُ الوظيفة وشريطُ الطلب الجاري. وسببُ التعديل المباشر «لماذا عُدّلت» لكلّ قارئ (قرارُ المالك ٦: مَن ومتى ولماذا).
-  const OPUS_REVISION_REASON_PUBLIC = "تعديلٌ من Opus بطلب المعتمِد";
+  const OPUS_REVISION_REASON_PUBLIC = "تعديلٌ من Bionic AI بطلب المعتمِد";
   const versionTexts = (v: { how: string; reason: string | null; approvalNote: string | null }, s: any) =>
     v.how === "opus_revision" && !canApproveProtocols(s) ? { reason: OPUS_REVISION_REASON_PUBLIC, approvalNote: null } : { reason: v.reason, approvalNote: v.approvalNote };
   //  «سجلّ النسخ» — لكلّ قارئ الخطّة: مَن ومتى وكيف ولماذا، وما تغيّر، وكم جلسةً نُفّذت على كلّ نسخة.

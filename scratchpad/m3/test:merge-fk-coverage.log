@@ -1,0 +1,77 @@
+✅  قُرئ فهرس Postgres: 64 مفتاحاً أجنبياً إلى patients و patient_cases و patient_device_episodes
+
+── كل مفتاح في القاعدة له قرار معلَن ──
+✅  patient_cases ← cost_entries.case_id — remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف، قبل الحذف
+✅  patient_cases ← cost_entries.case_id — remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف، قبل الحذف
+✅  patient_cases ← installment_plans.case_id — remap من حالة المصدر إلى حالة الهدف؛ وخطّتان نشطتان على نوع القسم نفسِه ⟵ رفضُ الدمج
+✅  patient_cases ← medical_exams.case_id — remap مقيَّد بـ patient_id للمصدر، داخل باب الختم
+✅  patient_cases ← medical_review_requests.case_id — remap مقيَّد بـ patient_id للمصدر إلى حالة الهدف
+✅  patient_cases ← patient_device_episodes.case_id — remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل
+✅  patient_cases ← patient_device_episodes.case_id — remap إلى حالة الهدف من النوع نفسه + إعادة ترقيم التسلسل
+✅  patient_cases ← patient_device_episodes.patient_id — repoint إلى الملف الهدف مع إعادة الترقيم
+✅  patient_cases ← payments.case_id — remap من حالة المصدر إلى حالة الهدف
+✅  patient_cases ← pending_service_charges.case_id — remap من حالة المصدر إلى حالة الهدف (ترحيل ٠٦٧)
+✅  patient_cases ← post_exam_followups.case_id — remap من حالة المصدر إلى حالة الهدف
+✅  patient_cases ← visits.case_id — remap من حالة المصدر إلى حالة الهدف
+✅  patient_device_episodes ← cost_entries.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← cost_entries.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← cost_entries.patient_id — repoint — دفتر الكلف المؤرَّخ يتبع المريض
+✅  patient_device_episodes ← medical_review_requests.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← payments.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← payments.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← payments.patient_id — repoint إلى الملف الهدف
+✅  patient_device_episodes ← post_exam_followups.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← prosthetic_work_orders.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← prosthetic_work_orders.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← prosthetic_work_orders.patient_id — repoint إلى الملف الهدف
+✅  patient_device_episodes ← visits.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← visits.device_episode_id — لا شيء — الحلقة تُنقَل بمعرّفها فلا يتغيّر
+✅  patient_device_episodes ← visits.patient_id — repoint إلى الملف الهدف
+✅  patients ← administrative_operation_reversals.patient_id — repoint — سجلّ التصحيح يتبع صاحبه
+✅  patients ← cost_entries.patient_id — repoint — دفتر الكلف المؤرَّخ يتبع المريض
+✅  patients ← documents.patient_id — repoint إلى الملف الهدف
+✅  patients ← financial_correction_requests.patient_id — إغلاق المعلَّق تلقائياً (رفضٌ بلا تطبيق) ثم repoint — التاريخ كلُّه محفوظ
+✅  patients ← follow_up_calls.patient_id — repoint إلى الملف الهدف
+✅  patients ← installment_plans.patient_id — repoint إلى الملف الهدف
+✅  patients ← invoices.patient_id — repoint إلى الملف الهدف
+✅  patients ← journal_lines.patient_id — repoint إلى الملف الهدف (تاريخ محاسبي)
+✅  patients ← medical_exam_cancellations.patient_id — repoint — الشاهدة تتبع معاينتها وصاحبَها
+✅  patients ← medical_exams.patient_id — repoint داخل باب الختم — إعادة ربط إدارية بلا مساس سريري
+✅  patients ← medical_review_requests.patient_id — إعادة طلب المصدر المعلَّق المتصادم ثم repoint — معلَّقٌ واحد والتاريخ محفوظ
+✅  patients ← patient_branch_access.patient_id — حذف المكرَّر وفرع تسجيل الهدف من صفوف المصدر ثم repoint — اتّحادُ الفروع
+✅  patients ← patient_cases.patient_id — طيّ حالات المصدر في الهدف ثم حذف صفوف المصدر
+✅  patients ← patient_code_aliases.patient_id — repoint + إضافة رمز المصدر اسماً بديلاً للهدف
+✅  patients ← patient_contacts.patient_id — ختم جهة المصدر المتصادمة ثم repoint — نشِطٌ واحد والتاريخ محفوظ
+✅  patients ← patient_device_episodes.patient_id — repoint إلى الملف الهدف مع إعادة الترقيم
+✅  patients ← patient_events.patient_id — repoint داخل باب الختم، مع إفراغ dedupe_key المتصادم
+✅  patients ← patient_link_tokens.patient_id — repoint — البصمة فريدة عالمياً فلا تتصادم
+✅  patients ← patient_notification_deliveries.patient_id — repoint — الصادر يتبع المريض، ولا تصادم فيه
+✅  patients ← patient_refund_requests.patient_id — رفضُ المعلَّق تلقائياً ثم repoint، و`case_id` (بلا مفتاح) يُرمَّم مع الحالات — §4.fz
+✅  patients ← payments.patient_id — repoint إلى الملف الهدف
+✅  patients ← pending_service_charge_events.patient_id — repoint — الرحلة تتبع صفّها وصاحبَه
+✅  patients ← pending_service_charges.patient_id — repoint — المبلغ المعلّق يتبع صاحبه
+✅  patients ← physio_agent_jobs.patient_id — repoint — وظيفةُ Bionic AI تتبع معاينتَها وصاحبَها (وتُلغى النشطةُ قبل الدمج)
+✅  patients ← physio_assessments.patient_id — repoint إلى الملف الهدف — تقييماتُ الخطط (§4.cp) تتبع صاحبَها وخطّتَها
+✅  patients ← physio_exam_red_flag_reviews.patient_id — repoint — الطلبُ يتبع معاينتَه وصاحبَها
+✅  patients ← physio_plan_sessions.patient_id — repoint إلى الملف الهدف — جلساتُ تنفيذ الخطّة (§4.cn) تتبع خطّتَها وصاحبَها، وبنودُها تتبع الجلسة
+✅  patients ← physio_plan_suggestions.patient_id — repoint إلى الملف الهدف — اقتراحاتُ «اقترح خطّة» (§4.co) تتبع صاحبَها وخطّتَها
+✅  patients ← physio_plan_versions.patient_id — repoint — نسخُ خطّة Bionic AI تتبع خطّتَها ومريضَها (§4.hb)
+✅  patients ← physio_plans.patient_id — repoint إلى الملف الهدف — خططُ العلاج الطبيعي (§4.cm) وأجهزتُها ومنفّذوها تتبعها
+✅  patients ← post_exam_followup_events.patient_id — repoint — التاريخ يتبع المريض بلا تصادم
+✅  patients ← post_exam_followups.patient_id — إغلاق متابعة المصدر المتصادمة ثم repoint — حيّةٌ واحدة والتاريخ محفوظ
+✅  patients ← price_change_requests.patient_id — repoint — الطلبات تتبع المريض بلا تصادم
+✅  patients ← prosthetic_work_orders.patient_id — repoint إلى الملف الهدف
+✅  patients ← service_discount_requests.patient_id — إلغاء طلب المصدر المعلَّق المتصادم ثم repoint — معلَّقٌ واحد والتاريخ محفوظ
+✅  patients ← survey_responses.patient_id — repoint إلى الملف الهدف
+✅  patients ← treatment_plans.patient_id — repoint إلى الملف الهدف
+✅  patients ← visits.patient_id — repoint إلى الملف الهدف
+
+── ولا قرار متعفّن لمفتاح لم يعد موجوداً ──
+❌ FAIL  قرارات لمفاتيح غير موجودة: patients.phone_shared_with_patient_id
+      إمّا حُذف الجدول أو أُزيل مفتاحه — احذف السطر من MERGE_DECISIONS
+      كي لا تعطي القائمة طمأنينة كاذبة.
+
+ℹ  هذا الحارس يسأل «هل اتُّخذ قرار؟» لا «هل القرار صحيح؟».
+   صحّة السلوك يغطّيها test:merge-exams و test:patient-events.
+
+❌ 1 case(s) failed

@@ -92,7 +92,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 <Sparkles className="w-4 h-4 text-violet-700" />
                 <span className="font-semibold">{OPUS_AWAITING_LABEL}</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">كتبها Opus في {fmt(p.createdAt)} — تظهر هنا كاملةً بعد أن يعتمدها المسؤولُ أو المشرفُ العام.</div>
+              <div className="text-[11px] text-muted-foreground mt-1">كتبها Bionic AI في {fmt(p.createdAt)} — تظهر هنا كاملةً بعد أن يعتمدها المسؤولُ أو المشرفُ العام.</div>
             </div>
           ) : (
             <div key={p.id} className="flex items-stretch gap-1">
@@ -104,7 +104,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 <Badge variant="outline" className={PLAN_STATUS_TONE[p.status]}>{PLAN_STATUS_LABELS[p.status]}</Badge>
                 {p.origin === "opus" && (
                   <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300" data-testid={`physio-plan-opus-${p.id}`}>
-                    {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Opus — افتحها لتعتمدها" : "كتبها Opus"}
+                    {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Bionic AI — افتحها لتعتمدها" : "كتبها Bionic AI"}
                   </Badge>
                 )}
                 {p.protocolId && p.protocolStatus !== "approved" && (
@@ -131,7 +131,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
             {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — لكاتبها: الأخصائيّ والمشرف العام والمسؤول (§4.eh)، والخادمُ يحرسهما. */}
             {q.data?.canDelete && (p.origin !== "opus" || q.data.canApprove) && (
               <div className="flex flex-col justify-center gap-1">
-                {/*  §4.hb — خطّةُ Opus لا يتغيّر نوعُها (تُعدَّل بنسخٍ مرقّمة)، وحذفُها للمعتمِد وحده. */}
+                {/*  §4.hb — خطّةُ Bionic AI لا يتغيّر نوعُها (تُعدَّل بنسخٍ مرقّمة)، وحذفُها للمعتمِد وحده. */}
                 {!isPlanClosed(p.status) && p.origin !== "opus" && (
                   <Button variant="ghost" size="icon" title="تغيير نوع الخطّة" onClick={() => setChangingType(p)}
                     data-testid={`button-change-type-physio-plan-${p.id}`}><RefreshCcw className="w-4 h-4" /></Button>
@@ -158,7 +158,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
 function OpusBusyNote({ writing, testId }: { writing: boolean; testId: string }) {
   return (
     <div dir="rtl" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900" data-testid={testId}>
-      {writing ? "Opus يكتب خطّةً لهذا المريض الآن" : "خطّةُ Opus لهذا المريض تنتظر الاعتماد"} — خطّةٌ جديدة الآن تعني خطّتين معاً تُعدّان مرّتين.
+      {writing ? "Bionic AI يكتب خطّةً لهذا المريض الآن" : "خطّةُ Bionic AI لهذا المريض تنتظر الاعتماد"} — خطّةٌ جديدة الآن تعني خطّتين معاً تُعدّان مرّتين.
     </div>
   );
 }

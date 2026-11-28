@@ -71,14 +71,14 @@ export function ReturnToOpusDialog({ planId, patientId, open, onClose }: { planI
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: (note: string) => opusPost(`/api/physio/plans/${planId}/opus-return`, { note }),
-    onSuccess: () => { invalidateOpusPlan(qc, planId, patientId); onClose(); toast({ title: "أُعيدت إلى Opus", description: "يعيد كتابتها بملاحظتك في الخادم، وتصلك رسالةٌ حين تعود للاعتماد." }); },
+    onSuccess: () => { invalidateOpusPlan(qc, planId, patientId); onClose(); toast({ title: "أُعيدت إلى Bionic AI", description: "يعيد كتابتها بملاحظتك في الخادم، وتصلك رسالةٌ حين تعود للاعتماد." }); },
     onError: (e: any) => { invalidateOpusPlan(qc, planId, patientId); toast({ title: "لم تُرسَل", description: e.message, variant: "destructive" }); },
   });
   return (
     <NoteDialog open={open} onClose={onClose} pending={m.isPending} onSubmit={(n) => m.mutate(n)} testId="opus-return"
-      title="أعِده إلى Opus" label="ملاحظتك لـ Opus (إلزامية — يقرؤها أمراً ملزماً)" submit="أرسل إلى Opus"
+      title="أعِده إلى Bionic AI" label="ملاحظتك لـ Bionic AI (إلزامية — يقرؤها أمراً ملزماً)" submit="أرسل إلى Bionic AI"
       placeholder="مثال: اجعل المشي ٣٠ دقيقة من الجلسة ١٠، وخفّف التحفيز الكهربائي"
-      helper="يعيد Opus الكتابة، ويراجعها المراجع، وتمرّ ببوّابات الموانع، ثمّ تعود إليك للاعتماد. يرى الفاحص الحالَ وحدها." />
+      helper="يعيد Bionic AI الكتابة، ويراجعها المراجع، وتمرّ ببوّابات الموانع، ثمّ تعود إليك للاعتماد. يرى الفاحص الحالَ وحدها." />
   );
 }
 
@@ -89,15 +89,15 @@ export function RequestOpusAmendDialog({ planId, patientId, baseVersion, open, o
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: (request: string) => opusPost(`/api/physio/plans/${planId}/opus-amend`, { request, baseVersion }),
-    onSuccess: () => { invalidateOpusPlan(qc, planId, patientId); onClose(); toast({ title: "أُرسل الطلب إلى Opus", description: `يعمل في الخادم — وحتى تحفظ ما يقترحه تبقى النسخة ${ar(baseVersion)} سارية.` }); },
+    onSuccess: () => { invalidateOpusPlan(qc, planId, patientId); onClose(); toast({ title: "أُرسل الطلب إلى Bionic AI", description: `يعمل في الخادم — وحتى تحفظ ما يقترحه تبقى النسخة ${ar(baseVersion)} سارية.` }); },
     onError: (e: any) => { invalidateOpusPlan(qc, planId, patientId); toast({ title: "لم يُرسَل", description: e.message, variant: "destructive" }); },
   });
   return (
     <NoteDialog open={open} onClose={onClose} pending={m.isPending} onSubmit={(n) => m.mutate(n)} testId="opus-amend"
-      title="اطلب من Opus تعديلاً" label="ما التعديل الذي تريده من Opus؟ (إلزامي)" submit="أرسل الطلب إلى Opus"
+      title="اطلب من Bionic AI تعديلاً" label="ما التعديل الذي تريده من Bionic AI؟ (إلزامي)" submit="أرسل الطلب إلى Bionic AI"
       placeholder="مثال: المريض بدأ يشكو من الركبة اليسرى، أضف ما يناسب دون أن يتعارض مع الظهر"
-      warning={hasPendingProposal ? "لـ Opus اقتراحٌ ينتظر قرارك على هذه الخطّة — إن أتمّ طلبَك الجديد حلّ اقتراحُه محلَّ المنتظر ولم يعد يُحفظ. احفظ المنتظرَ أو تجاهله أوّلاً إن أردته." : null}
-      helper={`يعيد Opus الكتابة، ويراجعها المراجع، وتمرّ ببوّابات الموانع، ثمّ يُعرض عليك الفرق قبل أن تحفظ. وحتى تحفظ تبقى النسخة ${ar(baseVersion)} سارية.`} />
+      warning={hasPendingProposal ? "لـ Bionic AI اقتراحٌ ينتظر قرارك على هذه الخطّة — إن أتمّ طلبَك الجديد حلّ اقتراحُه محلَّ المنتظر ولم يعد يُحفظ. احفظ المنتظرَ أو تجاهله أوّلاً إن أردته." : null}
+      helper={`يعيد Bionic AI الكتابة، ويراجعها المراجع، وتمرّ ببوّابات الموانع، ثمّ يُعرض عليك الفرق قبل أن تحفظ. وحتى تحفظ تبقى النسخة ${ar(baseVersion)} سارية.`} />
   );
 }
 
@@ -127,7 +127,7 @@ export function CancelRevisionButton({ jobId, onDone, label = "إلغاء الط
   if (!ask) return <Button size="sm" variant="outline" onClick={() => setAsk(true)} data-testid="button-opus-revision-cancel">{label}</Button>;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-red-800">يتوقّف Opus ويبقى ما قبل الطلب كما هو — متأكّد؟</span>
+      <span className="text-xs text-red-800">يتوقّف Bionic AI ويبقى ما قبل الطلب كما هو — متأكّد؟</span>
       <Button size="sm" variant="destructive" disabled={m.isPending} onClick={() => m.mutate()} data-testid="button-opus-revision-cancel-confirm">نعم، أوقفه</Button>
       <Button size="sm" variant="ghost" onClick={() => setAsk(false)}>لا</Button>
     </div>
@@ -136,11 +136,11 @@ export function CancelRevisionButton({ jobId, onDone, label = "إلغاء الط
 
 /** مآلُ طلبٍ انتهى — بالعربية. */
 export function revisionOutcome(j: Pick<RevisionJobView, "status" | "errorCode" | "error" | "proposalStatus" | "savedVersion" | "lostByExamChange">): { t: string; tone: "ok" | "bad" | "muted" | "run" } {
-  if (isActiveJobStatus(j.status)) return { t: "يعمل Opus عليها الآن", tone: "run" };
+  if (isActiveJobStatus(j.status)) return { t: "يعمل Bionic AI عليها الآن", tone: "run" };
   if (j.status === "succeeded") {
     if (j.proposalStatus === "accepted") return { t: `حُفظت النسخة ${ar(j.savedVersion)}`, tone: "ok" };
     if (j.proposalStatus) return { t: PROPOSAL_STATUS_LABELS[j.proposalStatus as ProposalStatus] ?? j.proposalStatus, tone: j.proposalStatus === "pending" ? "ok" : "muted" };
-    return { t: "أعاد Opus الكتابة", tone: "ok" };
+    return { t: "أعاد Bionic AI الكتابة", tone: "ok" };
   }
   if (j.lostByExamChange) return { t: "أُلغي لتغيّر المعاينة — أعد طلبك", tone: "bad" };
   const why = j.error || (j.errorCode ? JOB_ERROR_TEXTS[j.errorCode] : "") || JOB_STATUS_LABELS[j.status];
@@ -163,7 +163,7 @@ export function OpusRevisionStrip({ planId, patientId, approver, revising, onEdi
     if (!revising) return null;
     return (
       <div className="rounded-md border border-violet-300 bg-violet-50 p-2 text-sm text-violet-950 print:hidden" data-testid="opus-revision-readonly">
-        يعدّل المعتمِدُ الخطّةَ مع Opus — النسخةُ الحالية سارية وتُنفَّذ كما هي.
+        يعدّل المعتمِدُ الخطّةَ مع Bionic AI — النسخةُ الحالية سارية وتُنفَّذ كما هي.
       </div>
     );
   }
@@ -178,7 +178,7 @@ export function OpusRevisionStrip({ planId, patientId, approver, revising, onEdi
       {active && (
         <div className="rounded-lg border border-violet-300 bg-violet-50/70 p-2 space-y-2" style={{ boxShadow: "inset 0 3px 0 rgb(109 40 217)" }} data-testid="opus-revision-active">
           <div className="text-sm font-semibold text-violet-950 flex items-center gap-1.5"><Sparkles className="w-4 h-4" />
-            يعدّل Opus الخطّةَ بطلب {active.requestedByName ?? "المعتمِد"} — النسخة {ar(active.baseVersion)} سارية حتى تحفظ ما يقترحه
+            يعدّل Bionic AI الخطّةَ بطلب {active.requestedByName ?? "المعتمِد"} — النسخة {ar(active.baseVersion)} سارية حتى تحفظ ما يقترحه
           </div>
           {active.note && <div className="text-xs text-violet-950 bg-white/70 rounded px-2 py-1" dir="auto">الطلب: «{active.note}»</div>}
           <RevisionStages job={active} />
@@ -190,7 +190,7 @@ export function OpusRevisionStrip({ planId, patientId, approver, revising, onEdi
       {d.proposal && <OpusAmendReview key={`${d.proposal.jobId}:${d.proposal.proposalHash ?? ""}`} planId={planId} patientId={patientId} p={d.proposal} onEdit={onEdit} />}
       {ended.length > 0 && (
         <details className="text-xs rounded-md border bg-white p-2" data-testid="opus-revision-latest">
-          <summary className="cursor-pointer text-slate-700">طلباتُك السابقة إلى Opus ({ar(ended.length)})</summary>
+          <summary className="cursor-pointer text-slate-700">طلباتُك السابقة إلى Bionic AI ({ar(ended.length)})</summary>
           <ul className="m-0 mt-1 p-0 list-none space-y-1">
             {ended.map((j) => { const o = revisionOutcome(j); return (
               <li key={j.id} className="flex flex-wrap items-center gap-1.5">
@@ -243,7 +243,7 @@ export function OpusAmendReview({ planId, patientId, p, onEdit }: { planId: numb
   return (
     <Card dir="rtl" className="p-3 space-y-3 min-w-0 border-violet-300" style={{ boxShadow: "inset 0 3px 0 rgb(109 40 217)" }} data-testid="opus-amend-review">
       <div className="space-y-1">
-        <h3 className="m-0 text-base font-bold flex items-center gap-1.5"><Sparkles className="w-5 h-5 text-violet-700" /> اقتراح Opus على النسخة {ar(p.baseVersion)}</h3>
+        <h3 className="m-0 text-base font-bold flex items-center gap-1.5"><Sparkles className="w-5 h-5 text-violet-700" /> اقتراح Bionic AI على النسخة {ar(p.baseVersion)}</h3>
         {p.request && <p className="m-0 text-sm"><span className="text-muted-foreground">طلبُك: </span><span dir="auto">«{p.request}»</span></p>}
         {!p.stale && <p className="m-0 text-xs text-muted-foreground">لم يتغيّر شيءٌ في الخطّة بعد — النسخة {ar(p.currentVersion ?? p.baseVersion)} سارية حتى تحفظ.</p>}
       </div>

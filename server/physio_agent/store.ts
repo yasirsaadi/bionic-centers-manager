@@ -25,7 +25,7 @@ export class AgentJobError extends Error {
 }
 
 export interface Actor { userId: number | null; name: string | null; ip?: string | null; userAgent?: string | null }
-export const SYSTEM_ACTOR: Actor = { userId: null, name: "Claude Opus" };
+export const SYSTEM_ACTOR: Actor = { userId: null, name: "Bionic AI" };
 
 export interface JobRecord {
   id: number; patientId: number; examId: number; branchId: number; kind: string; trigger: JobTrigger; status: JobStatus; stage: string | null;
@@ -57,7 +57,7 @@ export function jobOf(r: Record<string, any>): JobRecord {
 
 /** **ما يُعرض من الوظيفة** — بلا نتيجتها الداخلية (المسوّداتُ والمراجعاتُ للمعتمِد من «الخطّة المقترحة» وحدها).
  *  ووظيفةُ «تعديل» (§4.hb): نوعُها ونطاقُها لكلّ قارئ، **وملاحظةُ المعتمِد وحالُ الاقتراح والسببُ المفصَّل للمعتمِد وحده**. */
-export const REVISE_ENDED_TEXT = "انتهى طلبُ المعتمِد إلى Opus";
+export const REVISE_ENDED_TEXT = "انتهى طلبُ المعتمِد إلى Bionic AI";
 export function jobView(j: JobRecord, planId: number | null = null, opts: { approver?: boolean } = {}) {
   const hideRevise = j.kind === "revise" && !opts.approver;
   return {
@@ -109,18 +109,18 @@ export async function runBlocker(ex: any, examId: number): Promise<{ code: strin
   if (!exam || exam.caseType !== "physiotherapy" || !isExamV2(readStoredAssessment(exam.assessment))) return b("not_v2", "ليست معاينةَ علاجٍ طبيعيّ على الاستمارة الإلزامية");
   if (exam.cancelled) return b("exam_cancelled", "المعاينةُ ملغاة");
   if (await patientTrashed(ex, exam.patientId)) return b("patient_deleted", "المريضُ في السلّة");
-  if ((await newestV2ExamId(ex, exam.patientId)) !== exam.id) return b("not_newest", "وُقّعت بعدها معاينةٌ أحدث — يكتب Opus من الأحدث وحدها");
+  if ((await newestV2ExamId(ex, exam.patientId)) !== exam.id) return b("not_newest", "وُقّعت بعدها معاينةٌ أحدث — يكتب Bionic AI من الأحدث وحدها");
   const gate = await examAgentGate(exam.id, ex);
   if (!gate.allowed) return b("gate_closed", gate.reason);
   if (await hasActivePlan(ex, exam.patientId)) return b("has_active_plan", HAS_ACTIVE_PLAN_TEXT);
-  if (await awaitingOpusPlanOfExam(ex, exam.id)) return b("opus_plan_pending", "لهذه المعاينة خطّةُ Opus تنتظر الاعتماد — يحذفها المعتمِدُ من «الخطّة المقترحة» إن أراد إعادتَها");
+  if (await awaitingOpusPlanOfExam(ex, exam.id)) return b("opus_plan_pending", "لهذه المعاينة خطّةُ Bionic AI تنتظر الاعتماد — يحذفها المعتمِدُ من «الخطّة المقترحة» إن أراد إعادتَها");
   const patient = rows(await ex.execute(sql`SELECT branch_id FROM patients WHERE id = ${exam.patientId}`))[0];
   const branchId = exam.branchId ?? (patient?.branch_id == null ? null : Number(patient.branch_id));
   if (!(await branchOk(ex, branchId))) return b("branch_unavailable", "فرعُ المعاينة لا يقدّم العلاجَ الطبيعي أو مغلقٌ مؤقتاً");
   return null;
 }
 
-export const HAS_ACTIVE_PLAN_TEXT = "للمريض خطّةٌ قائمة معتمَدة — يعدّلها المعتمِدُ من صفحة الخطّة (مباشرةً أو بطلبٍ إلى Opus)";
+export const HAS_ACTIVE_PLAN_TEXT = "للمريض خطّةٌ قائمة معتمَدة — يعدّلها المعتمِدُ من صفحة الخطّة (مباشرةً أو بطلبٍ إلى Bionic AI)";
 
 export async function lockPatientAgent(tx: any, patientId: number): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('physio_agent_patient'), ${patientId})`);
@@ -184,7 +184,7 @@ export type EnqueueResult = { job: JobRecord } | { skipped: string; reason: stri
 /** **وضعُ وظيفةٍ في الطابور** (§4.ha ٤.٣) — داخل معاملة المُستدعي وقفلِ مريضه. التلقائيُّ يتخطّى بصمت، واليدويُّ يُردّ بالسبب. */
 export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigger; actor: Actor; strictFingerprint?: boolean; discardPlanId?: number | null }): Promise<EnqueueResult> {
   const skip = (skipped: string, reason: string, existing?: JobRecord): EnqueueResult => ({ skipped, reason, existing });
-  if (!agentEnabled()) return skip("disabled", "وكيلُ Opus غيرُ مفعّل (لا مفتاحَ لخدمة Claude)");
+  if (!agentEnabled()) return skip("disabled", "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)");
   const exam = await loadExam(tx, p.examId, true);
   if (!exam || exam.caseType !== "physiotherapy" || !isExamV2(readStoredAssessment(exam.assessment))) return skip("not_v2", "ليست معاينةَ علاجٍ طبيعيّ على الاستمارة الإلزامية");
   if (exam.cancelled) return skip("exam_cancelled", "المعاينةُ ملغاة");
@@ -193,7 +193,7 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
   const gate = await examAgentGate(exam.id, tx);
   if (!gate.allowed) return skip("gate_closed", gate.reason);
   const active = await activeJobOfPatient(tx, exam.patientId);
-  if (active) return skip("job_active", "Opus يعمل على خطّةٍ لهذا المريض الآن", active);
+  if (active) return skip("job_active", "Bionic AI يعمل على خطّةٍ لهذا المريض الآن", active);
   if (await hasActivePlan(tx, exam.patientId)) return skip("has_active_plan", HAS_ACTIVE_PLAN_TEXT);
   const fp = fingerprintOf(exam);
   const awaiting = await awaitingOpusPlanOfExam(tx, exam.id);
@@ -202,10 +202,10 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
     if (p.discardPlanId && p.discardPlanId === awaiting.id) {
       await tx.execute(sql`DELETE FROM physio_plans WHERE id = ${awaiting.id}`);
       await logAudit({ entityType: "physio_plan", entityId: awaiting.id, action: "discard_for_rerun", userId: p.actor.userId, userName: p.actor.name,
-        branchId: exam.branchId, newValues: { examId: exam.id }, notes: "حُذفت خطّةُ Opus المنتظرة لتُعاد كتابتُها", ipAddress: p.actor.ip ?? null,
+        branchId: exam.branchId, newValues: { examId: exam.id }, notes: "حُذفت خطّةُ Bionic AI المنتظرة لتُعاد كتابتُها", ipAddress: p.actor.ip ?? null,
         userAgent: p.actor.userAgent ?? null, tx });
     } else if (!(auto && awaiting.stale)) {
-      return skip("opus_plan_pending", "لهذه المعاينة خطّةُ Opus تنتظر الاعتماد");
+      return skip("opus_plan_pending", "لهذه المعاينة خطّةُ Bionic AI تنتظر الاعتماد");
     }
   }
   if (auto) {
@@ -221,7 +221,7 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
       && !(j.status === "succeeded" && j.plan_stale != null);
     if (p.strictFingerprint && prev.some((j) => j.exam_fingerprint === fp && tried(j))) return skip("already_tried", "جرى تشغيلٌ على هذه المعاينة بنصّها");
     if (prev.some((j) => j.exam_fingerprint === fp && (j.status === "needs_exam_revision" || (j.status === "failed" && j.error_code === "agent_declined")))) {
-      return skip("already_decided", "قرّر Opus في هذه المعاينة بنصّها من قبل");
+      return skip("already_decided", "قرّر Bionic AI في هذه المعاينة بنصّها من قبل");
     }
     if (prev.some((j) => j.exam_fingerprint === fp && j.status === "succeeded") && awaiting && !awaiting.stale) return skip("already_planned", "كُتبت خطّةٌ لهذه المعاينة");
   }
@@ -234,7 +234,7 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
     RETURNING *`))[0];
   const job = jobOf(ins);
   await audit(tx, job.id, "enqueue", p.actor, branchId, { examId: exam.id, patientId: exam.patientId, trigger: p.trigger },
-    `وُضعت وظيفةُ Opus لكتابة خطّة المعاينة #${exam.id} (${p.trigger})`);
+    `وُضعت وظيفةُ Bionic AI لكتابة خطّة المعاينة #${exam.id} (${p.trigger})`);
   return { job };
 }
 
@@ -262,8 +262,8 @@ export const LOST_REQUEST_REASONS = ["exam_changed", "superseded_by_newer_exam",
 export async function lostRequestNoticeTx(tx: any, j: Pick<JobRecord, "kind" | "planId" | "patientId" | "branchId">, code: string): Promise<void> {
   if (j.kind !== "revise" || !LOST_REQUEST_REASONS.includes(code)) return;
   const line = code === "base_version_changed"
-    ? "⚠️ حُفظت نسخةٌ أحدث من الخطّة فأُلغي طلبُك إلى Opus — أعد طلبك على النسخة الجديدة إن بقي لازماً"
-    : "⚠️ عُدّلت المعاينة فأُلغي طلبُك إلى Opus — أعد طلبك إن بقي لازماً";
+    ? "⚠️ حُفظت نسخةٌ أحدث من الخطّة فأُلغي طلبُك إلى Bionic AI — أعد طلبك على النسخة الجديدة إن بقي لازماً"
+    : "⚠️ عُدّلت المعاينة فأُلغي طلبُك إلى Bionic AI — أعد طلبك إن بقي لازماً";
   await notifyApproversTx(tx, j as JobRecord, line, j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`);
 }
 
@@ -282,15 +282,15 @@ export async function enqueueReviseTx(tx: any, p: { plan: Record<string, any>; s
   examId: number; staleness?: string | null }): Promise<JobRecord> {
   const plan = p.plan;
   const patientId = Number(plan.patient_id);
-  if (!agentEnabled()) throw new AgentJobError(503, "وكيلُ Opus غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", "disabled");
+  if (!agentEnabled()) throw new AgentJobError(503, "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", "disabled");
   const note = String(p.note ?? "").trim();
-  if (note.length < 3 || note.length > 4000) throw new AgentJobError(400, "اكتب ملاحظتَك لـ Opus (ثلاثةُ أحرفٍ على الأقلّ)", "note_required");
+  if (note.length < 3 || note.length > 4000) throw new AgentJobError(400, "اكتب ملاحظتَك لـ Bionic AI (ثلاثةُ أحرفٍ على الأقلّ)", "note_required");
   if (await patientTrashed(tx, patientId)) throw new AgentJobError(409, "المريضُ في السلّة", "patient_deleted");
   const active = await activeJobOfPatient(tx, patientId);
-  if (active) throw new AgentJobError(409, "Opus يعمل على خطّةٍ لهذا المريض الآن", "job_active");
+  if (active) throw new AgentJobError(409, "Bionic AI يعمل على خطّةٍ لهذا المريض الآن", "job_active");
   if (!(await branchOk(tx, Number(plan.branch_id)))) throw new AgentJobError(409, "فرعُ الخطّة لا يقدّم العلاجَ الطبيعي أو مغلقٌ مؤقتاً", "branch_unavailable");
   if (p.scope === "return") {
-    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) throw new AgentJobError(409, "الخطّةُ ليست خطّةَ Opus تنتظر الاعتماد", "not_awaiting");
+    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) throw new AgentJobError(409, "الخطّةُ ليست خطّةَ Bionic AI تنتظر الاعتماد", "not_awaiting");
     if (p.staleness && p.staleness !== "forbidden_now") throw new AgentJobError(409, `قدُمت الخطّة: ${JOB_ERROR_TEXTS[p.staleness] ?? p.staleness} — احذفها وأعد الكتابة`, "opus_plan_stale");
   }
   const exam = await loadExam(tx, p.examId);
@@ -318,9 +318,9 @@ export async function markStaleOpusPlansTx(tx: any, p: { patientId: number; exam
      RETURNING id, branch_id, source_exam_id`));
   //  متى قدُمت ولماذا — فـ٤٠٩ `opus_plan_stale` عند المعتمِد له أثرٌ في السجلّ.
   for (const x of r) {
-    await logAudit({ entityType: "physio_plan", entityId: Number(x.id), action: "opus_stale", userId: p.actor?.userId ?? null, userName: p.actor?.name ?? "Claude Opus",
+    await logAudit({ entityType: "physio_plan", entityId: Number(x.id), action: "opus_stale", userId: p.actor?.userId ?? null, userName: p.actor?.name ?? "Bionic AI",
       branchId: x.branch_id == null ? null : Number(x.branch_id), newValues: { reason: p.reason, examId: x.source_exam_id ?? null },
-      notes: `قدُمت خطّةُ Opus المنتظرة: ${JOB_ERROR_TEXTS[p.reason] ?? p.reason}`, tx });
+      notes: `قدُمت خطّةُ Bionic AI المنتظرة: ${JOB_ERROR_TEXTS[p.reason] ?? p.reason}`, tx });
   }
   return r.length;
 }
@@ -381,7 +381,7 @@ export async function answerQuestions(jobId: number, raw: unknown, actor: Actor,
         questions = '[]'::jsonb, status = 'queued', stage = NULL, failures = 0, run_after = now(), updated_at = now()
       WHERE id = ${jobId} RETURNING *`))[0];
     await audit(tx, jobId, "answer", actor, j.branchId, { round: round.round, answers: v.answers.map((a) => ({ id: a.id, length: a.answer.length })) },
-      `أُجيبت أسئلةُ Opus (الجولة ${round.round} من ${MAX_QUESTION_ROUNDS})`);
+      `أُجيبت أسئلةُ Bionic AI (الجولة ${round.round} من ${MAX_QUESTION_ROUNDS})`);
     return jobOf(up);
   });
   await signalJob(job);

@@ -93,7 +93,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
              pl.reviewed_by_name, pl.decided_by_name, pl.created_by_name, pl.created_at, pr.title_ar AS protocol_title
         FROM physio_plans pl LEFT JOIN physio_protocols pr ON pr.id = pl.protocol_id
        WHERE pl.patient_id = ${patientId}
-         --  خطّةُ Opus المنتظرة لا تُعرض قبل اعتمادها (§4.ha).
+         --  خطّةُ Bionic AI المنتظرة لا تُعرض قبل اعتمادها (§4.ha).
          AND NOT (pl.origin = 'opus' AND pl.status IN ('draft','pending','returned'))
        ORDER BY pl.created_at DESC, pl.id DESC
     `);

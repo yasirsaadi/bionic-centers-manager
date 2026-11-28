@@ -133,7 +133,7 @@ async function main() {
     console.log("\n── أ. لوحة المسؤول ──");
     same("أ١. لغير المسؤول ⟵ ٤٠٣", (await http("GET", "/api/admin/staff-notifications", S.recv1)).status, 403);
     const g = await http("GET", "/api/admin/staff-notifications", S.admin);
-    same("أ٢. البوتُ جاهز والأنواعُ واحدٌ وثلاثون (ومنها خمسةُ خطط العلاج الطبيعي — §4.cp: «مستحقّ التقييم» الصباحيّ، و«طلبُ تصحيح صرف» — §4.ce التكملة، و«قسطٌ مستحقّ» — §4.ea، و«طلب سحب» وقرارُه — §4.fy، و«طلب استرجاع» و«طلب تسليم لمستشفى العين» وقراراهما — §4.fz، و«العلامةُ الحمراء» وقرارُها — §4.gz، وخطّةُ Opus وأسئلتُه — §4.ha)، والموظّفُ غيرُ النشط لا يظهر",
+    same("أ٢. البوتُ جاهز والأنواعُ واحدٌ وثلاثون (ومنها خمسةُ خطط العلاج الطبيعي — §4.cp: «مستحقّ التقييم» الصباحيّ، و«طلبُ تصحيح صرف» — §4.ce التكملة، و«قسطٌ مستحقّ» — §4.ea، و«طلب سحب» وقرارُه — §4.fy، و«طلب استرجاع» و«طلب تسليم لمستشفى العين» وقراراهما — §4.fz، و«العلامةُ الحمراء» وقرارُها — §4.gz، وخطّةُ Bionic AI وأسئلتُه — §4.ha)، والموظّفُ غيرُ النشط لا يظهر",
       [g.status, g.body?.botReady, g.body?.events?.length, g.body?.users?.some((u: any) => u.id === OFF)], [200, true, 32, false]);
     same("أ٣. الأنواعُ الثلاثة التي لا تقع اليوم ليست فيها",
       ["charge_returned", "discount_pending", "discount_decided"].some((k) => g.body?.events?.some((e: any) => e.key === k)), false);
@@ -161,7 +161,7 @@ async function main() {
        ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due", "reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided", "order_hold_rework", "evening_summary"], 32]);
     {
       const { eligibleStaffEvents } = await import("@shared/staff_notifications");
-      same("أ٤د٢. **«خطّةُ Opus عُدّلت» للمعالج والفنيّ والمدرّب والأخصائيّ وطبيب العلاج الطبيعي والمشرف** (§4.hb) — لا للاستقبال",
+      same("أ٤د٢. **«خطّةُ Bionic AI عُدّلت» للمعالج والفنيّ والمدرّب والأخصائيّ وطبيب العلاج الطبيعي والمشرف** (§4.hb) — لا للاستقبال",
         [["therapist"], ["physio_technician"], ["physio_trainer"], ["physio_specialist"]].map(([r]) => eligibleStaffEvents({ role: r } as any).includes("physio_opus_plan_versioned"))
           .concat([eligibleStaffEvents({ role: "doctor", medicalSpecialties: ["physiotherapy"] } as any).includes("physio_opus_plan_versioned"),
             eligibleStaffEvents({ role: "branch_manager", canSupervisePhysio: true } as any).includes("physio_opus_plan_versioned"),

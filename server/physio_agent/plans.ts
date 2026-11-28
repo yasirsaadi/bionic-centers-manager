@@ -50,7 +50,7 @@ export async function createPlanFromAgentTx(job: JobRecord, me: string, submitte
       const r = rows(await tx.execute(sql`UPDATE physio_agent_jobs SET status = ${status}, error_code = ${code}, error = ${error}, error_detail = ${detail},
           result = ${JSON.stringify({ ...result, ...extra })}::jsonb, finished_at = now(), locked_by = NULL, locked_at = NULL, stage = ${status === "succeeded" ? "saving" : cur.stage}, updated_at = now()
         WHERE id = ${job.id} RETURNING *`))[0];
-      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Claude Opus", branchId: job.branchId,
+      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Bionic AI", branchId: job.branchId,
         newValues: { status, code, detail }, notes: error ?? undefined, tx });
       return jobOf(r);
     };
@@ -79,8 +79,8 @@ export async function createPlanFromAgentTx(job: JobRecord, me: string, submitte
       //  فالعاملُ بعدها لا يجد وظيفةً عاملة يُنهيها ولا يرسل شيئاً.
       const detail = g.blocking.map((b) => b.code).join(",");
       const failedJob = await finish("failed", c, JOB_ERROR_TEXTS[c], { gateLog, final: { submitted, gated: g.plan } }, detail);
-      await notifyApproversTx(tx, failedJob, `⚠️ لم يكتب Opus خطّة: ${JOB_ERROR_TEXTS[c]}`, `/patients/${job.patientId}`);
-      await notifyExaminerTx(tx, failedJob, `⚠️ لم يكتب Opus خطّة: ${JOB_ERROR_TEXTS[c]}`);
+      await notifyApproversTx(tx, failedJob, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[c]}`, `/patients/${job.patientId}`);
+      await notifyExaminerTx(tx, failedJob, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[c]}`);
       return { kind: "failed", code: c, detail, job: failedJob };
     }
     const plan = g.plan;
@@ -100,15 +100,15 @@ export async function createPlanFromAgentTx(job: JobRecord, me: string, submitte
         ${cols.sessionsPerWeek}, ${cols.durationWeeks}, ${cols.sessionMinutes}, ${cols.totalSessions}, 'pending', now(),
         ${cols.measuresOwn}, ${plan.protocolId ? sql`now()` : null},
         'opus', ${job.examId}, ${job.id}, ${cols.outOfLibrary}, ${JSON.stringify(cols.sources)}::jsonb,
-        ${examiner?.doctor_id ?? null}, ${examiner?.doctor_name ?? null}, NULL, 'Claude Opus')
+        ${examiner?.doctor_id ?? null}, ${examiner?.doctor_name ?? null}, NULL, 'Bionic AI')
       RETURNING id`))[0];
     const planId = Number(ins.id);
     await writeChildRowsTx(tx, planId, snap);
-    await logAudit({ entityType: "physio_plan", entityId: planId, action: "create_by_agent", userId: null, userName: "Claude Opus", branchId: job.branchId,
+    await logAudit({ entityType: "physio_plan", entityId: planId, action: "create_by_agent", userId: null, userName: "Bionic AI", branchId: job.branchId,
       newValues: { jobId: job.id, examId: job.examId, mode: plan.mode, protocolId: plan.protocolId, devices: plan.devices.map((d) => d.deviceCode),
-        removed: plan.removed, totalSessions: plan.totalSessions }, notes: `كتب Opus خطّةً تنتظر الاعتماد من المعاينة #${job.examId}`, tx });
+        removed: plan.removed, totalSessions: plan.totalSessions }, notes: `كتب Bionic AI خطّةً تنتظر الاعتماد من المعاينة #${job.examId}`, tx });
     const done = await finish("succeeded", null, null, { gateLog, final: { submitted, gated: plan } });
-    await notifyApproversTx(tx, job, plan.mode === "out_of_library" ? "🤖 خطّةٌ كتبها Opus «خارج المكتبة» تنتظر الاعتماد" : "🤖 خطّةٌ كتبها Opus تنتظر الاعتماد",
+    await notifyApproversTx(tx, job, plan.mode === "out_of_library" ? "🤖 خطّةٌ كتبها Bionic AI «خارج المكتبة» تنتظر الاعتماد" : "🤖 خطّةٌ كتبها Bionic AI تنتظر الاعتماد",
       `/physio/plans/${planId}`);
     return { kind: "succeeded", planId, job: done };
   });
@@ -130,8 +130,8 @@ export async function replaceAwaitingPlanFromAgentTx(job: JobRecord, me: string,
       const r = rows(await tx.execute(sql`UPDATE physio_agent_jobs SET status = ${status}, error_code = ${code}, error = ${code ? JOB_ERROR_TEXTS[code] ?? code : null},
           error_detail = ${detail}, result = ${JSON.stringify({ ...result, ...extra })}::jsonb, finished_at = now(), locked_by = NULL, locked_at = NULL,
           stage = ${status === "succeeded" ? "saving" : cur.stage}, updated_at = now() WHERE id = ${job.id} RETURNING *`))[0];
-      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Claude Opus", branchId: job.branchId,
-        newValues: { status, code, detail }, notes: code ? JOB_ERROR_TEXTS[code] ?? code : "أعاد Opus كتابةَ الخطّة بملاحظة المعتمِد", tx });
+      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Bionic AI", branchId: job.branchId,
+        newValues: { status, code, detail }, notes: code ? JOB_ERROR_TEXTS[code] ?? code : "أعاد Bionic AI كتابةَ الخطّة بملاحظة المعتمِد", tx });
       return jobOf(r);
     };
     let code: string | null = null;
@@ -151,7 +151,7 @@ export async function replaceAwaitingPlanFromAgentTx(job: JobRecord, me: string,
     }
     if (code) {
       const j = await finish("cancelled", code);
-      await notifyApproversTx(tx, j, `⚠️ لم يُعد Opus كتابةَ الخطّة: ${JOB_ERROR_TEXTS[code] ?? code}`, plan ? `/physio/plans/${plan.id}` : `/patients/${job.patientId}`);
+      await notifyApproversTx(tx, j, `⚠️ لم يُعد Bionic AI كتابةَ الخطّة: ${JOB_ERROR_TEXTS[code] ?? code}`, plan ? `/physio/plans/${plan.id}` : `/patients/${job.patientId}`);
       return { kind: "cancelled", code, job: j };
     }
     const gate = await examAgentGate(job.examId, tx);
@@ -168,7 +168,7 @@ export async function replaceAwaitingPlanFromAgentTx(job: JobRecord, me: string,
       const c = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan" : "gates_blocking";
       const detail = g.blocking.map((b) => b.code).join(",");
       const j = await finish("failed", c, { gateLog, final: { submitted, gated: g.plan } }, detail);
-      await notifyApproversTx(tx, j, `⚠️ لم يُعد Opus كتابةَ الخطّة: ${JOB_ERROR_TEXTS[c]} — الاقتراحُ السابق باقٍ`, `/physio/plans/${plan!.id}`);
+      await notifyApproversTx(tx, j, `⚠️ لم يُعد Bionic AI كتابةَ الخطّة: ${JOB_ERROR_TEXTS[c]} — الاقتراحُ السابق باقٍ`, `/physio/plans/${plan!.id}`);
       return { kind: "failed", code: c, detail, job: j };
     }
     const snap = await snapshotFromGatedTx(tx, g.plan, { patientId: job.patientId, branchId: job.branchId, exam, forbidden: fp, gateCode: gate.code, sources: { fetchedInJob: job.id } });
@@ -183,11 +183,11 @@ export async function replaceAwaitingPlanFromAgentTx(job: JobRecord, me: string,
       diffFromPrevious = d; diffSummary = diffSummaryAr(d);
     }
     await materializeAwaitingTx(tx, Number(plan!.id), snap, job.id);
-    await logAudit({ entityType: "physio_plan", entityId: Number(plan!.id), action: "opus_returned_rewrite", userId: null, userName: "Claude Opus", branchId: plan!.branch_id,
+    await logAudit({ entityType: "physio_plan", entityId: Number(plan!.id), action: "opus_returned_rewrite", userId: null, userName: "Bionic AI", branchId: plan!.branch_id,
       oldValues: { agentJobId: plan!.agent_job_id }, newValues: { agentJobId: job.id, mode: g.plan.mode, devices: g.plan.devices.map((d) => d.deviceCode), diff: diffSummary },
-      notes: "أعاد Opus كتابةَ الخطّة بملاحظة المعتمِد — تنتظر الاعتماد", tx });
+      notes: "أعاد Bionic AI كتابةَ الخطّة بملاحظة المعتمِد — تنتظر الاعتماد", tx });
     const done = await finish("succeeded", null, { gateLog, final: { submitted, gated: g.plan }, revision: { scope: "return", diffFromPrevious, diffSummaryAr: diffSummary } });
-    await notifyApproversTx(tx, done, "🤖 أعاد Opus كتابةَ الخطّة بملاحظة المعتمِد وتنتظر الاعتماد", `/physio/plans/${plan!.id}`);
+    await notifyApproversTx(tx, done, "🤖 أعاد Bionic AI كتابةَ الخطّة بملاحظة المعتمِد وتنتظر الاعتماد", `/physio/plans/${plan!.id}`);
     return { kind: "succeeded", planId: Number(plan!.id), job: done };
   });
 }
@@ -258,7 +258,7 @@ export async function saveDraftProtocolTx(tx: any, planId: number, result: Recor
       RETURNING id`))[0];
     cardIds.set(c.key, Number(r.id));
     await logAudit({ entityType: "physio_exercise", entityId: Number(r.id), action: "create_by_agent", userId: actor.userId, userName: actor.name,
-      newValues: { planId, key: c.key, sourceUrl: c.sourceUrl }, notes: "بطاقةٌ مسوّدة اقترحها Opus", tx });
+      newValues: { planId, key: c.key, sourceUrl: c.sourceUrl }, notes: "بطاقةٌ مسوّدة اقترحها Bionic AI", tx });
   }
   const total = gated.totalSessions;
   const dose = normalizeDose({ sessionsPerWeek: gated.sessionsPerWeek, durationWeeks: null, totalSessions: total });
@@ -305,7 +305,7 @@ export async function saveDraftProtocolTx(tx: any, planId: number, result: Recor
   }
   //  الخطّةُ نفسُها تأخذ بطاقاتِها المقترحة من النسخة ١ (`approveOpusPlanVersioned` تكتب الصفوفَ من اللقطة بأرقام هذه البطاقات).
   await logAudit({ entityType: "physio_protocol", entityId: protocolId, action: "create_by_agent", userId: actor.userId, userName: actor.name,
-    newValues: { planId, code: `opus-${planId}`, cards: Array.from(cardIds.values()) }, notes: "بروتوكولٌ مسوّدة من خطّة Opus «خارج المكتبة» المعتمَدة", tx });
+    newValues: { planId, code: `opus-${planId}`, cards: Array.from(cardIds.values()) }, notes: "بروتوكولٌ مسوّدة من خطّة Bionic AI «خارج المكتبة» المعتمَدة", tx });
   return { protocolId, cardIds };
 }
 
@@ -318,11 +318,11 @@ export async function discardOpusPlan(planId: number, actor: { userId: number | 
     await lockPatientAgent(tx, Number(p0.patient_id));
     const plan = rows(await tx.execute(sql`SELECT * FROM physio_plans WHERE id = ${planId} FOR UPDATE`))[0];
     if (!plan) throw new OpusPlanError(404, "الخطّة غير موجودة", "plan_not_found");
-    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) throw new OpusPlanError(409, "تُحذف من هنا خطّةُ Opus المنتظرة وحدها", "not_awaiting");
+    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) throw new OpusPlanError(409, "تُحذف من هنا خطّةُ Bionic AI المنتظرة وحدها", "not_awaiting");
     await onOpusPlanClosingTx(tx, planId, "plan_discarded", actor);
     await tx.execute(sql`DELETE FROM physio_plans WHERE id = ${planId}`);
     await logAudit({ entityType: "physio_plan", entityId: planId, action: "opus_discard", userId: actor.userId, userName: actor.name, branchId: plan.branch_id,
-      oldValues: plan, notes: "حُذفت خطّةُ Opus منتظرة", ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
+      oldValues: plan, notes: "حُذفت خطّةُ Bionic AI منتظرة", ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
     return plan;
   });
 }

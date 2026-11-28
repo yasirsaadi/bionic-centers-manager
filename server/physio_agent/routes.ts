@@ -59,7 +59,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     const s = sess(req);
     const approver = canApproveProtocols(s);
     try {
-      if (!agentEnabled()) return res.status(503).json({ error: "وكيلُ Opus غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", code: "disabled" });
+      if (!agentEnabled()) return res.status(503).json({ error: "وكيلُ Bionic AI غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", code: "disabled" });
       const exam = await loadExam(db, examId);
       if (!exam) return res.status(404).json({ error: "المعاينةُ غير موجودة", code: "exam_not_found" });
       if (!approver && !(await writesPhysioExam(s))) return res.status(403).json({ error: "يطلبها كاتبُ معاينة العلاج الطبيعي أو المعتمِد", code: "not_writer" });
@@ -151,7 +151,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
   });
 
   app.get("/api/physio/opus-plans", isAuthenticated, async (req: any, res) => {
-    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "خططُ Opus للمسؤول والمشرف العام" });
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "خططُ Bionic AI للمسؤول والمشرف العام" });
     try {
       //  §4.hb — «تعديلاتٌ مقترحة»: اقتراحاتُ Opus المنتظرة على خططٍ معتمَدة قائمة.
       if (req.query?.view === "proposals") return res.json({ view: "proposals", rows: await plans.listOpusProposals() });
@@ -163,7 +163,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
   // ══ §4.hb — التعديلُ بعد الاعتماد: حالُه واقتراحُ Opus (المعتمِد وحده) ═════════════════════════════════
   const refusedRes = (res: any, r: versions.Refused) => res.status(r.status).json({ error: r.error, code: r.code, ...(r.extra ?? {}) });
   app.get("/api/physio/plans/:id/opus-revision", isAuthenticated, async (req: any, res) => {
-    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "تعديلُ خطّة Opus للمسؤول والمشرف العام" });
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "تعديلُ خطّة Bionic AI للمسؤول والمشرف العام" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {
@@ -173,7 +173,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
   app.post("/api/physio/opus-jobs/:id/proposal/save", isAuthenticated, async (req: any, res) => {
-    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يحفظ اقتراحَ Opus المسؤولُ أو المشرفُ العام", code: "approver_only" });
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يحفظ اقتراحَ Bionic AI المسؤولُ أو المشرفُ العام", code: "approver_only" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {
@@ -183,7 +183,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
   app.post("/api/physio/opus-jobs/:id/proposal/discard", isAuthenticated, async (req: any, res) => {
-    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يتجاهل اقتراحَ Opus المسؤولُ أو المشرفُ العام", code: "approver_only" });
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يتجاهل اقتراحَ Bionic AI المسؤولُ أو المشرفُ العام", code: "approver_only" });
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {

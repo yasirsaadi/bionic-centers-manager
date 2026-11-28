@@ -95,8 +95,8 @@ export const GATE_REASONS: Record<string, string> = {
   exercise_draft_substitute: "البديلُ بطاقةٌ غيرُ معتمَدة",
   exercise_draft: "بطاقةُ البروتوكول مسوّدةٌ لم تُعتمد",
   exercise_changed: "تبديلُ تمرين",
-  protocol_device_omitted: "جهازٌ في البروتوكول لم يختره Opus",
-  source_not_fetched: "مصدرٌ لم يفتحه Opus",
+  protocol_device_omitted: "جهازٌ في البروتوكول لم يختره Bionic AI",
+  source_not_fetched: "مصدرٌ لم يفتحه Bionic AI",
   sources_missing: "خطّةٌ خارج المكتبة بلا مصادر",
   source_dropped: "مصدرٌ لم يظهر في البحث",
   protocol_missing: "البروتوكولُ غيرُ موجود أو مؤرشف أو مسوّدةٌ غيرُ معتمَدة",
@@ -221,8 +221,8 @@ export function buildLibraryPlan(protocol: GateProtocol, s: SubmittedPlan, exerc
   for (const n of s.phaseNotes) {
     const ph = phases.find((p) => p.position === n.phase);
     if (!ph) continue;
-    ph.notes = [ph.notes, `Opus: ${n.noteAr}`].filter(Boolean).join("\n");
-    if (n.noteEn) ph.notesEn = [ph.notesEn, `Opus: ${n.noteEn}`].filter(Boolean).join("\n");
+    ph.notes = [ph.notes, `Bionic AI: ${n.noteAr}`].filter(Boolean).join("\n");
+    if (n.noteEn) ph.notesEn = [ph.notesEn, `Bionic AI: ${n.noteEn}`].filter(Boolean).join("\n");
   }
   return { phases: protocol.totalSessions && protocol.totalSessions !== total ? rescalePhaseRanges(phases, protocol.totalSessions, total) : phases, changes };
 }

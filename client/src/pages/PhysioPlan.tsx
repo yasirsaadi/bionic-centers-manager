@@ -317,7 +317,7 @@ export default function PhysioPlanPage() {
       )}
       {isOpus && plan.newerExamSinceVersion && (
         <p className="text-xs text-sky-900 rounded-md bg-sky-50 border border-sky-200 px-2 py-1 print:hidden" dir="rtl" data-testid="plan-newer-exam">
-          وُقّعت للمريض معاينةٌ أحدث من التي بُنيت عليها النسخة السارية — {opusCanEdit ? "راجِعها، وعدّل الخطّة أو اطلب من Opus تعديلاً إن غيّرت شيئاً." : "يراجعها المعتمِد."}
+          وُقّعت للمريض معاينةٌ أحدث من التي بُنيت عليها النسخة السارية — {opusCanEdit ? "راجِعها، وعدّل الخطّة أو اطلب من Bionic AI تعديلاً إن غيّرت شيئاً." : "يراجعها المعتمِد."}
         </p>
       )}
       {/*  §4.dq — الخطّةُ لا تُمنع، **ومَن يبدؤها أو يعتمدها يُطلب منه أن يذكّر المشرف** بإعدادات الجهاز الناقصة في البروتوكول. */}
@@ -336,13 +336,13 @@ export default function PhysioPlanPage() {
           {canWrite && !isPlanClosed(plan.status) && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
           )}
-          {/*  §4.hb — المعتمِدُ يعدّل خطّةَ Opus بسببٍ إلزاميّ، أو يطلب من Opus؛ وكلُّ حفظٍ نسخةٌ مرقّمة. */}
+          {/*  §4.hb — المعتمِدُ يعدّل خطّةَ Bionic AI بسببٍ إلزاميّ، أو يطلب من Bionic AI؛ وكلُّ حفظٍ نسخةٌ مرقّمة. */}
           {opusCanEdit && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setOpusEditing(true)} data-testid="button-opus-edit-plan"><Pencil className="w-4 h-4" /> تعديل الخطّة</Button>
           )}
           {opusCanEdit && (
             <Button size="sm" className="gap-1 bg-violet-700 hover:bg-violet-800" disabled={amendRunning} onClick={() => setAmendOpen(true)} data-testid="button-opus-amend">
-              <Sparkles className="w-4 h-4" /> {amendRunning ? "Opus يعدّلها الآن…" : "اطلب من Opus تعديلاً"}
+              <Sparkles className="w-4 h-4" /> {amendRunning ? "Bionic AI يعدّلها الآن…" : "اطلب من Bionic AI تعديلاً"}
             </Button>
           )}
           {/*  §4.do — يبدؤها كاتبُها بنفسه على أيّ بروتوكول؛ والمشرفُ يُنبَّه ويراجعها بعدها. («إرسال للاعتماد» تقاعد من الشاشة.) */}
@@ -390,7 +390,7 @@ export default function PhysioPlanPage() {
       )}
       {!editing && !opusEditing && isOpus && opusLocked && !plan.canApprove && (
         <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-opus-readonly">
-          خطّةٌ كتبها Opus — يعدّلها المسؤولُ أو المشرفُ العام وحدهما، وكلُّ تعديلٍ نسخةٌ مرقّمة يصلك تنبيهُها. تنفّذها كما هي.
+          خطّةٌ كتبها Bionic AI — يعدّلها المسؤولُ أو المشرفُ العام وحدهما، وكلُّ تعديلٍ نسخةٌ مرقّمة يصلك تنبيهُها. تنفّذها كما هي.
         </p>
       )}
       {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}

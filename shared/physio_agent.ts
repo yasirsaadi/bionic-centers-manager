@@ -15,12 +15,12 @@ export const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ["queued", "running", "
 export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ["needs_exam_revision", "succeeded", "failed", "cancelled"];
 export const isActiveJobStatus = (s: unknown): boolean => (ACTIVE_JOB_STATUSES as readonly string[]).includes(String(s));
 export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
-  queued: "بالدور — سيبدأ Opus قريباً",
-  running: "Opus يعمل على الخطّة",
-  needs_answers: "Opus يسأل قبل أن يكتب",
-  needs_exam_revision: "وجد Opus ما لم تسجّله المعاينة — عدّل المعاينة",
-  succeeded: "كتب Opus الخطّة — بانتظار الاعتماد",
-  failed: "لم يكتب Opus الخطّة",
+  queued: "بالدور — سيبدأ Bionic AI قريباً",
+  running: "Bionic AI يعمل على الخطّة",
+  needs_answers: "Bionic AI يسأل قبل أن يكتب",
+  needs_exam_revision: "وجد Bionic AI ما لم تسجّله المعاينة — عدّل المعاينة",
+  succeeded: "كتب Bionic AI الخطّة — بانتظار الاعتماد",
+  failed: "لم يكتب Bionic AI الخطّة",
   cancelled: "أُلغيت",
 };
 export const JOB_STAGES = ["reading", "research", "writing", "review", "audit", "gates", "questions", "saving"] as const;
@@ -90,7 +90,7 @@ export function reviewStageNote(verdict: string, issues: number, who: "reviewer"
 }
 export const researchStageNote = (fetched: number): string => `فتح ${arCount(fetched, COUNT_FORMS.source)}`;
 
-export const OPUS_AWAITING_LABEL = "خطّة Opus بانتظار الاعتماد";
+export const OPUS_AWAITING_LABEL = "خطّة Bionic AI بانتظار الاعتماد";
 export const OPUS_OUT_OF_LIBRARY_LABEL = "خارج المكتبة";
 
 /** رسائلُ الإيقاف والإخفاق بالعربية — كلُّ `error_code` يُكتب معه نصُّه. */
@@ -103,18 +103,18 @@ export const JOB_ERROR_TEXTS: Record<string, string> = {
   patient_deleted: "المريضُ في السلّة",
   patient_merged: "دُمج ملفُّ المريض",
   has_active_plan: "للمريض خطّةٌ قائمة معتمَدة",
-  agent_declined: "يرى Opus ألّا تُكتب خطّةٌ الآن",
+  agent_declined: "يرى Bionic AI ألّا تُكتب خطّةٌ الآن",
   unresolved_critical: "بقيت ملاحظةٌ حرجة لم تُحلّ",
   empty_plan: "لم تبقَ في الخطّة أجهزةٌ ولا تمارين بعد البوّابات",
   gates_blocking: "لم تمرّ الخطّةُ من البوّابات الحتمية",
-  refusal: "رفض Opus إكمالَ هذه الحالة لأسباب السلامة — تُكتب الخطّةُ يدوياً",
+  refusal: "رفض Bionic AI إكمالَ هذه الحالة لأسباب السلامة — تُكتب الخطّةُ يدوياً",
   identifier_leak: "أُوقف الإرسال: في النصّ ما يشبه اسمَ المريض أو هاتفَه أو رمزَه",
-  identifier_in_query: "أُوقف البحث: طلب Opus بحثاً فيه ما يشبه هويّةَ المريض",
-  too_many_turns: "تجاوز Opus عددَ الجولات المسموح دون أن يُنهي",
+  identifier_in_query: "أُوقف البحث: طلب Bionic AI بحثاً فيه ما يشبه هويّةَ المريض",
+  too_many_turns: "تجاوز Bionic AI عددَ الجولات المسموح دون أن يُنهي",
   paused_too_long: "توقّف البحثُ مراراً دون أن يكتمل",
-  output_truncated: "انقطع ردُّ Opus قبل أن يكتمل",
-  no_submission: "أنهى Opus دون أن يقدّم الخطّة",
-  research_budget: "تجاوز Opus حدَّ البحث لهذه الوظيفة",
+  output_truncated: "انقطع ردُّ Bionic AI قبل أن يكتمل",
+  no_submission: "أنهى Bionic AI دون أن يقدّم الخطّة",
+  research_budget: "تجاوز Bionic AI حدَّ البحث لهذه الوظيفة",
   context_too_long: "طالت المحادثةُ أكثرَ ممّا تتّسع له خدمةُ Claude",
   api_unavailable: "خدمةُ Claude غيرُ متاحة بعد عدّة محاولات",
   api_error: "رفضت خدمةُ Claude الطلب",
@@ -126,11 +126,11 @@ export const JOB_ERROR_TEXTS: Record<string, string> = {
   plan_closed: "أُوقفت الخطّةُ أو تخرّج المريض",
   plan_deleted: "حُذفت الخطّة",
   plan_not_awaiting: "لم تعد الخطّةُ تنتظر الاعتماد",
-  plan_not_amendable: "الخطّةُ ليست خطّةَ Opus معتمَدة",
-  base_version_changed: "عُدّلت الخطّةُ إلى نسخةٍ أحدث قبل أن يُنهي Opus",
-  revision_declined: "يرى Opus ألّا يُنفَّذ التعديلُ المطلوب",
-  revision_no_change: "لم يغيّر Opus شيئاً في الخطّة بعد البوّابات",
-  questions_in_revision: "سأل Opus مرّتين — الأسئلةُ غيرُ متاحة في التعديل",
+  plan_not_amendable: "الخطّةُ ليست خطّةَ Bionic AI معتمَدة",
+  base_version_changed: "عُدّلت الخطّةُ إلى نسخةٍ أحدث قبل أن يُنهي Bionic AI",
+  revision_declined: "يرى Bionic AI ألّا يُنفَّذ التعديلُ المطلوب",
+  revision_no_change: "لم يغيّر Bionic AI شيئاً في الخطّة بعد البوّابات",
+  questions_in_revision: "سأل Bionic AI مرّتين — الأسئلةُ غيرُ متاحة في التعديل",
   patient_trashed: "المريضُ في السلّة",
   proposal_new_request: "حلّ محلَّه طلبٌ أحدث نجح",
   edited_directly: "عُدّلت الخطّةُ مباشرةً بعده",
@@ -539,7 +539,7 @@ export const OPUS_AWAITING_ALLOWED = ["approve", "opus-discard", "delete", "opus
 /** **خطّةُ Opus بعد الاعتماد** (§4.hb): تُعدَّل بـ«تعديل الخطّة» و«اطلب من Opus تعديلاً» وحدهما وبيد المعتمِد، فكلُّ حفظٍ نسخة؛
  *  وأبوابُ التعديل القديمة (الخطّةُ والمراحلُ والمقاييسُ وتغييرُ النوع) تُردّ لأيّ أحد. */
 export const OPUS_VERSIONED_BLOCKED = ["update", "phases", "measures", "change-protocol"] as const;
-export const OPUS_VERSIONED_ERROR = "خطّةُ Opus المعتمَدة تُعدَّل من «تعديل الخطّة» أو «اطلب من Opus تعديلاً» بيد المسؤول أو المشرف العام — فكلُّ حفظٍ نسخةٌ مرقّمة";
+export const OPUS_VERSIONED_ERROR = "خطّةُ Bionic AI المعتمَدة تُعدَّل من «تعديل الخطّة» أو «اطلب من Bionic AI تعديلاً» بيد المسؤول أو المشرف العام — فكلُّ حفظٍ نسخةٌ مرقّمة";
 export function opusApprovedBlocked(p: { origin?: string | null; status: string }, action: string): string | null {
   if (p.origin !== "opus" || isOpusAwaiting(p)) return null;
   return (OPUS_VERSIONED_BLOCKED as readonly string[]).includes(action) ? OPUS_VERSIONED_ERROR : null;
@@ -547,5 +547,5 @@ export function opusApprovedBlocked(p: { origin?: string | null; status: string 
 export function opusAwaitingBlocked(p: { origin?: string | null; status: string }, action: string): string | null {
   if (!isOpusAwaiting(p)) return null;
   return (OPUS_AWAITING_ALLOWED as readonly string[]).includes(action) ? null
-    : "خطّةُ Opus بانتظار الاعتماد — لا تُعدَّل ولا تُنفَّذ قبل أن يعتمدها المسؤول أو المشرف العام";
+    : "خطّةُ Bionic AI بانتظار الاعتماد — لا تُعدَّل ولا تُنفَّذ قبل أن يعتمدها المسؤول أو المشرف العام";
 }

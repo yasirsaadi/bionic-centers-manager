@@ -185,7 +185,7 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
     })).json(),
     onSuccess: () => {
       toast({ title: "حُفظ التقييم", description: decision === "discharge" ? "وتخرّجت الخطّة" : decision === "stop" ? "وأُوقفت الخطّة" : decision === "modify" ? (modifyByApprover === "other"
-        ? "خطّةُ Opus يعدّلها المعتمِد — أُبلغ بقرارك، وتبقى تُنفَّذ كما هي حتى يعدّلها"
+        ? "خطّةُ Bionic AI يعدّلها المعتمِد — أُبلغ بقرارك، وتبقى تُنفَّذ كما هي حتى يعدّلها"
         : modifyByApprover === "me" ? "عدّل الخطّةَ الآن — تبقى تُنفَّذ حتى تحفظ نسخةً جديدة" : "عدّل الخطّةَ الآن — تبقى تُنفَّذ، ويُنبَّه المشرفُ ليطّلع") : undefined });
       onSaved(decision);
     },

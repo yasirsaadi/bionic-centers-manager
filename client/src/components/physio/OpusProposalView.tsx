@@ -72,7 +72,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
       fromProposal: true, acknowledgedIssueIds: Array.from(acks), agentJobId: q.data?.agentJobId ?? null, proposalHash: q.data?.proposalHash ?? null }),
     onSuccess: (r) => {
       refresh(q.data?.plan.patientId);
-      toast({ title: "اعتُمدت خطّةُ Opus — النسخة ١", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات»." : "نزلت في ملفّ المريض ويراها المعالجون الآن." });
+      toast({ title: "اعتُمدت خطّةُ Bionic AI — النسخة ١", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات»." : "نزلت في ملفّ المريض ويراها المعالجون الآن." });
     },
     onError: (e: any) => {
       refresh(q.data?.plan.patientId);
@@ -83,7 +83,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
   });
   const discard = useMutation({
     mutationFn: () => opusPost(`/api/physio/plans/${planId}/opus-discard`, {}),
-    onSuccess: () => { const pid = q.data?.plan.patientId; refresh(pid); toast({ title: "حُذفت الخطّة", description: "تستطيع أن تطلب من Opus كتابتَها من جديد من بطاقة المعاينة." }); if (pid) navigate(`/patients/${pid}`); },
+    onSuccess: () => { const pid = q.data?.plan.patientId; refresh(pid); toast({ title: "حُذفت الخطّة", description: "تستطيع أن تطلب من Bionic AI كتابتَها من جديد من بطاقة المعاينة." }); if (pid) navigate(`/patients/${pid}`); },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
@@ -123,23 +123,23 @@ export function OpusProposalView({ planId }: { planId: number }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-bold m-0 flex items-center gap-1.5"><Sparkles className="w-5 h-5 text-violet-700" /> الخطّة المقترحة</h2>
         <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", out ? "bg-violet-100 text-violet-800" : "bg-teal-100 text-teal-800")} data-testid="opus-proposal-mode">
-          {out ? `${OPUS_OUT_OF_LIBRARY_LABEL} — بناها Opus` : `من المكتبة: ${p.plan.protocolTitleAr ?? "—"}`}
+          {out ? `${OPUS_OUT_OF_LIBRARY_LABEL} — بناها Bionic AI` : `من المكتبة: ${p.plan.protocolTitleAr ?? "—"}`}
         </span>
       </div>
       <p className="m-0 text-xs text-muted-foreground">
-        كتبها Opus من معاينة {p.plan.createdByName ?? "الفاحص"}{p.job?.finishedAt ? ` في ${arText(formatDateIraq(p.job.finishedAt))}` : ""}. لا يراها المعالجون ولا تُنفَّذ قبل اعتمادك.
+        كتبها Bionic AI من معاينة {p.plan.createdByName ?? "الفاحص"}{p.job?.finishedAt ? ` في ${arText(formatDateIraq(p.job.finishedAt))}` : ""}. لا يراها المعالجون ولا تُنفَّذ قبل اعتمادك.
       </p>
 
       {revising && (
         <div className="rounded-md border border-violet-300 bg-violet-50 p-2 space-y-2" data-testid="opus-proposal-revising">
-          <div className="text-sm font-semibold text-violet-950">يعيد Opus كتابةَ الخطّة بملاحظتك — «اعتماد» معطّلٌ حتى تعود.</div>
+          <div className="text-sm font-semibold text-violet-950">يعيد Bionic AI كتابةَ الخطّة بملاحظتك — «اعتماد» معطّلٌ حتى تعود.</div>
           <RevisionStages job={revising} />
           <CancelRevisionButton jobId={revising.jobId} onDone={() => refresh(p.plan.patientId)} label="إلغاء الإعادة" />
         </div>
       )}
       {p.regated && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950 space-y-1" data-testid="opus-proposal-regated">
-          <b>صحّحت البوّاباتُ هذا الاقتراح عند محاولة اعتمادٍ سابقة{p.regated.at ? ` (${when(p.regated.at)})` : ""}</b> — تغيّر شيءٌ في الفرع أو البروتوكول أو المعاينة منذ كتبه Opus؛
+          <b>صحّحت البوّاباتُ هذا الاقتراح عند محاولة اعتمادٍ سابقة{p.regated.at ? ` (${when(p.regated.at)})` : ""}</b> — تغيّر شيءٌ في الفرع أو البروتوكول أو المعاينة منذ كتبه Bionic AI؛
           والمعتمَدُ يكون الاقتراحَ المصحَّح. ما صحّحته:
           <GateLogList entries={p.regated.gateLog.filter((g) => g.kind !== "info")} devName={devName} exName={exName} />
         </div>
@@ -179,7 +179,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
                   <b className="block">{ph.nameAr}</b>
                   {ph.sessionFrom && ph.sessionTo ? <div className="text-[11px] text-muted-foreground">الجلسات من {ar(ph.sessionFrom)} إلى {ar(ph.sessionTo)}</div> : null}
                   {ph.goals && <div className="text-xs text-slate-700 whitespace-pre-line" dir="auto">{ph.goals}</div>}
-                  {notes.map((n, i) => <div key={i} className="mt-1 text-xs rounded bg-violet-100 text-violet-900 px-1.5 py-0.5">ملاحظة Opus: {n.noteAr}</div>)}
+                  {notes.map((n, i) => <div key={i} className="mt-1 text-xs rounded bg-violet-100 text-violet-900 px-1.5 py-0.5">ملاحظة Bionic AI: {n.noteAr}</div>)}
                 </div>
               );
             })}
@@ -217,7 +217,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
             {p.removed.map((r, i) => (
               <li key={i} className="text-sm flex flex-wrap items-center gap-1.5 rounded border border-red-200 bg-red-50/60 px-2 py-1">
                 <span className="line-through text-slate-600">{devName(r.deviceCode)}</span>
-                <span className="rounded-full bg-red-100 text-red-800 px-2 text-[11px] font-semibold">{r.by === "gate" ? "حذفته البوّابة" : "حذفه Opus"}</span>
+                <span className="rounded-full bg-red-100 text-red-800 px-2 text-[11px] font-semibold">{r.by === "gate" ? "حذفته البوّابة" : "حذفه Bionic AI"}</span>
                 <span className="text-xs text-red-900">{r.reasonAr}</span>
               </li>
             ))}
@@ -242,7 +242,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
           </div>
           {f.exerciseChanges.length > 0 && (
             <div className="text-xs space-y-0.5">
-              <div className="font-semibold text-slate-700">ما بدّله Opus في تمارين البروتوكول:</div>
+              <div className="font-semibold text-slate-700">ما بدّله Bionic AI في تمارين البروتوكول:</div>
               {f.exerciseChanges.map((c, i) => (
                 <div key={i}>المرحلة {ar(c.phase)}: {c.fromExerciseId !== null ? exName(c.fromExerciseId) : "—"} ⟵ {c.toExerciseId !== null ? exName(c.toExerciseId) : "أُزيل"}{c.reasonAr ? ` — ${c.reasonAr}` : ""}</div>
               ))}
@@ -252,7 +252,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
       )}
 
       {f && f.proposedCards.length > 0 && (
-        <Section title="بطاقاتُ تمارين جديدة يقترحها Opus" testId="opus-proposal-cards">
+        <Section title="بطاقاتُ تمارين جديدة يقترحها Bionic AI" testId="opus-proposal-cards">
           <p className="m-0 text-[11px] text-muted-foreground">تُحفظ مسوّداتٍ في مكتبة التمارين عند الاعتماد، ويعتمدها المشرف بعد ذلك.</p>
           <div className="grid gap-2 sm:grid-cols-2">
             {f.proposedCards.map((c) => (
@@ -342,7 +342,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
                 <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-primary underline inline-flex items-center gap-1">
                   <Ltr>{s.title}{s.org ? ` — ${s.org}` : ""}{s.year ? ` (${s.year})` : ""}</Ltr><ExternalLink className="w-3 h-3 shrink-0" />
                 </a>
-                {fetched.has(normalizeSourceUrl(s.url)) && <span className="text-emerald-700"> ✓ فتحه Opus</span>}
+                {fetched.has(normalizeSourceUrl(s.url)) && <span className="text-emerald-700"> ✓ فتحه Bionic AI</span>}
               </li>
             ))}
           </ul>
@@ -361,7 +361,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
       )}
 
       {rounds.length > 0 && (
-        <Section title={`جولاتُ الإعادة إلى Opus (${ar(rounds.length)})`} testId="opus-proposal-rounds">
+        <Section title={`جولاتُ الإعادة إلى Bionic AI (${ar(rounds.length)})`} testId="opus-proposal-rounds">
           <ul className="m-0 p-0 list-none space-y-1.5">
             {rounds.map((r, i) => { const o = revisionOutcome({ ...r, proposalStatus: null, savedVersion: null, lostByExamChange:
               r.status === "cancelled" && ["exam_changed", "superseded_by_newer_exam", "exam_cancelled", "gate_closed"].includes(String(r.errorCode)) }); return (
@@ -389,7 +389,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
         </Button>
         {canReturn && (
           <Button variant="outline" className="gap-1 border-violet-300 text-violet-800" onClick={() => setReturnOpen(true)} data-testid="button-opus-return">
-            <Undo2 className="w-4 h-4" /> أعِده إلى Opus بملاحظة
+            <Undo2 className="w-4 h-4" /> أعِده إلى Bionic AI بملاحظة
           </Button>
         )}
         {!confirmDiscard ? (
@@ -475,8 +475,8 @@ function simpleValue(v: unknown): string | null {
 function changeText(g: GateLogEntry): string | null {
   const b = g.before === undefined ? null : simpleValue(g.before);
   const a = g.after === undefined ? null : simpleValue(g.after);
-  if (b && a) return `كتب Opus: ${b} ⟵ صار: ${a}`;
-  if (b && (g.kind === "removed" || g.kind === "clamped")) return `كتب Opus: ${b}`;
+  if (b && a) return `كتب Bionic AI: ${b} ⟵ صار: ${a}`;
+  if (b && (g.kind === "removed" || g.kind === "clamped")) return `كتب Bionic AI: ${b}`;
   return null;
 }
 

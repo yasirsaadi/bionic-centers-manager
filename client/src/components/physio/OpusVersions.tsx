@@ -40,7 +40,7 @@ const VERB: Record<Change["kind"], { t: string; c: string }> = {
 };
 const BY: Record<Change["by"], { t: string; c: string }> = {
   gate: { t: "تصحيحُ البوّابات", c: "bg-red-50 text-red-800 border-red-200" },
-  writer: { t: "Opus", c: "bg-violet-50 text-violet-800 border-violet-200" },
+  writer: { t: "Bionic AI", c: "bg-violet-50 text-violet-800 border-violet-200" },
   approver: { t: "المعتمِد", c: "bg-sky-50 text-sky-800 border-sky-200" },
 };
 const USE_AR: Record<string, string> = { core: "أساسيّ", adjunct: "مساعد" };

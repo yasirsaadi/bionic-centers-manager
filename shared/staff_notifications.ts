@@ -54,10 +54,10 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "physio_exam_red_flag_pending", label: "علامةٌ حمراء في معاينة علاجٍ طبيعيّ تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
   { key: "physio_exam_red_flag_decided", label: "علامةُ معاينته الحمراء اعتُمدت أو رُفضت", group: "العلاج الطبيعي", scope: "targeted" },
   //  وكيلُ Opus (§4.ha، ترحيل ١٩٩) — خطّتُه تنتظر المعتمِد؛ وأسئلتُه (وما لم يكتبه) لكاتب المعاينة.
-  { key: "physio_opus_plan_ready", label: "خطّةٌ كتبها Opus تنتظر الاعتماد — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "global" },
-  { key: "physio_opus_questions", label: "Opus يسأل عن مريضه قبل كتابة خطّته — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_opus_plan_ready", label: "خطّةٌ كتبها Bionic AI تنتظر الاعتماد — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_opus_questions", label: "Bionic AI يسأل عن مريضه قبل كتابة خطّته — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "targeted" },
   //  §4.hb (ترحيل ٢٠٠) — نسخةٌ جديدة من خطّة Opus المعتمَدة: لكاتبها وفاحصها ومنفّذيها والمعتمِدين.
-  { key: "physio_opus_plan_versioned", label: "خطّةُ Opus عُدّلت — نسخةٌ جديدة وما تغيّر", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_opus_plan_versioned", label: "خطّةُ Bionic AI عُدّلت — نسخةٌ جديدة وما تغيّر", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);

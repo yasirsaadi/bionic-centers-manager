@@ -144,7 +144,7 @@ async function main() {
     return [r(good), r({ ...good, extra: 1 }), r({ ...good, devices: [{ ...good.devices[0], hack: 1 }] }), r({ ...good, devices: [{ ...good.devices[0], fallback: [{ ...good.devices[0].fallback[0], unit: "Hz" }] }] }),
       r({ ...good, phases: [{ ...good.phases[0], exercises: [{ ...good.phases[0].exercises[0], name: "x" }] }] }), r({ ...good, texts: { ...good.texts, forbidden: "x" } }),
       r((() => { const { measures: _m, ...rest } = good; return rest; })())]; })(), [true, false, false, false, false, false, false]);
-  same("P.6 **قفلُ تعديل Opus**: الوضعُ والبروتوكولُ مقفلان، والمكتبةُ بلا مراحل، وخارجَها بلا `exercise_changes`", (() => {
+  same("P.6 **قفلُ تعديل Bionic AI**: الوضعُ والبروتوكولُ مقفلان، والمكتبةُ بلا مراحل، وخارجَها بلا `exercise_changes`", (() => {
     const lock = { mode: "library" as const, protocolId: 77 };
     const lib = { mode: "library", protocol_id: 77, starting_phase: 1, dose: {}, devices: [], phases: [], exercise_changes: [] };
     return [parseSubmittedPlan(lib, lock).ok, parseSubmittedPlan({ ...lib, protocol_id: 78 }, lock).ok, parseSubmittedPlan({ ...lib, mode: "out_of_library" }, lock).ok,
@@ -174,12 +174,12 @@ async function main() {
     const changed = dgate(edited((e) => { e.devices[0].fallback[0].value = 80; }));
     const approver = dgate(edited((e) => { e.devices[0].fallback[0].value = 80; e.devices[0].fallback[0].source = "approver"; }));
     return [kept.blocking.length, changed.blocking.map((b) => b.code), approver.blocking.length]; })(), [0, ["param_unsourced"], 0]);
-  same("P.7e2 **وقيمةٌ «protocol» موروثة كما هي تبقى** ولو لم يكتبها البروتوكولُ الآن (كانت تنبيهاً في كتابة Opus)", (() => {
+  same("P.7e2 **وقيمةٌ «protocol» موروثة كما هي تبقى** ولو لم يكتبها البروتوكولُ الآن (كانت تنبيهاً في كتابة Bionic AI)", (() => {
     const b = baseSnap(); b.devices[0].btl!.fallback[0].source = "protocol";
     const e = editFromSnapshot(b); e.texts.precautionsAr = "x";
     const c = applyPlanEdit(b, e, lookups);
     return applyEditGates(c, ectx(), "direct_edit", b).blocking.length; })(), 0);
-  same("P.7f **EG9b لتعديل Opus**: القيمةُ كما في الأساس تبقى بمصدرها، والمعدَّلةُ بلا رابطٍ فُتح تُحذف", (() => {
+  same("P.7f **EG9b لتعديل Bionic AI**: القيمةُ كما في الأساس تبقى بمصدرها، والمعدَّلةُ بلا رابطٍ فُتح تُحذف", (() => {
     const s1 = edited((e) => { e.texts.precautionsAr = "x"; }); const s2 = edited((e) => { e.devices[0].fallback[0].value = 80; });
     const a = applyEditGates(s1, ectx(), "opus_amend", baseSnap()); const b = applyEditGates(s2, ectx(), "opus_amend", baseSnap());
     return [a.snapshot.devices[0].btl?.fallback.length, b.snapshot.devices[0].btl?.fallback.length, b.log.some((x) => x.code === "param_unsourced" && x.kind === "removed")]; })(), [1, 0, true]);
@@ -193,7 +193,7 @@ async function main() {
     return [r.blocking.map((b) => b.code), r.blocking.every((b) => /تغيّر حدٌّ منذ النسخة ١/.test(b.reasonAr))]; })(), [["sessions_clamped", "phase_ranges_fixed"], true]);
   same("P.7i والعددُ دون ما نُفّذ مانعٌ في كلّ سياسة", [dgate(edited((e) => { e.totalSessions = 3; e.phases[0].sessionTo = 2; e.phases[1].sessionFrom = 3; e.phases[1].sessionTo = 3; }), { sessionsDone: 5 }).blocking.some((b) => b.code === "total_below_done"),
     applyEditGates(edited((e) => { e.totalSessions = 3; }), ectx({ sessionsDone: 5 }), "opus_amend", baseSnap()).blocking.some((b) => b.code === "total_below_done")], [true, true]);
-  same("P.8 **تعديلُ Opus في المكتبة فرقٌ على النسخة النافذة**: التبديلُ على مراحلها والنطاقاتُ بنسبة العدد", (() => {
+  same("P.8 **تعديلُ Bionic AI في المكتبة فرقٌ على النسخة النافذة**: التبديلُ على مراحلها والنطاقاتُ بنسبة العدد", (() => {
     const sub = parseSubmittedPlan({ mode: "library", protocol_id: 77, starting_phase: 1, dose: { total_sessions: 6 }, devices: [dev("electro", { btl_model_id: "btl-4825s-electro" })], phases: [],
       exercise_changes: [{ phase: 1, from_exercise_id: 1, to_exercise_id: 3, reason_ar: "أسهل" }] }, { mode: "library", protocolId: 77 });
     if (!sub.ok) throw new Error(sub.errors.join());
@@ -227,7 +227,7 @@ async function main() {
   await cleanup();
   setRetryDelaysForTests([1, 1, 1, 1]);
   setAgentTimingForTests({ heartbeatMs: 40, staleMs: 5 * 60_000, runCapMs: 60_000 });
-  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع تعديل Opus')`, [B1]);
+  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع تعديل Bionic AI')`, [B1]);
   for (const [id, role, extra] of [[ADMIN, "admin", {}], [SUP, "branch_manager", { can_supervise_physio: true }], [SPEC, "physio_specialist", {}], [TECH, "therapist", {}]] as const) {
     await q(`INSERT INTO system_users (id, username, password_hash, display_name, role, branch_id, branch_ids, is_active, can_view_patients)
              VALUES ($1, $2, 'x', $3, $4, $5, $6::jsonb, true, true)`, [id, `opusrev-${id}`, `مستخدم ${id}`, role, B1, JSON.stringify([B1])]);
@@ -244,7 +244,7 @@ async function main() {
     [`TEST-OPREV-${code}`, `خطوات ${code}`]))[0].id);
   const EX1 = await mkEx("A"), EX2 = await mkEx("B"), EX3 = await mkEx("C");
   const P = Number((await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, status, total_sessions, max_total_sessions, sessions_per_week, session_minutes, contraindications)
-    VALUES ('test-oprev-lib', 'بروتوكول تعديل Opus', 'Opus revise protocol', 'spine', 'adult', 'approved', 12, 18, 6, 50, 'موانعُ البروتوكول') RETURNING id`))[0].id);
+    VALUES ('test-oprev-lib', 'بروتوكول تعديل Bionic AI', 'Bionic AI revise protocol', 'spine', 'adult', 'approved', 12, 18, 6, 50, 'موانعُ البروتوكول') RETURNING id`))[0].id);
   for (const [code, use, ev] of [["electro", "core", "recommended"], ["tecar", "adjunct", "optional"], ["ultrasound", "not_used", "not_recommended"]] as const) {
     await q(`INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, minutes, params, centre_use) VALUES ($1, $2, $3, 20, '{}'::jsonb, $4)`, [P, devId[code], ev, use]);
   }
@@ -325,11 +325,11 @@ async function main() {
     let rerun = ""; try { await pool.query(m200); } catch (e: any) { rerun = String(e?.message ?? e); }
     same("M.0b إعادةُ الترحيل لا تفعل شيئاً", rerun, "");
 
-    console.log("\n── أ. «أعِده إلى Opus» قبل الاعتماد ──");
+    console.log("\n── أ. «أعِده إلى Bionic AI» قبل الاعتماد ──");
     const pA = await patient("علي حسين");
     const eA = await sign(pA, { assessment: completeExamV2({ core: { anticoagulant: ["warfarin"] } }) });
     const { job: jA0, plan: planA0 } = await writePlan(pA);
-    same("RT.0 خطّةُ Opus تنتظر الاعتماد", [jA0.status, planA0?.status, planA0?.total_sessions], ["succeeded", "pending", 12]);
+    same("RT.0 خطّةُ Bionic AI تنتظر الاعتماد", [jA0.status, planA0?.status, planA0?.total_sessions], ["succeeded", "pending", 12]);
     const planA = Number(planA0.id);
     const oldBody = await approveBody(planA);
     same("RT.2 **غيرُ المعتمِد لا يعيدها** (٤٠٤ — لا يرى الخطّة)، والملاحظةُ إلزامية",
@@ -373,7 +373,7 @@ async function main() {
     const pA1 = await planRow(planA);
     same("RT.6 **نجحت ⟵ الخطّةُ نفسُها أُعيدت كتابتُها** (العدد ١٠) وبقيت تنتظر، ووظيفتُها الجديدة، وتنبيهُ المعتمِدين وحدهم",
       [jR2.status, pA1.status, pA1.total_sessions, Number(pA1.agent_job_id), pA1.opus_stale_reason,
-        (await outbox("physio_opus_plan_ready", before1)).some((o) => /أعاد Opus كتابةَ الخطّة/.test(o.text)), (await outbox("physio_opus_questions", before1)).length],
+        (await outbox("physio_opus_plan_ready", before1)).some((o) => /أعاد Bionic AI كتابةَ الخطّة/.test(o.text)), (await outbox("physio_opus_questions", before1)).length],
       ["succeeded", "pending", 10, Number(jR.id), null, true, 0]);
     same("RT.14 **الاعتمادُ ببصمة الاقتراح القديم ⟵ ٤٠٩ `proposal_changed`**", (await call("POST", `/api/physio/plans/${planA}/approve`, S.sup, oldBody)).json?.code, "proposal_changed");
     const prop = (await call("GET", `/api/physio/plans/${planA}/opus-proposal`, S.sup)).json;
@@ -407,7 +407,7 @@ async function main() {
     const pv = await call("POST", `/api/physio/plans/${planA}/opus-edit/preview`, S.sup, { baseVersion: 1, edit: editPrec() });
     same("DE.1 **المعاينةُ قراءةٌ وحدها**: الفرقُ والبوّابات بلا كتابةٍ ولا تدقيق", [pv.status, pv.json?.blocking?.length, /الاحتياطات/.test(pv.json?.diffSummaryAr ?? ""), await countV(), await auditN()],
       [200, 0, true, 1, a0]);
-    same("DE.5 **غيرُ المعتمِد لا يعدّل** (٤٠٣)، و**أبوابُ التعديل القديمة ٤٠٩ لأيّ أحد** على خطّة Opus المعتمَدة",
+    same("DE.5 **غيرُ المعتمِد لا يعدّل** (٤٠٣)، و**أبوابُ التعديل القديمة ٤٠٩ لأيّ أحد** على خطّة Bionic AI المعتمَدة",
       [(await call("POST", `/api/physio/plans/${planA}/opus-edit/preview`, S.spec, { baseVersion: 1, edit: editPrec() })).status,
         (await call("PUT", `/api/physio/plans/${planA}`, S.sup, { titleAr: "x", devices: [] })).json?.code,
         (await call("PUT", `/api/physio/plans/${planA}/phases`, S.sup, { phases: [] })).json?.code, (await call("DELETE", `/api/physio/plans/${planA}`, S.spec)).json?.code],
@@ -473,7 +473,7 @@ async function main() {
       [(await call("GET", `/api/physio/plans/${planA}/sessions`, S.tech)).json?.sessions?.[0]?.planVersion,
         (await call("GET", `/api/physio/plans/${planA}/versions`, S.tech)).json?.versions?.map((v: any) => v.sessionsOnVersion)], [2, [0, 1]]);
 
-    console.log("\n── ط. «اطلب من Opus تعديلاً» بعد الاعتماد ──");
+    console.log("\n── ط. «اطلب من Bionic AI تعديلاً» بعد الاعتماد ──");
     same("AM.2 **أساسٌ قديم ٤٠٩ · غيرُ المعتمِد ٤٠٣ · بلا طلب ٤٠٠**",
       [(await call("POST", `/api/physio/plans/${planA}/opus-amend`, S.sup, { request: "أضف تمريناً", baseVersion: 1 })).json?.code,
         (await call("POST", `/api/physio/plans/${planA}/opus-amend`, S.spec, { request: "أضف تمريناً", baseVersion: 2 })).status,
@@ -497,7 +497,7 @@ async function main() {
     const live = async () => (await q(`SELECT pe.exercise_id FROM physio_plan_phase_exercises pe JOIN physio_plan_phases ph ON ph.id = pe.phase_id WHERE ph.plan_id = $1 AND ph.position = 1`, [planA]))
       .map((r) => Number(r.exercise_id));
     same("AM.4 **اقتراحٌ منتظر — والنسخةُ النافذة تبقى تُنفَّذ** (الصفوفُ والرقمُ كما هما)، وتنبيهُ المعتمِدين",
-      [jM2.proposal_status, (await planRow(planA)).opus_version, await live(), (await outbox("physio_opus_plan_ready", b3)).some((o) => /اقترح Opus تعديلاً/.test(o.text))],
+      [jM2.proposal_status, (await planRow(planA)).opus_version, await live(), (await outbox("physio_opus_plan_ready", b3)).some((o) => /اقترح Bionic AI تعديلاً/.test(o.text))],
       ["pending", 2, [EX1], true]);
     const rev = (await call("GET", `/api/physio/plans/${planA}/opus-revision`, S.sup)).json;
     same("AM.4b «حالُ التعديل» للمعتمِد: الاقتراحُ بفرقه وبصمته، ولغيره ٤٠٣",
@@ -510,16 +510,16 @@ async function main() {
     const saveP = await call("POST", `/api/physio/opus-jobs/${jM.id}/proposal/save`, S.sup, { proposalHash: rev.proposal.proposalHash, acknowledgedIssueIds: [], note: "موافق" });
     const v3 = (await versionsOf(planA))[2];
     const jM3 = (await q(`SELECT * FROM physio_agent_jobs WHERE id = $1`, [jM.id]))[0];
-    same("AM.6 **الحفظُ ⟵ النسخة ٣ «تعديلٌ من Opus»** سببُها الطلب، والوظيفةُ «حُفظ»، والصفوفُ من الاقتراح",
+    same("AM.6 **الحفظُ ⟵ النسخة ٣ «تعديلٌ من Bionic AI»** سببُها الطلب، والوظيفةُ «حُفظ»، والصفوفُ من الاقتراح",
       [saveP.status, saveP.json?.version, v3?.how, v3?.reason, v3?.approval_note, Number(v3?.job_id), jM3.proposal_status, jM3.saved_version, (await planRow(planA)).opus_version, await live()],
       [200, 3, "opus_revision", REQ, "موافق", Number(jM.id), "accepted", 3, 3, [EX3]]);
     {
       const forTech = (await call("GET", `/api/physio/plans/${planA}/versions`, S.tech)).json?.versions?.[2];
       const forSup = (await call("GET", `/api/physio/plans/${planA}/versions`, S.sup)).json?.versions?.[2];
       const oneTech = (await call("GET", `/api/physio/plans/${planA}/versions/3`, S.tech)).json;
-      same("VIS.1 **نصُّ طلب المعتمِد إلى Opus للمعتمِدين وحدهم** — المعالجُ يرى سبباً ثابتاً بلا ملاحظة الحفظ، والمعتمِدُ يرى الطلب",
+      same("VIS.1 **نصُّ طلب المعتمِد إلى Bionic AI للمعتمِدين وحدهم** — المعالجُ يرى سبباً ثابتاً بلا ملاحظة الحفظ، والمعتمِدُ يرى الطلب",
         [forTech?.reason, forTech?.approvalNote, oneTech?.reason, oneTech?.approvalNote, forSup?.reason, forSup?.approvalNote],
-        ["تعديلٌ من Opus بطلب المعتمِد", null, "تعديلٌ من Opus بطلب المعتمِد", null, REQ, "موافق"]);
+        ["تعديلٌ من Bionic AI بطلب المعتمِد", null, "تعديلٌ من Bionic AI بطلب المعتمِد", null, REQ, "موافق"]);
     }
     same("AM.8 **الحفظُ مرّةً ثانية ⟵ ٤٠٩ `not_pending`**", (await call("POST", `/api/physio/opus-jobs/${jM.id}/proposal/save`, S.sup, { proposalHash: rev.proposal.proposalHash })).json?.code, "not_pending");
 
@@ -533,13 +533,13 @@ async function main() {
     const jB = await lastJob(pA);
     resetModel(); queues.writer.push(msg([tu("decline_plan", { reason_ar: "لا يجوز إيقاف كلّ شيء", reason_en: "no", recommended_action_ar: "راجِع الطبيب" })]));
     await runAgentOnce({ skipReconcile: true });
-    same("AM.1b/AM.9 **رفضُ Opus ⟵ `revision_declined`، والاقتراحُ المنتظر قبله باقٍ**",
+    same("AM.1b/AM.9 **رفضُ Bionic AI ⟵ `revision_declined`، والاقتراحُ المنتظر قبله باقٍ**",
       [(await q(`SELECT status, error_code FROM physio_agent_jobs WHERE id = $1`, [jB.id]))[0], (await q(`SELECT proposal_status FROM physio_agent_jobs WHERE id = $1`, [jA2.id]))[0].proposal_status],
       [{ status: "failed", error_code: "revision_declined" }, "pending"]);
     {
       const forSpec = (await call("GET", `/api/physio/exams/${eA}/opus-job`, S.spec)).json?.job;
       const forSup = (await call("GET", `/api/physio/exams/${eA}/opus-job`, S.sup)).json?.job;
-      same("VIS.2 **رفضُ Opus لطلب التعديل لا يصل الفاحصَ بنصّه** (قد يعيد ملاحظةَ المعتمِد) — نصٌّ ثابت، والمعتمِدُ يرى السبب",
+      same("VIS.2 **رفضُ Bionic AI لطلب التعديل لا يصل الفاحصَ بنصّه** (قد يعيد ملاحظةَ المعتمِد) — نصٌّ ثابت، والمعتمِدُ يرى السبب",
         [Number(forSpec?.id), forSpec?.error, /لا يجوز/.test(forSpec?.error ?? ""), forSpec?.newFinding, /لا يجوز/.test(forSup?.error ?? "")],
         [Number(jB.id), JOB_ERROR_TEXTS.revision_declined, false, null, true]);
     }
@@ -605,13 +605,13 @@ async function main() {
     const bF6 = await maxOutbox();
     await recoverStale();
     same("FX.6 **نفادُ المحاولات في «تعديل» ⟵ `worker_lost` ويُنبَّه المعتمِدون**",
-      [(await q(`SELECT status, error_code FROM physio_agent_jobs WHERE id = $1`, [jF6.id]))[0], (await outbox("physio_opus_plan_ready", bF6)).some((o) => /لم يُكمل Opus طلبَ التعديل/.test(o.text))],
+      [(await q(`SELECT status, error_code FROM physio_agent_jobs WHERE id = $1`, [jF6.id]))[0], (await outbox("physio_opus_plan_ready", bF6)).some((o) => /لم يُكمل Bionic AI طلبَ التعديل/.test(o.text))],
       [{ status: "failed", error_code: "worker_lost" }, true]);
     //  FX.10 — قرارُ «تعديل» في تقييمٍ على خطّة Opus يُبلغ المعتمِدين (المعالجُ لا يفتح المحرّر).
     const bF10 = await maxOutbox();
     const asF = await call("POST", `/api/physio/plans/${planA}/assessments`, S.spec, { assessedOn: (await q(`SELECT (now() AT TIME ZONE 'Asia/Baghdad')::date::text AS d`))[0].d,
       pain: 4, notes: "ألمٌ جديد في الركبة", decision: "modify", scores: [], goals: [] });
-    same("FX.10 **«تعديل» في تقييم خطّة Opus ⟵ المعتمِدون يُنبَّهون بالقرار**",
+    same("FX.10 **«تعديل» في تقييم خطّة Bionic AI ⟵ المعتمِدون يُنبَّهون بالقرار**",
       [asF.status, (await outbox("physio_opus_plan_ready", bF10)).some((o) => /تحتاج تعديلاً/.test(o.text) && /ألمٌ جديد في الركبة/.test(o.text))], [200, true]);
 
     //  AM.11 — الإيقافُ يلغي طلبَ التعديل.
@@ -642,7 +642,7 @@ async function main() {
     await sign(pB);   // معاينةٌ أحدث ⟵ المصالحة تلغي وظيفةَ «أعِده»
     await wait(300);
     same("RT.15 **معاينةٌ أحدث ⟵ طلبُ الإعادة يُلغى ويُقال للمعتمِدين ليعيدوا طلبَهم**",
-      [(await q(`SELECT status, error_code FROM physio_agent_jobs WHERE id = $1`, [jRB2.id]))[0].error_code, (await outbox("physio_opus_plan_ready", b5)).some((o) => /أُلغي طلبُك إلى Opus/.test(o.text))],
+      [(await q(`SELECT status, error_code FROM physio_agent_jobs WHERE id = $1`, [jRB2.id]))[0].error_code, (await outbox("physio_opus_plan_ready", b5)).some((o) => /أُلغي طلبُك إلى Bionic AI/.test(o.text))],
       ["superseded_by_newer_exam", true]);
 
     //  وظيفةُ الكتابة التلقائية للمعاينة الأحدث لا تُشغَّل هنا (تأخذ دورَ المريض التالي في العامل).
@@ -712,7 +712,7 @@ async function main() {
     }
     const dl = await call("DELETE", `/api/physio/plans/${planD}`, S.sup);
     const delAudit = (await q(`SELECT old_values FROM audit_log WHERE entity_type = 'physio_plan' AND entity_id = $1 AND action = 'delete' ORDER BY id DESC LIMIT 1`, [planD]))[0]?.old_values;
-    same("M.5 **حذفُ خطّة Opus (المعتمِد، بلا جلسات) ⟵ نسخُها في صورة التدقيق، وتُحذف معها** (القادحُ يسمح حين ذهب الأب)",
+    same("M.5 **حذفُ خطّة Bionic AI (المعتمِد، بلا جلسات) ⟵ نسخُها في صورة التدقيق، وتُحذف معها** (القادحُ يسمح حين ذهب الأب)",
       [dl.status, (JSON.parse(typeof delAudit === "string" ? delAudit : JSON.stringify(delAudit ?? {})).opusVersions ?? []).length, (await versionsOf(planD)).length], [200, 2, 0]);
 
     console.log("\n── و. خطّةٌ اعتُمدت قبل نظام النسخ ──");

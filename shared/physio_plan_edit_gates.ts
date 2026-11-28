@@ -55,7 +55,7 @@ export const EDIT_GATE_REASONS: Record<string, string> = {
   protocol_archived: "البروتوكولُ مؤرشف",
   bound_changed_since: "تغيّر حدٌّ منذ النسخة",
   unavailable_kept: "غيرُ متوفّرٍ في الفرع الآن — بقي كما في النسخة السابقة",
-  source_new_unfetched: "مصدرٌ جديد لم يفتحه Opus في هذه الوظيفة",
+  source_new_unfetched: "مصدرٌ جديد لم يفتحه Bionic AI في هذه الوظيفة",
   param_source_invalid: "مصدرُ القيمة: «protocol» بقيمة البروتوكول نفسِها، أو «approver»، أو رابطٌ موروث بالقيمة نفسِها",
 };
 export const reasonOf = (code: string): string => EDIT_GATE_REASONS[code] ?? GATE_REASONS[code] ?? code;

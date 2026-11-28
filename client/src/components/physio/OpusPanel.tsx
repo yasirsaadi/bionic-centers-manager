@@ -12,22 +12,22 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { cn, formatDateIraq, formatTimeIraq } from "@/lib/utils";
-import { JOB_ERROR_TEXTS, JOB_STATUS_LABELS, MAX_QUESTION_ROUNDS, OPUS_AWAITING_LABEL, OPUS_MODEL_ID, isActiveJobStatus } from "@shared/physio_agent";
+import { JOB_ERROR_TEXTS, JOB_STATUS_LABELS, MAX_QUESTION_ROUNDS, OPUS_AWAITING_LABEL, isActiveJobStatus } from "@shared/physio_agent";
 import type { AgentGate } from "@shared/physio_exam_v2";
 import { ar, opusGet, opusJobKey, opusPost, stageStates, type OpusJobResponse, type OpusJobSummary, type OpusJobView } from "@/lib/opus_agent";
 
-export const RUN_LABEL = "اكتب الخطّة بـ Opus";
+export const RUN_LABEL = "اكتب الخطّة بـ Bionic AI";
 export const RERUN_LABEL = "أعد";
 
 function errorText(job: Pick<OpusJobView, "error" | "errorCode" | "errorDetailAr">): string {
   //  C3 — للمعتمِد سببُ الإخفاق مفصَّلاً (الخادمُ لا يرسله لغيره).
-  return job.errorDetailAr || job.error || (job.errorCode ? JOB_ERROR_TEXTS[job.errorCode] : "") || "لم يكتب Opus الخطّة";
+  return job.errorDetailAr || job.error || (job.errorCode ? JOB_ERROR_TEXTS[job.errorCode] : "") || "لم يكتب Bionic AI الخطّة";
 }
 /** §4.hb — وظيفةُ «تعديل» بطلب معتمِد: «أعِده إلى Opus» قبل الاعتماد، أو «اطلب من Opus تعديلاً» بعده. */
 function reviseLine(job: OpusJobView): string | null {
   if (job.kind !== "revise") return null;
-  return job.reviseScope === "amend" ? "يعدّل Opus الخطّةَ المعتمَدة بطلب المعتمِد — النسخةُ الحالية سارية حتى يحفظ المعتمِد ما يقترحه."
-    : "يعيد Opus كتابةَ الخطّة بملاحظة المعتمِد، ثمّ تعود للاعتماد.";
+  return job.reviseScope === "amend" ? "يعدّل Bionic AI الخطّةَ المعتمَدة بطلب المعتمِد — النسخةُ الحالية سارية حتى يحفظ المعتمِد ما يقترحه."
+    : "يعيد Bionic AI كتابةَ الخطّة بملاحظة المعتمِد، ثمّ تعود للاعتماد.";
 }
 
 export function OpusPanel({ examId, patientId, gate, summary }: {
@@ -49,12 +49,12 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
   };
   const onErr = (e: any) => { toast({ title: "خطأ", description: e.message, variant: "destructive" }); refresh(); };
   const run = useMutation({ mutationFn: () => opusPost(`/api/physio/exams/${examId}/opus-plan`, {}),
-    onSuccess: () => { refresh(); toast({ title: "بدأ Opus", description: "يعمل في الخادم — تستطيع إغلاق الصفحة ويكمل، وتصلك رسالةٌ حين ينتهي." }); }, onError: onErr });
+    onSuccess: () => { refresh(); toast({ title: "بدأ Bionic AI", description: "يعمل في الخادم — تستطيع إغلاق الصفحة ويكمل، وتصلك رسالةٌ حين ينتهي." }); }, onError: onErr });
   const cancel = useMutation({ mutationFn: (id: number) => opusPost(`/api/physio/opus-jobs/${id}/cancel`, {}),
     onSuccess: () => { refresh(); toast({ title: "أُلغيت" }); }, onError: onErr });
   const answer = useMutation({ mutationFn: (job: OpusJobView) => opusPost(`/api/physio/opus-jobs/${job.id}/answers`,
     { answers: job.questions.map((x) => ({ id: x.id, answer: (answers[x.id] ?? "").trim() })) }),
-    onSuccess: () => { setAnswers({}); refresh(); toast({ title: "أُرسلت الأجوبة — يكمل Opus" }); }, onError: onErr });
+    onSuccess: () => { setAnswers({}); refresh(); toast({ title: "أُرسلت الأجوبة — يكمل Bionic AI" }); }, onError: onErr });
 
   //  مَن لا يقرأ تفصيلَ الوظيفة (٤٠٣) يرى الحالَ من صفّ المعاينة وحده — ولا شيءَ بلا وظيفة.
   if (q.isError) {
@@ -62,7 +62,7 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
     return (
       <Shell examId={examId}>
         <p className="m-0 text-xs text-slate-700" data-testid={`opus-status-${examId}`}>{summary.status === "succeeded"
-          ? (summary.planStatus === "approved" ? "اعتُمدت خطّةُ Opus." : summary.planStatus === "pending" || summary.planStatus === undefined ? OPUS_AWAITING_LABEL : "حُذفت الخطّةُ التي كتبها Opus.")
+          ? (summary.planStatus === "approved" ? "اعتُمدت خطّةُ Bionic AI." : summary.planStatus === "pending" || summary.planStatus === undefined ? OPUS_AWAITING_LABEL : "حُذفت الخطّةُ التي كتبها Bionic AI.")
           : JOB_STATUS_LABELS[summary.status]}</p>
       </Shell>
     );
@@ -87,9 +87,9 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
 
   return (
     <Shell examId={examId}>
-      {!d.enabled && d.canRun && wantsRun && <p className="m-0 text-xs text-slate-600" data-testid={`opus-disabled-${examId}`}>وكيلُ Opus غيرُ مفعّل على هذا الخادم بعد — تُكتب الخطّةُ يدوياً.</p>}
+      {!d.enabled && d.canRun && wantsRun && <p className="m-0 text-xs text-slate-600" data-testid={`opus-disabled-${examId}`}>وكيلُ Bionic AI غيرُ مفعّل على هذا الخادم بعد — تُكتب الخطّةُ يدوياً.</p>}
       {wantsRun && d.enabled && (gateClosed || blocked) && (
-        <p className="m-0 text-xs text-slate-600" data-testid={`opus-gate-${examId}`}>لا يعمل Opus الآن: {blocked?.reason ?? gate!.reason}</p>
+        <p className="m-0 text-xs text-slate-600" data-testid={`opus-gate-${examId}`}>لا يعمل Bionic AI الآن: {blocked?.reason ?? gate!.reason}</p>
       )}
       {d.approvalNote && (
         <p className="m-0 text-xs text-violet-950 bg-white/70 rounded px-2 py-1" data-testid={`opus-approval-note-${examId}`}>
@@ -119,7 +119,7 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
               <p className="m-0 text-sm"><b>سؤال {ar(i + 1)}:</b> {x.textAr}</p>
               {x.affects === "exam_field" ? (
                 <p className="m-0 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1" data-testid={`opus-question-examfield-${x.id}`}>
-                  هذا عن خانةٍ في المعاينة — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُ Opus عليها.
+                  هذا عن خانةٍ في المعاينة — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُ Bionic AI عليها.
                 </p>
               ) : d.canAnswer ? (
                 <Textarea rows={2} value={answers[x.id] ?? ""} onChange={(e) => setAnswers((a) => ({ ...a, [x.id]: e.target.value }))}
@@ -143,7 +143,7 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
             </Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-red-800">يتوقّف Opus ويضيع ما كتبه حتى الآن — متأكّد؟</span>
+              <span className="text-xs text-red-800">يتوقّف Bionic AI ويضيع ما كتبه حتى الآن — متأكّد؟</span>
               <Button size="sm" variant="destructive" disabled={busy} onClick={() => { setConfirmCancel(false); cancel.mutate(job.id); }}
                 data-testid={`button-opus-cancel-confirm-${examId}`}>نعم، أوقفه</Button>
               <Button size="sm" variant="ghost" onClick={() => setConfirmCancel(false)}>لا</Button>
@@ -154,9 +154,9 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
 
       {job?.status === "needs_exam_revision" && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" data-testid={`opus-finding-${examId}`}>
-          <b>وجد Opus ما لم تسجّله المعاينة{job.newFinding?.textAr ? ":" : ""}</b> {job.newFinding?.textAr ?? (job.kind === "revise" ? "" : errorText(job))}
+          <b>وجد Bionic AI ما لم تسجّله المعاينة{job.newFinding?.textAr ? ":" : ""}</b> {job.newFinding?.textAr ?? (job.kind === "revise" ? "" : errorText(job))}
           {/* وظيفةُ «تعديل» لا تُعاد بعد الحفظ: الطلبُ للمعتمِد، يعيده هو بعد تعديل المعاينة (وغيرُه لا يرى ما وجده — §4.hb ٣.٦). */}
-          {job.kind === "revise" ? " — عدّل المعاينة من زرّ «تعديل» أعلاه، ثمّ يعيد المعتمِدُ طلبَه إلى Opus." : " — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُه بعد الحفظ."}
+          {job.kind === "revise" ? " — عدّل المعاينة من زرّ «تعديل» أعلاه، ثمّ يعيد المعتمِدُ طلبَه إلى Bionic AI." : " — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُه بعد الحفظ."}
         </div>
       )}
 
@@ -167,10 +167,10 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
             <div className="min-w-0 space-y-1">
               {job.decline ? (
                 <>
-                  <div><b>يرى Opus ألّا تُكتب خطّةٌ الآن:</b> {job.decline.reasonAr}</div>
+                  <div><b>يرى Bionic AI ألّا تُكتب خطّةٌ الآن:</b> {job.decline.reasonAr}</div>
                   {job.decline.recommendedActionAr && <div><b>المقترح:</b> {job.decline.recommendedActionAr}</div>}
                 </>
-              ) : <div><b>{job.kind === "revise" ? "لم يكتمل التعديل — بقيت الخطّة كما هي:" : "لم يكتب Opus الخطّة:"}</b> {errorText(job)}</div>}
+              ) : <div><b>{job.kind === "revise" ? "لم يكتمل التعديل — بقيت الخطّة كما هي:" : "لم يكتب Bionic AI الخطّة:"}</b> {errorText(job)}</div>}
               {job.unresolvedCritical.length > 0 && (
                 <ul className="m-0 ps-4 list-disc">{job.unresolvedCritical.map((i) => <li key={i.id}>{i.problemAr}</li>)}</ul>
               )}
@@ -197,9 +197,9 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
         <div className="flex flex-col gap-2" data-testid={`opus-done-${examId}`}>
           <StageList job={job} />
           {d.planStatus === "approved" ? (
-            <p className="m-0 text-xs font-semibold text-emerald-800">اعتُمدت خطّةُ Opus.</p>
+            <p className="m-0 text-xs font-semibold text-emerald-800">اعتُمدت خطّةُ Bionic AI.</p>
           ) : d.planStatus === null ? (
-            <p className="m-0 text-xs text-slate-700">حُذفت الخطّةُ التي كتبها Opus.</p>
+            <p className="m-0 text-xs text-slate-700">حُذفت الخطّةُ التي كتبها Bionic AI.</p>
           ) : !d.canSeeProposal ? (
             <p className="m-0 text-xs font-semibold text-amber-900" data-testid={`opus-awaiting-${examId}`}>{OPUS_AWAITING_LABEL}</p>
           ) : null}
@@ -241,8 +241,7 @@ function Shell({ examId, children }: { examId: number; children: React.ReactNode
     <div dir="rtl" className="mb-2 rounded-lg border border-violet-300 bg-violet-50/60 p-2 flex flex-col gap-2 min-w-0" style={{ boxShadow: "inset 0 3px 0 rgb(109 40 217)" }}
       data-testid={`exam-opus-${examId}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-bold text-violet-900 flex items-center gap-1"><Sparkles className="w-4 h-4" /> Opus يفحص الحالة</span>
-        <span className="rounded-full bg-violet-100 text-violet-800 px-2 py-0.5 text-[11px] font-semibold" dir="ltr">{OPUS_MODEL_ID}</span>
+        <span className="text-xs font-bold text-violet-900 flex items-center gap-1"><Sparkles className="w-4 h-4" /> Bionic AI يفحص الحالة</span>
       </div>
       {children}
     </div>

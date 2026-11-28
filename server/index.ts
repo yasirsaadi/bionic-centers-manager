@@ -14,6 +14,7 @@ import { startNotificationDispatcher } from "./patient_notifications/dispatcher"
 import { startInstallmentReminders } from "./installments/reminders";
 import { startHospitalRatioReconcile } from "./hospital_ratio/scheduler";
 import { installJsonParsers } from "./json_body";
+import { installAiBrandJson } from "./ai_brand_json";
 
 // Resilience: a single failing request must NEVER take down the whole service.
 // In Express, an async handler that rejects (or any stray promise rejection)
@@ -61,6 +62,9 @@ installJsonParsers(app, (req, _res, buf) => {
 });
 
 app.use(express.urlencoded({ extended: false }));
+
+//  «Bionic AI» لا «Opus» في كلّ ردّ — والمخزَّنُ بالاسم القديم يُبدَّل عند العرض وحده (`server/ai_brand_json.ts`).
+installAiBrandJson(app);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

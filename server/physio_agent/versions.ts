@@ -106,7 +106,7 @@ export async function snapshotFromGatedTx(ex: any, gated: GatedPlan, p: { patien
   return {
     schema: 1, mode: gated.mode, protocolId: gated.mode === "library" ? gated.protocolId : null, draftProtocolId: p.draftProtocolId ?? null,
     protocolCode: pr?.code ?? null,
-    titleAr: (gated.libraryProtocol?.titleAr || pr?.title_ar || "خطّة Opus").slice(0, 300), titleEn: (gated.libraryProtocol?.titleEn || pr?.title_en || "Opus plan").slice(0, 300),
+    titleAr: (gated.libraryProtocol?.titleAr || pr?.title_ar || "خطّة Bionic AI").slice(0, 300), titleEn: (gated.libraryProtocol?.titleEn || pr?.title_en || "Bionic AI plan").slice(0, 300),
     track: gated.track, startingPhase: gated.startingPhase, totalSessions: gated.totalSessions, sessionsPerWeek: gated.sessionsPerWeek, sessionMinutes: gated.sessionMinutes,
     texts: { goalsAr: gated.goalsAr, goalsEn: gated.goalsEn, precautionsAr: gated.precautionsAr, precautionsEn: gated.precautionsEn, stopRulesAr: gated.stopRulesAr,
       stopRulesEn: gated.stopRulesEn, homeProgramAr: gated.homeProgramAr, homeProgramEn: gated.homeProgramEn, rationaleAr: gated.rationaleAr, rationaleEn: gated.rationaleEn },
@@ -239,7 +239,7 @@ async function materializeTx(tx: any, planId: number, s: PlanSnapshot, extra: { 
 }
 /** خطّةٌ منتظرة تُعاد كتابتُها من اقتراحٍ جديد (§4.hb ٣.٦ — «أعِده إلى Opus») — الحالةُ تبقى «بانتظار الاعتماد». */
 export async function materializeAwaitingTx(tx: any, planId: number, s: PlanSnapshot, jobId: number): Promise<void> {
-  await materializeTx(tx, planId, s, { actor: { userId: null, name: "Claude Opus" }, awaiting: { agentJobId: jobId, protocolId: s.protocolId } });
+  await materializeTx(tx, planId, s, { actor: { userId: null, name: "Bionic AI" }, awaiting: { agentJobId: jobId, protocolId: s.protocolId } });
 }
 
 // ══ إثباتُ البوّابات وكتابةُ النسخة ════════════════════════════════════════════════════════════════════
@@ -413,7 +413,7 @@ export async function markProposalsStaleTx(tx: any, p: { planId?: number; patien
   const r = rows(await tx.execute(sql`UPDATE physio_agent_jobs SET proposal_status = 'stale', proposal_reason = ${p.reason}, updated_at = now()
      WHERE proposal_status = 'pending' AND ${cond} RETURNING id, branch_id`));
   for (const x of r) await logAudit({ entityType: "physio_agent_job", entityId: Number(x.id), action: "proposal_stale", userId: p.actor.userId, userName: p.actor.name,
-    branchId: x.branch_id, newValues: { reason: p.reason }, notes: `قدُم اقتراحُ Opus: ${JOB_ERROR_TEXTS[p.reason] ?? p.reason}`, tx });
+    branchId: x.branch_id, newValues: { reason: p.reason }, notes: `قدُم اقتراحُ Bionic AI: ${JOB_ERROR_TEXTS[p.reason] ?? p.reason}`, tx });
   return r.length;
 }
 /** **خطّةٌ تُغلق** (إيقاف · تخرّج · حذف) — وظيفةُ «تعديل» عليها تُلغى، واقتراحُها المنتظر يقدُم. */
@@ -438,12 +438,12 @@ export async function approveOpusPlanVersioned(planId: number, body: any, actor:
   hasActivePlan: (ex: any, patientId: number) => Promise<boolean>;
   saveDraftProtocolTx: (tx: any, planId: number, result: Record<string, any>, actor: Actor) => Promise<{ protocolId: number; cardIds: Map<string, number> }>;
 }): Promise<ApproveOk | Refused> {
-  if (body?.fromProposal !== true) return refused(400, "opus_use_proposal_view", "تُعتمد خطّةُ Opus من «الخطّة المقترحة» بعد قراءتها");
+  if (body?.fromProposal !== true) return refused(400, "opus_use_proposal_view", "تُعتمد خطّةُ Bionic AI من «الخطّة المقترحة» بعد قراءتها");
   return db.transaction(async (tx) => {
     const plan = await lockPlanForOpus(tx, planId);
-    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "not_awaiting", "الخطّةُ ليست خطّةَ Opus منتظرة");
+    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "not_awaiting", "الخطّةُ ليست خطّةَ Bionic AI منتظرة");
     const running = rows(await tx.execute(sql`SELECT id FROM physio_agent_jobs WHERE plan_id = ${planId} AND kind = 'revise' AND status IN ('queued','running','needs_answers') LIMIT 1`))[0];
-    if (running) return refused(409, "opus_revision_running", "يعيد Opus كتابةَ الخطّة بملاحظتك الآن — انتظر حتى يُنهي أو ألغِ الطلب");
+    if (running) return refused(409, "opus_revision_running", "يعيد Bionic AI كتابةَ الخطّة بملاحظتك الآن — انتظر حتى يُنهي أو ألغِ الطلب");
     const job = plan.agent_job_id ? rows(await tx.execute(sql`SELECT * FROM physio_agent_jobs WHERE id = ${plan.agent_job_id} FOR UPDATE`))[0] : null;
     const result = (job?.result ?? {}) as Record<string, any>;
     //  الاعتمادُ لما قرأه المعتمِد (D1): الوظيفةُ نفسُها وبصمةُ اقتراحها.
@@ -508,10 +508,10 @@ export async function approveOpusPlanVersioned(planId: number, body: any, actor:
     await logAudit({ entityType: "physio_plan", entityId: planId, action: "approve", userId: actor.userId, userName: actor.name, branchId: plan.branch_id,
       oldValues: { status: plan.status }, newValues: { status: "approved", origin: "opus", acknowledgedIssueIds: Array.from(acks), draftProtocolId, version, basis: snapshot.basis,
         snapshotHash: hashOf(snapshot) },
-      notes: `اعتُمدت خطّةُ Opus — ${versionLabel(1)}${draftProtocolId ? ` وحُفظت بروتوكولاً مسوّدة #${draftProtocolId}` : ""}`, ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
+      notes: `اعتُمدت خطّةُ Bionic AI — ${versionLabel(1)}${draftProtocolId ? ` وحُفظت بروتوكولاً مسوّدة #${draftProtocolId}` : ""}`, ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
     if (plan.created_by) {
       await enqueueStaffEvent(tx, { event: "physio_plan_decided", targetUserIds: [Number(plan.created_by)], excludeUserId: actor.userId,
-        text: `✅ اعتُمدت خطّة Opus: ${plan.title_ar} — ${actor.name ?? ""}`, linkPath: `/physio/plans/${planId}` });
+        text: `✅ اعتُمدت خطّة Bionic AI: ${plan.title_ar} — ${actor.name ?? ""}`, linkPath: `/physio/plans/${planId}` });
     }
     return { ok: true as const, after, draftProtocolId, version };
   });
@@ -523,7 +523,7 @@ export interface EditPreview {
   gateHash: string; noChange: boolean;
 }
 async function editCandidate(ex: any, plan: Record<string, any>, raw: any): Promise<{ base: VersionRow; preview: EditPreview } | Refused> {
-  if (plan.origin !== "opus" || isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "plan_not_amendable", "تُعدَّل من هنا خطّةُ Opus المعتمَدة وحدها");
+  if (plan.origin !== "opus" || isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "plan_not_amendable", "تُعدَّل من هنا خطّةُ Bionic AI المعتمَدة وحدها");
   if (plan.status !== "approved") return refused(409, "plan_closed", "الخطّةُ منتهية — موقوفةٌ أو متخرّجة");
   const base = await currentVersionTx(ex, plan);
   if (!base) return refused(409, "no_version", "لا نسخةَ لهذه الخطّة");
@@ -592,7 +592,7 @@ export async function enqueueAmend(planId: number, body: any, actor: Actor): Pro
   try {
     return await db.transaction(async (tx) => {
       const plan = await lockPlanForOpus(tx, planId);
-      if (plan.origin !== "opus" || isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "plan_not_amendable", "يُطلب التعديلُ على خطّة Opus المعتمَدة");
+      if (plan.origin !== "opus" || isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "plan_not_amendable", "يُطلب التعديلُ على خطّة Bionic AI المعتمَدة");
       if (plan.status !== "approved") return refused(409, "plan_closed", "الخطّةُ منتهية — موقوفةٌ أو متخرّجة");
       const current = await ensureVersionOneTx(tx, plan, actor);
       if (Number(body?.baseVersion) !== current) return refused(409, "version_conflict", "عُدّلت الخطّةُ من غيرك — أُعيد تحميلُها", { currentVersion: current });
@@ -621,8 +621,8 @@ export async function createAmendProposalTx(job: JobRecord, me: string, build: (
       await tx.execute(sql`UPDATE physio_agent_jobs SET status = ${status}, error_code = ${code}, error = ${code ? JOB_ERROR_TEXTS[code] ?? code : null}, error_detail = ${detail},
           result = ${JSON.stringify({ ...result, ...extra })}::jsonb, finished_at = now(), locked_by = NULL, locked_at = NULL,
           proposal_status = ${proposal ? "pending" : null}, updated_at = now() WHERE id = ${job.id}`);
-      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Claude Opus", branchId: job.branchId,
-        newValues: { status, code, detail, proposal }, notes: code ? JOB_ERROR_TEXTS[code] ?? code : "اقترح Opus تعديلاً على الخطّة", tx });
+      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: status, userId: null, userName: "Bionic AI", branchId: job.branchId,
+        newValues: { status, code, detail, proposal }, notes: code ? JOB_ERROR_TEXTS[code] ?? code : "اقترح Bionic AI تعديلاً على الخطّة", tx });
     };
     let code: string | null = null;
     if (!plan) code = "plan_deleted";
@@ -637,7 +637,7 @@ export async function createAmendProposalTx(job: JobRecord, me: string, build: (
     }
     if (code) {
       await finish("cancelled", code, {});
-      await notifyApproversTx(tx, job, `⚠️ لم يقترح Opus تعديلاً: ${JOB_ERROR_TEXTS[code]}`, `/physio/plans/${job.planId ?? ""}`);
+      await notifyApproversTx(tx, job, `⚠️ لم يقترح Bionic AI تعديلاً: ${JOB_ERROR_TEXTS[code]}`, `/physio/plans/${job.planId ?? ""}`);
       return { kind: "cancelled", code };
     }
     const base = (await currentVersionTx(tx, plan!))!;
@@ -649,12 +649,12 @@ export async function createAmendProposalTx(job: JobRecord, me: string, build: (
       const detail = res.blocking.map((b) => b.code).join(",");
       const c = res.blocking.some((b) => b.code === "empty_plan") ? "empty_plan" : "gates_blocking";
       await finish("failed", c, { final: { revision: { baseVersion: base.version, snapshot: res.snapshot, gateLog: res.log } } }, detail);
-      await notifyApproversTx(tx, job, `⚠️ لم يقترح Opus تعديلاً: ${JOB_ERROR_TEXTS[c]}`, `/physio/plans/${job.planId}`);
+      await notifyApproversTx(tx, job, `⚠️ لم يقترح Bionic AI تعديلاً: ${JOB_ERROR_TEXTS[c]}`, `/physio/plans/${job.planId}`);
       return { kind: "failed", code: c, detail };
     }
     if (sameContent(base.snapshot, res.snapshot)) {
       await finish("failed", "revision_no_change", {});
-      await notifyApproversTx(tx, job, `⚠️ لم يقترح Opus تعديلاً: ${JOB_ERROR_TEXTS.revision_no_change}`, `/physio/plans/${job.planId}`);
+      await notifyApproversTx(tx, job, `⚠️ لم يقترح Bionic AI تعديلاً: ${JOB_ERROR_TEXTS.revision_no_change}`, `/physio/plans/${job.planId}`);
       return { kind: "failed", code: "revision_no_change" };
     }
     const diff = diffSnapshots(base.snapshot, res.snapshot, res.log, "writer");
@@ -663,10 +663,10 @@ export async function createAmendProposalTx(job: JobRecord, me: string, build: (
       fetchedUrls: Array.from(fetched) };
     const sup = rows(await tx.execute(sql`UPDATE physio_agent_jobs SET proposal_status = 'superseded', proposal_reason = 'proposal_new_request', updated_at = now()
         WHERE plan_id = ${job.planId} AND proposal_status = 'pending' AND id <> ${job.id} RETURNING id`));
-    for (const x of sup) await logAudit({ entityType: "physio_agent_job", entityId: Number(x.id), action: "proposal_superseded", userName: "Claude Opus", branchId: job.branchId,
+    for (const x of sup) await logAudit({ entityType: "physio_agent_job", entityId: Number(x.id), action: "proposal_superseded", userName: "Bionic AI", branchId: job.branchId,
       newValues: { by: job.id }, notes: JOB_ERROR_TEXTS.proposal_new_request, tx });
     await finish("succeeded", null, { final: { ...(result.final ?? {}), revision } }, null, true);
-    await notifyApproversTx(tx, job, `🤖 اقترح Opus تعديلاً على ${versionLabel(base.version)} — راجِع الفرق واحفظه`, `/physio/plans/${job.planId}?proposal=${job.id}`);
+    await notifyApproversTx(tx, job, `🤖 اقترح Bionic AI تعديلاً على ${versionLabel(base.version)} — راجِع الفرق واحفظه`, `/physio/plans/${job.planId}?proposal=${job.id}`);
     return { kind: "succeeded" };
   });
 }
@@ -696,7 +696,7 @@ export async function acceptProposal(jobId: number, body: any, actor: Actor): Pr
     if (String(body?.proposalHash ?? "") !== String(rev.proposalHash)) return refused(409, "proposal_changed", "تغيّر الاقتراحُ منذ فتحتَه — أُعيد تحميلُه");
     const exam = await loadExam(tx, job.examId);
     if (!exam || exam.cancelled || fingerprintOf(exam) !== job.examFingerprint || (await newestV2ExamId(tx, job.patientId)) !== job.examId) {
-      return stale("exam_changed", "proposal_stale", "عُدّلت المعاينةُ أو وُقّعت أحدث بعد الاقتراح — اطلب من Opus تعديلاً جديداً");
+      return stale("exam_changed", "proposal_stale", "عُدّلت المعاينةُ أو وُقّعت أحدث بعد الاقتراح — اطلب من Bionic AI تعديلاً جديداً");
     }
     if (!(await examAgentGate(job.examId, tx)).allowed) return stale("gate_closed", "proposal_stale", JOB_ERROR_TEXTS.gate_closed);
     const majors = unresolvedMajorsOf(job.result);
@@ -728,7 +728,7 @@ export async function acceptProposal(jobId: number, body: any, actor: Actor): Pr
       newValues: { version, acks: Array.from(acks) }, notes: note ?? undefined, ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
     await logAudit({ entityType: "physio_plan", entityId: Number(plan.id), action: "opus_version", userId: actor.userId, userName: actor.name, branchId: plan.branch_id,
       oldValues: { version: base.version, hash: base.snapshotHash }, newValues: { version, how: "opus_revision", jobId, hash: hashOf(res.snapshot), diff: rev.diffSummaryAr },
-      notes: `${versionLabel(version)} — تعديلٌ من Opus`, ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
+      notes: `${versionLabel(version)} — تعديلٌ من Bionic AI`, ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
     await notifyVersionedTx(tx, plan, version, "opus_revision", rev.diffSummaryAr ?? "", actor);
     const after = rows(await tx.execute(sql`SELECT * FROM physio_plans WHERE id = ${plan.id}`))[0];
     return { ok: true as const, version, plan: after };
@@ -746,7 +746,7 @@ export async function discardProposal(jobId: number, body: any, actor: Actor): P
     await tx.execute(sql`UPDATE physio_agent_jobs SET proposal_status = 'discarded', proposal_reason = ${note}, proposal_decided_by = ${actor.userId},
         proposal_decided_by_name = ${actor.name}, proposal_decided_at = now(), updated_at = now() WHERE id = ${jobId}`);
     await logAudit({ entityType: "physio_agent_job", entityId: jobId, action: "proposal_discarded", userId: actor.userId, userName: actor.name, branchId: j.branch_id,
-      newValues: { note }, notes: "تُجوهل اقتراحُ Opus", ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
+      newValues: { note }, notes: "تُجوهل اقتراحُ Bionic AI", ipAddress: actor.ip ?? null, userAgent: actor.userAgent ?? null, tx });
     return { ok: true as const };
   });
 }
@@ -757,7 +757,7 @@ export async function enqueueReturn(planId: number, body: any, actor: Actor, opu
   try {
     return await db.transaction(async (tx) => {
       const plan = await lockPlanForOpus(tx, planId);
-      if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "not_awaiting", "الخطّةُ ليست خطّةَ Opus تنتظر الاعتماد");
+      if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) return refused(409, "not_awaiting", "الخطّةُ ليست خطّةَ Bionic AI تنتظر الاعتماد");
       if (!plan.source_exam_id) return refused(409, "no_live_exam", "لا معاينةَ لهذه الخطّة");
       const staleness = await opusStaleness(tx, plan);
       const job = await enqueueReviseTx(tx, { plan, scope: "return", note: String(body?.note ?? ""), actor, examId: Number(plan.source_exam_id), staleness });

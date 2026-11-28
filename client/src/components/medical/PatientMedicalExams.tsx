@@ -687,7 +687,7 @@ ${addenda}
                       review={exam.redFlagReview ?? null} gate={exam.agentGate ?? null} examinerId={exam.doctorId ?? null}
                       isAuthor={exam.doctorId != null && exam.doctorId === data?.userId} canApprove={Boolean(data?.canApproveRedFlags)} />
                   )}
-                  {/*  **Opus يكتب الخطّةَ من المعاينة** (§4.ha) — للمعاينة الإلزامية وحدها؛ والخادمُ يقول مَن يشغّل ومَن يرى. */}
+                  {/*  **Bionic AI يكتب الخطّةَ من المعاينة** (§4.ha) — للمعاينة الإلزامية وحدها؛ والخادمُ يقول مَن يشغّل ومَن يرى. */}
                   {exam.caseType === "physiotherapy" && isExamV2(exam.assessment) && (
                     <OpusPanel examId={exam.id} patientId={patientId} gate={exam.agentGate ?? null} summary={exam.opusJob ?? null} />
                   )}

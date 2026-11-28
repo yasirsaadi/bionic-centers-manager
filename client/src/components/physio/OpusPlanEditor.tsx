@@ -131,8 +131,8 @@ export function OpusPlanEditor({ planId, patientId, branchId, opusVersion, sessi
       </div>
       {(revisionRunning || hasPendingProposal) && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950" data-testid="opus-editor-opus-warning">
-          {revisionRunning && "يعدّل Opus هذه الخطّةَ الآن بطلبٍ من معتمِد — حفظُك يوقف طلبَه، ويُقال لطالبه. "}
-          {hasPendingProposal && "لـ Opus اقتراحٌ ينتظر قراراً على هذه الخطّة — حفظُك يُسقطه فلا يُحفظ بعدها."}
+          {revisionRunning && "يعدّل Bionic AI هذه الخطّةَ الآن بطلبٍ من معتمِد — حفظُك يوقف طلبَه، ويُقال لطالبه. "}
+          {hasPendingProposal && "لـ Bionic AI اقتراحٌ ينتظر قراراً على هذه الخطّة — حفظُك يُسقطه فلا يُحفظ بعدها."}
         </div>
       )}
       {changedUnderneath && (
@@ -310,7 +310,7 @@ export function OpusPlanEditor({ planId, patientId, branchId, opusVersion, sessi
         {confirmSave ? (
           <>
             <span className="text-xs text-amber-950" data-testid="opus-edit-save-confirm-text">
-              {revisionRunning ? "يتوقّف طلبُ Opus الجاري" : "يسقط اقتراحُ Opus المنتظر"} ويُحفظ تعديلُك نسخةً {ar(baseVersion + 1)} — متأكّد؟
+              {revisionRunning ? "يتوقّف طلبُ Bionic AI الجاري" : "يسقط اقتراحُ Bionic AI المنتظر"} ويُحفظ تعديلُك نسخةً {ar(baseVersion + 1)} — متأكّد؟
             </span>
             <Button className="gap-1 bg-emerald-700 hover:bg-emerald-800" disabled={!canSave || save.isPending} onClick={() => { setConfirmSave(false); save.mutate(); }} data-testid="button-opus-edit-save-confirm">
               <Save className="w-4 h-4" /> نعم، احفظ

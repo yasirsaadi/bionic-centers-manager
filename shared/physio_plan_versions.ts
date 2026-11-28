@@ -78,7 +78,7 @@ export const EMPTY_PROTOCOL_TEXTS: SnapProtocolTexts = { goals: null, goalsEn: n
 // ══ التسميات ═══════════════════════════════════════════════════════════════════════════════════════════
 export const VERSION_HOWS = ["approval", "direct_edit", "opus_revision"] as const;
 export type VersionHow = (typeof VERSION_HOWS)[number];
-export const VERSION_HOW_LABELS: Record<VersionHow, string> = { approval: "الاعتماد", direct_edit: "تعديلٌ مباشر", opus_revision: "تعديلٌ من Opus" };
+export const VERSION_HOW_LABELS: Record<VersionHow, string> = { approval: "الاعتماد", direct_edit: "تعديلٌ مباشر", opus_revision: "تعديلٌ من Bionic AI" };
 export const versionLabel = (n: number): string => `النسخة ${arDigits(n)}`;
 /** سببُ النسخة الثانية حين عُدّلت الخطّةُ قبل نظام النسخ (§4.hb ١.٢) — بصدقٍ: لا يُعرف مَن ولا متى ولا أيُّ الجلسات بعدها. */
 export const BACKFILL_DIVERGENT_REASON = "تعديلاتٌ قبل نظام النسخ — لا يُعرف مَن ومتى ولا أيُّ الجلسات بعدها";
@@ -438,8 +438,8 @@ export function snapshotFromAmendDelta(base: PlanSnapshot, s: SubmittedPlan, x: 
   for (const n of s.phaseNotes) {
     const ph = c.phases.find((p) => p.position === n.phase);
     if (!ph) continue;
-    ph.notes = [ph.notes, `Opus: ${n.noteAr}`].filter(Boolean).join("\n");
-    if (n.noteEn) ph.notesEn = [ph.notesEn, `Opus: ${n.noteEn}`].filter(Boolean).join("\n");
+    ph.notes = [ph.notes, `Bionic AI: ${n.noteAr}`].filter(Boolean).join("\n");
+    if (n.noteEn) ph.notesEn = [ph.notesEn, `Bionic AI: ${n.noteEn}`].filter(Boolean).join("\n");
   }
   c.phaseNotes = [...base.phaseNotes, ...s.phaseNotes];
   if (c.totalSessions && base.totalSessions && c.totalSessions !== base.totalSessions) c.phases = rescalePhaseRanges(c.phases, base.totalSessions, c.totalSessions);

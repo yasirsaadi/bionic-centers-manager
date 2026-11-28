@@ -91,7 +91,7 @@ export async function recordAssessment(planId: number, body: unknown, actor: Act
       const pt = ((await tx.execute(sql`SELECT p.name, p.patient_code, b.name AS branch FROM patients p LEFT JOIN branches b ON b.id = ${plan.branchId}
           WHERE p.id = ${plan.patientId}`)) as any).rows[0];
       await enqueueStaffEvent(tx, { event: "physio_opus_plan_ready", excludeUserId: actor.userId,
-        text: `📝 قرّر ${actor.name ?? "المعالج"} في تقييمٍ أنّ خطّة Opus تحتاج تعديلاً — يعدّلها المعتمِد${input.notes ? ` (${input.notes.slice(0, 200)})` : ""}: ${pt?.name ?? `#${plan.patientId}`}${pt?.patient_code ? ` (${pt.patient_code})` : ""}${pt?.branch ? ` — ${pt.branch}` : ""}`,
+        text: `📝 قرّر ${actor.name ?? "المعالج"} في تقييمٍ أنّ خطّة Bionic AI تحتاج تعديلاً — يعدّلها المعتمِد${input.notes ? ` (${input.notes.slice(0, 200)})` : ""}: ${pt?.name ?? `#${plan.patientId}`}${pt?.patient_code ? ` (${pt.patient_code})` : ""}${pt?.branch ? ` — ${pt.branch}` : ""}`,
         linkPath: `/physio/plans/${planId}` });
     }
     return { row, before: plan, after };
