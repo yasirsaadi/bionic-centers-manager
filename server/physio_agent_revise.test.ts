@@ -23,7 +23,7 @@ import { applyProductionChecks } from "./test_fixtures/production_checks";
 import { JOB_ERROR_TEXTS, normalizeSourceUrl, parseSubmittedPlan } from "@shared/physio_agent";
 import { findAuthoredLeaks, patientIdentifierSet, redactDeep, stripNoteEcho } from "@shared/physio_agent_privacy";
 import {
-  applyPlanEdit, canonicalJson, composePlanColumns, diffSnapshots, diffSummaryAr, editFromSnapshot, parsePlanEdit, snapshotFromAmendDelta, FORBIDDEN_LINE_PREFIX,
+  applyPlanEdit, canonicalJson, snapshotContent, composePlanColumns, diffSnapshots, diffSummaryAr, editFromSnapshot, parsePlanEdit, snapshotFromAmendDelta, FORBIDDEN_LINE_PREFIX,
   type PlanSnapshot,
 } from "@shared/physio_plan_versions";
 import { applyEditGates, type EditGateContext } from "@shared/physio_plan_edit_gates";
@@ -215,6 +215,35 @@ async function main() {
       return ch.map((c) => c.after); })(),
     [{ use: "adjunct", minutes: 10, everyDays: null, times: null, modelId: "btl-4825s-electro", program: null, fallback: [["frequency_hz", 100, "https://x.org/a"]] },
       { dose: [3, 12, null, null, null] }]);
+  //  مراجعةُ Codex على #775: كلُّ حقلٍ محفوظ يغيّر الفرق — لا «لا تغيير» يحفظ نصّاً لم يُرَ (الإنكليزيُّ منه خاصّة).
+  same("P.13 **كلُّ حقلٍ في المحتوى يظهر في الفرق** — كلُّ ورقةٍ في اللقطة تُغيَّر وحدها فلا يكون الفرقُ فارغاً", (() => {
+    const rich = (): PlanSnapshot => { const s = baseSnap(); s.measuresOwn = true;
+      s.measures = [{ code: "pain", nameAr: "الألم", nameEn: "Pain", unitAr: null, unitEn: null, min: 0, max: 10, higherIsBetter: false }];
+      s.sources = [{ title: "مصدر", url: "https://x.org/a", org: "X", year: 2024, usedFor: "y", addedBy: "opus", fetchedInJob: 1 } as any];
+      s.phaseNotes = [{ phase: 1, noteAr: "م", noteEn: null }]; s.track = { nameAr: "م", nameEn: "T", whyEn: "w" }; return s; };
+    const content = JSON.parse(JSON.stringify(snapshotContent(rich())));
+    const paths: (string | number)[][] = [];
+    const walk = (v: any, path: (string | number)[]) => {
+      if (v !== null && typeof v === "object") { for (const k of Object.keys(v)) walk(v[k], [...path, Array.isArray(v) ? Number(k) : k]); return; }
+      paths.push(path);
+    };
+    walk(content, []);
+    const missed: string[] = [];
+    for (const path of paths) {
+      if (path[0] === "schema") continue;
+      const b = rich() as any; let o = b; for (const k of path.slice(0, -1)) o = o[k];
+      const k = path.at(-1)!; const v = o[k];
+      o[k] = typeof v === "string" ? `${v}x` : typeof v === "number" ? v + 1 : typeof v === "boolean" ? !v : "z";
+      if (diffSnapshots(rich(), b).empty) missed.push(path.join("."));
+    }
+    return [paths.length > 100, missed]; })(), [true, []]);
+  same("P.13ب **الاسمُ الإنكليزيّ للمرحلة يُسمّى في الفرق** «بالإنكليزية»", (() => {
+    const a = baseSnap(); const b = baseSnap(); b.phases[0].nameEn = "One — new"; b.phases[0].goalsEn = "Goal";
+    return diffSnapshots(a, b).sections.flatMap((x) => x.changes).map((c) => c.labelAr); })(), ["أولى — الأهدافُ بالإنكليزية", "أولى — الاسمُ بالإنكليزية"]);
+  same("P.14 **مقياسٌ جديد باسمَيه يمرّ في التعديل المباشر** وبلا الإنكليزيّ تحذفه البوّابة", (() => {
+    const m = { code: "mnew", nameAr: "الألم", nameEn: "Pain", unitAr: null, unitEn: null, min: 0, max: 10, higherIsBetter: false };
+    const run = (nameEn: string) => dgate(edited((e) => { e.measures = [{ ...m, nameEn }]; })).log.some((g: any) => g.code === "measure_dropped");
+    return [run("Pain"), run("")]; })(), [false, true]);
   same("P.11 **«اختصر» بعد انقطاع الرسالة الأولى يُدرج قبل «كتلة التعديل»** فتبقى آخرَ كتلة، وفي غيرها آخراً",
     [(withTruncationNote([{ role: "user", content: [{ type: "text", text: "{}" }, { type: "text", text: `${REVISION_BLOCK_OPEN}\nnote: x` }] }] as any)[0].content as any[])
       .map((b: any) => b.text.startsWith(REVISION_BLOCK_OPEN) ? "R" : b.text === "{}" ? "C" : "T"),
