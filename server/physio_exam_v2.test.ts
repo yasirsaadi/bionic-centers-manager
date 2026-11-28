@@ -27,10 +27,13 @@ import {
   answerFollowUps, coreFieldsFor, examAskableFields, examCautionInputsMissing, examGateInputsMissing, examGroupConfirmed, examMustAskBeforePlan,
   examV2SummaryAr, GATE_INPUTS, HIGH_INTENSITY_PROTOCOLS, isNotRecordedReason, redFlagQuestionsOfExam, UNKNOWN_ONSET_REASON, V3_REQUIRED_CORE, type V2Value,
 } from "@shared/physio_exam_v2";
+import { otherGroupTextConflicts, textSafetyHitsOf } from "@shared/physio_exam_text_safety";
 import { readFileSync } from "fs";
 import { db } from "./db";
 import { newestV2ExamId } from "./physio_agent/context";
 import { suggestPlan } from "./physio_plans/suggest";
+import { setExamPatchRaceHookForTests } from "./medical/routes";
+import { reviseExam } from "./medical/store";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -334,6 +337,55 @@ async function main() {
   same("ث.٢٥ **«نعم» خارج مجموعة المعاينة تُحسب في الثالثة** (علامةٌ اختيارية علّمها الفاحص)، ولا تُعدّ ناقصةً بلا جواب",
     [redFlagsOf(minimalExamV3({ core: { group: "lumbar" }, redFlags: { arterial: "yes" } })).map((h) => h.key), miss3({ ...gen, redFlags: { ...gen.redFlags } }).length],
     [["arterial"], 0]);
+  //  §4.hd (مراجعة Codex) — **كلماتُ النصّ الحرّ لا تلتقط مفرداتِ الشكوى اليومية**: «حرقان» ألمٌ لا حرق، و«الصفائح» دمٌ لا معدن…
+  //  ولكلّ نمطٍ ضُيّق: ما لا يُحسب بعد التضييق، وما يبقى يُحسب (المانعُ الحقيقيّ لا يفلت).
+  const safetyOn = minimalExamV3({ core: { pregnant: "no" } });
+  const hitKeys = (t: string) => textSafetyHitsOf(safetyOn, [t]).map((h) => h.key);
+  const libHits = (t: string) => otherGroupTextConflicts([t]);
+  same("ث.٢٦ **الجلد: «حرقان» و«burning pain» وصفُ ألم لا حرق** — والحرقُ والحروقُ وندبةُ الحرق تبقى",
+    [hitKeys("حرقان في القدم"), hitKeys("burning pain in the sole"), hitKeys("حرقة المعدة بعد الأكل"), hitKeys("حرقة بالبول"), hitKeys("burning sensation at night"), hitKeys("حرقه في الساق عند المشي"), hitKeys("حرقة بالرجل والتنميل")],
+    [[], [], [], [], [], [], []]);
+  same("ث.٢٦ب الجلد: ما يبقى مانعاً",
+    [hitKeys("حرق من الدرجة الثانية"), hitKeys("حروق قديمة في اليد"), hitKeys("burn scar on the forearm"), hitKeys("burns on the leg"), hitKeys("انحرقت ايده بالماء"),
+      hitKeys("جروحه ما التأمت"), hitKeys("قرحة سكرية بالقدم"), hitKeys("diabetic foot ulcer")],
+    [["core.skin"], ["core.skin"], ["core.skin"], ["core.skin"], ["core.skin"], ["core.skin"], ["core.skin"], ["core.skin"]]);
+  //  (المراجعة الثانية) — **«حرق» بلواحقه وسوابقه حرقٌ**، و"burned"/"burnt" كذلك؛ و«حرقة» وحدها حرقٌ بمصدرها في الجملة («من المدفأة»، «بالشاي») وإلّا فألمٌ عصبيّ.
+  same("ث.٢٦ج الجلد: صيغُ الحرق كلُّها تبقى مانعة",
+    ["burned hand last week", "burnt skin over the knee", "حرقت ايدها بالشاي", "اثار حرقها على الساق", "وبالحرق جلد رقيق", "للحرق اثار", "حرقين بالساق",
+      "حرقه بالفخذ من المدفئه", "حرقة بالشاي على الساعد"].map(hitKeys),
+    Array(9).fill(["core.skin"]));
+  same("ث.٢٧ الجلد: **قرحةُ المعدة والاثني عشر والقولون ليست جلداً**",
+    [hitKeys("قرحة بالمعدة من المسكنات"), hitKeys("قرحه الاثنى عشر"), hitKeys("peptic ulcer history"), hitKeys("ulcerative colitis")], [[], [], [], []]);
+  same("ث.٢٨ المعدن: **الصفائحُ الدموية وصفيحةُ النموّ والتعويضُ الهرمونيّ ومسمارُ اللحم ليست معدناً** — والصفيحةُ والاستبدالُ والمسمارُ في العظم تبقى",
+    [hitKeys("low platelets"), hitKeys("near the growth plate"), hitKeys("hormone replacement therapy"), hitKeys("vitamin d replacement"), hitKeys("مسمار لحم بالقدم"),
+      hitKeys("plate fixation of tibia"), hitKeys("knee replacement 2023"), hitKeys("مسمار بالعظم")],
+    [[], [], [], [], [], ["core.metalInField"], ["core.metalInField"], ["core.metalInField"]]);
+  same("ث.٢٩ ذيلُ الفرس: **«السلسلة» و«احتباس السوائل» وسرجُ الدراجة ليست أعراضَه** — والسلسُ واحتباسُ البول وخدرُ السرج تبقى",
+    [hitKeys("ألم في السلسلة الظهرية"), hitKeys("احتباس السوائل بالساقين"), hitKeys("saddle height adjusted"),
+      hitKeys("سلس بول جديد"), hitKeys("احتباس بول منذ أمس"), hitKeys("saddle anaesthesia")],
+    [[], [], [], ["redFlags.cauda_equina"], ["redFlags.cauda_equina"], ["redFlags.cauda_equina"]]);
+  same("ث.٣٠ الخثرة: **نقصُ الصفيحات وحالُّ الخثرة والجلطةُ الانصماميّة الدماغية ليست خثرةَ ساقٍ أو رئة** — والخثارُ والانصمامُ الرئويّ يبقيان",
+    [hitKeys("thrombocytopenia"), hitKeys("received thrombolysis"), hitKeys("cardioembolic stroke"), hitKeys("embolic stroke 2024"),
+      hitKeys("pulmonary embolism"), hitKeys("thrombosis left calf")],
+    [[], [], [], [], ["redFlags.dvt_pe"], ["redFlags.dvt_pe"]]);
+  same("ث.٣١ **«منبّهات» (القهوة) ليست جهازاً مزروعاً، و«جلطة نزفية» ليست مضادَّ تخثّر، و«ورمت رجله» تورّمٌ لا ورم** — والمنبّهُ والنزفُ والورمُ تبقى",
+    [hitKeys("يشرب منبهات كثيرة"), hitKeys("جلطة نزفية قبل سنة"), hitKeys("ورمت رجله بعد المشي"),
+      hitKeys("منبه دماغي مزروع"), hitKeys("اضطراب نزفي"), hitKeys("نزف دماغي"), hitKeys("ورم في الفخذ")],
+    [[], [], [], ["core.implants"], ["core.anticoagulant"], ["core.anticoagulant"], ["core.cancer"]]);
+  same("ث.٣١ب **«السكر منظم» و«الضغط منظم» انضباطٌ لا منظّمُ ضربات** — و«عنده منظم ضربات» يبقى",
+    [hitKeys("السكر منظم والضغط منظم"), hitKeys("سكري منظم"), hitKeys("ارتفاع الضغط منظم بالعلاج"), hitKeys("عنده منظم ضربات"), hitKeys("منظم ضربات القلب منذ ٢٠٢٠")],
+    [[], [], [], ["core.implants"], ["core.implants"]]);
+  same("ث.٣٢ **ما أضافه التدقيق**: «ألم بالصدر» و«كسور» تُحسب (كانت تفلت)",
+    [hitKeys("ألم بالصدر عند الجهد"), hitKeys("كسور متعددة بالحادث"), hitKeys("مكسور من سنة")], [["redFlags.cardiac"], ["redFlags.fracture"], ["redFlags.fracture"]]);
+  same("ث.٣٣ **حالاتُ المكتبة لا تُلتقط من غير معناها** (عنقُ الفخذ وعنقُ الرحم، وضربةُ الشمس، و«بعد الظهر»، والملّي ثانية، و«شلل بلا»، والتنكّس، والعقدُ اللمفية، وقرصُ الفكّ)",
+    [libHits("كسر عنق الفخذ"), libHits("fracture neck of femur"), libHits("سرطان عنق الرحم"), libHits("heat stroke"), libHits("يأتي بعد الظهر"), libHits("pulse 100 ms"),
+      libHits("شلل بلا سبب"), libHits("تنكس الفقار العنقي").filter((x) => x !== "الرقبة"), libHits("تضخم العقد الليمفاوية"), libHits("TMJ disc displacement")],
+    [[], [], [], [], [], [], [], [], [], []]);
+  same("ث.٣٣ب وما يبقى حالةً من المكتبة",
+    [libHits("ألم في الرقبة"), libHits("stroke 2024"), libHits("ألم الظهر"), libHits("MS relapse"), libHits("شلل بل"), libHits("التهاب الفقار اللاصق"),
+      libHits("وذمة ليمفاوية بالذراع"), libHits("lumbar disc")],
+    [["الرقبة"], ["الجلطة الدماغية"], ["أسفل الظهر والجذر القطنيّ"], ["التصلّب اللويحيّ"], ["شلل العصب الوجهيّ"], ["التهاب الفقار المحوريّ"], ["الوذمة اللمفية"],
+      ["أسفل الظهر والجذر القطنيّ"]]);
 
   // ══ النقاطُ الحقيقية ══
   await cleanup();
@@ -633,6 +685,63 @@ async function main() {
     const good = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ baseVersion: 1, assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
     same("ث.١٠ **تنقيحُ الثالثة يحمل نسختَه**: بلا رقمٍ ⟵ ٤٠٠، وقديمٌ ⟵ ٤٠٩، والصحيحُ ⟵ ٢٠٠ والنسخةُ ٢",
       [noBase.status, noBase.json?.code, stale.status, stale.json?.code, good.status, good.json?.version], [400, "base_version_required", 409, "exam_version_changed", 200, 2]);
+    //  §4.hd (مراجعة Codex على #779) — **النسخةُ والقسمُ ذرّةٌ واحدة**: تعديلٌ آخر (أو جوابٌ لـ Bionic AI) يلتزم بعد فحوص ما قبل الكتابة
+    //  وقبل أن تُكتب الوصفة ⟵ ٤٠٩، **ولا شيءَ تحرّك** — لا ملفُّ المريض ولا قسمُه. (كان `applyDecision` يلتزم بالقسم ثمّ يردّ `reviseExam`.)
+    const pRace = await physioPatient("سباقُ النسخة");
+    const sRace = await call("POST", `/api/medical/patients/${pRace}/exams`, S.spec, v3Body(minimalExamV3(), { redFlagsBulkNo: true }));
+    const idRace = Number(sRace.json?.id);
+    const fileOf = async () => (await q(`SELECT p.disease_type, p.treatment_type, (SELECT details::text FROM patient_cases c WHERE c.patient_id = p.id AND c.case_type = 'physiotherapy') AS details
+      FROM patients p WHERE p.id = $1`, [pRace])).rows[0];
+    const fileBefore = await fileOf();
+    const raceRx = { diseaseType: "ألمُ الكعب المزمن", treatments: [{ treatmentType: "روبوت", sessionCount: 3 }] };
+    let hookRan = 0;
+    setExamPatchRaceHookForTests(async (examId) => {
+      if (examId !== idRace) return;
+      hookRan++;
+      const cur = (await q(`SELECT * FROM medical_exams WHERE id = $1`, [examId])).rows[0];
+      await reviseExam(examId, { caseType: "physiotherapy", prescription: cur.prescription ?? {}, deviceCost: cur.device_cost, proposedExpertUserId: cur.proposed_expert_user_id,
+        chiefComplaint: cur.chief_complaint, clinicalFindings: cur.clinical_findings, diagnosis: cur.diagnosis, plan: cur.plan, notes: "تعديلٌ آخر في اللحظة نفسِها" },
+        { userId: SPEC, userName: "أخصائيّ" });
+    });
+    let raced: Awaited<ReturnType<typeof call>>;
+    try { raced = await call("PATCH", `/api/medical/exams/${idRace}`, S.spec, pat3({ baseVersion: 1, prescription: raceRx, assessment: minimalExamV3({ core: { diabetes: "no" } }) })); }
+    finally { setExamPatchRaceHookForTests(null); }
+    const rowRace = (await q(`SELECT version, notes FROM medical_exams WHERE id = $1`, [idRace])).rows[0];
+    same("ث.١٠د **نسخةٌ تغيّرت بين الفحص والكتابة ⟵ ٤٠٩ ولا كتابةَ جزئية**: ملفُّ المريض وقسمُه كما كانا، والمعاينةُ على التعديل الآخر وحده",
+      [hookRan, raced.status, raced.json?.code, raced.json?.currentVersion, await fileOf(), Number(rowRace.version), rowRace.notes],
+      [1, 409, "exam_version_changed", 2, fileBefore, 2, "تعديلٌ آخر في اللحظة نفسِها"]);
+    const raceOk = await call("PATCH", `/api/medical/exams/${idRace}`, S.spec, pat3({ baseVersion: 2, prescription: raceRx, assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
+    const fileAfter = await fileOf();
+    same("ث.١٠هـ وعلى النسخة الصحيحة يُكتب القرارُ والتنقيحُ معاً", [raceOk.status, raceOk.json?.version, fileAfter.disease_type, /روبوت/.test(fileAfter.treatment_type ?? "")],
+      [200, 3, "ألمُ الكعب المزمن", true]);
+    //  (المراجعة الثانية) — **ترتيبُ الأقفال: ٩١٩ قبل صفّ المريض**: كاتبٌ آخر بترتيب البيت (الخدمةُ الجديدة والدفعُ والاسترجاع: ٩١٩ ثمّ
+    //  صفُّ المريض) يمسك ٩١٩ والتعديلُ يبدأ، ثمّ يطلب صفَّ المريض. بالترتيب المعكوس يتبادلان الانتظار، وضحيّتُه نقطةُ حفظٍ تُبلَع فيعود
+    //  ٢٠٠ والوصفةُ لم تُكتب — أو يسقط الكاتبُ الآخر. والصحيح: ينتظر التعديلُ ٩١٩، ثمّ يكتب الاثنان.
+    let otherErr: unknown = "لم يجرِ";
+    let otherDone: Promise<void> = Promise.resolve();
+    setExamPatchRaceHookForTests(async (examId) => {
+      if (examId !== idRace) return;
+      const c = await pool.connect();
+      await c.query("BEGIN");
+      await c.query("SELECT pg_advisory_xact_lock(919, $1)", [pRace]);
+      otherDone = (async () => {
+        try {
+          await new Promise((r) => setTimeout(r, 400));
+          await c.query("UPDATE patients SET name = name WHERE id = $1", [pRace]);
+          await c.query("COMMIT");
+          otherErr = null;
+        } catch (e) { otherErr = (e as Error).message; await c.query("ROLLBACK").catch(() => {}); }
+        finally { c.release(); }
+      })();
+    });
+    let lockRace: Awaited<ReturnType<typeof call>>;
+    try {
+      lockRace = await call("PATCH", `/api/medical/exams/${idRace}`, S.spec, pat3({ baseVersion: 3, prescription: { ...raceRx, diseaseType: "ألمُ الكعب بعد ٩١٩" },
+        assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
+      await otherDone;
+    } finally { setExamPatchRaceHookForTests(null); }
+    same("ث.١٠و **التعديلُ يأخذ ٩١٩ قبل صفّ المريض** — لا جمودَ مع كاتبٍ بترتيب البيت، ولا ٢٠٠ بلا وصفته",
+      [otherErr, lockRace.status, lockRace.json?.version, (await fileOf()).disease_type], [null, 200, 4, "ألمُ الكعب بعد ٩١٩"]);
     const toV2 = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ baseVersion: 2, assessment: completeExamV2() }));
     const v2ToV3 = await call("PATCH", `/api/medical/exams/${v2Id}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: minimalExamV3() });
     same("ث.١٠ب **الإصدارُ لا يتبدّل**: الثالثةُ لا تصير ثانية، والثانيةُ لا تصير ثالثة (وبلا `baseVersion` في الثانية كما كان)",
