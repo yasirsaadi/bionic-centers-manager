@@ -18,10 +18,11 @@ import { physioOfferingBranchIds } from "../physio_plans/store";
 import { isExamV2 } from "@shared/physio_exam_v2";
 import { readStoredAssessment } from "@shared/physio_initial_assessment";
 import { GATE_REASONS } from "@shared/physio_agent_gates";
+import { ExamAnswerError, writeAnswersToExamTx } from "./exam_answers";
 const GATE_REASONS_ALL: Record<string, string> = { ...GATE_REASONS, ...EDIT_GATE_REASONS };
 
 export class AgentJobError extends Error {
-  constructor(public status: number, message: string, public code: string) { super(message); }
+  constructor(public status: number, message: string, public code: string, public extra: Record<string, unknown> = {}) { super(message); }
 }
 
 export interface Actor { userId: number | null; name: string | null; ip?: string | null; userAgent?: string | null }
@@ -66,7 +67,8 @@ export function jobView(j: JobRecord, planId: number | null = null, opts: { appr
     ...(opts.approver ? { reviseNote: j.reviseNote, proposalStatus: j.proposalStatus, proposalReason: j.proposalReason, baseVersion: j.baseVersion,
       savedVersion: j.savedVersion, errorDetailAr: jobErrorDetailAr(j.errorCode, j.errorDetail, GATE_REASONS_ALL) } : {}),
     questions: j.status === "needs_answers" ? j.questions : [], questionRounds: j.questionRounds, qa: j.qa.map((r) => ({ round: r.round, at: r.at, byName: r.byName,
-      answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, answer: a.answer })) })),
+      ...(r.examVersion ? { examVersion: r.examVersion } : {}),
+      answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, answer: a.answer, ...(a.fields ? { fields: a.fields, examVersion: a.examVersion ?? null } : {}) })) })),
     failures: j.failures, maxFailures: j.maxFailures, cancelRequested: j.cancelRequested,
     //  وظيفةُ «تعديل» لغير المعتمِد: **نصٌّ ثابتٌ بلا ما كتبه Opus** — سببُ رفضه أو ما وجده قد يعيد ملاحظةَ المعتمِد بحرفها (§4.hb ٣.٦).
     errorCode: j.errorCode, error: hideRevise ? (j.errorCode ? JOB_ERROR_TEXTS[j.errorCode] ?? REVISE_ENDED_TEXT : null) : j.error,
@@ -334,7 +336,7 @@ async function patientLabel(ex: any, patientId: number, branchId: number): Promi
   const r = rows(await ex.execute(sql`SELECT p.name, p.patient_code, b.name AS branch FROM patients p LEFT JOIN branches b ON b.id = ${branchId} WHERE p.id = ${patientId}`))[0];
   return `${r?.name ?? `#${patientId}`}${r?.patient_code ? ` (${r.patient_code})` : ""}${r?.branch ? ` — ${r.branch}` : ""}`;
 }
-async function physioWritersOfBranch(ex: any, branchId: number): Promise<number[]> {
+export async function physioWritersOfBranch(ex: any, branchId: number): Promise<number[]> {
   const r = rows(await ex.execute(sql`SELECT id FROM system_users u WHERE COALESCE(u.is_active, true)
      AND (u.branch_id = ${branchId} OR COALESCE(u.branch_ids, '[]'::jsonb) @> ${JSON.stringify([branchId])}::jsonb)
      AND (u.role = 'physio_specialist' OR COALESCE(u.extra_roles, '[]'::jsonb) ? 'physio_specialist'
@@ -364,7 +366,9 @@ export async function signalJob(job: Pick<JobRecord, "examId" | "requestedBy">):
 }
 
 /** **أجوبةُ الأسئلة** (§4.ha ٤.٥) — والوظيفةُ تعود للطابور بالأجوبة وميزانيةِ إخفاقٍ جديدة؛ والبوّابةُ تُفحص في المعاملة. */
+export const EXAM_CHANGED_SINCE_QUESTIONS_TEXT = "عُدّلت المعاينةُ بعد أن سأل Bionic AI — أُعيد التشغيلُ على المعاينة الجديدة، وستصلك أسئلتُه عليها إن احتاج";
 export async function answerQuestions(jobId: number, raw: unknown, actor: Actor, mayAnswer: (j: JobRecord) => Promise<boolean>): Promise<JobRecord> {
+  let staleEnqueued: JobRecord | null | undefined;
   const job = await db.transaction(async (tx) => {
     const j0 = await getJob(jobId, tx);
     if (!j0) throw new AgentJobError(404, "الوظيفةُ غير موجودة", "job_not_found");
@@ -372,19 +376,75 @@ export async function answerQuestions(jobId: number, raw: unknown, actor: Actor,
     const j = jobOf(rows(await tx.execute(sql`SELECT * FROM physio_agent_jobs WHERE id = ${jobId} FOR UPDATE`))[0]);
     if (!(await mayAnswer(j))) throw new AgentJobError(403, "يجيب كاتبُ معاينة العلاج الطبيعي في فرع المريض أو المعتمِد", "not_answerer");
     if (j.status !== "needs_answers") throw new AgentJobError(409, "لا أسئلةَ مفتوحة على هذه الوظيفة", "no_open_questions");
+    //  §4.hd (المراجعة) — **المعاينةُ ما زالت التي سُئل عليها؟** تعديلٌ مباشر التزم قبل أن يصل خطّافُه (`onExamRevised` بعد الردّ) لا يُكتب فوقه جوابٌ
+    //  ولا تُمحى بصمتُه — تُلغى الوظيفةُ هنا (`exam_changed`) وتُصالَح في المعاملة نفسِها، والردُّ ٤٠٩ فيُعاد تحميلُ اللوح.
+    const examNow = await loadExam(tx, j.examId);
+    if (!examNow || fingerprintOf(examNow) !== j.examFingerprint) {
+      await cancelActiveJobsTx(tx, { patientId: j.patientId, examId: j.examId, reason: "exam_changed", actor });
+      await markStaleOpusPlansTx(tx, { patientId: j.patientId, examId: j.examId, reason: "exam_changed", actor });
+      await (await import("./versions")).markProposalsStaleTx(tx, { patientIds: [j.patientId], examId: j.examId, reason: "exam_changed", actor });
+      staleEnqueued = (await (await import("./reconcile")).reconcilePatientJobs(tx, j.patientId, actor, "exam_revised")).enqueued;
+      return (await getJob(jobId, tx))!;
+    }
     const v = validateAnswers(j.questions, raw);
-    if (!v.ok) throw new AgentJobError(400, v.error, v.code);
+    if (!v.ok) {
+      throw new AgentJobError(400, v.error, v.code === "answer_fields_missing" ? "answer_incomplete_fields" : v.code, v.missing ? { missing: v.missing } : {});
+    }
     const gate = await examAgentGate(j.examId, tx);
     if (!gate.allowed) throw new AgentJobError(409, gate.reason, "gate_closed");
-    const round: QaRound = { round: j.questionRounds + 1, at: new Date().toISOString(), byName: actor.name, answers: v.answers };
+    const roundNo = j.questionRounds + 1;
+    //  §4.hd — **الأجوبةُ عن خانات المعاينة تُكتب فيها** نسخةً جديدة في هذه المعاملة، وبصمةُ الوظيفة تتبعها فتكمل الوظيفةُ التي سألت.
+    let written: Awaited<ReturnType<typeof writeAnswersToExamTx>> | null = null;
+    let fp: string | null = null;
+    if (v.examPatch) {
+      const cp = j.checkpoint ?? {};
+      //  الاستئنافُ بعد الأسئلة يبدأ من الكاتب (`questionCheckpoint`) — فلا خطّةَ مقبولة تُبنى على المعاينة قبل الجواب.
+      if (cp.accepted || cp.acceptedGated || cp.stage || (Array.isArray(cp.drafts) && cp.drafts.length)) {
+        throw new AgentJobError(409, "حالُ الوظيفة لا يسمح بكتابة الجواب في المعاينة — أعد تحميل الصفحة", "job_state_invalid");
+      }
+      if ((await newestV2ExamId(tx, j.patientId)) !== j.examId) throw new AgentJobError(409, "وُقّعت بعدها معاينةٌ أحدث", "not_newest");
+      const examRow = rows(await tx.execute(sql`SELECT doctor_id, branch_id FROM medical_exams WHERE id = ${j.examId}`))[0];
+      const examBranch = examRow?.branch_id == null ? j.branchId : Number(examRow.branch_id);
+      const mayWrite = actor.userId != null && (Number(examRow?.doctor_id) === actor.userId
+        || (await physioWritersOfBranch(tx, examBranch)).includes(actor.userId));
+      try {
+        written = await writeAnswersToExamTx(tx, { examId: j.examId, patch: v.examPatch, actor, jobId, round: roundNo, mayWrite,
+          askedKeys: j.questions.flatMap((q) => q.examFields ?? []) });
+      } catch (e) {
+        if (e instanceof ExamAnswerError) throw new AgentJobError(e.status, e.message, e.code, e.extra);
+        throw e;
+      }
+      for (const a of v.answers) if (a.fields) a.examVersion = written.examVersion;
+      await markStaleOpusPlansTx(tx, { patientId: j.patientId, examId: j.examId, reason: "exam_changed", actor });
+      await (await import("./versions")).markProposalsStaleTx(tx, { patientIds: [j.patientId], examId: j.examId, reason: "exam_changed", actor });
+      const reloaded = await loadExam(tx, j.examId);
+      fp = reloaded ? fingerprintOf(reloaded) : null;
+    }
+    const round: QaRound = { round: roundNo, at: new Date().toISOString(), byName: actor.name, answers: v.answers,
+      ...(written ? { examVersion: written.examVersion } : {}) };
     const up = rows(await tx.execute(sql`UPDATE physio_agent_jobs SET qa = qa || ${JSON.stringify([round])}::jsonb, question_rounds = question_rounds + 1,
         questions = '[]'::jsonb, status = 'queued', stage = NULL, failures = 0, run_after = now(), updated_at = now()
+        ${fp ? sql`, exam_fingerprint = ${fp}` : sql``}
       WHERE id = ${jobId} RETURNING *`))[0];
-    await audit(tx, jobId, "answer", actor, j.branchId, { round: round.round, answers: v.answers.map((a) => ({ id: a.id, length: a.answer.length })) },
-      `أُجيبت أسئلةُ Bionic AI (الجولة ${round.round} من ${MAX_QUESTION_ROUNDS})`);
+    await audit(tx, jobId, "answer", actor, j.branchId, { round: round.round, answers: v.answers.map((a) => ({ id: a.id, length: a.answer.length })),
+      ...(written ? { examVersion: written.examVersion, examFields: written.keys, fingerprintChanged: fp !== j.examFingerprint } : {}) },
+      `أُجيبت أسئلةُ Bionic AI (الجولة ${round.round} من ${MAX_QUESTION_ROUNDS})${written ? ` — وكُتبت في المعاينة (النسخة ${written.examVersion})` : ""}`);
+    if (written) {
+      //  البوّابةُ بعد الكتابة — **علامةُ مجموعةٍ أُجيبت «نعم» في الجواب** (§4.hd، المراجعة) تغلقها: تُلغى الوظيفةُ بسببٍ من النظام (`gate_closed`)
+      //  ويرسلها الفاحصُ للاعتماد كأيّ علامةٍ حمراء.
+      const g2 = await examAgentGate(j.examId, tx);
+      if (!g2.allowed) {
+        await cancelActiveJobsTx(tx, { patientId: j.patientId, examId: j.examId, reason: "gate_closed", actor });
+        return (await getJob(jobId, tx))!;
+      }
+    }
     return jobOf(up);
   });
   await signalJob(job);
+  if (staleEnqueued !== undefined) {
+    if (staleEnqueued) { (await import("./reconcile")).nudgeWorkerNow(); await signalJob(staleEnqueued); }
+    throw new AgentJobError(409, EXAM_CHANGED_SINCE_QUESTIONS_TEXT, "exam_changed");
+  }
   return job;
 }
 

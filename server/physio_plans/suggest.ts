@@ -15,7 +15,10 @@ import {
 import { aiComplete, aiErrorDetail, classifyAiError, isAiEnabled, type AiCompleteParams } from "../ai/provider";
 import { getProtocol } from "../physio_protocols/store";
 import { assessmentPlanLabels, readStoredAssessment } from "@shared/physio_initial_assessment";
-import { anyAssessmentEnglishText, anyAssessmentSummaryAr, assessmentPainWorst, forbiddenDevices, isExamV2, type ForbiddenDevice } from "@shared/physio_exam_v2";
+import {
+  anyAssessmentEnglishText, anyAssessmentSummaryAr, assessmentPainWorst, examCautionInputsMissing, examGroupConfirmed, examV2MissingLabel, forbiddenDevices, isExamV2,
+  type ForbiddenDevice,
+} from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { PlanError, type Actor } from "./store";
 import { examAgentGate } from "../physio_exam_reviews/store";
@@ -24,6 +27,11 @@ export type Completer = (p: AiCompleteParams) => Promise<string>;
 let testCompleter: Completer | null = null;
 /** للاختبار وحده — مزوّدٌ مزيّف يعيد ردوداً جاهزة (لا مفتاحَ في بيئة التطوير). */
 export function setSuggestCompleterForTests(fn: Completer | null): void { testCompleter = fn; }
+export const EXAM_GROUP_UNCONFIRMED_TEXT = "أكمل مجموعةَ التشخيص وحالتَها في المعاينة";
+/** §4.hd (المراجعة) — مدخلاتُ سلامة التمرين التي جعلتها الثانيةُ إلزاميةً تلزم «اقترح خطّة» وفتحَه كما تلزم Bionic AI — بأسمائها. */
+export function examCautionText(keys: readonly string[], group: unknown): string {
+  return `أكمل في المعاينة ما تحتاجه سلامةُ التمرين قبل الخطّة: ${keys.map((k) => examV2MissingLabel(k, group)).join("، ")}`;
+}
 export function suggestEnabled(): boolean { return Boolean(testCompleter) || isAiEnabled(); }
 
 async function complete(p: AiCompleteParams): Promise<Record<string, any>> {
@@ -71,13 +79,15 @@ export async function patientContext(patientId: number) {
   return {
     //  **أيُّ معاينةٍ يقرؤها المساعد** — وبها تُفحص بوّابةُ العلامة الحمراء للإلزامية (§4.gz).
     examId: ex ? Number(ex.id) : null, examIsV2: isExamV2(assessed),
+    //  §4.hd — مجموعةُ التشخيص في معاينة التشخيص الحرّ: بلا تأكيدها لا يُختار بروتوكول (ولا أسئلةَ في هذا الباب).
+    groupConfirmed: examGroupConfirmed(assessed), assessed,
     //  **الأجهزةُ الممنوعة بالمعاينة** (مصفوفةُ الموانع الحتمية) — تُطبَّق في الشيفرة لا في النموذج (مراجعةُ Codex على #770).
     forbidden: ex ? forbiddenDevices(assessed, { today: baghdadTodayYmd() }) : ([] as ForbiddenDevice[]),
     age: clip(pt?.age, 40), medicalCondition: clip(pt?.medicalCondition, 300), presentingComplaint: clip(pt?.presentingComplaint, 1000),
     exam: examHasText ? exam : null,
     //  للشاشة لا للمساعد: سطرُ التقييم بالعربية وبنودُ الخطّة وأسوأُ الألم — تُعرَض بجانب اختيار البروتوكول.
     assessmentView: examHasText && assessed ? {
-      summary: anyAssessmentSummaryAr(assessed), planItems: assessmentPlanLabels(assessed, "ar"), painWorst: assessmentPainWorst(assessed),
+      summary: anyAssessmentSummaryAr(assessed, { diagnosis: ex?.diagnosis }), planItems: assessmentPlanLabels(assessed, "ar"), painWorst: assessmentPainWorst(assessed),
     } : null,
   };
 }
@@ -133,6 +143,7 @@ export async function suggestPlan(p: SuggestInput) {
     const gate = await examAgentGate(ctx.examId);
     if (!gate.allowed) throw new PlanError(409, `لا يُقترح خطّةٌ على هذه المعاينة — ${gate.reason}`);
     redFlagApprovalNote = gate.decisionNote;
+    if (!ctx.groupConfirmed) throw new PlanError(409, EXAM_GROUP_UNCONFIRMED_TEXT, "exam_group_unconfirmed");
   }
   const patient = {
     age: ctx.age, registeredCondition: ctx.medicalCondition, reasonForVisit: ctx.presentingComplaint, physiotherapyExam: ctx.exam, specialistNote: p.note,
@@ -175,6 +186,10 @@ export async function suggestPlan(p: SuggestInput) {
   const allowedRows = usable.filter((d) => !forbiddenWhy.has(d.code));
   if (usable.length && !allowedRows.length) {
     throw new PlanError(422, "أجهزةُ هذا البروتوكول كلُّها ممنوعةٌ لهذا المريض بالمعاينة — اختر بروتوكولاً آخر");
+  }
+  if (ctx.examId !== null && ctx.examIsV2) {
+    const cm = examCautionInputsMissing(ctx.assessed, { deviceCodes: allowedRows.map((d) => d.code), protocolCode: chosen.code ?? null });
+    if (cm.length) throw new PlanError(409, examCautionText(cm, (ctx.assessed as any)?.core?.group), "exam_caution_inputs_missing");
   }
   const allowed: AllowedLine[] = allowedRows.map((d) => ({ deviceId: Number(d.deviceId), minutes: d.minutes, nameAr: d.nameAr, nameEn: d.nameEn }));
   const dose = { sessionsPerWeek: chosen.sessionsPerWeek, durationWeeks: chosen.durationWeeks, sessionMinutes: chosen.sessionMinutes };

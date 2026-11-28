@@ -253,7 +253,8 @@ async function main() {
       prescription: {}, assessment: emptyInitialAssessment(),
     });
     same("ب.٢ب **والاستمارةُ بلا أيّ حقلٍ تُردّ في المعاينة الجديدة** بقائمة الناقص", [bareSheet.status, bareSheet.json?.code,
-      Array.isArray(bareSheet.json?.missing) && bareSheet.json.missing.includes("diagnosis") && bareSheet.json.missing.includes("core.group"), await examCount(pBare)],
+      //  (§4.hd: تُفحص بالإصدار الثالث — التشخيصُ وورقةُ السلامة، والمعدنُ يُسأل فيه دائماً.)
+      Array.isArray(bareSheet.json?.missing) && bareSheet.json.missing.includes("diagnosis") && bareSheet.json.missing.includes("core.metalInField"), await examCount(pBare)],
       [400, "assessment_incomplete", true, 0]);
     const bareOld = await call("POST", `/api/medical/patients/${pBare}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", diagnosis: "", plan: "", notes: "", prescription: {},

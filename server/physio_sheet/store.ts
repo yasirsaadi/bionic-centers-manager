@@ -79,7 +79,7 @@ export async function physioSheetFor(patientId: number, opts: { withMoney: boole
       : str(physioSheetNotesOf({ chiefComplaint: e.chief_complaint, clinicalFindings: e.clinical_findings, plan: e.plan, notes: e.notes }));
     return {
       id: Number(e.id), version: Number(e.version ?? 1), doctorName: String(e.doctor_name ?? ""), signedAt: iso(e.signed_at),
-      diagnosis: str(e.diagnosis) ?? str(rx.diseaseType), treatments, notes, assessment, assessmentSummary: anyAssessmentSummaryAr(assessment),
+      diagnosis: str(e.diagnosis) ?? str(rx.diseaseType), treatments, notes, assessment, assessmentSummary: anyAssessmentSummaryAr(assessment, { diagnosis: e.diagnosis }),
     };
   });
 

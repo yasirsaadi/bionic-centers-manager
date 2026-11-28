@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { physioPlanLine, type PhysioSheetResponse } from "@shared/physio_sheet_view";
 import { PhysioSheetView } from "./PhysioSheetView";
 import { formatDateIraq } from "@/lib/utils";
+import { summaryWithoutDiagnosis } from "@/components/physio/ExamV3Form";
 
 export const physioSheetKey = (patientId: number) => [`/api/patients/${patientId}/physio-sheet`];
 
@@ -53,8 +54,8 @@ export function PhysioSheetBox({ patientId }: { patientId: number }) {
             ? <span className="font-medium" dir="auto">{latest.diagnosis ?? "—"}<span className="text-muted-foreground font-normal"> — {latest.doctorName}{latest.signedAt ? `، ${formatDateIraq(latest.signedAt)}` : ""}</span></span>
             : <span className="text-slate-400">لم تُوقَّع بعد</span>}
         </div>
-        {latest?.assessmentSummary && (
-          <div className="min-w-0 text-slate-600" data-testid="physio-box-assessment">{latest.assessmentSummary}</div>
+        {summaryWithoutDiagnosis(latest?.assessmentSummary, latest?.diagnosis) && (
+          <div className="min-w-0 text-slate-600" data-testid="physio-box-assessment">{summaryWithoutDiagnosis(latest?.assessmentSummary, latest?.diagnosis)}</div>
         )}
         {data.canViewPlan && (
           <div className="min-w-0" data-testid="physio-box-plan">

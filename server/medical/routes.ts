@@ -61,7 +61,11 @@ import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio
 import { latestReviews } from "../physio_exam_reviews/store";
 import { autoReconcile, onExamRevised } from "../physio_agent/reconcile";
 import { latestJobsOfExams, planStatusesOfJobs } from "../physio_agent/store";
-import { agentGateFor, examV2AgeConflict, isExamV2, newestOtherExamReview } from "@shared/physio_exam_v2";
+import { agentGateFor, examRuleset, examV2AgeConflict, isExamV2, newestOtherExamReview, redFlagsOf } from "@shared/physio_exam_v2";
+
+/** §4.hd — «لا شيء ممّا يلي» في التدقيق: مَن ومتى، **وكم «نعم» بقيت عند الحفظ** (المراجعة: علامةٌ عُلّمت بعد الضغطة لا تجعل السطرَ يقول «لا كلُّها»). */
+const bulkNoAuditOf = (session: { userId?: number | null }, assessment: unknown) =>
+  ({ by: session.userId ?? null, at: new Date().toISOString(), yesAtSave: redFlagsOf(assessment).length });
 import { canApproveProtocols } from "@shared/physio_protocols";
 
 type Req = any;
@@ -904,7 +908,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           userId: session.userId,
           userName: doctorName,
           branchId: exam.branchId,
-          newValues: exam,
+          //  §4.hd — «لا شيء ممّا يلي» في العلامات الحمراء: إقرارُ الفاحص بضغطةٍ واحدة يُسجَّل (مَن ومتى) مع المعاينة.
+          newValues: req.body?.redFlagsBulkNo === true ? { ...exam, redFlagsBulkNo: bulkNoAuditOf(session, exam.assessment) } : exam,
           ipAddress: req.ip ?? null,
           userAgent: req.get("user-agent") ?? null,
           notes: `معاينة ${specialtyLabel(caseType)} للمريض ${patient.name ?? patientId} — بتوقيع ${doctorName}`,
@@ -983,6 +988,16 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       //  سجلٍّ سُحبت سلطتُه — تصحيحٌ في مكانٍ لا يُقرأ. والمسار: معاينةٌ جديدة.
       if (await isExamCancelled(examId)) {
         return res.status(409).json({ error: "هذه المعاينة ملغاة — اكتب معاينة جديدة بدل التعديل" });
+      }
+      //  ══ **النسخةُ التي فُتح عليها التعديل** (§4.hd) ══ أجوبةُ Bionic AI تكتب في المعاينة نسخاً، فتعديلٌ فُتح قبلها لا يمحوها صامتاً:
+      //  `baseVersion` إلزاميٌّ لمعاينة الإصدار الثالث، واختياريٌّ لغيرها كما كان؛ والمختلفُ ٤٠٩ — هنا قبل أيّ كتابة، وتحت القفل في `reviseExam`.
+      const baseVersionRaw = req.body?.baseVersion;
+      const baseVersion = Number.isInteger(baseVersionRaw) && baseVersionRaw > 0 ? Number(baseVersionRaw) : undefined;
+      if (baseVersion === undefined && exam.caseType === "physiotherapy" && isExamV2(exam.assessment) && examRuleset(exam.assessment) === "v3") {
+        return res.status(400).json({ error: "أعد تحميل المعاينة ثمّ عدّلها (لا رقمَ لنسختها في الطلب)", code: "base_version_required" });
+      }
+      if (baseVersion !== undefined && baseVersion !== exam.version) {
+        return res.status(409).json({ error: store.EXAM_VERSION_CHANGED_TEXT, code: "exam_version_changed", currentVersion: exam.version });
       }
 
       const caseType = req.body?.caseType ?? exam.caseType;
@@ -1149,6 +1164,14 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (await askCrossRetireIfNeeded(res, exam.patientId, caseType, crossRetire)) return;
 
       const editorName = session.userName?.trim() || "مستخدم";
+      //  §4.hd (المراجعة) — **النسخةُ مرّةً ثانية قبل أوّل كتابة**: جوابٌ لـ Bionic AI قد يلتزم بين الفحص الأوّل وهنا، و`applyDecision` يكتب في القسم
+      //  قبل `reviseExam` — فالردُّ ٤٠٩ يجب أن يسبق القسمَ لا أن يلحقه. (وما بقي من نافذةٍ تحرسه `expectedVersion` تحت القفل في `reviseExam`.)
+      if (baseVersion !== undefined) {
+        const fresh = await store.getExam(examId);
+        if (fresh && fresh.version !== baseVersion) {
+          return res.status(409).json({ error: store.EXAM_VERSION_CHANGED_TEXT, code: "exam_version_changed", currentVersion: fresh.version });
+        }
+      }
       // Same ordering rule as signing: the decision lands on the case first, so
       // a specialty change has a case to point the revised exam at.
       const applied = await applyDecision(exam.patientId, caseType, prescription, null,
@@ -1177,7 +1200,8 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         userName: editorName,
         branchId: exam.branchId,
         oldValues: exam,
-        newValues: { ...revisionValues, version },
+        newValues: { ...revisionValues, version,
+          ...(req.body?.redFlagsBulkNo === true ? { redFlagsBulkNo: bulkNoAuditOf(session, assessment ?? exam.assessment) } : {}) },
         ipAddress: req.ip ?? null,
         userAgent: req.get("user-agent") ?? null,
         notes: auditNote(version),
@@ -1199,7 +1223,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         const fs = await import("../followup/store");
         const { db } = await import("../db");
         updated = await db.transaction(async (tx) => {
-          const revised = await store.reviseExam(examId, revisionValues, editor, { tx });
+          const revised = await store.reviseExam(examId, revisionValues, editor, { tx, expectedVersion: baseVersion });
           await fs.applyExamPriceCorrection({
             followupId: priceVerdict!.kind === "sync" ? priceVerdict!.followupId : 0,
             newPrice: deviceCost, actor: editor, tx,
@@ -1217,7 +1241,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         const { db } = await import("../db");
         const vd = priceVerdict;
         updated = await db.transaction(async (tx) => {
-          const revised = await store.reviseExam(examId, revisionValues, editor, { tx });
+          const revised = await store.reviseExam(examId, revisionValues, editor, { tx, expectedVersion: baseVersion });
           const done = await fs.applyExamPriceCorrectionAfterSale({
             followupId: vd.followupId,
             medicalExamId: examId,
@@ -1232,7 +1256,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
           return revised;
         });
       } else {
-        updated = await store.reviseExam(examId, revisionValues, editor);
+        updated = await store.reviseExam(examId, revisionValues, editor, { expectedVersion: baseVersion });
         await auditFor(updated.version);
       }
 
@@ -1268,6 +1292,9 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       // must read WHY and what to do instead, not a bare 500.
       if (err instanceof DeviceEpisodeError) {
         return res.status(err.status).json({ error: err.message });
+      }
+      if (err instanceof store.ExamVersionChangedError) {
+        return res.status(409).json({ error: err.message, code: "exam_version_changed" });
       }
       //  **وانحرافُ الملفّ التجاري تحت القفل جوابُ عملٍ أيضاً**: المعاملةُ
       //  رجعت كلُّها — لا نسخةَ حُفظت ولا سعرَ تحرّك — والطبيبُ يحتاج أن

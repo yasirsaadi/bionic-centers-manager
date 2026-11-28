@@ -15,6 +15,7 @@
 // وتاريخُ البوتوكس خاناتٌ في النواة (§ب.٦–١٥). والمرجعُ الكامل: `exam_design.json` (تصميمُ المعاينة من البروتوكولات الأربعة والأربعين ونقدُه).
 //
 // هذا الملفُّ **المصدرُ الواحد**: الخادمُ يفحص به قبل أيّ كتابة، والشاشةُ تعرض به وتفحص قبل الإرسال، و«اقترح خطّة» يقرأ نصَّه الإنجليزي.
+import { otherGroupTextConflicts, TEXT_SAFETY_KEYS } from "./physio_exam_text_safety";
 import {
   PT_FORM_CODE, PT_FORM_CODE_V2, PT_SENSATION, assessmentAsEnglishText, assessmentGaps, assessmentGapsText, assessmentSummaryAr,
   emptyInitialAssessment, parseInitialAssessment, sensationNeedsRegions, optLabel, type Opt, type PhysioInitialAssessment,
@@ -23,6 +24,11 @@ import { arDigits } from "./physio_exercises";
 
 export { PT_FORM_CODE_V2 };
 export const PT_FORM_VERSION_V2 = 2;
+/** **«تشخيصٌ حرّ + ورقةُ سلامةٍ قصيرة»** (§4.hd، طلبُ المالك ٢٠٢٦-١١-٢٨): الاستمارةُ نفسُها `BC-PT-02` بإصدارٍ ثالث — التشخيصُ نصٌّ حرٌّ إلزاميّ،
+ *  وورقةُ السلامة (`V3_REQUIRED_CORE`) والعلاماتُ الحمراء الأربعون كلُّها إلزامية، وكلُّ ما عداها اختياريّ يسأل عنه Bionic AI. والمجهولُ أسوأُ قيمه
+ *  في الموانع الحتمية (`forbiddenDevices`). والثانيةُ الموقَّعة تبقى بقواعدها كلِّها. */
+export const PT_FORM_VERSION_V3 = 3;
+export type ExamRuleset = "v2" | "v3";
 
 const o = (code: string, en: string, ar: string): Opt => ({ code, en, ar });
 
@@ -33,11 +39,19 @@ export type RedFlagAnswer = "yes" | "no";
 /** **ما يُخزَّن مع المعاينة** — خاناتُ الأولى كلُّها (المُعادُ منها يُقرأ كما هو) وفوقها الثلاث. */
 export interface PhysioExamV2 extends PhysioInitialAssessment {
   form: typeof PT_FORM_CODE_V2;
-  version: typeof PT_FORM_VERSION_V2;
+  version: typeof PT_FORM_VERSION_V2 | typeof PT_FORM_VERSION_V3;
   core: V2Values;
   module: V2Values;
   redFlags: Record<string, RedFlagAnswer>;
+  /** §4.hd — **مَن كتب الخانةَ بجواب سؤالٍ لـ Bionic AI** (`core.x` · `module.x`). يكتبه الخادمُ وحده (لا يُقبل من العميل)، ويسقط حين يغيّر الفاحصُ الخانة. */
+  fieldSources?: Record<string, ExamFieldSource>;
+  /** §4.hd (المراجعة) — **ما أكّده الفاحصُ من تنبيهات النصّ الحرّ** (`textSafetyHitsOf`): مفاتيحُ ورقة السلامة التي قال فيها «الورقةُ صحيحة رغم ما في النصّ». للثالثة وحدها. */
+  textSafetyAck?: string[];
 }
+export interface ExamFieldSource { by: number | null; byName: string | null; jobId: number; round: number; version: number; at: string }
+
+/** **قواعدُ أيّ إصدار** — `version: 3` ⟵ v3، وغيرُه (والمخزَّنُ بلا إصدار) ⟵ v2. **ولا يقرأ `version` غيرُ هذه الدالّة في هذا الملفّ.** */
+export const examRuleset = (a: unknown): ExamRuleset => (a && typeof a === "object" && (a as any).version === PT_FORM_VERSION_V3 ? "v3" : "v2");
 
 export const isExamV2 = (a: unknown): a is PhysioExamV2 =>
   Boolean(a && typeof a === "object" && (a as any).form === PT_FORM_CODE_V2);
@@ -52,6 +66,7 @@ export interface V2Ctx {
   condition: string | null;
   ageYears: number | null;
   sex: string | null;
+  ruleset: ExamRuleset;
 }
 
 export interface V2Field {
@@ -622,8 +637,10 @@ export const V2_CORE_FIELDS: readonly V2Field[] = [
     o("walker", "Walker", "مشّاية"), o("wheelchair", "Wheelchair", "كرسيّ متحرّك")], REQ),
   { key: "implants", ar: "أجهزةٌ مزروعة", en: "Implanted devices", kind: "multi", options: V2_IMPLANTS, exclusive: "none", required: true },
   tx("implantsOther", "الجهازُ المزروع بالتحديد", "Implanted device (specify)", { ...REQ, when: (c) => Array.isArray(c.core.implants) && c.core.implants.includes("other") }),
-  yn("metalInField", "معدنٌ في منطقة العلاج", "Metal in the treatment area", { ...REQ, when: metalApplies }),
-  { key: "metalTypes", ar: "نوعُ المعدن", en: "Metal type", kind: "multi", options: V2_METAL_TYPES, required: true, when: (c) => metalApplies(c) && c.core.metalInField === "yes" },
+  //  §4.hd — في الإصدار الثالث يُسأل المعدنُ دائماً (المجموعةُ قد لا تُعرف).
+  yn("metalInField", "معدنٌ في منطقة العلاج", "Metal in the treatment area", { ...REQ, when: (c) => c.ruleset === "v3" || metalApplies(c) }),
+  { key: "metalTypes", ar: "نوعُ المعدن", en: "Metal type", kind: "multi", options: V2_METAL_TYPES, required: true,
+    when: (c) => (c.ruleset === "v3" || metalApplies(c)) && c.core.metalInField === "yes" },
   yn("pregnant", "حامل", "Pregnant", { ...REQ, when: pregnancyApplies }),
   int("pregnancyMonth", "شهرُ الحمل", "Month of pregnancy", 1, 9, { ...REQ, when: (c) => pregnancyApplies(c) && c.core.pregnant === "yes" }),
   yn("breastfeeding", "ترضع", "Breastfeeding", { ...REQ, when: pregnancyApplies }),
@@ -636,7 +653,8 @@ export const V2_CORE_FIELDS: readonly V2Field[] = [
   yn("cancerInField", "الورمُ في منطقة العلاج", "Tumour in the treatment area", { ...REQ, when: (c) => c.core.cancer === "past" || c.core.cancer === "current" }),
   tx("cancerSite", "موضعُ الورم", "Tumour site", { when: (c) => c.core.cancer === "past" || c.core.cancer === "current" }),
   { key: "skin", ar: "الجلدُ في منطقة العلاج", en: "Skin in the treatment area", kind: "multi", options: V2_SKIN, exclusive: "none", required: true },
-  yn("steroidInjection", "حقنةُ كورتيزون في المنطقة", "Corticosteroid injection in the area", { ...REQ, when: (c) => c.group !== null && (STEROID_GROUPS.includes(c.group) || c.condition === "jia") }),
+  yn("steroidInjection", "حقنةُ كورتيزون في المنطقة", "Corticosteroid injection in the area",
+    { ...REQ, when: (c) => c.ruleset === "v3" || (c.group !== null && (STEROID_GROUPS.includes(c.group) || c.condition === "jia")) }),
   dt("steroidInjectionDate", "تاريخُ آخر حقنة", "Last injection date", { ...REQ, when: (c) => c.core.steroidInjection === "yes" }),
   int("steroidInjectionsPerYear", "عددُ الحقن في السنة", "Injections per year", 1, 20, { when: (c) => c.core.steroidInjection === "yes" }),
   { key: "boneHealth", ar: "هشاشةُ العظام أو الكورتيزون الفمويّ", en: "Bone health / oral corticosteroid", kind: "multi", options: V2_BONE, exclusive: "none", required: true },
@@ -837,6 +855,193 @@ export function redFlagQuestionsFor(group: unknown, condition: unknown): RedFlag
   });
 }
 
+/**
+ * **العلاماتُ الإلزامية في هذه المعاينة** — العامّةُ الثماني وما يخصّ مجموعتَها وحالتَها، في الإصدارين.
+ * (§4.hd — المراجعة: كانت الثالثةُ تُلزم الأربعين كلَّها، فكانت «لا شيء ممّا يلي» تكتب «لا» لاثنتين وثلاثين علامةً مطويّةً لم يرها الفاحص، ثمّ تبقى «لا»
+ * حين تُؤكَّد المجموعةُ بجواب. فصارت علاماتُ المجموعة تُلزم حين تُعرف المجموعة: عند التوقيع إن اختارها، وفي الجواب نفسِه إن أكّدها بجواب — `answerFollowUps`.)
+ */
+export function redFlagQuestionsOfExam(a: unknown): RedFlagDef[] {
+  const x = (a ?? {}) as Partial<PhysioExamV2>;
+  return redFlagQuestionsFor(x.core?.group, x.module?.condition);
+}
+/** **العلاماتُ المجابة في هذه المعاينة** — الإلزاميةُ، وفي الثالثة كلُّ ما أجاب عنه الفاحصُ من غيرها (اختياراً): «نعم» فيها تُحسب أينما كانت. */
+function redFlagsAnsweredOfExam(a: PhysioExamV2): RedFlagDef[] {
+  if (examRuleset(a) !== "v3") return redFlagQuestionsOfExam(a);
+  const req = new Set(redFlagQuestionsOfExam(a).map((q) => q.key));
+  return V2_RED_FLAGS.filter((q) => req.has(q.key) || a.redFlags?.[q.key] === "yes" || a.redFlags?.[q.key] === "no");
+}
+
+// ══ الإصدارُ الثالث: ورقةُ السلامة ومدخلاتُ البوّابات والحذر (§4.hd) ═══════════════════════════════════════════
+/** **ورقةُ السلامة** — إلزاميةٌ عند التوقيع (حين تنطبق): كلُّ خانةٍ تغيّر الموانعَ أو البوّابةَ لكلّ مريض، وأبناؤها المشروطون. */
+export const V3_REQUIRED_CORE: ReadonlySet<string> = new Set([
+  "sex", "ageYears", "onsetKind", "onsetDate", "surgery", "surgeryDate", "irritability", "canReportHeat", "implants", "implantsOther",
+  "metalInField", "metalTypes", "pregnant", "anticoagulant", "cancer", "cancerInField", "skin", "steroidInjection", "steroidInjectionDate",
+  "boneHealth", "epilepsy",
+]);
+/** «غير ذلك» — للإصدار الثالث وحده: يؤكّد أنّ الحالةَ خارجَ المجموعات (مسارُ «خارج المكتبة»). */
+export const V3_OTHER_GROUP = "other";
+export const V3_GROUPS: readonly Opt[] = [...V2_GROUPS, o(V3_OTHER_GROUP, "Other — not in the groups", "غير ذلك — ليست في المجموعات")];
+const V3_GROUP_FIELD: V2Field = { ...V2_CORE_FIELDS[0], options: V3_GROUPS };
+/** خاناتُ النواة بإصدارها — «مجموعةُ التشخيص» في الثالث فيها «غير ذلك». */
+export const coreFieldsFor = (ruleset: ExamRuleset): readonly V2Field[] =>
+  ruleset === "v3" ? V2_CORE_FIELDS.map((f) => (f.key === "group" ? V3_GROUP_FIELD : f)) : V2_CORE_FIELDS;
+
+/** نطاقُ مدخلٍ: المجموعةُ أو الحالة. */
+export interface ExamScope { group?: string; condition?: string }
+/**
+ * **مدخلاتُ البوّابات** — ما تقرؤه قاعدةُ موانعٍ لمجموعةٍ أو حالةٍ بعينها. مجهولُها يُعامَل بأسوأ قيمه (`worst`) في `forbiddenDevices`،
+ * ويسأل عنه Bionic AI قبل الخطّة. و`best` لاختبار الخاصّية وحده (قيمةٌ لا تمنع شيئاً).
+ */
+export interface GateInput { scope: ExamScope; key: string; worst: V2Value; best: V2Value }
+export const GATE_INPUTS: readonly GateInput[] = [
+  { scope: { group: "lumbar" }, key: "core.side", worst: "both", best: "right" },
+  { scope: { group: "neck" }, key: "core.side", worst: "both", best: "right" },
+  { scope: { condition: "stroke" }, key: "core.fac", worst: "5", best: "0" },
+  { scope: { condition: "calcific" }, key: "module.acuteAttack", worst: "yes", best: "no" },
+  { scope: { condition: "cuff_repair" }, key: "module.tearSize", worst: "massive", best: "small" },
+  { scope: { condition: "cuff_repair" }, key: "module.subscapRepair", worst: "yes", best: "no" },
+  { scope: { condition: "achilles" }, key: "module.tendonType", worst: "insertional", best: "midportion" },
+  { scope: { condition: "achilles" }, key: "module.priorRupture", worst: "yes", best: "no" },
+  { scope: { condition: "ms" }, key: "module.heatSensitive", worst: "yes", best: "no" },
+  { scope: { condition: "bells" }, key: "module.eyeCloses", worst: "no", best: "yes" },
+  { scope: { condition: "axspa" }, key: "module.fusedSpine", worst: "yes", best: "no" },
+  { scope: { group: "osteo_falls" }, key: "module.boneStatus", worst: "vertebral_fracture", best: "no_fracture" },
+  { scope: { group: "lymphedema" }, key: "module.limb", worst: "leg", best: "arm" },
+  { scope: { group: "lymphedema" }, key: "module.abi", worst: 0.5, best: 1 },
+  { scope: { group: "lymphedema" }, key: "module.heartFailure", worst: "IV", best: "none" },
+];
+/**
+ * **بروتوكولاتُ الشدّة العالية** — ما يكتب محتواه شدّةً بالنبض أو بالجهد، فتلزم قبل خطّته حاصراتُ بيتا والرجفانُ والوزن.
+ * **قائمةٌ مقترحة لسليم أن يؤكّدها** (§4.hd — بنودُ المالك)، واختبارٌ يتحقّق أنّ كلَّ رمزٍ فيها بروتوكولٌ في المجموعات.
+ */
+export const HIGH_INTENSITY_PROTOCOLS: readonly string[] = [
+  "stroke-subacute-adult", "stroke-chronic-adult", "parkinsons-geriatric", "multiple-sclerosis-adult", "axial-spa-adult",
+  "rheumatoid-arthritis-adult", "osteoporosis-falls-geriatric", "sci-incomplete-adult",
+];
+
+const scopeMatches = (s: ExamScope, group: string | null, condition: string | null) =>
+  (s.group === undefined || s.group === group) && (s.condition === undefined || s.condition === condition);
+
+/** **هل أُكّدت مجموعةُ التشخيص؟** — الثانيةُ دائماً؛ والثالثةُ حين تُختار المجموعة (أو «غير ذلك») وحالتُها إن كان لها حالات. */
+export function examGroupConfirmed(a: unknown): boolean {
+  if (!isExamV2(a) || examRuleset(a) === "v2") return true;
+  const g = a.core?.group;
+  if (typeof g !== "string" || !g) return false;
+  if (g === V3_OTHER_GROUP) return true;
+  const m = moduleOf(g);
+  if (!m) return false;
+  return !(m.conditions?.length) || typeof a.module?.condition === "string" && Boolean(conditionOf(g, a.module.condition));
+}
+const valueAt = (a: Pick<PhysioExamV2, "core" | "module">, key: string): V2Value | undefined => {
+  const [part, k] = key.split(".");
+  return part === "core" ? a.core?.[k] : part === "module" ? a.module?.[k] : undefined;
+};
+const fieldAt = (key: string, group: unknown): V2Field | null => {
+  const [part, k] = key.split(".");
+  if (part === "core") return V2_CORE_FIELDS.find((f) => f.key === k) ?? null;
+  if (part === "module") return moduleFieldsOf(group).find((f) => f.key === k) ?? null;
+  return null;
+};
+/** **مدخلاتُ البوّابات الفارغة** لنطاق المعاينة المؤكَّد (الثالثةُ وحدها) — والخانةُ التي لا تنطبق (مؤشّرُ الكاحل لذراع) ليست ناقصة. */
+export function examGateInputsMissing(a: unknown): string[] {
+  if (!isExamV2(a) || examRuleset(a) === "v2" || !examGroupConfirmed(a)) return [];
+  const c = examV2Ctx(a);
+  const out: string[] = [];
+  for (const gi of GATE_INPUTS) {
+    if (!scopeMatches(gi.scope, c.group, c.condition) || out.includes(gi.key)) continue;
+    const f = fieldAt(gi.key, c.group);
+    if (f && !applies(f, c)) continue;
+    if (isEmptyValue(valueAt(a, gi.key))) out.push(gi.key);
+  }
+  return out;
+}
+/**
+ * **مدخلاتُ الحذر** — سلامةُ التمرين التي جعلتها الثانيةُ إلزاميةً عمداً (١٥٧ · ١٧٤ · ١٧٩): اختياريةٌ عند التوقيع في الثالثة،
+ * ولازمةٌ قبل الخطّة (تُكتب أو يُجاب عنها). بلا خطّة: العامّةُ وما تقرّره المجموعة؛ ومع الخطّة: ما يقرّره جهازُها وبروتوكولُها.
+ */
+export function examCautionInputsMissing(a: unknown, plan?: { deviceCodes?: readonly string[]; protocolCode?: string | null; outOfLibrary?: boolean } | null): string[] {
+  if (!isExamV2(a) || examRuleset(a) === "v2") return [];
+  const c = examV2Ctx(a);
+  const need: string[] = ["core.diabetes", "core.neuropathy", "core.fasting"];
+  if (c.core.surgery === "yes") need.push("core.surgeonInstructions");
+  if (c.ageYears !== null && c.ageYears < 2) need.push("core.correctedAgeMonths");
+  if (c.group === "neuro_adult" || c.condition === "cp") need.push("core.botox", "core.botoxDate", "core.fallsLastYear");
+  if (plan?.deviceCodes?.includes("needle")) need.push("core.immunosuppressed");
+  //  §4.hd (المراجعة) — وخطّةُ «خارج المكتبة» لا يُعرف أنّها ليست شديدة: تلزمها مدخلاتُ الشدّة كلّها.
+  if ((plan?.protocolCode && HIGH_INTENSITY_PROTOCOLS.includes(plan.protocolCode)) || plan?.outOfLibrary) need.push("core.betaBlocker", "core.atrialFibrillation", "core.weightKg");
+  return need.filter((key) => {
+    const f = fieldAt(key, c.group);
+    return Boolean(f) && applies(f!, c) && isEmptyValue(valueAt(a, key));
+  });
+}
+/** **ما يجب أن يُسأل قبل `submit_plan`** (بلا خطّة): تأكيدُ المجموعة وحالتِها، ومدخلاتُ البوّابات، ومدخلاتُ الحذر. */
+export function examMustAskBeforePlan(a: unknown): string[] {
+  if (!isExamV2(a) || examRuleset(a) === "v2") return [];
+  const out: string[] = [];
+  if (!examGroupConfirmed(a)) {
+    const g = a.core?.group;
+    if (typeof g !== "string" || !g) out.push("core.group");
+    if (typeof g !== "string" || !g || (moduleOf(g)?.conditions?.length ?? 0) > 0) out.push("module.condition");
+  }
+  return [...out, ...examGateInputsMissing(a), ...examCautionInputsMissing(a)];
+}
+/** **ما يفرضه جوابٌ على نفسه** (§4.hd ٥.٥): مدخلاتٌ صارت لازمةً بالجواب (المجموعةُ ⟵ حالتُها ⟵ مدخلاتُ بوّابتها، والسكّريّ ⟵ اعتلالُ القدم…)
+ *  ولم تكن لازمةً قبله — فتُطلب في الجواب نفسِه. */
+export function answerFollowUps(stored: unknown, merged: unknown, patchedKeys: readonly string[]): string[] {
+  const before = new Set(examMustAskBeforePlan(stored));
+  const after = examMustAskBeforePlan(merged);
+  const out = after.filter((k) => !before.has(k) || (k === "module.condition" && patchedKeys.includes("core.group")));
+  //  §4.hd (المراجعة) — **علاماتُ المجموعة التي أكّدها الجواب** تُجاب في الجواب نفسِه («لا شيء ممّا يلي» أو «نعم» لما وُجد) — فلا تبقى بلا قراءة.
+  if (isExamV2(merged)) {
+    const wasRequired = new Set(isExamV2(stored) ? redFlagQuestionsOfExam(stored).map((q) => q.key) : []);
+    for (const q of redFlagQuestionsOfExam(merged)) {
+      const ans = merged.redFlags?.[q.key];
+      if (!wasRequired.has(q.key) && ans !== "yes" && ans !== "no") out.push(`redFlags.${q.key}`);
+    }
+  }
+  return out;
+}
+/** بروتوكولاتُ المكتبة لنطاق المعاينة — الحالةُ ثمّ المجموعة. */
+export function protocolsOfExam(a: unknown): readonly string[] {
+  if (!isExamV2(a)) return [];
+  const cond = conditionOf(a.core?.group, a.module?.condition);
+  return cond?.protocols ?? moduleOf(a.core?.group)?.protocols ?? [];
+}
+/** **ما يجوز أن يُسأل عنه الفاحصُ خانةً في المعاينة** (§4.hd ٥.٢): الفارغُ الآن من المجموعة والحالة وخاناتِ الوحدة والنواةِ الاختيارية —
+ *  **لا ورقةَ السلامة ولا العلاماتِ الحمراء ولا الجنسَ والعمر** أبداً. */
+export interface AskableField { key: string; en: string; ar: string; kind: V2Kind; options: { code: string; en: string }[] | null; min?: number; max?: number }
+export function examAskableFields(a: unknown): AskableField[] {
+  if (!isExamV2(a) || examRuleset(a) === "v2") return [];
+  const c = examV2Ctx(a);
+  const out: AskableField[] = [];
+  const push = (key: string, f: V2Field) => {
+    if (out.some((x) => x.key === key)) return;
+    out.push({ key, en: f.en, ar: f.ar, kind: f.kind, options: f.options ? f.options.map((x) => ({ code: x.code, en: x.en })) : null,
+      ...(f.min !== undefined ? { min: f.min } : {}), ...(f.max !== undefined ? { max: f.max } : {}) });
+  };
+  if (isEmptyValue(c.core.group)) push("core.group", V3_GROUP_FIELD);
+  const groups = c.group ? [c.group] : V2_MODULES.map((m) => m.group);
+  for (const g of groups) {
+    const m = moduleOf(g);
+    if (!m) continue;
+    const cf = conditionField(m);
+    if (cf && isEmptyValue(c.module.condition)) push("module.condition", c.group ? cf : { ...cf, options: V2_MODULES.flatMap((x) => x.conditions ?? []).map((x) => o(x.code, x.en, x.ar)) });
+    //  المجموعةُ مؤكَّدة: ما ينطبق الآن (وما يتبع حالةً لم تُختر بعد)؛ وبلا مجموعة: خاناتُ كلّ وحدة.
+    for (const f of m.fields) if (isEmptyValue(c.module[f.key]) && (!c.group || applies(f, c) || c.condition === null)) push(`module.${f.key}`, f);
+  }
+  for (const f of V2_CORE_FIELDS) {
+    if (f.key === "group" || V3_REQUIRED_CORE.has(f.key)) continue;
+    if (isEmptyValue(c.core[f.key]) && applies(f, c)) push(`core.${f.key}`, f);
+  }
+  return out;
+}
+/** مفاتيحُ لا يُسأل عنها أبداً بجواب — ورقةُ السلامة والجنسُ والعمرُ والعلاماتُ الحمراء. */
+export const isNeverAskable = (key: string): boolean => {
+  if (key.startsWith("redFlags.") || key === "sensation" || key === "sensationRegions" || key === "diagnosis") return true;
+  const [part, k] = key.split(".");
+  return part === "core" && V3_REQUIRED_CORE.has(k);
+};
+
 // ══ التطبيع والفحص ═══════════════════════════════════════════════════════════════════════════════
 const ARABIC_DIGITS = /[٠-٩۰-۹]/g;
 /** «٤٧» و«۴۷» ⟵ «47» — لوحةُ المفاتيح العربية تكتب أرقامَها. */
@@ -906,19 +1111,26 @@ export function isRealCalendarDate(s: string): boolean {
   return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
 }
 
-const ctxOf = (core: V2Values, module: V2Values): V2Ctx => {
+//  `ruleset` إلزاميٌّ بلا قيمةٍ افتراضية — فيجد `tsc` كلَّ مُستدعٍ (§4.hd).
+const ctxOf = (core: V2Values, module: V2Values, ruleset: ExamRuleset): V2Ctx => {
   const group = typeof core.group === "string" ? core.group : null;
   return {
     core, module, group,
     condition: typeof module.condition === "string" ? module.condition : null,
     ageYears: typeof core.ageYears === "number" ? core.ageYears : null,
     sex: typeof core.sex === "string" ? core.sex : null,
+    ruleset,
   };
 };
 const applies = (f: V2Field, c: V2Ctx) => !f.when || f.when(c);
-const isRequired = (f: V2Field, c: V2Ctx) => (typeof f.required === "function" ? f.required(c) : f.required === true);
+/** الإلزامُ بإصداره: في الثالث ورقةُ السلامة وحدها من النواة (وأبناؤها المشروطون)، ولا خانةَ وحدةٍ ولا «حالة». */
+const isRequired = (f: V2Field, c: V2Ctx) => {
+  const base = typeof f.required === "function" ? f.required(c) : f.required === true;
+  if (c.ruleset === "v2") return base;
+  return base && V3_REQUIRED_CORE.has(f.key) && V2_CORE_FIELDS.some((x) => x.key === f.key);
+};
 /** للشاشة: سياقُ الشروط، وهل الخانةُ ظاهرةٌ وإلزامية — بالقاعدة نفسِها التي يفحص بها الخادم. */
-export const examV2Ctx = (a: Pick<PhysioExamV2, "core" | "module">): V2Ctx => ctxOf(a.core ?? {}, a.module ?? {});
+export const examV2Ctx = (a: Pick<PhysioExamV2, "core" | "module"> & { version?: unknown }): V2Ctx => ctxOf(a.core ?? {}, a.module ?? {}, examRuleset(a));
 export const fieldApplies = applies;
 export const fieldRequired = (f: V2Field, c: V2Ctx) => applies(f, c) && isRequired(f, c);
 const isEmptyValue = (v: V2Value | undefined) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
@@ -942,6 +1154,10 @@ export function emptyExamV2(): PhysioExamV2 {
     core: { implants: [], anticoagulant: [], skin: [], boneHealth: [] }, module: {}, redFlags: {},
   };
 }
+/** **معاينةٌ جديدة بالإصدار الثالث** (§4.hd) — التشخيصُ الحرّ وورقةُ السلامة والعلاماتُ الأربعون. */
+export function emptyExamV3(): PhysioExamV2 {
+  return { ...emptyExamV2(), version: PT_FORM_VERSION_V3 };
+}
 
 export type ExamV2Parse =
   | { ok: true; value: PhysioExamV2; missing: string[] }
@@ -957,6 +1173,8 @@ export function parseExamV2(raw: unknown, opts: { today?: string; diagnosis?: un
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return bad("assessment", "استمارة المعاينة غير صالحة");
   const r = raw as Record<string, any>;
   if (r.form !== PT_FORM_CODE_V2) return bad("assessment", `استمارة المعاينة ليست ${PT_FORM_CODE_V2}`);
+  const ruleset = examRuleset(r);
+  const coreFields = coreFieldsFor(ruleset);
   //  أقسامُ الأولى المُعادة بقاعدتها نفسِها — والمخفيُّ منها هنا لا يُخزَّن (الألمُ والعمليةُ في النواة، و«لا ينطبق» لا مكانَ له في الإلزام).
   const v1 = parseInitialAssessment({ ...r, form: PT_FORM_CODE, sectionANa: false, painBest: null, painWorst: null, surgeryDate: null }, { today: opts.today });
   if (!v1.ok) return { ok: false, error: v1.error, missing: v1.missing };
@@ -964,7 +1182,7 @@ export function parseExamV2(raw: unknown, opts: { today?: string; diagnosis?: un
   const rawCore = r.core && typeof r.core === "object" && !Array.isArray(r.core) ? r.core : {};
   const rawModule = r.module && typeof r.module === "object" && !Array.isArray(r.module) ? r.module : {};
   const core: V2Values = {};
-  for (const f of V2_CORE_FIELDS) {
+  for (const f of coreFields) {
     const n = normalizeField(f, rawCore[f.key], opts.today);
     if (!n.ok) return bad(`core.${f.key}`, n.error);
     core[f.key] = n.v;
@@ -977,27 +1195,35 @@ export function parseExamV2(raw: unknown, opts: { today?: string; diagnosis?: un
   }
   //  ما لا ينطبق يُمحى — مرّتان لتتّسق الشروطُ المتسلسلة (العمليةُ ⟵ نوعُها ⟵ «بالتحديد»، والحالةُ ⟵ المعدن).
   for (let pass = 0; pass < 3; pass++) {
-    for (const f of V2_CORE_FIELDS) if (!applies(f, ctxOf(core, module))) core[f.key] = f.kind === "multi" ? [] : null;
-    for (const f of moduleFieldsOf(core.group)) if (!applies(f, ctxOf(core, module))) module[f.key] = f.kind === "multi" ? [] : null;
+    for (const f of coreFields) if (!applies(f, ctxOf(core, module, ruleset))) core[f.key] = f.kind === "multi" ? [] : null;
+    for (const f of moduleFieldsOf(core.group)) if (!applies(f, ctxOf(core, module, ruleset))) module[f.key] = f.kind === "multi" ? [] : null;
   }
   if (typeof core.painNow === "number" && typeof core.painWorstWeek === "number" && core.painNow > core.painWorstWeek) {
     return bad("core.painNow", "الألمُ الآن لا يزيد على الأسوأ في الأسبوع الماضي");
   }
+  //  §4.hd (المراجعة) — **«غير ذلك» لا تصحّ والتشخيصُ يذكر حالةً من المكتبة**: تأكيدُها يُسقط موانعَ تلك الحالة كلَّها (الورك والكفّة والعرقوب والجلطة…).
+  if (ruleset === "v3" && core.group === V3_OTHER_GROUP && opts.diagnosis !== undefined) {
+    const named = otherGroupTextConflicts([typeof opts.diagnosis === "string" ? opts.diagnosis : null]);
+    if (named.length) return bad("core.group", `التشخيصُ يذكر «${named.join("»، «")}» — اختر مجموعتَها بدل «غير ذلك»`);
+  }
 
-  const c = ctxOf(core, module);
+  const c = ctxOf(core, module, ruleset);
   const rawFlags = r.redFlags && typeof r.redFlags === "object" && !Array.isArray(r.redFlags) ? r.redFlags : {};
   const redFlags: Record<string, RedFlagAnswer> = {};
-  for (const q of redFlagQuestionsFor(c.group, c.condition)) {
+  for (const q of ruleset === "v3" ? V2_RED_FLAGS : redFlagQuestionsFor(c.group, c.condition)) {
     const a = rawFlags[q.key];
     if (a === undefined || a === null || a === "") continue;
     if (a !== "yes" && a !== "no") return bad(`redFlags.${q.key}`, "جوابُ العلامة الحمراء «نعم» أو «لا»");
     redFlags[q.key] = a;
   }
 
+  //  §4.hd (المراجعة) — ما أكّده الفاحصُ من تنبيهات النصّ (للثالثة وحدها، ومفاتيحُ معروفة وحدها).
+  const ack = ruleset === "v3" && Array.isArray(r.textSafetyAck)
+    ? Array.from(new Set((r.textSafetyAck as unknown[]).filter((k): k is string => typeof k === "string" && TEXT_SAFETY_KEYS.includes(k)))) : [];
   const value: PhysioExamV2 = {
-    ...v1.value, form: PT_FORM_CODE_V2, version: PT_FORM_VERSION_V2,
+    ...v1.value, form: PT_FORM_CODE_V2, version: ruleset === "v3" ? PT_FORM_VERSION_V3 : PT_FORM_VERSION_V2,
     sectionANa: false, painBest: null, painWorst: null, surgeryDate: null,
-    core, module, redFlags,
+    core, module, redFlags, ...(ack.length ? { textSafetyAck: ack } : {}),
   };
   return { ok: true, value, missing: examV2Missing(value, opts.diagnosis) };
 }
@@ -1009,7 +1235,7 @@ export function parseExamV2(raw: unknown, opts: { today?: string; diagnosis?: un
 export function examV2Missing(a: PhysioExamV2, diagnosis?: unknown): string[] {
   const missing: string[] = [];
   if (diagnosis !== undefined && !(typeof diagnosis === "string" && diagnosis.trim())) missing.push("diagnosis");
-  const c = ctxOf(a.core ?? {}, a.module ?? {});
+  const c = examV2Ctx(a);
   for (const f of V2_CORE_FIELDS) {
     if (applies(f, c) && isRequired(f, c) && isEmptyValue(c.core[f.key])) missing.push(`core.${f.key}`);
     //  الإحساسُ (من الأولى) بعد «يستطيع أن يقول حارّ» — مكانُه في الشاشة.
@@ -1021,7 +1247,7 @@ export function examV2Missing(a: PhysioExamV2, diagnosis?: unknown): string[] {
   for (const f of moduleFieldsOf(c.group)) {
     if (applies(f, c) && isRequired(f, c) && isEmptyValue(c.module[f.key])) missing.push(`module.${f.key}`);
   }
-  for (const q of redFlagQuestionsFor(c.group, c.condition)) {
+  for (const q of redFlagQuestionsOfExam(a)) {
     if (a.redFlags?.[q.key] !== "yes" && a.redFlags?.[q.key] !== "no") missing.push(`redFlags.${q.key}`);
   }
   return missing;
@@ -1051,8 +1277,8 @@ const URGENCY_RANK: Record<RedFlagUrgency, number> = { emergency: 0, same_day: 1
 /** **ما أُجيب «نعم»** — بالأشدّ أوّلاً، ومع كلٍّ الإجراءُ الموصى به ودرجتُه. */
 export function redFlagsOf(a: unknown): RedFlagHit[] {
   if (!isExamV2(a)) return [];
-  const c = ctxOf(a.core ?? {}, a.module ?? {});
-  return redFlagQuestionsFor(c.group, c.condition)
+  //  §4.hd — في الثالثة «نعم» تُحسب أينما كانت (والعلامةُ خارج مجموعة المعاينة قد يعلّمها الفاحصُ اختياراً).
+  return (examRuleset(a) === "v3" ? V2_RED_FLAGS : redFlagQuestionsOfExam(a))
     .filter((q) => a.redFlags?.[q.key] === "yes")
     .map((q) => ({ key: q.key, questionAr: q.questionAr, actionAr: q.actionAr, urgency: q.urgency }))
     .sort((x, y) => URGENCY_RANK[x.urgency] - URGENCY_RANK[y.urgency]);
@@ -1087,9 +1313,88 @@ export interface ForbiddenDevice { deviceCode: string; reasonAr: string }
  */
 export function forbiddenDevices(a: unknown, opts: { today: string }): ForbiddenDevice[] {
   if (!isExamV2(a)) return [];
+  const real = rulesOf(a, opts);
+  if (examRuleset(a) === "v2") return real;
+  //  §4.hd — **المجهولُ أسوأُ قيمه**: ما قد تمنعه مجموعةٌ أو حالةٌ أو مدخلُ بوّابةٍ لم يُسجَّل بعد يُمنع بسببه حتى يُسجَّل.
+  const extra = worstCaseExtra(a, opts, new Set(real.map((d) => d.deviceCode)));
+  //  §4.hd (المراجعة) — **بدايةُ الأعراض «غير معروف» تُعامَل حادّةً وفي أيّامها الأولى** (المجهولُ أسوأُ قيمه): لا شدَّ ولا موجاتٍ ولا إبر حتى يُكتب تاريخٌ تقريبيّ.
+  //  ليست «لم يُسجَّل بعد» (لا يُسأل عنها بجواب) — يصحّحها الفاحصُ في المعاينة.
+  if (a.core?.onsetKind === "unknown") {
+    const done = new Set([...real.map((d) => d.deviceCode), ...Array.from(extra.keys())]);
+    for (const d of ["traction", "shockwaves", "needle"]) if (!done.has(d)) extra.set(d, UNKNOWN_ONSET_REASON);
+  }
+  if (!extra.size) return real;
+  const reasons = new Map(real.map((d) => [d.deviceCode, d.reasonAr]));
+  extra.forEach((why, d) => reasons.set(d, why));
+  return DEVICE_ORDER.filter((d) => reasons.has(d)).map((d) => ({ deviceCode: d, reasonAr: reasons.get(d)! }));
+}
+/** سببُ منع ما تمنعه المرحلةُ الحادّة حين لا تُعرف بدايةُ الأعراض. */
+export const UNKNOWN_ONSET_REASON = "بدايةُ الأعراض غير معروفة — تُعامَل حادّةً وفي أيّامها الأولى؛ اكتب تاريخاً تقريبياً في المعاينة لتقصر القائمة";
+/** بادئةُ سببِ ما يُمنع لأنّه لم يُسجَّل بعد — تعرفه الشاشةُ فتقول «أكمل المجموعةَ وخاناتها لتقصر القائمة». */
+export const NOT_RECORDED_PREFIX = "لم يُسجَّل بعد: ";
+export const isNotRecordedReason = (reasonAr: string): boolean => reasonAr.startsWith(NOT_RECORDED_PREFIX);
+
+/** إكمالاتُ المجهول: لكلّ مجموعةٍ وحالةٍ ممكنة نسخةٌ تُكتب فيها مدخلاتُ بوّابتها الفارغة بأسوأ قيمها. */
+function worstCompletions(a: PhysioExamV2, today: string, only?: string): PhysioExamV2[] {
+  const confirmed = examGroupConfirmed(a);
+  const g0 = typeof a.core?.group === "string" && a.core.group ? a.core.group : null;
+  const scopes: { group: string; condition: string | null }[] = [];
+  if (confirmed) scopes.push({ group: g0!, condition: typeof a.module?.condition === "string" ? a.module.condition : null });
+  else {
+    const groups = g0 ? [g0] : [...V2_MODULES.map((m) => m.group), V3_OTHER_GROUP];
+    for (const g of groups) {
+      const m = moduleOf(g);
+      if (m?.conditions?.length) for (const cd of m.conditions) scopes.push({ group: g, condition: cd.code });
+      else scopes.push({ group: g, condition: null });
+    }
+  }
+  return scopes.map((sc) => {
+    const core: V2Values = { ...(a.core ?? {}), group: sc.group };
+    const module: V2Values = confirmed ? { ...(a.module ?? {}) } : (sc.group === g0 ? { ...(a.module ?? {}) } : {});
+    if (sc.condition) module.condition = sc.condition;
+    for (const gi of GATE_INPUTS) {
+      if (!scopeMatches(gi.scope, sc.group, sc.condition) || (only && gi.key !== only)) continue;
+      const [part, k] = gi.key.split(".");
+      const target = part === "core" ? core : module;
+      if (isEmptyValue(target[k])) target[k] = gi.worst;
+    }
+    //  ما بعد استبدال الورك بلا تاريخ عمليةٍ مسجَّل ⟵ داخلَ الأسابيع الستّة (الأسوأ).
+    if (sc.condition === "tha" && isEmptyValue(core.surgeryDate)) core.surgeryDate = today;
+    return { ...a, core, module };
+  });
+}
+function worstCaseExtra(a: PhysioExamV2, opts: { today: string }, realBanned: ReadonlySet<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  const confirmed = examGroupConfirmed(a);
+  const union = new Set<string>();
+  for (const x of worstCompletions(a, opts.today)) for (const d of rulesOf(x, opts)) if (!realBanned.has(d.deviceCode)) union.add(d.deviceCode);
+  if (!union.size) return out;
+  if (!confirmed) {
+    //  المراجعة: اختار المجموعةَ ولم يختر حالتَها ⟵ يُقال «حالةُ «الكتف»» لا «المجموعةُ وحالتُها».
+    const g0 = moduleOf(a.core?.group);
+    union.forEach((d) => out.set(d, `${NOT_RECORDED_PREFIX}${g0 ? `حالةُ «${g0.ar}»` : "مجموعةُ التشخيص وحالتُها"}`));
+    return out;
+  }
+  //  المجموعةُ مؤكَّدة: لكلّ جهازٍ أسماءُ المدخلات التي تمنعه بأسوأ قيمها.
+  const c = examV2Ctx(a);
+  for (const key of examGateInputsMissing(a)) {
+    const label = fieldAt(key, c.group)?.ar ?? key;
+    for (const x of worstCompletions(a, opts.today, key)) for (const d of rulesOf(x, opts)) {
+      if (!union.has(d.deviceCode)) continue;
+      const prev = out.get(d.deviceCode);
+      out.set(d.deviceCode, prev ? (prev.includes(label) ? prev : `${prev}، ${label}`) : `${NOT_RECORDED_PREFIX}${label}`);
+    }
+  }
+  //  ما بقي سببُه تاريخُ العملية (ما بعد استبدال الورك بلا تاريخٍ مسجَّل) — لا يُسأل بجواب: يصحّحه الفاحصُ في المعاينة.
+  union.forEach((d) => { if (!out.has(d)) out.set(d, "ما بعد استبدال الورك بلا تاريخ عمليةٍ مسجَّل — صحّح العمليةَ وتاريخَها في المعاينة"); });
+  return out;
+}
+
+/** **جسمُ القواعد** كما كان — يُقرأ على المعاينة الحقيقية وعلى كلّ إكمالٍ لمجهولها. */
+function rulesOf(a: PhysioExamV2, opts: { today: string }): ForbiddenDevice[] {
   const core = a.core ?? {};
   const mod = a.module ?? {};
-  const c = ctxOf(core, mod);
+  const c = examV2Ctx(a);
   const reasons = new Map<string, string[]>();
   const block = (devices: string[], why: string) => {
     for (const d of devices) {
@@ -1155,7 +1460,10 @@ export function forbiddenDevices(a: unknown, opts: { today: string }): Forbidden
     const windowDays = c.condition === "lateral_elbow" ? 42 : c.condition === "achilles" ? 28 : c.condition === "calcific" ? 90 : null;
     if (days !== null && windowDays !== null && days < windowDays) block(["shockwaves"], `حقنةُ كورتيزون قبل ${arDigits(days)} يوماً (المهلةُ ${arDigits(windowDays)} يوماً)`);
     //  **وبلا مهلةٍ مكتوبة لهذه الحالة ⟵ موضعُ الحقنة مانعٌ** كما في CONTRA العامّ لترحيل ١٣١ («a site of corticosteroid injection») — لا مهلةَ تُخترع.
-    if (windowDays === null) block(["shockwaves"], "موضعُ حقنة كورتيزون — مانعٌ عامّ في نشرة الموجات الصادمة، ولا مهلةَ مكتوبةً لهذه الحالة");
+    //  §4.hd — وفي الثالثة بلا مجموعةٍ مؤكَّدة: لا تُعرف الحالةُ فلا تُعرف المهلة ⟵ «لم يُسجَّل بعد» (تأكيدُها يحسمه).
+    if (windowDays === null) block(["shockwaves"], c.ruleset === "v3" && !examGroupConfirmed(a)
+      ? `${NOT_RECORDED_PREFIX}${moduleOf(c.group) ? `حالةُ «${moduleOf(c.group)!.ar}»` : "مجموعةُ التشخيص وحالتُها"} (مهلةُ حقنة الكورتيزون بحسب الحالة)`
+      : "موضعُ حقنة كورتيزون — مانعٌ عامّ في نشرة الموجات الصادمة، ولا مهلةَ مكتوبةً لهذه الحالة");
   }
   //  م.١٤ صفائحُ النموّ المفتوحة — ١٧٧ · ١٧٦ · ١٦٦ · ١٨٠ وCONTRA العامّ. واستثناءُ المراهق في آخر نموّه «بقرار» فلا تملكه القاعدةُ الحتمية.
   if (c.ageYears !== null && c.ageYears < 18) block(["shockwaves", "ultrasound", "laser"], "صفائحُ نموٍّ مفتوحة (دون ١٨ سنة)");
@@ -1221,10 +1529,15 @@ const valueText = (f: V2Field, v: V2Value, lang: "ar" | "en"): string => {
 export const examV2ValueText = valueText;
 
 /** **السطرُ المختصر** — «أسفل الظهر · ألمُ ظهرٍ غير نوعيّ · مزمن (أكثر من ١٢ أسبوعاً) · الألم ٥/٨ من ١٠ · علاماتٌ حمراء: ٢». */
-export function examV2SummaryAr(a: PhysioExamV2, opts: { today?: string } = {}): string {
+export function examV2SummaryAr(a: PhysioExamV2, opts: { today?: string; diagnosis?: unknown } = {}): string {
   const m = moduleOf(a.core?.group);
   const cond = conditionOf(a.core?.group, a.module?.condition);
   const parts: string[] = [];
+  //  §4.hd — بلا مجموعةٍ يبدأ السطرُ بالتشخيص الحرّ (ثمانون حرفاً).
+  if (!m && examRuleset(a) === "v3" && typeof opts.diagnosis === "string" && opts.diagnosis.trim()) {
+    const d = opts.diagnosis.trim();
+    parts.push(d.length > 80 ? `${d.slice(0, 80)}…` : d);
+  }
   if (m) parts.push(m.ar);
   if (cond) parts.push(cond.ar);
   //  الحدّةُ المشتقّة من تاريخ البدء (لا تُكتب في اسم الحالة).
@@ -1244,13 +1557,23 @@ export function examV2SummaryAr(a: PhysioExamV2, opts: { today?: string } = {}):
  * ثمّ أقسامُ الأولى المُعادة بنصّها. **بلا اسمٍ ولا هاتفٍ ولا رمز**: لا شيءَ هنا يعرّف المريض.
  */
 export function examV2EnglishText(a: PhysioExamV2, opts: { today: string }): string {
-  const lines: string[] = [`Form ${PT_FORM_CODE_V2} (mandatory structured physiotherapy exam)`];
-  const c = ctxOf(a.core ?? {}, a.module ?? {});
+  const v3 = examRuleset(a) === "v3";
+  const lines: string[] = [v3
+    ? `Form ${PT_FORM_CODE_V2} v3 (free-text diagnosis + mandatory safety sheet; every other field is optional — "NOT RECORDED" means not assessed, never normal)`
+    : `Form ${PT_FORM_CODE_V2} (mandatory structured physiotherapy exam)`];
+  const c = examV2Ctx(a);
   const m = moduleOf(c.group);
-  for (const f of V2_CORE_FIELDS) {
+  const askKeys = new Set(v3 ? [...examMustAskBeforePlan(a), ...examCautionInputsMissing(a, { deviceCodes: ["needle"], protocolCode: HIGH_INTENSITY_PROTOCOLS[0] })] : []);
+  const src = (key: string) => {
+    const s = a.fieldSources?.[key];
+    return s ? ` (added by an answer to Bionic AI, exam version ${s["version"]})` : "";
+  };
+  if (v3 && !examGroupConfirmed(a)) lines.push("Diagnosis group: NOT CONFIRMED");
+  for (const f of coreFieldsFor(examRuleset(a))) {
     if (!applies(f, c)) continue;
     const t = valueText(f, c.core[f.key] ?? null, "en");
-    lines.push(`${f.en}: ${t || "—"}`);
+    if (v3 && !t && ((!askKeys.has(`core.${f.key}`) && !isRequired(f, c)) || f.key === "group")) continue;
+    lines.push(`${f.en}: ${t || (v3 ? "NOT RECORDED" : "—")}${src(`core.${f.key}`)}`);
     if (f.key === "onsetDate") {
       const acuity = examV2Acuity(c.core, opts.today);
       if (acuity) lines.push(`Derived acuity: ${acuity.en}`);
@@ -1260,14 +1583,16 @@ export function examV2EnglishText(a: PhysioExamV2, opts: { today: string }): str
     lines.push(`Module — ${m.en}:`);
     for (const f of moduleFieldsOf(c.group)) {
       if (!applies(f, c)) continue;
-      lines.push(`  ${f.en}: ${valueText(f, c.module[f.key] ?? null, "en") || "—"}`);
+      const t = valueText(f, c.module[f.key] ?? null, "en");
+      if (v3 && !t && !askKeys.has(`module.${f.key}`)) continue;
+      lines.push(`  ${f.en}: ${t || (v3 ? "NOT RECORDED" : "—")}${src(`module.${f.key}`)}`);
     }
     const cond = conditionOf(c.group, c.condition);
     if (cond) lines.push(`  Library protocols for this condition: ${cond.protocols.join(", ")}`);
     else lines.push(`  Library protocols for this group: ${m.protocols.join(", ")}`);
   }
-  lines.push("Red flags (every question answered):");
-  for (const q of redFlagQuestionsFor(c.group, c.condition)) {
+  lines.push(v3 ? "Red flags (general ones and the diagnosis group's ones are mandatory; other groups' flags only if the examiner ticked them):" : "Red flags (every question answered):");
+  for (const q of redFlagsAnsweredOfExam(a)) {
     const ans = a.redFlags?.[q.key];
     lines.push(`  [${ans === "yes" ? "YES" : ans === "no" ? "no" : "unanswered"}] ${q.key}${ans === "yes" ? ` — urgency ${q.urgency}` : ""}`);
   }
@@ -1275,6 +1600,7 @@ export function examV2EnglishText(a: PhysioExamV2, opts: { today: string }): str
   lines.push(fd.length
     ? `Deterministic contraindications (devices that must not be used): ${fd.map((x) => `${x.deviceCode} (${x.reasonAr})`).join("; ")}`
     : "Deterministic contraindications: none");
+  if (fd.some((x) => isNotRecordedReason(x.reasonAr))) lines.push("Some contraindications above are worst-case bans for facts NOT RECORDED yet; they shorten once the examiner records them.");
   const v1 = assessmentAsEnglishText(a);
   if (v1) lines.push(v1);
   return lines.join("\n");
@@ -1287,7 +1613,7 @@ export function anyAssessmentEnglishText(a: PhysioInitialAssessment | null, opts
   return isExamV2(a) ? examV2EnglishText(a, opts) : assessmentAsEnglishText(a);
 }
 /** **السطرُ العربيّ لأيّ استمارة** (وبـ`today` تُذكر حدّةُ الثانية المشتقّة). */
-export function anyAssessmentSummaryAr(a: PhysioInitialAssessment | null, opts: { today?: string } = {}): string | null {
+export function anyAssessmentSummaryAr(a: PhysioInitialAssessment | null, opts: { today?: string; diagnosis?: unknown } = {}): string | null {
   if (!a) return null;
   return isExamV2(a) ? examV2SummaryAr(a, opts) : assessmentSummaryAr(a);
 }
@@ -1305,7 +1631,7 @@ export function assessmentPainWorst(a: PhysioInitialAssessment | null): number |
 }
 /** رمزُ الاستمارة وإصدارُها للعرض («BC-PT-02 · v2»). */
 export const assessmentFormLabel = (a: PhysioInitialAssessment | null): string =>
-  isExamV2(a) ? `${PT_FORM_CODE_V2} · v${PT_FORM_VERSION_V2}` : `${PT_FORM_CODE} · v1`;
+  isExamV2(a) ? `${PT_FORM_CODE_V2} · v${examRuleset(a) === "v3" ? PT_FORM_VERSION_V3 : PT_FORM_VERSION_V2}` : `${PT_FORM_CODE} · v1`;
 
 // ══ بوّابةُ الوكيل (قرارُ المالك ٢٠٢٦-١١-٢٧، §4.gz) ════════════════════════════════════════════════════════════
 export type RedFlagReviewStatus = "pending" | "approved" | "rejected";

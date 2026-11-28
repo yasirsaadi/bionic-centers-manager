@@ -1,6 +1,6 @@
 // **معاينةٌ إلزاميةٌ كاملة للاختبارات** (`BC-PT-02`، §4.gz) — ألمُ أسفل الظهر غيرُ النوعيّ لرجلٍ في السادسة والأربعين، بلا علامةٍ حمراء.
 // كلُّ اختبارٍ يوقّع معاينةَ علاجٍ طبيعيّ لغرضٍ آخر يرسلها (`withCompleteExamV2`) — فالإلزامُ يبقى على الخادم كما هو، ولا يُخفَّف لاختبار.
-import { emptyExamV2, redFlagQuestionsFor, type PhysioExamV2, type V2Values } from "@shared/physio_exam_v2";
+import { emptyExamV2, emptyExamV3, redFlagQuestionsFor, V2_RED_FLAGS, type PhysioExamV2, type V2Values } from "@shared/physio_exam_v2";
 
 export function completeExamV2(over: { core?: V2Values; module?: V2Values; redFlags?: Record<string, "yes" | "no">; top?: Partial<PhysioExamV2> } = {}): PhysioExamV2 {
   const core: V2Values = {
@@ -27,4 +27,15 @@ export function withCompleteExamV2<T extends Record<string, any>>(body: T): T & 
 export function v2FromV1(v1: Record<string, any>, core: V2Values = {}): PhysioExamV2 {
   const { painBest: _b, painWorst: _w, surgeryDate: _s, sectionANa: _n, form: _f, version: _v, ...sections } = v1;
   return completeExamV2({ core, top: sections as Partial<PhysioExamV2> });
+}
+
+/** **معاينةٌ بالإصدار الثالث بأقلّ ما يُقبل** (§4.hd): ورقةُ السلامة والعلاماتُ الأربعون «لا» — ولا مجموعةَ ولا خانةً اختيارية. */
+export function minimalExamV3(over: { core?: V2Values; module?: V2Values; redFlags?: Record<string, "yes" | "no">; top?: Partial<PhysioExamV2> } = {}): PhysioExamV2 {
+  const core: V2Values = {
+    sex: "male", ageYears: 46, onsetKind: "date", onsetDate: "2025-01-01", surgery: "no", irritability: "moderate", canReportHeat: "yes", implants: ["none"],
+    metalInField: "no", anticoagulant: ["none"], cancer: "no", skin: ["none"], steroidInjection: "no", boneHealth: ["none"], epilepsy: "none",
+    ...(over.core ?? {}),
+  };
+  return { ...emptyExamV3(), sensation: "intact", ...(over.top ?? {}), core, module: { ...(over.module ?? {}) },
+    redFlags: { ...Object.fromEntries(V2_RED_FLAGS.map((f) => [f.key, "no" as const])), ...(over.redFlags ?? {}) } };
 }

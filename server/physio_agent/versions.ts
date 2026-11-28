@@ -12,7 +12,7 @@ import { logAudit } from "../accounting/ledger";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import { examAgentGate } from "../physio_exam_reviews/store";
 import { readStoredAssessment } from "@shared/physio_initial_assessment";
-import { forbiddenDevices, V2_DEVICE_NAMES } from "@shared/physio_exam_v2";
+import { examRuleset, forbiddenDevices, isExamV2, V2_DEVICE_NAMES } from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { isOpusAwaiting, JOB_ERROR_TEXTS, type Issue } from "@shared/physio_agent";
 import type { GatedPlan, GateProtocol } from "@shared/physio_agent_gates";
@@ -297,10 +297,16 @@ export async function buildEditGateContext(ex: any, plan: Record<string, any>, b
   return {
     ctx: { agentGate: gate ? { allowed: gate.allowed, code: gate.code, reason: gate.reason } : null, forbidden, knownDeviceCodes: await knownDeviceCodes(ex),
       branchAvailable: await branchDeviceCodes(ex, Number(plan.branch_id)), protocol, exercises, fetchedUrls: opts.fetched ?? new Set(), sessionsDone: done, allowDraftIds,
-      baseVersion: plan.opus_version ?? null },
+      baseVersion: plan.opus_version ?? null, examConfirm: examConfirmOf(live) },
     exam: live, protocol,
     basis: await basisOf(ex, patientId, live, gate?.code ?? null, Number(plan.branch_id), candidate.mode === "library" ? candidate.protocolId : null),
   };
+}
+/** §4.hd (المراجعة) — معاينةُ الإصدار الثالث الحيّة للبوّابات (وغيرُها `null`): المخزَّنةُ ونصوصُها الحرّة. */
+function examConfirmOf(live: ExamRow | null): EditGateContext["examConfirm"] {
+  if (!live) return null;
+  const a = readStoredAssessment(live.assessment);
+  return isExamV2(a) && examRuleset(a) === "v3" ? { exam: a, texts: [live.diagnosis, live.chiefComplaint, live.clinicalFindings, live.notes] } : null;
 }
 /** المرشَّحُ بما يحسبه الخادم: الممنوعُ و`basis`، ونصوصُ البروتوكول الحاليّ في المكتبة. */
 function serverDerived(c: PlanSnapshot, g: { ctx: EditGateContext; protocol: GateProtocol | null; basis: PlanSnapshot["basis"] }, protocolRow: Record<string, any> | null): PlanSnapshot {

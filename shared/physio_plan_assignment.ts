@@ -92,9 +92,11 @@ export const isSubstitutionExpired = (s: { status: string; dateTo: string }, tod
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const dayNo = (d: string) => Math.round(Date.parse(`${d}T00:00:00Z`) / 86_400_000);
+/** يومٌ موجودٌ حقّاً — «2026-02-31» يمرّ بـ`Date.parse` (يصير ٣ آذار) فيُردّ هنا لا خطأً عامّاً من قاعدة البيانات. */
+const realDay = (d: string) => YMD.test(d) && !Number.isNaN(dayNo(d)) && new Date(dayNo(d) * 86_400_000).toISOString().slice(0, 10) === d;
 /** **طلبُ البديل صالح؟** — التاريخان، ومن اليوم فصاعداً، والمدّة، والسبب. ⟵ الرسالة أو `null`. */
 export function substitutionInputError(p: { dateFrom: string; dateTo: string; reason: string; today: string }): string | null {
-  if (!YMD.test(p.dateFrom) || !YMD.test(p.dateTo) || Number.isNaN(dayNo(p.dateFrom)) || Number.isNaN(dayNo(p.dateTo))) return "التاريخان بصيغة سنة-شهر-يوم";
+  if (!realDay(p.dateFrom) || !realDay(p.dateTo)) return "التاريخان بصيغة سنة-شهر-يوم";
   if (p.dateFrom < p.today) return "لا يُطلب بديلٌ ليومٍ مضى";
   if (p.dateTo < p.dateFrom) return "تاريخُ النهاية قبل البداية";
   if (dayNo(p.dateTo) - dayNo(p.dateFrom) + 1 > SUBSTITUTION_MAX_DAYS) return `أقصى مدّة البديل ${SUBSTITUTION_MAX_DAYS.toLocaleString("ar-IQ")} يوماً`;

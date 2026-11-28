@@ -18,7 +18,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
-import { completeExamV2 } from "./test_fixtures/physio_exam_v2";
+import { completeExamV2, minimalExamV3 } from "./test_fixtures/physio_exam_v2";
 import { applyProductionChecks } from "./test_fixtures/production_checks";
 import { JOB_ERROR_TEXTS, normalizeSourceUrl, parseSubmittedPlan } from "@shared/physio_agent";
 import { findAuthoredLeaks, patientIdentifierSet, redactDeep, stripNoteEcho } from "@shared/physio_agent_privacy";
@@ -195,6 +195,15 @@ async function main() {
     const changed = dgate(edited((e) => { e.devices[0].fallback[0].value = 80; }));
     const approver = dgate(edited((e) => { e.devices[0].fallback[0].value = 80; e.devices[0].fallback[0].source = "approver"; }));
     return [kept.blocking.length, changed.blocking.map((b) => b.code), approver.blocking.length]; })(), [0, ["param_unsourced"], 0]);
+  //  §4.hd (المراجعة) — **تعديلُ الخطّة بعد اعتمادها على معاينة التشخيص الحرّ** يمرّ بما تمرّ به كتابتُها الأولى (`examConfirmIssues`).
+  same("P.7v3 **إضافةُ الإبر بتعديلٍ مباشر وكبتُ المناعة لم يُسجَّل ⟵ مانع**، وبتسجيله يمرّ، **وبروتوكولٌ من غير المجموعة ⟵ مانع**", (() => {
+    const v3e = (core: Record<string, unknown> = {}) => minimalExamV3({ core: { group: "lumbar", side: "right", diabetes: "no", fasting: "no", ...core } as any,
+      module: { condition: "nonspecific" } });
+    const b = { ...baseSnap(), protocolCode: "lbp-chronic-adult" };
+    const withNeedle = { ...b, devices: [...b.devices, { ...b.devices[0], deviceCode: "needle", btl: null }] };
+    const ex = (c: PlanSnapshot, exam: unknown) => applyEditGates(c, ectx({ examConfirm: { exam } }), "direct_edit", b).blocking.map((x) => x.code).filter((x) => /^(exam_|library_)/.test(x));
+    return [ex(withNeedle, v3e()), ex(withNeedle, v3e({ immunosuppressed: "no" })), ex({ ...b, protocolCode: "stroke-chronic-adult" }, v3e({ betaBlocker: "no", atrialFibrillation: "no", weightKg: 70 })), ex(withNeedle, completeExamV2())];
+  })(), [["exam_caution_inputs_missing"], [], ["library_protocol_outside_group"], []]);
   same("P.7e2 **وقيمةٌ «protocol» موروثة كما هي تبقى** ولو لم يكتبها البروتوكولُ الآن (كانت تنبيهاً في كتابة Bionic AI)", (() => {
     const b = baseSnap(); b.devices[0].btl!.fallback[0].source = "protocol";
     const e = editFromSnapshot(b); e.texts.precautionsAr = "x";

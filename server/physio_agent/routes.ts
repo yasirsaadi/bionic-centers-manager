@@ -38,7 +38,8 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
   };
   const idOf = (v: unknown) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
   const fail = (res: any, e: unknown) => {
-    if (e instanceof store.AgentJobError || e instanceof plans.OpusPlanError) return res.status(e.status).json({ error: e.message, code: e.code });
+    if (e instanceof store.AgentJobError) return res.status(e.status).json({ error: e.message, code: e.code, ...e.extra });
+    if (e instanceof plans.OpusPlanError) return res.status(e.status).json({ error: e.message, code: e.code });
     console.error("[physio-agent]", e);
     return res.status(500).json({ error: "تعذّر تنفيذ الطلب" });
   };
@@ -99,11 +100,16 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
           ORDER BY decided_at DESC NULLS LAST, id DESC LIMIT 1`)) as any).rows?.[0];
       //  §4.hb — وظيفةُ «تعديل» طلبُ معتمِد: يلغيها معتمِدٌ وحده، وملاحظتُه لا تُعرض لغيره.
       const revise = job?.kind === "revise";
+      //  §4.hd — مَن يجيب عن **خانة المعاينة** من اللوح: كاتبُها أو أخصائيّو فرعها (الخادمُ يحكم في `answerQuestions` — هنا ما يُعرض وحده).
+      const uid = s.userId ?? null;
+      const canAnswerExamFields = Boolean(job && job.status === "needs_answers" && answerer && !revise && uid != null
+        && (exam.doctorId === uid || (await store.physioWritersOfBranch(db, exam.branchId ?? job.branchId)).includes(uid)));
       res.json({
         job: job ? store.jobView(job, planId, { approver }) : null, planStatus,
         approvalNote: approval?.decision_note ? String(approval.decision_note) : null,
         enabled: agentEnabled(), canRun: answerer && !active && !runBlocked, runBlocked,
         canAnswer: Boolean(job && job.status === "needs_answers" && answerer && !revise),
+        canAnswerExamFields,
         canCancel: Boolean(job && isActiveJobStatus(job.status) && (revise ? approver : answerer)),
         canSeeProposal: approver,
       });

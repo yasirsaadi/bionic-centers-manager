@@ -5,6 +5,7 @@
 import { arabicPluralCategory, type CountForms } from "./staff_greeting";
 import { canApproveProtocols, type ProtocolSessionLike, DEVICE_TEXT_MAX, PROTOCOL_TEXT_MAX } from "./physio_protocols";
 import { canReadPlans, planVisibleTo } from "./physio_plans";
+import { conditionOf, examV2MissingLabel, isNeverAskable, moduleOf, V2_MODULES, type V2Value } from "./physio_exam_v2";
 
 export const OPUS_MODEL_ID = "claude-opus-5-5";
 
@@ -134,6 +135,8 @@ export const JOB_ERROR_TEXTS: Record<string, string> = {
   patient_trashed: "المريضُ في السلّة",
   proposal_new_request: "حلّ محلَّه طلبٌ أحدث نجح",
   edited_directly: "عُدّلت الخطّةُ مباشرةً بعده",
+  //  §4.hd — انتهت جولاتُ الأسئلة وما زال في المعاينة ما يلزم قبل الخطّة.
+  exam_confirmation_needed: "يحتاج Bionic AI تأكيدَ خاناتٍ في المعاينة قبل الخطّة — أكمل مجموعةَ التشخيص وما تحتاجه في المعاينة",
 };
 
 /** **سببُ الإخفاق مفصَّلاً للمعتمِد** (C3) — الرموزُ في `error_detail` بأسبابها العربية حيث تُعرف، وإلّا نصُّ الإخفاق وحده. */
@@ -142,18 +145,33 @@ export function jobErrorDetailAr(code: string | null, detail: string | null, rea
   const base = JOB_ERROR_TEXTS[code] ?? code;
   if (!detail) return base;
   const parts = detail.split(",").map((c) => c.trim()).filter(Boolean);
+  //  §4.hd — الخاناتُ التي يكملها الفاحصُ في المعاينة بأسمائها.
+  if (code === "exam_confirmation_needed") {
+    const labels = Array.from(new Set(parts.filter((k) => /^(core|module|redFlags)\./.test(k)).map(examFieldLabelAnyGroup)));
+    return labels.length ? `${base}: ${labels.join("، ")}` : base;
+  }
   const named = parts.map((c) => reasons[c]).filter(Boolean);
   if (named.length && named.length === parts.length) return `${base}: ${Array.from(new Set(named)).join("؛ ")}`;
   if (code === "api_error" || code === "internal" || code === "api_unavailable") return `${base} (${detail.slice(0, 200)})`;
   return base;
 }
 
+/** اسمُ خانة المعاينة بالعربية ولو لم تُعرف المجموعة (خانةُ الوحدة تُبحث في المجموعات كلّها). */
+export function examFieldLabelAnyGroup(key: string): string {
+  const own = examV2MissingLabel(key);
+  if (own !== key.split(".")[1] || !key.startsWith("module.")) return own;
+  for (const m of V2_MODULES) { const l = examV2MissingLabel(key, m.group); if (l !== key.split(".")[1]) return l; }
+  return own;
+}
+
 // ══ الأسئلة ═════════════════════════════════════════════════════════════════════════════════════════════
 export const QUESTION_AFFECTS = ["exam_field", "preference", "history"] as const;
 export type QuestionAffects = (typeof QUESTION_AFFECTS)[number];
-export interface AgentQuestion { id: string; textAr: string; whyEn: string; affects: QuestionAffects }
-export interface QaAnswer { id: string; questionAr: string; affects: QuestionAffects; answer: string }
-export interface QaRound { round: number; at: string; byName: string | null; answers: QaAnswer[] }
+/** §4.hd — **سؤالٌ عن خانات المعاينة** (`examFields`: `core.x` · `module.x`) يُجاب في لوح الأسئلة ويُكتب في المعاينة نسخةً جديدة؛
+ *  و`suggestions` اقتراحُ Bionic AI للمجموعة أو الحالة وحدهما — لا يُختار مسبقاً. وسؤالٌ عن خانةٍ بلا `examFields` (قديم) يُعدَّل به من المعاينة. */
+export interface AgentQuestion { id: string; textAr: string; whyEn: string; affects: QuestionAffects; examFields?: string[]; suggestions?: { field: string; value: string }[] }
+export interface QaAnswer { id: string; questionAr: string; affects: QuestionAffects; answer: string; fields?: Record<string, V2Value>; examVersion?: number }
+export interface QaRound { round: number; at: string; byName: string | null; answers: QaAnswer[]; examVersion?: number }
 
 const str = (v: unknown, max: number): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const strOrNull = (v: unknown, max: number): string | null => { const s = str(v, max); return s ? s : null; };
@@ -164,7 +182,8 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object"
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
 
-export function parseQuestions(input: unknown): Parsed<AgentQuestion[]> {
+/** `askable`: خاناتُ المعاينة التي يجوز السؤالُ عنها الآن (`exam.askableFields`) — وفي الإصدار الثالث سؤالُ الخانة يسمّيها لزاماً. */
+export function parseQuestions(input: unknown, opts: { askable?: ReadonlySet<string> | null; v3?: boolean } = {}): Parsed<AgentQuestion[]> {
   const list = arr(obj(input).questions);
   const errors: string[] = [];
   if (list.length < 1 || list.length > MAX_QUESTIONS_PER_ROUND) errors.push(`Send 1–${MAX_QUESTIONS_PER_ROUND} questions.`);
@@ -179,19 +198,74 @@ export function parseQuestions(input: unknown): Parsed<AgentQuestion[]> {
     if (!(QUESTION_AFFECTS as readonly string[]).includes(affects)) errors.push(`Question ${id}: affects must be exam_field, preference or history.`);
     if (seen.has(id)) errors.push(`Question ids must be unique (${id}).`);
     seen.add(id);
-    out.push({ id, textAr, whyEn: str(q.why_en, 300), affects: affects as QuestionAffects });
+    const examFields = Array.from(new Set(arr(q.exam_fields).map((k) => str(k, 80)).filter(Boolean)));
+    const question: AgentQuestion = { id, textAr, whyEn: str(q.why_en, 300), affects: affects as QuestionAffects };
+    if (affects === "exam_field" && examFields.length) {
+      for (const k of examFields) {
+        if (isNeverAskable(k)) errors.push(`Question ${id}: ${k} is never asked — safety-sheet items, sex, age and red flags are recorded by the examiner; a contradiction goes to report_new_finding.`);
+        else if (!opts.askable || !opts.askable.has(k)) errors.push(`Question ${id}: ${k} is not in exam.askableFields (unknown, or already recorded in the exam).`);
+      }
+      question.examFields = examFields;
+      const sug: { field: string; value: string }[] = [];
+      for (const raw of arr(q.suggestions)) {
+        const sg = obj(raw);
+        const field = str(sg.field, 80); const value = str(sg.value, 80);
+        if (!examFields.includes(field)) continue;
+        //  §4.hd (المراجعة) — «غير ذلك» لا يقترحها Bionic AI أبداً: هي قرارُ الفاحص وحده (تأكيدُها يُسقط موانعَ كلّ حالةٍ من المكتبة).
+        if (field === "core.group" && moduleOf(value)) sug.push({ field, value });
+        else if (field === "module.condition" && V2_MODULES.some((m) => conditionOf(m.group, value))) sug.push({ field, value });
+      }
+      if (sug.length) question.suggestions = sug;
+    } else if (affects === "exam_field" && opts.v3) {
+      errors.push(`Question ${id}: on this exam an exam_field question must list exam_fields (keys from exam.askableFields).`);
+    } else if (affects !== "exam_field" && examFields.length) {
+      errors.push(`Question ${id}: exam_fields only with affects = "exam_field".`);
+    }
+    out.push(question);
   });
   return errors.length ? { ok: false, errors } : { ok: true, value: out };
 }
 
 /** أجوبةُ جولة — كلُّ سؤالٍ مفتوحٍ له جوابٌ نصّيّ ١–٢٠٠٠، **وسؤالُ خانة المعاينة لا يُجاب نصّاً** (تُعدَّل المعاينة). */
+const emptyAnswerValue = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 export function validateAnswers(questions: readonly AgentQuestion[], raw: unknown):
-  { ok: true; answers: QaAnswer[] } | { ok: false; code: "answer_needs_exam_revision" | "answers_incomplete"; error: string } {
+  { ok: true; answers: QaAnswer[]; examPatch: Record<string, V2Value> | null }
+  | { ok: false; code: "answer_needs_exam_revision" | "answers_incomplete" | "answer_fields_missing"; error: string; missing?: string[] } {
   const given = new Map<string, string>();
-  for (const a of arr(raw)) { const o = obj(a); const id = str(o.id, 40); if (id) given.set(id, str(o.answer, 2000)); }
+  const givenFields = new Map<string, Record<string, unknown>>();
+  for (const a of arr(raw)) {
+    const o = obj(a); const id = str(o.id, 40);
+    if (id) { given.set(id, str(o.answer, 2000)); givenFields.set(id, obj(o.fields)); }
+  }
   const out: QaAnswer[] = [];
+  const patch: Record<string, V2Value> = {};
   for (const q of questions) {
     const ans = given.get(q.id) ?? "";
+    //  §4.hd — سؤالُ خانةٍ مسمّاة يُجاب هنا بقيمتها، والنصُّ اختياريّ.
+    if (q.affects === "exam_field" && q.examFields?.length) {
+      const f = givenFields.get(q.id) ?? {};
+      //  «الحالة» لا تُطلب لمجموعةٍ بلا حالات (الهشاشة · الوذمة · «غير ذلك»).
+      const groupHasNoConditions = typeof f["core.group"] === "string" && !(moduleOf(f["core.group"])?.conditions?.length);
+      const missing = q.examFields.filter((k) => emptyAnswerValue(f[k]) && !(k === "module.condition" && groupHasNoConditions));
+      if (missing.length) return { ok: false, code: "answer_fields_missing", error: "أكمل خاناتِ المعاينة في السؤال", missing };
+      const fields: Record<string, V2Value> = {};
+      //  والخاناتُ التي يفرضها الجوابُ على نفسه (المجموعةُ ⟵ حالتُها ⟵ مدخلاتُ بوّابتها) تأتي معه — والخادمُ يحكم أيّها يجوز (`writeAnswersToExamTx`).
+      //  §4.hd (المراجعة) — وعلاماتُ المجموعة التي أكّدها الجوابُ (`redFlags.x`: «نعم» أو «لا») تأتي معه كذلك. والخادمُ يردّ كلَّ مفتاحٍ لم يُطلب ولم يفرضه الجواب
+      //  (`exam_field_not_requested`) — فلا يُكتب ما لم يُسأل عنه.
+      const keys = Array.from(new Set([...q.examFields, ...Object.keys(f).filter((k) => /^(core|module|redFlags)\.[A-Za-z0-9_]{1,60}$/.test(k) && !emptyAnswerValue(f[k]))])).slice(0, 60);
+      for (const k of keys) {
+        const v = f[k];
+        if (emptyAnswerValue(v)) continue;
+        if (k.startsWith("redFlags.") && v !== "yes" && v !== "no") return { ok: false, code: "answer_fields_missing", error: "جوابُ العلامة الحمراء «نعم» أو «لا»", missing: [k] };
+        if (!(typeof v === "string" || typeof v === "number" || (Array.isArray(v) && v.every((x) => typeof x === "string")))) {
+          return { ok: false, code: "answer_fields_missing", error: "قيمةٌ غيرُ صالحة في خانة المعاينة", missing: [k] };
+        }
+        if (k in patch && JSON.stringify(patch[k]) !== JSON.stringify(v)) return { ok: false, code: "answer_fields_missing", error: "خانةٌ واحدة بجوابين مختلفين", missing: [k] };
+        fields[k] = v as V2Value; patch[k] = v as V2Value;
+      }
+      out.push({ id: q.id, questionAr: q.textAr, affects: q.affects, answer: ans, fields });
+      continue;
+    }
     if (q.affects === "exam_field") {
       if (ans) return { ok: false, code: "answer_needs_exam_revision", error: "هذا السؤالُ عن خانةٍ في المعاينة — عدّل المعاينة بدل الجواب" };
       return { ok: false, code: "answer_needs_exam_revision", error: "في الأسئلة سؤالٌ عن خانةٍ في المعاينة — عدّل المعاينة ليُعاد التشغيل" };
@@ -199,7 +273,7 @@ export function validateAnswers(questions: readonly AgentQuestion[], raw: unknow
     if (!ans) return { ok: false, code: "answers_incomplete", error: "أجب عن كلّ الأسئلة" };
     out.push({ id: q.id, questionAr: q.textAr, affects: q.affects, answer: ans });
   }
-  return { ok: true, answers: out };
+  return { ok: true, answers: out, examPatch: Object.keys(patch).length ? patch : null };
 }
 
 // ══ الخطّةُ المقدَّمة ══════════════════════════════════════════════════════════════════════════════════
@@ -484,7 +558,8 @@ export const SUBMIT_PLAN_SCHEMA: Js = O({
   assumptions: A(S()),
   sources: A(O({ title: S(), url: S(), org: nul(S()), year: nul(I()), used_for: nul(S()) })),
 });
-export const ASK_QUESTIONS_SCHEMA: Js = O({ questions: A(O({ id: S(), text_ar: S(), why_en: S(), affects: E(QUESTION_AFFECTS) })) });
+export const ASK_QUESTIONS_SCHEMA: Js = O({ questions: A(O({ id: S(), text_ar: S(), why_en: S(), affects: E(QUESTION_AFFECTS),
+  exam_fields: A(S()), suggestions: A(O({ field: S(), value: S() })) })) });
 export const DECLINE_SCHEMA: Js = O({ reason_ar: S(), reason_en: S(), recommended_action_ar: S() });
 export const NEW_FINDING_SCHEMA: Js = O({ kind: E(["red_flag", "contraindication"]), text_ar: S(), text_en: S(), source_question_id: nul(S()) });
 export const SUBMIT_REVIEW_SCHEMA: Js = O({ verdict: E(["pass", "revise"]), summary_ar: S(), issues: A(ISSUE), checked: A(S()) });

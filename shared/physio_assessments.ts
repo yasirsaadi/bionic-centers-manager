@@ -385,6 +385,8 @@ export interface PlanOutcome {
   planId: number; status: string; verdict: Verdict; adherence: number | null; overdue: boolean;
   protocolKey: string; protocolTitle: string; branchKey: string; branchName: string;
   specialistKey: string; specialistName: string; executorKey: string; executorName: string;
+  /** §4.hc — كلُّ معالجٍ هو الأكثرُ جلساتٍ في جزءٍ من الخطّة (فمعالجا الجلسة المقسومة كلاهما). */
+  executors?: { key: string; name: string }[];
 }
 export interface OutcomeGroup {
   key: string; name: string; plans: number; compared: number; improved: number; worse: number; same: number;

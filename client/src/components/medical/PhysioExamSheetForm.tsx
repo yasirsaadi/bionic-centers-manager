@@ -7,11 +7,12 @@
 //   ٣. **قرارُ الفاحص**: التشخيص · العلاجُ الموصوف وعددُ الجلسات (منه تُملأ «الكلفة والجلسات») · ملاحظاتُ الفاحص.
 //   ٤. ما بعدها مقفول: الخطّةُ والتقدّم يُقرآن من خطّة العلاج، والمالُ والجلساتُ والمراجعاتُ من سجلّاتها.
 // والحالةُ كلُّها يملكها `NewExamDialog` (التوقيعُ والمفتاحُ والإرسال) — هذه شاشةٌ لا منطقَ حفظٍ فيها.
+import { useEffect, useState } from "react";
 import { GovernorateSelect, InjuryDateField } from "@/components/intake/IntakeFields";
 import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTable, cellInput } from "@/components/intake/IntakeSheetFrame";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
 import { ExamV2Form } from "@/components/physio/ExamV2Form";
-import { anyAssessmentGapsText, assessmentFormLabel, isExamV2 } from "@shared/physio_exam_v2";
+import { anyAssessmentGapsText, assessmentFormLabel, examRuleset, isExamV2 } from "@shared/physio_exam_v2";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PRIOR_CENTER_HISTORY_LABEL } from "@shared/service_path";
@@ -26,7 +27,7 @@ export const PHYSIO_SHEET_TITLE = "استمارة مراجع — علاج طبي
 const dmy = (iso: string) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
 
 export function PhysioExamSheetForm({
-  branchName, registeredAt, sheet, onSheet, rx, onRx, diagnosis, onDiagnosis, notes, onNotes,
+  branchName, registeredAt, sheet, onSheet, rx, onRx, diagnosis, onDiagnosis, notes, onNotes, onRedFlagsBulkNo,
   assessment, onAssessment, lang, onLang, missing, assessMissing, today, prefilled = [],
 }: {
   branchName: string | null;
@@ -51,18 +52,38 @@ export function PhysioExamSheetForm({
   today: string;
   /** خاناتُ النواة المملوءةُ من الملفّ (§4.gz). */
   prefilled?: string[];
+  /** §4.hd — «لا شيء ممّا يلي» في العلامات الحمراء ضُغطت. */
+  onRedFlagsBulkNo?: (stillAccurate?: boolean) => void;
 }) {
   const miss = (k: string) => missing.includes(k);
   //  **الثانيةُ إلزامية** (§4.gz): الناقصُ يمنع الحفظ ويُسمّى؛ والأولى (معاينةٌ قديمة تُنقَّح) تنبيهٌ كما كانت.
   const v2 = isExamV2(assessment);
+  //  §4.hd — الثالثة: أقسامُ التقييم الأوّليّ (القوّةُ والتشنّجُ والوظيفة) اختياريةٌ مطويّة.
+  const v3 = v2 && examRuleset(assessment) === "v3";
   const gapsText = anyAssessmentGapsText(assessment, diagnosis);
   const set = <K extends keyof ExamSheetValues>(k: K, v: ExamSheetValues[K]) => onSheet({ ...sheet, [k]: v });
   const onset = sheet.injuryDate ? sheet.injuryDate.slice(0, 10) : sheet.injuryDateStatus;
-
-  return (
-    <div className="bg-white rounded-xl border shadow-sm p-2 md:p-5 min-w-0" data-testid="physio-exam-sheet">
-      <IntakeSheetHeader branchName={branchName} title={PHYSIO_SHEET_TITLE} />
-      <SheetTable>
+  //  §4.hd (المراجعة) — المطويُّ ينفتح حين يقع فيه ناقصٌ أو قيمةٌ غيرُ صالحة (فلا يختبئ الخطأ تحت طيّ).
+  const receptionMissing = missing.some((k) => k !== "diagnosis");
+  const initialMissing = assessMissing.some((k) => !/^(core|module|redFlags)\./.test(k) && !["diagnosis", "sensation", "sensationRegions", "assessment"].includes(k));
+  const [receptionOpen, setReceptionOpen] = useState(false);
+  const [initialOpen, setInitialOpen] = useState(false);
+  useEffect(() => { if (receptionMissing) setReceptionOpen(true); }, [receptionMissing]);
+  useEffect(() => { if (initialMissing) setInitialOpen(true); }, [initialMissing]);
+  const examBand = isExamV2(assessment) ? (
+    <>
+      <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 text-center font-bold text-slate-900" data-testid="pt-v2-band">
+        {v3 ? "معاينة العلاج الطبيعي — التشخيص وورقة السلامة" : "معاينة العلاج الطبيعي الإلزامية"}
+      </div>
+      <div className="p-2 md:p-3 bg-slate-50 border-b border-slate-700">
+        <ExamV2Form value={assessment} onChange={(v) => onAssessment(v)} diagnosis={diagnosis} onDiagnosis={onDiagnosis}
+          missing={[...assessMissing, ...(miss("diagnosis") ? ["diagnosis"] : [])]} today={today} prefilled={prefilled} testIdPrefix="pt-v2"
+          onRedFlagsBulkNo={onRedFlagsBulkNo} diagnosisStarter={sheet.presentingComplaint} />
+      </div>
+    </>
+  ) : null;
+  const receptionRows = (
+    <>
         <SheetPair>
           <SheetRow label="اسم المراجع" missing={miss("name")} testId="pt-row-name">
             <Input className={cellInput} value={sheet.name} onChange={(e) => set("name", e.target.value)} data-testid="pt-sheet-name" />
@@ -129,34 +150,59 @@ export function PhysioExamSheetForm({
           </SheetRow>
         </SheetPair>
 
-        {/*  ══ **المعاينةُ الإلزامية `BC-PT-02`** (§4.gz): النواةُ ووحدةُ المجموعة والعلاماتُ الحمراء — فوق أقسام الأولى ══ */}
-        {isExamV2(assessment) && (
+    </>
+  );
+  //  التقييمُ الأوّليّ — بهيئة الورقتين الأصليتين ولغتهما (رأسُه مرّةً واحدة للإصدارات كلّها).
+  const initialSheet = (
+    <>
+      <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 flex flex-wrap items-center justify-center gap-2">
+        <span className="font-bold text-slate-900">
+          {v2 ? "أقسام التقييم الأوّلي: القوة والتشنّج والوظيفة" : <>التقييم الأوّلي — <bdi dir="ltr">{PT_LABELS.formTitle.en}</bdi></>}
+        </span>
+        <div className="ms-auto inline-flex rounded-md border border-slate-600 overflow-hidden text-xs" role="group" aria-label="لغة الاستمارة">
+          {(["en", "ar"] as const).map((l) => (
+            <button key={l} type="button" onClick={() => onLang(l)} aria-pressed={lang === l}
+              className={cn("px-2.5 py-1", lang === l ? "bg-slate-800 text-white" : "bg-white text-slate-800")} data-testid={`pt-lang-${l}`}>
+              {l === "en" ? "English" : "عربي"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <InitialAssessmentSheet value={assessment} onChange={onAssessment} lang={lang} onset={onset || null} missing={assessMissing}
+        hide={v2 ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
+    </>
+  );
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-2 md:p-5 min-w-0" data-testid="physio-exam-sheet">
+      <IntakeSheetHeader branchName={branchName} title={PHYSIO_SHEET_TITLE} />
+      <SheetTable>
+        {v3 ? (
           <>
-            <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 text-center font-bold text-slate-900" data-testid="pt-v2-band">
-              معاينة العلاج الطبيعي الإلزامية
-            </div>
-            <div className="p-2 md:p-3 bg-slate-50 border-b border-slate-700">
-              <ExamV2Form value={assessment} onChange={(v) => onAssessment(v)} diagnosis={diagnosis} onDiagnosis={onDiagnosis}
-                missing={[...assessMissing, ...(miss("diagnosis") ? ["diagnosis"] : [])]} today={today} prefilled={prefilled} testIdPrefix="pt-v2" />
-            </div>
+            {examBand}
+            {/*  §4.hd (المراجعة) — في الثالثة الفاحصُ يكتب أوّلاً: بياناتُ الاستقبال للتأكيد مطويّةً (وتنفتح إن نقص منها شيء). */}
+            <details open={receptionOpen} onToggle={(e) => setReceptionOpen((e.target as HTMLDetailsElement).open)} className="border-b border-slate-700" data-testid="pt-v3-reception">
+              <summary className="cursor-pointer bg-slate-100 px-2 py-2 text-sm font-bold text-slate-800 list-none flex items-center justify-between gap-2">
+                <span className="min-w-0">بيانات الاستقبال — للتأكيد{sheet.name ? `: ${sheet.name}` : ""}</span>
+                <span className="text-xs font-normal text-slate-500 shrink-0">{receptionOpen ? "إخفاء" : "عرض"}</span>
+              </summary>
+            {receptionRows}
+            </details>
+          </>
+        ) : (
+          <>
+            {receptionRows}
+            {examBand}
           </>
         )}
-        {/*  ══ التقييمُ الأوّليّ — بهيئة الورقتين الأصليتين ولغتهما ══ */}
-        <div className="bg-[#9dc3e6] border-b border-slate-700 px-2 py-1.5 flex flex-wrap items-center justify-center gap-2">
-          <span className="font-bold text-slate-900">
-            {v2 ? "أقسام التقييم الأوّلي: القوة والتشنّج والوظيفة" : <>التقييم الأوّلي — <bdi dir="ltr">{PT_LABELS.formTitle.en}</bdi></>}
-          </span>
-          <div className="ms-auto inline-flex rounded-md border border-slate-600 overflow-hidden text-xs" role="group" aria-label="لغة الاستمارة">
-            {(["en", "ar"] as const).map((l) => (
-              <button key={l} type="button" onClick={() => onLang(l)} aria-pressed={lang === l}
-                className={cn("px-2.5 py-1", lang === l ? "bg-slate-800 text-white" : "bg-white text-slate-800")} data-testid={`pt-lang-${l}`}>
-                {l === "en" ? "English" : "عربي"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <InitialAssessmentSheet value={assessment} onChange={onAssessment} lang={lang} onset={onset || null} missing={assessMissing}
-          hide={v2 ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
+        {v3 ? (
+          <details open={initialOpen} onToggle={(e) => setInitialOpen((e.target as HTMLDetailsElement).open)} className="border-b border-slate-700" data-testid="pt-v3-initial">
+            <summary className="cursor-pointer bg-slate-100 px-2 py-2 text-sm font-bold text-slate-800">
+              اختياري: أقسام التقييم الأوّلي — القوة والتشنّج والوظيفة
+            </summary>
+            {initialSheet}
+          </details>
+        ) : initialSheet}
 
         <SheetBand>قرار الفاحص</SheetBand>
         {/*  في الثانية «التشخيص» في بطاقة النواة بجانب مجموعته — خانةٌ واحدة لا اثنتان. */}

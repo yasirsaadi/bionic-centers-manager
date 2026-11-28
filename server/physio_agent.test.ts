@@ -17,7 +17,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db, pool } from "./db";
 import { registerRoutes } from "./routes";
 import { storage } from "./storage";
-import { completeExamV2 } from "./test_fixtures/physio_exam_v2";
+import { completeExamV2, minimalExamV3 } from "./test_fixtures/physio_exam_v2";
+import { setExamAnswerInvariantHookForTests } from "./physio_agent/exam_answers";
 import { applyProductionChecks, productionChecksDrift } from "./test_fixtures/production_checks";
 import { applyPlanGates, buildLibraryPlan, rescalePhaseRanges, type GateContext, type GateProtocol } from "@shared/physio_agent_gates";
 import {
@@ -36,6 +37,7 @@ import { libraryIndex } from "./physio_agent/context";
 import { AgentStop } from "./physio_agent/model";
 import { MAX_TOTAL_SESSIONS } from "./migrations/199_physio_agent_jobs";
 import { softDeletePatient } from "./patients/trash_store";
+import { examAgentGate } from "./physio_exam_reviews/store";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -256,6 +258,63 @@ async function main() {
   }
   same("P.dup **مفتاحُ بطاقةٍ مقترحة مكرّر يُردّ للكاتب** (وإلّا تعذّر الاعتمادُ على رمز البطاقة الفريد)", (() => {
     const r = parseSubmittedPlan(oolPlan({ proposed_cards: [card(), card({ name_en: "Other" })] })); return [r.ok, r.ok ? [] : r.errors.some((e) => /duplicated/.test(e))]; })(), [false, true]);
+
+
+  // ══ س. §4.hd — بوّاباتُ معاينة التشخيص الحرّ والأسئلةُ عن خاناتها (صرفة) ══
+  console.log("\n── س. التشخيصُ الحرّ: البوّاباتُ والأسئلة ──");
+  const v3Ready = minimalExamV3({ core: { group: "lumbar", side: "right", diabetes: "no", fasting: "no", betaBlocker: "no", atrialFibrillation: "no", weightKg: 70 },
+    module: { condition: "nonspecific" } });
+  //  §4.hd (المراجعة) — بروتوكولُ المكتبة من مجموعة المعاينة وحالتِها (`library_protocol_outside_group`): بروتوكولُ الاختبار برمز ألم الظهر.
+  const lbp = { protocol: proto({ code: "lbp-chronic-adult" }) };
+  same("س.ب١ **مجموعةٌ لم تُؤكَّد ⟵ مانع**، والمؤكَّدةُ لا", [gate(lib(), { ...lbp, examConfirm: { exam: minimalExamV3() } }).blocking.map((b) => b.code).filter((c) => c.startsWith("exam_")),
+    gate(lib(), { ...lbp, examConfirm: { exam: v3Ready } }).blocking.length], [["exam_group_unconfirmed", "exam_caution_inputs_missing"], 0]);
+  same("س.ب٢ **«غير ذلك» تمرّ خارجَ المكتبة، وبروتوكولُ مكتبةٍ عليها مانع**",
+    [gate(lib(), { ...lbp, examConfirm: { exam: { ...v3Ready, core: { ...v3Ready.core, group: "other" }, module: {} } } }).blocking.map((b) => b.code).filter((c) => /^(exam_|library_)/.test(c)),
+      gate(oolPlan(), { protocol: null, examConfirm: { exam: { ...v3Ready, core: { ...v3Ready.core, group: "other" }, module: {} } } }).blocking.map((b) => b.code).filter((c) => /^(exam_|library_)/.test(c))],
+    [["library_protocol_group_other"], []]);
+  same("س.ب٣ **مدخلُ الحذر بالخطّة**: الإبرُ بلا كبت المناعة ⟵ مانع، ومدخلُ البوّابة الفارغ ⟵ مانع",
+    [gate(lib({ devices: [dev("electro"), dev("needle")] }), { ...lbp, examConfirm: { exam: v3Ready } }).blocking.map((b) => b.code),
+      gate(lib(), { ...lbp, examConfirm: { exam: { ...v3Ready, core: { ...v3Ready.core, side: null } } } }).blocking.map((b) => b.code)],
+    [["exam_caution_inputs_missing"], ["exam_gate_inputs_missing"]]);
+  //  §4.hd (المراجعة) — ما أضافته مراجعةُ السلامة.
+  const noHigh = { ...v3Ready, core: { ...v3Ready.core, betaBlocker: null, atrialFibrillation: null, weightKg: null } };
+  same("س.ب٥ **«خارج المكتبة» تلزمه مدخلاتُ الشدّة** (لا يُعرف أنّه ليس شديداً)، وبروتوكولُ المكتبة العاديّ لا",
+    [gate(oolPlan(), { protocol: null, examConfirm: { exam: noHigh } }).blocking.find((b) => b.code === "exam_caution_inputs_missing")?.target,
+      gate(lib(), { ...lbp, examConfirm: { exam: noHigh } }).blocking.length], ["core.betaBlocker,core.atrialFibrillation,core.weightKg", 0]);
+  same("س.ب٦ **بروتوكولُ مكتبةٍ من غير مجموعة المعاينة وحالتِها ⟵ مانع** (الروبوتُ للجلطة وحدها لا يُفتح بظهر)",
+    [gate(lib(), { protocol: proto({ code: "stroke-chronic-adult" }), examConfirm: { exam: v3Ready } }).blocking.map((b) => b.code),
+      gate(lib(), { ...lbp, examConfirm: { exam: v3Ready } }).blocking.map((b) => b.code)], [["library_protocol_outside_group"], []]);
+  const dxText = (t: string, ack?: string[]) => gate(lib(), { ...lbp, examConfirm: { exam: { ...v3Ready, ...(ack ? { textSafetyAck: ack } : {}) }, texts: [t] } })
+    .blocking.filter((b) => b.code === "exam_text_safety_conflict").map((b) => b.target);
+  same("س.ب٧ **النصُّ يخالف ورقةَ السلامة ⟵ مانع** (والإملاءُ العراقيّ «سيوله»، وجوابٌ نصّيّ)، **والنفيُ القريب لا**، **وتأكيدُ الفاحص يرفعه**",
+    [dxText("ألم ظهر والمريض على الوارفارين"), dxText("ياخذ دواء سيوله يومياً"), dxText("لا يوجد منظم ضربات ولا سيوله"),
+      dxText("على الوارفارين", ["core.anticoagulant"]), dxText("ألم ظهر مزمن")],
+    [["core.anticoagulant"], ["core.anticoagulant"], [], [], []]);
+  same("س.ب٤ والثانيةُ بلا هذه البوّابات (`examConfirm` غائب)", gate(lib()).blocking.length, 0);
+  const askable = new Set(["core.group", "module.condition", "core.diabetes"]);
+  const pq = (qs: unknown[], v3 = true) => parseQuestions({ questions: qs }, { askable, v3 });
+  same("س.٢ **السؤالُ عن الخانة يُفحص**: ورقةُ السلامة والعمرُ والعلاماتُ لا تُسأل، وما ليس في القائمة يُردّ، والاقتراحُ للمجموعة وحدها",
+    [pq([{ id: "a", text_ar: "هل في المنطقة معدن؟ نحتاج الجواب", why_en: "", affects: "exam_field", exam_fields: ["core.metalInField"] }]).ok,
+      pq([{ id: "a", text_ar: "كم عمره بالضبط يا ترى؟", why_en: "", affects: "exam_field", exam_fields: ["core.ageYears"] }]).ok,
+      pq([{ id: "a", text_ar: "هل عنده علامةُ ذيل الفرس؟", why_en: "", affects: "exam_field", exam_fields: ["redFlags.cauda_equina"] }]).ok,
+      pq([{ id: "a", text_ar: "ما وزنُه الآن بالكيلو؟", why_en: "", affects: "exam_field", exam_fields: ["core.weightKg"] }]).ok,
+      pq([{ id: "a", text_ar: "هل هي حامل الآن؟ نحتاج الجواب", why_en: "", affects: "exam_field" }]).ok,
+      pq([{ id: "a", text_ar: "هل هي حامل الآن؟ نحتاج الجواب", why_en: "", affects: "exam_field" }], false).ok,
+      (() => { const r = pq([{ id: "a", text_ar: "ما مجموعةُ التشخيص وحالتُها؟", why_en: "", affects: "exam_field", exam_fields: ["core.group", "module.condition", "core.diabetes"],
+        suggestions: [{ field: "core.group", value: "foot_ankle" }, { field: "core.diabetes", value: "no" }, { field: "module.condition", value: "achilles" }, { field: "core.group", value: "nope" }] }]);
+        return r.ok ? r.value[0].suggestions : null; })()],
+    [false, false, false, false, false, true, [{ field: "core.group", value: "foot_ankle" }, { field: "module.condition", value: "achilles" }]]);
+  same("س.٢ج **«غير ذلك» لا يقترحها Bionic AI أبداً** (قرارُ الفاحص وحده)",
+    (() => { const r = pq([{ id: "a", text_ar: "ما مجموعةُ التشخيص وحالتُها؟", why_en: "", affects: "exam_field", exam_fields: ["core.group"],
+      suggestions: [{ field: "core.group", value: "other" }] }]); return r.ok ? r.value[0].suggestions ?? null : "ERR"; })(), null);
+  const typed = [{ id: "g", textAr: "ما المجموعة؟", whyEn: "", affects: "exam_field" as const, examFields: ["core.group", "module.condition"] },
+    { id: "h", textAr: "هل يعمل واقفاً؟", whyEn: "", affects: "history" as const }];
+  same("س.٢ب **الجوابُ بالقيمة**: كلُّ خانةٍ مسمّاة إلزامية، والزائدُ الذي يفرضه الجوابُ يأتي معه، والنصُّ اختياريّ",
+    [(() => { const v = validateAnswers(typed, [{ id: "g", fields: { "core.group": "foot_ankle" } }, { id: "h", answer: "نعم" }]); return v.ok ? null : [v.code, v.missing]; })(),
+      (() => { const v = validateAnswers(typed, [{ id: "g", fields: { "core.group": "foot_ankle", "module.condition": "achilles", "module.tendonType": "midportion" } }, { id: "h", answer: "نعم" }]);
+        return v.ok ? v.examPatch : null; })(),
+      (() => { const v = validateAnswers([{ id: "q", textAr: "حامل؟", whyEn: "", affects: "exam_field" }], [{ id: "q", answer: "لا" }]); return v.ok ? null : v.code; })()],
+    [["answer_fields_missing", ["module.condition"]], { "core.group": "foot_ankle", "module.condition": "achilles", "module.tendonType": "midportion" }, "answer_needs_exam_revision"]);
 
   console.log("\n── ل. الخطّةُ من البروتوكول ──");
   same("L.1 **مراحلُ البروتوكول وتمارينُه تُنسخ ولو أرسل النموذجُ غيرَها**، وملاحظاتُه ملاحظات", (() => {
@@ -665,6 +724,236 @@ async function main() {
     //  ما بقي بالدور من سيناريوهاتٍ سابقة لا يُؤخذ بدل وظيفة السيناريو التالي.
     await q(`UPDATE physio_agent_jobs SET status = 'cancelled', error_code = 'cancelled_by_user', error = 'تنظيف', finished_at = now()
       WHERE status IN ('queued','needs_answers') AND patient_id IN (SELECT id FROM patients WHERE referral_sub_source = $1)`, [MARK]);
+
+    {
+    console.log("\n── س٣. التشخيصُ الحرّ: الوكيلُ يسأل والجوابُ يُكتب في المعاينة (§4.hd) ──");
+    const park = async () => q(`UPDATE physio_agent_jobs SET status = 'cancelled', error_code = 'cancelled_by_user', error = 'تنظيف', finished_at = now()
+      WHERE status IN ('queued','needs_answers') AND patient_id IN (SELECT id FROM patients WHERE referral_sub_source = $1)`, [MARK]);
+    const examV = async (id: number) => (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [id]))[0];
+    const DX = "ألمٌ في وتر العرقوب الأيمن منذ ثلاثة أشهر، يسوء مع الجري";
+    const p8 = await patient("عرقوب");
+    const e8 = await sign(p8, { diagnosis: DX, assessment: minimalExamV3({ core: { weightKg: 80 } }) });
+    const j8rows = await waitJobs(p8, 1);
+    resetModel();
+    queues.writer.push(
+      msg([tu("submit_plan", libFor())]),
+      msg([tu("ask_questions", { questions: [{ id: "bad", text_ar: "هل في منطقة العلاج معدن؟", why_en: "", affects: "exam_field", exam_fields: ["core.metalInField"] }] })]),
+      msg([tu("ask_questions", { questions: [
+        { id: "g", text_ar: "ما مجموعةُ التشخيص وحالتُها؟ أرجّح اعتلالَ وتر العرقوب", why_en: "group", affects: "exam_field", exam_fields: ["core.group", "module.condition"],
+          suggestions: [{ field: "core.group", value: "foot_ankle" }, { field: "module.condition", value: "achilles" }] },
+        { id: "d", text_ar: "هل عنده سكّري، وهل يصوم الآن؟", why_en: "caution", affects: "exam_field", exam_fields: ["core.diabetes", "core.fasting"] }] })]),
+    );
+    await runAgentOnce({ skipReconcile: true });
+    const j8 = (await jobsOf(p8))[0];
+    const w8 = writerCalls();
+    const ctx8 = JSON.parse((w8[0]?.body.messages[0] as any).content[0].text);
+    same("س.١ **بلا مجموعة: `submit_plan` يُردّ «اسأل أوّلاً» قبل البوّابات ولا يُحسب**، وسؤالٌ عن ورقة السلامة يُردّ، ثمّ يسأل ⟵ «يسأل»",
+      [j8.status, j8.questions.map((x: any) => x.examFields), /Ask first: .*core\.group/.test(JSON.stringify(w8[1]?.body.messages.at(-1))),
+        /metalInField is never asked/.test(JSON.stringify(w8[2]?.body.messages.at(-1))), (j8.result?.drafts ?? []).length, ctx8.rules.mustAskBeforeSubmit,
+        ctx8.exam.ruleset, ctx8.exam.groupConfirmed, j8.questions[0].suggestions],
+      ["needs_answers", [["core.group", "module.condition"], ["core.diabetes", "core.fasting"]], true, true, 0,
+        ["core.group", "module.condition", "core.diabetes", "core.fasting"], "v3", false,
+        [{ field: "core.group", value: "foot_ankle" }, { field: "module.condition", value: "achilles" }]]);
+    const ansBody = (g: Record<string, unknown>, d: Record<string, unknown> = { "core.diabetes": "no", "core.fasting": "no" }) =>
+      ({ answers: [{ id: "g", answer: "", fields: g }, { id: "d", answer: "", fields: d }] });
+    const okFields = { "core.group": "foot_ankle", "module.condition": "achilles", "module.tendonType": "insertional", "module.priorRupture": "no" };
+    const a1 = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec, ansBody({ "core.group": "foot_ankle", "module.condition": "achilles" }));
+    same("س.٤ **ما يفرضه الجوابُ يُطلب معه**: العرقوبُ بلا نوعه وتمزّقه ⟵ ٤٠٠ يسمّيهما، والمعاينةُ كما هي",
+      [a1.status, a1.json?.code, a1.json?.missing, a1.json?.missingLabels, (await examV(e8)).version], [400, "answer_incomplete_fields",
+        ["module.tendonType", "module.priorRupture"], ["نوعُ الاعتلال", "تمزّقٌ سابق أو جراحةٌ في الوتر"], 1]);
+    const a2 = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec, ansBody({ ...okFields, "core.weightKg": 95 }));
+    const a2b = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec, ansBody({ ...okFields, "core.metalInField": "yes" }));
+    same("س.٥ **ملءٌ لا تبديل**: خانةٌ فيها قيمة ⟵ ٤٠٠ «من تعديل المعاينة»، وورقةُ السلامة لا تُكتب من هنا",
+      [a2.status, a2.json?.code, a2b.status, a2b.json?.code, (await examV(e8)).version], [400, "exam_field_already_answered", 400, "exam_field_not_askable", 1]);
+    //  §4.hd (المراجعة) — **لا يُكتب ما لم يُسأل عنه ولم يفرضه الجواب**: سؤالُ السكّريّ لا يحمل الألمَ ولا نوعَ وترٍ لم يُطلب.
+    const a2c = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec, ansBody({ ...okFields, "core.painNow": 5 }));
+    const a2d = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec, ansBody({ "core.group": "foot_ankle", "module.condition": "achilles",
+      "module.tendonType": "insertional", "module.priorRupture": "no" }, { "core.diabetes": "no", "core.fasting": "no", "redFlags.quinolones": "no" }));
+    same("س.٥ب **خانةٌ لم يُسأل عنها ولا يفرضها الجواب ⟵ ٤٠٠ `exam_field_not_requested`** (والعلامةُ الحمراء كذلك)، ولا كتابة",
+      [a2c.status, a2c.json?.code, a2c.json?.missing, a2d.status, a2d.json?.code, (await examV(e8)).version],
+      [400, "exam_field_not_requested", ["core.painNow"], 400, "exam_field_already_answered", 1]);
+    const a3 = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.admin, ansBody(okFields));
+    const a3t = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.tech, ansBody(okFields));
+    same("س.٣ **يكتب في المعاينة كاتبُها وأخصائيّو فرعها**: المسؤولُ (معتمِدٌ لا أخصائيّ) ⟵ ٤٠٣، والتقنيّ ⟵ ٤٠٣",
+      [a3.status, a3.json?.code, a3t.status, (await examV(e8)).version], [403, "exam_field_answer_refused", 403, 1]);
+    const fpBefore = String(j8.exam_fingerprint);
+    const a4 = await call("POST", `/api/physio/opus-jobs/${j8.id}/answers`, S.spec2, ansBody(okFields));
+    const ev = await examV(e8);
+    const j8a = (await jobsOf(p8))[0];
+    const revRow = (await q(`SELECT version, edited_by FROM medical_exam_revisions WHERE exam_id = $1 ORDER BY version DESC LIMIT 1`, [e8]))[0];
+    const liveRow = (await q(`SELECT edited_by, edited_by_name FROM medical_exams WHERE id = $1`, [e8]))[0];
+    const js = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v) as any;
+    const exAudit0 = (await q(`SELECT user_id, new_values, notes FROM audit_log WHERE entity_type = 'medical_exam' AND entity_id = $1 AND action = 'update' ORDER BY id DESC LIMIT 1`, [String(e8)]))[0];
+    const exAudit = { ...exAudit0, new_values: js(exAudit0?.new_values) };
+    const jobAudit0 = (await q(`SELECT new_values FROM audit_log WHERE entity_type = 'physio_agent_job' AND entity_id = $1 AND action = 'answer' ORDER BY id DESC LIMIT 1`, [String(j8.id)]))[0];
+    const jobAudit = { new_values: js(jobAudit0?.new_values) };
+    same("س.٦ **زميلُه في الفرع يجيب فيُكتب في المعاينة نسخةً** باسمه وبتدقيق، والوظيفةُ نفسُها للطابور ببصمة المعاينة الجديدة",
+      [a4.status, a4.json?.job?.id, a4.json?.job?.status, ev.version, ev.assessment.core.group, ev.assessment.module.tendonType, ev.assessment.core.diabetes,
+        ev.assessment.fieldSources?.["module.tendonType"]?.by, ev.assessment.fieldSources?.["module.tendonType"]?.version, Number(revRow.version), Number(liveRow.edited_by),
+        Number(exAudit.user_id), exAudit.new_values?.source, /أُضيفت أجوبةٌ لـ Bionic AI/.test(exAudit.notes ?? ""), jobAudit.new_values?.fingerprintChanged,
+        jobAudit.new_values?.examVersion, j8a.exam_fingerprint !== fpBefore, a4.json?.job?.qa?.[0]?.answers?.[0]?.examVersion],
+      [202, Number(j8.id), "queued", 2, "foot_ankle", "insertional", "no", SPEC2, 2, 1, SPEC2, SPEC2, "agent_question", true, true, 2, true, 2]);
+    const stalePatch = await call("PATCH", `/api/medical/exams/${e8}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: DX, prescription: {}, baseVersion: 1,
+      assessment: minimalExamV3({ core: { weightKg: 80 } }) });
+    same("س.٧ **نافذةٌ فُتحت قبل الجواب لا تمحوه**: `baseVersion` ١ ⟵ ٤٠٩، والأجوبةُ باقية", [stalePatch.status, stalePatch.json?.code, (await examV(e8)).assessment.module.tendonType],
+      [409, "exam_version_changed", "insertional"]);
+    resetModel();
+    //  §4.hd (المراجعة) — بروتوكولُ المكتبة من حالة المعاينة: بروتوكولُ الاختبار يحمل رمزَ بروتوكول العرقوب في هذا السيناريو وحده.
+    await q(`UPDATE physio_protocols SET code = 'achilles-tendinopathy-adult--seeded' WHERE code = 'achilles-tendinopathy-adult'`);
+    await q(`UPDATE physio_protocols SET code = 'achilles-tendinopathy-adult' WHERE id = $1`, [P]);
+    queues.writer.push(msg([tu("submit_plan", libFor({ devices: [dev("electro", { btl_model_id: "btl-4825s-electro" }), dev("shockwaves", { btl_model_id: "rswt-elite" })] }))]));
+    queues.reviewer.push(pass());
+    await runAgentOnce({ skipReconcile: true });
+    const j8b = (await jobsOf(p8));
+    const plan8 = await planOfJob(Number(j8.id));
+    const ctx8b = JSON.parse((writerCalls()[0]?.body.messages[0] as any).content[0].text);
+    const d8 = plan8 ? await q(`SELECT d.code FROM physio_plan_devices l JOIN devices d ON d.id = l.device_id WHERE l.plan_id = $1`, [plan8.id]) : [];
+    same("س.٦ب **الوظيفةُ التي سألت تكمل** (لا إلغاءَ بـ«تغيّرت المعاينة») — تقرأ الجوابَ في المعاينة، والموجاتُ ممنوعةٌ بالارتكازيّ، والخطّةُ على الوظيفة نفسِها",
+      [j8b.length, j8b[0].status, /Tendinopathy type: Insertional \(added by an answer to Bionic AI, exam version 2\)/.test(ctx8b.exam.text),
+        ctx8b.constraints.forbiddenDevices.find((f: any) => f.deviceCode === "shockwaves")?.reasonAr, ctx8b.rules.mustAskBeforeSubmit,
+        ctx8b.qa[0].answers[0].fields?.["module.tendonType"], d8.map((r) => r.code), plan8?.status],
+      [1, "succeeded", true, "اعتلالٌ ارتكازيّ في وتر العرقوب", [], "insertional", ["electro"], "pending"]);
+    await q(`UPDATE physio_protocols SET code = 'TEST-OPUS-LIB' WHERE id = $1`, [P]);
+    await q(`UPDATE physio_protocols SET code = 'achilles-tendinopathy-adult' WHERE code = 'achilles-tendinopathy-adult--seeded'`);
+
+    const cur8 = (await examV(e8)).assessment;
+    const forged = { ...cur8, module: { ...cur8.module, tendonType: "midportion" }, fieldSources: { ...cur8.fieldSources, "core.side": { by: 1, byName: "مزوَّر", jobId: 1, round: 1, version: 9, at: "x" } } };
+    const edit8 = await call("PATCH", `/api/medical/exams/${e8}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: DX, prescription: {}, baseVersion: 2, assessment: forged });
+    const fs8 = (await examV(e8)).assessment.fieldSources ?? {};
+    await waitJobs(p8, 2);  //  التنقيحُ يضع وظيفةً جديدة (خطّتُها المنتظرة قدُمت) — تُركن قبل السيناريو التالي.
+    same("س.٦ج **مَن كتب الخانةَ يسقط حين يغيّرها الفاحص**، ويبقى لما لم يتغيّر، **ولا يُقبل من العميل**",
+      [edit8.status, "module.tendonType" in fs8, fs8["core.group"]?.by, "core.side" in fs8], [200, false, SPEC2, false]);
+
+    // ── الثابت (حارسُ عطب): جوابٌ يُبيح جهازاً ممنوعاً بسببٍ مسجَّل ⟵ ٥٠٠ ولا كتابة.
+    await park();
+    const p9 = await patient("ثابت");
+    const e9 = await sign(p9, { diagnosis: DX, assessment: minimalExamV3({ core: { implants: ["pacemaker"] } }) });
+    await waitJobs(p9, 1);
+    resetModel();
+    queues.writer.push(msg([tu("ask_questions", { questions: [{ id: "g", text_ar: "ما مجموعةُ التشخيص وحالتُها؟", why_en: "", affects: "exam_field",
+      exam_fields: ["core.group", "module.condition"] }] })]));
+    await runAgentOnce({ skipReconcile: true });
+    const j9 = (await jobsOf(p9))[0];
+    setExamAnswerInvariantHookForTests((m) => ({ ...m, core: { ...m.core, implants: ["none"] } }));
+    const a9 = await call("POST", `/api/physio/opus-jobs/${j9.id}/answers`, S.spec, { answers: [{ id: "g", fields: { "core.group": "lymphedema", "module.limb": "arm", "module.heartFailure": "none" } }] });
+    setExamAnswerInvariantHookForTests(null);
+    same("س.٨ **الثابت**: جوابٌ يُسقط مانعاً مسجَّلاً (المنظّم) ⟵ ٥٠٠ `exam_answer_invariant` ولا نسخة",
+      [a9.status, a9.json?.code, (await examV(e9)).version, (await jobsOf(p9))[0].status], [500, "exam_answer_invariant", 1, "needs_answers"]);
+
+    // ── انتهت الجولات وما زال ما يلزم ⟵ «أكمل المعاينة» لا «افترض واكتب».
+    await park();
+    const p10 = await patient("جولات");
+    await sign(p10, { diagnosis: "مريضٌ لديه منظّم ضربات منذ سنتين، وألمٌ في الكعب", assessment: minimalExamV3() });
+    await waitJobs(p10, 1);
+    const j10 = (await jobsOf(p10))[0];
+    await q(`UPDATE physio_agent_jobs SET question_rounds = 3 WHERE id = $1`, [j10.id]);
+    resetModel();
+    queues.writer.push(msg([tu("submit_plan", libFor())]));
+    await runAgentOnce({ skipReconcile: true });
+    const j10b = (await jobsOf(p10))[0];
+    const ctx10 = JSON.parse((writerCalls()[0]?.body.messages[0] as any).content[0].text);
+    same("س.٩ **عند سقف الجولات ومازال ما يلزم ⟵ `exam_confirmation_needed`** لا خطّة",
+      [j10b.status, j10b.error_code, await planOfJob(Number(j10.id))], ["failed", "exam_confirmation_needed", null]);
+    same("س.١٧ **ما في النصّ الحرّ ويخالف ورقةَ السلامة يُقال للكاتب** («منظّم ضربات» والمزروعُ «لا شيء»)",
+      ctx10.exam.textSafetyHits.map((h: any) => h.key), ["core.implants"]);
+
+    // ── تعديلُ الفاحص المباشر وهي تسأل ⟵ تُلغى «تغيّرت المعاينة» والجديدةُ بلا جولات والأجوبةُ السابقة بياناتٌ لها.
+    await park();
+    const p11 = await patient("تعديلٌ مباشر");
+    const e11 = await sign(p11, { diagnosis: DX, assessment: minimalExamV3() });
+    await waitJobs(p11, 1);
+    resetModel();
+    queues.writer.push(msg([tu("ask_questions", { questions: [{ id: "d", text_ar: "هل عنده سكّري، وهل يصوم الآن؟", why_en: "", affects: "exam_field", exam_fields: ["core.diabetes", "core.fasting"] }] })]));
+    await runAgentOnce({ skipReconcile: true });
+    const j11 = (await jobsOf(p11))[0];
+    await call("POST", `/api/physio/opus-jobs/${j11.id}/answers`, S.spec, { answers: [{ id: "d", fields: { "core.diabetes": "no", "core.fasting": "no" } }] });
+    resetModel();
+    queues.writer.push(msg([tu("ask_questions", { questions: [{ id: "g", text_ar: "ما مجموعةُ التشخيص وحالتُها؟", why_en: "", affects: "exam_field", exam_fields: ["core.group", "module.condition"] }] })]));
+    await runAgentOnce({ skipReconcile: true });
+    same("س.١٠ (تمهيد) الجولةُ الثانية تسأل", [(await jobsOf(p11))[0].status, (await jobsOf(p11))[0].question_rounds], ["needs_answers", 1]);
+    const direct = await call("PATCH", `/api/medical/exams/${e11}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: DX, prescription: {}, baseVersion: 2,
+      assessment: minimalExamV3({ core: { diabetes: "oral", neuropathy: "no", fasting: "no" } }) });
+    const j11all = await waitJobs(p11, 2);
+    const oldAns = await call("POST", `/api/physio/opus-jobs/${j11.id}/answers`, S.spec, { answers: [{ id: "g", fields: { "core.group": "other" } }] });
+    resetModel();
+    queues.writer.push(msg([tu("decline_plan", { reason_ar: "ينتظر التصوير", reason_en: "x", recommended_action_ar: "صورة" })]));
+    await runAgentOnce({ skipReconcile: true });
+    const ctx11 = JSON.parse((writerCalls()[0]?.body.messages[0] as any).content[0].text);
+    const ear = ctx11.earlierAnswers?.rounds?.[0]?.answers?.[0]?.fields ?? {};
+    same("س.١٠ **تعديلُ الفاحص المباشر يلغيها** (`exam_changed`) **والجديدةُ تبدأ بلا جولات**، والأجوبةُ السابقة بياناتٌ «أما زالت في المعاينة؟»، والجوابُ على القديمة ⟵ ٤٠٩",
+      [direct.status, j11all[0].status, j11all[0].cancel_reason, j11all.length, Number(j11all[1].question_rounds), oldAns.status, oldAns.json?.code,
+        ear["core.diabetes"]?.stillInExam, ear["core.fasting"]?.stillInExam],
+      [200, "cancelled", "exam_changed", 2, 0, 409, "no_open_questions", false, true]);
+    // ── §4.hd (المراجعة) — **علاماتُ المجموعة التي يؤكّدها الجوابُ تُجاب معه**، و«نعم» فيها تغلق البوّابة.
+    await park();
+    const p12 = await patient("علاماتُ المجموعة بالجواب");
+    const general = minimalExamV3();
+    general.redFlags = Object.fromEntries(Object.entries(general.redFlags).filter(([k]) => ["cauda_equina", "progressive_weakness", "cancer_suspicion", "infection", "dvt_pe",
+      "cardiac", "suicide", "stroke_signs"].includes(k)));
+    const e12 = await sign(p12, { diagnosis: DX, assessment: general });
+    await waitJobs(p12, 1);
+    resetModel();
+    queues.writer.push(msg([tu("ask_questions", { questions: [{ id: "g", text_ar: "ما مجموعةُ التشخيص وحالتُها؟", why_en: "", affects: "exam_field",
+      exam_fields: ["core.group", "module.condition"] }] })]));
+    await runAgentOnce({ skipReconcile: true });
+    const j12 = (await jobsOf(p12))[0];
+    const g12 = { "core.group": "foot_ankle", "module.condition": "achilles", "module.tendonType": "midportion", "module.priorRupture": "no" };
+    const footFlags = ["inflammatory", "fracture", "tendon_rupture", "quinolones"];
+    const b12a = await call("POST", `/api/physio/opus-jobs/${j12.id}/answers`, S.spec, { answers: [{ id: "g", fields: g12 }] });
+    const b12b = await call("POST", `/api/physio/opus-jobs/${j12.id}/answers`, S.spec, { answers: [{ id: "g", fields: { ...g12,
+      ...Object.fromEntries(footFlags.map((k) => [`redFlags.${k}`, "no"])), "redFlags.arterial": "no" } }] });
+    same("س.١١ **علاماتُ المجموعة التي أكّدها الجوابُ تُطلب معه** (`redFlags.*` بأسمائها)، **وعلامةُ مجموعةٍ أخرى ⟵ ٤٠٠ `exam_field_not_requested`**، ولا كتابة",
+      [b12a.status, b12a.json?.code, (b12a.json?.missing ?? []).filter((k: string) => k.startsWith("redFlags.")).sort(), b12b.status, b12b.json?.code, b12b.json?.missing,
+        (await examV(e12)).version], [400, "answer_incomplete_fields", footFlags.map((k) => `redFlags.${k}`).sort(), 400, "exam_field_not_requested", ["redFlags.arterial"], 1]);
+    const b12c = await call("POST", `/api/physio/opus-jobs/${j12.id}/answers`, S.spec, { answers: [{ id: "g", fields: { ...g12,
+      ...Object.fromEntries(footFlags.map((k) => [`redFlags.${k}`, k === "tendon_rupture" ? "yes" : "no"])) } }] });
+    const ev12 = await examV(e12);
+    same("س.١١ب **«نعم» في علامةٍ أُجيبت مع الجواب تُكتب في المعاينة وتغلق البوّابة** — الوظيفةُ تُلغى `gate_closed` وتنتظر الاعتماد كأيّ علامة",
+      [b12c.status, ev12.version, ev12.assessment.redFlags.tendon_rupture, ev12.assessment.fieldSources?.["redFlags.tendon_rupture"]?.version,
+        (await jobsOf(p12))[0].status, (await jobsOf(p12))[0].cancel_reason, (await examAgentGate(e12)).code],
+      [202, 2, "yes", 2, "cancelled", "gate_closed", "red_flag_unreviewed"]);
+
+    // ── §4.hd (المراجعة) — **تعديلٌ التزم قبل خطّافه لا يُكتب فوقه جواب**: البصمةُ تُقارن تحت القفل ⟵ ٤٠٩ والوظيفةُ تُلغى وتُصالَح.
+    await park();
+    const p13 = await patient("تعديلٌ قبل خطّافه");
+    const e13 = await sign(p13, { diagnosis: DX, assessment: minimalExamV3() });
+    await waitJobs(p13, 1);
+    resetModel();
+    queues.writer.push(msg([tu("ask_questions", { questions: [{ id: "d", text_ar: "هل عنده سكّري، وهل يصوم الآن؟", why_en: "", affects: "exam_field", exam_fields: ["core.diabetes", "core.fasting"] }] })]));
+    await runAgentOnce({ skipReconcile: true });
+    const j13 = (await jobsOf(p13))[0];
+    const row13 = (await q(`SELECT * FROM medical_exams WHERE id = $1`, [e13]))[0];
+    const { reviseExam } = await import("./medical/store");
+    await reviseExam(e13, { caseType: "physiotherapy", prescription: row13.prescription ?? {}, deviceCost: null, proposedExpertUserId: null, chiefComplaint: null,
+      clinicalFindings: null, diagnosis: row13.diagnosis, plan: null, notes: "تعديلٌ لم يصل خطّافُه", assessment: row13.assessment }, { userId: SPEC, userName: "أخصائيّ" });
+    const c13 = await call("POST", `/api/physio/opus-jobs/${j13.id}/answers`, S.spec, { answers: [{ id: "d", fields: { "core.diabetes": "no", "core.fasting": "no" } }] });
+    const j13all = await jobsOf(p13);
+    same("س.١٢ **المعاينةُ تغيّرت بعد السؤال ⟵ ٤٠٩ `exam_changed`**: لا يُكتب الجوابُ فوق التعديل، والوظيفةُ تُلغى `exam_changed` وتُوضع جديدةٌ على المعاينة الجديدة",
+      [c13.status, c13.json?.code, (await examV(e13)).version, (await examV(e13)).assessment.core.diabetes ?? null, j13all[0].status, j13all[0].cancel_reason,
+        j13all.length, j13all[1]?.trigger], [409, "exam_changed", 2, null, "cancelled", "exam_changed", 2, "exam_revised"]);
+    // ── §4.hd (المراجعة) — **النصُّ يخالف ورقةَ السلامة ⟵ لا خطّة**: لا يصلحه الكاتب بل الفاحص، فتنتهي الوظيفةُ `exam_confirmation_needed` بالخانة.
+    await park();
+    const p14 = await patient("نصٌّ يخالف الورقة");
+    await sign(p14, { diagnosis: "ألم أسفل الظهر المزمن، والمريض على الوارفارين منذ سنة",
+      assessment: minimalExamV3({ core: { group: "lumbar", side: "right", diabetes: "no", fasting: "no" }, module: { condition: "nonspecific" } }) });
+    await waitJobs(p14, 1);
+    await q(`UPDATE physio_protocols SET code = 'lbp-chronic-adult--seeded' WHERE code = 'lbp-chronic-adult'`);
+    await q(`UPDATE physio_protocols SET code = 'lbp-chronic-adult' WHERE id = $1`, [P]);
+    resetModel();
+    queues.writer.push(msg([tu("submit_plan", libFor())]));
+    await runAgentOnce({ skipReconcile: true });
+    await q(`UPDATE physio_protocols SET code = 'TEST-OPUS-LIB' WHERE id = $1`, [P]);
+    await q(`UPDATE physio_protocols SET code = 'lbp-chronic-adult' WHERE code = 'lbp-chronic-adult--seeded'`);
+    const j14 = (await jobsOf(p14))[0];
+    same("س.١٣ **النصُّ «على الوارفارين» والورقةُ «لا مضادَّ تخثّر» ⟵ الوظيفةُ `exam_confirmation_needed` بالخانة** (لا خطّة، والفاحصُ يصحّح أو يؤكّد)",
+      [j14.status, j14.error_code, j14.error_detail, await planOfJob(Number(j14.id))], ["failed", "exam_confirmation_needed", "core.anticoagulant", null]);
+    await park();
+    //  خارجَ مرشّحي المصالِح الدوريّ في سيناريوهاته اللاحقة (N.6 يمسح بحدٍّ واحد).
+    for (const pid of [p8, p9, p10, p11, p12, p13, p14]) {
+      await softDeletePatient({ patientId: pid, reason: "انتهى سيناريو الاختبار", actor: { userId: ADMIN, displayName: "م", role: "admin", isAdmin: true, scope: null } as any });
+    }
+    }
+
     console.log("\n── ع. أخطاءُ الخدمة والإيقاف ──");
     const p8 = await patient("رفض");
     await sign(p8); await waitJobs(p8, 1);

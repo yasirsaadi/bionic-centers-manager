@@ -50,7 +50,7 @@ import {
   emptyInitialAssessment, parseInitialAssessment, readStoredAssessment, type Lang, type PhysioInitialAssessment,
 } from "@shared/physio_initial_assessment";
 import {
-  agentGateFor, emptyExamV2, examV2AgeConflict, isExamV2, parseExamV2, redFlagsOf, type AgentGate, type PhysioExamV2, type RedFlagReviewSummary,
+  agentGateFor, emptyExamV3, examV2AgeConflict, examV2MissingLabel, isExamV2, parseExamV2, redFlagsOf, type AgentGate, type PhysioExamV2, type RedFlagReviewSummary,
 } from "@shared/physio_exam_v2";
 import { arDigits } from "@shared/physio_exercises";
 import { RedFlagReviewBox } from "@/components/physio/RedFlagReviewBox";
@@ -366,6 +366,10 @@ export function NewExamDialog({
   const v2PrefillDoneRef = useRef(false);
   //  **خطوةُ «أرسل للاعتماد» بعد الحفظ** (مراجعةُ المرحلة الأولى — كالنموذج: الملاحظةُ والزرُّ تحت اللافتة داخل المعاينة): رقمُ المعاينة المحفوظة.
   const [rfStep, setRfStep] = useState<{ examId: number; assessment: unknown } | null>(null);
+  //  §4.hd — «لا شيء ممّا يلي» في العلامات الحمراء: إقرارُ الفاحص بضغطةٍ يُرسَل مع الحفظ فيُسجَّل في سطر التدقيق.
+  const redFlagsBulkNoRef = useRef(false);
+  //  §4.hd (المراجعة) — **نسخةٌ أحدث ظهرت أثناء التعديل** (جوابٌ لـ Bionic AI أو زميل): تعديلُ الفاحص يُدمج فوقها ويُحفظ بنسختها، لا يُرمى.
+  const [baseOverride, setBaseOverride] = useState<{ version: number; assessment: unknown } | null>(null);
   //  وتبديلُ معاينةٍ من اختصاصٍ آخر إلى العلاج الطبيعي يُملأ من الملفّ كالجديدة.
   const v2Fresh = !isEdit || exam?.caseType !== "physiotherapy";
   const today = baghdadTodayYmd();
@@ -375,7 +379,10 @@ export function NewExamDialog({
     setSheetMissing([]);
     setRequestedOverride(null);
     //  **وتنقيحٌ يبدّل معاينةَ اختصاصٍ آخر إلى العلاج الطبيعي معاينةٌ جديدة** — على الثانية بإلزامها كالخادم (مراجعةُ المرحلة الأولى).
-    setAssessment(exam && exam.caseType === "physiotherapy" ? (readStoredAssessment(exam.assessment) ?? emptyInitialAssessment()) : emptyExamV2());
+    setAssessment(exam && exam.caseType === "physiotherapy" ? (readStoredAssessment(exam.assessment) ?? emptyInitialAssessment()) : emptyExamV3());
+    //  §4.hd — **المعاينةُ الجديدة على الإصدار الثالث** (التشخيصُ الحرّ وورقةُ السلامة)؛ والتنقيحُ على إصدارها المخزَّن كما هو.
+    redFlagsBulkNoRef.current = false;
+    setBaseOverride(null);
     setAssessMissing([]);
     setV2Prefilled([]);
     setRfStep(null);
@@ -550,6 +557,9 @@ export function NewExamDialog({
             prescription: rx,
             // إلزاميٌّ على الإنشاء وحده — التعديل (PATCH) لا يقرأه أصلاً.
             ...(isEdit ? {} : { idempotencyKey: newExamIdempotencyKeyRef.current }),
+            //  §4.hd — **النسخةُ التي فُتح عليها التعديل**: أجوبةُ Bionic AI تكتب في المعاينة نسخاً، فلا يمحوها تعديلٌ فُتح قبلها (٤٠٩).
+            ...(isEdit && (baseOverride?.version ?? exam?.version) ? { baseVersion: baseOverride?.version ?? exam!.version } : {}),
+            ...(physioMode && redFlagsBulkNoRef.current ? { redFlagsBulkNo: true } : {}),
             //  **هويّةُ الجهاز** — تصل الخادمَ حين تُعرَف، ويحكم هو تحت القفل.
             ...(isEdit || resolvedEpisode === null ? {} : { deviceEpisodeId: resolvedEpisode }),
             //  **التقييمُ الأوّليّ** (§4.da) — سريريٌّ محض، يُفحَص في الخادم ويُختَم مع المعاينة.
@@ -576,6 +586,7 @@ export function NewExamDialog({
         err.dropLabel = body?.dropLabel ?? null;
         err.episodeIds = Array.isArray(body?.episodeIds) ? body.episodeIds : [];
         err.missing = Array.isArray(body?.missing) ? body.missing : [];
+        err.status = res.status;
         throw err;
       }
       return res.json();
@@ -615,6 +626,29 @@ export function NewExamDialog({
       if (!withFlags) onDone?.();
     },
     onError: (err: any) => {
+      //  §4.hd — عُدّلت المعاينةُ بعد فتح النافذة (جوابٌ لـ Bionic AI أو تعديلٌ آخر): لا يُحفظ فوقها — تُغلق وتُفتح على النسخة الجديدة.
+      if (err?.code === "exam_version_changed" || err?.code === "base_version_required") {
+        queryClient.invalidateQueries({ queryKey: [`/api/medical/patients/${patientId}/exams`] });
+        //  المراجعة: يُجلب الأحدث ويُدمج فوقه ما غيّره الفاحصُ هنا (أجوبةُ Bionic AI تملأ فارغاً فلا تكاد تتعارض)، ثمّ يحفظ ثانيةً بنسخته.
+        void (async () => {
+          try {
+            const r = await fetch(`/api/medical/patients/${patientId}/exams`, { credentials: "include" });
+            const list = await r.json();
+            const fresh = (Array.isArray(list?.exams) ? list.exams : Array.isArray(list) ? list : []).find((x: any) => x.id === exam?.id);
+            if (!fresh || !Number.isInteger(fresh.version)) throw new Error("no fresh exam");
+            const opened = readStoredAssessment((baseOverride?.assessment ?? exam?.assessment) as any);
+            const latest = readStoredAssessment(fresh.assessment);
+            const merged = mergeExamEdit(opened, assessment, latest);
+            setAssessment(merged.value as PhysioInitialAssessment);
+            setBaseOverride({ version: fresh.version, assessment: fresh.assessment });
+            toast({ title: "عُدّلت المعاينة بعد فتحها — دُمج تعديلُك مع الأحدث",
+              description: `${merged.added.length ? `أُضيف إليها: ${merged.added.slice(0, 4).join("، ")}${merged.added.length > 4 ? "، …" : ""} — ` : ""}راجع ثمّ اضغط «حفظ» ثانيةً (النسخة ${arDigits(fresh.version)}).` });
+          } catch {
+            toast({ title: "عُدّلت المعاينة بعد فتحها", description: "أغلق النافذة وافتح «تعديل» من جديد ليظهر الأحدث، ثمّ أعد تعديلك.", variant: "destructive" });
+          }
+        })();
+        return;
+      }
       if (err?.code === "cross_retire_decision_required") {
         //  سؤالٌ جديد يُبطل جواباً سابقاً — فالطلباتُ تبدّلت منذ أجاب.
         crossDecisionRef.current = null;
@@ -667,7 +701,13 @@ export function NewExamDialog({
       el.querySelector<HTMLElement>("input, select, textarea, button")?.focus({ preventScroll: true });
     }, 50);
   };
-  const missingToast = (n: number) => `الخاناتُ الناقصة: ${arDigits(n)} — مُعلَّمةٌ بالأحمر`;
+  //  المراجعة: الأسماءُ لا العددُ وحده — أوّلُ أربعةٍ منها ثمّ «…».
+  const missingToast = (keys: string[], group?: unknown) => {
+    const flags = keys.filter((k) => k.startsWith("redFlags.")).length;
+    const names = keys.filter((k) => !k.startsWith("redFlags.")).map((k) => examV2MissingLabel(k, group));
+    const list = [...names.slice(0, 4), ...(names.length > 4 ? ["…"] : []), ...(flags ? [`${arDigits(flags)} من العلامات الحمراء`] : [])];
+    return `ينقص (${arDigits(keys.length)}): ${list.join("، ")} — مُعلَّمةٌ بالأحمر`;
+  };
   //  **ونهايةُ خطوة «أرسل للاعتماد»** — بعد الإرسال أو القرار أو «لاحقاً».
   const finishRfStep = () => { setRfStep(null); onOpenChange(false); onDone?.(); };
   const { data: rfData } = useQuery<{ exams?: { id: number; doctorId?: number | null; redFlagReview?: RedFlagReviewSummary | null; agentGate?: AgentGate | null }[];
@@ -696,7 +736,7 @@ export function NewExamDialog({
       if (!r.ok || r.missing.length) {
         setAssessMissing(r.missing);
         scrollToFirstMissing();
-        toast({ title: "المعاينة إلزامية — أكمل الخانات المعلَّمة", description: r.ok ? missingToast(r.missing.length) : r.error, variant: "destructive" });
+        toast({ title: "المعاينة إلزامية — أكمل الخانات المعلَّمة", description: r.ok ? missingToast(r.missing, r.value.core?.group) : r.error, variant: "destructive" });
         return;
       }
       //  **والعمرُ يطابق الورقة** حين يغيّر الفرقُ سؤالَ سلامة — بقاعدة الخادم نفسِها (`examV2AgeConflict`).
@@ -927,6 +967,7 @@ export function NewExamDialog({
                 assessMissing={assessMissing}
                 today={today}
                 prefilled={v2Prefilled}
+                onRedFlagsBulkNo={(stillAccurate = true) => { redFlagsBulkNoRef.current = stillAccurate; }}
               />
             )
             : physioMode && <p className="text-sm text-muted-foreground" data-testid="exam-sheet-loading">جارٍ تحميل الاستمارة…</p>)}
@@ -973,4 +1014,30 @@ export function NewExamDialog({
     </Dialog>
     </>
   );
+}
+
+/**
+ * §4.hd (المراجعة) — **دمجُ تعديل الفاحص فوق نسخةٍ أحدث**: ما غيّره في النافذة (عن النسخة التي فُتحت) يُكتب فوق الأحدث، وما لم يمسّه يبقى كما في الأحدث
+ * (ومنه ما أضافته أجوبةُ Bionic AI). يعيد الدمجَ وأسماءَ ما أُضيف في الأحدث ولم يمسّه الفاحص.
+ */
+export function mergeExamEdit(opened: unknown, mine: unknown, latest: unknown): { value: unknown; added: string[] } {
+  if (!latest || typeof latest !== "object") return { value: mine, added: [] };
+  const o = (opened ?? {}) as Record<string, any>; const m = (mine ?? {}) as Record<string, any>; const l = latest as Record<string, any>;
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const out: Record<string, any> = { ...l };
+  const added: string[] = [];
+  for (const part of ["core", "module", "redFlags"] as const) {
+    const res: Record<string, any> = { ...(l[part] ?? {}) };
+    const keys = new Set([...Object.keys(o[part] ?? {}), ...Object.keys(m[part] ?? {}), ...Object.keys(l[part] ?? {})]);
+    keys.forEach((k) => {
+      if (!same(o[part]?.[k], m[part]?.[k])) res[k] = m[part]?.[k];
+      else if (!same(o[part]?.[k], l[part]?.[k])) added.push(part === "redFlags" ? "علامةٌ حمراء" : examV2MissingLabel(`${part}.${k}`, l.core?.group));
+    });
+    out[part] = res;
+  }
+  for (const k of Object.keys(m)) {
+    if (k === "core" || k === "module" || k === "redFlags" || k === "fieldSources") continue;
+    if (!same(o[k], m[k])) out[k] = m[k];
+  }
+  return { value: out, added: Array.from(new Set(added)) };
 }

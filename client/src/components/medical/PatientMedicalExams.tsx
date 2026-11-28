@@ -664,7 +664,7 @@ ${addenda}
                     <div className="mb-2 rounded-lg border border-emerald-300 bg-emerald-50/60 p-2 flex flex-wrap items-center gap-2" data-testid={`exam-assessment-${exam.id}`}>
                       <div className="text-xs flex-1 min-w-[12rem]">
                         <span className="font-bold text-emerald-900">{isExamV2(exam.assessment) ? "المعاينة الإلزامية: " : "التقييم الأوّلي: "}</span>
-                        <span dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(exam.assessment), { today: baghdadTodayYmd() })}</span>
+                        <span dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(exam.assessment), { today: baghdadTodayYmd(), diagnosis: exam.diagnosis })}</span>
                         {/*  **ما نقص يبقى ظاهراً** — الأولى بلا إلزام (قرارُ المالك ٢٠٢٦-١٠-١٠)، والثانيةُ لا تُحفظ ناقصة (§4.gz). */}
                         {anyAssessmentGapsText(readStoredAssessment(exam.assessment), exam.diagnosis ?? "") && (
                           <div className="mt-1 text-[11px] text-amber-800" data-testid={`exam-assessment-gaps-${exam.id}`}>
@@ -689,7 +689,7 @@ ${addenda}
                   )}
                   {/*  **Bionic AI يكتب الخطّةَ من المعاينة** (§4.ha) — للمعاينة الإلزامية وحدها؛ والخادمُ يقول مَن يشغّل ومَن يرى. */}
                   {exam.caseType === "physiotherapy" && isExamV2(exam.assessment) && (
-                    <OpusPanel examId={exam.id} patientId={patientId} gate={exam.agentGate ?? null} summary={exam.opusJob ?? null} />
+                    <OpusPanel examId={exam.id} patientId={patientId} gate={exam.agentGate ?? null} summary={exam.opusJob ?? null} assessment={exam.assessment} />
                   )}
                   {prescriptionLines(exam).length > 0 && (
                     <div className="mb-2 rounded-lg border border-teal-200 bg-teal-50/60 p-2 space-y-1">
@@ -862,7 +862,7 @@ ${addenda}
                       {readStoredAssessment(rev.assessment) && (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-muted-foreground shrink-0 min-w-[92px]">التقييم الأوّلي:</span>
-                          <span className="text-xs" dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(rev.assessment))}</span>
+                          <span className="text-xs" dir="auto">{anyAssessmentSummaryAr(readStoredAssessment(rev.assessment), { diagnosis: rev.diagnosis })}</span>
                           <Button size="sm" variant="ghost" className="h-6 text-xs px-2"
                             onClick={() => setAssessView({ a: readStoredAssessment(rev.assessment)!, title: `النسخة ${rev.version} — ${rev.doctorName ?? ""}`, diagnosis: rev.diagnosis ?? "" })}
                             data-testid={`button-view-assessment-rev-${rev.id}`}>عرض</Button>
