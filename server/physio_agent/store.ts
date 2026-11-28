@@ -210,7 +210,11 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
   }
   if (auto) {
     const prev = rows(await tx.execute(sql`SELECT j.status, j.error_code, j.cancel_reason, j.exam_fingerprint, pl.opus_stale_reason AS plan_stale
-      FROM physio_agent_jobs j LEFT JOIN physio_plans pl ON pl.agent_job_id = j.id WHERE j.exam_id = ${exam.id} ORDER BY j.id DESC`));
+      FROM physio_agent_jobs j
+      LEFT JOIN physio_plans pl ON pl.agent_job_id = j.id
+        OR (pl.origin = 'opus' AND pl.source_exam_id = j.exam_id
+            AND EXISTS (SELECT 1 FROM physio_agent_jobs r WHERE r.id = pl.agent_job_id AND r.kind = 'revise' AND r.plan_id = pl.id))
+      WHERE j.exam_id = ${exam.id} AND j.kind <> 'revise' ORDER BY j.id DESC`));
     //  ما ألغاه النظامُ لا لقرارٍ في الخطّة (البوّابةُ أُغلقت ثمّ فُتحت، معاينةٌ أحدث أُلغيت…) ليس «تشغيلاً» — مراجعةُ Codex؛
     //  ولا وظيفةٌ نجحت وخطّتُها قدُمت (معاينةٌ أحدث جعلتها قديمة ثمّ أُلغيت فعادت هذه الأحدث) — فالخطّةُ القديمة لا تُعتمد ولا بديلَ لها.
     const tried = (j: Record<string, any>) => !(j.status === "cancelled" && SYSTEM_CANCEL_REASONS.has(String(j.cancel_reason ?? j.error_code ?? "")))

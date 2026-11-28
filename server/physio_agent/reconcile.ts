@@ -113,7 +113,9 @@ export async function reconcilerScan(limit = 20): Promise<number> {
                          AND sk.skipped_at > now() - make_interval(hours => ${RECONCILE_SKIP_TTL_HOURS})
                          AND sk.skipped_at > COALESCE((SELECT max(rv.edited_at) FROM medical_exam_revisions rv WHERE rv.exam_id = me.id), '-infinity')
                          AND sk.skipped_at > COALESCE((SELECT max(GREATEST(fr.requested_at, COALESCE(fr.decided_at, fr.requested_at)))
-                                                         FROM physio_exam_red_flag_reviews fr WHERE fr.patient_id = me.patient_id), '-infinity'))
+                                                         FROM physio_exam_red_flag_reviews fr WHERE fr.patient_id = me.patient_id), '-infinity')
+                         --  مراجعةُ Codex على #774: إلغاءُ معاينةٍ أحدث للمريض بعد التخطّي يُسقطه (الخطّةُ التي قدُمت بها صار لها أن تُعاد).
+                         AND sk.skipped_at > COALESCE((SELECT max(mc.cancelled_at) FROM medical_exam_cancellations mc WHERE mc.patient_id = me.patient_id), '-infinity'))
      ORDER BY me.signed_at DESC, me.id DESC LIMIT ${limit}`));
   let n = 0;
   for (const c of cands) {

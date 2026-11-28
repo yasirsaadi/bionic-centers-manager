@@ -1252,6 +1252,47 @@ async function main() {
         [planOk, (await jobsOf(r9)).map((j) => j.status)], [1, ["succeeded", "queued"]]);
       await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
         WHERE patient_id = $1 AND status = 'queued'`, [r9]);
+      //  مراجعةُ Codex على #774: تخطّي «كُتبت خطّة» محفوظٌ، ثمّ معاينةٌ أحدث قدّمت الخطّةَ وأُلغيت ونداؤها ضاع ⟵ الإلغاءُ يُسقط التخطّي.
+      const r10 = await patient("الغاء معاينة احدث بعد التخطي");
+      const e10 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '3 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r10, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      const j10 = (await jobsOf(r10))[0];
+      await q(`UPDATE physio_agent_jobs SET status = 'succeeded', finished_at = now(), locked_by = NULL, locked_at = NULL WHERE id = $1`, [j10.id]);
+      await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, status, origin, agent_job_id, source_exam_id) VALUES ($1, $2, 'صالحة', 'pending', 'opus', $3, $4)`,
+        [r10, B1, j10.id, e10]);
+      await reconcilerScan(1);
+      const skip10 = (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e10]))[0]?.reason;
+      await q(`UPDATE physio_agent_reconcile_skips SET skipped_at = now() - interval '10 minutes' WHERE exam_id = $1`, [e10]);
+      const e10b = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '4 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r10, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await q(`UPDATE physio_plans SET opus_stale_reason = 'superseded_by_newer_exam' WHERE agent_job_id = $1`, [j10.id]);
+      await q(`INSERT INTO medical_exam_cancellations (exam_id, patient_id, branch_id, reason, cancelled_at) VALUES ($1, $2, $3, 'أُلغيت', now() - interval '5 minutes')`, [e10b, r10, B1]);
+      await reconcilerScan(1);
+      same("N.8g **أُلغيت المعاينةُ الأحدث بعد التخطّي ⟵ التخطّي يسقط والقديمةُ تُكتب ثانيةً** (وصفُّ التخطّي باقٍ لا يُحذف باليد)",
+        [skip10, (await jobsOf(r10)).map((j) => j.status)], ["opus_plan_pending", ["succeeded", "queued"]]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r10]);
+      //  «أعِده إلى Opus» نقل رابطَ الخطّة إلى وظيفة التعديل: الوظيفةُ الأصلية تبقى تُرى بخطّتها، والقديمةُ تُعاد كتابتُها.
+      const r11 = await patient("خطة اعيدت ثم قدمت");
+      const e11 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '5 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r11, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      const j11 = (await jobsOf(r11))[0];
+      await q(`UPDATE physio_agent_jobs SET status = 'succeeded', finished_at = now(), locked_by = NULL, locked_at = NULL WHERE id = $1`, [j11.id]);
+      const pl11 = Number((await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, status, origin, agent_job_id, source_exam_id) VALUES ($1, $2, 'اعيدت', 'pending', 'opus', $3, $4) RETURNING id`,
+        [r11, B1, j11.id, e11]))[0].id);
+      const rv11 = Number((await q(`INSERT INTO physio_agent_jobs (patient_id, exam_id, branch_id, kind, trigger, exam_fingerprint, plan_id, revise_scope, revise_note, status, finished_at)
+        SELECT patient_id, exam_id, branch_id, 'revise', 'approver_return', exam_fingerprint, $2, 'return', 'ملاحظة', 'succeeded', now() FROM physio_agent_jobs WHERE id = $1 RETURNING id`, [j11.id, pl11]))[0].id);
+      await q(`UPDATE physio_plans SET agent_job_id = $1, opus_stale_reason = 'superseded_by_newer_exam' WHERE id = $2`, [rv11, pl11]);
+      await reconcilerScan(1);
+      same("N.8h **خطّةٌ أُعيدت إلى Opus ثمّ قدُمت ⟵ المصالِحُ يعيد الكتابة** (وظيفةُ التعديل لا تُحسب «تشغيلاً» للمعاينة)",
+        (await jobsOf(r11)).filter((j) => j.kind !== "revise").map((j) => j.status), ["succeeded", "queued"]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r11]);
     }
   } catch (e) {
     failures++;
