@@ -39,11 +39,12 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
     .orderBy(asc(physioAssessments.assessedOn), asc(physioAssessments.id));
   //  §4.hc — جلسةُ خطّة Bionic AI بجزأين تُنسب لمسجِّل كلّ جزء (مرّةً لكلٍّ منهما)؛ والعددُ المنفَّذ جلساتٌ لا أجزاء.
   const sessions = (await db.execute(sql`
-    SELECT s.plan_id, COALESCE(sp.recorded_by, s.executed_by) AS executed_by, max(COALESCE(sp.recorded_by_name, s.executed_by_name)) AS name,
+    SELECT s.plan_id, COALESCE(sp.part, 'whole') AS part, COALESCE(sp.recorded_by, s.executed_by) AS executed_by,
+           max(COALESCE(sp.recorded_by_name, s.executed_by_name)) AS name,
            count(DISTINCT s.id)::int AS n, max(s.session_date)::text AS last_on
       FROM physio_plan_sessions s LEFT JOIN physio_plan_session_parts sp ON sp.session_id = s.id
      WHERE s.plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND s.cancelled_at IS NULL
-     GROUP BY s.plan_id, COALESCE(sp.recorded_by, s.executed_by)`)).rows as any[];
+     GROUP BY s.plan_id, COALESCE(sp.part, 'whole'), COALESCE(sp.recorded_by, s.executed_by)`)).rows as any[];
   const totals = new Map(((await db.execute(sql`SELECT plan_id, count(*)::int AS n FROM physio_plan_sessions
      WHERE plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND cancelled_at IS NULL GROUP BY plan_id`)).rows as any[]).map((r) => [Number(r.plan_id), Number(r.n)]));
   const byPlan = new Map<number, typeof assess>();
@@ -53,7 +54,16 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
     const verdict: Verdict = list.length >= 2 ? compareAssessments(list[0] as any, list[list.length - 1] as any).verdict : "insufficient";
     const ses = sessions.filter((s) => Number(s.plan_id) === p.id);
     const executed = totals.get(p.id) ?? 0;
-    const top = ses.slice().sort((a, b) => Number(b.n) - Number(a.n))[0];
+    //  §4.hc — الأكثرُ جلساتٍ في كلّ جزء (الأجهزة · التمارين · الجلسةُ غيرُ المقسومة) يُنسب له؛ فمعالجا الجلسة المقسومة كلاهما.
+    const tops = new Map<string, any>();
+    for (const s of ses) {
+      const k = String(s.part); const cur = tops.get(k);
+      if (!cur || Number(s.n) > Number(cur.n) || (Number(s.n) === Number(cur.n) && Number(s.executed_by ?? 0) < Number(cur.executed_by ?? 0))) tops.set(k, s);
+    }
+    const topList = Array.from(tops.values());
+    const executors = Array.from(new Map(topList.filter((t) => t.executed_by)
+      .map((t) => [`u${t.executed_by}`, { key: `u${t.executed_by}`, name: String(t.name ?? "—") }] as const)).values());
+    const top = topList.slice().sort((a, b) => Number(b.n) - Number(a.n))[0];
     const approvedOn = baghdadDayOf(p.decidedAt);
     const endOn = baghdadDayOf(p.status === "graduated" ? p.graduatedAt : p.status === "stopped" ? p.stoppedAt : null);
     const lastSessionOn = ses.reduce<string | null>((a, s) => (s.last_on && (!a || s.last_on > a) ? String(s.last_on) : a), null);
@@ -68,6 +78,7 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
       branchKey: `b${p.branchId}`, branchName: p.branchName ?? `#${p.branchId}`,
       specialistKey: p.createdBy ? `u${p.createdBy}` : "none", specialistName: p.createdByName ?? "—",
       executorKey: top?.executed_by ? `u${top.executed_by}` : "none", executorName: top ? String(top.name ?? "—") : "لم تُنفَّذ جلسة",
+      executors,
       patientName: p.patientName, patientCode: p.patientCode, titleAr: p.titleAr, approvedOn,
     };
   });
@@ -82,7 +93,8 @@ export async function outcomesReport(f: OutcomeFilter) {
     byProtocol: summarizeOutcomes(rows, (r) => [r.protocolKey, r.protocolTitle]),
     byBranch: sortByBranchDisplay(summarizeOutcomes(rows, (r) => [r.branchKey, r.branchName]), (g) => g.name), //  بترتيب العرض الواحد (§4.gt)
     bySpecialist: summarizeOutcomes(rows, (r) => [r.specialistKey, r.specialistName]),
-    byExecutor: summarizeOutcomes(rows, (r) => [r.executorKey, r.executorName]),
+    byExecutor: summarizeOutcomes(rows.flatMap((r) => (r.executors?.length ? r.executors : [{ key: r.executorKey, name: r.executorName }])
+      .map((e) => ({ ...r, executorKey: e.key, executorName: e.name }))), (r) => [r.executorKey, r.executorName]),
     overdue: rows.filter((r) => r.overdue).map((r) => ({ planId: r.planId, titleAr: r.titleAr, patientName: r.patientName, patientCode: r.patientCode,
       branchName: r.branchName, specialistName: r.specialistName })).slice(0, 100),
   };

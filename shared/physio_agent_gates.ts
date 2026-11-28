@@ -10,6 +10,8 @@ import { BODY_REGIONS, EXERCISE_KINDS } from "./physio_exercises";
 import { arDigits, normalizeSourceUrl, protocolSessionCeiling, type AgentSource, type LibraryProtocolDraft, type PlanMeasure, type ProposedCard,
   type SubmittedPlan } from "./physio_agent";
 import { findAuthoredLeaks, type IdentifierSet } from "./physio_agent_privacy";
+import { examCautionInputsMissing, examGateInputsMissing, examGroupConfirmed, examRuleset, examV2MissingLabel, isExamV2, protocolsOfExam, V3_OTHER_GROUP } from "./physio_exam_v2";
+import { textSafetyConflictsOf } from "./physio_exam_text_safety";
 
 // ══ السياق ══════════════════════════════════════════════════════════════════════════════════════════════
 export interface GateProtocolDevice {
@@ -49,6 +51,48 @@ export interface GateContext {
   /** جولاتُ الكاتب انتهت ⟵ بعضُ ما كان «راجِع» يصير حذفاً. */
   final: boolean;
   at?: string;
+  /** §4.hd — **معاينةُ الإصدار الثالث** (المخزَّنة): تأكيدُ المجموعة ومدخلاتُ البوّابات والحذر بوّاباتٌ مانعة. وغائبٌ للثانية. */
+  examConfirm?: ExamConfirmInput | null;
+}
+
+/** §4.hd — **معاينةُ الإصدار الثالث للبوّابات**: المخزَّنةُ، ونصوصُها الحرّة وأجوبةُ أسئلة Bionic AI النصّية (لتنبيهات النصّ ضدّ ورقة السلامة). */
+export interface ExamConfirmInput { exam: unknown; texts?: readonly (string | null | undefined)[] }
+/** رموزُ ما يلزم الفاحصَ أن يكمله في المعاينة — بها يُعرف أنّ الوظيفةَ تنتهي `exam_confirmation_needed` لا «بوّاباتٌ مانعة». */
+export const EXAM_CONFIRM_CODES: ReadonlySet<string> = new Set([
+  "exam_group_unconfirmed", "exam_gate_inputs_missing", "exam_caution_inputs_missing", "library_protocol_group_other", "library_protocol_outside_group",
+  "exam_text_safety_conflict",
+]);
+export interface ExamConfirmIssue { code: string; target: string | null; reasonAr: string; keys: string[] }
+/**
+ * **ما يمنع خطّةً على معاينة الإصدار الثالث** — قاعدةٌ واحدة لكتابة Bionic AI (`applyPlanGates`) ولتعديل الخطّة بعد اعتمادها (`applyEditGates`):
+ * المجموعةُ وحالتُها، ومدخلاتُ الموانع، ومدخلاتُ سلامة التمرين بأجهزة الخطّة وبروتوكولها (و«خارج المكتبة» مدخلاتُ الشدّة كلُّها)،
+ * وبروتوكولُ المكتبة من مجموعة المعاينة وحالتِها، والنصُّ الحرّ الذي يخالف ورقةَ السلامة ولم يؤكّده الفاحص.
+ */
+export function examConfirmIssues(c: ExamConfirmInput, plan: { deviceCodes: readonly string[]; library: boolean; protocolCode: string | null }): ExamConfirmIssue[] {
+  const a = c.exam;
+  if (!isExamV2(a) || examRuleset(a) !== "v3") return [];
+  const g = (a as any)?.core?.group;
+  const out: ExamConfirmIssue[] = [];
+  const names = (keys: string[]) => keys.map((k) => examV2MissingLabel(k, g)).join("، ");
+  if (!examGroupConfirmed(a)) out.push({ code: "exam_group_unconfirmed", target: "core.group", reasonAr: GATE_REASONS.exam_group_unconfirmed, keys: ["core.group", "module.condition"] });
+  const gi = examGateInputsMissing(a);
+  if (gi.length) out.push({ code: "exam_gate_inputs_missing", target: gi.join(","), reasonAr: `${GATE_REASONS.exam_gate_inputs_missing}: ${names(gi)}`, keys: gi });
+  const cm = examCautionInputsMissing(a, { deviceCodes: plan.deviceCodes, protocolCode: plan.library ? plan.protocolCode : null, outOfLibrary: !plan.library });
+  if (cm.length) out.push({ code: "exam_caution_inputs_missing", target: cm.join(","), reasonAr: `${GATE_REASONS.exam_caution_inputs_missing}: ${names(cm)}`, keys: cm });
+  if (plan.library && g === V3_OTHER_GROUP) out.push({ code: "library_protocol_group_other", target: "core.group", reasonAr: GATE_REASONS.library_protocol_group_other, keys: ["core.group"] });
+  //  §4.hd (المراجعة) — بروتوكولُ مكتبةٍ من غير مجموعة المعاينة وحالتِها يُسقط موانعَ الحالة (الروبوتُ للجلطة وحدها…) — مانعٌ لا ملاحظة.
+  const allowed = protocolsOfExam(a);
+  if (plan.library && plan.protocolCode && g !== V3_OTHER_GROUP && examGroupConfirmed(a) && allowed.length && !allowed.includes(plan.protocolCode)) {
+    out.push({ code: "library_protocol_outside_group", target: `protocol:${plan.protocolCode}`,
+      reasonAr: `${GATE_REASONS.library_protocol_outside_group} (${allowed.join("، ")})`, keys: ["core.group", "module.condition"] });
+  }
+  const hits = textSafetyConflictsOf(a, c.texts ?? []);
+  if (hits.length) {
+    out.push({ code: "exam_text_safety_conflict", target: hits.map((h) => h.key).join(","),
+      reasonAr: `${GATE_REASONS.exam_text_safety_conflict}: ${hits.map((h) => `${h.labelAr} («${h.term}»)`).join("، ")} — صحّح ورقةَ السلامة أو أكّدها في المعاينة`,
+      keys: hits.map((h) => h.key) });
+  }
+  return out;
 }
 
 // ══ السجلّ ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -107,6 +151,12 @@ export const GATE_REASONS: Record<string, string> = {
   alternative_unknown: "بديلٌ ليس في المكتبة",
   generic_text_identifier: "في نصّ البروتوكول العامّ ما يشبه هويّةَ المريض",
   empty_plan: "لا أجهزةَ ولا تمارين",
+  exam_group_unconfirmed: "مجموعةُ التشخيص وحالتُها لم يؤكّدهما الفاحص",
+  exam_gate_inputs_missing: "خانةٌ في المعاينة تحتاجها موانعُ هذه الحالة",
+  exam_caution_inputs_missing: "خانةٌ تحتاجها سلامةُ التمرين لم تُسجَّل",
+  library_protocol_group_other: "بروتوكولُ المكتبة يحتاج مجموعةَ التشخيص الحقيقية",
+  library_protocol_outside_group: "بروتوكولُ المكتبة ليس من مجموعة المعاينة وحالتِها",
+  exam_text_safety_conflict: "في النصّ ما يخالف ورقةَ السلامة",
   no_settings: "لا برنامجَ ولا قيمَ احتياطيةً ولا إعداداتٍ في البروتوكول — لا يجد المعالجُ ما يضبط به الجهاز",
 };
 
@@ -333,6 +383,12 @@ export function applyPlanGates(s: SubmittedPlan, ctx: GateContext): GateResult {
 
   //  G0 — البوّابة.
   if (!ctx.agentGate.allowed) { add({ code: "gate_closed", kind: "blocking", target: null, reasonAr: `${GATE_REASONS.gate_closed}: ${ctx.agentGate.reason}` }); return done(); }
+  //  G0b — §4.hd: معاينةُ الإصدار الثالث — لا خطّةَ على مجموعةٍ لم تُؤكَّد أو مدخلٍ للموانع أو لسلامة التمرين لم يُسجَّل (الكاتبُ يُردّ قبلها؛ وهذه احتياط).
+  if (ctx.examConfirm) {
+    for (const i of examConfirmIssues(ctx.examConfirm, { deviceCodes: s.devices.map((d) => d.deviceCode), library, protocolCode: library ? pr?.code ?? null : null })) {
+      add({ code: i.code, kind: "blocking", target: i.target, reasonAr: i.reasonAr });
+    }
+  }
   //  G13b — بروتوكولُ المكتبة موجودٌ حيٌّ معتمَدٌ إن كان من Opus.
   if (library && (!pr || pr.id !== s.protocolId || pr.isArchived || (pr.origin === "opus" && pr.status !== "approved"))) {
     add({ code: "protocol_missing", kind: "blocking", target: `protocol:${s.protocolId}`, reasonAr: GATE_REASONS.protocol_missing });

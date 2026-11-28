@@ -19,7 +19,7 @@ import {
 } from "../physio_protocols/settings_reminders";
 import { logAudit } from "../accounting/ledger";
 import { readStoredAssessment } from "@shared/physio_initial_assessment";
-import { forbiddenDevices } from "@shared/physio_exam_v2";
+import { examCautionInputsMissing, examGroupConfirmed, forbiddenDevices } from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
 import {
@@ -488,7 +488,12 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     //  **البوّابةُ الحتمية عند الفتح أيضاً** (§4.gz، مراجعةُ Codex على #770): المعاينةُ قد تُنقَّح بعد الاقتراح — فما تمنعه
     //  آخرُ معاينةٍ حيّة الآن لا يدخل الخطّة ولو كان في الاقتراح.
     const banned = await examForbiddenDeviceIds(tx, sg.patientId);
+    //  §4.hd — والمعاينةُ ذات التشخيص الحرّ بلا مجموعةٍ مؤكَّدة الآن لا تفتح خطّةً من اقتراحٍ سابق.
+    if (await latestExamGroupUnconfirmed(tx, sg.patientId)) throw new PlanError(409, "أكمل مجموعةَ التشخيص وحالتَها في المعاينة", "exam_group_unconfirmed");
     banned.forEach((id) => want.delete(id));
+    //  §4.hd (المراجعة) — ومدخلاتُ سلامة التمرين بأجهزة الخطّة وبروتوكولها (الإبرُ ⟵ كبتُ المناعة، والشديدُ ⟵ حاصراتُ بيتا والرجفانُ والوزن).
+    const caution = await latestExamCautionMissing(tx, sg.patientId, Array.from(want.keys()), sg.protocolId);
+    if (caution) throw new PlanError(409, caution.text, "exam_caution_inputs_missing");
     if (want.size === 0 && Array.isArray(r?.devices) && r.devices.length) {
       throw new PlanError(409, "أجهزةُ هذا الاقتراح كلُّها ممنوعةٌ لهذا المريض بآخر معاينة — اطلب اقتراحاً جديداً");
     }
@@ -521,6 +526,27 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     await tx.update(physioPlanSuggestions).set({ planId: row.id, acceptedAt: new Date() }).where(eq(physioPlanSuggestions.id, sg.id));
     return row;
   });
+}
+
+async function latestExamCautionMissing(ex: any, patientId: number, deviceIds: number[], protocolId: number | null): Promise<{ text: string } | null> {
+  const [e] = await ex.select({ assessment: medicalExams.assessment }).from(medicalExams)
+    .where(and(eq(medicalExams.patientId, patientId), eq(medicalExams.caseType, "physiotherapy"),
+      sql`NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = ${medicalExams.id})`))
+    .orderBy(desc(medicalExams.signedAt), desc(medicalExams.id)).limit(1);
+  if (!e) return null;
+  const a = readStoredAssessment(e.assessment);
+  const codes = deviceIds.length ? (await ex.select({ code: devices.code }).from(devices).where(inArray(devices.id, deviceIds))).map((r: any) => String(r.code)) : [];
+  const [pr] = protocolId ? await ex.select({ code: physioProtocols.code }).from(physioProtocols).where(eq(physioProtocols.id, protocolId)) : [];
+  const keys = examCautionInputsMissing(a, { deviceCodes: codes, protocolCode: pr?.code ?? null });
+  const { examCautionText } = await import("./suggest");
+  return keys.length ? { text: examCautionText(keys, (a as any)?.core?.group) } : null;
+}
+async function latestExamGroupUnconfirmed(ex: any, patientId: number): Promise<boolean> {
+  const [e] = await ex.select({ assessment: medicalExams.assessment }).from(medicalExams)
+    .where(and(eq(medicalExams.patientId, patientId), eq(medicalExams.caseType, "physiotherapy"),
+      sql`NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = ${medicalExams.id})`))
+    .orderBy(desc(medicalExams.signedAt), desc(medicalExams.id)).limit(1);
+  return Boolean(e) && !examGroupConfirmed(readStoredAssessment(e.assessment));
 }
 
 /** معرّفاتُ الأجهزة التي تمنعها آخرُ معاينة علاجٍ طبيعيّ غيرِ ملغاة للمريض (`BC-PT-02` وحدها — القديمةُ لا موانعَ حتميةً فيها). */

@@ -6,7 +6,7 @@
 //   • `approval` / `accept` — الاقتراحُ يُعاد فحصُه عند الحفظ: أيُّ تغيير ⟵ `changed` (يحفظ الخادمُ الاقتراحَ المصحَّح ويقول «تغيّر منذ فتحتَه»).
 // وما يمنع في كلّ حال: البوّابةُ مغلقة أو لا معاينةَ حيّة، والعددُ دون ما نُفّذ، والجرعةُ غيرُ صالحة، والخطّةُ الفارغة، والمراحلُ خارجَ بنية البروتوكول.
 import { btlModelById, btlModelsFor, unitAr } from "./btl_devices";
-import { BTL_TO_PROTOCOL_KEY, GATE_REASONS, rescalePhaseRanges, type GateExercise, type GateLogEntry, type GateProtocol } from "./physio_agent_gates";
+import { BTL_TO_PROTOCOL_KEY, examConfirmIssues, GATE_REASONS, rescalePhaseRanges, type ExamConfirmInput, type GateExercise, type GateLogEntry, type GateProtocol } from "./physio_agent_gates";
 import { arDigits, normalizeSourceUrl, protocolSessionCeiling } from "./physio_agent";
 import { TOTAL_SESSIONS_MAX, doseError, normalizeDose } from "./physio_protocols";
 import { btlLineText } from "./physio_agent_gates";
@@ -30,6 +30,8 @@ export interface EditGateContext {
   allowDraftIds?: ReadonlySet<number>;
   /** رقمُ النسخة الأساس — لنصّ «تغيّر حدٌّ منذ النسخة ن». */
   baseVersion?: number | null;
+  /** §4.hd (المراجعة) — **معاينةُ الإصدار الثالث** (أحدثُ معاينةٍ حيّة): ما يلزم الخطّةَ منها يمنع التعديلَ كما يمنع الكتابةَ الأولى (`examConfirmIssues`). وغائبٌ للثانية. */
+  examConfirm?: ExamConfirmInput | null;
 }
 
 export interface EditGateResult {
@@ -84,6 +86,12 @@ export function applyEditGates(candidate: PlanSnapshot, ctx: EditGateContext, po
   // ── EG0 — البوّابة ──
   if (!ctx.agentGate) always("no_live_exam", null);
   else if (!ctx.agentGate.allowed) always("gate_closed", null, `${reasonOf("gate_closed_edit")}: ${ctx.agentGate.reason}`);
+  // ── EG0b — §4.hd (المراجعة): معاينةُ التشخيص الحرّ — جهازٌ يُضاف (الإبرُ ⟵ كبتُ المناعة) أو بروتوكولٌ شديد لا يُحفظ قبل أن تُسجَّل مدخلاتُه ──
+  if (ctx.examConfirm) {
+    for (const i of examConfirmIssues(ctx.examConfirm, { deviceCodes: candidate.devices.map((d) => d.deviceCode), library, protocolCode: library ? candidate.protocolCode ?? pr?.code ?? null : null })) {
+      always(i.code, i.target, i.reasonAr);
+    }
+  }
   // ── EG15 — البروتوكول ──
   if (library && candidate.protocolId && !pr) always("protocol_missing", `protocol:${candidate.protocolId}`);
   else if (library && pr?.isArchived) (policy === "direct_edit" ? warn : always)("protocol_archived", `protocol:${pr.id}`);

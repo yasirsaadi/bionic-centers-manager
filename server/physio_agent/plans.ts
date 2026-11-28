@@ -8,7 +8,7 @@ import { db } from "../db";
 import { logAudit } from "../accounting/ledger";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import { examAgentGate } from "../physio_exam_reviews/store";
-import { applyPlanGates, type GateLogEntry, type GatedPlan } from "@shared/physio_agent_gates";
+import { applyPlanGates, EXAM_CONFIRM_CODES, type GateLogEntry, type GatedPlan } from "@shared/physio_agent_gates";
 import { isOpusAwaiting, JOB_ERROR_TEXTS, type Issue, type SubmittedPlan } from "@shared/physio_agent";
 import { normalizeDose } from "@shared/physio_protocols";
 import { buildGateContext, fingerprintOf, loadExam, newestV2ExamId, forbiddenOf, approverConstraints, patientIds } from "./context";
@@ -70,14 +70,15 @@ export async function createPlanFromAgentTx(job: JobRecord, me: string, submitte
     const ctx = await buildGateContext(tx, { patientId: job.patientId, examId: job.examId, branchId: job.branchId,
       protocolId: submitted.mode === "library" ? submitted.protocolId : null,
       exerciseIds: [...submitted.phases.flatMap((p) => p.exercises.map((x) => x.exerciseId ?? 0)), ...submitted.exerciseChanges.map((c) => c.toExerciseId ?? 0)],
-      fetched: web.fetched, searched: web.searched, final: true, at: "saving", agentGate: gate });
+      fetched: web.fetched, searched: web.searched, final: true, at: "saving", agentGate: gate, qa: job.qa });
     const g = applyPlanGates(submitted, ctx);
     const gateLog: GateLogEntry[] = [...(result.gateLog ?? []), ...g.log];
     if (g.blocking.length) {
-      const c = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan" : "gates_blocking";
+      const c = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan"
+        : g.blocking.every((b) => EXAM_CONFIRM_CODES.has(b.code)) ? "exam_confirmation_needed" : "gates_blocking";
       //  بوّابةٌ تغلق عند الحفظ (جهازٌ صار ممنوعاً أو غيرَ متوفّرٍ بعد المراجعة): الوظيفةُ تفشل هنا في المعاملة — **ويُنبَّه المعتمِدون والفاحصُ هنا**،
       //  فالعاملُ بعدها لا يجد وظيفةً عاملة يُنهيها ولا يرسل شيئاً.
-      const detail = g.blocking.map((b) => b.code).join(",");
+      const detail = g.blocking.map((b) => (c === "exam_confirmation_needed" ? b.target ?? b.code : b.code)).join(",");
       const failedJob = await finish("failed", c, JOB_ERROR_TEXTS[c], { gateLog, final: { submitted, gated: g.plan } }, detail);
       await notifyApproversTx(tx, failedJob, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[c]}`, `/patients/${job.patientId}`);
       await notifyExaminerTx(tx, failedJob, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[c]}`);
@@ -158,15 +159,16 @@ export async function replaceAwaitingPlanFromAgentTx(job: JobRecord, me: string,
     const ctx = await buildGateContext(tx, { patientId: job.patientId, examId: job.examId, branchId: job.branchId,
       protocolId: submitted.mode === "library" ? submitted.protocolId : null,
       exerciseIds: [...submitted.phases.flatMap((p) => p.exercises.map((x) => x.exerciseId ?? 0)), ...submitted.exerciseChanges.map((c) => c.toExerciseId ?? 0)],
-      fetched: web.fetched, searched: web.searched, final: true, at: "saving", agentGate: gate });
+      fetched: web.fetched, searched: web.searched, final: true, at: "saving", agentGate: gate, qa: job.qa });
     //  الممنوعُ: المعاينةُ ∪ ما منعه المعتمِدون في كلّ اعتمادٍ حيّ للمريض (D10).
     const { forbiddenForPatientTx } = await import("./versions");
     const fp = await forbiddenForPatientTx(tx, job.patientId, exam, null);
     const g = applyPlanGates(submitted, { ...ctx, forbidden: fp.map((f) => ({ deviceCode: f.deviceCode, reasonAr: f.reasonAr, source: f.source })) });
     const gateLog: GateLogEntry[] = [...(result.gateLog ?? []), ...g.log];
     if (g.blocking.length) {
-      const c = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan" : "gates_blocking";
-      const detail = g.blocking.map((b) => b.code).join(",");
+      const c = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan"
+        : g.blocking.every((b) => EXAM_CONFIRM_CODES.has(b.code)) ? "exam_confirmation_needed" : "gates_blocking";
+      const detail = g.blocking.map((b) => (c === "exam_confirmation_needed" ? b.target ?? b.code : b.code)).join(",");
       const j = await finish("failed", c, { gateLog, final: { submitted, gated: g.plan } }, detail);
       await notifyApproversTx(tx, j, `⚠️ لم يُعد Bionic AI كتابةَ الخطّة: ${JOB_ERROR_TEXTS[c]} — الاقتراحُ السابق باقٍ`, `/physio/plans/${plan!.id}`);
       return { kind: "failed", code: c, detail, job: j };

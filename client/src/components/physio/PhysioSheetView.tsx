@@ -20,6 +20,7 @@ import {
 } from "@shared/physio_sheet_view";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { summaryWithoutDiagnosis } from "@/components/physio/ExamV3Form";
 
 /** قيمةُ خانةٍ مقروءة — والفارغةُ «—» لا فراغٌ يُظنّ نسياناً. */
 function V({ children, testId, multiline }: { children: ReactNode; testId?: string; multiline?: boolean }) {
@@ -91,7 +92,7 @@ export function PhysioSheetView({ data, showAssessment = true }: { data: PhysioS
               <div className="px-1.5 py-1 text-[11px] text-slate-500" data-testid={`psv-exam-sign-${e.id}`}>
                 {e.doctorName}{e.signedAt ? ` — ${formatDateIraq(e.signedAt)} ${formatTimeIraq(e.signedAt)}` : ""}{e.version > 1 ? ` — النسخة ${e.version}` : ""}
               </div>
-              {e.assessmentSummary && <V testId={`psv-exam-summary-${e.id}`}>التقييم الأوّلي: {e.assessmentSummary}</V>}
+              {summaryWithoutDiagnosis(e.assessmentSummary, e.diagnosis) && <V testId={`psv-exam-summary-${e.id}`}>التقييم الأوّلي: {summaryWithoutDiagnosis(e.assessmentSummary, e.diagnosis)}</V>}
             </SheetRow>
             <SheetRow label="التشخيص"><V testId={`psv-exam-dx-${e.id}`}>{e.diagnosis}</V></SheetRow>
             <SheetRow label="العلاج الموصوف وعدد الجلسات"><V testId={`psv-exam-rx-${e.id}`}>{physioTreatmentsLine(e.treatments)}</V></SheetRow>

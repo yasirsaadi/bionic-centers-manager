@@ -22,7 +22,15 @@ import {
 } from "@shared/physio_exam_v2";
 import { eligibleStaffEvents, REQUESTER_REPLY_EVENTS } from "@shared/staff_notifications";
 import { examAgentGate } from "./physio_exam_reviews/store";
-import { completeExamV2 } from "./test_fixtures/physio_exam_v2";
+import { completeExamV2, minimalExamV3 } from "./test_fixtures/physio_exam_v2";
+import {
+  answerFollowUps, coreFieldsFor, examAskableFields, examCautionInputsMissing, examGateInputsMissing, examGroupConfirmed, examMustAskBeforePlan,
+  examV2SummaryAr, GATE_INPUTS, HIGH_INTENSITY_PROTOCOLS, isNotRecordedReason, redFlagQuestionsOfExam, UNKNOWN_ONSET_REASON, V3_REQUIRED_CORE, type V2Value,
+} from "@shared/physio_exam_v2";
+import { readFileSync } from "fs";
+import { db } from "./db";
+import { newestV2ExamId } from "./physio_agent/context";
+import { suggestPlan } from "./physio_plans/suggest";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -197,6 +205,136 @@ async function main() {
       REQUESTER_REPLY_EVENTS.includes("physio_exam_red_flag_decided")],
     [["physio_exam_red_flag_pending", "physio_exam_red_flag_decided"], ["physio_exam_red_flag_decided"], [], true]);
 
+
+  // ══ ث. الإصدارُ الثالث — «تشخيصٌ حرّ + ورقةُ سلامةٍ قصيرة» (§4.hd) ══
+  console.log("\n── ث. الإصدارُ الثالث: القواعد ──");
+  const p3x = (a: PhysioExamV2, dx = "ألمٌ في الكعب منذ شهرين") => parseExamV2(a, { today: TODAY, diagnosis: dx });
+  const m3 = p3x(minimalExamV3());
+  same("ث.١ **التشخيصُ الحرّ وورقةُ السلامة والعلاماتُ «لا» تكفي** — الإصدارُ ٣ ولا مجموعةَ ولا خانةً اختيارية",
+    [m3.ok, m3.ok ? m3.missing : null, m3.ok ? m3.value.version : null, m3.ok ? m3.value.core.group : "?", m3.ok ? m3.value.core.weightKg : "?"], [true, [], 3, null, null]);
+  const miss3 = (a: PhysioExamV2, dx?: string) => { const r = p3x(a, dx); return r.ok ? r.missing : [`ERR:${r.error}`]; };
+  same("ث.٢ **ورقةُ السلامة إلزامية**: المعدنُ والحقنةُ يُسألان بلا مجموعة، والإحساس — بمفاتيحها",
+    miss3(minimalExamV3({ core: { metalInField: null, steroidInjection: null }, top: { sensation: null } as any })), ["sensation", "core.metalInField", "core.steroidInjection"]);
+  same("ث.٢ب وأبناؤها المشروطون (المعدنُ ⟵ نوعُه، والحقنةُ ⟵ تاريخُها، والورمُ ⟵ موضعُه، والأنثى في سنّ الإنجاب ⟵ الحمل)",
+    miss3(minimalExamV3({ core: { metalInField: "yes", steroidInjection: "yes", cancer: "past", sex: "female", ageYears: 30 } })),
+    ["core.metalTypes", "core.pregnant", "core.cancerInField", "core.steroidInjectionDate"]);
+  same("ث.٣ **والتشخيصُ نصّاً إلزاميّ**", miss3(minimalExamV3(), " "), ["diagnosis"]);
+  //  §4.hd (المراجعة) — كانت الأربعون كلُّها إلزامية فكانت «لا شيء ممّا يلي» تكتب «لا» لما لم يُرَ. صارت: العامّةُ دائماً، وعلاماتُ المجموعة حين تُعرف.
+  const generalFlags = V2_RED_FLAGS.filter((f) => f.groups === null).length;
+  const noFlags = (over: Parameters<typeof minimalExamV3>[0] = {}) => { const a = minimalExamV3(over); a.redFlags = {}; return a; };
+  same("ث.٤ **العلاماتُ الإلزامية في الثالثة: العامّةُ الثماني بلا مجموعة، وعلاماتُ المجموعة معها حين تُختار** — وعلامةُ القدم في مريض الظهر اختيارية",
+    [redFlagQuestionsOfExam(minimalExamV3()).length, miss3(noFlags()).length, miss3(minimalExamV3({ core: { group: "lumbar" }, redFlags: { quinolones: undefined as any } })),
+      miss3(minimalExamV3({ core: { group: "lumbar" }, redFlags: { visceral: undefined as any } }))],
+    [generalFlags, generalFlags, [], ["redFlags.visceral"]]);
+  const fd3 = (a: PhysioExamV2) => forbiddenDevices(a, { today: TODAY });
+  const ws = fd3(minimalExamV3());
+  same("ث.٥ **المجهولُ أسوأُ قيمه**: بلا مجموعة ⟵ الشدُّ والروبوتُ والموجاتُ ممنوعةٌ «لم يُسجَّل بعد»",
+    ["traction", "robotik", "shockwaves"].map((d) => isNotRecordedReason(ws.find((x) => x.deviceCode === d)?.reasonAr ?? "")), [true, true, true]);
+  const pm = fd3(minimalExamV3({ core: { implants: ["pacemaker"] } }));
+  same("ث.٥ب والمنظّمُ يمنع بسببه المسجَّل (لا «لم يُسجَّل»)",
+    ["electro", "megnatik", "tecar"].map((d) => /منظّمُ ضربات/.test(pm.find((x) => x.deviceCode === d)?.reasonAr ?? "")), [true, true, true]);
+  const ach = (mod: Record<string, V2Value>) => fd3(minimalExamV3({ core: { group: "foot_ankle" }, module: { condition: "achilles", ...mod } }));
+  same("ث.٦ **التأكيدُ يقصّر القائمة**: عرقوبٌ لم يُسجَّل نوعُه ⟵ الموجاتُ «لم يُسجَّل»، ومنتصفُ الوتر بلا تمزّق ⟵ تُباح، والارتكازيّ ⟵ يمنعها بسببه",
+    [ach({}).find((x) => x.deviceCode === "shockwaves")?.reasonAr.startsWith("لم يُسجَّل بعد: نوعُ الاعتلال"),
+      ach({ tendonType: "midportion", priorRupture: "no" }).some((x) => x.deviceCode === "shockwaves"),
+      ach({ tendonType: "insertional", priorRupture: "no" }).find((x) => x.deviceCode === "shockwaves")?.reasonAr],
+    [true, false, "اعتلالٌ ارتكازيّ في وتر العرقوب"]);
+  same("ث.٦ب **والجلطةُ بلا مستوى مشي ⟵ الروبوتُ ممنوع حتى يُسجَّل**، وFAC ٠ يبيحه",
+    [fd3(minimalExamV3({ core: { group: "neuro_adult" }, module: { condition: "stroke" } })).some((x) => x.deviceCode === "robotik"),
+      fd3(minimalExamV3({ core: { group: "neuro_adult", fac: "0" }, module: { condition: "stroke" } })).some((x) => x.deviceCode === "robotik")], [true, false]);
+  // ث.٧ — اختبارُ الخاصّية: لكلّ مجموعةٍ وحالة، كلُّ خانةٍ ليست في ورقة السلامة ولا مدخلاً لبوّابة نطاقها لا تغيّر الموانع أيّاً كانت قيمتُها.
+  const violations: string[] = [];
+  const scopes = V2_MODULES.flatMap((m) => (m.conditions?.length ? m.conditions.map((c) => ({ g: m.group, c: c.code as string | null })) : [{ g: m.group, c: null as string | null }]));
+  scopes.push({ g: "other", c: null });
+  const sampleValues = (f: { kind: string; options?: readonly { code: string }[]; min?: number; max?: number }): V2Value[] => {
+    if (f.kind === "choice" || f.kind === "yesno") return (f.options ?? []).map((o) => o.code);
+    if (f.kind === "multi") return (f.options ?? []).map((o) => [o.code]);
+    if (f.kind === "int" || f.kind === "num") return [f.min ?? 0, f.max ?? 100];
+    if (f.kind === "date") return [TODAY, "2025-01-01"];
+    return ["x"];
+  };
+  for (const sc of scopes) {
+    const gate = GATE_INPUTS.filter((gi) => (gi.scope.group === undefined || gi.scope.group === sc.g) && (gi.scope.condition === undefined || gi.scope.condition === sc.c));
+    const best: Record<string, V2Value> = Object.fromEntries(gate.map((gi) => [gi.key, gi.best]));
+    const mk = (extra: Record<string, V2Value>) => {
+      const core: Record<string, V2Value> = { group: sc.g, side: "right" };
+      const mod: Record<string, V2Value> = sc.c ? { condition: sc.c } : {};
+      for (const [k, v] of Object.entries({ ...best, ...extra })) { const [p, kk] = k.split("."); (p === "core" ? core : mod)[kk] = v; }
+      //  بالتطبيع كما يُخزَّن (ما لا ينطبق يُمحى) — فالخاصّيةُ على ما يصل القواعدَ فعلاً.
+      const r = parseExamV2(minimalExamV3({ core, module: mod }), { today: TODAY, diagnosis: "د" });
+      return r.ok ? r.value : minimalExamV3({ core, module: mod });
+    };
+    const base = JSON.stringify(fd3(mk({})).map((x) => x.deviceCode));
+    const fields = [...V2_CORE_FIELDS.map((f) => ({ key: `core.${f.key}`, f })), ...moduleFieldsOf(sc.g).filter((f) => f.key !== "condition").map((f) => ({ key: `module.${f.key}`, f }))];
+    for (const { key, f } of fields) {
+      const k = key.split(".")[1];
+      if ((key.startsWith("core.") && (V3_REQUIRED_CORE.has(k) || k === "group")) || gate.some((gi) => gi.key === key)) continue;
+      for (const v of sampleValues(f)) {
+        const got = JSON.stringify(fd3(mk({ [key]: v })).map((x) => x.deviceCode));
+        if (got !== base) { violations.push(`${sc.g}/${sc.c}: ${key}=${JSON.stringify(v)}`); break; }
+      }
+    }
+  }
+  same("ث.٧ **خاصّية**: لا خانةَ اختيارية تغيّر الموانعَ — كلُّ ما تقرؤه القواعدُ في ورقة السلامة أو مدخلٌ لبوّابة نطاقه", violations, []);
+  const v2c = parseExamV2(completeExamV2(), { today: TODAY, diagnosis: "د" });
+  same("ث.٨ **الثانيةُ كما كانت**: الكاملةُ إصدارُها ٢ وعلاماتُها بمجموعتها، وبلا مجموعةٍ ناقصة",
+    [v2c.ok && v2c.value.version, redFlagQuestionsOfExam(completeExamV2()).length < V2_RED_FLAGS.length, miss3(completeExamV2({ core: { group: null } })).includes("core.group")], [2, true, true]);
+  same("ث.٨ب وفي الثانية لا «لم يُسجَّل» ولا «غير ذلك»",
+    [fd3(completeExamV2()).some((x) => isNotRecordedReason(x.reasonAr)), parseExamV2(completeExamV2({ core: { group: "other" } }), { today: TODAY }).ok], [false, false]);
+  const t3 = examV2EnglishText(m3.ok ? m3.value : minimalExamV3(), { today: TODAY });
+  same("ث.١١ **النصُّ الإنجليزيّ يقول «NOT RECORDED»** لكلّ ما يُسأل، و«المجموعةُ غيرُ مؤكَّدة»، والسطرُ العربيّ يبدأ بالتشخيص",
+    [/Diagnosis group: NOT CONFIRMED/.test(t3), /Diabetes: NOT RECORDED/.test(t3), /Fasting now \(Ramadan or other\): NOT RECORDED/.test(t3), /v3 \(free-text diagnosis/.test(t3),
+      examV2SummaryAr(minimalExamV3(), { diagnosis: "ألمٌ في الكعب" }).startsWith("ألمٌ في الكعب")], [true, true, true, true, true]);
+  const src = readFileSync(new URL("../shared/physio_exam_v2.ts", import.meta.url), "utf8");
+  same("ث.١٣ **لا يقرأ `.version` في الاستمارة غيرُ `examRuleset`**", (src.match(/\.version\b/g) ?? []).length, 1);
+  same("ث.١٥ **ما يُسأل قبل الخطّة**: المجموعةُ وحالتُها والسكّريُّ والصيام — ثمّ بعد تأكيد العرقوب مدخلاتُه",
+    [examMustAskBeforePlan(minimalExamV3()), examMustAskBeforePlan(minimalExamV3({ core: { group: "foot_ankle", diabetes: "no", fasting: "no" }, module: { condition: "achilles" } }))],
+    [["core.group", "module.condition", "core.diabetes", "core.fasting"], ["module.tendonType", "module.priorRupture"]]);
+  const ask = examAskableFields(minimalExamV3()).map((f) => f.key);
+  same("ث.١٦ **ما يجوز السؤالُ عنه**: المجموعةُ والحالةُ والاختياريّ — لا ورقةَ السلامة ولا الجنسَ والعمرَ ولا العلامات",
+    [ask.includes("core.group"), ask.includes("module.condition"), ask.includes("module.tendonType"), ask.includes("core.diabetes"),
+      ask.some((k) => k === "core.sex" || k === "core.ageYears" || k === "core.metalInField" || k.startsWith("redFlags."))], [true, true, true, true, false]);
+  same("ث.١٧ **ما يفرضه الجوابُ على نفسه**: المجموعةُ ⟵ حالتُها، والعرقوبُ ⟵ نوعُه وتمزّقُه، والسكّريُّ ⟵ اعتلالُ القدم",
+    [answerFollowUps(minimalExamV3(), minimalExamV3({ core: { group: "foot_ankle" } }), ["core.group"]),
+      answerFollowUps(minimalExamV3(), minimalExamV3({ core: { group: "foot_ankle" }, module: { condition: "achilles" } }), ["core.group", "module.condition"]),
+      answerFollowUps(minimalExamV3(), minimalExamV3({ core: { diabetes: "oral" } }), ["core.diabetes"])],
+    [["module.condition"], ["module.tendonType", "module.priorRupture"], ["core.neuropathy"]]);
+  same("ث.١٨ **مدخلاتُ الحذر مع الخطّة**: الإبرُ ⟵ كبتُ المناعة، وبروتوكولُ الشدّة العالية ⟵ بيتا والرجفانُ والوزن",
+    [examCautionInputsMissing(minimalExamV3({ core: { diabetes: "no", fasting: "no" } }), { deviceCodes: ["needle"] }),
+      examCautionInputsMissing(minimalExamV3({ core: { diabetes: "no", fasting: "no" } }), { protocolCode: "stroke-chronic-adult" })],
+    [["core.immunosuppressed"], ["core.betaBlocker", "core.atrialFibrillation", "core.weightKg"]]);
+  same("ث.١٩ وكلُّ بروتوكولٍ في قائمة الشدّة العالية موجودٌ في المجموعات",
+    HIGH_INTENSITY_PROTOCOLS.filter((c) => !V2_MODULES.some((m) => m.protocols.includes(c))), []);
+  same("ث.٢٠ «غير ذلك» تؤكّد المجموعةَ في الثالثة وحدها، والمجموعةُ بلا حالةٍ غيرُ مؤكَّدة",
+    [examGroupConfirmed(minimalExamV3({ core: { group: "other" } })), examGroupConfirmed(minimalExamV3({ core: { group: "foot_ankle" } })),
+      examGroupConfirmed(minimalExamV3({ core: { group: "lymphedema" } })), coreFieldsFor("v3")[0].options!.some((o) => o.code === "other"),
+      examGateInputsMissing(minimalExamV3({ core: { group: "lymphedema" } }))], [true, false, true, true, ["module.limb", "module.heartFailure"]]);
+
+  // ══ §4.hd (المراجعة) — ما أضافته مراجعةُ السلامة ══
+  const onsetUnknown = fd3(minimalExamV3({ core: { group: "lymphedema", onsetKind: "unknown", onsetDate: null }, module: { limb: "arm", heartFailure: "none" } }));
+  same("ث.٢١ **بدايةُ الأعراض «غير معروف» تُعامَل حادّةً وفي أيّامها الأولى** (المجهولُ أسوأُ قيمه) — والتاريخُ القديم لا",
+    [["traction", "shockwaves", "needle"].map((d) => onsetUnknown.find((x) => x.deviceCode === d)?.reasonAr === UNKNOWN_ONSET_REASON),
+      fd3(minimalExamV3({ core: { group: "lymphedema" }, module: { limb: "arm", heartFailure: "none" } })).filter((x) => ["traction", "shockwaves", "needle"].includes(x.deviceCode)).length],
+    [[true, true, true], 0]);
+  const otherWith = (dx: string) => { const r = parseExamV2(minimalExamV3({ core: { group: "other" } }), { today: TODAY, diagnosis: dx }); return r.ok ? "ok" : r.missing; };
+  same("ث.٢٢ **«غير ذلك» لا تصحّ والتشخيصُ يذكر حالةً من المكتبة** (موانعُها لا تسقط بضغطة) — والنفيُ والنصُّ المحايد يمرّان",
+    [otherWith("بعد تبديل مفصل الورك قبل ثلاثة أسابيع"), otherWith("Post hip replacement 3 weeks"), otherWith("جلطه دماغيه قديمه"),
+      otherWith("ألم في الفك منذ شهر"), otherWith("ألم في الفك، لا يوجد ألم ظهر")],
+    [["core.group"], ["core.group"], ["core.group"], "ok", "ok"]);
+  const gen = minimalExamV3(); gen.redFlags = Object.fromEntries(Object.entries(gen.redFlags).filter(([k]) => V2_RED_FLAGS.find((f) => f.key === k)?.groups === null));
+  const genNeck = { ...gen, core: { ...gen.core, group: "neck", side: "right" }, module: {} } as PhysioExamV2;
+  same("ث.٢٣ **علاماتُ المجموعة التي يؤكّدها الجوابُ يفرضها الجوابُ نفسُه** (`answerFollowUps`) — ولا تُفرض ما كانت مُجابة",
+    [answerFollowUps(gen, genNeck, ["core.group"]).filter((k) => k.startsWith("redFlags.")).sort(),
+      answerFollowUps(minimalExamV3(), { ...minimalExamV3(), core: { ...minimalExamV3().core, group: "neck", side: "right" } }, ["core.group"]).filter((k) => k.startsWith("redFlags."))],
+    [V2_RED_FLAGS.filter((f) => f.groups?.includes("neck")).map((f) => `redFlags.${f.key}`).sort(), []]);
+  const ackOf = (a: unknown) => { const r = parseExamV2(a, { today: TODAY }); return r.ok ? r.value.textSafetyAck ?? null : "ERR"; };
+  same("ث.٢٤ **تأكيدُ الفاحص لتنبيه النصّ** يُحفظ بمفاتيحَ معروفة وحدها، وفي الثالثة وحدها",
+    [ackOf({ ...minimalExamV3(), textSafetyAck: ["core.anticoagulant", "core.anticoagulant", "core.x", 5] }), ackOf({ ...completeExamV2(), textSafetyAck: ["core.anticoagulant"] })],
+    [["core.anticoagulant"], null]);
+  same("ث.٢٥ **«نعم» خارج مجموعة المعاينة تُحسب في الثالثة** (علامةٌ اختيارية علّمها الفاحص)، ولا تُعدّ ناقصةً بلا جواب",
+    [redFlagsOf(minimalExamV3({ core: { group: "lumbar" }, redFlags: { arterial: "yes" } })).map((h) => h.key), miss3({ ...gen, redFlags: { ...gen.redFlags } }).length],
+    [["arterial"], 0]);
+
   // ══ النقاطُ الحقيقية ══
   await cleanup();
   await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع المعاينة الإلزامية'), ($2, 'فرعٌ آخر للمعاينة')`, [B1, B2]);
@@ -272,7 +410,9 @@ async function main() {
     const p1 = await physioPatient("علي");
     const v1Sign = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: { ...emptyInitialAssessment(), painBest: 2, painWorst: 6, sensation: "intact", plan: ["rom"] } }));
     same("ب.١ **الاستمارةُ الأولى في توقيعٍ جديد ⟵ ٤٠٠ `assessment_incomplete` بقائمة الناقص** ولا صفّ",
-      [v1Sign.status, v1Sign.json?.code, Array.isArray(v1Sign.json?.missing) && v1Sign.json.missing.includes("core.group"), await examCount(p1)], [400, "assessment_incomplete", true, 0]);
+      //  (§4.hd: العميلُ القديم يُفحص بالإصدار الثالث — فيُسمّى المعدنُ الذي يُسأل فيه دائماً، لا مجموعةُ التشخيص الاختيارية.)
+      [v1Sign.status, v1Sign.json?.code, Array.isArray(v1Sign.json?.missing) && v1Sign.json.missing.includes("core.metalInField")
+        && !v1Sign.json.missing.includes("core.group"), await examCount(p1)], [400, "assessment_incomplete", true, 0]);
     const noAssess = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: undefined }));
     same("ب.٢ وبلا استمارة (عميلٌ قديم) ⟵ ٤٠٠ كذلك", [noAssess.status, noAssess.json?.code, await examCount(p1)], [400, "assessment_incomplete", 0]);
     const partial = await call("POST", `/api/medical/patients/${p1}/exams`, S.spec, examBody({ assessment: completeExamV2({ core: { weightKg: null, sex: "female", ageYears: 30 } }) }));
@@ -472,6 +612,64 @@ async function main() {
     same("و.٢ **حذفُ المريض كاملاً يحذف طلباته قبل معايناته** — بلا عطب مفتاح",
       [delErr, Number((await q(`SELECT count(*) FROM physio_exam_red_flag_reviews WHERE id = $1`, [srcReq.json?.id])).rows[0].count),
         Number((await q(`SELECT count(*) FROM patients WHERE id = $1`, [dst])).rows[0].count)], ["", 0, 0]);
+
+    console.log("\n── ث. الإصدارُ الثالث على الخادم ──");
+    const pV3 = await physioPatient("كعب");
+    const v3Body = (a: PhysioExamV2, over: Record<string, unknown> = {}) => examBody({ diagnosis: "ألمٌ في الكعب الأيمن منذ شهرين، يسوء صباحاً", assessment: a, ...over });
+    const s3 = await call("POST", `/api/medical/patients/${pV3}/exams`, S.spec, v3Body(minimalExamV3(), { redFlagsBulkNo: true }));
+    const r3 = (await q(`SELECT version, assessment FROM medical_exams WHERE id = $1`, [s3.json?.id])).rows[0];
+    same("ث.٩ **تُوقَّع بالتشخيص الحرّ وورقة السلامة وحدهما** — الإصدارُ ٣ مختوم، و«لا شيء ممّا يلي» في التدقيق",
+      [s3.status, r3?.assessment?.version, r3?.assessment?.core?.group, Object.keys(r3?.assessment?.redFlags ?? {}).length,
+        Boolean((await q(`SELECT 1 FROM audit_log WHERE entity_type = 'medical_exam' AND entity_id = $1 AND action = 'create' AND (new_values::jsonb) ? 'redFlagsBulkNo'`, [String(s3.json?.id)])).rows.length),
+        (await examsOf(pV3))?.exams?.[0]?.agentGate?.code], [200, 3, null, V2_RED_FLAGS.length, true, "clear"]);
+    const s3bad = await call("POST", `/api/medical/patients/${pV3}/exams`, S.spec, v3Body(minimalExamV3({ core: { metalInField: null, anticoagulant: [] } })));
+    same("ث.٩ب **بندٌ ناقص من ورقة السلامة ⟵ ٤٠٠ بمفتاحه واسمه** ولا صفّ",
+      [s3bad.status, s3bad.json?.code, s3bad.json?.missing, s3bad.json?.missingLabels, await examCount(pV3)],
+      [400, "assessment_incomplete", ["core.metalInField", "core.anticoagulant"], ["معدنٌ في منطقة العلاج", "مضادّاتُ التخثّر أو اضطرابُ نزف"], 1]);
+    const id3 = Number(s3.json?.id);
+    const pat3 = (over: Record<string, unknown>) => ({ caseType: "physiotherapy", notes: "ملاحظة", diagnosis: "ألمٌ في الكعب الأيمن", prescription: {}, ...over });
+    const noBase = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
+    const stale = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ baseVersion: 7, assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
+    const good = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ baseVersion: 1, assessment: minimalExamV3({ core: { diabetes: "no" } }) }));
+    same("ث.١٠ **تنقيحُ الثالثة يحمل نسختَه**: بلا رقمٍ ⟵ ٤٠٠، وقديمٌ ⟵ ٤٠٩، والصحيحُ ⟵ ٢٠٠ والنسخةُ ٢",
+      [noBase.status, noBase.json?.code, stale.status, stale.json?.code, good.status, good.json?.version], [400, "base_version_required", 409, "exam_version_changed", 200, 2]);
+    const toV2 = await call("PATCH", `/api/medical/exams/${id3}`, S.spec, pat3({ baseVersion: 2, assessment: completeExamV2() }));
+    const v2ToV3 = await call("PATCH", `/api/medical/exams/${v2Id}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: "د", prescription: {}, assessment: minimalExamV3() });
+    same("ث.١٠ب **الإصدارُ لا يتبدّل**: الثالثةُ لا تصير ثانية، والثانيةُ لا تصير ثالثة (وبلا `baseVersion` في الثانية كما كان)",
+      [toV2.status, toV2.json?.code, v2ToV3.status, v2ToV3.json?.code], [400, "assessment_invalid", 400, "assessment_invalid"]);
+    const pOld = await physioPatient("قديمٌ يرقّى");
+    const oldCase = Number((await q(`SELECT id FROM patient_cases WHERE patient_id = $1 AND case_type = 'physiotherapy'`, [pOld])).rows[0].id);
+    const oldId = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment)
+      VALUES ($1, $2, 'physiotherapy', $3, $4, 'أخصائيّ', 'قديم', '{}'::jsonb, $5::jsonb) RETURNING id`, [pOld, oldCase, B1, SPEC, JSON.stringify({ ...emptyInitialAssessment(), sensation: "intact" })])).rows[0].id);
+    const up3 = await call("PATCH", `/api/medical/exams/${oldId}`, S.spec, { caseType: "physiotherapy", notes: "x", diagnosis: "قديم", prescription: {}, assessment: minimalExamV3() });
+    same("ث.١٠ج والأولى تُرقّى إلى الثالثة", [up3.status, (await q(`SELECT assessment FROM medical_exams WHERE id = $1`, [oldId])).rows[0].assessment.version], [200, 3]);
+    const pYes = await physioPatient("علامة");
+    const sYes = await call("POST", `/api/medical/patients/${pYes}/exams`, S.spec, v3Body(minimalExamV3({ redFlags: { quinolones: "yes" } })));
+    const omit = minimalExamV3(); delete (omit.redFlags as any).quinolones;
+    const omitRev = await call("PATCH", `/api/medical/exams/${sYes.json?.id}`, S.spec, pat3({ baseVersion: 1, assessment: omit }));
+    same("ث.١٢ **«نعم» في علامةٍ خارج المجموعة توقف الوكيل**، وتنقيحٌ يُسقطها بلا «لا» صريحة ⟵ ٤٠٠ والبوّابةُ مغلقة",
+      [sYes.status, (await examsOf(pYes))?.exams?.[0]?.agentGate?.code, omitRev.status, omitRev.json?.missing, (await examAgentGate(Number(sYes.json?.id))).code],
+      [200, "red_flag_unreviewed", 400, ["redFlags.quinolones"], "red_flag_unreviewed"]);
+    const sheet3 = (await call("GET", `/api/patients/${pV3}/physio-sheet`, S.admin)).json;
+    same("ث.١٢ب **ورقةُ العلاج الطبيعي تقرأ الثالثة** وسطرُها يبدأ بالتشخيص الحرّ",
+      [sheet3?.exams?.[0]?.assessment?.version, /^ألمٌ في الكعب/.test(sheet3?.exams?.[0]?.assessmentSummary ?? "")], [3, true]);
+    let sgErr: any = null;
+    try { await suggestPlan({ patientId: pV3, branchId: B1, note: null, protocolId: null, fromSuggestionId: null, actor: { userId: SPEC, name: "x" } as any }); }
+    catch (e) { sgErr = e; }
+    same("ث.١٢ج **«اقترح خطّة» على ثالثةٍ بلا مجموعةٍ مؤكَّدة ⟵ ٤٠٩ `exam_group_unconfirmed`**", [sgErr?.status, sgErr?.code], [409, "exam_group_unconfirmed"]);
+    //  §4.hd (المراجعة) — ومدخلاتُ سلامة التمرين تلزم «اقترح خطّة» كما تلزم Bionic AI.
+    const pCau = await physioPatient("حذرٌ قبل الاقتراح");
+    await call("POST", `/api/medical/patients/${pCau}/exams`, S.spec, v3Body(minimalExamV3({ core: { group: "lumbar", side: "right" }, module: { condition: "nonspecific" } })));
+    const lbpId = Number((await q(`SELECT id FROM physio_protocols WHERE code = 'lbp-chronic-adult'`)).rows[0]?.id);
+    let cauErr: any = null;
+    try { await suggestPlan({ patientId: pCau, branchId: B1, note: null, protocolId: lbpId, fromSuggestionId: null, actor: { userId: SPEC, name: "x" } as any }); }
+    catch (e) { cauErr = e; }
+    same("ث.١٢د **«اقترح خطّة» ومدخلاتُ الحذر لم تُسجَّل ⟵ ٤٠٩ `exam_caution_inputs_missing`** بأسمائها",
+      [cauErr?.status, cauErr?.code, /السكّري/.test(cauErr?.message ?? "")], [409, "exam_caution_inputs_missing", true]);
+    const pNew = await physioPatient("أحدث");
+    await call("POST", `/api/medical/patients/${pNew}/exams`, S.spec, examBody());
+    const newer = await call("POST", `/api/medical/patients/${pNew}/exams`, S.spec, v3Body(minimalExamV3()));
+    same("ث.١٤ **أحدثُ معاينةٍ للوكيل تشمل الثالثة** (الرمزُ نفسُه `BC-PT-02`)", await newestV2ExamId(db, pNew), Number(newer.json?.id));
   } finally {
     httpServer.close();
     await cleanup();

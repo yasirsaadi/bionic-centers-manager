@@ -3,6 +3,7 @@
 import { JOB_STAGE_LABELS, type JobStage, type JobStatus, type QuestionAffects, type Issue, type AgentSource, type PlanMeasure,
   type ProposedCard, type LibraryProtocolDraft } from "@shared/physio_agent";
 import type { GatedPlan, GateLogEntry } from "@shared/physio_agent_gates";
+import type { V2Value } from "@shared/physio_exam_v2";
 import type { PlanDiff, PlanSnapshot, VersionHow } from "@shared/physio_plan_versions";
 import type { PlanEdit } from "@shared/physio_plan_versions";
 
@@ -13,8 +14,10 @@ export interface OpusJobSummary { id: number; status: JobStatus; stage: string |
 export interface OpusJobView {
   id: number; examId: number; patientId: number; status: JobStatus; stage: string | null;
   stages: { stage: string; at: string; noteAr?: string | null }[]; trigger: string;
-  questions: { id: string; textAr: string; whyEn: string; affects: QuestionAffects }[];
-  questionRounds: number; qa: { round: number; at: string; byName: string | null; answers: { id: string; questionAr: string; answer: string }[] }[];
+  /** §4.hd — `examFields`: خاناتُ المعاينة التي يُجاب عنها هنا فتُكتب فيها؛ و`suggestions` اقتراحُ المجموعة أو الحالة (لا يُختار مسبقاً). */
+  questions: { id: string; textAr: string; whyEn: string; affects: QuestionAffects; examFields?: string[]; suggestions?: { field: string; value: string }[] }[];
+  questionRounds: number; qa: { round: number; at: string; byName: string | null; examVersion?: number;
+    answers: { id: string; questionAr: string; answer: string; fields?: Record<string, V2Value>; examVersion?: number | null }[] }[];
   failures: number; maxFailures: number; cancelRequested: boolean; errorCode: string | null; error: string | null;
   decline: { by: string; reasonAr: string; reasonEn: string; recommendedActionAr: string } | null;
   newFinding: { kind: string; textAr: string; textEn: string; sourceQuestionId: string | null } | null;
@@ -29,7 +32,9 @@ export interface OpusJobView {
   /** C3 — سببُ الإخفاق مفصَّلاً بالعربية للمعتمِد. */
   errorDetailAr?: string | null;
 }
-export interface OpusJobResponse { job: OpusJobView | null; planStatus: string | null; enabled: boolean; canRun: boolean; canAnswer: boolean; canCancel: boolean; canSeeProposal: boolean;
+export interface OpusJobResponse { job: OpusJobView | null; planStatus: string | null; enabled: boolean; canRun: boolean; canAnswer: boolean;
+  /** §4.hd — يجيب عن خانة المعاينة كاتبُها أو أخصائيّو فرعها وحدهم. */
+  canAnswerExamFields?: boolean; canCancel: boolean; canSeeProposal: boolean;
   /** لماذا لا يُشغَّل الآن (يردّه الخادم ٤٠٩) — يُقال مكانَ الزرّ. */
   runBlocked?: { code: string; reason: string } | null;
   /** ملاحظةُ اعتماد العلامة الحمراء على هذه المعاينة — قيدٌ يقرؤه Opus أوّلاً. */

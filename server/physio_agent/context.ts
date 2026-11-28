@@ -4,7 +4,10 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { readStoredAssessment } from "@shared/physio_initial_assessment";
-import { anyAssessmentEnglishText, conditionOf, examV2Acuity, forbiddenDevices, isExamV2, moduleOf, type PhysioExamV2 } from "@shared/physio_exam_v2";
+import {
+  anyAssessmentEnglishText, conditionOf, examAskableFields, examCautionInputsMissing, examGateInputsMissing, examGroupConfirmed, examMustAskBeforePlan,
+  examRuleset, examV2Acuity, forbiddenDevices, isExamV2, moduleOf, type PhysioExamV2,
+} from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { btlCatalogForModel } from "@shared/btl_devices";
 import { patientIdentifierSet, redactAuthoredText, redactDeep, type IdentifierSet } from "@shared/physio_agent_privacy";
@@ -15,6 +18,7 @@ import { BODY_REGIONS, EXERCISE_KINDS } from "@shared/physio_exercises";
 import { planLineFromProtocol } from "@shared/physio_plan_diff";
 import { V2_DEVICE_NAMES } from "@shared/physio_exam_v2";
 import { examFingerprint } from "./fingerprint";
+import { textSafetyHitsOf } from "@shared/physio_exam_text_safety";
 
 const rows = (r: any): Record<string, any>[] => (r?.rows ?? []) as Record<string, any>[];
 const clip = (s: unknown, n: number): string | null => (typeof s === "string" && s.trim() ? s.trim().slice(0, n) : null);
@@ -203,8 +207,37 @@ function datesOf(a: PhysioExamV2 | null, today: string) {
   };
 }
 
+/**
+ * **ما في النصّ الحرّ ويخالف ورقةَ السلامة** (§4.hd) — القاعدةُ في `shared/physio_exam_text_safety.ts` (تطبيعٌ عربيّ، ونفيٌ قريب، وتأكيدُ الفاحص):
+ * في التشخيص والشكوى والموجودات والملاحظات **وأجوبةِ أسئلة Bionic AI النصّية**. وما لم يؤكّده الفاحص بوّابةٌ مانعة (`exam_text_safety_conflict`).
+ */
+export function textSafetyHits(a: unknown, texts: (string | null | undefined)[]): { key: string; term: string; acknowledged: boolean }[] {
+  return textSafetyHitsOf(a, texts).map((h) => ({ key: h.key, term: h.term, acknowledged: h.acknowledged }));
+}
+/** النصوصُ التي تُفحص: المعاينةُ وأجوبةُ الأسئلة النصّية. */
+export const examSafetyTexts = (exam: Pick<ExamRow, "diagnosis" | "chiefComplaint" | "clinicalFindings" | "notes">, qa: readonly QaRound[] = []): (string | null)[] =>
+  [exam.diagnosis, exam.chiefComplaint, exam.clinicalFindings, exam.notes, ...qa.flatMap((r) => (r.answers ?? []).map((x) => x.answer ?? null))];
+
+/** أجوبةُ وظائفَ سابقة على هذه المعاينة نفسِها (أُلغيت بتعديل المعاينة) — بياناتٌ للكاتب، وكلُّ خانةٍ كُتبت بجواب: أما زالت في المعاينة؟ */
+async function earlierAnswersOfExam(ex: any, examId: number, beforeJobId: number | null, a: unknown, ids: IdentifierSet) {
+  if (!beforeJobId) return [];
+  const list = rows(await ex.execute(sql`SELECT id, qa FROM physio_agent_jobs WHERE exam_id = ${examId} AND kind <> 'revise' AND id < ${beforeJobId}
+     AND jsonb_array_length(COALESCE(qa, '[]'::jsonb)) > 0 ORDER BY id`));
+  const now = isExamV2(a) ? a : null;
+  const cur = (key: string) => { const [p, k] = key.split("."); return p === "core" ? now?.core?.[k] : now?.module?.[k]; };
+  return list.flatMap((j) => (Array.isArray(j.qa) ? j.qa : []).map((r: any) => ({
+    round: r.round, at: r.at, earlierJob: true,
+    answers: (Array.isArray(r.answers) ? r.answers : []).map((x: any) => ({ id: x.id, questionAr: x.questionAr, affects: x.affects,
+      answer: redactAuthoredText(String(x.answer ?? ""), ids),
+      ...(x.fields ? { fields: Object.fromEntries(Object.entries(x.fields).map(([k, v]) => [k,
+        { value: v, stillInExam: JSON.stringify(cur(k) ?? null) === JSON.stringify(v ?? null) }])) } : {}) })),
+  })));
+}
+
 export interface AgentContext {
   exam: ExamRow; fingerprint: string; ids: IdentifierSet; today: string;
+  /** §4.hd — الإصدارُ الثالث: ما يُسأل عنه ولماذا (يحكم به `ask_questions` و`submit_plan` في الكاتب). */
+  v3: boolean; askable: Set<string>; mustAsk: string[];
   forbidden: GateForbidden[]; constraints: ApproverConstraint[];
   library: Awaited<ReturnType<typeof libraryIndex>>; knownDevices: Set<string>; branchDevices: Set<string>;
   initialUser: string;
@@ -226,7 +259,7 @@ export function revisionBlockText(scope: string, note: string): string {
 }
 
 /** **السياقُ كلُّه** ورسالةُ المستخدم الأولى JSON بمفاتيحَ ثابتة. */
-export async function buildAgentContext(job: { patientId: number; examId: number; branchId: number; qa: QaRound[]; questionRounds: number }, ex: any = db,
+export async function buildAgentContext(job: { id?: number; patientId: number; examId: number; branchId: number; qa: QaRound[]; questionRounds: number }, ex: any = db,
   web: { searches: number; fetches: number } = { searches: 0, fetches: 0 }, revision: RevisionForContext | null = null): Promise<AgentContext> {
   const exam = await loadExam(ex, job.examId);
   if (!exam) throw new Error("exam not found");
@@ -249,6 +282,10 @@ export async function buildAgentContext(job: { patientId: number; examId: number
   const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^\d.]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
   const history = await patientHistory(ex, job.patientId, exam.id, ids, today);
   const examText = redactAuthoredText(anyAssessmentEnglishText(a, { today }) ?? "", ids);
+  const v3 = isExamV2(a) && examRuleset(a) === "v3";
+  const askableFields = v3 ? examAskableFields(a) : [];
+  const mustAsk = v3 && !revision ? examMustAskBeforePlan(a) : [];
+  const earlier = !revision && v3 ? await earlierAnswersOfExam(ex, exam.id, job.id ?? null, a, ids) : [];
   const payload: Record<string, unknown> = {
     task: revision ? REVISION_TASK_LINE : "Write one physiotherapy treatment plan for this patient from the signed examination below.",
     today,
@@ -260,6 +297,10 @@ export async function buildAgentContext(job: { patientId: number; examId: number
       chiefComplaint: redactAuthoredText(clip(exam.chiefComplaint, 4000), ids), clinicalFindings: redactAuthoredText(clip(exam.clinicalFindings, 4000), ids),
       plan: redactAuthoredText(clip(exam.plan, 4000), ids), notes: redactAuthoredText(clip(exam.notes, 4000), ids), text: examText,
       conditionGroup: core.group ?? null, condition: (v2?.module as any)?.condition ?? null, suggestedProtocolCodes: hint,
+      ...(v3 ? {
+        ruleset: "v3", groupConfirmed: examGroupConfirmed(a), gateInputsMissing: examGateInputsMissing(a), cautionInputsMissing: examCautionInputsMissing(a),
+        askableFields, textSafetyHits: textSafetyHits(a, examSafetyTexts(exam, job.qa)),
+      } : {}),
     },
     constraints: {
       forbiddenDevices: forbidden.map((f) => ({ deviceCode: f.deviceCode, deviceNameEn: devs.find((d) => d.code === f.deviceCode)?.name_en ?? f.deviceCode,
@@ -274,24 +315,25 @@ export async function buildAgentContext(job: { patientId: number; examId: number
         ...(r.sameExamAsContext ? {} : { note: "answered on an earlier exam — may be outdated (DATA)" }),
         answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, affects: a.affects, answer: redactAuthoredText(a.answer, ids) })) }))
       : job.qa.map((r) => ({ round: r.round, at: r.at, answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, affects: a.affects,
-        answer: redactAuthoredText(a.answer, ids) })) })),
+        answer: redactAuthoredText(a.answer, ids), ...(a.fields ? { fields: a.fields, writtenToExamVersion: a.examVersion ?? r.examVersion ?? null } : {}) })) })),
+    ...(earlier.length ? { earlierAnswers: { note: "Answers given to earlier jobs on this same examination (DATA). The examination wins over any earlier answer: a field whose stillInExam is false was changed by the examiner.", rounds: earlier } } : {}),
     library: { protocols: library, lists: { exerciseKinds: EXERCISE_KINDS, bodyRegions: BODY_REGIONS, protocolCategories: PROTOCOL_CATEGORIES, ageGroups: AGE_GROUPS } },
     branch: { devices: devs.map((d) => ({ code: d.code, nameEn: d.name_en, nameAr: d.name_ar ?? V2_DEVICE_NAMES[d.code] ?? d.code, availableInBranch: branchDevices.has(String(d.code)) })) },
     btlCatalog: btlCatalogForModel(),
     rules: revision
       ? { questionsAvailable: false, webBudget: { searches: WEB_SEARCH_BUDGET, fetches: WEB_FETCH_BUDGET, used: web, reached: web.searches >= WEB_SEARCH_BUDGET || web.fetches >= WEB_FETCH_BUDGET } }
-      : { maxQuestionRounds: MAX_QUESTION_ROUNDS, roundsUsed: job.questionRounds,
+      : { maxQuestionRounds: MAX_QUESTION_ROUNDS, roundsUsed: job.questionRounds, ...(v3 ? { mustAskBeforeSubmit: mustAsk } : {}),
         webBudget: { searches: WEB_SEARCH_BUDGET, fetches: WEB_FETCH_BUDGET, used: web, reached: web.searches >= WEB_SEARCH_BUDGET || web.fetches >= WEB_FETCH_BUDGET } },
   };
   const revisionRedacted = revision ? redactDeep(revision.obj, ids) : null;
   if (revisionRedacted) payload.revision = revisionRedacted;
-  return { exam, fingerprint: fingerprintOf(exam), ids, today, forbidden, constraints, library, knownDevices, branchDevices, initialUser: JSON.stringify(payload),
+  return { exam, fingerprint: fingerprintOf(exam), ids, today, v3, askable: new Set(askableFields.map((f) => f.key)), mustAsk, forbidden, constraints, library, knownDevices, branchDevices, initialUser: JSON.stringify(payload),
     revisionBlock: revision ? revisionBlockText(revision.scope, redactAuthoredText(revision.note, ids)) : null, revisionRedacted };
 }
 
 /** سياقُ البوّابة — يُعاد بناؤه طازجاً قبل كلّ تطبيق (البوّابةُ والممنوعُ والتوفّرُ تتغيّر). */
 export async function buildGateContext(ex: any, p: { patientId: number; examId: number; branchId: number; protocolId: number | null;
-  exerciseIds: number[]; fetched: Set<string>; searched: Set<string>; final: boolean; at?: string; agentGate: GateContext["agentGate"] }): Promise<GateContext> {
+  exerciseIds: number[]; fetched: Set<string>; searched: Set<string>; final: boolean; at?: string; agentGate: GateContext["agentGate"]; qa?: readonly QaRound[] }): Promise<GateContext> {
   const exam = await loadExam(ex, p.examId);
   const today = baghdadTodayYmd();
   const ids = await patientIds(ex, p.patientId);
@@ -303,5 +345,7 @@ export async function buildGateContext(ex: any, p: { patientId: number; examId: 
     knownDeviceCodes: await knownDeviceCodes(ex), branchAvailable: await branchDeviceCodes(ex, p.branchId),
     protocol, exercises: await exerciseMap(ex, exIds), fetchedUrls: p.fetched, searchedUrls: p.searched,
     libraryIds: new Set((await libraryIndex(ex)).map((l) => l.id)), ids, final: p.final, at: p.at,
+    examConfirm: exam && isExamV2(readStoredAssessment(exam.assessment)) && examRuleset(readStoredAssessment(exam.assessment)) === "v3"
+      ? { exam: readStoredAssessment(exam.assessment), texts: examSafetyTexts(exam, p.qa ?? []) } : null,
   };
 }

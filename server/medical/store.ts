@@ -1208,6 +1208,14 @@ export async function deviceCaseTypes(patientId: number): Promise<string[]> {
  * anything fails the transaction rolls back and the record is untouched — there
  * is no window in which a version exists nowhere.
  */
+export const EXAM_VERSION_CHANGED_TEXT = "عُدّلت المعاينة بعد فتحها (أجوبةٌ لـ Bionic AI أو تعديلٌ آخر) — أعد التحميل";
+/** §4.hd — نسخةُ المعاينة تغيّرت بين القراءة والكتابة. */
+export class ExamVersionChangedError extends Error {
+  status = 409;
+  code = "exam_version_changed";
+  constructor() { super(EXAM_VERSION_CHANGED_TEXT); this.name = "ExamVersionChangedError"; }
+}
+
 export async function reviseExam(
   examId: number,
   values: {
@@ -1231,15 +1239,17 @@ export async function reviseExam(
    *
    * ولا نسخةَ ثانية من منطق النسخ: الجسمُ واحد، والفرقُ مَن يملك المعاملة.
    */
-  opts?: { tx?: any },
+  opts?: { tx?: any; expectedVersion?: number },
 ): Promise<MedicalExam> {
   const body = async (tx: any) => {
     //  ختمُ ٠٢٨ يرفض أيّ تعديلٍ لم يفتح البابَ المراقَب — ويُفتَح داخل
     //  المعاملة العاملة أيّاً كان صاحبُها، فـ`SET LOCAL` نطاقُها المعاملة.
     await tx.execute(sql`SET LOCAL app.allow_exam_edit = 'on'`);
 
-    const [current] = await tx.select().from(EX).where(eq(EX.id, examId));
+    //  §4.hd — الصفُّ مقفولٌ حتى آخر المعاملة، و`expectedVersion` (النسخةُ التي فُتح عليها التعديل أو قرأها الجوابُ) تطابق الحيّة أو ٤٠٩.
+    const [current] = await tx.select().from(EX).where(eq(EX.id, examId)).for("update");
     if (!current) throw new Error("المعاينة غير موجودة");
+    if (opts?.expectedVersion !== undefined && current.version !== opts.expectedVersion) throw new ExamVersionChangedError();
 
     // ══ A LINKED EXAM MAY NOT CHANGE SPECIALTY ═══════════════════════════
     // Below, `caseType` is rewritten and `caseId` re-resolved for the new

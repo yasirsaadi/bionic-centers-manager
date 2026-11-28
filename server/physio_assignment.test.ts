@@ -85,6 +85,9 @@ async function main() {
   same("Q.3 **طلبُ البديل**: ليومٍ مضى ⟵ لا · النهايةُ قبل البداية ⟵ لا · ٦١ يوماً نعم و٦٢ لا · السببُ ٣–٥٠٠ · الصيغة",
     [sie(today0, today0), sie("2026-11-27", today0), sie(today0, "2026-11-27"), sie(today0, "2027-01-27"), sie(today0, "2027-01-28"), sie(today0, today0, "اب"),
       sie(today0, today0, "x".repeat(501)), sie("28-11-2026", today0), SUBSTITUTION_MAX_DAYS], [true, false, false, true, false, false, false, false, 61]);
+  same("Q.3ب **يومٌ غيرُ موجود** («٣١ شباط» و«٢٩ شباط» في سنةٍ بسيطة) يُردّ برسالة الصيغة لا خطأً عامّاً — و«٢٨ شباط» يمرّ (مراجعةُ Codex على #778)",
+    [substitutionInputError({ dateFrom: "2027-02-31", dateTo: "2027-02-31", reason: "إجازة", today: today0 }), sie("2027-02-01", "2027-02-29"), sie("2027-02-01", "2027-02-28")],
+    ["التاريخان بصيغة سنة-شهر-يوم", false, true]);
   const S0 = (o: any) => o;
   same("Q.4 **قرارُ المالك D**: يوقف خطّةَ Bionic AI الأخصائيُّ والمسؤولُ والمشرفُ العام — لا المعالجُ ولا التقنيّ ولا المدرّبُ ولا الطبيبُ ولا المدير",
     [S0({ isAdmin: true }), S0({ role: "branch_manager", permissions: { canSupervisePhysio: true } }), S0({ role: "physio_specialist" }),
@@ -338,6 +341,13 @@ async function main() {
       .map((r) => [JSON.parse(r.old_values).notes !== JSON.parse(r.new_values).notes]), [[true]]);
     same("E.6 جلسةُ التوأم بحفظٍ واحد: جزآن بصفة المعتمِد", (await q(`SELECT part, via FROM physio_plan_session_parts WHERE session_id = $1 ORDER BY part`, [tw.json?.id])).map((r) => [r.part, r.via]),
       [["devices", "approver"], ["exercises", "approver"]]);
+    {
+      //  مراجعةُ Codex على #778 — «حسب المعالج» في نتائج العلاج الطبيعي ينسب الجلسةَ المقسومة لمعالجَيها كليهما، لا لأحدهما.
+      const oc = await call("GET", `/api/physio/outcomes`, S[ADMIN]);
+      const names = (await q(`SELECT id, display_name FROM system_users WHERE id IN ($1, $2)`, [T1, T3])).map((r) => [Number(r.id), String(r.display_name)]);
+      same("E.4ج **نتائجُ العلاج: معالجا الجلسة المقسومة كلاهما** في «حسب المعالج»",
+        [oc.status, names.length, ...names.map(([, n]) => (oc.json?.byExecutor ?? []).some((g: any) => g.name === n))], [200, 2, true, true]);
+    }
     same("E.7ب وسطرُ التمارين مع الأجهزة ⟵ ٤٠٠", (await run(P1, S[T1], { parts: ["devices"], items: items({ ...p1Dev, exercise: { done: true } }), planVersion: v1 })).status, 400);
     same("E.5 الجزءُ نفسُه ثانيةً ⟵ ٤٠٩", (await run(P1, S[T3], { parts: ["exercises"], sessionId: e1.json?.id, items: items({ exercise: { done: true } }),
       exercises: exs([EX[0], EX[1]]), planVersion: v1 })).json?.code, "part_already_recorded");

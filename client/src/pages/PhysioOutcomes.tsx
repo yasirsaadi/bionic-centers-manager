@@ -103,7 +103,7 @@ export default function PhysioOutcomes() {
             <TabsContent value="protocol"><GroupTable rows={r.byProtocol} first="البروتوكول" /></TabsContent>
             <TabsContent value="branch"><GroupTable rows={r.byBranch} first="الفرع" /></TabsContent>
             <TabsContent value="specialist"><GroupTable rows={r.bySpecialist} first="الأخصائيّ" /></TabsContent>
-            <TabsContent value="executor"><GroupTable rows={r.byExecutor} first="المعالج (الأكثرُ جلسات)" /></TabsContent>
+            <TabsContent value="executor"><GroupTable rows={r.byExecutor} first="المعالج (الأكثرُ جلساتٍ في كلّ جزء)" /></TabsContent>
             <TabsContent value="overdue">
               {r.overdue.length === 0 ? <p className="text-sm text-muted-foreground p-3">لا متأخّر.</p> : (
                 <div className="space-y-1">{r.overdue.map((o) => (

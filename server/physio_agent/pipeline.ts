@@ -7,12 +7,14 @@ import {
   AUTO_TRIGGERS, gatesStageNote, researchStageNote, reviewStageNote, MAX_QUESTION_ROUNDS, MAX_WRITER_ROUNDS, OPUS_MODEL_ID, parseAudit, parseDecline, parseNewFinding, parseQuestions, parseReview,
   parseSubmittedPlan, type AgentQuestion, type Audit, type Decline, type Issue, type NewFinding, type Review, type SubmittedPlan,
 } from "@shared/physio_agent";
-import { applyPlanGates, type GateLogEntry, type GatedPlan } from "@shared/physio_agent_gates";
+import { applyPlanGates, EXAM_CONFIRM_CODES, type GateLogEntry, type GatedPlan } from "@shared/physio_agent_gates";
 import { examAgentGate } from "../physio_exam_reviews/store";
 import { buildAgentContext, buildGateContext, fingerprintOf, loadExam, newestV2ExamId, type AgentContext } from "./context";
 import { runConversation, type RunCtx, type TerminalResult, type TraceEntry, type Usage } from "./conversation";
 import { AgentFatal, AgentStop, type AgentRole } from "./model";
-import { QUESTION_LIMIT_ERROR, QUESTIONS_DISABLED_ERROR } from "./prompts";
+import { askFirstError, QUESTION_LIMIT_ERROR, QUESTIONS_DISABLED_ERROR } from "./prompts";
+import { examCautionInputsMissing } from "@shared/physio_exam_v2";
+import { readStoredAssessment } from "@shared/physio_initial_assessment";
 import { hasActivePlan, type JobRecord } from "./store";
 import { createPlanFromAgentTx, opusStaleness, replaceAwaitingPlanFromAgentTx } from "./plans";
 import { amendCandidate, amendGate, buildRevisionInput, createAmendProposalTx, snapshotFromGatedTx, type RevisionInput } from "./versions";
@@ -132,7 +134,7 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
     const g = await buildGateContext(db, { patientId: job.patientId, examId: job.examId, branchId: job.branchId,
       protocolId: plan.mode === "library" ? plan.protocolId : null,
       exerciseIds: [...plan.phases.flatMap((p) => p.exercises.map((x) => x.exerciseId ?? 0)), ...plan.exerciseChanges.map((c) => c.toExerciseId ?? 0)],
-      fetched: runCtx.fetched, searched: runCtx.searched, final, at: `round_${round}`, agentGate: await examAgentGate(job.examId) });
+      fetched: runCtx.fetched, searched: runCtx.searched, final, at: `round_${round}`, agentGate: await examAgentGate(job.examId), qa: job.qa });
     //  «أعِده إلى Opus»: الممنوعُ اتّحادُ كلّ ما منعه المعتمِدون (D10).
     const res = applyPlanGates(plan, rev ? { ...g, forbidden: rev.forbidden.map((f) => ({ deviceCode: f.deviceCode, reasonAr: f.reasonAr, source: f.source })) } : g);
     if (rev && rev.previousSnapshot) {
@@ -197,8 +199,12 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
             if (asksInRevision++ >= 1) throw new AgentFatal("questions_in_revision");
             return { kind: "continue", isError: true, content: QUESTIONS_DISABLED_ERROR };
           }
-          if (job.questionRounds >= MAX_QUESTION_ROUNDS) return { kind: "continue", isError: true, content: QUESTION_LIMIT_ERROR };
-          const q = parseQuestions(input);
+          if (job.questionRounds >= MAX_QUESTION_ROUNDS) {
+            //  §4.hd — انتهت الجولاتُ وما زال في المعاينة ما يلزم: لا «افترض واكتب» — تنتهي الوظيفةُ ويكمله الفاحصُ في المعاينة.
+            if (ctxA.v3 && ctxA.mustAsk.length) return { kind: "done", outcome: { kind: "failed", code: "exam_confirmation_needed", detail: ctxA.mustAsk.join(","), result: resultOf() } };
+            return { kind: "continue", isError: true, content: QUESTION_LIMIT_ERROR };
+          }
+          const q = parseQuestions(input, { askable: ctxA.askable, v3: ctxA.v3 });
           return q.ok ? { kind: "done", outcome: { kind: "questions", questions: q.value, result: resultOf() } } : err(q.errors);
         }
         if (name === "decline_plan") {
@@ -212,9 +218,20 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
           st.newFinding = f.value; return { kind: "done", outcome: { kind: "new_finding", finding: f.value, result: resultOf() } };
         }
         // ── submit_plan ──
+        //  §4.hd — في الإصدار الثالث: ما يلزم قبل الخطّة يُسأل أوّلاً — قبل المحلّل والبوّابات، ولا يُحسب تقديماً.
+        const askFirst = (keys: string[]): TerminalResult => job.questionRounds >= MAX_QUESTION_ROUNDS
+          ? { kind: "done", outcome: { kind: "failed", code: "exam_confirmation_needed", detail: keys.join(","), result: resultOf() } }
+          : { kind: "continue", isError: true, content: askFirstError(keys) };
+        if (!rev && ctxA.v3 && ctxA.mustAsk.length) return askFirst(ctxA.mustAsk);
         const parsed = parseSubmittedPlan(input, amend?.base ? { mode: amend.base.snapshot.mode, protocolId: amend.base.snapshot.protocolId } : null);
         if (!parsed.ok) return err(parsed.errors);
         const plan = parsed.value;
+        if (!rev && ctxA.v3) {
+          const protocolCode = plan.mode === "library" ? ctxA.library.find((l) => l.id === plan.protocolId)?.code ?? null : null;
+          const caution = examCautionInputsMissing(readStoredAssessment(ctxA.exam.assessment),
+            { deviceCodes: plan.devices.map((d) => d.deviceCode), protocolCode, outOfLibrary: plan.mode !== "library" });
+          if (caution.length) return askFirst(caution);
+        }
         st.submissions += 1;
         const round = st.submissions;
         const auditRound = st.auditPending;
@@ -228,6 +245,13 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
         { const byGate = (g.plan.removed ?? []).filter((r) => r.by === "gate").length;
           const changed = g.log.filter((e) => e.kind === "removed" || e.kind === "clamped").length;
           await note("gates", gatesStageNote(byGate, Math.max(0, changed - byGate))); }
+        //  §4.hd (المراجعة) — ما لا يصلحه الكاتبُ بل الفاحصُ في المعاينة: تناقضُ النصّ وورقةِ السلامة دائماً، وكلُّ ما يلزم المعاينةَ في «التعديل»
+        //  (لا أسئلةَ فيه) ⟵ تنتهي الوظيفةُ `exam_confirmation_needed` بالخانات — لا «بوّاباتٌ مانعة» مبهمة.
+        const examinerFix = g.blocking.filter((b) => b.code === "exam_text_safety_conflict" || (rev && EXAM_CONFIRM_CODES.has(b.code) && b.code !== "library_protocol_outside_group"));
+        if (examinerFix.length || (final && g.blocking.length && g.blocking.every((b) => EXAM_CONFIRM_CODES.has(b.code)))) {
+          const list = examinerFix.length ? examinerFix : g.blocking;
+          return { kind: "done", outcome: { kind: "failed", code: "exam_confirmation_needed", detail: list.map((b) => b.target ?? b.code).join(","), result: resultOf() } };
+        }
         if (g.blocking.length) {
           if (!final) return { kind: "continue", isError: false, content: JSON.stringify({ status: "revise", round, blockingGateIssues: g.blocking, reviewerIssues: [], auditorIssues: [], gateLog: g.log }) };
           const code = g.blocking.some((b) => b.code === "empty_plan") ? "empty_plan" : "gates_blocking";

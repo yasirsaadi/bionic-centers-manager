@@ -27,11 +27,13 @@ import {
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import {
   V2_CORE_FIELDS, V2_DEVICE_NAMES, examV2Acuity, examV2Ctx, examV2ValueText, fieldApplies, fieldRequired, forbiddenDevices, isExamV2, moduleFieldsOf, moduleOf,
-  redFlagQuestionsFor, redFlagsOf, RED_FLAG_URGENCY_AR, PT_FORM_CODE_V2, PT_FORM_VERSION_V2, type PhysioExamV2, type V2Field, type V2Value,
+  redFlagQuestionsFor, redFlagsOf, RED_FLAG_URGENCY_AR, PT_FORM_CODE_V2, PT_FORM_VERSION_V2,
+  V3_REQUIRED_CORE, coreFieldsFor, examGroupConfirmed, examRuleset, isNotRecordedReason, redFlagQuestionsOfExam, assessmentFormLabel, type PhysioExamV2, type V2Field, type V2Value,
 } from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import bionicLogo from "@/assets/intake/bionic.jpg";
 import warithLogo from "@/assets/intake/warith.jpg";
+import { summaryWithoutDiagnosis } from "@/components/physio/ExamV3Form";
 
 const stamp = (d: Date) => d.toLocaleString("en-GB", { timeZone: "Asia/Baghdad", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 const SAFETY_MM = 10;
@@ -144,7 +146,7 @@ export default function PhysioSheetPrint() {
             <Fragment key={e.id}>
               <tr className="rp-exam-head"><td className="k">المعاينة</td>
                 <td className="v"><b>{e.doctorName}</b>{e.signedAt && <> — <bdi dir="ltr">{formatDateIraq(e.signedAt)} {formatTimeIraq(e.signedAt)}</bdi></>}
-                  {e.assessmentSummary && <div className="rp-sub">التقييم الأوّلي: {e.assessmentSummary}</div>}</td></tr>
+                  {summaryWithoutDiagnosis(e.assessmentSummary, e.diagnosis) && <div className="rp-sub">التقييم الأوّلي: {summaryWithoutDiagnosis(e.assessmentSummary, e.diagnosis)}</div>}</td></tr>
               <tr><td className="k">التشخيص</td><V>{e.diagnosis}</V></tr>
               <tr><td className="k">العلاج الموصوف</td><V>{physioTreatmentsLine(e.treatments)}</V></tr>
               {e.notes && <tr><td className="k">{PHYSIO_SHEET_NOTES_LABEL}</td><td className="v pre" dir="auto">{e.notes}</td></tr>}
@@ -327,7 +329,7 @@ function AssessmentPrint({ a, examiner, signedAt }: { a: PhysioInitialAssessment
   const onset = a.onsetAtSigning === "congenital" ? "Since birth" : a.onsetAtSigning === "unknown" ? "Unknown" : a.onsetAtSigning;
   return (
     <div className="pa" dir="ltr" data-testid="psp-assessment">
-      <div className="pa-title">{L("formTitle")} <span className="pa-sub">{isExamV2(a) ? `${PT_FORM_CODE_V2} · v${PT_FORM_VERSION_V2}` : `${PT_FORM_CODE} · v${PT_FORM_VERSION}`} — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
+      <div className="pa-title">{L("formTitle")} <span className="pa-sub">{isExamV2(a) ? assessmentFormLabel(a) : `${PT_FORM_CODE} · v${PT_FORM_VERSION}`} — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
       <table className="pa-t"><tbody>
         <tr><th colSpan={2}>{L("sectionA")} <span className="pa-tick">{a.sectionANa ? "☑" : "☐"} {L("na")}</span></th></tr>
         <tr><td className="k">{L("investigations")}</td><td>{many(PT_INVESTIGATIONS, a.investigations)}</td></tr>
@@ -372,7 +374,10 @@ function AssessmentPrint({ a, examiner, signedAt }: { a: PhysioInitialAssessment
 }
 
 /** **المعاينةُ الإلزامية مطبوعة** (§4.gz) — الخاناتُ الظاهرةُ وحدها بقيمها، والعلاماتُ الحمراء: «نعم» بإجرائها وعددُ «لا»، والموانعُ الحتمية. */
-function ExamV2Print({ a, diagnosis, examiner, signedAt }: { a: PhysioExamV2; diagnosis: string; examiner: string; signedAt: string | null }) {
+function ExamV2Print(props: { a: PhysioExamV2; diagnosis: string; examiner: string; signedAt: string | null }) {
+  return examRuleset(props.a) === "v3" ? <ExamV3Print {...props} /> : <ExamV2PrintBody {...props} />;
+}
+function ExamV2PrintBody({ a, diagnosis, examiner, signedAt }: { a: PhysioExamV2; diagnosis: string; examiner: string; signedAt: string | null }) {
   const ctx = examV2Ctx(a);
   const mod = moduleOf(a.core?.group);
   const today = baghdadTodayYmd();
@@ -417,6 +422,72 @@ function ExamV2Print({ a, diagnosis, examiner, signedAt }: { a: PhysioExamV2; di
           {forbidden.map((d) => cell(V2_DEVICE_NAMES[d.deviceCode] ?? d.deviceCode, d.reasonAr))}
         </tbody></table>
       )}
+    </div>
+  );
+}
+
+/** **الإصدارُ الثالث مطبوعاً** (§4.hd): التشخيصُ والشكوى، وورقةُ السلامة، والعلاماتُ («نعم» بإجرائها ثمّ «باقي العلامات: لا»)، والموانعُ
+ *  ولافتةُ ما يُمنع قبل التأكيد، و«تفاصيل مسجَّلة» بما مُلئ وحده — وكلُّ خانةٍ أضافها جوابٌ لـ Bionic AI بعلامتها. */
+function ExamV3Print({ a, diagnosis, examiner, signedAt }: { a: PhysioExamV2; diagnosis: string; examiner: string; signedAt: string | null }) {
+  const ctx = examV2Ctx(a);
+  const mod = moduleOf(a.core?.group);
+  const today = baghdadTodayYmd();
+  const acuity = examV2Acuity(a.core ?? {}, today);
+  const flags = redFlagQuestionsOfExam(a);
+  const hits = redFlagsOf(a);
+  const noCount = flags.filter((q) => a.redFlags?.[q.key] === "no").length;
+  const forbidden = forbiddenDevices(a, { today });
+  const core = coreFieldsFor("v3");
+  const mark = (key: string) => {
+    const s = a.fieldSources?.[key];
+    return s ? ` (أُضيف بجوابٍ عن سؤال Bionic AI — ${s.byName ?? "—"}، النسخة ${s.version})` : "";
+  };
+  const cell = (label: string, value: string, key?: string) => (
+    <tr key={key ?? label}><td className="k">{label}</td><td>{value ? <>{value}{key && mark(key)}</> : <span className="pa-blank">—</span>}</td></tr>
+  );
+  const val = (f: V2Field, part: "core" | "module") => examV2ValueText(f, (part === "core" ? a.core?.[f.key] : a.module?.[f.key]) ?? null, "ar");
+  const safety = core.filter((f) => V3_REQUIRED_CORE.has(f.key) && fieldApplies(f, ctx))
+    .map((f) => cell(f.ar, val(f, "core") + (f.key === "onsetDate" && acuity ? ` — ${acuity.ar}` : ""), `core.${f.key}`));
+  safety.splice(Math.min(7, safety.length), 0, cell("الإحساس في منطقة العلاج", `${PT_SENSATION.find((o) => o.code === a.sensation)?.ar ?? ""}${a.sensationRegions ? ` — ${a.sensationRegions}` : ""}`));
+  const half = Math.ceil(safety.length / 2);
+  const optionalCore = core.filter((f) => f.key !== "group" && !V3_REQUIRED_CORE.has(f.key) && fieldApplies(f, ctx) && val(f, "core"));
+  const moduleRows = mod ? moduleFieldsOf(mod.group).filter((f) => fieldApplies(f, ctx) && val(f, "module")) : [];
+  return (
+    <div className="pa" dir="rtl" data-testid="psp-v3">
+      <div className="pa-title">معاينة العلاج الطبيعي — التشخيص وورقة السلامة <span className="pa-sub" dir="ltr">{assessmentFormLabel(a)}</span>
+        <span className="pa-sub"> — {examiner}{signedAt ? ` — ${formatDateIraq(signedAt)} ${formatTimeIraq(signedAt)}` : ""}</span></div>
+      <table className="pa-t pa-rtl"><tbody>
+        <tr><th colSpan={2}>التشخيص والشكوى</th></tr>
+        <tr><td colSpan={2} dir="auto" style={{ whiteSpace: "pre-wrap" }} data-testid="psp-v3-diagnosis">{diagnosis || <span className="pa-blank">—</span>}</td></tr>
+        {cell("مجموعةُ التشخيص", ctx.group ? val(core[0], "core") + (mod && ctx.condition ? ` — ${val(moduleFieldsOf(mod.group)[0], "module")}` : "") : "لم تُؤكَّد بعد", "core.group")}
+      </tbody></table>
+      <table className="pa-t pa-rtl"><tbody><tr><th>ورقة السلامة</th></tr></tbody></table>
+      <div className="pa-two">
+        <table className="pa-t pa-rtl"><tbody>{safety.slice(0, half)}</tbody></table>
+        <table className="pa-t pa-rtl"><tbody>{safety.slice(half)}</tbody></table>
+      </div>
+      <table className="pa-t pa-rtl"><tbody>
+        <tr><th colSpan={2}>العلاماتُ الحمراء — العامّةُ وعلاماتُ مجموعة المعاينة ({flags.length})</th></tr>
+        {hits.map((h) => <tr key={h.key}><td className="k">{h.questionAr}</td><td><b>نعم — {RED_FLAG_URGENCY_AR[h.urgency]}:</b> {h.actionAr}</td></tr>)}
+        <tr><td colSpan={2} data-testid="psp-v3-rf-rest">{hits.length ? `باقي العلامات (${noCount}): لا` : `العلاماتُ كلُّها (${noCount}): لا`}</td></tr>
+      </tbody></table>
+      {forbidden.length > 0 && (
+        <table className="pa-t pa-rtl"><tbody>
+          <tr><th colSpan={2}>أجهزةٌ ممنوعة لهذا المريض</th></tr>
+          {forbidden.some((d) => isNotRecordedReason(d.reasonAr)) && (
+            <tr><td colSpan={2} data-testid="psp-v3-worstcase">القائمة تشمل ما قد يُمنع قبل تأكيد مجموعة التشخيص وخاناتها — أكملها لتقصر.</td></tr>
+          )}
+          {forbidden.map((d) => cell(V2_DEVICE_NAMES[d.deviceCode] ?? d.deviceCode, d.reasonAr))}
+        </tbody></table>
+      )}
+      {(optionalCore.length > 0 || moduleRows.length > 0) && (
+        <table className="pa-t pa-rtl"><tbody>
+          <tr><th colSpan={2}>تفاصيل مسجَّلة</th></tr>
+          {optionalCore.map((f) => cell(f.ar, val(f, "core"), `core.${f.key}`))}
+          {moduleRows.filter((f) => f.key !== "condition").map((f) => cell(f.ar, val(f, "module"), `module.${f.key}`))}
+        </tbody></table>
+      )}
+      {!examGroupConfirmed(a) && <p className="pa-legend" style={{ margin: 0 }}>ما لم يُسجَّل لم يُفحص — لا يُقرأ «طبيعياً».</p>}
     </div>
   );
 }
