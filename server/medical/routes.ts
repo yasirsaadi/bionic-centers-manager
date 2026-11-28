@@ -39,6 +39,7 @@
 // instead of at their next login.
 
 import type { Express, Response } from "express";
+import { sql } from "drizzle-orm";
 import { aliasCodesByPatient } from "../patient_code/store";
 import { logAudit } from "../accounting/ledger";
 import * as store from "./store";
@@ -60,7 +61,7 @@ import type { AmputationParts } from "@shared/case_fields";
 import { prepareAssessmentForCreate, prepareAssessmentForRevise } from "./physio_assessment_input";
 import { latestReviews } from "../physio_exam_reviews/store";
 import { autoReconcile, onExamRevised } from "../physio_agent/reconcile";
-import { latestJobsOfExams, planStatusesOfJobs } from "../physio_agent/store";
+import { latestJobsOfExams, lockPatientAgent, planStatusesOfJobs } from "../physio_agent/store";
 import { agentGateFor, examRuleset, examV2AgeConflict, isExamV2, newestOtherExamReview, redFlagsOf } from "@shared/physio_exam_v2";
 
 /** §4.hd — «لا شيء ممّا يلي» في التدقيق: مَن ومتى، **وكم «نعم» بقيت عند الحفظ** (المراجعة: علامةٌ عُلّمت بعد الضغطة لا تجعل السطرَ يقول «لا كلُّها»). */
@@ -309,6 +310,10 @@ async function askCrossRetireIfNeeded(
   return true;
 }
 
+//  §4.hd — خطّافُ اختبارٍ ضيّق: يُنادى في تعديل المعاينة بعد فحوص ما قبل الكتابة وقبل معاملتها (فيه يُغيّر الاختبارُ النسخةَ «في اللحظة نفسِها»).
+let examPatchRaceHook: ((examId: number) => Promise<void>) | null = null;
+export function setExamPatchRaceHookForTests(fn: ((examId: number) => Promise<void>) | null): void { examPatchRaceHook = fn; }
+
 async function applyDecision(
   patientId: number,
   caseType: MedicalSpecialty,
@@ -325,9 +330,23 @@ async function applyDecision(
    * فالقسمُ القديم ما زال يحمل معاينتَها الموقّعة ويردّه حارسُها — فيُسحَب
    * بعد التنقيح بـ`caseTypesBefore` المُعادة من هنا.
    */
-  opts: { deferCrossRetire?: boolean; crossRetire?: CrossRetireAnswer } = {},
+  opts: {
+    deferCrossRetire?: boolean; crossRetire?: CrossRetireAnswer;
+    /**
+     *  **معاملةُ التنقيح** (§4.hd، مراجعة Codex على #779) — الوصفةُ وسحبُ القسم المستبدَل يُكتبان فيها بعد قفل صفّ المعاينة وفحص
+     *  نسختها، فنسخةٌ تغيّرت (جوابٌ لـ Bionic AI أو تعديلٌ آخر) تُرجع الكلَّ ولا يبقى قسمٌ تحرّك وردٌّ يقول «لم يُحفظ شيء».
+     *  وكلُّ خطوةٍ نقطةُ حفظٍ فيها: فشلُها يُسجَّل ويمضي كما كان بلا معاملة، ولا يُفسد المعاملة. ويلزمها `deferCrossRetire`
+     *  (السحبُ عبر العلاج الطبيعي بعد التنقيح، بمعاملته) ولا تصحيحَ نوع.
+     */
+    tx?: any;
+  } = {},
 ): Promise<{ switchNote?: string; caseTypesBefore: string[] }> {
   let switchNote: string | undefined;
+  if (opts.tx && (!opts.deferCrossRetire || retypedFromCaseType)) {
+    throw new Error("applyDecision: معاملةُ التنقيح لا تحمل السحبَ عبر العلاج الطبيعي ولا تصحيحَ النوع");
+  }
+  //  نقطةُ حفظٍ لكلّ خطوة داخل معاملة المُستدعي، وبلاها الخطوةُ كما كانت.
+  const step = <T>(fn: (tx?: any) => Promise<T>): Promise<T> => opts.tx ? opts.tx.transaction((sp: any) => fn(sp)) : fn(undefined);
 
   // Read the device cases BEFORE anything is applied — once the prescription
   // has run, the new case exists and a change is indistinguishable from an
@@ -342,13 +361,13 @@ async function applyDecision(
   }
 
   try {
-    await store.applyPrescription(patientId, caseType, prescription);
+    await step((t) => store.applyPrescription(patientId, caseType, prescription, t));
   } catch (err) {
     console.error("[medical] applying prescription to case failed:", err);
   }
 
   try {
-    const result = await store.retireSupersededCase(patientId, caseType, deviceTypesBefore);
+    const result = await step((t) => store.retireSupersededCase(patientId, caseType, deviceTypesBefore, t));
     if (result.reason) {
       switchNote = `بقيت الحالة السابقة مفتوحة: ${result.reason}`;
     }
@@ -990,7 +1009,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(409).json({ error: "هذه المعاينة ملغاة — اكتب معاينة جديدة بدل التعديل" });
       }
       //  ══ **النسخةُ التي فُتح عليها التعديل** (§4.hd) ══ أجوبةُ Bionic AI تكتب في المعاينة نسخاً، فتعديلٌ فُتح قبلها لا يمحوها صامتاً:
-      //  `baseVersion` إلزاميٌّ لمعاينة الإصدار الثالث، واختياريٌّ لغيرها كما كان؛ والمختلفُ ٤٠٩ — هنا قبل أيّ كتابة، وتحت القفل في `reviseExam`.
+      //  `baseVersion` إلزاميٌّ لمعاينة الإصدار الثالث، واختياريٌّ لغيرها كما كان؛ والمختلفُ ٤٠٩ — هنا قبل أيّ كتابة، ثمّ تحت قفل صفّ المعاينة في معاملة الحفظ قبل القرار (أدناه).
       const baseVersionRaw = req.body?.baseVersion;
       const baseVersion = Number.isInteger(baseVersionRaw) && baseVersionRaw > 0 ? Number(baseVersionRaw) : undefined;
       if (baseVersion === undefined && exam.caseType === "physiotherapy" && isExamV2(exam.assessment) && examRuleset(exam.assessment) === "v3") {
@@ -1164,19 +1183,6 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
       if (await askCrossRetireIfNeeded(res, exam.patientId, caseType, crossRetire)) return;
 
       const editorName = session.userName?.trim() || "مستخدم";
-      //  §4.hd (المراجعة) — **النسخةُ مرّةً ثانية قبل أوّل كتابة**: جوابٌ لـ Bionic AI قد يلتزم بين الفحص الأوّل وهنا، و`applyDecision` يكتب في القسم
-      //  قبل `reviseExam` — فالردُّ ٤٠٩ يجب أن يسبق القسمَ لا أن يلحقه. (وما بقي من نافذةٍ تحرسه `expectedVersion` تحت القفل في `reviseExam`.)
-      if (baseVersion !== undefined) {
-        const fresh = await store.getExam(examId);
-        if (fresh && fresh.version !== baseVersion) {
-          return res.status(409).json({ error: store.EXAM_VERSION_CHANGED_TEXT, code: "exam_version_changed", currentVersion: fresh.version });
-        }
-      }
-      // Same ordering rule as signing: the decision lands on the case first, so
-      // a specialty change has a case to point the revised exam at.
-      const applied = await applyDecision(exam.patientId, caseType, prescription, null,
-        { deferCrossRetire: true });
-
       const revisionValues = {
         caseType, prescription, deviceCost, proposedExpertUserId, ...body,
         ...(assessment !== undefined ? { assessment } : {}),
@@ -1208,41 +1214,51 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         tx,
       });
 
-      let updated;
-      if (priceVerdict?.kind === "sync" && deviceCost !== null) {
-        // ══ **التصحيحُ والتزامنُ معاملةٌ واحدة** ═══════════════════════
-        //  كان التنقيحُ يُحفَظ أوّلاً ثم يُحاوَل التزامن. وسقوطُ الثانية كان
-        //  يترك حالاً لا يجوز أن توجد: معاينةٌ تقول ٦,٥٠٠,٠٠٠ ومتابعةٌ تقول
-        //  ٦,٠٠٠,٠٠٠ — والاستعلاماتُ تقبض على الثانية.
-        //
-        //  **والسجلُّ معهما**: تدقيقٌ يصف تصحيحاً لم يقع كذبٌ على السجلّ.
-        //  فالأربعة — النسخة، والسعر، وحدثُ المتابعة، والتدقيق — تنجح معاً
-        //  أو تسقط معاً، ويبقى الرقمُ القديم في الجهتين.
-        //
-        //  وأيُّ انحرافٍ يكتشفه القفلُ داخلها يُرمى، فيُرجِع التنقيحَ نفسه.
-        const fs = await import("../followup/store");
-        const { db } = await import("../db");
-        updated = await db.transaction(async (tx) => {
-          const revised = await store.reviseExam(examId, revisionValues, editor, { tx, expectedVersion: baseVersion });
-          await fs.applyExamPriceCorrection({
-            followupId: priceVerdict!.kind === "sync" ? priceVerdict!.followupId : 0,
+      //  ══ **النسخةُ والقرارُ والتنقيحُ ذرّةٌ واحدة** (§4.hd، مراجعة Codex على #779) ═══════════════════
+      //  كان الفحصُ الثاني للنسخة قبل `applyDecision` بلا قفل، و`applyDecision` يلتزم بالقسم والوصفة وحده، ثمّ يأخذ `reviseExam`
+      //  القفلَ ويجد النسخةَ تغيّرت (جوابٌ لـ Bionic AI بين الاثنين) فيردّ ٤٠٩ «لم يُحفظ شيء» — والقسمُ تحرّك. فصار الثلاثةُ معاملةً
+      //  واحدة: قفلُ وكيل المريض أوّلاً لمعاينة العلاج الطبيعي (ترتيبُ الجواب والإلغاء: الوكيلُ ⟵ صفُّ المعاينة)، ثمّ صفُّ المعاينة
+      //  `FOR UPDATE` والنسخةُ تحته — قبل أوّل كتابة — ثمّ القرارُ والتنقيحُ وتصحيحُ السعر والتدقيقُ فيها. والمردودُ يُرجع الكلّ.
+      await examPatchRaceHook?.(examId);
+      const { db } = await import("../db");
+      const fs = priceVerdict?.kind === "sync" || priceVerdict?.kind === "sync_after_sale" ? await import("../followup/store") : null;
+      let applied!: Awaited<ReturnType<typeof applyDecision>>;
+      const updated = await db.transaction(async (tx) => {
+        if (exam.caseType === "physiotherapy" || caseType === "physiotherapy") await lockPatientAgent(tx, exam.patientId);
+        const cur = ((await tx.execute(sql`SELECT version FROM medical_exams WHERE id = ${examId} FOR UPDATE`)).rows ?? [])[0] as { version: number } | undefined;
+        if (!cur) throw new Error("المعاينة غير موجودة");
+        if (baseVersion !== undefined && Number(cur.version) !== baseVersion) throw new store.ExamVersionChangedError(Number(cur.version));
+        //  **ثمّ قفلُ المريض (٩١٩) قبل أوّل كتابةٍ على صفّه** (المراجعة الثانية): `applyPrescription` يكتب `patients` ثمّ يأخذ ٩١٩ في
+        //  `syncPatientCases` — عكسُ ترتيب البيت (٩١٩ ⟵ صفُّ المريض) الذي تأخذه الخدمةُ الجديدة والدفعُ والاسترجاعُ والإغلاق، فيتبادلان
+        //  الانتظار؛ والضحيّةُ نقطةُ حفظٍ تُبلَع فيلتزم تنقيحٌ بلا وصفته. فالترتيبُ هنا: الوكيلُ ⟵ صفُّ المعاينة ⟵ ٩١٩ ⟵ صفُّ المريض.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${exam.patientId})`);
+        // Same ordering rule as signing: the decision lands on the case first, so
+        // a specialty change has a case to point the revised exam at.
+        applied = await applyDecision(exam.patientId, caseType, prescription, null, { deferCrossRetire: true, tx });
+        const revised = await store.reviseExam(examId, revisionValues, editor, { tx, expectedVersion: baseVersion });
+        if (priceVerdict?.kind === "sync" && deviceCost !== null) {
+          // ══ **التصحيحُ والتزامنُ معاملةٌ واحدة** ═══════════════════════
+          //  كان التنقيحُ يُحفَظ أوّلاً ثم يُحاوَل التزامن. وسقوطُ الثانية كان
+          //  يترك حالاً لا يجوز أن توجد: معاينةٌ تقول ٦,٥٠٠,٠٠٠ ومتابعةٌ تقول
+          //  ٦,٠٠٠,٠٠٠ — والاستعلاماتُ تقبض على الثانية.
+          //
+          //  **والسجلُّ معهما**: تدقيقٌ يصف تصحيحاً لم يقع كذبٌ على السجلّ.
+          //  فالأربعة — النسخة، والسعر، وحدثُ المتابعة، والتدقيق — تنجح معاً
+          //  أو تسقط معاً، ويبقى الرقمُ القديم في الجهتين.
+          //
+          //  وأيُّ انحرافٍ يكتشفه القفلُ داخلها يُرمى، فيُرجِع التنقيحَ نفسه.
+          await fs!.applyExamPriceCorrection({
+            followupId: priceVerdict.followupId,
             newPrice: deviceCost, actor: editor, tx,
           });
-          await auditFor(revised.version, tx);
-          return revised;
-        });
-      } else if (priceVerdict?.kind === "sync_after_sale" && deviceCost !== null) {
-        // ══ **بعد البيع: المعاينةُ والمالُ كلُّه ذرّةٌ واحدة** ═════════════
-        //  ستّةُ مواضعَ تتحرّك (المتابعة · الحلقة · كلفةُ الخيط · مجموعُ
-        //  المريض · قيدُ الدفتر · الحدث) ومعها النسخةُ والتدقيق. وسقوطُ
-        //  أيّها يُرجِع الجميعَ — فلا يبقى مريضٌ سعرُ معاينته يقول شيئاً
-        //  وسعرُ حلقته يقول غيرَه، وهي الحالُ التي وُلد لها هذا الباب.
-        const fs = await import("../followup/store");
-        const { db } = await import("../db");
-        const vd = priceVerdict;
-        updated = await db.transaction(async (tx) => {
-          const revised = await store.reviseExam(examId, revisionValues, editor, { tx, expectedVersion: baseVersion });
-          const done = await fs.applyExamPriceCorrectionAfterSale({
+        } else if (priceVerdict?.kind === "sync_after_sale" && deviceCost !== null) {
+          // ══ **بعد البيع: المعاينةُ والمالُ كلُّه ذرّةٌ واحدة** ═════════════
+          //  ستّةُ مواضعَ تتحرّك (المتابعة · الحلقة · كلفةُ الخيط · مجموعُ
+          //  المريض · قيدُ الدفتر · الحدث) ومعها النسخةُ والتدقيق. وسقوطُ
+          //  أيّها يُرجِع الجميعَ — فلا يبقى مريضٌ سعرُ معاينته يقول شيئاً
+          //  وسعرُ حلقته يقول غيرَه، وهي الحالُ التي وُلد لها هذا الباب.
+          const vd = priceVerdict;
+          const done = await fs!.applyExamPriceCorrectionAfterSale({
             followupId: vd.followupId,
             medicalExamId: examId,
             examDeviceEpisodeId: exam.deviceEpisodeId ?? null,
@@ -1252,13 +1268,10 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
             + `${vd.previousPrice.toLocaleString("en-US")} ⟶ ${deviceCost.toLocaleString("en-US")} د.ع`
             + ` (الفرق ${done.delta > 0 ? "+" : ""}${done.delta.toLocaleString("en-US")})`
             + " — حُدّث سعر الجهاز وكلفة المريض وقُيّد الفرق في الدفتر.";
-          await auditFor(revised.version, tx);
-          return revised;
-        });
-      } else {
-        updated = await store.reviseExam(examId, revisionValues, editor, { expectedVersion: baseVersion });
-        await auditFor(updated.version);
-      }
+        }
+        await auditFor(revised.version, tx);
+        return revised;
+      });
 
       //  ══ **وسحبُ القسم عبر العلاج الطبيعي بعد أن انتقلت المعاينة** ═══════
       //  (٢٠٢٦-٠٩-٢٦) — الآن لا يحمل القسمُ القديم معاينتَها، فحارسُ «معاينةٌ
@@ -1294,7 +1307,7 @@ export function registerMedicalRoutes(app: Express, isAuthenticated: any) {
         return res.status(err.status).json({ error: err.message });
       }
       if (err instanceof store.ExamVersionChangedError) {
-        return res.status(409).json({ error: err.message, code: "exam_version_changed" });
+        return res.status(409).json({ error: err.message, code: "exam_version_changed", ...(err.currentVersion !== undefined ? { currentVersion: err.currentVersion } : {}) });
       }
       //  **وانحرافُ الملفّ التجاري تحت القفل جوابُ عملٍ أيضاً**: المعاملةُ
       //  رجعت كلُّها — لا نسخةَ حُفظت ولا سعرَ تحرّك — والطبيبُ يحتاج أن

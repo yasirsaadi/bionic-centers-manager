@@ -3204,8 +3204,13 @@ export class DatabaseStorage implements IStorage {
        */
       pendingGuard?: { expectedExamEpisodeIds: number[] };
     },
+    /**
+     *  **معاملةُ المُستدعي** (تنقيحُ المعاينة، §4.hd) — يجري الجسمُ نقطةَ حفظٍ داخلها: حارسٌ يردّ السحبَ يُرجع ما كتبه وحده
+     *  ولا يُسقط معاملةَ المُستدعي. وبلاها معاملتُه كما كانت.
+     */
+    outerTx?: any,
   ): Promise<{ movedRows: number; disposed: CaseScaffolding }> {
-    return await db.transaction(async (tx) => {
+    return await ((outerTx ?? db) as typeof db).transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(919, ${patientId})`);
       const [p] = await tx.select().from(patients).where(eq(patients.id, patientId));
       if (!p) throw new Error("المريض غير موجود");

@@ -838,6 +838,8 @@ export async function applyPrescription(
   patientId: number,
   caseType: MedicalSpecialty,
   prescription: Record<string, any>,
+  /** معاملةُ المُستدعي — تنقيحُ المعاينة يكتب الوصفةَ والنسخةَ معاً تحت قفل صفّ المعاينة (§4.hd). وبلاها كما كان. */
+  tx?: any,
 ): Promise<void> {
   const patch: Record<string, any> = {};
 
@@ -909,9 +911,9 @@ export async function applyPrescription(
 
   if (Object.keys(patch).length === 0) return;
 
-  await db.update(patients).set(patch).where(eq(patients.id, patientId));
+  await (tx ?? db).update(patients).set(patch).where(eq(patients.id, patientId));
   // Re-derive the case's `details` from the columns we just wrote.
-  await storage.syncPatientCases(patientId);
+  await storage.syncPatientCases(patientId, tx);
 }
 
 // NOTE deliberately absent: nothing here writes the doctor's device price onto
@@ -952,6 +954,8 @@ export async function retireSupersededCase(
    * addition.
    */
   deviceTypesBefore: string[],
+  /** معاملةُ المُستدعي (تنقيحُ المعاينة، §4.hd) — والسحبُ نقطةُ حفظٍ داخلها، فحارسٌ يردّه لا يُسقطها. */
+  tx?: any,
 ): Promise<{ switched: boolean; reason?: string }> {
   // Only the two device specialties trade places. Physiotherapy is a different
   // service entirely, not an alternative reading of the same need.
@@ -970,7 +974,7 @@ export async function retireSupersededCase(
   if (!hadOnlyTheOther) return { switched: false };
 
   try {
-    await storage.deleteCaseType(patientId, dropType);
+    await storage.deleteCaseType(patientId, dropType, undefined, tx);
     return { switched: true };
   } catch (err: any) {
     // Guard tripped — the old case has real history (a work order, or tagged
@@ -1213,7 +1217,8 @@ export const EXAM_VERSION_CHANGED_TEXT = "عُدّلت المعاينة بعد �
 export class ExamVersionChangedError extends Error {
   status = 409;
   code = "exam_version_changed";
-  constructor() { super(EXAM_VERSION_CHANGED_TEXT); this.name = "ExamVersionChangedError"; }
+  /** النسخةُ التي وُجدت تحت القفل — فالردُّ ٤٠٩ بالشكل نفسِه أينما وقع السباق (`currentVersion`). */
+  constructor(public currentVersion?: number) { super(EXAM_VERSION_CHANGED_TEXT); this.name = "ExamVersionChangedError"; }
 }
 
 export async function reviseExam(
@@ -1249,7 +1254,7 @@ export async function reviseExam(
     //  §4.hd — الصفُّ مقفولٌ حتى آخر المعاملة، و`expectedVersion` (النسخةُ التي فُتح عليها التعديل أو قرأها الجوابُ) تطابق الحيّة أو ٤٠٩.
     const [current] = await tx.select().from(EX).where(eq(EX.id, examId)).for("update");
     if (!current) throw new Error("المعاينة غير موجودة");
-    if (opts?.expectedVersion !== undefined && current.version !== opts.expectedVersion) throw new ExamVersionChangedError();
+    if (opts?.expectedVersion !== undefined && current.version !== opts.expectedVersion) throw new ExamVersionChangedError(current.version);
 
     // ══ A LINKED EXAM MAY NOT CHANGE SPECIALTY ═══════════════════════════
     // Below, `caseType` is rewritten and `caseId` re-resolved for the new

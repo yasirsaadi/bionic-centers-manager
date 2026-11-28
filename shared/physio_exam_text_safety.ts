@@ -34,24 +34,32 @@ type Exam = Pick<PhysioExamV2, "core" | "redFlags"> & { version?: unknown; form?
 const has = (a: Exam, key: string, code: string) => Array.isArray(a.core?.[key]) && (a.core[key] as string[]).includes(code);
 
 /** المفتاحُ في ورقة السلامة، واسمُه، ومتى يخالفه النصّ (الورقةُ تقول «لا»)، والكلماتُ. */
+//  **والكلمةُ تُضيَّق حيث تلتقط مفرداتِ الشكوى اليومية وحدها** (مراجعةُ Codex): «حرقان» و"burning" ألمٌ لا حرق، و"platelet" دمٌ لا معدن،
+//  و«قرحة المعدة» ليست جلداً، و«السلسلة» ظهرٌ لا سلس، و"thrombolysis" علاجٌ لا خثرة. **والتضييقُ استثناءٌ مسمّى لا حذفُ كلمة** —
+//  فالنفيُ الخاطئ أخطرُ من التنبيه الزائد، والصيغةُ الحقيقية تبقى تُلتقط. و`\b` لا يعرف الحرفَ العربيّ، فحدُّ الكلمة العربية `(?<![ء-ي])`.
+//  **و«حرق» جزءُ كلمةٍ لا كلمةٌ كاملة** (المراجعة الثانية): «حرقت» و«حرقها» و«حرقين» و«وبالحرق» و«للحرق» حروقٌ حقيقية، فالمستثنى
+//  بالاسم وحده — «حرقان»، و«حرقة» قبل المعدة والبول والصدر والفم والعين (و«حرقة في الساق» تبقى: لا تُميَّز من «حرقُه في الساق» فتُنبَّه).
+//  **و«منظّم» بعد السكر والضغط والنبض انضباطٌ لا جهاز** («السكر منظم»)، و«عنده منظم ضربات» يبقى.
 export const TEXT_SAFETY_TERMS: readonly { key: string; labelAr: string; when: (a: Exam) => boolean; terms: RegExp }[] = [
   { key: "core.implants", labelAr: "جهازٌ مزروع (منظّم ضربات، منبّه، صمّام…)", when: (a) => has(a, "implants", "none"),
-    terms: /pace\s?maker|defibrillat|\bicd\b|\bdbs\b|stimulator|cochlear|shunt|منظم|مزيل رجفان|منبه|قوقعه|صمام|بطاريه القلب/ },
+    terms: /pace\s?maker|defibrillat|\bicd\b|\bdbs\b|stimulator|cochlear|shunt|(?<!(ال)?(سكر|سكري|ضغط|نبض)ه?( [ء-ي]+)? )منظم|مزيل رجفان|منبه(?!ات)|قوقعه|صمام|بطاريه القلب/ },
   { key: "core.anticoagulant", labelAr: "مضادُّ التخثّر أو اضطرابُ النزف", when: (a) => has(a, "anticoagulant", "none"),
-    terms: /warfarin|apixaban|rivaroxaban|dabigatran|xarelto|eliquis|clopidogrel|plavix|heparin|enoxaparin|clexane|anticoag|haemophil|hemophil|وارفارين|مميع|سيوله|هيبارين|كليكسان|بلافكس|زاريلتو|اليكويس|هيموفيليا|نزف/ },
+    terms: /warfarin|apixaban|rivaroxaban|dabigatran|xarelto|eliquis|clopidogrel|plavix|heparin|enoxaparin|clexane|anticoag|haemophil|hemophil|وارفارين|مميع|سيوله|هيبارين|كليكسان|بلافكس|زاريلتو|اليكويس|هيموفيليا|(?<!(جلطه|سكته|دماغيه) )نزف/ },
   { key: "core.pregnant", labelAr: "الحمل", when: (a) => a.core?.pregnant === "no", terms: /pregnan|(^|[\s،.])حامل([\s،.]|$)|(شهر|اشهر|اسبوع|اسابيع) من الحمل/ },
   { key: "core.cancer", labelAr: "ورمٌ أو سرطان", when: (a) => a.core?.cancer === "no",
-    terms: /cancer|tumou?r|malignan|metasta|lymphoma|carcinoma|sarcoma|سرطان|(^|[\s،.])ورم|اورام|خبيث|كيمياوي|كيماوي/ },
-  { key: "core.skin", labelAr: "جرحٌ أو جلدٌ متضرّر", when: (a) => has(a, "skin", "none"), terms: /wound|ulcer|burn|جرح|قرحه|حرق/ },
+    terms: /cancer|tumou?r|malignan|metasta|lymphoma|carcinoma|sarcoma|سرطان|(^|[\s،.])و?ورم(?!ت|ان)|اورام|خبيث|كيمياوي|كيماوي/ },
+  //  «حرقة» وحدها (= «حرقُه» بعد التطبيع) ألمٌ عصبيّ في الكلام العراقيّ («حرقة بالرجل») — تُحسب حرقاً حين يُذكر مصدرُه في الجملة («من المدفأة»، «بالشاي»).
+  { key: "core.skin", labelAr: "جرحٌ أو جلدٌ متضرّر", when: (a) => has(a, "skin", "none"),
+    terms: /wound|(?<!\b(peptic|gastric|duodenal|stomach) )ulcer(?!ative)|\bburn(s|ed|t)?\b|\bburn[- ]?(scar|wound|injur|contracture)|sunburn|جرح|جروح|قر(ح|وح)(?![ء-ي]* (في |ب)?(ال)?(معد|اثني|اثنا|هضمي))|حرق(?!ان|ه(?= (في |ب)?(ال)?(معد|بول|صدر|فم|عين|مري|بلعوم|حلق|لسان))|ه(?![ء-ي])(?![^.\n،؛]* (من|بال?(نار|ماء|مي|شاي|زيت|مكواه|كهرباء|مدفاه|مدفيه|صوبه|بخار))))|حروق|محروق/ },
   { key: "core.metalInField", labelAr: "معدنٌ في منطقة العلاج", when: (a) => a.core?.metalInField === "no",
-    terms: /plate|screw|\bnail\b|\brod\b|arthroplasty|replacement|prosthe|fixat|صفيحه|براغي|مسامير|مسمار|بلاتين|مفصل صناعي|(استبدال|تبديل) (ال)?مفصل|تثبيت داخلي|مثبت خارجي|شظيه|شظايا/ },
+    terms: /(?<!growth )plate(?!let)|screw|\bnail\b|\brod\b|arthroplasty|(?<!\b(hormone|fluid|vitamin d|vitamin|electrolyte|iron|enzyme|nicotine|calcium|estrogen|oestrogen|testosterone) )replacement|prosthe|fixat|صفيحه|براغي|مسامير|مسمار(?! (ال)?لحم)|بلاتين|مفصل صناعي|(استبدال|تبديل) (ال)?مفصل|تثبيت داخلي|مثبت خارجي|شظيه|شظايا/ },
   { key: "redFlags.cauda_equina", labelAr: "أعراضُ ذيل الفرس", when: (a) => a.redFlags?.cauda_equina === "no",
-    terms: /saddle|cauda|incontinen|urinary retention|خدر العجان|العجان|سلس|احتباس/ },
+    terms: /saddle(?! (height|position|seat))|cauda|incontinen|urinary retention|خدر العجان|العجان|سلس(?!ل)|احتباس(?! (ال)?(سوائل|ماء))/ },
   { key: "redFlags.cardiac", labelAr: "ألمُ الصدر أو الإغماء", when: (a) => a.redFlags?.cardiac === "no",
-    terms: /chest pain|syncope|الم الصدر|الم في الصدر|ضيق نفس|اغماء/ },
-  { key: "redFlags.fracture", labelAr: "كسر", when: (a) => a.redFlags?.fracture === "no", terms: /fracture|كسر/ },
+    terms: /chest pain|syncope|(الم|وجع) (في |ب)?(ال)?صدر|ضيق نفس|اغماء/ },
+  { key: "redFlags.fracture", labelAr: "كسر", when: (a) => a.redFlags?.fracture === "no", terms: /fracture|كسر|كسور/ },
   { key: "redFlags.dvt_pe", labelAr: "خثرة", when: (a) => a.redFlags?.dvt_pe === "no",
-    terms: /\bdvt\b|thrombo|embol|خثره|جلطه في الساق|جلطه رئويه|جلطه بالساق/ },
+    terms: /\bdvt\b|thrombo(?!cyt|lys|lyt)|(?<!cardio)embol(?!ic (stroke|infarct|cva))|خثره|جلطه في الساق|جلطه رئويه|جلطه بالساق/ },
 ];
 export const TEXT_SAFETY_KEYS: readonly string[] = TEXT_SAFETY_TERMS.map((t) => t.key);
 
@@ -80,20 +88,20 @@ export const textSafetyConflictsOf = (a: unknown, texts: readonly (string | null
 
 /** **حالاتُ المكتبة التي يذكرها النصّ** — ما له موانعُ أو مدخلاتُ بوّابةٍ خاصّة به. «غير ذلك» لا تصحّ معها. */
 const LIBRARY_CONDITION_TERMS: readonly { labelAr: string; terms: RegExp }[] = [
-  { labelAr: "أسفل الظهر والجذر القطنيّ", terms: /low back|lumbar|sciatica|\bdisc\b|ديسك|الظهر|الم ظهر|قطني|انزلاق غضروفي|عرق النسا|(^|[\s،.])النسا([\s،.]|$)/ },
-  { labelAr: "الرقبة", terms: /\bneck\b|cervical|رقبه|الرقبه|عنق|العنق/ },
-  { labelAr: "الجلطة الدماغية", terms: /stroke|\bcva\b|hemipleg|جلطه دماغيه|جلطه بالدماغ|سكته دماغيه|شلل نصفي/ },
-  { labelAr: "التصلّب اللويحيّ", terms: /multiple sclerosis|\bms\b|تصلب لويحي|التصلب اللويحي|التصلب المتعدد/ },
-  { labelAr: "شلل العصب الوجهيّ", terms: /bell'?s|facial (nerve )?palsy|شلل الوجه|شلل وجهي|العصب الوجهي|شلل بل|لقوه/ },
+  { labelAr: "أسفل الظهر والجذر القطنيّ", terms: /low back|lumbar|sciatica|(?<!\b(tmj|jaw|temporomandibular|articular) )\bdisc\b|ديسك|(?<!(بعد|قبل) )الظهر|الم ظهر|قطني|انزلاق غضروفي|عرق النسا|(^|[\s،.])النسا([\s،.]|$)/ },
+  { labelAr: "الرقبة", terms: /(?<!femoral )\bneck\b(?! of (the )?(femur|humerus|bladder|womb))|cervical(?! (cancer|smear|cerclage))|(ال)?رقبه(?! (ال)?(فخذ|عظم))|(ال)?عنق(?! (ال)?(رحم|فخذ|عظم|مثانه))/ },
+  { labelAr: "الجلطة الدماغية", terms: /(?<!(heat|sun) )stroke|\bcva\b|hemipleg|جلطه دماغيه|جلطه بالدماغ|سكته دماغيه|شلل نصفي/ },
+  { labelAr: "التصلّب اللويحيّ", terms: /multiple sclerosis|(?<![\d.] ?)\bms\b|تصلب لويحي|التصلب اللويحي|التصلب المتعدد/ },
+  { labelAr: "شلل العصب الوجهيّ", terms: /bell'?s|facial (nerve )?palsy|شلل الوجه|شلل وجهي|العصب الوجهي|شلل بل(?![ء-ي])|لقوه/ },
   { labelAr: "الروماتويد أو المفاصل اليفعية", terms: /rheumatoid|juvenile (idiopathic )?arthritis|\bjia\b|روماتويد|رثياني|الروماتيزم اليفعي|يفعي/ },
-  { labelAr: "التهاب الفقار المحوريّ", terms: /ankylosing|spondyloarth|axial spa|فقار|الفقار اللاصق/ },
+  { labelAr: "التهاب الفقار المحوريّ", terms: /ankylosing|spondyloarth|axial spa|التهاب (ال)?فقار|الفقار (اللاصق|المقسط|المحوري)/ },
   { labelAr: "الكتف التكلّسيّ", terms: /calcif|تكلس/ },
   { labelAr: "الكفّة المدوّرة", terms: /rotator cuff|\bcuff\b|الكفه المدوره|الكفه الدواره/ },
   { labelAr: "وتر العرقوب", terms: /achilles|عرقوب|العرقوب/ },
   { labelAr: "مرفق التنس", terms: /tennis elbow|lateral epicond|مرفق التنس|كوع التنس/ },
   { labelAr: "ما بعد استبدال الورك", terms: /hip (replacement|arthroplasty)|\btha\b|(استبدال|تبديل) (مفصل )?(ال)?ورك|مفصل ورك صناعي|ورك صناعي/ },
   { labelAr: "هشاشة العظام", terms: /osteopor|هشاشه/ },
-  { labelAr: "الوذمة اللمفية", terms: /lymph(o)?edema|lymphoedema|وذمه لمفيه|الوذمه اللمفيه|ليمفاوي/ },
+  { labelAr: "الوذمة اللمفية", terms: /lymph(o)?edema|lymphoedema|وذمه لمفيه|الوذمه اللمفيه|(ال)?وذمه (ال)?ليمفاويه|(تورم|انتفاخ) (ال)?لي?مفاوي/ },
 ];
 /** النصُّ يذكر حالاتٍ من المكتبة (غيرَ منفيّة) ⟵ أسماؤها؛ وبلا ذكرٍ ⟵ []. */
 export function otherGroupTextConflicts(texts: readonly (string | null | undefined)[]): string[] {
