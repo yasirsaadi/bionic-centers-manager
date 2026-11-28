@@ -134,3 +134,36 @@ export function redactAuthoredText(text: string | null | undefined, ids: Identif
   }
   return s;
 }
+
+/** **التنقيةُ في العمق** (§4.hb ٣.٣) — كلُّ نصٍّ في كائن «التعديل» (الخطّةُ السابقة واللقطةُ وأسبابُ النسخ وملاحظاتُ الطلبات) يُنقّى قبل أن يُرسَل:
+ *  المعتمِدُ قد يكتب اسمَ المريض في احتياطٍ أو سبب، ولا يصل النموذجَ. المفاتيحُ والأرقامُ كما هي. */
+export function redactDeep<T>(value: T, ids: IdentifierSet): T {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return redactAuthoredText(v, ids);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+      return out;
+    }
+    return v;
+  };
+  return walk(value) as T;
+}
+
+/** **لا صدى للملاحظة** (§4.hb ٣.٦): يُحذف من نصّ Opus المرسَل للفاحص كلُّ جملةٍ فيها ستُّ كلماتٍ متتالية من ملاحظة المعتمِد — فلا تصل الفاحصَ.
+ *  والملاحظةُ القصيرة (أقلُّ من ستّ كلمات) تُطابَق بطولها كلِّه — «أزل الليزر لوجود ورم» تُحذف جملتُها لا تمرّ. */
+export function stripNoteEcho(text: string, note: string | null | undefined, run = 6): string {
+  const words = (s: string) => normalizeForMatch(s).split(" ").filter(Boolean);
+  const nw = words(note ?? "");
+  if (!nw.length) return text;
+  run = Math.min(run, nw.length);
+  const grams = new Set<string>();
+  for (let i = 0; i + run <= nw.length; i++) grams.add(nw.slice(i, i + run).join(" "));
+  const sentences = String(text ?? "").split(/(?<=[.!؟?\n،؛])\s*/);
+  return sentences.filter((s) => {
+    const w = words(s);
+    for (let i = 0; i + run <= w.length; i++) if (grams.has(w.slice(i, i + run).join(" "))) return false;
+    return true;
+  }).join(" ").trim();
+}

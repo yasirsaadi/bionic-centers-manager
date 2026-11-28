@@ -35,7 +35,7 @@ import {
   type SurveyQuestion, type InsertSurveyQuestion,
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
-  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations, physioExamRedFlagReviews, physioAgentJobs,
+  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations, physioExamRedFlagReviews, physioAgentJobs, physioPlanVersions,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
@@ -2742,6 +2742,9 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(documents).where(eq(documents.patientId, id));
       //  جلساتُ تنفيذ خطط العلاج الطبيعي (ترحيل ١١١، §4.cn) تشير إلى الزيارة والخطّة — قبلهما، وبنودُها تتبعها بـ`ON DELETE CASCADE`.
       await tx.delete(physioPlanSessions).where(eq(physioPlanSessions.patientId, id));
+      //  نسخُ خطط Opus (ترحيل ٢٠٠، §4.hb) — لا تُحذف إلّا من هنا أو مع خطّتها (`trg_ppv_nodelete`): البابُ مفتوحٌ لهذه المعاملة وحدها.
+      await tx.execute(sql`SET LOCAL bcm.allow_plan_version_delete = 'on'`);
+      await tx.delete(physioPlanVersions).where(eq(physioPlanVersions.patientId, id));
       //  اقتراحاتُ «اقترح خطّة» (ترحيل ١١٢، §4.co) — تشير إلى المريض والخطّة.
       await tx.delete(physioPlanSuggestions).where(eq(physioPlanSuggestions.patientId, id));
       //  تقييماتُ الخطط (ترحيل ١١٣، §4.cp) — تشير إلى المريض والخطّة.
@@ -3698,6 +3701,8 @@ export class DatabaseStorage implements IStorage {
       await repoint("treatmentPlans", treatmentPlans, treatmentPlans.patientId);
       await repoint("physioPlans", physioPlans, physioPlans.patientId);
       await repoint("physioPlanSessions", physioPlanSessions, physioPlanSessions.patientId);
+      //  نسخُ خطط Opus (ترحيل ٢٠٠) تتبع خطّتَها ومريضَها — والقادحُ يسمح بتغيير `patient_id` وحده.
+      await repoint("physioPlanVersions", physioPlanVersions, physioPlanVersions.patientId);
       await repoint("physioPlanSuggestions", physioPlanSuggestions, physioPlanSuggestions.patientId);
       await repoint("physioAssessments", physioAssessments, physioAssessments.patientId);
       await repoint("surveyResponses", surveyResponses, surveyResponses.patientId);

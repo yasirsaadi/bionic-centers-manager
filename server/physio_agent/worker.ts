@@ -10,7 +10,8 @@ import { JOB_ERROR_TEXTS, JOB_STAGE_LABELS, type JobStage } from "@shared/physio
 import { AgentFatal, AgentStop, agentEnabled } from "./model";
 import { TransientExhausted } from "./conversation";
 import { runJob, type Outcome } from "./pipeline";
-import { jobOf, notifyApproversTx, notifyExaminerTx, questionCheckpoint, signalJob, type JobRecord } from "./store";
+import { jobOf, lostRequestNoticeTx, notifyApproversTx, notifyExaminerTx, questionCheckpoint, signalJob, type JobRecord } from "./store";
+import { stripNoteEcho } from "@shared/physio_agent_privacy";
 import { reconcilerScan, setWorkerNudge } from "./reconcile";
 
 const rows = (r: any): Record<string, any>[] => (r?.rows ?? []) as Record<string, any>[];
@@ -98,6 +99,7 @@ export async function recoverStale(): Promise<number> {
       } else {
         await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'failed', failures = max_failures, error_code = 'worker_lost', error = ${JOB_ERROR_TEXTS.worker_lost},
           finished_at = now(), locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${job.id}`);
+        await reviseFailedNoticeTx(tx, job, "worker_lost");
       }
       await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "recover_stale", userName: "Claude Opus", branchId: job.branchId,
         newValues: { from: job.lockedBy, failures: job.failures }, tx });
@@ -105,6 +107,12 @@ export async function recoverStale(): Promise<number> {
     await signalJob(j);
   }
   return stale.length;
+}
+
+/** **طلبُ المعتمِد إلى Opus انتهى بنفاد المحاولات** (انقطاعُ الخدمة · المهلة · العاملُ الضائع) — يُقال للمعتمِدين كسائر نهاياته، لا يموت صامتاً. */
+async function reviseFailedNoticeTx(tx: any, j: JobRecord, code: string): Promise<void> {
+  if (j.kind !== "revise") return;
+  await notifyApproversTx(tx, j, `⚠️ لم يُكمل Opus طلبَ التعديل: ${JOB_ERROR_TEXTS[code] ?? code}`, j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`);
 }
 
 /** ملاحظةٌ على آخر سطرٍ في المراحل — يُنتظر في `pipeline.ts` قبل المرحلة التالية، فهو سطرُ مرحلتها. */
@@ -141,6 +149,32 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
     if (j.cancelRequested) {
       const code = j.cancelReason ?? "cancelled_by_user";
       await terminal("cancelled", code, JOB_ERROR_TEXTS[code] ?? code);
+      await lostRequestNoticeTx(tx, j, code);
+      return;
+    }
+    //  §4.hb — وظيفةُ «تعديل» طلبُ معتمِد: نتيجتُها للمعتمِدين وحدهم، والفاحصُ لا يرى ملاحظتَهم (إلّا «عدّل المعاينة» بنصٍّ ثابت بلا صدى للملاحظة).
+    const revise = j.kind === "revise";
+    const planLink = j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`;
+    if (revise && o.kind === "declined") {
+      await terminal("failed", "revision_declined", `يرى Opus ألّا يُنفَّذ التعديلُ المطلوب: ${o.decline.reasonAr}`, { result: o.result });
+      await notifyApproversTx(tx, j, `⚠️ لم يُنفّذ Opus طلبَ التعديل (${o.decline.reasonAr.slice(0, 200)})`, planLink);
+      return;
+    }
+    if (revise && o.kind === "new_finding") {
+      await terminal("needs_exam_revision", "new_finding", `وجد Opus ما لم تسجّله المعاينة: ${o.finding.textAr}`, { result: o.result });
+      await notifyApproversTx(tx, j, "⚠️ لم يُكمل Opus طلبَ التعديل: وجد ما لم تسجّله المعاينة — أعد طلبك بعد تعديلها", planLink);
+      const finding = stripNoteEcho(o.finding.textAr, j.reviseNote).slice(0, 300);
+      await notifyExaminerTx(tx, j, `⚠️ يحتاج Opus تعديلَ المعاينة قبل أن يكمل${finding ? `: ${finding}` : ""}`);
+      return;
+    }
+    if (revise && o.kind === "failed") {
+      await terminal("failed", o.code, JOB_ERROR_TEXTS[o.code] ?? o.code, { result: o.result, detail: o.detail ?? null });
+      await notifyApproversTx(tx, j, `⚠️ لم يُكمل Opus طلبَ التعديل: ${JOB_ERROR_TEXTS[o.code] ?? o.code}`, planLink);
+      return;
+    }
+    if (revise && o.kind === "cancelled") {
+      await terminal("cancelled", o.code, JOB_ERROR_TEXTS[o.code] ?? o.code, o.result ? { result: o.result } : {});
+      await lostRequestNoticeTx(tx, j, o.code);
       return;
     }
     switch (o.kind) {
@@ -177,6 +211,7 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
         if (j.failures + (o.countFailure ? 1 : 0) >= j.maxFailures) {
           await tx.execute(sql`UPDATE physio_agent_jobs SET failures = max_failures WHERE id = ${j.id}`);
           await terminal("failed", o.code, JOB_ERROR_TEXTS[o.code] ?? o.error, { detail: o.error });
+          await reviseFailedNoticeTx(tx, j, o.code);
           return;
         }
         await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'queued', failures = failures + ${o.countFailure ? 1 : 0}, locked_by = NULL, locked_at = NULL,

@@ -6,8 +6,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { OpusProposalView } from "@/components/physio/OpusProposalView";
+import { OpusVersionBadge, OpusVersionHistory } from "@/components/physio/OpusVersions";
+import { OpusRevisionStrip, RequestOpusAmendDialog } from "@/components/physio/OpusAmend";
+import { OpusPlanEditor } from "@/components/physio/OpusPlanEditor";
 import { isOpusAwaiting } from "@shared/physio_agent";
-import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Home, Pencil, Play, Printer, RefreshCcw, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, ClipboardList, Eye, Home, Pencil, Play, Printer, RefreshCcw, ShieldAlert, Sparkles, Trash2, Undo2, UserPlus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -80,6 +83,13 @@ interface Plan {
   origin?: "manual" | "suggest" | "opus" | null;
   /** §4.ds — ورقةُ تمارين البيت: من خطّةٍ بدأت، وإرسالُها عبر تلغرام لفريق العلاج في فرعها لمريضٍ مربوط. */
   homeSheet?: { allowed: boolean; botEnabled: boolean; telegramRecipients: number; canSend: boolean };
+  /** §4.hb — خطّةُ Opus بعد الاعتماد: النسخةُ النافذة، ومَن يعدّلها، والطلبُ الجاري، والممنوعُ الآن. */
+  opusVersion?: number | null; versionCount?: number; versionsVirtual?: boolean; executionVersion?: number | null;
+  canOpusEdit?: boolean; editLocked?: "opus_versioned" | null;
+  opusRevision?: { jobId: number; scope: "return" | "amend" | null; status: string; stage: string | null; note?: string | null } | null;
+  pendingProposal?: { jobId: number; baseVersion: number } | null;
+  forbiddenNow?: { deviceCode: string; nameAr: string; reasonAr: string }[];
+  newerExamSinceVersion?: boolean;
 }
 
 /** **ورقةُ تمارين البيت** (§4.ds) — على الحاسوب في تبويبٍ جديد، وعلى الهاتف والتطبيق المثبَّت في مكانها (كـ`openPhysioSheetPrint`). */
@@ -158,6 +168,9 @@ export default function PhysioPlanPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  //  §4.hb — خطّةُ Opus المعتمَدة: «تعديل الخطّة» (نسخةٌ جديدة) و«اطلب من Opus تعديلاً».
+  const [opusEditing, setOpusEditing] = useState(false);
+  const [amendOpen, setAmendOpen] = useState(false);
   //  «طباعة التقدّم» (§4.cp): تُخفى أقسامُ الخطّة في الطباعة ويظهر رأسُها وقسمُ التقدّم وحده، ثمّ تعود.
   const [printMode, setPrintMode] = useState<"plan" | "progress">("plan");
   useEffect(() => {
@@ -210,6 +223,13 @@ export default function PhysioPlanPage() {
   const showDiff = (plan.canWrite || plan.canApprove) && Boolean(plan.protocolDiff);
   const diff = showDiff ? plan.protocolDiff!.diff : null;
   const removedDevices = (diff?.items ?? []).filter((i) => i.area === "device" && i.kind === "removed");
+  //  §4.hb D5 — **خطّةُ Opus المعتمَدة تُعدَّل بنسخٍ مرقّمة وحدها** وبيد المعتمِد: أبوابُ التعديل العادية مخفيّة لكلّ أحد.
+  const opusLocked = plan.editLocked === "opus_versioned";
+  const isOpus = plan.origin === "opus";
+  const canWrite = plan.canWrite && !opusLocked;
+  const canDelete = plan.canDelete && (!isOpus || plan.canApprove);
+  const opusCanEdit = Boolean(plan.canOpusEdit && plan.opusVersion);
+  const amendRunning = plan.opusRevision?.scope === "amend";
 
   return (
     <div className="max-w-4xl mx-auto space-y-3 print:p-0" dir={lang === "en" ? "ltr" : "rtl"}>
@@ -217,7 +237,7 @@ export default function PhysioPlanPage() {
         <Link href={`/patients/${plan.patientId}`}>
           <Button variant="ghost" size="sm" className="gap-1"><ArrowRight className="w-4 h-4" /> {t.back}</Button>
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <LangToggle lang={lang} onChange={setLang} />
           <Button variant="outline" size="sm" className="gap-1" onClick={() => window.print()} data-testid="button-print-plan">
             <Printer className="w-4 h-4" /> {lang === "en" ? "Print" : "طباعة"}
@@ -238,6 +258,7 @@ export default function PhysioPlanPage() {
           <ClipboardList className="w-5 h-5 text-green-700 print:hidden" />
           <h1 className="text-lg font-bold" data-testid="plan-title">{title}</h1>
           <Badge variant="outline" className={`${PLAN_STATUS_TONE[plan.status]} print:hidden`} data-testid="plan-status">{statusLabel}</Badge>
+          {isOpus && <OpusVersionBadge version={plan.opusVersion ?? null} virtual={plan.versionsVirtual} />}
           {plan.aiSuggestion && (
             <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300 print:hidden" data-testid="plan-ai-badge">{lang === "en" ? "Suggested by the assistant" : "مقترحة بالمساعد"}</Badge>
           )}
@@ -287,12 +308,24 @@ export default function PhysioPlanPage() {
         )}
       </CardContent></Card>
 
+      {isOpus && (plan.forbiddenNow?.length ?? 0) > 0 && (
+        <div className="rounded-md border-2 border-red-400 bg-red-50 p-2 text-sm text-red-950 flex flex-wrap items-center gap-2 print:hidden" dir="rtl" data-testid="plan-forbidden-now">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          <span className="min-w-0 flex-1">معاينةٌ أحدث تمنع جهازاً في هذه الخطّة: {plan.forbiddenNow!.map((f) => `${f.nameAr} — ${f.reasonAr}`).join("؛ ")}. على المعتمِد تعديلُ الخطّة.</span>
+          {opusCanEdit && !opusEditing && <Button size="sm" variant="outline" className="border-red-300 text-red-800" onClick={() => setOpusEditing(true)} data-testid="button-forbidden-now-edit">تعديل الخطّة</Button>}
+        </div>
+      )}
+      {isOpus && plan.newerExamSinceVersion && (
+        <p className="text-xs text-sky-900 rounded-md bg-sky-50 border border-sky-200 px-2 py-1 print:hidden" dir="rtl" data-testid="plan-newer-exam">
+          وُقّعت للمريض معاينةٌ أحدث من التي بُنيت عليها النسخة السارية — {opusCanEdit ? "راجِعها، وعدّل الخطّة أو اطلب من Opus تعديلاً إن غيّرت شيئاً." : "يراجعها المعتمِد."}
+        </p>
+      )}
       {/*  §4.dq — الخطّةُ لا تُمنع، **ومَن يبدؤها أو يعتمدها يُطلب منه أن يذكّر المشرف** بإعدادات الجهاز الناقصة في البروتوكول. */}
-      {!editing && plan.settingsGaps && (
+      {!editing && !opusEditing && plan.settingsGaps && (
         <PlanSettingsReminder planId={plan.id} protocolId={plan.protocol?.id ?? null} view={plan.settingsGaps} onSent={refresh} />
       )}
       {/*  الأزرارُ بحسب صلاحية السائل (من الخادم) وحالة الخطّة. */}
-      {!editing && (
+      {!editing && !opusEditing && (
         <div className="flex flex-wrap gap-2 print:hidden" data-testid="plan-actions">
           {/*  «تنفيذ جلسة» — أيُّ منفّذٍ من القسم في فرع الخطّة المعتمَدة (قرارُ المالك: المسنَدُ افتراضيٌّ لا حصر — §4.cn). */}
           {plan.canExecute && plan.status === "approved" && (
@@ -300,8 +333,17 @@ export default function PhysioPlanPage() {
               <Play className="w-4 h-4" /> تنفيذ جلسة
             </Button>
           )}
-          {plan.canWrite && !isPlanClosed(plan.status) && (
+          {canWrite && !isPlanClosed(plan.status) && (
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setEditing(true)} data-testid="button-edit-plan"><Pencil className="w-4 h-4" /> تعديل</Button>
+          )}
+          {/*  §4.hb — المعتمِدُ يعدّل خطّةَ Opus بسببٍ إلزاميّ، أو يطلب من Opus؛ وكلُّ حفظٍ نسخةٌ مرقّمة. */}
+          {opusCanEdit && (
+            <Button variant="outline" size="sm" className="gap-1" onClick={() => setOpusEditing(true)} data-testid="button-opus-edit-plan"><Pencil className="w-4 h-4" /> تعديل الخطّة</Button>
+          )}
+          {opusCanEdit && (
+            <Button size="sm" className="gap-1 bg-violet-700 hover:bg-violet-800" disabled={amendRunning} onClick={() => setAmendOpen(true)} data-testid="button-opus-amend">
+              <Sparkles className="w-4 h-4" /> {amendRunning ? "Opus يعدّلها الآن…" : "اطلب من Opus تعديلاً"}
+            </Button>
           )}
           {/*  §4.do — يبدؤها كاتبُها بنفسه على أيّ بروتوكول؛ والمشرفُ يُنبَّه ويراجعها بعدها. («إرسال للاعتماد» تقاعد من الشاشة.) */}
           {selfStart && (
@@ -334,13 +376,22 @@ export default function PhysioPlanPage() {
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => setAsk("stop")} data-testid="button-stop-plan"><XCircle className="w-4 h-4" /> إيقاف الخطّة</Button>
           )}
           {/*  تغييرُ النوع والحذفُ لكاتب الخطّة: الأخصائيّ والمشرف العام والمسؤول (§4.eh). */}
-          {plan.canDelete && !isPlanClosed(plan.status) && (
+          {canDelete && !opusLocked && !isPlanClosed(plan.status) && (
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setTypeOpen(true)} data-testid="button-change-plan-type"><RefreshCcw className="w-4 h-4" /> تغيير نوع الخطّة</Button>
           )}
-          {plan.canDelete && (
+          {canDelete && (
             <Button size="sm" variant="ghost" className="gap-1 text-destructive" onClick={() => setDeleteOpen(true)} data-testid="button-delete-plan"><Trash2 className="w-4 h-4" /> حذف</Button>
           )}
         </div>
+      )}
+      {!editing && !opusEditing && isOpus && opusLocked && (
+        <OpusRevisionStrip planId={plan.id} patientId={plan.patientId} approver={Boolean(plan.canApprove)} revising={Boolean(plan.opusRevision)}
+          onEdit={opusCanEdit ? () => setOpusEditing(true) : undefined} />
+      )}
+      {!editing && !opusEditing && isOpus && opusLocked && !plan.canApprove && (
+        <p className="text-[11px] text-muted-foreground print:hidden" data-testid="plan-opus-readonly">
+          خطّةٌ كتبها Opus — يعدّلها المسؤولُ أو المشرفُ العام وحدهما، وكلُّ تعديلٍ نسخةٌ مرقّمة يصلك تنبيهُها. تنفّذها كما هي.
+        </p>
       )}
       {!editing && plan.aiSuggestion && <SuggestionSummary sg={plan.aiSuggestion} lang={lang} />}
       {!editing && selfStart && (
@@ -348,7 +399,7 @@ export default function PhysioPlanPage() {
           «بدء العلاج» يُنزلها في ملفّ المريض فتُنفَّذ في الحال — لا تنتظر اعتماداً، ويُنبَّه المشرفُ ليطّلع عليها.
         </p>
       )}
-      {!editing && plan.status === "approved" && plan.canWrite && !plan.canApprove && (
+      {!editing && plan.status === "approved" && canWrite && !plan.canApprove && (
         <p className="text-[11px] text-muted-foreground print:hidden">تعديلُك يُبقيها تُنفَّذ، ويُنبَّه المشرفُ ليطّلع عليه.</p>
       )}
       {!editing && showDiff && <PlanDiffBox view={plan.protocolDiff} lang={lang}
@@ -359,14 +410,20 @@ export default function PhysioPlanPage() {
         </p>
       )}
 
-      {editing ? (
+      {opusEditing && opusCanEdit ? (
+        <OpusPlanEditor planId={plan.id} patientId={plan.patientId} branchId={plan.branchId} opusVersion={plan.opusVersion!}
+          revisionRunning={Boolean(plan.opusRevision && plan.opusRevision.scope === "amend")} hasPendingProposal={Boolean(plan.pendingProposal)}
+          sessionsDone={plan.rotation?.sessionsSoFar ?? 0} onDone={() => { setOpusEditing(false); refresh(); }} onCancel={() => setOpusEditing(false)} />
+      ) : editing ? (
         <PlanEditor plan={plan} lang={lang} onDone={() => { setEditing(false); refresh(); }} onCancel={() => setEditing(false)} />
       ) : (
         <>
           {/*  **ما بُنيت عليه الخطّة** (§4.da المرحلة ٤): التقييمُ الأوّليّ في آخر معاينة — سطرُه وبنودُ «خطة العلاج» التي أشّرها الفاحص. */}
           <div className="print:hidden"><LatestAssessmentBox patientId={plan.patientId} lang={lang} /></div>
           <div className={printMode === "progress" ? "" : "print:hidden"}>
-            <PlanProgress planId={plan.id} planStatus={plan.status} lang={lang} onModify={() => setEditing(true)} patientId={plan.patientId} />
+            <PlanProgress planId={plan.id} planStatus={plan.status} lang={lang} patientId={plan.patientId}
+              modifyByApprover={opusLocked ? (opusCanEdit ? "me" : "other") : null}
+              onModify={() => (opusLocked ? (opusCanEdit ? setOpusEditing(true) : undefined) : setEditing(true))} />
           </div>
           <div className={`space-y-3 ${printMode === "progress" ? "print:hidden" : ""}`}>
           <Section title={t.dose}>
@@ -421,13 +478,13 @@ export default function PhysioPlanPage() {
           {/*  §4.do — مقاييسُ هذا المريض: تتبع البروتوكولَ حتى يعدّلها كاتبُ الخطّة لمريضه. */}
           <Card className="print:shadow-none print:border-0"><CardContent className="p-4 print:p-0 print:pb-3">
             <PlanMeasuresSection planId={plan.id} measures={plan.measures ?? []} own={Boolean(plan.measuresOwn)} hasProtocol={Boolean(plan.protocol)}
-              canEdit={plan.canWrite} closed={isPlanClosed(plan.status)} lang={lang} diff={diff} showDiff={showDiff}
+              canEdit={canWrite} closed={isPlanClosed(plan.status)} lang={lang} diff={diff} showDiff={showDiff}
               onSaved={() => { refresh(); qc.invalidateQueries({ queryKey: [`/api/physio/plans/${plan.id}/assessments`] }); }} />
           </CardContent></Card>
           {/*  ترحيل ١٢٣ (§4.dd) — نسخةُ المريض من مراحل البروتوكول: يعدّلها كاتبُ الخطّة بمرونة البروتوكول نفسِها، والبروتوكولُ لا يُمَسّ. */}
-          {((plan.phases ?? []).length > 0 || (plan.canWrite && !isPlanClosed(plan.status))) && (
+          {((plan.phases ?? []).length > 0 || (canWrite && !isPlanClosed(plan.status))) && (
             <Card className="print:shadow-none print:border-0"><CardContent className="p-4 print:p-0 print:pb-3">
-              <ProtocolPhasesSection phases={plan.phases ?? []} canEdit={plan.canWrite} isArchived={isPlanClosed(plan.status)} lang={lang}
+              <ProtocolPhasesSection phases={plan.phases ?? []} canEdit={canWrite} isArchived={isPlanClosed(plan.status)} lang={lang}
                 saveUrl={`/api/physio/plans/${plan.id}/phases`} onSaved={refresh} title={t.phases}
                 currentSession={plan.status === "approved" && plan.rotation ? plan.rotation.sessionsSoFar + 1 : null} diff={diff}
                 editNote="تعديلٌ لهذا المريض وحده — البروتوكولُ الأساسيّ لا يتغيّر. وتعديلُ خطّةٍ تُنفَّذ يُبقيها تُنفَّذ ويُنبَّه المشرف." />
@@ -441,6 +498,9 @@ export default function PhysioPlanPage() {
             {plan.assignees.length === 0 ? <p className="text-sm text-muted-foreground">{t.noAssignees}</p>
               : <p className="text-sm">{plan.assignees.map((a) => a.name).join("، ")}</p>}
           </Section>
+          {isOpus && opusLocked && (
+            <div className="print:hidden"><Section title={lang === "en" ? "Version history" : "سجلّ النسخ"}><OpusVersionHistory planId={plan.id} /></Section></div>
+          )}
           <div className="print:hidden"><Section title={t.sessions}><PlanSessionsHistory planId={plan.id} /></Section></div>
           <div className="hidden print:flex justify-between pt-8 text-sm">
             <div>{t.signature}: ____________</div>
@@ -457,6 +517,8 @@ export default function PhysioPlanPage() {
       <DeletePlanDialog plan={deleteOpen ? plan : null} onClose={() => setDeleteOpen(false)} patientId={plan.patientId}
         onDeleted={() => navigate(`/patients/${plan.patientId}`)} />
       <ExecuteSessionDialog planId={execOpen ? plan.id : null} onClose={() => setExecOpen(false)} />
+      {opusCanEdit && <RequestOpusAmendDialog planId={plan.id} patientId={plan.patientId} baseVersion={plan.opusVersion!} open={amendOpen} onClose={() => setAmendOpen(false)}
+        hasPendingProposal={Boolean(plan.pendingProposal)} />}
       {assignOpen && <AssignDialog plan={plan} onClose={() => setAssignOpen(false)} onDone={() => { setAssignOpen(false); refresh(); }} />}
     </div>
   );

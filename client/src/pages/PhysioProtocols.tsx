@@ -82,6 +82,8 @@ interface Protocol {
   sessionsPerWeek: number | null; durationWeeks: number | null; sessionMinutes: number | null;
   /** ترحيل ١٢٣ (§4.dd) — عددُ الجلسات أساسُ الجرعة، والأسابيعُ مشتقّة. */
   totalSessions?: number | null;
+  /** §4.ha/§4.hb C1 — أقصى عدد الجلسات مع التمديد المكتوب (سقفُ خطّة Opus) — `null` بلا تمديد. */
+  maxTotalSessions?: number | null;
   references: ProtocolReference[]; status: "draft" | "approved"; isArchived: boolean;
   approvedByName: string | null; approvedAt: string | null; updatedByName: string | null; updatedAt: string;
   devices: DeviceLine[]; images: { id: number; caption: string | null; sourceUrl: string | null; credit: string | null }[];
@@ -568,6 +570,15 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
     sessionMinutes: initial?.sessionMinutes ? String(initial.sessionMinutes) : "",
     totalSessions: initial?.totalSessions ? String(initial.totalSessions) : "",
   }));
+  //  §4.hb C1 — «أقصى عدد جلسات (مع التمديد المكتوب)»: للمعتمِد وحده، ويُرسَل حين يتغيّر وحده (والخادمُ يفحصه ويكتب سطرَ تدقيق).
+  const maxInitial = initial?.maxTotalSessions ? String(initial.maxTotalSessions) : "";
+  const [maxTotal, setMaxTotal] = useState(maxInitial);
+  const canMax = Boolean(initial?.canApprove);
+  const maxDigits = maxTotal.trim().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  const maxParsed: number | null = maxDigits === "" ? null : /^\d+$/.test(maxDigits) ? Number(maxDigits) : NaN;
+  const totalNow = Number(String(f.totalSessions).trim().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))) || 0;
+  const maxInvalid: string | null = maxParsed === null ? null : !Number.isInteger(maxParsed) ? "أقصى عدد الجلسات رقمٌ صحيح بلا كلمات ولا فواصل — أو اتركه فارغاً"
+    : maxParsed > 300 || (totalNow > 0 && maxParsed < totalNow) ? "أقصى عدد الجلسات بين عدد الجلسات و٣٠٠" : null;
   const [lines, setLines] = useState<DeviceLine[]>(() => (initial?.devices ?? []).map((d) => ({
     deviceId: d.deviceId, evidence: d.evidence, parameters: d.parameters, minutes: d.minutes, note: d.note,
     parametersEn: d.parametersEn ?? null, noteEn: d.noteEn ?? null, params: d.params ?? {},
@@ -588,7 +599,12 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
 
   const save = useMutation({
     mutationFn: async () => {
-      const body = { ...f, references: refs, devices: lines };
+      const body: Record<string, unknown> = { ...f, references: refs, devices: lines };
+      //  رقمٌ صحيح أو فارغٌ مقصود — وما سواهما يُردّ هنا: `Number("٣٠ جلسة")` = NaN ويُرسَل `null` فيمحو التمديدَ صامتاً.
+      if (canMax && maxTotal.trim() !== maxInitial) {
+        if (maxInvalid) throw new Error(maxInvalid);
+        body.maxTotalSessions = maxParsed;
+      }
       const r = initial ? await apiRequest("PUT", `/api/physio/protocols/${initial.id}`, body) : await apiRequest("POST", "/api/physio/protocols", body);
       return r.json();
     },
@@ -596,9 +612,13 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
       qc.invalidateQueries({ queryKey: ["/api/physio/protocols"] });
       const blockers: SettingsBlocker[] = row?.settingsBlockers ?? [];
       const missingText = blockers.map((b) => `${b.nameAr}: ${b.missing.map((m) => m.ar).join("، ")}`).join(" · ");
-      toast({ title: "حُفظ", description: row?.demoted
+      const warnings: string[] = row?.warnings ?? [];
+      //  رسالةٌ واحدة (`TOAST_LIMIT = 1` — الثانيةُ تمحو الأولى): «حُفظ» وتحتها الخططُ فوق الأقصى الجديد.
+      const main = row?.demoted
         ? (blockers.length ? `عاد مسوّدةً — لا يبقى معتمَداً قبل إعدادات الجهاز (${missingText}).` : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار اعتماد المشرف العام.")
-        : blockers.length ? `لا يُعتمد قبل إعدادات الجهاز: ${missingText}` : undefined });
+        : blockers.length ? `لا يُعتمد قبل إعدادات الجهاز: ${missingText}` : "";
+      const desc = [main, warnings.length ? `خططٌ فوق الأقصى الجديد: ${warnings.join(" · ")}` : ""].filter(Boolean).join(" — ");
+      toast({ title: "حُفظ", description: desc || undefined });
       onClose();
       if (!initial && row?.id) navigate(`/physio/protocols/${row.id}`);
     },
@@ -632,6 +652,19 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
             <label className="grid gap-1">جلسات/أسبوع<Input inputMode="numeric" value={f.sessionsPerWeek} onChange={set("sessionsPerWeek")} /></label>
             <label className="grid gap-1">دقائق الجلسة<Input inputMode="numeric" value={f.sessionMinutes} onChange={set("sessionMinutes")} /></label>
           </div>
+          {initial && (
+            <div className="grid sm:grid-cols-[14rem_1fr] gap-2 items-start" data-testid="protocol-max-total">
+              <label className="grid gap-1">أقصى عدد جلسات (مع التمديد المكتوب)
+                <Input inputMode="numeric" value={maxTotal} onChange={(e) => setMaxTotal(e.target.value)} disabled={!canMax}
+                  placeholder="بلا تمديد" aria-invalid={Boolean(maxInvalid)} className={maxInvalid ? "border-red-500" : undefined} data-testid="input-protocol-maxTotalSessions" />
+                {maxInvalid && <span className="text-[11px] text-red-700" data-testid="protocol-max-invalid">{maxInvalid}</span>}</label>
+              <p className="text-[11px] text-muted-foreground m-0 sm:pt-6">
+                {canMax
+                  ? "السقفُ الذي لا تتجاوزه خطّةُ Opus لهذا البروتوكول — بين عدد الجلسات و٣٠٠. اتركه فارغاً إن لم يُكتب تمديد، فيكون السقفُ عددَ الجلسات."
+                  : "يغيّره المسؤولُ أو المشرفُ العام."}
+              </p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground -mt-1" data-testid="protocol-weeks-derived">
             {Number(f.totalSessions) > 0 && Number(f.sessionsPerWeek) > 0
               ? `المدّة نحو ${Math.ceil(Number(f.totalSessions) / Number(f.sessionsPerWeek))} أسابيع — تُحسب من العدد والتواتر. والأخصائيُّ يعدّلهما لمريضه في خطّته.`
@@ -733,7 +766,7 @@ function ProtocolEditor({ initial, onClose }: { initial: Protocol | null; onClos
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button disabled={save.isPending} onClick={() => save.mutate()} data-testid="pf-save">حفظ</Button>
+          <Button disabled={save.isPending || (canMax && maxTotal.trim() !== maxInitial && Boolean(maxInvalid))} onClick={() => save.mutate()} data-testid="pf-save">حفظ</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

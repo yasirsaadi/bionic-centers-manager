@@ -19,8 +19,15 @@ import { ar, opusGet, opusJobKey, opusPost, stageStates, type OpusJobResponse, t
 export const RUN_LABEL = "اكتب الخطّة بـ Opus";
 export const RERUN_LABEL = "أعد";
 
-function errorText(job: Pick<OpusJobView, "error" | "errorCode">): string {
-  return job.error || (job.errorCode ? JOB_ERROR_TEXTS[job.errorCode] : "") || "لم يكتب Opus الخطّة";
+function errorText(job: Pick<OpusJobView, "error" | "errorCode" | "errorDetailAr">): string {
+  //  C3 — للمعتمِد سببُ الإخفاق مفصَّلاً (الخادمُ لا يرسله لغيره).
+  return job.errorDetailAr || job.error || (job.errorCode ? JOB_ERROR_TEXTS[job.errorCode] : "") || "لم يكتب Opus الخطّة";
+}
+/** §4.hb — وظيفةُ «تعديل» بطلب معتمِد: «أعِده إلى Opus» قبل الاعتماد، أو «اطلب من Opus تعديلاً» بعده. */
+function reviseLine(job: OpusJobView): string | null {
+  if (job.kind !== "revise") return null;
+  return job.reviseScope === "amend" ? "يعدّل Opus الخطّةَ المعتمَدة بطلب المعتمِد — النسخةُ الحالية سارية حتى يحفظ المعتمِد ما يقترحه."
+    : "يعيد Opus كتابةَ الخطّة بملاحظة المعتمِد، ثمّ تعود للاعتماد.";
 }
 
 export function OpusPanel({ examId, patientId, gate, summary }: {
@@ -95,6 +102,8 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
       {job && (job.status === "queued" || job.status === "running" || job.status === "needs_answers") && (
         <>
           <p className="m-0 text-xs font-semibold text-violet-900" data-testid={`opus-status-${examId}`}>{JOB_STATUS_LABELS[job.status]}</p>
+          {reviseLine(job) && <p className="m-0 text-xs text-violet-950" data-testid={`opus-revise-${examId}`}>{reviseLine(job)}</p>}
+          {job.kind === "revise" && job.reviseNote && <p className="m-0 text-xs text-violet-950 bg-white/70 rounded px-2 py-1" dir="auto">ملاحظةُ المعتمِد: «{job.reviseNote}»</p>}
           <StageList job={job} />
           {job.failures > 0 && job.status !== "needs_answers" && (
             <p className="m-0 text-[11px] text-amber-800" data-testid={`opus-retry-${examId}`}>تعذّر الاتّصال بخدمة Claude — إعادةُ المحاولة {ar(job.failures)} من {ar(job.maxFailures)}.</p>
@@ -145,7 +154,9 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
 
       {job?.status === "needs_exam_revision" && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" data-testid={`opus-finding-${examId}`}>
-          <b>وجد Opus ما لم تسجّله المعاينة:</b> {job.newFinding?.textAr ?? errorText(job)} — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُه بعد الحفظ.
+          <b>وجد Opus ما لم تسجّله المعاينة{job.newFinding?.textAr ? ":" : ""}</b> {job.newFinding?.textAr ?? (job.kind === "revise" ? "" : errorText(job))}
+          {/* وظيفةُ «تعديل» لا تُعاد بعد الحفظ: الطلبُ للمعتمِد، يعيده هو بعد تعديل المعاينة (وغيرُه لا يرى ما وجده — §4.hb ٣.٦). */}
+          {job.kind === "revise" ? " — عدّل المعاينة من زرّ «تعديل» أعلاه، ثمّ يعيد المعتمِدُ طلبَه إلى Opus." : " — عدّل المعاينة من زرّ «تعديل» أعلاه، فيُعاد تشغيلُه بعد الحفظ."}
         </div>
       )}
 
@@ -159,7 +170,7 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
                   <div><b>يرى Opus ألّا تُكتب خطّةٌ الآن:</b> {job.decline.reasonAr}</div>
                   {job.decline.recommendedActionAr && <div><b>المقترح:</b> {job.decline.recommendedActionAr}</div>}
                 </>
-              ) : <div><b>لم يكتب Opus الخطّة:</b> {errorText(job)}</div>}
+              ) : <div><b>{job.kind === "revise" ? "لم يكتمل التعديل — بقيت الخطّة كما هي:" : "لم يكتب Opus الخطّة:"}</b> {errorText(job)}</div>}
               {job.unresolvedCritical.length > 0 && (
                 <ul className="m-0 ps-4 list-disc">{job.unresolvedCritical.map((i) => <li key={i.id}>{i.problemAr}</li>)}</ul>
               )}
@@ -171,14 +182,14 @@ export function OpusPanel({ examId, patientId, gate, summary }: {
               )}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">{runButton(RERUN_LABEL)}</div>
+          {job.kind !== "revise" && <div className="flex flex-wrap gap-2">{runButton(RERUN_LABEL)}</div>}
         </div>
       )}
 
       {job?.status === "cancelled" && (
         <div className="flex flex-col gap-2">
-          <p className="m-0 text-xs text-slate-700" data-testid={`opus-cancelled-${examId}`}>أُلغيت: {errorText(job)}</p>
-          <div className="flex flex-wrap gap-2">{runButton(RERUN_LABEL)}</div>
+          <p className="m-0 text-xs text-slate-700" data-testid={`opus-cancelled-${examId}`}>{job.kind === "revise" ? "أُلغي طلبُ التعديل — بقيت الخطّة كما هي" : "أُلغيت"}: {errorText(job)}</p>
+          {job.kind !== "revise" && <div className="flex flex-wrap gap-2">{runButton(RERUN_LABEL)}</div>}
         </div>
       )}
 

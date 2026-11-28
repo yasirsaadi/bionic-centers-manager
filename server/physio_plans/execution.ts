@@ -76,6 +76,8 @@ export async function hasApprovedPlan(patientId: number): Promise<boolean> {
 }
 
 /** **«إنهاء الجلسة»** — كلُّ شيءٍ في معاملةٍ واحدة. */
+const arDigitsOf = (n: number) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+
 export async function executeSession(p: {
   planId: number; items: ExecutionItemInput[]; noteToSpecialist: string | null; sessionDate: string; shift: "morning" | "evening";
   actor: Actor; canDryNeedle: boolean; visitCustomDate: string | null;
@@ -86,11 +88,28 @@ export async function executeSession(p: {
   exercises?: ExerciseItemInput[] | null; phasePosition?: number | null;
   /** اختارها المعالجُ من القائمة — وإلّا فالمرحلةُ المرسَلة افتراضُ الشاشة، يُعاد حسابُه هنا تحت قفل الخطّة. */
   phaseManual?: boolean;
+  /** §4.hb D9 — نسخةُ خطّة Opus التي عرضتها الشاشة؛ تُطابَق تحت قفل الخطّة. */
+  planVersion?: number | null;
 }) {
   return db.transaction(async (tx) => {
+    //  §4.hb D9 — خطّةُ Opus اعتُمدت قبل نظام النسخ (`opus_version` فارغ): نسخُها المحسوبة تُكتب الآن قبل أن تُختم الجلسة — فلا تُختم بالنسخة ١ وهي
+    //  تُنفَّذ على الثانية المحسوبة (عُدّلت صفوفُها قبل المرحلة الثالثة). وترتيبُ الأقفال D13: المريضُ أوّلاً ثمّ صفُّ الخطّة.
+    const pre = ((await tx.execute(sql`SELECT origin, opus_version FROM physio_plans WHERE id = ${p.planId}`)) as any).rows?.[0];
+    const backfill = pre?.origin === "opus" && pre.opus_version == null;
+    if (backfill) await (await import("../physio_agent/versions")).lockOpusPatientFirstTx(tx, p.planId);
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, p.planId)).for("update");
     if (!plan) throw new PlanError(404, "الخطّة غير موجودة");
     if (plan.status !== "approved") throw new PlanError(409, "تُنفَّذ الخطّةُ المعتمَدة وحدها");
+    let ensured: number | null = null;
+    if (backfill && plan.origin === "opus" && plan.opusVersion == null) {
+      const raw = ((await tx.execute(sql`SELECT * FROM physio_plans WHERE id = ${p.planId}`)) as any).rows[0];
+      ensured = await (await import("../physio_agent/versions")).ensureVersionOneTx(tx, raw, { userId: p.actor.userId, name: p.actor.name });
+    }
+    //  §4.hb D9 — **لا تُختم جلسةٌ بنسخةٍ لم يرها المعالج**: نسخةُ الشاشة = النافذةُ تحت القفل، وإلّا ٤٠٩ (وغيابُها من صفحةٍ أقدم كذلك).
+    const opusVersion = plan.origin === "opus" ? (ensured ?? plan.opusVersion ?? 1) : null;
+    if (opusVersion !== null && p.planVersion !== opusVersion) {
+      throw new PlanError(409, `عُدّلت الخطّة إلى النسخة ${arDigitsOf(opusVersion)} — أعد فتح الجلسة`, "plan_version_changed");
+    }
     const planLines = await tx.select({ deviceId: physioPlanDevices.deviceId, minutes: physioPlanDevices.minutes, code: devices.code,
       centreUse: physioPlanDevices.centreUse, displayOrder: physioPlanDevices.displayOrder,
       everyDays: physioPlanDevices.everyDays, times: physioPlanDevices.times })
@@ -184,7 +203,7 @@ export async function executeSession(p: {
     const [session] = await tx.insert(physioPlanSessions).values({
       planId: plan.id, patientId: plan.patientId, branchId: plan.branchId, sessionDate: p.sessionDate, shift: p.shift,
       executedBy: p.actor.userId, executedByName: p.actor.name, visitId: visit.id,
-      noteToSpecialist: p.noteToSpecialist, countsWritten: writeCounts, phasePosition,
+      noteToSpecialist: p.noteToSpecialist, countsWritten: writeCounts, phasePosition, planVersion: opusVersion,
     }).returning();
     if (p.exercises?.length) {
       await tx.insert(physioPlanSessionExercises).values(p.exercises.map((x) => {

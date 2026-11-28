@@ -192,8 +192,10 @@ async function main() {
   same("ق.٣ المستثناةُ لا تُرسل: المساعد، وتلميحاتُ المصروف، ومعاينةُ التصحيح، والدخولُ وتبديلُ الفرع وكلمةُ المرور، وأسئلةُ المساعد، وبطاقةُ المريض، والاتصالُ نفسُه",
     ["/api/ai/chat", "/api/guidance/expense", "/api/admin/operation-reversal/preview", "/api/verify-branch", "/api/verify-admin",
       "/api/auth/switch-branch", "/api/auth/change-password", "/api/ai/monthly-report", "/api/ai/smart-audit", "/api/ai/survey-reply",
-      "/api/ai/categorize-expense", "/api/ai/explain-anomaly", "/api/patient-card/me", "/api/live/stream"].map((p) => isBroadcastWrite("POST", p)),
-    Array(14).fill(false));
+      "/api/ai/categorize-expense", "/api/ai/explain-anomaly", "/api/patient-card/me", "/api/live/stream", "/api/physio/plans/12/opus-edit/preview"].map((p) => isBroadcastWrite("POST", p)),
+    Array(15).fill(false));
+  same("ق.٣ب **وحفظُ تعديل خطّة Opus يرسل** — معاينتُه وحدها قراءة (§4.hb)",
+    ["/api/physio/plans/12/opus-edit", "/api/physio/plans/12/opus-amend", "/api/physio/opus-jobs/3/proposal/save"].map((p) => isBroadcastWrite("POST", p)), [true, true, true]);
   same("ق.٤ وما يكتب يبقى خارج الاستثناء — ولو شابه اسمُه: معرفةُ المساعد، واقتراحُ الخطّة، وويب هوك تلغرام (يربط المريض)",
     ["/api/ai/knowledge/articles", "/api/patients/5/physio-plans/suggest", "/api/integrations/telegram/patient/webhook", "/api/ai/chat/extra"]
       .map((p) => isBroadcastWrite("POST", p)), [true, true, true, true]);

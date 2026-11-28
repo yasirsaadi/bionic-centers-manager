@@ -23,6 +23,7 @@ import * as store from "./store";
 import * as plans from "./plans";
 import { nudgeWorkerNow } from "./reconcile";
 import { loadExam } from "./context";
+import * as versions from "./versions";
 
 const SKIP_STATUS: Record<string, number> = {
   disabled: 503, not_v2: 409, exam_cancelled: 409, patient_deleted: 409, not_newest: 409, gate_closed: 409, job_active: 409,
@@ -96,11 +97,14 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
       //  قيدُ المعتمِد على هذه المعاينة (ملاحظةُ اعتماد العلامة الحمراء) — أوّلُ ما يقرؤه Opus، فيُقال على اللوح.
       const approval = ((await db.execute(sql`SELECT decision_note FROM physio_exam_red_flag_reviews WHERE exam_id = ${examId} AND status = 'approved'
           ORDER BY decided_at DESC NULLS LAST, id DESC LIMIT 1`)) as any).rows?.[0];
+      //  §4.hb — وظيفةُ «تعديل» طلبُ معتمِد: يلغيها معتمِدٌ وحده، وملاحظتُه لا تُعرض لغيره.
+      const revise = job?.kind === "revise";
       res.json({
-        job: job ? store.jobView(job, planId) : null, planStatus,
+        job: job ? store.jobView(job, planId, { approver }) : null, planStatus,
         approvalNote: approval?.decision_note ? String(approval.decision_note) : null,
         enabled: agentEnabled(), canRun: answerer && !active && !runBlocked, runBlocked,
-        canAnswer: Boolean(job && job.status === "needs_answers" && answerer), canCancel: Boolean(job && isActiveJobStatus(job.status) && answerer),
+        canAnswer: Boolean(job && job.status === "needs_answers" && answerer && !revise),
+        canCancel: Boolean(job && isActiveJobStatus(job.status) && (revise ? approver : answerer)),
         canSeeProposal: approver,
       });
     } catch (e) { fail(res, e); }
@@ -112,7 +116,7 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     try {
       const job = await store.answerQuestions(id, req.body?.answers, actorOf(req), mayAnswer(req));
       nudgeWorkerNow();
-      res.status(202).json({ job: store.jobView(job) });
+      res.status(202).json({ job: store.jobView(job, null, { approver: canApproveProtocols(sess(req)) }) });
     } catch (e) { fail(res, e); }
   });
 
@@ -120,7 +124,8 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     const id = idOf(req.params.id);
     if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
     try {
-      res.json({ job: store.jobView(await store.cancelJob(id, actorOf(req), mayAnswer(req))) });
+      const approver = canApproveProtocols(sess(req));
+      res.json({ job: store.jobView(await store.cancelJob(id, actorOf(req), mayAnswer(req), approver), null, { approver }) });
     } catch (e) { fail(res, e); }
   });
 
@@ -147,9 +152,44 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
 
   app.get("/api/physio/opus-plans", isAuthenticated, async (req: any, res) => {
     if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "خططُ Opus للمسؤول والمشرف العام" });
-    const view = req.query?.view === "stale" ? "stale" : req.query?.view === "decided" ? "decided" : "pending";
     try {
+      //  §4.hb — «تعديلاتٌ مقترحة»: اقتراحاتُ Opus المنتظرة على خططٍ معتمَدة قائمة.
+      if (req.query?.view === "proposals") return res.json({ view: "proposals", rows: await plans.listOpusProposals() });
+      const view = req.query?.view === "stale" ? "stale" : req.query?.view === "decided" ? "decided" : "pending";
       res.json({ view, rows: await plans.listOpusPlans(view) });
+    } catch (e) { fail(res, e); }
+  });
+
+  // ══ §4.hb — التعديلُ بعد الاعتماد: حالُه واقتراحُ Opus (المعتمِد وحده) ═════════════════════════════════
+  const refusedRes = (res: any, r: versions.Refused) => res.status(r.status).json({ error: r.error, code: r.code, ...(r.extra ?? {}) });
+  app.get("/api/physio/plans/:id/opus-revision", isAuthenticated, async (req: any, res) => {
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "تعديلُ خطّة Opus للمسؤول والمشرف العام" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const v = await versions.opusRevisionView(id);
+      if (!v) return res.status(404).json({ error: "الخطّة غير موجودة" });
+      res.json(v);
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/physio/opus-jobs/:id/proposal/save", isAuthenticated, async (req: any, res) => {
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يحفظ اقتراحَ Opus المسؤولُ أو المشرفُ العام", code: "approver_only" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const r = await versions.acceptProposal(id, req.body, actorOf(req));
+      if (!r.ok) return refusedRes(res, r);
+      res.json({ version: r.version, plan: r.plan });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/physio/opus-jobs/:id/proposal/discard", isAuthenticated, async (req: any, res) => {
+    if (!canApproveProtocols(sess(req))) return res.status(403).json({ error: "يتجاهل اقتراحَ Opus المسؤولُ أو المشرفُ العام", code: "approver_only" });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(400).json({ error: "رقمٌ غير صالح" });
+    try {
+      const r = await versions.discardProposal(id, req.body, actorOf(req));
+      if (!r.ok) return refusedRes(res, r);
+      res.json({ ok: true });
     } catch (e) { fail(res, e); }
   });
 }

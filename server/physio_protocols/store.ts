@@ -2,6 +2,7 @@
 import { sortBranchesForDisplay } from "@shared/branch_order";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
+import { logAudit } from "../accounting/ledger";
 import {
   branches, devices, physioDeviceBranches, physioProtocolChecklist, physioProtocolDevices, physioProtocolImages, physioProtocolMeasures, physioProtocols,
   type PhysioProtocol,
@@ -236,7 +237,10 @@ export async function createProtocol(input: ProtocolInput, actor: Actor) {
  * تعديلٌ كامل — والحالةُ بعده يقرّرها المُنادي (`statusAfterEdit`). يُرجع ما قبلُ وما بعدُ لسطر التدقيق.
  * **ولا يبقى معتمَداً وفيه جهازٌ مستعمَلٌ ناقصُ الإعدادات** (§4.dn): يعود مسوّدةً ويقول لماذا (`settingsBlockers`).
  */
-export async function updateProtocol(id: number, input: ProtocolInput, requestedStatus: ProtocolStatus, actor: Actor) {
+export const MAX_TOTAL_RANGE_ERROR = "أقصى عدد الجلسات بين عدد الجلسات و٣٠٠";
+export const TOTAL_ABOVE_MAX_ERROR = "عددُ الجلسات فوق الأقصى المكتوب — يرفعه المسؤولُ أو المشرفُ العام";
+export async function updateProtocol(id: number, input: ProtocolInput, requestedStatus: ProtocolStatus, actor: Actor,
+  opts: { maxTotalSessions?: number | null } = {}) {
   const found = await assertDevices(input.devices);
   const settingsBlockers = blockersOf(input.devices, found);
   const nextStatus: ProtocolStatus = requestedStatus === "approved" && settingsBlockers.length ? "draft" : requestedStatus;
@@ -244,15 +248,35 @@ export async function updateProtocol(id: number, input: ProtocolInput, requested
     return await db.transaction(async (tx) => {
       const [before] = await tx.select().from(physioProtocols).where(eq(physioProtocols.id, id)).for("update");
       if (!before) throw new ProtocolError(404, "البروتوكول غير موجود");
+      //  §4.hb C1 — «أقصى عدد جلسات (مع التمديد المكتوب)»: يُفحص حين يتغيّر هو أو العدد؛ والفارغُ «بلا تمديد» (السقفُ = العدد).
+      const maxGiven = opts.maxTotalSessions !== undefined;
+      const max = maxGiven ? opts.maxTotalSessions! : before.maxTotalSessions;
+      const total = input.totalSessions ?? null;
+      if (max !== null && max !== undefined && (max > 300 || (total !== null && max < total))) {
+        const maxChanged = maxGiven && opts.maxTotalSessions !== before.maxTotalSessions;
+        throw new ProtocolError(400, maxChanged || max > 300 ? MAX_TOTAL_RANGE_ERROR : TOTAL_ABOVE_MAX_ERROR);
+      }
       const beforeDevices = await tx.select().from(physioProtocolDevices).where(eq(physioProtocolDevices.protocolId, id));
       const demote = before.status === "approved" && nextStatus === "draft";
       const [after] = await tx.update(physioProtocols).set({
         ...rowValues(input), status: nextStatus,
+        ...(maxGiven ? { maxTotalSessions: opts.maxTotalSessions } : {}),
         ...(demote ? { approvedBy: null, approvedByName: null, approvedAt: null } : {}),
         updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date(),
       }).where(eq(physioProtocols.id, id)).returning();
       await writeDevices(tx, id, input.devices);
-      return { before: { ...before, devices: beforeDevices }, after, demoted: demote, settingsBlockers };
+      //  سقفٌ نزل تحت خطّة Opus نافذة: تنبيهٌ لا منع — تبقى كما هي حتى تُعدَّل (والبوّابةُ تقولها عند التعديل التالي).
+      const warnings: string[] = [];
+      const ceiling = Math.max(after.totalSessions ?? 1, after.maxTotalSessions ?? after.totalSessions ?? 1);
+      if (maxGiven && opts.maxTotalSessions !== before.maxTotalSessions) {
+        const over = await tx.execute(sql`SELECT pl.id, pl.total_sessions, p.name FROM physio_plans pl JOIN patients p ON p.id = pl.patient_id
+            WHERE pl.protocol_id = ${id} AND pl.origin = 'opus' AND pl.status = 'approved' AND NOT pl.out_of_library AND pl.total_sessions > ${ceiling}`);
+        for (const r of (over as any).rows ?? []) warnings.push(`خطّة المريض ${r.name} فيها ${String(r.total_sessions).replace(/\d/g, (d: string) => "٠١٢٣٤٥٦٧٨٩"[Number(d)])} جلسة — تبقى كما هي حتى تُعدَّل`);
+        await logAudit({ entityType: "physio_protocol", entityId: id, action: "max_total_sessions", userId: actor.userId, userName: actor.name,
+          oldValues: { maxTotalSessions: before.maxTotalSessions }, newValues: { maxTotalSessions: opts.maxTotalSessions, overPlans: warnings.length },
+          notes: "أقصى عدد الجلسات مع التمديد المكتوب", tx });
+      }
+      return { before: { ...before, devices: beforeDevices }, after, demoted: demote, settingsBlockers, warnings };
     });
   } catch (e: any) {
     if (e?.code === "23505") throw new ProtocolError(409, "هذا الرمزُ مستعملٌ لبروتوكولٍ آخر");

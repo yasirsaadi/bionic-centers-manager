@@ -3305,6 +3305,8 @@ export const physioPlans = pgTable("physio_plans", {
   outOfLibrary: boolean("out_of_library").notNull().default(false),
   sources: jsonb("sources").$type<{ title: string; url: string; org?: string | null; year?: number | null; usedFor?: string | null }[]>().notNull().default([]),
   opusStaleReason: text("opus_stale_reason"),
+  //  ترحيل ٢٠٠ (§4.hb) — رقمُ نسخة خطّة Opus النافذة (`physio_plan_versions`).
+  opusVersion: integer("opus_version"),
   createdBy: integer("created_by").references(() => systemUsers.id),
   createdByName: text("created_by_name"),
   updatedBy: integer("updated_by").references(() => systemUsers.id),
@@ -3404,6 +3406,8 @@ export const physioPlanSessions = pgTable("physio_plan_sessions", {
   cancelReason: text("cancel_reason"),
   //  ترحيل ١٣٤ (§4.dr) — المرحلةُ التي نُفّذت تمارينُها في هذه الجلسة.
   phasePosition: integer("phase_position"),
+  //  ترحيل ٢٠٠ (§4.hb) — نسخةُ خطّة Opus التي نُفّذت عليها الجلسة (وللخطّة اليدوية فارغ).
+  planVersion: integer("plan_version"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   byPlan: index("idx_physio_plan_sessions_plan").on(t.planId),
@@ -3521,6 +3525,18 @@ export const physioAgentJobs = pgTable("physio_agent_jobs", {
   result: jsonb("result").$type<Record<string, any>>().notNull().default({}),
   requestedBy: integer("requested_by").references(() => systemUsers.id),
   requestedByName: text("requested_by_name"),
+  //  ترحيل ٢٠٠ (§4.hb) — وظيفةُ «تعديل»: الخطّةُ والنطاقُ (return · amend) والملاحظةُ والنسخةُ الأساس، واقتراحُ Opus بعد الاعتماد بحاله.
+  planId: integer("plan_id").references((): AnyPgColumn => physioPlans.id, { onDelete: "set null" }),
+  reviseScope: text("revise_scope"),
+  reviseNote: text("revise_note"),
+  baseVersion: integer("base_version"),
+  baseJobId: integer("base_job_id"),
+  proposalStatus: text("proposal_status"),
+  proposalReason: text("proposal_reason"),
+  proposalDecidedBy: integer("proposal_decided_by").references(() => systemUsers.id),
+  proposalDecidedByName: text("proposal_decided_by_name"),
+  proposalDecidedAt: timestamp("proposal_decided_at", { withTimezone: true }),
+  savedVersion: integer("saved_version"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -3528,6 +3544,34 @@ export const physioAgentJobs = pgTable("physio_agent_jobs", {
   index("ix_paj_patient").on(t.patientId),
 ]);
 export type PhysioAgentJob = typeof physioAgentJobs.$inferSelect;
+
+/**
+ * **نسخُ خطّة Opus المرقّمة** (ترحيل ٢٠٠، §4.hb — قرارُ المالك ٦): لقطةٌ كاملة لا تتغيّر لكلّ حفظ (الاعتمادُ ثمّ كلُّ تعديلٍ مباشر أو تعديلٍ من Opus)،
+ * بمَن ومتى ولماذا وكيف. الأولى = الاعتماد. والصفوفُ الحيّة تُكتب من اللقطة دائماً (`server/physio_agent/versions.ts`).
+ */
+export const physioPlanVersions = pgTable("physio_plan_versions", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  version: integer("version").notNull(),
+  how: text("how").notNull(),
+  reason: text("reason"),
+  approvalNote: text("approval_note"),
+  snapshot: jsonb("snapshot").$type<Record<string, any>>().notNull(),
+  snapshotHash: text("snapshot_hash").notNull(),
+  gateLog: jsonb("gate_log").$type<any[]>().notNull().default([]),
+  diffSummaryAr: text("diff_summary_ar"),
+  jobId: integer("job_id").references(() => physioAgentJobs.id, { onDelete: "set null" }),
+  acknowledgedIssueIds: jsonb("acknowledged_issue_ids").$type<string[]>().notNull().default([]),
+  backfilled: boolean("backfilled").notNull().default(false),
+  createdBy: integer("created_by").references(() => systemUsers.id),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("uq_ppv_plan_version").on(t.planId, t.version),
+  index("ix_ppv_patient").on(t.patientId),
+]);
+export type PhysioPlanVersion = typeof physioPlanVersions.$inferSelect;
 
 export const physioPlanAssignees = pgTable("physio_plan_assignees", {
   planId: integer("plan_id").notNull().references(() => physioPlans.id, { onDelete: "cascade" }),

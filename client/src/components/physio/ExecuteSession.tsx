@@ -31,6 +31,8 @@ interface PlanLite {
   scheduleHistory?: Record<number, string[]>;
   /** §4.dr — مراحلُ الخطّة بتمارينها: تمارينُ مرحلة هذه الجلسة تُعلَّم واحداً واحداً. */
   phases?: PlanPhase[];
+  /** §4.hb D9 — خطّةُ Opus: النسخةُ النافذة، تُرسَل مع الجلسة (والخادمُ يردّ ٤٠٩ إن تغيّرت تحت اليد). */
+  origin?: string | null; opusVersion?: number | null; executionVersion?: number | null;
 }
 interface PlanPhase {
   position: number; nameAr: string; sessionFrom?: number | null; sessionTo?: number | null;
@@ -52,6 +54,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   //  المسؤولُ أو حاملُ «زيارات أقدم من ٣ أيام» (§4.fr).
   const mayBackdate = mayBackdateVisits(useBranchSession() as any);
   const canNeedle = permissions.canDryNeedle === true;
+  const [reloadKey, setReloadKey] = useState(0);
   const q = useQuery<PlanLite>({
     queryKey: [`/api/physio/plans/${planId}`],
     queryFn: async () => (await apiRequest("GET", `/api/physio/plans/${planId}`)).json(),
@@ -65,6 +68,8 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
   //  اختارها المعالجُ من القائمة؟ — وإلّا فهي افتراضُ رقم الجلسة: تُعاد كلّما تغيّر عددُ الجلسات، ويعيد الخادمُ حسابَها تحت قفل الخطّة.
   const [phaseManual, setPhaseManual] = useState(false);
   const [exLines, setExLines] = useState<ExLine[]>([]);
+  //  §4.hb D9 — **النسخةُ التي فُتحت عليها الشاشة**: تُرسَل هي لا ما يصل بعدها بالتحديث الحيّ؛ وإن تغيّرت قيل ذلك وأُعيد الفتح.
+  const [shownVersion, setShownVersion] = useState<number | null>(null);
   const phaseAt = (pos: number | null) => (q.data?.phases ?? []).find((p) => p.position === pos) ?? null;
   const showPhase = (pos: number | null) => {
     setPhasePos(pos);
@@ -86,7 +91,8 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
     }));
     setNote(""); setDate(baghdadTodayYmd());
     setPhaseManual(false);
-  }, [q.data?.id, planId]);
+    setShownVersion(q.data.origin === "opus" ? q.data.executionVersion ?? null : null);
+  }, [q.data?.id, planId, reloadKey]);
   //  **مرحلةُ رقم هذه الجلسة** — تُعاد حين يتحدّث عددُ الجلسات (خطّةٌ مخزَّنة ثمّ أحدث، أو جلسةٌ سجّلها زميل) ما لم يخترها المعالج.
   const sessionsSoFar = q.data?.rotation?.sessionsSoFar ?? 0;
   const phasesKey = (q.data?.phases ?? []).map((p) => `${p.position}:${p.sessionFrom ?? ""}-${p.sessionTo ?? ""}:${p.exercises.map((x) => x.exerciseId).join(".")}`).join("|");
@@ -108,6 +114,7 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
       date, noteToSpecialist: note.trim() || undefined,
       items: lines.map((l) => ({ deviceId: l.deviceId, done: l.done, minutes: l.minutes === "" ? null : Number(l.minutes), note: l.note.trim() || null })),
       ...(exerciseDeviceOff ? {} : { exercises: exercisesBody(), phasePosition: phasePos, phaseManual }),
+      ...(q.data?.origin === "opus" ? { planVersion: shownVersion } : {}),
     })).json(),
     onSuccess: () => {
       toast({ title: "سُجّلت الجلسة", description: "وكُتبت زيارةُ الجلسة في ملفّ المريض" });
@@ -147,6 +154,15 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
         {q.isLoading || !q.data ? <div className="text-sm text-muted-foreground">جارٍ التحميل…</div> : (
           <div className="space-y-3">
             <div className="text-sm"><b>{q.data.patient?.name}</b>{q.data.patient?.code ? ` (${q.data.patient.code})` : ""} — {q.data.titleAr}</div>
+            {q.data.origin === "opus" && shownVersion !== null && (
+              <p className="text-[11px] text-violet-900 m-0" data-testid="exec-plan-version">تُنفَّذ على النسخة {arDigits(shownVersion)} من الخطّة.</p>
+            )}
+            {q.data.origin === "opus" && shownVersion !== null && (q.data.executionVersion ?? null) !== shownVersion && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 flex flex-wrap items-center gap-2" data-testid="exec-version-changed">
+                <span className="min-w-0">عُدّلت الخطّة الآن إلى النسخة {arDigits(q.data.executionVersion ?? 0)} — أعد فتح الجلسة على النسخة الجديدة قبل الحفظ.</span>
+                <Button size="sm" variant="outline" onClick={() => setReloadKey((k) => k + 1)} data-testid="button-exec-reload-version">افتحها على النسخة الجديدة</Button>
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">علّم ما نُفّذ وعدّل دقائقه إن اختلفت، واكتب سببَ ما لم يُنفَّذ. لا يُضاف جهازٌ ولا يُحذف بند — التعديلُ للأخصائيّ.</p>
             {q.data.devices.map((d, i) => {
               const l = lines[i];
@@ -231,7 +247,8 @@ export function ExecuteSessionDialog({ planId, onClose }: { planId: number | nul
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button disabled={m.isPending || !q.data || noneDone || missingReason || allExercisesSkipped || !dateVerdict.ok} onClick={() => m.mutate()} data-testid="button-finish-session">
+          <Button disabled={m.isPending || !q.data || noneDone || missingReason || allExercisesSkipped || !dateVerdict.ok
+            || (q.data.origin === "opus" && (q.data.executionVersion ?? null) !== shownVersion)} onClick={() => m.mutate()} data-testid="button-finish-session">
             {m.isPending ? "جارٍ الحفظ…" : "إنهاء الجلسة"}
           </Button>
         </DialogFooter>
@@ -248,6 +265,8 @@ interface SessionRow {
   cancelledAt: string | null; cancelledByName: string | null; cancelReason: string | null; items: SessionItem[];
   /** §4.dr — تمارينُ المرحلة في الجلسة (فارغةٌ لجلسةٍ قبل ترحيل ١٣٤). */
   exercises?: SessionExercise[]; phasePosition?: number | null;
+  /** §4.hb D9 — نسخةُ خطّة Opus التي نُفّذت عليها الجلسة. */
+  planVersion?: number | null;
 }
 
 export function PlanSessionsHistory({ planId }: { planId: number }) {
@@ -278,6 +297,7 @@ export function PlanSessionsHistory({ planId }: { planId: number }) {
           <div className="flex items-center gap-2 flex-wrap">
             <b>{s.sessionDate}</b>
             <span className="text-xs text-muted-foreground">{s.shift === "evening" ? "مسائي" : "صباحي"} · {s.executedByName ?? "—"}</span>
+            {s.planVersion ? <span className="rounded-full bg-violet-50 text-violet-800 border border-violet-200 px-1.5 text-[11px]" data-testid={`session-version-${s.id}`}>النسخة {arDigits(s.planVersion)}</span> : null}
             {s.cancelledAt && <span className="text-xs text-red-700">ملغاة — {s.cancelledByName ?? ""}: {s.cancelReason}</span>}
             {!s.cancelledAt && q.data?.canCancel && (
               <Button size="sm" variant="ghost" className="ms-auto h-7 text-destructive print:hidden" onClick={() => { setCancelling(s); setReason(""); }}

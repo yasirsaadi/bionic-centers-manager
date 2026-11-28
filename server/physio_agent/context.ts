@@ -7,7 +7,7 @@ import { readStoredAssessment } from "@shared/physio_initial_assessment";
 import { anyAssessmentEnglishText, conditionOf, examV2Acuity, forbiddenDevices, isExamV2, moduleOf, type PhysioExamV2 } from "@shared/physio_exam_v2";
 import { baghdadTodayYmd } from "@shared/visit_date";
 import { btlCatalogForModel } from "@shared/btl_devices";
-import { patientIdentifierSet, redactAuthoredText, type IdentifierSet } from "@shared/physio_agent_privacy";
+import { patientIdentifierSet, redactAuthoredText, redactDeep, type IdentifierSet } from "@shared/physio_agent_privacy";
 import { mergeForbidden, type GateContext, type GateExercise, type GateForbidden, type GateProtocol } from "@shared/physio_agent_gates";
 import { MAX_QUESTION_ROUNDS, protocolSessionCeiling, WEB_FETCH_BUDGET, WEB_SEARCH_BUDGET, type QaRound } from "@shared/physio_agent";
 import { AGE_GROUPS, PROTOCOL_CATEGORIES, centreUseOf } from "@shared/physio_protocols";
@@ -208,11 +208,26 @@ export interface AgentContext {
   forbidden: GateForbidden[]; constraints: ApproverConstraint[];
   library: Awaited<ReturnType<typeof libraryIndex>>; knownDevices: Set<string>; branchDevices: Set<string>;
   initialUser: string;
+  /** §4.hb — «كتلةُ التعديل» من الخادم: آخرُ كتلة نصٍّ في الرسالة الأولى وحدها (والملاحظةُ منقّاة). */
+  revisionBlock: string | null;
+  /** كائنُ «التعديل» منقّىً في العمق — للمراجع والمدقّق. */
+  revisionRedacted: Record<string, unknown> | null;
+}
+
+/** ما يقوله الخادمُ لـ Opus في وظيفة «تعديل» بدل مهمّة الكتابة. */
+export const REVISION_TASK_LINE = "Revise the existing plan as instructed by the REVISION block.";
+export interface RevisionForContext {
+  scope: "return" | "amend"; note: string; obj: Record<string, unknown>;
+  priorAnswers: { round: number; at: string; examId: number; sameExamAsContext: boolean; answers: { id: string; questionAr: string; affects: string; answer: string }[] }[];
+  forbidden: { deviceCode: string; reasonAr: string; source: "exam" | "approver" }[];
+}
+export function revisionBlockText(scope: string, note: string): string {
+  return `<<REVISION BLOCK — issued by the server>>\nscope: ${scope}\nnote: ${note}\n<<END REVISION BLOCK>>`;
 }
 
 /** **السياقُ كلُّه** ورسالةُ المستخدم الأولى JSON بمفاتيحَ ثابتة. */
 export async function buildAgentContext(job: { patientId: number; examId: number; branchId: number; qa: QaRound[]; questionRounds: number }, ex: any = db,
-  web: { searches: number; fetches: number } = { searches: 0, fetches: 0 }): Promise<AgentContext> {
+  web: { searches: number; fetches: number } = { searches: 0, fetches: 0 }, revision: RevisionForContext | null = null): Promise<AgentContext> {
   const exam = await loadExam(ex, job.examId);
   if (!exam) throw new Error("exam not found");
   const today = baghdadTodayYmd();
@@ -220,7 +235,8 @@ export async function buildAgentContext(job: { patientId: number; examId: number
   const a = readStoredAssessment(exam.assessment);
   const v2 = isExamV2(a) ? a : null;
   const constraints = await approverConstraints(ex, job.patientId, exam.id, ids);
-  const forbidden = forbiddenOf(exam, constraints, today);
+  //  §4.hb D10 — في «التعديل» الممنوعُ اتّحادُ المعاينة وكلِّ ما منعه المعتمِدون للمريض (وما منعه في النسخة النافذة).
+  const forbidden = revision ? revision.forbidden.map((f) => ({ deviceCode: f.deviceCode, reasonAr: f.reasonAr, source: f.source })) : forbiddenOf(exam, constraints, today);
   const library = await libraryIndex(ex);
   const knownDevices = await knownDeviceCodes(ex);
   const branchDevices = await branchDeviceCodes(ex, job.branchId);
@@ -233,8 +249,8 @@ export async function buildAgentContext(job: { patientId: number; examId: number
   const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^\d.]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
   const history = await patientHistory(ex, job.patientId, exam.id, ids, today);
   const examText = redactAuthoredText(anyAssessmentEnglishText(a, { today }) ?? "", ids);
-  const payload = {
-    task: "Write one physiotherapy treatment plan for this patient from the signed examination below.",
+  const payload: Record<string, unknown> = {
+    task: revision ? REVISION_TASK_LINE : "Write one physiotherapy treatment plan for this patient from the signed examination below.",
     today,
     patient: { ageYearsFile: num(p.age), ageYearsExam: core.ageYears ?? null, sex: core.sex ?? null, weightKg: core.weightKg ?? num(p.weight),
       heightCm: num(p.height), pregnant: core.pregnant ?? null, breastfeeding: core.breastfeeding ?? null },
@@ -252,15 +268,25 @@ export async function buildAgentContext(job: { patientId: number; examId: number
     },
     history,
     //  الأجوبةُ نصٌّ كتبه موظّفٌ — تُنقّى كغيرها، **ولا اسمَ لمن أجاب**.
-    qa: job.qa.map((r) => ({ round: r.round, at: r.at, answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, affects: a.affects,
-      answer: redactAuthoredText(a.answer, ids) })) })),
+    //  §4.hb — في «التعديل» أجوبةُ سلسلة الوظائف السابقة (ما أُجيب على معاينةٍ أقدم يُقال إنّه قد يكون قديماً).
+    qa: revision
+      ? revision.priorAnswers.map((r) => ({ round: r.round, at: r.at, sameExamAsContext: r.sameExamAsContext,
+        ...(r.sameExamAsContext ? {} : { note: "answered on an earlier exam — may be outdated (DATA)" }),
+        answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, affects: a.affects, answer: redactAuthoredText(a.answer, ids) })) }))
+      : job.qa.map((r) => ({ round: r.round, at: r.at, answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, affects: a.affects,
+        answer: redactAuthoredText(a.answer, ids) })) })),
     library: { protocols: library, lists: { exerciseKinds: EXERCISE_KINDS, bodyRegions: BODY_REGIONS, protocolCategories: PROTOCOL_CATEGORIES, ageGroups: AGE_GROUPS } },
     branch: { devices: devs.map((d) => ({ code: d.code, nameEn: d.name_en, nameAr: d.name_ar ?? V2_DEVICE_NAMES[d.code] ?? d.code, availableInBranch: branchDevices.has(String(d.code)) })) },
     btlCatalog: btlCatalogForModel(),
-    rules: { maxQuestionRounds: MAX_QUESTION_ROUNDS, roundsUsed: job.questionRounds,
-      webBudget: { searches: WEB_SEARCH_BUDGET, fetches: WEB_FETCH_BUDGET, used: web, reached: web.searches >= WEB_SEARCH_BUDGET || web.fetches >= WEB_FETCH_BUDGET } },
+    rules: revision
+      ? { questionsAvailable: false, webBudget: { searches: WEB_SEARCH_BUDGET, fetches: WEB_FETCH_BUDGET, used: web, reached: web.searches >= WEB_SEARCH_BUDGET || web.fetches >= WEB_FETCH_BUDGET } }
+      : { maxQuestionRounds: MAX_QUESTION_ROUNDS, roundsUsed: job.questionRounds,
+        webBudget: { searches: WEB_SEARCH_BUDGET, fetches: WEB_FETCH_BUDGET, used: web, reached: web.searches >= WEB_SEARCH_BUDGET || web.fetches >= WEB_FETCH_BUDGET } },
   };
-  return { exam, fingerprint: fingerprintOf(exam), ids, today, forbidden, constraints, library, knownDevices, branchDevices, initialUser: JSON.stringify(payload) };
+  const revisionRedacted = revision ? redactDeep(revision.obj, ids) : null;
+  if (revisionRedacted) payload.revision = revisionRedacted;
+  return { exam, fingerprint: fingerprintOf(exam), ids, today, forbidden, constraints, library, knownDevices, branchDevices, initialUser: JSON.stringify(payload),
+    revisionBlock: revision ? revisionBlockText(revision.scope, redactAuthoredText(revision.note, ids)) : null, revisionRedacted };
 }
 
 /** سياقُ البوّابة — يُعاد بناؤه طازجاً قبل كلّ تطبيق (البوّابةُ والممنوعُ والتوفّرُ تتغيّر). */

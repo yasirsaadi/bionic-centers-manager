@@ -7,9 +7,10 @@ import { logAudit } from "../accounting/ledger";
 import { notifyChange, notifyUser } from "../live/updates";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import {
-  AUTO_TRIGGERS, isActiveJobStatus, JOB_ERROR_TEXTS, JOB_MAX_FAILURES, MAX_QUESTION_ROUNDS, validateAnswers,
-  type AgentQuestion, type JobStatus, type JobTrigger, type QaRound,
+  AUTO_TRIGGERS, isActiveJobStatus, JOB_ERROR_TEXTS, JOB_MAX_FAILURES, MAX_QUESTION_ROUNDS, REVISE_TRIGGER, jobErrorDetailAr, validateAnswers,
+  isOpusAwaiting, type AgentQuestion, type JobStatus, type JobTrigger, type QaRound, type ReviseScope,
 } from "@shared/physio_agent";
+import { EDIT_GATE_REASONS } from "@shared/physio_plan_edit_gates";
 import { examAgentGate } from "../physio_exam_reviews/store";
 import { fingerprintOf, loadExam, newestV2ExamId } from "./context";
 import { agentEnabled } from "./model";
@@ -17,6 +18,7 @@ import { physioOfferingBranchIds } from "../physio_plans/store";
 import { isExamV2 } from "@shared/physio_exam_v2";
 import { readStoredAssessment } from "@shared/physio_initial_assessment";
 import { GATE_REASONS } from "@shared/physio_agent_gates";
+const GATE_REASONS_ALL: Record<string, string> = { ...GATE_REASONS, ...EDIT_GATE_REASONS };
 
 export class AgentJobError extends Error {
   constructor(public status: number, message: string, public code: string) { super(message); }
@@ -32,6 +34,9 @@ export interface JobRecord {
   heartbeatAt: Date | null; cancelRequested: boolean; cancelReason: string | null; startedAt: Date | null; finishedAt: Date | null;
   errorCode: string | null; error: string | null; errorDetail: string | null; checkpoint: Record<string, any>; result: Record<string, any>;
   requestedBy: number | null; requestedByName: string | null; createdAt: Date; updatedAt: Date;
+  //  ترحيل ٢٠٠ (§4.hb) — وظيفةُ «تعديل».
+  planId: number | null; reviseScope: ReviseScope | null; reviseNote: string | null; baseVersion: number | null; baseJobId: number | null;
+  proposalStatus: string | null; proposalReason: string | null; savedVersion: number | null; proposalDecidedByName: string | null; proposalDecidedAt: Date | null;
 }
 const rows = (r: any): Record<string, any>[] => (r?.rows ?? []) as Record<string, any>[];
 export function jobOf(r: Record<string, any>): JobRecord {
@@ -43,19 +48,30 @@ export function jobOf(r: Record<string, any>): JobRecord {
     cancelRequested: Boolean(r.cancel_requested), cancelReason: r.cancel_reason ?? null, startedAt: r.started_at ?? null, finishedAt: r.finished_at ?? null,
     errorCode: r.error_code ?? null, error: r.error ?? null, errorDetail: r.error_detail ?? null, checkpoint: r.checkpoint ?? {}, result: r.result ?? {},
     requestedBy: r.requested_by == null ? null : Number(r.requested_by), requestedByName: r.requested_by_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+    planId: r.plan_id == null ? null : Number(r.plan_id), reviseScope: r.revise_scope ?? null, reviseNote: r.revise_note ?? null,
+    baseVersion: r.base_version == null ? null : Number(r.base_version), baseJobId: r.base_job_id == null ? null : Number(r.base_job_id),
+    proposalStatus: r.proposal_status ?? null, proposalReason: r.proposal_reason ?? null, savedVersion: r.saved_version == null ? null : Number(r.saved_version),
+    proposalDecidedByName: r.proposal_decided_by_name ?? null, proposalDecidedAt: r.proposal_decided_at ?? null,
   };
 }
 
-/** **ما يُعرض من الوظيفة** — بلا نتيجتها الداخلية (المسوّداتُ والمراجعاتُ للمعتمِد من «الخطّة المقترحة» وحدها). */
-export function jobView(j: JobRecord, planId: number | null = null) {
+/** **ما يُعرض من الوظيفة** — بلا نتيجتها الداخلية (المسوّداتُ والمراجعاتُ للمعتمِد من «الخطّة المقترحة» وحدها).
+ *  ووظيفةُ «تعديل» (§4.hb): نوعُها ونطاقُها لكلّ قارئ، **وملاحظةُ المعتمِد وحالُ الاقتراح والسببُ المفصَّل للمعتمِد وحده**. */
+export const REVISE_ENDED_TEXT = "انتهى طلبُ المعتمِد إلى Opus";
+export function jobView(j: JobRecord, planId: number | null = null, opts: { approver?: boolean } = {}) {
+  const hideRevise = j.kind === "revise" && !opts.approver;
   return {
     id: j.id, examId: j.examId, patientId: j.patientId, status: j.status, stage: j.stage, stages: j.stages, trigger: j.trigger,
+    kind: j.kind, reviseScope: j.reviseScope,
+    ...(opts.approver ? { reviseNote: j.reviseNote, proposalStatus: j.proposalStatus, proposalReason: j.proposalReason, baseVersion: j.baseVersion,
+      savedVersion: j.savedVersion, errorDetailAr: jobErrorDetailAr(j.errorCode, j.errorDetail, GATE_REASONS_ALL) } : {}),
     questions: j.status === "needs_answers" ? j.questions : [], questionRounds: j.questionRounds, qa: j.qa.map((r) => ({ round: r.round, at: r.at, byName: r.byName,
       answers: r.answers.map((a) => ({ id: a.id, questionAr: a.questionAr, answer: a.answer })) })),
     failures: j.failures, maxFailures: j.maxFailures, cancelRequested: j.cancelRequested,
-    errorCode: j.errorCode, error: j.error,
+    //  وظيفةُ «تعديل» لغير المعتمِد: **نصٌّ ثابتٌ بلا ما كتبه Opus** — سببُ رفضه أو ما وجده قد يعيد ملاحظةَ المعتمِد بحرفها (§4.hb ٣.٦).
+    errorCode: j.errorCode, error: hideRevise ? (j.errorCode ? JOB_ERROR_TEXTS[j.errorCode] ?? REVISE_ENDED_TEXT : null) : j.error,
     decline: j.status === "failed" && j.errorCode === "agent_declined" ? j.result?.decline ?? null : null,
-    newFinding: j.status === "needs_exam_revision" ? j.result?.newFinding ?? null : null,
+    newFinding: j.status === "needs_exam_revision" && !hideRevise ? j.result?.newFinding ?? null : null,
     unresolvedCritical: j.errorCode === "unresolved_critical" ? [...(j.result?.unresolved?.reviewer ?? []), ...(j.result?.unresolved?.auditor ?? [])].filter((i: any) => i.severity === "critical") : [],
     //  أيُّ بوّابةٍ أوقفت الخطّة — بأسبابها العربية لا برموزها (الرموزُ في `error_detail`).
     blockingGates: j.status === "failed" && (j.errorCode === "gates_blocking" || j.errorCode === "empty_plan")
@@ -76,8 +92,12 @@ export function questionCheckpoint(cp: Record<string, any> | null | undefined): 
 export async function planStatusesOfJobs(jobIds: number[], ex: any = db): Promise<Map<number, { planId: number; status: string }>> {
   const out = new Map<number, { planId: number; status: string }>();
   if (!jobIds.length) return out;
+  const list = sql.join(jobIds.map((i) => sql`${i}`), sql`, `);
+  //  وظيفةُ «تعديل» (§4.hb) — خطّتُها من `plan_id`.
+  for (const r of rows(await ex.execute(sql`SELECT j.id AS job_id, p.id, p.status FROM physio_agent_jobs j JOIN physio_plans p ON p.id = j.plan_id
+      WHERE j.id IN (${list})`))) out.set(Number(r.job_id), { planId: Number(r.id), status: String(r.status) });
   for (const r of rows(await ex.execute(sql`SELECT id, status, agent_job_id FROM physio_plans
-      WHERE agent_job_id IN (${sql.join(jobIds.map((i) => sql`${i}`), sql`, `)})`))) out.set(Number(r.agent_job_id), { planId: Number(r.id), status: String(r.status) });
+      WHERE agent_job_id IN (${list})`))) out.set(Number(r.agent_job_id), { planId: Number(r.id), status: String(r.status) });
   return out;
 }
 
@@ -92,13 +112,15 @@ export async function runBlocker(ex: any, examId: number): Promise<{ code: strin
   if ((await newestV2ExamId(ex, exam.patientId)) !== exam.id) return b("not_newest", "وُقّعت بعدها معاينةٌ أحدث — يكتب Opus من الأحدث وحدها");
   const gate = await examAgentGate(exam.id, ex);
   if (!gate.allowed) return b("gate_closed", gate.reason);
-  if (await hasActivePlan(ex, exam.patientId)) return b("has_active_plan", "للمريض خطّةٌ قائمة معتمَدة — إرجاعُها إلى Opus في المرحلة القادمة");
+  if (await hasActivePlan(ex, exam.patientId)) return b("has_active_plan", HAS_ACTIVE_PLAN_TEXT);
   if (await awaitingOpusPlanOfExam(ex, exam.id)) return b("opus_plan_pending", "لهذه المعاينة خطّةُ Opus تنتظر الاعتماد — يحذفها المعتمِدُ من «الخطّة المقترحة» إن أراد إعادتَها");
   const patient = rows(await ex.execute(sql`SELECT branch_id FROM patients WHERE id = ${exam.patientId}`))[0];
   const branchId = exam.branchId ?? (patient?.branch_id == null ? null : Number(patient.branch_id));
   if (!(await branchOk(ex, branchId))) return b("branch_unavailable", "فرعُ المعاينة لا يقدّم العلاجَ الطبيعي أو مغلقٌ مؤقتاً");
   return null;
 }
+
+export const HAS_ACTIVE_PLAN_TEXT = "للمريض خطّةٌ قائمة معتمَدة — يعدّلها المعتمِدُ من صفحة الخطّة (مباشرةً أو بطلبٍ إلى Opus)";
 
 export async function lockPatientAgent(tx: any, patientId: number): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('physio_agent_patient'), ${patientId})`);
@@ -119,9 +141,11 @@ export async function latestJobsOfExams(examIds: number[], ex: any = db): Promis
       WHERE exam_id IN (${sql.join(examIds.map((i) => sql`${i}`), sql`, `)}) ORDER BY exam_id, id DESC`))) out.set(Number(r.exam_id), jobOf(r));
   return out;
 }
+/** خطّةُ الوظيفة: التي كتبتها (`agent_job_id`) أو — لوظيفة «تعديل» — التي تعمل عليها (`plan_id`)، فيرى الفاحصُ حالَ الخطّة على لوح Opus. */
 export async function planIdOfJob(jobId: number, ex: any = db): Promise<number | null> {
-  const r = rows(await ex.execute(sql`SELECT id FROM physio_plans WHERE agent_job_id = ${jobId}`))[0];
-  return r ? Number(r.id) : null;
+  const r = rows(await ex.execute(sql`SELECT COALESCE((SELECT id FROM physio_plans WHERE agent_job_id = ${jobId}),
+      (SELECT j.plan_id FROM physio_agent_jobs j JOIN physio_plans p ON p.id = j.plan_id WHERE j.id = ${jobId})) AS id`))[0];
+  return r?.id == null ? null : Number(r.id);
 }
 export async function activeJobOfPatient(ex: any, patientId: number): Promise<JobRecord | null> {
   const r = rows(await ex.execute(sql`SELECT * FROM physio_agent_jobs WHERE patient_id = ${patientId} AND status IN ('queued','running','needs_answers') LIMIT 1`))[0];
@@ -167,7 +191,7 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
   if (!gate.allowed) return skip("gate_closed", gate.reason);
   const active = await activeJobOfPatient(tx, exam.patientId);
   if (active) return skip("job_active", "Opus يعمل على خطّةٍ لهذا المريض الآن", active);
-  if (await hasActivePlan(tx, exam.patientId)) return skip("has_active_plan", "للمريض خطّةٌ قائمة معتمَدة — إرجاعُها إلى Opus في المرحلة القادمة");
+  if (await hasActivePlan(tx, exam.patientId)) return skip("has_active_plan", HAS_ACTIVE_PLAN_TEXT);
   const fp = fingerprintOf(exam);
   const awaiting = await awaitingOpusPlanOfExam(tx, exam.id);
   const auto = AUTO_TRIGGERS.includes(p.trigger);
@@ -215,8 +239,63 @@ export async function cancelActiveJobsTx(tx: any, p: { patientId: number; examId
         error_code = ${p.reason}, error = ${text}, finished_at = now(), locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${j.id}`);
     }
     await audit(tx, j.id, j.status === "running" && !p.hard ? "cancel_requested" : "cancel", p.actor, j.branchId, { reason: p.reason, from: j.status }, text);
+    //  §4.hb — طلبُ المعتمِد إلى Opus أُلغي لتغيّر المعاينة: يُقال له ليعيد طلبَه إن بقي لازماً (الملاحظةُ لا تنتقل إلى وظيفةٍ تلقائية).
+    if (!(j.status === "running" && !p.hard)) await lostRequestNoticeTx(tx, j, p.reason);
   }
   return list.map((j) => j.id);
+}
+
+export const LOST_REQUEST_REASONS = ["exam_changed", "superseded_by_newer_exam", "exam_cancelled", "gate_closed", "new_finding", "base_version_changed"];
+/** **إشعارُ الطلب الضائع** — وظيفةُ «تعديل» انتهت لتغيّر المعاينة أو لحفظ نسخةٍ أحدث قبلها: المعتمِدون وحدهم، برابط الخطّة. */
+export async function lostRequestNoticeTx(tx: any, j: Pick<JobRecord, "kind" | "planId" | "patientId" | "branchId">, code: string): Promise<void> {
+  if (j.kind !== "revise" || !LOST_REQUEST_REASONS.includes(code)) return;
+  const line = code === "base_version_changed"
+    ? "⚠️ حُفظت نسخةٌ أحدث من الخطّة فأُلغي طلبُك إلى Opus — أعد طلبك على النسخة الجديدة إن بقي لازماً"
+    : "⚠️ عُدّلت المعاينة فأُلغي طلبُك إلى Opus — أعد طلبك إن بقي لازماً";
+  await notifyApproversTx(tx, j as JobRecord, line, j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`);
+}
+
+/** وظيفةُ «تعديل» نشطة على هذه الخطّة؟ */
+export async function activeReviseJobOfPlan(ex: any, planId: number, scope?: ReviseScope): Promise<JobRecord | null> {
+  const r = rows(await ex.execute(sql`SELECT * FROM physio_agent_jobs WHERE plan_id = ${planId} AND kind = 'revise' AND status IN ('queued','running','needs_answers')
+    ${scope ? sql`AND revise_scope = ${scope}` : sql``} LIMIT 1`))[0];
+  return r ? jobOf(r) : null;
+}
+
+/**
+ * **طلبُ «تعديل» إلى Opus** (§4.hb ٣.١) — داخل معاملة المُستدعي بعد قفل المريض ثمّ صفّ الخطّة. `return`: خطّةٌ منتظرة (والقِدَمُ بممنوعٍ الآن مسموح —
+ * إعادةُ الكتابة تحت البوّابات علاجُه)، على معاينتها؛ `amend`: خطّةٌ معتمَدة بنسختها النافذة، على أحدث معاينةٍ حيّة. وظيفةٌ نشطةٌ واحدة للمريض.
+ */
+export async function enqueueReviseTx(tx: any, p: { plan: Record<string, any>; scope: ReviseScope; note: string; actor: Actor; baseVersion?: number | null;
+  examId: number; staleness?: string | null }): Promise<JobRecord> {
+  const plan = p.plan;
+  const patientId = Number(plan.patient_id);
+  if (!agentEnabled()) throw new AgentJobError(503, "وكيلُ Opus غيرُ مفعّل (لا مفتاحَ لخدمة Claude)", "disabled");
+  const note = String(p.note ?? "").trim();
+  if (note.length < 3 || note.length > 4000) throw new AgentJobError(400, "اكتب ملاحظتَك لـ Opus (ثلاثةُ أحرفٍ على الأقلّ)", "note_required");
+  if (await patientTrashed(tx, patientId)) throw new AgentJobError(409, "المريضُ في السلّة", "patient_deleted");
+  const active = await activeJobOfPatient(tx, patientId);
+  if (active) throw new AgentJobError(409, "Opus يعمل على خطّةٍ لهذا المريض الآن", "job_active");
+  if (!(await branchOk(tx, Number(plan.branch_id)))) throw new AgentJobError(409, "فرعُ الخطّة لا يقدّم العلاجَ الطبيعي أو مغلقٌ مؤقتاً", "branch_unavailable");
+  if (p.scope === "return") {
+    if (!isOpusAwaiting({ origin: plan.origin, status: plan.status })) throw new AgentJobError(409, "الخطّةُ ليست خطّةَ Opus تنتظر الاعتماد", "not_awaiting");
+    if (p.staleness && p.staleness !== "forbidden_now") throw new AgentJobError(409, `قدُمت الخطّة: ${JOB_ERROR_TEXTS[p.staleness] ?? p.staleness} — احذفها وأعد الكتابة`, "opus_plan_stale");
+  }
+  const exam = await loadExam(tx, p.examId);
+  if (!exam || exam.cancelled) throw new AgentJobError(409, "لا معاينةَ علاجٍ طبيعيّ حيّة للمريض", "no_live_exam");
+  const gate = await examAgentGate(exam.id, tx);
+  if (!gate.allowed) throw new AgentJobError(409, gate.reason, "gate_closed");
+  const ins = rows(await tx.execute(sql`
+    INSERT INTO physio_agent_jobs (patient_id, exam_id, branch_id, kind, trigger, exam_fingerprint, max_failures, requested_by, requested_by_name,
+      plan_id, revise_scope, revise_note, base_version, base_job_id)
+    VALUES (${patientId}, ${exam.id}, ${Number(plan.branch_id)}, 'revise', ${REVISE_TRIGGER[p.scope]}, ${fingerprintOf(exam)}, ${JOB_MAX_FAILURES},
+      ${p.actor.userId}, ${p.actor.name}, ${Number(plan.id)}, ${p.scope}, ${note}, ${p.scope === "amend" ? p.baseVersion ?? null : null},
+      ${p.scope === "return" ? plan.agent_job_id ?? null : null})
+    RETURNING *`))[0];
+  const job = jobOf(ins);
+  await audit(tx, job.id, "enqueue_revise", p.actor, job.branchId, { scope: p.scope, planId: Number(plan.id), baseVersion: job.baseVersion, noteLength: note.length,
+    examId: exam.id }, note);
+  return job;
 }
 
 /** **خطّةُ Opus المنتظرة تقدُم** حين تتغيّر معاينتُها أو تُلغى أو يُدمج المريض — فلا تُعتمد (`opus_plan_stale`). */
@@ -298,12 +377,14 @@ export async function answerQuestions(jobId: number, raw: unknown, actor: Actor,
 }
 
 /** **«إلغاء»** بيد مجيبٍ أو معتمِد. */
-export async function cancelJob(jobId: number, actor: Actor, mayCancel: (j: JobRecord) => Promise<boolean>): Promise<JobRecord> {
+export async function cancelJob(jobId: number, actor: Actor, mayCancel: (j: JobRecord) => Promise<boolean>, isApprover = false): Promise<JobRecord> {
   const job = await db.transaction(async (tx) => {
     const j0 = await getJob(jobId, tx);
     if (!j0) throw new AgentJobError(404, "الوظيفةُ غير موجودة", "job_not_found");
     await lockPatientAgent(tx, j0.patientId);
     const j = jobOf(rows(await tx.execute(sql`SELECT * FROM physio_agent_jobs WHERE id = ${jobId} FOR UPDATE`))[0]);
+    //  §4.hb — وظيفةُ «تعديل» طلبُ معتمِد: يلغيها معتمِدٌ وحده.
+    if (j.kind === "revise" && !isApprover) throw new AgentJobError(403, "يلغي طلبَ التعديل المسؤولُ أو المشرفُ العام", "revise_cancel_approver_only");
     if (!(await mayCancel(j))) throw new AgentJobError(403, "يلغيها كاتبُ معاينة العلاج الطبيعي في فرع المريض أو المعتمِد", "not_answerer");
     if (!isActiveJobStatus(j.status)) throw new AgentJobError(409, "الوظيفةُ منتهية", "job_finished");
     await cancelActiveJobsTx(tx, { patientId: j.patientId, examId: j.examId, reason: "cancelled_by_user", actor });

@@ -184,13 +184,22 @@ export function registerPhysioProtocolRoutes(app: Express, isAuthenticated: any)
       if (!current) return res.status(404).json({ error: "البروتوكول غير موجود" });
       if (current.isArchived) return res.status(409).json({ error: "البروتوكولُ مؤرشف — استعِده أوّلاً" });
       const next = statusAfterEdit(current.status as ProtocolStatus, s);
-      const r = await store.updateProtocol(id, input, next, actor(s));
+      //  §4.hb C1 — «أقصى عدد جلسات (مع التمديد المكتوب)»: للمعتمِد (`canApproveProtocols`)، والغائبُ يبقى كما هو، والفارغُ «بلا تمديد».
+      let maxTotalSessions: number | null | undefined;
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, "maxTotalSessions")) {
+        if (!canApproveProtocols(s)) return res.status(403).json({ error: "يغيّر أقصى عدد الجلسات المسؤولُ أو المشرفُ العام" });
+        const v = req.body.maxTotalSessions;
+        if (v === null || v === "") maxTotalSessions = null;
+        else if (Number.isInteger(Number(v)) && Number(v) >= 1) maxTotalSessions = Number(v);
+        else return res.status(400).json({ error: store.MAX_TOTAL_RANGE_ERROR });
+      }
+      const r = await store.updateProtocol(id, input, next, actor(s), { maxTotalSessions });
       await audit(req, s, { entityType: "physio_protocol", entityId: id, action: "update",
         oldValues: r.before, newValues: { ...r.after, devices: input.devices },
         notes: r.demoted
           ? (r.settingsBlockers.length ? `عاد مسوّدةً: ${settingsBlockedMessage(r.settingsBlockers)}` : "عُدّل بروتوكولٌ معتمَد فعاد مسوّدةً بانتظار الاعتماد")
           : undefined });
-      res.json({ ...r.after, demoted: r.demoted, settingsBlockers: r.settingsBlockers });
+      res.json({ ...r.after, demoted: r.demoted, settingsBlockers: r.settingsBlockers, warnings: r.warnings });
     } catch (e) { fail(res, e); }
   });
 

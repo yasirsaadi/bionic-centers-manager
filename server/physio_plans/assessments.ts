@@ -2,8 +2,10 @@
 //
 // التقييمُ في معاملةٍ واحدة بقفل الخطّة: القياساتُ لقطةٌ بتعريف مقاييس البروتوكول يومَها، والقرارُ «تخرّج» يجعل الخطّةَ `graduated`
 // و«إيقاف» يجعلها `stopped` بسببه — في المعاملة نفسِها. و«مستحقّ التقييم» يُحسب من آخر تقييمٍ ويوم الاعتماد ومدّة الخطّة (`assessmentDue`).
+import { lockOpusPatientFirstTx, onOpusPlanClosingTx } from "../physio_agent/versions";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
+import { enqueueStaffEvent } from "../staff_telegram/outbox";
 import { branches, patients, physioAssessments, physioPlanSessions, physioPlans, physioProtocols, type PhysioPlan } from "@shared/schema";
 import {
   assessmentDue, parseAssessment, planGoalsList, type AssessmentKind, type MeasureDef, type ScoreSnap,
@@ -58,6 +60,8 @@ export async function planAssessmentView(plan: PhysioPlan, today: string) {
  */
 export async function recordAssessment(planId: number, body: unknown, actor: Actor) {
   return db.transaction(async (tx) => {
+    //  §4.hb D13 — خطّةُ Opus: قفلُ المريض أوّلاً (التخرّجُ والإيقافُ يُغلقانها).
+    await lockOpusPatientFirstTx(tx, planId);
     const [plan] = await tx.select().from(physioPlans).where(eq(physioPlans.id, planId)).for("update");
     if (!plan) throw new PlanError(404, "الخطّة غير موجودة");
     if (isPlanClosed(plan.status)) throw new PlanError(409, "الخطّةُ منتهية — موقوفةٌ أو متخرّجة");
@@ -74,12 +78,21 @@ export async function recordAssessment(planId: number, body: unknown, actor: Act
       assessedBy: actor.userId, assessedByName: actor.name,
     }).returning();
     let after: PhysioPlan = plan;
+    if ((input.decision === "discharge" || input.decision === "stop") && plan.origin === "opus") await onOpusPlanClosingTx(tx, planId, "plan_closed", actor);
     if (input.decision === "discharge") {
       [after] = await tx.update(physioPlans).set({ status: "graduated", graduatedAt: new Date(), graduatedBy: actor.userId, graduatedByName: actor.name,
         updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() }).where(eq(physioPlans.id, planId)).returning();
     } else if (input.decision === "stop") {
       [after] = await tx.update(physioPlans).set({ status: "stopped", stopReason: input.notes, stoppedAt: new Date(),
         updatedBy: actor.userId, updatedByName: actor.name, updatedAt: new Date() }).where(eq(physioPlans.id, planId)).returning();
+    }
+    //  §4.hb — **«تعديل» على خطّة Opus لا يفتحه المعالج** (يعدّلها المعتمِدان وحدهما): يُنبَّه المعتمِدون بقراره فلا يضيع.
+    if (input.decision === "modify" && plan.origin === "opus" && plan.status === "approved") {
+      const pt = ((await tx.execute(sql`SELECT p.name, p.patient_code, b.name AS branch FROM patients p LEFT JOIN branches b ON b.id = ${plan.branchId}
+          WHERE p.id = ${plan.patientId}`)) as any).rows[0];
+      await enqueueStaffEvent(tx, { event: "physio_opus_plan_ready", excludeUserId: actor.userId,
+        text: `📝 قرّر ${actor.name ?? "المعالج"} في تقييمٍ أنّ خطّة Opus تحتاج تعديلاً — يعدّلها المعتمِد${input.notes ? ` (${input.notes.slice(0, 200)})` : ""}: ${pt?.name ?? `#${plan.patientId}`}${pt?.patient_code ? ` (${pt.patient_code})` : ""}${pt?.branch ? ` — ${pt.branch}` : ""}`,
+        linkPath: `/physio/plans/${planId}` });
     }
     return { row, before: plan, after };
   });

@@ -12,9 +12,13 @@ import { examAgentGate } from "../physio_exam_reviews/store";
 import { buildAgentContext, buildGateContext, fingerprintOf, loadExam, newestV2ExamId, type AgentContext } from "./context";
 import { runConversation, type RunCtx, type TerminalResult, type TraceEntry, type Usage } from "./conversation";
 import { AgentFatal, AgentStop, type AgentRole } from "./model";
-import { QUESTION_LIMIT_ERROR } from "./prompts";
+import { QUESTION_LIMIT_ERROR, QUESTIONS_DISABLED_ERROR } from "./prompts";
 import { hasActivePlan, type JobRecord } from "./store";
-import { createPlanFromAgentTx } from "./plans";
+import { createPlanFromAgentTx, opusStaleness, replaceAwaitingPlanFromAgentTx } from "./plans";
+import { amendCandidate, amendGate, buildRevisionInput, createAmendProposalTx, snapshotFromGatedTx, type RevisionInput } from "./versions";
+import { diffSnapshots } from "@shared/physio_plan_versions";
+import { redactDeep } from "@shared/physio_agent_privacy";
+import { isOpusAwaiting } from "@shared/physio_agent";
 
 export type Outcome =
   | { kind: "questions"; questions: AgentQuestion[]; result: Record<string, any> }
@@ -53,6 +57,21 @@ export async function assertRunnable(job: JobRecord, ex: any = db): Promise<stri
   if ((await newestV2ExamId(ex, job.patientId)) !== job.examId) return "superseded_by_newer_exam";
   if (!(await examAgentGate(job.examId, ex)).allowed) return "gate_closed";
   if (AUTO_TRIGGERS.includes(job.trigger) && await hasActivePlan(ex, job.patientId)) return "has_active_plan";
+  //  §4.hb — وظيفةُ «تعديل»: الإعادةُ على خطّةٍ ما زالت منتظرةً على وظيفة الأساس (والقِدَمُ بممنوعٍ الآن مسموح)، والطلبُ على نسخته الأساس.
+  if (job.kind === "revise") {
+    const plan = job.planId ? ((await ex.execute(sql`SELECT * FROM physio_plans WHERE id = ${job.planId}`)).rows ?? [])[0] as any : null;
+    if (job.reviseScope === "return") {
+      if (!plan) return "plan_discarded";
+      if (!isOpusAwaiting({ origin: plan.origin, status: plan.status }) || Number(plan.agent_job_id) !== job.baseJobId) return "plan_not_awaiting";
+      const st = await opusStaleness(ex, plan);
+      if (st && st !== "forbidden_now") return st;
+      if (await hasActivePlan(ex, job.patientId)) return "has_active_plan";
+    } else {
+      if (!plan) return "plan_deleted";
+      if (plan.status !== "approved") return "plan_closed";
+      if (Number(plan.opus_version) !== job.baseVersion) return "base_version_changed";
+    }
+  }
   return null;
 }
 
@@ -68,7 +87,10 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
   if (notRunnable) return { kind: "cancelled", code: notRunnable };
   const cp = job.checkpoint ?? {};
   const web = webCountsOf(cp.webCounts);
-  const ctxA: AgentContext = await buildAgentContext(job, db, web.writer);
+  const rev: RevisionInput | null = job.kind === "revise" ? await buildRevisionInput(db, job) : null;
+  const amend = rev?.scope === "amend" ? rev : null;
+  const ctxA: AgentContext = await buildAgentContext(job, db, web.writer, rev);
+  let asksInRevision = 0;
   const runCtx: RunCtx = {
     ids: ctxA.ids, signal: rt.signal, sleep: rt.sleep,
     checkpoint: () => { if (rt.signal.aborted) { const r = (rt.signal as any).reason; throw r instanceof AgentStop ? r : new AgentStop("cancel"); } },
@@ -101,17 +123,35 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
       webCounts: web, usage: runCtx.usage });
     hook?.(`after_checkpoint_${stage}`);
   };
-  const gateFor = async (plan: SubmittedPlan, final: boolean, round: number) => {
+  const gateFor = async (plan: SubmittedPlan, final: boolean, round: number): Promise<{ plan: GatedPlan; log: GateLogEntry[]; blocking: GateLogEntry[]; diff?: unknown }> => {
+    //  §4.hb — تعديلُ Opus بعد الاعتماد: البوّاباتُ على النسخة كاملةً (`opus_amend`) — والخطّةُ هنا لقطةٌ لا `GatedPlan`.
+    if (amend && amend.base) {
+      const r = await amendGate(db, amend.plan, amend.base, plan, runCtx.fetched, job.examId);
+      return { plan: r.plan as any, log: r.log, blocking: r.blocking, diff: redactDeep(r.diff, ctxA.ids) };
+    }
     const g = await buildGateContext(db, { patientId: job.patientId, examId: job.examId, branchId: job.branchId,
       protocolId: plan.mode === "library" ? plan.protocolId : null,
       exerciseIds: [...plan.phases.flatMap((p) => p.exercises.map((x) => x.exerciseId ?? 0)), ...plan.exerciseChanges.map((c) => c.toExerciseId ?? 0)],
       fetched: runCtx.fetched, searched: runCtx.searched, final, at: `round_${round}`, agentGate: await examAgentGate(job.examId) });
-    return applyPlanGates(plan, g);
+    //  «أعِده إلى Opus»: الممنوعُ اتّحادُ كلّ ما منعه المعتمِدون (D10).
+    const res = applyPlanGates(plan, rev ? { ...g, forbidden: rev.forbidden.map((f) => ({ deviceCode: f.deviceCode, reasonAr: f.reasonAr, source: f.source })) } : g);
+    if (rev && rev.previousSnapshot) {
+      const now = await snapshotFromGatedTx(db, res.plan, { patientId: job.patientId, branchId: job.branchId, exam: ctxA.exam, forbidden: rev.forbidden });
+      return { ...res, diff: redactDeep(diffSnapshots(rev.previousSnapshot, now, res.log, "writer"), ctxA.ids) };
+    }
+    return res;
   };
+  //  §4.hb — المراجعُ والمدقّقُ يقرآن «التعديل» كالكاتب: **ملاحظةُ المعتمِد في «كتلة التعديل» آخرَ كتلة نصٍّ في الرسالة الأولى** (`finalBlocks`) — فكتلةٌ
+  //  مزوّرة في نصّ المعاينة داخل CONTEXT تبقى بياناً عندهم أيضاً — و`revision` (منقّىً) في CONTEXT مرّةً واحدة، والفرقُ هنا وحده.
+  //  وكلُّ نصٍّ في الخطّة منقّى (المعتمِدُ قد كتب اسمَ المريض في احتياط).
+  const revisionText = (diff: unknown) => rev ? `\nDIFF:\n${JSON.stringify(diff ?? null)}` : "";
+  const revisionBlocks = ctxA.revisionBlock ? [ctxA.revisionBlock] : [];
+  const planText = (plan: unknown) => JSON.stringify(rev ? redactDeep(plan, ctxA.ids) : plan);
+  let lastDiff: unknown = null;
   const reviewInput = (plan: GatedPlan, gateLog: GateLogEntry[], round: number) =>
-    `REVIEW TASK — round ${round}. The examination context the writer had is CONTEXT (JSON). The plan after the deterministic gates is PLAN (JSON); GATE_LOG lists what the code removed or clamped.\nCONTEXT:\n${ctxA.initialUser}\nPLAN:\n${JSON.stringify(plan)}\nGATE_LOG:\n${JSON.stringify(gateLog)}`;
+    `REVIEW TASK — round ${round}. The examination context the writer had is CONTEXT (JSON). The plan after the deterministic gates is PLAN (JSON); GATE_LOG lists what the code removed or clamped.\nCONTEXT:\n${ctxA.initialUser}\nPLAN:\n${planText(plan)}\nGATE_LOG:\n${JSON.stringify(gateLog)}${revisionText(lastDiff)}`;
   const auditInput = (plan: GatedPlan, round: number) =>
-    `AUDIT TASK — out-of-library plan, round ${round}. CONTEXT (JSON) is the examination context; PLAN (JSON) is the plan after the gates; FETCHED lists the URLs the writer opened.\nCONTEXT:\n${ctxA.initialUser}\nPLAN:\n${JSON.stringify(plan)}\nFETCHED:\n${JSON.stringify(Array.from(runCtx.fetched))}`;
+    `AUDIT TASK — out-of-library plan, round ${round}. CONTEXT (JSON) is the examination context; PLAN (JSON) is the plan after the gates; FETCHED lists the URLs the writer opened.\nCONTEXT:\n${ctxA.initialUser}\nPLAN:\n${planText(plan)}\nFETCHED:\n${JSON.stringify(Array.from(runCtx.fetched))}`;
 
   type Sub = { kind: "review"; review: Review } | { kind: "audit"; audit: Audit } | { kind: "declined"; decline: Decline } | { kind: "new_finding"; finding: NewFinding };
   const runReviewer = async (plan: GatedPlan, gateLog: GateLogEntry[], round: number): Promise<Sub> => {
@@ -120,14 +160,14 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
       if (name === "submit_review") { const r = parseReview(input); return r.ok ? { kind: "done", outcome: { kind: "review", review: r.value } } : { kind: "continue", isError: true, content: JSON.stringify({ errors: r.errors }) }; }
       if (name === "decline_plan") { const r = parseDecline(input, "reviewer"); return r.ok ? { kind: "done", outcome: { kind: "declined", decline: r.value } } : { kind: "continue", isError: true, content: JSON.stringify({ errors: r.errors }) }; }
       const r = parseNewFinding(input); return r.ok ? { kind: "done", outcome: { kind: "new_finding", finding: r.value } } : { kind: "continue", isError: true, content: JSON.stringify({ errors: r.errors }) };
-    }) as Sub;
+    }, revisionBlocks) as Sub;
   };
   const runAuditor = async (plan: GatedPlan, round: number): Promise<Sub> => {
     stageNow = "audit"; await rt.setStage("audit");
     return await runConversation("auditor", auditInput(plan, round), runCtx, async (name, input): Promise<TerminalResult> => {
       if (name === "submit_audit") { const r = parseAudit(input); return r.ok ? { kind: "done", outcome: { kind: "audit", audit: r.value } } : { kind: "continue", isError: true, content: JSON.stringify({ errors: r.errors }) }; }
       const r = parseNewFinding(input); return r.ok ? { kind: "done", outcome: { kind: "new_finding", finding: r.value } } : { kind: "continue", isError: true, content: JSON.stringify({ errors: r.errors }) };
-    }) as Sub;
+    }, revisionBlocks) as Sub;
   };
   const subOutcome = (s: Sub): Outcome | null => {
     if (s.kind === "declined") { st.decline = s.decline; return { kind: "declined", decline: s.decline, result: resultOf() }; }
@@ -152,6 +192,11 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
       const writerOut = await runConversation("writer", ctxA.initialUser, runCtx, async (name, input): Promise<TerminalResult> => {
         const err = (errors: string[]): TerminalResult => ({ kind: "continue", isError: true, content: JSON.stringify({ errors }) });
         if (name === "ask_questions") {
+          //  §4.hb D8 — لا أسئلة في «التعديل»: مرّةً خطأ، والثانيةُ تُنهي الوظيفة.
+          if (rev) {
+            if (asksInRevision++ >= 1) throw new AgentFatal("questions_in_revision");
+            return { kind: "continue", isError: true, content: QUESTIONS_DISABLED_ERROR };
+          }
           if (job.questionRounds >= MAX_QUESTION_ROUNDS) return { kind: "continue", isError: true, content: QUESTION_LIMIT_ERROR };
           const q = parseQuestions(input);
           return q.ok ? { kind: "done", outcome: { kind: "questions", questions: q.value, result: resultOf() } } : err(q.errors);
@@ -167,7 +212,7 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
           st.newFinding = f.value; return { kind: "done", outcome: { kind: "new_finding", finding: f.value, result: resultOf() } };
         }
         // ── submit_plan ──
-        const parsed = parseSubmittedPlan(input);
+        const parsed = parseSubmittedPlan(input, amend?.base ? { mode: amend.base.snapshot.mode, protocolId: amend.base.snapshot.protocolId } : null);
         if (!parsed.ok) return err(parsed.errors);
         const plan = parsed.value;
         st.submissions += 1;
@@ -177,9 +222,10 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
         if (runCtx.fetched.size) await note(stageNow, researchStageNote(runCtx.fetched.size));
         stageNow = "gates"; await rt.setStage("gates");
         const g = await gateFor(plan, final, round);
+        lastDiff = g.diff ?? null;
         st.gateLog.push(...g.log);
         st.drafts.push(g.plan);
-        { const byGate = g.plan.removed.filter((r) => r.by === "gate").length;
+        { const byGate = (g.plan.removed ?? []).filter((r) => r.by === "gate").length;
           const changed = g.log.filter((e) => e.kind === "removed" || e.kind === "clamped").length;
           await note("gates", gatesStageNote(byGate, Math.max(0, changed - byGate))); }
         if (g.blocking.length) {
@@ -227,7 +273,7 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
           st.unresolved.auditor = audit.verdict === "concerns" ? audit.issues : [];
         }
         return { kind: "done", outcome: { kind: "done" } };
-      }) as Outcome;
+      }, revisionBlocks) as Outcome;
       if (writerOut.kind !== "done") return writerOut;
       await checkpointNow("saving");
     } else if (cp.stage === "audit" && st.acceptedGated && st.audits.length === 0) {
@@ -248,7 +294,15 @@ export async function runJob(job: JobRecord, rt: Runtime): Promise<Outcome> {
     // ══ الحفظ ══
     stageNow = "saving"; await rt.setStage("saving");
     runCtx.checkpoint();
-    const saved = await createPlanFromAgentTx(job, rt.me, st.accepted!, resultOf(), { fetched: runCtx.fetched, searched: runCtx.searched });
+    if (job.kind === "revise" && job.reviseScope === "amend") {
+      hook?.("before_save_amend");
+      const accepted = st.accepted!;
+      const r = await createAmendProposalTx(job, rt.me, async (tx, base) => ({ candidate: await amendCandidate(tx, base, accepted), fetched: runCtx.fetched }), resultOf());
+      return r.kind === "succeeded" ? { kind: "succeeded", planId: job.planId ?? 0 } : { kind: "done" };
+    }
+    const saved = job.kind === "revise"
+      ? await replaceAwaitingPlanFromAgentTx(job, rt.me, st.accepted!, resultOf(), { fetched: runCtx.fetched, searched: runCtx.searched })
+      : await createPlanFromAgentTx(job, rt.me, st.accepted!, resultOf(), { fetched: runCtx.fetched, searched: runCtx.searched });
     if (saved.kind === "succeeded") return { kind: "succeeded", planId: saved.planId };
     return { kind: "done" };
   }

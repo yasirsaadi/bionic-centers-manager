@@ -4,10 +4,10 @@
 // وبرنامجه («—» حتى تُسجَّل البرامج) وقيمه الاحتياطية بوحداتها ومصدرها وإعدادات البروتوكول المكتوبة، وما حُذف وسببُه، والتمارين، وما وجده
 // المراجعُ والمدقّق، **وكلُّ ملاحظةٍ كبيرة لم تُحلّ بمربّع إقرارٍ إلزاميّ**، وسجلُّ البوّابات، والمصادر. و«اعتماد» لا يعمل قبل الإقرار ولا لخطّةٍ قدُمت.
 // والخادمُ يعيد الفحصَ كلَّه عند الاعتماد (`fromProposal` · `acknowledgedIssueIds`).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, CheckCircle2, Trash2, ShieldAlert, ExternalLink } from "lucide-react";
+import { Sparkles, CheckCircle2, Trash2, ShieldAlert, ExternalLink, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +19,8 @@ import { btlModelById, btlModelsFor, unitAr } from "@shared/btl_devices";
 import { arCount, COUNT_FORMS, OPUS_OUT_OF_LIBRARY_LABEL, normalizeSourceUrl, type Issue } from "@shared/physio_agent";
 import { GATE_REASONS, type BuiltDevice, type GateKind, type GateLogEntry } from "@shared/physio_agent_gates";
 import { ar, arText, opusGet, opusPost, opusProposalKey, OPUS_PLANS_KEY, type OpusProposal } from "@/lib/opus_agent";
+import { CancelRevisionButton, ReturnToOpusDialog, RevisionStages, revisionOutcome, TONE } from "@/components/physio/OpusAmend";
+import { PlanDiffView, when } from "@/components/physio/OpusVersions";
 
 const SEVERITY_AR: Record<string, string> = { critical: "حرجة", major: "كبيرة", minor: "صغيرة" };
 const KIND_AR: Record<GateKind, { t: string; c: string }> = {
@@ -52,6 +54,7 @@ export function OpusProposalView({ planId }: { planId: number }) {
   const q = useQuery<OpusProposal>({ queryKey: opusProposalKey(planId), queryFn: () => opusGet(`/api/physio/plans/${planId}/opus-proposal`), retry: false });
   const [acks, setAcks] = useState<Set<string>>(new Set());
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
   const refresh = (patientId?: number) => {
     qc.invalidateQueries({ queryKey: opusProposalKey(planId) });
     qc.invalidateQueries({ queryKey: [`/api/physio/plans/${planId}`] });
@@ -64,12 +67,19 @@ export function OpusProposalView({ planId }: { planId: number }) {
     }
   };
   const approve = useMutation({
-    mutationFn: () => opusPost<{ draftProtocolId?: number | null }>(`/api/physio/plans/${planId}/approve`, { fromProposal: true, acknowledgedIssueIds: Array.from(acks) }),
+    //  §4.hb D1 — **الاعتمادُ لما يُعرض**: رقمُ الوظيفة وبصمةُ الاقتراح الذي قرأه المعتمِد.
+    mutationFn: () => opusPost<{ draftProtocolId?: number | null; opusVersion?: number }>(`/api/physio/plans/${planId}/approve`, {
+      fromProposal: true, acknowledgedIssueIds: Array.from(acks), agentJobId: q.data?.agentJobId ?? null, proposalHash: q.data?.proposalHash ?? null }),
     onSuccess: (r) => {
       refresh(q.data?.plan.patientId);
-      toast({ title: "اعتُمدت خطّةُ Opus", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات»." : "نزلت في ملفّ المريض ويراها المعالجون الآن." });
+      toast({ title: "اعتُمدت خطّةُ Opus — النسخة ١", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات»." : "نزلت في ملفّ المريض ويراها المعالجون الآن." });
     },
-    onError: (e: any) => { refresh(q.data?.plan.patientId); toast({ title: "لم تُعتمد", description: e.message, variant: "destructive" }); },
+    onError: (e: any) => {
+      refresh(q.data?.plan.patientId);
+      if (e.code === "proposal_changed") setAcks(new Set());
+      toast({ title: e.code === "proposal_changed" ? "تغيّر الاقتراح منذ فتحتَه" : "لم تُعتمد",
+        description: e.code === "proposal_changed" ? "أُعيد تحميله بما صحّحته البوّابات — راجِعه ثمّ اعتمد." : e.message, variant: "destructive" });
+    },
   });
   const discard = useMutation({
     mutationFn: () => opusPost(`/api/physio/plans/${planId}/opus-discard`, {}),
@@ -78,6 +88,9 @@ export function OpusProposalView({ planId }: { planId: number }) {
   });
 
   const p = q.data;
+  //  **إقرارٌ لما قُرئ وحده**: اقتراحٌ جديد (أعاد Opus كتابتَه أو صحّحته البوّابات) ⟵ تُمحى الإقرارات — رقمُ الملاحظة «r1» قد يتكرّر بنصٍّ آخر.
+  const proposalIdentity = `${p?.agentJobId ?? ""}:${p?.proposalHash ?? ""}`;
+  useEffect(() => { setAcks(new Set()); }, [proposalIdentity]);
   const issuesById = useMemo(() => {
     const m = new Map<string, Issue & { from: "reviewer" | "auditor" }>();
     for (const i of p?.unresolved.reviewer ?? []) m.set(i.id, { ...i, from: "reviewer" });
@@ -92,7 +105,11 @@ export function OpusProposalView({ planId }: { planId: number }) {
   const exName = (id: number | null) => (id === null ? "—" : p.exerciseNames[id]?.nameAr ?? `تمرين رقم ${ar(id)}`);
   const fetched = new Set(p.fetchedUrls.map(normalizeSourceUrl));
   const missingAcks = p.majorsToAcknowledge.filter((id) => !acks.has(id));
-  const canApprove = !p.examStale && missingAcks.length === 0 && Boolean(f);
+  const revising = p.activeRevision ?? null;
+  const canApprove = !p.examStale && missingAcks.length === 0 && Boolean(f) && !revising;
+  //  «أعِده إلى Opus» يُتاح لخطّةٍ طازجة (أو قدُمت بممنوعٍ الآن وحده) وما من إعادةٍ جارية — والخادمُ يحكم.
+  const canReturn = !revising && (!p.examStale || p.staleReason === "forbidden_now");
+  const rounds = p.returnRounds ?? [];
   const weeks = f?.totalSessions && f?.sessionsPerWeek ? Math.ceil(f.totalSessions / f.sessionsPerWeek) : null;
   const constraints = p.approverConstraints.filter((c) => c.note || c.forbiddenDevices.length);
   const auditorUnresolved = p.unresolved.auditor;
@@ -113,6 +130,20 @@ export function OpusProposalView({ planId }: { planId: number }) {
         كتبها Opus من معاينة {p.plan.createdByName ?? "الفاحص"}{p.job?.finishedAt ? ` في ${arText(formatDateIraq(p.job.finishedAt))}` : ""}. لا يراها المعالجون ولا تُنفَّذ قبل اعتمادك.
       </p>
 
+      {revising && (
+        <div className="rounded-md border border-violet-300 bg-violet-50 p-2 space-y-2" data-testid="opus-proposal-revising">
+          <div className="text-sm font-semibold text-violet-950">يعيد Opus كتابةَ الخطّة بملاحظتك — «اعتماد» معطّلٌ حتى تعود.</div>
+          <RevisionStages job={revising} />
+          <CancelRevisionButton jobId={revising.jobId} onDone={() => refresh(p.plan.patientId)} label="إلغاء الإعادة" />
+        </div>
+      )}
+      {p.regated && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950 space-y-1" data-testid="opus-proposal-regated">
+          <b>صحّحت البوّاباتُ هذا الاقتراح عند محاولة اعتمادٍ سابقة{p.regated.at ? ` (${when(p.regated.at)})` : ""}</b> — تغيّر شيءٌ في الفرع أو البروتوكول أو المعاينة منذ كتبه Opus؛
+          والمعتمَدُ يكون الاقتراحَ المصحَّح. ما صحّحته:
+          <GateLogList entries={p.regated.gateLog.filter((g) => g.kind !== "info")} devName={devName} exName={exName} />
+        </div>
+      )}
       {p.examStale && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900" data-testid="opus-proposal-stale">
           <b>قدُمت هذه الخطّة:</b> {p.staleText} — لا تُعتمد. احذفها وأعد الكتابة من بطاقة المعاينة.
@@ -329,10 +360,38 @@ export function OpusProposalView({ planId }: { planId: number }) {
         </Section>
       )}
 
+      {rounds.length > 0 && (
+        <Section title={`جولاتُ الإعادة إلى Opus (${ar(rounds.length)})`} testId="opus-proposal-rounds">
+          <ul className="m-0 p-0 list-none space-y-1.5">
+            {rounds.map((r, i) => { const o = revisionOutcome({ ...r, proposalStatus: null, savedVersion: null, lostByExamChange:
+              r.status === "cancelled" && ["exam_changed", "superseded_by_newer_exam", "exam_cancelled", "gate_closed"].includes(String(r.errorCode)) }); return (
+              <li key={r.jobId} className="rounded border p-2 text-sm space-y-1" data-testid={`opus-round-${r.jobId}`}>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <b>الجولة {ar(i + 1)}</b>
+                  <span className={cn("rounded-full px-2 text-[11px] font-semibold", TONE[o.tone])}>{o.t}</span>
+                  <span className="text-xs text-muted-foreground">{r.requestedByName ?? "—"} · {when(r.createdAt)}</span>
+                </div>
+                {r.note && <div className="text-xs" dir="auto">الملاحظة: «{r.note}»</div>}
+                {r.diffSummaryAr && <div className="text-xs text-slate-700">ما تغيّر عن الكتابة السابقة: {r.diffSummaryAr}</div>}
+                {r.diffFromPrevious && !r.diffFromPrevious.empty && (
+                  <details className="text-xs"><summary className="cursor-pointer text-slate-700">اعرض الفرق</summary>
+                    <div className="mt-1"><PlanDiffView diff={r.diffFromPrevious} testId={`opus-round-diff-${r.jobId}`} /></div></details>
+                )}
+              </li>
+            ); })}
+          </ul>
+        </Section>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
         <Button className="gap-1 bg-emerald-700 hover:bg-emerald-800" disabled={!canApprove || approve.isPending} onClick={() => approve.mutate()} data-testid="button-opus-approve">
           <CheckCircle2 className="w-4 h-4" /> اعتماد
         </Button>
+        {canReturn && (
+          <Button variant="outline" className="gap-1 border-violet-300 text-violet-800" onClick={() => setReturnOpen(true)} data-testid="button-opus-return">
+            <Undo2 className="w-4 h-4" /> أعِده إلى Opus بملاحظة
+          </Button>
+        )}
         {!confirmDiscard ? (
           <Button variant="outline" className="gap-1 text-red-700 border-red-300" onClick={() => setConfirmDiscard(true)} data-testid="button-opus-discard">
             <Trash2 className="w-4 h-4" /> احذف الخطّة
@@ -344,13 +403,14 @@ export function OpusProposalView({ planId }: { planId: number }) {
             <Button size="sm" variant="ghost" onClick={() => setConfirmDiscard(false)}>لا</Button>
           </>
         )}
-        {!canApprove && !p.examStale && missingAcks.length > 0 && <span className="text-xs text-amber-900">أقرّ بالملاحظات الكبيرة أعلاه أوّلاً.</span>}
+        {!canApprove && !p.examStale && !revising && missingAcks.length > 0 && <span className="text-xs text-amber-900">أقرّ بالملاحظات الكبيرة أعلاه أوّلاً.</span>}
       </div>
+      <ReturnToOpusDialog planId={planId} patientId={p.plan.patientId} open={returnOpen} onClose={() => setReturnOpen(false)} />
     </Card>
   );
 }
 
-function GateLogList({ entries, devName, exName }: { entries: OpusProposal["gateLog"]; devName: (c: string) => string; exName: (id: number | null) => string }) {
+export function GateLogList({ entries, devName, exName }: { entries: OpusProposal["gateLog"]; devName: (c: string) => string; exName: (id: number | null) => string }) {
   return (
     <ul className="m-0 p-0 list-none space-y-1">
       {entries.map((g, i) => (
@@ -365,11 +425,11 @@ function GateLogList({ entries, devName, exName }: { entries: OpusProposal["gate
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+export function Fact({ label, value }: { label: string; value: string }) {
   return <div className="rounded-md bg-slate-50 border px-2 py-1.5 min-w-0"><div className="text-[11px] text-muted-foreground">{label}</div><div className="text-sm font-semibold break-words">{value}</div></div>;
 }
 
-function IssueList({ issues }: { issues: Issue[] }) {
+export function IssueList({ issues }: { issues: Issue[] }) {
   return (
     <ul className="m-0 ps-5 list-disc text-xs space-y-0.5">
       {issues.map((i) => <li key={i.id}><b>{SEVERITY_AR[i.severity] ?? i.severity}:</b> {i.problemAr}</li>)}
@@ -377,7 +437,7 @@ function IssueList({ issues }: { issues: Issue[] }) {
   );
 }
 
-function doseText(x: { sets: number | null; reps: number | null; holdSeconds: number | null; doseNote: string | null }): string {
+export function doseText(x: { sets: number | null; reps: number | null; holdSeconds: number | null; doseNote: string | null }): string {
   const parts: string[] = [];
   if (x.sets) parts.push(arCount(x.sets, COUNT_FORMS.set));
   if (x.reps) parts.push(arCount(x.reps, COUNT_FORMS.rep));

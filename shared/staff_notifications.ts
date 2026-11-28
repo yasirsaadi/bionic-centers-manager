@@ -56,6 +56,8 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   //  وكيلُ Opus (§4.ha، ترحيل ١٩٩) — خطّتُه تنتظر المعتمِد؛ وأسئلتُه (وما لم يكتبه) لكاتب المعاينة.
   { key: "physio_opus_plan_ready", label: "خطّةٌ كتبها Opus تنتظر الاعتماد — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "global" },
   { key: "physio_opus_questions", label: "Opus يسأل عن مريضه قبل كتابة خطّته — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "targeted" },
+  //  §4.hb (ترحيل ٢٠٠) — نسخةٌ جديدة من خطّة Opus المعتمَدة: لكاتبها وفاحصها ومنفّذيها والمعتمِدين.
+  { key: "physio_opus_plan_versioned", label: "خطّةُ Opus عُدّلت — نسخةٌ جديدة وما تغيّر", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -88,7 +90,7 @@ export interface StaffEligibilityUser {
 
 const DOCTOR_EVENTS = ["exam_request"];
 //  والطبيبُ قد يكتب معاينةَ العلاج الطبيعي **باختصاصه** — فقرارُ علامتها الحمراء له وحده، لا لطبيب الأطراف (§4.gz).
-const PHYSIO_DOCTOR_EVENTS = ["physio_exam_red_flag_decided", "physio_opus_questions"];
+const PHYSIO_DOCTOR_EVENTS = ["physio_exam_red_flag_decided", "physio_opus_questions", "physio_opus_plan_versioned"];
 const specialtiesOf = (u: StaffEligibilityUser): string[] =>
   Array.isArray(u.medicalSpecialties) ? u.medicalSpecialties.map(String) : [];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
@@ -114,9 +116,10 @@ export function staffEventDeliverable(u: StaffEligibilityUser, event: string, ta
   if (targeted && REQUESTER_REPLY_EVENTS.includes(event)) return true;
   return eligibleStaffEvents(u).includes(event);
 }
-const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending", "physio_opus_plan_ready"];
-const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided", "physio_opus_questions"];
-const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
+const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending", "physio_opus_plan_ready", "physio_opus_plan_versioned"];
+const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided", "physio_opus_questions",
+  "physio_opus_plan_versioned"];
+const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned", "physio_opus_plan_versioned"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   const out = new Set<string>();

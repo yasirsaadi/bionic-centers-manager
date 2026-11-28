@@ -29,9 +29,19 @@ export const JOB_STAGE_LABELS: Record<JobStage, string> = {
   reading: "يقرأ المعاينة", research: "يبحث في الإرشادات", writing: "يكتب الخطّة", review: "المراجع يدقّق",
   audit: "المدقّق", gates: "البوّابات في الشيفرة", questions: "ينتظر الأجوبة", saving: "يحفظ الخطّة",
 };
-export const JOB_TRIGGERS = ["exam_signed", "red_flag_approved", "exam_revised", "manual", "reconcile"] as const;
+export const JOB_TRIGGERS = ["exam_signed", "red_flag_approved", "exam_revised", "manual", "reconcile", "approver_return", "approver_request"] as const;
 export type JobTrigger = (typeof JOB_TRIGGERS)[number];
 export const AUTO_TRIGGERS: readonly JobTrigger[] = ["exam_signed", "red_flag_approved", "exam_revised", "reconcile"];
+/** **وظيفةُ «تعديل»** (ترحيل ٢٠٠، §4.hb): `return` — المعتمِدُ يعيد الخطّةَ المنتظرة إلى Opus بملاحظة؛ `amend` — يطلب تعديلَ خطّةٍ معتمَدة. */
+export const REVISE_SCOPES = ["return", "amend"] as const;
+export type ReviseScope = (typeof REVISE_SCOPES)[number];
+export const REVISE_TRIGGER: Record<ReviseScope, JobTrigger> = { return: "approver_return", amend: "approver_request" };
+/** حالُ اقتراح Opus بعد الاعتماد — منتظرٌ حتى يحفظه المعتمِد أو يتجاهله، أو يقدُم، أو يحلّ محلَّه طلبٌ أحدث نجح. */
+export const PROPOSAL_STATUSES = ["pending", "accepted", "discarded", "stale", "superseded"] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
+  pending: "بانتظار حفظك", accepted: "حُفظ نسخةً جديدة", discarded: "تُجوهل", stale: "قدُم — تغيّرت الخطّةُ أو المعاينة بعده", superseded: "حلّ محلَّه اقتراحٌ أحدث",
+};
 
 export const MAX_QUESTION_ROUNDS = 3;
 export const MAX_QUESTIONS_PER_ROUND = 5;
@@ -111,7 +121,32 @@ export const JOB_ERROR_TEXTS: Record<string, string> = {
   timeout: "تجاوزت الوظيفةُ وقتَها مراراً",
   worker_lost: "توقّف العاملُ عن الوظيفة مراراً",
   internal: "خطأٌ داخليّ في الوكيل",
+  //  ترحيل ٢٠٠ (§4.hb) — وظيفةُ «تعديل».
+  plan_discarded: "حُذفت الخطّةُ المنتظرة",
+  plan_closed: "أُوقفت الخطّةُ أو تخرّج المريض",
+  plan_deleted: "حُذفت الخطّة",
+  plan_not_awaiting: "لم تعد الخطّةُ تنتظر الاعتماد",
+  plan_not_amendable: "الخطّةُ ليست خطّةَ Opus معتمَدة",
+  base_version_changed: "عُدّلت الخطّةُ إلى نسخةٍ أحدث قبل أن يُنهي Opus",
+  revision_declined: "يرى Opus ألّا يُنفَّذ التعديلُ المطلوب",
+  revision_no_change: "لم يغيّر Opus شيئاً في الخطّة بعد البوّابات",
+  questions_in_revision: "سأل Opus مرّتين — الأسئلةُ غيرُ متاحة في التعديل",
+  patient_trashed: "المريضُ في السلّة",
+  proposal_new_request: "حلّ محلَّه طلبٌ أحدث نجح",
+  edited_directly: "عُدّلت الخطّةُ مباشرةً بعده",
 };
+
+/** **سببُ الإخفاق مفصَّلاً للمعتمِد** (C3) — الرموزُ في `error_detail` بأسبابها العربية حيث تُعرف، وإلّا نصُّ الإخفاق وحده. */
+export function jobErrorDetailAr(code: string | null, detail: string | null, reasons: Record<string, string> = {}): string | null {
+  if (!code) return null;
+  const base = JOB_ERROR_TEXTS[code] ?? code;
+  if (!detail) return base;
+  const parts = detail.split(",").map((c) => c.trim()).filter(Boolean);
+  const named = parts.map((c) => reasons[c]).filter(Boolean);
+  if (named.length && named.length === parts.length) return `${base}: ${Array.from(new Set(named)).join("؛ ")}`;
+  if (code === "api_error" || code === "internal" || code === "api_unavailable") return `${base} (${detail.slice(0, 200)})`;
+  return base;
+}
 
 // ══ الأسئلة ═════════════════════════════════════════════════════════════════════════════════════════════
 export const QUESTION_AFFECTS = ["exam_field", "preference", "history"] as const;
@@ -218,9 +253,26 @@ export interface SubmittedPlan {
 const T = PROTOCOL_TEXT_MAX;
 const D = DEVICE_TEXT_MAX;
 
-export function parseSubmittedPlan(input: unknown): Parsed<SubmittedPlan> {
-  const o = obj(input);
+/** **قفلُ التعديل بعد الاعتماد** (§4.hb ٣.٥): الوضعُ والبروتوكولُ من النسخة النافذة، ولا بطاقاتٍ مقترحة ولا بروتوكولَ عامّاً؛
+ *  في المكتبة تعديلٌ بالفرق (`exercise_changes`) بلا مراحل، وخارجَها المراحلُ كاملةً بلا `exercise_changes`. */
+export interface AmendLock { mode: "library" | "out_of_library"; protocolId: number | null }
+
+export function parseSubmittedPlan(input: unknown, amend: AmendLock | null = null): Parsed<SubmittedPlan> {
+  const o: Record<string, unknown> = amend ? { ...obj(input) } : obj(input);
   const errors: string[] = [];
+  if (amend) {
+    if (o.mode !== amend.mode) errors.push(`amend task: mode is locked to "${amend.mode}".`);
+    const pid = intOrNull(o.protocol_id);
+    if (amend.mode === "library" && pid !== amend.protocolId) errors.push(`amend task: protocol_id is locked to ${amend.protocolId}.`);
+    if (amend.mode === "out_of_library" && pid !== null) errors.push("amend task: protocol_id must be null for an out-of-library plan.");
+    if (arr(o.proposed_cards).length) errors.push("amend task: proposed_cards must be empty.");
+    if (amend.mode === "out_of_library" && arr(o.exercise_changes).length) errors.push("amend task (out-of-library): restate the complete phases and leave exercise_changes empty.");
+    if (amend.mode === "out_of_library" && !arr(o.phases).length) errors.push("amend task (out-of-library): phases are required.");
+    if (amend.mode === "out_of_library") {
+      //  البروتوكولُ العامّ صار مسوّدةً عند الاعتماد ولا يُمسّ — فلا يُطلب.
+      o.library_protocol = o.library_protocol ?? { title_ar: "-", title_en: "-", category: "other", age_group: "all" };
+    }
+  }
   const mode = o.mode === "library" || o.mode === "out_of_library" ? o.mode : null;
   if (!mode) errors.push("mode must be \"library\" or \"out_of_library\".");
   const protocolId = intOrNull(o.protocol_id);
@@ -293,7 +345,7 @@ export function parseSubmittedPlan(input: unknown): Parsed<SubmittedPlan> {
     goalsAr: strOrNull(lp.goals_ar, T), goalsEn: strOrNull(lp.goals_en, T),
   } : null;
   if (mode === "library") {
-    if (phases.length) errors.push("library mode: leave phases empty — the phases are copied from the protocol.");
+    if (phases.length) errors.push(amend ? "amend task (library): leave phases empty — express exercise changes through exercise_changes relative to revision.currentVersion." : "library mode: leave phases empty — the phases are copied from the protocol.");
     if (proposedCards.length) errors.push("library mode: proposed_cards must be empty.");
     if (libraryProtocol) errors.push("library mode: library_protocol must be null.");
   }
@@ -483,7 +535,15 @@ export function opusPlanStub(p: { id: number; patientId: number; status: string;
 }
 
 /** ما يُسمح على خطّة Opus منتظرة — الاعتمادُ والحذفُ بيد معتمِد وحده؛ وغيرُ ذلك `opus_plan_locked`. */
-export const OPUS_AWAITING_ALLOWED = ["approve", "opus-discard", "delete"] as const;
+export const OPUS_AWAITING_ALLOWED = ["approve", "opus-discard", "delete", "opus-return"] as const;
+/** **خطّةُ Opus بعد الاعتماد** (§4.hb): تُعدَّل بـ«تعديل الخطّة» و«اطلب من Opus تعديلاً» وحدهما وبيد المعتمِد، فكلُّ حفظٍ نسخة؛
+ *  وأبوابُ التعديل القديمة (الخطّةُ والمراحلُ والمقاييسُ وتغييرُ النوع) تُردّ لأيّ أحد. */
+export const OPUS_VERSIONED_BLOCKED = ["update", "phases", "measures", "change-protocol"] as const;
+export const OPUS_VERSIONED_ERROR = "خطّةُ Opus المعتمَدة تُعدَّل من «تعديل الخطّة» أو «اطلب من Opus تعديلاً» بيد المسؤول أو المشرف العام — فكلُّ حفظٍ نسخةٌ مرقّمة";
+export function opusApprovedBlocked(p: { origin?: string | null; status: string }, action: string): string | null {
+  if (p.origin !== "opus" || isOpusAwaiting(p)) return null;
+  return (OPUS_VERSIONED_BLOCKED as readonly string[]).includes(action) ? OPUS_VERSIONED_ERROR : null;
+}
 export function opusAwaitingBlocked(p: { origin?: string | null; status: string }, action: string): string | null {
   if (!isOpusAwaiting(p)) return null;
   return (OPUS_AWAITING_ALLOWED as readonly string[]).includes(action) ? null
