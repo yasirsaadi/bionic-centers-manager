@@ -84,7 +84,9 @@ export const RECONCILE_SKIP_TTL_HOURS = 6;
 
 /** **المصالِحُ الدوريّ** — معاينةٌ ثانية وُقّعت في الأيّام السبعة ولم تُشغَّل على بصمتها (نداءٌ ضاع أو مفتاحٌ أُضيف لاحقاً).
  *  المرشّحون **أحدثُ معاينةٍ حيّة لكلّ مريض** بلا خطّةٍ معتمَدة ولا وظيفةٍ نشطة، والأحدثُ توقيعاً أوّلاً؛ وما تخطّاه `enqueueTx` يُكتب في
- *  `physio_agent_reconcile_skips` فلا يعود إليه قبل ست ساعات — فعشرون مريضاً بخطّةٍ قائمة أو علامةٍ معلَّقة لا يحجبون الحدَّ عن غيرهم. */
+ *  `physio_agent_reconcile_skips` فلا يعود إليه قبل ست ساعات — فعشرون مريضاً بخطّةٍ قائمة أو علامةٍ معلَّقة لا يحجبون الحدَّ عن غيرهم.
+ *  **ولا يُستبعد بوجود وظيفةٍ أو خطّةٍ سابقة** (مراجعةُ Codex): الحكمُ لبصمة المعاينة الحالية في `enqueueTx`، والتخطّي المحفوظ يسقط بتنقيح
+ *  المعاينة أو بطلب اعتمادٍ أو قرارٍ أحدث منه — فنداءٌ ضاع بعد التنقيح أو بعد فتح البوّابة يصلحه المصالِح. */
 export async function reconcilerScan(limit = 20): Promise<number> {
   if (!agentEnabled()) return 0;
   const cands = rows(await db.execute(sql`
@@ -92,8 +94,6 @@ export async function reconcilerScan(limit = 20): Promise<number> {
       JOIN patients p ON p.id = me.patient_id AND p.deleted_at IS NULL
      WHERE me.case_type = 'physiotherapy' AND me.assessment->>'form' = 'BC-PT-02' AND me.signed_at > now() - interval '7 days'
        AND NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = me.id)
-       AND NOT EXISTS (SELECT 1 FROM physio_agent_jobs j WHERE j.exam_id = me.id)
-       AND NOT EXISTS (SELECT 1 FROM physio_plans pl WHERE pl.source_exam_id = me.id)
        AND NOT EXISTS (SELECT 1 FROM medical_exams m2 WHERE m2.patient_id = me.patient_id AND m2.case_type = 'physiotherapy'
                          AND m2.assessment->>'form' = 'BC-PT-02' AND m2.signed_at IS NOT NULL
                          AND (m2.signed_at > me.signed_at OR (m2.signed_at = me.signed_at AND m2.id > me.id))
@@ -101,7 +101,10 @@ export async function reconcilerScan(limit = 20): Promise<number> {
        AND NOT EXISTS (SELECT 1 FROM physio_plans ap WHERE ap.patient_id = me.patient_id AND ap.status = 'approved')
        AND NOT EXISTS (SELECT 1 FROM physio_agent_jobs aj WHERE aj.patient_id = me.patient_id AND aj.status IN ('queued','running','needs_answers'))
        AND NOT EXISTS (SELECT 1 FROM physio_agent_reconcile_skips sk WHERE sk.exam_id = me.id
-                         AND sk.skipped_at > now() - make_interval(hours => ${RECONCILE_SKIP_TTL_HOURS}))
+                         AND sk.skipped_at > now() - make_interval(hours => ${RECONCILE_SKIP_TTL_HOURS})
+                         AND sk.skipped_at > COALESCE((SELECT max(rv.edited_at) FROM medical_exam_revisions rv WHERE rv.exam_id = me.id), '-infinity')
+                         AND sk.skipped_at > COALESCE((SELECT max(GREATEST(fr.requested_at, COALESCE(fr.decided_at, fr.requested_at)))
+                                                         FROM physio_exam_red_flag_reviews fr WHERE fr.patient_id = me.patient_id), '-infinity'))
      ORDER BY me.signed_at DESC, me.id DESC LIMIT ${limit}`));
   let n = 0;
   for (const c of cands) {
