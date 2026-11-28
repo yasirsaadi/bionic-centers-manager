@@ -126,6 +126,27 @@ async function main() {
     deviceLabels: new Map([["tecar", { nameAr: "التيكار", nameEn: "Tecar" }], ["electro", { nameAr: "التحفيز", nameEn: "Electro" }]]), protocolLines: new Map(proto().devices.map((d) => [d.deviceCode, d])) };
   const edited = (fn: (e: ReturnType<typeof editFromSnapshot>) => void) => { const e = editFromSnapshot(baseSnap()); fn(e); return applyPlanEdit(baseSnap(), e, lookups); };
   const dgate = (c: PlanSnapshot, over: Partial<EditGateContext> = {}) => applyEditGates(c, ectx(over), "direct_edit", baseSnap());
+  /** **تغطيةُ الأوراق**: كلُّ ورقةٍ في محتوى `make()` تُغيَّر وحدها إلى علامةٍ فريدة، ويُطلب أن تظهر العلامةُ في الفرق عن `from()`
+   *  (والمنطقيُّ يكفيه فرقٌ غيرُ فارغ). `only` يحصر الأوراقَ المفحوصة. */
+  const leafCoverage = (make: () => PlanSnapshot, _id: (b: PlanSnapshot) => PlanSnapshot, only?: (path: (string | number)[]) => boolean, from: () => PlanSnapshot = make) => {
+    const paths: (string | number)[][] = [];
+    const walk = (v: any, path: (string | number)[]) => {
+      if (v !== null && typeof v === "object") { for (const k of Object.keys(v)) walk(v[k], [...path, Array.isArray(v) ? Number(k) : k]); return; }
+      paths.push(path);
+    };
+    walk(JSON.parse(JSON.stringify(snapshotContent(make()))), []);
+    const missed: string[] = []; let n = 0;
+    for (const path of paths) {
+      if (path[0] === "schema" || (only && !only(path))) continue;
+      const b = make() as any; let o = b; for (const k of path.slice(0, -1)) o = o[k];
+      const k = path.at(-1)!; const v = o[k]; n++;
+      if (typeof v === "boolean") { o[k] = !v; if (diffSnapshots(from(), b).empty) missed.push(path.join(".")); continue; }
+      const mark = typeof v === "number" ? 900000 + n : `MARK${n}`;
+      o[k] = mark;
+      if (!JSON.stringify(diffSnapshots(from(), b)).includes(String(mark))) missed.push(path.join("."));
+    }
+    return { many: n > 30, missed };
+  };
 
   same("P.1 البصمةُ لا يغيّرها ترتيبُ المفاتيح", canonicalJson({ b: 1, a: [2, { d: 1, c: 2 }] }), canonicalJson({ a: [2, { c: 2, d: 1 }], b: 1 }));
   same("P.2 **سطرُ الممنوع يُعاد تركيبُه دائماً** — مسحُ الاحتياطات لا يُسقطه، وجهازٌ ممنوعٌ بسببين مرّةً بسببيه", (() => {
@@ -216,27 +237,33 @@ async function main() {
     [{ use: "adjunct", minutes: 10, everyDays: null, times: null, modelId: "btl-4825s-electro", program: null, fallback: [["frequency_hz", 100, "https://x.org/a"]] },
       { dose: [3, 12, null, null, null] }]);
   //  مراجعةُ Codex على #775: كلُّ حقلٍ محفوظ يغيّر الفرق — لا «لا تغيير» يحفظ نصّاً لم يُرَ (الإنكليزيُّ منه خاصّة).
-  same("P.13 **كلُّ حقلٍ في المحتوى يظهر في الفرق** — كلُّ ورقةٍ في اللقطة تُغيَّر وحدها فلا يكون الفرقُ فارغاً", (() => {
+  same("P.13 **كلُّ حقلٍ في المحتوى يظهر في الفرق بقيمته** — كلُّ ورقةٍ في اللقطة تُغيَّر وحدها بعلامةٍ فتظهر العلامةُ في الفرق (لا اسمٌ عربيٌّ مكانها)", (() => {
     const rich = (): PlanSnapshot => { const s = baseSnap(); s.measuresOwn = true;
       s.measures = [{ code: "pain", nameAr: "الألم", nameEn: "Pain", unitAr: null, unitEn: null, min: 0, max: 10, higherIsBetter: false }];
       s.sources = [{ title: "مصدر", url: "https://x.org/a", org: "X", year: 2024, usedFor: "y", addedBy: "opus", fetchedInJob: 1 } as any];
       s.phaseNotes = [{ phase: 1, noteAr: "م", noteEn: null }]; s.track = { nameAr: "م", nameEn: "T", whyEn: "w" }; return s; };
-    const content = JSON.parse(JSON.stringify(snapshotContent(rich())));
-    const paths: (string | number)[][] = [];
-    const walk = (v: any, path: (string | number)[]) => {
-      if (v !== null && typeof v === "object") { for (const k of Object.keys(v)) walk(v[k], [...path, Array.isArray(v) ? Number(k) : k]); return; }
-      paths.push(path);
-    };
-    walk(content, []);
-    const missed: string[] = [];
-    for (const path of paths) {
-      if (path[0] === "schema") continue;
-      const b = rich() as any; let o = b; for (const k of path.slice(0, -1)) o = o[k];
-      const k = path.at(-1)!; const v = o[k];
-      o[k] = typeof v === "string" ? `${v}x` : typeof v === "number" ? v + 1 : typeof v === "boolean" ? !v : "z";
-      if (diffSnapshots(rich(), b).empty) missed.push(path.join("."));
-    }
-    return [paths.length > 100, missed]; })(), [true, []]);
+    return leafCoverage(rich, (b) => b);
+  })(), { many: true, missed: [] });
+  //  مراجعةُ Codex على #776: المضافُ (مرحلةٌ بتمارينها، جهاز، تمرين، مقياس، مصدر، ممنوع) يُعرض بكلّ ما فيه — لا اسمُه وحده.
+  same("P.15 **كلُّ ما في العنصر المضاف يظهر في الفرق بقيمته**", (() => {
+    const base = (): PlanSnapshot => baseSnap();
+    const grow = (b: PlanSnapshot): PlanSnapshot => {
+      const ph = JSON.parse(JSON.stringify(b.phases[1])); ph.position = 3; ph.nameAr = "ثالثة"; ph.nameEn = "Three"; ph.sessionFrom = 13; ph.sessionTo = 18;
+      ph.goals = "هدف"; ph.goalsEn = "G"; ph.education = "ت"; ph.notes = "ن"; ph.exercises = [{ ...ex(3), sets: 2, reps: 8, note: "م", noteEn: "N", doseNoteEn: "D" }];
+      b.phases.push(ph);
+      b.phases[0].exercises.push({ ...ex(2), sets: 3, reps: 10, note: "م٢", noteEn: "N2" });
+      b.devices.push({ ...b.devices[0], deviceCode: "tecar", nameAr: "تيكار", nameEn: "Tecar", parameters: "p", parametersEn: "pe", note: "n", noteEn: "ne", reasonAr: "ر", reasonEn: "r" });
+      b.measuresOwn = true; b.measures = [{ code: "rom", nameAr: "المدى", nameEn: "ROM", unitAr: "درجة", unitEn: "deg", min: 0, max: 180, higherIsBetter: true }];
+      b.sources = [{ title: "مصدر", url: "https://x.org/b", org: "X", year: 2023, usedFor: "u", addedBy: "approver", fetchedInJob: null } as any];
+      b.forbidden.push({ deviceCode: "laser", nameAr: "الليزر", reasonAr: "حمل", source: "approver" });
+      return b; };
+    //  الأوراقُ داخل المضاف وحده: ما يختلف بين اللقطتين قبل التغيير.
+    return leafCoverage(() => grow(base()), (b) => b, (path) => {
+      const [k, i] = path as [string, number];
+      return (k === "phases" && i === 2) || (k === "phases" && i === 0 && path[2] === "exercises" && path[3] === 1) || (k === "devices" && i === 1)
+        || k === "measures" || k === "sources" || (k === "forbidden" && i === 1);
+    }, base);
+  })(), { many: true, missed: [] });
   same("P.13ب **الاسمُ الإنكليزيّ للمرحلة يُسمّى في الفرق** «بالإنكليزية»", (() => {
     const a = baseSnap(); const b = baseSnap(); b.phases[0].nameEn = "One — new"; b.phases[0].goalsEn = "Goal";
     return diffSnapshots(a, b).sections.flatMap((x) => x.changes).map((c) => c.labelAr); })(), ["أولى — الأهدافُ بالإنكليزية", "أولى — الاسمُ بالإنكليزية"]);
