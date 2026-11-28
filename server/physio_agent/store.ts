@@ -152,6 +152,9 @@ async function branchOk(ex: any, branchId: number | null): Promise<boolean> {
   return Boolean(r) && !r.temporarily_closed;
 }
 
+/** أسبابُ إلغاءٍ يفرضها النظامُ على الوظيفة لا قرارٌ فيها — وظيفتُها لا تمنع إعادةَ المحاولة على البصمة نفسِها. */
+export const SYSTEM_CANCEL_REASONS = new Set(["gate_closed", "superseded_by_newer_exam", "exam_changed", "exam_cancelled", "patient_deleted", "patient_merged"]);
+
 export type EnqueueResult = { job: JobRecord } | { skipped: string; reason: string; existing?: JobRecord };
 
 /** **وضعُ وظيفةٍ في الطابور** (§4.ha ٤.٣) — داخل معاملة المُستدعي وقفلِ مريضه. التلقائيُّ يتخطّى بصمت، واليدويُّ يُردّ بالسبب. */
@@ -182,8 +185,10 @@ export async function enqueueTx(tx: any, p: { examId: number; trigger: JobTrigge
     }
   }
   if (auto) {
-    const prev = rows(await tx.execute(sql`SELECT status, error_code, exam_fingerprint FROM physio_agent_jobs WHERE exam_id = ${exam.id} ORDER BY id DESC`));
-    if (p.strictFingerprint && prev.some((j) => j.exam_fingerprint === fp)) return skip("already_tried", "جرى تشغيلٌ على هذه المعاينة بنصّها");
+    const prev = rows(await tx.execute(sql`SELECT status, error_code, cancel_reason, exam_fingerprint FROM physio_agent_jobs WHERE exam_id = ${exam.id} ORDER BY id DESC`));
+    //  ما ألغاه النظامُ لا لقرارٍ في الخطّة (البوّابةُ أُغلقت ثمّ فُتحت، معاينةٌ أحدث أُلغيت…) ليس «تشغيلاً» — مراجعةُ Codex.
+    const tried = (j: Record<string, any>) => !(j.status === "cancelled" && SYSTEM_CANCEL_REASONS.has(String(j.cancel_reason ?? j.error_code ?? "")));
+    if (p.strictFingerprint && prev.some((j) => j.exam_fingerprint === fp && tried(j))) return skip("already_tried", "جرى تشغيلٌ على هذه المعاينة بنصّها");
     if (prev.some((j) => j.exam_fingerprint === fp && (j.status === "needs_exam_revision" || (j.status === "failed" && j.error_code === "agent_declined")))) {
       return skip("already_decided", "قرّر Opus في هذه المعاينة بنصّها من قبل");
     }

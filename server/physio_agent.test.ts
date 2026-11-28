@@ -1080,6 +1080,7 @@ async function main() {
       const okp = await patient("مصالح قابل");
       await insExam(okp, B1, 30);
       await q(`DELETE FROM physio_agent_reconcile_skips`);
+      const maxJobBefore = Number((await q(`SELECT COALESCE(max(id), 0) AS m FROM physio_agent_jobs`))[0].m);
       let scans = 0;
       for (; scans < 40 && (await jobsOf(okp)).length === 0; scans++) await reconcilerScan(1);
       same("N.6 **المصالِحُ الدوريّ لا يجوع**: ذو الخطّة القائمة خارجَ المرشّحين أصلاً، والمتخطّى يُذكَر (فرعٌ مغلق) فلا يعود، والقابلةُ تُوضع لها وظيفة",
@@ -1087,7 +1088,9 @@ async function main() {
           (await q(`SELECT count(*) FROM physio_agent_reconcile_skips WHERE exam_id = ANY($1::int[])`, [blockedExams]))[0].count,
           (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [closedExam]))[0]?.reason, scans < 40],
         [1, "reconcile", "0", "branch_unavailable", true]);
-      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', error_code = 'cancelled_by_user', error = 'تنظيف', finished_at = now() WHERE patient_id = $1 AND status IN ('queued','running','needs_answers')`, [okp]);
+      //  والمصالِحُ يعيد أيضاً ما ألغاه النظامُ لمرضى سبقوا (مراجعةُ Codex) — كلُّ ما وضعه هنا يُنظَّف فلا يأخذه العاملُ قبل ما بعده.
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', error_code = 'cancelled_by_user', cancel_reason = 'cancelled_by_user', error = 'تنظيف', finished_at = now()
+        WHERE (patient_id = $1 OR id > $2) AND status IN ('queued','running','needs_answers')`, [okp, maxJobBefore]);
     }
 
     //  ما يحفظه النظامُ عن المريض ومَن معه خارجَ صفّه (رقمُ الجنسية واسمُ المرافق والكفيل) في مجموعة الهويّة.
@@ -1182,6 +1185,47 @@ async function main() {
       await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, origin, agent_job_id) VALUES ($1, $2, 'x', 'opus', $3)`, [p1, B1, j.id]);
     } catch (e: any) { ppDup = String(e?.constraint ?? e?.message); }
     same("M.5 خطّةٌ واحدة لكلّ وظيفة", ppDup, "uq_pp_agent_job");
+
+    //  مراجعةُ Codex: المصالِحُ لا يستبعد معاينةً لأنّ لها وظيفةً سابقة — الحكمُ للبصمة الحالية، وإلغاءُ النظام ليس «تشغيلاً»،
+    //  والتنقيحُ أو قرارُ الاعتماد بعد التخطّي يُسقط التخطّي.
+    {
+      const r8 = await patient("مصالحة بعد تغيّر");
+      const e8 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '1 hour' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r8, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      same("N.8a وظيفةٌ أولى", (await jobsOf(r8)).length, 1);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'gate_closed', error_code = 'gate_closed', error = 'أُغلقت', finished_at = now() WHERE patient_id = $1`, [r8]);
+      await reconcilerScan(1);
+      same("N.8b **أُغلقت البوّابةُ ثمّ فُتحت ونداؤها ضاع ⟵ المصالِحُ يعيدها** (إلغاءُ النظام ليس تشغيلاً)",
+        (await jobsOf(r8)).map((j) => j.status), ["cancelled", "queued"]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r8]);
+      await reconcilerScan(1);
+      same("N.8c وإلغاءُ المستخدم يُحترم: لا وظيفةَ ثالثة، والتخطّي محفوظ",
+        [(await jobsOf(r8)).length, (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e8]))[0]?.reason], [2, "already_tried"]);
+      await q(`UPDATE physio_agent_reconcile_skips SET skipped_at = now() - interval '10 minutes' WHERE exam_id = $1`, [e8]);
+      {  //  تنقيحٌ ضاع نداؤه: النصُّ يتغيّر بلا مرورٍ بالنقطة (المحفّزُ الختميّ معطَّلٌ لهذه المعاملة وحدها).
+        const c = await pool.connect();
+        try { await c.query("BEGIN"); await c.query("SET LOCAL session_replication_role = replica");
+          await c.query(`UPDATE medical_exams SET diagnosis = 'د بعد التنقيح' WHERE id = $1`, [e8]); await c.query("COMMIT"); }
+        catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
+      }
+      await q(`INSERT INTO medical_exam_revisions (exam_id, version, diagnosis, edited_at) VALUES ($1, 1, 'د', now() - interval '5 minutes')`, [e8]);
+      await reconcilerScan(1);
+      same("N.8d **نُقّحت المعاينةُ ونداؤها ضاع ⟵ التخطّي يسقط والبصمةُ الجديدة تُكتب**",
+        (await jobsOf(r8)).map((j) => j.status), ["cancelled", "cancelled", "queued"]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r8]);
+      await reconcilerScan(1);
+      const skipBefore = (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e8]))[0]?.reason;
+      //  التنقيحُ (N.8d، قبل خمس دقائق) أقدمُ من التخطّي هنا — فالطلبُ وحده ما يُسقطه.
+      await q(`UPDATE physio_agent_reconcile_skips SET skipped_at = now() - interval '1 minute' WHERE exam_id = $1`, [e8]);
+      await q(`INSERT INTO physio_exam_red_flag_reviews (exam_id, patient_id, branch_id, flags, status, examiner_note, requested_at) VALUES ($1, $2, $3, '[]'::jsonb, 'pending', 'ملاحظة', now())`, [e8, r8, B1]);
+      await reconcilerScan(1);
+      same("N.8e **طلبُ اعتمادٍ أو قرارٌ بعد التخطّي يُسقطه** فيُعاد الحكم (هنا: البوّابةُ أُغلقت بالطلب المعلَّق)",
+        [skipBefore, (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e8]))[0]?.reason], ["already_tried", "gate_closed"]);
+    }
   } catch (e) {
     failures++;
     console.error("❌ FAIL  استثناءٌ في الاختبار:", e);
