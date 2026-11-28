@@ -30,9 +30,9 @@ export interface PhysioSheetExam {
   treatments: { treatmentType: string; sessionCount: number | null }[];
   /** «ملاحظات الفاحص» — وللمعاينة القديمة (قبل الاستمارة) خاناتُها الأربع بعناوينها في هذا النصّ نفسِه. */
   notes: string | null;
-  /** التقييمُ الأوّليّ (`BC-PT-01`) — `null` لمعاينةٍ قبل الاستمارة. */
+  /** التقييمُ الأوّليّ (`BC-PT-01` أو الإلزاميّة `BC-PT-02`، §4.gz) — `null` لمعاينةٍ قبل الاستمارة. */
   assessment: PhysioInitialAssessment | null;
-  /** سطرُه المختصر بالعربية (`assessmentSummaryAr`). */
+  /** سطرُه المختصر بالعربية (`anyAssessmentSummaryAr` — للاستمارتين). */
   assessmentSummary: string | null;
 }
 

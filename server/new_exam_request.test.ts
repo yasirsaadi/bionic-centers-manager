@@ -26,6 +26,7 @@ import { isExamRequestServiceType, isReviewServiceType, REVIEW_KIND_LABELS } fro
 import { changedSheetValues, newExamDepartmentsOf, referralSubSourceChoice } from "@shared/new_exam_request";
 import { transferTargets, transferHref, resendPhysioHref, parseNewExamQuery, withReplaces, returnedKindLabel } from "@shared/returned_transfer";
 import { readFileSync } from "fs";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -196,7 +197,8 @@ async function main() {
   });
   const signPhysio = async (pid: number) => call("POST", `/api/medical/patients/${pid}/exams`, S.spec, {
     idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-    diagnosis: "ألم أسفل الظهر الميكانيكي", assessment: GOOD(), prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }] },
+    //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+    diagnosis: "ألم أسفل الظهر الميكانيكي", assessment: v2FromV1(GOOD()), prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }] },
   });
 
   try {

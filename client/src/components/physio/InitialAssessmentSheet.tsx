@@ -55,8 +55,14 @@ const FillIn = ({ v }: { v: string | number | null | undefined }) =>
 
 const inputCls = "h-8 rounded border border-slate-300 bg-white px-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
+/**
+ * **ما يُخفى من الورقة الأولى داخل الاستمارة الثانية** (§4.gz): «لا ينطبق» (لا مكانَ له في الإلزام)، وتاريخا البداية والعملية والألمُ
+ * والإحساس — كلُّها في بطاقة النواة. والباقي (الفحوصات · التاريخ · الألمُ ووصفُه · القوة · أشورث · الوظيفة · الخطّة) كما هو.
+ */
+export type AssessmentSheetSection = "na" | "onset" | "surgery" | "painScale" | "sensation";
+
 export function InitialAssessmentSheet({
-  value, onChange, lang, onset, missing = [], testIdPrefix = "pt",
+  value, onChange, lang, onset, missing = [], testIdPrefix = "pt", hide = [],
 }: {
   value: PhysioInitialAssessment;
   /** غيابُه = قراءةٌ فقط. */
@@ -66,8 +72,10 @@ export function InitialAssessmentSheet({
   onset: string | null;
   missing?: string[];
   testIdPrefix?: string;
+  hide?: AssessmentSheetSection[];
 }) {
   const edit = Boolean(onChange);
+  const shown = (k: AssessmentSheetSection) => !hide.includes(k);
   const L = (k: keyof typeof PT_LABELS) => PT_LABELS[k][lang];
   const t = (o: Opt) => o[lang];
   const miss = (k: string) => missing.includes(k);
@@ -132,12 +140,14 @@ export function InitialAssessmentSheet({
   const td = "border-b border-e last:border-e-0 border-slate-400 px-2 py-1 text-sm";
 
   return (
-    <div dir={lang === "en" ? "ltr" : "rtl"} lang={lang} className="bg-white" data-testid={tid("sheet")} data-form={PT_FORM_CODE}>
+    <div dir={lang === "en" ? "ltr" : "rtl"} lang={lang} className="bg-white" data-testid={tid("sheet")} data-form={value.form ?? PT_FORM_CODE}>
       <div className="bg-slate-300/80 font-bold text-sm text-slate-900 py-1.5 px-2 border-b border-slate-700 flex flex-wrap items-center justify-center gap-3">
         <span>{L("sectionA")}</span>
-        <span className="ms-auto font-semibold">
-          <Box label={L("na")} on={value.sectionANa} testId={tid("na")} onToggle={edit ? () => patch({ sectionANa: !value.sectionANa }) : undefined} />
-        </span>
+        {shown("na") && (
+          <span className="ms-auto font-semibold">
+            <Box label={L("na")} on={value.sectionANa} testId={tid("na")} onToggle={edit ? () => patch({ sectionANa: !value.sectionANa }) : undefined} />
+          </span>
+        )}
       </div>
 
       {value.sectionANa && edit ? (
@@ -149,16 +159,20 @@ export function InitialAssessmentSheet({
           <Row label={L("investigations")}>{multi("investigations", PT_INVESTIGATIONS)}</Row>
           <Row label={L("trend")}>{single("trend", PT_TRENDS)}</Row>
           <Group label={L("history")}>
-            <Row label={L("onset")}>
-              <FillIn v={onsetText} />
-              {edit && <span className="text-xs text-slate-500">{lang === "ar" ? "يُعدَّل من «تاريخ الإصابة» أعلى الاستمارة" : "Edit it in «تاريخ الإصابة» above"}</span>}
-            </Row>
-            <Row label={L("surgery")} missing={miss("surgeryDate")}>
-              {edit
-                ? <input type="date" className={cn(inputCls, "w-44")} value={value.surgeryDate ?? ""} dir="ltr"
-                    onChange={(e) => patch({ surgeryDate: e.target.value || null })} data-testid={tid("surgeryDate")} />
-                : <FillIn v={value.surgeryDate} />}
-            </Row>
+            {shown("onset") && (
+              <Row label={L("onset")}>
+                <FillIn v={onsetText} />
+                {edit && <span className="text-xs text-slate-500">{lang === "ar" ? "يُعدَّل من «تاريخ الإصابة» أعلى الاستمارة" : "Edit it in «تاريخ الإصابة» above"}</span>}
+              </Row>
+            )}
+            {shown("surgery") && (
+              <Row label={L("surgery")} missing={miss("surgeryDate")}>
+                {edit
+                  ? <input type="date" className={cn(inputCls, "w-44")} value={value.surgeryDate ?? ""} dir="ltr"
+                      onChange={(e) => patch({ surgeryDate: e.target.value || null })} data-testid={tid("surgeryDate")} />
+                  : <FillIn v={value.surgeryDate} />}
+              </Row>
+            )}
             <Row label={L("pastHistory")}>{text("pastHistory")}</Row>
             <Row label={L("allergy")}>
               {multi("allergy", PT_ALLERGIES)}
@@ -178,10 +192,12 @@ export function InitialAssessmentSheet({
           </Row>
           <Group label={L("pain")}>
             <Row label={L("symptoms")} missing={miss("symptoms")}>{single("symptoms", PT_SYMPTOMS)}</Row>
-            <Row label={L("painScale")} missing={miss("painBest") || miss("painWorst")}>
-              <span className="inline-flex items-center gap-1.5">{L("atBest")} {pain("painBest")}</span>
-              <span className="inline-flex items-center gap-1.5">{L("atWorst")} {pain("painWorst")}</span>
-            </Row>
+            {shown("painScale") && (
+              <Row label={L("painScale")} missing={miss("painBest") || miss("painWorst")}>
+                <span className="inline-flex items-center gap-1.5">{L("atBest")} {pain("painBest")}</span>
+                <span className="inline-flex items-center gap-1.5">{L("atWorst")} {pain("painWorst")}</span>
+              </Row>
+            )}
             <Row label={L("location")} missing={miss("location")}>
               {multi("location", PT_LOCATIONS)}
               <span className="inline-flex items-center gap-1.5 flex-1">{L("other")} {text("locationOther")}</span>
@@ -192,10 +208,12 @@ export function InitialAssessmentSheet({
               <span className="inline-flex items-center gap-1.5 flex-1">{L("other")} {text("relievingOther")}</span>
             </Row>
           </Group>
-          <Group label={L("sensation")}>
-            <Row label={L("overallStatus")} missing={miss("sensation")}>{single("sensation", PT_SENSATION)}</Row>
-            <Row label={L("affectedRegions")} missing={miss("sensationRegions")}>{text("sensationRegions")}</Row>
-          </Group>
+          {shown("sensation") && (
+            <Group label={L("sensation")}>
+              <Row label={L("overallStatus")} missing={miss("sensation")}>{single("sensation", PT_SENSATION)}</Row>
+              <Row label={L("affectedRegions")} missing={miss("sensationRegions")}>{text("sensationRegions")}</Row>
+            </Group>
+          )}
           <Band>{L("mmt")} — <span className="font-normal text-xs">{PT_MMT_LEGEND[lang]}</span></Band>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse print:break-inside-avoid" data-testid={tid("mmt")}>

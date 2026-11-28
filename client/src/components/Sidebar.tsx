@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock, ScrollText, ArrowUpDown, ArrowUpToLine, ChevronUp, ChevronDown } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, LogOut, FileBarChart, Building2, ShieldCheck, Menu, X, BarChart3, Calculator, Settings, User, Globe, ClipboardCheck, CalendarDays, Activity, Target, ClipboardList, TrendingUp, PhoneCall, Wrench, Bell, Stethoscope, KeyRound, BadgePercent, Wallet, Undo2, Trash2, Banknote, Eye, BookOpen, Dumbbell, CalendarCheck, CalendarClock, ScrollText, ArrowUpDown, ArrowUpToLine, ChevronUp, ChevronDown, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { clearBranchSession, useBranchSession } from "@/components/BranchGate";
@@ -35,7 +35,7 @@ import { hasAnyRole, hidesDashboard, onlyRoles, rolesOf } from "@shared/user_rol
 import { canWriteCashBook } from "@shared/cash_book";
 import { canExecutePlans, canReadPlans } from "@shared/physio_plans";
 import { canViewOutcomes } from "@shared/physio_assessments";
-import { canReadProtocols } from "@shared/physio_protocols";
+import { canApproveProtocols, canReadProtocols } from "@shared/physio_protocols";
 import { canOperateNoExam } from "@shared/pending_charge";
 import { sidebarToneOf } from "@/components/sidebar_tones";
 import { SidebarClockWeather, TopBarClockWeather } from "@/components/ClockWeather";
@@ -300,6 +300,19 @@ export function Sidebar() {
       return res.json();
     },
   });
+  //  ══ **«اعتمادات العلاج الطبيعي»** (ترحيل ١٩٨، §4.gz) — للمسؤول والمشرف العام كبوّابة الخادم؛ والرقمُ العلاماتُ الحمراء المنتظرة.
+  //  **بلا `refetchInterval`** (قرارُ المالك ٢٠٢٦-٠٩-٢٣): تتحدّث عند الكتابة والعودة.
+  const physioApprover = canApproveProtocols(branchSession ? { ...branchSession, permissions } : null);
+  const { data: redFlagCountData } = useQuery<{ count: number }>({
+    queryKey: ["/api/physio/red-flag-reviews", "pending-count"],
+    enabled: physioApprover,
+    queryFn: async () => {
+      const res = await fetch("/api/physio/red-flag-reviews/pending-count", { credentials: "include" });
+      if (!res.ok) return { count: 0 };
+      return res.json();
+    },
+  });
+  const redFlagPending = redFlagCountData?.count ?? 0;
   const paymentCorrectionsCount = (paymentCorrectionsData?.count ?? 0) + (moneyCorrectionsData?.count ?? 0) + (reserveWithdrawalsData?.count ?? 0)
     + (refundsData?.count ?? 0) + (hospitalDeliveriesData?.count ?? 0);
 
@@ -427,6 +440,8 @@ export function Sidebar() {
     { label: "جلسات اليوم", icon: CalendarCheck, href: "/physio/today", adminOnly: false, settingKey: null, permission: null, eligible: canExecutePlans(branchSession ? { ...branchSession, permissions } : null) },
     //  نتائجُ العلاج الطبيعي (§4.cp) — للأخصائيّ ومدير الفرع والمشرف والمسؤول، بقاعدة الخادم نفسِها.
     { label: "نتائج العلاج الطبيعي", icon: TrendingUp, href: "/physio/outcomes", adminOnly: false, settingKey: null, permission: null, eligible: canViewOutcomes(branchSession ? { ...branchSession, permissions } : null) },
+    //  اعتماداتُ العلاج الطبيعي (§4.gz) — العلاماتُ الحمراء في المعاينات، للمسؤول والمشرف العام وحدهما.
+    { label: "اعتمادات العلاج الطبيعي", icon: ShieldAlert, href: "/physio/approvals", adminOnly: false, settingKey: null, permission: null, eligible: physioApprover, badge: redFlagPending },
     //  ══ **«بانتظار الحسم»** (المرحلة الخامسة — كانت «متابعة ما بعد
     //  المعاينة») ══════════════════════════════════════════════════════
     //  **ولا الطبيبُ بعد اليوم**: الحسمُ صار حصراً لمن يحمل

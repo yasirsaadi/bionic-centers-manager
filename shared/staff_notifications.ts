@@ -50,6 +50,9 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "physio_plan_assigned", label: "خطة علاج طبيعي معتمدة أُسندت إليه", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_session_note", label: "ملاحظةٌ من المعالج على جلسةٍ من خطّته", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_assessment_due", label: "تذكير صباحي بخططه المستحقّة التقييم", group: "العلاج الطبيعي", scope: "targeted", digest: true },
+  //  العلامةُ الحمراء في معاينة العلاج الطبيعي (§4.gz، ترحيل ١٩٨) — للمسؤول والمشرف العام؛ وقرارُها لمن طلبه وحده.
+  { key: "physio_exam_red_flag_pending", label: "علامةٌ حمراء في معاينة علاجٍ طبيعيّ تنتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_exam_red_flag_decided", label: "علامةُ معاينته الحمراء اعتُمدت أو رُفضت", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -76,9 +79,15 @@ export interface StaffEligibilityUser {
   canWorkAsExpert?: boolean | null;
   /** «مشرف عام العلاج الطبيعي» (§4.cg) — يعتمد الخطط. */
   canSupervisePhysio?: boolean | null;
+  /** اختصاصاتُ الطبيب (`medical_specialties`) — قرارُ العلامة الحمراء لطبيبٍ يكتب معاينةَ العلاج الطبيعي وحده (§4.gz). */
+  medicalSpecialties?: unknown;
 }
 
 const DOCTOR_EVENTS = ["exam_request"];
+//  والطبيبُ قد يكتب معاينةَ العلاج الطبيعي **باختصاصه** — فقرارُ علامتها الحمراء له وحده، لا لطبيب الأطراف (§4.gz).
+const PHYSIO_DOCTOR_EVENTS = ["physio_exam_red_flag_decided"];
+const specialtiesOf = (u: StaffEligibilityUser): string[] =>
+  Array.isArray(u.medicalSpecialties) ? u.medicalSpecialties.map(String) : [];
 const EXPERT_EVENTS = ["order_assigned", "order_reassigned", "expert_due_digest"];
 const FRONT_DESK_EVENTS = ["returned_from_doctor", "awaiting_decision", "ready_for_fitting", "delivered", "followups_digest", "installment_due"];
 const MANAGER_EVENTS = ["order_hold_rework", "evening_summary"];
@@ -93,15 +102,16 @@ const REFUND_EVENTS = ["refund_request_decided"];
  * فالمُرسِلُ لا يعيد فحصَ الدور لها، ويكفيها أن تكون موجَّهةً إليه (`target_user_ids`) وأن يكون تنبيهُها مفعّلاً له.
  * والأهليّةُ بالدور تبقى لما يُعرض في «تنبيهات الموظفين».
  */
-export const REQUESTER_REPLY_EVENTS: readonly string[] = ["reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided"];
+export const REQUESTER_REPLY_EVENTS: readonly string[] = ["reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided",
+  "physio_exam_red_flag_decided"];
 
 /** هل يُرسَل النوعُ لهذا الموظّف؟ — بالدور، أو ردّاً موجَّهاً على طلبه. */
 export function staffEventDeliverable(u: StaffEligibilityUser, event: string, targeted: boolean): boolean {
   if (targeted && REQUESTER_REPLY_EVENTS.includes(event)) return true;
   return eligibleStaffEvents(u).includes(event);
 }
-const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending"];
-const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due"];
+const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending"];
+const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided"];
 const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
@@ -109,7 +119,10 @@ export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   //  الأدوارُ كلُّها (ترحيل ١٠٥، §4.ch) — والأنواعُ اتّحادُ ما يصل كلَّ دور.
   const role = (r: string) => hasRole(u, r);
   if (role("admin")) return STAFF_EVENT_KEYS.slice();
-  if (role("doctor") || u.canWriteMedicalExam) DOCTOR_EVENTS.forEach((k) => out.add(k));
+  if (role("doctor") || u.canWriteMedicalExam) {
+    DOCTOR_EVENTS.forEach((k) => out.add(k));
+    if (specialtiesOf(u).includes("physiotherapy")) PHYSIO_DOCTOR_EVENTS.forEach((k) => out.add(k));
+  }
   if (role("prosthetics_expert") || u.canWorkAsExpert) EXPERT_EVENTS.forEach((k) => out.add(k));
   //  والمديرُ بلا «طلب معاينة» — «مدير الفرع لا يعاين» (المالك ٢٠٢٦-١٠-٠٤)؛ ومَن مُنح كتابةَ المعاينة يصله بالسطر أعلاه.
   if (role("branch_manager")) [...FRONT_DESK_EVENTS, ...MANAGER_EVENTS].forEach((k) => out.add(k));

@@ -21,6 +21,7 @@ import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
 import {
   applyEditLocks, editValueChanged, isPrivilegedPatientEditor, lockedPatientFields, requestedItemEditable, EXAMINER_FIELDS,
 } from "@shared/patient_edit_rules";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -300,7 +301,8 @@ async function main() {
     const legacyInjuries = JSON.stringify([{ type: "انزلاق ديسك", area: "القطن", side: "" }]);
     const ps = await call("POST", `/api/medical/patients/${C.pid}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
-      diagnosis: "ألم أسفل الظهر الميكانيكي", assessment: GOOD(), prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }] },
+      //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+      diagnosis: "ألم أسفل الظهر الميكانيكي", assessment: v2FromV1(GOOD()), prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }] },
     });
     check(ps.status === 200, "تهيئة: الأخصائيُّ وقّع معاينةَ العلاج الطبيعي", JSON.stringify(ps.json));
     const c3 = await put(C.pid, S.recv, { presentingComplaint: "ألم الظهر فقط" });

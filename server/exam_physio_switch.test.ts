@@ -15,6 +15,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { retireAcrossPhysiotherapy } from "./medical/store";
 import { storage } from "./storage";
+import { completeExamV2, withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -91,10 +92,9 @@ async function openEpisode(patientId: number, svc: "prosthetic" | "medical_suppo
   return { episodeId, requestId: req[0]?.id ?? null };
 }
 async function signExam(patientId: number, svc: Svc, extra: Record<string, unknown> = {}) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, S.doc, {
-    idempotencyKey: crypto.randomUUID(), caseType: svc, diagnosis: `معاينة ${svc}`, prescription: {},
-    ...extra,
-  });
+  //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+  const body = { idempotencyKey: crypto.randomUUID(), caseType: svc, diagnosis: `معاينة ${svc}`, prescription: {}, ...extra };
+  return await http("POST", `/api/medical/patients/${patientId}/exams`, S.doc, svc === "physiotherapy" ? withCompleteExamV2(body) : body);
 }
 async function casesOf(p: number) {
   return (await q<{ t: string }>(`SELECT case_type t FROM patient_cases WHERE patient_id=$1 ORDER BY case_type`, [p]))
@@ -246,10 +246,16 @@ async function main() {
     const g = await mkPatient("ز-تنقيح", "medical_support");
     const exg = await signExam(g, "medical_support");
     same("ز.١ (الإعداد: معاينةُ مسندٍ على قسم المساند)", await examCaseType(Number(exg.body?.id)), "medical_support");
-    const rev = await http("PATCH", `/api/medical/exams/${exg.body?.id}`, S.doc, {
+    //  **وتبديلُ معاينةٍ إلى العلاج الطبيعي معاينةُ علاجٍ طبيعيّ جديدة** — بإلزامها (§4.gz، مراجعةُ المرحلة الأولى).
+    const revBare = await http("PATCH", `/api/medical/exams/${exg.body?.id}`, S.doc, {
       caseType: "physiotherapy", diagnosis: "علاج طبيعي بعد الفحص", prescription: {},
     });
-    check(rev.status < 300, "ز.٢ التنقيحُ يُحفَظ", JSON.stringify(rev.body));
+    same("ز.٢أ **وبلا الاستمارة الإلزامية ⟵ ٤٠٠** والمعاينةُ على قسمها كما كانت",
+      [revBare.status, revBare.body?.code, await examCaseType(Number(exg.body?.id))], [400, "assessment_incomplete", "medical_support"]);
+    const rev = await http("PATCH", `/api/medical/exams/${exg.body?.id}`, S.doc, {
+      caseType: "physiotherapy", diagnosis: "علاج طبيعي بعد الفحص", prescription: {}, assessment: completeExamV2(),
+    });
+    check(rev.status < 300, "ز.٢ التنقيحُ بالاستمارة كاملةً يُحفَظ", JSON.stringify(rev.body));
     same("ز.٣ **والمعاينةُ انتقلت إلى العلاج الطبيعي**", await examCaseType(Number(exg.body?.id)), "physiotherapy");
     //  **ومعاينةُ الجهاز الموقّعة وَلدت متابعةَ «قرار المريض»** على قسم المساند،
     //  والتنقيحُ لا يمسّها — فحارسُ المتابعة يُبقي القسمَ ويقول للطبيب لماذا.
@@ -324,13 +330,13 @@ async function main() {
         doctor_name, diagnosis, prescription) VALUES ($1,$2,'medical_support',1,$3,'طبيب','مسند','{}'::jsonb)
         RETURNING id`, [m, mCase, DOC]))[0].id;
     const revAsk = await http("PATCH", `/api/medical/exams/${mExam}`, S.doc,
-      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {} });
+      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {}, assessment: completeExamV2() });
     same("ك.١ **التنقيحُ يسأل أيضاً** — ٤٠٩ بصفر كتابة",
       [revAsk.status, revAsk.body?.code, await examCaseType(mExam), await casesOf(m)],
       [409, "cross_retire_decision_required", "medical_support", ["medical_support"]]);
     same("ك.١ب والسؤالُ يحمل الطلبَ بعينه", Array.isArray(revAsk.body?.episodeIds) && revAsk.body.episodeIds.length, 1);
     const revKeep = await http("PATCH", `/api/medical/exams/${mExam}`, S.doc,
-      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {}, crossRetireDecision: "keep" });
+      { caseType: "physiotherapy", diagnosis: "علاج طبيعي", prescription: {}, assessment: completeExamV2(), crossRetireDecision: "keep" });
     same("ك.٢ وبجواب «يحتاج القسمين» ⟵ المعاينةُ على العلاج الطبيعي والقسمان باقيان",
       [revKeep.status < 300, await examCaseType(mExam), await casesOf(m), await pendingOf(m)],
       [true, "physiotherapy", ["medical_support", "physiotherapy"], ["medical_support"]]);

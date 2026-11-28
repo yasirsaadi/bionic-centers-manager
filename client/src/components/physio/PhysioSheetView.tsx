@@ -7,6 +7,9 @@
 import { useState, type ReactNode } from "react";
 import { IntakeSheetHeader, LockedCell, SheetBand, SheetPair, SheetRow, SheetTable } from "@/components/intake/IntakeSheetFrame";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
+import { ExamV2Form } from "@/components/physio/ExamV2Form";
+import { isExamV2 } from "@shared/physio_exam_v2";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { PHYSIO_SHEET_TITLE } from "@/components/medical/PhysioExamSheetForm";
 import { injuryDateDisplay } from "@shared/intake_sheet";
 import { PHYSIO_SHEET_NOTES_LABEL } from "@shared/exam_sheet";
@@ -176,7 +179,12 @@ export function PhysioSheetView({ data, showAssessment = true }: { data: PhysioS
               <button type="button" className={cn("px-2.5 py-1", lang === "ar" ? "bg-primary text-primary-foreground" : "bg-white")} onClick={() => setLang("ar")} data-testid="psv-lang-ar">عربي</button>
             </div>
           </div>
-          <InitialAssessmentSheet value={latestAssessed.assessment} lang={lang} onset={latestAssessed.assessment.onsetAtSigning ?? onset} testIdPrefix="psv-pt" />
+          {/*  **والمعاينةُ الإلزامية** (§4.gz) — بطاقاتُها الثلاث للقراءة، ثمّ أقسامُ الأولى المُعادة. */}
+          {isExamV2(latestAssessed.assessment) && (
+            <div className="mb-2"><ExamV2Form value={latestAssessed.assessment} diagnosis={latestAssessed.diagnosis ?? ""} today={baghdadTodayYmd()} testIdPrefix="psv-v2" /></div>
+          )}
+          <InitialAssessmentSheet value={latestAssessed.assessment} lang={lang} onset={latestAssessed.assessment.onsetAtSigning ?? onset} testIdPrefix="psv-pt"
+            hide={isExamV2(latestAssessed.assessment) ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
         </div>
       )}
     </div>

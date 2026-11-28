@@ -16,6 +16,12 @@
 
 export const PT_FORM_CODE = "BC-PT-01";
 export const PT_FORM_VERSION = 1;
+/**
+ * **الاستمارةُ الثانية الإلزامية** (§4.gz، قرارُ المالك ٢٠٢٦-١١-٢٧) — تعريفُها وقواعدُها في `shared/physio_exam_v2.ts`، ورمزُها هنا
+ * ليقرأ `readStoredAssessment` الاستمارتين معاً: ما خُزّن بالأولى يبقى مقروءاً كما هو، والثانيةُ تحمل أقسامَ الأولى المُعادة
+ * (الإحساس · قوةُ العضلات · أشورث · الحالةُ الوظيفية) بالخانات نفسِها، ومعها النواةُ ووحدةُ المجموعة والعلاماتُ الحمراء.
+ */
+export const PT_FORM_CODE_V2 = "BC-PT-02";
 
 export type Lang = "en" | "ar";
 export interface Opt { code: string; en: string; ar: string }
@@ -155,7 +161,8 @@ export interface Sides<T> { r: T | null; l: T | null }
 
 /** **ما يُخزَّن مع المعاينة** — رموزٌ لا ألفاظ، فتُعرَض بأيّ لغة ولا تتغيّر بتغيّر الترجمة. */
 export interface PhysioInitialAssessment {
-  form: typeof PT_FORM_CODE;
+  /** `BC-PT-01` أو `BC-PT-02` (§4.gz) — والثانيةُ تحمل فوق هذه الخانات `core` و`module` و`redFlags`. */
+  form: typeof PT_FORM_CODE | typeof PT_FORM_CODE_V2;
   version: number;
   sectionANa: boolean;
   investigations: string[];
@@ -389,9 +396,13 @@ export function assessmentHasContent(raw: unknown): boolean {
   return false;
 }
 
-/** يقرأ ما خُزّن (أو `null`) — للعرض. ما لا يُقرأ يُعامَل غياباً لا خطأً. */
+/**
+ * يقرأ ما خُزّن (أو `null`) — للعرض. ما لا يُقرأ يُعامَل غياباً لا خطأً.
+ * **ويقبل الاستمارتين** (§4.gz): `BC-PT-01` كما كانت، و`BC-PT-02` بأقسامها المُعادة وما فوقها (`core` · `module` · `redFlags`) —
+ * فلا تسقط الثانيةُ صامتةً من عرضٍ أو طباعةٍ أو «اقترح خطّة».
+ */
 export function readStoredAssessment(v: unknown): PhysioInitialAssessment | null {
-  if (!v || typeof v !== "object" || (v as any).form !== PT_FORM_CODE) return null;
+  if (!v || typeof v !== "object" || ((v as any).form !== PT_FORM_CODE && (v as any).form !== PT_FORM_CODE_V2)) return null;
   const base = emptyInitialAssessment();
   return { ...base, ...(v as PhysioInitialAssessment) };
 }

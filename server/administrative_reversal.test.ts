@@ -25,6 +25,7 @@ import { readFileSync } from "fs";
 import {
   followupEventView, purchasePresentation, replacementEpisodeIdOf, PURCHASE_STATE_TEXT,
 } from "@shared/followup_events";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 const DBURL = process.env.DATABASE_URL || "";
 if (!/test|localhost|127\.0\.0\.1/.test(DBURL)) {
@@ -1346,11 +1347,12 @@ async function main() {
       await q(`UPDATE patients SET is_physiotherapy=true, is_amputee=false WHERE id=$1`, [phys]);
       await q(`INSERT INTO patient_cases (patient_id, branch_id, case_type, status, cost)
                VALUES ($1, 1, 'physiotherapy', 'active', 0)`, [phys]);
-      const signed = await http("POST", `/api/medical/patients/${phys}/exams`, S.doc, {
+      //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+      const signed = await http("POST", `/api/medical/patients/${phys}/exams`, S.doc, withCompleteExamV2({
         idempotencyKey: crypto.randomUUID(),
         caseType: "physiotherapy", chiefComplaint: "ألم", clinicalFindings: "—",
         diagnosis: "—", plan: "—",
-      });
+      }));
       same("١١٩. (معاينةُ علاجٍ طبيعي وُقّعت)", signed.status < 300, true);
       const pr = await http("GET", `/api/medical/patients/${phys}/exams`, S.admin);
       same("١٢٠. **ومعاينةُ العلاج الطبيعي بلا عملية** — فلا بابَ عليها",

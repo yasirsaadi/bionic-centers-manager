@@ -17,6 +17,7 @@ import express from "express";
 import { createServer } from "http";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 /** خاناتُ الجهاز التي يملؤها الاستعلاماتُ عند «اشترى» حين تركتها المعاينة (§4.cq، ترحيل ١١٥) — لا يُقبَل البيعُ بدونها. */
 const SALE_SPECS_TEST = {
@@ -116,11 +117,9 @@ async function openEpisode(patientId: number, svc: Svc, requestedItem?: string, 
 }
 async function signExam(patientId: number, session: any, svc: string,
   extra: Record<string, unknown> = {}) {
-  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, {
-    idempotencyKey: crypto.randomUUID(),
-    caseType: svc, diagnosis: `معاينة ${svc}`, prescription: {},
-    ...extra,
-  });
+  //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+  const body = { idempotencyKey: crypto.randomUUID(), caseType: svc, diagnosis: `معاينة ${svc}`, prescription: {}, ...extra };
+  return await http("POST", `/api/medical/patients/${patientId}/exams`, session, svc === "physiotherapy" ? withCompleteExamV2(body) : body);
 }
 async function worklist(session: any = S.doc) {
   const r = await http("GET", "/api/medical/worklist", session);

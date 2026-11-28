@@ -6,7 +6,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardList } from "lucide-react";
 import { InitialAssessmentSheet } from "@/components/physio/InitialAssessmentSheet";
-import { assessmentPlanLabels, assessmentSummaryAr, readStoredAssessment, type Lang, type PhysioInitialAssessment } from "@shared/physio_initial_assessment";
+import { assessmentPlanLabels, readStoredAssessment, type Lang, type PhysioInitialAssessment } from "@shared/physio_initial_assessment";
+import { anyAssessmentSummaryAr, assessmentPainWorst, isExamV2 } from "@shared/physio_exam_v2";
+import { ExamV2Form } from "@/components/physio/ExamV2Form";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { formatDateIraq } from "@/lib/utils";
 
 interface ExamRow { id: number; caseType: string; doctorName: string; signedAt: string | null; diagnosis: string | null; assessment?: unknown }
@@ -46,9 +49,11 @@ export function LatestAssessmentBox({ patientId, lang = "ar", compact = false }:
         )}
       </div>
       {latest.diagnosis && <div className="text-xs"><span className="text-slate-500">{en ? "Diagnosis: " : "التشخيص: "}</span><b dir="auto">{latest.diagnosis}</b></div>}
-      {!en && <div className="text-xs text-slate-700" data-testid="latest-assessment-summary">{assessmentSummaryAr(latest.assessment)}</div>}
-      {en && latest.assessment.painWorst !== null && (
-        <div className="text-xs text-slate-700">Pain {latest.assessment.painBest ?? "—"}–{latest.assessment.painWorst} / 10</div>
+      {!en && <div className="text-xs text-slate-700" data-testid="latest-assessment-summary">{anyAssessmentSummaryAr(latest.assessment)}</div>}
+      {en && assessmentPainWorst(latest.assessment) !== null && (
+        <div className="text-xs text-slate-700">{isExamV2(latest.assessment)
+          ? `Pain now ${latest.assessment.core?.painNow ?? "—"}, worst this week ${assessmentPainWorst(latest.assessment)} / 10`
+          : `Pain ${latest.assessment.painBest ?? "—"}–${latest.assessment.painWorst} / 10`}</div>
       )}
       {items.length > 0 && (
         <div className="flex flex-wrap gap-1" data-testid="latest-assessment-plan">
@@ -57,8 +62,10 @@ export function LatestAssessmentBox({ patientId, lang = "ar", compact = false }:
         </div>
       )}
       {full && (
-        <div className="pt-1" data-testid="latest-assessment-full">
-          <InitialAssessmentSheet value={latest.assessment} lang={lang} onset={latest.assessment.onsetAtSigning} testIdPrefix="la-pt" />
+        <div className="pt-1 space-y-2" data-testid="latest-assessment-full">
+          {isExamV2(latest.assessment) && <ExamV2Form value={latest.assessment} diagnosis={latest.diagnosis ?? ""} today={baghdadTodayYmd()} testIdPrefix="la-v2" />}
+          <InitialAssessmentSheet value={latest.assessment} lang={lang} onset={latest.assessment.onsetAtSigning} testIdPrefix="la-pt"
+            hide={isExamV2(latest.assessment) ? ["na", "onset", "surgery", "painScale", "sensation"] : []} />
         </div>
       )}
     </div>

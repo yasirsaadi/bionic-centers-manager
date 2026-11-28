@@ -35,7 +35,7 @@ import {
   type SurveyQuestion, type InsertSurveyQuestion,
   type SurveyResponse, type InsertSurveyResponse,
   type SurveyAnswer, type InsertSurveyAnswer,
-  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations,
+  medicalExams, medicalExamAddenda, medicalExamRevisions, medicalExamCancellations, physioExamRedFlagReviews,
   costEntries, patientEvents, patientContacts, patientLinkTokens,
   patientNotificationDeliveries,
   pendingServiceCharges, pendingServiceChargeEvents, patientCodeAliases,
@@ -2759,6 +2759,10 @@ export class DatabaseStorage implements IStorage {
         .where(eq(medicalExams.patientId, id));
       if (examRows.length > 0) {
         const examIds = examRows.map((e: { id: number }) => e.id);
+        //  طلباتُ اعتماد العلامة الحمراء (ترحيل ١٩٨، §4.gz) — مفتاحان إلى المعاينة والمريض، فقبل المعاينات.
+        await tx.execute(sql`
+          DELETE FROM physio_exam_red_flag_reviews WHERE patient_id = ${id} OR exam_id IN (${sql.join(examIds.map((e: number) => sql`${e}`), sql`, `)})
+        `);
         await tx.delete(medicalExamAddenda).where(inArray(medicalExamAddenda.examId, examIds));
         await tx.delete(medicalExamRevisions).where(inArray(medicalExamRevisions.examId, examIds));
         //  شواهدُ الإلغاء (ترحيل ٠٦١) — **صراحةً لا اتّكالاً على الكاسكيد**.
@@ -3705,6 +3709,8 @@ export class DatabaseStorage implements IStorage {
       //  وإلّا صار الصفُّ يشير إلى ملفٍّ اندمج ثم اختفى.
       await repoint("medicalExamCancellations", medicalExamCancellations,
         medicalExamCancellations.patientId);
+      //  وطلباتُ اعتماد العلامة الحمراء (ترحيل ١٩٨، §4.gz) تتبع معاينتَها: `exam_id` لا يتغيّر، و`patient_id` يتبع صاحبَه.
+      await repoint("physioExamRedFlagReviews", physioExamRedFlagReviews, physioExamRedFlagReviews.patientId);
 
       // ── Event log (migration 044) ────────────────────────────────────────
       // Repointing patient_id alone is NOT enough, for two independent reasons.

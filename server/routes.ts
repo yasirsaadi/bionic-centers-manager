@@ -77,6 +77,7 @@ import { parseInstallmentInput, type InstallmentInput } from "@shared/installmen
 import { registerPhysioProtocolRoutes } from "./physio_protocols/routes";
 import { liveBroadcastMiddleware, registerLiveStream } from "./live/updates";
 import { registerPhysioPlanRoutes } from "./physio_plans/routes";
+import { registerPhysioExamReviewRoutes } from "./physio_exam_reviews/routes";
 import { physioOfferingBranchIds } from "./physio_plans/store";
 import { createDocumentWithFile, getDocument, getDocumentFile, ALLOWED_MIME as DOCUMENT_MIME, MAX_BYTES as MAX_DOCUMENT_BYTES } from "./documents/files";
 import { ownerDrawingsForPeriod } from "./cash_book/store";
@@ -9276,6 +9277,8 @@ export async function registerRoutes(
   registerInstallmentRoutes(app, isAuthenticated);
   registerPhysioProtocolRoutes(app, isAuthenticated);
   registerPhysioPlanRoutes(app, isAuthenticated);
+  //  اعتمادُ العلامة الحمراء في معاينة العلاج الطبيعي (ترحيل ١٩٨، §4.gz).
+  registerPhysioExamReviewRoutes(app, isAuthenticated);
   registerAdminReversalRoutes(app, isAuthenticated);
   registerPaymentCorrectionRoutes(app, isAuthenticated);
   //  المراجعةُ اليومية: سردٌ إشرافيٌّ للقراءة فقط فوق الجداول أعلاه —

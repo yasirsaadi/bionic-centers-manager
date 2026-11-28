@@ -20,6 +20,7 @@ import { emptyInitialAssessment } from "@shared/physio_initial_assessment";
 import {
   EXAM_QUEUED_HEADER, decodeExamQueued, encodeExamQueued, mergeExamQueued, type ExamQueuedNotice,
 } from "@shared/exam_queued_notice";
+import { withCompleteExamV2, v2FromV1 } from "./test_fixtures/physio_exam_v2";
 
 let failures = 0;
 function check(cond: boolean, msg: string, detail = "") {
@@ -214,9 +215,10 @@ async function main() {
     const sp = await call("POST", `/api/medical/patients/${F.pid}/exams`, S.spec, {
       idempotencyKey: randomUUID(), caseType: "physiotherapy", chiefComplaint: "", clinicalFindings: "", plan: "", notes: "",
       diagnosis: "ألم أسفل الظهر الميكانيكي", prescription: { treatments: [{ treatmentType: "تمارين تأهيلية", sessionCount: 10 }] },
-      assessment: { ...emptyInitialAssessment(), investigations: ["mri"], trend: "worse", allergy: ["nka"], previousTherapy: "no",
+      //  (§4.gz) معاينةُ العلاج الطبيعي الجديدة إلزاميةٌ على `BC-PT-02` — فتوقيعُها هنا يحمل الاستمارةَ كاملةً (`withCompleteExamV2`).
+      assessment: v2FromV1({ ...emptyInitialAssessment(), investigations: ["mri"], trend: "worse", allergy: ["nka"], previousTherapy: "no",
         symptoms: "constant", painBest: 3, painWorst: 7, location: ["back"], aggravating: ["sitting"], relieving: ["rest"],
-        sensation: "intact", plan: ["therapeutic_exercises"] },
+        sensation: "intact", plan: ["therapeutic_exercises"] }),
     });
     check(sp.status === 200, "تهيئة: الأخصائيُّ وقّع معاينةَ العلاج الطبيعي", JSON.stringify(sp.json));
     const e1 = await call("POST", `/api/patients/${F.pid}/new-exam-request`, S.recv, { department: "physiotherapy", fields: { address: "الأعظمية" } });

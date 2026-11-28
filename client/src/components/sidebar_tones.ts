@@ -69,6 +69,8 @@ const TONE_BY_HREF: Record<string, SidebarTone> = {
   "/physio/plans": T.purple,
   "/physio/today": T.fuchsia,
   "/physio/outcomes": T.violet,
+  //  اعتمادُ العلامات الحمراء (§4.gz) — أحمرُ الخطر.
+  "/physio/approvals": T.red,
   //  تتبّعُ الجلسات
   "/session-tracking/entry": T.indigo,
   "/session-tracking/targets": T.indigo,
