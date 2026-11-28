@@ -285,6 +285,27 @@ async function main() {
     same("ت.٧ب **وملاحظةُ الاعتماد تصل المساعدَ قيداً**", sent5.includes("redFlagApprovalNote") && sent5.includes("بلا شدّ"), true);
     const info5 = (await call("GET", `/api/patients/${pt5}/physio-plans`, S.spec)).json?.suggest?.assessment;
     same("ت.٨ وبجانب الاختيار سطرُها وأسوأُ ألم الأسبوع", [/أسفل الظهر/.test(info5?.summary ?? ""), /علاماتٌ حمراء: ١/.test(info5?.summary ?? ""), info5?.painWorst], [true, true, 8]);
+    //  **البوّابةُ الحتمية بعد النموذج** (مراجعةُ Codex على #770): مراهقٌ في الخامسة عشرة ⟵ صفائحُ النموّ تمنع الليزر —
+    //  فلا يراه المساعدُ ولا يدخل الاقتراح ولو لم يحذفه، ويُكتب حذفاً بسببه؛ وعند الفتح يُفحص ثانيةً.
+    const pt6 = (await q(`INSERT INTO patients (name, phone, referral_source, age, medical_condition, branch_id, is_physiotherapy, presenting_complaint)
+      VALUES ($1, '07705556669', $2, '15', 'physiotherapy', $3, true, 'ألم أسفل الظهر') RETURNING id`, [`مراهق ${MARK}`, MARK, B1])).rows[0].id;
+    await q(`INSERT INTO medical_exams (patient_id, case_type, branch_id, doctor_name, diagnosis, assessment) VALUES ($1, 'physiotherapy', $2, 'أخصائيّ اختبار', 'ألم أسفل الظهر', $3::jsonb)`,
+      [pt6, B1, JSON.stringify(completeExamV2({ core: { ageYears: 15 } }))]);
+    calls.length = 0;
+    reply = { choose: { choices: [{ protocolId: P1, reasonAr: "اختبار" }] }, adjust: {} };
+    const r6 = await suggestFor(S.spec, pt6);
+    const adj6 = JSON.parse(calls.find((c) => c.step === "adjust")!.user);
+    same("ت.٩ **الجهازُ الممنوع بالمعاينة لا يراه المساعد** ولا يدخل الاقتراح، ويُكتب حذفاً بسببه",
+      [r6.status, adj6.protocol.devices.some((d: any) => d.deviceId === LASER), r6.json?.devices?.some((d: any) => d.deviceId === LASER),
+        r6.json?.changes?.some((c: any) => c.kind === "remove" && c.deviceId === LASER && /ممنوعٌ بالمعاينة/.test(c.reasonAr))],
+      [200, false, false, true]);
+    //  اقتراحٌ قديم يحمل الليزر (كأنّ المعاينةَ نُقّحت بعده) ⟵ الفتحُ يُسقطه.
+    await q(`UPDATE physio_plan_suggestions SET result = jsonb_set(result, '{devices}', (result->'devices') || jsonb_build_array(jsonb_build_object('deviceId', $2::int, 'minutes', 10))) WHERE id = $1`,
+      [r6.json.id, LASER]);
+    const acc6 = await call("POST", `/api/physio/suggestions/${r6.json.id}/accept`, S.spec);
+    const g6 = (await call("GET", `/api/physio/plans/${acc6.json?.id}`, S.spec)).json;
+    same("ت.١٠ **وعند فتح الخطّة يُفحص ثانيةً** — جهازٌ ممنوعٌ بآخر معاينة لا يدخلها ولو كان في الاقتراح",
+      [acc6.status, g6?.devices?.some((d: any) => d.deviceId === LASER), g6?.devices?.length > 0], [200, false, true]);
     calls.length = 0;
     calls.push(...savedCalls);
 

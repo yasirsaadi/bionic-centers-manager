@@ -3,7 +3,7 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  branches, devices, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanMeasures, physioPlanPhaseExercises,
+  branches, devices, medicalExams, patients, physioDeviceBranches, physioExercises, physioPlanAssignees, physioPlanDevices, physioPlanMeasures, physioPlanPhaseExercises,
   physioPlanPhases, physioPlanSessionItems, physioPlanSessions, physioPlans, physioPlanSuggestions, physioProtocolDevices, physioProtocolMeasures,
   physioProtocolPhaseExercises, physioProtocolPhases, physioProtocols, systemUsers, type PhysioPlan,
 } from "@shared/schema";
@@ -17,6 +17,9 @@ import {
   physioSupervisors, SETTINGS_REMINDER_ACTION, SETTINGS_REMINDER_QUIET_MS, settingsReminderInfo, type SettingsReminderInfo,
 } from "../physio_protocols/settings_reminders";
 import { logAudit } from "../accounting/ledger";
+import { readStoredAssessment } from "@shared/physio_initial_assessment";
+import { forbiddenDevices } from "@shared/physio_exam_v2";
+import { baghdadTodayYmd } from "@shared/visit_date";
 import { PHASE_TEXT_FIELDS, type PhaseInput } from "@shared/physio_exercises";
 import {
   diffSummaryLine, planLineFromProtocol, planProtocolDiff, protocolPrecautionsText, type DiffPhase, type PlanDiff,
@@ -478,6 +481,13 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     const { base, lines } = await protocolFill(tx, sg.protocolId, sg.branchId);
     const r = sg.result as any;
     const want = new Map<number, number | null>((Array.isArray(r?.devices) ? r.devices : []).map((d: any) => [Number(d.deviceId), d.minutes == null ? null : Number(d.minutes)]));
+    //  **البوّابةُ الحتمية عند الفتح أيضاً** (§4.gz، مراجعةُ Codex على #770): المعاينةُ قد تُنقَّح بعد الاقتراح — فما تمنعه
+    //  آخرُ معاينةٍ حيّة الآن لا يدخل الخطّة ولو كان في الاقتراح.
+    const banned = await examForbiddenDeviceIds(tx, sg.patientId);
+    banned.forEach((id) => want.delete(id));
+    if (want.size === 0 && Array.isArray(r?.devices) && r.devices.length) {
+      throw new PlanError(409, "أجهزةُ هذا الاقتراح كلُّها ممنوعةٌ لهذا المريض بآخر معاينة — اطلب اقتراحاً جديداً");
+    }
     const kept = lines.filter((l: PlanDeviceInput) => want.has(Number(l.deviceId))).map((l: PlanDeviceInput) => {
       const m = want.get(Number(l.deviceId));
       return { ...l, minutes: m == null ? l.minutes : l.minutes == null ? m : Math.min(m, l.minutes) };
@@ -507,6 +517,19 @@ export async function createPlanFromSuggestion(suggestionId: number, actor: Acto
     await tx.update(physioPlanSuggestions).set({ planId: row.id, acceptedAt: new Date() }).where(eq(physioPlanSuggestions.id, sg.id));
     return row;
   });
+}
+
+/** معرّفاتُ الأجهزة التي تمنعها آخرُ معاينة علاجٍ طبيعيّ غيرِ ملغاة للمريض (`BC-PT-02` وحدها — القديمةُ لا موانعَ حتميةً فيها). */
+async function examForbiddenDeviceIds(ex: any, patientId: number): Promise<Set<number>> {
+  const [e] = await ex.select({ assessment: medicalExams.assessment }).from(medicalExams)
+    .where(and(eq(medicalExams.patientId, patientId), eq(medicalExams.caseType, "physiotherapy"),
+      sql`NOT EXISTS (SELECT 1 FROM medical_exam_cancellations c WHERE c.exam_id = ${medicalExams.id})`))
+    .orderBy(desc(medicalExams.signedAt), desc(medicalExams.id)).limit(1);
+  if (!e) return new Set();
+  const codes = forbiddenDevices(readStoredAssessment(e.assessment), { today: baghdadTodayYmd() }).map((f) => f.deviceCode);
+  if (!codes.length) return new Set();
+  const rows = await ex.select({ id: devices.id }).from(devices).where(inArray(devices.code, codes));
+  return new Set(rows.map((x: any) => Number(x.id)));
 }
 
 async function lockPlan(tx: any, id: number): Promise<PhysioPlan> {
