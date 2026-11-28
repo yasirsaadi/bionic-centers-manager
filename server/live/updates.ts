@@ -32,6 +32,8 @@ const BROADCAST_EXEMPT: RegExp[] = [
   /^\/api\/ai\/chat$/,
   /^\/api\/guidance\/expense$/,
   /^\/api\/admin\/operation-reversal\/preview$/,
+  //  §4.hb — «راجِع البوّابات والفرق» على تعديل خطّة Opus: قراءةٌ وحدها لا تكتب شيئاً.
+  /^\/api\/physio\/plans\/\d+\/opus-edit\/preview$/,
   /^\/api\/verify-branch$/,
   /^\/api\/verify-admin$/,
   /^\/api\/auth\/switch-branch$/,

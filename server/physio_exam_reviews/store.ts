@@ -166,7 +166,7 @@ export async function requestReview(input: {
     const liftingRejection = last?.status === "rejected" && input.actor.isApprover && decision !== null;
     if (!hits.length && !liftingRejection) throw new ReviewError(409, "لا علامةَ حمراء في هذه المعاينة", "no_red_flags");
     if (!direct && !note) throw new ReviewError(400, "ملاحظةُ الفاحص للمعتمِد إلزامية", "examiner_note_required");
-    if (decision !== null && !decisionNote) throw new ReviewError(400, "ملاحظةُ الاعتماد إلزامية — يقرؤها Opus قيداً على الخطّة", "decision_note_required");
+    if (decision !== null && !decisionNote) throw new ReviewError(400, "ملاحظةُ الاعتماد إلزامية — يقرؤها Bionic AI قيداً على الخطّة", "decision_note_required");
     if (last?.status === "pending") throw new ReviewError(409, "طلبُ اعتمادٍ مفتوحٌ لهذه المعاينة", "review_pending");
     //  **المرفوضُ يوقفها حتى يطلب معتمِد** (قرارُ المالك: «لا تعود إلّا بموافقتك أو موافقة سليم»).
     if (last?.status === "rejected" && !input.actor.isApprover) {
@@ -229,7 +229,7 @@ export async function decideReview(input: { reviewId: number; actor: ReviewActor
   if (!input.actor.isApprover) throw new ReviewError(403, "الاعتمادُ للمسؤول والمشرف العام وحدهما", "not_approver");
   if (input.decision !== "approve" && input.decision !== "reject") throw new ReviewError(400, "القرارُ «اعتماد» أو «رفض»", "decision_invalid");
   const note = cleanNote(input.note);
-  if (!note) throw new ReviewError(400, "ملاحظةُ الاعتماد إلزامية — يقرؤها Opus قيداً على الخطّة", "decision_note_required");
+  if (!note) throw new ReviewError(400, "ملاحظةُ الاعتماد إلزامية — يقرؤها Bionic AI قيداً على الخطّة", "decision_note_required");
   let after: (() => Promise<void>) | null = null;
   const out = await db.transaction(async (tx) => {
     const pre = ((await tx.execute(sql`SELECT patient_id FROM physio_exam_red_flag_reviews WHERE id = ${input.reviewId}`)).rows ?? [])[0] as any;

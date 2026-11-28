@@ -10,7 +10,8 @@ import { JOB_ERROR_TEXTS, JOB_STAGE_LABELS, type JobStage } from "@shared/physio
 import { AgentFatal, AgentStop, agentEnabled } from "./model";
 import { TransientExhausted } from "./conversation";
 import { runJob, type Outcome } from "./pipeline";
-import { jobOf, notifyApproversTx, notifyExaminerTx, questionCheckpoint, signalJob, type JobRecord } from "./store";
+import { jobOf, lostRequestNoticeTx, notifyApproversTx, notifyExaminerTx, questionCheckpoint, signalJob, type JobRecord } from "./store";
+import { stripNoteEcho } from "@shared/physio_agent_privacy";
 import { reconcilerScan, setWorkerNudge } from "./reconcile";
 
 const rows = (r: any): Record<string, any>[] => (r?.rows ?? []) as Record<string, any>[];
@@ -55,8 +56,8 @@ export async function claimOne(me = INSTANCE_ID): Promise<JobRecord | null> {
         FROM c WHERE j.id = c.id RETURNING j.*`))[0];
     if (!r) return null;
     const job = jobOf(r);
-    await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "claim", userName: "Claude Opus", branchId: job.branchId,
-      newValues: { by: token, run: job.runs, failures: job.failures }, notes: "بدأ Opus العملَ على الوظيفة", tx });
+    await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "claim", userName: "Bionic AI", branchId: job.branchId,
+      newValues: { by: token, run: job.runs, failures: job.failures }, notes: "بدأ Bionic AI العملَ على الوظيفة", tx });
     return job;
   });
 }
@@ -73,7 +74,7 @@ export async function recoverStale(): Promise<number> {
       const code = job.cancelReason ?? "cancelled_by_user";
       await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'cancelled', error_code = ${code}, error = ${JOB_ERROR_TEXTS[code] ?? code},
         finished_at = now(), locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${job.id}`);
-      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "cancelled", userName: "Claude Opus", branchId: job.branchId,
+      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "cancelled", userName: "Bionic AI", branchId: job.branchId,
         newValues: { code, from: "queued" }, notes: JOB_ERROR_TEXTS[code] ?? code, tx });
     });
   }
@@ -98,13 +99,20 @@ export async function recoverStale(): Promise<number> {
       } else {
         await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'failed', failures = max_failures, error_code = 'worker_lost', error = ${JOB_ERROR_TEXTS.worker_lost},
           finished_at = now(), locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${job.id}`);
+        await reviseFailedNoticeTx(tx, job, "worker_lost");
       }
-      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "recover_stale", userName: "Claude Opus", branchId: job.branchId,
+      await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "recover_stale", userName: "Bionic AI", branchId: job.branchId,
         newValues: { from: job.lockedBy, failures: job.failures }, tx });
     });
     await signalJob(j);
   }
   return stale.length;
+}
+
+/** **طلبُ المعتمِد إلى Opus انتهى بنفاد المحاولات** (انقطاعُ الخدمة · المهلة · العاملُ الضائع) — يُقال للمعتمِدين كسائر نهاياته، لا يموت صامتاً. */
+async function reviseFailedNoticeTx(tx: any, j: JobRecord, code: string): Promise<void> {
+  if (j.kind !== "revise") return;
+  await notifyApproversTx(tx, j, `⚠️ لم يُكمل Bionic AI طلبَ التعديل: ${JOB_ERROR_TEXTS[code] ?? code}`, j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`);
 }
 
 /** ملاحظةٌ على آخر سطرٍ في المراحل — يُنتظر في `pipeline.ts` قبل المرحلة التالية، فهو سطرُ مرحلتها. */
@@ -131,7 +139,7 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
     const cur = rows(await tx.execute(sql`SELECT * FROM physio_agent_jobs WHERE id = ${job.id} AND locked_by = ${me} AND status = 'running' FOR UPDATE`))[0];
     if (!cur) return;
     const j = jobOf(cur);
-    const audit = (action: string, newValues: unknown, notes?: string) => logAudit({ entityType: "physio_agent_job", entityId: j.id, action, userName: "Claude Opus",
+    const audit = (action: string, newValues: unknown, notes?: string) => logAudit({ entityType: "physio_agent_job", entityId: j.id, action, userName: "Bionic AI",
       branchId: j.branchId, newValues, notes: notes ?? null, tx });
     const terminal = async (status: string, code: string, error: string, extra: Record<string, any> = {}) => {
       await tx.execute(sql`UPDATE physio_agent_jobs SET status = ${status}, error_code = ${code}, error = ${error}, error_detail = ${extra.detail ?? null},
@@ -141,6 +149,32 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
     if (j.cancelRequested) {
       const code = j.cancelReason ?? "cancelled_by_user";
       await terminal("cancelled", code, JOB_ERROR_TEXTS[code] ?? code);
+      await lostRequestNoticeTx(tx, j, code);
+      return;
+    }
+    //  §4.hb — وظيفةُ «تعديل» طلبُ معتمِد: نتيجتُها للمعتمِدين وحدهم، والفاحصُ لا يرى ملاحظتَهم (إلّا «عدّل المعاينة» بنصٍّ ثابت بلا صدى للملاحظة).
+    const revise = j.kind === "revise";
+    const planLink = j.planId ? `/physio/plans/${j.planId}` : `/patients/${j.patientId}`;
+    if (revise && o.kind === "declined") {
+      await terminal("failed", "revision_declined", `يرى Bionic AI ألّا يُنفَّذ التعديلُ المطلوب: ${o.decline.reasonAr}`, { result: o.result });
+      await notifyApproversTx(tx, j, `⚠️ لم يُنفّذ Bionic AI طلبَ التعديل (${o.decline.reasonAr.slice(0, 200)})`, planLink);
+      return;
+    }
+    if (revise && o.kind === "new_finding") {
+      await terminal("needs_exam_revision", "new_finding", `وجد Bionic AI ما لم تسجّله المعاينة: ${o.finding.textAr}`, { result: o.result });
+      await notifyApproversTx(tx, j, "⚠️ لم يُكمل Bionic AI طلبَ التعديل: وجد ما لم تسجّله المعاينة — أعد طلبك بعد تعديلها", planLink);
+      const finding = stripNoteEcho(o.finding.textAr, j.reviseNote).slice(0, 300);
+      await notifyExaminerTx(tx, j, `⚠️ يحتاج Bionic AI تعديلَ المعاينة قبل أن يكمل${finding ? `: ${finding}` : ""}`);
+      return;
+    }
+    if (revise && o.kind === "failed") {
+      await terminal("failed", o.code, JOB_ERROR_TEXTS[o.code] ?? o.code, { result: o.result, detail: o.detail ?? null });
+      await notifyApproversTx(tx, j, `⚠️ لم يُكمل Bionic AI طلبَ التعديل: ${JOB_ERROR_TEXTS[o.code] ?? o.code}`, planLink);
+      return;
+    }
+    if (revise && o.kind === "cancelled") {
+      await terminal("cancelled", o.code, JOB_ERROR_TEXTS[o.code] ?? o.code, o.result ? { result: o.result } : {});
+      await lostRequestNoticeTx(tx, j, o.code);
       return;
     }
     switch (o.kind) {
@@ -150,24 +184,24 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
         await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'needs_answers', stage = 'questions', questions = ${JSON.stringify(o.questions)}::jsonb,
           result = ${JSON.stringify(o.result)}::jsonb, checkpoint = ${JSON.stringify(questionCheckpoint(j.checkpoint))}::jsonb,
           locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${j.id}`);
-        await audit("ask_questions", { count: o.questions.length, round: j.questionRounds + 1 }, "Opus يسأل قبل كتابة الخطّة");
-        await notifyExaminerTx(tx, j, `❓ Opus يسأل قبل كتابة خطّة مريضك (${o.questions.length} ${o.questions.length === 1 ? "سؤال" : "أسئلة"})`);
+        await audit("ask_questions", { count: o.questions.length, round: j.questionRounds + 1 }, "Bionic AI يسأل قبل كتابة الخطّة");
+        await notifyExaminerTx(tx, j, `❓ Bionic AI يسأل قبل كتابة خطّة مريضك (${o.questions.length} ${o.questions.length === 1 ? "سؤال" : "أسئلة"})`);
         return;
       case "declined":
-        await terminal("failed", "agent_declined", `يرى Opus ألّا تُكتب خطّةٌ الآن: ${o.decline.reasonAr}`, { result: o.result });
-        await notifyApproversTx(tx, j, `⚠️ لم يكتب Opus خطّة (${o.decline.reasonAr.slice(0, 200)})`, `/patients/${j.patientId}`);
-        await notifyExaminerTx(tx, j, `⚠️ لم يكتب Opus خطّة: ${o.decline.reasonAr.slice(0, 200)}${o.decline.recommendedActionAr ? ` — المقترح: ${o.decline.recommendedActionAr.slice(0, 200)}` : ""}`);
+        await terminal("failed", "agent_declined", `يرى Bionic AI ألّا تُكتب خطّةٌ الآن: ${o.decline.reasonAr}`, { result: o.result });
+        await notifyApproversTx(tx, j, `⚠️ لم يكتب Bionic AI خطّة (${o.decline.reasonAr.slice(0, 200)})`, `/patients/${j.patientId}`);
+        await notifyExaminerTx(tx, j, `⚠️ لم يكتب Bionic AI خطّة: ${o.decline.reasonAr.slice(0, 200)}${o.decline.recommendedActionAr ? ` — المقترح: ${o.decline.recommendedActionAr.slice(0, 200)}` : ""}`);
         return;
       case "new_finding":
-        await terminal("needs_exam_revision", "new_finding", `وجد Opus ما لم تسجّله المعاينة: ${o.finding.textAr}`, { result: o.result });
-        await notifyApproversTx(tx, j, "⚠️ لم يكتب Opus خطّة: وجد ما لم تسجّله المعاينة", `/patients/${j.patientId}`);
-        await notifyExaminerTx(tx, j, `⚠️ Opus يحتاج تعديلَ المعاينة: ${o.finding.textAr.slice(0, 300)}`);
+        await terminal("needs_exam_revision", "new_finding", `وجد Bionic AI ما لم تسجّله المعاينة: ${o.finding.textAr}`, { result: o.result });
+        await notifyApproversTx(tx, j, "⚠️ لم يكتب Bionic AI خطّة: وجد ما لم تسجّله المعاينة", `/patients/${j.patientId}`);
+        await notifyExaminerTx(tx, j, `⚠️ Bionic AI يحتاج تعديلَ المعاينة: ${o.finding.textAr.slice(0, 300)}`);
         return;
       case "failed":
         await terminal("failed", o.code, JOB_ERROR_TEXTS[o.code] ?? o.code, { result: o.result, detail: o.detail ?? null });
         if (o.code === "unresolved_critical" || o.code === "empty_plan" || o.code === "gates_blocking") {
-          await notifyApproversTx(tx, j, `⚠️ لم يكتب Opus خطّة: ${JOB_ERROR_TEXTS[o.code]}`, `/patients/${j.patientId}`);
-          await notifyExaminerTx(tx, j, `⚠️ لم يكتب Opus خطّة: ${JOB_ERROR_TEXTS[o.code]}`);
+          await notifyApproversTx(tx, j, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[o.code]}`, `/patients/${j.patientId}`);
+          await notifyExaminerTx(tx, j, `⚠️ لم يكتب Bionic AI خطّة: ${JOB_ERROR_TEXTS[o.code]}`);
         }
         return;
       case "cancelled":
@@ -177,6 +211,7 @@ async function finishRun(job: JobRecord, me: string, o: Outcome | { kind: "reque
         if (j.failures + (o.countFailure ? 1 : 0) >= j.maxFailures) {
           await tx.execute(sql`UPDATE physio_agent_jobs SET failures = max_failures WHERE id = ${j.id}`);
           await terminal("failed", o.code, JOB_ERROR_TEXTS[o.code] ?? o.error, { detail: o.error });
+          await reviseFailedNoticeTx(tx, j, o.code);
           return;
         }
         await tx.execute(sql`UPDATE physio_agent_jobs SET status = 'queued', failures = failures + ${o.countFailure ? 1 : 0}, locked_by = NULL, locked_at = NULL,
@@ -221,7 +256,7 @@ export async function runClaimed(job: JobRecord, me = INSTANCE_ID): Promise<void
       },
       onRetry: (role, attempt, e) => console.warn(`[physio-agent] job ${job.id} ${role} retry ${attempt}: ${(e as Error)?.message ?? e}`),
       onPrivacyStop: async (kinds) => {
-        await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "privacy_stop", userName: "Claude Opus", branchId: job.branchId,
+        await logAudit({ entityType: "physio_agent_job", entityId: job.id, action: "privacy_stop", userName: "Bionic AI", branchId: job.branchId,
           newValues: { kinds }, notes: JOB_ERROR_TEXTS.identifier_in_query, tx: db });
       },
     });

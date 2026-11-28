@@ -48,8 +48,10 @@ export function dueText(due: DueState, en = false): string | null {
   return en ? `Next assessment (${kind}): ${due.dueOn}` : `التقييمُ التالي (${kind}): ${due.dueOn}`;
 }
 
-export function PlanProgress({ planId, planStatus, lang, onModify, patientId }: {
+export function PlanProgress({ planId, planStatus, lang, onModify, patientId, modifyByApprover = null }: {
   planId: number; planStatus: string; lang: "ar" | "en"; onModify: () => void; patientId?: number;
+  /** §4.hb — خطّةُ Opus يعدّلها المعتمِد وحده: `"me"` المعتمِدُ نفسُه (يُفتح المحرّر)، و`"other"` غيرُه (يُقال له إنّ المعتمِد أُبلغ). */
+  modifyByApprover?: "me" | "other" | null;
 }) {
   const en = lang === "en";
   //  **أوّلُ تقييمٍ للخطّة يبدأ بألم «At Worst» من التقييم الأوّليّ** (§4.da المرحلة ٤) — يملأ الخانةَ والأخصائيُّ يؤكّده أو يعدّله.
@@ -153,15 +155,16 @@ export function PlanProgress({ planId, planStatus, lang, onModify, patientId }: 
           )}
         </>
       )}
-      {open && v && <AssessmentDialog planId={planId} planStatus={planStatus} view={v} onClose={() => setOpen(false)}
+      {open && v && <AssessmentDialog planId={planId} planStatus={planStatus} view={v} onClose={() => setOpen(false)} modifyByApprover={modifyByApprover}
         prefillPain={list.length === 0 ? (latest?.assessment.painWorst ?? null) : null}
         onSaved={(d) => { setOpen(false); if (d === "modify") onModify(); }} />}
     </Card>
   );
 }
 
-function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillPain = null }: {
+function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillPain = null, modifyByApprover = null }: {
   planId: number; planStatus: string; view: View; onClose: () => void; onSaved: (d: AssessmentDecision) => void;
+  modifyByApprover?: "me" | "other" | null;
   /** أسوأُ ألمٍ في التقييم الأوّليّ — لأوّل تقييمٍ للخطّة وحده. */
   prefillPain?: number | null;
 }) {
@@ -181,7 +184,9 @@ function AssessmentDialog({ planId, planStatus, view, onClose, onSaved, prefillP
       goals: view.goals.map((text, i) => ({ text, status: goals[i] })),
     })).json(),
     onSuccess: () => {
-      toast({ title: "حُفظ التقييم", description: decision === "discharge" ? "وتخرّجت الخطّة" : decision === "stop" ? "وأُوقفت الخطّة" : decision === "modify" ? "عدّل الخطّةَ الآن — تبقى تُنفَّذ، ويُنبَّه المشرفُ ليطّلع" : undefined });
+      toast({ title: "حُفظ التقييم", description: decision === "discharge" ? "وتخرّجت الخطّة" : decision === "stop" ? "وأُوقفت الخطّة" : decision === "modify" ? (modifyByApprover === "other"
+        ? "خطّةُ Bionic AI يعدّلها المعتمِد — أُبلغ بقرارك، وتبقى تُنفَّذ كما هي حتى يعدّلها"
+        : modifyByApprover === "me" ? "عدّل الخطّةَ الآن — تبقى تُنفَّذ حتى تحفظ نسخةً جديدة" : "عدّل الخطّةَ الآن — تبقى تُنفَّذ، ويُنبَّه المشرفُ ليطّلع") : undefined });
       onSaved(decision);
     },
     onError: (e) => toast({ title: "خطأ", description: errText(e), variant: "destructive" }),

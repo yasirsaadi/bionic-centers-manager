@@ -12,7 +12,7 @@ import { getSession, accessibleBranchesFor } from "../sessions_module/permission
 import { scopeReachesPatient } from "../patients/branch_access";
 import { canApproveProtocols } from "@shared/physio_protocols";
 import * as store from "./store";
-import { pendingOpusCount, staleOpusCount } from "../physio_agent/plans";
+import { pendingOpusCount, pendingProposalCount, staleOpusCount } from "../physio_agent/plans";
 
 export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: any) {
   const sess = (req: any) => getSession(req) ?? ({} as any);
@@ -70,7 +70,9 @@ export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: an
       //  والشارةُ تجمع العلاماتِ الحمراء وخططَ Opus المنتظرة الطازجة (§4.ha).
       const redFlags = await store.pendingCount();
       const opusPlans = await pendingOpusCount();
-      res.json({ count: redFlags + opusPlans, redFlags, opusPlans, opusStale: await staleOpusCount() });
+      //  §4.hb — واقتراحاتُ Opus المنتظرة على خططٍ معتمَدة («تعديلاتٌ مقترحة»).
+      const opusProposals = await pendingProposalCount();
+      res.json({ count: redFlags + opusPlans + opusProposals, redFlags, opusPlans, opusProposals, opusStale: await staleOpusCount() });
     } catch (e) { fail(res, e); }
   });
 }

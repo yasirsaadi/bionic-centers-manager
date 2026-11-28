@@ -15,6 +15,7 @@
 //   GET  /api/physio/plans/:id/assignee-candidates · PUT /api/physio/plans/:id/assignees
 //   POST /api/physio/plans/:id/home-sheet/telegram — ورقةُ تمارين البيت (PDF الصفحة المطبوعة) إلى تلغرام المريض (§4.ds)
 import type { Express } from "express";
+import { sql } from "drizzle-orm";
 import multer from "multer";
 import { logAudit } from "../accounting/ledger";
 import { db } from "../db";
@@ -26,7 +27,13 @@ import {
 } from "@shared/physio_plans";
 import * as store from "./store";
 import * as opusPlans from "../physio_agent/plans";
-import { isOpusAwaiting, opusAwaitingBlocked, opusPlanStub, planAccessFor } from "@shared/physio_agent";
+import { isOpusAwaiting, opusApprovedBlocked, opusAwaitingBlocked, opusPlanStub, planAccessFor } from "@shared/physio_agent";
+import * as versions from "../physio_agent/versions";
+import { canApproveProtocols } from "@shared/physio_protocols";
+import { VERSION_HOW_LABELS } from "@shared/physio_plan_versions";
+import { newestV2ExamId } from "../physio_agent/context";
+import { nudgeWorkerNow } from "../physio_agent/reconcile";
+import { signalJob } from "../physio_agent/store";
 import { normalizeSchedule } from "@shared/physio_device_settings";
 import * as exec from "./execution";
 import * as suggest from "./suggest";
@@ -44,7 +51,7 @@ import * as homeSheet from "./home_sheet";
 const homeSheetUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: HOME_SHEET_MAX_BYTES, files: 1, fields: 4 } });
 
 function fail(res: any, e: unknown) {
-  if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof store.PlanError) return res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
   console.error("[physio-plans]", e);
   res.status(500).json({ error: "تعذّر تنفيذ الطلب — لم يتغيّر شيء" });
 }
@@ -118,12 +125,20 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     //  **خطّةُ Opus المنتظرة للمعتمِد وحده** (§4.ha): غيرُه يرى سطرَها في القائمة ولا يفتحها.
     if (!reaches || planAccessFor(s, row) !== "full") { res.status(404).json({ error: PLAN_NOT_FOUND }); return null; }
     //  **وقبل الاعتماد لا تُعدَّل ولا تُنفَّذ** — إلّا الاعتمادُ والحذفُ بيد معتمِد؛ و«الإعادة إلى Opus» في المرحلة القادمة.
+    const last = String(req.path ?? "").split("/").filter(Boolean).pop() ?? "";
+    const onPlan = /^\d+$/.test(last);
     if (req.method !== "GET" && isOpusAwaiting(row)) {
-      const last = String(req.path ?? "").split("/").filter(Boolean).pop() ?? "";
-      if (last === "return") { res.status(409).json({ error: "إعادةُ خطّة Opus إليه بملاحظة في المرحلة القادمة — احذفها وأعد الكتابة الآن", code: "opus_return_next_phase" }); return null; }
-      const action = req.method === "DELETE" && /^\d+$/.test(last) ? "delete" : last;
+      if (last === "return") { res.status(409).json({ error: "خطّةُ Bionic AI تُعاد إليه بملاحظة من «أعِده إلى Bionic AI»", code: "opus_use_opus_return" }); return null; }
+      const action = req.method === "DELETE" && onPlan ? "delete" : last;
       const why = opusAwaitingBlocked(row, action);
       if (why) { res.status(409).json({ error: why, code: "opus_plan_locked" }); return null; }
+    }
+    //  §4.hb D5 — **خطّةُ Opus بعد الاعتماد** تُعدَّل بنسخٍ مرقّمة وحدها: أبوابُ التعديل القديمة ٤٠٩ لأيّ أحد، والحذفُ للمعتمِد وحده.
+    if (req.method !== "GET" && row.origin === "opus" && !isOpusAwaiting(row)) {
+      const action = req.method === "PUT" && onPlan ? "update" : last;
+      const why = opusApprovedBlocked(row, action);
+      if (why) { res.status(409).json({ error: why, code: "opus_plan_versioned" }); return null; }
+      if (req.method === "DELETE" && onPlan && !canApproveProtocols(s)) { res.status(403).json({ error: "تحذف خطّةَ Bionic AI المسؤولُ أو المشرفُ العام", code: "opus_delete_approver_only" }); return null; }
     }
     return { s, row };
   }
@@ -249,7 +264,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         homeSheet: { allowed: homeSheetAllowed(l.row.status), botEnabled: patientBotEnabled(),
           telegramRecipients: await homeSheet.telegramRecipients(l.row.patientId),
           canSend: canExecutePlans(l.s) && (scope === null || scope.includes(l.row.branchId)) },
-        settingsGaps: gaps ? { ...gaps, supervisors: gaps.supervisors.map((u) => u.name), youFill: l.s.permissions?.canSupervisePhysio === true } : null });
+        settingsGaps: gaps ? { ...gaps, supervisors: gaps.supervisors.map((u) => u.name), youFill: l.s.permissions?.canSupervisePhysio === true } : null,
+        ...(await opusPlanFields(l.row, l.s)) });
     } catch (e) { fail(res, e); }
   });
 
@@ -400,7 +416,8 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
         if (decision === "approve" && isOpusAwaiting(l.row)) {
           const r = await opusPlans.approveOpusPlan(l.row.id, req.body, { userId: l.s.userId ?? null, name: l.s.displayName ?? null,
             ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
-          return res.json({ ...r.after, draftProtocolId: r.draftProtocolId });
+          if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code, ...(r.extra ?? {}) });
+          return res.json({ ...r.after, draftProtocolId: r.draftProtocolId, opusVersion: r.version });
         }
         const r = await store.decidePlan(l.row.id, decision, note, actor(l.s));
         await audit(req, l.s, { entityId: l.row.id, action: decision, branchId: l.row.branchId,
@@ -462,6 +479,130 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
     } catch (e) { fail(res, e); }
   });
 
+  // ══ خطّةُ Opus بعد الاعتماد وقبله — المرحلةُ الثالثة (ترحيل ٢٠٠، §4.hb) ═════════════════════════════
+  const vActor = (req: any, s: any) => ({ userId: s.userId ?? null, name: s.displayName ?? null, ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null });
+  const sendRefused = (res: any, r: versions.Refused) => res.status(r.status).json({ error: r.error, code: r.code, ...(r.extra ?? {}) });
+  const approverOnly = (res: any, s: any) => {
+    if (canApproveProtocols(s)) return true;
+    res.status(403).json({ error: "تعديلُ خطّة Bionic AI للمسؤول والمشرف العام", code: "approver_only" });
+    return false;
+  };
+  /** ما تضيفه خطّةُ Opus إلى صفحة الخطّة: النسخةُ وعددُ النسخ ومَن يعدّل، والممنوعُ الآن، وطلبُ التعديل الجاري (بلا ملاحظته لغير المعتمِد). */
+  async function opusPlanFields(row: any, s: any) {
+    if (row.origin !== "opus") return {};
+    const approver = canApproveProtocols(s);
+    const plan = (await db.execute(sql`SELECT * FROM physio_plans WHERE id = ${row.id}`) as any).rows[0];
+    const awaiting = isOpusAwaiting(row);
+    const vs = awaiting ? { versions: [], virtual: false } : await versions.listVersions(db, plan);
+    const current = vs.versions.length ? vs.versions[vs.versions.length - 1] : null;
+    const active = (await db.execute(sql`SELECT id, revise_scope, status, stage, stages, revise_note FROM physio_agent_jobs WHERE plan_id = ${row.id} AND kind = 'revise'
+        AND status IN ('queued','running','needs_answers') LIMIT 1`) as any).rows[0] ?? null;
+    const pending = (await db.execute(sql`SELECT id, base_version FROM physio_agent_jobs WHERE plan_id = ${row.id} AND proposal_status = 'pending' LIMIT 1`) as any).rows[0] ?? null;
+    const newest = await newestV2ExamId(db, row.patientId);
+    const basisExam = current?.snapshot?.basis?.examId ?? row.sourceExamId ?? null;
+    return {
+      opusVersion: current?.version ?? null, versionCount: vs.versions.length, versionsVirtual: vs.virtual,
+      //  ما يُرسَل مع «تنفيذ جلسة» — النسخةُ النافذة نفسُها: والتنفيذُ يكتب النسخَ المحسوبة لخطّةٍ قبل نظام النسخ ثمّ يطابقها (§4.hb D9).
+      executionVersion: awaiting || row.status !== "approved" ? null : (current?.version ?? null),
+      canOpusEdit: approver && row.status === "approved", editLocked: awaiting ? null : "opus_versioned",
+      opusRevision: active ? { jobId: Number(active.id), scope: active.revise_scope, status: active.status, stage: active.stage, stages: active.stages,
+        ...(approver ? { note: active.revise_note } : {}) } : null,
+      pendingProposal: approver && pending ? { jobId: Number(pending.id), baseVersion: pending.base_version } : null,
+      forbiddenNow: awaiting ? [] : await versions.forbiddenNowOf(plan),
+      newerExamSinceVersion: Boolean(!awaiting && newest && basisExam && newest !== basisExam),
+    };
+  }
+
+  //  «أعِده إلى Opus» — خطّةٌ منتظرة، بملاحظةٍ إلزامية (المعتمِد).
+  app.post("/api/physio/plans/:id/opus-return", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!approverOnly(res, l.s)) return;
+      const r = await versions.enqueueReturn(l.row.id, req.body, vActor(req, l.s), opusPlans.opusStaleness);
+      if (!r.ok) return sendRefused(res, r);
+      nudgeWorkerNow(); await signalJob(r.job);
+      res.status(202).json({ job: { id: r.job.id, status: r.job.status, kind: r.job.kind, reviseScope: r.job.reviseScope, planId: l.row.id } });
+    } catch (e) { fail(res, e); }
+  });
+  //  «اطلب من Opus تعديلاً» — خطّةٌ معتمَدة بنسختها النافذة (المعتمِد).
+  app.post("/api/physio/plans/:id/opus-amend", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!approverOnly(res, l.s)) return;
+      const r = await versions.enqueueAmend(l.row.id, req.body, vActor(req, l.s));
+      if (!r.ok) return sendRefused(res, r);
+      nudgeWorkerNow(); await signalJob(r.job);
+      res.status(202).json({ job: { id: r.job.id, status: r.job.status, kind: r.job.kind, reviseScope: r.job.reviseScope, baseVersion: r.job.baseVersion, planId: l.row.id } });
+    } catch (e) { fail(res, e); }
+  });
+  //  «راجِع البوّابات والفرق» — قراءةٌ وحدها (معفاةٌ من الإشارة الحيّة).
+  app.post("/api/physio/plans/:id/opus-edit/preview", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!approverOnly(res, l.s)) return;
+      const r = await versions.previewOpusEdit(l.row.id, req.body);
+      if (!r.ok) return sendRefused(res, r);
+      res.json(r.preview);
+    } catch (e) { fail(res, e); }
+  });
+  //  «احفظ النسخة ن+١» — تعديلٌ مباشر بسببٍ إلزاميّ.
+  app.post("/api/physio/plans/:id/opus-edit", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      if (!approverOnly(res, l.s)) return;
+      const r = await versions.saveOpusEdit(l.row.id, req.body, vActor(req, l.s));
+      if (!r.ok) return sendRefused(res, r);
+      res.json({ version: r.version, plan: r.plan });
+    } catch (e) { fail(res, e); }
+  });
+  //  **طلبُ المعتمِد إلى Opus للمعتمِدين وحدهم** (§4.hb ٣.٦) — نسخةُ «تعديلٌ من Opus» سببُها نصُّ الطلب وملاحظةُ حفظه: لغيرهم سببٌ ثابت، كما يخفيها
+  //  لوحُ الوظيفة وشريطُ الطلب الجاري. وسببُ التعديل المباشر «لماذا عُدّلت» لكلّ قارئ (قرارُ المالك ٦: مَن ومتى ولماذا).
+  const OPUS_REVISION_REASON_PUBLIC = "تعديلٌ من Bionic AI بطلب المعتمِد";
+  const versionTexts = (v: { how: string; reason: string | null; approvalNote: string | null }, s: any) =>
+    v.how === "opus_revision" && !canApproveProtocols(s) ? { reason: OPUS_REVISION_REASON_PUBLIC, approvalNote: null } : { reason: v.reason, approvalNote: v.approvalNote };
+  //  «سجلّ النسخ» — لكلّ قارئ الخطّة: مَن ومتى وكيف ولماذا، وما تغيّر، وكم جلسةً نُفّذت على كلّ نسخة.
+  app.get("/api/physio/plans/:id/versions", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      const plan = (await db.execute(sql`SELECT * FROM physio_plans WHERE id = ${l.row.id}`) as any).rows[0];
+      const { versions: list, virtual } = await versions.listVersions(db, plan);
+      const per = await versions.sessionsPerVersion(l.row.id);
+      res.json({ current: list.length ? list[list.length - 1].version : null, virtual,
+        versions: list.map((v) => ({ version: v.version, how: v.how, howAr: VERSION_HOW_LABELS[v.how], ...versionTexts(v, l.s),
+          createdByName: v.createdByName, createdAt: v.createdAt, diffSummaryAr: v.diffSummaryAr, jobId: v.jobId, sessionsOnVersion: per.get(v.version) ?? 0,
+          backfilled: v.backfilled, snapshotHash: v.snapshotHash })) });
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/physio/plans/:id/versions/:n", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      const n = idOf(req.params.n);
+      const plan = (await db.execute(sql`SELECT * FROM physio_plans WHERE id = ${l.row.id}`) as any).rows[0];
+      const v = n ? (await versions.listVersions(db, plan)).versions.find((x) => x.version === n) : null;
+      if (!v) return res.status(404).json({ error: "النسخةُ غير موجودة" });
+      res.json({ version: v.version, how: v.how, howAr: VERSION_HOW_LABELS[v.how], ...versionTexts(v, l.s), createdByName: v.createdByName,
+        createdAt: v.createdAt, snapshot: v.snapshot, gateLog: v.gateLog, snapshotHash: v.snapshotHash, backfilled: v.backfilled, virtual: Boolean(v.virtual) });
+    } catch (e) { fail(res, e); }
+  });
+  app.get("/api/physio/plans/:id/versions/:n/diff", isAuthenticated, async (req: any, res) => {
+    try {
+      const l = await loadPlan(req, res, idOf(req.params.id));
+      if (!l) return;
+      const n = idOf(req.params.n);
+      const against = req.query?.against != null ? idOf(req.query.against) : null;
+      const plan = (await db.execute(sql`SELECT * FROM physio_plans WHERE id = ${l.row.id}`) as any).rows[0];
+      const d = n ? await versions.versionDiff(plan, n, against) : null;
+      if (!d) return res.status(404).json({ error: "النسخةُ غير موجودة" });
+      res.json(d);
+    } catch (e) { fail(res, e); }
+  });
+
   // ══ التنفيذ — المرحلةُ الرابعة (ترحيل ١١١، §4.cn) ═══════════════════════════════════════════════
   const shiftOf = (s: any): "morning" | "evening" => {
     if (s?.shift === "morning" || s?.shift === "evening") return s.shift;
@@ -514,8 +655,10 @@ export function registerPhysioPlanRoutes(app: Express, isAuthenticated: any) {
       }
       const phasePosition = req.body?.phasePosition == null ? null : Number(req.body.phasePosition);
       if (phasePosition !== null && (!Number.isInteger(phasePosition) || phasePosition < 1)) return res.status(400).json({ error: "مرحلةٌ غير صالحة" });
+      //  §4.hb D9 — خطّةُ Opus: النسخةُ التي عرضتها الشاشة (وغيابُها من صفحةٍ أقدم ⟵ ٤٠٩ في التنفيذ).
+      const planVersion = req.body?.planVersion == null ? null : Number(req.body.planVersion);
       const r = await exec.executeSession({
-        planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s),
+        planId: l.row.id, items, noteToSpecialist: note, sessionDate, shift: shiftOf(l.s), actor: actor(l.s), planVersion,
         canDryNeedle: l.s.permissions?.canDryNeedle === true, visitCustomDate: sessionDate === today ? null : sessionDate,
         exercises, phasePosition, phaseManual: req.body?.phaseManual === true,
       });

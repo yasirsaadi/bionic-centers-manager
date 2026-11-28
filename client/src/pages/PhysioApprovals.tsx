@@ -7,7 +7,7 @@ import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldAlert, Sparkles } from "lucide-react";
 import { JOB_ERROR_TEXTS, OPUS_OUT_OF_LIBRARY_LABEL } from "@shared/physio_agent";
-import { arText, OPUS_PLANS_KEY, type OpusPlanRow } from "@/lib/opus_agent";
+import { arText, OPUS_PLANS_KEY, type OpusPlanRow, type OpusProposalRow } from "@/lib/opus_agent";
 import { canApproveProtocols } from "@shared/physio_protocols";
 import { useBranchSession } from "@/components/BranchGate";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -90,11 +90,11 @@ function ReviewCard({ r, decided }: { r: ReviewRow; decided: boolean }) {
   );
 }
 
-const OPUS_VIEWS = { pending: "بانتظار الاعتماد", stale: "قدُمت", decided: "المحسومة" } as const;
+const OPUS_VIEWS = { pending: "بانتظار الاعتماد", proposals: "تعديلاتٌ مقترحة", stale: "قدُمت", decided: "المحسومة" } as const;
 type OpusView = keyof typeof OPUS_VIEWS;
 
 /** **خطّةُ Opus في الطابور** (§4.ha ١١.٣) — تُفتح «الخطّة المقترحة» في صفحتها، والاعتمادُ هناك بعد قراءتها. */
-function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: OpusView }) {
+function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: Exclude<OpusView, "proposals"> }) {
   return (
     <Card className="p-3 space-y-1.5 min-w-0 border-violet-200" data-testid={`opus-plan-row-${r.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -102,16 +102,39 @@ function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: OpusView }) {
         <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", r.outOfLibrary ? "bg-violet-100 text-violet-800" : "bg-teal-100 text-teal-800")}>
           {r.outOfLibrary ? OPUS_OUT_OF_LIBRARY_LABEL : "من المكتبة"}
         </span>
+        {r.revising && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-600 text-white" data-testid={`opus-plan-revising-${r.id}`}>يعيد Bionic AI كتابتها</span>}
         {view === "decided" && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-emerald-100 text-emerald-800">{r.status === "approved" ? "اعتُمدت" : "أُغلقت"}{r.decidedByName ? ` — ${r.decidedByName}` : ""}</span>}
       </div>
       <div className="text-sm" dir="auto">{r.titleAr}</div>
-      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · الفاحص: {r.examinerName ?? "—"} · كتبها Opus {arText(formatDateIraq(r.createdAt))} {arText(formatTimeIraq(r.createdAt))}</div>
+      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · الفاحص: {r.examinerName ?? "—"} · كتبها Bionic AI {arText(formatDateIraq(r.createdAt))} {arText(formatTimeIraq(r.createdAt))}</div>
       {r.staleReason && <div className="text-xs text-amber-900">قدُمت: {JOB_ERROR_TEXTS[r.staleReason] ?? "تغيّرت المعاينةُ بعد كتابتها"}</div>}
       <div>
         <Link href={`/physio/plans/${r.id}`}>
           <Button size="sm" className="bg-violet-700 hover:bg-violet-800 gap-1" data-testid={`button-open-opus-plan-${r.id}`}>
             <Sparkles className="w-4 h-4" /> {view === "decided" ? "افتح الخطّة" : "اعرض الخطّة المقترحة"}
           </Button>
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+/** **اقتراحُ Opus على خطّةٍ معتمَدة** (§4.hb ١٠.٥) — يُفتح في صفحة الخطّة، والحفظُ هناك بعد قراءة الفرق. */
+function OpusProposalCard({ r }: { r: OpusProposalRow & { stale?: boolean } }) {
+  return (
+    <Card className="p-3 space-y-1.5 min-w-0 border-violet-200" data-testid={`opus-proposal-row-${r.jobId}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link href={`/patients/${r.patientId}`} className="font-semibold hover:underline">{r.patientName ?? "—"}{r.patientCode ? ` (${r.patientCode})` : ""}</Link>
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-100 text-violet-800">على النسخة {arText(r.baseVersion ?? 0)}</span>
+        {r.stale && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-900">قدُم — عُدّلت الخطّة بعده</span>}
+      </div>
+      <div className="text-sm" dir="auto">{r.titleAr}</div>
+      {r.request && <div className="text-xs" dir="auto"><span className="text-muted-foreground">الطلب: </span>«{r.request}»</div>}
+      {r.diffSummaryAr && <div className="text-xs text-slate-700">ما يتغيّر: {r.diffSummaryAr}</div>}
+      <div className="text-xs text-muted-foreground">{r.branchName ?? "—"} · طلبه {r.requestedByName ?? "—"}{r.finishedAt ? ` · أنهاه Bionic AI ${arText(formatDateIraq(r.finishedAt))} ${arText(formatTimeIraq(r.finishedAt))}` : ""}</div>
+      <div>
+        <Link href={`/physio/plans/${r.planId}`}>
+          <Button size="sm" className="bg-violet-700 hover:bg-violet-800 gap-1" data-testid={`button-open-opus-proposal-${r.jobId}`}><Sparkles className="w-4 h-4" /> راجِع الفرق واحفظ</Button>
         </Link>
       </div>
     </Card>
@@ -155,7 +178,7 @@ function PhysioApprovalsInner() {
   const [kind, setKind] = useState<"redflags" | "opus">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "opus" ? "opus" : "redflags"));
   const [view, setView] = useState<"pending" | "decided">("pending");
   const [opusView, setOpusView] = useState<OpusView>("pending");
-  const counts = useQuery<{ count: number; redFlags?: number; opusPlans?: number; opusStale?: number }>({
+  const counts = useQuery<{ count: number; redFlags?: number; opusPlans?: number; opusStale?: number; opusProposals?: number }>({
     queryKey: ["/api/physio/red-flag-reviews", "pending-count"],
     queryFn: async () => (await apiRequest("GET", "/api/physio/red-flag-reviews/pending-count")).json(),
   });
@@ -164,7 +187,7 @@ function PhysioApprovalsInner() {
     queryFn: async () => (await apiRequest("GET", `/api/physio/red-flag-reviews?view=${view}`)).json(),
     enabled: kind === "redflags",
   });
-  const oq = useQuery<{ rows: OpusPlanRow[] }>({
+  const oq = useQuery<{ rows: any[] }>({
     queryKey: [OPUS_PLANS_KEY, opusView],
     queryFn: async () => (await apiRequest("GET", `${OPUS_PLANS_KEY}?view=${opusView}`)).json(),
     enabled: kind === "opus",
@@ -174,12 +197,12 @@ function PhysioApprovalsInner() {
   return (
     <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-red-700" /> اعتمادات العلاج الطبيعي</h1>
-      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: "خطط Opus" }}
-        counts={{ redflags: counts.data?.redFlags ?? 0, opus: counts.data?.opusPlans ?? 0 }} />
+      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: "خطط Bionic AI" }}
+        counts={{ redflags: counts.data?.redFlags ?? 0, opus: (counts.data?.opusPlans ?? 0) + (counts.data?.opusProposals ?? 0) }} />
       {kind === "redflags" ? (
         <>
           <p className="text-xs text-muted-foreground">
-            علاماتٌ حمراء في معاينات العلاج الطبيعي أرسلها الفاحصون. الإجراءُ العاجل ظهر للفاحص لحظةَ المعاينة؛ وهنا القرار: الاعتمادُ يسمح لـ Opus
+            علاماتٌ حمراء في معاينات العلاج الطبيعي أرسلها الفاحصون. الإجراءُ العاجل ظهر للفاحص لحظةَ المعاينة؛ وهنا القرار: الاعتمادُ يسمح لـ Bionic AI
             بكتابة الخطّة وملاحظتُك قيدٌ عليها، والرفضُ يوقفها وتبقى الإحالة.
           </p>
           <Seg value={view} onChange={setView} prefix="approvals-view" options={{ pending: "بانتظار القرار", decided: "المحسومة" }} />
@@ -191,15 +214,18 @@ function PhysioApprovalsInner() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            خططٌ كتبها Opus من معاينات العلاج الطبيعي. لا يراها المعالجون قبل اعتمادك؛ افتح كلّاً منها واقرأها ثمّ اعتمدها أو احذفها.
+            خططٌ كتبها Bionic AI من معاينات العلاج الطبيعي. لا يراها المعالجون قبل اعتمادك؛ افتح كلّاً منها واقرأها ثمّ اعتمدها أو احذفها.
+            و«تعديلاتٌ مقترحة» ما كتبه Bionic AI بطلبك على خططٍ معتمَدة — تُحفظ نسخةً جديدة بعد قراءة الفرق.
             و«قدُمت» خططٌ تغيّرت معاينتُها بعد كتابتها — لا تُعتمد، تُحذف ويُعاد الكتابة.
           </p>
-          <Seg value={opusView} onChange={setOpusView} prefix="opus-view" options={OPUS_VIEWS} counts={{ pending: counts.data?.opusPlans ?? 0 }}
+          <Seg value={opusView} onChange={setOpusView} prefix="opus-view" options={OPUS_VIEWS} counts={{ pending: counts.data?.opusPlans ?? 0, proposals: counts.data?.opusProposals ?? 0 }}
             muted={{ stale: counts.data?.opusStale ?? 0 }} />
           {oq.isLoading ? <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
             : oq.isError ? <Card className="p-4 text-sm text-red-700">تعذّر التحميل.</Card>
-              : orows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="opus-plans-empty">{opusView === "pending" ? "لا خطّةَ من Opus تنتظر الاعتماد." : opusView === "stale" ? "لا خطّةَ قديمة." : "لا قرارات بعد."}</Card>
-                : <div className="space-y-2">{orows.map((r) => <OpusPlanCard key={r.id} r={r} view={opusView} />)}</div>}
+              : orows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="opus-plans-empty">{opusView === "pending" ? "لا خطّةَ من Bionic AI تنتظر الاعتماد."
+                : opusView === "proposals" ? "لا تعديلَ من Bionic AI ينتظر حفظك." : opusView === "stale" ? "لا خطّةَ قديمة." : "لا قرارات بعد."}</Card>
+                : opusView === "proposals" ? <div className="space-y-2">{orows.map((r) => <OpusProposalCard key={r.jobId} r={r as OpusProposalRow} />)}</div>
+                : <div className="space-y-2">{orows.map((r) => <OpusPlanCard key={r.id} r={r as OpusPlanRow} view={opusView} />)}</div>}
         </>
       )}
     </div>

@@ -78,11 +78,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
           </Button>
         )}
       </div>
-      {opusBusy && q.data?.canWrite && (
-        <div dir="rtl" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900" data-testid="physio-plans-opus-busy">
-          {opusWriting ? "Opus يكتب خطّةً لهذا المريض الآن" : "خطّةُ Opus لهذا المريض تنتظر الاعتماد"} — خطّةٌ جديدة الآن تعني خطّتين معاً تُعدّان مرّتين.
-        </div>
-      )}
+      {opusBusy && q.data?.canWrite && <OpusBusyNote writing={opusWriting} testId="physio-plans-opus-busy" />}
       {q.isLoading ? (
         <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
       ) : plans.length === 0 ? (
@@ -96,7 +92,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 <Sparkles className="w-4 h-4 text-violet-700" />
                 <span className="font-semibold">{OPUS_AWAITING_LABEL}</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">كتبها Opus في {fmt(p.createdAt)} — تظهر هنا كاملةً بعد أن يعتمدها المسؤولُ أو المشرفُ العام.</div>
+              <div className="text-[11px] text-muted-foreground mt-1">كتبها Bionic AI في {fmt(p.createdAt)} — تظهر هنا كاملةً بعد أن يعتمدها المسؤولُ أو المشرفُ العام.</div>
             </div>
           ) : (
             <div key={p.id} className="flex items-stretch gap-1">
@@ -108,7 +104,7 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
                 <Badge variant="outline" className={PLAN_STATUS_TONE[p.status]}>{PLAN_STATUS_LABELS[p.status]}</Badge>
                 {p.origin === "opus" && (
                   <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-300" data-testid={`physio-plan-opus-${p.id}`}>
-                    {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Opus — افتحها لتعتمدها" : "كتبها Opus"}
+                    {isOpusAwaiting({ origin: p.origin, status: p.status }) ? "كتبها Bionic AI — افتحها لتعتمدها" : "كتبها Bionic AI"}
                   </Badge>
                 )}
                 {p.protocolId && p.protocolStatus !== "approved" && (
@@ -133,9 +129,10 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
               </div>
             )}
             {/*  تغييرُ نوع الخطّة وحذفُها من الملفّ — لكاتبها: الأخصائيّ والمشرف العام والمسؤول (§4.eh)، والخادمُ يحرسهما. */}
-            {q.data?.canDelete && (
+            {q.data?.canDelete && (p.origin !== "opus" || q.data.canApprove) && (
               <div className="flex flex-col justify-center gap-1">
-                {!isPlanClosed(p.status) && (
+                {/*  §4.hb — خطّةُ Bionic AI لا يتغيّر نوعُها (تُعدَّل بنسخٍ مرقّمة)، وحذفُها للمعتمِد وحده. */}
+                {!isPlanClosed(p.status) && p.origin !== "opus" && (
                   <Button variant="ghost" size="icon" title="تغيير نوع الخطّة" onClick={() => setChangingType(p)}
                     data-testid={`button-change-type-physio-plan-${p.id}`}><RefreshCcw className="w-4 h-4" /></Button>
                 )}
@@ -151,13 +148,24 @@ export function PhysioPlansSection({ patientId }: { patientId: number }) {
       <DeletePlanDialog plan={deleting} onClose={() => setDeleting(null)} patientId={patientId} />
       <ExecuteSessionDialog planId={executing} onClose={() => setExecuting(null)} />
       <NewPlanDialog open={pickOpen} onOpenChange={setPickOpen} patientId={patientId} suggest={q.data?.suggest ?? null}
+        opusBusy={opusBusy ? (opusWriting ? "writing" : "waiting") : null}
         onCreated={(id) => setLocation(`/physio/plans/${id}?edit=1`)} />
     </div>
   );
 }
 
-function NewPlanDialog({ open, onOpenChange, patientId, suggest, onCreated }: {
+/** **Opus يكتب خطّةً لهذا المريض أو خطّتُه تنتظر** — تنبيهٌ لا منع (درسُ ٢٥)؛ فوق «خطة جديدة» وداخل نافذتها بجانب «اقترح خطّة» (§4.hb C2). */
+function OpusBusyNote({ writing, testId }: { writing: boolean; testId: string }) {
+  return (
+    <div dir="rtl" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900" data-testid={testId}>
+      {writing ? "Bionic AI يكتب خطّةً لهذا المريض الآن" : "خطّةُ Bionic AI لهذا المريض تنتظر الاعتماد"} — خطّةٌ جديدة الآن تعني خطّتين معاً تُعدّان مرّتين.
+    </div>
+  );
+}
+
+function NewPlanDialog({ open, onOpenChange, patientId, suggest, onCreated, opusBusy = null }: {
   open: boolean; onOpenChange: (v: boolean) => void; patientId: number; suggest: SuggestInfo | null; onCreated: (id: number) => void;
+  opusBusy?: "writing" | "waiting" | null;
 }) {
   const { toast } = useToast();
   const [blankTitle, setBlankTitle] = useState("");
@@ -171,6 +179,7 @@ function NewPlanDialog({ open, onOpenChange, patientId, suggest, onCreated }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle>خطة علاج طبيعي جديدة</DialogTitle></DialogHeader>
+        {open && opusBusy && <OpusBusyNote writing={opusBusy === "writing"} testId="physio-plan-dialog-opus-busy" />}
         {/*  «اقترح خطّة» (§4.co) — لكاتبي الخطط، والخادمُ يقرّر مَن يراه (`suggest` غائبٌ لغيرهم). */}
         {open && suggest && <SuggestBox patientId={patientId} info={suggest} onCreated={(id) => { onOpenChange(false); onCreated(id); }} />}
         {/*  **التقييمُ الأوّليّ بجانب اختيار البروتوكول** (§4.da المرحلة ٤): «على أساس هذه التقييمات تُختار الخطّة». */}

@@ -1,5 +1,6 @@
 // **خطّةُ العلاج الطبيعي للمريض** (ترحيل ١٠٩، §4.cm) — طبقةُ البيانات. القواعدُ في `shared/physio_plans.ts`.
 // كلُّ انتقالٍ في معاملةٍ بقفل الصفّ، وتنبيهُه في المعاملة نفسِها (`enqueueStaffEvent`) — ارتدّت ⟵ لا تنبيه.
+import { lockOpusPatientFirstTx, onOpusPlanClosingTx } from "../physio_agent/versions";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -29,7 +30,7 @@ import { withImageUrls } from "../physio_protocols/exercises_store";
 import { enqueueStaffEvent } from "../staff_telegram/outbox";
 
 export class PlanError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 /** `isApprover`: مسؤولٌ أو مشرفٌ عام (`canApprovePlans`) — به يُعرف أنّ التعديلَ والإيقافَ والاستبدالَ قرارُ مشرفٍ يُنبَّه به كاتبُ الخطّة (§4.cz). */
 export interface Actor { userId: number | null; name: string | null; isApprover?: boolean }
@@ -751,7 +752,10 @@ async function notifyAssigned(tx: any, plan: PhysioPlan, userIds: number[], acto
 /** **الإيقاف** — لا محو: الخطّةُ تبقى تاريخاً بسببها. */
 export async function stopPlan(id: number, reason: string, actor: Actor) {
   return db.transaction(async (tx) => {
+    //  §4.hb D13 — خطّةُ Opus: قفلُ المريض أوّلاً، ووظيفةُ «تعديل» عليها تُلغى واقتراحُها يقدُم.
+    await lockOpusPatientFirstTx(tx, id);
     const before = await lockPlan(tx, id);
+    if (before.origin === "opus") await onOpusPlanClosingTx(tx, id, "plan_closed", actor);
     if (before.status === "stopped") throw new PlanError(409, "الخطّةُ موقوفة من قبل");
     if (before.status === "graduated") throw new PlanError(409, "الخطّةُ منتهيةٌ بتخرّج المريض");
     const [after] = await tx.update(physioPlans).set({ status: "stopped", stopReason: reason, stoppedAt: new Date(),
@@ -799,7 +803,12 @@ export async function setAssignees(id: number, userIds: number[], actor: Actor) 
  *  والصورةُ الكاملة تُعاد لسطر التدقيق فلا يضيع ما حُذف. وحذفُ الأخصائيّ خطّةً بدأ علاجُها يصل المشرفَ للاطّلاع. */
 export async function deletePlan(id: number, actor: Actor) {
   return db.transaction(async (tx) => {
+    await lockOpusPatientFirstTx(tx, id);
     const plan = await lockPlan(tx, id);
+    //  §4.hb — نسخُ خطّة Opus في صورة سطر التدقيق، ووظيفتُها تُلغى واقتراحُها يقدُم (والنسخُ تتبع الخطّةَ بـ`ON DELETE CASCADE`).
+    const opusVersions = plan.origin === "opus" ? (await tx.execute(sql`SELECT version, how, reason, snapshot_hash, created_by_name, created_at FROM physio_plan_versions
+        WHERE plan_id = ${id} ORDER BY version`) as any).rows : [];
+    if (plan.origin === "opus") await onOpusPlanClosingTx(tx, id, "plan_deleted", actor);
     const lines = await tx.select().from(physioPlanDevices).where(eq(physioPlanDevices.planId, id));
     const assignees = (await tx.select({ u: physioPlanAssignees.userId }).from(physioPlanAssignees)
       .where(eq(physioPlanAssignees.planId, id))).map((r) => Number(r.u));
@@ -814,7 +823,7 @@ export async function deletePlan(id: number, actor: Actor) {
     if (plan.status === "approved" && !actor.isApprover) {
       await notifyPending(tx, plan, actor, "حُذفت خطّةٌ بدأ علاجُها — للاطّلاع", "🗑️", [`حذفها ${actor.name ?? "—"}`], patientPath);
     }
-    return { ...plan, devices: lines, assignees, phases };
+    return { ...plan, devices: lines, assignees, phases, ...(plan.origin === "opus" ? { opusVersions } : {}) };
   });
 }
 

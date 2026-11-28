@@ -760,7 +760,7 @@ export function NewExamDialog({
             <DialogHeader>
               <DialogTitle className="text-red-800 flex items-center gap-2 pr-10" data-testid="exam-rf-step-title">حُفظت المعاينة — فيها علامةٌ حمراء</DialogTitle>
               <p className="text-sm text-muted-foreground text-right">
-                نفّذ الإجراءَ العاجل الآن ولا تنتظر. ولا يكتب Opus خطّةً قبل أن يعتمدها المسؤول أو المشرف العام بملاحظته.
+                نفّذ الإجراءَ العاجل الآن ولا تنتظر. ولا يكتب Bionic AI خطّةً قبل أن يعتمدها المسؤول أو المشرف العام بملاحظته.
               </p>
             </DialogHeader>
             <div data-testid="exam-rf-step">

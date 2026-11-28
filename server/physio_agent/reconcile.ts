@@ -16,11 +16,15 @@ export function setWorkerNudge(fn: () => void): void { nudge = fn; }
 
 export async function reconcilePatientJobs(tx: any, patientId: number, actor: Actor, trigger: JobTrigger): Promise<{ enqueued: JobRecord | null }> {
   const newest = await newestV2ExamId(tx, patientId);
+  //  §4.hb — اقتراحُ «تعديل» منتظرٌ على معاينةٍ لم تعد الأحدث يقدُم الآن (لا عند محاولة حفظه) — فلا يبقى في شارة المعتمِد.
+  const { markProposalsStaleTx } = await import("./versions");
   if (newest !== null) {
     await cancelActiveJobsTx(tx, { patientId, exceptExamId: newest, reason: "superseded_by_newer_exam", actor });
     await markStaleOpusPlansTx(tx, { patientId, exceptExamId: newest, reason: "superseded_by_newer_exam", actor });
+    await markProposalsStaleTx(tx, { patientIds: [patientId], exceptExamId: newest, reason: "superseded_by_newer_exam", actor });
   } else {
     await cancelActiveJobsTx(tx, { patientId, reason: "exam_cancelled", actor });
+    await markProposalsStaleTx(tx, { patientIds: [patientId], reason: "exam_cancelled", actor });
   }
   const active = await activeJobOfPatient(tx, patientId);
   if (active && newest !== null && active.examId === newest) {
@@ -55,6 +59,7 @@ export async function onExamRevised(examId: number, patientId: number, actor: Ac
       await lockPatientAgent(tx, patientId);
       await cancelActiveJobsTx(tx, { patientId, examId, reason: "exam_changed", actor });
       await markStaleOpusPlansTx(tx, { patientId, examId, reason: "exam_changed", actor });
+      await (await import("./versions")).markProposalsStaleTx(tx, { patientIds: [patientId], examId, reason: "exam_changed", actor });
       return reconcilePatientJobs(tx, patientId, actor, "exam_revised");
     });
     if (r.enqueued) { nudge(); await signalJob(r.enqueued); } else { (await import("../live/updates")).notifyChange(null); }
@@ -67,6 +72,7 @@ export async function onExamCancelledTx(tx: any, examId: number, patientId: numb
   await lockPatientAgent(tx, patientId);
   await cancelActiveJobsTx(tx, { patientId, examId, reason: "exam_cancelled", actor });
   await markStaleOpusPlansTx(tx, { patientId, examId, reason: "exam_cancelled", actor });
+  await (await import("./versions")).markProposalsStaleTx(tx, { patientIds: [patientId], examId, reason: "exam_cancelled", actor });
   return (await reconcilePatientJobs(tx, patientId, actor, "reconcile")).enqueued;
 }
 export const nudgeWorkerNow = () => nudge();
@@ -77,6 +83,9 @@ export async function onPatientGoneTx(tx: any, patientId: number, reason: "patie
   await lockPatientAgent(tx, patientId);
   await cancelActiveJobsTx(tx, { patientId, reason, actor, hard: reason === "patient_merged" });
   await markStaleOpusPlansTx(tx, { patientId, reason, actor });
+  //  §4.hb — واقتراحُ Opus المنتظر على خطّته المعتمَدة يقدُم (فالاستعادةُ من السلّة لا تُحييه).
+  const { markProposalsStaleTx } = await import("./versions");
+  await markProposalsStaleTx(tx, { patientIds: [patientId], reason: reason === "patient_merged" ? "patient_merged" : "patient_trashed", actor });
 }
 
 /** مدّةُ تذكّر ما تخطّاه المصالِح — بعدها يُعاد فحصُه مرّة (ما يفتح بوّابةً يُصالح بنفسه في الحال: الاعتمادُ والتوقيعُ والتنقيح). */
@@ -104,7 +113,9 @@ export async function reconcilerScan(limit = 20): Promise<number> {
                          AND sk.skipped_at > now() - make_interval(hours => ${RECONCILE_SKIP_TTL_HOURS})
                          AND sk.skipped_at > COALESCE((SELECT max(rv.edited_at) FROM medical_exam_revisions rv WHERE rv.exam_id = me.id), '-infinity')
                          AND sk.skipped_at > COALESCE((SELECT max(GREATEST(fr.requested_at, COALESCE(fr.decided_at, fr.requested_at)))
-                                                         FROM physio_exam_red_flag_reviews fr WHERE fr.patient_id = me.patient_id), '-infinity'))
+                                                         FROM physio_exam_red_flag_reviews fr WHERE fr.patient_id = me.patient_id), '-infinity')
+                         --  مراجعةُ Codex على #774: إلغاءُ معاينةٍ أحدث للمريض بعد التخطّي يُسقطه (الخطّةُ التي قدُمت بها صار لها أن تُعاد).
+                         AND sk.skipped_at > COALESCE((SELECT max(mc.cancelled_at) FROM medical_exam_cancellations mc WHERE mc.patient_id = me.patient_id), '-infinity'))
      ORDER BY me.signed_at DESC, me.id DESC LIMIT ${limit}`));
   let n = 0;
   for (const c of cands) {

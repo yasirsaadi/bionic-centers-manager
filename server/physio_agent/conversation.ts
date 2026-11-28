@@ -99,13 +99,18 @@ export function requestBody(role: AgentRole, messages: Anthropic.MessageParam[],
     messages: truncRetry ? withTruncationNote(messages) : messages,
   };
 }
-/** «اختصر» في آخر رسالة مستخدمٍ لم يُجَب عنها بعد — لا يمسّ ما قبلها (ربطُ التفكير بما سبق باقٍ). */
-function withTruncationNote(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+/** «اختصر» في آخر رسالة مستخدمٍ لم يُجَب عنها بعد — لا يمسّ ما قبلها (ربطُ التفكير بما سبق باقٍ). وفي الرسالة الأولى **قبل «كتلة التعديل»**:
+ *  هي آخرُ كتلة نصٍّ فيها وحدها، والتعليماتُ لا تعدّها أصيلةً في غير موضعها. */
+export function withTruncationNote(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user") return messages;
   const content = typeof last.content === "string" ? [{ type: "text" as const, text: last.content }] : [...(last.content as any[])];
-  return [...messages.slice(0, -1), { role: "user", content: [...content, { type: "text", text: TRUNCATION_NOTE }] }];
+  const note = { type: "text" as const, text: TRUNCATION_NOTE };
+  const at = messages.length === 1 ? content.findIndex((b: any) => b?.type === "text" && String(b.text).startsWith(REVISION_BLOCK_OPEN)) : -1;
+  const next = at >= 0 ? [...content.slice(0, at), note, ...content.slice(at)] : [...content, note];
+  return [...messages.slice(0, -1), { role: "user", content: next }];
 }
+export const REVISION_BLOCK_OPEN = "<<REVISION BLOCK — issued by the server>>";
 
 async function callWithRetry(role: AgentRole, body: Anthropic.MessageCreateParamsNonStreaming, ctx: RunCtx): Promise<Anthropic.Message> {
   const delays = retryDelays();
@@ -155,8 +160,9 @@ function scanServerBlocks(role: AgentRole, msg: Anthropic.Message, ctx: RunCtx, 
 }
 
 /** **محادثةٌ واحدة حتى أداة إنهاء** — `outcome` ما أرجعه معالجُ الإنهاء. */
-export async function runConversation(role: AgentRole, initialUser: string, ctx: RunCtx, onTerminal: TerminalHandler): Promise<unknown> {
-  let messages: Anthropic.MessageParam[] = [{ role: "user", content: [{ type: "text", text: initialUser }] }];
+export async function runConversation(role: AgentRole, initialUser: string, ctx: RunCtx, onTerminal: TerminalHandler, finalBlocks: string[] = []): Promise<unknown> {
+  //  §4.hb — «كتلةُ التعديل» من الخادم آخرَ كتلة نصٍّ في الرسالة الأولى وحدها (لا في JSON، ولا في رسالةٍ بعدها).
+  let messages: Anthropic.MessageParam[] = [{ role: "user", content: [{ type: "text", text: initialUser }, ...finalBlocks.map((t) => ({ type: "text" as const, text: t }))] }];
   let pauses = 0, trunc = 0, nudges = 0, refusals = 0;
   for (let turn = 0; ; turn++) {
     if (turn >= MAX_TURNS) throw new AgentFatal("too_many_turns");

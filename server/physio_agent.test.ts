@@ -260,7 +260,7 @@ async function main() {
   console.log("\n── ل. الخطّةُ من البروتوكول ──");
   same("L.1 **مراحلُ البروتوكول وتمارينُه تُنسخ ولو أرسل النموذجُ غيرَها**، وملاحظاتُه ملاحظات", (() => {
     const r = gate(lib({ phase_notes: [{ phase: 1, note_ar: "ابدأ بلطف", note_en: null }] }));
-    return [r.plan.phases.map((p) => [p.nameAr, p.exercises.map((x) => x.exerciseId)]), /Opus: ابدأ بلطف/.test(r.plan.phases[0]?.notes ?? "")]; })(),
+    return [r.plan.phases.map((p) => [p.nameAr, p.exercises.map((x) => x.exerciseId)]), /Bionic AI: ابدأ بلطف/.test(r.plan.phases[0]?.notes ?? "")]; })(),
     [[["أولى", [1, 2]], ["ثانية", [2]]], true]);
   same("L.1ب ونصٌّ في `phases` بوضع المكتبة يُردّ في المحلّل", parseSubmittedPlan(lib({ phases: [{ name_ar: "x", name_en: "x", session_from: 1, session_to: 2, goals_ar: null, goals_en: null,
     progress_criteria_ar: null, progress_criteria_en: null, education_ar: null, education_en: null, exercises: [] }] })).ok, false);
@@ -284,7 +284,7 @@ async function main() {
     [["source_not_fetched"], ["source_not_fetched"], [], ["sources_missing"]]);
   same("G.13a بوضع المكتبة: المصدرُ الذي لم يظهر يسقط ولا يمنع", (() => { const r = gate(lib({ sources: [{ title: "n", url: NICE, org: null, year: null, used_for: null },
     { title: "x", url: "https://x.example", org: null, year: null, used_for: null }] })); return [r.plan.sources.map((s) => s.url), r.blocking.length]; })(), [[NICE], 0]);
-  same("G.13b بروتوكولٌ مؤرشف أو مسوّدةُ Opus ⟵ مانع", [gate(lib(), { protocol: proto({ isArchived: true }) }).blocking.map((b) => b.code),
+  same("G.13b بروتوكولٌ مؤرشف أو مسوّدةُ Bionic AI ⟵ مانع", [gate(lib(), { protocol: proto({ isArchived: true }) }).blocking.map((b) => b.code),
     gate(lib(), { protocol: proto({ origin: "opus", status: "draft" }) }).blocking.map((b) => b.code)], [["protocol_missing"], ["protocol_missing"]]);
   same("G.13d **نوعُ البطاقة ومنطقتُها وفئةُ البروتوكول من القوائم**", gate(oolPlan({ proposed_cards: [card({ kind: "yoga" })], library_protocol: lp({ category: "spa" }) }), { protocol: null })
     .blocking.map((b) => b.code).sort(), ["card_enum_invalid", "protocol_enum_invalid"]);
@@ -349,7 +349,7 @@ async function main() {
     [true, true, true, ["radial", "focused"], true]);
   const specS = { role: "physio_specialist", roles: ["physio_specialist"], isAdmin: false, permissions: {} } as any;
   const supS = { role: "branch_manager", roles: ["branch_manager"], isAdmin: false, permissions: { canSupervisePhysio: true } } as any;
-  same("V.1 **خطّةُ Opus المنتظرة**: كاملةٌ للمعتمِد، وسطرٌ لغيره بلا تنفيذ، والمعتمَدةُ عاديّة", [planAccessFor(supS, { origin: "opus", status: "pending" }),
+  same("V.1 **خطّةُ Bionic AI المنتظرة**: كاملةٌ للمعتمِد، وسطرٌ لغيره بلا تنفيذ، والمعتمَدةُ عاديّة", [planAccessFor(supS, { origin: "opus", status: "pending" }),
     planAccessFor(specS, { origin: "opus", status: "pending" }), planAccessFor(specS, { origin: "opus", status: "approved" }),
     Object.keys(opusPlanStub({ id: 1, patientId: 2, status: "pending", createdAt: null })).sort(), opusPlanStub({ id: 1, patientId: 2, status: "pending", createdAt: null }).titleAr],
     ["full", "stub", "full", ["createdAt", "id", "origin", "patientId", "status", "stub", "titleAr"], OPUS_AWAITING_LABEL]);
@@ -360,7 +360,7 @@ async function main() {
   await cleanup();
   setRetryDelaysForTests([1, 1, 1, 1]);
   setAgentTimingForTests({ heartbeatMs: 40, staleMs: 5 * 60_000, runCapMs: 60_000 });
-  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع وكيل Opus'), ($2, 'فرع Opus المغلق')`, [B1, B3]);
+  await q(`INSERT INTO branches (id, name) VALUES ($1, 'فرع وكيل Bionic AI'), ($2, 'فرع Bionic AI المغلق')`, [B1, B3]);
   await q(`UPDATE branches SET temporarily_closed = true WHERE id = $1`, [B3]);
   const users: [number, string, Record<string, unknown>][] = [[ADMIN, "admin", {}], [SUP, "branch_manager", { can_supervise_physio: true }],
     [SPEC, "physio_specialist", {}], [SPEC2, "physio_specialist", {}], [TECH, "therapist", {}]];
@@ -380,7 +380,7 @@ async function main() {
     [`TEST-OPUS-${code}`, status]))[0].id);
   const EX1 = await ex("A", "approved"), EX2 = await ex("B", "approved"), EX3 = await ex("C", "approved");
   const P = Number((await q(`INSERT INTO physio_protocols (code, title_ar, title_en, category, age_group, status, total_sessions, max_total_sessions, sessions_per_week, session_minutes)
-    VALUES ('TEST-OPUS-LIB', 'بروتوكول اختبار Opus', 'Opus test protocol', 'spine', 'adult', 'approved', 12, 18, 6, 50) RETURNING id`))[0].id);
+    VALUES ('TEST-OPUS-LIB', 'بروتوكول اختبار Bionic AI', 'Bionic AI test protocol', 'spine', 'adult', 'approved', 12, 18, 6, 50) RETURNING id`))[0].id);
   for (const [code, use, ev, params, ed, t] of [["electro", "core", "recommended", {}, null, null], ["shockwaves", "adjunct", "optional", { mode: "radial", pressureBar: "2.5", frequencyHz: "8", impulses: "2000" }, 7, 3],
     ["ultrasound", "not_used", "not_recommended", {}, null, null], ["laser", "core", "optional", {}, null, null]] as const) {
     await q(`INSERT INTO physio_protocol_devices (protocol_id, device_id, evidence, minutes, params, centre_use, every_days, times) VALUES ($1, $2, $3, 20, $4::jsonb, $5, $6, $7)`,
@@ -437,17 +437,25 @@ async function main() {
   const maxOutbox = async () => Number((await q(`SELECT COALESCE(max(id),0) AS m FROM staff_notification_outbox`))[0].m);
   const outbox = async (event: string, since: number) => q(`SELECT target_user_ids, text FROM staff_notification_outbox WHERE event_type = $1 AND id > $2 ORDER BY id`, [event, since]);
   const writerCalls = () => calls.filter((c) => c.role === "writer");
+  //  §4.hb — الاعتمادُ لما قرأه المعتمِد: رقمُ الوظيفة وبصمةُ الاقتراح من «الخطّة المقترحة».
+  const approveBody = async (planId: number, acknowledgedIssueIds: string[], s: string) => {
+    const pr = (await call("GET", `/api/physio/plans/${planId}/opus-proposal`, s)).json;
+    return { fromProposal: true, acknowledgedIssueIds, agentJobId: pr?.agentJobId, proposalHash: pr?.proposalHash };
+  };
 
   try {
     console.log("\n── م. الترحيل ──");
     const cks = (await q(`SELECT conname FROM pg_constraint WHERE conname LIKE 'ck_paj_%' OR conname IN ('ck_pp_origin','ck_pp_opus_only','ck_pp_sources_array','ck_pprot_max_total','ck_pprot_origin','ck_pefr_forbidden_array') ORDER BY 1`)).map((r) => r.conname);
-    same("M.1 القيودُ مكتوبة", cks.length, 16);
+    same("M.1 القيودُ مكتوبة (١٩٩ و٢٠٠: `ck_paj_trigger` صار `ck_paj_trigger_v2`، وستّةٌ لوظيفة «تعديل» — §4.hb)", cks.length, 22);
     same("M.3 السقفُ مزروعٌ لكلّ بروتوكولٍ في المكتبة", Number((await q(`SELECT count(*) FROM physio_protocols WHERE max_total_sessions IS NULL AND code <> 'TEST-OPUS-LIB' AND code NOT LIKE 'opus-%'`))[0].count), 0);
     same("E.22 **العاملُ لا يبدأ في الاختبار**", workerStartedForTest(), false);
     const { sql: m199 } = await import("./migrations/199_physio_agent_jobs");
     let rerun = "";
-    try { await pool.query(m199); } catch (e: any) { rerun = String(e?.message ?? e); }
-    same("M.4 **إعادةُ الترحيل لا تفعل شيئاً**", [rerun, Number((await q(`SELECT count(*) FROM pg_constraint WHERE conname LIKE 'ck_paj_%'`))[0].count)], ["", 10]);
+    const { sql: m200 } = await import("./migrations/200_physio_plan_versions");
+    try { await pool.query(m199); await pool.query(m200); } catch (e: any) { rerun = String(e?.message ?? e); }
+    same("M.4 **إعادةُ الترحيل لا تفعل شيئاً** (١٩٩ ثمّ ٢٠٠ — والثاني يُسقط قيدَ المُطلِق القديم ثانيةً)",
+      [rerun, Number((await q(`SELECT count(*) FROM pg_constraint WHERE conname LIKE 'ck_paj_%'`))[0].count),
+        Number((await q(`SELECT count(*) FROM pg_constraint WHERE conname = 'ck_paj_trigger'`))[0].count)], ["", 16, 0]);
 
     console.log("\n── هـ. المسارُ السعيد (مكتبة) ──");
     const p1 = await patient("علي حسين");
@@ -473,7 +481,7 @@ async function main() {
     await runAgentOnce({ skipReconcile: true });
     const j1 = (await jobsOf(p1))[0];
     const plan1 = await planOfJob(Number(j1.id));
-    same("E.5 **الوظيفةُ نجحت والخطّةُ تنتظر الاعتماد**: منشؤها Opus ومعاينتُها، وكاتبُها الفاحص، والطالبُ على الوظيفة",
+    same("E.5 **الوظيفةُ نجحت والخطّةُ تنتظر الاعتماد**: منشؤها Bionic AI ومعاينتُها، وكاتبُها الفاحص، والطالبُ على الوظيفة",
       [j1.status, plan1?.status, plan1?.origin, Number(plan1?.source_exam_id), Number(plan1?.created_by), Number(j1.requested_by), plan1?.out_of_library],
       ["succeeded", "pending", "opus", e1, SPEC, SPEC, false]);
     const ph1 = await q(`SELECT ph.position, array_agg(pe.exercise_id ORDER BY pe.position) AS ex, ph.session_to FROM physio_plan_phases ph LEFT JOIN physio_plan_phase_exercises pe ON pe.phase_id = ph.id
@@ -513,29 +521,29 @@ async function main() {
       [((await call("GET", `/api/physio/plans?view=pending`, S.sup)).json?.plans ?? []).some((x: any) => x.id === plan1.id),
         (await call("GET", `/api/patients/${p1}/physio-sheet`, S.admin)).json?.plan ?? null, (await call("GET", `/api/physio/red-flag-reviews/pending-count`, S.sup)).json?.opusPlans >= 1],
       [false, null, true]);
-    same("E.18 **قبل الاعتماد لا تُعدَّل** (`opus_plan_locked`)، و«الإعادة» للمرحلة القادمة",
+    same("E.18 **قبل الاعتماد لا تُعدَّل** (`opus_plan_locked`)، و«الإعادة» من «أعِده إلى Bionic AI» (§4.hb)",
       [(await call("PUT", `/api/physio/plans/${plan1.id}`, S.sup, { titleAr: "x", devices: [] })).json?.code, (await call("POST", `/api/physio/plans/${plan1.id}/return`, S.sup, { note: "x" })).json?.code],
-      ["opus_plan_locked", "opus_return_next_phase"]);
+      ["opus_plan_locked", "opus_use_opus_return"]);
     same("E.15ج الاعتمادُ بلا «الخطّة المقترحة» ⟵ ٤٠٠", (await call("POST", `/api/physio/plans/${plan1.id}/approve`, S.sup, {})).json?.code, "opus_use_proposal_view");
     const prop = await call("GET", `/api/physio/plans/${plan1.id}/opus-proposal`, S.sup);
     const pc = (await call("GET", `/api/physio/red-flag-reviews/pending-count`, S.sup)).json;
-    same("E.20 **الشارةُ = العلاماتُ + خططُ Opus الطازجة**", pc?.count, (pc?.redFlags ?? -1) + (pc?.opusPlans ?? -1));
+    same("E.20 **الشارةُ = العلاماتُ + خططُ Bionic AI الطازجة**", pc?.count, (pc?.redFlags ?? -1) + (pc?.opusPlans ?? -1));
     same("E.15د «الخطّة المقترحة» للمعتمِد: الخطّةُ والسجلُّ والمراجعات", [prop.status, prop.json?.reviews?.length, Array.isArray(prop.json?.gateLog), prop.json?.examStale], [200, 2, true, false]);
     same("E.15هـ **أسماءُ ما تشير إليه الخطّةُ للعرض** — التمرينُ البديل والجهاز، وحالُ الخطّة في «حال الوظيفة» بلا ما فيها",
       [prop.json?.exerciseNames?.[EX3]?.nameAr, typeof prop.json?.deviceNames?.electro?.nameAr, (await call("GET", `/api/physio/exams/${e1}/opus-job`, S.spec)).json?.planStatus],
       ["TEST-OPUS-C", "string", "pending"]);
-    const ap = await call("POST", `/api/physio/plans/${plan1.id}/approve`, S.sup, { fromProposal: true, acknowledgedIssueIds: [] });
+    const ap = await call("POST", `/api/physio/plans/${plan1.id}/approve`, S.sup, await approveBody(plan1.id, [], S.sup));
     same("E.13c′ الاعتمادُ يفتحها للأخصائيّ", [ap.status, ap.json?.status, (await call("GET", `/api/physio/plans/${plan1.id}`, S.spec)).status], [200, "approved", 200]);
     {
       const pr1 = String((await q(`SELECT precautions FROM physio_plans WHERE id = $1`, [plan1.id]))[0].precautions ?? "");
       same("E.13d **الأجهزةُ الممنوعة في «الاحتياطات» بأسمائها العربية** لا برموزها", [/الأجهزةُ الممنوعة لهذا المريض/.test(pr1), /\bshockwaves\b/.test(pr1)], [true, false]);
       const { staffEventDeliverable } = await import("@shared/staff_notifications");
-      same("E.13e **«اعتُمدت خطّتُك» يصل كاتبَها الطبيبَ باختصاص العلاج الطبيعي** (الفاحصُ كاتبُ خطّة Opus)",
+      same("E.13e **«اعتُمدت خطّتُك» يصل كاتبَها الطبيبَ باختصاص العلاج الطبيعي** (الفاحصُ كاتبُ خطّة Bionic AI)",
         [staffEventDeliverable({ role: "doctor", medicalSpecialties: ["physiotherapy"] } as any, "physio_plan_decided", true),
           staffEventDeliverable({ role: "doctor", medicalSpecialties: ["physiotherapy"] } as any, "physio_plan_decided", false)], [true, false]);
     }
     same("E.15و وبعد الاعتماد يقول «حالُ الوظيفة» اعتُمدت", (await call("GET", `/api/physio/exams/${e1}/opus-job`, S.spec)).json?.planStatus, "approved");
-    same("E.17b **مريضٌ له خطّةٌ قائمة ⟵ «اكتب بـ Opus» يدوياً ٤٠٩**", (await call("POST", `/api/physio/exams/${e1}/opus-plan`, S.spec)).json?.code, "has_active_plan");
+    same("E.17b **مريضٌ له خطّةٌ قائمة ⟵ «اكتب بـ Bionic AI» يدوياً ٤٠٩**", (await call("POST", `/api/physio/exams/${e1}/opus-plan`, S.spec)).json?.code, "has_active_plan");
 
     console.log("\n── ب. البوّابةُ والعلامةُ الحمراء ──");
     const p2 = await patient("بوّابة");
@@ -545,7 +553,7 @@ async function main() {
     const rq = await call("POST", `/api/physio/exams/${e2}/red-flag-review`, S.spec, { examinerNote: "حمّى خفيفة" });
     const dec = await call("POST", `/api/physio/red-flag-reviews/${rq.json?.id}/decide`, S.sup, { decision: "approve", note: "لا تحفيزَ كهربائيّ حتى تزول الحمّى", forbiddenDevices: ["electro"] });
     const j2 = await jobsOf(p2);
-    same("E.3ل **ولوحُ Opus يقول ملاحظةَ الاعتماد** (أوّلُ ما يقرؤه)", (await call("GET", `/api/physio/exams/${e2}/opus-job`, S.spec)).json?.approvalNote, "لا تحفيزَ كهربائيّ حتى تزول الحمّى");
+    same("E.3ل **ولوحُ Bionic AI يقول ملاحظةَ الاعتماد** (أوّلُ ما يقرؤه)", (await call("GET", `/api/physio/exams/${e2}/opus-job`, S.spec)).json?.approvalNote, "لا تحفيزَ كهربائيّ حتى تزول الحمّى");
     same("E.3 **الاعتمادُ يضع الوظيفة** والجهازُ المؤشَّر محفوظ", [dec.status, j2.length, j2[0]?.trigger, (await q(`SELECT forbidden_devices FROM physio_exam_red_flag_reviews WHERE id = $1`, [rq.json?.id]))[0]?.forbidden_devices],
       [200, 1, "red_flag_approved", ["electro"]]);
     resetModel();
@@ -919,9 +927,9 @@ async function main() {
       [JSON.parse((writerCalls()[1]?.body.messages.at(-1) as any)?.content?.[0]?.content ?? "{}").blockingGateIssues?.map((b: any) => b.code), calls.filter((c) => c.role === "reviewer").length,
         calls.filter((c) => c.role === "auditor").length, j23.status, plan23?.out_of_library, j23.result?.unresolved?.auditor?.map((i: any) => i.id)],
       [["source_not_fetched", "source_not_fetched"], 2, 2, "succeeded", true, ["a2"]]);
-    same("E.13c **الاعتمادُ بلا إقرارٍ بالكبيرة ⟵ ٤٠٠**", (await call("POST", `/api/physio/plans/${plan23.id}/approve`, S.admin, { fromProposal: true, acknowledgedIssueIds: [] })).json?.code,
+    same("E.13c **الاعتمادُ بلا إقرارٍ بالكبيرة ⟵ ٤٠٠**", (await call("POST", `/api/physio/plans/${plan23.id}/approve`, S.admin, await approveBody(plan23.id, [], S.admin))).json?.code,
       "opus_ack_required");
-    const ap23 = await call("POST", `/api/physio/plans/${plan23.id}/approve`, S.admin, { fromProposal: true, acknowledgedIssueIds: ["a2"] });
+    const ap23 = await call("POST", `/api/physio/plans/${plan23.id}/approve`, S.admin, await approveBody(plan23.id, ["a2"], S.admin));
     const dp = ap23.json?.draftProtocolId ? (await q(`SELECT * FROM physio_protocols WHERE id = $1`, [ap23.json.draftProtocolId]))[0] : null;
     const dpDev = dp ? (await q(`SELECT params FROM physio_protocol_devices WHERE protocol_id = $1`, [dp.id]))[0]?.params : null;
     same("E.16 **«خارج المكتبة» يصير بروتوكولاً مسوّدة** بنصّه العامّ وبطاقاته مسوّدة وإعداداتِ الموجات بخاناتها، والإقرارُ في التدقيق",
@@ -930,7 +938,7 @@ async function main() {
         (await q(`SELECT new_values FROM audit_log WHERE entity_type = 'physio_plan' AND entity_id = $1 AND action = 'approve'`, [plan23.id]))[0]?.new_values?.includes?.("a2") ??
           JSON.stringify((await q(`SELECT new_values FROM audit_log WHERE entity_type = 'physio_plan' AND entity_id = $1 AND action = 'approve'`, [plan23.id]))[0]?.new_values).includes("a2")],
       [200, "draft", "opus", `opus-${plan23.id}`, false, { energyMj: "0.12", frequencyHz: "4", impulses: "2000", mode: "focused" }, "draft", true]);
-    same("E.16ب **ومسوّدةُ Opus لا تدخل فهرسَ المكتبة للوظيفة التالية**", (await libraryIndex(db)).some((l) => l.id === ap23.json?.draftProtocolId), false);
+    same("E.16ب **ومسوّدةُ Bionic AI لا تدخل فهرسَ المكتبة للوظيفة التالية**", (await libraryIndex(db)).some((l) => l.id === ap23.json?.draftProtocolId), false);
     same("E.16ج والخطّةُ أخذت بطاقتَها المقترحة", (await q(`SELECT count(*) FROM physio_plan_phase_exercises pe JOIN physio_plan_phases ph ON ph.id = pe.phase_id
       JOIN physio_exercises e ON e.id = pe.exercise_id WHERE ph.plan_id = $1 AND e.code = $2`, [plan23.id, `opus-${plan23.id}-new1`]))[0].count, "1");
 
@@ -997,12 +1005,12 @@ async function main() {
     const sum3 = async () => ((await call("GET", `/api/medical/patients/${pg3}/exams`, S.spec)).json?.exams ?? []).find((e: any) => e.id === eg3)?.opusJob?.planStatus ?? null;
     const before3 = await sum3();
     const pl3 = await planOfJob(Number((await jobsOf(pg3))[0].id));
-    await call("POST", `/api/physio/plans/${pl3.id}/approve`, S.admin, { fromProposal: true, acknowledgedIssueIds: [] });
+    await call("POST", `/api/physio/plans/${pl3.id}/approve`, S.admin, await approveBody(pl3.id, [], S.admin));
     const blocked3 = await call("GET", `/api/physio/exams/${eg3}/opus-job`, S.spec);
     const st3 = ((await jobsOf(pg3))[0].stages ?? []) as { stage: string; noteAr?: string }[];
     same("N.3م **ملاحظاتُ المراحل على اللوح** — عددٌ بلا محتوى الخطّة", [st3.find((x) => x.stage === "gates")?.noteAr, st3.find((x) => x.stage === "review")?.noteAr],
       ["البوّاباتُ في الشيفرة: عدّلت أو حذفت قيمةً واحدة", "المراجع: لا ملاحظات"]);
-    same("N.3 **ملخّصُ صفّ المعاينة يحمل حالَ خطّة Opus** (منتظرة ⟵ معتمَدة)، والمعتمَدةُ تمنع «اكتب» بسببها",
+    same("N.3 **ملخّصُ صفّ المعاينة يحمل حالَ خطّة Bionic AI** (منتظرة ⟵ معتمَدة)، والمعتمَدةُ تمنع «اكتب» بسببها",
       [before3, await sum3(), blocked3.json?.runBlocked?.code], ["pending", "approved", "has_active_plan"]);
 
     //  طلبُ إلغاءٍ وصل ثمّ إطفاءٌ قبل النبضة ⟵ لا تبقى «بالدور» بطلب إلغاءٍ لا يأخذها أحد.
@@ -1136,7 +1144,7 @@ async function main() {
       assessment: completeExamV2({ core: { painNow: 3 } }) });
     await wait(300);
     same("E.17 **تنقيحُ المعاينة ⟵ الخطّةُ قدُمت فلا تُعتمد، وتخرج من الشارة**", [revOk.status, (await q(`SELECT opus_stale_reason FROM physio_plans WHERE id = $1`, [plan24.id]))[0].opus_stale_reason,
-      (await call("POST", `/api/physio/plans/${plan24.id}/approve`, S.sup, { fromProposal: true, acknowledgedIssueIds: [] })).json?.code,
+      (await call("POST", `/api/physio/plans/${plan24.id}/approve`, S.sup, await approveBody(plan24.id, [], S.sup))).json?.code,
       (await call("GET", `/api/physio/opus-plans?view=pending`, S.sup)).json?.rows?.some((r: any) => r.id === plan24.id)], [200, "exam_changed", "opus_plan_stale", false]);
     same("E.17ج **والقِدَمُ يُكتب في التدقيق** بسببه", (await q(`SELECT new_values FROM audit_log WHERE entity_type = 'physio_plan' AND entity_id = $1 AND action = 'opus_stale'`, [plan24.id]))
       .map((r) => (typeof r.new_values === "string" ? JSON.parse(r.new_values) : r.new_values)?.reason), ["exam_changed"]);
@@ -1176,7 +1184,7 @@ async function main() {
     console.log("\n── و. الحذفُ الكامل ──");
     let delErr = "";
     try { await storage.deletePatient(p23); } catch (e: any) { delErr = String(e?.message ?? e); }
-    same("W.1 **حذفُ مريضٍ له وظيفةٌ وخطّةُ Opus وبروتوكولٌ مسوّدةٌ منها** — بلا عطب، والمسوّدةُ تبقى بلا رابط",
+    same("W.1 **حذفُ مريضٍ له وظيفةٌ وخطّةُ Bionic AI وبروتوكولٌ مسوّدةٌ منها** — بلا عطب، والمسوّدةُ تبقى بلا رابط",
       [delErr, Number((await q(`SELECT count(*) FROM physio_agent_jobs WHERE patient_id = $1`, [p23]))[0].count),
         (await q(`SELECT source_plan_id FROM physio_protocols WHERE id = $1`, [ap23.json?.draftProtocolId])).map((r) => r.source_plan_id)], ["", 0, [null]]);
     let ppDup = "";
@@ -1244,6 +1252,47 @@ async function main() {
         [planOk, (await jobsOf(r9)).map((j) => j.status)], [1, ["succeeded", "queued"]]);
       await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
         WHERE patient_id = $1 AND status = 'queued'`, [r9]);
+      //  مراجعةُ Codex على #774: تخطّي «كُتبت خطّة» محفوظٌ، ثمّ معاينةٌ أحدث قدّمت الخطّةَ وأُلغيت ونداؤها ضاع ⟵ الإلغاءُ يُسقط التخطّي.
+      const r10 = await patient("الغاء معاينة احدث بعد التخطي");
+      const e10 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '3 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r10, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      const j10 = (await jobsOf(r10))[0];
+      await q(`UPDATE physio_agent_jobs SET status = 'succeeded', finished_at = now(), locked_by = NULL, locked_at = NULL WHERE id = $1`, [j10.id]);
+      await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, status, origin, agent_job_id, source_exam_id) VALUES ($1, $2, 'صالحة', 'pending', 'opus', $3, $4)`,
+        [r10, B1, j10.id, e10]);
+      await reconcilerScan(1);
+      const skip10 = (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e10]))[0]?.reason;
+      await q(`UPDATE physio_agent_reconcile_skips SET skipped_at = now() - interval '10 minutes' WHERE exam_id = $1`, [e10]);
+      const e10b = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '4 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r10, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await q(`UPDATE physio_plans SET opus_stale_reason = 'superseded_by_newer_exam' WHERE agent_job_id = $1`, [j10.id]);
+      await q(`INSERT INTO medical_exam_cancellations (exam_id, patient_id, branch_id, reason, cancelled_at) VALUES ($1, $2, $3, 'أُلغيت', now() - interval '5 minutes')`, [e10b, r10, B1]);
+      await reconcilerScan(1);
+      same("N.8g **أُلغيت المعاينةُ الأحدث بعد التخطّي ⟵ التخطّي يسقط والقديمةُ تُكتب ثانيةً** (وصفُّ التخطّي باقٍ لا يُحذف باليد)",
+        [skip10, (await jobsOf(r10)).map((j) => j.status)], ["opus_plan_pending", ["succeeded", "queued"]]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r10]);
+      //  «أعِده إلى Opus» نقل رابطَ الخطّة إلى وظيفة التعديل: الوظيفةُ الأصلية تبقى تُرى بخطّتها، والقديمةُ تُعاد كتابتُها.
+      const r11 = await patient("خطة اعيدت ثم قدمت");
+      const e11 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '5 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r11, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      const j11 = (await jobsOf(r11))[0];
+      await q(`UPDATE physio_agent_jobs SET status = 'succeeded', finished_at = now(), locked_by = NULL, locked_at = NULL WHERE id = $1`, [j11.id]);
+      const pl11 = Number((await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, status, origin, agent_job_id, source_exam_id) VALUES ($1, $2, 'اعيدت', 'pending', 'opus', $3, $4) RETURNING id`,
+        [r11, B1, j11.id, e11]))[0].id);
+      const rv11 = Number((await q(`INSERT INTO physio_agent_jobs (patient_id, exam_id, branch_id, kind, trigger, exam_fingerprint, plan_id, revise_scope, revise_note, status, finished_at)
+        SELECT patient_id, exam_id, branch_id, 'revise', 'approver_return', exam_fingerprint, $2, 'return', 'ملاحظة', 'succeeded', now() FROM physio_agent_jobs WHERE id = $1 RETURNING id`, [j11.id, pl11]))[0].id);
+      await q(`UPDATE physio_plans SET agent_job_id = $1, opus_stale_reason = 'superseded_by_newer_exam' WHERE id = $2`, [rv11, pl11]);
+      await reconcilerScan(1);
+      same("N.8h **خطّةٌ أُعيدت إلى Bionic AI ثمّ قدُمت ⟵ المصالِحُ يعيد الكتابة** (وظيفةُ التعديل لا تُحسب «تشغيلاً» للمعاينة)",
+        (await jobsOf(r11)).filter((j) => j.kind !== "revise").map((j) => j.status), ["succeeded", "queued"]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r11]);
     }
   } catch (e) {
     failures++;

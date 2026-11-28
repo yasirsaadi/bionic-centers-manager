@@ -222,6 +222,8 @@ const LIVE_REFRESH_EXEMPT = [
   //  أثرُ التصحيح قبل وقوعه — `previewReversal` قراءةٌ محضة، والكتابةُ في
   //  `execute` وحدها (§4.f: «النافذةُ وحدها تنادي `preview` و`execute`»).
   /^\/api\/admin\/operation-reversal\/preview$/,
+  //  §4.hb — «راجِع البوّابات والفرق» على تعديل خطّة Opus: معاينةٌ لا تكتب (والحفظُ `opus-edit` يكتب).
+  /^\/api\/physio\/plans\/\d+\/opus-edit\/preview$/,
   //  «حسناً» على تحيّة اليوم (§4.dp) — يومُ صاحبها وحده، فلا تُعاد شاشتُه.
   /^\/api\/greeting\/seen$/,
   //  ترتيبُ الشريط الجانبيّ (§4.ed) — قائمةُ صاحبه وحده، والشريطُ يتبدّل من الحفظ نفسِه.

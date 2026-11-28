@@ -27,9 +27,9 @@ export function requestNoteLabel(review: Pick<RedFlagReviewSummary, "requestedBy
   return review.requestedById !== null && review.requestedById === examinerId ? "ملاحظةُ الفاحص" : "ملاحظةُ المرسِل";
 }
 
-export const APPROVE_LABEL = "اعتماد — يكمل Opus";
+export const APPROVE_LABEL = "اعتماد — يكمل Bionic AI";
 export const REJECT_LABEL = "رفض — تتوقّف";
-export const DECISION_NOTE_PLACEHOLDER = "ملاحظةُ الاعتماد (إلزامية — يقرؤها Opus قيداً على الخطّة)";
+export const DECISION_NOTE_PLACEHOLDER = "ملاحظةُ الاعتماد (إلزامية — يقرؤها Bionic AI قيداً على الخطّة)";
 
 /**
  * **أجهزةٌ ممنوعة بهذا الاعتماد** (§4.ha ١١.٦ — اختياريّ): يؤشّرها المعتمِدُ بجانب ملاحظته فتحذفها بوّابةُ الشيفرة من خطّة Opus مهما كتب،
@@ -51,7 +51,7 @@ export function ForbiddenDevicePicker({ value, onChange, testId }: { value: stri
             data-testid={`${testId}-${d.code}`}>{d.nameAr}</button>
         ))}
       </div>
-      <p className="m-0 mt-1 text-[11px] text-slate-600">تحذفها البوّابةُ من خطّة Opus مهما كتب — مع الاعتماد وحده.</p>
+      <p className="m-0 mt-1 text-[11px] text-slate-600">تحذفها البوّابةُ من خطّة Bionic AI مهما كتب — مع الاعتماد وحده.</p>
     </details>
   );
 }
@@ -177,7 +177,7 @@ export function RedFlagReviewBox({
                 data-testid={`input-redflag-note-${examId}`} />
               {canApprove && (
                 <Textarea rows={2} value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)}
-                  placeholder="أنت معتمِد: ملاحظةُ الاعتماد هنا تكفي في الخطوة نفسِها (إلزامية لقرارك — يقرؤها Opus)" data-testid={`input-redflag-self-decision-${examId}`} />
+                  placeholder="أنت معتمِد: ملاحظةُ الاعتماد هنا تكفي في الخطوة نفسِها (إلزامية لقرارك — يقرؤها Bionic AI)" data-testid={`input-redflag-self-decision-${examId}`} />
               )}
               {canApprove && <ForbiddenDevicePicker value={forbidden} onChange={setForbidden} testId={`redflag-forbidden-own-${examId}`} />}
               <div className="flex flex-wrap gap-2">
