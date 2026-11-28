@@ -1225,6 +1225,25 @@ async function main() {
       await reconcilerScan(1);
       same("N.8e **طلبُ اعتمادٍ أو قرارٌ بعد التخطّي يُسقطه** فيُعاد الحكم (هنا: البوّابةُ أُغلقت بالطلب المعلَّق)",
         [skipBefore, (await q(`SELECT reason FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e8]))[0]?.reason], ["already_tried", "gate_closed"]);
+      //  مراجعةُ Codex على #773: وظيفةٌ نجحت وخطّتُها قدُمت (معاينةٌ أحدث ثمّ أُلغيت ونداؤها ضاع) لا تمنع إعادةَ الكتابة.
+      const r9 = await patient("خطة قديمة بلا بديل");
+      const e9 = Number((await q(`INSERT INTO medical_exams (patient_id, case_id, case_type, branch_id, doctor_id, doctor_name, diagnosis, prescription, assessment, signed_at)
+        SELECT $1, pc.id, 'physiotherapy', $2, $3, 'أخصائيّ', 'د', '{}'::jsonb, $4::jsonb, now() + interval '2 hours' FROM patient_cases pc
+         WHERE pc.patient_id = $1 AND pc.case_type = 'physiotherapy' RETURNING id`, [r9, B1, SPEC, JSON.stringify(completeExamV2())]))[0].id);
+      await reconcilerScan(1);
+      const j9 = (await jobsOf(r9))[0];
+      await q(`UPDATE physio_agent_jobs SET status = 'succeeded', finished_at = now(), locked_by = NULL, locked_at = NULL WHERE id = $1`, [j9.id]);
+      await q(`INSERT INTO physio_plans (patient_id, branch_id, title_ar, status, origin, agent_job_id, source_exam_id) VALUES ($1, $2, 'قدُمت', 'pending', 'opus', $3, $4)`,
+        [r9, B1, j9.id, e9]);
+      await reconcilerScan(1);
+      const planOk = (await jobsOf(r9)).length;
+      await q(`UPDATE physio_plans SET opus_stale_reason = 'superseded_by_newer_exam' WHERE agent_job_id = $1`, [j9.id]);
+      await q(`DELETE FROM physio_agent_reconcile_skips WHERE exam_id = $1`, [e9]);
+      await reconcilerScan(1);
+      same("N.8f **الخطّةُ قدُمت ولا بديلَ لها ⟵ المصالِحُ يعيد الكتابة**، والخطّةُ الصالحة تمنعه",
+        [planOk, (await jobsOf(r9)).map((j) => j.status)], [1, ["succeeded", "queued"]]);
+      await q(`UPDATE physio_agent_jobs SET status = 'cancelled', cancel_reason = 'cancelled_by_user', error_code = 'cancelled_by_user', error = 'ألغاه', finished_at = now()
+        WHERE patient_id = $1 AND status = 'queued'`, [r9]);
     }
   } catch (e) {
     failures++;
