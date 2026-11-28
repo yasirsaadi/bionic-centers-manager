@@ -1,2 +1,0 @@
-test:physio-agent 0
-test:physio-plans 0
