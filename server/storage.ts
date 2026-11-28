@@ -2740,6 +2740,8 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(installmentPlans).where(eq(installmentPlans.patientId, id));
       await tx.delete(payments).where(eq(payments.patientId, id));
       await tx.delete(documents).where(eq(documents.patientId, id));
+      //  §4.hc (ترحيل ٢٠١) — **أجزاءُ الجلسات صراحةً قبل الجلسات** (CLAUDE.md §٨): تشير إلى البديل بلا كاسكيد (`NO ACTION`) فتُحذف قبله.
+      await tx.execute(sql`DELETE FROM physio_plan_session_parts WHERE session_id IN (SELECT id FROM physio_plan_sessions WHERE patient_id = ${id})`);
       //  جلساتُ تنفيذ خطط العلاج الطبيعي (ترحيل ١١١، §4.cn) تشير إلى الزيارة والخطّة — قبلهما، وبنودُها تتبعها بـ`ON DELETE CASCADE`.
       await tx.delete(physioPlanSessions).where(eq(physioPlanSessions.patientId, id));
       //  نسخُ خطط Opus (ترحيل ٢٠٠، §4.hb) — لا تُحذف إلّا من هنا أو مع خطّتها (`trg_ppv_nodelete`): البابُ مفتوحٌ لهذه المعاملة وحدها.
@@ -2826,6 +2828,10 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(patientBranchAccess).where(eq(patientBranchAccess.patientId, id));
       await tx.delete(followUpCalls).where(eq(followUpCalls.patientId, id));
       await tx.delete(treatmentPlans).where(eq(treatmentPlans.patientId, id));
+      //  §4.hc (ترحيل ٢٠١) — **بدائلُ خطط المريض وإسنادُ أجزائها صراحةً قبل الخطط** (والكاسكيدُ حزامُ أمان). وبديلُ «كلّ خطط المُسنَد» (`plan_id` فارغ)
+      //  لا يخصّ مريضاً — غيابُ معالج — فيبقى.
+      await tx.execute(sql`DELETE FROM physio_plan_substitutions WHERE plan_id IN (SELECT id FROM physio_plans WHERE patient_id = ${id})`);
+      await tx.execute(sql`DELETE FROM physio_plan_part_assignments WHERE plan_id IN (SELECT id FROM physio_plans WHERE patient_id = ${id})`);
       //  خططُ العلاج الطبيعي الجديدة (ترحيل ١٠٩، §4.cm) — أجهزتُها ومنفّذوها يتبعونها بـ`ON DELETE CASCADE`.
       await tx.delete(physioPlans).where(eq(physioPlans.patientId, id));
       const respRows = await tx.select({ id: surveyResponses.id })
@@ -3701,6 +3707,7 @@ export class DatabaseStorage implements IStorage {
       await repoint("treatmentPlans", treatmentPlans, treatmentPlans.patientId);
       await repoint("physioPlans", physioPlans, physioPlans.patientId);
       await repoint("physioPlanSessions", physioPlanSessions, physioPlanSessions.patientId);
+      //  §4.hc (ترحيل ٢٠١) — إسنادُ الأجزاء وبدائلُها وأجزاءُ الجلسات تتبع الخطّةَ والجلسةَ لا المريض (لا `patient_id` فيها) — لا شيءَ يُعاد توجيهُه.
       //  نسخُ خطط Opus (ترحيل ٢٠٠) تتبع خطّتَها ومريضَها — والقادحُ يسمح بتغيير `patient_id` وحده.
       await repoint("physioPlanVersions", physioPlanVersions, physioPlanVersions.patientId);
       await repoint("physioPlanSuggestions", physioPlanSuggestions, physioPlanSuggestions.patientId);

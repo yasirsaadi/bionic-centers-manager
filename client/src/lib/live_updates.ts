@@ -236,6 +236,9 @@ export function startLiveUpdates(d: LiveDeps): () => void {
     es.addEventListener("sidebar-order", () => { try { d.onSidebarOrder?.(); } catch { /* زينةٌ لا شرط */ } });
     //  **وكيلُ Opus** (§4.ha): مرحلةٌ جديدة أو سؤالٌ أو خطّةٌ جاهزة لصاحب المعاينة ومَن طلبها — يُحدَّث ما يعرضه (ولو كان المصدرُ صداه).
     es.addEventListener("opus", () => requestRefresh());
+    //  §4.hc — أُسند إليك جزءٌ أو سُحب، أو تغيّر طلبُ بديلٍ يخصّك ⟵ تُعاد «جلسات اليوم» وصفحةُ الخطّة والشارات.
+    es.addEventListener("physio_assignment", () => requestRefresh());
+    es.addEventListener("physio_substitution", () => requestRefresh());
     es.onerror = () => {
       //  المتصفّحُ يُعيد الاتصالَ وحده ما دام `CONNECTING`؛ و`CLOSED` (ردٌّ بغير ٢٠٠ — جلسةٌ انتهت مثلاً) لا يعود إلّا بيدنا.
       if (es && es.readyState === 2) { try { es.close(); } catch { /* */ } es = null; scheduleReconnect(); }

@@ -47,7 +47,7 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   //  خطّةُ العلاج الطبيعي (§4.cm) — للمسؤول والمشرف العام، ولكاتبها، ولمنفّذيها.
   { key: "physio_plan_pending", label: "خطة علاج طبيعي تنتظر الاعتماد أو المراجعة", group: "العلاج الطبيعي", scope: "global" },
   { key: "physio_plan_decided", label: "خطته اعتُمدت أو أُعيدت أو راجعها المشرف", group: "العلاج الطبيعي", scope: "targeted" },
-  { key: "physio_plan_assigned", label: "خطة علاج طبيعي معتمدة أُسندت إليه", group: "العلاج الطبيعي", scope: "targeted" },
+  { key: "physio_plan_assigned", label: "خطة علاج طبيعي أو جزءٌ منها أُسند إليه أو سُحب منه", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_session_note", label: "ملاحظةٌ من المعالج على جلسةٍ من خطّته", group: "العلاج الطبيعي", scope: "targeted" },
   { key: "physio_assessment_due", label: "تذكير صباحي بخططه المستحقّة التقييم", group: "العلاج الطبيعي", scope: "targeted", digest: true },
   //  العلامةُ الحمراء في معاينة العلاج الطبيعي (§4.gz، ترحيل ١٩٨) — للمسؤول والمشرف العام؛ وقرارُها لمن طلبه وحده.
@@ -58,6 +58,9 @@ export const STAFF_EVENTS: readonly StaffEventDef[] = [
   { key: "physio_opus_questions", label: "Bionic AI يسأل عن مريضه قبل كتابة خطّته — أو لم يكتبها ولماذا", group: "العلاج الطبيعي", scope: "targeted" },
   //  §4.hb (ترحيل ٢٠٠) — نسخةٌ جديدة من خطّة Opus المعتمَدة: لكاتبها وفاحصها ومنفّذيها والمعتمِدين.
   { key: "physio_opus_plan_versioned", label: "خطّةُ Bionic AI عُدّلت — نسخةٌ جديدة وما تغيّر", group: "العلاج الطبيعي", scope: "targeted" },
+  //  §4.hc (ترحيل ٢٠١) — طلبُ بديلٍ لمُسنَدٍ غائب: للمعتمِد؛ وقرارُه وإنهاؤه للمُسنَد ولصاحب الطلب وللبديل.
+  { key: "physio_substitute_pending", label: "طلبُ بديلٍ لمعالجٍ غائب في خطط Bionic AI ينتظر الاعتماد", group: "العلاج الطبيعي", scope: "global" },
+  { key: "physio_substitute_decided", label: "قرارُ طلب البديل وإنهاؤه — للمُسنَد ولصاحب الطلب وللبديل", group: "العلاج الطبيعي", scope: "targeted" },
 ] as const;
 
 export const STAFF_EVENT_KEYS: readonly string[] = STAFF_EVENTS.map((e) => e.key);
@@ -109,17 +112,19 @@ const REFUND_EVENTS = ["refund_request_decided"];
  */
 export const REQUESTER_REPLY_EVENTS: readonly string[] = ["reserve_withdrawal_decided", "refund_request_decided", "hospital_delivery_decided",
   //  «خطّتُه اعتُمدت» لكاتبها — وكاتبُ خطّة Opus هو الفاحص، وقد يكون طبيباً باختصاص العلاج الطبيعي لا أخصائيّاً (§4.ha).
-  "physio_exam_red_flag_decided", "physio_opus_questions", "physio_plan_decided"];
+  "physio_exam_red_flag_decided", "physio_opus_questions", "physio_plan_decided",
+  //  §4.hc — قرارُ طلب البديل لصاحبه وللمُسنَد وللبديل.
+  "physio_substitute_decided"];
 
 /** هل يُرسَل النوعُ لهذا الموظّف؟ — بالدور، أو ردّاً موجَّهاً على طلبه. */
 export function staffEventDeliverable(u: StaffEligibilityUser, event: string, targeted: boolean): boolean {
   if (targeted && REQUESTER_REPLY_EVENTS.includes(event)) return true;
   return eligibleStaffEvents(u).includes(event);
 }
-const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending", "physio_opus_plan_ready", "physio_opus_plan_versioned"];
+const PHYSIO_APPROVER_EVENTS = ["physio_plan_pending", "physio_exam_red_flag_pending", "physio_opus_plan_ready", "physio_opus_plan_versioned", "physio_substitute_pending"];
 const PHYSIO_WRITER_EVENTS = ["physio_plan_decided", "physio_session_note", "physio_assessment_due", "physio_exam_red_flag_decided", "physio_opus_questions",
   "physio_opus_plan_versioned"];
-const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned", "physio_opus_plan_versioned"];
+const PHYSIO_EXECUTOR_EVENTS = ["physio_plan_assigned", "physio_opus_plan_versioned", "physio_substitute_decided"];
 
 export function eligibleStaffEvents(u: StaffEligibilityUser): string[] {
   const out = new Set<string>();

@@ -72,7 +72,9 @@ export function OpusProposalView({ planId }: { planId: number }) {
       fromProposal: true, acknowledgedIssueIds: Array.from(acks), agentJobId: q.data?.agentJobId ?? null, proposalHash: q.data?.proposalHash ?? null }),
     onSuccess: (r) => {
       refresh(q.data?.plan.patientId);
-      toast({ title: "اعتُمدت خطّةُ Bionic AI — النسخة ١", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات»." : "نزلت في ملفّ المريض ويراها المعالجون الآن." });
+      toast({ title: "اعتُمدت خطّةُ Bionic AI — النسخة ١", description: r?.draftProtocolId ? "وحُفظت مسوّدةَ بروتوكولٍ جديد في المكتبة لحالاتٍ مشابهة — تعتمدها من «البروتوكولات». وأسنِدها الآن لمن ينفّذها." : "أسنِدها الآن — ينفّذ كلَّ جزءٍ مُسنَدُه أو بديلُه المعتمَد." });
+      //  §4.hc — بعد الاعتماد «إسناد» في الحال (`?assign=1` تفتحه صفحةُ الخطّة).
+      navigate(`/physio/plans/${planId}?assign=1`);
     },
     onError: (e: any) => {
       refresh(q.data?.plan.patientId);

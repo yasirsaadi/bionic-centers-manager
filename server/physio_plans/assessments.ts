@@ -2,6 +2,7 @@
 //
 // التقييمُ في معاملةٍ واحدة بقفل الخطّة: القياساتُ لقطةٌ بتعريف مقاييس البروتوكول يومَها، والقرارُ «تخرّج» يجعل الخطّةَ `graduated`
 // و«إيقاف» يجعلها `stopped` بسببه — في المعاملة نفسِها. و«مستحقّ التقييم» يُحسب من آخر تقييمٍ ويوم الاعتماد ومدّة الخطّة (`assessmentDue`).
+import { closeOpusForbidden } from "@shared/physio_plan_assignment";
 import { lockOpusPatientFirstTx, onOpusPlanClosingTx } from "../physio_agent/versions";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
@@ -58,7 +59,7 @@ export async function planAssessmentView(plan: PhysioPlan, today: string) {
 /**
  * **تقييمٌ جديد** — كاتبُ خطط على خطّةٍ غيرِ منتهية. النوعُ من التاريخ والقرار: الأوّلُ «أوّليّ»، و«تخرّج»/«إيقاف» «ختاميّ»، وما سواهما «دوريّ».
  */
-export async function recordAssessment(planId: number, body: unknown, actor: Actor) {
+export async function recordAssessment(planId: number, body: unknown, actor: Actor, opts: { canClose?: boolean } = {}) {
   return db.transaction(async (tx) => {
     //  §4.hb D13 — خطّةُ Opus: قفلُ المريض أوّلاً (التخرّجُ والإيقافُ يُغلقانها).
     await lockOpusPatientFirstTx(tx, planId);
@@ -68,6 +69,10 @@ export async function recordAssessment(planId: number, body: unknown, actor: Act
     const measures = await effectiveMeasures(plan, tx);
     const input = parseAssessment(body, measures, plan.status);
     if (typeof input === "string") throw new PlanError(400, input);
+    //  §4.hc — **قرارُ المالك D** تحت القفل أيضاً: «تخرّج» و«إيقاف» خطّة Bionic AI للأخصائيّ والمسؤول والمشرف العام وحدهم (`canCloseOpusPlans`).
+    if ((input.decision === "discharge" || input.decision === "stop") && plan.origin === "opus" && opts.canClose !== true) {
+      throw new PlanError(403, closeOpusForbidden(), "close_forbidden");
+    }
     const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(physioAssessments).where(eq(physioAssessments.planId, planId));
     const kind: AssessmentKind = input.decision === "discharge" || input.decision === "stop" ? "final" : Number(n) === 0 ? "baseline" : "periodic";
     const byCode = new Map(measures.map((m) => [m.code, m]));

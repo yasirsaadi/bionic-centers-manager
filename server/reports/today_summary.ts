@@ -3,6 +3,7 @@
 // كلُّ حدثٍ بفرع صفّه ويوم بغداد، ومريضُ السلّة غائب. والأعمدةُ نوعان (§4.m): بلا منطقة (`patients.created_at` · `visits.visit_date` ·
 // `payments.date` · `audit_log.created_at`) تُقارَن بلحظة UTC مكتوبةً بلا إزاحة، والباقي `timestamptz`؛ وجلسةُ الخطّة بيومها (`session_date`).
 // وتخرج اللحظاتُ كلُّها نصّاً ISO بـ`Z` من القاعدة نفسِها — فلا يتوقّف المعنى على منطقة الخادم.
+import { PART_LABELS, type PlanPart } from "@shared/physio_plan_assignment";
 import { pool } from "../db";
 import { storage } from "../storage";
 import { baghdadDayBounds } from "@shared/staff_greeting";
@@ -61,7 +62,9 @@ export async function loadTodaySummary(opts: { day: string; branchId: number | n
           AND COALESCE(v.details, '') <> ALL($6::text[])
           AND $3::text IS NOT NULL AND $4::text IS NOT NULL`, [...P, nonAttendance]),
     //  رقمُ الجلسة في خطّتها: الجلساتُ القائمة حتى هذه (باليوم ثمّ الترتيب) — كما يعدّها التنفيذ.
-    q(`SELECT s.patient_id AS pid, s.branch_id AS bid, ${ISO_TZ("s.created_at")} AS at, s.executed_by_name,
+    //  §4.hc — جلسةُ خطّة Bionic AI بجزأين حدثان: لكلّ جزءٍ ساعتُه ومسجِّلُه.
+    q(`SELECT s.patient_id AS pid, s.branch_id AS bid, ${ISO_TZ("COALESCE(sp.recorded_at, s.created_at)")} AS at,
+              COALESCE(sp.recorded_by_name, s.executed_by_name) AS executed_by_name, sp.part,
               pl.title_ar, pl.total_sessions,
               (SELECT COUNT(*) FROM physio_plan_sessions s2
                 WHERE s2.plan_id = s.plan_id AND s2.cancelled_at IS NULL
@@ -69,6 +72,7 @@ export async function loadTodaySummary(opts: { day: string; branchId: number | n
          FROM physio_plan_sessions s
          JOIN patients p ON p.id = s.patient_id AND p.deleted_at IS NULL
          LEFT JOIN physio_plans pl ON pl.id = s.plan_id
+         LEFT JOIN physio_plan_session_parts sp ON sp.session_id = s.id
         WHERE s.cancelled_at IS NULL AND s.session_date = $6::date AND ${B("s.branch_id")}
           AND $1::text IS NOT NULL AND $2::text IS NOT NULL AND $3::text IS NOT NULL AND $4::text IS NOT NULL`, [...P, day]),
     q(`SELECT e.patient_id AS pid, e.branch_id AS bid, ${ISO_TZ("e.signed_at")} AS at, e.case_type, e.doctor_name,
@@ -197,7 +201,8 @@ export async function loadTodaySummary(opts: { day: string; branchId: number | n
     visits: visits.map((r) => ({ patientId: Number(r.pid), branchId: numOrNull(r.bid), at: String(r.at), details: strOrNull(r.details),
       treatmentType: strOrNull(r.treatment_type), caseType: strOrNull(r.case_type), isPlanSession: Boolean(r.is_session) })),
     sessions: sessions.map((r) => ({ patientId: Number(r.pid), branchId: numOrNull(r.bid), at: String(r.at), number: num(r.n),
-      total: numOrNull(r.total_sessions), title: strOrNull(r.title_ar), executedBy: strOrNull(r.executed_by_name) })),
+      total: numOrNull(r.total_sessions),
+      title: r.part ? `${strOrNull(r.title_ar) ?? ""} — جزءُ «${PART_LABELS[r.part as PlanPart] ?? r.part}»` : strOrNull(r.title_ar), executedBy: strOrNull(r.executed_by_name) })),
     exams: exams.map((r) => ({ patientId: Number(r.pid), branchId: numOrNull(r.bid), at: String(r.at), caseType: strOrNull(r.case_type),
       doctor: strOrNull(r.doctor_name), diagnosis: strOrNull(r.diagnosis), plan: strOrNull(r.plan), complaint: strOrNull(r.chief_complaint) })),
     decisions: decisions.map((r) => ({ patientId: Number(r.pid), branchId: numOrNull(r.bid), at: String(r.at), eventType: String(r.event_type),

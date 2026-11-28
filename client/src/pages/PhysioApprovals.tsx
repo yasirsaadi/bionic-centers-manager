@@ -19,6 +19,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { formatDateIraq, formatTimeIraq } from "@/lib/utils";
 import { RED_FLAG_URGENCY_AR, type RedFlagReviewSummary } from "@shared/physio_exam_v2";
 import { cn } from "@/lib/utils";
+import { SubstitutionItem, type SubstitutionView } from "@/components/physio/OpusAssignment";
+import { PART_LABELS, type PlanPart } from "@shared/physio_plan_assignment";
+import { AI_BRAND } from "@shared/ai_brand";
 import { APPROVE_LABEL, DECISION_NOTE_PLACEHOLDER, ForbiddenDevicePicker, REJECT_LABEL, requestNoteLabel } from "@/components/physio/RedFlagReviewBox";
 
 interface ReviewRow extends RedFlagReviewSummary {
@@ -90,11 +93,35 @@ function ReviewCard({ r, decided }: { r: ReviewRow; decided: boolean }) {
   );
 }
 
-const OPUS_VIEWS = { pending: "بانتظار الاعتماد", proposals: "تعديلاتٌ مقترحة", stale: "قدُمت", decided: "المحسومة" } as const;
+const OPUS_VIEWS = { pending: "بانتظار الاعتماد", unassigned: "بانتظار الإسناد", proposals: "تعديلاتٌ مقترحة", stale: "قدُمت", decided: "المحسومة" } as const;
 type OpusView = keyof typeof OPUS_VIEWS;
 
 /** **خطّةُ Opus في الطابور** (§4.ha ١١.٣) — تُفتح «الخطّة المقترحة» في صفحتها، والاعتمادُ هناك بعد قراءتها. */
-function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: Exclude<OpusView, "proposals"> }) {
+/** §4.hc — **خطّةٌ معتمَدة بجزءٍ بلا مُسنَد**: لا ينفّذها إلّا المعتمِد حتى تُسنَد. */
+interface UnassignedRow { id: number; titleAr: string; patientId: number; patientName: string; patientCode: string | null; branchName: string | null;
+  opusVersion: number | null; decidedAt: string | null; decidedByName: string | null; sessionsDone: number; totalSessions: number | null; missingParts: PlanPart[]; parts: PlanPart[] }
+function UnassignedCard({ r }: { r: UnassignedRow }) {
+  return (
+    <Card className="p-3 space-y-1.5 min-w-0 border-amber-300" data-testid={`opus-unassigned-row-${r.id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link href={`/patients/${r.patientId}`} className="font-semibold hover:underline">{r.patientName ?? "—"}{r.patientCode ? ` (${r.patientCode})` : ""}</Link>
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-900">ينقصه: {r.missingParts.map((p) => PART_LABELS[p]).join(" و")}</span>
+      </div>
+      <div className="text-sm" dir="auto">{r.titleAr}</div>
+      <div className="text-xs text-muted-foreground">
+        {r.branchName ?? "—"} · {arText(r.sessionsDone)}{r.totalSessions ? ` من ${arText(r.totalSessions)}` : ""} جلسة نُفّذت
+        {r.decidedByName ? ` · اعتمدها ${r.decidedByName}` : ""}{r.decidedAt ? ` ${arText(formatDateIraq(r.decidedAt))}` : ""}
+      </div>
+      <div>
+        <Link href={`/physio/plans/${r.id}?assign=1`}>
+          <Button size="sm" className="bg-violet-700 hover:bg-violet-800" data-testid={`button-assign-unassigned-${r.id}`}>إسناد</Button>
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+function OpusPlanCard({ r, view }: { r: OpusPlanRow; view: Exclude<OpusView, "proposals" | "unassigned"> }) {
   return (
     <Card className="p-3 space-y-1.5 min-w-0 border-violet-200" data-testid={`opus-plan-row-${r.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -175,10 +202,15 @@ export default function PhysioApprovals() {
 }
 
 function PhysioApprovalsInner() {
-  const [kind, setKind] = useState<"redflags" | "opus">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "opus" ? "opus" : "redflags"));
+  const [kind, setKind] = useState<"redflags" | "opus" | "substitutes">(() => {
+    const t = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("tab") : null;
+    return t === "opus" || t === "substitutes" ? t : "redflags";
+  });
+  const [subView, setSubView] = useState<"pending" | "decided">("pending");
+  const viewerId = useBranchSession()?.userId ?? null;
   const [view, setView] = useState<"pending" | "decided">("pending");
   const [opusView, setOpusView] = useState<OpusView>("pending");
-  const counts = useQuery<{ count: number; redFlags?: number; opusPlans?: number; opusStale?: number; opusProposals?: number }>({
+  const counts = useQuery<{ count: number; redFlags?: number; opusPlans?: number; opusStale?: number; opusProposals?: number; opusUnassigned?: number; substitutes?: number }>({
     queryKey: ["/api/physio/red-flag-reviews", "pending-count"],
     queryFn: async () => (await apiRequest("GET", "/api/physio/red-flag-reviews/pending-count")).json(),
   });
@@ -192,14 +224,34 @@ function PhysioApprovalsInner() {
     queryFn: async () => (await apiRequest("GET", `${OPUS_PLANS_KEY}?view=${opusView}`)).json(),
     enabled: kind === "opus",
   });
+  //  §4.hc — طلباتُ البديل لغياب المُسنَد.
+  const sq = useQuery<{ rows: SubstitutionView[] }>({
+    queryKey: ["/api/physio/substitutes", subView],
+    queryFn: async () => (await apiRequest("GET", `/api/physio/substitutes?view=${subView}`)).json(),
+    enabled: kind === "substitutes",
+  });
+  const srows = sq.data?.rows ?? [];
   const rows = q.data?.rows ?? [];
   const orows = oq.data?.rows ?? [];
   return (
     <div className="max-w-4xl mx-auto space-y-3" dir="rtl">
       <h1 className="text-xl font-bold flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-red-700" /> اعتمادات العلاج الطبيعي</h1>
-      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: "خطط Bionic AI" }}
-        counts={{ redflags: counts.data?.redFlags ?? 0, opus: (counts.data?.opusPlans ?? 0) + (counts.data?.opusProposals ?? 0) }} />
-      {kind === "redflags" ? (
+      <Seg value={kind} onChange={setKind} prefix="approvals-kind" options={{ redflags: "العلامات الحمراء", opus: `خطط ${AI_BRAND}`, substitutes: "البدلاء" }}
+        counts={{ redflags: counts.data?.redFlags ?? 0, opus: (counts.data?.opusPlans ?? 0) + (counts.data?.opusProposals ?? 0) + (counts.data?.opusUnassigned ?? 0),
+          substitutes: counts.data?.substitutes ?? 0 }} />
+      {kind === "substitutes" ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            مُسنَدون سيغيبون طلبوا بديلاً من منفّذي فرعهم. لا ينفّذ البديلُ شيئاً قبل اعتمادك، ويصل القرارُ صاحبَ الطلب والبديل. والرفضُ بسببٍ يصله.
+          </p>
+          <Seg value={subView} onChange={setSubView} prefix="substitutes-view" options={{ pending: "بانتظار القرار", decided: "المحسومة" }}
+            counts={{ pending: counts.data?.substitutes ?? 0 }} />
+          {sq.isLoading ? <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
+            : sq.isError ? <Card className="p-4 text-sm text-red-700">تعذّر التحميل.</Card>
+              : srows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="substitutes-empty">{subView === "pending" ? "لا طلبَ بديلٍ ينتظر القرار." : "لا قرارات بعد."}</Card>
+                : <div className="space-y-2">{srows.map((r) => <SubstitutionItem key={r.id} s={r} viewerId={viewerId} approver testPrefix="approval-sub" />)}</div>}
+        </>
+      ) : kind === "redflags" ? (
         <>
           <p className="text-xs text-muted-foreground">
             علاماتٌ حمراء في معاينات العلاج الطبيعي أرسلها الفاحصون. الإجراءُ العاجل ظهر للفاحص لحظةَ المعاينة؛ وهنا القرار: الاعتمادُ يسمح لـ Bionic AI
@@ -216,14 +268,18 @@ function PhysioApprovalsInner() {
           <p className="text-xs text-muted-foreground">
             خططٌ كتبها Bionic AI من معاينات العلاج الطبيعي. لا يراها المعالجون قبل اعتمادك؛ افتح كلّاً منها واقرأها ثمّ اعتمدها أو احذفها.
             و«تعديلاتٌ مقترحة» ما كتبه Bionic AI بطلبك على خططٍ معتمَدة — تُحفظ نسخةً جديدة بعد قراءة الفرق.
+            و«بانتظار الإسناد» خططٌ معتمَدة لم يُسنَد جزءٌ منها — لا ينفّذها أحدٌ قبل إسنادها إلّا المسؤولُ والمشرفُ العام.
             و«قدُمت» خططٌ تغيّرت معاينتُها بعد كتابتها — لا تُعتمد، تُحذف ويُعاد الكتابة.
           </p>
-          <Seg value={opusView} onChange={setOpusView} prefix="opus-view" options={OPUS_VIEWS} counts={{ pending: counts.data?.opusPlans ?? 0, proposals: counts.data?.opusProposals ?? 0 }}
+          <Seg value={opusView} onChange={setOpusView} prefix="opus-view" options={OPUS_VIEWS}
+            counts={{ pending: counts.data?.opusPlans ?? 0, unassigned: counts.data?.opusUnassigned ?? 0, proposals: counts.data?.opusProposals ?? 0 }}
             muted={{ stale: counts.data?.opusStale ?? 0 }} />
           {oq.isLoading ? <Card className="p-4 text-sm text-muted-foreground">جارٍ التحميل…</Card>
             : oq.isError ? <Card className="p-4 text-sm text-red-700">تعذّر التحميل.</Card>
               : orows.length === 0 ? <Card className="p-4 text-sm text-muted-foreground" data-testid="opus-plans-empty">{opusView === "pending" ? "لا خطّةَ من Bionic AI تنتظر الاعتماد."
+                : opusView === "unassigned" ? "كلُّ الخطط المعتمَدة مُسنَدة."
                 : opusView === "proposals" ? "لا تعديلَ من Bionic AI ينتظر حفظك." : opusView === "stale" ? "لا خطّةَ قديمة." : "لا قرارات بعد."}</Card>
+                : opusView === "unassigned" ? <div className="space-y-2">{orows.map((r) => <UnassignedCard key={r.id} r={r as UnassignedRow} />)}</div>
                 : opusView === "proposals" ? <div className="space-y-2">{orows.map((r) => <OpusProposalCard key={r.jobId} r={r as OpusProposalRow} />)}</div>
                 : <div className="space-y-2">{orows.map((r) => <OpusPlanCard key={r.id} r={r as OpusPlanRow} view={opusView} />)}</div>}
         </>

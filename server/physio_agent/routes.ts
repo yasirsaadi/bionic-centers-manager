@@ -7,7 +7,7 @@
 //   POST /api/physio/opus-jobs/:id/cancel           — «إلغاء»
 //   GET  /api/physio/plans/:id/opus-proposal        — «الخطّة المقترحة» للمعتمِد وحده
 //   POST /api/physio/plans/:id/opus-discard         — حذفُ خطّة Opus منتظرة بيد معتمِد
-//   GET  /api/physio/opus-plans?view=pending|stale|decided — طابورُ خطط Opus للمعتمِد
+//   GET  /api/physio/opus-plans?view=pending|stale|decided|proposals|unassigned — طابورُ خطط Opus للمعتمِد (و«بانتظار الإسناد» — §4.hc)
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
@@ -155,6 +155,8 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     try {
       //  §4.hb — «تعديلاتٌ مقترحة»: اقتراحاتُ Opus المنتظرة على خططٍ معتمَدة قائمة.
       if (req.query?.view === "proposals") return res.json({ view: "proposals", rows: await plans.listOpusProposals() });
+      //  §4.hc — «بانتظار الإسناد»: خططُ Bionic AI المعتمَدة بجزءٍ مطلوبٍ بلا مُسنَدٍ مؤهَّل.
+      if (req.query?.view === "unassigned") return res.json({ view: "unassigned", rows: await (await import("../physio_plans/assignment")).listUnassignedOpusPlans(null) });
       const view = req.query?.view === "stale" ? "stale" : req.query?.view === "decided" ? "decided" : "pending";
       res.json({ view, rows: await plans.listOpusPlans(view) });
     } catch (e) { fail(res, e); }
@@ -179,7 +181,8 @@ export function registerPhysioAgentRoutes(app: Express, isAuthenticated: any) {
     try {
       const r = await versions.acceptProposal(id, req.body, actorOf(req));
       if (!r.ok) return refusedRes(res, r);
-      res.json({ version: r.version, plan: r.plan });
+      //  §4.hc — جزءٌ أضافته النسخةُ بلا إسناد ⟵ تفتح الشاشةُ «إسناد».
+      res.json({ version: r.version, plan: r.plan, needsAssignment: await (await import("../physio_plans/assignment")).unassignedPartsOf(db, Number(r.plan.id)) });
     } catch (e) { fail(res, e); }
   });
   app.post("/api/physio/opus-jobs/:id/proposal/discard", isAuthenticated, async (req: any, res) => {

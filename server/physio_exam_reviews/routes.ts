@@ -72,7 +72,12 @@ export function registerPhysioExamReviewRoutes(app: Express, isAuthenticated: an
       const opusPlans = await pendingOpusCount();
       //  §4.hb — واقتراحاتُ Opus المنتظرة على خططٍ معتمَدة («تعديلاتٌ مقترحة»).
       const opusProposals = await pendingProposalCount();
-      res.json({ count: redFlags + opusPlans + opusProposals, redFlags, opusPlans, opusProposals, opusStale: await staleOpusCount() });
+      //  §4.hc — وخططُ Bionic AI «بانتظار الإسناد» وطلباتُ البديل المنتظرة.
+      const { unassignedOpusCount, pendingSubstituteCount } = await import("../physio_plans/assignment");
+      const opusUnassigned = await unassignedOpusCount();
+      const substitutes = await pendingSubstituteCount();
+      res.json({ count: redFlags + opusPlans + opusProposals + opusUnassigned + substitutes, redFlags, opusPlans, opusProposals, opusUnassigned, substitutes,
+        opusStale: await staleOpusCount() });
     } catch (e) { fail(res, e); }
   });
 }

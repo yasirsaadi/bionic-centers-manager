@@ -37,17 +37,22 @@ export async function planOutcomes(f: OutcomeFilter): Promise<(PlanOutcome & { p
   const ids = plans.map((p) => p.id);
   const assess = await db.select().from(physioAssessments).where(inArray(physioAssessments.planId, ids))
     .orderBy(asc(physioAssessments.assessedOn), asc(physioAssessments.id));
+  //  §4.hc — جلسةُ خطّة Bionic AI بجزأين تُنسب لمسجِّل كلّ جزء (مرّةً لكلٍّ منهما)؛ والعددُ المنفَّذ جلساتٌ لا أجزاء.
   const sessions = (await db.execute(sql`
-    SELECT plan_id, executed_by, max(executed_by_name) AS name, count(*)::int AS n, max(session_date)::text AS last_on
-      FROM physio_plan_sessions WHERE plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND cancelled_at IS NULL
-     GROUP BY plan_id, executed_by`)).rows as any[];
+    SELECT s.plan_id, COALESCE(sp.recorded_by, s.executed_by) AS executed_by, max(COALESCE(sp.recorded_by_name, s.executed_by_name)) AS name,
+           count(DISTINCT s.id)::int AS n, max(s.session_date)::text AS last_on
+      FROM physio_plan_sessions s LEFT JOIN physio_plan_session_parts sp ON sp.session_id = s.id
+     WHERE s.plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND s.cancelled_at IS NULL
+     GROUP BY s.plan_id, COALESCE(sp.recorded_by, s.executed_by)`)).rows as any[];
+  const totals = new Map(((await db.execute(sql`SELECT plan_id, count(*)::int AS n FROM physio_plan_sessions
+     WHERE plan_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) AND cancelled_at IS NULL GROUP BY plan_id`)).rows as any[]).map((r) => [Number(r.plan_id), Number(r.n)]));
   const byPlan = new Map<number, typeof assess>();
   for (const a of assess) { if (!byPlan.has(a.planId)) byPlan.set(a.planId, []); byPlan.get(a.planId)!.push(a); }
   return plans.map((p) => {
     const list = byPlan.get(p.id) ?? [];
     const verdict: Verdict = list.length >= 2 ? compareAssessments(list[0] as any, list[list.length - 1] as any).verdict : "insufficient";
     const ses = sessions.filter((s) => Number(s.plan_id) === p.id);
-    const executed = ses.reduce((a, s) => a + Number(s.n), 0);
+    const executed = totals.get(p.id) ?? 0;
     const top = ses.slice().sort((a, b) => Number(b.n) - Number(a.n))[0];
     const approvedOn = baghdadDayOf(p.decidedAt);
     const endOn = baghdadDayOf(p.status === "graduated" ? p.graduatedAt : p.status === "stopped" ? p.stoppedAt : null);
